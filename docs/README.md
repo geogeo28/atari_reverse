@@ -32,6 +32,8 @@ One body of transferable knowledge lives outside this directory because it is th
 own contract: [`../tools/recreate_kit/TRAP_MODEL.md`](../tools/recreate_kit/TRAP_MODEL.md) — what the
 oracle models of TOS and the hardware and what it deliberately refuses, the seeded read models, the
 scheduled-write and hardware-write ledgers, and the callback door an asm twin calls a verified core
-through — and, when **the target is an OS ROM rather than a game**, its "ROM mode" section: the
-model above switched off entirely, and what the seeded hardware read model then leaves unprovable.
+through — and, when **the target is an OS ROM rather than a game**, its "ROM mode" section (the model
+above switched off entirely) together with **"Phase 15 — the DECLARED I/O MAP"**, which is how a case
+declares any byte of the I/O page by address and is what a BIOS/XBIOS reconstruction reads hardware
+through.
 `agent-playbook` and `on-target-execution` both send you there.

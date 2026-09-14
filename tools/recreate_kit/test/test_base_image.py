@@ -69,19 +69,22 @@ def test_set_base_image_hands_back_the_previous_one(installed_base):
     assert bytes(harness.set_base_image(previous)) == installed_base
 
 
-def test_a_prg_project_compares_one_prefix_and_nothing_above_the_stack():
-    """ROM mode made the diffed region TWO spans; for a .PRG project the second must stay empty.
+def test_a_prg_project_compares_a_prefix_and_the_tail_above_the_stack_band():
+    """ROM mode made the diffed region TWO spans, and a .PRG project has two of them as well.
 
-    It is empty only while the stack band's top lands exactly on the image — `STACK_TOP` is
-    `IMAGE_SIZE - STACK_SENTINEL_BYTES` and the band closes `STACK_SENTINEL_BYTES` above it — and
-    that relation is stated in prose in four places and, without this, tested in none. Change the
-    headroom and every game project silently grows a span above its own image (or drops bytes below
-    it) while all six recreates stay green, which is exactly the shape nothing would catch.
+    The band closes at the top of the CALLER'S FRAME AREA in either mode (emu's STACK_BAND_HI), and
+    a .PRG project's stack sits `STACK_SENTINEL_BYTES` below its image — so the tail between the two
+    is compared image like any other, not headroom dropped because of the arithmetic that placed the
+    stack. The relation is stated in prose in several places and, without this, tested in none:
+    change the headroom and every game project silently moves the boundary between "compared" and
+    "dropped" while all seven recreates stay green.
     """
     import emu
-    assert harness.diff_spans() == ((0, emu.STACK_GUARD_LO),)
-    assert emu.STACK_BAND_HI == harness.IMAGE_SIZE
+    tail = emu.STACK_TOP + emu.STACK_SENTINEL_BYTES - emu.STACK_BAND_HI
+    assert harness.diff_spans() == ((0, emu.STACK_GUARD_LO), (emu.STACK_BAND_HI, harness.IMAGE_SIZE))
+    assert emu.STACK_BAND_HI + tail == harness.IMAGE_SIZE
     assert harness.in_diff(emu.STACK_GUARD_LO - 1) and not harness.in_diff(emu.STACK_GUARD_LO)
+    assert harness.in_diff(emu.STACK_BAND_HI) and not harness.in_diff(emu.STACK_BAND_HI - 1)
 
 
 @pytest.mark.parametrize("length", (harness.IMAGE_SIZE - 1, harness.IMAGE_SIZE + 1, 0))

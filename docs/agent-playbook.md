@@ -517,8 +517,11 @@ Only the hardware map survives, and it is strict in both directions: a case that
 byte the model names refuses the run rather than fabricating one, and a read of an I/O address the
 model does NOT name refuses it too, by address. That second refusal is the OS-sized version of a
 game-sized hole — the silent 0 such a read used to answer is the same 0 on both sides, so a `Getrez`
-reconstruction would have gone green against a fabricated `$ff8260`. The addresses are still absent
-until someone adds them; what changed is that a function reading one says so.
+reconstruction would have gone green against a fabricated `$ff8260`. **The remedy is the case's, not
+a model change:** `io_seed={0xff8260: 0x02}` declares any byte of the I/O page by address and both
+cores serve exactly that byte (the DECLARED I/O MAP, `TRAP_MODEL.md` Phase 15). A slot apiece was
+the right shape for a game and the bottleneck for an OS; what changed is that a function reading a
+register says which machine it means, in writing, and is refused when it does not.
 One decompiler pin is target-specific rather than kit-specific: every BIOS/XBIOS routine runs with
 `a5 = 0`, because the dispatcher does `suba.l a5,a5` — see [`ghidra-pipeline.md`](ghidra-pipeline.md),
 "The ROM variant: pin over a RANGE, not the program". The binding itself is

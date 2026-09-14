@@ -1,12 +1,12 @@
 /* probe_common.h — the scaffolding every 68000-driving kit probe needs, in one place.
  *
- * Four probes here plant 68000 code into a scratch image and run it through the oracle:
- * entry_state_probe.c, reported_regs_probe.c, psg_model_probe.c and hw_model_probe.c. They had a
- * copy of this each — the same geometry, the same extern block, the same `plant_word`. Four copies
- * of a buffer size and a register count is four places for one of them to be wrong, and the register
- * count in particular is a hand-kept mirror of `shim.c`'s `OSH_OUT_REGS`: too small and `osh_run`
- * — OR `osh_run_bench`, which reports the whole file too since the callee-saved check was added —
- * writes past the caller's buffer.
+ * Five probes here plant 68000 code into a scratch image and run it through the oracle:
+ * entry_state_probe.c, reported_regs_probe.c, psg_model_probe.c, hw_model_probe.c and
+ * io_model_probe.c. They had a copy of this each — the same geometry, the same extern block, the
+ * same `plant_word`. Five copies of a buffer size and a register count is five places for one of
+ * them to be wrong, and the register count in particular is a hand-kept mirror of `shim.c`'s
+ * `OSH_OUT_REGS`: too small and `osh_run` — OR `osh_run_bench`, which reports the whole file too
+ * since the callee-saved check was added — writes past the caller's buffer.
  *
  * (test/os_refusal_probe.c is deliberately NOT a fifth copy. It calls `include/os.h`'s helpers
  * directly, plants no code, never enters the CPU, and its own `PROBE_*` names denote in-image
@@ -66,6 +66,13 @@ uint32_t osh_out_regs(void);
  * header exists. */
 #define OPCODE_MOVE_B_ABSL_TO_DN(reg) ((uint16_t)(0x1039u | ((reg) << 9)))
 #define MOVE_B_ABSL_TO_D1 OPCODE_MOVE_B_ABSL_TO_DN(1)
+/* ...the same read WIDENED, which is the shape the seeded-hardware model REFUSES and the declared
+ * I/O map serves only when every byte of it was declared — so both models' probes plant these. */
+#define MOVE_W_ABSL_TO_D1  0x3239u /* move.w (xxx).l,d1 */
+#define MOVE_L_ABSL_TO_D1  0x2239u /* move.l (xxx).l,d1 */
+/* ...and the STORE both models need in order to reach their staleness rule: a declaration describes
+ * the machine on ENTRY, and a run that overwrites the address has made it describe nothing. */
+#define MOVE_B_IMM_TO_ABSL 0x13fcu /* move.b #imm,(xxx).l */
 
 /* The scratch image every helper below writes into. `static` in a header is right here: a probe is
  * one translation unit plus the oracle's, so there is exactly one of these per binary. */
@@ -111,5 +118,57 @@ static inline uint32_t plant_long(uint32_t addr, uint32_t value) {
 }
 
 static inline void plant_rts(uint32_t addr) { plant_word(addr, OPCODE_RTS); }
+
+/* Each emitter plants ONE instruction at `addr` and returns the address after it, so a caller
+ * emitting a stream chains them. Shared by the two seeded-read probes, which plant the identical
+ * instructions at the identical addresses and differ only in which model's registers they aim at.
+ *
+ * `io_addr` is the address the planted instruction names — the untranslated `$ffff8260` form or the
+ * folded `$ff8260` one, as the case wants; the oracle's callbacks fold it either way. */
+static inline uint32_t emit_read(uint32_t addr, uint16_t opcode, uint32_t io_addr) {
+    plant_word(addr, opcode);
+    return plant_long(addr + 2, io_addr);
+}
+
+static inline uint32_t emit_write_byte(uint32_t addr, uint8_t value, uint32_t io_addr) {
+    plant_word(addr, MOVE_B_IMM_TO_ABSL);
+    plant_word(addr + 2, value);
+    return plant_long(addr + 4, io_addr);
+}
+
+/* ---- driving a planted routine through each of the oracle's two entry points ----
+ * `report` is the probe's own reporter, which takes the case name and the value the routine left in
+ * D1; `d1_mask` is how wide that value is for THIS probe (a byte for the named set, the whole
+ * longword for the declared I/O map, which serves word and long reads too).
+ *
+ * The image is NOT cleared between runs — only the code is re-planted — because one of the claims
+ * both probes make is that the MODEL's own per-run state does not carry over even when the image
+ * does. */
+static inline void probe_run_and_report(const char *name, uint32_t d1_mask, uint32_t max_insns,
+                                        void (*report)(const char *, uint32_t)) {
+    uint32_t dregs[NREGS] = {0}, aregs[NREGS] = {0}, out[OUT_REGS] = {0};
+    if (!osh_run(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, dregs, aregs,
+                 PROBE_SP, PROBE_SENTINEL, 0, max_insns, out)) {
+        fprintf(stderr, "%s: the probe's routine did not return to the sentinel\n", name);
+        exit(1);
+    }
+    report(name, out[1] & d1_mask);
+}
+
+/* The same through `osh_run_bench` — the OTHER entry point, which a perf measurement uses and which
+ * installs no OS traps. Its routine is a bare `rts`: what such a case is about is the state the
+ * bench STARTS from, since both entry points share `enter_from_reset()` and therefore every model's
+ * per-run reinstall. The routine reads nothing, so the read is reported as 0. */
+static inline void probe_bench_and_report(const char *name, uint32_t max_insns,
+                                          void (*report)(const char *, uint32_t)) {
+    uint32_t out[OUT_REGS] = {0};
+    plant_rts(PROBE_ENTRY);
+    if (!osh_run_bench(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, 0,
+                       PROBE_SP, PROBE_SENTINEL, max_insns, out)) {
+        fprintf(stderr, "%s: the bench's routine did not return to the sentinel\n", name);
+        exit(1);
+    }
+    report(name, 0);
+}
 
 #endif /* RECREATE_KIT_PROBE_COMMON_H */

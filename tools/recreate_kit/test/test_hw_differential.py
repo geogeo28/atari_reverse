@@ -380,6 +380,22 @@ def test_a_hw_seed_passed_under_the_capture_mode_is_refused():
             "under the mode the run was served something other than the profile the mode declares")
 
 
+def test_the_capture_refusal_names_the_door_the_declaration_came_through():
+    """The same refusal reached the OTHER way, and it must not name a parameter the case never wrote.
+
+    `emu.seed_split` routes a Phase-7 NAMED SLOT out of `io_seed` and into the hardware seed before
+    the capture guards read either, so a case that declared its byte through `io_seed` — the door
+    TRAP_MODEL.md tells a case author to use, since it takes any I/O address — would be told a
+    `hw_seed` it never passed was the problem, and go looking for it in a call that has none.
+    """
+    with emu.audio_capturing():
+        with pytest.raises(RuntimeError) as raised:
+            emu.run(harness.make_image(), HW_READ_ENTRY, io_seed=DECLARED)
+    message = str(raised.value)
+    assert "io_seed" in message and f"{MFP_GPIP:#x}" in message, (
+        f"the refusal does not name the door the declaration arrived through: {message}")
+
+
 def test_declaring_an_address_the_model_does_not_serve_is_refused():
     """`hw_seed` is over a NAMED set. A case declaring, say, the FDC status would otherwise install
     nothing, read a fabricated 0, and pass while testing the read it meant to declare not at all —

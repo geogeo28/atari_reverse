@@ -94,6 +94,81 @@ void g_hw_untouched(uint8_t *image) {
     (void)image;
 }
 
+
+/* ---- the Phase 15 side: reads of I/O bytes the CASE declares by address ---------------------
+ * The same shape as the named set's cores above and for the same reason — the routine's whole
+ * effect is off-image — with the addresses spelt here rather than taken from os.h, because this
+ * model does not name them: they are the machine's own registers, and which ones a case declares is
+ * the case's business. The .PRG side spells the identical literals in `kit_smoke_project`; the
+ * differential itself is what pins the two spellings equal, since a core reading a different
+ * address produces a different read stream and reds.
+ */
+#define KIT_SHIFTER_RESOLUTION 0xff8260u   /* what XBIOS Getrez reads */
+#define KIT_VIDEO_BASE_HI      0xff8201u   /* ...and Physbase */
+#define KIT_PALETTE_0_HI       0xff8240u   /* ...and one colour word, the WIDE shape */
+#define KIT_PALETTE_0_LO       0xff8241u
+#define KIT_RESOLUTION_MONO    0x02u        /* what the write-then-read routine stores there */
+
+/* The faithful reconstruction of the .PRG's read of the resolution byte. */
+void g_io_reads_the_resolution(uint8_t *image) {
+    (void)image;
+    io_read8(KIT_SHIFTER_RESOLUTION);
+}
+
+/* The faithful reconstruction of the two-read routine, in the order it makes them. */
+void g_io_reads_the_pair(uint8_t *image) {
+    (void)image;
+    io_read8(KIT_SHIFTER_RESOLUTION);
+    io_read8(KIT_VIDEO_BASE_HI);
+}
+
+/* MUTANT: the same two reads in the OTHER order. Given a case that declares both addresses to the
+ * same byte, every surface a differential has agrees with a correct run — the values, the map, the
+ * untouched image — and the ordered stream is the only thing left. */
+void g_io_reads_the_pair_backwards(uint8_t *image) {
+    (void)image;
+    io_read8(KIT_VIDEO_BASE_HI);
+    io_read8(KIT_SHIFTER_RESOLUTION);
+}
+
+/* The faithful reconstruction of the WORD read: ONE io_read16, which is one ledger entry of width
+ * 2 — the same entry the oracle's own `move.w` produces. */
+void g_io_reads_the_palette_word(uint8_t *image) {
+    (void)image;
+    io_read16(KIT_PALETTE_0_HI);
+}
+
+/* MUTANT: two byte reads where the original made one word read. It computes the identical value
+ * from the identical declared bytes, so only the WIDTH in the ledger entry separates them. */
+void g_io_reads_the_palette_as_two_bytes(uint8_t *image) {
+    (void)image;
+    io_read8(KIT_PALETTE_0_HI);
+    io_read8(KIT_PALETTE_0_LO);
+}
+
+/* The store half of the write-then-read routine, on its own. Phase 10's door, not this model's —
+ * a hardware write has always been dropped and separately ledgered — and it is here so that the
+ * STALENESS rule's control case has a faithful candidate: the write stream must match, or the case
+ * would red on Phase 10 before reaching the question it is about. */
+void g_io_writes_the_resolution(uint8_t *image) {
+    (void)image;
+    hw_write8(KIT_SHIFTER_RESOLUTION, KIT_RESOLUTION_MONO);
+}
+
+/* ...and the whole routine, store then read back — which is the shape no declaration can describe,
+ * because the declaration is about the byte the machine held ON ENTRY. */
+void g_io_writes_then_reads(uint8_t *image) {
+    (void)image;
+    hw_write8(KIT_SHIFTER_RESOLUTION, KIT_RESOLUTION_MONO);
+    io_read8(KIT_SHIFTER_RESOLUTION);
+}
+
+/* A candidate that reads no declared I/O byte at all: for the ABI case, and for the mutant that
+ * hardcodes what it should have read. */
+void g_io_untouched(uint8_t *image) {
+    (void)image;
+}
+
 /* ---- the Phase 10 side: stores to memory-mapped I/O registers (test_hw_write_differential.py) ----
  * Same shape as the two groups above and for the same reason: the oracle DROPS a store to one of
  * these addresses, so the byte diff is blind to every mutant below and only the ordered write

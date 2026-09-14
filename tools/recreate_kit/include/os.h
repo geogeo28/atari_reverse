@@ -416,6 +416,12 @@ static inline void os_vsync(void) { g_os_event(OS_EVENT_VSYNC, 0); }
  * probe that no longer tests the guard it names. */
 #define OS_PSG_PORT_SELECT 0xff8800u  /* register-select latch; also the chip's READ-BACK port */
 #define OS_PSG_PORT_DATA   0xff8802u  /* data port: write-only on the real chip */
+/* One past the chip's block. The ST decodes the YM2149 INCOMPLETELY: it answers across the whole
+ * $ff8800..$ff88ff span, of which the two ports above are the canonical pair. Named here rather
+ * than in shim.c because the declared I/O map below has to exclude the same span — a byte of it
+ * served from that map would never reach Phase 6's own guards — so the block bound is a fact two
+ * models read and not one file's private constant. */
+#define OS_PSG_BLOCK_END   0xff8900u
 
 /* The direct path writes the chip, not the image, so it is the SECOND thing both sides record in a
  * ledger the harness compares (src/psg.c on the candidate side, shim.c's g_psg_reg/g_psg_val on the
@@ -583,6 +589,15 @@ static inline void os_vsync(void) { g_os_event(OS_EVENT_VSYNC, 0); }
 #define OS_HW_IO_PAGE      0xff0000u
 #define OS_HW_IO_PAGE_MASK 0xff0000u
 
+/* The 68000's ADDRESS BUS: the chip has 24 address lines, so the machine decodes `$ffff8260` and
+ * `$ff8260` at one register. `oracle/shim.c`'s BUS_ADDR_MASK folds a real access with this number
+ * before decoding it and `os_map.OS_BUS_ADDR_MASK` is Python's copy, for the message that names a
+ * case the canonical address; `test/test_os_memory_map.py` pins all three equal.
+ *
+ * HERE IT IS A BOUND AND NOT A FOLD. A declaration is keyed on the address, so an untranslated
+ * spelling has to be refused rather than quietly translated — see `os_io_is_page`. */
+#define OS_BUS_ADDR_MASK   0xffffffu
+
 /* Is `addr` inside one of those blocks?
  *
  * IT TAKES THE 24-BIT BUS FORM AND DOES NOT MASK, which is hw.h's contract for `hw_read8` stated
@@ -748,6 +763,122 @@ static inline uint32_t os_hw_slots_touched(uint32_t addr, uint32_t n) {
             touched |= 1u << slot;
     }
     return touched;
+}
+
+/* ---- the DECLARED I/O MAP (TRAP_MODEL.md, "Phase 15") ------------------------------------------
+ * Phase 7 above models a NAMED SET of I/O bytes, one `OS_HW_*` slot at a time, because a GAME
+ * touches few registers and each one earned an entry with the evidence for what it answers. An
+ * OPERATING SYSTEM touches the whole machine: `Getrez` reads $ff8260, `Physbase` reads
+ * $ff8201/$ff8203, `Setcolor` reads the palette back at $ff8240+, `Mfpint`/`Jenabint`/`Jdisint`
+ * read-modify-write the MFP's IERA/IERB/IMRA/IMRB at $fffa07..$fffa15, `Rsconf` reads the USART.
+ * A slot apiece is the wrong shape for that, so this model lets a case declare ANY byte of the I/O
+ * page by address — `io_seed={0xff8260: 0x02}` — and both cores serve exactly those bytes.
+ *
+ * IT IS PHASE 7'S SEMANTICS, GENERALISED IN THE ADDRESS AND NOWHERE ELSE. A declared byte is a
+ * per-run CONSTANT: every read of it is served the same byte, which is what a STATIC slot already
+ * meant. There is no volatile flag and no re-read rule, because a value that must CHANGE between
+ * two reads of one address is not a constant at all — an FDC status poll, a DMA counter advancing
+ * — and modelling one is the SCHEDULED WRITE model's job (Phase 8), which is about a value that
+ * changes mid-run by construction. An undeclared byte is unchanged: the silent 0 an off-image read
+ * has always answered, counted, and refused in ROM mode by harness._vet_rom_io_reads_are_modelled.
+ *
+ * WHAT IS NOT SEEDABLE. Each exclusion is structural rather than a matter of taste, and the
+ * argument for each is made ONCE in TRAP_MODEL.md, "Phase 15" ("What may NOT be declared, and why
+ * each exclusion is structural"); what follows is that table in one sentence apiece:
+ *   - a Phase-7 NAMED SLOT. Those carry rules this model does not have (a volatile re-read is
+ *     refused, the ACIA status has a model default, the ACIA data port is exempt from staleness),
+ *     and they keep their own ledger. A byte served by both models would be ledgered by one of them
+ *     while the other's rules went unenforced — so the two sets are DISJOINT by construction, here
+ *     and in the read callbacks. THE CASE AUTHOR STILL HAS ONE DOOR: `emu.seed_split` routes such
+ *     an address out of `io_seed` and into the named set's own installer before either side is
+ *     seeded, so the models stay two while the declaration a case writes is one.
+ *   - the YM2149's block. Phase 6 models it, including two refusals of its own (an unselected latch,
+ *     an unseeded register), and a byte of the block answered from this map would reach none of them.
+ *   - anything below the I/O page. That is ordinary off-image memory, which has read 0 since the
+ *     kit's first run and is a defect in the CASE rather than a hole in a model.
+ *
+ * THE ADMISSIBLE SET IS THE REFUSAL'S OWN SET, and that pairing is the point rather than a
+ * coincidence: `os_io_is_page` is what shim.c's unmodeled-read tally counts, so every read the
+ * refusal can fire on is a read some `io_seed` can answer. Were the two spelt separately, an
+ * address could be refused with no declaration able to fix it — a refusal whose remedy does not
+ * exist, which is worse than the silent 0 it replaced. */
+#define OS_IO_SEED_MAX 256    /* declared bytes per run: a palette read-back is 32, the MFP ~24 */
+/* The ordered ledger of SERVED reads, on BOTH sides (shim.c's g_io_log_* and src/hw.c's), for
+ * OS_PSG_LOG_MAX's reason: were the two caps to differ, a long run would drop entries on one side
+ * only and the streams would diverge for a reason that has nothing to do with the reconstruction.
+ *
+ * ONLY SERVED READS ARE LEDGERED, and that is what makes this model cost every already-ported
+ * project exactly nothing: a case that declares no I/O byte serves none, so both ledgers are empty
+ * and compare equal, exactly as they did before this model existed. An UNDECLARED read is not a
+ * ledger entry — it is the unmodeled-read tally's business, and its remedy is a declaration. */
+#define OS_IO_LOG_MAX  4096
+
+/* Is `bus_addr` in the memory-mapped I/O page at all? The 24-bit bus form, as everything in this
+ * model is: the oracle folds an access before it decodes, and a reconstruction spells the canonical
+ * address itself.
+ *
+ * SO THE BUS IS TESTED FIRST AND THE PAGE SECOND, which is what closes the untranslated class
+ * whole. `$ffff8260`, `$fffffa01`, `$1ff8260` — every spelling the 24 address lines cannot carry —
+ * is refused here, because the oracle's decode can never produce one (it folds with BUS_ADDR_MASK
+ * first) and `os_io_seedable` would otherwise accept it as A DECLARATION NO READ CAN EVER MATCH: a
+ * row sitting in the map serving nothing while the case believes the byte is declared. Two earlier
+ * spellings each admitted part of that class — `>= OS_HW_IO_PAGE` took `$1000000`, and masking with
+ * OS_HW_IO_PAGE_MASK took everything whose bits 16-23 happen to be `$ff`. `os_hw_is_io` above needs
+ * no such bound: its three blocks are ranges, and every one of them ends inside the bus.
+ *
+ * REFUSED RATHER THAN FOLDED, and the difference is the declaration: folding here would make
+ * `io_seed={0xffff8260: …}` silently mean `$ff8260`, where what a case wants back is that the
+ * machine decodes the access at `$ff8260` and the declaration must say so. `emu.io_seed_entries`
+ * gives it that message by name; a C caller that never goes through emu.py — this kit's own probes,
+ * a project seeding the map from its own C — reaches THIS rule instead, and
+ * `test/io_model_probe.c`'s `an_untranslated_address_is_not_declarable` is where it is measured. */
+static inline int os_io_is_page(uint32_t bus_addr) {
+    return (bus_addr & ~(uint32_t)OS_BUS_ADDR_MASK) == 0 && bus_addr >= OS_HW_IO_PAGE;
+}
+
+/* May a case DECLARE `bus_addr` through `io_seed`? The three exclusions in the header above, in one
+ * predicate both sides read — the oracle's installer, the candidate's, and emu.py's encoder (which
+ * mirrors it in Python only to say WHICH rule a rejected address broke). */
+static inline int os_io_seedable(uint32_t bus_addr) {
+    if (!os_io_is_page(bus_addr))
+        return 0;
+    if (os_hw_slot(bus_addr) >= 0)
+        return 0;                      /* Phase 7 names it, with rules this model does not have */
+    return !(bus_addr >= OS_PSG_PORT_SELECT && bus_addr < OS_PSG_BLOCK_END);   /* Phase 6's chip */
+}
+
+/* Where `addr` sits in a declared map of `n` entries, or -1. A LINEAR scan, deliberately: the map
+ * holds at most OS_IO_SEED_MAX entries and is consulted only after the in-image fast path has
+ * missed, so it costs nothing on an ordinary memory access — and a sorted table would have to be
+ * kept sorted by two installers rather than by one. */
+static inline int os_io_find(const uint32_t *addrs, uint32_t n, uint32_t addr) {
+    for (uint32_t i = 0; i < n; i++)
+        if (addrs[i] == addr)
+            return (int)i;
+    return -1;
+}
+
+/* INSTALL A RUN'S DECLARED I/O BYTES, and return how many actually landed.
+ *
+ * Shared verbatim by shim.c's `osh_io_seed` and src/hw.c's `g_io_reset`, for os_hw_install_seed's
+ * reason: two copies of this are two places the admissibility rule can be changed in one, and the
+ * failure that produces is the oracle serving a byte the candidate refuses — which surfaces as a
+ * read-stream mismatch blamed on the reconstruction rather than on the model.
+ *
+ * An entry the rule rejects, a duplicate, or one past the cap is NOT installed, and the shortfall
+ * is what both callers report: emu.py raises on it and the candidate charges os_refused(), so a map
+ * that did not fit is loud rather than a run served fewer bytes than the case declared. */
+static inline uint32_t os_io_install_seed(uint32_t *dst_addrs, uint8_t *dst_values,
+                                          const uint32_t *addrs, const uint8_t *values, uint32_t n) {
+    uint32_t installed = 0;
+    for (uint32_t i = 0; i < n && installed < OS_IO_SEED_MAX; i++) {
+        if (!os_io_seedable(addrs[i]) || os_io_find(dst_addrs, installed, addrs[i]) >= 0)
+            continue;
+        dst_addrs[installed] = addrs[i];
+        dst_values[installed] = values[i];
+        installed++;
+    }
+    return installed;
 }
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------

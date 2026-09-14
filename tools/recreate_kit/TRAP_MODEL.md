@@ -303,6 +303,15 @@ only compile-time use to unpick is `os_in_image_fixed`'s `_Static_assert`. Not i
 mechanism built before a project needs it is a mechanism nobody has tested against a real second
 machine.
 
+**A DEVICE ANSWERS ITS OWN ADDRESS, ahead of either window.** The read callbacks decode in one
+order — RAM, then the YM2149's ports, then Phase 7's named set, then Phase 15's declared map, and
+only then the ROM window — so no window declaration can put an image byte where a chip register
+belongs. Both windows are pinned clear of the page anyway (`emu` refuses a binding whose `ROM_END`
+or `RAM_END` passes `OS_HW_IO_PAGE`), and TOS 1.02 holds by **zero bytes**: its 192 KB ROM at
+`$fc0000` ends exactly at `$ff0000`. So the order decides nothing today; what it decides is what the
+first binding that overlapped them would do, and serving a chip's register out of a ROM image is the
+silent half of that — a `Getrez` reconstruction verified against the ROM's own image bytes.
+
 **Why the map and the model are ONE switch.** `osh_rom_window` installs the memory map, and
 `osh_run` derives "serve no traps" from it: declaring a window is the only way to switch the model
 off, and switching it off is unavoidable once you declare one. They are two claims, and they are
@@ -310,6 +319,52 @@ deliberately not two knobs — a ROM project wants both and nothing else wants e
 would need them separated is a .PRG differential run with the real ROM mapped in so `trap #1`
 reaches genuine GEMDOS; that is a second parameter on `osh_rom_window` on the day someone builds it,
 not a knob nothing sets today.
+
+### The BENCH door in ROM mode — what `osh_run_bench` carries and what it does not
+
+Tier 3's numerator runs the reconstruction's own cores, cross-compiled to m68k, through the OTHER
+door into the oracle (`rom_bench.py`; the README's "Tier 3's numerator"). Four properties of that
+door decide whether the measurement and its second differential mean anything, and all four are
+`shim.c`'s rather than the runner's:
+
+* **It enters from the same reset.** `osh_run_bench` and `osh_run` both go through
+  `enter_from_reset`, so a bench run gets the forced entry `SR` and — through `psg_enter_run` /
+  `hw_enter_run` / `sched_enter_run` — the same per-run reset of the seeded models, their ordered
+  ledgers and their refusal tallies. That is what makes `emu.psg_events()` after a bench run
+  comparable with `o_regs["psg_events"]` from the oracle's: each is one run's own traffic.
+* **The PSG and named-hardware seeds it re-installs are the LAST ones installed**, because
+  `osh_psg_seed`/`osh_hw_seed` store rather than apply and `run_bench` takes neither. So the two runs
+  of one case must be made in one order — the original first, our build second — and
+  `RomBench.measure` is where that order lives. The DECLARED I/O MAP is the exception: `run_bench`
+  takes a keyword-only `io_seed` and installs it per run exactly as `emu.run` does, an empty
+  declaration included, because a core that reads the shifter has to be measured over the same bytes
+  its differential was served or it is measuring a run down a different path. A named slot routed out
+  of that `io_seed` has nowhere to go here and is refused rather than dropped.
+* **It installs no trap vectors at all**, so ROM mode's "no model ran" claim holds here by
+  construction rather than by the `osh_trap_count` re-test `emu.run` makes.
+* **It charges the same ENTRY OVERHEAD**: Musashi's first `m68k_execute()` after a reset spends the
+  68000's 40-cycle reset exception and executes no instruction, so every cost either door reports is
+  one instruction and 40 cycles high. Both sides of a ratio carry it, which is exactly why it must
+  come off both — a constant added to a numerator and a denominator pulls the ratio towards 1.00 and
+  makes a bar lenient (3% on a routine the size of XBIOS `Random`). `RomBench` measures the pair on
+  an empty function through BOTH doors and requires them equal, rather than writing the number down.
+
+The I/O-read refusal above applies to a bench run too, and has to: `osh_run_bench` clears
+`g_io_unmodeled_reads` per run, and `rom_bench` refuses a run that tallied one. A target build
+reading `$ff8260` would otherwise be answered the same fabricated 0 the oracle answers, be measured
+against it, and be reported as a verified row.
+
+**And so does every OTHER refusal tally the harness reads after a Tier 1 run** — the PSG's undeclared
+register, no-select, unmodelled-access, mixed-path and dropped counters; the modelled-hardware set's
+undeclared, stale, wide, re-read and dropped counters; the declared I/O map's unmodelled, stale and
+dropped ones. They are cleared by the same `enter_from_reset` the seeded models are, so
+`rom_bench._refusal_tallies` reads the set the instant each of the two runs ends and refuses by name.
+Two kinds are in it and both would make a row meaningless: an access the model could not serve (a
+fabricated byte, answered identically on both sides, so the second differential vouches for it) and a
+LEDGER THAT OVERFLOWED, which truncates a stream the same second differential then compares as
+though it were whole. The same argument applies to the four ordered streams themselves —
+`psg_events`, `hw_events`, `io_events` and `hw_writes` are compared between the ORIGINAL's report and
+the getters read after the bench run, because each is one run's own traffic.
 
 ## The harness-poked model state
 
@@ -564,7 +619,7 @@ the trap dispatch gives an unmodeled selector:
   case seeds, and a register nothing declared is still refused — the ledger's emptiness was never the
   real obstacle, the chip's *prior contents* were.
 - **any other access to the chip's address block.** The ST decodes the YM2149 incompletely, so it
-  answers across `$ff8800..$ff88ff` (`PSG_BLOCK_END`); of that, only the byte
+  answers across `$ff8800..$ff88ff` (`os.h`'s `OS_PSG_BLOCK_END`); of that, only the byte
   select-latch-then-data sequence on the canonical pair is modeled — not the odd-address decoding
   a `move.w #$0e00,$ff8800` relies on, and not the mirrors. This is what keeps the mixed-path guard
   honest: before, only the *byte* callbacks compared the address against the two ports, **by
@@ -2825,6 +2880,220 @@ routes all four through `src/os.c`'s empty `g_*` bodies, which its `.PRG` build 
 declare it. The waiver reproduces exactly the coverage every project had before this phase existed,
 and retiring one is a reconstruction pass — every call site routed through its door — not a config
 change.
+
+## Phase 15 — the DECLARED I/O MAP (any byte of the I/O page, by address)
+
+Phase 7 models a NAMED SET of I/O bytes, one `os.h` slot at a time, and that shape is right for a
+GAME: a game touches a handful of registers, each slot earned its entry with the evidence for what
+the address really answers, and the set grew four times in two years. An OPERATING SYSTEM touches
+the whole machine. `Getrez` reads `$ff8260`, `Physbase` reads `$ff8201`/`$ff8203`, `Setcolor` reads
+`$ff8240`+ back, `Mfpint`/`Jenabint`/`Jdisint` read-modify-write `$fffa07`..`$fffa15`, `Xbtimer`
+reads the timer control registers, `Rsconf` reads the USART, the IKBD handler reads `$fffc00`/`02`.
+At a slot apiece that is a Phase-7-sized change per BIOS leaf, which is not a model — it is a
+bottleneck. **So a case declares the byte by ADDRESS**: `io_seed={0xff8260: 0x02}`, any byte of the
+page the named models do not own, and both cores serve exactly those bytes.
+
+> **It is Phase 7's semantics generalised in the ADDRESS and nowhere else.** Everything the earlier
+> phase argues about a declared byte being an INPUT of the run holds here verbatim; what changes is
+> that the set of declarable addresses is the case's rather than `os.h`'s.
+
+### The numbering, and why this is not "Phase 9"
+
+The phases are numbered in the order they were built and the sequence already runs to 14 (the
+file-load seam took 9). This is the fifteenth model, and it is the SECOND that answers a hardware
+read — read it beside Phase 7, not after Phase 14.
+
+### Modeled
+
+**A map of (address, byte) the case declares, plus an ordered ledger of the reads it served.**
+`include/os.h` owns the rules — `OS_IO_SEED_MAX`, `OS_IO_LOG_MAX`, `os_io_is_page`,
+`os_io_seedable`, `os_io_find` and `os_io_install_seed` — because both sides decode them:
+`oracle/shim.c` from a bus address, `src/hw.c` from the address a reconstruction spells.
+
+* **a read of a declared address** → the declared byte, on EVERY read of it, plus an
+  `(address, width, value)` entry in the ordered ledger. `harness.differential` compares that stream
+  against the candidate's (`_vet_io_state`);
+* **a read where any byte of the access is UNDECLARED** → served `0` — exactly what it was served
+  before this model existed — counted in `osh_io_unmodeled_reads()` with the first offending
+  address, and **not ledgered**. The refusal is `harness._vet_rom_io_reads_are_modelled`'s and
+  fires **in ROM mode only**, unchanged from what that vet did before this model: a game's
+  unmodeled I/O reads are nobody's enumerated list;
+* **a 16- or 32-bit read** → served if and only if EVERY byte it covers was declared, assembled
+  big-endian, as ONE ledger entry carrying the width. This is where the model parts company with
+  Phase 7, which refuses a wide read outright: there the neighbouring register could not be
+  described at all, so serving the access would have fabricated the neighbour; here it can be
+  declared, so a case that declares both bytes has said what the word holds and one that declares
+  the first alone has not — and the refusal names the byte that is MISSING rather than the access
+  that straddled it;
+* **a read of a byte THIS RUN STORED TO** → still served, still ledgered, and counted in
+  `osh_io_stale_reads()`. Refused by `harness._vet_io_reads_are_declared`, for Phase 7's staleness
+  reason exactly: the declaration describes the byte the machine held on ENTRY and an instruction of
+  this very run has replaced it. **Not fixable by declaring more** — the remedy is the case's shape;
+* **a WRITE** → unchanged. Dropped as every hardware write is, and ledgered by Phase 10, which is
+  what makes it comparable. This model claims nothing about what storing to an address does.
+
+**A declared byte is a per-run CONSTANT, and there is no volatile rule.** Phase 7 refuses a second
+read of a VOLATILE slot because the machine changes it between reads; here every declaration is a
+constant by definition, so a run may read a declared byte as often as it likes and is served the
+same byte each time. That is the model's stated LIMIT rather than an oversight: a register whose two
+successive reads must DIFFER for the run to proceed — an FDC status poll, a DMA counter advancing —
+is not describable by a constant at all, and a value that changes mid-run is **Phase 8's** shape (an
+external agent storing while the run is in flight). Adding a re-read refusal here would be a change
+to the model, not a repair.
+
+**The map is the case's, and it is per-run.** `emu.run(..., io_seed={…})` /
+`harness.differential(..., io_seed=…)` install it before **every** run — an empty one included, so a
+declaration cannot leak from the previous case — and the per-run tallies are cleared at the top of
+each `osh_run` *and* each `osh_run_bench` (both go through `enter_from_reset`).
+
+**ONLY SERVED READS ARE LEDGERED, and that is what makes this model cost every already-ported
+project nothing.** A case that declares no I/O byte serves none, so both ledgers are empty and
+compare equal — which is why the `.PRG` projects' suites are byte-for-byte unchanged by it
+(zynaps: 4,751 passed / 4 skipped before and after).
+
+### What may NOT be declared, and why each exclusion is structural
+
+The two sets are **disjoint by construction**, in `os_io_seedable` and again in the read callbacks'
+order — and the C rule underneath refuses a named slot offered to this map whatever reaches the ABI.
+
+> **THE MODELS STAY TWO; THE DOOR IS ONE.** A case author reading a disassembly sees `$fffa01` and
+> `$ff8260` as the same kind of thing — a byte the machine held on entry — and which of them Phase 7
+> happens to NAME is the kit's bookkeeping rather than the case's. So `io_seed` accepts **every** I/O
+> byte, and `emu.seed_split` routes a named slot into Phase 7's own installer before either side is
+> seeded. Both shores call the same function (`emu.run` for the oracle, `harness.arm_candidate` for
+> the candidate), because a routing done on one side only would have the oracle serve a byte the
+> candidate refused and the mismatch would read as a reconstruction bug. The two models keep their
+> separate rules and their separate ledgers; what is one is the dict a case writes.
+
+| offered address | answer | why |
+| --- | --- | --- |
+| a **Phase-7 named slot** (`emu.HW_ADDRS`) | **routed** into `hw_seed`'s installer | those slots carry rules this model does not have — a volatile address may be read once, the ACIA status has a MODEL DEFAULT, the ACIA data port is exempt from staleness — and they keep their OWN ledger. A byte served by both models would be ledgered by one while the other's rules went unenforced, so it is moved rather than shared. **Declaring the same address through BOTH `hw_seed` and `io_seed` is a `ValueError`**: two claims about one byte, and which won would be an iteration order |
+| the **YM2149's block** (`$ff8800`..`$ff88ff`) | `ValueError` naming `psg_seed` | NOT routable, and the reason is the chip's rather than a choice: Phase 6's file is keyed by REGISTER NUMBER and a read of `$ff8800` answers whatever the run last LATCHED there, so an address-keyed byte could not say which register it declared. Phase 6 also carries two refusals of its own (an unselected latch, an unseeded register) that a byte served from this map would reach none of |
+| anything **below the I/O page** | `ValueError` | ordinary off-image memory, which has read `0` since the kit's first run. An address down there is a defect in the CASE, not a byte to declare |
+| the **untranslated form** (`$ffff8260` for `$ff8260`) | `ValueError` naming the 24-bit form | the 68000 drives 24 address lines and the oracle folds an access before it decodes one, so a map keyed on the untranslated spelling holds an entry no read can ever match — a declaration that reads as made and is not. The message names the address the decode really produces, and says which model owns THAT one when it is not this |
+| a **duplicate**, or one past `OS_IO_SEED_MAX` | not installed, and the SHORTFALL is loud | `emu.run` compares the count the shim kept against what it sent and raises; the candidate's `g_io_reset` charges `os_refused()`. A map quietly smaller than the case wrote is the one failure a silent drop would produce |
+
+**A `hw_seed` under the audio-capture mode is refused whether the case wrote it there or reached it
+through `io_seed`.** The routing happens before that guard, so the mode — which installs its own
+50 Hz colour-ST profile over any declaration — cannot silently ignore one door's worth of claim.
+
+**THE ADMISSIBLE SET IS THE REFUSAL'S OWN SET**, spelled as one predicate (`os_io_is_page`) that
+`os_io_seedable` and the oracle's `io_serve` both call. Were the two written separately — a
+declaration limited to the three DECODED blocks, say, while the tally covered the whole page — an
+address in the gap between them would be refused with no declaration able to answer it: a refusal
+whose remedy does not exist, which is worse than the silent `0` it replaced.
+
+### The candidate side
+
+`include/hw.h` + `src/hw.c` — the same file as Phase 7's named set and Phase 10's write ledger,
+because it is one contract the harness reads a candidate through:
+
+```c
+uint8_t  io_read8(uint32_t addr);    /* addr is the 24-bit bus form */
+uint16_t io_read16(uint32_t addr);
+uint32_t io_read32(uint32_t addr);
+```
+
+A read of a fully declared access is served and ledgered. Anything else — an address in no
+declaration, a word with one byte missing — tallies through the existing **`os_refused()`**, so
+`harness.differential`'s unconditional `_vet_no_os_refusal` already throws the case away, and it is
+**not** ledgered, because the oracle records no entry for it either. That closes the refusal on
+**both** shores, which is the property "Refusing on ONE side is a false green" exists to state.
+
+The names are `io_read*` and not `os_io_read*` deliberately: `os_*` in this kit belongs to
+`include/os.h`'s shared inline model, which on-target builds compile too, and these are off-target
+candidate functions exactly like `hw_read8` beside them.
+
+**ALL THREE OF THE 68000'S ACCESS WIDTHS ARE SPELLED**, which is what makes the model's promise —
+that every read the ROM-mode refusal can fire on is a read some `io_seed` can answer — hold at every
+width rather than at two of them. The oracle decodes whatever instruction the ROM really executes,
+so a candidate missing a width had no way to reconstruct a `move.l $ff8205,d0` at all: the stream
+comparison told the case so, correctly, and then left it nowhere to go. `io_read32` is a long read
+as ONE access, not two `io_read16` calls — the ledger entry carries the width, and on a register
+that latches on access two word reads are a different thing to the chip.
+
+**ON TARGET** the build supplies all three as the real volatile access — `*(volatile uint8_t *)addr`,
+`*(volatile uint16_t *)addr`, `*(volatile uint32_t *)addr` — exactly as it supplies `psg.h`'s ports
+and `hw_write8/16/32`. It does not compile `src/hw.c`, so there is no map and no declaration anywhere
+in the chain: the machine answers. `projects/tos102us/recreate/atari/shim_include/hw.h` is the worked
+example, and the seam is the include path.
+
+### The honest limit
+
+**What this pins is "given byte X, both cores agree", not "a real ST serves X"** — Phase 7's limit
+word for word, and it does not get weaker for the set being larger. The declaration is the case's
+claim about the machine, and the model's whole contribution is to make that claim *explicit and
+shared* instead of implicit and fabricated. `io_seed={0xff8260: 0x02}` states "the shifter was in
+high resolution"; whether the machine a ROM function shipped on was is a documented claim about
+hardware, not a differential result. Before this model the wrong answer was taken silently on both
+sides; after it, a case that does not say which machine it means is **refused** in ROM mode, and one
+that says the wrong thing is wrong *in writing*.
+
+### What is pinned, and what is not
+
+**The model** is pinned kit-side by [`test/test_io_model.py`](test/test_io_model.py) and its
+`io_model_probe.c`, which drives **both** implementations in one process (60 cases, as pytest
+collects them): a declared read served and ledgered; a declaration not consumed by one run and not
+surviving one either; an undeclared read served `0`, counted, and NOT ledgered on either side; a
+declared byte read twice, served twice (the stated limit, as a row); two reads compared **in order**;
+a word served from two declared bytes and REFUSED when one is missing, naming the missing byte; a
+long read over four, on BOTH shores; the write-then-read case counted and its per-run clear; each
+exclusion measured as "all but this one installed" rather than as "none of one"; the duplicate; the
+cap; and the bench starting from the case's map with an empty ledger. And the negative controls,
+each caught while touching no image byte:
+
+* a candidate that **reads the wrong declared address**, declared to the same byte — its value, its
+  map and its (empty) image effect are a correct run's exactly, so only the ledger's address
+  separates them;
+* a candidate that **never reads and hardcodes the answer**, which is what a port written against a
+  fabricated `0` looks like once the byte is declared;
+* a candidate that reads **two bytes where the original read a word** (and **two words where it
+  read a long**), which computes the identical value from the identical declared bytes and is
+  separated by the entry's WIDTH alone;
+* a candidate handed a declaration `os.h`'s rule rejected, which must charge a refusal rather than
+  run against a map quietly smaller than the case wrote.
+
+**The plumbing** is pinned by [`test/test_io_differential.py`](test/test_io_differential.py),
+through the shared miniature project in `test/kit_smoke_project.py` — whose `.PRG` holds
+XBIOS `Getrez`'s own read as real 68000 code, plus the two-read, word-read and write-then-read
+shapes: the green case; the DECLARED/UNDECLARED pair over one routine, with the refusal naming the
+address AND the `io_seed=` that answers it; `_vet_io_state` stubbed out via `monkeypatch` and shown
+load-bearing (with the comparison gone, the wrong-ORDER mutant passes the entire differential
+clean); the same for the word/two-byte mutant; `_seed_candidate_io` shown load-bearing through the
+REAL installer handed a DIFFERENT map, and again handed an EMPTY one; the staleness refusal
+rendering the case's declaration as a reader would type it (`{0xff8260: 0x02}`, not Python's decimal
+`{16745056: 2}`), beside its control — the same store with nothing read back, which must stay an
+ordinary run; a Phase-7 named slot declared through `io_seed` ROUTED end to end (the reads land in
+the named set's ledger and this model's stays empty, which only happens if both shores routed), with
+the same address through both doors refused; the exclusions that survive the one door — the YM2149's
+block, an address below the page, and the untranslated `$ffff8260` form, whose refusal must name the
+register the fold really produces; a value that is not a byte (a float, a string, `None`, `0x100`,
+`-1`) refused as the `ValueError` the encoder's docstring promises rather than silently truncated or
+raising `TypeError` from a comparison; a declaration the run never reads left alone; and a case
+declaring nothing left green with both ledgers empty.
+
+**A cross-language pin** keeps `OS_IO_LOG_MAX` equal in `os.h` and `harness.py`
+(`test_os_memory_map.py`'s `PINNED`), along with `OS_PSG_BLOCK_END`, which the encoder needs to
+refuse a declaration inside Phase 6's chip. `OS_IO_SEED_MAX` deliberately has no Python mirror:
+`emu.py` reads it from the `.so` (`osh_io_seed_max`), so there is no second copy to drift.
+
+**A source-level pin** holds the admissible set equal to the refused set
+(`test_the_admissible_set_is_the_refused_set`): no run can demonstrate that pairing, because the
+failure it guards is an address NEITHER can reach.
+
+**The first consumer** is `projects/tos102us`: XBIOS `Getrez` (`$fc0aac`, `src/xbios/getrez.c`) is
+three instructions, one of which is the read, and its battery declares the register on every case.
+Its `and.b #3,d0` is swept over all 256 bytes the register could hold, but HOST-SIDE against the
+armed candidate rather than through 256 differentials: the ROM's agreement is a claim about the
+INSTRUCTION, which eight boundary bytes through the full differential make, and the sweep is a claim
+about the MASK, which needs no oracle. (The 256 differentials cost about two seconds — what is wrong
+with them is the shape of the claim, not the time.)
+**Mutation sweep — 4/4 caught**, each with the candidate force-relinked (the `.so` removed, never
+merely touched): the mask widened to `$07`, narrowed to `$01`, dropped entirely, and the read
+replaced by the constant it would have returned.
+
+**Not pinned.** The ledger's **cap** arm has no case, for `OS_PSG_LOG_MAX`'s reason: it needs 4,096
+served reads in one run, and nothing that exists does that.
 
 ## Still unmodeled (an honest raise is the right answer)
 

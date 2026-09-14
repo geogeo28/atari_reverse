@@ -50,11 +50,12 @@ static uint32_t g_ram_end;          /* first address above RAM; == g_size off RO
 static uint32_t g_rom_lo, g_rom_hi; /* the ROM window; lo == hi (both 0) means "no ROM" */
 static uint32_t g_rom_ram_end;      /* what osh_rom_window declared, applied per run */
 static uint32_t g_rom_stores;       /* stores this run made INTO the ROM, dropped as hardware does */
-/* READS OF THE I/O PAGE THAT NOTHING MODELS. Phase 7 declares a NAMED SET of hardware bytes; every
- * other address in the page is answered with the silent 0 an off-image read has always been answered
- * with, on both sides. For a game that was a small surface — a game touches few registers, and its
- * reconstruction is held to those. An OPERATING SYSTEM touches the whole machine, so a ROM function
- * that reads $ff8260 (the shifter's resolution byte) could be verified GREEN against a fabricated 0.
+/* READS OF THE I/O PAGE THAT NOTHING MODELS. Phase 7 declares a NAMED SET of hardware bytes and
+ * Phase 15's DECLARED I/O MAP serves whatever else a case declared by address; every address left
+ * over is answered with the silent 0 an off-image read has always been answered with, on both
+ * sides. For a game that was a small surface — a game touches few registers, and its reconstruction
+ * is held to those. An OPERATING SYSTEM touches the whole machine, so a ROM function that reads
+ * $ff8260 (the shifter's resolution byte) could be verified GREEN against a fabricated 0.
  * Tallied here, with the first offending address, and REFUSED one level up by harness.differential
  * — the Phase-7 split exactly (g_hw_unseeded's comment argues it): emu.run stays permissive because
  * a bootstrap run verifies nothing, and a false green needs something being verified. */
@@ -95,6 +96,7 @@ int      osh_rom_mode(void)   { return rom_mode(); }
  * there were none) — see g_io_unmodeled_reads. */
 uint32_t osh_io_unmodeled_reads(void) { return g_io_unmodeled_reads; }
 uint32_t osh_io_unmodeled_first(void) { return g_io_unmodeled_first; }
+
 
 /* THE WRITE LEDGER'S CAP, and `logw` SATURATES at it rather than wrapping — so a run past it leaves
  * `g_wn` sitting here and every further address is dropped uncounted. That silence is why the cap is
@@ -246,17 +248,110 @@ uint32_t osh_sched_site_arrivals(uint32_t i) {
  * guard sees it. */
 #define BUS_ADDR_MASK 0xffffffu
 
-/* Note a read of the I/O page the decode could not serve — see g_io_unmodeled_reads. Only that page
- * is counted: an address above RAM but below it is ordinary off-image memory, which has read 0 since
- * the kit's first run and is a defect in the CASE rather than a hole in the model (TRAP_MODEL.md,
- * "ROM mode"). The masked address is what is recorded, so the message names the register rather than
- * whichever alias the code reached it through. */
-static void io_note_unmodeled_read(unsigned int a) {
-    uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff8260 onto $ff8260 */
-    if (lo < OS_HW_IO_PAGE)
-        return;
+/* --- the DECLARED I/O MAP (TRAP_MODEL.md, "Phase 15") ------------------------------------------
+ * os.h names the model — what a case may declare, what it may not, and why a declared byte is a
+ * per-run constant. This is the state behind it, and it is Phase 7's shape with the NAMED SET
+ * replaced by an ADDRESS-KEYED map: the bytes a case declared, an ordered ledger of the reads they
+ * served, and a per-entry note of whether this run has STORED to the address (which is what makes a
+ * later read of it a refusal rather than an answer).
+ *
+ * The map is installed by osh_io_seed and PERSISTS between runs, exactly as g_hw_seed does and for
+ * its reason: a declaration set between runs cannot reach a run already in flight, and two runs
+ * given the same declaration start identical whatever ran between them. Nothing in a run mutates
+ * it — only the per-run tallies below are cleared by io_enter_run. */
+static uint32_t g_io_addr[OS_IO_SEED_MAX];   /* the declared addresses, 24-bit bus form */
+static uint8_t  g_io_val[OS_IO_SEED_MAX];    /* ...and what a read of each answers */
+static uint32_t g_io_n;                      /* how many of them os_io_install_seed accepted */
+/* Per declared address: did an instruction of THIS run store to it? A read after that is served the
+ * byte the case declared the machine held ON ENTRY while the program has already replaced it — the
+ * Phase-7 staleness refusal, at an address-keyed model. Recorded rather than refused here, as every
+ * other read tally is, because emu.run drives boots nobody enumerates. */
+static uint8_t  g_io_written[OS_IO_SEED_MAX];
+static uint32_t g_io_stale_reads;            /* ...and the reads that met one */
+static uint32_t g_io_stale_first;            /* ...with the first such address */
+/* The ordered ledger of SERVED reads, (address, width in bytes, value). Only served reads: os.h's
+ * OS_IO_LOG_MAX says why, and it is what makes this model free for every project that declares
+ * nothing. Three parallel arrays rather than an array of structs, for the read ledger's reason —
+ * the harness casts each one straight through ctypes. */
+static uint32_t g_io_log_addr[OS_IO_LOG_MAX];
+static uint8_t  g_io_log_width[OS_IO_LOG_MAX];
+static uint32_t g_io_log_val[OS_IO_LOG_MAX];
+static uint32_t g_io_log_n;
+static uint32_t g_io_log_dropped;            /* reads past the cap: never silently truncated */
+
+/* Note a read of the I/O page the decode could not serve — see g_io_unmodeled_reads. The caller has
+ * already established that `lo` is in the page (io_serve owns that test, so the admissible set and
+ * the refused set are one predicate); an address above RAM but below it is ordinary off-image
+ * memory, which has read 0 since the kit's first run and is a defect in the CASE rather than a hole
+ * in the model (TRAP_MODEL.md, "ROM mode"). The MASKED address is what is recorded, so the message
+ * names the register rather than whichever alias the code reached it through. */
+static void io_note_unmodeled_read(uint32_t lo) {
     if (!g_io_unmodeled_reads++)
         g_io_unmodeled_first = lo;
+}
+
+/* Append one served read to the ordered ledger. Overflow is counted, never silent: two ledgers that
+ * diverge only past the cap would truncate to the same stream and compare equal. */
+static void io_log(uint32_t lo, uint32_t width, uint32_t value) {
+    if (g_io_log_n >= OS_IO_LOG_MAX) {
+        g_io_log_dropped++;
+        return;
+    }
+    g_io_log_addr[g_io_log_n] = lo;
+    g_io_log_width[g_io_log_n] = (uint8_t)width;
+    g_io_log_val[g_io_log_n] = value;
+    g_io_log_n++;
+}
+
+/* Serve `n` bytes at `a` from the declared map. Returns 1 with `*value` filled big-endian when
+ * EVERY byte of the access was declared, and 0 otherwise — in which case the first undeclared byte
+ * is counted as an unmodeled read and the caller answers it the 0 it always did.
+ *
+ * ALL OR NOTHING: a wide read is N declared bytes rather than a width of its own, and the argument
+ * for that — what Phase 7's wide-read refusal was protecting, and why the neighbour being
+ * DECLARABLE is what changes it — is in TRAP_MODEL.md, "Phase 15". The half that matters here is
+ * that the refusal names the byte that is MISSING rather than the access that straddled it. */
+static int io_serve(unsigned int a, unsigned int n, unsigned int *value) {
+    uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff8260 onto $ff8260 */
+    if (!os_io_is_page(lo))
+        return 0;                                  /* ordinary off-image memory, as it always was */
+
+    /* Resolve the whole span BEFORE serving any of it, so a half-declared word records the missing
+     * byte and nothing else — neither a staleness note nor a ledger entry for the byte that WAS
+     * declared, which would leave the candidate's stream a half-entry short of the oracle's. */
+    int entry[OS_HW_WRITE_WIDTH_32];               /* the 68000's widest access, in bytes */
+    for (unsigned i = 0; i < n; i++) {
+        entry[i] = os_io_find(g_io_addr, g_io_n, lo + i);
+        if (entry[i] < 0) {
+            io_note_unmodeled_read(lo + i);
+            return 0;
+        }
+    }
+    uint32_t served = 0;
+    for (unsigned i = 0; i < n; i++) {
+        if (g_io_written[entry[i]]) {
+            if (!g_io_stale_reads++)
+                g_io_stale_first = lo + i;
+        }
+        served = served << 8 | g_io_val[entry[i]];
+    }
+    io_log(lo, n, served);
+    *value = served;
+    return 1;
+}
+
+/* Mark every declared byte a store of `n` bytes at `a` covered (see g_io_written). The store itself
+ * is dropped and separately ledgered by Phase 10, exactly as it was; what this records is that a
+ * later READ of the same address would be answered with a declaration the run has invalidated. */
+static void io_note_write(unsigned int a, unsigned int n) {
+    uint32_t lo = a & BUS_ADDR_MASK;
+    if (!os_io_is_page(lo))
+        return;
+    for (unsigned i = 0; i < n; i++) {
+        int entry = os_io_find(g_io_addr, g_io_n, lo + i);
+        if (entry >= 0)
+            g_io_written[entry] = 1;
+    }
 }
 
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
@@ -283,8 +378,9 @@ static void io_note_unmodeled_read(unsigned int a) {
  * The ST decodes the YM2149 incompletely: it answers across the whole $ff8800..$ff88ff block, of
  * which those two are the canonical pair. The guards below cover the BLOCK, not the pair — a driver
  * reaching the chip through a mirror is using the direct path just as much, and guarding only the
- * pair would let it disarm the mixed-path check. */
-#define PSG_BLOCK_END 0xff8900
+ * pair would let it disarm the mixed-path check. The block's bound is os.h's OS_PSG_BLOCK_END
+ * rather than a constant here, because the DECLARED I/O MAP (Phase 15) has to exclude the same
+ * span: a byte of it served from that map would reach none of Phase 6's own guards. */
 /* The ledger's cap is os.h's OS_PSG_LOG_MAX — ONE cap for both sides, like OS_DOSOUND_LOG_MAX:
  * harness.differential compares this ledger against the candidate's (src/psg.c), and were the two
  * caps to differ a long run would drop entries on one side only and diverge for a reason that has
@@ -580,6 +676,30 @@ const uint32_t *osh_hw_addr_table(void) { return os_hw_addrs(); }
 /* The bytes the audio-capture mode declares, by slot — what a test pins the mode against. */
 const uint8_t  *osh_hw_capture_profile(void) { return g_hw_capture_profile; }
 
+/* ---- the DECLARED I/O MAP's ABI (see g_io_addr above; emu.py binds every one) ------------------ */
+/* Declare the I/O bytes every FOLLOWING run serves. `addrs`/`values` are `n` parallel entries in the
+ * 24-bit bus form; os.h's os_io_install_seed decides which of them are admissible, so an entry this
+ * model may not serve — a Phase-7 named slot, a YM2149 port, an address below the page — is dropped
+ * rather than shadowing the model that owns it. osh_io_seed_count() reports how many landed, which
+ * is what emu.py compares against what it sent: a case whose declaration did not fit is loud rather
+ * than a run served fewer bytes than it asked for. */
+void osh_io_seed(const uint32_t *addrs, const uint8_t *values, uint32_t n) {
+    g_io_n = os_io_install_seed(g_io_addr, g_io_val, addrs, values, n);
+}
+uint32_t osh_io_seed_count(void) { return g_io_n; }
+uint32_t osh_io_seed_max(void)   { return OS_IO_SEED_MAX; }
+/* Reads this run made of a declared byte the run had already STORED to, and the first such address.
+ * The declaration describes the machine on ENTRY and an instruction of this run has replaced it, so
+ * no bigger declaration can fix it — harness._vet_io_reads_are_declared refuses the case. */
+uint32_t osh_io_stale_reads(void) { return g_io_stale_reads; }
+uint32_t osh_io_stale_first(void) { return g_io_stale_first; }
+/* The ordered SERVED-read ledger, compared against the candidate's (src/hw.c) entry by entry. */
+uint32_t        osh_io_count(void)      { return g_io_log_n; }
+const uint32_t *osh_io_log_addrs(void)  { return g_io_log_addr; }
+const uint8_t  *osh_io_log_widths(void) { return g_io_log_width; }
+const uint32_t *osh_io_log_vals(void)   { return g_io_log_val; }
+uint32_t        osh_io_dropped(void)    { return g_io_log_dropped; }
+
 /* Declare the register contents every FOLLOWING run starts from — the case's seed, and the only way
  * a register becomes readable before this run writes it. `known` is a bitmask of the registers
  * `values` declares; a register outside it stays unknown and reading it refuses the run.
@@ -619,7 +739,7 @@ uint32_t       osh_psg_nregs(void) { return OS_PSG_NREGS; }
 /* Does an access of `n` bytes at `a` fall in the YM2149's address block? */
 static int psg_block_touched(uint32_t a, uint32_t n) {
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
-    return lo < PSG_BLOCK_END && lo + n > OS_PSG_PORT_SELECT;
+    return lo < OS_PSG_BLOCK_END && lo + n > OS_PSG_PORT_SELECT;
 }
 
 /* Tally a PSG access the model cannot serve (see g_psg_unmodeled). Callers reach this only after
@@ -781,24 +901,35 @@ unsigned int m68k_read_memory_8(unsigned int a) {
      * switch of its own here: it arms this same model with a seed (see hw_enter_run). */
     int hw_slot = os_hw_slot(lo);
     if (hw_slot >= 0) return hw_read(hw_slot);
+    /* The DECLARED I/O MAP (Phase 15), AFTER the two named models and never over them — os.h's
+     * os_io_seedable keeps their addresses out of this map, so the order is the invariant stated
+     * twice rather than a tie-break — and BEFORE the ROM window, which is os_hw_slot's precedence
+     * restated: a DEVICE answers its own address, whatever a window declaration overlaps it with.
+     * emu's ROM binding pins the two apart (ROM_END <= OS_HW_IO_PAGE), so on every project that
+     * exists this order decides nothing; what it decides is what a future binding that overlapped
+     * them would do, and serving a chip's register out of a ROM image is the silent half of that.
+     * It serves or it counts the byte as unmodeled — both. */
+    unsigned int declared;
+    if (io_serve(a, 1, &declared)) return declared;
     if (in_rom(a, 1)) return g_mem[a];             /* ROM MODE: the image above the I/O page */
-    io_note_unmodeled_read(a);                     /* ...and nothing here models an I/O byte */
     psg_note_unmodeled(a, 1);
     return 0;                                      /* off-image, like any unmapped address */
 }
 unsigned int m68k_read_memory_16(unsigned int a) {
     if (a + 1 < g_ram_end) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
+    unsigned int declared;
+    if (io_serve(a, 2, &declared)) return declared;   /* the device first; see read_memory_8 */
     if (in_rom(a, 2)) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
-    io_note_unmodeled_read(a);
     psg_note_unmodeled(a, 2);
     hw_note_wide_read(a, 2);
     return 0;
 }
 unsigned int m68k_read_memory_32(unsigned int a) {
     if (a + 3 >= g_ram_end) {
+        unsigned int declared;
+        if (io_serve(a, 4, &declared)) return declared;   /* the device first; see read_memory_8 */
         if (in_rom(a, 4))
             return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
-        io_note_unmodeled_read(a);
         psg_note_unmodeled(a, 4);
         hw_note_wide_read(a, 4);
         return 0;
@@ -894,6 +1025,7 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
     if (in_rom(a, 1)) { g_rom_stores++; return; }   /* ROM MODE: a store to ROM changes nothing */
     psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
     hw_note_write(a, 1);        /* dropped like any hardware write, but it makes a seed stale */
+    io_note_write(a, 1);        /* ...and a DECLARED I/O byte's declaration stale too (Phase 15) */
     hw_log_write(a, OS_HW_WRITE_WIDTH_8, v);       /* ...and it is comparable (Phase 10) */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
@@ -901,6 +1033,7 @@ void m68k_write_memory_16(unsigned int a, unsigned int v) {
     if (in_rom(a, 2)) { g_rom_stores++; return; }
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
     hw_note_write(a, 2);
+    io_note_write(a, 2);
     hw_log_write(a, OS_HW_WRITE_WIDTH_16, v);
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
@@ -908,6 +1041,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
         if (in_rom(a, 4)) { g_rom_stores++; return; }
         psg_note_unmodeled(a, 4);
         hw_note_write(a, 4);
+        io_note_write(a, 4);
         hw_log_write(a, OS_HW_WRITE_WIDTH_32, v);
         return;
     }
@@ -1018,6 +1152,20 @@ static void hw_enter_run(void) {
     g_hw_write_dropped = 0;
 }
 
+/* Clear what the DECLARED I/O MAP accumulates over one run. The MAP itself is NOT cleared — it is
+ * the case's declaration, installed between runs by osh_io_seed and re-installed there per run by
+ * emu.run, exactly as the hardware seed is. What a run owns is the staleness notes, the ledger and
+ * the drop count, and leaving any of those behind would compare this run's candidate stream against
+ * the previous run's oracle one. */
+static void io_enter_run(void) {
+    for (uint32_t i = 0; i < g_io_n; i++)
+        g_io_written[i] = 0;
+    g_io_stale_reads = 0;
+    g_io_stale_first = 0;
+    g_io_log_n = 0;
+    g_io_log_dropped = 0;
+}
+
 static void enter_from_reset(void) {
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
@@ -1025,6 +1173,7 @@ static void enter_from_reset(void) {
     m68k_set_reg(M68K_REG_SR, ENTRY_SR);
     psg_enter_run();
     hw_enter_run();
+    io_enter_run();
     sched_enter_run();
 }
 

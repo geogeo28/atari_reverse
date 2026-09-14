@@ -86,6 +86,74 @@ uint8_t hw_read8(uint32_t addr) {
 
 
 /* ================================================================================================
+ * THE DECLARED I/O MAP (TRAP_MODEL.md, "Phase 15"). What it is for is in ../include/hw.h; this is
+ * the candidate's half of it, and it mirrors shim.c's g_io_* exactly. The map is address-keyed
+ * rather than slot-keyed, which is the ONE way it differs from the named set above.
+ * ============================================================================================= */
+static uint32_t g_io_addr[OS_IO_SEED_MAX];   /* the declared addresses, 24-bit bus form */
+static uint8_t  g_io_val[OS_IO_SEED_MAX];    /* ...and what a read of each answers */
+static uint32_t g_io_n;
+/* The ordered ledger of SERVED reads, (address, width, value), mirroring shim.c's. A REFUSED read
+ * is not an entry, because the oracle has none for it either: its callback counts the byte as an
+ * unmodeled I/O read and answers 0, so an entry here would diverge the streams for a reason that is
+ * not about this read. */
+static uint32_t g_io_log_addr[OS_IO_LOG_MAX];
+static uint8_t  g_io_log_width[OS_IO_LOG_MAX];
+static uint32_t g_io_log_val[OS_IO_LOG_MAX];
+static uint32_t g_io_log_n;
+
+/* Install the case's declared map and clear the ledger. The harness calls this before EACH candidate
+ * run, the poison re-run included, exactly as it calls g_hw_reset.
+ *
+ * The install is os.h's, shared verbatim with shim.c's osh_io_seed, so the two implementations
+ * cannot hold two different ideas of which addresses are declarable. A declaration os.h's rule
+ * REJECTED — a Phase-7 named slot, a YM2149 port, an address below the I/O page — is a refusal
+ * rather than a silent shortfall: the case declared a byte this model will never serve, and a run
+ * that went on to read it would refuse anyway, one layer down and with a less useful message. */
+void g_io_reset(const uint32_t *addrs, const uint8_t *values, uint32_t n) {
+    g_io_log_n = 0;
+    g_io_n = os_io_install_seed(g_io_addr, g_io_val, addrs, values, n);
+    if (g_io_n != n)
+        os_refused(0);
+}
+
+uint32_t        g_io_seed_count(void)  { return g_io_n; }
+uint32_t        g_io_log_count(void)   { return g_io_log_n; }
+const uint32_t *g_io_log_addrs(void)   { return g_io_log_addr; }
+const uint8_t  *g_io_log_widths(void)  { return g_io_log_width; }
+const uint32_t *g_io_log_vals(void)    { return g_io_log_val; }
+
+/* Serve `width` bytes at `addr` from the declared map, or refuse. ALL OR NOTHING, which is hw.h's
+ * contract and whose argument is in TRAP_MODEL.md, "Phase 15": a wide read is N declared bytes, and
+ * one missing byte refuses the whole access rather than fabricating that half — the oracle's
+ * callback refuses the same access for the same reason.
+ *
+ * Entries past the cap are dropped exactly as the oracle's are, so a run longer than the cap still
+ * compares like for like; the harness refuses a comparison at the cap rather than trust a truncated
+ * one. */
+static uint32_t io_read(uint32_t addr, uint32_t width) {
+    uint32_t served = 0;
+    for (uint32_t i = 0; i < width; i++) {
+        int entry = os_io_find(g_io_addr, g_io_n, addr + i);
+        if (entry < 0)
+            return os_refused(0);        /* see hw.h: an undeclared I/O byte is an input, not a 0 */
+        served = served << 8 | g_io_val[entry];
+    }
+    if (g_io_log_n < OS_IO_LOG_MAX) {
+        g_io_log_addr[g_io_log_n] = addr;
+        g_io_log_width[g_io_log_n] = (uint8_t)width;
+        g_io_log_val[g_io_log_n] = served;
+        g_io_log_n++;
+    }
+    return served;
+}
+
+uint8_t  io_read8(uint32_t addr)  { return (uint8_t)io_read(addr, OS_HW_WRITE_WIDTH_8); }
+uint16_t io_read16(uint32_t addr) { return (uint16_t)io_read(addr, OS_HW_WRITE_WIDTH_16); }
+uint32_t io_read32(uint32_t addr) { return io_read(addr, OS_HW_WRITE_WIDTH_32); }
+
+
+/* ================================================================================================
  * THE HARDWARE WRITE MODEL (TRAP_MODEL.md, "Phase 10"). What it is for and what it pins are in
  * ../include/hw.h; this is the ledger behind it, and it mirrors shim.c's g_hw_write_* exactly.
  * Its arrays are declared at the top of this file, with g_hw_reset, which is the ONE reset both

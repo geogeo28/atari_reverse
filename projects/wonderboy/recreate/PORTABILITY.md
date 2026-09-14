@@ -515,7 +515,7 @@ pair to `include/os.h` as `OS_PSG_PORT_SELECT` / `OS_PSG_PORT_DATA`, same values
 constant that MOVES again fails with the instruction to re-point its entry rather than to delete
 it. Verified by mutation on a throwaway copy of the kit, repo untouched: renaming
 `OS_PSG_PORT_SELECT` exits 1 (the Phase 6 break, replayed), changing `OS_PSG_PORT_DATA`'s value
-exits 1, changing shim.c's `PSG_BLOCK_END` exits 1, and a checkout with **no** kit still
+exits 1, changing os.h's `OS_PSG_BLOCK_END` exits 1, and a checkout with **no** kit still
 classifies (exit 0) — the one case that must not fail.
 
 **2. The T4 read rule had drifted, and it was the expensive one.** The rule said *any* PSG-block

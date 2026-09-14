@@ -183,8 +183,14 @@ KIT = pathlib.Path(__file__).resolve().parent / "recreate_kit"
 SHIM_C = KIT / "oracle" / "shim.c"          # also the file check_seeded_read_model() reads
 OS_H = KIT / "include" / "os.h"
 PINNED_CONSTANTS = (
-    (SHIM_C, {"BUS_ADDR_MASK": BUS_ADDR_MASK, "PSG_BLOCK_END": PSG_BLOCK_END}),
+    (SHIM_C, {"BUS_ADDR_MASK": BUS_ADDR_MASK}),
     (OS_H, {"OS_PSG_PORT_SELECT": PSG_SELECT, "OS_PSG_PORT_DATA": PSG_DATA,
+            # MOVED from shim.c with the PSG port pair, and this pin followed it late: the kit had
+            # renamed it `OS_PSG_BLOCK_END` in the shared header (os_io_seedable needs it, to keep a
+            # declaration out of Phase 6's chip) while this table still looked for the old name in
+            # shim.c — which is the "constant MOVED" case the error text below prescribes, and it
+            # exited on every run until the entry moved here.
+            "OS_PSG_BLOCK_END": PSG_BLOCK_END,
             "OS_HW_MFP_GPIP": HW_MFP_GPIP, "OS_HW_SHIFTER_SYNC": HW_SHIFTER_SYNC,
             "OS_HW_SHIFTER_VCOUNT_MID": HW_SHIFTER_VCOUNT_MID,
             "OS_HW_SHIFTER_VCOUNT_LOW": HW_SHIFTER_VCOUNT_LOW,

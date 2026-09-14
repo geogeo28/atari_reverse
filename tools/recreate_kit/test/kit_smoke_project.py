@@ -272,11 +272,47 @@ _STAGED_FILE_CODE = (struct.pack(">HH", _MOVE_W_IMM_PUSH, _FOPEN_READ_MODE)
                      + struct.pack(">HI", _MOVE_L_D0_ABSL, FS_RESULT_AT)
                      + struct.pack(">H", 0x4E75))                          # rts
 
+# ---- Phase 15's routines: reads of I/O bytes the CASE declares by address ----
+# XBIOS Getrez's own body, which is the model's founding case: TOS 1.02 reads the shifter's
+# resolution byte at $ff8260 and masks it to two bits. No Phase-7 slot names that address, so before
+# this model both sides read a fabricated 0 and agreed on whatever it implied.
+SHIFTER_RESOLUTION = 0xFF8260
+# ...and one colour word, which is the WIDE shape: a `move.w` of the palette's two bytes is served
+# only because the case declared BOTH, where Phase 7 would have had to fabricate the neighbour.
+PALETTE_0_HI = 0xFF8240
+PALETTE_0_LO = 0xFF8241
+# ...and a second single byte, so a case about two reads is about their ORDER rather than about one
+# address read twice: the video base's high byte, which XBIOS Physbase reads.
+VIDEO_BASE_HI = 0xFF8201
+# What the write-then-read routine stores into the resolution byte before reading it back — TOS's
+# own `Setscreen` writes this register, so the composite is a real shape rather than a contrived one.
+RESOLUTION_MONO = 0x02
+
+_IO_READ_CODE = (struct.pack(">HI", 0x1239, SHIFTER_RESOLUTION)      # move.b $ff8260.l,d1
+                 + struct.pack(">H", 0x4E75))                        # rts
+
+# ...the two-read routine, whose ORDER is the only thing separating a faithful reconstruction from
+# one that reads the same two declared bytes the other way round.
+_IO_READ_PAIR_CODE = (struct.pack(">HI", 0x1239, SHIFTER_RESOLUTION)  # move.b $ff8260.l,d1
+                      + struct.pack(">HI", 0x1439, VIDEO_BASE_HI)     # move.b $ff8201.l,d2
+                      + struct.pack(">H", 0x4E75))                    # rts
+
+# ...the WORD read of the palette's two bytes.
+_IO_WORD_READ_CODE = (struct.pack(">HI", 0x3239, PALETTE_0_HI)       # move.w $ff8240.l,d1
+                      + struct.pack(">H", 0x4E75))                   # rts
+
+# ...and the shape no declaration can describe: the run stores to the byte and then reads it back,
+# so the declaration describes a machine an instruction of this very run has already changed.
+_IO_WRITE_THEN_READ_CODE = (struct.pack(">HHI", 0x13FC, RESOLUTION_MONO, SHIFTER_RESOLUTION)
+                            + struct.pack(">HI", 0x1239, SHIFTER_RESOLUTION)  # move.b $ff8260.l,d1
+                            + struct.pack(">H", 0x4E75))                      # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
              _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
-             _EVENT_MALLOC_CODE, _PTERM_CODE, _STAGED_FILE_CODE)
+             _EVENT_MALLOC_CODE, _PTERM_CODE, _STAGED_FILE_CODE,
+             _IO_READ_CODE, _IO_READ_PAIR_CODE, _IO_WORD_READ_CODE, _IO_WRITE_THEN_READ_CODE)
 
 
 def _entries():
@@ -292,7 +328,8 @@ def _entries():
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
  ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
- EVENT_MALLOC_ENTRY, PTERM_ENTRY, STAGED_FILE_ENTRY) = _entries()
+ EVENT_MALLOC_ENTRY, PTERM_ENTRY, STAGED_FILE_ENTRY,
+ IO_READ_ENTRY, IO_READ_PAIR_ENTRY, IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY) = _entries()
 
 # The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
 PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET

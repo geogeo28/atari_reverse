@@ -45,13 +45,11 @@ const uint8_t  *osh_hw_capture_profile(void);
 
 #define PROBE_MAX_INSNS  32u       /* the routines are a handful of instructions */
 
-/* 68000 encodings. The byte read is the shape Wonder Boy's tempo selector has at $17c7e
- * (`btst.b #7,$fffa01`, which the 68000 executes as an absolute-long byte read); the word and long
- * forms are the same instruction widened, which is the shape the model refuses. */
-#define MOVE_W_ABSL_TO_D1  0x3239u /* move.w (xxx).l,d1 */
-#define MOVE_L_ABSL_TO_D1  0x2239u /* move.l (xxx).l,d1 */
-#define MOVE_B_IMM_TO_ABSL 0x13fcu /* move.b #imm,(xxx).l */
-#define OPCODE_RTS         0x4e75u
+/* The 68000 encodings this probe plants are probe_common.h's: the byte read is the shape Wonder
+ * Boy's tempo selector has at $17c7e (`btst.b #7,$fffa01`, which the 68000 executes as an
+ * absolute-long byte read), and the word and long forms are the same instruction widened, which is
+ * the shape this model refuses. They live there because io_model_probe.c plants them too.
+ */
 
 /* What the cases declare the machine holds. Both slots get the SAME byte, which is what makes the
  * wrong-address mutant's every other surface identical to a correct run's: only the ordered
@@ -70,18 +68,6 @@ const uint8_t  *osh_hw_capture_profile(void);
 
 #define ALL_SLOTS_DECLARED ((1u << OS_HW_NSLOTS) - 1u)
 #define SLOT_BIT(slot) (1u << (slot))
-
-/* Each emitter plants one instruction at `addr` and returns the address after it. */
-static uint32_t emit_read(uint32_t addr, uint16_t opcode, uint32_t hw_addr) {
-    plant_word(addr, opcode);
-    return plant_long(addr + 2, hw_addr);
-}
-
-static uint32_t emit_write_byte(uint32_t addr, uint8_t value, uint32_t hw_addr) {
-    plant_word(addr, MOVE_B_IMM_TO_ABSL);
-    plant_word(addr + 2, value);
-    return plant_long(addr + 4, hw_addr);
-}
 
 /* Install a seed declaring the slots `known` names, each holding `value`. A `known` of 0 withdraws
  * the declaration entirely, which is what restores the model's fabricated 0. */
@@ -109,32 +95,16 @@ static void report_oracle(const char *name, uint32_t read_value) {
         printf("F %s %d %u\n", name, slot, file[slot]);
 }
 
-/* Run whatever is planted at PROBE_ENTRY and report. The image is NOT cleared between runs — only
- * the code is re-planted — because one of the claims is that the MODEL's own state does not carry
- * over even when the image does. */
+/* This model serves BYTE reads only, so the value a case reports is the low byte of D1. The two
+ * drivers themselves are probe_common.h's, shared with io_model_probe.c. */
+#define HW_READ_MASK 0xffu
+
 static void run_and_report(const char *name) {
-    uint32_t dregs[NREGS] = {0}, aregs[NREGS] = {0}, out[OUT_REGS] = {0};
-    if (!osh_run(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, dregs, aregs,
-                 PROBE_SP, PROBE_SENTINEL, 0, PROBE_MAX_INSNS, out)) {
-        fprintf(stderr, "%s: the probe's routine did not return to the sentinel\n", name);
-        exit(1);
-    }
-    report_oracle(name, out[1] & 0xffu);
+    probe_run_and_report(name, HW_READ_MASK, PROBE_MAX_INSNS, report_oracle);
 }
 
-/* The same, through osh_run_bench — the OTHER entry point into the oracle, which a perf measurement
- * uses and which installs no OS traps. Its routine here is a bare `rts`: what the case is about is
- * the state the bench STARTS from, since both entry points share enter_from_reset() and therefore
- * the model's per-run reinstall. The bench's routine reads nothing, so the read is reported as 0. */
 static void bench_and_report(const char *name) {
-    uint32_t out[OUT_REGS] = {0};
-    plant_rts(PROBE_ENTRY);
-    if (!osh_run_bench(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, 0,
-                       PROBE_SP, PROBE_SENTINEL, PROBE_MAX_INSNS, out)) {
-        fprintf(stderr, "%s: the bench's routine did not return to the sentinel\n", name);
-        exit(1);
-    }
-    report_oracle(name, 0);
+    probe_bench_and_report(name, PROBE_MAX_INSNS, report_oracle);
 }
 
 /* The capture mode's own profile, so the Python side can pin "the mode serves this" against "a case

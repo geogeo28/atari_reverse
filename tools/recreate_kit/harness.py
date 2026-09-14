@@ -71,7 +71,12 @@ _HW_LEDGER_ABI = ("g_hw_reset", "g_hw_log_count", "g_hw_log_slots", "g_hw_log_va
                   # ...and the hardware WRITE ledger (Phase 10). One group, not two, because it is
                   # one source file: a candidate exporting the read half and not the write half is a
                   # half-updated build or a stale .so, and probing them together says which.
-                  "g_hw_write_count", "g_hw_write_addrs", "g_hw_write_widths", "g_hw_write_vals")
+                  "g_hw_write_count", "g_hw_write_addrs", "g_hw_write_widths", "g_hw_write_vals",
+                  # ...and the DECLARED I/O MAP (Phase 15). One group again, for the same reason:
+                  # it ships in the same src/hw.c, so a candidate with the named set and not the
+                  # map is a half-updated build or a stale .so, and probing them together says so.
+                  "g_io_reset", "g_io_seed_count", "g_io_log_count", "g_io_log_addrs",
+                  "g_io_log_widths", "g_io_log_vals")
 _missing_hw_ledger = [sym for sym in _HW_LEDGER_ABI if not hasattr(_lib, sym)]
 _has_hw_ledger = not _missing_hw_ledger
 if _has_hw_ledger:
@@ -85,6 +90,13 @@ if _has_hw_ledger:
     _lib.g_hw_write_addrs.restype = ctypes.POINTER(ctypes.c_uint32)
     _lib.g_hw_write_widths.restype = ctypes.POINTER(ctypes.c_uint8)
     _lib.g_hw_write_vals.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.g_io_reset.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint8),
+                                ctypes.c_uint32]
+    _lib.g_io_seed_count.restype = ctypes.c_uint32
+    _lib.g_io_log_count.restype = ctypes.c_uint32
+    _lib.g_io_log_addrs.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.g_io_log_widths.restype = ctypes.POINTER(ctypes.c_uint8)
+    _lib.g_io_log_vals.restype = ctypes.POINTER(ctypes.c_uint32)
 
 # The scheduled-write surfaces (src/sched.c) are optional in exactly the same way and for the same
 # reason: a game with no busy-wait to model schedules nothing, and the ORACLE's own schedule is the
@@ -268,6 +280,7 @@ OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and sr
 OS_EVENT_LOG_MAX = 4096      # ...and the off-image OS event ledger's (shim.c, src/os_log.c)
 OS_PSG_LOG_MAX = 4096        # ...and the direct-PSG ledger's, likewise on both (shim.c, src/psg.c)
 OS_HW_LOG_MAX = 4096         # ...and the seeded-hardware read ledger's (shim.c, src/hw.c)
+OS_IO_LOG_MAX = 4096         # ...and the DECLARED I/O MAP's served-read ledger's (likewise both)
 OS_HW_WRITE_LOG_MAX = 4096   # ...and the hardware WRITE ledger's, likewise on both
 # The widths that ledger records, as the byte counts os.h tags an entry with. Mirrored (and pinned
 # equal by test_os_memory_map.py) because the field is COMPARED entry for entry between two
@@ -942,21 +955,22 @@ def candidate_image(img):
 
 
 # ---- the region a differential compares ---------------------------------------------------------
-# The bytes of the run's stack the HARNESS itself puts there, and which a write is therefore not
-# output: `osh_run` plants the sentinel return address at A7 before the run, exactly as a `jsr`
-# would, and a case stages a called function's arguments in the words above it (a project's
-# `test/abi.py` FIRST_ARG = emu.STACK_TOP + SENTINEL_SLOT_BYTES is where that spelling lives).
-SENTINEL_SLOT_BYTES = 4
+# The two constants the dropped band is built from, served back under the kit's own names. They live
+# in `emu` because `emu.STACK_BAND_HI` is DERIVED from them — the band ends exactly at the top of the
+# frame area — and a copy here would be a second place for that arithmetic to be decided. A case
+# spells `harness.SENTINEL_SLOT_BYTES` (a project's `test/abi.py` FIRST_ARG), so the kit's spelling
+# stays the kit's.
+SENTINEL_SLOT_BYTES = emu.SENTINEL_SLOT_BYTES
+STACK_ARGS_BYTES = emu.STACK_ARGS_BYTES
 
 
 def diff_spans():
     """The byte ranges a differential compares: the image minus the ORACLE's machine-stack band.
 
     The band is [STACK_GUARD_LO, STACK_BAND_HI) — a return address and saved registers, which the C
-    reconstruction has no analogue for. For a .PRG project the stack is at the top of the image, so
-    this is the prefix [0, STACK_GUARD_LO) every case has always been compared over and the second
-    span is empty; in ROM mode the stack is a band inside the machine's RAM and the image continues
-    above it, so the comparison resumes past it.
+    reconstruction has no analogue for. It closes at the top of the CALLER'S FRAME AREA (emu's
+    STACK_BAND_HI), because the machine stack grows DOWN and nothing above that frame is ever the
+    oracle's scratch: in both modes the comparison resumes immediately past it.
 
     COMPUTED PER CALL from emu's constants rather than frozen at import, so that this and the
     stray-write guard in `differential` — which reports the writes this drops — cannot come to
@@ -998,24 +1012,31 @@ def in_diff(addr):
 def _stray_stack_writes(o_writes, pokes):
     """Oracle writes inside the DROPPED band that the run's own stack frame does not explain.
 
-    The band `diff_spans` drops is [STACK_GUARD_LO, STACK_BAND_HI). Three parts of it are the
-    harness's rather than the function's output, and only those three:
+    The band `diff_spans` drops is [STACK_GUARD_LO, STACK_BAND_HI), and it CLOSES at the top of the
+    caller's frame area — so this guard's whole job is the band's lower half. Three parts of the
+    band are the harness's rather than the function's output, and only those three:
 
     * [STACK_TOP - STACK_SCRATCH, STACK_TOP) — the frame a call may legitimately push into;
-    * [STACK_TOP, STACK_TOP + SENTINEL_SLOT_BYTES) — the sentinel return address `osh_run` plants;
-    * whatever addresses in the band THIS CASE poked, which are the arguments it staged in the
-      caller's frame (a project's `abi.FIRST_ARG` and up). A callee that writes its own argument
-      slot is ordinary 68000 practice — Alcyon C's write-to-`(sp)` first-argument idiom does exactly
-      that — and the case declared those bytes, so a write to one is not hidden output.
+    * [STACK_TOP, STACK_BAND_HI) — the sentinel return address `osh_run` plants, and above it the
+      CALLER'S FRAME AREA, which belongs to the callee rather than to the case. An Alcyon/DRI C
+      routine writes its own arguments back into it (`move.l d0,8(a6)`, the write-to-`(sp)`
+      first-argument idiom), and a case entering a routine mid-body puts its synthetic frame base up
+      here so A6 and A7 stand where the routine's own `link` would have left them — so the function
+      under test stores bytes there that no case poked. That is output the candidate cannot
+      reproduce through the image, because it is handed the same values as C arguments and has no
+      emulated stack at all;
+    * whatever OTHER addresses in the band THIS CASE poked. A case that stages state in the band
+      deliberately declared those bytes, so a write to one is not hidden output either.
 
-    Everything else in the band is program output the diff would silently hide, which is the one
-    thing the cutoff must never do quietly.
+    What is left — [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH), which is far below where any frame
+    of this run reached — is program output the diff would silently hide, which is the one thing the
+    cutoff must never do quietly. THE REGION ABOVE THE BAND IS THE DIFF'S JOB NOW, not this guard's:
+    a write there lands in compared image and shows as an ordinary byte difference, which names the
+    address and both sides' values instead of naming only the address.
     """
-    band_lo, band_hi = emu.STACK_GUARD_LO, emu.STACK_BAND_HI
-    frame_lo, frame_hi = emu.STACK_TOP - emu.STACK_SCRATCH, emu.STACK_TOP + SENTINEL_SLOT_BYTES
+    frame_lo = emu.STACK_TOP - emu.STACK_SCRATCH
     staged = {a for at, data in (pokes or {}).items() for a in range(at, at + len(data))}
-    return [a for a in o_writes
-            if band_lo <= a < band_hi and not (frame_lo <= a < frame_hi) and a not in staged]
+    return [a for a in o_writes if emu.STACK_GUARD_LO <= a < frame_lo and a not in staged]
 
 
 def hi_garbage(rng, low_word):
@@ -1181,28 +1202,49 @@ def _vet_audio_capture_off(entry):
 
 
 def _seed_candidate(reset, encode, seed, available):
-    """Install one model's seed in the candidate and clear its ledger — the shape BOTH use.
+    """Install one model's seed in the candidate and clear its ledger — the shape ALL THREE use.
 
     Called before EVERY candidate run, the poison re-run included, exactly as ``emu.run`` re-seeds
     the oracle before every run. A candidate left holding the previous case's state could read
     something it never declared and stay green on it, which is the whole false green these models
     close; and a ledger left holding the previous run's entries would be compared against this run's
-    oracle stream. ``encode`` is the oracle's own encoder (``emu.psg_seed_bytes`` /
-    ``emu.hw_seed_bytes``), so the two sides cannot disagree about what the case's dict means.
+    oracle stream.
+
+    ``encode`` wraps the ORACLE's own encoder (``emu.psg_seed_bytes`` / ``emu.hw_seed_bytes`` /
+    ``emu.io_seed_entries``), so the two sides cannot disagree about what the case's dict means. It
+    returns ``(columns, trailing)``: the parallel arrays the candidate's reset takes, each as a
+    ``(ctypes element type, sequence)`` pair, and the scalar that follows them — a known-MASK for
+    the two byte-file models, an entry COUNT for the address-keyed map. Two shapes rather than one,
+    because the models really are two shapes; what is shared is the reset-then-install contract
+    above, which is the half a missing call would break silently.
 
     ``available`` is the optional-ABI flag: a candidate without the group is left alone here and
     refused later, by the vet that has the oracle's own traffic as its witness.
     """
     if not available:
         return
-    values, known = encode(seed)
-    reset((ctypes.c_uint8 * len(values))(*values), known)
+    columns, trailing = encode(seed)
+    reset(*[(ctype * len(values))(*values) for ctype, values in columns], trailing)
+
+
+def _byte_file_encoder(encode):
+    """Adapt a ``(values, known-mask)`` encoder to ``_seed_candidate``'s ``(columns, trailing)``."""
+    def encoded(seed):
+        values, known = encode(seed)
+        return ((ctypes.c_uint8, values),), known
+    return encoded
+
+
+def _io_map_encoder(io_seed):
+    """...and the address-keyed map's own shape: two parallel columns, and the entry count."""
+    addrs, values = emu.io_seed_entries(io_seed)
+    return ((ctypes.c_uint32, addrs), (ctypes.c_uint8, values)), len(addrs)
 
 
 def _seed_candidate_psg(psg_seed):
     """Install the case's PSG seed (``{register: value}``) in the candidate. See _seed_candidate."""
     _seed_candidate(_lib.g_psg_reset if _has_psg_ledger else None,
-                    emu.psg_seed_bytes, psg_seed, _has_psg_ledger)
+                    _byte_file_encoder(emu.psg_seed_bytes), psg_seed, _has_psg_ledger)
 
 
 def _vet_declared_state_matches(entry, what, oracle_bytes, oracle_known, cand_file, cand_known, why):
@@ -1344,12 +1386,17 @@ def _vet_os_event_state(entry, o_regs):
 def _vet_rom_io_reads_are_modelled(entry, o_regs):
     """Refuse a ROM-mode run that read an I/O byte NO MODEL SERVES. No-op for a .PRG project.
 
-    Phase 7 models a NAMED SET of I/O addresses; every other address in the page answers the silent
-    0 an off-image read has always answered, on BOTH sides. For a game that was a small surface — a
-    game touches few registers and its reconstruction is held to the ones it does. An OPERATING
-    SYSTEM touches the whole machine, so `Getrez` reading `$ff8260`, `Physbase` reading `$ff8201`
-    and `Setcolor` reading the palette back would each be verified GREEN against a fabricated 0.
-    Refused instead, naming the address and what closing it costs.
+    Phase 7 models a NAMED SET of I/O addresses and Phase 15's DECLARED I/O MAP serves whatever else
+    the CASE declared by address; every address left over answers the silent 0 an off-image read has
+    always answered, on BOTH sides. For a game that was a small surface — a game touches few
+    registers and its reconstruction is held to the ones it does. An OPERATING SYSTEM touches the
+    whole machine, so `Getrez` reading `$ff8260`, `Physbase` reading `$ff8201` and `Setcolor`
+    reading the palette back would each be verified GREEN against a fabricated 0. Refused instead,
+    naming the address and the declaration that answers it.
+
+    The admissible set and the refused set are ONE predicate (`os.h`'s `os_io_is_page`), so every
+    address this can fire on is one an `io_seed` can declare — a refusal whose remedy does not exist
+    would be worse than the silent 0 it replaced.
 
     ROM mode's OTHER two structural claims — that no modelled trap was served and that nothing
     stored into the ROM — are `emu`'s (`_vet_rom_mode_is_modelless`, `_vet_no_store_into_rom`),
@@ -1364,10 +1411,11 @@ def _vet_rom_io_reads_are_modelled(entry, o_regs):
         f"{label(entry)} @ {entry:#x}: the oracle made {o_regs['io_unmodeled_reads']} read(s) of "
         f"the I/O page that no model serves, the first at {first:#x}. It was answered 0 — on both "
         f"sides, so the case would go green against a byte the model invented rather than against "
-        f"the machine's. Declare the address: if it is one of the modelled slots (emu.HW_ADDRS), "
-        f"pass its contents as this case's `hw_seed`; otherwise it is a Phase-7 slot's worth of "
-        f"work — an entry in include/os.h's table on both sides, and the evidence for what the "
-        f"machine really answers there (TRAP_MODEL.md, Phase 7).")
+        f"the machine's. Declare the address: `io_seed={{{first:#x}: <byte>}}` is the one door, at "
+        f"any access width — it serves every byte of the page, routing a Phase-7 named slot "
+        f"(emu.HW_ADDRS) into that model for you and refusing only the YM2149's block, which "
+        f"`psg_seed` owns by register number. What a declaration is worth is the evidence for what "
+        f"the machine really answers there (TRAP_MODEL.md, Phases 7 and 15).")
 
 
 def _vet_heap_pointers_agree(entry, o_regs):
@@ -1508,7 +1556,17 @@ def _vet_psg_state(entry, o_regs):
 def _seed_candidate_hw(hw_seed):
     """Install the case's hardware seed (``{address: byte}``) in the candidate. See _seed_candidate."""
     _seed_candidate(_lib.g_hw_reset if _has_hw_ledger else None,
-                    emu.hw_seed_bytes, hw_seed, _has_hw_ledger)
+                    _byte_file_encoder(emu.hw_seed_bytes), hw_seed, _has_hw_ledger)
+
+
+def _seed_candidate_io(io_seed):
+    """Install the case's DECLARED I/O MAP (``{address: byte}``) in the candidate (Phase 15).
+
+    Takes the map ``emu.seed_split`` already routed, so a Phase-7 named slot the case declared here
+    has left for ``_seed_candidate_hw`` before this is called. See _seed_candidate.
+    """
+    _seed_candidate(_lib.g_io_reset if _has_hw_ledger else None,
+                    _io_map_encoder, io_seed, _has_hw_ledger)
 
 
 def _vet_schedule_is_runnable(entry, schedule, wait_sites):
@@ -1556,7 +1614,7 @@ def _vet_schedule_is_runnable(entry, schedule, wait_sites):
     emu.wait_site_pcs(schedule, wait_sites)
 
 
-def arm_candidate(psg_seed=None, hw_seed=None, scheduled=(), sites=()):
+def arm_candidate(psg_seed=None, hw_seed=None, io_seed=None, scheduled=(), sites=()):
     """PUT THE CANDIDATE'S MODELS IN THE STATE A RUN IS ENTITLED TO ASSUME, as `differential` does.
 
     Every per-run model the kit carries has to be reset and re-seeded before a candidate runs, or it
@@ -1577,8 +1635,14 @@ def arm_candidate(psg_seed=None, hw_seed=None, scheduled=(), sites=()):
     _lib.g_os_event_reset()
     _lib.g_os_heap_reset()
     _lib.g_os_refusal_reset()
+    # ONE DOOR, TWO MODELS — and the SAME routing `emu.run` did for the oracle, from the same
+    # function: were only one shore to route a named slot out of `io_seed`, the oracle would serve
+    # it from Phase 7 while the candidate refused it, and the mismatch would read as a
+    # reconstruction bug rather than as the two shores disagreeing about which model owns an address.
+    hw_seed, io_seed = emu.seed_split(hw_seed, io_seed)
     _seed_candidate_psg(psg_seed)
     _seed_candidate_hw(hw_seed)
+    _seed_candidate_io(io_seed)
     _seed_candidate_sched(scheduled, sites)
 
 
@@ -1677,6 +1741,36 @@ def _vet_schedule_ran_the_same_wait(entry, o_regs):
 def _hw_event_text(events):
     """One ledger's reads as readable text: ``0xfffa01->0xb0``."""
     return [f"{addr:#x}->{value:#04x}" for addr, value in events]
+
+
+def _vet_read_stream(entry, what, oracle, cand, render, example):
+    """Compare one off-image READ ledger against the candidate's, or raise naming both streams.
+
+    Shared by the named set (``_vet_hw_state``) and the declared I/O map (``_vet_io_state``) because
+    the argument for comparing them is one argument, and it is the message that carries it: neither
+    stream is in the image, so a reconstruction that skipped a read, added one, or aimed one at the
+    wrong address writes exactly the bytes a correct one does. ``render`` is the model's own text
+    form and ``example`` reads one of its entries aloud, which is the half a reader acts on.
+    """
+    if oracle == cand:
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: {what} read stream mismatch — "
+        f"oracle={render(oracle)} cand={render(cand)} ({example}). These addresses are outside the "
+        f"image, and so is everything such a read leaves behind — a branch it steers, a status flag "
+        f"it clears — so this divergence is invisible to the byte diff")
+
+
+# How wide a read's width tag renders, keyed by the BYTE COUNT os.h records an access width as. From
+# `OS_HW_WRITE_WIDTH_*` rather than three literals, so the table cannot come to be keyed on numbers
+# the ledgers do not use; the suffix is what the disassembly says where the entry says a number.
+_IO_WIDTH_SUFFIX = {OS_HW_WRITE_WIDTH_8: "b", OS_HW_WRITE_WIDTH_16: "w", OS_HW_WRITE_WIDTH_32: "l"}
+
+
+def _io_event_text(events):
+    """The declared I/O map's reads as readable text: ``0xff8260.b->0x02``."""
+    return [f"{addr:#x}.{_IO_WIDTH_SUFFIX.get(width, width)}->{value:#0{2 + 2 * width}x}"
+            for addr, width, value in events]
 
 
 def _hw_seed_text(hw_seed):
@@ -1816,18 +1910,100 @@ def _vet_hw_state(entry, o_regs, waived=frozenset()):
     if waived:
         _vet_waiver_is_still_needed(entry, waived, {event[0] for event in c_hw})
         c_hw = [event for event in c_hw if event[0] not in waived]
-    if o_hw != c_hw:
-        raise AssertionError(
-            f"function @ {entry:#x}: modeled hardware read stream mismatch — "
-            f"oracle={_hw_event_text(o_hw)} cand={_hw_event_text(c_hw)} "
-            f"(`0xfffa01->0xb0` read 0xb0 from 0xfffa01). These addresses are outside the image, "
-            f"and so is the branch they steer, so this divergence is invisible to the byte diff")
+    _vet_read_stream(entry, "modeled hardware", o_hw, c_hw, _hw_event_text,
+                     "`0xfffa01->0xb0` read 0xb0 from 0xfffa01")
 
     _vet_declared_state_matches(
         entry, "the declared hardware bytes", o_regs["hw_file"], o_regs["hw_known"],
         _candidate_bytes(_lib.g_hw_file, len(o_regs["hw_file"])), _lib.g_hw_file_known(),
         "The two sides were handed the same hw_seed, so this is the two model implementations "
         "disagreeing, not the reconstruction")
+
+
+def _io_seed_text(io_seed):
+    """A case's ``io_seed`` as a reader would type it, or a prescription when there is none.
+
+    ``_hw_seed_text``'s shape and its reason: Python renders a dict of addresses in decimal, which is
+    unreadable for a register map, and "io_seed=None declares what the machine held on entry" would
+    put a contradiction in a message whose whole point is the remedy.
+    """
+    if not io_seed:
+        return "no io_seed was given, and a declaration is what says"
+    body = ", ".join(f"{addr:#x}: {value:#04x}" for addr, value in sorted(io_seed.items()))
+    return f"io_seed={{{body}}} says"
+
+
+def _vet_io_reads_are_declared(entry, io_seed, o_regs):
+    """Refuse a differential that READ a declared I/O byte this run had already STORED to.
+
+    Phase 15's one refusal, and it is Phase 7's staleness rule at an address-keyed model
+    (``_vet_hw_reads_are_declared``'s first arm states the argument): the declaration describes the
+    byte the machine held ON ENTRY, the model drops hardware writes, and an instruction of this very
+    run has replaced it — so the byte served contradicts the program, and no bigger declaration can
+    fix it. The remedy is the case's shape: run up to the write, or enter past it with the
+    declaration describing what the write left.
+
+    The OTHER half of this model's refusal — an I/O byte nothing declared — is
+    ``_vet_rom_io_reads_are_modelled``'s, unchanged, because it is ROM mode's rule and predates this
+    model. This one holds of ANY project: it can only fire on a byte the case itself declared, so a
+    project that declares none is untouched by it.
+    """
+    if not o_regs.get("io_stale_reads"):
+        return
+    first = o_regs["io_stale_first"]
+    raise AssertionError(
+        f"{label(entry)} @ {entry:#x}: the oracle made {o_regs['io_stale_reads']} read(s) of a "
+        f"DECLARED I/O byte this run had already STORED to, the first at {first:#x}. "
+        f"{_io_seed_text(io_seed)} what the machine held on ENTRY, and an instruction of this run "
+        f"has replaced it — the model drops hardware writes, so the read was served the entry byte "
+        f"and contradicts the program. Declaring more cannot fix it: run the case up to the write, "
+        f"or enter past it with the declaration describing what the write left (TRAP_MODEL.md, "
+        f"Phase 15).")
+
+
+def _vet_io_state(entry, o_regs):
+    """Compare the DECLARED I/O MAP's ordered SERVED-read stream against the candidate's.
+
+    Nothing here is in the image, so nothing else could catch a divergence — and the sharpest case
+    is a read whose RESULT the routine discards, which is most of what clearing a status flag by
+    reading it amounts to: such a read leaves no register and no byte behind, so the stream is its
+    only witness. A reconstruction that skipped one, added one, read the wrong address or read a
+    word where the original read a byte is separable from a correct one by nothing else.
+
+    The MAP'S SIZE is compared too, as a cross-check of the two implementations rather than extra
+    coverage: both sides install the case's declaration through the same ``os_io_install_seed``, so
+    a disagreement about how many entries it accepted is the two shores' rules drifting apart. The
+    bytes themselves need no comparison of their own — every one a run actually used shows up in the
+    stream above, with its value.
+
+    Optional ABI (``_has_hw_ledger``, which this model shares with the named set) with the oracle's
+    own stream as the witness, exactly as ``_vet_hw_state``: a candidate without it is served only
+    while the oracle serves no declared read at all.
+    """
+    o_io = o_regs["io_events"]
+    if not _has_hw_ledger:
+        if o_io:
+            raise AssertionError(
+                f"the oracle served {len(o_io)} declared I/O read(s) but {_CFG.name}'s candidate "
+                f"exports no {'/'.join(_missing_hw_ledger)} — the read stream cannot be compared, "
+                f"so a reconstruction reading the wrong address, or none, would pass unnoticed. "
+                f"That is tools/recreate_kit/src/hw.c's ABI: build the candidate through kit.mk, "
+                f"whose SRC sweeps $(KIT)/src/*.c")
+        return
+
+    count = _lib.g_io_log_count()
+    addrs, widths, vals = _lib.g_io_log_addrs(), _lib.g_io_log_widths(), _lib.g_io_log_vals()
+    c_io = [(addrs[i], widths[i], vals[i]) for i in range(count)]
+    _vet_ledger_below_cap("declared I/O read", len(o_io), count, OS_IO_LOG_MAX, "OS_IO_LOG_MAX")
+    _vet_read_stream(entry, "declared I/O", o_io, c_io, _io_event_text,
+                     "`0xff8260.b->0x02` read the byte 0x02 from 0xff8260")
+
+    if _lib.g_io_seed_count() != o_regs["io_declared"]:
+        raise AssertionError(
+            f"function @ {entry:#x}: the oracle installed {o_regs['io_declared']} of this case's "
+            f"declared I/O bytes and the candidate {_lib.g_io_seed_count()}. Both go through "
+            f"os.h's os_io_install_seed, so this is the two model implementations disagreeing about "
+            f"which addresses are declarable, not the reconstruction")
 
 
 # ---- the off-image hardware waiver (see differential's ``hw_waiver``) ----
@@ -1987,7 +2163,8 @@ def _vet_poison_is_attributable(entry, scheduled, o_writes):
 
 
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
-                       stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites, waived):
+                       stop_pc, max_insns, psg_seed, hw_seed, io_seed, schedule, wait_sites,
+                       waived):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
@@ -2000,11 +2177,15 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
         if in_diff(a):                       # only the diffed region matters; stack canaries are moot
             poisoned[a] = o_final[a] ^ 0xff
     po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                   psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
-                                   wait_sites=wait_sites)
+                                   psg_seed=psg_seed, hw_seed=hw_seed, io_seed=io_seed,
+                                   schedule=schedule, wait_sites=wait_sites)
     # Poisoning can steer the ORACLE into a modeled hardware read the plain run never made, and one
     # the case does not declare would be served a fabricated 0 on this pass too.
     _vet_hw_reads_are_declared(entry, hw_seed, po_regs)
+    # ...and into a STORE to a declared I/O byte it later reads back, which is this model's own
+    # not-seedable refusal (Phase 15) and is likewise the poisoned run's to raise.
+    _vet_io_reads_are_declared(entry, io_seed, po_regs)
+    _vet_rom_io_reads_are_modelled(entry, po_regs)
     buf = candidate_image(poisoned)
     # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
     # poisoning inverts oracle-written bytes, which can steer the candidate down a path the plain
@@ -2013,11 +2194,10 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
     # public: the block it opened with had drifted from it, so the event ledger and the Malloc arena
     # were never rewound for this pass and a run that printed on the poisoned image compared its
     # output against the FIRST pass's ledger.
-    arm_candidate(psg_seed, hw_seed, po_regs["sched"], po_regs["sched_sites"])
+    arm_candidate(psg_seed, hw_seed, io_seed, po_regs["sched"], po_regs["sched_sites"])
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
     # ...and the same off-image OS event comparison, against the POISONED run's own oracle stream.
-    _vet_rom_io_reads_are_modelled(entry, po_regs)
     _vet_os_event_state(entry, po_regs)
     _vet_heap_pointers_agree(entry, po_regs)
     # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
@@ -2026,6 +2206,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
     _vet_psg_state(entry, po_regs)
     _vet_hw_state(entry, po_regs, waived)
     _vet_hw_write_state(entry, po_regs, waived)
+    _vet_io_state(entry, po_regs)
     _vet_schedule_ran_the_same_wait(entry, po_regs)
     pc_final = bytes(buf)
     # Same fast path as the plain compare in differential(), memoryview slices and all: the
@@ -2043,7 +2224,8 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
 
 
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
-                 psg_seed=None, hw_seed=None, schedule=None, wait_sites=None, hw_waiver=None):
+                 psg_seed=None, hw_seed=None, io_seed=None, schedule=None, wait_sites=None,
+                 hw_waiver=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -2093,6 +2275,15 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     read-back, a wide read, and a second read of a VOLATILE address, which one per-run constant
     cannot describe). Both sides' ordered read stream is compared afterwards, seed or none
     (``_vet_hw_state``).
+
+    ``io_seed`` is ``{address: byte}`` over ANY byte of the I/O page the named models do not own
+    (TRAP_MODEL.md, Phase 15) — ``{0xff8260: 0x02}`` for the shifter's resolution byte XBIOS
+    ``Getrez`` reads. Both sides are handed the same map, a declared byte is served on every read of
+    it, and the ordered SERVED-read stream is compared (``_vet_io_state``), which is the whole
+    witness for a read whose result the routine discards. A read of a byte the run itself STORED to
+    is refused (``_vet_io_reads_are_declared``); an UNDECLARED one is the silent 0 it has always
+    been, counted, and refused in ROM mode by ``_vet_rom_io_reads_are_modelled``; and declaring an
+    address one of the named models owns is a ``ValueError`` naming the other door.
     ``schedule`` is the list of stores an EXTERNAL AGENT makes while the run is in flight, for a
     routine that busy-waits on a byte its own instructions never write (``emu.schedule_entries``;
     TRAP_MODEL.md, Phase 8). The SAME list is installed on both sides, and the oracle's arrivals are
@@ -2127,8 +2318,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     pokes = regs.pop("_pokes", None)
     img = make_image(pokes)
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                        psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
-                                        wait_sites=wait_sites)
+                                        psg_seed=psg_seed, hw_seed=hw_seed, io_seed=io_seed,
+                                        schedule=schedule, wait_sites=wait_sites)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
     _vet_write_ledger_below_cap(entry, o_regs)
@@ -2136,12 +2327,19 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     # Before the candidate runs at all: a case whose oracle was served a fabricated hardware byte
     # cannot be made honest by anything the candidate does, and the remedy names the seed to add.
     _vet_hw_reads_are_declared(entry, hw_seed, o_regs)
+    _vet_io_reads_are_declared(entry, io_seed, o_regs)
+    # ...and the same, for an I/O byte NO model served. It reads the ORACLE's report alone, so it
+    # belongs here rather than after the candidate: a reconstruction of such a read calls `io_read8`
+    # on an address it was never given and REFUSES, and `_vet_no_os_refusal` would then report the
+    # tally's generic message — sending the reader hunting for a missing `Bconstat` gate instead of
+    # to the register the case has to declare.
+    _vet_rom_io_reads_are_modelled(entry, o_regs)
 
     buf = candidate_image(img)
     # A fresh Dosound ledger and refusal tally, the PSG entry state the oracle just ran on, the same
     # declared hardware bytes with both ledgers clear, and the same external-agent stores on the same
     # declared wait sites — see `arm_candidate`, which is also what the asm-twin suites call.
-    arm_candidate(psg_seed, hw_seed, o_regs["sched"], o_regs["sched_sites"])
+    arm_candidate(psg_seed, hw_seed, io_seed, o_regs["sched"], o_regs["sched_sites"])
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -2204,18 +2402,19 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
             f"candidate exports no Dosound ledger ({'/'.join(_DOSOUND_LEDGER_ABI)}) — the command "
             f"lists cannot be compared, so a divergence here would pass unnoticed")
 
-    _vet_rom_io_reads_are_modelled(entry, o_regs)
     _vet_os_event_state(entry, o_regs)
     _vet_heap_pointers_agree(entry, o_regs)
     _vet_psg_state(entry, o_regs)
     _vet_hw_state(entry, o_regs, waived)
     _vet_hw_write_state(entry, o_regs, waived)
+    _vet_io_state(entry, o_regs)
     _vet_schedule_ran_the_same_wait(entry, o_regs)
 
     if poison and not diffs:
         _vet_poison_is_attributable(entry, o_regs["sched"], o_writes)
         _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
-                           stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites, waived)
+                           stop_pc, max_insns, psg_seed, hw_seed, io_seed, schedule, wait_sites,
+                           waived)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

@@ -58,6 +58,10 @@ PINNED = ("OS_IMAGE_SIZE",
           # ...and the hardware WRITE ledger's (Phase 10), which truncates on both sides identically
           # for the same reason: two write streams that diverge past the cap would compare equal.
           "OS_HW_WRITE_LOG_MAX",
+          # ...and the DECLARED I/O MAP's served-read ledger cap (Phase 15), for the same reason a
+          # third time. The map's SIZE (OS_IO_SEED_MAX) needs no entry: emu.py reads it from the .so
+          # (osh_io_seed_max), so there is no second copy in Python that could drift from os.h.
+          "OS_IO_LOG_MAX",
           # the YM2149's select/read-back port. Mirrored because a PROJECT's case names it — the
           # decoy a ROM case plants there to prove the ports are not served out of the image has to
           # be at the address the shim actually decodes.
@@ -67,6 +71,14 @@ PINNED = ("OS_IMAGE_SIZE",
           # I/O page would answer every unmodeled hardware read with a ROM byte, silently — and that
           # refusal is only as good as the two spellings agreeing.
           "OS_HW_IO_PAGE",
+          # ...and the 68000's 24-bit address bus, which bounds that page from above: os.h refuses a
+          # declaration spelt in an untranslated form (`os_io_is_page`) and emu.py's encoder refuses
+          # the same key by name, so the two sides must agree on where the bus ends.
+          "OS_BUS_ADDR_MASK",
+          # ...and one past the YM2149's block, which the declared I/O map's encoder must REFUSE a
+          # declaration inside (emu.io_seed_entries): Phase 6 models those bytes, with refusals of
+          # its own that a byte served from that map would reach none of.
+          "OS_PSG_BLOCK_END",
           # ...and the off-image OS event ledger's (Phase 13), for the same reason again, together
           # with its event kinds: the C tags each entry and the Python compares them, so a value
           # changed on one side alone would make every IKBD command compare as a console byte.
@@ -201,6 +213,10 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # rather than like Dosound's because one Cconws of a screen of text is already hundreds of
         # entries. Not a place in the image either.
         "OS_EVENT_LOG_MAX",
+        # 4096 entries — the DECLARED I/O MAP's served-read ledger cap on both sides (Phase 15).
+        # Sized like the seeded-hardware ledger's for its reason — the addresses this model serves
+        # are the ones an OS polls — and not a place in the image either.
+        "OS_IO_LOG_MAX",
         # 4096 bytes — the DISTANCE from the staged-file table to the staging area above it, not a
         # place in the image. The window's own address is `fs_base` in a project.toml, and its
         # default is OS_FS_TABLE_DEFAULT, well clear of this range.
@@ -260,6 +276,29 @@ def test_every_modeled_hardware_address_is_above_the_image():
         f"OS_IMAGE_SIZE ({c['OS_IMAGE_SIZE']:#x}) covers {swallowed} — those addresses are decoded "
         f"only after shim.c's image bounds check, so an access to one would be served from the "
         f"image and neither model would ever see it")
+
+
+def test_the_bus_mask_python_declares_is_the_one_the_oracle_folds_with():
+    """`os_map.OS_BUS_ADDR_MASK` must equal `oracle/shim.c`'s `BUS_ADDR_MASK`.
+
+    CLAUDE.md §5's rule at the boundary the PINNED sweep cannot reach: that sweep holds os.h's
+    `OS_BUS_ADDR_MASK` and Python's equal, and this holds Python's and the ORACLE's — which is the
+    third spelling, because folding an access onto the 68000's 24 address lines is what shim.c's
+    memory callbacks do and a `#define` in a .c file is nobody's mirror. Each side needs the number
+    for its own job: the oracle to fold, os.h to REFUSE a declaration spelt in a form no fold can
+    produce, and Python to tell a case that declared `io_seed={0xffff8260: …}` that the machine
+    decodes that access at `$ff8260`. A copy that drifted would either refuse a legal address or
+    name the wrong register in the refusal.
+
+    Parsed rather than imported, for this module's usual reason: it must run in a bare checkout with
+    nothing built.
+    """
+    shim = (KIT / "oracle" / "shim.c").read_text()
+    m = re.search(r"^#define\s+BUS_ADDR_MASK\s+(0x[0-9a-fA-F]+|\d+)[uUlL]*\s*$", shim, re.M)
+    assert m, "shim.c no longer defines BUS_ADDR_MASK as a plain literal this pin can read"
+    assert int(m.group(1), 0) == os_map.OS_BUS_ADDR_MASK, (
+        f"shim.c folds an access with {int(m.group(1), 0):#x} while os_map declares "
+        f"{os_map.OS_BUS_ADDR_MASK:#x} — emu's encoder would name the wrong canonical address")
 
 
 def test_staged_file_table_fits_below_staging():

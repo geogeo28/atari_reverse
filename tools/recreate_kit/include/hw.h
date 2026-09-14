@@ -48,6 +48,41 @@
  * nothing it could be compared against. */
 uint8_t hw_read8(uint32_t addr);
 
+/* ---- THE DECLARED I/O MAP: reading a byte the CASE declared by address (Phase 15) --------------
+ *
+ * `hw_read8` above serves the NAMED SET, one os.h slot at a time, because a game touches few
+ * registers. An OPERATING SYSTEM touches the whole machine — the shifter's resolution byte, the
+ * video base, the palette, the MFP's interrupt registers — and a slot apiece is the wrong shape for
+ * it. A reconstruction of such a routine reads through these instead, and the case declares what
+ * the machine held with `differential(..., io_seed={0xff8260: 0x02})`.
+ *
+ * `addr` is the 24-BIT BUS FORM, exactly as for hw_read8/hw_write8, and everything the case did not
+ * declare — an address in no declaration, one below the I/O page, one the os.h models own — is a
+ * REFUSAL rather than a zero. It tallies through `os_refused()`, so `harness.differential`'s
+ * unconditional `_vet_no_os_refusal` throws the case away; the oracle's side of the same read is
+ * counted as an unmodeled I/O read and refused by `harness._vet_rom_io_reads_are_modelled`, so the
+ * fabrication is closed on BOTH shores.
+ *
+ * A WIDE READ IS N DECLARED BYTES, not a width of its own: `io_read16(0xff8240)` is served only
+ * when the case declared `0xff8240` AND `0xff8241`, and `io_read32` only when all four were
+ * declared. TRAP_MODEL.md, "Phase 15" ("a 16- or 32-bit read") carries that argument in full; the
+ * one line of it that matters at the call site is that a half-declared access refuses WHOLE, and
+ * names the byte that is missing rather than the access that straddled it.
+ *
+ * Both are LEDGERED, address and width and value, and `harness` compares the stream against the
+ * oracle's. That is the whole comparison for a read whose result the routine discards — clearing a
+ * status flag by reading it, which is most of what an MFP or ACIA handler does with one — since
+ * such a read touches no image byte and leaves no register behind.
+ *
+ * ON TARGET the build supplies all three as the real volatile access, exactly as it supplies psg.h's
+ * ports and hw_write8/16/32: `*(volatile uint8_t *)addr`, `*(volatile uint16_t *)addr` and
+ * `*(volatile uint32_t *)addr`. It does not compile src/hw.c, so there is no map and no declaration
+ * in the chain — the machine answers.
+ */
+uint8_t  io_read8(uint32_t addr);
+uint16_t io_read16(uint32_t addr);
+uint32_t io_read32(uint32_t addr);
+
 /* ---- what the harness drives (see README.md, "What the candidate .so must export") ---- */
 void            g_hw_reset(const uint8_t *seed, uint32_t known);  /* clear BOTH ledgers, install the seed */
 /* The ordered READ stream — every hw_read8 of a modeled address, in the order it happened, refused
@@ -59,6 +94,16 @@ const uint8_t  *g_hw_log_slots(void);   /* ...their os.h OS_HW_SLOT_* numbers, i
 const uint8_t  *g_hw_log_vals(void);    /* ...and the byte each was served */
 const uint8_t  *g_hw_file(void);        /* the declared bytes the reads are served from, by slot */
 uint32_t        g_hw_file_known(void);  /* bit S = slot S's contents were declared */
+
+/* ...and the DECLARED I/O MAP's (Phase 15). `g_io_reset` installs the case's map and clears the
+ * ledger, exactly as `g_hw_reset` does for the named set; it is a SEPARATE reset because the two
+ * models are separate declarations, and the harness calls both before every candidate run. */
+void            g_io_reset(const uint32_t *addrs, const uint8_t *values, uint32_t n);
+uint32_t        g_io_seed_count(void);  /* entries os.h's rule accepted — compared to the oracle's */
+uint32_t        g_io_log_count(void);   /* served reads logged this run */
+const uint32_t *g_io_log_addrs(void);   /* ...their 24-bit addresses, in order */
+const uint8_t  *g_io_log_widths(void);  /* ...each read's width in bytes (1, 2 or 4) */
+const uint32_t *g_io_log_vals(void);    /* ...and the value it was served */
 
 /* ---- THE HARDWARE WRITE MODEL (TRAP_MODEL.md, "Phase 10") ------------------------------------
  *

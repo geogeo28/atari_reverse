@@ -256,12 +256,16 @@ def test_one_more_modeled_hardware_address_fails(kit_copy):
 
 
 def test_a_changed_block_end_fails(kit_copy):
-    """PSG_BLOCK_END decides which accesses are tested against the PSG protocol at all."""
-    rewrite(kit_copy / "oracle" / "shim.c", "#define PSG_BLOCK_END 0xff8900",
-            "#define PSG_BLOCK_END 0xff8880")
+    """OS_PSG_BLOCK_END decides which accesses are tested against the PSG protocol at all — and,
+    since the declared I/O map (Phase 15) exists, which addresses a case may declare around it.
+
+    Rewritten in os.h, which is where the kit moved the constant to when both sides began reading
+    it; the pin followed it there, and this case is what says the pin is looking at the real one."""
+    rewrite(kit_copy / "include" / "os.h", "#define OS_PSG_BLOCK_END   0xff8900",
+            "#define OS_PSG_BLOCK_END   0xff8880")
     with pytest.raises(SystemExit) as exit_info:
         hp.check_shim_agreement()
-    assert "PSG_BLOCK_END" in str(exit_info.value)
+    assert "OS_PSG_BLOCK_END" in str(exit_info.value)
 
 
 @pytest.mark.parametrize("rewritten", ["(0xff8802u)", "0xff8802u | PSG_SOME_FLAG", "(PSG_BASE + 2)"])

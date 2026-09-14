@@ -31,7 +31,7 @@ BIOS_DEV_PRINTER = 0        # any other BIOS device: the model has no keystroke 
 PSG_MIXER = 7               # YM2149 register 7: the tone/noise enables Joust polls
 PSG_SELECT_PORT = 0xFF8800  # register-select latch; reading it reads the selected register back
 PSG_DATA_PORT = 0xFF8802    # data port (shim.c's off-image PSG tap logs writes here)
-PSG_BLOCK_END = 0xFF8900    # the ST decodes the chip across $ff8800..$ff88ff (shim.c PSG_BLOCK_END)
+PSG_BLOCK_END = 0xFF8900    # the ST decodes the chip across $ff8800..$ff88ff (os.h OS_PSG_BLOCK_END)
 
 # Bytes to pop after each trap: the pushed arguments plus the 2-byte selector word.
 POP_BCON, POP_SUPER, POP_GIACCESS, POP_RANDOM = 4, 6, 6, 2

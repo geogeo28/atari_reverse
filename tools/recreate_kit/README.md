@@ -283,6 +283,31 @@ candidate starts accessing one of them, and each distinct waiver is recorded in
 `harness.HW_WAIVERS`. The whole contract, including the read-modify-write residual and why the
 default is ON, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 10".
 
+The **DECLARED I/O MAP** ships in the same two files, and is the same group's last three rows:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `io_read8` / `io_read16` / `io_read32` | `uint8_t(uint32_t)` / `uint16_t(uint32_t)` / `uint32_t(uint32_t)` | what a reconstruction calls where the original reads an I/O byte the CASE declares by address — one call per instruction, at the instruction's own width |
+| `g_io_reset` | `void(const uint32_t *addrs, const uint8_t *values, uint32_t n)` | install the case's map + clear the ledger, before each candidate run |
+| `g_io_seed_count` / `g_io_log_count` / `g_io_log_addrs` / `g_io_log_widths` / `g_io_log_vals` | | the map's size, and the ordered SERVED-read stream: one `(address, width, value)` per read |
+
+The named set above is one `os.h` slot per address, which is the right shape for a game and a
+bottleneck for an operating system — TOS's BIOS and XBIOS touch most of the machine. So a case may
+declare ANY byte of the I/O page the named models do not own:
+`harness.differential(..., io_seed={0xff8260: 0x02})`, served on every read of it, ledgered, and
+compared. A wide read is N DECLARED BYTES and one entry, so declaring both halves of a palette word
+is served where Phase 7 would have had to refuse. An UNDECLARED byte is unchanged — the silent `0`
+it has always been, counted, and refused in ROM mode.
+
+**The models stay two; the door is one.** `io_seed` accepts every I/O byte, and a Phase-7 named slot
+written there is ROUTED into that model's own installer (`emu.seed_split`, called by both shores) —
+so the two models keep their separate rules and ledgers while the declaration a case writes is one
+dict. Only the YM2149's block is refused instead of routed, because Phase 6's file is keyed by
+register number rather than by address; so is the untranslated `$ffff8260` form, and so is one
+address declared through both doors at once. An on-target build supplies all three doors as the real
+volatile access and compiles no map at all. The whole contract, including the staleness rule and the
+deliberate absence of a volatile rule, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 15".
+
 The EIGHTH group is the **scheduled writes**, from `src/sched.c` + `include/sched.h` (likewise linked
 into every candidate by `kit.mk`, and optional in the same way, with the case's own `schedule=` as
 the witness — a case that declares one against a candidate lacking the group is refused by name):
@@ -699,23 +724,47 @@ where it does not, and checks that the declared `stack_top` band lies inside tha
 **The seeded models stay, and an I/O byte outside them is REFUSED rather than answered.** A case
 declares the bytes it expects exactly as a game case does, an undeclared modelled read still refuses
 the run in `differential()`, and hardware writes are still ledgered and compared. What is new is the
-rest of the page: a read of an I/O address no Phase-7 slot declares is counted by the shim and
-refused by `harness._vet_rom_io_reads_are_modelled`, naming the address. It has to be — a game
-touches few registers, but an operating system touches the whole machine, and the silent 0 those
-reads used to answer is the same 0 on both sides, so a `Getrez` reading `$ff8260` would verify green
-against a byte the model invented. Adding an address is a Phase-7 slot's worth of work; until it is
-added, the function that reads it cannot be proved here, and it says so.
+rest of the page: a read of an I/O address no model serves is counted by the shim and refused by
+`harness._vet_rom_io_reads_are_modelled`, naming the address. It has to be — a game touches few
+registers, but an operating system touches the whole machine, and the silent 0 those reads used to
+answer is the same 0 on both sides, so a `Getrez` reading `$ff8260` would verify green against a
+byte the model invented.
+
+**The remedy is a case's, not a model change: `io_seed={0xff8260: 0x02}`.** Phase 7's named set is
+one `os.h` slot per address, which is the right shape for a game and a bottleneck for an operating
+system — so the DECLARED I/O MAP (TRAP_MODEL.md, "Phase 15") lets a case declare ANY byte of the
+page, routing the named models' own addresses to them, and both cores serve exactly those bytes on
+every read. A reconstruction reads them through `hw.h`'s `io_read8`/`io_read16`/`io_read32`, which a
+target build supplies as the real volatile access; the served reads land in an ordered ledger the harness compares, so a read
+whose result the routine discards is still a compared fact. The refusal above and the declaration
+that answers it cover the SAME set of addresses, deliberately — a refusal whose remedy does not
+exist would be worse than the silent 0 it replaced.
 
 ### The stack, and the region the diff drops
 
 `STACK_TOP` is `image_size - 0x100` for a `.PRG` project, which in ROM mode would be the I/O page —
 so a ROM project declares `stack_top` instead, a band inside the machine's real RAM. The kit reserves
-`[stack_top - 0xf00, stack_top + 0x100)` around it and drops it from the diff, as it always has; what
-is new is that the image *continues above it*, so `harness.DIFF_SPANS` is two spans rather than one
-prefix. For a `.PRG` project the second span is empty and nothing changes.
+`[stack_top - 0xf00, stack_top + SENTINEL_SLOT_BYTES + STACK_ARGS_BYTES)` around it and drops that
+band from the diff — ONE formula in both modes, because the machine stack grows DOWN and the only
+thing ever written above `stack_top` is the harness's own sentinel and a case's staged frame.
+`harness.diff_spans()` is therefore two spans in either mode: a `.PRG` project's image continues for
+228 bytes above the band, and those bytes are compared like any others.
 
 Pick a band the snapshot leaves empty, and pin that it is empty — the oracle writes a machine stack
 there and the candidate does not, so anything live in it would be invisible on one side.
+
+**Dropping the band is only sound while the oracle uses it purely as a stack**, so `differential`
+reports every write inside it that the run's own frame does not explain
+(`harness._stray_stack_writes`). The frame is the scratch below `STACK_TOP`, the sentinel return
+slot at it, the `STACK_ARGS_BYTES` of CALLER FRAME AREA above that — which belongs to the callee,
+since an Alcyon/DRI C routine writes its own arguments back into it and a case entering a routine
+mid-body puts its synthetic frame base there, neither of which the candidate can reproduce through
+the image — and whatever else the case itself poked. A write ABOVE the frame area is ordinary
+program output in COMPARED image, so it reds as a byte difference naming both sides' values rather
+than through this guard at all. `STACK_ARGS_BYTES` is a MEASUREMENT pinned in BOTH directions
+(`test/test_stack_band.py`): the deepest write no case stages, which is also where the dropped band
+now ends — too small and a callee's own frame locals red as masked output, too large and that many
+bytes of real image stop being compared at all.
 
 ### Capturing the snapshot
 
@@ -818,6 +867,85 @@ the seam goes (a `ZY_SCROLL()`-style macro at the CALL SITE, so the C reference 
 the build gate proves the twins are what the game actually calls, and the four checks a new twin
 needs. Zynaps' scroll path came out at 1.002x-1.014x of the original's per-call cycles.
 
+## Tier 3's numerator: the cores cross-compiled, measured, and proved again
+
+`emu.run` reports what the ORIGINAL cost — instructions and 68000 cycles for one call — so a
+project's denominator is a measurement rather than an estimate. `rom_bench.py` is the other half for
+a **ROM project**: it builds the same C the shipped ROM will carry (`m68k-elf-gcc`, the target
+build's own flags), stages it in a free span of the same post-boot snapshot, and enters one core
+through `emu.run_bench` over the same case. Two costs, one instrument, one image.
+
+| | |
+|---|---|
+| `rom_bench.py` | loads a project's cross-compiled blob and runs one core: `RomBench().measure(entry, symbol, args=…, regs=…, pokes=…, psg_seed=…, hw_seed=…, io_seed=…, returns=…)` → a `Measurement` whose `.ratio` is `recreate / original`. The seed set is `harness.differential`'s, so a case runnable there is runnable here |
+| `kit.mk`'s `$(BENCH_ELF)` / `$(BENCH_BIN)` | compiles `src/**/*.c` plus `bench/entry_probe.c` with `m68k-elf-gcc`, linked at `bench_base`, and makes `test` and `guarded` depend on the blob so a gate cannot run against a stale one |
+| `bench/entry_probe.c` | one empty function, so the oracle's own entry overhead is MEASURED rather than declared |
+
+Opt-in with **two** things, neither defaulted: `bench_base` in `project.toml` (where the blob goes
+inside the machine's RAM — the rules exist only for a project that declares one) and `BENCH_CFLAGS`
+in the project Makefile, set before including `kit.mk`. The flags are the project's because they must
+be the **shipped build's own**: a numerator measured under flags nobody ships is a number about a
+program nobody runs. `projects/tos102us/recreate` is the worked example — its `atari/target.mk` holds
+one definition of those flags *and of the include paths*, which the ROM build and this one both read.
+
+**The opt-in is decided by a `grep` and only its VALUE by the Python probe**, and that split is
+load-bearing: the probe prints nothing for a project with no `bench_base`, and it also prints nothing
+when it cannot run at all (no venv yet, `PY` overridden), which is the same output for "no numerator
+wanted" and "the numerator is broken". Deciding the block on the probe alone silently dropped the
+blob, the `test:` prerequisite and the gate together; `make -n test PY=/nonexistent/python` is the
+repro, and it is now a `$(error)`.
+
+**Three tenants share one free window, and they are declared in one file so a vet can compare them**:
+the run's stack (`stack_top`), the blob (`bench_base`), and the band a CASE stages buffers and stub
+routines in (`staging_base` / `staging_bytes`, read by the project's `test/staging.py` rather than
+spelt there a second time). `RomBench` refuses any overlap, any band past the end of RAM, a blob
+linked somewhere other than the key says, a snapshot that is not empty where the blob goes, and a
+case that pokes inside the blob's span — each on every construction, because every one of them is
+invisible when it is wrong.
+
+**A cost without a proof is not a measurement**, so every row is also a SECOND DIFFERENTIAL. The
+cross build is a *third* build of the reconstruction — the host `.so` Tier 1 proves, the shipped ROM,
+and this — and [`docs/on-target-execution.md`](../../docs/on-target-execution.md)'s bug class 6 is
+target codegen going wrong where the host build is right. So `measure()` runs the original and our
+build over one case and requires: the whole image equal outside the oracle's stack band and the
+blob's own span; the return value equal **at the width the C signature declares**; every
+callee-saved register handed back (`asm_twin`'s seeds, for `asm_twin`'s reason); **all four
+off-image streams** equal in order — the ordered PSG accesses, the ordered modelled-hardware reads,
+the ordered reads the declared I/O map served, and the ordered hardware writes, which is the same set
+`harness.differential` compares; and **no refusal tally set on either side** — again the same set,
+so a row is never measured over a run the model answered with something it invented, nor over a
+ledger that silently truncated. Measured sharp: a one-line mutation of a core reddens on the image, a
+target-only mutation of a `psg.h` shadow reddens on the return value, and a shadow reading the wrong
+port reddens as an unmodelled I/O read naming `$ff8802`.
+
+**The entry overhead is measured AND the probe is checked**: the empty function must have executed
+the reset's phantom instruction and its own `rts` and nothing else, or the overhead every ratio is
+net of would be carrying a prologue — the refusal names the flag (`-O0`, `-fno-omit-frame-pointer`)
+that would cause it.
+
+**The CALL is one shape for this runner and for `asm_twin.py`**, so its shared half lives beside
+`asm_twin.CALLEE_SAVED_SEEDS`: `require_built`, `blob_entry`, `stage_stack_args`,
+`vet_callee_saved`, `vet_blob_intact`. A check tightened for one runner is tightened for both.
+
+**The register FILE is not compared, and that is a decision.** The m68k SysV ABI promises a
+`uint8_t` result in the low byte of D0 and nothing above it — measured: GCC emits `move.b
+$ff8800,%d0` for `xbios_giaccess` and leaves the caller's high word there, where the ROM's own
+`moveq #0,d0` cleared it — and D1/A0/A1 are scratch a C compiler owes nobody. Requiring the original's
+whole file back would be requiring a TRANSCRIPTION, which is what `asm_twin.py` is for.
+
+**It is `asm_twin.py`'s mirror image, and the two are mutually exclusive by construction.** That
+module stages the image at a NON-ZERO base so a twin addressing it absolutely is caught, and
+therefore refuses a ROM project, whose code is absolute by construction; this one stages the image at
+0 because in ROM mode that IS the machine, hands the cores 0 as their image base, and refuses
+everything but a ROM project. A `.PRG` project's numerator is a third arrangement again — the recon
+in its own memory with the game image beside it — and has two worked examples,
+`projects/zynaps/recreate/atari/bench_tier.py` and `projects/buggyboy/remaster/tools/bench.py`.
+
+**Rebuild before you trust a mutation.** The blob is one `make` rule over a handful of sources, so a
+mutation and its re-link inside the same filesystem second leave the PREVIOUS blob on disk and the
+suite measuring it (`docs/agent-playbook.md` §10 — it happened while this was being built). Delete
+`build/bench/` and rebuild before reading any mutation's verdict.
+
 ## The guarded-image sweep, and the seam it hangs on
 
 The oracle puts every address on the 68000's 24-bit bus and then bounds it against the image: an
@@ -857,7 +985,12 @@ one game: the cross-language pin between `prg_dis.py`'s and `AtariOsTrapAnnotate
 trap tables, `prg_dis`'s 68000 decoder (reference encodings + an opcode-space sweep for
 impossible instruction forms), the C-vs-Python pin on the TOS memory map above,
 `project._bool_flag`'s refusal of a non-boolean waiver flag (for **every** waiver flag, checked
-against `project.load` itself so a new one cannot ship untested), `os_map`'s overlap geometry, and
+against `project.load` itself so a new one cannot ship untested), `rom_bench`'s decidable parts (what
+a `bench_base` may be, that a blob's span covers the `.bss` its flat binary does not, that a ratio
+comes out net of the entry overhead, and every refusal that decides WHERE a blob may sit — the link
+address, the three bands' tenancy, an occupied snapshot — plus the pin that keeps kit.mk's blob paths
+and `rom_bench.py`'s the same three names; the end-to-end proof is the project's own
+`test_tier3.py`, since this directory binds no project), `os_map`'s overlap geometry, and
 `stubs.py`'s shared building blocks — the GEMDOS `Malloc` probe's *encoding* (a stub with the wrong
 selector is still a serviced trap, so the run goes green having asked a different question) and the
 span seeder's merge (two pokes over one byte look like two seeded regions and are one).

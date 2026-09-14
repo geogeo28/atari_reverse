@@ -96,6 +96,12 @@ OS_PSG_EVENT_READ = 1
 # address, and a project spelling the literal itself would go on reporting the model green after the
 # constant moved.
 OS_PSG_PORT_SELECT = 0xff8800
+# One past the chip's block — os.h's OS_PSG_BLOCK_END. The ST decodes the YM2149 incompletely, so it
+# answers across $ff8800..$ff88ff and the two canonical ports are only its head. Mirrored because the
+# declared I/O map's encoder (`emu.io_seed_entries`) has to REFUSE a declaration inside the block:
+# Phase 6 models those bytes, with two refusals of its own that a byte served from that map would
+# reach none of.
+OS_PSG_BLOCK_END = 0xff8900
 
 # The first address of the ST's memory-mapped I/O page — os.h's OS_HW_IO_PAGE, mirrored here for
 # the same reason the poked-input block is: `loader` and `harness` both need it and neither can
@@ -103,6 +109,13 @@ OS_PSG_PORT_SELECT = 0xff8800
 # ports, the seeded hardware slots, the write ledger) rather than served from the image, which is
 # what makes it the ceiling a ROM window may not reach.
 OS_HW_IO_PAGE = 0xff0000
+
+# The 68000's ADDRESS BUS, as the mask that folds an access onto it — `shim.c`'s BUS_ADDR_MASK,
+# mirrored here (and pinned equal to it by `test/test_os_memory_map.py`) because `emu`'s encoder is
+# what has to tell a case that wrote the untranslated `$ffff8260` so. The chip has 24 address lines,
+# so the machine decodes `$ffff8260` and `$ff8260` at the same register; a DECLARATION is keyed on
+# the address and has to be spelled in the one form the decode produces.
+OS_BUS_ADDR_MASK = 0xffffff
 
 
 def poked_input_overlaps_program(load_base, program_end):

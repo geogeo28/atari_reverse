@@ -42,10 +42,43 @@ STACK_GUARD_BYTES = 0xF00       # ...and the scratch below it a call frame may u
 # read the same way in either mode.
 STACK_TOP = _cfg.stack_top if ROM_MODE else loader.IMAGE_SIZE - STACK_SENTINEL_BYTES
 STACK_GUARD_LO = STACK_TOP - STACK_GUARD_BYTES  # [STACK_GUARD_LO, STACK_BAND_HI): stack scratch, excluded from the diff
-# ...and where that band ENDS. It is the image's end for a .PRG project, which is what every caller
-# assumed while the stack could only be at the top; a ROM project's band closes above its declared
-# top with the image going on above it, so the diff has to resume rather than stop.
-STACK_BAND_HI = STACK_TOP + STACK_SENTINEL_BYTES
+
+# ---- what the harness itself puts ABOVE A7, and which is therefore not a function's output ----
+# `osh_run` plants the sentinel return address at A7 before the run, exactly as a `jsr` would, and a
+# case stages a called function's arguments in the words above it (a project's `test/abi.py`
+# FIRST_ARG = emu.STACK_TOP + SENTINEL_SLOT_BYTES is where that spelling lives).
+SENTINEL_SLOT_BYTES = 4
+# ...and how far above the sentinel slot that ARGUMENT AREA reaches. It belongs to the CALLEE, not
+# to the case: an Alcyon/DRI C routine writes its own arguments back into the caller's frame
+# (`move.l d0,8(a6)`, the write-to-`(sp)` first-argument idiom this workspace's ROMs and games are
+# full of), so bytes a case never poked are stored there by the very function under test. Those
+# stores are not hidden output — they are the frame the harness built being used as a frame — and
+# they are unreproducible by the candidate, which is handed the same values as C arguments and has
+# no emulated stack at all.
+#
+# TWENTY-FOUR BYTES, and the number is MEASURED rather than chosen — every project's suite run with
+# this exemption removed, and the offsets of the writes it then reports collected. The deepest write
+# NOTHING STAGED reaches +24..+27: a case that enters a routine MID-BODY declares a synthetic frame
+# base above STACK_TOP so that A7 and A6 stand in the relation the routine's own `link` would have
+# left them in (bubbleghost's `FRAME_DRAW_ROOM_A6 = emu.STACK_TOP + 0x20`, reproducing
+# `link a6,#$ffe4`), and that frame's locals are then written by the routine under test. Its deeper
+# locals at +28/+30 are covered by the case's own staging instead, which is why the measurement
+# stops here; the widest argument list any case stages is narrower still, 20 bytes (bubbleghost's
+# `vro_cpyfm` call at `test/test_frontend.py:517`).
+#
+# It is a measured FLOOR *and* a measured CEILING, pinned in both directions by
+# test/test_stack_band.py: everything above it is COMPARED byte for byte, so widening it would drop
+# real output from the diff and narrowing it would report a callee's own frame as masked output.
+# (Before this constant existed the exemption stopped at the sentinel slot and every Alcyon callee's
+# write-back read as masked output — 103 red cases in bubbleghost.)
+STACK_ARGS_BYTES = 24
+# ...and where the DROPPED band ENDS, which is exactly the top of that frame area. ONE FORMULA IN
+# BOTH MODES: the machine stack grows DOWN from STACK_TOP, so nothing but the harness's own sentinel
+# and a case's staged frame is ever written above it, and every byte past this belongs to the byte
+# diff. A .PRG project's band used to close STACK_SENTINEL_BYTES (0x100) above the top, which
+# dropped the image's last 228 bytes from every comparison for no reason but the arithmetic that
+# placed the stack.
+STACK_BAND_HI = STACK_TOP + SENTINEL_SLOT_BYTES + STACK_ARGS_BYTES
 STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately use; a write in
                           # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
 SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts lands here
@@ -485,6 +518,31 @@ _LIB.osh_rom_stores.restype = ctypes.c_uint32
 # ...and the I/O reads NO model served. Required for the same reason the slots themselves are: an
 # .so without the tally answers an undeclared $ff8260 with a silent 0 on both sides, and the case
 # that read it goes green against a byte the model invented (harness._vet_rom_io_reads_are_modelled).
+# The DECLARED I/O MAP (TRAP_MODEL.md, Phase 15). Required, not probed, for the seeded models'
+# reason: run() installs the map before EVERY run — an empty one included, so a declaration cannot
+# leak from the previous case — and reads its ledger back. An .so without these would answer every
+# declared I/O read with a silent 0 while this file reported the case as having declared it, which
+# is precisely the false green the model closes.
+_IO_MODEL_ABI = ("osh_io_seed", "osh_io_seed_count", "osh_io_seed_max", "osh_io_stale_reads",
+                 "osh_io_stale_first", "osh_io_count", "osh_io_log_addrs", "osh_io_log_widths",
+                 "osh_io_log_vals", "osh_io_dropped")
+_missing_io_model = [sym for sym in _IO_MODEL_ABI if not hasattr(_LIB, sym)]
+if _missing_io_model:
+    raise _stale_oracle(
+        "/".join(_missing_io_model),
+        "so it predates the declared I/O map: a case's `io_seed` would install nothing and every "
+        "byte it declared would answer a silent 0 on both sides.")
+_LIB.osh_io_seed.argtypes = [_u32p, _u8p, ctypes.c_uint32]
+for _symbol in ("osh_io_seed_count", "osh_io_seed_max", "osh_io_stale_reads", "osh_io_stale_first",
+                "osh_io_count", "osh_io_dropped"):
+    getattr(_LIB, _symbol).restype = ctypes.c_uint32
+_LIB.osh_io_log_addrs.restype = _u32p
+_LIB.osh_io_log_widths.restype = _u8p
+_LIB.osh_io_log_vals.restype = _u32p
+# The cap, read from the .so rather than kept as a second copy of os.h's constant here (PSG_NREGS's
+# argument): a shim.c that resizes the map cannot leave this file refusing at the old size.
+IO_SEED_MAX = _LIB.osh_io_seed_max()
+
 for _symbol in ("osh_io_unmodeled_reads", "osh_io_unmodeled_first"):
     if not hasattr(_LIB, _symbol):
         raise _stale_oracle(
@@ -524,6 +582,28 @@ if bool(_LIB.osh_rom_mode()) != ROM_MODE:
     raise RuntimeError(f"the oracle reports rom_mode={bool(_LIB.osh_rom_mode())} but "
                        f"{_cfg.name} is bound with ROM_MODE={ROM_MODE} — the window install "
                        f"did not take, and the image's I/O page would be served as RAM")
+# ...and NEITHER WINDOW MAY REACH THE I/O PAGE, THOUGH THE TWO WOULD FAIL IN OPPOSITE DIRECTIONS.
+# The oracle's read callbacks open with the RAM window (`a < g_ram_end`, shim.c's
+# m68k_read_memory_8/16/32) and decode a device address only after it, while the ROM window is
+# consulted LAST, after the named models and the declared map. So a RAM snapshot reaching the page
+# would have the IMAGE answer where the machine has a chip, and a ROM reaching it the DEVICE answer
+# where the project meant its image to. TOS 1.02 holds by ZERO BYTES: its 192 KB ROM at $fc0000 ends
+# exactly at $ff0000, so this is the pin that fires the day a 256 KB ROM or a machine with more RAM
+# than the page is bound rather than a margin anyone can spend.
+if ROM_MODE:
+    for what, end, consequence in (
+            ("its ROM", ROM_END,
+             "the overlapping bytes would be served by the hardware models instead of by this "
+             "project's image — silently, since both sides would agree on the wrong byte"),
+            ("its RAM snapshot", RAM_END,
+             "the oracle would serve the overlapping bytes out of the SNAPSHOT — its read callbacks "
+             "consult the RAM window before they decode a device — while the candidate has no image "
+             "up there and serves the declared map, so the two would differ in their ordered I/O "
+             "reads and the difference would read as the reconstruction's")):
+        if end > os_map.OS_HW_IO_PAGE:
+            raise RuntimeError(
+                f"{_cfg.name} binds {what} up to {end:#x}, past the start of the memory-mapped I/O "
+                f"page ({os_map.OS_HW_IO_PAGE:#x}): {consequence}")
 
 _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
@@ -611,8 +691,28 @@ def _bench_seed(seed_regs):
     _LIB.osh_bench_seed(buf)
 
 
+def _install_io_seed(io_seed):
+    """Install a run's DECLARED I/O MAP (Phase 15) in the oracle. Called before EVERY run, an empty
+    declaration included: one left installed would make a case that declares nothing readable
+    through another case's map, and under ``-n auto`` unpredictably which one.
+
+    The count the shim kept is compared against what was sent rather than assumed — ``os.h``'s
+    ``os_io_install_seed`` is what decides admissibility, and a shortfall means this file and the
+    ``.so`` disagree about the rule, which would otherwise surface as a read the oracle refuses and
+    the candidate serves.
+    """
+    addrs, values = io_seed_entries(io_seed)
+    _LIB.osh_io_seed((ctypes.c_uint32 * len(addrs))(*addrs),
+                     (ctypes.c_uint8 * len(values))(*values), len(addrs))
+    if _LIB.osh_io_seed_count() != len(addrs):
+        raise RuntimeError(f"the oracle installed {_LIB.osh_io_seed_count()} of this case's "
+                           f"{len(addrs)} declared I/O byte(s) — its os_io_seedable() and this "
+                           f"file's mirror of it disagree, or OS_IO_SEED_MAX is smaller than "
+                           f"emu.IO_SEED_MAX says")
+
+
 def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
-              seed_regs=None):
+              seed_regs=None, *, io_seed=None):
     """Run a cross-compiled reconstruction function (our C built to m68k, loaded into ``mem`` at its
     link addresses) at ``entry`` with one 32-bit stack argument ``arg0`` (the image pointer). No OS
     traps are installed (see osh_run_bench). ``mem`` is a mutable bytearray already holding the loaded
@@ -629,7 +729,23 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     ``seed_regs`` is the entry register file, one value per ``REPORTED_REGS`` name, or None to enter
     exactly as this always has. Seeding is what lets a caller pin the callee-saved file (see
     ``asm_twin.AsmTwins.call``).
+
+    ``io_seed`` is the DECLARED I/O MAP (Phase 15), installed per run exactly as ``run`` installs
+    it, an empty declaration included — a measurement of a core that reads the shifter has to be
+    served the same bytes its differential was, or it is measuring a run down a different path.
+    KEYWORD-ONLY, so that the six positional parameters above keep the meaning every caller already
+    passes them by. There is no ``hw_seed`` door here (the named set's seed PERSISTS between runs,
+    and a bench run clearing it would disarm an asm twin's), so a named slot routed out of this
+    ``io_seed`` has nowhere to go and is refused rather than dropped.
     """
+    routed_hw, io_seed = seed_split(None, io_seed)
+    if routed_hw:
+        raise ValueError(
+            f"run_bench's io_seed declares {', '.join(f'{addr:#x}' for addr in sorted(routed_hw))}, "
+            f"which the Phase-7 NAMED SET owns. A bench run has no hw_seed door — the named set's "
+            f"declaration persists between runs so this entry point deliberately leaves it alone — "
+            f"so the byte would be silently undeclared. Install it with the emu.run that armed the "
+            f"model, or measure a core that does not read it (TRAP_MODEL.md, Phases 7 and 15)")
     # RESOLVED HERE AND NOT AS A DEFAULT ARGUMENT: a default is bound once at def time, so a
     # caller that shrinks `emu.BENCH_MAX_INSNS` (the door tests do, to turn a would-be hang
     # into a fast red) would shrink every segment EXCEPT the first — which is the one segment
@@ -648,6 +764,7 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     base, span = door if door else (0, 0)
     _LIB.osh_bench_door(base & 0xFFFFFFFF, span & 0xFFFFFFFF)
     _bench_seed(seed_regs)
+    _install_io_seed(io_seed)
     status = _LIB.osh_run_bench(buf, size, entry & 0xFFFFFFFF, arg0 & 0xFFFFFFFF,
                                 sp & 0xFFFFFFFF, sentinel & 0xFFFFFFFF, max_insns, out)
     _release_unless_resumable(status)
@@ -917,6 +1034,153 @@ def hw_seed_bytes(hw_seed):
         values[slot] = value
         known |= 1 << slot
     return bytes(values), known
+
+
+# The dict pair `io_seed_entries` last encoded, its contents at the time, and what it produced.
+# `harness.differential` asks for the same declaration up to four times a case (the oracle run, the
+# candidate arming, and both again under `poison`), and a battery that declares a whole palette
+# re-walks 32 entries through four rules each time for an answer that cannot have changed.
+# IDENTITY *AND* CONTENTS, not identity alone: a case is free to mutate a dict it has already
+# passed, and a memo keyed on `is` would then serve the previous run's map — silently, which is the
+# one failure worth more than the encoding it saves. Comparing the two dicts is a C-level compare
+# against a whole revalidation.
+_io_seed_memo = None
+
+
+def io_seed_entries(io_seed):
+    """``{address: byte}`` -> ``(addresses, values)``: the pair BOTH sides take (Phase 15).
+
+    One implementation, for ``psg_seed_bytes``'s reason — ``run()`` installs the pair in the oracle
+    and ``harness.differential`` hands the same pair to the candidate's ``g_io_reset``, so the two
+    cannot disagree about what the case's dict means. Entries are sorted by address, so two cases
+    that declare the same bytes install the same map whatever order the dict was written in.
+
+    Every rejection is a ``ValueError`` rather than a dropped entry: a case that declares a byte
+    this model may not serve would otherwise read a fabricated 0 while its own source says the byte
+    was declared, which is the false green the model exists to close. The rules are ``os.h``'s
+    ``os_io_seedable``, mirrored here only so the message can say WHICH one was broken, plus the
+    24-bit BUS FORM every address in this kit is spelled in.
+
+    A Phase-7 NAMED SLOT does not reach here at all: ``seed_split`` routes it into the named set's
+    own installer before either side is seeded (ONE DOOR, TWO MODELS). A caller that reaches past
+    that and hands one in anyway is not served silently — ``os_io_install_seed`` drops it, and both
+    installers report the shortfall loudly (``run()`` raises, the candidate charges ``os_refused``).
+    """
+    global _io_seed_memo
+    if _io_seed_memo is not None:
+        seen, contents, encoded = _io_seed_memo
+        if io_seed is seen and io_seed == contents:
+            return encoded
+    entries = sorted((io_seed or {}).items())
+    for addr, value in entries:
+        canonical = addr & os_map.OS_BUS_ADDR_MASK
+        if addr != canonical:
+            raise ValueError(
+                f"io_seed[{addr:#x}] is not the 24-bit BUS FORM this model is spelled in. The "
+                f"68000's address bus is 24 bits wide, so the machine decodes this access at "
+                f"{canonical:#x} and that is the address to declare — the oracle folds an access "
+                f"before it decodes one, so a map keyed on the untranslated form holds an entry no "
+                f"read can ever match{_io_owner_note(canonical)} (TRAP_MODEL.md, Phase 15)")
+        if addr < os_map.OS_HW_IO_PAGE:
+            raise ValueError(
+                f"io_seed[{addr:#x}] is below the I/O page ({os_map.OS_HW_IO_PAGE:#x}). Ordinary "
+                f"off-image memory has read 0 since the kit's first run and no model declares it — "
+                f"an address down there is a defect in the case rather than a byte to seed")
+        if os_map.OS_PSG_PORT_SELECT <= addr < os_map.OS_PSG_BLOCK_END:
+            raise ValueError(
+                f"io_seed[{addr:#x}] is inside the YM2149's block "
+                f"({os_map.OS_PSG_PORT_SELECT:#x}..{os_map.OS_PSG_BLOCK_END - 1:#x}), which "
+                f"Phase 6 models and which this model cannot be routed into: the chip's file is "
+                f"keyed by REGISTER NUMBER, not by address, and which register a read of "
+                f"{os_map.OS_PSG_PORT_SELECT:#x} answers depends on what the run last LATCHED "
+                f"there — so an address-keyed byte could not say which register it declared. "
+                f"Phase 6 also carries two refusals of its own (an unselected latch, an unseeded "
+                f"register) that a byte served from this map would reach none of. Declare the chip "
+                f"with `psg_seed={{<register>: <byte>}}` instead")
+        # `0 <= value <= 0xFF` alone admits a float (2.5 passes it) and raises TypeError on a
+        # string, neither of which is the ValueError this function's docstring promises.
+        if not isinstance(value, int) or not 0 <= value <= 0xFF:
+            raise ValueError(f"io_seed[{addr:#x}] = {value!r} is not a byte")
+    if len(entries) > IO_SEED_MAX:
+        raise ValueError(
+            f"io_seed declares {len(entries)} bytes, past os.h's OS_IO_SEED_MAX of {IO_SEED_MAX}. "
+            f"Raise the constant with the case that needs it, on both sides at once")
+    encoded = (tuple(addr for addr, _ in entries), tuple(value for _, value in entries))
+    # `dict(io_seed) if io_seed` would store an EMPTY dict as its own contents, and the guard
+    # above would then compare the object with itself — vacuously true however it is mutated.
+    _io_seed_memo = (io_seed, None if io_seed is None else dict(io_seed), encoded)
+    return encoded
+
+
+def _io_owner_note(addr):
+    """What to add to the untranslated-form refusal when the address it really names is not this
+    model's to serve. Empty for the ordinary case, so the message stays one sentence."""
+    if addr in HW_ADDRS:
+        return (f"; {addr:#x} is a Phase-7 NAMED SLOT, which `io_seed` routes into `hw_seed` for you "
+                f"once it is spelled as the bus form")
+    if os_map.OS_PSG_PORT_SELECT <= addr < os_map.OS_PSG_BLOCK_END:
+        return f"; {addr:#x} is inside the YM2149's block, which `psg_seed` owns"
+    return ""
+
+
+def seed_split(hw_seed, io_seed):
+    """Route the case's ONE I/O declaration into the TWO models that own its addresses.
+
+    ONE DOOR, TWO MODELS. A case author reading a disassembly sees `$fffa01` and `$ff8260` as the
+    same kind of thing — a byte the machine held on entry — and which of them Phase 7 happens to
+    name is the KIT's bookkeeping, not the case's. So `io_seed` accepts every I/O byte, and this is
+    where a named slot leaves it for `hw_seed`'s installer: the two models keep their separate rules
+    (the volatile re-read, the model default, the split-register exemption) and their separate
+    ledgers, while the declaration a case writes is one dict.
+
+    Returns ``(hw_seed, io_seed)`` as ``hw_seed_bytes`` and ``io_seed_entries`` take them. Called by
+    ``run()`` and by ``harness.arm_candidate`` before either side is seeded, so both shores route
+    identically — were only one of them to route, the oracle would serve a slot the candidate
+    refused and the mismatch would read as a reconstruction bug.
+
+    The YM2149's block is NOT routed, and that asymmetry is the chip's rather than a choice: Phase 6
+    is keyed by register number and a read of `$ff8800` answers whatever the run last latched, so an
+    address-keyed byte could not say which register it declared. ``io_seed_entries`` refuses it by
+    name.
+    """
+    routed = {}
+    for addr, value in (io_seed or {}).items():
+        if addr not in HW_ADDRS:
+            continue
+        if hw_seed and addr in hw_seed:
+            raise ValueError(
+                f"{addr:#x} is declared by BOTH this case's hw_seed ({hw_seed[addr]!r}) and its "
+                f"io_seed ({value!r}). It is one byte of one machine and the two declarations are "
+                f"two claims about it; which one won would be this function's arbitrary order "
+                f"rather than the case's meaning. Declare it once (TRAP_MODEL.md, Phase 15)")
+        routed[addr] = value
+    if not routed:
+        # The ordinary case, and it hands the CALLER'S OWN dict back rather than a copy of it:
+        # `io_seed_entries` memoises on the dict it was given, and a fresh object per call would
+        # re-encode the whole declaration four times a differential for an answer that cannot have
+        # changed.
+        return hw_seed, io_seed
+    return {**(hw_seed or {}), **routed}, {a: v for a, v in io_seed.items() if a not in routed}
+
+
+def io_events():
+    """The declared I/O map's whole ordered SERVED-read stream from the most recent ``run()``.
+
+    A list of ``(address, width, value)`` in the order the run read them. Only reads the map SERVED
+    are here: an undeclared byte is not an entry on either side — it is ``io_unmodeled_reads``'
+    business, whose remedy is a declaration — which is what makes the stream empty, and this whole
+    model free, for a case that declares nothing.
+
+    Nothing here touches an image byte, and a routine that reads a register only to clear it leaves
+    no register behind either, so ``harness.differential`` comparing this stream against the
+    candidate's (``src/hw.c``) is that read's entire witness.
+    """
+    n = _LIB.osh_io_count()
+    if not n:
+        return []                # the ordinary case: three FFI calls bought an empty list
+    addrs, widths, vals = (_LIB.osh_io_log_addrs(), _LIB.osh_io_log_widths(),
+                           _LIB.osh_io_log_vals())
+    return [(addrs[i], widths[i], vals[i]) for i in range(n)]
 
 
 def schedule_entries(schedule):
@@ -1328,8 +1592,27 @@ def _vet_heap_within_bounds(heap_end):
         f"it and raise `heap_limit` in {_cfg.dir / project.CONFIG_NAME}.")
 
 
+def _declared_hw_door(passed_hw_seed, hw_seed):
+    """How a run's modelled-hardware declaration got here: `hw_seed`, `io_seed`, or both.
+
+    `seed_split` routes every Phase-7 NAMED SLOT out of `io_seed` and into `hw_seed` before the
+    audio-capture guards read either, so a refusal that said "a hw_seed was passed" unconditionally
+    would name a parameter the case never wrote — and send its author looking for a seed that is not
+    in their call.
+    """
+    routed = sorted(set(hw_seed) - set(passed_hw_seed or {}))
+    if not routed:
+        return "a hw_seed was passed"
+    named = ", ".join(f"{addr:#x}" for addr in routed)
+    if not passed_hw_seed:
+        return (f"an io_seed declaring {named} was passed, which `emu.seed_split` routes into the "
+                f"modelled-hardware seed (the Phase-7 NAMED SET owns those addresses)")
+    return (f"a hw_seed was passed, and an io_seed declaring {named}, which `emu.seed_split` routes "
+            f"into the same seed")
+
+
 def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw_seed=None,
-        schedule=None, wait_sites=None):
+        io_seed=None, schedule=None, wait_sites=None):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
     ``regs`` maps register name -> value (e.g. {"a1": 0x1e000}); A7 is forced to STACK_TOP.
@@ -1367,6 +1650,14 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     every run. An entry that never came due sinks the run: a wait loop whose agent never fired ran
     to the instruction cap, and reporting only "did not reach rts" would name the symptom.
 
+    ``io_seed`` is ``{address: byte}`` over ANY byte of the I/O page the named models do not own
+    (TRAP_MODEL.md, Phase 15) — ``{0xff8260: 0x02}`` for the shifter's resolution byte XBIOS
+    ``Getrez`` reads. A declared byte is a per-run CONSTANT served on every read of it; an
+    undeclared one is unchanged, the silent 0 an off-image read has always answered, counted in
+    ``out_regs["io_unmodeled_reads"]`` and refused in ROM mode by ``harness.differential``. It too
+    is re-installed before every run. Declaring an address one of the named models owns is a
+    ``ValueError`` rather than a silent override — see ``io_seed_entries``.
+
     ``wait_sites`` is the list of PCs at which this run BUSY-WAITS, and it defaults to the trigger
     PCs the schedule names — which is right for every run with one wait in it. Arrivals are counted
     per site, not per run, so that ``harness.differential`` can compare them against the candidate's
@@ -1374,6 +1665,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     that wait goes uncounted (os.h, "WAIT SITES", has what a run TOTAL loses).
     """
     regs = regs or {}
+    # ONE DOOR, TWO MODELS: a named slot declared through `io_seed` becomes a `hw_seed` entry here,
+    # BEFORE the audio-capture guards below — so the mode's refusal of a case-declared hardware byte
+    # covers a routed declaration exactly as it covers a direct one. Routed or direct, the mode
+    # installs its own profile over it and the case's claim would be silently ignored.
+    passed_hw_seed = hw_seed        # ...and what the CASE wrote, so a refusal can name its door
+    hw_seed, io_seed = seed_split(hw_seed, io_seed)
     if audio_capture_on():
         # ONE-SIDED CAPTURE. The mode is oracle-global, so a run can be made under someone else's
         # capture — an extractor in the same process, a block that raised on its way out — and every
@@ -1400,12 +1697,13 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
                 "`with emu.audio_capturing():`) or drop the seed.")
         if hw_seed is not None:
             raise RuntimeError(
-                "a hw_seed was passed while the audio-capture mode is armed. The mode DECLARES the "
-                "modeled hardware bytes itself — the 50 Hz colour-ST profile a replayer picks its "
-                "tempo from — and installs that profile over this seed, so the case's declaration "
-                "would be silently ignored (emu.hw_capture_profile() is what the run would really "
-                "read). Disarm the mode (emu.audio_capture(False), or scope it with "
-                "`with emu.audio_capturing():`) or drop the seed.")
+                f"{_declared_hw_door(passed_hw_seed, hw_seed)} while the audio-capture mode is "
+                f"armed. The mode DECLARES the modeled hardware bytes itself — the 50 Hz colour-ST "
+                f"profile a replayer picks its tempo from — and installs that profile over this "
+                f"seed, so the case's declaration would be silently ignored "
+                f"(emu.hw_capture_profile() is what the run would really read). Disarm the mode "
+                f"(emu.audio_capture(False), or scope it with `with emu.audio_capturing():`) or "
+                f"drop the declaration.")
     # Deliberately unconditional, seed or none: leaving the previous run's seed installed would make
     # a case that declares nothing readable through another case's declaration, under -n auto
     # unpredictably. (Under audio capture the shim ignores it — the file spans runs there by contract
@@ -1416,6 +1714,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # shim installs its own profile over this, which is why passing one under the mode is refused).
     hw_values, hw_known = hw_seed_bytes(hw_seed)
     _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
+    _install_io_seed(io_seed)   # ...and the DECLARED I/O MAP (Phase 15), for the same reason
     # ...and the external agent's stores, unconditionally for the same reason: a schedule left
     # installed would fire inside the next case, which under -n auto is not even a stable one.
     scheduled, sites = _install_schedule(schedule, wait_sites)
@@ -1526,6 +1825,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
         causes.append(f"its hardware writes overflowed the ledger — {dropped_hw_writes} store(s) "
                       f"past os.h's OS_HW_WRITE_LOG_MAX cap were DROPPED, so hw_writes() is a "
                       f"truncated store stream, not this run's whole one")
+    # ...and the DECLARED I/O MAP's ledger, on the same footing and for the same reason again.
+    dropped_io_reads = _LIB.osh_io_dropped()
+    if dropped_io_reads:
+        causes.append(f"its declared I/O reads overflowed the ledger — {dropped_io_reads} read(s) "
+                      f"past os.h's OS_IO_LOG_MAX cap were DROPPED, so io_events() is a truncated "
+                      f"read stream, not this run's whole one")
     # The addresses come from the mask, never from a restated pair: the modeled set grows (os.h owns
     # it), and a message naming two of four would send the reader looking at the wrong register.
     if audio_capture_on() and _LIB.osh_hw_wide():
@@ -1596,6 +1901,14 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # harness.differential is where a fabricated byte could produce a false green.
     out_regs["io_unmodeled_reads"] = _LIB.osh_io_unmodeled_reads()
     out_regs["io_unmodeled_first"] = _LIB.osh_io_unmodeled_first()
+    # The DECLARED I/O MAP's off-image surfaces (TRAP_MODEL.md, Phase 15). Reported rather than
+    # raised on, exactly as the hardware model's are and for the same reason (see run()'s
+    # docstring): harness._vet_io_reads_are_declared refuses a stale read, and _vet_io_state
+    # compares the served stream against the candidate's.
+    out_regs["io_events"] = io_events()              # the ordered (address, width, value) stream
+    out_regs["io_stale_reads"] = _LIB.osh_io_stale_reads()   # ...reads of a byte THIS run stored to
+    out_regs["io_stale_first"] = _LIB.osh_io_stale_first()   # ...and the first such address
+    out_regs["io_declared"] = _LIB.osh_io_seed_count()       # the map's size, as a drift cross-check
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
     # ...and the ordered (kind, value) stream of every OTHER off-image call the model serves. Same
