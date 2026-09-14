@@ -6,7 +6,8 @@
 # processor defaults to 68000:BE:32:default (use 68000:BE:32:MC68030 for 68010/020/030 code).
 #
 # The LineAResolve / SeedFunctions steps below are the same three the .PRG path runs
-# (same SLEIGH, same entry-then-follow-flow shape) — keep them in sync with headless.sh.
+# (same SLEIGH, same entry-then-follow-flow shape) — keep them in sync with headless.sh
+# (.PRG) and load_rom.sh (ROM images), which run the same shared steps.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

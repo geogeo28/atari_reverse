@@ -17,10 +17,19 @@ Grep the disassembly / decomp for both (`\$ff(ff)?8[0-9a-f]{3}`, `\$fffffaxx`, `
 | `$ffff8800/8802` | **YM2149 PSG** | sound, and reads for joystick/keyboard/drive via port A/B → see `sound.md` |
 | `$ffff8604–860D` | **DMA / disk** | floppy/HD |
 | `$ffff8900–8925` | **STE DMA sound** + the LMC1992 mixer on MicroWire | `8901` control, `8903/05/07` start, `890F/11/13` end, `8921` mode; `8922` MicroWire data, `8924` mask — below |
+| `$ffff8A00–8A3D` | **BLiTTER** (Mega ST / STE) | `8A00–8A1E` halftone RAM, `8A20/8A22` source X/Y increment, `8A24` source address, `8A28/8A2A/8A2C` endmasks 1–3, `8A2E/8A30` dest X/Y increment, `8A32` dest address, `8A36/8A38` X/Y count, `8A3A` HOP/OP, `8A3C` line number + BUSY/HOG, `8A3D` skew |
 | `$fffffa00–fa2F` | **MFP 68901** | timers A–D, interrupt enable/mask, `fa01` GPIP |
 | `$fffffc00/fc02` | **IKBD ACIA** | keyboard/mouse/joystick controller (status/data) |
 
 Palette word = ST `0x0RGB` (3 bits/channel) or STE 4-bit — see `graphics.md`.
+
+**Every register above has a second address.** The ST decodes `$00FFxxxx` and `$FFFFxxxx` to the
+same device (the 68000 puts nothing on A24–A31), and an absolute-long operand costs the same
+either way, so code is free to use either — TOS 1.02 itself drives the blitter and the VDI's
+palette calls through `$00FF8Axx`/`$00FF8240` while using `$FFFFxxxx` everywhere else. A scan
+that only looks for `$FFFF….` operands misses those accesses, and a disassembly loaded without
+a memory block at `$00FF8000` resolves them to nothing
+(`projects/tos102us/COMPONENTS.md`, "Where the hardware really is").
 
 ### The STE sound block
 
@@ -70,8 +79,10 @@ BuggyBoy's `flip_screen` toggles an index and writes the base to `$ffff8200`, th
   only caller of `joyvec` is TOS's own packet parser, which lives behind the vector the game has just
   taken, so Flying Shark's `tos_joyvec_handler` is correct, installed, and unreachable
   (`projects/flyingshark/notes/frontend.md` §4).
-- Low-memory system vars worth knowing: `0x420` memvalid, `0x4A2` _v_bas_ad (screen base),
-  `0x484` **conterm** (keyboard/click config — games zero it), `0x466` _dumpflg.
+- Low-memory system vars worth knowing: `0x420` memvalid, `0x44E` _v_bas_ad (screen base — `0x4A2`
+  is `savptr`, the BIOS's register-save pointer; XBIOS `Logbase` reads `$44e`),
+  `0x484` **conterm** (keyboard/click config — games zero it), `0x4EE` _dumpflg (`0x466` is
+  `_frclock`). The full standard table is `projects/tos102us/names.txt`.
 - Supervisor mode via GEMDOS `Super` or XBIOS `Supexec` is needed to touch most of this.
 
 ## Line-A

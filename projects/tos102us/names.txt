@@ -1,0 +1,545 @@
+# names.txt — TOS 1.02 (US) ROM, TOS102US.img, 196,608 B, dated 1987-04-22.
+#
+# ADDRESS CONVENTION: a Ghidra address here IS a REAL ROM/machine address. The ROM is
+# imported raw at 0xFC0000 (where it is decoded on the ST), not at the 0x10000 image
+# base the .PRG projects use, and it carries no relocation table — every absolute
+# operand in the image already resolves. RAM addresses ($0..$C9FF), the I/O page
+# ($FFFF8000..) and the cartridge port ($FA0000..) are memory blocks RomLoader creates,
+# so a `var` line can name an address the file does not contain.
+#
+# Format: `fn`/`var`/`cmt`/`param`/`proto`, one directive per line, ONE `cmt` per address
+# (ApplyNames sets rather than appends — a second cmt silently deletes the first).
+# A trailing `# ctx` marks a name taken from a dispatch-table position or a published ABI
+# rather than from a read of the body; those are the refinable ones.
+#
+# PROVENANCE of the dispatch-table names below: every table was located by reading the
+# dispatcher that indexes it (addresses in COMPONENTS.md), and the selector->name mapping
+# is the published TOS ABI. Three independent cross-checks came out clean, which is why
+# the numbering is trusted: every GEMDOS selector the ABI leaves undefined lands on the
+# one stub at 0xfc933e and every defined one does not; the same holds for the AES's gaps
+# against 0xfe64a6 and the XBIOS's against 0xfc0670; and XBIOS Physbase/Logbase/Getrez/
+# Setscreen/Random/Vsync were confirmed from their bodies (they touch $ffff8201/$44e/
+# $ffff8260/$4ba/$466).
+
+# ---------------------------------------------------------------------------
+# OS header (0xFC0000..0xFC002F) — the fields RomLoader also labels on import.
+# ---------------------------------------------------------------------------
+var 0xfc0000 os_header
+cmt 0xfc0000 TOS OS header. bra.s to the reset PC, version 0x0102, date 0x04221987 (1987-04-22).
+var 0xfc0002 os_version
+var 0xfc0004 os_reset_pc
+var 0xfc0008 os_beg
+var 0xfc000c os_end
+var 0xfc0010 os_rsv1
+var 0xfc0014 os_magic
+var 0xfc0018 os_date
+var 0xfc001c os_conf
+var 0xfc001e os_dosdate
+var 0xfc0020 os_p_root
+var 0xfc0024 os_pkbshift
+var 0xfc0028 os_p_run
+var 0xfc002c os_p_rsv2
+var 0xfefff4 gem_mupb
+cmt 0xfefff4 GEM memory-usage parameter block: magic 0x87654321, GEM RAM top 0x0000CA00, GEM entry 0x00FD9ECA.
+
+# ---------------------------------------------------------------------------
+# 68000 exception vectors TOS installs (the install site is in COMPONENTS.md).
+# ---------------------------------------------------------------------------
+var 0x0008 vec_bus_error
+var 0x000c vec_address_error
+var 0x0010 vec_illegal
+var 0x0014 vec_divide_by_zero
+var 0x0028 vec_line_a
+var 0x002c vec_line_f
+var 0x0060 vec_spurious
+var 0x0064 vec_level1
+var 0x0068 vec_level2_hbl
+var 0x006c vec_level3
+var 0x0070 vec_level4_vbl
+var 0x0074 vec_level5
+var 0x0078 vec_level6_mfp
+var 0x007c vec_level7
+var 0x0084 vec_trap1_gemdos
+var 0x0088 vec_trap2_gem
+var 0x00b4 vec_trap13_bios
+var 0x00b8 vec_trap14_xbios
+var 0x0100 vec_mfp_base
+var 0x0118 vec_mfp_acia
+
+# ---------------------------------------------------------------------------
+# TOS system variables. $380..$3FF is the exception dump the bombs handler writes;
+# $400..$5B3 is the documented system-variable block.
+# ---------------------------------------------------------------------------
+var 0x0380 proc_lives
+var 0x0384 proc_regs
+var 0x03c4 proc_pc
+var 0x03c8 proc_usp
+var 0x03cc proc_stk
+var 0x0400 etv_timer
+var 0x0404 etv_critic
+var 0x0408 etv_term
+var 0x040c etv_xtra
+var 0x0420 memvalid
+var 0x0424 memctrl
+var 0x0426 resvalid
+var 0x042a resvector
+var 0x042e phystop
+var 0x0432 _membot
+var 0x0436 _memtop
+var 0x043a memval2
+var 0x043e flock
+var 0x0440 seekrate
+var 0x0442 _timr_ms
+var 0x0444 _fverify
+var 0x0446 _bootdev
+var 0x0448 palmode
+var 0x044a defshiftmd
+var 0x044c sshiftmd
+var 0x044e _v_bas_ad
+var 0x0452 vblsem
+var 0x0454 nvbls
+var 0x0456 _vblqueue
+var 0x045a colorptr
+var 0x045e screenpt
+var 0x0462 _vbclock
+var 0x0466 _frclock
+var 0x046a hdv_init
+var 0x046e swv_vec
+var 0x0472 hdv_bpb
+var 0x0476 hdv_rw
+var 0x047a hdv_boot
+var 0x047e hdv_mediach
+var 0x0482 _cmdload
+var 0x0484 conterm
+var 0x0486 trp14ret
+var 0x048a criticret
+var 0x048e themd
+var 0x049e _md
+var 0x04a2 savptr
+var 0x04a6 _nflops
+var 0x04a8 con_state
+var 0x04ac save_row
+var 0x04ae sav_context
+var 0x04b2 _bufl
+var 0x04ba _hz_200
+var 0x04be the_env
+var 0x04c2 _drvbits
+var 0x04c6 _dskbufp
+var 0x04ca _autopath
+var 0x04ce _vbl_list
+var 0x04ee _dumpflg
+var 0x04f0 _prtabt
+var 0x04f2 _sysbase
+var 0x04f6 _shell_p
+var 0x04fa end_os
+var 0x04fe exec_os
+var 0x0502 scr_dump
+var 0x0506 prv_lsto
+var 0x050a prv_lst
+var 0x050e prv_auxo
+var 0x0512 prv_aux
+var 0x0516 pun_ptr
+var 0x051a memval3
+var 0x051e xconstat
+var 0x053e xconin
+var 0x055e xcostat
+var 0x057e xconout
+var 0x059e _longframe
+var 0x05a0 _p_cookies
+cmt 0x05a0 Cookie-jar pointer. TOS 1.02 never writes it (the jar arrives with TOS 1.06); labelled because programs read it here.
+var 0x05a4 ramtop
+var 0x05a8 ramvalid
+var 0x05ac bell_hook
+var 0x05b0 kcl_hook
+
+# ---------------------------------------------------------------------------
+# Hardware registers (docs/hardware-map.md).
+# ---------------------------------------------------------------------------
+var 0xffff8001 hw_memctrl
+var 0xffff8201 hw_vid_base_hi
+var 0xffff8203 hw_vid_base_mid
+var 0xffff8205 hw_vid_count_hi
+var 0xffff8207 hw_vid_count_mid
+var 0xffff8209 hw_vid_count_lo
+var 0xffff820a hw_sync_mode
+var 0xffff8240 hw_palette
+var 0xffff8260 hw_resolution
+var 0xffff8604 hw_dma_data
+var 0xffff8606 hw_dma_mode
+var 0xffff8609 hw_dma_base_hi
+var 0xffff860b hw_dma_base_mid
+var 0xffff860d hw_dma_base_lo
+var 0xffff8800 hw_psg_select
+var 0xffff8802 hw_psg_write
+var 0xfffffa01 hw_mfp_gpip
+var 0xfffffa03 hw_mfp_aer
+var 0xfffffa05 hw_mfp_ddr
+var 0xfffffa07 hw_mfp_iera
+var 0xfffffa09 hw_mfp_ierb
+var 0xfffffa0b hw_mfp_ipra
+var 0xfffffa0d hw_mfp_iprb
+var 0xfffffa0f hw_mfp_isra
+var 0xfffffa11 hw_mfp_isrb
+var 0xfffffa13 hw_mfp_imra
+var 0xfffffa15 hw_mfp_imrb
+var 0xfffffa17 hw_mfp_vr
+var 0xfffffa19 hw_mfp_tacr
+var 0xfffffa1b hw_mfp_tbcr
+var 0xfffffa1d hw_mfp_tcdcr
+var 0xfffffa1f hw_mfp_tadr
+var 0xfffffa21 hw_mfp_tbdr
+var 0xfffffa23 hw_mfp_tcdr
+var 0xfffffa25 hw_mfp_tddr
+var 0xfffffa27 hw_mfp_scr
+var 0xfffffa29 hw_mfp_ucr
+var 0xfffffa2b hw_mfp_rsr
+var 0xfffffa2d hw_mfp_tsr
+var 0xfffffa2f hw_mfp_udr
+var 0xfffffc00 hw_acia_ikbd_ctrl
+var 0xfffffc02 hw_acia_ikbd_data
+var 0xfffffc04 hw_acia_midi_ctrl
+var 0xfffffc06 hw_acia_midi_data
+
+# The SAME registers through their 24-bit addresses, which is how TOS itself reaches the
+# blitter and, in the VDI's colour calls, the palette: the ST decodes $00FFxxxx and $FFFFxxxx
+# to one device, and an absolute-long operand costs the same either way. Ten blitter `lea`
+# sites (0xfc47be, 0xfc4852, 0xfc48b6, 0xfc4936, 0xfca20a, 0xfca5ca, 0xfcee6a, 0xfcf9be,
+# 0xfcfccc, 0xfd0674) and four palette sites (0xfd2e32, 0xfd2e66, 0xfd2ee4, 0xfd2f06) —
+# RomLoader creates the IO_ALIAS block so these resolve to a label instead of to nothing.
+var 0x00ff8240 hw_palette_alias
+var 0x00ff8a20 hw_blitter_src_xinc
+var 0x00ff8a28 hw_blitter_endmask1
+var 0x00ff8a3c hw_blitter_lineno_ctrl
+
+# ---------------------------------------------------------------------------
+# Boot chain, interrupt handlers and the trap/exception entry points.
+# Each name is from a body read; the install site is given in the comment.
+# ---------------------------------------------------------------------------
+fn 0xfc0030 os_reset
+cmt 0xfc0030 Reset entry (OS header +0x04). sr := 0x2700, RESET, probe the cartridge magic 0xFA52235F at $FA0000, then memory sizing, vector table, hardware init, AUTO folder, desktop.
+fn 0xfc0b50 os_exception_bombs
+cmt 0xfc0b50 Exception handler installed into $08..$FC by the loop at 0xfc0334 with the vector number in the ignored top address byte. Dumps d0-a7 to proc_regs ($384), the PC to $3c4 and the USP to $3c8, then draws the bombs.
+fn 0xfc07ce os_rte_stub
+cmt 0xfc07ce Bare rte. Installed at 0xfc0340 into $14 (divide by zero), at 0xfc034c into the seven autovectors $64..$7c, and at 0xfc0366 into $88 (trap #2) until the GEM dispatcher replaces it.
+fn 0xfc06c8 hbl_handler
+cmt 0xfc06c8 Level-2 (HBL) autovector handler, installed at 0xfc035e into $68.
+fn 0xfc06de vbl_handler
+cmt 0xfc06de Level-4 (VBL) autovector handler, installed at 0xfc0356 into $70: honours vblsem ($452), counts _frclock ($466), reloads the shifter base from _v_bas_ad ($44e) and runs the _vblqueue ($456).
+fn 0xfc07ee etv_critic_default
+cmt 0xfc07ee Default critical-error handler (moveq #-1,d0; rts), installed at 0xfc0386 into etv_critic ($404).
+fn 0xfc07fc trap_dispatch_common
+cmt 0xfc07fc Shared BIOS/XBIOS trap tail: switch to savptr ($4a2) for the register frame, read the selector, bounds-check it against the table's first word, index longwords; a NEGATIVE entry is a pointer to a RAM vector (hdv_bpb/hdv_rw/hdv_mediach) rather than a routine.
+fn 0xfc07f8 bios_trap13
+cmt 0xfc07f8 trap #13 (BIOS) entry, installed at 0xfc036a into $b4. Loads a0 with the BIOS table at 0xfc0846 and falls into trap_dispatch_common.
+fn 0xfc07f2 xbios_trap14
+cmt 0xfc07f2 trap #14 (XBIOS) entry, installed at 0xfc0372 into $b8. Loads a0 with the XBIOS table at 0xfc0878 and falls into trap_dispatch_common.
+fn 0xfc4f6e gemdos_trap1
+cmt 0xfc4f6e trap #1 (GEMDOS) entry, installed at 0xfc4e5e into $84. Serves Super (0x20) inline, otherwise builds the process register frame off p_run ($87ce) and calls gemdos_dispatch.
+fn 0xfc94e4 gemdos_dispatch
+cmt 0xfc94e4 GEMDOS function dispatcher (compiled C: link a6, args at 8(a6)). Rejects a selector above 0x57 with EINVFN (-32), else indexes the 6-byte records at 0xfd307a (handler longword + argument-descriptor word).
+fn 0xfc4ebc gem_trap2_boot
+cmt 0xfc4ebc trap #2 (GEM) entry installed at 0xfc4e72 into $88 before the AES exists: d0 == 0x73 calls the VDI at 0xfc9f9e, d0 == -1 returns that address in d0, d0 == 0 takes the abort path, anything else chains to the previous vector saved at 0x16d6.
+fn 0xfe3ea6 gem_trap2_aes
+cmt 0xfe3ea6 trap #2 (GEM) entry installed at 0xfe3c78 into $88 once the AES is up: d0 == 0xC8/0xC9 enters the AES at 0xfe65aa, d0 == 0 terminates via GEMDOS Pterm(0), anything else chains to the vector saved at 0x8c2a.
+fn 0xfc9f9e vdi_entry
+cmt 0xfc9f9e VDI entry (GEM trap #2, d0 = 0x73). Copies the caller's five-array parameter block from d1 into the VDI's own RAM at 0x299e, copies ptsin to 0x19da, calls vdi_dispatch and returns the value at 0x171e.
+fn 0xfca9f6 vdi_dispatch
+cmt 0xfca9f6 VDI opcode dispatcher. Finds the workstation by handle, loads the attribute state, then indexes opcodes 1..39 in the table at 0xfd372c and 100..131 in the table at 0xfd37c8.
+fn 0xfe65aa aes_entry
+cmt 0xfe65aa AES entry (GEM trap #2, d0 = 0xC8). Reached from gem_trap2_aes; calls the AES dispatcher through the Line-F call table.
+fn 0xfe5d9c aes_dispatch
+cmt 0xfe5d9c AES opcode dispatcher: sub #10 / cmp #115 bounds the opcode to 10..125, then jumps through the table at 0xfef834.
+fn 0xfe64e6 aes_marshal_arrays
+cmt 0xfe64e6 AES parameter-block marshalling: copies the caller's contrl/intin/addrin arrays into local frames, calls aes_dispatch through Line-F $f2b0, then copies intout/addrout back.
+fn 0xfc9f0c linea_dispatch
+cmt 0xfc9f0c Line-A handler, installed at 0xfc037a into $28. Reads the faulting $aXXX word, masks the low 12 bits, bounds-checks it to 15 and jumps through the 16-entry table at 0xfc9f4a, advancing the stacked PC past the word.
+fn 0xfee8c2 linef_handler
+cmt 0xfee8c2 GEM Line-F call handler, copied into a Malloc'd buffer and installed into $2c by the AES init at 0xfd9f4a. An EVEN $fXXX word is a one-word call through the 658-entry table at 0xfee900 (index = the low 12 bits as a byte offset); an ODD one is a return (unlk a6; rts, plus a movem mask of (op & 0x0ffe) * 4).
+fn 0xfd9eca gem_entry
+cmt 0xfd9eca GEM entry point named by the memory-usage parameter block at 0xfefff4.
+fn 0xfc0688 memory_size_probe   # ctx
+cmt 0xfc0688 Called from the reset path at 0xfc0050/0xfc00e8 through the a6 return-address convention (lea ret,a6 / bra sub / jmp (a6)) rather than by bsr.
+
+# ---------------------------------------------------------------------------
+# Dispatch tables and the data blocks the handlers name.
+# ---------------------------------------------------------------------------
+var 0xfc0846 bios_function_table
+cmt 0xfc0846 BIOS (trap #13) dispatch table: count word 0x000c, then 12 longwords. Entries 4/7/9 have bit 31 set and are pointers to the RAM vectors hdv_rw ($476), hdv_bpb ($472), hdv_mediach ($47e).
+var 0xfc0878 xbios_function_table
+cmt 0xfc0878 XBIOS (trap #14) dispatch table: count word 0x0041, then 65 longwords (opcodes 0..64). 0x28..0x3f are unimplemented and point at the rts stub.
+var 0xfd307a gemdos_function_table
+cmt 0xfd307a GEMDOS (trap #1) dispatch table: 88 six-byte records for selectors 0x00..0x57 — handler longword plus an argument-descriptor word the dispatcher reads at +4.
+var 0xfd372c vdi_opcode_table_1
+cmt 0xfd372c VDI dispatch table for opcodes 1..39 (39 longwords). The 100..131 table follows it at 0xfd37c8.
+var 0xfd37c8 vdi_opcode_table_100
+cmt 0xfd37c8 VDI dispatch table for opcodes 100..131 (32 longwords).
+var 0xfef834 aes_opcode_table
+cmt 0xfef834 AES dispatch table for opcodes 10..125 (116 longwords), indexed by opcode-10 at 0xfe64c8.
+var 0xfc9f4a linea_function_table
+cmt 0xfc9f4a Line-A function table, 16 longwords for $a000..$a00f. Returned in a2 by $a000.
+var 0xfc9f8a linea_font_headers
+cmt 0xfc9f8a Three system-font header pointers (0xfd39f6, 0xfd40d2, 0xfd5b2e), returned in a1 by Line-A $a000.
+var 0xfee900 linef_call_table
+cmt 0xfee900 GEM Line-F call table: 658 longwords for opcodes $f000..$fa44 (index = opcode & 0x0fff, used as a byte offset). Every AES and desktop routine reachable by a one-word call is in here.
+var 0xfc09ae xcon_vector_image
+cmt 0xfc09ae 32 longwords copied to $51e at 0xfc03b0 — the initial xconstat/xconin/xcostat/xconout device vector tables ($51e..$59d).
+var 0xfc06a8 boot_palette
+cmt 0xfc06a8 16 palette words copied to $ffff8240 by the reset path at 0xfc00c0.
+fn 0xfc0670 os_rts_stub
+cmt 0xfc0670 Dispatch-table target for: XBIOS 1, XBIOS 40, XBIOS 41, XBIOS 42, XBIOS 43, XBIOS 44, XBIOS 45, XBIOS 46, XBIOS 47, XBIOS 48, XBIOS 49, XBIOS 50, XBIOS 51, XBIOS 52, XBIOS 53, XBIOS 54, XBIOS 55, XBIOS 56, XBIOS 57, XBIOS 58, XBIOS 59, XBIOS 60, XBIOS 61, XBIOS 62, XBIOS 63
+fn 0xfc07d0 Vsync
+fn 0xfc097e Supexec   # ctx
+fn 0xfc0984 Bconstat   # ctx
+fn 0xfc098c Bconin   # ctx
+fn 0xfc0994 Bcostat   # ctx
+fn 0xfc099c Bconout   # ctx
+fn 0xfc0a2e Drvmap   # ctx
+fn 0xfc0a34 Kbshift   # ctx
+fn 0xfc0a46 Getmpb   # ctx
+fn 0xfc0a72 Setexc   # ctx
+fn 0xfc0a8a Tickcal   # ctx
+fn 0xfc0a92 Physbase
+fn 0xfc0aa6 Logbase
+fn 0xfc0aac Getrez
+fn 0xfc0ab8 Setscreen
+fn 0xfc0b06 Setpalette   # ctx
+fn 0xfc0b0e Setcolor   # ctx
+fn 0xfc0b34 Puntaes   # ctx
+fn 0xfc0d50 Scrdmp   # ctx
+fn 0xfc0e96 Gettime   # ctx
+fn 0xfc0ea4 Settime   # ctx
+fn 0xfc0ef6 Blitmode   # ctx
+fn 0xfc0fc0 Dbmsg   # ctx
+fn 0xfc1510 Random
+fn 0xfc15f8 Protobt   # ctx
+fn 0xfc1782 Floprd   # ctx
+fn 0xfc1858 Flopwr   # ctx
+fn 0xfc1916 Flopfmt   # ctx
+fn 0xfc1ae2 Flopver   # ctx
+fn 0xfc2030 Midiws   # ctx
+fn 0xfc2212 Ikbdws   # ctx
+fn 0xfc2658 Mfpint   # ctx
+fn 0xfc2682 Jdisint   # ctx
+fn 0xfc26bc Jenabint   # ctx
+fn 0xfc28f6 Iorec   # ctx
+fn 0xfc290e Rsconf   # ctx
+fn 0xfc2ea4 Giaccess   # ctx
+fn 0xfc2edc Ongibit   # ctx
+fn 0xfc2f02 Offgibit   # ctx
+fn 0xfc2f28 Initmous   # ctx
+fn 0xfc2ff2 Xbtimer   # ctx
+fn 0xfc302e Keytbl   # ctx
+fn 0xfc305a Bioskeys   # ctx
+fn 0xfc3074 Dosound   # ctx
+fn 0xfc3088 Setprt   # ctx
+fn 0xfc309a Kbrate   # ctx
+fn 0xfc30bc Kbdvbase   # ctx
+fn 0xfc31fa Prtblk   # ctx
+fn 0xfc427a vdi_escape   # ctx
+fn 0xfc4698 Cursconf   # ctx
+fn 0xfc5216 Fdup   # ctx
+fn 0xfc52de Fforce   # ctx
+fn 0xfc56c6 Fclose   # ctx
+fn 0xfc5e6a Fread   # ctx
+fn 0xfc5eea Fwrite   # ctx
+fn 0xfc6a7e Dsetpath   # ctx
+fn 0xfc6c1a Dgetpath   # ctx
+fn 0xfc6c9a Fgetdta   # ctx
+fn 0xfc6cac Fsetdta   # ctx
+fn 0xfc6cc0 Dsetdrv   # ctx
+fn 0xfc6ce0 Dgetdrv   # ctx
+fn 0xfc6cf6 Fsfirst   # ctx
+fn 0xfc6df4 Fsnext   # ctx
+fn 0xfc719a Fcreate   # ctx
+fn 0xfc73ce Dcreate   # ctx
+fn 0xfc75f2 Fopen   # ctx
+fn 0xfc7678 Fattrib   # ctx
+fn 0xfc772e Fdatime   # ctx
+fn 0xfc77b2 Fdelete   # ctx
+fn 0xfc792a Ddelete   # ctx
+fn 0xfc7a68 Dfree   # ctx
+fn 0xfc7af0 Frename   # ctx
+fn 0xfc7cce Fseek   # ctx
+fn 0xfc7fd8 Ptermres   # ctx
+fn 0xfc8028 Pterm   # ctx
+fn 0xfc8086 Pterm0   # ctx
+fn 0xfc817a Pexec   # ctx
+fn 0xfc895a Mshrink   # ctx
+fn 0xfc8aae Malloc   # ctx
+fn 0xfc8afc Mfree   # ctx
+fn 0xfc8b70 Cconis   # ctx
+fn 0xfc8b8a Cconos   # ctx
+fn 0xfc8bae Cprnos   # ctx
+fn 0xfc8bd2 Cauxis   # ctx
+fn 0xfc8bee Cauxos   # ctx
+fn 0xfc8e1c Cconout   # ctx
+fn 0xfc8ed2 Cauxout   # ctx
+fn 0xfc8efa Cprnout   # ctx
+fn 0xfc8faa Crawcin   # ctx
+fn 0xfc8ff2 Cconin   # ctx
+fn 0xfc900c Cnecin   # ctx
+fn 0xfc903e Cauxin   # ctx
+fn 0xfc9062 Crawio   # ctx
+fn 0xfc90c2 Cconws   # ctx
+fn 0xfc91ea Cconrs   # ctx
+fn 0xfc933e gemdos_unimplemented
+cmt 0xfc933e Dispatch-table target for: GEMDOS 12, GEMDOS 13, GEMDOS 15, GEMDOS 20, GEMDOS 21, GEMDOS 22, GEMDOS 23, GEMDOS 24, GEMDOS 27, GEMDOS 28, GEMDOS 29, GEMDOS 30, GEMDOS 31, GEMDOS 32, GEMDOS 33, GEMDOS 34, GEMDOS 35, GEMDOS 36, GEMDOS 37, GEMDOS 38, GEMDOS 39, GEMDOS 40, GEMDOS 41, GEMDOS 46, GEMDOS 50, GEMDOS 51, GEMDOS 52, GEMDOS 53, GEMDOS 55, GEMDOS 56, GEMDOS 68, GEMDOS 77, GEMDOS 80, GEMDOS 81, GEMDOS 82, GEMDOS 83, GEMDOS 84, GEMDOS 85
+fn 0xfc9348 Sversion   # ctx
+fn 0xfc9e1a Tgetdate   # ctx
+fn 0xfc9e2a Tsetdate   # ctx
+fn 0xfc9ea2 Tgettime   # ctx
+fn 0xfc9eb2 Tsettime   # ctx
+fn 0xfc9f34 linea_init   # ctx
+fn 0xfca05e linea_filled_poly   # ctx
+fn 0xfca1ea linea_line   # ctx
+fn 0xfca57e linea_hline   # ctx
+fn 0xfca652 vdi_nop
+cmt 0xfca652 Dispatch-table target for: VDI 4, VDI 10, VDI 27, VDI 34
+fn 0xfca654 v_clrwk   # ctx
+fn 0xfca6a4 vex_timv   # ctx
+fn 0xfcac76 vsl_type   # ctx
+fn 0xfcacc0 vsl_width   # ctx
+fn 0xfcad20 vsl_ends   # ctx
+fn 0xfcad7c vsl_color   # ctx
+fn 0xfcadcc vsm_height   # ctx
+fn 0xfcae58 vsm_type   # ctx
+fn 0xfcaea8 vsm_color   # ctx
+fn 0xfcaefe vsf_interior   # ctx
+fn 0xfcaf4a vsf_style   # ctx
+fn 0xfcafb2 vsf_color   # ctx
+fn 0xfcb002 vdi_locator   # ctx
+fn 0xfcb120 linea_show_mouse   # ctx
+cmt 0xfcb120 Dispatch-table target for: VDI 122, Line-A 9
+fn 0xfcb148 v_hide_c   # ctx
+fn 0xfcb156 vq_mouse   # ctx
+fn 0xfcb198 vdi_valuator   # ctx
+fn 0xfcb1a0 vdi_choice   # ctx
+fn 0xfcb22a vdi_string   # ctx
+fn 0xfcb30a vq_key_s   # ctx
+fn 0xfcb32e vswr_mode   # ctx
+fn 0xfcb388 vsin_mode   # ctx
+fn 0xfcb3f6 vqin_mode   # ctx
+fn 0xfcb45c vsf_perimeter   # ctx
+fn 0xfcb4a2 vsl_udsty   # ctx
+fn 0xfcb4ba vs_clip   # ctx
+fn 0xfcb5aa vro_cpyfm   # ctx
+fn 0xfcb5dc vrt_cpyfm   # ctx
+fn 0xfcb614 vr_recfl   # ctx
+fn 0xfcb694 v_opnwk   # ctx
+fn 0xfcb8d0 vq_extnd   # ctx
+fn 0xfcb998 v_clswk   # ctx
+fn 0xfcb9e0 v_pline   # ctx
+fn 0xfcba7a v_pmarker   # ctx
+fn 0xfcbbc0 v_fillarea   # ctx
+fn 0xfcbbcc vdi_gdp   # ctx
+fn 0xfcbd7e vql_attributes   # ctx
+fn 0xfcbdda vqm_attributes   # ctx
+fn 0xfcbe3a vqf_attributes   # ctx
+fn 0xfcd612 v_opnvwk   # ctx
+fn 0xfcd6a4 v_clsvwk   # ctx
+fn 0xfcd6fa vsf_udpat   # ctx
+fn 0xfcd756 v_gtext   # ctx
+fn 0xfcdfd0 vst_height   # ctx
+fn 0xfce26c vst_point   # ctx
+fn 0xfce3b2 vst_effects   # ctx
+fn 0xfce3e6 vst_alignment   # ctx
+fn 0xfce442 vst_rotation   # ctx
+fn 0xfce47c vst_font   # ctx
+fn 0xfce560 vst_color   # ctx
+fn 0xfce5b0 vqt_attributes   # ctx
+fn 0xfce62a vqt_extent   # ctx
+fn 0xfce7f0 vqt_width   # ctx
+fn 0xfce8ca vqt_name   # ctx
+fn 0xfce95a vqt_fontinfo   # ctx
+fn 0xfced06 vst_load_fonts   # ctx
+fn 0xfced9a vst_unload_fonts   # ctx
+fn 0xfcee54 linea_textblt   # ctx
+fn 0xfcface linea_put_pixel   # ctx
+fn 0xfcfb16 linea_get_pixel   # ctx
+fn 0xfcfc56 linea_filled_rect   # ctx
+fn 0xfcff68 vex_butv   # ctx
+fn 0xfcff80 vex_motv   # ctx
+fn 0xfcff98 vex_curv   # ctx
+fn 0xfcffb0 linea_draw_sprite   # ctx
+fn 0xfd0184 linea_undraw_sprite   # ctx
+fn 0xfd0254 linea_hide_mouse   # ctx
+fn 0xfd02ca linea_transform_mouse   # ctx
+cmt 0xfd02ca Dispatch-table target for: VDI 111, Line-A 11
+fn 0xfd0346 linea_copy_raster   # ctx
+fn 0xfd05fc linea_bitblt   # ctx
+fn 0xfd08e0 v_contourfill   # ctx
+fn 0xfd08f4 linea_contour_fill   # ctx
+fn 0xfd0fde v_get_pixel   # ctx
+fn 0xfd2d32 vr_trnfm   # ctx
+fn 0xfd2dd2 vs_color   # ctx
+fn 0xfd2e84 vq_color   # ctx
+fn 0xfe5db2 appl_init   # ctx
+fn 0xfe5df2 appl_read   # ctx
+fn 0xfe5df6 appl_write   # ctx
+fn 0xfe5e0c appl_find   # ctx
+fn 0xfe5e1a appl_tplay   # ctx
+fn 0xfe5e2c appl_trecord   # ctx
+fn 0xfe5e40 appl_exit   # ctx
+fn 0xfe5e70 evnt_keybd   # ctx
+fn 0xfe5e78 evnt_button   # ctx
+fn 0xfe5e90 evnt_mouse   # ctx
+fn 0xfe5ea2 evnt_mesag   # ctx
+fn 0xfe5eb0 evnt_timer   # ctx
+fn 0xfe5ec2 evnt_multi   # ctx
+fn 0xfe5f40 evnt_dclick   # ctx
+fn 0xfe5f4e menu_bar   # ctx
+fn 0xfe5f60 menu_icheck   # ctx
+fn 0xfe5f7c menu_ienable   # ctx
+fn 0xfe5fc0 menu_tnormal   # ctx
+fn 0xfe5fee menu_text   # ctx
+fn 0xfe601a menu_register   # ctx
+fn 0xfe602e objc_add   # ctx
+fn 0xfe6040 objc_delete   # ctx
+fn 0xfe6052 objc_draw   # ctx
+fn 0xfe606c objc_find   # ctx
+fn 0xfe6084 objc_offset   # ctx
+fn 0xfe60a2 objc_order   # ctx
+fn 0xfe60b4 objc_edit   # ctx
+fn 0xfe60de objc_change   # ctx
+fn 0xfe60fc form_do   # ctx
+fn 0xfe6110 form_dial   # ctx
+fn 0xfe612e form_alert   # ctx
+fn 0xfe6142 form_error   # ctx
+fn 0xfe6150 form_center   # ctx
+fn 0xfe6162 form_keybd   # ctx
+fn 0xfe619a form_button   # ctx
+fn 0xfe61bc graf_rubberbox   # ctx
+fn 0xfe61d8 graf_dragbox   # ctx
+fn 0xfe61fa graf_movebox   # ctx
+cmt 0xfe6216 AES 73 graf_growbox: an arm INSIDE aes_dispatch, not a function of its own -- no fn line, because ApplyNames cannot create a function inside an existing body.
+fn 0xfe621e graf_shrinkbox   # ctx
+fn 0xfe6234 graf_watchbox   # ctx
+fn 0xfe624e graf_slidebox   # ctx
+fn 0xfe6266 graf_handle   # ctx
+fn 0xfe628e graf_mouse   # ctx
+fn 0xfe62e8 graf_mkstate   # ctx
+fn 0xfe6304 scrp_read   # ctx
+fn 0xfe6310 scrp_write   # ctx
+fn 0xfe631c fsel_input   # ctx
+fn 0xfe6332 wind_create   # ctx
+fn 0xfe6346 wind_open   # ctx
+fn 0xfe6358 wind_close   # ctx
+fn 0xfe6364 wind_delete   # ctx
+fn 0xfe6370 wind_get   # ctx
+fn 0xfe6382 wind_set   # ctx
+fn 0xfe6394 wind_find   # ctx
+fn 0xfe63a2 wind_update   # ctx
+cmt 0xfe63ae AES 108 wind_calc: an arm INSIDE aes_dispatch, not a function of its own -- no fn line, because ApplyNames cannot create a function inside an existing body.
+fn 0xfe63dc rsrc_load   # ctx
+fn 0xfe63ec rsrc_free   # ctx
+fn 0xfe63f6 rsrc_gaddr   # ctx
+fn 0xfe640c rsrc_saddr   # ctx
+fn 0xfe6422 rsrc_obfix   # ctx
+fn 0xfe6436 shel_read   # ctx
+fn 0xfe6448 shel_write   # ctx
+fn 0xfe6464 shel_get   # ctx
+fn 0xfe6476 shel_put   # ctx
+fn 0xfe6488 shel_find   # ctx
+fn 0xfe6496 shel_envrn   # ctx
+fn 0xfe64a6 aes_unimplemented
+cmt 0xfe64a6 Dispatch-table target for: AES 16, AES 17, AES 18, AES 27, AES 28, AES 29, AES 36, AES 37, AES 38, AES 39, AES 48, AES 49, AES 57, AES 58, AES 59, AES 60, AES 61, AES 62, AES 63, AES 64, AES 65, AES 66, AES 67, AES 68, AES 69, AES 82, AES 83, AES 84, AES 85, AES 86, AES 87, AES 88, AES 89, AES 91, AES 92, AES 93, AES 94, AES 95, AES 96, AES 97, AES 98, AES 99, AES 109, AES 115, AES 116, AES 117, AES 118, AES 119

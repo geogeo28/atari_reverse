@@ -145,6 +145,54 @@ Why it matters more than it looks:
   [`packed-executables.md`](packed-executables.md)); the bytes are already plain, only the base is
   wrong. Entropy tells the two apart: Wonder Boy's text is 4.96 bits/byte.
 
+## The TOS ROM header (48 bytes, at the ROM's load address)
+
+A TOS ROM is not a `.PRG`: no `0x601A` magic, no relocation table, no symbols, and it is
+**absolute** — the image already sits at the address it runs from (`$FC0000` for a 192 KB ST
+ROM, `$E00000` for TOS 1.04+ / STE), so a Ghidra address IS a ROM address. What it does carry
+is a header, and it is the only thing that tells you where the OS's RAM ends.
+
+| Off | Size | Field | TOS 1.02 US |
+|----:|-----:|-------|-------------|
+| 0x00 | 2 | `bra.s` to the reset PC | `0x602E` (the magic, in practice) |
+| 0x02 | 2 | `os_version` | `0x0102` |
+| 0x04 | 4 | `os_reset_pc` — the reset entry | `0x00FC0030` |
+| 0x08 | 4 | `os_beg` — base of the OS, = the load address | `0x00FC0000` |
+| 0x0C | 4 | `os_end` — first RAM byte ABOVE the OS's own BSS | `0x00008900` |
+| 0x10 | 4 | `os_rsv1` | `0x00FC0030` |
+| 0x14 | 4 | `os_magic` → the GEM memory-usage parameter block | `0x00FEFFF4` |
+| 0x18 | 4 | `os_date`, BCD `mmddyyyy` | `0x04221987` |
+| 0x1C | 2 | `os_conf` — country/configuration | `0x0000` (US) |
+| 0x1E | 2 | `os_dosdate`, DOS-packed | `0x0E96` |
+| 0x20 | 4 | `p_root` → the GEMDOS memory-pool root in RAM | `0x00007E9C` |
+| 0x24 | 4 | `pkbshift` → the keyboard shift-state byte | `0x00000E61` |
+| 0x28 | 4 | `p_run` → the current basepage pointer | `0x000087CE` |
+| 0x2C | 4 | `p_rsv2` | `0` |
+
+The last three are RAM addresses the ROM publishes about itself, and the dispatchers use them
+(the GEMDOS trap entry reads `p_run`) — so the header alone names three globals.
+
+**The MUPB (GEM memory-usage parameter block)** is what `os_magic` points at: three longwords,
+in practice the **last 12 bytes of the image**.
+
+| Off | Field | TOS 1.02 US |
+|----:|-------|-------------|
+| 0x00 | magic — this is what identifies the block | `0x87654321` |
+| 0x04 | top of GEM's RAM usage (where `_membot` ends up once GEM is resident) | `0x0000CA00` |
+| 0x08 | the GEM entry point in ROM | `0x00FD9ECA` |
+
+**The RAM map this gives you**, which is what `tools/ghidra_scripts/RomLoader.java` creates as
+memory blocks so that operands resolve to labelled addresses instead of to nothing:
+
+| Range | Block | Notes |
+|---|---|---|
+| `$0..$3FF` | vector table | |
+| `$400..$FFF` | system variables | **volatile**: interrupt handlers write `_frclock`, `_hz_200` and the ACIA/MFP iorecs, and a non-volatile block lets the decompiler fold a spin loop into `do {} while (true)` |
+| `$1000..os_end-1` | the OS's own BSS and buffers | `os_end` from header `+0x0C` |
+| `os_end..mupb[1]-1` | GEM's (VDI/AES/desktop) BSS | above the OS BSS, hence the MUPB |
+| `$FF8000..$FFFFFF` and `$FFFF8000..$FFFFFFFF` | the I/O page, twice | the ST decodes both; TOS uses the 24-bit alias for the blitter and the VDI's palette calls |
+| `$FA0000..$FBFFFF` | the cartridge port | the reset code probes it for `0xFA52235F` first thing |
+
 ## Quick recon
 
 ```bash

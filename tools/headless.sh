@@ -17,7 +17,8 @@
 #
 # LineAResolve runs twice because a $aXXX opcode halts disassembly: once before
 # analysis (the entry path) and once after it (code only auto-analysis reached).
-# tools/load_dump.sh runs the same three steps — keep the two lists in sync.
+# tools/load_dump.sh (memory dumps) and tools/load_rom.sh (ROM images) run the same
+# shared steps — keep all three lists in sync.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

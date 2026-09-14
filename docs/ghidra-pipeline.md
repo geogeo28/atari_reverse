@@ -17,10 +17,12 @@ interactive exploration in the GUI, see [`ghidra-gui.md`](ghidra-gui.md).
 |--------|------|
 | `PrgLoader.java` | Rebuild memory: create TEXT at base (arg 2, default `0x10000`), apply **all** relocations in place (the DRI `1` byte is a 254-byte SPAN, not a fixup — getting that wrong corrupts one longword every 254 bytes, see [`binary-formats.md`](binary-formats.md)), import DRI symbols as labels, set entry, disassemble. Args: `<prg-path> [base_hex]`. GUI: prompts for the file. |
 | `LineAResolve.java` | Resolve Line-A (`$aXXX`) opcodes so disassembly does not stop at them: define the word as data with a naming comment, fall-through-override past it, resume disassembly, re-body the host function. Arg `reanalyze` re-runs analysis over its changes. See "Line-A opcodes" below. |
+| `RomLoader.java` | Prepare a raw-imported **ROM** (TOS itself, via `tools/load_rom.sh`): mark the ROM block read-only+execute, create the vector / system-variable (volatile) / OS-BSS / GEM-BSS / I/O-page / 24-bit-I/O-alias / cartridge blocks so every `$4ba.w`-style operand resolves to a labelled address, label the OS header and the MUPB, seed the reset PC. Ghidra addresses = real machine addresses. Args: `[base_hex]` (default `0xFC0000`) — it **must** equal the `-loader-baseAddr` the image was imported at, and the script fails if there is no TOS header there. |
+| `LineFResolve.java` | Resolve **Line-F** (`$fXXX`) call words — the one-word subroutine call GEM's compiler emits (see "Line-F calls" below) — by locating the handler's dispatch table from its own signature and resolving each site to its target, so the AES and desktop functions stop truncating at their first call. Arg `reanalyze` re-runs analysis over its changes each pass (use it in the post-analysis position), as `LineAResolve` does. |
 | `SeedFunctions.java` | Create a function at the start of every run of disassembled code that belongs to none — branch-only entry points and jump-table arms Ghidra reached but never attributed, which `ExportDecompC` would otherwise skip. Never seeds from a linear sweep. |
 | `AtariOsTrapAnnotate.java` | Comment every `trap` with its call name (GEMDOS/BIOS/XBIOS from the pushed selector; GEM AES/VDI from `d0`), and rename thin single-trap wrappers. |
 | `ExportDecompC.java` | Decompile every function to a text file (arg 1), with a function index. This is your reading material. |
-| `SetRegisterValue.java` | Pin a register to a constant over every memory block, so the decompiler resolves register-relative operands to absolute addresses. Args: `<register> <hex value>`, e.g. `a4 0x24f1a`. Must run **before** auto-analysis — see "Small-model C" below. |
+| `SetRegisterValue.java` | Pin a register to a constant, so the decompiler resolves register-relative operands to absolute addresses. Args: `<register> <hex value> [start_hex] [end_hex]` — every memory block by default (`a4 0x24f1a`), or one range when the value only holds there (`a5 0 0xfc0688 0xfc4e5d`). Must run **before** auto-analysis — see "Small-model C" below. |
 | `ApplyNames.java` | Apply a `names.txt` map (`fn`/`var`/`cmt`) back into the DB; disassembles+creates functions for jump-only handler stubs. Strips a trailing `# ctx` confidence tag on `fn`/`var` lines. |
 | `DumpNames.java` | The reverse: export the DB's current non-default function names, data labels, and plate comments **back** to `names.txt` format — use it to recover names made/edited in the GUI. |
 | `HwPortabilityScan.java` | Dump function bodies, the call graph, and every hardware/off-image memory access (with direction, size, and whether the read steers a branch) to a TSV. Args: `<out.tsv> [image_size_hex]`. Drive it with `tools/hw_scan.sh`; classify with `tools/hw_portability.py` — see [`on-target-execution.md`](on-target-execution.md), "Measure the blindness". |
@@ -110,6 +112,19 @@ positive is DATA. No conversion in either direction, and `var` lines land on rea
 Bubble Ghost this turned 10,031 `a4 + n` expressions into **zero**, and 8,166 globals into
 addressed `DAT_*` labels; see [`../projects/bubbleghost/README.md`](../projects/bubbleghost/README.md).
 
+**The ROM variant: pin over a RANGE, not the program.** A TOS ROM has the same symptom for a
+different reason — the BIOS/XBIOS dispatcher zeroes `a5` (`suba.l a5,a5`) before every handler
+and addresses system variables and hardware as `n(a5)`, so those bodies decompile as
+`unaff_A5 + 0x44e`. The fix is the same script with a range: `SetRegisterValue.java a5 0
+<start> <end>`. **Do not pin it program-wide.** Unlike a small-model `.PRG`, where the crt0
+gives one base register one value for the whole program, a ROM is several programs sharing a
+register file: in TOS 1.02 the boot uses `a5` as a return address and as an FDC pointer, and
+the VDI and AES take it as an incoming pointer, so a program-wide pin would resolve *their*
+operands off a value that is wrong — confidently, and with no `unaff_A5` left to warn you.
+Pin the range the dispatcher's guarantee actually covers, and state the exclusions where the
+range is defined (worked case: `projects/tos102us/run.sh` and `COMPONENTS.md`, "The a5 base
+register" — 308 `unaff_A5` uses down to 107, all of the rest outside the pinned range).
+
 **What the rest of such a program looks like — the stack-args ABI, the two trap trampolines that file
 the caller's A1/A2, and the compiler's straight-line initialiser — is
 [`agent-playbook.md`](agent-playbook.md), "When the target is COMPILED C, not hand asm".** Read it
@@ -138,6 +153,22 @@ A trailing `# ctx` tags a low-confidence, context-inferred name — `ApplyNames`
 **Recovering GUI edits.** If you rename in the CodeBrowser, run `dump_names.sh`
 (→ `out/names_dump.txt`), diff against `names.txt`, and merge new/changed lines back —
 `names.txt` stays the source of truth and survives a future re-import.
+
+## Line-F calls (`$fXXX`) — GEM's one-word subroutine call
+
+TOS's AES and desktop (and any program built with the same DRI toolchain) do not `jsr` their own
+routines: a call is **one `$fXXX` word**. The 68000 has no instruction in the `$Fxxx` row either, so
+it takes the Line-F exception (vector 11, `$2c`), and at AES init TOS copies a 100-byte handler into
+RAM and points `$2c` at it. An **even** word is a call — `target = *(long *)(table + (op & 0x0fff))`:
+the low 12 bits are a **byte** offset into a table of longwords, so `$f008` is entry 2, not entry 8.
+The table sits right after the handler in the ROM (658 entries in TOS 1.02). An **odd** word
+is a return (`unlk a6; rts`, with a `movem` restore whose mask is derived from the word). Ghidra
+halts on that row exactly as it does on `$aXXX`, so **every GEM function truncated at its first
+call** until `LineFResolve.java` resolved 1,979 opcode words in the ROM. Same no-op modelling and the same
+caveat as Line-A below: the callee's `d0` and clobbers are invisible, and constant propagation
+through a site fabricates "hardware accesses" (the portability scan reported 52 in GEM text that
+do not exist). Worked case and table addresses: `projects/tos102us/COMPONENTS.md`, "The Line-F
+call mechanism".
 
 ## Line-A opcodes (`$aXXX`) — one word can hide a whole program
 
