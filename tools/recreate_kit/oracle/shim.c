@@ -29,6 +29,73 @@
 static uint8_t *g_mem;
 static uint32_t g_size;
 
+/* --- THE MEMORY MAP, and the one thing ROM MODE changes about it (TRAP_MODEL.md, "ROM mode") ----
+ *
+ * A .PRG project's image IS the machine's RAM: every address below `g_size` is image, everything
+ * above it is off-image and reaches the PSG / seeded-hardware / write-ledger models. A ROM project's
+ * image is 16 MB of ADDRESS SPACE with three regions in it — RAM at the bottom, the decoded I/O
+ * blocks at $ff0000, and the ROM at $fc0000 — so "is this address in the image?" stops being one
+ * comparison. Two extra bounds say which region an address is in:
+ *
+ *   g_ram_end   the first address above RAM. It is `g_size` in .PRG mode, which is what makes every
+ *               path below byte-for-byte the path it was: the I/O decode is reached by exactly the
+ *               addresses that reached it before.
+ *   [g_rom_lo, g_rom_hi)  the ROM window, read out of the image but never written. EMPTY in .PRG
+ *               mode (both 0), so the ROM arm of every test below is dead there.
+ *
+ * The I/O decode sits BETWEEN them on purpose: in ROM mode $ff8800 is numerically inside the image
+ * and would otherwise be served as RAM, which would silently take the PSG, the seeded hardware
+ * reads and the hardware write ledger out of the model for every ROM function that touches them. */
+static uint32_t g_ram_end;          /* first address above RAM; == g_size off ROM mode */
+static uint32_t g_rom_lo, g_rom_hi; /* the ROM window; lo == hi (both 0) means "no ROM" */
+static uint32_t g_rom_ram_end;      /* what osh_rom_window declared, applied per run */
+static uint32_t g_rom_stores;       /* stores this run made INTO the ROM, dropped as hardware does */
+/* READS OF THE I/O PAGE THAT NOTHING MODELS. Phase 7 declares a NAMED SET of hardware bytes; every
+ * other address in the page is answered with the silent 0 an off-image read has always been answered
+ * with, on both sides. For a game that was a small surface — a game touches few registers, and its
+ * reconstruction is held to those. An OPERATING SYSTEM touches the whole machine, so a ROM function
+ * that reads $ff8260 (the shifter's resolution byte) could be verified GREEN against a fabricated 0.
+ * Tallied here, with the first offending address, and REFUSED one level up by harness.differential
+ * — the Phase-7 split exactly (g_hw_unseeded's comment argues it): emu.run stays permissive because
+ * a bootstrap run verifies nothing, and a false green needs something being verified. */
+static uint32_t g_io_unmodeled_reads;
+static uint32_t g_io_unmodeled_first;
+
+static int rom_mode(void) { return g_rom_hi > g_rom_lo; }
+
+/* Where RAM ends for a run over `size` bytes of memory: the declared end off ROM mode is `size`
+ * itself, and in it the declaration — CLAMPED to the buffer, for in_rom's reason. A declaration
+ * wider than the memory would otherwise make every store between the two a write past the end of
+ * the caller's buffer, which is the one shape here that corrupts the host rather than the model. */
+static uint32_t rom_ram_end(uint32_t size) {
+    if (!rom_mode())              return size;
+    return g_rom_ram_end < size ? g_rom_ram_end : size;
+}
+
+/* Declare the ROM-mode map. `ram_end` is the first address above RAM, `[rom_lo, rom_hi)` the ROM.
+ * All three zero puts the shim back in .PRG mode, which is what it starts in.
+ *
+ * STICKY, AND RE-INSTALLED BY emu.run BEFORE EVERY RUN. It has to be: this is process-global state
+ * in an .so, and anything that installs another map — the kit's own rom_mode_probe.c builds its
+ * control case by disarming the window — would otherwise leave every later run in the other mode,
+ * where a ROM project's $ff8800 is served out of the image and osh_run patches MAGIC_* into the
+ * snapshot's real vector table. Nothing downstream could attribute that. */
+void osh_rom_window(uint32_t ram_end, uint32_t rom_lo, uint32_t rom_hi) {
+    g_rom_ram_end = ram_end;
+    g_rom_lo = rom_lo;
+    g_rom_hi = rom_hi;
+}
+
+/* Stores the last run aimed at the ROM window. Dropped, as a store to ROM is on the machine — and
+ * COUNTED, because a reconstruction that writes there does so in its own buffer, where it would
+ * show up as an ordinary image difference the oracle could never produce. */
+uint32_t osh_rom_stores(void) { return g_rom_stores; }
+int      osh_rom_mode(void)   { return rom_mode(); }
+/* Reads of the I/O page the last run made that no model served, and the first such address (0 when
+ * there were none) — see g_io_unmodeled_reads. */
+uint32_t osh_io_unmodeled_reads(void) { return g_io_unmodeled_reads; }
+uint32_t osh_io_unmodeled_first(void) { return g_io_unmodeled_first; }
+
 /* THE WRITE LEDGER'S CAP, and `logw` SATURATES at it rather than wrapping — so a run past it leaves
  * `g_wn` sitting here and every further address is dropped uncounted. That silence is why the cap is
  * EXPORTED (osh_max_writes): emu.py mirrors it, cross-checks the mirror against this, reports the
@@ -134,7 +201,12 @@ static void sched_fire(uint32_t pc, uint32_t insn_index) {
         if (!due || g_sched_fired[i])
             continue;
         g_sched_fired[i] = 1;
-        if (os_sched_store(g_mem, g_size, g_sched[i][OS_SCHED_F_ADDR],
+        /* BOUNDED BY RAM, NOT BY THE IMAGE. Off ROM mode the two are the same number; in it the
+         * image spans the I/O page and the ROM, and an agent store aimed at either would land in
+         * bytes no read ever looks at (the I/O decode answers those addresses) or scribble on the
+         * read-only ROM. The candidate's twin bounds the same store against OS_IMAGE_SIZE, which is
+         * the machine's RAM there, so this is also what keeps the two sides storing the same set. */
+        if (os_sched_store(g_mem, g_ram_end, g_sched[i][OS_SCHED_F_ADDR],
                            g_sched[i][OS_SCHED_F_WIDTH], g_sched[i][OS_SCHED_F_VALUE]))
             g_sched_applied++;
         else
@@ -173,6 +245,19 @@ uint32_t osh_sched_site_arrivals(uint32_t i) {
  * masks with this first, so the idiom a game uses to reach a register cannot decide whether the
  * guard sees it. */
 #define BUS_ADDR_MASK 0xffffffu
+
+/* Note a read of the I/O page the decode could not serve — see g_io_unmodeled_reads. Only that page
+ * is counted: an address above RAM but below it is ordinary off-image memory, which has read 0 since
+ * the kit's first run and is a defect in the CASE rather than a hole in the model (TRAP_MODEL.md,
+ * "ROM mode"). The masked address is what is recorded, so the message names the register rather than
+ * whichever alias the code reached it through. */
+static void io_note_unmodeled_read(unsigned int a) {
+    uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff8260 onto $ff8260 */
+    if (lo < OS_HW_IO_PAGE)
+        return;
+    if (!g_io_unmodeled_reads++)
+        g_io_unmodeled_first = lo;
+}
 
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
  * read_joystick busy-waits on the status TDRE bit then sends a command; the joystick reply
@@ -675,26 +760,49 @@ static unsigned int psg_read_back(void) {
     return served;
 }
 
-/* --- memory callbacks: big-endian, bounds-checked to the image --- */
+/* --- memory callbacks: big-endian, decoded RAM / I-O / ROM and bounds-checked to the
+ * buffer in every arm (see THE MEMORY MAP above) --- */
+/* Is `[a, a + n)` inside the ROM window AND inside the buffer? Always false off ROM mode, where the
+ * window is empty.
+ *
+ * BOTH BOUNDS, because the window is a caller's DECLARATION (osh_rom_window) and `g_size` is the
+ * real length of the memory it later hands to osh_run. Nothing makes the two agree — the Python
+ * side is saved only by load_rom_image checking the fit, and the C ABI is a live surface the kit's
+ * own probe uses — so a window declared larger than the buffer would index past it here. */
+static int in_rom(unsigned int a, unsigned int n) {
+    return a >= g_rom_lo && a + n <= g_rom_hi && a + n <= g_size;
+}
+
 unsigned int m68k_read_memory_8(unsigned int a) {
-    if (a < g_size) return g_mem[a];
+    if (a < g_ram_end) return g_mem[a];
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
     if (lo == OS_PSG_PORT_SELECT) return psg_read_back();
     /* The seeded-hardware model (Phase 7). Ahead of the audio-capture mode, which no longer has a
      * switch of its own here: it arms this same model with a seed (see hw_enter_run). */
     int hw_slot = os_hw_slot(lo);
     if (hw_slot >= 0) return hw_read(hw_slot);
+    if (in_rom(a, 1)) return g_mem[a];             /* ROM MODE: the image above the I/O page */
+    io_note_unmodeled_read(a);                     /* ...and nothing here models an I/O byte */
     psg_note_unmodeled(a, 1);
     return 0;                                      /* off-image, like any unmapped address */
 }
 unsigned int m68k_read_memory_16(unsigned int a) {
-    if (a + 1 < g_size) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
+    if (a + 1 < g_ram_end) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
+    if (in_rom(a, 2)) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
+    io_note_unmodeled_read(a);
     psg_note_unmodeled(a, 2);
     hw_note_wide_read(a, 2);
     return 0;
 }
 unsigned int m68k_read_memory_32(unsigned int a) {
-    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); hw_note_wide_read(a, 4); return 0; }
+    if (a + 3 >= g_ram_end) {
+        if (in_rom(a, 4))
+            return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
+        io_note_unmodeled_read(a);
+        psg_note_unmodeled(a, 4);
+        hw_note_wide_read(a, 4);
+        return 0;
+    }
     return (unsigned)(g_mem[a] << 24 | g_mem[a + 1] << 16 | g_mem[a + 2] << 8 | g_mem[a + 3]);
 }
 
@@ -782,19 +890,22 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
             psg_log(OS_PSG_EVENT_WRITE, g_psg_latch, (uint8_t)v);
             return;
     }
-    if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); return; }
+    if (a < g_ram_end) { g_mem[a] = (uint8_t)v; logw(a); return; }
+    if (in_rom(a, 1)) { g_rom_stores++; return; }   /* ROM MODE: a store to ROM changes nothing */
     psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
     hw_note_write(a, 1);        /* dropped like any hardware write, but it makes a seed stale */
     hw_log_write(a, OS_HW_WRITE_WIDTH_8, v);       /* ...and it is comparable (Phase 10) */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
-    if (a + 1 < g_size) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
+    if (a + 1 < g_ram_end) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
+    if (in_rom(a, 2)) { g_rom_stores++; return; }
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
     hw_note_write(a, 2);
     hw_log_write(a, OS_HW_WRITE_WIDTH_16, v);
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
-    if (a + 3 >= g_size) {
+    if (a + 3 >= g_ram_end) {
+        if (in_rom(a, 4)) { g_rom_stores++; return; }
         psg_note_unmodeled(a, 4);
         hw_note_write(a, 4);
         hw_log_write(a, OS_HW_WRITE_WIDTH_32, v);
@@ -935,6 +1046,11 @@ uint32_t g_os_fs_table = OS_FS_TABLE_DEFAULT;
 #endif
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
+/* EVERY trap the model served this run, whatever it was — the one counter that is not about a
+ * particular door. ROM mode installs no trap model at all, and the checks that let the harness skip
+ * its whole region map rest on that; a per-door tally cannot state it, because the file, Super and
+ * Mfree doors bump none of them. This does. */
+static uint32_t g_traps_served;
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
 /* Traps serviced this run that REACH the harness-poked model state (see osh_poked_input_calls). The
  * six the project.toml waiver `tos_poked_input_unused` names: Bconstat, Bconin, Crawio, Random,
@@ -963,6 +1079,7 @@ static int g_terminated;
  * unstaged file, an unknown fn) is counted in g_unmodeled so the run can be rejected rather
  * than trusted against a fabricated result. */
 static void handle_trap(int vec) {
+    g_traps_served++;
     uint32_t sp     = m68k_get_reg(0, M68K_REG_A7);
     uint32_t sr     = m68k_read_memory_16(sp);       /* pushed status register */
     uint32_t retpc  = m68k_read_memory_32(sp + 2);   /* return address (past the trap) */
@@ -1237,6 +1354,14 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
             uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
             uint32_t *out_regs) {
     g_mem = mem; g_size = size;
+    /* RAM ends where the ROM-mode map says, or at the image's end when there is no ROM. Set per
+     * run rather than at osh_rom_window() time, because `size` is the caller's and only arrives
+     * here — and because it is what puts the shim back in .PRG mode for a project that declares no
+     * window at all. */
+    g_ram_end = rom_ram_end(size);
+    g_rom_stores = 0;
+    g_io_unmodeled_reads = 0;     /* ...and the I/O reads no model served (see the tally) */
+    g_io_unmodeled_first = 0;
 
     enter_from_reset();
     for (int i = 0; i < 8; i++) {
@@ -1249,15 +1374,28 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     g_run_sentinel = sentinel;            /* ...and where a GEMDOS Pterm ends the run (handle_trap) */
     g_terminated = 0;                     /* ...which is per-run, like every other cause emu.run reads */
 
-    /* Install trap vectors transiently (restored below so the final image is trap-free). */
-    uint32_t save_g = m68k_read_memory_32(TRAP_VEC_GEMDOS), save_x = m68k_read_memory_32(TRAP_VEC_XBIOS);
-    uint32_t save_b = m68k_read_memory_32(TRAP_VEC_BIOS),   save_a = m68k_read_memory_32(TRAP_VEC_GEM);
-    m68k_write_memory_32(TRAP_VEC_GEMDOS, MAGIC_GEMDOS);
-    m68k_write_memory_32(TRAP_VEC_XBIOS, MAGIC_XBIOS);
-    m68k_write_memory_32(TRAP_VEC_BIOS, MAGIC_BIOS);
-    m68k_write_memory_32(TRAP_VEC_GEM, MAGIC_GEM);
+    /* Install trap vectors transiently (restored below so the final image is trap-free).
+     *
+     * NOT IN ROM MODE, where the image IS the operating system: a `trap #13` inside a GEMDOS
+     * function must be taken through the image's OWN vector table by Musashi's exception
+     * processing, into the ROM's real handler — which is the whole point of running a ROM function
+     * in place. The dispatch below is gated on the same flag, so a stray PC at one of the magic
+     * slots executes the snapshot's bytes there rather than being served a modelled trap. */
+    const int trap_model = !rom_mode();
+    uint32_t save_g = 0, save_x = 0, save_b = 0, save_a = 0;
+    if (trap_model) {
+        save_g = m68k_read_memory_32(TRAP_VEC_GEMDOS);
+        save_x = m68k_read_memory_32(TRAP_VEC_XBIOS);
+        save_b = m68k_read_memory_32(TRAP_VEC_BIOS);
+        save_a = m68k_read_memory_32(TRAP_VEC_GEM);
+        m68k_write_memory_32(TRAP_VEC_GEMDOS, MAGIC_GEMDOS);
+        m68k_write_memory_32(TRAP_VEC_XBIOS, MAGIC_XBIOS);
+        m68k_write_memory_32(TRAP_VEC_BIOS, MAGIC_BIOS);
+        m68k_write_memory_32(TRAP_VEC_GEM, MAGIC_GEM);
+    }
     g_heap = g_heap_base;
     g_malloc_n = 0;
+    g_traps_served = 0;
     g_unmodeled = 0;
     g_poked_input_calls = 0;
 
@@ -1297,10 +1435,10 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
         if (g_cov_on && pc < COV_SIZE) g_cov[pc >> 3] |= (uint8_t)(1u << (pc & 7));   /* coverage */
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
-        if      (pc == MAGIC_GEMDOS) handle_trap(1);
-        else if (pc == MAGIC_XBIOS)  handle_trap(14);
-        else if (pc == MAGIC_BIOS)   handle_trap(13);
-        else if (pc == MAGIC_GEM)    handle_trap(2);
+        if      (trap_model && pc == MAGIC_GEMDOS) handle_trap(1);
+        else if (trap_model && pc == MAGIC_XBIOS)  handle_trap(14);
+        else if (trap_model && pc == MAGIC_BIOS)   handle_trap(13);
+        else if (trap_model && pc == MAGIC_GEM)    handle_trap(2);
         else                         g_ncycles += (uint32_t)m68k_execute(1);   /* one insn; tally its cycles */
     }
     g_ninsns = n;                                   /* instruction count for perf profiling */
@@ -1312,10 +1450,12 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     report_regs(out_regs);
 
     uint32_t wn = g_wn;                              /* keep the restore writes out of the write-set */
-    m68k_write_memory_32(TRAP_VEC_GEMDOS, save_g);   /* restore vectors */
-    m68k_write_memory_32(TRAP_VEC_XBIOS, save_x);
-    m68k_write_memory_32(TRAP_VEC_BIOS, save_b);
-    m68k_write_memory_32(TRAP_VEC_GEM, save_a);
+    if (trap_model) {
+        m68k_write_memory_32(TRAP_VEC_GEMDOS, save_g);   /* restore vectors */
+        m68k_write_memory_32(TRAP_VEC_XBIOS, save_x);
+        m68k_write_memory_32(TRAP_VEC_BIOS, save_b);
+        m68k_write_memory_32(TRAP_VEC_GEM, save_a);
+    }
     g_wn = wn;
     uint32_t final_pc = m68k_get_reg(0, M68K_REG_PC);  /* reached rts or the checkpoint? */
     return final_pc == sentinel || (stop_pc && final_pc == stop_pc);
@@ -1499,6 +1639,10 @@ void osh_bench_seed(const uint32_t *regs) {
 int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
                   uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
     g_mem = mem; g_size = size;
+    g_ram_end = rom_ram_end(size);   /* osh_run's map, for osh_run's reason */
+    g_rom_stores = 0;
+    g_io_unmodeled_reads = 0;     /* ...and the I/O reads no model served (see the tally) */
+    g_io_unmodeled_first = 0;
     enter_from_reset();
     if (g_bench_seed_on) {
         for (int i = 0; i < OSH_OUT_DREGS; i++)
@@ -1570,6 +1714,8 @@ uint32_t        osh_malloc_count(void) { return g_malloc_n; }
  * it keys the heap guard on osh_malloc_count: both waivers claim something about the GAME, so both
  * are re-tested per run rather than trusted once. */
 uint32_t        osh_poked_input_calls(void) { return g_poked_input_calls; }
+/* Every trap the model served this run, whatever door — see g_traps_served. */
+uint32_t        osh_trap_count(void) { return g_traps_served; }
 uint32_t        osh_num_insns(void)   { return g_ninsns; }
 uint64_t        osh_num_cycles(void)  { return g_ncycles; }
 uint32_t        osh_psg_count(void)   { return g_psgn; }

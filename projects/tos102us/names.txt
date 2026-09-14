@@ -151,6 +151,8 @@ var 0x05a4 ramtop
 var 0x05a8 ramvalid
 var 0x05ac bell_hook
 var 0x05b0 kcl_hook
+var 0x2a4a random_seed
+cmt 0x2a4a XBIOS Random's LCG state (long, OS BSS); 0 in the captured boot snapshot = unseeded.
 
 # ---------------------------------------------------------------------------
 # Hardware registers (docs/hardware-map.md).
@@ -294,7 +296,7 @@ fn 0xfc098c Bconin   # ctx
 fn 0xfc0994 Bcostat   # ctx
 fn 0xfc099c Bconout   # ctx
 fn 0xfc0a2e Drvmap   # ctx
-fn 0xfc0a34 Kbshift   # ctx
+fn 0xfc0a34 Kbshift
 fn 0xfc0a46 Getmpb   # ctx
 fn 0xfc0a72 Setexc   # ctx
 fn 0xfc0a8a Tickcal   # ctx
@@ -302,7 +304,7 @@ fn 0xfc0a92 Physbase
 fn 0xfc0aa6 Logbase
 fn 0xfc0aac Getrez
 fn 0xfc0ab8 Setscreen
-fn 0xfc0b06 Setpalette   # ctx
+fn 0xfc0b06 Setpalette
 fn 0xfc0b0e Setcolor   # ctx
 fn 0xfc0b34 Puntaes   # ctx
 fn 0xfc0d50 Scrdmp   # ctx
@@ -311,6 +313,9 @@ fn 0xfc0ea4 Settime   # ctx
 fn 0xfc0ef6 Blitmode   # ctx
 fn 0xfc0fc0 Dbmsg   # ctx
 fn 0xfc1510 Random
+cmt 0xfc1510 XBIOS $11. LCG seed = seed*0xbb40e62d + 1 (via alcyon_lmul), seeded from _hz_200 when random_seed is 0; returns (seed >> 8) & 0xffffff. Verified by recreate/test/test_xbios_random.py.
+fn 0xfc4b28 alcyon_lmul
+cmt 0xfc4b28 Alcyon C runtime: signed 32x32 -> low 32 bits (called by Random).
 fn 0xfc15f8 Protobt   # ctx
 fn 0xfc1782 Floprd   # ctx
 fn 0xfc1858 Flopwr   # ctx
@@ -323,9 +328,9 @@ fn 0xfc2682 Jdisint   # ctx
 fn 0xfc26bc Jenabint   # ctx
 fn 0xfc28f6 Iorec   # ctx
 fn 0xfc290e Rsconf   # ctx
-fn 0xfc2ea4 Giaccess   # ctx
-fn 0xfc2edc Ongibit   # ctx
-fn 0xfc2f02 Offgibit   # ctx
+fn 0xfc2ea4 Giaccess
+fn 0xfc2edc Ongibit
+fn 0xfc2f02 Offgibit
 fn 0xfc2f28 Initmous   # ctx
 fn 0xfc2ff2 Xbtimer   # ctx
 fn 0xfc302e Keytbl   # ctx

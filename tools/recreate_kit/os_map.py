@@ -90,6 +90,21 @@ OS_PSG_EVENT_WRITE = 0
 OS_PSG_EVENT_READ = 1
 
 
+# The YM2149's register-SELECT latch, which is also the port a read-back answers at — os.h's
+# OS_PSG_PORT_SELECT, mirrored here for this module's usual reason and one more: a PROJECT needs it
+# too. A case that proves the PSG ports are not served out of the image plants a decoy at that very
+# address, and a project spelling the literal itself would go on reporting the model green after the
+# constant moved.
+OS_PSG_PORT_SELECT = 0xff8800
+
+# The first address of the ST's memory-mapped I/O page — os.h's OS_HW_IO_PAGE, mirrored here for
+# the same reason the poked-input block is: `loader` and `harness` both need it and neither can
+# import the other. Everything at or above it is DECODED by the oracle's memory callbacks (the PSG
+# ports, the seeded hardware slots, the write ledger) rather than served from the image, which is
+# what makes it the ceiling a ROM window may not reach.
+OS_HW_IO_PAGE = 0xff0000
+
+
 def poked_input_overlaps_program(load_base, program_end):
     """Does the poked-input block intersect a program loaded at ``[load_base, program_end)``?
 

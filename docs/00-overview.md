@@ -59,6 +59,13 @@ bash projects/mygame/reapply.sh      # apply + re-export; repeat
   (Alcyon/DRI small model), not hand asm. Rebuild it in the run-time layout and pin the base register
   before analysis → `ghidra-pipeline.md`, "Small-model C"; port it per `agent-playbook.md`,
   "When the target is COMPILED C".
+- No `60 1A` (the first word is a branch over an OS header — `60 2e` in TOS 1.x), the file is
+  exactly **192 KB or 256 KB**, the word at `+2` is a **TOS version number** (`0x0102`, `0x0104`,
+  `0x0106`, `0x0206`, …) and the longword at `+4` — the OS's own entry/reset vector — points back
+  **inside the file**, naming the base it is linked for (`$fc0030` in a 192 KB TOS 1.x, so base
+  `$fc0000`) → a **TOS ROM image**, not a program: no header to parse, no relocations, no symbols.
+  Import it raw at that base with `tools/load_rom.sh` → `ghidra-pipeline.md`, `RomLoader.java`;
+  worked case: `projects/tos102us`.
 - No `60 1A`, highly structured, lots of `0x0000`/`0xffff` runs → **compressed or
   bitmap data** (course/graphics data). → `graphics.md`
 - ST palette words (`0x0RGB`, nibbles small), 16 in a row → a **palette table**. → `graphics.md`

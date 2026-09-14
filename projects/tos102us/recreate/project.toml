@@ -1,0 +1,38 @@
+# Binds the shared differential harness (tools/recreate_kit) to the TOS 1.02 US ROM.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+#
+# THIS IS A ROM PROJECT, not a .PRG one. The four keys below are the kit's ROM BINDING (see
+# tools/recreate_kit/README.md, "ROM mode", and TRAP_MODEL.md's "ROM mode" section): the image is
+# the machine's 24-bit address space rather than a program at a load base, so there is no `prg`,
+# no relocation, and no TOS trap model — a `trap #13` is taken through the image's own vector table
+# into the ROM's real handler.
+name       = "tos102us"
+names      = "../names.txt"
+lib        = "build/libtos102us.so"
+
+# The ROM itself. Atari's copyright, gitignored, and referenced IN PLACE — nothing here copies it
+# into a tracked path.
+rom        = "../../../tools/hatari/TOS102US.img"
+rom_base   = 0xfc0000
+
+# The post-boot RAM snapshot the ROM runs over: 1 MB of a real machine's memory, captured once from
+# headless Hatari at the desktop's first settled `evnt_multi` (tools/boot_snapshot.py). It is a
+# build product, not a source: `make snapshot` captures it, and build/ is gitignored for the ROM's
+# reason — it is the ROM's own data.
+snapshot   = "build/boot_ram.bin"
+
+# Where a run's stack goes. NOT the top of the image, which is the I/O page and the ROM, and not the
+# machine's own supervisor stack either — that lives at $8930..$8bff, which is one of the regions
+# two captures of the same boot disagree about. This is a guarded band in the middle of the FREE
+# TPA: the snapshot is zero from $1dde2 to $f7fa1 in all three captures taken, so the 0x1000 bytes
+# the kit reserves around this address — [stack_top - 0xf00, stack_top + 0x100) — hold nothing the
+# desktop left behind. `test/test_boot_snapshot.py` pins that, so a future capture whose desktop
+# grew into the band reddens instead of silently running the oracle's stack over live data.
+stack_top  = 0x80000
+
+# The whole 24-bit address space, so the ROM sits inside the flat image at its real address. The
+# image is a 16 MB bytearray; RAM is its first megabyte, the I/O page at $ff0000 is decoded by the
+# oracle's memory callbacks rather than served from these bytes, and the ROM is the last 192 KB.
+# It deliberately does NOT equal os.h's OS_IMAGE_SIZE: that constant bounds the TOS trap model's
+# copies, and no part of that model is installed here.
+image_size = 0x1000000

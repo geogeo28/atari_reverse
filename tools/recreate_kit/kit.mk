@@ -25,7 +25,12 @@ PY      := .venv/bin/python
 CAND    := build/lib$(GAME).so
 # The project's own cores, plus the kit sources every candidate must export (the Dosound ledger the
 # harness diffs off-image sound against — see "What the candidate .so must export" in README.md).
-SRC     := $(wildcard src/*.c) $(wildcard src/machine/*.c) $(wildcard $(KIT)/src/*.c)
+# `src/*/*.c` rather than the one subdirectory it used to name: a project big enough to have
+# COMPONENTS keeps one per directory (projects/tos102us has src/xbios/, src/bios/, src/gemdos/…),
+# and a file the build silently did not compile would fail at dlsym with the candidate's ABI error
+# rather than at the missing source. It subsumes the old `src/machine/*.c`; `src/asm/*.S` is not a
+# `.c` and is still built by the twin rules below.
+SRC     := $(wildcard src/*.c) $(wildcard src/*/*.c) $(wildcard $(KIT)/src/*.c)
 
 # A VARIANT build of the same candidate — a tool that compiles the cores with an extra header or an
 # extra translation unit and wants ONE set of build rules, not a copy of them. It overrides CAND on
@@ -59,7 +64,9 @@ ORACLE  := $(GENDIR)/liboracle.so
 OCFLAGS := -O2 -fPIC -DM68K_EMULATE_TRACE=0 -DOS_FS_TABLE_RUNTIME \
            -I$(KIT)/include -I$(MUSASHI) -I$(GENDIR) -I$(MUSASHI)/softfloat
 
-$(CAND): $(SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h)
+# On this file too, as $(ORACLE) is: CFLAGS and SRC are decided here, so a candidate built
+# before a change to either is a stale .so the suite would go on dlopening.
+$(CAND): $(SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h) $(KIT)/kit.mk
 	@mkdir -p build
 	$(CC) $(CFLAGS) -shared $(SRC) -o $(CAND)
 

@@ -18,10 +18,34 @@ if loader.IMAGE_SIZE is None:
                        "loader.IMAGE_SIZE is unbound, so the stack constants below have no image "
                        "to derive from")
 
+# ---- ROM MODE: the project binding that changes the map (TRAP_MODEL.md, "ROM mode") ----
+# A ROM project runs the OPERATING SYSTEM's own functions in place, so its image is the 24-bit
+# address space — a post-boot RAM snapshot at 0 and the ROM at its real base — rather than a .PRG at
+# a load base. None on every .PRG project, and every arm below that reads it is dead there.
+_cfg = project.current()
+ROM_MODE = _cfg.rom is not None
+ROM_BASE = _cfg.rom_base
+ROM_BYTES = _cfg.rom.stat().st_size if ROM_MODE else 0
+ROM_END = ROM_BASE + ROM_BYTES if ROM_MODE else 0
+
 # The stack lives at the top of the image; derived from IMAGE_SIZE so growing the image moves
-# it automatically (keep 0x100 headroom for the sentinel return slot, a 0xF00 guard span).
-STACK_TOP = loader.IMAGE_SIZE - 0x100   # A7 start; stack grows down into the guard region below
-STACK_GUARD_LO = STACK_TOP - 0xF00  # [STACK_GUARD_LO, IMAGE_SIZE): stack scratch, excluded from the diff
+# it automatically. Two spans, named because their SUM is load-bearing: the band the diff drops is
+# [STACK_TOP - STACK_GUARD_BYTES, STACK_TOP + STACK_SENTINEL_BYTES), and a .PRG project's stack sits
+# exactly STACK_SENTINEL_BYTES below its image so that band ends AT the image and the second diff
+# span is empty (see harness.DIFF_SPANS). Two bare 0x100s could drift apart silently.
+STACK_SENTINEL_BYTES = 0x100    # headroom above A7 for the sentinel return slot
+STACK_GUARD_BYTES = 0xF00       # ...and the scratch below it a call frame may use
+#
+# ...EXCEPT IN ROM MODE, where the top of the image is the I/O page and the ROM. A ROM project
+# declares `stack_top` in its project.toml, a guarded band inside the machine's real RAM, and the
+# same two spans are measured down from it — so a case, a diff exclusion and a stray-write check all
+# read the same way in either mode.
+STACK_TOP = _cfg.stack_top if ROM_MODE else loader.IMAGE_SIZE - STACK_SENTINEL_BYTES
+STACK_GUARD_LO = STACK_TOP - STACK_GUARD_BYTES  # [STACK_GUARD_LO, STACK_BAND_HI): stack scratch, excluded from the diff
+# ...and where that band ENDS. It is the image's end for a .PRG project, which is what every caller
+# assumed while the stack could only be at the top; a ROM project's band closes above its declared
+# top with the image going on above it, so the diff has to resume rather than stop.
+STACK_BAND_HI = STACK_TOP + STACK_SENTINEL_BYTES
 STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately use; a write in
                           # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
 SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts lands here
@@ -32,7 +56,6 @@ SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts
 # harness.py because the guards below, which every emu.run() passes through whether a harness is
 # involved or not, need it; harness.py serves it back under its own name.
 OS_HEAP_BASE_DEFAULT = 0x20000
-_cfg = project.current()
 OS_HEAP_BASE = OS_HEAP_BASE_DEFAULT if _cfg.heap_base is None else _cfg.heap_base
 # ---- the staged-file window: the map's OTHER per-project region ----
 # The table's address, and the staging area a fixed distance above it. Resolved here rather than in
@@ -445,6 +468,63 @@ _LIB.osh_prof_slots.restype = ctypes.c_uint32
 _LIB.osh_audio_capture.argtypes = [ctypes.c_int]
 _LIB.osh_audio_capture_on.restype = ctypes.c_int
 
+# The ROM-mode memory map (shim.c, "THE MEMORY MAP"). Required, not probed, for the seeded models'
+# reason: it is installed ONCE here and describes which addresses are RAM, which are ROM and which
+# reach the I/O decode. An .so without it would serve a ROM project's $ff8800 out of the image —
+# the PSG, the seeded hardware reads and the write ledger all silently gone — while this file
+# reported the project as bound in ROM mode.
+for _symbol in ("osh_rom_window", "osh_rom_mode", "osh_rom_stores"):
+    if not hasattr(_LIB, _symbol):
+        raise _stale_oracle(
+            _symbol,
+            "so it predates ROM mode: a project whose image is a RAM snapshot with a ROM mapped "
+            "over it would have its whole I/O page served out of the image as ordinary RAM.")
+_LIB.osh_rom_window.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+_LIB.osh_rom_mode.restype = ctypes.c_int
+_LIB.osh_rom_stores.restype = ctypes.c_uint32
+# ...and the I/O reads NO model served. Required for the same reason the slots themselves are: an
+# .so without the tally answers an undeclared $ff8260 with a silent 0 on both sides, and the case
+# that read it goes green against a byte the model invented (harness._vet_rom_io_reads_are_modelled).
+for _symbol in ("osh_io_unmodeled_reads", "osh_io_unmodeled_first"):
+    if not hasattr(_LIB, _symbol):
+        raise _stale_oracle(
+            _symbol,
+            "so an I/O-page read that no Phase 7 slot declares cannot be seen: it is answered 0 on "
+            "both sides, and a ROM function that reads one would verify against that fabrication.")
+_LIB.osh_io_unmodeled_reads.restype = ctypes.c_uint32
+_LIB.osh_io_unmodeled_first.restype = ctypes.c_uint32
+# EVERY trap the model served this run, whatever door it was. Required for the same reason: the
+# per-door tallies above it (Malloc, poked input, the event and Dosound ledgers) miss the GEMDOS
+# file, Super and Mfree doors entirely, so "no trap model ran" cannot be stated from them.
+if not hasattr(_LIB, "osh_trap_count"):
+    raise _stale_oracle(
+        "osh_trap_count",
+        "so ROM mode's claim that NO modelled trap ran cannot be tested: the per-door counters miss "
+        "the GEMDOS file, Super and Mfree doors, and a run served by the model would pass as one "
+        "that reached the ROM's own handler.")
+_LIB.osh_trap_count.restype = ctypes.c_uint32
+# RAM_END is where the snapshot stops being RAM: the machine's own memory size, which in ROM mode is
+# the ROM binding's snapshot length rounded to nothing at all — the snapshot IS that size.
+RAM_END = _cfg.snapshot.stat().st_size if ROM_MODE else loader.IMAGE_SIZE
+def _install_rom_window():
+    """Put this project's memory map into the oracle. Called before EVERY run, not once.
+
+    The window is process-global state in a shared .so, so anything that installs another one leaves
+    every later run in the other mode — and a ROM run in .PRG mode is served its whole I/O page out
+    of the image while `osh_run` patches trap vectors into the machine's snapshot. Re-installing is
+    one FFI call and makes "which map is armed" a property of the bound project rather than of
+    whatever ran last. An empty window is installed just as unconditionally, for the same reason in
+    the other direction.
+    """
+    _LIB.osh_rom_window(RAM_END if ROM_MODE else 0, ROM_BASE or 0, ROM_END or 0)
+
+
+_install_rom_window()
+if bool(_LIB.osh_rom_mode()) != ROM_MODE:
+    raise RuntimeError(f"the oracle reports rom_mode={bool(_LIB.osh_rom_mode())} but "
+                       f"{_cfg.name} is bound with ROM_MODE={ROM_MODE} — the window install "
+                       f"did not take, and the image's I/O page would be served as RAM")
+
 _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32,
                                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                                _u32p]
@@ -561,6 +641,7 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     # `g_mem` pointer, and `bench_resume` executes m68k code straight over it after this function has
     # returned. A local export would drop the only reference keeping the bytearray alive, and a
     # caller whose `mem` then went out of scope would resume into freed heap.
+    _install_rom_window()   # process-global; see run()
     global _bench_buf
     _bench_buf = buf = (ctypes.c_uint8 * size).from_buffer(mem)
     out = (ctypes.c_uint32 * len(REPORTED_REGS))()
@@ -898,9 +979,14 @@ def schedule_entries(schedule):
             raise ValueError(f"schedule[{i}]['width'] = {width!r} is not one of {SCHED_WIDTHS}")
         if not 0 <= value < (1 << (8 * width)):
             raise ValueError(f"schedule[{i}]['value'] = {value:#x} does not fit {width} byte(s)")
-        if not (0 <= addr and addr + width <= loader.IMAGE_SIZE):
+        # BOUNDED BY RAM, not by the image: off ROM mode the two are the same number, and in it an
+        # agent store aimed at the I/O page or the ROM would land in bytes no read ever looks at
+        # (the I/O decode answers those addresses) or be dropped by the read-only window. The
+        # oracle and the candidate both bound the store at RAM's end, so this is also what keeps
+        # the two sides storing the same set (shim.c's sched_fire, src/sched.c's os_sched_store).
+        if not (0 <= addr and addr + width <= RAM_END):
             raise ValueError(f"schedule[{i}] stores {width} byte(s) at {addr:#x}, outside the "
-                             f"{loader.IMAGE_SIZE:#x}-byte image")
+                             f"machine's {RAM_END:#x} bytes of RAM")
         flat += [kind, trigger, nth, addr, width, value]
     return flat
 
@@ -1095,6 +1181,55 @@ def poked_input_overlaps_program():
     return os_map.poked_input_overlaps_program(loader.LOAD_BASE, loader.PROGRAM_END)
 
 
+def _vet_rom_mode_is_modelless(entry, traps_served):
+    """Reject a ROM-mode run the TOS trap MODEL served any door of — the mode's own FALSE GREEN.
+
+    ROM mode's whole claim is that the model is not installed: ``shim.c`` neither patches the vector
+    table nor dispatches on its magic PCs, so a ``trap #13`` is taken through the image's own table
+    into the ROM's real handler. ``harness._vet_os_memory_map`` skips its entire region map on the
+    strength of that — the Malloc arena, the poked-input block and the staged-file window are the
+    MODEL's regions, and no door that reads or writes them can run. A claim is worth re-testing from
+    the other side, so it is re-tested after every run rather than trusted once.
+
+    It lives here rather than in ``harness.differential`` for ``_vet_no_malloc_over_program``'s
+    reason: a bare ``run()`` — an oracle-only test, the poison re-run inside
+    ``harness._attribution_check`` — is covered too, and a run through the model instead of through
+    the ROM describes nothing about the ROM whoever made it.
+
+    It is tested against the TOTAL of every trap served, not the per-door tallies: the GEMDOS file
+    doors, ``Super`` and ``Mfree`` bump none of those, and the staged-file window is exactly the
+    region the harness stops checking — so a per-door test would be blind to the one door whose
+    omission it stands in for.
+    """
+    if not (ROM_MODE and traps_served):
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the oracle served {traps_served} modelled TOS trap(s) in ROM mode, "
+        f"where no trap model is installed and no such door can run. Either shim.c's ROM-mode gate "
+        f"has come undone — in which case this run went through the MODEL's TOS instead of the "
+        f"image's own ROM — or the ROM window was disarmed and this run was not in ROM mode at all. "
+        f"Nothing about this result describes the ROM.")
+
+
+def _vet_no_store_into_rom(entry, rom_stores):
+    """Reject a run that stored into the ROM window — the other end of the same FALSE GREEN.
+
+    The machine drops such a store and so does the oracle, but a RECONSTRUCTION's identical store
+    lands in its own image buffer: the two images then diverge at an address the oracle cannot
+    produce, and the difference names the ROM address rather than the reason. Refused by name
+    instead, and here rather than in the harness so that a bare ``run()`` is covered too — a run
+    that scribbled on the ROM entered the function with a pointer the real machine never hands it.
+    """
+    if not (ROM_MODE and rom_stores):
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the oracle made {rom_stores} store(s) into the ROM window "
+        f"({ROM_BASE:#x}..{ROM_END - 1:#x}). The machine drops them and so does the oracle, but a "
+        f"candidate's C writes its own buffer, so the two images diverge at an address neither side "
+        f"can explain. The case is entering the function with a pointer the real machine never "
+        f"hands it.")
+
+
 def _vet_no_poked_input_read(poked_input_calls):
     """Reject a run in which a trap reached poked input that lies inside the program — a FALSE GREEN.
 
@@ -1284,6 +1419,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # ...and the external agent's stores, unconditionally for the same reason: a schedule left
     # installed would fire inside the next case, which under -n auto is not even a stable one.
     scheduled, sites = _install_schedule(schedule, wait_sites)
+    _install_rom_window()   # ...and the memory map, for the same reason: it is process-global too
 
     mem = bytearray(image)
     Buf = ctypes.c_uint8 * loader.IMAGE_SIZE
@@ -1448,6 +1584,18 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["poked_input_calls"] = _LIB.osh_poked_input_calls()  # ...and traps reading poked input
     out_regs["ninsns"] = _LIB.osh_num_insns()  # instructions executed (perf profiling)
     out_regs["cycles"] = _LIB.osh_num_cycles()  # 68000 clock cycles executed (perf profiling)
+    # ROM MODE only, and always 0 elsewhere: stores this run aimed at the ROM window. They are
+    # dropped, as they are on the machine — but a RECONSTRUCTION's store there lands in its own
+    # buffer, so the pair would diverge with the oracle unable to produce the difference.
+    # harness.differential is what refuses it; a bare run only reports it.
+    out_regs["rom_stores"] = _LIB.osh_rom_stores()
+    # ...and every trap the MODEL served, whatever door. ROM mode requires this to be 0.
+    out_regs["traps_served"] = _LIB.osh_trap_count()
+    # ...and the reads of the I/O page no model served, with the first such address. Reported rather
+    # than raised here, exactly as `hw_unseeded` is and for the same reason (see run()'s docstring):
+    # harness.differential is where a fabricated byte could produce a false green.
+    out_regs["io_unmodeled_reads"] = _LIB.osh_io_unmodeled_reads()
+    out_regs["io_unmodeled_first"] = _LIB.osh_io_unmodeled_first()
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
     # ...and the ordered (kind, value) stream of every OTHER off-image call the model serves. Same
@@ -1492,4 +1640,6 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
     _vet_heap_within_bounds(out_regs["heap"])
     _vet_no_poked_input_read(out_regs["poked_input_calls"])
+    _vet_rom_mode_is_modelless(entry, out_regs["traps_served"])
+    _vet_no_store_into_rom(entry, out_regs["rom_stores"])
     return mem, writes, out_regs

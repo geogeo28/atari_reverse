@@ -47,6 +47,8 @@ import ctypes
 import subprocess
 from pathlib import Path
 
+from . import project
+
 # The `.S` files are linked here by the kit's Makefile rule (kit.mk, $(ASM_ELF)). Spelt once, in
 # Python, and passed to the linker from there -- see asm_link_base() below, which is what kit.mk
 # reads -- so the blob's base cannot drift from the loader's idea of it.
@@ -215,6 +217,29 @@ class TwinResult:
         self.ninsns = ninsns
 
 
+def _refuse_in_rom_mode():
+    """A ROM project cannot have asm twins, and the reason is the layout above rather than a policy.
+
+    Everything here rests on the image being RELOCATABLE: it is staged at a non-zero `image_at`
+    precisely so that a twin which addressed it absolutely — instead of through the base argument it
+    is handed — fails the suite. A ROM project's code is the opposite by construction. The ORIGINAL
+    is linked for $fc0000 and reaches the machine's RAM and I/O page by absolute address, so a
+    transcription of it is absolute too, and staging the image anywhere but at 0 would make every
+    one of those addresses wrong. There is no arrangement of this runner that serves both.
+    """
+    cfg = project.current()
+    if cfg.rom is None:
+        return
+    raise RuntimeError(
+        f"{cfg.name} is bound in ROM MODE (tools/recreate_kit/README.md, \"ROM mode\"), where the "
+        f"asm twins cannot run: this runner stages the image at a non-zero base and hands a twin "
+        f"that base as its first C argument, so that a twin addressing the image absolutely is "
+        f"caught — and a transcription of ROM code is absolute by construction, since the ORIGINAL "
+        f"is linked for {cfg.rom_base:#x} and reaches RAM and the I/O page by absolute address. A "
+        f"twin staged anywhere but at 0 would read the wrong bytes and one staged AT 0 would defeat "
+        f"the check the layout exists for.")
+
+
 class AsmTwins:
     """The assembled twins for one project, loaded once and callable with the C ABI.
 
@@ -232,6 +257,7 @@ class AsmTwins:
     """
 
     def __init__(self, asm_dir, image_size, callbacks=None, lib=None):
+        _refuse_in_rom_mode()
         self.elf = Path(asm_dir) / "twins.elf"
         self.bin = Path(asm_dir) / "twins.bin"
         self.require()

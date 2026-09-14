@@ -58,6 +58,15 @@ PINNED = ("OS_IMAGE_SIZE",
           # ...and the hardware WRITE ledger's (Phase 10), which truncates on both sides identically
           # for the same reason: two write streams that diverge past the cap would compare equal.
           "OS_HW_WRITE_LOG_MAX",
+          # the YM2149's select/read-back port. Mirrored because a PROJECT's case names it — the
+          # decoy a ROM case plants there to prove the ports are not served out of the image has to
+          # be at the address the shim actually decodes.
+          "OS_PSG_PORT_SELECT",
+          # the first address the oracle DECODES rather than serving from the image. Mirrored because
+          # loader.load_rom_image refuses a ROM window that reaches it — a window that covered the
+          # I/O page would answer every unmodeled hardware read with a ROM byte, silently — and that
+          # refusal is only as good as the two spellings agreeing.
+          "OS_HW_IO_PAGE",
           # ...and the off-image OS event ledger's (Phase 13), for the same reason again, together
           # with its event kinds: the C tags each entry and the Python compares them, so a value
           # changed on one side alone would make every IKBD command compare as a console byte.

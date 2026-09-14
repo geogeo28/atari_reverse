@@ -630,6 +630,100 @@ second route with different behaviour. `harness.BASE_IMAGE` keeps its meaning ei
 as loaded, which is what a battery reads when it wants the ORIGINAL's own bytes (an entry
 prologue, a shipped table). `test/test_base_image.py` pins it.
 
+## ROM mode: when the target is the operating system, not a program
+
+The kit's default shape is a game: a `.PRG` loaded at `load_base` into a 1 MB image, with a MODELLED
+TOS around it — trap callbacks, a poked-input block at `$600..$660`, a Malloc arena, a staged-file
+window. None of that applies when the binary under test **is** TOS. A ROM function's inputs are the
+machine's own RAM, its `trap #13` must be taken through the image's real vector table, and its code
+lives at `$fcxxxx`, far above any `image_size` a game ever used.
+
+A project turns that on by declaring the **ROM binding** in its `project.toml` — four keys, all or
+none (`project._rom_binding` refuses three out of four, because a partial one would bind the project
+as an ordinary `.PRG` project with a missing file):
+
+```toml
+name       = "tos102us"
+names      = "../names.txt"
+lib        = "build/libtos102us.so"
+rom        = "../../../tools/hatari/TOS102US.img"   # referenced in place; never copied
+rom_base   = 0xfc0000
+snapshot   = "build/boot_ram.bin"                   # a post-boot RAM image, captured once
+stack_top  = 0x80000                                # a guarded band inside the machine's own RAM
+image_size = 0x1000000                              # the whole 24-bit address space
+```
+
+There is no `prg` and no `load_base`: the image starts at address 0, which is the machine's RAM.
+
+### What the image is, and how it is decoded
+
+`loader.load_rom_image()` builds it: the RAM snapshot at 0, the ROM at `rom_base`, zeros between.
+Byte `i` is still exactly what the 68000 sees at address `i` — but "inside the image" stops meaning
+"memory", because the I/O page at `$ff0000` is numerically inside it. `emu` installs the map into
+the oracle (`osh_rom_window`) and `shim.c` decodes in this order:
+
+| address | served by |
+| --- | --- |
+| `< ram_end` (the snapshot's length) | the image, exactly as a `.PRG` project's RAM is |
+| the PSG ports, then os.h's `OS_HW_*` slots, then the `OS_HW_IO_*` blocks | the seeded PSG / hardware read models and the hardware WRITE ledger |
+| `[rom_base, rom_base + rom size)` | the image, **read-only** — a store is dropped and counted |
+| anything else | off-image: 0 on a read, dropped on a write — and a READ of the I/O page is counted, which is what the refusal below is built on |
+
+Off ROM mode the window is empty and `ram_end` is the image's length, so every one of those paths is
+byte-for-byte the path it always was. `test/test_rom_mode.py` pins both directions from C.
+
+**The CANDIDATE's buffer holds the ROM too, and the diff covers it.** The oracle drops a store into
+the window, so nothing the oracle does can differ there — but the candidate is C over a plain
+bytearray, where a stray store lands and stays, and that difference is visible only if the ROM is
+both in its image and inside the compared spans. It is also what a core READS: the ROM's own tables
+(the BIOS/XBIOS dispatch tables, the fonts) are data a reconstruction is entitled to walk, exactly as
+the original does.
+
+### What is NOT modelled, and why that is the point
+
+**No TOS trap model.** `shim.c` neither patches the vector table nor dispatches on its magic PCs, so
+a `trap #13` is taken by Musashi's own exception processing into whatever the image's vector table
+names — the ROM's real handler. That is the whole reason to run a ROM function in place. It also
+means the poked-input block, the Malloc arena and the staged-file window cannot be reached by
+anything, which is why `harness._vet_os_memory_map` hands over to `_vet_rom_memory_map` here. The
+claim is re-tested rather than trusted: `emu._vet_rom_mode_is_modelless` refuses any RUN whose
+oracle served ANY modelled trap — a bare `emu.run` included, since a run through the model describes
+nothing about the ROM whoever made it — and the builders that stage that state (`console_key`,
+`psg_regs`, `stage_files`, …) are refused outright.
+
+`image_size` is free to be the whole address space — but **os.h's `OS_IMAGE_SIZE` must equal the
+machine's RAM**, i.e. the snapshot's length, because it is the bound the CANDIDATE's kit sources use
+for every image access (`os_in_image`, `os_sched_store`). `_vet_rom_memory_map` refuses a binding
+where it does not, and checks that the declared `stack_top` band lies inside that RAM.
+
+**The seeded models stay, and an I/O byte outside them is REFUSED rather than answered.** A case
+declares the bytes it expects exactly as a game case does, an undeclared modelled read still refuses
+the run in `differential()`, and hardware writes are still ledgered and compared. What is new is the
+rest of the page: a read of an I/O address no Phase-7 slot declares is counted by the shim and
+refused by `harness._vet_rom_io_reads_are_modelled`, naming the address. It has to be — a game
+touches few registers, but an operating system touches the whole machine, and the silent 0 those
+reads used to answer is the same 0 on both sides, so a `Getrez` reading `$ff8260` would verify green
+against a byte the model invented. Adding an address is a Phase-7 slot's worth of work; until it is
+added, the function that reads it cannot be proved here, and it says so.
+
+### The stack, and the region the diff drops
+
+`STACK_TOP` is `image_size - 0x100` for a `.PRG` project, which in ROM mode would be the I/O page —
+so a ROM project declares `stack_top` instead, a band inside the machine's real RAM. The kit reserves
+`[stack_top - 0xf00, stack_top + 0x100)` around it and drops it from the diff, as it always has; what
+is new is that the image *continues above it*, so `harness.DIFF_SPANS` is two spans rather than one
+prefix. For a `.PRG` project the second span is empty and nothing changes.
+
+Pick a band the snapshot leaves empty, and pin that it is empty — the oracle writes a machine stack
+there and the candidate does not, so anything live in it would be invisible on one side.
+
+### Capturing the snapshot
+
+That is the project's job, not the kit's: it is one headless Hatari boot of the original ROM, stopped
+at a documented instant, `savebin`ned. `projects/tos102us/recreate/tools/boot_snapshot.py` is the
+worked example, including the part that matters — capturing TWICE and recording exactly which bytes
+two boots disagree about, so no case can rest on one.
+
 ## Building, and what `clean` owns
 
 `liboracle.so` and Musashi's generated opcode tables (`oracle/build/`) are **shared**: every
@@ -643,6 +737,13 @@ project's `make test` links the same file. So the two `clean` targets are delibe
 `make oracle` from a project rebuilds the shared oracle without running the suite. The oracle is
 compiled **without** the project's `include/` on the header path, so a stray include can never make
 the shared artifact game-specific — make's timestamps could not detect that across projects.
+
+**Every `.c` under `src/` is linked into the candidate**, one directory deep: `src/*.c` and
+`src/*/*.c`. A small project keeps its cores in `src/` alone; one big enough to have COMPONENTS
+keeps one directory per component (`projects/tos102us` has `src/xbios/`, and will have `src/bios/`,
+`src/gemdos/`, …), and either shape builds with no rule of its own. A component nested deeper than
+that is not compiled — and would surface at `dlsym` as the candidate's ABI error rather than as the
+missing source, so keep the layout flat.
 
 ## Beyond the differential: running the cores on target
 

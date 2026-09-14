@@ -1341,6 +1341,18 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   arm.txt`, and `arm.txt` holds the memory breakpoint. Three files, one per hop, each because the
   hop before it is the only thing that can arm it (`projects/tos102us/recreate/atari/ledger_run.py`).
 
+- **THREE MORE FACTS ABOUT THE DEBUGGER, EACH OF WHICH COST A HUNG RUN** (measured by
+  `projects/tos102us/recreate/tools/boot_snapshot.py`). (1) **A breakpoint expression dereferences
+  memory ONE level only** (`b help`): `(pc).w = $4e42 && d0 = $c8` can say "a `trap #2` with an AES
+  selector" but not WHICH AES call, because the opcode sits behind a second pointer (`(d1)`) — so a
+  stop on "the first `evnt_multi`" cannot be expressed, and on TOS 1.02 it would never fire anyway
+  (`tos-os-calls.md`, the desktop calls the AES dispatcher directly). (2) **`:trace` is mandatory on a
+  breakpoint whose action file is meant to run unattended**: without it the action file runs AND
+  THEN the interactive debugger opens, and a headless run sits there for ever. (3) **Hatari `chdir`s
+  into an action file's directory before running it**, so every path inside one — `savebin`, a
+  nested `:file`, a log — must be ABSOLUTE; a relative `savebin dump.bin ...` lands wherever the
+  action file lives, not where the driver started.
+
 - **RAM ABOVE THE LOW PAGES IS NOT DETERMINISTIC ACROSS BOOTS OF THE SAME ROM — PIN THE LOW WINDOW
   AND HASH THE REST.** Measured over three boots of TOS 1.02 US on one fixed configuration
   (`boot_surface.py`): `$000-$9FE` is byte-identical every time and **645 bytes above it are not**,
@@ -1383,7 +1395,7 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
 
 - **Byte-compare against the original by dumping its RAM.** The strongest side-by-side there is,
   and it costs one Hatari debugger script. Run the ORIGINAL binary to the screen you want, dump the
-  whole machine (`b VBL > N :once :file act.ini` with `savebin dump.bin 0 0x400000` and `cont` in
+  whole machine (`b VBL > N :once :file act.ini` with `savebin /abs/path/dump.bin 0 0x400000` and `cont` in
   it — host paths, not GEMDOS ones, and give Hatari `/dev/null` on stdin or the debugger blocks),
   then **search the dump for your own framebuffer bytes**. A hit means the two bitmaps are equal,
   and you never had to find the original's screen address. Joust's on-target title screen is

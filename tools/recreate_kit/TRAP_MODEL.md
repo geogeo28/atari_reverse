@@ -222,6 +222,95 @@ where a case expects an output) or, in the other direction, the C overrunning th
 `osh_out_regs()` exports the count and `emu.py` checks it against its own mirror at import, naming
 the rebuild.
 
+## ROM mode — the model that is switched OFF
+
+Everything below this section is a model of TOS for a program that *calls* TOS. When the binary under
+test IS TOS, the only honest model is none: the ROM's own instructions must run, its `trap #13` must
+be taken through the image's real vector table into its own handler, and its inputs must be a real
+machine's RAM rather than a poked block. A project declares that with the ROM binding in its
+`project.toml` (`rom` / `rom_base` / `snapshot` / `stack_top`; see the README's "ROM mode").
+
+**What is not modelled, deliberately:**
+
+* **The four TOS traps.** `osh_run` installs no magic vectors and dispatches on none, so GEMDOS, the
+  BIOS, the XBIOS and the AES/VDI door are whatever the image says they are. Nothing about
+  "Phase 1..13" below is in the picture.
+* **The harness-poked input block** (`$600..$660`), the **Malloc arena**, the **staged-file window**.
+  They are only ever read or written by the trap doors, and no door can run — so
+  `harness._vet_os_memory_map` hands over to `_vet_rom_memory_map`, which asks the two questions a
+  ROM binding CAN get wrong instead. That is a structural argument, not a promise:
+  `emu._vet_rom_mode_is_modelless` re-tests it after every RUN against the TOTAL number of traps the
+  model served (`osh_trap_count`), so a shim whose gate came undone reddens rather than quietly
+  verifying a reconstruction against the model it was supposed to be replacing. In `emu` rather than
+  in the harness because it holds of any run at all, `emu.run`'s own callers included — the split
+  `_vet_no_malloc_over_program` states. A per-door
+  tally would not do: the GEMDOS file doors, `Super` and `Mfree` bump none of them.
+  The builders that STAGE that state — `console_key`, `psg_regs`, `vdi_state`, `stage_files` — are
+  refused outright in ROM mode, because their pokes would land on the machine snapshot's own low RAM
+  identically on both sides and the case would go green having corrupted what the ROM function runs
+  over.
+
+**`OS_IMAGE_SIZE` IS NOT VACUOUS HERE, and an earlier draft of this section said it was.** It is the
+bound the CANDIDATE's kit sources use for every image access — `os_in_image`, `os_sched_store` — so
+in ROM mode it must equal the machine's RAM, i.e. the snapshot's length. `_vet_rom_memory_map`
+refuses a binding where it does not. What is free to differ from it is `image_size`, the ADDRESS
+SPACE. The same rule reaches the scheduled-write model: an agent's store is bounded by RAM on both
+sides, not by the image, so a case cannot schedule a store into the I/O page or the ROM.
+
+**What is modelled, unchanged:** the CPU configuration and the entry state (above), the seeded PSG
+read model (Phase 6), the seeded hardware read model (Phase 7), the scheduled-write model (Phase 8)
+and the hardware write ledger (Phase 10). A ROM function reaches the same `$ff8800` and `$fffa01` a
+game does, and the same rule holds *for the addresses those models name*: an undeclared read of one
+of them refuses the run rather than fabricating a byte.
+
+**AND THE RULE THAT FOLLOWS FROM IT: AN I/O READ NOTHING MODELS REFUSES THE RUN.** Phase 7 models a
+NAMED SET of I/O bytes and nothing else, and every other address in the page used to answer the
+silent 0 an off-image read has always answered — on both sides, refusing nothing. For a game that
+was a small surface. TOS touches the whole machine: `$ff8260` (the shifter's resolution byte, which
+XBIOS `Getrez` reads), `$ff8201`/`$ff8203` (the video base, which `Physbase` reads), `$ff8240`+ (the
+palette, which `Setcolor` reads back), the whole FDC/DMA block, the rest of the MFP — so a
+reconstruction of any of those could be verified GREEN against a fabricated 0. So the shim COUNTS
+such a read (`osh_io_unmodeled_reads`, with the first offending address) and
+`harness._vet_rom_io_reads_are_modelled` refuses the differential, naming the address.
+
+It is Phase 7's own split, kept verbatim: `emu.run` stays permissive, because it drives boots and
+bootstraps whose I/O reads are nobody's enumerated list and a false green needs something being
+VERIFIED. What the refusal does not do is make the address available — each is still a Phase-7
+slot's worth of work (an address, the evidence for what the machine really answers, an entry in
+os.h's table on both sides). The change is that a function reading one now says so instead of
+passing.
+
+**What is modelled that a game never needed:** the ROM window is READ-ONLY. A store into it is
+dropped, as it is on the machine, and counted (`osh_rom_stores`) — because the candidate's identical
+store lands in its own buffer, so the two images would diverge at an address the oracle cannot
+produce. `differential()` refuses such a run by name instead of reporting it as a byte difference.
+
+**Two smaller limits:** RAM above the snapshot's length and below the I/O page reads 0 rather than
+taking a bus error, exactly as an off-image address always has; and the executed-PC coverage bitset
+(`osh_cov_*`) only covers the first megabyte, so it sees nothing a ROM function does. Neither is
+load-bearing for a differential — the first would be a bus error on the machine and so is a defect
+in the case either way, and coverage is an opt-in diagnostic.
+
+**AND ONE THAT IS A CHECKOUT'S, NOT A RUN'S — PARKED.** `OS_IMAGE_SIZE` is one kit-wide constant in
+`include/os.h`, and in ROM mode it must equal the machine's RAM (above). So a ROM project on a 4 MB
+machine cannot coexist with the 1 MB `.PRG` projects in one checkout: whichever value the header
+carries, the other projects' `harness._vet_os_memory_map` refuses to bind. Today's ROM project is a
+1 MB ST and the question does not arise. The resolution when it does is the one `OS_FS_TABLE` already
+took: an `OS_IMAGE_SIZE_RUNTIME` build flag making it a variable on the HOST builds (the oracle and
+every candidate `.so`, both of which already pass `-DOS_FS_TABLE_RUNTIME`), installed per project
+from `image_size`/the snapshot, with the on-target build compiling the constant it always did. The
+only compile-time use to unpick is `os_in_image_fixed`'s `_Static_assert`. Not implemented — a
+mechanism built before a project needs it is a mechanism nobody has tested against a real second
+machine.
+
+**Why the map and the model are ONE switch.** `osh_rom_window` installs the memory map, and
+`osh_run` derives "serve no traps" from it: declaring a window is the only way to switch the model
+off, and switching it off is unavoidable once you declare one. They are two claims, and they are
+deliberately not two knobs — a ROM project wants both and nothing else wants either. The shape that
+would need them separated is a .PRG differential run with the real ROM mapped in so `trap #1`
+reaches genuine GEMDOS; that is a second parameter on `osh_rom_window` on the day someone builds it,
+not a knob nothing sets today.
+
 ## The harness-poked model state
 
 Four regions of the image are inputs the harness pokes, not program memory. Both cores read the

@@ -69,13 +69,34 @@ def test_set_base_image_hands_back_the_previous_one(installed_base):
     assert bytes(harness.set_base_image(previous)) == installed_base
 
 
-@pytest.mark.parametrize("length", (harness.OS_IMAGE_SIZE - 1, harness.OS_IMAGE_SIZE + 1, 0))
+def test_a_prg_project_compares_one_prefix_and_nothing_above_the_stack():
+    """ROM mode made the diffed region TWO spans; for a .PRG project the second must stay empty.
+
+    It is empty only while the stack band's top lands exactly on the image — `STACK_TOP` is
+    `IMAGE_SIZE - STACK_SENTINEL_BYTES` and the band closes `STACK_SENTINEL_BYTES` above it — and
+    that relation is stated in prose in four places and, without this, tested in none. Change the
+    headroom and every game project silently grows a span above its own image (or drops bytes below
+    it) while all six recreates stay green, which is exactly the shape nothing would catch.
+    """
+    import emu
+    assert harness.diff_spans() == ((0, emu.STACK_GUARD_LO),)
+    assert emu.STACK_BAND_HI == harness.IMAGE_SIZE
+    assert harness.in_diff(emu.STACK_GUARD_LO - 1) and not harness.in_diff(emu.STACK_GUARD_LO)
+
+
+@pytest.mark.parametrize("length", (harness.IMAGE_SIZE - 1, harness.IMAGE_SIZE + 1, 0))
 def test_an_image_of_the_wrong_length_is_refused_by_name(length):
-    """Every address the model fixes is an offset into an image of exactly OS_IMAGE_SIZE bytes."""
+    """Every address the model fixes is an offset into an image of exactly this project's length.
+
+    Checked against the BOUND `image_size` rather than os.h's OS_IMAGE_SIZE: `_vet_os_memory_map`
+    pins the two equal for every .PRG project (this one included, so the parameters below are the
+    lengths they always were), while a ROM project's image is the 24-bit address space and os.h's
+    constant describes a trap model that is not installed there at all.
+    """
     with pytest.raises(ValueError) as excinfo:
         harness.set_base_image(bytes(length))
     message = str(excinfo.value)
-    assert "OS_IMAGE_SIZE" in message and f"{harness.OS_IMAGE_SIZE:#x}" in message
+    assert "image_size" in message and f"{harness.IMAGE_SIZE:#x}" in message
 
 
 def test_the_installed_image_is_a_copy_the_caller_cannot_mutate():

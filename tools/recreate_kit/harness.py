@@ -13,14 +13,18 @@ from . import project
 _CFG = project.current()                 # bound by project.load(); it also put oracle/ on sys.path
 
 import loader  # noqa: E402  (module access: load_image() sets loader.PROGRAM_END, read below)
-from loader import load_image, IMAGE_SIZE  # noqa: E402
+from loader import load_image, load_rom_image, IMAGE_SIZE  # noqa: E402
 import emu  # noqa: E402
 
 PRG = _CFG.prg                                        # e.g. projects/buggyboy/bin/BUGGYBOY.PRG
 NAMES = _CFG.names
 LIB = _CFG.lib
 
-BASE_IMAGE = load_image(PRG)             # loaded + relocated once; tests copy & poke it
+# ROM MODE (see ../README.md, "ROM mode"): the image is the machine rather than a program — the
+# post-boot RAM snapshot at 0 with the ROM mapped over it at its real base. The .PRG arm is
+# unchanged and is what every game project takes.
+BASE_IMAGE = (load_rom_image(_CFG.snapshot, _CFG.rom, _CFG.rom_base) if emu.ROM_MODE
+              else load_image(PRG))      # loaded (+ relocated) once; tests copy & poke it
 # ...and the image a DIFFERENTIAL starts from, which is BASE_IMAGE until a project says otherwise.
 # See set_base_image() for the whole argument; it is private because rebinding it is the sanctioned
 # route and a second name for the same storage would be a second way to get it wrong.
@@ -286,7 +290,9 @@ OS_PSG_REGS = os_map.OS_PSG_REGS
 OS_PSG_NREGS = os_map.OS_PSG_NREGS
 OS_PSG_WRITE = os_map.OS_PSG_WRITE
 OS_POKE_BLOCK_END = os_map.OS_POKE_BLOCK_END
-# The direct-PSG ledger's event kinds, likewise re-exported from their one home (see os_map).
+# ...the chip's select/read-back port, for a project whose cases name it, and the direct-PSG
+# ledger's event kinds — all re-exported from their one home (see os_map).
+OS_PSG_PORT_SELECT = os_map.OS_PSG_PORT_SELECT
 OS_PSG_EVENT_WRITE = os_map.OS_PSG_EVENT_WRITE
 OS_PSG_EVENT_READ = os_map.OS_PSG_EVENT_READ
 # ...and the OFF-IMAGE OS event ledger's, from the same home and for one more reason: the kit's own
@@ -411,6 +417,59 @@ def _vet_staged_file_window():
             f"{_CFG.dir / project.CONFIG_NAME}, or raise image_size there.")
 
 
+def _vet_rom_memory_map():
+    """The ROM-mode half of the map check: what a ROM project can get wrong instead.
+
+    NONE OF THE REGIONS `_vet_os_memory_map` places is a question here. The Malloc arena, the
+    staged-file window and the poked-input block all belong to the TOS trap MODEL, and ROM mode
+    installs no trap model at all — the image's own vector table takes every trap into the ROM's
+    real handler, so no door that reads or writes those regions can run (shim.c gates the dispatch
+    on the same flag, and `emu._vet_rom_mode_is_modelless` re-tests the claim after every run).
+
+    What IS a question is the two numbers a ROM binding supplies by hand, one the candidate side
+    still carries, and what the SNAPSHOT holds where the oracle is about to put a stack:
+
+    * ``OS_IMAGE_SIZE`` is not vacuous, and an earlier draft of this said it was. It is the bound
+      the CANDIDATE's kit sources use for every image access — ``os_in_image``, ``os_sched_store``
+      — so it has to be the machine's RAM, which in ROM mode is the snapshot's length. Equal, and
+      a ROM project on a machine of another size has to move os.h's constant with it.
+    * ``stack_top`` was derived arithmetic for a .PRG project (``IMAGE_SIZE`` minus the sentinel
+      headroom) and is a hand-written key here, checked by ``project._address`` only for being
+      positive and even. A band outside RAM makes every push a dropped off-image write and the run
+      dies at the instruction cap naming neither the key nor the snapshot.
+    * ...and the band it reserves has to be DEAD MEMORY in the base image. The diff drops that band,
+      so anything the boot left living there is invisible to every case while the oracle writes a
+      machine stack over it and the candidate does not. Structural here — the base image is the one
+      thing this function can read — while the project's own test pins the VALUE, i.e. which band
+      that particular capture leaves clear.
+    """
+    if OS_IMAGE_SIZE != emu.RAM_END:
+        raise RuntimeError(
+            f"OS_IMAGE_SIZE ({OS_IMAGE_SIZE:#x}, tools/recreate_kit/include/os.h) is not "
+            f"{_CFG.name}'s RAM ({emu.RAM_END:#x}, the length of {_CFG.snapshot.name}) — the "
+            f"CANDIDATE's kit sources bound every image access against that constant, so its cores "
+            f"would refuse a legitimate access to the top of RAM (or, were it larger, read past the "
+            f"machine's memory) while the oracle served it. Capture the snapshot from a machine of "
+            f"OS_IMAGE_SIZE bytes, or move the constant and its Python mirror above.")
+    band_lo, band_hi = emu.STACK_GUARD_LO, emu.STACK_BAND_HI
+    if not 0 <= band_lo < band_hi <= emu.RAM_END:
+        raise RuntimeError(
+            f"{_CFG.name}'s `stack_top` ({emu.STACK_TOP:#x}, {_CFG.dir / project.CONFIG_NAME}) puts "
+            f"the oracle's machine stack in [{band_lo:#x}, {band_hi:#x}), which is not inside the "
+            f"machine's {emu.RAM_END:#x} bytes of RAM. Every push would be dropped as an off-image "
+            f"write and the run would never reach its rts. Move `stack_top` into RAM — a band the "
+            f"snapshot leaves empty, since the diff drops it and the candidate writes no stack.")
+    band = bytes(BASE_IMAGE[band_lo:band_hi])
+    if band != bytes(len(band)):
+        live = band_lo + next(i for i, byte in enumerate(band) if byte)
+        raise RuntimeError(
+            f"{_CFG.name}'s base image is not empty in [{band_lo:#x}, {band_hi:#x}), the band the "
+            f"oracle uses as a machine stack (first live byte at {live:#x}) — the diff DROPS that "
+            f"band, so whatever the boot left there is invisible to every case, while the oracle "
+            f"overwrites it and the candidate does not. Move `stack_top` in "
+            f"{_CFG.dir / project.CONFIG_NAME} to a band this capture leaves clear.")
+
+
 def _vet_os_memory_map():
     """Refuse to run if OS_HEAP_BASE / OS_FS_TABLE / OS_FS_STAGING / the poked-input block, or
     OS_IMAGE_SIZE, don't fit this project's image.
@@ -449,6 +508,8 @@ def _vet_os_memory_map():
     a base that is legal here says nothing about the seventh allocation — emu._vet_heap_within_bounds
     is the other half, refusing per run a bump pointer that passed the ceiling.
     """
+    if emu.ROM_MODE:
+        return _vet_rom_memory_map()
     heap_base = emu.OS_HEAP_BASE                 # the CONFIGURED base; live, so this is re-runnable
     heap_source = emu.heap_base_source()         # ...and where it came from: the key, or os.h
     if heap_base < OS_POKE_BLOCK_END:
@@ -560,6 +621,16 @@ def _vet_poked_input_available(what):
     sees every poke however it was built; the guard over the GAME's own reads of the block is
     emu._vet_no_poked_input_read().
     """
+    if emu.ROM_MODE:
+        raise RuntimeError(
+            f"{_CFG.name} staged {what}, which is the TOS trap MODEL's own state — and ROM mode "
+            f"installs no trap model, so nothing can ever read it back. The poke would land on the "
+            f"machine snapshot's own low RAM (the block is {OS_CON_PENDING:#x}.."
+            f"{OS_POKE_BLOCK_END - 1:#x}, which on a real machine is the OS's), identically on both "
+            f"sides, and the case would go green having corrupted the state the ROM function runs "
+            f"over. Declare the chip's contents with `differential(..., psg_seed=...)` / "
+            f"`hw_seed=...`, or perturb the snapshot with an ordinary poke at the address the "
+            f"machine really keeps that state at.")
     if emu.poked_input_overlaps_program():
         raise _poked_input_waiver_error(what)
 
@@ -747,6 +818,15 @@ def stage_files(files):
     dict. If these constants drift from os.h the open/read test fails (the cross-language pin),
     since os_fopen would look at the wrong table address.
     """
+    if emu.ROM_MODE:
+        raise RuntimeError(
+            f"{_CFG.name} staged {len(list(files))} file(s), which only the TOS trap model's "
+            f"Fopen/Fread doors can serve — and ROM mode installs no trap model, so nothing can "
+            f"read them back. The pokes would land on the machine snapshot's own memory at "
+            f"{emu.OS_FS_TABLE:#x} and above, identically on both sides, and the case would go "
+            f"green having corrupted the state the ROM function runs over. A ROM function that "
+            f"reads a floppy does it through the FDC, which is hardware (TRAP_MODEL.md, Phase 7).")
+
     assert len(files) <= OS_FS_SLOTS, (
         f"{len(files)} files staged into a {OS_FS_SLOTS}-slot table — the extra entries would be "
         f"written past its end, over the staging area os_fread then serves bytes from")
@@ -793,10 +873,13 @@ def set_base_image(image):
     caller kept a reference to could be mutated under them all.
     """
     global _DIFFERENTIAL_BASE
-    if len(image) != OS_IMAGE_SIZE:
+    # Against the BOUND image length, not os.h's constant. _vet_os_memory_map pins the two equal for
+    # every .PRG project, so this is the check it always was there; in ROM mode the image is the
+    # 24-bit address space and os.h's constant describes a model that is not installed.
+    if len(image) != IMAGE_SIZE:
         raise ValueError(
-            f"set_base_image() was given {len(image):#x} bytes, but the model's image is "
-            f"OS_IMAGE_SIZE ({OS_IMAGE_SIZE:#x}, tools/recreate_kit/include/os.h) — every address "
+            f"set_base_image() was given {len(image):#x} bytes, but this project's image is "
+            f"{IMAGE_SIZE:#x} bytes (image_size in project.toml) — every address "
             f"the map fixes is an offset into an image of exactly that length, so a short one would "
             f"put the staged-file table past its end and a long one would silently drop its top.")
     previous, _DIFFERENTIAL_BASE = _DIFFERENTIAL_BASE, bytes(image)
@@ -856,6 +939,83 @@ def candidate_image(img):
     is free to hand back the same storage every call. A new caller that breaks that must not use it.
     """
     return (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(img))
+
+
+# ---- the region a differential compares ---------------------------------------------------------
+# The bytes of the run's stack the HARNESS itself puts there, and which a write is therefore not
+# output: `osh_run` plants the sentinel return address at A7 before the run, exactly as a `jsr`
+# would, and a case stages a called function's arguments in the words above it (a project's
+# `test/abi.py` FIRST_ARG = emu.STACK_TOP + SENTINEL_SLOT_BYTES is where that spelling lives).
+SENTINEL_SLOT_BYTES = 4
+
+
+def diff_spans():
+    """The byte ranges a differential compares: the image minus the ORACLE's machine-stack band.
+
+    The band is [STACK_GUARD_LO, STACK_BAND_HI) — a return address and saved registers, which the C
+    reconstruction has no analogue for. For a .PRG project the stack is at the top of the image, so
+    this is the prefix [0, STACK_GUARD_LO) every case has always been compared over and the second
+    span is empty; in ROM mode the stack is a band inside the machine's RAM and the image continues
+    above it, so the comparison resumes past it.
+
+    COMPUTED PER CALL from emu's constants rather than frozen at import, so that this and the
+    stray-write guard in `differential` — which reports the writes this drops — cannot come to
+    describe two different bands.
+    """
+    return tuple((lo, hi) for lo, hi in ((0, emu.STACK_GUARD_LO),
+                                         (emu.STACK_BAND_HI, IMAGE_SIZE)) if lo < hi)
+
+
+# How much of a span the byte-by-byte walk looks at once. The walk is ~200x the cost of a `bytes()`
+# compare, and a ROM project's second span is 15.5 MB — so walking the whole span to locate one
+# differing byte turns the FIRST red case into minutes. Chunking keeps the walk proportional to what
+# actually differs: the compare is run per chunk and only the chunks that differ are walked.
+DIFF_CHUNK_BYTES = 1 << 16
+
+
+def differing_addresses(left, right, spans, excluded):
+    """Every address in ``spans`` where ``left`` and ``right`` differ and ``excluded`` says nothing.
+
+    ``left``/``right`` are memoryviews of the two final images. One implementation because the plain
+    pass and the attribution pass ask the identical question, and a second copy of the chunking
+    would be a second place for the span arithmetic to go wrong.
+    """
+    found = []
+    for lo, hi in spans:
+        for start in range(lo, hi, DIFF_CHUNK_BYTES):
+            stop = min(start + DIFF_CHUNK_BYTES, hi)
+            if bytes(left[start:stop]) == bytes(right[start:stop]):
+                continue
+            found += [a for a in range(start, stop) if left[a] != right[a] and not excluded(a)]
+    return found
+
+
+def in_diff(addr):
+    """Is ``addr`` part of what a differential compares? (False inside the oracle's stack band.)"""
+    return any(lo <= addr < hi for lo, hi in diff_spans())
+
+
+def _stray_stack_writes(o_writes, pokes):
+    """Oracle writes inside the DROPPED band that the run's own stack frame does not explain.
+
+    The band `diff_spans` drops is [STACK_GUARD_LO, STACK_BAND_HI). Three parts of it are the
+    harness's rather than the function's output, and only those three:
+
+    * [STACK_TOP - STACK_SCRATCH, STACK_TOP) — the frame a call may legitimately push into;
+    * [STACK_TOP, STACK_TOP + SENTINEL_SLOT_BYTES) — the sentinel return address `osh_run` plants;
+    * whatever addresses in the band THIS CASE poked, which are the arguments it staged in the
+      caller's frame (a project's `abi.FIRST_ARG` and up). A callee that writes its own argument
+      slot is ordinary 68000 practice — Alcyon C's write-to-`(sp)` first-argument idiom does exactly
+      that — and the case declared those bytes, so a write to one is not hidden output.
+
+    Everything else in the band is program output the diff would silently hide, which is the one
+    thing the cutoff must never do quietly.
+    """
+    band_lo, band_hi = emu.STACK_GUARD_LO, emu.STACK_BAND_HI
+    frame_lo, frame_hi = emu.STACK_TOP - emu.STACK_SCRATCH, emu.STACK_TOP + SENTINEL_SLOT_BYTES
+    staged = {a for at, data in (pokes or {}).items() for a in range(at, at + len(data))}
+    return [a for a in o_writes
+            if band_lo <= a < band_hi and not (frame_lo <= a < frame_hi) and a not in staged]
 
 
 def hi_garbage(rng, low_word):
@@ -1179,6 +1339,35 @@ def _vet_os_event_state(entry, o_regs):
         f"None of these calls touches the image, so the byte diff cannot see them: a console byte "
         f"never printed, an IKBD command never sent, or a mouse-cursor call in the wrong place is "
         f"invisible except here.")
+
+
+def _vet_rom_io_reads_are_modelled(entry, o_regs):
+    """Refuse a ROM-mode run that read an I/O byte NO MODEL SERVES. No-op for a .PRG project.
+
+    Phase 7 models a NAMED SET of I/O addresses; every other address in the page answers the silent
+    0 an off-image read has always answered, on BOTH sides. For a game that was a small surface — a
+    game touches few registers and its reconstruction is held to the ones it does. An OPERATING
+    SYSTEM touches the whole machine, so `Getrez` reading `$ff8260`, `Physbase` reading `$ff8201`
+    and `Setcolor` reading the palette back would each be verified GREEN against a fabricated 0.
+    Refused instead, naming the address and what closing it costs.
+
+    ROM mode's OTHER two structural claims — that no modelled trap was served and that nothing
+    stored into the ROM — are `emu`'s (`_vet_rom_mode_is_modelless`, `_vet_no_store_into_rom`),
+    because they hold of any run whatever. This one is a DIFFERENTIAL's: `emu.run` drives a boot
+    and a bootstrap, whose I/O reads are nobody's enumerated list, and a false green needs something
+    being verified. That is Phase 7's own split, kept verbatim (TRAP_MODEL.md, "ROM mode").
+    """
+    if not (emu.ROM_MODE and o_regs["io_unmodeled_reads"]):
+        return
+    first = o_regs["io_unmodeled_first"]
+    raise AssertionError(
+        f"{label(entry)} @ {entry:#x}: the oracle made {o_regs['io_unmodeled_reads']} read(s) of "
+        f"the I/O page that no model serves, the first at {first:#x}. It was answered 0 — on both "
+        f"sides, so the case would go green against a byte the model invented rather than against "
+        f"the machine's. Declare the address: if it is one of the modelled slots (emu.HW_ADDRS), "
+        f"pass its contents as this case's `hw_seed`; otherwise it is a Phase-7 slot's worth of "
+        f"work — an entry in include/os.h's table on both sides, and the evidence for what the "
+        f"machine really answers there (TRAP_MODEL.md, Phase 7).")
 
 
 def _vet_heap_pointers_agree(entry, o_regs):
@@ -1797,7 +1986,7 @@ def _vet_poison_is_attributable(entry, scheduled, o_writes):
         f"wrote. Use poison=False and seed those destinations away from what the routine leaves.")
 
 
-def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
+def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
                        stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites, waived):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
@@ -1808,7 +1997,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     that also steers control flow could perturb a complex function's run."""
     poisoned = bytearray(img)
     for a in o_writes:
-        if a < guard_lo:                     # only the diffed region matters; stack canaries are moot
+        if in_diff(a):                       # only the diffed region matters; stack canaries are moot
             poisoned[a] = o_final[a] ^ 0xff
     po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
                                    psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
@@ -1828,6 +2017,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
     # ...and the same off-image OS event comparison, against the POISONED run's own oracle stream.
+    _vet_rom_io_reads_are_modelled(entry, po_regs)
     _vet_os_event_state(entry, po_regs)
     _vet_heap_pointers_agree(entry, po_regs)
     # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
@@ -1838,14 +2028,11 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     _vet_hw_write_state(entry, po_regs, waived)
     _vet_schedule_ran_the_same_wait(entry, po_regs)
     pc_final = bytes(buf)
-    # Same fast path as the plain compare in differential(): the byte-by-byte walk below is ~200x
-    # the cost of one bytes() compare over a 1 MiB prefix, and it is only ever needed to LOCATE a
-    # difference. Measured on Zynaps' suite, where every attribution pass is clean: 49 ms per call
-    # against 0.24 ms, ~15% of the whole run.
-    if bytes(po_final[:guard_lo]) == bytes(pc_final[:guard_lo]):
-        bad = []
-    else:
-        bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
+    # Same fast path as the plain compare in differential(), memoryview slices and all: the
+    # byte-by-byte walk below is ~200x the cost of one bytes() compare over the same span, and it is
+    # only ever needed to LOCATE a difference. Measured on Zynaps' suite, where every attribution
+    # pass is clean: 49 ms per call against 0.24 ms over its 1 MiB prefix, ~15% of the whole run.
+    bad = differing_addresses(memoryview(po_final), memoryview(pc_final), diff_spans(), excluded)
     if bad:
         a = bad[0]
         raise AssertionError(
@@ -1869,8 +2056,9 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     ``stop_pc`` diffs at a checkpoint PC instead of at rts (for a function that never returns;
     see emu.run). ``exclude`` is an optional list of (lo, hi) byte bands to drop from the diff
     in addition to the default stack guard — used when the function relocates its own stack
-    outside [STACK_GUARD_LO, IMAGE_SIZE) (e.g. _start moves A7 to 0x1b044). The candidate is
-    pure C and never writes a machine stack, so excluding the oracle's stack band is sound.
+    outside [STACK_GUARD_LO, STACK_BAND_HI), the band ``diff_spans`` already drops (e.g. _start
+    moves A7 to 0x1b044). The candidate is pure C and never writes a machine stack, so excluding
+    the oracle's stack band is sound.
     ``max_insns`` caps the oracle run (raise it for data-heavy functions like the unpacker).
     Raises before comparing anything if the candidate made an ``os_*`` call the TOS model refuses
     (``_vet_no_os_refusal``) — such a case tests nothing, however clean its bytes look — or if the
@@ -1964,27 +2152,29 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     def excluded(a):
         return any(lo <= a < hi for lo, hi in (exclude or ()))
 
-    # Diff only [0, STACK_GUARD_LO): the oracle uses the guard region above as a real machine
-    # stack (return address, saved registers) that the C reconstruction has no analogue for.
-    # Fast path — compare that prefix at C speed; only walk it byte-by-byte when it actually
+    # Diff everything but [STACK_GUARD_LO, STACK_BAND_HI): the oracle uses that band as a real
+    # machine stack (return address, saved registers) that the C reconstruction has no analogue for.
+    # For a .PRG project the band ends AT the image, so this is the prefix [0, STACK_GUARD_LO) it
+    # has always been and the second span below is empty; in ROM mode the stack sits inside the
+    # machine's RAM and the image goes on above it — the ROM, and the RAM between the stack and it
+    # — so the comparison has to resume rather than stop.
+    # Fast path — compare each span at C speed; only walk it byte-by-byte when it actually
     # differs (a failure, or an excluded band like _start's relocated stack). This keeps the
-    # scan cheap as IMAGE_SIZE grows (the prefix is ~1 MiB now).
-    guard_lo = emu.STACK_GUARD_LO
-    if bytes(o_final[:guard_lo]) == bytes(c_final[:guard_lo]):
-        diffs = []
-    else:
-        diffs = [(a, o_final[a], c_final[a])
-                 for a in range(guard_lo)
-                 if o_final[a] != c_final[a] and not excluded(a)]
+    # scan cheap as IMAGE_SIZE grows: a ROM project's second span is ~15.5 MB, and the slice is
+    # taken through a memoryview because `o_final` is a bytearray whose plain slice COPIES it
+    # (measured: 2.9 ms a span against 0.4 ms, on every case and twice more under `poison`).
+    o_view, c_view = memoryview(o_final), memoryview(c_final)
+    diffs = [(a, o_final[a], c_final[a])
+             for a in differing_addresses(o_view, c_view, diff_spans(), excluded)]
 
-    # Write-set completeness: the guard cutoff above is only sound if the oracle used that
-    # region purely as stack. A write in [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program
-    # output the diff would silently hide — fail loudly so it can't pass as verified.
-    stray = sorted(a for a in o_writes
-                   if emu.STACK_GUARD_LO <= a < emu.STACK_TOP - emu.STACK_SCRATCH)
+    # Write-set completeness: dropping the stack band is only sound if the oracle used it purely as
+    # stack. Every write inside it that the frame does not explain is program output the diff would
+    # silently hide — so the guard covers the WHOLE dropped band, and the two cannot diverge because
+    # both read the same emu constants (`diff_spans`).
+    stray = sorted(_stray_stack_writes(o_writes, pokes))
     if stray:
         raise AssertionError(
-            f"oracle wrote {len(stray)} byte(s) in the reserved stack-guard band "
+            f"oracle wrote {len(stray)} byte(s) in the reserved stack band "
             f"(e.g. {label(stray[0])} @ 0x{stray[0]:x}) — real output masked by the guard cutoff")
 
     # Side-effect ledger: XBIOS Dosound(A0) writes the YM2149, not RAM, so a wrong/missing command
@@ -2014,6 +2204,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
             f"candidate exports no Dosound ledger ({'/'.join(_DOSOUND_LEDGER_ABI)}) — the command "
             f"lists cannot be compared, so a divergence here would pass unnoticed")
 
+    _vet_rom_io_reads_are_modelled(entry, o_regs)
     _vet_os_event_state(entry, o_regs)
     _vet_heap_pointers_agree(entry, o_regs)
     _vet_psg_state(entry, o_regs)
@@ -2023,7 +2214,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
 
     if poison and not diffs:
         _vet_poison_is_attributable(entry, o_regs["sched"], o_writes)
-        _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
+        _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
                            stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites, waived)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
