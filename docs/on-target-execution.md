@@ -893,6 +893,32 @@ work once the pieces exist:
    the cross-compiled port's linked ELF, both under the same CPU core, per stage and per routine.
    `projects/zynaps/recreate/atari/bench_tier.py`. One image, one instrument: no window, no mixture
    and no average. (The precedent is `projects/buggyboy/recreate/tools/bench_frame.py`.)
+
+   **A ROM PORT'S NUMERATOR IS THE SAME ARGUMENT WITH THE IMAGE AT 0** —
+   `tools/recreate_kit/rom_bench.py`, the worked case being `projects/tos102us`. A ROM runs at its
+   burnt address over the machine's own RAM, so the "image" IS the address space: the snapshot is
+   staged at 0, the cores are handed 0 as their image base, and the cross-compiled blob is linked
+   into a free span of that same RAM (`bench_base` in the project's `project.toml`) rather than
+   beside it. Putting the blob INSIDE the compared image is the point — a core that stores into its
+   own code is then a visible divergence — and the price of it is that the span has to be excluded
+   from the comparison and vetted clear of every other tenant of that window. Both sides are net of
+   the entry cost the instrument itself charges, which is MEASURED on an empty function through both
+   of the oracle's doors rather than written down: Musashi's reset spends 40 cycles and one observed
+   instruction before either entry executes anything, and a constant added to a numerator and a
+   denominator drags every ratio towards 1.00 — 3% on a routine the size of XBIOS `Random`, 19% on
+   one the size of `Giaccess`, all of it lenient.
+
+   **And the numerator doubles as a SECOND DIFFERENTIAL, which is the detector this document's class
+   6 otherwise has none of.** The cross build is a third build of the port — the host `.so` the
+   differential proves, the shipped ROM, and this — so every row requires the m68k build to leave the
+   same image, the same return value at the width the C signature declares, the same callee-saved
+   file, the same off-image streams (PSG, modelled hardware reads, declared I/O reads, hardware
+   writes) and no refusal tally on either side. Measured sharp while it was being built: a
+   target-only `psg.h` shadow selecting `reg + 1` reds on the return value, and one reading `$ff8802`
+   instead of `$ff8800` reds as an I/O read no seeded model serves. It also prices things the
+   differential cannot see AT ALL — an interrupt mask, which an oracle that enters at IPL 7 and
+   reports no SR has no surface for — so such a row's cycle count is pinned rather than merely
+   printed.
 3. **Compare against the release slot, not against a frame rate.** Class 13's quantisation rule
    applies: what matters is how much of the slot the frame's work fills.
 

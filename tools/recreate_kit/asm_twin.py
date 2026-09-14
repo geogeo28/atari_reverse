@@ -170,6 +170,93 @@ CALLEE_SAVED_SEED = 0xCA11ED00
 CALLEE_SAVED_SEEDS = {name: CALLEE_SAVED_SEED + i for i, name in enumerate(CALLEE_SAVED)}
 
 
+# ---- what BOTH blob runners need ------------------------------------------------------------------
+# This module runs a project's hand-written m68k TWINS; `rom_bench.py` runs the same project's C
+# cores cross-compiled to m68k. The two stage different blobs over different memory for different
+# reasons, but the CALL is one shape — find the built blob, resolve a symbol in it, lay the C
+# arguments above the frame `run_bench` builds, and require the callee-saved file and the blob's own
+# code back untouched — and each of those four had a copy here and a copy there. They live beside
+# `CALLEE_SAVED_SEEDS` and `elf_symbols`, which the two already share, so a check tightened for one
+# runner is tightened for both rather than for whichever file the reader was in.
+
+# The first two longwords of the frame `emu.run_bench` builds: the return address it plants at the
+# stack pointer, and `arg0` above it. Every FURTHER C argument is the caller's to place, and it goes
+# above those two — which is what `stage_stack_args` does and why it starts there.
+BLOB_FRAME_BYTES = 8
+BLOB_ARG_BYTES = 4
+
+
+def require_built(paths, what, remedy):
+    """FAIL LOUDLY if a blob was never built, naming the files and the command that builds them.
+
+    A skip would hide a broken build: the suite would go green having run nothing, and "no row, no
+    comparison" is exactly the state a numerator and a twin differential exist to leave behind.
+    """
+    missing = [path for path in paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"{what} are not built ({', '.join(p.name for p in missing)} "
+                                f"missing) — {remedy}")
+
+
+def blob_entry(symbols, symbol, what):
+    """`symbols[symbol]`, or a KeyError listing what the blob DOES hold.
+
+    A renamed or dropped routine must name itself rather than surface as a wild jump into whatever
+    is at the address it did not get. The listing is narrowed to symbols sharing the asked-for
+    name's last underscore-separated word when any do — callers ask for `_body` / `_body_end`
+    bracket labels as well as for entry points, and an unnarrowed listing omits exactly the
+    neighbours a missing bracket needs it to show — and is the whole table when none do.
+    """
+    try:
+        return symbols[symbol]
+    except KeyError:
+        near = sorted(name for name in symbols if name.endswith(symbol.rsplit("_", 1)[-1]))
+        known = ", ".join(near or sorted(symbols)) or "(none)"
+        raise KeyError(f"no symbol {symbol!r} in {what}; what is there: {known}") from None
+
+
+def stage_stack_args(memory, stack_top, args):
+    """Lay `args` — the C arguments AFTER `arg0` — as 32-bit words above `run_bench`'s frame.
+
+    Returns the first address past them, which is where a caller's "nothing was written below the
+    image" sweep may start: the frame and the argument words are written on purpose.
+    """
+    at = stack_top + BLOB_FRAME_BYTES
+    for value in args:
+        memory[at:at + BLOB_ARG_BYTES] = (int(value) & 0xFFFFFFFF).to_bytes(BLOB_ARG_BYTES, "big")
+        at += BLOB_ARG_BYTES
+    return at
+
+
+def vet_callee_saved(symbol, regs):
+    """Every callee-saved register back as it was entered (`CALLEE_SAVED_SEEDS`).
+
+    NOTHING ELSE OFF TARGET CAN SEE A LOST ONE: the image, the return value and the cost are all a
+    correct routine's, while on the machine the caller's register is gone. For a twin that is a
+    `movem` list or a frame size; for a cross-compiled core it is a codegen or inline-asm defect,
+    since C owes its caller this file back.
+    """
+    for name, want in CALLEE_SAVED_SEEDS.items():
+        got = regs[name]
+        if got != want:
+            raise AssertionError(
+                f"{symbol} returned with {name} = {got:#x}, not the {want:#x} it was entered with "
+                f"— a callee-saved register that was not restored. Nothing else here can see that: "
+                f"the image, the return value and the cost are all a correct routine's")
+
+
+def vet_blob_intact(symbol, memory, span, reference):
+    """The blob's own code must come back byte for byte — a wild store, not a divergence.
+
+    An image comparison would either report it at an address inside the span that comparison
+    excludes, or not at all, so it is checked where it can be named.
+    """
+    lo, hi = span
+    if bytes(memory[lo:hi]) != bytes(reference):
+        raise AssertionError(f"{symbol} stored into the blob's own code — a wild write, not a "
+                             f"divergence")
+
+
 class DoorCallback:
     """One C core a twin reaches through the door: its symbol in the project's candidate `.so`, and
     how many 32-bit C arguments the twin pushes for it.
@@ -282,31 +369,14 @@ class AsmTwins:
         _check_door_band(self.stack_top, self.image_at)
 
     def require(self):
-        """FAIL LOUDLY if the twins were never assembled. A skip here would hide a broken twin: the
-        suite would go green having compared nothing, which is the one outcome a differential must
-        not have."""
-        missing = [p for p in (self.elf, self.bin) if not p.exists()]
-        if missing:
-            raise FileNotFoundError(
-                f"the asm twins are not built ({', '.join(p.name for p in missing)} missing) -- "
-                f"build them with `make test` (or `make {self.bin}`), which assembles src/asm/*.S")
+        """FAIL LOUDLY if the twins were never assembled — `require_built`'s reason."""
+        require_built((self.elf, self.bin), "the asm twins",
+                      f"build them with `make test` (or `make {self.bin}`), which assembles "
+                      f"src/asm/*.S")
 
     def entry(self, symbol):
-        """A symbol's link address, or a listing of what WAS assembled — a renamed or dropped twin
-        must name itself rather than surface as a wild jump to 0.
-
-        The listing is of NEIGHBOURS by suffix rather than of twins: callers ask for `_body` /
-        `_body_end` bracket labels as well as for `_asm` entry points, and a listing that named only
-        the twins would omit exactly the symbols a missing bracket needs it to show.
-        """
-        try:
-            return self.symbols[symbol]
-        except KeyError:
-            suffix = symbol.rsplit("_", 1)[-1]
-            near = sorted(s for s in self.symbols if s.endswith(suffix))
-            known = ", ".join(near) if near else ", ".join(sorted(self.symbols)) or "(none)"
-            raise KeyError(f"no symbol {symbol!r} in the assembled twins; "
-                           f"what is there: {known}") from None
+        """A symbol's link address, or a listing of what WAS assembled (`blob_entry`)."""
+        return blob_entry(self.symbols, symbol, "the assembled twins")
 
     def call(self, image, symbol, *args):
         """Run `symbol` over a copy of `image` with the C ABI: the image base then `args`, each a
@@ -321,9 +391,7 @@ class AsmTwins:
         mem[self.image_at:self.image_at + self.image_size] = image
         # run_bench itself writes the return address at sp and arg0 at sp+4; the remaining C
         # arguments are the caller's to place, and they sit above those two longwords.
-        for i, value in enumerate(args):
-            at = self.stack_top + 8 + 4 * i
-            mem[at:at + 4] = int(value & 0xffffffff).to_bytes(4, "big")
+        frame_end = stage_stack_args(mem, self.stack_top, args)
 
         entry = self.entry(symbol)
         seed = [CALLEE_SAVED_SEEDS.get(name, 0) for name in emu.REPORTED_REGS]
@@ -351,18 +419,13 @@ class AsmTwins:
                     f"{emu.bench_door_pc():#x}, having executed nothing in between — the stub's "
                     f"frame is wrong, and the run would never end")
 
-        for name, want in CALLEE_SAVED_SEEDS.items():
-            got = r["regs"][name]
-            if got != want:
-                raise AssertionError(
-                    f"{symbol} returned with {name} = {got:#x}, not the {want:#x} it was entered "
-                    f"with — a callee-saved register its epilogue did not restore. Nothing else "
-                    f"here can see that: the image, the return value and the cost are all a "
-                    f"correct twin's. Check both `movem` lists and the frame size between them")
-
+        # ...and the two checks the cross-compiled cores make for the same reasons (the shared half
+        # beside `CALLEE_SAVED_SEEDS`): the callee-saved file back as it was entered — for a twin
+        # that is a `movem` list or the frame size between the two of them — and the blob's own code
+        # untouched.
+        vet_callee_saved(symbol, r["regs"])
         blob_lo, blob_hi = self._blob_span
-        if mem[blob_lo:blob_hi] != self._template[blob_lo:blob_hi]:
-            raise AssertionError(f"{symbol} stored into its own code — a wild write, not a divergence")
+        vet_blob_intact(symbol, mem, self._blob_span, self._template[blob_lo:blob_hi])
         # OUTSIDE THE IMAGE, ON BOTH SIDES, where the comparison against the C core has nothing to
         # compare. The C is run through `harness.candidate_image`, whose guarded sweep
         # (`make guarded`) faults on exactly this; a twin has no such sweep, so the surroundings are
@@ -371,8 +434,8 @@ class AsmTwins:
         # so an overrun wider than the guard band is caught as well.
         # The lower band starts past the CALL FRAME, which is written on purpose: run_bench puts the
         # return address at `stack_top` and arg0 at `stack_top + 4`, and the remaining arguments sit
-        # above those. Everything higher, up to the image, is the twin's to leave alone.
-        frame_end = self.stack_top + 8 + 4 * len(args)
+        # above those — which is the `frame_end` `stage_stack_args` handed back. Everything higher,
+        # up to the image, is the twin's to leave alone.
         # `count(0) != span` and not `any(...)`: both slice the same ~1 MB, but `count` runs in C
         # where `any` iterates in Python. Measured 4.28 ms -> 0.51 ms a sweep on Bubble Ghost's
         # 1 MiB image, which is 8.5x of a twin call's whole cost — and a twin suite makes one call

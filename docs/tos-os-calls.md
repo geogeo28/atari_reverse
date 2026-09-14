@@ -157,6 +157,41 @@ Restore all three on the way out (`Setscreen(saved_log, saved_phys, saved_rez)`)
 [`on-target-execution.md`](on-target-execution.md), "The observable surfaces", has the control-boot
 rule that makes such a check measure your program rather than the OS.
 
+## What a BIOS/XBIOS call leaves in D0 is often not what it returns
+
+Three shapes, all measured against TOS 1.02 US by differentials that run the ROM routine in place
+(`projects/tos102us/recreate/`). Each is a place where the obvious reconstruction — and the obvious
+*reading* of a disassembly — is wrong, and a caller that depends on the documented return value is
+depending on something the ROM does not promise.
+
+**MIDI `Bconin` returns `$ffffff00 | byte`, not the byte.** The console's input driver ends
+`move.l 0(a1,d1.w),d0` and returns a whole longword; MIDI's is the same routine with `move.b`, which
+writes D0's LOW BYTE only — over the `moveq #-1,d0` its own status driver had just executed on the
+way in. So every MIDI character comes back with 24 bits of ones above it. Pinned by
+`test/test_bios_bconin.py::test_midi_returns_the_byte_inside_the_minus_one_its_status_left`; the
+constant is `MIDI_RESULT_PREFIX` in `include/addrs.h`.
+
+**A `jmp`-table dispatch leaves the DISPLACEMENT WORD in D0**, so an arm that sets no result returns
+a number out of the table. `Cursconf` ($fc4698) is `move.w TABLE(pc,d0.w),d0 / jmp TABLE(pc,d0.w)`,
+and its blink / steady / set-rate arms touch D0 no further — so they return `$0010`, `$0016` and
+`$001c`, which are the arms' own offsets in the ROM and nothing to do with the function numbers 2, 3
+and 4. Only the arms that open `moveq #0,d0` return a value of their own, and only the out-of-range
+arm — which escapes before the overwrite — comes back as its own argument. The corollary matters
+more than the numbers: such a routine writes D0's low word alone, so **the caller's high half comes
+back**, and a reconstruction must take the entering D0 as an argument to reproduce it. Pinned by
+`test/test_xbios_cursconf.py`, which reads the expected displacements out of the mapped ROM rather
+than writing them down.
+
+**"A negative argument means report only" is tested AT THE ROM'S OWN WIDTH, and not always per
+argument.** `Kbshift` and `Kbrate` test a WORD (`tst.w 4(sp) / bmi`), so `$0080` is a STORE — bit 7
+of the byte they go on to store is not the sign of the word they tested — while `$ff80` is a read.
+`Setexc` and `Keytbl` test a LONG, so `$ffffffff` is only one member of the family of "just tell me"
+values. And `Kbrate`'s two arguments are COUPLED: the `bmi` on a negative delay jumps past BOTH
+stores, so `Kbrate(-1, 3)` changes nothing at all, where `Keytbl`'s three arguments really are
+independent. Pinned by `test_bios_kbshift.py`, `test_xbios_kbrate.py`,
+`test_bios_setexc.py` and `test_xbios_keytbl.py`; the predicate is `keeps_current_value_word` /
+`_long` in `include/m68k_idioms.h`.
+
 ## Naming the wrappers
 
 Games wrap common calls in helpers: `move.w #sel,-(sp); trap #1; addq; rts`. Name these

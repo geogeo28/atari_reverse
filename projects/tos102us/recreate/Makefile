@@ -3,7 +3,25 @@
 # snapshot its differentials run over.
 KIT  := ../../../tools/recreate_kit
 GAME := tos102us
+
+# TIER 3's NUMERATOR: the same cores, built for the 68000 and run under the same oracle, so every
+# verified function carries a `recreate / original` cycle ratio and not just the original's cost.
+# kit.mk owns the rules (`bench_base` in project.toml turns them on); the FLAGS are the shipped ROM
+# build's own, read from the one file that states them, because a numerator measured under other
+# flags is a number about a program nobody runs. Set BEFORE the include, which is where kit.mk reads
+# them, including the include-path list: the ROM build and this one compile the cores against the
+# same headers by construction rather than by two lists agreeing.
+RECREATE := .
+include atari/target.mk
+BENCH_CFLAGS := $(TARGET_CFLAGS) $(TARGET_INCLUDES)
+BENCH_LDLIBS := $(TARGET_LDLIBS)
+
 include $(KIT)/kit.mk
+
+# ...and the one prerequisite kit.mk cannot know: the target header shadows the cores compile
+# against. (`project.toml` and this makefile are kit.mk's own prerequisites of the same rule, and
+# atari/target.mk is reached through this file.)
+$(BENCH_ELF): $(wildcard atari/shim_include/*.h) atari/target.mk
 
 # The snapshot is a BUILD PRODUCT, captured out of headless Hatari from the user's own ROM — which
 # is why it is a make rule and not a checked-in file (the ROM is Atari's, and so is its RAM image).
@@ -20,8 +38,29 @@ $(SNAPSHOT): tools/boot_snapshot.py tools/addrs.py include/addrs.h
 .PHONY: snapshot
 snapshot: $(SNAPSHOT)
 
-# Every differential reads it, so both suites capture it first rather than failing on a missing file
-# (kit.mk owns the recipes; this only adds the prerequisite). `guarded` is the same suite under the
-# guarded-image plugin, and it reads the snapshot at exactly the same import.
-test: $(SNAPSHOT)
-guarded: $(SNAPSHOT)
+# TIER 3's table: every verified function's `recreate / original` cycle ratio. It runs the ORIGINAL
+# too, so it needs the snapshot exactly as the suites do; `bench/tier3.py` exits non-zero on a row
+# the gate refuses or a verified case nobody priced, and `test/test_tier3.py` is the same registry
+# run by `make test`.
+#
+# THE TABLE IS A FILE AND ONLY THE PRINTING IS PHONY, which is what lets STATUS.md's Tier 3 column be
+# PINNED against it (`test/test_status.py`): a ledger quoting numbers nothing re-derives is the shape
+# that goes stale, and a target with no file has nothing to read. Its prerequisites are every input
+# of the measurement — the blob, both .so files, the snapshot, the registry, and `test/` because the
+# ROWS are `test_boot_snapshot.VERIFIED_CASES` (see bench/tier3.py).
+BENCH_TABLE := $(BENCH_DIR)/tier3.txt
+
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(CAND) $(ORACLE) $(SNAPSHOT)
+	$(PY) bench/tier3.py --out $@
+
+.PHONY: bench
+bench: $(BENCH_TABLE)
+	@cat $(BENCH_TABLE)
+
+# Every differential reads the snapshot, so both suites capture it first rather than failing on a
+# missing file (kit.mk owns the recipes; this only adds the prerequisite). `guarded` is the same
+# suite under the guarded-image plugin, and it reads the snapshot at exactly the same import.
+# The TABLE is a prerequisite too, because `test/test_status.py` pins STATUS.md's Tier 3 column
+# against it — a pin that skipped for want of a file would be no pin at all.
+test: $(SNAPSHOT) $(BENCH_TABLE)
+guarded: $(SNAPSHOT) $(BENCH_TABLE)

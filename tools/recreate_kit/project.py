@@ -128,6 +128,84 @@ def _fs_base(raw, recreate_dir):
                     "the bytes the window serves")
 
 
+def _bench_base(raw, recreate_dir):
+    """The optional ``bench_base`` address — where a ROM project stages its CROSS-COMPILED cores.
+
+    Tier 3's numerator (``rom_bench.py``) builds the same C the shipped ROM will carry and runs it
+    under the oracle over the same snapshot, which means the blob needs an address inside the
+    machine: a span of RAM the captured snapshot leaves empty, below the run's stack band. This is
+    that address, and kit.mk hands it to the linker.
+
+    Only the shape is checked here. Whether the span is a legal PLACE — empty in the snapshot, clear
+    of the stack band, inside the machine's RAM — is ``rom_bench._vet_tenancy``'s question,
+    since only it knows how big the blob came out. Odd is refused because the 68000 fetches the
+    blob's instructions from it.
+    """
+    return _address(raw, "bench_base", recreate_dir,
+                    "the 68000 fetches the cross-compiled cores' instructions from it")
+
+
+def _staging_base(raw, recreate_dir):
+    """The optional ``staging_base`` address — where a CASE stages memory of its own, or None.
+
+    Several ROM routines take a POINTER (``Getmpb``'s parameter block, ``Protobt``'s boot sector,
+    ``Supexec``'s routine), so a case has to own a piece of the machine's RAM. It is the THIRD tenant
+    of the free window ``stack_top`` and ``bench_base`` already share, and the three must not overlap
+    — which is why it is declared here beside them rather than as a number in a test module: one file
+    states the whole tenancy and ``rom_bench._vet_tenancy`` re-tests it on every
+    construction.
+
+    Only the shape is checked here. Whether the band is EMPTY in the captured snapshot is the
+    project's own case (``test_boot_snapshot.py``), and whether it is clear of the other two tenants
+    is the vet above. Odd is refused because a case stages longwords and 68000 code in it.
+    """
+    return _address(raw, "staging_base", recreate_dir,
+                    "a case stages longwords and 68000 code there")
+
+
+def _staging_bytes(raw, recreate_dir):
+    """How much of the machine's RAM ``staging_base`` claims. ``None`` when the project declares no
+    staging band; required, and positive, when it declares one — a band with no length bounds
+    nothing, so the tenancy vet would compare an empty span against its neighbours and pass."""
+    key = "staging_bytes"
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise TypeError(f"{recreate_dir / CONFIG_NAME}: `{key}` must be a positive TOML integer — "
+                        f"the number of bytes `staging_base` claims — not {value!r}")
+    return value
+
+
+def _staging_band(raw, recreate_dir):
+    """``(base, bytes)``, or ``(None, None)``. Both keys or neither: a base with no length claims no
+    bytes and a length with no base claims them nowhere, and either half alone would leave the
+    tenancy vet comparing against a band nobody declared."""
+    base = _staging_base(raw, recreate_dir)
+    size = _staging_bytes(raw, recreate_dir)
+    if (base is None) != (size is None):
+        named, missing = ("staging_base", "staging_bytes") if size is None else \
+                         ("staging_bytes", "staging_base")
+        raise ValueError(f"{recreate_dir / CONFIG_NAME}: `{named}` is declared and `{missing}` is "
+                         f"not. The two are one declaration — where a case's staged memory starts "
+                         f"and how far it reaches — and half of it bounds nothing.")
+    return base, size
+
+
+def peek_bench_base(recreate_dir):
+    """``bench_base`` out of a project.toml WITHOUT binding the project, or None when absent.
+
+    ``rom_bench.bench_base`` is kit.mk's door onto this, and the reason it does not go through
+    ``current()`` is that make evaluates it on every invocation — including the ``make snapshot``
+    that CAPTURES the snapshot a binding insists already exists. The validation is still this
+    module's, so a malformed key is refused by one rule rather than two.
+    """
+    with open(Path(recreate_dir) / CONFIG_NAME, "rb") as fh:
+        raw = tomllib.load(fh)
+    return _bench_base(raw, Path(recreate_dir).resolve())
+
+
+
 def _program_data_ranges(raw, recreate_dir, poked_input_unused):
     """``poked_input_program_data`` as a tuple of ``(lo, hi)`` half-open ranges; empty when absent.
 
@@ -266,6 +344,7 @@ def load(recreate_dir):
         raw = tomllib.load(fh)
     poked_input_unused = _bool_flag(raw, "tos_poked_input_unused", recreate_dir)
     rom, rom_base, snapshot, stack_top = _rom_binding(raw, recreate_dir)
+    staging_base, staging_bytes = _staging_band(raw, recreate_dir)
     cfg = SimpleNamespace(
         name=raw["name"],
         dir=recreate_dir,
@@ -277,6 +356,15 @@ def load(recreate_dir):
         rom_base=rom_base,
         snapshot=snapshot,
         stack_top=stack_top,
+        # Optional, and only meaningful in ROM mode: where Tier 3's numerator stages the
+        # cross-compiled cores inside the machine's RAM. None = the project has no bench blob, and
+        # kit.mk builds none. See _bench_base.
+        bench_base=_bench_base(raw, recreate_dir),
+        # ...and the THIRD tenant of the same free window: the band a CASE stages buffers and stub
+        # routines in (see _staging_band). None/None = the project declares none, and a test module
+        # that asks for it gets the refusal rather than a stand-in address.
+        staging_base=staging_base,
+        staging_bytes=staging_bytes,
         names=(recreate_dir / raw["names"]).resolve(),
         lib=(recreate_dir / raw["lib"]).resolve(),
         # Where the program is loaded. A ROM project has none, and its image starts at address 0 —

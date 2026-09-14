@@ -24,11 +24,33 @@ snapshot   = "build/boot_ram.bin"
 # Where a run's stack goes. NOT the top of the image, which is the I/O page and the ROM, and not the
 # machine's own supervisor stack either — that lives at $8930..$8bff, which is one of the regions
 # two captures of the same boot disagree about. This is a guarded band in the middle of the FREE
-# TPA: the snapshot is zero from $1dde2 to $f7fa1 in all three captures taken, so the 0x1000 bytes
-# the kit reserves around this address — [stack_top - 0xf00, stack_top + 0x100) — hold nothing the
-# desktop left behind. `test/test_boot_snapshot.py` pins that, so a future capture whose desktop
-# grew into the band reddens instead of silently running the oracle's stack over live data.
+# TPA: the snapshot is zero from $1dde2 to $f7fa1 in all three captures taken, so the 0xf1c bytes
+# the kit reserves around this address — [stack_top - 0xf00, stack_top + SENTINEL_SLOT_BYTES +
+# STACK_ARGS_BYTES), which is [stack_top - 0xf00, stack_top + 0x1c) — hold nothing the desktop left
+# behind. Everything ABOVE that band is ordinary image the differential compares.
+# `test/test_boot_snapshot.py` pins that, so a future capture whose desktop grew into the band
+# reddens instead of silently running the oracle's stack over live data.
 stack_top  = 0x80000
+
+# Where TIER 3's NUMERATOR stages the cores, cross-compiled for the 68000, inside the machine's own
+# RAM (tools/recreate_kit/rom_bench.py). It has to be a span the captured snapshot leaves EMPTY and
+# that is clear of the stack band above — the same free-TPA window `stack_top` sits in, far enough
+# below it to leave the blob room to grow. `RomBench._vet_span` re-tests every part of that on each
+# construction rather than trusting this comment: a blob over live snapshot data would measure a core
+# against a machine that never existed, and those bytes are excluded from the comparison.
+bench_base = 0x30000
+
+# ...and the THIRD tenant of that same free window: where a CASE stages memory of its own. Several
+# routines here take a POINTER — Getmpb's parameter block, Protobt's boot sector, Supexec's stub
+# routine — so a case has to own a piece of the machine's RAM, and it must be RAM the snapshot leaves
+# empty or the case would be staging over the desktop's live data. $60000 leaves the whole of
+# $30000..$60000 below it for the blob to grow into, and $1f000 of headroom below the stack guard
+# above it. `test/staging.py` reads these two keys rather than spelling the address a second time;
+# `RomBench._vet_tenancy` refuses any overlap between the three tenants, and
+# `test_boot_snapshot.py::test_the_case_staging_band_is_dead_memory_in_this_snapshot` is what keeps
+# the "dead RAM" half true against a future capture.
+staging_base  = 0x60000
+staging_bytes = 0x1000
 
 # The whole 24-bit address space, so the ROM sits inside the flat image at its real address. The
 # image is a 16 MB bytearray; RAM is its first megabyte, the I/O page at $ff0000 is decoded by the

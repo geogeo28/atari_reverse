@@ -22,7 +22,20 @@ CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -DRECREATE_HOST_DIFFERENTIAL -DOS_FS
            -Iinclude -I$(KIT)/include
 PY      := .venv/bin/python
 
+# A TARGET THAT FAILED MUST NOT SURVIVE WITH A FRESH MTIME — `projects/tos102us/recreate/atari`'s
+# own Makefile carries the same line for the same reason. Every rule here writes its target with a
+# tool that can fail part-way (a link that ran out of symbols, an objcopy over a truncated ELF), and
+# without this the half-written file stays on disk looking newer than its sources: the next make
+# reports it up to date and the suite measures it.
+.DELETE_ON_ERROR:
+
 CAND    := build/lib$(GAME).so
+# The two files a project writes that this one READS rather than defaults: the binding (`project.toml`
+# — the same name `recreate_kit.project.CONFIG_NAME` opens) and the makefile that included this one,
+# which is where a project sets BENCH_CFLAGS and anything else these rules ask of it. Named once, so
+# the rules below can depend on them.
+PROJECT_CONFIG   := project.toml
+PROJECT_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 # The project's own cores, plus the kit sources every candidate must export (the Dosound ledger the
 # harness diffs off-image sound against — see "What the candidate .so must export" in README.md).
 # `src/*/*.c` rather than the one subdirectory it used to name: a project big enough to have
@@ -161,6 +174,70 @@ $(ASM_ELF): $(ASM_OBJ) $(KIT)/asm_twin.py $(KIT)/kit.mk
 
 $(ASM_BIN): $(ASM_ELF)
 	m68k-elf-objcopy -O binary $(ASM_ELF) $(ASM_BIN)
+endif
+
+# ---- TIER 3's NUMERATOR: the cores cross-compiled for the target (a ROM project) ----------------
+# The differential proves the C equals the original; this build is what says what it COSTS. It is the
+# same C, compiled by m68k-elf-gcc with the flags the SHIPPED build uses — which is why BENCH_CFLAGS
+# is the project's to supply and is not defaulted here: flags invented by the kit would measure a
+# program nobody ships. $(KIT)/rom_bench.py loads what this produces and runs it under the oracle.
+#
+# Opt-in through project.toml's `bench_base`, asked of rom_bench.py rather than read here, for
+# ASM_LINK_BASE's reason: the blob's link base and the loader's idea of it are one value, and a
+# second spelling would drift silently — the blob would load at one address and run with its absolute
+# references resolved against another. The shell-out does NOT bind the project (rom_bench.bench_base
+# says why), so it stays evaluable before the snapshot a binding insists on exists.
+#
+# THE KEY'S PRESENCE IS DECIDED BY GREP AND ITS VALUE BY THE PROBE, and splitting the two is what
+# makes a broken probe LOUD. The probe prints nothing for a project that declares no `bench_base` —
+# and it also prints nothing when it cannot run at all (no venv yet, `PY` overridden to something
+# that is not a Python), which is indistinguishable from the first. Deciding the block on that
+# output alone silently drops the whole numerator: no blob, no `test:` prerequisite, and a gate that
+# passes because it never ran. `make -n test PY=/nonexistent/python` is the repro.
+BENCH_DECLARED := $(shell grep -l '^bench_base' $(PROJECT_CONFIG) 2>/dev/null)
+ifneq ($(BENCH_DECLARED),)
+BENCH_BASE := $(shell $(PY) -c 'import sys; sys.path.insert(0, "$(KIT)/.."); \
+                                from recreate_kit import rom_bench; print(rom_bench.bench_base())')
+ifeq ($(BENCH_BASE),)
+$(error $(PROJECT_CONFIG) declares bench_base, but asking rom_bench.bench_base() for its value \
+printed nothing — the probe could not run. Check PY ($(PY)): without this the Tier 3 numerator \
+would be dropped silently, blob, prerequisite and gate together)
+endif
+ifndef BENCH_CFLAGS
+$(error project.toml declares bench_base = $(BENCH_BASE), so this project builds its cores for the \
+target — set BENCH_CFLAGS (and BENCH_LDLIBS) to the SHIPPED build's own flags before including \
+kit.mk. A Tier 3 numerator measured under flags the shipped build does not use is a number about \
+nothing)
+endif
+BENCH_DIR := build/bench
+BENCH_ELF := $(BENCH_DIR)/bench.elf
+BENCH_BIN := $(BENCH_DIR)/bench.bin
+# The same sweep $(SRC) makes of the project's cores, one directory deep, plus the kit's entry probe
+# — the empty function rom_bench.py measures the oracle's own entry overhead on. A core the sweep
+# missed surfaces as a missing SYMBOL when a bench row asks for it, naming the function.
+BENCH_SRC := $(wildcard src/*.c) $(wildcard src/*/*.c) $(KIT)/bench/entry_probe.c
+# -Wl,-e0: the blob has no `_start` and needs none — every core is entered by SYMBOL, from Python.
+# -Wl,--build-id=none: a build-id note is an allocated section, and objcopy would carry it into the
+# flat blob and move every symbol after it.
+# One compile-and-link rather than one object per source (the twins' shape): nothing here asks a
+# single translation unit what it defines, which is the whole reason those are kept apart.
+# $(PROJECT_CONFIG) and the project's own makefile are prerequisites because both DECIDE this build:
+# the first carries `bench_base`, which is the link address, and the second carries BENCH_CFLAGS,
+# which is what the cores are compiled with. Without them a change to either leaves make reporting
+# "up to date" and the suite measuring a blob built under the previous configuration.
+$(BENCH_ELF): $(BENCH_SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h) $(KIT)/kit.mk \
+              $(KIT)/rom_bench.py $(PROJECT_CONFIG) $(PROJECT_MAKEFILE)
+	@mkdir -p $(BENCH_DIR)
+	m68k-elf-gcc $(BENCH_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BENCH_BASE) \
+	  $(BENCH_SRC) $(BENCH_LDLIBS) -o $@
+
+$(BENCH_BIN): $(BENCH_ELF)
+	m68k-elf-objcopy -O binary $(BENCH_ELF) $(BENCH_BIN)
+
+# Both suites build it, for $(ASM_BIN)'s reason: a Tier 3 gate that ran against a stale blob would
+# report yesterday's cycles, and one that SKIPPED for want of a build step would report none.
+test: $(BENCH_BIN)
+guarded: $(BENCH_BIN)
 endif
 
 .PHONY: test clean venv oracle guarded asm

@@ -18,7 +18,6 @@ routine reads the selected register back and returns it, which is what makes it 
 read-modify-write primitive Ongibit/Offgibit next door are built from.
 """
 import ctypes
-import struct
 
 import pytest
 
@@ -27,21 +26,13 @@ import pytest
 from harness import (OS_PSG_EVENT_READ, OS_PSG_EVENT_WRITE, OS_PSG_PORT_SELECT, _lib, addrs,
                      differential, report)
 
-import abi
+# The register set, the declared entry file and the argument poke come from `cases_xbios`, which
+# Tier 3's bench reads too — one spelling, so a ratio is measured over the machine a case was
+# verified on. That module's docstring says why.
+from cases_xbios import ENTRY_FILE, REGISTERS, argument_poke
 
 _lib.xbios_giaccess.argtypes = [ctypes.c_uint16, ctypes.c_uint16]
 _lib.xbios_giaccess.restype = ctypes.c_uint8
-
-# Every register the chip's four-bit select latch can name.
-REGISTERS = tuple(range(addrs.GIACCESS_REGISTER_MASK + 1))
-# What the case declares the chip held on entry, for the read-only path: a distinct byte per
-# register, so a reconstruction that read the WRONG one diverges on the value rather than by luck.
-ENTRY_FILE = {reg: (0xA0 ^ (reg * 0x11)) & 0xFF for reg in REGISTERS}
-
-
-def argument_poke(data, reg_and_flag):
-    """The two argument words, where the dispatcher's caller would have left them."""
-    return {abi.FIRST_ARG: struct.pack(">HH", data & 0xFFFF, reg_and_flag & 0xFFFF)}
 
 
 def run(data, reg_and_flag, psg_seed=None, poison=True, pokes=None):

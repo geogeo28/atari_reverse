@@ -3,7 +3,7 @@
 The workspace's differential harness was built for a game: a `.PRG` loaded at `0x10000` into a 1 MB
 image, surrounded by a *modelled* TOS. This project's target is that TOS, so none of the model
 applies — the ROM **is** the operating system. What follows is how the kit is bound here, how to
-write a case, and how to get the Tier 3 denominator for a function.
+write a case, and how a function gets its Tier 3 ratio.
 
 The mode itself is documented kit-side: `tools/recreate_kit/README.md` ("ROM mode") and
 `TRAP_MODEL.md` ("ROM mode — the model that is switched OFF"). This file is the project's half.
@@ -36,14 +36,19 @@ equal this machine's RAM** — it is the bound the CANDIDATE's kit sources use f
 so `0x100000` here is the 1 MB machine and not a coincidence. `harness._vet_rom_memory_map` refuses
 a binding where the two disagree, and checks the `stack_top` band lies inside that RAM.
 
-**The seeded hardware model covers only the addresses Phase 7 names, and a read outside them REFUSES
-the case.** For a game the silent 0 an unmodelled I/O read answers was a small surface; for an
+**An I/O byte no model serves REFUSES the case, and the remedy is a declaration the case writes
+itself.** For a game the silent 0 an unmodelled I/O read answers was a small surface; for an
 operating system it is a much larger hole, so the oracle counts such a read and
-`harness._vet_rom_io_reads_are_modelled` refuses the differential by address.
-`Getrez` (`$ff8260`), `Physbase` (`$ff8201`/`$ff8203`), `Setcolor` (`$ff8240`+) and everything
-touching the FDC are therefore out of reach — loudly — until each address is added to the model with
-the evidence for what it really answers. `TRAP_MODEL.md`'s ROM-mode section has the list, and
-`test/test_boot_snapshot.py` drives the refusal on a planted `move.b $ffff8260,d0`.
+`harness._vet_rom_io_reads_are_modelled` refuses the differential by address. The declaration that
+answers it is `io_seed={0xff8260: 0x02}` — the DECLARED I/O MAP (`TRAP_MODEL.md`, Phase 15), which
+takes any byte of the page and routes the named models' own addresses to them — so `Getrez`
+(`$ff8260`), `Physbase`
+(`$ff8201`/`$ff8203`) and `Setcolor` (`$ff8240`+) are reachable by SAYING WHAT THE MACHINE HELD,
+which is a claim in the case rather than a change to the kit. What stays out of reach is the shape a
+constant cannot describe at all: a register whose two successive reads must DIFFER, which is every
+FDC status poll and every DMA counter. `test/test_boot_snapshot.py` drives both halves of the pair
+on a planted `move.b $ffff8260,d0`, and `test/test_xbios_getrez.py` is the first real function held
+to it.
 
 ## The snapshot
 
@@ -125,47 +130,117 @@ assert info["ret"] == info["regs"]["d0"]
   through `_pokes`. That is inside the band the diff drops, which is where a caller's frame belongs.
 * **Perturbing the snapshot** is an ordinary poke: `{addrs.RANDOM_SEED: seed.to_bytes(4, "big")}`
   proves a function over *inputs* rather than over the one machine that was captured.
-* **Declaring hardware reads** is unchanged from a game project. A byte read of a modelled address
-  (`emu.HW_ADDRS`) that nothing declared **refuses the case**; a PSG register read back without a
-  `psg_seed` does the same. Pass `hw_seed={0xfffa01: 0xb0}` / `psg_seed={7: 0x3f}` — see
-  `TRAP_MODEL.md`, Phases 6 and 7.
+* **Declare every hardware byte with `io_seed`.** `io_seed={addrs.SHIFTER_RESOLUTION: 0x02}` is the
+  one door, and it is the one most BIOS/XBIOS routines need — the shifter, the video base, the
+  palette, the MFP's interrupt registers. A byte read of an I/O address nothing declared **refuses
+  the case**. The declared byte is served on every read of it, a wide read is N declared bytes and
+  one ledger entry, and the whole ordered stream is compared, so a read whose result the routine
+  DISCARDS (clearing a status flag by reading it) is still a compared fact. The reconstruction reads
+  through `hw.h`'s `io_read8`/`io_read16`/`io_read32`, which the on-target build in
+  `atari/shim_include/hw.h` supplies as the real volatile access.
+  * **The models are two; the door is one.** A Phase-7 named slot (`emu.HW_ADDRS` — `$fffa01`,
+    `$fffc00`, …) written into `io_seed` is ROUTED into that model, which keeps its own rules and
+    its own ledger; `hw_seed={0xfffa01: 0xb0}` still works and is the same declaration. Declaring
+    one address through both doors is a `ValueError`. See `TRAP_MODEL.md`, Phases 7 and 15.
+  * **The YM2149 is the exception**, because Phase 6's file is keyed by REGISTER NUMBER and a read
+    of `$ff8800` answers whatever was last latched there: `psg_seed={7: 0x3f}`, refused by name if
+    written as an address.
+  * **A byte the run itself STORES to and then reads back is refused**, and no bigger declaration
+    fixes it: the declaration describes the machine on ENTRY. Run the case up to the write, or enter
+    past it declaring what the write left.
 * **Off-image effects are compared automatically**: the PSG access ledger and register file, the
   hardware read and write ledgers, the scheduled-write wait counts.
 
-## Verified functions, and their Tier 3 denominators
+## Verified functions, and what they cost on each side
 
 The oracle reports `ninsns` and `cycles` for every run (`out_regs`), so the ORIGINAL's cost per
-function is a measurement rather than an estimate — that is the denominator the `recreate / original`
-ratio in `STATUS.md` is divided by. `ninsns` counts one more than the instructions executed (the
-reset iteration; `shim.c`'s run loop says why), and is reported here as the oracle reports it.
+function is a measurement rather than an estimate — that is the **denominator**. The **numerator** is
+the same C compiled by `m68k-elf-gcc` with the shipped ROM build's own flags, staged in free RAM
+inside the same snapshot and entered through `emu.run_bench` over the same case:
 
-| function | address | case | insns | cycles |
-| --- | --- | --- | --- | --- |
-| XBIOS `Random` ($11) | `$fc1510` | seeding branch (state 0, as the snapshot has it) | 44 | **810** |
-| | | advance branch (state `$12345678`) | 39 | **710** |
-| XBIOS `Giaccess` ($1c) | `$fc2ea4` | read a register | 17 | **260** |
-| | | write, then read it back | 18 | **270** |
-
-To measure one:
-
-```python
-_, _, regs = emu.run(harness.make_image(pokes), addrs.XBIOS_RANDOM, {"a5": 0})
-regs["cycles"], regs["ninsns"]
+```
+make bench          # build the cores for the 68000, measure every row, print the table
 ```
 
-The numerator — the same function compiled with `m68k-elf-gcc` and run under the same oracle — comes
-from `recreate_kit/asm_twin.py`'s bench path (`emu.run_bench`), which this project has not yet wired
-up: **no Tier 3 ratio has been measured yet.** The denominators above are the first half of it.
+**The table is not restated here.** `make bench` writes it to `build/bench/tier3.txt` and prints it,
+one row per verified case — function, ROM address, case, both sides' instructions and cycles, and the
+ratio. A copy in this file would be a second set of numbers nobody re-derives; `STATUS.md`'s Tier 3
+column is the ledger's summary of the same file, and `test/test_status.py` pins it to that file
+ratio by ratio so the prose cannot drift from the measurement.
+
+Both cost columns are as the oracle reports them, which includes the **1 instruction and 40 cycles**
+Musashi's reset exception charges before either entry executes anything (`shim.c`'s run loop). The
+RATIO is net of that on both sides: a constant added to a numerator and a denominator pulls the ratio
+towards 1.00, which on a routine this small is 3% of pure leniency.
+
+**What the spread says**, since the table changes and this does not. The two routines with real work
+in them come out well ahead of the ROM — `Protobt` at 0.23x-0.25x and `Random` at 0.62x-0.67x —
+and the reason is the 1987 toolchain rather than anything clever here: `Random` pushes two longwords
+and calls Alcyon's SIGNED `lmul`, which tracks both operands' signs around three 16x16 multiplies,
+where GCC's `__mulsi3` does the three and stops. The LEAF routines come out behind, and the reason is
+structural: every core takes `uint8_t *image` and loads it out of the frame, where the ROM reaches
+the same memory through the trap dispatcher's own `suba.l a5,a5` at no cost — on a routine whose
+whole body is `move.l _drvbits,d0 / rts` that one instruction is +16 cycles and reads as 1.50x.
+`bench/tier3.py`'s `PERF_ACCEPTED` records every such row with its measured cost and which of three
+mechanisms it is. Being faster is not a licence and being slower is not a defect: the reconstruction
+is held to the ROM's BEHAVIOUR, and the ratio is what says how a 2020s compiler prices the same
+algorithm.
+
+### How a row is made, and what makes it honest
+
+`bench/tier3.py` is the registry and `test/test_tier3.py` is the gate. **The registry is not a list
+anybody typed**: its rows ARE `test/test_boot_snapshot.py`'s `VERIFIED_CASES` — this project's
+register of every case a battery has verified, built from each battery's own case constructors — run
+again with a cost attached, and even the C argument VALUES are decoded out of the frame the case
+poked. A second hand-written list of entries, registers and pokes is exactly how a ratio comes to be
+a number about a case nobody proved, and it drifts silently because both lists keep working. What
+the registry adds is the one thing that list cannot carry: a `CALL` entry per ROM routine saying how
+our C is called (its arguments and the width its signature returns).
+
+The gate then holds three things: every row at or under **1.10** unless `PERF_ACCEPTED` carries it
+with its measured cost and a reason; every PINNED row still measuring what it was pinned at, within
+0.02; and **every verified case having a row at all** — a function reconstructed without one carries
+no ratio and no second differential, and before this nothing said so.
+
+A pin does double duty. Over the bar it is an ACCEPTANCE. Under it, it is how a cost the Tier 1
+differential *cannot see* is held in place: XBIOS `Giaccess`'s interrupt bracket (`ipl.h`) is a no-op
+off target — the oracle enters at IPL 7, takes no interrupts and reports no SR — so deleting it
+leaves every differential green, and the 46 cycles it costs are the whole of its surface.
+
+Each row is also a **second differential**, and that is the larger half of what it buys. The cross
+build is a third build of the reconstruction — the host `.so` Tier 1 proves, the shipped ROM, and
+this one — so `RomBench.measure` requires the m68k build to leave the same image, the same return
+value (at the width the C signature declares), the same callee-saved registers and the same chip
+traffic as the ROM did, and refuses a run that read an I/O byte no seeded model serves.
+`tools/recreate_kit/README.md`, "Tier 3's numerator", has the mechanism and the measured sharpness.
+
+Two things a target build needs that the host build does not, both in `atari/`: `target.mk`, the one
+definition of the flags **and of the include paths** (the ROM build and this one read it, so a ratio
+cannot be measured under flags nobody ships, and neither can compile a core against a different set
+of headers), and `shim_include/`, where the headers the kit declares "off-target only" have their
+target halves — `psg.h` writes the real `$ff8800`/`$ff8802` and `hw.h` reads the real `$ff8260`,
+which under the oracle are decoded into the same seeded models and the same ordered ledgers the ROM's
+own `move.b` reaches, and `ipl.h` is the real `move.w sr,d0` / `ori.w #$700,sr` pair.
 
 ## Layout
 
 ```
 recreate/
-├── project.toml        the ROM binding: rom / rom_base / snapshot / stack_top / image_size
-├── Makefile            the kit's three lines, plus the snapshot rule
+├── project.toml        the ROM binding: rom / rom_base / snapshot / image_size, plus the THREE
+│                       tenants of the machine's free window — stack_top (the run's stack),
+│                       bench_base (Tier 3's cross-compiled blob) and staging_base/staging_bytes
+│                       (the band a case stages buffers and stub routines in). One file, so
+│                       `RomBench` can refuse an overlap between them
+├── Makefile            the kit's lines, the snapshot rule, and Tier 3's BENCH_CFLAGS + table
 ├── include/addrs.h     every ROM and system address this project names — the source of truth
 ├── src/<component>/    the reconstruction, one directory per ROM component
+├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
+│                       shim_include/ (the target halves of the kit's off-target headers), the
+│                       rebuilt ROM image and the two measurement programs
+├── bench/              tier3.py: Tier 3's registry, its bar, its pins, and the table `make bench`
+│                       writes to build/bench/tier3.txt
 ├── test/               the differentials; `harness.py` is the kit shim plus `addrs`
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python)
-└── build/              gitignored: the candidate .so and the RAM snapshot (the ROM's own data)
+└── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data), and
+                        bench/ — the cross-compiled blob and the Tier 3 table
 ```

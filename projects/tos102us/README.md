@@ -114,12 +114,18 @@ the sysvars and the dispatch tables the components share are wired the same way.
 
 "On par" is a measured ratio, not an impression, measured two ways:
 
-* **per function** — the C compiled with `m68k-elf-gcc` for the target runs under the same Musashi
-  oracle as the original (`asm_twin.py`'s bench path reports instruction and cycle counts), so every
-  verified function carries a **cycle ratio** `recreate / original`. Bar: **≤ 1.10** per function;
-  a function over the bar is a perf item, not a verified row, until it is either brought under by the
-  levers the games used (a hand-asm twin pinned to the C core by the twin differential) or explicitly
-  accepted in `STATUS.md` with the measured cost.
+* **per function** — the C compiled with `m68k-elf-gcc` for the target, with the **shipped ROM
+  build's own flags**, staged in a free span of the same post-boot snapshot and run under the same
+  Musashi oracle as the original (`recreate_kit/rom_bench.py`, which is ROM mode's counterpart of
+  `asm_twin.py` — that one refuses a ROM project and says why). So every verified function carries a
+  **cycle ratio** `recreate / original`, net of the entry overhead both sides are charged. Bar:
+  **≤ 1.10** per function; a function over the bar is a perf item, not a verified row, until it is
+  either brought under by the levers the games used (a hand-asm twin pinned to the C core by the twin
+  differential) or explicitly accepted, with the measured cost, in `bench/tier3.py`'s `PERF_ACCEPTED`
+  and `STATUS.md`. `make bench` prints the table; `test/test_tier3.py` is the gate, and every row is
+  also a **second differential** — the target build must leave the same image, return value,
+  callee-saved file and chip traffic as the ROM, which is the only place a target-codegen defect
+  (`docs/on-target-execution.md`, class 6) would surface.
 * **on target** — **`TOSBENCH.PRG`** times workloads with `_hz_200` under both ROMs: boot-to-desktop
   (vblanks), console output, `Fread`/`Fwrite` on a floppy image, `Malloc`/`Mfree` churn, VDI text /
   lines / fills / raster copies, AES `objc_draw` / `form_do` / window operations, `Pexec` of a

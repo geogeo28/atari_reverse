@@ -29,13 +29,19 @@ ST_BUILD  := $(TOOLS)/st_build.py
 # workspace .gitignore refuses `**/TOS*.img` for exactly this reason).
 ORIGINAL_ROM ?= $(TOOLS)/hatari/TOS102US.img
 
-# -fno-jump-tables: a switch compiled to a table puts absolute addresses in rodata, and every one of
-#   them is another fixup the .PRG's relocation table has to carry correctly.
-# -Wno-array-bounds: TOS publishes its state in page zero ($466, $4ba), and a dereference of a small
-#   absolute address is exactly what -Warray-bounds is built to shout about — right on a host, wrong
-#   on a machine whose OS lives there.
-CFLAGS    := -m68000 -O2 -fomit-frame-pointer -ffreestanding -nostdlib -fno-jump-tables \
-             -Wall -Wextra -Werror -Wno-array-bounds
+# The flags themselves live in target.mk, because ../Makefile's Tier 3 numerator compiles the same
+# cores and must use the same ones — see that file. It carries the core INCLUDE PATHS too, as
+# $(TARGET_INCLUDES), relative to the RECREATE and KIT this file states: nothing here compiles a
+# core yet (the ROM is a stub and the two .PRGs are drivers), and whichever rule first does MUST add
+# that list, or it would compile the kit's off-target header models into what ships.
+#
+# EVERY OBJECT RULE BELOW DEPENDS ON target.mk, for the reason kit.mk's rules depend on kit.mk: it
+# decides the flags, so an object built before a change to it is a stale object make reports as up
+# to date — and a ROM half-built under two flag sets is the worst shape that can take.
+RECREATE  := ..
+KIT       := $(TOOLS)/recreate_kit
+include target.mk
+CFLAGS    := $(TARGET_CFLAGS)
 
 ROM_CFLAGS := $(CFLAGS) -I.
 ROM_LDFLAGS := -m68000 -nostdlib -T tos_rom.ld
@@ -47,7 +53,7 @@ PRG_CFLAGS := $(CFLAGS) -Iprg -I.
 #   image — so the warning is about a property the target does not have, and it would
 #   otherwise print on every link and train a reader to ignore linker warnings.
 PRG_LDFLAGS := -m68000 -nostdlib -T tos.ld -Wl,--emit-relocs -Wl,--no-warn-rwx-segments
-LDLIBS    := -lgcc
+LDLIBS    := $(TARGET_LDLIBS)
 
 # The image's size, its reset entry and its header field values are romdefs.h's, and checkrom.py
 # reads them from there — deliberately NOT repeated here, since a second copy is a second thing to
@@ -87,10 +93,10 @@ $(BUILD) $(OUT) $(BUILD)/fixtures:
 
 # ---- the ROM -------------------------------------------------------------------------------------
 
-$(BUILD)/header.o: header.S $(ROM_HEADERS) | $(BUILD)
+$(BUILD)/header.o: header.S $(ROM_HEADERS) target.mk | $(BUILD)
 	$(CC) $(ROM_CFLAGS) -c $< -o $@
 
-$(BUILD)/boot_stub.o: boot_stub.c $(ROM_HEADERS) | $(BUILD)
+$(BUILD)/boot_stub.o: boot_stub.c $(ROM_HEADERS) target.mk | $(BUILD)
 	$(CC) $(ROM_CFLAGS) -c $< -o $@
 
 $(BUILD)/tos_rom.elf: $(BUILD)/header.o $(BUILD)/boot_stub.o tos_rom.ld
@@ -107,17 +113,17 @@ $(ROM_IMAGE): $(BUILD)/tos_rom.elf checkrom.py $(ROM_HEADERS)
 
 # ---- the two programs ------------------------------------------------------------------------------
 
-$(BUILD)/os.o: prg/os.S | $(BUILD)
+$(BUILD)/os.o: prg/os.S target.mk | $(BUILD)
 	@bash $(TOOLS)/assert_trap_registers.sh --expect $(TRAP_WRAPPERS) $<
 	$(CC) $(PRG_CFLAGS) -c $< -o $@
 
-$(BUILD)/ledger.o: prg/ledger.c $(PRG_HEADERS) | $(BUILD)
+$(BUILD)/ledger.o: prg/ledger.c $(PRG_HEADERS) target.mk | $(BUILD)
 	$(CC) $(PRG_CFLAGS) -c $< -o $@
 
-$(BUILD)/tostest.o: tostest/tostest.c $(PRG_HEADERS) st_screen.h | $(BUILD)
+$(BUILD)/tostest.o: tostest/tostest.c $(PRG_HEADERS) st_screen.h target.mk | $(BUILD)
 	$(CC) $(PRG_CFLAGS) -c $< -o $@
 
-$(BUILD)/tosbench.o: tosbench/tosbench.c $(PRG_HEADERS) prg/fixtures.h | $(BUILD)
+$(BUILD)/tosbench.o: tosbench/tosbench.c $(PRG_HEADERS) prg/fixtures.h target.mk | $(BUILD)
 	$(CC) $(PRG_CFLAGS) -c $< -o $@
 
 $(BUILD)/tostest.elf: $(PRG_COMMON_OBJ) $(BUILD)/tostest.o tos.ld

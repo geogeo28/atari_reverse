@@ -290,16 +290,16 @@ cmt 0xfc06a8 16 palette words copied to $ffff8240 by the reset path at 0xfc00c0.
 fn 0xfc0670 os_rts_stub
 cmt 0xfc0670 Dispatch-table target for: XBIOS 1, XBIOS 40, XBIOS 41, XBIOS 42, XBIOS 43, XBIOS 44, XBIOS 45, XBIOS 46, XBIOS 47, XBIOS 48, XBIOS 49, XBIOS 50, XBIOS 51, XBIOS 52, XBIOS 53, XBIOS 54, XBIOS 55, XBIOS 56, XBIOS 57, XBIOS 58, XBIOS 59, XBIOS 60, XBIOS 61, XBIOS 62, XBIOS 63
 fn 0xfc07d0 Vsync
-fn 0xfc097e Supexec   # ctx
-fn 0xfc0984 Bconstat   # ctx
-fn 0xfc098c Bconin   # ctx
-fn 0xfc0994 Bcostat   # ctx
+fn 0xfc097e Supexec
+fn 0xfc0984 Bconstat
+fn 0xfc098c Bconin
+fn 0xfc0994 Bcostat
 fn 0xfc099c Bconout   # ctx
-fn 0xfc0a2e Drvmap   # ctx
+fn 0xfc0a2e Drvmap
 fn 0xfc0a34 Kbshift
-fn 0xfc0a46 Getmpb   # ctx
-fn 0xfc0a72 Setexc   # ctx
-fn 0xfc0a8a Tickcal   # ctx
+fn 0xfc0a46 Getmpb
+fn 0xfc0a72 Setexc
+fn 0xfc0a8a Tickcal
 fn 0xfc0a92 Physbase
 fn 0xfc0aa6 Logbase
 fn 0xfc0aac Getrez
@@ -316,7 +316,7 @@ fn 0xfc1510 Random
 cmt 0xfc1510 XBIOS $11. LCG seed = seed*0xbb40e62d + 1 (via alcyon_lmul), seeded from _hz_200 when random_seed is 0; returns (seed >> 8) & 0xffffff. Verified by recreate/test/test_xbios_random.py.
 fn 0xfc4b28 alcyon_lmul
 cmt 0xfc4b28 Alcyon C runtime: signed 32x32 -> low 32 bits (called by Random).
-fn 0xfc15f8 Protobt   # ctx
+fn 0xfc15f8 Protobt
 fn 0xfc1782 Floprd   # ctx
 fn 0xfc1858 Flopwr   # ctx
 fn 0xfc1916 Flopfmt   # ctx
@@ -326,22 +326,22 @@ fn 0xfc2212 Ikbdws   # ctx
 fn 0xfc2658 Mfpint   # ctx
 fn 0xfc2682 Jdisint   # ctx
 fn 0xfc26bc Jenabint   # ctx
-fn 0xfc28f6 Iorec   # ctx
+fn 0xfc28f6 Iorec
 fn 0xfc290e Rsconf   # ctx
 fn 0xfc2ea4 Giaccess
 fn 0xfc2edc Ongibit
 fn 0xfc2f02 Offgibit
 fn 0xfc2f28 Initmous   # ctx
 fn 0xfc2ff2 Xbtimer   # ctx
-fn 0xfc302e Keytbl   # ctx
-fn 0xfc305a Bioskeys   # ctx
+fn 0xfc302e Keytbl
+fn 0xfc305a Bioskeys
 fn 0xfc3074 Dosound   # ctx
 fn 0xfc3088 Setprt   # ctx
-fn 0xfc309a Kbrate   # ctx
+fn 0xfc309a Kbrate
 fn 0xfc30bc Kbdvbase   # ctx
 fn 0xfc31fa Prtblk   # ctx
 fn 0xfc427a vdi_escape   # ctx
-fn 0xfc4698 Cursconf   # ctx
+fn 0xfc4698 Cursconf
 fn 0xfc5216 Fdup   # ctx
 fn 0xfc52de Fforce   # ctx
 fn 0xfc56c6 Fclose   # ctx
@@ -548,3 +548,51 @@ fn 0xfe6488 shel_find   # ctx
 fn 0xfe6496 shel_envrn   # ctx
 fn 0xfe64a6 aes_unimplemented
 cmt 0xfe64a6 Dispatch-table target for: AES 16, AES 17, AES 18, AES 27, AES 28, AES 29, AES 36, AES 37, AES 38, AES 39, AES 48, AES 49, AES 57, AES 58, AES 59, AES 60, AES 61, AES 62, AES 63, AES 64, AES 65, AES 66, AES 67, AES 68, AES 69, AES 82, AES 83, AES 84, AES 85, AES 86, AES 87, AES 88, AES 89, AES 91, AES 92, AES 93, AES 94, AES 95, AES 96, AES 97, AES 98, AES 99, AES 109, AES 115, AES 116, AES 117, AES 118, AES 119
+
+# --- BIOS wave 1 (2026-09-14): the character-device drivers the three Bcon* entries jump through,
+# and the one helper Protobt calls — all bodies read and verified by recreate/test/test_bios_*.py ---
+fn 0xfc2044 xconstat_midi
+cmt 0xfc2044 MIDI input status: cmpm.w on the $d84 IOREC's head/tail; -1 ready, 0 not. Bconstat device 3.
+fn 0xfc2060 xconin_midi
+cmt 0xfc2060 MIDI input: polls $fc2044, then move.b one byte into the -1 it left -> returns $ffffff00 | byte.
+fn 0xfc2138 xconstat_rs232
+cmt 0xfc2138 RS232 input status: the $c54 IOREC's head/tail. Bconstat device 1.
+fn 0xfc2226 xconstat_con
+cmt 0xfc2226 Console input status: the IKBD ring at $c76 -- device 2 is a screen out and an IKBD in.
+fn 0xfc223c xconin_con
+cmt 0xfc223c Console input: polls $fc2226, then move.l one 4-byte scancode/ASCII record out of the $c76 ring.
+fn 0xfc226c xcostat_con
+cmt 0xfc226c Console output status: moveq #-1,d0 / rts -- the screen is never busy.
+fn 0xfc16e4 protobt_sum_words
+cmt 0xfc16e4 Add `count` big-endian words in 16 bits. Called twice with DIFFERENT counts: 256 for Protobt's executable probe, 255 for the checksum it writes.
+
+# --- BIOS wave 1 (2026-09-14): the RAM and ROM tables these routines own ---
+var 0x0c54 iorec_rs232
+cmt 0x0c54 RS232 IOREC, first of a pair (its output record follows at $c62). buffer/size/head/tail at +0/+4/+6/+8.
+var 0x0c76 iorec_ikbd
+cmt 0x0c76 IKBD IOREC -- $100 bytes, four bytes a record (scancode word + ASCII word).
+var 0x0d84 iorec_midi
+cmt 0x0d84 MIDI IOREC -- $80 bytes, ONE byte a record.
+var 0x0e61 _kbshift
+cmt 0x0e61 Keyboard shift/control/alt state byte; the address the OS header publishes as pkbshift ($fc0024).
+var 0x0e62 keytbl
+cmt 0x0e62 Three longwords: unshifted/shifted/CapsLock scancode tables. Keytbl ($fc302e) replaces them, Bioskeys ($fc305a) restores the ROM's.
+var 0x0e82 _kbrate_delay
+cmt 0x0e82 Vertical blanks before a held key repeats; $e83 is the interval. Kbrate reports BOTH as one word.
+var 0x0e83 _kbrate_repeat
+var 0x2982 con_blink_rate
+cmt 0x2982 Vertical blanks between cursor blinks -- Cursconf 4/5, reached as -18(a4) off $2994.
+var 0x2994 con_state_flags
+cmt 0x2994 Console/VDI cursor state: bit 0 = blinks (Cursconf 2/3), bit 1 = drawn now.
+var 0x2995 con_state_spare
+cmt 0x2995 Byte Cursconf 6 writes and 7 reads back; nothing else in the ROM uses it.
+var 0xfc2288 keytbl_unshifted_rom
+cmt 0xfc2288 The ROM's three 128-byte scancode tables ($fc2288/$fc2308/$fc2388); $fc2298 spells `qwertyuiop[]`.
+var 0xfc2308 keytbl_shifted_rom
+var 0xfc2388 keytbl_capslock_rom
+var 0xfc2902 iorec_table
+cmt 0xfc2902 XBIOS Iorec's three-longword table. UNBOUNDED: device 3 and up reads Rsconf's opening instructions as an address.
+var 0xfc46b2 cursconf_jump_table
+cmt 0xfc46b2 Eight SIGNED word displacements from this address. The dispatch leaves the entry in D0, so an arm that sets no result returns it.
+var 0xfd2f32 protobt_bpb_table
+cmt 0xfd2f32 Four 19-byte BPB prototypes, indexed by `muls.w #19` taken as a WORD and sign-extended -- no bounds check.

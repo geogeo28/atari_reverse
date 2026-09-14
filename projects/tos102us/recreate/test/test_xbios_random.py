@@ -22,23 +22,12 @@ import pytest
 
 from harness import BASE_IMAGE, _lib, addrs, differential, report
 
+# The pokes and the snapshot's own seed value come from `cases_xbios`, which Tier 3's bench reads
+# too — one spelling, so a ratio is measured over the machine a case was verified on. That module's
+# docstring says why.
+from cases_xbios import UNSEEDED, seed_poke, tick_poke
+
 _lib.xbios_random.restype = ctypes.c_uint32
-
-# The seed the captured snapshot holds. The desktop never calls Random, so it is still zero there —
-# which means the DEFAULT image exercises the seeding branch and a case that wants the other one has
-# to poke a seed in. Asserted rather than assumed, in its own case below: a future snapshot whose
-# desktop had called Random would silently stop testing the branch this file thinks it tests.
-UNSEEDED = 0
-
-
-def seed_poke(seed):
-    """The image poke that puts `seed` in the OS's own random state."""
-    return {addrs.RANDOM_SEED: seed.to_bytes(4, "big")}
-
-
-def tick_poke(tick):
-    """...and the one that sets the 200 Hz system tick the seeding branch draws its entropy from."""
-    return {addrs.SYSVAR_HZ_200: tick.to_bytes(4, "big")}
 
 
 def _glue(lib, buf):

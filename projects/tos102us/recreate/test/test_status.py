@@ -18,6 +18,21 @@ REC = Path(__file__).resolve().parents[1]
 # `## Verified — <component> (N)`, and the `| `0xADDR` | ... | ✅ verified |` rows beneath it.
 _SECTION_RE = re.compile(r"^## Verified — (?P<name>\S+) \((?P<count>\d+)\)\s*$", re.M)
 _ROW_RE = re.compile(r"^\| `0x[0-9a-f]+` \|.*\| ✅ verified \|", re.M)
+# ...and the same row with its ADDRESS and its Tier 3 cell picked out. The columns are
+# `| Addr | Name | Cases | Cost | Tier 3 | Status | Verification |`, so the cell is the fifth.
+_VERIFIED_ROW_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|(?:[^|]*\|){3}"
+                              r"(?P<tier3>[^|]*)\|[^|]*✅ verified[^|]*\|", re.M)
+# A ratio as either file spells one: `0.62`, `**0.62**`, `1.50x`.
+_RATIO_RE = re.compile(r"\d+\.\d\d")
+# One measured row of `build/bench/tier3.txt`: its ROM address and the ratio at the end of the line.
+# The costs on the way past are `insns/cycles` pairs and carry no decimal point, so the ratio is the
+# only thing on a row that looks like one.
+_TABLE_ROW_RE = re.compile(r"^.*\$(?P<addr>fc[0-9a-f]+)\s.*?(?P<ratio>\d+\.\d\d)\s*\S*$", re.M)
+
+# The table `make bench` writes, which `../Makefile` makes a prerequisite of `test` — so it is
+# always present and always current when this runs. STATUS.md QUOTES it; nothing re-derives a
+# quoted number, which is the shape that goes stale.
+BENCH_TABLE = REC / "build" / "bench" / "tier3.txt"
 # ...and the Components table's own claim: `| <component> | <Tier 1 count> | …`.
 _COMPONENT_RE = re.compile(r"^\| (?P<name>\S+) \| (?P<tier1>\d+) \|", re.M)
 
@@ -48,6 +63,35 @@ def test_every_section_states_its_own_row_count():
             f"re-count that section and update its heading")
 
 
+def test_every_component_with_code_has_a_section_that_covers_it():
+    """THE REVERSE OF THE CHECK BELOW, and the one that catches a wave landing code without a ledger.
+
+    `test_every_section_names_a_real_component` refuses a section for a component that does not
+    exist; nothing refused a COMPONENT that has no section — which is the failure that goes
+    unnoticed, because every stated count still agrees with every row when the rows were never
+    written at all.
+
+    The floor is the number of `.c` FILES in the directory rather than of functions, since several
+    hold more than one ROM routine (`src/bios/bcon.c` is three, `src/bios/sysvars.c` two). A section
+    may therefore be well ahead of this number, but it can never be behind it: a component with five
+    reconstructed cores and four rows has lost one.
+    """
+    stated = {name: count for name, count, _rows in _sections()}
+    for directory in sorted(path for path in (REC / "src").iterdir() if path.is_dir()):
+        cores = sorted(directory.glob("*.c"))
+        if not cores:
+            continue
+        assert directory.name in stated, (
+            f"src/{directory.name}/ holds {len(cores)} reconstructed core(s) and STATUS.md has no "
+            f"`## Verified — {directory.name} (N)` section — the ledger is missing a component, "
+            f"which no count in it can show")
+        assert stated[directory.name] >= len(cores), (
+            f"STATUS.md's `## Verified — {directory.name} ({stated[directory.name]})` section "
+            f"carries fewer rows than src/{directory.name}/ has .c files ({len(cores)}: "
+            f"{', '.join(path.name for path in cores)}) — at least one reconstructed function has "
+            f"no row")
+
+
 def test_every_section_names_a_real_component():
     """The heading is a source DIRECTORY's name, so a section can only exist for code that does.
 
@@ -71,3 +115,63 @@ def test_the_components_table_agrees_with_the_sections():
         assert tier1 == stated.get(name, 0), (
             f"STATUS.md's Components table says {name} has {tier1} verified function(s), but its "
             f"`## Verified — {name}` section carries {stated.get(name, 0)}")
+
+
+# ---- the Tier 3 column, against the measurement it quotes -----------------------------------------
+
+def _measured_ratios():
+    """{ROM address: the set of ratios `make bench` measured for it}, out of the generated table."""
+    assert BENCH_TABLE.exists(), (
+        f"{BENCH_TABLE} is missing — `make bench` writes it and ../Makefile makes it a prerequisite "
+        f"of `test`, so this ran outside that. Run `make bench`.")
+    ratios = {}
+    for match in _TABLE_ROW_RE.finditer(BENCH_TABLE.read_text()):
+        ratios.setdefault(int(match["addr"], 16), set()).add(match["ratio"])
+    assert ratios, f"{BENCH_TABLE} holds no measured rows — its shape has changed under this pin"
+    return ratios
+
+
+def _as_text(ratios):
+    """A set of ratios as a reader would paste them: `0.60x, 0.74x`, smallest first."""
+    return ", ".join(f"{ratio}x" for ratio in sorted(ratios))
+
+
+def _verified_rows():
+    """[(ROM address, the Tier 3 cell)] for every ✅ verified row in the ledger."""
+    return [(int(match["addr"], 16), match["tier3"].strip())
+            for match in _VERIFIED_ROW_RE.finditer(_status())]
+
+
+def test_every_verified_row_quotes_its_measured_tier_3_ratios():
+    """STATUS.md's Tier 3 column against `build/bench/tier3.txt`, ratio by ratio.
+
+    The ledger is quoted in reports, and a number nobody re-derives is one nobody notices going
+    wrong: a ratio hand-copied before a core changed, or a `—` left behind by a wave that added the
+    row and not the cell. `bench/tier3.py` measures both sides on one instrument and writes that
+    file; this holds the prose to it.
+
+    Every ratio a cell names must be one the table measured for THAT address — a cell may name fewer
+    (a row per branch is more than a summary wants), but not one that was never measured — and a row
+    the table prices may not say `—`.
+    """
+    measured = _measured_ratios()
+    rows = _verified_rows()
+    assert rows, ("STATUS.md has no `| `0xADDR` | … | ✅ verified |` rows this pin can read — either "
+                  "the ledger's columns moved or the Tier 3 column is no longer the fifth")
+    # EVERY ROW, not the first that is wrong: this reds after a wave that measured a new set, and a
+    # message naming one address at a time would be walked through a row per run.
+    wrong = []
+    for address, cell in rows:
+        ratios = measured.get(address)
+        quoted = set(_RATIO_RE.findall(cell))
+        if not ratios:
+            wrong.append(f"{address:#x}: ✅ verified, but `make bench` measured no row for it — "
+                         f"add the routine to bench/tier3.py's CALL table")
+        elif not quoted:
+            wrong.append(f"{address:#x}: says {cell!r}; measured {_as_text(ratios)}")
+        elif quoted - ratios:
+            wrong.append(f"{address:#x}: quotes {_as_text(quoted - ratios)}, which was not measured "
+                         f"for it; measured {_as_text(ratios)}")
+    assert not wrong, (
+        f"{len(wrong)} STATUS.md row(s) disagree with {BENCH_TABLE.name}, which `make bench` wrote:"
+        + "".join(f"\n  {line}" for line in wrong))
