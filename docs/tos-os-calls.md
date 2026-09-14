@@ -81,6 +81,18 @@ actually annotates from are the `GEMDOS`/`BIOS`/`XBIOS` dicts in `tools/prg_dis.
 v_opnvwk. Register `d0` only tells AES-vs-VDI; the specific function is in the parameter
 block's control array, so trace the `contrl` setup to name it precisely.
 
+**...but the ROM's OWN desktop never traps to the AES.** TOS 1.02's desktop is part of the same
+ROM: it calls the AES dispatcher (`$fe65aa`, reached from the trap handler at `$fe3ea6`) DIRECTLY,
+so `trap #2 && d0 = $c8` never fires after boot and the first `trap #2` of a boot is the VDI's
+(`$fecb6a`, `d0 = $73`). Measured over 900 vblanks of boot with Hatari breakpoints
+(`projects/tos102us/recreate/atari/boot_surface.py`): zero matches. The consequence for a driver is
+that **an `evnt_multi` anchor for "the desktop is up" does not exist** — the anchor is real only for
+a GEM program loaded from disk. Stop on a VBL count instead and prove the machine is quiescent
+(photograph it twice, N vblanks apart, and compare the screen and the pinned low RAM); a settle
+proof is the stronger statement anyway, since an anchor says the event loop was reached once and a
+settle says nothing is changing any more. Hatari cannot express the opcode test either way: its
+breakpoint grammar allows one level of indirection (`(d1).w`) and the opcode is two deep.
+
 ## Startup patterns to recognize
 
 - **Mshrink prologue**: read basepage at `4(sp)`, compute `tlen+dlen+blen+0x100`, `Mshrink`

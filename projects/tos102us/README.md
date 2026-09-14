@@ -70,7 +70,7 @@ What is new for a ROM is the image: a TOS function's inputs are the machine's RA
 and the I/O page. So the image is
 
 * a **post-boot RAM snapshot** of the original ROM, captured once from headless Hatari at a
-  deterministic stop point (the desktop's first `evnt_multi`), 1 MB, plus
+  deterministic stop point, 1 MB, plus
 * the **ROM** mapped at `0xFC0000`, plus
 * the **seeded hardware read model** for the I/O page (`TRAP_MODEL.md`, Phase 7): a case declares
   the bytes it expects the MFP, shifter, PSG or ACIA to answer, and an undeclared read *refuses* the
@@ -80,6 +80,19 @@ A case may perturb the snapshot (a different key pending, a different directory 
 a different `_hz_200`) so a function is proved over inputs, not over one state. Functions that
 never return (the boot chain, the desktop event loop) are proved as **slices** — `[start, end)`
 ranges — exactly as Zynaps's `_start` was.
+
+**Where "booted" is, measured.** The obvious anchor — the desktop's first `evnt_multi` — does not
+exist on this ROM: the desktop is in the same image and calls the AES dispatcher directly, so no
+`trap #2` with `d0 = $c8` ever fires after boot, and once idle the desktop blocks inside its event
+wait. Both stop rules in this project are therefore vertical-blank counts under one fixed machine
+config, each with its own proof: the Tier 1 snapshot stops in the ROM's own VBL handler at vblank 901
+(`recreate/tools/boot_snapshot.py`; three boots agree on every byte outside a documented 1,929-byte
+mask of AES/desktop idle scratch), and the Tier 2 boot surface stops at vblank 500 with a settle
+proof, a second capture 50 vblanks later that must be identical (`recreate/atari/boot_surface.py`).
+They differ because they answer different questions — "an idle machine to run one function over"
+versus "the earliest point at which the desktop is fully drawn" — and a function verified over the
+901 snapshot is not thereby proved over the 500 state; a case that needs the earlier state perturbs
+the snapshot rather than re-capturing.
 
 ### Tier 2 — conformance on target (correctness, at the trap surface)
 

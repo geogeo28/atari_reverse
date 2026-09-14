@@ -1,0 +1,83 @@
+# the TOS system variables, $400-$5B3
+# masked (time-varying, excluded from every comparison):
+#   $462  4 bytes  _vbclock counts vblanks
+#   $466  4 bytes  _frclock counts vblanks
+#   $4BA  4 bytes  _hz_200 counts 200ths of a second
+# address  name            value
+  $400     etv_timer       $00fca78a
+  $404     etv_critic      $00fe3cbe
+  $408     etv_term        $00fc0670
+  $40C     etv_xtra        $00000000 $00000000 $00000000 $00000000 $00000000
+  $420     memvalid        $752019f3
+  $424     memctrl         $0500
+  $426     resvalid        $00000000
+  $42A     resvector       $00000000
+  $42E     phystop         $00100000
+  $432     _membot         $0000ca00
+  $436     _memtop         $000f8000
+  $43A     memval2         $237698aa
+  $43E     flock           $0000
+  $440     seekrate        $0003
+  $442     _timr_ms        $0014
+  $444     _fverify        $ff00
+  $446     _bootdev        $0000
+  $448     palmode         $0000
+  $44A     defshiftmd      $00
+  $44B     (pad)           $00
+  $44C     sshiftmd        $0000
+  $44E     _v_bas_ad       $000f8000
+  $452     vblsem          $0001
+  $454     nvbls           $0008
+  $456     _vblqueue       $000004ce
+  $45A     colorptr        $00000000
+  $45E     screenpt        $00000000
+  $462     _vbclock        <masked>
+  $466     _frclock        <masked>
+  $46A     hdv_init        $00fc0f44
+  $46E     swv_vec         $00fc0030
+  $472     hdv_bpb         $00fc0fca
+  $476     hdv_rw          $00fc12b6
+  $47A     hdv_boot        $00fc1560
+  $47E     hdv_mediach     $00fc117a
+  $482     _cmdload        $0000
+  $484     conterm         $07
+  $485     (pad)           $00
+  $486     trp14ret        $00000000
+  $48A     criticret       $00000000
+  $48E     themd           $00000000 $0000ca00 $00000002 $00002a70
+  $49E     _md             $00000000
+  $4A2     savptr          $0000093a
+  $4A6     _nflops         $0002
+  $4A8     con_state       $00fc4308
+  $4AC     save_row        $0000
+  $4AE     sav_context     $00000000
+  $4B2     _bufl           $00008846 $00008882
+  $4BA     _hz_200         <masked>
+  $4BE     the_env         $00000000
+  $4C2     _drvbits        $00000003
+  $4C6     _dskbufp        $000016da
+  $4CA     _autopath       $00000000
+  $4CE     _vbl_list       $00fcff2a $00000000 $00000000 $00000000 $00000000 $00000000 $00000000 $00000000
+  $4EE     _dumpflg        $ffff
+  $4F0     _prtabt         $0000
+  $4F2     _sysbase        $00fc0000
+  $4F6     _shell_p        $00000000
+  $4FA     end_os          $0000ca00
+  $4FE     exec_os         $00fd9eca
+  $502     scr_dump        $00fc0d62
+  $506     prv_lsto        $00fc2124
+  $50A     prv_lst         $00fc2090
+  $50E     prv_auxo        $00fc219a
+  $512     prv_aux         $00fc21b4
+  $516     pun_ptr         $00000000
+  $51A     memval3         $5555aaaa
+  $51E     xconstat        $00fc0670 $00fc2138 $00fc2226 $00fc2044 $00fc0670 $00fc0670 $00fc0670 $00fc0670
+  $53E     xconin          $00fc2104 $00fc2150 $00fc223c $00fc2060 $00fc0670 $00fc0670 $00fc0670 $00fc0670
+  $55E     xcostat         $00fc2124 $00fc219a $00fc226c $00fc21dc $00fc2004 $00fc0670 $00fc0670 $00fc0670
+  $57E     xconout         $00fc2090 $00fc21b4 $00fc42f2 $00fc2016 $00fc21ee $00fc42e6 $00fc0670 $00fc0670
+  $59E     _longframe      $0000
+  $5A0     _p_cookies      $00000000
+  $5A4     ramtop          $00000000
+  $5A8     ramvalid        $00000000
+  $5AC     bell_hook       $00000000
+  $5B0     kcl_hook        $00000000

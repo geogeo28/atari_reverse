@@ -1,0 +1,226 @@
+{
+  "instrument": {
+    "rom": {
+      "name": "TOS102US.img",
+      "bytes": 196608,
+      "sha256": "8a5914bb8559ebfd71fa075302a1d7335e0ac594bc3ea75e54fc666176141e9d",
+      "version": "1.02"
+    },
+    "disk": {
+      "name": "TOSTEST.ST",
+      "bytes": 737280,
+      "sha256": "6d9e3c01d56ed7dae4be0124b4b35676a9da4516cad8e418f93f6cfe985c710f"
+    },
+    "program": {
+      "name": "TOSTEST.PRG",
+      "bytes": 3415,
+      "sha256": "dabce96162e54b572d8f710a3e6d2c3a4fbd7a20bbba21a3e50f3278cca2fdf2"
+    }
+  },
+  "header": {
+    "magic": 1414484812,
+    "version": 1,
+    "kind": 1413829460,
+    "record_count": 19,
+    "record_bytes": 32,
+    "status": 0,
+    "rom_version": 258,
+    "reserved": 0
+  },
+  "records": [
+    {
+      "index": 0,
+      "id": 769,
+      "flags": 0,
+      "v0": 4864,
+      "v1": 0,
+      "v2": 0,
+      "name": "Sversion",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 1,
+      "id": 770,
+      "flags": 0,
+      "v0": 4294967264,
+      "v1": 0,
+      "v2": 0,
+      "name": "Getmpb",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 2,
+      "id": 771,
+      "flags": 1,
+      "v0": 3734,
+      "v1": 0,
+      "v2": 0,
+      "name": "Tgetdat",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 3,
+      "id": 257,
+      "flags": 0,
+      "v0": 0,
+      "v1": 0,
+      "v2": 0,
+      "name": "Kbshift",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 4,
+      "id": 258,
+      "flags": 0,
+      "v0": 3,
+      "v1": 0,
+      "v2": 0,
+      "name": "Drvmap",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 5,
+      "id": 772,
+      "flags": 0,
+      "v0": 952004,
+      "v1": 0,
+      "v2": 0,
+      "name": "MallocX",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 6,
+      "id": 773,
+      "flags": 0,
+      "v0": 63804,
+      "v1": 0,
+      "v2": 0,
+      "name": "Malloc",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 7,
+      "id": 773,
+      "flags": 0,
+      "v0": 64828,
+      "v1": 0,
+      "v2": 1,
+      "name": "Malloc",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 8,
+      "id": 773,
+      "flags": 0,
+      "v0": 65852,
+      "v1": 0,
+      "v2": 2,
+      "name": "Malloc",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 9,
+      "id": 773,
+      "flags": 0,
+      "v0": 66876,
+      "v1": 0,
+      "v2": 3,
+      "name": "Malloc",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 10,
+      "id": 774,
+      "flags": 0,
+      "v0": 0,
+      "v1": 0,
+      "v2": 0,
+      "name": "Fsfirst",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 11,
+      "id": 775,
+      "flags": 4,
+      "v0": 16,
+      "v1": 4641,
+      "v2": 0,
+      "name": "DirEnt",
+      "blob": "414c5048412e4441"
+    },
+    {
+      "index": 12,
+      "id": 775,
+      "flags": 4,
+      "v0": 300,
+      "v1": 4641,
+      "v2": 1,
+      "name": "DirEnt",
+      "blob": "424554412e444154"
+    },
+    {
+      "index": 13,
+      "id": 775,
+      "flags": 4,
+      "v0": 65536,
+      "v1": 4641,
+      "v2": 2,
+      "name": "DirEnt",
+      "blob": "4441544136344b2e"
+    },
+    {
+      "index": 14,
+      "id": 515,
+      "flags": 0,
+      "v0": 0,
+      "v1": 0,
+      "v2": 0,
+      "name": "Getrez",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 15,
+      "id": 513,
+      "flags": 0,
+      "v0": 1015808,
+      "v1": 0,
+      "v2": 0,
+      "name": "Physbas",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 16,
+      "id": 514,
+      "flags": 0,
+      "v0": 1015808,
+      "v1": 0,
+      "v2": 0,
+      "name": "Logbase",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 17,
+      "id": 259,
+      "flags": 0,
+      "v0": 28,
+      "v1": 0,
+      "v2": 0,
+      "name": "Bconout",
+      "blob": "0000000000000000"
+    },
+    {
+      "index": 18,
+      "id": 516,
+      "flags": 0,
+      "v0": 1809140553,
+      "v1": 32000,
+      "v2": 0,
+      "name": "ScrnCRC",
+      "blob": "0000000000000000"
+    }
+  ],
+  "screen": {
+    "sha256": "48b11fa0dd64b005b3851dd4f5b8f6974c4c724a90f429644cd756c400931540",
+    "distinct_colours": 2
+  }
+}

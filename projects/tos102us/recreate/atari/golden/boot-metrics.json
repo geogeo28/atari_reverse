@@ -1,0 +1,58 @@
+{
+  "instrument": {
+    "rom": {
+      "name": "TOS102US.img",
+      "bytes": 196608,
+      "sha256": "8a5914bb8559ebfd71fa075302a1d7335e0ac594bc3ea75e54fc666176141e9d",
+      "version": "1.02"
+    },
+    "disk": {
+      "name": "BLANK.ST",
+      "bytes": 737280,
+      "sha256": "2116fa4e321a1eb58dc6150d8ad373db95530d9cfdd9cdd818b76e9b58b5d4b1"
+    }
+  },
+  "stop_rule": {
+    "stop_vbl": 500,
+    "settle_vbl": 550,
+    "run_vbls": 620
+  },
+  "boot_metric": {
+    "stop_vbl": 500,
+    "_vbclock": 461,
+    "_frclock": 461,
+    "_hz_200": 1534
+  },
+  "settle": {
+    "screen_still": true,
+    "ram_still": true,
+    "ram_moved_at": [],
+    "settle_vbl": 550
+  },
+  "screen": {
+    "sha256": "bd2453511d426555ea26a59488fb15e8805c7cab0a4abb0777328250c2925ffc",
+    "distinct_colours": 3
+  },
+  "ram": {
+    "pinned_end": 2559,
+    "pinned_sha256": "848340a17edb26ae5f9e277cc012742941dcd50a4133433e299f71574e6db230",
+    "page_sha256": [
+      "f73a3e0680adbf7587b913b125871ebb813695d10eefd879cec9890d3f6ccb49",
+      "1b8751b4c2ea1668f46d06663df487a82440a9576b4b61c8dae5dda9830182d7",
+      "d274efd9a471f7dc5a7885bd3b2545454ba55d5dabf6bbf6b801858e8e02a009",
+      "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+      "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+      "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+      "208625c5eeff62e8577899674fcca1095a52e194cc5635096e3defe4bd511cb2",
+      "3d1cb23ff882ce407cdc8ec42af5e1032f22a0e379a93cb0a0602d4ecfd44d4c",
+      "7e0f596452921c499c8e0d9b16a0865359c9f542f0c3be08041e49c49b64a2d3",
+      "80bb013276e7271aeceaa4f31511088d2837e32a9a0d9eedd7d7f14f8457a002",
+      "5af7b5e128929d47b49643c93ac14fd3f8537fbf3b527dcf3baa60a654bf0523",
+      "57835e13b95e5728c62d435419094cd2885254c05e8a23d7020adf5cbcfe83e9",
+      "0220b821b05a35c6d30658e91e2bb9c139285b9a37663797cca3284ed793fa2a",
+      "35ab9df2afb85cafec0a40b4ee8f147fc7dd1ca54016e17631026f8e600cbae6",
+      "22a71eb7990309dbeba7dba5b07e6878311e501cacc8f1f0cf3e00ab5fd86a3c",
+      "6d71df8971a25d567bd98e35fa1be2de55b5dc435c6f42044361e74a0810559e"
+    ]
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "instrument": {
+    "rom": {
+      "name": "TOS102US.img",
+      "bytes": 196608,
+      "sha256": "8a5914bb8559ebfd71fa075302a1d7335e0ac594bc3ea75e54fc666176141e9d",
+      "version": "1.02"
+    },
+    "disk": {
+      "name": "TOSBENCH.ST",
+      "bytes": 737280,
+      "sha256": "1d736545d5de469a0f6f03b0a5af281e445a918345a53618fe81c70c309c5cbc"
+    },
+    "program": {
+      "name": "TOSBENCH.PRG",
+      "bytes": 2881,
+      "sha256": "18c415c6ff249e4971a8a1af66831fd1f4e3d3e797813b4080cb3bd624471e5b"
+    }
+  },
+  "runs": 5,
+  "screen": {
+    "sha256": "d8ee04510a750f5938e23dee41cff5d2cdc4b02243dc4ebe0b9d30960178542b",
+    "distinct_colours": 2
+  },
+  "workloads": {
+    "Bconout": {
+      "iterations": 2000,
+      "ticks": {
+        "runs": [
+          154,
+          155,
+          155,
+          154,
+          155
+        ],
+        "median": 155,
+        "min": 154,
+        "max": 155,
+        "relative_spread": 0.0064516129032258064
+      },
+      "vblanks": {
+        "runs": [
+          47,
+          46,
+          46,
+          46,
+          47
+        ],
+        "median": 46,
+        "min": 46,
+        "max": 47,
+        "relative_spread": 0.021739130434782608
+      }
+    },
+    "Malloc": {
+      "iterations": 1000,
+      "ticks": {
+        "runs": [
+          190,
+          191,
+          191,
+          190,
+          191
+        ],
+        "median": 191,
+        "min": 190,
+        "max": 191,
+        "relative_spread": 0.005235602094240838
+      },
+      "vblanks": {
+        "runs": [
+          57,
+          58,
+          57,
+          58,
+          57
+        ],
+        "median": 57,
+        "min": 57,
+        "max": 58,
+        "relative_spread": 0.017543859649122806
+      }
+    },
+    "Fread": {
+      "iterations": 65536,
+      "ticks": {
+        "runs": [
+          1282,
+          1372,
+          1301,
+          1360,
+          1362
+        ],
+        "median": 1360,
+        "min": 1282,
+        "max": 1372,
+        "relative_spread": 0.0661764705882353
+      },
+      "vblanks": {
+        "runs": [
+          384,
+          412,
+          392,
+          409,
+          409
+        ],
+        "median": 409,
+        "min": 384,
+        "max": 412,
+        "relative_spread": 0.06845965770171149
+      }
+    }
+  }
+}

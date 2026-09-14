@@ -1,0 +1,22 @@
+# TOSTEST conformance ledger: the answers TOS gave to a fixed set of calls
+# kind=TEST version=1 records=19 status=0 ROM version=0x0102
+# index  id      name      flags                return        second         third  blob
+      0  0x0301  Sversion  -                      4864             0             0  0000000000000000
+      1  0x0302  Getmpb    -                4294967264             0             0  0000000000000000
+      2  0x0303  Tgetdat   masked                 3734             0             0  0000000000000000
+      3  0x0101  Kbshift   -                         0             0             0  0000000000000000
+      4  0x0102  Drvmap    -                         3             0             0  0000000000000000
+      5  0x0304  MallocX   -                    952004             0             0  0000000000000000
+      6  0x0305  Malloc    -                     63804             0             0  0000000000000000
+      7  0x0305  Malloc    -                     64828             0             1  0000000000000000
+      8  0x0305  Malloc    -                     65852             0             2  0000000000000000
+      9  0x0305  Malloc    -                     66876             0             3  0000000000000000
+     10  0x0306  Fsfirst   -                         0             0             0  0000000000000000
+     11  0x0307  DirEnt    blob                     16          4641             0  414c5048412e4441
+     12  0x0307  DirEnt    blob                    300          4641             1  424554412e444154
+     13  0x0307  DirEnt    blob                  65536          4641             2  4441544136344b2e
+     14  0x0203  Getrez    -                         0             0             0  0000000000000000
+     15  0x0201  Physbas   -                   1015808             0             0  0000000000000000
+     16  0x0202  Logbase   -                   1015808             0             0  0000000000000000
+     17  0x0103  Bconout   -                        28             0             0  0000000000000000
+     18  0x0204  ScrnCRC   -                1809140553         32000             0  0000000000000000

@@ -1314,6 +1314,43 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   gate. A fixed delay lands wherever the host's speed and the medium put it, and the picture cannot
   tell you it landed wrong. `tools/hatari_headless.py` is where this workspace keeps all of it.
 
+- **HATARI PATCHES KNOWN TOS IMAGES BY DEFAULT, AND IT IS QUIET ABOUT IT.** At `--log-level debug`
+  a stock TOS 1.02 US reports `Applying TOS patch 'big VDI resolutions mouse driver'` / `Applied 1
+  TOS patches`, and a REBUILT image of the same version reports the same patch *failing* (`expected
+  d2c147f9, found 0`) — at the default log level, neither says anything. So a comparison of two ROMs
+  can be a comparison in which one side was modified and the other was not. The fixed set is
+  `--patch-tos off --fast-boot off --timer-d off`; with it Hatari logs `Skipped TOS patches.` and
+  both sides run the bytes on disk. Measured on Hatari 2.6.1 by
+  `projects/tos102us/recreate/atari/boot_surface.py`.
+
+- **AND THE COMMAND LINE IS NOT THE WHOLE MACHINE: HATARI READS A CONFIG FILE FIRST.** It is
+  `$HOME/.config/hatari/hatari.cfg` (on macOS, `~/Library/Application Support/Hatari/hatari.cfg`) —
+  or, **with no `HOME` in the environment, `hatari.cfg` in the CURRENT DIRECTORY**, which a driver
+  that builds a minimal env for SDL hits without meaning to. Everything in it that no flag overrides
+  is part of the emulated machine. Measured with `boot_surface.py`: a file holding nothing but
+  `[Screen] bUseExtVdiResolutions = TRUE` moved the boot metric from 461/1534 to 479/1340, took the
+  desktop from three distinct colours to two and changed the pinned RAM — silently. Pass `-c
+  <committed cfg>` FIRST on the command line (it is additive, so later flags still win) and name in
+  it every setting that has no flag. Note that `--machine` RE-SEEDS the CPU: measured, `--cpuclock
+  32` before `--machine st` does nothing and after it quarters a workload (155 → 38 ticks).
+
+- **A MEMORY BREAKPOINT CANNOT BE ARMED AT POWER-ON — CHAIN IT FROM A VBL BREAKPOINT.** A `--parse`
+  file's commands all execute at STARTUP, where Hatari has not sized RAM yet and refuses a condition
+  on a RAM address. So a watch on a value the program will write (a magic longword, a ledger) is
+  armed from inside an earlier breakpoint's `:file` action file: `b VBL > N :once :quiet :file
+  arm.txt`, and `arm.txt` holds the memory breakpoint. Three files, one per hop, each because the
+  hop before it is the only thing that can arm it (`projects/tos102us/recreate/atari/ledger_run.py`).
+
+- **RAM ABOVE THE LOW PAGES IS NOT DETERMINISTIC ACROSS BOOTS OF THE SAME ROM — PIN THE LOW WINDOW
+  AND HASH THE REST.** Measured over three boots of TOS 1.02 US on one fixed configuration
+  (`boot_surface.py`): `$000-$9FE` is byte-identical every time and **645 bytes above it are not**,
+  first at `$9FF` and last at `$C7E9`, over pages `$0`, `$1`, `$7`, `$8`, `$9`, `$A` and `$C` — the
+  OS's own stack scratch and working storage. A second measurement at a later stop point found 1,929
+  bytes in 10 regions. So pin `$000-$9FF` (which holds the whole vector table and the whole
+  system-variable block) as bytes, and hash everything above it per page and REPORT it: a red light
+  over a region that does not reproduce would mean nothing, and saying which pages move is the
+  useful half.
+
 - **Booting from a FLOPPY image instead of a GEMDOS drive — three things that bite.** A GEMDOS
   drive (`--harddrive DIR --auto C:\X.PRG`) is a host directory: no FAT12, no FDC, no TOS floppy
   driver, and no desktop AUTO scan. Moving to `--disk-a IMAGE.ST` puts all four under the program,
