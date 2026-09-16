@@ -29,6 +29,12 @@
  * before the read. A reconstruction that hoisted the read to the top would describe the machine as
  * it was on entry rather than as those stores left it, and `test_bios_getmpb.py` stages exactly that
  * overlap (`mp_rover` on `_membot`).
+ *
+ * AND THE TPA'S LENGTH IS ALSO THE RESULT. The `sub.l` leaves `memtop - membot` in D0 and the two
+ * instructions that follow it — `clr.l 12(a1)` and `rts` — do not touch the register, so the D0 a
+ * caller gets back is the size of the TPA. TOS's own GEMDOS init ignores it, but it is the register
+ * the routine leaves and `case.FULL_D0` compares the whole of it, so the C returns it rather than
+ * being `void` and agreeing with a reconstruction that left something else there.
  */
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #include <assert.h>
@@ -40,9 +46,10 @@
 
 #define LIST_HEAD_BYTES 4       /* one longword: a list head in the MPB, a field in the descriptor */
 
-void bios_getmpb(uint8_t *image, uint32_t mpb)
+uint32_t bios_getmpb(uint8_t *image, uint32_t mpb)
 {
     uint8_t *descriptor = image + OS_MEMORY_DESCRIPTOR;
+    uint32_t tpa_bytes;
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
     /* The MPB is the CALLER's pointer and the routine does not check it; a case that passed one
@@ -58,6 +65,8 @@ void bios_getmpb(uint8_t *image, uint32_t mpb)
     /* ...and only now `_membot`, twice, exactly where the ROM reads it (see the note above). */
     wr32(descriptor + MD_LINK, 0);
     wr32(descriptor + MD_START, be32(image + SYSVAR_MEMBOT));
-    wr32(descriptor + MD_LENGTH, be32(image + SYSVAR_MEMTOP) - be32(image + SYSVAR_MEMBOT));
+    tpa_bytes = be32(image + SYSVAR_MEMTOP) - be32(image + SYSVAR_MEMBOT);
+    wr32(descriptor + MD_LENGTH, tpa_bytes);
     wr32(descriptor + MD_OWNER, 0);
+    return tpa_bytes;
 }

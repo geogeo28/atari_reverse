@@ -215,7 +215,25 @@ BENCH_BIN := $(BENCH_DIR)/bench.bin
 # The same sweep $(SRC) makes of the project's cores, one directory deep, plus the kit's entry probe
 # — the empty function rom_bench.py measures the oracle's own entry overhead on. A core the sweep
 # missed surfaces as a missing SYMBOL when a bench row asks for it, naming the function.
-BENCH_SRC := $(wildcard src/*.c) $(wildcard src/*/*.c) $(KIT)/bench/entry_probe.c
+#
+# THE `.S` FILES ARE CORES TOO, and in a ROM project some of them have to be. An exception handler
+# cannot be C on the target — it is entered with a 68000 exception frame, moves the stack pointer
+# between the supervisor and user stacks, and owes its caller a register file no C compiler can
+# promise — so the reconstruction carries the ROM's own instruction sequence, and the only build in
+# which that sequence RUNS is this one. Assembled by the same `m68k-elf-gcc` invocation as the C
+# (gcc dispatches on the extension, and `.S` capital-S is the cpp'd form, so a `.S` may include the
+# project's addrs.h), under the SHIPPED build's own flags for the reason every other source here is.
+# The sweep MIRRORS the `.c` one, both depths: `src/*.S` beside `src/*/*.S`, because a project whose
+# cores sit at the top of `src/` keeps its transcriptions there too, and a wildcard that is one
+# directory off is silently empty rather than an error.
+#
+# What it is NOT is `src/asm/*.S`: that is the ASM TWINS' directory above, which is a .PRG project's
+# mechanism and mutually exclusive with this one — rom_bench.py refuses a project with no `rom` key
+# and asm_twin.py refuses one WITH it, both by testing the project's ROM MODE rather than its name —
+# so the two sweeps cannot collide over one file.
+BENCH_SRC := $(wildcard src/*.c) $(wildcard src/*/*.c) \
+             $(wildcard src/*.S) $(wildcard src/*/*.S) \
+             $(KIT)/bench/entry_probe.c
 # -Wl,-e0: the blob has no `_start` and needs none — every core is entered by SYMBOL, from Python.
 # -Wl,--build-id=none: a build-id note is an allocated section, and objcopy would carry it into the
 # flat blob and move every symbol after it.

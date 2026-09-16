@@ -192,6 +192,29 @@ independent. Pinned by `test_bios_kbshift.py`, `test_xbios_kbrate.py`,
 `test_bios_setexc.py` and `test_xbios_keytbl.py`; the predicate is `keeps_current_value_word` /
 `_long` in `include/m68k_idioms.h`.
 
+**And one call in that block has NO "negative means keep" arm at all.** `Setpalette` ($fc0b06) is
+`move.l 4(sp),$45a / rts` — no `tst`, no `bmi`, every argument stored. `-1` is not "leave the palette
+alone", it is a pointer the next vertical blank will copy sixteen words from; `0` is not
+refused either, and is how a caller CANCELS a palette the handler has not yet applied (the VBL
+at $fc06de tests `_colorptr` for zero, copies the row into $ff8240 and clears it). A
+reconstruction that copied the idiom from `Setscreen` next door would pass every case that only
+ever passed it a real palette. Pinned by `test/test_xbios_setpalette.py`
+(`test_every_argument_is_stored_including_the_negative_ones`).
+
+**A routine can REPORT a masked value and STORE an unmasked one**, and the two are separate
+instructions rather than one policy. `Setcolor` ($fc0b0e) reads the colour register, applies
+`andi.w #$777` — three bits per gun, which is all an ST shifter decodes — and reports that; the
+value it writes back goes to the register exactly as the caller gave it, `$7888` included. On a
+real machine the two are indistinguishable (the shifter ignores the other bits), so the mask's
+SIDE is visible only in a hardware-write ledger, and a reconstruction that masked both is wrong
+in a way no screenshot could show. The same routine's index arithmetic has no bounds test and
+needs none: `add.w d1,d1 / andi.w #$1f` keeps the byte offset even and inside the sixteen-word
+row, so colour 16 is colour 0 and colour -1 is colour 15. Pinned by
+`test/test_xbios_setcolor.py` (`test_only_three_bits_per_gun_are_reported`,
+`test_a_non_negative_value_is_stored_to_that_register_unmasked`,
+`test_the_index_wraps_into_the_row_rather_than_leaving_it`); the constants are
+`SETCOLOR_VALUE_MASK` and `SETCOLOR_INDEX_MASK` in `include/addrs.h`.
+
 ## Naming the wrappers
 
 Games wrap common calls in helpers: `move.w #sel,-(sp); trap #1; addq; rts`. Name these

@@ -8,9 +8,12 @@ binds them as module attributes, so a case and the core it proves cannot disagre
     addrs.XBIOS_RANDOM      # 0xfc1510
     addrs.SYSVAR_HZ_200     # 0x4ba
 
-Only simple integer defines are taken (decimal or `0x`, with an optional `u` suffix); anything else
-in the header — a macro with arguments, a string, an expression — is skipped rather than guessed at,
-because a half-understood value bound under a familiar name is worse than a missing one.
+Only simple integer defines are taken (decimal or `0x`, with an optional `u` suffix) and ALIASES of
+one already defined above it — `#define TRAP_EXCEPTION_FRAME_BYTES EXCEPTION_FRAME_BYTES`, which is
+how the header says "the same value under a second name" without spelling the number twice for one
+of the two to be corrected alone. Anything else — a macro with arguments, a string, an expression —
+is skipped rather than guessed at, because a half-understood value bound under a familiar name is
+worse than a missing one.
 """
 import re
 import sys
@@ -18,19 +21,35 @@ from pathlib import Path
 
 HEADER = Path(__file__).resolve().parents[1] / "include" / "addrs.h"
 
-# `#define NAME <integer>` and nothing else: name, then a decimal or hex literal with an optional
-# unsigned suffix, then end-of-value (a comment may follow).
+# `#define NAME <integer>`, or `#define NAME <ANOTHER NAME THE HEADER DEFINES>`, and nothing else:
+# the name, then a decimal or hex literal with an optional unsigned suffix, or a bare identifier,
+# then end-of-value (a comment may follow).
 _DEFINE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
-                     r"(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\s*(?:/\*.*)?$")
+                     r"((?:0[xX][0-9a-fA-F]+|\d+)[uUlL]*|[A-Za-z_][A-Za-z0-9_]*)\s*(?:/\*.*)?$")
 
 
 def parse(header=HEADER):
-    """``{name: value}`` for every plain integer `#define` in ``header``."""
-    values = {}
+    """``{name: value}`` for every plain integer `#define` in ``header``, aliases resolved.
+
+    Aliases are resolved AFTER the whole file is read, not as they are met, so the header may put
+    the two names in whichever sections they belong to rather than in parse order. One that names
+    something this parser does not bind — a macro with arguments, an expression — is dropped rather
+    than raised on: those are defines it deliberately does not read, and a name bound to a
+    half-understood value is worse than a missing one.
+    """
+    values, aliases = {}, {}
     for line in Path(header).read_text().splitlines():
         match = _DEFINE.match(line)
-        if match:
-            values[match.group(1)] = int(match.group(2), 0)
+        if not match:
+            continue
+        name, value = match.group(1), match.group(2)
+        if value[0].isdigit():
+            values[name] = int(value.rstrip("uUlL"), 0)
+        else:
+            aliases[name] = value
+    for name, target in aliases.items():
+        if target in values:
+            values[name] = values[target]
     if not values:
         raise RuntimeError(f"{header} defined no integer constants — the parser and the header have "
                            f"drifted apart, and every address below would be missing rather than "

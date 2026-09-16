@@ -224,9 +224,9 @@ cmt 0xfc0b50 Exception handler installed into $08..$FC by the loop at 0xfc0334 w
 fn 0xfc07ce os_rte_stub
 cmt 0xfc07ce Bare rte. Installed at 0xfc0340 into $14 (divide by zero), at 0xfc034c into the seven autovectors $64..$7c, and at 0xfc0366 into $88 (trap #2) until the GEM dispatcher replaces it.
 fn 0xfc06c8 hbl_handler
-cmt 0xfc06c8 Level-2 (HBL) autovector handler, installed at 0xfc035e into $68.
+cmt 0xfc06c8 Vector $68, the horizontal blank: raises the interrupted frame's IPL to 3 when it was 0 (ori.w #$300 on the saved SR) and rte's -- the ROM's guard against a program that unmasked HBL. src/bios/hbl.c; recreate/test/test_bios_hbl.py.
 fn 0xfc06de vbl_handler
-cmt 0xfc06de Level-4 (VBL) autovector handler, installed at 0xfc0356 into $70: honours vblsem ($452), counts _frclock ($466), reloads the shifter base from _v_bas_ad ($44e) and runs the _vblqueue ($456).
+cmt 0xfc06de Vector $70, the vertical blank: _frclock++ then the vblsem semaphore (re-read before release), _vbclock++; the monitor follower (GPIP bit 7 vs defshiftmd, a SIGNED cmp.b #2, writes $ff8260 from sshiftmd); the palette from colorptr (16 words to $ff8240, colorptr cleared); the screen base from screenpt copied INTO _v_bas_ad and then to $ff8203/$ff8201 (screenpt NOT cleared); the cursor blink; the _vblqueue walk over nvbls slots; the floppy VBL behind flock; the screen-dump hook on _dumpflg. src/bios/vbl.c; recreate/test/test_bios_vbl.py.
 fn 0xfc07ee etv_critic_default
 cmt 0xfc07ee Default critical-error handler (moveq #-1,d0; rts), installed at 0xfc0386 into etv_critic ($404).
 fn 0xfc07fc trap_dispatch_common
@@ -305,11 +305,11 @@ fn 0xfc0aa6 Logbase
 fn 0xfc0aac Getrez
 fn 0xfc0ab8 Setscreen
 fn 0xfc0b06 Setpalette
-fn 0xfc0b0e Setcolor   # ctx
+fn 0xfc0b0e Setcolor
 fn 0xfc0b34 Puntaes   # ctx
-fn 0xfc0d50 Scrdmp   # ctx
-fn 0xfc0e96 Gettime   # ctx
-fn 0xfc0ea4 Settime   # ctx
+fn 0xfc0d50 Scrdmp
+fn 0xfc0e96 Gettime
+fn 0xfc0ea4 Settime
 fn 0xfc0ef6 Blitmode   # ctx
 fn 0xfc0fc0 Dbmsg   # ctx
 fn 0xfc1510 Random
@@ -321,24 +321,24 @@ fn 0xfc1782 Floprd   # ctx
 fn 0xfc1858 Flopwr   # ctx
 fn 0xfc1916 Flopfmt   # ctx
 fn 0xfc1ae2 Flopver   # ctx
-fn 0xfc2030 Midiws   # ctx
-fn 0xfc2212 Ikbdws   # ctx
-fn 0xfc2658 Mfpint   # ctx
-fn 0xfc2682 Jdisint   # ctx
-fn 0xfc26bc Jenabint   # ctx
+fn 0xfc2030 Midiws
+fn 0xfc2212 Ikbdws
+fn 0xfc2658 Mfpint
+fn 0xfc2682 Jdisint
+fn 0xfc26bc Jenabint
 fn 0xfc28f6 Iorec
-fn 0xfc290e Rsconf   # ctx
+fn 0xfc290e Rsconf
 fn 0xfc2ea4 Giaccess
 fn 0xfc2edc Ongibit
 fn 0xfc2f02 Offgibit
-fn 0xfc2f28 Initmous   # ctx
-fn 0xfc2ff2 Xbtimer   # ctx
+fn 0xfc2f28 Initmous
+fn 0xfc2ff2 Xbtimer
 fn 0xfc302e Keytbl
 fn 0xfc305a Bioskeys
-fn 0xfc3074 Dosound   # ctx
-fn 0xfc3088 Setprt   # ctx
+fn 0xfc3074 Dosound
+fn 0xfc3088 Setprt
 fn 0xfc309a Kbrate
-fn 0xfc30bc Kbdvbase   # ctx
+fn 0xfc30bc Kbdvbase
 fn 0xfc31fa Prtblk   # ctx
 fn 0xfc427a vdi_escape   # ctx
 fn 0xfc4698 Cursconf
@@ -596,3 +596,120 @@ var 0xfc46b2 cursconf_jump_table
 cmt 0xfc46b2 Eight SIGNED word displacements from this address. The dispatch leaves the entry in D0, so an arm that sets no result returns it.
 var 0xfd2f32 protobt_bpb_table
 cmt 0xfd2f32 Four 19-byte BPB prototypes, indexed by `muls.w #19` taken as a WORD and sign-extended -- no bounds check.
+
+# --- BIOS wave 2 (2026-09-15): screen/sound XBIOS, MFP/timer/IKBD XBIOS, the interrupt handlers,
+# the trap dispatcher -- bodies read and verified by recreate/test/test_{xbios,bios}_*.py ---
+fn 0xfc312a dosound_driver_step
+cmt 0xfc312a The 200 Hz timer-C sound driver: walks the list at $e8a, writes $ff8800/$ff8802 directly, keeps its pause countdown at $e8e and its ramp accumulator at $e8f. XBIOS Dosound ($fc3074) only hands it a cursor. Reconstructed inside src/bios/timerc.c.
+fn 0xfca914 console_reinit
+cmt 0xfca914 Console/VT52 re-initialisation after a resolution change: picks a font ($fd40d2 or $fd5b2e), calls the Line-A setup at $fc4a48, rewrites $2974..$2995 and tail-calls $fca654. XBIOS Setscreen's resolution arm ends here, which is why that arm HALTS in the recreate.
+fn 0xfc2ed8 offgibit_clear_bit4
+cmt 0xfc2ed8 `moveq #-17,d2 / bra $fc2f08` -- an internal entry into Offgibit's body below its argument fetch, with the keep mask $ef already in D2. The OS's own "clear port A bit 4".
+cmt 0xfc0a92 XBIOS $02. Assembles the shifter's screen base from $ff8201 (bits 23..16) and $ff8203 (bits 15..8); the low 8 bits do not exist. The first lsl is .w and its width is immaterial (moveq #0 cleared the register); the lsl.l carries the pair into bits 23..8. Verified by recreate/test/test_xbios_physbase.py.
+cmt 0xfc0ab8 XBIOS $05. Stores _v_bas_ad, the shifter base bytes and sshiftmd, each skipped on a negative argument at its own width; no arm writes D0, so the caller's register comes back whole. The resolution arm Vsyncs, writes $ff8260, brackets vblsem and calls console_reinit ($fca914). The recreate verifies the first two arms; the third HALTS.
+cmt 0xfc0b06 XBIOS $06. Stores _colorptr ($45a) unconditionally -- there is no "negative keeps" arm -- and touches D0 not at all. The VBL handler at $fc06de applies and clears it. Verified by recreate/test/test_xbios_setpalette.py.
+cmt 0xfc0b0e XBIOS $07. Reads $ff8240+((2n)&$1f), reports it masked with $777, and stores the caller's word UNMASKED unless negative. Verified by recreate/test/test_xbios_setcolor.py.
+cmt 0xfc07d0 XBIOS $25. Unmasks interrupts (andi.w #$f8ff,sr at $fc07d2) and only THEN samples _frclock ($466) at $fc07d6 -- so a blank already pending is counted before the sample -- then spins at $fc07dc until the longword DIFFERS from it, leaving the sample in D0. Verified under the kit's scheduled-write model (recreate/test/test_xbios_vsync.py).
+cmt 0xfc3074 XBIOS $20. Reports the 200 Hz driver's list cursor ($e8a) and, for a non-negative argument, replaces it and clears the pause countdown ($e8e) so the next tick starts the new list. Verified by recreate/test/test_xbios_dosound.py.
+cmt 0xfc3088 XBIOS $21. Reports the printer configuration word ($e90) in D0's LOW half and replaces it unless negative. Verified by recreate/test/test_xbios_setprt.py.
+cmt 0xfc2edc XBIOS $1e. Read-modify-write of YM2149 port A through Giaccess: port_a |= arg.b, bracketed by ori.w #$700,sr across BOTH calls; movem.l (sp)+,d0-d2 gives the caller's D0 back. Verified by recreate/test/test_xbios_ongibit.py.
+cmt 0xfc2f02 XBIOS $1d. The same with AND -- the argument is the mask to KEEP, not the bits to clear -- and the same D0 restore. Verified by recreate/test/test_xbios_offgibit.py.
+var 0x0e8a snd_list_pointer
+var 0x0e8e snd_list_delay
+var 0x0e8f snd_ramp_value
+var 0x0e90 prt_config
+fn 0xfc201a midi_send_byte
+cmt 0xfc201a One byte to the MIDI 6850: spin on $fffc04 bit 1, then store $fffc06.
+fn 0xfc21f2 ikbd_send_byte
+cmt 0xfc21f2 One byte to the IKBD 6850: spin on $fffc00 bit 1, 951 iterations of bsr-to-rts settling, then store $fffc02.
+fn 0xfc25b0 mfp_timer_program
+cmt 0xfc25b0 The shared MFP timer programmer: five masked clears (IMR/IER/IPR/ISR + the control register), the data register written and read back until it sticks, then the control bits ORed in. Only the clears are provable under a per-run-constant read model; the read-back is why Xbtimer HALTS.
+fn 0xfc2622 mfp_timer_clear_field
+cmt 0xfc2622 One masked clear: (offsets+timer) selects the register, (masks+timer) the bits to keep.
+fn 0xfc262a mfp_timer_select_register
+cmt 0xfc262a The two table reads behind it: a3 = $fffa01 + offsets[timer], a2 = masks + timer.
+fn 0xfc26e6 mfp_channel_split
+cmt 0xfc26e6 channel -> (register, bit) via a SIGNED byte compare (cmpi.b #8 / blt): channels 8..15 are register A's bits 0..7, 0..7 are register B's two bytes above it -- a byte >= $80 is NEGATIVE and takes B's arm, which only Xbtimer's unmasked table byte can reach. The bit is bclr's own, modulo 8.
+fn 0xfc2fd8 initmous_common_parameters
+cmt 0xfc2fd8 Initmous's common tail: xparam, yparam, 16-topmode (a BYTE subtract), $07, buttons.
+fn 0xfc3028 mouse_discard_handler
+fn 0xfc1f52 ikbd_gettime
+cmt 0xfc1f52 The IKBD clock read: sets $e92 = $ff, sends command $1c, spins until the ACIA handler clears it, returns the packed time at $e50. Needs the scheduled-write model to run.
+fn 0xfc1f6c ikbd_settime
+cmt 0xfc1f6c The IKBD clock write: unpacks the GEMDOS datetime into six BCD bytes at $e5e and sends $1b plus six bytes. Runs clean under the model -- ready to reconstruct.
+fn 0xfc4c0c rtc_probe
+cmt 0xfc4c0c MC146818 presence probe: writes register 27, then movep.w writes registers 5/6 and reads them back -- the shape no per-run declaration can serve; why Gettime/Settime are not reconstructed.
+fn 0xfc4c44 rtc_gettime
+fn 0xfc4d02 rtc_settime
+cmt 0xfc2658 Mfpint (XBIOS $0d): Jdisint's body, the vector store at $100+channel*4, then Jenabint's body -- the ROM bsr's into both. Proved as the slice [$fc2658,$fc267a) because the enable half re-reads the IERA/IMRA the disable half wrote. Returns the masked channel in D0.
+cmt 0xfc2682 Jdisint (XBIOS $1a): clears the channel's bit in IMR, IER, IPR, ISR in that order -- masked off before disarmed. Verified, src/xbios/mfp.c. Returns the masked channel in D0.
+cmt 0xfc26bc Jenabint (XBIOS $1b): sets the channel's bit in IER then IMR -- armed before unmasked. Verified, src/xbios/mfp.c. Returns the masked channel in D0.
+cmt 0xfc2ff2 Xbtimer (XBIOS $1f): program a timer, then install a handler on its channel ($fc302a: 13, 8, 5, 4) through Mfpint's body at $fc2666. HALTS at the programmer's data-register write-and-verify.
+cmt 0xfc290e Rsconf (XBIOS $0f): movep.l reads UCR/RSR/TSR/UDR as the result; six optional words, each negative to keep; the handshake byte normalised to 0, 1 or 2; the baud arm is timer D through $fc25b0 and HALTS.
+cmt 0xfc2212 Ikbdws (XBIOS $19): count+1 bytes to the IKBD 6850, each after a TDRE poll and a 951-iteration settling delay.
+cmt 0xfc2030 Midiws (XBIOS $0c): the same on $fffc04/$fffc06, with no settling delay.
+cmt 0xfc2f28 Initmous (XBIOS $00): builds the IKBD packet at $e6e and sends it through Ikbdws's loop at $fc221c; mousevec ($e22) is stored BEFORE the mode is validated, so mode 3 installs the handler and returns 0.
+cmt 0xfc30bc Kbdvbase (XBIOS $22): move.l #$e12,d0 -- the KBDVECS table's address; reads nothing.
+cmt 0xfc0e96 Gettime (XBIOS $17): probes for an MC146818 at $fffc20, then the RTC path or the IKBD one. NOT reconstructed: the probe reads back what it wrote, and the IKBD path waits for the ACIA interrupt to clear $e92.
+cmt 0xfc0ea4 Settime (XBIOS $16): the same dispatcher, sending only. NOT reconstructed: the RTC probe's read-back is a stale read under the per-run-constant model.
+var 0x0c74 rs232_flow_control
+var 0x0e12 kbdvecs
+var 0x0e22 kbdvecs_mousevec
+var 0x0e50 ikbd_clock_reply
+var 0x0e54 ikbd_settime_requested
+var 0x0e5e ikbd_settime_bcd
+var 0x0e6e initmous_packet
+var 0x0e92 ikbd_clock_reply_pending
+var 0xfc2638 mfp_timer_ier_offsets
+var 0xfc263c mfp_timer_ipr_offsets
+var 0xfc2640 mfp_timer_isr_offsets
+var 0xfc2644 mfp_timer_imr_offsets
+var 0xfc2648 mfp_timer_interrupt_masks
+var 0xfc264c mfp_timer_control_offsets
+var 0xfc2650 mfp_timer_control_masks
+var 0xfc2654 mfp_timer_data_offsets
+var 0xfc29ae rsconf_baud_control_table
+var 0xfc29be rsconf_baud_data_table
+var 0xfc302a xbtimer_channel_table
+cmt 0x04a2 Top of the BIOS register-save area. trap_dispatch_common ($fc07fc) pushes a 46-byte frame below it per call -- the exception frame's SR word and return PC, then d3-d7/a3-a7 -- and pops it on the way out; re-read in the epilogue because the called routine may have nested. $93a in the post-boot snapshot.
+var 0x8c2a vdi_dispatch_vector   # ctx
+cmt 0x8c2a The longword the trap #2 entry ($fe3ea6) jumps through for any selector that is not AES/Pterm: $fc4ebc in the snapshot, the VDI selector arm that calls vdi_entry ($fc9f9e).
+fn 0xfc30c4 timer_c_handler
+cmt 0xfc30c4 MFP channel 5 (timer C, 200 Hz), vector $114: counts _hz_200, rotates the $e88 divider so the body runs at 50 Hz, steps the Dosound driver ($fc312a), counts the keyboard auto-repeat down and calls etv_timer ($400) with timr_ms pushed as a word; clears ISRB bit 5 on both paths. src/bios/timerc.c.
+fn 0xfc29ce acia_handler
+cmt 0xfc29ce MFP channel 6 (the IKBD and MIDI 6850s share one line), vector $118: calls KBDVECS' midisys ($e2e) then ikbdsys ($e32) and goes round again while GPIP bit 4 is low; clears ISRB bit 6. src/bios/ikbd.c.
+fn 0xfc4666 blink_cursor
+fn 0xfc4a1e invert_cursor_cell
+fn 0xfc1bc4 floppy_vbl
+fn 0xfc29fc midi_acia_service
+fn 0xfc2a0c ikbd_acia_service
+fn 0xfc2a42 acia_take_byte   # ctx
+fn 0xfc2c42 kbd_queue_key   # ctx
+fn 0xfc1e60 fdc_set_drive_and_side   # ctx
+fn 0xfc1ea4 fdc_read_status   # ctx
+fn 0xfc1eac fdc_settle_delay
+var 0x0a04 floppy_vbl_entered
+var 0x0e7f kb_repeat_key
+var 0x0e80 kb_repeat_delay
+var 0x0e81 kb_repeat_left
+var 0x0e88 timer_c_divider
+var 0x2840 con_cursor_disable
+var 0x296c con_cell_height
+var 0x2978 con_cursor_address
+var 0x2983 con_blink_timer
+var 0x299a con_planes
+var 0x299c con_line_bytes
+fn 0xfc268c mfp_disable_channel
+cmt 0xfc268c Jdisint's body, entered past its andi.l #15: clears the channel's bit in IMR, IER, IPR, ISR in that order. Mfpint bsr's here at $fc266a.
+fn 0xfc26c6 mfp_enable_channel
+cmt 0xfc26c6 Jenabint's body: sets the channel's bit in IER then IMR. Mfpint bsr's here at $fc267a.
+fn 0xfc2666 mfp_install_vector_and_enable
+cmt 0xfc2666 Mfpint's body, entered past the argument fetch AND past andi.l #15: disable, store the vector at $100+channel*4, enable. Xbtimer bsr's here at $fc3024 with the RAW byte from $fc302a, so the channel is a whole byte and the slot can land outside $100..$13c.
+fn 0xfc3008 xbtimer_install_handler
+cmt 0xfc3008 Xbtimer's vector arm: tst.l 10(sp)/bmi, then $fc302a(d0.w) and bsr into Mfpint's body. Unreachable on both sides -- the timer programmer above halts first.
+fn 0xfc203a midi_send_string
+cmt 0xfc203a Midiws's loop: count+1 bytes, each through the MIDI sender at $fc201a. Same shape as Ikbdws's at $fc221c.
+cmt 0xfc0a46 BIOS $00 Getmpb: builds the initial GEMDOS MPB over the OS's descriptor at $48e from _membot/_memtop (read AFTER the caller's MPB is stored -- the two can alias). Returns memtop-membot in D0. Verified by recreate/test/test_bios_getmpb.py.
+cmt 0xfc07c4 The VBL's exit, where both paths meet: movem.l (sp)+,d0-a6 then addq.w #1,vblsem (a re-read, not the entry's value) and rte. src/bios/isr.S transcribes these six words verbatim.
+cmt 0xfc311c Timer C's exit, on both paths: bclr #5,$fffa11 acknowledges channel 5 and rte. src/bios/isr.S transcribes it; the C core spells the same read-modify-write through include/mfp.h.
+cmt 0xfc29f6 The ACIA handler's exit: movem.l (sp)+,d0-d3/a0-a3/a5 -- the list IS the handler's contract, D4-D7/A4/A6 are NOT given back -- and rte. src/bios/isr.S transcribes it.

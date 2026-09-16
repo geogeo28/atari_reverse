@@ -47,6 +47,11 @@ _lib.xbios_supexec.restype = ctypes.c_uint32
 
 STUB_AT = staging.SCRATCH
 MARKER_AT = staging.SCRATCH + 0x100
+# Where the NAMED stub goes when a case plants a decoy at the default address — far enough above
+# `STUB_AT` that the two are unmistakably different routines. Module-level rather than spelt inside
+# the parametrize because the other tenants of the staging band have to be able to say they are
+# CLEAR of these: `test/isr.py` asserts its own band starts past the last of them.
+DECOY_ALTERNATIVES = (0x800, 0xA00, 0xC00)
 MARKER = 0x5A
 A_RESULT = 0x1234_5678
 
@@ -86,6 +91,12 @@ def move_byte_immediate(value, address):
 def move_long_immediate_to_d0(value):
     """`move.l #value,d0` — 0x203c and the longword."""
     return struct.pack(">HI", 0x203C, value)
+
+
+# ...and how far past the last of `DECOY_ALTERNATIVES` this battery's staging reaches, which is what
+# a neighbouring tenant of the band asserts it is clear of. Derived from the stub itself, so a
+# longer decoy moves the bound rather than silently overrunning it.
+DECOY_STUB_BYTES = len(move_long_immediate_to_d0(0) + RTS)
 
 
 def read_long_from_stack_into_d0():
@@ -154,13 +165,13 @@ def test_the_routine_sees_the_caller_s_own_stack_with_nothing_pushed_over_it():
     assert run({STUB_AT: stub})["regs"]["d0"] == emu.SENTINEL
 
 
-@pytest.mark.parametrize("offset", (0, 0x200, 0x400))
+@pytest.mark.parametrize("offset", DECOY_ALTERNATIVES)
 def test_the_routine_run_is_the_one_4_sp_names_and_not_another(offset):
     """The staged stub is an INPUT, and a DECOY is planted at the default address on every case —
     for BOTH sides now, since the hook dispatches on the address the core passes it. A
     reconstruction, or an oracle entry, that jumped to a baked-in address would return the decoy's
     2 rather than the named stub's 1."""
-    named = STUB_AT + 0x800 + offset
+    named = STUB_AT + offset
     stubs = {STUB_AT: (move_long_immediate_to_d0(2) + RTS, lambda buf: 2),
              named: (move_long_immediate_to_d0(1) + RTS, lambda buf: 1)}
     assert run(stubs, named=named)["regs"]["d0"] == 1

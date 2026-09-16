@@ -1,4 +1,4 @@
-/* hw.h — the DECLARED I/O MAP's three read doors as a 68000 build makes them: the access itself.
+/* hw.h — the I/O doors this reconstruction has, as a 68000 build makes them: the access itself.
  *
  * It shadows `tools/recreate_kit/include/hw.h`, which states this file's contract in its own words:
  * "ON TARGET the build supplies all three as the real volatile access, exactly as it supplies
@@ -11,12 +11,22 @@
  * OUTRIGHT rather than through `#include_next`, for zynaps' reason: the kit declares these `extern`
  * and C forbids redeclaring one `static`.
  *
- * ONLY THE THREE READ DOORS, and the omissions are the point. `hw_read8`, `hw_write8/16/32` and the
- * three read-modify-writes are declared by the kit and implemented by NO core in this reconstruction
- * yet — so a core that acquires one fails at LINK, naming the symbol, which is the right outcome:
- * each of those is a decision about what the target build does with a store the oracle only
- * ledgers, and writing them before a core needs one would be writing them with nothing to check
- * them against. Add each one here, with its evidence, when the core that needs it lands.
+ * SIX DOORS NOW, IN THREE GROUPS, AND WHAT IS STILL MISSING IS AS DELIBERATE AS WHAT IS HERE:
+ *
+ *   * the DECLARED I/O MAP's reads — `io_read8`, `io_read16`, `io_read32` — which is every byte of
+ *     the I/O page the named models do not own (`Getrez`'s $ff8260, `Physbase`'s two base bytes,
+ *     `Setcolor`'s palette word, `Rsconf`'s four USART registers);
+ *   * its STORES — `hw_write8` and `hw_write16` — landed with `xbios_setscreen` and
+ *     `xbios_setcolor`, the first cores to write a chip register (see their own note below);
+ *   * one SEEDED-MODEL read — `hw_read8` — landed with `src/xbios/acia.c`, where the address is a
+ *     Phase-7 NAMED slot rather than an ordinary declared byte (its note says why the two names
+ *     stay apart in the core and collapse here).
+ *
+ * `hw_write32` and the three read-modify-writes remain declared by the kit and implemented by NO
+ * core here — so a core that acquires one fails at LINK, naming the symbol, which is the right
+ * outcome: each is a decision about what the target build does with an access the oracle only
+ * ledgers, and writing it before a core needs one would be writing it with nothing to check it
+ * against. Add each one here, with its evidence, when the core that needs it lands.
  *
  * Under the oracle these accesses reach the DECLARED I/O MAP exactly as the ROM's own `move.b
  * $ffff8260,d0` does — the shim decodes the I/O page rather than serving it from the image — which
@@ -48,6 +58,52 @@ static inline uint16_t io_read16(uint32_t addr)
 static inline uint32_t io_read32(uint32_t addr)
 {
     return *(volatile uint32_t *)addr;
+}
+
+/* ---- the STORES (Phase 10), which under the oracle are a ledger and here are the instruction ----
+ *
+ * Added with the cores that needed them, as the note above prescribes: `xbios_setscreen` stores the
+ * shifter's two screen-base BYTES at $ff8201/$ff8203 (`move.b 9(sp),$ffff8201`) and `xbios_setcolor`
+ * one palette WORD at $ff8240+2n (`move.w 6(sp),0(a0,d1.w)`).
+ *
+ * THE WIDTH IS THE WHOLE DECISION HERE, and it is why there is one function per width rather than a
+ * `size` argument: the shifter's screen-base bytes sit at ODD addresses two apart with the video
+ * counter's own registers between them, so a byte store widened to a word writes $ff8202 as well —
+ * which is the middle byte of the video address counter on a running machine. The ledger compares
+ * the width a core DECLARED, so a mismatch reds under the oracle before it can reach a machine.
+ *
+ * The read-modify-writes and `hw_write32` stay absent for the reason the header note gives: no core
+ * here has one, and a core that acquires one fails at LINK naming the symbol rather than silently
+ * getting a definition nobody weighed. */
+static inline void hw_write8(uint32_t addr, uint32_t value)
+{
+    *(volatile uint8_t *)addr = (uint8_t)value;
+}
+
+static inline void hw_write16(uint32_t addr, uint32_t value)
+{
+    *(volatile uint16_t *)addr = (uint16_t)value;
+}
+
+/* ---- the SEEDED READ model's one door, which here is the same instruction as `io_read8` --------
+ *
+ * Added with `src/xbios/acia.c`, whose IKBD sender spins on `$fffc00` until the 6850's transmit
+ * register is empty. That address is one of the Phase-7 NAMED slots (os.h, `OS_HW_ACIA_STATUS`)
+ * rather than an ordinary byte of the declared I/O map, so off target it is served and ledgered by
+ * a DIFFERENT model and a core has to spell which one it means — `hw_read8` for a named slot,
+ * `io_read8` for everything else, and each refuses the other's addresses.
+ *
+ * ON TARGET THE DISTINCTION VANISHES, and that is the whole of this definition: there is no map and
+ * no named set on a real machine, only the bus, so this is the same `move.b addr,d0` its neighbour
+ * above is. Keeping the two names apart in the CORE is what keeps the off-target models straight;
+ * collapsing them here is what the machine does.
+ *
+ * VOLATILE for the reason `sched.h`'s poll is: the ACIA's status byte is changed by the chip and by
+ * nothing in the caller's instruction stream, so a compiler that hoisted the load out of the send
+ * loop would leave a program that spins on a register for ever. */
+static inline uint8_t hw_read8(uint32_t addr)
+{
+    return *(volatile uint8_t *)addr;
 }
 
 #endif /* TOS102US_SHIM_HW_H */

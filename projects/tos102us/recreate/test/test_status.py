@@ -175,3 +175,24 @@ def test_every_verified_row_quotes_its_measured_tier_3_ratios():
     assert not wrong, (
         f"{len(wrong)} STATUS.md row(s) disagree with {BENCH_TABLE.name}, which `make bench` wrote:"
         + "".join(f"\n  {line}" for line in wrong))
+
+
+def test_every_address_the_table_prices_has_a_verified_row():
+    """THE REVERSE OF THE PIN ABOVE, and the one that catches a measurement nobody wrote down.
+
+    The check above walks the LEDGER and asks the table about each row: a ✅ row with no measurement
+    reds. Nothing walked the TABLE. So an address `make bench` prices and STATUS.md has no row for
+    is invisible — the ledger is complete about itself, every count agrees, and a function that was
+    reconstructed, verified and measured is missing from the only document anybody quotes.
+
+    It is a live gap rather than a hypothetical one: the trap dispatcher has TWO exception entries
+    at two addresses ($fc07f8 and $fc07f2), the table prices both, and the ledger carried one row.
+    """
+    measured = _measured_ratios()
+    rows = {address for address, _cell in _verified_rows()}
+    missing = sorted(set(measured) - rows)
+    assert not missing, (
+        f"{len(missing)} address(es) `make bench` measured have no `✅ verified` row in STATUS.md: "
+        + ", ".join(f"{address:#x} ({_as_text(measured[address])})" for address in missing)
+        + ". The ledger is the document reports quote; a measured function missing from it is a "
+          "function nobody can find")

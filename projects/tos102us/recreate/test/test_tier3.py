@@ -33,7 +33,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 import tier3                                               # noqa: E402  (the registry and the bar)
-from recreate_kit.rom_bench import RomBench                # noqa: E402
+# ...and the caller a transcription row is netted by, whose cost `trap.py` measures.
+import trap                                                # noqa: E402
+from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +47,16 @@ def bench():
     tree nobody built.
     """
     return RomBench()
+
+
+@pytest.fixture(scope="module")
+def dispatch(bench):
+    """What a `trap #13` call spends before the leaf runs, measured once per worker.
+
+    The LEAF RULE is a fraction of it (`tier3.dispatch_cycles`), so every verdict below needs it —
+    and it is two more oracle runs, not a number to re-measure per row.
+    """
+    return tier3.dispatch_cycles(lambda key: tier3.measure(tier3.row_named(key), bench))
 
 
 def _row_id(row):
@@ -76,11 +88,11 @@ def test_no_two_rows_share_a_name():
 
 
 @pytest.mark.parametrize("row", tier3.ROWS, ids=_row_id)
-def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench):
+def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch):
     """One row: measure both sides over one case — which raises if the m68k build diverged — then
-    put the ratio through the same `verdict` the table prints."""
+    put the measurement through the same `verdict` the table prints."""
     measured = tier3.measure(row, bench)
-    state = tier3.verdict(row, measured.ratio)
+    state = tier3.verdict(row, measured, dispatch)
     assert state not in tier3.FAILED, _why(row, measured, state)
 
 
@@ -124,6 +136,157 @@ def test_no_pinned_ratio_is_stale(bench):
             f"tier3.PERF_ACCEPTED carries {key} as an ACCEPTANCE ({pinned:.3f}x, over the "
             f"{tier3.TIER3_FUNCTION_BAR:.2f} bar), but it now measures {measured.ratio:.3f}x — "
             f"under it. Drop the acceptance: it is excusing a cost that is no longer paid")
+
+
+# ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------
+
+# What a `trap #13` costs before the leaf it dispatches to runs, as this table measures it. Pinned
+# for `RESET_OBSERVATION`'s reason: it is the denominator the rule's fraction is taken of, so a
+# dispatcher that grew would quietly widen the slack every leaf is judged by, and nothing else in
+# the suite reads this number.
+DISPATCH_CYCLES = 464
+
+# The ISR row the rule must NOT admit, and the reason it is the right control: mechanism (A) is part
+# of its excess too, exactly as it is the whole of a leaf's — and it is seven times the slack. A rule
+# that passed it would be accepting anything (A) touched rather than anything small.
+ISR_OVER_THE_SLACK = ("isr_vbl", "a frame with everything queued")
+
+# A row the listing does NOT name, and an excess small enough that only the naming can refuse it.
+UNNAMED_ROW = ("bios_setexc", "read")
+TRIVIAL_EXCESS = 2
+
+
+def test_the_dispatch_cost_the_rule_is_a_fraction_of(dispatch):
+    assert dispatch == DISPATCH_CYCLES, (
+        f"a whole trap call costs {dispatch} cycles before the leaf runs, not the "
+        f"{DISPATCH_CYCLES} the leaf rule's slack was written against — every (A)-only leaf is now "
+        f"judged against a different denominator, so re-read tier3.IMAGE_POINTER_LEAVES")
+
+
+@pytest.mark.parametrize("key", sorted(tier3.IMAGE_POINTER_LEAVES), ids=lambda key: "-".join(key))
+def test_the_leaf_rule_admits_every_row_it_names(key, bench, dispatch):
+    """Each named row measured, and the rule asked about it.
+
+    A name here is a claim that the image-pointer load is the WHOLE of that row's excess; if the row
+    has grown a second cost the excess walks out of the slack and this reds, which is the same
+    service the written entry it replaced performed and the reason the list is not a silencer.
+    """
+    row = tier3.row_named(key)
+    measured = tier3.measure(row, bench)
+    excess = measured.recreate_net - measured.original_net
+    assert tier3.rule_admits(row, measured, dispatch), (
+        f"{key} is named an (A)-only trap leaf but costs {excess} cycles over the original — past "
+        f"the {tier3.LEAF_SLACK_CYCLES}-cycle slack or past {tier3.LEAF_SLACK_FRACTION:.1%} of the "
+        f"{dispatch + measured.original_net}-cycle call it is part of. Either the core grew a "
+        f"second cost, in which case name it in PERF_ACCEPTED, or the excess is real")
+
+
+def _carrying(measured, bench, excess):
+    """`measured`'s row with a different EXCESS over the original and nothing else changed — the
+    shape a regression in that core would have, without a core that has one."""
+    return Measurement((0, measured.original_cycles),
+                       (0, measured.original_cycles + excess), bench.overhead)
+
+
+def _fraction_budget(measured, dispatch):
+    """...and what the rule's second test allows that row: a fraction of the whole dispatched call."""
+    return tier3.LEAF_SLACK_FRACTION * (dispatch + measured.original_net)
+
+
+def test_the_leaf_rule_refuses_an_excess_the_size_of_a_serviced_blank(bench, dispatch):
+    """The smallest leaf, carrying the excess `isr_vbl / a frame with everything queued` really
+    measures.
+
+    The slack is what makes the rule a rule rather than a blanket, so the refusal is driven with a
+    MEASURED number — that ISR row's own excess, a whole serviced vertical blank through an image
+    pointer and four staged calls — rather than an invented one.
+    """
+    isr = tier3.measure(tier3.row_named(ISR_OVER_THE_SLACK), bench)
+    excess = isr.recreate_net - isr.original_net
+    leaf = tier3.row_named(tier3.DISPATCH_LEAF)
+    measured = tier3.measure(leaf, bench)
+    assert tier3.rule_admits(leaf, measured, dispatch), "the leaf's own measurement is admitted"
+    assert not tier3.rule_admits(leaf, _carrying(measured, bench, excess), dispatch), (
+        f"the leaf rule admitted a {excess}-cycle excess on {tier3.DISPATCH_LEAF} — the slack is "
+        f"{tier3.LEAF_SLACK_CYCLES} cycles, and an ISR arm's worth of excess is not a pointer load")
+
+
+# The rule has TWO tests and they bind on different rows, so an excess that only one of them refuses
+# is the only way to pin either. On the SMALLEST leaf the fraction is the tighter — 7.5% of a
+# 496-cycle call is 37 cycles against the 40-cycle slack — and on the largest it is the other way
+# round, because the leaf's own cycles are inside the call the fraction is taken of. Both cases
+# below assert which half is doing the refusing before they ask, so WIDENING EITHER CONSTANT reds
+# here rather than quietly admitting more.
+BIGGEST_LEAF = ("bios_getmpb", "bios_getmpb")
+OVER_THE_SLACK = tier3.LEAF_SLACK_CYCLES + 2
+INSIDE_THE_SLACK = tier3.LEAF_SLACK_CYCLES - 2
+
+
+def test_the_absolute_slack_is_what_refuses_it_on_the_biggest_leaf(bench, dispatch):
+    row = tier3.row_named(BIGGEST_LEAF)
+    measured = tier3.measure(row, bench)
+    assert OVER_THE_SLACK <= _fraction_budget(measured, dispatch), (
+        f"the premise has moved: {OVER_THE_SLACK} cycles is no longer inside {BIGGEST_LEAF}'s "
+        f"fraction budget, so this case no longer tests the absolute slack at all")
+    assert not tier3.rule_admits(row, _carrying(measured, bench, OVER_THE_SLACK), dispatch), (
+        f"{OVER_THE_SLACK} cycles over the original was admitted on {BIGGEST_LEAF}, where only the "
+        f"{tier3.LEAF_SLACK_CYCLES}-cycle slack refuses it — the slack has been widened, and an "
+        f"excess that size is no longer one image-pointer load")
+
+
+def test_the_fraction_is_what_refuses_it_on_the_smallest_leaf(bench, dispatch):
+    row = tier3.row_named(tier3.DISPATCH_LEAF)
+    measured = tier3.measure(row, bench)
+    assert INSIDE_THE_SLACK > _fraction_budget(measured, dispatch), (
+        f"the premise has moved: {INSIDE_THE_SLACK} cycles is now inside {tier3.DISPATCH_LEAF}'s "
+        f"fraction budget, so this case no longer tests the fraction at all")
+    assert not tier3.rule_admits(row, _carrying(measured, bench, INSIDE_THE_SLACK), dispatch), (
+        f"{INSIDE_THE_SLACK} cycles over the original was admitted on {tier3.DISPATCH_LEAF}, where "
+        f"only the {tier3.LEAF_SLACK_FRACTION:.1%} fraction refuses it — a two-instruction routine "
+        f"cannot pay that for a pointer load")
+
+
+def test_the_rule_refuses_a_row_it_does_not_name(bench, dispatch):
+    """The NAMING is the claim, and it is the half neither slack can make.
+
+    `IMAGE_POINTER_LEAVES` says "(A) is the whole of this row's excess", which only a reader of the
+    ROM's instructions and the C's can assert. Drop that test from the rule and every small excess
+    anywhere becomes admissible — including one that is small for a reason nobody looked at — so an
+    unnamed row is driven here with an excess of two cycles, where nothing but the naming refuses it.
+    """
+    row = tier3.row_named(UNNAMED_ROW)
+    assert UNNAMED_ROW not in tier3.IMAGE_POINTER_LEAVES, "the premise: this row is not named"
+    measured = tier3.measure(row, bench)
+    assert not tier3.rule_admits(row, _carrying(measured, bench, TRIVIAL_EXCESS), dispatch), (
+        f"the leaf rule admitted {UNNAMED_ROW}, which it does not name — the rule is no longer "
+        f"asking whether anybody has read the row, only whether its excess is small")
+
+
+def test_a_transcription_rows_ratio_is_netted_by_the_caller_it_measured(bench):
+    """The plumbing between `trap.py`'s measured caller and the `Measurement` that uses it.
+
+    `test_rom_bench.py` pins the arithmetic and `test_bios_trap.py` pins the constant; what neither
+    can see is the row carrying the wrong one, or none. Netting a 642-cycle call by 106 instead of
+    by nothing moves its ratio by less than the table prints, so this is the only surface the wiring
+    has.
+    """
+    row = tier3.row_named(tier3.DISPATCH_WHOLE_CALL)
+    assert row.shared_entry == trap.caller_cost(), (
+        f"{tier3.DISPATCH_WHOLE_CALL} carries {row.shared_entry} as the caller both sides run, not "
+        f"the {trap.caller_cost()} its own shape measures")
+    measured = tier3.measure(row, bench)
+    assert measured.original_net == \
+        measured.original_cycles - RESET_OBSERVATION[1] - row.shared_entry[1]
+
+
+def test_no_named_leaf_has_come_back_under_the_bar(bench, dispatch):
+    """A name whose row no longer needs it is `PERF_ACCEPTED`'s staleness, in the rule's shape: it
+    would go on admitting the next regression on that row without anybody deciding to."""
+    for key in sorted(tier3.IMAGE_POINTER_LEAVES):
+        row = tier3.row_named(key)
+        assert tier3.measure(row, bench).ratio > tier3.TIER3_FUNCTION_BAR, (
+            f"{key} is named an (A)-only leaf the rule carries, but it now measures under the "
+            f"{tier3.TIER3_FUNCTION_BAR:.2f} bar on its own. Drop the name")
 
 
 # What Musashi's reset exception costs, and what it therefore adds to EVERY run of either entry

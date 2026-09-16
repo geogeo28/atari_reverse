@@ -979,6 +979,43 @@ re-derived. Five checks judge one and a new twin needs all five: the image diffe
 transcription pin (bytes where they are available, otherwise every original instruction address
 appearing exactly once in ascending order), a cost pin, a **register check**, and a **build gate**.
 
+**A ROM project's chain is ONE LINK, not two, and the fifth check becomes the first.** Where a game
+reconstructs a routine in C and then writes a twin beside it, a ROM has routines that cannot be C on
+any target at all — an exception handler is entered by the 68000 with a group-2 frame, moves the
+stack pointer between the supervisor and user stacks, and owes its caller a register file no
+compiler can promise. There is no C core to be the middle of the chain, so the `.S` is compared
+against the ORIGINAL directly: `original ==(the transcription differential)== .S`, both sides
+entered over ONE image by the second differential of Tier 3's numerator
+(`tools/recreate_kit/rom_bench.py`, `RomBench.measure_transcription`; the worked case is TOS 1.02's
+trap #13/#14 dispatcher, `projects/tos102us/recreate/src/bios/trap.S`). The relation is **stronger**
+than a C core's rather than weaker: both sides are entered with the same register file, the case
+must name it in full — a register nobody named enters as 0 on both sides and agrees for that reason
+— and the WHOLE of D0-D7/A0-A6 must come back equal, preserved and clobbered alike, alongside the
+same image and the same off-image traffic.
+
+**ONE IMAGE, TWO HANDLERS — through the FIRST-ARG slot inside the dropped band.** The two sides
+cannot be handed different code, because they run over one image; and they must reach different
+handlers, the ROM's and the blob's. So the case stages a CALLER — it pushes the arguments and the
+function number, builds the exception frame by hand (`pea` the return PC, then `move.w sr,-(sp)`),
+and enters whatever handler it finds in the longword at the first argument slot, one longword above
+the run's stack pointer. That slot is the one place the two runs may legitimately differ: the
+oracle's `run` leaves it as the case poked it and `run_bench` writes `arg0` over it, and it sits
+inside the band `harness.diff_spans()` drops because a machine stack is not output. A real `trap`
+cannot be used instead — it reaches the machine's own vector table and would always run the ROM's
+handler — so the hand-built frame is itself pinned, by running the same case through a caller that
+does `trap #13` and requiring the two runs indistinguishable in the register file and in every byte
+outside that band.
+
+**And the BYTE PIN is the fifth check here, not an optional one.** The differential sees everything
+an instruction DOES; it cannot see an instruction no case distinguishes. The dispatcher's bound
+check is `bge.s` and every case that reaches it passes a non-negative function number, so `bcc.s` in
+its place leaves the same image, the same registers, the same traffic and the same cycle count on
+every case — a different ROM that nothing but the bytes can refuse. The whole `.S` is therefore
+compared against the whole ROM span, with only the encodings a LINK forces spliced: `lea (d16,pc)`
+becomes `lea abs.l` (six bytes where the ROM's is four, +4 cycles), and — the part that is easy to
+miss — the `bra.s` between two such `lea`s has its displacement moved by them. Three opcode words,
+not one; the header that said "every other opcode word matches" was wrong about the third.
+
 The last two are the ones a first twin gets wrong. **The register check exists because the other
 three cannot see a clobbered callee-saved register at all** — measured: drop one register from both
 of a twin's `movem` lists and correct the frame size to match, and the image is identical, the return

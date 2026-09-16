@@ -22,7 +22,7 @@ FULL_D0 = 32
 NO_RESULT = None
 
 
-def run(entry, regs, glue, *, width=FULL_D0, poison=True):
+def run(entry, regs, glue, *, width=FULL_D0, poison=True, **seeds):
     """One differential at `entry`. Returns the oracle's `info` once everything always-checked holds.
 
     `regs` are the oracle's input registers plus the case's `_pokes`; `glue(lib, buf)` runs the
@@ -30,8 +30,13 @@ def run(entry, regs, glue, *, width=FULL_D0, poison=True):
     runs the attribution pass, which is what makes a store the candidate SKIPPED visible when the
     byte already held the right value; it is on by default because these are leaf routines, and a
     battery that turns it off says why.
+
+    `seeds` are `harness.differential`'s remaining keyword arguments — `io_seed`, `psg_seed`,
+    `schedule`, `wait_sites` — forwarded rather than enumerated. Every one of them is a DECLARATION
+    the case makes about the machine, and the four steps around it are the same whichever is
+    present, so naming them here would be a second list to keep level with the kit's.
     """
-    diffs, info = differential(entry, regs, glue, poison=poison)
+    diffs, info = differential(entry, regs, glue, poison=poison, **seeds)
     assert not diffs, report(diffs)
     assert_result_is_d0(info, width)
     return info

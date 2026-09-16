@@ -366,6 +366,76 @@ though it were whole. The same argument applies to the four ordered streams them
 `psg_events`, `hw_events`, `io_events` and `hw_writes` are compared between the ORIGINAL's report and
 the getters read after the bench run, because each is one run's own traffic.
 
+### The BENCH door as a TRANSCRIPTION differential — a routine that cannot be C
+
+Some of a ROM's routines are not C on any target. An exception handler is entered by the 68000 with
+a group-2 frame rather than by a `jsr`, it moves the stack pointer between the supervisor and user
+stacks, and the register file it hands its caller back is its published contract — including the
+registers it does NOT preserve, which is `docs/on-target-execution.md`'s "TOS traps clobber d2/a2
+that GCC thinks are callee-saved". A C compiler can state none of that, so the reconstruction
+carries the ORIGINAL'S OWN INSTRUCTION SEQUENCE under `src/<component>/*.S` — the games' asm-twin
+convention — and kit.mk's `$(BENCH_SRC)` sweeps `src/*/*.S` into the same blob as the C cores, with
+one `m68k-elf-gcc` invocation and one symbol table.
+
+**`asm_twin.py` is not the runner for these, and cannot be.** It stages the image at a NON-ZERO base
+so that a twin addressing the image absolutely is caught, which is why it refuses a ROM project by
+name; ROM code is absolute by construction. The BENCH door is already the mirror image of that
+argument — the image IS the machine's address space, staged at 0 — so a ROM project's transcriptions
+run through `RomBench`, and the chain a game gets in two links
+
+    original == (harness.differential) == C core == (asm_twin) == asm twin
+
+is one link here: the transcription is compared against the ORIGINAL directly, over the same image.
+
+`RomBench.measure_transcription` is that comparison, and **the relation is stronger than a C core's
+rather than weaker**:
+
+* both sides are entered with the SAME register file, which the case must name in full — a register
+  it left out would enter as 0 on both sides, agree for that reason, and pin nothing;
+* the WHOLE of `D0-D7/A0-A6` must come back equal, preserved and clobbered alike, where `measure`
+  compares a return value at the C signature's width plus the callee-saved file;
+* the image and all four ordered off-image streams are compared exactly as `measure` compares them,
+  and a refusal on either side sinks the row the same way.
+
+**How one image serves two handlers.** The second differential runs both sides over ONE image, so
+the two cannot be handed different code — and they must reach different handlers, the ROM's and the
+blob's. The case stages a CALLER: it pushes the arguments and the function number, builds the
+exception frame by hand (`pea` the return PC, then `move.w sr,-(sp)`), and enters the handler it
+finds in the longword at the FIRST ARGUMENT SLOT, one longword above the run's stack pointer. That
+slot is the one place the two runs legitimately differ: `emu.run` leaves it as the case poked it —
+the ROM's entry — and `emu.run_bench` writes `arg0` over it, which `measure_transcription` sets to
+the blob's. It is inside the band `harness.diff_spans()` drops, which is the whole reason this
+works.
+
+A real `trap` cannot be used for that, because it reaches the machine's own vector table and would
+therefore always run the ROM's handler. So the hand-built frame has to be shown to BE a trap's, and
+the project's battery is where that is done: the same case through a caller that traps, and the two
+runs required indistinguishable in the register file and in every byte outside the run's stack band
+(`projects/tos102us/recreate/test/test_bios_trap.py`, and `test/trap.py` for the stubs).
+
+**What the row then costs is a WHOLE CALL** — the staged caller, the handler, and whatever it
+dispatched to — because that is the only way an exception handler can be entered at all. The
+caller's own cost is identical on both sides, so it cancels out of the *difference* but drags the
+*ratio* towards 1.00, which is what makes a bar lenient. A project measures that caller through a
+NULL DISPATCHER (a handler whose whole body is the `rte` that consumes the frame) and passes the
+number as `shared_entry`.
+
+**So a `Measurement` makes TWO subtractions, in opposite directions, and they are not the same kind
+of thing:**
+
+| | off which column | what it is |
+|---|---|---|
+| the entry overhead (`RomBench.overhead`) | BOTH | Musashi's reset: one instruction and 40 cycles before either door executes anything. Measured on `bench/entry_probe.c` through both doors and required equal |
+| `staged_entry` | the ORIGINAL's alone | what that run spent REACHING the routine — an interrupt handler's trampoline, which `run_bench` enters past |
+| `shared_entry` | BOTH | the staged CALLER a transcription can only be entered through: the same instructions on both sides, inside both costs |
+
+Leaving either out is lenient, and by more than it looks. Measured on the worked project: a whole
+`Bios(Drvmap)` through the dispatcher costs the original 642 cycles, of which 40 are the reset and
+106 the staged caller — so 496 is the dispatcher and its leaf. A 12% regression *inside the
+dispatcher* raises the whole call to 702, which reads as 1.10 against the raw figures and passes a
+1.10 bar; net of both constants it is 1.12 and fails. `test_rom_bench.py`'s
+`test_a_shared_entry_comes_off_BOTH_columns` is that arithmetic with the numbers in it.
+
 ## The harness-poked model state
 
 Four regions of the image are inputs the harness pokes, not program memory. Both cores read the
@@ -3102,7 +3172,12 @@ serves a handler that reads the port ONCE per entry (Phase 7, "The ACIA's DATA p
 declaration is one byte, so a routine that drains a multi-byte packet inside a single entry, or a
 poll loop whose two successive reads must DIFFER for it to terminate (the FDC status register Phase 7
 names as its non-goal), still has no model. The third shape would be a declared LIST, one entry per
-read, and nothing in the kit has one.
+read, and nothing in the kit has one. TOS 1.02's BIOS wave 2 raised three more demand sites for
+exactly that list, all in the four interrupt handlers: the ACIA handler's two service routines drain
+a packet's worth of `$fffc02` per entry, its own `btst #4,$fffa01` loop needs a GPIP that reads
+ASSERTED and then IDLE (a case that declares it low is refused for never terminating, which is the
+negative control `test_bios_ikbd.py` drives), and the VBL's floppy service polls the FDC status
+register at `$ff8604` — which is why that arm halts rather than being reconstructed.
 
 **Zynaps's `ikbd_acia_isr` @ `0x14456` IS the routine waiting on it, and the slot above serves only
 part of it.** The handler reads the port once per PASS, and its last two instructions are

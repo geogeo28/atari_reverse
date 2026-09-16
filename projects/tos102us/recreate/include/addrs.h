@@ -12,7 +12,22 @@
 #ifndef TOS102US_ADDRS_H
 #define TOS102US_ADDRS_H
 
-#include "os.h"     /* the kit's own map: PSG_PORT_SELECT below is OS_PSG_PORT_SELECT, not a copy */
+/* GUARDED, because `src/bios/trap.S` includes this header too: the trap dispatcher is an
+ * exception handler and cannot be C on the target, so the one file that names every address
+ * has to be readable by the assembler as well. os.h is C; everything defined in THIS file is a
+ * plain integer `#define`, which both languages read, and gcc defines __ASSEMBLER__ when it
+ * preprocesses a `.S`.
+ *
+ * SO NOTHING BELOW THE GUARD MAY EXPAND TO AN os.h NAME. A `#define` whose value is `OS_…` reads
+ * as an undefined symbol once the include is skipped — the assembler does not fail on the header,
+ * it fails at the line that USES the constant, and only if some `.S` ever does. The kit's own
+ * addresses are therefore spelt here as integers and PINNED equal to os.h by a test, which is the
+ * pattern `MFP_GPIP` already uses (`test_bios_vbl.py`) and `PSG_PORT_SELECT` now uses
+ * (`test_bios_trap.py`); `test_bios_trap.py::test_the_header_the_transcription_includes_holds_no_os_names`
+ * preprocesses this file as assembly and refuses a residual one. */
+#ifndef __ASSEMBLER__
+#include "os.h"
+#endif
 
 /* ---- the machine ------------------------------------------------------------------------------ */
 #define ROM_BASE            0xfc0000   /* TOS 1.02 US is mapped here and linked for it */
@@ -64,12 +79,18 @@
 #define GIACCESS_REGISTER_MASK 0x0f     /* the YM2149's select latch decodes four bits */
 #define GIACCESS_WRITE_FLAG    0x80     /* ...and bit 7 of the register argument means "write" */
 /* The chip's select port, in the 24-bit bus form the ROM's own `lea $ffff8800,a0` aliases onto. This
- * project's name for os.h's constant and NOT a second spelling of $ff8800: a core that reached the
- * chip directly would have to hit the address the oracle DECODES, or the PSG model would quietly
- * stop being in the picture. (Today no core does — they call psg.h, which is what makes the accesses
- * comparable — and the Python case that plants a decoy at the port reads the same constant through
- * `harness.OS_PSG_PORT_SELECT`, pinned to os.h by recreate_kit/test/test_os_memory_map.py.) */
-#define PSG_PORT_SELECT     OS_PSG_PORT_SELECT
+ * project's name for os.h's `OS_PSG_PORT_SELECT` and NOT a second spelling of $ff8800: a core that
+ * reached the chip directly would have to hit the address the oracle DECODES, or the PSG model
+ * would quietly stop being in the picture. (Today no core does — they call psg.h, which is what
+ * makes the accesses comparable — and the Python case that plants a decoy at the port reads the
+ * same constant through `harness.OS_PSG_PORT_SELECT`, pinned to os.h by
+ * recreate_kit/test/test_os_memory_map.py.)
+ *
+ * Spelt as the integer rather than as the os.h name for the guard's reason above — an `OS_…`
+ * expansion is not readable by the assembler, and `tools/addrs.py` takes integers only, so the
+ * Python side could not see it either. Held equal to os.h by
+ * `test_bios_trap.py::test_the_psg_port_this_project_names_is_the_kit_s_own`. */
+#define PSG_PORT_SELECT     0xff8800   /* = OS_PSG_PORT_SELECT */
 
 /* ================================================================================================
  * THE BIOS/XBIOS LEAVES THAT READ AND WRITE RAM ONLY (wave 2)
@@ -239,5 +260,414 @@
 #define GETREZ_MODE_MASK    0x03       /* `and.b #3,d0` — 0 low, 1 medium, 2 high */
 #define XBIOS_GETREZ_FN     0x04
 #define XBIOS_GETREZ        0xfc0aac
+
+/* ================================================================================================
+ * THE XBIOS SCREEN AND SOUND LEAVES (BIOS wave 2)
+ *
+ * The group that reaches the SHIFTER and the YM2149 rather than only RAM: the screen base, the
+ * palette, the frame clock a caller can wait on, and the two front ends of the 200 Hz sound and
+ * printer state. Every hardware byte one of them reads is a case's `io_seed` declaration and every
+ * one it writes is a `hw.h` ledger entry (../README.md, "Writing a case"; TRAP_MODEL.md, Phases 10
+ * and 15).
+ * ============================================================================================= */
+
+/* ---- the shifter's screen base ($ff8201/$ff8203) ------------------------------------------------
+ * TWO BYTES AT ODD ADDRESSES, holding bits 23..16 and 15..8 of the physical screen address; the low
+ * eight bits do not exist, which is why an ST screen is 256-byte aligned. `Physbase` assembles the
+ * pair and `Setscreen` stores it. */
+#define SHIFTER_BASE_HIGH   0xff8201
+#define SHIFTER_BASE_MID    0xff8203
+#define SHIFTER_BASE_SHIFT  8          /* ...so the pair IS the address shifted down this far */
+
+/* ---- the shifter's palette ($ff8240) ------------------------------------------------------------
+ * Sixteen WORDS. `Setcolor` indexes one of them; the VBL handler at $fc06de loads all sixteen from
+ * `SYSVAR_COLORPTR` when `Setpalette` has left a pointer there. */
+#define SHIFTER_PALETTE     0xff8240
+#define PALETTE_ENTRY_BYTES 2
+/* `add.w d1,d1 / andi.w #$1f,d1` — the BYTE offset of the entry, so the index wraps every 16 colours
+ * (`Setcolor(16, …)` is colour 0) and can never leave the row. */
+#define SETCOLOR_INDEX_MASK  0x1f
+/* `andi.w #$777,d0` — three bits per gun, which is all an ST shifter decodes, applied to the value
+ * REPORTED and not to the value stored. */
+#define SETCOLOR_VALUE_MASK  0x777
+
+/* ---- system variables the screen and sound leaves keep ------------------------------------------ */
+#define SYSVAR_COLORPTR     0x45a      /* long: 16 palette words the next VBL loads, then clears */
+#define SYSVAR_FRCLOCK      0x466      /* long: vertical blanks since power-on — Vsync's whole wait */
+/* The 200 Hz driver's two words of state ($fc312a reads both). Dosound replaces the cursor and
+ * clears the delay so the driver runs the new list on its very next tick. */
+#define SOUND_LIST_POINTER  0xe8a      /* long: where the driver reads its next command, or 0 */
+#define SOUND_LIST_DELAY    0xe8e      /* byte: ticks still to wait before it does */
+#define PRINTER_CONFIG      0xe90      /* word: the printer description Setprt keeps */
+
+/* ---- the YM2149 port the GI-bit pair drives ----------------------------------------------------
+ * Register 14 is port A, whose eight bits are the drive select, the side select, the printer strobe
+ * and the RS232 handshake lines — i.e. everything on the machine that is neither sound nor an ACIA.
+ * `Ongibit`/`Offgibit` are its read-modify-write, made through `Giaccess` rather than the ports. */
+#define PSG_PORT_A          14
+
+/* ---- the routines ------------------------------------------------------------------------------ */
+#define XBIOS_PHYSBASE_FN   0x02
+#define XBIOS_PHYSBASE      0xfc0a92
+#define XBIOS_SETSCREEN_FN  0x05
+#define XBIOS_SETSCREEN     0xfc0ab8
+#define XBIOS_SETPALETTE_FN 0x06
+#define XBIOS_SETPALETTE    0xfc0b06
+#define XBIOS_SETCOLOR_FN   0x07
+#define XBIOS_SETCOLOR      0xfc0b0e
+#define XBIOS_OFFGIBIT_FN   0x1d
+#define XBIOS_OFFGIBIT      0xfc2f02
+#define XBIOS_ONGIBIT_FN    0x1e
+#define XBIOS_ONGIBIT       0xfc2edc
+#define XBIOS_DOSOUND_FN    0x20
+#define XBIOS_DOSOUND       0xfc3074
+#define XBIOS_SETPRT_FN     0x21
+#define XBIOS_SETPRT        0xfc3088
+#define XBIOS_VSYNC_FN      0x25
+#define XBIOS_VSYNC         0xfc07d0
+/* Vsync's WAIT SITE: the `cmp.l SYSVAR_FRCLOCK,d0` the spin re-executes, which is the PC the case's
+ * schedule names as its trigger and the core names at every poll (sched.h; TRAP_MODEL.md, Phase 8).
+ * It is the RE-READ and not the `beq` below it — the agent's store lands just before the site's
+ * instruction, so naming the branch would apply it one instruction too late. */
+#define VSYNC_WAIT_SITE     0xfc07dc
+
+/* ---- the TRAP DISPATCHER: how every BIOS and XBIOS call is entered ($fc07f2..$fc0845) ------------
+ * Reconstruction agent D's block. Two exception entries — `trap #14` picks the XBIOS table,
+ * `trap #13` the BIOS one — falling into one shared body that saves the caller's file into the
+ * BIOS's save area, bounds the function number, and `jsr`s through the table with A5 = 0.
+ * `src/bios/trap.S` is the transcription and `test/trap.py` stages the CALLER that enters it. */
+#define XBIOS_TRAP14          0xfc07f2  /* vector $b8: `lea XBIOS_FUNCTION_TABLE(pc),a0` */
+#define BIOS_TRAP13           0xfc07f8  /* vector $b4: ...and the BIOS table, falling through into */
+#define TRAP_DISPATCH_COMMON  0xfc07fc  /* the shared body, which is what both entries are FOR */
+#define SYSVAR_SAVPTR         0x4a2     /* long: the walking top of the BIOS's register-save area */
+#define SR_SUPERVISOR_BIT     13        /* `btst #13,d0` on the frame's SR word — was the caller
+                                         * supervisor? If not, its arguments are on the USER stack */
+#define TRAP_TABLE_ENTRY_SHIFT 2        /* `lsl.w #2` — the index, as a WORD, into longword entries */
+/* The same 6 bytes `EXCEPTION_FRAME_BYTES` names below, under the name the trap dispatcher's own
+ * battery reads it by: a group-2 exception frame and a group-1 one are the same shape on a 68000,
+ * and one size spelt twice is one of the two waiting to be corrected alone. */
+#define TRAP_EXCEPTION_FRAME_BYTES EXCEPTION_FRAME_BYTES
+#define TRAP_SAVED_REGISTERS  10        /* d3-d7/a3-a7: what the dispatcher gives the caller back,
+                                         * and the whole of it — d0-d2/a0-a2 are the callee's */
+#define TRAP_SAVE_FRAME_BYTES 46        /* ...so one nesting level costs this much of the save area */
+
+/* BIOS 4 (Rwabs) is the dispatch table's INDIRECT entry the battery exercises: its longword has bit
+ * 31 set over this RAM vector, which the boot fills with the floppy driver and a hard-disk driver
+ * replaces. A case pokes it to a routine of its own, which is the only way to watch the dispatcher
+ * call something whose body the case wrote. */
+#define BIOS_RWABS_FN         4
+#define HDV_RWABS             0x476     /* long: `hdv_rw`, the entry at $fc0848 + 4*4 points at */
+
+/* ---- the GEM trap ($fe3ea6) — its SELECTOR SWITCH, read but not reconstructed -------------------
+ * `trap #2` is three interfaces behind one vector, told apart by D0 alone. Documented here because
+ * the BIOS/XBIOS dispatcher's battery proves what a trap entry IS and this is the third one; the
+ * arms themselves are the AES's and the VDI's waves. */
+#define GEM_TRAP2             0xfe3ea6
+#define GEM_SELECTOR_PTERM    0x0000    /* -> $fe3ec0: `Pterm(0)`, i.e. GEMDOS $4c through trap #1 */
+#define GEM_SELECTOR_AES      0x00c8    /* -> $fe3eca: the AES dispatcher, via $fe3890/$fe65aa */
+#define GEM_SELECTOR_AES_ALT  0x00c9    /* ...and the same arm: $c9 is $c8's alias */
+#define GEM_TRAP2_PTERM_ARM   0xfe3ec0
+#define GEM_TRAP2_AES_ARM     0xfe3eca
+#define GEM_TRAP2_VDI_ARM     0xfe3eb8  /* everything else: `move.l SYSVAR_VDI_ENTRY,-(sp) / rts` */
+#define SYSVAR_VDI_ENTRY      0x8c2a    /* long: where that arm jumps — $fc4ebc in this snapshot */
+
+/* ================================================================================================
+ * THE INTERRUPT HANDLERS (BIOS wave 2) — the every-tick code, entered through a LIVE VECTOR
+ *
+ * Everything below belongs to the four handlers the boot snapshot's own vector table points at:
+ * the horizontal blank ($68), the vertical blank ($70), the MFP's 200 Hz timer C ($114) and the
+ * ACIA channel the IKBD and MIDI 6850s share ($118). They are not trap routines — nothing calls
+ * them, the machine does — so they take no arguments, return no result, and end in `rte` rather
+ * than `rts`. `test/isr.py` is how a case enters one.
+ * ============================================================================================= */
+
+/* ---- the vector slots, and the handler the snapshot has in each --------------------------------
+ * The VECTOR is the claim `test/isr.py` checks against the captured table: a handler reconstructed
+ * at an address the machine does not dispatch to is a reconstruction of nothing. (`VECTOR_VBL`
+ * above is the vertical blank's, already named because the capture stops inside it.) */
+#define VECTOR_HBL            0x68      /* level-2 autovector — installed at $fc035e */
+#define VECTOR_TIMER_C        0x114     /* MFP channel 5: timer C, the 200 Hz system tick */
+#define VECTOR_ACIA           0x118     /* MFP channel 6: the IKBD and MIDI 6850s, one line between them */
+#define ISR_HBL               0xfc06c8
+#define ISR_VBL               0xfc06de
+#define ISR_TIMER_C           0xfc30c4
+#define ISR_ACIA              0xfc29ce
+/* ...and where each handler's EXIT sequence begins, which is where the two paths of the VBL and of
+ * timer C meet. `src/bios/isr.S` carries those sequences instruction for instruction and
+ * `test/isr.py`'s `LITERAL_SPANS` compares the assembled words with the ROM's at these addresses —
+ * a transcription that has to name the ROM span it is a transcription OF. */
+#define ISR_VBL_RELEASE            0xfc07c4  /* `movem.l (sp)+,d0-a6`, then `addq.w #1,vblsem` */
+#define ISR_TIMER_C_ACKNOWLEDGE    0xfc311c  /* ...then `bclr #5,$fffa11` on both paths */
+#define ISR_ACIA_RESTORE           0xfc29f6  /* `movem.l (sp)+,d0-d3/a0-a3/a5` and the `rte` */
+
+/* ---- the exception frame a handler returns through ---------------------------------------------
+ * The 68000's group-1/2 frame: the SR the interrupt was taken at, then the PC it resumes at. The
+ * HBL is the one handler here that WRITES it (`ori.w #$300,2(sp)` reaches the SR word past its own
+ * pushed D0), so the offsets are named rather than spelt at the one site that uses them. */
+#define EXCEPTION_FRAME_SR    0         /* word */
+#define EXCEPTION_FRAME_PC    2         /* long */
+#define EXCEPTION_FRAME_BYTES 6
+#define SR_IPL_MASK           0x0700    /* the status register's three interrupt-mask bits */
+#define HBL_IPL_FLOOR         0x0300    /* what the HBL ors into a frame whose mask is 0 */
+
+/* ---- the system variables the VBL keeps ---------------------------------------------------------
+ * Every one of them is reached as a 16-bit displacement off the A5 the handler zeroes itself, which
+ * is the same `(a5)` addressing the trap dispatcher's own `suba.l a5,a5` sets up (COMPONENTS.md). */
+#define SYSVAR_ETV_TIMER      0x400     /* long: -> the OS timer-tick vector timer C calls */
+#define SYSVAR_FLOCK          0x43e     /* word: nonzero while a disk operation owns the FDC */
+#define SYSVAR_DEFSHIFTMD     0x44a     /* byte: the resolution to restore when a colour monitor returns */
+#define SYSVAR_SSHIFTMD       0x44c     /* byte: the shadow of the shifter's resolution register */
+#define SYSVAR_VBLSEM         0x452     /* word: the VBL's re-entry semaphore — 1 open, <= 0 closed */
+#define SYSVAR_NVBLS          0x454     /* word: how many slots _vblqueue has */
+#define SYSVAR_VBLQUEUE       0x456     /* long: -> that many routine pointers, 0 for an empty slot */
+#define SYSVAR_SCREENPT       0x45e     /* long: -> the screen base to program this VBL, or 0 */
+#define SYSVAR_VBCLOCK        0x462     /* long: vertical blanks SERVICED (the semaphore was open) */
+/* `SYSVAR_COLORPTR` ($45a) and `SYSVAR_FRCLOCK` ($466) are named with the screen leaves above, which
+ * is where they are written; this handler is what reads and clears them. */
+#define SYSVAR_SWV_VEC        0x46e     /* long: -> the routine a MONITOR CHANGE calls */
+#define SYSVAR_CONTERM        0x484     /* byte: bit 0 = key click, bit 1 = key repeat */
+#define SYSVAR_DUMPFLG        0x4ee     /* word: 0 asks this VBL for a screen dump; Scrdmp sets -1 */
+#define SYSVAR_SCR_DUMP       0x502     /* long: -> the screen-dump routine Scrdmp jumps through */
+#define VBLQUEUE_ENTRY_BYTES  4         /* ...and one slot of _vblqueue, which is the walk's step */
+#define CONTERM_REPEAT_BIT    1         /* bit number, as the ROM's `btst #1,conterm` names it */
+
+/* ---- the shifter and MFP registers these handlers touch ------------------------------------------
+ * `SHIFTER_PALETTE`, `PALETTE_ENTRY_BYTES` and the two `SHIFTER_BASE_*` bytes are named with the
+ * screen leaves above — the VBL programs the same registers `Setpalette` and `Setscreen` queue for
+ * it, and a second spelling of $ff8240 would be a second place for one of them to be wrong. What is
+ * this handler's own is how MANY palette words it moves, and the MFP. `MFP_GPIP` is os.h's
+ * `OS_HW_MFP_GPIP`, spelt here because `tools/addrs.py` reads integers only and pinned equal to the
+ * kit's by `test_bios_vbl.py::test_the_mfp_gpip_this_project_names_is_the_kit_s_own_slot`. */
+#define SHIFTER_PALETTE_ENTRIES    16        /* `move.w #15,d0 / dbf` — the whole row, every VBL */
+#define SHIFTER_MODE_HIGH          2         /* `cmp.b #2,d0`: ST high, the mono monitor's resolution */
+#define MFP_GPIP                   0xfffa01  /* = OS_HW_MFP_GPIP */
+#define MFP_GPIP_MONOCHROME_BIT    7         /* 0 = a mono monitor is attached */
+#define MFP_GPIP_ACIA_BIT          4         /* 0 = one of the two 6850s still wants service */
+#define MFP_ISRB                   0xfffa11  /* in-service register B: a handler clears its own bit */
+#define MFP_ISRB_TIMER_C_BIT       5
+#define MFP_ISRB_ACIA_BIT          6
+
+/* The ROM addresses the VBL's own body sits at — $fc4666 (the cursor blink), $fc4a1e (the cell
+ * inversion), $fc1bc4 (the floppy service) and $fc0d50 (Scrdmp) — are named in `src/bios/vbl.c` at
+ * the code that reconstructs each, and in the halt message of the one that is deferred. Nothing
+ * compiles against them, so they are not `#define`s here: an address no build and no case reads is
+ * a second spelling waiting to disagree with the comment beside the code.
+ *
+ * What IS here is the one byte of RAM that body writes before any of it. */
+#define FLOPPY_VBL_ENTERED    0xa04     /* byte: the `st` the floppy VBL sets before it looks at flock */
+
+/* ---- the alpha cursor's own state, past what Cursconf already names ------------------------------
+ * All of it is reached as a displacement off `CON_STATE_FLAGS`, which is the block's anchor. */
+#define CON_CURSOR_DISABLE    0x2840    /* word: nonzero suppresses the blink entirely ($2994 - 340) */
+#define CON_BLINK_TIMER       0x2983    /* byte: vertical blanks left before the next toggle */
+#define CON_CURSOR_ADDRESS    0x2978    /* long: -> the cursor cell's top-left byte on screen */
+#define CON_CELL_HEIGHT       0x296c    /* word: scan lines in a character cell */
+#define CON_PLANES            0x299a    /* word: bit planes — the cursor is inverted in each */
+#define CON_LINE_BYTES        0x299c    /* word: bytes from one scan line to the next */
+#define CON_FLAG_DRAWN        1         /* bit number: the cursor is on screen right now */
+/* ...and how far apart the planes are, which is the cursor inversion's OUTER step (`addq.w #2,a1`):
+ * an ST interleaves its bit planes word by word, so one 16-pixel screen cell is `CON_PLANES` words
+ * side by side. Here rather than in `vbl.c` because `test_bios_vbl.py` computes the same set of
+ * inverted bytes and a second spelling would be one the C could be corrected without. */
+#define SCREEN_PLANE_WORD_BYTES 2
+
+/* ---- timer C: the 200 Hz tick, its fourth-tick divider, and the keyboard's auto-repeat ----------- */
+#define SYSVAR_TIMER_C_DIVIDER 0xe88    /* word: `rol.w` once a tick; the body runs when it goes negative */
+#define SYSVAR_KB_REPEAT_KEY   0xe7f    /* byte: the scancode being auto-repeated, 0 for none */
+#define SYSVAR_KB_REPEAT_DELAY 0xe80    /* byte: ticks left of the initial delay */
+#define SYSVAR_KB_REPEAT_LEFT  0xe81    /* byte: ticks left until the next repeat */
+
+/* ---- ...and the Dosound driver the same tick steps ------------------------------------------------
+ * The sound table interpreter: a byte under $80 is a REGISTER to write, and $80/$81/anything above
+ * are the three commands. `SYSVAR_DOSOUND_TEMP` is the byte command $81 ramps. */
+/* `SOUND_LIST_POINTER` ($e8a) and `SOUND_LIST_DELAY` ($e8e) are named with XBIOS `Dosound` above,
+ * which is the call that plants them; this is the driver that consumes them, plus the one byte only
+ * the driver has. */
+#define SOUND_RAMP_VALUE       0xe8f    /* byte: the accumulator command $81 steps towards its end */
+#define DOSOUND_COMMAND_FLOOR  0x80     /* `bmi`: at or above this the byte is a command, not a register */
+#define DOSOUND_LOAD_TEMP      0x80     /* $80 <byte>: load the accumulator */
+#define DOSOUND_RAMP           0x81     /* $81 <reg> <step> <end>: step it and write it, once a tick */
+#define DOSOUND_RAMP_OPERANDS  4        /* ...and the `subq.w #4,a0` that replays the whole command */
+#define PSG_MIXER_REGISTER     7        /* the one register the driver READ-MODIFY-WRITES */
+#define PSG_MIXER_CHANNEL_MASK 0x3f     /* ...taking these bits from the list... */
+#define PSG_MIXER_PORT_MASK    0xc0     /* ...and keeping these, which are the two I/O port directions */
+
+/* ---- the ACIA handler's two service vectors ------------------------------------------------------
+ * The last two longwords of KBDVECS, which is what `Kbdvbase` hands a caller: the handler calls
+ * both on every entry and goes round again while the MFP says either 6850 still wants service. */
+#define KBDVECS                0xe12    /* nine longwords; `Kbdvbase` ($fc30bc) returns this */
+#define KBDVECS_MIDISYS        0x1c     /* -> the MIDI 6850's service routine ($fc29fc) */
+#define KBDVECS_IKBDSYS        0x20     /* -> the IKBD 6850's ($fc2a0c) */
+
+/* ================================================================================================
+ * THE MFP / TIMER / IKBD / SERIAL ROUTINES (BIOS wave 2)
+ *
+ * Everything below belongs to the group of XBIOS entries whose body is the MFP 68901's interrupt
+ * controller and timers, one of the two 6850 ACIAs, or the MFP's own USART. They are the first
+ * reconstructions here to WRITE hardware (TRAP_MODEL.md, Phase 10) and the first to change a bit of
+ * a register they had to read first, which is what the DECLARED I/O MAP (Phase 15) makes provable —
+ * `include/mfp.h` carries that argument, and the bound on it.
+ * ============================================================================================= */
+
+/* ---- the MFP 68901's registers -----------------------------------------------------------------
+ * Every one of them is an ODD byte on a two-byte stride, because the chip sits on the low half of
+ * the bus; the ROM reaches all of them off one `lea $fffffa01,a0` and names the rest by
+ * displacement. These are the 24-BIT BUS FORMS, which is what a reconstruction spells and what the
+ * oracle decodes (`hw.h`: the untranslated `$fffffa01` is a refusal, not an alias). */
+/* `MFP_GPIP` ($fffa01) is the block's anchor and is already named above, with the VBL's own bits. */
+#define MFP_IERA            0xfffa07   /* interrupt ENABLE, channels 8..15 */
+#define MFP_IERB            0xfffa09   /* ...and channels 0..7 */
+#define MFP_IPRA            0xfffa0b   /* interrupt PENDING */
+#define MFP_IPRB            0xfffa0d
+#define MFP_ISRA            0xfffa0f   /* interrupt IN-SERVICE — `MFP_ISRB` is named above */
+#define MFP_IMRA            0xfffa13   /* interrupt MASK */
+#define MFP_IMRB            0xfffa15
+#define MFP_TACR            0xfffa19   /* timer A control — its own byte */
+#define MFP_TBCR            0xfffa1b   /* timer B control — its own byte */
+#define MFP_TCDCR           0xfffa1d   /* timers C and D SHARE this one: C bits 4-6, D bits 0-2 */
+#define MFP_TADR            0xfffa1f   /* the four timers' data registers (the reload count) */
+#define MFP_TBDR            0xfffa21
+#define MFP_TCDR            0xfffa23
+#define MFP_TDDR            0xfffa25
+#define MFP_SCR             0xfffa27   /* USART synchronous character */
+#define MFP_UCR             0xfffa29   /* USART control */
+#define MFP_RSR             0xfffa2b   /* receiver status */
+#define MFP_TSR             0xfffa2d   /* transmitter status */
+#define MFP_UDR             0xfffa2f   /* USART data */
+
+/* ...and the interrupt-channel arithmetic the three interrupt routines share ($fc26e6). */
+#define MFP_CHANNEL_MASK      0x0f     /* `andi.l #15,d0` — the four bits a channel number is */
+#define MFP_CHANNELS_PER_HALF 8        /* channels 8..15 are register A's bits 0..7 ... */
+#define MFP_HALF_B_STEP       2        /* ...and 0..7 are register B's, two bytes above it */
+#define MFP_BIT_NUMBER_MASK   0x07     /* `bclr d1,(a1)`: a bit number on MEMORY is modulo 8, which
+                                        * is what bounds the half-select's answer for a channel byte
+                                        * `Xbtimer` never masked (`include/mfp.h`) */
+#define MFP_VECTOR_TABLE      0x100    /* `addi.l #256,d2` — the MFP's base vector register is $40,
+                                        * so its sixteen channels are exception vectors $40..$4f */
+
+/* ---- the MFP's four timers, and the tables the ROM's shared programmer at $fc25b0 indexes -------
+ * Eight adjacent four-byte tables in the ROM, every one indexed by the timer number with a SIGNED
+ * WORD add. The reconstruction reads them out of the mapped image rather than copying them into C
+ * arrays, so an out-of-range timer reads the next table along exactly as the ROM does. */
+#define MFP_TIMER_A         0
+#define MFP_TIMER_B         1
+#define MFP_TIMER_C         2
+#define MFP_TIMER_D         3
+#define MFP_TIMERS          4
+#define MFP_TIMER_IER_OFFSETS      0xfc2638  /* +$06 +$06 +$08 +$08 off MFP_GPIP: IERA, IERA, IERB… */
+#define MFP_TIMER_IPR_OFFSETS      0xfc263c
+#define MFP_TIMER_ISR_OFFSETS      0xfc2640
+#define MFP_TIMER_IMR_OFFSETS      0xfc2644
+#define MFP_TIMER_INTERRUPT_MASKS  0xfc2648  /* $df $fe $df $ef — one bit cleared, per timer */
+#define MFP_TIMER_CONTROL_OFFSETS  0xfc264c  /* +$18 +$1a +$1c +$1c: TACR, TBCR, then TCDCR twice */
+#define MFP_TIMER_CONTROL_MASKS    0xfc2650  /* $00 $00 $8f $f8 — and THIS is what the pair is for */
+#define MFP_TIMER_DATA_OFFSETS     0xfc2654  /* +$1e +$20 +$22 +$24: TADR, TBDR, TCDR, TDDR */
+
+/* ---- the two 6850 ACIAs ($fffc00 the IKBD's, $fffc04 the MIDI's) ------------------------------- */
+/* The IKBD's pair is the kit's, not this project's — `os.h` names both as Phase-7 NAMED slots — but
+ * `tools/addrs.py` takes plain integers only, so it is spelt here as `MFP_GPIP` above is and
+ * `test_xbios_ikbdws.py` pins the two equal against the oracle's own slot table rather than leaving
+ * a second spelling to drift. The MIDI pair is nobody's named slot and is this project's to name. */
+#define IKBD_ACIA_STATUS    0xfffc00           /* = OS_HW_ACIA_STATUS */
+#define IKBD_ACIA_DATA      0xfffc02           /* = OS_HW_ACIA_DATA */
+#define MIDI_ACIA_STATUS    0xfffc04
+#define MIDI_ACIA_DATA      0xfffc06
+#define ACIA_TRANSMIT_READY 0x02               /* = OS_ACIA_TX_RDY: the transmit register is empty */
+/* `move.w #950,d2` + `dbf` = 951 iterations of `bsr` to an `rts`, between the IKBD's status poll
+ * and its data store. Pure delay — the 6301 needs the gap — and the MIDI sender has none. */
+#define IKBD_SETTLE_ITERATIONS 951
+
+/* ---- KBDVECS: the IKBD/MIDI interrupt dispatch table in RAM, and Kbdvbase's whole body ---------- */
+/* `KBDVECS` ($e12) is named above, with the two service vectors the ACIA handler calls. This is the
+ * slot `Initmous` installs into, and `Kbdvbase`'s `move.l #$e12,d0` is the table's whole address. */
+#define KBDVECS_MOUSEVEC    0x10       /* -> the IKBD mouse-packet handler */
+#define KBDVECS_LONGWORDS   9
+
+/* ---- XBIOS Initmous ----------------------------------------------------------------------------
+ * The mouse reporting modes, the IKBD commands each one sends, and the parameter block's fields. */
+#define INITMOUS_PACKET     0xe6e      /* the command buffer the routine builds its packet in */
+#define INITMOUS_DISABLE    0
+#define INITMOUS_RELATIVE   1
+#define INITMOUS_ABSOLUTE   2
+#define INITMOUS_KEYCODE    4
+#define INITMOUS_DONE       0xffffffffu  /* `moveq #-1,d0` — every mode that sent something */
+#define INITMOUS_UNKNOWN_MODE 0          /* `moveq #0,d0` — 3, 5 and up, vector installed anyway */
+#define INITMOUS_RELATIVE_COUNT 6      /* the `Ikbdws` counts, which are ONE LESS than the bytes */
+#define INITMOUS_ABSOLUTE_COUNT 16
+#define INITMOUS_KEYCODE_COUNT  5
+#define IKBD_SET_BUTTON_ACTION    0x07  /* the 6301's own command bytes */
+#define IKBD_SET_RELATIVE_MOUSE   0x08
+#define IKBD_SET_ABSOLUTE_MOUSE   0x09
+#define IKBD_SET_KEYCODE_MOUSE    0x0a
+#define IKBD_SET_MOUSE_THRESHOLD  0x0b
+#define IKBD_SET_MOUSE_SCALE      0x0c
+#define IKBD_SET_MOUSE_POSITION   0x0e
+#define IKBD_DISABLE_MOUSE        0x12
+#define MOUSE_PARAM_TOPMODE   0        /* the parameter block, as the ROM copies it */
+#define MOUSE_PARAM_BUTTONS   1
+#define MOUSE_PARAM_XPARAM    2
+#define MOUSE_PARAM_YPARAM    3
+#define MOUSE_PARAM_XMAX      4        /* four big-endian PAIRS, absolute mode only */
+#define MOUSE_PARAM_YMAX      6
+#define MOUSE_PARAM_XINITIAL  8
+#define MOUSE_PARAM_YINITIAL  10
+#define MOUSE_PARAM_PAIR_BYTES 2
+#define MOUSE_COMMON_BYTES    5        /* xparam, yparam, the origin, the command and its byte */
+#define MOUSE_TOPMODE_ORIGIN  16       /* `moveq #16,d1 / sub.b (a3),d1` — a BYTE subtract */
+#define MOUSE_POSITION_FILLER 0        /* `move.b #0,(a2)+` after the set-position command */
+#define MOUSE_DISCARD_HANDLER 0xfc3028 /* the ROM `rts` Initmous(0) parks `mousevec` on */
+
+/* ---- XBIOS Rsconf ------------------------------------------------------------------------------ */
+#define IOREC_FLOW_CONTROL  0x20       /* the RS232 input IOREC's handshake byte, past the record */
+/* = IOREC_RS232 + IOREC_FLOW_CONTROL, spelt out because `tools/addrs.py` takes plain integers only;
+ * `test_xbios_rsconf.py` asserts the sum rather than leaving the two spellings to drift. */
+#define RSCONF_FLOW_CONTROL 0xc74
+#define RSCONF_FLOW_NONE    0          /* 0 and 2 stand; `andi.b #$fd` is what says so... */
+#define RSCONF_FLOW_KEEP_MASK 0xfd
+#define RSCONF_FLOW_XON_XOFF 1         /* ...and every other value is stored back as this one */
+#define RSCONF_USART_OFF    0          /* RSR and TSR across a baud change: off, then on */
+#define RSCONF_USART_ON     1
+#define RSCONF_BAUD_CONTROL_TABLE 0xfc29ae  /* timer D's control byte per rate: 14 x $01, then $02 */
+#define RSCONF_BAUD_DATA_TABLE    0xfc29be  /* ...and its divider */
+#define RSCONF_BAUD_RATES   16         /* both tables, and the bound the routine does NOT apply */
+/* ...and the caller's argument frame, which this routine reads as a BLOCK rather than as registers:
+ * six optional words at `4(sp)`..`14(sp)`, each one negative for "leave this alone". */
+#define RSCONF_ARG_BAUD     0
+#define RSCONF_ARG_FLOW     2
+#define RSCONF_ARG_UCR      4
+#define RSCONF_ARG_RSR      6
+#define RSCONF_ARG_TSR      8
+#define RSCONF_ARG_SCR      10
+
+/* ---- the XBIOS routines (trap #14, table $fc0878) ----------------------------------------------- */
+#define XBIOS_INITMOUS_FN   0x00
+#define XBIOS_INITMOUS      0xfc2f28
+#define XBIOS_MIDIWS_FN     0x0c
+#define XBIOS_MIDIWS        0xfc2030
+#define XBIOS_MFPINT_FN     0x0d
+#define XBIOS_MFPINT        0xfc2658
+#define XBIOS_RSCONF_FN     0x0f
+#define XBIOS_RSCONF        0xfc290e
+#define XBIOS_IKBDWS_FN     0x19
+#define XBIOS_IKBDWS        0xfc2212
+#define XBIOS_JDISINT_FN    0x1a
+#define XBIOS_JDISINT       0xfc2682
+#define XBIOS_JENABINT_FN   0x1b
+#define XBIOS_JENABINT      0xfc26bc
+#define XBIOS_XBTIMER_FN    0x1f
+#define XBIOS_XBTIMER       0xfc2ff2
+#define XBIOS_KBDVBASE_FN   0x22
+#define XBIOS_KBDVBASE      0xfc30bc
+
+/* ---- and the ROM addresses a SLICE case stops at ------------------------------------------------
+ * Two routines here cannot be run to their `rts` under the declared I/O map, because each reads a
+ * register back after storing to it (`src/xbios/mfp.c` and `src/xbios/xbtimer.c` carry the
+ * measurement). What a case can do is stop at the instruction before the read-back, which is what
+ * `differential(..., stop_pc=)` is for — the same way a routine that never returns is proved. */
+#define MFPINT_ENABLE_HALF     0xfc267a  /* Mfpint's `bsr` into Jenabint's body: the slice's end */
+#define MFP_TIMER_PROGRAM      0xfc25b0  /* the shared timer programmer Xbtimer and Rsconf call */
+#define MFP_TIMER_DATA_WRITE   0xfc2600  /* ...and where ITS slice ends, before the data register */
+#define XBTIMER_CHANNEL_TABLE  0xfc302a  /* timer -> MFP channel: 13, 8, 5, 4 for A, B, C, D */
+#define XBTIMER_TIMER_MASK     0xff      /* `andi.l #255,d0` before that table read — a BYTE, not 3 */
 
 #endif /* TOS102US_ADDRS_H */

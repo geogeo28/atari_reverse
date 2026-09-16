@@ -110,6 +110,34 @@ def bench_base(recreate_dir="."):
     return "" if value is None else f"{value:#x}"
 
 
+def _bench_io_seed(io_seed):
+    """The half of a case's `io_seed` a BENCH run can be given: everything the Phase-7 NAMED SET
+    does not own.
+
+    ONE DOOR, TWO MODELS (`emu.seed_split`). A case declares `$fffa01` and `$ff8260` in one dict,
+    and the named half belongs to the hardware model — which the ORIGINAL's `emu.run` above installs
+    and which PERSISTS between runs, deliberately, so that a bench run cannot disarm an asm twin's.
+    `run_bench` therefore has no door for a named slot and refuses one outright rather than dropping
+    it silently, so the split has to be made on this side too: the original is handed the whole
+    declaration and our build the part it can still be given, over a model the original has already
+    armed with the rest.
+
+    Without it, a core that reads a named slot could not be measured at all — an interrupt handler
+    testing the MFP's GPIP monitor or ACIA bit is the first in this workspace to try.
+
+    IT RESTS ON AN ORDER, and both callers below are inside it: the ORIGINAL's `emu.run` — which
+    installs the whole declaration, named half included — runs BEFORE the `_call` this feeds. A
+    caller that ran our build first would have the named model holding the previous case's bytes.
+    What says it did not is the comparison itself: the ordered hardware READ stream is compared
+    between the two runs (`_vet_ledger`), so a slot served differently on our side is a red rather
+    than a silent measurement of another machine.
+    """
+    import emu
+
+    _named, declared = emu.seed_split(None, io_seed)
+    return declared
+
+
 class Measurement:
     """One function, one case, on both sides: what each cost and what the ratio is.
 
@@ -121,43 +149,89 @@ class Measurement:
     by 3% on XBIOS `Random`'s 810-cycle case and by 19% on `Giaccess`'s 260-cycle one — a bar can
     survive neither. `RomBench.overhead` measures the constant through BOTH doors rather than
     declaring it.
+
+    `staged_entry` IS A SECOND SUBTRACTION, and it comes off the ORIGINAL's column ALONE: what that
+    run spent REACHING the routine rather than inside it. A routine the machine DISPATCHES rather
+    than calls — an interrupt handler — cannot be entered by `emu.run` at all (it returns through an
+    exception frame, and `run` forces A7 to `STACK_TOP`), so its case enters at a trampoline it
+    staged and the original's count carries those instructions; ours is entered at the symbol by
+    `run_bench` and pays none of them. Leaving them in the denominator flatters every such row — by
+    nearly a quarter on a sixty-cycle handler. The caller passes what it MEASURED its own entry to
+    cost; it defaults to nothing, so every ordinary row reads exactly as it did.
+
+    `shared_entry` IS A THIRD SUBTRACTION AND THE OPPOSITE ONE: it comes off BOTH columns, because
+    both sides really do pay it. A TRANSCRIPTION of an exception handler is the case it exists for.
+    A handler cannot be called, so both sides are entered at a CALLER the case staged
+    (`measure_transcription`), and that caller's instructions are inside both measured costs — the
+    same instructions, executed by the same CPU model, differing by nothing. A constant present in
+    both columns drags the ratio towards 1.00 exactly as the entry overhead does, and by far more
+    here: 106 of a 642-cycle `Bios(Drvmap)` call. Left in, a 12% regression in the dispatcher itself
+    measures 1.10 and passes the bar. So it is removed from both, and what remains is the two
+    dispatchers' own cycles.
     """
 
-    def __init__(self, original, recreate, overhead):
-        self.original_insns, self.original_cycles = original
+    def __init__(self, original, recreate, overhead, staged_entry=(0, 0), shared_entry=(0, 0)):
+        staged_insns, staged_cycles = staged_entry
+        # The instruction count is left untouched when there is nothing to take off it: this file's
+        # own ratio cases pass None there, because the ratio is a CYCLE ratio and the counts are
+        # printed raw beside it.
+        self.original_insns = original[0] - staged_insns if staged_insns else original[0]
+        self.original_cycles = original[1] - staged_cycles
         self.recreate_insns, self.recreate_cycles = recreate
-        # Only the CYCLES half is kept: the ratio is a cycle ratio, and the instruction counts are
-        # printed raw on both sides rather than netted.
+        # Only the CYCLES half of either constant is kept: the ratio is a cycle ratio, and the
+        # instruction counts are printed raw on both sides rather than netted.
         self.overhead_cycles = overhead[1]
+        self.shared_insns, self.shared_cycles = shared_entry
 
     @property
     def ratio(self):
-        """recreate / original in CYCLES, each net of the shared entry observation."""
-        return self._net(self.recreate_cycles) / self._net(self.original_cycles)
+        """recreate / original in CYCLES, each net of what both columns pay to get there."""
+        return self.recreate_net / self.original_net
+
+    @property
+    def original_net(self):
+        """The ORIGINAL's own cycles — its measured cost less everything both sides pay."""
+        return self._net(self.original_cycles)
+
+    @property
+    def recreate_net(self):
+        """...and ours, which is the other half of `ratio` and what a row's EXCESS is measured in."""
+        return self._net(self.recreate_cycles)
 
     def _net(self, cost):
-        """`cost` with the entry observation removed, refusing a run that cannot have happened.
+        """`cost` with the entry observation and the shared entry removed, refusing a run that
+        cannot have happened.
 
-        A measured cost at or below the overhead is not a fast function, it is a run that executed
-        nothing — a wrong entry symbol, a blob that was never staged — and dividing by it would
-        report that as a ratio rather than as the mistake it is.
+        A measured cost at or below the floor those two make is not a fast function, it is a run
+        that executed nothing — a wrong entry symbol, a blob that was never staged, a `shared_entry`
+        naming a caller this case did not stage — and dividing by it would report that as a ratio
+        rather than as the mistake it is.
         """
-        if cost <= self.overhead_cycles:
+        floor = self.overhead_cycles + self.shared_cycles
+        if cost <= floor:
             raise AssertionError(
-                f"a measured cost of {cost} is not above the {self.overhead_cycles} the entry "
-                f"itself charges — the run executed nothing, which is an entry that is not where "
-                f"the function is")
-        return cost - self.overhead_cycles
+                f"a measured cost of {cost} is not above the {floor} the entry itself charges "
+                f"({self.overhead_cycles}) plus the staged caller both sides run "
+                f"({self.shared_cycles}) — the run executed nothing beyond them, which is an entry "
+                f"that is not where the function is")
+        return cost - floor
 
 
 class BenchResult:
-    """One run of the cross-compiled cores: the memory it left, its return register, and its cost."""
+    """One run of the cross-compiled cores: the memory it left, its registers, and its cost.
 
-    def __init__(self, image, d0, insns, cycles):
+    The WHOLE register file is kept, not just D0: a C core is held to its return value and the
+    callee-saved file (`measure`), but an m68k TRANSCRIPTION is held to every register the original
+    left, because that file is part of what the original's instructions promise its caller
+    (`measure_transcription`).
+    """
+
+    def __init__(self, image, d0, insns, cycles, regs):
         self.image = image
         self.d0 = d0
         self.insns = insns
         self.cycles = cycles
+        self.regs = regs
 
 
 def _refuse_off_rom_mode(cfg):
@@ -244,14 +318,96 @@ class RomBench:
         return blob_entry(self.symbols, symbol, "the cross-compiled cores")
 
     def measure(self, entry, symbol, args=(), regs=None, pokes=None, psg_seed=None, hw_seed=None,
-                io_seed=None, returns=4):
+                io_seed=None, returns=4, staged_entry=(0, 0)):
         """One case on both sides: the ORIGINAL at `entry`, then our `symbol`, over the same image.
 
         Returns a `Measurement`. `entry`/`regs`/`pokes`/`psg_seed`/`hw_seed`/`io_seed` are the oracle
         case exactly as `harness.differential` takes it — the same seed set, so a case that is
         runnable there is runnable here — and `args` are the C arguments our build is called with.
         `returns` is how many bytes of D0 the C signature declares: 4 for a `uint32_t`, 1 for a
-        `uint8_t`, 0 for `void`.
+        `uint8_t`, 0 for `void`. `staged_entry` is what the ORIGINAL's run spends REACHING the
+        routine rather than inside it — see `Measurement`. `_both_sides` below owns everything this
+        shares with `measure_transcription`, including the order the two runs must be made in.
+
+        WHY THE RETURN VALUE IS COMPARED AT THAT WIDTH AND THE REGISTER FILE IS NOT. The m68k SysV
+        ABI promises a `uint8_t` result in the low BYTE of D0 and nothing above it: measured on
+        `xbios_giaccess`, GCC emits `move.b $ff8800,%d0` and leaves the caller's high word in place,
+        where the ROM's own `moveq #0,d0` first clears it. The same holds for D1/A0/A1, which are
+        scratch: a C compiler owes them nothing, and requiring them to match the original's would be
+        requiring the reconstruction to be a transcription — which is what `asm_twin.py` is for. What
+        IS required of every other register is that it comes back untouched — `vet_callee_saved`
+        below, made HERE and not in `_call`, because `_call` is shared with the transcription
+        relation, which holds its side to the whole register file instead (`_vet_register_file`).
+        """
+        def run_ours(image):
+            return self._call(image, symbol, args, io_seed=_bench_io_seed(io_seed))
+
+        def vet_ours(ours, o_regs):
+            vet_callee_saved(symbol, ours.regs)
+            _vet_return_value(symbol, ours.d0, o_regs["d0"], returns)
+
+        self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
+        return self._both_sides(entry, symbol, dict(regs or {}), pokes,
+                                (psg_seed, hw_seed, io_seed), run_ours, vet_ours, staged_entry)
+
+    def measure_transcription(self, caller, symbol, regs, pokes=None, psg_seed=None, hw_seed=None,
+                              io_seed=None, staged_entry=(0, 0), shared_entry=(0, 0)):
+        """One case on both sides for an m68k TRANSCRIPTION — a `src/**/*.S` routine the
+        reconstruction carries because it cannot be C on the target.
+
+        An exception handler is the case this exists for. It is entered by the 68000 with an
+        exception frame, not by a `jsr` with a C frame; it owes its caller a REGISTER FILE the
+        published ABI names rather than a return value; and the registers it does NOT preserve are
+        part of that contract too (`docs/on-target-execution.md`: a TOS trap comes back with D1, D2,
+        A0, A1 and A2 holding whatever the called routine left, which GCC believes are its own).
+        None of that is a C signature, so `measure` above cannot state it.
+
+        SO THE RELATION HERE IS STRONGER THAN A C CORE'S, NOT WEAKER. Both sides are entered with
+        the SAME register file — `regs`, which a case spells over the whole of `emu.REPORTED_REGS` —
+        and the WHOLE of D0-D7/A0-A6 must come back equal, alongside the same image and the same
+        off-image streams `measure` requires. A transcription that preserved a register the ROM's
+        own `movem` list does not, or lost one it does, reddens here and nowhere else.
+
+        HOW ONE IMAGE SERVES TWO HANDLERS, which is the arrangement that makes this runnable at all.
+        Both sides are entered at `caller` — a CALLER the case staged, which builds the exception
+        frame a `trap` would and enters the handler through it — and the handler each side reaches
+        is the longword at `abi.FIRST_ARG` (the first argument slot, one longword above the run's
+        stack pointer): the ORIGINAL's run finds the ROM's entry there because the case poked it,
+        and ours finds the blob's because `run_bench` writes `arg0` over that same slot. The slot is
+        inside the band `harness.diff_spans()` drops, which is the only reason the two runs can
+        differ there and still be compared byte for byte everywhere else.
+
+        AND SO THE ROW IS A WHOLE CALL, which is what `shared_entry` is for: the staged caller's own
+        instructions are inside BOTH measured costs, identical on both sides, and a constant in both
+        columns makes the ratio lenient. The case passes what it MEASURED its caller to cost and
+        `Measurement` takes it off both, so the ratio is about the two handlers.
+        """
+        def run_ours(image):
+            import emu
+
+            seed = [regs[name] for name in emu.REPORTED_REGS]
+            return self._call(image, symbol, args=(self.entry(symbol),),
+                              io_seed=_bench_io_seed(io_seed), entry_at=caller, seed_regs=seed)
+
+        def vet_ours(ours, o_regs):
+            _vet_register_file(symbol, ours.regs, o_regs)
+
+        self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
+        _vet_seeds_the_whole_file(symbol, regs)
+        return self._both_sides(caller, symbol, dict(regs), pokes, (psg_seed, hw_seed, io_seed),
+                                run_ours, vet_ours, staged_entry, shared_entry)
+
+    def _both_sides(self, entry, symbol, regs, pokes, seeds, run_ours, vet_ours,
+                    staged_entry, shared_entry=(0, 0)):
+        """The sequence the two `measure*` methods share, with the RELATION as a parameter.
+
+        One image, the ORIGINAL over it first, then ours over a copy, then the comparisons and the
+        `Measurement`. `run_ours(image)` is how our build is entered — a C core through the C ABI, a
+        transcription at the case's own caller with the original's register file — and
+        `vet_ours(ours, o_regs)` is everything that differs between the two relations: a return
+        value and the callee-saved file for a C core, the whole register file for a transcription.
+        Everything else here is identical between them, and a second copy of it is how one of the
+        two comes to skip a ledger or seed the machine in the wrong order.
 
         ONE IMAGE IS BUILT, AND OURS IS A COPY OF IT — `harness.candidate_image`'s arrangement for a
         Tier 1 case, for its reason: the two sides must start from the same bytes, and a second
@@ -266,48 +422,47 @@ class RomBench:
         to go first, and our build then runs over the chip the case declared. Everything the run
         leaves off-image is read the instant each run ends, because the shim keeps one set of
         ledgers and clears them per run.
-
-        WHY THE RETURN VALUE IS COMPARED AT THAT WIDTH AND THE REGISTER FILE IS NOT. The m68k SysV
-        ABI promises a `uint8_t` result in the low BYTE of D0 and nothing above it: measured on
-        `xbios_giaccess`, GCC emits `move.b $ff8800,%d0` and leaves the caller's high word in place,
-        where the ROM's own `moveq #0,d0` first clears it. The same holds for D1/A0/A1, which are
-        scratch: a C compiler owes them nothing, and requiring them to match the original's would be
-        requiring the reconstruction to be a transcription — which is what `asm_twin.py` is for. What
-        IS required of every other register is that it comes back untouched, and `_call` checks that.
         """
         import emu
         import harness
 
-        self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
+        psg_seed, hw_seed, io_seed = seeds
         image = harness.make_image(pokes or {})
-        o_final, _o_writes, o_regs = emu.run(image, entry, dict(regs or {}), psg_seed=psg_seed,
+        o_final, _o_writes, o_regs = emu.run(image, entry, regs, psg_seed=psg_seed,
                                              hw_seed=hw_seed, io_seed=io_seed)
         # The denominator gets the same refusals as the numerator. `harness.differential` makes them
         # for a Tier 1 case, but a bench row is a case of its own — and an original measured while
         # reading a fabricated byte is measuring a machine that does not exist, whichever side did it.
-        _vet_no_refusals(f"the ORIGINAL at {entry:#x}", _refusal_tallies())
+        _vet_no_refusals(f"the ORIGINAL entered at {entry:#x}", _refusal_tallies())
         original_streams = {key: o_regs[key] for key in _STREAMS}
 
-        ours = self._call(bytearray(image), symbol, args, io_seed=io_seed)
+        ours = run_ours(bytearray(image))
 
+        # The relation's own comparisons first: they name what diverged (a return value, a register)
+        # where the image comparison can only name an address.
+        vet_ours(ours, o_regs)
         self._vet_image(entry, symbol, o_final, ours.image)
-        _vet_return_value(symbol, ours.d0, o_regs["d0"], returns)
         for key, original in original_streams.items():
             _vet_ledger(symbol, _STREAMS[key], getattr(emu, key)(), original)
         return Measurement((o_regs["ninsns"], o_regs["cycles"]), (ours.insns, ours.cycles),
-                           self.overhead)
+                           self.overhead, staged_entry, shared_entry)
 
-    def _call(self, image, symbol, args=(), io_seed=None):
+    def _call(self, image, symbol, args=(), io_seed=None, entry_at=None, seed_regs=None):
         """Run `symbol` over `image` with the C ABI: `args` as 32-bit stack words, in order.
+
+        `entry_at` is where the run is ENTERED when that is not the symbol's own address, and
+        `seed_regs` the register file it is entered with when that is not the callee-saved seed.
+        Both are `measure_transcription`'s: an exception handler is reached through a CALLER the
+        case stages, and it is held to the register file the ORIGINAL left rather than to the seed.
 
         `io_seed` is the case's DECLARED I/O MAP, installed for THIS run — an empty declaration
         included, so a core that reads the shifter is served the byte its differential was rather
         than the previous case's map, or the fabricated 0 no map at all answers with.
 
-        PRIVATE TO `measure`, and it has to be: the map above is the only half of the machine a
-        bench run declares, and the PSG and the named hardware set are still the ones the run BEFORE
-        it left installed (see `measure`). Called on its own it would measure this case's C over the
-        previous case's chip.
+        PRIVATE TO `_both_sides`' two callers, and it has to be: the map above is the only half of
+        the machine a bench run declares, and the PSG and the named hardware set are still the ones
+        the run BEFORE it left installed (see `_both_sides`). Called on its own it would measure
+        this case's C over the previous case's chip.
 
         `image` is the run's MEMORY and is mutated. The blob is staged into it here rather than by
         the caller, so the span that is staged and the span that is excluded from the comparison are
@@ -330,8 +485,9 @@ class RomBench:
         _vet_stack_args_fit(symbol, args)
         stage_stack_args(image, emu.STACK_TOP, args[1:])
 
-        entry = self.entry(symbol)
-        seed = [CALLEE_SAVED_SEEDS.get(name, 0) for name in emu.REPORTED_REGS]
+        entry = self.entry(symbol) if entry_at is None else entry_at
+        seed = (list(seed_regs) if seed_regs is not None
+                else [CALLEE_SAVED_SEEDS.get(name, 0) for name in emu.REPORTED_REGS])
         result = emu.run_bench(image, entry, arg0=(int(args[0]) & 0xFFFFFFFF) if args else 0,
                                sp=emu.STACK_TOP, sentinel=emu.SENTINEL, seed_regs=seed,
                                io_seed=io_seed)
@@ -339,9 +495,8 @@ class RomBench:
         # counters: `emu` publishes these only through `run()`'s own report, and a bench run needs
         # the same refusals (`osh_run_bench` clears them per run, as `osh_run` does).
         _vet_no_refusals(f"the m68k build of {symbol}", _refusal_tallies())
-        vet_callee_saved(symbol, result["regs"])
         vet_blob_intact(symbol, image, (self.base, self.base + len(self.blob)), self.blob)
-        return BenchResult(image, result["d0"], result["ninsns"], result["cycles"])
+        return BenchResult(image, result["d0"], result["ninsns"], result["cycles"], result["regs"])
 
     # ---- what the blob's placement has to be true of ---------------------------------------------
 
@@ -535,6 +690,43 @@ def _vet_return_value(symbol, ours, original, returns):
             f"the m68k build of {symbol} returned {ours & mask:#x} where the original left "
             f"{original & mask:#x} in D0 (compared over {returns} byte(s), the width the C "
             f"signature declares)")
+
+
+def _vet_seeds_the_whole_file(symbol, regs):
+    """A transcription's case must name EVERY register it enters with.
+
+    The comparison below is of the whole file, so a register the case left out would be entered as 0
+    on the original's side and as 0 on ours, agree, and pin nothing — which is exactly the register
+    a lost `movem` entry hides in. Refused here rather than defaulted, because a default is the
+    thing that would make it agree.
+    """
+    import emu
+
+    missing = [name for name in emu.REPORTED_REGS if name not in regs]
+    if missing:
+        raise AssertionError(
+            f"{symbol}'s case does not say what {', '.join(missing)} is entered with. A "
+            f"transcription is held to the WHOLE register file it leaves, so every register it is "
+            f"entered with has to be a claim the case makes — an unnamed one enters as 0 on both "
+            f"sides and agrees for that reason alone")
+
+
+def _vet_register_file(symbol, ours, original):
+    """Every reported register equal — what an m68k transcription owes its caller.
+
+    Not the callee-saved subset: the registers a TOS trap does NOT preserve are as much a fact about
+    it as the ones it does, and a reconstruction that tidied them would break exactly the callers
+    the ROM's own behaviour has shaped (`docs/on-target-execution.md`, the d2/a2 class).
+    """
+    import emu
+
+    differing = [(name, original[name], ours[name]) for name in emu.REPORTED_REGS
+                 if ours[name] != original[name]]
+    if differing:
+        shown = ", ".join(f"{name} {was:#x} -> {now:#x}" for name, was, now in differing)
+        raise AssertionError(
+            f"the m68k build of {symbol} left a different register file than the original: {shown}. "
+            f"A transcription is held to the whole of it, preserved and clobbered alike")
 
 
 def _vet_ledger(symbol, what, ours, original):

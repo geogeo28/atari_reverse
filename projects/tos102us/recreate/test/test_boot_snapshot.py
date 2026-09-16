@@ -42,6 +42,37 @@ import test_xbios_protobt as protobt                       # noqa: E402
 import test_xbios_random as xbios_random                   # noqa: E402
 import test_xbios_supexec as supexec                       # noqa: E402
 
+# The XBIOS screen and sound leaves (BIOS wave 2). `Vsync` is deliberately absent: its case needs a
+# `schedule` and an entry here carries none — see test_xbios_vsync.py's docstring.
+import test_xbios_dosound as dosound                        # noqa: E402
+import test_xbios_offgibit as offgibit                      # noqa: E402
+import test_xbios_ongibit as ongibit                        # noqa: E402
+import test_xbios_physbase as physbase                      # noqa: E402
+import test_xbios_setcolor as setcolor                      # noqa: E402
+import test_xbios_setpalette as setpalette                  # noqa: E402
+import test_xbios_setprt as setprt                          # noqa: E402
+import test_xbios_setscreen as setscreen                    # noqa: E402
+# The MFP / timer / IKBD / serial leaves (BIOS wave 2). `Mfpint` and `Xbtimer` are deliberately
+# absent: each reads an MFP register back after storing to it, so neither can be run to its `rts`
+# under the declared I/O map and both are proved as SLICES — an entry here carries no `stop_pc`.
+# See test_xbios_mfpint.py and test_xbios_xbtimer.py, which measure both refusals.
+import test_xbios_ikbdws as ikbdws                          # noqa: E402
+import test_xbios_initmous as initmous                      # noqa: E402
+import test_xbios_mfpint as mfpint                          # noqa: E402
+import test_xbios_rsconf as rsconf                          # noqa: E402
+import mfp                                                  # noqa: E402
+# ...and the TRAP DISPATCHER's case-shape module, which is not a battery: its cases are proved
+# through the transcription differential rather than through `harness.differential`, so what
+# this file needs from it is the SPANS they read and poke (below), not a row in VERIFIED_CASES.
+import trap                                                 # noqa: E402
+# ...and the INTERRUPT HANDLERS (BIOS wave 2). `isr` is their shared case shape — the staged
+# exception frame, the trampoline that enters one, and the spans below — rather than a battery.
+import test_bios_hbl as hbl                                 # noqa: E402
+import test_bios_ikbd as ikbd                               # noqa: E402
+import test_bios_timerc as timerc                           # noqa: E402
+import test_bios_vbl as vbl                                 # noqa: E402
+import isr                                                  # noqa: E402
+
 import abi                                                 # noqa: E402
 import case                                                # noqa: E402
 import iorec                                               # noqa: E402
@@ -265,10 +296,32 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                (getmpb.ALIASED_MPB, getmpb.MPB_BYTES,
                 "the MPB a Getmpb case lays over the system variables"),
                (staging.SCRATCH, staging.SCRATCH_BYTES, "the band a case stages buffers in"),
+               (addrs.MFP_VECTOR_TABLE, (addrs.MFP_CHANNEL_MASK + 1) * addrs.VECTOR_BYTES,
+                "the MFP's sixteen interrupt vectors Mfpint installs into"),
+               (addrs.KBDVECS, addrs.KBDVECS_LONGWORDS * addrs.VECTOR_BYTES,
+                "KBDVECS, which Kbdvbase reports and Initmous installs `mousevec` into"),
+               (addrs.INITMOUS_PACKET, addrs.INITMOUS_ABSOLUTE_COUNT + 1,
+                "the IKBD command buffer Initmous builds its packet in"),
+               (addrs.RSCONF_FLOW_CONTROL, 1, "the RS232 handshake byte Rsconf keeps"),
                # The vector table AND each individual slot the out-of-range cases reach, declared by
                # the battery itself: they are scattered from $400 to $7ffc with masked regions in
                # between, so one span over the lot would claim bytes no case here touches.
-               *setexc.CASE_SPANS)
+               # The XBIOS screen and sound leaves (BIOS wave 2).
+               (addrs.SYSVAR_COLORPTR, 4, "the palette pointer Setpalette hands the VBL"),
+               (addrs.SYSVAR_FRCLOCK, 4, "the frame clock Vsync spins on"),
+               (addrs.SOUND_LIST_POINTER, 5, "the 200 Hz driver's cursor and tick countdown"),
+               (addrs.PRINTER_CONFIG, 2, "the printer configuration Setprt keeps"),
+               *setexc.CASE_SPANS,
+               # ...and the trap dispatcher's, which are the machine's own rather than a buffer a
+               # case owns: savptr, the frame the dispatcher pushes below it, and the RAM vector the
+               # dispatch table's INDIRECT entry reaches (`test/trap.py`).
+               (addrs.SYSVAR_SAVPTR, 4, "savptr, the top of the BIOS's register-save area"),
+               (trap.FRAME_AT, addrs.TRAP_SAVE_FRAME_BYTES,
+                "the frame the trap dispatcher pushes into that area"),
+               (addrs.HDV_RWABS, 4, "hdv_rw, the vector the INDIRECT dispatch-table entry follows"),
+               # ...and the interrupt handlers', which `test/isr.py` owns because the four share
+               # most of them (its CASE_SPANS says which are already declared above).
+               *isr.CASE_SPANS)
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():
@@ -358,6 +411,68 @@ VERIFIED_CASES = (
     ("xbios_protobt, random serial", addrs.XBIOS_PROTOBT, {"a5": 0},
      {**protobt.argument_poke(protobt.BUFFER_AT, 0x01000000, 0, 1),
       protobt.BUFFER_AT: bytes(addrs.BOOT_SECTOR_BYTES)}, None, None),
+
+    # ---- the XBIOS screen and sound leaves (BIOS wave 2) ----
+    ("xbios_physbase", addrs.XBIOS_PHYSBASE, {"a5": 0}, {}, None,
+     physbase.register_pair(physbase.SNAPSHOT_BASE)),
+    # The four `"d0": 0` below are the entering D0 these routines hand BACK (`bench/tier3.py`'s
+    # ENTRY_D0 reads it from here): none of them writes the register, so the value is part of the
+    # case rather than a default.
+    ("xbios_setscreen, both bases", addrs.XBIOS_SETSCREEN, {"a5": 0, "d0": 0},
+     setscreen.argument_poke(setscreen.ANOTHER_BASE, 0x00ABCDEF, setscreen.KEEP_WORD), None, None),
+    ("xbios_setscreen, keep everything", addrs.XBIOS_SETSCREEN, {"a5": 0, "d0": 0},
+     setscreen.argument_poke(setscreen.KEEP_LONG, setscreen.KEEP_LONG, setscreen.KEEP_WORD),
+     None, None),
+    ("xbios_setpalette", addrs.XBIOS_SETPALETTE, {"a5": 0, "d0": 0},
+     setpalette.argument_poke(0x000A_0000), None, None),
+    ("xbios_setcolor, read", addrs.XBIOS_SETCOLOR, {"a5": 0, "d0": 0},
+     case.word_args(3, setcolor.KEEP), None,
+     setcolor.declared(setcolor.register_of(3), setcolor.ENTRY_ROW[setcolor.register_of(3)])),
+    ("xbios_setcolor, write", addrs.XBIOS_SETCOLOR, {"a5": 0, "d0": 0},
+     case.word_args(3, 0x0246), None,
+     setcolor.declared(setcolor.register_of(3), setcolor.ENTRY_ROW[setcolor.register_of(3)])),
+    ("xbios_ongibit", addrs.XBIOS_ONGIBIT, {"a5": 0, "d0": 0}, case.word_arg(0x04),
+     ongibit.ENTRY_FILE, None),
+    ("xbios_offgibit", addrs.XBIOS_OFFGIBIT, {"a5": 0, "d0": 0}, case.word_arg(0xEF),
+     offgibit.ENTRY_FILE, None),
+    ("xbios_dosound, play", addrs.XBIOS_DOSOUND, {"a5": 0},
+     {**dosound.argument_poke(0x000A_1234),
+      **dosound.state_poke(dosound.SNAPSHOT_LIST, dosound.A_PENDING_DELAY)}, None, None),
+    ("xbios_dosound, report only", addrs.XBIOS_DOSOUND, {"a5": 0},
+     {**dosound.argument_poke(dosound.KEEP),
+      **dosound.state_poke(dosound.SNAPSHOT_LIST, dosound.A_PENDING_DELAY)}, None, None),
+    ("xbios_setprt, write", addrs.XBIOS_SETPRT, {"a5": 0, "d0": 0},
+     {**case.word_arg(0x0055), **setprt.config_poke(setprt.SNAPSHOT_CONFIG)}, None, None),
+    ("xbios_setprt, report only", addrs.XBIOS_SETPRT, {"a5": 0, "d0": 0},
+     {**case.word_arg(setprt.KEEP), **setprt.config_poke(setprt.SNAPSHOT_CONFIG)}, None, None),
+    ("xbios_jdisint", addrs.XBIOS_JDISINT, {"a5": 0},
+     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C), None, mfp.seed()),
+    ("xbios_jenabint", addrs.XBIOS_JENABINT, {"a5": 0},
+     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C), None, mfp.seed()),
+    ("xbios_ikbdws", addrs.XBIOS_IKBDWS, {"a5": 0},
+     {**ikbdws.frame(1, ikbdws.BYTES_AT), ikbdws.BYTES_AT: b"\x80\x01"}, None, ikbdws.ready(addrs.XBIOS_IKBDWS)),
+    ("xbios_midiws", addrs.XBIOS_MIDIWS, {"a5": 0},
+     {**ikbdws.frame(1, ikbdws.BYTES_AT), ikbdws.BYTES_AT: b"\x90\x40"}, None, ikbdws.ready(addrs.XBIOS_MIDIWS)),
+    ("xbios_kbdvbase", addrs.XBIOS_KBDVBASE, {"a5": 0}, {}, None, None),
+    ("xbios_initmous, disable", addrs.XBIOS_INITMOUS, {"a5": 0},
+     {**initmous.frame(addrs.INITMOUS_DISABLE), initmous.PARAM_AT: initmous.PARAM}, None,
+     dict(initmous.READY)),
+    ("xbios_initmous, absolute", addrs.XBIOS_INITMOUS, {"a5": 0},
+     {**initmous.frame(addrs.INITMOUS_ABSOLUTE), initmous.PARAM_AT: initmous.PARAM}, None,
+     dict(initmous.READY)),
+    ("xbios_rsconf, report", addrs.XBIOS_RSCONF, {"a5": 0}, rsconf.frame(), None,
+     dict(rsconf.USART_ENTRY)),
+    ("xbios_rsconf, store four", addrs.XBIOS_RSCONF, {"a5": 0},
+     rsconf.frame(ucr=0x11, rsr=0x22, tsr=0x33, scr=0x44), None, dict(rsconf.USART_ENTRY)),
+    # THE INTERRUPT HANDLERS (BIOS wave 2), whose rows their own batteries build: each is a case
+    # SPEC (`isr.registered`) that the battery also runs as a differential, so a row here cannot
+    # come to describe a run nobody verified. Their `entry` is a TRAMPOLINE in the staging band
+    # rather than a ROM address — nothing calls a handler, so a case has to stage the exception
+    # frame its `rte` returns through (`test/isr.py`).
+    *hbl.VERIFIED_CASES,
+    *vbl.VERIFIED_CASES,
+    *timerc.VERIFIED_CASES,
+    *ikbd.VERIFIED_CASES,
 )
 
 
@@ -430,10 +545,14 @@ TRAP_ROUTINE_NAMES = {getattr(addrs, name): name
 # it. The two lists had already drifted — Getrez is in that table and had no line here, so nothing
 # checked that the routine it verifies is XBIOS function $04 — and a second list of the same set is
 # exactly the shape that goes stale.
+# An INTERRUPT HANDLER is not in either dispatch table and has no function number — nothing calls
+# it, the machine dispatches it — so the entries `TRAP_ROUTINE_NAMES` does not name are skipped
+# rather than looked up. What holds one to the right address is its VECTOR, which its own battery
+# reads out of the captured table (`test_the_vector_table_still_points_at_this_handler`).
 RECONSTRUCTED_TRAP_ROUTINES = sorted(
     {((addrs.XBIOS_FUNCTION_TABLE if TRAP_ROUTINE_NAMES[entry].startswith("XBIOS_")
        else addrs.BIOS_FUNCTION_TABLE), TRAP_ROUTINE_NAMES[entry])
-     for _name, entry, *_rest in VERIFIED_CASES})
+     for _name, entry, *_rest in VERIFIED_CASES if entry in TRAP_ROUTINE_NAMES})
 
 
 @pytest.mark.parametrize("table,name", RECONSTRUCTED_TRAP_ROUTINES)

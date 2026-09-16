@@ -130,9 +130,8 @@ static inline uint32_t rotate_right32(uint32_t value, unsigned count) {
  * immediate form's 0-means-8 encoding applies here too — decode the count field before calling.
  *
  * `rotate_right16` is Zynaps' sprite pre-shifter, which turns one bitmap word into a bank of
- * phase-shifted copies; `rotate_left16` has no caller yet and is here for the same reason the
- * 32-bit pair is a pair — an asymmetric set reads as an oversight at the call site that needs the
- * other direction. */
+ * phase-shifted copies; `rotate_left16` is TOS 1.02's timer C divider, a four-bit pattern rotated
+ * once a tick so that the handler's body runs on one tick in four. */
 #define ROTATE_COUNT_MASK_WORD 0xfu
 
 static inline uint16_t rotate_left16(uint16_t value, unsigned count) {

@@ -877,8 +877,8 @@ through `emu.run_bench` over the same case. Two costs, one instrument, one image
 
 | | |
 |---|---|
-| `rom_bench.py` | loads a project's cross-compiled blob and runs one core: `RomBench().measure(entry, symbol, args=…, regs=…, pokes=…, psg_seed=…, hw_seed=…, io_seed=…, returns=…)` → a `Measurement` whose `.ratio` is `recreate / original`. The seed set is `harness.differential`'s, so a case runnable there is runnable here |
-| `kit.mk`'s `$(BENCH_ELF)` / `$(BENCH_BIN)` | compiles `src/**/*.c` plus `bench/entry_probe.c` with `m68k-elf-gcc`, linked at `bench_base`, and makes `test` and `guarded` depend on the blob so a gate cannot run against a stale one |
+| `rom_bench.py` | loads a project's cross-compiled blob and runs one core: `RomBench().measure(entry, symbol, args=…, regs=…, pokes=…, psg_seed=…, hw_seed=…, io_seed=…, returns=…)` → a `Measurement` whose `.ratio` is `recreate / original`. The seed set is `harness.differential`'s, so a case runnable there is runnable here. `measure_transcription(caller, symbol, regs, …)` is the same for a `src/**/*.S` routine, held to the WHOLE register file instead of a return value: both sides are entered at a CALLER the case staged, and each reaches its own handler through `abi.FIRST_ARG` — `staged_entry` comes off the ORIGINAL's column (what its run spends getting there and ours never pays) and `shared_entry` off BOTH (the staged caller they run identically). `_bench_io_seed` is how one `io_seed` reaches two models: the Phase-7 NAMED half is already armed by the ORIGINAL's `emu.run` and persists, so our run is handed only the rest — without the split a core that reads a named slot could not be measured at all |
+| `kit.mk`'s `$(BENCH_ELF)` / `$(BENCH_BIN)` | compiles `src/**/*.c` **and `src/**/*.S`** (both depths, the same sweep) plus `bench/entry_probe.c` with `m68k-elf-gcc`, linked at `bench_base`, and makes `test` and `guarded` depend on the blob so a gate cannot run against a stale one |
 | `bench/entry_probe.c` | one empty function, so the oracle's own entry overhead is MEASURED rather than declared |
 
 Opt-in with **two** things, neither defaulted: `bench_base` in `project.toml` (where the blob goes
@@ -927,11 +927,24 @@ that would cause it.
 `asm_twin.CALLEE_SAVED_SEEDS`: `require_built`, `blob_entry`, `stage_stack_args`,
 `vet_callee_saved`, `vet_blob_intact`. A check tightened for one runner is tightened for both.
 
-**The register FILE is not compared, and that is a decision.** The m68k SysV ABI promises a
-`uint8_t` result in the low byte of D0 and nothing above it — measured: GCC emits `move.b
+**The register FILE is not compared for a C core, and that is a decision.** The m68k SysV ABI
+promises a `uint8_t` result in the low byte of D0 and nothing above it — measured: GCC emits `move.b
 $ff8800,%d0` for `xbios_giaccess` and leaves the caller's high word there, where the ROM's own
-`moveq #0,d0` cleared it — and D1/A0/A1 are scratch a C compiler owes nobody. Requiring the original's
-whole file back would be requiring a TRANSCRIPTION, which is what `asm_twin.py` is for.
+`moveq #0,d0` cleared it — and D1/A0/A1 are scratch a C compiler owes nobody. Requiring the
+original's whole file back would be requiring a TRANSCRIPTION.
+
+**...which is `measure_transcription`, for the routines that cannot be C.** An exception handler is
+entered with a 68000 exception frame, moves the stack pointer between the supervisor and user
+stacks, and owes its caller a register file — including the registers it does NOT preserve, which is
+the d2/a2 class in `docs/on-target-execution.md`. `asm_twin.py` cannot run such a routine (it stages
+the image at a non-zero base on purpose, and ROM code is absolute), so a ROM project carries its
+transcriptions as `src/<component>/*.S` in the same blob and proves them through this door instead:
+both sides entered with the SAME register file, which the case must name in full, and the WHOLE of
+`D0-D7/A0-A6` required back equal, alongside the same image, streams and refusals every row gets.
+The handler each side reaches is the longword at the first argument slot — poked for the original,
+written as `arg0` for ours, and inside the band the diff drops, which is how ONE image serves two
+handlers. `TRAP_MODEL.md`, "The BENCH door as a TRANSCRIPTION differential", has the whole
+arrangement and why a real `trap` cannot be used for it.
 
 **It is `asm_twin.py`'s mirror image, and the two are mutually exclusive by construction.** That
 module stages the image at a NON-ZERO base so a twin addressing it absolutely is caught, and

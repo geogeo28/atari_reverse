@@ -26,7 +26,7 @@ import case
 import staging
 
 _lib.bios_getmpb.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32]
-_lib.bios_getmpb.restype = None
+_lib.bios_getmpb.restype = ctypes.c_uint32
 
 MPB_AT = staging.SCRATCH
 MPB_BYTES = 12                  # three list heads, which is the whole structure
@@ -51,11 +51,11 @@ def tpa_poke(membot, memtop):
 
 def run(mpb=MPB_AT, pokes=None, poison=True):
     def glue(lib, buf):
-        lib.bios_getmpb(buf, mpb)
+        return lib.bios_getmpb(buf, mpb)
 
     return case.run(addrs.BIOS_GETMPB,
                     {"a5": 0, "_pokes": {**argument_poke(mpb), **(pokes or {})}},
-                    glue, width=case.NO_RESULT, poison=poison)
+                    glue, poison=poison)
 
 
 def test_the_mpb_names_the_os_s_own_descriptor_twice():
@@ -97,6 +97,12 @@ def test_the_length_is_memtop_minus_membot_and_is_not_clamped(membot, memtop):
     at = addrs.OS_MEMORY_DESCRIPTOR
     assert case.written_long(info, at + addrs.MD_START) == membot
     assert case.written_long(info, at + addrs.MD_LENGTH) == (memtop - membot) & 0xFFFFFFFF
+    # ...AND THE SAME SUBTRACTION IS THE RESULT. `sub.l` leaves it in D0 and neither instruction
+    # after it touches the register, so the routine reports the TPA's size as well as storing it.
+    # `case.run` compares the candidate's return against the ORACLE's whole D0 on every case here;
+    # this line says which value that is, over the five bounds above — the inverted pair included,
+    # where a reconstruction returning a clamped or a signed length would part company.
+    assert info["ret"] == (memtop - membot) & 0xFFFFFFFF
 
 
 def test_the_tpa_is_read_after_the_mpb_is_stored_and_not_before():

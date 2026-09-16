@@ -43,7 +43,23 @@ static inline os_ipl_t os_ipl_raise(void)
     return saved;
 }
 
-/* ...and `move.w <d>,sr`, which restores the whole register the pair above saved. */
+/* `move.w %%sr,<d>` then `andi.w #$f8ff,sr` — the ROM's own pair at `$fc07d0`, in its order: the
+ * mask goes to 0 so that the vertical blank `Vsync` is waiting for can actually be taken. The
+ * "memory" clobber is the raise's, for the raise's reason.
+ *
+ * PRIVILEGED for the same half of the pair: `andi.w #imm,sr` is, `move.w sr,<d>` is not. Every
+ * caller reaches it through the trap dispatcher, so the processor is already in supervisor mode. */
+static inline os_ipl_t os_ipl_unmask(void)
+{
+    os_ipl_t saved;
+
+    __asm__ volatile ("move.w %%sr,%0\n\t"
+                      "andi.w #0xf8ff,%%sr"
+                      : "=d" (saved) : : "cc", "memory");
+    return saved;
+}
+
+/* ...and `move.w <d>,sr`, which restores the whole register either pair above saved. */
 static inline void os_ipl_restore(os_ipl_t saved)
 {
     __asm__ volatile ("move.w %0,%%sr" : : "d" (saved) : "cc", "memory");

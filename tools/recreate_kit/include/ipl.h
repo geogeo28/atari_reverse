@@ -40,7 +40,24 @@ static inline os_ipl_t os_ipl_raise(void)
     return 0;
 }
 
-/* ...and put it back: `move.w d0,sr`. `saved` must be what `os_ipl_raise` returned. */
+/* ...AND THE OTHER DIRECTION, which a routine that WAITS for an interrupt needs: clear the mask so
+ * that every level is taken — `move.w sr,d0` / `andi.w #$f8ff,sr` — returning what the SR was, for
+ * the same `os_ipl_restore` to put back.
+ *
+ * It is not `os_ipl_raise`'s opposite by accident of symmetry. TOS's XBIOS `Vsync` ($fc07d0) opens
+ * with exactly that pair and then spins on `_frclock`, which only the vertical-blank handler
+ * increments: called at a raised IPL — from inside another handler, or from a routine that had
+ * bracketed something — the wait would never end, so the unmask is the routine's TERMINATION rather
+ * than a nicety. Off target it is the same no-op the raise is, and for the same reason (the oracle
+ * enters at IPL 7, takes no interrupts and reports no SR), so the note above applies unchanged:
+ * deleting it leaves every Tier 1 differential green and moves the Tier 3 cycle count. */
+static inline os_ipl_t os_ipl_unmask(void)
+{
+    return 0;
+}
+
+/* ...and put it back: `move.w d0,sr`. `saved` must be what `os_ipl_raise` or `os_ipl_unmask`
+ * returned. */
 static inline void os_ipl_restore(os_ipl_t saved)
 {
     (void)saved;

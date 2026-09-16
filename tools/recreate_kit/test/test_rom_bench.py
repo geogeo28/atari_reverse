@@ -152,11 +152,77 @@ def test_the_ratio_takes_the_entry_overhead_off_both_sides():
     assert measured.ratio == pytest.approx(500 / 800)
 
 
+def test_a_staged_entry_comes_off_the_original_s_column_alone():
+    """What a case spent REACHING the routine is not what the routine cost.
+
+    A handler the machine DISPATCHES cannot be entered by `emu.run` directly, so its case enters at
+    a trampoline it staged; our build is entered at the symbol and pays none of it. Leaving the
+    trampoline in the denominator flatters the row — here 840 raw against 540 is 0.625 net, and
+    taking the entry's 24 cycles off the original alone gives 0.649 over the same measurement.
+    """
+    staged = (2, 24)
+    measured = rom_bench.Measurement((10, 840), (8, 540), OVERHEAD, staged)
+    assert (measured.original_insns, measured.original_cycles) == (8, 816)
+    assert (measured.recreate_insns, measured.recreate_cycles) == (8, 540)
+    assert measured.ratio == pytest.approx(500 / 776)
+
+
+def test_no_staged_entry_leaves_a_measurement_exactly_as_it_was():
+    """...so every row that is entered at its own address reads as it always did."""
+    measured = rom_bench.Measurement((10, 840), (8, 540), OVERHEAD)
+    assert (measured.original_insns, measured.original_cycles) == (10, 840)
+    assert measured.ratio == pytest.approx(500 / 800)
+
+
 def test_a_cost_at_or_below_the_entry_overhead_is_refused():
     """Not a fast function: a run that executed nothing — a wrong entry symbol, a blob that was never
     staged — and a ratio computed from it would report that as a number."""
     with pytest.raises(AssertionError, match="executed nothing"):
         rom_bench.Measurement((None, 840), (None, OVERHEAD[1]), OVERHEAD).ratio
+
+
+# One exception handler's whole call, as the worked project measures it: a `Bios(Drvmap)` through the
+# dispatcher costs the ORIGINAL 642 cycles, of which 40 are the reset observation and 106 are the
+# CALLER the case had to stage — the same seven instructions on both sides, because a handler cannot
+# be entered any other way. What is left, 496, is the dispatcher and the leaf it called.
+SHARED_CALLER = (7, 106)
+WHOLE_CALL_CYCLES = 642
+DISPATCHER_CYCLES = WHOLE_CALL_CYCLES - OVERHEAD[1] - SHARED_CALLER[1]
+# ...and a 12% regression in that dispatcher, which is the size of change this subtraction exists to
+# make visible: rounded to whole cycles, as a 68000 counts them.
+REGRESSION_FRACTION = 0.12
+REGRESSED_CYCLES = WHOLE_CALL_CYCLES + round(REGRESSION_FRACTION * DISPATCHER_CYCLES)
+PROJECT_BAR = 1.10                      # projects/tos102us/recreate: `tier3.TIER3_FUNCTION_BAR`
+
+
+def test_a_shared_entry_comes_off_BOTH_columns():
+    """The opposite subtraction to `staged_entry`, and the one a transcription's row needs.
+
+    Both sides really do run the staged caller, so its cycles sit in both columns — and a constant
+    in both columns drags the ratio towards 1.00 exactly as the entry overhead does. This is that
+    with the numbers on it: a 12% regression inside the dispatcher itself measures UNDER the
+    project's 1.10 bar while the caller is left in, and over it once the caller comes off.
+    """
+    left_in = rom_bench.Measurement((0, WHOLE_CALL_CYCLES), (0, REGRESSED_CYCLES), OVERHEAD)
+    assert left_in.ratio <= PROJECT_BAR, (
+        "the premise of this test has moved: with the shared caller left in both columns, a 12% "
+        "dispatcher regression was supposed to hide under the bar")
+
+    netted = rom_bench.Measurement((0, WHOLE_CALL_CYCLES), (0, REGRESSED_CYCLES), OVERHEAD,
+                                   shared_entry=SHARED_CALLER)
+    assert netted.original_net == DISPATCHER_CYCLES
+    assert netted.ratio == pytest.approx(1 + REGRESSION_FRACTION, abs=0.005)
+    assert netted.ratio > PROJECT_BAR, (
+        f"a {REGRESSION_FRACTION:.0%} regression in the dispatcher measures {netted.ratio:.3f}x, "
+        f"which is not over the {PROJECT_BAR} bar — the shared caller is not coming off both "
+        f"columns, and every transcription row is being read as 1.01x whatever it costs")
+
+
+def test_a_cost_at_or_below_the_shared_entry_is_refused_too():
+    """A `shared_entry` naming a caller the case did not stage would make a run look like nothing,
+    and the same refusal has to catch it: otherwise the ratio divides by a negative number."""
+    with pytest.raises(AssertionError, match="executed nothing"):
+        rom_bench.Measurement((0, 140), (0, 400), OVERHEAD, shared_entry=SHARED_CALLER).ratio
 
 
 # ---- the two comparisons that have no image behind them -----------------------------------------
@@ -294,6 +360,104 @@ def test_the_makefile_writes_the_blob_where_this_module_looks_for_it():
             f"not read it — or reads it from somewhere make does not write")
 
 
+# ---- TRANSCRIPTIONS: the `.S` cores, and the relation they are held to --------------------------
+# A ROM project has routines that cannot be C on the target — an exception handler is entered with a
+# 68000 exception frame and owes its caller a register file no compiler can promise — so it carries
+# the original's own instruction sequence under `src/<component>/*.S`, and `measure_transcription`
+# is how that is proved. What is decidable here is the build sweep that reaches such a file and the
+# two refusals the stronger relation rests on; the end-to-end proof is the project's
+# (`projects/tos102us/recreate/test/test_bios_trap.py`).
+
+# The symbol the fixture's hand-written `.S` defines, and what its whole body is.
+ASM_SYMBOL = "rom_bench_asm_probe"
+
+
+def test_the_blob_build_sweeps_a_projects_assembly_beside_its_c(tmp_path):
+    """One `m68k-elf-gcc` invocation over a `.c` and a `.S` together, which is what kit.mk's
+    `$(BENCH_ELF)` rule is.
+
+    The point is that the two land in ONE blob with one symbol table, because `RomBench.entry`
+    resolves a transcription's entry out of the same table a C core's comes from — and that a `.S`
+    (capital S) is preprocessed, so it may include the project's own `addrs.h` and name the ROM
+    addresses it transcribes rather than spelling them twice.
+    """
+    if not shutil.which("m68k-elf-gcc"):
+        pytest.skip("m68k-elf-gcc is not installed; the cross build is what this pins")
+    asm = tmp_path / "probe.S"
+    asm.write_text(f"#define PROBE_SYMBOL {ASM_SYMBOL}\n"
+                   f"    .text\n    .globl PROBE_SYMBOL\nPROBE_SYMBOL:\n    rts\n")
+    out = tmp_path / "bench.elf"
+    subprocess.run(["m68k-elf-gcc", "-m68000", "-O2", "-ffreestanding", "-nostdlib",
+                    "-Wl,--build-id=none", "-Wl,-e0", f"-Wl,-Ttext={LINK_BASE:#x}",
+                    str(ENTRY_PROBE), str(asm), "-o", str(out)], check=True)
+    symbols = rom_bench.elf_symbols(out)
+    assert ASM_SYMBOL in symbols and rom_bench.ENTRY_PROBE_SYMBOL in symbols, (
+        f"a `.S` and a `.c` did not link into one blob; what is there: {sorted(symbols)}")
+
+
+def test_the_makefile_sweeps_assembly_into_the_blob():
+    """...and that kit.mk actually makes that sweep, which is the half this file can only read.
+
+    A project whose `.S` the wildcard missed fails at `RomBench.entry`, naming every symbol the blob
+    DOES hold — so the behavioural half is the project's suite. This is here because the wildcard is
+    one character away from being right and silently empty.
+    """
+    makefile = (KIT / "kit.mk").read_text()
+    # BOTH DEPTHS, mirroring the `.c` sweep beside it: a project that keeps its cores at the top of
+    # `src/` keeps its transcriptions there too, and either wildcard on its own is silently empty
+    # for half the projects rather than an error for any of them.
+    for sweep in ("$(wildcard src/*.S)", "$(wildcard src/*/*.S)"):
+        assert sweep in makefile, (
+            f"kit.mk's BENCH_SRC does not sweep `{sweep}`, so a ROM project's transcriptions at "
+            f"that depth would be left out of the blob and every one of their rows would fail as a "
+            f"missing symbol")
+
+
+# The register file the two vets below are driven over: the 68000's, as the oracle reports it. It is
+# NOT `CALLEE_SAVED_SEEDS`' names, and that is the whole point — those are d2-d7/a2-a6, and the
+# registers this relation adds over `measure`'s are exactly the four outside them.
+FAKE_REPORTED_REGS = tuple(f"d{number}" for number in range(8)) + \
+                     tuple(f"a{number}" for number in range(7))
+
+
+def _reported_regs_only():
+    """An `emu` holding the one attribute the two register vets read (they `import emu` inside)."""
+    return SimpleNamespace(REPORTED_REGS=FAKE_REPORTED_REGS)
+
+
+def _entered_with():
+    """...and a distinct value per register, so a failure names the one that moved."""
+    return {name: 0x1000 + index for index, name in enumerate(FAKE_REPORTED_REGS)}
+
+
+def test_a_transcriptions_case_must_name_every_register_it_enters_with(monkeypatch):
+    """The whole-file comparison is only worth anything if both sides were entered the same way.
+
+    A register the case left out enters as 0 on the original's side and as 0 on ours, agrees for
+    that reason, and pins nothing — which is exactly the register a dropped `movem` entry hides in.
+    """
+    monkeypatch.setitem(sys.modules, "emu", _reported_regs_only())
+    regs = _entered_with()
+    rom_bench._vet_seeds_the_whole_file("bios_trap13", regs)      # a complete file is accepted
+    del regs["d2"]
+    with pytest.raises(AssertionError, match="d2"):
+        rom_bench._vet_seeds_the_whole_file("bios_trap13", regs)
+
+
+@pytest.mark.parametrize("register", ("d1", "d2", "a1", "a5"))
+def test_a_transcription_is_held_to_the_whole_register_file(monkeypatch, register):
+    """Including the ones a C core owes nobody. D1 and A1 are scratch under the m68k SysV ABI, so
+    `measure`'s callee-saved check passes a build that leaves either of them elsewhere — and a
+    dispatcher that did would hand its caller a different machine than the ROM does.
+    """
+    monkeypatch.setitem(sys.modules, "emu", _reported_regs_only())
+    original = _entered_with()
+    rom_bench._vet_register_file("bios_trap13", dict(original), original)
+    ours = dict(original, **{register: original[register] ^ 1})
+    with pytest.raises(AssertionError, match=register):
+        rom_bench._vet_register_file("bios_trap13", ours, original)
+
+
 def test_an_off_image_ledger_is_compared_in_order():
     """The only surface a core whose whole effect is a chip has: the same accesses in the wrong
     order is a different program, and both images are identical either way."""
@@ -319,6 +483,11 @@ FAKE_ENTRY = 0xFC0AAC                   # XBIOS Getrez, the row this case is abo
 # an undeclared I/O read is answered a fabricated 0 — on both sides, so the second differential
 # would compare two runs of a machine that does not exist.
 FAKE_IO_SEED = {0xFF8260: 2}
+# ...and one a case may declare through the SAME door that the Phase-7 NAMED SET owns: the MFP's
+# GPIP, which an interrupt handler tests for the monitor and the ACIA line. `emu.seed_split` routes
+# it into the hardware model, where the ORIGINAL's run installs it and it PERSISTS — so `run_bench`
+# has no door for it and refuses one, and `rom_bench` has to hand our side only the other half.
+FAKE_NAMED_ADDRESS = 0xFFFA01
 
 
 class _QuietLib:
@@ -349,7 +518,15 @@ def _fake_emu(calls):
         calls.append(("emu.run_bench", io_seed))
         return {"d0": 2, "ninsns": 4, "cycles": 80, "regs": dict(rom_bench.CALLEE_SAVED_SEEDS)}
 
-    return SimpleNamespace(run=run, run_bench=run_bench, STACK_TOP=FAKE_STACK_TOP, SENTINEL=2,
+    def seed_split(hw_seed, io_seed):
+        """The real routing's contract, over a named set of one: `(named half, the rest)`."""
+        named = {a: v for a, v in (io_seed or {}).items() if a == FAKE_NAMED_ADDRESS}
+        if not named:
+            return hw_seed, io_seed
+        return {**(hw_seed or {}), **named}, {a: v for a, v in io_seed.items() if a not in named}
+
+    return SimpleNamespace(run=run, run_bench=run_bench, seed_split=seed_split,
+                           STACK_TOP=FAKE_STACK_TOP, SENTINEL=2,
                            REPORTED_REGS=tuple(rom_bench.CALLEE_SAVED_SEEDS), PSG_NREGS=16,
                            _LIB=_QuietLib(), hw_unseeded_addrs=lambda: (), _hw_addrs_of=lambda _m: (),
                            psg_events=lambda: [], hw_events=lambda: [], io_events=lambda: [],
@@ -401,3 +578,22 @@ def test_both_sides_of_a_row_are_run_over_the_cases_own_declared_io_map(monkeypa
     monkeypatch.setitem(sys.modules, "harness", _fake_harness())
     _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), io_seed=io_seed, returns=1)
     assert calls == [("emu.run", io_seed), ("emu.run_bench", io_seed)]
+
+
+def test_only_the_original_is_handed_the_part_of_the_map_the_named_set_owns(monkeypatch):
+    """ONE DOOR, TWO MODELS, and the second model is installed on one side only.
+
+    A case declares `$fffa01` and `$ff8260` in one `io_seed` — which of them Phase 7 happens to name
+    is the kit's bookkeeping, not the case's. The named half belongs to the hardware model, which
+    the ORIGINAL's `emu.run` arms and which persists between runs deliberately (a bench run clearing
+    it would disarm an asm twin's), so `run_bench` refuses one outright rather than dropping it
+    silently. Without the split here, a core that reads a named slot — an interrupt handler testing
+    the MFP's GPIP is the first — could not be MEASURED at all: the row would die in the refusal
+    instead of reporting a ratio.
+    """
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _fake_emu(calls))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    whole = {**FAKE_IO_SEED, FAKE_NAMED_ADDRESS: 0x80}
+    _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), io_seed=whole, returns=1)
+    assert calls == [("emu.run", whole), ("emu.run_bench", FAKE_IO_SEED)]

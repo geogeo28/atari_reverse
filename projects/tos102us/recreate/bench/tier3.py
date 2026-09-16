@@ -45,6 +45,24 @@ import abi                                                 # noqa: E402
 # verified case with a cost attached. A copy here would be a second answer to "what is verified".
 import test_boot_snapshot                                  # noqa: E402
 import test_xbios_supexec as supexec                       # noqa: E402
+# ...and the TRANSCRIPTION cases, which are the same idea for the one routine that is not C:
+# `src/bios/trap.S`, the exception handler every BIOS and XBIOS call is entered through. They
+# are kept in `test/trap.py` rather than in `VERIFIED_CASES` because they are proved through a
+# different relation — see `RomBench.measure_transcription` and `measure` below.
+import trap                                                # noqa: E402
+# ...and the INTERRUPT HANDLERS' case shape, for the same reason: a handler's case is
+# entered at a TRAMPOLINE in the staging band rather than at the routine, so getting from
+# a row's entry back to the ROM address it is about is this module's map to give
+# (`test/isr.py`).
+import isr                                                 # noqa: E402
+# ...and the four ISR batteries, for their TRANSCRIPTION cases — `src/bios/isr.S`, the stubs a
+# shipped ROM installs in the four vectors. They live beside each handler's own registered cases
+# (both are built from ONE spec, so the two rows are two relations over one verified run) rather
+# than in a list here, which is `trap.CASES`' arrangement one file per handler.
+import test_bios_hbl                                       # noqa: E402
+import test_bios_ikbd                                      # noqa: E402
+import test_bios_timerc                                    # noqa: E402
+import test_bios_vbl                                       # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -90,6 +108,30 @@ RATIO_TOLERANCE = 0.02
 #       read (the C reproduces the displacement the ROM leaves in D0 — see `cursconf.c`) and a
 #       compare chain, for the same reason as (B).
 #
+#   (D) THE CALLER'S D0 AS AN ARGUMENT. A ROM routine that writes only D0's LOW WORD (`move.w
+#       <ea>,d0`) leaves the caller's high half, and the C says so by taking that D0 as a parameter
+#       and returning the whole register — which GCC compiles to `move.l 4(sp),d0 / clr.w d0 /
+#       or.w d1,d0`, three instructions and ~28 cycles where the ROM's one `move.w` WAS the whole
+#       result path. The alternative is a `uint16_t` core, which would agree with a reconstruction
+#       that had cleared the half the ROM preserves (`kbrate.c`), so this is the cost of being able
+#       to say the true thing at all.
+#   (E) AN I/O ADDRESS THE ROM KEEPS IN AN ADDRESS REGISTER. `lea $ffff8240,a0` plus an indexed
+#       `0(a0,d1.w)`, against GCC computing the whole address in D0 (`addi.l #$ff8240,d0`, 16
+#       cycles) and moving it to A0. The C names the register by its 24-bit address, which is what
+#       makes the declared I/O map and the write ledger able to compare it at all.
+#   (F) A BYTE READ WIDENED TO A LONGWORD. The ROM clears the register once BEFORE the byte move
+#       (`moveq #0,d0`, 4 cycles); GCC spells the same widening AFTER it (`andi.l #255,d0`, 16).
+#   (G) A BYTE THE ROM READS OUT OF ITS OWN ARGUMENT FRAME. `move.b 9(sp),$ffff8201` takes bits
+#       23..16 of a longword argument for nothing, because the frame is memory and the byte has an
+#       address; the C is handed the longword as a VALUE and extracts it with shifts.
+#   (J) `movep.l`, WHICH C HAS NO FORM FOR. The 68901 sits on every other byte of the bus, and the
+#       68000 has one instruction for reading four such registers into a longword — which is how
+#       `Rsconf` fetches the configuration it reports. Off target and on, the C is four `io_read8`
+#       calls and the shifts and ORs that pack them, because each byte is a DECLARED read of its own
+#       address and the ordered ledger compares them one at a time (`hw.h`, Phase 15): one
+#       instruction becomes ten. The lever, if it is ever worth one, is a hand-asm twin pinned to
+#       the C core by the twin differential, exactly as the game recreates use.
+#
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
 PERF_ACCEPTED = {
@@ -100,14 +142,9 @@ PERF_ACCEPTED = {
     ("xbios_giaccess", "write"): (
         0.74, "the same bracket, over the write path's extra port access — see the row above"),
 
-    # (A) — the image pointer, and on these it is the whole of the difference.
-    ("bios_drvmap", "bios_drvmap"): (1.50, "(A) 32 -> 48 cycles: two instructions become three"),
-    ("xbios_logbase", "xbios_logbase"): (1.50, "(A) 32 -> 48 cycles, the same two-become-three"),
-    ("bios_tickcal", "bios_tickcal"): (1.41, "(A) 34 -> 48 cycles, one instruction more"),
-    ("bios_kbshift", "read"): (1.48, "(A) 54 -> 80 cycles, one instruction more"),
-    ("bios_kbshift", "write"): (1.53, "(A) 64 -> 98 cycles, one instruction more"),
-    ("xbios_bioskeys", "xbios_bioskeys"): (1.18, "(A) 88 -> 104 cycles, one instruction more"),
-    ("bios_getmpb", "bios_getmpb"): (1.14, "(A) 214 -> 244 cycles, one instruction more"),
+    # (A) alone, on a trap leaf, is not written down at all any more: those rows are admitted by
+    # THE LEAF RULE below, which measures the excess against the dispatched call the machine really
+    # makes instead of against a fragment nobody executes on its own.
     ("xbios_iorec", "xbios_iorec"): (
         1.48, "(A) plus the ROM's `lea IOREC_TABLE(a5),a0` / indexed load against a C bound and a "
               "shift: 58 -> 86 cycles, four instructions to eight"),
@@ -129,11 +166,232 @@ PERF_ACCEPTED = {
               "90 -> 130 cycles, 8 instructions to 13"),
 
     # (C) — Cursconf's arm selection, and the widest row here.
+    # (J) — `movep.l`, and the interrupt mask the differential cannot see.
+    ("xbios_rsconf", "report"): (
+        2.03, "(J) 220 -> 446 cycles, 18 instructions to 37. The whole of it is the `movep.l` (one "
+              "instruction, four declared reads and the packing) and the six argument words read "
+              "out of the caller's block where the ROM tests them in place; the arm itself stores "
+              "nothing. It also carries the `ori.w #$700,sr` the ROM never restores (ipl.h), which "
+              "no Tier 1 case can see"),
+    ("xbios_rsconf", "store four"): (
+        1.72, "(J) the same, over the arm that stores all four USART registers: 292 -> 502 cycles"),
+
+    # ...and one row pinned UNDER the bar, because a cycle count is all the surface it has.
+    ("xbios_ikbdws", "xbios_ikbdws"): (
+        1.00, "the IKBD sender's 951-iteration SETTLING DELAY, which the Tier 1 differential cannot "
+              "see: it touches no memory, no compared register and no chip, so deleting it leaves "
+              "every case green and the 6301 short of the gap it needs — this row is its whole "
+              "surface. 83,976 -> 83,994 cycles for two bytes, nearly all of it that loop. What the "
+              "6301 is owed is ELAPSED TIME, so the delay is a FLOOR and a counted C loop that made "
+              "the same 951 passes more cheaply would not meet it: measured at 0.86 (72,598 cycles, "
+              "a seventh of the gap missing), which is why the target build spells the loop as the "
+              "ROM's own `bsr`-to-an-`rts` under `dbf` — `src/xbios/acia.c`. The 18 cycles over are "
+              "the one `bra.s` that jumps the `rts`. `Initmous`'s two rows send through the same "
+              "loop and moved with it, to 1.00"),
+
     ("xbios_cursconf", "blink"): (
         2.29, "(C) 104 -> 238 cycles, 9 instructions to 25. The widest row in the table and the one "
               "worth a lever first: the C pays the bounds test, the table read the ROM's `jmp` does "
               "for free, and a compare chain to the arm"),
+
+    # ---- the XBIOS screen and sound leaves (BIOS wave 2) ----
+    # The two GI-bit rows are UNDER the bar and pinned for `xbios_giaccess`'s reason: their OUTER
+    # interrupt bracket is a second one, around BOTH `Giaccess` calls rather than inside each, and it
+    # is what makes the port-A read-modify-write atomic against the 200 Hz driver's own `$ff8800`
+    # writes. Off target it is a no-op, so deleting it leaves every Tier 1 case green and moves only
+    # these numbers.
+    ("xbios_ongibit", "xbios_ongibit"): (
+        0.90, "includes the OUTER interrupt bracket spanning both Giaccess calls (ipl.h), which the "
+              "Tier 1 differential cannot see: the oracle enters at IPL 7 and reports no SR, so this "
+              "cycle count is the whole surface that bracket has. 664 -> 604 cycles, of which 16 are "
+              "(D) in its cheapest form: the `movem` pair gives the caller's D0 back, so the core "
+              "takes it and returns it, and GCC spells the whole pass-through as one `move.l "
+              "4(sp),d0` (0.88 before that argument, measured)"),
+    ("xbios_offgibit", "xbios_offgibit"): (
+        0.90, "the same bracket and the same pass-through, over the `and.b` twin — see the row "
+              "above"),
+
+    # (F) — and this is the only row in the table where the byte widening is the whole difference.
+    ("xbios_physbase", "xbios_physbase"): (
+        1.12, "(F) 138 -> 150 cycles at the SAME seven instructions: `andi.l #255,d0` after the byte "
+              "load where the ROM's `moveq #0,d0` cleared the register before it, and those 12 "
+              "cycles are the entire excess"),
+
+    # (Dosound's two arms are (A)-only trap leaves, and the LEAF RULE below admits them.)
+
+    # (A) + (D) — Setpalette WAS one of those leaves and is not one any more: it hands the caller's
+    # D0 back, so its excess is no longer the image pointer alone and the rule must not be asked.
+    ("xbios_setpalette", "xbios_setpalette"): (
+        1.73, "(A) plus (D) over a routine that IS one store: 84 -> 116 cycles, 3 instructions to 5. "
+              "The ROM's `move.l 4(sp),$45a / rts` touches no register, so the core takes the "
+              "entering D0 and returns it — one `move.l 4(sp),d0`, 16 cycles, which on a 44-cycle "
+              "body is the whole of the difference between this and the 1.36 it measured as a "
+              "`void` core. A ratio is a poor instrument at this size; the absolute is 32 cycles"),
+
+    # (A) + (G) + (D) — the screen base the ROM stores straight out of its frame, and the D0 it
+    # gives back. The pass-through is 16 cycles on both arms, so the SHORTER one moves further.
+    ("xbios_setscreen", "both bases"): (
+        1.28, "(A) plus (G) plus (D): the C is handed the physical base as a VALUE and extracts bits "
+              "23..8 with `move.l`/`clr.w`/`swap` and an `lsr.l` where the ROM stores 9(sp) and "
+              "10(sp) as bytes, and it loads the entering D0 to hand back — 202 -> 248 cycles, 11 "
+              "instructions to 19 (1.19 before that argument, measured)"),
+    ("xbios_setscreen", "keep everything"): (
+        1.24, "the same (A) and (D) over the arm that does nothing at all: three tests and an `rts` "
+              "in the ROM, 130 -> 152 cycles, 8 instructions to 11. (G) is absent here — no store is "
+              "made — so this row is the pointer load and the pass-through alone, 22 cycles of a "
+              "90-cycle body (1.07 before that argument, measured)"),
+
+    # (D) + (E) — the caller's D0 as an argument, and the palette base as an immediate.
+    ("xbios_setcolor", "read"): (
+        1.28, "(D) plus (E): 140 -> 168 cycles, 10 instructions to 14"),
+    ("xbios_setcolor", "write"): (
+        1.18, "the same two over the arm that stores: 160 -> 182 cycles, 11 instructions to 15"),
+
+    # (A) + (D) — and together they are the widest pair in this wave.
+    ("xbios_setprt", "write"): (
+        1.59, "(A) plus (D) over a three-instruction routine: 108 -> 148 cycles, 6 instructions to "
+              "10. Its neighbour `Dosound` pays only (A) and sits at 1.23 — the difference between "
+              "them IS (D), measured"),
+    ("xbios_setprt", "report only"): (
+        1.80, "the same pair over the arm that only reports: 90 -> 130 cycles"),
+
+    # ---- THE INTERRUPT HANDLERS (BIOS wave 2) ----
+    # A handler is entered by the MACHINE, and two consequences run through every row below.
+    #
+    #   (H) THE MFP ACKNOWLEDGEMENT. Timer C and the ACIA handler each end by clearing their own bit
+    #       of $fffa11, which the ROM does in ONE `bclr` and the reconstruction does as a declared
+    #       read and a ledgered store (`include/mfp.h` carries the argument: the seven bits the
+    #       instruction preserves are seven other channels, and a door whose read half is a
+    #       fabricated 0 cannot hold them). Two bus accesses where the original makes one, on a
+    #       routine whose whole fast path is four instructions.
+    #   (I) THE ENTRY GLUE IS NOT IN THE CORE, and it moves a C row the OTHER way. The ROM's own
+    #       `movem.l d0-a6,-(sp)` / `movem.l (sp)+,d0-a6` and its `rte` are the machine's contract
+    #       rather than the routine's, and a C function has no register file to save — so the
+    #       ORIGINAL's column carries them and a C core's does not.
+    #
+    #       IT IS ANSWERED, and the `... ISR entry` rows are the answer: `src/bios/isr.S` is what a
+    #       shipped ROM installs in each vector — the ROM's own entry sequence around the C body —
+    #       and its rows pay the `movem` pair on both sides, so their ratio is the two handlers' own
+    #       cycles with no hole in it. Each handler therefore has two rows: the C CORE, where (I)
+    #       still stands and a figure under the bar is under it partly for a reason that is not a
+    #       saving, and the ENTRY, where nothing is missing from either column.
+    #   (L) A VECTOR ROUTINE KEEPS TO NOTHING. `include/staged_call.h`'s `jsr` tells GCC that every
+    #       data register and A0-A5 are gone across a call into `swv_vec`, `_vblqueue`, `scr_dump`,
+    #       `etv_timer` or KBDVECS — because what runs there is RAM, and the ROM defends itself by
+    #       hand at the same places (`movem.l d7/a0,-(sp)` around each queue slot, `suba.l a5,a5`
+    #       after each group). GCC's answer is to save what it is holding around each call, which is
+    #       the same defence in the same place and is not free: measured on the ACIA handler, whose
+    #       body is two such calls and nothing else, it is +147 cycles on a 269-cycle core.
+    #
+    # Every figure below is NET of the entry observation, as the rows above are: the table prints
+    # the oracle's raw counts and the ratio is computed from these. An `... ISR entry` row is net of
+    # the staged caller both sides run as well (`isr.SHARED_ENTRY_COST`).
+    ("isr_hbl", "a frame already masked"): (
+        1.18, "(A) 68 -> 80 cycles, six instructions to seven: the C loads the image pointer AND "
+              "the frame address out of its own frame, where the ROM's `2(sp)` is free"),
+    ("isr_vbl", "the semaphore taken"): (
+        1.27, "(A) 98 -> 124 cycles, 5 instructions to 11. The arm is three memory read-modify-"
+              "writes in the ROM (`addq.l`, `subq.w`, `addq.w` straight to absolute addresses) and "
+              "the same three through an image pointer here"),
+    ("isr_vbl", "a quiet frame"): (
+        0.97, "(I) 736 -> 716 cycles: UNDER the bar, and pinned because the reason is a hole rather "
+              "than a saving — the original's column carries the `movem` pair this core has no "
+              "register file for. It is also what says the body has not grown. The row WITHOUT the "
+              "hole is `isr_vbl_entry / a quiet frame` below"),
+    ("isr_vbl", "a monitor change"): (
+        1.00, "PINNED, not accepted: the arm is 2001 passes of `dbf` doing nothing — the shifter "
+              "settling — and a delay's only surface is its cost. Delete the loop and every Tier 1 "
+              "case stays green (`src/bios/vbl.c`); this row is 20,840 cycles against 20,870. The "
+              "RATIO is too coarse to hold the count on its own — a pass either way moves it by "
+              "0.0005 — so `test_bios_vbl.py` pins the absolute number as well"),
+    ("isr_vbl", "a frame with everything queued"): (
+        1.14, "(A) and (L) over a blank that does everything at once: 2062 -> 2344 cycles. The "
+              "queue walk and the dump hook are two staged calls, and the register saves GCC makes "
+              "around them are the ROM's own `movem.l d7/a0` in another place"),
+    ("isr_timer_c", "a divided-away tick"): (
+        1.18, "(A) and (H): 102 -> 120 cycles, 5 instructions to 9. Three of the ROM's five are "
+              "`addq.l`/`rol.w`/`bclr` straight to memory, and every one of them is a load, an "
+              "operation and a store here"),
+    ("isr_timer_c", "a serviced tick"): (
+        1.06, "PINNED under the bar: (A), (H) and (L) spread over a tick that steps the sound "
+              "driver, the auto-repeat and the OS vector come to 978 -> 1040 cycles. This is the "
+              "routine that runs 200 times a second, so the pin is what says the body has not "
+              "grown; the row a hand-asm twin would be measured against is its ENTRY below"),
+
+    # ---- ...and the same four handlers as `src/bios/isr.S` installs them (BIOS wave 2) ----
+    # No (A) and no (I): the image base is a pushed 0 where the ROM zeroes A5, and both columns pay
+    # the ROM's own `movem` pair. What is left in these rows is the C BODY against the ROM's inline
+    # one, plus the `pea`/`jsr`/`addq` of calling it at all — about 56 cycles — and (L).
+    #
+    # THE LEVER FOR ALL FOUR IS ONE THING: a hand-asm body, pinned to the C core by the same twin
+    # differential the game recreates use. That is a wave of its own and it is the timer C row that
+    # earns it first, at 200 Hz.
+    ("isr_vbl_entry", "a quiet frame"): (
+        1.23, "736 -> 908 cycles. The body is the monitor follower, the cursor blink and the "
+              "floppy gate, none of which does anything on a quiet blank — so this row is very "
+              "nearly the C body's own prologue and the call that reaches it"),
+    ("isr_vbl_entry", "a frame with everything queued"): (
+        1.23, "2062 -> 2536 cycles, the same 1.23 over a blank thirty times the size: the palette "
+              "move, the screen base, the queue walk and the dump hook. (L) is most of it"),
+    ("isr_timer_c_entry", "a serviced tick"): (
+        1.31, "(H) and (L): 978 -> 1284 cycles. The acknowledgement is the ROM's own `bclr` in this "
+              "stub, so what is left is the C body — the Dosound step, the auto-repeat countdowns "
+              "and the register saves GCC makes around the `jsr` into `etv_timer`"),
+    ("isr_acia_entry", "one pass"): (
+        1.68, "(H) and (L), and this handler is nothing else: its body is two staged calls and an "
+              "acknowledgement. 384 -> 644 cycles, of which +147 is the clobber list alone "
+              "(measured: the same core was 269 cycles before `staged_call.h` stopped promising "
+              "that a routine in a RAM vector keeps to the C ABI)"),
+    ("isr_vbl_entry", "a monitor change"): (
+        1.01, "PINNED, not accepted, for the C row's reason one line up: 20,870 -> 21,032 cycles "
+              "is the shifter settling, and a delay has no surface but its cost"),
 }
+
+# ---- THE LEAF RULE — the rows where a ratio is the wrong instrument ------------------------------
+#
+# Mechanism (A) on a TRAP LEAF is the case a written acceptance serves worst. The whole excess is one
+# `moveal %sp@(4),%a0` — 12 to 16 cycles, the same instruction on every one of them — and over a
+# routine whose body is `move.l _drvbits,d0 / rts` that reads as 1.50x. Ten entries then said the
+# same sentence ten times, each carrying a hand-copied ratio somebody has to re-pin the day the core
+# moves, and a reader learned nothing from the sixth.
+#
+# WHAT THE MACHINE ACTUALLY PAYS is what the rule measures against instead. Nothing CALLS a BIOS
+# leaf: a caller reaches it through `trap #13`, and the dispatcher's own cycles dwarf it. So
+# Drvmap's +16 is 16 cycles on a whole `Bios(10)` call, not 16 on a 32-cycle fragment nobody ever
+# executes alone — a few per cent rather than half again. The dispatcher's cost is READ from the
+# rows this same table measures (`dispatch_cycles` below), never written down here: it is a
+# measurement like every other number in this file.
+#
+# A row NAMED BELOW is then admitted when its excess is small BOTH ways — at most
+# `LEAF_SLACK_CYCLES` absolutely, which is one pointer load and change and never a branch or a loop,
+# and at most `LEAF_SLACK_FRACTION` of the dispatched call it is part of. A row that is not named is
+# not eligible whatever it measures: the naming IS the claim that (A) is the whole of its excess,
+# and only a reader of the two listings can make that claim.
+#
+# INTERRUPT-HANDLER ROWS ARE DELIBERATELY OUT OF IT. A handler is dispatched by the machine and pays
+# no dispatcher, so there is no whole call for its excess to be a fraction of — every ISR row keeps
+# its written entry above, and the rule refuses the largest of them (`isr_vbl / a frame with
+# everything queued`, +282 cycles) on the absolute test alone. `test_tier3.py` pins both halves.
+LEAF_SLACK_CYCLES = 40
+LEAF_SLACK_FRACTION = 0.075
+
+# The (A)-ONLY TRAP LEAVES: every row whose excess over the original is the image-pointer load and
+# nothing else. Read off `make bench`'s own instruction counts (one instruction more on each) and
+# the two listings, which is why this is a list of names rather than something derived.
+IMAGE_POINTER_LEAVES = frozenset({
+    ("bios_drvmap", "bios_drvmap"),         # +16 cycles: two instructions become three
+    ("xbios_logbase", "xbios_logbase"),     # +16, the same two-become-three
+    ("bios_tickcal", "bios_tickcal"),       # +14
+    ("bios_kbshift", "read"),               # +26
+    ("bios_kbshift", "write"),              # +34, the widest the rule admits
+    ("xbios_bioskeys", "xbios_bioskeys"),   # +16
+    ("bios_getmpb", "bios_getmpb"),         # +30
+    ("xbios_dosound", "play"),              # +20
+    ("xbios_dosound", "report only"),       # +20, the same load over the shorter arm
+})
+assert not IMAGE_POINTER_LEAVES & set(PERF_ACCEPTED), (
+    "a row is both named as an (A)-only leaf and carries a written PERF_ACCEPTED entry; the two are "
+    "alternatives — the entry would decide it first and the rule would never be asked")
 
 # The image base a core is handed. ROM MODE, so it is 0 and a core's `be32(image + SYSVAR_HZ_200)`
 # reads the machine's real `$4ba` (tools/recreate_kit/rom_bench.py, "THE MEMORY LAYOUT").
@@ -256,7 +514,8 @@ CALL = {
     "BIOS_BCONIN": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
     "BIOS_BCOSTAT": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
     "BIOS_DRVMAP": Call((IMAGE,), RETURNS_LONG),
-    "BIOS_GETMPB": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    # ...and its D0 is the TPA's length, which the `sub.l` leaves there (`src/bios/getmpb.c`).
+    "BIOS_GETMPB": Call((IMAGE, arg_long(0)), RETURNS_LONG),
     "BIOS_KBSHIFT": Call((IMAGE, arg_word(0)), RETURNS_LONG),
     "BIOS_SETEXC": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_LONG),
     "BIOS_TICKCAL": Call((IMAGE,), RETURNS_LONG),
@@ -274,6 +533,47 @@ CALL = {
                           RETURNS_NOTHING),
     "XBIOS_RANDOM": Call((IMAGE,), RETURNS_LONG),
     "XBIOS_SUPEXEC": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    # ---- the XBIOS screen and sound leaves (BIOS wave 2) ----
+    # No image argument: this one's whole input is the two shifter base registers (`physbase.c`).
+    "XBIOS_PHYSBASE": Call((), RETURNS_LONG),
+    "XBIOS_SETSCREEN": Call((IMAGE, ENTRY_D0, arg_long(0), arg_long(4), arg_word(8)),
+                            RETURNS_LONG),
+    "XBIOS_SETPALETTE": Call((IMAGE, ENTRY_D0, arg_long(0)), RETURNS_LONG),
+    # ...nor does this one: one declared palette read, one ledgered store, and D0.
+    "XBIOS_SETCOLOR": Call((ENTRY_D0, arg_word(0), arg_word(2)), RETURNS_LONG),
+    # ...and these two reach the chip through `Giaccess` and the image not at all.
+    "XBIOS_ONGIBIT": Call((ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    "XBIOS_OFFGIBIT": Call((ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    "XBIOS_DOSOUND": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "XBIOS_SETPRT": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    # ---- the MFP / timer / IKBD / serial leaves (BIOS wave 2) ----
+    # No image argument: these two change a bit of an MFP register and touch memory not at all.
+    # Their D0 is the MASKED channel, which the `andi.l #15` writes and the `movem.l (sp)+` restores
+    # — not the argument, and not the caller's entry D0 (`src/xbios/mfp.c`).
+    "XBIOS_JDISINT": Call((arg_word(0),), RETURNS_LONG),
+    "XBIOS_JENABINT": Call((arg_word(0),), RETURNS_LONG),
+    # ...and these two READ the image (the bytes to send) and write only an ACIA's data port.
+    "XBIOS_IKBDWS": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_NOTHING),
+    "XBIOS_MIDIWS": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_NOTHING),
+    # A constant, and the smallest routine in this table: `move.l #$e12,d0 / rts`.
+    "XBIOS_KBDVBASE": Call((), RETURNS_LONG),
+    "XBIOS_INITMOUS": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
+    # ...and this one takes the caller's whole ARGUMENT BLOCK, as the ROM does — six optional words
+    # it reads off the frame. `arg_address(0)` is the copy of that frame at POINTER_STORAGE, which
+    # is also the only form seven values could be passed in (`rom_bench._vet_stack_args_fit`).
+    "XBIOS_RSCONF": Call((IMAGE, arg_address(0)), RETURNS_LONG),
+    # ---- the INTERRUPT HANDLERS (BIOS wave 2) ----
+    # None takes an argument — nothing calls one, the machine dispatches it — and none returns a
+    # result: what a handler owes the interrupted program is the memory and the chip it left, and
+    # the registers it gives back (`isr.assert_registers_survived`).
+    #
+    # The HBL is the exception, and its argument is not one the ROM has: a C function has no
+    # `2(sp)` to reach, so the ADDRESS of the exception frame is what the reconstruction takes, and
+    # this is the frame `test/isr.py` puts its registered cases' at.
+    "ISR_HBL": Call((IMAGE, isr.STAGED_FRAME), RETURNS_NOTHING),
+    "ISR_VBL": Call((IMAGE,), RETURNS_NOTHING),
+    "ISR_TIMER_C": Call((IMAGE,), RETURNS_NOTHING),
+    "ISR_ACIA": Call((IMAGE,), RETURNS_NOTHING),
 }
 
 # Cases this file adds to the verified set, in `VERIFIED_CASES`' own shape.
@@ -296,7 +596,36 @@ EXTRA_CASES = (
 # One measured row. `entry`/`regs`/`pokes`/`psg_seed`/`io_seed` are the ORACLE's case, exactly as
 # `harness.differential` takes it; `symbol`/`args` are how our build is called; `returns` is the
 # width in bytes the C signature declares for its result (see `RomBench.measure`).
-Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns")
+# `transcription` says WHICH RELATION the row is measured through: a C core is held to its return
+# value and the callee-saved file, an m68k transcription to the whole register file it leaves. It
+# defaults to False, so every C row above reads exactly as it did.
+# `address` is the ROM address the row is ABOUT, when that is not where the case is entered — a
+# transcription's case enters at the caller it staged, and STATUS.md's ledger is keyed by the
+# routine's own $fcxxxx address.
+# `staged_entry` is the `(instructions, cycles)` the ORIGINAL's column spends GETTING to the routine
+# rather than inside it, and which our build never pays: an interrupt handler's case is reached
+# through a two-instruction trampoline, because nothing CALLS a handler. `RomBench.measure` takes it
+# off the original's column so the ratio is about the handler; the number is `isr.STAGED_ENTRY_COST`,
+# MEASURED by `test_bios_hbl.py::test_the_staged_entry_costs_what_tier_3_takes_off_the_original`
+# rather than declared, and it is `(0, 0)` for every row entered at its own address.
+# `shared_entry` is the opposite subtraction and comes off BOTH columns: what both sides spend on
+# the staged CALLER a transcription can only be entered through (`test/trap.py`'s `caller_cost`,
+# measured by `test_bios_trap.py`). It is `(0, 0)` for every row that is entered at its own address.
+Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns "
+                        "transcription address staged_entry shared_entry",
+                 defaults=(False, None, (0, 0), (0, 0)))
+
+
+def _routine(entry):
+    """The `addrs.h` NAME of the routine a case's entry belongs to — the `CALL` table's key.
+
+    Two kinds of entry reach this. A trap routine's case is entered AT the routine, and the name is
+    the one `test_boot_snapshot.py` holds to its dispatch-table slot. An interrupt handler's case is
+    entered at a TRAMPOLINE (nothing calls a handler, so the case has to stage the exception frame
+    its `rte` returns through), and the name comes from the handler that trampoline jumps to.
+    """
+    handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
+    return handler.constant if handler else test_boot_snapshot.TRAP_ROUTINE_NAMES.get(entry)
 
 
 def _function_label(entry):
@@ -304,8 +633,13 @@ def _function_label(entry):
 
     Not a label typed beside the row: `test_boot_snapshot.py` reads the dispatch table out of the
     mapped ROM and holds every one of these names to the entry it claims, so a label built from them
-    cannot claim a function number the ROM does not give it.
+    cannot claim a function number the ROM does not give it. An interrupt handler has no function
+    number — it is dispatched rather than called — so its label carries its VECTOR instead, which
+    its own battery reads out of the captured table.
     """
+    handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
+    if handler:
+        return f"{handler.name} handler (vector ${handler.vector:02x})"
     name = test_boot_snapshot.TRAP_ROUTINE_NAMES[entry]
     trap, _, routine = name.partition("_")
     return f"{trap} {routine.capitalize()} (${getattr(addrs, f'{name}_FN'):02x})"
@@ -313,7 +647,7 @@ def _function_label(entry):
 
 def _symbol(entry):
     """...and the C core's name, which is the same `addrs.h` name lower-cased."""
-    return test_boot_snapshot.TRAP_ROUTINE_NAMES[entry].lower()
+    return _routine(entry).lower()
 
 
 def _case_label(name, symbol):
@@ -361,18 +695,54 @@ def _pokes_for(call, pokes):
 def _row(case):
     """One `VERIFIED_CASES` entry as a bench row, or None when no `CALL` entry says how to call it."""
     name, entry, regs, pokes, psg_seed, io_seed = case
-    routine = test_boot_snapshot.TRAP_ROUTINE_NAMES[entry]
-    call = CALL.get(routine)
+    call = CALL.get(_routine(entry))
     if call is None:
         return None
     symbol = _symbol(entry)
+    handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
-               call.returns)
+               call.returns, False, handler.entry if handler else None,
+               isr.STAGED_ENTRY_COST if handler else (0, 0))
 
+
+def _transcription_row(case):
+    """One `trap.CASES` entry as a bench row.
+
+    It carries no `CALL` entry and needs none: a transcription has no C signature to be called
+    through — both sides are entered at the CALLER the case staged, and the handler each reaches is
+    the longword at `abi.FIRST_ARG` (`RomBench.measure_transcription`). So the only things this adds
+    to the case are the label, which is the entry the case came in through, and what that caller
+    costs — which the case carries because the shape it staged is what decides it.
+    """
+    name, symbol, caller, regs, pokes, caller_cost = case
+    return Row(trap.LABELS[symbol], name, caller, symbol, (), regs, pokes, None, None,
+               RETURNS_NOTHING, True, getattr(addrs, symbol.upper()), (0, 0), caller_cost)
+
+
+def _isr_transcription_row(case):
+    """One handler's WHOLE-HANDLER row: `src/bios/isr.S` against the ROM's own entry sequence.
+
+    The C row above it prices the reconstruction's CORE — the handler as a C function, entered
+    directly while the original runs the whole of itself, which is why its column carries a `movem`
+    pair ours has no register file for (mechanism (I)). This row has no such hole: both sides are
+    entered at the same staged trampoline and ours runs the same brackets the ROM does, so the
+    ratio is the two handlers' own cycles and nothing else.
+    """
+    return Row(f"{case.handler.name} ISR entry (vector ${case.handler.vector:02x})",
+               _case_label(case.name, case.handler.constant.lower()), case.caller, case.symbol,
+               (), case.regs, case.pokes, case.psg_seed, case.io_seed,
+               RETURNS_NOTHING, True, case.handler.entry, (0, 0), case.shared_entry)
+
+
+ISR_TRANSCRIPTION_CASES = (test_bios_hbl.TRANSCRIPTION_CASES + test_bios_vbl.TRANSCRIPTION_CASES
+                           + test_bios_timerc.TRANSCRIPTION_CASES
+                           + test_bios_ikbd.TRANSCRIPTION_CASES)
 
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
-ROWS = tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
+ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
+        + tuple(_transcription_row(case) for case in trap.CASES)
+        + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -382,9 +752,20 @@ UNPRICED = tuple(case[0] for case, row in zip(ALL_CASES, (_row(c) for c in ALL_C
 
 def measure(row, bench):
     """One row's `Measurement` — which is also its second differential, so this raises on a target
-    build that does not equal the original."""
+    build that does not equal the original.
+
+    The two relations are the kit's, not a choice made here: a C core owes its caller a return value
+    and the callee-saved file, and an m68k transcription owes it the WHOLE register file the ROM's
+    own instructions leave (`tools/recreate_kit/rom_bench.py`).
+    """
+    if row.transcription:
+        return bench.measure_transcription(row.entry, row.symbol, row.regs, pokes=row.pokes,
+                                           psg_seed=row.psg_seed, io_seed=row.io_seed,
+                                           staged_entry=row.staged_entry,
+                                           shared_entry=row.shared_entry)
     return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
-                         psg_seed=row.psg_seed, io_seed=row.io_seed, returns=row.returns)
+                         psg_seed=row.psg_seed, io_seed=row.io_seed, returns=row.returns,
+                         staged_entry=row.staged_entry)
 
 
 def pin_of(row):
@@ -392,19 +773,63 @@ def pin_of(row):
     return PERF_ACCEPTED.get((row.symbol, row.case))
 
 
-def verdict(row, ratio):
-    """What the gate makes of one measured ratio — THE SINGLE RULE, read by the table and the gate.
+# The two rows the DISPATCHED-CALL cost is read off: a whole `Bios(Drvmap)` through the dispatcher,
+# and Drvmap entered directly. The difference between what the ORIGINAL spends on the two is the
+# dispatcher's own cycles — the number the leaf rule's fraction is taken of, measured on this
+# machine by this table rather than written down beside it.
+DISPATCH_WHOLE_CALL = ("bios_trap13", "BIOS Drvmap, no arguments")
+DISPATCH_LEAF = ("bios_drvmap", "bios_drvmap")
+
+
+def row_named(key):
+    """The row one `(symbol, case)` names — the key `PERF_ACCEPTED` and the rule are written in."""
+    return {(row.symbol, row.case): row for row in ROWS}[key]
+
+
+def dispatch_cycles(measurement_of):
+    """What the machine spends REACHING a trap leaf, in cycles — 464 as measured today.
+
+    Both halves are rows of this table, so this measures what the gate measures: the whole call less
+    the leaf it dispatched to. A leaf's own cost is already net of the entry observation and the
+    whole call's is also net of its staged caller, so the subtraction leaves the dispatcher alone.
+
+    `measurement_of(key)` is how a caller hands over the two `Measurement`s — the table already has
+    every row measured and the gate measures the pair on its own — so the SUBTRACTION is stated
+    once whoever asks.
+    """
+    return (measurement_of(DISPATCH_WHOLE_CALL).original_net
+            - measurement_of(DISPATCH_LEAF).original_net)
+
+
+def rule_admits(row, measured, dispatch):
+    """THE LEAF RULE: is this row's excess small enough, both ways, to need no written entry?
+
+    `dispatch` is what a trap call costs before the leaf runs (`dispatch_cycles`). A row the
+    listing does not name is never admitted — see `IMAGE_POINTER_LEAVES`.
+    """
+    if (row.symbol, row.case) not in IMAGE_POINTER_LEAVES:
+        return False
+    excess = measured.recreate_net - measured.original_net
+    return excess <= LEAF_SLACK_CYCLES and \
+        excess <= LEAF_SLACK_FRACTION * (dispatch + measured.original_net)
+
+
+def verdict(row, measured, dispatch):
+    """What the gate makes of one measurement — THE SINGLE RULE, read by the table and the gate.
 
     "ok" — under the bar and not pinned. "pinned" — under the bar, measuring what it was pinned at.
-    "accepted" — over the bar, and an entry says so. "DRIFTED" — pinned, and no longer that number.
-    "OVER" — over the bar with nothing accepting it.
+    "accepted" — over the bar, and a written entry says so. "rule" — over the bar, and the LEAF RULE
+    admits it on the measured excess. "DRIFTED" — pinned, and no longer that number. "OVER" — over
+    the bar with nothing carrying it.
     """
     pin = pin_of(row)
-    if pin and abs(ratio - pin[0]) > RATIO_TOLERANCE:
+    if pin and abs(measured.ratio - pin[0]) > RATIO_TOLERANCE:
         return "DRIFTED"
-    if ratio <= TIER3_FUNCTION_BAR:
+    if measured.ratio <= TIER3_FUNCTION_BAR:
         return "pinned" if pin else "ok"
-    return "accepted" if pin else "OVER"
+    if pin:
+        return "accepted"
+    return "rule" if rule_admits(row, measured, dispatch) else "OVER"
 
 
 FAILED = ("OVER", "DRIFTED")
@@ -415,7 +840,16 @@ ADDRESS_WIDTH = 9
 
 
 def table(bench):
-    """Every row measured, as the lines `make bench` writes and STATUS.md quotes."""
+    """Every row measured, as the lines `make bench` writes and STATUS.md quotes.
+
+    MEASURED FIRST AND JUDGED AFTER, because one of the verdicts is about the others: the LEAF RULE
+    is a fraction of what a trap dispatch costs, and that is two of these rows (`dispatch_cycles`).
+    """
+    # One pass, keyed by the row, so `dispatch_cycles` below re-uses the pair rather than running
+    # the oracle over them a third and fourth time.
+    measured = [(row, measure(row, bench)) for row in ROWS]
+    by_name = {(row.symbol, row.case): m for row, m in measured}
+    dispatch = dispatch_cycles(by_name.__getitem__)
     overhead_insns, overhead_cycles = bench.overhead
     lines = [
         "Tier 3 — the recreate against the original, same case, same instrument (Musashi).",
@@ -424,6 +858,12 @@ def table(bench):
         f"net of that on both sides.",
         f"Bar: ratio <= {TIER3_FUNCTION_BAR:.2f} per function; a pinned row must stay within "
         f"{RATIO_TOLERANCE:.2f} of what it was pinned at.",
+        f"A TRANSCRIPTION's row is a whole call — an exception handler can only be entered through "
+        f"a caller — so its ratio is also net of the staged caller both sides run (trap.py's "
+        f"`caller_cost`: 7 / 106 with no arguments, +1 / +12 per argument word).",
+        f"`rule`: over the bar, and admitted by the LEAF RULE — an (A)-only trap leaf whose excess "
+        f"is <= {LEAF_SLACK_CYCLES} cycles and <= {LEAF_SLACK_FRACTION:.1%} of the "
+        f"{dispatch} cycles this table measures a trap dispatch at, plus the leaf's own.",
         "",
     ]
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
@@ -438,10 +878,10 @@ def table(bench):
     lines.append(f"{'':<{name_width}}{'':<{ADDRESS_WIDTH}}{'':<{case_width}}"
                  f"{'insns/cycles':>14}{'insns/cycles':>14}")
     failed = []
-    for row in ROWS:
-        m = measure(row, bench)
-        state = verdict(row, m.ratio)
-        lines.append(f"{row.function:<{name_width}}{f'${row.entry:x}':<{ADDRESS_WIDTH}}"
+    for row, m in measured:
+        state = verdict(row, m, dispatch)
+        lines.append(f"{row.function:<{name_width}}"
+                     f"{f'${row.address or row.entry:x}':<{ADDRESS_WIDTH}}"
                      f"{row.case:<{case_width}}"
                      f"{f'{m.original_insns}/{m.original_cycles}':>14}"
                      f"{f'{m.recreate_insns}/{m.recreate_cycles}':>14}"
