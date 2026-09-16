@@ -74,10 +74,17 @@ uint8_t hw_read8(uint32_t addr);
  * status flag by reading it, which is most of what an MFP or ACIA handler does with one — since
  * such a read touches no image byte and leaves no register behind.
  *
+ * A WRITE-THROUGH DECLARATION IS WHAT LETS A CORE READ BACK WHAT IT JUST STORED. A case may mark an
+ * address (`emu.write_through(byte)` in its `io_seed`), and a `hw_write8` to it then REPLACES what
+ * the next `io_read8` of it is served — which is how `write the timer's data register and re-read
+ * it until the chip agrees` becomes an ordinary differential rather than a refusal. It is the CASE's
+ * claim about the register, true of a latch and false of a write-to-clear or a live counter;
+ * TRAP_MODEL.md, "Phase 15" ("The write-through arm") says which is which and why.
+ *
  * ON TARGET the build supplies all three as the real volatile access, exactly as it supplies psg.h's
  * ports and hw_write8/16/32: `*(volatile uint8_t *)addr`, `*(volatile uint16_t *)addr` and
  * `*(volatile uint32_t *)addr`. It does not compile src/hw.c, so there is no map and no declaration
- * in the chain — the machine answers.
+ * in the chain — the machine answers, which is the behaviour a write-through claim is claiming.
  */
 uint8_t  io_read8(uint32_t addr);
 uint16_t io_read16(uint32_t addr);
@@ -97,9 +104,13 @@ uint32_t        g_hw_file_known(void);  /* bit S = slot S's contents were declar
 
 /* ...and the DECLARED I/O MAP's (Phase 15). `g_io_reset` installs the case's map and clears the
  * ledger, exactly as `g_hw_reset` does for the named set; it is a SEPARATE reset because the two
- * models are separate declarations, and the harness calls both before every candidate run. */
-void            g_io_reset(const uint32_t *addrs, const uint8_t *values, uint32_t n);
+ * models are separate declarations, and the harness calls both before every candidate run.
+ * `writeback` is the parallel WRITE-THROUGH column — os.h's OS_IO_DECLARED_CONSTANT or
+ * OS_IO_WRITE_THROUGH per address, deciding whether a store to it LATCHES. */
+void            g_io_reset(const uint32_t *addrs, const uint8_t *values, const uint8_t *writeback,
+                           uint32_t n);
 uint32_t        g_io_seed_count(void);  /* entries os.h's rule accepted — compared to the oracle's */
+uint32_t        g_io_writeback_count(void);  /* ...of which this many were marked WRITE-THROUGH */
 uint32_t        g_io_log_count(void);   /* served reads logged this run */
 const uint32_t *g_io_log_addrs(void);   /* ...their 24-bit addresses, in order */
 const uint8_t  *g_io_log_widths(void);  /* ...each read's width in bytes (1, 2 or 4) */

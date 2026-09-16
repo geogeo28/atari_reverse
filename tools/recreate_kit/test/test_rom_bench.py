@@ -502,21 +502,45 @@ class _QuietLib:
         return lambda *args: 0
 
 
-def _fake_emu(calls):
-    """An `emu` holding just the surface `RomBench.measure` touches, recording what each door was
-    handed as its declared I/O map."""
-    def run(image, entry, regs, psg_seed=None, hw_seed=None, io_seed=None):
-        calls.append(("emu.run", io_seed))
-        return image, [], {"d0": 2, "ninsns": 5, "cycles": 82,
-                           "psg_events": [], "hw_events": [], "io_events": [], "hw_writes": []}
+# A wait the fake machine reports, in the shape both doors report one: the address the routine spins
+# on and the reads each run made at it (os.h, "READ TRIGGERS"). A run with no schedule declares no
+# read site at all, which is every row but the one that waits.
+FAKE_WAIT_ADDRESS = 0x466
+FAKE_WAIT_READS = 4
 
-    # `io_seed` is KEYWORD-ONLY here because it is keyword-only on the real `run_bench`: a caller
-    # that passed it positionally would take another parameter's meaning, and this mirror is what
-    # makes that fail here rather than in a project's bench run.
+
+def _fake_wait(schedule):
+    """`(the read sites, the reads at each)` a run of this fake machine reports for `schedule`."""
+    if not schedule:
+        return (), ()
+    return (FAKE_WAIT_ADDRESS,), (FAKE_WAIT_READS,)
+
+
+def _fake_emu(calls, bench_reads=None):
+    """An `emu` holding just the surface `RomBench.measure` touches, recording what each door was
+    handed as its declared I/O map and its schedule.
+
+    `bench_reads` overrides what OUR side reports having read at the wait address — the shape of a
+    target build whose loop ran a different number of times, which is the one thing a row over a
+    wait has to be able to fail on.
+    """
+    def run(image, entry, regs, psg_seed=None, hw_seed=None, io_seed=None, schedule=None):
+        calls.append(("emu.run", io_seed, schedule))
+        sites, reads = _fake_wait(schedule)
+        return image, [], {"d0": 2, "ninsns": 5, "cycles": 82,
+                           "psg_events": [], "hw_events": [], "io_events": [], "hw_writes": [],
+                           "sched_read_sites": sites, "sched_read_arrivals": reads}
+
+    # `io_seed` and `schedule` are KEYWORD-ONLY here because they are keyword-only on the real
+    # `run_bench`: a caller that passed one positionally would take another parameter's meaning, and
+    # this mirror is what makes that fail here rather than in a project's bench run.
     def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None, seed_regs=None, *,
-                  io_seed=None):
-        calls.append(("emu.run_bench", io_seed))
-        return {"d0": 2, "ninsns": 4, "cycles": 80, "regs": dict(rom_bench.CALLEE_SAVED_SEEDS)}
+                  io_seed=None, schedule=None):
+        calls.append(("emu.run_bench", io_seed, schedule))
+        sites, reads = _fake_wait(schedule)
+        return {"d0": 2, "ninsns": 4, "cycles": 80, "regs": dict(rom_bench.CALLEE_SAVED_SEEDS),
+                "sched_applied": len(schedule or ()),
+                "sched_read_sites": sites, "sched_read_arrivals": bench_reads or reads}
 
     def seed_split(hw_seed, io_seed):
         """The real routing's contract, over a named set of one: `(named half, the rest)`."""
@@ -577,7 +601,7 @@ def test_both_sides_of_a_row_are_run_over_the_cases_own_declared_io_map(monkeypa
     monkeypatch.setitem(sys.modules, "emu", _fake_emu(calls))
     monkeypatch.setitem(sys.modules, "harness", _fake_harness())
     _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), io_seed=io_seed, returns=1)
-    assert calls == [("emu.run", io_seed), ("emu.run_bench", io_seed)]
+    assert calls == [("emu.run", io_seed, None), ("emu.run_bench", io_seed, None)]
 
 
 def test_only_the_original_is_handed_the_part_of_the_map_the_named_set_owns(monkeypatch):
@@ -596,4 +620,68 @@ def test_only_the_original_is_handed_the_part_of_the_map_the_named_set_owns(monk
     monkeypatch.setitem(sys.modules, "harness", _fake_harness())
     whole = {**FAKE_IO_SEED, FAKE_NAMED_ADDRESS: 0x80}
     _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), io_seed=whole, returns=1)
-    assert calls == [("emu.run", whole), ("emu.run_bench", FAKE_IO_SEED)]
+    assert calls == [("emu.run", whole, None), ("emu.run_bench", FAKE_IO_SEED, None)]
+
+
+# ---- a row over a routine that WAITS: one list, both doors, and the count that separates them ----
+
+# The case's own schedule, in the shape a bench row's must be: a READ trigger, because the address is
+# the machine's while a PC belongs to one build (os.h, "READ TRIGGERS").
+FAKE_SCHEDULE = ({"read": FAKE_WAIT_ADDRESS, "nth": FAKE_WAIT_READS,
+                  "addr": FAKE_WAIT_ADDRESS, "width": 4, "value": 0x35E},)
+
+
+def test_both_doors_are_handed_the_same_schedule():
+    """The one declaration both runs take unchanged, and the reason it can be: an entry keyed to a
+    READ of an address fires at the same moment in the ROM's instructions and in the compiled
+    build's, where a PC would name one of them and nothing in the other."""
+    calls = []
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setitem(sys.modules, "emu", _fake_emu(calls))
+        patch.setitem(sys.modules, "harness", _fake_harness())
+        _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1,
+                                 schedule=FAKE_SCHEDULE)
+    assert calls == [("emu.run", None, FAKE_SCHEDULE), ("emu.run_bench", None, FAKE_SCHEDULE)]
+
+
+def test_a_build_that_ran_a_different_wait_sinks_the_row(monkeypatch):
+    """THE CROSS-CHECK, driven: our build reads the wait's address one time fewer than the ORIGINAL.
+
+    Everything else about the two runs is identical here, which is not a convenience of the fake —
+    it is the real situation. The agent's store is applied from the same list at both doors, so a
+    build that spun a different number of times leaves the same image, the same return value, the
+    same register file and the same streams. Without this comparison the row would be a cycle count
+    with a second differential that could not fail.
+    """
+    monkeypatch.setitem(sys.modules, "emu", _fake_emu([], bench_reads=(FAKE_WAIT_READS - 1,)))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    with pytest.raises(AssertionError, match="did not run the original's wait") as raised:
+        _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1,
+                                 schedule=FAKE_SCHEDULE)
+    assert f"{FAKE_WAIT_ADDRESS:#x}" in str(raised.value), (
+        "the refusal does not name the address the two sides disagreed about")
+
+
+def test_a_row_that_schedules_nothing_has_no_wait_to_compare(monkeypatch):
+    """The control, and why the comparison costs the other rows nothing: a run with no schedule
+    derives no read site, so both sides report nothing and the two agree by having nothing."""
+    monkeypatch.setitem(sys.modules, "emu", _fake_emu([]))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1)
+
+
+@pytest.mark.parametrize("original, ours, differs", (
+    ({0x466: 4}, {0x466: 4}, False),
+    ({0x466: 4}, {0x466: 8}, True),          # the double-poller: two reads per iteration
+    ({0x466: 4}, {}, True),                  # ...and a build that never read it at all
+    ({}, {}, False),
+))
+def test_the_wait_comparison_is_per_address(original, ours, differs):
+    """`_vet_same_wait` on its own, over the shapes a target build can have. Keyed by ADDRESS, so a
+    run with two waits in it cannot balance one against the other."""
+    o_regs = {"sched_read_sites": tuple(original), "sched_read_arrivals": tuple(original.values())}
+    if not differs:
+        rom_bench._vet_same_wait("core", o_regs, ours)
+        return
+    with pytest.raises(AssertionError, match="wait"):
+        rom_bench._vet_same_wait("core", o_regs, ours)

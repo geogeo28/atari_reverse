@@ -21,6 +21,9 @@ original AND the m68k build, and requires
     DECLARED I/O MAP served, and the ordered hardware writes. That is the ONLY surface a core whose
     whole effect is a chip has (XBIOS `Giaccess` is exactly that, and XBIOS `Getrez` is a single
     declared I/O read whose value it returns);
+  * THE SAME WAIT, for a routine that BUSY-WAITS: the two runs must have read the address the wait
+    spins on the same number of times (`_vet_same_wait`). The agent's store is made from one list at
+    both doors, so everything above agrees whatever the loop did;
   * NO REFUSAL TALLY SET ON EITHER SIDE — every one the harness reads after a Tier 1 run
     (`_refusal_tallies`). Each says the run was served something the model invented, or that a
     ledger this file then compares was silently truncated, and either makes the row a number about
@@ -226,12 +229,17 @@ class BenchResult:
     (`measure_transcription`).
     """
 
-    def __init__(self, image, d0, insns, cycles, regs):
+    def __init__(self, image, d0, insns, cycles, regs, reads=()):
         self.image = image
         self.d0 = d0
         self.insns = insns
         self.cycles = cycles
         self.regs = regs
+        # {address: reads} at each of the run's derived READ SITES — empty for the great majority of
+        # rows, which schedule nothing. It is the only surface the WAIT ITSELF has: the agent's store
+        # lands on both sides from one list, so a build that spun a different number of times leaves
+        # the same image, the same registers and the same streams (`_vet_same_wait`).
+        self.reads = dict(reads)
 
 
 def _refuse_off_rom_mode(cfg):
@@ -318,7 +326,7 @@ class RomBench:
         return blob_entry(self.symbols, symbol, "the cross-compiled cores")
 
     def measure(self, entry, symbol, args=(), regs=None, pokes=None, psg_seed=None, hw_seed=None,
-                io_seed=None, returns=4, staged_entry=(0, 0)):
+                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None):
         """One case on both sides: the ORIGINAL at `entry`, then our `symbol`, over the same image.
 
         Returns a `Measurement`. `entry`/`regs`/`pokes`/`psg_seed`/`hw_seed`/`io_seed` are the oracle
@@ -326,7 +334,8 @@ class RomBench:
         runnable there is runnable here — and `args` are the C arguments our build is called with.
         `returns` is how many bytes of D0 the C signature declares: 4 for a `uint32_t`, 1 for a
         `uint8_t`, 0 for `void`. `staged_entry` is what the ORIGINAL's run spends REACHING the
-        routine rather than inside it — see `Measurement`. `_both_sides` below owns everything this
+        routine rather than inside it — see `Measurement`. `schedule` is the SCHEDULED WRITE model's
+        list for a routine that BUSY-WAITS (`_both_sides`). `_both_sides` below owns everything this
         shares with `measure_transcription`, including the order the two runs must be made in.
 
         WHY THE RETURN VALUE IS COMPARED AT THAT WIDTH AND THE REGISTER FILE IS NOT. The m68k SysV
@@ -340,7 +349,8 @@ class RomBench:
         relation, which holds its side to the whole register file instead (`_vet_register_file`).
         """
         def run_ours(image):
-            return self._call(image, symbol, args, io_seed=_bench_io_seed(io_seed))
+            return self._call(image, symbol, args, io_seed=_bench_io_seed(io_seed),
+                              schedule=schedule)
 
         def vet_ours(ours, o_regs):
             vet_callee_saved(symbol, ours.regs)
@@ -348,7 +358,8 @@ class RomBench:
 
         self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
         return self._both_sides(entry, symbol, dict(regs or {}), pokes,
-                                (psg_seed, hw_seed, io_seed), run_ours, vet_ours, staged_entry)
+                                (psg_seed, hw_seed, io_seed), run_ours, vet_ours, staged_entry,
+                                schedule=schedule)
 
     def measure_transcription(self, caller, symbol, regs, pokes=None, psg_seed=None, hw_seed=None,
                               io_seed=None, staged_entry=(0, 0), shared_entry=(0, 0)):
@@ -398,7 +409,7 @@ class RomBench:
                                 run_ours, vet_ours, staged_entry, shared_entry)
 
     def _both_sides(self, entry, symbol, regs, pokes, seeds, run_ours, vet_ours,
-                    staged_entry, shared_entry=(0, 0)):
+                    staged_entry, shared_entry=(0, 0), schedule=None):
         """The sequence the two `measure*` methods share, with the RELATION as a parameter.
 
         One image, the ORIGINAL over it first, then ours over a copy, then the comparisons and the
@@ -412,6 +423,12 @@ class RomBench:
         ONE IMAGE IS BUILT, AND OURS IS A COPY OF IT — `harness.candidate_image`'s arrangement for a
         Tier 1 case, for its reason: the two sides must start from the same bytes, and a second
         `make_image` would re-read a base image an autouse fixture could have moved in between.
+
+        `schedule` IS THE ONE DECLARATION BOTH DOORS TAKE UNCHANGED, and it has to be: the store it
+        names is what makes a routine that BUSY-WAITS terminate at all, and it must land at the same
+        moment on both sides or the two runs are of different loops. That is why its entries are READ
+        triggers (os.h, "READ TRIGGERS") — the address is the machine's, where a PC belongs to one
+        build — and why `_vet_same_wait` below compares the reads each run made at it.
 
         THE ORDER OF THE TWO RUNS IS LOAD-BEARING, for the half of the machine a bench run does
         not declare. `io_seed` — the DECLARED I/O MAP — is handed to `run_bench` per run, exactly as
@@ -429,7 +446,7 @@ class RomBench:
         psg_seed, hw_seed, io_seed = seeds
         image = harness.make_image(pokes or {})
         o_final, _o_writes, o_regs = emu.run(image, entry, regs, psg_seed=psg_seed,
-                                             hw_seed=hw_seed, io_seed=io_seed)
+                                             hw_seed=hw_seed, io_seed=io_seed, schedule=schedule)
         # The denominator gets the same refusals as the numerator. `harness.differential` makes them
         # for a Tier 1 case, but a bench row is a case of its own — and an original measured while
         # reading a fabricated byte is measuring a machine that does not exist, whichever side did it.
@@ -441,13 +458,15 @@ class RomBench:
         # The relation's own comparisons first: they name what diverged (a return value, a register)
         # where the image comparison can only name an address.
         vet_ours(ours, o_regs)
+        _vet_same_wait(symbol, o_regs, ours.reads)
         self._vet_image(entry, symbol, o_final, ours.image)
         for key, original in original_streams.items():
             _vet_ledger(symbol, _STREAMS[key], getattr(emu, key)(), original)
         return Measurement((o_regs["ninsns"], o_regs["cycles"]), (ours.insns, ours.cycles),
                            self.overhead, staged_entry, shared_entry)
 
-    def _call(self, image, symbol, args=(), io_seed=None, entry_at=None, seed_regs=None):
+    def _call(self, image, symbol, args=(), io_seed=None, entry_at=None, seed_regs=None,
+              schedule=None):
         """Run `symbol` over `image` with the C ABI: `args` as 32-bit stack words, in order.
 
         `entry_at` is where the run is ENTERED when that is not the symbol's own address, and
@@ -490,13 +509,14 @@ class RomBench:
                 else [CALLEE_SAVED_SEEDS.get(name, 0) for name in emu.REPORTED_REGS])
         result = emu.run_bench(image, entry, arg0=(int(args[0]) & 0xFFFFFFFF) if args else 0,
                                sp=emu.STACK_TOP, sentinel=emu.SENTINEL, seed_regs=seed,
-                               io_seed=io_seed)
+                               io_seed=io_seed, schedule=schedule)
         # Read the instant the run ends, before anything else can run over the shim's one set of
         # counters: `emu` publishes these only through `run()`'s own report, and a bench run needs
         # the same refusals (`osh_run_bench` clears them per run, as `osh_run` does).
         _vet_no_refusals(f"the m68k build of {symbol}", _refusal_tallies())
         vet_blob_intact(symbol, image, (self.base, self.base + len(self.blob)), self.blob)
-        return BenchResult(image, result["d0"], result["ninsns"], result["cycles"], result["regs"])
+        return BenchResult(image, result["d0"], result["ninsns"], result["cycles"], result["regs"],
+                           zip(result["sched_read_sites"], result["sched_read_arrivals"]))
 
     # ---- what the blob's placement has to be true of ---------------------------------------------
 
@@ -727,6 +747,33 @@ def _vet_register_file(symbol, ours, original):
         raise AssertionError(
             f"the m68k build of {symbol} left a different register file than the original: {shown}. "
             f"A transcription is held to the whole of it, preserved and clobbered alike")
+
+
+def _vet_same_wait(symbol, o_regs, ours):
+    """The two runs of a WAIT must have read the address the wait is on the same number of times.
+
+    THE BENCH DOOR'S HALF OF WHAT `harness._vet_schedule_ran_the_same_wait` IS FOR TIER 1, and it
+    exists for the identical reason. The agent's store is applied from ONE list at both doors, so a
+    build whose loop ran a different number of iterations — or did not loop at all, or read the byte
+    somewhere the original does not — still ends with byte-identical memory, the same return value,
+    the same register file and the same off-image streams. The READ COUNT is the only thing left that
+    can tell them apart, and without it a row over a routine that waits would be a cycle count
+    attached to a second differential that could not fail.
+
+    A row that schedules nothing has nothing here to compare and nothing to hide: both dicts are
+    empty, and the routine terminates on its own.
+    """
+    original = dict(zip(o_regs.get("sched_read_sites", ()), o_regs.get("sched_read_arrivals", ())))
+    if original == ours:
+        return
+    addresses = sorted(set(original) | set(ours))
+    raise AssertionError(
+        f"the m68k build of {symbol} did not run the original's wait: "
+        + ", ".join(f"{addr:#x} read {original.get(addr, 0)} time(s) by the original and "
+                    f"{ours.get(addr, 0)} by our build" for addr in addresses)
+        + ". The agent's store is made from the same list at both doors, so the image, the return "
+          "value and every stream agree whatever the loop did — this count is what says the two "
+          "sides waited the same wait (os.h, \"READ TRIGGERS\")")
 
 
 def _vet_ledger(symbol, what, ours, original):

@@ -552,6 +552,134 @@ def test_the_shim_reports_the_sizes_os_h_declares(cases):
     assert s["site_max"] == _os_h_int("OS_SCHED_SITE_MAX")
 
 
+# ---- READ TRIGGERS: the trigger the BENCH door can fire (os.h, "READ TRIGGERS") ------------------
+#
+# A PC names an address in ONE build's instruction stream. The cross-compiled reconstruction of the
+# same routine puts its wait wherever the compiler chose, and moves it with every rebuild — so a
+# Tier 3 row over a routine that busy-waits cannot be keyed on a PC at all. What both builds share is
+# the ADDRESS the wait spins on, because that is the machine's: the ROM reads `_frclock` at $466 and
+# so does the recreate. These cases are driven over `plant_sample_then_spin`, which is that shape.
+
+# The reads the routine makes ABOVE its loop: the one sample every "wait for this to CHANGE" takes
+# before spinning. It is the whole of the offset between the two triggers — a wait released at
+# iteration k is `nth = k + SAMPLE_READS` — and `test_a_read_trigger_is_an_arrival_one_sample_later`
+# is what says so by running both over one routine.
+SAMPLE_READS = 1
+# ...and what an unreleased one reaches: the run executes PROBE_MAX_INSNS - 1 instructions (the first
+# observes the entry PC without executing it), of which the sample is one and the rest are the
+# `cmpi`/`bne` pair.
+UNRELEASED_READS = SAMPLE_READS + (PROBE_MAX_INSNS - 1 - SAMPLE_READS) // 2
+
+
+def test_a_read_trigger_releases_the_wait_at_the_nth_read_of_the_address(cases):
+    """THE CASE THE TRIGGER EXISTS FOR. The store lands before the third READ, which is the second
+    iteration of the spin — the sample above the loop is the first read.
+
+    D1 is the SAMPLE, so it must still be what the byte held on entry: a trigger that fired early
+    enough to change what the routine reported would be describing a different run.
+    """
+    s = scalars(cases, "read_released_at_the_third_read")
+    assert (s["reached"], s["applied"], s["refused"]) == (1, 1, 0)
+    assert s["readsites"] == 1 and s["readsite0"] == _c_define(PROBE_SRC.read_text(), "WATCH_ADDR")
+    assert s["reads0"] == 3, "the run did not read the watched address three times"
+    assert s["d1"] == HELD, "the routine reported something other than the byte it sampled"
+    assert s["sites"] == 0, "a read trigger derives its sites and declares none"
+
+
+def test_a_read_trigger_fires_before_the_value_is_served(cases):
+    """`nth = 1` fires before the SAMPLE — the first read of the address the run makes — and the
+    sample therefore comes back holding the store.
+
+    That is the relation the whole model rests on, at this trigger: the store lands BEFORE the read,
+    exactly as an AT_PC entry lands before the instruction at its site. Fired after, this case would
+    report the old byte and the spin would still be waiting for a store that had already been made.
+    """
+    s = scalars(cases, "read_released_before_the_sample")
+    assert s["reached"] == 1 and s["applied"] == 1
+    assert s["d1"] == WANT, "the store did not land before the read it was scheduled against"
+    assert s["reads0"] == 1 + SAMPLE_READS, "the spin ran more than the one iteration it needed"
+
+
+def test_a_read_trigger_is_an_arrival_one_sample_later(cases):
+    """The two triggers over ONE routine, at the release they both name.
+
+    A read trigger at `nth = k + SAMPLE_READS` and a PC trigger at arrival `k` are the same event,
+    and this is what says so rather than the comment that claims it: the same planted code, the same
+    store, and the two runs required indistinguishable in what they left and what they reported.
+    Without it the offset would be a number in a project's case file that nothing checks.
+    """
+    by_read = scalars(cases, "read_released_at_the_third_read")
+    by_pc = scalars(cases, "released_at_the_second_arrival")
+    assert by_pc["arrivals0"] == by_read["reads0"] - SAMPLE_READS, (
+        "the PC trigger's arrival count is not the read count less the sample, so these two cases "
+        "are not the same release and the comparison below says nothing")
+    for surface in ("reached", "applied", "refused", "d1", "watch"):
+        assert by_read[surface] == by_pc[surface], (
+            f"the same release expressed as a read trigger and as a PC trigger left different "
+            f"{surface}")
+
+
+def test_a_read_nth_the_run_never_reaches_never_comes_due(cases):
+    """...and the reads GO ON BEING COUNTED to the cap, which is what a caller comparing two builds'
+    counts reads. The run ends at the instruction cap with its store unmade, which `emu.run` and
+    `emu.run_bench` both turn into a named refusal rather than a bare overrun."""
+    s = scalars(cases, "read_nth_never_reached")
+    assert (s["reached"], s["applied"]) == (0, 0)
+    assert s["reads0"] == UNRELEASED_READS
+    assert s["watch"] == HELD, "nothing came due, so nothing may have changed the byte"
+
+
+def test_a_read_trigger_on_an_address_the_run_never_reads_never_comes_due(cases):
+    """The read trigger's "trigger PC never reached": the entry names an address this routine does
+    not touch, so its site counts nothing and the wait spins to the cap — with the address the wait
+    is really on counted by nobody, which is exactly why the count that IS kept is the trigger's."""
+    s = scalars(cases, "read_trigger_on_an_address_nothing_reads")
+    assert (s["reached"], s["applied"]) == (0, 0)
+    assert s["readsites"] == 1 and s["reads0"] == 0
+    assert s["watch"] == HELD
+
+
+def test_both_oracle_doors_fire_one_list_at_one_moment(cases):
+    """THE CLAIM A TIER 3 ROW OVER A WAIT RESTS ON, and the reason this pair is in the kit rather
+    than in a project: `emu.run` and `emu.run_bench` are two entry points into one shim, and a
+    project's row runs the ORIGINAL through the first and the cross-compiled build through the
+    second. If the two fired the same list at different moments, the row's second differential would
+    be comparing two runs of different loops — and every surface it compares would still agree,
+    because the store is made from the same list either way.
+
+    The planted code is IDENTICAL in the two cases, so anything that differed here would be the
+    doors' and nothing else.
+    """
+    through_run = scalars(cases, "read_released_at_the_third_read")
+    through_bench = scalars(cases, "bench_read_released_at_the_third_read")
+    for surface in ("reached", "applied", "refused", "readsites", "readsite0", "reads0", "watch"):
+        assert through_run[surface] == through_bench[surface], (
+            f"emu.run and emu.run_bench left different {surface} over one routine and one schedule")
+
+
+def test_a_bench_runs_schedule_does_not_leak_into_the_next(cases):
+    """The per-run reset AT THE BENCH DOOR, driven immediately after a bench run whose entry fired.
+
+    A row is one case; the row after it is another. A list left installed would release the next
+    row's wait at whatever iteration the last one's `nth` named, and the ratio it measured would be
+    of a loop the case never described.
+    """
+    s = scalars(cases, "bench_no_schedule_after_a_scheduled_run")
+    assert (s["count"], s["applied"], s["readsites"]) == (0, 0, 0)
+    assert s["reached"] == 0, "the wait ended with nothing declared — an entry leaked from the run "\
+                              "before, or the routine does not spin"
+    assert s["watch"] == HELD
+
+
+def test_a_bench_run_reports_the_reads_that_never_came_due(cases):
+    """The bench door's own never-came-due surface: the run hit the cap, made its reads, and stored
+    nothing. `emu.run_bench` turns exactly these two numbers into the refusal a caller sees, so that
+    a routine whose wait was never released names that rather than `max_insns`."""
+    s = scalars(cases, "bench_read_nth_never_reached")
+    assert (s["reached"], s["applied"]) == (0, 0)
+    assert s["reads0"] == UNRELEASED_READS
+
+
 def test_the_probe_and_this_suite_agree_on_the_bytes():
     """The named constants above are the probe's own, read out of its source.
 

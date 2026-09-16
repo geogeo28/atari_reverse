@@ -94,6 +94,20 @@ NO_IMAGE_EXPECTED = NO_IMAGE_A + 2 * NO_IMAGE_B
 SUM_A, SUM_B, SUM_C = 0x11, 0x220, 0x3300
 SUM_EXPECTED = SUM_A + 2 * SUM_B + 4 * SUM_C
 
+# The byte `probe_door_then_wait` spins on, and what the schedule stores into it.
+#
+# NOT IN THE IMAGE, which is the one thing about it worth reading twice. A `read` trigger must name
+# an address below `emu.RAM_END` (the machine's RAM, = the project's image size), and `AsmTwins`
+# stages the twin's copy of the image ABOVE that on purpose — see its layout comment. So the address
+# a bench schedule can fire on is in the dead span between the door band and the image, which is
+# also where nothing else in this file writes. `test_a_bench_door_stop_is_not_a_never_came_due`
+# asserts that placement rather than trusting the three numbers to stay in that order.
+WAIT_ADDR = 0x000F8000
+WAIT_RELEASED = 0x01
+# ...and an arrival count no run of it can reach inside SHRUNK_INSN_CAP: the spin is two
+# instructions an iteration, so a cap of 200 buys ~100 reads and this is two orders above it.
+UNREACHABLE_NTH = 10_000
+
 # probe_sum's own instructions: four argument reads, four pushes, the `bsr`, the `lea` that drops the
 # frame and the `rts` — eleven — plus the stub's `jmp`, which really executes and is really charged.
 PROBE_SUM_INSNS = 12
@@ -175,6 +189,21 @@ probe_extend_pair:
     lea     4(%sp),%sp
     move.w  %sr,{EXTEND_SECOND_AT}(%a2)
     movea.l (%sp)+,%a2
+    rts
+
+| long probe_door_then_wait(uint8_t *image) — call the door ONCE, then busy-wait on a byte only the
+| scheduled-write agent can change. The two halves are in this order deliberately: at the door stop
+| the wait has not begun, so nothing has come due yet — which is the state the bench's came-due vet
+| used to be asked about, and reported as a failure.
+    .globl probe_door_then_wait
+probe_door_then_wait:
+    movea.l 4(%sp),%a0
+    move.l  %a0,-(%sp)                | argument 0: the image base
+    bsr.w   door_probe_mark
+    lea     4(%sp),%sp
+.Lprobe_door_then_wait:
+    tst.b   ({WAIT_ADDR:#x}).l        | an address BELOW RAM's end, where a schedule may store
+    beq.s   .Lprobe_door_then_wait
     rts
 
 | long probe_undeclared(uint8_t *image) — a stub whose slot no callback table declares.
@@ -655,6 +684,72 @@ def test_a_stub_reaching_the_band_refuses_even_with_no_table(asm_dir, image):
     twins = AsmTwins(asm_dir, kit_smoke_project.IMAGE_SIZE)
     with pytest.raises(KeyError, match="no callback table entry declares"):
         twins.call(image, "probe_undeclared")
+
+
+def _service_one_door(mem):
+    """Service the callback the run is stopped at, the way `AsmTwins._service_door` does minus the
+    host core: these cases are about the SCHEDULE across the stop, so the answer D0 carries is
+    immaterial and no callback table is needed."""
+    sp = emu.bench_door_sp()
+    return_pc = int.from_bytes(mem[sp:sp + 4], "big")     # the address the twin's `bsr` pushed
+    emu.bench_door_return(0, return_pc, sp + 4)
+
+
+def _run_door_then_wait(twins, mem, nth):
+    """Start `probe_door_then_wait` with a read-triggered store at `nth`. Stops at the door."""
+    return emu.run_bench(mem, twins.entry("probe_door_then_wait"), arg0=twins.image_at,
+                         sp=twins.stack_top, sentinel=twins.sentinel,
+                         door=(asm_twin.DOOR_BASE, asm_twin.DOOR_SPAN),
+                         schedule=[{"read": WAIT_ADDR, "nth": nth, "addr": WAIT_ADDR,
+                                    "width": 1, "value": WAIT_RELEASED}])
+
+
+def test_a_bench_door_stop_is_not_a_never_came_due(asm_dir):
+    """THE SCHEDULE AND THE DOOR IN ONE RUN, which is the shape a twin that calls a host core and
+    then waits on the machine has — and which the came-due vet used to make impossible.
+
+    Checked in `run_bench`, the vet saw only the FIRST segment. A door stop ends that segment with
+    the wait not yet entered and nothing come due, so the run raised "never came due" at the moment
+    it was working exactly as intended; and the segment that really ends the run comes back through
+    `bench_resume`, which the vet never saw at all. Both halves are here: the stop is not a failure,
+    and the resume that follows it does fire the store and reach the sentinel.
+    """
+    assert asm_twin.DOOR_BASE + asm_twin.DOOR_SPAN < WAIT_ADDR < emu.RAM_END, (
+        "the watched byte is not in the dead span between the door band and the image, so it is "
+        "either unreachable by a schedule or aliasing something this run also uses")
+    twins = AsmTwins(asm_dir, kit_smoke_project.IMAGE_SIZE)
+    mem = bytearray(twins._template)      # the class's own layout, not a second derivation of it
+    try:
+        stopped = _run_door_then_wait(twins, mem, nth=1)
+        assert stopped["status"] == emu.BENCH_DOOR
+        assert stopped["sched_applied"] == 0, (
+            "the store came due before the wait was even entered, so this case is not measuring "
+            "the door stop it names")
+
+        _service_one_door(mem)
+        resumed = emu.bench_resume(twins.entry("probe_door_then_wait"), SHRUNK_INSN_CAP)
+    finally:
+        emu.bench_abort()
+    assert resumed["status"] == emu.BENCH_SENTINEL
+    assert resumed["sched_applied"] == 1, "the wait was released by something other than the store"
+    assert mem[WAIT_ADDR] == WAIT_RELEASED
+
+
+def test_a_store_that_never_comes_due_after_a_door_stop_is_named_as_that(asm_dir):
+    """...and the vet still FIRES on the segment that ends the run, which is the half a plain move
+    could have lost. `nth` is past every read the spin makes inside the resume's budget, so the run
+    ends at the instruction cap — and the cause a reader is handed must be the trigger that never
+    arrived, not the cap it then hit."""
+    twins = AsmTwins(asm_dir, kit_smoke_project.IMAGE_SIZE)
+    mem = bytearray(twins._template)
+    try:
+        stopped = _run_door_then_wait(twins, mem, nth=UNREACHABLE_NTH)
+        assert stopped["status"] == emu.BENCH_DOOR
+        _service_one_door(mem)
+        with pytest.raises(RuntimeError, match="never came due"):
+            emu.bench_resume(twins.entry("probe_door_then_wait"), SHRUNK_INSN_CAP)
+    finally:
+        emu.bench_abort()
 
 
 def test_run_bench_without_a_door_is_unchanged(asm_dir):

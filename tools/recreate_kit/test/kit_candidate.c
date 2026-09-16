@@ -163,6 +163,60 @@ void g_io_writes_then_reads(uint8_t *image) {
     io_read8(KIT_SHIFTER_RESOLUTION);
 }
 
+/* ---- the WRITE-THROUGH arm's cores (TRAP_MODEL.md, Phase 15, "The write-through arm") ----
+ * A case may declare an address `write_through`, which says the register LATCHES what is stored and
+ * reads it back: `hw_write8` then replaces what the next `io_read8` of it is served, on BOTH shores.
+ * These are the .PRG's store-and-verify routine and the three ways a port of it goes wrong while
+ * touching no image byte — the class the ordered read stream exists to separate.
+ */
+#define KIT_VIDEO_BASE_MID  0xff8203u   /* the screen address's middle byte: a register that latches */
+#define KIT_LATCHED_BYTE    0x5au       /* ...what the loop stores, and must therefore read back */
+
+/* The faithful reconstruction of the .PRG's loop: store, read back, round again until it agrees.
+ *
+ * BOUNDED, WHERE THE .PRG's IS NOT, and that is the difference between a fixture and a port. The
+ * 68000 side spins forever if the register does not latch, which is what the oracle's instruction
+ * cap is for; this side is C running inside pytest, and a mutation that breaks the write-through arm
+ * on THIS shore would hang the suite instead of reddening it — measured, twice, in this model's own
+ * mutation sweep. The cap is never reached on a correct run (the ledger below carries exactly one
+ * read), so it changes nothing this file is used to measure. */
+#define KIT_VERIFY_PASSES 8
+
+void g_io_stores_and_verifies(uint8_t *image) {
+    (void)image;
+    for (unsigned pass = 0; pass < KIT_VERIFY_PASSES; pass++) {
+        hw_write8(KIT_VIDEO_BASE_MID, KIT_LATCHED_BYTE);
+        if (io_read8(KIT_VIDEO_BASE_MID) == KIT_LATCHED_BYTE)
+            return;
+    }
+    os_refused(0);      /* the register never agreed: throw the case away rather than spin */
+}
+
+/* MUTANT: it stores and never reads back, which is what a port that "knows" what the register will
+ * hold looks like. The store ledger agrees entry for entry; the read stream is empty where the
+ * oracle's carries the verify. */
+void g_io_stores_without_verifying(uint8_t *image) {
+    (void)image;
+    hw_write8(KIT_VIDEO_BASE_MID, KIT_LATCHED_BYTE);
+}
+
+/* MUTANT: it reads the register BEFORE it stores, so it is served the byte the case declared the
+ * machine held on ENTRY where the original was served what it had just written. Same address, same
+ * width, same store — only the ledger's VALUE separates it, and only because the byte latched. */
+void g_io_verifies_before_it_stores(uint8_t *image) {
+    (void)image;
+    io_read8(KIT_VIDEO_BASE_MID);
+    hw_write8(KIT_VIDEO_BASE_MID, KIT_LATCHED_BYTE);
+}
+
+/* MUTANT: it stores a DIFFERENT byte, which the register then latches — so one wrong store moves
+ * the write ledger's value and the read ledger's together. */
+void g_io_stores_another_value(uint8_t *image) {
+    (void)image;
+    hw_write8(KIT_VIDEO_BASE_MID, KIT_LATCHED_BYTE ^ 0xff);
+    io_read8(KIT_VIDEO_BASE_MID);
+}
+
 /* A candidate that reads no declared I/O byte at all: for the ABI case, and for the mutant that
  * hardcodes what it should have read. */
 void g_io_untouched(uint8_t *image) {

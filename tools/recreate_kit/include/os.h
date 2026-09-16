@@ -782,6 +782,23 @@ static inline uint32_t os_hw_slots_touched(uint32_t addr, uint32_t n) {
  * changes mid-run by construction. An undeclared byte is unchanged: the silent 0 an off-image read
  * has always answered, counted, and refused in ROM mode by harness._vet_rom_io_reads_are_modelled.
  *
+ * ...WITH ONE OPT-IN PER ADDRESS: THE WRITE-THROUGH BYTE. A declaration marked OS_IO_WRITE_THROUGH
+ * says the register LATCHES what the run stores to it and reads that back unchanged, so a store
+ * REPLACES the byte later reads are served instead of making the declaration stale. It is still a
+ * per-run constant until the run's own instruction changes it, and the value it changes to is one
+ * the run itself produced — identically on both shores — so nothing is fabricated. That is what
+ * lets a routine write a register and read it back be an ordinary differential: the MFP's mask,
+ * enable, vector and (stopped-)timer data registers, which is most of what a BIOS does to the chip.
+ * An UNMARKED declaration keeps the staleness rule verbatim.
+ *
+ * IT IS A CLAIM ABOUT THE REGISTER, AND IT IS THE CASE'S TO GET WRONG. TRAP_MODEL.md, "Phase 15"
+ * ("The honest limit of a write-through byte") is the table of where it fails: a RUNNING timer's
+ * data register reads the live counter rather than the reload latch; the FDC's status register is a
+ * sequence and not a byte at all; a write-to-clear register (the MFP's IPR/ISR) reads back the
+ * store only while every store is a pure clear; and NONE of it holds on a machine live enough for
+ * something to arrive between the write and the read. Marking one of those is a wrong claim in
+ * writing, which is the most this model can offer: it cannot check a claim about hardware.
+ *
  * WHAT IS NOT SEEDABLE. Each exclusion is structural rather than a matter of taste, and the
  * argument for each is made ONCE in TRAP_MODEL.md, "Phase 15" ("What may NOT be declared, and why
  * each exclusion is structural"); what follows is that table in one sentence apiece:
@@ -812,6 +829,12 @@ static inline uint32_t os_hw_slots_touched(uint32_t addr, uint32_t n) {
  * and compare equal, exactly as they did before this model existed. An UNDECLARED read is not a
  * ledger entry — it is the unmodeled-read tally's business, and its remedy is a declaration. */
 #define OS_IO_LOG_MAX  4096
+/* What one declaration's WRITE-THROUGH flag holds. Two named values rather than a bare 0/1, because
+ * the flag column is a parallel array on both ABIs and `1` in a call site says nothing about which
+ * of the two claims a case is making. `emu.py` mirrors these (`os_map.py`), pinned equal by
+ * test_os_memory_map.py. */
+#define OS_IO_DECLARED_CONSTANT 0   /* the byte the machine held on ENTRY; a store makes it stale */
+#define OS_IO_WRITE_THROUGH     1   /* ...and a register that LATCHES a store and reads it back */
 
 /* Is `bus_addr` in the memory-mapped I/O page at all? The 24-bit bus form, as everything in this
  * model is: the oracle folds an access before it decodes, and a reconstruction spells the canonical
@@ -869,16 +892,71 @@ static inline int os_io_find(const uint32_t *addrs, uint32_t n, uint32_t addr) {
  * is what both callers report: emu.py raises on it and the candidate charges os_refused(), so a map
  * that did not fit is loud rather than a run served fewer bytes than the case declared. */
 static inline uint32_t os_io_install_seed(uint32_t *dst_addrs, uint8_t *dst_values,
-                                          const uint32_t *addrs, const uint8_t *values, uint32_t n) {
+                                          uint8_t *dst_writeback,
+                                          const uint32_t *addrs, const uint8_t *values,
+                                          const uint8_t *writeback, uint32_t n) {
     uint32_t installed = 0;
     for (uint32_t i = 0; i < n && installed < OS_IO_SEED_MAX; i++) {
         if (!os_io_seedable(addrs[i]) || os_io_find(dst_addrs, installed, addrs[i]) >= 0)
             continue;
         dst_addrs[installed] = addrs[i];
         dst_values[installed] = values[i];
+        dst_writeback[installed] = writeback ? writeback[i] : OS_IO_DECLARED_CONSTANT;
         installed++;
     }
     return installed;
+}
+
+/* WHAT A RUN IS SERVED FROM, at the top of every run: the declared bytes, copied.
+ *
+ * The map itself is the CASE's and survives a run; what a write-through store changes is this copy,
+ * so two runs given one declaration start identical whatever the first of them stored.
+ *
+ * THE ORACLE'S ALONE. It keeps the declaration and the live copy apart because a run there is
+ * installed once and entered several times — the poison re-run, a resumed bench segment — so "the
+ * case's map" and "what this run has stored" have to be two arrays. The candidate gets the same
+ * guarantee from its one entry point: `g_io_reset` runs before EVERY candidate run and re-installs
+ * the declaration straight into its live bytes (src/hw.c). */
+static inline void os_io_enter_run(uint8_t *live, const uint8_t *declared, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++)
+        live[i] = declared[i];
+}
+
+/* APPLY A `width`-BYTE STORE OF `value` AT `addr` TO A DECLARED MAP OF `n` ENTRIES. Per byte, in
+ * the 68000's big-endian order, because a wide store can straddle a write-through declaration and
+ * an ordinary one and each byte gets its own answer:
+ *
+ *    - the address is declared WRITE-THROUGH — `live` now holds the byte stored, and every later
+ *      read of the address is served it;
+ *    - the address is declared as a per-run CONSTANT — the declaration describes what the machine
+ *      held on ENTRY and the run has replaced it, so it is STALE, which is noted in `written`;
+ *    - the address is in no declaration at all, which is no business of this model's.
+ *
+ * `written` is the staleness column, or NULL for a caller that keeps none: only the ORACLE's tally
+ * feeds a refusal (harness._vet_io_reads_are_declared reads the oracle's report), so the candidate
+ * passes NULL rather than carrying a second array nothing reads.
+ *
+ * ONE RULE, BOTH SHORES — the WHOLE store, not just one byte of it, so that neither the per-byte
+ * decision nor the order the bytes are walked in can be spelt differently on the two sides. That is
+ * os_io_install_seed's reason with a sharper failure: were the shim to latch a store the candidate's
+ * `hw_write8` did not, the two would serve different bytes for the same read and the mismatch would
+ * read as a reconstruction bug. The STORE ITSELF is still dropped and still ledgered by Phase 10 on
+ * both sides — this changes what a later READ answers, nothing about what a write does. */
+static inline void os_io_store(const uint32_t *addrs, uint32_t n, const uint8_t *writeback,
+                               uint8_t *live, uint8_t *written, uint32_t addr, uint32_t width,
+                               uint32_t value) {
+    for (uint32_t i = 0; i < width; i++) {
+        int entry = os_io_find(addrs, n, addr + i);
+        if (entry < 0)
+            continue;
+        uint8_t byte = (uint8_t)(value >> (8 * (width - 1 - i)));
+        if (writeback[entry] != OS_IO_WRITE_THROUGH) {
+            if (written)
+                written[entry] = 1;
+            continue;
+        }
+        live[entry] = byte;
+    }
 }
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
@@ -1376,8 +1454,10 @@ static inline int os_in_image(uint32_t addr, uint32_t count) {
  *
  * ONE ENCODING FOR BOTH SIDES, `OS_SCHED_FIELDS` uint32s per entry, flattened:
  *
- *   [OS_SCHED_F_KIND]    OS_SCHED_AT_PC or OS_SCHED_AT_INSN — what the trigger counts
- *   [OS_SCHED_F_TRIGGER] the PC to arrive at, or the instruction index to reach (1-based)
+ *   [OS_SCHED_F_KIND]    OS_SCHED_AT_PC, OS_SCHED_AT_INSN or OS_SCHED_AT_READ — what the trigger
+ *                        counts
+ *   [OS_SCHED_F_TRIGGER] the PC to arrive at, the instruction index to reach (1-based), or the
+ *                        ADDRESS whose reads are counted ("READ TRIGGERS" below)
  *   [OS_SCHED_F_NTH]     which arrival fires it (1 = the first); AT_INSN ignores it
  *   [OS_SCHED_F_ADDR]    where the agent stores
  *   [OS_SCHED_F_WIDTH]   1, 2 or 4 bytes, big-endian
@@ -1411,6 +1491,9 @@ static inline int os_in_image(uint32_t addr, uint32_t count) {
 #define OS_SCHED_AT_PC    0u     /* fire before the NTH execution of the instruction at TRIGGER */
 #define OS_SCHED_AT_INSN  1u     /* fire before the run's TRIGGERth instruction, 1 = the first
                                   * (oracle only: the candidate counts polls, not instructions) */
+#define OS_SCHED_AT_READ  2u     /* fire before the NTH READ OF THE ADDRESS in TRIGGER — see
+                                  * "READ TRIGGERS" below (oracle only, and the one trigger both of
+                                  * the oracle's DOORS can fire the same store from) */
 
 /* Copy `n` entries of the flattened array into `dst`, clamped to OS_SCHED_MAX; return how many were
  * kept. The two sides share this for os_sched_store's reason — the STRIDE and the drop policy must
@@ -1476,14 +1559,79 @@ static inline uint32_t os_sched_install_sites(uint32_t *dst, const uint32_t *sit
     return kept;
 }
 
-/* Where `pc` sits in the run's declared site list, or OS_SCHED_NO_SITE. Shared so that "which wait
- * is this" is answered identically on both shores — the two counters being compared are only
- * comparable while they are keyed the same way. */
-static inline uint32_t os_sched_site_index(const uint32_t *sites, uint32_t n, uint32_t pc) {
+/* Where `key` sits in the run's site list, or OS_SCHED_NO_SITE. Shared so that "which wait is this"
+ * is answered identically on both shores — the two counters being compared are only comparable while
+ * they are keyed the same way. `key` is a PC for the declared wait sites above and a READ ADDRESS
+ * for the derived read sites below; the search is the same and the two lists are separate arrays,
+ * so an address that happens to equal a PC cannot be looked up in the wrong one. */
+static inline uint32_t os_sched_site_index(const uint32_t *sites, uint32_t n, uint32_t key) {
     for (uint32_t i = 0; i < n; i++)
-        if (sites[i] == pc)
+        if (sites[i] == key)
             return i;
     return OS_SCHED_NO_SITE;
+}
+
+/* ---- READ TRIGGERS: an arrival is a READ OF AN ADDRESS, not an execution of a PC ---------------
+ *
+ * THE TRIGGER FOR A RUN OF COMPILED CODE CANNOT BE A PC. An AT_PC entry names an address in the
+ * ORIGINAL's instruction stream, which is fixed and readable in the disassembly. The same wait
+ * cross-compiled from the reconstruction's C lands wherever the compiler put it and MOVES with every
+ * recompile, so the bench door (`osh_run_bench`) has no PC a case could name — and a case that named
+ * one would measure whichever routine happened to be at that address next. A `nth` INSTRUCTION index
+ * is worse: the two sides execute different instructions.
+ *
+ * What both sides DO share is the address the wait spins on. It is the machine's, not either build's
+ * — the ROM reads `_frclock` at $466 and so does the recreate, because that is where the VBL handler
+ * writes it — so an entry that fires before the NTH READ OF THAT ADDRESS is one list, one store and
+ * one moment at BOTH doors. Musashi's read callbacks see every access, so counting costs the
+ * measured code nothing: no instruction is added to the loop, which a `jsr` to a host counter would
+ * do, and an inflated loop is a mispriced routine.
+ *
+ *   * TRIGGER is the ADDRESS, and NTH counts reads AT it (1 = the first read the run makes).
+ *   * A READ AT the address counts, at any width: the callbacks are keyed by the address the
+ *     instruction names, so a longword read at the address counts once and a byte read of the byte
+ *     ABOVE it counts not at all. That is what makes the count the same on two builds that reach the
+ *     same longword through different code.
+ *   * THE SITES ARE DERIVED, not declared: they are the distinct TRIGGER addresses of the run's own
+ *     AT_READ entries (`os_sched_read_sites`), in first-appearance order. There is nothing for a
+ *     case to get wrong and nothing that can go uncounted, because an address nothing stores on has
+ *     no wait for the counts to be compared over.
+ *   * A WAIT'S READS ARE NOT ONLY ITS LOOP'S. A routine that samples the address once before the
+ *     loop — which is the shape of every "wait for this to CHANGE" — reads it once more than it
+ *     spins, so `nth` for a wait released at iteration k is k + 1. That offset is a fact about the
+ *     routine and belongs in the case that declares it, pinned rather than assumed.
+ *
+ * THE CANDIDATE HAS NO READ COUNTER, so a differential refuses an AT_READ entry exactly as it
+ * refuses an AT_INSN one (`harness._vet_schedule_is_runnable`): this trigger is for the ORACLE's two
+ * doors, where both sides are real 68000 code. What keeps a bench row honest instead is the
+ * comparison of the two runs' READ COUNTS at each site (`rom_bench`), which is the read trigger's
+ * version of the per-site arrival/poll comparison above: the store lands on both sides from the same
+ * list, so a build that spun a different number of times ends with identical memory and is separable
+ * by nothing else. */
+#define OS_SCHED_READ_MAX 4      /* distinct addresses one run's read triggers may name */
+
+/* The distinct AT_READ trigger addresses of `n` installed entries, in first-appearance order,
+ * clamped to OS_SCHED_READ_MAX; returns how many were kept.
+ *
+ * DERIVED FROM THE ENTRIES so that the counting and the firing cannot describe different addresses —
+ * the reason the PC sites are a declaration at all is that a run may POLL at a site nothing stores
+ * on, and a read trigger has no such shape. Both callers report the kept count, which the Python
+ * side checks against the distinct addresses it sent: an address past the clamp would leave its
+ * entry unable to come due, which reads as a wait that never ended. */
+static inline uint32_t os_sched_read_sites(uint32_t *dst, const uint32_t entries[][OS_SCHED_FIELDS],
+                                           uint32_t n) {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (entries[i][OS_SCHED_F_KIND] != OS_SCHED_AT_READ)
+            continue;
+        uint32_t addr = entries[i][OS_SCHED_F_TRIGGER];
+        if (os_sched_site_index(dst, kept, addr) != OS_SCHED_NO_SITE)
+            continue;
+        if (kept == OS_SCHED_READ_MAX)
+            continue;
+        dst[kept++] = addr;
+    }
+    return kept;
 }
 
 /* Store `value` at `addr` in the `size`-byte `image`, big-endian, at 1/2/4 bytes — the agent's write,

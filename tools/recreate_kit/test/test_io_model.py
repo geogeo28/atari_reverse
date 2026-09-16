@@ -154,6 +154,38 @@ ORACLE_CASES = {
     "after_the_write_the_next_run_is_clean": dict(
         scalars=_scalars(d1=RESOLUTION_MONO, nlog=1),
         ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # THE WRITE-THROUGH ARM. A marked declaration says the register LATCHES what the run stores and
+    # reads it back, so the store REPLACES what a later read is served — which is how a routine that
+    # writes a register and re-reads it becomes an ordinary differential instead of the staleness
+    # refusal above. Nothing is fabricated by it: the byte served is one the run itself produced,
+    # identically on both shores. `stale` stays 0, which is the row's other half — a marked byte is
+    # not a declaration the run invalidated.
+    "write_through_read_back": dict(scalars=_scalars(d1=OTHER_BYTE, nlog=1),
+                                    ledger=[(SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # ...and a marked byte the run never stores to is an ORDINARY declaration, served the byte the
+    # case declared. It is also the per-run reset, over the run that follows the store above: the
+    # live byte is re-copied from the declaration at the top of every run, so one case's store
+    # cannot reach the next — under `pytest -n auto`, unpredictably which.
+    "write_through_never_stored_reads_the_declaration": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, nlog=1),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # ...and the STORE-AND-VERIFY loop the arm exists for, which is the MFP timer programmer's own
+    # shape: store, read back, go round again until the chip agrees. ONE read in the ledger is the
+    # claim — the loop ran once — and it is what pins a reconstruction's loop SHAPE to the ROM's:
+    # one that read twice, or that never read, produces a different stream. Undeclared the compare
+    # can never come true and the run dies at the instruction cap; declared as a per-run CONSTANT it
+    # dies there too. Terminating at all is the arm's doing.
+    "write_through_store_and_verify_loop": dict(scalars=_scalars(d1=0, nlog=1),
+                                                ledger=[(SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # ...and a WIDE store straddling a MARKED byte and an unmarked one. Each covered byte gets its
+    # own answer — the marked half latches, the unmarked half keeps its declaration AND goes stale —
+    # so the word read after it is half what the run wrote and half what the case declared. A store
+    # that latched the whole access would serve both halves the written word and the staleness tally
+    # would be empty; both halves of that are measured here.
+    "a_wide_store_straddles_a_marked_byte_and_an_unmarked_one": dict(
+        scalars=_scalars(d1=OTHER_BYTE << 8 | PALETTE_LO_BYTE, declared=2, stale=1,
+                         stale_first=PALETTE_0_LO, nlog=1),
+        ledger=[(PALETTE_0_HI, WORD, OTHER_BYTE << 8 | PALETTE_LO_BYTE)]),
     # PRECEDENCE, and the whole of what "must not be double-modelled" means: a Phase-7 named slot
     # offered here is NOT installed (four of the five declarations land), and a read of it still
     # reaches Phase 7 — `hw_unseeded` names it and the NAMED set's ledger has the entry, while this
@@ -162,6 +194,11 @@ ORACLE_CASES = {
     "named_slot_is_not_shadowed": dict(scalars=_scalars(d1=FABRICATED, hw_unseeded=1 << 0,
                                                         hw_nlog=1),
                                        ledger=[]),
+    # ...and a WRITE-THROUGH mark buys no admission. The same five declarations with the named slot
+    # marked still install four, so a case cannot reach past `os_io_seedable` by claiming a register
+    # latches — the mark qualifies a declaration this model accepted, it does not make one.
+    "a_named_slot_marked_write_through_is_still_not_installed": dict(
+        scalars=_scalars(d1=FABRICATED, hw_unseeded=1 << 0, hw_nlog=1), ledger=[]),
     # ...and the same for the YM2149's block, which Phase 6 owns along with two refusals of its own.
     # Only the INSTALL is measured here: what a read of the chip's ports does is another model's
     # subject, and this row's claim is that such a byte never enters this map at all.
@@ -257,6 +294,37 @@ CANDIDATE_CASES = {
     "cand_declaration_does_not_leak": dict(scalars={"d1": 0, "refusals": 1, "declared": 0,
                                                     "nlog": 0},
                                            ledger=[]),
+    # The WRITE-THROUGH arm on the candidate shore, which must serve what the oracle's rows above
+    # serve: `cand_write_through_read_back`'s entry is `write_through_read_back`'s, byte for byte
+    # (`test_the_two_sides_serve_the_same_byte_for_the_same_declaration` compares them).
+    "cand_write_through_read_back": dict(scalars={"d1": OTHER_BYTE, "refusals": 0,
+                                                  "declared": ALL_DECLARED, "nlog": 1},
+                                         ledger=[(SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # ...and a marked byte never stored to is an ordinary declaration on this side too.
+    "cand_write_through_never_stored": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0,
+                                                     "declared": ALL_DECLARED, "nlog": 1},
+                                            ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # MUTANT: it reads BEFORE it stores, so it is served the ENTRY byte where the original was
+    # served what it had just written — which is exactly what a port written against the model
+    # WITHOUT this arm does. Same address, same width, same store: only the VALUE separates it.
+    "cand_write_through_read_before_store": dict(
+        scalars={"d1": RESOLUTION_MONO, "refusals": 0, "declared": ALL_DECLARED, "nlog": 1},
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # MUTANT: it stores a DIFFERENT byte, which the register latches — so one wrong store moves both
+    # the write ledger's value and the read ledger's.
+    "cand_write_through_stores_another_value": dict(
+        scalars={"d1": RESOLUTION_MONO, "refusals": 0, "declared": ALL_DECLARED, "nlog": 1},
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # ...and the SAME store against an UNMARKED declaration keeps today's rule verbatim: the read is
+    # served the byte the case declared, on both shores, and the refusal is the harness's on the
+    # oracle's staleness tally. This is the row that says the arm is opt-in per address.
+    "cand_unmarked_write_then_read": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0,
+                                                   "declared": ALL_DECLARED, "nlog": 1},
+                                          ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # ...and the WIDE store straddling the two rules: half latched, half declared.
+    "cand_wide_store_straddle": dict(
+        scalars={"d1": OTHER_BYTE << 8 | PALETTE_LO_BYTE, "refusals": 0, "declared": 2, "nlog": 1},
+        ledger=[(PALETTE_0_HI, WORD, OTHER_BYTE << 8 | PALETTE_LO_BYTE)]),
     # ...and a declaration os.h's rule REJECTED charges a refusal on this side too — offered with
     # the four ordinary ones, so "four of five installed" is the measurement rather than "none of
     # one" — which is what stops a case that bypassed `emu.seed_split` from running against a map
@@ -332,6 +400,14 @@ def test_the_two_sides_serve_the_same_byte_for_the_same_declaration(probe):
     assert (probe["long_read_all_four_declared"]["ledger"] == probe["cand_long_read"]["ledger"]), (
         "the oracle's long read and the candidate's io_read32 produced different entries, so a "
         "faithful reconstruction of a `move.l` would red against a correct oracle")
+    assert (probe["write_through_read_back"]["ledger"]
+            == probe["cand_write_through_read_back"]["ledger"]), (
+        "the oracle latched a store the candidate's hw_write8 did not (or the other way round) — a "
+        "faithful reconstruction of a store-and-verify loop would red against a correct oracle, and "
+        "the WRITE-THROUGH column is the one rule the two shores must decode alike")
+    assert (probe["a_wide_store_straddles_a_marked_byte_and_an_unmarked_one"]["ledger"]
+            == probe["cand_wide_store_straddle"]["ledger"]), (
+        "the two shores split a wide store across the marked and unmarked halves differently")
 
 
 def test_the_wrong_address_mutant_differs_from_a_correct_run_only_in_the_ledger(probe):
@@ -348,6 +424,27 @@ def test_the_wrong_address_mutant_differs_from_a_correct_run_only_in_the_ledger(
     assert right["ledger"] != wrong["ledger"], (
         "a candidate reading the WRONG declared address produced the same ledger as a correct one — "
         "nothing in a differential could tell them apart")
+
+
+def test_the_mark_is_what_changes_the_byte_a_read_back_is_served(probe):
+    """The arm's whole claim, as the relation no single row states: ONE candidate body, TWO
+    declarations, two different answers.
+
+    `cand_write_through_read_back` and `cand_unmarked_write_then_read` run the SAME store-then-read
+    core against the same four addresses and the same four bytes; the only difference is the
+    write-through column. Marked, the read is served what the core stored; unmarked, it is served
+    what the case declared — which is the behaviour every existing case keeps, and is why adding the
+    arm changed no project's suite.
+    """
+    marked, unmarked = probe["cand_write_through_read_back"], probe["cand_unmarked_write_then_read"]
+    assert marked["scalars"]["nlog"] == unmarked["scalars"]["nlog"] == 1, (
+        "the two cases no longer make one read each, so they are not the same core any more")
+    assert marked["ledger"] != unmarked["ledger"], (
+        "the write-through column changed nothing about what a read back is served — the arm is "
+        "not load-bearing, and every case above would pass without it")
+    assert unmarked["ledger"] == probe["cand_declared_read"]["ledger"], (
+        "an UNMARKED declaration no longer serves the byte the case declared, so the arm is not "
+        "opt-in per address and every already-ported project's map has changed meaning")
 
 
 def test_the_probe_addresses_are_the_registers_they_name():

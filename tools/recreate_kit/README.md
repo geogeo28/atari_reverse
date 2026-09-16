@@ -283,13 +283,14 @@ candidate starts accessing one of them, and each distinct waiver is recorded in
 `harness.HW_WAIVERS`. The whole contract, including the read-modify-write residual and why the
 default is ON, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 10".
 
-The **DECLARED I/O MAP** ships in the same two files, and is the same group's last three rows:
+The **DECLARED I/O MAP** ships in the same two files, and is the same group's last four rows:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
 | `io_read8` / `io_read16` / `io_read32` | `uint8_t(uint32_t)` / `uint16_t(uint32_t)` / `uint32_t(uint32_t)` | what a reconstruction calls where the original reads an I/O byte the CASE declares by address — one call per instruction, at the instruction's own width |
-| `g_io_reset` | `void(const uint32_t *addrs, const uint8_t *values, uint32_t n)` | install the case's map + clear the ledger, before each candidate run |
+| `g_io_reset` | `void(const uint32_t *addrs, const uint8_t *values, const uint8_t *writeback, uint32_t n)` | install the case's map (`writeback` = os.h's `OS_IO_WRITE_THROUGH` per address) + clear the ledger, before each candidate run |
 | `g_io_seed_count` / `g_io_log_count` / `g_io_log_addrs` / `g_io_log_widths` / `g_io_log_vals` | | the map's size, and the ordered SERVED-read stream: one `(address, width, value)` per read |
+| `g_io_writeback_count` | `uint32_t(void)` | how many installed entries the case marked `OS_IO_WRITE_THROUGH` — the one surface that says the candidate built the writeback COLUMN and not just the addresses, and the NEWEST name in the probed group, so an `.so` predating `g_io_reset`'s fourth argument fails the probe instead of being called with it |
 
 The named set above is one `os.h` slot per address, which is the right shape for a game and a
 bottleneck for an operating system — TOS's BIOS and XBIOS touch most of the machine. So a case may
@@ -877,7 +878,7 @@ through `emu.run_bench` over the same case. Two costs, one instrument, one image
 
 | | |
 |---|---|
-| `rom_bench.py` | loads a project's cross-compiled blob and runs one core: `RomBench().measure(entry, symbol, args=…, regs=…, pokes=…, psg_seed=…, hw_seed=…, io_seed=…, returns=…)` → a `Measurement` whose `.ratio` is `recreate / original`. The seed set is `harness.differential`'s, so a case runnable there is runnable here. `measure_transcription(caller, symbol, regs, …)` is the same for a `src/**/*.S` routine, held to the WHOLE register file instead of a return value: both sides are entered at a CALLER the case staged, and each reaches its own handler through `abi.FIRST_ARG` — `staged_entry` comes off the ORIGINAL's column (what its run spends getting there and ours never pays) and `shared_entry` off BOTH (the staged caller they run identically). `_bench_io_seed` is how one `io_seed` reaches two models: the Phase-7 NAMED half is already armed by the ORIGINAL's `emu.run` and persists, so our run is handed only the rest — without the split a core that reads a named slot could not be measured at all |
+| `rom_bench.py` | loads a project's cross-compiled blob and runs one core: `RomBench().measure(entry, symbol, args=…, regs=…, pokes=…, psg_seed=…, hw_seed=…, io_seed=…, returns=…, schedule=…)` → a `Measurement` whose `.ratio` is `recreate / original`. The seed set is `harness.differential`'s, so a case runnable there is runnable here. `measure_transcription(caller, symbol, regs, …)` is the same for a `src/**/*.S` routine, held to the WHOLE register file instead of a return value: both sides are entered at a CALLER the case staged, and each reaches its own handler through `abi.FIRST_ARG` — `staged_entry` comes off the ORIGINAL's column (what its run spends getting there and ours never pays) and `shared_entry` off BOTH (the staged caller they run identically). `_bench_io_seed` is how one `io_seed` reaches two models: the Phase-7 NAMED half is already armed by the ORIGINAL's `emu.run` and persists, so our run is handed only the rest — without the split a core that reads a named slot could not be measured at all |
 | `kit.mk`'s `$(BENCH_ELF)` / `$(BENCH_BIN)` | compiles `src/**/*.c` **and `src/**/*.S`** (both depths, the same sweep) plus `bench/entry_probe.c` with `m68k-elf-gcc`, linked at `bench_base`, and makes `test` and `guarded` depend on the blob so a gate cannot run against a stale one |
 | `bench/entry_probe.c` | one empty function, so the oracle's own entry overhead is MEASURED rather than declared |
 
@@ -917,6 +918,22 @@ so a row is never measured over a run the model answered with something it inven
 ledger that silently truncated. Measured sharp: a one-line mutation of a core reddens on the image, a
 target-only mutation of a `psg.h` shadow reddens on the return value, and a shadow reading the wrong
 port reddens as an unmodelled I/O read naming `$ff8802`.
+
+**A ROUTINE THAT BUSY-WAITS IS MEASURABLE, and its row has a cross-check of its own.** `schedule=`
+carries the SCHEDULED WRITE model (Phase 8) to both doors of one case — the agent's store is what
+ends the wait, and without it neither the ROM's loop nor the cross-compiled build's would return. Its
+entries must be **READ triggers**, keyed to the ADDRESS the wait spins on rather than to a PC:
+`$fc07dc` is an instruction in the ROM and the blob's own spin is wherever the compiler put it, while
+`_frclock` is the machine's and identical on both sides. `run_bench` refuses a `pc` or `insn` entry by
+name, and an entry that never comes due raises naming the reads each side made rather than spending
+`max_insns`. The row's own honesty is `_vet_same_wait`: the store lands from one list at both doors,
+so a build that spun a different number of times leaves the same image, return value, register file
+and streams — the READ COUNT at each site is what separates them, and it is Tier 1's arrivals-against-
+polls comparison in the one shape a compiled build can be held to. Measured: with a target-only
+`sched.h` shadow reading twice per iteration, the row at an ODD arrival count is caught by that count
+alone (4 reads against 5) with the ratio under the bar, and the row at an EVEN one survives
+everything — which is Phase 8's documented aliasing hole, and why a wait is priced at more than one
+`nth`.
 
 **The entry overhead is measured AND the probe is checked**: the empty function must have executed
 the reset's phantom instruction and its own `rts` and nothing else, or the overhead every ratio is

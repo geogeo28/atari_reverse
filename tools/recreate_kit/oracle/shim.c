@@ -163,6 +163,15 @@ static uint32_t g_sched_sites[OS_SCHED_SITE_MAX];
 static uint32_t g_sched_site_n;
 static uint32_t g_sched_site_arrivals[OS_SCHED_SITE_MAX];
 
+/* ...AND THE READ SITES (os.h, "READ TRIGGERS"), which are the other kind of arrival: the distinct
+ * ADDRESSES this run's AT_READ entries name, DERIVED from the entries rather than declared, and the
+ * count of reads the run made at each. They are a separate array from the PC sites above because
+ * they key a different thing — an address the machine reads, not an instruction it executes — and an
+ * address that happened to equal a wait's PC would otherwise share its counter. */
+static uint32_t g_sched_reads[OS_SCHED_READ_MAX];
+static uint32_t g_sched_read_n;
+static uint32_t g_sched_read_arrivals[OS_SCHED_READ_MAX];
+
 /* Install the run's schedule: the entries AND the wait sites their triggers name, as one
  * declaration, because an AT_PC entry whose trigger is not a declared site can never come due.
  * Entries past OS_SCHED_MAX (and sites past OS_SCHED_SITE_MAX) are DROPPED and reported through
@@ -170,13 +179,52 @@ static uint32_t g_sched_site_arrivals[OS_SCHED_SITE_MAX];
  * (`_install_schedule`): silently carrying fewer than the case declared would leave the wait loop
  * spinning to the instruction cap with no cause named.
  *
- * NEITHER LIST IS PER-RUN STATE and sched_enter_run does not clear them — only the counters. What
- * makes a schedule not leak into the next case is that emu.run calls this before EVERY run, an
- * empty one included; a C caller that drives osh_run directly (the probes in ../test) inherits
- * whatever the last install left and must install its own, empty or not. */
+ * The READ SITES are DERIVED here rather than passed, from the entries just installed (os.h, "READ
+ * TRIGGERS"): an AT_READ entry's trigger IS its site, so there is nothing for a caller to declare.
+ *
+ * NONE OF THE THREE LISTS IS PER-RUN STATE and sched_enter_run does not clear them — only the
+ * counters. What makes a schedule not leak into the next case is that emu.run calls this before
+ * EVERY run, an empty one included; a C caller that drives osh_run directly (the probes in ../test)
+ * inherits whatever the last install left and must install its own, empty or not. */
 void osh_schedule(const uint32_t *entries, uint32_t n, const uint32_t *sites, uint32_t site_n) {
     g_sched_n = os_sched_install(g_sched, entries, n);
     g_sched_site_n = os_sched_install_sites(g_sched_sites, sites, site_n);
+    g_sched_read_n = os_sched_read_sites(g_sched_reads, g_sched, g_sched_n);
+}
+
+/* Make entry `i`'s store, once, and tally it. Shared by the two firing paths — the instruction loop's
+ * and the read callbacks' — so that "what an entry does when it comes due" is one decision however
+ * it was triggered.
+ *
+ * BOUNDED BY RAM, NOT BY THE IMAGE. Off ROM mode the two are the same number; in it the image spans
+ * the I/O page and the ROM, and an agent store aimed at either would land in bytes no read ever looks
+ * at (the I/O decode answers those addresses) or scribble on the read-only ROM. The candidate's twin
+ * bounds the same store against OS_IMAGE_SIZE, which is the machine's RAM there, so this is also what
+ * keeps the two sides storing the same set. */
+static void sched_apply(uint32_t i) {
+    g_sched_fired[i] = 1;
+    if (os_sched_store(g_mem, g_ram_end, g_sched[i][OS_SCHED_F_ADDR],
+                       g_sched[i][OS_SCHED_F_WIDTH], g_sched[i][OS_SCHED_F_VALUE]))
+        g_sched_applied++;
+    else
+        g_sched_refused++;
+}
+
+/* Apply every READ-TRIGGERED entry this read of `addr` brings due, before the value is served — so
+ * an entry with nth = 1 lands before the very first read of the address sees anything (os.h, "READ
+ * TRIGGERS"). Called from the read callbacks, which see EVERY access the machine makes at that
+ * address: the instruction that spins on it, the one that sampled it before the loop, and a fetch, if
+ * a case ever aimed a trigger at an address the run also executes. */
+static void sched_read_fire(uint32_t addr) {
+    uint32_t site = os_sched_site_index(g_sched_reads, g_sched_read_n, addr);
+    if (site == OS_SCHED_NO_SITE)
+        return;
+    uint32_t arrival = ++g_sched_read_arrivals[site];
+    for (uint32_t i = 0; i < g_sched_n; i++)
+        if (!g_sched_fired[i] && g_sched[i][OS_SCHED_F_KIND] == OS_SCHED_AT_READ
+                && g_sched[i][OS_SCHED_F_TRIGGER] == addr
+                && arrival == g_sched[i][OS_SCHED_F_NTH])
+            sched_apply(i);
 }
 
 /* Apply every entry the instruction about to run brings due. Called once per instruction, BEFORE it
@@ -195,24 +243,17 @@ static void sched_fire(uint32_t pc, uint32_t insn_index) {
     }
     for (uint32_t i = 0; i < g_sched_n; i++) {
         int due;
-        if (g_sched[i][OS_SCHED_F_KIND] == OS_SCHED_AT_PC)
+        uint32_t kind = g_sched[i][OS_SCHED_F_KIND];
+        if (kind == OS_SCHED_AT_PC)
             due = site != OS_SCHED_NO_SITE && pc == g_sched[i][OS_SCHED_F_TRIGGER]
                   && arrival == g_sched[i][OS_SCHED_F_NTH];
-        else
+        else if (kind == OS_SCHED_AT_INSN)
             due = insn_index == g_sched[i][OS_SCHED_F_TRIGGER];   /* 1-based; see osh_run's loop */
+        else
+            continue;   /* AT_READ fires from the read callbacks, where the count is kept */
         if (!due || g_sched_fired[i])
             continue;
-        g_sched_fired[i] = 1;
-        /* BOUNDED BY RAM, NOT BY THE IMAGE. Off ROM mode the two are the same number; in it the
-         * image spans the I/O page and the ROM, and an agent store aimed at either would land in
-         * bytes no read ever looks at (the I/O decode answers those addresses) or scribble on the
-         * read-only ROM. The candidate's twin bounds the same store against OS_IMAGE_SIZE, which is
-         * the machine's RAM there, so this is also what keeps the two sides storing the same set. */
-        if (os_sched_store(g_mem, g_ram_end, g_sched[i][OS_SCHED_F_ADDR],
-                           g_sched[i][OS_SCHED_F_WIDTH], g_sched[i][OS_SCHED_F_VALUE]))
-            g_sched_applied++;
-        else
-            g_sched_refused++;
+        sched_apply(i);
     }
 }
 
@@ -224,6 +265,8 @@ static void sched_enter_run(void) {
         g_sched_fired[i] = 0;
     for (uint32_t i = 0; i < OS_SCHED_SITE_MAX; i++)
         g_sched_site_arrivals[i] = 0;
+    for (uint32_t i = 0; i < OS_SCHED_READ_MAX; i++)
+        g_sched_read_arrivals[i] = 0;
 }
 
 uint32_t osh_sched_count(void)     { return g_sched_n; }
@@ -242,6 +285,22 @@ uint32_t osh_sched_site_arrivals(uint32_t i) {
     return i < OS_SCHED_SITE_MAX ? g_sched_site_arrivals[i] : 0u;
 }
 
+/* The READ sites this run derived from its own entries, and the reads it made at each (os.h, "READ
+ * TRIGGERS"). `osh_sched_read_site` is exported beside the count because the list is DERIVED here
+ * rather than passed in, so a caller comparing two runs' counts needs to be able to say which
+ * address each column is about; `rom_bench` names the address in its refusal. Out of range reads 0
+ * rather than past the table, as the arrivals getter above does and for the same reason. */
+uint32_t osh_sched_read_count(void) { return g_sched_read_n; }
+uint32_t osh_sched_read_max(void)   { return OS_SCHED_READ_MAX; }
+
+uint32_t osh_sched_read_site(uint32_t i) {
+    return i < OS_SCHED_READ_MAX ? g_sched_reads[i] : 0u;
+}
+
+uint32_t osh_sched_read_arrivals(uint32_t i) {
+    return i < OS_SCHED_READ_MAX ? g_sched_read_arrivals[i] : 0u;
+}
+
 /* The 68000 has a 24-bit address bus, so the top byte of an address is ignored: $ffff8800 and
  * $fffffc00 reach the same hardware as $ff8800 and $fffc00. Every hardware-address comparison below
  * masks with this first, so the idiom a game uses to reach a register cannot decide whether the
@@ -258,14 +317,22 @@ uint32_t osh_sched_site_arrivals(uint32_t i) {
  * The map is installed by osh_io_seed and PERSISTS between runs, exactly as g_hw_seed does and for
  * its reason: a declaration set between runs cannot reach a run already in flight, and two runs
  * given the same declaration start identical whatever ran between them. Nothing in a run mutates
- * it — only the per-run tallies below are cleared by io_enter_run. */
+ * it — a WRITE-THROUGH store changes g_io_live below, which io_enter_run re-copies from the
+ * declaration; only that and the per-run tallies are cleared per run. */
 static uint32_t g_io_addr[OS_IO_SEED_MAX];   /* the declared addresses, 24-bit bus form */
-static uint8_t  g_io_val[OS_IO_SEED_MAX];    /* ...and what a read of each answers */
+static uint8_t  g_io_val[OS_IO_SEED_MAX];    /* ...and what a read of each answers ON ENTRY */
+static uint8_t  g_io_writeback[OS_IO_SEED_MAX];  /* ...and which of them LATCH a store (os.h) */
 static uint32_t g_io_n;                      /* how many of them os_io_install_seed accepted */
+/* What a read is served NOW: g_io_val at the top of each run, and the byte the run itself stored
+ * for a write-through address. Separate from the declaration so the map stays the case's — see the
+ * block comment above, and os.h's os_io_enter_run. */
+static uint8_t  g_io_live[OS_IO_SEED_MAX];
 /* Per declared address: did an instruction of THIS run store to it? A read after that is served the
  * byte the case declared the machine held ON ENTRY while the program has already replaced it — the
  * Phase-7 staleness refusal, at an address-keyed model. Recorded rather than refused here, as every
- * other read tally is, because emu.run drives boots nobody enumerates. */
+ * other read tally is, because emu.run drives boots nobody enumerates. A WRITE-THROUGH address
+ * never gets a note here: its declaration says the register latches the store, so a later read is
+ * served what the run wrote rather than something the run has invalidated. */
 static uint8_t  g_io_written[OS_IO_SEED_MAX];
 static uint32_t g_io_stale_reads;            /* ...and the reads that met one */
 static uint32_t g_io_stale_first;            /* ...with the first such address */
@@ -333,25 +400,27 @@ static int io_serve(unsigned int a, unsigned int n, unsigned int *value) {
             if (!g_io_stale_reads++)
                 g_io_stale_first = lo + i;
         }
-        served = served << 8 | g_io_val[entry[i]];
+        served = served << 8 | g_io_live[entry[i]];
     }
     io_log(lo, n, served);
     *value = served;
     return 1;
 }
 
-/* Mark every declared byte a store of `n` bytes at `a` covered (see g_io_written). The store itself
- * is dropped and separately ledgered by Phase 10, exactly as it was; what this records is that a
- * later READ of the same address would be answered with a declaration the run has invalidated. */
-static void io_note_write(unsigned int a, unsigned int n) {
+/* Apply a store of `n` bytes at `a`, value `v`, to the declared map. The store itself is dropped and
+ * separately ledgered by Phase 10, exactly as it was; what this decides is what a later READ of the
+ * same address is answered with:
+ *
+ *   - a WRITE-THROUGH byte LATCHES it, so the read is served what this run stored;
+ *   - an ordinary declared byte becomes STALE, so the read is served a declaration the run has
+ *     invalidated and harness._vet_io_reads_are_declared refuses the case.
+ *
+ * os.h's os_io_store is the rule itself — the per-byte walk included — shared with src/hw.c. */
+static void io_note_written(unsigned int a, unsigned int n, unsigned int v) {
     uint32_t lo = a & BUS_ADDR_MASK;
     if (!os_io_is_page(lo))
         return;
-    for (unsigned i = 0; i < n; i++) {
-        int entry = os_io_find(g_io_addr, g_io_n, lo + i);
-        if (entry >= 0)
-            g_io_written[entry] = 1;
-    }
+    os_io_store(g_io_addr, g_io_n, g_io_writeback, g_io_live, g_io_written, lo, n, v);
 }
 
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
@@ -677,14 +746,19 @@ const uint32_t *osh_hw_addr_table(void) { return os_hw_addrs(); }
 const uint8_t  *osh_hw_capture_profile(void) { return g_hw_capture_profile; }
 
 /* ---- the DECLARED I/O MAP's ABI (see g_io_addr above; emu.py binds every one) ------------------ */
-/* Declare the I/O bytes every FOLLOWING run serves. `addrs`/`values` are `n` parallel entries in the
- * 24-bit bus form; os.h's os_io_install_seed decides which of them are admissible, so an entry this
- * model may not serve — a Phase-7 named slot, a YM2149 port, an address below the page — is dropped
- * rather than shadowing the model that owns it. osh_io_seed_count() reports how many landed, which
- * is what emu.py compares against what it sent: a case whose declaration did not fit is loud rather
- * than a run served fewer bytes than it asked for. */
-void osh_io_seed(const uint32_t *addrs, const uint8_t *values, uint32_t n) {
-    g_io_n = os_io_install_seed(g_io_addr, g_io_val, addrs, values, n);
+/* Declare the I/O bytes every FOLLOWING run serves. `addrs`/`values`/`writeback` are `n` parallel
+ * entries in the 24-bit bus form, the third being os.h's OS_IO_DECLARED_CONSTANT or
+ * OS_IO_WRITE_THROUGH per address; os.h's os_io_install_seed decides which of them are admissible,
+ * so an entry this model may not serve — a Phase-7 named slot, a YM2149 port, an address below the
+ * page — is dropped rather than shadowing the model that owns it. osh_io_seed_count() reports how
+ * many landed, which is what emu.py compares against what it sent: a case whose declaration did not
+ * fit is loud rather than a run served fewer bytes than it asked for. */
+void osh_io_seed(const uint32_t *addrs, const uint8_t *values, const uint8_t *writeback,
+                 uint32_t n) {
+    g_io_n = os_io_install_seed(g_io_addr, g_io_val, g_io_writeback, addrs, values, writeback, n);
+    /* ...and the bytes a read is served from, so a declaration installed between runs is live even
+     * before the next `enter_from_reset` refreshes them (this kit's own probes seed and read). */
+    os_io_enter_run(g_io_live, g_io_val, g_io_n);
 }
 uint32_t osh_io_seed_count(void) { return g_io_n; }
 uint32_t osh_io_seed_max(void)   { return OS_IO_SEED_MAX; }
@@ -893,7 +967,15 @@ static int in_rom(unsigned int a, unsigned int n) {
     return a >= g_rom_lo && a + n <= g_rom_hi && a + n <= g_size;
 }
 
+/* Count this read against the run's READ TRIGGERS and apply whatever it brings due (os.h, "READ
+ * TRIGGERS"). Called first in all three callbacks, so the store lands BEFORE the value is served and
+ * the reading instruction sees it — the same relation an AT_PC entry has to the instruction at its
+ * site. Gated on the derived site count, which is 0 for every run that declares no read trigger, so
+ * a project that has never heard of one pays one predictable compare per memory access. */
+#define SCHED_READ_TICK(a) do { if (g_sched_read_n) sched_read_fire(a); } while (0)
+
 unsigned int m68k_read_memory_8(unsigned int a) {
+    SCHED_READ_TICK(a);
     if (a < g_ram_end) return g_mem[a];
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
     if (lo == OS_PSG_PORT_SELECT) return psg_read_back();
@@ -916,6 +998,7 @@ unsigned int m68k_read_memory_8(unsigned int a) {
     return 0;                                      /* off-image, like any unmapped address */
 }
 unsigned int m68k_read_memory_16(unsigned int a) {
+    SCHED_READ_TICK(a);
     if (a + 1 < g_ram_end) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
     unsigned int declared;
     if (io_serve(a, 2, &declared)) return declared;   /* the device first; see read_memory_8 */
@@ -925,6 +1008,7 @@ unsigned int m68k_read_memory_16(unsigned int a) {
     return 0;
 }
 unsigned int m68k_read_memory_32(unsigned int a) {
+    SCHED_READ_TICK(a);
     if (a + 3 >= g_ram_end) {
         unsigned int declared;
         if (io_serve(a, 4, &declared)) return declared;   /* the device first; see read_memory_8 */
@@ -1025,7 +1109,7 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
     if (in_rom(a, 1)) { g_rom_stores++; return; }   /* ROM MODE: a store to ROM changes nothing */
     psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
     hw_note_write(a, 1);        /* dropped like any hardware write, but it makes a seed stale */
-    io_note_write(a, 1);        /* ...and a DECLARED I/O byte's declaration stale too (Phase 15) */
+    io_note_written(a, 1, v);   /* ...and a DECLARED I/O byte LATCHES it, or goes stale (Phase 15) */
     hw_log_write(a, OS_HW_WRITE_WIDTH_8, v);       /* ...and it is comparable (Phase 10) */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
@@ -1033,7 +1117,7 @@ void m68k_write_memory_16(unsigned int a, unsigned int v) {
     if (in_rom(a, 2)) { g_rom_stores++; return; }
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
     hw_note_write(a, 2);
-    io_note_write(a, 2);
+    io_note_written(a, 2, v);
     hw_log_write(a, OS_HW_WRITE_WIDTH_16, v);
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
@@ -1041,7 +1125,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
         if (in_rom(a, 4)) { g_rom_stores++; return; }
         psg_note_unmodeled(a, 4);
         hw_note_write(a, 4);
-        io_note_write(a, 4);
+        io_note_written(a, 4, v);
         hw_log_write(a, OS_HW_WRITE_WIDTH_32, v);
         return;
     }
@@ -1158,6 +1242,9 @@ static void hw_enter_run(void) {
  * the drop count, and leaving any of those behind would compare this run's candidate stream against
  * the previous run's oracle one. */
 static void io_enter_run(void) {
+    /* The bytes THIS run is served from: the declaration again, so a write-through store made by the
+     * previous run does not reach this one (os.h, os_io_enter_run). */
+    os_io_enter_run(g_io_live, g_io_val, g_io_n);
     for (uint32_t i = 0; i < g_io_n; i++)
         g_io_written[i] = 0;
     g_io_stale_reads = 0;

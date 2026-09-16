@@ -36,6 +36,9 @@ uint32_t osh_sched_fields(void);
 uint32_t osh_sched_site_max(void);
 uint32_t osh_sched_site_count(void);
 uint32_t osh_sched_site_arrivals(uint32_t i);
+uint32_t osh_sched_read_count(void);
+uint32_t osh_sched_read_site(uint32_t i);
+uint32_t osh_sched_read_arrivals(uint32_t i);
 
 /* Enough for the longest spin any case here schedules (five arrivals = ten instructions) with room
  * to overrun visibly, and small enough that the UNRELEASED cases end in microseconds rather than
@@ -168,6 +171,36 @@ static void plant_long_spin(void) {
     plant_rts(plant_long(at + 2, LONG_ADDR));
 }
 
+/* ---- THE SAMPLE-THEN-SPIN ROUTINE: what a READ TRIGGER counts, and why it is not a PC ------------
+ *
+ * XBIOS Vsync's shape, and the shape of every "wait for this to CHANGE": read the value once, then
+ * spin until it differs. It is the routine the READ TRIGGER exists for (os.h, "READ TRIGGERS"),
+ * because the cross-compiled reconstruction of it reads the same ADDRESS the same number of times
+ * while its instructions are wherever the compiler put them — so an entry keyed to the address fires
+ * at one moment at BOTH of the oracle's doors, and one keyed to a PC fires at neither.
+ *
+ *     move.b (WATCH).l,d1        ; the SAMPLE: read 1, and D1 is what the routine reports
+ *   .spin:
+ *     cmpi.b #WANT,(WATCH).l     ; reads 2, 3, ... — one per iteration, and the PC site
+ *     bne.s  .spin
+ *     rts
+ *
+ * SO THE READ COUNT IS ONE MORE THAN THE ITERATION COUNT, which is the whole of the offset a case
+ * has to get right: a wait released at iteration k is `nth = k + 1`. The two triggers are driven
+ * over this routine side by side below, which is what says the offset is that and nothing else. */
+#define SAMPLE_SPIN_SITE (PROBE_ENTRY + 6u)   /* past the sample: the `cmpi` the spin re-executes */
+
+static void plant_sample_then_spin(void) {
+    plant_word(PROBE_ENTRY, MOVE_B_ABSL_TO_D1);
+    uint32_t at = plant_long(PROBE_ENTRY + 2, WATCH_ADDR);
+    if (at != SAMPLE_SPIN_SITE) {
+        fprintf(stderr, "probe: the sample is %u bytes, so SAMPLE_SPIN_SITE names nothing\n",
+                at - PROBE_ENTRY);
+        exit(1);
+    }
+    plant_rts(plant_wait(at, CMPI_B_IMM_ABSL, WANT, WATCH_ADDR));
+}
+
 /* ---- THE BOUNDED READ LOOP: a wait SITE with NO SCHEDULE AT ALL --------------------------------
  *
  * The empty-schedule case is not an exotic one — it is "the key never comes down", and any loop that
@@ -225,14 +258,7 @@ static void arm_image(void) {
  * `sites` is the run's declared WAIT SITES (os.h), which a caller passes explicitly here because
  * this probe has no `emu.wait_site_pcs` to default them from the triggers — and because two of the
  * cases below are ABOUT a site list that is not simply the trigger set. */
-static void oracle_case(const char *name, void (*plant)(void), const uint32_t *entries, uint32_t n,
-                        const uint32_t *sites, uint32_t site_n) {
-    uint32_t dregs[NREGS] = {0}, aregs[NREGS] = {0}, out[OUT_REGS] = {0};
-    arm_image();
-    plant();
-    osh_schedule(entries, n, sites, site_n);
-    int reached = osh_run(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, dregs, aregs,
-                          PROBE_SP, PROBE_SENTINEL, 0, PROBE_MAX_INSNS, out);
+static void report_oracle_run(const char *name, int reached, const uint32_t *out) {
     printf("K %s reached %d\n", name, reached);
     printf("K %s d1 %u\n", name, out[1] & 0xffu);
     printf("K %s d1w %u\n", name, out[1] & 0xffffu);
@@ -244,12 +270,50 @@ static void oracle_case(const char *name, void (*plant)(void), const uint32_t *e
     printf("K %s sites %u\n", name, osh_sched_site_count());
     for (uint32_t i = 0; i < osh_sched_site_count(); i++)
         printf("K %s arrivals%u %u\n", name, i, osh_sched_site_arrivals(i));
+    /* ...and the READ trigger's pair of the same two: the addresses this run's own entries derived,
+     * and the reads it made at each. `readsite0` is printed as well as the count because the list is
+     * DERIVED in the shim rather than passed in, so a case asserting a count has to be able to say
+     * which address it is about. */
+    printf("K %s readsites %u\n", name, osh_sched_read_count());
+    for (uint32_t i = 0; i < osh_sched_read_count(); i++) {
+        printf("K %s readsite%u %u\n", name, i, osh_sched_read_site(i));
+        printf("K %s reads%u %u\n", name, i, osh_sched_read_arrivals(i));
+    }
     printf("K %s watch %u\n", name, g_image[WATCH_ADDR]);
     printf("K %s watch2 %u\n", name, g_image[WATCH2_ADDR]);
     for (int i = 0; i < 4; i++)
         printf("K %s scratch%d %u\n", name, i, g_image[SCRATCH_ADDR + i]);
     for (int i = 0; i < 4; i++)
         printf("K %s long%d %u\n", name, i, g_image[LONG_ADDR + i]);
+}
+
+static void oracle_case(const char *name, void (*plant)(void), const uint32_t *entries, uint32_t n,
+                        const uint32_t *sites, uint32_t site_n) {
+    uint32_t dregs[NREGS] = {0}, aregs[NREGS] = {0}, out[OUT_REGS] = {0};
+    arm_image();
+    plant();
+    osh_schedule(entries, n, sites, site_n);
+    int reached = osh_run(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, dregs, aregs,
+                          PROBE_SP, PROBE_SENTINEL, 0, PROBE_MAX_INSNS, out);
+    report_oracle_run(name, reached, out);
+}
+
+/* The same case through the OTHER DOOR — `osh_run_bench`, which a Tier 3 numerator enters a
+ * cross-compiled reconstruction through (rom_bench.py).
+ *
+ * WHY IT IS HERE AT ALL: a read-triggered entry is the one kind both doors can fire, and "both
+ * doors fire it the same way" is a claim about two entry points in shim.c that nothing else in the
+ * kit is in a position to make — the projects have one door apiece per run, and this directory binds
+ * none. The routine is the SAME planted 68000 code either way, so a difference in the counts could
+ * only be the doors'. `reached` is normalised to osh_run's boolean so the two cases read alike. */
+static void bench_case(const char *name, void (*plant)(void), const uint32_t *entries, uint32_t n) {
+    uint32_t out[OUT_REGS] = {0};
+    arm_image();
+    plant();
+    osh_schedule(entries, n, (const uint32_t *)0, 0);
+    int status = osh_run_bench(g_image, PROBE_IMAGE_SIZE, PROBE_ENTRY, 0,
+                               PROBE_SP, PROBE_SENTINEL, PROBE_MAX_INSNS, out);
+    report_oracle_run(name, status == 1, out);
 }
 
 /* ---- the candidate side: ../src/sched.c, driven the way harness.differential drives it --------- */
@@ -623,5 +687,57 @@ int main(void) {
     oracle_case("no_schedule_but_a_declared_site", plant_bounded_reads, flat, 0, bounded_site, 1);
     candidate_case("cand_no_schedule_but_a_declared_site", flat, 0, bounded_site, 1,
                    cand_body_bounded_reads);
+
+    /* ---- READ TRIGGERS, over the sample-then-spin routine (os.h, "READ TRIGGERS") ----
+     *
+     * Every case here declares NO wait site: a read trigger's sites are DERIVED from its own
+     * entries, so there is nothing for the caller to pass and nothing that can be passed wrong.
+     *
+     * Released at the third READ of the address — which is the second iteration of the spin, because
+     * the sample above the loop is the first read. That offset is the one thing a case using this
+     * trigger has to get right, and `released_at_the_second_arrival` below is the same release
+     * expressed as a PC trigger, so the two cases together say what the offset is. */
+    memset(flat, 0, sizeof flat);
+    set_entry(flat, 0, OS_SCHED_AT_READ, WATCH_ADDR, 3, WATCH_ADDR, 1, WANT);
+    oracle_case("read_released_at_the_third_read", plant_sample_then_spin, flat, 1, no_sites, 0);
+
+    /* THE SAME ROUTINE THROUGH THE OTHER DOOR, on the SAME list. `osh_run_bench` is what a Tier 3
+     * numerator enters a cross-compiled reconstruction through, and a row over a routine that waits
+     * is only a measurement if the store lands at the same moment there. Identical planted code, so
+     * a difference between this case and the one above could only be the doors'. */
+    bench_case("bench_read_released_at_the_third_read", plant_sample_then_spin, flat, 1);
+
+    /* ...and the per-run reset AT THAT DOOR: the same routine immediately after, with nothing
+     * declared, must not be released by the run before's entry. */
+    bench_case("bench_no_schedule_after_a_scheduled_run", plant_sample_then_spin, flat, 0);
+
+    /* nth = 1 fires before the SAMPLE, which is the read that proves the store lands before the
+     * value is served rather than after it: the sample itself comes back WANT. The spin then ends on
+     * its first compare, so the run makes two reads. */
+    set_entry(flat, 0, OS_SCHED_AT_READ, WATCH_ADDR, 1, WATCH_ADDR, 1, WANT);
+    oracle_case("read_released_before_the_sample", plant_sample_then_spin, flat, 1, no_sites, 0);
+
+    /* THE PC TRIGGER OVER THE SAME ROUTINE, at the arrival the third read corresponds to. Both
+     * cases must leave the same image and the same D1 — which is what says a read trigger is the
+     * same event as an arrival at the instruction that reads, one sample later. */
+    set_entry(flat, 0, OS_SCHED_AT_PC, SAMPLE_SPIN_SITE, 2, WATCH_ADDR, 1, WANT);
+    {
+        const uint32_t spin_site[] = {SAMPLE_SPIN_SITE};
+        oracle_case("released_at_the_second_arrival", plant_sample_then_spin, flat, 1, spin_site, 1);
+    }
+
+    /* An `nth` past what the run can reach never comes due, exactly as an unreached trigger PC does
+     * — and the READS GO ON BEING COUNTED to the cap, which is what a caller comparing two builds'
+     * counts is reading. */
+    set_entry(flat, 0, OS_SCHED_AT_READ, WATCH_ADDR, 1000, WATCH_ADDR, 1, WANT);
+    oracle_case("read_nth_never_reached", plant_sample_then_spin, flat, 1, no_sites, 0);
+    bench_case("bench_read_nth_never_reached", plant_sample_then_spin, flat, 1);
+
+    /* AN ADDRESS THE RUN READS AND THE TRIGGER DOES NOT NAME counts nothing: the entry names the
+     * scratch longword, which this routine never reads, so the wait spins to the cap with its own
+     * address uncounted. It is the read trigger's "trigger PC never reached". */
+    set_entry(flat, 0, OS_SCHED_AT_READ, SCRATCH_ADDR, 1, WATCH_ADDR, 1, WANT);
+    oracle_case("read_trigger_on_an_address_nothing_reads", plant_sample_then_spin, flat, 1,
+                no_sites, 0);
     return 0;
 }

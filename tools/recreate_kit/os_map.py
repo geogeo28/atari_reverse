@@ -117,6 +117,14 @@ OS_HW_IO_PAGE = 0xff0000
 # the address and has to be spelled in the one form the decode produces.
 OS_BUS_ADDR_MASK = 0xffffff
 
+# The DECLARED I/O MAP's WRITE-THROUGH flag, per declaration — os.h's OS_IO_DECLARED_CONSTANT and
+# OS_IO_WRITE_THROUGH, mirrored here because `emu.io_seed_entries` encodes the column BOTH shores
+# read and `harness._seed_candidate_io` hands the same column to the candidate. Pinned equal to
+# os.h by `test/test_os_memory_map.py`: a flag that meant one thing in Python and another in C would
+# have the oracle latch a store the candidate left alone, which reads as a reconstruction bug.
+OS_IO_DECLARED_CONSTANT = 0
+OS_IO_WRITE_THROUGH = 1
+
 
 def poked_input_overlaps_program(load_base, program_end):
     """Does the poked-input block intersect a program loaded at ``[load_base, program_end)``?

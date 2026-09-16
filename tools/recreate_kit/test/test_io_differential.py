@@ -22,14 +22,19 @@ WHAT IT PINS:
   * the one refusal no declaration can fix: a read of a byte the run itself stored to;
   * ONE DOOR, TWO MODELS: a Phase-7 named slot declared through `io_seed` is ROUTED into the named
     set rather than refused, on both shores at once, while the YM2149's block, an address below the
-    I/O page and the untranslated `$ffff8260` form are refused by name.
+    I/O page and the untranslated `$ffff8260` form are refused by name;
+  * the WRITE-THROUGH arm end to end: a declaration marked `emu.write_through` makes a store replace
+    what a later read is served, so the .PRG's store-and-verify loop — the MFP timer programmer's
+    own shape — runs as an ordinary differential. With the mark stripped by `_seed_candidate_io`
+    the same faithful core reds, which is that installer shown load-bearing for the new column.
 """
 import pytest
 
-from kit_smoke_project import (HW_READ_ENTRY, IO_READ_ENTRY, IO_READ_PAIR_ENTRY,
-                               IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY, MFP_GPIP,
-                               PALETTE_0_HI, PALETTE_0_LO, SHIFTER_RESOLUTION, SHIFTER_SYNC,
-                               VIDEO_BASE_HI, bind)
+from kit_smoke_project import (HW_READ_ENTRY, IO_LATCHED_BYTE, IO_READ_ENTRY, IO_READ_PAIR_ENTRY,
+                               IO_STORE_AND_VERIFY_ENTRY, IO_WORD_READ_ENTRY,
+                               IO_WRITE_THEN_READ_ENTRY, MFP_GPIP, PALETTE_0_HI, PALETTE_0_LO,
+                               RESOLUTION_MONO, SHIFTER_RESOLUTION, SHIFTER_SYNC, VIDEO_BASE_HI,
+                               VIDEO_BASE_MID, bind)
 
 harness = bind()
 emu = harness.emu
@@ -224,6 +229,132 @@ def test_a_read_of_a_byte_the_run_itself_wrote_is_refused_and_not_declarable():
         "decimal dict cannot be matched against the address in the disassembly")
 
 
+# ---- the WRITE-THROUGH arm ----------------------------------------------------------------------
+#
+# What the .PRG stores into the register the loop verifies, and the byte the case declares it held
+# BEFORE that — deliberately different, so "served what the run wrote" and "served what the case
+# declared" are two visible answers rather than one.
+LATCHING_REGISTER_ENTRY = 0x11
+WRITE_THROUGH_LOOP = {VIDEO_BASE_MID: emu.write_through(LATCHING_REGISTER_ENTRY)}
+# ...and the same for the single store-then-read routine, which is the shape without the loop. Its
+# declared ENTRY byte is again not the byte the routine stores (`RESOLUTION_MONO`), so "served what
+# the run wrote" and "served what the case declared" are two visible answers here too.
+WRITE_THROUGH_RESOLUTION = {SHIFTER_RESOLUTION: emu.write_through(LATCHING_REGISTER_ENTRY)}
+
+
+def test_a_store_and_verify_loop_runs_as_an_ordinary_differential_when_the_byte_latches():
+    """THE ARM'S WHOLE POINT, over the shape that demanded it: the MFP timer programmer's
+    `move.b` / `cmp.b` / `bne` — store the byte, read the register back, go round again until the
+    chip agrees (`projects/tos102us`, `$fc260e`).
+
+    It terminates only because the register LATCHED what was stored: declared as a per-run constant
+    the compare could never come true, and the oracle would die at the instruction cap. ONE entry in
+    the read stream is the other half of the claim — the loop ran once — so a reconstruction whose
+    loop reads a different number of times is separated by the stream rather than by luck.
+    """
+    diffs, info = _run("g_io_stores_and_verifies", entry=IO_STORE_AND_VERIFY_ENTRY,
+                       io_seed=WRITE_THROUGH_LOOP)
+    assert diffs == []
+    assert info["regs"]["io_events"] == [(VIDEO_BASE_MID, BYTE, IO_LATCHED_BYTE)], (
+        "the verify was not served what the loop had just stored, so the loop that terminated was "
+        "not the one this case is about")
+    assert info["regs"]["io_stale_reads"] == 0, (
+        "a write-through read back was counted as STALE — the arm marks the declaration rather than "
+        "invalidating it, and `_vet_io_reads_are_declared` would refuse every case that used it")
+    assert [(address, value) for address, _width, value in info["regs"]["hw_writes"]] == \
+        [(VIDEO_BASE_MID, IO_LATCHED_BYTE)], "the store did not reach the Phase 10 ledger unchanged"
+
+
+def test_the_same_loop_declared_as_a_constant_never_terminates():
+    """...and its control, which is what says the arm and not the declaration is doing the work.
+
+    Without the mark the same map serves the entry byte on every read, the `bne` is always taken,
+    and the ORACLE runs to the instruction cap — the state this whole arm was built to leave.
+    """
+    with pytest.raises(RuntimeError, match="did not reach rts"):
+        emu.run(harness.make_image(), IO_STORE_AND_VERIFY_ENTRY, {},
+                io_seed={VIDEO_BASE_MID: LATCHING_REGISTER_ENTRY}, max_insns=20_000)
+
+
+@pytest.mark.parametrize("mutant", ("g_io_stores_without_verifying", "g_io_verifies_before_it_stores",
+                                    "g_io_stores_another_value"))
+def test_the_three_ways_a_port_of_that_loop_goes_wrong_are_each_caught(mutant):
+    """The negative controls, each touching no image byte at all.
+
+    `g_io_stores_without_verifying` skips the read back and assumes the answer, which is what a port
+    written before this arm existed looks like: its read stream is EMPTY where the oracle's carries
+    the verify. `g_io_verifies_before_it_stores` makes the same two accesses in the other ORDER, so
+    it is served the byte the case declared the machine held on entry rather than the byte it wrote.
+    And `g_io_stores_another_value` stores the wrong byte, which the register then latches — one
+    wrong store moving the write ledger's value and the read ledger's together.
+    """
+    with pytest.raises(AssertionError, match="stream mismatch"):
+        _run(mutant, entry=IO_STORE_AND_VERIFY_ENTRY, io_seed=WRITE_THROUGH_LOOP)
+
+
+
+def test_the_write_through_mark_really_reaches_the_candidate(monkeypatch):
+    """`_seed_candidate_io` carries the new COLUMN, and this measures it rather than asserting it.
+
+    The patch strips every mark out of the declaration and installs the rest through the REAL
+    installer — never a hand-rolled copy, for `test_the_candidate_really_gets_the_cases_declaration`'s
+    reason — so the candidate holds the same addresses and the same bytes and only the write-through
+    column differs. The faithful core then reads back the byte the case DECLARED where the oracle
+    reads back the byte the run STORED, which is the mutant class the arm exists to make impossible.
+
+    The single store-then-read routine rather than the loop, deliberately: a candidate loop under an
+    unmarked declaration would spin forever rather than red.
+    """
+    declared_marks = sum(isinstance(value, emu.write_through)
+                         for value in WRITE_THROUGH_RESOLUTION.values())
+    seed_candidate_io = harness._seed_candidate_io
+    monkeypatch.setattr(harness, "_seed_candidate_io", lambda io_seed: seed_candidate_io(
+        {addr: emu.io_seed_byte(value) for addr, value in (io_seed or {}).items()}))
+    with pytest.raises(AssertionError, match="declared I/O read stream mismatch"):
+        _run("g_io_writes_then_reads", entry=IO_WRITE_THEN_READ_ENTRY,
+             io_seed=WRITE_THROUGH_RESOLUTION)
+    # ...and the candidate's OWN account of the column it was handed agrees that it got none. The
+    # ledger mismatch above is the behavioural half; this is the structural one, and it is what says
+    # the .so is the post-column build rather than a stale one whose `g_io_reset` never took a
+    # writeback argument at all (harness._HW_LEDGER_ABI).
+    assert harness._lib.g_io_writeback_count() == 0
+
+    monkeypatch.undo()
+    diffs, info = _run("g_io_writes_then_reads", entry=IO_WRITE_THEN_READ_ENTRY,
+                       io_seed=WRITE_THROUGH_RESOLUTION)
+    assert diffs == []
+    assert info["regs"]["io_events"] == [(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)], (
+        "the read back was not served the byte the routine stored")
+    assert harness._lib.g_io_writeback_count() == declared_marks
+    assert info["regs"]["io_declared"] == len(WRITE_THROUGH_RESOLUTION), (
+        "the oracle installed a different number of bytes than the case declared, so the marked "
+        "count above is being compared against the wrong map")
+
+
+def test_an_unmarked_declaration_keeps_the_staleness_refusal_verbatim():
+    """The arm is OPT-IN PER ADDRESS, which is what makes it cost every already-ported project
+    nothing: the very same routine and the very same byte, declared without the mark, is still the
+    refusal `test_a_read_of_a_byte_the_run_itself_wrote_is_refused_and_not_declarable` measures —
+    and the message renders the mark that would answer it."""
+    with pytest.raises(AssertionError, match="already STORED to") as raised:
+        _run("g_io_writes_then_reads", entry=IO_WRITE_THEN_READ_ENTRY, io_seed=RESOLUTION_ONLY)
+    assert "write_through" in str(raised.value), (
+        "the refusal did not name the declaration that answers it, which is now a mark rather than "
+        "a different case shape")
+
+
+def test_a_write_through_claim_on_a_phase_7_named_slot_is_refused_by_name():
+    """The one address class the mark may not be made on, and the refusal names the model that owns
+    it. `emu.seed_split` routes a named slot into Phase 7's installer, which has no write-through
+    arm at all — so carrying the claim across would drop it silently and serve the case a byte its
+    own source says the run had replaced."""
+    with pytest.raises(ValueError, match="NAMED SLOT") as raised:
+        harness.differential(HW_READ_ENTRY, {}, lambda lib, buf: lib.g_hw_reads_the_pair(buf),
+                             io_seed={MFP_GPIP: emu.write_through(GPIP_BYTE),
+                                      SHIFTER_SYNC: SYNC_BYTE})
+    assert "write_through" in str(raised.value) and "hw_seed" in str(raised.value)
+
+
 def test_the_same_store_with_nothing_read_back_is_an_ordinary_run():
     """...and its control, which is what says the refusal is about the READ and not about the store.
 
@@ -300,6 +431,20 @@ def test_the_addresses_no_routing_can_reach_are_refused_by_name():
         "one thing a reader has to change it to")
 
 
+def test_marking_an_excluded_address_write_through_is_refused_by_the_same_rule():
+    """...and the mark changes NONE of the other exclusions, which is the half a new keyword could
+    have got wrong: the address is judged before the value is, so a YM2149 port, an address below
+    the page and the untranslated form are refused by the same messages whether the declaration is a
+    plain byte or a `write_through` one. A mark is a qualifier on a declaration this model accepted,
+    never a way to make one it did not."""
+    with pytest.raises(ValueError, match="psg_seed"):
+        _run("g_io_untouched", io_seed={emu.os_map.OS_PSG_PORT_SELECT: emu.write_through(0x07)})
+    with pytest.raises(ValueError, match="below the I/O page"):
+        _run("g_io_untouched", io_seed={IO_READ_ENTRY: emu.write_through(0x01)})
+    with pytest.raises(ValueError, match=f"{SHIFTER_RESOLUTION:#x}"):
+        _run("g_io_untouched", io_seed={0xFFFF8260: emu.write_through(DECLARED_RESOLUTION)})
+
+
 @pytest.mark.parametrize("value", (2.5, "x", None, 0x100, -1))
 def test_a_value_that_is_not_a_byte_is_refused_as_the_docstring_promises(value):
     """`io_seed_entries` promises a ValueError for every rejection, and a value is a rejection too.
@@ -311,6 +456,10 @@ def test_a_value_that_is_not_a_byte_is_refused_as_the_docstring_promises(value):
     """
     with pytest.raises(ValueError, match="is not a byte"):
         _run("g_io_untouched", io_seed={SHIFTER_RESOLUTION: value})
+    # ...and the same inside a `write_through` wrapper, whose byte goes through the identical rule:
+    # the mark qualifies a declaration, it does not exempt one.
+    with pytest.raises(ValueError, match="is not a byte"):
+        _run("g_io_untouched", io_seed={SHIFTER_RESOLUTION: emu.write_through(value)})
 
 
 def test_a_declaration_mutated_after_it_was_encoded_is_re_encoded():
@@ -323,10 +472,19 @@ def test_a_declaration_mutated_after_it_was_encoded_is_re_encoded():
     green against a byte the model invented, with its own source saying the byte was declared.
     """
     declaration = {}
-    assert emu.io_seed_entries(declaration) == ((), ())
+    assert emu.io_seed_entries(declaration) == ((), (), ())
     declaration[SHIFTER_RESOLUTION] = DECLARED_RESOLUTION
-    assert emu.io_seed_entries(declaration) == ((SHIFTER_RESOLUTION,), (DECLARED_RESOLUTION,)), (
+    assert emu.io_seed_entries(declaration) == ((SHIFTER_RESOLUTION,), (DECLARED_RESOLUTION,),
+                                                (emu.os_map.OS_IO_DECLARED_CONSTANT,)), (
         "the memo served the empty encoding for a dict that has since been filled")
+    # ...and the WRITE-THROUGH column is part of what the memo has to notice: marking an address a
+    # case has already declared changes no key and no byte, so a memo comparing either alone would
+    # serve the unmarked encoding and the candidate would refuse the read back it is now entitled to.
+    declaration[SHIFTER_RESOLUTION] = emu.write_through(DECLARED_RESOLUTION)
+    assert emu.io_seed_entries(declaration) == ((SHIFTER_RESOLUTION,), (DECLARED_RESOLUTION,),
+                                                (emu.os_map.OS_IO_WRITE_THROUGH,)), (
+        "the memo served the UNMARKED encoding for a declaration that has since been marked")
+    declaration[SHIFTER_RESOLUTION] = DECLARED_RESOLUTION
     diffs, info = _run("g_io_reads_the_resolution", io_seed=declaration)
     assert diffs == []
     assert info["regs"]["io_events"] == [(SHIFTER_RESOLUTION, BYTE, DECLARED_RESOLUTION)]

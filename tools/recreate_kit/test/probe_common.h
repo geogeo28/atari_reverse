@@ -73,6 +73,11 @@ uint32_t osh_out_regs(void);
 /* ...and the STORE both models need in order to reach their staleness rule: a declaration describes
  * the machine on ENTRY, and a run that overwrites the address has made it describe nothing. */
 #define MOVE_B_IMM_TO_ABSL 0x13fcu /* move.b #imm,(xxx).l */
+/* ...and the WIDE store, which the declared I/O map's WRITE-THROUGH arm needs: one store can
+ * straddle a marked byte and an unmarked one, and each gets its own answer. */
+#define MOVE_W_IMM_TO_ABSL 0x33fcu /* move.w #imm,(xxx).l */
+#define CMPI_B_IMM_ABSL    0x0c39u /* cmpi.b #imm,(xxx).l — the read half of a verify loop */
+#define BNE_SHORT          0x6600u /* bne.s <disp8>, the loop's own branch */
 
 /* The scratch image every helper below writes into. `static` in a header is right here: a probe is
  * one translation unit plus the oracle's, so there is exactly one of these per binary. */
@@ -134,6 +139,28 @@ static inline uint32_t emit_write_byte(uint32_t addr, uint8_t value, uint32_t io
     plant_word(addr, MOVE_B_IMM_TO_ABSL);
     plant_word(addr + 2, value);
     return plant_long(addr + 4, io_addr);
+}
+
+static inline uint32_t emit_write_word(uint32_t addr, uint16_t value, uint32_t io_addr) {
+    plant_word(addr, MOVE_W_IMM_TO_ABSL);
+    plant_word(addr + 2, value);
+    return plant_long(addr + 4, io_addr);
+}
+
+/* `cmpi.b #imm,(xxx).l` and `bne.s` — the two instructions a STORE-AND-VERIFY loop needs beside the
+ * store, which is the shape a chip with a settling time is programmed in (`move.b` the byte,
+ * re-read it, go round again until it agrees). `emit_bne_back_to` takes the address to branch to
+ * and encodes the SIGNED displacement the 68000 measures from the word after the opcode. */
+static inline uint32_t emit_compare_byte(uint32_t addr, uint8_t value, uint32_t io_addr) {
+    plant_word(addr, CMPI_B_IMM_ABSL);
+    plant_word(addr + 2, value);
+    return plant_long(addr + 4, io_addr);
+}
+
+static inline uint32_t emit_bne_back_to(uint32_t addr, uint32_t target) {
+    int32_t displacement = (int32_t)target - (int32_t)(addr + 2);
+    plant_word(addr, (uint16_t)(BNE_SHORT | (uint8_t)(int8_t)displacement));
+    return addr + 2;
 }
 
 /* ---- driving a planted routine through each of the oracle's two entry points ----

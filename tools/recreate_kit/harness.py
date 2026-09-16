@@ -75,8 +75,15 @@ _HW_LEDGER_ABI = ("g_hw_reset", "g_hw_log_count", "g_hw_log_slots", "g_hw_log_va
                   # ...and the DECLARED I/O MAP (Phase 15). One group again, for the same reason:
                   # it ships in the same src/hw.c, so a candidate with the named set and not the
                   # map is a half-updated build or a stale .so, and probing them together says so.
+                  # `g_io_writeback_count` is LAST because it is NEWEST, and the probe is only as
+                  # good as its youngest symbol: `g_io_reset` grew its `writeback` argument in the
+                  # same change, and a .so built before that exports every other name here — so it
+                  # passed the probe and was then called with four arguments for a three-argument
+                  # function, which segfaults. Every future argument added to an existing export
+                  # needs a NEW name here for the same reason (test_candidate_abi.py pins the list
+                  # against what src/hw.c actually exports, so the two cannot drift apart again).
                   "g_io_reset", "g_io_seed_count", "g_io_log_count", "g_io_log_addrs",
-                  "g_io_log_widths", "g_io_log_vals")
+                  "g_io_log_widths", "g_io_log_vals", "g_io_writeback_count")
 _missing_hw_ledger = [sym for sym in _HW_LEDGER_ABI if not hasattr(_lib, sym)]
 _has_hw_ledger = not _missing_hw_ledger
 if _has_hw_ledger:
@@ -91,8 +98,9 @@ if _has_hw_ledger:
     _lib.g_hw_write_widths.restype = ctypes.POINTER(ctypes.c_uint8)
     _lib.g_hw_write_vals.restype = ctypes.POINTER(ctypes.c_uint32)
     _lib.g_io_reset.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint8),
-                                ctypes.c_uint32]
+                                ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32]
     _lib.g_io_seed_count.restype = ctypes.c_uint32
+    _lib.g_io_writeback_count.restype = ctypes.c_uint32
     _lib.g_io_log_count.restype = ctypes.c_uint32
     _lib.g_io_log_addrs.restype = ctypes.POINTER(ctypes.c_uint32)
     _lib.g_io_log_widths.restype = ctypes.POINTER(ctypes.c_uint8)
@@ -1236,9 +1244,14 @@ def _byte_file_encoder(encode):
 
 
 def _io_map_encoder(io_seed):
-    """...and the address-keyed map's own shape: two parallel columns, and the entry count."""
-    addrs, values = emu.io_seed_entries(io_seed)
-    return ((ctypes.c_uint32, addrs), (ctypes.c_uint8, values)), len(addrs)
+    """...and the address-keyed map's own shape: three parallel columns, and the entry count.
+
+    The third is the WRITE-THROUGH flag per address (``emu.write_through``), which the candidate's
+    ``src/hw.c`` decodes with the same ``os.h`` rule the oracle's shim does.
+    """
+    addrs, values, writeback = emu.io_seed_entries(io_seed)
+    return ((ctypes.c_uint32, addrs), (ctypes.c_uint8, values),
+            (ctypes.c_uint8, writeback)), len(addrs)
 
 
 def _seed_candidate_psg(psg_seed):
@@ -1572,12 +1585,13 @@ def _seed_candidate_io(io_seed):
 def _vet_schedule_is_runnable(entry, schedule, wait_sites):
     """Refuse a differential whose schedule the CANDIDATE cannot mirror — before either side runs.
 
-    Two shapes. An ``insn`` trigger names an instruction index, and the candidate has no instruction
-    counter at all: the oracle would make the store and the candidate would spin, which reads as a
-    hung test rather than as a case that could never have worked. And a schedule against a candidate
-    with no ``src/sched.c`` linked is the same thing one level down — the entries would fire on the
-    oracle alone, and every byte the agent supplied would come back as a diff against a reconstruction
-    that never saw it.
+    Three shapes. An ``insn`` trigger names an instruction index, and a ``read`` trigger an address
+    whose READS are counted; the candidate has neither an instruction counter nor a read counter —
+    it counts POLLS, which is the one event both shores can key on — so the oracle would make the
+    store and the candidate would spin, which reads as a hung test rather than as a case that could
+    never have worked. And a schedule against a candidate with no ``src/sched.c`` linked is the same
+    thing one level down — the entries would fire on the oracle alone, and every byte the agent
+    supplied would come back as a diff against a reconstruction that never saw it.
 
     A THIRD SHAPE USED TO BE REFUSED HERE AND IS NOT ANY MORE: a schedule naming more than one
     trigger PC. It was refused because both sides counted a run TOTAL, which two waits can balance by
@@ -1599,15 +1613,19 @@ def _vet_schedule_is_runnable(entry, schedule, wait_sites):
     # trigger — or both — would come out of here as a bare KeyError naming nothing. emu's encoder
     # owns every field's shape and its messages say what is wrong; run them before reading a key.
     emu.schedule_entries(schedule)
-    at_insn = [i for i, spec in enumerate(schedule or ()) if "insn" in spec]
-    if at_insn:
-        raise AssertionError(
-            f"the case for {label(entry)} @ {entry:#x} schedules entr(ies) {at_insn} on an `insn` "
-            f"trigger, which a differential cannot run: the candidate is C and counts POLLS, not "
-            f"instructions, so nothing on that side could fire the store at the same moment. Give "
-            f"the entry a `pc` trigger — the address of the instruction the original's wait loop "
-            f"re-executes — and have the reconstruction read that byte through `sched_poll8`. The "
-            f"`insn` trigger is for an oracle-only run (emu.run).")
+    for key, counts, door in (("insn", "instructions", "an oracle-only run (emu.run)"),
+                              ("read", "reads of an address",
+                               "the two oracle DOORS (emu.run and emu.run_bench), where both sides "
+                               "are real 68000 code — it is what prices a routine that waits")):
+        wrong = [i for i, spec in enumerate(schedule or ()) if key in spec]
+        if wrong:
+            raise AssertionError(
+                f"the case for {label(entry)} @ {entry:#x} schedules entr(ies) {wrong} on a "
+                f"`{key}` trigger, which a differential cannot run: the candidate is C and counts "
+                f"POLLS, not {counts}, so nothing on that side could fire the store at the same "
+                f"moment. Give the entry a `pc` trigger — the address of the instruction the "
+                f"original's wait loop re-executes — and have the reconstruction read that byte "
+                f"through `sched_poll8`. The `{key}` trigger is for {door}.")
     # ...and every trigger PC must be a declared WAIT SITE, which the encoder owns because the site
     # list is what both shores key their counters by. Run it here so the case is refused before
     # either core does, with the encoder's own wording.
@@ -1929,8 +1947,18 @@ def _io_seed_text(io_seed):
     """
     if not io_seed:
         return "no io_seed was given, and a declaration is what says"
-    body = ", ".join(f"{addr:#x}: {value:#04x}" for addr, value in sorted(io_seed.items()))
+    body = ", ".join(f"{addr:#x}: {_io_declaration_text(value)}"
+                     for addr, value in sorted(io_seed.items()))
     return f"io_seed={{{body}}} says"
+
+
+def _io_declaration_text(value):
+    """One declared byte as a reader would type it, WRITE-THROUGH wrapper and all — so the refusal
+    below shows whether the address was marked, which is the difference between a case that has the
+    remedy already and one that needs it."""
+    byte = emu.io_seed_byte(value)
+    return (f"write_through({byte:#04x})" if isinstance(value, emu.write_through)
+            else f"{byte:#04x}")
 
 
 def _vet_io_reads_are_declared(entry, io_seed, o_regs):
@@ -1942,6 +1970,12 @@ def _vet_io_reads_are_declared(entry, io_seed, o_regs):
     run has replaced it — so the byte served contradicts the program, and no bigger declaration can
     fix it. The remedy is the case's shape: run up to the write, or enter past it with the
     declaration describing what the write left.
+
+    ...UNLESS THE CASE MARKED THE ADDRESS `write_through`, in which case there is no staleness to
+    refuse: the declaration says the register latches a store and reads it back, the oracle serves
+    what the run itself wrote, and the candidate's ``src/hw.c`` does the same — so the read is an
+    ordinary compared entry. That is the remedy this message would otherwise have to prescribe, and
+    it is right only where the register really latches (TRAP_MODEL.md, Phase 15).
 
     The OTHER half of this model's refusal — an I/O byte nothing declared — is
     ``_vet_rom_io_reads_are_modelled``'s, unchanged, because it is ROM mode's rule and predates this
@@ -1956,9 +1990,12 @@ def _vet_io_reads_are_declared(entry, io_seed, o_regs):
         f"DECLARED I/O byte this run had already STORED to, the first at {first:#x}. "
         f"{_io_seed_text(io_seed)} what the machine held on ENTRY, and an instruction of this run "
         f"has replaced it — the model drops hardware writes, so the read was served the entry byte "
-        f"and contradicts the program. Declaring more cannot fix it: run the case up to the write, "
-        f"or enter past it with the declaration describing what the write left (TRAP_MODEL.md, "
-        f"Phase 15).")
+        f"and contradicts the program. A BIGGER declaration cannot fix it, but a different one can "
+        f"where the register really latches what is stored: mark it "
+        f"`io_seed={{{first:#x}: write_through(<byte>)}}` and the store replaces what the read is "
+        f"served, on both shores. Otherwise the remedy is the case's shape — run it up to the "
+        f"write, or enter past it with the declaration describing what the write left "
+        f"(TRAP_MODEL.md, Phase 15).")
 
 
 def _vet_io_state(entry, o_regs):
@@ -2276,7 +2313,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     cannot describe). Both sides' ordered read stream is compared afterwards, seed or none
     (``_vet_hw_state``).
 
-    ``io_seed`` is ``{address: byte}`` over ANY byte of the I/O page the named models do not own
+    ``io_seed`` is ``{address: byte}`` (or ``emu.write_through(byte)``) over ANY byte of the I/O
+    page the named models do not own
     (TRAP_MODEL.md, Phase 15) — ``{0xff8260: 0x02}`` for the shifter's resolution byte XBIOS
     ``Getrez`` reads. Both sides are handed the same map, a declared byte is served on every read of
     it, and the ordered SERVED-read stream is compared (``_vet_io_state``), which is the whole

@@ -342,6 +342,22 @@ door decide whether the measurement and its second differential mean anything, a
   of that `io_seed` has nowhere to go here and is refused rather than dropped.
 * **It installs no trap vectors at all**, so ROM mode's "no model ran" claim holds here by
   construction rather than by the `osh_trap_count` re-test `emu.run` makes.
+* **It takes the case's SCHEDULE** (Phase 8), per run and an empty one included, as it takes
+  `io_seed` — which is what lets a routine that BUSY-WAITS be measured at all: the cross-compiled
+  build spins on the same byte the ROM does, and nothing changes memory while a run is in flight.
+  **Only a READ trigger is accepted here**, and a `pc` or `insn` entry is refused by name rather than
+  silently never coming due: the blob's instructions are at whatever addresses the compiler chose and
+  move with every rebuild, so a PC in this door names nothing a case can know (Phase 8, "READ
+  TRIGGERS"). An entry that **never comes due raises**, naming the reads the run made at each site,
+  instead of letting the wait spend `max_insns` and report the cap.
+
+  **AND THE ROW GETS ITS OWN CROSS-CHECK, because Tier 1's does not reach here.** The agent's store
+  is applied from ONE list at both doors, so a build whose loop ran a different number of iterations —
+  or did not loop at all — leaves the same image, the same return value, the same callee-saved file
+  and the same four streams; the second differential would be a relation that could not fail. So
+  `rom_bench._vet_same_wait` compares the READS EACH RUN MADE at every derived site, address by
+  address, and sinks the row when they differ. It is the bench door's `_vet_schedule_ran_the_same_wait`,
+  with reads where Tier 1 has arrivals against polls.
 * **It charges the same ENTRY OVERHEAD**: Musashi's first `m68k_execute()` after a reset spends the
   68000's 40-cycle reset exception and executes no instruction, so every cost either door reports is
   one instruction and 40 cycles high. Both sides of a ratio carry it, which is exactly why it must
@@ -1550,6 +1566,8 @@ emu.run(image, entry, schedule=[{"pc": 0x64e, "nth": 3, "addr": 0x879, "width": 
 * `pc` + `nth` — fire just before the `nth` execution of the instruction at that address (`nth`
   defaults to 1). This is the trigger a differential uses.
 * `insn` — fire just before the run's Nth instruction, 1-based. **Oracle only** (see below).
+* `read` + `nth` — fire just before the `nth` READ OF THAT ADDRESS. **Oracle only** as well, and the
+  one trigger BOTH ORACLE DOORS can fire the same store from — see "READ TRIGGERS" below.
 * `addr`/`width`/`value` — a 1-, 2- or 4-byte big-endian store, made by `os.h`'s `os_sched_store` on
   both sides so a straddle of the image's top cannot be handled one way by one and another by the
   other.
@@ -1679,6 +1697,64 @@ and overwrites the canary, so a candidate that never made the function's own sto
 matches anyway. The combination is refused (`_vet_poison_is_attributable`) rather than served — seed
 the destination away from what the routine leaves instead, which is what the pass would have bought.
 
+### READ TRIGGERS: the trigger a BENCH run can fire, because an address is the machine's
+
+**A PC BELONGS TO ONE BUILD.** Tier 3 runs a routine twice over one image — the ORIGINAL's machine
+code through `emu.run`, the reconstruction cross-compiled to m68k through `emu.run_bench` — and for
+a routine that BUSY-WAITS neither run ends unless something stores the byte it spins on. The `pc`
+trigger cannot serve the second of those: `$fc07dc` is an instruction in the ROM, and the compiled
+build's own spin is wherever `m68k-elf-gcc` put it *and moves with every recompile*. A hand-found PC
+inside a compiled function is not a trigger, it is a number that was right once.
+
+Two alternatives were weighed and rejected. **Resolving the blob's site from its symbol table** (or
+from a label the target `sched.h` plants) makes the case's correctness depend on the compiler's
+instruction selection — the label would have to sit exactly at the load, and a rebuild that hoists or
+duplicates it moves the store without moving the case. **A counter the target `sched.h` calls** — the
+kit's own `sched_poll32` shape, on the target side — adds a `jsr`/`rts` per iteration to the very
+loop being measured, which inflates the ratio and misprices the routine; the instrument may not
+charge the thing it is measuring.
+
+**WHAT BOTH SIDES SHARE IS THE ADDRESS.** `_frclock` is at `$466` because the VBL handler writes it
+there, and the reconstruction reads the same longword the ROM does — so an entry keyed to the READ of
+that address fires at one moment at both doors, from one list. Musashi's read callbacks see every
+access, so the count costs the measured code nothing:
+
+```python
+emu.run(image, XBIOS_VSYNC, {"a5": 0}, schedule=[{"read": 0x466, "nth": 2,
+                                                  "addr": 0x466, "width": 4, "value": 0x35e}])
+emu.run_bench(image, entry, ..., schedule=<the same list>)
+```
+
+* **`nth` counts READS AT the address**, at any width and whatever instruction made them: the
+  callbacks are keyed by the address the instruction names, so a longword read at the address counts
+  once and a byte read of the byte above it counts not at all. That is what makes the count the same
+  on two builds that reach one longword through different code (`be32(image + addr)` compiles to a
+  `move.l` or to four byte loads, and either way the address is read once).
+* **The store lands BEFORE the value is served**, which is the same relation an AT_PC entry has to
+  the instruction at its site.
+* **THE SITES ARE DERIVED, not declared** (`os_sched_read_sites`): they are the distinct trigger
+  addresses of the run's own entries. A wait SITE is a declaration because a run may poll at a site
+  no entry stores on; a read count nothing stores on belongs to no wait and has no second column to
+  be compared against.
+* **A WAIT'S READS ARE NOT ONLY ITS LOOP'S.** Every "wait for this to CHANGE" samples the address
+  once above the loop, so a wait released at iteration *k* is `nth = k + 1`. **That offset is the
+  case's to get right and must be pinned, not assumed**: `test_xbios_vsync.READS_BEFORE_THE_WAIT`
+  carries it for the worked routine and `test_the_two_triggers_name_the_same_blank` runs the same
+  release through both triggers and requires the two runs indistinguishable, so a wrong offset is a
+  red rather than a Tier 3 row measured over a loop one iteration long.
+
+**THE CANDIDATE HAS NO READ COUNTER**, so `harness._vet_schedule_is_runnable` refuses an AT_READ
+entry in a differential exactly as it refuses an AT_INSN one. Tier 1 keeps the `pc` trigger and the
+arrival/poll comparison; Tier 3 gets the `read` trigger and a comparison of its own — see the bench
+door's section above.
+
+**The honest limits.** A read trigger counts **every** read of the address the machine or the model
+makes, an instruction fetch included: Musashi is built with `M68K_SEPARATE_READS` off, so a fetch
+goes through the same callback. Aim a trigger at RAM the run does not execute (the encoder refuses
+one outside RAM, where the I/O and PSG models decode first and the two doors could not both read it).
+And what the trigger pins is the model's own limit unchanged — *given that the agent stored X at the
+Nth read, both doors agree* — not that the machine's VBL arrives there.
+
 ### The off-by-one the probe found, and where it lives
 
 Musashi's first `m68k_execute()` after a reset spends the reset's own cycles and executes **no
@@ -1707,7 +1783,7 @@ a case that knows which iteration each lands on.
 ### What is pinned, and what is not
 
 **The model** is pinned kit-side by [`test/test_sched_model.py`](test/test_sched_model.py) and its
-`sched_model_probe.c`, which drives **both** implementations in one process (34 cases, as pytest
+`sched_model_probe.c`, which drives **both** implementations in one process (42 cases, as pytest
 collects them), and the declaration's own arithmetic by
 [`test/test_os_map.py`](test/test_os_map.py). The load-bearing one is RED: the same planted spin with **no** schedule does not
 return, which is the state every such routine was in before this phase. Then: the store landing
@@ -1725,6 +1801,18 @@ the image directly (the shape of a port written against a byte that "is already 
 that polls twice per iteration, whose final image is a correct run's exactly. And, at each of the
 three widths, an undeclared site tallying one poll one way, plus — for the two wide wrappers — the
 full-width comparand and the cap that stops an unreleased wait hanging the suite.
+
+**The READ TRIGGER** is pinned by the same probe, on a planted `move.b (WATCH).l,d1` above a
+`cmpi.b`/`bne` spin — the sample-then-spin shape the trigger exists for. Its cases: the store landing
+before the `nth` read and the wait ending; `nth = 1` landing before the SAMPLE, which is what says the
+store precedes the value being served; an `nth` past what the run reaches never coming due while the
+READS GO ON BEING COUNTED to the cap; a trigger on an address the routine never reads counting
+nothing; and — the pair the whole bench row rests on — the SAME routine and the SAME list through
+BOTH doors, `osh_run` and `osh_run_bench`, required to leave the same counts and the same memory,
+plus a bench run with an empty schedule immediately after one that fired, which must not be released.
+The offset between the two triggers is pinned by running one release through each over that one
+routine (`test_a_read_trigger_is_an_arrival_one_sample_later`), which is what stops
+`READS_BEFORE_THE_WAIT` in a project's case file from being a number nothing checks.
 
 **One hole is measured and stated rather than papered over**: at an `nth` that is a multiple of the
 port's polls-per-iteration, the double-poller's extra poll lands on the iteration the release was due
@@ -2998,9 +3086,117 @@ read — read it beside Phase 7, not after Phase 14.
 * **a read of a byte THIS RUN STORED TO** → still served, still ledgered, and counted in
   `osh_io_stale_reads()`. Refused by `harness._vet_io_reads_are_declared`, for Phase 7's staleness
   reason exactly: the declaration describes the byte the machine held on ENTRY and an instruction of
-  this very run has replaced it. **Not fixable by declaring more** — the remedy is the case's shape;
-* **a WRITE** → unchanged. Dropped as every hardware write is, and ledgered by Phase 10, which is
-  what makes it comparable. This model claims nothing about what storing to an address does.
+  this very run has replaced it. **Not fixable by declaring more** — but fixable by declaring
+  DIFFERENTLY, where the register really latches what is stored: see "The write-through arm" below;
+* **a WRITE** → dropped as every hardware write is, and ledgered by Phase 10, which is what makes
+  it comparable. What it does to THIS model's map is the case's to declare: nothing, by default
+  (beyond the staleness note above), or a replacement of the byte later reads are served where the
+  case marked the address write-through — see the next subsection.
+
+### The write-through arm — a declaration a store REPLACES
+
+A case may mark one declaration `emu.write_through(byte)`, and a store to that address then replaces
+the byte later reads are served instead of making the declaration stale:
+
+```python
+io_seed={0xfffa1f: emu.write_through(0x00)}    # timer A's data register, stopped
+```
+
+**It is what lets a routine write a register and read it back be an ordinary differential.** The
+demand is not exotic — it is most of what a BIOS does to a chip. TOS 1.02's `Mfpint` (`$fc2658`)
+disables a channel, stores its vector and then calls `Jenabint`'s body, which **re-reads** the IERA
+and IMRA the disable half has just cleared a bit of; its timer programmer (`$fc25b0`) writes the
+timer's data register and re-reads it until the 68901 agrees, then ORs the control bits into a
+register its own clear half has just written. Under the constant rule the first was refused with two
+stale reads and the second could not terminate at all, so `Mfpint` shipped as a slice and both
+`Xbtimer` and `Rsconf`'s baud arm halted.
+
+**Nothing is fabricated by it, which is why it is admissible at all.** The byte a read is served
+after a store is a byte the RUN ITSELF produced, computed identically on both shores from the same
+declaration — not a value the model invented. That is the same argument Phase 6 makes for the
+YM2149's register file one address over, where a write updates what a later read-back answers.
+
+**Modeled, on both shores from one rule.** `os.h` owns it: `OS_IO_WRITE_THROUGH` and `os_io_store`
+(what a whole store does to the map, per byte and in the 68000's big-endian order), plus
+`os_io_enter_run`, the oracle's re-copy of the live bytes at the top of every run. `oracle/shim.c`'s
+`io_note_written` and `src/hw.c`'s call `os_io_store` with the same arguments, so neither side can
+latch a store the other did not.
+
+* **a store to a MARKED byte** → the map's served value becomes the byte stored, and the address is
+  **not** noted stale. The store itself is unchanged: still dropped, still ledgered by Phase 10;
+* **a store to an UNMARKED byte** → today's rule verbatim, staleness note and all. The arm is opt-in
+  **per address**, which is what keeps every existing case byte-identical;
+* **a WIDE store** → per byte, each covered byte getting its own answer: the marked ones latch and
+  the unmarked ones go stale. A `move.w` over a marked byte and an unmarked one is a real shape
+  (`test_io_model.py` drives it over the palette's two halves) and latching the whole access would
+  have fabricated the unmarked half;
+* **a marked byte the run never stores to** → the declared byte, on every read. A mark is a claim
+  about what a store WOULD do, not a change to what the machine held on entry;
+* **PER RUN, like everything else here.** The oracle re-copies the live bytes from the declaration
+  at the top of each `osh_run`/`osh_run_bench`, because a run there is installed once and entered
+  several times; the candidate has one entry point and re-installs the declaration straight into its
+  live bytes in `g_io_reset`. Either way one case's store cannot reach the next — under
+  `pytest -n auto`, unpredictably which;
+* **the exclusions are unchanged, and a mark buys no admission.** A write-through claim on a
+  **Phase-7 named slot** is a `ValueError` in `emu.seed_split` naming `hw_seed` as the model that
+  owns the address and has no such arm — refused there because that is where the routing decision
+  is, and after it the address is Phase 7's and the mark is gone. The YM2149's block, an address
+  below the page and the untranslated form are refused exactly as before, mark or no mark; the C
+  rule underneath (`os_io_seedable`) likewise ignores the column, which `io_model_probe.c`'s
+  `a_named_slot_marked_write_through_is_still_not_installed` measures.
+
+**The spelling: a wrapper VALUE, not a sibling `io_writeback=` keyword.** Both keep every existing
+case byte-identical (a plain `int` still means exactly what it meant), so what decides it is the
+plumbing. A case's I/O declaration is carried as ONE object everywhere it goes — `emu.run`'s and
+`emu.run_bench`'s keyword, `harness.differential`'s, `rom_bench`'s Tier 3 row, and a project's own
+registry of verified cases (`projects/tos102us`'s `VERIFIED_CASES`, a 6-tuple several batteries
+build) — and a second keyword would have to be threaded through all of them and grow a field in that
+tuple. Wrapping the value leaves that chain untouched and puts the mark on the declaration it
+qualifies, which also makes the one inconsistent state unrepresentable: a sibling set could name an
+address the map does not declare at all.
+
+### The honest limit of a write-through byte
+
+**It is the CASE's claim that the register latches what is stored and reads it back unchanged.** The
+model cannot check that — it is a statement about hardware, exactly as the declared byte itself is
+(see "The honest limit" below) — so what the arm buys is that the claim is *written where the case
+is read* rather than assumed.
+
+It is TRUE of a latch: the MFP 68901's interrupt mask, enable, pending-mask and in-service **mask**
+registers, its vector register, and a **stopped** timer's data register, which is a reload latch
+until the timer runs.
+
+It is FALSE, in writing, of three shapes this kit has met:
+
+| register | what a read really answers | why the claim fails |
+| --- | --- | --- |
+| the MFP's **IPRA/IPRB, ISRA/ISRB** given a store that SETS a bit | the byte with that bit still clear | these are **write-to-clear**: a 0 bit drops the channel's request and a 1 bit is IGNORED, so a read-back is the chip's state and not, in general, the byte stored. It IS the byte stored for a store of the form `read & mask` — a pure clear, where every 1 written was already 1 — which is what the ROM's own `and.b`/`bclr` instructions are, and `projects/tos102us` marks these four on exactly that narrower reading |
+| a **RUNNING** timer's data register (`$fffa1f`..`$fffa25`) | the live down-counter | the write goes to the reload latch and the read comes off the counter, so the two are different registers behind one address. It is only a latch while the timer is stopped |
+| the **FDC** status register (`$ff8604`) | a sequence, byte by byte | Phase 7 names this as its non-goal and it stays one: successive reads must DIFFER for a poll to end, which no single byte — latched or declared — can say |
+| **any** of them on a LIVE machine | whatever arrived in between | every declared byte in this model already assumes a quiescent chip; write-through inherits that assumption and stretches it across a store, so a new interrupt request, a DMA transfer or a keystroke landing between the write and the read breaks the claim the same way it breaks a plain declaration |
+
+**The demand sites, against that claim.** TOS 1.02's timer programmer meets it, and the ROM's own
+order is why: the five clears run FIRST, and the fifth is the timer's **control** register masked to
+`$00` (timers A and B) or to `$8f`/`$f8` (timers C and D, which share `$fffa1d`) — a control field of
+zero is a **stopped** timer on the 68901. Only then does `$fc260e` write the data register and
+re-read it, so the read-back is of a reload latch and not of a counter. The `or.b d1,(a3)` that
+follows re-reads the **control** register the same clear had written, which is a latch outright. The
+`Mfpint` half is the same kind: IERA and IMRA are masks, and its `bclr`/`bset` on them read back what
+the run stored. `Rsconf`'s baud arm inherits both through the same programmer, for timer D.
+**IPRA/IPRB and ISRA/ISRB are marked too, on the narrower reading the table above gives**, and that is
+a finding the first run of `Xbtimer` produced rather than a decision made in advance: the programmer
+clears the timer's channel in all four pairs with `and.b mask,(reg)` and then calls `Mfpint`'s body,
+which clears the SAME channel again with `bclr d1,(a1)` — so the pending and in-service registers ARE
+read back, twice per call. Every store either routine makes is `read & mask`, so the read-back is the
+store on a quiescent chip; a store that SET a bit of one of them would not be, and nothing here does
+that. `projects/tos102us/recreate/test/mfp.py` carries that sentence beside the declaration it
+qualifies.
+
+**Zynaps's four Timer-B spins (`0x10626`, `0x10664`, and twice in `title_attract_loop`) are the same
+shape and are NOT changed by this arm** — that project is the unchanged control for the whole
+model, and its `STATUS.md` still records the twenty bytes its slicing costs. A case there that
+declared `$fffa21` write-through would meet the claim (the boot stops Timer B before it programs it),
+but nothing here has run one.
 
 **A declared byte is a per-run CONSTANT, and there is no volatile rule.** Phase 7 refuses a second
 read of a VOLATILE slot because the machine changes it between reads; here every declaration is a
@@ -3064,6 +3260,14 @@ uint16_t io_read16(uint32_t addr);
 uint32_t io_read32(uint32_t addr);
 ```
 
+...plus `hw_write8/16/32`, already there for Phase 10, which now ALSO apply the store to the map
+(`io_note_written`, one rule shared with the shim through `os.h`'s `os_io_store`) — so a core
+that writes a marked register and reads it back is served what it wrote, exactly as the oracle's
+instruction is. The three read-modify-write helpers beside them (`hw_bset8`/`hw_bclr8`/`hw_and8`)
+store through the same path and are still not for a declared address: their READ half is the
+fabricated 0 those exist for, so a core reaching for one on a declared register reds on the Phase 10
+ledger's value.
+
 A read of a fully declared access is served and ledgered. Anything else — an address in no
 declaration, a word with one byte missing — tallies through the existing **`os_refused()`**, so
 `harness.differential`'s unconditional `_vet_no_os_refusal` already throws the case away, and it is
@@ -3102,14 +3306,19 @@ that says the wrong thing is wrong *in writing*.
 ### What is pinned, and what is not
 
 **The model** is pinned kit-side by [`test/test_io_model.py`](test/test_io_model.py) and its
-`io_model_probe.c`, which drives **both** implementations in one process (60 cases, as pytest
+`io_model_probe.c`, which drives **both** implementations in one process (89 cases, as pytest
 collects them): a declared read served and ledgered; a declaration not consumed by one run and not
 surviving one either; an undeclared read served `0`, counted, and NOT ledgered on either side; a
 declared byte read twice, served twice (the stated limit, as a row); two reads compared **in order**;
 a word served from two declared bytes and REFUSED when one is missing, naming the missing byte; a
-long read over four, on BOTH shores; the write-then-read case counted and its per-run clear; each
-exclusion measured as "all but this one installed" rather than as "none of one"; the duplicate; the
-cap; and the bench starting from the case's map with an empty ledger. And the negative controls,
+long read over four, on BOTH shores; the write-then-read case counted and its per-run clear; the
+WRITE-THROUGH arm as five rows — the store read back, a marked byte the run never stores, the
+store-and-verify LOOP terminating with exactly ONE read in the ledger, a wide store straddling a
+marked byte and an unmarked one (half latched, half declared AND stale), and a named slot marked
+write-through still not installed — beside the SAME candidate body run against a marked and an
+unmarked declaration, which is the relation that says the mark rather than the map is doing the
+work; each exclusion measured as "all but this one installed" rather than as "none of one"; the
+duplicate; the cap; and the bench starting from the case's map with an empty ledger. And the negative controls,
 each caught while touching no image byte:
 
 * a candidate that **reads the wrong declared address**, declared to the same byte — its value, its
@@ -3189,15 +3398,14 @@ non-goal the FDC poll is excluded under). `projects/zynaps/recreate/STATUS.md` r
 mutant that leaves — a candidate that drops the loop and services exactly one byte passes every
 drivable case.
 
-**A REGISTER THAT READS BACK WHAT THE RUN JUST WROTE.** Zynaps's boot programs the MFP's Timer B data
-register and then spins until it reads the value back (`move.b #$ac,$fffa21` / `cmpi.b #$ac,$fffa21`
-/ `bne`, at `0x10626` and `0x10664`, and twice more in `title_attract_loop`). Neither half of the
-model fits: unmodeled, the read answers `0` and the spin never ends; declared as a Phase 7 slot, the
-run's own store makes the seed STALE and the case is refused — correctly, because the seed describes
-the byte the chip held on ENTRY. The shape it wants is Phase 6's YM2149 register FILE one address
-over: a slot whose write updates what a later read is served, which is not a fabrication because the
-value is one the run itself produced, identically on both sides. Zynaps slices around the four spins
-rather than model them; `projects/zynaps/recreate/STATUS.md` records the twenty bytes that costs.
+**A REGISTER THAT READS BACK WHAT THE RUN JUST WROTE is MODELED** as of 2026-09-15 — Phase 15's
+write-through arm, which is where the argument for it now lives. It is an opt-in per declared
+address, because it is a claim about the register that is true of a latch and false of a
+write-to-clear, a running counter or a status sequence; that section's table says which is which.
+**Zynaps's four Timer-B spins** (`move.b #$ac,$fffa21` / `cmpi.b #$ac,$fffa21` / `bne`, at `0x10626`
+and `0x10664`, and twice more in `title_attract_loop`) are what raised it and are deliberately NOT
+revisited: that project is the unchanged control for this model, it still slices around the spins,
+and `projects/zynaps/recreate/STATUS.md` still records the twenty bytes that costs.
 
 `Dgetdrv` (0x19) appears in Joust and is **not** modeled: its answer is a property of the machine the
 harness does not have. `Pexec`, `Cauxin` (0x03), `Pterm0` (0x00), GEM opcodes outside the set in

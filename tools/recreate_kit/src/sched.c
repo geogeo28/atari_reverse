@@ -79,11 +79,14 @@ uint8_t sched_poll8(uint8_t *image, uint32_t addr, uint32_t site_pc) {
     }
     uint32_t arrival = ++g_sched_site_polls_n[site];
     for (uint32_t i = 0; i < g_sched_n; i++) {
-        /* OS_SCHED_F_KIND and OS_SCHED_F_TRIGGER name a program counter, which this side does not
-         * have; harness.differential refuses a differential carrying an AT_INSN entry for exactly
-         * that reason, so every entry that reaches here is an AT_PC one whose TRIGGER is a site and
-         * whose NTH is that site's poll index. */
-        if (g_sched_fired[i] || site_pc != g_sched[i][OS_SCHED_F_TRIGGER]
+        /* ONLY AN AT_PC ENTRY CAN FIRE HERE. The other two kinds count things this side does not
+         * have — an instruction index and the run's reads of an address — and harness.differential
+         * refuses a case carrying either for exactly that reason. The KIND is tested all the same,
+         * because "the harness refused it" is a fact about another file: an AT_READ entry whose
+         * TRIGGER happened to equal this site's PC would otherwise fire here on a poll count, which
+         * is a store made at a moment neither side meant. */
+        if (g_sched_fired[i] || g_sched[i][OS_SCHED_F_KIND] != OS_SCHED_AT_PC
+                || site_pc != g_sched[i][OS_SCHED_F_TRIGGER]
                 || arrival != g_sched[i][OS_SCHED_F_NTH])
             continue;
         g_sched_fired[i] = 1;

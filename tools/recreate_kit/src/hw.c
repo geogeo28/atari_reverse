@@ -91,7 +91,12 @@ uint8_t hw_read8(uint32_t addr) {
  * rather than slot-keyed, which is the ONE way it differs from the named set above.
  * ============================================================================================= */
 static uint32_t g_io_addr[OS_IO_SEED_MAX];   /* the declared addresses, 24-bit bus form */
-static uint8_t  g_io_val[OS_IO_SEED_MAX];    /* ...and what a read of each answers */
+static uint8_t  g_io_writeback[OS_IO_SEED_MAX];  /* ...and which of them LATCH a store (os.h) */
+/* ...and what a read of each is served NOW. The oracle keeps the declaration and this live copy
+ * apart, because a run there may be resumed and a bench segment must not re-seed; this side has no
+ * such split — `g_io_reset` runs before EVERY candidate run and re-installs the declaration into
+ * these bytes, so a previous run's write-through store cannot survive into the next one. */
+static uint8_t  g_io_live[OS_IO_SEED_MAX];
 static uint32_t g_io_n;
 /* The ordered ledger of SERVED reads, (address, width, value), mirroring shim.c's. A REFUSED read
  * is not an entry, because the oracle has none for it either: its callback counts the byte as an
@@ -110,14 +115,33 @@ static uint32_t g_io_log_n;
  * REJECTED — a Phase-7 named slot, a YM2149 port, an address below the I/O page — is a refusal
  * rather than a silent shortfall: the case declared a byte this model will never serve, and a run
  * that went on to read it would refuse anyway, one layer down and with a less useful message. */
-void g_io_reset(const uint32_t *addrs, const uint8_t *values, uint32_t n) {
+void g_io_reset(const uint32_t *addrs, const uint8_t *values, const uint8_t *writeback,
+                uint32_t n) {
     g_io_log_n = 0;
-    g_io_n = os_io_install_seed(g_io_addr, g_io_val, addrs, values, n);
+    /* Installed STRAIGHT INTO the live bytes: this runs before every candidate run, so re-installing
+     * the declaration IS what stops a write-through store made by the previous run from reaching
+     * this one, and a second array holding the declaration would be state nothing else reads. */
+    g_io_n = os_io_install_seed(g_io_addr, g_io_live, g_io_writeback, addrs, values, writeback, n);
     if (g_io_n != n)
         os_refused(0);
 }
 
 uint32_t        g_io_seed_count(void)  { return g_io_n; }
+
+/* How many installed entries this run's case marked WRITE-THROUGH. The harness compares it against
+ * the oracle's own count of the same declaration, which is the one surface that says the candidate
+ * built the writeback COLUMN — a candidate that installed the addresses and the values and dropped
+ * the column serves every read from a byte no store can ever change, and every case whose seed has
+ * no write-through byte in it stays green. It is also the newest symbol in `_HW_LEDGER_ABI`, which
+ * is what makes a STALE .so predating `g_io_reset`'s writeback argument fail the presence probe
+ * instead of being called with an argument it does not take. */
+uint32_t        g_io_writeback_count(void) {
+    uint32_t marked = 0;
+    for (uint32_t i = 0; i < g_io_n; i++)
+        marked += g_io_writeback[i] == OS_IO_WRITE_THROUGH;
+    return marked;
+}
+
 uint32_t        g_io_log_count(void)   { return g_io_log_n; }
 const uint32_t *g_io_log_addrs(void)   { return g_io_log_addr; }
 const uint8_t  *g_io_log_widths(void)  { return g_io_log_width; }
@@ -137,7 +161,7 @@ static uint32_t io_read(uint32_t addr, uint32_t width) {
         int entry = os_io_find(g_io_addr, g_io_n, addr + i);
         if (entry < 0)
             return os_refused(0);        /* see hw.h: an undeclared I/O byte is an input, not a 0 */
-        served = served << 8 | g_io_val[entry];
+        served = served << 8 | g_io_live[entry];
     }
     if (g_io_log_n < OS_IO_LOG_MAX) {
         g_io_log_addr[g_io_log_n] = addr;
@@ -151,6 +175,18 @@ static uint32_t io_read(uint32_t addr, uint32_t width) {
 uint8_t  io_read8(uint32_t addr)  { return (uint8_t)io_read(addr, OS_HW_WRITE_WIDTH_8); }
 uint16_t io_read16(uint32_t addr) { return (uint16_t)io_read(addr, OS_HW_WRITE_WIDTH_16); }
 uint32_t io_read32(uint32_t addr) { return io_read(addr, OS_HW_WRITE_WIDTH_32); }
+
+/* Apply a store to the declared map — the candidate's half of the WRITE-THROUGH arm, and the mirror
+ * of shim.c's `io_note_written`. A marked byte LATCHES the store, so the next `io_read8` of it is
+ * served what this core wrote; an unmarked or undeclared one is untouched here, which is what keeps
+ * every case that declares no write-through byte byte-identical.
+ *
+ * The STALENESS column is the oracle's alone (os.h's os_io_store takes NULL for it here): that tally
+ * feeds `harness._vet_io_reads_are_declared`, which reads the ORACLE's report, so a second copy on
+ * this side would be state nothing consults. */
+static void io_note_written(uint32_t addr, uint32_t width, uint32_t value) {
+    os_io_store(g_io_addr, g_io_n, g_io_writeback, g_io_live, (uint8_t *)0, addr, width, value);
+}
 
 
 /* ================================================================================================
@@ -185,9 +221,19 @@ static void hw_log_write(uint32_t addr, uint32_t width, uint32_t value) {
     g_hw_write_n++;
 }
 
-void hw_write8(uint32_t addr, uint32_t value)  { hw_log_write(addr, OS_HW_WRITE_WIDTH_8, value); }
-void hw_write16(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_WIDTH_16, value); }
-void hw_write32(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_WIDTH_32, value); }
+/* EVERY store this file makes goes through here, so that a write-through declaration cannot be
+ * latched by one spelling of a store and not by another — the oracle sees one bus access whichever
+ * C a reconstruction wrote. The Phase 10 ledger is unchanged and still second: `io_note_written`
+ * decides what a later READ answers, `hw_log_write` records the store itself, and the shim's write
+ * callbacks call its two counterparts in this order. */
+static void hw_write(uint32_t addr, uint32_t width, uint32_t value) {
+    io_note_written(addr, width, value);      /* Phase 15's write-through arm */
+    hw_log_write(addr, width, value);         /* ...and Phase 10's ledger, exactly as it was */
+}
+
+void hw_write8(uint32_t addr, uint32_t value)  { hw_write(addr, OS_HW_WRITE_WIDTH_8, value); }
+void hw_write16(uint32_t addr, uint32_t value) { hw_write(addr, OS_HW_WRITE_WIDTH_16, value); }
+void hw_write32(uint32_t addr, uint32_t value) { hw_write(addr, OS_HW_WRITE_WIDTH_32, value); }
 
 /* The three READ-MODIFY-WRITE operations, off target. ../include/hw.h has the whole contract; the
  * one line that matters here is that the read half these stand for is of an address the seeded READ
@@ -195,17 +241,24 @@ void hw_write32(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_
  * byte the oracle's own `bset`/`bclr`/`andi.b` computes and ledgers is `0 | bit`, `0 & ~bit` and
  * `0 & mask`. These reproduce exactly that, which is why introducing them changed no ledger
  * comparison. A build for the real Atari does not compile this file and supplies each as the
- * genuine instruction on the register, where the read half is the byte the chip really holds. */
+ * genuine instruction on the register, where the read half is the byte the chip really holds.
+ *
+ * THEY ARE STILL NOT FOR A DECLARED ADDRESS, and the write-through arm does not change that: the
+ * READ half is fabricated here and served from the map on the oracle, so a core that reached for one
+ * of these on a declared register would store a byte the original did not and red on the Phase 10
+ * ledger's VALUE. The store goes through `hw_write` all the same, so a declared byte cannot be
+ * latched by one spelling of a store and missed by another. `include/hw.h` names the remedy: read
+ * the register with `io_read8` and store the result. */
 #define HW_RMW_FABRICATED_READ 0u   /* the byte the oracle serves for an unmodeled register */
 
 void hw_bset8(uint32_t addr, uint32_t bit) {
-    hw_log_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ | (1u << bit));
+    hw_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ | (1u << bit));
 }
 
 void hw_bclr8(uint32_t addr, uint32_t bit) {
-    hw_log_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ & ~(1u << bit));
+    hw_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ & ~(1u << bit));
 }
 
 void hw_and8(uint32_t addr, uint32_t mask) {
-    hw_log_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ & mask);
+    hw_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ & mask);
 }

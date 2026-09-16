@@ -26,7 +26,8 @@
 /* ../oracle/shim.c ships no header — Python binds it by ctypes — so the entry points this probe
  * uses come from probe_common.h, which also says exactly what that shared declaration does and does
  * not guarantee. The model-specific exports this probe reads are declared below. */
-void            osh_io_seed(const uint32_t *addrs, const uint8_t *values, uint32_t n);
+void            osh_io_seed(const uint32_t *addrs, const uint8_t *values, const uint8_t *writeback,
+                            uint32_t n);
 uint32_t        osh_io_seed_count(void);
 uint32_t        osh_io_seed_max(void);
 uint32_t        osh_io_stale_reads(void);
@@ -82,10 +83,17 @@ _Static_assert(CAP_PROBE_BASE + OS_IO_SEED_MAX < OS_PSG_PORT_SELECT,
  * show WHICH declaration was installed, and as the value a store overwrites the map's with. */
 #define OTHER_BYTE          0xa5u
 
-/* Install a declaration. `n` may be 0, which withdraws the previous one entirely — the shape that
- * restores the fabricated 0 this model exists to replace. */
+/* Install a declaration of per-run CONSTANTS. `n` may be 0, which withdraws the previous one
+ * entirely — the shape that restores the fabricated 0 this model exists to replace. */
 static void declare(const uint32_t *addrs, const uint8_t *values, uint32_t n) {
-    osh_io_seed(addrs, values, n);
+    osh_io_seed(addrs, values, (const uint8_t *)0, n);
+}
+
+/* ...and one carrying the WRITE-THROUGH column, which is what makes a store to a marked address
+ * replace the byte later reads are served (os.h, OS_IO_WRITE_THROUGH). */
+static void declare_with_writeback(const uint32_t *addrs, const uint8_t *values,
+                                   const uint8_t *writeback, uint32_t n) {
+    osh_io_seed(addrs, values, writeback, n);
 }
 
 /* The four addresses and bytes almost every case declares, in one place so a case that wants a
@@ -94,6 +102,21 @@ static const uint32_t ALL_ADDRS[] = {SHIFTER_RESOLUTION, PALETTE_0_HI, PALETTE_0
 static const uint8_t  ALL_VALUES[] = {RESOLUTION_MONO, PALETTE_HI_BYTE, PALETTE_LO_BYTE,
                                       VIDEO_BASE_BYTE};
 #define ALL_N ((uint32_t)(sizeof ALL_ADDRS / sizeof ALL_ADDRS[0]))
+
+/* ...and the WRITE-THROUGH column for those four: the resolution byte alone is marked, which is
+ * what makes "a store to a MARKED address latches and a store to an unmarked one goes stale" a
+ * claim about the mark rather than about the map. */
+static const uint8_t ALL_WRITE_THROUGH[] = {OS_IO_WRITE_THROUGH, OS_IO_DECLARED_CONSTANT,
+                                            OS_IO_DECLARED_CONSTANT, OS_IO_DECLARED_CONSTANT};
+_Static_assert(sizeof ALL_WRITE_THROUGH == sizeof ALL_VALUES,
+               "the write-through column must cover every declaration it is installed beside");
+
+/* ...and the pair a WIDE store straddles: the palette word's high byte marked and its low byte not,
+ * so one `move.w` reaches both rules at once. */
+static const uint32_t STRADDLE_ADDRS[] = {PALETTE_0_HI, PALETTE_0_LO};
+static const uint8_t  STRADDLE_VALUES[] = {PALETTE_HI_BYTE, PALETTE_LO_BYTE};
+static const uint8_t  STRADDLE_WRITE_THROUGH[] = {OS_IO_WRITE_THROUGH, OS_IO_DECLARED_CONSTANT};
+#define STRADDLE_N ((uint32_t)(sizeof STRADDLE_ADDRS / sizeof STRADDLE_ADDRS[0]))
 
 /* ...and the four CONSECUTIVE bytes a LONG read covers — the palette's first colour word and the
  * one beside it. Declared at file scope because both shores' long-read cases share it, and they are
@@ -148,16 +171,23 @@ static void report_candidate(const char *name, uint32_t read_value, uint32_t ref
 
 /* Seed the candidate the way harness.differential does, run `body`, and report. The declaration is
  * the SAME one the oracle cases get, so the two sides' cases are comparable pair by pair. */
-static void candidate_case(const char *name, const uint32_t *addrs, const uint8_t *values,
-                           uint32_t n, void (*body)(uint32_t *read_value)) {
+static void candidate_case_with_writeback(const char *name, const uint32_t *addrs,
+                                          const uint8_t *values, const uint8_t *writeback,
+                                          uint32_t n, void (*body)(uint32_t *read_value)) {
     /* The refusal tally FIRST, then the declaration — `harness.arm_candidate`'s own order, and it
      * is load-bearing: `g_io_reset` charges a refusal for a declaration os.h's rule rejected, and
      * clearing the tally after it would throw that away. */
     g_os_refusal_reset();
-    g_io_reset(addrs, values, n);
+    g_io_reset(addrs, values, writeback, n);
     uint32_t read_value = 0;
     body(&read_value);
     report_candidate(name, read_value, g_os_refusal_count());
+}
+
+/* ...and the ordinary form, whose every declaration is a per-run CONSTANT. */
+static void candidate_case(const char *name, const uint32_t *addrs, const uint8_t *values,
+                           uint32_t n, void (*body)(uint32_t *read_value)) {
+    candidate_case_with_writeback(name, addrs, values, (const uint8_t *)0, n, body);
 }
 
 /* The faithful reconstruction of the oracle's routine: read the shifter's resolution byte. */
@@ -205,6 +235,45 @@ static void cand_body_reads_the_palette_as_two_bytes(uint32_t *read_value) {
  * the oracle's own `move.l` produces. */
 static void cand_body_reads_the_long(uint32_t *read_value) {
     *read_value = io_read32(PALETTE_0_HI);
+}
+
+/* ---- the WRITE-THROUGH arm's candidate bodies (os.h, OS_IO_WRITE_THROUGH) ----
+ * A marked declaration says the register LATCHES what is stored and reads it back, so a store
+ * through `hw_write8` replaces what the next `io_read8` of the address is served. */
+
+/* The faithful shape the arm exists for: store, then read the register back. */
+static void cand_body_stores_then_reads_back(uint32_t *read_value) {
+    hw_write8(SHIFTER_RESOLUTION, OTHER_BYTE);
+    *read_value = io_read8(SHIFTER_RESOLUTION);
+}
+
+/* ...and the same read with NO store before it, which must be served the declared entry byte: a
+ * marked byte the run never stores to is an ordinary declaration. */
+static void cand_body_reads_without_storing(uint32_t *read_value) {
+    *read_value = io_read8(SHIFTER_RESOLUTION);
+}
+
+/* MUTANT — it reads BEFORE it stores, so it is served the byte the machine held on ENTRY where the
+ * original was served what it had just written. That is what a port written against the model
+ * WITHOUT this arm looks like, and the ledger's VALUE is what separates it. */
+static void cand_body_reads_back_before_storing(uint32_t *read_value) {
+    *read_value = io_read8(SHIFTER_RESOLUTION);
+    hw_write8(SHIFTER_RESOLUTION, OTHER_BYTE);
+}
+
+/* MUTANT — it stores a DIFFERENT byte, which the register then latches: the write ledger's value
+ * and the read ledger's value both move, from one wrong store. */
+static void cand_body_stores_a_different_value(uint32_t *read_value) {
+    hw_write8(SHIFTER_RESOLUTION, RESOLUTION_MONO);
+    *read_value = io_read8(SHIFTER_RESOLUTION);
+}
+
+/* A WIDE store straddling a MARKED byte and an unmarked one: the marked half latches and the
+ * unmarked half keeps its declaration (on the oracle it also goes stale, which is that side's
+ * tally). The word read after it is therefore half what the run wrote and half what it declared. */
+static void cand_body_wide_store_then_word_read(uint32_t *read_value) {
+    hw_write16(PALETTE_0_HI, (uint32_t)OTHER_BYTE << 8 | OTHER_BYTE);
+    *read_value = io_read16(PALETTE_0_HI);
 }
 
 /* MUTANT — two word reads where the original made one long read. Both halves are declared, so the
@@ -282,6 +351,42 @@ int main(void) {
     plant_rts(pc);
     run_and_report("after_the_write_the_next_run_is_clean");
 
+    /* --- THE WRITE-THROUGH ARM. A declaration marked OS_IO_WRITE_THROUGH says the register LATCHES
+     * what the run stores and reads it back unchanged, so the store REPLACES what a later read is
+     * served instead of making the declaration stale. The three rows below are the whole arm: the
+     * store read back, a marked byte the run never stores (which is an ordinary declaration), and
+     * the per-run reset — the next run is served the case's declaration again, or one case's store
+     * would reach the next. --- */
+    declare_with_writeback(ALL_ADDRS, ALL_VALUES, ALL_WRITE_THROUGH, ALL_N);
+    pc = emit_write_byte(PROBE_ENTRY, OTHER_BYTE, SHIFTER_RESOLUTION);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("write_through_read_back");
+
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("write_through_never_stored_reads_the_declaration");
+
+    /* ...and the STORE-AND-VERIFY loop the arm exists for, which is the MFP timer programmer's own
+     * shape (`projects/tos102us`, `$fc260e`): store the byte, read it back, go round again until
+     * the chip agrees. Undeclared it never terminates and declared as a constant it never
+     * terminates either — the compare can only come true because the register latched. */
+    pc = emit_write_byte(PROBE_ENTRY, OTHER_BYTE, SHIFTER_RESOLUTION);
+    pc = emit_compare_byte(pc, OTHER_BYTE, SHIFTER_RESOLUTION);
+    pc = emit_bne_back_to(pc, PROBE_ENTRY);
+    plant_rts(pc);
+    run_and_report("write_through_store_and_verify_loop");
+
+    /* ...and a WIDE store straddling a MARKED byte and an unmarked one: each covered byte gets its
+     * own answer, so the word read after it is half the byte the run wrote and half the byte the
+     * case declared — and the unmarked half is STALE, which is the refusal this arm does not
+     * remove. A store that latched the whole access would serve both halves the written word. */
+    declare_with_writeback(STRADDLE_ADDRS, STRADDLE_VALUES, STRADDLE_WRITE_THROUGH, STRADDLE_N);
+    pc = emit_write_word(PROBE_ENTRY, (uint16_t)(OTHER_BYTE << 8 | OTHER_BYTE), PALETTE_0_HI);
+    pc = emit_read(pc, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    plant_rts(pc);
+    run_and_report("a_wide_store_straddles_a_marked_byte_and_an_unmarked_one");
+
     /* --- PRECEDENCE. A Phase-7 NAMED SLOT offered to this model is NOT installed, and a read of it
      * still reaches Phase 7 — so no byte is ever served by two models with only one model's rules
      * enforced. (Through the Python door a case may write one here and `emu.seed_split` routes it
@@ -297,6 +402,19 @@ int main(void) {
     pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_MFP_GPIP);
     plant_rts(pc);
     run_and_report("named_slot_is_not_shadowed");
+
+    /* ...and the mark buys no admission: the same slot offered WITH a write-through claim is still
+     * not installed, so a case cannot reach past os_io_seedable by marking an address. (Through the
+     * Python door such a claim is a ValueError in `emu.seed_split`, which is where the routing
+     * decision is; this is the C rule underneath.) */
+    const uint8_t WITH_NAMED_SLOT_WRITEBACK[] = {OS_IO_DECLARED_CONSTANT, OS_IO_DECLARED_CONSTANT,
+                                                 OS_IO_DECLARED_CONSTANT, OS_IO_DECLARED_CONSTANT,
+                                                 OS_IO_WRITE_THROUGH};
+    declare_with_writeback(WITH_NAMED_SLOT, WITH_NAMED_SLOT_VALUES, WITH_NAMED_SLOT_WRITEBACK, 5);
+    pc = emit_write_byte(PROBE_ENTRY, OTHER_BYTE, OS_HW_MFP_GPIP);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_MFP_GPIP);
+    plant_rts(pc);
+    run_and_report("a_named_slot_marked_write_through_is_still_not_installed");
 
     /* ...and the same for the YM2149's block, which Phase 6 owns along with two refusals of its own
      * that a byte served from here would reach none of. Only the INSTALL is measured: a read of the
@@ -381,6 +499,30 @@ int main(void) {
      * bypassed emu's encoder cannot run against a map quietly smaller than the one it wrote. */
     candidate_case("cand_rejected_declaration", WITH_NAMED_SLOT, WITH_NAMED_SLOT_VALUES, 5,
                    cand_body_reads_the_resolution);
+
+    /* ...and the WRITE-THROUGH arm on this shore, which must serve exactly what the oracle's rows
+     * above serve or a faithful reconstruction of a store-and-verify loop would red. The three
+     * mutants are the ways a port of such a loop goes wrong while touching no image byte: it reads
+     * before it stores (so it is served the ENTRY byte, which is what the model without this arm
+     * would have given it), or it stores the wrong byte (which the register then latches). */
+    candidate_case_with_writeback("cand_write_through_read_back", ALL_ADDRS, ALL_VALUES,
+                                  ALL_WRITE_THROUGH, ALL_N, cand_body_stores_then_reads_back);
+    candidate_case_with_writeback("cand_write_through_never_stored", ALL_ADDRS, ALL_VALUES,
+                                  ALL_WRITE_THROUGH, ALL_N, cand_body_reads_without_storing);
+    candidate_case_with_writeback("cand_write_through_read_before_store", ALL_ADDRS, ALL_VALUES,
+                                  ALL_WRITE_THROUGH, ALL_N, cand_body_reads_back_before_storing);
+    candidate_case_with_writeback("cand_write_through_stores_another_value", ALL_ADDRS, ALL_VALUES,
+                                  ALL_WRITE_THROUGH, ALL_N, cand_body_stores_a_different_value);
+    /* ...and the same store to an UNMARKED declaration, which keeps today's rule verbatim: the read
+     * is served the byte the case declared, identically on both shores, and the refusal is the
+     * harness's on the ORACLE's staleness tally rather than anything either core can see. */
+    candidate_case("cand_unmarked_write_then_read", ALL_ADDRS, ALL_VALUES, ALL_N,
+                   cand_body_stores_then_reads_back);
+    /* ...and the WIDE store that straddles the two rules, whose word read is half what the run
+     * wrote and half what the case declared. */
+    candidate_case_with_writeback("cand_wide_store_straddle", STRADDLE_ADDRS, STRADDLE_VALUES,
+                                  STRADDLE_WRITE_THROUGH, STRADDLE_N,
+                                  cand_body_wide_store_then_word_read);
 
     free(g_image);
     return 0;

@@ -307,12 +307,33 @@ _IO_WRITE_THEN_READ_CODE = (struct.pack(">HHI", 0x13FC, RESOLUTION_MONO, SHIFTER
                             + struct.pack(">HI", 0x1239, SHIFTER_RESOLUTION)  # move.b $ff8260.l,d1
                             + struct.pack(">H", 0x4E75))                      # rts
 
+# ...and the shape the WRITE-THROUGH arm exists for, which is the MFP timer programmer's own
+# (`projects/tos102us`, `$fc260e`): store the byte, read the register back, and go round again until
+# the chip agrees. A 68901 needs a settling time on its data registers, so the ROM really spins here
+# — and the loop terminates only because the register LATCHED what was stored, which is precisely
+# what a `write_through` declaration claims. Undeclared, or declared as a per-run constant, the
+# compare can never come true and the run dies at the instruction cap.
+VIDEO_BASE_MID = 0xFF8203             # the screen address's middle byte: a register that latches
+IO_LATCHED_BYTE = 0x5A                # what the loop stores, and therefore what it must read back
+_CMPI_B_IMM_ABSL = 0x0C39
+_BNE_SHORT = 0x66
+_IO_STORE_AND_VERIFY_BYTES = 16       # the store (8) and the compare (8), which the `bne` spans
+
+_IO_STORE_AND_VERIFY_CODE = (
+    struct.pack(">HHI", 0x13FC, IO_LATCHED_BYTE, VIDEO_BASE_MID)      # .st: move.b #$5a,$ff8203.l
+    + struct.pack(">HHI", _CMPI_B_IMM_ABSL, IO_LATCHED_BYTE, VIDEO_BASE_MID)  # cmpi.b #$5a,$ff8203
+    # The displacement is measured from the word AFTER the opcode, so branching back to the store
+    # is -(the two instructions above, plus this opcode word).
+    + struct.pack(">Bb", _BNE_SHORT, -(_IO_STORE_AND_VERIFY_BYTES + 2))       # bne.s .st
+    + struct.pack(">H", 0x4E75))                                             # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
              _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
              _EVENT_MALLOC_CODE, _PTERM_CODE, _STAGED_FILE_CODE,
-             _IO_READ_CODE, _IO_READ_PAIR_CODE, _IO_WORD_READ_CODE, _IO_WRITE_THEN_READ_CODE)
+             _IO_READ_CODE, _IO_READ_PAIR_CODE, _IO_WORD_READ_CODE, _IO_WRITE_THEN_READ_CODE,
+             _IO_STORE_AND_VERIFY_CODE)
 
 
 def _entries():
@@ -329,7 +350,8 @@ def _entries():
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
  ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
  EVENT_MALLOC_ENTRY, PTERM_ENTRY, STAGED_FILE_ENTRY,
- IO_READ_ENTRY, IO_READ_PAIR_ENTRY, IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY) = _entries()
+ IO_READ_ENTRY, IO_READ_PAIR_ENTRY, IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY,
+ IO_STORE_AND_VERIFY_ENTRY) = _entries()
 
 # The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
 PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET

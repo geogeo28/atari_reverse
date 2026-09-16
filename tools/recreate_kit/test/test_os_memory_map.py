@@ -62,6 +62,11 @@ PINNED = ("OS_IMAGE_SIZE",
           # third time. The map's SIZE (OS_IO_SEED_MAX) needs no entry: emu.py reads it from the .so
           # (osh_io_seed_max), so there is no second copy in Python that could drift from os.h.
           "OS_IO_LOG_MAX",
+          # ...and that map's WRITE-THROUGH flag, which emu.io_seed_entries encodes per declaration
+          # and both C shores decode: a flag meaning one thing in Python and another in os.h would
+          # have the oracle LATCH a store the candidate left alone, and the divergent read-back that
+          # followed would read as a reconstruction bug rather than as the two shores disagreeing.
+          "OS_IO_DECLARED_CONSTANT", "OS_IO_WRITE_THROUGH",
           # the YM2149's select/read-back port. Mirrored because a PROJECT's case names it — the
           # decoy a ROM case plants there to prove the ports are not served out of the image has to
           # be at the address the shim actually decodes.
@@ -114,11 +119,11 @@ PINNED = ("OS_IMAGE_SIZE",
           "OS_VDI_HANDLE", "OS_VDI_DEFAULT_FILL_COLOR", "OS_VDI_DEFAULT_TEXT_COLOR",
           "OS_VDI_DEFAULT_WRITE_MODE", "OS_VDI_DEFAULT_TEXT_HEIGHT",
           "OS_VDI_DEFAULT_FILL_INTERIOR", "OS_VDI_DEFAULT_FILL_STYLE",
-          # ...and the scheduled-write model's two trigger kinds (Phase 8). The sizes need no entry —
-          # emu.py reads OS_SCHED_MAX/OS_SCHED_FIELDS from the .so — but these two are an ENCODING
-          # the cases are written against, and a value changed on one side alone would turn every
+          # ...and the scheduled-write model's three trigger kinds (Phase 8). The sizes need no entry
+          # — emu.py reads OS_SCHED_MAX/OS_SCHED_FIELDS from the .so — but these are an ENCODING the
+          # cases are written against, and a value changed on one side alone would turn every
           # `pc` trigger into an `insn` one, which fires at an instruction index instead.
-          "OS_SCHED_AT_PC", "OS_SCHED_AT_INSN")
+          "OS_SCHED_AT_PC", "OS_SCHED_AT_INSN", "OS_SCHED_AT_READ")
 
 
 def _c_defines(source, names=None):

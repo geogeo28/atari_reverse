@@ -8,6 +8,7 @@ Unicorn's ColdFire-derived core, which mis-handles byte memory read-modify-write
 import contextlib
 import ctypes
 from pathlib import Path
+from typing import NamedTuple
 
 import loader   # bound by recreate_kit.project.load() before this module is first imported
 from recreate_kit import os_map    # the poked-input block + the pure overlap arithmetic below
@@ -457,7 +458,9 @@ _HwFileP = ctypes.POINTER(ctypes.c_uint8 * HW_NSLOTS)
 # that it was silently dropped.
 _SCHED_ABI = ("osh_schedule", "osh_sched_count", "osh_sched_applied", "osh_sched_arrivals",
               "osh_sched_refused", "osh_sched_max", "osh_sched_fields",
-              "osh_sched_site_max", "osh_sched_site_count", "osh_sched_site_arrivals")
+              "osh_sched_site_max", "osh_sched_site_count", "osh_sched_site_arrivals",
+              "osh_sched_read_max", "osh_sched_read_count", "osh_sched_read_site",
+              "osh_sched_read_arrivals")
 _missing_sched = [sym for sym in _SCHED_ABI if not hasattr(_LIB, sym)]
 if _missing_sched:
     raise _stale_oracle(
@@ -466,24 +469,38 @@ if _missing_sched:
         "supplies would spin to the instruction cap, with the declared store never made.")
 _LIB.osh_schedule.argtypes = [_u32p, ctypes.c_uint32, _u32p, ctypes.c_uint32]
 _LIB.osh_sched_site_arrivals.argtypes = [ctypes.c_uint32]
+_LIB.osh_sched_read_site.argtypes = [ctypes.c_uint32]
+_LIB.osh_sched_read_arrivals.argtypes = [ctypes.c_uint32]
 for _sym in ("osh_sched_count", "osh_sched_applied", "osh_sched_arrivals", "osh_sched_refused",
              "osh_sched_max", "osh_sched_fields", "osh_sched_site_max", "osh_sched_site_count",
-             "osh_sched_site_arrivals"):
+             "osh_sched_site_arrivals", "osh_sched_read_max", "osh_sched_read_count",
+             "osh_sched_read_site", "osh_sched_read_arrivals"):
     getattr(_LIB, _sym).restype = ctypes.c_uint32
 # Read from the .so rather than restated here (PSG_NREGS's argument): a shim that resized the table
 # or the entry cannot leave this file encoding the old shape.
 SCHED_MAX = _LIB.osh_sched_max()
 SCHED_FIELDS = _LIB.osh_sched_fields()
 SCHED_SITE_MAX = _LIB.osh_sched_site_max()
-# The two trigger kinds. Mirrored from os.h rather than read back from the .so, unlike the two sizes
+SCHED_READ_MAX = _LIB.osh_sched_read_max()
+# The three trigger kinds. Mirrored from os.h rather than read back from the .so, unlike the sizes
 # above, because they are an ENCODING the CASES are written against rather than a table size — and
-# test/test_os_memory_map.py pins the pair equal to os.h, which is what a mirror costs.
+# test/test_os_memory_map.py pins them equal to os.h, which is what a mirror costs.
 OS_SCHED_AT_PC = 0
 OS_SCHED_AT_INSN = 1
+OS_SCHED_AT_READ = 2
 # ...and the field order of one flattened entry, for the two consumers that read one back rather
 # than build one (harness._vet_poison_is_attributable). os.h owns the numbers.
 OS_SCHED_F_KIND, OS_SCHED_F_TRIGGER, OS_SCHED_F_NTH = 0, 1, 2
 OS_SCHED_F_ADDR, OS_SCHED_F_WIDTH, OS_SCHED_F_VALUE = 3, 4, 5
+# ...and the KEY a case spells each kind with, which is what makes this the ONE place a fourth
+# trigger is added. `schedule_entries` derives its accepted keys, its "exactly one trigger" list and
+# its encoding from this dict, and `_install_bench_schedule` refuses by ALLOWLIST — so a kind added
+# here without a thought for the bench door is refused there by default rather than silently reaching
+# a door that cannot fire it.
+SCHED_TRIGGER_KINDS = {"pc": OS_SCHED_AT_PC, "insn": OS_SCHED_AT_INSN, "read": OS_SCHED_AT_READ}
+# The kinds the BENCH door can fire. A PC or an instruction index belongs to the ORIGINAL's stream
+# and names nothing in the cross-compiled build (_install_bench_schedule says this in full).
+SCHED_BENCH_TRIGGER_KINDS = frozenset({"read"})
 SCHED_WIDTHS = (1, 2, 4)          # os_sched_store carries a byte, a word and a longword
 
 _LIB.osh_cov_enable.argtypes = [ctypes.c_int]
@@ -532,7 +549,7 @@ if _missing_io_model:
         "/".join(_missing_io_model),
         "so it predates the declared I/O map: a case's `io_seed` would install nothing and every "
         "byte it declared would answer a silent 0 on both sides.")
-_LIB.osh_io_seed.argtypes = [_u32p, _u8p, ctypes.c_uint32]
+_LIB.osh_io_seed.argtypes = [_u32p, _u8p, _u8p, ctypes.c_uint32]
 for _symbol in ("osh_io_seed_count", "osh_io_seed_max", "osh_io_stale_reads", "osh_io_stale_first",
                 "osh_io_count", "osh_io_dropped"):
     getattr(_LIB, _symbol).restype = ctypes.c_uint32
@@ -665,15 +682,57 @@ BENCH_MAX_INSNS = 16_000_000
 _bench_buf = None
 
 
+def _vet_bench_schedule(status, entry):
+    """Refuse a bench SEGMENT whose declared store never fired, or was refused, NAMING it rather
+    than letting the wait run to the instruction cap.
+
+    A cap overrun on a routine that waits says "did not return within N instructions", which sends
+    the reader to `max_insns`; the cause is almost always that the trigger is not what the build
+    reads, or that `nth` names a read the loop never reached. Both are separable from the counts, so
+    the counts are what the message carries.
+
+    WHY IT IS HERE AND NOT IN `run_bench`. A schedule is installed once and the run that consumes it
+    can span SEVERAL segments — a twin that stops at the callback door resumes through
+    `bench_resume`, which never passed through `run_bench` at all. Checked there, the vet fired on
+    the DOOR STOP (where a store legitimately has not come due yet, because the wait is past the
+    door) and never on the segment that actually ended the run. So: every segment but a door stop,
+    which is precisely "the run has finished", and BEFORE the exhaustion raise, so a wait whose store
+    never landed is named as that rather than as the instruction cap it then hit.
+
+    The expected count is the SHIM's (`osh_sched_count`), not a number carried from the install: the
+    installed list persists across resumes, so the shim is the only side that still knows it by the
+    time a later segment ends.
+    """
+    if status == BENCH_DOOR:
+        return
+    cause = _sched_never_came_due_text(_LIB.osh_sched_count())
+    if cause is None and _LIB.osh_sched_refused():
+        # On the same footing as `run`'s, and for the same reason: the store the case declared was
+        # never made, so the run is not the one the case describes — and in a bench run, whose whole
+        # product is a cycle count, a silently dropped store is a measurement of a different path.
+        cause = (f"{_LIB.osh_sched_refused()} of its scheduled store(s) could not be made — the "
+                 f"store leaves the {loader.IMAGE_SIZE:#x}-byte image")
+    if cause:
+        raise RuntimeError(f"recon fn @ {entry:#x}: {cause}")
+
+
 def _bench_result(status, out, entry, max_insns):
     """The reported shape of one bench segment, or the raise for a run that stopped at neither the
     sentinel nor the door. ``entry`` names the function in that message."""
+    _vet_bench_schedule(status, entry)
     if status == BENCH_INSNS_EXHAUSTED:
         raise RuntimeError(f"recon fn @ {entry:#x} did not return to the sentinel within "
                            f"{max_insns} instructions")
     return {"status": status, "reached": status == BENCH_SENTINEL, "d0": out[0],
             "regs": dict(zip(REPORTED_REGS, out)),
-            "ninsns": _LIB.osh_num_insns(), "cycles": _LIB.osh_num_cycles()}
+            "ninsns": _LIB.osh_num_insns(), "cycles": _LIB.osh_num_cycles(),
+            # The SCHEDULED WRITE model's surfaces for this run, on the same footing as `run`'s:
+            # what the agent stored, and the reads made at each derived READ SITE. The last is the
+            # only thing a caller can compare against the ORIGINAL's own run of the same case, and
+            # without it a build that spun a different number of times is invisible (`rom_bench`).
+            "sched_applied": _LIB.osh_sched_applied(),
+            "sched_read_sites": sched_read_sites(),
+            "sched_read_arrivals": sched_read_arrivals()}
 
 
 def _bench_seed(seed_regs):
@@ -701,9 +760,10 @@ def _install_io_seed(io_seed):
     ``.so`` disagree about the rule, which would otherwise surface as a read the oracle refuses and
     the candidate serves.
     """
-    addrs, values = io_seed_entries(io_seed)
+    addrs, values, writeback = io_seed_entries(io_seed)
     _LIB.osh_io_seed((ctypes.c_uint32 * len(addrs))(*addrs),
-                     (ctypes.c_uint8 * len(values))(*values), len(addrs))
+                     (ctypes.c_uint8 * len(values))(*values),
+                     (ctypes.c_uint8 * len(writeback))(*writeback), len(addrs))
     if _LIB.osh_io_seed_count() != len(addrs):
         raise RuntimeError(f"the oracle installed {_LIB.osh_io_seed_count()} of this case's "
                            f"{len(addrs)} declared I/O byte(s) — its os_io_seedable() and this "
@@ -711,8 +771,43 @@ def _install_io_seed(io_seed):
                            f"emu.IO_SEED_MAX says")
 
 
+def _install_bench_schedule(schedule):
+    """Install a BENCH run's schedule, or clear whatever the run before left — and refuse a trigger
+    this door cannot fire.
+
+    ONLY A READ TRIGGER CAN BE FIRED HERE, and that is the whole shape of this door (os.h, "READ
+    TRIGGERS"). A ``pc`` names an address in the ORIGINAL's instruction stream; the cross-compiled
+    build's own wait is wherever the compiler put it and moves with every recompile, so an entry
+    keyed to a PC would either never come due or fire inside whatever code landed there. An ``insn``
+    index is the same objection with the counting done differently. A READ trigger names the ADDRESS
+    the wait spins on, which is the MACHINE's and identical on both sides — so one list, installed at
+    both doors, fires one store at one moment.
+
+    Returns how many stores were installed. The came-due vet asks the SHIM for that same number
+    rather than taking it from here (`_vet_bench_schedule`), because the installed list outlives this
+    call — a run that stops at the door resumes without passing through it again.
+    """
+    refused = sorted({key for entry in (schedule or ())
+                      for key in set(SCHED_TRIGGER_KINDS) - SCHED_BENCH_TRIGGER_KINDS
+                      if key in entry})
+    if refused:
+        raise ValueError(
+            f"run_bench's schedule names a `{'`/`'.join(refused)}` trigger, which this door cannot "
+            f"fire: it enters the CROSS-COMPILED build, whose instructions are at whatever "
+            f"addresses the compiler chose and move with every rebuild, so a program counter here "
+            f"names nothing the case can know. Trigger on the `read` of the address the wait spins "
+            f"on — that address is the machine's, so the same entry fires at both doors "
+            f"(TRAP_MODEL.md, Phase 8, \"READ TRIGGERS\")")
+    # ...and then the ORDINARY installer, which is the same call with no wait sites to declare: a
+    # read-only schedule names no trigger PC, so `wait_site_pcs` yields () and the shim is handed
+    # the empty site array either way. Sharing it rather than spelling a second install here is what
+    # keeps the two doors installing one list, checked against the shim's count by one comparison.
+    flat, _sites = _install_schedule(schedule, None)
+    return len(flat) // SCHED_FIELDS
+
+
 def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
-              seed_regs=None, *, io_seed=None):
+              seed_regs=None, *, io_seed=None, schedule=None):
     """Run a cross-compiled reconstruction function (our C built to m68k, loaded into ``mem`` at its
     link addresses) at ``entry`` with one 32-bit stack argument ``arg0`` (the image pointer). No OS
     traps are installed (see osh_run_bench). ``mem`` is a mutable bytearray already holding the loaded
@@ -737,6 +832,14 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     passes them by. There is no ``hw_seed`` door here (the named set's seed PERSISTS between runs,
     and a bench run clearing it would disarm an asm twin's), so a named slot routed out of this
     ``io_seed`` has nowhere to go and is refused rather than dropped.
+
+    ``schedule`` is the SCHEDULED WRITE model's list (Phase 8), installed per run exactly as
+    ``io_seed`` is — which is what makes a routine that BUSY-WAITS measurable at all: the
+    cross-compiled build spins on the same byte the ROM does, and nothing changes memory while a run
+    is in flight. Every entry must be a ``read`` trigger, because a PC here belongs to whatever the
+    compiler emitted (``_install_bench_schedule``); an entry that never comes due raises rather than
+    letting the wait run to ``max_insns``, and the reads the run made at each derived site come back
+    in the result so a caller can compare them with the ORIGINAL's.
     """
     routed_hw, io_seed = seed_split(None, io_seed)
     if routed_hw:
@@ -765,9 +868,12 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     _LIB.osh_bench_door(base & 0xFFFFFFFF, span & 0xFFFFFFFF)
     _bench_seed(seed_regs)
     _install_io_seed(io_seed)
+    _install_bench_schedule(schedule)
     status = _LIB.osh_run_bench(buf, size, entry & 0xFFFFFFFF, arg0 & 0xFFFFFFFF,
                                 sp & 0xFFFFFFFF, sentinel & 0xFFFFFFFF, max_insns, out)
     _release_unless_resumable(status)
+    # The schedule's own two failures are vetted inside `_bench_result`, for every segment rather
+    # than only this first one — see `_vet_bench_schedule`.
     return _bench_result(status, out, entry, max_insns)
 
 
@@ -1036,6 +1142,37 @@ def hw_seed_bytes(hw_seed):
     return bytes(values), known
 
 
+class write_through(NamedTuple):
+    """Mark one ``io_seed`` byte as a register that LATCHES a store and reads it back (Phase 15).
+
+    ``io_seed={0xfffa1f: write_through(0x00)}`` says two things at once: the timer's data register
+    held ``0x00`` on entry, AND a store to it replaces what a later read is served. Without the mark,
+    a read after a store is the STALENESS refusal — which is right for a declaration describing the
+    machine on entry, and wrong for the write-and-verify loop a BIOS programs a timer with.
+
+    WHY IT IS A VALUE IN THE SAME DICT rather than a sibling ``io_writeback=`` keyword. A case's I/O
+    declaration is carried as ONE object everywhere it goes — ``emu.run``/``emu.run_bench``'s
+    keyword, ``harness.differential``'s, ``rom_bench``'s Tier 3 row, and a project's own registry of
+    verified cases (`projects/tos102us`'s `VERIFIED_CASES` tuple) — and a second keyword would have
+    to be threaded through every one of them, growing a field in a tuple several batteries build.
+    Wrapping the value keeps that whole chain untouched: an `io_seed` is still `{address: byte}`, a
+    plain ``int`` still means exactly what it meant (so every existing case encodes byte-identically),
+    and the mark travels with the declaration it qualifies. It also makes the one inconsistent state
+    unrepresentable — a sibling set could name an address the map does not declare at all.
+
+    IT IS A CLAIM ABOUT THE REGISTER, and TRAP_MODEL.md, "Phase 15" ("The write-through arm") says
+    which registers it is FALSE for: a write-to-clear register (the MFP's IPR/ISR), a RUNNING timer's
+    data register, the FDC's status register. Nothing here can check that; what the model offers is
+    that the claim is written down where the case is read.
+    """
+    byte: int
+
+
+def io_seed_byte(value):
+    """The byte a declaration holds, whether it is a plain one or a ``write_through`` wrapper."""
+    return value.byte if isinstance(value, write_through) else value
+
+
 # The dict pair `io_seed_entries` last encoded, its contents at the time, and what it produced.
 # `harness.differential` asks for the same declaration up to four times a case (the oracle run, the
 # candidate arming, and both again under `poison`), and a battery that declares a whole palette
@@ -1048,12 +1185,16 @@ _io_seed_memo = None
 
 
 def io_seed_entries(io_seed):
-    """``{address: byte}`` -> ``(addresses, values)``: the pair BOTH sides take (Phase 15).
+    """``{address: byte}`` -> ``(addresses, values, writeback)``: the columns BOTH sides take.
 
-    One implementation, for ``psg_seed_bytes``'s reason — ``run()`` installs the pair in the oracle
-    and ``harness.differential`` hands the same pair to the candidate's ``g_io_reset``, so the two
-    cannot disagree about what the case's dict means. Entries are sorted by address, so two cases
-    that declare the same bytes install the same map whatever order the dict was written in.
+    One implementation, for ``psg_seed_bytes``'s reason — ``run()`` installs the columns in the
+    oracle and ``harness.differential`` hands the same columns to the candidate's ``g_io_reset``, so
+    the two cannot disagree about what the case's dict means. Entries are sorted by address, so two
+    cases that declare the same bytes install the same map whatever order the dict was written in.
+
+    A value may be a plain byte or a ``write_through`` wrapper (that class says why it is a value
+    rather than a second keyword); the third column is ``os_map.OS_IO_WRITE_THROUGH`` for the
+    wrapped ones and ``OS_IO_DECLARED_CONSTANT`` for the rest, which is the flag os.h decodes.
 
     Every rejection is a ``ValueError`` rather than a dropped entry: a case that declares a byte
     this model may not serve would otherwise read a fabricated 0 while its own source says the byte
@@ -1072,7 +1213,8 @@ def io_seed_entries(io_seed):
         if io_seed is seen and io_seed == contents:
             return encoded
     entries = sorted((io_seed or {}).items())
-    for addr, value in entries:
+    for addr, declaration in entries:
+        value = io_seed_byte(declaration)
         canonical = addr & os_map.OS_BUS_ADDR_MASK
         if addr != canonical:
             raise ValueError(
@@ -1100,12 +1242,15 @@ def io_seed_entries(io_seed):
         # `0 <= value <= 0xFF` alone admits a float (2.5 passes it) and raises TypeError on a
         # string, neither of which is the ValueError this function's docstring promises.
         if not isinstance(value, int) or not 0 <= value <= 0xFF:
-            raise ValueError(f"io_seed[{addr:#x}] = {value!r} is not a byte")
+            raise ValueError(f"io_seed[{addr:#x}] = {declaration!r} is not a byte")
     if len(entries) > IO_SEED_MAX:
         raise ValueError(
             f"io_seed declares {len(entries)} bytes, past os.h's OS_IO_SEED_MAX of {IO_SEED_MAX}. "
             f"Raise the constant with the case that needs it, on both sides at once")
-    encoded = (tuple(addr for addr, _ in entries), tuple(value for _, value in entries))
+    encoded = (tuple(addr for addr, _ in entries),
+               tuple(io_seed_byte(value) for _, value in entries),
+               tuple(os_map.OS_IO_WRITE_THROUGH if isinstance(value, write_through)
+                     else os_map.OS_IO_DECLARED_CONSTANT for _, value in entries))
     # `dict(io_seed) if io_seed` would store an EMPTY dict as its own contents, and the guard
     # above would then compare the object with itself — vacuously true however it is mutated.
     _io_seed_memo = (io_seed, None if io_seed is None else dict(io_seed), encoded)
@@ -1142,11 +1287,25 @@ def seed_split(hw_seed, io_seed):
     is keyed by register number and a read of `$ff8800` answers whatever the run last latched, so an
     address-keyed byte could not say which register it declared. ``io_seed_entries`` refuses it by
     name.
+
+    A `write_through` mark on a named slot is refused HERE rather than routed, and this is the only
+    place that can see it: after the routing the address is `hw_seed`'s and the mark is gone. Phase 7
+    has no write-through arm, so carrying the claim across would mean serving a case the entry byte
+    for a register its own source says the run replaced.
     """
     routed = {}
     for addr, value in (io_seed or {}).items():
         if addr not in HW_ADDRS:
             continue
+        if isinstance(value, write_through):
+            raise ValueError(
+                f"{addr:#x} is declared `write_through` through io_seed, and it is a Phase-7 NAMED "
+                f"SLOT — which `hw_seed`'s model owns and which has no write-through arm. Routing "
+                f"the claim would drop it silently and serve the case a byte its own source says "
+                f"the run had replaced. Phase 7's rules for that address are its own (a volatile "
+                f"re-read is refused, the ACIA data port is exempt from staleness); if a routine "
+                f"really writes this register and reads it back, the remedy is a model for the "
+                f"slot rather than a mark here (TRAP_MODEL.md, Phase 15)")
         if hw_seed and addr in hw_seed:
             raise ValueError(
                 f"{addr:#x} is declared by BOTH this case's hw_seed ({hw_seed[addr]!r}) and its "
@@ -1194,10 +1353,15 @@ def schedule_entries(schedule):
 
         {"pc": 0x64e, "nth": 3, "addr": 0x879, "width": 1, "value": 0x99}
         {"insn": 40,              "addr": 0x879, "width": 1, "value": 0x99}
+        {"read": 0x466, "nth": 2, "addr": 0x466, "width": 4, "value": 0x35e}
 
     ``pc`` fires the store just before the ``nth`` execution of the instruction at that address
     (``nth`` defaults to 1); ``insn`` fires it before the run's Nth instruction (1 = the first) and
-    has no candidate equivalent, so a differential refuses one (``harness.differential``). Every field is checked
+    has no candidate equivalent, so a differential refuses one (``harness.differential``); ``read``
+    fires it before the ``nth`` READ OF THAT ADDRESS, which is the one trigger both of the oracle's
+    DOORS can fire the same store from, because an address is the machine's where a PC belongs to one
+    build (os.h, "READ TRIGGERS"; ``run_bench``). It has no candidate equivalent either.
+    Every field is checked
     rather than masked: a width the model does not carry, a value that does not fit it or a store
     that leaves the image would otherwise be dropped by ``os_sched_store`` at run time, and a
     schedule that silently did nothing reads as a wait loop that simply never ended.
@@ -1208,24 +1372,33 @@ def schedule_entries(schedule):
                          f"this one declares {len(entries)}")
     flat = []
     for i, entry in enumerate(entries):
-        unknown = set(entry) - {"pc", "insn", "nth", "addr", "width", "value"}
+        unknown = set(entry) - set(SCHED_TRIGGER_KINDS) - {"nth", "addr", "width", "value"}
         if unknown:
             raise ValueError(f"schedule[{i}] carries unknown key(s) {sorted(unknown)}")
-        if ("pc" in entry) == ("insn" in entry):
+        named = [key for key in SCHED_TRIGGER_KINDS if key in entry]
+        if len(named) != 1:
             raise ValueError(f"schedule[{i}] must name exactly one trigger: `pc` (with an optional "
-                             f"`nth`) or `insn`")
+                             f"`nth`), `insn`, or `read` (with an optional `nth`)")
         nth = entry.get("nth", 1)
         if "insn" in entry and "nth" in entry:
             raise ValueError(f"schedule[{i}] is an `insn` trigger, which fires once at a fixed "
                              f"instruction index — `nth` names an arrival count and applies only to "
-                             f"a `pc` trigger")
+                             f"a `pc` or `read` trigger")
         if not (isinstance(nth, int) and nth >= 1):
             raise ValueError(f"schedule[{i}]['nth'] = {nth!r} is not an arrival count (1 = the first)")
         if "insn" in entry and not (isinstance(entry["insn"], int) and entry["insn"] >= 1):
             raise ValueError(f"schedule[{i}]['insn'] = {entry['insn']!r} is not an instruction index "
                              f"(1 = the first instruction the run executes)")
-        kind = OS_SCHED_AT_PC if "pc" in entry else OS_SCHED_AT_INSN
-        trigger = entry.get("pc", entry.get("insn"))
+        kind = SCHED_TRIGGER_KINDS[named[0]]
+        trigger = entry[named[0]]
+        # A READ trigger names an ADDRESS the run reads rather than an instruction it executes, so
+        # what makes it arrivable is different: any address in RAM can be read, odd ones included (a
+        # byte wait on an odd byte is an ordinary shape), and the bound is RAM's rather than the
+        # image's for the store's reason below — the I/O page and the ROM are decoded by the models
+        # in front of them, so a trigger there would count reads the two doors cannot both make.
+        if kind == OS_SCHED_AT_READ and not (isinstance(trigger, int) and 0 <= trigger < RAM_END):
+            raise ValueError(f"schedule[{i}]['read'] = {trigger!r} is not an address inside the "
+                             f"machine's {RAM_END:#x} bytes of RAM, so no run can read it")
         if kind == OS_SCHED_AT_PC and not (isinstance(trigger, int) and 0 <= trigger < loader.IMAGE_SIZE
                                            and trigger % 2 == 0):
             # A 68000 fetches instructions at EVEN addresses inside the image, so a `pc` that is
@@ -1304,6 +1477,26 @@ def wait_site_pcs(schedule, wait_sites):
     return tuple(sites)
 
 
+def read_site_addrs(schedule):
+    """The run's READ SITES as a tuple of addresses (os.h, "READ TRIGGERS").
+
+    DERIVED, not declared: they are the distinct ``read`` trigger addresses the schedule names, in
+    first-appearance order — the same derivation ``os_sched_read_sites`` makes in the shim, mirrored
+    here so that the caller of a run can say which address each reported count is about, and so that
+    a schedule naming more addresses than the model can hold is refused before it runs rather than
+    leaving an entry unable to come due.
+
+    Unlike a wait SITE there is nothing for a case to declare: a poll at a site no entry stores on is
+    an ordinary shape (a bounded loop that gives up), but a READ count nothing stores on belongs to
+    no wait and has no second column to be compared against.
+    """
+    sites = list(dict.fromkeys(entry["read"] for entry in (schedule or ()) if "read" in entry))
+    if len(sites) > SCHED_READ_MAX:
+        raise ValueError(f"a run's read triggers may name at most {SCHED_READ_MAX} address(es) "
+                         f"(os.h's OS_SCHED_READ_MAX); this one names {len(sites)}")
+    return tuple(sites)
+
+
 def _install_schedule(schedule, wait_sites):
     """Install ``schedule`` in the oracle; return ``(flattened entries, the declared sites)``.
 
@@ -1312,6 +1505,7 @@ def _install_schedule(schedule, wait_sites):
     """
     flat = schedule_entries(schedule)
     sites = wait_site_pcs(schedule, wait_sites)
+    reads = read_site_addrs(schedule)
     n = len(flat) // SCHED_FIELDS
     _LIB.osh_schedule(schedule_array(flat), n, schedule_array(list(sites)), len(sites))
     # The shim CLAMPS to OS_SCHED_MAX/OS_SCHED_SITE_MAX and reports what it kept. The encoders above
@@ -1325,7 +1519,65 @@ def _install_schedule(schedule, wait_sites):
         raise RuntimeError(f"the oracle kept {_LIB.osh_sched_site_count()} of this run's "
                            f"{len(sites)} wait site(s) — its OS_SCHED_SITE_MAX and this file's "
                            f"disagree")
+    # ...and the READ sites, which the shim derives from the entries it was just handed rather than
+    # taking from this call: the two derivations agreeing is what makes the counts this file reports
+    # back be about the addresses the case named.
+    if _LIB.osh_sched_read_count() != len(reads):
+        raise RuntimeError(f"the oracle derived {_LIB.osh_sched_read_count()} read site(s) from "
+                           f"this run's schedule and this file derived {len(reads)} "
+                           f"({', '.join(f'{addr:#x}' for addr in reads)}) — os_sched_read_sites "
+                           f"and emu.read_site_addrs disagree")
     return flat, sites
+
+
+def sched_read_sites():
+    """The READ SITES the run that has just finished derived from its schedule, as addresses.
+
+    Read back from the shim rather than re-derived in Python, so that a caller comparing two runs'
+    counts is reading the list the counts are indexed by. ``read_site_addrs`` is the mirror that
+    makes the two derivations checkable against each other (``_install_schedule``).
+    """
+    return tuple(_LIB.osh_sched_read_site(i) for i in range(_LIB.osh_sched_read_count()))
+
+
+def sched_read_arrivals():
+    """...and how many reads it made at each, in that same order.
+
+    THE BENCH DOOR'S CROSS-CHECK IS THIS AGAINST ITSELF on the two runs of one case: the store lands
+    on both sides from the same list, so a build that spun a different number of times ends with
+    identical memory and nothing else could tell (``rom_bench``).
+    """
+    return tuple(_LIB.osh_sched_read_arrivals(i) for i in range(_LIB.osh_sched_read_count()))
+
+
+def _sched_arrivals_text():
+    """How far the run's triggers got, as the phrase every schedule diagnostic ends with.
+
+    One spelling for the three of them (``run``'s overrun message, its never-came-due cause, and
+    ``run_bench``'s), because "the trigger never arrived" and "the loop never got that far" are the
+    two things a reader has to separate and the counts are what separate them.
+    """
+    parts = [f"{_LIB.osh_sched_arrivals()} arrival(s) at a trigger PC"]
+    parts += [f"{count} read(s) of {addr:#x}"
+              for addr, count in zip(sched_read_sites(), sched_read_arrivals())]
+    return " and ".join(parts)
+
+
+def _sched_never_came_due_text(n_scheduled):
+    """The cause for a run whose declared store(s) did not all fire, or None when they did.
+
+    ONE SPELLING for both doors. `run`'s and `run_bench`'s used to be two sentences with the same
+    counts and different tails, which is a claim about the model stated twice — and the shorter tail
+    ("the trigger is not what the build reads") had already lost the `pc`-trigger half that only
+    `run` can have. The wording is `run`'s, because it is the one that covers both trigger kinds; the
+    two callers differ only in how they carry it (a cause among others, or the whole raise).
+    """
+    applied = _LIB.osh_sched_applied()
+    if not n_scheduled or applied == n_scheduled:
+        return None
+    return (f"{n_scheduled - applied} of its {n_scheduled} scheduled store(s) never came due — the "
+            f"run made {_sched_arrivals_text()}, so either the trigger is not what the wait "
+            f"re-executes (or re-reads) or `nth` names an arrival the loop never reached")
 
 
 def hw_capture_profile():
@@ -1650,7 +1902,8 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     every run. An entry that never came due sinks the run: a wait loop whose agent never fired ran
     to the instruction cap, and reporting only "did not reach rts" would name the symptom.
 
-    ``io_seed`` is ``{address: byte}`` over ANY byte of the I/O page the named models do not own
+    ``io_seed`` is ``{address: byte}`` (or ``write_through(byte)``) over ANY byte of the I/O page
+    the named models do not own
     (TRAP_MODEL.md, Phase 15) — ``{0xff8260: 0x02}`` for the shifter's resolution byte XBIOS
     ``Getrez`` reads. A declared byte is a per-run CONSTANT served on every read of it; an
     undeclared one is unchanged, the silent 0 an off-image read has always answered, counted in
@@ -1751,9 +2004,8 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
         if scheduled:
             n_entries = len(scheduled) // SCHED_FIELDS
             stalled = (f"; its schedule of {n_entries} store(s) made "
-                       f"{_LIB.osh_sched_applied()} of them, after {_LIB.osh_sched_arrivals()} "
-                       f"arrival(s) at a trigger PC — an entry that never came due leaves the wait "
-                       f"loop spinning")
+                       f"{_LIB.osh_sched_applied()} of them, after {_sched_arrivals_text()} — an "
+                       f"entry that never came due leaves the wait loop spinning")
         raise RuntimeError(f"function @ {entry:#x} did not reach {where} within {max_insns} "
                            f"instructions; final memory is mid-execution, not trustworthy{stalled}")
     # The independent reasons a run's result may be fabricated. They are reported TOGETHER rather
@@ -1846,12 +2098,9 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # `nth` — and a refused store means os_sched_store would not make it (a straddle of the image's
     # top; the width and value are already checked in schedule_entries). Both leave the byte the case
     # declared unwritten, which on a wait loop is the difference between a modeled run and a hang.
-    n_scheduled = len(scheduled) // SCHED_FIELDS
-    if n_scheduled and _LIB.osh_sched_applied() != n_scheduled:
-        causes.append(f"{n_scheduled - _LIB.osh_sched_applied()} of its {n_scheduled} scheduled "
-                      f"store(s) never came due — the run made {_LIB.osh_sched_arrivals()} "
-                      f"arrival(s) at a trigger PC, so either the PC is not the instruction the "
-                      f"wait re-executes or `nth` names an arrival the loop never reached")
+    never_came_due = _sched_never_came_due_text(len(scheduled) // SCHED_FIELDS)
+    if never_came_due:
+        causes.append(never_came_due)
     if _LIB.osh_sched_refused():
         causes.append(f"{_LIB.osh_sched_refused()} of its scheduled store(s) could not be made — "
                       f"the store leaves the {loader.IMAGE_SIZE:#x}-byte image")
@@ -1949,6 +2198,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["sched_arrivals"] = _LIB.osh_sched_arrivals()
     out_regs["sched_site_arrivals"] = tuple(_LIB.osh_sched_site_arrivals(i)
                                             for i in range(len(sites)))
+    # ...and the READ trigger's pair of the same two (os.h, "READ TRIGGERS"): the addresses this
+    # run's own entries derived, and the reads it made at each. They have no candidate column — the
+    # trigger is refused in a differential — and are compared between the ORACLE'S TWO DOORS instead,
+    # which is what makes a Tier 3 row over a wait honest (`rom_bench`).
+    out_regs["sched_read_sites"] = sched_read_sites()
+    out_regs["sched_read_arrivals"] = sched_read_arrivals()
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
     _vet_heap_within_bounds(out_regs["heap"])
