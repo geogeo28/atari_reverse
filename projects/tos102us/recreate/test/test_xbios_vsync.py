@@ -28,20 +28,26 @@ WHAT IT LEAVES IN D0 is the `_frclock` sampled BEFORE the wait: `move.l $466,d0`
 instruction to touch the register. Not a documented return value, and exactly what the differential
 compares.
 
-NOT IN `test_boot_snapshot.VERIFIED_CASES` AND WITH NO TIER 3 ROW, and the reason is structural
-rather than an omission: that list's entries carry an entry, registers, pokes and the two seeds, with
-nowhere to put a `schedule`, and `emu.run_bench` — Tier 3's numerator door — has no schedule door at
-all, so the m68k build's own spin could never be released. Both would have to grow one; the
-orchestrator carries that as the next kit item, and until it lands **TIER 3 CANNOT PRICE THIS
-ROUTINE** — the cycle count below is the ORIGINAL's alone, a denominator with no numerator beside
-it. That also leaves this core's `os_ipl_unmask`/`os_ipl_restore` pair with no Tier 3 row to move
-when it vanishes, which is where every other `ipl.h` bracket is pinned; what stands in for it is the
-kit's `test_ipl_target_half.py`, which compiles the target header and pins the two instructions the
-unmask emits and their ORDER.
+IN `test_boot_snapshot.VERIFIED_CASES` THROUGH ITS SEVENTH FIELD, WHICH IS A SCHEDULE — and at two
+arrival counts (`PRICED_SPINS`), so Tier 3 prices this routine like every other. Those rows carry a
+DIFFERENT TRIGGER from this battery's, and the difference is the point. A registry row is run at both
+of the oracle's doors — `emu.run` for that file's own sweeps and for the Tier 3 denominator,
+`emu.run_bench` for the cross-compiled build beside it — and $fc07dc is an address in the ROM's
+instructions that the m68k build has nothing at, while its own spin is wherever `m68k-elf-gcc` put it
+and moves with every rebuild. So a registry row triggers on the READ of `_frclock` itself, which is
+the machine's address and the same on both sides (`blank_after`; TRAP_MODEL.md, Phase 8, "READ
+TRIGGERS"), and this battery keeps the PC trigger because the CANDIDATE counts polls and has no read
+counter at all. `test_the_two_triggers_name_the_same_blank` runs one release through both and
+requires the two runs indistinguishable, which is what makes the pair one claim rather than two.
 
-`$466` is outside `boot_snapshot.MASK` (asserted below), which is the coverage the snapshot list
-would have added here; the function number this routine answers to is read out of the ROM's own
-XBIOS table below, which is the other thing that list's entries buy.
+That also gives this core's `os_ipl_unmask`/`os_ipl_restore` pair a Tier 3 row to move when it
+vanishes, which is where every other `ipl.h` bracket is pinned. The kit's `test_ipl_target_half.py`
+stands beside it rather than in place of it: it compiles the target header and pins the two
+instructions the unmask emits and their ORDER, which a cycle count cannot say.
+
+`$466` is outside `boot_snapshot.MASK` (asserted below), and the function number this routine answers
+to is read out of the ROM's own XBIOS table below — both of them things a registry row buys, kept
+here because this battery is where a reader of `Vsync` looks for them.
 """
 import ctypes
 import sys
@@ -69,11 +75,52 @@ def clock_poke(clock):
     return {addrs.SYSVAR_FRCLOCK: clock.to_bytes(FRCLOCK_BYTES, "big")}
 
 
+def _blank_store(new_clock):
+    """The STORE half of a blank — `new_clock` into `_frclock`, longword — shared by the two
+    triggers below, so a case expressed either way cannot be describing a different store."""
+    return {"addr": addrs.SYSVAR_FRCLOCK, "width": FRCLOCK_BYTES, "value": new_clock}
+
+
 def blank_at(iteration, new_clock):
     """The external agent's store: `new_clock` into `_frclock`, just before the `iteration`th
     execution of the spin's own compare. One entry, which is one vertical blank."""
-    return [{"pc": addrs.VSYNC_WAIT_SITE, "nth": iteration, "addr": addrs.SYSVAR_FRCLOCK,
-             "width": FRCLOCK_BYTES, "value": new_clock}]
+    return [{"pc": addrs.VSYNC_WAIT_SITE, "nth": iteration, **_blank_store(new_clock)}]
+
+
+# The reads of `_frclock` the routine makes ABOVE its wait. `move.l SYSVAR_FRCLOCK,d0` at $fc07d6
+# samples the clock once before the loop, and the spin's `cmp.l` reads it once per iteration — so the
+# Nth spin is the (N + READS_BEFORE_THE_WAIT)th read of the address. That offset is the one thing a
+# read-triggered case has to get right, and `test_the_two_triggers_name_the_same_blank` below is what
+# holds it: it runs the same release through both triggers and requires the two runs identical.
+READS_BEFORE_THE_WAIT = 1
+
+
+def blank_after(spins, new_clock=SNAPSHOT_FRCLOCK + 1):
+    """The same blank as a READ trigger: the store lands before the `spins`th time round the loop.
+
+    WHY THE REGISTRY'S ROWS USE THIS ONE and the battery above uses the PC trigger. A
+    `VERIFIED_CASES` row is run at BOTH of the oracle's doors — `emu.run` for this project's own
+    sweeps and for the Tier 3 denominator, `emu.run_bench` for the cross-compiled build beside it —
+    and $fc07dc is an address in the ROM's instructions that our m68k build has nothing at, while its
+    own spin is wherever `m68k-elf-gcc` put it and moves with every rebuild. What both builds share
+    is `_frclock` itself, because the VBL handler's address is the machine's (TRAP_MODEL.md, Phase 8,
+    "READ TRIGGERS"). The Tier 1 differential keeps the PC trigger, because the CANDIDATE counts
+    polls and has no read counter at all.
+    """
+    return ({"read": addrs.SYSVAR_FRCLOCK, "nth": spins + READS_BEFORE_THE_WAIT,
+             **_blank_store(new_clock)},)
+
+
+# The arrival counts the registry prices this routine at (`bench/tier3.py`). MORE THAN ONE, and one of
+# them ODD, and both halves of that are measured rather than cautious. Phase 8 documents one hole: a
+# build that reads the byte twice per iteration is invisible at an `nth` that is a multiple of its
+# polling rate. Here that is every EVEN spin count — a double-reading build's reads are 1 + 2k against
+# the original's 1 + k, and the two are equal exactly when the release falls on one of its own
+# iterations. Measured on this row (2026-09-15): with the target `sched.h` mutated to read twice, the
+# blank at spin 4 passes EVERYTHING — same image, same D0, same streams, 5 reads either way, and a
+# ratio under the bar — while the blank at spin 3 is caught by the read comparison alone (4 against 5)
+# and the blank at spin 1 by that and by the ratio.
+PRICED_SPINS = (1, 4)
 
 
 def run(iteration, entry_clock=SNAPSHOT_FRCLOCK, new_clock=None):
@@ -97,10 +144,11 @@ def test_the_snapshot_holds_the_frame_clock_the_capture_stopped_at():
 
 
 def test_the_xbios_table_still_dispatches_function_0x25_here():
-    """WHAT A `VERIFIED_CASES` ROW WOULD HAVE BOUGHT, part two: every other reconstruction is held to
-    its dispatch-table entry by `test_boot_snapshot.py`, which derives that list from the register
-    this routine cannot be in. So the same read is made here, once, out of the mapped ROM — a wrong
-    `XBIOS_VSYNC` in `addrs.h` would otherwise leave this whole battery verifying some other routine.
+    """Every reconstruction here is held to its dispatch-table entry by `test_boot_snapshot.py`,
+    which derives that list from the registry. This routine IS in the registry now, so that check
+    covers it — and the same read is made here anyway, because a reader of `Vsync` looks for "which
+    function is this?" in this file: a wrong `XBIOS_VSYNC` in `addrs.h` would leave the whole battery
+    verifying some other routine.
 
     `test_boot_snapshot._trap_table` is imported rather than copied: the table's shape (a count, then
     that many longwords) is that file's claim, and a second reading of it is what drifts."""
@@ -112,10 +160,11 @@ def test_the_xbios_table_still_dispatches_function_0x25_here():
 
 
 def test_the_frame_clock_is_not_a_byte_the_capture_disagrees_about():
-    """What a `VERIFIED_CASES` row would have bought, said directly. Two captures of the same boot
-    differ in 1,929 bytes of AES and desktop scratch; a routine resting on one of them is verified
-    against one particular boot. `_frclock` is not among them — the stop is at a fixed vertical-blank
-    count — and this is what says so for the one function that reads it."""
+    """The snapshot sweep's claim, said directly for the byte this routine is about. Two captures of
+    the same boot differ in 1,929 bytes of AES and desktop scratch; a routine resting on one of them
+    is verified against one particular boot. `_frclock` is not among them — the stop is at a fixed
+    vertical-blank count — and a mask region that grew over it would red HERE, naming the byte,
+    rather than as a sweep failing over a case whose reads a reader then has to find."""
     for address, length, _name in boot_snapshot.MASK:
         assert max(address, addrs.SYSVAR_FRCLOCK) >= min(address + length,
                                                          addrs.SYSVAR_FRCLOCK + FRCLOCK_BYTES), (
@@ -182,6 +231,53 @@ def test_it_writes_nothing_of_its_own_outside_the_stack():
     assert info["regs"]["hw_writes"] == [] and info["regs"]["io_events"] == []
 
 
+# ---- the two triggers, and the offset between them --------------------------------------------------
+
+@pytest.mark.parametrize("spins", (1, 2, 3, 7))
+def test_the_two_triggers_name_the_same_blank(spins):
+    """THE PIN UNDER `READS_BEFORE_THE_WAIT`, and the reason this battery and the registry may spell
+    one blank two ways.
+
+    A PC trigger at arrival `k` and a read trigger at `k + READS_BEFORE_THE_WAIT` are the same event
+    only because `move.l SYSVAR_FRCLOCK,d0` reads the clock once above the loop. That is a fact about
+    THIS routine's instructions, not about the model — the kit pins the mechanism on a planted spin
+    (`test_sched_model.py`) — so it is checked here, over the ROM's own body, at four arrival counts.
+
+    Get the offset wrong and nothing else says so: the registry's rows would describe a run one
+    iteration longer or shorter than this battery's, both would pass, and the Tier 3 ratio would be
+    of a loop no differential ever verified.
+    """
+    image = make_image(clock_poke(SNAPSHOT_FRCLOCK))
+    by_pc = emu.run(image, addrs.XBIOS_VSYNC, {"a5": 0},
+                    schedule=blank_at(spins, SNAPSHOT_FRCLOCK + 1))
+    by_read = emu.run(image, addrs.XBIOS_VSYNC, {"a5": 0}, schedule=list(blank_after(spins)))
+    assert by_pc[0] == by_read[0], "the two triggers left different memory"
+    assert by_pc[1] == by_read[1], "...and wrote different bytes"
+    for name in (*emu.REPORTED_REGS, "ninsns", "cycles"):
+        assert by_pc[2][name] == by_read[2][name], (
+            f"the same blank expressed as a PC trigger and as a read trigger left a different "
+            f"{name} — READS_BEFORE_THE_WAIT is not the number of times this routine reads "
+            f"_frclock above its loop")
+    assert by_pc[2]["sched_site_arrivals"] == (spins,)
+    assert by_read[2]["sched_read_arrivals"] == (spins + READS_BEFORE_THE_WAIT,)
+
+
+def test_the_registry_prices_this_routine_at_an_odd_arrival_count():
+    """`PRICED_SPINS` is a claim the Phase 8 hole makes necessary, so it is asserted rather than
+    trusted: at an `nth` that is a multiple of a build's polls-per-iteration the extra poll lands on
+    the iteration the release was due anyway, and nothing separates it from a faithful body.
+
+    So the property that matters is not that the counts DIFFER — (2, 4) differ and are both inside
+    the hole a build that polls twice per iteration leaves — but that at least one of them is ODD,
+    which no such build can land on. That is what the pin says now; `len(set(...)) > 1` said only
+    that the tuple above has two entries, which is a fact about the line rather than about the
+    pricing.
+    """
+    assert any(spins % 2 for spins in PRICED_SPINS), (
+        "every priced arrival count is even, so a build that polls twice per iteration is inside "
+        "the hole at all of them")
+
+
 # ---- what the model refuses, over this routine ------------------------------------------------------
 
 def test_without_a_schedule_the_original_does_not_return():
@@ -210,8 +306,8 @@ def test_a_blank_that_does_not_change_the_clock_never_releases_the_wait():
 
 
 def test_the_oracles_cost_is_what_status_reports():
-    """The ORIGINAL's cost for one case — the Tier 3 DENOMINATOR this routine has no numerator for
-    (see the module docstring). It is a function of the arrival count, so the case that pins it is
+    """The ORIGINAL's cost for one case — the Tier 3 DENOMINATOR, which `bench/tier3.py` now divides
+    the m68k build's own cost by. It is a function of the arrival count, so the case that pins it is
     the one-iteration wait; `ninsns` counts one more than the instructions executed."""
     _final, _writes, regs = emu.run(make_image(clock_poke(SNAPSHOT_FRCLOCK)), addrs.XBIOS_VSYNC,
                                     {"a5": 0}, schedule=blank_at(1, SNAPSHOT_FRCLOCK + 1))

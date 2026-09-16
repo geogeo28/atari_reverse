@@ -13,17 +13,18 @@ read half fabricated as 0 (which is what `hw.h`'s `hw_bclr8` is for, and what a 
 without a declaration) the store's value would be the bit alone on both sides, and a reconstruction
 that wiped the register would be indistinguishable from one that cleared one bit of it.
 
-WHAT NO CASE HERE CAN SAY: the declaration is a per-run CONSTANT describing the chip on ENTRY. So a
-routine that stores to a register and then reads it back is refused outright — which is exactly
-`Mfpint`, whose enable half re-reads the IERA and IMRA its disable half has already written. That is
-measured below rather than asserted, and it is why `Mfpint` is proved as a SLICE.
+AND WHAT A `write_through` DECLARATION ADDS, which is what makes `Mfpint` a whole differential.
+`Mfpint`'s enable half RE-READS the IERA and IMRA its disable half has already written. A declaration
+describing only the chip on ENTRY could not serve that — the oracle counted two stale reads, the
+first at `$fffa07`, and `harness._vet_io_reads_are_declared` refused the case, so the routine used to
+be proved as a slice with its enable half pinned only by address identity with `Jenabint`. The mask
+and enable pairs are LATCHES, so `mfp.seed()` declares them write-through (TRAP_MODEL.md, Phase 15)
+and the second read is served the byte the first write left, on both shores. `mfp.Chip` is where this
+file computes what that comes to, independently of the core.
 
-WHAT IS LEFT OVER, AND HOW IT IS LABELLED. A slice leaves the COMPOSITION open — that `Mfpint` is
-the disable, the store and the enable, in that order, on one channel — and no differential here can
-close it, because there is no original run to compare against. The last section of this file runs
-the reconstruction ALONE and checks it against ledgers composed out of the slices the oracle did
-verify. That is weaker than everything above it, so every one of those cases says CANDIDATE-ONLY in
-its first line; none of them is evidence that the ROM does what it does, only that this code does.
+WHAT THAT DOES AND DOES NOT MOVE: the bytes STORED are unchanged — clearing a bit and then setting
+the same bit gives the entry byte with the bit set either way — so what the arm buys is the READ
+stream, and the composition claim it carries. There are no candidate-only cases left in this file.
 """
 import ctypes
 import struct
@@ -79,7 +80,12 @@ def run_enabint(channel, io_seed=None, poison=True):
 
 
 def run_install(channel, handler, io_seed=None, poison=True):
-    """`Mfpint` as far as a case can carry it: `[$fc2658, $fc267a)`, up to the enable's `bsr`."""
+    """`Mfpint`'s first half on its own: `[$fc2658, $fc267a)`, up to the enable's `bsr`.
+
+    Kept as a `stop_pc` case now that the whole routine runs, because it is the one instant at which
+    the vector slot has been replaced and the channel is still OFF — which is the window the disable
+    exists to open, and the only place a case can compare the image in it.
+    """
     def glue(lib, buf):
         lib.mfp_install_vector(buf, channel & 0xFFFF, handler)
 
@@ -88,10 +94,21 @@ def run_install(channel, handler, io_seed=None, poison=True):
                     io_seed=io_seed or mfp.seed())
 
 
-# ---- the two register pairs' order, which is the behaviour ---------------------------------------
+def run_mfpint(channel, handler, io_seed=None, poison=True):
+    """...and the whole of it, entered at `$fc2658`: the argument fetch, the disable, the vector
+    store and the enable."""
+    def glue(lib, buf):
+        return lib.xbios_mfpint(buf, channel & 0xFFFF, handler)
 
-DISABLE_ORDER = (addrs.MFP_IMRA, addrs.MFP_IERA, addrs.MFP_IPRA, addrs.MFP_ISRA)
-ENABLE_ORDER = (addrs.MFP_IERA, addrs.MFP_IMRA)
+    return case.run(addrs.XBIOS_MFPINT, {"a5": 0, "_pokes": channel_arg(channel, handler)}, glue,
+                    poison=poison, io_seed=io_seed or mfp.seed())
+
+
+# ---- the two register pairs' order, which is the behaviour ---------------------------------------
+# `mfp.py`'s, because the timer programmer's five clears walk the same four registers for the timer's
+# own channel and the two batteries may not hold two ideas of what that order is.
+
+DISABLE_ORDER, ENABLE_ORDER = mfp.DISABLE_ORDER, mfp.ENABLE_ORDER
 
 
 @pytest.mark.parametrize("channel", CHANNELS)
@@ -179,7 +196,7 @@ def test_an_undeclared_mfp_register_refuses_the_case():
     assert "io_seed=" in str(raised.value)
 
 
-# ---- Mfpint: the vector store, and the slice ------------------------------------------------------
+# ---- Mfpint: the slice, and then the whole routine -------------------------------------------
 
 def vector_slot(channel):
     """`$100 + channel * 4` — the 68000 vector the MFP's base register ($40) puts the channel on."""
@@ -225,110 +242,84 @@ def test_the_snapshot_s_own_handlers_are_rom_addresses_and_are_replaced():
     assert case.written_long(info, vector_slot(CHANNEL_ACIA)) == A_HANDLER
 
 
-def test_the_whole_of_mfpint_cannot_be_run_under_a_declared_map_and_this_is_why():
-    """THE MEASUREMENT THE SLICE RESTS ON, so the limit is a red rather than a paragraph.
+def mfpint_chip(channel, declared=None):
+    """What `mfp.Chip` says `Mfpint` should leave: the disable, then the enable, on one channel.
 
-    `Mfpint`'s enable half re-reads IERA and IMRA — the two registers its disable half has already
-    stored to — and the declared I/O map describes the byte a register held on ENTRY. The oracle
-    counts such a read as STALE and `harness._vet_io_reads_are_declared` refuses the case; nothing
-    the reconstruction does can make it honest, because the ORACLE's own read was served a byte the
-    run had invalidated. What would unblock it is a WRITE-THROUGH arm of that map, in the kit.
-
-    The counts are asserted exactly: two stale reads and no others, the first at IERA, which is the
-    ROM's own order. If a future kit serves the read-back, this case reds and `run_install`'s slice
-    can become an ordinary whole-function differential.
+    Composed out of the two bodies' own orders rather than out of the core, so the composition claim
+    — that `Mfpint` performs BOTH, on the same channel, disable first — is this file's and not the
+    reconstruction's. The ROM's own `bsr` targets are what say it does, and the two decode cases at
+    the bottom of this file read them out of the mapped image.
     """
-    _final, _writes, o_regs = emu.run(make_image(channel_arg(CHANNEL_TIMER_B, A_HANDLER)),
-                                      addrs.XBIOS_MFPINT, {"a5": 0}, io_seed=mfp.seed())
-    assert o_regs["io_stale_reads"] == 2, (
-        f"Mfpint now makes {o_regs['io_stale_reads']} stale read(s) — the slice's premise has moved")
-    assert o_regs["io_stale_first"] == addrs.MFP_IERA
-    with pytest.raises(AssertionError, match="already STORED to"):
-        def glue(lib, buf):
-            lib.mfp_install_vector(buf, CHANNEL_TIMER_B, A_HANDLER)
-        differential(addrs.XBIOS_MFPINT, {"a5": 0, "_pokes": channel_arg(CHANNEL_TIMER_B, A_HANDLER)},
-                     glue, io_seed=mfp.seed())
-
-
-# ---- and `xbios_mfpint` itself, which only the CANDIDATE can be made to run ----------------------
-
-def run_mfpint_candidate_only(channel, handler, declared=None):
-    """`xbios_mfpint` end to end on the reconstruction alone. THERE IS NO ORACLE SIDE TO THIS.
-
-    The case above measures why: the ROM's own `Mfpint` cannot be carried past `$fc267a` under a
-    declared map, so there is no D0, no image and no ledger from the original to compare against.
-    What is left is a COMPOSITION claim — that the whole is the two halves the oracle DID verify,
-    run back to back — and that is what the cases below make. Every expectation they use comes from
-    `mfp.py`'s own arithmetic or from a slice the oracle verified, never from this run.
-    """
-    def call(lib, buf):
-        assert lib.xbios_mfpint(buf, channel & 0xFFFF, handler) == (channel & addrs.MFP_CHANNEL_MASK)
-
-    return mfp.candidate_only(call, pokes=channel_arg(channel, handler), declared=declared)
+    chip = mfp.Chip(declared)
+    chip.disable_channel(channel)
+    chip.enable_channel(channel)
+    return chip
 
 
 @pytest.mark.parametrize("channel", CHANNELS)
 def test_mfpint_is_the_disable_the_store_and_the_enable_in_that_order(channel):
-    """CANDIDATE-ONLY. The four writes `run_install`'s verified slice makes, then the two
-    `run_enabint`'s verified case makes — one stream, in the ROM's order.
+    """The whole routine, over all sixteen channels: four `bclr` stores, the vector longword, then
+    two `bset` stores — one ordered stream, against the ORIGINAL's own.
 
-    A composition is the one thing a slice leaves open: `Jdisint`'s body and `Jenabint`'s body are
-    each proved at their own entry over all sixteen channels, and what is NOT proved by either is
-    that `Mfpint` performs both, on the same channel, disable first. The ROM's own `bsr` targets say
-    it does — decoded out of the mapped image by the two cases below — and this says the
-    reconstruction agrees.
+    This is what the write-through arm bought. A composition is the one thing a slice leaves open —
+    `Jdisint`'s body and `Jenabint`'s are each proved at their own entry, and neither says that
+    `Mfpint` performs both on the same channel, disable first — and until the enable half's two
+    re-reads could be served there was no original run to compare against at all.
     """
-    info = run_mfpint_candidate_only(channel, A_HANDLER)
-    assert info["hw_writes"] == ([mfp.bit_cleared(reg, channel) for reg in DISABLE_ORDER]
-                                 + [mfp.bit_set(reg, channel) for reg in ENABLE_ORDER])
-    assert info["io_events"] == ([mfp.read(reg, channel) for reg in DISABLE_ORDER]
-                                 + [mfp.read(reg, channel) for reg in ENABLE_ORDER])
+    info = run_mfpint(channel, A_HANDLER)
+    chip = mfpint_chip(channel)
+    assert info["regs"]["hw_writes"] == chip.writes
+    assert info["regs"]["io_events"] == chip.reads
+    assert case.written_long(info, vector_slot(channel)) == A_HANDLER
 
 
-def test_mfpint_s_enable_half_reads_back_what_its_disable_half_wrote():
-    """CANDIDATE-ONLY, and it is the same fact the ORACLE's refusal above reports.
+def test_mfpint_s_enable_half_is_served_what_its_disable_half_wrote():
+    """THE READ-BACK ITSELF, asserted as the two bytes it is rather than through the model.
 
-    The declared map serves the byte a register held on ENTRY, so the reconstruction's enable half
-    is handed the same IERA and IMRA its disable half already cleared a bit of — which is why the
-    two `bset` values below are the DECLARED bytes with a bit set, and not the bytes the two `bclr`
-    stores left. That is a statement about the MODEL, not about the machine: on a real MFP the
-    read-back would see the cleared bit. Asserted so the bound is a case rather than a paragraph —
-    if a future write-through arm of the map lands, this reds and the whole routine becomes an
-    ordinary differential.
+    The enable half re-reads IERA and IMRA. With the registers declared write-through it is served
+    the bytes the disable half's two `bclr` stores left — the entry byte with the channel's bit
+    CLEARED — where a declaration describing only the machine on entry would have served the entry
+    byte itself, and the oracle would have counted two stale reads.
+
+    Spelt from `mfp.INTERRUPT_REGISTERS` and the bit, so it is a claim about the chip rather than a
+    re-run of `mfp.Chip`: this is the case that would red if the arm stopped latching.
     """
     channel = CHANNEL_TIMER_B
-    writes = run_mfpint_candidate_only(channel, A_HANDLER)["hw_writes"]
-    enable_reads = [mfp.read(reg, channel) for reg in ENABLE_ORDER]
-    assert writes[len(DISABLE_ORDER):] == \
-        [(reg, width, value | (1 << mfp.bit_of(channel))) for reg, width, value in enable_reads]
+    info = run_mfpint(channel, A_HANDLER)
+    bit = 1 << mfp.bit_of(channel)
+    expected = [(mfp.register_of(register_a, channel), 1,
+                 mfp.INTERRUPT_REGISTERS[mfp.register_of(register_a, channel)] & ~bit & 0xFF)
+                for register_a in ENABLE_ORDER]
+    assert info["regs"]["io_events"][len(DISABLE_ORDER):] == expected, (
+        "the enable half was not served the bytes the disable half wrote — the declared map's "
+        "write-through arm is not reaching these registers")
+    assert info["regs"]["io_stale_reads"] == 0, (
+        "the oracle still counts the read back as STALE, so `_vet_io_reads_are_declared` is one "
+        "change away from refusing every case in this file")
 
 
-@pytest.mark.parametrize("channel", (0, CHANNEL_ACIA, 15))
-def test_mfpint_stores_the_vector_between_the_two_halves(channel):
-    """CANDIDATE-ONLY. The longword goes in `$100 + channel * 4`, which is the one effect of
-    `Mfpint` that IS in memory — so it is read out of the image the candidate ran on rather than out
-    of a ledger, and a run that stored it anywhere else leaves the slot holding the boot's handler.
-    """
-    image = run_mfpint_candidate_only(channel, ANOTHER_HANDLER)["image"]
-    slot = vector_slot(channel)
-    assert int.from_bytes(image[slot:slot + addrs.VECTOR_BYTES], "big") == ANOTHER_HANDLER
+@pytest.mark.parametrize("argument,channel", ALIASED_ARGUMENTS)
+def test_the_whole_routine_masks_its_argument_and_returns_the_masked_channel(argument, channel):
+    """`andi.l #15,d0` at `Mfpint`'s own entry, and the D0 its `movem.l (sp)+` restores — the same
+    pair `Jdisint` and `Jenabint` are pinned on, now that the whole routine runs. `Mfpint($fffd)`
+    installs on channel 13 and hands 13 back; `Xbtimer` is what enters PAST this mask."""
+    info = run_mfpint(argument, ANOTHER_HANDLER, poison=False)
+    assert info["ret"] == channel
+    assert case.written_long(info, vector_slot(channel)) == ANOTHER_HANDLER
+    assert info["regs"]["hw_writes"] == mfpint_chip(channel).writes
 
 
-def test_there_is_no_tier_3_row_for_mfpint_and_this_is_why():
-    """...so the gap in `bench/tier3.py` is a case rather than an omission somebody has to notice.
-
-    A Tier 3 row runs the ORIGINAL's machine code beside our m68k build and compares both (
-    `rom_bench.RomBench.measure`), and `Mfpint`'s cannot be run: `VERIFIED_CASES` carries no entry
-    for `XBIOS_MFPINT`, because the only case this file has at that address is the `stop_pc` slice
-    above and a slice has no `rts` to measure to. The routine's COST is therefore unmeasured; what
-    is measured is both of its halves, at `xbios_jdisint` and `xbios_jenabint`.
-    """
-    import test_boot_snapshot                     # the register of verified cases (bench/tier3.py)
-
-    entries = {entry for _label, entry, _regs, _pokes, _psg, _io in test_boot_snapshot.VERIFIED_CASES}
-    assert addrs.XBIOS_MFPINT not in entries, (
-        "Mfpint now has a verified case, so it can carry a Tier 3 row — add its CALL entry")
-    assert {addrs.XBIOS_JDISINT, addrs.XBIOS_JENABINT} <= entries
+@pytest.mark.parametrize("held", LOADED_REGISTERS)
+def test_the_whole_routine_preserves_the_bits_it_does_not_name(held):
+    """...and the declared read made load-bearing over the COMPOSITION, which is where it is easiest
+    to get wrong: the enable half's `bset` must merge into the byte the disable half's `bclr` left,
+    not into the byte the case declared. With `$ff` held the two bytes differ in exactly the
+    channel's bit, which is the smallest thing that separates them."""
+    declared = {register: held for register in mfp.INTERRUPT_REGISTERS}
+    info = run_mfpint(CHANNEL_TIMER_C, A_HANDLER, io_seed=mfp.seed(declared), poison=False)
+    chip = mfpint_chip(CHANNEL_TIMER_C, declared)
+    assert info["regs"]["hw_writes"] == chip.writes
+    assert info["regs"]["io_events"] == chip.reads
 
 
 def test_the_enable_half_of_mfpint_is_jenabint_s_own_body():

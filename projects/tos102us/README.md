@@ -72,9 +72,12 @@ and the I/O page. So the image is
 * a **post-boot RAM snapshot** of the original ROM, captured once from headless Hatari at a
   deterministic stop point, 1 MB, plus
 * the **ROM** mapped at `0xFC0000`, plus
-* the **seeded hardware read model** for the I/O page (`TRAP_MODEL.md`, Phase 7): a case declares
+* the **declared I/O map** for the I/O page (`TRAP_MODEL.md`, Phases 7 and 15): a case declares
   the bytes it expects the MFP, shifter, PSG or ACIA to answer, and an undeclared read *refuses* the
-  run rather than answering zero.
+  run rather than answering zero. A declaration may also be marked **write-through**, which says the
+  register latches what the run stores to it and reads it back — that is what makes a routine like
+  the MFP timer programmer (write the reload byte, re-read it until the chip agrees) runnable at
+  all, and it is a claim about the register that the case is responsible for.
 
 A case may perturb the snapshot (a different key pending, a different directory in the FAT buffer,
 a different `_hz_200`) so a function is proved over inputs, not over one state. Functions that

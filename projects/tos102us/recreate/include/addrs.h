@@ -664,7 +664,7 @@
  * register back after storing to it (`src/xbios/mfp.c` and `src/xbios/xbtimer.c` carry the
  * measurement). What a case can do is stop at the instruction before the read-back, which is what
  * `differential(..., stop_pc=)` is for — the same way a routine that never returns is proved. */
-#define MFPINT_ENABLE_HALF     0xfc267a  /* Mfpint's `bsr` into Jenabint's body: the slice's end */
+#define MFPINT_ENABLE_HALF     0xfc267a  /* Mfpint's `bsr` into Jenabint's body: where it splits */
 #define MFP_TIMER_PROGRAM      0xfc25b0  /* the shared timer programmer Xbtimer and Rsconf call */
 #define MFP_TIMER_DATA_WRITE   0xfc2600  /* ...and where ITS slice ends, before the data register */
 #define XBTIMER_CHANNEL_TABLE  0xfc302a  /* timer -> MFP channel: 13, 8, 5, 4 for A, B, C, D */

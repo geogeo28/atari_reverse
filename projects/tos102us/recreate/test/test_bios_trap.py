@@ -365,7 +365,7 @@ def test_no_case_here_depends_on_a_byte_the_capture_does_not_reproduce(seed):
 
     scrambled = snapshot._scrambled_base(seed)
     for name, _symbol, caller_at, regs, pokes, _cost in trap.CASES:
-        shape = (name, caller_at, regs, pokes, None, None)
+        shape = (name, caller_at, regs, pokes, None, None, ())
         assert snapshot._oracle_outputs(scrambled, shape) == \
             snapshot._oracle_outputs(snapshot.BASE_IMAGE, shape), (
                 f"{name} behaves differently over a snapshot whose masked regions hold noise, so it "

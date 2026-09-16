@@ -175,6 +175,14 @@ PERF_ACCEPTED = {
               "no Tier 1 case can see"),
     ("xbios_rsconf", "store four"): (
         1.72, "(J) the same, over the arm that stores all four USART registers: 292 -> 502 cycles"),
+    ("xbios_rsconf", "baud"): (
+        1.11, "(J) and (A) over the arm that reprograms timer D: 1436 -> 1594 cycles, 116 "
+              "instructions to 140. The same `movep.l` the report row pays 2.03 for — four "
+              "`io_read8` calls of their own declared addresses where the 68000 has one instruction "
+              "— and the image-pointer load beside it, DILUTED here by the hundred-odd instructions "
+              "of the shared timer programmer ($fc25b0) this arm runs through, whose cost is "
+              "measured inside this row and `Xbtimer`'s and nowhere else. The excess is 158 cycles, "
+              "far past the leaf rule's 40, so it is written down rather than ruled on"),
 
     # ...and one row pinned UNDER the bar, because a cycle count is all the surface it has.
     ("xbios_ikbdws", "xbios_ikbdws"): (
@@ -210,6 +218,21 @@ PERF_ACCEPTED = {
     ("xbios_offgibit", "xbios_offgibit"): (
         0.90, "the same bracket and the same pass-through, over the `and.b` twin — see the row "
               "above"),
+
+    # ...and `Vsync`'s two rows, UNDER the bar and pinned for the same reason a third time. Its
+    # unmask is the routine's TERMINATION rather than its manners — at IPL 7 the blank it waits for
+    # is never taken — and off target `ipl.h` is a no-op, so deleting the bracket leaves every Tier 1
+    # case green. These cycles are the only surface it has. The two rows differ in how many times the
+    # wait goes round, which is the ONE thing the schedule's `nth` decides (`test_xbios_vsync`).
+    ("xbios_vsync", "the blank at spin 1"): (
+        0.97, "includes the interrupt bracket (`ipl.h`) the ROM makes with `move.w sr,-(sp)` / "
+              "`andi.w #$f8ff,sr` and undoes with `move.w (sp)+,sr`, which the Tier 1 differential "
+              "cannot see. Under 1.00 because the target bracket keeps the entry SR in a register "
+              "where the ROM pushes and pops it: 156 -> 152 cycles over one iteration of the wait"),
+    ("xbios_vsync", "the blank at spin 4"): (
+        0.92, "the same bracket over four iterations, where the loop rather than the entry is most "
+              "of the cost: 252 -> 236. The pair is what says the bracket is priced at more than "
+              "one arrival count — see `test_xbios_vsync.PRICED_SPINS`"),
 
     # (F) — and this is the only row in the table where the byte widening is the whole difference.
     ("xbios_physbase", "xbios_physbase"): (
@@ -546,12 +569,20 @@ CALL = {
     "XBIOS_OFFGIBIT": Call((ENTRY_D0, arg_word(0)), RETURNS_LONG),
     "XBIOS_DOSOUND": Call((IMAGE, arg_long(0)), RETURNS_LONG),
     "XBIOS_SETPRT": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    # ...and the one routine here that WAITS. Its argument list is ordinary; what is not is that its
+    # case carries a SCHEDULE, without which neither side's loop would ever end (`Row.schedule`).
+    "XBIOS_VSYNC": Call((IMAGE,), RETURNS_LONG),
     # ---- the MFP / timer / IKBD / serial leaves (BIOS wave 2) ----
     # No image argument: these two change a bit of an MFP register and touch memory not at all.
     # Their D0 is the MASKED channel, which the `andi.l #15` writes and the `movem.l (sp)+` restores
     # — not the argument, and not the caller's entry D0 (`src/xbios/mfp.c`).
     "XBIOS_JDISINT": Call((arg_word(0),), RETURNS_LONG),
     "XBIOS_JENABINT": Call((arg_word(0),), RETURNS_LONG),
+    # ...and the two that DO reach the image: the vector slot at `$100 + channel * 4` is memory, so
+    # the whole routine takes the image pointer where its two halves above do not.
+    "XBIOS_MFPINT": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_LONG),
+    "XBIOS_XBTIMER": Call((IMAGE, arg_word(0), arg_word(2), arg_word(4), arg_long(6)),
+                          RETURNS_LONG),
     # ...and these two READ the image (the bytes to send) and write only an ACIA's data port.
     "XBIOS_IKBDWS": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_NOTHING),
     "XBIOS_MIDIWS": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_NOTHING),
@@ -590,7 +621,7 @@ CALL = {
 EXTRA_CASES = (
     ("xbios_supexec, the routine sees the caller's own (sp)", addrs.XBIOS_SUPEXEC, {"a5": 0},
      {abi.FIRST_ARG: struct.pack(">I", supexec.STUB_AT),
-      supexec.STUB_AT: supexec.read_long_from_stack_into_d0() + supexec.RTS}, None, None),
+      supexec.STUB_AT: supexec.read_long_from_stack_into_d0() + supexec.RTS}, None, None, ()),
 )
 
 # One measured row. `entry`/`regs`/`pokes`/`psg_seed`/`io_seed` are the ORACLE's case, exactly as
@@ -611,9 +642,13 @@ EXTRA_CASES = (
 # `shared_entry` is the opposite subtraction and comes off BOTH columns: what both sides spend on
 # the staged CALLER a transcription can only be entered through (`test/trap.py`'s `caller_cost`,
 # measured by `test_bios_trap.py`). It is `(0, 0)` for every row that is entered at its own address.
+# `schedule` is the case's own, straight out of `VERIFIED_CASES`: the stores an external agent makes
+# while the run is in flight, which is what makes a routine that BUSY-WAITS measurable at all (Phase
+# 8). It is `()` for every row but `Vsync`'s, and `RomBench.measure` hands the identical list to both
+# doors — which is why those entries are READ-triggered (`test_xbios_vsync.blank_after`).
 Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns "
-                        "transcription address staged_entry shared_entry",
-                 defaults=(False, None, (0, 0), (0, 0)))
+                        "transcription address staged_entry shared_entry schedule",
+                 defaults=(False, None, (0, 0), (0, 0), ()))
 
 
 def _routine(entry):
@@ -694,7 +729,7 @@ def _pokes_for(call, pokes):
 
 def _row(case):
     """One `VERIFIED_CASES` entry as a bench row, or None when no `CALL` entry says how to call it."""
-    name, entry, regs, pokes, psg_seed, io_seed = case
+    name, entry, regs, pokes, psg_seed, io_seed, schedule = case
     call = CALL.get(_routine(entry))
     if call is None:
         return None
@@ -703,7 +738,7 @@ def _row(case):
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
                call.returns, False, handler.entry if handler else None,
-               isr.STAGED_ENTRY_COST if handler else (0, 0))
+               isr.STAGED_ENTRY_COST if handler else (0, 0), (0, 0), schedule)
 
 
 def _transcription_row(case):
@@ -765,7 +800,7 @@ def measure(row, bench):
                                            shared_entry=row.shared_entry)
     return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
                          psg_seed=row.psg_seed, io_seed=row.io_seed, returns=row.returns,
-                         staged_entry=row.staged_entry)
+                         staged_entry=row.staged_entry, schedule=row.schedule)
 
 
 def pin_of(row):

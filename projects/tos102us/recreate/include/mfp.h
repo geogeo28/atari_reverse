@@ -50,11 +50,15 @@
  * the instruction itself makes: `bclr` reads the register and writes it back. What the target build
  * supplies is `io_read8` and `hw_write8` as the real volatile accesses (`atari/shim_include/hw.h`).
  *
- * WHAT A PER-RUN CONSTANT CANNOT SAY, and it bounds every claim made through this door: the declared
- * byte describes the register on ENTRY and nothing updates it, so a routine that changes a register
- * and then READS IT BACK is refused outright rather than served a stale declaration. That is why
- * `Mfpint` is proved as a slice and the timer programmer's data-register write is not proved at all
- * — `src/xbios/mfp.c` and `src/xbios/xbtimer.c` carry the measurement and what would unblock each.
+ * WHAT A WRITE-THROUGH DECLARATION SAYS, and it is what makes the re-reading routines runnable at
+ * all: a case may declare a register one whose store the chip LATCHES and reads back (TRAP_MODEL.md,
+ * Phase 15, "The write-through arm"), and every register this header changes a bit of is one — the
+ * interrupt MASK and ENABLE pairs, the timer CONTROL registers, and a STOPPED timer's data register.
+ * So `Mfpint`'s enable half is served the IERA its disable half cleared a bit of, and the timer
+ * programmer's write-and-verify loop terminates because the register really holds what it stored.
+ * `test/mfp.py` carries the claim register by register, including the two pairs it makes only on a
+ * narrower reading: PENDING and IN-SERVICE are write-to-clear rather than latches, and they read
+ * back what was stored because every store these routines make is `read & mask`, a pure clear.
  */
 #ifndef TOS102US_MFP_H
 #define TOS102US_MFP_H
@@ -103,6 +107,15 @@ static inline void mfp_keep_bits(uint32_t reg, uint8_t mask)
     hw_write8(reg, (uint8_t)(io_read8(reg) & mask));
 }
 
+/* ...and `or.b d1,(a3)`, the same programmer's last instruction: put the caller's bits in without
+ * disturbing the rest — which for timers C and D is the OTHER timer's field in the byte they share.
+ * It re-reads a register the routine has already written, so it runs only because the case declares
+ * the control registers WRITE-THROUGH (`test/mfp.py` carries that claim). */
+static inline void mfp_set_bits(uint32_t reg, uint8_t bits)
+{
+    hw_write8(reg, (uint8_t)(io_read8(reg) | bits));
+}
+
 /* One channel's bit, in whichever half of the pair holds it: `bclr`/`bset` at the channel level. */
 static inline void mfp_clear_channel_bit(uint32_t register_a, unsigned channel)
 {
@@ -142,14 +155,15 @@ uint32_t mfp_install_vector_and_enable(uint8_t *image, unsigned channel, uint32_
 uint32_t xbios_mfpint(uint8_t *image, uint16_t channel_argument, uint32_t handler);
 
 /* The four interrupt-register pairs and the control register, cleared for one timer — the first
- * five sixths of the ROM's shared timer programmer at `$fc25b0` (`src/xbios/xbtimer.c`). Split out
- * because it is the part a differential can reach: what follows it writes the timer's DATA register
- * and reads it back, which the declared I/O map cannot serve. `image` is the ROM's own offset and
- * mask tables, which the routine indexes by timer. */
+ * five sixths of the ROM's shared timer programmer at `$fc25b0` (`src/xbios/xbtimer.c`). Still its
+ * own entry point because it is the slice `[$fc25b0, $fc2600)` a battery drives on its own, and
+ * because clearing the control register is what STOPS the timer the rest of the routine programs.
+ * `image` is the ROM's own offset and mask tables, which the routine indexes by timer. */
 void mfp_timer_clear(const uint8_t *image, uint16_t timer);
 
-/* ...and the whole of that routine, which `Xbtimer` and `Rsconf`'s baud arm both call. It HALTS at
- * the data-register write — see the header of `src/xbios/xbtimer.c` for the measurement. */
+/* ...and the whole of that routine, which `Xbtimer` and `Rsconf`'s baud arm both call: the five
+ * clears, the data register written and re-read until the 68901 agrees, and the control bits ORed
+ * in last. */
 void mfp_timer_program(const uint8_t *image, uint16_t timer, uint16_t control, uint16_t data);
 
 #endif /* TOS102US_MFP_H */

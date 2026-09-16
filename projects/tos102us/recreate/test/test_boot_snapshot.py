@@ -42,8 +42,9 @@ import test_xbios_protobt as protobt                       # noqa: E402
 import test_xbios_random as xbios_random                   # noqa: E402
 import test_xbios_supexec as supexec                       # noqa: E402
 
-# The XBIOS screen and sound leaves (BIOS wave 2). `Vsync` is deliberately absent: its case needs a
-# `schedule` and an entry here carries none — see test_xbios_vsync.py's docstring.
+# The XBIOS screen and sound leaves (BIOS wave 2). `Vsync`'s rows are here through the SCHEDULE
+# field: it is the one routine in this list that does not terminate on its own (see
+# test_xbios_vsync.py, and Phase 8).
 import test_xbios_dosound as dosound                        # noqa: E402
 import test_xbios_offgibit as offgibit                      # noqa: E402
 import test_xbios_ongibit as ongibit                        # noqa: E402
@@ -52,14 +53,16 @@ import test_xbios_setcolor as setcolor                      # noqa: E402
 import test_xbios_setpalette as setpalette                  # noqa: E402
 import test_xbios_setprt as setprt                          # noqa: E402
 import test_xbios_setscreen as setscreen                    # noqa: E402
-# The MFP / timer / IKBD / serial leaves (BIOS wave 2). `Mfpint` and `Xbtimer` are deliberately
-# absent: each reads an MFP register back after storing to it, so neither can be run to its `rts`
-# under the declared I/O map and both are proved as SLICES — an entry here carries no `stop_pc`.
-# See test_xbios_mfpint.py and test_xbios_xbtimer.py, which measure both refusals.
+import test_xbios_vsync as vsync                            # noqa: E402
+# The MFP / timer / IKBD / serial leaves (BIOS wave 2). `Mfpint` and `Xbtimer` are here WHOLE rather
+# than as the slices they were: each reads an MFP register back after storing to it, and the declared
+# I/O map's WRITE-THROUGH arm (`emu.write_through`, TRAP_MODEL.md Phase 15) serves that read the byte
+# the store made — so both run to their own `rts` under the model, as does Rsconf's baud arm.
 import test_xbios_ikbdws as ikbdws                          # noqa: E402
 import test_xbios_initmous as initmous                      # noqa: E402
 import test_xbios_mfpint as mfpint                          # noqa: E402
 import test_xbios_rsconf as rsconf                          # noqa: E402
+import test_xbios_xbtimer as xbtimer                        # noqa: E402
 import mfp                                                  # noqa: E402
 # ...and the TRAP DISPATCHER's case-shape module, which is not a battery: its cases are proved
 # through the transcription differential rather than through `harness.differential`, so what
@@ -257,9 +260,9 @@ def test_a_verified_function_reads_no_io_byte_the_model_does_not_serve():
     reconstructed functions reach only modelled addresses, so neither is verified against a
     fabrication. Random touches no hardware at all; Giaccess is served by the PSG model, which sits
     in front of the tally."""
-    for name, entry, regs, pokes, psg_seed, io_seed in VERIFIED_CASES:
+    for name, entry, regs, pokes, psg_seed, io_seed, schedule in VERIFIED_CASES:
         _final, _writes, o_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
-                                          io_seed=io_seed)
+                                          io_seed=io_seed, schedule=schedule)
         assert o_regs["io_unmodeled_reads"] == 0, (
             f"{name} read {o_regs['io_unmodeled_reads']} unmodelled I/O byte(s), the first at "
             f"{o_regs['io_unmodeled_first']:#x}")
@@ -344,126 +347,152 @@ def _scrambled_base(seed):
 
 
 # EVERY FUNCTION THIS PROJECT HAS VERIFIED, entered the way its own battery enters it: the name, the
-# entry, the input registers, the pokes that stage its arguments, the chip state it declares and the
-# I/O bytes it declares. The LIST is the point — a function added without a line here is one the
-# mask stops covering — and it is a table rather than a call apiece because the case below runs each
-# of them twice.
+# entry, the input registers, the pokes that stage its arguments, the chip state it declares, the
+# I/O bytes it declares, and the SCHEDULE — the stores an external agent makes while the run is in
+# flight (TRAP_MODEL.md, Phase 8), which is `()` for every routine that terminates on its own. The
+# LIST is the point — a function added without a line here is one the mask stops covering — and it
+# is a table rather than a call apiece because the case below runs each of them twice.
+#
+# A SCHEDULE HERE IS READ-TRIGGERED, and the case below refuses any other kind. These rows are run at
+# BOTH of the oracle's doors — `emu.run` for the sweeps in this file and for `bench/tier3.py`'s
+# original column, `emu.run_bench` for the cross-compiled build beside it — and a `pc` trigger names
+# an address in the ROM's instruction stream that the compiled build has nothing at. A `read` trigger
+# names the ADDRESS the wait spins on, which is the machine's and the same on both sides.
 VERIFIED_CASES = (
-    ("xbios_random, seeding branch", addrs.XBIOS_RANDOM, {"a5": 0}, {}, None, None),
+    ("xbios_random, seeding branch", addrs.XBIOS_RANDOM, {"a5": 0}, {}, None, None, ()),
     ("xbios_random, advance branch", addrs.XBIOS_RANDOM, {"a5": 0},
-     xbios_random.seed_poke(0x1234_5678), None, None),
+     xbios_random.seed_poke(0x1234_5678), None, None, ()),
     ("xbios_giaccess, read", addrs.XBIOS_GIACCESS, {"a5": 0},
-     giaccess.argument_poke(0, 3), giaccess.ENTRY_FILE, None),
+     giaccess.argument_poke(0, 3), giaccess.ENTRY_FILE, None, ()),
     ("xbios_giaccess, write", addrs.XBIOS_GIACCESS, {"a5": 0},
-     giaccess.argument_poke(0x5A, addrs.GIACCESS_WRITE_FLAG | 3), None, None),
+     giaccess.argument_poke(0x5A, addrs.GIACCESS_WRITE_FLAG | 3), None, None, ()),
     ("xbios_getrez", addrs.XBIOS_GETREZ, {"a5": 0}, {}, None,
-     {addrs.SHIFTER_RESOLUTION: getrez.ST_HIGH}),
-    ("bios_drvmap", addrs.BIOS_DRVMAP, {"a5": 0}, {}, None, None),
-    ("bios_tickcal", addrs.BIOS_TICKCAL, {"a5": 0}, {}, None, None),
-    ("xbios_logbase", addrs.XBIOS_LOGBASE, {"a5": 0}, {}, None, None),
-    ("bios_kbshift, read", addrs.BIOS_KBSHIFT, {"a5": 0}, kbshift.argument_poke(-1), None, None),
+     {addrs.SHIFTER_RESOLUTION: getrez.ST_HIGH}, ()),
+    ("bios_drvmap", addrs.BIOS_DRVMAP, {"a5": 0}, {}, None, None, ()),
+    ("bios_tickcal", addrs.BIOS_TICKCAL, {"a5": 0}, {}, None, None, ()),
+    ("xbios_logbase", addrs.XBIOS_LOGBASE, {"a5": 0}, {}, None, None, ()),
+    ("bios_kbshift, read", addrs.BIOS_KBSHIFT, {"a5": 0}, kbshift.argument_poke(-1), None, None, ()),
     ("bios_kbshift, write", addrs.BIOS_KBSHIFT, {"a5": 0},
-     kbshift.argument_poke(kbshift.CONTROL), None, None),
-    ("bios_getmpb", addrs.BIOS_GETMPB, {"a5": 0}, getmpb.argument_poke(getmpb.MPB_AT), None, None),
+     kbshift.argument_poke(kbshift.CONTROL), None, None, ()),
+    ("bios_getmpb", addrs.BIOS_GETMPB, {"a5": 0}, getmpb.argument_poke(getmpb.MPB_AT), None, None, ()),
     ("bios_setexc, read", addrs.BIOS_SETEXC, {"a5": 0},
-     setexc.argument_poke(2, setexc.READ_ONLY), None, None),
+     setexc.argument_poke(2, setexc.READ_ONLY), None, None, ()),
     ("bios_setexc, install", addrs.BIOS_SETEXC, {"a5": 0},
-     setexc.argument_poke(2, setexc.A_HANDLER), None, None),
+     setexc.argument_poke(2, setexc.A_HANDLER), None, None, ()),
     ("bios_bconstat, console ring empty", addrs.BIOS_BCONSTAT,
      {"a5": 0, "d0": bconstat.ENTRY_D0}, case.word_arg(bconstat.DEVICE_CONSOLE),
-     None, None),
+     None, None, ()),
     ("bios_bconstat, console ring ready", addrs.BIOS_BCONSTAT,
      {"a5": 0, "d0": bconstat.ENTRY_D0},
      {**case.word_arg(bconstat.DEVICE_CONSOLE),
-      **iorec.staged(addrs.IOREC_IKBD, 0, addrs.IOREC_KEY_BYTES)}, None, None),
+      **iorec.staged(addrs.IOREC_IKBD, 0, addrs.IOREC_KEY_BYTES)}, None, None, ()),
     ("bios_bconstat, no driver", addrs.BIOS_BCONSTAT, {"a5": 0, "d0": bconstat.ENTRY_D0},
-     case.word_arg(4), None, None),
+     case.word_arg(4), None, None, ()),
     ("bios_bconin, console", addrs.BIOS_BCONIN, {"a5": 0, "d0": bconin.ENTRY_D0},
      {**case.word_arg(bconin.DEVICE_CONSOLE),
       **iorec.staged(addrs.IOREC_IKBD, 0, addrs.IOREC_KEY_BYTES,
-                     [(addrs.IOREC_KEY_BYTES, struct.pack(">I", bconin.A_KEY))])}, None, None),
+                     [(addrs.IOREC_KEY_BYTES, struct.pack(">I", bconin.A_KEY))])}, None, None, ()),
     ("bios_bconin, midi", addrs.BIOS_BCONIN, {"a5": 0, "d0": bconin.ENTRY_D0},
      {**case.word_arg(bconin.DEVICE_MIDI),
       **iorec.staged(addrs.IOREC_MIDI, 0, addrs.IOREC_MIDI_BYTES,
-                     [(addrs.IOREC_MIDI_BYTES, b"\x42")])}, None, None),
+                     [(addrs.IOREC_MIDI_BYTES, b"\x42")])}, None, None, ()),
     ("bios_bcostat, console", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
-     case.word_arg(bcostat.DEVICE_CONSOLE), None, None),
+     case.word_arg(bcostat.DEVICE_CONSOLE), None, None, ()),
     ("xbios_iorec", addrs.XBIOS_IOREC, {"a5": 0},
-     case.word_arg(xbios_iorec.DEVICE_IKBD), None, None),
+     case.word_arg(xbios_iorec.DEVICE_IKBD), None, None, ()),
     ("xbios_keytbl, install", addrs.XBIOS_KEYTBL, {"a5": 0},
-     keytbl.argument_poke(keytbl.STAGED), None, None),
-    ("xbios_bioskeys", addrs.XBIOS_BIOSKEYS, {"a5": 0}, {}, None, None),
+     keytbl.argument_poke(keytbl.STAGED), None, None, ()),
+    ("xbios_bioskeys", addrs.XBIOS_BIOSKEYS, {"a5": 0}, {}, None, None, ()),
     ("xbios_kbrate, read", addrs.XBIOS_KBRATE, {"a5": 0},
-     case.word_args(kbrate.KEEP, kbrate.KEEP), None, None),
+     case.word_args(kbrate.KEEP, kbrate.KEEP), None, None, ()),
     ("xbios_kbrate, write", addrs.XBIOS_KBRATE, {"a5": 0},
-     case.word_args(0x20, 0x03), None, None),
+     case.word_args(0x20, 0x03), None, None, ()),
     ("xbios_cursconf, blink", addrs.XBIOS_CURSCONF, {"a5": 0},
-     case.word_args(addrs.CURSCONF_BLINK, 0), None, None),
+     case.word_args(addrs.CURSCONF_BLINK, 0), None, None, ()),
     ("xbios_cursconf, get rate", addrs.XBIOS_CURSCONF, {"a5": 0},
-     case.word_args(addrs.CURSCONF_GET_RATE, 0), None, None),
+     case.word_args(addrs.CURSCONF_GET_RATE, 0), None, None, ()),
     ("xbios_supexec", addrs.XBIOS_SUPEXEC, {"a5": 0},
      {abi.FIRST_ARG: struct.pack(">I", supexec.STUB_AT),
       supexec.STUB_AT: supexec.move_long_immediate_to_d0(supexec.A_RESULT) + supexec.RTS},
-     None, None),
+     None, None, ()),
     ("xbios_protobt, format", addrs.XBIOS_PROTOBT, {"a5": 0},
      {**protobt.argument_poke(protobt.BUFFER_AT, 0x00ABCDEF, 3, 1),
-      protobt.BUFFER_AT: bytes(addrs.BOOT_SECTOR_BYTES)}, None, None),
+      protobt.BUFFER_AT: bytes(addrs.BOOT_SECTOR_BYTES)}, None, None, ()),
     ("xbios_protobt, random serial", addrs.XBIOS_PROTOBT, {"a5": 0},
      {**protobt.argument_poke(protobt.BUFFER_AT, 0x01000000, 0, 1),
-      protobt.BUFFER_AT: bytes(addrs.BOOT_SECTOR_BYTES)}, None, None),
+      protobt.BUFFER_AT: bytes(addrs.BOOT_SECTOR_BYTES)}, None, None, ()),
 
     # ---- the XBIOS screen and sound leaves (BIOS wave 2) ----
     ("xbios_physbase", addrs.XBIOS_PHYSBASE, {"a5": 0}, {}, None,
-     physbase.register_pair(physbase.SNAPSHOT_BASE)),
+     physbase.register_pair(physbase.SNAPSHOT_BASE), ()),
     # The four `"d0": 0` below are the entering D0 these routines hand BACK (`bench/tier3.py`'s
     # ENTRY_D0 reads it from here): none of them writes the register, so the value is part of the
     # case rather than a default.
     ("xbios_setscreen, both bases", addrs.XBIOS_SETSCREEN, {"a5": 0, "d0": 0},
-     setscreen.argument_poke(setscreen.ANOTHER_BASE, 0x00ABCDEF, setscreen.KEEP_WORD), None, None),
+     setscreen.argument_poke(setscreen.ANOTHER_BASE, 0x00ABCDEF, setscreen.KEEP_WORD), None, None, ()),
     ("xbios_setscreen, keep everything", addrs.XBIOS_SETSCREEN, {"a5": 0, "d0": 0},
      setscreen.argument_poke(setscreen.KEEP_LONG, setscreen.KEEP_LONG, setscreen.KEEP_WORD),
-     None, None),
+     None, None, ()),
     ("xbios_setpalette", addrs.XBIOS_SETPALETTE, {"a5": 0, "d0": 0},
-     setpalette.argument_poke(0x000A_0000), None, None),
+     setpalette.argument_poke(0x000A_0000), None, None, ()),
     ("xbios_setcolor, read", addrs.XBIOS_SETCOLOR, {"a5": 0, "d0": 0},
      case.word_args(3, setcolor.KEEP), None,
-     setcolor.declared(setcolor.register_of(3), setcolor.ENTRY_ROW[setcolor.register_of(3)])),
+     setcolor.declared(setcolor.register_of(3), setcolor.ENTRY_ROW[setcolor.register_of(3)]), ()),
     ("xbios_setcolor, write", addrs.XBIOS_SETCOLOR, {"a5": 0, "d0": 0},
      case.word_args(3, 0x0246), None,
-     setcolor.declared(setcolor.register_of(3), setcolor.ENTRY_ROW[setcolor.register_of(3)])),
+     setcolor.declared(setcolor.register_of(3), setcolor.ENTRY_ROW[setcolor.register_of(3)]), ()),
     ("xbios_ongibit", addrs.XBIOS_ONGIBIT, {"a5": 0, "d0": 0}, case.word_arg(0x04),
-     ongibit.ENTRY_FILE, None),
+     ongibit.ENTRY_FILE, None, ()),
     ("xbios_offgibit", addrs.XBIOS_OFFGIBIT, {"a5": 0, "d0": 0}, case.word_arg(0xEF),
-     offgibit.ENTRY_FILE, None),
+     offgibit.ENTRY_FILE, None, ()),
+    # THE ONE ROUTINE HERE THAT DOES NOT TERMINATE ON ITS OWN, and the reason the schedule field
+    # exists: `Vsync` spins on `_frclock` until something outside it stores a new value. At TWO
+    # arrival counts, because Phase 8's one measured hole is an `nth` that aliases a port's polling
+    # rate — `test_xbios_vsync.PRICED_SPINS` is that pair, and its battery says why.
+    *((f"xbios_vsync, the blank at spin {spins}", addrs.XBIOS_VSYNC, {"a5": 0},
+       vsync.clock_poke(vsync.SNAPSHOT_FRCLOCK), None, None, vsync.blank_after(spins))
+      for spins in vsync.PRICED_SPINS),
     ("xbios_dosound, play", addrs.XBIOS_DOSOUND, {"a5": 0},
      {**dosound.argument_poke(0x000A_1234),
-      **dosound.state_poke(dosound.SNAPSHOT_LIST, dosound.A_PENDING_DELAY)}, None, None),
+      **dosound.state_poke(dosound.SNAPSHOT_LIST, dosound.A_PENDING_DELAY)}, None, None, ()),
     ("xbios_dosound, report only", addrs.XBIOS_DOSOUND, {"a5": 0},
      {**dosound.argument_poke(dosound.KEEP),
-      **dosound.state_poke(dosound.SNAPSHOT_LIST, dosound.A_PENDING_DELAY)}, None, None),
+      **dosound.state_poke(dosound.SNAPSHOT_LIST, dosound.A_PENDING_DELAY)}, None, None, ()),
     ("xbios_setprt, write", addrs.XBIOS_SETPRT, {"a5": 0, "d0": 0},
-     {**case.word_arg(0x0055), **setprt.config_poke(setprt.SNAPSHOT_CONFIG)}, None, None),
+     {**case.word_arg(0x0055), **setprt.config_poke(setprt.SNAPSHOT_CONFIG)}, None, None, ()),
     ("xbios_setprt, report only", addrs.XBIOS_SETPRT, {"a5": 0, "d0": 0},
-     {**case.word_arg(setprt.KEEP), **setprt.config_poke(setprt.SNAPSHOT_CONFIG)}, None, None),
+     {**case.word_arg(setprt.KEEP), **setprt.config_poke(setprt.SNAPSHOT_CONFIG)}, None, None, ()),
     ("xbios_jdisint", addrs.XBIOS_JDISINT, {"a5": 0},
-     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C), None, mfp.seed()),
+     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C), None, mfp.seed(), ()),
     ("xbios_jenabint", addrs.XBIOS_JENABINT, {"a5": 0},
-     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C), None, mfp.seed()),
+     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C), None, mfp.seed(), ()),
+    # The three routines the WRITE-THROUGH arm unblocked: each re-reads an MFP register its own
+    # earlier store wrote, which the declared map now serves as that byte rather than refusing.
+    ("xbios_mfpint", addrs.XBIOS_MFPINT, {"a5": 0},
+     mfpint.channel_arg(mfpint.CHANNEL_TIMER_C, mfpint.A_HANDLER), None, mfp.seed(), ()),
+    ("xbios_xbtimer, install", addrs.XBIOS_XBTIMER, {"a5": 0},
+     xbtimer.xbtimer_frame(addrs.MFP_TIMER_C), None, mfp.seed(), ()),
+    ("xbios_xbtimer, no vector", addrs.XBIOS_XBTIMER, {"a5": 0},
+     xbtimer.xbtimer_frame(addrs.MFP_TIMER_B, vector=xbtimer.NEGATIVE_VECTOR), None, mfp.seed(), ()),
     ("xbios_ikbdws", addrs.XBIOS_IKBDWS, {"a5": 0},
-     {**ikbdws.frame(1, ikbdws.BYTES_AT), ikbdws.BYTES_AT: b"\x80\x01"}, None, ikbdws.ready(addrs.XBIOS_IKBDWS)),
+     {**ikbdws.frame(1, ikbdws.BYTES_AT), ikbdws.BYTES_AT: b"\x80\x01"}, None,
+     ikbdws.ready(addrs.XBIOS_IKBDWS), ()),
     ("xbios_midiws", addrs.XBIOS_MIDIWS, {"a5": 0},
-     {**ikbdws.frame(1, ikbdws.BYTES_AT), ikbdws.BYTES_AT: b"\x90\x40"}, None, ikbdws.ready(addrs.XBIOS_MIDIWS)),
-    ("xbios_kbdvbase", addrs.XBIOS_KBDVBASE, {"a5": 0}, {}, None, None),
+     {**ikbdws.frame(1, ikbdws.BYTES_AT), ikbdws.BYTES_AT: b"\x90\x40"}, None,
+     ikbdws.ready(addrs.XBIOS_MIDIWS), ()),
+    ("xbios_kbdvbase", addrs.XBIOS_KBDVBASE, {"a5": 0}, {}, None, None, ()),
     ("xbios_initmous, disable", addrs.XBIOS_INITMOUS, {"a5": 0},
      {**initmous.frame(addrs.INITMOUS_DISABLE), initmous.PARAM_AT: initmous.PARAM}, None,
-     dict(initmous.READY)),
+     dict(initmous.READY), ()),
     ("xbios_initmous, absolute", addrs.XBIOS_INITMOUS, {"a5": 0},
      {**initmous.frame(addrs.INITMOUS_ABSOLUTE), initmous.PARAM_AT: initmous.PARAM}, None,
-     dict(initmous.READY)),
+     dict(initmous.READY), ()),
     ("xbios_rsconf, report", addrs.XBIOS_RSCONF, {"a5": 0}, rsconf.frame(), None,
-     dict(rsconf.USART_ENTRY)),
+     dict(rsconf.USART_ENTRY), ()),
     ("xbios_rsconf, store four", addrs.XBIOS_RSCONF, {"a5": 0},
-     rsconf.frame(ucr=0x11, rsr=0x22, tsr=0x33, scr=0x44), None, dict(rsconf.USART_ENTRY)),
+     rsconf.frame(ucr=0x11, rsr=0x22, tsr=0x33, scr=0x44), None, dict(rsconf.USART_ENTRY), ()),
+    ("xbios_rsconf, baud", addrs.XBIOS_RSCONF, {"a5": 0},
+     rsconf.frame(baud=0), None, rsconf.BAUD_DECLARATION, ()),
     # THE INTERRUPT HANDLERS (BIOS wave 2), whose rows their own batteries build: each is a case
     # SPEC (`isr.registered`) that the battery also runs as a differential, so a row here cannot
     # come to describe a run nobody verified. Their `entry` is a TRAMPOLINE in the staging band
@@ -476,17 +505,33 @@ VERIFIED_CASES = (
 )
 
 
+def test_every_scheduled_case_is_read_triggered():
+    """A row's schedule must fire at both of the oracle's doors, which only a `read` trigger does.
+
+    A `pc` entry names an address in the ROM's own instruction stream. `bench/tier3.py` runs these
+    rows through `emu.run_bench` as well, entering the CROSS-COMPILED build, whose wait is wherever
+    the compiler put it — so such an entry would never come due there, and the row would die as an
+    instruction-cap overrun rather than as the case being unrunnable at that door. Refused here, once,
+    rather than by every consumer (`emu.run_bench` refuses it too, one level down).
+    """
+    for name, *_rest, schedule in VERIFIED_CASES:
+        for entry in schedule:
+            assert "read" in entry, (
+                f"{name} schedules {entry}, which is not a `read` trigger — a Tier 3 row runs this "
+                f"case at the BENCH door too, where a PC names nothing (TRAP_MODEL.md, Phase 8)")
+
+
 def _oracle_outputs(base, case):
     """Everything the ORIGINAL leaves behind for one case run over `base`.
 
     Its registers at rts, the set of addresses it wrote, the bytes it left at them, and its ordered
     PSG access ledger — i.e. every surface a differential compares, gathered from the oracle alone.
     """
-    _name, entry, regs, pokes, psg_seed, io_seed = case
+    _name, entry, regs, pokes, psg_seed, io_seed, schedule = case
     previous = set_base_image(base)
     try:
         final, writes, out_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
-                                          io_seed=io_seed)
+                                          io_seed=io_seed, schedule=schedule)
     finally:
         set_base_image(previous)
     written = sorted(set(writes))

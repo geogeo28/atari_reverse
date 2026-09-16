@@ -44,7 +44,18 @@ answers it is `io_seed={0xff8260: 0x02}` — the DECLARED I/O MAP (`TRAP_MODEL.m
 takes any byte of the page and routes the named models' own addresses to them — so `Getrez`
 (`$ff8260`), `Physbase`
 (`$ff8201`/`$ff8203`) and `Setcolor` (`$ff8240`+) are reachable by SAYING WHAT THE MACHINE HELD,
-which is a claim in the case rather than a change to the kit. What stays out of reach is the shape a
+which is a claim in the case rather than a change to the kit.
+
+**A register a routine WRITES and then READS BACK is declared `write_through`**, which is the same
+kind of claim one step further: the case says the register latches what is stored and reads it back
+unchanged, and both cores then serve the byte the run itself wrote. It is what makes `Mfpint` (whose
+enable half re-reads the IERA and IMRA its disable half cleared a bit of), the MFP timer programmer
+(`$fc260e`, which writes the reload byte and re-reads it until the 68901 agrees) and `Rsconf`'s baud
+arm ordinary differentials rather than slices and halts. `test/mfp.py` carries the claim register by
+register — including the two pairs where it holds only because every store these routines make is a
+pure clear (`TRAP_MODEL.md`, Phase 15, "The honest limit of a write-through byte").
+
+What stays out of reach is the shape a
 constant cannot describe at all: a register whose two successive reads must DIFFER, which is every
 FDC status poll and every DMA counter. `test/test_boot_snapshot.py` drives both halves of the pair
 on a planted `move.b $ffff8260,d0`, and `test/test_xbios_getrez.py` is the first real function held

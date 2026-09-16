@@ -55,15 +55,16 @@
  * last — the two tables are 16 bytes each and adjacent, so rate 16 reads the first byte of the other
  * one. Reproduced by construction: both tables are read out of the mapped ROM.
  *
- * ---- WHAT IS NOT RECONSTRUCTED --------------------------------------------------------------
+ * THE BAUD ARM IS THE SHARED TIMER PROGRAMMER, for timer D. `bsr.w $fc25b0` writes the timer's data
+ * register and READS IT BACK until the 68901 agrees, and re-reads the control register to OR the
+ * rate's control bits in — two read-backs a declaration describing the machine on ENTRY could not
+ * serve, which is why this arm used to halt. A case declares both registers WRITE-THROUGH now
+ * (TRAP_MODEL.md, Phase 15), which is true of them because the programmer's own clears stop the
+ * timer first; `src/xbios/xbtimer.c`'s header carries that argument.
  *
- * THE BAUD ARM HALTS, because `bsr.w $fc25b0` is the MFP timer programmer and that routine writes
- * timer D's data register and READS IT BACK until the chip agrees. The declared I/O map serves the
- * byte a register held on ENTRY, so the read-back is a stale read and `harness` refuses the case —
- * measured on this routine as one stale read at `$fffa25`, with a second at `$fffa1d` where the
- * control register is re-read to be ORed. `src/xbios/xbtimer.c`'s header carries the full
- * measurement and what would unblock it. Everything either side of that call — the four register
- * reads, the handshake arm, the four optional register writes and the result — is proved.
+ * WHAT SURROUNDS THE CALL IS THIS ROUTINE'S OWN: the receiver and transmitter are turned OFF across
+ * the rate change and back ON after it — four byte stores, and the pair that brackets the call is
+ * what says a caller's RSR/TSR arguments below are applied AFTER the port comes back up.
  */
 #include <stdint.h>
 
@@ -126,9 +127,9 @@ uint32_t xbios_rsconf(uint8_t *image, uint32_t arguments)
 
         hw_write8(MFP_RSR, RSCONF_USART_OFF);       /* receiver and transmitter off across the... */
         hw_write8(MFP_TSR, RSCONF_USART_OFF);
-        mfp_timer_program(image, MFP_TIMER_D,       /* ...baud-rate change. DOES NOT RETURN: the */
-                          image[addr_add(RSCONF_BAUD_CONTROL_TABLE, index)],   /* programmer's data */
-                          image[addr_add(RSCONF_BAUD_DATA_TABLE, index)]);     /* write is unproved */
+        mfp_timer_program(image, MFP_TIMER_D,       /* ...baud-rate change, which IS timer D */
+                          image[addr_add(RSCONF_BAUD_CONTROL_TABLE, index)],
+                          image[addr_add(RSCONF_BAUD_DATA_TABLE, index)]);
         hw_write8(MFP_RSR, RSCONF_USART_ON);
         hw_write8(MFP_TSR, RSCONF_USART_ON);
     }

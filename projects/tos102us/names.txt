@@ -623,7 +623,7 @@ cmt 0xfc201a One byte to the MIDI 6850: spin on $fffc04 bit 1, then store $fffc0
 fn 0xfc21f2 ikbd_send_byte
 cmt 0xfc21f2 One byte to the IKBD 6850: spin on $fffc00 bit 1, 951 iterations of bsr-to-rts settling, then store $fffc02.
 fn 0xfc25b0 mfp_timer_program
-cmt 0xfc25b0 The shared MFP timer programmer: five masked clears (IMR/IER/IPR/ISR + the control register), the data register written and read back until it sticks, then the control bits ORed in. Only the clears are provable under a per-run-constant read model; the read-back is why Xbtimer HALTS.
+cmt 0xfc25b0 The shared MFP timer programmer: five masked clears (IMR/IER/IPR/ISR + the control register), the data register written and read back once, then the control bits ORed into the byte the clear left. Verified whole: the data register is a RELOAD LATCH -- the fifth clear stops the timer, so the read-back sees the byte the write left (io_seed write-through, TRAP_MODEL Phase 15).
 fn 0xfc2622 mfp_timer_clear_field
 cmt 0xfc2622 One masked clear: (offsets+timer) selects the register, (masks+timer) the bits to keep.
 fn 0xfc262a mfp_timer_select_register
@@ -641,11 +641,11 @@ fn 0xfc4c0c rtc_probe
 cmt 0xfc4c0c MC146818 presence probe: writes register 27, then movep.w writes registers 5/6 and reads them back -- the shape no per-run declaration can serve; why Gettime/Settime are not reconstructed.
 fn 0xfc4c44 rtc_gettime
 fn 0xfc4d02 rtc_settime
-cmt 0xfc2658 Mfpint (XBIOS $0d): Jdisint's body, the vector store at $100+channel*4, then Jenabint's body -- the ROM bsr's into both. Proved as the slice [$fc2658,$fc267a) because the enable half re-reads the IERA/IMRA the disable half wrote. Returns the masked channel in D0.
+cmt 0xfc2658 Mfpint (XBIOS $0d): Jdisint's body, the vector store at $100+channel*4, then Jenabint's body -- the ROM bsr's into both. Verified as one whole differential over all sixteen channels; the enable half is served the IERA/IMRA bytes the disable half wrote (io_seed write-through). Returns the masked channel in D0.
 cmt 0xfc2682 Jdisint (XBIOS $1a): clears the channel's bit in IMR, IER, IPR, ISR in that order -- masked off before disarmed. Verified, src/xbios/mfp.c. Returns the masked channel in D0.
 cmt 0xfc26bc Jenabint (XBIOS $1b): sets the channel's bit in IER then IMR -- armed before unmasked. Verified, src/xbios/mfp.c. Returns the masked channel in D0.
-cmt 0xfc2ff2 Xbtimer (XBIOS $1f): program a timer, then install a handler on its channel ($fc302a: 13, 8, 5, 4) through Mfpint's body at $fc2666. HALTS at the programmer's data-register write-and-verify.
-cmt 0xfc290e Rsconf (XBIOS $0f): movep.l reads UCR/RSR/TSR/UDR as the result; six optional words, each negative to keep; the handshake byte normalised to 0, 1 or 2; the baud arm is timer D through $fc25b0 and HALTS.
+cmt 0xfc2ff2 Xbtimer (XBIOS $1f): program a timer, then install a handler on its channel ($fc302a: 13, 8, 5, 4) through Mfpint's body at $fc2666. Verified whole for all four timers, both the install arm and the negative-vector arm.
+cmt 0xfc290e Rsconf (XBIOS $0f): movep.l reads UCR/RSR/TSR/UDR as the result; six optional words, each negative to keep; the handshake byte normalised to 0, 1 or 2; the baud arm is timer D through $fc25b0, verified over four rates with both baud tables pinned.
 cmt 0xfc2212 Ikbdws (XBIOS $19): count+1 bytes to the IKBD 6850, each after a TDRE poll and a 951-iteration settling delay.
 cmt 0xfc2030 Midiws (XBIOS $0c): the same on $fffc04/$fffc06, with no settling delay.
 cmt 0xfc2f28 Initmous (XBIOS $00): builds the IKBD packet at $e6e and sends it through Ikbdws's loop at $fc221c; mousevec ($e22) is stored BEFORE the mode is validated, so mode 3 installs the handler and returns 0.
@@ -706,7 +706,7 @@ cmt 0xfc26c6 Jenabint's body: sets the channel's bit in IER then IMR. Mfpint bsr
 fn 0xfc2666 mfp_install_vector_and_enable
 cmt 0xfc2666 Mfpint's body, entered past the argument fetch AND past andi.l #15: disable, store the vector at $100+channel*4, enable. Xbtimer bsr's here at $fc3024 with the RAW byte from $fc302a, so the channel is a whole byte and the slot can land outside $100..$13c.
 fn 0xfc3008 xbtimer_install_handler
-cmt 0xfc3008 Xbtimer's vector arm: tst.l 10(sp)/bmi, then $fc302a(d0.w) and bsr into Mfpint's body. Unreachable on both sides -- the timer programmer above halts first.
+cmt 0xfc3008 Xbtimer's vector arm: tst.l 10(sp)/bmi, then $fc302a(d0.w) and bsr into Mfpint's body. Reached on both sides now that the programmer above runs; the RAW table byte past the four timers (timer 4's $4a, the signed half-select) stays candidate-only.
 fn 0xfc203a midi_send_string
 cmt 0xfc203a Midiws's loop: count+1 bytes, each through the MIDI sender at $fc201a. Same shape as Ikbdws's at $fc221c.
 cmt 0xfc0a46 BIOS $00 Getmpb: builds the initial GEMDOS MPB over the OS's descriptor at $48e from _membot/_memtop (read AFTER the caller's MPB is stored -- the two can alias). Returns memtop-membot in D0. Verified by recreate/test/test_bios_getmpb.py.

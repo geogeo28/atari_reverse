@@ -11,14 +11,14 @@ counts in this file against its rows.
 |---|---|---|---|---|
 | boot | 0 | — | — | NOT STARTED |
 | bios | 14 | — | 0.62–1.96x, every ✅ row priced (`make bench`) | STARTED |
-| xbios | 26 | — | 0.23–2.29x, every ✅ row priced; Vsync unpriced (no schedule door) | STARTED |
+| xbios | 29 | — | 0.23–2.29x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
 | gemdos | 0 | — | — | NOT STARTED |
 | vdi + linea | 0 | — | — | NOT STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
 
-## Verified — xbios (26)
+## Verified — xbios (29)
 
 Each row is one function of the ORIGINAL ROM, run in place at its own address over the post-boot RAM
 snapshot and compared byte-for-byte against the reconstruction (`../README.md`, Tier 1). The cost
@@ -47,17 +47,17 @@ value, callee-saved file and chip traffic as the ROM.
 | `0xfc0ab8` | `Setscreen` (XBIOS $05, `src/xbios/setscreen.c`) |  21 | 11 / 202 both bases, 8 / 130 keep everything |  **1.28** both bases (19 / 248; accepted: (A)+(G)+(D)), **1.24** keep everything (11 / 152; accepted: (A)+(D)) | ✅ verified | two of three arms: four logical bases incl. the one already held and $7fffffff; four physical bases through the hardware WRITE ledger incl. $12345678 proving bits 31..24 and 7..0 are DROPPED not rounded; the sign boundary on both; INDEPENDENCE as three calls; the all-keep call doing nothing; the caller's whole D0 given back on both arms. The RESOLUTION arm HALTS (`recreate_not_reconstructed`): it ends in `jsr $fca914`, the console re-init, pinned from the ROM's own bytes. Mutation 4/4 |
 | `0xfc0b06` | `Setpalette` (XBIOS $06, `src/xbios/palette.c`) |  11 | 3 / 84 |  **1.73** (5 / 116; accepted: image pointer + the caller's D0) | ✅ verified | THE ABSENT `tst`/`bmi`: five pointers incl. $ffffffff and $80000000 all stored; 0 over the snapshot's own 0 attributed by the poison pass; the whole effect asserted to be four bytes and no hardware store — the palette itself is the VBL's; the caller's whole D0 given back. Mutation 3/3 |
 | `0xfc0b0e` | `Setcolor` (XBIOS $07, `src/xbios/palette.c`) |  46 | 10 / 140 read, 11 / 160 write | **1.28** read (14 / 168), **1.18** write (15 / 182; accepted: the caller's D0 as an argument, the palette base as an immediate) | ✅ verified | all sixteen registers against a declared row with a distinct word each; five wrapping index arguments incl. 16, 24, $8000, $ffff with no bounds test; the reporting mask at four boundaries; twelve store cases proving the value reaches the register UNMASKED; the read BEFORE the `bmi`; the caller's high half surviving; a decoy at $ff8240; one byte of the word declared refusing. Mutation 4/5 (the fifth EQUIVALENT: the five-bit mask discards every bit the `add.w` wrap could move) |
-| `0xfc07d0` | `Vsync` (XBIOS $25, `src/xbios/vsync.c`) |  21 | 8 / 156 (one iteration) | — (no numerator: `run_bench` has no schedule door) | ⚠️ verified, unpriced | THE FIRST RECONSTRUCTION HERE THAT DOES NOT TERMINATE ON ITS OWN, driven by Phase 8's scheduled write at the spin's own `cmp.l` ($fc07dc): four arrival counts, each equal to the oracle's arrivals AND the candidate's polls site by site; the result the clock sampled BEFORE the wait; five entry clocks proving a whole-LONGWORD compare; a clock going BACKWARDS still ending the wait (`cmp`/`beq` is a difference test); the two negative controls running the ORIGINAL to the cap. Not in `VERIFIED_CASES` (no schedule field); the XBIOS table's entry $25 read from the ROM. Mutation 3/3 |
+| `0xfc07d0` | `Vsync` (XBIOS $25, `src/xbios/vsync.c`) |  26 | 8 / 156 one spin, 14 / 252 four spins | **0.97** one spin (9 / 152), **0.92** four spins (15 / 236) — both PINNED, incl. the IPL bracket | ✅ verified | THE FIRST RECONSTRUCTION HERE THAT DOES NOT TERMINATE ON ITS OWN, driven by Phase 8's scheduled write: Tier 1 at the spin's own `cmp.l` ($fc07dc) over four arrival counts, each equal to the oracle's arrivals AND the candidate's polls site by site; the result the clock sampled BEFORE the wait; five entry clocks proving a whole-LONGWORD compare; a clock going BACKWARDS still ending the wait (`cmp`/`beq` is a difference test); the two negative controls running the ORIGINAL to the cap. Tier 3 through the READ TRIGGER on `_frclock` itself, which is the only trigger both oracle doors can fire (a PC inside the m68k build moves with every recompile), at TWO arrival counts, with the two runs' reads of $466 compared; the offset between the two triggers pinned by running one blank through each. Both ratios PINNED because the `ipl.h` bracket is the routine's TERMINATION and is invisible to Tier 1 — deleting it leaves all 26 cases green and moves these rows to 0.64x/0.75x. Mutation 4/4 (a target-only double read caught at an ODD spin count by the read comparison alone; a build that never spins caught as `never came due`; the trigger off by one caught by the ORIGINAL's own loop and by the two-trigger pin; the bracket deleted caught by both pins) |
 | `0xfc2f02` | `Offgibit` (XBIOS $1d, `src/xbios/gibit.c`) | 22 | 45 / 664 |  **0.90** (48 / 604) — incl. the OUTER IPL bracket | ✅ verified | THE ARGUMENT IS THE MASK TO KEEP: eight single-bit clears (TOS's own $ef among them), both ends, $55/$aa; the pair asserted to DISAGREE over one mask; four words proving only the low byte is read; the write made even when nothing changes; register 14 against a distinct-byte entry file; the internal entry at $fc2ed8 pinned. Mutation 3/3 |
 | `0xfc2edc` | `Ongibit` (XBIOS $1e, `src/xbios/gibit.c`) | 22 | 45 / 664 |  **0.90** (48 / 604) — incl. the OUTER IPL bracket | ✅ verified | composed over the verified `Giaccess`: the witness is the chip's ordered ledger READ 14 / WRITE 14 / READ 14; eleven masks incl. every single bit, one already set, $ff and 0; the high byte never read; the write unconditional; the caller's whole D0 given back. Mutation 4/4 |
 | `0xfc3074` | `Dosound` (XBIOS $20, `src/xbios/sound.c`) | 21 | 7 / 128 play, 5 / 98 report only | **1.23** play (9 / 148), **1.34** report only (7 / 118; accepted: image pointer) | ✅ verified | THE `clr.b $0e8e` handshake over a driver 42 ticks into a list, incl. when the countdown is already zero (poison-attributed) and NOT cleared on the report-only arm; four cursors incl. 0 and the one already held; three negative pointers; the OLD cursor as a whole longword. The 200 Hz driver is the timer C handler's. Mutation 3/3 |
 | `0xfc3088` | `Setprt` (XBIOS $21, `src/xbios/sound.c`) | 15 | 6 / 108 write, 5 / 90 report only | **1.59** write (10 / 148), **1.80** report only (9 / 130; accepted: image pointer + the caller's D0) | ✅ verified | stored as a WORD not a byte; three negative arguments incl. $ff80 at the ROM's width; the OLD word reported; the caller's high half surviving on both arms. Mutation 3/3 |
 | `0xfc2682` | `Jdisint` (XBIOS $1a, `src/xbios/mfp.c`) | 79 | 39 / 514 |  **0.61** (23 / 328) | ✅ verified | all sixteen channels over both halves of all four register pairs with a DISTINCT declared byte per register; the ORDER (mask, enable, pending, in-service) out of the hardware write ledger; the read half of every `bclr` ledgered (four declared bytes incl. $00/$ff prove the five preserved bits); five aliased arguments pinning `andi.l #15`; an undeclared register refuses by name; the masked channel returned in D0 (the ROM's andi.l precedes the movem push). Mutation 5/5 |
 | `0xfc26bc` | `Jenabint` (XBIOS $1b, `src/xbios/mfp.c`) | 79 | 23 / 346 |  **0.50** (16 / 194) | ✅ verified | the same sixteen channels in the OTHER order — arm then unmask — and the same declared-read arithmetic; also the code `Mfpint`'s enable half IS, decoded out of the ROM's own `bsr` |
-| `0xfc2658` | `Mfpint` (XBIOS $0d, `src/xbios/mfp.c`) | 79 | — | — | ⚠️ slice | proved as `[$fc2658, $fc267a)`: the disable and the vector at `$100 + channel * 4` read back out of the oracle's write ledger for all sixteen channels. The enable half CANNOT be run — it re-reads the IERA/IMRA the disable half wrote (2 stale reads, first at `$fffa07`) — and is pinned by address identity with `Jenabint`'s verified body at `$fc26c6`. Unblocked by a write-through arm of the declared I/O map |
-| `0xfc25b0` | MFP timer programmer (`src/xbios/xbtimer.c`) | 25 | — | — | ⚠️ slice | the five clears as `[$fc25b0, $fc2600)`, per timer: the four interrupt registers computed from the timer's CHANNEL (13/8/5/4); the CONTROL clear, where A and B have their whole byte wiped and C and D share `$fffa1d` with masks $8f/$f8. All eight ROM tables read out of the image and asserted contiguous. Mutation 3/3 |
-| `0xfc2ff2` | `Xbtimer` (XBIOS $1f, `src/xbios/xbtimer.c`) | 29 | — | — | ❌ HALTS | the data-register write-and-verify loop cannot be run (no termination undeclared, stale at `$fffa1f` declared). The channel table `$fc302a` and the `bsr` into `Mfpint`'s body are pinned out of the ROM; the install arm (`xbtimer_install_handler`, $fc3008) is reconstructed with the RAW table byte — the `bsr` lands PAST Mfpint's `andi.l #15`, so timer 4's $4a reaches slot $228 and a byte ≥ $80 takes register B by the SIGNED half-select — proved at the C level (the halt precedes it at the ROM level). Unblocked by the write-through arm |
-| `0xfc290e` | `Rsconf` (XBIOS $0f, `src/xbios/rsconf.c`) | 26 | 19 / 260 report, 23 / 332 store four | **2.03** report, **1.72** store four (accepted: `movep.l` has no C form) | ✅ verified | the result read BEFORE anything changes and packed UCR:RSR:TSR:UDR from four DIFFERENT declared bytes; each optional register on its own and all four in the ROM's order; five words separating `tst.w` from `tst.b`; the handshake byte over eight values incl. mode 3 demoted to XON/XOFF. Baud arm HALTS with both baud tables pinned. Mutation 4/4 |
+| `0xfc2658` | `Mfpint` (XBIOS $0d, `src/xbios/mfp.c`) | 88 | 70 / 1024 | **0.56** (46 / 588) | ✅ verified | THE WHOLE ROUTINE, where this row read a slice: the disable, the vector at `$100 + channel * 4` and the enable over all sixteen channels as ONE ordered stream. The enable half is now SERVED the bytes the disable half wrote (the declared map's write-through arm) and is asserted as THOSE bytes rather than through the model; the mask and the masked channel returned over five aliased arguments; four held bytes over the whole composition. Mutation: covered by the timer programmer's sweep below |
+| `0xfc25b0` | MFP timer programmer (`src/xbios/xbtimer.c`) | 57 | 84 / 1072 | — | ⚠️ verified, unpriced | verified WHOLE rather than as its five clears — all four timers × both control/divider pairs: the masked clears, the data register written and read back, and the control bits ORed into the byte the clear left. UNPRICED because its arguments are D0/D1/D2 and `tier3.CALL` spells frame arguments and `ENTRY_D0` only; its cost is measured inside the `Xbtimer` and `Rsconf` rows instead. Mutation 8/8: the mutant that drops the MFP base aims the write-and-verify spin at an undeclared address, which used to HANG pytest rather than red. The off-target build now caps the loop at `MFP_VERIFY_PASSES` and ends it in `os_refused(0)`, so that mutant reds through `_vet_no_os_refusal` (43 cases across this row and `Rsconf`'s); the TARGET build keeps the ROM's own unbounded spin, and on a correct run the ledger is one store and one read either way |
+| `0xfc2ff2` | `Xbtimer` (XBIOS $1f, `src/xbios/xbtimer.c`) | 57 | 166 / 2198 install, 94 / 1180 no vector | **0.68** install (130 / 1516), **0.78** no vector (83 / 924) | ✅ verified | the programmer, the channel table `$fc302a` and `Mfpint`'s own body end to end for all four timers, where this row read HALTS; and the negative-vector arm, which programs the timer and installs nothing. The RAW-byte and out-of-range shapes stay candidate-only — a timer past the table would program a register that is not a timer: the `bsr` lands PAST Mfpint's `andi.l #15`, so timer 4's $4a reaches slot $228 and a byte ≥ $80 takes register B by the SIGNED half-select |
+| `0xfc290e` | `Rsconf` (XBIOS $0f, `src/xbios/rsconf.c`) | 32 | 19 / 260 report, 23 / 332 store four, 116 / 1436 baud | **2.03** report, **1.72** store four, **1.11** baud (accepted: `movep.l` has no C form; on the baud arm that mechanism is diluted by the timer programmer) | ✅ verified | the result read BEFORE anything changes and packed UCR:RSR:TSR:UDR from four DIFFERENT declared bytes; each optional register on its own and all four in the ROM's order; five words separating `tst.w` from `tst.b`; the handshake byte over eight values incl. mode 3 demoted to XON/XOFF. The BAUD arm no longer halts: four rates, the two baud tables indexed out of the ROM, the RSR/TSR bracket that stops the receiver and the transmitter across the rate change, and the caller's own four registers applied after it. Mutation 4/4 |
 | `0xfc2212` | `Ikbdws` (XBIOS $19, `src/xbios/acia.c`) | 21 | 5731 / 84016 (two bytes) |  **1.00** (5734 / 84034; pinned: the settle loop is the ROM's own `dbf` shape on target, a FLOOR the 6301 is owed) | ✅ verified | five byte strings whose order and repeats are separable; `count + 1` at counts 0..2; two buffers a page apart; one TDRE poll per byte in the named-slot stream with the MIDI stream empty. Shrinking the settle loop leaves every Tier 1 case green and reddens the pinned row (measured); the count is pinned to about ±38 passes by the ratio, stated as a floor. Mutation 3/3 |
 | `0xfc2030` | `Midiws` (XBIOS $0c, `src/xbios/acia.c`) | 21 | 23 / 304 |  **0.90** (22 / 278) | ✅ verified | the same cases on the other ACIA, whose status comes through the DECLARED map where the IKBD's comes through the named set — each routine's polls in its own stream; and the pair saying what a per-run constant cannot: undeclared, or declared not-ready, the ROM's loop never leaves |
 | `0xfc30bc` | `Kbdvbase` (XBIOS $22, `src/xbios/kbdvbase.c`) | 8 | 3 / 68 | **1.00** | ✅ verified | the address proved three ways: every named slot of the block holds an installed ROM handler, the table fits below the keyboard struct, a scrambled table changes nothing (`move.l #`, not a load); plus the WIDTH, a caller's marked high half not surviving |
@@ -102,6 +102,9 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
 | rebuilt ROM boots in Hatari (`--tos`) | **DONE** 2026-09-13: `recreate/atari/` builds a 196,608-byte `TOS102RC.IMG` (header byte-identical to the original's, `checkrom.py` dereferences the MUPB; `.data`/`.bss` refused by the linker) whose boot stub paints 16 bands at the header-derived 60 Hz; Hatari runs it with `--patch-tos off` and a committed machine config |
 | `TOSTEST.PRG` conformance ledger | **DONE** (seed) 2026-09-13: 14 call sites / 19 records + a screen CRC, ledger at $C0000, golden reproducible run-to-run; instrument identity (ROM/floppy/PRG sha256) pinned in every metrics file |
 | `TOSBENCH.PRG` + boot-time surface | **DONE** (seed) 2026-09-13: boot surface = screenshot + 256 vectors + named sysvars ($000–$9FF pinned, clocks masked) at vblank 500 with a settle proof at 550 (boot metric 461 vbl / 1534 ticks); TOSBENCH times Bconout / Malloc / Fread on both clocks. **OPEN: Fread's own noise floor is 6.6 % (floppy rotational phase), wider than the 5 % bar — the floppy workload cannot be judged as designed; either sync to the index pulse, widen that row's bar to its measured floor, or move the read workload off the floppy** |
+| write-through arm of the declared I/O map (`TRAP_MODEL.md` Phase 15) | **DONE** 2026-09-15: `io_seed={address: emu.write_through(byte)}` — a declared register whose later reads are served the byte the run's own store left, which is what lets a routine that re-reads what it wrote run to its `rts` instead of refusing; every store on the candidate goes through one `hw_write` so the two sides' ordered ledgers stay comparable. Pinned in the kit by `test/test_io_model.py`, `test/test_io_differential.py` and `test/io_model_probe.c` (the C side of the same claim), and in this project by `test/mfp.py`'s `WRITE_THROUGH_REGISTERS`. Its LIMIT is written down with it: the four pending/in-service registers are write-to-clear on the real 68901, and the claim holds only because every store these routines make is a pure `and` clear. Consumers: `Mfpint`, the MFP timer programmer, `Xbtimer`, `Rsconf`'s baud arm |
+| schedule door on `run_bench` (Tier 3 for a routine that waits) | **DONE** 2026-09-15: `OS_SCHED_AT_READ` (`include/os.h`, `oracle/shim.c`) fires the scheduled store before the Nth READ OF THE WAIT ADDRESS rather than at a PC, because a PC belongs to one build and the cross-compiled column has nothing at the ROM's; the 7th `VERIFIED_CASES` field carries the schedule to both doors, and `rom_bench._vet_same_wait` compares the two runs' reads address by address so a build that spins differently cannot be priced as if it spun the same. Pinned by `test/test_sched_model.py`, `test/sched_model_probe.c` and `test/test_rom_bench.py` in the kit, and by `test/test_xbios_vsync.py` here. First consumer: `Vsync`, 0.97 / 0.92 |
+
 
 ## Wave log
 
@@ -161,14 +164,50 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
   own cost); nine leaves fall under it, `isr_vbl`'s +94 does not and keeps a written entry. The transcription rows are net
   of the staged caller on BOTH columns. Mechanism (I) — the ROM's entry glue in the original's column only — is retired
   by the ISR entry stubs (see the bios rows).
-* **Kit items this wave named, not built:** a WRITE-THROUGH arm of the declared I/O map (a stored byte replaces the
-  declared one for later reads — unblocks Mfpint's enable half, Xbtimer's programmer, Rsconf's baud arm, the RTC probe);
-  a declared ORDERED SEQUENCE per address (the ACIA data list per read, GPIP's second loop pass, the FDC status — TRAP_MODEL
-  'Still unmodeled' names it); a `schedule` door on `run_bench` and a 7th `VERIFIED_CASES` field (Vsync's Tier 3 row,
-  the slices' registry); a cross-stream order between image stores and hardware writes (Initmous mode 0).
+* **Kit items wave 3 named, and what became of them.** BUILT in wave 4 (below): the WRITE-THROUGH arm of the declared
+  I/O map (a stored byte replaces the declared one for later reads — it unblocked Mfpint's enable half, the timer
+  programmer, Xbtimer and Rsconf's baud arm), and the `schedule` door on `run_bench` with the 7th `VERIFIED_CASES`
+  field (Vsync's Tier 3 row). STILL NOT BUILT: a declared ORDERED SEQUENCE per address (the ACIA data list per read,
+  GPIP's second loop pass, the FDC status — TRAP_MODEL 'Still unmodeled' names it); the door's OTHER half, a registry
+  of SLICES with a `stop_pc` for a routine whose arguments no `CALL` form can spell — which is why `$fc25b0` is
+  verified and unpriced; a cross-stream order between image stores and hardware writes (Initmous mode 0).
   Parked from review: `test/trap.py`'s TRAP_BAND at SCRATCH+0x800 overlaps Supexec's staged decoys at +0x800/+0xa00
   (different cases, never staged together; `isr.py` asserts its own band clear of both) — move D's band. Set I's C cores keep
   the C ABI's `rts` entry as their own Tier 1 instrument beside the `.S` entry rows.
+  Parked from the wave-4 review: `src/xbios/acia.c`'s two unbounded status spins are the same hole class as the timer
+  programmer's was (a mis-addressed ACIA status hangs pytest rather than reds) and are left faithful for now; the
+  trigger-door table (`TRIGGER_DOORS` + `triggers_not_runnable_at`) as a follow-up; `tier3`'s `RegArg` generalization, so
+  `$fc25b0` can be priced at its own entry rather than only inside its callers; `VERIFIED_CASES` as a `NamedTuple` with
+  defaults, now that the tuple is seven fields wide; the `os.h` I/O map as one struct rather than four parallel arrays;
+  and a sharper refusal for an RMW helper (`hw_bset8`/`hw_bclr8`/`hw_and8`) aimed at a DECLARED address — today it reds on
+  the Phase 10 value and the Phase 15 read stream, which is a correct red pointing one layer away from the cause.
+* **Wave 4 (2026-09-15), the two kit doors wave 3 named** — two agents on disjoint doors:
+  (A) **the WRITE-THROUGH arm of the declared I/O map** — `emu.write_through(byte)` is an `io_seed` VALUE rather than a
+  second door, so a case declares which registers read back what was stored; every store the candidate makes goes
+  through one `hw_write`, which is what makes the two sides' ledgers comparable at all. Its honest limit is written
+  down: IPRA/IPRB/ISRA/ISRB are WRITE-TO-CLEAR on the real 68901, and the model's plain read-back claim holds only
+  because every store these routines make is a pure `and` clear — found by the refusal naming `$fffa0b`, not by
+  reading the datasheet first. The timer DATA register is a reload latch, which is why the programmer writes it and
+  reads it once: the fifth clear STOPS the timer, pinned as a run-order assertion rather than as a comment. With it:
+  `Mfpint` whole, the MFP timer programmer whole, `Xbtimer` (both arms) and `Rsconf`'s baud arm — the four rows above.
+  The programmer's spin is faithful on target and CAPPED off target (`MFP_VERIFY_PASSES`, ending in `os_refused(0)`),
+  because a mis-addressed register makes it never agree — which on target is the ROM's own hang and in pytest was a hung
+  worker rather than a red. That closes the row's last mutation: 8/8.
+  (B) **the SCHEDULE DOOR on `run_bench`** — a new `OS_SCHED_AT_READ` trigger keyed on the Nth read of the WAIT
+  ADDRESS, because a PC belongs to one build and the cross-compiled column has nothing at the ROM's; the 7th
+  `VERIFIED_CASES` field carries it, and `rom_bench._vet_same_wait` compares the two runs' reads per address so a
+  build that spins differently cannot be priced as if it spun the same. `Vsync` is priced at 0.97 / 0.92 over two
+  arrival counts, both PINNED UNDER the bar so that a vanished `ipl.h` bracket reds (measured 0.64 / 0.75 with it
+  deleted). Phase 8's one aliasing hole is now measured in its Tier 3 form as well: a double-reading build agrees
+  with the original at every EVEN spin count, so `PRICED_SPINS` holds an odd one.
+  Review found: a stale candidate `.so` passing the ABI probe and segfaulting on the new `g_io_reset` (now
+  `g_io_writeback_count` in the probe list + an `nm` pin); the timer programmer's faithful spin hanging pytest on a
+  mis-addressed register (host-only pass cap ending in a refusal; the HUNG mutant now reds, 8/8); the bench came-due vet
+  firing on a door stop and never on a resume (moved into `_bench_result`, pinned through the real door); a duplicated
+  bench installer and never-came-due sentence; the per-byte store loop spelt on both shores (now one `os_io_store`);
+  `baud_chip` indexing Python literals where its docstring claimed the image; a tautology where the odd-spin-count claim
+  should be. Refuted: the RMW helpers latching a fabricated half on a write-through byte — two unconditional vets
+  (Phase 10 value, Phase 15 read stream) already red it; a documented limit, a sharper refusal parked.
 * **Next** — BIOS wave 3: the character-device drivers behind the write-through arm and the sequence seed (the ACIA packet
   parser, Bconout's VT52 driver), then GEMDOS. Was: the XBIOS screen/MFP/timer routines and the interrupt handlers, now that the
   declared I/O map reaches them; the trap #13/#14 dispatcher itself (which prices mechanism A honestly);
@@ -176,14 +215,15 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
 
 ## Suite
 
-`make test` — **1,165 passed** and `make guarded` the same count, no fault; `make bench` judges 48 rows (rule / accepted /
-pinned / ok, none OVER or DRIFTED); re-summed at the wave-3 merge on 2026-09-15 after a clean rebuild. The kit's own
-suite: **977 passed**. Zynaps unchanged (4,751 / 4 skipped) as the PRG control. `names.txt`: 313 fn / 226 var / 113 cmt,
-applied with zero failures.
+`make test` — **1,212 passed** and `make guarded` the same count (1,788 candidate runs guarded, no fault), re-summed at
+the wave-4 merge on 2026-09-15 after a forced relink of the oracle and every candidate; `make bench` judges 81 rows (rule /
+accepted / pinned / ok, none OVER or DRIFTED), re-counted from the printed table — the 48 it said before wave 4 was stale.
+The kit's own suite: **1,029 passed**. Zynaps unchanged (4,751 / 4 skipped) as the PRG control; Flying Shark 3,851, the
+second control this wave (it uses the RMW helpers and Phase 8). `names.txt`: 313 fn / 226 var / 113 cmt, applied with
+zero failures.
 
-Environment note: the host `cc`/`make`/`git` shims are Xcode-licence-gated after an update; the gates ran through
-`/Library/Developer/CommandLineTools/usr/bin` with `SDKROOT`/`-isysroot` set. `sudo xcodebuild -license accept` restores
-the defaults.
+Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
+`SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.
 
 ## Not reconstructed, and why
 

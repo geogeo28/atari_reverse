@@ -12,11 +12,13 @@ a byte of received traffic rather than a setting. Every case below declares four
 a reconstruction that packed them in another order — or read three of them and invented the fourth —
 diverges on the value rather than on luck.
 
-THE BAUD ARM IS NOT RECONSTRUCTED, and the reason is measured here rather than asserted: the timer
-programmer writes timer D's data register and reads it back until the 68901 agrees, which the
-declared I/O map cannot serve (a declaration describes the byte a register held on ENTRY). The core
-HALTS there, so no case in this file passes a non-negative baud to the candidate; what they do
-instead is run the ORIGINAL and require the refusal, and pin the two baud tables the arm indexes.
+THE BAUD ARM IS THE SHARED TIMER PROGRAMMER, for timer D. It writes the timer's data register and
+reads it back until the 68901 agrees, and re-reads the control register to OR the rate's control
+bits in — two read-backs a declaration describing the machine on ENTRY could not serve, which is why
+this arm used to halt. The registers are declared WRITE-THROUGH now (`test/mfp.py`), so the arm runs
+end to end; what this file adds over `test_xbios_xbtimer.py`'s cases is the two tables the RATE
+indexes, the receiver/transmitter bracket around the change, and that both are driven at more than
+one rate.
 """
 import ctypes
 import struct
@@ -27,6 +29,7 @@ from harness import BASE_IMAGE, _lib, addrs, differential, emu, make_image
 
 import abi
 import case
+import mfp
 
 _lib.xbios_rsconf.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32]
 _lib.xbios_rsconf.restype = ctypes.c_uint32
@@ -54,10 +57,6 @@ def frame(**arguments):
 
 
 def run(pokes=None, poison=True, io_seed=None, **arguments):
-    words = {name: KEEP for name in ARGUMENT_INDEX}
-    words.update(arguments)
-    assert words["baud"] & 0x8000, "the baud arm halts the candidate — see the module docstring"
-
     def glue(lib, buf):
         # The SAME words the oracle reads: the core takes the caller's argument block, as the ROM
         # does, so the case hands it the frame it staged rather than six values of its own.
@@ -176,30 +175,93 @@ def test_the_two_baud_tables_are_where_addrs_h_says_and_hold_what_it_says():
     assert addrs.RSCONF_BAUD_DATA_TABLE == addrs.RSCONF_BAUD_CONTROL_TABLE + addrs.RSCONF_BAUD_RATES
 
 
-def test_the_baud_arm_cannot_be_run_under_a_declared_map_and_this_is_why():
-    """THE MEASUREMENT THE HALT RESTS ON, so the limit is a red rather than a paragraph.
+# The declaration the BAUD arm needs on top of the USART's four bytes: the MFP's whole interrupt and
+# timer file, since the programmer it calls clears five registers and reads two of them back
+# (`test/mfp.py` carries which of them are claimed WRITE-THROUGH, and why).
+BAUD_DECLARATION = mfp.seed(USART_ENTRY)
+# Four rates chosen for what they separate: 19200 is the fastest and index 0, 300 is the one a
+# terminal program actually asks for, 13 is the last rate on the FAST prescaler table and 15 the
+# slowest — the two that carry the $02 control byte rather than $01.
+BAUD_RATES = (0, 7, 13, 15)
 
-    Undeclared, timer D's data register answers a fabricated 0 and the programmer's `move.b` /
-    `cmp.b` / `bne` loop never ends — the run dies at the instruction cap. Declared equal to the
-    byte the arm writes, the run completes and the ORACLE reports STALE reads, which
-    `harness._vet_io_reads_are_declared` refuses: the declaration describes the register on ENTRY
-    and an instruction of this very run has replaced it. Neither is a case anybody can verify, and
-    no bigger declaration is the remedy — `src/xbios/xbtimer.c` says what would be.
+
+def baud_chip(rate, **arguments):
+    """What `mfp.Chip` says the BAUD arm should leave: the four USART reads, the receiver and
+    transmitter off, the timer programmed, and them back on.
+
+    The tables are indexed here as the ROM indexes them, out of the mapped image — so a rate whose
+    control byte or divider moved in the ROM moves this expectation with it.
     """
-    fastest = 0
-    with pytest.raises(RuntimeError, match="did not reach rts"):
-        emu.run(make_image(frame(baud=fastest)), addrs.XBIOS_RSCONF, {"a5": 0},
-                io_seed=dict(USART_ENTRY), max_insns=20_000)
+    chip = mfp.Chip({**mfp.ENTRY_BYTES, **USART_ENTRY})
+    for register in (addrs.MFP_UCR, addrs.MFP_RSR, addrs.MFP_TSR, addrs.MFP_UDR):
+        chip.read(register)
+    chip.write(addrs.MFP_RSR, addrs.RSCONF_USART_OFF)
+    chip.write(addrs.MFP_TSR, addrs.RSCONF_USART_OFF)
+    chip.program_timer(addrs.MFP_TIMER_D,
+                       BASE_IMAGE[addrs.RSCONF_BAUD_CONTROL_TABLE + rate],
+                       BASE_IMAGE[addrs.RSCONF_BAUD_DATA_TABLE + rate])
+    chip.write(addrs.MFP_RSR, addrs.RSCONF_USART_ON)
+    chip.write(addrs.MFP_TSR, addrs.RSCONF_USART_ON)
+    for register, name in STORE_ORDER:
+        if name in arguments:
+            chip.write(register, arguments[name] & 0xFF)
+    return chip
 
-    written = BAUD_DATA[fastest]
-    declared = {**USART_ENTRY, addrs.MFP_TDDR: written, addrs.MFP_TCDCR: 0x77,
-                addrs.MFP_IERB: 0x49, addrs.MFP_IPRB: 0x4D, addrs.MFP_ISRB: 0x41,
-                addrs.MFP_IMRB: 0x45}
-    _final, _writes, o_regs = emu.run(make_image(frame(baud=fastest)), addrs.XBIOS_RSCONF,
-                                      {"a5": 0}, io_seed=declared)
-    assert o_regs["io_stale_reads"] == 2 and o_regs["io_stale_first"] == addrs.MFP_TDDR, (
-        f"the baud arm now makes {o_regs['io_stale_reads']} stale read(s), the first at "
-        f"{o_regs['io_stale_first']:#x} — the halt's premise has moved")
+
+@pytest.mark.parametrize("rate", BAUD_RATES)
+def test_the_baud_arm_programs_timer_d_from_the_two_tables(rate):
+    """THE ARM THAT USED TO HALT, end to end at four rates.
+
+    `bsr.w $fc25b0` is the shared timer programmer and the rate is timer D's: the control byte comes
+    out of `$fc29ae` and the divider out of `$fc29be`, both indexed by the rate word. The programmer
+    then writes the divider into `$fffa25` and reads it back until the chip agrees, and ORs the
+    control byte into `$fffa1d` — the byte timer D SHARES with timer C, whose field the clear kept.
+    Both read-backs are of registers this run wrote, which is what the declared map's write-through
+    arm serves.
+    """
+    info = run(baud=rate, io_seed=BAUD_DECLARATION)
+    chip = baud_chip(rate)
+    assert info["regs"]["hw_writes"] == chip.writes
+    assert info["regs"]["io_events"] == chip.reads
+    assert info["regs"]["d0"] == PREVIOUS, (
+        "the result is still the configuration read BEFORE the change, whatever the arm did")
+
+
+def test_the_receiver_and_transmitter_are_off_across_the_rate_change_and_on_after():
+    """The bracket, which is the part of the arm that is `Rsconf`'s own rather than the
+    programmer's: RSR and TSR are zeroed before the timer is touched and set to 1 after, so no
+    character is clocked at a rate that is half changed. It is four byte stores and nothing else
+    records them — the registers are off-image, so only the ordered write ledger can see the order.
+    """
+    stored = [entry for entry in stores(run(baud=BAUD_RATES[0], io_seed=BAUD_DECLARATION))
+              if entry[0] in (addrs.MFP_RSR, addrs.MFP_TSR)]
+    assert stored == [(addrs.MFP_RSR, addrs.RSCONF_USART_OFF), (addrs.MFP_TSR, addrs.RSCONF_USART_OFF),
+                      (addrs.MFP_RSR, addrs.RSCONF_USART_ON), (addrs.MFP_TSR, addrs.RSCONF_USART_ON)]
+
+
+def test_a_rate_and_the_four_optional_registers_together_are_applied_in_the_rom_s_order():
+    """...and the one case that shows WHERE the caller's own RSR and TSR land: after the bracket
+    puts the port back up, not before. A reconstruction that stored the arguments first would leave
+    the port holding `$01` — the bracket's own byte — instead of what the caller asked for."""
+    arguments = dict(ucr=0x11, rsr=0x22, tsr=0x33, scr=0x44)
+    info = run(baud=BAUD_RATES[1], io_seed=BAUD_DECLARATION, poison=False, **arguments)
+    assert info["regs"]["hw_writes"] == baud_chip(BAUD_RATES[1], **arguments).writes
+
+
+def test_the_baud_index_is_a_signed_word_and_nothing_bounds_it():
+    """`move.b TABLE(d1.w),d0` is `m68k_idioms.h`'s SIGNED word index, so rate 16 reads the byte
+    after the control table's last — which is the DIVIDER table's first, the two being adjacent —
+    and the divider it pairs with comes from one past that. Reproduced by construction: both tables
+    are read out of the mapped ROM, so the reconstruction indexes the same bytes the ROM does.
+    """
+    past_the_end = addrs.RSCONF_BAUD_RATES
+    control = BASE_IMAGE[addrs.RSCONF_BAUD_CONTROL_TABLE + past_the_end]
+    assert control == BAUD_DATA[0], "rate 16's control byte is not the divider table's first"
+    info = run(baud=past_the_end, io_seed=BAUD_DECLARATION, poison=False)
+    # `baud_chip` indexes the same two tables out of the same image, so it needs no special case for
+    # a rate past their end: it walks off the control table into the divider table exactly as the
+    # ROM's sign-extended word index does.
+    assert info["regs"]["hw_writes"] == baud_chip(past_the_end).writes
 
 
 def test_the_oracles_cost_is_what_status_reports():

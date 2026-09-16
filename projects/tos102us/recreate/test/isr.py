@@ -248,13 +248,16 @@ def registered(spec):
 
     Its ENTRY is the trampoline, because that is what a case runs; `HANDLER_OF_TRAMPOLINE` is how
     `bench/tier3.py` gets from it back to the ROM routine the row is about.
+
+    The SCHEDULE field is empty for all four handlers: an interrupt handler is what WRITES the byte a
+    wait spins on, so none of them waits on one.
     """
     entry = spec["entry"]
     return (spec["name"], TRAMPOLINE_AT[entry],
             {**DIRTY_REGISTERS, **spec.get("regs", {})},
             case_pokes(entry, spec.get("frame", FRAME_IN_STACK_BAND),
                        spec.get("resume_sr", RESUME_SR), spec.get("routines"), spec.get("pokes")),
-            spec.get("psg_seed"), spec.get("io_seed"))
+            spec.get("psg_seed"), spec.get("io_seed"), ())
 
 
 def run_spec(spec, glue, **overrides):

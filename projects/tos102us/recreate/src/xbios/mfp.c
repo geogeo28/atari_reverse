@@ -56,16 +56,20 @@
  * but it is the register the routine leaves and `case.FULL_D0` compares the whole of it, so the C
  * returns it rather than being `void` and agreeing with a reconstruction that cleared it.
  *
- * WHAT THE DIFFERENTIAL PROVES OF `Mfpint`, AND WHAT IT DOES NOT. `Jdisint` and `Jenabint` are
- * proved whole, at their own entries. `Mfpint` is proved as a SLICE — `[$fc2658, $fc267a)`, the
- * argument fetch, the disable and the vector store — because the run cannot be carried past it: the
- * enable half RE-READS `IERA` and `IMRA`, which the disable half has already STORED to, and the
- * declared I/O map describes the byte a register held on ENTRY. The oracle counts that as a stale
- * read and `harness._vet_io_reads_are_declared` refuses the case (measured: two stale reads, the
- * first at `$fffa07`). What would unblock it is a WRITE-THROUGH arm of that map — a declared byte
- * the run's own store updates — which is a change to the kit rather than to this core. Until then
- * the enable half is pinned where the ROM itself puts it: at `$fc26c6`, inside `Jenabint`, whose own
- * case runs it over the same registers.
+ * `Mfpint` RE-READS WHAT ITS OWN DISABLE HALF WROTE, and that is why it is a whole differential
+ * rather than a slice. Its enable half reads `IERA` and `IMRA` back — the two registers the disable
+ * half has already stored to — so under a declaration describing the machine on ENTRY the oracle
+ * counted two stale reads (the first at `$fffa07`) and `harness._vet_io_reads_are_declared` refused
+ * the case; the routine was proved as `[$fc2658, $fc267a)` and its enable half pinned only by
+ * address identity with `Jenabint`. A case declares the mask and enable pairs WRITE-THROUGH now
+ * (TRAP_MODEL.md, Phase 15), which is what they are — the MFP latches a store to them and reads it
+ * back — so the second read is served the byte the first write left, on both shores.
+ *
+ * THE BYTES STORED DO NOT MOVE, WHICH IS WORTH SAYING BECAUSE IT LOOKS LIKE THEY SHOULD: clearing a
+ * bit and then setting the same bit gives the entry byte with the bit set either way, so the four
+ * `bclr` values and the two `bset` values are what they always were. What the write-through arm
+ * changes is the READ stream — the enable half's two reads are now the cleared bytes — and that is
+ * the surface `test_xbios_mfpint.py` compares.
  */
 #include <stdint.h>
 
@@ -109,10 +113,12 @@ uint32_t xbios_jenabint(uint16_t channel_argument)
 
 /* XBIOS $0d — install `handler` as one MFP channel's interrupt vector, around a disable/enable.
  *
- * IT IS SPLIT IN TWO AT THE SLICE BOUNDARY, and `mfp_install_vector` is the half a case can run:
- * disable the channel, then replace its vector while it is off — which is the reason the disable is
- * there at all, and a whole operation rather than a fragment. `xbios_mfpint` is that plus the
- * enable, and the enable is `Jenabint`, proved at its own entry.
+ * IT IS SPLIT IN TWO AT `$fc267a`, and `mfp_install_vector` is the first half: disable the channel,
+ * then replace its vector while it is off — which is the reason the disable is there at all, and a
+ * whole operation rather than a fragment. The split was the slice boundary a declaration describing
+ * the machine on ENTRY forced (see the header); it is kept because a case that wants to compare the
+ * image at that instant has a `stop_pc` to run to, and because the enable half really is
+ * `Jenabint`'s own body. `xbios_mfpint` is the two halves, and the whole routine is a differential.
  *
  * The vector table is the 68000's, at $100: the MFP's base vector register holds $40, so its sixteen
  * channels are exception vectors $40..$4f and their longwords are `$100 + channel * 4`. The ROM
