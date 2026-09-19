@@ -55,9 +55,15 @@ arm ordinary differentials rather than slices and halts. `test/mfp.py` carries t
 register — including the two pairs where it holds only because every store these routines make is a
 pure clear (`TRAP_MODEL.md`, Phase 15, "The honest limit of a write-through byte").
 
-What stays out of reach is the shape a
-constant cannot describe at all: a register whose two successive reads must DIFFER, which is every
-FDC status poll and every DMA counter. `test/test_boot_snapshot.py` drives both halves of the pair
+**A register whose two successive reads must DIFFER is declared as a LIST**, one byte per read —
+`io_seed={0xfffa01: [0x00, 0xff]}`, the DECLARED SEQUENCE (`TRAP_MODEL.md`, Phase 16). That is what
+makes the ACIA handler's TWO-PASS entry a case at all: its loop asks the MFP after every pass whether
+either 6850 still wants service, and no constant can say "asserted, then idle". A read PAST THE END
+of a list is refused on both shores rather than served the last byte again.
+
+What stays out of reach is the TRANSACTION: a register whose next answer depends on something the run
+itself did — an FDC command written to `$ff8606` deciding what the next read of `$ff8604` means.
+`test/test_boot_snapshot.py` drives both halves of the declared/undeclared pair
 on a planted `move.b $ffff8260,d0`, and `test/test_xbios_getrez.py` is the first real function held
 to it.
 
@@ -158,7 +164,13 @@ assert info["ret"] == info["regs"]["d0"]
     written as an address.
   * **A byte the run itself STORES to and then reads back is refused**, and no bigger declaration
     fixes it: the declaration describes the machine on ENTRY. Run the case up to the write, or enter
-    past it declaring what the write left.
+    past it declaring what the write left. (Where the register really LATCHES the store, say so with
+    `emu.write_through(byte)` — see above.)
+  * **A routine whose successive reads of one address must DIFFER takes a LIST**:
+    `io_seed={addrs.MFP_GPIP: [asserted, idle]}`. The Nth read is served the Nth byte, the list works
+    on a named slot as readily as on any other address, and reading past its end is a refusal rather
+    than a sticky last byte — so a list is also the case's statement of HOW MANY reads it describes.
+    `test/test_bios_ikbd.py`'s two-pass case is the worked example.
 * **Off-image effects are compared automatically**: the PSG access ledger and register file, the
   hardware read and write ledgers, the scheduled-write wait counts.
 

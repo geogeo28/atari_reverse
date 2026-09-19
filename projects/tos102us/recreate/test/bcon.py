@@ -29,7 +29,10 @@ def runner(entry, core):
     itself, because that is what the trap dispatcher really leaves in D0: the routine's own address,
     which it loaded in order to jump through it.
     """
-    def run(device, pokes=None, entry_d0=None, poison=True):
+    def run(device, pokes=None, entry_d0=None, poison=True, **seeds):
+        """`seeds` are `case.run`'s own — `io_seed` above all, which is how a case declares the
+        hardware byte a driver reads. Forwarded rather than enumerated, for `case.run`'s reason: they
+        are the kit's list and naming them here would be a second copy to keep level with it."""
         d0 = entry if entry_d0 is None else entry_d0
 
         def glue(_harness_lib, buf):
@@ -39,7 +42,7 @@ def runner(entry, core):
 
         return case.run(entry,
                         {"a5": 0, "d0": d0, "_pokes": {**case.word_arg(device), **(pokes or {})}},
-                        glue, poison=poison)
+                        glue, poison=poison, **seeds)
     return run
 
 

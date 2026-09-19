@@ -142,6 +142,10 @@
  * The RS232 record is the first of a PAIR (its output record follows at $c62); the other two are
  * single. */
 #define IOREC_RS232         0xc54
+/* ...and the RS232's OUTPUT record, the second of the pair: one IOREC is 14 bytes, and the RS232 is
+ * the only device with a ring in each direction. BIOS Bcostat(AUX:) is a question about THIS one. */
+#define IOREC_RS232_OUT     0xc62
+#define IOREC_RS232_BYTES   1           /* `addq.w #1,d1` — a raw byte a record, like MIDI's */
 #define IOREC_IKBD          0xc76
 #define IOREC_MIDI          0xd84
 
@@ -210,6 +214,15 @@
 #define XCONIN_CON          0xfc223c
 #define XCONIN_MIDI         0xfc2060
 #define XCOSTAT_CON         0xfc226c   /* the screen is never busy: `moveq #-1,d0` and nothing else */
+/* ...and Bcostat's other four drivers, every one of which is a SINGLE read of one declared byte (or,
+ * for the RS232's, of no byte at all). They were out of reach while the declared I/O map answered
+ * only what a case could name and the halt in `src/bios/bcon.c` described all of them as polling —
+ * which was true of the MFP and the two 6850s and never true of the RS232's, whose whole body is
+ * its own output ring (`$fc28ea` is the wrap arithmetic, not an access). */
+#define XCOSTAT_PRT         0xfc2124   /* the Centronics BUSY line, MFP GPIP bit 0 */
+#define XCOSTAT_RS232       0xfc219a   /* ...the RS232 OUTPUT ring: is there room for one more byte? */
+#define XCOSTAT_IKBD        0xfc21dc   /* ...the IKBD 6850's TDRE */
+#define XCOSTAT_MIDI        0xfc2004   /* ...and the MIDI 6850's, one register block along */
 /* MIDI's reader ends `move.b (a1,d1.w),d0`, a BYTE into the D0 its status driver had just filled
  * with `moveq #-1` — so Bconin(MIDI) answers this OR the byte, and never the bare byte. */
 #define MIDI_RESULT_PREFIX  0xffffff00u
@@ -443,6 +456,7 @@
 #define MFP_GPIP                   0xfffa01  /* = OS_HW_MFP_GPIP */
 #define MFP_GPIP_MONOCHROME_BIT    7         /* 0 = a mono monitor is attached */
 #define MFP_GPIP_ACIA_BIT          4         /* 0 = one of the two 6850s still wants service */
+#define MFP_GPIP_PRINTER_BUSY_BIT  0         /* 1 = the Centronics port is BUSY (BIOS Bcostat) */
 #define MFP_ISRB                   0xfffa11  /* in-service register B: a handler clears its own bit */
 #define MFP_ISRB_TIMER_C_BIT       5
 #define MFP_ISRB_ACIA_BIT          6

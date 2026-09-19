@@ -398,6 +398,21 @@ VERIFIED_CASES = (
                      [(addrs.IOREC_MIDI_BYTES, b"\x42")])}, None, None, ()),
     ("bios_bcostat, console", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
      case.word_arg(bcostat.DEVICE_CONSOLE), None, None, ()),
+    # ...and the four drivers a DECLARED hardware byte brought into reach. Each declares its own
+    # register through `bcostat.declare`, which is the battery's own expression rather than a second
+    # copy: a row that described a different machine from the case that proved it would carry a
+    # Tier 3 ratio about a run nobody verified.
+    ("bios_bcostat, printer", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
+     case.word_arg(bcostat.DEVICE_PRINTER), None,
+     bcostat.declare(bcostat.DEVICE_PRINTER, bit_set=False), ()),
+    ("bios_bcostat, rs232", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
+     case.word_arg(bcostat.DEVICE_RS232), None, None, ()),
+    ("bios_bcostat, ikbd", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
+     case.word_arg(bcostat.DEVICE_IKBD), None,
+     bcostat.declare(bcostat.DEVICE_IKBD, bit_set=True), ()),
+    ("bios_bcostat, midi", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
+     case.word_arg(bcostat.DEVICE_MIDI), None,
+     bcostat.declare(bcostat.DEVICE_MIDI, bit_set=True), ()),
     ("xbios_iorec", addrs.XBIOS_IOREC, {"a5": 0},
      case.word_arg(xbios_iorec.DEVICE_IKBD), None, None, ()),
     ("xbios_keytbl, install", addrs.XBIOS_KEYTBL, {"a5": 0},

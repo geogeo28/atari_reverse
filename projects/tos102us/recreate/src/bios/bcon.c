@@ -13,12 +13,27 @@
  *                  jmp     (a0)                ; a JUMP, not a call: the driver returns to the caller
  *
  * WHAT IS RECONSTRUCTED HERE IS THE COMPOSITION, not just the walk: the differential enters the ROM
- * at the BIOS entry and runs through into the driver, so the C has to be both. The drivers it can
- * be are the ones whose whole body is an IOREC in RAM — the console's and MIDI's input, the RS232's
- * input STATUS, and the console's output status, which is a constant. The printer's, the RS232's
- * input and every output driver poll the MFP or an ACIA, which ROM mode refuses to run
- * (../README.md, "The image in ROM mode"), so this file HALTS on them rather than guessing: an arm
- * that returned a value would be indistinguishable from a reconstructed one (`recreate.h`).
+ * at the BIOS entry and runs through into the driver, so the C has to be both.
+ *
+ * WHAT IS IN REACH, and what the reach is. Every driver whose whole body is an IOREC in RAM: the
+ * console's and MIDI's input, the RS232's input status, the console's output status (a constant) and
+ * the RS232's OUTPUT status, which reads no register at all. And, since a case can DECLARE a
+ * hardware byte, every driver whose body is a SINGLE read of one and a test of one bit: all four of
+ * Bcostat's — the Centronics BUSY line, the two 6850s' TDRE, and the RS232 ring above.
+ *
+ * WHAT IS NOT, and it is one shape rather than "hardware": a driver that POLLS — whose successive
+ * reads of one address must DIFFER before it can return. `Bconin(PRT:)` ($fc2104) drives the
+ * parallel port through the YM2149 and then spins on GPIP bit 0 until it clears; `Bconin(AUX:)`
+ * ($fc2150) waits on the RS232 input ring an interrupt fills. Neither is a value a declaration can
+ * supply — the first needs the direct-PSG path this project has never used, the second needs an
+ * interrupt — so this file HALTS on them rather than guessing: an arm that returned a value would be
+ * indistinguishable from a reconstructed one (`recreate.h`).
+ *
+ * `Bconstat`'s own halt is unreachable on the captured machine: its table carries THREE drivers —
+ * $fc2138 (RS232), $fc2226 (console) and $fc2044 (MIDI), devices 1/2/3, where 0 and 4-7 are the bare
+ * `rts` — all three are ring readers and all three are here. It stays because the table is RAM and
+ * anything may replace an entry (`test_bios_bconstat.py` reads the table out of the snapshot rather
+ * than assuming it, which is what contradicted the "four" this note used to claim).
  *
  * THE DRIVERS, verbatim:
  *
@@ -80,6 +95,7 @@
 
 #include "machine.h"
 #include "recreate.h"
+#include "hw.h"
 #include "addrs.h"
 #include "m68k_idioms.h"
 
@@ -152,14 +168,23 @@ static void wait_for_a_record(const uint8_t *image, uint32_t ring)
         ;
 }
 
-/* The head one record on from where it stands, wrapped the ROM's way: `cmp.w 4(a0),d1 / bcs` is an
- * UNSIGNED compare and the arm it skips is `moveq #0,d1`, so a ring that reaches its size restarts
- * at 0 rather than at head + record - size. */
+/* One ring index, one record on, wrapped the ROM's way: `cmp.w 4(a0),d1 / bcs` is an UNSIGNED
+ * compare and the arm it skips is `moveq #0,d1`, so an index that reaches the ring's size restarts
+ * at 0 rather than at index + record - size.
+ *
+ * ONE HELPER FOR BOTH DIRECTIONS, because the ROM has one: `$fc28ea` is the whole of it, and the
+ * readers call it on the HEAD while the output-status driver calls it on the TAIL. */
+static uint16_t ring_index_after(const uint8_t *image, uint32_t ring, uint16_t index,
+                                 uint16_t record_bytes)
+{
+    uint16_t next = (uint16_t)(index + record_bytes);
+
+    return next >= be16(image + ring + IOREC_SIZE) ? 0 : next;
+}
+
 static uint16_t head_after_one_record(const uint8_t *image, uint32_t ring, uint16_t record_bytes)
 {
-    uint16_t head = (uint16_t)(be16(image + ring + IOREC_HEAD) + record_bytes);
-
-    return head >= be16(image + ring + IOREC_SIZE) ? 0 : head;
+    return ring_index_after(image, ring, be16(image + ring + IOREC_HEAD), record_bytes);
 }
 
 /* ...and where that record sits: `movea.l (a0),a1 / 0(a1,d1.w)`, so the head is a WORD index off a
@@ -197,6 +222,46 @@ static uint32_t midi_read(uint8_t *image)
     return MIDI_RESULT_PREFIX | record;
 }
 
+/* ---- Bcostat's four hardware drivers: "can this device take another character?" ----------------
+ *
+ * Each is a SINGLE read of one byte and a test of one bit — no loop, nothing that has to change
+ * between two reads — so each is describable by a declaration the case writes
+ * (`io_seed={<address>: <byte>}`, TRAP_MODEL.md, Phases 7 and 15). Which of the three the kit
+ * happens to serve each address from is its own bookkeeping: `$fffa01` and `$fffc00` are NAMED
+ * SLOTS and go through `hw_read8`, `$fffc04` is an ordinary declared byte and goes through
+ * `io_read8`, and a case declares all three through the one `io_seed` door.
+ */
+
+/* MFP GPIP bit 0 is the Centronics BUSY line, and the ROM's test reads the opposite way round to the
+ * answer: `btst #0,(a0) / beq` KEEPS the `moveq #-1` when the bit is CLEAR. So busy means not ready,
+ * which is the sense of the line rather than of the branch. */
+static uint32_t printer_output_status(void)
+{
+    return (hw_read8(MFP_GPIP) & (1u << MFP_GPIP_PRINTER_BUSY_BIT)) ? BCON_NOT_READY : BCON_READY;
+}
+
+/* ...and both 6850s answer the same question the same way, one register block apart: bit 1 of the
+ * status register is TDRE, "the transmit register is empty". `btst #1,d2 / bne` keeps the -1 when it
+ * is SET, which is the plain reading for once. The byte is the argument rather than the address so
+ * that the two drivers differ only in which door reads them, which is the whole of the difference. */
+static uint32_t acia_output_status(uint8_t status)
+{
+    return (status & ACIA_TRANSMIT_READY) ? BCON_READY : BCON_NOT_READY;
+}
+
+/* The RS232's is the one that reads NO byte at all, and the halt this file used to carry said
+ * otherwise. Its whole body is the OUTPUT ring: advance the tail one record, and if that lands on
+ * the head the ring is full and the port cannot take another character. `$fc28ea` — the `bsr` in the
+ * middle of it — is the wrap arithmetic above, not an access. */
+static uint32_t rs232_output_status(const uint8_t *image)
+{
+    uint16_t next_tail = ring_index_after(image, IOREC_RS232_OUT,
+                                          be16(image + IOREC_RS232_OUT + IOREC_TAIL),
+                                          IOREC_RS232_BYTES);
+
+    return next_tail == be16(image + IOREC_RS232_OUT + IOREC_HEAD) ? BCON_NOT_READY : BCON_READY;
+}
+
 /* `entry_d0` is the D0 the trap dispatcher leaves — the routine's own address, which it computed to
  * jump through. It reaches the result only for a device with no driver (see `no_driver`). */
 uint32_t bios_bconstat(uint8_t *image, uint32_t entry_d0, uint16_t device)
@@ -210,7 +275,7 @@ uint32_t bios_bconstat(uint8_t *image, uint32_t entry_d0, uint16_t device)
     case ROM_BARE_RTS:   return no_driver(entry_d0, device);
     default: break;
     }
-    recreate_not_reconstructed("BIOS Bconstat: an input status driver that polls the MFP or an ACIA");
+    recreate_not_reconstructed("BIOS Bconstat: an input status driver this wave does not reconstruct");
 }
 
 uint32_t bios_bconin(uint8_t *image, uint32_t entry_d0, uint16_t device)
@@ -223,7 +288,11 @@ uint32_t bios_bconin(uint8_t *image, uint32_t entry_d0, uint16_t device)
     case ROM_BARE_RTS: return no_driver(entry_d0, device);
     default: break;
     }
-    recreate_not_reconstructed("BIOS Bconin: an input driver that polls the MFP or an ACIA");
+    /* The two that remain are POLLS: the parallel port's ($fc2104) spins on GPIP bit 0 until it
+     * clears, after driving the port through the YM2149; the RS232's ($fc2150) waits on a ring an
+     * interrupt fills. See this file's header for why neither is a declaration away. */
+    recreate_not_reconstructed("BIOS Bconin: an input driver that POLLS — the parallel port through "
+                               "the YM2149, or the RS232 ring an interrupt fills");
 }
 
 uint32_t bios_bcostat(uint8_t *image, uint32_t entry_d0, uint16_t device)
@@ -231,9 +300,16 @@ uint32_t bios_bcostat(uint8_t *image, uint32_t entry_d0, uint16_t device)
     uint32_t driver = device_vector(image, XCOSTAT_TABLE, device);
 
     switch (driver) {
-    case XCOSTAT_CON:  return BCON_READY;
-    case ROM_BARE_RTS: return no_driver(entry_d0, device);
+    case XCOSTAT_CON:   return BCON_READY;
+    case XCOSTAT_PRT:   return printer_output_status();
+    case XCOSTAT_RS232: return rs232_output_status(image);
+    case XCOSTAT_IKBD:  return acia_output_status(hw_read8(IKBD_ACIA_STATUS));
+    case XCOSTAT_MIDI:  return acia_output_status(io_read8(MIDI_ACIA_STATUS));
+    case ROM_BARE_RTS:  return no_driver(entry_d0, device);
     default: break;
     }
-    recreate_not_reconstructed("BIOS Bcostat: an output status driver that polls the MFP or an ACIA");
+    /* Every driver the captured machine's own table names is above, so this arm is reached only by a
+     * case that stages a vector of its own — which is the honest state for a table in RAM that
+     * anything may replace. */
+    recreate_not_reconstructed("BIOS Bcostat: an output status driver this wave does not reconstruct");
 }

@@ -35,12 +35,23 @@
  * declared SEQUENCE of bytes out of $fffc02, where one per-run constant describes exactly one read
  * (os.h, `OS_HW_ACIA_DATA`).
  *
- * THE LOOP RUNS ONCE PER CASE, for the same reason: GPIP bit 4 is a per-run constant, so a case
- * declares it HIGH and the handler makes one pass. Declared low it would spin on both builds — a
- * case that never terminates rather than a case that lies — because nothing in either core can
- * change what the declaration answers. That half is DRIVEN rather than described, on the ORIGINAL
- * alone (`test_bios_ikbd.py::test_a_line_declared_still_asserted_spins_until_the_oracle_s_cap`):
- * the oracle has an instruction cap to refuse the run with and this C has none.
+ * HOW MANY PASSES A CASE GETS IS WHAT IT DECLARES. GPIP bit 4 is a Phase-7 named slot, and a case
+ * may declare it as one BYTE — which describes one pass, since the loop asks the same question every
+ * round and a constant answers it the same way — or as a LIST, one byte per read, which is what
+ * describes a two-pass entry: asserted, then idle (TRAP_MODEL.md, Phase 16). A byte declaring the
+ * line still ASSERTED spins on both builds, which is a case that never terminates rather than a case
+ * that lies; that half is DRIVEN rather than described, on the ORIGINAL alone
+ * (`test_bios_ikbd.py::test_a_line_declared_still_asserted_spins_until_the_oracle_s_cap`), because
+ * the oracle has an instruction cap to refuse the run with and this C has none of its own.
+ *
+ * ...WHICH IS WHY THE LINE IS POLLED RATHER THAN READ. A read past the end of a declared list is
+ * REFUSED, and a refusal hands this side 0 — every bit clear, which this loop reads as "still
+ * asserting". So a case whose list is shorter than the entry's passes would spin here for ever while
+ * the oracle came back with its own refusal, and a hung pytest worker is a worse report than a red.
+ * `hw_poll8` makes the model's own answer part of the loop's condition (`tools/recreate_kit/
+ * include/hw.h`): the loop ends where the case's declaration runs out, with the refusal already
+ * tallied, and there is no bound anywhere to be derived or maintained. On target (`src/bios/isr.S`'s
+ * stub calls this core) it is the plain volatile read and the loop is the machine's own.
  */
 #include <stdint.h>
 
@@ -52,9 +63,11 @@
 
 void isr_acia(uint8_t *image)
 {
+    uint8_t gpip;
+
     do {
         call_vector(image, be32(image + KBDVECS + KBDVECS_MIDISYS));
         call_vector(image, be32(image + KBDVECS + KBDVECS_IKBDSYS));
-    } while ((hw_read8(MFP_GPIP) & (1u << MFP_GPIP_ACIA_BIT)) == 0);
+    } while (hw_poll8(MFP_GPIP, &gpip) && (gpip & (1u << MFP_GPIP_ACIA_BIT)) == 0);
     mfp_clear_bit(MFP_ISRB, MFP_ISRB_ACIA_BIT);
 }

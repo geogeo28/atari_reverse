@@ -11,22 +11,23 @@
  * OUTRIGHT rather than through `#include_next`, for zynaps' reason: the kit declares these `extern`
  * and C forbids redeclaring one `static`.
  *
- * SIX DOORS NOW, IN THREE GROUPS, AND WHAT IS STILL MISSING IS AS DELIBERATE AS WHAT IS HERE:
+ * SEVEN DOORS NOW, IN THREE GROUPS, AND WHAT IS STILL MISSING IS AS DELIBERATE AS WHAT IS HERE:
  *
  *   * the DECLARED I/O MAP's reads — `io_read8`, `io_read16`, `io_read32` — which is every byte of
  *     the I/O page the named models do not own (`Getrez`'s $ff8260, `Physbase`'s two base bytes,
  *     `Setcolor`'s palette word, `Rsconf`'s four USART registers);
  *   * its STORES — `hw_write8` and `hw_write16` — landed with `xbios_setscreen` and
  *     `xbios_setcolor`, the first cores to write a chip register (see their own note below);
- *   * one SEEDED-MODEL read — `hw_read8` — landed with `src/xbios/acia.c`, where the address is a
- *     Phase-7 NAMED slot rather than an ordinary declared byte (its note says why the two names
- *     stay apart in the core and collapse here).
+ *   * the SEEDED MODEL's read and its POLL — `hw_read8` landed with `src/xbios/acia.c` and
+ *     `hw_poll8` with `src/bios/ikbd.c`'s ACIA handler, where the address is a Phase-7 NAMED slot
+ *     rather than an ordinary declared byte (their notes say why the names stay apart in the core
+ *     and collapse here).
  *
- * `hw_write32` and the three read-modify-writes remain declared by the kit and implemented by NO
- * core here — so a core that acquires one fails at LINK, naming the symbol, which is the right
- * outcome: each is a decision about what the target build does with an access the oracle only
- * ledgers, and writing it before a core needs one would be writing it with nothing to check it
- * against. Add each one here, with its evidence, when the core that needs it lands.
+ * `hw_write32`, `io_poll8` and the three read-modify-writes remain declared by the kit and
+ * implemented by NO core here — so a core that acquires one fails at LINK, naming the symbol, which
+ * is the right outcome: each is a decision about what the target build does with an access the
+ * oracle only ledgers, and writing it before a core needs one would be writing it with nothing to
+ * check it against. Add each one here, with its evidence, when the core that needs it lands.
  *
  * Under the oracle these accesses reach the DECLARED I/O MAP exactly as the ROM's own `move.b
  * $ffff8260,d0` does — the shim decodes the I/O page rather than serving it from the image — which
@@ -104,6 +105,25 @@ static inline void hw_write16(uint32_t addr, uint32_t value)
 static inline uint8_t hw_read8(uint32_t addr)
 {
     return *(volatile uint8_t *)addr;
+}
+
+/* ...and the POLL of that same slot, which off target is the read PLUS the model's answer to "could
+ * you still serve it?" and here is the read plus `1`.
+ *
+ * `isr_acia` spins on GPIP bit 4 until both 6850s go idle, and off target that loop ends when the
+ * case's declared list runs out — a refused read hands the core `0`, which the loop would read as
+ * "still asserting" and spin on for ever. There is no model here and no declaration to run out, so
+ * the answer is always "served" and the loop is the machine's own, exactly as `hw_read8`'s note
+ * above says. VOLATILE for that note's reason too: the byte is changed by the chips and by nothing
+ * in the caller's instruction stream.
+ *
+ * `io_poll8` stays absent for the header's rule: no core here polls an ordinary I/O byte, and a core
+ * that acquires one fails at LINK naming the symbol rather than getting a definition nobody weighed.
+ */
+static inline int hw_poll8(uint32_t addr, uint8_t *seen)
+{
+    *seen = *(volatile uint8_t *)addr;
+    return 1;
 }
 
 #endif /* TOS102US_SHIM_HW_H */

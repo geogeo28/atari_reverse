@@ -11,6 +11,13 @@ tables into the console IOREC. Every one of those reads pops the receive registe
 declared SEQUENCE of bytes where the model has one per-run constant (os.h, `OS_HW_ACIA_DATA`). The
 vectors are staged instead, and `test_the_captured_machine_has_the_rom_s_own_service_routines` is
 what keeps the deferral checkable rather than invisible.
+
+WHAT THE DECLARED SEQUENCE ADDED (TRAP_MODEL.md, Phase 16): the handler's LOOP. GPIP bit 4 used to
+be a per-run constant here, so a case could declare the line idle (one pass) or asserted (a run that
+never ends) and nothing in between; a list of `[asserted, idle]` is what drives the two-pass entry,
+which is the shape the handler is a loop for. The packet drain out of `$fffc02` is the same model at
+the address next door and is still deferred, for the reason above: it needs the ROM's own service
+routines reconstructed, not a declaration.
 """
 import ctypes
 import struct
@@ -134,31 +141,89 @@ ACIA_LINE_ASSERTED = 0xFF & ~(1 << addrs.MFP_GPIP_ACIA_BIT)
 SPIN_INSN_CAP = 5000
 
 
-def test_a_line_declared_still_asserted_spins_until_the_oracle_s_cap():
+@pytest.mark.parametrize("line", (ACIA_LINE_ASSERTED, [ACIA_LINE_ASSERTED, ACIA_LINE_ASSERTED]),
+                         ids=("a constant", "a list"))
+def test_a_line_declared_still_asserted_spins_until_the_oracle_s_cap(line):
     """THE NEGATIVE CONTROL the four bytes above rest on, driven rather than described.
 
-    A per-run constant cannot say "asserted, then idle" (`ikbd.c`), so a case that declares GPIP
-    bit 4 LOW never ends — and without this, every case above would be compatible with a handler
-    that made one pass unconditionally and never asked the MFP at all. It runs the ORIGINAL alone,
-    because the candidate is host C with no instruction cap of its own: the same declaration is an
-    endless loop in the `.so` rather than a refusal.
+    A declaration that never says IDLE cannot end this loop, and the two shapes fail the same way:
+    a per-run constant answers every round the same, and a LIST that runs out is served a refusal —
+    which hands both cores 0, every bit clear, which this loop reads as "still asserting". Without
+    this, every case above would be compatible with a handler that made one pass unconditionally and
+    never asked the MFP at all.
+
+    SO A READ PAST THE END IS NOT REACHABLE AS A RED FROM THIS ROUTINE, and that is a fact about the
+    handler rather than a gap in the model: the loop's only exit IS the read, so a case that
+    under-declares it never gets to the `rts` where a refusal would be reported. What both shapes
+    produce instead is the honest failure — loud, on the ORACLE, at its instruction cap. The refusal
+    itself is pinned where a routine reads a fixed number of times
+    (`tools/recreate_kit/test/test_io_differential.py`).
+
+    It runs the ORIGINAL alone, because the candidate is host C with no instruction cap of its own:
+    the same declaration is an endless loop in the `.so`, which is what `ikbd.c`'s host-only pass
+    bound turns into a red rather than a hung worker.
     """
     image = make_image(isr.case_pokes(addrs.ISR_ACIA, routines={
         MIDI_STUB: marker_routine(0), IKBD_STUB: marker_routine(1)}, pokes=vectors()))
     with pytest.raises(Exception) as raised:
         emu.run(image, isr.TRAMPOLINE_AT[addrs.ISR_ACIA], isr.DIRTY_REGISTERS,
                 max_insns=SPIN_INSN_CAP,
-                io_seed={addrs.MFP_GPIP: ACIA_LINE_ASSERTED, addrs.MFP_ISRB: ISRB_HELD})
+                io_seed={addrs.MFP_GPIP: line, addrs.MFP_ISRB: ISRB_HELD})
     assert str(SPIN_INSN_CAP) in str(raised.value) or "cap" in str(raised.value).lower(), (
         f"the handler ended for a reason other than the instruction cap: {raised.value}")
 
 
 def test_the_line_is_asked_about_exactly_once_per_pass():
-    """One read, because one declared byte describes one pass: `btst #4,$fffa01` is re-executed on
-    every round of the loop, so a run that went round twice would read it twice — and a per-run
-    constant cannot say "asserted, then idle". A case that declared it LOW spins on both builds,
-    which is a case that never terminates rather than one that lies (`ikbd.c`)."""
+    """One read per pass, and this case declares ONE BYTE, so it describes one pass: `btst #4,$fffa01`
+    is re-executed on every round of the loop, and a run that went round twice would read it twice.
+    The two-pass case below is the same claim from the other side."""
     assert len(run()["regs"]["hw_events"]) == 1
+
+
+# ---- the TWO-PASS entry, which only a declared SEQUENCE can drive --------------------------------
+# GPIP bit 4 is ACTIVE LOW and the handler asks the MFP after EVERY pass, so a two-pass entry reads
+# $fffa01 asserted and then idle. One per-run constant cannot say that — declared low the loop never
+# ends and declared high it describes one pass — which is what the DECLARED SEQUENCE model exists
+# for (TRAP_MODEL.md, Phase 16). $fffa01 is a Phase-7 NAMED SLOT and the list goes through the same
+# `io_seed` door a byte does; `emu.seed_split` routes it, and the reads come back in `hw_events`.
+TWO_PASS_LINE = [ACIA_LINE_ASSERTED, ACIA_LINE_IDLE]
+
+
+def test_a_second_pass_runs_both_service_routines_again_in_the_rom_s_order():
+    """THE SHAPE THIS BATTERY COULD NOT REACH BEFORE. A byte that arrives while the first pass is
+    running is serviced by the second — that is the whole reason the handler is a loop rather than
+    two calls — and the claim is the CALL LIST: MIDI, IKBD, MIDI, IKBD, each vector RE-READ from
+    KBDVECS on its own pass (`ikbd.c`), so a routine that replaced its own would be answered from
+    the next round.
+    """
+    info = run(gpip=TWO_PASS_LINE)
+    assert isr.CALLS == [(MIDI_STUB, isr.NO_ARGUMENT), (IKBD_STUB, isr.NO_ARGUMENT),
+                         (MIDI_STUB, isr.NO_ARGUMENT), (IKBD_STUB, isr.NO_ARGUMENT)]
+    assert info["writes"][MARKS] == MARK and info["writes"][MARKS + 1] == MARK
+
+
+def test_the_two_passes_ask_the_mfp_twice_and_are_answered_the_list_in_order():
+    """...and the reads themselves, which is the only surface a `btst` leaves: two entries in the
+    NAMED SET's ledger — not the declared map's — because `$fffa01` is Phase 7's address however the
+    case spelled the declaration. A reconstruction that asked once and looped on a remembered answer
+    produces one entry and reds.
+    """
+    info = run(gpip=TWO_PASS_LINE)
+    assert info["regs"]["hw_events"] == [(addrs.MFP_GPIP, ACIA_LINE_ASSERTED),
+                                         (addrs.MFP_GPIP, ACIA_LINE_IDLE)]
+    assert info["regs"]["io_events"] == [(addrs.MFP_ISRB, 1, ISRB_HELD)], (
+        "the list leaked into the declared map's ledger, so one byte is being served by two models")
+
+
+def test_the_channel_is_acknowledged_ONCE_however_many_passes_the_entry_took():
+    """`bclr #6,$fffa11` is past the loop, not inside it. A reconstruction that acknowledged per pass
+    writes the register twice, which only the hardware WRITE ledger can see — the second store is of
+    the same byte, so the image and every other surface agree."""
+    info = run(gpip=TWO_PASS_LINE)
+    assert info["regs"]["hw_writes"] == [
+        (addrs.MFP_ISRB, 1, ISRB_HELD & ~(1 << addrs.MFP_ISRB_ACIA_BIT))]
+
+
 
 
 # The exact `movem.l d0-d3/a0-a3/a5` list, asked of the two registers that straddle its edge. THE
@@ -189,14 +254,25 @@ def test_the_handler_gives_back_every_register_it_saved():
     isr.assert_registers_survived(run(), saved)
 
 
-# ---- the case this battery REGISTERS ------------------------------------------------------------
-# One, because the handler has one shape: the loop's second pass is unreachable from a case (GPIP
-# bit 4 is a per-run constant), so there is no second cost to price.
+# ---- the cases this battery REGISTERS -----------------------------------------------------------
+# TWO, because the handler has two shapes and both are now reachable: one pass, and the loop's second
+# round. The second used to be unreachable from a case — GPIP bit 4 was a per-run constant, so a
+# declaration could say "idle" or say "asserted for ever" and nothing in between — and the DECLARED
+# SEQUENCE is what made it a case (TRAP_MODEL.md, Phase 16).
 REGISTERED = (
     {"name": "isr_acia, one pass", "entry": addrs.ISR_ACIA,
      "pokes": vectors(),
      "routines": {MIDI_STUB: marker_routine(0), IKBD_STUB: marker_routine(1)},
      "io_seed": {addrs.MFP_GPIP: ACIA_LINE_IDLE, addrs.MFP_ISRB: ISRB_HELD}},
+    # ...and the TWO-PASS entry, which is a second SHAPE rather than a longer run of the first: the
+    # loop's second round re-reads both KBDVECS vectors and calls both routines again, and it is
+    # reachable only through a declared SEQUENCE (TRAP_MODEL.md, Phase 16). Before that model it was
+    # not a case at all, so the handler's cost was priced over the arm a per-run constant could
+    # describe and the loop's own cost was measured by nothing.
+    {"name": "isr_acia, two passes", "entry": addrs.ISR_ACIA,
+     "pokes": vectors(),
+     "routines": {MIDI_STUB: marker_routine(0), IKBD_STUB: marker_routine(1)},
+     "io_seed": {addrs.MFP_GPIP: TWO_PASS_LINE, addrs.MFP_ISRB: ISRB_HELD}},
 )
 VERIFIED_CASES = tuple(isr.registered(spec) for spec in REGISTERED)
 # ...and the same case as a WHOLE-HANDLER one: `src/bios/isr.S`'s bracket — the `movem` pair whose

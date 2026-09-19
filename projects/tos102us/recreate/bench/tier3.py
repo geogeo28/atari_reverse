@@ -161,9 +161,26 @@ PERF_ACCEPTED = {
               "`lsl.w` result by hand: 86 -> 162 cycles, 7 instructions to 16"),
     ("bios_bconin", "console"): (1.18, "(B) 336 -> 398 cycles, 29 instructions to 37"),
     ("bios_bconin", "midi"): (1.16, "(B) 344 -> 400 cycles, 30 instructions to 39"),
+    # BIOS wave 3 brought Bcostat's whole table into reach — four drivers a DECLARED hardware byte
+    # made runnable (TRAP_MODEL.md, Phases 7 and 15) — and (B)'s compare chain grew by the four
+    # entries that took: every row here pays it in full before it reaches its own arm, so the whole
+    # table moved together and the console's row moved most, being the one with no body of its own.
+    # The lever is the same as (B)'s everywhere else and is a wave of its own: a shipped ROM builds
+    # these with a jump table, which is what the ROM's `jmp (a0)` really is.
     ("bios_bcostat", "console"): (
-        1.44, "(B) over a driver whose whole body is `moveq #-1,d0`, so the dispatch IS the routine: "
-              "90 -> 130 cycles, 8 instructions to 13"),
+        1.84, "(B) over a driver whose whole body is `moveq #-1,d0`, so the dispatch IS the routine: "
+              "90 -> 166 cycles, 8 instructions to 17. It was 1.44 over a chain of two drivers; the "
+              "chain is six now, and this arm is the one that pays it with nothing to amortise it "
+              "against"),
+    ("bios_bcostat", "printer"): (
+        1.55, "(B) over a body that is one declared read and a `btst`: 128 -> 198 cycles. The read "
+              "itself is free on both sides — the MFP answers a byte — so the excess is the chain"),
+    ("bios_bcostat", "ikbd"): (
+        1.46, "(B) over the IKBD 6850's TDRE, the same one-read body: 126 -> 184 cycles"),
+    ("bios_bcostat", "midi"): (
+        1.44, "(B) over the MIDI 6850's, which differs from the row above only in which model serves "
+              "the byte — a NAMED slot against a declared one — and costs two cycles less for it: "
+              "126 -> 182"),
 
     # (C) — Cursconf's arm selection, and the widest row here.
     # (J) — `movep.l`, and the interrupt mask the differential cannot see.
@@ -365,6 +382,13 @@ PERF_ACCEPTED = {
               "acknowledgement. 384 -> 644 cycles, of which +147 is the clobber list alone "
               "(measured: the same core was 269 cycles before `staged_call.h` stopped promising "
               "that a routine in a RAM vector keeps to the C ABI)"),
+    ("isr_acia_entry", "two passes"): (
+        1.47, "THE SAME +260 CYCLES as the row above, over an entry that is 166 cycles longer on "
+              "BOTH sides: 548 -> 808. The handler's loop is free — a second pass costs the two "
+              "builds exactly the same — so the excess this row carries is the one-time one the row "
+              "above measures, amortised, and the ratio falls because the entry grew rather than "
+              "because anything improved. The lever is the same hand-asm body, and the two rows now "
+              "say between them that it would buy a constant, not a rate"),
     ("isr_vbl_entry", "a monitor change"): (
         1.01, "PINNED, not accepted, for the C row's reason one line up: 20,870 -> 21,032 cycles "
               "is the shifter settling, and a delay has no surface but its cost"),

@@ -39,13 +39,21 @@
  *
  * WHAT IS NOT RECONSTRUCTED HERE, and each halts rather than guessing (`recreate.h`):
  *
- *   * THE FLOPPY VBL SERVICE ($fc1bc4) past its `flock` gate. Its body selects a drive through the
- *     YM2149's port A, waits, and reads the FDC's status register at $ff8604 — a register whose two
- *     successive reads must DIFFER, which is the one shape the declared I/O map cannot describe
- *     (../README.md, "Writing a case"). What IS reconstructed is the `st` it makes before it looks
- *     at anything and the early return `flock` buys, which is the arm a machine with a disk
- *     operation in flight takes; the rest belongs with a floppy wave, which will need a sequence
- *     model for $ff8604 before it can run at all.
+ *   * THE FLOPPY VBL SERVICE ($fc1bc4) past its `flock` gate, and the reason is now ONE thing rather
+ *     than two. It makes TWO word reads of the FDC's data/status register at $ff8604 — at $fc1c0a
+ *     for the media-change poll and again through $fc1ea4 for the motor-off check — which a
+ *     declared SEQUENCE describes exactly (TRAP_MODEL.md, Phase 16: `io_seed={0xff8604: [...],
+ *     0xff8605: [...]}`, a word read taking one entry from each). It is NOT a poll LOOP, which is
+ *     what this comment used to say.
+ *
+ *     What it still needs is the YM2149's DIRECT path. Between those two reads it calls $fc1e60,
+ *     which selects PSG register 14, READS PORT A BACK and merges the drive-select bits into it —
+ *     Phase 6's read-modify-write, which this project has never used (its only PSG door so far is
+ *     the XBIOS `Giaccess` trap, and a run that reached both would be refused by the mixed-path
+ *     guard). That is a floppy wave's first piece of work, not this one's.
+ *
+ *     What IS reconstructed is the `st` it makes before it looks at anything and the early return
+ *     `flock` buys, which is the arm a machine with a disk operation in flight takes.
  *   * nothing else: the monitor follower, the cursor blink INCLUDING the cell inversion at $fc4a1e,
  *     the palette load, the screen base, the queue walk and the dump hook are all here.
  */
@@ -254,8 +262,10 @@ static void floppy_vbl(uint8_t *image)
     if (be16(image + SYSVAR_FLOCK) != 0)
         return;                                     /* a disk operation owns the FDC: hands off */
     recreate_not_reconstructed(
-        "the floppy VBL service ($fc1bc4) with `flock` clear — it polls the FDC status register, "
-        "whose successive reads must differ, which the declared I/O map cannot express");
+        "the floppy VBL service ($fc1bc4) with `flock` clear — it drives the drive-select bits "
+        "through the YM2149's port A ($fc1e60 reads register 14 back and merges them), which is the "
+        "DIRECT PSG path this project has no case for yet; its two reads of $ff8604 a declared "
+        "sequence already describes");
 }
 
 /* ---- the queue, and the dump hook ---------------------------------------------------------------- */
