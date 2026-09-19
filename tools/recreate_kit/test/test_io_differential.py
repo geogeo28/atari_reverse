@@ -30,11 +30,13 @@ WHAT IT PINS:
 """
 import pytest
 
-from kit_smoke_project import (HW_READ_ENTRY, IO_LATCHED_BYTE, IO_READ_ENTRY, IO_READ_PAIR_ENTRY,
+from kit_smoke_project import (ACIA_LINE_BIT, FDC_BUSY_BIT, FDC_STATUS, HW_POLL_UNTIL_IDLE_ENTRY,
+                               HW_READ_ENTRY, IO_LATCHED_BYTE, IO_POLL_UNTIL_READY_ENTRY,
+                               IO_READ_ENTRY, IO_READ_PAIR_ENTRY,
                                IO_STORE_AND_VERIFY_ENTRY, IO_WORD_READ_ENTRY,
                                IO_WRITE_THEN_READ_ENTRY, MFP_GPIP, PALETTE_0_HI, PALETTE_0_LO,
-                               RESOLUTION_MONO, SHIFTER_RESOLUTION, SHIFTER_SYNC, VIDEO_BASE_HI,
-                               VIDEO_BASE_MID, bind)
+                               RESOLUTION_MONO, SHIFTER_RESOLUTION, SHIFTER_SYNC,
+                               STATIC_TWICE_ENTRY, VIDEO_BASE_HI, VIDEO_BASE_MID, bind)
 
 harness = bind()
 emu = harness.emu
@@ -57,6 +59,21 @@ THE_PALETTE = {PALETTE_0_HI: DECLARED_PALETTE_HI, PALETTE_0_LO: DECLARED_PALETTE
 
 # The 68000's access widths as os.h records them in a ledger entry: a BYTE COUNT.
 BYTE, WORD = 1, 2
+
+# ---- the DECLARED SEQUENCE's cases (TRAP_MODEL.md, "Phase 16") ------------------------------------
+# What a poll loop needs and a constant cannot give: the first read says BUSY and the second says
+# READY, so the loop makes exactly two passes. Declared `[0x00]` it would spin to the instruction
+# cap; declared `0x01` as a constant it would exit on the first read and the case would be measuring
+# one read where the machine made two.
+FDC_BUSY = 0x00
+FDC_READY = 1 << FDC_BUSY_BIT
+FDC_DRAIN = {FDC_STATUS: [FDC_BUSY, FDC_READY]}
+# ...and the same demand at a Phase-7 NAMED SLOT. GPIP bit 4 is ACTIVE LOW — clear means a 6850 is
+# still asserting — so an ACIA handler's two-pass entry reads it asserted and then idle. Every other
+# bit is set in both bytes, so a core testing the wrong bit does not end where this one does.
+GPIP_ACIA_ASSERTED = 0xFF & ~(1 << ACIA_LINE_BIT)
+GPIP_ACIA_IDLE = 0xFF
+GPIP_TWO_PASS = {MFP_GPIP: [GPIP_ACIA_ASSERTED, GPIP_ACIA_IDLE]}
 
 
 def _run(glue_name, entry=IO_READ_ENTRY, io_seed=None, **kwargs):
@@ -343,6 +360,34 @@ def test_an_unmarked_declaration_keeps_the_staleness_refusal_verbatim():
         "a different case shape")
 
 
+def test_the_staleness_refusal_over_a_sequenced_address_renders_the_list_and_prescribes_a_remedy():
+    """The same store-then-read routine with the address declared as a LIST rather than a byte.
+
+    The refusal QUOTES THE CASE'S OWN DECLARATION back at it, so the formatter has to render every
+    shape a declaration can take: a list formatted as one byte is a `TypeError` inside the vet, and
+    what the reader gets is a traceback about `list.__format__` where the diagnosis should be.
+
+    The REMEDY has to be right for a list too. `write_through` is the answer for a constant and is
+    not on offer here — a list and a mark are two contradictory claims about what the read after a
+    store answers, refused at the door — and neither is a longer list, since the refusal is about the
+    store rather than about how many reads were described. So the message must send the reader to the
+    case's shape, and prescribing the mark would send them to write a declaration `emu` rejects.
+    """
+    sequenced = {SHIFTER_RESOLUTION: [DECLARED_RESOLUTION, SAME_BYTE]}
+    with pytest.raises(AssertionError, match="already STORED to") as raised:
+        _run("g_io_writes_then_reads", entry=IO_WRITE_THEN_READ_ENTRY, io_seed=sequenced)
+    message = str(raised.value)
+    assert f"[{DECLARED_RESOLUTION:#04x}, {SAME_BYTE:#04x}]" in message, (
+        "the refusal did not render the list the case declared, so it cannot be the declaration a "
+        "reader is being asked to change")
+    assert f"io_seed={{{SHIFTER_RESOLUTION:#x}: write_through(" not in message, (
+        "the refusal PRESCRIBED a mark for a SEQUENCED address, which `emu.io_seed_entries` refuses "
+        "— the reader would be sent to write a declaration that cannot be installed")
+    assert "refused at the door" in message, (
+        "the refusal does not say why the mark a reader would reach for next is not on offer here")
+    assert "run it up to the write" in message, "the refusal names no remedy at all"
+
+
 def test_a_write_through_claim_on_a_phase_7_named_slot_is_refused_by_name():
     """The one address class the mark may not be made on, and the refusal names the model that owns
     it. `emu.seed_split` routes a named slot into Phase 7's installer, which has no write-through
@@ -406,6 +451,20 @@ def test_declaring_one_address_through_both_doors_is_refused():
     with pytest.raises(ValueError, match="declared by BOTH"):
         harness.differential(HW_READ_ENTRY, {}, lambda lib, buf: lib.g_hw_reads_the_pair(buf),
                              hw_seed={MFP_GPIP: GPIP_BYTE}, io_seed={MFP_GPIP: SYNC_BYTE})
+
+
+def test_declaring_one_address_as_a_list_and_a_hw_seed_byte_is_refused_by_the_same_rule():
+    """...and a LIST is the same two claims, refused the same way rather than quietly winning.
+
+    A sequenced address leaves `io_seed` for the THIRD table, so `hw_seed`'s byte would stay
+    installed beside it: the case would hold two live declarations of one byte, and which one a read
+    was served by would be which model reached it first. The refusal has to be made where the
+    routing is, because after it the two are in different tables and nothing can see both.
+    """
+    with pytest.raises(ValueError, match="declared by BOTH"):
+        harness.differential(HW_READ_ENTRY, {}, lambda lib, buf: lib.g_hw_reads_the_pair(buf),
+                             hw_seed={MFP_GPIP: GPIP_BYTE},
+                             io_seed={MFP_GPIP: [GPIP_ACIA_ASSERTED, GPIP_ACIA_IDLE]})
 
 
 def test_the_addresses_no_routing_can_reach_are_refused_by_name():
@@ -512,3 +571,241 @@ def test_a_case_that_declares_nothing_is_untouched_by_the_model():
     assert (info["regs"]["io_events"], info["regs"]["io_declared"]) == ([], 0)
     assert info["regs"]["io_unmodeled_reads"] == 2, (
         "the two undeclared reads were not counted, so this case is not running the routine it names")
+
+
+# ---- the DECLARED SEQUENCE, end to end (TRAP_MODEL.md, "Phase 16") --------------------------------
+
+def test_a_poll_loop_runs_against_a_declared_sequence_and_is_green():
+    """THE SHAPE NEITHER CONSTANT MODEL CAN DESCRIBE, as a whole differential.
+
+    The `.PRG` reads the FDC's status register until its busy bit clears and the C core does the
+    same. Under a per-run constant the run is not merely unfaithful, it is unrunnable: `0x00` spins
+    to the instruction cap and `0x01` exits on the first read. The list is what makes both sides make
+    the SAME TWO reads, and the ordered stream is what compares them — the routine writes no image
+    byte, so a green result here is entirely that stream's word.
+    """
+    diffs, info = _run("g_io_polls_until_ready", entry=IO_POLL_UNTIL_READY_ENTRY,
+                       io_seed=FDC_DRAIN)
+    assert diffs == []
+    assert info["regs"]["io_events"] == [(FDC_STATUS, BYTE, FDC_BUSY),
+                                         (FDC_STATUS, BYTE, FDC_READY)], (
+        "the oracle did not drain the list, so the loop ended for some other reason and nothing "
+        "this case is about was compared")
+    assert info["regs"]["io_seq_spent"] == 0
+
+
+def test_the_same_loop_undeclared_never_terminates():
+    """The pair that says the LIST is load-bearing, and it is driven rather than described.
+
+    With no declaration the status byte is the fabricated 0 this whole family of models exists to
+    close — and 0 is "still busy", so the loop runs to the oracle's instruction cap. That is the
+    honest failure: loud, on the ORACLE, before any comparison. (The candidate would spin too, which
+    is why `kit_candidate.c`'s loop carries a bound of its own.)
+    """
+    with pytest.raises(Exception) as raised:
+        harness.differential(IO_POLL_UNTIL_READY_ENTRY, {},
+                             lambda lib, buf: lib.g_io_polls_once(buf), max_insns=2000)
+    assert "rts" in str(raised.value) or "cap" in str(raised.value).lower(), (
+        f"the run ended for a reason other than the instruction cap: {raised.value}")
+
+
+def test_a_constant_declaration_cannot_express_the_same_loop():
+    """...and neither can the model one door along, which is the argument for a THIRD shape.
+
+    The same routine, the same door, a byte instead of a list: `0x01` ends the loop on its FIRST
+    read, so the case would be measuring one read where the machine makes two — a green run down a
+    path the machine never took. The row is what says a list is not a convenience over a constant.
+    """
+    diffs, info = _run("g_io_polls_until_ready", entry=IO_POLL_UNTIL_READY_ENTRY,
+                       io_seed={FDC_STATUS: FDC_READY})
+    assert diffs == []
+    assert info["regs"]["io_events"] == [(FDC_STATUS, BYTE, FDC_READY)], (
+        "a constant declaration no longer ends the loop on its first read, so this case is not the "
+        "control it claims to be")
+
+
+def test_a_core_that_reads_once_where_the_original_drained_twice_is_caught():
+    """NEGATIVE CONTROL 1: the port that services one byte and drops the loop.
+
+    It is the surviving mutant `projects/zynaps/recreate/STATUS.md` records for its own ACIA handler,
+    and it touches no image byte — so the ordered read stream is the only surface that separates it
+    from a correct run.
+    """
+    with pytest.raises(AssertionError) as raised:
+        _run("g_io_polls_once", entry=IO_POLL_UNTIL_READY_ENTRY, io_seed=FDC_DRAIN)
+    assert "read stream mismatch" in str(raised.value)
+
+
+def test_a_core_that_reads_one_time_too_many_is_refused_on_its_own_shore():
+    """NEGATIVE CONTROL 2a: the drain that runs off the end of the case's own list, on the CANDIDATE.
+
+    The oracle's loop ends at the list's second byte, so only the reconstruction reads a third time —
+    and that read is refused rather than served the last byte again. What throws the case away is
+    therefore the candidate's own `os_refused()` tally, which is the half of "refusing on ONE side is
+    a false green" this shore owns. A sticky last byte here would have made the mutant identical to a
+    correct run on every surface a differential has.
+    """
+    with pytest.raises(AssertionError) as raised:
+        _run("g_io_polls_one_time_too_many", entry=IO_POLL_UNTIL_READY_ENTRY, io_seed=FDC_DRAIN)
+    message = str(raised.value)
+    assert "REFUSES" in message, message
+    assert "PAST THE END" in message, (
+        "the refusal did not name the SEQUENCE as a cause, so the reader is sent to hunt for a "
+        "missing Bconstat gate instead")
+    # ...and it names WHICH read of WHICH address ran off the end, from the candidate's own spent
+    # counters — the oracle's run stayed inside the list, so nothing else in this refusal can. It is
+    # the difference between a cause offered to every case that declares a list and a fact about
+    # this one: "the list is short" and "the loop reads it more times than you thought" are
+    # different repairs, and only the index tells them apart.
+    assert f"read {len(FDC_DRAIN[FDC_STATUS])} of {FDC_STATUS:#x}" in message, message
+
+
+def test_an_oracle_that_reads_past_the_end_names_the_address_and_the_read():
+    """NEGATIVE CONTROL 2b: the same over-read on the ORACLE, which is where the tally lives.
+
+    The `.PRG` reads `$fffa01` twice and the case declares a list of ONE byte, so the second read is
+    past the end on both shores. The oracle's refusal is the one with the diagnosis: it names the
+    address AND the READ INDEX, because "the list is short" and "this routine reads the register more
+    times than the case expected" are different repairs and only the count tells them apart.
+    """
+    with pytest.raises(AssertionError) as raised:
+        _run("g_hw_reads_the_gpip_twice", entry=STATIC_TWICE_ENTRY,
+             io_seed={MFP_GPIP: [GPIP_ACIA_IDLE]})
+    message = str(raised.value)
+    assert f"{MFP_GPIP:#x}" in message and "past the" in message.lower(), message
+    assert "read 1" in message, "the refusal does not say WHICH read ran off the end"
+    assert "io_seed=" in message, "the refusal does not prescribe the longer list that answers it"
+
+
+def test_two_sequenced_addresses_read_in_the_wrong_order_are_caught():
+    """NEGATIVE CONTROL 3: two lists consumed in the wrong order.
+
+    Each address still yields ITS OWN first byte whichever is read first, so the values the two cores
+    compute are identical and neither touches the image. Only the ordered stream separates them —
+    which is the same argument the constant map makes, now over state that ADVANCES, where reading
+    the wrong one first also leaves every later read of both addresses out of step.
+    """
+    pair = {SHIFTER_RESOLUTION: [SAME_BYTE, SAME_BYTE], VIDEO_BASE_HI: [SAME_BYTE, SAME_BYTE]}
+    diffs, _info = _run("g_io_reads_the_pair", entry=IO_READ_PAIR_ENTRY, io_seed=pair)
+    assert diffs == [], "the faithful core no longer matches, so the mutant below proves nothing"
+    with pytest.raises(AssertionError) as raised:
+        _run("g_io_reads_the_pair_backwards", entry=IO_READ_PAIR_ENTRY, io_seed=pair)
+    assert "read stream mismatch" in str(raised.value)
+
+
+def test_a_sequence_on_a_named_slot_is_routed_and_lands_in_the_named_set_s_ledger():
+    """ONE DOOR, TWO MODELS, over a LIST: the case writes `io_seed` and the reads come back in
+    Phase 7's OWN stream.
+
+    The `.PRG` asks the MFP's GPIP until the ACIA line goes idle — TOS 1.02's ACIA handler's own
+    question — and the C core reads it through `hw_read8`, which is the NAMED set's door. The case
+    declares the list through `io_seed` all the same, because which addresses Phase 7 happens to name
+    is the kit's bookkeeping rather than the case's.
+
+    The claim is the SPLIT: the reads land in `hw_events` and this model's `io_events` stays empty,
+    which only happens if BOTH shores routed the list to the same model. Were only one to route, the
+    oracle would serve a byte the candidate refused and the mismatch would read as a reconstruction
+    bug.
+    """
+    diffs, info = _run("g_hw_polls_until_idle", entry=HW_POLL_UNTIL_IDLE_ENTRY,
+                       io_seed=GPIP_TWO_PASS)
+    assert diffs == []
+    assert info["regs"]["hw_events"] == [(MFP_GPIP, GPIP_ACIA_ASSERTED), (MFP_GPIP, GPIP_ACIA_IDLE)]
+    assert info["regs"]["io_events"] == [], (
+        "a named slot's sequenced reads landed in the declared map's ledger — the two models are "
+        "serving one byte, and only one of them is enforcing its rules on it")
+    assert info["regs"]["io_seq_declared"] == 1, (
+        "the list was not installed at all, so the loop ended for some other reason")
+
+
+def test_a_named_slot_s_sequence_replaces_the_volatile_re_read_refusal():
+    """...and the refusal it MOVES, as the pair that says so.
+
+    `$fffa01` is STATIC, so its two reads are legal with or without a list — what a list changes is
+    that they can DIFFER. The volatile slot next door is where the bound really moves, and the
+    control here is the same routine under a CONSTANT: the loop never ends, which is what the whole
+    model is for.
+    """
+    with pytest.raises(Exception) as raised:
+        harness.differential(HW_POLL_UNTIL_IDLE_ENTRY, {},
+                             lambda lib, buf: lib.g_hw_polls_once(buf), max_insns=2000,
+                             io_seed={MFP_GPIP: GPIP_ACIA_ASSERTED})
+    assert "rts" in str(raised.value) or "cap" in str(raised.value).lower(), (
+        f"a constant declaring the line ASSERTED no longer spins: {raised.value}")
+
+
+def test_seed_candidate_seq_is_load_bearing(monkeypatch):
+    """`_seed_candidate_seq` stubbed out, and the same FAITHFUL core reds.
+
+    With the installer gone the candidate's table is whatever the previous case left — here nothing —
+    so its first read is refused where the oracle serves the list's first byte. The point is not the
+    particular failure but that there IS one: a declaration that reached only the oracle would have
+    the candidate reading a machine the case never described.
+    """
+    monkeypatch.setattr(harness, "_seed_candidate_seq", lambda io_seq: None)
+    with pytest.raises(AssertionError) as raised:
+        _run("g_io_polls_until_ready", entry=IO_POLL_UNTIL_READY_ENTRY, io_seed=FDC_DRAIN)
+    assert "refus" in str(raised.value).lower() or "read stream mismatch" in str(raised.value)
+
+
+def test_the_sequence_vet_is_load_bearing(monkeypatch):
+    """`_vet_io_sequences_are_servable` stubbed out, over the case ONLY THE ORACLE over-reads.
+
+    The `.PRG` reads `$fffa01` twice against a list of one byte, so the oracle runs off the end; the
+    candidate here reads it ONCE, so it charges no refusal of its own and has nothing to say. With
+    the vet gone the case is still thrown away — the two streams differ by the refused read — but
+    the DIAGNOSIS goes: nothing names the address, the read index or the list that answers it, and a
+    reader is sent to compare two streams instead. That is what the vet contributes, and it is the
+    half of the refusal the ORACLE owns.
+
+    A candidate that over-reads TOO would be no measurement of this: its own spent counters report
+    the same address and read index through `_seq_refusal_hint`, so the diagnosis survives the stub
+    for a reason that is not the vet.
+    """
+    short = {MFP_GPIP: [GPIP_ACIA_IDLE]}
+    monkeypatch.setattr(harness, "_vet_io_sequences_are_servable",
+                        lambda entry, io_seed, o_regs: None)
+    with pytest.raises(AssertionError) as raised:
+        _run("g_hw_polls_once", entry=STATIC_TWICE_ENTRY, io_seed=short)
+    assert "read 1" not in str(raised.value), (
+        "the vet is not what reported the read past the end, so removing it changed nothing and it "
+        "is pinning nothing")
+
+
+def test_declaring_one_address_as_both_a_list_and_a_write_through_byte_is_refused():
+    """The one inconsistent declaration the door can express, refused where the routing is.
+
+    A list says "the next byte I named" and a `write_through` mark says "whatever the run stored";
+    both describe what the read after a store answers, and which won would be an iteration order
+    rather than the case's meaning.
+    """
+    with pytest.raises(ValueError) as raised:
+        _run("g_io_polls_until_ready", entry=IO_POLL_UNTIL_READY_ENTRY,
+             io_seed={FDC_STATUS: emu.write_through([FDC_BUSY, FDC_READY])})
+    assert "write_through" in str(raised.value) and "SEQUENCE" in str(raised.value)
+
+
+@pytest.mark.parametrize("declaration, wanted", (
+    ({FDC_STATUS: []}, "EMPTY"),
+    ({FDC_STATUS: [FDC_BUSY, 0x100]}, "not a byte"),
+    ({FDC_STATUS: [FDC_BUSY, "ready"]}, "not a byte"),
+    ({0xFFFF8604: [FDC_BUSY]}, "BUS FORM"),
+    ({0x1000: [FDC_BUSY]}, "below the I/O page"),
+    ({0xFF8802: [FDC_BUSY]}, "YM2149"),
+))
+def test_a_list_the_model_cannot_serve_is_a_ValueError_rather_than_a_dropped_row(declaration,
+                                                                                wanted):
+    """Every rejection is refused by NAME, for the constant map's reason: a case that declared a list
+    this model may not serve would otherwise read the model BELOW it while its own source says a
+    sequence was declared — which is the false green, with the declaration standing behind it."""
+    with pytest.raises(ValueError) as raised:
+        emu.io_seq_entries({addr: bytes_ for addr, bytes_ in declaration.items()})
+    assert wanted in str(raised.value)
+
+
+def test_a_case_that_declares_no_list_leaves_the_table_empty():
+    """The zero-regression property, as a case: a run that declares no sequence installs none, so
+    neither read path is diverted and every already-ported project's suite is unchanged."""
+    diffs, info = _run("g_io_reads_the_resolution", io_seed=RESOLUTION_ONLY)
+    assert diffs == []
+    assert (info["regs"]["io_seq_declared"], info["regs"]["io_seq_spent"]) == (0, 0)

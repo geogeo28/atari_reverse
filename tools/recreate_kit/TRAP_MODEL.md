@@ -1341,6 +1341,10 @@ admissible: `$51ac` reads `$ff8207` once and `$ff8209` once, and one read of one
 what one declared byte is. The criterion is also *enforced* rather than argued — the two counter
 bytes are flagged VOLATILE, and a second read of one in the same run is a refusal.
 
+(Since Phase 16 a case may declare a LIST for one of these addresses, which moves the criterion from
+"at most once per run" to "at most as many reads as the case listed" — a poll of a KNOWN number of
+iterations is describable that way. What stays excluded is below.)
+
 An FDC poll fails that criterion by its nature, not by bad luck. `fdc_wait_irq` (`$62da`) polls
 `$fffa01` bit 5 *until it changes*; `fdc_wait_irq_bounded` polls the DMA address counter at
 `$ff8609`/`$860b`/`$860d` *until it advances*. **Reading many times per run is the whole of what a
@@ -1528,9 +1532,12 @@ to compose an IKBD send with ACIA servicing in one run would be refused on a dia
 hold. `test_sending_on_the_acia_does_not_make_a_later_receive_stale` is the case, and
 `test_a_write_then_a_read_of_one_modeled_byte_is_refused` is its control.
 
-**What this is still NOT is a sequence model.** A handler that drains a whole packet inside ONE entry
-— reading the port until the controller stops asserting — needs a declared LIST of bytes, one per
-read, and nothing here has one. See "Still unmodeled".
+**A HANDLER THAT DRAINS A WHOLE PACKET inside ONE entry needs a declared LIST**, one byte per read,
+and Phase 16 is that model. It is not a second slot or a relaxation of this one: a list is consulted
+from inside this model's own read path, so the slot keeps its ledger, its staleness mask and its
+split-register exemption while the list answers its reads — and the VOLATILE re-read refusal above
+becomes "at most as many reads as the case listed", enforced by that phase's exhaustion refusal. A
+case that declares no list meets every rule on this page unchanged.
 
 ## Phase 8 — the SCHEDULED WRITE MODEL (what an external agent stores mid-run)
 
@@ -3201,11 +3208,10 @@ but nothing here has run one.
 **A declared byte is a per-run CONSTANT, and there is no volatile rule.** Phase 7 refuses a second
 read of a VOLATILE slot because the machine changes it between reads; here every declaration is a
 constant by definition, so a run may read a declared byte as often as it likes and is served the
-same byte each time. That is the model's stated LIMIT rather than an oversight: a register whose two
-successive reads must DIFFER for the run to proceed — an FDC status poll, a DMA counter advancing —
-is not describable by a constant at all, and a value that changes mid-run is **Phase 8's** shape (an
-external agent storing while the run is in flight). Adding a re-read refusal here would be a change
-to the model, not a repair.
+same byte each time. That is the model's stated LIMIT rather than an oversight, and the remedy for a
+register whose two successive reads must DIFFER — an FDC status poll, a DMA counter advancing — is a
+DECLARED LIST rather than a re-read refusal here: **Phase 16**, which is consulted by this model's
+own read path before the map and leaves every case that declares no list byte-identical.
 
 **The map is the case's, and it is per-run.** `emu.run(..., io_seed={…})` /
 `harness.differential(..., io_seed=…)` install it before **every** run — an empty one included, so a
@@ -3233,6 +3239,7 @@ order — and the C rule underneath refuses a named slot offered to this map wha
 
 | offered address | answer | why |
 | --- | --- | --- |
+| a **Phase-7 named slot** declared as a LIST | **routed** into the SEQUENCE table (Phase 16), not into `hw_seed` | a list is consulted from inside Phase 7's own read path, so the slot keeps its ledger and its rules while the list answers its reads. Routing it into `hw_seed` would need a second list-per-slot model — one rule written twice |
 | a **Phase-7 named slot** (`emu.HW_ADDRS`) | **routed** into `hw_seed`'s installer | those slots carry rules this model does not have — a volatile address may be read once, the ACIA status has a MODEL DEFAULT, the ACIA data port is exempt from staleness — and they keep their OWN ledger. A byte served by both models would be ledgered by one while the other's rules went unenforced, so it is moved rather than shared. **Declaring the same address through BOTH `hw_seed` and `io_seed` is a `ValueError`**: two claims about one byte, and which won would be an iteration order |
 | the **YM2149's block** (`$ff8800`..`$ff88ff`) | `ValueError` naming `psg_seed` | NOT routable, and the reason is the chip's rather than a choice: Phase 6's file is keyed by REGISTER NUMBER and a read of `$ff8800` answers whatever the run last LATCHED there, so an address-keyed byte could not say which register it declared. Phase 6 also carries two refusals of its own (an unselected latch, an unseeded register) that a byte served from this map would reach none of |
 | anything **below the I/O page** | `ValueError` | ordinary off-image memory, which has read `0` since the kit's first run. An address down there is a defect in the CASE, not a byte to declare |
@@ -3374,29 +3381,295 @@ replaced by the constant it would have returned.
 **Not pinned.** The ledger's **cap** arm has no case, for `OS_PSG_LOG_MAX`'s reason: it needs 4,096
 served reads in one run, and nothing that exists does that.
 
+## Phase 16 — the DECLARED SEQUENCE (a LIST one address yields, one byte per read)
+
+Phases 6, 7 and 15 all answer the same kind of question — *what byte did the machine hold on entry?*
+— and all three serve that byte to **every** read of the address. That describes a configuration
+register exactly and a **transfer** register not at all. The shape they cannot express is a register
+whose **successive reads must DIFFER for the run to proceed**, and this workspace has met it four
+times:
+
+* the IKBD/MIDI 6850's **DATA port** `$fffc02`. Every read POPS the receive register, so a service
+  routine draining a packet reads it once per byte — and Phase 7 refuses the second read outright,
+  correctly, because one constant cannot be two bytes;
+* TOS 1.02's **ACIA handler** `$fc29ce`, whose loop asks the MFP after every pass whether either
+  6850 still wants service. GPIP bit 4 is active low, so a two-pass entry reads `$fffa01` ASSERTED
+  and then IDLE. A constant declaring it low never terminates and one declaring it high describes
+  one pass;
+* the **FDC's status register** `$ff8604`, which Phase 7 names as its non-goal and Phase 15 names
+  again in its limit paragraph: a poll ends when the byte changes;
+* **Zynaps's `ikbd_acia_isr`** @ `0x14456`, whose last two instructions branch back to its own entry
+  with no `rte` between, so one interrupt can pop the port several times.
+
+> **So a case declares a LIST, and the Nth read of the address is served the Nth byte of it.**
+> `io_seed={0xfffa01: [0x00, 0xff]}`. It is not a new kind of claim — it is the same claim the other
+> three make, *the case says what the chip yielded*, made once per read instead of once per run.
+
+### The numbering
+
+The sixteenth model, and the FOURTH that answers a hardware read. Read it beside Phases 7 and 15,
+whose semantics it extends in the one dimension they share: how many reads one declaration describes.
+
+### ONE TABLE, BOTH MODELS' ADDRESSES — and two ledgers
+
+A sequence may be declared on **any** I/O byte, a Phase-7 NAMED SLOT included, and it is consulted by
+**both** read paths before either model's own rule. The alternative — a list-per-slot for Phase 7 and
+a list-per-address for Phase 15 — is one rule written twice, which is the drift `os.h` exists to
+prevent; `os_io_seq_install`, `os_io_seq_next` and `os_io_seq_store` are the whole of it, shared
+verbatim by `oracle/shim.c` and `src/hw.c`.
+
+**What stays SEPARATE is the LEDGER, and everything that hangs off it.** The sequence decides what
+byte is served; the model that OWNS the address decides where the read is recorded, what a wide read
+does, and what a store to it means:
+
+| the address | served from | ledgered in | a wide read | a store |
+| --- | --- | --- | --- | --- |
+| a **Phase-7 named slot** (`emu.HW_ADDRS`) | the list | Phase 7's SLOT stream (`hw_events`), refused reads included | **refused**, unchanged: the access also covers registers nothing declared | Phase 7's staleness mask, split-register exemption and all |
+| any other I/O byte | the list | Phase 15's ADDRESS stream (`io_events`), served reads only | **served** if every covered byte has a byte left, each advancing once | Phase 15's staleness tally, which the list's own `written` column feeds |
+
+A byte served by both models would be ledgered by one while the other's rules went unenforced, which
+is the reason Phase 15's exclusion table gives for keeping the two maps disjoint. This model keeps
+them disjoint the same way, in the read paths rather than in the table: `io_serve` refuses a byte
+`os_hw_slot` names **at every width**, so a wide read taking in a sequenced slot cannot be served
+past Phase 7's own wide-read refusal.
+
+### What a sequence REPLACES, per owning model
+
+* **Phase 7's VOLATILE re-read refusal becomes "at most `len(list)` reads".** That refusal exists
+  because one constant cannot answer two reads; a list of N answers N, and the N+1th is the
+  exhaustion refusal below. A STATIC slot gains the same bound, which is the point: a case declaring
+  a list has said how many reads it is describing;
+* **Phase 15's "every read is served the same byte" becomes the same bound**, for the same reason.
+  That model's stated limit — "a register whose two successive reads must DIFFER is not describable
+  by a constant at all" — is what this phase answers.
+
+Neither is softened: a case that declares no list gets exactly today's rules, the table is empty, and
+neither read path is diverted. That is what makes the model cost every already-ported project nothing
+(zynaps: 4,751 passed / 4 skipped before and after; flyingshark: 3,851).
+
+### A READ PAST THE END IS A REFUSAL, on both shores
+
+A list says what successive reads yielded **and how many reads the case describes**. The read after
+the last is one the case said nothing about, so there is no honest byte for it:
+
+* **a sticky last byte** and **a 0** are both fabrications *with the case's own declaration standing
+  behind them*, which is strictly worse than the bare fabricated `0` this family of models exists to
+  close — the source would say the byte was declared;
+* so the oracle **counts** it (`osh_io_seq_spent`, with the first offending address and the READ
+  INDEX) and `harness._vet_io_sequences_are_servable` refuses the differential; the candidate charges
+  the shared `os_refused()`, which `_vet_no_os_refusal` already throws the case away on, with a hint
+  (`_seq_refusal_hint`) gated on the case having declared a list at all.
+
+**The index is half the remedy.** "The list is short" and "this routine reads the register more times
+than the case expected" are different repairs, and only the count tells them apart.
+
+**It is diagnosed AFTER the staleness refusal**, for that refusal's own ordering reason: a run that
+stored to a sequenced address and then read it off the end trips both, and "declare more bytes" would
+send the reader to lengthen a list and meet the un-seedable refusal on the next run.
+
+**A read past the end is not always reachable as a RED**, and that is a fact about the routine rather
+than a gap. TOS 1.02's ACIA handler exits its loop on the read itself, so a case that under-declares
+it never gets to the `rts` where a refusal would be reported — the run spends the oracle's instruction
+cap instead, exactly as an under-declared constant does
+(`projects/tos102us/recreate/test/test_bios_ikbd.py` drives both shapes). The refusal is pinned where
+a routine reads a fixed number of times.
+
+### A WIDE READ takes one entry from each covered list
+
+Served if and only if **every** byte it covers can be served at its current index, each advancing by
+one — one bus access reads a 16-bit register once. That is Phase 15's all-or-nothing rule with
+"declared" generalised to "has a byte left", and the span is resolved **before any cursor moves**, so
+a half-spent access advances nothing and the two shores cannot come to disagree about where a later
+read stands. It is what makes TOS's own `move.w $ffff8604,d0` of the FDC's register describable.
+
+It does **not** widen Phase 7, for the reason in the table above.
+
+### A SEQUENCE IS NOT WRITE-THROUGH
+
+Declaring both is a `ValueError` in `emu.io_seed_entries`, before either shore is seeded. The two say
+contradictory things about what the read after a store answers — the list says "the byte I named",
+the mark says "whatever the run stored" — and which won would be an iteration order rather than the
+case's meaning.
+
+What a **store** does to a sequenced address is the owning model's rule unchanged (the table above).
+For a Phase-15 address that is `os_io_seq_store`, whose `written` column feeds the **same** staleness
+tally a stale constant feeds, because it is the same refusal with the same remedy: the case declared
+what successive reads of the register the machine held **on entry** would yield, and an instruction of
+this run has replaced that register.
+
+### The spelling: a LIST, in the same dict
+
+`io_seed={addr: [b0, b1]}` — a `list` or a `tuple` value where a constant is an `int` and a
+write-through byte is an `emu.write_through` wrapper. `emu.is_sequence` is the one predicate that
+tells them apart, and **the order of its test matters**: `write_through` is a `NamedTuple`, so it IS
+a tuple, and asking `isinstance(value, tuple)` first would read every marked constant as a one-byte
+sequence and silently drop its mark. One predicate, called by everything, so the order cannot be got
+right in one place and wrong in another.
+
+Wrapping the value rather than adding an `io_sequences=` keyword is Phase 15's argument verbatim: a
+case's I/O declaration is carried as ONE object everywhere it goes — `emu.run`'s and `emu.run_bench`'s
+keyword, `harness.differential`'s, `rom_bench`'s Tier 3 row, and a project's own `VERIFIED_CASES`
+6-tuple — and a second keyword would have to be threaded through all of them.
+
+### The wire form: a flat byte pool plus (address, offset, length) rows
+
+A C ABI has no ragged arrays, so `emu.io_seq_entries` encodes `{address: [bytes]}` as four parallel
+columns and `os.h`'s `os_io_seq_install` decodes them. The pool is copied **verbatim** and the offsets
+are kept as the encoder spelled them, so a row the rule rejects leaves its bytes unreferenced rather
+than shifting every following row's offset.
+
+Two caps, `OS_IO_SEQ_MAX` (rows) and `OS_IO_SEQ_POOL_MAX` (bytes across all of them). **Neither is
+mirrored in Python**: `emu.py` reads both from the `.so` (`osh_io_seq_max` / `osh_io_seq_pool_max`),
+which is `OS_IO_SEED_MAX`'s arrangement and the stronger one — a resized table cannot leave the
+encoder refusing at the old size. `test/test_os_memory_map.py` names both in its `PINNED` comment so
+their absence reads as a decision. A row past the cap is dropped and a POOL past its cap installs
+**nothing**; both shortfalls are loud (`emu.run` raises, the candidate charges `os_refused`).
+
+### The candidate side
+
+`include/hw.h` + `src/hw.c`, and the sequence table sits **first in that file** because both models
+below it consult it:
+
+```c
+void     g_io_seq_reset(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths,
+                        const uint8_t *pool, uint32_t n, uint32_t pool_len);
+uint32_t g_io_seq_count(void);
+uint32_t g_io_seq_spent(void);        /* reads past the end of a list, this run */
+uint32_t g_io_seq_spent_addr(void);   /* ...the first one's address */
+uint32_t g_io_seq_spent_index(void);  /* ...and which read of it ran off the end */
+```
+
+The three `spent` counters are the candidate's symmetric surface to the oracle's
+`osh_io_seq_spent{,_addr,_index}`, and they are what makes `harness.refusal_hints`' sequence clause a
+FACT: such a read charges the same shared `os_refused()` every other candidate refusal does, so
+without them a run where only the RECONSTRUCTION over-reads could be reported as nothing better than
+"the candidate refused 1 call", with the sequence offered as a guess to every case that declared a
+list at all.
+
+`g_io_seq_spent` is the **newest** name in `harness._HW_LEDGER_ABI` and is what dates a build; a `.so`
+predating this model exports every other name on that list, so without a new one the probe would pass
+and the harness would drive a candidate whose lists nothing had installed — serving every sequenced
+read out of the model below it. (`g_io_seq_reset` held that place for the table itself.)
+`test_candidate_abi.py` pins the list against `hw.h`'s own declarations and names the newest symbol
+as a fact.
+
+**A candidate-side loop that can spin on a refused read must POLL rather than read.** A refusal hands
+this shore `0`, and `0` is "still busy" to most poll loops — so an under-declared case would hang the
+worker while the oracle came back with its own refusal. `include/hw.h`'s `hw_poll8`/`io_poll8` are
+that read plus the model's own answer to "could you still serve it?" (`sched.h`'s `sched_poll16`
+contract, at this door), so the loop's condition ends it exactly where the case's declaration runs
+out, with the refusal already tallied:
+
+```c
+uint8_t status;
+while (io_poll8(FDC_STATUS, &status) && !(status & FDC_BUSY))
+    ;                      /* the model refused, or the bit cleared; the case is already void */
+```
+
+`test/kit_candidate.c`'s poll cores and `projects/tos102us/recreate/src/bios/ikbd.c`'s ACIA handler
+are both written that way. A CAP would be the wrong shape for it — a number nothing derives, and a
+behaviour the target build does not have. On target the build supplies the poll as the plain volatile
+read returning 1, so the loop is the machine's own.
+
+### The bench door
+
+`emu.run_bench` installs the sequences per run exactly as it installs the map, **including a list on a
+NAMED SLOT — where a named CONSTANT is refused.** The asymmetry is what a run owns of each: a constant
+is a byte installed between runs, which the original's `emu.run` has already armed and which a bench
+run must not disturb; a sequence's run state is a **cursor**, rewound at the top of every run by
+whichever door entered it, so a table left where the previous run stopped reading would price the core
+against a machine that had already answered half the list. `rom_bench._bench_io_seed` therefore keeps
+every sequence and drops only the named constants.
+
+### The honest limit
+
+**What this pins is "given these bytes, in this order, both cores agree", not "a real ST would have
+yielded them".** Phase 7's and Phase 15's limit with one word added: a list is the case's claim about
+what the chip produced over the run, and its LENGTH is part of that claim. The model's contribution is
+to make the claim *explicit, shared and bounded* — before it, a routine whose reads must differ could
+not be run at all, so the choice was between not verifying it and verifying it against a constant that
+describes a machine the routine never met.
+
+What a list cannot say is **why** the bytes differ, or what happened between them. A 6850 popping its
+receive register, an FDC finishing a seek and a GPIP line dropping are three different mechanisms and
+this model represents all of them as "the next byte". Where the difference matters — where something
+the run does decides what comes next — the right model is Phase 8's scheduled write, which is about a
+value an external agent changes while the run is in flight.
+
+### What is pinned, and what is not
+
+**The model** is pinned kit-side by [`test/test_io_model.py`](test/test_io_model.py) and its
+`io_model_probe.c` (141 cases, as pytest collects them, up from 89) and by
+[`test/test_hw_model.py`](test/test_hw_model.py) and its `hw_model_probe.c` (107, up from 84), both
+driving **both** implementations in one process: the served list, in order; the declaration not
+consumed by one run and rewound for the next, **a partly-consumed one included**; the read past the
+end refused, counted with its address and read index, and unledgered by Phase 15 while Phase 7 logs it
+as it logs every read of a slot; a wide read advancing both covered lists, and refusing WHOLE — and
+advancing nothing — when one is spent; a list and a constant under one word read, each keeping its own
+rule; a store making a sequenced byte stale, into the same tally a stale constant feeds, and cleared
+per run; a named slot's list served through Phase 7's path with the volatile re-read refusal replaced,
+**beside the same two reads with no list, which are that refusal**; the same slot refused at this
+model's door at every width; both caps; and the bench starting from the declaration. And the negative
+controls: a candidate that reads ONCE where the original drained twice, one that reads a THIRD time,
+and two sequenced addresses read in the WRONG ORDER — which yields the identical value from the
+identical lists, so only the ordered stream separates it.
+
+**The plumbing** is pinned by [`test/test_io_differential.py`](test/test_io_differential.py), through
+the shared miniature project in `test/kit_smoke_project.py` — whose `.PRG` now holds two real 68000
+POLL LOOPS, the FDC's status register read until its busy bit clears and the MFP's GPIP asked until
+the ACIA line goes idle: the green case; the same loop UNDECLARED, which spends the instruction cap;
+the same loop under a CONSTANT, which ends on its first read and would have measured one read where
+the machine makes two; the three negative controls above as whole differentials; a list on a NAMED
+SLOT routed end to end (the reads land in `hw_events` and this model's stream stays empty, which only
+happens if BOTH shores routed); the read past the end naming its address and its READ INDEX;
+`_seed_candidate_seq` and `_vet_io_sequences_are_servable` each stubbed via `monkeypatch` and shown
+load-bearing; the write-through-and-a-list refusal; every encoder rejection by name; and a case
+declaring no list left with an empty table.
+
+**A Tier 3 pin** (`test/test_rom_bench.py`) holds the bench door's own asymmetry: a sequence reaches
+BOTH doors where a named constant reaches one.
+
+**Mutation sweep — see the wave's record.** **Not pinned:** the ledger caps' overflow arms, for
+`OS_PSG_LOG_MAX`'s reason, and the model has no analogue of the PSG's mixed-path guard because it
+serves no chip of its own.
+
+### The consumers
+
+`projects/tos102us`'s **ACIA handler** (`$fc29ce`, `src/bios/ikbd.c`) is the first: its TWO-PASS entry
+— both service routines called again, both KBDVECS vectors re-read, the channel acknowledged once —
+is a case only because GPIP bit 4 can be declared `[asserted, idle]`. It registers its own Tier 3 row
+beside the one-pass case, and the pair says something neither could alone: the second pass costs the
+two builds **exactly the same 166 cycles**, so the excess the entry carries is a constant rather than
+a rate.
+
+**Zynaps's `ikbd_acia_isr` @ `0x14456` can now be modeled** — its loop needs a list on `$fffc02` and
+one on `$fffa01`, which is exactly what this phase serves — and is deliberately NOT revisited: that
+project is the unchanged control for this model and for Phase 15's, and its `STATUS.md` still records
+the surviving mutant its slicing leaves.
+
 ## Still unmodeled (an honest raise is the right answer)
 
-**A SEQUENCE of bytes one address yields, one per read.** `$fffc02` is a Phase 7 slot now, which
-serves a handler that reads the port ONCE per entry (Phase 7, "The ACIA's DATA port") — and a
-declaration is one byte, so a routine that drains a multi-byte packet inside a single entry, or a
-poll loop whose two successive reads must DIFFER for it to terminate (the FDC status register Phase 7
-names as its non-goal), still has no model. The third shape would be a declared LIST, one entry per
-read, and nothing in the kit has one. TOS 1.02's BIOS wave 2 raised three more demand sites for
-exactly that list, all in the four interrupt handlers: the ACIA handler's two service routines drain
-a packet's worth of `$fffc02` per entry, its own `btst #4,$fffa01` loop needs a GPIP that reads
-ASSERTED and then IDLE (a case that declares it low is refused for never terminating, which is the
-negative control `test_bios_ikbd.py` drives), and the VBL's floppy service polls the FDC status
-register at `$ff8604` — which is why that arm halts rather than being reconstructed.
+**A SEQUENCE of bytes one address yields, one per read, is MODELED** as of 2026-09-15 — Phase 16,
+which is where the argument for it now lives. A case declares `io_seed={addr: [b0, b1]}` on any I/O
+byte, a Phase-7 named slot included; the Nth read is served the Nth byte; a read past the end is a
+refusal on both shores rather than a sticky last byte. It is what makes TOS 1.02's ACIA handler's
+TWO-PASS entry a case at all (`projects/tos102us`, `src/bios/ikbd.c`), and its limit is stated there:
+a list says what the chip produced and how many reads it describes, not WHY the bytes differ.
 
-**Zynaps's `ikbd_acia_isr` @ `0x14456` IS the routine waiting on it, and the slot above serves only
-part of it.** The handler reads the port once per PASS, and its last two instructions are
-`btst #4,$fffffa01 / beq.s $14456` — a branch back to its own entry with no `rte` between, so one
-interrupt can pop the port several times. Each pass is servable on its own; the LOOP is not, and it
-needs a sequence on TWO addresses: the data port's successive bytes, and a GPIP whose bit 4 must
-change from asserted to idle for the loop to end (a STATIC slot cannot say that, which is the same
-non-goal the FDC poll is excluded under). `projects/zynaps/recreate/STATUS.md` records the surviving
-mutant that leaves — a candidate that drops the loop and services exactly one byte passes every
-drivable case.
+**Zynaps's `ikbd_acia_isr` @ `0x14456` is the routine that was waiting on it**, and it needs lists on
+both of the addresses its loop reads — `$fffc02`'s successive bytes and a GPIP whose bit 4 goes from
+asserted to idle — which Phase 16 now serves. It is deliberately NOT revisited: that project is the
+unchanged control for this model and for Phase 15's, and `projects/zynaps/recreate/STATUS.md` still
+records the surviving mutant its slicing leaves — a candidate that drops the loop and services exactly
+one byte passes every drivable case.
+
+**What a sequence still does not model** is a value that changes because of something the RUN does,
+rather than in an order the case can write down in advance: the FDC/DMA **transaction** Phase 7's
+non-goal really excludes, where a command written to `$ff8606` decides what the next read of
+`$ff8604` means. TOS 1.02's floppy VBL service is the worked example and it stays halted — but for a
+DIFFERENT reason than its two reads of `$ff8604`, which a list describes: it drives the drive-select
+bits through the YM2149's port A, which is Phase 6's direct path and a floppy wave's first piece of
+work (`projects/tos102us/recreate/src/bios/vbl.c` says so where the halt is).
 
 **A REGISTER THAT READS BACK WHAT THE RUN JUST WROTE is MODELED** as of 2026-09-15 — Phase 15's
 write-through arm, which is where the argument for it now lives. It is an opt-in per declared

@@ -114,8 +114,8 @@ def bench_base(recreate_dir="."):
 
 
 def _bench_io_seed(io_seed):
-    """The half of a case's `io_seed` a BENCH run can be given: everything the Phase-7 NAMED SET
-    does not own.
+    """The half of a case's `io_seed` a BENCH run can be given: everything but the CONSTANTS the
+    Phase-7 NAMED SET owns.
 
     ONE DOOR, TWO MODELS (`emu.seed_split`). A case declares `$fffa01` and `$ff8260` in one dict,
     and the named half belongs to the hardware model — which the ORIGINAL's `emu.run` above installs
@@ -137,8 +137,22 @@ def _bench_io_seed(io_seed):
     """
     import emu
 
-    _named, declared = emu.seed_split(None, io_seed)
-    return declared
+    # A SEQUENCE IS KEPT WHATEVER MODEL NAMES ITS ADDRESS, where a named CONSTANT is dropped, and
+    # the asymmetry is what a run owns of each: a constant is a byte installed BETWEEN runs, which
+    # the original's `emu.run` already armed and which a bench run must not disturb; a sequence's
+    # run state is a CURSOR, so a table left where the previous run stopped reading would price the
+    # core against a machine that had already answered. `run_bench` re-installs it and rewinds it.
+    #
+    # So this drops the ROUTED half and nothing else — the routing is `seed_split`'s, which already
+    # leaves a sequenced address out of it, and re-splitting and re-merging the other two halves
+    # here would be that rule spelled a second time.
+    named, _declared, _sequences = emu.seed_split(None, io_seed)
+    if not named:
+        # The CALLER'S OWN object back, `None` included: `emu.io_seed_entries` memoises on the dict
+        # it was given, and a fresh one per row would re-encode a whole declaration for an answer
+        # that cannot have changed (`emu.seed_split`'s own reason for the same shape).
+        return io_seed
+    return {addr: value for addr, value in io_seed.items() if addr not in named}
 
 
 class Measurement:
@@ -664,6 +678,12 @@ def _refusal_tallies():
         "read I/O byte(s) THIS run stored to, which a declaration of the machine on ENTRY cannot "
         "describe": _first(lib.osh_io_stale_reads(), lib.osh_io_stale_first()),
         "overflowed the declared-I/O read ledger": _count(lib.osh_io_dropped()),
+        "read PAST THE END of a declared I/O sequence, which says how many reads it describes as "
+        "well as what they yield — lengthen the list with `io_seed={<address>: [<byte>, ...]}`, or "
+        "measure a core that reads the address as many times as the case says (TRAP_MODEL.md, "
+        "Phase 16)":
+            _first_read(lib.osh_io_seq_spent(), lib.osh_io_seq_spent_addr(),
+                        lib.osh_io_seq_spent_index()),
     }
 
 
@@ -680,6 +700,15 @@ def _addrs(addresses):
 def _first(n, first):
     """...and a tally that also names the first offending address."""
     return f"{n}, the first at {first:#x}" if n else ""
+
+
+def _first_read(n, first, index):
+    """...and one that names the READ as well: which address, and which read of it ran off the end.
+
+    The index is half the remedy — "the list is short" and "this core reads the register more times
+    than the case expected" are different repairs, and only the count tells them apart.
+    """
+    return f"{n}, the first read {index} of {first:#x}" if n else ""
 
 
 def _vet_no_refusals(who, tallies):

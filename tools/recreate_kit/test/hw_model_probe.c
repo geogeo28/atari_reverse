@@ -42,6 +42,15 @@ uint32_t        osh_hw_count(void);
 const uint8_t  *osh_hw_log_slots(void);
 const uint8_t  *osh_hw_log_vals(void);
 const uint8_t  *osh_hw_capture_profile(void);
+/* ...and the DECLARED SEQUENCE's (Phase 16), which is the ONE table both read paths consult: a list
+ * declared for a NAMED SLOT is served by THIS model's read path, so the slot keeps its ledger and
+ * its rules while the list answers its reads and REPLACES the volatile re-read refusal. */
+void            osh_io_seq(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths,
+                           const uint8_t *pool, uint32_t n, uint32_t pool_len);
+uint32_t        osh_io_seq_count(void);
+uint32_t        osh_io_seq_spent(void);
+uint32_t        osh_io_seq_spent_addr(void);
+uint32_t        osh_io_seq_spent_index(void);
 
 #define PROBE_MAX_INSNS  32u       /* the routines are a handful of instructions */
 
@@ -84,6 +93,9 @@ static void report_oracle(const char *name, uint32_t read_value) {
     printf("K %s stale %u\n", name, osh_hw_stale());
     printf("K %s wide %u\n", name, osh_hw_wide());
     printf("K %s reread %u\n", name, osh_hw_reread());
+    printf("K %s seq_spent %u\n", name, osh_io_seq_spent());
+    printf("K %s seq_spent_addr %u\n", name, osh_io_seq_spent_addr());
+    printf("K %s seq_spent_index %u\n", name, osh_io_seq_spent_index());
     printf("K %s known %u\n", name, osh_hw_known());
     uint32_t n = osh_hw_count();
     printf("K %s nlog %u\n", name, n);
@@ -130,16 +142,33 @@ static void report_candidate(const char *name, uint32_t read_value, uint32_t ref
         printf("F %s %d %u\n", name, slot, file[slot]);
 }
 
-/* Seed the candidate the way harness.differential does, run `body`, and report. The seed is the SAME
- * one the oracle cases get, so the two sides' cases are comparable pair by pair. */
-static void candidate_case(const char *name, uint32_t known, void (*body)(uint32_t *read_value)) {
+/* Seed the candidate's byte file AND its SEQUENCE table the way harness.differential does, run
+ * `body`, and report. The seed is the SAME one the oracle cases get, so the two sides' cases are
+ * comparable pair by pair.
+ *
+ * ONE HELPER FOR BOTH SHAPES, with `candidate_case` below delegating with an EMPTY table: the
+ * harness installs both declarations before every candidate run, so a case that reset only the byte
+ * file would leave the previous case's list installed — and a constant case following a sequenced
+ * one would then be served that list, or refused by a cursor it never moved
+ * (`cand_sequence_does_not_leak`). */
+static void candidate_seq_case(const char *name, uint32_t known, const uint32_t *addrs,
+                               const uint32_t *offsets, const uint32_t *lengths,
+                               const uint8_t *pool, uint32_t n, uint32_t pool_len,
+                               void (*body)(uint32_t *read_value)) {
     uint8_t values[OS_HW_NSLOTS];
     memset(values, DECLARED_BYTE, sizeof values);
     g_hw_reset(values, known);
+    g_io_seq_reset(addrs, offsets, lengths, pool, n, pool_len);
     g_os_refusal_reset();
     uint32_t read_value = 0;
     body(&read_value);
     report_candidate(name, read_value, g_os_refusal_count());
+}
+
+/* ...and the ordinary form, whose case declares no list at all. */
+static void candidate_case(const char *name, uint32_t known, void (*body)(uint32_t *read_value)) {
+    candidate_seq_case(name, known, (const uint32_t *)0, (const uint32_t *)0, (const uint32_t *)0,
+                       (const uint8_t *)0, 0, 0, body);
 }
 
 /* The faithful reconstruction of the oracle's routine: read the monitor-detect byte. */
@@ -172,6 +201,27 @@ static void cand_body_undeclared_read(uint32_t *read_value) {
  * the model claims to serve. */
 static void cand_body_unmodeled_address(uint32_t *read_value) {
     *read_value = hw_read8(UNMODELED_HW_ADDR);
+}
+
+/* ---- a DECLARED SEQUENCE on a NAMED SLOT (TRAP_MODEL.md, "Phase 16") ----
+ * The ACIA's data port is VOLATILE because every read POPS the receive register, so a per-run
+ * constant describes exactly ONE read of it and the second is refused. A LIST is what describes a
+ * service routine that drains a packet: the refusal's bound moves from "one read" to "as many as the
+ * case listed", and the reads still land in THIS model's slot ledger. */
+
+/* The faithful drain: two reads of the data port, served the list's two bytes. */
+static void cand_body_drains_the_acia_twice(uint32_t *read_value) {
+    uint32_t first = hw_read8(OS_HW_ACIA_DATA);
+    *read_value = first << 8 | hw_read8(OS_HW_ACIA_DATA);
+}
+
+/* MUTANT — it reads a THIRD time, past the end of the list. Refused, and LOGGED all the same,
+ * because this model logs every read of a named slot whether it could serve it or not: the oracle
+ * does the same, so a stream missing the entry on one side would diverge for the wrong reason. */
+static void cand_body_drains_the_acia_three_times(uint32_t *read_value) {
+    uint32_t first = hw_read8(OS_HW_ACIA_DATA);
+    uint32_t second = hw_read8(OS_HW_ACIA_DATA);
+    *read_value = first << 8 | second | hw_read8(OS_HW_ACIA_DATA);
 }
 
 int main(void) {
@@ -291,6 +341,39 @@ int main(void) {
     seed(ALL_SLOTS_DECLARED, DECLARED_BYTE);
     bench_and_report("bench_starts_from_the_seed");
 
+    /* --- A DECLARED SEQUENCE ON A NAMED SLOT (TRAP_MODEL.md, "Phase 16"). The ACIA's data port is
+     * the slot the model already calls VOLATILE — every read pops the receive register — so a
+     * per-run constant describes ONE read of it and the second is refused. A LIST describes as many
+     * as the case wrote, the reads land in THIS model's slot ledger under its own rules, and the
+     * refusal's bound simply moves: "at most one read" becomes "at most as many as were listed". --- */
+    static const uint32_t ACIA_SEQ_ADDRS[] = {OS_HW_ACIA_DATA};
+    static const uint32_t ACIA_SEQ_OFFSETS[] = {0};
+    static const uint32_t ACIA_SEQ_LENGTHS[] = {2};
+    static const uint8_t  ACIA_SEQ_POOL[] = {DECLARED_BYTE, OTHER_BYTE};
+    /* The byte FILE still declares every slot, and the list still wins for the one it names: that is
+     * what "supersedes" means, and without the case a list could be quietly ignored wherever a
+     * constant happened to be declared too. */
+    seed(ALL_SLOTS_DECLARED, DECLARED_BYTE);
+    osh_io_seq(ACIA_SEQ_ADDRS, ACIA_SEQ_OFFSETS, ACIA_SEQ_LENGTHS, ACIA_SEQ_POOL, 1,
+               sizeof ACIA_SEQ_POOL);
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_ACIA_DATA);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_ACIA_DATA);
+    plant_rts(pc);
+    run_and_report("seq_drains_a_volatile_slot_twice");
+    /* ...and the read PAST THE END: refused and counted, served nothing — but still LOGGED, because
+     * this model logs every read of a named slot whether it could serve it or not. */
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_ACIA_DATA);
+    plant_rts(pc);
+    run_and_report("seq_third_read_of_a_volatile_slot_is_past_the_end");
+    /* ...and the CONTROL that says the list is what moved the bound: the identical two reads with no
+     * list declared are the volatile re-read REFUSAL, which is what this slot answered before. */
+    osh_io_seq((const uint32_t *)0, (const uint32_t *)0, (const uint32_t *)0, (const uint8_t *)0,
+               0, 0);
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, OS_HW_ACIA_DATA);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_ACIA_DATA);
+    plant_rts(pc);
+    run_and_report("without_a_list_the_volatile_slot_is_refused_on_the_second_read");
+
     /* --- the candidate side, seeded and run exactly as harness.differential does it --- */
     candidate_case("cand_declared_read", ALL_SLOTS_DECLARED, cand_body_reads_the_gpip);
     candidate_case("cand_wrong_address", ALL_SLOTS_DECLARED, cand_body_reads_the_wrong_address);
@@ -299,6 +382,25 @@ int main(void) {
     candidate_case("cand_unmodeled_address", ALL_SLOTS_DECLARED, cand_body_unmodeled_address);
     /* ...and the reset really clears: a case declaring nothing must not see the previous one's. */
     candidate_case("cand_seed_does_not_leak", 0, cand_body_reads_the_gpip);
+    /* ...and the SEQUENCE on a named slot, on this shore: the faithful drain and the read past the
+     * end, which must produce exactly what the oracle's two rows above produce. */
+    candidate_seq_case("cand_seq_drains_the_acia_twice", ALL_SLOTS_DECLARED, ACIA_SEQ_ADDRS,
+                       ACIA_SEQ_OFFSETS, ACIA_SEQ_LENGTHS, ACIA_SEQ_POOL, 1, sizeof ACIA_SEQ_POOL,
+                       cand_body_drains_the_acia_twice);
+    candidate_seq_case("cand_seq_drains_the_acia_three_times", ALL_SLOTS_DECLARED, ACIA_SEQ_ADDRS,
+                       ACIA_SEQ_OFFSETS, ACIA_SEQ_LENGTHS, ACIA_SEQ_POOL, 1, sizeof ACIA_SEQ_POOL,
+                       cand_body_drains_the_acia_three_times);
+    /* ...and the SEQUENCE table does not leak either, which is `cand_seed_does_not_leak`'s claim for
+     * the other declaration: an ORDINARY case right after a sequenced one is served its own byte
+     * file, twice, rather than a list it never declared or a cursor the previous case spent. */
+    candidate_case("cand_sequence_does_not_leak", ALL_SLOTS_DECLARED,
+                   cand_body_drains_the_acia_twice);
+    /* ...and the same body with NO list, which is the control for the pair above: the byte file
+     * declares the slot, so the first read is served and the second is the volatile re-read the
+     * ORACLE refuses — this shore serves both, exactly as it did before this model. */
+    candidate_seq_case("cand_without_a_list_both_reads_are_served", ALL_SLOTS_DECLARED,
+                       (const uint32_t *)0, (const uint32_t *)0, (const uint32_t *)0,
+                       (const uint8_t *)0, 0, 0, cand_body_drains_the_acia_twice);
 
     free(g_image);
     return 0;

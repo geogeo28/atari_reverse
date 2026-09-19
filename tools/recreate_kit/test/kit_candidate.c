@@ -146,6 +146,68 @@ void g_io_reads_the_palette_as_two_bytes(uint8_t *image) {
     io_read8(KIT_PALETTE_0_LO);
 }
 
+/* ---- the Phase 16 side: a POLL LOOP, which only a declared LIST can end -----------------------
+ * The .PRG's `_IO_POLL_UNTIL_READY_CODE` reads the FDC's status register until its busy bit clears,
+ * and `_HW_POLL_UNTIL_IDLE_CODE` asks the MFP's GPIP until the ACIA line goes idle. Neither can run
+ * against a per-run constant: one value spins to the instruction cap and the other exits on the
+ * first read, so the case would be measuring one read where the machine made two.
+ *
+ * THE LOOPS POLL RATHER THAN READ, and that is what turns a REFUSED read into a red instead of a
+ * hang. A read past the end of a declared list hands this side `0` (the refusal's sentinel, tallied
+ * through `os_refused`), and `0` is "still busy" to both loops below — so a case whose list is too
+ * short would spin here for ever while the ORACLE, which has an instruction cap, comes back with its
+ * own refusal. `io_poll8`/`hw_poll8` make the model's own answer part of the loop's condition, so
+ * the loop ends exactly where the declaration runs out (include/hw.h). On target the build does not
+ * compile this file and the loop is the machine's own.
+ */
+#define KIT_FDC_STATUS   0xff8604u    /* the FDC status register: a SEQUENCE, never a constant */
+#define KIT_FDC_BUSY_BIT 0
+#define KIT_ACIA_LINE_BIT 4           /* MFP GPIP bit 4, ACTIVE LOW: a 6850 is still asserting */
+
+/* The faithful reconstruction of the FDC poll: read until the busy bit clears. */
+void g_io_polls_until_ready(uint8_t *image) {
+    (void)image;
+    uint8_t status;
+    while (io_poll8(KIT_FDC_STATUS, &status) && !(status & (1u << KIT_FDC_BUSY_BIT)))
+        ;
+}
+
+/* MUTANT: it reads ONCE and calls the device ready — which is what a port written against a
+ * fabricated 0, or against a constant declaration, looks like. Its read stream is one entry short
+ * and nothing else moves: the routine's whole effect is off-image either way. */
+void g_io_polls_once(uint8_t *image) {
+    (void)image;
+    io_read8(KIT_FDC_STATUS);
+}
+
+/* MUTANT: it reads one time too many — the drain that runs off the end of the case's own list. The
+ * extra read is refused on both shores, so what throws the case away is the refusal tally rather
+ * than a stream that diverges. */
+void g_io_polls_one_time_too_many(uint8_t *image) {
+    (void)image;
+    uint8_t status;
+    while (io_poll8(KIT_FDC_STATUS, &status) && !(status & (1u << KIT_FDC_BUSY_BIT)))
+        ;
+    io_read8(KIT_FDC_STATUS);
+}
+
+/* ...and the same loop at a Phase-7 NAMED SLOT, through `hw_read8`. It is what shows the ONE DOOR
+ * routing end to end: the case declares the list in `io_seed` exactly as it declares the FDC's, and
+ * the reads land in the NAMED set's ledger because that is the model the address belongs to. */
+void g_hw_polls_until_idle(uint8_t *image) {
+    (void)image;
+    uint8_t gpip;
+    while (hw_poll8(OS_HW_MFP_GPIP, &gpip) && !(gpip & (1u << KIT_ACIA_LINE_BIT)))
+        ;
+}
+
+/* MUTANT: one pass, which is the surviving mutant `projects/zynaps` records for its own ACIA
+ * handler — a port that services one byte and drops the loop. */
+void g_hw_polls_once(uint8_t *image) {
+    (void)image;
+    hw_read8(OS_HW_MFP_GPIP);
+}
+
 /* The store half of the write-then-read routine, on its own. Phase 10's door, not this model's —
  * a hardware write has always been dropped and separately ledgered — and it is here so that the
  * STALENESS rule's control case has a faithful candidate: the write stream must match, or the case

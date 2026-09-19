@@ -560,6 +560,29 @@ _LIB.osh_io_log_vals.restype = _u32p
 # argument): a shim.c that resizes the map cannot leave this file refusing at the old size.
 IO_SEED_MAX = _LIB.osh_io_seed_max()
 
+# ...and the DECLARED SEQUENCE (TRAP_MODEL.md, Phase 16). Required, not probed, for the seeded
+# models' reason twice over: `run` installs the case's lists before EVERY run and reads the
+# exhaustion tally back, and an .so without these would answer a sequenced address out of the model
+# BELOW it — the named set's per-run byte, or a silent 0 — on every read, while this file reported
+# the case as having declared a list. That is the false green the model closes, with the case's own
+# declaration standing behind it.
+_IO_SEQ_ABI = ("osh_io_seq", "osh_io_seq_count", "osh_io_seq_max", "osh_io_seq_pool_max",
+               "osh_io_seq_spent", "osh_io_seq_spent_addr", "osh_io_seq_spent_index")
+_missing_io_seq = [sym for sym in _IO_SEQ_ABI if not hasattr(_LIB, sym)]
+if _missing_io_seq:
+    raise _stale_oracle(
+        "/".join(_missing_io_seq),
+        "so it predates the declared SEQUENCE: a case's `io_seed={addr: [b0, b1]}` would install "
+        "nothing and every read of that address would answer the model below it.")
+_LIB.osh_io_seq.argtypes = [_u32p, _u32p, _u32p, _u8p, ctypes.c_uint32, ctypes.c_uint32]
+for _symbol in ("osh_io_seq_count", "osh_io_seq_max", "osh_io_seq_pool_max", "osh_io_seq_spent",
+                "osh_io_seq_spent_addr", "osh_io_seq_spent_index"):
+    getattr(_LIB, _symbol).restype = ctypes.c_uint32
+# Both caps are read from the .so rather than mirrored here, for IO_SEED_MAX's reason: a shim.c that
+# resizes the table cannot leave this file refusing at the old size.
+IO_SEQ_MAX = _LIB.osh_io_seq_max()
+IO_SEQ_POOL_MAX = _LIB.osh_io_seq_pool_max()
+
 for _symbol in ("osh_io_unmodeled_reads", "osh_io_unmodeled_first"):
     if not hasattr(_LIB, _symbol):
         raise _stale_oracle(
@@ -771,6 +794,28 @@ def _install_io_seed(io_seed):
                            f"emu.IO_SEED_MAX says")
 
 
+def _install_io_seq(io_seq):
+    """Install a run's DECLARED SEQUENCES (Phase 16) in the oracle. Called before EVERY run, an empty
+    declaration included, for ``_install_io_seed``'s reason: one left installed would let a case that
+    declares no list read through another case's, and under ``-n auto`` unpredictably which one.
+
+    The count the shim kept is compared against what was sent rather than assumed — ``os.h``'s
+    ``os_io_seq_install`` is what decides admissibility, and a shortfall means this file and the
+    ``.so`` disagree about the rule, which would otherwise surface as an address the oracle serves
+    from the model BELOW the sequence while the candidate serves the list.
+    """
+    addrs, offsets, lengths, pool = io_seq_entries(io_seq)
+    _LIB.osh_io_seq((ctypes.c_uint32 * len(addrs))(*addrs),
+                    (ctypes.c_uint32 * len(offsets))(*offsets),
+                    (ctypes.c_uint32 * len(lengths))(*lengths),
+                    (ctypes.c_uint8 * len(pool))(*pool), len(addrs), len(pool))
+    if _LIB.osh_io_seq_count() != len(addrs):
+        raise RuntimeError(f"the oracle installed {_LIB.osh_io_seq_count()} of this case's "
+                           f"{len(addrs)} declared I/O sequence(s) — its os_io_seq_install() and "
+                           f"this file's mirror of it disagree, or OS_IO_SEQ_MAX/OS_IO_SEQ_POOL_MAX "
+                           f"are smaller than emu.IO_SEQ_MAX/IO_SEQ_POOL_MAX say")
+
+
 def _install_bench_schedule(schedule):
     """Install a BENCH run's schedule, or clear whatever the run before left — and refuse a trigger
     this door cannot fire.
@@ -825,9 +870,12 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     exactly as this always has. Seeding is what lets a caller pin the callee-saved file (see
     ``asm_twin.AsmTwins.call``).
 
-    ``io_seed`` is the DECLARED I/O MAP (Phase 15), installed per run exactly as ``run`` installs
-    it, an empty declaration included — a measurement of a core that reads the shifter has to be
-    served the same bytes its differential was, or it is measuring a run down a different path.
+    ``io_seed`` is the DECLARED I/O MAP (Phase 15) and the DECLARED SEQUENCES (Phase 16), installed
+    per run exactly as ``run`` installs them, an empty declaration included — a measurement of a core
+    that reads the shifter has to be served the same bytes its differential was, or it is measuring a
+    run down a different path. A SEQUENCE is carried here whatever model names its address, because
+    what a run owns of one is a CURSOR: a table left where the previous run stopped reading would
+    price a core against a machine that had already answered.
     KEYWORD-ONLY, so that the six positional parameters above keep the meaning every caller already
     passes them by. There is no ``hw_seed`` door here (the named set's seed PERSISTS between runs,
     and a bench run clearing it would disarm an asm twin's), so a named slot routed out of this
@@ -841,7 +889,7 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     letting the wait run to ``max_insns``, and the reads the run made at each derived site come back
     in the result so a caller can compare them with the ORIGINAL's.
     """
-    routed_hw, io_seed = seed_split(None, io_seed)
+    routed_hw, io_seed, io_seq = seed_split(None, io_seed)
     if routed_hw:
         raise ValueError(
             f"run_bench's io_seed declares {', '.join(f'{addr:#x}' for addr in sorted(routed_hw))}, "
@@ -868,6 +916,11 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     _LIB.osh_bench_door(base & 0xFFFFFFFF, span & 0xFFFFFFFF)
     _bench_seed(seed_regs)
     _install_io_seed(io_seed)
+    # ...and the DECLARED SEQUENCES, per run exactly as the map is — including one on a NAMED SLOT,
+    # which this door DOES carry where a named CONSTANT is refused above. A sequence's state is the
+    # per-run CURSOR rather than a byte installed between runs, so leaving it to the `emu.run` that
+    # armed the named model would measure a core against a table nothing had rewound.
+    _install_io_seq(io_seq)
     _install_bench_schedule(schedule)
     status = _LIB.osh_run_bench(buf, size, entry & 0xFFFFFFFF, arg0 & 0xFFFFFFFF,
                                 sp & 0xFFFFFFFF, sentinel & 0xFFFFFFFF, max_insns, out)
@@ -1173,6 +1226,105 @@ def io_seed_byte(value):
     return value.byte if isinstance(value, write_through) else value
 
 
+def is_sequence(value):
+    """Is this ``io_seed`` value a DECLARED SEQUENCE (Phase 16) — a LIST of bytes, one per read?
+
+    A list or a tuple, and the ORDER OF THE TEST MATTERS: ``write_through`` is a ``NamedTuple``, so
+    it IS a tuple, and asking ``isinstance(value, tuple)`` first would read every marked constant as
+    a one-byte sequence and quietly drop its mark. One predicate, called by everything that has to
+    tell the two apart, so the order cannot be got right in one place and wrong in another.
+    """
+    return isinstance(value, (list, tuple)) and not isinstance(value, write_through)
+
+
+def _vet_io_address(addr, subject, phase):
+    """The three ADDRESS rules both ``io_seed`` encoders enforce, in one body.
+
+    A constant and a sequence are two declarations about one machine, and they are admissible at
+    exactly the same addresses but for the Phase-7 named slots — which ``seed_split`` has already
+    routed out before either encoder runs. So the bus form, the I/O page and the YM2149's block are
+    ONE rule with one message apiece (``os.h``'s ``os_io_seq_seedable``, mirrored here only to say
+    WHICH rule a rejected address broke); what stays with each encoder is its own: a list's emptiness
+    and its bytes, a constant's byte and its mark.
+
+    ``subject`` is how the message opens, so the sentence reads as the declaration the case wrote
+    ("io_seed[0x1000] is below the I/O page", "…declares a SEQUENCE at an address that is below…"),
+    and ``phase`` is the TRAP_MODEL.md section a reader is sent to.
+    """
+    canonical = addr & os_map.OS_BUS_ADDR_MASK
+    if addr != canonical:
+        raise ValueError(
+            f"{subject} not the 24-bit BUS FORM this model is spelled in. The 68000's address bus "
+            f"is 24 bits wide, so the machine decodes this access at {canonical:#x} and that is the "
+            f"address to declare — the oracle folds an access before it decodes one, so a map keyed "
+            f"on the untranslated form holds an entry no read can ever match"
+            f"{_io_owner_note(canonical)} (TRAP_MODEL.md, {phase})")
+    if addr < os_map.OS_HW_IO_PAGE:
+        raise ValueError(
+            f"{subject} below the I/O page ({os_map.OS_HW_IO_PAGE:#x}). Ordinary off-image memory "
+            f"has read 0 since the kit's first run and no model declares it — an address down there "
+            f"is a defect in the case rather than a byte to declare")
+    if os_map.OS_PSG_PORT_SELECT <= addr < os_map.OS_PSG_BLOCK_END:
+        raise ValueError(
+            f"{subject} inside the YM2149's block "
+            f"({os_map.OS_PSG_PORT_SELECT:#x}..{os_map.OS_PSG_BLOCK_END - 1:#x}), which Phase 6 "
+            f"models and which this model cannot be routed into: the chip's file is keyed by "
+            f"REGISTER NUMBER, not by address, and which register a read of "
+            f"{os_map.OS_PSG_PORT_SELECT:#x} answers depends on what the run last LATCHED there — "
+            f"so an address-keyed declaration could not say which register it described. Phase 6 "
+            f"also carries two refusals of its own (an unselected latch, an unseeded register) that "
+            f"a byte served from this map would reach none of. Declare the chip with "
+            f"`psg_seed={{<register>: <byte>}}` instead")
+
+
+def io_seq_entries(io_seq):
+    """``{address: [b0, b1, …]}`` -> ``(addresses, offsets, lengths, pool)``: the columns BOTH sides
+    take.
+
+    One implementation, for ``io_seed_entries``'s reason — ``run()`` installs the columns in the
+    oracle and ``harness`` hands the same columns to the candidate's ``g_io_seq_reset``, so the two
+    cannot disagree about what the case's dict meant. Entries are sorted by address, so two cases
+    that declare the same lists install the same table whatever order the dict was written in, and
+    the pool is packed in that same order.
+
+    A FLAT POOL PLUS OFFSETS rather than a ragged array, because a C ABI has no ragged arrays;
+    ``os.h``'s ``os_io_seq_install`` is the shared decoder and it keeps the offsets as spelled here.
+
+    Every rejection is a ``ValueError`` rather than a dropped entry, for ``io_seed_entries``'s
+    reason: a case that declares a list this model may not serve would otherwise read the model
+    BELOW it while its own source says a sequence was declared.
+    """
+    entries = sorted((io_seq or {}).items())
+    addrs, offsets, lengths, pool = [], [], [], []
+    for addr, bytes_ in entries:
+        _vet_io_address(addr, f"io_seed[{addr:#x}] declares a SEQUENCE at an address that is",
+                        "Phase 16")
+        if not bytes_:
+            raise ValueError(
+                f"io_seed[{addr:#x}] declares an EMPTY sequence, which says that every read of the "
+                f"address is past the end — a refusal the case could have written as declaring "
+                f"nothing at all. Give it the bytes the machine yielded, in order")
+        for index, byte in enumerate(bytes_):
+            # `0 <= byte <= 0xFF` alone admits a float and raises TypeError on a string, neither of
+            # which is the ValueError this function's docstring promises (`io_seed_entries`' rule).
+            if not isinstance(byte, int) or isinstance(byte, bool) or not 0 <= byte <= 0xFF:
+                raise ValueError(f"io_seed[{addr:#x}][{index}] = {byte!r} is not a byte")
+        addrs.append(addr)
+        offsets.append(len(pool))
+        lengths.append(len(bytes_))
+        pool.extend(bytes_)
+    if len(entries) > IO_SEQ_MAX:
+        raise ValueError(
+            f"io_seed declares {len(entries)} SEQUENCES, past os.h's OS_IO_SEQ_MAX of "
+            f"{IO_SEQ_MAX}. Raise the constant with the case that needs it, on both sides at once")
+    if len(pool) > IO_SEQ_POOL_MAX:
+        raise ValueError(
+            f"io_seed's sequences hold {len(pool)} bytes between them, past os.h's "
+            f"OS_IO_SEQ_POOL_MAX of {IO_SEQ_POOL_MAX}. Raise the constant with the case that needs "
+            f"it, on both sides at once")
+    return tuple(addrs), tuple(offsets), tuple(lengths), tuple(pool)
+
+
 # The dict pair `io_seed_entries` last encoded, its contents at the time, and what it produced.
 # `harness.differential` asks for the same declaration up to four times a case (the oracle run, the
 # candidate arming, and both again under `poison`), and a battery that declares a whole palette
@@ -1215,30 +1367,19 @@ def io_seed_entries(io_seed):
     entries = sorted((io_seed or {}).items())
     for addr, declaration in entries:
         value = io_seed_byte(declaration)
-        canonical = addr & os_map.OS_BUS_ADDR_MASK
-        if addr != canonical:
+        _vet_io_address(addr, f"io_seed[{addr:#x}] is", "Phase 15")
+        # A SEQUENCE AND A WRITE-THROUGH MARK ARE TWO CONTRADICTORY CLAIMS about what the next
+        # read answers — the list says "the byte I named", the mark says "whatever the run stored" —
+        # and which one won would be an order rather than the case's meaning. `seed_split` has
+        # already taken every BARE list out of `io_seed`, so the only spelling that reaches here is
+        # a list inside the wrapper, and it is refused by name rather than as "not a byte".
+        if is_sequence(value):
             raise ValueError(
-                f"io_seed[{addr:#x}] is not the 24-bit BUS FORM this model is spelled in. The "
-                f"68000's address bus is 24 bits wide, so the machine decodes this access at "
-                f"{canonical:#x} and that is the address to declare — the oracle folds an access "
-                f"before it decodes one, so a map keyed on the untranslated form holds an entry no "
-                f"read can ever match{_io_owner_note(canonical)} (TRAP_MODEL.md, Phase 15)")
-        if addr < os_map.OS_HW_IO_PAGE:
-            raise ValueError(
-                f"io_seed[{addr:#x}] is below the I/O page ({os_map.OS_HW_IO_PAGE:#x}). Ordinary "
-                f"off-image memory has read 0 since the kit's first run and no model declares it — "
-                f"an address down there is a defect in the case rather than a byte to seed")
-        if os_map.OS_PSG_PORT_SELECT <= addr < os_map.OS_PSG_BLOCK_END:
-            raise ValueError(
-                f"io_seed[{addr:#x}] is inside the YM2149's block "
-                f"({os_map.OS_PSG_PORT_SELECT:#x}..{os_map.OS_PSG_BLOCK_END - 1:#x}), which "
-                f"Phase 6 models and which this model cannot be routed into: the chip's file is "
-                f"keyed by REGISTER NUMBER, not by address, and which register a read of "
-                f"{os_map.OS_PSG_PORT_SELECT:#x} answers depends on what the run last LATCHED "
-                f"there — so an address-keyed byte could not say which register it declared. "
-                f"Phase 6 also carries two refusals of its own (an unselected latch, an unseeded "
-                f"register) that a byte served from this map would reach none of. Declare the chip "
-                f"with `psg_seed={{<register>: <byte>}}` instead")
+                f"io_seed[{addr:#x}] = {declaration!r} declares a SEQUENCE and marks it "
+                f"`write_through`, which are two claims about what the read after a store answers: "
+                f"the list says the next byte it names and the mark says whatever the run stored. "
+                f"Declare one of them — the list for a register whose successive reads differ, the "
+                f"mark for one that latches (TRAP_MODEL.md, Phases 15 and 16)")
         # `0 <= value <= 0xFF` alone admits a float (2.5 passes it) and raises TypeError on a
         # string, neither of which is the ValueError this function's docstring promises.
         if not isinstance(value, int) or not 0 <= value <= 0xFF:
@@ -1278,10 +1419,17 @@ def seed_split(hw_seed, io_seed):
     (the volatile re-read, the model default, the split-register exemption) and their separate
     ledgers, while the declaration a case writes is one dict.
 
-    Returns ``(hw_seed, io_seed)`` as ``hw_seed_bytes`` and ``io_seed_entries`` take them. Called by
-    ``run()`` and by ``harness.arm_candidate`` before either side is seeded, so both shores route
-    identically — were only one of them to route, the oracle would serve a slot the candidate
-    refused and the mismatch would read as a reconstruction bug.
+    Returns ``(hw_seed, io_seed, io_seq)`` as ``hw_seed_bytes``, ``io_seed_entries`` and
+    ``io_seq_entries`` take them. Called by ``run()`` and by ``harness.arm_candidate`` before either
+    side is seeded, so both shores route identically — were only one of them to route, the oracle
+    would serve a slot the candidate refused and the mismatch would read as a reconstruction bug.
+
+    A DECLARED SEQUENCE (Phase 16) leaves for the THIRD table whatever model names its address, and
+    that is the one routing decision the two models do not share: the sequence table admits a named
+    slot deliberately, because it is consulted from inside Phase 7's own read path, so the slot keeps
+    its ledger and its rules while the LIST answers its reads. Routing a sequence into ``hw_seed``
+    instead would need a second list-per-slot model — the same rule written twice, which is what
+    ``os.h``'s one table exists to avoid.
 
     The YM2149's block is NOT routed, and that asymmetry is the chip's rather than a choice: Phase 6
     is keyed by register number and a read of `$ff8800` answers whatever the run last latched, so an
@@ -1293,9 +1441,23 @@ def seed_split(hw_seed, io_seed):
     has no write-through arm, so carrying the claim across would mean serving a case the entry byte
     for a register its own source says the run replaced.
     """
+    sequences = {addr: tuple(value) for addr, value in (io_seed or {}).items()
+                 if is_sequence(value)}
     routed = {}
     for addr, value in (io_seed or {}).items():
         if addr not in HW_ADDRS:
+            continue
+        if hw_seed and addr in hw_seed:
+            raise ValueError(
+                f"{addr:#x} is declared by BOTH this case's hw_seed ({hw_seed[addr]!r}) and its "
+                f"io_seed ({value!r}). It is one byte of one machine and the two declarations are "
+                f"two claims about it; which one won would be this function's arbitrary order "
+                f"rather than the case's meaning. Declare it once (TRAP_MODEL.md, Phase 15)")
+        # ...and a LIST is refused by that same rule rather than quietly winning it, which is why
+        # the test above the routing: a sequence leaves for the third table and `hw_seed`'s byte
+        # would stay installed beside it, so the case would hold two live claims about one address
+        # with nothing to say which the run was served by.
+        if addr in sequences:
             continue
         if isinstance(value, write_through):
             raise ValueError(
@@ -1306,20 +1468,18 @@ def seed_split(hw_seed, io_seed):
                 f"re-read is refused, the ACIA data port is exempt from staleness); if a routine "
                 f"really writes this register and reads it back, the remedy is a model for the "
                 f"slot rather than a mark here (TRAP_MODEL.md, Phase 15)")
-        if hw_seed and addr in hw_seed:
-            raise ValueError(
-                f"{addr:#x} is declared by BOTH this case's hw_seed ({hw_seed[addr]!r}) and its "
-                f"io_seed ({value!r}). It is one byte of one machine and the two declarations are "
-                f"two claims about it; which one won would be this function's arbitrary order "
-                f"rather than the case's meaning. Declare it once (TRAP_MODEL.md, Phase 15)")
         routed[addr] = value
-    if not routed:
-        # The ordinary case, and it hands the CALLER'S OWN dict back rather than a copy of it:
-        # `io_seed_entries` memoises on the dict it was given, and a fresh object per call would
-        # re-encode the whole declaration four times a differential for an answer that cannot have
-        # changed.
-        return hw_seed, io_seed
-    return {**(hw_seed or {}), **routed}, {a: v for a, v in io_seed.items() if a not in routed}
+    if not routed and not sequences:
+        # The case with nothing to route, and it hands the CALLER'S OWN dict back rather than a copy
+        # of it: `io_seed_entries` memoises on the dict it was given, and a fresh object per call
+        # would re-encode the whole declaration four times a differential for an answer that cannot
+        # have changed. A case that declares ANY list takes the branch below and is rebuilt per
+        # call, so the memo does not hold for it — which costs the encoding of whatever CONSTANTS
+        # such a case also declares.
+        return hw_seed, io_seed, sequences
+    return ({**(hw_seed or {}), **routed},
+            {a: v for a, v in io_seed.items() if a not in routed and a not in sequences},
+            sequences)
 
 
 def io_events():
@@ -1923,7 +2083,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # covers a routed declaration exactly as it covers a direct one. Routed or direct, the mode
     # installs its own profile over it and the case's claim would be silently ignored.
     passed_hw_seed = hw_seed        # ...and what the CASE wrote, so a refusal can name its door
-    hw_seed, io_seed = seed_split(hw_seed, io_seed)
+    hw_seed, io_seed, io_seq = seed_split(hw_seed, io_seed)
     if audio_capture_on():
         # ONE-SIDED CAPTURE. The mode is oracle-global, so a run can be made under someone else's
         # capture — an extractor in the same process, a block that raised on its way out — and every
@@ -1968,6 +2128,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     hw_values, hw_known = hw_seed_bytes(hw_seed)
     _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
     _install_io_seed(io_seed)   # ...and the DECLARED I/O MAP (Phase 15), for the same reason
+    _install_io_seq(io_seq)     # ...and the DECLARED SEQUENCES (Phase 16), for the same reason
     # ...and the external agent's stores, unconditionally for the same reason: a schedule left
     # installed would fire inside the next case, which under -n auto is not even a stable one.
     scheduled, sites = _install_schedule(schedule, wait_sites)
@@ -2158,6 +2319,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["io_stale_reads"] = _LIB.osh_io_stale_reads()   # ...reads of a byte THIS run stored to
     out_regs["io_stale_first"] = _LIB.osh_io_stale_first()   # ...and the first such address
     out_regs["io_declared"] = _LIB.osh_io_seed_count()       # the map's size, as a drift cross-check
+    # ...and the DECLARED SEQUENCES' (TRAP_MODEL.md, Phase 16). Reported rather than raised on, for
+    # the map's reason: harness._vet_io_sequences_are_servable refuses a read past the end of one.
+    out_regs["io_seq_spent"] = _LIB.osh_io_seq_spent()        # reads past the end of a declared list
+    out_regs["io_seq_spent_addr"] = _LIB.osh_io_seq_spent_addr()   # ...the first such address
+    out_regs["io_seq_spent_index"] = _LIB.osh_io_seq_spent_index() # ...and which read it was
+    out_regs["io_seq_declared"] = _LIB.osh_io_seq_count()     # the table's size, as a cross-check
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
     # ...and the ordered (kind, value) stream of every OTHER off-image call the model serves. Same

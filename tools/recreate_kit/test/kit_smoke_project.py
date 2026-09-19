@@ -327,13 +327,48 @@ _IO_STORE_AND_VERIFY_CODE = (
     + struct.pack(">Bb", _BNE_SHORT, -(_IO_STORE_AND_VERIFY_BYTES + 2))       # bne.s .st
     + struct.pack(">H", 0x4E75))                                             # rts
 
+# ---- Phase 16's routines: a LIST one address yields, one byte per read ----
+# The shape neither of the two models above can describe: a POLL LOOP, whose two successive reads
+# must DIFFER for the run to terminate at all. This is the FDC's status register — the address
+# TRAP_MODEL.md names as Phase 7's non-goal and Phase 15's stated limit — read until its busy bit
+# clears, which is `fdc_wait_irq`'s own shape in every ST program that touches a floppy.
+#
+# Declared as a per-run CONSTANT it cannot run: `0x00` spins to the instruction cap and `0x01` exits
+# on the first read, so a case would be measuring one read where the machine made two. A list of
+# `[busy, ready]` is exactly what the run needs, and nothing else can supply it.
+FDC_STATUS = 0xFF8604
+FDC_BUSY_BIT = 0                      # bit 0 of the status byte: the controller is still working
+_BTST_IMM_D1 = 0x0801                 # btst #<n>,d1
+_BEQ_SHORT = 0x67
+_FDC_POLL_BYTES = 12                  # the read (6) and the `btst` (4), plus this opcode word (2)
+
+_IO_POLL_UNTIL_READY_CODE = (
+    struct.pack(">HI", 0x1239, FDC_STATUS)                       # .again: move.b $ff8604.l,d1
+    + struct.pack(">HH", _BTST_IMM_D1, FDC_BUSY_BIT)             # btst #0,d1
+    + struct.pack(">Bb", _BEQ_SHORT, -_FDC_POLL_BYTES)           # beq.s .again
+    + struct.pack(">H", 0x4E75))                                 # rts
+
+# ...and the same demand at a Phase-7 NAMED SLOT, which is what says the ONE DOOR really routes a
+# list to whichever model owns the address. TOS 1.02's ACIA handler ($fc29ce) asks the MFP after
+# every pass whether either 6850 still wants service, and GPIP bit 4 is ACTIVE LOW — so a two-pass
+# entry reads $fffa01 ASSERTED and then IDLE. The loop body here is the question alone; what the
+# ROM's own handler does between the two reads is two `jsr`s through RAM vectors.
+ACIA_LINE_BIT = 4                     # GPIP bit 4: either 6850 is asserting, active low
+_GPIP_POLL_BYTES = 12
+
+_HW_POLL_UNTIL_IDLE_CODE = (
+    struct.pack(">HI", 0x1239, MFP_GPIP)                         # .again: move.b $fffa01.l,d1
+    + struct.pack(">HH", _BTST_IMM_D1, ACIA_LINE_BIT)            # btst #4,d1
+    + struct.pack(">Bb", _BEQ_SHORT, -_GPIP_POLL_BYTES)          # beq.s .again
+    + struct.pack(">H", 0x4E75))                                 # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
              _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
              _EVENT_MALLOC_CODE, _PTERM_CODE, _STAGED_FILE_CODE,
              _IO_READ_CODE, _IO_READ_PAIR_CODE, _IO_WORD_READ_CODE, _IO_WRITE_THEN_READ_CODE,
-             _IO_STORE_AND_VERIFY_CODE)
+             _IO_STORE_AND_VERIFY_CODE, _IO_POLL_UNTIL_READY_CODE, _HW_POLL_UNTIL_IDLE_CODE)
 
 
 def _entries():
@@ -351,7 +386,7 @@ def _entries():
  ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
  EVENT_MALLOC_ENTRY, PTERM_ENTRY, STAGED_FILE_ENTRY,
  IO_READ_ENTRY, IO_READ_PAIR_ENTRY, IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY,
- IO_STORE_AND_VERIFY_ENTRY) = _entries()
+ IO_STORE_AND_VERIFY_ENTRY, IO_POLL_UNTIL_READY_ENTRY, HW_POLL_UNTIL_IDLE_ENTRY) = _entries()
 
 # The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
 PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET

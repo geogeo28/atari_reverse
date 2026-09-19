@@ -283,20 +283,28 @@ candidate starts accessing one of them, and each distinct waiver is recorded in
 `harness.HW_WAIVERS`. The whole contract, including the read-modify-write residual and why the
 default is ON, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 10".
 
-The **DECLARED I/O MAP** ships in the same two files, and is the same group's last four rows:
+The **DECLARED I/O MAP** ships in the same two files, and is the rest of the same group:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
 | `io_read8` / `io_read16` / `io_read32` | `uint8_t(uint32_t)` / `uint16_t(uint32_t)` / `uint32_t(uint32_t)` | what a reconstruction calls where the original reads an I/O byte the CASE declares by address — one call per instruction, at the instruction's own width |
 | `g_io_reset` | `void(const uint32_t *addrs, const uint8_t *values, const uint8_t *writeback, uint32_t n)` | install the case's map (`writeback` = os.h's `OS_IO_WRITE_THROUGH` per address) + clear the ledger, before each candidate run |
 | `g_io_seed_count` / `g_io_log_count` / `g_io_log_addrs` / `g_io_log_widths` / `g_io_log_vals` | | the map's size, and the ordered SERVED-read stream: one `(address, width, value)` per read |
-| `g_io_writeback_count` | `uint32_t(void)` | how many installed entries the case marked `OS_IO_WRITE_THROUGH` — the one surface that says the candidate built the writeback COLUMN and not just the addresses, and the NEWEST name in the probed group, so an `.so` predating `g_io_reset`'s fourth argument fails the probe instead of being called with it |
+| `g_io_writeback_count` | `uint32_t(void)` | how many installed entries the case marked `OS_IO_WRITE_THROUGH` — the one surface that says the candidate built the writeback COLUMN and not just the addresses (it was the NEWEST name in the probed group when `g_io_reset` grew its fourth argument) |
+| `g_io_seq_reset` | `void(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths, const uint8_t *pool, uint32_t n, uint32_t pool_len)` | install the case's DECLARED SEQUENCES (Phase 16) and rewind every cursor, before each candidate run. The wire form is a flat byte POOL plus one `(address, offset, length)` row per list, because a C ABI has no ragged arrays |
+| `g_io_seq_count` | `uint32_t(void)` | rows `os.h`'s rule accepted — compared against the oracle's, exactly as `g_io_seed_count` is |
+| `g_io_seq_spent` / `g_io_seq_spent_addr` / `g_io_seq_spent_index` | `uint32_t(void)` | this run's reads PAST THE END of a declared list, and the first one's address and read index — the candidate's mirror of the oracle's `osh_io_seq_spent*`, and what makes `harness.refusal_hints()` name the read rather than offer the shape. `g_io_seq_spent` is the NEWEST name in the probed group, so an `.so` predating it fails the probe instead of being driven as though it reported one |
+| `hw_poll8` / `io_poll8` | `int(uint32_t addr, uint8_t *seen)` | ONE ITERATION of a poll loop at either door: the same read as `hw_read8`/`io_read8`, plus whether the model could still serve it (1 = go round again, 0 = refused). A refusal hands this shore `0`, which most poll loops read as "still busy" — so a core that spins on a status bit polls rather than reads, and the loop ends where the case's declaration runs out instead of hanging the worker (`sched.h`'s `sched_poll16` contract, at this door) |
 
 The named set above is one `os.h` slot per address, which is the right shape for a game and a
 bottleneck for an operating system — TOS's BIOS and XBIOS touch most of the machine. So a case may
 declare ANY byte of the I/O page the named models do not own:
 `harness.differential(..., io_seed={0xff8260: 0x02})`, served on every read of it, ledgered, and
-compared. A wide read is N DECLARED BYTES and one entry, so declaring both halves of a palette word
+compared. A declaration may also be a **LIST** — `io_seed={0xfffa01: [0x00, 0xff]}` — for a register
+whose successive reads must DIFFER before the run can proceed: the Nth read is served the Nth byte,
+a read past the end is a refusal on both shores, and the list may be declared on a Phase-7 NAMED
+SLOT too ([`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 16"). A wide read is N DECLARED BYTES and one
+entry, so declaring both halves of a palette word
 is served where Phase 7 would have had to refuse. An UNDECLARED byte is unchanged — the silent `0`
 it has always been, counted, and refused in ROM mode.
 

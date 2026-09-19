@@ -96,10 +96,20 @@ def test_the_probed_list_is_what_a_current_build_really_exports():
         f"those symbols existed")
 
 
+# The name that dates a CURRENT build — the youngest symbol on the list, which is the only one a
+# stale `.so` can be counted on to lack. It moves with every change that adds a surface or an
+# argument, and the test below is what makes moving it a decision rather than an omission.
+NEWEST_SYMBOL = "g_io_seq_spent"
+
+
 def test_the_newest_symbol_really_is_the_one_that_dates_the_build():
-    """`g_io_writeback_count` is the name that separates a candidate holding the write-through
-    COLUMN from one whose `g_io_reset` takes three arguments. Pinned as a named fact rather than
-    left implicit in the list's order, because the list's order is a comment and this is a test."""
-    assert "g_io_writeback_count" in harness._HW_LEDGER_ABI
-    assert "g_io_writeback_count" in _declared_surface()
-    assert "g_io_writeback_count" in _exported_symbols()
+    """`g_io_seq_spent` is the name that separates a candidate REPORTING where it over-read a
+    declared sequence from one whose over-read the harness can only report as a bare refusal count
+    (`harness._seq_refusal_hint`). Pinned as a named fact rather than left implicit in the list's
+    order, because the list's order is a comment and this is a test. (`g_io_writeback_count` held
+    this place for the write-through column and `g_io_seq_reset` for the sequence table itself; both
+    are still probed, and what makes the probe honest is that the YOUNGEST name is on it.)"""
+    assert NEWEST_SYMBOL in harness._HW_LEDGER_ABI
+    assert NEWEST_SYMBOL in _declared_surface()
+    assert NEWEST_SYMBOL in _exported_symbols()
+    assert {"g_io_writeback_count", "g_io_seq_reset"} <= set(harness._HW_LEDGER_ABI)

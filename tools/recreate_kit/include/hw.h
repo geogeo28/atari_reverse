@@ -90,6 +90,35 @@ uint8_t  io_read8(uint32_t addr);
 uint16_t io_read16(uint32_t addr);
 uint32_t io_read32(uint32_t addr);
 
+/* ---- POLLING one of those addresses: the read, plus whether the model could still answer it -----
+ *
+ * `hw_poll8` reads a NAMED SLOT and `io_poll8` a declared I/O byte, each exactly as its `read`
+ * neighbour above does — same ledger entry, same sequence cursor, same refusal — and each hands the
+ * byte back through `seen` and returns whether THAT read was SERVED: 1 to go round again, 0 for a
+ * read the model refused. `sched.h`'s `sched_poll16`/`sched_poll32` have the same iterator contract
+ * and exist for the same reason.
+ *
+ * THEY EXIST BECAUSE A REFUSAL HANDS THIS SHORE 0, AND 0 IS "STILL BUSY" TO MOST POLL LOOPS. A core
+ * that spins on a status bit until it clears, or on the MFP's GPIP until a line goes idle, reads a
+ * refused byte as "not yet" and spins for ever — so an under-declared case would HANG the pytest
+ * worker while the oracle came back with its own refusal, and a hung suite decides nothing. The
+ * loop's own condition is what ends it:
+ *
+ *     uint8_t status;
+ *     while (io_poll8(FDC_STATUS, &status) && !(status & FDC_BUSY))
+ *         ;                          // the model refused, or the bit cleared; the case is already void
+ *
+ * A CAP WOULD BE THE WRONG SHAPE for it. A bound ("stop after N reads") is a number nothing derives
+ * and a behaviour the target build does not have; this is the model's own answer, asked once per
+ * read, so the loop ends exactly when the case's declaration runs out and the differential reports
+ * the refusal rather than the timeout.
+ *
+ * ON TARGET the build supplies each as the plain volatile read of its width, returning 1 — there is
+ * no model to refuse, so the loop is the machine's own, exactly as it is for `hw_read8` above.
+ */
+int hw_poll8(uint32_t addr, uint8_t *seen);
+int io_poll8(uint32_t addr, uint8_t *seen);
+
 /* ---- what the harness drives (see README.md, "What the candidate .so must export") ---- */
 void            g_hw_reset(const uint8_t *seed, uint32_t known);  /* clear BOTH ledgers, install the seed */
 /* The ordered READ stream — every hw_read8 of a modeled address, in the order it happened, refused
@@ -115,6 +144,34 @@ uint32_t        g_io_log_count(void);   /* served reads logged this run */
 const uint32_t *g_io_log_addrs(void);   /* ...their 24-bit addresses, in order */
 const uint8_t  *g_io_log_widths(void);  /* ...each read's width in bytes (1, 2 or 4) */
 const uint32_t *g_io_log_vals(void);    /* ...and the value it was served */
+
+/* ...and the DECLARED SEQUENCE's (TRAP_MODEL.md, "Phase 16"). A case declares a LIST for an address
+ * and the Nth read of it is served the Nth byte — which is what makes a routine that drains a packet
+ * out of one port, or loops until a status line changes, runnable at all. ONE table covers both
+ * models' addresses, so a Phase-7 named slot's list is installed here too and `hw_read8` serves it;
+ * which LEDGER the read lands in is still the owning model's.
+ *
+ * The wire form is a flat byte POOL plus one (address, offset, length) row per sequence, because a
+ * C ABI has no ragged arrays; `os_io_seq_install` is the shared rule that decodes it. A read PAST
+ * THE END of a declared list is a refusal on both shores — never a sticky last byte, never a 0.
+ *
+ * `g_io_seq_spent` is the NEWEST name in `harness._HW_LEDGER_ABI` and is what dates a build: a .so
+ * predating it exports every other name there, so without a new one the probe would pass and the
+ * harness would then drive a candidate whose over-read it could only report as a bare refusal
+ * count. (`g_io_seq_reset` held that place for the table itself and is still probed.) */
+void            g_io_seq_reset(const uint32_t *addrs, const uint32_t *offsets,
+                               const uint32_t *lengths, const uint8_t *pool,
+                               uint32_t n, uint32_t pool_len);
+uint32_t        g_io_seq_count(void);   /* rows os.h's rule accepted — compared to the oracle's */
+/* ...and this run's reads PAST THE END of one, the candidate's symmetric surface to the oracle's
+ * `osh_io_seq_spent{,_addr,_index}`. Such a read charges the same shared `os_refused()` every other
+ * candidate refusal does, so without these the harness could only report "the candidate refused N
+ * calls" and send the reader to hunt for a missing Bconstat gate; with them `harness.refusal_hints`
+ * names the ADDRESS and the READ INDEX as a fact rather than as a guess. Cleared by
+ * `g_io_seq_reset`, so they describe this run alone. */
+uint32_t        g_io_seq_spent(void);        /* reads past the end of a declared list, this run */
+uint32_t        g_io_seq_spent_addr(void);   /* ...the address of the FIRST of them */
+uint32_t        g_io_seq_spent_index(void);  /* ...and which read of it ran off the end */
 
 /* ---- THE HARDWARE WRITE MODEL (TRAP_MODEL.md, "Phase 10") ------------------------------------
  *

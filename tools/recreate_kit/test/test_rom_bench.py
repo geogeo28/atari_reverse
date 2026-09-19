@@ -543,11 +543,24 @@ def _fake_emu(calls, bench_reads=None):
                 "sched_read_sites": sites, "sched_read_arrivals": bench_reads or reads}
 
     def seed_split(hw_seed, io_seed):
-        """The real routing's contract, over a named set of one: `(named half, the rest)`."""
-        named = {a: v for a, v in (io_seed or {}).items() if a == FAKE_NAMED_ADDRESS}
-        if not named:
-            return hw_seed, io_seed
-        return {**(hw_seed or {}), **named}, {a: v for a, v in io_seed.items() if a not in named}
+        """The real routing's contract, over a named set of one: `(named half, the rest, the lists)`.
+
+        A DECLARED SEQUENCE leaves for the third table whatever model names its address, so it is
+        NOT in the named half — which is what `_bench_io_seed` keeps where it drops a named CONSTANT,
+        and the mirror has to route the same way or the case under test is not the one being run.
+
+        The list test is spelled out rather than delegated to `emu.is_sequence`: this file binds no
+        project, and importing the real `emu` needs one bound and the oracle `.so` built. What that
+        costs is the `write_through` half of the real predicate, which no row here declares.
+        """
+        sequences = {a: tuple(v) for a, v in (io_seed or {}).items() if isinstance(v, (list, tuple))}
+        named = {a: v for a, v in (io_seed or {}).items()
+                 if a == FAKE_NAMED_ADDRESS and a not in sequences}
+        if not named and not sequences:
+            return hw_seed, io_seed, sequences
+        return ({**(hw_seed or {}), **named},
+                {a: v for a, v in io_seed.items() if a not in named and a not in sequences},
+                sequences)
 
     return SimpleNamespace(run=run, run_bench=run_bench, seed_split=seed_split,
                            STACK_TOP=FAKE_STACK_TOP, SENTINEL=2,
@@ -621,6 +634,29 @@ def test_only_the_original_is_handed_the_part_of_the_map_the_named_set_owns(monk
     whole = {**FAKE_IO_SEED, FAKE_NAMED_ADDRESS: 0x80}
     _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), io_seed=whole, returns=1)
     assert calls == [("emu.run", whole, None), ("emu.run_bench", FAKE_IO_SEED, None)]
+
+
+def test_both_doors_are_handed_a_declared_sequence_even_on_a_named_slot(monkeypatch):
+    """...and a DECLARED SEQUENCE (Phase 16) goes to BOTH doors, where a named CONSTANT goes to one.
+
+    The asymmetry is what a run OWNS of each. A constant is a byte installed between runs, which the
+    original's `emu.run` has already armed and which a bench run must not disturb. A sequence's run
+    state is a CURSOR, rewound at the top of every run by whichever door entered it — so a table left
+    where the previous run stopped reading would price the core against a machine that had already
+    answered half the list. `run_bench` therefore installs it, and it does so for a NAMED slot too,
+    which is the one place this model's routing differs from the constant map's.
+
+    Without this, a Tier 3 row over a case whose core drains a port would measure a path its own
+    differential never ran.
+    """
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _fake_emu(calls))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    sequenced = {**FAKE_IO_SEED, FAKE_NAMED_ADDRESS: [0xEF, 0xFF]}
+    _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), io_seed=sequenced, returns=1)
+    assert calls == [("emu.run", sequenced, None), ("emu.run_bench", sequenced, None)], (
+        "the bench door was handed a different declaration from the original's, so a row over a "
+        "sequenced case would price a machine the differential never ran")
 
 
 # ---- a row over a routine that WAITS: one list, both doors, and the count that separates them ----

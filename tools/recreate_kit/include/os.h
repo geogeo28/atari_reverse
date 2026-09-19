@@ -469,9 +469,10 @@ static inline void os_vsync(void) { g_os_event(OS_EVENT_VSYNC, 0); }
  *
  * DELIBERATELY NOT HERE: the FDC/DMA registers at $ff8604+. Those answer a per-ACCESS SEQUENCE (a
  * status byte that must change between two reads of the same address for a poll loop to terminate,
- * a DMA counter whose successive reads differ), and a per-run constant cannot express one. Phase 7
- * does not model them; TRAP_MODEL.md says so in as many words rather than leaving the omission to
- * be inferred.
+ * a DMA counter whose successive reads differ), and a per-run constant cannot express one. A case
+ * that knows how many reads its run makes may declare a LIST for such an address instead (the
+ * DECLARED SEQUENCE below, TRAP_MODEL.md "Phase 16"); what stays outside every model here is the
+ * TRANSACTION — where a command the run writes decides what the next read means.
  *
  * Defined here, not in shim.c, for psg.h's reason: BOTH sides need them — shim.c decodes the
  * addresses, test/hw_model_probe.c plants 68000 code that reaches them, and a reconstruction calls
@@ -512,9 +513,11 @@ static inline void os_vsync(void) { g_os_event(OS_EVENT_VSYNC, 0); }
  * That refusal is the honest answer rather than a limitation worked around: a run needing two
  * different bytes out of this port is two runs, each declaring the byte the machine held then.
  *
- * WHAT IT IS STILL NOT is a SEQUENCE model. A handler that drains a whole IKBD packet inside one
- * entry — reading the port until the controller stops asserting — needs a declared LIST of bytes,
- * one per read, and nothing here has one. TRAP_MODEL.md, "Still unmodeled", says so. */
+ * A HANDLER THAT DRAINS A WHOLE PACKET inside one entry needs a declared LIST, one byte per read,
+ * and that is the DECLARED SEQUENCE below (TRAP_MODEL.md, "Phase 16"). It is not a second slot: a
+ * list is consulted from inside this model's own read path, so the slot keeps its ledger and its
+ * rules while the list answers its reads, and the volatile refusal above becomes "at most as many
+ * reads as the case listed". A case that declares no list meets every rule here unchanged. */
 #define OS_HW_ACIA_DATA    0xfffc02u
 
 /* Both sides index the modeled set by SLOT rather than by address — the seed is an array, the
@@ -776,11 +779,12 @@ static inline uint32_t os_hw_slots_touched(uint32_t addr, uint32_t n) {
  *
  * IT IS PHASE 7'S SEMANTICS, GENERALISED IN THE ADDRESS AND NOWHERE ELSE. A declared byte is a
  * per-run CONSTANT: every read of it is served the same byte, which is what a STATIC slot already
- * meant. There is no volatile flag and no re-read rule, because a value that must CHANGE between
- * two reads of one address is not a constant at all — an FDC status poll, a DMA counter advancing
- * — and modelling one is the SCHEDULED WRITE model's job (Phase 8), which is about a value that
- * changes mid-run by construction. An undeclared byte is unchanged: the silent 0 an off-image read
- * has always answered, counted, and refused in ROM mode by harness._vet_rom_io_reads_are_modelled.
+ * meant. There is no volatile flag and no re-read rule here, because a value that must CHANGE
+ * between two reads of one address is not a constant at all — an FDC status poll, a DMA counter
+ * advancing — and what describes one is a DECLARED LIST (the sequence model below, TRAP_MODEL.md
+ * "Phase 16"), consulted by this model's own read path before the map. An undeclared byte is
+ * unchanged: the silent 0 an off-image read has always answered, counted, and refused in ROM mode
+ * by harness._vet_rom_io_reads_are_modelled.
  *
  * ...WITH ONE OPT-IN PER ADDRESS: THE WRITE-THROUGH BYTE. A declaration marked OS_IO_WRITE_THROUGH
  * says the register LATCHES what the run stores to it and reads that back unchanged, so a store
@@ -859,15 +863,33 @@ static inline int os_io_is_page(uint32_t bus_addr) {
     return (bus_addr & ~(uint32_t)OS_BUS_ADDR_MASK) == 0 && bus_addr >= OS_HW_IO_PAGE;
 }
 
-/* May a case DECLARE `bus_addr` through `io_seed`? The three exclusions in the header above, in one
- * predicate both sides read — the oracle's installer, the candidate's, and emu.py's encoder (which
- * mirrors it in Python only to say WHICH rule a rejected address broke). */
-static inline int os_io_seedable(uint32_t bus_addr) {
+/* May a case declare a SEQUENCE for `bus_addr` (TRAP_MODEL.md, "Phase 16")? Every byte of the I/O
+ * page but the YM2149's block.
+ *
+ * IT LIVES HERE, ahead of the sequence model's own section, because `os_io_seedable` below is
+ * defined in terms of it: the two rules differ by EXACTLY the Phase-7 named slots, and spelling the
+ * shared exclusions twice is how one of them comes to admit an address the other does not.
+ *
+ * IT IS DELIBERATELY WIDER THAN `os_io_seedable`, by those slots: they are excluded from the
+ * CONSTANT map because that map has neither their rules nor their ledger, and a sequence has no such
+ * conflict — it is consulted from inside Phase 7's own read path, so the slot keeps both. The
+ * YM2149's block is excluded for `os_io_seedable`'s reason, which a list does not change: Phase 6's
+ * file is keyed by REGISTER NUMBER and what a read of $ff8800 answers depends on what the run last
+ * latched there, so an address-keyed list could not say which register it meant.
+ */
+static inline int os_io_seq_seedable(uint32_t bus_addr) {
     if (!os_io_is_page(bus_addr))
         return 0;
-    if (os_hw_slot(bus_addr) >= 0)
-        return 0;                      /* Phase 7 names it, with rules this model does not have */
     return !(bus_addr >= OS_PSG_PORT_SELECT && bus_addr < OS_PSG_BLOCK_END);   /* Phase 6's chip */
+}
+
+/* May a case DECLARE `bus_addr` through `io_seed`? The three exclusions in the header above, in one
+ * predicate both sides read — the oracle's installer, the candidate's, and emu.py's encoder (which
+ * mirrors it in Python only to say WHICH rule a rejected address broke). Two of the three are the
+ * sequence rule's above; what this one adds is the third. */
+static inline int os_io_seedable(uint32_t bus_addr) {
+    /* Phase 7 names the slot, with rules this model does not have. */
+    return os_io_seq_seedable(bus_addr) && os_hw_slot(bus_addr) < 0;
 }
 
 /* Where `addr` sits in a declared map of `n` entries, or -1. A LINEAR scan, deliberately: the map
@@ -957,6 +979,235 @@ static inline void os_io_store(const uint32_t *addrs, uint32_t n, const uint8_t 
         }
         live[entry] = byte;
     }
+}
+
+/* ---- the DECLARED SEQUENCE (TRAP_MODEL.md, "Phase 16") -----------------------------------------
+ * The two models above answer a byte the machine held ON ENTRY: Phase 7 a named slot's, Phase 15
+ * any address's, and both of them serve that one byte to EVERY read of it. That describes a
+ * configuration register exactly and a TRANSFER register not at all. Three shapes in this workspace
+ * need successive reads of ONE address to DIFFER before the run can proceed:
+ *
+ *   - the IKBD/MIDI 6850's DATA port ($fffc02). Every read POPS the receive register, so a service
+ *     routine draining a packet reads it once per byte and Phase 7's VOLATILE rule refuses the
+ *     second read outright — correctly, because one constant cannot be two bytes;
+ *   - the MFP's GPIP bit 4 in TOS 1.02's ACIA handler ($fc29ce). Its loop re-asks the MFP whether
+ *     either 6850 still wants service, so a two-pass entry reads $fffa01 ASSERTED and then IDLE. A
+ *     constant declared low never terminates and one declared high describes one pass only;
+ *   - the FDC's status register ($ff8604), which Phase 7 names as its NON-GOAL and Phase 15's limit
+ *     paragraph names again: a poll ends when the byte changes.
+ *
+ * So a case declares a LIST, and the Nth read of the address is served the Nth byte of it. That is
+ * the whole model. It is not a new claim about the machine — it is the SAME claim the other two
+ * make (the case says what the chip yielded, the model makes the claim explicit and shared), made
+ * once per read instead of once per run.
+ *
+ * ONE TABLE, BOTH MODELS' ADDRESSES. A sequence may be declared on ANY I/O byte, a Phase-7 NAMED
+ * SLOT included, and it is consulted by BOTH read paths before either model's own rule. The
+ * alternative — a per-slot list for Phase 7 and a per-address list for Phase 15 — is the same rule
+ * written twice, which is the drift this header exists to prevent. What stays SEPARATE is the
+ * LEDGER: the sequence decides what byte is served, and the model that OWNS the address decides
+ * where the read is recorded and what a store to it means. A named slot's sequenced read lands in
+ * Phase 7's slot ledger under Phase 7's rules; every other one lands in Phase 15's address ledger
+ * under Phase 15's.
+ *
+ * WHAT A SEQUENCE REPLACES, per owning model:
+ *   - Phase 7's VOLATILE re-read refusal becomes "at most `length` reads". The refusal existed
+ *     because one constant cannot answer two reads; a list of N answers N, and the N+1th is the
+ *     EXHAUSTION refusal below. A STATIC slot gains the same bound, which is the point: a case
+ *     declaring a list has said how many reads it is describing;
+ *   - Phase 15's "every read is served the same byte" becomes the same bound, for the same reason.
+ *
+ * A READ PAST THE END IS A REFUSAL ON BOTH SHORES, never a sticky last byte and never a 0. Both
+ * would be a fabrication with the case's own declaration standing behind it, which is worse than
+ * the bare fabricated 0 this family of models exists to close: the source would say the byte was
+ * declared. The oracle counts it (naming the address and the READ INDEX, so the message says how
+ * many the case described and which read ran off the end) and `harness` refuses the differential;
+ * the candidate charges `os_refused()`, which `_vet_no_os_refusal` already throws the case away on.
+ *
+ * A WIDE READ is served if and only if EVERY byte it covers can be served at its current index,
+ * each of them advancing by one — one bus access reads a 16-bit register once, so each covered
+ * sequence takes one entry. That is Phase 15's all-or-nothing rule with "declared" generalised to
+ * "has a byte left", and the span is resolved BEFORE any cursor moves, so a half-spent access
+ * advances nothing. It does NOT widen Phase 7: a wide read taking in a NAMED slot is that model's
+ * own refusal whether the slot carries a sequence or a byte, because the neighbouring MFP/shifter
+ * register the access also covers is still one this model was never told about.
+ *
+ * A SEQUENCE IS NOT WRITE-THROUGH, and declaring both is refused in `emu.py` before either shore is
+ * seeded. The two say contradictory things about what the next read answers — the list says "the
+ * byte I named", the mark says "whatever the run stored" — and which won would be an order rather
+ * than the case's meaning. What a STORE does to a sequenced address is the owning model's rule
+ * unchanged: Phase 7's staleness mask for a named slot (its split-register exemption included, so
+ * an IKBD send still composes with a receive), and `os_io_seq_store` below for every other address,
+ * which feeds the same staleness tally Phase 15's constants do.
+ */
+/* How many ADDRESSES one run may declare a sequence for, and how many bytes they may hold between
+ * them. Sized for the demand rather than generously: the ACIA handler's two-pass case declares one
+ * address with two bytes, an IKBD packet is eight, and the floppy's status pair is two addresses of
+ * two. `emu.py` reads both from the .so (`osh_io_seq_max`/`osh_io_seq_pool_max`) rather than
+ * mirroring them, for OS_IO_SEED_MAX's reason: a second copy in Python is a second place to change.
+ */
+#define OS_IO_SEQ_MAX      8
+#define OS_IO_SEQ_POOL_MAX 256
+
+/* Which addresses a case may declare a sequence for is `os_io_seq_seedable`, which sits with
+ * `os_io_seedable` above rather than here: the two rules differ by exactly the Phase-7 named slots,
+ * so the narrower one is defined in terms of the wider and the shared exclusions have one body.
+ *
+ * INSTALL A RUN'S DECLARED SEQUENCES, and return how many actually landed.
+ *
+ * The wire form is a FLAT BYTE POOL plus one (address, offset, length) row per sequence, because
+ * both shores receive it across a C ABI that has no ragged arrays. The pool is copied VERBATIM and
+ * the offsets are kept as the caller spelled them, so a row the rule rejects leaves its bytes
+ * unreferenced in the pool rather than shifting every following row's offset — which is what keeps
+ * this one pass and keeps a rejected row from silently re-pointing its neighbour.
+ *
+ * Shared verbatim by shim.c's `osh_io_seq` and src/hw.c's `g_io_seq_reset`, for
+ * `os_io_install_seed`'s reason: two copies are two places the admissibility rule can be changed in
+ * one, and the failure that produces is the oracle serving a byte the candidate refuses.
+ *
+ * A row the rule rejects, a duplicate, an empty one, one whose bytes run off the pool, or one past
+ * the cap is NOT installed, and a pool larger than `OS_IO_SEQ_POOL_MAX` installs NOTHING — both
+ * callers report the shortfall (emu.py raises, the candidate charges `os_refused`), so a case served
+ * fewer sequences than it wrote is loud rather than quietly short.
+ */
+static inline uint32_t os_io_seq_install(uint32_t *dst_addrs, uint32_t *dst_offsets,
+                                         uint32_t *dst_lengths, uint8_t *dst_pool,
+                                         const uint32_t *addrs, const uint32_t *offsets,
+                                         const uint32_t *lengths, const uint8_t *pool,
+                                         uint32_t n, uint32_t pool_len) {
+    uint32_t installed = 0;
+
+    if (pool_len > OS_IO_SEQ_POOL_MAX)
+        return 0;
+    for (uint32_t i = 0; i < pool_len; i++)
+        dst_pool[i] = pool[i];
+    for (uint32_t i = 0; i < n && installed < OS_IO_SEQ_MAX; i++) {
+        if (!os_io_seq_seedable(addrs[i]) || lengths[i] == 0
+            || offsets[i] + lengths[i] > pool_len
+            || os_io_find(dst_addrs, installed, addrs[i]) >= 0)
+            continue;
+        dst_addrs[installed] = addrs[i];
+        dst_offsets[installed] = offsets[i];
+        dst_lengths[installed] = lengths[i];
+        installed++;
+    }
+    return installed;
+}
+
+/* WHERE EACH SEQUENCE STANDS AT THE TOP OF A RUN: at its first byte, with nothing stored to it.
+ *
+ * The table itself is the CASE's and survives a run, exactly as the constant map is; what a run owns
+ * is how far it has read and what it has written. Without this a second run of one declaration would
+ * start where the first stopped — and under `pytest -n auto` which run that was is not even stable.
+ *
+ * `written` is the staleness column, or NULL for a caller that keeps none — `os_io_store`'s
+ * convention and its reason: only the ORACLE's tally feeds a refusal, so the candidate carries no
+ * second array for something nothing on its side reads.
+ */
+static inline void os_io_seq_enter_run(uint32_t *cursors, uint8_t *written, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) {
+        cursors[i] = 0;
+        if (written)
+            written[i] = 0;
+    }
+}
+
+/* HAS SEQUENCE `entry` A BYTE LEFT FOR THIS RUN? One predicate rather than a `cursor >= length`
+ * spelled at each of the three places that ask — the serve below, and each shore's wide-read span
+ * resolution — because a sequence's END is the model's whole refusal and an off-by-one in one
+ * spelling would serve a byte the other refuses. */
+static inline int os_io_seq_has_next(const uint32_t *lengths, const uint32_t *cursors, int entry) {
+    return cursors[entry] < lengths[entry];
+}
+
+/* THE NEXT BYTE OF SEQUENCE `entry`, or 0 for a sequence this run has already read to the end.
+ *
+ * The cursor advances only when a byte is served, so the index a refusal reports is the read that
+ * ran off the end rather than one past it. */
+static inline int os_io_seq_next(const uint32_t *offsets, const uint32_t *lengths,
+                                 uint32_t *cursors, const uint8_t *pool, int entry,
+                                 uint8_t *out) {
+    if (!os_io_seq_has_next(lengths, cursors, entry))
+        return 0;
+    *out = pool[offsets[entry] + cursors[entry]];
+    cursors[entry]++;
+    return 1;
+}
+
+/* APPLY a `width`-byte store at `addr` to the declared sequences — Phase 15's staleness rule, at a
+ * sequenced address.
+ *
+ * A store the model drops invalidates a LIST exactly as it invalidates a constant: the case
+ * declared what successive reads of the register the machine held on ENTRY would yield, and an
+ * instruction of this run has replaced that register. So the address is noted, and the next read of
+ * it feeds the same staleness tally `os_io_store` feeds.
+ *
+ * A PHASE-7 NAMED SLOT IS SKIPPED, and that is the routing rule rather than an exemption: Phase 7
+ * owns what a store to one of its addresses means, including the split-register case where a write
+ * lands in the transmit register and a read pops the receive one (`os_hw_split_slots`). Noting it
+ * here as well would count one store against two tallies and refuse an IKBD send composed with a
+ * receive — the shape that exemption exists for.
+ */
+static inline void os_io_seq_store(const uint32_t *addrs, uint32_t n, uint8_t *written,
+                                   uint32_t addr, uint32_t width) {
+    for (uint32_t i = 0; i < width; i++) {
+        int entry = os_io_find(addrs, n, addr + i);
+        if (entry < 0 || os_hw_slot(addr + i) >= 0)
+            continue;
+        written[entry] = 1;
+    }
+}
+
+/* ---- WHERE A WIDE READ'S BYTES COME FROM, resolved BEFORE any of them is served ----------------
+ *
+ * What `os_io_resolve_span` answers for an access of `width` bytes at `addr`: which model owns each
+ * byte, or which byte cannot be served and why.
+ */
+#define OS_IO_SPAN_SERVED     0   /* every byte has an answer: `seq[i]` or `entry[i]` says whose */
+#define OS_IO_SPAN_UNMODELED  1   /* ...byte `*at` is declared by nothing this model may serve */
+#define OS_IO_SPAN_SPENT      2   /* ...byte `*at`'s sequence was read to its end by this run */
+
+/* RESOLVE THE WHOLE SPAN OF A READ, one answer per byte, WITHOUT SERVING ANY OF IT — and without
+ * moving a cursor, which is the point: a wide read that cannot be served whole must advance nothing,
+ * or the two shores disagree about where every later read of the address stands.
+ *
+ * ONE BODY, BOTH SHORES. `oracle/shim.c`'s `io_serve` and `src/hw.c`'s `io_read` ask exactly this
+ * question and differ only in what they do with the answer (the oracle counts an unmodeled read and
+ * a spent list in its own tallies, the candidate charges `os_refused()`), so the rule itself is here
+ * for `os_io_install_seed`'s reason: two copies are two places it can be changed in one, and the
+ * failure that produces is one shore serving a byte the other refuses.
+ *
+ * `seq[i]` is byte i's row in the SEQUENCE table or -1, `entry[i]` its row in the CONSTANT map or
+ * -1, and exactly one of the two is set for every byte of a served span. `*at` names the byte a
+ * refusal is about — the caller's own message and tally need the address, which is `addr + *at`.
+ * Both out-arrays must hold `OS_HW_WRITE_WIDTH_32` entries, the widest access a 68000 makes.
+ *
+ * THE NAMED-SLOT EXCLUSION IS TESTED AFTER THE SEQUENCE FIND, and the order is not arbitrary: a
+ * Phase-7 slot can never be in the CONSTANT map (`os_io_seedable` excludes it) but the SEQUENCE
+ * table admits one deliberately, so only a sequenced byte can reach the test — and a span with no
+ * sequence in it therefore pays no `os_hw_slot` call it did not pay before. A slot's list belongs to
+ * `hw_read8` at every width; served here, a wide read would be served past Phase 7's own wide-read
+ * refusal, fabricating the neighbouring MFP/shifter register the access also covers.
+ */
+static inline int os_io_resolve_span(const uint32_t *seq_addrs, const uint32_t *seq_lengths,
+                                     const uint32_t *seq_cursors, uint32_t seq_n,
+                                     const uint32_t *map_addrs, uint32_t map_n,
+                                     uint32_t addr, uint32_t width,
+                                     int *seq, int *entry, uint32_t *at) {
+    for (uint32_t i = 0; i < width; i++) {
+        *at = i;                       /* meaningful only for the two refusals below */
+        seq[i] = os_io_find(seq_addrs, seq_n, addr + i);
+        entry[i] = seq[i] >= 0 ? -1 : os_io_find(map_addrs, map_n, addr + i);
+        if (seq[i] < 0 && entry[i] < 0)
+            return OS_IO_SPAN_UNMODELED;
+        if (seq[i] < 0)
+            continue;
+        if (os_hw_slot(addr + i) >= 0)
+            return OS_IO_SPAN_UNMODELED;
+        if (!os_io_seq_has_next(seq_lengths, seq_cursors, seq[i]))
+            return OS_IO_SPAN_SPENT;
+    }
+    return OS_IO_SPAN_SERVED;
 }
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------

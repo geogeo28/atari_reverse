@@ -83,7 +83,16 @@ _HW_LEDGER_ABI = ("g_hw_reset", "g_hw_log_count", "g_hw_log_slots", "g_hw_log_va
                   # needs a NEW name here for the same reason (test_candidate_abi.py pins the list
                   # against what src/hw.c actually exports, so the two cannot drift apart again).
                   "g_io_reset", "g_io_seed_count", "g_io_log_count", "g_io_log_addrs",
-                  "g_io_log_widths", "g_io_log_vals", "g_io_writeback_count")
+                  "g_io_log_widths", "g_io_log_vals", "g_io_writeback_count",
+                  # ...and the DECLARED SEQUENCE's (Phase 16), the same group again for the third
+                  # time: it ships in the same src/hw.c. `g_io_seq_reset` dated the build that first
+                  # held the table — a candidate predating it exports every name above, so without a
+                  # new name the probe would pass and the harness would drive a candidate whose
+                  # lists nothing had installed. `g_io_seq_spent` is now the NEWEST symbol here and
+                  # dates the build that reports WHERE it over-read (`_seq_refusal_hint`); without
+                  # it that hint would be a guess offered to every refused case.
+                  "g_io_seq_count", "g_io_seq_reset", "g_io_seq_spent_addr", "g_io_seq_spent_index",
+                  "g_io_seq_spent")
 _missing_hw_ledger = [sym for sym in _HW_LEDGER_ABI if not hasattr(_lib, sym)]
 _has_hw_ledger = not _missing_hw_ledger
 if _has_hw_ledger:
@@ -105,6 +114,11 @@ if _has_hw_ledger:
     _lib.g_io_log_addrs.restype = ctypes.POINTER(ctypes.c_uint32)
     _lib.g_io_log_widths.restype = ctypes.POINTER(ctypes.c_uint8)
     _lib.g_io_log_vals.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.g_io_seq_reset.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32),
+                                    ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint8),
+                                    ctypes.c_uint32, ctypes.c_uint32]
+    for _sym in ("g_io_seq_count", "g_io_seq_spent", "g_io_seq_spent_addr", "g_io_seq_spent_index"):
+        getattr(_lib, _sym).restype = ctypes.c_uint32
 
 # The scheduled-write surfaces (src/sched.c) are optional in exactly the same way and for the same
 # reason: a game with no busy-wait to model schedules nothing, and the ORACLE's own schedule is the
@@ -1168,17 +1182,44 @@ def _vet_no_os_refusal(entry):
         f"psg_seed={{reg: value}} for a PSG register the candidate reads back) so BOTH sides execute "
         f"the call; or a stop_pc checkpoint ended the oracle before a call the candidate still "
         f"makes. See tools/recreate_kit/TRAP_MODEL.md."
-        + _hw_refusal_hint() + _sched_refusal_hint())
+        + _hw_refusal_hint() + _seq_refusal_hint() + _sched_refusal_hint())
+
+
+def _seq_refusal_hint():
+    """...and the hint for a candidate that read PAST THE END of a declared SEQUENCE (Phase 16).
+
+    That read charges the same shared ``os_refused()`` every other candidate refusal does, so the
+    bare count above sends the reader to hunt for a missing ``Bconstat`` gate.
+
+    IT IS A FACT AND NOT A GUESS, which is what the candidate's own spent counters buy: the hint
+    fires only when this run really ran off the end of a list, and it names the ADDRESS and the READ
+    INDEX exactly as ``_vet_io_sequences_are_servable`` does for the oracle. It is the case where
+    ONLY the reconstruction over-reads — where by construction the oracle has nothing to say — so
+    without these counters there was nothing to name and the hint had to be offered to every refused
+    case that declared any list at all, which is noise on the many it does not explain.
+    """
+    if not _has_hw_ledger or not _lib.g_io_seq_spent():
+        return ""
+    return (f" AND THE CANDIDATE READ PAST THE END OF A DECLARED I/O SEQUENCE "
+            f"{_lib.g_io_seq_spent()} time(s), the first of them read {_lib.g_io_seq_spent_index()} "
+            f"of {_lib.g_io_seq_spent_addr():#x}. A list says what successive reads of an address "
+            f"yielded AND how many reads it describes, and the read after the last is refused "
+            f"rather than served the last byte again — so this is a reconstruction that reads the "
+            f"address more times than the case's own list allows, where the ORACLE's run stayed "
+            f"inside it. Lengthen the list (`io_seed={{{_lib.g_io_seq_spent_addr():#x}: [<byte>, "
+            f"…]}}`, one byte per read) or fix the loop (TRAP_MODEL.md, Phase 16).")
 
 
 def refusal_hints():
     """The model-refusal hints a "both sides refused" diagnostic should carry, as one string.
 
     PUBLIC for `arm_candidate`'s reason: a caller outside this module that arms the candidate itself
-    also has to DIAGNOSE a run where both sides refused, and the two hints belong together — a caller
-    that reached for one private name would print half the causes.
+    also has to DIAGNOSE a run where both sides refused, and the hints belong together — a caller
+    that reached for one private name would print some of the causes. Every hint
+    ``_vet_no_os_refusal`` appends belongs here, the SEQUENCE's included: each is silent unless this
+    run's own counters say it applies, so the composite costs a caller nothing it does not need.
     """
-    return _hw_refusal_hint() + _sched_refusal_hint()
+    return _hw_refusal_hint() + _seq_refusal_hint() + _sched_refusal_hint()
 
 
 def _vet_audio_capture_off(entry):
@@ -1219,12 +1260,13 @@ def _seed_candidate(reset, encode, seed, available):
     oracle stream.
 
     ``encode`` wraps the ORACLE's own encoder (``emu.psg_seed_bytes`` / ``emu.hw_seed_bytes`` /
-    ``emu.io_seed_entries``), so the two sides cannot disagree about what the case's dict means. It
-    returns ``(columns, trailing)``: the parallel arrays the candidate's reset takes, each as a
-    ``(ctypes element type, sequence)`` pair, and the scalar that follows them — a known-MASK for
-    the two byte-file models, an entry COUNT for the address-keyed map. Two shapes rather than one,
-    because the models really are two shapes; what is shared is the reset-then-install contract
-    above, which is the half a missing call would break silently.
+    ``emu.io_seed_entries`` / ``emu.io_seq_entries``), so the two sides cannot disagree about what
+    the case's dict means. It returns ``(columns, trailing)``: the parallel arrays the candidate's
+    reset takes, each as a ``(ctypes element type, sequence)`` pair, and a TUPLE of the scalars that
+    follow them — a known-MASK for the two byte-file models, an entry COUNT for the address-keyed
+    map, a row count AND a pool length for the sequence table. The models really are four shapes;
+    what is shared is the reset-then-install contract above, which is the half a missing call would
+    break silently.
 
     ``available`` is the optional-ABI flag: a candidate without the group is left alone here and
     refused later, by the vet that has the oracle's own traffic as its witness.
@@ -1232,14 +1274,14 @@ def _seed_candidate(reset, encode, seed, available):
     if not available:
         return
     columns, trailing = encode(seed)
-    reset(*[(ctype * len(values))(*values) for ctype, values in columns], trailing)
+    reset(*[(ctype * len(values))(*values) for ctype, values in columns], *trailing)
 
 
 def _byte_file_encoder(encode):
     """Adapt a ``(values, known-mask)`` encoder to ``_seed_candidate``'s ``(columns, trailing)``."""
     def encoded(seed):
         values, known = encode(seed)
-        return ((ctypes.c_uint8, values),), known
+        return ((ctypes.c_uint8, values),), (known,)
     return encoded
 
 
@@ -1251,7 +1293,20 @@ def _io_map_encoder(io_seed):
     """
     addrs, values, writeback = emu.io_seed_entries(io_seed)
     return ((ctypes.c_uint32, addrs), (ctypes.c_uint8, values),
-            (ctypes.c_uint8, writeback)), len(addrs)
+            (ctypes.c_uint8, writeback)), (len(addrs),)
+
+
+def _io_seq_encoder(io_seq):
+    """...and the DECLARED SEQUENCE table's (Phase 16): three parallel columns plus the flat byte
+    POOL they index, followed by the row count AND the pool's length.
+
+    Two trailing scalars rather than one, because the pool's length is not derivable from the rows:
+    ``os_io_seq_install`` bounds every row's offset against it, and a pool larger than the cap
+    installs nothing at all.
+    """
+    addrs, offsets, lengths, pool = emu.io_seq_entries(io_seq)
+    return ((ctypes.c_uint32, addrs), (ctypes.c_uint32, offsets), (ctypes.c_uint32, lengths),
+            (ctypes.c_uint8, pool)), (len(addrs), len(pool))
 
 
 def _seed_candidate_psg(psg_seed):
@@ -1582,6 +1637,17 @@ def _seed_candidate_io(io_seed):
                     _io_map_encoder, io_seed, _has_hw_ledger)
 
 
+def _seed_candidate_seq(io_seq):
+    """Install the case's DECLARED SEQUENCES (``{address: [b0, b1, …]}``) in the candidate (Phase 16).
+
+    Takes the table ``emu.seed_split`` already separated out, whatever model names each address: a
+    sequence on a Phase-7 NAMED SLOT is installed here too, and the candidate's ``hw_read8`` serves
+    it — one table, two ledgers, which is the model's shape (``os.h``). See _seed_candidate.
+    """
+    _seed_candidate(_lib.g_io_seq_reset if _has_hw_ledger else None,
+                    _io_seq_encoder, io_seq, _has_hw_ledger)
+
+
 def _vet_schedule_is_runnable(entry, schedule, wait_sites):
     """Refuse a differential whose schedule the CANDIDATE cannot mirror — before either side runs.
 
@@ -1657,10 +1723,11 @@ def arm_candidate(psg_seed=None, hw_seed=None, io_seed=None, scheduled=(), sites
     # function: were only one shore to route a named slot out of `io_seed`, the oracle would serve
     # it from Phase 7 while the candidate refused it, and the mismatch would read as a
     # reconstruction bug rather than as the two shores disagreeing about which model owns an address.
-    hw_seed, io_seed = emu.seed_split(hw_seed, io_seed)
+    hw_seed, io_seed, io_seq = emu.seed_split(hw_seed, io_seed)
     _seed_candidate_psg(psg_seed)
     _seed_candidate_hw(hw_seed)
     _seed_candidate_io(io_seed)
+    _seed_candidate_seq(io_seq)
     _seed_candidate_sched(scheduled, sites)
 
 
@@ -1953,12 +2020,18 @@ def _io_seed_text(io_seed):
 
 
 def _io_declaration_text(value):
-    """One declared byte as a reader would type it, WRITE-THROUGH wrapper and all — so the refusal
-    below shows whether the address was marked, which is the difference between a case that has the
-    remedy already and one that needs it."""
-    byte = emu.io_seed_byte(value)
-    return (f"write_through({byte:#04x})" if isinstance(value, emu.write_through)
-            else f"{byte:#04x}")
+    """One declaration as a reader would type it — WRITE-THROUGH wrapper, SEQUENCE and all.
+
+    The refusals below quote the case's own declaration back at it, so what the address was declared
+    AS is the difference between a case that has the remedy already and one that needs it. A LIST is
+    rendered as the list (`[0x80, 0x00]`): formatting it as one byte is a `TypeError` inside the
+    refusal, which turns the diagnosis a reader needs into a traceback about `list.__format__`.
+    """
+    declaration = emu.io_seed_byte(value)
+    if emu.is_sequence(declaration):
+        return f"[{', '.join(f'{byte:#04x}' for byte in declaration)}]"
+    return (f"write_through({declaration:#04x})" if isinstance(value, emu.write_through)
+            else f"{declaration:#04x}")
 
 
 def _vet_io_reads_are_declared(entry, io_seed, o_regs):
@@ -1970,6 +2043,13 @@ def _vet_io_reads_are_declared(entry, io_seed, o_regs):
     run has replaced it — so the byte served contradicts the program, and no bigger declaration can
     fix it. The remedy is the case's shape: run up to the write, or enter past it with the
     declaration describing what the write left.
+
+    THE REMEDY IT PRESCRIBES DEPENDS ON WHAT THE ADDRESS WAS DECLARED AS, and the two are not
+    interchangeable: a CONSTANT can be marked `write_through` where the register really latches, and
+    a SEQUENCE cannot be marked at all — a list and a mark are two contradictory claims about what
+    the read after a store answers, refused at the door (``emu.io_seed_entries``, Phase 16). So a
+    stale sequenced address has only the case-shape remedy, and prescribing the mark for it would
+    send the reader to write a declaration the encoder rejects.
 
     ...UNLESS THE CASE MARKED THE ADDRESS `write_through`, in which case there is no staleness to
     refuse: the declaration says the register latches a store and reads it back, the oracle serves
@@ -1985,17 +2065,66 @@ def _vet_io_reads_are_declared(entry, io_seed, o_regs):
     if not o_regs.get("io_stale_reads"):
         return
     first = o_regs["io_stale_first"]
+    if emu.is_sequence(emu.io_seed_byte(io_seed.get(first) if io_seed else None)):
+        # A list cannot be marked, so the mark is not on offer here — and LENGTHENING it is not
+        # either: the refusal is about the store, not about how many reads the case described.
+        remedy = (f"NO declaration can fix it: {first:#x} is declared as a SEQUENCE, and a list and "
+                  f"a `write_through` mark are two contradictory claims about what the read after a "
+                  f"store answers, refused at the door. Nor does a longer list answer it — this is "
+                  f"about the store, not about how many reads were described. The remedy is the "
+                  f"case's shape — run it up to the write, or enter past it with the list "
+                  f"describing the reads the write left (TRAP_MODEL.md, Phases 15 and 16).")
+    else:
+        remedy = (f"A BIGGER declaration cannot fix it, but a different one can where the register "
+                  f"really latches what is stored: mark it "
+                  f"`io_seed={{{first:#x}: write_through(<byte>)}}` and the store replaces what the "
+                  f"read is served, on both shores. Otherwise the remedy is the case's shape — run "
+                  f"it up to the write, or enter past it with the declaration describing what the "
+                  f"write left (TRAP_MODEL.md, Phase 15).")
     raise AssertionError(
         f"{label(entry)} @ {entry:#x}: the oracle made {o_regs['io_stale_reads']} read(s) of a "
         f"DECLARED I/O byte this run had already STORED to, the first at {first:#x}. "
         f"{_io_seed_text(io_seed)} what the machine held on ENTRY, and an instruction of this run "
         f"has replaced it — the model drops hardware writes, so the read was served the entry byte "
-        f"and contradicts the program. A BIGGER declaration cannot fix it, but a different one can "
-        f"where the register really latches what is stored: mark it "
-        f"`io_seed={{{first:#x}: write_through(<byte>)}}` and the store replaces what the read is "
-        f"served, on both shores. Otherwise the remedy is the case's shape — run it up to the "
-        f"write, or enter past it with the declaration describing what the write left "
-        f"(TRAP_MODEL.md, Phase 15).")
+        f"and contradicts the program. {remedy}")
+
+
+def _vet_io_sequences_are_servable(entry, io_seed, o_regs):
+    """Refuse a differential whose ORACLE read PAST THE END of a declared SEQUENCE (Phase 16).
+
+    A sequence is the case's claim about what successive reads of one address yielded, and its
+    LENGTH is part of that claim: it says how many reads the case is describing. The read after the
+    last one is a read the case said nothing about, so there is no honest byte to serve — a sticky
+    last byte and a 0 are both fabrications with the case's own declaration standing behind them,
+    which is worse than the bare fabricated 0 this family of models exists to close.
+
+    So it is refused, and the message names the ADDRESS and the READ INDEX rather than only the
+    address: "declare more bytes" is the remedy exactly when the case under-counted the reads, and
+    "this routine reads it more times than you thought" is what the index says. The candidate's own
+    side of the same read charges ``os_refused()``, which ``_vet_no_os_refusal`` throws the case
+    away on unconditionally — so the refusal is closed on BOTH shores.
+
+    IT RUNS AFTER THE STALENESS REFUSAL, deliberately and for that refusal's own ordering reason: a
+    run that STORED to a sequenced address and then read it off the end trips both, and "declare
+    more bytes" would send the reader to lengthen a list and meet the un-seedable refusal on the
+    next run. Staleness is the strictly narrower answer, so it is diagnosed first.
+    """
+    if not o_regs.get("io_seq_spent"):
+        return
+    addr, index = o_regs["io_seq_spent_addr"], o_regs["io_seq_spent_index"]
+    # A sequence is never `write_through` (the two claims are refused together at the door), so the
+    # declaration is the list itself — and the tally can only have fired on an address this case
+    # declared one for, which is what makes the length part of the message a fact.
+    described = f"declares {len(io_seed[addr])} byte(s) for it"
+    raise AssertionError(
+        f"{label(entry)} @ {entry:#x}: the oracle made {o_regs['io_seq_spent']} read(s) past the "
+        f"END of a declared I/O SEQUENCE, the first of them read {index} of {addr:#x}, which this "
+        f"case {described}. A sequence says what successive reads of an address yielded AND how "
+        f"many reads it describes, so there is no honest byte for the next one — serving the last "
+        f"one again, or a 0, would be a fabrication the case's own source appears to authorise. "
+        f"Either the routine reads {addr:#x} more times than the case expected, or the list is "
+        f"short: `io_seed={{{addr:#x}: [<byte>, …]}}` with one byte per read "
+        f"(TRAP_MODEL.md, Phase 16).")
 
 
 def _vet_io_state(entry, o_regs):
@@ -2041,6 +2170,15 @@ def _vet_io_state(entry, o_regs):
             f"declared I/O bytes and the candidate {_lib.g_io_seed_count()}. Both go through "
             f"os.h's os_io_install_seed, so this is the two model implementations disagreeing about "
             f"which addresses are declarable, not the reconstruction")
+    # ...and the SEQUENCE table's size, for the same reason a third time (Phase 16). The bytes
+    # themselves need no comparison of their own: every one a run actually used shows up in one of
+    # the two read streams above, with its value and in its order.
+    if _lib.g_io_seq_count() != o_regs.get("io_seq_declared", 0):
+        raise AssertionError(
+            f"function @ {entry:#x}: the oracle installed {o_regs.get('io_seq_declared', 0)} of "
+            f"this case's declared I/O SEQUENCES and the candidate {_lib.g_io_seq_count()}. Both go "
+            f"through os.h's os_io_seq_install, so this is the two model implementations "
+            f"disagreeing about which addresses may carry a list, not the reconstruction")
 
 
 # ---- the off-image hardware waiver (see differential's ``hw_waiver``) ----
@@ -2222,6 +2360,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
     # ...and into a STORE to a declared I/O byte it later reads back, which is this model's own
     # not-seedable refusal (Phase 15) and is likewise the poisoned run's to raise.
     _vet_io_reads_are_declared(entry, io_seed, po_regs)
+    _vet_io_sequences_are_servable(entry, io_seed, po_regs)
     _vet_rom_io_reads_are_modelled(entry, po_regs)
     buf = candidate_image(poisoned)
     # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
@@ -2366,6 +2505,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     # cannot be made honest by anything the candidate does, and the remedy names the seed to add.
     _vet_hw_reads_are_declared(entry, hw_seed, o_regs)
     _vet_io_reads_are_declared(entry, io_seed, o_regs)
+    _vet_io_sequences_are_servable(entry, io_seed, o_regs)
     # ...and the same, for an I/O byte NO model served. It reads the ORACLE's report alone, so it
     # belongs here rather than after the candidate: a reconstruction of such a read calls `io_read8`
     # on an address it was never given and REFUSES, and `_vet_no_os_refusal` would then report the

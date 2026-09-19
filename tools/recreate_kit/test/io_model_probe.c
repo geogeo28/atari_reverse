@@ -42,6 +42,14 @@ uint32_t        osh_io_unmodeled_first(void);
  * Phase-7 slot must reach Phase 7 and leave this model's ledger empty. */
 uint32_t        osh_hw_unseeded(void);
 uint32_t        osh_hw_count(void);
+uint32_t        osh_hw_wide(void);
+/* ...and the DECLARED SEQUENCE's (Phase 16), which is the THIRD table both read paths consult. */
+void            osh_io_seq(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths,
+                           const uint8_t *pool, uint32_t n, uint32_t pool_len);
+uint32_t        osh_io_seq_count(void);
+uint32_t        osh_io_seq_spent(void);
+uint32_t        osh_io_seq_spent_addr(void);
+uint32_t        osh_io_seq_spent_index(void);
 
 #define PROBE_MAX_INSNS  32u       /* the routines are a handful of instructions */
 
@@ -96,6 +104,21 @@ static void declare_with_writeback(const uint32_t *addrs, const uint8_t *values,
     osh_io_seed(addrs, values, writeback, n);
 }
 
+/* Install a declaration of SEQUENCES — a LIST per address, one byte per read (Phase 16). Spelled
+ * as the flat POOL plus per-row offsets both shores decode, because that is the wire form; every
+ * case below builds its pool as a plain array literal beside the row it describes. */
+static void declare_seq(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths,
+                        const uint8_t *pool, uint32_t n, uint32_t pool_len) {
+    osh_io_seq(addrs, offsets, lengths, pool, n, pool_len);
+}
+
+/* Withdraw every declared sequence — the state a case that declares none must run against, and what
+ * every CONSTANT case below is entitled to assume (the table persists between runs, like the map). */
+static void declare_no_sequence(void) {
+    osh_io_seq((const uint32_t *)0, (const uint32_t *)0, (const uint32_t *)0, (const uint8_t *)0,
+               0, 0);
+}
+
 /* The four addresses and bytes almost every case declares, in one place so a case that wants a
  * SUBSET spells the subset rather than a second copy of the whole. */
 static const uint32_t ALL_ADDRS[] = {SHIFTER_RESOLUTION, PALETTE_0_HI, PALETTE_0_LO, VIDEO_BASE_HI};
@@ -134,7 +157,12 @@ static void report_oracle(const char *name, uint32_t read_value) {
     printf("K %s stale %u\n", name, osh_io_stale_reads());
     printf("K %s stale_first %u\n", name, osh_io_stale_first());
     printf("K %s hw_unseeded %u\n", name, osh_hw_unseeded());
+    printf("K %s hw_wide %u\n", name, osh_hw_wide());
     printf("K %s hw_nlog %u\n", name, osh_hw_count());
+    printf("K %s seq_declared %u\n", name, osh_io_seq_count());
+    printf("K %s seq_spent %u\n", name, osh_io_seq_spent());
+    printf("K %s seq_spent_addr %u\n", name, osh_io_seq_spent_addr());
+    printf("K %s seq_spent_index %u\n", name, osh_io_seq_spent_index());
     uint32_t n = osh_io_count();
     printf("K %s nlog %u\n", name, n);
     const uint32_t *addrs = osh_io_log_addrs(), *vals = osh_io_log_vals();
@@ -161,6 +189,7 @@ static void report_candidate(const char *name, uint32_t read_value, uint32_t ref
     printf("K %s d1 %u\n", name, read_value);
     printf("K %s refusals %u\n", name, refusals);
     printf("K %s declared %u\n", name, g_io_seed_count());
+    printf("K %s seq_declared %u\n", name, g_io_seq_count());
     uint32_t n = g_io_log_count();
     printf("K %s nlog %u\n", name, n);
     const uint32_t *addrs = g_io_log_addrs(), *vals = g_io_log_vals();
@@ -169,19 +198,43 @@ static void report_candidate(const char *name, uint32_t read_value, uint32_t ref
         printf("L %s %u %u %u %u\n", name, i, addrs[i], widths[i], vals[i]);
 }
 
-/* Seed the candidate the way harness.differential does, run `body`, and report. The declaration is
- * the SAME one the oracle cases get, so the two sides' cases are comparable pair by pair. */
-static void candidate_case_with_writeback(const char *name, const uint32_t *addrs,
-                                          const uint8_t *values, const uint8_t *writeback,
-                                          uint32_t n, void (*body)(uint32_t *read_value)) {
-    /* The refusal tally FIRST, then the declaration — `harness.arm_candidate`'s own order, and it
+/* One case's DECLARED SEQUENCE table, as `g_io_seq_reset` takes it. Bundled so that the one
+ * candidate-case helper below can take a whole declaration per model rather than eleven arguments. */
+struct seq_declaration {
+    const uint32_t *addrs, *offsets, *lengths;
+    const uint8_t *pool;
+    uint32_t n, pool_len;
+};
+static const struct seq_declaration NO_SEQUENCES = {0};
+
+/* Seed the candidate's CONSTANT map and its SEQUENCE table the way harness.differential does, run
+ * `body`, and report. The declaration is the SAME one the oracle cases get, so the two sides' cases
+ * are comparable pair by pair.
+ *
+ * ONE HELPER FOR EVERY SHAPE, with the three wrappers below delegating: the harness installs BOTH
+ * declarations before every candidate run, so a case that reset only one of them would run against
+ * whatever the previous case left in the other (`cand_declaration_does_not_leak` and
+ * `cand_sequence_does_not_leak` are the two halves of that claim). */
+static void candidate_case_declaring(const char *name, const uint32_t *addrs,
+                                     const uint8_t *values, const uint8_t *writeback, uint32_t n,
+                                     struct seq_declaration seq,
+                                     void (*body)(uint32_t *read_value)) {
+    /* The refusal tally FIRST, then the declarations — `harness.arm_candidate`'s own order, and it
      * is load-bearing: `g_io_reset` charges a refusal for a declaration os.h's rule rejected, and
      * clearing the tally after it would throw that away. */
     g_os_refusal_reset();
     g_io_reset(addrs, values, writeback, n);
+    g_io_seq_reset(seq.addrs, seq.offsets, seq.lengths, seq.pool, seq.n, seq.pool_len);
     uint32_t read_value = 0;
     body(&read_value);
     report_candidate(name, read_value, g_os_refusal_count());
+}
+
+/* ...the form that marks some of its declarations WRITE-THROUGH, and declares no list. */
+static void candidate_case_with_writeback(const char *name, const uint32_t *addrs,
+                                          const uint8_t *values, const uint8_t *writeback,
+                                          uint32_t n, void (*body)(uint32_t *read_value)) {
+    candidate_case_declaring(name, addrs, values, writeback, n, NO_SEQUENCES, body);
 }
 
 /* ...and the ordinary form, whose every declaration is a per-run CONSTANT. */
@@ -281,6 +334,70 @@ static void cand_body_wide_store_then_word_read(uint32_t *read_value) {
  * one of width 4, which is the only witness. */
 static void cand_body_reads_the_long_as_two_words(uint32_t *read_value) {
     *read_value = (uint32_t)io_read16(PALETTE_0_HI) << 16 | io_read16(PALETTE_0_HI + 2);
+}
+
+/* ---- the DECLARED SEQUENCE's candidate bodies (os.h, "Phase 16") ----
+ * A list says what successive reads of one address yielded AND how many reads the case describes,
+ * so the shapes worth measuring are: reading it as many times as the original did, reading it FEWER
+ * times (the drain a port cut short), reading it MORE (the read past the end), and reading two
+ * sequenced addresses in the WRONG ORDER — which is the one a byte diff and a value comparison both
+ * agree with, since the same bytes come back either way. */
+
+/* The faithful drain: two reads of one sequenced address, served its two different bytes. */
+static void cand_body_drains_two(uint32_t *read_value) {
+    uint32_t first = io_read8(SHIFTER_RESOLUTION);
+    *read_value = first << 8 | io_read8(SHIFTER_RESOLUTION);
+}
+
+/* MUTANT — it reads ONCE where the original drained twice, which is what a port that services one
+ * byte and drops the loop looks like. Its ledger is one entry short; nothing else moves. */
+static void cand_body_drains_one(uint32_t *read_value) {
+    *read_value = io_read8(SHIFTER_RESOLUTION);
+}
+
+/* MUTANT — it reads a THIRD time, past the end of the declaration: a refusal, logged by neither
+ * side, so the tally is the only witness. */
+static void cand_body_drains_three(uint32_t *read_value) {
+    uint32_t first = io_read8(SHIFTER_RESOLUTION);
+    uint32_t second = io_read8(SHIFTER_RESOLUTION);
+    *read_value = first << 8 | second | io_read8(SHIFTER_RESOLUTION);
+}
+
+/* Two sequenced addresses, read in the order the original reads them... */
+static void cand_body_reads_two_sequences_in_order(uint32_t *read_value) {
+    uint32_t first = io_read8(SHIFTER_RESOLUTION);
+    *read_value = first << 8 | io_read8(VIDEO_BASE_HI);
+}
+
+/* ...and the MUTANT that reads them the other way round. Each address still yields ITS OWN first
+ * byte, so the value can be made identical and the image is untouched either way: only the ordered
+ * ledger separates the two. */
+static void cand_body_reads_two_sequences_reversed(uint32_t *read_value) {
+    uint32_t first = io_read8(VIDEO_BASE_HI);
+    *read_value = io_read8(SHIFTER_RESOLUTION) << 8 | first;
+}
+
+/* A WORD read over two sequenced bytes: ONE entry of width 2, each sequence advancing once. */
+static void cand_body_reads_a_sequenced_word(uint32_t *read_value) {
+    *read_value = io_read16(PALETTE_0_HI);
+}
+
+/* ...and a read of a NAMED SLOT through this door, which must refuse whatever the sequence table
+ * says: a slot belongs to `hw_read8`, at every width. */
+static void cand_body_reads_a_named_slot_through_the_map(uint32_t *read_value) {
+    *read_value = io_read8(OS_HW_MFP_GPIP);
+}
+
+/* ...and the SEQUENCED form, which declares a list and NO constant: the map is installed empty so
+ * that a sequenced case cannot be answered out of a previous case's map, which is the same leak the
+ * helper above closes in the other direction. */
+static void candidate_seq_case(const char *name, const uint32_t *addrs, const uint32_t *offsets,
+                               const uint32_t *lengths, const uint8_t *pool, uint32_t n,
+                               uint32_t pool_len, void (*body)(uint32_t *read_value)) {
+    const struct seq_declaration seq = {addrs, offsets, lengths, pool, n, pool_len};
+
+    candidate_case_declaring(name, (const uint32_t *)0, (const uint8_t *)0, (const uint8_t *)0, 0,
+                             seq, body);
 }
 
 int main(void) {
@@ -524,6 +641,228 @@ int main(void) {
                                   STRADDLE_WRITE_THROUGH, STRADDLE_N,
                                   cand_body_wide_store_then_word_read);
 
+
+    /* ================================================================================================
+     * THE DECLARED SEQUENCE (TRAP_MODEL.md, "Phase 16"): a LIST one address yields, one byte per
+     * read. Every case above declared a CONSTANT, and the table below is empty for all of them —
+     * which is the property that makes this model free for a case that declares none.
+     * ============================================================================================= */
+    declare(ALL_ADDRS, ALL_VALUES, 0);          /* the constant map, withdrawn: the list answers */
+
+    /* --- the served sequence: N reads, N different bytes, in order --- */
+    static const uint32_t SEQ_ADDRS[] = {SHIFTER_RESOLUTION};
+    static const uint32_t SEQ_OFFSETS[] = {0};
+    static const uint32_t SEQ_LENGTHS[] = {2};
+    static const uint8_t  SEQ_POOL[] = {RESOLUTION_MONO, OTHER_BYTE};
+    declare_seq(SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1, sizeof SEQ_POOL);
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("seq_two_reads");
+    /* ...and the SAME run again, which must be identical: the table is the case's and survives, but
+     * the CURSOR is the run's, so a second run starts at the first byte again. */
+    run_and_report("seq_two_reads_again_rewound");
+
+    /* --- a run that consumes the list only PARTLY still rewinds it, which is the leak a reset
+     * written as "clear it when it ran out" would miss. --- */
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("seq_one_read_of_two");
+    run_and_report("seq_one_read_again_is_the_first_byte");
+
+    /* --- the READ PAST THE END: refused, counted, and NOT ledgered — never the last byte again and
+     * never a 0, because either would be a fabrication the case's own list appears to authorise. --- */
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("seq_third_read_is_past_the_end");
+
+    /* --- a WIDE read over two sequenced bytes: served as ONE access, each list advancing once, so
+     * a second word read is served each list's SECOND byte. This is where the model parts company
+     * with Phase 7 (which refuses a wide read outright) for Phase 15's reason: the neighbour is
+     * DECLARABLE here, so the case has said what the whole word holds. --- */
+    static const uint32_t WORD_SEQ_ADDRS[] = {PALETTE_0_HI, PALETTE_0_LO};
+    static const uint32_t WORD_SEQ_OFFSETS[] = {0, 2};
+    static const uint32_t WORD_SEQ_LENGTHS[] = {2, 2};
+    static const uint8_t  WORD_SEQ_POOL[] = {PALETTE_HI_BYTE, OTHER_BYTE,
+                                             PALETTE_LO_BYTE, RESOLUTION_MONO};
+    declare_seq(WORD_SEQ_ADDRS, WORD_SEQ_OFFSETS, WORD_SEQ_LENGTHS, WORD_SEQ_POOL, 2,
+                sizeof WORD_SEQ_POOL);
+    pc = emit_read(PROBE_ENTRY, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    pc = emit_read(pc, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    plant_rts(pc);
+    run_and_report("seq_word_read_advances_both_lists");
+
+    /* ...and a wide read one of whose bytes is SPENT refuses the WHOLE access and advances NOTHING
+     * — the span is resolved before any cursor moves. The byte read that follows is what says so:
+     * the surviving list is still at its second byte, not its third. */
+    static const uint32_t RAGGED_SEQ_LENGTHS[] = {1, 2};
+    declare_seq(WORD_SEQ_ADDRS, WORD_SEQ_OFFSETS, RAGGED_SEQ_LENGTHS, WORD_SEQ_POOL, 2,
+                sizeof WORD_SEQ_POOL);
+    pc = emit_read(PROBE_ENTRY, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    pc = emit_read(pc, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, PALETTE_0_LO);
+    plant_rts(pc);
+    run_and_report("seq_word_read_refuses_whole_and_advances_nothing");
+
+    /* --- a SEQUENCE and a CONSTANT under one word read: the list advances, the constant repeats.
+     * The two models' rules meet inside one access and each keeps its own. --- */
+    static const uint32_t ONE_SEQ_ADDRS[] = {PALETTE_0_HI};
+    static const uint32_t ONE_SEQ_OFFSETS[] = {0};
+    static const uint32_t ONE_SEQ_LENGTHS[] = {2};
+    static const uint8_t  ONE_SEQ_POOL[] = {PALETTE_HI_BYTE, OTHER_BYTE};
+    static const uint32_t CONSTANT_LO_ADDRS[] = {PALETTE_0_LO};
+    static const uint8_t  CONSTANT_LO_VALUES[] = {PALETTE_LO_BYTE};
+    declare_seq(ONE_SEQ_ADDRS, ONE_SEQ_OFFSETS, ONE_SEQ_LENGTHS, ONE_SEQ_POOL, 1,
+                sizeof ONE_SEQ_POOL);
+    declare(CONSTANT_LO_ADDRS, CONSTANT_LO_VALUES, 1);
+    pc = emit_read(PROBE_ENTRY, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    pc = emit_read(pc, MOVE_W_ABSL_TO_D1, PALETTE_0_HI);
+    plant_rts(pc);
+    run_and_report("seq_and_constant_under_one_word_read");
+
+    /* --- a STORE to a sequenced address makes it STALE, into the SAME tally a stale constant feeds:
+     * the case declared what successive reads of the register the machine held ON ENTRY would yield,
+     * and an instruction of this run has replaced that register. The list still answers — the
+     * refusal is the harness's, on the tally. --- */
+    declare(CONSTANT_LO_ADDRS, CONSTANT_LO_VALUES, 0);
+    declare_seq(SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1, sizeof SEQ_POOL);
+    pc = emit_write_byte(PROBE_ENTRY, OTHER_BYTE, SHIFTER_RESOLUTION);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("seq_store_then_read_is_stale");
+    /* ...and the note is PER RUN, exactly as the constant map's is. */
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, SHIFTER_RESOLUTION);
+    plant_rts(pc);
+    run_and_report("seq_after_the_store_the_next_run_is_clean");
+
+    /* --- A STORE TO A SEQUENCED NAMED SLOT IS PHASE 7'S BUSINESS, NOT THIS MODEL'S. The ACIA's
+     * data port is two registers behind one address — a write lands in the transmit register and a
+     * read pops the receive one — so Phase 7 exempts it from staleness, and `os_io_seq_store` must
+     * not note it either or the case would be refused twice over on a diagnosis that does not hold.
+     * The routine below sends a byte and then services the reply, which is the composite that
+     * exemption exists for. --- */
+    static const uint32_t ACIA_SEQ_ADDRS[] = {OS_HW_ACIA_DATA};
+    static const uint32_t ACIA_SEQ_OFFSETS[] = {0};
+    static const uint32_t ACIA_SEQ_LENGTHS[] = {2};
+    static const uint8_t  ACIA_SEQ_POOL[] = {RESOLUTION_MONO, OTHER_BYTE};
+    declare_seq(ACIA_SEQ_ADDRS, ACIA_SEQ_OFFSETS, ACIA_SEQ_LENGTHS, ACIA_SEQ_POOL, 1,
+                sizeof ACIA_SEQ_POOL);
+    pc = emit_write_byte(PROBE_ENTRY, OTHER_BYTE, OS_HW_ACIA_DATA);
+    pc = emit_read(pc, MOVE_B_ABSL_TO_D1, OS_HW_ACIA_DATA);
+    plant_rts(pc);
+    run_and_report("seq_a_send_does_not_make_a_sequenced_receive_stale");
+
+    /* --- A PHASE-7 NAMED SLOT MAY CARRY A LIST, and it is still not THIS model's to serve: a wide
+     * read taking one in is Phase 7's own refusal, whatever the list says, because the neighbouring
+     * register the access also covers is one nothing declared. The word below straddles the MFP's
+     * vector register (declared here) and its GPIP (sequenced), and must be refused and recorded on
+     * BOTH tallies — this model's unmodeled read and Phase 7's wide mask. --- */
+    static const uint32_t GPIP_SEQ_ADDRS[] = {OS_HW_MFP_GPIP};
+    static const uint32_t GPIP_SEQ_OFFSETS[] = {0};
+    static const uint32_t GPIP_SEQ_LENGTHS[] = {2};
+    static const uint8_t  GPIP_SEQ_POOL[] = {OTHER_BYTE, RESOLUTION_MONO};
+    static const uint32_t MFP_VECTOR_ADDRS[] = {OS_HW_MFP_GPIP - 1};   /* $fffa00, the vector reg */
+    static const uint8_t  MFP_VECTOR_VALUES[] = {PALETTE_HI_BYTE};
+    declare_seq(GPIP_SEQ_ADDRS, GPIP_SEQ_OFFSETS, GPIP_SEQ_LENGTHS, GPIP_SEQ_POOL, 1,
+                sizeof GPIP_SEQ_POOL);
+    declare(MFP_VECTOR_ADDRS, MFP_VECTOR_VALUES, 1);
+    pc = emit_read(PROBE_ENTRY, MOVE_W_ABSL_TO_D1, OS_HW_MFP_GPIP - 1);
+    plant_rts(pc);
+    run_and_report("seq_on_a_named_slot_is_not_served_wide_by_this_model");
+
+    /* --- the two CAPS. One row past OS_IO_SEQ_MAX is dropped; a POOL past OS_IO_SEQ_POOL_MAX
+     * installs NOTHING, because every row's offset is bounded against it. --- */
+    declare(MFP_VECTOR_ADDRS, MFP_VECTOR_VALUES, 0);
+
+    /* --- an EMPTY list is not installed, offered beside a good one so the measurement is "one of
+     * two" rather than "none of one". It says that every read of the address is past the end, which
+     * is a refusal the case could have written as declaring nothing at all — and `emu.py` refuses
+     * the spelling by name, so what this measures is the C rule underneath, which a caller that
+     * never goes through emu.py (this probe, a project seeding from its own C) reaches instead. --- */
+    static const uint32_t WITH_EMPTY_ADDRS[] = {SHIFTER_RESOLUTION, VIDEO_BASE_HI};
+    static const uint32_t WITH_EMPTY_OFFSETS[] = {0, 2};
+    static const uint32_t WITH_EMPTY_LENGTHS[] = {2, 0};
+    declare_seq(WITH_EMPTY_ADDRS, WITH_EMPTY_OFFSETS, WITH_EMPTY_LENGTHS, SEQ_POOL, 2,
+                sizeof SEQ_POOL);
+    pc = emit_read(PROBE_ENTRY, MOVE_B_ABSL_TO_D1, VIDEO_BASE_HI);
+    plant_rts(pc);
+    run_and_report("seq_an_empty_list_is_not_installed");
+
+    uint32_t over_seq_addrs[OS_IO_SEQ_MAX + 1];
+    uint32_t over_seq_offsets[OS_IO_SEQ_MAX + 1];
+    uint32_t over_seq_lengths[OS_IO_SEQ_MAX + 1];
+    uint8_t over_seq_pool[OS_IO_SEQ_MAX + 1];
+    for (uint32_t i = 0; i < OS_IO_SEQ_MAX + 1; i++) {
+        over_seq_addrs[i] = CAP_PROBE_BASE + i;
+        over_seq_offsets[i] = i;
+        over_seq_lengths[i] = 1;
+        over_seq_pool[i] = (uint8_t)i;
+    }
+    declare_seq(over_seq_addrs, over_seq_offsets, over_seq_lengths, over_seq_pool,
+                OS_IO_SEQ_MAX + 1, sizeof over_seq_pool);
+    plant_rts(PROBE_ENTRY);
+    run_and_report("seq_one_row_past_the_cap_is_dropped");
+
+    static uint8_t over_pool[OS_IO_SEQ_POOL_MAX + 1];
+    static const uint32_t ONE_BIG_OFFSETS[] = {0};
+    static const uint32_t ONE_BIG_LENGTHS[] = {OS_IO_SEQ_POOL_MAX + 1};
+    declare_seq(SEQ_ADDRS, ONE_BIG_OFFSETS, ONE_BIG_LENGTHS, over_pool, 1, sizeof over_pool);
+    run_and_report("seq_a_pool_past_the_cap_installs_nothing");
+
+    /* --- the bench door carries a sequence exactly as it carries a map: both go through
+     * enter_from_reset, so a bench run starts at the list's first byte with an empty ledger. --- */
+    declare_seq(SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1, sizeof SEQ_POOL);
+    bench_and_report("seq_bench_starts_from_the_declaration");
+
+    /* --- the candidate side of every shape above, seeded as harness.differential seeds it --- */
+    candidate_seq_case("cand_seq_drains_two", SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1,
+                       sizeof SEQ_POOL, cand_body_drains_two);
+    candidate_seq_case("cand_seq_drains_one", SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1,
+                       sizeof SEQ_POOL, cand_body_drains_one);
+    candidate_seq_case("cand_seq_drains_three", SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1,
+                       sizeof SEQ_POOL, cand_body_drains_three);
+    /* ...and the per-run reset on this shore: the same body again must read the first byte again. */
+    candidate_seq_case("cand_seq_drains_two_again", SEQ_ADDRS, SEQ_OFFSETS, SEQ_LENGTHS, SEQ_POOL, 1,
+                       sizeof SEQ_POOL, cand_body_drains_two);
+    /* ...two sequenced addresses, read in order and in the WRONG order. Each list yields its own
+     * first byte either way, so the value and the image are a correct run's exactly. */
+    static const uint32_t PAIR_SEQ_ADDRS[] = {SHIFTER_RESOLUTION, VIDEO_BASE_HI};
+    static const uint32_t PAIR_SEQ_OFFSETS[] = {0, 2};
+    static const uint32_t PAIR_SEQ_LENGTHS[] = {2, 2};
+    static const uint8_t  PAIR_SEQ_POOL[] = {RESOLUTION_MONO, OTHER_BYTE,
+                                             VIDEO_BASE_BYTE, PALETTE_LO_BYTE};
+    candidate_seq_case("cand_seq_pair_in_order", PAIR_SEQ_ADDRS, PAIR_SEQ_OFFSETS, PAIR_SEQ_LENGTHS,
+                       PAIR_SEQ_POOL, 2, sizeof PAIR_SEQ_POOL,
+                       cand_body_reads_two_sequences_in_order);
+    candidate_seq_case("cand_seq_pair_reversed", PAIR_SEQ_ADDRS, PAIR_SEQ_OFFSETS, PAIR_SEQ_LENGTHS,
+                       PAIR_SEQ_POOL, 2, sizeof PAIR_SEQ_POOL,
+                       cand_body_reads_two_sequences_reversed);
+    /* ...the WORD read over two lists, which must match the oracle's single width-2 entry. */
+    candidate_seq_case("cand_seq_word_read", WORD_SEQ_ADDRS, WORD_SEQ_OFFSETS, WORD_SEQ_LENGTHS,
+                       WORD_SEQ_POOL, 2, sizeof WORD_SEQ_POOL, cand_body_reads_a_sequenced_word);
+    /* ...a NAMED SLOT reached through THIS door, which refuses however it is declared: the slot
+     * belongs to `hw_read8`, and serving it here would put one byte in two ledgers. */
+    candidate_seq_case("cand_seq_named_slot_through_the_map", GPIP_SEQ_ADDRS, GPIP_SEQ_OFFSETS,
+                       GPIP_SEQ_LENGTHS, GPIP_SEQ_POOL, 1, sizeof GPIP_SEQ_POOL,
+                       cand_body_reads_a_named_slot_through_the_map);
+    /* ...and a declaration os.h's rule REJECTED — a list inside the YM2149's block — which must
+     * charge a refusal rather than run against a table quietly smaller than the case wrote. */
+    static const uint32_t REJECTED_SEQ_ADDRS[] = {SHIFTER_RESOLUTION, OS_PSG_PORT_DATA};
+    static const uint32_t REJECTED_SEQ_OFFSETS[] = {0, 2};
+    static const uint32_t REJECTED_SEQ_LENGTHS[] = {2, 2};
+    candidate_seq_case("cand_seq_rejected_declaration", REJECTED_SEQ_ADDRS, REJECTED_SEQ_OFFSETS,
+                       REJECTED_SEQ_LENGTHS, PAIR_SEQ_POOL, 2, sizeof PAIR_SEQ_POOL,
+                       cand_body_drains_two);
+    /* ...and the SEQUENCE table does not leak either, which is `cand_declaration_does_not_leak`'s
+     * claim for the other declaration: an ORDINARY case right after a sequenced one is served its
+     * own constant map rather than a list it never declared — or refused outright by a cursor the
+     * previous case spent, which is what a helper that reset only the map would produce here. */
+    candidate_case("cand_sequence_does_not_leak", ALL_ADDRS, ALL_VALUES, ALL_N,
+                   cand_body_reads_the_resolution);
+
+    declare_no_sequence();      /* nothing this probe declared outlives it */
     free(g_image);
     return 0;
 }

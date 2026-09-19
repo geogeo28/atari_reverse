@@ -61,6 +61,14 @@ PINNED = ("OS_IMAGE_SIZE",
           # ...and the DECLARED I/O MAP's served-read ledger cap (Phase 15), for the same reason a
           # third time. The map's SIZE (OS_IO_SEED_MAX) needs no entry: emu.py reads it from the .so
           # (osh_io_seed_max), so there is no second copy in Python that could drift from os.h.
+          #
+          # THE DECLARED SEQUENCE's two caps (Phase 16) — OS_IO_SEQ_MAX and OS_IO_SEQ_POOL_MAX — are
+          # deliberately absent here, and named so that their absence reads as a decision. They
+          # follow OS_IO_SEED_MAX rather than the ledger caps above: `emu.py` reads both from the
+          # .so (`osh_io_seq_max` / `osh_io_seq_pool_max`), so there is no Python copy to pin
+          # against — which is the stronger arrangement, since a resized table cannot leave the
+          # encoder refusing at the old size. The C shore's own bound is one header both
+          # implementations compile, so the two of them cannot drift either.
           "OS_IO_LOG_MAX",
           # ...and that map's WRITE-THROUGH flag, which emu.io_seed_entries encodes per declaration
           # and both C shores decode: a flag meaning one thing in Python and another in os.h would

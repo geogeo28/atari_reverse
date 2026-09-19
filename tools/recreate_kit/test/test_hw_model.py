@@ -39,6 +39,8 @@ VMID = 2            # $ff8207, the shifter's video address counter, mid byte
 VLOW = 3            # $ff8209, ...and its low byte
 ACIA = 4            # $fffc00, the IKBD ACIA's status: bit 1 = the transmit register is empty
 ACIA_DATA = 5       # $fffc02, ...and its receive/transmit data port, which every read POPS
+ACIA_DATA_ADDR = 0xFFFC02   # ...spelled as the BUS address too: the sequence model is keyed by
+                            # address, not by slot, so its spent tally names one (Phase 16)
 NSLOTS = 6
 
 # The bytes the probe's cases use. DECLARED is what a case declares (deliberately not the capture
@@ -57,6 +59,7 @@ SYNC_BIT = 1 << SYNC
 VMID_BIT = 1 << VMID
 VLOW_BIT = 1 << VLOW
 ACIA_BIT = 1 << ACIA
+ACIA_DATA_BIT = 1 << ACIA_DATA
 # What the probe declares when it declares EVERY slot — its own ALL_SLOTS_DECLARED, spelled the same
 # way so that a slot added to os.h's table lands on both sides at once rather than in the C alone.
 ALL_KNOWN = (1 << NSLOTS) - 1
@@ -71,6 +74,41 @@ PROFILE_PAIR = GPIP_BIT | SYNC_BIT
 ACIA_TX_RDY = 0x02
 MODEL_DEFAULTS = {ACIA: ACIA_TX_RDY}
 DEFAULTED = ACIA_BIT
+
+
+def _scalars(*, d1=0, unseeded=0, stale=0, wide=0, reread=0, known=0, nlog=0, seq_spent=0,
+             seq_spent_addr=0, seq_spent_index=0):
+    """One ORACLE case's whole scalar claim, with the quiet defaults named once.
+
+    The three `seq_*` keys are the DECLARED SEQUENCE's (Phase 16), which this model's read path
+    consults before its own rules: a list declared for a named slot answers the slot's reads and
+    replaces the volatile re-read refusal with "at most as many reads as the case listed". They are
+    0 for every row that declares none, which is what says the table is empty and nothing is being
+    diverted through it.
+    """
+    return {"d1": d1, "unseeded": unseeded, "stale": stale, "wide": wide, "reread": reread,
+            "known": known, "nlog": nlog, "seq_spent": seq_spent,
+            "seq_spent_addr": seq_spent_addr, "seq_spent_index": seq_spent_index}
+
+
+def _cand_scalars(*, d1=0, refusals=0, known=0, nlog=0):
+    """...and one CANDIDATE case's, whose report is its own shorter set: this shore has a refusal
+    tally where the oracle has four read tallies."""
+    return {"d1": d1, "refusals": refusals, "known": known, "nlog": nlog}
+
+
+# What the two AUDIO-CAPTURE rows deliberately leave unclaimed (`SUBSET_CASES` below): `d1`, because
+# the byte they were SERVED is pinned against `osh_hw_capture_profile()` in a case of its own rather
+# than restated as a constant here; and the SEQUENCE tallies, because those rows run before any list
+# is declared and a row claiming a table it never touched would say nothing.
+CAPTURE_ROW_UNCLAIMED = ("d1", "seq_spent", "seq_spent_addr", "seq_spent_index")
+
+
+def _scalars_except(unclaimed, **claimed):
+    """`_scalars` minus the keys a row deliberately leaves to another pin — so that "this case claims
+    less" is spelt as the one table's own shape rather than as a hand-written dict, which is how a
+    key added to `_scalars` came to be missing from such a row in the first place."""
+    return {key: value for key, value in _scalars(**claimed).items() if key not in unclaimed}
 
 
 def _file(**slots):
@@ -109,11 +147,9 @@ ORACLE_CASES = {
     # per-run reinstall a case could be verified against a byte another case declared, and under
     # `pytest -n auto` which case that is would not be stable — the defect ENTRY_SR closed for the
     # condition codes.
-    "declared_read": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                   "known": _known(GPIP_BIT), "nlog": 1},
+    "declared_read": dict(scalars=_scalars(d1=DECLARED, known=_known(GPIP_BIT), nlog=1),
                           ledger=[(GPIP, DECLARED)], file=_file(s0=DECLARED)),
-    "declared_read_again": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                         "known": _known(GPIP_BIT), "nlog": 1},
+    "declared_read_again": dict(scalars=_scalars(d1=DECLARED, known=_known(GPIP_BIT), nlog=1),
                                 ledger=[(GPIP, DECLARED)], file=_file(s0=DECLARED)),
     # ...and withdrawing it restores the fabrication. THIS ROW IS PHASE 7'S ONE DIVERGENCE FROM
     # PHASE 6, and a "fix" in either direction is the tidy-looking change to watch for: an undeclared
@@ -125,51 +161,49 @@ ORACLE_CASES = {
     # would diverge for the wrong reason. (The harness-level half is
     # test_hw_differential.py::test_a_bare_emu_run_of_the_same_routine_is_served_rather_than_refused,
     # which asserts it against a real run rather than against this table.)
-    "undeclared_read": dict(scalars={"d1": FABRICATED, "unseeded": GPIP_BIT, "stale": 0, "wide": 0,
-                                     "known": _known(), "nlog": 1},
+    "undeclared_read": dict(scalars=_scalars(d1=FABRICATED, unseeded=GPIP_BIT, known=_known(),
+                                             nlog=1),
                             ledger=[(GPIP, FABRICATED)], file=_file()),
     # Declaring ONE address declares one address. The mask is per-slot, so a case that seeds the
     # GPIP and reads the sync byte is as undeclared as one that seeds nothing.
     # THE VIDEO COUNTER, the pair the model grew for Wonder Boy's $51ac. Declared, both bytes are
     # served and both land in the ordered ledger under their own slots.
-    "vcount_pair_declared": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                          "known": _known(VMID_BIT | VLOW_BIT), "nlog": 2},
+    "vcount_pair_declared": dict(scalars=_scalars(d1=DECLARED, known=_known(VMID_BIT | VLOW_BIT),
+                                                  nlog=2),
                                  ledger=[(VMID, DECLARED), (VLOW, DECLARED)],
                                  file=_file(s2=DECLARED, s3=DECLARED)),
     # ...and a declaration of the OLD pair is not theirs: both reads are the fabricated 0 the model
     # answered before they were named, now TALLIED under their own bits where before this change
     # they were an unmodeled off-image read that nothing recorded at all.
-    "vcount_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": VMID_BIT | VLOW_BIT,
-                                            "stale": 0, "wide": 0, "known": _known(GPIP_BIT), "nlog": 2},
+    "vcount_pair_undeclared": dict(scalars=_scalars(d1=FABRICATED, unseeded=VMID_BIT | VLOW_BIT,
+                                                    known=_known(GPIP_BIT), nlog=2),
                                    ledger=[(VMID, FABRICATED), (VLOW, FABRICATED)],
                                    file=_file(s0=DECLARED)),
     # A WRITE to a counter byte and then a read of it: the seed no longer describes the slot, which
     # is the stale shape the sync byte has one address over.
-    "vcount_write_then_read": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": VLOW_BIT,
-                                            "wide": 0, "known": ALL_KNOWN, "nlog": 1},
+    "vcount_write_then_read": dict(scalars=_scalars(d1=DECLARED, stale=VLOW_BIT, known=ALL_KNOWN,
+                                                    nlog=1),
                                    ledger=[(VLOW, DECLARED)], file=_file_all(DECLARED)),
     # A VOLATILE byte read TWICE: served both times (the model has one byte to give) and TALLIED,
     # which is what harness.differential turns into a refusal. Without it os.h's "read once per run"
     # is a comment the next handler to poll a counter quietly falsifies.
-    "volatile_read_twice": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                         "reread": VLOW_BIT, "known": ALL_KNOWN, "nlog": 2},
+    "volatile_read_twice": dict(scalars=_scalars(d1=DECLARED, reread=VLOW_BIT, known=ALL_KNOWN,
+                                                 nlog=2),
                                 ledger=[(VLOW, DECLARED), (VLOW, DECLARED)],
                                 file=_file_all(DECLARED)),
     # ...and a STATIC one read twice is served twice with nothing tallied: the monitor-detect byte
     # really does answer the same thing every time, and the tempo head reads it for two bits.
-    "static_read_twice": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                       "reread": 0, "known": ALL_KNOWN, "nlog": 2},
+    "static_read_twice": dict(scalars=_scalars(d1=DECLARED, known=ALL_KNOWN, nlog=2),
                               ledger=[(GPIP, DECLARED), (GPIP, DECLARED)],
                               file=_file_all(DECLARED)),
-    "other_address_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": SYNC_BIT, "stale": 0,
-                                              "wide": 0, "known": _known(GPIP_BIT), "nlog": 1},
+    "other_address_undeclared": dict(scalars=_scalars(d1=FABRICATED, unseeded=SYNC_BIT,
+                                                      known=_known(GPIP_BIT), nlog=1),
                                      ledger=[(SYNC, FABRICATED)], file=_file(s0=DECLARED)),
     # Two reads of two addresses, both declared to the SAME byte: only their ORDER separates this
     # stream from the reverse one, which is what the ledger comparison adds over a set of reads.
     # Declaring ONE address declares one address (the row above): the mask is per-slot, so a case
     # that seeds the GPIP and reads the sync byte is as undeclared as one that seeds nothing.
-    "two_reads_in_order": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                        "known": ALL_KNOWN, "nlog": 2},
+    "two_reads_in_order": dict(scalars=_scalars(d1=DECLARED, known=ALL_KNOWN, nlog=2),
                                ledger=[(SYNC, DECLARED), (GPIP, DECLARED)],
                                file=_file_all(DECLARED)),
     # A WIDE read taking a modeled byte in. Served nothing (d1 is the ordinary off-image 0) and NOT
@@ -180,20 +214,17 @@ ORACLE_CASES = {
     # serve it. All three rows use an address a 68000 can really execute that width at; the kit
     # builds Musashi with M68K_EMULATE_ADDRESS_ERROR off, so a case planted at an odd address would
     # quietly stop measuring the refusal the day that flag moved.
-    "word_read": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": GPIP_BIT,
-                               "known": _known(GPIP_BIT), "nlog": 0},
+    "word_read": dict(scalars=_scalars(d1=0, wide=GPIP_BIT, known=_known(GPIP_BIT), nlog=0),
                       ledger=[], file=_file(s0=DECLARED)),
-    "long_read": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": SYNC_BIT,
-                               "known": _known(GPIP_BIT), "nlog": 0},
+    "long_read": dict(scalars=_scalars(d1=0, wide=SYNC_BIT, known=_known(GPIP_BIT), nlog=0),
                       ledger=[], file=_file(s0=DECLARED)),
     # ...including one that straddles INTO the byte from below, the case a start-address equality
     # test misses (hw_portability.py's lattice has the same case for the PSG block).
     # A long read whose span covers $ff8209 AND $ff820a, so it takes in TWO modeled slots — which
     # is what os_hw_slots_touched is for, and what a wide-read tally over a growing table has to
     # keep reporting rather than collapsing to the first one it meets.
-    "long_read_straddling_in": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0,
-                                             "wide": SYNC_BIT | VLOW_BIT,
-                                             "known": _known(GPIP_BIT), "nlog": 0},
+    "long_read_straddling_in": dict(scalars=_scalars(d1=0, wide=SYNC_BIT | VLOW_BIT,
+                                                     known=_known(GPIP_BIT), nlog=0),
                                     ledger=[], file=_file(s0=DECLARED)),
     # The run WROTE the address and then read it back — Wonder Boy's own shape, `move.b #2,$ff820a`
     # at $f91c and `btst #1,$ff820a` at $17c90, so any whole-frame run covers both. The write is
@@ -201,34 +232,31 @@ ORACLE_CASES = {
     # the read is served the ENTRY declaration, which an instruction of this very run has
     # contradicted. Recorded in `stale`, its own cause because its remedy is its own: no declaration
     # can fix it, so `unseeded` stays 0 rather than offering one.
-    "write_then_read": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": SYNC_BIT, "wide": 0,
-                                     "known": ALL_KNOWN, "nlog": 1},
+    "write_then_read": dict(scalars=_scalars(d1=DECLARED, stale=SYNC_BIT, known=ALL_KNOWN, nlog=1),
                             ledger=[(SYNC, DECLARED)], file=_file_all(DECLARED)),
     # ...while a write NOTHING reads back is the ordinary invisible hardware write it always was:
     # `stale` stays 0, or refusing it would sink runs that read nothing at all.
-    "write_only": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": 0, "known": ALL_KNOWN,
-                                "nlog": 0},
+    "write_only": dict(scalars=_scalars(d1=0, known=ALL_KNOWN, nlog=0),
                        ledger=[], file=_file_all(DECLARED)),
     # The audio-capture fold. Off the mode, nothing declared: both reads are the silent 0 that made
     # a replayer pick the MONOCHROME tempo, which is why the mode exists at all.
-    "profile_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": PROFILE_PAIR, "stale": 0,
-                                             "wide": 0, "known": _known(), "nlog": 2},
+    "profile_pair_undeclared": dict(scalars=_scalars(d1=FABRICATED, unseeded=PROFILE_PAIR,
+                                                     known=_known(), nlog=2),
                                     ledger=[(GPIP, FABRICATED), (SYNC, FABRICATED)], file=_file()),
     # Under the mode the same run is served the profile — because the mode INSTALLS A SEED over this
     # model rather than keeping a switch of its own. The bytes are claimed against
     # `osh_hw_capture_profile()` rather than restated, in the case below.
-    "profile_pair_under_capture": dict(scalars={"unseeded": 0, "stale": 0, "wide": 0,
-                                                "known": _known(PROFILE_PAIR), "nlog": 2}),
+    "profile_pair_under_capture": dict(
+        scalars=_scalars_except(CAPTURE_ROW_UNCLAIMED, known=_known(PROFILE_PAIR), nlog=2)),
     # ...and the mode's declaration WINS over a case's, which is why emu.run refuses to take one.
     # ...and it declares the PROFILE PAIR and no more, even with every slot in the case's own seed:
     # the mode has bytes for two of the modeled set and says so (shim.c's HW_CAPTURE_PROFILE_KNOWN);
     # the ACIA's default is the model's, not the mode's, and is folded in by `_known` either way.
-    "capture_overrides_a_seed": dict(scalars={"unseeded": 0, "stale": 0, "wide": 0,
-                                              "known": _known(PROFILE_PAIR), "nlog": 2}),
+    "capture_overrides_a_seed": dict(
+        scalars=_scalars_except(CAPTURE_ROW_UNCLAIMED, known=_known(PROFILE_PAIR), nlog=2)),
     # ...but does not survive the mode. No reset call in between: the next run reinstalls the case's
     # own declaration, which is what stops the profile leaking into a differential.
-    "after_capture_the_case_seed_returns": dict(scalars={"d1": OTHER, "unseeded": 0, "stale": 0,
-                                                         "wide": 0, "known": ALL_KNOWN, "nlog": 2},
+    "after_capture_the_case_seed_returns": dict(scalars=_scalars(d1=OTHER, known=ALL_KNOWN, nlog=2),
                                                 ledger=[(GPIP, OTHER), (SYNC, OTHER)],
                                                 file=_file_all(OTHER)),
     # The bench is the OTHER door into the oracle — no OS traps, a C function measured for cycles —
@@ -236,36 +264,57 @@ ORACLE_CASES = {
     # THERE rather than in osh_run alone: with it in osh_run only, a bench issued after a declared
     # run would inherit that run's bytes AND its ledger, and report its own hardware reads with
     # another run's in front of them.
-    "bench_starts_from_the_seed": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": 0,
-                                                "known": ALL_KNOWN, "nlog": 0},
+    "bench_starts_from_the_seed": dict(scalars=_scalars(d1=0, known=ALL_KNOWN, nlog=0),
                                        ledger=[], file=_file_all(DECLARED)),
+
+    # ---- A DECLARED SEQUENCE ON A NAMED SLOT (TRAP_MODEL.md, "Phase 16") ------------------------
+    # The ACIA's data port is the slot this model already calls VOLATILE, because every read POPS the
+    # receive register: one per-run constant describes exactly ONE read of it and the second is the
+    # `reread` refusal two rows below. A LIST describes as many reads as the case wrote, so the bound
+    # simply moves — and the reads still land in THIS model's slot ledger, under its own rules, which
+    # is what "one table, two ledgers" means from the serving side. The byte FILE still declares every
+    # slot here, so the row is also what says the list SUPERSEDES the constant rather than filling in
+    # where none was given.
+    "seq_drains_a_volatile_slot_twice": dict(
+        scalars=_scalars(d1=OTHER, known=ALL_KNOWN, nlog=2),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, OTHER)], file=_file_all(DECLARED)),
+    # ...and the read PAST THE END: refused, counted with the address and the READ INDEX, and served
+    # nothing — but still LOGGED, because this model logs every read of a named slot whether it could
+    # serve it or not (`hw_read`), and the candidate's `hw_read8` does the same. A stream missing the
+    # entry on one side would diverge for a reason that is not about this read.
+    "seq_third_read_of_a_volatile_slot_is_past_the_end": dict(
+        scalars=_scalars(d1=FABRICATED, known=ALL_KNOWN, nlog=3, seq_spent=1,
+                         seq_spent_addr=ACIA_DATA_ADDR, seq_spent_index=2),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, OTHER), (ACIA_DATA, FABRICATED)],
+        file=_file_all(DECLARED)),
+    # ...and the CONTROL that says the LIST is what moved the bound rather than something else in
+    # these two runs: the identical two reads with no list declared are the volatile re-read refusal,
+    # which is what this slot answered before Phase 16 and still answers without one.
+    "without_a_list_the_volatile_slot_is_refused_on_the_second_read": dict(
+        scalars=_scalars(d1=DECLARED, reread=ACIA_DATA_BIT, known=ALL_KNOWN, nlog=2),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, DECLARED)], file=_file_all(DECLARED)),
 }
 
-# Every oracle case asserts the WHOLE scalar set, so a scalar added to the probe's report must be
-# named in every expectation. `reread` is 0 everywhere but the two volatile cases above — a default
-# rather than twenty-odd copies of the same line, and the strict comparison is unchanged.
-for _case in ORACLE_CASES.values():
-    _case["scalars"].setdefault("reread", 0)
-
+# Every oracle case asserts the WHOLE scalar set — `_scalars` is what supplies it, so a key added to
+# the probe's report is claimed by every row the moment it is added there, and a row that means "0"
+# says so by leaving the argument out. The two SUBSET_CASES below are the one exception, and they
+# spell what they DROP rather than what they keep.
 CANDIDATE_CASES = {
     # The faithful reconstruction: it reads the declared byte, refuses nothing, and logs the read.
-    "cand_declared_read": dict(scalars={"d1": DECLARED, "refusals": 0, "known": ALL_KNOWN,
-                                        "nlog": 1},
+    "cand_declared_read": dict(scalars=_cand_scalars(d1=DECLARED, known=ALL_KNOWN, nlog=1),
                                ledger=[(GPIP, DECLARED)], file=_file_all(DECLARED)),
     # MUTANT: it reads the OTHER modeled address, declared to the same byte. The value it branches
     # on, the declared file and the (empty) image effect are all a correct run's — only the ledger's
     # slot separates them.
-    "cand_wrong_address": dict(scalars={"d1": DECLARED, "refusals": 0, "known": ALL_KNOWN,
-                                        "nlog": 1},
+    "cand_wrong_address": dict(scalars=_cand_scalars(d1=DECLARED, known=ALL_KNOWN, nlog=1),
                                ledger=[(SYNC, DECLARED)], file=_file_all(DECLARED)),
     # MUTANT: it never reads and hardcodes the answer — what a port written against a fabricated 0
     # looks like. Its ledger is empty where the oracle's has an entry.
-    "cand_skips_the_read": dict(scalars={"d1": DECLARED, "refusals": 0, "known": ALL_KNOWN,
-                                         "nlog": 0},
+    "cand_skips_the_read": dict(scalars=_cand_scalars(d1=DECLARED, known=ALL_KNOWN, nlog=0),
                                 ledger=[], file=_file_all(DECLARED)),
     # The read the ORACLE serves 0, made against no declaration: the candidate must TALLY rather
     # than answer — refusing on one side only is the false green — and log it anyway.
-    "cand_undeclared_read": dict(scalars={"d1": 0, "refusals": 1, "known": _known(), "nlog": 1},
+    "cand_undeclared_read": dict(scalars=_cand_scalars(d1=0, refusals=1, known=_known(), nlog=1),
                                  ledger=[(GPIP, FABRICATED)], file=_file()),
     # An address outside the modeled set: refused AND unlogged, since the oracle records nothing for
     # it either and an entry here would diverge the streams for a reason that is not about a read.
@@ -273,14 +322,42 @@ CANDIDATE_CASES = {
     # a new name — and that address in particular cannot be modeled this way at all, since a poll
     # loop needs its answer to CHANGE between two reads and a per-run constant cannot
     # (TRAP_MODEL.md, Phase 7's non-goal).
-    "cand_unmodeled_address": dict(scalars={"d1": 0, "refusals": 1, "known": ALL_KNOWN, "nlog": 0},
+    "cand_unmodeled_address": dict(scalars=_cand_scalars(d1=0, refusals=1, known=ALL_KNOWN, nlog=0),
                                    ledger=[], file=_file_all(DECLARED)),
     # g_hw_reset really clears: a case declaring nothing does not see the previous case's bytes.
     # It runs before EVERY candidate run, the poison re-run included — the state is process-global,
     # so without the clear a candidate reads a byte this case never declared and stays green on it,
     # and under `pytest -n auto` which case it inherited is not even stable.
-    "cand_seed_does_not_leak": dict(scalars={"d1": 0, "refusals": 1, "known": _known(), "nlog": 1},
+    "cand_seed_does_not_leak": dict(scalars=_cand_scalars(d1=0, refusals=1, known=_known(), nlog=1),
                                     ledger=[(GPIP, FABRICATED)], file=_file()),
+    # ...and the SEQUENCE on a named slot, on this shore. The drain must produce exactly the oracle's
+    # `seq_drains_a_volatile_slot_twice` stream, or a faithful reconstruction of a service routine
+    # that pops the port once per byte would red against a correct oracle.
+    "cand_seq_drains_the_acia_twice": dict(
+        scalars=_cand_scalars(d1=DECLARED << 8 | OTHER, known=ALL_KNOWN, nlog=2),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, OTHER)], file=_file_all(DECLARED)),
+    # MUTANT: it pops the port a THIRD time, past the end of the list. Refused — so the harness's
+    # unconditional `_vet_no_os_refusal` throws the case away — and logged all the same, matching the
+    # oracle entry for entry so that the refusal is what separates them rather than the stream.
+    "cand_seq_drains_the_acia_three_times": dict(
+        scalars=_cand_scalars(d1=DECLARED << 8 | OTHER, refusals=1, known=ALL_KNOWN, nlog=3),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, OTHER), (ACIA_DATA, FABRICATED)],
+        file=_file_all(DECLARED)),
+    # ...and the same body with NO list: the byte file declares the slot, so BOTH reads are served
+    # the one constant. This shore has no volatile rule and never had one — the refusal is the
+    # ORACLE's tally, which the harness reads — so the row is what says the two reads really are
+    # indistinguishable here without a list, and the list is what makes them differ.
+    "cand_without_a_list_both_reads_are_served": dict(
+        scalars=_cand_scalars(d1=DECLARED << 8 | DECLARED, known=ALL_KNOWN, nlog=2),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, DECLARED)], file=_file_all(DECLARED)),
+    # `g_io_seq_reset` really clears, which is `cand_seed_does_not_leak`'s claim for the OTHER
+    # declaration and the reason every candidate case installs BOTH (hw_model_probe.c's one helper).
+    # This is the same body as the row above, run through the ORDINARY door right after a sequenced
+    # case: it must be served its own byte file twice. Were the table to leak, the previous case's
+    # cursor is already at the end of the list and both reads would be refused instead.
+    "cand_sequence_does_not_leak": dict(
+        scalars=_cand_scalars(d1=DECLARED << 8 | DECLARED, known=ALL_KNOWN, nlog=2),
+        ledger=[(ACIA_DATA, DECLARED), (ACIA_DATA, DECLARED)], file=_file_all(DECLARED)),
 }
 
 EXPECTED = {**ORACLE_CASES, **CANDIDATE_CASES}
@@ -321,6 +398,10 @@ def test_the_slots_are_the_addresses_os_h_names():
     assert int(defines["OS_HW_SHIFTER_VCOUNT_MID"], 0) == 0xFF8207
     assert int(defines["OS_HW_SHIFTER_VCOUNT_LOW"], 0) == 0xFF8209
     assert int(defines["OS_HW_ACIA_DATA"], 0) == 0xFFFC02
+    # ...and the same address in the form the SEQUENCE model's tally reports, which is keyed by
+    # address rather than by slot: a row claiming the spent list names a bus address, so the two
+    # spellings of one register have to be pinned equal or that claim is about nothing.
+    assert int(defines["OS_HW_ACIA_DATA"], 0) == ACIA_DATA_ADDR
 
 
 def test_the_capture_profile_declares_exactly_the_slots_it_has_bytes_for():
@@ -487,6 +568,48 @@ def test_a_mutant_candidate_is_caught_by_the_ordered_stream_and_by_nothing_else(
     assert probe[mutant]["ledger"] != correct["ledger"], (
         f"{mutant}: the ordered read stream matches a correct run's, so the mutant would pass the "
         f"differential with every surface green")
+
+
+def test_a_list_is_what_moves_the_volatile_slot_s_bound(probe):
+    """The relation no single row states: ONE routine, TWO declarations, two different answers.
+
+    `seq_drains_a_volatile_slot_twice` and `without_a_list_the_volatile_slot_is_refused_on_the_second
+    _read` plant the identical two reads of the identical slot against the identical byte file. With
+    a list the second read is SERVED its own byte and nothing is refused; without one it is served
+    the first read's byte again and the volatile mask fires. That is the whole of what Phase 16 adds
+    to a named slot — and if the two came out the same, every sequenced row above would pass without
+    the model doing anything.
+    """
+    with_list = probe["seq_drains_a_volatile_slot_twice"]
+    without = probe["without_a_list_the_volatile_slot_is_refused_on_the_second_read"]
+    assert with_list["file"] == without["file"], (
+        "the two cases no longer run against the same declared byte file, so what separates them is "
+        "not the list any more")
+    assert with_list["ledger"] != without["ledger"], (
+        "a declared list served the same bytes a per-run constant did — the sequence is not "
+        "superseding the slot's own byte, and every row above would pass without it")
+    assert with_list["scalars"]["reread"] == 0 and without["scalars"]["reread"] != 0, (
+        "the volatile re-read refusal did not move: a list is supposed to REPLACE it with `at most "
+        "as many reads as the case listed`, which the spent tally enforces instead")
+
+
+def test_a_read_past_the_end_of_a_list_is_refused_on_BOTH_sides(probe):
+    """The property "refusing on ONE side is a false green" at this model's newest refusal.
+
+    The oracle counts the read and logs it (a named slot's read is logged whether it could be served
+    or not); the candidate charges `os_refused()` and logs it too. So the two streams stay equal
+    ENTRY FOR ENTRY — which is the point: what throws the case away is the refusal, not a divergence,
+    and a shore that served a sticky last byte instead would be indistinguishable from a correct run
+    on every surface a differential has.
+    """
+    oracle = probe["seq_third_read_of_a_volatile_slot_is_past_the_end"]
+    cand = probe["cand_seq_drains_the_acia_three_times"]
+    assert oracle["ledger"] == cand["ledger"], (
+        "the two shores logged different streams for the same over-long drain, so the refusal would "
+        "be reported as a reconstruction bug rather than as the case out-reading its own list")
+    assert oracle["scalars"]["seq_spent"] == 1 and cand["scalars"]["refusals"] == 1, (
+        "one of the two shores served the read past the end — which is the false green a sticky "
+        "last byte would produce, with the case's own declaration appearing to authorise it")
 
 
 def test_an_undeclared_read_is_recorded_on_BOTH_sides(probe):

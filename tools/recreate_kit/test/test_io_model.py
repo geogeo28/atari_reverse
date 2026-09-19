@@ -56,20 +56,35 @@ BYTE, WORD, LONG = 1, 2, 4
 # claim is "one past the cap is dropped" and a hardcoded 256 would go on passing if the cap moved.
 IO_SEED_MAX = int(re.search(r"^#define\s+OS_IO_SEED_MAX\s+(\d+)",
                             (KIT / "include" / "os.h").read_text(), re.M).group(1))
+# ...and the SEQUENCE table's own row cap, for the same reason: "one row past the cap is dropped" is
+# a claim about os.h's number, so a literal here would go on passing after the number moved.
+IO_SEQ_MAX = int(re.search(r"^#define\s+OS_IO_SEQ_MAX\s+(\d+)",
+                           (KIT / "include" / "os.h").read_text(), re.M).group(1))
 
 
 def _scalars(*, d1=0, declared=ALL_DECLARED, unmodeled=0, unmodeled_first=0, stale=0, stale_first=0,
-             hw_unseeded=0, hw_nlog=0, nlog=0):
+             hw_unseeded=0, hw_wide=0, hw_nlog=0, nlog=0,
+             seq_declared=0, seq_spent=0, seq_spent_addr=0, seq_spent_index=0):
     """One oracle case's whole scalar claim, with the quiet defaults named once.
 
-    Nine keys and most cases are about one of them, so spelling every row in full would bury the one
-    that matters in eight zeros — and a row that quietly omitted a key would stop measuring it (see
-    `test_every_probe_key_is_claimed_by_some_case`). The defaults are the SILENT state: nothing
-    unmodeled, nothing stale, the named set untouched.
+    Thirteen keys and most cases are about one of them, so spelling every row in full would bury the
+    one that matters in twelve zeros — and a row that quietly omitted a key would stop measuring it
+    (see `test_every_probe_key_is_claimed_by_some_case`). The defaults are the SILENT state: nothing
+    unmodeled, nothing stale, no sequence declared or spent, the named set untouched.
     """
     return {"d1": d1, "declared": declared, "unmodeled": unmodeled,
             "unmodeled_first": unmodeled_first, "stale": stale, "stale_first": stale_first,
-            "hw_unseeded": hw_unseeded, "hw_nlog": hw_nlog, "nlog": nlog}
+            "hw_unseeded": hw_unseeded, "hw_wide": hw_wide, "hw_nlog": hw_nlog, "nlog": nlog,
+            "seq_declared": seq_declared, "seq_spent": seq_spent,
+            "seq_spent_addr": seq_spent_addr, "seq_spent_index": seq_spent_index}
+
+
+def _cand_scalars(*, d1=0, refusals=0, declared=0, seq_declared=0, nlog=0):
+    """...and one CANDIDATE case's, whose report is its own shorter set: the two shores have
+    different surfaces (the candidate has a refusal tally where the oracle has four read tallies),
+    which `test_every_probe_key_is_claimed_by_some_case` is what keeps honest."""
+    return {"d1": d1, "refusals": refusals, "declared": declared, "seq_declared": seq_declared,
+            "nlog": nlog}
 
 
 # One entry per case the probe runs. `scalars` are exact; `ledger` is the ordered
@@ -136,7 +151,8 @@ ORACLE_CASES = {
     # that instruction calls, so `cand_long_read` below must produce this very entry.
     "long_read_all_four_declared": dict(
         scalars=_scalars(d1=(PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16 | OTHER_BYTE << 8
-                             | RESOLUTION_MONO), declared=4, nlog=1),
+                             | RESOLUTION_MONO),
+                         declared=4, nlog=1),
         ledger=[(PALETTE_0_HI, LONG, PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16
                  | OTHER_BYTE << 8 | RESOLUTION_MONO)]),
     # THE STALENESS RULE, which is Phase 7's at an address-keyed model: the run stored to the byte
@@ -191,8 +207,7 @@ ORACLE_CASES = {
     # reaches Phase 7 — `hw_unseeded` names it and the NAMED set's ledger has the entry, while this
     # model's stays empty. Were it installed, one model would serve the byte while the other's rules
     # (the volatile re-read, the model default, the split-register exemption) went unenforced.
-    "named_slot_is_not_shadowed": dict(scalars=_scalars(d1=FABRICATED, hw_unseeded=1 << 0,
-                                                        hw_nlog=1),
+    "named_slot_is_not_shadowed": dict(scalars=_scalars(d1=FABRICATED, hw_unseeded=1 << 0, hw_nlog=1),
                                        ledger=[]),
     # ...and a WRITE-THROUGH mark buys no admission. The same five declarations with the named slot
     # marked still install four, so a case cannot reach past `os_io_seedable` by claiming a register
@@ -228,6 +243,129 @@ ORACLE_CASES = {
     # `enter_from_reset`, so a bench run starts from the case's map with an empty ledger. Without
     # that, a perf measurement would run against whatever the last differential left.
     "bench_starts_from_the_declaration": dict(scalars=_scalars(), ledger=[]),
+
+    # ---- THE DECLARED SEQUENCE (TRAP_MODEL.md, "Phase 16") -------------------------------------
+    # Every row above declares a CONSTANT and reports `seq_declared=0`, which is the property that
+    # makes this model free for a case that declares no list — the table is empty, so no read path
+    # can be diverted through it. The rows below withdraw the constant map (`declared=0`) so that
+    # what answers each read is the list and nothing else.
+    #
+    # N READS, N DIFFERENT BYTES, in order. This is the shape neither model above can describe: one
+    # constant answers every read of an address with the same byte, and a drain loop, a packet
+    # service routine and a status poll all need successive reads to DIFFER before the run can go on.
+    "seq_two_reads": dict(scalars=_scalars(d1=OTHER_BYTE, declared=0, seq_declared=1, nlog=2),
+                          ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                                  (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # ...and the SAME run again is identical, which is the per-run reset: the table is the case's and
+    # survives a run (like the map), the CURSOR is the run's and does not. Without the rewind a
+    # second run of one declaration would start where the first stopped, and under `pytest -n auto`
+    # which run that was is not even stable.
+    "seq_two_reads_again_rewound": dict(
+        scalars=_scalars(d1=OTHER_BYTE, declared=0, seq_declared=1, nlog=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # ...and a run that consumes the list only PARTLY rewinds too, which is the leak a reset written
+    # as "clear it once it has run out" would miss: the pair below is one read of a two-byte list,
+    # twice, and both must be served the FIRST byte.
+    "seq_one_read_of_two": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, declared=0, seq_declared=1, nlog=1),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    "seq_one_read_again_is_the_first_byte": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, declared=0, seq_declared=1, nlog=1),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # THE READ PAST THE END, which is the model's one new refusal. A list says what successive reads
+    # yielded AND how many reads the case describes, so the read after the last is one the case said
+    # nothing about: serving the last byte again, or a 0, would be a fabrication with the case's own
+    # source appearing to authorise it — strictly worse than the bare fabricated 0 this family of
+    # models exists to close. It is NOT ledgered (the candidate refuses and logs nothing either), it
+    # is NOT counted as an unmodeled read (the byte IS declared; the remedy is a longer list, not a
+    # declaration), and the tally names the address AND the read index — "read 2" of a two-byte list
+    # being the third one, counting as the case wrote it.
+    "seq_third_read_is_past_the_end": dict(
+        scalars=_scalars(d1=FABRICATED, declared=0, seq_declared=1, nlog=2, seq_spent=1,
+                         seq_spent_addr=SHIFTER_RESOLUTION, seq_spent_index=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # A WIDE READ over two sequenced bytes is ONE access, so each list advances ONCE — the second
+    # word read is served each list's second byte. That is Phase 15's all-or-nothing rule with
+    # "declared" generalised to "has a byte left", and it is what makes a `move.w $ff8604,d0` of the
+    # FDC's status register describable at all.
+    "seq_word_read_advances_both_lists": dict(
+        scalars=_scalars(d1=OTHER_BYTE << 8 | RESOLUTION_MONO, declared=0, seq_declared=2, nlog=2),
+        ledger=[(PALETTE_0_HI, WORD, PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE),
+                (PALETTE_0_HI, WORD, OTHER_BYTE << 8 | RESOLUTION_MONO)]),
+    # ...and a wide read one of whose bytes is SPENT refuses the WHOLE access and advances NOTHING,
+    # because the span is resolved before any cursor moves. The byte read that follows is what says
+    # so: the surviving list is at its SECOND byte, not its third. Without the resolve-first order
+    # the two shores would disagree about where every later read of that address stands.
+    "seq_word_read_refuses_whole_and_advances_nothing": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, declared=0, seq_declared=2, nlog=2, seq_spent=1,
+                         seq_spent_addr=PALETTE_0_HI, seq_spent_index=1),
+        ledger=[(PALETTE_0_HI, WORD, PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE),
+                (PALETTE_0_LO, BYTE, RESOLUTION_MONO)]),
+    # A SEQUENCE AND A CONSTANT UNDER ONE WORD READ: the list advances and the constant repeats. The
+    # two models' rules meet inside a single access and each keeps its own, which is the whole of
+    # "one table, two ledgers" seen from the serving side.
+    "seq_and_constant_under_one_word_read": dict(
+        scalars=_scalars(d1=OTHER_BYTE << 8 | PALETTE_LO_BYTE, declared=1, seq_declared=1, nlog=2),
+        ledger=[(PALETTE_0_HI, WORD, PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE),
+                (PALETTE_0_HI, WORD, OTHER_BYTE << 8 | PALETTE_LO_BYTE)]),
+    # A STORE to a sequenced address makes it STALE, into the SAME tally a stale constant feeds and
+    # with the same remedy: the case declared what successive reads of the register the machine held
+    # ON ENTRY would yield, and an instruction of this run has replaced that register. The list still
+    # answers (both shores do the same thing, so the streams agree) and the refusal is the harness's.
+    "seq_store_then_read_is_stale": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, declared=0, seq_declared=1, nlog=1, stale=1,
+                         stale_first=SHIFTER_RESOLUTION),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # ...and the note is PER RUN, exactly as the constant map's is.
+    "seq_after_the_store_the_next_run_is_clean": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, declared=0, seq_declared=1, nlog=1),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # A STORE to a sequenced NAMED SLOT is the OWNING model's business and not this one's. `$fffc02`
+    # is two registers behind one address — a write lands in the transmit register and a read pops
+    # the receive one — so Phase 7 exempts it from staleness, and `os_io_seq_store` skips every named
+    # slot for exactly that reason: noting it here as well would refuse an IKBD send composed with a
+    # receive, twice over, on a diagnosis that does not hold. `stale` staying 0 is the whole row, and
+    # the read is served the list's FIRST byte because the write never touched it.
+    # It also lands in Phase 7's SLOT ledger (`hw_nlog`) and not in this model's, which is the
+    # routing table's own row seen from a third angle.
+    "seq_a_send_does_not_make_a_sequenced_receive_stale": dict(
+        scalars=_scalars(d1=RESOLUTION_MONO, declared=0, seq_declared=1, hw_nlog=1, nlog=0),
+        ledger=[]),
+    # A PHASE-7 NAMED SLOT MAY CARRY A LIST — that is how a slot's sequence is declared, and Phase 7's
+    # own read path serves it — and it is still not THIS model's to serve at ANY width. The word here
+    # straddles the MFP's vector register (declared as a constant) and its GPIP (sequenced), and is
+    # refused on BOTH tallies: this model's unmodeled read, naming the byte it would not serve, and
+    # Phase 7's wide mask, which is the refusal that has the argument (the access also covers
+    # registers nothing declared). Without the exclusion the list would be served past that refusal.
+    "seq_on_a_named_slot_is_not_served_wide_by_this_model": dict(
+        scalars=_scalars(d1=FABRICATED, declared=1, seq_declared=1, unmodeled=1,
+                         unmodeled_first=MFP_GPIP, hw_wide=1 << 0),
+        ledger=[]),
+    # AN EMPTY LIST IS NOT INSTALLED. It claims that every read of the address is past the end,
+    # which is a refusal the case could have written as declaring nothing at all — so the row is
+    # dropped and the address goes back to being undeclared, which the read below is: served the
+    # fabricated 0 and COUNTED as unmodeled, not as a spent list. `emu.py` refuses the spelling by
+    # name; this is the C rule underneath, which a caller that never goes through it reaches.
+    "seq_an_empty_list_is_not_installed": dict(
+        scalars=_scalars(d1=FABRICATED, declared=0, seq_declared=1, unmodeled=1,
+                         unmodeled_first=VIDEO_BASE_HI),
+        ledger=[]),
+    # THE TWO CAPS. One row past OS_IO_SEQ_MAX is dropped rather than wrapped over the array...
+    "seq_one_row_past_the_cap_is_dropped": dict(
+        scalars=_scalars(declared=0, seq_declared=IO_SEQ_MAX), ledger=[]),
+    # ...and a POOL past OS_IO_SEQ_POOL_MAX installs NOTHING, because every row's offset is bounded
+    # against the pool it indexes: a row admitted over a pool that did not fit would read whatever
+    # followed the array. Both shortfalls are loud — `emu.run` raises and the candidate charges
+    # `os_refused` — so a case served fewer lists than it wrote can never be quiet.
+    "seq_a_pool_past_the_cap_installs_nothing": dict(
+        scalars=_scalars(declared=0, seq_declared=0), ledger=[]),
+    # ...and the BENCH door carries a sequence exactly as it carries a map: both entry points go
+    # through `enter_from_reset`, so a Tier 3 row over a sequenced case starts at the list's first
+    # byte with an empty ledger and measures the same path its differential ran.
+    "seq_bench_starts_from_the_declaration": dict(
+        scalars=_scalars(declared=0, seq_declared=1), ledger=[]),
 }
 
 # ...and the CANDIDATE's side, driven through `src/hw.c` exactly as `harness.differential` drives it.
@@ -235,103 +373,172 @@ ORACLE_CASES = {
 # on, `declared` the map size, `nlog` the ledger's length.
 CANDIDATE_CASES = {
     # The faithful reconstruction: it reads the declared byte, refuses nothing, and logs the read.
-    "cand_declared_read": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0,
-                                        "declared": ALL_DECLARED, "nlog": 1},
+    "cand_declared_read": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=ALL_DECLARED,
+                                                     nlog=1),
                                ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
     # MUTANT: it never reads and hardcodes the answer — what a port written against a fabricated 0
     # looks like once the byte is declared. Its ledger is empty where the oracle's has an entry.
-    "cand_skips_the_read": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0,
-                                         "declared": ALL_DECLARED, "nlog": 0},
+    "cand_skips_the_read": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=ALL_DECLARED,
+                                                      nlog=0),
                                 ledger=[]),
     # An address in no declaration REFUSES and is NOT ledgered — the oracle records nothing for it
     # either (it counts an unmodeled read and answers 0), so an entry here would diverge the streams
     # for a reason that is not about this read.
-    "cand_undeclared_read": dict(scalars={"d1": 0, "refusals": 1, "declared": ALL_DECLARED,
-                                          "nlog": 0},
+    "cand_undeclared_read": dict(scalars=_cand_scalars(d1=0, refusals=1, declared=ALL_DECLARED,
+                                                       nlog=0),
                                  ledger=[]),
     # A WORD read of two declared bytes: one entry of width 2, big-endian — the same entry the
     # oracle's own `move.w` produces, which is what makes the two streams comparable at all.
-    "cand_palette_word": dict(scalars={"d1": PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE, "refusals": 0,
-                                       "declared": ALL_DECLARED, "nlog": 1},
+    "cand_palette_word": dict(scalars=_cand_scalars(d1=PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE,
+                                                    declared=ALL_DECLARED, nlog=1),
                               ledger=[(PALETTE_0_HI, WORD, PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE)]),
     # MUTANT: two byte reads where the original made one word read. It computes the IDENTICAL value
     # from the IDENTICAL declared bytes and touches no image byte, so the width in the ledger entry
     # is the only thing that separates it — which is why the entry carries one.
     "cand_palette_as_two_bytes": dict(
-        scalars={"d1": PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE, "refusals": 0,
-                 "declared": ALL_DECLARED, "nlog": 2},
+        scalars=_cand_scalars(d1=PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE, declared=ALL_DECLARED,
+                              nlog=2),
         ledger=[(PALETTE_0_HI, BYTE, PALETTE_HI_BYTE), (PALETTE_0_LO, BYTE, PALETTE_LO_BYTE)]),
     # The wrong-address pair, against a declaration giving BOTH addresses the same byte: the value
     # returned, the map and the (empty) image effect are a correct run's exactly. See
     # `test_the_wrong_address_mutant_differs_from_a_correct_run_only_in_the_ledger`.
-    "cand_twinned_right_address": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0, "declared": 2,
-                                                "nlog": 1},
+    "cand_twinned_right_address": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=2, nlog=1),
                                        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
-    "cand_twinned_wrong_address": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0, "declared": 2,
-                                                "nlog": 1},
+    "cand_twinned_wrong_address": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=2, nlog=1),
                                        ledger=[(VIDEO_BASE_HI, BYTE, RESOLUTION_MONO)]),
     # The LONG read's candidate half: ONE entry of width 4, big-endian, matching the oracle's own
     # `move.l` above. Without `io_read32` a faithful port of that instruction had no spelling at all.
     "cand_long_read": dict(
-        scalars={"d1": (PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16 | OTHER_BYTE << 8
-                        | RESOLUTION_MONO), "refusals": 0, "declared": 4, "nlog": 1},
+        scalars=_cand_scalars(d1=(PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16
+                                  | OTHER_BYTE << 8 | RESOLUTION_MONO),
+                              declared=4, nlog=1),
         ledger=[(PALETTE_0_HI, LONG, PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16
                  | OTHER_BYTE << 8 | RESOLUTION_MONO)]),
     # MUTANT: two word reads where the original made one long read. It computes the IDENTICAL value
     # from the IDENTICAL declared bytes, so — as with the byte/word pair above — the entry's WIDTH is
     # the only thing that separates it.
     "cand_long_read_as_two_words": dict(
-        scalars={"d1": (PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16 | OTHER_BYTE << 8
-                        | RESOLUTION_MONO), "refusals": 0, "declared": 4, "nlog": 2},
+        scalars=_cand_scalars(d1=(PALETTE_HI_BYTE << 24 | PALETTE_LO_BYTE << 16
+                                  | OTHER_BYTE << 8 | RESOLUTION_MONO),
+                              declared=4, nlog=2),
         ledger=[(PALETTE_0_HI, WORD, PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE),
                 (PALETTE_0_HI + 2, WORD, OTHER_BYTE << 8 | RESOLUTION_MONO)]),
     # A HALF-declared word refuses WHOLE rather than serving the byte it does have — the oracle's
     # own rule, so that a case missing one declaration fails on both shores at once.
-    "cand_word_half_declared": dict(scalars={"d1": 0, "refusals": 1, "declared": 2, "nlog": 0},
+    "cand_word_half_declared": dict(scalars=_cand_scalars(d1=0, refusals=1, declared=2, nlog=0),
                                     ledger=[]),
     # `g_io_reset` really clears: a case declaring nothing must not read through the previous one's
     # map. That is the same false green the per-run reinstall closes on the oracle's side.
-    "cand_declaration_does_not_leak": dict(scalars={"d1": 0, "refusals": 1, "declared": 0,
-                                                    "nlog": 0},
+    "cand_declaration_does_not_leak": dict(scalars=_cand_scalars(d1=0, refusals=1, declared=0,
+                                                                 nlog=0),
                                            ledger=[]),
     # The WRITE-THROUGH arm on the candidate shore, which must serve what the oracle's rows above
     # serve: `cand_write_through_read_back`'s entry is `write_through_read_back`'s, byte for byte
     # (`test_the_two_sides_serve_the_same_byte_for_the_same_declaration` compares them).
-    "cand_write_through_read_back": dict(scalars={"d1": OTHER_BYTE, "refusals": 0,
-                                                  "declared": ALL_DECLARED, "nlog": 1},
+    "cand_write_through_read_back": dict(scalars=_cand_scalars(d1=OTHER_BYTE, declared=ALL_DECLARED,
+                                                               nlog=1),
                                          ledger=[(SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
     # ...and a marked byte never stored to is an ordinary declaration on this side too.
-    "cand_write_through_never_stored": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0,
-                                                     "declared": ALL_DECLARED, "nlog": 1},
+    "cand_write_through_never_stored": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO,
+                                                                  declared=ALL_DECLARED, nlog=1),
                                             ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
     # MUTANT: it reads BEFORE it stores, so it is served the ENTRY byte where the original was
     # served what it had just written — which is exactly what a port written against the model
     # WITHOUT this arm does. Same address, same width, same store: only the VALUE separates it.
     "cand_write_through_read_before_store": dict(
-        scalars={"d1": RESOLUTION_MONO, "refusals": 0, "declared": ALL_DECLARED, "nlog": 1},
+        scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=ALL_DECLARED, nlog=1),
         ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
     # MUTANT: it stores a DIFFERENT byte, which the register latches — so one wrong store moves both
     # the write ledger's value and the read ledger's.
     "cand_write_through_stores_another_value": dict(
-        scalars={"d1": RESOLUTION_MONO, "refusals": 0, "declared": ALL_DECLARED, "nlog": 1},
+        scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=ALL_DECLARED, nlog=1),
         ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
     # ...and the SAME store against an UNMARKED declaration keeps today's rule verbatim: the read is
     # served the byte the case declared, on both shores, and the refusal is the harness's on the
     # oracle's staleness tally. This is the row that says the arm is opt-in per address.
-    "cand_unmarked_write_then_read": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 0,
-                                                   "declared": ALL_DECLARED, "nlog": 1},
+    "cand_unmarked_write_then_read": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO,
+                                                                declared=ALL_DECLARED, nlog=1),
                                           ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
     # ...and the WIDE store straddling the two rules: half latched, half declared.
     "cand_wide_store_straddle": dict(
-        scalars={"d1": OTHER_BYTE << 8 | PALETTE_LO_BYTE, "refusals": 0, "declared": 2, "nlog": 1},
+        scalars=_cand_scalars(d1=OTHER_BYTE << 8 | PALETTE_LO_BYTE, declared=2, nlog=1),
         ledger=[(PALETTE_0_HI, WORD, OTHER_BYTE << 8 | PALETTE_LO_BYTE)]),
     # ...and a declaration os.h's rule REJECTED charges a refusal on this side too — offered with
     # the four ordinary ones, so "four of five installed" is the measurement rather than "none of
     # one" — which is what stops a case that bypassed `emu.seed_split` from running against a map
     # quietly smaller than the one it wrote.
-    "cand_rejected_declaration": dict(scalars={"d1": RESOLUTION_MONO, "refusals": 1,
-                                               "declared": ALL_DECLARED, "nlog": 1},
+    "cand_rejected_declaration": dict(scalars=_cand_scalars(d1=RESOLUTION_MONO, refusals=1,
+                                                            declared=ALL_DECLARED, nlog=1),
                                       ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+
+    # ---- THE DECLARED SEQUENCE's candidate side (TRAP_MODEL.md, "Phase 16") --------------------
+    # The faithful drain: as many reads as the case listed, served the list's bytes in order.
+    "cand_seq_drains_two": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO << 8 | OTHER_BYTE, seq_declared=1, nlog=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # MUTANT: it reads ONCE where the original drained twice — a port that services one byte and
+    # drops the loop, which is the surviving mutant `projects/zynaps` records for its ACIA handler.
+    # Its ledger is one entry short and nothing else moves.
+    "cand_seq_drains_one": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO, seq_declared=1, nlog=1),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # MUTANT: it reads a THIRD time, past the end. Refused and NOT ledgered — the oracle does the
+    # same — so the refusal tally is the only witness, which is exactly the shape `_vet_no_os_refusal`
+    # throws a case away on. A sticky last byte here would have made the mutant indistinguishable.
+    "cand_seq_drains_three": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO << 8 | OTHER_BYTE, refusals=1, seq_declared=1,
+                              nlog=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # ...and the per-run reset on THIS shore: the same body again reads the first byte again. Without
+    # it the candidate would drift one read further into the list on every case while the oracle
+    # rewound, and the streams would diverge for a reason that is not about the reconstruction.
+    "cand_seq_drains_two_again": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO << 8 | OTHER_BYTE, seq_declared=1, nlog=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # TWO SEQUENCED ADDRESSES, read in the order the original reads them...
+    "cand_seq_pair_in_order": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO << 8 | VIDEO_BASE_BYTE, seq_declared=2, nlog=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (VIDEO_BASE_HI, BYTE, VIDEO_BASE_BYTE)]),
+    # ...and the MUTANT that INTERLEAVES them the other way round. Each list yields its own first
+    # byte either way, so the value it computes and the image it leaves are a correct run's exactly:
+    # the ordered stream is the only surface that separates them, which is the claim this model adds
+    # over a constant (where the same two reads would also be indistinguishable, but for a reason
+    # that does not involve the order the lists are consumed in).
+    "cand_seq_pair_reversed": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO << 8 | VIDEO_BASE_BYTE, seq_declared=2, nlog=2),
+        ledger=[(VIDEO_BASE_HI, BYTE, VIDEO_BASE_BYTE),
+                (SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
+    # A WORD READ over two lists, which must be the oracle's single width-2 entry or a faithful
+    # reconstruction of a `move.w` over a sequenced register would red.
+    "cand_seq_word_read": dict(
+        scalars=_cand_scalars(d1=PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE, seq_declared=2, nlog=1),
+        ledger=[(PALETTE_0_HI, WORD, PALETTE_HI_BYTE << 8 | PALETTE_LO_BYTE)]),
+    # A NAMED SLOT reached through THIS door refuses however it is declared: the slot belongs to
+    # `hw_read8`, and serving it here would put one byte in two ledgers with only one model's rules
+    # enforced. It is the candidate's half of `seq_on_a_named_slot_is_not_served_wide_by_this_model`.
+    "cand_seq_named_slot_through_the_map": dict(
+        scalars=_cand_scalars(d1=0, refusals=1, seq_declared=1, nlog=0), ledger=[]),
+    # ...and a declaration os.h's rule REJECTED — a list inside the YM2149's block, offered beside an
+    # ordinary one so the measurement is "one of two installed" rather than "none of one" — charges a
+    # refusal, which is what stops a case that bypassed `emu`'s encoder from running against a table
+    # quietly smaller than the one it wrote.
+    "cand_seq_rejected_declaration": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO << 8 | OTHER_BYTE, refusals=1, seq_declared=1,
+                              nlog=2),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO),
+                (SHIFTER_RESOLUTION, BYTE, OTHER_BYTE)]),
+    # `g_io_seq_reset` really clears, which is `cand_declaration_does_not_leak`'s claim for the OTHER
+    # declaration and the reason every candidate case installs BOTH (io_model_probe.c's one helper).
+    # An ORDINARY case right after a sequenced one is served its own constant map; were the table to
+    # leak, the previous case's list still names this address with its cursor at the end, so the read
+    # would be REFUSED and ledgered nowhere.
+    "cand_sequence_does_not_leak": dict(
+        scalars=_cand_scalars(d1=RESOLUTION_MONO, declared=ALL_DECLARED, nlog=1),
+        ledger=[(SHIFTER_RESOLUTION, BYTE, RESOLUTION_MONO)]),
 }
 
 EXPECTED = {**ORACLE_CASES, **CANDIDATE_CASES}
@@ -477,13 +684,23 @@ def test_the_admissible_set_is_the_refused_set():
     declaration able to answer it: a refusal whose remedy does not exist, which is worse than the
     silent 0 it replaced. One predicate is what makes that impossible, and this is the check that
     fires the day someone narrows one of them.
+
+    `os_io_seedable` reaches `os_io_is_page` THROUGH `os_io_seq_seedable` — the two declaration
+    rules differ by exactly the Phase-7 named slots, so the narrower is defined in terms of the
+    wider — and the derivation is followed here rather than assumed, or this pin would go green on a
+    seedable rule that had quietly stopped deriving from the page test at all.
     """
     source = (KIT / "include" / "os.h").read_text()
     seedable = re.search(r"os_io_seedable\(uint32_t bus_addr\) \{(.*?)\n\}", source, re.S)
     assert seedable, "os_io_seedable is not where this pin looks for it"
-    assert "os_io_is_page(bus_addr)" in seedable.group(1), (
-        "os_io_seedable no longer derives its page test from os_io_is_page, so the set a case may "
-        "declare and the set the refusal fires on can now drift apart")
+    assert "os_io_seq_seedable(bus_addr)" in seedable.group(1), (
+        "os_io_seedable no longer derives from os_io_seq_seedable, so the two declaration rules "
+        "spell the shared exclusions twice and can drift apart in one of them")
+    seq_seedable = re.search(r"os_io_seq_seedable\(uint32_t bus_addr\) \{(.*?)\n\}", source, re.S)
+    assert seq_seedable, "os_io_seq_seedable is not where this pin looks for it"
+    assert "os_io_is_page(bus_addr)" in seq_seedable.group(1), (
+        "the declaration rules no longer derive their page test from os_io_is_page, so the set a "
+        "case may declare and the set the refusal fires on can now drift apart")
 
     shim = (KIT / "oracle" / "shim.c").read_text()
     serve = re.search(r"static int io_serve\(.*?\n\}", shim, re.S)

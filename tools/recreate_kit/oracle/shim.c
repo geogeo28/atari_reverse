@@ -346,6 +346,34 @@ static uint32_t g_io_log_val[OS_IO_LOG_MAX];
 static uint32_t g_io_log_n;
 static uint32_t g_io_log_dropped;            /* reads past the cap: never silently truncated */
 
+/* --- the DECLARED SEQUENCE (TRAP_MODEL.md, "Phase 16") -----------------------------------------
+ * os.h names the model: a case declares a LIST for an address and the Nth read of it is served the
+ * Nth byte, which is the one shape neither model above can describe — a register whose successive
+ * reads must DIFFER for the run to proceed. This is the state behind it.
+ *
+ * ONE TABLE FOR BOTH MODELS' ADDRESSES, consulted by both read paths before either model's own
+ * rule, because the rule is one rule (os.h says why it is not written twice). What stays separate
+ * is the LEDGER: a named slot's sequenced read is recorded by `hw_read` in Phase 7's slot stream,
+ * and every other one by `io_serve` in Phase 15's address stream.
+ *
+ * The table is installed by osh_io_seq and PERSISTS between runs, exactly as g_io_addr does and for
+ * its reason; what a RUN owns is the cursors and the staleness notes, which io_enter_run clears. */
+static uint32_t g_io_seq_addr[OS_IO_SEQ_MAX];      /* the sequenced addresses, 24-bit bus form */
+static uint32_t g_io_seq_offset[OS_IO_SEQ_MAX];    /* ...where each one's bytes start in the pool */
+static uint32_t g_io_seq_length[OS_IO_SEQ_MAX];    /* ...and how many reads it describes */
+static uint8_t  g_io_seq_pool[OS_IO_SEQ_POOL_MAX]; /* every declared byte, packed */
+static uint32_t g_io_seq_n;                        /* rows os_io_seq_install accepted */
+static uint32_t g_io_seq_cursor[OS_IO_SEQ_MAX];    /* how many of each this RUN has read */
+static uint8_t  g_io_seq_written[OS_IO_SEQ_MAX];   /* ...and whether this run STORED to it (os.h) */
+/* Reads past the END of a declared sequence: refused, never served a sticky last byte or a 0 — os.h
+ * has the argument. Recorded rather than refused here, as every other read tally in this file is,
+ * because emu.run drives boots nobody enumerates; harness._vet_io_sequences_are_servable is where it
+ * becomes a refusal. The first one's ADDRESS and READ INDEX are kept, so the message can say how
+ * many bytes the case described and which read ran off the end. */
+static uint32_t g_io_seq_spent;
+static uint32_t g_io_seq_spent_addr;
+static uint32_t g_io_seq_spent_index;
+
 /* Note a read of the I/O page the decode could not serve — see g_io_unmodeled_reads. The caller has
  * already established that `lo` is in the page (io_serve owns that test, so the admissible set and
  * the refused set are one predicate); an address above RAM but below it is ordinary off-image
@@ -378,29 +406,96 @@ static void io_log(uint32_t lo, uint32_t width, uint32_t value) {
  * for that — what Phase 7's wide-read refusal was protecting, and why the neighbour being
  * DECLARABLE is what changes it — is in TRAP_MODEL.md, "Phase 15". The half that matters here is
  * that the refusal names the byte that is MISSING rather than the access that straddled it. */
+/* Note a read that ran off the end of a declared SEQUENCE (see g_io_seq_spent). `index` is the read
+ * that was refused — the cursor has not moved — so "read 2 of a 2-byte sequence" reads as the third
+ * one, counting from 0, exactly as the case wrote the list. */
+static void io_seq_note_spent(uint32_t lo, uint32_t index) {
+    if (!g_io_seq_spent++) {
+        g_io_seq_spent_addr = lo;
+        g_io_seq_spent_index = index;
+    }
+}
+
+/* Note a read served a declaration THIS RUN had already stored to (see g_io_stale_reads). One body
+ * for both models' halves of Phase 15's staleness rule — the constant map's and the sequence
+ * table's — because it is the same refusal with the same remedy whichever declaration went stale. */
+static void io_note_stale(uint32_t lo) {
+    if (!g_io_stale_reads++)
+        g_io_stale_first = lo;
+}
+
+/* Serve one BYTE at `lo` from a declared sequence, if a sequence declares it (Phase 16).
+ *
+ *    1  served: `*value` holds the byte and the cursor has advanced;
+ *    0  no sequence declares `lo` — the CALLER'S OWN model answers, unchanged;
+ *   -1  a sequence declares it and this run has read it to the end: refused and counted.
+ *
+ * PHASE 7'S READ PATH IS ITS ONLY CALLER (`hw_read`): Phase 15's own path resolves the whole span
+ * first and then takes each byte from the row that resolution found, so it never asks twice. The
+ * staleness note therefore lives at that caller's side rather than here — `os_io_seq_store` skips a
+ * named slot deliberately, leaving Phase 7's own mask to say so, so a store can never make a slot's
+ * list stale and a note here would be unreachable.
+ */
+static int io_seq_serve(uint32_t lo, unsigned int *value) {
+    int entry = os_io_find(g_io_seq_addr, g_io_seq_n, lo);
+    uint8_t byte;
+
+    if (entry < 0)
+        return 0;
+    if (!os_io_seq_next(g_io_seq_offset, g_io_seq_length, g_io_seq_cursor, g_io_seq_pool,
+                        entry, &byte)) {
+        io_seq_note_spent(lo, g_io_seq_cursor[entry]);
+        return -1;
+    }
+    *value = byte;
+    return 1;
+}
+
 static int io_serve(unsigned int a, unsigned int n, unsigned int *value) {
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff8260 onto $ff8260 */
     if (!os_io_is_page(lo))
         return 0;                                  /* ordinary off-image memory, as it always was */
 
     /* Resolve the whole span BEFORE serving any of it, so a half-declared word records the missing
-     * byte and nothing else — neither a staleness note nor a ledger entry for the byte that WAS
-     * declared, which would leave the candidate's stream a half-entry short of the oracle's. */
+     * byte and nothing else — neither a staleness note, nor a ledger entry for the byte that WAS
+     * declared, nor a SEQUENCE cursor advanced for a byte whose neighbour cannot be served — any of
+     * which would leave the candidate's stream out of step with the oracle's. The rule itself is
+     * os.h's, shared verbatim with src/hw.c's `io_read`; what is this shore's is the two TALLIES
+     * below, where the candidate charges `os_refused()`. */
     int entry[OS_HW_WRITE_WIDTH_32];               /* the 68000's widest access, in bytes */
-    for (unsigned i = 0; i < n; i++) {
-        entry[i] = os_io_find(g_io_addr, g_io_n, lo + i);
-        if (entry[i] < 0) {
-            io_note_unmodeled_read(lo + i);
-            return 0;
-        }
+    int seq[OS_HW_WRITE_WIDTH_32];                 /* ...and its row in the sequence table, or -1 */
+    uint32_t at = 0;                               /* the byte a refusal is about (os.h) */
+    switch (os_io_resolve_span(g_io_seq_addr, g_io_seq_length, g_io_seq_cursor, g_io_seq_n,
+                               g_io_addr, g_io_n, lo, n, seq, entry, &at)) {
+    case OS_IO_SPAN_SPENT:
+        io_seq_note_spent(lo + at, g_io_seq_cursor[seq[at]]);
+        return 0;
+    case OS_IO_SPAN_UNMODELED:
+        io_note_unmodeled_read(lo + at);
+        return 0;
+    default:
+        break;
     }
     uint32_t served = 0;
     for (unsigned i = 0; i < n; i++) {
-        if (g_io_written[entry[i]]) {
-            if (!g_io_stale_reads++)
-                g_io_stale_first = lo + i;
+        unsigned int byte;
+        if (seq[i] >= 0) {
+            uint8_t sequenced;
+            /* Resolved above, so it cannot refuse — and taken from the ROW that resolution found
+             * rather than searched for a second time. The staleness note is this model's half of
+             * Phase 15's rule at a sequenced address (os_io_seq_store), feeding the SAME tally a
+             * stale constant does because it is the same refusal with the same remedy. */
+            if (g_io_seq_written[seq[i]])
+                io_note_stale(lo + i);
+            os_io_seq_next(g_io_seq_offset, g_io_seq_length, g_io_seq_cursor, g_io_seq_pool,
+                           seq[i], &sequenced);
+            byte = sequenced;
+        } else {
+            if (g_io_written[entry[i]])
+                io_note_stale(lo + i);
+            byte = g_io_live[entry[i]];
         }
-        served = served << 8 | g_io_live[entry[i]];
+        served = served << 8 | byte;
     }
     io_log(lo, n, served);
     *value = served;
@@ -421,6 +516,9 @@ static void io_note_written(unsigned int a, unsigned int n, unsigned int v) {
     if (!os_io_is_page(lo))
         return;
     os_io_store(g_io_addr, g_io_n, g_io_writeback, g_io_live, g_io_written, lo, n, v);
+    /* ...and the SEQUENCE table's own staleness column (Phase 16), which feeds the same tally: a
+     * store invalidates a declared LIST exactly as it invalidates a declared constant. */
+    os_io_seq_store(g_io_seq_addr, g_io_seq_n, g_io_seq_written, lo, n);
 }
 
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
@@ -762,6 +860,29 @@ void osh_io_seed(const uint32_t *addrs, const uint8_t *values, const uint8_t *wr
 }
 uint32_t osh_io_seed_count(void) { return g_io_n; }
 uint32_t osh_io_seed_max(void)   { return OS_IO_SEED_MAX; }
+
+/* ---- the DECLARED SEQUENCE's ABI (see g_io_seq_addr above; emu.py binds every one) ------------- */
+/* Declare the LISTS every FOLLOWING run starts from, as a flat byte POOL plus one (address, offset,
+ * length) row each — the wire form os.h's installer takes, because a C ABI has no ragged arrays. A
+ * row os.h's rule rejects is dropped; osh_io_seq_count() reports how many landed, and emu.run raises
+ * on the shortfall, so a case served fewer sequences than it wrote is loud (osh_io_seed's reason).
+ *
+ * The cursors are reset HERE as well as per run, so that a declaration installed between runs is in
+ * a defined state even for a caller that reads the table back without running anything. */
+void osh_io_seq(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths,
+                const uint8_t *pool, uint32_t n, uint32_t pool_len) {
+    g_io_seq_n = os_io_seq_install(g_io_seq_addr, g_io_seq_offset, g_io_seq_length, g_io_seq_pool,
+                                   addrs, offsets, lengths, pool, n, pool_len);
+    os_io_seq_enter_run(g_io_seq_cursor, g_io_seq_written, g_io_seq_n);
+}
+uint32_t osh_io_seq_count(void)    { return g_io_seq_n; }
+uint32_t osh_io_seq_max(void)      { return OS_IO_SEQ_MAX; }
+uint32_t osh_io_seq_pool_max(void) { return OS_IO_SEQ_POOL_MAX; }
+/* Reads this run made past the END of a declared sequence, with the first one's address and read
+ * index. A refusal in a differential (harness._vet_io_sequences_are_servable), reported here. */
+uint32_t osh_io_seq_spent(void)       { return g_io_seq_spent; }
+uint32_t osh_io_seq_spent_addr(void)  { return g_io_seq_spent_addr; }
+uint32_t osh_io_seq_spent_index(void) { return g_io_seq_spent_index; }
 /* Reads this run made of a declared byte the run had already STORED to, and the first such address.
  * The declaration describes the machine on ENTRY and an instruction of this run has replaced it, so
  * no bigger declaration can fix it — harness._vet_io_reads_are_declared refuses the case. */
@@ -896,12 +1017,22 @@ static void hw_log(int slot, uint8_t value) {
  * diverge for the wrong reason. */
 static unsigned int hw_read(int slot) {
     unsigned int served = 0;
-    if (g_hw_known & (1u << slot)) served = g_hw_file[slot];
-    else                           g_hw_unseeded |= 1u << slot;
+    /* A DECLARED SEQUENCE (Phase 16) supersedes the slot's per-run byte, and with it the VOLATILE
+     * re-read rule below: "at most one read" becomes "at most as many reads as the case listed",
+     * which the exhaustion refusal inside `io_seq_serve` enforces. The read is still LEDGERED here,
+     * in Phase 7's own slot stream and under Phase 7's own staleness mask — the sequence decides
+     * what byte is served, the owning model decides everything else (os.h). */
+    int sequenced = io_seq_serve(os_hw_addrs()[slot], &served);
+    if (sequenced < 0)
+        served = 0;                    /* read past the end: refused and counted, nothing served */
+    else if (sequenced == 0) {
+        if (g_hw_known & (1u << slot)) served = g_hw_file[slot];
+        else                           g_hw_unseeded |= 1u << slot;
+    }
     if (g_hw_written & (1u << slot)) g_hw_stale |= 1u << slot;
     /* The SECOND read of a volatile slot, tallied on the read that repeats rather than on the one
      * that opened it — so the mask names the slot a case must do something about. */
-    if ((g_hw_seen & (1u << slot)) && (os_hw_volatile_slots() & (1u << slot)))
+    if (sequenced == 0 && (g_hw_seen & (1u << slot)) && (os_hw_volatile_slots() & (1u << slot)))
         g_hw_reread |= 1u << slot;
     g_hw_seen |= 1u << slot;
     hw_log(slot, (uint8_t)served);
@@ -1251,6 +1382,13 @@ static void io_enter_run(void) {
     g_io_stale_first = 0;
     g_io_log_n = 0;
     g_io_log_dropped = 0;
+    /* ...and every declared SEQUENCE back to its first byte (Phase 16). The table is the case's and
+     * survives a run; how far this run has read it is the run's, so without this a second run of one
+     * declaration would start where the first stopped. */
+    os_io_seq_enter_run(g_io_seq_cursor, g_io_seq_written, g_io_seq_n);
+    g_io_seq_spent = 0;
+    g_io_seq_spent_addr = 0;
+    g_io_seq_spent_index = 0;
 }
 
 static void enter_from_reset(void) {

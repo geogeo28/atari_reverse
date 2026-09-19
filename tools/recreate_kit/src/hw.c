@@ -1,6 +1,8 @@
-/* hw.c — the candidate side of the seeded hardware read model. WHY it exists and what it must agree
- * with is in ../include/hw.h and TRAP_MODEL.md ("Phase 7"); the contract the harness reads it
- * through is in ../README.md, "What the candidate .so must export".
+/* hw.c — the candidate side of every off-image model that answers by ADDRESS: the seeded hardware
+ * read model's NAMED SET (Phase 7), the DECLARED I/O MAP (Phase 15), the DECLARED SEQUENCE that both
+ * of them consult (Phase 16), and the hardware WRITE ledger (Phase 10). WHY each exists and what it
+ * must agree with is in ../include/hw.h and TRAP_MODEL.md; the contract the harness reads it through
+ * is in ../README.md, "What the candidate .so must export".
  *
  * It lives in the kit, beside src/psg.c and the refusal tally, because the contract is kit-wide and
  * kit.mk sweeps every kit source into every project's candidate — so both surfaces are one
@@ -23,6 +25,90 @@
 #include "os.h"
 #include "hw.h"
 
+/* ================================================================================================
+ * THE DECLARED SEQUENCE (TRAP_MODEL.md, "Phase 16"): a LIST one address yields, one byte per read.
+ *
+ * FIRST IN THIS FILE because BOTH models below consult it — `hw_read8`'s named set and `io_read`'s
+ * declared map — which is the whole shape of the model: one table keyed by address, one rule, and
+ * the read still LEDGERED by whichever model owns the address. os.h carries the argument for why it
+ * is not two tables; `include/hw.h` carries what a case declares and what a read past the end does.
+ * ============================================================================================= */
+static uint32_t g_io_seq_addr[OS_IO_SEQ_MAX];      /* the sequenced addresses, 24-bit bus form */
+static uint32_t g_io_seq_offset[OS_IO_SEQ_MAX];    /* ...where each one's bytes start in the pool */
+static uint32_t g_io_seq_length[OS_IO_SEQ_MAX];    /* ...and how many reads it describes */
+static uint8_t  g_io_seq_pool[OS_IO_SEQ_POOL_MAX]; /* every declared byte, packed */
+static uint32_t g_io_seq_n;
+static uint32_t g_io_seq_cursor[OS_IO_SEQ_MAX];    /* how many of each this RUN has read */
+/* There is no STALENESS column on this side, exactly as there is none for the constant map: that
+ * tally feeds `harness._vet_io_reads_are_declared`, which reads the ORACLE's report, so a second
+ * copy here would be state nothing consults. `os_io_seq_enter_run` takes NULL for it. */
+/* Reads PAST THE END of a declared list, and the first one's address and read index — the mirror of
+ * shim.c's `g_io_seq_spent*`, and the one place where this side DOES keep what the oracle keeps.
+ * Here it is not a refusal of its own (the shared `os_refused()` is that) but the DIAGNOSIS: a bare
+ * refusal count sends the reader to hunt for a missing guard, where these name the list that ran
+ * out. `harness.refusal_hints` reads them; `include/hw.h` says why they are ABI. */
+static uint32_t g_io_seq_spent_n;
+static uint32_t g_io_seq_spent_a;
+static uint32_t g_io_seq_spent_i;
+
+/* Install the case's declared SEQUENCES and put every cursor back to its first byte. The harness
+ * calls this before EACH candidate run, the poison re-run included, exactly as it calls `g_io_reset`
+ * — a run that started where the previous one stopped reading would be compared against an oracle
+ * that had reset, and under `pytest -n auto` which run that was is not even stable.
+ *
+ * The install is os.h's, shared verbatim with shim.c's `osh_io_seq`. A row os.h's rule REJECTED —
+ * an address outside the I/O page, a YM2149 port, an empty list, one past the cap — is a refusal
+ * rather than a silent shortfall, for `g_io_reset`'s reason: the case declared a list this model
+ * will never serve, and the run that read it would refuse anyway with a less useful message. */
+void g_io_seq_reset(const uint32_t *addrs, const uint32_t *offsets, const uint32_t *lengths,
+                    const uint8_t *pool, uint32_t n, uint32_t pool_len) {
+    g_io_seq_n = os_io_seq_install(g_io_seq_addr, g_io_seq_offset, g_io_seq_length, g_io_seq_pool,
+                                   addrs, offsets, lengths, pool, n, pool_len);
+    os_io_seq_enter_run(g_io_seq_cursor, (uint8_t *)0, g_io_seq_n);
+    g_io_seq_spent_n = 0;
+    g_io_seq_spent_a = 0;
+    g_io_seq_spent_i = 0;
+    if (g_io_seq_n != n)
+        os_refused(0);
+}
+
+uint32_t        g_io_seq_count(void)       { return g_io_seq_n; }
+uint32_t        g_io_seq_spent(void)       { return g_io_seq_spent_n; }
+uint32_t        g_io_seq_spent_addr(void)  { return g_io_seq_spent_a; }
+uint32_t        g_io_seq_spent_index(void) { return g_io_seq_spent_i; }
+
+/* Note a read that ran off the end of a declared list (see g_io_seq_spent_n), mirroring shim.c's
+ * `io_seq_note_spent`. `index` is the read that was REFUSED — the cursor has not moved — so "read 2
+ * of a 2-byte list" reads as the third one, counting from 0, exactly as the case wrote it. */
+static void io_seq_note_spent(uint32_t addr, uint32_t index) {
+    if (!g_io_seq_spent_n++) {
+        g_io_seq_spent_a = addr;
+        g_io_seq_spent_i = index;
+    }
+}
+
+/* Serve one BYTE at `addr` from a declared sequence, if one declares it — the mirror of shim.c's
+ * `io_seq_serve`, with the same three answers: 1 served, 0 not sequenced, -1 read past the end. A
+ * read past the end is the CANDIDATE's own refusal (`os_refused`, charged by the caller so that the
+ * two ledgers stay each model's own), never a sticky last byte and never a 0. */
+static int io_seq_serve(uint32_t addr, uint32_t *value) {
+    int entry = os_io_find(g_io_seq_addr, g_io_seq_n, addr);
+    uint8_t byte;
+
+    if (entry < 0)
+        return 0;
+    if (!os_io_seq_next(g_io_seq_offset, g_io_seq_length, g_io_seq_cursor, g_io_seq_pool,
+                        entry, &byte)) {
+        io_seq_note_spent(addr, g_io_seq_cursor[entry]);
+        return -1;
+    }
+    *value = byte;
+    return 1;
+}
+
+/* ================================================================================================
+ * THE SEEDED HARDWARE READ MODEL (TRAP_MODEL.md, "Phase 7"): the NAMED SET.
+ * ============================================================================================= */
 static uint8_t  g_hw_bytes[OS_HW_NSLOTS];   /* the declared bytes a read is served from */
 static uint32_t g_hw_bytes_known;           /* bit S = slot S's contents were declared */
 /* The ordered read stream. Two parallel arrays rather than an array of structs so the harness can
@@ -68,20 +154,58 @@ static void hw_log(int slot, uint8_t value) {
     g_hw_n++;
 }
 
-uint8_t hw_read8(uint32_t addr) {
+/* Charge one refusal and report it through `refused` — the shape every refusal in this file takes,
+ * so that a caller which needs to know (a POLL loop, whose own condition is the only thing that can
+ * end it) reads the SAME answer the tally records rather than searching for it a second time. */
+static uint32_t refuse_read(int *refused) {
+    *refused = 1;
+    return (uint32_t)os_refused(0);
+}
+
+/* The body of `hw_read8`, with the refusal reported as well as tallied (see `refuse_read`). */
+static uint8_t hw_read_slot(uint32_t addr, int *refused) {
     int slot = os_hw_slot(addr);
+    uint32_t sequenced_byte = 0;
+    int sequenced;
+    uint8_t served;
+
+    *refused = 0;
     /* An address the model does not name is refused WITHOUT a ledger entry: the oracle has no entry
      * for it either (its callback answers such an address 0 and records nothing), so logging one
      * here would diverge the streams for a reason that is not about this read. */
     if (slot < 0)
-        return (uint8_t)os_refused(0);
+        return (uint8_t)refuse_read(refused);
+    /* A DECLARED SEQUENCE (Phase 16) supersedes the slot's per-run byte, and the read is still
+     * ledgered here in Phase 7's own stream — the sequence decides what byte is served and the
+     * owning model decides everything else (os.h). A read past the END of one is a refusal, as an
+     * undeclared byte is: the case said how many reads it was describing and this is not one. */
+    sequenced = io_seq_serve(addr, &sequenced_byte);
+    if (sequenced > 0)
+        served = (uint8_t)sequenced_byte;
+    else if (sequenced < 0)
+        served = (uint8_t)refuse_read(refused);
     /* A declared byte is served; an undeclared one is refused — and the event is logged EITHER WAY,
      * because a refused read still HAPPENED and the oracle logs its own (see shim.c's hw_read). */
-    uint8_t served = (g_hw_bytes_known & (1u << slot))
-                     ? g_hw_bytes[slot]
-                     : (uint8_t)os_refused(0);     /* see hw.h: an undeclared byte is an input */
+    else
+        served = (g_hw_bytes_known & (1u << slot))
+                 ? g_hw_bytes[slot]
+                 : (uint8_t)refuse_read(refused);  /* see hw.h: an undeclared byte is an input */
     hw_log(slot, served);
     return served;
+}
+
+uint8_t hw_read8(uint32_t addr) {
+    int refused;
+    return hw_read_slot(addr, &refused);
+}
+
+/* ONE ITERATION OF A POLL on a named slot: the identical read, plus whether the model could still
+ * answer it. `include/hw.h` has the contract and the argument for why a poll loop needs one. */
+int hw_poll8(uint32_t addr, uint8_t *seen) {
+    int refused;
+
+    *seen = hw_read_slot(addr, &refused);
+    return !refused;
 }
 
 
@@ -142,6 +266,8 @@ uint32_t        g_io_writeback_count(void) {
     return marked;
 }
 
+
+
 uint32_t        g_io_log_count(void)   { return g_io_log_n; }
 const uint32_t *g_io_log_addrs(void)   { return g_io_log_addr; }
 const uint8_t  *g_io_log_widths(void)  { return g_io_log_width; }
@@ -155,13 +281,42 @@ const uint32_t *g_io_log_vals(void)    { return g_io_log_val; }
  * Entries past the cap are dropped exactly as the oracle's are, so a run longer than the cap still
  * compares like for like; the harness refuses a comparison at the cap rather than trust a truncated
  * one. */
-static uint32_t io_read(uint32_t addr, uint32_t width) {
+static uint32_t io_read(uint32_t addr, uint32_t width, int *refused) {
     uint32_t served = 0;
+    uint32_t at = 0;                               /* the byte a refusal is about (os.h) */
+    int entry[OS_HW_WRITE_WIDTH_32];               /* the 68000's widest access, in bytes */
+    int seq[OS_HW_WRITE_WIDTH_32];                 /* ...and its row in the sequence table, or -1 */
+
+    *refused = 0;
+    /* RESOLVE THE WHOLE SPAN BEFORE SERVING ANY OF IT — os.h's shared rule, the same call the
+     * oracle's `io_serve` makes, which is what keeps a half-servable wide read from advancing one
+     * sequence's cursor and refusing on the next byte: the two sides would then disagree about
+     * where every later read stands. What differs between the shores is only what a refusal DOES,
+     * and on this one it is `os_refused()`; see hw.h, an undeclared I/O byte is an input, not a 0,
+     * and a sequence read to its end is not an input either. */
+    switch (os_io_resolve_span(g_io_seq_addr, g_io_seq_length, g_io_seq_cursor, g_io_seq_n,
+                               g_io_addr, g_io_n, addr, width, seq, entry, &at)) {
+    case OS_IO_SPAN_SPENT:
+        io_seq_note_spent(addr + at, g_io_seq_cursor[seq[at]]);
+        return refuse_read(refused);
+    case OS_IO_SPAN_UNMODELED:
+        return refuse_read(refused);
+    default:
+        break;
+    }
     for (uint32_t i = 0; i < width; i++) {
-        int entry = os_io_find(g_io_addr, g_io_n, addr + i);
-        if (entry < 0)
-            return os_refused(0);        /* see hw.h: an undeclared I/O byte is an input, not a 0 */
-        served = served << 8 | g_io_live[entry];
+        uint32_t byte;
+        if (seq[i] >= 0) {
+            uint8_t sequenced;
+            /* Resolved above, so it cannot refuse here — and taken from the ROW the resolution
+             * already found rather than searched for a second time. */
+            os_io_seq_next(g_io_seq_offset, g_io_seq_length, g_io_seq_cursor, g_io_seq_pool,
+                           seq[i], &sequenced);
+            byte = sequenced;
+        } else {
+            byte = g_io_live[entry[i]];
+        }
+        served = served << 8 | byte;
     }
     if (g_io_log_n < OS_IO_LOG_MAX) {
         g_io_log_addr[g_io_log_n] = addr;
@@ -172,9 +327,29 @@ static uint32_t io_read(uint32_t addr, uint32_t width) {
     return served;
 }
 
-uint8_t  io_read8(uint32_t addr)  { return (uint8_t)io_read(addr, OS_HW_WRITE_WIDTH_8); }
-uint16_t io_read16(uint32_t addr) { return (uint16_t)io_read(addr, OS_HW_WRITE_WIDTH_16); }
-uint32_t io_read32(uint32_t addr) { return io_read(addr, OS_HW_WRITE_WIDTH_32); }
+uint8_t io_read8(uint32_t addr) {
+    int refused;
+    return (uint8_t)io_read(addr, OS_HW_WRITE_WIDTH_8, &refused);
+}
+
+uint16_t io_read16(uint32_t addr) {
+    int refused;
+    return (uint16_t)io_read(addr, OS_HW_WRITE_WIDTH_16, &refused);
+}
+
+uint32_t io_read32(uint32_t addr) {
+    int refused;
+    return io_read(addr, OS_HW_WRITE_WIDTH_32, &refused);
+}
+
+/* ONE ITERATION OF A POLL on a declared I/O byte, `hw_poll8`'s contract at this model's door:
+ * the identical `io_read8`, plus whether the model could still answer it (include/hw.h). */
+int io_poll8(uint32_t addr, uint8_t *seen) {
+    int refused;
+
+    *seen = (uint8_t)io_read(addr, OS_HW_WRITE_WIDTH_8, &refused);
+    return !refused;
+}
 
 /* Apply a store to the declared map — the candidate's half of the WRITE-THROUGH arm, and the mirror
  * of shim.c's `io_note_written`. A marked byte LATCHES the store, so the next `io_read8` of it is
