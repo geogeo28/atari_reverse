@@ -21,10 +21,10 @@
  * THE STATUS POLL IS A LOOP THE MODEL CAN ONLY RUN ONE WAY ROUND. `$fffc00` is one of the seeded
  * hardware model's NAMED slots (os.h, `OS_HW_ACIA_STATUS`) and `$fffc04` is an ordinary declared I/O
  * byte; either way the declaration is a per-RUN CONSTANT, so a case that declares TDRE set leaves
- * the loop on its first read and a case that declares it clear hangs BOTH sides identically. What
- * cannot be expressed today is the interesting sequence — not ready, then ready — because that needs
- * two different bytes out of one address in one run, which is the shape os.h calls out as beyond a
- * constant. So what these cases prove of the poll is that it HAPPENS, in order, once per byte, at
+ * the loop on its first read and a case that declares it clear hangs BOTH sides identically. The
+ * interesting sequence — not ready, then ready — is a DECLARED LIST now (`io_seed={addr: [busy,
+ * ready]}`, TRAP_MODEL.md Phase 16), which `test_bios_bconout.py` drives through the same two
+ * senders. What every case here proves of the poll is that it HAPPENS, in order, once per byte, at
  * the right port: the read ledgers are compared entry for entry, and a reconstruction that dropped
  * the poll or polled the wrong ACIA reds there rather than on any image byte.
  *
@@ -83,20 +83,29 @@ static void ikbd_settle(void)
 #endif
 }
 
+/* THE SPIN ENDS ON THE MODEL'S OWN ANSWER, not on a bound. A read the seeded model cannot serve
+ * hands this shore 0, and 0 is "not ready yet" to this loop — so an under-declared case would spin
+ * for ever on the host while the oracle came back with its refusal, and a hung pytest worker
+ * decides nothing. `hw_poll8` is the read plus "could you still serve it?" (`hw.h`), which on the
+ * machine is the read plus `1` and leaves the ROM's own unbounded wait. */
 void ikbd_send_byte(uint8_t byte)
 {
-    while ((hw_read8(IKBD_ACIA_STATUS) & ACIA_TRANSMIT_READY) == 0)
+    uint8_t status;
+
+    while (hw_poll8(IKBD_ACIA_STATUS, &status) && (status & ACIA_TRANSMIT_READY) == 0)
         ;
     ikbd_settle();
     hw_write8(IKBD_ACIA_DATA, byte);
 }
 
 /* ...and the MIDI 6850's, which has no settling delay. Its status register is not one of the seeded
- * model's named slots, so it comes through the DECLARED I/O MAP instead (`io_read8`); both are
+ * model's named slots, so it comes through the DECLARED I/O MAP instead (`io_poll8`); both are
  * ledgered and compared, in their own stream. */
-static void midi_send_byte(uint8_t byte)
+void midi_send_byte(uint8_t byte)
 {
-    while ((io_read8(MIDI_ACIA_STATUS) & ACIA_TRANSMIT_READY) == 0)
+    uint8_t status;
+
+    while (io_poll8(MIDI_ACIA_STATUS, &status) && (status & ACIA_TRANSMIT_READY) == 0)
         ;
     hw_write8(MIDI_ACIA_DATA, byte);
 }

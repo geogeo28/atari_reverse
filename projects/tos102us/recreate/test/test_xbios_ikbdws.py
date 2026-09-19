@@ -30,7 +30,8 @@ import struct
 
 import pytest
 
-from harness import _lib, addrs, differential, emu, in_diff, make_image
+from harness import (_lib, addrs, arm_candidate, candidate_image, differential, emu,
+                     in_diff, make_image)
 
 import abi
 import case
@@ -181,7 +182,7 @@ SPIN_CAP = 5000
 
 @pytest.mark.parametrize("declared,what", ((None, "undeclared"), ({addrs.MIDI_ACIA_STATUS: 0},
                                                                  "declared with TDRE clear")))
-def test_a_status_register_that_is_never_ready_spins_for_ever_on_both_sides(declared, what):
+def test_a_status_register_that_is_never_ready_spins_the_oracle_to_its_cap(declared, what):
     """WHAT THE CONSTANT CANNOT SAY, measured — and why the usual refusal has nothing to fire on.
 
     Everywhere else in this project an undeclared I/O byte REFUSES the case by address. Not here:
@@ -191,13 +192,52 @@ def test_a_status_register_that_is_never_ready_spins_for_ever_on_both_sides(decl
     same program, which is the point: a per-run constant can describe a transmitter that is ready or
     one that never becomes ready, and the machine's own "not yet, now" is neither.
 
-    A reconstruction is held to the same loop, so neither side has a bounded number of polls to
-    disagree about: what a case can prove is the poll that DOES happen, which every case above does.
+    THE ORACLE ALONE, and the name says so: the reconstruction reaches the same loop through
+    `io_poll8`, which ends it the moment the model cannot serve another read — so on the UNDECLARED
+    row it leaves at once where the oracle here does not, and the case below pins that. On the
+    DECLARED row both really do spin, because a constant serves every poll for ever. Either way
+    there is no bounded number of polls for the two to be compared over: what a case can prove is
+    the poll that DOES happen, which every case above does.
     """
     del what
     with pytest.raises(RuntimeError, match="did not reach rts"):
         emu.run(make_image({**frame(0, BYTES_AT), BYTES_AT: b"\x55"}), addrs.XBIOS_MIDIWS,
                 {"a5": 0}, io_seed=declared, max_insns=SPIN_CAP)
+
+
+# A status byte with TDRE CLEAR: the transmitter is busy and the send loop goes round again.
+ACIA_NOT_READY = 0
+
+
+def test_a_refused_status_poll_ends_the_recreate_s_spin_and_sends_anyway():
+    """WHERE THE RECONSTRUCTION AND THE ORIGINAL PART COMPANY, and the only case that says so.
+
+    The ROM's wait is unbounded: `btst #1,d2 / beq .poll`, and the case above measures the oracle
+    running it to the instruction cap. The reconstruction's is `io_poll8`/`hw_poll8` — the read plus
+    "could you still serve it?" — so a declaration that RUNS OUT ends the loop on this shore
+    (`src/xbios/acia.c`). That asymmetry is deliberate: a hung pytest worker decides nothing where a
+    refused run reds. What it costs is that the byte is then sent to a transmitter nobody said was
+    ready, which is what this pins.
+
+    NO DIFFERENTIAL, because there is nothing to compare against: the oracle does not return from
+    this case at all. So the candidate is run on its own and its two ledgers are read directly — the
+    refusal tally that makes the run void, and the hardware write that happened anyway.
+
+    `Ikbdws` reaches the same primitive one door along (`hw_poll8`), and its status register cannot
+    be under-declared: it is a Phase-7 NAMED slot the kit defaults to `OS_ACIA_TX_RDY`, which is
+    what `test_the_ready_bit_is_the_one_the_kit_defaults_that_slot_to` above pins.
+    """
+    buf = candidate_image(make_image({**frame(0, BYTES_AT), BYTES_AT: b"\x55"}))
+    arm_candidate(io_seed={addrs.MIDI_ACIA_STATUS: [ACIA_NOT_READY]})
+    _lib.xbios_midiws(buf, 0, BYTES_AT)
+
+    assert _lib.g_os_refusal_count() == 1, (
+        "the list of one should have been spent by the first poll and the second poll refused")
+    written = [(_lib.g_hw_write_addrs()[i], _lib.g_hw_write_vals()[i])
+               for i in range(_lib.g_hw_write_count())]
+    assert written == [(addrs.MIDI_ACIA_DATA, 0x55)], (
+        "the send should leave the spin on the refusal and store the byte, which is what makes the "
+        "run VOID rather than hung")
 
 
 def test_the_ikbd_s_two_ports_are_the_ones_the_seeded_model_names():

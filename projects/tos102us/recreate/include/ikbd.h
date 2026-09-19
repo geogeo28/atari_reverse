@@ -12,6 +12,10 @@
 /* $fc21f2 — one byte to the IKBD's 6850, after spinning on the status register's TDRE bit. */
 void ikbd_send_byte(uint8_t byte);
 
+/* $fc201a — the same for the MIDI 6850, which has no settling delay. `Bconout(MIDI:)` ($fc2016) and
+ * `Bconout(IKBD:)` ($fc21ee) ARE these two, one `move.w 6(sp),d1` further up. */
+void midi_send_byte(uint8_t byte);
+
 /* $fc221c — `Ikbdws`'s loop: `count + 1` bytes from `at`, each through `ikbd_send_byte`. */
 void ikbd_send_string(const uint8_t *image, uint16_t count, uint32_t at);
 

@@ -21,19 +21,17 @@
  *
  * THE TWO ROUTINES ARE RAM. `midisys` and `ikbdsys` are the last two longwords of KBDVECS — the
  * table `Kbdvbase` hands a caller for exactly this purpose — and the vectors are RE-READ on every
- * pass, so a routine that replaces its own is answered from the next one. They are staged
- * (`include/staged_call.h`), which is also what makes the handler itself provable: the ROM's own
- * service routines at $fc29fc and $fc2a0c read the 6850s' data ports, and those are not
- * reconstructed here.
+ * pass, so a routine that replaces its own is answered from the next one. What runs there is
+ * therefore an INPUT of this handler and never a call by name, however well known the routine is:
+ * control leaves through `include/staged_call.h` either way.
  *
- * WHAT IS NOT RECONSTRUCTED, and why it is not a halt: the two service routines are not ARMS of this
- * function, they are separate ROM routines reached through a vector — so this file has nothing to
- * halt on. `test_bios_ikbd.py` pins that the captured machine really has $fc29fc and $fc2a0c in
- * those slots, so what is deferred stays checkable: the packet parser (mouse, joystick, clock and
- * status packets into their buffers), the scancode translation through the `Keytbl` tables into the
- * console IOREC, and MIDI's own ring. All of it needs something this model does not have — a
- * declared SEQUENCE of bytes out of $fffc02, where one per-run constant describes exactly one read
- * (os.h, `OS_HW_ACIA_DATA`).
+ * BOTH OF THEM ARE NOW RECONSTRUCTED — `src/bios/acia_service.c` and `src/bios/keyboard.c` — so
+ * `test_bios_ikbd.py` drives this handler in TWO SHAPES. One stages a marker in each slot, which
+ * ISOLATES the loop, the vector re-read and the acknowledgement from any chip at all; the other
+ * leaves the captured machine's own `$fc29fc` and `$fc2a0c` in the slots and declares the two 6850s
+ * instead, so a whole mouse packet is assembled over three passes of this loop and a keystroke
+ * reaches the IKBD IOREC. The pin that the snapshot really holds those two addresses is kept either
+ * way: it is what says the second shape is about the machine rather than about a stub.
  *
  * HOW MANY PASSES A CASE GETS IS WHAT IT DECLARES. GPIP bit 4 is a Phase-7 named slot, and a case
  * may declare it as one BYTE — which describes one pass, since the loop asks the same question every

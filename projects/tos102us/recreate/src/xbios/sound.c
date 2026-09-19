@@ -41,6 +41,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "m68k_idioms.h"
+#include "sound.h"
 
 /* Where the 200 Hz driver should read its next sound command from, reporting where it was reading
  * from before. A negative pointer only reports — and every real address on a 24-bit bus is
@@ -49,10 +50,8 @@ uint32_t xbios_dosound(uint8_t *image, uint32_t list)
 {
     uint32_t previous = be32(image + SOUND_LIST_POINTER);
 
-    if (!keeps_current_value_long(list)) {
-        wr32(image + SOUND_LIST_POINTER, list);
-        image[SOUND_LIST_DELAY] = 0;
-    }
+    if (!keeps_current_value_long(list))
+        sound_start_list(image, list);
     return previous;
 }
 

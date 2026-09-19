@@ -17,4 +17,10 @@ uint32_t xbios_random(uint8_t *image);
  * instructions in at $fc2eac with the two arguments already in D0/D1. */
 uint8_t xbios_giaccess(uint16_t data, uint16_t reg_and_flag);
 
+/* $fc2edc / $fc2f02 — port A's two read-modify-writes. `Bconout(PRT:)` ($fc2090) pulses the
+ * Centronics strobe through their BODIES ($fc2ee2 / $fc2f08), which is the same routine entered
+ * below its argument fetch with the mask already in D2; `entry_d0` is what both give back. */
+uint32_t xbios_ongibit(uint32_t entry_d0, uint16_t bits);
+uint32_t xbios_offgibit(uint32_t entry_d0, uint16_t bits);
+
 #endif /* TOS102US_XBIOS_H */

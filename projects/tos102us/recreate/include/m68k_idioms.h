@@ -57,4 +57,20 @@ static inline int keeps_current_value_long(uint32_t argument)
     return (argument & SIGN_BIT32) != 0;
 }
 
+/* THE N FLAG OF A WORD DIFFERENCE — what `cmp.w Dm,Dn` followed by `bpl`/`bmi` actually tests, and
+ * NOT the signed compare `Dn < Dm` a reconstruction reaches for. `bpl` reads bit 15 of the
+ * difference alone, so the two answers part company exactly where the subtraction OVERFLOWS a word:
+ * the console's column clamp compares a maximum of 39 against a column of $8000 and the ROM's
+ * `cmp.w d0,d2 / bpl` sees $8027 — negative, so it CLAMPS — where `39 < -32768` is false and a
+ * signed compare leaves the column alone.
+ *
+ * `blt`/`bge` are the pair that DO make a signed compare, because they read V alongside N; a routine
+ * branching on one of those is not this idiom. `$fc49c8` and `$fc49d2` (`cell_address`'s two clamps)
+ * are `bpl` and are this; `$fc4746` and `$fc475e` (`advance_cursor`) are `blt` and are a real `<`.
+ * `test_bios_vt52.py` drives both halves of the clamp at the overflow window. */
+static inline int word_difference_is_negative(uint16_t left, uint16_t right)
+{
+    return (int16_t)(uint16_t)(left - right) < 0;
+}
+
 #endif /* TOS102US_M68K_IDIOMS_H */

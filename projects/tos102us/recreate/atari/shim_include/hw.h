@@ -23,8 +23,8 @@
  *     rather than an ordinary declared byte (their notes say why the names stay apart in the core
  *     and collapse here).
  *
- * `hw_write32`, `io_poll8` and the three read-modify-writes remain declared by the kit and
- * implemented by NO core here — so a core that acquires one fails at LINK, naming the symbol, which
+ * `hw_write32` and the three read-modify-writes remain declared by the kit and implemented by NO
+ * core here — so a core that acquires one fails at LINK, naming the symbol, which
  * is the right outcome: each is a decision about what the target build does with an access the
  * oracle only ledgers, and writing it before a core needs one would be writing it with nothing to
  * check it against. Add each one here, with its evidence, when the core that needs it lands.
@@ -115,12 +115,23 @@ static inline uint8_t hw_read8(uint32_t addr)
  * "still asserting" and spin on for ever. There is no model here and no declaration to run out, so
  * the answer is always "served" and the loop is the machine's own, exactly as `hw_read8`'s note
  * above says. VOLATILE for that note's reason too: the byte is changed by the chips and by nothing
- * in the caller's instruction stream.
- *
- * `io_poll8` stays absent for the header's rule: no core here polls an ordinary I/O byte, and a core
- * that acquires one fails at LINK naming the symbol rather than getting a definition nobody weighed.
- */
+ * in the caller's instruction stream. */
 static inline int hw_poll8(uint32_t addr, uint8_t *seen)
+{
+    *seen = *(volatile uint8_t *)addr;
+    return 1;
+}
+
+/* ...and the same for an ordinary byte of the DECLARED I/O MAP, which the header note above says to
+ * add with the core that needs one. Two landed together: `src/xbios/acia.c`'s MIDI sender spins on
+ * the second 6850's status at `$fffc04`, and `src/bios/bcon.c`'s `Bconout(AUX:)` spins on the MFP
+ * USART's transmitter status at `$fffa2d`. Neither address is a Phase-7 named slot, so off target
+ * they are served and refused by the DECLARED MAP rather than by the seeded set; here, as for
+ * `hw_poll8` above, there is no model to refuse and the answer is always "served".
+ *
+ * VOLATILE for `hw_poll8`'s reason: both bytes are changed by the chips and by nothing in the
+ * caller's instruction stream, so a hoisted load would leave a program spinning for ever. */
+static inline int io_poll8(uint32_t addr, uint8_t *seen)
 {
     *seen = *(volatile uint8_t *)addr;
     return 1;

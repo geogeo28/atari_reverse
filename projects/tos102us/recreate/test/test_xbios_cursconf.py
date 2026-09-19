@@ -11,9 +11,11 @@ WHAT THIS FILE COVERS is the six arms whose whole body is that block, plus the o
     6 set spare `move.b 7(sp),($2995)` 7 get spare
 
 Functions 0 and 1 — hide and show — are the cursor RENDERER at $fc45d8/$fc45be: they keep a hide
-depth at $2840 and XOR the cursor cell into the screen through the console's font and line tables.
-That is a body of its own and is NOT reconstructed here; the C halts on them rather than guessing,
-and `test_the_two_drawing_arms_are_a_different_body` pins that they really are elsewhere.
+DEPTH at $2840 and XOR the cursor cell into the screen through the console's line and plane
+geometry. They are a body of its own and they are the CONSOLE's, so their cases live with it in
+`test_bios_vt52.py` — `test_cursconf_s_two_drawing_arms_are_the_console_s_own_renderer` — and what
+this file still pins about them is that the table really does send them elsewhere
+(`test_the_two_drawing_arms_are_a_different_body`). They halted here until `Bconout(CON:)` landed.
 
 WHAT EACH ARM LEAVES IN D0 is the subtle half, and it is not guessable from the arm alone: the
 dispatch overwrites D0 with the arm's own DISPLACEMENT out of the jump table (`move.w TABLE(pc,d0.w),

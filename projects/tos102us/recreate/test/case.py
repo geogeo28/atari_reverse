@@ -75,6 +75,23 @@ def written_long(info, address):
     return written(info, address, 4)
 
 
+def hardware_reads(info):
+    """The ORACLE's two ordered read streams as one list, `[(address, value), ...]`.
+
+    WHICH of them a byte lands in is the kit's bookkeeping — a Phase-7 NAMED slot goes through
+    `hw_read8` and an ordinary declared byte through `io_read8` — and a case declares both through
+    the one `io_seed` door, so a battery that cared which would be asserting the kit's routing
+    rather than the routine's traffic.
+    """
+    return (list(info["regs"]["hw_events"])
+            + [(address, value) for address, _width, value in info["regs"]["io_events"]])
+
+
+def hardware_writes(info):
+    """...and the ordered WRITE ledger (Phase 10), which is the whole of what a data port leaves."""
+    return [(address, value) for address, _width, value in info["regs"]["hw_writes"]]
+
+
 def word_args(*values):
     """The argument WORDS a case stages, where the dispatcher's caller would have left them.
 

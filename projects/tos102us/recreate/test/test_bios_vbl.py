@@ -592,7 +592,11 @@ def test_every_registered_case_is_one_this_battery_proves(spec):
 # nothing would redden. The absolute number is what holds it, and it is the RECREATE column because
 # that is the side the count is in.
 SETTLE_ROW = ("isr_vbl", "a monitor change")
-SETTLE_ARM_RECREATE_CYCLES = 20880
+# Re-pinned from 20,880 when `staged_call.h` began pinning A5 = 0 at every RAM-vector call (the
+# base register `swv_vec` and every other system vector is entered with — see that header). The
+# arm makes one such call, and what moved is the CODEGEN around the loop rather than the loop: six
+# cycles, which is not a whole `dbf` pass either way.
+SETTLE_ARM_RECREATE_CYCLES = 20886
 # ...and what one `dbf` pass costs on a 68000, so a failure here reads as "the count moved by N"
 # rather than as an unexplained number: 10 cycles to loop, 14 to fall out of it.
 DBF_PASS_CYCLES = 10

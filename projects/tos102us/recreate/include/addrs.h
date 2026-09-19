@@ -161,7 +161,10 @@
 /* The alpha-cursor / console state block the BIOS console driver and the VDI escape share. Cursconf
  * reaches it through `lea $2994,a4` and addresses the rest at negative displacements off it. */
 #define CON_STATE_FLAGS     0x2994     /* byte: bit 0 = cursor blinks, bit 1 = cursor drawn now */
-#define CON_STATE_SPARE     0x2995     /* byte: Cursconf 6 writes it and 7 reads it back */
+/* byte: `Cursconf` 6 writes it and 7 reads it back — and the console's own cursor tail ($fc479a)
+ * reads it too: a NONZERO value suppresses the redraw and becomes the blink timer's next value,
+ * which is what makes it the console's "stop drawing my cursor" byte rather than a spare one. */
+#define CON_STATE_SPARE     0x2995
 #define CON_BLINK_RATE      0x2982     /* byte: vertical blanks between cursor blinks ($2994 - 18) */
 
 /* ---- the BIOS routines (trap #13, table $fc0846) ------------------------------------------------ */
@@ -235,8 +238,8 @@
 /* ---- XBIOS Cursconf ----------------------------------------------------------------------------- */
 #define CURSCONF_JUMP_TABLE   0xfc46b2  /* eight SIGNED WORD displacements, from the table's own address */
 #define CURSCONF_MAX_FUNCTION 7        /* `cmp.w #7,d0 / bhi` — above it the routine just returns */
-#define CURSCONF_HIDE         0        /* these two DRAW, and are not reconstructed here */
-#define CURSCONF_SHOW         1
+#define CURSCONF_HIDE         0        /* these two DRAW: they are the CONSOLE driver's own cursor */
+#define CURSCONF_SHOW         1        /* renderer, `console_hide_cursor` / `console_show_cursor` */
 #define CURSCONF_BLINK        2
 #define CURSCONF_STEADY       3
 #define CURSCONF_SET_RATE     4
@@ -683,5 +686,303 @@
 #define MFP_TIMER_DATA_WRITE   0xfc2600  /* ...and where ITS slice ends, before the data register */
 #define XBTIMER_CHANNEL_TABLE  0xfc302a  /* timer -> MFP channel: 13, 8, 5, 4 for A, B, C, D */
 #define XBTIMER_TIMER_MASK     0xff      /* `andi.l #255,d0` before that table read — a BYTE, not 3 */
+
+/* ================================================================================================
+ * THE ACIA INPUT CHAIN (BIOS wave 3) — what the two KBDVECS service routines do with a byte
+ *
+ * The ACIA handler above asks each 6850 in turn through a RAM vector; this is what those two
+ * vectors point at in the captured machine, and everything below them. One byte out of a data port
+ * is either a PACKET (the 6301 reports the mouse, the joysticks, the clock and its own status with
+ * a header byte $f6..$ff and a fixed number of bytes after it) or a SCANCODE — and the ROM tells
+ * them apart by a single byte of state, `IKBD_PACKET_KIND`, which is non-zero exactly while a
+ * packet is in progress. `src/bios/acia_service.c` and `src/bios/keyboard.c` are the two halves.
+ * ============================================================================================= */
+
+/* ---- the routines, and the internal entries a case enters directly ------------------------------ */
+#define MIDI_ACIA_SERVICE      0xfc29fc  /* KBDVECS' midisys: the MIDI 6850's service routine */
+#define IKBD_ACIA_SERVICE      0xfc2a0c  /* ...and ikbdsys. It FALLS INTO the shared body below */
+#define ACIA_SERVICE_BODY      0xfc2a1a  /* the status test both entries reach, and the whole of them */
+#define ACIA_SERVICE_RTS       0xfc2a40  /* the `rts` the body ends at — and what both error vectors
+                                          * hold in this capture, so an overrun is a no-op here */
+#define ACIA_TAKE_BYTE         0xfc2a42  /* the byte itself: a packet, a scancode, or MIDI's ring */
+#define KBD_SCANCODE           0xfc2b5c  /* ...the scancode arm: the shift machine and auto-repeat */
+#define KBD_QUEUE_KEY          0xfc2c42  /* ...and the translation into the IKBD IOREC's 4-byte record */
+#define MIDI_QUEUE_BYTE        0xfc2e3a  /* the ROM's own `midivec`: one raw byte into the MIDI ring */
+
+/* ---- the 6850's status bits the shared body tests, in the order it tests them ------------------- */
+#define ACIA_INTERRUPT         0x80      /* `btst #7`: this chip is the one that raised the line */
+#define ACIA_RECEIVE_FULL      0x01      /* `btst #0`: a byte is waiting in the receive register */
+#define ACIA_OVERRUN           0x20      /* `andi.b #32`: one was lost — the error vector is called */
+#define ACIA_DATA_OFFSET       2         /* `2(a1)`: the data port, two bytes above the status one */
+
+/* ---- KBDVECS' first seven longwords, which is the rest of the table named above ----------------- */
+#define KBDVECS_MIDIVEC        0x00      /* -> what a MIDI byte goes to ($fc2e3a in this capture) */
+#define KBDVECS_VKBDERR        0x04      /* -> an IKBD overrun */
+#define KBDVECS_VMIDERR        0x08      /* -> a MIDI overrun */
+#define KBDVECS_STATVEC        0x0c      /* -> a completed $f6 status packet */
+/* `KBDVECS_MOUSEVEC` (0x10) is named with `Initmous` above, which is what installs the mouse. */
+#define KBDVECS_CLOCKVEC       0x14      /* -> a completed $fc time-of-day packet */
+#define KBDVECS_JOYVEC         0x18      /* -> a completed $fd/$fe/$ff joystick packet */
+
+/* ---- the packet state machine's two bytes, and the buffers the packets are assembled in ---------
+ * The buffers are adjacent and their bounds come out of the ROM's own descriptor table below, so
+ * each address here is the START of one packet and the END of the one before it. */
+#define IKBD_PACKET_KIND       0xe36     /* byte: 0 = no packet in progress, else 1..7 (the table) */
+#define IKBD_PACKET_REMAINING  0xe37     /* byte: how many more bytes this packet wants */
+#define IKBD_STATUS_PACKET     0xe38     /* 7 bytes: the $f6 status report */
+#define IKBD_ABSOLUTE_MOUSE_PACKET 0xe3f /* 5 bytes: the $f7 absolute-mouse report, header dropped */
+#define IKBD_RELATIVE_MOUSE_PACKET 0xe44 /* 3 bytes: the $f8..$fb header, then dx and dy */
+#define IKBD_CLOCK_PACKET      0xe47     /* 6 bytes: the $fc time of day, header dropped */
+#define IKBD_JOYSTICK_PACKET   0xe4d     /* the $fd/$fe/$ff packet — see IKBD_JOYSTICK_DATA */
+#define IKBD_JOYSTICK_DATA     0xe4e     /* ...where kinds 6 and 7 store, at + (kind - 6) */
+#define IKBD_PACKET_END        0xe4f     /* one past the joystick packet: the table's last `end` */
+#define KBD_MOUSE_PACKET       0xe5e     /* 3 bytes: the packet the ALT+arrow mouse EMULATION builds,
+                                          * which is its own buffer and not the 6301's */
+
+/* ---- the three ROM tables the packet machine indexes -------------------------------------------- */
+#define IKBD_FIRST_HEADER      0xf6      /* `cmpi.b #$f6,d0 / bcs`: below this a byte is a scancode */
+#define IKBD_PACKET_KIND_TABLE  0xfc2aa2 /* header - $f6 -> kind 1..7 */
+#define IKBD_PACKET_COUNT_TABLE 0xfc2aac /* header - $f6 -> how many bytes follow it */
+#define IKBD_PACKET_TABLE       0xfc2b06 /* kind 1..5 -> three longwords: */
+#define IKBD_PACKET_TABLE_STRIDE 12      /*   ...`(kind - 1) * 3 * 4`, as the ROM's shifts compute it */
+#define IKBD_PACKET_TABLE_START  0       /*   the packet's address, which is what the vector is given */
+#define IKBD_PACKET_TABLE_END    4       /*   one past its last byte: the fill runs END - REMAINING */
+#define IKBD_PACKET_TABLE_VECTOR 8       /*   -> the KBDVECS SLOT to call, not the routine */
+#define IKBD_FIRST_UNTABLED_KIND 6       /* `cmpi.b #6 / bcc`: kinds 6 and 7 are the two one-stick
+                                          * joystick reports, which the table does not describe */
+/* ...and the two header ranges the BEGIN arm stores the header byte itself for, as the ROM's two
+ * SIGNED byte compares name them (`cmpi.b #-8` / `#-5` / `#-3`). $f6, $f7 and $fc store nothing. */
+#define IKBD_RELATIVE_MOUSE_FIRST 0xf8
+#define IKBD_RELATIVE_MOUSE_LAST  0xfb
+#define IKBD_JOYSTICK_FIRST       0xfd
+
+/* ---- kbshift's bits, as the ROM's `bset`/`bclr`/`btst` immediates name them --------------------- */
+#define KBSHIFT_RIGHT_SHIFT_BIT  0
+#define KBSHIFT_LEFT_SHIFT_BIT   1
+#define KBSHIFT_CONTROL_BIT      2
+#define KBSHIFT_ALTERNATE_BIT    3
+#define KBSHIFT_CAPSLOCK_BIT     4
+#define KBSHIFT_RIGHT_BUTTON_BIT 5      /* ALT+Home — the emulated mouse's buttons live here too */
+#define KBSHIFT_LEFT_BUTTON_BIT  6      /* ALT+Insert */
+#define KBSHIFT_EITHER_SHIFT     0x03   /* `andi.b #3`: the two shift keys, tested as one mask */
+#define KBSHIFT_BUTTON_SHIFT     5      /* `lsr.b #5`: the two button bits ARE the packet header's */
+#define KBD_MOUSE_HEADER_BIAS    0xf8   /* ...after `addi.b #-8`, which biases them to $f8..$fb */
+
+/* ---- conterm's other two bits (bit 1, the repeat gate, is named with the VBL above) ------------- */
+#define CONTERM_CLICK_BIT        0      /* 1 = every key starts the click list below */
+#define CONTERM_KBSHIFT_BIT      3      /* 1 = the IOREC record carries kbshift in its top byte */
+#define KEYCLICK_SOUND_LIST      0xfc31e0  /* the Dosound list a click plants in `SOUND_LIST_POINTER` */
+
+/* ---- the scancodes the shift machine and the two modifier arms name ----------------------------- */
+#define SCANCODE_BREAK_BIT       7      /* `btst #7,d0`: set on the release of every key */
+#define SCANCODE_INDEX_MASK      0x7f   /* `andi.w #127,d0`: what indexes a 128-byte key table */
+#define SCANCODE_LEFT_SHIFT      0x2a
+#define SCANCODE_RIGHT_SHIFT     0x36
+#define SCANCODE_CONTROL         0x1d
+#define SCANCODE_ALTERNATE       0x38
+#define SCANCODE_CAPSLOCK        0x3a   /* the MAKE only: its break falls through to the key path */
+#define SCANCODE_RELEASE         0x80   /* ...and the same bit as a MASK, which is what a
+                                        * break scancode is its make plus. Two spellings of
+                                        * one bit because the ROM uses both: `btst #7,d0` to
+                                        * sort make from break, and $aa/$b6/$9d/$b8 as whole
+                                        * bytes in the modifier chain */
+/* The two BREAKS the release arm lets through to the key path, because ALT+Home and ALT+Insert are
+ * the emulated mouse buttons and a button has to come back up. */
+#define SCANCODE_HOME_BREAK      0xc7
+#define SCANCODE_INSERT_BREAK    0xd2
+/* ...and the four codes ALT looks for, as the ROM's own four-byte table rather than as constants:
+ * $47, $c7, $52, $d2, walked from the END by a `dbf`. */
+#define ALT_MOUSE_BUTTON_KEYS    0xfc2ea0
+#define ALT_MOUSE_BUTTON_KEY_COUNT 4
+/* Which button a matched key is: bit 4 of the scancode separates Home ($47/$c7) from Insert
+ * ($52/$d2), and the ROM turns it into a kbshift bit number by adding it to bit 5. */
+#define ALT_MOUSE_BUTTON_SELECT_BIT 4
+
+/* ---- the keys the CONTROL and ALTERNATE arms rewrite -------------------------------------------- */
+#define SCANCODE_FUNCTION_FIRST  0x3b   /* F1..F10, which SHIFT moves up by ten keys */
+#define SCANCODE_FUNCTION_LAST   0x44
+#define SCANCODE_FUNCTION_SHIFTED 25    /* `addi.w #25`: $3b -> $54, the shifted F-key codes */
+#define SCANCODE_HOME            0x47
+#define SCANCODE_CURSOR_UP       0x48
+#define SCANCODE_CURSOR_LEFT     0x4b
+#define SCANCODE_CURSOR_RIGHT    0x4d
+#define SCANCODE_CURSOR_DOWN     0x50
+#define SCANCODE_HELP            0x62   /* ALT+Help is the screen dump */
+#define CONTROL_HOME_OFFSET      0x30   /* `addi.w #48`: ALT-less CTRL+Home becomes scancode $77 */
+#define CONTROL_CURSOR_LEFT      0x73   /* ...and the two horizontal cursor keys get codes outright */
+#define CONTROL_CURSOR_RIGHT     0x74
+#define SCANCODE_DIGIT_FIRST     0x02   /* the number row, `1` through `=`, which ALT renumbers */
+#define SCANCODE_DIGIT_LAST      0x0d
+#define ALT_DIGIT_OFFSET         0x76   /* `addi.b #118`: $02 -> $78, the ALT-digit codes */
+/* ...and how far the emulated mouse moves per keypress, which SHIFT changes from a step to a pixel. */
+#define KBD_MOUSE_STEP           8
+#define KBD_MOUSE_FINE_STEP      1
+
+/* ---- what the CONTROL arm does to the ASCII the key table produced ------------------------------ */
+#define ASCII_CARRIAGE_RETURN    0x0d   /* CTRL+M's table byte, which the arm turns into a line feed */
+#define ASCII_LINE_FEED          0x0a
+#define CONTROL_MASK             0x1f   /* the default: the low five bits, so CTRL+A is 1 */
+/* ...and the three characters that are NOT that, because ASCII puts them outside the control run:
+ * CTRL+2 is NUL, CTRL+6 is RS and CTRL+- is US. The ROM tests the ASCII, not the scancode. */
+#define ASCII_DIGIT_TWO          0x32
+#define ASCII_DIGIT_SIX          0x36
+#define ASCII_MINUS              0x2d
+#define CONTROL_DIGIT_TWO        0x00
+#define CONTROL_DIGIT_SIX        0x1e
+#define CONTROL_MINUS            0x1f
+#define ASCII_UPPER_FIRST        0x41   /* the ALT arm drops the ASCII of a letter key outright */
+#define ASCII_UPPER_LAST         0x5a
+#define ASCII_LOWER_FIRST        0x61
+#define ASCII_LOWER_LAST         0x7a
+
+/* ================================================================================================
+ * BIOS Bconout ($fc099c) AND ITS SIX OUTPUT DRIVERS (BIOS wave 3)
+ *
+ * The fourth of the character-device entries, over the fourth table copied out of $fc09ae: the same
+ * four instructions as Bconstat/Bconin/Bcostat, and a CHARACTER WORD at 6(sp) above the device word.
+ * What makes it a wave of its own is what the drivers are — the two 6850 senders are Ikbdws' and
+ * Midiws' own bodies, the printer's drives the YM2149's port B and times out on `_hz_200`, the
+ * RS232's pushes a byte into an output ring and primes the MFP's USART, and CON: is the whole VT52
+ * console (`src/bios/vt52.c`).
+ * ============================================================================================= */
+#define BIOS_BCONOUT_FN     3
+#define BIOS_BCONOUT        0xfc099c
+#define XCONOUT_TABLE       0x57e      /* the fourth of the four tables at $51e, $53e, $55e, $57e */
+/* ...and the six drivers it reaches, as the captured machine's own table holds them. */
+#define XCONOUT_PRT         0xfc2090   /* the parallel port, through the YM2149's port B */
+#define XCONOUT_RS232       0xfc21b4   /* ...the RS232 output ring, then the MFP's USART */
+#define XCONOUT_CON         0xfc42f2   /* ...the VT52 console: escapes, control codes and a glyph */
+#define XCONOUT_MIDI        0xfc2016   /* ...`Midiws`' own single-byte sender ($fc201a) */
+#define XCONOUT_IKBD        0xfc21ee   /* ...and `Ikbdws`' ($fc21f2), settling delay included */
+#define XCONOUT_RAW         0xfc42e6   /* the RAW console: the glyph renderer with no state machine */
+
+/* ---- the printer driver ($fc2090) ---------------------------------------------------------------
+ * `btst #4,PRINTER_CONFIG` first: a machine configured for a SERIAL printer sends the byte down the
+ * RS232 driver instead, which is a `bne` into `$fc21b4` and not a call. */
+#define PRINTER_CONFIG_SERIAL_BIT 4
+#define PRINTER_RETRY_AT    0xe84      /* long: `_hz_200` as it stood when the port last timed out */
+/* Two spans in 200 Hz ticks, both a `cmpi.l` against a longword difference and NOT the same compare:
+ * the hold-off — a port that timed out less than five seconds ago is not tried again — is `bcs`,
+ * UNSIGNED, and the thirty seconds the driver waits for BUSY to clear is `blt`, SIGNED. */
+#define PRINTER_RETRY_HOLDOFF_TICKS 1000
+#define PRINTER_TIMEOUT_TICKS       6000
+/* ...and the WAIT SITE that second span is measured at: `move.l _hz_200,d3`, the re-read the busy
+ * loop makes once a pass. Nothing inside a differential run advances the 200 Hz tick — it is an
+ * interrupt — so the loop is infinite on both shores until a case says what that interrupt did, and
+ * this is the PC its schedule triggers on and the core names at every poll (`sched.h`; TRAP_MODEL.md,
+ * Phase 8). It is the RE-READ and not the `cmpi.l` below it: the store lands just before the site's
+ * own instruction. */
+#define PRINTER_WAIT_SITE   0xfc20b4
+#define PSG_PORT_B          15         /* the eight parallel data lines (`PSG_PORT_A` is above) */
+#define PSG_PORT_B_OUTPUT   0x80       /* `ori.b #$80`: mixer bit 7 turns port B into an output */
+/* The Centronics strobe is port A bit 5, driven LOW and then back HIGH through Offgibit's and
+ * Ongibit's own bodies ($fc2f08 / $fc2ee2, entered below their argument fetch with the mask in D2).
+ * The ROM asserts it TWICE — `bsr .low / bsr .low / bsr .high` — which is the pulse width. */
+#define PRINTER_STROBE_SET_MASK   0x0020    /* `moveq #32,d2`  -> Ongibit */
+#define PRINTER_STROBE_CLEAR_MASK 0xffdf    /* `moveq #-33,d2` -> Offgibit; only its low byte is used */
+#define PRINTER_STROBE_ASSERTIONS 2         /* ...how many times the low half is called */
+#define PRINTER_SENT        0xffffffffu     /* `moveq #-1,d0` — the byte reached the port */
+#define PRINTER_TIMED_OUT   0u              /* `moveq #0,d0` — BUSY never cleared */
+
+/* ---- the RS232 driver ($fc21b4) and the transmitter it primes ($fc2836) --------------------------
+ * The three bytes above the two IOREC records that the flow-control half keeps, and the MFP
+ * transmitter status the ROM saves a copy of. All four are displacements off `IOREC_RS232`, which is
+ * how the ROM reaches them (`29(a0)`..`33(a0)`), spelt out because `tools/addrs.py` takes plain
+ * integers only; `test_bios_bconout.py` asserts each sum rather than leaving two spellings to drift. */
+#define RS232_TRANSMIT_STATUS   0xc71  /* byte: the TSR byte the transmitter last saw (= $c54 + 29) */
+#define RS232_REMOTE_STOPPED    0xc73  /* byte: masked with the flow mode — nonzero means "hold off" */
+#define RS232_PENDING_CHARACTER 0xc75  /* byte: an XON/XOFF to send ahead of the ring, then cleared */
+#define MFP_TSR_BUFFER_EMPTY_BIT 7     /* `tst.b TSR / bpl`: set when the USART can take a byte */
+
+/* ---- conterm's bell gate, which BEL ($fc2270) is the only reader of -----------------------------
+ * Its siblings (bits 0, 1 and 3) are named with the keyboard and the VBL above. */
+#define CONTERM_BELL_BIT    2
+#define BELL_SOUND_LIST     0xfc31c2   /* the Dosound list ^G plants in `SOUND_LIST_POINTER` */
+
+/* ================================================================================================
+ * THE VT52 CONSOLE ($fc42f2) — its state block, its state machine and its four screen routines.
+ *
+ * Everything the driver keeps is a displacement off `CON_STATE_FLAGS` ($2994), which is the Line-A
+ * block's own anchor and is already named above with Cursconf's three bytes and the VBL's cursor
+ * blink. The driver reads NO hardware at all: the screen base is `_v_bas_ad` in RAM and the cell
+ * geometry, the font and the four screen routines are all fields of this block.
+ * ============================================================================================= */
+#define CON_STATE_VECTOR    0x4a8      /* long: the ROM routine the NEXT character goes to */
+#define CON_ESCAPE_Y_ROW    0x4ac      /* word: ESC Y's row, held while its column byte is awaited */
+/* ...and the six states, which are ROM addresses because the vector is a jump target. The four that
+ * are WAITING for an argument are named `AWAIT` rather than `ESCAPE` so that none of them reads like
+ * `CON_ESCAPE_Y_ROW` above, which is the RAM word one of them fills in. */
+#define CON_STATE_NORMAL            0xfc4308
+#define CON_STATE_ESCAPE            0xfc4354
+#define CON_STATE_AWAIT_Y_ROW       0xfc4378
+#define CON_STATE_AWAIT_Y_COLUMN    0xfc4388
+#define CON_STATE_AWAIT_FOREGROUND  0xfc43a4
+#define CON_STATE_AWAIT_BACKGROUND  0xfc43b8
+
+/* The cell geometry and the cursor, in the order the block holds them. `CON_CURSOR_DISABLE`,
+ * `CON_CURSOR_ADDRESS`, `CON_CELL_HEIGHT`, `CON_PLANES`, `CON_LINE_BYTES`, `CON_BLINK_RATE` and
+ * `CON_BLINK_TIMER` are named with the VBL's cursor blink above; these are the rest. */
+#define CON_MAX_COLUMN      0x296e     /* word: the LAST column, not the count ($2994 - 38) */
+#define CON_MAX_ROW         0x2970     /* word: ...and the last row */
+#define CON_ROW_BYTES       0x2972     /* word: one text row = `CON_LINE_BYTES` * `CON_CELL_HEIGHT` */
+#define CON_COLOUR_BACKGROUND 0x2974   /* word: one bit a plane, LSB first (ESC c sets it) */
+#define CON_COLOUR_FOREGROUND 0x2976   /* word: ...and ESC b sets this one */
+#define CON_CURSOR_OFFSET   0x297c     /* word: added to `_v_bas_ad` before the cell arithmetic */
+#define CON_CURSOR_COLUMN   0x297e     /* word: where the cursor is */
+#define CON_CURSOR_ROW      0x2980
+#define CON_FONT_FORM       0x2984     /* long: the font's bitmap, one scan line every FORM_BYTES */
+#define CON_FONT_LAST       0x2988     /* word: the last character code the font draws */
+#define CON_FONT_FIRST      0x298a     /* word: ...and the first */
+#define CON_FONT_FORM_BYTES 0x298c     /* word: the font bitmap's width, which is its row stride */
+#define CON_FONT_OFFSETS    0x2990     /* long: one WORD per code — the glyph's BIT column in the form */
+#define CON_SAVED_POSITION  0x284c     /* long: ESC j's column and row, as one longword ($2994 - 328) */
+/* ...and the three flag bits past the two Cursconf names, as the ROM's own `bset`/`btst` name them. */
+#define CON_FLAG_WRAP       3          /* ESC v / ESC w: does the last column wrap to the next row? */
+#define CON_FLAG_REVERSE    4          /* ESC p / ESC q: swap the two colours for the next glyph */
+#define CON_FLAG_POSITION_SAVED 5      /* ESC j has stored a position ESC k may go back to */
+
+/* The four screen routines, as LONGWORDS OF RAM the driver jumps through. TOS 1.02 installs the
+ * BLITTER variants ($fc47be, $fc4852, $fc48b6, $fc4936) on a machine that has one, so which set the
+ * console uses is a fact about the captured machine and not about the ROM — a reconstruction reads
+ * the vector and halts on a variant it does not reconstruct, exactly as the device tables above are
+ * read rather than assumed. */
+#define CON_VECTOR_GLYPH        0x2a14  /* ($2994 + 128) */
+#define CON_VECTOR_SCROLL_UP    0x2a18
+#define CON_VECTOR_SCROLL_DOWN  0x2a1c
+#define CON_VECTOR_CLEAR        0x2a20
+#define CONOUT_GLYPH_CPU        0xfd141c   /* ...and the CPU set the snapshot's machine holds */
+#define CONOUT_SCROLL_UP_CPU    0xfd149a
+#define CONOUT_SCROLL_DOWN_CPU  0xfd14de
+#define CONOUT_CLEAR_CPU        0xfd1542
+/* ...and the two tables the CPU clear routine indexes: eight two-word edge masks, and the THREE
+ * fill arms `(planes >> 1) * 4` chooses between (one word a group, two, four). Six or more planes
+ * index past the second, which is what makes it a halt rather than a fourth arm. */
+#define CONOUT_CLEAR_MASKS      0xfd1522
+#define CONOUT_CLEAR_PLANE_ARMS 3
+
+/* The control codes the console acts on. Everything from $20 up is a glyph; of what is below, only
+ * $07..$0d and ESC do anything, which is the `subq.w #7 / bmi / cmp.w #6 / bgt` gate. */
+#define CON_FIRST_PRINTABLE 0x20
+#define CON_BEL             0x07
+#define CON_BS              0x08
+#define CON_TAB             0x09
+#define CON_LF              0x0a
+#define CON_VT              0x0b       /* ...both of these do exactly what LF does */
+#define CON_FF              0x0c
+#define CON_CR              0x0d
+#define CON_ESC             0x1b
+#define CON_TAB_STOP_MASK   0xfff8u    /* `andi.w #-8,d0 / addq.w #8,d0` — the next multiple of 8 */
+#define CON_TAB_WIDTH       8
+/* ESC Y and the two colour escapes bias their argument byte by a space, which is how VT52 spells a
+ * small number as a printable character. */
+#define CON_ESCAPE_BIAS     0x20
+/* ...and the three escape ranges the ROM implements, as its own three-stage compare names them:
+ * `ESC A`..`ESC M`, `ESC Y`, and `ESC b`..`ESC w`. Anything else returns to the normal state and
+ * does nothing. */
+#define CON_ESCAPE_UPPER_FIRST 0x41    /* 'A' — spelt as the code, because tools/addrs.py, which */
+#define CON_ESCAPE_UPPER_LAST  0x4d    /* 'M'   binds this header for the cases, reads integers    */
+#define CON_ESCAPE_POSITION    0x59    /* 'Y'   only and would silently skip a character literal   */
+#define CON_ESCAPE_LOWER_FIRST 0x62    /* 'b' */
+#define CON_ESCAPE_LOWER_LAST  0x77    /* 'w' */
 
 #endif /* TOS102US_ADDRS_H */

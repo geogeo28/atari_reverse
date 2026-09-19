@@ -131,6 +131,22 @@ RATIO_TOLERANCE = 0.02
 #       address and the ordered ledger compares them one at a time (`hw.h`, Phase 15): one
 #       instruction becomes ten. The lever, if it is ever worth one, is a hand-asm twin pinned to
 #       the C core by the twin differential, exactly as the game recreates use.
+#   (K) THE RAM-VECTOR BASE REGISTER. Every routine TOS installs in a system vector is entered with
+#       A5 = 0 — the ROM's handlers establish it once with `lea 0,a5` and index low RAM and the I/O
+#       page off it (`$fc2a0c`'s first instruction is `lea $c76(a5),a0`). `src/bios/isr.S` spells
+#       that zero as the PUSHED IMAGE ARGUMENT instead, which the C body needs and the vector does
+#       not, so `include/staged_call.h` pins A5 as an OPERAND of every vector call: one
+#       `suba.l %a5,%a5`, 8 cycles, per call. It is a CORRECTNESS guarantee with no Tier 1 surface —
+#       the cross-compiled `isr_acia` spun to the oracle's cap without it in the build that found
+#       it, and passes by coincidence in a build where GCC happens to hold the image pointer in A5 —
+#       so the rows that carry it are PINNED: deleting it leaves every differential green and moves
+#       them to the ratios each entry names.
+#
+#       THE DEEPER LEVER IS UNMEASURED AND RECORDED RATHER THAN TAKEN: `-ffixed-a5` in
+#       `atari/target.mk` plus the ROM's own `suba.l a5,a5` in each `src/bios/isr.S` stub would set
+#       the register ONCE per interrupt instead of once per call — zero per-call cost — at the price
+#       of one fewer allocatable address register in every core the shipped build compiles. What is
+#       in the tree is the interim: correct everywhere, paid per call, and priced by these rows.
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -182,6 +198,58 @@ PERF_ACCEPTED = {
               "the byte — a NAMED slot against a declared one — and costs two cycles less for it: "
               "126 -> 182"),
 
+    # ...and `Bconout` (BIOS wave 3), which is the same dispatch over SIX drivers that do work. The
+    # two rows that need no entry are the two whose driver is big enough to swallow it: `ikbd` at
+    # 1.01 (the 951-iteration settle the 6301 is owed) and `printer` at 1.05 (the whole YM2149
+    # send). Everything else here is (B) over a body of a handful of instructions, or the console.
+    ("bios_bconout", "midi"): (
+        2.76, "(A)+(B): 142 -> 392 cycles over a driver whose whole body is a status read and a "
+              "data write — the dispatch chain IS the routine"),
+    ("bios_bconout", "no driver"): (
+        3.63, "(B) alone, over a driver that is a bare `rts`: 76 -> 276"),
+    ("bios_bconout", "printer held off"): (
+        1.88, "(A)+(B) over the give-up arm, which is two longword reads and a store: 194 -> 364"),
+    ("bios_bconout", "rs232 ring only"): (
+        1.90, "(A)+(B): 302 -> 574. The ring put is six field accesses the ROM makes off one `lea`"),
+    ("bios_bconout", "rs232 primed"): (
+        1.44, "722 -> 1040, and it includes the `ipl.h` bracket around the prime that Tier 1 cannot "
+              "see (src/xbios/gibit.c's argument)"),
+    ("bios_bconout", "console escape state"): (
+        3.27, "(A)+(B) over a state-machine arm whose whole body is `move.l a0,$4a8`: 212 -> 694"),
+    ("bios_bconout", "console line feed"): (
+        2.24, "716 -> 1604: the cursor lock, the cell arithmetic and the unlock, each of which is a "
+              "handful of field accesses off the ROM's one `lea $2994,a4`. It was 2.21 (1580) until "
+              "`cell_address`'s two clamps became the N-flag test the ROM makes of them rather than "
+              "the signed compare they had been transcribed as — 24 cycles, and a correctness fix "
+              "(`m68k_idioms.h`, `word_difference_is_negative`)"),
+    ("bios_bconout", "console glyph"): (
+        1.93, "2268 -> 4388 over a 32-byte blit: the ROM's inner loop is `move.b (a2),(a3) / "
+              "adda.w / adda.w / dbf` and GCC will not give back the `dbf`"),
+    ("bios_bconout", "console glyph with the cursor"): (
+        1.71, "the same body plus the cell inversion, 3452 -> 5916 — the inversion is the half that "
+              "ports well"),
+    ("bios_bconout", "raw console"): (
+        1.85, "the glyph row without the state dispatch: 2220 -> 4114"),
+    # ...and the two SCREEN rows, which are PINNED UNDER THE BAR rather than accepted: their loops
+    # are spelt as the ROM's own instructions and nothing in Tier 1 can see the shape, only the
+    # bytes. The cycle count is the whole surface those spellings have.
+    ("bios_bconout", "console scroll"): (
+        1.03, "180,794 -> 185,754 moving 30 KB. PINNED, not accepted: the copy is now the ROM's own "
+              "`move.l (a1)+,(a0)+` four times under a `dbra`, which is what the four unrolled "
+              "copies and the 16-bit post-tested pass counter in `conout_glyph.c` are for — written "
+              "as a counted inner loop GCC kept a count, a compare and a branch per longword and "
+              "this row read 2.03 (367,470); before the CURSOR_BARRIERs, 3.22. Every one of those "
+              "spellings is invisible to the differential, which compares the bytes moved and not "
+              "the instructions that moved them, so this number is their only surface"),
+    ("bios_bconout", "console clear to end of screen"): (
+        1.49, "166,492 -> 247,614 filling 30 KB. Three levers, each measured: a group the run covers "
+              "WHOLLY is a store and not a read-modify-write (8.17x before that), the row walks as a "
+              "POINTER (2.24x with it), and the middle run is now one loop PER PLANE COUNT, so the "
+              "four-plane arm is the ROM's own `move.l (a2)+ / move.l (a2)+ / dbf` rather than a "
+              "counted loop inside a counted loop. WHAT IS LEFT is the two EDGE groups of every scan "
+              "line: the ROM masks a whole group with `and.l`/`or.l` pairs where this fills it a "
+              "word at a time. That is the next lever and it is not taken"),
+
     # (C) — Cursconf's arm selection, and the widest row here.
     # (J) — `movep.l`, and the interrupt mask the differential cannot see.
     ("xbios_rsconf", "report"): (
@@ -215,9 +283,19 @@ PERF_ACCEPTED = {
               "loop and moved with it, to 1.00"),
 
     ("xbios_cursconf", "blink"): (
-        2.29, "(C) 104 -> 238 cycles, 9 instructions to 25. The widest row in the table and the one "
-              "worth a lever first: the C pays the bounds test, the table read the ROM's `jmp` does "
-              "for free, and a compare chain to the arm"),
+        1.65, "(C) 104 -> 172 cycles, down from 238: the jump-table read is now made in the arm "
+              "that uses it rather than above the switch. What is left is the bounds test, that "
+              "read, and a compare chain to one of EIGHT arms where the ROM's `jmp TABLE(pc,d0.w)` "
+              "reaches any of them in three instructions"),
+    ("xbios_cursconf", "get rate"): (
+        1.33, "104 -> 138 cycles, up from 0.90x, and the whole of it is that the two arms that DRAW "
+              "made this routine a NON-LEAF: GCC opens an outgoing-argument frame on every path and "
+              "the chain grew from six arms to eight. The ROM pays neither. The alternative was the "
+              "halt those two arms used to be"),
+    ("xbios_cursconf", "hide"): (
+        1.37, "1278 -> 1752, the dispatch above plus the cursor inversion"),
+    ("xbios_cursconf", "show"): (
+        1.47, "1408 -> 2066, the same with the forced-visible arm"),
 
     # ---- the XBIOS screen and sound leaves (BIOS wave 2) ----
     # The two GI-bit rows are UNDER the bar and pinned for `xbios_giaccess`'s reason: their OUTER
@@ -345,7 +423,7 @@ PERF_ACCEPTED = {
               "RATIO is too coarse to hold the count on its own — a pass either way moves it by "
               "0.0005 — so `test_bios_vbl.py` pins the absolute number as well"),
     ("isr_vbl", "a frame with everything queued"): (
-        1.14, "(A) and (L) over a blank that does everything at once: 2062 -> 2344 cycles. The "
+        1.14, "(A) and (L) over a blank that does everything at once: 2062 -> 2356 cycles. The "
               "queue walk and the dump hook are two staged calls, and the register saves GCC makes "
               "around them are the ROM's own `movem.l d7/a0` in another place"),
     ("isr_timer_c", "a divided-away tick"): (
@@ -353,10 +431,23 @@ PERF_ACCEPTED = {
               "`addq.l`/`rol.w`/`bclr` straight to memory, and every one of them is a load, an "
               "operation and a store here"),
     ("isr_timer_c", "a serviced tick"): (
-        1.06, "PINNED under the bar: (A), (H) and (L) spread over a tick that steps the sound "
-              "driver, the auto-repeat and the OS vector come to 978 -> 1040 cycles. This is the "
+        1.08, "PINNED under the bar: (A), (H) and (L) spread over a tick that steps the sound "
+              "driver, the auto-repeat and the OS vector come to 978 -> 1052 cycles. This is the "
               "routine that runs 200 times a second, so the pin is what says the body has not "
-              "grown; the row a hand-asm twin would be measured against is its ENTRY below"),
+              "grown; the row a hand-asm twin would be measured against is its ENTRY below. It was "
+              "1.06 (1040) until BIOS wave 3: the auto-repeat's injection at `$fc2c42` is a real "
+              "call to `kbd_queue_key` now rather than the halt it was"),
+    # ...and the ACIA handler's C core, which BIOS wave 3 moved over the bar with a CORRECTNESS pin
+    # rather than a body: mechanism (K).
+    ("isr_acia", "one pass"): (
+        1.11, "includes the A5 = 0 pin at each of the two RAM-vector calls (mechanism (K)): 468 "
+              "cycles against 424, of which 16 are the two `suba.l %a5,%a5`. PINNED rather than "
+              "merely accepted — deleting the pin leaves all 30 cases of test_bios_ikbd.py green "
+              "and moves this row to 1.04 (440 cycles), which is the whole of its surface"),
+    ("isr_acia", "two passes"): (
+        1.10, "the same pin over two passes — four vector calls, 646 cycles against 590. PINNED: "
+              "without it, 1.03 (606). The pair with the row above says the pin is a RATE (8 cycles "
+              "a call) and not a constant"),
 
     # ---- ...and the same four handlers as `src/bios/isr.S` installs them (BIOS wave 2) ----
     # No (A) and no (I): the image base is a pushed 0 where the ROM zeroes A5, and both columns pay
@@ -371,24 +462,86 @@ PERF_ACCEPTED = {
               "floppy gate, none of which does anything on a quiet blank — so this row is very "
               "nearly the C body's own prologue and the call that reaches it"),
     ("isr_vbl_entry", "a frame with everything queued"): (
-        1.23, "2062 -> 2536 cycles, the same 1.23 over a blank thirty times the size: the palette "
-              "move, the screen base, the queue walk and the dump hook. (L) is most of it"),
+        1.24, "2062 -> 2548 cycles over a blank thirty times the size of the quiet one above: the "
+              "palette move, the screen base, the queue walk and the dump hook. (L) is most of it. "
+              "Re-pinned from 1.23 (2536) in BIOS wave 3, when `src/bios/vbl.c` moved under it"),
     ("isr_timer_c_entry", "a serviced tick"): (
-        1.31, "(H) and (L): 978 -> 1284 cycles. The acknowledgement is the ROM's own `bclr` in this "
+        1.33, "(H) and (L): 978 -> 1296 cycles. The acknowledgement is the ROM's own `bclr` in this "
               "stub, so what is left is the C body — the Dosound step, the auto-repeat countdowns "
-              "and the register saves GCC makes around the `jsr` into `etv_timer`"),
+              "and the register saves GCC makes around the `jsr` into `etv_timer`. It was 1.31 "
+              "until BIOS wave 3, for the C row's reason: the auto-repeat injection is a real call "
+              "now"),
     ("isr_acia_entry", "one pass"): (
-        1.68, "(H) and (L), and this handler is nothing else: its body is two staged calls and an "
-              "acknowledgement. 384 -> 644 cycles, of which +147 is the clobber list alone "
+        1.71, "(H) and (L), and this handler is nothing else: its body is two staged calls and an "
+              "acknowledgement. 384 -> 656 cycles, of which +147 is the clobber list alone "
               "(measured: the same core was 269 cycles before `staged_call.h` stopped promising "
-              "that a routine in a RAM vector keeps to the C ABI)"),
+              "that a routine in a RAM vector keeps to the C ABI). +28 cycles since the A5 pin "
+              "landed (mechanism (K)); 752 against 480 as the table prints them. Without the pin, "
+              "1.64"),
     ("isr_acia_entry", "two passes"): (
-        1.47, "THE SAME +260 CYCLES as the row above, over an entry that is 166 cycles longer on "
-              "BOTH sides: 548 -> 808. The handler's loop is free — a second pass costs the two "
+        1.52, "THE SAME EXCESS as the row above, over an entry that is 166 cycles longer on "
+              "BOTH sides: 550 -> 834. The handler's loop is free — a second pass costs the two "
               "builds exactly the same — so the excess this row carries is the one-time one the row "
               "above measures, amortised, and the ratio falls because the entry grew rather than "
               "because anything improved. The lever is the same hand-asm body, and the two rows now "
-              "say between them that it would buy a constant, not a rate"),
+              "say between them that it would buy a constant, not a rate. 930 against 646 as the "
+              "table prints them; without the A5 pin (mechanism (K)), 1.44"),
+    # ...and the two REAL-VECTOR cases, which price EXACTLY the same thing the two rows above do,
+    # amortised over a chain that does real work. BOTH COLUMNS RUN THE ROM'S CHAIN here, and that is
+    # worth saying plainly: the captured machine's own `$fc29fc`/`$fc2a0c` are left in KBDVECS, and
+    # the cross-compiled `isr_acia` jumps through those slots exactly as the ROM's handler does — so
+    # `acia_service.c` and `keyboard.c` never execute under the recreate's column. What these rows
+    # measure is the handler's own bracket, its loop, its A5 pins and its acknowledgement, over a
+    # denominator the ROM chain makes large. The six cores' own cost is in their own rows.
+    ("isr_acia_entry", "real vectors, a mouse packet"): (
+        1.12, "the handler's bracket over a three-pass loop assembling a packet: 2880 cycles against "
+              "2584. The excess is the same +296 the two rows above carry — the movem clobber list "
+              "plus six A5 pins over three passes (mechanism (K)) — against a denominator the ROM's "
+              "own service routines fill, which is why it reads as 1.12 where the empty entry reads "
+              "as 1.71. Without the pin, 1.10"),
+    ("isr_acia_entry", "real vectors, a keystroke"): (
+        1.18, "one pass of the same chain, the same bracket: 1908 against 1636. Without the pin, "
+              "1.16"),
+
+    # ---- THE ACIA INPUT CHAIN, reached through KBDVECS (BIOS wave 3) ----
+    # Five rows, and they exist because the two above cannot price them: a row whose original and
+    # recreate columns run the SAME ROM routines says nothing about our C. These enter each core at
+    # its own address, and between them they carry (A), (L) and one more:
+    #
+    #   (M) A ROUTINE WHOSE ARGUMENTS ARE ALREADY IN REGISTERS. Nothing here is called by a C
+    #       caller: the ACIA handler jumps through a KBDVECS slot, `acia_take_byte` falls into the
+    #       scancode arm, and timer C's auto-repeat jumps into the key path — so every one of these
+    #       is entered with its arguments in hand, the byte in D0 and the record in A0. Our C takes
+    #       the same values as PARAMETERS, so the m68k ABI builds a frame the callee then reads back:
+    #       two or three `move.l n(sp),Rn` where the ROM had them already. It is (A) with more than
+    #       one argument, and on bodies this small it is most of the excess.
+    ("midi_acia_service", "a byte"): (
+        1.40, "(A) and (L): 322 -> 450 cycles at 22 instructions against 23. The body is a status "
+              "read, a data read and ONE call through a KBDVECS slot, and `staged_call.h` tells GCC "
+              "that call keeps to nothing — so GCC's own `movem.l` pair saves more of the file than "
+              "the ROM's `movem.l d2/a0-a2`, at the same instruction count and 128 more cycles"),
+    ("ikbd_acia_service", "a packet's last byte"): (
+        1.75, "the same two over the arm that does the most — the descriptor read, the packet fill "
+              "and the dispatch through the slot the descriptor names: 618 -> 1080 cycles, 47 "
+              "instructions to 65. TWO calls rather than one (`acia_take_byte` and then the packet "
+              "vector), so (L)'s save is paid twice, and (M) on top: `acia_take_byte(image, iorec, "
+              "acia_base)` is a three-argument frame where the ROM's `bsr` had A0 and A1 in hand"),
+    ("midi_queue_byte", "one byte into the ring"): (
+        1.53, "(A) and (M) ALONE, which makes this the cleanest measurement of (M) in the table: no "
+              "call, no chip, and a body that is six field accesses off one `lea` in the ROM. "
+              "116 -> 178 cycles, 10 instructions to 14 — the image pointer and two register "
+              "arguments, read back out of a frame the caller had to build"),
+    ("kbd_scancode", "a key"): (
+        1.61, "(A), (M) and one more: the ROM FALLS INTO `$fc2c42` where the C makes a CALL of it, "
+              "so the key path's three arguments are pushed and read back a second time. 802 -> "
+              "1288 cycles over the arm an ordinary letter takes — nine `cmpi.b`, the auto-repeat "
+              "arming, and then the whole of the row below"),
+    ("kbd_queue_key", "a key"): (
+        1.85, "(A) and (M) over the three `Keytbl` reads and the ring put: the ROM indexes all of it "
+              "off the A0 and D0 it was entered with, and every one of them is an argument load "
+              "here. 520 -> 964 cycles, and it is the widest ratio of the five because its body is "
+              "small enough — a table read and a four-byte store — for the marshalling to be a "
+              "third of it"),
     ("isr_vbl_entry", "a monitor change"): (
         1.01, "PINNED, not accepted, for the C row's reason one line up: 20,870 -> 21,032 cycles "
               "is the shifter settling, and a delay has no surface but its cost"),
@@ -510,18 +663,28 @@ class FrameAddress:
         return POINTER_STORAGE + self.offset
 
 
-class EntryD0:
-    """The D0 the trap dispatcher left, which a few routines' no-driver arms hand back.
+class EntryRegister:
+    """A C argument that is a REGISTER the case is entered with, named by the register.
+
+    Two kinds of routine need one. A trap routine's no-driver arm hands back the D0 the dispatcher
+    left, so the C takes it and returns it. And a routine TOS reaches through a RAM vector has no
+    argument frame at all — its caller leaves the byte in D0 and the record in A0 (`acia_take_byte`
+    into `midivec`, `kbd_queue_key` from either of its two callers) — so the C's parameters ARE
+    those registers.
 
     Taken from the CASE's own input registers rather than re-typed, for `FrameArg`'s reason: the
-    oracle is entered with it and our C is passed it, and the two must be one value.
+    oracle is entered with them and our C is passed them, and the two must be one value.
     """
 
+    def __init__(self, name):
+        self.name = name
+
     def of(self, _frame):
-        raise AssertionError("EntryD0 is resolved from the case's registers, not from its frame")
+        raise AssertionError(f"{self.name} is resolved from the case's registers, not its frame")
 
 
-ENTRY_D0 = EntryD0()
+ENTRY_D0 = EntryRegister("d0")
+ENTRY_A0 = EntryRegister("a0")
 
 
 def arg_word(offset):
@@ -559,6 +722,9 @@ Call = namedtuple("Call", "args returns")
 CALL = {
     "BIOS_BCONSTAT": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
     "BIOS_BCONIN": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    # ...and the one character-device call with a SECOND argument word: the device and the
+    # character, both read off the frame the case poked (`src/bios/bcon.c`).
+    "BIOS_BCONOUT": Call((IMAGE, ENTRY_D0, arg_word(0), arg_word(2)), RETURNS_LONG),
     "BIOS_BCOSTAT": Call((IMAGE, ENTRY_D0, arg_word(0)), RETURNS_LONG),
     "BIOS_DRVMAP": Call((IMAGE,), RETURNS_LONG),
     # ...and its D0 is the TPA's length, which the `sub.l` leaves there (`src/bios/getmpb.c`).
@@ -629,6 +795,20 @@ CALL = {
     "ISR_VBL": Call((IMAGE,), RETURNS_NOTHING),
     "ISR_TIMER_C": Call((IMAGE,), RETURNS_NOTHING),
     "ISR_ACIA": Call((IMAGE,), RETURNS_NOTHING),
+    # ---- the ACIA INPUT CHAIN, reached through KBDVECS (BIOS wave 3) ----
+    # None returns anything and none reads an argument frame: each is entered by the routine above it
+    # with the registers the ROM's own callers leave, and the C takes exactly those as parameters
+    # (`include/acia_packets.h`, `include/keyboard.h`). The two service routines take only the image
+    # — their chip and their IOREC are the three instructions that are all each entry is.
+    "MIDI_ACIA_SERVICE": Call((IMAGE,), RETURNS_NOTHING),
+    "IKBD_ACIA_SERVICE": Call((IMAGE,), RETURNS_NOTHING),
+    # `midi_queue_byte(image, iorec, byte)` — A0 is the record and D0 the raw byte, which is the
+    # published KBDVECS contract for a byte vector (`test/acia.py`).
+    "MIDI_QUEUE_BYTE": Call((IMAGE, ENTRY_A0, ENTRY_D0), RETURNS_NOTHING),
+    # ...and the keyboard's pair, whose order is the other way round: `(image, scancode, iorec)` with
+    # the scancode in D0 and the IOREC in A0.
+    "KBD_SCANCODE": Call((IMAGE, ENTRY_D0, ENTRY_A0), RETURNS_NOTHING),
+    "KBD_QUEUE_KEY": Call((IMAGE, ENTRY_D0, ENTRY_A0), RETURNS_NOTHING),
 }
 
 # Cases this file adds to the verified set, in `VERIFIED_CASES`' own shape.
@@ -675,16 +855,46 @@ Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_
                  defaults=(False, None, (0, 0), (0, 0), ()))
 
 
+# THE THIRD RELATION: a routine TOS reaches through a RAM VECTOR rather than through a dispatch
+# table or a vector of its own. Nothing calls one of these by name — the ACIA handler jumps through a
+# KBDVECS slot, and the two keyboard routines are fallen into by `acia_take_byte` and jumped into by
+# timer C's auto-repeat — so neither relation below finds them, and without this one they would be
+# priced ONLY inside `isr_acia, real vectors`, where both columns run the ROM's own chain: the
+# cross-compiled `isr_acia` jumps through KBDVECS exactly as the ROM does, so those rows never enter
+# our C at all. Their own rows are what price it.
+#
+# The value is the `addrs.h` constant, which is also the C core's symbol lower-cased, exactly as the
+# other two relations' are.
+VECTOR_ROUTINE_NAMES = {getattr(addrs, name): name
+                        for name in ("MIDI_ACIA_SERVICE", "IKBD_ACIA_SERVICE", "MIDI_QUEUE_BYTE",
+                                     "KBD_SCANCODE", "KBD_QUEUE_KEY")}
+
+# ...and what each IS, for the label. A routine reached this way has no function number to carry, so
+# the column names the SLOT it is installed in, or the caller that falls into it.
+VECTOR_ROUTINE_ROLES = {
+    "MIDI_ACIA_SERVICE": "KBDVECS midisys",
+    "IKBD_ACIA_SERVICE": "KBDVECS ikbdsys",
+    "MIDI_QUEUE_BYTE": "KBDVECS midivec",
+    "KBD_SCANCODE": "IKBD scancode arm",
+    "KBD_QUEUE_KEY": "IKBD key into the ring",
+}
+
+
 def _routine(entry):
     """The `addrs.h` NAME of the routine a case's entry belongs to — the `CALL` table's key.
 
-    Two kinds of entry reach this. A trap routine's case is entered AT the routine, and the name is
+    Three kinds of entry reach this. A trap routine's case is entered AT the routine, and the name is
     the one `test_boot_snapshot.py` holds to its dispatch-table slot. An interrupt handler's case is
     entered at a TRAMPOLINE (nothing calls a handler, so the case has to stage the exception frame
-    its `rte` returns through), and the name comes from the handler that trampoline jumps to.
+    its `rte` returns through), and the name comes from the handler that trampoline jumps to. And a
+    RAM-VECTOR routine is entered at its own address but named by neither table — see
+    `VECTOR_ROUTINE_NAMES`.
     """
     handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
-    return handler.constant if handler else test_boot_snapshot.TRAP_ROUTINE_NAMES.get(entry)
+    if handler:
+        return handler.constant
+    return (test_boot_snapshot.TRAP_ROUTINE_NAMES.get(entry)
+            or VECTOR_ROUTINE_NAMES.get(entry))
 
 
 def _function_label(entry):
@@ -699,6 +909,8 @@ def _function_label(entry):
     handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
     if handler:
         return f"{handler.name} handler (vector ${handler.vector:02x})"
+    if entry in VECTOR_ROUTINE_NAMES:
+        return f"{VECTOR_ROUTINE_ROLES[VECTOR_ROUTINE_NAMES[entry]]} (${entry:x})"
     name = test_boot_snapshot.TRAP_ROUTINE_NAMES[entry]
     trap, _, routine = name.partition("_")
     return f"{trap} {routine.capitalize()} (${getattr(addrs, f'{name}_FN'):02x})"
@@ -722,8 +934,8 @@ def _resolve(args, pokes, regs):
     frame = pokes.get(abi.FIRST_ARG, b"")
     out = []
     for arg in args:
-        if arg is ENTRY_D0:
-            out.append(regs.get("d0", 0))
+        if isinstance(arg, EntryRegister):
+            out.append(regs.get(arg.name, 0))
         elif isinstance(arg, (FrameArg, FrameAddress)):
             out.append(arg.of(frame))
         else:

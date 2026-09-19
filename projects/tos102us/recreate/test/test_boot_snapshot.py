@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import boot_snapshot                                      # noqa: E402
 
 import test_bios_bconin as bconin                          # noqa: E402
+import test_bios_bconout as bconout                        # noqa: E402
 import test_bios_bconstat as bconstat                      # noqa: E402
 import test_bios_bcostat as bcostat                        # noqa: E402
 import test_bios_getmpb as getmpb                          # noqa: E402
@@ -75,6 +76,16 @@ import test_bios_ikbd as ikbd                               # noqa: E402
 import test_bios_timerc as timerc                           # noqa: E402
 import test_bios_vbl as vbl                                 # noqa: E402
 import isr                                                  # noqa: E402
+# ...and the VT52 CONSOLE (BIOS wave 3), which is `Bconout`'s widest driver and `Cursconf`'s two
+# drawing arms at once. `vt52` is its case shape — the geometry, the cursor depth and the state
+# vector a case stages — beside the battery that runs them.
+import test_bios_vt52 as vt52_cases                         # noqa: E402
+import vt52                                                 # noqa: E402
+# ...and the ACIA INPUT CHAIN (BIOS wave 3): the two service routines KBDVECS holds, the ring the
+# ROM's own `midivec` is, and the keyboard's two arms. `acia` is their shared case shape — the seven
+# staged slots and the two 6850s' declared bytes — beside the batteries that run them.
+import test_bios_acia_service as acia_service               # noqa: E402
+import test_bios_keyboard as keyboard                       # noqa: E402
 
 import abi                                                 # noqa: E402
 import case                                                # noqa: E402
@@ -315,6 +326,22 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                (addrs.SOUND_LIST_POINTER, 5, "the 200 Hz driver's cursor and tick countdown"),
                (addrs.PRINTER_CONFIG, 2, "the printer configuration Setprt keeps"),
                *setexc.CASE_SPANS,
+               # ...and `Bconout`'s six drivers (BIOS wave 3): the console's whole state block and
+               # the screen it writes, the printer's retry stamp, and the RS232's flow-control
+               # bytes and output ring.
+               (vt52.SCREEN, vt52.ROW_BYTES * (vt52.MAX_ROW + 1), "the screen the console writes"),
+               (addrs.CON_CURSOR_DISABLE, 2, "the console's cursor-disable and lock depth"),
+               (addrs.CON_CELL_HEIGHT, 0x2a,
+                "the console's geometry, cursor, colours and font block $296c..$2996"),
+               (addrs.CON_VECTOR_GLYPH, 16, "the four console screen vectors"),
+               (addrs.CON_SAVED_POSITION, 4, "the cursor position ESC j saves and ESC k restores"),
+               (addrs.CON_STATE_VECTOR, 4, "the console state vector the escapes walk"),
+               (addrs.CON_ESCAPE_Y_ROW, 2, "the row ESC Y keeps between its two arguments"),
+               (addrs.XCONOUT_TABLE, 32, "the Bconout driver vector table"),
+               (addrs.PRINTER_RETRY_AT, 4, "the printer's five-second hold-off stamp"),
+               (addrs.RS232_TRANSMIT_STATUS, 5, "the RS232 flow-control bytes $c71..$c75"),
+               (iorec.buffer_of(addrs.IOREC_RS232_OUT), iorec.size_of(addrs.IOREC_RS232_OUT),
+                "the RS232 output ring a Bconout case puts a byte in"),
                # ...and the trap dispatcher's, which are the machine's own rather than a buffer a
                # case owns: savptr, the frame the dispatcher pushes below it, and the RAM vector the
                # dispatch table's INDIRECT entry reaches (`test/trap.py`).
@@ -413,6 +440,55 @@ VERIFIED_CASES = (
     ("bios_bcostat, midi", addrs.BIOS_BCOSTAT, {"a5": 0, "d0": bcostat.ENTRY_D0},
      case.word_arg(bcostat.DEVICE_MIDI), None,
      bcostat.declare(bcostat.DEVICE_MIDI, bit_set=True), ()),
+    # ...and `Bconout` (BIOS wave 3), which is the same table walk over SIX drivers that do work:
+    # the two 6850 senders, the printer's whole YM2149 send, the RS232 output ring, and the VT52
+    # console — a row per arm, because the dispatch is a handful of cycles and each driver is the
+    # rest of the routine (`test_bios_bconout.py`, `test_bios_vt52.py`).
+    ("bios_bconout, midi", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     case.word_args(bconout.DEVICE_MIDI, bconout.A_CHARACTER), None,
+     {addrs.MIDI_ACIA_STATUS: bconout.ACIA_READY}, ()),
+    ("bios_bconout, ikbd", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     case.word_args(bconout.DEVICE_IKBD, bconout.A_CHARACTER), None,
+     {addrs.IKBD_ACIA_STATUS: bconout.ACIA_READY}, ()),
+    ("bios_bconout, printer", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(bconout.DEVICE_PRINTER, bconout.A_CHARACTER), **bconout.printer_pokes()},
+     bconout.PRINTER_PSG_SEED, {addrs.MFP_GPIP: bconout.GPIP_READY}, ()),
+    ("bios_bconout, printer held off", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(bconout.DEVICE_PRINTER, bconout.A_CHARACTER),
+      **bconout.printer_pokes(last_failure=bconout.SNAPSHOT_HZ_200)}, None, None, ()),
+    ("bios_bconout, rs232 ring only", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(bconout.DEVICE_RS232, bconout.A_CHARACTER), **bconout.rs232_pokes()},
+     None, {addrs.MFP_TSR: bconout.TSR_SENDING}, ()),
+    ("bios_bconout, rs232 primed", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(bconout.DEVICE_RS232, bconout.A_CHARACTER), **bconout.rs232_pokes()},
+     None, {addrs.MFP_TSR: [bconout.TSR_EMPTY] * 3}, ()),
+    ("bios_bconout, no driver", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     case.word_args(bconout.NO_DRIVER_DEVICES[0], bconout.A_CHARACTER), None, None, ()),
+    ("bios_bconout, console glyph", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_CONSOLE, bconout.A_CHARACTER),
+      **vt52.staged(0, 0, cursor_depth=1)}, None, None, ()),
+    ("bios_bconout, console glyph with the cursor", addrs.BIOS_BCONOUT,
+     {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_CONSOLE, bconout.A_CHARACTER),
+      **vt52.staged(0, 0)}, None, None, ()),
+    ("bios_bconout, console line feed", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_CONSOLE, addrs.CON_LF),
+      **vt52.staged(7, 5, cursor_depth=1)}, None, None, ()),
+    ("bios_bconout, console scroll", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_CONSOLE, addrs.CON_LF),
+      **vt52.staged(7, vt52.MAX_ROW, cursor_depth=1)}, None, None, ()),
+    # ESC J, the escape that clears to the end of the screen: the state vector is already the
+    # ESCAPE one, so this character is the escape's ARGUMENT rather than the `$1b` that armed it.
+    ("bios_bconout, console clear to end of screen", addrs.BIOS_BCONOUT,
+     {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_CONSOLE, 0x4A),
+      **vt52.staged(0, 0, cursor_depth=1), **vt52.state(addrs.CON_STATE_ESCAPE)}, None, None, ()),
+    ("bios_bconout, console escape state", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_CONSOLE, addrs.CON_ESC),
+      **vt52.staged(7, 5, cursor_depth=1)}, None, None, ()),
+    ("bios_bconout, raw console", addrs.BIOS_BCONOUT, {"a5": 0, "d0": bconout.ENTRY_D0},
+     {**case.word_args(vt52_cases.DEVICE_RAW, bconout.A_CHARACTER),
+      **vt52.staged(0, 0, cursor_depth=1)}, None, None, ()),
     ("xbios_iorec", addrs.XBIOS_IOREC, {"a5": 0},
      case.word_arg(xbios_iorec.DEVICE_IKBD), None, None, ()),
     ("xbios_keytbl, install", addrs.XBIOS_KEYTBL, {"a5": 0},
@@ -426,6 +502,13 @@ VERIFIED_CASES = (
      case.word_args(addrs.CURSCONF_BLINK, 0), None, None, ()),
     ("xbios_cursconf, get rate", addrs.XBIOS_CURSCONF, {"a5": 0},
      case.word_args(addrs.CURSCONF_GET_RATE, 0), None, None, ()),
+    # ...and the two arms that DRAW (BIOS wave 3), which the console's cursor renderer unblocked:
+    # each stages a cursor on the screen and one that is not on it (`test_bios_vt52.py`).
+    ("xbios_cursconf, hide", addrs.XBIOS_CURSCONF, {"a5": 0},
+     {**case.word_args(addrs.CURSCONF_HIDE, 0), **vt52.staged(7, 5)}, None, None, ()),
+    ("xbios_cursconf, show", addrs.XBIOS_CURSCONF, {"a5": 0},
+     {**case.word_args(addrs.CURSCONF_SHOW, 0), **vt52.staged(7, 5, cursor_depth=2)},
+     None, None, ()),
     ("xbios_supexec", addrs.XBIOS_SUPEXEC, {"a5": 0},
      {abi.FIRST_ARG: struct.pack(">I", supexec.STUB_AT),
       supexec.STUB_AT: supexec.move_long_immediate_to_d0(supexec.A_RESULT) + supexec.RTS},
@@ -517,6 +600,14 @@ VERIFIED_CASES = (
     *vbl.VERIFIED_CASES,
     *timerc.VERIFIED_CASES,
     *ikbd.VERIFIED_CASES,
+    # ...and the ROUTINES THOSE HANDLERS CALL THROUGH RAM (BIOS wave 3), each entered at its own
+    # address as the ordinary `rts` routine it is. They are rows of their own because the handler's
+    # own rows cannot price them: the cross-compiled `isr_acia` jumps through KBDVECS too, so BOTH
+    # columns of `isr_acia, real vectors` run the ROM's chain (`bench/tier3.py`,
+    # `VECTOR_ROUTINE_NAMES`). Same arrangement as the handlers': one spec per case, registered here
+    # and run as a differential by its own battery.
+    *acia_service.VERIFIED_CASES,
+    *keyboard.VERIFIED_CASES,
 )
 
 

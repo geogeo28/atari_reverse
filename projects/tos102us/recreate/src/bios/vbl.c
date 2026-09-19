@@ -68,6 +68,7 @@
 #include "m68k_idioms.h"
 #include "hw.h"
 #include "addrs.h"
+#include "vt52.h"
 #include "staged_call.h"
 
 /* ---- the monitor follower ----------------------------------------------------------------------
@@ -137,41 +138,12 @@ static void follow_the_monitor(uint8_t *image)
 
 /* ---- the alpha cursor's blink ($fc4666), and the cell inversion it ends in ($fc4a1e) ------------ */
 
-/* `not.b` down one column of every bit plane — the cursor cell, inverted in place on the screen.
- * Two nested `dbf`s, so both counts are "the register plus one" and a zero count is a full 65,536
- * passes rather than none (`loop_passes`). That zero arm is EXERCISED by a case and its pass count
- * is not PINNED by one — `test_bios_vbl.py`'s `test_a_cell_height_of_zero_is_a_full_sixty_five
- * _thousand_passes` says why, and what it would take.
- *
- * The inner step is a SIGN-EXTENDED word add, the outer a full address add: `adda.w` against
- * `addq.w #2,a1`, which on an address register is 32 bits wide whatever its suffix says. The outer
- * step is two bytes because that is how far apart an ST's bit planes are: the four words of one
- * 16-pixel screen cell sit side by side (`SCREEN_PLANE_WORD_BYTES` is in `addrs.h`, because the
- * battery computes the same set of inverted bytes). */
-static void invert_cursor_cell(uint8_t *image, uint32_t cursor)
-{
-    uint16_t line_bytes = be16(image + CON_LINE_BYTES);
-    unsigned rows = loop_passes(be16(image + CON_CELL_HEIGHT), COUNT_MASK_WORD);
-    unsigned planes = loop_passes(be16(image + CON_PLANES), COUNT_MASK_WORD);
-
-    while (planes-- != 0) {
-        uint32_t at = cursor;
-        unsigned row = rows;
-
-        while (row-- != 0) {
-#ifdef RECREATE_HOST_DIFFERENTIAL
-            /* HOST-ONLY, the way the kit prescribes: the cursor address, the cell height and the
-             * line pitch are all RAM the console driver keeps, so a machine whose block held
-             * nonsense would walk off the image here — where the original walks its own address
-             * space. Nothing a case stages can reach it (../README.md, the staging band). */
-            assert(at < ST_RAM_BYTES);
-#endif
-            image[at] = (uint8_t)~image[at];
-            at = addr_add(at, sign_ext16(line_bytes));
-        }
-        cursor = addr_add(cursor, SCREEN_PLANE_WORD_BYTES);
-    }
-}
+/* `$fc4a1e` — `not.b` down one column of every bit plane — is `console_invert_cursor_cell`, a
+ * `static inline` in `include/vt52.h`. It moved there when `Bconout(CON:)` landed: this blink and
+ * the console driver are two callers of one routine, and a copy here would be a second place for
+ * the plane step to be corrected alone. The HEADER rather than one of the two `.c` files because a
+ * cross-file call is not free on this path — vt52.h's note beside it has the measurement — and its
+ * note also carries the two `dbf` counts and the `addq.w #2,a1` plane step. */
 
 /* The blink itself. Three gates, and each of the writes below happens whether or not it CHANGES
  * anything — `subq.b`, `bchg` and `bset` are read-modify-writes, so the byte is stored back even
@@ -212,7 +184,7 @@ static void blink_cursor(uint8_t *image)
         if (flags & (1u << CON_FLAG_DRAWN))
             return;
     }
-    invert_cursor_cell(image, be32(image + CON_CURSOR_ADDRESS));
+    console_invert_cursor_cell(image, be32(image + CON_CURSOR_ADDRESS));
 }
 
 /* ---- the two things the screen leaves queue for this handler ------------------------------------ */
@@ -227,7 +199,7 @@ static void load_the_palette(uint8_t *image)
     if (source == 0)
         return;
 #ifdef RECREATE_HOST_DIFFERENTIAL
-    /* HOST-ONLY, as in `invert_cursor_cell` above: `colorptr` is whatever `Setpalette` was handed,
+    /* HOST-ONLY, as in `console_invert_cursor_cell`: `colorptr` is whatever `Setpalette` was handed,
      * so a caller that pointed it outside RAM would walk off the image here where the original
      * walks its own address space. */
     assert(source <= ST_RAM_BYTES - SHIFTER_PALETTE_ENTRIES * PALETTE_ENTRY_BYTES);

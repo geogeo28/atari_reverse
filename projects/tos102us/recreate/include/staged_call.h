@@ -69,8 +69,44 @@ extern void (*recreate_call_vector)(uint8_t *image, uint32_t routine, uint32_t a
  * layer above: `src/bios/isr.S` brackets the whole handler in the ROM's own `movem` pair, so the
  * INTERRUPTED PROGRAM gets A6 back whatever a staged routine did with it. What is left unguarded is
  * a local of our own C body, and only if GCC chose A6 for it. */
-#define STAGED_CALL_CLOBBERS "d1", "d2", "d3", "d4", "d5", "d6", "d7", \
-                             "a1", "a2", "a3", "a4", "a5", "memory", "cc"
+/* Spelt in two pieces because the three shapes at the bottom of this file need A1 for the ROUTINE —
+ * their callees read A0, so A0 cannot hold it — and a register an `asm` names as an operand may not
+ * also be clobbered. Two lists written out in full would be one rule spelt twice, and the second
+ * copy is the one that would miss a register. */
+#define STAGED_CALL_CLOBBERS_D1_D7 "d1", "d2", "d3", "d4", "d5", "d6", "d7"
+#define STAGED_CALL_CLOBBERS_A2_A4 "a2", "a3", "a4"
+#define STAGED_CALL_CLOBBERS STAGED_CALL_CLOBBERS_D1_D7, "a1", STAGED_CALL_CLOBBERS_A2_A4, \
+                             "memory", "cc"
+/* ...and the same list for a shape whose ROUTINE is in A1, so A1 is an operand rather than free. */
+#define STAGED_CALL_CLOBBERS_ROUTINE_IN_A1 STAGED_CALL_CLOBBERS_D1_D7, \
+                                           STAGED_CALL_CLOBBERS_A2_A4, "memory", "cc"
+
+/* A5 IS AN OPERAND OF EVERY SHAPE BELOW, NOT A CLOBBER, AND THE VALUE IS THE ROM'S OWN ZERO.
+ *
+ * Each of these handlers opens `lea 0,a5` inside its `movem` bracket, and every routine TOS installs
+ * in one of these slots reaches low RAM and the I/O page through `(a5)` displacements: `$fc29fc`'s
+ * first instruction is `lea $d84(a5),a0`, the IOREC it is about to service. `src/bios/isr.S` spells
+ * that zero as the PUSHED IMAGE ARGUMENT instead — which the C body needs and the vector does not —
+ * so the register itself is pinned HERE, at the one place control leaves for a routine that expects
+ * it, rather than in a stub whose value a C body is free to allocate over.
+ *
+ * WHAT FOUND IT is the ACIA chain's own Tier 3 row. With the captured machine's real service
+ * routines back in KBDVECS — rather than a staged stub that reads no register — the cross-compiled
+ * `isr_acia` spun until the oracle's cap, because `$fc2a0c` had indexed its IOREC off whatever GCC
+ * last left in A5. Every case before that staged a stub that read nothing, so no differential could
+ * see it; this is `docs/on-target-execution.md`'s register-contract class, at a RAM vector.
+ *
+ * Declared read-write ("+a") because the callee owes this caller nothing: it may leave anything in
+ * A5, and telling GCC the value does not survive is what makes the next call set it again.
+ *
+ * THE DECLARATION AND THE CONSTRAINT ARE ONE PIN IN TWO TOKENS: a register variable's declaration and
+ * its operand sit in different parts of the statement, so C cannot spell them as one macro. They are
+ * defined together here and never used apart, which is what keeps five shapes from carrying five
+ * copies of a pin that has to agree with itself. */
+#define STAGED_CALL_VECTOR_BASE 0
+#define STAGED_CALL_BASE_REGISTER \
+    register uint32_t vector_base __asm__("a5") = STAGED_CALL_VECTOR_BASE
+#define STAGED_CALL_BASE_OPERAND "+a"(vector_base)
 
 /* `movea.l <vector>,a0 / jsr (a0)` — the whole of the VBL's and the ACIA handler's calls. */
 static inline void call_vector(uint8_t *image, uint32_t routine)
@@ -79,10 +115,11 @@ static inline void call_vector(uint8_t *image, uint32_t routine)
     recreate_call_vector(image, routine, STAGED_CALL_NO_ARGUMENT);
 #else
     register uint32_t target __asm__("a0") = routine;
+    STAGED_CALL_BASE_REGISTER;
 
     (void)image;
     __asm__ volatile ("jsr (%0)"
-                      : "+a"(target)
+                      : "+a"(target), STAGED_CALL_BASE_OPERAND
                       :
                       : STAGED_CALL_CLOBBERS, "d0");   /* no pushed word: D0 is a clobber here */
 #endif
@@ -97,14 +134,102 @@ static inline void call_vector_word(uint8_t *image, uint32_t routine, uint16_t a
 #else
     register uint32_t target __asm__("a0") = routine;
     register uint16_t pushed __asm__("d0") = argument;
+    STAGED_CALL_BASE_REGISTER;
 
     (void)image;
     __asm__ volatile ("move.w %1,-(%%sp)\n\t"
                       "jsr (%0)\n\t"
                       "addq.w #2,%%sp"
-                      : "+a"(target), "+d"(pushed)
+                      : "+a"(target), "+d"(pushed), STAGED_CALL_BASE_OPERAND
                       :
                       : STAGED_CALL_CLOBBERS);
+#endif
+}
+
+/* ---- the three shapes the IKBD/MIDI input chain adds, all of which put something in A0 ----------
+ *
+ * The two forms above pass their operand on the STACK, which is what a C handler reads. The 6301's
+ * own packet handlers do not: `mousevec`, `clockvec`, `joyvec`, `statvec` and `midivec` are called
+ * with A0 naming the packet (or the IOREC) exactly as the ROM's `lea`/`movea.l` left it, which is
+ * the published KBDVECS contract. So the ROUTINE moves to A1 here, and A0 carries the argument.
+ *
+ * OFF TARGET ALL THREE REACH THE SAME HOOK as the two above, with `argument` carrying the packet
+ * address or the received byte — because a host stub has no register file and nothing on this side
+ * could observe which register a value arrived in. What the register placement IS pinned by is Tier
+ * 3: the cross-compiled blob really jumps into whatever the case staged, so a case that leaves the
+ * ROM's own `midivec` in the slot has its `move.b d0` and `movea.l a0` read by the ROM's own code.
+ */
+
+/* THE TWO PACKET SHAPES ARE ONE SHAPE AND TWO INSTRUCTION SEQUENCES, so the registers, the operands
+ * and the clobber list are written once and each caller supplies the ROM's own instructions around
+ * the `jsr`. The sequences stay AT the call sites, because which instructions the ROM makes is the
+ * fidelity claim and a reader has to be able to see it. */
+#define STAGED_CALL_PACKET(image, routine, packet, before, after)                                  \
+    do {                                                                                           \
+        register uint32_t target __asm__("a1") = (routine);                                        \
+        register uint32_t block __asm__("a0") = (packet);                                          \
+        STAGED_CALL_BASE_REGISTER;                                                                 \
+                                                                                                   \
+        (void)(image);                                                                             \
+        __asm__ volatile (before "jsr (%0)" after                                                  \
+                          : "+a"(target), "+a"(block), STAGED_CALL_BASE_OPERAND                    \
+                          :                                                                        \
+                          : STAGED_CALL_CLOBBERS_ROUTINE_IN_A1, "d0");                             \
+    } while (0)
+
+/* `move.l <packet>,-(sp) / jsr (a2) / addq.w #4,sp`, with A0 already naming the packet — the IKBD
+ * packet machine's dispatch at `$fc2afa`. The push and the register are the SAME address: TOS calls
+ * these vectors both ways round so that a C handler and an asm one can each read the one it knows. */
+static inline void call_vector_packet_pushed(uint8_t *image, uint32_t routine, uint32_t packet)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    recreate_call_vector(image, routine, packet);
+#else
+    STAGED_CALL_PACKET(image, routine, packet, "move.l %1,-(%%sp)\n\t", "\n\taddq.w #4,%%sp");
+#endif
+}
+
+/* ...and the same call with NOTHING pushed, which is how the keyboard's own mouse emulation reaches
+ * `mousevec` at `$fc2e9a`: A0 names the three-byte packet and the longword under the return address
+ * is the caller's own saved A0, not the packet. */
+static inline void call_vector_packet(uint8_t *image, uint32_t routine, uint32_t packet)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    recreate_call_vector(image, routine, packet);
+#else
+    STAGED_CALL_PACKET(image, routine, packet, "", "");
+#endif
+}
+
+/* `move.b <byte>,d0 / <a0 = the IOREC> / jmp (a2)` — the two places `acia_take_byte` hands a RAW
+ * BYTE to a vector: MIDI's `midivec` ($fc2e38) and either 6850's overrun vector ($fc2a3e).
+ *
+ * THE ROM TAIL-JUMPS AND THIS CALLS, and the difference is the stack depth the callee sees plus the
+ * return address it would find there — `src/xbios/supexec.c` carries the same residual for the same
+ * reason. Neither build can spell a tail jump out of a C body without owning the frame, and no
+ * handler TOS installs in these slots reads either.
+ *
+ * A SECOND RESIDUAL, in the registers. At the ROM's `jmp (a2)` the callee finds A1 = the 6850's own
+ * STATUS ADDRESS ($fffc00 or $fffc04) and D2 = the status byte it just read, because that is simply
+ * what the service body was holding; here A1 is the ROUTINE and D2 is a clobber. It is moot for the
+ * vectors the capture holds — the error vectors are a bare `rts` and `midivec` reads only A0 and D0
+ * — but a Tier 3 case that staged a stub reading A1 would diverge, and it would be right to. */
+static inline void call_vector_byte(uint8_t *image, uint32_t routine, uint32_t iorec, uint8_t byte)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    (void)iorec;
+    recreate_call_vector(image, routine, byte);
+#else
+    register uint32_t target __asm__("a1") = routine;
+    register uint32_t record __asm__("a0") = iorec;
+    register uint32_t received __asm__("d0") = byte;
+    STAGED_CALL_BASE_REGISTER;
+
+    (void)image;
+    __asm__ volatile ("jsr (%0)"
+                      : "+a"(target), "+a"(record), "+d"(received), STAGED_CALL_BASE_OPERAND
+                      :
+                      : STAGED_CALL_CLOBBERS_ROUTINE_IN_A1);
 #endif
 }
 

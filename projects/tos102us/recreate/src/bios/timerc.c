@@ -33,12 +33,11 @@
  * is even rotated, and the MFP's in-service bit is cleared after the two paths meet — so a tick that
  * does no work still counts and still acknowledges, which is what keeps channel 5 firing.
  *
- * WHAT IS NOT RECONSTRUCTED HERE (`recreate.h`): the auto-repeat INJECTION at $fc2c42, which is
- * where a key that has waited out both countdowns goes. That routine translates a scancode through
- * the `Keytbl` tables and writes the IKBD's own IOREC — it is the keyboard half of the ACIA
- * handler's world rather than the timer's, and it belongs with the packet parser. Everything up to
- * it is here: the `conterm` gate, the "is a key held" gate, and both countdowns including the
- * reload from `Kbrate`'s interval byte.
+ * WHERE A KEY THAT HAS WAITED OUT BOTH COUNTDOWNS GOES: `kbd_queue_key` ($fc2c42,
+ * `src/bios/keyboard.c`), which is the keyboard's own routine and not this handler's — the held
+ * scancode goes through the `Keytbl` tables into the IKBD's IOREC exactly as a key the 6301 just
+ * sent does. This handler's own half is the `conterm` gate, the "is a key held" gate, and both
+ * countdowns including the reload from `Kbrate`'s interval byte.
  */
 #include <stdint.h>
 
@@ -47,12 +46,12 @@
 #endif
 
 #include "machine.h"
-#include "recreate.h"
 #include "m68k_idioms.h"
 #include "hw.h"
 #include "psg.h"
 #include "addrs.h"
 #include "mfp.h"
+#include "keyboard.h"
 #include "staged_call.h"
 
 /* ---- the Dosound driver's one step ($fc312a) ---------------------------------------------------
@@ -174,9 +173,11 @@ static void step_the_key_repeat(uint8_t *image)
     if (image[SYSVAR_KB_REPEAT_LEFT] != 0)
         return;
     image[SYSVAR_KB_REPEAT_LEFT] = image[KBRATE_REPEAT];
-    recreate_not_reconstructed(
-        "the auto-repeat injection at $fc2c42 — it translates the held scancode through the Keytbl "
-        "tables into the IKBD's IOREC, which is the keyboard half of the ACIA handler's world");
+    /* `move.b $e7f,d0 / lea $c76,a0 / bsr $fc2c42` — the INJECTION, and it is the keyboard's own
+     * routine rather than anything of this handler's: the held scancode goes through the `Keytbl`
+     * tables into the IKBD's IOREC exactly as a key the 6301 just sent does. Which is why
+     * `kbd_queue_key` takes the IOREC as a parameter — this caller does its own `lea`. */
+    kbd_queue_key(image, image[SYSVAR_KB_REPEAT_KEY], IOREC_IKBD);
 }
 
 /* ---- the handler ------------------------------------------------------------------------------- */

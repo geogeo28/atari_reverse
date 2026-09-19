@@ -11,10 +11,11 @@ case that touches the Dosound driver's mixer register declares the chip too (`ps
 that register is read back before it is written and the six bits the list does not supply are
 whatever the chip already had.
 
-WHAT IS NOT REACHABLE FROM HERE, said once: the auto-repeat's own INJECTION ($fc2c42) halts on both
-builds (`timerc.c`), and the interval RELOAD sits in the same arm — `move.b KBRATE_REPEAT,$e81` is
-the instruction before the `bsr` — so the countdown is proved down to its last tick and the reload
-is not proved at all. Nothing short of reconstructing the injection changes that.
+THE AUTO-REPEAT'S LAST ARM IS REACHABLE NOW, and it was not: `$fc2c42` is `kbd_queue_key`
+(`src/bios/keyboard.c`), so the interval RELOAD and the INJECTION — the two instructions at the
+bottom of the countdown — are a case rather than a halt. What that case needs beyond the countdown
+is the keyboard's own state, which is why it stages the IKBD ring and `kbshift` where every other
+case here leaves them alone.
 """
 import ctypes
 import struct
@@ -23,7 +24,8 @@ import pytest
 
 import case
 import isr
-from harness import addrs, _lib
+import iorec
+from harness import BASE_IMAGE, addrs, _lib
 from recreate_kit import os_map
 
 _lib.isr_timer_c.argtypes = [ctypes.POINTER(ctypes.c_ubyte)]
@@ -174,14 +176,15 @@ REPEAT_ENABLED = 1 << addrs.CONTERM_REPEAT_BIT
 # POISONING A COUNTDOWN FEEDS THE ROUTINE A DIFFERENT COUNT. The attribution pass re-runs both cores
 # over an image whose oracle-written bytes are inverted, so a countdown that this tick left at N is
 # re-entered at `N ^ $ff` — and a value that lands on 1 there runs the poisoned tick all the way into
-# the auto-repeat INJECTION, which halts on both builds by design. The counts below are chosen so the
-# poisoned run stays inside the arms this wave reconstructs; each case says which value that rules
-# out.
-def repeat_pokes(delay, interval, key=A_SCANCODE, conterm=REPEAT_ENABLED | 1):
+# the auto-repeat INJECTION. That is an ordinary arm now rather than a halt, but it writes the IKBD
+# ring, so the counts below are still chosen to keep the poisoned run out of it: a case that reaches
+# the injection stages the ring for it, which is the one at the bottom of this section.
+def repeat_pokes(delay, interval, key=A_SCANCODE, conterm=REPEAT_ENABLED | 1, overrides=None):
     return quiet_pokes({addrs.SYSVAR_CONTERM: bytes([conterm]),
                         addrs.SYSVAR_KB_REPEAT_KEY: bytes([key]),
                         addrs.SYSVAR_KB_REPEAT_DELAY: bytes([delay]),
-                        addrs.SYSVAR_KB_REPEAT_LEFT: bytes([interval])})
+                        addrs.SYSVAR_KB_REPEAT_LEFT: bytes([interval]),
+                        **(overrides or {})})
 
 
 @pytest.mark.parametrize("conterm", (0, 1, 0xFD, 0x80))
@@ -218,7 +221,8 @@ def test_the_last_tick_of_the_delay_falls_straight_into_the_interval(interval):
     assert info["writes"][addrs.SYSVAR_KB_REPEAT_LEFT] == interval - 1
 
 
-# $ff is left out: the poisoned re-run would enter with an interval of 1 and reach the injection.
+# $ff is left out: the poisoned re-run would enter with an interval of 1 and reach the injection,
+# which this case stages no ring for.
 @pytest.mark.parametrize("interval", (2, 3, 0x1E, 0xFE))
 def test_a_spent_delay_counts_the_interval_down_on_every_tick(interval):
     """`tst.b $e80 / beq` — a delay ALREADY at zero is not decremented (it would wrap to $ff and
@@ -226,6 +230,25 @@ def test_a_spent_delay_counts_the_interval_down_on_every_tick(interval):
     info = run(repeat_pokes(delay=0, interval=interval))
     assert addrs.SYSVAR_KB_REPEAT_DELAY not in info["writes"]
     assert info["writes"][addrs.SYSVAR_KB_REPEAT_LEFT] == interval - 1
+
+
+@pytest.mark.parametrize("held", (A_SCANCODE, 0x10, 0x39))
+def test_the_last_tick_of_the_interval_reloads_it_and_repeats_the_held_key(held):
+    """THE ARM THIS BATTERY COULD NOT REACH. `move.b $e83,$e81 / move.b $e7f,d0 / lea $c76,a0 /
+    bsr $fc2c42`: the interval is reloaded from `Kbrate`'s own byte and the HELD scancode goes into
+    the IKBD's ring through the same routine a key the 6301 just sent uses.
+
+    Three scancodes, because the injection is the only place this handler's held byte is read as
+    anything but "non-zero" — a reconstruction that injected a constant, or the interval, passes on
+    one of them.
+    """
+    ring = iorec.staged(addrs.IOREC_IKBD, 0, 0)
+    info = run(repeat_pokes(delay=0, interval=1, key=held,
+                            overrides={**ring, addrs.KBSHIFT: b"\x00"}))
+    assert info["writes"][addrs.SYSVAR_KB_REPEAT_LEFT] == BASE_IMAGE[addrs.KBRATE_REPEAT]
+    buffer = iorec.buffer_of(addrs.IOREC_IKBD)
+    assert info["writes"][buffer + addrs.IOREC_KEY_BYTES + 1] == held
+    assert case.written(info, addrs.IOREC_IKBD + addrs.IOREC_TAIL, 2) == addrs.IOREC_KEY_BYTES
 
 
 # ---- the Dosound driver ------------------------------------------------------------------------------

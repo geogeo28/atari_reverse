@@ -294,7 +294,7 @@ fn 0xfc097e Supexec
 fn 0xfc0984 Bconstat
 fn 0xfc098c Bconin
 fn 0xfc0994 Bcostat
-fn 0xfc099c Bconout   # ctx
+fn 0xfc099c Bconout
 fn 0xfc0a2e Drvmap
 fn 0xfc0a34 Kbshift
 fn 0xfc0a46 Getmpb
@@ -585,7 +585,7 @@ cmt 0x2982 Vertical blanks between cursor blinks -- Cursconf 4/5, reached as -18
 var 0x2994 con_state_flags
 cmt 0x2994 Console/VDI cursor state: bit 0 = blinks (Cursconf 2/3), bit 1 = drawn now.
 var 0x2995 con_state_spare
-cmt 0x2995 Byte Cursconf 6 writes and 7 reads back; nothing else in the ROM uses it.
+cmt 0x2995 Byte Cursconf 6 writes and 7 reads back -- and the console's cursor tail ($fc479a) reads it too: NONZERO suppresses the cursor redraw and becomes the blink timer's next value.
 var 0xfc2288 keytbl_unshifted_rom
 cmt 0xfc2288 The ROM's three 128-byte scancode tables ($fc2288/$fc2308/$fc2388); $fc2298 spells `qwertyuiop[]`.
 var 0xfc2308 keytbl_shifted_rom
@@ -657,7 +657,7 @@ var 0x0e12 kbdvecs
 var 0x0e22 kbdvecs_mousevec
 var 0x0e50 ikbd_clock_reply
 var 0x0e54 ikbd_settime_requested
-var 0x0e5e ikbd_settime_bcd
+var 0x0e5e kbd_mouse_packet
 var 0x0e6e initmous_packet
 var 0x0e92 ikbd_clock_reply_pending
 var 0xfc2638 mfp_timer_ier_offsets
@@ -679,12 +679,12 @@ cmt 0xfc30c4 MFP channel 5 (timer C, 200 Hz), vector $114: counts _hz_200, rotat
 fn 0xfc29ce acia_handler
 cmt 0xfc29ce MFP channel 6 (the IKBD and MIDI 6850s share one line), vector $118: calls KBDVECS' midisys ($e2e) then ikbdsys ($e32) and goes round again while GPIP bit 4 is low; clears ISRB bit 6. src/bios/ikbd.c.
 fn 0xfc4666 blink_cursor
-fn 0xfc4a1e invert_cursor_cell
+fn 0xfc4a1e console_invert_cursor_cell
 fn 0xfc1bc4 floppy_vbl
 fn 0xfc29fc midi_acia_service
 fn 0xfc2a0c ikbd_acia_service
-fn 0xfc2a42 acia_take_byte   # ctx
-fn 0xfc2c42 kbd_queue_key   # ctx
+fn 0xfc2a42 acia_take_byte
+fn 0xfc2c42 kbd_queue_key
 fn 0xfc1e60 fdc_set_drive_and_side   # ctx
 fn 0xfc1ea4 fdc_read_status   # ctx
 fn 0xfc1eac fdc_settle_delay
@@ -718,8 +718,150 @@ cmt 0xfc29f6 The ACIA handler's exit: movem.l (sp)+,d0-d3/a0-a3/a5 -- the list I
 cmt 0xfc0984 BIOS $01 Bconstat: lea $051e,a0 then the shared walk (move.w 4(sp),d0 / lsl.w #2 / movea.l 0(a0,d0.w),a0 / jmp (a0)). Its THREE drivers are IOREC head/tail readers ($fc2138 RS232 device 1, $fc2226 console device 2, $fc2044 MIDI device 3; devices 0 and 4-7 are the bare rts) and all three are reconstructed, so the recreate's halt arm is unreachable on the captured machine; it stays because the table is RAM. src/bios/bcon.c.
 cmt 0xfc0994 BIOS $08 Bcostat: the same walk over the table at $055e, and the one BIOS entry whose WHOLE table is reconstructed -- console $fc226c (moveq #-1, never busy), printer $fc2124 (MFP GPIP bit 0, the Centronics BUSY line, so the branch reads the opposite way round to the answer), RS232 $fc219a (NO hardware: its output ring's tail advanced one record and compared with the head), IKBD $fc21dc and MIDI $fc2004 (bit 1 of each 6850's status, TDRE). src/bios/bcon.c.
 fn 0xfc2104 xconin_prt
-cmt 0xfc2104 Bconin device 0 (PRT:): drives the parallel port through the YM2149 and then SPINS on MFP GPIP bit 0 until it clears. A genuine poll -- successive reads of one address must differ -- so the recreate HALTS on it; a declared sequence cannot supply it, the direct-PSG path can.
+cmt 0xfc2104 Bconin device 0 (PRT:): reaches the parallel port through Giaccess (not a direct PSG access) and then SPINS on MFP GPIP bit 0 until it is ASSERTED. BIOS wave 3 found the earlier note wrong on both counts: a declared GPIP list describes this wait exactly, so the halt is a DEFERRAL and not a limit.
 fn 0xfc2150 xconin_rs232
 cmt 0xfc2150 Bconin device 1 (AUX:): waits on the RS232 input ring at $c54 that the serial interrupt fills. The recreate HALTS on it: nothing in the run writes the ring, so the wait needs an interrupt rather than a declaration.
 cmt 0xfc1bc4 The floppy's own VBL service, called past the VBL's flock gate. NOT a poll loop: it makes two WORD reads of the FDC data/status register at $ff8604 (at $fc1c0a for the media-change poll, again through $fc1ea4 for the motor-off check), which a declared SEQUENCE describes exactly. What still blocks it is the YM2149's DIRECT path -- between those reads it calls $fc1e60 -- so the recreate reconstructs only the st it makes before it looks at anything and the early return flock buys.
 cmt 0xfc1e60 Selects YM2149 register 14 and READS PORT A BACK, then merges the drive-select and side bits into it -- a direct-PSG read-modify-write. This project's only PSG door so far is the XBIOS Giaccess trap, and a run reaching both paths is refused by the mixed-path guard; that is why floppy_vbl ($fc1bc4) is not reconstructed.
+
+# --- BIOS wave 3 / wave 6 (2026-09-19): the ACIA INPUT CHAIN under the IKBD handler's two KBDVECS slots ---
+fn 0xfc2a1a acia_service_body
+fn 0xfc2b5c kbd_scancode
+fn 0xfc2dee kbd_queue_record
+fn 0xfc2e3a midi_queue_byte
+fn 0xfc2e7a kbd_emulated_mouse
+var 0x0e36 ikbd_packet_kind
+var 0x0e37 ikbd_packet_remaining
+var 0x0e38 ikbd_status_packet
+var 0x0e3f ikbd_absolute_mouse_packet
+var 0x0e44 ikbd_relative_mouse_packet
+var 0x0e47 ikbd_clock_packet
+var 0x0e4d ikbd_joystick_packet
+var 0x0e16 kbdvecs_vkbderr
+var 0x0e1a kbdvecs_vmiderr
+var 0x0e1e kbdvecs_statvec
+var 0x0e26 kbdvecs_clockvec
+var 0x0e2a kbdvecs_joyvec
+var 0xfc2aa2 ikbd_packet_kind_table
+var 0xfc2aac ikbd_packet_count_table
+var 0xfc2b06 ikbd_packet_table
+var 0xfc2ea0 alt_mouse_button_keys
+var 0xfc31e0 keyclick_sound_list
+cmt 0xfc29fc KBDVECS midisys: lea $d84(a5),a0 / lea $fffffc04,a1 / movea.l vmiderr,a2, then falls into the shared body at $fc2a1a. src/bios/acia_service.c.
+cmt 0xfc2a0c KBDVECS ikbdsys: the same three instructions for the IKBD -- IOREC $c76, 6850 $fffc00, vkbderr -- then the shared body. src/bios/acia_service.c.
+cmt 0xfc2a1a The shared 6850 service body: btst #7 (this chip raised the line), btst #0 (a byte waiting) -> bsr acia_take_byte under movem.l d2/a0-a2, andi.b #$20 (a byte was LOST) -> move.b 2(a1),d0 / jmp (a2) through the error vector read at entry. Ends at the rts both error vectors hold in this capture.
+cmt 0xfc2a42 One byte off a 6850: cmpa.l #$c76,a0 sorts IKBD from MIDI (MIDI tail-jumps through midivec with d0 = byte, a0 = IOREC). IKBD: $e36 non-zero continues a packet, a byte under $f6 is a scancode, $f6..$ff is a header -- $e36/$e37 from the tables at $fc2aa2/$fc2aac, and the header kept at $e44 ($f8..$fb) or $e4d ($fd..$ff) by two SIGNED byte compares.
+cmt 0xfc2b06 Five 12-byte packet descriptors, kind 1..5: packet start, one past its end, and the ADDRESS OF A KBDVECS SLOT. The fill runs end - $e37, so the bytes land in arrival order; kind 5 ($fd) ends at $e4f with two outstanding, so its first byte overwrites its own header at $e4d. Kinds 6 and 7 ($fe/$ff) are NOT here: they store at $e4e + kind - 6 by byte arithmetic and go to joyvec.
+cmt 0xfc2b5c The scancode arm: nine cmpi.b for the four modifier keys' makes and breaks and CapsLock's MAKE (a bchg -- $ba is not in the chain and falls through), each on a copy of $e61 stored back at $fc2be0. Everything else arms or disarms the auto-repeat ($e7f/$e80/$e81 from $e82/$e83) and then falls into $fc2c42; a BREAK returns there, except $c7 and $d2 under ALT. src/bios/keyboard.c.
+cmt 0xfc2c42 A scancode into the IKBD IOREC, and TIMER C's auto-repeat calls it too ($fc310c, with a0 = $c76): the key click, the three Keytbl tables (CapsLock chosen first, either SHIFT overriding it), SHIFT+F1..F10 renumbered by 25, then the CONTROL and ALTERNATE rewrites. src/bios/keyboard.c.
+cmt 0xfc2dee The record store: scancode<<8 | ascii packed with $e61 and a zero into kbshift:scancode:00:ascii, masked to $00ffffff unless conterm bit 3 is set; tail + 4 wrapping AT the ring's size (not modulo); a tail that meets the head DROPS the key -- neither index moves.
+cmt 0xfc2e3a The ROM's own midivec: one raw byte into the MIDI IOREC's ring, a0 = the record and d0 = the byte, with the same wrap-at-size and the same drop-the-newest rule. src/bios/acia_service.c.
+cmt 0xfc2e7a The keyboard's emulated mouse: a THREE-BYTE relative-mouse packet of its own at $e5e (not the 6301's at $e44) whose header is (kbshift >> 5) - 8, so ALT+Home and ALT+Insert change the header of every subsequent move; mousevec is called with a0 = $e5e and NOTHING pushed.
+cmt 0xfc2ea0 The four scancodes ALT turns into mouse buttons -- $47, $c7, $52, $d2 -- walked from the END by a dbf. Bit 4 of the scancode picks the button (kbshift bit 5 or 6) and bit 7 picks press from release.
+cmt 0x0e5e Three bytes: the relative-mouse packet the KEYBOARD's own ALT+arrow emulation builds ($fc2e7a), which is NOT the 6301's at $e44. Labelled ikbd_settime_bcd until BIOS wave 3; the set-time path is $e50/$e54, and wave 3's battery drives this buffer as the emulated packet.
+
+# --- BIOS wave 3 / wave 6 (2026-09-19): Bconout's six drivers and the VT52 console ---
+fn 0xfc2090 xconout_prt
+fn 0xfc21b4 xconout_rs232
+fn 0xfc42f2 xconout_con
+fn 0xfc2016 xconout_midi
+fn 0xfc21ee xconout_ikbd
+fn 0xfc42e6 xconout_raw
+fn 0xfc20cc printer_send
+fn 0xfc20f8 printer_strobe_high
+fn 0xfc20fe printer_strobe_low
+fn 0xfc2836 rs232_prime_transmitter
+fn 0xfc2878 rs232_ring_put
+fn 0xfc2892 rs232_ring_get
+fn 0xfc28ea iorec_index_after
+fn 0xfc2270 bell_arm
+fn 0xfc4308 con_state_normal
+fn 0xfc4354 con_state_escape
+fn 0xfc4370 con_set_state
+fn 0xfc4376 con_ignore
+fn 0xfc4378 con_state_await_y_row
+fn 0xfc4388 con_state_await_y_column
+fn 0xfc439e con_escape_foreground
+fn 0xfc43a4 con_state_await_foreground
+fn 0xfc43b2 con_escape_background
+fn 0xfc43b8 con_state_await_background
+fn 0xfc4342 con_tab
+fn 0xfc4464 con_clear_screen_and_home
+fn 0xfc4468 con_cursor_up
+fn 0xfc4478 con_cursor_down
+fn 0xfc448c con_cursor_right
+fn 0xfc44a0 con_cursor_left
+fn 0xfc44b0 con_cursor_home
+fn 0xfc44b8 con_clear_to_end_of_screen
+fn 0xfc44ca con_clear_to_end_of_line
+fn 0xfc4510 con_reverse_video_on
+fn 0xfc4516 con_reverse_video_off
+fn 0xfc4560 con_reverse_index
+fn 0xfc4572 con_insert_line
+fn 0xfc4588 con_delete_line
+fn 0xfc4594 con_clear_to_start_of_screen
+fn 0xfc45ae con_unlock_cursor
+fn 0xfc45be console_show_cursor
+fn 0xfc45d8 console_hide_cursor
+fn 0xfc45f0 con_save_position
+fn 0xfc45fc con_restore_position
+fn 0xfc4610 con_erase_line
+fn 0xfc4622 con_clear_to_start_of_line
+fn 0xfc462e con_clear_region
+fn 0xfc4638 con_wrap_on
+fn 0xfc463e con_wrap_off
+fn 0xfc4644 con_carriage_return
+fn 0xfc464e con_line_feed
+fn 0xfc46f0 con_put_glyph
+fn 0xfc479a con_cursor_unlock_tail
+fn 0xfc484c con_scroll_up
+fn 0xfc48b0 con_scroll_down
+fn 0xfc4930 con_clear_cells
+fn 0xfc49c4 con_cell_address
+fn 0xfc49fc con_place_cursor
+fn 0xfd141c cpu_draw_glyph
+fn 0xfd149a cpu_scroll_up
+fn 0xfd14de cpu_scroll_down
+fn 0xfd1542 cpu_clear_cells
+fn 0xfc47be blitter_draw_glyph   # ctx
+fn 0xfc4852 blitter_scroll_up   # ctx
+fn 0xfc48b6 blitter_scroll_down   # ctx
+fn 0xfc4936 blitter_clear_cells   # ctx
+var 0x0e84 printer_retry_at
+var 0x0c71 rs232_transmit_status
+var 0x0c73 rs232_remote_stopped
+var 0x0c75 rs232_pending_character
+var 0x284c con_saved_position
+var 0x296e con_max_column
+var 0x2970 con_max_row
+var 0x2972 con_row_bytes
+var 0x2974 con_colour_background
+var 0x2976 con_colour_foreground
+var 0x297c con_cursor_offset
+var 0x297e con_cursor_column
+var 0x2980 con_cursor_row
+var 0x2984 con_font_form
+var 0x2988 con_font_last
+var 0x298a con_font_first
+var 0x298c con_font_form_bytes
+var 0x2990 con_font_offsets
+var 0x2a14 con_vector_glyph
+var 0x2a18 con_vector_scroll_up
+var 0x2a1c con_vector_scroll_down
+var 0x2a20 con_vector_clear
+var 0xfc4330 con_control_jump_table
+var 0xfc43e8 con_escape_upper_jump_table
+var 0xfc4402 con_escape_lower_jump_table
+var 0xfd1446 conout_glyph_plane_arms
+var 0xfd1522 conout_clear_masks
+var 0xfd15ba conout_clear_plane_arms
+var 0xfc31c2 bell_sound_list
+cmt 0xfc099c BIOS $03 Bconout: the dispatcher over the table at $57e. `move.w 4(sp),d0 / lsl.w #2` replaces the caller's D0 LOW WORD before the jmp -- every driver is entered with that scratch, and the two 6850 senders and a no-driver device return it. src/bios/bcon.c.
+cmt 0xfc2090 Bconout device 0 (PRT:): the SERIAL REDIRECT test is a BYTE btst on the WORD at $e90, so it reads BIT 12 -- $0010 prints and $1000 redirects to xconout_rs232. The five-second hold-off's compare is UNSIGNED (bcs) and the thirty-second BUSY timeout's is SIGNED (blt). Every chip access is Giaccess: mixer bit 7 makes port B an output, the byte goes to register 15, then port A bit 5 strobes LOW, LOW, HIGH.
+cmt 0xfc2016 Bconout device 3 (MIDI:): Midiws of one byte. It writes no D0, so it answers the dispatch's own scratch exactly as a no-driver device does.
+cmt 0xfc21ee Bconout device 4 (IKBD): IS Ikbdws of one byte, the 951-iteration settle included. Like the MIDI sender it writes no D0, so the dispatch scratch is the result.
+cmt 0xfc21b4 Bconout device 1 (AUX:): the byte goes into the $c62 output ring at the ADVANCED tail whatever the USART is doing, and the transmitter is primed only when TSR bit 7 says the buffer is empty. $fc2836 sends nothing while $c74 & $c73 (remote stopped), else the pending flow character at $c75, else one byte out of the ring.
+cmt 0xfc42f2 Bconout device 2 (CON:): reads NO hardware. It dispatches through the state vector at $4a8 -- six states: normal, escape, ESC Y row, ESC Y column, ESC b (foreground) and ESC c (background). src/bios/vt52.c.
+cmt 0xfc45ae The cursor unlock: it leaves the lock DEPTH in D0, which is why ESC l ($fc4610, the erase-line escape that runs straight after it) puts the cursor in column `depth`.
+cmt 0xfc4402 The lower-case escape jump table: 22 SIGNED word displacements, of which nine point at the bare rts at $fc4376 -- F G g h i m n r s t u are table entries the ROM does not implement.
+cmt 0x2a14 The four console screen vectors -- glyph, scroll up, scroll down, clear cells. The captured ST holds the CPU set at $fd141c/$fd149a/$fd14de/$fd1542; on a machine with a blitter TOS 1.02 installs $fc47be/$fc4852/$fc48b6/$fc4936 here instead.

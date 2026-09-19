@@ -39,6 +39,7 @@ with the same effect for the candidate, which reaches it through `include/staged
 hook dispatches BY ADDRESS, so a decoy staged beside the named routine means something on both
 sides.
 """
+import contextlib
 import ctypes
 import struct
 from collections import namedtuple
@@ -137,6 +138,9 @@ def stub_symbol(constant):
     return f"{constant.lower()}{STUB_SUFFIX}"
 
 KBDVECS_BYTES = addrs.KBDVECS_LONGWORDS * addrs.VECTOR_BYTES
+# ...and the three-byte relative-mouse packet the KEYBOARD builds for `mousevec` — header, dx, dy —
+# which is the last of the bytes the ACIA chain writes and so the end of its span below.
+KBD_MOUSE_PACKET_BYTES = 3
 
 # The 68000 opcode words the stubs below are assembled from, named rather than spelt at the site —
 # a stub is the only thing in a case that is machine code, so an unnamed word here is a bug nothing
@@ -149,6 +153,9 @@ MOVE_B_IMMEDIATE_ABSOLUTE = 0x13FC  # `move.b #<byte>,<long>.l`  (the immediate 
 MOVE_W_IMMEDIATE_ABSOLUTE = 0x33FC  # `move.w #<word>,<long>.l`
 MOVE_L_IMMEDIATE_ABSOLUTE = 0x23FC  # `move.l #<long>,<long>.l`
 MOVE_W_FRAME_ABSOLUTE = 0x33EF      # `move.w <d16>(sp),<long>.l`
+MOVE_L_FRAME_ABSOLUTE = 0x23EF      # `move.l <d16>(sp),<long>.l`
+MOVE_L_A0_ABSOLUTE = 0x23C8         # `move.l a0,<long>.l` — the low three bits are the register
+MOVE_B_D0_ABSOLUTE = 0x13C0         # `move.b d0,<long>.l`
 ARGUMENT_AT_4_SP = 4                # ...and the displacement a pushed word sits at, past the `jsr`
 RTE = b"\x4e\x73"
 RTS = b"\x4e\x75"
@@ -231,7 +238,7 @@ def case_pokes(entry, frame=FRAME_IN_STACK_BAND, resume_sr=RESUME_SR, routines=N
     verified, which is exactly what deriving the rows from `VERIFIED_CASES` exists to prevent.
     """
     return {**entry_pokes(entry, frame, resume_sr),
-            **{at: code for at, (code, _effect) in (routines or {}).items()},
+            **routine_pokes(routines or {}),
             **(pokes or {})}
 
 
@@ -472,6 +479,24 @@ def store_long(value, address):
     return struct.pack(">HII", MOVE_L_IMMEDIATE_ABSOLUTE, value, address)
 
 
+def store_register(opcode, address):
+    """`move.<size> <Rn>,(address).l` — a stub that reports a REGISTER it was entered with.
+
+    `opcode` names both the register and the width, because the 68000 encodes the source in the
+    instruction word: `MOVE_L_A0_ABSOLUTE` and `MOVE_B_D0_ABSOLUTE` are the two this project needs.
+    The vectors below `acia_take_byte` take their packet — or their IOREC and byte — in registers
+    rather than on the stack, which is the published KBDVECS contract, and this is the only way a
+    case can see which register held what.
+    """
+    return struct.pack(">HI", opcode, address)
+
+
+def store_frame_long(address):
+    """`move.l 4(sp),(address).l` — and the LONGWORD its caller pushed, which is the other half of
+    the same contract: the IKBD packet dispatch passes its packet BOTH ways round."""
+    return struct.pack(">HHI", MOVE_L_FRAME_ABSOLUTE, ARGUMENT_AT_4_SP, address)
+
+
 def store_frame_word(address):
     """`move.w 4(sp),(address).l` — a stub that reports the WORD its caller pushed in front of it.
 
@@ -525,34 +550,36 @@ def marked(info, index=0):
     return info["writes"].get(MARKS + index) == MARK
 
 
-def run(entry, glue, *, frame=FRAME_IN_STACK_BAND, resume_sr=RESUME_SR, pokes=None, regs=None,
-        routines=None, exclude=None, poison=True, io_seed=None, psg_seed=None,
-        max_insns=DEFAULT_MAX_INSNS):
-    """One differential over the handler at `entry`, entered through its staged frame.
+def routine_pokes(routines):
+    """The 68000 stubs half of `routines`, for a case that lays its own pokes.
 
-    `routines` is {address: (68000 stub bytes, effect(buf, argument))} — every routine this case
-    stages, planted in the image for the ORACLE and bound to the hook for the CANDIDATE. `frame`,
-    `resume_sr`, `exclude` and the seeds are `harness.differential`'s own; `regs` overrides part of
-    the dirty register file a handler is entered with.
+    A routine staged at a ROM address plants NOTHING — the code is already there, and the pair's
+    effect exists so the candidate can reach our own C for it — which is why an empty `code` is a
+    legitimate entry rather than a mistake.
     """
-    routines = routines or {}
+    return {at: code for at, (code, _effect) in routines.items() if code}
+
+
+@contextlib.contextmanager
+def staged_routines(routines):
+    """Install `routines` for ONE differential, and collect what the candidate called.
+
+    `routines` is {address: (68000 stub bytes, effect(buf, argument))} — planted in the image for
+    the ORACLE by the caller's pokes, and bound to `staged_call.h`'s hook for the CANDIDATE.
+
+    It is a context manager rather than part of `run` below because the handlers are not the only
+    routines that call a RAM vector: `acia_take_byte` and the keyboard reach `midivec`, `mousevec`,
+    `joyvec` and the rest, and those are entered as ordinary `rts` routines rather than through an
+    exception frame. One installer, so the hook is bound once in this module and a second battery
+    cannot bind it again — under `pytest -n auto` the later import would silently win.
+    """
     _STAGED.clear()
     _STAGED.update({at: effect for at, (_code, effect) in routines.items()})
     _UNSTAGED.clear()
     _PASSES.clear()
     CALLS.clear()
-
-    def one_pass(lib, buf):
-        """The battery's glue, with a fresh call list per candidate run — see `_PASSES`."""
-        _PASSES.append([])
-        return glue(lib, buf)
-
-    staged = case_pokes(entry, frame, resume_sr, routines, pokes)
     try:
-        info = case.run(TRAMPOLINE_AT[entry],
-                        {**DIRTY_REGISTERS, **(regs or {}), "_pokes": staged}, one_pass,
-                        width=case.NO_RESULT, poison=poison, exclude=exclude, io_seed=io_seed,
-                        psg_seed=psg_seed, max_insns=max_insns)
+        yield
     finally:
         # Nothing staged stays installed past the case that staged it: a later run that reached the
         # hook without going through here would otherwise apply THIS case's effect to its buffer.
@@ -561,6 +588,32 @@ def run(entry, glue, *, frame=FRAME_IN_STACK_BAND, resume_sr=RESUME_SR, pokes=No
     assert not _UNSTAGED, (
         f"the candidate transferred control to {_UNSTAGED[0]:#x}, where this case staged no routine "
         f"— it staged {', '.join(f'{at:#x}' for at in sorted(routines))}")
+
+
+def recording(glue):
+    """`glue` with a fresh call list per candidate run — see `_PASSES`."""
+    def one_pass(lib, buf):
+        _PASSES.append([])
+        return glue(lib, buf)
+    return one_pass
+
+
+def run(entry, glue, *, frame=FRAME_IN_STACK_BAND, resume_sr=RESUME_SR, pokes=None, regs=None,
+        routines=None, exclude=None, poison=True, io_seed=None, psg_seed=None,
+        max_insns=DEFAULT_MAX_INSNS):
+    """One differential over the handler at `entry`, entered through its staged frame.
+
+    `routines` is `staged_routines`' own; `frame`, `resume_sr`, `exclude` and the seeds are
+    `harness.differential`'s; `regs` overrides part of the dirty register file a handler is entered
+    with.
+    """
+    routines = routines or {}
+    staged = case_pokes(entry, frame, resume_sr, routines, pokes)
+    with staged_routines(routines):
+        info = case.run(TRAMPOLINE_AT[entry],
+                        {**DIRTY_REGISTERS, **(regs or {}), "_pokes": staged}, recording(glue),
+                        width=case.NO_RESULT, poison=poison, exclude=exclude, io_seed=io_seed,
+                        psg_seed=psg_seed, max_insns=max_insns)
     return info
 
 
@@ -594,6 +647,12 @@ CASE_SPANS = (
     (addrs.SYSVAR_TIMER_C_DIVIDER, 2, "timer C's fourth-tick divider"),
     (addrs.SOUND_RAMP_VALUE, 1, "the Dosound driver's ramp accumulator"),
     (addrs.KBDVECS, KBDVECS_BYTES, "KBDVECS, whose last two longwords the ACIA handler calls"),
+    # $e36..$e60: the packet machine and its buffers. It stops ONE BYTE SHORT of `KBSHIFT` ($e61),
+    # which `test_boot_snapshot.CASE_FIELDS` declares on its own — and the bytes $e4f..$e5d inside it
+    # are covered as part of the range rather than by a field of their own.
+    (addrs.IKBD_PACKET_KIND, addrs.KBD_MOUSE_PACKET + KBD_MOUSE_PACKET_BYTES
+     - addrs.IKBD_PACKET_KIND,
+     "the 6301's packet state, its five packet buffers and the keyboard's own mouse packet"),
     (FRAME_IN_STACK_BAND, addrs.EXCEPTION_FRAME_BYTES,
      "the exception frame a case stages under the oracle's stack"),
 )

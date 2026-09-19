@@ -4,26 +4,29 @@ Its whole body is a loop over two vectors in RAM and a question to the MFP, so w
 stages is the two routines and what it declares is the MFP: GPIP bit 4 (is anybody still asserting?)
 and the in-service register the handler acknowledges itself in.
 
-WHAT THIS BATTERY DOES NOT REACH, and it is most of the keyboard: the two ROM routines the captured
-machine really has in those slots ($fc29fc and $fc2a0c) read the 6850s' data ports and parse what
-comes out — mouse, joystick, clock and status packets, and a scancode's way through the `Keytbl`
-tables into the console IOREC. Every one of those reads pops the receive register, so a run needs a
-declared SEQUENCE of bytes where the model has one per-run constant (os.h, `OS_HW_ACIA_DATA`). The
-vectors are staged instead, and `test_the_captured_machine_has_the_rom_s_own_service_routines` is
-what keeps the deferral checkable rather than invisible.
+TWO CASE SHAPES, and they answer different questions. The first stages a MARKER in each slot, which
+ISOLATES the handler: the loop, the vector re-read and the acknowledgement are proved with no 6850
+in the picture at all. The second leaves the captured machine's own `$fc29fc` and `$fc2a0c` in those
+slots — `src/bios/acia_service.c` and `src/bios/keyboard.c` are what the candidate reaches through
+them — and declares the two chips instead, so a whole mouse packet is assembled over three passes of
+this loop and a keystroke reaches the IKBD IOREC. `test_the_captured_machine_has_the_rom_s_own
+_service_routines` belongs to both: it is what says the second shape is about the machine.
 
 WHAT THE DECLARED SEQUENCE ADDED (TRAP_MODEL.md, Phase 16): the handler's LOOP. GPIP bit 4 used to
 be a per-run constant here, so a case could declare the line idle (one pass) or asserted (a run that
 never ends) and nothing in between; a list of `[asserted, idle]` is what drives the two-pass entry,
-which is the shape the handler is a loop for. The packet drain out of `$fffc02` is the same model at
-the address next door and is still deferred, for the reason above: it needs the ROM's own service
-routines reconstructed, not a declaration.
+which is the shape the handler is a loop for. The PACKET DRAIN out of `$fffc02` is the same model at
+the address next door, and it is what the second shape needs: three passes of the loop, three bytes
+of the list, and one mouse packet at the end of them.
 """
 import ctypes
 import struct
 
 import pytest
 
+import acia
+import case
+import iorec
 import isr
 from harness import addrs, emu, make_image, _lib
 
@@ -254,6 +257,103 @@ def test_the_handler_gives_back_every_register_it_saved():
     isr.assert_registers_survived(run(), saved)
 
 
+# ---- the SECOND CASE SHAPE: the ROM's own service routines, no longer staged over -----------------
+# Every case above replaces `midisys` and `ikbdsys` with a marker, which is what ISOLATES the handler:
+# the loop, the vector re-read and the acknowledgement are proved without a 6850 in the picture. This
+# shape puts the captured machine's own two routines back in the slots and declares the chips instead,
+# so the whole input chain runs — handler, service routine, packet machine or keyboard, and the vector
+# a completed packet leaves through. Both shapes are kept, and they answer different questions.
+#
+# THE CANDIDATE REACHES THEM THE SAME WAY THE ORACLE DOES: through the vector. `isr_acia`'s C calls
+# whatever KBDVECS names, and the case binds that address to our own `midi_acia_service` /
+# `ikbd_acia_service` — so nothing is staged over and nothing is called by name either.
+
+
+def real_service_routines():
+    """The two ROM routines in the slots, with our C bound to their addresses for the candidate.
+
+    Nothing is poked: `$fc29fc` and `$fc2a0c` are already in the image, which is what
+    `test_the_captured_machine_has_the_rom_s_own_service_routines` above says.
+    """
+    def midi(buf, _argument):
+        _lib.midi_acia_service(buf)
+
+    def ikbd(buf, _argument):
+        _lib.ikbd_acia_service(buf)
+    return {ROM_MIDISYS: (b"", midi), ROM_IKBDSYS: (b"", ikbd)}
+
+
+def real_vector_spec(name, ikbd_data, *, gpip, pokes=None, ikbd_status=acia.READY):
+    """One case spec for the shape above: the chips declared, and all seven KBDVECS vectors staged.
+
+    `ikbd_data` is the bytes the 6301 sent, ONE PER PASS of the handler's loop — so its length and
+    `gpip`'s must agree, and the list is the case's statement of both. The MIDI chip is declared
+    INTERRUPTING WITH NOTHING WAITING, which is the state that makes `midisys` a status read and a
+    return: its own arms are `test_bios_acia_service.py`'s.
+    """
+    vector_pokes, vector_routines = acia.stage()
+    return {"name": name, "entry": addrs.ISR_ACIA,
+            "pokes": {**vectors(midi=ROM_MIDISYS, ikbd=ROM_IKBDSYS), **vector_pokes,
+                      **(pokes or {})},
+            "routines": {**vector_routines, **real_service_routines()},
+            "io_seed": {addrs.MFP_GPIP: gpip, addrs.MFP_ISRB: ISRB_HELD,
+                        **acia.both_chips(midi_status=acia.QUIET,
+                                          ikbd_status=ikbd_status, ikbd_data=ikbd_data)}}
+
+
+# A three-byte relative-mouse report, which is the packet a real machine sends most: the header, then
+# dx and dy. Three bytes is three INTERRUPTS, so the handler's loop is what assembles it — one pass
+# per byte, with the MFP asserted until the last.
+MOUSE_REPORT = (addrs.IKBD_RELATIVE_MOUSE_FIRST, 0x07, 0xF9)
+LINE_FOR = {passes: [ACIA_LINE_ASSERTED] * (passes - 1) + [ACIA_LINE_IDLE]
+            for passes in (1, 2, 3)}
+A_SCANCODE = 0x1E                       # `A`, which is in every key table and in no special arm
+
+
+def test_a_whole_mouse_packet_is_assembled_over_the_loop_s_three_passes():
+    """THE SHAPE THE WHOLE CHAIN EXISTS FOR, and it needs both declared models at once: a SEQUENCE on
+    the MFP's GPIP to say how many passes, and one on the 6850's data port to say what each pass
+    popped. The packet lands header-first in its own buffer and `mousevec` is called exactly once,
+    on the byte that completes it."""
+    spec = real_vector_spec("mouse", list(MOUSE_REPORT), gpip=LINE_FOR[3],
+                            pokes={addrs.IKBD_PACKET_KIND: b"\x00\x00"})
+    info = isr.run_spec(spec, _glue)
+    assert tuple(info["writes"][addrs.IKBD_RELATIVE_MOUSE_PACKET + i] for i in range(3)) == \
+        MOUSE_REPORT
+    assert acia.reported(info, "mousevec") == addrs.IKBD_RELATIVE_MOUSE_PACKET
+    assert info["writes"][addrs.IKBD_PACKET_KIND] == 0
+    assert not acia.called(info, "joyvec") and not acia.called(info, "statvec")
+
+
+def test_a_keystroke_reaches_the_ikbd_ring_through_the_whole_chain():
+    """...and the other half of the chain, composed the same way: handler, `ikbdsys`,
+    `acia_take_byte`, the shift machine, the key tables and the IOREC — on one pass."""
+    spec = real_vector_spec("key", [A_SCANCODE], gpip=LINE_FOR[1],
+                            pokes={addrs.IKBD_PACKET_KIND: b"\x00\x00", addrs.KBSHIFT: b"\x00",
+                                   **iorec.staged(addrs.IOREC_IKBD, 0, 0)})
+    info = isr.run_spec(spec, _glue)
+    buffer = iorec.buffer_of(addrs.IOREC_IKBD)
+    assert (info["writes"][buffer + addrs.IOREC_KEY_BYTES + 1] == A_SCANCODE)
+    assert case.written(info, addrs.IOREC_IKBD + addrs.IOREC_TAIL, 2) == addrs.IOREC_KEY_BYTES
+    assert info["writes"][addrs.SYSVAR_KB_REPEAT_KEY] == A_SCANCODE, (
+        "the same pass must arm the auto-repeat timer C reads")
+
+
+def test_the_two_service_routines_are_still_reached_through_kbdvecs_and_not_by_name():
+    """The real routines are in the slots, but they are still RAM vectors: a decoy in `midisys`'
+    place is called instead, exactly as it is for the staged shape above."""
+    spec = real_vector_spec("decoy", [A_SCANCODE], gpip=LINE_FOR[1],
+                            pokes={addrs.IKBD_PACKET_KIND: b"\x00\x00"})
+    spec["pokes"] = {**spec["pokes"], **vectors(midi=DECOY_STUB, ikbd=ROM_IKBDSYS)}
+    spec["routines"] = {**spec["routines"], DECOY_STUB: marker_routine(2)}
+    # The MIDI chip is never asked now, so its declaration would be a byte nothing reads.
+    spec["io_seed"] = {key: value for key, value in spec["io_seed"].items()
+                       if key != addrs.MIDI_ACIA_STATUS}
+    info = isr.run_spec(spec, _glue)
+    assert info["writes"][MARKS + 2] == MARK
+    assert isr.CALLS[0] == (DECOY_STUB, isr.NO_ARGUMENT)
+
+
 # ---- the cases this battery REGISTERS -----------------------------------------------------------
 # TWO, because the handler has two shapes and both are now reachable: one pass, and the loop's second
 # round. The second used to be unreachable from a case — GPIP bit 4 was a per-run constant, so a
@@ -273,6 +373,14 @@ REGISTERED = (
      "pokes": vectors(),
      "routines": {MIDI_STUB: marker_routine(0), IKBD_STUB: marker_routine(1)},
      "io_seed": {addrs.MFP_GPIP: TWO_PASS_LINE, addrs.MFP_ISRB: ISRB_HELD}},
+    # ...and the two cases of the OTHER SHAPE, with the captured machine's own service routines back
+    # in the slots. What they add to the two above is the whole input chain under one entry: a
+    # three-pass loop assembling a mouse packet, and a single pass carrying a key into the IOREC.
+    real_vector_spec("isr_acia, real vectors, a mouse packet", list(MOUSE_REPORT),
+                     gpip=LINE_FOR[3], pokes={addrs.IKBD_PACKET_KIND: b"\x00\x00"}),
+    real_vector_spec("isr_acia, real vectors, a keystroke", [A_SCANCODE], gpip=LINE_FOR[1],
+                     pokes={addrs.IKBD_PACKET_KIND: b"\x00\x00", addrs.KBSHIFT: b"\x00",
+                            **iorec.staged(addrs.IOREC_IKBD, 0, 0)}),
 )
 VERIFIED_CASES = tuple(isr.registered(spec) for spec in REGISTERED)
 # ...and the same case as a WHOLE-HANDLER one: `src/bios/isr.S`'s bracket — the `movem` pair whose
