@@ -193,7 +193,7 @@ def registered(spec):
 
     Its ENTRY is the routine's own ROM address: unlike a handler, one of these is CALLED — by the
     handler, through a KBDVECS slot — so there is no exception frame to stage and nothing to
-    trampoline through. `bench/tier3.py`'s `VECTOR_ROUTINE_NAMES` is how a row gets from that entry
+    trampoline through. `bench/tier3.py`'s `UNNUMBERED_ROUTINE_NAMES` is how a row gets from that entry
     back to the `CALL` signature, since neither the trap tables nor the vector table names it.
 
     No PSG seed and no schedule: nothing here plays a sound list or waits on a byte.

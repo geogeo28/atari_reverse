@@ -23,6 +23,7 @@ RTS = b"\x4e\x75"
 RTE = b"\x4e\x73"                       # ...the way out of an exception handler, and of a trampoline
 TRAP_BIOS = b"\x4e\x4d"                 # trap    #13
 TRAP_XBIOS = b"\x4e\x4e"                # trap    #14
+TRAP_GEMDOS = b"\x4e\x41"                # trap    #1, the GEMDOS entry
 
 # ---- the stack ----------------------------------------------------------------------------------
 PUSH_WORD_IMMEDIATE = b"\x3f\x3c"       # move.w  #<imm>,-(sp)

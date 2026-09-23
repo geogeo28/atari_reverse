@@ -483,7 +483,7 @@ def test_the_ring_the_record_goes_in_is_the_one_a0_names():
 # TWO, one per routine, and each is a case above with a name. They are what gives these two Tier 3
 # rows of their own: nothing CALLS either by name — `acia_take_byte` falls into `kbd_scancode` and
 # timer C's auto-repeat jumps into `kbd_queue_key` — so `bench/tier3.py` reaches them through its
-# `VECTOR_ROUTINE_NAMES` relation. An ordinary letter with no modifier held is the arm both share
+# `UNNUMBERED_ROUTINE_NAMES` relation. An ordinary letter with no modifier held is the arm both share
 # and the one the machine runs most.
 REGISTERED = (
     spec("kbd_scancode, a key", addrs.KBD_SCANCODE, A_KEY,

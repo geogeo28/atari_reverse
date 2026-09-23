@@ -63,6 +63,11 @@ import test_bios_hbl                                       # noqa: E402
 import test_bios_ikbd                                      # noqa: E402
 import test_bios_timerc                                    # noqa: E402
 import test_bios_vbl                                       # noqa: E402
+# ...and the GEMDOS wave's own shared module, for two things this file cannot get anywhere else: the
+# trap #1 entry's TRANSCRIPTION rows and their label (`gemdos.TRANSCRIPTIONS`/`LABELS`, `trap.py`'s
+# arrangement under GEMDOS names), and the SLICE trampoline a dispatcher row is entered at, because
+# `$fc973e` is inside a frame nothing can enter directly (`gemdos.ROUTINE_OF_TRAMPOLINE`).
+import gemdos                                              # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -545,6 +550,23 @@ PERF_ACCEPTED = {
     ("isr_vbl_entry", "a monitor change"): (
         1.01, "PINNED, not accepted, for the C row's reason one line up: 20,870 -> 21,032 cycles "
               "is the shifter settling, and a delay has no surface but its cost"),
+
+    # ---- the GEMDOS RAM-ONLY LEAVES (GEMDOS wave 1) ----
+    ("gemdos_fsetdta", "gemdos_fsetdta"): (
+        1.17, "(A)+(D), and nothing else: 132 -> 148 cycles is the image pointer loaded off the "
+              "frame plus the ENTRY D0 the ROM never writes, which the C takes as a third argument "
+              "and loads from the frame too. The ROM's whole body is "
+              "`link a6,#-4 / move.l 8(a6),$20(a0)`"),
+
+    # ---- the GEMDOS CHARACTER DEVICES (GEMDOS wave 1) ----
+    # NO ENTRY, and that is the wave's own result rather than an omission. These fifteen leaves each
+    # reach the BIOS, and the target build takes the ROM's own `trap #13` to do it
+    # (`src/gemdos/console.c`), so both columns carry the trap, the BIOS dispatcher and the driver.
+    # Every one of the 60-odd rows then lands between 0.60x and 1.01x — where the direct call they
+    # used to make had put twenty-three of them over the bar, on mechanism (B) paid once per BIOS
+    # call with no trap on our side to cover it. The entries that accepted those are deleted rather
+    # than re-pinned: `test_no_pinned_ratio_is_stale` reds on an acceptance whose row has come back
+    # under the bar, which is what caught them.
 }
 
 # ---- THE LEAF RULE — the rows where a ratio is the wrong instrument ------------------------------
@@ -809,6 +831,65 @@ CALL = {
     # the scancode in D0 and the IOREC in A0.
     "KBD_SCANCODE": Call((IMAGE, ENTRY_D0, ENTRY_A0), RETURNS_NOTHING),
     "KBD_QUEUE_KEY": Call((IMAGE, ENTRY_D0, ENTRY_A0), RETURNS_NOTHING),
+    # ---- the GEMDOS trap entry, the dispatcher and the RAM-only leaves (GEMDOS wave 1) ----
+    # A GEMDOS leaf reads its arguments out of the ARGUMENT LIST the dispatcher hands it rather than
+    # off its own frame, so the two are the same words here as everywhere: `gemdos.ARGUMENTS_AT` is
+    # where the case staged the caller's own, and `arg_word`/`arg_long` read the leaf's out of the
+    # frame at `abi.FIRST_ARG` (`test/gemdos.py`, `argument_list`).
+    "GEMDOS_SVERSION": Call((), RETURNS_LONG),
+    "GEMDOS_UNIMPLEMENTED": Call((), RETURNS_LONG),
+    "GEMDOS_FGETDTA": Call((IMAGE,), RETURNS_LONG),
+    # ...and the one leaf that writes no result of its own: the ROM's `move.l 8(a6),$20(a0)` leaves
+    # the caller's D0 where it was, so the C takes it and hands it back.
+    "GEMDOS_FSETDTA": Call((IMAGE, ENTRY_D0, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_DGETDRV": Call((IMAGE,), RETURNS_LONG),
+    # ...and the one leaf here that reaches the BIOS: on target it takes the ROM's own `trap #13`,
+    # so both columns of its row carry the dispatcher and `Drvmap` (`src/gemdos/leaves.c`).
+    "GEMDOS_DSETDRV": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_TGETDATE": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_TGETTIME": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_TSETDATE": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_TSETTIME": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    # The dispatcher itself, and the SLICE past the termination record it arms. Both take the
+    # caller's argument LIST — the function number word and the arguments under it — which is what
+    # the trap entry's `lea 50(frame),a0` hands them.
+    "GEMDOS_DISPATCH": Call((IMAGE, gemdos.ARGUMENTS_AT), RETURNS_LONG),
+    "GEMDOS_DISPATCH_SELECTOR": Call((IMAGE, gemdos.ARGUMENTS_AT), RETURNS_LONG),
+    # ---- the GEMDOS CHARACTER DEVICES (GEMDOS wave 1) ----
+    # The DEVICE is not an argument to any of these: each leaf reads its own standard handle out of
+    # the running process's basepage and adds three (`src/gemdos/console.c`). What IS an argument is
+    # the character word or the buffer longword the caller pushed — and, for the two that can return
+    # without any call writing D0, the caller's own D0 (`include/gemdos_console.h`).
+    "GEMDOS_CCONIN": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CRAWCIN": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CNECIN": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CAUXIN": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CCONIS": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CAUXIS": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CCONOS": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CPRNOS": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CAUXOS": Call((IMAGE,), RETURNS_LONG),
+    "GEMDOS_CCONOUT": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_CAUXOUT": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_CPRNOUT": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_CRAWIO": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    # ...and the two with a POINTER argument, which also take `entry_d0`: `Cconws` over an empty
+    # string hands back the sign-extended standard handle in D0's low word over the caller's high
+    # half, and `Cconrs` writes only the low word on every path.
+    "GEMDOS_CCONWS": Call((IMAGE, ENTRY_D0, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_CCONRS": Call((IMAGE, ENTRY_D0, arg_long(0)), RETURNS_LONG),
+    # ---- the MEMORY MANAGER (GEMDOS wave 1) ----
+    # The three trap leaves take the caller's own argument frame; the five under them are called by
+    # name, with the arguments GEMDOS's own C left on the stack (`src/gemdos/memory.c`). `Mshrink`'s
+    # frame is the odd one: a reserved zero word the ROM never reads, then the block and the length.
+    "GEMDOS_POOL_ARENA_ALLOC": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_POOL_GET": Call((IMAGE, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_POOL_FREE": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    "GEMDOS_MD_ALLOC": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_MD_FREE_INSERT": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_NOTHING),
+    "GEMDOS_MALLOC": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_MFREE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_MSHRINK": Call((IMAGE, arg_long(2), arg_long(6)), RETURNS_LONG),
 }
 
 # Cases this file adds to the verified set, in `VERIFIED_CASES`' own shape.
@@ -855,29 +936,60 @@ Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_
                  defaults=(False, None, (0, 0), (0, 0), ()))
 
 
-# THE THIRD RELATION: a routine TOS reaches through a RAM VECTOR rather than through a dispatch
-# table or a vector of its own. Nothing calls one of these by name — the ACIA handler jumps through a
-# KBDVECS slot, and the two keyboard routines are fallen into by `acia_take_byte` and jumped into by
-# timer C's auto-repeat — so neither relation below finds them, and without this one they would be
-# priced ONLY inside `isr_acia, real vectors`, where both columns run the ROM's own chain: the
-# cross-compiled `isr_acia` jumps through KBDVECS exactly as the ROM does, so those rows never enter
-# our C at all. Their own rows are what price it.
+# THE THIRD RELATION: a routine NOTHING DISPATCHES BY NUMBER, so neither table below names it and
+# neither would price it. Two kinds, and both need the same thing — a name and a role, because there
+# is no function number for the column to carry:
+#
+#   * a routine TOS reaches through a RAM VECTOR. The ACIA handler jumps through a KBDVECS slot, and
+#     the two keyboard routines are fallen into by `acia_take_byte` and jumped into by timer C's
+#     auto-repeat. Without a row of their own they would be priced ONLY inside `isr_acia, real
+#     vectors`, where both columns run the ROM's own chain: the cross-compiled `isr_acia` jumps
+#     through KBDVECS exactly as the ROM does, so those rows never enter our C at all.
+#   * a GEMDOS routine the OS's own C calls BY NAME — the allocator core, the record pool under it,
+#     the dispatcher and the undefined-selector stub, which is reached by a table RECORD rather than
+#     by a number.
 #
 # The value is the `addrs.h` constant, which is also the C core's symbol lower-cased, exactly as the
-# other two relations' are.
-VECTOR_ROUTINE_NAMES = {getattr(addrs, name): name
-                        for name in ("MIDI_ACIA_SERVICE", "IKBD_ACIA_SERVICE", "MIDI_QUEUE_BYTE",
-                                     "KBD_SCANCODE", "KBD_QUEUE_KEY")}
+# dispatch-table relations' are.
+UNNUMBERED_ROUTINE_NAMES = {
+    getattr(addrs, name): name
+    for name in ("MIDI_ACIA_SERVICE", "IKBD_ACIA_SERVICE", "MIDI_QUEUE_BYTE",
+                 "KBD_SCANCODE", "KBD_QUEUE_KEY",
+                 "GEMDOS_POOL_ARENA_ALLOC", "GEMDOS_POOL_GET", "GEMDOS_POOL_FREE",
+                 "GEMDOS_MD_ALLOC", "GEMDOS_MD_FREE_INSERT",
+                 "GEMDOS_DISPATCH", "GEMDOS_DISPATCH_SELECTOR", "GEMDOS_UNIMPLEMENTED")}
 
-# ...and what each IS, for the label. A routine reached this way has no function number to carry, so
-# the column names the SLOT it is installed in, or the caller that falls into it.
-VECTOR_ROUTINE_ROLES = {
+# ...and what each IS, for the label: the SLOT it is installed in, the caller that falls into it, or
+# what the routine does.
+UNNUMBERED_ROUTINE_ROLES = {
     "MIDI_ACIA_SERVICE": "KBDVECS midisys",
     "IKBD_ACIA_SERVICE": "KBDVECS ikbdsys",
     "MIDI_QUEUE_BYTE": "KBDVECS midivec",
     "KBD_SCANCODE": "IKBD scancode arm",
     "KBD_QUEUE_KEY": "IKBD key into the ring",
+    "GEMDOS_POOL_ARENA_ALLOC": "GEMDOS pool arena",
+    "GEMDOS_POOL_GET": "GEMDOS pool record",
+    "GEMDOS_POOL_FREE": "GEMDOS pool release",
+    "GEMDOS_MD_ALLOC": "GEMDOS allocator core",
+    "GEMDOS_MD_FREE_INSERT": "GEMDOS free-list insert",
+    "GEMDOS_DISPATCH": "GEMDOS dispatcher",
+    "GEMDOS_DISPATCH_SELECTOR": "GEMDOS dispatcher, past the record",
+    "GEMDOS_UNIMPLEMENTED": "GEMDOS undefined selector",
 }
+
+# How a TRANSCRIPTION row names itself, keyed by the blob symbol: `src/bios/trap.S`'s entries and
+# `src/gemdos/trap1.S` in one map, because `_transcription_row` reads one list of labels and each
+# wave's module owns its own (`trap.LABELS`, `gemdos.LABELS`).
+TRANSCRIPTION_LABELS = {**trap.LABELS, **gemdos.LABELS}
+
+
+def _entered_routine(entry):
+    """The ROM address a case's entry is ABOUT, which is not the entry for a staged one.
+
+    A GEMDOS dispatcher SLICE is entered at a trampoline in the staging band — `$fc973e` is inside
+    the frame its own prologue opened, so nothing can enter it directly (`test/gemdos.py`).
+    """
+    return gemdos.ROUTINE_OF_TRAMPOLINE.get(entry, entry)
 
 
 def _routine(entry):
@@ -887,14 +999,16 @@ def _routine(entry):
     the one `test_boot_snapshot.py` holds to its dispatch-table slot. An interrupt handler's case is
     entered at a TRAMPOLINE (nothing calls a handler, so the case has to stage the exception frame
     its `rte` returns through), and the name comes from the handler that trampoline jumps to. And a
-    RAM-VECTOR routine is entered at its own address but named by neither table — see
-    `VECTOR_ROUTINE_NAMES`.
+    routine nothing dispatches by number is entered at its own address but named by neither table —
+    see `UNNUMBERED_ROUTINE_NAMES`. A GEMDOS dispatcher SLICE is the second kind of staged entry,
+    named by the routine its trampoline jumps to.
     """
     handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
     if handler:
         return handler.constant
+    entry = _entered_routine(entry)
     return (test_boot_snapshot.TRAP_ROUTINE_NAMES.get(entry)
-            or VECTOR_ROUTINE_NAMES.get(entry))
+            or UNNUMBERED_ROUTINE_NAMES.get(entry))
 
 
 def _function_label(entry):
@@ -909,11 +1023,15 @@ def _function_label(entry):
     handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
     if handler:
         return f"{handler.name} handler (vector ${handler.vector:02x})"
-    if entry in VECTOR_ROUTINE_NAMES:
-        return f"{VECTOR_ROUTINE_ROLES[VECTOR_ROUTINE_NAMES[entry]]} (${entry:x})"
-    name = test_boot_snapshot.TRAP_ROUTINE_NAMES[entry]
-    trap, _, routine = name.partition("_")
-    return f"{trap} {routine.capitalize()} (${getattr(addrs, f'{name}_FN'):02x})"
+    address = _entered_routine(entry)
+    name = _routine(entry)
+    # THE UNNUMBERED CHECK COMES FIRST, and it is the address that decides it: a routine nothing
+    # dispatches has no number to name it by, and asking `addrs` for a `<NAME>_FN` first would let a
+    # constant that merely happens to have one relabel it.
+    if address in UNNUMBERED_ROUTINE_NAMES:
+        return f"{UNNUMBERED_ROUTINE_ROLES[name]} (${address:x})"
+    trap_name, _, routine = name.partition("_")
+    return f"{trap_name} {routine.capitalize()} (${getattr(addrs, f'{name}_FN'):02x})"
 
 
 def _symbol(entry):
@@ -970,11 +1088,20 @@ def _row(case):
     if call is None:
         return None
     symbol = _symbol(entry)
+    # A case entered at a STAGED trampoline is a row about the routine that trampoline reaches, and
+    # its column carries what the trampoline itself cost — which our build, called as a C function,
+    # never runs. The two kinds have their own measured constants (`isr.py`, `gemdos.py`).
     handler = isr.HANDLER_OF_TRAMPOLINE.get(entry)
+    slice_of = gemdos.ROUTINE_OF_TRAMPOLINE.get(entry)
+    if handler:
+        address, staged_entry = handler.entry, isr.STAGED_ENTRY_COST
+    elif slice_of:
+        address, staged_entry = slice_of, gemdos.SLICE_ENTRY_COST
+    else:
+        address, staged_entry = None, (0, 0)
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
-               call.returns, False, handler.entry if handler else None,
-               isr.STAGED_ENTRY_COST if handler else (0, 0), (0, 0), schedule)
+               call.returns, False, address, staged_entry, (0, 0), schedule)
 
 
 def _transcription_row(case):
@@ -987,7 +1114,7 @@ def _transcription_row(case):
     costs — which the case carries because the shape it staged is what decides it.
     """
     name, symbol, caller, regs, pokes, caller_cost = case
-    return Row(trap.LABELS[symbol], name, caller, symbol, (), regs, pokes, None, None,
+    return Row(TRANSCRIPTION_LABELS[symbol], name, caller, symbol, (), regs, pokes, None, None,
                RETURNS_NOTHING, True, getattr(addrs, symbol.upper()), (0, 0), caller_cost)
 
 
@@ -1012,7 +1139,7 @@ ISR_TRANSCRIPTION_CASES = (test_bios_hbl.TRANSCRIPTION_CASES + test_bios_vbl.TRA
 
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
-        + tuple(_transcription_row(case) for case in trap.CASES)
+        + tuple(_transcription_row(case) for case in trap.CASES + tuple(gemdos.TRANSCRIPTIONS))
         + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the

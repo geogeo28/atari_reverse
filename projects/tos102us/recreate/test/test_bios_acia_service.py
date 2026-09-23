@@ -447,7 +447,7 @@ def test_a_list_that_runs_out_is_refused_by_address_and_by_read_index():
 # THREE, one per routine this file enters at its own address, and each is a case above with a name.
 # They are what gives these routines Tier 3 rows of their own: nothing CALLS one of them — the ACIA
 # handler jumps through a KBDVECS slot — so `bench/tier3.py` reaches them through a relation of its
-# own (`VECTOR_ROUTINE_NAMES`) and prices them against the ROM's. Before that they were measured only
+# own (`UNNUMBERED_ROUTINE_NAMES`) and prices them against the ROM's. Before that they were measured only
 # inside `isr_acia, real vectors`, where BOTH columns run the ROM's chain.
 #
 # `acia_take_byte` ($fc2a42) is NOT here and is DEFERRED: no case enters it directly, so nothing in

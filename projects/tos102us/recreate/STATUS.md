@@ -12,7 +12,7 @@ counts in this file against its rows.
 | boot | 0 | — | — | NOT STARTED |
 | bios | 20 | — | 0.88–3.63x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
-| gemdos | 0 | — | — | NOT STARTED |
+| gemdos | 36 | — | 0.42–1.17x, every ✅ row priced | STARTED |
 | vdi + linea | 0 | — | — | NOT STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
@@ -97,6 +97,63 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
 | `0xfc2e3a` | `midi_queue_byte` (the ROM's own `midivec`, same file) | 8 | 11 / 156 | **1.53** one byte into the ring (accepted: (A)+(M) alone — the cleanest measurement of the register-argument marshalling in the table) | ✅ verified | the one-byte record at four tails; the wrap AT the size and not one short of it, at both boundaries; a full ring at three head/tail pairs incl. the wrap, leaving the record and BOTH indices alone — the newest byte is the one that is lost |
 | `0xfc2b5c` | `kbd_scancode` (`src/bios/keyboard.c`) | 26 | 70 / 842 a key | **1.61** a key (accepted: (A)+(M), plus the ROM's FALL-THROUGH into `$fc2c42` where the C makes a call of it) | ✅ verified | the eight modifier arms from a clear byte and from every bit set, so an arm that cleared the byte or set the wrong bit diverges; CapsLock as a `bchg` from three states, and its RELEASE proved NOT to be in the chain; the click on the same `conterm` bit as the key path's; a make arming the repeat from `Kbrate`'s own bytes; a second key zeroing both countdowns and LEAVING the held scancode; a break disarming and queueing nothing; and the two breaks ALT turns into mouse-button releases, with and without ALT |
 | `0xfc2c42` | `kbd_queue_key` (same file; TIMER C's auto-repeat calls it too) | 88 (+3 from `$fc30c4`) | 43 / 560 a key | **1.85** a key (accepted: (A)+(M) over the table reads and the ring put) | ✅ verified | five keys through each of the three `Keytbl` tables with the ASCII read out of the table the snapshot's pointers name; SHIFT overriding CapsLock and not the reverse; all ten shifted F-keys, the keys either side of the run, and the test proved to be on the MASKED scancode; CONTROL's mask, its three named characters, its CR→LF (which survives the three scancode arms) and its three renumbered keys; ALTERNATE's screen dump as a WORD increment; the four mouse-button codes read out of the ROM's own table, each moving its own kbshift bit and sending a packet whose header is what it just wrote; the four arrows at both step sizes; the whole number row renumbered by a BYTE add; every letter's ASCII dropped, tested on the ASCII; `conterm` bit 3 over three shift states; the ring at four tails, both wrap boundaries and three full-ring pairs; the click made BEFORE the ring is looked at; and the ring being the one A0 names |
+
+## Verified — gemdos (36)
+
+GEMDOS wave 1, three groups at once: the `trap #1` ENTRY and the dispatcher behind it, the RAM-only
+LEAVES, the CHARACTER DEVICES and the MEMORY MANAGER (`src/gemdos/trap1.S`, `dispatch.c`,
+`leaves.c`, `console.c`, `memory.c`). Each row is one function of the ORIGINAL ROM, entered at its
+own address over the post-boot snapshot and compared byte-for-byte (`../README.md`, Tier 1); the
+trap entry's own row is the TRANSCRIPTION differential instead, as `src/bios/trap.S`'s rows are, and
+the dispatcher carries two rows because its arms past the termination record can only be entered as
+a SLICE (`test/gemdos.py`, `ROUTINE_OF_TRAMPOLINE`).
+
+Ratios run from 0.42x to 1.17x and every row is under the bar. THE TARGET BUILD TAKES THE ROM'S OWN
+`trap #13` wherever the ROM reaches the BIOS through `gemdos_bios_trampoline` ($fc4eac), so both
+columns of a character-device row carry the trap, the BIOS dispatcher and the driver, and what the
+ratio compares is the GEMDOS layer itself (`src/gemdos/console.c`, `include/bcon.h`). The HOST build
+calls the BIOS core directly — there is no 68000 to take a trap — and that is the stand-in ROM mode
+asks for rather than a decision about the routine; the register-save frame the oracle's trap leaves
+below `savptr` is DECLARED into the band the differential drops (`test/gemdos.py`, `machine`).
+
+| Addr (ROM) | Name | Cases | Cost (insns / cycles) | Tier 3 (recreate / original) | Status | Verification |
+|---|---|---|---|---|---|---|
+| `0xfc4f6e` | GEMDOS trap #1 entry + the OS's own C door (`src/gemdos/trap1.S`) | 22 | 312 / 296 / 286 / 292 cycles per `Super` shape | **1.00** on all four `Super` rows | ✅ verified | 292 bytes byte-identical to the ROM with nothing spliced; the hand-built frame proved to be a real `trap #1`'s; the process frame read LIVE at the dispatcher (the epilogue rebuilds the `rte` frame over A1/A2 on the way out); all fifteen registers handed back; `Super`'s six arms incl. both D0 quirks; the framing path's only divergence measured to be the four bytes of `jsr` return address on the OS stack at `$16c6` |
+| `0xfc94e4` | `gemdos_dispatch` (`src/gemdos/dispatch.c`) | 11 | 194 past the table | **0.65** past the table | ✅ verified | the counter's two stores from the ledger; the signed bound at three selectors and past it; the table's 88 six-byte records and its 38 stubs; and the termination record's twelve bytes identified — the one thing the C core is right not to have, because it is the 68000 frame of the `jsr` that armed it (see `## Not reconstructed, and why`) |
+| `0xfc973e` | `gemdos_dispatch_selector`, the arms PAST that record (same file) | 32 | 604-640 per dispatched selector | **0.82-0.83** dispatched | ✅ verified | one battery with the row above (`test/test_gemdos_dispatch.py`, 43 cases): six selectors dispatched through our own leaves, bound by the table's address; every descriptor class's frame read off the ORACLE's stack (incl. `Mshrink`'s and `Pexec`'s, whose handlers do not exist); the descriptor REWRITE over five character-device selectors; and the redirected arm reached as a slice for all five. Three arms halt. Mutation 6/6 |
+| `0xfc9348` | `Sversion` ($30, `src/gemdos/leaves.c`) | 1 | 5 / 96 | **0.50** | ✅ verified | the constant, and its D0 |
+| `0xfc933e` | the undefined-selector stub (38 records, same file) | 1 | 5 / 88 | **0.42** | ✅ verified | EINVFN, and that it is NOT the bound check |
+| `0xfc6c9a` | `Fgetdta` ($2f, same file) | 4 | 6 / 120 | **1.00** | ✅ verified | the whole longword over four DTAs incl. the snapshot's own |
+| `0xfc6cac` | `Fsetdta` ($1a, same file) | 3 | 6 / 132 | **1.17** (accepted) | ✅ verified | the store from the write ledger, and the caller's own D0 back — the ROM writes no result |
+| `0xfc6ce0` | `Dgetdrv` ($19, same file) | 7 | 8 / 124 | **1.00** | ✅ verified | the SIGNED byte at seven values incl. `$80` and `$ff` |
+| `0xfc6cc0` | `Dsetdrv` ($0e, same file) | 6 | 39 / 762 | **0.98** | ✅ verified | the low byte stored with no bound check at four drives; the drive map answered against `_drvbits`; and the trampoline's parked return address pinned to a site the ROM really has a `jsr $fc4eac` at. A WHOLE-ROUTINE differential: on target our C takes the same `trap #13`, and off it the trap's register frame is declared into the band the diff drops |
+| `0xfc9e1a` | `Tgetdate` ($2a, same file) | 6 | 6 / 104 | **0.97** | ✅ verified | the sign extension at both sides of bit 15 |
+| `0xfc9ea2` | `Tgettime` ($2c, same file) | 6 | 6 / 104 | **0.75** | ✅ verified | the same, and why every afternoon answers negative |
+| `0xfc9e2a` | `Tsetdate` ($2b, same file) | 9 | 22 / 308 | **0.60** | ✅ verified | VERIFIED ON ITS REJECTING ARMS: seven refused dates — a four-bit month, month 0, 31 April/September, and the leap pair (30 Feb 1988 vs 29 Feb 1987) — plus the YEAR bound shown to be DEAD CODE. The accepting arm halts at XBIOS `Settime` |
+| `0xfc9eb2` | `Tsettime` ($2d, same file) | 6 | 18 / 228 | **0.76** | ✅ verified | the same shape: four refused times, plus the HOUR bound shown to be DEAD CODE. Same halt on the accepting arm |
+| `0xfc8b70` | `Cconis` (GEMDOS $0b, `src/gemdos/console.c`) | 4 | 19-63 / 262-1014 | 0.89x, 0.90x, 0.91x | ✅ verified | the typeahead queue answering BEFORE the BIOS does — the arm's witness is not the answer ($ffffffff either way) but the trampoline's return slot, which a queued record leaves untouched; a handle whose device has no INPUT driver (PRN:) coming back as the BIOS dispatch's own scratch and not 0; and the ring both ways round |
+| `0xfc8b8a` | `Cconos` (GEMDOS $10) | 3 | 48-57 / 840-946 | 0.96x, 0.97x | ✅ verified | `Bcostat` on p_uft[1] and nothing else, driven on the console and, with stdout moved, on the printer's BUSY line — the pair that says the leaf reads its OWN handle |
+| `0xfc8bae` | `Cprnos` (GEMDOS $11) | 2 | 51-52 / 878-880 | 0.97x | ✅ verified | the MFP GPIP bit 0, swept both ways with every other bit inverted, and each read pinned in the ordered stream |
+| `0xfc8bd2` | `Cauxis` (GEMDOS $12) | 1 | 63 / 1018 | 0.91x | ✅ verified | the AUX device's own queue and the RS232 input ring — and a record staged on the CONSOLE's queue leaving this answering no, which is what makes the index a claim |
+| `0xfc8bee` | `Cauxos` (GEMDOS $13) | 2 | 57-58 / 946-948 | 0.97x | ✅ verified | the RS232 output ring's tail stepped and compared with its head, reading no hardware at all |
+| `0xfc8e1c` | `Cconout` (GEMDOS $02) | 13 | 159-2859 / 2494-33858 | 0.86x, 0.87x, 0.90x, 0.91x, 0.92x, 0.94x, 0.96x, 0.97x, 0.98x, 0.99x | ✅ verified | the column counter's three arms (>= 32 SIGNED, CR to zero, BS back, LF untouched); TAB expansion at every column of one stop's width and its do-while at a stop; a glyph landing in the cell both layers' cursors name; and the poll it makes first |
+| `0xfc8ed2` | `Cauxout` (GEMDOS $04) | 2 | 65-278 / 1068-3060 | 1.00x | ✅ verified | three instructions and a trap: the device's column counter untouched, and a key staged in the console's ring left where it was (no poll) |
+| `0xfc8efa` | `Cprnout` (GEMDOS $05) | 1 | 253 / 3688 | 1.00x | ✅ verified | the same pair over the printer's whole YM2149 send |
+| `0xfc8faa` | `Crawcin` (GEMDOS $07) | 1 | 81 / 1276 | 0.98x | ✅ verified | neither echo nor poll — no screen byte, no column, and one BIOS call |
+| `0xfc8ff2` | `Cconin` (GEMDOS $01) | 3 | 412-443 / 4948-5584 | 0.92x, 0.93x | ✅ verified | the whole BIOS record back with only its LOW WORD echoed, the echo going to the INPUT device, a queued record read without the ring's head moving, and the queue rewinding when it empties |
+| `0xfc900c` | `Cnecin` (GEMDOS $08) | 1 | 243 / 3640 | 0.97x | ✅ verified | no echo and the poll AFTERWARDS: two keys waiting, the first the answer and the second swept into the queue |
+| `0xfc903e` | `Cauxin` (GEMDOS $03) | 1 | 69 / 1086 | 0.97x | ✅ verified | `Bconin(p_uft[2] + 3)` and nothing else. Driven with stdaux on the CONSOLE handle: on the captured machine it reaches `Bconin(AUX:)` ($fc2150), which `src/bios/bcon.c` defers |
+| `0xfc9062` | `Crawio` (GEMDOS $06) | 5 | 72-284 / 898-3154 | 0.85x, 0.88x, 0.92x, 0.98x | ✅ verified | `cmp.w #255` on the WHOLE word ($40ff writes $ff), the read arm through the queue with no echo and no poll, and a plain 0 — not `$ffffffff` — when nothing is waiting |
+| `0xfc90c2` | `Cconws` (GEMDOS $09) | 5 | 19-12486 / 276-207282 | 0.60x, 0.87x, 0.91x, 0.96x, 0.99x | ✅ verified | the SIGN-EXTENDED string byte, which leaves the column counter alone where `Cconout`'s word of the same value moves it; a TAB inside the string expanded by the same routine; a string crossing the last column into a wrap and a scroll; and the empty string, whose D0 is the caller's high half over the sign-extended standard handle |
+| `0xfc91ea` | `Cconrs` (GEMDOS $0a) | 15 | 38-3986 / 538-48330 | 0.86x, 0.88x, 0.91x, 0.92x, 0.93x | ✅ verified | every key the ROM's own two nine-entry tables implement — BS and DEL one arm, LF and CR one arm, ^R, ^U, ^X — the ninth (zero) key sharing the DEFAULT arm, the erase MEASURING the line (a TAB taken back whole, a control code two columns), both buffer bounds (a maximum of 0 reads no key; a full line leaves the next key queued), and the length written back with nothing terminating the text |
+| `0xfc7ed0` | `gemdos_pool_arena_alloc` (`src/gemdos/memory.c`) | 12 | 20 / 294 a request, 12 / 192 refused | **0.66**, **0.58** | ✅ verified | the bump cursor and both counters over four sizes; the refusal BEFORE the subtraction (nothing stored); `ble` proved by a request for exactly what is left; a zero request that still stores both counters (named settled); and both WORD-SIZED signednesses — a request with bit 15 set granted however little is left, and a cursor at/over `$4000` forming a NEGATIVE byte offset that wraps the address space |
+| `0xfc7f1a` | `gemdos_pool_get` (same file) | 5 | 105 / 1504 from the arena, 84 / 1224 from the chain | **0.47**, **0.43** | ✅ verified | `class * 8` words for class 1 and class 16, the arena request one word MORE, the class word written below the record and the answer pointing past it; the chain POP with the record cleared over the link it was read from (attributed by staging the recycled descriptor holding its old fields); a spent arena answering 0 with no store; and the two arms proved independent — a chain record served with zero arena left |
+| `0xfc7f9c` | `gemdos_pool_free` (same file) | 3 | 20 / 292 | **0.57** | ✅ verified | the record's first longword becoming the chain link over an empty and a non-empty chain; and the class read from BELOW the record — a class-16 record filed on `p_root[16]` and not `p_root[1]`, which a hard-coded class fails |
+| `0xfc886a` | `gemdos_md_alloc` (same file) | 20 | 156 / 2280 a split, 40 / 636 an exact fit, 58 / 744 the largest | **0.53**, **0.94**, **1.00** | ✅ verified | NEXT-FIT: three free blocks all big enough, the rover moved over each, the successor always taken and the last one WRAPPING through the MPB — which a search from `mp_mfl` fails twice of three. The rover left at the predecessor (staged so it moves) and at `mp_mfl` on the MPB arm; the exact fit unlinked whole at no cost to the pool; the split's five stores in order with the block keeping `m_start`; the remainder from the class chain when one is waiting; a SPENT POOL refusing a split over free RAM while the same pool still serves an exact fit; `m_own` from `p_run` at a second value; the whole free list taken, emptying it and NULLING the rover; and `-1` measuring every block wherever the rover is, with the biggest staged in the MIDDLE and a SIGNED compare that never reports a wrapped length |
+| `0xfc89dc` | `gemdos_md_free_insert` (same file) | 4 | 50 / 682 | **0.93** | ✅ verified | the sorted insert at the head, the middle and the end of the list with a used span either side so nothing merges; and the NULL-rover fix-up, which is what makes a pool `Malloc` emptied usable again. Its four coalescing arms are driven through `Mfree` below |
+| `0xfc8aae` | `gemdos_malloc` ($48, same file) | 10 | 178 / 2576 an odd request, 78 / 1012 the largest | **0.55**, **0.86** | ✅ verified | `m_start` answered rather than the descriptor, and 0 for every failure; the 2-byte rounding at four sizes; the rounding turning a near miss into an EXACT fit (so no descriptor is cut) and pushing a request past a block it would have fitted; `-1` escaping the rounding — which is the whole reason it does not allocate; and a request for NO memory, which splits a block into nothing and the whole of it and still answers a real address |
+| `0xfc8afc` | `gemdos_mfree` ($49, same file) | 15 | 86 / 1238 the snapshot's head, 114 / 1236 refused, 129 / 1816 both neighbours free | **0.78**, **0.84**, **0.70** | ✅ verified | head, middle and tail of the snapshot's own fourteen found by `m_start`; EIMBA over four wrong addresses incl. the FREE block's own start; the head unlinked through `mp_mal` read as a descriptor. ALL FOUR COALESCING ARMS: neither neighbour, successor only, predecessor only, and BOTH — three blocks into one with two descriptors recycled in the ROM's order — plus the rover walking successor → freed → predecessor, the only path the second fix-up fires on. The snapshot's own most recent allocation merges back into the free block with no staging at all |
+| `0xfc895a` | `gemdos_mshrink` ($4a, same file) | 21 | 174 / 2484 a split, 21 / 314 refused (grow), 99 / 1176 refused (address) | **0.58**, **1.01**, **0.98** | ✅ verified | EIMBA over the same four addresses; EGSBF (−67) at +1/+2/+0x1000 with nothing stored; `bge` proved by shrinking to the block's own length (a ZERO-LENGTH descriptor); the SIGNED grow compare letting `$80000000` through; the rounding AFTER the check as the refused/accepted pair; the split's three stores with the block keeping its start, its owner and its place on the allocated list; shrinking to nothing; the remainder COALESCING with a block it touches and taking a recycled descriptor first; the zero-length remainder sorting BELOW a block at the same address; and **the ROM's unchecked `pool_get`** — a spent pool storing the remainder through NULL into the reset vectors, inserting an address-0 descriptor into the free list and reporting SUCCESS |
 
 ## Harness
 
@@ -317,18 +374,66 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
   groups a scan line, which the ROM masks with `and.l`/`or.l` pairs where this fills a word at a time (the 1.49 row's
   remainder); and a process note — never run a mutation sweep in the background while editing, because a killed sweep
   skips its `finally` and leaves the mutation in the tree (it happened once this wave).
-* **Next** — GEMDOS. Was: BIOS wave 3, the character-device drivers behind the write-through arm and the sequence seed
-  (the ACIA packet parser, Bconout's VT52 driver) — done in wave 6 above; the XBIOS screen/MFP/timer routines and the
-  interrupt handlers, now that the declared I/O map reaches them; the trap #13/#14 dispatcher itself (which prices
-  mechanism A honestly); the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
+* **Wave 7 (2026-09-19/20), GEMDOS wave 1** — three agents on disjoint paths, each mutation-swept and
+  merged by the orchestrator: (1) the `trap #1` ENTRY (`src/gemdos/trap1.S`, a byte-identical
+  transcription), the dispatcher and the RAM-only leaves; (2) the CHARACTER-DEVICE group
+  (`console.c`, fifteen leaves); (3) the MEMORY MANAGER (`memory.c`, the three trap leaves and the
+  five routines under them). 36 verified rows and 98 new Tier 3 rows in one component.
+  FINDINGS: the trap #1 entry frames into the calling process's own BASEPAGE rather than a shared
+  save area, which is what lets `Pterm` unwind the PARENT; the dispatcher's descriptor word is a
+  frame CLASS (4/8/12/14 bytes) plus bit 7 "this argument is a standard handle", with the
+  rewrite/redirect split hanging off it; the YEAR bound of `Tsetdate` and the HOUR bound of
+  `Tsettime` are DEAD CODE in TOS 1.02, both through a sign extension, and both are reproduced with
+  a case; GEMDOS's clock is RAM advanced by an `etv_timer` hook (`$fc9cc0`), which is why
+  `Tgettime`/`Tgetdate` are pure RAM reads; the console group's device model is `handle + 3`, with a
+  typeahead queue between GEMDOS and `Bconin`, `Cconws` sign-extending bytes where `Cconout` does
+  not, an empty `Cconws` returning the handle in D0's low word, and the `Cconrs` editor's real
+  nine-key table whose ninth key is 0 and shares the DEFAULT arm; and the memory manager is NEXT-FIT
+  with 2-byte rounding over a 16,000-byte record arena at `$2a6e` whose exhaustion is TOS 1.02's
+  "out of memory descriptors", coalescing FORWARD then BACKWARD, EGSBF is −67 and not −37, ENSMEM is
+  never used, and `Mshrink` on a spent pool writes a descriptor THROUGH NULL into the reset vectors
+  and reports success. Mutation: G1 15/15, G2 20/20 (+2 coverage holes closed), G3 41/42 — the one
+  survivor is the null guard on the forward merge, which no producible pool can reach.
+  STILL HALTING: the dispatcher's three unreconstructed arms (redirected handles, handle resolution,
+  the device-name arm of `Fopen`/`Fcreate`), the accepting arm of both clock setters, and the
+  `Pterm` group — each with its reason in `## Not reconstructed, and why`.
+  Process notes: agents' mutation sweeps against one `build/` serialise badly, and a killed sweep
+  leaves a MUTANT BLOB behind — `build/bench/bench.*` must be deleted with the `.so`, not just the
+  `.so` (it bit an agent this wave, and the orchestrator's gate now clears both before every run).
+  Parked: `tools/addrs.py` binding MULTIPLE headers (this wave ran both conventions at once and the
+  merge settled it one way — ROUTINE ADDRESSES and function numbers in `addrs.h`, where the
+  registries key on them, and STRUCTURES in the group's own header — but the parser still reads one
+  file, so a group with its own header still binds it by hand); a SHARED `AddressHook` class for
+  `test/gemdos.py`, `test/isr.py` and `test/acia.py`, which are three copies of one
+  dispatch-by-address recorder; a KIT-LEVEL DECLARED TRAP-FRAME EFFECT, so that the `savptr` poke is
+  one convention rather than one wave's note; `bench/tier3.py` as ONE registry (address -> name,
+  role, table) instead of three maps consulted in order; a STAGING BAND registry, so a battery's
+  band is allocated rather than asserted against its neighbours; and a PER-MUTANT TIMEOUT in the
+  sweep scripts (a mutation that unbounds a loop is detected by hanging, which costs a worker).
+  Review found: the TARGET-SIDE BIOS DOOR — the cores took no `trap #13` on the bench blob, so the
+  measured GEMDOS rows were our leaf against the ROM's leaf-plus-trap and twenty-three of them sat
+  over the bar on an acceptance; the target build now takes the ROM's own trap and all 27 console
+  rows re-measured under it, `Dsetdrv` with them (it was UNPRICED). The DISPATCHER'S POP COUNT lived
+  in D2 across a `jsr` into drivers that write D2 (`xconout_rs232`, the bell) — now D3, which both
+  ABIs preserve, with D2 clobbered. The SPLIT read a stale `m_length` across `gemdos_pool_get`
+  (unreachable; the ROM re-reads it). `p_run` was defined in two headers and the memory manager's
+  eight routine addresses in none of them. The hook was copied from `isr.py` without its call cap.
+  Three copies of the basepage accessor and six of "read a longword out of an image".
+* **Next** — THE REST OF GEMDOS. In the order the halts make available: the PTERM/PEXEC PROCESS GROUP (`$fc8028`,
+  `$fc8086`, `$fc7fd8` and `Pexec`), which is what the termination record at `$7ef4` and G3's release helpers
+  (`gemdos_md_free_insert`, `gemdos_pool_free`) were exported for; the FILE SYSTEM (`Fopen`/`Fread`/`Fwrite`/… over
+  BIOS `Rwabs`), which is also the three arms the dispatcher still halts on — the redirected arms at `$fd328a`, the
+  handle-resolution arm over the open-file descriptors at `$8092`, and `Fopen`/`Fcreate`'s device-name arm — plus
+  `Fforce` and `Fdup`, which are what put a redirected handle there in the first place. Then VDI and Line-A.
+  Earlier lists, still open: the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **1,736 passed** and `make guarded` the same count (2,634 candidate runs guarded, no fault), re-summed at
-the wave-6 merge on 2026-09-19 after a forced relink of the oracle and every candidate; `make bench` judges 112 rows (rule /
-accepted / pinned / ok, none OVER or DRIFTED), re-counted from the printed table. The kit's own suite: **1,126 passed**.
-Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged (3,851) as the PRG controls. `names.txt`: 386 fn / 272 var /
-140 cmt.
+`make test` — **2,174 passed** (1 skipped) and `make guarded` the same count (2,951 candidate runs guarded, no fault),
+re-summed at the GEMDOS wave-1 merge on 2026-09-22 after a forced relink of the oracle and every candidate; `make bench`
+judges 209 rows (rule / accepted / pinned / ok, none OVER or DRIFTED), re-counted from the printed table. The kit's own
+suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged (3,851) as the PRG controls.
+`names.txt`: 412 fn / 299 var / 187 cmt.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.
@@ -372,3 +477,64 @@ would be indistinguishable from the routine's own output; `vt52.canary` stands i
 
 **bios — the floppy VBL** (`$fc1bc4`, reached from `isr_vbl` past the `flock` gate) stays halted on the PSG's account:
 it merges drive-select bits with a direct YM2149 read-modify-write, a path this project has no door for (see wave 5).
+
+**gemdos — the dispatcher's three unreconstructed arms are all whole COMPONENTS, not branches.** The REDIRECTED arms
+(`$fd328a`, 19 entries, reached when `Fforce` has pointed a standard handle at a file) are `Fread`/`Fwrite`/`Fseek`;
+the HANDLE-RESOLUTION arm (`$fc9924`) walks the open-file descriptors at `$8092`; and `Fopen`/`Fcreate`'s device-name
+arm (`$fc9aca`) needs both handlers. Each halts on both builds. The PROCESS-TERMINATION RECORD at `$7ef4` is omitted
+rather than halted, because the ROM arms it before any reconstructed arm and a halt would stop every case: it is the
+68000 frame of the `jsr` that armed it, which a C core has no counterpart for, and `test_gemdos_dispatch.py` measures
+the hole at exactly twelve bytes. ON TARGET THE OMISSION HAS A CONSEQUENCE, and it is worth writing down before
+anything depends on it: a ROM built from these cores would leave `$7ef4` holding whatever last wrote it, so a `Pterm`
+would longjmp through a stale record. Nothing compiles these cores into a ROM yet — the bench blob enters the
+dispatcher as a C function and never terminates a process — so nothing is broken by it today, and nothing pins it
+either. The surface that would is the `Pterm` group's own wave, or a Tier 2 `Pexec` row.
+
+**gemdos — `Tsetdate`/`Tsettime` are verified on their REJECTING arms only.** Both end in XBIOS `Settime`
+(`$fc50b4`, a `trap #14` that writes the 6301's clock over the IKBD ACIA), which is not reconstructed. Every bound the
+two routines apply is in reach — and two of them turn out to apply to nothing at all: the year bound and the hour bound
+are DEAD CODE in TOS 1.02, both through a sign extension, and both are reproduced with a case.
+
+**gemdos — `Pterm0`/`Pterm`/`Ptermres` are not RAM-only in any reachable arm.** `Pterm` (`$fc8028`) takes a real
+`trap #13` (BIOS `Setexc`), `Fclose`s every open standard handle, releases the process's memory, and then DOES NOT
+RETURN: it reassigns `p_run` to the parent, plants the exit code in the parent's own `+$68` save slot and `jsr`s into
+the trap entry's epilogue at `$fc4fe8`, whose `rte` resumes whoever called the PARENT's GEMDOS call. No case can run it
+to an `rts`.
+
+**gemdos — what a routine that reaches the BIOS still owes the harness.** Every GEMDOS call into the BIOS goes through
+`gemdos_bios_trampoline` ($fc4eac): the oracle takes a real `trap #13`, whose dispatcher parks a return address at
+`$eb0` and frames 46 bytes below `savptr`. The TARGET build takes the same trap, so nothing is owed there. The HOST
+build cannot — there is no 68000 — and calls the BIOS core directly, which leaves two residuals: the parked longword,
+which the reconstruction therefore stores itself from a named constant per call site, and the register frame, which is
+neither excluded nor ignored but DECLARED — `test/gemdos.py`'s `machine()` pokes `savptr` into the run's own stack
+band, so the frame lands where the differential already drops bytes and every other byte is compared as usual.
+`harness._vet_exclude_bands` would refuse an exclusion here (neither band is stack, correctly), which is why the
+declaration is the shape rather than a band.
+
+**gemdos — the character devices' three halts.** `^C` in the typeahead poll ends the process through `Pterm`
+(`$fc8028`, the paragraph above); a standard handle outside -3..-1 is refused by `console.c`'s own `per_device`,
+because the ROM's six per-device tables are sized for exactly three entries in straight-line code and a fourth
+indexes off all of them (it is not the dispatcher's handle-resolution arm — that one is for a handle ABOVE 0, which
+the dispatcher redirects before a leaf ever sees it); and `Cauxin` inherits `Bconin(AUX:)` (`$fc2150`), which
+`src/bios/bcon.c` defers for want of a staged input ring. Each halts on both builds rather than answering something
+plausible.
+
+**gemdos — the dispatcher's pop count is UNPINNED.** `call_handler`'s target build keeps the number of bytes to unwind
+in D3 across the `jsr` into the handler, because D2 — where it used to sit — is scratch that a real GEMDOS leaf writes:
+`Cauxout` reaches `xconout_rs232`'s `move.b $fffc00,d2`, and so do `Cprnout` and a `Cconout` of BEL. Off target the
+handler is a host hook and writes no 68000 register, so no differential can see the difference; on the bench blob it
+would, but every dispatcher row registered so far names a handler whose whole body is a `moveq`. Putting the count back
+in D2 was measured to leave `make test`, `make guarded` and `make bench` green (only the dispatcher's own Tier 3 ratio
+moves, and that is a cost pin rather than a correctness one). THE ROW THAT WOULD PIN IT is a dispatcher-SLICE case on a
+character-device selector, which needs the console group's staged machine under a slice case — not written.
+
+**gemdos — the memory manager's two honest gaps, neither of them a halt.** ONE SURVIVING MUTANT: the null guard on the
+forward merge in `gemdos_md_free_insert`. No pool this harness can produce reaches it — it would take a free list whose
+successor link is NULL where the list is not empty — so it is recorded unpinned rather than pinned by a fabricated
+record. And the ALCYON OUTGOING-ARGUMENT SLOT: every routine in this group saves one register more than it restores
+(D5/D6/D7), because Alcyon reserves the four-byte slot a callee's first argument is written into by pushing one, and
+the epilogue drops it with `tst.l (sp)+`. What the arguments overwrite is that STACK SLOT and not the register — no
+body here writes the register itself, which the verifier checked over all of them — so a caller's copy survives and
+there is nothing for a differential to see either way.
+Both ROM DEFECTS the group found are reproduced rather than corrected, with a case each: `Mshrink` writing through NULL
+into the reset vectors on a spent pool, and the SIGNED grow check that lets `$80000000` past.

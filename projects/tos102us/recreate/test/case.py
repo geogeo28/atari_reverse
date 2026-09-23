@@ -92,16 +92,45 @@ def hardware_writes(info):
     return [(address, value) for address, _width, value in info["regs"]["hw_writes"]]
 
 
-def word_args(*values):
-    """The argument WORDS a case stages, where the dispatcher's caller would have left them.
+def long_in(image, address):
+    """The big-endian LONGWORD `image` holds at `address` — a snapshot, a staged image or a run's
+    final one, all of which are byte sequences a battery indexes.
+
+    The GEMDOS wave alone had six private copies of this and its word twin, under three names and
+    two argument orders. It is not about any routine, so it belongs where a battery can reach it
+    without importing another battery's module; the spelling is `test/isr.py`'s `long_in_snapshot`,
+    which is this function with `BASE_IMAGE` bound.
+    """
+    return int.from_bytes(bytes(image[address:address + 4]), "big")
+
+
+def word_in(image, address):
+    """...and the word."""
+    return int.from_bytes(bytes(image[address:address + 2]), "big")
+
+
+def args(fmt, *values):
+    """The argument frame a case stages, as `struct` spells it — for the shapes the three helpers
+    below do not cover (`Mshrink`'s reserved word and then two longwords is the one).
 
     `abi.FIRST_ARG` is 4(A7) — one longword of return address above the stack pointer `emu.run`
-    plants, which is the frame a `jsr` leaves and therefore the frame every BIOS/XBIOS routine reads
-    its arguments out of.
+    plants, which is the frame a `jsr` leaves and therefore the frame every BIOS/XBIOS/GEMDOS
+    routine reads its arguments out of.
     """
-    return {abi.FIRST_ARG: struct.pack(f">{len(values)}H", *(value & 0xFFFF for value in values))}
+    return {abi.FIRST_ARG: struct.pack(fmt, *values)}
+
+
+def word_args(*values):
+    """The argument WORDS a case stages, where the dispatcher's caller would have left them."""
+    return args(f">{len(values)}H", *(value & 0xFFFF for value in values))
 
 
 def word_arg(value):
     """...and the single-word case, which is most of them."""
     return word_args(value)
+
+
+def long_args(*values):
+    """The argument LONGWORDS, which is what GEMDOS takes where the BIOS takes words — a DTA
+    pointer, a block address, the MPB the allocator core is handed beside its own argument."""
+    return args(f">{len(values)}I", *(value & 0xFFFF_FFFF for value in values))

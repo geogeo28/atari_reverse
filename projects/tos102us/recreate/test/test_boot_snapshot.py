@@ -86,6 +86,26 @@ import vt52                                                 # noqa: E402
 # staged slots and the two 6850s' declared bytes — beside the batteries that run them.
 import test_bios_acia_service as acia_service               # noqa: E402
 import test_bios_keyboard as keyboard                       # noqa: E402
+# ...and GEMDOS WAVE 1: the trap #1 entry, the dispatcher, the RAM-only leaves, the character
+# devices and the memory manager. These batteries do NOT publish a list of their own — each row is
+# recorded by `gemdos.register` as the battery builds it, so `gemdos.CASES` below is all five
+# groups' at once and a row here cannot describe a run nobody verified. `gemdos` and
+# `gemdos_console` are their shared case shapes; `gemdos_memory` is the memory group's, and the
+# four memory batteries publish their rows in the older way (their own `VERIFIED_CASES`).
+import test_gemdos_dispatch                                 # noqa: E402,F401  (registers its rows)
+import test_gemdos_leaves                                   # noqa: E402,F401
+import test_gemdos_trap1                                    # noqa: E402,F401
+import test_gemdos_console_status                           # noqa: E402,F401
+import test_gemdos_console_output                           # noqa: E402,F401
+import test_gemdos_console_input                            # noqa: E402,F401
+import test_gemdos_console_line                             # noqa: E402,F401
+import test_gemdos_memory_pool as memory_pool               # noqa: E402
+import test_gemdos_memory_malloc as memory_malloc           # noqa: E402
+import test_gemdos_memory_mfree as memory_mfree             # noqa: E402
+import test_gemdos_memory_mshrink as memory_mshrink         # noqa: E402
+import gemdos                                               # noqa: E402
+import gemdos_console                                       # noqa: E402
+import gemdos_memory                                        # noqa: E402
 
 import abi                                                 # noqa: E402
 import case                                                # noqa: E402
@@ -270,8 +290,14 @@ def test_a_verified_function_reads_no_io_byte_the_model_does_not_serve():
     """...and the other direction, which is what makes the refusal above worth having: the two
     reconstructed functions reach only modelled addresses, so neither is verified against a
     fabrication. Random touches no hardware at all; Giaccess is served by the PSG model, which sits
-    in front of the tally."""
-    for name, entry, regs, pokes, psg_seed, io_seed, schedule in VERIFIED_CASES:
+    in front of the tally.
+
+    `gemdos.UNPRICED` is swept here too. Such a row is VERIFIED and only unpriceable, so the claim
+    applies to it exactly as to the rest — it is kept out of `VERIFIED_CASES` because `bench/
+    tier3.py` reds on a verified case it cannot make a row for, which is a fact about the table
+    rather than about the case."""
+    for name, entry, regs, pokes, psg_seed, io_seed, schedule in (VERIFIED_CASES
+                                                                 + tuple(gemdos.UNPRICED)):
         _final, _writes, o_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
                                           io_seed=io_seed, schedule=schedule)
         assert o_regs["io_unmodeled_reads"] == 0, (
@@ -351,7 +377,13 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                (addrs.HDV_RWABS, 4, "hdv_rw, the vector the INDIRECT dispatch-table entry follows"),
                # ...and the interrupt handlers', which `test/isr.py` owns because the four share
                # most of them (its CASE_SPANS says which are already declared above).
-               *isr.CASE_SPANS)
+               *isr.CASE_SPANS,
+               # ...and GEMDOS wave 1's, each group's declared by the module its batteries share:
+               # the running process's basepage and GEMDOS's own clock and call counter; the three
+               # devices' columns and typeahead queues; and the memory manager's pool.
+               *gemdos.CASE_FIELDS,
+               *gemdos_console.CASE_SPANS,
+               *gemdos_memory.CASE_SPANS)
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():
@@ -604,10 +636,24 @@ VERIFIED_CASES = (
     # address as the ordinary `rts` routine it is. They are rows of their own because the handler's
     # own rows cannot price them: the cross-compiled `isr_acia` jumps through KBDVECS too, so BOTH
     # columns of `isr_acia, real vectors` run the ROM's chain (`bench/tier3.py`,
-    # `VECTOR_ROUTINE_NAMES`). Same arrangement as the handlers': one spec per case, registered here
+    # `UNNUMBERED_ROUTINE_NAMES`). Same arrangement as the handlers': one spec per case, registered here
     # and run as a differential by its own battery.
     *acia_service.VERIFIED_CASES,
     *keyboard.VERIFIED_CASES,
+    # ...and GEMDOS WAVE 1. `gemdos.CASES` is every row the trap-entry, dispatcher, leaves and
+    # character-device batteries registered as they built it — one splat rather than five lists,
+    # which is why the imports above are the only place those batteries are named. `gemdos.UNPRICED`
+    # is deliberately NOT here: a case whose differential is a CHECKPOINT has no `rts` for Tier 3 to
+    # run both sides to, and `bench/tier3.py` reds on a verified case it cannot price. The two
+    # claims that are about the CASE rather than about the table splat it anyway — the unmodelled-
+    # I/O sweep above and the dispatch-table pin below. (It is empty as this wave lands: `Dsetdrv`
+    # takes the ROM's own `trap #13` on target and is priced like the rest.)
+    *gemdos.CASES,
+    # ...and the memory manager's four batteries, which publish their own rows.
+    *memory_pool.VERIFIED_CASES,
+    *memory_malloc.VERIFIED_CASES,
+    *memory_mfree.VERIFIED_CASES,
+    *memory_mshrink.VERIFIED_CASES,
 )
 
 
@@ -700,10 +746,35 @@ TRAP_ROUTINE_NAMES = {getattr(addrs, name): name
 # it, the machine dispatches it — so the entries `TRAP_ROUTINE_NAMES` does not name are skipped
 # rather than looked up. What holds one to the right address is its VECTOR, which its own battery
 # reads out of the captured table (`test_the_vector_table_still_points_at_this_handler`).
+def _table_of(name):
+    """Which dispatch table a routine's `addrs.h` name says it is in."""
+    if name.startswith("XBIOS_"):
+        return addrs.XBIOS_FUNCTION_TABLE
+    if name.startswith("GEMDOS_"):
+        return addrs.GEMDOS_FUNCTION_TABLE
+    return addrs.BIOS_FUNCTION_TABLE
+
+
+def _dispatch_entries(table):
+    """``[entry, ...]`` for one dispatch table, in whichever of the ROM's TWO SHAPES it is written.
+
+    The BIOS's and the XBIOS's are "a count, then that many longwords". GEMDOS's is neither: it is
+    `GEMDOS_FUNCTION_COUNT` SIX-byte records — a handler longword and the argument-descriptor word
+    the dispatcher reads at `$fc9754` — with no count in front of them, because the bound is the
+    `cmpi.w #87` in the dispatcher's own code instead (COMPONENTS.md, "gemdos").
+    """
+    if table != addrs.GEMDOS_FUNCTION_TABLE:
+        return _trap_table(table)[1]
+    return [long_at(at) for at in range(table,
+                                        table + addrs.GEMDOS_FUNCTION_COUNT
+                                        * addrs.GEMDOS_RECORD_BYTES,
+                                        addrs.GEMDOS_RECORD_BYTES)]
+
+
 RECONSTRUCTED_TRAP_ROUTINES = sorted(
-    {((addrs.XBIOS_FUNCTION_TABLE if TRAP_ROUTINE_NAMES[entry].startswith("XBIOS_")
-       else addrs.BIOS_FUNCTION_TABLE), TRAP_ROUTINE_NAMES[entry])
-     for _name, entry, *_rest in VERIFIED_CASES if entry in TRAP_ROUTINE_NAMES})
+    {(_table_of(TRAP_ROUTINE_NAMES[entry]), TRAP_ROUTINE_NAMES[entry])
+     for _name, entry, *_rest in VERIFIED_CASES + tuple(gemdos.UNPRICED)
+     if entry in TRAP_ROUTINE_NAMES})
 
 
 @pytest.mark.parametrize("table,name", RECONSTRUCTED_TRAP_ROUTINES)
@@ -711,8 +782,8 @@ def test_a_reconstruction_is_the_dispatch_table_entry_it_claims_to_be(table, nam
     """Read from the mapped ROM, so a wrong address in `addrs.h` is a red here instead of a
     differential that quietly proves some other routine correct."""
     number = getattr(addrs, f"{name}_FN")
-    count, entries = _trap_table(table)
-    assert count > number, f"{name}'s function number is past the table's own count"
+    entries = _dispatch_entries(table)
+    assert len(entries) > number, f"{name}'s function number is past the table's own count"
     assert entries[number] == getattr(addrs, name)
 
 

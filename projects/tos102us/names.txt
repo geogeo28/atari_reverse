@@ -349,10 +349,10 @@ fn 0xfc5e6a Fread   # ctx
 fn 0xfc5eea Fwrite   # ctx
 fn 0xfc6a7e Dsetpath   # ctx
 fn 0xfc6c1a Dgetpath   # ctx
-fn 0xfc6c9a Fgetdta   # ctx
-fn 0xfc6cac Fsetdta   # ctx
-fn 0xfc6cc0 Dsetdrv   # ctx
-fn 0xfc6ce0 Dgetdrv   # ctx
+fn 0xfc6c9a Fgetdta
+fn 0xfc6cac Fsetdta
+fn 0xfc6cc0 Dsetdrv
+fn 0xfc6ce0 Dgetdrv
 fn 0xfc6cf6 Fsfirst   # ctx
 fn 0xfc6df4 Fsnext   # ctx
 fn 0xfc719a Fcreate   # ctx
@@ -369,31 +369,31 @@ fn 0xfc7fd8 Ptermres   # ctx
 fn 0xfc8028 Pterm   # ctx
 fn 0xfc8086 Pterm0   # ctx
 fn 0xfc817a Pexec   # ctx
-fn 0xfc895a Mshrink   # ctx
-fn 0xfc8aae Malloc   # ctx
-fn 0xfc8afc Mfree   # ctx
-fn 0xfc8b70 Cconis   # ctx
-fn 0xfc8b8a Cconos   # ctx
-fn 0xfc8bae Cprnos   # ctx
-fn 0xfc8bd2 Cauxis   # ctx
-fn 0xfc8bee Cauxos   # ctx
-fn 0xfc8e1c Cconout   # ctx
-fn 0xfc8ed2 Cauxout   # ctx
-fn 0xfc8efa Cprnout   # ctx
-fn 0xfc8faa Crawcin   # ctx
-fn 0xfc8ff2 Cconin   # ctx
-fn 0xfc900c Cnecin   # ctx
-fn 0xfc903e Cauxin   # ctx
-fn 0xfc9062 Crawio   # ctx
-fn 0xfc90c2 Cconws   # ctx
-fn 0xfc91ea Cconrs   # ctx
+fn 0xfc895a Mshrink
+fn 0xfc8aae Malloc
+fn 0xfc8afc Mfree
+fn 0xfc8b70 Cconis
+fn 0xfc8b8a Cconos
+fn 0xfc8bae Cprnos
+fn 0xfc8bd2 Cauxis
+fn 0xfc8bee Cauxos
+fn 0xfc8e1c Cconout
+fn 0xfc8ed2 Cauxout
+fn 0xfc8efa Cprnout
+fn 0xfc8faa Crawcin
+fn 0xfc8ff2 Cconin
+fn 0xfc900c Cnecin
+fn 0xfc903e Cauxin
+fn 0xfc9062 Crawio
+fn 0xfc90c2 Cconws
+fn 0xfc91ea Cconrs
 fn 0xfc933e gemdos_unimplemented
 cmt 0xfc933e Dispatch-table target for: GEMDOS 12, GEMDOS 13, GEMDOS 15, GEMDOS 20, GEMDOS 21, GEMDOS 22, GEMDOS 23, GEMDOS 24, GEMDOS 27, GEMDOS 28, GEMDOS 29, GEMDOS 30, GEMDOS 31, GEMDOS 32, GEMDOS 33, GEMDOS 34, GEMDOS 35, GEMDOS 36, GEMDOS 37, GEMDOS 38, GEMDOS 39, GEMDOS 40, GEMDOS 41, GEMDOS 46, GEMDOS 50, GEMDOS 51, GEMDOS 52, GEMDOS 53, GEMDOS 55, GEMDOS 56, GEMDOS 68, GEMDOS 77, GEMDOS 80, GEMDOS 81, GEMDOS 82, GEMDOS 83, GEMDOS 84, GEMDOS 85
-fn 0xfc9348 Sversion   # ctx
-fn 0xfc9e1a Tgetdate   # ctx
-fn 0xfc9e2a Tsetdate   # ctx
-fn 0xfc9ea2 Tgettime   # ctx
-fn 0xfc9eb2 Tsettime   # ctx
+fn 0xfc9348 Sversion
+fn 0xfc9e1a Tgetdate
+fn 0xfc9e2a Tsetdate
+fn 0xfc9ea2 Tgettime
+fn 0xfc9eb2 Tsettime
 fn 0xfc9f34 linea_init   # ctx
 fn 0xfca05e linea_filled_poly   # ctx
 fn 0xfca1ea linea_line   # ctx
@@ -865,3 +865,119 @@ cmt 0xfc42f2 Bconout device 2 (CON:): reads NO hardware. It dispatches through t
 cmt 0xfc45ae The cursor unlock: it leaves the lock DEPTH in D0, which is why ESC l ($fc4610, the erase-line escape that runs straight after it) puts the cursor in column `depth`.
 cmt 0xfc4402 The lower-case escape jump table: 22 SIGNED word displacements, of which nine point at the bare rts at $fc4376 -- F G g h i m n r s t u are table entries the ROM does not implement.
 cmt 0x2a14 The four console screen vectors -- glyph, scroll up, scroll down, clear cells. The captured ST holds the CPU set at $fd141c/$fd149a/$fd14de/$fd1542; on a machine with a blitter TOS 1.02 installs $fc47be/$fc4852/$fc48b6/$fc4936 here instead.
+
+# ---- GEMDOS wave 1 (trap #1 entry, dispatcher, RAM-only leaves, character devices, memory) -------
+# The fn/var lines above for the fifteen character devices, the nine RAM-only leaves and
+# Malloc/Mfree/Mshrink lost their `# ctx` in this wave: every one is a body read with a differential
+# behind it (`recreate/STATUS.md`, "Verified — gemdos").
+
+fn 0xfc4f38 gemdos_setjmp
+fn 0xfc4f54 gemdos_longjmp
+fn 0xfc4eac gemdos_bios_trampoline
+fn 0xfc4ef6 gemdos_timer_tick_hook
+fn 0xfc5078 gemdos_entry_c
+fn 0xfc50b4 gemdos_publish_clock
+fn 0xfc973e gemdos_dispatch_selector
+fn 0xfc9cc0 gemdos_clock_tick
+
+var 0x0eb0 gemdos_bios_return_slot
+var 0x16ce gemdos_supervisor_stack_top
+var 0x68fa gemdos_call_depth
+var 0x68fc gemdos_clock_subsecond
+var 0x75b0 gemdos_time
+var 0x7dee gemdos_process_owners
+var 0x7ef4 gemdos_termination_jmpbuf
+var 0x8066 gemdos_process_flags
+var 0x8092 gemdos_ofd_table
+var 0x879c gemdos_clock_ticks
+var 0x8840 gemdos_date
+var 0xfd3060 gemdos_month_lengths
+var 0xfd328a gemdos_redirect_table
+
+cmt 0xfc4f38 setjmp: stores the CALLER's frame into the buffer at 8(a6) - the saved A6, the address of its own argument slot, and the return PC. The dispatcher arms $7ef4 with it at $fc9510; Pterm longjmps back through $fc4f54.
+cmt 0xfc4eac How GEMDOS calls the BIOS: pop this call's own return address into $eb0, trap #13 with the BIOS frame now at (sp), push the address back and rts. The store into $eb0 is ordinary RAM and survives the call, so after any GEMDOS call that longword names the instruction after whichever `jsr $fc4eac` ran last. Dsetdrv, Pterm and every character device reach the BIOS this way.
+cmt 0xfc6cc0 Dsetdrv ($0e): two halves with nothing to do with each other - the argument word's LOW BYTE becomes p_curdrv with no bound check at all, and the answer is the BIOS DRIVE MAP, reached through the $fc4eac trampoline (its jsr is at $fc6cd6, so the longword parked at $eb0 is $fc6cdc).
+cmt 0xfc4ef6 GEMDOS's etv_timer hook: passes the tick count to $fc9cc0 and tails into the saved vector at $16d2.
+cmt 0xfc5078 The OS's own C-callable GEMDOS entry: `lea 8(a6),a0` hands the dispatcher its OWN caller's argument list, which is why it cannot be C. The dispatcher's redirection arms reach Fwrite this way ($fc9886).
+cmt 0xfc50b4 Publishes BOTH clock words to the hardware: pushes $75b0, $8840 and XBIOS function 22, then `trap #14`. Setting the date therefore re-sends the time.
+cmt 0xfc973e The dispatcher past its termination record: table index, descriptor at +4, the standard-handle redirection, the four argument-frame classes (4/8/12/14 bytes) and the jsr.
+cmt 0xfc9cc0 GEMDOS's 200 Hz clock tick, hooked on etv_timer: advances $879c and $68fc, and rolls $68fc into the time word $75b0 every 2000 ticks - which is why Tgettime/Tgetdate are pure RAM reads.
+cmt 0x0eb0 long: the return address $fc4eac parks while it takes its trap #13.
+cmt 0x87ce p_run - the current process's basepage. The trap entry frames D0/A3-A5 at +$68, A6 at +$78 and a pointer to the rest (50 bytes on the caller's own stack) at +$7c; p_uft is +$30, p_curdrv +$37, p_dta +$20.
+cmt 0x68fa GEMDOS call depth: CLEARED then BUMPED on every trap #1 ($fc94e8/$fc94ee), and bumped again at each restart the process-termination path makes.
+cmt 0x7ef4 The process-termination record: the dispatcher's own A6, its own stack pointer and a resume PC inside it. Pterm longjmps here.
+cmt 0x8840 GEMDOS's own DOS date word: (year-1980)<<9 | month<<5 | day. Seeded from os_dosdate at $fc0460, advanced by the tick at $fc9cc0, read by Tgetdate and written by Tsetdate.
+cmt 0x75b0 GEMDOS's own DOS time word: hour<<11 | minute<<5 | second/2.
+cmt 0xfd3060 Thirteen words: Tsetdate's day bound indexed by month. Entry 0 is 0, so month 0 admits only day 0; February's 28 is the non-leap arm ($fc9e78).
+cmt 0xfd328a Nineteen longwords indexed by selector-1: what a character-device call becomes when Fforce has pointed its standard handle at a file (Cconin -> Fread, Cconws -> a loop of Fwrites).
+
+# ---- the character-device layer under the fifteen leaves ----
+fn 0xfc8b44 gemdos_device_input_status
+fn 0xfc8c12 gemdos_drain_typeahead
+fn 0xfc8d4e gemdos_typeahead_reset
+fn 0xfc8d96 gemdos_device_put
+fn 0xfc8e3c gemdos_device_put_expanding_tabs
+fn 0xfc8e88 gemdos_device_put_echoing_controls
+fn 0xfc8f22 gemdos_device_get
+fn 0xfc8fc6 gemdos_device_get_echoing
+fn 0xfc90e2 gemdos_device_put_string
+fn 0xfc910c gemdos_device_new_line
+fn 0xfc9152 gemdos_device_erase_last_character
+fn 0xfc9226 gemdos_device_read_line
+fn 0xfc9356 gemdos_console_init
+
+var 0x68f4 gemdos_device_column
+var 0x756c gemdos_typeahead_count
+var 0x83c0 gemdos_typeahead_buffer
+var 0x8830 gemdos_typeahead_read
+var 0x8896 gemdos_typeahead_write
+var 0xfd3018 gemdos_line_editor_keys
+var 0xfd303c gemdos_line_editor_arms
+
+cmt 0xfc8b44 Input status for a BIOS device: -1 if GEMDOS's own typeahead queue holds a record for it ($756c[device]), else BIOS Bconstat. Cconis and Cauxis are this routine over their own standard handle.
+cmt 0xfc8c12 The poll EVERY GEMDOS output makes before it writes a byte, and the only place flow control lives. Bconstat once; then read keys and classify: ^C resets the queue and Pterm(-32)s, ^S sets a hold and re-reads (blocking) until ^Q, ^X resets the queue and queues itself, anything else is queued while the count is < 80 and answered with a BEL when it is not. The key is the LOW BYTE (and.l #255) but the whole longword is queued.
+cmt 0xfc8d4e Empty one device's typeahead queue: count := 0 and both pointers back to $83c0 + device * 320. ^C and ^X are its two callers.
+cmt 0xfc8d96 One character to a device: the poll above, BIOS Bconout, then the per-device COLUMN COUNTER at $68f4 - +1 for a character >= 32 (SIGNED word compare), 0 for CR, -1 for BS, unchanged for everything else (LF included). D0 comes back as the BIOS's answer with its low word replaced by the column the counter HAD.
+cmt 0xfc8e3c ...with TAB expanded: spaces until the column counter is a multiple of 8. A do-while, so a TAB already on a stop costs eight spaces and not none.
+cmt 0xfc8e88 ...and with a control code echoed as '^' and the letter code|$40 (two columns). TAB goes to $fc8e3c instead; DEL ($7f) is not a control code to this test and prints as itself. The Cconrs line editor's echo, where Cconin's is the raw $fc8d96.
+cmt 0xfc8f22 One record IN: GEMDOS's typeahead queue first (advancing $8830[device] and decrementing $756c[device], both pointers rewound when it empties), and BIOS Bconin - which BLOCKS - only when the queue is empty.
+cmt 0xfc8fc6 ...and the same read with its LOW WORD echoed back to the SAME device through $fc8d96, raw. Cconin's body. The result is the record, not the echo's answer.
+cmt 0xfc90e2 Cconws' loop: each byte SIGN-EXTENDED into the character word (move.b / ext.w), so a byte with bit 7 set is negative to $fc8d96's signed compare and does NOT advance the column counter. Over an empty string it makes no call at all and D0 keeps the sign-extended standard handle its caller left there.
+cmt 0xfc910c CR, LF, then N spaces - how Cconrs' ^U and ^R get back to the column the line began in.
+cmt 0xfc9152 Rub out the last character: re-walk the first length-1 characters adding up how wide each PRINTS (TAB to the next multiple of 8, a control code 2, anything else 1) and then send BS/space/BS until the column counter has come back to that width. Returns the decremented length in D0's low word.
+cmt 0xfc9226 The Cconrs line editor. Reads through $fc8f22 while length < maximum (SIGNED word), sign-extends the record's low word (ext.l) and looks it up in the nine longwords at $fd3018 with cmp.l (a0)+ under a dbeq, then jumps through 32(a0). The ninth key is 0 and its arm IS the default arm, so a key with no ASCII half is an ordinary character stored as a NUL. Keys: ^C Pterm, BS and DEL erase, LF and CR end (echoing ONE CR), ^R retype, ^U kill, ^X rub out.
+cmt 0xfc9356 GEMDOS console init: allocates the first basepage, writes p_uft[0..3] = -1,-1,-2,-3 and then initialises EXACTLY THREE devices' worth of console state - three typeahead counts at $756c, three read pointers at $8830 and three write pointers at $8896, all at $83c0 + device * 320. Straight-line code, and the evidence that a standard handle outside -3..-1 indexes past every one of those tables.
+cmt 0x68f4 word[3]: which column GEMDOS thinks each standard device's cursor is in. NOT the VT52 driver's own cursor column ($297e) - two layers, two words, and nothing keeps them in step.
+cmt 0x756c byte[3]: how many records are queued ahead of the reader on each standard device (max 80).
+cmt 0x83c0 The three typeahead queues: 80 four-byte Bconin records each, 320 bytes apart.
+cmt 0x8830 long[3]: where the next queued record comes OUT.
+cmt 0x8896 long[3]: ...and where the next one goes IN.
+cmt 0xfd3018 Cconrs' nine editing keys, searched with cmp.l (a0)+ under a dbeq: ^C, BS, LF, CR, ^R, ^U, ^X, DEL, 0.
+cmt 0xfd303c ...and the nine arms, read at 32(a0) from wherever that search stopped. The ninth is the DEFAULT arm, which is why "matched 0" and "matched nothing" are one branch.
+
+# ---- the memory manager: the allocator core and the record pool under the three trap leaves ----
+fn 0xfc7ed0 gemdos_pool_arena_alloc
+fn 0xfc7f1a gemdos_pool_get
+fn 0xfc7f9c gemdos_pool_free
+fn 0xfc886a gemdos_md_alloc
+fn 0xfc89dc gemdos_md_free_insert
+
+var 0x2a6e gemdos_pool_arena
+var 0x68f0 gemdos_pool_used_words
+var 0x7e8e gemdos_mpb_free_list
+var 0x7e92 gemdos_mpb_allocated_list
+var 0x7e96 gemdos_mpb_rover
+var 0x7e9c gemdos_p_root
+var 0x8780 gemdos_pool_free_words
+
+cmt 0xfc7ed0 GEMDOS record pool: bump d0.w words off the arena at $2a6e, or 0. `cmp.w $8780,d0 / ble` is a SIGNED word compare and the byte offset is `asl.w #1 / ext.l`, so a request or a cursor with bit 15 set reads as negative (not reachable from pool_get's own callers).
+cmt 0xfc7f1a GEMDOS record pool: a ZEROED record of size class d0.w (class*8 words = class*16 bytes) - popped off p_root[class] if one waits, else cut from the arena as class*8+1 words with the class word written below it. 0 when the arena is spent, which is TOS 1.02's "out of memory descriptors".
+cmt 0xfc7f9c GEMDOS record pool: push a record back onto p_root[class], the class read out of the WORD BELOW the record; the record's first longword becomes the chain link.
+cmt 0xfc886a GEMDOS allocator core (amount 8(a6), MPB 12(a6)): NEXT-FIT from mp_rover, wrapping through the MPB read as the descriptor before the first. Answers the descriptor, or the largest free m_length for amount = -1, or 0. The block keeps m_start and takes the request's length; the REMAINDER gets a new descriptor and the block's place in the free list. The rover is left at the block's predecessor, or at mp_mfl when that predecessor is the MPB.
+cmt 0xfc89dc GEMDOS free-list insert, sorted by m_start ascending, with coalescing: FORWARD first (md swallows its successor) then BACKWARD (the predecessor swallows md), so three blocks can become one and two descriptors go back to p_root[1], the successor's first. Each merge moves a rover off the descriptor about to be recycled; a NULL rover is put on md before either.
+cmt 0x2a6e GEMDOS's record arena, $2a6e..$68ed: 16,000 bytes bump-allocated by $fc7ed0, the home of every memory descriptor, basepage and file-system record. Its size is the `move.w #8000,$8780` the init writes at $fc936e.
+cmt 0x68f0 Words of the GEMDOS arena handed out so far - the bump cursor, two bytes above the arena's own top ($68ee).
+cmt 0x7e8e GEMDOS's own memory parameter block, $7e8e..$7e99: mp_mfl here, mp_mal $7e92, mp_rover $7e96. GEMDOS's init hands this address to BIOS Getmpb ($fc935e); Malloc/Mfree/Mshrink reach it absolutely. The free list is kept sorted by m_start; the allocated list is not.
+cmt 0x7e9c p_root (OS header +$20): an ARRAY of free-chain heads, one per record SIZE CLASS, indexed p_root + (int16)class*4 ($fc7f30/$fc7fb6) - not a single list head. Class 1 is the 16-byte memory descriptor, class 16 the 256-byte basepage the init cuts ($fc9376). p_root[0..21] read zero in the boot snapshot and other GEMDOS data starts at $7ef4, so the array's length is not established.
+cmt 0x8780 Words of the GEMDOS arena still to hand out; used + left == 8000 on the captured machine. A Malloc needing a SPLIT fails when this runs out, over RAM that is plainly free.
+cmt 0x048e The fixed memory descriptor BIOS Getmpb builds ($fc0a46) - the one descriptor that is NOT a pool record. It is on the captured machine's GEMDOS ALLOCATED list, because GEMDOS's init passed its own MPB ($7e8e) to Getmpb and then allocated out of it; the word below it is a system variable, so gemdos_pool_free would file it under the wrong class.

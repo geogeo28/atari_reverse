@@ -985,4 +985,315 @@
 #define CON_ESCAPE_LOWER_FIRST 0x62    /* 'b' */
 #define CON_ESCAPE_LOWER_LAST  0x77    /* 'w' */
 
+/* ---- GEMDOS ($fc4f6e trap entry, $fc94e4 dispatcher, the RAM-only leaves) ------------------------
+ *
+ * Added by the GEMDOS trap/dispatcher wave (src/gemdos/trap1.S, dispatch.c, leaves.c). GEMDOS is the
+ * third trap entry and the only one that is not a bare table dispatch: the entry serves `Super`
+ * itself, builds the calling process's register frame in ITS OWN BASEPAGE, moves the stack to the
+ * OS's supervisor stack and then calls a C dispatcher that indexes a table of SIX-BYTE records.
+ */
+#define GEMDOS_TRAP1          0xfc4f6e  /* vector $84 — the entry, and `Super`'s three arms with it */
+#define GEMDOS_TRAP1_FRAME    0xfc4f8a  /* ...where a call that is NOT `Super` starts framing */
+#define GEMDOS_SUPER_FROM_USER 0xfc501c /* `Super` as a user-mode caller reaches it */
+#define GEMDOS_SUPER_FROM_SUPERVISOR 0xfc503a
+#define GEMDOS_SUPER_QUERY    0xfc506a  /* ...and the `Super(1)` arm both of them share */
+#define GEMDOS_SUPER_LEAVE_SUPERVISOR 0xfc5068  /* the `rte` that drops a supervisor caller to user */
+#define GEMDOS_ENTRY_C        0xfc5078  /* the OS's own C-callable GEMDOS entry ($fc9886 uses it) */
+#define GEMDOS_TRAP1_END      0xfc5092  /* one past the last byte src/gemdos/trap1.S transcribes */
+#define GEMDOS_DISPATCH       0xfc94e4  /* the C dispatcher the entry calls, with the frame pointer */
+#define GEMDOS_DISPATCH_SELECTOR 0xfc973e  /* ...and where it dispatches, PAST the `setjmp` */
+/* The dispatcher's own frame: `link a6,#-54`, and the ONE local a case entering the slice above has
+ * to stand in for — the selector, which the prologue read out of the argument list before the
+ * `setjmp` and every arm past it reads back from here. (The argument POINTER is at `8(a6)`, which
+ * is where an ordinary `jsr` frame already puts it.) */
+#define GEMDOS_DISPATCH_FRAME_BYTES 54
+#define GEMDOS_DISPATCH_SELECTOR_LOCAL 0xffde
+#define GEMDOS_SETJMP         0xfc4f38  /* the three-longword frame record the dispatcher arms */
+#define GEMDOS_TERMINATION_JMPBUF 0x7ef4   /* ...and where it writes it */
+#define GEMDOS_CALL_DEPTH     0x68fa    /* word: cleared then bumped on every trap #1 ($fc94e8) */
+
+/* The trap entry's own geometry. The register frame it builds runs UNDER the caller's own words —
+ * the other stack pointer, the SR, the return PC and then ten registers — so its length is also the
+ * displacement from the frame's base back up to the argument words. */
+#define GEMDOS_SUPERVISOR_STACK 0x16ce  /* where the entry parks A7 before calling the dispatcher */
+#define GEMDOS_SAVED_FRAME_BYTES 50     /* `lea 50(a5),a0`: 4 + 2 + 4 + 10 * 4 */
+/* Where the ARGUMENTS are, measured from three different places, which is why there are three
+ * names: from the argument list itself (the function number is the first word), from a supervisor
+ * caller's stack pointer inside the entry (the exception frame is still on it), and from the
+ * C entry's own frame pointer (the saved A6 and the return address are under them). */
+#define GEMDOS_ARGUMENT_WORD  2
+#define GEMDOS_SUPERVISOR_ARGUMENT 8    /* EXCEPTION_FRAME_BYTES + GEMDOS_ARGUMENT_WORD */
+#define GEMDOS_C_ARGUMENTS    8         /* `lea 8(a6),a0` at $fc507e */
+#define GEMDOS_SAVED_REGISTERS 10       /* d1-d7/a0-a2 — and note D0/A3-A6 go in the BASEPAGE */
+#define SR_SUPERVISOR         0x2000    /* the S bit as a whole word, which `Super` sets and clears */
+#define SR_USER_MASK          0xdfff    /* ...and `andi.w #$dfff,(sp)`, which is how it clears it */
+#define SR_SUPERVISOR_HIGH_BYTE_BIT 5   /* `btst #5,(sp)`: bit 13 of the SR is bit 5 of its high byte */
+
+/* The BASEPAGE, as the ROM's own instructions index it. The first twelve longwords are the published
+ * layout; everything from $30 up is what GEMDOS keeps there about the running process, and the three
+ * save slots are the trap entry's — it has nowhere else to put D0/A3-A6 before it has a stack. */
+#define GEMDOS_P_RUN          0x87ce    /* long: -> the current process's basepage (OS header +$28) */
+#define BASEPAGE_DTA          0x20      /* long: Fgetdta/Fsetdta, and the whole of both routines */
+#define BASEPAGE_HANDLES      0x30      /* 6 bytes: p_uft, the standard handles 0..5 that */
+                                        /*    `Fforce` ($fc52de, its entry) stores into */
+#define BASEPAGE_STANDARD_HANDLES 6
+#define BASEPAGE_LDDRV        0x36      /* byte */
+#define BASEPAGE_CURDRV       0x37      /* byte: Dgetdrv reports it, Dsetdrv stores it */
+#define BASEPAGE_SAVED_D0     0x68      /* long: D0, then A3, A4, A5 — the trap entry's save area */
+#define BASEPAGE_SAVED_A6     0x78      /* long: ...A6, which it had to push to free a base register */
+#define BASEPAGE_SAVED_FRAME  0x7c      /* long: -> the register frame on the caller's own stack */
+#define BASEPAGE_SAVED_REGISTERS 5      /* d0/a3-a6, as the returning `movem.l $68(a5)` reads them */
+
+/* The dispatch TABLE: 88 six-byte records, a handler longword and an ARGUMENT-DESCRIPTOR word. */
+#define GEMDOS_FUNCTION_TABLE 0xfd307a
+#define GEMDOS_FUNCTION_COUNT 88
+#define GEMDOS_MAX_SELECTOR   0x57      /* `cmpi.w #87` — above it, no record is read at all */
+#define GEMDOS_RECORD_BYTES   6
+#define GEMDOS_RECORD_DESCRIPTOR 4      /* the word the dispatcher reads at $fc9754 */
+#define GEMDOS_EINVFN         0xffffffe0u   /* -32, what a selector past the table answers */
+#define GEMDOS_EIHNDL         0xffffffdbu   /* -37, what an unresolvable handle answers */
+
+/* The DESCRIPTOR word. Its low two bits are the ARGUMENT-FRAME CLASS — how many bytes of the
+ * caller's words the dispatcher copies onto the stack before `jsr` — and bit 7 marks a call whose
+ * argument is a HANDLE, so that a standard handle Fforce redirected reaches the file system and a
+ * character device reaches the device driver. The low seven bits of such a descriptor are the
+ * STANDARD HANDLE the redirection consults ($80 -> 0 stdin, $81 -> 1 stdout, $82 -> 2 stdaux,
+ * $83 -> 3 stdprn). */
+#define GEMDOS_DESC_HANDLE    0x80      /* `btst #7,<descriptor low byte>` at $fc991a */
+#define GEMDOS_DESC_ARGUMENT_MASK 0x7f  /* `andi.w #127` at $fc9ba8 — what is left is 0..3 */
+#define GEMDOS_ARGUMENT_CLASSES 4
+/* ...and the four frames themselves, in bytes, as the four arms at $fc9bb6/$fc9bd8/$fc9c0a/$fc9c4e
+ * push them. They are not 4/8/12/16: the widest is Pexec's word-plus-three-longwords. */
+#define GEMDOS_ARGUMENT_BYTES_0 4
+#define GEMDOS_ARGUMENT_BYTES_1 8
+#define GEMDOS_ARGUMENT_BYTES_2 12
+#define GEMDOS_ARGUMENT_BYTES_3 14
+
+/* WHICH SELECTORS the standard-handle redirection applies to: the character-device group, in the two
+ * runs the ROM's own four compares carve out ($fc9762..$fc9784). Everything else — Fread and Fwrite
+ * included, which carry a $82 descriptor of their own — skips straight to the descriptor's bit 7. */
+#define GEMDOS_REDIRECT_FIRST 1         /* Cconin .. Cconis */
+#define GEMDOS_REDIRECT_LAST  11
+#define GEMDOS_REDIRECT_SECOND_FIRST 16 /* Cconos, Cprnos, Cauxis, Cauxos */
+#define GEMDOS_REDIRECT_SECOND_LAST  19
+#define GEMDOS_REDIRECT_TABLE 0xfd328a  /* 19 longwords, indexed by selector - 1 ($fc98f4) */
+/* ...and what the descriptor is REWRITTEN to when the standard handle is still a character device:
+ * one pointer argument for the two console calls that take a string, and none for the rest. */
+#define GEMDOS_CCONWS_FN      0x09
+#define GEMDOS_CCONRS_FN      0x0a
+
+/* The OPEN FILE DESCRIPTORS a resolved handle names, and the two process tables the termination
+ * path walks. Named because the dispatcher indexes them; nothing here reconstructs them. */
+#define GEMDOS_OFD_TABLE      0x8092    /* handle 6.. -> (handle - 6) * 10 + here ($fc9950) */
+#define GEMDOS_OFD_STRIDE     10
+#define GEMDOS_FIRST_FILE_HANDLE 6
+#define GEMDOS_PROCESS_ID     0x87cc    /* word: which slot of the tables below is running */
+#define GEMDOS_PROCESS_TABLE  0x8380    /* longwords, indexed by GEMDOS_PROCESS_ID */
+#define GEMDOS_PROCESS_FLAGS  0x8066    /* one byte a slot */
+#define GEMDOS_PROCESS_OWNERS 0x7dee    /* longwords, one a slot */
+
+/* The RAM-ONLY LEAVES this wave reconstructs, and the two words two of them are the whole of. */
+#define GEMDOS_DATE           0x8840    /* word: the DOS date, seeded from os_dosdate at $fc0460 */
+#define GEMDOS_TIME           0x75b0    /* word: the DOS time */
+#define GEMDOS_MONTH_LENGTHS  0xfd3060  /* 13 words: Tsetdate's day bound, indexed by month */
+#define GEMDOS_PUBLISH_CLOCK  0xfc50b4  /* the XBIOS `Settime(date, time)` both setters end with */
+#define XBIOS_SETTIME_FN      22        /* ...and the function number it pushes before `trap #14` */
+#define GEMDOS_RANGE_ERROR    0xffffffffu   /* -1, what both setters answer a word out of range */
+#define GEMDOS_BIOS_TRAMPOLINE 0xfc4eac /* `move.l (sp)+,$eb0 / trap #13 / move.l $eb0,-(sp) / rts` */
+#define GEMDOS_BIOS_RETURN_SLOT 0xeb0   /* ...and the longword it parks the return address in */
+
+#define GEMDOS_UNIMPLEMENTED  0xfc933e  /* every undefined selector's handler: `moveq #-32,d0` */
+#define GEMDOS_DSETDRV        0xfc6cc0
+#define GEMDOS_FSETDTA        0xfc6cac
+#define GEMDOS_DGETDRV        0xfc6ce0
+#define GEMDOS_TGETDATE       0xfc9e1a
+#define GEMDOS_TSETDATE       0xfc9e2a
+#define GEMDOS_TGETTIME       0xfc9ea2
+#define GEMDOS_TSETTIME       0xfc9eb2
+/* ...and the instruction in each setter that every refusal branches PAST: the store of the word it
+ * has just accepted. A case that can only read the accepting arm as a slice stops here. */
+#define GEMDOS_TSETDATE_STORE 0xfc9e8a
+#define GEMDOS_TSETTIME_STORE 0xfc9ef4
+#define GEMDOS_FGETDTA        0xfc6c9a
+#define GEMDOS_SVERSION       0xfc9348
+#define GEMDOS_PTERM0         0xfc8086  /* read only: the process-termination group, not reconstructed */
+#define GEMDOS_PTERM          0xfc8028
+#define GEMDOS_PTERMRES       0xfc7fd8
+
+/* The selectors the cases drive, by number. The table above is indexed by these, so a case naming a
+ * handler and a case naming a selector cannot drift apart. */
+#define GEMDOS_DSETDRV_FN     0x0e
+#define GEMDOS_UNDEFINED_FN   0x0c      /* the lowest selector the ABI leaves undefined */
+#define GEMDOS_FSETDTA_FN     0x1a
+#define GEMDOS_DGETDRV_FN     0x19
+#define GEMDOS_SUPER_FN       0x20
+#define GEMDOS_TGETDATE_FN    0x2a
+#define GEMDOS_TSETDATE_FN    0x2b
+#define GEMDOS_TGETTIME_FN    0x2c
+#define GEMDOS_TSETTIME_FN    0x2d
+#define GEMDOS_FGETDTA_FN     0x2f
+#define GEMDOS_SVERSION_FN    0x30
+#define GEMDOS_FCREATE_FN     0x3c      /* ...the two selectors whose FILENAME the dispatcher itself */
+#define GEMDOS_FOPEN_FN       0x3d      /*    compares against the six device names at $fd32d6 */
+#define GEMDOS_FREAD_FN       0x3f
+#define GEMDOS_FWRITE_FN      0x40
+#define GEMDOS_PEXEC_FN       0x4b
+
+/* Sversion's answer, and the DOS date/time fields Tsetdate and Tsettime bound. The date word is
+ * `(year - 1980) << 9 | month << 5 | day` and the time word `hour << 11 | minute << 5 | second / 2`,
+ * and the ROM bounds each field with its own compare rather than with a mask. */
+#define GEMDOS_VERSION        0x1300
+#define GEMDOS_DATE_YEAR_SHIFT 9
+#define GEMDOS_DATE_MONTH_SHIFT 5
+#define GEMDOS_DATE_DAY_MASK  0x1f
+#define GEMDOS_DATE_MONTH_MASK 0x0f     /* `asr.w #5 / andi.w #15` — FOUR bits, not the field's own */
+#define GEMDOS_DATE_MAX_YEAR  119       /* 1980 + 119 = 2099 */
+#define GEMDOS_DATE_MAX_MONTH 12
+#define GEMDOS_DATE_FEBRUARY  2
+#define GEMDOS_DATE_LEAP_MASK 0x0600    /* the two year bits a leap year clears (year % 4) */
+#define GEMDOS_DATE_LEAP_DAYS 29
+#define GEMDOS_TIME_SECOND_MASK 0x1f
+#define GEMDOS_TIME_MAX_SECOND 30       /* `cmp.w #30 / blt` on the two-second field */
+#define GEMDOS_TIME_MINUTE_MASK 0x07e0
+#define GEMDOS_TIME_MAX_MINUTE 0x0780   /* 60 << 5, compared without shifting the field down */
+#define GEMDOS_TIME_HOUR_MASK 0xf800
+#define GEMDOS_TIME_MAX_HOUR  0xc000    /* 24 << 11, as a SIGNED longword compare ($fc9ee6) */
+
+/* ---- the GEMDOS CHARACTER DEVICES (selectors $01..$0b and $10..$13) -----------------------------
+ *
+ * `src/gemdos/console.c`. Fifteen leaves over one small layer: each reads a STANDARD HANDLE out of
+ * the running process's basepage, turns it into a BIOS device number by ADDING THREE (-1/-2/-3, the
+ * three standard handle values, become CON:/AUX:/PRT: = 2/1/0) and then reaches the BIOS through the
+ * trampoline at `GEMDOS_BIOS_TRAMPOLINE`. What sits between the leaves and the BIOS is GEMDOS's own
+ * console state: a TYPEAHEAD queue, a per-device COLUMN counter, TAB expansion, the `^X` echo and
+ * the `Cconrs` line editor.
+ *
+ * THE STATE IS SIZED FOR EXACTLY THREE DEVICES, and `GEMDOS_CONSOLE_INIT` says so in straight-line
+ * code: it writes p_uft[0..3] = -1,-1,-2,-3 and then initialises three typeahead counts, three read
+ * pointers and three write pointers, one instruction each. So a standard handle outside -3..-1
+ * indexes off every one of these tables — see `src/gemdos/console.c` for the three facts that make
+ * refusing it right (the dispatcher redirects every handle above 0, `Fforce` refuses 0..5, and what
+ * is left is any NEGATIVE byte a program stores). */
+#define GEMDOS_CCONIN         0xfc8ff2
+#define GEMDOS_CCONIN_FN      0x01
+#define GEMDOS_CCONOUT        0xfc8e1c
+#define GEMDOS_CCONOUT_FN     0x02
+#define GEMDOS_CAUXIN         0xfc903e
+#define GEMDOS_CAUXIN_FN      0x03
+#define GEMDOS_CAUXOUT        0xfc8ed2
+#define GEMDOS_CAUXOUT_FN     0x04
+#define GEMDOS_CPRNOUT        0xfc8efa
+#define GEMDOS_CPRNOUT_FN     0x05
+#define GEMDOS_CRAWIO         0xfc9062
+#define GEMDOS_CRAWIO_FN      0x06
+#define GEMDOS_CRAWCIN        0xfc8faa
+#define GEMDOS_CRAWCIN_FN     0x07
+#define GEMDOS_CNECIN         0xfc900c
+#define GEMDOS_CNECIN_FN      0x08
+#define GEMDOS_CCONWS         0xfc90c2      /* ...and GEMDOS_CCONWS_FN is above, with the table */
+#define GEMDOS_CCONRS         0xfc91ea
+#define GEMDOS_CCONIS         0xfc8b70
+#define GEMDOS_CCONIS_FN      0x0b
+#define GEMDOS_CCONOS         0xfc8b8a
+#define GEMDOS_CCONOS_FN      0x10
+#define GEMDOS_CPRNOS         0xfc8bae
+#define GEMDOS_CPRNOS_FN      0x11
+#define GEMDOS_CAUXIS         0xfc8bd2
+#define GEMDOS_CAUXIS_FN      0x12
+#define GEMDOS_CAUXOS         0xfc8bee
+#define GEMDOS_CAUXOS_FN      0x13
+
+/* The layer under them. None is a dispatch-table entry — each is a `bsr` from the leaf above it —
+ * so they are named here for the cases and the name map rather than for a function number. */
+#define GEMDOS_DEVICE_INPUT_STATUS 0xfc8b44 /* typeahead pending, else `Bconstat` */
+#define GEMDOS_TYPEAHEAD_DRAIN  0xfc8c12    /* the poll every output makes FIRST: ^S/^Q/^C/^X */
+#define GEMDOS_TYPEAHEAD_RESET  0xfc8d4e    /* count := 0 and both pointers back to the buffer */
+#define GEMDOS_DEVICE_PUT       0xfc8d96    /* drain, `Bconout`, then track the column */
+#define GEMDOS_DEVICE_PUT_TAB   0xfc8e3c    /* ...with TAB expanded to the next multiple of 8 */
+#define GEMDOS_DEVICE_PUT_ECHO  0xfc8e88    /* ...and with a control code echoed as `^` + letter */
+#define GEMDOS_DEVICE_GET       0xfc8f22    /* the typeahead queue if it has a record, else `Bconin` */
+#define GEMDOS_DEVICE_GET_ECHOING 0xfc8fc6  /* ...and the same read echoed back RAW (`Cconin`) */
+#define GEMDOS_DEVICE_PUT_STRING 0xfc90e2   /* `Cconws`' loop, one sign-extended byte at a time */
+#define GEMDOS_DEVICE_NEW_LINE  0xfc910c    /* CR, LF, then N spaces — `Cconrs`' ^U and ^R redraw */
+#define GEMDOS_DEVICE_ERASE     0xfc9152    /* one character rubbed out: BS, space, BS to a column */
+#define GEMDOS_DEVICE_READ_LINE 0xfc9226    /* the line editor itself */
+#define GEMDOS_CONSOLE_INIT     0xfc9356    /* what sizes all of the above at three devices */
+
+/* WHICH standard handle each leaf reads, as the index into `BASEPAGE_HANDLES` the ROM's own
+ * displacement names, and what turns one into a BIOS device number. */
+#define GEMDOS_STDIN          0
+#define GEMDOS_STDOUT         1
+#define GEMDOS_STDAUX         2
+#define GEMDOS_STDPRN         3
+#define GEMDOS_HANDLE_TO_DEVICE 3       /* `addq.w #3,(sp)` on the sign-extended handle byte */
+#define GEMDOS_CONSOLE_DEVICES 3        /* ...and how many devices the state below is sized for */
+
+/* GEMDOS's own console state, all of it indexed by that device number. */
+#define GEMDOS_DEVICE_COLUMN  0x68f4    /* word[3]: which column the device's cursor is in */
+#define GEMDOS_DEVICE_COLUMN_BYTES 2
+#define GEMDOS_TYPEAHEAD_COUNT 0x756c   /* byte[3]: records queued ahead of the reader */
+#define GEMDOS_TYPEAHEAD_COUNT_BYTES 1
+#define GEMDOS_TYPEAHEAD_READ 0x8830    /* long[3]: where the next record comes OUT */
+#define GEMDOS_TYPEAHEAD_WRITE 0x8896   /* long[3]: ...and where the next one goes IN */
+#define GEMDOS_TYPEAHEAD_POINTER_BYTES 4
+#define GEMDOS_TYPEAHEAD_BUFFER 0x83c0  /* the three queues themselves, one after another */
+#define GEMDOS_TYPEAHEAD_BUFFER_BYTES 320
+#define GEMDOS_TYPEAHEAD_RECORD_BYTES 4 /* one whole `Bconin` longword, scancode half included */
+#define GEMDOS_TYPEAHEAD_MAX  80        /* `cmpi.b #80` — a SIGNED byte compare on the count */
+#define GEMDOS_TYPEAHEAD_READY 0xffffffffu  /* `moveq #-1`: Cconis' answer when a record is queued */
+
+/* `Cconrs`' buffer, which is a length-prefixed line: the caller's maximum, the length GEMDOS writes
+ * back, and then the characters. The maximum is read as an UNSIGNED byte (`ext.w` then `andi.w
+ * #255`) while the length written back is a plain `move.b`. */
+#define GEMDOS_CCONRS_MAX     0
+#define GEMDOS_CCONRS_LENGTH  1
+#define GEMDOS_CCONRS_TEXT    2
+
+/* The line editor's KEY SET, as the ROM's own two tables hold it: nine longwords compared with
+ * `cmp.l (a0)+` under a `dbeq`, and nine arm addresses 32 bytes past where that search stops. The
+ * ninth key is 0 and its arm is the DEFAULT arm, which is what makes "no match" and "matched the
+ * ninth" the same branch. */
+#define GEMDOS_LINE_EDITOR_KEYS 0xfd3018
+#define GEMDOS_LINE_EDITOR_ARMS 0xfd303c
+#define GEMDOS_LINE_EDITOR_KEY_COUNT 9
+
+/* ...and the codes themselves, by their ASCII names. `CON_BS`, `CON_TAB`, `CON_LF` and `CON_CR` are
+ * named with the VT52 console above; these are the rest of what this layer tests for. */
+#define CON_ETX               0x03      /* ^C — ends the process through `GEMDOS_PTERM` */
+#define CON_DC1               0x11      /* ^Q — resume output */
+#define CON_DC2               0x12      /* ^R — retype the line */
+#define CON_DC3               0x13      /* ^S — hold output: read on, blocking, until ^Q */
+#define CON_NAK               0x15      /* ^U — kill the line */
+#define CON_CAN               0x18      /* ^X — kill the line by rubbing it out */
+#define CON_DEL               0x7f      /* ...and DEL, which is BS */
+#define CON_SPACE             0x20
+#define CON_HASH              0x23      /* what ^U and ^R print before redrawing */
+#define CON_CARET             0x5e      /* ...and the `^` a control code is echoed as */
+#define CON_CONTROL_LETTER    0x40      /* `or.w #64`: ^A echoes as '^' then 'A' */
+#define CON_CONTROL_WIDTH     2         /* ...so a control code occupies two columns */
+#define CON_TAB_PHASE_MASK    0x0007    /* `and.w #7`: the tab loop ends when the column is a stop */
+#define GEMDOS_CTRLC_STATUS   0xffe0    /* `Pterm(-32)`, the word both ^C arms push */
+#define GEMDOS_CRAWIO_READ    0x00ff    /* `Crawio`'s whole argument WORD, not just its low byte */
+
+/* ---- the GEMDOS MEMORY MANAGER (selectors $48..$4a, and the five routines under them) -----------
+ *
+ * `src/gemdos/memory.c`; the STRUCTURES it reads — the MPB, the descriptors and the record pool —
+ * are `include/gemdos_memory.h`'s. The addresses are here because this header is the one the
+ * registries key on: `test_boot_snapshot.py` pairs every `<NAME>`/`<NAME>_FN` it finds against the
+ * ROM's own dispatch table, and `bench/tier3.py` names a row by the same pair. A routine whose
+ * address lived anywhere else would be a row nothing could label and an entry nothing could pin. */
+#define GEMDOS_MALLOC         0xfc8aae
+#define GEMDOS_MALLOC_FN      0x48
+#define GEMDOS_MFREE          0xfc8afc
+#define GEMDOS_MFREE_FN       0x49
+#define GEMDOS_MSHRINK        0xfc895a
+#define GEMDOS_MSHRINK_FN     0x4a
+/* ...and the five with no function number at all: GEMDOS's own C calls them by name, so nothing
+ * dispatches them and `bench/tier3.py` labels them by what they are instead. */
+#define GEMDOS_MD_ALLOC       0xfc886a  /* the next-fit search, the split and the two lists */
+#define GEMDOS_MD_FREE_INSERT 0xfc89dc  /* ...and the sorted insert with its two coalescing merges */
+#define GEMDOS_POOL_ARENA_ALLOC 0xfc7ed0 /* the bump arena the descriptors themselves come out of */
+#define GEMDOS_POOL_GET       0xfc7f1a  /* one ZEROED record of a size class, chain or arena */
+#define GEMDOS_POOL_FREE      0xfc7f9c  /* ...and back onto the chain its header word names */
+
 #endif /* TOS102US_ADDRS_H */

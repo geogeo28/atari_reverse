@@ -336,7 +336,83 @@ accesses in the whole range** — GEMDOS reaches the disk only through the BIOS.
 RAM: `p_root` `$7E9C` and `p_run` `$87CE` (both published in the OS header), the process
 table indexed at `0x8380` (`0xFC9534`), `0x8066` (`0xFC959A`), the current-process index word
 at `$87CC`, the supervisor stack top `0x16CE`, and a call-depth counter at `$68FA`
-(`0xFC94E8`). The full extent of the GEMDOS BSS was not established.
+(`0xFC94E8`). The full extent of the GEMDOS BSS was not established — but the MEMORY MANAGER's
+part of it now is (see below).
+
+**The memory manager's own RAM**, established by the recreate's GEMDOS memory group
+(`recreate/src/gemdos/memory.c`, `recreate/include/gemdos_memory.h`):
+
+| range | what | evidence |
+|---|---|---|
+| `$7E8E..$7E99` | GEMDOS's own **MPB** — `mp_mfl`, `mp_mal`, `mp_rover` | `Mfree` `0xFC8B04` reads `mp_mal` at `$7E92`; `Malloc` `0xFC8ACA` passes `$7E8E` to `md_alloc`; GEMDOS's init `0xFC935E` hands `$7E8E` to BIOS `Getmpb` |
+| `$7E9C..` | **`p_root`** is an ARRAY, one free-chain head per record SIZE CLASS — not a single list head | `0xFC7F30`/`0xFC7FB6` index it as `p_root + (int16)class * 4`; class 1 is the 16-byte memory descriptor, class 16 the 256-byte basepage the init cuts at `0xFC9376`. `p_root[0..21]` are zero in the snapshot and other GEMDOS data starts at `$7EF4` |
+| `$2A6E..$68ED` | the **record arena** every descriptor, basepage and file-system record is bump-allocated from | `0xFC7EFE` adds `$2A6E`; the init writes `move.w #8000,$8780` at `0xFC936E`, so 16,000 bytes |
+| `$68F0` | words handed out so far (the bump cursor), two bytes above the arena's top | `0xFC7EF2`/`0xFC7F08` |
+| `$8780` | ...and words remaining; `used + left == 8000` on the captured machine | `0xFC7EDC`/`0xFC7EEC` |
+
+A **memory descriptor is not an array slot**: it is an 18-byte arena record (a class word, then
+`m_link`/`m_start`/`m_length`/`m_own`), recycled through `p_root[1]`. That is where TOS 1.02's
+"out of memory descriptors" comes from — `Malloc` refuses a SPLIT when the arena is spent, over
+RAM that is plainly free, and `Mshrink` does not check at all and stores the remainder's fields
+through a null pointer into the reset vectors. Both are reproduced rather than corrected
+(`recreate/test/test_gemdos_memory_mshrink.py`).
+
+The one descriptor that is NOT an arena record is `$048E`, the fixed quartet BIOS `Getmpb`
+builds — it is on the captured machine's ALLOCATED list, because GEMDOS's init passed its own MPB
+to `Getmpb` and then allocated out of it.
+
+**The trap entry's own RAM, and THE PROCESS FRAME**, established by the recreate's GEMDOS
+trap/dispatcher group (`recreate/src/gemdos/trap1.S`, `dispatch.c`, `leaves.c`). The entry does not
+use a shared save area the way the BIOS dispatcher's `savptr` does — it frames the calling process
+into ITS OWN BASEPAGE and onto the caller's own stack, because a GEMDOS call is the one a process
+can be destroyed inside of:
+
+| basepage offset | field | evidence |
+|---|---|---|
+| `+$20` | `p_dta` | `Fgetdta` `0xFC6CA4`, `Fsetdta` `0xFC6CB6` |
+| `+$24` | `p_parent` | `Pterm` `0xFC805A` reassigns `p_run` from it |
+| `+$30..$35` | `p_uft`, the six STANDARD HANDLES | `Fforce` `0xFC5328` writes one; the dispatcher's redirection reads one at `0xFC9794`/`0xFC9972` |
+| `+$36`, `+$37` | `p_lddrv`, `p_curdrv` | `Dgetdrv` `0xFC6CEA`, `Dsetdrv` `0xFC6CCE` |
+| `+$68..$77` | D0, A3, A4, A5 — saved before the entry has a stack to save them on | `0xFC4F92`; the epilogue's `movem.l $68(a5),d0/a3-a6` at `0xFC500E` restores five |
+| `+$78` | A6, which had to be pushed first so it could become `p_run` | `0xFC4F98` |
+| `+$7C` | -> the REST of the frame, 50 bytes on the caller's own stack: the other stack pointer, the SR, the return PC, then D1-D7/A0-A2 | `0xFC4FB4`/`0xFC4FD0`; `lea 50(a5),a0` at `0xFC4FBE` is both the frame's length and the way back up to the caller's argument words |
+
+...so a GEMDOS call hands the caller back EVERY register (D0 is the result), where a BIOS call hands
+back nine. `0xFC4FE8`, the epilogue, is a SECOND ENTRY POINT: `Pterm` `0xFC8076` reassigns `p_run`
+to the parent, plants the exit code in the parent's `+$68`, and `jsr`s there, so the frame unwound
+is the parent's and the `rte` resumes whoever called the parent's own GEMDOS call.
+
+**The rest of GEMDOS's BSS that this group established**, which with the memory manager's block
+above leaves little of `$68F0..$8840` unaccounted for:
+
+| address | what | evidence |
+|---|---|---|
+| `$0EB0` | where `0xFC4EAC`'s trampoline parks its return address across a `trap #13` — GEMDOS reaches the BIOS this way, `Dsetdrv` `0xFC6CD6` included | `0xFC4EAC` |
+| `$68FA` | the call-depth counter: CLEARED and then BUMPED, at a label the termination path branches back to | `0xFC94E8`, `0xFC94EE` |
+| `$68FC` | the sub-second accumulator the 200 Hz tick rolls into the time word at 2,000 | `0xFC9CD8`, `0xFC9CDE` |
+| `$75B0` | GEMDOS's own TIME word | `Tgettime` `0xFC9EA6`, `Tsettime` `0xFC9EF4`, the tick `0xFC9CF2` |
+| `$7DEE` | one longword per process slot, walked when a process ends | `0xFC95B2` |
+| `$7EF4` | the process-termination record `0xFC4F38` arms — three longwords of the dispatcher's own 68000 frame, which `Pterm` longjmps back to | `0xFC950A` |
+| `$8066` | one flag byte per process slot | `0xFC959E` |
+| `$8092` | the OPEN FILE DESCRIPTORS, ten bytes each, indexed from handle 6 | `0xFC9950` |
+| `$879C` | a longword the timer tick accumulates ticks into (role not established beyond that) | `0xFC9CCE` |
+| `$8840` | GEMDOS's own DATE word, seeded from `os_dosdate` | `Tgetdate` `0xFC9E1E`, `Tsetdate` `0xFC9E8A`, `0xFC0460` |
+
+**GEMDOS keeps its own clock and does not ask the hardware for it.** `0xFC9CC0` is hooked onto
+`etv_timer` (the chain at `0xFC4EF6`, which tails into the saved vector at `$16D2`) and advances
+`$879C`, `$68FC`, `$75B0` and the date — which is why `Tgetdate` and `Tgettime` are one RAM word
+each, and why `Tsetdate`/`Tsettime` have to publish what they store BACK to the 6301 through XBIOS
+`Settime` (`0xFC50B4`, a `trap #14`).
+
+**The ARGUMENT-DESCRIPTOR word** at `+4` of each record does two jobs. Its low two bits are an
+argument-frame CLASS — the dispatcher copies 4, 8, 12 or 14 bytes of the caller's words onto the
+stack before the `jsr`, in four straight-line arms at `0xFC9BB6`, `0xFC9BD8`, `0xFC9C0A` and
+`0xFC9C4E` — and bit 7 marks a call whose argument is a HANDLE. For the character-device group
+(selectors 1..11 and 16..19, carved out by the four compares at `0xFC9762..0xFC9784`) the low seven
+bits are a STANDARD HANDLE NUMBER: `$80`->0 stdin, `$81`->1 stdout, `$82`->2 stdaux, `$83`->3 stdprn.
+The dispatcher looks that handle up in `p_uft` and either takes the 19-entry table at `0xFD328A`
+(the handle has been `Fforce`d to a file, so `Cconin` becomes an `Fread`) or REWRITES the descriptor
+to 1 for `Cconws`/`Cconrs` and 0 for the rest and calls the handler directly (`0xFC98FE`).
 
 ### vdi + linea — `0xFC9F0C..0xFD2F21`
 
