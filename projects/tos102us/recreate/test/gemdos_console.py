@@ -22,12 +22,11 @@ import ctypes
 import struct
 from collections import namedtuple
 
-from harness import BASE_IMAGE, _lib, addrs, make_image
+from harness import BASE_IMAGE, _lib, addrs
 
 import case
 import gemdos
 import staging
-import trap
 
 # The D0 a case enters with. `Cconws` over an empty string and `Cconrs` with a zero maximum hand it
 # straight back, and every other leaf must NOT — so it is marked rather than zero, and distinct from
@@ -40,10 +39,8 @@ MARKED_D0 = 0xC0DE_0000
 # `gemdos.py`'s shared argument list took the first half of the gap between them. This is the second
 # half, and the two asserts are what say so rather than a comment nobody re-reads: a band that grew
 # into either neighbour would stage a case's buffer over another battery's words.
-BAND = staging.SCRATCH + 0x600
 BAND_BYTES = 0x200
-assert gemdos.GEMDOS_BAND + gemdos.GEMDOS_BAND_BYTES <= BAND
-assert BAND + BAND_BYTES <= trap.TRAP_BAND
+BAND = staging.band(0x600, BAND_BYTES, "test/gemdos_console.py")
 
 STRING_AT = BAND                    # `Cconws`' string
 LINE_AT = BAND + 0x100              # ...and `Cconrs`' length-prefixed buffer
@@ -238,28 +235,8 @@ def run(spec, **overrides):
     pokes = _pokes(spec)
     info = case.run(leaf.entry, {**_regs(spec), "_pokes": pokes}, glue, poison=False,
                     io_seed=spec.get("io_seed"), psg_seed=spec.get("psg_seed"))
-    info["final"] = _final(pokes, info)
+    info["final"] = case.final_image(info, pokes)
     return info
-
-
-def _final(pokes, info):
-    """The image the ORACLE ended with: the staged one, with its own write ledger laid over it.
-
-    `harness.differential` hands a battery the ledger rather than the image, and the queue's three
-    fields are read TOGETHER (`queue_state`) — a field the run did not touch has to read as what the
-    case staged rather than raise, which `case.written` cannot do. The ledger IS the final value at
-    every address it names, so the two together are the run's last state.
-
-    A run that overflowed the ledger would make that false SILENTLY, so it is refused here rather
-    than quietly reconstructed from a partial list.
-    """
-    assert not info["regs"].get("writes_truncated"), (
-        "the oracle's write ledger overflowed, so the image rebuilt from it would be missing stores "
-        "— shorten the run or read the fields this case needs out of `info[\"writes\"]` directly")
-    image = make_image(pokes)
-    for at, value in info["writes"].items():
-        image[at] = value
-    return image
 
 
 def registered(spec):

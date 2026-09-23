@@ -68,6 +68,10 @@ import test_bios_vbl                                       # noqa: E402
 # arrangement under GEMDOS names), and the SLICE trampoline a dispatcher row is entered at, because
 # `$fc973e` is inside a frame nothing can enter directly (`gemdos.ROUTINE_OF_TRAMPOLINE`).
 import gemdos                                              # noqa: E402
+# ...and GEMDOS wave 2's process module, for the SECOND slice trampoline: `Pexec` past the
+# termination record it arms is entered through a stub of its own, which costs two instructions
+# where the dispatcher's costs three (`SLICE_ENTRY_COST` below).
+import gemdos_process                                      # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -567,6 +571,22 @@ PERF_ACCEPTED = {
     # call with no trap on our side to cover it. The entries that accepted those are deleted rather
     # than re-pinned: `test_no_pinned_ratio_is_stale` reds on an acceptance whose row has come back
     # under the bar, which is what caught them.
+
+    # ---- the PROCESS group (GEMDOS wave 2) ----
+    # ONE entry out of the wave's seventeen priced rows; everything else in the file-system and
+    # process groups lands at or under 1.04. `gemdos_resync_clock` was accepted here at 1.18 on a
+    # rationale that blamed the ledger — "two `movep`s and a loop become 42 calls" — which was true
+    # of the calls and false about the excess: what cost the cycles was the two digit buffers kept
+    # as IMAGE OFFSETS and swapped each pass, which made `image + offset` a per-digit recomputation
+    # and `read_clock_digits` an out-of-line six-register call. Respelt as `uint8_t *`
+    # (`src/gemdos/process.c`) the row measures 1.04 with the same reads in the same order, so the
+    # acceptance is DELETED rather than re-pinned — `test_no_pinned_ratio_is_stale`'s own rule.
+    ("gemdos_pexec", "a refused mode"): (
+        1.75, "(A), at the size where a ratio is a poor instrument. The whole routine on this arm "
+              "is two `tst.w 8(a6)` and a `moveq #-32,d0` — 104 cycles; our C is handed an image "
+              "pointer and four arguments it never reads, and loading them off the frame is the "
+              "entire excess of 78 cycles. The structural lever is (A)'s: a shipped build with the "
+              "base fixed at 0."),
 }
 
 # ---- THE LEAF RULE — the rows where a ratio is the wrong instrument ------------------------------
@@ -890,6 +910,51 @@ CALL = {
     "GEMDOS_MALLOC": Call((IMAGE, arg_long(0)), RETURNS_LONG),
     "GEMDOS_MFREE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
     "GEMDOS_MSHRINK": Call((IMAGE, arg_long(2), arg_long(6)), RETURNS_LONG),
+    # ---- the FILE SYSTEM (GEMDOS wave 2) ----
+    # The two name-layer leaves and the matcher take the CALLER'S OWN D0 as well as their argument,
+    # for mechanism (D)'s reason: each writes only part of the register and hands the rest back, so
+    # a `uint16_t` core would agree with a reconstruction that had cleared a half the ROM preserves
+    # (`src/gemdos/fs_name.c`). The first two touch the image not at all.
+    "GEMDOS_FS_TOUPPER": Call((ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_FS_LOG2": Call((ENTRY_D0, arg_word(0)), RETURNS_LONG),
+    "GEMDOS_CLUSTER_RECORD": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_LONG),
+    "GEMDOS_NAME_MATCH": Call((ENTRY_D0, IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_BUILD_FCB_NAME": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_NOTHING),
+    # ...and the three that reach the disk, each through the ROM's own `trap #13` on target
+    # (`src/gemdos/fs_disk.c`): the case stages the driver the vectors name, so both columns run it.
+    #
+    # THEIR ~1.00 IS A RATIO OF THE WHOLE CALL AND NOT OF THE CORE, and it is worth saying where the
+    # rows are. The staged `hdv_rw` stub copies 512 bytes at 22 cycles a byte, so ~11k of each of
+    # these ~13k columns is the same driver on both shores; the core's own share is ~1-2k, and a
+    # change to it moves the printed ratio by a fraction of what it moved the core by. NETTING THE
+    # STUB OUT is the fix and is PARKED (`recreate/STATUS.md`): it wants a per-row `staged_entry`
+    # measured from a zero-count `Rwabs`, which is a bench change rather than a case one.
+    "GEMDOS_BUFFER_FLUSH": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    "GEMDOS_RWABS_DATA": Call((IMAGE, arg_word(0), arg_word(2), arg_word(4), arg_long(6),
+                               arg_long(10)), RETURNS_NOTHING),
+    "GEMDOS_BUFFER_GET": Call((IMAGE, arg_word(0), arg_long(2), arg_word(6)), RETURNS_LONG),
+    # ---- the PROCESS group and the HANDLE machinery (GEMDOS wave 2) ----
+    # A handle is SIGNED everywhere in this group — the bound `Fforce` applies is `bge`/`ble` over
+    # -1..5 — so its argument words are `arg_signed_word` and its C parameters are `int16_t`
+    # (`src/gemdos/handles.c`).
+    "GEMDOS_FFORCE": Call((IMAGE, arg_signed_word(0), arg_signed_word(2)), RETURNS_LONG),
+    "GEMDOS_FORCE_HANDLE": Call((IMAGE, arg_signed_word(0), arg_signed_word(2), arg_long(4)),
+                                RETURNS_LONG),
+    "GEMDOS_FDUP": Call((IMAGE, arg_signed_word(0)), RETURNS_LONG),
+    "GEMDOS_FCLOSE": Call((IMAGE, arg_signed_word(0)), RETURNS_LONG),
+    "GEMDOS_RELEASE_PROCESS": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    # ...and the one routine here whose whole input is a chip: the Mega ST's battery clock, read
+    # through the declared I/O map with the register written back (`src/gemdos/process.c`).
+    "GEMDOS_RESYNC_CLOCK": Call((IMAGE,), RETURNS_NOTHING),
+    "GEMDOS_INHERIT_CURDIR": Call((IMAGE, arg_signed_word(0), arg_signed_word(2), arg_long(4)),
+                                  RETURNS_NOTHING),
+    # `Pexec`'s own frame is the dispatcher's widest class: a mode WORD and three longwords. The
+    # slice past the termination record takes the same four, because it is the same frame one
+    # routine along (`test/gemdos_process.py`, `pexec_args`).
+    "GEMDOS_PEXEC": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6), arg_long(10)),
+                         RETURNS_LONG),
+    "GEMDOS_PEXEC_CREATE": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6), arg_long(10)),
+                                RETURNS_LONG),
 }
 
 # Cases this file adds to the verified set, in `VERIFIED_CASES`' own shape.
@@ -957,7 +1022,14 @@ UNNUMBERED_ROUTINE_NAMES = {
                  "KBD_SCANCODE", "KBD_QUEUE_KEY",
                  "GEMDOS_POOL_ARENA_ALLOC", "GEMDOS_POOL_GET", "GEMDOS_POOL_FREE",
                  "GEMDOS_MD_ALLOC", "GEMDOS_MD_FREE_INSERT",
-                 "GEMDOS_DISPATCH", "GEMDOS_DISPATCH_SELECTOR", "GEMDOS_UNIMPLEMENTED")}
+                 "GEMDOS_DISPATCH", "GEMDOS_DISPATCH_SELECTOR", "GEMDOS_UNIMPLEMENTED",
+                 # ...and GEMDOS wave 2's, which are the same kind: the file system's eight cores
+                 # and the process group's five, all of them called BY NAME out of GEMDOS's own C.
+                 "GEMDOS_FS_TOUPPER", "GEMDOS_FS_LOG2", "GEMDOS_CLUSTER_RECORD",
+                 "GEMDOS_NAME_MATCH", "GEMDOS_BUILD_FCB_NAME", "GEMDOS_BUFFER_FLUSH",
+                 "GEMDOS_RWABS_DATA", "GEMDOS_BUFFER_GET",
+                 "GEMDOS_RELEASE_PROCESS", "GEMDOS_FORCE_HANDLE", "GEMDOS_INHERIT_CURDIR",
+                 "GEMDOS_RESYNC_CLOCK", "GEMDOS_PEXEC_CREATE")}
 
 # ...and what each IS, for the label: the SLOT it is installed in, the caller that falls into it, or
 # what the routine does.
@@ -975,12 +1047,40 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_DISPATCH": "GEMDOS dispatcher",
     "GEMDOS_DISPATCH_SELECTOR": "GEMDOS dispatcher, past the record",
     "GEMDOS_UNIMPLEMENTED": "GEMDOS undefined selector",
+    "GEMDOS_FS_TOUPPER": "GEMDOS upper case",
+    "GEMDOS_FS_LOG2": "GEMDOS log2",
+    "GEMDOS_CLUSTER_RECORD": "GEMDOS cluster -> record",
+    "GEMDOS_NAME_MATCH": "GEMDOS 8.3 name match",
+    "GEMDOS_BUILD_FCB_NAME": "GEMDOS 8.3 name build",
+    "GEMDOS_BUFFER_FLUSH": "GEMDOS buffer flush",
+    "GEMDOS_RWABS_DATA": "GEMDOS data transfer",
+    "GEMDOS_BUFFER_GET": "GEMDOS buffer cache",
+    "GEMDOS_RELEASE_PROCESS": "GEMDOS process release",
+    "GEMDOS_FORCE_HANDLE": "GEMDOS Fforce body",
+    "GEMDOS_INHERIT_CURDIR": "GEMDOS curdir inherit",
+    "GEMDOS_RESYNC_CLOCK": "GEMDOS clock resync",
+    "GEMDOS_PEXEC_CREATE": "GEMDOS Pexec, past the record",
 }
 
 # How a TRANSCRIPTION row names itself, keyed by the blob symbol: `src/bios/trap.S`'s entries and
 # `src/gemdos/trap1.S` in one map, because `_transcription_row` reads one list of labels and each
 # wave's module owns its own (`trap.LABELS`, `gemdos.LABELS`).
 TRANSCRIPTION_LABELS = {**trap.LABELS, **gemdos.LABELS}
+
+
+# ...and what each SLICE TRAMPOLINE costs, which is not one number. A slice case is entered at a
+# stub in the staging band because the routine it is about is inside a frame its own prologue
+# opened, and the stub sits in the ORIGINAL's column alone — our build is called as a C function and
+# never runs it. The dispatcher's stub is THREE instructions (it stands the selector in the frame as
+# well) and `Pexec`'s is two, so the one shared constant `_row` used to net every slice by cannot
+# serve both. Each module MEASURES its own against the oracle (`test_gemdos_dispatch.py`,
+# `test_gemdos_process_pexec.py`); this is where the two meet, keyed by the trampoline exactly as
+# `gemdos.ROUTINE_OF_TRAMPOLINE` is.
+SLICE_ENTRY_COST = {gemdos.TRAMPOLINE_AT: gemdos.SLICE_ENTRY_COST,
+                    gemdos_process.SLICE_TRAMPOLINE_AT: gemdos_process.SLICE_ENTRY_COST}
+assert set(SLICE_ENTRY_COST) == set(gemdos.ROUTINE_OF_TRAMPOLINE), (
+    "a slice trampoline has a routine and no cost, or a cost and no routine — the two maps are "
+    "keyed by the same addresses, and a missing cost would net a row by the wrong stub in silence")
 
 
 def _entered_routine(entry):
@@ -1081,9 +1181,21 @@ def _pokes_for(call, pokes):
     return {**pokes, POINTER_STORAGE: frame}
 
 
+def _stop_pc(case):
+    """The PC a case's differential stops at, or 0 for a routine that reaches its own `rts`."""
+    return test_boot_snapshot.fields(case)[7]
+
+
 def _row(case):
-    """One `VERIFIED_CASES` entry as a bench row, or None when no `CALL` entry says how to call it."""
-    name, entry, regs, pokes, psg_seed, io_seed, schedule = case
+    """One `VERIFIED_CASES` entry as a bench row, or None when this file cannot make one.
+
+    Two reasons it cannot, and they are different failures: no `CALL` entry says how to call the
+    routine — which `UNPRICED` reds on — or the case is a CHECKPOINT, which no `CALL` entry could
+    rescue. Tier 3 runs both columns to the routine's own `rts`, and `Pterm` has none.
+    """
+    name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = test_boot_snapshot.fields(case)
+    if stop_pc:
+        return None
     call = CALL.get(_routine(entry))
     if call is None:
         return None
@@ -1096,7 +1208,7 @@ def _row(case):
     if handler:
         address, staged_entry = handler.entry, isr.STAGED_ENTRY_COST
     elif slice_of:
-        address, staged_entry = slice_of, gemdos.SLICE_ENTRY_COST
+        address, staged_entry = slice_of, SLICE_ENTRY_COST[entry]
     else:
         address, staged_entry = None, (0, 0)
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
@@ -1144,8 +1256,13 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
-UNPRICED = tuple(case[0] for case, row in zip(ALL_CASES, (_row(c) for c in ALL_CASES))
-                 if row is None)
+UNPRICED = tuple(case[0] for case in ALL_CASES
+                 if not _stop_pc(case) and _row(case) is None)
+# ...and the ones it does not price for a reason no `CALL` entry could answer: a CHECKPOINT case
+# stops at a PC instead of at an `rts`, so there is no second column to measure. Listed rather than
+# silent — the table prints them under itself — but NOT in `UNPRICED`, because that list is the
+# gate's "somebody forgot to say how this is called" and these are said.
+CHECKPOINTS = tuple(case[0] for case in ALL_CASES if _stop_pc(case))
 
 
 def measure(row, bench):
@@ -1286,6 +1403,10 @@ def table(bench):
                      f"{m.ratio:>8.2f}  {'' if state == 'ok' else state}")
         if state in FAILED:
             failed.append((row, state))
+    if CHECKPOINTS:
+        lines.append("")
+        lines.append(f"{len(CHECKPOINTS)} verified case(s) are CHECKPOINTS and have no second "
+                     f"column: {', '.join(CHECKPOINTS)}")
     if UNPRICED:
         lines.append("")
         lines.append(f"{len(UNPRICED)} verified case(s) with NO row here: {', '.join(UNPRICED)}")

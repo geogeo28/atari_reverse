@@ -29,10 +29,32 @@ $(BENCH_ELF): $(wildcard atari/shim_include/*.h) atari/target.mk
 # again only when the tool that defines the stop point changes.
 SNAPSHOT := build/boot_ram.bin
 
-# On include/addrs.h too: tools/addrs.py parses it, so the machine's size and the vector slot the
-# capture stops in are read from there — a snapshot captured before an edit to it is a capture of a
-# different machine than the one the cases describe.
-$(SNAPSHOT): tools/boot_snapshot.py tools/addrs.py include/addrs.h
+# WHAT THE CAPTURE REALLY DEPENDS ON, which is not include/addrs.h. tools/boot_snapshot.py parses
+# that header, but it reads exactly TWO of its nine hundred constants — the machine's size and the
+# vector slot the capture stops in — and every wave edits the header. A prerequisite on the whole
+# file therefore re-ran 15 s of real emulation for an edit to a GEMDOS address the capture never
+# looks at, and, with two agents' makes running in one tree, made them race on the capture (wave 8:
+# the first one failed at $cc46 while the second was writing the file).
+#
+# So the prerequisite is a CONTENT STAMP of those two values, rewritten only when it differs — and
+# the ROM itself, which really is an input and was not named at all.
+SNAPSHOT_INPUTS := build/snapshot_inputs.txt
+SNAPSHOT_CONSTANTS := ST_RAM_BYTES VECTOR_VBL
+ROM_IMAGE := ../../../tools/hatari/TOS102US.img
+
+.PHONY: snapshot-inputs
+snapshot-inputs:
+	@mkdir -p $(dir $(SNAPSHOT_INPUTS))
+	@$(PY) tools/addrs.py $(SNAPSHOT_CONSTANTS) > $(SNAPSHOT_INPUTS).new
+	@cmp -s $(SNAPSHOT_INPUTS).new $(SNAPSHOT_INPUTS) \
+	  && rm -f $(SNAPSHOT_INPUTS).new \
+	  || mv $(SNAPSHOT_INPUTS).new $(SNAPSHOT_INPUTS)
+
+# An order-only-free dependency on the phony above: the recipe runs every make, and the FILE's
+# timestamp moves only when one of the two values really changed.
+$(SNAPSHOT_INPUTS): snapshot-inputs ;
+
+$(SNAPSHOT): tools/boot_snapshot.py $(SNAPSHOT_INPUTS) $(ROM_IMAGE)
 	$(PY) tools/boot_snapshot.py --out $@
 
 .PHONY: snapshot

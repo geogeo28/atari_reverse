@@ -48,7 +48,6 @@ import abi
 import case
 import staging
 import test_xbios_supexec as supexec
-import trap
 from harness import BASE_IMAGE, _lib, addrs, emu
 
 # ---- the band this module and its batteries stage into -------------------------------------------
@@ -56,14 +55,12 @@ from harness import BASE_IMAGE, _lib, addrs, emu
 # block and Protobt's boot sector at +0, Keytbl's tables at +0x100, Supexec's decoys as far as
 # +0xc06). Declared as one span so a battery can say which part of it is its own, and covered by
 # `test_boot_snapshot.py`'s claim that the whole staging band is dead RAM in this capture.
-ISR_BAND = staging.SCRATCH + 0xD00
 ISR_BAND_BYTES = 0x300
-assert ISR_BAND + ISR_BAND_BYTES <= staging.SCRATCH + staging.SCRATCH_BYTES
-# ...and clear of the two bands BELOW it, which is the bound a comment was holding: a collision
-# there would corrupt a trampoline for BOTH cores at once — green on the byte diff, because both
-# read the same wrong image. The trap dispatcher's battery owns [+0x800, +0xc00) (`test/trap.py`),
-# and Supexec's decoys sit at +0x800, +0xa00 and +0xc00 with a stub apiece above them.
-assert trap.TRAP_BAND + trap.TRAP_BAND_BYTES <= ISR_BAND
+ISR_BAND = staging.band(0xD00, ISR_BAND_BYTES, "test/isr.py")
+# ...and clear of Supexec's DECOYS, which `staging.band` cannot see: they are planted at +0x800,
+# +0xa00 and +0xc00 deliberately, inside other batteries' bands, so they are not a claimed band and
+# this is the one place their top edge is held. A collision there would corrupt a trampoline for
+# BOTH cores at once — green on the byte diff, because both read the same wrong image.
 assert (supexec.STUB_AT + max(supexec.DECOY_ALTERNATIVES) + supexec.DECOY_STUB_BYTES
         <= ISR_BAND), "Supexec's decoys reach into the band this module stages in"
 
@@ -424,13 +421,9 @@ _UNSTAGED = []                      # ...and addresses the candidate jumped to t
 # `CALLS` below is the PLAIN pass's, which is the one every claim here is about.
 _PASSES = []
 CALLS = []
-# How many calls one candidate run may make before the list stops growing. A handler that LOOPS —
-# the ACIA's `btst #4,$fffa01 / beq` is a real one — calls a staged routine per pass, and the
-# reconstruction is host code with no instruction cap the way the oracle has: a defect in that
-# condition is an endless loop, and an unbounded record of it is an endless ALLOCATION (measured
-# during this wave's mutation sweep: a mutant that polled the wrong GPIP bit reached 15 GB before it
-# was killed). Far above any case here, so a run under the cap is an ordinary run.
-CALLS_MAX = 1 << 16
+# The cap on one candidate run's recording is `case.CALLS_MAX`, which says why. A handler that LOOPS
+# (the ACIA's `btst #4,$fffa01 / beq` is a real one) calls a staged routine per pass, and an
+# unbounded record of a defect in that condition is an endless ALLOCATION.
 
 
 def _dispatch(buf, routine, argument):
@@ -441,7 +434,7 @@ def _dispatch(buf, routine, argument):
     if not _PASSES:
         _UNSTAGED.append(routine)
         return
-    if len(_PASSES[-1]) < CALLS_MAX:
+    if len(_PASSES[-1]) < case.CALLS_MAX:
         _PASSES[-1].append((routine, argument))
     effect = _STAGED.get(routine)
     if effect is None:

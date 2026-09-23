@@ -46,6 +46,12 @@ uint32_t bios_bcostat(uint8_t *image, uint32_t entry_d0, uint16_t device);
 /* $fc0a2e — which drives exist, as one bit each. `Dsetdrv` answers with it. */
 uint32_t bios_drvmap(const uint8_t *image);
 
+/* $fc0a72 — read an exception vector, and replace it unless `handler` is negative. `src/bios/
+ * setexc.c`. GEMDOS's second caller outside the BIOS and the first that is not a character device:
+ * `Pterm` reads the terminate vector through it with `handler = -1` before it calls what is there
+ * (`src/gemdos/process.c`). It takes no `entry_d0` because it writes the whole register itself. */
+uint32_t bios_setexc(uint8_t *image, uint16_t vector, uint32_t handler);
+
 #ifndef RECREATE_HOST_DIFFERENTIAL
 /* ---- the trampoline's frame, on target ---------------------------------------------------------
  *
@@ -88,6 +94,25 @@ static inline uint32_t bios_trap_device(uint16_t fn, uint16_t device)
                       "addq.l #4,%%sp"
                       : "=d"(result)
                       : "d"(device), "i"(fn)
+                      : BIOS_TRAP_CLOBBERS);
+    return result;
+}
+
+/* fn, vector, handler — `Setexc` ($05): a word, a word and a LONGWORD, so eight bytes of frame.
+ * The ROM's own caller drops only four of them, because the other four are the Alcyon outgoing
+ * slot it pushed before the call (`src/gemdos/process.c`); a C caller pushed all eight and drops
+ * all eight. What is on the stack when the trap is taken is the same either way. */
+static inline uint32_t bios_trap_vector(uint16_t fn, uint16_t vector, uint32_t handler)
+{
+    register uint32_t result __asm__("d0");
+
+    __asm__ volatile ("move.l %1,-(%%sp)\n\t"
+                      "move.w %2,-(%%sp)\n\t"
+                      "move.w %3,-(%%sp)\n\t"
+                      "trap #13\n\t"
+                      "addq.l #8,%%sp"
+                      : "=d"(result)
+                      : "d"(handler), "d"(vector), "i"(fn)
                       : BIOS_TRAP_CLOBBERS);
     return result;
 }

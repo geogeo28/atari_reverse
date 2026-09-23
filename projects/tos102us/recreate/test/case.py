@@ -13,7 +13,17 @@ staging that is the same for all of them.
 import struct
 
 import abi
-from harness import differential, report
+from harness import differential, make_image, report
+
+# How many calls ONE candidate run's recording may grow to before the list stops growing. Three
+# modules hook a door the reconstruction calls out through (`test/isr.py`'s vectors, `test/gemdos.py`'s
+# handlers, `test/gemdos_fs.py`'s disk driver) and each needs the same cap, for the same reason: the
+# reconstruction is host code with no instruction cap the way the oracle has, so a defect that leaves
+# a dispatched call looping is an endless ALLOCATION rather than a failure. A mutant that polled the
+# wrong GPIP bit reached 15 GB before it was killed (measured in the BIOS wave's sweep). Far above
+# any case in this project, so a run under the cap is an ordinary run — and ONE constant, because
+# three copies is three numbers to raise the day a case legitimately needs more.
+CALLS_MAX = 1 << 16
 
 # The width of a result, as the C signature declares it. A core that returns nothing (`void` — the
 # ROM routine sets no result, or reports only through memory) says so with `None`, which is a claim
@@ -134,3 +144,25 @@ def long_args(*values):
     """The argument LONGWORDS, which is what GEMDOS takes where the BIOS takes words — a DTA
     pointer, a block address, the MPB the allocator core is handed beside its own argument."""
     return args(f">{len(values)}I", *(value & 0xFFFF_FFFF for value in values))
+
+
+def final_image(info, pokes):
+    """The image the ORACLE ended with: the staged one, with its own write ledger laid over it.
+
+    `harness.differential` hands a battery the write LEDGER rather than the final image, which is the
+    sharper thing for a field the routine stores — a `KeyError` names a field nothing wrote — but a
+    case that asserts about a LIST, a queue or a whole sector is mostly reading bytes it poked and
+    the routine left alone. The ledger IS the final value at every address it names, so the two
+    layers together are the run's last state.
+
+    A run that overflowed the ledger would make that false SILENTLY, so it is refused here rather
+    than quietly reconstructed from a partial list. Six batteries had a private copy of these four
+    lines and only one of them carried that refusal.
+    """
+    assert not info["regs"].get("writes_truncated"), (
+        "the oracle's write ledger overflowed, so the image rebuilt from it would be missing stores "
+        "— shorten the run or read the fields this case needs out of `info[\"writes\"]` directly")
+    image = make_image(pokes)
+    for at, value in info["writes"].items():
+        image[at] = value
+    return image

@@ -47,9 +47,8 @@ from opcodes import (COPY_LONG_ABSOLUTE, DROP_STACK_BYTES, LOAD_ADDRESS_IMMEDIAT
 # which part of the staging band is its own: the pointer-argument batteries fill it from the bottom
 # (Getmpb's and Protobt's buffers at +0, Keytbl's tables at +0x100..+0x300) and the interrupt
 # handlers' trampolines take the top (+0xd00). This sits between them.
-TRAP_BAND = staging.SCRATCH + 0x800
 TRAP_BAND_BYTES = 0x400
-assert TRAP_BAND + TRAP_BAND_BYTES <= staging.SCRATCH + staging.SCRATCH_BYTES
+TRAP_BAND = staging.band(0x800, TRAP_BAND_BYTES, "test/trap.py")
 
 CALLER_AT = TRAP_BAND               # the caller above: a hand-built frame, and a jump through (sp)
 TRAP_CALLER_AT = TRAP_BAND + 0x40   # ...and the same caller through a real `trap #13`

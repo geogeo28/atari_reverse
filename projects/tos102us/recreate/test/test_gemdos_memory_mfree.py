@@ -17,7 +17,7 @@ import ctypes
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, make_image
+from harness import BASE_IMAGE, _lib, addrs
 
 import case
 import gemdos_memory as mem
@@ -45,10 +45,7 @@ BETWEEN_TWO_FREE = mem.stage(mem.fill((mem.FREE, BLOCK), (mem.USED, BLOCK), (mem
 def after(info, staged):
     """The image as the ORACLE left it — the staged pool with the run's own stores applied, which is
     what a case asserting about the LIST rather than about one field has to walk."""
-    image = make_image(staged.pokes)
-    for address, value in info["writes"].items():
-        image[address] = value
-    return image
+    return case.final_image(info, staged.pokes)
 
 
 def mfree(address, pokes=None, settled=()):

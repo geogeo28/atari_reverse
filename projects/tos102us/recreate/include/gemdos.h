@@ -25,19 +25,69 @@ static inline uint32_t gemdos_basepage(const uint8_t *image)
     return be32(image + GEMDOS_P_RUN);
 }
 
-/* One of the six STANDARD HANDLES, as the signed byte it is: 0..5 are the process's own, and
- * $ff/$fe/$fd are the console, AUX: and PRN: devices a fresh process starts with.
+/* ---- reaching a basepage, and THE host-only bound ------------------------------------------------
  *
- * The bound is HOST-ONLY, the way the kit prescribes (kit.mk: "asserted where there is a process to
- * abort"): `p_run` is an ordinary longword of RAM a case may stage anywhere, so a basepage pointed
- * outside the machine walks off the image here where the original walks its own address space. */
+ * THE BOUND IS HOST-ONLY, the way the kit prescribes (kit.mk: "asserted where there is a process to
+ * abort"): `p_run`, a `Pexec` argument and a basepage field are ordinary longwords of RAM a case may
+ * stage anywhere, so a basepage pointed outside the machine walks off the image array here where the
+ * original walks its own address space. It is spelt ONCE, below, and every accessor in this header
+ * and in the process group goes through it — six copies of the same `assert` across `process.c` and
+ * `handles.c` were six places for the width to be written differently.
+ */
+static inline void gemdos_assert_inside_ram(uint32_t at, uint32_t width)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    assert(at + width <= ST_RAM_BYTES);
+#else
+    (void)at;
+    (void)width;
+#endif
+}
+
+/* `width` bytes of the image at `at` — the door every accessor below reaches the array through, and
+ * what a core that indexes an arbitrary address (`Pexec` copying an environment, building the
+ * child's stack) uses directly. */
+static inline uint8_t *gemdos_image_bytes(uint8_t *image, uint32_t at, uint32_t width)
+{
+    gemdos_assert_inside_ram(at, width);
+    return image + at;
+}
+
+static inline uint8_t *gemdos_image_byte(uint8_t *image, uint32_t at)
+{
+    return gemdos_image_bytes(image, at, 1);
+}
+
+/* One LONGWORD field of a basepage that is not necessarily `p_run`'s — the dying process's, or the
+ * child `Pexec` has just cut. */
+static inline uint32_t gemdos_basepage_field(const uint8_t *image, uint32_t basepage, uint32_t field)
+{
+    uint32_t at = addr_add(basepage, field);
+
+    gemdos_assert_inside_ram(at, 4);
+    return be32(image + at);
+}
+
+static inline void gemdos_set_basepage_field(uint8_t *image, uint32_t basepage, uint32_t field,
+                                             uint32_t value)
+{
+    wr32(gemdos_image_bytes(image, addr_add(basepage, field), 4), value);
+}
+
+/* ...and one BYTE of it: a standard handle, a `p_curdir` entry, the command tail. */
+static inline uint8_t *gemdos_basepage_byte(uint8_t *image, uint32_t basepage, uint32_t field)
+{
+    return gemdos_image_byte(image, addr_add(basepage, field));
+}
+
+/* One of the six STANDARD HANDLES of the RUNNING process, as the signed byte it is: 0..5 are the
+ * process's own, and $ff/$fe/$fd are the console, AUX: and PRN: devices a fresh process starts
+ * with. `handles.c` writes where this reads, through `gemdos_basepage_byte` above. */
 static inline int8_t gemdos_standard_handle(const uint8_t *image, unsigned standard)
 {
     uint32_t handle_at = addr_add(gemdos_basepage(image), BASEPAGE_HANDLES + standard);
 
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    assert(handle_at < ST_RAM_BYTES);
-#endif
+    gemdos_assert_inside_ram(handle_at, 1);
     return (int8_t)image[handle_at];
 }
 

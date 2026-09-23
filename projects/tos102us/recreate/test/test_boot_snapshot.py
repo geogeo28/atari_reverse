@@ -107,6 +107,19 @@ import gemdos                                               # noqa: E402
 import gemdos_console                                       # noqa: E402
 import gemdos_memory                                        # noqa: E402
 
+# ...and GEMDOS WAVE 2, which is the same arrangement over two more groups: the FILE SYSTEM over a
+# staged RAM disk (`test/gemdos_fs.py` is its shared shape, and the disk's own span is claimed by
+# `test_gemdos_fs_disk.py` rather than declared here), and the PROCESS group with the handle
+# machinery under it (`test/gemdos_process.py`, which also carries the three CHECKPOINT rows — the
+# terminators, which stop at a PC instead of an `rts`).
+import test_gemdos_fs_disk                                  # noqa: E402,F401  (registers its rows)
+import test_gemdos_fs_name                                  # noqa: E402
+import test_gemdos_handles                                  # noqa: E402,F401
+import test_gemdos_process                                  # noqa: E402,F401
+import test_gemdos_process_pexec                            # noqa: E402,F401
+import gemdos_fs                                            # noqa: E402
+import gemdos_process                                       # noqa: E402
+
 import abi                                                 # noqa: E402
 import case                                                # noqa: E402
 import iorec                                               # noqa: E402
@@ -296,10 +309,10 @@ def test_a_verified_function_reads_no_io_byte_the_model_does_not_serve():
     applies to it exactly as to the rest — it is kept out of `VERIFIED_CASES` because `bench/
     tier3.py` reds on a verified case it cannot make a row for, which is a fact about the table
     rather than about the case."""
-    for name, entry, regs, pokes, psg_seed, io_seed, schedule in (VERIFIED_CASES
-                                                                 + tuple(gemdos.UNPRICED)):
+    for row in VERIFIED_CASES + tuple(gemdos.UNPRICED):
+        name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(row)
         _final, _writes, o_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
-                                          io_seed=io_seed, schedule=schedule)
+                                          io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
         assert o_regs["io_unmodeled_reads"] == 0, (
             f"{name} read {o_regs['io_unmodeled_reads']} unmodelled I/O byte(s), the first at "
             f"{o_regs['io_unmodeled_first']:#x}")
@@ -383,7 +396,13 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                # devices' columns and typeahead queues; and the memory manager's pool.
                *gemdos.CASE_FIELDS,
                *gemdos_console.CASE_SPANS,
-               *gemdos_memory.CASE_SPANS)
+               *gemdos_memory.CASE_SPANS,
+               # ...and GEMDOS wave 2's: the file system's vectors and error words, the two FCB
+               # buffers its name layer works in, and the process group's handle table, directory
+               # reference counts and terminate vector.
+               *gemdos_fs.CASE_FIELDS,
+               *test_gemdos_fs_name.CASE_FIELDS,
+               *gemdos_process.CASE_SPANS)
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():
@@ -412,6 +431,21 @@ def _scrambled_base(seed):
 # LIST is the point — a function added without a line here is one the mask stops covering — and it
 # is a table rather than a call apiece because the case below runs each of them twice.
 #
+# THE EIGHTH FIELD IS `stop_pc`, AND IT IS OPTIONAL. Every row that ends at the routine's own `rts`
+# carries seven fields and is read as `stop_pc = 0`; a row that CANNOT — `Pterm`, `Pterm0` and
+# `Ptermres` never return, which is the whole of what they are — carries the PC its differential
+# stops at instead (`test/gemdos_process.py`, `register_checkpoint`). One reader below gives the
+# eight fields whichever shape a row is written in, so adding the field did not mean rewriting a
+# hundred rows that have nothing to say about it, and every consumer asks for it the same way.
+
+
+def fields(row):
+    """One `VERIFIED_CASES` row as its eight fields, defaulting `stop_pc` to 0 — see above."""
+    name, entry, regs, pokes, psg_seed, io_seed, schedule, *checkpoint = row
+    return (name, entry, regs, pokes, psg_seed, io_seed, schedule,
+            checkpoint[0] if checkpoint else 0)
+
+
 # A SCHEDULE HERE IS READ-TRIGGERED, and the case below refuses any other kind. These rows are run at
 # BOTH of the oracle's doors — `emu.run` for the sweeps in this file and for `bench/tier3.py`'s
 # original column, `emu.run_bench` for the cross-compiled build beside it — and a `pc` trigger names
@@ -654,6 +688,14 @@ VERIFIED_CASES = (
     *memory_malloc.VERIFIED_CASES,
     *memory_mfree.VERIFIED_CASES,
     *memory_mshrink.VERIFIED_CASES,
+    # ...and GEMDOS WAVE 2's three CHECKPOINT rows, which are the eighth field's whole reason: a
+    # terminator has no `rts`, so its row carries the PC its run stops at and everything here reads
+    # it through `fields()` above. They are ordinary rows in every other respect — the mask sweep
+    # and the unmodelled-I/O sweep run them exactly as they run the rest — and `bench/tier3.py`
+    # takes them as CHECKPOINTS rather than as cases nobody priced (Tier 3 runs both columns to an
+    # `rts` there is still none of). The file system's and the handle group's own rows arrive with
+    # the rest of `gemdos.CASES` above.
+    *gemdos_process.CHECKPOINT_CASES,
 )
 
 
@@ -666,7 +708,8 @@ def test_every_scheduled_case_is_read_triggered():
     instruction-cap overrun rather than as the case being unrunnable at that door. Refused here, once,
     rather than by every consumer (`emu.run_bench` refuses it too, one level down).
     """
-    for name, *_rest, schedule in VERIFIED_CASES:
+    for row in VERIFIED_CASES:
+        name, *_rest, schedule, _stop_pc = fields(row)
         for entry in schedule:
             assert "read" in entry, (
                 f"{name} schedules {entry}, which is not a `read` trigger — a Tier 3 row runs this "
@@ -679,11 +722,11 @@ def _oracle_outputs(base, case):
     Its registers at rts, the set of addresses it wrote, the bytes it left at them, and its ordered
     PSG access ledger — i.e. every surface a differential compares, gathered from the oracle alone.
     """
-    _name, entry, regs, pokes, psg_seed, io_seed, schedule = case
+    _name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(case)
     previous = set_base_image(base)
     try:
         final, writes, out_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
-                                          io_seed=io_seed, schedule=schedule)
+                                          io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
     finally:
         set_base_image(previous)
     written = sorted(set(writes))

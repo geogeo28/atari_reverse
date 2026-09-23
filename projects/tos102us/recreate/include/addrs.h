@@ -1033,13 +1033,36 @@
  * layout; everything from $30 up is what GEMDOS keeps there about the running process, and the three
  * save slots are the trap entry's — it has nowhere else to put D0/A3-A6 before it has a stack. */
 #define GEMDOS_P_RUN          0x87ce    /* long: -> the current process's basepage (OS header +$28) */
+/* The published twelve, as `Pexec` fills them ($fc8370 onwards) and the loader and the child's own
+ * startup read them. `p_tbase` is also where the basepage CLEAR starts — 256 bytes from +8, which
+ * runs eight bytes past the basepage's own end. */
+#define BASEPAGE_LOWTPA       0x00      /* long: the basepage itself */
+#define BASEPAGE_HITPA        0x04      /* long: ...+ the TPA's length; the child's stack top */
+#define BASEPAGE_TBASE        0x08      /* long: the entry point Pexec pushes for the child */
+#define BASEPAGE_TLEN         0x0c
+#define BASEPAGE_DBASE        0x10      /* long: ...which the child is handed in A5 */
+#define BASEPAGE_DLEN         0x14
+#define BASEPAGE_BBASE        0x18      /* long: ...and this one in A4 */
+#define BASEPAGE_BLEN         0x1c
 #define BASEPAGE_DTA          0x20      /* long: Fgetdta/Fsetdta, and the whole of both routines */
+#define BASEPAGE_PARENT       0x24      /* long: p_parent — `Pterm` $fc805a reassigns p_run from it */
+#define BASEPAGE_ENV          0x2c      /* long: p_env, the block `Pexec` cuts and copies */
 #define BASEPAGE_HANDLES      0x30      /* 6 bytes: p_uft, the standard handles 0..5 that */
                                         /*    `Fforce` ($fc52de, its entry) stores into */
 #define BASEPAGE_STANDARD_HANDLES 6
 #define BASEPAGE_LDDRV        0x36      /* byte */
 #define BASEPAGE_CURDRV       0x37      /* byte: Dgetdrv reports it, Dsetdrv stores it */
+/* 16 bytes: p_curdir, one DIRECTORY NODE per drive. Each byte indexes `GEMDOS_CURDIR_REFCOUNTS`,
+ * which `Pexec` bumps ($fc51de) and a process's release drops ($fc80ea). */
+#define BASEPAGE_CURDIR       0x40
+#define BASEPAGE_CURDIR_ENTRIES 16
+/* 128 bytes: the COMMAND TAIL, a length byte and up to 125 characters — and the default DTA, which
+ * `Pexec` points at this same address ($fc83b2). */
+#define BASEPAGE_COMMAND_TAIL 0x80
 #define BASEPAGE_SAVED_D0     0x68      /* long: D0, then A3, A4, A5 — the trap entry's save area */
+#define BASEPAGE_SAVED_A3     0x6c
+#define BASEPAGE_SAVED_A4     0x70      /* ...which `Pexec` seeds with p_bbase, so a child starts */
+#define BASEPAGE_SAVED_A5     0x74      /*    with A4 = BSS and A5 = DATA ($fc85a4/$fc85b2) */
 #define BASEPAGE_SAVED_A6     0x78      /* long: ...A6, which it had to push to free a base register */
 #define BASEPAGE_SAVED_FRAME  0x7c      /* long: -> the register frame on the caller's own stack */
 #define BASEPAGE_SAVED_REGISTERS 5      /* d0/a3-a6, as the returning `movem.l $68(a5)` reads them */
@@ -1060,6 +1083,11 @@
  * STANDARD HANDLE the redirection consults ($80 -> 0 stdin, $81 -> 1 stdout, $82 -> 2 stdaux,
  * $83 -> 3 stdprn). */
 #define GEMDOS_DESC_HANDLE    0x80      /* `btst #7,<descriptor low byte>` at $fc991a */
+/* ...and the ONE descriptor whose handle is not the first argument word: $81 is `Fseek`, whose
+ * first argument is a longword offset, so its handle is the THIRD word (`cmpi.w #129` at $fc9924).
+ * `Fread` and `Fwrite` are $82 and take theirs first. */
+#define GEMDOS_DESC_HANDLE_AT_THIRD_WORD 0x81
+#define GEMDOS_ARGUMENT_THIRD_WORD 6
 #define GEMDOS_DESC_ARGUMENT_MASK 0x7f  /* `andi.w #127` at $fc9ba8 — what is left is 0..3 */
 #define GEMDOS_ARGUMENT_CLASSES 4
 /* ...and the four frames themselves, in bytes, as the four arms at $fc9bb6/$fc9bd8/$fc9c0a/$fc9c4e
@@ -1082,15 +1110,27 @@
 #define GEMDOS_CCONWS_FN      0x09
 #define GEMDOS_CCONRS_FN      0x0a
 
-/* The OPEN FILE DESCRIPTORS a resolved handle names, and the two process tables the termination
- * path walks. Named because the dispatcher indexes them; nothing here reconstructs them. */
-#define GEMDOS_OFD_TABLE      0x8092    /* handle 6.. -> (handle - 6) * 10 + here ($fc9950) */
-#define GEMDOS_OFD_STRIDE     10
+/* The HANDLE RECORDS $8092 holds — ten bytes each, whose own first longword POINTS at the 64-byte
+ * open file descriptor the file system keeps (or, negative, names a character device). Named because
+ * the dispatcher indexes them; `src/gemdos/handles.c` walks them, and nothing here follows that
+ * pointer. NOT the OFD itself, which is `include/gemdos_fs.h`'s and keeps the `OFD_` prefix. */
+#define GEMDOS_HANDLE_TABLE   0x8092    /* handle 6.. -> (handle - 6) * 10 + here ($fc9950) */
+#define GEMDOS_HANDLE_STRIDE  10
 #define GEMDOS_FIRST_FILE_HANDLE 6
-#define GEMDOS_PROCESS_ID     0x87cc    /* word: which slot of the tables below is running */
-#define GEMDOS_PROCESS_TABLE  0x8380    /* longwords, indexed by GEMDOS_PROCESS_ID */
-#define GEMDOS_PROCESS_FLAGS  0x8066    /* one byte a slot */
-#define GEMDOS_PROCESS_OWNERS 0x7dee    /* longwords, one a slot */
+/* CORRECTED BY THE PROCESS WAVE, and the correction is what this group's own routines pin: $8066 is
+ * not indexed by a process at all. `gemdos_inherit_curdir` ($fc51de) bumps `$8066[node]` and
+ * `gemdos_release_process` ($fc80ea) drops it, in both cases with `node` read out of a basepage's
+ * `p_curdir` — so it is one REFERENCE COUNT PER DIRECTORY NODE, and $7dee is the node table those
+ * counts are about. See `src/gemdos/process.c`.
+ *
+ * THREE CONSTANTS WAVE 7 PUT HERE HAVE BEEN DELETED, all three read off a "process table" that is
+ * not one and none of them with a user in any core or case: `GEMDOS_PROCESS_ID` ($87cc, which is
+ * really `GEMDOS_DISK_ERROR_DRIVE` — the file-system wave found the ROM storing a DRIVE there),
+ * `GEMDOS_PROCESS_TABLE` ($8380, the per-drive DMD table) and `GEMDOS_PROCESS_OWNERS` ($7dee, the
+ * DIRECTORY NODE table). The latter two are named in `../names.txt` (`gemdos_dmd_table`,
+ * `gemdos_directory_nodes`) and come back here the day a core reads one; `test/test_addrs.py` now
+ * refuses a second name for one address, which is what $87cc had. */
+#define GEMDOS_CURDIR_REFCOUNTS 0x8066  /* one byte per directory node: how many basepages hold it */
 
 /* The RAM-ONLY LEAVES this wave reconstructs, and the two words two of them are the whole of. */
 #define GEMDOS_DATE           0x8840    /* word: the DOS date, seeded from os_dosdate at $fc0460 */
@@ -1116,9 +1156,6 @@
 #define GEMDOS_TSETTIME_STORE 0xfc9ef4
 #define GEMDOS_FGETDTA        0xfc6c9a
 #define GEMDOS_SVERSION       0xfc9348
-#define GEMDOS_PTERM0         0xfc8086  /* read only: the process-termination group, not reconstructed */
-#define GEMDOS_PTERM          0xfc8028
-#define GEMDOS_PTERMRES       0xfc7fd8
 
 /* The selectors the cases drive, by number. The table above is indexed by these, so a case naming a
  * handler and a case naming a selector cannot drift apart. */
@@ -1154,6 +1191,9 @@
 #define GEMDOS_DATE_LEAP_DAYS 29
 #define GEMDOS_TIME_SECOND_MASK 0x1f
 #define GEMDOS_TIME_MAX_SECOND 30       /* `cmp.w #30 / blt` on the two-second field */
+#define GEMDOS_TIME_SECOND_SHIFT 0     /* ...in TWO-second units, which is the `asr.w #1` */
+#define GEMDOS_TIME_MINUTE_SHIFT 5
+#define GEMDOS_TIME_HOUR_SHIFT 11
 #define GEMDOS_TIME_MINUTE_MASK 0x07e0
 #define GEMDOS_TIME_MAX_MINUTE 0x0780   /* 60 << 5, compared without shifting the field down */
 #define GEMDOS_TIME_HOUR_MASK 0xf800
@@ -1295,5 +1335,93 @@
 #define GEMDOS_POOL_ARENA_ALLOC 0xfc7ed0 /* the bump arena the descriptors themselves come out of */
 #define GEMDOS_POOL_GET       0xfc7f1a  /* one ZEROED record of a size class, chain or arena */
 #define GEMDOS_POOL_FREE      0xfc7f9c  /* ...and back onto the chain its header word names */
+
+/* ---- the GEMDOS FILE SYSTEM ($fc5216..$fc7cce) --------------------------------------------------
+ *
+ * `src/gemdos/fs_disk.c` (the buffer cache over BIOS `Rwabs`) and `src/gemdos/fs_name.c` (the 8.3
+ * name layer, which touches no disk at all); the STRUCTURES they read — the BPB, the drive media
+ * descriptor, the buffer control block, the directory node and the open-file descriptor — are
+ * `include/gemdos_fs.h`'s, by the wave's one-header-per-subsystem rule. The addresses are here for
+ * `include/gemdos_memory.h`'s reason: this header is the one the registries key on.
+ *
+ * None of these carries a `_FN`: GEMDOS's own C calls them by name, so nothing dispatches them. */
+#define GEMDOS_FS_LOG2        0xfc539a  /* `asr` until the word is 0, minus 1 — log2 of a power of 2 */
+#define GEMDOS_FS_TOUPPER     0xfc50ca  /* 'a'..'z' -> `& 0x5f`, everything else through unchanged */
+#define GEMDOS_CLUSTER_RECORD 0xfc55e6  /* cluster * `m_clsiz` — the pseudo-record a cluster starts at */
+#define GEMDOS_BUFFER_FLUSH   0xfc590a  /* one dirty BCB back to the disk (a FAT buffer goes twice) */
+#define GEMDOS_RWABS_DATA     0xfc59f2  /* a span of DATA records straight to `Rwabs`, cache flushed */
+#define GEMDOS_BUFFER_GET     0xfc5a98  /* THE buffer cache: hit, media change, LRU evict, re-read */
+#define GEMDOS_NAME_MATCH     0xfc5c9a  /* one 11-byte FCB pattern against one directory entry */
+#define GEMDOS_BUILD_FCB_NAME 0xfc5d28  /* "name.ext" -> the 11-byte padded FCB form, `*` expanded */
+
+/* WHERE EACH OF THIS GROUP'S BIOS CALLS RETURNS TO — the longword `GEMDOS_BIOS_TRAMPOLINE` parks,
+ * one per call site, exactly as `src/gemdos/console.c` keeps its fourteen. Each is the address of
+ * the instruction after a `jsr GEMDOS_BIOS_TRAMPOLINE`, which `gemdos.bios_call_site` re-checks
+ * against the ROM's own instruction stream. */
+#define BIOS_RETURN_BUFFER_FLUSH 0xfc5966    /* $fc5960: the buffer's own record */
+#define BIOS_RETURN_BUFFER_FLUSH_FAT1 0xfc59b8 /* $fc59b2: ...and the FIRST FAT copy, `m_fsiz` below */
+#define BIOS_RETURN_RWABS_DATA 0xfc5a60      /* $fc5a5a */
+#define BIOS_RETURN_BUFFER_READ 0xfc5b84     /* $fc5b7e: the miss that fills an evicted buffer */
+#define BIOS_RETURN_BUFFER_MEDIACH 0xfc5bd6  /* $fc5bd0: the hit's media-change interrogation */
+
+/* The two BIOS entries this group reaches that `include/bcon.h` does not declare, because they are
+ * not reconstructed BIOS cores at all: entries 4, 7 and 9 of the table at `$fc0846` have bit 31 set
+ * and the dispatcher's `movea.l (a0),a0` turns each into a jump through a RAM VECTOR, so what runs
+ * is whatever the boot (or a hard-disk driver) left there. `BIOS_RWABS_FN`/`HDV_RWABS` are above,
+ * with the dispatcher battery that first exercised the indirection. */
+#define BIOS_GETBPB_FN        7
+#define HDV_BPB               0x472     /* long: `hdv_bpb`, the entry at $fc0846 + 4 + 7*4 points at */
+#define BIOS_MEDIACH_FN       9
+#define HDV_MEDIACH           0x47e     /* long: `hdv_mediach`, likewise for entry 9 */
+/* ...and what `Mediach` answers, which is a three-way protocol rather than a flag. */
+#define MEDIACH_UNCHANGED     0         /* the medium is definitely the same one */
+#define MEDIACH_MAYBE         1         /* ...might have changed: `GEMDOS_BUFFER_GET` re-reads */
+#define MEDIACH_CHANGED       2         /* ...definitely has: E_CHNG, and the call longjmps out */
+
+/* GEMDOS's own file-system RAM. */
+#define SYSVAR_BUFL           0x4b2     /* long[2]: the BCB list heads — [0] FAT, [1] dir AND data */
+#define SYSVAR_BUFL_ENTRY_BYTES 4
+#define GEMDOS_DISK_ERROR     0x75b4    /* long: the last BIOS disk result, kept for the longjmp */
+#define GEMDOS_DISK_ERROR_DRIVE 0x87cc  /* word: ...and which drive it came from */
+/* ...as the LONGWORD the ROM stores, because that is the form both sides compare: `$fc5bf2` is a
+ * `move.l #-14,$75b4`, and a signed spelling would not survive `tools/addrs.py`, which binds plain
+ * integers only (a name bound to half a value is worse than a missing one). */
+#define E_CHNG_LONG           0xfffffff2u
+
+/* ---- the GEMDOS PROCESS group and the HANDLE machinery under it ---------------------------------
+ *
+ * `src/gemdos/process.c` and `src/gemdos/handles.c`; the STRUCTURES — the open-file descriptor and
+ * what a handle means — are `include/gemdos_process.h`'s, and the BASEPAGE's own offsets are up
+ * with the rest of the basepage above. The addresses are here for the registries' sake, exactly as
+ * the memory manager's are: `test_boot_snapshot.py` pairs every `<NAME>`/`<NAME>_FN` against the
+ * ROM's own dispatch table and `bench/tier3.py` labels a row by the same pair. */
+#define GEMDOS_PTERM          0xfc8028
+#define GEMDOS_PTERM_FN       0x4c
+#define GEMDOS_PTERM0         0xfc8086
+#define GEMDOS_PTERM0_FN      0x00
+#define GEMDOS_PTERMRES       0xfc7fd8
+#define GEMDOS_PTERMRES_FN    0x31
+#define GEMDOS_PEXEC          0xfc817a  /* ...and GEMDOS_PEXEC_FN is above, with the table */
+#define GEMDOS_FDUP           0xfc5216
+#define GEMDOS_FDUP_FN        0x45
+#define GEMDOS_FFORCE         0xfc52de
+#define GEMDOS_FFORCE_FN      0x46
+#define GEMDOS_FCLOSE         0xfc56c6
+#define GEMDOS_FCLOSE_FN      0x3e
+/* ...and the five with no function number: GEMDOS's own C calls each by name. `GEMDOS_PEXEC_CREATE`
+ * is `Pexec` PAST the termination record it arms, which is where a case can enter it at all — the
+ * dispatcher's own split, for the dispatcher's reason (`src/gemdos/dispatch.c`). */
+#define GEMDOS_PEXEC_CREATE   0xfc8242
+#define GEMDOS_RELEASE_PROCESS 0xfc8092 /* handles, descriptors, directories and memory, given back */
+#define GEMDOS_FORCE_HANDLE   0xfc52f8  /* `Fforce`'s body, over a basepage the caller names */
+#define GEMDOS_INHERIT_CURDIR 0xfc51de  /* one p_curdir entry copied, and its node's count bumped */
+#define GEMDOS_RESYNC_CLOCK   0xfc5092  /* the Mega ST battery clock re-read, which only Pterm does */
+/* Read only, for the cases and the name map: the trampoline `Pterm` reaches the terminate vector
+ * through, the BIOS's battery-clock probe under `GEMDOS_RESYNC_CLOCK`, and GEMDOS's own setjmp and
+ * longjmp — the dispatcher arms the record with the first and the FILE SYSTEM's critical-error
+ * abort is what jumps to it with the second. `Pterm` uses neither. */
+#define GEMDOS_CALL_TERM_VECTOR 0xfc4f0a
+#define BIOS_RTC_PROBE        0xfc4c0c
+#define GEMDOS_LONGJMP        0xfc4f54
 
 #endif /* TOS102US_ADDRS_H */

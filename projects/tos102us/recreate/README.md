@@ -174,6 +174,70 @@ assert info["ret"] == info["regs"]["d0"]
 * **Off-image effects are compared automatically**: the PSG access ledger and register file, the
   hardware read and write ledgers, the scheduled-write wait counts.
 
+## A STAGED RAM DISK — the shape the file system needed
+
+Every case above proves a routine over the captured machine's own RAM. The GEMDOS file system
+cannot be proved that way: its whole subject is a medium, and the machine this snapshot came from
+has a blank floppy in drive A: that no case may spin.
+
+**What makes a disk stageable is where GEMDOS stops.** It makes no hardware access at all, and
+reaches a disk through exactly three BIOS calls — `Rwabs`, `Getbpb`, `Mediach` — which are the
+dispatch table's INDIRECT entries: entries 4, 7 and 9 of `$fc0846` have bit 31 set, and the
+dispatcher's `movea.l (a0),a0` turns each into a jump through a RAM VECTOR (`hdv_rw` `$476`,
+`hdv_bpb` `$472`, `hdv_mediach` `$47e`). Those three longwords are ordinary system variables, so a
+case pokes them — and from that moment the ROM's own file system is running against a disk the case
+built, with no hardware touched by either shore and no model of a floppy anywhere.
+
+**It is the RAM-VECTOR PAIR one layer down** — the arrangement `test/isr.py` already makes for the
+routines an interrupt handler calls, and `include/staged_call.h` for the handler's own side:
+
+* for the ORACLE, three real 68000 stubs in the case's band, which copy sectors to and from an image
+  poked into free RAM, answer a pointer to a staged BPB record, and answer the MEDIA-CHANGE LONGWORD
+  the case poked — which is what makes all three arms of that protocol reachable, the ROM's own
+  truncation of it to a word included. They
+  are hand-built from named opcode words (`test/gemdos_fs.py`, the shape `gemdos.slice_trampoline`
+  uses), assembled offline by `m68k-elf-as` to get them right, and pinned by EXECUTION: a stub
+  reading `recno` or the buffer pointer from the wrong stack slot transfers the wrong sector, and
+  the candidate — handed the same arguments by C — transfers the right one, so the byte diff reds;
+* for the CANDIDATE, a hook the case binds to `recreate_call_disk_vector` (`include/gemdos_fs.h`),
+  with the same three effects in Python over the same image bytes.
+
+**The disk is COMPARED IMAGE, and that is the whole of why this works.** The sectors, the buffer
+control blocks, their 512-byte buffers, the drive media descriptor and the staged BPB are all
+ordinary RAM inside the differential's byte compare — so "the ROM wrote this sector and we did not",
+"we wrote it to the wrong record", "we kept a buffer the ROM invalidated" are all ordinary red
+diffs. Nothing is excluded, nothing is waived, and the harness needed no new door.
+
+**What it costs is a fourth tenant of the free window.** `project.toml` declares three
+(`stack_top`, `bench_base`, `staging_base`) and `RomBench._vet_tenancy` refuses an overlap between
+them. A FAT12 floppy does not fit in the 4 KB case band, so the disk takes 44 KB at `$68000` and
+says so by arithmetic instead: `test_gemdos_fs_disk.py` asserts the span is clear of all three and
+that the captured snapshot leaves every byte of it zero. Growing `staging_bytes` so the kit's own
+vet covers it is the tidier answer and is not an agent's edit to make.
+
+**Inside the 4 KB case band, a battery that needs several buffers at once CLAIMS a band**, through
+`test/staging.py`'s `band(offset, size, owner)` — which refuses an overlap with every band already
+claimed, whoever claimed it, and answers the address. Six modules claim one and the 4 KB is now full,
+so a new one takes its span out of a declared tenant instead (the 8.3 name battery's is
+`gemdos_fs.NAMES_AT`, inside the RAM disk's). The registry replaced a hand-written assertion per
+module against the ONE neighbour its author knew about: under that arrangement two batteries' bands
+sat on top of each other with every assertion still passing.
+
+**The disk itself is small enough to read whole in a failure message** — 512-byte sectors, two per
+cluster, two sectors per FAT, two of root directory, 32 data clusters, 71 sectors in all — and both
+FAT and root directory are two sectors DELIBERATELY: a region whose length is not a whole number of
+clusters leaves pseudo-records inside its own cluster span that map onto the region above it, which
+is legal (an OFD's length stops the ROM reaching them) and a needless trap for a case that spells a
+record by hand. The root holds a subdirectory, a file inside one cluster, a file spanning three, an
+empty file, a deleted entry and a volume label, and each file's body is a ramp keyed on the file, so
+a read landing on the wrong cluster is a wrong BYTE rather than a plausible one.
+
+**A case here does not poison.** `case.run`'s attribution pass pre-inverts every byte the oracle
+wrote, and the oracle writes `savptr` itself on every `trap #13`; what stands in for it is staging —
+every buffer starts full of `$a5` and every sector holds its own ramp, so a byte the reconstruction
+did not write reads as something no arm of these routines produces. That is the
+character-device group's rule (`test/gemdos_console.py`) applied one layer down.
+
 ## Verified functions, and what they cost on each side
 
 The oracle reports `ninsns` and `cycles` for every run (`out_regs`), so the ORIGINAL's cost per

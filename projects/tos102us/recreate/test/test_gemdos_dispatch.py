@@ -36,7 +36,7 @@ import ctypes
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, differential, emu, make_image, report
+from harness import BASE_IMAGE, _lib, addrs, emu, make_image
 
 import case
 import gemdos
@@ -81,19 +81,10 @@ A_DTA = 0x0002_4680
 
 
 def run_slice(selector, words=(), pokes=None):
-    """One dispatch, entered at `$fc973e` through the trampoline, with the handlers bound."""
-    gemdos.bind_handlers(HANDLERS)
-    staged = gemdos.slice_pokes(selector, words, pokes)
-
-    def glue(lib, buf):
-        return lib.gemdos_dispatch_selector(buf, gemdos.ARGUMENTS_AT)
-
-    diffs, info = differential(gemdos.TRAMPOLINE_AT, {"a5": 0, "_pokes": staged},
-                               gemdos.recording(glue), poison=True)
-    assert not diffs, report(diffs)
-    gemdos.assert_every_handler_was_bound()
-    case.assert_result_is_d0(info)
-    return info
+    """One dispatch, entered at `$fc973e` through the trampoline, with THIS battery's handlers
+    bound — `test/gemdos.py` owns the shape, because `test_gemdos_handles.py` drives the same slice
+    and the two copies had drifted (see `gemdos.run_slice`)."""
+    return gemdos.run_slice(selector, words, pokes, handlers=HANDLERS)
 
 
 def run_to_handler(selector, words=(), pokes=None):
@@ -101,12 +92,9 @@ def run_to_handler(selector, words=(), pokes=None):
     instruction — which is where the argument frame the dispatcher built is on the stack."""
     staged = gemdos.slice_pokes(selector, words, pokes)
     return emu.run(make_image(staged), gemdos.TRAMPOLINE_AT, {"a5": 0},
-                   stop_pc=rom_handler(selector))
+                   stop_pc=gemdos.rom_handler(selector))
 
 
-def rom_handler(selector):
-    at = addrs.GEMDOS_FUNCTION_TABLE + selector * addrs.GEMDOS_RECORD_BYTES
-    return case.long_in(BASE_IMAGE, at)
 
 
 def rom_descriptor(selector):
@@ -121,20 +109,20 @@ def test_the_table_is_88_six_byte_records_and_40_of_them_are_the_stub():
     ROM. The stub count is what says the selector map is the published ABI's: every selector the ABI
     leaves undefined names `$fc933e`, and no defined one does."""
     stubs = [selector for selector in range(addrs.GEMDOS_FUNCTION_COUNT)
-             if rom_handler(selector) == addrs.GEMDOS_UNIMPLEMENTED]
+             if gemdos.rom_handler(selector) == addrs.GEMDOS_UNIMPLEMENTED]
     assert addrs.GEMDOS_MAX_SELECTOR == addrs.GEMDOS_FUNCTION_COUNT - 1
     assert len(stubs) == UNDEFINED_SELECTORS
     assert addrs.GEMDOS_UNDEFINED_FN in stubs and addrs.GEMDOS_SVERSION_FN not in stubs
     # ...and `Super`, which is in the table and can never be reached through it: the trap entry
     # serves it inline and returns through `rte` (`src/gemdos/trap1.S`).
-    assert rom_handler(addrs.GEMDOS_SUPER_FN) == addrs.GEMDOS_UNIMPLEMENTED
+    assert gemdos.rom_handler(addrs.GEMDOS_SUPER_FN) == addrs.GEMDOS_UNIMPLEMENTED
 
 
 @pytest.mark.parametrize("what,selector", DISPATCHED, ids=lambda arg: arg)
 def test_each_dispatched_selector_reaches_its_own_handler(what, selector):
     """The index arithmetic, as the only thing that could put a call in the wrong record: the same
     staging with a different selector must reach a different routine."""
-    assert rom_handler(selector) in HANDLERS
+    assert gemdos.rom_handler(selector) in HANDLERS
 
 
 # ---- 1. the bound, which is the whole of what a selector past the table gets ------------------------
@@ -198,7 +186,7 @@ def test_a_dispatched_call_answers_with_its_handlers_d0(what, selector):
     `assert_every_handler_was_bound` is what turns that into a failure rather than a 0.
     """
     run_slice(selector, pokes=gemdos.dta_poke(A_DTA))
-    assert [call[0] for call in gemdos.HANDLER_CALLS] == [rom_handler(selector)]
+    assert [call[0] for call in gemdos.HANDLER_CALLS] == [gemdos.rom_handler(selector)]
 
 
 def test_the_descriptor_zero_leaves_take_the_four_byte_frame():

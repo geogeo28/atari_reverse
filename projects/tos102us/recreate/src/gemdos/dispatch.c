@@ -26,11 +26,14 @@
  *     _frame`, which measures the twelve bytes the ROM leaves and says which frame they are.
  *   * THE REDIRECTED ARMS (5) — a standard handle `Fforce` has pointed at a FILE, so that
  *     `Cconin` becomes an `Fread` and `Cconws` a loop of `Fwrite`s ($fd328a's 19-entry table).
- *   * THE HANDLE-RESOLUTION ARM — a `$80..$83` descriptor on a call whose argument IS a handle
- *     (`Fread`, `Fwrite`, `Fseek`), which walks the open-file descriptors at $8092 and routes a
- *     character device to the console driver.
+ *   * THE CHARACTER-DEVICE ROUTING under the handle-resolution arm — a call whose argument IS a
+ *     handle (`Fread`, `Fwrite`, `Fseek`) that resolves to a DEVICE, which the dispatcher then
+ *     serves out of `src/gemdos/console.c`'s leaves instead of calling the handler. The resolution
+ *     itself ($fc9924, the walk through `p_uft` and the descriptors at $8092) IS reconstructed —
+ *     `gemdos_resolve_handle`, `src/gemdos/handles.c` — and so is the EIHNDL it answers for a
+ *     handle that names nothing.
  *
- * All three need the file system or the character-device group, and neither is reconstructed yet.
+ * All three need the file system or a handler the character-device group does not have yet.
  *
  * WHY THE HANDLER IS CALLED THROUGH A HOOK OFF TARGET. The table's handler longwords are ROM
  * addresses; the candidate is host code over a byte array and cannot execute one. So the host build
@@ -42,6 +45,7 @@
 #include <stdint.h>
 
 #include "gemdos.h"
+#include "gemdos_process.h"
 #include "machine.h"
 #include "recreate.h"
 
@@ -156,8 +160,24 @@ uint32_t gemdos_dispatch_selector(uint8_t *image, uint32_t arguments)
             recreate_not_reconstructed("GEMDOS: a standard handle Fforce redirected to a file");
         descriptor = descriptor_for_a_device(selector);
     }
-    if (descriptor & GEMDOS_DESC_HANDLE)
-        recreate_not_reconstructed("GEMDOS: a call whose argument is an open-file handle");
+    if (descriptor & GEMDOS_DESC_HANDLE) {
+        /* $fc9924 — the handle argument RESOLVED before the call is made at all, which is the one
+         * thing the dispatcher does that a handler could not do for itself: an `Fread` on a handle
+         * that has been `Fforce`d onto the console must become a console read, and only the
+         * dispatcher knows the descriptor said "this argument is a handle".
+         *
+         * Three outcomes and this file owns the first two. 0 is a handle that names nothing and is
+         * EIHNDL, having made no call; a NEGATIVE resolution is a character device and routes into
+         * `src/gemdos/console.c`'s leaves under an `Fread`/`Fwrite` that are not reconstructed; and
+         * anything else is the file system's own pointer, which falls through to the ordinary
+         * dispatch below exactly as the ROM's `bge $fc9ac6` does. */
+        int32_t named = gemdos_resolve_handle(image, arguments, descriptor);
+
+        if (named == 0)
+            return GEMDOS_EIHNDL;
+        if (named < 0)
+            recreate_not_reconstructed("GEMDOS: a handle argument that names a character device");
+    }
     if (selector == GEMDOS_FOPEN_FN || selector == GEMDOS_FCREATE_FN)
         recreate_not_reconstructed("GEMDOS: Fopen/Fcreate's device-name arm");
 

@@ -31,7 +31,8 @@ case whose selector reaches a handler nothing bound fails by naming it.
 import ctypes
 import struct
 
-from harness import _lib, addrs, emu
+from harness import (BASE_IMAGE, _lib, addrs, arm_candidate, candidate_image,
+                     differential, emu, make_image, report)
 
 import abi
 import case
@@ -43,9 +44,8 @@ from opcodes import LOAD_ADDRESS_IMMEDIATE, SET_USER_STACK, TRAP_GEMDOS
 # `trap.py` took +0x800..+0xc00 and `isr.py` the top from +0xd00; the pointer-argument batteries fill
 # the bottom as far as +0x400. This is the gap between them, and it is deliberately half of what is
 # free: the character-device and memory-manager waves need staging of their own.
-GEMDOS_BAND = staging.SCRATCH + 0x400
 GEMDOS_BAND_BYTES = 0x200
-assert GEMDOS_BAND + GEMDOS_BAND_BYTES <= trap.TRAP_BAND
+GEMDOS_BAND = staging.band(0x400, GEMDOS_BAND_BYTES, "test/gemdos.py")
 
 # Where a DIRECT-ENTRY case puts the caller's words — the function number first, then the arguments,
 # which is what the trap entry's `lea 50(frame),a0` hands the dispatcher. In COMPARED image rather
@@ -140,6 +140,13 @@ def dispatch_pokes(selector, words=(), pokes=None):
 LINK_A6 = 0x4E56                        # link    a6,#<d16>
 MOVE_W_IMMEDIATE_FRAME = 0x3D7C         # move.w  #<imm>,<d16>(a6)
 JMP_ABSOLUTE_LONG = 0x4EF9              # jmp     <long>.l
+# ...and what each of the three costs on a 68000, which is what a slice row's ORIGINAL column
+# carries and our build — called as a C function — never runs. MEASURED rather than read off the
+# tables: `test_gemdos_dispatch.py` and `test_gemdos_process_pexec.py` each drive their own
+# trampoline under the oracle and hold the sum below to it.
+LINK_CYCLES = 16
+MOVE_W_IMMEDIATE_FRAME_CYCLES = 16
+JMP_ABSOLUTE_LONG_CYCLES = 12
 
 SUPER_CALLER_AT = BUFFER_AT + 0x80      # the stub `supervisor_caller_with_a_user_stack` stages
 TRAMPOLINE_AT = BUFFER_AT + BUFFER_BYTES - 0x20
@@ -154,20 +161,107 @@ DISPATCHER_FRAME_AT = emu.STACK_TOP - 4
 DISPATCHER_SP = DISPATCHER_FRAME_AT - addrs.GEMDOS_DISPATCH_FRAME_BYTES
 
 
-def slice_trampoline(selector):
-    """The three instructions above, as bytes."""
-    stub = struct.pack(">HhHHHHI", LINK_A6, -addrs.GEMDOS_DISPATCH_FRAME_BYTES,
-                       MOVE_W_IMMEDIATE_FRAME, selector & 0xFFFF,
-                       addrs.GEMDOS_DISPATCH_SELECTOR_LOCAL,
-                       JMP_ABSOLUTE_LONG, addrs.GEMDOS_DISPATCH_SELECTOR)
+def slice_trampoline(target, frame_bytes, selector=None):
+    """A slice stub and what it COSTS: `(bytes, (instructions, cycles))`.
+
+    TWO SHAPES, and `selector` is what picks between them. Given one, this is the three instructions
+    above — the dispatcher's, which needs the selector its own prologue had already decoded standing
+    in the frame, at the dispatcher's own local offset. Without one it is the two a routine whose
+    locals nothing past the entry reads needs: `Pexec` past its record is that
+    (`test/gemdos_process.py`).
+
+    ONE BUILDER FOR BOTH, because `bench/tier3.py` reads the cost off it per trampoline: two builders
+    meant two hand-written cost constants, and a stub whose shape changed without its number is a row
+    netted by an entry nobody ran.
+    """
+    stub = struct.pack(">Hh", LINK_A6, -frame_bytes)
+    insns, cycles = 1, LINK_CYCLES
+    if selector is not None:
+        stub += struct.pack(">HHH", MOVE_W_IMMEDIATE_FRAME, selector & 0xFFFF,
+                            addrs.GEMDOS_DISPATCH_SELECTOR_LOCAL)
+        insns, cycles = insns + 1, cycles + MOVE_W_IMMEDIATE_FRAME_CYCLES
+    stub += struct.pack(">HI", JMP_ABSOLUTE_LONG, target)
+    return stub, (insns + 1, cycles + JMP_ABSOLUTE_LONG_CYCLES)
+
+
+def dispatcher_trampoline(selector):
+    """...and this module's own use of it: `$fc973e`, entered with `selector` in the frame."""
+    stub, cost = slice_trampoline(addrs.GEMDOS_DISPATCH_SELECTOR,
+                                  addrs.GEMDOS_DISPATCH_FRAME_BYTES, selector=selector)
     assert len(stub) <= TRAMPOLINE_BYTES, "the slice trampoline outgrew the band reserved for it"
-    return stub
+    return stub, cost
 
 
 def slice_pokes(selector, words=(), pokes=None):
     """...and the whole poke set for a slice case: the trampoline, the argument list and the
     pointer to it."""
-    return {TRAMPOLINE_AT: slice_trampoline(selector), **dispatch_pokes(selector, words, pokes)}
+    return {TRAMPOLINE_AT: dispatcher_trampoline(selector)[0],
+            **dispatch_pokes(selector, words, pokes)}
+
+
+def rom_descriptor(selector):
+    """The ARGUMENT DESCRIPTOR the ROM's own table holds for `selector`, read out of the captured
+    image — which is what makes a claim about "the three selectors with bit 7" a claim about this
+    ROM rather than a list somebody typed."""
+    return case.word_in(BASE_IMAGE, addrs.GEMDOS_FUNCTION_TABLE
+                        + selector * addrs.GEMDOS_RECORD_BYTES
+                        + addrs.GEMDOS_RECORD_DESCRIPTOR)
+
+
+def rom_handler(selector):
+    """...and the HANDLER longword the same record holds — the ROM address the dispatcher `jsr`s and
+    therefore the key `bind_handlers` is keyed by."""
+    return case.long_in(BASE_IMAGE, addrs.GEMDOS_FUNCTION_TABLE
+                        + selector * addrs.GEMDOS_RECORD_BYTES)
+
+
+def run_candidate_only(call, pokes=None, handlers=None, io_seed=None):
+    """Run `call(lib, buf)` on a freshly armed candidate with NO oracle, and answer `(ret, image)`.
+
+    For the two claims in this wave that no differential can make, because the arm runs into
+    something the ORIGINAL would do and the reconstruction deliberately does not: the dispatcher's
+    fall-through to a FILE handler (the ROM's own `Fread`, which is the file system's), and
+    `Pexec`'s copy of the outer termination record (the ROM arms a new one two instructions later,
+    which is the hole `test_gemdos_dispatch.py` measures). The ORACLE's half of each is its own
+    case; this is the CANDIDATE's, and without it those arms have no case at all on this side.
+
+    `arm_candidate` is the same block `harness.differential` runs before each of its candidate
+    passes — public for exactly this (`harness.py`), so a hand copy here cannot go stale.
+    """
+    bind_handlers(handlers or {})
+    buf = candidate_image(make_image(pokes))
+    arm_candidate(io_seed=io_seed)
+    _new_pass()
+    returned = call(_lib, buf)
+    assert _lib.g_os_refusal_count() == 0, (
+        f"the candidate made {_lib.g_os_refusal_count()} refused os_* call(s) — this run proves "
+        f"nothing; declare the addresses it read")
+    assert_every_handler_was_bound()
+    return returned, bytes(buf)
+
+
+def run_slice(selector, words=(), pokes=None, handlers=None):
+    """One dispatch, entered at `$fc973e` through the trampoline, with `handlers` bound.
+
+    ONE POLICY FOR EVERY SLICE CASE, which is why this is here and not in a battery: two copies had
+    drifted into two — one poisoned and reported an unbound handler, the other did neither — so
+    whether a case would notice the reconstruction SKIPPING a store, or answering a handler nobody
+    staged with a fabricated 0, depended on which module its author copied from. Poisoning is on
+    (these are whole-function runs over staged image) and the unbound-handler ledger is always
+    reported.
+    """
+    bind_handlers(handlers or {})
+    staged = slice_pokes(selector, words, pokes)
+
+    def glue(lib, buf):
+        return lib.gemdos_dispatch_selector(buf, ARGUMENTS_AT)
+
+    diffs, info = differential(TRAMPOLINE_AT, {"a5": 0, "_pokes": staged}, recording(glue),
+                               poison=True)
+    assert not diffs, report(diffs)
+    assert_every_handler_was_bound()
+    case.assert_result_is_d0(info)
+    return info
 
 
 # HOW A TIER 3 ROW GETS FROM THAT TRAMPOLINE BACK TO THE ROUTINE IT IS ABOUT. `bench/tier3.py` looks
@@ -175,11 +269,10 @@ def slice_pokes(selector, words=(), pokes=None):
 # in this band — so the registry needs the same mapping `test/isr.py` gives its handler trampolines.
 ROUTINE_OF_TRAMPOLINE = {TRAMPOLINE_AT: addrs.GEMDOS_DISPATCH_SELECTOR}
 
-# ...and what the trampoline COSTS, which sits in the ORIGINAL's column alone: the candidate is
-# called as a C function and never runs it. `link` + `move.w #imm,<d16>(a6)` + `jmp <long>.l`.
-# MEASURED rather than read off the 68000's tables —
-# `test_gemdos_dispatch.py::test_the_slice_trampoline_costs_what_its_rows_are_net_of`.
-SLICE_ENTRY_COST = (3, 44)
+# ...and what the trampoline COSTS, out of the one builder above rather than written down beside it:
+# `link` + `move.w #imm,<d16>(a6)` + `jmp <long>.l`, which
+# `test_gemdos_dispatch.py::test_the_slice_trampoline_costs_what_its_rows_are_net_of` measures.
+SLICE_ENTRY_COST = dispatcher_trampoline(0)[1]
 
 
 def pushed_arguments(final, argument_bytes):
@@ -378,11 +471,6 @@ HANDLER_CALLS = []
 _PASSES = []            # every pass's list, the first of which IS `HANDLER_CALLS`
 UNBOUND_CALLS = []      # ...and the handlers nothing bound, which a case reports as its own failure
 CLOCK_PUBLICATIONS = []  # (date, time) — the door `recreate/STATUS.md` records as not reconstructed
-# How many calls one candidate run may make before the list stops growing — `test/isr.py`'s cap, for
-# its reason: the reconstruction is host code with no instruction cap the way the oracle has, so a
-# defect that leaves a dispatched call looping is an endless ALLOCATION here rather than a failure.
-# Far above any case in this wave, so a run under the cap is an ordinary run.
-CALLS_MAX = 1 << 16
 
 
 def _new_pass():
@@ -408,7 +496,7 @@ def _call_handler(buf, handler, arguments, argument_bytes):
     if not _PASSES:
         UNBOUND_CALLS.append(handler)
         return 0
-    if len(_PASSES[-1]) < CALLS_MAX:
+    if len(_PASSES[-1]) < case.CALLS_MAX:
         _PASSES[-1].append((handler, arguments, argument_bytes))
     effect = _HANDLERS.get(handler)
     if effect is None:
@@ -464,7 +552,8 @@ def assert_the_clock_was_not_published():
 
 # ---- the registry ---------------------------------------------------------------------------------
 # `test_boot_snapshot.VERIFIED_CASES` is the orchestrator's; a battery here appends its rows to
-# `CASES` below, in that file's own seven-field shape, so that the splat is mechanical. The
+# `CASES` below, in that file's own seven-or-eight-field shape — the eighth is `stop_pc`, 0 for a
+# routine that reaches its own `rts` — so that the splat is mechanical. The
 # TRANSCRIPTION rows are separate for `trap.py`'s reason: `$fc4f6e` is proved by
 # `RomBench.measure_transcription` and a C core by `harness.differential`, which are two relations.
 

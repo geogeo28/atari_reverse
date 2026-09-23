@@ -333,11 +333,14 @@ handle-redirection path (`0xFC9754` onwards). The unimplemented stub is `0xFC933
 Authorship is unambiguous: 119 `link a6` frames for 127 functions, and **zero hardware
 accesses in the whole range** — GEMDOS reaches the disk only through the BIOS.
 
-RAM: `p_root` `$7E9C` and `p_run` `$87CE` (both published in the OS header), the process
-table indexed at `0x8380` (`0xFC9534`), `0x8066` (`0xFC959A`), the current-process index word
-at `$87CC`, the supervisor stack top `0x16CE`, and a call-depth counter at `$68FA`
-(`0xFC94E8`). The full extent of the GEMDOS BSS was not established — but the MEMORY MANAGER's
-part of it now is (see below).
+RAM: `p_root` `$7E9C` and `p_run` `$87CE` (both published in the OS header), the supervisor
+stack top `0x16CE`, and a call-depth counter at `$68FA` (`0xFC94E8`). THE THREE ADDRESSES THIS
+PARAGRAPH ONCE CALLED A PROCESS TABLE ARE NOT ONE, and the file-system and process waves each
+established what they really are: `0x8380` is the per-drive DMD table (`$8380 + drive * 4`),
+`0x8066` is one reference count per DIRECTORY NODE, and `$87CC` is the DRIVE a failed BIOS disk
+call came from — the reading below, from the ROM's own stores, rather than the guess here. The
+full extent of the GEMDOS BSS was not established — but the MEMORY MANAGER's part of it now is
+(see below).
 
 **The memory manager's own RAM**, established by the recreate's GEMDOS memory group
 (`recreate/src/gemdos/memory.c`, `recreate/include/gemdos_memory.h`):
@@ -391,10 +394,10 @@ above leaves little of `$68F0..$8840` unaccounted for:
 | `$68FA` | the call-depth counter: CLEARED and then BUMPED, at a label the termination path branches back to | `0xFC94E8`, `0xFC94EE` |
 | `$68FC` | the sub-second accumulator the 200 Hz tick rolls into the time word at 2,000 | `0xFC9CD8`, `0xFC9CDE` |
 | `$75B0` | GEMDOS's own TIME word | `Tgettime` `0xFC9EA6`, `Tsettime` `0xFC9EF4`, the tick `0xFC9CF2` |
-| `$7DEE` | one longword per process slot, walked when a process ends | `0xFC95B2` |
-| `$7EF4` | the process-termination record `0xFC4F38` arms — three longwords of the dispatcher's own 68000 frame, which `Pterm` longjmps back to | `0xFC950A` |
-| `$8066` | one flag byte per process slot | `0xFC959E` |
-| `$8092` | the OPEN FILE DESCRIPTORS, ten bytes each, indexed from handle 6 | `0xFC9950` |
+| `$7DEE` | the DIRECTORY NODE table — one longword per node, walked by the media-change arm and indexed by a basepage's `p_curdir` bytes (CORRECTED: the process wave read it as "one longword per process slot") | `0xFC95B2`, `0xFC51DE` |
+| `$7EF4` | the process-termination record `0xFC4F38` arms — three longwords of the dispatcher's own 68000 frame. The FILE SYSTEM's critical-error abort is what longjmps to it (`0xFC5986` and four more), and `Pexec` saves a copy to `$7560` before arming its own; `Pterm` does NOT — it `jsr`s the trap entry's epilogue (CORRECTED: the process wave said `Pterm` longjmps here) | `0xFC950A`, `0xFC81C2` |
+| `$8066` | one REFERENCE COUNT BYTE per directory node, bumped by `gemdos_inherit_curdir` and dropped by a process's release, both indexed by a `p_curdir` byte (CORRECTED: the process wave read it as "one flag byte per process slot") | `0xFC959E`, `0xFC51DE`, `0xFC80EA` |
+| `$8092` | the HANDLE TABLE — 75 records of ten bytes, indexed from handle 6, whose `+0` longword POINTS AT a 64-byte OFD pool record (or, negative, names a character device); `+4` is the owning basepage and `+8` a reference count | `0xFC9950`, `0xFC51C0` |
 | `$879C` | a longword the timer tick accumulates ticks into (role not established beyond that) | `0xFC9CCE` |
 | `$8840` | GEMDOS's own DATE word, seeded from `os_dosdate` | `Tgetdate` `0xFC9E1E`, `Tsetdate` `0xFC9E8A`, `0xFC0460` |
 
@@ -413,6 +416,121 @@ bits are a STANDARD HANDLE NUMBER: `$80`->0 stdin, `$81`->1 stdout, `$82`->2 std
 The dispatcher looks that handle up in `p_uft` and either takes the 19-entry table at `0xFD328A`
 (the handle has been `Fforce`d to a file, so `Cconin` becomes an `Fread`) or REWRITES the descriptor
 to 1 for `Cconws`/`Cconrs` and 0 for the rest and calls the handler directly (`0xFC98FE`).
+
+**THE FILE SYSTEM's data structures** (`0xFC5216..0xFC7CCE`), established by the recreate's GEMDOS
+file-system group (`recreate/src/gemdos/fs_disk.c`, `fs_name.c`, `recreate/include/gemdos_fs.h`).
+GEMDOS reaches a disk through exactly three BIOS calls — `Rwabs`, `Getbpb`, `Mediach` — all three
+of them **indirect** through the RAM vectors `hdv_rw` `$476` / `hdv_bpb` `$472` / `hdv_mediach`
+`$47E` (the table entries with bit 31 set, above). There is no fourth door: the "zero hardware
+accesses in the whole range" above is the other half of this fact.
+
+**ONE CLUSTER-NUMBERED ADDRESS SPACE, and it is the idea the whole layer rests on.** `0xFC53C0`
+builds a *drive media descriptor* out of the BPB in which the FAT, the root directory and the data
+area are all addressed as clusters of one space: data clusters are 2 upwards, the root directory
+occupies the clusters just below 0, and the FAT the ones below those. Each region carries a BIAS
+(`m_recoff[type]`) that turns a record of that space back into the record number `Rwabs` takes —
+which is what lets one buffer cache hold FAT sectors, directory sectors and data sectors and tell
+them apart by arithmetic on the record alone (`0xFC5A98`, three compares and a shift).
+
+| record offset | built at | from |
+|---|---|---|
+| `m_recoff[0]` FAT | `0xFC5564` | `fatrec - (FAT pseudo-cluster) * clsiz` |
+| `m_recoff[1]` root dir | `0xFC5580` | `fatrec + fsiz - (root pseudo-cluster) * clsiz` |
+| `m_recoff[2]` data | `0xFC55A2` | `datrec - 2 * clsiz` |
+
+**The BPB's `fatrec` names the SECOND FAT**, not the first, which is why `m_recoff[0]` is derived
+from it and why a dirty FAT buffer is written TWICE — the second copy at its own record, the first
+at `record - m_fsiz` (`0xFC59B2`). Only buffer type 0 gets that.
+
+| structure | size | fields established |
+|---|---|---|
+| **BPB** (Getbpb's answer) | 18 | `recsiz` 0, `clsiz` 2, `clsizb` 4, `rdlen` 6, `fsiz` 8, `fatrec` 10, `datrec` 12, `numcl` 14, `bflags` 16 (bit 0 = 16-bit FAT) |
+| **DMD** (per open drive, pool class 3) | 48 | `m_recoff[3]` 0/2/4, `m_drvnum` 6, `m_fsiz` 8, `m_clsiz` 10, `m_clsizb` 12, `m_recsiz` 14, `m_numcl` 16, then three log2/mask PAIRS at 18/20 (clsiz), 22/24 (recsiz) and 26 (clsizb) taken from the mask table at `0xFD2FC8` (`table[n] == (1 << n) - 1`), the FAT's pseudo-OFD at 28, the root DND at 36, and `bflags & 1` at 40 |
+| **BCB** (one cached sector) | 20 | `b_link` 0, `b_bufdrv` 4 (`-1` = EMPTY), `b_buftyp` 6 (0 FAT / 1 root dir / 2 data), `b_bufrec` 8, `b_dirty` 10, `b_dm` 12, `b_bufr` 16 |
+| **DND** (a directory node, pool class 4) | 64 | the 11 FCB name bytes at 0, `d_strtcl` 14, `d_ofd` 20, `d_drv` 36 |
+| **OFD** (an open file, pool class 4) | 64 | `o_strtcl` 10, `o_fileln` 12, `o_dmd` 16 |
+| **directory entry** | 32 | the 11 FCB name bytes at 0, the attribute at 11 (8 = volume label) |
+
+`0xFC50FA` cuts the DMD and its three satellites out of the record pool in one go and files the DMD
+at `$8380 + drive * 4`; `$8784` is a word bitmap of the drives whose DMD has been built, and
+`0xFC67DE` is what builds one on first use.
+
+**THE BUFFER CACHE** is two singly-linked BCB lists headed at `_bufl` `$4B2` — list 0 for FAT
+sectors, list 1 for directory AND data sectors — filled by the boot at `0xFC4AFE` (`$8846` and
+`$886E`). `0xFC5A98` is the whole of its policy: **MRU to the front, LRU at the tail**. A hit is
+moved to the head after `Mediach` has been asked whether the medium is still the one those bytes
+came off (0 = no, 1 = re-read the sector in place, 2 = `E_CHNG` and a longjmp); a miss takes an
+EMPTY buffer if the scan passed one — the LAST such, because the scan's store is unconditional —
+and otherwise the tail, flushes it if dirty, and fills it with one `Rwabs`. `$75B4` holds the last
+BIOS disk result and `$87CC` the drive it came from; a non-zero result longjmps through the
+process-termination record at `$7EF4`.
+
+**The 8.3 NAME layer** touches no disk: `0xFC5D28` turns "name.ext" into the eleven padded FCB
+bytes (`*` fills the rest of its field with `?`; a stem past eight is truncated and the remainder
+thrown away up to the next `.`, `\` or NUL; a SPACE ends a field), `0xFC5C9A` compares one such
+pattern with one directory entry (`?` matches anything except against a DELETED `$E5` entry, where
+only an `$E5` pattern matches — which is how a free slot is found), and `0xFC50CA` is the
+`and.w #$5f` fold, applied to both sides.
+
+**FAT12 IS READ BIG-ENDIAN AND THEN SWAPPED.** `0xFC6038` seeks the FAT's pseudo-OFD to byte
+`n + n/2`, reads two bytes, calls the byte-swapper at `0xFC4F10`, and then masks (`& $fff`) for an
+even cluster or shifts (`>> 4`) for an odd one — which is how a 68000 reads a little-endian on-disk
+FAT. `0xFC5F44` writes one back the same way round, and `0xFC60F2` is the chain walk with the
+free-cluster search (a wrapping scan bounded by `m_numcl`) under it.
+
+**THE PROCESS and its HANDLES** (`0xFC5216`, `0xFC52DE`, `0xFC56C6`, `0xFC7FD8..0xFC85D4`),
+established by the recreate's GEMDOS process group (`recreate/src/gemdos/process.c`, `handles.c`,
+`recreate/include/gemdos_process.h`).
+
+**A HANDLE IS THREE DIFFERENT THINGS SPELT AS ONE SIGNED WORD**, and every routine in the group
+branches on which: NEGATIVE is a character DEVICE (-1/-2/-3 = CON:/AUX:/PRN:, which is what a fresh
+`p_uft` holds); 0..5 is a STANDARD handle, an index into the running process's own `p_uft` whose
+byte is then one of the other two kinds; and 6 and up is a slot of the **HANDLE TABLE at `$8092`**,
+75 records of ten bytes indexed from handle 6.
+
+| handle-table field | what | evidence |
+|---|---|---|
+| `+0` | what the handle NAMES — the file system's own 64-byte OFD (above), or a NEGATIVE character device | `Fclose` `0xFC571C` and the dispatcher's resolution `0xFC995C` both branch on its SIGN |
+| `+4` | the basepage that owns it, which is what makes it releasable by process | `Fdup` `0xFC526C` stores `p_run`; `0xFC80CE` hunts a dying process's |
+| `+8` | a word REFERENCE COUNT | `Fforce` `0xFC538A` bumps it, `Fclose` `0xFC5730` drops it and zeroes the record at zero |
+
+`Fdup` ($45) takes the first record nobody owns and copies `+0` but **not** the reference count — it
+starts its own at one, so a program that `Fdup`s a file and closes both halves closes the file
+twice. `Fforce` ($46) is four instructions over `0xFC52F8`, whose third argument is the basepage —
+which is why `Pexec` can force a handle into the CHILD's table while `p_run` is still the parent's.
+
+**The rest of the BASEPAGE this group established**, beside the `+$20`/`+$24`/`+$30`/`+$36` fields
+the trap-entry wave found: `p_curdir` at **`+$40`, sixteen bytes**, one DIRECTORY NODE per drive
+(`0xFC83DE`, `0xFC80EA`), and the COMMAND TAIL at **`+$80`, 128 bytes**, which `Pexec` also points
+`p_dta` at (`0xFC83B2`). The trap entry's save slots hold more than D0: `Pexec` seeds `+$70` with
+`p_bbase` and `+$74` with `p_dbase` (`0xFC85A4`/`0xFC85B2`), so a child starts with **A4 = BSS and
+A5 = DATA** — the register contract every Atari `.PRG` of the period was linked against.
+
+**`$8066` IS NOT "one flag byte per process slot"** — the earlier reading above is corrected here.
+`0xFC51DE` bumps `$8066[node]` and `0xFC80EA` drops it, in both cases with `node` read out of a
+basepage's `p_curdir`, so it is **one reference count per DIRECTORY NODE**, and `$7DEE` beside it is
+the node table those counts are about. The dispatcher's arm at `0xFC952A` reads the same pair, and
+what it is is now legible too: it fires when the longjmp comes back with **`E_CHNG` (-14)**, the
+media-change error the buffer cache raises, and it invalidates every node on the changed drive.
+
+**`Pterm` DOES NOT LONGJMP**, which is worth writing down because the record's name says it should.
+`0xFC4F38` is a real `setjmp` and `0xFC4F54` a real `longjmp`, the dispatcher arms the record at
+`$7EF4` and the FILE SYSTEM's critical-error abort is what jumps to it. `Pterm`'s own unwind is:
+`Setexc($102, -1)` and a call through what came back, a Mega ST battery-clock re-read (`0xFC5092`,
+the one piece of hardware GEMDOS itself touches), `p_run := p_parent`, the release at `0xFC8092`,
+the exit code ZERO-extended into the parent's own `+$68` save slot, and `jsr $fc4fe8` — the trap
+entry's epilogue, whose `rte` resumes whoever called the PARENT's GEMDOS call. `Ptermres` ($31) is
+`Mshrink(p_run, keep)` and then the same walk with the descriptors handed back to the **record pool**
+rather than to the free list, which is the whole of what "stay resident" means: the memory survives
+with no owner and on no list.
+
+**`Pexec`'s four modes are not a range** (`0xFC817E`): 0 LOAD AND GO, 3 LOAD, 4 JUST GO, 5 CREATE
+BASEPAGE, with 1 and 2 a gap. It saves the dispatcher's termination record to `$7560` and arms one
+of its own before any of them. The TPA is cut in TWO allocator calls — ask for the largest free
+block, then ask for exactly that — and the environment is measured to its double NUL, rounded up to
+a word, and copied into a block of its own. Two branches in it are DEAD CODE: the `mode == 4` half of
+the owner choice at `0xFC8342` and the `cmpi.w #5` at `0xFC85C0`, both of them on paths only modes 0
+and 4 reach.
 
 ### vdi + linea — `0xFC9F0C..0xFD2F21`
 

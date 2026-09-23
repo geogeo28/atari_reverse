@@ -342,33 +342,33 @@ fn 0xfc30bc Kbdvbase
 fn 0xfc31fa Prtblk   # ctx
 fn 0xfc427a vdi_escape   # ctx
 fn 0xfc4698 Cursconf
-fn 0xfc5216 Fdup   # ctx
-fn 0xfc52de Fforce   # ctx
-fn 0xfc56c6 Fclose   # ctx
-fn 0xfc5e6a Fread   # ctx
-fn 0xfc5eea Fwrite   # ctx
-fn 0xfc6a7e Dsetpath   # ctx
-fn 0xfc6c1a Dgetpath   # ctx
+fn 0xfc5216 Fdup
+fn 0xfc52de Fforce
+fn 0xfc56c6 Fclose
+fn 0xfc5e6a Fread
+fn 0xfc5eea Fwrite
+fn 0xfc6a7e Dsetpath
+fn 0xfc6c1a Dgetpath
 fn 0xfc6c9a Fgetdta
 fn 0xfc6cac Fsetdta
 fn 0xfc6cc0 Dsetdrv
 fn 0xfc6ce0 Dgetdrv
-fn 0xfc6cf6 Fsfirst   # ctx
-fn 0xfc6df4 Fsnext   # ctx
-fn 0xfc719a Fcreate   # ctx
-fn 0xfc73ce Dcreate   # ctx
-fn 0xfc75f2 Fopen   # ctx
-fn 0xfc7678 Fattrib   # ctx
-fn 0xfc772e Fdatime   # ctx
-fn 0xfc77b2 Fdelete   # ctx
-fn 0xfc792a Ddelete   # ctx
-fn 0xfc7a68 Dfree   # ctx
-fn 0xfc7af0 Frename   # ctx
-fn 0xfc7cce Fseek   # ctx
-fn 0xfc7fd8 Ptermres   # ctx
-fn 0xfc8028 Pterm   # ctx
-fn 0xfc8086 Pterm0   # ctx
-fn 0xfc817a Pexec   # ctx
+fn 0xfc6cf6 Fsfirst
+fn 0xfc6df4 Fsnext
+fn 0xfc719a Fcreate
+fn 0xfc73ce Dcreate
+fn 0xfc75f2 Fopen
+fn 0xfc7678 Fattrib
+fn 0xfc772e Fdatime
+fn 0xfc77b2 Fdelete
+fn 0xfc792a Ddelete
+fn 0xfc7a68 Dfree
+fn 0xfc7af0 Frename
+fn 0xfc7cce Fseek
+fn 0xfc7fd8 Ptermres
+fn 0xfc8028 Pterm
+fn 0xfc8086 Pterm0
+fn 0xfc817a Pexec
 fn 0xfc895a Mshrink
 fn 0xfc8aae Malloc
 fn 0xfc8afc Mfree
@@ -638,7 +638,6 @@ cmt 0xfc1f52 The IKBD clock read: sets $e92 = $ff, sends command $1c, spins unti
 fn 0xfc1f6c ikbd_settime
 cmt 0xfc1f6c The IKBD clock write: unpacks the GEMDOS datetime into six BCD bytes at $e5e and sends $1b plus six bytes. Runs clean under the model -- ready to reconstruct.
 fn 0xfc4c0c rtc_probe
-cmt 0xfc4c0c MC146818 presence probe: writes register 27, then movep.w writes registers 5/6 and reads them back -- the shape no per-run declaration can serve; why Gettime/Settime are not reconstructed.
 fn 0xfc4c44 rtc_gettime
 fn 0xfc4d02 rtc_settime
 cmt 0xfc2658 Mfpint (XBIOS $0d): Jdisint's body, the vector store at $100+channel*4, then Jenabint's body -- the ROM bsr's into both. Verified as one whole differential over all sixteen channels; the enable half is served the IERA/IMRA bytes the disable half wrote (io_seed write-through). Returns the masked channel in D0.
@@ -885,16 +884,16 @@ var 0x16ce gemdos_supervisor_stack_top
 var 0x68fa gemdos_call_depth
 var 0x68fc gemdos_clock_subsecond
 var 0x75b0 gemdos_time
-var 0x7dee gemdos_process_owners
+var 0x7dee gemdos_directory_nodes
 var 0x7ef4 gemdos_termination_jmpbuf
-var 0x8066 gemdos_process_flags
-var 0x8092 gemdos_ofd_table
+var 0x8066 gemdos_curdir_refcounts
+var 0x8092 gemdos_handle_table
 var 0x879c gemdos_clock_ticks
 var 0x8840 gemdos_date
 var 0xfd3060 gemdos_month_lengths
 var 0xfd328a gemdos_redirect_table
 
-cmt 0xfc4f38 setjmp: stores the CALLER's frame into the buffer at 8(a6) - the saved A6, the address of its own argument slot, and the return PC. The dispatcher arms $7ef4 with it at $fc9510; Pterm longjmps back through $fc4f54.
+cmt 0xfc4f38 setjmp: stores the CALLER's frame into the buffer at 8(a6) - the saved A6, the address of its own argument slot, and the return PC. The dispatcher arms $7ef4 with it at $fc9510 and the FILE SYSTEM's critical-error abort ($fc5986 and four more) is what jumps back through $fc4f54; the dispatcher's $fc9526 then compares the value against E_CHNG (-14). Pterm uses neither - it jsrs into the trap entry's epilogue at $fc4fe8.
 cmt 0xfc4eac How GEMDOS calls the BIOS: pop this call's own return address into $eb0, trap #13 with the BIOS frame now at (sp), push the address back and rts. The store into $eb0 is ordinary RAM and survives the call, so after any GEMDOS call that longword names the instruction after whichever `jsr $fc4eac` ran last. Dsetdrv, Pterm and every character device reach the BIOS this way.
 cmt 0xfc6cc0 Dsetdrv ($0e): two halves with nothing to do with each other - the argument word's LOW BYTE becomes p_curdrv with no bound check at all, and the answer is the BIOS DRIVE MAP, reached through the $fc4eac trampoline (its jsr is at $fc6cd6, so the longword parked at $eb0 is $fc6cdc).
 cmt 0xfc4ef6 GEMDOS's etv_timer hook: passes the tick count to $fc9cc0 and tails into the saved vector at $16d2.
@@ -905,7 +904,7 @@ cmt 0xfc9cc0 GEMDOS's 200 Hz clock tick, hooked on etv_timer: advances $879c and
 cmt 0x0eb0 long: the return address $fc4eac parks while it takes its trap #13.
 cmt 0x87ce p_run - the current process's basepage. The trap entry frames D0/A3-A5 at +$68, A6 at +$78 and a pointer to the rest (50 bytes on the caller's own stack) at +$7c; p_uft is +$30, p_curdrv +$37, p_dta +$20.
 cmt 0x68fa GEMDOS call depth: CLEARED then BUMPED on every trap #1 ($fc94e8/$fc94ee), and bumped again at each restart the process-termination path makes.
-cmt 0x7ef4 The process-termination record: the dispatcher's own A6, its own stack pointer and a resume PC inside it. Pterm longjmps here.
+cmt 0x7ef4 The process-termination record: the dispatcher's own A6, its own stack pointer and a resume PC inside it. The FILE SYSTEM's disk-error arms longjmp here ($fc4f54), and Pexec saves it to $7560 before arming one of its own. NOT Pterm, which does not touch it at all.
 cmt 0x8840 GEMDOS's own DOS date word: (year-1980)<<9 | month<<5 | day. Seeded from os_dosdate at $fc0460, advanced by the tick at $fc9cc0, read by Tgetdate and written by Tsetdate.
 cmt 0x75b0 GEMDOS's own DOS time word: hour<<11 | minute<<5 | second/2.
 cmt 0xfd3060 Thirteen words: Tsetdate's day bound indexed by month. Entry 0 is 0, so month 0 admits only day 0; February's 28 is the non-leap arm ($fc9e78).
@@ -981,3 +980,66 @@ cmt 0x7e8e GEMDOS's own memory parameter block, $7e8e..$7e99: mp_mfl here, mp_ma
 cmt 0x7e9c p_root (OS header +$20): an ARRAY of free-chain heads, one per record SIZE CLASS, indexed p_root + (int16)class*4 ($fc7f30/$fc7fb6) - not a single list head. Class 1 is the 16-byte memory descriptor, class 16 the 256-byte basepage the init cuts ($fc9376). p_root[0..21] read zero in the boot snapshot and other GEMDOS data starts at $7ef4, so the array's length is not established.
 cmt 0x8780 Words of the GEMDOS arena still to hand out; used + left == 8000 on the captured machine. A Malloc needing a SPLIT fails when this runs out, over RAM that is plainly free.
 cmt 0x048e The fixed memory descriptor BIOS Getmpb builds ($fc0a46) - the one descriptor that is NOT a pool record. It is on the captured machine's GEMDOS ALLOCATED list, because GEMDOS's init passed its own MPB ($7e8e) to Getmpb and then allocated out of it; the word below it is a system variable, so gemdos_pool_free would file it under the wrong class.
+# ---- GEMDOS wave 2 (2026-09-22): the FILE SYSTEM over a staged RAM disk, and the PROCESS group ----
+# The nineteen file-system and four process entries in the `fn` block above lost their `# ctx` in
+# this wave: every one was checked against the GEMDOS dispatch table's own record. The seven the
+# process group reconstructs keep their API names, which is wave 1's convention for a table entry
+# (Fgetdta, Malloc, Sversion); the C cores are the same names lower-cased with a `gemdos_` front.
+
+# --- the file system: the eight cores, and the twelve routines around them still to read ---
+fn 0xfc50ca gemdos_fs_toupper
+fn 0xfc539a gemdos_fs_log2
+fn 0xfc55e6 gemdos_cluster_record
+fn 0xfc590a gemdos_buffer_flush
+fn 0xfc59f2 gemdos_rwabs_data
+fn 0xfc5a98 gemdos_buffer_get
+fn 0xfc5c9a gemdos_name_match
+fn 0xfc5d28 gemdos_build_fcb_name
+fn 0xfc4f10 os_swap_word
+fn 0xfc4f22 os_swap_long
+fn 0xfc50fa gemdos_dmd_alloc   # ctx
+fn 0xfc53c0 gemdos_dmd_build   # ctx
+fn 0xfc51c0 gemdos_ofd_of_handle   # ctx
+fn 0xfc57ee gemdos_ofd_close   # ctx
+fn 0xfc5c3c gemdos_ofd_new   # ctx
+fn 0xfc5e08 gemdos_split_path   # ctx
+fn 0xfc5e9c gemdos_ofd_read   # ctx
+fn 0xfc5f1c gemdos_ofd_write   # ctx
+fn 0xfc5f44 gemdos_fat_set   # ctx
+fn 0xfc6038 gemdos_fat_get   # ctx
+fn 0xfc60f2 gemdos_next_cluster   # ctx
+fn 0xfc67de gemdos_open_drive   # ctx
+
+# --- the process group and the handle machinery under it ---
+fn 0xfc52f8 gemdos_force_handle
+fn 0xfc51de gemdos_inherit_curdir
+fn 0xfc5092 gemdos_resync_clock
+fn 0xfc8092 gemdos_release_process
+fn 0xfc8242 gemdos_pexec_create
+fn 0xfc4f0a gemdos_call_through_vector
+fn 0xfc564a gemdos_bcopy
+
+# --- the RAM and ROM these two groups own ---
+var 0x75b4 gemdos_disk_error
+var 0x87cc gemdos_disk_error_drive
+var 0x8784 gemdos_drives_opened
+var 0x8380 gemdos_dmd_table
+var 0x7560 gemdos_pexec_saved_jmpbuf
+var 0xfd2fc8 gemdos_bit_mask_table
+
+cmt 0xfc5a98 THE GEMDOS buffer cache. Two BCB lists at _bufl ($4b2) — [0] FAT, [1] dir AND data — MRU to the front, LRU at the tail. The region is arithmetic on the record: shifted down to its cluster and compared with the root directory's own first cluster; below it the FAT, at or above it a negative record is the root directory and a non-negative one is data. A hit asks Mediach with b_bufdrv and TRUNCATES the answer to a word: 0 stands, 1 flushes and re-reads the hit IN PLACE, 2 is E_CHNG and a longjmp. A miss takes the LAST empty buffer in the list, else the tail.
+cmt 0xfc590a One dirty BCB back to the disk. Invalidates b_bufdrv FIRST so a failed write leaves the buffer empty; a FAT buffer (type 0) is written TWICE — its own record and m_fsiz below it, because the BPB's fatrec names the SECOND copy.
+cmt 0xfc59f2 A span of DATA records straight to Rwabs. Walks list 1 only and flushes every buffer with recno <= b_bufrec < recno + count first; a flush is not an eviction — the buffer keeps the record, clean.
+cmt 0xfc53c0 Builds the drive media descriptor out of the BPB: three record biases that make FAT, root directory and data ONE cluster-numbered space (data from 2, root just below 0, FAT below that), three log2/mask pairs off the table at $fd2fc8, and pseudo-OFDs for the FAT and the root directory.
+cmt 0xfc5c9a One 11-byte FCB pattern against one directory entry. The DELETED ($e5) test comes FIRST and is the one place a `?` is refused; an $e5 pattern matches it, which is how a free slot is found. The attribute is position twelve: an entry attribute of 0 matches anything UNLESS the pattern is 8, and everything else shares a bit or does not — a volume-label pattern is not an equality test.
+cmt 0xfc5d28 "name.ext" into eleven padded FCB bytes. `*` fills the rest of its field with `?`; a stem past eight is truncated and the rest thrown away up to the next `.`, `\` or NUL — a skip stopped by neither `*` nor space, unlike the copy loop. A bare `*` is NOT `*.*`: the stem's tail steps past it, so the extension pads with space.
+cmt 0xfc6038 FAT12/FAT16 read through the FAT's pseudo-OFD. Seeks byte n + n/2, reads two bytes, BYTE-SWAPS them ($fc4f10) and then masks &$fff for an even cluster or >>4 for an odd one — which is how a big-endian 68000 reads a little-endian on-disk FAT. A cluster below 0 is the pseudo-chain and answers cluster+1.
+cmt 0xfc4c0c RP5C15 presence probe: mode register 27 := 9, movep.w #$0a05 into registers 5/7, read back masked $0f0f; ABSENCE is reported through the CARRY. Declarable to the harness only as write_through, i.e. as a machine with the clock FITTED (recreate/test/gemdos_process.py).
+cmt 0xfc8028 Pterm ($4c). DOES NOT RETURN and DOES NOT LONGJMP: Setexc($102,-1) and a call through what came back, the Mega ST clock re-read, p_run := p_parent, everything the process owned given back ($fc8092), the exit code ZERO-extended into the PARENT's +$68 save slot, and jsr $fc4fe8 -- the trap entry's epilogue, whose rte resumes whoever called the parent's own GEMDOS call.
+cmt 0xfc7fd8 Ptermres ($31). Mshrink(p_run, keep), then every descriptor the process still owns unlinked and the RECORD handed back to the pool -- so the memory survives with no owner and on no list, which is the whole of "stay resident". Tail-calls Pterm.
+cmt 0xfc8092 Everything a process owns, given back, in four loops: the six standard handles (Fclose only when STRICTLY positive), the 75 handle records BY OWNER, the sixteen p_curdir entries (a zero skipped, a NEGATIVE one decrementing below $8066), and the allocated list by m_own.
+cmt 0xfc817a Pexec ($4b). Modes 0/3/4/5 -- not a range; 1 and 2 are a gap. Saves the dispatcher's termination record to $7560 and arms its own at $7ef4, so everything past $fc8242 is a slice. Two dead branches: the mode-4 half of the owner choice at $fc8342, and the cmpi.w #5 at $fc85c0.
+cmt 0xfc8242 Pexec past the record. The TPA is cut in TWO allocator calls -- ask for the largest free block, then ask for exactly that; the environment is measured to its DOUBLE NUL and rounded up to a word; the basepage clear runs 256 bytes from +8, eight past the basepage's own end; the child is handed A4 = p_bbase and A5 = p_dbase.
+cmt 0xfc5216 Fdup ($45). Takes the first handle record nobody OWNS and copies what the source names -- but not its reference count, which starts at one. So Fdup of a file and Fclose of both halves closes the file twice.
+cmt 0xfc52f8 Fforce's body, over a basepage the caller names (which is how Pexec fills a CHILD's table). A descriptor that itself names a DEVICE stores the device byte and takes no reference; only a real file leaves the handle NUMBER in p_uft and counts the holder.
+cmt 0xfc9924 The dispatcher's handle-argument RESOLUTION. Descriptor $81 (Fseek, longword offset first) takes its handle from the THIRD argument word; $82 (Fread/Fwrite) from the first. 0 answers EIHNDL with no call made, a NEGATIVE resolution routes into the console leaves, anything else falls through to the ordinary dispatch.

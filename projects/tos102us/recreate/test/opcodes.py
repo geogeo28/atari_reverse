@@ -44,3 +44,29 @@ LOAD_IMMEDIATE = {"d0": b"\x20\x3c", "d1": b"\x22\x3c", "d2": b"\x24\x3c",
 LOAD_ADDRESS_IMMEDIATE = LOAD_IMMEDIATE["a0"]
 STORE_A5_ABSOLUTE = b"\x23\xcd"         # move.l  a5,<xxx>.l
 COPY_LONG_ABSOLUTE = b"\x23\xf9"        # move.l  <xxx>.l,<yyy>.l
+
+# ---- ...and the same instructions as WORDS -------------------------------------------------------
+# A stub built with `struct.pack` needs the opcode as an INT, not as bytes: `test/gemdos_fs.py`'s
+# staged disk driver is one `struct.pack` of thirty-odd fields, because every instruction in it
+# carries an operand. It had its own private copy of these sixteen words. They are ordinary 68000
+# and belong here; what stays private to that module is the two SHORT BRANCHES, whose displacement
+# is baked into the opcode word and is a fact about that stub's own layout rather than about the
+# instruction.
+RTS_WORD = int.from_bytes(RTS, "big")   # derived, so the two spellings cannot disagree
+
+LEA_ABSOLUTE_LONG_A0 = 0x41F9           # lea     <xxx>.l,a0
+MOVE_L_ABSOLUTE_D0 = 0x2039             # move.l  <xxx>.l,d0
+MOVE_L_A0_D0 = 0x2008                   # move.l  a0,d0
+MOVEQ_0_D0 = 0x7000                     # moveq   #0,d0
+MOVEA_L_STACK_A1 = 0x226F               # movea.l <d16>(sp),a1
+MOVE_W_STACK_D0 = 0x302F                # move.w  <d16>(sp),d0
+MOVE_W_STACK_D1 = 0x322F                # move.w  <d16>(sp),d1
+MOVE_W_IMMEDIATE_D2 = 0x343C            # move.w  #<imm>,d2
+MULU_W_IMMEDIATE_D0 = 0xC0FC            # mulu.w  #<imm>,d0
+ADDA_L_D0_A0 = 0xD1C0                   # adda.l  d0,a0
+SUBQ_W_1_D1 = 0x5341                    # subq.w  #1,d1
+BTST_IMMEDIATE_STACK = 0x082F           # btst    #<imm>,<d16>(sp)
+MOVE_B_A0_TO_A1 = 0x12D8                # move.b  (a0)+,(a1)+
+MOVE_B_A1_TO_A0 = 0x10D9                # move.b  (a1)+,(a0)+
+DBF_D2 = 0x51CA                         # dbf     d2,<d16>
+DBF_D1 = 0x51C9                         # dbf     d1,<d16>

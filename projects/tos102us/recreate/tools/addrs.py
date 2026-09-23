@@ -61,3 +61,13 @@ ADDRS = parse()
 # Bound as module attributes so a reader writes `addrs.XBIOS_RANDOM` rather than a dict lookup, and
 # a typo is an AttributeError naming the constant instead of a KeyError naming a string.
 sys.modules[__name__].__dict__.update(ADDRS)
+
+
+if __name__ == "__main__":
+    # `NAME=0x...` for each constant named on the command line — the CONTENT STAMP the makefile's
+    # snapshot rule depends on. `tools/boot_snapshot.py` reads exactly two of this header's nine
+    # hundred `#define`s, so a prerequisite on the whole file re-captures 15 s of real emulation for
+    # an edit to a constant the capture never looks at (and, with two agents' `make`s running, makes
+    # them race on the capture). A name the header does not define is an error rather than a blank.
+    for _name in sys.argv[1:]:
+        print(f"{_name}={ADDRS[_name]:#x}")
