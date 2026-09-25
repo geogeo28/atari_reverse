@@ -67,15 +67,16 @@ empty file, a deleted entry and a volume label — the six shapes the directory 
 apart. `SPAN.DAT`'s three-cluster chain (4 -> 5 -> 6) is what makes a read cross both a sector and a
 cluster boundary in one call.
 """
+import contextlib
 import ctypes
 import struct
 import sys
 from pathlib import Path
 
-from harness import _lib, addrs
+from harness import addrs
 
-import case
 import gemdos
+from address_hook import AddressHook
 from opcodes import (ADDA_L_D0_A0, BTST_IMMEDIATE_STACK, DBF_D1, DBF_D2, LEA_ABSOLUTE_LONG_A0,
                      MOVE_B_A0_TO_A1, MOVE_B_A1_TO_A0, MOVE_L_A0_D0, MOVE_L_ABSOLUTE_D0,
                      MOVE_W_IMMEDIATE_D2, MOVE_W_STACK_D0, MOVE_W_STACK_D1, MOVEA_L_STACK_A1,
@@ -599,31 +600,19 @@ def machine(pokes=None):
 
 
 # ---- the candidate's half of the pair ------------------------------------------------------------
-# `include/gemdos_fs.h`'s `recreate_call_disk_vector`, bound here for the process's lifetime in the
-# shape `test/gemdos.py` binds its handler hook: a ctypes trampoline the module holds, recording
-# what it was asked for so a case can assert the ordered BIOS traffic, and refusing what nothing
-# staged.
+# `include/gemdos_fs.h`'s `recreate_call_disk_vector`, bound here for the process's lifetime through
+# `test/address_hook.py`'s record-and-refuse hook, keyed by BIOS FUNCTION NUMBER and recording
+# (fn, rwflag, buffer, count, recno, dev) so a case can assert the ordered BIOS traffic.
 DISK_CALL = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint16,
                              ctypes.c_uint16, ctypes.c_uint32, ctypes.c_uint16, ctypes.c_uint16,
                              ctypes.c_uint16)
 
-# The ordered calls of ONE candidate run — the PLAIN pass's, for `test/gemdos.py`'s reason: an
-# attribution pass's calls are not the case's.
-DISK_CALLS = []
-_PASSES = []
-# ...and the two things a case reports as its own failure, because a ctypes callback cannot raise
-# through to its C caller: the transfers that asked for something outside the staged disk, and the
-# calls made from OUTSIDE a pass.
+_DISK_HOOK = AddressHook("recreate_call_disk_vector", DISK_CALL)
+DISK_CALLS = _DISK_HOOK.calls
+# ...and the transfers that asked for something outside the staged disk, which a case reports as its
+# own failure beside the hook's refusals, because a ctypes callback cannot raise through to its caller.
 OUT_OF_RANGE = []
-UNSTAGED_CALLS = []
-
-
-def recording(glue):
-    """`glue` with a fresh call list per candidate run."""
-    def one_pass(lib, buf):
-        _PASSES.append(DISK_CALLS if not _PASSES else [])
-        return glue(lib, buf)
-    return one_pass
+recording = _DISK_HOOK.recording
 
 
 def _span(buf, at, length):
@@ -636,21 +625,16 @@ def _span(buf, at, length):
     return (ctypes.c_uint8 * length).from_address(ctypes.addressof(buf.contents) + at)
 
 
-def _answer(buf, fn, rwflag, buffer, count, recno, dev):
-    # A call from OUTSIDE a pass is one nothing staged: no case is in flight, so serving it out of
-    # the last case's disk — or copying 512 bytes into whatever image this is — would be the worst
-    # answer available. `_PASSES` empty is how that shows, exactly as it does in `test/isr.py`'s
-    # `_dispatch` and `test/gemdos.py`'s `_call_handler`.
-    if not _PASSES:
-        UNSTAGED_CALLS.append(fn)
-        return 0
-    if len(_PASSES[-1]) < case.CALLS_MAX:
-        _PASSES[-1].append((fn, rwflag, buffer, count, recno, dev))
-    if fn == addrs.BIOS_GETBPB_FN:
-        return BPB_AT
-    if fn == addrs.BIOS_MEDIACH_FN:
-        return int.from_bytes(bytes(_span(buf, MEDIACH_ANSWER_AT, MEDIACH_ANSWER_BYTES)), "big")
-    # `Rwabs`, byte for byte what the staged 68000 stub does — plus the bound the stub has not got.
+def _getbpb(_buf, _rwflag, _buffer, _count, _recno, _dev):
+    return BPB_AT
+
+
+def _mediach(buf, _rwflag, _buffer, _count, _recno, _dev):
+    return int.from_bytes(bytes(_span(buf, MEDIACH_ANSWER_AT, MEDIACH_ANSWER_BYTES)), "big")
+
+
+def _rwabs(buf, rwflag, buffer, count, recno, _dev):
+    # Byte for byte what the staged 68000 stub does — plus the bound the stub has not got.
     # A transfer outside the staged image would read the slack beyond it on the oracle's side and
     # host memory here, so it is refused rather than served, and the case is told which.
     # A count of 0 transfers nothing WHEREVER `recno` points — the stub's `subq.w #1 / bmi.s`
@@ -669,25 +653,23 @@ def _answer(buf, fn, rwflag, buffer, count, recno, dev):
     return 0
 
 
-_DISK_HOOK = DISK_CALL(_answer)
-ctypes.c_void_p.in_dll(_lib, "recreate_call_disk_vector").value = \
-    ctypes.cast(_DISK_HOOK, ctypes.c_void_p).value
+# The staged driver's three vectors, the same on every case: what varies is the DISK, which is image.
+_DRIVER = {addrs.BIOS_GETBPB_FN: _getbpb, addrs.BIOS_MEDIACH_FN: _mediach, addrs.BIOS_RWABS_FN: _rwabs}
 
 
-def arm():
-    """Clear the ledgers for the runs a case is about to make."""
-    _PASSES.clear()
-    DISK_CALLS.clear()
+def _describe_refused(refused):
+    return (f"the candidate reached the disk door outside a candidate run, or with a function the staged "
+            f"driver has not got: BIOS function(s) {sorted(set(refused))} were answered with a "
+            f"fabricated 0, so whatever ran proved nothing")
+
+
+@contextlib.contextmanager
+def staged_disk():
+    """The driver staged for ONE case, and the two refusals the callback could not raise reported on
+    the way out: a call the hook refused, and a transfer off the staged disk."""
     OUT_OF_RANGE.clear()
-    UNSTAGED_CALLS.clear()
-
-
-def assert_every_transfer_was_on_the_staged_disk():
-    """The two refusals the callback could not raise."""
-    assert not UNSTAGED_CALLS, (
-        f"the candidate reached the disk door outside any case: BIOS function(s) "
-        f"{sorted(set(UNSTAGED_CALLS))} were answered with a fabricated 0 — nothing had staged a "
-        f"disk, so whatever ran proved nothing")
+    with _DISK_HOOK.staged(_DRIVER, _describe_refused):
+        yield
     assert not OUT_OF_RANGE, (
         f"the candidate asked the staged disk for records outside it: {OUT_OF_RANGE} — the disk is "
         f"{DISK_SECTORS} sectors, so this case is about a machine neither shore modelled")

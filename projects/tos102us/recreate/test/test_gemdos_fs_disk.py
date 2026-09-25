@@ -76,14 +76,13 @@ class Result:
 
 
 def _run(entry, glue, pokes, **kwargs):
-    """One case over the staged disk: arm the hook, run, and refuse a transfer off the disk.
+    """One case over the staged disk: stage the driver, run, and refuse a transfer off the disk.
 
     `poison=False` for the module docstring's reason.
     """
     staged = fs.machine(pokes)
-    fs.arm()
-    info = case.run(entry, {"a5": 0, "_pokes": staged}, fs.recording(glue), poison=False, **kwargs)
-    fs.assert_every_transfer_was_on_the_staged_disk()
+    with fs.staged_disk():
+        info = case.run(entry, {"a5": 0, "_pokes": staged}, fs.recording(glue), poison=False, **kwargs)
     return Result(info, staged)
 
 

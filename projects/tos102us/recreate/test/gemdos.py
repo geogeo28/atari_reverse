@@ -24,10 +24,11 @@ case has to declare to `test_boot_snapshot.py`.
 
 THE HANDLER CALL IS A HOOK OFF TARGET. The dispatch table's handler longwords are ROM addresses and
 the candidate is host code over a byte array, so `src/gemdos/dispatch.c` transfers control through
-`recreate_call_gemdos_handler`, which `bind_handlers()` here binds to the reconstruction of whatever
+`recreate_call_gemdos_handler`, which `bound_handlers()` here binds to the reconstruction of whatever
 handler the case's selector names. Keyed BY ADDRESS, exactly as `test/isr.py`'s vector hook is, so a
 case whose selector reaches a handler nothing bound fails by naming it.
 """
+import contextlib
 import ctypes
 import struct
 
@@ -38,6 +39,7 @@ import abi
 import case
 import staging
 import trap
+from address_hook import AddressHook, bind_pointer
 from opcodes import LOAD_ADDRESS_IMMEDIATE, SET_USER_STACK, TRAP_GEMDOS
 
 # ---- the band this module owns, inside the one `staging.py` describes ---------------------------
@@ -210,7 +212,7 @@ def rom_descriptor(selector):
 
 def rom_handler(selector):
     """...and the HANDLER longword the same record holds — the ROM address the dispatcher `jsr`s and
-    therefore the key `bind_handlers` is keyed by."""
+    therefore the key `bound_handlers` is keyed by."""
     return case.long_in(BASE_IMAGE, addrs.GEMDOS_FUNCTION_TABLE
                         + selector * addrs.GEMDOS_RECORD_BYTES)
 
@@ -228,15 +230,13 @@ def run_candidate_only(call, pokes=None, handlers=None, io_seed=None):
     `arm_candidate` is the same block `harness.differential` runs before each of its candidate
     passes — public for exactly this (`harness.py`), so a hand copy here cannot go stale.
     """
-    bind_handlers(handlers or {})
-    buf = candidate_image(make_image(pokes))
-    arm_candidate(io_seed=io_seed)
-    _new_pass()
-    returned = call(_lib, buf)
+    with bound_handlers(handlers or {}):
+        buf = candidate_image(make_image(pokes))
+        arm_candidate(io_seed=io_seed)
+        returned = recording(call)(_lib, buf)
     assert _lib.g_os_refusal_count() == 0, (
         f"the candidate made {_lib.g_os_refusal_count()} refused os_* call(s) — this run proves "
         f"nothing; declare the addresses it read")
-    assert_every_handler_was_bound()
     return returned, bytes(buf)
 
 
@@ -250,16 +250,15 @@ def run_slice(selector, words=(), pokes=None, handlers=None):
     (these are whole-function runs over staged image) and the unbound-handler ledger is always
     reported.
     """
-    bind_handlers(handlers or {})
     staged = slice_pokes(selector, words, pokes)
 
     def glue(lib, buf):
         return lib.gemdos_dispatch_selector(buf, ARGUMENTS_AT)
 
-    diffs, info = differential(TRAMPOLINE_AT, {"a5": 0, "_pokes": staged}, recording(glue),
-                               poison=True)
+    with bound_handlers(handlers or {}):
+        diffs, info = differential(TRAMPOLINE_AT, {"a5": 0, "_pokes": staged}, recording(glue),
+                                   poison=True)
     assert not diffs, report(diffs)
-    assert_every_handler_was_bound()
     case.assert_result_is_d0(info)
     return info
 
@@ -451,95 +450,46 @@ def time_poke(time):
 
 # ---- the two host hooks --------------------------------------------------------------------------
 # `src/gemdos/dispatch.c` calls a HANDLER it cannot execute, and `src/gemdos/leaves.c` publishes the
-# clock through a `trap #14` it cannot take. Both are bound here, once per process, to the shape
-# `test/isr.py` binds its vector hook in: a ctypes trampoline the module holds for the process's
-# lifetime, dispatching by address, recording what it was asked for so that a case can refuse a call
-# nothing staged.
+# clock through a `trap #14` it cannot take. Both are bound here, once per process; the handler door
+# is `test/address_hook.py`'s record-and-refuse hook, which says what it guarantees.
 
 CALL_HANDLER = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.POINTER(ctypes.c_uint8),
                                 ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint16)
 PUBLISH_CLOCK = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_uint8),
                                  ctypes.c_uint16, ctypes.c_uint16)
 
-_HANDLERS = {}          # ROM handler address -> handler(buf, arguments, argument_bytes) -> result
-# The ordered (handler, arguments, argument_bytes) of ONE candidate run — the PLAIN pass's, which is
-# the one every claim is about. A differential with `poison` on runs the candidate twice, and the
-# attribution pass's calls are not the case's: poisoning an output can steer the reconstruction down
-# another arm entirely, so an accumulating list would hold a mixture nobody could read. `test/isr.py`
-# splits its vector calls the same way and for the same reason.
-HANDLER_CALLS = []
-_PASSES = []            # every pass's list, the first of which IS `HANDLER_CALLS`
-UNBOUND_CALLS = []      # ...and the handlers nothing bound, which a case reports as its own failure
+# Keyed by ROM handler address; records (handler, arguments, argument_bytes), and an effect
+# `handler(buf, arguments, argument_bytes)` returns the handler's D0.
+_HANDLER_HOOK = AddressHook("recreate_call_gemdos_handler", CALL_HANDLER)
+HANDLER_CALLS = _HANDLER_HOOK.calls
+recording = _HANDLER_HOOK.recording
+
 CLOCK_PUBLICATIONS = []  # (date, time) — the door `recreate/STATUS.md` records as not reconstructed
-
-
-def _new_pass():
-    """Start recording a candidate run — `recording()` below is how a battery reaches it, since the
-    glue is the only place that knows where one pass ends and the next begins."""
-    _PASSES.append(HANDLER_CALLS if not _PASSES else [])
-    return _PASSES[-1]
-
-
-def recording(glue):
-    """`glue` with a fresh call list per candidate run — see `_PASSES`."""
-    def one_pass(lib, buf):
-        _new_pass()
-        return glue(lib, buf)
-    return one_pass
-
-
-def _call_handler(buf, handler, arguments, argument_bytes):
-    # A ctypes callback cannot raise through to its C caller, so a refusal is RECORDED here and the
-    # battery reports it (`assert_every_handler_was_bound` below). A call from OUTSIDE a pass is one
-    # of those: nothing staged anything, so answering it with the last case's handler would be the
-    # worst answer available.
-    if not _PASSES:
-        UNBOUND_CALLS.append(handler)
-        return 0
-    if len(_PASSES[-1]) < case.CALLS_MAX:
-        _PASSES[-1].append((handler, arguments, argument_bytes))
-    effect = _HANDLERS.get(handler)
-    if effect is None:
-        UNBOUND_CALLS.append(handler)
-        return 0
-    return effect(buf, arguments, argument_bytes)
 
 
 def _publish_clock(_buf, date, time):
     CLOCK_PUBLICATIONS.append((date, time))
 
 
-_HANDLER_HOOK = CALL_HANDLER(_call_handler)
+# Not an `AddressHook`: it dispatches nothing — every publication is the same refusal, recorded.
 _CLOCK_HOOK = PUBLISH_CLOCK(_publish_clock)
-ctypes.c_void_p.in_dll(_lib, "recreate_call_gemdos_handler").value = \
-    ctypes.cast(_HANDLER_HOOK, ctypes.c_void_p).value
-ctypes.c_void_p.in_dll(_lib, "recreate_publish_clock").value = \
-    ctypes.cast(_CLOCK_HOOK, ctypes.c_void_p).value
+bind_pointer("recreate_publish_clock", _CLOCK_HOOK)
 
 
-def bind_handlers(handlers):
-    """Bind `{rom_handler_address: effect}` for the runs a case is about to make, and clear the
-    ledgers. `effect(buf, arguments, argument_bytes)` returns the handler's D0.
+def _describe_unbound(unbound):
+    return (f"the candidate called GEMDOS handler(s) "
+            f"{', '.join(f'{handler:#x}' for handler in sorted(set(unbound)))} that no case bound — bind "
+            f"them with `gemdos.bound_handlers`, or the run was answered with a fabricated 0")
 
-    The binding is global because the hook is a symbol in the `.so`, so a battery binds what it
-    needs immediately before each case rather than once at import — which is also what keeps two
-    batteries from silently sharing one table under `pytest -n auto`.
-    """
-    _HANDLERS.clear()
-    _HANDLERS.update(handlers)
-    _PASSES.clear()
-    HANDLER_CALLS.clear()
-    UNBOUND_CALLS.clear()
+
+@contextlib.contextmanager
+def bound_handlers(handlers):
+    """Bind `{rom_handler_address: effect}` for ONE case and clear the ledgers
+    (`AddressHook.staged` says why per case); a handler the candidate reached that nothing bound
+    fails the case on the way out — it proved nothing, the reconstruction was answered with a 0."""
     CLOCK_PUBLICATIONS.clear()
-
-
-def assert_every_handler_was_bound():
-    """...and the refusal the callback could not raise: a handler the candidate reached that nothing
-    staged. A case that hits this proved nothing — the reconstruction was answered with a 0."""
-    assert not UNBOUND_CALLS, (
-        f"the candidate called GEMDOS handler(s) "
-        f"{', '.join(f'{handler:#x}' for handler in sorted(set(UNBOUND_CALLS)))} that no case bound "
-        f"— bind them with `gemdos.bind_handlers`, or the run was answered with a fabricated 0")
+    with _HANDLER_HOOK.staged(handlers, _describe_unbound):
+        yield
 
 
 def assert_the_clock_was_not_published():

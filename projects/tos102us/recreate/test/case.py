@@ -15,16 +15,6 @@ import struct
 import abi
 from harness import differential, make_image, report
 
-# How many calls ONE candidate run's recording may grow to before the list stops growing. Three
-# modules hook a door the reconstruction calls out through (`test/isr.py`'s vectors, `test/gemdos.py`'s
-# handlers, `test/gemdos_fs.py`'s disk driver) and each needs the same cap, for the same reason: the
-# reconstruction is host code with no instruction cap the way the oracle has, so a defect that leaves
-# a dispatched call looping is an endless ALLOCATION rather than a failure. A mutant that polled the
-# wrong GPIP bit reached 15 GB before it was killed (measured in the BIOS wave's sweep). Far above
-# any case in this project, so a run under the cap is an ordinary run — and ONE constant, because
-# three copies is three numbers to raise the day a case legitimately needs more.
-CALLS_MAX = 1 << 16
-
 # The width of a result, as the C signature declares it. A core that returns nothing (`void` — the
 # ROM routine sets no result, or reports only through memory) says so with `None`, which is a claim
 # too: the case then requires the candidate glue to return nothing rather than skipping the check.

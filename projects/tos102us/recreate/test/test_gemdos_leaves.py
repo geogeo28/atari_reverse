@@ -216,9 +216,9 @@ def test_tsetdate_refuses_a_date_out_of_range(what, date):
     by four, so its February is computed at 29 days and 30 is refused; 1987's falls through to the
     table's 28 and 29 is refused there.
     """
-    gemdos.bind_handlers({})
-    info = case.run(addrs.GEMDOS_TSETDATE, {"a5": 0, "_pokes": case.word_arg(date)},
-                    lambda lib, buf: lib.gemdos_tsetdate(buf, date))
+    with gemdos.bound_handlers({}):
+        info = case.run(addrs.GEMDOS_TSETDATE, {"a5": 0, "_pokes": case.word_arg(date)},
+                        lambda lib, buf: lib.gemdos_tsetdate(buf, date))
     assert info["regs"]["d0"] == addrs.GEMDOS_RANGE_ERROR
     gemdos.assert_the_clock_was_not_published()
 
@@ -235,9 +235,9 @@ REFUSED_TIMES = (
 def test_tsettime_refuses_a_time_out_of_range(what, time):
     """...and the same for the time word. The seconds field counts TWO-second units, so 30 is 60
     seconds and is the first refused value."""
-    gemdos.bind_handlers({})
-    info = case.run(addrs.GEMDOS_TSETTIME, {"a5": 0, "_pokes": case.word_arg(time)},
-                    lambda lib, buf: lib.gemdos_tsettime(buf, time))
+    with gemdos.bound_handlers({}):
+        info = case.run(addrs.GEMDOS_TSETTIME, {"a5": 0, "_pokes": case.word_arg(time)},
+                        lambda lib, buf: lib.gemdos_tsettime(buf, time))
     assert info["regs"]["d0"] == addrs.GEMDOS_RANGE_ERROR
     gemdos.assert_the_clock_was_not_published()
 

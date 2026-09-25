@@ -41,6 +41,7 @@ from harness import _lib, addrs, emu
 import abi
 import case
 import staging
+from address_hook import AddressHook
 
 _lib.xbios_supexec.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32]
 _lib.xbios_supexec.restype = ctypes.c_uint32
@@ -60,27 +61,9 @@ RTS = b"\x4e\x75"
 # The candidate's half of the tail jump: `uint32_t (*)(uint8_t *image, uint32_t routine_address)`.
 CALL_ROUTINE = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32)
 
-# What the run in flight has staged, by address. A dict rather than one hook per case, because the
-# decoy is staged alongside the named stub and the hook has to tell them apart.
-_STAGED_EFFECTS = {}
-# Addresses the candidate jumped to that nothing staged. A ctypes callback cannot raise through to
-# its caller — the exception would be printed and 0 returned — so it is recorded and `run` reports it.
-_UNSTAGED = []
-
-
-def _dispatch(buf, routine_address):
-    effect = _STAGED_EFFECTS.get(routine_address)
-    if effect is None:
-        _UNSTAGED.append(routine_address)
-        return 0
-    return effect(buf)
-
-
-# Held in a module global for its lifetime: the .so keeps the raw pointer, and a trampoline the
-# garbage collector freed would be a jump into released memory.
-_HOOK = CALL_ROUTINE(_dispatch)
-ctypes.c_void_p.in_dll(_lib, "recreate_call_routine").value = \
-    ctypes.cast(_HOOK, ctypes.c_void_p).value
+# Keyed by routine address — the decoy is staged alongside the named stub and the hook has to tell
+# them apart — and an effect `effect(buf)` returns the routine's D0.
+HOOK = AddressHook("recreate_call_routine", CALL_ROUTINE)
 
 
 def move_byte_immediate(value, address):
@@ -110,21 +93,14 @@ def run(stubs, named=STUB_AT, poison=True, entry_d0=0):
     `named` is the address the call's 4(sp) argument points at; every stub in the map is planted in
     the image and bound to the hook, so a stub the call does NOT name is a decoy on both sides.
     """
-    _STAGED_EFFECTS.clear()
-    _STAGED_EFFECTS.update({at: effect for at, (_code, effect) in stubs.items()})
-    _UNSTAGED.clear()
-
     def glue(lib, buf):
         return lib.xbios_supexec(buf, named)
 
     pokes = {abi.FIRST_ARG: struct.pack(">I", named),
              **{at: code for at, (code, _effect) in stubs.items()}}
-    info = case.run(addrs.XBIOS_SUPEXEC, {"a5": 0, "d0": entry_d0, "_pokes": pokes}, glue,
-                    poison=poison)
-    assert not _UNSTAGED, (
-        f"the candidate transferred control to {_UNSTAGED[0]:#x}, where this case staged nothing — "
-        f"it named {named:#x}")
-    return info
+    with HOOK.staged_routines(stubs):
+        return case.run(addrs.XBIOS_SUPEXEC, {"a5": 0, "d0": entry_d0, "_pokes": pokes},
+                        HOOK.recording(glue), poison=poison)
 
 
 def test_a_bare_rts_passes_the_caller_s_d0_straight_back():

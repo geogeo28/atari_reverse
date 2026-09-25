@@ -46,7 +46,7 @@ for _name in ("gemdos_dispatch", "gemdos_dispatch_selector"):
 
 # The handlers this wave can bind, keyed by the ROM address the table names — which is how the hook
 # dispatches, so a case whose selector reaches anything else fails by naming it rather than by being
-# answered with a fabricated 0 (`gemdos.assert_every_handler_was_bound`).
+# answered with a fabricated 0 (`gemdos.bound_handlers`).
 #
 # Each takes `(buf, arguments, argument_bytes)` and returns the handler's D0, exactly as the 68000
 # `jsr` would leave it. None of these six reads an argument, which is why none of them uses the two
@@ -135,13 +135,13 @@ def test_a_selector_past_the_table_answers_einvfn(selector):
     EINVFN is the same -32 the undefined-selector stub answers, and the two are NOT the same event —
     this one reads no record and makes no call, and $0c has a whole dispatch before it.
     """
-    gemdos.bind_handlers({})
-    info = case.run(addrs.GEMDOS_DISPATCH, {"a5": 0, "_pokes": gemdos.dispatch_pokes(selector)},
-                    gemdos.recording(lambda lib, buf: lib.gemdos_dispatch(buf,
-                                                                          gemdos.ARGUMENTS_AT)))
+    with gemdos.bound_handlers({}):
+        info = case.run(addrs.GEMDOS_DISPATCH, {"a5": 0, "_pokes": gemdos.dispatch_pokes(selector)},
+                        gemdos.recording(lambda lib, buf: lib.gemdos_dispatch(buf,
+                                                                              gemdos.ARGUMENTS_AT)))
     assert info["regs"]["d0"] == addrs.GEMDOS_EINVFN
-    # A LIVE claim only because the glue opened a pass: outside one the hook records into
-    # `UNBOUND_CALLS` instead and this list is empty whatever the candidate did.
+    # A LIVE claim only because the glue opened a pass: outside one the hook refuses instead and
+    # this list is empty whatever the candidate did.
     assert not gemdos.HANDLER_CALLS, "a selector past the table reached a handler"
 
 
@@ -149,13 +149,12 @@ def test_the_call_counter_is_cleared_and_then_bumped():
     """Two stores rather than one, and the difference is visible only in the ledger: the ROM clears
     $68fa on entry and increments it at a label the process-termination path branches BACK to, so a
     call that outlives a restart counts more than once."""
-    gemdos.bind_handlers({})
-    info = case.run(addrs.GEMDOS_DISPATCH,
-                    {"a5": 0, "_pokes": gemdos.dispatch_pokes(PAST_THE_TABLE)},
-                    gemdos.recording(lambda lib, buf: lib.gemdos_dispatch(buf,
-                                                                          gemdos.ARGUMENTS_AT)))
+    with gemdos.bound_handlers({}):
+        info = case.run(addrs.GEMDOS_DISPATCH,
+                        {"a5": 0, "_pokes": gemdos.dispatch_pokes(PAST_THE_TABLE)},
+                        gemdos.recording(lambda lib, buf: lib.gemdos_dispatch(buf,
+                                                                              gemdos.ARGUMENTS_AT)))
     assert case.written(info, addrs.GEMDOS_CALL_DEPTH, 2) == 1
-    gemdos.assert_every_handler_was_bound()
 
 
 def test_the_bound_is_signed_so_a_negative_selector_passes_it():
@@ -181,9 +180,9 @@ def test_a_dispatched_call_answers_with_its_handlers_d0(what, selector):
     the handler's own result as the dispatcher's.
 
     The ORACLE runs the ROM's handler; the CANDIDATE runs our reconstruction of it, through the hook
-    `gemdos.bind_handlers` bound BY THE ADDRESS THE TABLE HOLDS. So this is also the second proof of
+    `gemdos.bound_handlers` bound BY THE ADDRESS THE TABLE HOLDS. So this is also the second proof of
     each of those leaves: a reconstruction bound under the wrong address would never be called, and
-    `assert_every_handler_was_bound` is what turns that into a failure rather than a 0.
+    the refusal `bound_handlers` reports on its way out is what turns that into a failure, not a 0.
     """
     run_slice(selector, pokes=gemdos.dta_poke(A_DTA))
     assert [call[0] for call in gemdos.HANDLER_CALLS] == [gemdos.rom_handler(selector)]
@@ -376,7 +375,6 @@ def test_the_termination_record_is_the_callers_own_frame():
     is the case that says exactly how big the hole is: twelve bytes, at one address, all three of
     them derived from a stack this reconstruction does not have.
     """
-    gemdos.bind_handlers(HANDLERS)
     staged = gemdos.dispatch_pokes(addrs.GEMDOS_SVERSION_FN)
     _final, writes, _regs = emu.run(make_image(staged), addrs.GEMDOS_DISPATCH, {"a5": 0})
     record = [int.from_bytes(bytes(writes[addrs.GEMDOS_TERMINATION_JMPBUF + 4 * word + byte]

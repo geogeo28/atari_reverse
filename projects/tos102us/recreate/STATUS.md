@@ -214,6 +214,7 @@ is a bench change and is PARKED below.
 | write-through arm of the declared I/O map (`TRAP_MODEL.md` Phase 15) | **DONE** 2026-09-15: `io_seed={address: emu.write_through(byte)}` — a declared register whose later reads are served the byte the run's own store left, which is what lets a routine that re-reads what it wrote run to its `rts` instead of refusing; every store on the candidate goes through one `hw_write` so the two sides' ordered ledgers stay comparable. Pinned in the kit by `test/test_io_model.py`, `test/test_io_differential.py` and `test/io_model_probe.c` (the C side of the same claim), and in this project by `test/mfp.py`'s `WRITE_THROUGH_REGISTERS`. Its LIMIT is written down with it: the four pending/in-service registers are write-to-clear on the real 68901, and the claim holds only because every store these routines make is a pure `and` clear. Consumers: `Mfpint`, the MFP timer programmer, `Xbtimer`, `Rsconf`'s baud arm |
 | schedule door on `run_bench` (Tier 3 for a routine that waits) | **DONE** 2026-09-15: `OS_SCHED_AT_READ` (`include/os.h`, `oracle/shim.c`) fires the scheduled store before the Nth READ OF THE WAIT ADDRESS rather than at a PC, because a PC belongs to one build and the cross-compiled column has nothing at the ROM's; the 7th `VERIFIED_CASES` field carries the schedule to both doors, and `rom_bench._vet_same_wait` compares the two runs' reads address by address so a build that spins differently cannot be priced as if it spun the same. Pinned by `test/test_sched_model.py`, `test/sched_model_probe.c` and `test/test_rom_bench.py` in the kit, and by `test/test_xbios_vsync.py` here. First consumer: `Vsync`, 0.97 / 0.92 |
 | declared SEQUENCE (`TRAP_MODEL.md` Phase 16) | **DONE** 2026-09-16: `io_seed={address: [b0, b1]}` on any I/O byte — a Phase-7 NAMED SLOT included — so the Nth read of that address is served the Nth byte, which is what describes a register whose successive reads must DIFFER. ONE address-keyed table, consulted by both read paths before either model's own rule (`os_io_seq_install` / `os_io_seq_next` / `os_io_seq_store`, shared verbatim by `oracle/shim.c` and `src/hw.c`); the model that OWNS the address still keeps its ledger, its wide-read rule and its store rule, so a named slot's reads stay in `hw_events` and refuse at every width while any other byte's go to `io_events`. A read PAST THE END is a refusal on both shores, by ADDRESS and by READ INDEX (`osh_io_seq_spent` / `harness._vet_io_sequences_are_servable` on the oracle's side, the shared `os_refused()` plus the candidate's own `g_io_seq_spent{,_addr,_index}`, which is what makes `_seq_refusal_hint` name the read rather than offer the shape) — because a sticky last byte or a `0` would be a fabrication with the case's own declaration behind it. The candidate exports `g_io_seq_reset` / `g_io_seq_count` / `g_io_seq_spent{,_addr,_index}`, and `g_io_seq_spent` is the NEWEST name in `harness._HW_LEDGER_ABI`, so an `.so` predating the model fails the probe instead of serving a sequenced read out of the model below it. Pinned by `test/test_io_model.py`, `test/test_hw_model.py` and `test/test_io_differential.py`; a case that declares no list gets exactly today's rules. Consumers: `isr_acia`'s two-pass entry, `Bcostat` |
+| shared record-and-refuse hook (`test/address_hook.py`) | **DONE** 2026-09-25: one `AddressHook` class per `.so` door (`recreate_call_vector`, `recreate_call_routine`, `recreate_call_gemdos_handler`, `recreate_call_disk_vector`), bound through `bind_pointer`: dispatch by key, a pass that opens and CLOSES around each candidate run, first-pass-only `calls`, the `CALLS_MAX` cap, and `staged()` — the one lifecycle, which refuses and REPORTS anything unstaged or outside a pass. Every guarantee pinned by `test/test_address_hook.py` (15/15 mutations killed). A new door is a new instance, never a copy |
 
 
 ## Wave log
@@ -506,7 +507,7 @@ is a bench change and is PARKED below.
   `AddressHook` — the RECORD-AND-REFUSE hook is copied FOUR times (`test/isr.py`, `test/acia.py`,
   `test/gemdos.py` and this wave's `test/gemdos_fs.py`) and the fix pass could only level the copies, not
   merge them, so it is a **HARD PRECONDITION for the next file-system wave**: the fifth copy is not to be
-  written; NETTING THE STAGED DRIVER out of the three disk rows (`gemdos_buffer_flush`/`_get`/`gemdos_rwabs_data`
+  written (LANDED 2026-09-25, see below); NETTING THE STAGED DRIVER out of the three disk rows (`gemdos_buffer_flush`/`_get`/`gemdos_rwabs_data`
   measure ~11k of stub against ~1-2k of core, see the note under the table) — a per-row `staged_entry` from a
   zero-count `Rwabs`; and a BENCH TRANSCRIPTION CASE for `Pterm`'s epilogue path, which is the only surface that
   would see the exit code's D0 pin (see `## Not reconstructed, and why`).
@@ -530,6 +531,22 @@ is a bench change and is PARKED below.
   and two arms had no candidate-side case — the dispatcher's resolved-FILE fall-through and `Pexec`'s copy of
   the outer termination record. Every one of the four correctness findings and both coverage holes was
   RED-before / GREEN-after under a mutation of its own.
+* **Harness (2026-09-25), the shared `AddressHook`** — the file-system wave's HARD PRECONDITION, landed. The
+  record-and-refuse hook is ONE class in `test/address_hook.py` (with `bind_pointer`, the one place a `.so` function
+  pointer is bound): dispatch by key; a PASS WITH AN END — `recording()` opens one around each candidate run and closes
+  it in `finally`, and any call while none is open is refused; `calls` = the FIRST pass alone (a pass counter, so the
+  attribution pass is served but not recorded); the `CALLS_MAX` cap (moved from `test/case.py`); and ONE lifecycle,
+  `staged(effects, describe_refusals)`, which drops the table on exit and FAILS the case if anything was refused — the
+  battery supplies the wording, so the check cannot be skipped. Its four copies are thin uses: `test/isr.py` and
+  `test/test_xbios_supexec.py` through `staged_routines` (one projection, one message), `test/gemdos.py` through
+  `bound_handlers` (was `bind_handlers` + a separate `assert_every_handler_was_bound`), `test/gemdos_fs.py` through
+  `staged_disk` (a fixed `{Getbpb, Mediach, Rwabs}` table, so an unmodelled BIOS function is REFUSED where it was
+  served as `Rwabs`). The wave-8 note had one copy wrong: `test/acia.py` never had one; Supexec's was the fourth and
+  the weakest. `final_image` was already one helper. Review of the first merge (5 finders) found the pass was never
+  CLOSED — a stray call after a case was appended to that case's `calls` and, in the two GEMDOS modules, SERVED out
+  of its table; fixed, RED-before/GREEN-after. Mutation 15/15, and the pass-close, the exit refusal and the table
+  drop are caught ONLY by the new `test/test_address_hook.py`, which drives the real Supexec door. Suites 2,485 /
+  1 skipped, guarded the same (3,292 runs), Tier 3 table byte-identical.
 * **Next** — THE REST OF GEMDOS, and wave 8 narrowed it to one thing: THE FILE LEAVES. The foundation under them is
   in (the buffer cache, the 8.3 name layer, the handle table, the process group), so what is left is
   `Fopen`/`Fcreate`/`Fread`/`Fwrite`/`Fseek`, `Fclose`'s file arm, the `D*` group and `Fsfirst`/`Fsnext` — which
@@ -540,8 +557,8 @@ is a bench change and is PARKED below.
 
 ## Suite
 
-`make test` — **2,474 passed** (1 skipped) and `make guarded` the same count (3,292 candidate runs guarded, no fault),
-re-summed at the GEMDOS wave-2 fix pass on 2026-09-22 after a forced relink of the oracle and every candidate;
+`make test` — **2,485 passed** (1 skipped) and `make guarded` the same count (3,292 candidate runs guarded, no fault),
+re-summed at the shared-AddressHook commit on 2026-09-25 after a forced relink of the oracle and every candidate;
 `make bench` judges 226 rows (147 ok / 58 accepted / 12 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
 printed table. The kit's own suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged
 (3,851) as the PRG controls. `names.txt`: 441 fn / 305 var / 202 cmt.

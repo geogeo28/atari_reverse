@@ -344,13 +344,12 @@ def test_a_handle_that_names_nothing_is_eihndl(selector, what, handle, pokes):
     walk rather than before it. Both ways of reaching a zero: a descriptor holding one, and a
     standard handle whose `p_uft` byte is the 0 an unused slot holds.
 
-    The call is refused before any handler is reached, which is what `bind_handlers({})` makes a
+    The call is refused before any handler is reached, which is what `bound_handlers({})` makes a
     claim rather than an accident.
     """
     info = gemdos.run_slice(selector, (handle, 0, 0, 0, 0, 0), pokes)
     assert info["regs"]["d0"] == EIHNDL
     assert not gemdos.HANDLER_CALLS, "a refused handle still reached a handler"
-    gemdos.assert_every_handler_was_bound()
 
 
 def test_fseek_takes_its_handle_from_the_THIRD_word():
@@ -362,7 +361,6 @@ def test_fseek_takes_its_handle_from_the_THIRD_word():
     info = gemdos.run_slice(FSEEK, (0, A_FILE_HANDLE, ANOTHER_FILE_HANDLE, 0, 0, 0), pokes)
     assert info["regs"]["d0"] == EIHNDL
     assert not gemdos.HANDLER_CALLS
-    gemdos.assert_every_handler_was_bound()
 
 
 @pytest.mark.parametrize("what,handle,pokes,reaches", (

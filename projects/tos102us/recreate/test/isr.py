@@ -39,7 +39,6 @@ with the same effect for the candidate, which reaches it through `include/staged
 hook dispatches BY ADDRESS, so a decoy staged beside the named routine means something on both
 sides.
 """
-import contextlib
 import ctypes
 import struct
 from collections import namedtuple
@@ -48,7 +47,8 @@ import abi
 import case
 import staging
 import test_xbios_supexec as supexec
-from harness import BASE_IMAGE, _lib, addrs, emu
+from address_hook import AddressHook
+from harness import BASE_IMAGE, addrs, emu
 
 # ---- the band this module and its batteries stage into -------------------------------------------
 # The top of `staging.SCRATCH`, which the other batteries fill from the bottom (Getmpb's parameter
@@ -412,42 +412,12 @@ CALL_VECTOR = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_ubyte),
                                ctypes.c_uint32, ctypes.c_uint32)
 NO_ARGUMENT = 0xFFFF_FFFF           # staged_call.h's STAGED_CALL_NO_ARGUMENT
 
-_STAGED = {}                        # address -> effect(buf, argument), for the run in flight
-_UNSTAGED = []                      # ...and addresses the candidate jumped to that nothing staged
-# The ordered (address, argument) the CANDIDATE made, ONE LIST PER CANDIDATE RUN. A differential
-# makes two of them when `poison` is on, and the attribution pass's is not the case's: poisoning an
-# output can steer the reconstruction down another path entirely (the VBL's own semaphore, inverted,
-# closes the whole body), so a single accumulating list would hold a mixture nobody could read.
-# `CALLS` below is the PLAIN pass's, which is the one every claim here is about.
-_PASSES = []
-CALLS = []
-# The cap on one candidate run's recording is `case.CALLS_MAX`, which says why. A handler that LOOPS
-# (the ACIA's `btst #4,$fffa01 / beq` is a real one) calls a staged routine per pass, and an
-# unbounded record of a defect in that condition is an endless ALLOCATION.
-
-
-def _dispatch(buf, routine, argument):
-    # A ctypes callback cannot raise through to its caller — the exception is printed and the call
-    # returns — so everything it refuses is RECORDED and `run` reports it as the case's failure.
-    # THAT INCLUDES A CALL FROM OUTSIDE `run`: nothing staged anything, so applying the last case's
-    # effect to this buffer would be the worst answer available. `_PASSES` empty is how that shows.
-    if not _PASSES:
-        _UNSTAGED.append(routine)
-        return
-    if len(_PASSES[-1]) < case.CALLS_MAX:
-        _PASSES[-1].append((routine, argument))
-    effect = _STAGED.get(routine)
-    if effect is None:
-        _UNSTAGED.append(routine)
-        return
-    effect(buf, argument)
-
-
-# Held for the process's lifetime: the .so keeps the raw pointer, and a trampoline the garbage
-# collector freed would be a jump into released memory.
-_HOOK = CALL_VECTOR(_dispatch)
-ctypes.c_void_p.in_dll(_lib, "recreate_call_vector").value = \
-    ctypes.cast(_HOOK, ctypes.c_void_p).value
+# Keyed by routine address; records (address, argument). A handler that LOOPS (the ACIA's
+# `btst #4,$fffa01 / beq` is a real one) calls a staged routine per pass, which is what the hook's
+# cap is for — and the VBL's own semaphore, inverted by the attribution pass, closes the whole body,
+# which is why `CALLS` is the PLAIN pass's alone.
+_HOOK = AddressHook("recreate_call_vector", CALL_VECTOR)
+CALLS = _HOOK.calls
 
 
 def store_byte(value, address):
@@ -553,7 +523,6 @@ def routine_pokes(routines):
     return {at: code for at, (code, _effect) in routines.items() if code}
 
 
-@contextlib.contextmanager
 def staged_routines(routines):
     """Install `routines` for ONE differential, and collect what the candidate called.
 
@@ -566,29 +535,10 @@ def staged_routines(routines):
     exception frame. One installer, so the hook is bound once in this module and a second battery
     cannot bind it again — under `pytest -n auto` the later import would silently win.
     """
-    _STAGED.clear()
-    _STAGED.update({at: effect for at, (_code, effect) in routines.items()})
-    _UNSTAGED.clear()
-    _PASSES.clear()
-    CALLS.clear()
-    try:
-        yield
-    finally:
-        # Nothing staged stays installed past the case that staged it: a later run that reached the
-        # hook without going through here would otherwise apply THIS case's effect to its buffer.
-        CALLS[:] = _PASSES[0] if _PASSES else []
-        _STAGED.clear()
-    assert not _UNSTAGED, (
-        f"the candidate transferred control to {_UNSTAGED[0]:#x}, where this case staged no routine "
-        f"— it staged {', '.join(f'{at:#x}' for at in sorted(routines))}")
+    return _HOOK.staged_routines(routines)
 
 
-def recording(glue):
-    """`glue` with a fresh call list per candidate run — see `_PASSES`."""
-    def one_pass(lib, buf):
-        _PASSES.append([])
-        return glue(lib, buf)
-    return one_pass
+recording = _HOOK.recording
 
 
 def run(entry, glue, *, frame=FRAME_IN_STACK_BAND, resume_sr=RESUME_SR, pokes=None, regs=None,
