@@ -8,12 +8,11 @@
   * the three routines, driven over that disk: a buffer flushed, a buffer fetched, and a span of
     data records moved straight through.
 
-WHY NOTHING HERE POISONS. `case.run`'s attribution pass pre-inverts every byte the ORACLE wrote and
-re-runs both cores — and the oracle writes `savptr` itself, twice per BIOS call, because it takes a
-real `trap #13` where the host build calls its door. An inverted `savptr` sends the next save frame
-somewhere no case staged. `test/gemdos.py`'s note is the long version; what stands in for the pass
-is STAGING — every buffer starts full of `$a5` and every disk sector holds a ramp keyed on its file,
-so a byte the reconstruction did not write reads as something no arm of these routines produces.
+WHY NOTHING HERE POISONS: every one of these routines reaches the BIOS, whose real `trap #13` on the
+oracle's side writes `savptr` — `gemdos_fs.run` says it once for every fs battery. What stands in for
+the pass is STAGING — every buffer starts full of `$a5` and every disk sector holds a ramp keyed on
+its file, so a byte the reconstruction did not write reads as something no arm of these routines
+produces.
 """
 import ctypes
 
@@ -33,57 +32,15 @@ _lib.gemdos_rwabs_data.restype = None
 DRIVE = 0
 OTHER_DRIVE = 1
 
-# The three regions' records this file works in, spelt once. Each is the FIRST record of its region
-# in the DMD's pseudo-cluster space, which `gemdos_fs.record_of` turns into a BIOS record.
-FAT_RECORD = fs.FAT_START_CLUSTER * fs.SECTORS_PER_CLUSTER
-DIR_RECORD = fs.ROOT_START_CLUSTER * fs.SECTORS_PER_CLUSTER
-DATA_RECORD = fs.FIRST_DATA_CLUSTER * fs.SECTORS_PER_CLUSTER
+# The three regions' records this file works in: the FIRST record of each region in the DMD's
+# pseudo-cluster space, which `gemdos_fs.record_of` turns into a BIOS record.
+FAT_RECORD = fs.FAT_PSEUDO_RECORD
+DIR_RECORD = fs.ROOT_PSEUDO_RECORD
+DATA_RECORD = fs.DATA_PSEUDO_RECORD
 
 # What a case writes into a buffer to see it reach the disk: a byte no sector of the staged image
 # holds, and not the `$a5` an untouched buffer is filled with.
 DIRTY_BYTE = 0x3C
-
-
-class Result:
-    """A run, and what the machine held AFTER it.
-
-    `harness.differential` hands back the oracle's WRITE LEDGER rather than its final image, which
-    is the sharper thing for a field the routine stores — a `KeyError` names a field nothing wrote
-    — but the disk, the buffers and the list links are mostly bytes a case POKED and the routine
-    left alone. So `after()` is a slice of `case.final_image`: the captured snapshot, the case's
-    pokes, and then the oracle's writes, composed once per run rather than per read.
-    """
-
-    def __init__(self, info, pokes):
-        self.info = info
-        self._final = case.final_image(info, pokes)
-
-    def after(self, at, length):
-        return bytes(self._final[at:at + length])
-
-    def long(self, at):
-        return int.from_bytes(self.after(at, 4), "big")
-
-    def word(self, at):
-        return int.from_bytes(self.after(at, 2), "big")
-
-    def sector(self, record):
-        """...and one sector of the staged disk."""
-        return self.after(fs.IMAGE_AT + record * fs.SECTOR_BYTES, fs.SECTOR_BYTES)
-
-    def order(self, which):
-        return fs.cache_order(self.long, which)
-
-
-def _run(entry, glue, pokes, **kwargs):
-    """One case over the staged disk: stage the driver, run, and refuse a transfer off the disk.
-
-    `poison=False` for the module docstring's reason.
-    """
-    staged = fs.machine(pokes)
-    with fs.staged_disk():
-        info = case.run(entry, {"a5": 0, "_pokes": staged}, fs.recording(glue), poison=False, **kwargs)
-    return Result(info, staged)
 
 
 def _dirty_sector(byte=DIRTY_BYTE):
@@ -150,14 +107,16 @@ def test_the_two_fat_copies_start_out_identical():
 
 # ---- buffer_flush, $fc590a -----------------------------------------------------------------------
 
+def _flush_pokes(index, holding):
+    return {**fs.drive(DRIVE), **fs.cache(data=[(index, holding)]), **case.long_args(fs.bcb_at(index))}
+
+
 def _flush(index, holding):
     """`gemdos_buffer_flush` takes the BCB by pointer and consults no list, so which chain the case
     stages it on makes no difference — the region comes from `b_buftyp`."""
-    pokes = {**fs.drive(DRIVE), **fs.cache(data=[(index, holding)]),
-             **case.long_args(fs.bcb_at(index))}
-    return _run(addrs.GEMDOS_BUFFER_FLUSH,
-                lambda lib, buf: lib.gemdos_buffer_flush(buf, fs.bcb_at(index)),
-                pokes, width=case.NO_RESULT)
+    return fs.run(addrs.GEMDOS_BUFFER_FLUSH,
+                  lambda lib, buf: lib.gemdos_buffer_flush(buf, fs.bcb_at(index)),
+                  _flush_pokes(index, holding), width=case.NO_RESULT)
 
 
 def test_a_clean_buffer_is_invalidated_and_never_reaches_the_disk():
@@ -222,12 +181,15 @@ def test_a_dirty_fat_buffer_is_written_TWICE_once_to_each_copy():
 
 # ---- buffer_get, $fc5a98 -------------------------------------------------------------------------
 
+def _get_pokes(record, chains, dirty=0, dmd_drive=DRIVE, mediach=None):
+    return {**fs.drive(dmd_drive), **fs.cache(**chains), **fs.mediach_answer(mediach),
+            **case.args(">HIH", record & fs.D0_LOW_WORD, fs.DMD_AT, dirty)}
+
+
 def _get(record, chains, dirty=0, dmd_drive=DRIVE, mediach=None):
-    pokes = {**fs.drive(dmd_drive), **fs.cache(**chains), **fs.mediach_answer(mediach),
-             **case.args(">HIH", record & 0xFFFF, fs.DMD_AT, dirty)}
-    return _run(addrs.GEMDOS_BUFFER_GET,
-                lambda lib, buf: lib.gemdos_buffer_get(buf, record & 0xFFFF, fs.DMD_AT, dirty),
-                pokes)
+    return fs.run(addrs.GEMDOS_BUFFER_GET,
+                  lambda lib, buf: lib.gemdos_buffer_get(buf, record & fs.D0_LOW_WORD, fs.DMD_AT, dirty),
+                  _get_pokes(record, chains, dirty, dmd_drive, mediach))
 
 
 def test_a_miss_on_an_empty_list_entry_fills_it_from_the_disk():
@@ -421,21 +383,26 @@ def test_the_dirty_argument_marks_the_buffer():
 
 # ---- rwabs_data, $fc59f2 -------------------------------------------------------------------------
 
-def _rwabs_data(rwflag, count, record, buffer_at, chains=None, contents=None):
+def _rwabs_data_pokes(rwflag, count, record, buffer_at, chains=None, contents=None):
     pokes = {**fs.drive(DRIVE), **fs.cache(**(chains or {})),
-             **case.args(">HHHII", rwflag, count, record & 0xFFFF, buffer_at, fs.DMD_AT)}
+             **case.args(">HHHII", rwflag, count, record & fs.D0_LOW_WORD, buffer_at, fs.DMD_AT)}
     if contents is not None:
         pokes[buffer_at] = contents
-    return _run(addrs.GEMDOS_RWABS_DATA,
-                lambda lib, buf: lib.gemdos_rwabs_data(buf, rwflag, count, record & 0xFFFF,
-                                                       buffer_at, fs.DMD_AT),
-                pokes, width=case.NO_RESULT)
+    return pokes
 
 
-# A buffer for a whole cluster, clear of the BCBs and their sector buffers, inside the RAM disk's
-# own span and below the image.
-TRANSFER_AT = fs.BUFFERS_AT + fs.BCB_COUNT * fs.BCB_STRIDE
-assert TRANSFER_AT + fs.CLUSTER_BYTES <= fs.IMAGE_AT
+def _rwabs_data(rwflag, count, record, buffer_at, chains=None, contents=None):
+    return fs.run(addrs.GEMDOS_RWABS_DATA,
+                  lambda lib, buf: lib.gemdos_rwabs_data(buf, rwflag, count, record & fs.D0_LOW_WORD,
+                                                         buffer_at, fs.DMD_AT),
+                  _rwabs_data_pokes(rwflag, count, record, buffer_at, chains, contents),
+                  width=case.NO_RESULT)
+
+
+# A buffer for a whole cluster: the file system's user buffer (`gemdos_fs.USER_AT`), which is what
+# a transfer of whole sectors moves bytes to and from.
+TRANSFER_AT = fs.USER_AT
+assert fs.CLUSTER_BYTES <= fs.USER_BYTES
 
 
 def test_a_multi_record_read_goes_straight_to_rwabs():
@@ -554,13 +521,9 @@ def test_the_remaining_call_sites_are_jsr_sites_too(site):
 _FLUSH_INDEX = 0
 _FLUSH_HOLDING = fs.holding(DRIVE, record=DATA_RECORD, dirty=1, contents=_dirty_sector())
 gemdos.register("buffer_flush, a dirty data buffer", addrs.GEMDOS_BUFFER_FLUSH, {"a5": 0},
-            fs.machine({**fs.drive(DRIVE), **fs.cache(data=[(_FLUSH_INDEX, _FLUSH_HOLDING)]),
-                        **case.long_args(fs.bcb_at(_FLUSH_INDEX))}))
+                fs.machine(_flush_pokes(_FLUSH_INDEX, _FLUSH_HOLDING)))
 gemdos.register("buffer_get, a miss into an empty buffer", addrs.GEMDOS_BUFFER_GET, {"a5": 0},
-            fs.machine({**fs.drive(DRIVE), **fs.cache(data=[(0, fs.EMPTY)]),
-                        **case.args(">HIH", DATA_RECORD & 0xFFFF, fs.DMD_AT, 0)}))
+                fs.machine(_get_pokes(DATA_RECORD, {"data": [(0, fs.EMPTY)]})))
 gemdos.register("rwabs_data, a cluster read", addrs.GEMDOS_RWABS_DATA, {"a5": 0},
-            fs.machine({**fs.drive(DRIVE), **fs.cache(),
-                        TRANSFER_AT: bytes([fs.SLACK_FILL]) * fs.CLUSTER_BYTES,
-                        **case.args(">HHHII", fs.RWABS_READ, fs.SECTORS_PER_CLUSTER,
-                                    DATA_RECORD & 0xFFFF, TRANSFER_AT, fs.DMD_AT)}))
+                fs.machine(_rwabs_data_pokes(fs.RWABS_READ, fs.SECTORS_PER_CLUSTER, DATA_RECORD, TRANSFER_AT,
+                                             contents=bytes([fs.SLACK_FILL]) * fs.CLUSTER_BYTES)))

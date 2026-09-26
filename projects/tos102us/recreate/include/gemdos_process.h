@@ -138,6 +138,14 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle);
  * handle is what the descriptor decides. */
 int32_t gemdos_resolve_handle(const uint8_t *image, uint32_t arguments, uint16_t descriptor);
 
+/* The handle table's record at a signed INDEX (`handle - 6` for a file handle): `muls.w #10` then
+ * `addl #$8092`, no bound of the ROM's own — the host build asserts it stays in RAM. */
+uint32_t gemdos_descriptor_at(int16_t index);
+
+/* $fc51c0 — the first longword of the record a handle names (via $fc5186, which reads `p_uft` for
+ * 0..5): 0 for nothing, the file system's OFD for an open file. No bound, the ROM's own. */
+int32_t gemdos_ofd_of_handle(const uint8_t *image, int16_t handle);
+
 /* $fc51de — copy one `p_curdir` entry into `basepage` and bump the directory's reference count. */
 void gemdos_inherit_curdir(uint8_t *image, int16_t entry, int16_t node, uint32_t basepage);
 

@@ -315,7 +315,7 @@ def test_fdup_of_an_unused_slot_makes_a_descriptor_fclose_answers_eihndl_for():
 
 # The only three selectors whose descriptor has bit 7 set once the character-device group has had
 # its own rewritten — read out of the ROM's table rather than written down.
-FREAD, FWRITE, FSEEK = addrs.GEMDOS_FREAD_FN, addrs.GEMDOS_FWRITE_FN, 0x42
+FREAD, FWRITE, FSEEK = addrs.GEMDOS_FREAD_FN, addrs.GEMDOS_FWRITE_FN, addrs.GEMDOS_FSEEK_FN
 
 
 def test_exactly_three_selectors_reach_the_resolution_arm():

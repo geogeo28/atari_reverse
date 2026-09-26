@@ -73,4 +73,43 @@ static inline int word_difference_is_negative(uint16_t left, uint16_t right)
     return (int16_t)(uint16_t)(left - right) < 0;
 }
 
+/* A SHIFT BY A REGISTER COUNT — `asl.w Dn,Dm`, `asr.l Dn,Dm` — takes the count MODULO 64, and a
+ * count past the operand's width shifts every bit out: a word shifted 16..63 places left is 0, and a
+ * long shifted 32..63 places right ARITHMETICALLY is its sign. C leaves both of those undefined, and
+ * the file system reaches them: `$fc53c0` makes a log2 of -1 ($ffff, a count of 63) out of a zero
+ * geometry field, and every shift by a DMD log2 then takes it; `$fc67de` shifts a drive's bit by the
+ * drive number itself.
+ *
+ * ON TARGET THE INSTRUCTION IS THE DEFINITION, so it is spelt as the instruction: the 68000's own
+ * shift already does all of the above, and a C spelling of it would cost a mask and a compare the
+ * ROM never pays (measured: `$fc7e24` at 1.32x its ROM cycles with the portable form, against the
+ * Tier 3 bar of 1.10). Off target the portable form computes the same answer, defined. */
+#define M68K_SHIFT_COUNT_MASK 63
+#define M68K_WORD_BITS        16
+#define M68K_LONG_BITS        32
+
+static inline uint16_t asl_word_by(uint16_t value, uint16_t count)
+{
+#ifdef __m68k__
+    __asm__("asl.w %1,%0" : "+d"(value) : "d"(count) : "cc");
+    return value;
+#else
+    unsigned bits = count & M68K_SHIFT_COUNT_MASK;
+
+    return bits < M68K_WORD_BITS ? (uint16_t)(value << bits) : 0;
+#endif
+}
+
+static inline int32_t asr_long_by(int32_t value, uint16_t count)
+{
+#ifdef __m68k__
+    __asm__("asr.l %1,%0" : "+d"(value) : "d"(count) : "cc");
+    return value;
+#else
+    unsigned bits = count & M68K_SHIFT_COUNT_MASK;
+
+    return value >> (bits < M68K_LONG_BITS ? bits : M68K_LONG_BITS - 1);
+#endif
+}
+
 #endif /* TOS102US_M68K_IDIOMS_H */

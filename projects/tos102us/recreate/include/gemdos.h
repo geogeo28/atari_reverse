@@ -16,6 +16,43 @@
 #include "addrs.h"
 #include "machine.h"
 
+/* ---- a frame local whose ADDRESS a core hands on ---------------------------------------------------
+ * The ROM's file system passes the address of a word in its own stack frame as a transfer's buffer
+ * (`$fc6038` and `$fc5f44`'s `-2(a6)`). On target the C local IS such a word and its address is the
+ * one passed. Off target a C local is host memory the image cannot reach, so the word goes to
+ * `GEMDOS_HOST_FRAME_WORD` instead: inside the oracle's stack band, which the differential drops on
+ * both shores — exactly where the ROM's own copy of the word lives — and below the deepest frame the
+ * kit calls legitimate (`test_gemdos_fs_fat.py` pins both).
+ *
+ * ONE WORD, so only one such local may be live at a time. The host build makes that a FACT rather
+ * than a claim: a claim while the word is held is an assert, and every claim is released by the
+ * helper that made it. (The FAT routines are the only users today, and they never nest: the FAT
+ * OFD's clusters are negative, so a transfer through it never reaches `$fc6038` again.) */
+#define GEMDOS_HOST_FRAME_WORD 0x7f200
+
+#ifdef RECREATE_HOST_DIFFERENTIAL
+extern int gemdos_host_frame_word_held;     /* defined with its user, `src/gemdos/fs_io.c` */
+#endif
+
+static inline uint32_t gemdos_frame_word_claim(uint16_t *local)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    (void)local;
+    assert(!gemdos_host_frame_word_held);
+    gemdos_host_frame_word_held = 1;
+    return GEMDOS_HOST_FRAME_WORD;
+#else
+    return (uint32_t)(uintptr_t)local;
+#endif
+}
+
+static inline void gemdos_frame_word_release(void)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    gemdos_host_frame_word_held = 0;
+#endif
+}
+
 /* ---- the current process --------------------------------------------------------------------- */
 
 /* `p_run` — GEMDOS's one pointer to the running process, published by the OS header at +$28 and

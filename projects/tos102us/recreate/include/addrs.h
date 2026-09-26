@@ -1128,8 +1128,9 @@
  * really `GEMDOS_DISK_ERROR_DRIVE` — the file-system wave found the ROM storing a DRIVE there),
  * `GEMDOS_PROCESS_TABLE` ($8380, the per-drive DMD table) and `GEMDOS_PROCESS_OWNERS` ($7dee, the
  * DIRECTORY NODE table). The latter two are named in `../names.txt` (`gemdos_dmd_table`,
- * `gemdos_directory_nodes`) and come back here the day a core reads one; `test/test_addrs.py` now
- * refuses a second name for one address, which is what $87cc had. */
+ * `gemdos_directory_nodes`) and came back in fs wave 3, when `$fc67de` became the first core to read
+ * them (`GEMDOS_DMD_TABLE`, `GEMDOS_DIRECTORY_NODES`, with the file system's RAM below); `test/test_addrs.py`
+ * now refuses a second name for one address, which is what $87cc had. */
 #define GEMDOS_CURDIR_REFCOUNTS 0x8066  /* one byte per directory node: how many basepages hold it */
 
 /* The RAM-ONLY LEAVES this wave reconstructs, and the two words two of them are the whole of. */
@@ -1174,6 +1175,7 @@
 #define GEMDOS_FOPEN_FN       0x3d      /*    compares against the six device names at $fd32d6 */
 #define GEMDOS_FREAD_FN       0x3f
 #define GEMDOS_FWRITE_FN      0x40
+#define GEMDOS_FSEEK_FN       0x42
 #define GEMDOS_PEXEC_FN       0x4b
 
 /* Sversion's answer, and the DOS date/time fields Tsetdate and Tsettime bound. The date word is
@@ -1353,6 +1355,35 @@
 #define GEMDOS_BUFFER_GET     0xfc5a98  /* THE buffer cache: hit, media change, LRU evict, re-read */
 #define GEMDOS_NAME_MATCH     0xfc5c9a  /* one 11-byte FCB pattern against one directory entry */
 #define GEMDOS_BUILD_FCB_NAME 0xfc5d28  /* "name.ext" -> the 11-byte padded FCB form, `*` expanded */
+/* fs wave 3: the shared byte copies (`src/gemdos/fs_copy.c`) — one loop, three argument orders. */
+#define GEMDOS_COPY_OUT       0xfc55fa  /* (n, src, dst): the transfer engine's READ copy ($fc5ec4) */
+#define GEMDOS_COPY_IN        0xfc5622  /* (n, dst, src): ...and its WRITE copy ($fc5f20) */
+#define GEMDOS_BCOPY          0xfc564a  /* (n, src, dst): byte-identical to $fc55fa, called by name */
+#define OS_SWAP_WORD          0xfc4f10  /* the word at the argument, its bytes exchanged in place */
+#define OS_SWAP_LONG          0xfc4f22  /* ...and the long, all four bytes reversed */
+/* fs wave 3: the I/O engine (`src/gemdos/fs_io.c`) — seek, the FAT as a pseudo-file, the transfer. */
+#define GEMDOS_SPLIT_SHIFT    0xfc7e24  /* *rem = value & mask[shift] (word), value >> shift (asr) */
+#define GEMDOS_OFD_ADVANCE    0xfc61d6  /* position += n, opt. in-cluster offset, length grown */
+#define GEMDOS_OFD_SEEK       0xfc7d2a  /* the cursor to a position: ERANGE, -1, or the position */
+#define GEMDOS_FAT_GET        0xfc6038  /* a cluster's FAT entry; negative cluster -> cl + 1 */
+#define GEMDOS_FAT_SET        0xfc5f44  /* ...stored: FAT16 a word, FAT12 read-modify-write */
+#define GEMDOS_NEXT_CLUSTER   0xfc60f2  /* the cursor one cluster on, allocating on a write */
+#define GEMDOS_OFD_XFER       0xfc6218  /* THE transfer: head / sectors / cluster runs / tail */
+#define GEMDOS_OFD_READ       0xfc5e9c  /* the transfer, clamped to the file's end, copy-out */
+#define GEMDOS_OFD_WRITE      0xfc5f1c  /* ...and unclamped, copy-in */
+#define GEMDOS_FREAD          0xfc5e6a  /* ...and the three leaves (their _FN numbers are above) */
+#define GEMDOS_FWRITE         0xfc5eea
+#define GEMDOS_FSEEK          0xfc7cce
+/* fs wave 3: the record layer (`src/gemdos/fs_records.c`). */
+#define GEMDOS_FCB_NAME_EQ    0xfc5672  /* two FCB names, eleven bytes, upper-cased: 1 or low word 0 */
+#define GEMDOS_OFD_NEW        0xfc5c3c  /* a directory's OFD from its DND, length $7fffffff */
+#define GEMDOS_DND_NEW        0xfc65a2  /* a child DND for a subdirectory entry, first on the list */
+#define GEMDOS_OFD_OPEN       0xfc6fdc  /* a file's OFD into a handle record; a second open shares */
+#define GEMDOS_HANDLE_ALLOC   0xfc6f5c  /* the first unowned handle record, then GEMDOS_OFD_OPEN */
+#define GEMDOS_DIR_ZERO_CLUSTER 0xfc70f6 /* a directory's current cluster zeroed through the cache */
+#define GEMDOS_FCB_TO_TEXT    0xfc6b66  /* eleven FCB bytes -> "NAME.EXT", NUL-ended */
+#define GEMDOS_DND_PATH       0xfc6bd2  /* a DND -> "\A\B\", root first, unterminated */
+#define GEMDOS_FILL_DTA       0xfc6ebc  /* a found entry's attribute, time, date, length, name */
 
 /* WHERE EACH OF THIS GROUP'S BIOS CALLS RETURNS TO — the longword `GEMDOS_BIOS_TRAMPOLINE` parks,
  * one per call site, exactly as `src/gemdos/console.c` keeps its fourteen. Each is the address of
@@ -1363,6 +1394,19 @@
 #define BIOS_RETURN_RWABS_DATA 0xfc5a60      /* $fc5a5a */
 #define BIOS_RETURN_BUFFER_READ 0xfc5b84     /* $fc5b7e: the miss that fills an evicted buffer */
 #define BIOS_RETURN_BUFFER_MEDIACH 0xfc5bd6  /* $fc5bd0: the hit's media-change interrogation */
+#define BIOS_RETURN_OPEN_DRIVE_GETBPB 0xfc6806 /* $fc6800: the drive's BPB — `Getbpb`'s one caller */
+
+/* fs wave 3: the DRIVE and PATH layer (`src/gemdos/fs_drive.c`, `include/gemdos_fs_drive.h`). */
+#define GEMDOS_DMD_ALLOC      0xfc50fa  /* the DMD, root DND, root OFD and FAT OFD out of the pool */
+#define GEMDOS_DMD_BUILD      0xfc53c0  /* BPB -> DMD: three record biases, two pseudo-files */
+#define GEMDOS_OPEN_DRIVE     0xfc67de  /* log a drive in through `Getbpb`; a curdir slot for p_run */
+#define GEMDOS_PATH_START     0xfc68dc  /* `X:` and a leading `\` -> the DND a path starts in */
+#define GEMDOS_DOT_NAME       0xfc7e52  /* 1 for "", -1 for ".", -2 for "..", else 0 */
+#define GEMDOS_SPLIT_PATH     0xfc5e08  /* the next path component into an FCB name */
+#define GEMDOS_STRNEQ         0xfc7e94  /* n bytes of two strings equal: "CON:"/"AUX:"/"PRN:" */
+/* The table `$fc53c0` and `$fc7e24` turn a log2 into a mask with: entry n is (1 << n) - 1 as a word
+ * for n = 0..17 ($fc54a4, $fc7e2e); both index it with a signed word and no bound. */
+#define GEMDOS_BIT_MASK_TABLE 0xfd2fc8
 
 /* The two BIOS entries this group reaches that `include/bcon.h` does not declare, because they are
  * not reconstructed BIOS cores at all: entries 4, 7 and 9 of the table at `$fc0846` have bit 31 set
@@ -1383,6 +1427,15 @@
 #define SYSVAR_BUFL_ENTRY_BYTES 4
 #define GEMDOS_DISK_ERROR     0x75b4    /* long: the last BIOS disk result, kept for the longjmp */
 #define GEMDOS_DISK_ERROR_DRIVE 0x87cc  /* word: ...and which drive it came from */
+/* ...and the drive tables `$fc67de` keeps. A drive is LOGGED IN when its bit is set here; it then has
+ * a DMD in the table, and each process names a directory on it by an index into the node table,
+ * whose reference counts are `GEMDOS_CURDIR_REFCOUNTS` (above, one byte per node). */
+#define GEMDOS_DRIVES_OPENED  0x8784    /* word: bit n = drive n's DMD is built ($fc67f0, $fc682a) */
+#define GEMDOS_DMD_TABLE      0x8380    /* long[16]: each drive's DMD, stored BEFORE the test ($fc511c) */
+/* ...the sixteen drives: one bit each in that WORD, one DMD each in this table. */
+#define GEMDOS_DRIVE_COUNT    16
+#define GEMDOS_DIRECTORY_NODES 0x7dee   /* long[40]: the DNDs a p_curdir byte indexes ($fc6856) */
+#define GEMDOS_DIRECTORY_NODE_COUNT 40  /* `cmpi.w #40` bounding the slot search at $fc6874 */
 /* ...as the LONGWORD the ROM stores, because that is the form both sides compare: `$fc5bf2` is a
  * `move.l #-14,$75b4`, and a signed spelling would not survive `tools/addrs.py`, which binds plain
  * integers only (a name bound to half a value is worse than a missing one). */

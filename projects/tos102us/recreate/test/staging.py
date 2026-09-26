@@ -41,27 +41,44 @@ if SCRATCH is None:
 #
 # The bands are claimed at IMPORT, so the pairs really checked are the ones a run imports; under
 # `pytest` that is all of them, because collection imports every battery.
-_BANDS = []
+
+class Registry:
+    """One span of dead RAM and every band claimed in it, refusing a claim outside the span or over
+    another claim — naming BOTH sides, since the module reading the message is rarely the one that
+    moved.
+
+    ONE CLASS for every such span: this module's declared staging band is one instance and the file
+    system's staged RAM disk window (`test/gemdos_fs.py`) another, so a battery staging there is
+    held to the same rule by the same code rather than by a copy of it."""
+
+    def __init__(self, lo, hi, label):
+        self.lo, self.hi, self.label = lo, hi, label
+        self.claims = []
+
+    def claim(self, at, size, owner):
+        """Claim `[at, at + size)` for `owner`, and answer `at`."""
+        assert self.lo <= at and at + size <= self.hi, (
+            f"{owner}'s band [{at:#x}, {at + size:#x}) is not inside {self.label} "
+            f"[{self.lo:#x}, {self.hi:#x})")
+        for other_at, other_size, other_owner in self.claims:
+            assert at + size <= other_at or other_at + other_size <= at, (
+                f"{owner}'s band [{at:#x}, {at + size:#x}) overlaps {other_owner}'s "
+                f"[{other_at:#x}, {other_at + other_size:#x}) in {self.label} — two batteries staging "
+                f"over each other read the same bytes back and prove nothing")
+        self.claims.append((at, size, owner))
+        return at
+
+    def band(self, offset, size, owner):
+        """...the same, at an OFFSET from the span's base."""
+        return self.claim(self.lo + offset, size, owner)
+
+
+SCRATCH_BANDS = Registry(SCRATCH, SCRATCH + SCRATCH_BYTES, "the staging band `project.toml` declares")
 
 
 def band(offset, size, owner):
-    """Claim `[SCRATCH + offset, + size)` for `owner`, and answer its address.
-
-    `owner` is the module that stages there, for the failure message — the point of the assertion is
-    to name BOTH sides of a collision, since the module reading the message is rarely the one that
-    moved.
-    """
-    at = SCRATCH + offset
-    assert 0 <= offset and offset + size <= SCRATCH_BYTES, (
-        f"{owner}'s band [{at:#x}, {at + size:#x}) is not inside the staging band "
-        f"[{SCRATCH:#x}, {SCRATCH + SCRATCH_BYTES:#x}) `project.toml` declares")
-    for other_at, other_size, other_owner in _BANDS:
-        assert at + size <= other_at or other_at + other_size <= at, (
-            f"{owner}'s staging band [{at:#x}, {at + size:#x}) overlaps {other_owner}'s "
-            f"[{other_at:#x}, {other_at + other_size:#x}) — two batteries staging over each other "
-            f"read the same bytes back and prove nothing")
-    _BANDS.append((at, size, owner))
-    return at
+    """Claim `[SCRATCH + offset, + size)` for `owner`, and answer its address."""
+    return SCRATCH_BANDS.band(offset, size, owner)
 
 
 # The bottom of the span, claimed here rather than by any one module: the SINGLE-BUFFER batteries

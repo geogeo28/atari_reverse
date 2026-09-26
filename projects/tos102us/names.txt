@@ -997,18 +997,18 @@ fn 0xfc5c9a gemdos_name_match
 fn 0xfc5d28 gemdos_build_fcb_name
 fn 0xfc4f10 os_swap_word
 fn 0xfc4f22 os_swap_long
-fn 0xfc50fa gemdos_dmd_alloc   # ctx
-fn 0xfc53c0 gemdos_dmd_build   # ctx
+fn 0xfc50fa gemdos_dmd_alloc
+fn 0xfc53c0 gemdos_dmd_build
 fn 0xfc51c0 gemdos_ofd_of_handle   # ctx
 fn 0xfc57ee gemdos_ofd_close   # ctx
-fn 0xfc5c3c gemdos_ofd_new   # ctx
-fn 0xfc5e08 gemdos_split_path   # ctx
-fn 0xfc5e9c gemdos_ofd_read   # ctx
-fn 0xfc5f1c gemdos_ofd_write   # ctx
-fn 0xfc5f44 gemdos_fat_set   # ctx
-fn 0xfc6038 gemdos_fat_get   # ctx
-fn 0xfc60f2 gemdos_next_cluster   # ctx
-fn 0xfc67de gemdos_open_drive   # ctx
+fn 0xfc5c3c gemdos_ofd_new
+fn 0xfc5e08 gemdos_split_path
+fn 0xfc5e9c gemdos_ofd_read
+fn 0xfc5f1c gemdos_ofd_write
+fn 0xfc5f44 gemdos_fat_set
+fn 0xfc6038 gemdos_fat_get
+fn 0xfc60f2 gemdos_next_cluster
+fn 0xfc67de gemdos_open_drive
 
 # --- the process group and the handle machinery under it ---
 fn 0xfc52f8 gemdos_force_handle
@@ -1030,10 +1030,10 @@ var 0xfd2fc8 gemdos_bit_mask_table
 cmt 0xfc5a98 THE GEMDOS buffer cache. Two BCB lists at _bufl ($4b2) — [0] FAT, [1] dir AND data — MRU to the front, LRU at the tail. The region is arithmetic on the record: shifted down to its cluster and compared with the root directory's own first cluster; below it the FAT, at or above it a negative record is the root directory and a non-negative one is data. A hit asks Mediach with b_bufdrv and TRUNCATES the answer to a word: 0 stands, 1 flushes and re-reads the hit IN PLACE, 2 is E_CHNG and a longjmp. A miss takes the LAST empty buffer in the list, else the tail.
 cmt 0xfc590a One dirty BCB back to the disk. Invalidates b_bufdrv FIRST so a failed write leaves the buffer empty; a FAT buffer (type 0) is written TWICE — its own record and m_fsiz below it, because the BPB's fatrec names the SECOND copy.
 cmt 0xfc59f2 A span of DATA records straight to Rwabs. Walks list 1 only and flushes every buffer with recno <= b_bufrec < recno + count first; a flush is not an eviction — the buffer keeps the record, clean.
-cmt 0xfc53c0 Builds the drive media descriptor out of the BPB: three record biases that make FAT, root directory and data ONE cluster-numbered space (data from 2, root just below 0, FAT below that), three log2/mask pairs off the table at $fd2fc8, and pseudo-OFDs for the FAT and the root directory.
+cmt 0xfc53c0 Builds the drive media descriptor out of the BPB: three record biases that make FAT, root directory and data ONE cluster-numbered space (data from 2, root just below 0, FAT below that), three log2/mask pairs off the table at $fd2fc8, and pseudo-OFDs for the FAT and the root directory. The FAT OFD starts at pos 3 / cloff 3 ($fc55be); BPB fields read where used, fatrec twice ($fc5568, $fc5584).
 cmt 0xfc5c9a One 11-byte FCB pattern against one directory entry. The DELETED ($e5) test comes FIRST and is the one place a `?` is refused; an $e5 pattern matches it, which is how a free slot is found. The attribute is position twelve: an entry attribute of 0 matches anything UNLESS the pattern is 8, and everything else shares a bit or does not — a volume-label pattern is not an equality test.
 cmt 0xfc5d28 "name.ext" into eleven padded FCB bytes. `*` fills the rest of its field with `?`; a stem past eight is truncated and the rest thrown away up to the next `.`, `\` or NUL — a skip stopped by neither `*` nor space, unlike the copy loop. A bare `*` is NOT `*.*`: the stem's tail steps past it, so the extension pads with space.
-cmt 0xfc6038 FAT12/FAT16 read through the FAT's pseudo-OFD. Seeks byte n + n/2, reads two bytes, BYTE-SWAPS them ($fc4f10) and then masks &$fff for an even cluster or >>4 for an odd one — which is how a big-endian 68000 reads a little-endian on-disk FAT. A cluster below 0 is the pseudo-chain and answers cluster+1.
+cmt 0xfc6038 FAT12/FAT16 read through the FAT's pseudo-OFD. Seeks byte n + n/2, reads two bytes, BYTE-SWAPS them ($fc4f10) and then masks &$fff for an even cluster or asr.w #4 (SIGNED) for an odd one — so any odd entry with bit 11 set (incl. $ff8..$ffe) comes back negative; only $fff→-1, and only on an even cluster — which is how a big-endian 68000 reads a little-endian on-disk FAT. A cluster below 0 is the pseudo-chain and answers cluster+1.
 cmt 0xfc4c0c RP5C15 presence probe: mode register 27 := 9, movep.w #$0a05 into registers 5/7, read back masked $0f0f; ABSENCE is reported through the CARRY. Declarable to the harness only as write_through, i.e. as a machine with the clock FITTED (recreate/test/gemdos_process.py).
 cmt 0xfc8028 Pterm ($4c). DOES NOT RETURN and DOES NOT LONGJMP: Setexc($102,-1) and a call through what came back, the Mega ST clock re-read, p_run := p_parent, everything the process owned given back ($fc8092), the exit code ZERO-extended into the PARENT's +$68 save slot, and jsr $fc4fe8 -- the trap entry's epilogue, whose rte resumes whoever called the parent's own GEMDOS call.
 cmt 0xfc7fd8 Ptermres ($31). Mshrink(p_run, keep), then every descriptor the process still owns unlinked and the RECORD handed back to the pool -- so the memory survives with no owner and on no list, which is the whole of "stay resident". Tail-calls Pterm.
@@ -1043,3 +1043,26 @@ cmt 0xfc8242 Pexec past the record. The TPA is cut in TWO allocator calls -- ask
 cmt 0xfc5216 Fdup ($45). Takes the first handle record nobody OWNS and copies what the source names -- but not its reference count, which starts at one. So Fdup of a file and Fclose of both halves closes the file twice.
 cmt 0xfc52f8 Fforce's body, over a basepage the caller names (which is how Pexec fills a CHILD's table). A descriptor that itself names a DEVICE stores the device byte and takes no reference; only a real file leaves the handle NUMBER in p_uft and counts the holder.
 cmt 0xfc9924 The dispatcher's handle-argument RESOLUTION. Descriptor $81 (Fseek, longword offset first) takes its handle from the THIRD argument word; $82 (Fread/Fwrite) from the first. 0 answers EIHNDL with no call made, a NEGATIVE resolution routes into the console leaves, anything else falls through to the ordinary dispatch.
+fn 0xfc55fa gemdos_copy_out
+fn 0xfc5622 gemdos_copy_in
+fn 0xfc5672 gemdos_fcb_name_eq
+fn 0xfc65a2 gemdos_dnd_new
+fn 0xfc6fdc gemdos_ofd_open
+fn 0xfc6f5c gemdos_handle_alloc
+fn 0xfc70f6 gemdos_dir_zero_cluster
+fn 0xfc6b66 gemdos_fcb_to_text
+fn 0xfc6bd2 gemdos_dnd_path
+fn 0xfc6ebc gemdos_fill_dta
+fn 0xfc7e24 gemdos_split_shift
+fn 0xfc61d6 gemdos_ofd_advance
+fn 0xfc7d2a gemdos_ofd_seek
+fn 0xfc6218 gemdos_ofd_xfer
+fn 0xfc68dc gemdos_path_start
+fn 0xfc7e52 gemdos_dot_name
+fn 0xfc7e94 gemdos_strneq
+cmt 0xfc6218 THE transfer: head sector via the cache and the passed copy routine, whole sectors / contiguous cluster runs straight through $fc59f2, tail via the cache; buf=0 answers a pointer into the cache. The head's cluster is finished with clsiz_mask & record — the sector INDEX: right for 2-sector clusters, wrong at head indices 1 and 3 of 4.
+cmt 0xfc7d2a Seek: ERANGE past length or below 0; walks from the current cluster when not going back (+1 step if the old cursor sat at its cluster's end); a boundary is held as the END of the previous cluster; cloff stored before the walk; no end-of-chain test on the last step.
+cmt 0xfc60f2 Next cluster: pseudo-cluster +1, FAT successor, or the first cluster from a fresh cursor. Allocating: m_numcl-2 probes from the current cluster, lifted to 2, wrapping % m_numcl — clusters m_numcl and m_numcl+1 are never allocated.
+cmt 0xfc67de Logs a drive in (BIOS Getbpb, then $fc53c0; bit set in $8784 only when both succeed) and gives p_run a directory on it: a p_curdir byte of 0 or naming a zero $7dee entry is replaced by the first zero refcount from slot 1, set to the drive's root DND. The old count is not dropped. -1 no BPB or no slot, -39 ENSMEM, else the drive sign-extended.
+cmt 0xfc50fa DMD (class 3) then root DND, root OFD, FAT OFD (class 4), each pointer stored into its parent BEFORE the test; the DMD goes into $8380[drv] first, so a later failure leaves the slot naming a freed DMD. Frees newest first.
+cmt 0xfc7e24 mask = the $fd2fc8 table at a SIGNED word index (0..17 are masks); remainder stored as a word; quotient asr.l by register, count mod 64.

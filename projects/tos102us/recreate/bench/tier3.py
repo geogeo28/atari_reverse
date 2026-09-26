@@ -933,6 +933,55 @@ CALL = {
     "GEMDOS_RWABS_DATA": Call((IMAGE, arg_word(0), arg_word(2), arg_word(4), arg_long(6),
                                arg_long(10)), RETURNS_NOTHING),
     "GEMDOS_BUFFER_GET": Call((IMAGE, arg_word(0), arg_long(2), arg_word(6)), RETURNS_LONG),
+    # ---- the FILE SYSTEM (GEMDOS fs wave 3) ----
+    # The three byte copies: one C loop, each entry taking its ROM frame's (n.w, a.l, b.l) in order
+    # (`src/gemdos/fs_copy.c`).
+    "GEMDOS_COPY_OUT": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_NOTHING),
+    "GEMDOS_COPY_IN": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_NOTHING),
+    "GEMDOS_BCOPY": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_NOTHING),
+    "OS_SWAP_WORD": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    "OS_SWAP_LONG": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    # ...and the record layer (`src/gemdos/fs_records.c`). `fcb_name_eq` takes the caller's D0 for
+    # `$fc5c9a`'s reason: its miss clears only the low word.
+    "GEMDOS_FCB_NAME_EQ": Call((ENTRY_D0, IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_FCB_TO_TEXT": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_DND_PATH": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_FILL_DTA": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_NOTHING),
+    "GEMDOS_OFD_NEW": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_DND_NEW": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_OFD_OPEN": Call((IMAGE, arg_long(0), arg_long(4), arg_signed_word(8), arg_word(10)),
+                            RETURNS_LONG),
+    "GEMDOS_HANDLE_ALLOC": Call((IMAGE, arg_long(0), arg_long(4), arg_word(8)), RETURNS_LONG),
+    "GEMDOS_DIR_ZERO_CLUSTER": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    # ...and the drive and path layer (`src/gemdos/fs_drive.c`). A drive is a
+    # SIGNED word everywhere in it (`movea.w` before every table index). `open_drive` reaches BIOS
+    # `Getbpb` for a drive not yet logged in, through the ROM's own `trap #13` on target; the three
+    # string routines take the caller's D0 for `$fc5c9a`'s reason.
+    "GEMDOS_DMD_ALLOC": Call((IMAGE, arg_signed_word(0)), RETURNS_LONG),
+    "GEMDOS_DMD_BUILD": Call((IMAGE, arg_long(0), arg_signed_word(4)), RETURNS_LONG),
+    "GEMDOS_OPEN_DRIVE": Call((IMAGE, arg_signed_word(0)), RETURNS_LONG),
+    "GEMDOS_PATH_START": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_DOT_NAME": Call((ENTRY_D0, IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_SPLIT_PATH": Call((ENTRY_D0, IMAGE, arg_long(0), arg_long(4), arg_word(8)), RETURNS_LONG),
+    "GEMDOS_STRNEQ": Call((ENTRY_D0, IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
+    # ...and the I/O engine (`src/gemdos/fs_io.c`). `fat_get` takes the caller's D0
+    # for `$fc5c9a`'s reason — its negative-cluster arm writes only the low word — and `ofd_xfer` its
+    # copy routine as the ROM ADDRESS the frame holds, which the core maps to its reconstruction.
+    # `advance` and `fat_set` leave only an incidental D0 no caller reads, so they are `void`.
+    "GEMDOS_SPLIT_SHIFT": Call((IMAGE, arg_long(0), arg_long(4), arg_word(8)), RETURNS_LONG),
+    "GEMDOS_OFD_ADVANCE": Call((IMAGE, arg_long(0), arg_long(4), arg_word(8)), RETURNS_NOTHING),
+    "GEMDOS_OFD_SEEK": Call((IMAGE, arg_long(0), arg_long(4)), RETURNS_LONG),
+    "GEMDOS_FAT_GET": Call((ENTRY_D0, IMAGE, arg_word(0), arg_long(2)), RETURNS_LONG),
+    "GEMDOS_FAT_SET": Call((IMAGE, arg_word(0), arg_word(2), arg_long(4)), RETURNS_NOTHING),
+    "GEMDOS_NEXT_CLUSTER": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_OFD_XFER": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6), arg_long(10),
+                             arg_long(14)), RETURNS_LONG),
+    "GEMDOS_OFD_READ": Call((IMAGE, arg_long(0), arg_long(4), arg_long(8)), RETURNS_LONG),
+    "GEMDOS_OFD_WRITE": Call((IMAGE, arg_long(0), arg_long(4), arg_long(8)), RETURNS_LONG),
+    # The three leaves: `Fseek`'s frame is the offset longword first and the handle third.
+    "GEMDOS_FREAD": Call((IMAGE, arg_signed_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
+    "GEMDOS_FWRITE": Call((IMAGE, arg_signed_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
+    "GEMDOS_FSEEK": Call((IMAGE, arg_long(0), arg_signed_word(4), arg_word(6)), RETURNS_LONG),
     # ---- the PROCESS group and the HANDLE machinery (GEMDOS wave 2) ----
     # A handle is SIGNED everywhere in this group — the bound `Fforce` applies is `bge`/`ble` over
     # -1..5 — so its argument words are `arg_signed_word` and its C parameters are `int16_t`
@@ -1014,25 +1063,10 @@ Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_
 #     the dispatcher and the undefined-selector stub, which is reached by a table RECORD rather than
 #     by a number.
 #
-# The value is the `addrs.h` constant, which is also the C core's symbol lower-cased, exactly as the
-# dispatch-table relations' are.
-UNNUMBERED_ROUTINE_NAMES = {
-    getattr(addrs, name): name
-    for name in ("MIDI_ACIA_SERVICE", "IKBD_ACIA_SERVICE", "MIDI_QUEUE_BYTE",
-                 "KBD_SCANCODE", "KBD_QUEUE_KEY",
-                 "GEMDOS_POOL_ARENA_ALLOC", "GEMDOS_POOL_GET", "GEMDOS_POOL_FREE",
-                 "GEMDOS_MD_ALLOC", "GEMDOS_MD_FREE_INSERT",
-                 "GEMDOS_DISPATCH", "GEMDOS_DISPATCH_SELECTOR", "GEMDOS_UNIMPLEMENTED",
-                 # ...and GEMDOS wave 2's, which are the same kind: the file system's eight cores
-                 # and the process group's five, all of them called BY NAME out of GEMDOS's own C.
-                 "GEMDOS_FS_TOUPPER", "GEMDOS_FS_LOG2", "GEMDOS_CLUSTER_RECORD",
-                 "GEMDOS_NAME_MATCH", "GEMDOS_BUILD_FCB_NAME", "GEMDOS_BUFFER_FLUSH",
-                 "GEMDOS_RWABS_DATA", "GEMDOS_BUFFER_GET",
-                 "GEMDOS_RELEASE_PROCESS", "GEMDOS_FORCE_HANDLE", "GEMDOS_INHERIT_CURDIR",
-                 "GEMDOS_RESYNC_CLOCK", "GEMDOS_PEXEC_CREATE")}
-
-# ...and what each IS, for the label: the SLOT it is installed in, the caller that falls into it, or
-# what the routine does.
+# Each is named by its `addrs.h` constant — also the C core's symbol lower-cased, exactly as the
+# dispatch-table relations' are — and mapped to what it IS, for the label: the SLOT it is installed
+# in, the caller that falls into it, or what the routine does. The address map below is DERIVED from
+# this one, so a routine cannot be priced without a label or labelled without being priced.
 UNNUMBERED_ROUTINE_ROLES = {
     "MIDI_ACIA_SERVICE": "KBDVECS midisys",
     "IKBD_ACIA_SERVICE": "KBDVECS ikbdsys",
@@ -1047,6 +1081,8 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_DISPATCH": "GEMDOS dispatcher",
     "GEMDOS_DISPATCH_SELECTOR": "GEMDOS dispatcher, past the record",
     "GEMDOS_UNIMPLEMENTED": "GEMDOS undefined selector",
+    # ...and GEMDOS wave 2's, which are the same kind: the file system's eight cores and the process
+    # group's five, all of them called BY NAME out of GEMDOS's own C.
     "GEMDOS_FS_TOUPPER": "GEMDOS upper case",
     "GEMDOS_FS_LOG2": "GEMDOS log2",
     "GEMDOS_CLUSTER_RECORD": "GEMDOS cluster -> record",
@@ -1060,7 +1096,41 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_INHERIT_CURDIR": "GEMDOS curdir inherit",
     "GEMDOS_RESYNC_CLOCK": "GEMDOS clock resync",
     "GEMDOS_PEXEC_CREATE": "GEMDOS Pexec, past the record",
+    # ...fs wave 3's drive and path layer (`src/gemdos/fs_drive.c`).
+    "GEMDOS_DMD_ALLOC": "GEMDOS drive records",
+    "GEMDOS_DMD_BUILD": "GEMDOS BPB -> DMD",
+    "GEMDOS_OPEN_DRIVE": "GEMDOS drive log-in",
+    "GEMDOS_PATH_START": "GEMDOS path start",
+    "GEMDOS_DOT_NAME": "GEMDOS . / .. test",
+    "GEMDOS_SPLIT_PATH": "GEMDOS path component",
+    "GEMDOS_STRNEQ": "GEMDOS strneq",
+    # ...its I/O engine (`src/gemdos/fs_io.c`; the three leaves over it are dispatched by number).
+    "GEMDOS_SPLIT_SHIFT": "GEMDOS split shift",
+    "GEMDOS_OFD_ADVANCE": "GEMDOS OFD advance",
+    "GEMDOS_OFD_SEEK": "GEMDOS OFD seek",
+    "GEMDOS_FAT_GET": "GEMDOS FAT entry read",
+    "GEMDOS_FAT_SET": "GEMDOS FAT entry write",
+    "GEMDOS_NEXT_CLUSTER": "GEMDOS next cluster",
+    "GEMDOS_OFD_XFER": "GEMDOS OFD transfer",
+    "GEMDOS_OFD_READ": "GEMDOS OFD read",
+    "GEMDOS_OFD_WRITE": "GEMDOS OFD write",
+    # ...and its byte copies and record layer (`src/gemdos/fs_copy.c`, `src/gemdos/fs_records.c`).
+    "GEMDOS_COPY_OUT": "GEMDOS copy, cache -> user",
+    "GEMDOS_COPY_IN": "GEMDOS copy, user -> cache",
+    "GEMDOS_BCOPY": "GEMDOS bcopy",
+    "OS_SWAP_WORD": "OS byte swap, word",
+    "OS_SWAP_LONG": "OS byte swap, long",
+    "GEMDOS_FCB_NAME_EQ": "GEMDOS FCB name equality",
+    "GEMDOS_FCB_TO_TEXT": "GEMDOS FCB name -> text",
+    "GEMDOS_DND_PATH": "GEMDOS directory path",
+    "GEMDOS_FILL_DTA": "GEMDOS DTA fill",
+    "GEMDOS_OFD_NEW": "GEMDOS directory OFD",
+    "GEMDOS_DND_NEW": "GEMDOS child DND",
+    "GEMDOS_OFD_OPEN": "GEMDOS file OFD open",
+    "GEMDOS_HANDLE_ALLOC": "GEMDOS handle allocation",
+    "GEMDOS_DIR_ZERO_CLUSTER": "GEMDOS directory cluster zero",
 }
+UNNUMBERED_ROUTINE_NAMES = {getattr(addrs, name): name for name in UNNUMBERED_ROUTINE_ROLES}
 
 # How a TRANSCRIPTION row names itself, keyed by the blob symbol: `src/bios/trap.S`'s entries and
 # `src/gemdos/trap1.S` in one map, because `_transcription_row` reads one list of labels and each

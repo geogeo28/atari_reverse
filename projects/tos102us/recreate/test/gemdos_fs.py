@@ -73,21 +73,27 @@ import struct
 import sys
 from pathlib import Path
 
-from harness import addrs
+from harness import BASE_IMAGE, addrs
 
+import case
 import gemdos
+import staging
 from address_hook import AddressHook
 from opcodes import (ADDA_L_D0_A0, BTST_IMMEDIATE_STACK, DBF_D1, DBF_D2, LEA_ABSOLUTE_LONG_A0,
-                     MOVE_B_A0_TO_A1, MOVE_B_A1_TO_A0, MOVE_L_A0_D0, MOVE_L_ABSOLUTE_D0,
+                     MOVE_B_A0_TO_A1, MOVE_B_A1_TO_A0, MOVE_L_ABSOLUTE_D0,
                      MOVE_W_IMMEDIATE_D2, MOVE_W_STACK_D0, MOVE_W_STACK_D1, MOVEA_L_STACK_A1,
                      MOVEQ_0_D0, MULU_W_IMMEDIATE_D0, RTS_WORD, SUBQ_W_1_D1)
 
-# ---- the two headers' constants, out of the C the cores compile against --------------------------
+# ---- the headers' constants, out of the C the cores compile against ------------------------------
 # `include/gemdos_fs.h` holds the STRUCTURES (the wave's one-header-per-subsystem rule) and
 # `include/addrs.h` the routine addresses; both are read by the one parser, exactly as
-# `test/gemdos_memory.py` reads its group's header.
-GEMDOS_FS_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos_fs.h"
-CONSTANTS = addrs.parse(GEMDOS_FS_HEADER)
+# `test/gemdos_memory.py` reads its group's header. The layers' own headers are read too — the drive
+# builder's quirks (`drive()` below is the DMD as `$fc53c0` builds it) and the I/O engine's FAT12
+# packing and seek modes — so every fs battery reads ONE namespace, this module's, and no battery
+# keeps a dictionary of its own over a header.
+_INCLUDE = Path(__file__).resolve().parents[1] / "include"
+FS_HEADERS = tuple(_INCLUDE / name for name in ("gemdos_fs.h", "gemdos_fs_drive.h", "gemdos_fs_io.h"))
+CONSTANTS = {name: value for header in FS_HEADERS for name, value in addrs.parse(header).items()}
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
 # ---- the span, and what is in it -----------------------------------------------------------------
@@ -95,20 +101,38 @@ sys.modules[__name__].__dict__.update(CONSTANTS)
 # the snapshot leaves zero. `test_gemdos_fs_disk.py` is where both claims are checked.
 RAM_DISK_AT = 0x68000
 RAM_DISK_BYTES = 0xB000
+# A USER BUFFER big enough for a transfer of whole clusters, which neither the 4 KB case band
+# (claimed to its last byte) nor the RAM disk's own gap can hold: a FIFTH tenant of the captured
+# machine's free window, taken the way the RAM disk took the fourth — by arithmetic
+# `test_gemdos_fs_io.py` checks (dead RAM in the snapshot, clear of the RAM disk and of the stack
+# guard). Growing `staging_bytes` would be the tidier answer, and is the orchestrator's.
+USER_AT = 0x74000
+USER_BYTES = 0x1000
+
+# EVERY TENANT OF BOTH SPANS IS CLAIMED — `test/staging.py`'s `Registry`, the rule the declared band's
+# batteries are held to, over the file system's window: the RAM disk and the user buffer above it.
+# This module claims its own tenants below; a battery staging a buffer of its own claims it the same
+# way (`test/fs_records.py` lays out the record gap), and an overlap between two claims is refused by
+# name.
+SPAN = staging.Registry(RAM_DISK_AT, USER_AT + USER_BYTES, "the file system's staged window")
 
 BPB_AT = RAM_DISK_AT                            # the record `hdv_bpb` answers with
 STUBS_AT = RAM_DISK_AT + 0x20                   # the three 68000 routines the vectors name
-RECORDS_AT = RAM_DISK_AT + 0x100                # DMDs, DNDs and OFDs a case stages
-RECORDS_BYTES = 0x200                           # ...four of them at 0x40 apiece, and room to grow
+DRIVE_RECORDS_AT = RAM_DISK_AT + 0x100          # the staged drive's DMD, root DND and two OFDs
+DRIVE_RECORDS_BYTES = 0x200                     # ...four of them at 0x40 apiece, and room to grow
 # The 8.3 NAME battery's two FCB buffers and its text (`test_gemdos_fs_name.py`). They live HERE and
 # not in `staging.SCRATCH` for one reason: the declared band's 4 KB is claimed to its last byte
 # (`test/staging.py`'s registry), and this span has room the disk does not use. The battery stages no
 # medium — it is in this module's span, not of it.
-NAMES_AT = RECORDS_AT + RECORDS_BYTES
 NAMES_BYTES = 0x100
+NAMES_AT = SPAN.claim(DRIVE_RECORDS_AT + DRIVE_RECORDS_BYTES, NAMES_BYTES,
+                      "test_gemdos_fs_name.py's FCB buffers")
 BUFFERS_AT = RAM_DISK_AT + 0x400                # ...and the BCBs with their sector buffers
 IMAGE_AT = RAM_DISK_AT + 0x2000                 # the disk itself
-assert NAMES_AT + NAMES_BYTES <= BUFFERS_AT, "the name battery's buffers reach into the BCBs'"
+SPAN.claim(BPB_AT, STUBS_AT - BPB_AT, "the staged BPB and the two driver answers")
+SPAN.claim(STUBS_AT, DRIVE_RECORDS_AT - STUBS_AT, "the three staged driver stubs")
+SPAN.claim(DRIVE_RECORDS_AT, DRIVE_RECORDS_BYTES, "the staged drive's four records")
+SPAN.claim(USER_AT, USER_BYTES, "the user buffer a transfer moves bytes to and from")
 
 # ---- the geometry --------------------------------------------------------------------------------
 SECTOR_BYTES = 512
@@ -129,9 +153,10 @@ DISK_BYTES = DISK_SECTORS * SECTOR_BYTES
 assert IMAGE_AT - RAM_DISK_AT + DISK_BYTES <= RAM_DISK_BYTES
 
 # FAT12's own constants. The first two entries are not clusters: entry 0 holds the media descriptor
-# and entry 1 the end-of-chain marker, so a data cluster is numbered from 2.
-FIRST_DATA_CLUSTER = 2
-FAT_END_OF_CHAIN = 0xFFF
+# and entry 1 the end-of-chain marker, so a data cluster is numbered from the header's
+# `FIRST_DATA_CLUSTER`. The marker ON DISK is every one of an entry's twelve bits — what `$fc5f44`
+# leaves of the -1 it is handed ($fc5fa4 `and.w #4095`), and what `$fc6038` turns back into -1.
+FAT12_END_OF_CHAIN = GEMDOS_FAT12_ENTRY_MASK
 MEDIA_DESCRIPTOR = 0xF9                         # 80 tracks, double sided, 9 sectors
 FAT_ENTRY_ZERO_PREFIX = 0xF00                   # ...and entry 0 is that byte under these bits
 SECTORS_PER_TRACK = 9
@@ -148,18 +173,32 @@ BOOT_OEM_BYTES = 8
 BOOT_BPB = 11
 BOOT_HEADS = 26
 
-DIRENT_BYTES = 32
 ROOT_ENTRIES = ROOT_SECTORS * SECTOR_BYTES // DIRENT_BYTES
 
-# The directory attribute bits this module WRITES. `GEMDOS_ATTR_VOLUME` is in `include/gemdos_fs.h`
-# instead, because the name layer's core compares against it.
+# A plain file's attribute: no bit set. Every bit this module writes is `include/gemdos_fs.h`'s.
 ATTR_NONE = 0x00
-ATTR_READ_ONLY = 0x01
-ATTR_DIRECTORY = 0x10
 
 # What fills a staged buffer nothing else claims, so that a routine reading past what a case staged
-# reads something a comparison notices rather than zeros. `vt52.CANARY`'s value, for its reason.
+# reads something a comparison notices rather than zeros. `vt52.CANARY`'s value, for its reason — and
+# the ONE fill every fs battery pre-fills an output buffer with.
 SLACK_FILL = 0xA5
+
+# A D0 whose HIGH half none of the file system's routines writes, for the ones that return through a
+# `move.w`/`clr.w` over the caller's (`include/gemdos_fs.h`, "what the cores export"): such a case
+# enters with it, and the half it expects back is `callers_high_half(ENTRY_D0)`.
+ENTRY_D0 = 0xDEC0_DE00
+D0_LOW_WORD = 0xFFFF
+
+
+def callers_high_half(d0):
+    """What a `clr.w d0` leaves of `d0`: its high half, the caller's."""
+    return d0 & ~D0_LOW_WORD
+
+
+def byte_swapped(value, fmt):
+    """`value` as a word (`fmt` "H") or a long ("I") reads once `$fc4f10`/`$fc4f22` has turned it
+    round — how a little-endian on-disk field reads on a 68000."""
+    return int.from_bytes(struct.pack("<" + fmt, value), "big")
 
 
 # ---- the three stubs -----------------------------------------------------------------------------
@@ -167,19 +206,15 @@ SLACK_FILL = 0xA5
 # in the shape `test/gemdos.py`'s `slice_trampoline` uses: one `struct.pack`, each word named with
 # the instruction it encodes. The source is below, and the BYTES are pinned by EXECUTION rather
 # than by a reader: `test_gemdos_fs_disk.py`'s cases run the ROM's own `Rwabs` and `Mediach` through
-# these bytes and check what arrived. `hdv_bpb`'s ten are the exception — NOTHING in this wave calls
-# `Getbpb`, because the routine that does is the drive-media-descriptor builder at `$fc53c0` and it
-# is not reconstructed. The vector is staged anyway: a machine with two of its three disk vectors
-# pointed at a staged driver and the third at whatever the snapshot left is a machine nobody built,
-# and the BPB record is where this module's DMD numbers come from either way.
+# these bytes and check what arrived, and `test_gemdos_fs_drive.py`'s run `Getbpb` through them —
+# its one caller is the drive log-in at `$fc67de`.
 #
 # EVERY STUB RUNS WITH A5 = 0 and has only D0-D2/A0-A2 to play with: the BIOS trap dispatcher at
 # `$fc07fc` has already saved D3-D7/A3-A7 into the `savptr` frame and does `suba.l a5,a5` before its
 # `jsr`, so a RAM-vector routine owes its caller nothing else.
 #
-#     hdv_bpb:                        | Getbpb(dev.w at 4(sp)) -> the staged BPB, whatever the drive
-#             lea     BPB_AT,a0
-#             move.l  a0,d0
+#     hdv_bpb:                        | Getbpb(dev.w at 4(sp)) -> the LONGWORD the CASE poked:
+#             move.l  GETBPB_ANSWER,d0 | the staged BPB by default, whatever the drive, or 0
 #             rts
 #     hdv_mediach:                    | Mediach(dev.w) -> the LONGWORD the CASE poked below it
 #             move.l  MEDIACH_ANSWER,d0
@@ -219,18 +254,27 @@ BNE_S_TO_WRITE = 0x6610                 # bne.s   rw_write  (+0x10)
 BACK_TO_THE_MOVE = -4                   # the inner `dbf`, to the `move.b` above it
 BACK_TO_THE_SECTOR = -12                # ...and the outer one, to the `move.w #511,d2`
 
+# The two ANSWER stubs are one shape — `move.l <abs.l>,d0 / rts` — so they are one builder, eight
+# bytes each.
+ANSWER_STUB_BYTES = 8
+
 # The three entry points, at fixed offsets inside the blob so that a poke of a vector and the stub
 # it names cannot drift apart.
 HDV_BPB_STUB = STUBS_AT
-HDV_MEDIACH_STUB = STUBS_AT + 0x0A
-HDV_RW_STUB = STUBS_AT + 0x12
+HDV_MEDIACH_STUB = HDV_BPB_STUB + ANSWER_STUB_BYTES
+HDV_RW_STUB = HDV_MEDIACH_STUB + ANSWER_STUB_BYTES
 # ...and the LONGWORD the media-change stub answers with, which is how a case drives the THREE-WAY
 # protocol rather than only its "unchanged" arm. A longword and not a byte deliberately: `hdv_mediach`
 # is an arbitrary driver's routine and the ROM TRUNCATES what it answers to a word ($fc5bd8
 # `move.w d0,d5`), so a case has to be able to stage a high half for that truncation to be a fact.
 # It sits just above the BPB record, in the same staged band.
+ANSWER_BYTES = 4                                # every answer is a longword, the whole of D0
 MEDIACH_ANSWER_AT = BPB_AT + BPB_BYTES
-MEDIACH_ANSWER_BYTES = 4
+MEDIACH_ANSWER_BYTES = ANSWER_BYTES
+# ...and the BPB POINTER the `Getbpb` stub answers with — `BPB_AT` unless a case stages another
+# geometry, or 0, which is a drive with no medium and `$fc67de`'s ERROR arm.
+GETBPB_ANSWER_AT = MEDIACH_ANSWER_AT + MEDIACH_ANSWER_BYTES
+assert GETBPB_ANSWER_AT + ANSWER_BYTES <= STUBS_AT, "the two answers run into the stubs"
 
 # Where each `Rwabs` argument sits once the BIOS dispatcher's `jsr` has pushed a return address: the
 # function number is already gone, so the caller's first word is at 4(sp).
@@ -243,10 +287,17 @@ RWABS_WRITE_BIT = 0
 _RW_STUB_FORMAT = ">Hh H Hh HH HI H Hh H H H HHh H HH H Hh Hh H HH H Hh Hh H".replace(" ", "")
 
 
+def _answer_stub(answer_at):
+    """`move.l answer_at,d0 / rts` — a driver routine whose whole behaviour is a longword a case
+    poked."""
+    stub = struct.pack(">HIH", MOVE_L_ABSOLUTE_D0, answer_at, RTS_WORD)
+    assert len(stub) == ANSWER_STUB_BYTES
+    return stub
+
+
 def stubs():
     """The three routines as one blob, to be poked at `STUBS_AT`."""
-    blob = struct.pack(">HIHH", LEA_ABSOLUTE_LONG_A0, BPB_AT, MOVE_L_A0_D0, RTS_WORD)
-    blob += struct.pack(">HIH", MOVE_L_ABSOLUTE_D0, MEDIACH_ANSWER_AT, RTS_WORD)
+    blob = _answer_stub(GETBPB_ANSWER_AT) + _answer_stub(MEDIACH_ANSWER_AT)
     assert len(blob) == HDV_RW_STUB - STUBS_AT
     blob += struct.pack(
         _RW_STUB_FORMAT,
@@ -272,7 +323,7 @@ def stubs():
         DBF_D2, BACK_TO_THE_MOVE,
         DBF_D1, BACK_TO_THE_SECTOR,
         RTS_WORD)
-    assert STUBS_AT + len(blob) <= RECORDS_AT, "the staged driver outgrew the band reserved for it"
+    assert STUBS_AT + len(blob) <= DRIVE_RECORDS_AT, "the staged driver outgrew the band reserved for it"
     return {STUBS_AT: blob}
 
 
@@ -281,6 +332,12 @@ def mediach_answer(answer=None):
     otherwise, and the same byte the host hook reads, so the two shores cannot disagree."""
     return {MEDIACH_ANSWER_AT: struct.pack(
         ">I", addrs.MEDIACH_UNCHANGED if answer is None else answer)}
+
+
+def getbpb_answer(answer=None):
+    """...and what the staged `hdv_bpb` is to answer: the staged BPB's address unless a case says
+    otherwise, read by the host hook out of the same longword."""
+    return {GETBPB_ANSWER_AT: struct.pack(">I", BPB_AT if answer is None else answer)}
 
 
 def vectors():
@@ -301,12 +358,124 @@ def bpb_record():
                                 DATA_CLUSTERS, 0)}
 
 
-# ---- the drive media descriptor, as `$fc53c0` would build it -------------------------------------
-# A STAGED INPUT, like the IOREC the ACIA battery stages: the builder is not reconstructed yet, so a
-# case says what the machine held rather than running it. Every value below is the ROM's own
-# expression with this BPB's numbers in it, cited to the instruction that computes it.
+# ---- the records, built from the header's own offsets ---------------------------------------------
+# field -> (header offset name, struct format). Big-endian: these are the ROM's in-memory records. A
+# record is built WHOLE: every byte a case does not name is `fill`, so a field the routine should have
+# written and did not reads as the fill rather than as a plausible zero. ONE set of builders for every
+# fs battery — the staged drive below is built with them too — and a value is masked to its field's
+# width, so a negative pseudo-cluster is staged as the word the ROM stores.
+_NAME = f"{DIRENT_NAME_BYTES}s"
+# The header spells the FCB's two fields as expressions over the entry's offsets, which the parser
+# does not evaluate; these are the same two expressions over the offsets it did read.
+FCB_STEM_BYTES = DIRENT_EXT
+FCB_EXTENSION_BYTES = DIRENT_NAME_BYTES - DIRENT_EXT
+DMD_FIELDS = {
+    "recoff": ("DMD_RECOFF", ">3h"), "drvnum": ("DMD_DRVNUM", ">H"), "fsiz": ("DMD_FSIZ", ">H"),
+    "clsiz": ("DMD_CLSIZ", ">H"), "clsizb": ("DMD_CLSIZB", ">H"), "recsiz": ("DMD_RECSIZ", ">H"),
+    "numcl": ("DMD_NUMCL", ">H"), "clsiz_log2": ("DMD_CLSIZ_LOG2", ">H"),
+    "clsiz_mask": ("DMD_CLSIZ_MASK", ">H"), "recsiz_log2": ("DMD_RECSIZ_LOG2", ">H"),
+    "recsiz_mask": ("DMD_RECSIZ_MASK", ">H"), "clsizb_log2": ("DMD_CLSIZB_LOG2", ">H"),
+    "fat_ofd": ("DMD_FAT_OFD", ">I"), "root_dnd": ("DMD_ROOT_DND", ">I"), "fat16": ("DMD_FAT16", ">H"),
+}
+DND_FIELDS = {
+    "name": ("DND_NAME", _NAME), "strtcl": ("DND_STRTCL", ">H"), "time": ("DND_TIME", ">H"),
+    "date": ("DND_DATE", ">H"), "ofd": ("DND_OFD", ">I"), "parent": ("DND_PARENT", ">I"),
+    "child": ("DND_CHILD", ">I"), "sibling": ("DND_SIBLING", ">I"), "dmd": ("DND_DMD", ">I"),
+    "parent_ofd": ("DND_PARENT_OFD", ">I"), "dirpos": ("DND_DIRPOS", ">I"),
+    "scanned": ("DND_SCANNED", ">I"), "files": ("DND_FILES", ">I"),
+}
+OFD_FIELDS = {
+    "link": ("OFD_LINK", ">I"), "flags": ("OFD_FLAGS", ">H"), "time": ("OFD_TIME", ">H"),
+    "date": ("OFD_DATE", ">H"), "strtcl": ("OFD_STRTCL", ">H"), "fileln": ("OFD_FILELN", ">I"),
+    "dmd": ("OFD_DMD", ">I"), "dir_dnd": ("OFD_DIR_DND", ">I"), "dir_ofd": ("OFD_DIR_OFD", ">I"),
+    "dirpos": ("OFD_DIRPOS", ">I"), "pos": ("OFD_POS", ">I"), "curcl": ("OFD_CURCL", ">H"),
+    "currec": ("OFD_CURREC", ">H"), "cloff": ("OFD_CLOFF", ">H"), "unused": ("OFD_UNUSED", ">H"),
+    "next_same_file": ("OFD_NEXT_SAME_FILE", ">I"), "mode": ("OFD_MODE", ">H"),
+}
+_FIELD_MASKS = {">H": 0xFFFF, ">I": 0xFFFF_FFFF}
 
-def _log2(value):
+
+def _record(size, layout, fill, fields):
+    record = bytearray([fill]) * size
+    for field, value in fields.items():
+        offset_name, fmt = layout[field]
+        values = value if isinstance(value, tuple) else (value & _FIELD_MASKS.get(fmt, -1)
+                                                         if isinstance(value, int) else value,)
+        struct.pack_into(fmt, record, CONSTANTS[offset_name], *values)
+    return bytes(record)
+
+
+def dmd_bytes(fill=0, **fields):
+    """One DMD, `DMD_BYTES` long; `fields` are `DMD_FIELDS`' keys, every other byte `fill`."""
+    return _record(DMD_BYTES, DMD_FIELDS, fill, fields)
+
+
+def dnd_bytes(fill=0, **fields):
+    """...one DND."""
+    return _record(DND_BYTES, DND_FIELDS, fill, fields)
+
+
+def ofd_bytes(fill=0, **fields):
+    """...one OFD."""
+    return _record(OFD_BYTES, OFD_FIELDS, fill, fields)
+
+
+def stage_dnd(at, fill=0, **fields):
+    """A DND staged at `at`, as a poke."""
+    return {at: dnd_bytes(fill, **fields)}
+
+
+def stage_ofd(at, fill=0, **fields):
+    """...and an OFD."""
+    return {at: ofd_bytes(fill, **fields)}
+
+
+def _field(image, at, layout, field):
+    offset_name, fmt = layout[field]
+    offset = at + CONSTANTS[offset_name]
+    return struct.unpack_from(fmt, bytes(image[offset:offset + struct.calcsize(fmt)]))[0]
+
+
+def dnd_field(image, at, field):
+    """One field of the DND at `at`, out of any image a case holds (a run's final one, usually)."""
+    return _field(image, at, DND_FIELDS, field)
+
+
+def ofd_field(image, at, field):
+    """...one field of an OFD."""
+    return _field(image, at, OFD_FIELDS, field)
+
+
+def fcb_name(name, extension=""):
+    """The eleven-byte FCB form of a name: stem and extension space-padded, no dot."""
+    return (name.ljust(FCB_STEM_BYTES)[:FCB_STEM_BYTES]
+            + extension.ljust(FCB_EXTENSION_BYTES)[:FCB_EXTENSION_BYTES]).encode("latin-1")
+
+
+def dirent_bytes(name, extension="", attr=0, cluster=0, length=0, time=0, date=0, deleted=False,
+                 reserved=0):
+    """One 32-byte directory entry, the DOS layout: little-endian from `DIRENT_TIME` on.
+
+    `reserved` fills the ten DOS-reserved bytes between the attribute and the time, which no routine
+    names — a case filling them with something non-zero sees a routine that copies too much.
+    """
+    entry = bytearray(fcb_name(name, extension) + bytes([attr])
+                      + bytes([reserved]) * (DIRENT_TIME - DIRENT_ATTR - 1)
+                      + struct.pack("<HHHI", time, date, cluster, length))
+    if deleted:
+        entry[DIRENT_NAME] = DIRENT_DELETED
+    assert len(entry) == DIRENT_BYTES
+    return bytes(entry)
+
+
+# ---- the drive media descriptor, as `$fc53c0` builds it ------------------------------------------
+# A STAGED INPUT, like the IOREC the ACIA battery stages — and a CHECKED one:
+# `test_gemdos_fs_drive.py` runs the ROM's own builder over the staged BPB and requires the four
+# records it cuts from the pool to be exactly `drive_records` at the addresses the pool gave it.
+# Every value below is the ROM's own expression with this BPB's numbers in it, cited to the
+# instruction that computes it.
+
+def log2(value):
     """What `$fc539a` answers for a power of two — arithmetic here, and a verified core elsewhere."""
     return value.bit_length() - 1
 
@@ -320,48 +489,54 @@ RECOFF_FAT = FAT2_RECORD - FAT_START_CLUSTER * SECTORS_PER_CLUSTER              
 RECOFF_DIR = FAT2_RECORD + FAT_SECTORS - ROOT_START_CLUSTER * SECTORS_PER_CLUSTER  # $fc5580
 RECOFF_DATA = DATA_RECORD - FIRST_DATA_CLUSTER * SECTORS_PER_CLUSTER            # $fc55a2
 
-DMD_AT = RECORDS_AT
-ROOT_DND_AT = RECORDS_AT + 0x40
-ROOT_OFD_AT = RECORDS_AT + 0x80
-FAT_OFD_AT = RECORDS_AT + 0xC0
-RECORD_STRIDE = 0x40                                        # every staged record has room to spare
+# The staged drive's four records, one pool record's worth of room apiece.
+DRIVE_RECORD_STRIDE = 0x40
+assert DND_BYTES == OFD_BYTES == DRIVE_RECORD_STRIDE, "a staged record no longer fits its slot"
+DMD_AT, ROOT_DND_AT, ROOT_OFD_AT, FAT_OFD_AT = (DRIVE_RECORDS_AT + slot * DRIVE_RECORD_STRIDE
+                                                for slot in range(4))
 
 
-def drive(number=0):
-    """The DMD, its root DND and the two pseudo-OFDs, for a drive of the geometry above."""
-    dmd = bytearray(DMD_BYTES)
-    struct.pack_into(">3h", dmd, DMD_RECOFF, RECOFF_FAT, RECOFF_DIR, RECOFF_DATA)
-    struct.pack_into(">H", dmd, DMD_DRVNUM, number)
-    struct.pack_into(">H", dmd, DMD_FSIZ, FAT_SECTORS)
-    struct.pack_into(">H", dmd, DMD_CLSIZ, SECTORS_PER_CLUSTER)
-    struct.pack_into(">H", dmd, DMD_CLSIZB, CLUSTER_BYTES)
-    struct.pack_into(">H", dmd, DMD_RECSIZ, SECTOR_BYTES)
-    struct.pack_into(">H", dmd, DMD_NUMCL, DATA_CLUSTERS)
-    struct.pack_into(">H", dmd, DMD_CLSIZ_LOG2, _log2(SECTORS_PER_CLUSTER))
-    struct.pack_into(">H", dmd, DMD_CLSIZ_MASK, SECTORS_PER_CLUSTER - 1)
-    struct.pack_into(">H", dmd, DMD_RECSIZ_LOG2, _log2(SECTOR_BYTES))
-    struct.pack_into(">H", dmd, DMD_RECSIZ_MASK, SECTOR_BYTES - 1)
-    struct.pack_into(">H", dmd, DMD_CLSIZB_LOG2, _log2(CLUSTER_BYTES))
-    struct.pack_into(">I", dmd, DMD_FAT_OFD, FAT_OFD_AT)
-    struct.pack_into(">I", dmd, DMD_ROOT_DND, ROOT_DND_AT)
+def drive_records(number, dmd_at, root_dnd_at, root_ofd_at, fat_ofd_at, **dmd_fields):
+    """The DMD, its root DND and the two pseudo-OFDs, for a drive of the geometry above, laid out
+    for records at the four given addresses — each exactly as long as the pool record it models,
+    and zero wherever `$fc53c0` stores nothing (the pool hands records out cleared).
 
-    dnd = bytearray(RECORD_STRIDE)
-    struct.pack_into(">h", dnd, DND_STRTCL, ROOT_START_CLUSTER)
-    struct.pack_into(">I", dnd, DND_OFD, ROOT_OFD_AT)
-    struct.pack_into(">I", dnd, DND_DMD, DMD_AT)
+    `dmd_fields` replaces DMD fields by `DMD_FIELDS` key — a drive of another geometry over the same
+    records (`test/fs_io.py`'s FAT16 drive and four-sector clusters)."""
+    dmd = dmd_bytes(**{
+        "recoff": (RECOFF_FAT, RECOFF_DIR, RECOFF_DATA), "drvnum": number, "fsiz": FAT_SECTORS,
+        "clsiz": SECTORS_PER_CLUSTER, "clsizb": CLUSTER_BYTES, "recsiz": SECTOR_BYTES,
+        "numcl": DATA_CLUSTERS, "clsiz_log2": log2(SECTORS_PER_CLUSTER),
+        "clsiz_mask": SECTORS_PER_CLUSTER - 1, "recsiz_log2": log2(SECTOR_BYTES),
+        "recsiz_mask": SECTOR_BYTES - 1, "clsizb_log2": log2(CLUSTER_BYTES),
+        "fat_ofd": fat_ofd_at, "root_dnd": root_dnd_at, **dmd_fields})
+    root_dnd = dnd_bytes(strtcl=ROOT_START_CLUSTER, ofd=root_ofd_at, dmd=dmd_at)
+    root_ofd = ofd_bytes(strtcl=ROOT_START_CLUSTER, fileln=ROOT_SECTORS * SECTOR_BYTES, dmd=dmd_at)
+    # THE FAT PSEUDO-FILE STARTS AT POSITION 3, byte 3 of its cluster ($fc55be, $fc55ca) — the one
+    # field this staging did not have until the builder's own output was compared against it.
+    fat_ofd = ofd_bytes(strtcl=FAT_START_CLUSTER, fileln=FAT_SECTORS * SECTOR_BYTES, dmd=dmd_at,
+                        pos=FAT_OFD_START_POSITION, cloff=FAT_OFD_START_POSITION)
+    return {dmd_at: dmd, root_dnd_at: root_dnd, root_ofd_at: root_ofd, fat_ofd_at: fat_ofd}
 
-    root_ofd = bytearray(RECORD_STRIDE)
-    struct.pack_into(">h", root_ofd, OFD_STRTCL, ROOT_START_CLUSTER)
-    struct.pack_into(">I", root_ofd, OFD_FILELN, ROOT_SECTORS * SECTOR_BYTES)
-    struct.pack_into(">I", root_ofd, OFD_DMD, DMD_AT)
 
-    fat_ofd = bytearray(RECORD_STRIDE)
-    struct.pack_into(">h", fat_ofd, OFD_STRTCL, FAT_START_CLUSTER)
-    struct.pack_into(">I", fat_ofd, OFD_FILELN, FAT_SECTORS * SECTOR_BYTES)
-    struct.pack_into(">I", fat_ofd, OFD_DMD, DMD_AT)
+def drive(number=0, **dmd_fields):
+    """`drive_records` at this module's four staged slots."""
+    return drive_records(number, DMD_AT, ROOT_DND_AT, ROOT_OFD_AT, FAT_OFD_AT, **dmd_fields)
 
-    return {DMD_AT: bytes(dmd), ROOT_DND_AT: bytes(dnd), ROOT_OFD_AT: bytes(root_ofd),
-            FAT_OFD_AT: bytes(fat_ofd)}
+
+def dmd_slot(drive):
+    """Where the drive's DMD pointer lives in `GEMDOS_DMD_TABLE` — a signed index, as the ROM's is."""
+    return addrs.GEMDOS_DMD_TABLE + drive * DRIVE_TABLE_ENTRY_BYTES
+
+
+def node_slot(node):
+    """...and a directory node's pointer in `GEMDOS_DIRECTORY_NODES`."""
+    return addrs.GEMDOS_DIRECTORY_NODES + node * DRIVE_TABLE_ENTRY_BYTES
+
+
+def curdir_at(drive):
+    """The running process's `p_curdir` byte for `drive`."""
+    return gemdos.BASEPAGE + addrs.BASEPAGE_CURDIR + drive
 
 
 def record_of(region, record):
@@ -370,13 +545,31 @@ def record_of(region, record):
     return (RECOFF_FAT, RECOFF_DIR, RECOFF_DATA)[region] + record
 
 
+def pseudo_record(cluster):
+    """A cluster's first record in the DMD's own pseudo-cluster space, SIGNED — negative for the FAT
+    and the root directory. Not a BIOS record: `record_of` makes one of it."""
+    return cluster * SECTORS_PER_CLUSTER
+
+
+def cluster_record(cluster):
+    """...and the WORD `$fc55e6` answers for it, which is what an OFD's `OFD_CURREC` and a BCB's
+    `BCB_BUFREC` hold."""
+    return pseudo_record(cluster) & D0_LOW_WORD
+
+
+# The first pseudo-record of each region, spelt once for every battery.
+FAT_PSEUDO_RECORD = pseudo_record(FAT_START_CLUSTER)
+ROOT_PSEUDO_RECORD = pseudo_record(ROOT_START_CLUSTER)
+DATA_PSEUDO_RECORD = pseudo_record(FIRST_DATA_CLUSTER)
+
+
 # ---- the buffer cache a case stages --------------------------------------------------------------
 # Each BCB is a 20-byte record with a 512-byte buffer of its own, laid out so a case names one by
 # index. The two list heads at `_bufl` are poked to whatever chains the case wants.
 BCB_STRIDE = 0x220
 BCB_COUNT = 6
 BUFFER_OFFSET = 0x20
-assert BUFFERS_AT + BCB_COUNT * BCB_STRIDE <= IMAGE_AT
+SPAN.claim(BUFFERS_AT, BCB_COUNT * BCB_STRIDE, "the staged BCBs and their sector buffers")
 
 
 def bcb_at(index):
@@ -442,9 +635,8 @@ def cache_order(read_long, which):
     rather than three separate link longwords.
 
     `read_long(address)` is the run's own view of memory: the base image with the case's pokes and
-    the oracle's writes over it (`test_gemdos_fs_disk.py`'s `Result`). The walk is capped at the
-    number of BCBs a case can stage, so a list the run made circular is a wrong ANSWER rather than
-    a hang.
+    the oracle's writes over it (`Result`, below). The walk is capped at the number of BCBs a case
+    can stage, so a list the run made circular is a wrong ANSWER rather than a hang.
     """
     at = read_long(addrs.SYSVAR_BUFL + which * addrs.SYSVAR_BUFL_ENTRY_BYTES)
     order = []
@@ -456,41 +648,48 @@ def cache_order(read_long, which):
 
 # ---- the disk image ------------------------------------------------------------------------------
 
-def _fat12(entries):
-    """`entries` (cluster -> value) as one FAT sector, LITTLE-endian twelve-bit pairs.
+# FAT12's twelve-bit PAIRS are what makes it awkward and what `$fc6038`/`$fc5f44` decode: entry `n`
+# lives at byte `n + n/2`, in the low nibble-and-a-half for an even `n` and the high one for an odd
+# one. The ROM reads the two bytes, BYTE-SWAPS them ($fc4f10) and then masks or shifts — which is how
+# a big-endian 68000 reads a little-endian on-disk word. The encoder and the decoder are side by side
+# and share the header's packing constants, so the staged FAT and a case's reading of it cannot drift.
 
-    The pairs are what makes FAT12 awkward and what `$fc6038`/`$fc5f44` decode: entry `n` lives at
-    byte `n + n/2`, in the low nibble-and-a-half for an even `n` and the high one for an odd one.
-    The ROM reads the two bytes, BYTE-SWAPS them ($fc4f10) and then masks or shifts — which is how a
-    big-endian 68000 reads a little-endian on-disk word.
-    """
+def _fat12_pair_at(cluster):
+    return cluster + cluster // 2
+
+
+def fat12_table(entries):
+    """`entries` (cluster -> value) as the FAT's sectors, LITTLE-endian twelve-bit pairs."""
     table = bytearray(FAT_SECTORS * SECTOR_BYTES)
     for cluster, value in sorted(entries.items()):
-        at = cluster + cluster // 2
+        at = _fat12_pair_at(cluster)
         pair = table[at] | (table[at + 1] << 8)
+        value &= GEMDOS_FAT12_ENTRY_MASK
         if cluster & 1:
-            pair = (pair & 0x000F) | ((value & FAT_END_OF_CHAIN) << 4)
+            pair = (pair & FAT12_ODD_KEEP) | (value << FAT12_ODD_SHIFT)
         else:
-            pair = (pair & 0xF000) | (value & FAT_END_OF_CHAIN)
-        table[at] = pair & 0xFF
-        table[at + 1] = (pair >> 8) & 0xFF
+            pair = (pair & FAT12_EVEN_KEEP) | value
+        struct.pack_into("<H", table, at, pair)
     return bytes(table)
 
 
-# One entry's fixed time and date. Nothing in this wave reads them, and a value taken from the clock
-# would be a byte no case chose.
-DIRENT_TIME = 0x1234
-DIRENT_DATE = 0x5678
+def fat12_entry(table, cluster):
+    """...and cluster `cluster`'s twelve-bit entry read back out of such a table, unsigned — the
+    on-disk value, not the signed word `$fc6038` makes of an odd one."""
+    pair = struct.unpack_from("<H", table, _fat12_pair_at(cluster))[0]
+    return (pair >> FAT12_ODD_SHIFT) if cluster & 1 else (pair & GEMDOS_FAT12_ENTRY_MASK)
+
+
+# One entry's fixed time and date VALUES — not the header's `DIRENT_TIME`/`DIRENT_DATE`, which are
+# the two fields' OFFSETS. A value taken from the clock would be a byte no case chose.
+STAGED_DIRENT_TIME = 0x1234
+STAGED_DIRENT_DATE = 0x5678
 
 
 def _dirent(name, extension, attr, cluster, length, deleted=False):
-    """One 32-byte directory entry: the 8.3 name, the attribute, ten reserved bytes, the time, the
-    date, the first cluster and the length — the DOS layout, little-endian past the name."""
-    stem = name.ljust(8)[:8].encode("ascii")
-    if deleted:
-        stem = bytes([DIRENT_DELETED]) + stem[1:]
-    return (stem + extension.ljust(3)[:3].encode("ascii") + bytes([attr]) + bytes(10)
-            + struct.pack("<HHHI", DIRENT_TIME, DIRENT_DATE, cluster, length))
+    """One of the staged disk's own entries: `dirent_bytes` with the staged time and date."""
+    return dirent_bytes(name, extension, attr, cluster, length, time=STAGED_DIRENT_TIME,
+                        date=STAGED_DIRENT_DATE, deleted=deleted)
 
 
 SUBDIR_CLUSTER = 2
@@ -501,16 +700,16 @@ SPAN_BYTES = 2500                       # crosses a sector AND a cluster: three 
 SPAN_CLUSTERS = -(-SPAN_BYTES // CLUSTER_BYTES)
 # The six shapes the directory layer has to tell apart, in the order they appear in the root.
 ROOT_FILES = (
-    ("SUBDIR", "", ATTR_DIRECTORY, SUBDIR_CLUSTER, 0, False),
+    ("SUBDIR", "", GEMDOS_ATTR_SUBDIR, SUBDIR_CLUSTER, 0, False),
     ("SHORT", "TXT", ATTR_NONE, SHORT_CLUSTER, SHORT_BYTES, False),
     ("SPAN", "DAT", ATTR_NONE, SPAN_CLUSTER, SPAN_BYTES, False),
-    ("EMPTY", "BIN", ATTR_READ_ONLY, 0, 0, False),
+    ("EMPTY", "BIN", GEMDOS_ATTR_READ_ONLY, 0, 0, False),
     ("GONE", "OLD", ATTR_NONE, 0, 0, True),
     ("STAGEDDSK", "", GEMDOS_ATTR_VOLUME, 0, 0, False),
 )
 
 
-def _body(seed, length):
+def body(seed, length):
     """A file's bytes: a ramp keyed on the file, so a read landing on the wrong cluster is a wrong
     BYTE rather than a plausible one."""
     return bytes((seed + index) & 0xFF for index in range(length))
@@ -520,8 +719,8 @@ def _body(seed, length):
 # offset — which is what makes "the read landed on the wrong cluster" a wrong byte.
 SHORT_SEED = 0x11
 SPAN_SEED = 0x40
-SHORT_BODY = _body(SHORT_SEED, SHORT_BYTES)
-SPAN_BODY = _body(SPAN_SEED, SPAN_BYTES)
+SHORT_BODY = body(SHORT_SEED, SHORT_BYTES)
+SPAN_BODY = body(SPAN_SEED, SPAN_BYTES)
 
 
 def _write_cluster(sectors, cluster, contents):
@@ -550,14 +749,14 @@ def _disk_image():
     struct.pack_into("<H", boot, BOOT_HEADS, HEADS)
     sectors[0:SECTOR_BYTES] = boot
 
-    fat = _fat12({
+    fat = fat12_table({
         0: FAT_ENTRY_ZERO_PREFIX | MEDIA_DESCRIPTOR,
-        1: FAT_END_OF_CHAIN,
-        SUBDIR_CLUSTER: FAT_END_OF_CHAIN,
-        SHORT_CLUSTER: FAT_END_OF_CHAIN,
+        1: FAT12_END_OF_CHAIN,
+        SUBDIR_CLUSTER: FAT12_END_OF_CHAIN,
+        SHORT_CLUSTER: FAT12_END_OF_CHAIN,
         SPAN_CLUSTER: SPAN_CLUSTER + 1,
         SPAN_CLUSTER + 1: SPAN_CLUSTER + 2,
-        SPAN_CLUSTER + 2: FAT_END_OF_CHAIN,
+        SPAN_CLUSTER + 2: FAT12_END_OF_CHAIN,
     })
     for at in (FAT1_RECORD, FAT2_RECORD):
         sectors[at * SECTOR_BYTES:(at + FAT_SECTORS) * SECTOR_BYTES] = fat
@@ -570,8 +769,8 @@ def _disk_image():
     # `SUBDIR`'s own cluster: `.`, `..` and nothing else, which is what a search below the root
     # walks into.
     subdir = bytearray(CLUSTER_BYTES)
-    subdir[0:DIRENT_BYTES] = _dirent(".", "", ATTR_DIRECTORY, SUBDIR_CLUSTER, 0)
-    subdir[DIRENT_BYTES:2 * DIRENT_BYTES] = _dirent("..", "", ATTR_DIRECTORY, 0, 0)
+    subdir[0:DIRENT_BYTES] = _dirent(".", "", GEMDOS_ATTR_SUBDIR, SUBDIR_CLUSTER, 0)
+    subdir[DIRENT_BYTES:2 * DIRENT_BYTES] = _dirent("..", "", GEMDOS_ATTR_SUBDIR, 0, 0)
     _write_cluster(sectors, SUBDIR_CLUSTER, bytes(subdir))
     _write_cluster(sectors, SHORT_CLUSTER, SHORT_BODY)
     for index in range(SPAN_CLUSTERS):
@@ -581,6 +780,7 @@ def _disk_image():
 
 
 DISK = _disk_image()
+SPAN.claim(IMAGE_AT, DISK_BYTES, "the staged disk image")
 
 
 def sector_of(source, record, at=0):
@@ -596,7 +796,13 @@ def machine(pokes=None):
     `test/gemdos.py`'s own `machine()`, because every one of these routines reaches the BIOS and so
     needs `savptr` declared into the band the differential drops."""
     return gemdos.machine({IMAGE_AT: DISK, **stubs(), **vectors(), **bpb_record(),
-                           **mediach_answer(), **(pokes or {})})
+                           **mediach_answer(), **getbpb_answer(), **(pokes or {})})
+
+
+def user_buffer(contents=None):
+    """The user buffer, pre-filled — `contents` at its start and `SLACK_FILL` after."""
+    contents = contents or b""
+    return {USER_AT: contents + bytes([SLACK_FILL]) * (USER_BYTES - len(contents))}
 
 
 # ---- the candidate's half of the pair ------------------------------------------------------------
@@ -625,12 +831,17 @@ def _span(buf, at, length):
     return (ctypes.c_uint8 * length).from_address(ctypes.addressof(buf.contents) + at)
 
 
-def _getbpb(_buf, _rwflag, _buffer, _count, _recno, _dev):
-    return BPB_AT
+def _staged_answer(buf, at):
+    """The longword a case poked for an ANSWER stub, out of the candidate's own image."""
+    return int.from_bytes(bytes(_span(buf, at, ANSWER_BYTES)), "big")
+
+
+def _getbpb(buf, _rwflag, _buffer, _count, _recno, _dev):
+    return _staged_answer(buf, GETBPB_ANSWER_AT)
 
 
 def _mediach(buf, _rwflag, _buffer, _count, _recno, _dev):
-    return int.from_bytes(bytes(_span(buf, MEDIACH_ANSWER_AT, MEDIACH_ANSWER_BYTES)), "big")
+    return _staged_answer(buf, MEDIACH_ANSWER_AT)
 
 
 def _rwabs(buf, rwflag, buffer, count, recno, _dev):
@@ -675,11 +886,76 @@ def staged_disk():
         f"{DISK_SECTORS} sectors, so this case is about a machine neither shore modelled")
 
 
+# ---- one case over the staged disk ----------------------------------------------------------------
+
+class Result:
+    """A run, and what the machine held AFTER it.
+
+    `harness.differential` hands back the oracle's WRITE LEDGER rather than its final image, which
+    is the sharper thing for a field the routine stores — a `KeyError` names a field nothing wrote
+    — but the disk, the buffers and the list links are mostly bytes a case POKED and the routine
+    left alone. So `final` is `case.final_image`: the captured snapshot, the case's pokes, and then
+    the oracle's writes, composed once per run rather than per read.
+    """
+
+    def __init__(self, info, pokes):
+        self.info = info
+        self.final = case.final_image(info, pokes)
+
+    def after(self, at, length):
+        return bytes(self.final[at:at + length])
+
+    def long(self, at):
+        return int.from_bytes(self.after(at, 4), "big")
+
+    def word(self, at):
+        return int.from_bytes(self.after(at, 2), "big")
+
+    def sector(self, record):
+        """...and one sector of the staged disk."""
+        return self.after(IMAGE_AT + record * SECTOR_BYTES, SECTOR_BYTES)
+
+    def order(self, which):
+        return cache_order(self.long, which)
+
+
+# WHY A CASE HERE DOES NOT POISON BY DEFAULT, said once for every fs battery. `case.run`'s
+# attribution pass pre-inverts every byte the ORACLE wrote and re-runs both cores, and three things
+# the oracle writes are pointers its next step FOLLOWS: `savptr`, which the oracle's real `trap #13`
+# writes twice per BIOS call, so an inverted one sends the next save frame somewhere no case staged;
+# a pool size class's CHAIN HEAD, which `$fc7f1a` both reads and writes; and a routine's own pointer
+# argument it stores and then reads through (`$fc68dc`'s path pointer). A routine that reaches none of
+# the three — no BIOS call, no pool, no stored pointer — poisons, and its battery says `poison=True`.
+# What stands in for the pass otherwise is STAGING: every buffer starts full of `SLACK_FILL` and every
+# record is filled, so a byte the reconstruction did not write reads as something no arm produces.
+
+def run(entry, glue, pokes, *, regs=None, poison=False, **kwargs):
+    """One differential over the staged disk: `machine(pokes)`, the driver staged, the candidate's
+    disk traffic recorded, and a transfer off the disk refused. `regs` are the entry registers over
+    A5 = 0 (the BIOS dispatcher's `suba.l a5,a5`, which every trap-reaching routine assumes);
+    `kwargs` go to `case.run` (`width`, `max_insns`, ...)."""
+    staged = machine(pokes)
+    with staged_disk():
+        info = case.run(entry, {"a5": 0, **(regs or {}), "_pokes": staged}, recording(glue),
+                        poison=poison, **kwargs)
+    return Result(info, staged)
+
+
 # ---- the registry --------------------------------------------------------------------------------
 # Every field these cases READ or POKE outside their own staged span, as `test_boot_snapshot.py`'s
-# `CASE_FIELDS` takes them. The staged span itself is not here: it is RAM the snapshot leaves zero,
-# which is a claim `test_gemdos_fs_disk.py` makes directly.
+# `CASE_FIELDS` takes them. The staged span is not here: it is RAM the snapshot leaves zero, which is
+# a claim `test_gemdos_fs_disk.py` makes directly, and its tenants are `SPAN.claims`, which
+# `test_boot_snapshot.py` splats once every battery has claimed its own.
+#
+# ...and each drive the SNAPSHOT has logged in: its DMD is in the pool arena, and a case that falls
+# back to the drive's root node (`$fc67de`'s fresh directory, `$fc68dc`'s `\`) reads the pointer there.
+_SNAPSHOT_DRIVES_OPENED = case.word_in(BASE_IMAGE, addrs.GEMDOS_DRIVES_OPENED)
+_LOGGED_IN_ROOT_POINTERS = tuple(
+    (case.long_in(BASE_IMAGE, dmd_slot(drive)) + DMD_ROOT_DND, DRIVE_TABLE_ENTRY_BYTES,
+     f"drive {drive}'s root-node pointer, in the DMD the snapshot's pool holds")
+    for drive in range(addrs.GEMDOS_DRIVE_COUNT) if _SNAPSHOT_DRIVES_OPENED >> drive & 1)
 CASE_FIELDS = (
+    *_LOGGED_IN_ROOT_POINTERS,
     (addrs.SYSVAR_BUFL, addrs.SYSVAR_BUFL_ENTRY_BYTES * BCB_LIST_COUNT,
      "the two buffer-cache list heads"),
     (addrs.HDV_BPB, 4, "the Getbpb RAM vector a case points at its own driver"),
@@ -687,6 +963,15 @@ CASE_FIELDS = (
     (addrs.HDV_MEDIACH, 4, "...and Mediach's"),
     (addrs.GEMDOS_DISK_ERROR, 4, "the last BIOS disk result, which every one of these stores"),
     (addrs.GEMDOS_DISK_ERROR_DRIVE, 2, "...and the drive it came from"),
+    # ...and the drive tables the log-in reads and writes (`test_gemdos_fs_drive.py`): all forty
+    # reference counts, where `test/gemdos_process.py` declares the sixteen a basepage reaches.
+    (addrs.GEMDOS_DRIVES_OPENED, 2, "the logged-in drive mask"),
+    (addrs.GEMDOS_DMD_TABLE, DRIVE_TABLE_ENTRY_BYTES * addrs.GEMDOS_DRIVE_COUNT, "each drive's DMD"),
+    (addrs.GEMDOS_DIRECTORY_NODES, DRIVE_TABLE_ENTRY_BYTES * addrs.GEMDOS_DIRECTORY_NODE_COUNT,
+     "the directory node table"),
+    (addrs.GEMDOS_CURDIR_REFCOUNTS, addrs.GEMDOS_DIRECTORY_NODE_COUNT,
+     "...and its reference counts, which the slot search reads"),
+    (gemdos.BASEPAGE + addrs.BASEPAGE_CURDIR, addrs.BASEPAGE_CURDIR_ENTRIES, "the running process's p_curdir"),
 )
 
 # ...and the ROWS themselves go to `gemdos.register`, not to a list of this module's own: GEMDOS

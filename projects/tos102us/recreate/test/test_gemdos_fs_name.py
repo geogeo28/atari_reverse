@@ -41,8 +41,8 @@ NAME_BAND_BYTES = 0xA0
 assert NAME_BAND_BYTES <= fs.NAMES_BYTES, "the name buffers outgrew the span reserved for them"
 
 # A D0 nothing in these routines writes the whole of, so that a reconstruction clearing the high
-# half has something to fail against.
-ENTRY_D0 = 0xDEC0_DE00
+# half has something to fail against — the one every fs battery enters with.
+ENTRY_D0 = fs.ENTRY_D0
 # ...and what an FCB buffer is filled with before a case writes into it: every one of the eleven
 # bytes must be stored, and a byte left holding this says which was not.
 FCB_FILL = 0xA5

@@ -18,17 +18,14 @@
 #include "gemdos_fs.h"
 #include "machine.h"
 
-/* The two characters the FCB form is built out of, and the three the parser stops a field at. */
-#define FCB_PAD           ' '
+/* The two characters the FCB form is built out of beyond `include/gemdos_fs.h`'s FCB_PAD, and the
+ * three the parser stops a field at besides it (NAME_DOT and PATH_SEPARATOR are that header's too:
+ * a path separator ends the name as surely as a NUL does). */
 #define FCB_ANY           '?'     /* one position a pattern matches anything in */
 #define NAME_WILDCARD     '*'     /* ...and what fills the rest of a field with those */
-#define NAME_DOT          '.'
-#define NAME_SEPARATOR    '\\'    /* a path separator ends the name as surely as a NUL does */
 
-/* The FCB's two fields, and the whole of it. */
-#define FCB_STEM_BYTES    8
-#define FCB_EXTENSION_BYTES 3
-#define FCB_NAME_BYTES    (FCB_STEM_BYTES + FCB_EXTENSION_BYTES)
+/* The whole FCB name, its two fields together. */
+#define FCB_NAME_BYTES    DIRENT_NAME_BYTES
 
 /* Lower case is upper case with this bit clear, which is how the ROM spells it: `and.w #$5f` rather
  * than a subtraction, applied only inside 'a'..'z' ($fc50d6/$fc50dc, a SIGNED byte compare pair). */
@@ -37,11 +34,6 @@
  * 'a'..'z' — so its high byte is 0 and the two spellings are the same mask there. Written as the
  * BYTE mask because the value this applies to is a byte. */
 #define UPPER_CASE_MASK   (0xff & ~LOWER_CASE_BIT)
-
-/* The half of D0 a `move.w`/`clr.w` result leaves standing — the caller's. Named because three of
- * this file's returns are built out of it and a bare mask repeated three times is one that gets
- * corrected twice (`include/gemdos_fs.h` says why these routines take the register in at all). */
-#define D0_CALLERS_HIGH_HALF 0xffff0000u
 
 /* $fc50ca — one character folded to upper case.
  *
@@ -64,7 +56,7 @@ uint32_t gemdos_fs_toupper(uint32_t entry_d0, uint16_t character)
     if (byte >= 'a' && byte <= 'z')
         folded &= UPPER_CASE_MASK;
     /* `move.w`/`and.w` on D0: the caller's high half stands. */
-    return (entry_d0 & D0_CALLERS_HIGH_HALF) | folded;
+    return set_low_word(entry_d0, folded);
 }
 
 /* $fc539a — log2 of a power of two: shift right until the word is zero, and subtract one from the
@@ -86,7 +78,7 @@ uint32_t gemdos_fs_log2(uint32_t entry_d0, uint16_t value)
         remaining = (int16_t)(remaining >> 1);
         shifts++;
     }
-    return (entry_d0 & D0_CALLERS_HIGH_HALF) | (uint16_t)(shifts - 1);
+    return set_low_word(entry_d0, (uint16_t)(shifts - 1));
 }
 
 /* Does this character end an FCB field? The ROM's five tests, in its own order ($fc5d50..$fc5d6a
@@ -94,7 +86,7 @@ uint32_t gemdos_fs_log2(uint32_t entry_d0, uint16_t value)
  * "A B.TXT" does not become an eight-character stem. */
 static int ends_a_field(uint8_t character)
 {
-    return character == '\0' || character == NAME_WILDCARD || character == NAME_SEPARATOR
+    return character == '\0' || character == NAME_WILDCARD || character == PATH_SEPARATOR
         || character == NAME_DOT || character == FCB_PAD;
 }
 
@@ -148,7 +140,7 @@ void gemdos_build_fcb_name(uint8_t *image, uint32_t path, uint32_t fcb)
     uint16_t written = copy_field_text(image, &at, &out, FCB_STEM_BYTES);
 
     if (written == FCB_STEM_BYTES)
-        while (image[at] != '\0' && image[at] != NAME_DOT && image[at] != NAME_SEPARATOR)
+        while (image[at] != '\0' && image[at] != NAME_DOT && image[at] != PATH_SEPARATOR)
             at++;
     pad_field(image, image[at], &out, written, FCB_STEM_BYTES);
     if (image[at] == NAME_WILDCARD)
@@ -178,16 +170,23 @@ void gemdos_build_fcb_name(uint8_t *image, uint32_t path, uint32_t fcb)
  *      two match when they share a bit, so a pattern of 8 matches an entry of $18 as well as one
  *      of 8. Only the SHORTCUT is special-cased, not the comparison.
  */
+/* A miss is `clr.w d0`: the low word only, the caller's high half standing. Formed at each return
+ * rather than once up front, which is the shape the compiler keeps out of a register across the
+ * loop (measured: hoisted, it cost this routine 40 of its Tier 3 cycles). */
+static uint32_t no_match(uint32_t entry_d0)
+{
+    return set_low_word(entry_d0, 0);
+}
+
 uint32_t gemdos_name_match(uint32_t entry_d0, const uint8_t *image, uint32_t pattern,
                            uint32_t entry)
 {
-    uint32_t no = entry_d0 & D0_CALLERS_HIGH_HALF;   /* `clr.w d0`: the low word only */
-    uint32_t yes = 1;                       /* ...against `moveq #1,d0`, which writes all of it */
+    uint32_t yes = 1;                       /* `moveq #1,d0`, which writes all of it */
     uint16_t at;
 
     if (image[entry] == DIRENT_DELETED) {
         if (image[pattern] == FCB_ANY)
-            return no;
+            return no_match(entry_d0);
         if (image[pattern] == DIRENT_DELETED)
             return yes;
     }
@@ -195,9 +194,9 @@ uint32_t gemdos_name_match(uint32_t entry_d0, const uint8_t *image, uint32_t pat
         if (image[pattern + at] == FCB_ANY)
             continue;
         if (gemdos_fs_toupper(0, image[entry + at]) != gemdos_fs_toupper(0, image[pattern + at]))
-            return no;
+            return no_match(entry_d0);
     }
     if (image[pattern + FCB_NAME_BYTES] != GEMDOS_ATTR_VOLUME && image[entry + FCB_NAME_BYTES] == 0)
         return yes;       /* the shortcut, and the one pattern that loses it */
-    return (image[pattern + FCB_NAME_BYTES] & image[entry + FCB_NAME_BYTES]) ? yes : no;
+    return (image[pattern + FCB_NAME_BYTES] & image[entry + FCB_NAME_BYTES]) ? yes : no_match(entry_d0);
 }

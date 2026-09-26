@@ -56,7 +56,6 @@ RTS_WORD = int.from_bytes(RTS, "big")   # derived, so the two spellings cannot d
 
 LEA_ABSOLUTE_LONG_A0 = 0x41F9           # lea     <xxx>.l,a0
 MOVE_L_ABSOLUTE_D0 = 0x2039             # move.l  <xxx>.l,d0
-MOVE_L_A0_D0 = 0x2008                   # move.l  a0,d0
 MOVEQ_0_D0 = 0x7000                     # moveq   #0,d0
 MOVEA_L_STACK_A1 = 0x226F               # movea.l <d16>(sp),a1
 MOVE_W_STACK_D0 = 0x302F                # move.w  <d16>(sp),d0

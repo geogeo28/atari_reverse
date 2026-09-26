@@ -117,6 +117,19 @@ import test_gemdos_fs_name                                  # noqa: E402
 import test_gemdos_handles                                  # noqa: E402,F401
 import test_gemdos_process                                  # noqa: E402,F401
 import test_gemdos_process_pexec                            # noqa: E402,F401
+# ...and fs WAVE 3's: the drive and path layer (whose out-of-table slots it declares), the shared
+# byte copies and the record layer, and the I/O engine — seek, the FAT, the transfer and
+# Fread/Fwrite/Fseek. Every band they stage in is a claim on `gemdos_fs.SPAN`, splatted below once
+# all of them have claimed.
+import test_gemdos_fs_drive                                 # noqa: E402
+import test_gemdos_fs_path                                  # noqa: E402,F401
+import test_gemdos_fs_copy                                  # noqa: E402,F401
+import test_gemdos_fs_records                               # noqa: E402,F401
+import test_gemdos_fs_records_pool                          # noqa: E402,F401
+import test_gemdos_fs_fat                                   # noqa: E402,F401
+import test_gemdos_fs_io                                    # noqa: E402,F401
+import test_gemdos_fs_io_leaves                             # noqa: E402,F401
+import fs_records                                           # noqa: E402
 import gemdos_fs                                            # noqa: E402
 import gemdos_process                                       # noqa: E402
 
@@ -402,7 +415,12 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                # reference counts and terminate vector.
                *gemdos_fs.CASE_FIELDS,
                *test_gemdos_fs_name.CASE_FIELDS,
-               *gemdos_process.CASE_SPANS)
+               *gemdos_process.CASE_SPANS,
+               # ...and wave 3's: every band of the file system's staged window, as claimed, and the
+               # fields its batteries reach outside it.
+               *gemdos_fs.SPAN.claims,
+               *test_gemdos_fs_drive.CASE_FIELDS,
+               *fs_records.CASE_FIELDS)
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():

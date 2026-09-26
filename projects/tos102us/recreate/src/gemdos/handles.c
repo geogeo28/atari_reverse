@@ -42,8 +42,9 @@
 #include "recreate.h"
 
 /* The descriptor at an INDEX into the table — `muls.w #10` on a signed word, exactly as the ROM's
- * five copies of this arithmetic do it, with no bound of the ROM's own. */
-static uint32_t descriptor_at(int16_t index)
+ * five copies of this arithmetic do it, with no bound of the ROM's own. Exported: the file system's
+ * record layer claims and fills these records too (`src/gemdos/fs_records.c`). */
+uint32_t gemdos_descriptor_at(int16_t index)
 {
     int32_t at = (int32_t)GEMDOS_HANDLE_TABLE + (int32_t)index * GEMDOS_HANDLE_STRIDE;
 
@@ -57,7 +58,7 @@ static uint32_t descriptor_at(int16_t index)
  * except `Fdup`, which is where the negative displacement comes from. */
 static uint32_t descriptor_of(int16_t handle)
 {
-    return descriptor_at((int16_t)(handle - GEMDOS_FIRST_FILE_HANDLE));
+    return gemdos_descriptor_at((int16_t)(handle - GEMDOS_FIRST_FILE_HANDLE));
 }
 
 /* One of the six standard handles of a basepage that is NOT necessarily `p_run` — `Pexec` forces
@@ -80,8 +81,13 @@ static int is_a_standard_handle(int16_t handle)
  * `gemdos_resolve_handle`'s: 6 and up is `handle - 6`, and 0..5 is the running process's `p_uft`
  * byte, minus six again if that byte is POSITIVE. A byte of 0 or below becomes the INDEX ITSELF — so
  * a standard handle naming nothing indexes record 0 and one naming a device indexes before the
- * table. The ROM applies no bound and neither does this; both callers below have already proved the
- * argument non-negative, which is why the `p_uft` read is safe to make unconditionally.
+ * table. The ROM applies no bound and neither does this.
+ *
+ * A NEGATIVE HANDLE IS NOT REFUSED HERE. `Fclose` proves its argument non-negative first, but
+ * `Fread`, `Fwrite` and `Fseek` (`src/gemdos/fs_io.c`) pass the caller's handle straight in, as
+ * `$fc5e6a`/`$fc5eea`/`$fc7cce` do — so the ROM reads the byte `-handle` places BELOW `p_uft`, and so
+ * does this (the address arithmetic wraps to the same place). The only bounds are the host build's
+ * RAM asserts on that read and on the record it then names.
  */
 static int16_t record_index_of(const uint8_t *image, int16_t handle)
 {
@@ -93,11 +99,11 @@ static int16_t record_index_of(const uint8_t *image, int16_t handle)
     return named > 0 ? (int16_t)(named - GEMDOS_FIRST_FILE_HANDLE) : named;
 }
 
-/* $fc51c0 (`gemdos_ofd_of_handle` in the name map) — ...and that record's first longword, which is
- * what `Fclose` tells "names nothing" from "names an open file" by. */
-static int32_t ofd_value_of_handle(const uint8_t *image, int16_t handle)
+/* $fc51c0 — ...and that record's first longword, which is what `Fclose` tells "names nothing" from
+ * "names an open file" by, and the OFD `Fread`/`Fwrite`/`Fseek` work on (`src/gemdos/fs_io.c`). */
+int32_t gemdos_ofd_of_handle(const uint8_t *image, int16_t handle)
 {
-    return (int32_t)be32(image + descriptor_at(record_index_of(image, handle)) + HANDLE_VALUE);
+    return (int32_t)be32(image + gemdos_descriptor_at(record_index_of(image, handle)) + HANDLE_VALUE);
 }
 
 /* $fc52f8 — `Fforce`'s whole body, over a basepage the caller names.
@@ -227,7 +233,7 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
         }
         looked_up = handle;
     }
-    if (ofd_value_of_handle(image, looked_up) == 0)
+    if (gemdos_ofd_of_handle(image, looked_up) == 0)
         return GEMDOS_EIHNDL;
     recreate_not_reconstructed("GEMDOS: Fclose of a handle that names an open FILE");
 }
