@@ -1000,7 +1000,7 @@ fn 0xfc4f22 os_swap_long
 fn 0xfc50fa gemdos_dmd_alloc
 fn 0xfc53c0 gemdos_dmd_build
 fn 0xfc51c0 gemdos_ofd_of_handle   # ctx
-fn 0xfc57ee gemdos_ofd_close   # ctx
+fn 0xfc57ee gemdos_ofd_close
 fn 0xfc5c3c gemdos_ofd_new
 fn 0xfc5e08 gemdos_split_path
 fn 0xfc5e9c gemdos_ofd_read
@@ -1040,7 +1040,7 @@ cmt 0xfc7fd8 Ptermres ($31). Mshrink(p_run, keep), then every descriptor the pro
 cmt 0xfc8092 Everything a process owns, given back, in four loops: the six standard handles (Fclose only when STRICTLY positive), the 75 handle records BY OWNER, the sixteen p_curdir entries (a zero skipped, a NEGATIVE one decrementing below $8066), and the allocated list by m_own.
 cmt 0xfc817a Pexec ($4b). Modes 0/3/4/5 -- not a range; 1 and 2 are a gap. Saves the dispatcher's termination record to $7560 and arms its own at $7ef4, so everything past $fc8242 is a slice. Two dead branches: the mode-4 half of the owner choice at $fc8342, and the cmpi.w #5 at $fc85c0.
 cmt 0xfc8242 Pexec past the record. The TPA is cut in TWO allocator calls -- ask for the largest free block, then ask for exactly that; the environment is measured to its DOUBLE NUL and rounded up to a word; the basepage clear runs 256 bytes from +8, eight past the basepage's own end; the child is handed A4 = p_bbase and A5 = p_dbase.
-cmt 0xfc5216 Fdup ($45). Takes the first handle record nobody OWNS and copies what the source names -- but not its reference count, which starts at one. So Fdup of a file and Fclose of both halves closes the file twice.
+cmt 0xfc5216 Fdup ($45). Takes the first handle record nobody OWNS and copies what the source names -- but not its reference count, which starts at one. So Fdup of a file and Fclose of both halves frees the OFD twice (see Fclose).
 cmt 0xfc52f8 Fforce's body, over a basepage the caller names (which is how Pexec fills a CHILD's table). A descriptor that itself names a DEVICE stores the device byte and takes no reference; only a real file leaves the handle NUMBER in p_uft and counts the holder.
 cmt 0xfc9924 The dispatcher's handle-argument RESOLUTION. Descriptor $81 (Fseek, longword offset first) takes its handle from the THIRD argument word; $82 (Fread/Fwrite) from the first. 0 answers EIHNDL with no call made, a NEGATIVE resolution routes into the console leaves, anything else falls through to the ordinary dispatch.
 fn 0xfc55fa gemdos_copy_out
@@ -1066,3 +1066,14 @@ cmt 0xfc60f2 Next cluster: pseudo-cluster +1, FAT successor, or the first cluste
 cmt 0xfc67de Logs a drive in (BIOS Getbpb, then $fc53c0; bit set in $8784 only when both succeed) and gives p_run a directory on it: a p_curdir byte of 0 or naming a zero $7dee entry is replaced by the first zero refcount from slot 1, set to the drive's root DND. The old count is not dropped. -1 no BPB or no slot, -39 ENSMEM, else the drive sign-extended.
 cmt 0xfc50fa DMD (class 3) then root DND, root OFD, FAT OFD (class 4), each pointer stored into its parent BEFORE the test; the DMD goes into $8380[drv] first, so a later failure leaves the slot naming a freed DMD. Frees newest first.
 cmt 0xfc7e24 mask = the $fd2fc8 table at a SIGNED word index (0..17 are masks); remainder stored as a word; quotient asr.l by register, count mod 64.
+fn 0xfc663c gemdos_dir_search
+fn 0xfc696c gemdos_find_dir
+fn 0xfc7824 gemdos_delete_entry
+cmt 0xfc56c6 Fclose ($3e). A file handle: closes the OFD FIRST ($fc57ee, flags 0) whoever else holds it, then drops the count; the last holder frees the OFD to the pool. After Fdup the second close runs on the FREED OFD, answers EINTRN and frees it again -- a self-looped pool chain.
+cmt 0xfc663c Directory search from *pos (or DND_SCANNED when *pos == -1). Makes a DND for every subdirectory entry passed beyond DND_SCANNED unless the OFD has bit 1 (end seen) or the name is already on the child list; never for ./.. or $e5. From -1 it answers the LAST DND MADE (not the matched entry's), raises the mark and un-reads the entry; otherwise the entry (cache pointer) and *pos after it.
+cmt 0xfc696c Walk a path's directories: child list first, then $fc663c(dir, text, $10, &$fd2fe8 = -1). A miss where the dir had no child list leaves *tail AT the component; one where the list ran out leaves it PAST it. tst.l a4 at $fc6a00 is unreachable.
+cmt 0xfc6df4 Fsnext ($4f): DTA+17 DND and DTA+13 position (odd offsets, copied via $fc564a), text pattern at DTA+0, attr DTA+12, through $fc663c; ENMFIL -49 leaves the DTA. A DTA position of -1 makes it fill the DTA from a DND.
+cmt 0xfc57ee close: dirty -> 10 entry bytes from OFD+6 (cluster/length swapped); flag 2 = length 0; flag 0 or bit 2 unlinks (EINTRN before flush); then flushes EVERY buffer of both lists
+cmt 0xfc7824 delete_entry(dnd,dirent,pos): caller's handles on the entry closed (not released), another's -> EACCDN; chain freed to 0/-1; $e5 written; dir closed flag 2
+cmt 0xfc772e Fdatime: no OFD check (NULL -> reads vectors 6/7); set leaves the caller's buffer byte-swapped; get D0 = read count with the swapped date as its low word
+cmt 0xfc7a68 Dfree: counts clusters 2..numcl-1 free, reports numcl; any negative open_drive word -> -1

@@ -1,24 +1,22 @@
 /* handles.c — GEMDOS's handle machinery: `Fforce` ($fc52de), `Fdup` ($fc5216), `Fclose` ($fc56c6)
  * and the resolution the dispatcher does before it calls a handler at all ($fc9924).
  *
- * THE LAYER THESE FOUR MAKE UP is the one between a program's handle and whatever the handle names,
- * and it is separable from the file system in exactly the way `include/gemdos/process.h` describes:
- * a handle is a device, a standard-handle index, or an open-file descriptor, and the only thing
- * these routines ever do with the THIRD one's contents is read its sign. A descriptor naming a
- * character device is theirs whole; one naming a file is the file system's the moment its reference
- * count reaches zero, and that is where each of them halts.
+ * THE LAYER THESE FOUR MAKE UP is the one between a program's handle and whatever the handle names:
+ * a device, a standard-handle index, or an open-file descriptor (`include/gemdos/process.h`). A
+ * descriptor naming a character device is theirs whole — its sign is all they read of it. One naming
+ * a file is `Fclose`'s to hand on: its OFD goes to the file system's own close (`src/gemdos/fs_file.c`)
+ * and, when the last reference goes, back to the pool.
  *
- * WHICH ARMS ARE RECONSTRUCTED, and it is the whole of the device story:
+ * WHICH ARMS ARE RECONSTRUCTED:
  *
  *   `Fforce`  every arm. The bound, the device byte stored straight, the refusal of a source in
  *             0..5, an OFD that itself names a device, and the reference count a real file's gets.
  *   `Fdup`    every arm. The free-slot search, the table being full, the descriptor claimed for
  *             `p_run`, and both shapes of what it copies.
- *   `Fclose`  four of five. A negative handle, a standard handle naming a device, a descriptor
- *             naming one — including the release when the last reference goes — and the EIHNDL a
- *             handle that names NOTHING answers, which is `$fc51c0` answering 0. What halts is a
- *             handle that resolves to an open FILE, which is `$fc57ee`: the file system's own
- *             close, and not a branch of this.
+ *   `Fclose`  every arm. A negative handle, a standard handle naming a device, a descriptor
+ *             naming one — including the release when the last reference goes — the EIHNDL a
+ *             handle that names NOTHING answers, which is `$fc51c0` answering 0, and a handle that
+ *             resolves to an open FILE, closed through `$fc57ee`.
  *   resolve   the walk itself, whole, and the EIHNDL it answers for a handle that names nothing.
  *             What halts is the routing BELOW it ($fc99bc), where a resolved CHARACTER DEVICE turns
  *             an `Fread` into a console read — that one needs `src/gemdos/console.c`'s leaves under
@@ -37,9 +35,10 @@
 #include <stdint.h>
 
 #include "gemdos/gemdos.h"
+#include "gemdos/fs_file.h"
+#include "gemdos/memory.h"
 #include "gemdos/process.h"
 #include "machine.h"
-#include "recreate.h"
 
 /* The descriptor at an INDEX into the table — `muls.w #10` on a signed word, exactly as the ROM's
  * five copies of this arithmetic do it, with no bound of the ROM's own. Exported: the file system's
@@ -186,7 +185,24 @@ uint32_t gemdos_fdup(uint8_t *image, int16_t standard)
     return (uint32_t)(slot + GEMDOS_FIRST_FILE_HANDLE);
 }
 
-/* $fc56c6 ($3e) — close a handle, and answer 0 whatever happened on every arm this reconstructs.
+/* A descriptor's reference count dropped by one — `subq.w #1,8(a0)` — and whether that was the last. */
+static int drop_reference(uint8_t *image, uint32_t descriptor)
+{
+    uint16_t left = (uint16_t)(be16(image + descriptor + HANDLE_REFCOUNT) - 1);
+
+    wr16(image + descriptor + HANDLE_REFCOUNT, left);
+    return left == 0;
+}
+
+/* ...and the last holder's release: the value and the OWNER zeroed, which is what puts the slot
+ * back in `Fdup`'s search. */
+static void release_descriptor(uint8_t *image, uint32_t descriptor)
+{
+    wr32(image + descriptor + HANDLE_VALUE, 0);
+    wr32(image + descriptor + HANDLE_OWNER, 0);
+}
+
+/* $fc56c6 ($3e) — close a handle: 0, or EIHNDL, or what the file system's close answered.
  *
  * THE STANDARD-HANDLE ARM CLEARS THE SLOT BEFORE IT KNOWS WHAT WAS IN IT, which is the order the ROM
  * stores in and therefore the order here: `clr.b` first, then the test that decides whether there is
@@ -195,19 +211,28 @@ uint32_t gemdos_fdup(uint8_t *image, int16_t standard)
  * an omission — it does NOT re-check whether the descriptor names a device.
  *
  * THE DESCRIPTOR ARM IS A REFERENCE COUNT AND NOTHING ELSE while the descriptor names a device: drop
- * it, and on the last holder zero the value and the owner, which is what puts the slot back in
- * `Fdup`'s search.
+ * it, and on the last holder release the descriptor.
  *
  * WHAT THE TWO `bge`s FALL INTO IS ONE ARM AND IT HAS TWO OUTCOMES. A standard handle whose byte is
  * not negative, and a descriptor whose value is not negative, both reach $fc576a — which looks the
  * handle up ONE MORE TIME through `$fc51c0` and branches on what it finds. A value of 0 is a handle
- * that names NOTHING and answers `GEMDOS_EIHNDL` with nothing stored; only a positive value is a
- * real open FILE, and that is the arm with a whole close behind it ($fc57ee flushes and releases the
- * file system's record) and the one that halts.
+ * that names NOTHING and answers `GEMDOS_EIHNDL` with nothing stored; a positive value is an open
+ * FILE, and the file system CLOSES IT FIRST ($fc57ee, flags 0) — whoever else still holds the
+ * descriptor. Only then is the count dropped, and the last holder gives the OFD back to the pool
+ * before releasing the descriptor. What the close answered is the answer: 0, or EINTRN for an OFD
+ * already off its directory's list — the last close of an `Fforce`d descriptor (count 2: the first
+ * close unlinked the OFD and only dropped the count).
+ *
+ * `Fdup` + `Fclose` + `Fclose` IS A DOUBLE FREE, faithfully. `Fdup` gives the new descriptor its own
+ * count of 1 naming the SAME OFD, so the first close unlinks the OFD and gives it back to the pool;
+ * the second runs `$fc57ee` on the freed record (its entry rewritten again if it was dirty — nothing
+ * clears OFD_DIRTY), answers EINTRN, and gives it back AGAIN: the chain then links the record to
+ * itself and the next two `pool_get`s hand out the same record (`test_gemdos_fs_close.py`).
  */
 uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
 {
     int16_t looked_up;                  /* what $fc576a is handed: the p_uft byte, or the handle */
+    uint32_t ofd, descriptor, closed;
 
     if (handle < 0)
         return 0;
@@ -219,23 +244,25 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
             return 0;
         looked_up = named;
     } else {
-        uint32_t descriptor = descriptor_of(handle);
-
+        descriptor = descriptor_of(handle);
         if ((int32_t)be32(image + descriptor + HANDLE_VALUE) < 0) {
-            uint16_t left = (uint16_t)(be16(image + descriptor + HANDLE_REFCOUNT) - 1);
-
-            wr16(image + descriptor + HANDLE_REFCOUNT, left);
-            if (left != 0)
-                return 0;
-            wr32(image + descriptor + HANDLE_VALUE, 0);
-            wr32(image + descriptor + HANDLE_OWNER, 0);
+            if (drop_reference(image, descriptor))
+                release_descriptor(image, descriptor);
             return 0;
         }
         looked_up = handle;
     }
-    if (gemdos_ofd_of_handle(image, looked_up) == 0)
+
+    ofd = (uint32_t)gemdos_ofd_of_handle(image, looked_up);
+    if (ofd == 0)
         return GEMDOS_EIHNDL;
-    recreate_not_reconstructed("GEMDOS: Fclose of a handle that names an open FILE");
+    closed = gemdos_ofd_close(image, ofd, 0);
+    descriptor = descriptor_of(looked_up);
+    if (drop_reference(image, descriptor)) {
+        gemdos_pool_free(image, be32(image + descriptor + HANDLE_VALUE));
+        release_descriptor(image, descriptor);
+    }
+    return closed;
 }
 
 /* $fc9924 — which handle a call's arguments name, and what it resolves to.

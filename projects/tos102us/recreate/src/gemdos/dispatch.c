@@ -49,6 +49,12 @@
 #include "machine.h"
 #include "recreate.h"
 
+#ifdef RECREATE_HOST_DIFFERENTIAL
+/* `include/gemdos/gemdos.h`'s host-slot guard: defined in the dispatcher, the one core every GEMDOS
+ * routine sits under, rather than beside any one of the slots' users. */
+unsigned gemdos_host_slots_held;
+#endif
+
 /* How many BYTES of the caller's words the dispatcher copies for each of the four argument classes,
  * indexed by `descriptor & GEMDOS_DESC_ARGUMENT_MASK`. Not a formula: the widest is 14, which is
  * `Pexec`'s mode word and three longwords, where a fourth long would have made it 16.

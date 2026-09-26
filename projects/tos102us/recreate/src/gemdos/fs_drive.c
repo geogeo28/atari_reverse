@@ -58,9 +58,19 @@ static uint8_t *curdir_entry(uint8_t *image, int16_t drive)
                                 BASEPAGE_CURDIR + (uint32_t)(int32_t)drive);
 }
 
+uint32_t gemdos_drive_dmd(const uint8_t *image, int16_t drive)
+{
+    return be32(image + dmd_slot(drive));
+}
+
 static uint32_t root_node_of(const uint8_t *image, int16_t drive)
 {
-    return be32(image + be32(image + dmd_slot(drive)) + DMD_ROOT_DND);
+    return be32(image + gemdos_drive_dmd(image, drive) + DMD_ROOT_DND);
+}
+
+uint32_t gemdos_current_directory(uint8_t *image, int16_t drive)
+{
+    return be32(image + node_slot((int8_t)*curdir_entry(image, drive)));
 }
 
 /* ---- $fc50fa: the four records ------------------------------------------------------------------ */
@@ -282,7 +292,7 @@ uint32_t gemdos_path_start(uint8_t *image, uint32_t path_pointer)
                                     - FIRST_DRIVE_LETTER);
         text += DRIVE_PREFIX_BYTES;
     } else {
-        drive = (int8_t)*gemdos_basepage_byte(image, gemdos_basepage(image), BASEPAGE_CURDRV);
+        drive = gemdos_current_drive(image);
     }
 
     if ((int32_t)gemdos_open_drive(image, drive) < 0)
@@ -292,7 +302,7 @@ uint32_t gemdos_path_start(uint8_t *image, uint32_t path_pointer)
         node = root_node_of(image, drive);
         text++;
     } else {
-        node = be32(image + node_slot((int8_t)*curdir_entry(image, drive)));
+        node = gemdos_current_directory(image, drive);
     }
     wr32(image + path_pointer, text);
     return node;

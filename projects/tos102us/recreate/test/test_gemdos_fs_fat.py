@@ -15,15 +15,13 @@ cluster: an odd `$fff` comes back as the word `$ffff`, which every caller's `cmp
 """
 import ctypes
 import struct
-from pathlib import Path
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, emu
+from harness import BASE_IMAGE, _lib, addrs
 
 import case
 import fs_io as io
-import gemdos
 import gemdos_fs as fs
 
 _lib.gemdos_split_shift.restype = ctypes.c_uint32
@@ -49,7 +47,7 @@ FAT = {EVEN_FF8: RESERVED_EOC, ODD_FF8: RESERVED_EOC, STRADDLING: STRADDLING_VAL
 
 
 def _fat_get_pokes(cluster, pokes=None):
-    return {**io.disk(FAT), **(pokes or {}), **case.args(">HI", cluster & fs.D0_LOW_WORD, fs.DMD_AT)}
+    return {**fs.disk(FAT), **(pokes or {}), **case.args(">HI", cluster & fs.D0_LOW_WORD, fs.DMD_AT)}
 
 
 def _fat_get(cluster, pokes=None):
@@ -57,19 +55,6 @@ def _fat_get(cluster, pokes=None):
                   lambda lib, buf: lib.gemdos_fat_get(fs.ENTRY_D0, buf, cluster & fs.D0_LOW_WORD,
                                                       fs.DMD_AT),
                   _fat_get_pokes(cluster, pokes), regs={"d0": fs.ENTRY_D0})
-
-
-# ---- the host build's frame word -----------------------------------------------------------------
-GEMDOS_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos" / "gemdos.h"
-
-def test_the_host_frame_word_is_inside_the_dropped_band_below_every_frame():
-    """`GEMDOS_HOST_FRAME_WORD` stands in, off target, for the ROM's `-2(a6)`: the word a FAT
-    routine hands the engine as its buffer. It must be where the differential drops bytes on both
-    shores, and below the deepest frame the kit calls legitimate and the `savptr` frame this wave
-    declares, so nothing the ORACLE writes can land on it."""
-    at = addrs.parse(GEMDOS_HEADER)["GEMDOS_HOST_FRAME_WORD"]
-    assert emu.STACK_GUARD_LO <= at and at + 2 <= emu.STACK_TOP - emu.STACK_SCRATCH
-    assert at + 2 <= gemdos.FRAME_AT
 
 
 # ---- split_shift, $fc7e24 -------------------------------------------------------------------------
@@ -210,7 +195,7 @@ def test_fat_get_reads_a_fat16_word(cluster, value, expected):
 # ---- fat_set, $fc5f44 ------------------------------------------------------------------------------
 
 def _fat_set_pokes(cluster, value, pokes=None):
-    return {**io.disk(FAT), **(pokes or {}), **case.args(">HHI", cluster, value, fs.DMD_AT)}
+    return {**fs.disk(FAT), **(pokes or {}), **case.args(">HHI", cluster, value, fs.DMD_AT)}
 
 
 def _fat_set(cluster, value, pokes=None):
@@ -230,7 +215,7 @@ def test_fat_set_stores_twelve_bits_and_keeps_the_neighbours(cluster, value, sto
     `keep` mask carries through, so both neighbours must read back as they were."""
     result = _fat_set(cluster, value)
     table = io.fat_after(result)
-    before = {**io.BASE_FAT, **FAT}
+    before = {**fs.BASE_FAT, **FAT}
     assert fs.fat12_entry(table, cluster) == stored
     for neighbour in (cluster - 1, cluster + 1):
         assert fs.fat12_entry(table, neighbour) == before.get(neighbour, 0), neighbour

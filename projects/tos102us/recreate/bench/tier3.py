@@ -982,6 +982,19 @@ CALL = {
     "GEMDOS_FREAD": Call((IMAGE, arg_signed_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
     "GEMDOS_FWRITE": Call((IMAGE, arg_signed_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
     "GEMDOS_FSEEK": Call((IMAGE, arg_long(0), arg_signed_word(4), arg_word(6)), RETURNS_LONG),
+    # ...and the fs DIRECTORY layer (`src/gemdos/fs_dir.c`). The search's position and the walk's
+    # tail are C POINTERS (`include/gemdos/fs_dir.h`): the frame's longword is the address, which in
+    # ROM mode our build reaches directly, so it stores where the original does.
+    "GEMDOS_DIR_SEARCH": Call((IMAGE, arg_long(0), arg_long(4), arg_word(8), arg_long(10)), RETURNS_LONG),
+    "GEMDOS_FIND_DIR": Call((IMAGE, arg_long(0), arg_long(4), arg_word(8)), RETURNS_LONG),
+    "GEMDOS_FSNEXT": Call((IMAGE,), RETURNS_LONG),
+    # ...and the fs FILE layer (`src/gemdos/fs_file.c`) and the two leaves over a drive
+    # (`src/gemdos/fs_leaves.c`). A handle and a drive are SIGNED words, as everywhere in GEMDOS.
+    "GEMDOS_OFD_CLOSE": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_DELETE_ENTRY": Call((IMAGE, arg_long(0), arg_long(4), arg_long(8)), RETURNS_LONG),
+    "GEMDOS_FDATIME": Call((IMAGE, arg_long(0), arg_signed_word(4), arg_word(6)), RETURNS_LONG),
+    "GEMDOS_DFREE": Call((IMAGE, arg_long(0), arg_signed_word(4)), RETURNS_LONG),
+    "GEMDOS_DGETPATH": Call((IMAGE, arg_long(0), arg_signed_word(4)), RETURNS_LONG),
     # ---- the PROCESS group and the HANDLE machinery (GEMDOS wave 2) ----
     # A handle is SIGNED everywhere in this group — the bound `Fforce` applies is `bge`/`ble` over
     # -1..5 — so its argument words are `arg_signed_word` and its C parameters are `int16_t`
@@ -1129,6 +1142,12 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_OFD_OPEN": "GEMDOS file OFD open",
     "GEMDOS_HANDLE_ALLOC": "GEMDOS handle allocation",
     "GEMDOS_DIR_ZERO_CLUSTER": "GEMDOS directory cluster zero",
+    # ...and the fs DIRECTORY layer (`src/gemdos/fs_dir.c`; `Fsnext` is dispatched by number).
+    "GEMDOS_DIR_SEARCH": "GEMDOS directory search",
+    "GEMDOS_FIND_DIR": "GEMDOS path walk",
+    # ...and the fs FILE layer (`src/gemdos/fs_file.c`; `Fdatime`, and `fs_leaves.c`'s `Dfree` and `Dgetpath`, by number).
+    "GEMDOS_OFD_CLOSE": "GEMDOS OFD close",
+    "GEMDOS_DELETE_ENTRY": "GEMDOS directory entry delete",
 }
 UNNUMBERED_ROUTINE_NAMES = {getattr(addrs, name): name for name in UNNUMBERED_ROUTINE_ROLES}
 

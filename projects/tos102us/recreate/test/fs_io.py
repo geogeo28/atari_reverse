@@ -4,9 +4,8 @@
 record; `test/fs_records.py` says where records go. What this adds is the two things only the engine
 needs:
 
-  * VARIANTS OF THE DISK. A FAT with the entries a case needs — a chain that is broken rather than
-    contiguous, a disk with no free cluster, a FAT12 entry of `$ff8` on an odd and an even cluster,
-    a FAT16 table — and the drive descriptor re-staged with fields changed (the FAT16 flag, a
+  * VARIANTS OF THE DISK. A FAT16 table (a FAT12 one with the entries a case needs is
+    `gemdos_fs.disk`), and the drive descriptor re-staged with fields changed (the FAT16 flag, a
     four-sector geometry). Built over `gemdos_fs.DISK` rather than beside it, so the six root files
     every other battery reads are still there.
   * OPEN FILES: an OFD over one of the disk's files, its cursor where the case says.
@@ -22,53 +21,19 @@ import gemdos_fs as fs
 DRIVE = 0
 
 # ---- the disk ------------------------------------------------------------------------------------
-# Every FAT entry the base disk holds, read back out of its own FAT: the six-file layout of
-# `gemdos_fs._disk_image`, which a variant keeps and adds to.
-FAT_ENTRIES = fs.FIRST_DATA_CLUSTER + fs.DATA_CLUSTERS
-
-
-def _fat_sectors(disk, first_record):
-    at = first_record * fs.SECTOR_BYTES
-    return bytes(disk[at:at + fs.FAT_SECTORS * fs.SECTOR_BYTES])
-
-
-BASE_FAT = {cluster: fs.fat12_entry(_fat_sectors(fs.DISK, fs.FAT1_RECORD), cluster)
-            for cluster in range(FAT_ENTRIES)}
-BASE_FAT_USED = {cluster for cluster, entry in BASE_FAT.items()
-                 if cluster >= fs.FIRST_DATA_CLUSTER and entry != 0}
-
-
-def _with_fat(disk, table):
-    """`disk` with `table` as BOTH FAT copies, which is how a formatted disk has them."""
-    disk = bytearray(disk)
-    for record in (fs.FAT1_RECORD, fs.FAT2_RECORD):
-        disk[record * fs.SECTOR_BYTES:(record + fs.FAT_SECTORS) * fs.SECTOR_BYTES] = table
-    return disk
-
-
-def disk(fat=None, clusters=None):
-    """The staged disk with FAT12 entries changed (`{cluster: value}`, over the base ones) and data
-    clusters overwritten (`{cluster: bytes}`). Returned as the poke at `IMAGE_AT` that replaces the
-    base disk in `gemdos_fs.machine`."""
-    image = _with_fat(fs.DISK, fs.fat12_table({**BASE_FAT, **(fat or {})}))
-    for cluster, contents in (clusters or {}).items():
-        at = fs.record_of_cluster(cluster) * fs.SECTOR_BYTES
-        image[at:at + len(contents)] = contents
-    return {fs.IMAGE_AT: bytes(image)}
-
 
 def fat16_disk(entries):
     """...and the same disk with a FAT16 table: little-endian words, entry `n` at byte `2n`."""
     table = bytearray(fs.FAT_SECTORS * fs.SECTOR_BYTES)
     for cluster, value in entries.items():
         struct.pack_into("<H", table, cluster * fs.FAT16_ENTRY_BYTES, value)
-    return {fs.IMAGE_AT: bytes(_with_fat(fs.DISK, bytes(table)))}
+    return {fs.IMAGE_AT: bytes(fs.with_fat(fs.DISK, bytes(table)))}
 
 
 def fat_after(result):
     """The FAT a run left: the disk's second copy, with every FAT sector the cache holds laid over
     it (a cached sector is the newer one — it is what a flush would write)."""
-    table = bytearray(_fat_sectors(result.after(fs.IMAGE_AT, fs.DISK_BYTES), fs.FAT2_RECORD))
+    table = bytearray(fs.fat_sectors(result.after(fs.IMAGE_AT, fs.DISK_BYTES), fs.FAT2_RECORD))
     for index in result.order(0):
         if result.word(fs.bcb_at(index) + fs.BCB_BUFDRV) == fs.BCB_EMPTY:
             continue
@@ -109,8 +74,9 @@ def big_cluster_record(cluster, sector=0):
     return fs.DATA_RECORD + (cluster - fs.FIRST_DATA_CLUSTER) * BIG_CLUSTER_SECTORS + sector
 
 
-# Every case's cache: two FAT buffers and four data buffers, all EMPTY, so each run's sectors arrive
-# through the ROM's own misses. A case that wants a hit stages its own chain.
+# Every case's cache unless its layer stages another: two FAT buffers and four data buffers, all
+# EMPTY, so each run's sectors arrive through the ROM's own misses. A case that wants a hit stages its
+# own chain.
 def cache():
     return fs.cache(fat=[(0, fs.EMPTY), (1, fs.EMPTY)],
                     data=[(index, fs.EMPTY) for index in range(2, fs.BCB_COUNT)])
@@ -136,19 +102,26 @@ def at_cursor(position, cluster, cloff):
 
 # ---- running a case ------------------------------------------------------------------------------
 
-def engine(pokes):
-    """The staged drive, cache and user buffer, then the case's own pokes over them."""
-    return {**drive(), **cache(), **fs.user_buffer(), **pokes}
+def engine(pokes, buffers=None):
+    """The staged drive, the cache — `buffers` if the case's layer stages its own (`fs.cache`'s pokes,
+    every BCB and both list heads), `cache()` otherwise — and the user buffer, then the case's own
+    pokes over them."""
+    return {**drive(), **(cache() if buffers is None else buffers), **fs.user_buffer(), **pokes}
 
 
-def run(entry, glue, pokes, **kwargs):
-    """`gemdos_fs.run` over `engine(pokes)`."""
-    return fs.run(entry, glue, engine(pokes), **kwargs)
+def run(entry, glue, pokes, buffers=None, **kwargs):
+    """`gemdos_fs.run` over `engine(pokes, buffers)`."""
+    return fs.run(entry, glue, engine(pokes, buffers), **kwargs)
 
 
-def register(name, entry, pokes, regs=None):
+def register(name, entry, pokes, regs=None, buffers=None):
     """...and the same staging as a `VERIFIED_CASES` row."""
-    return gemdos.register(name, entry, {"a5": 0, **(regs or {})}, fs.machine(engine(pokes)))
+    return gemdos.register(name, entry, {"a5": 0, **(regs or {})}, fs.machine(engine(pokes, buffers)))
+
+
+def dispatch_slice(leaf, words, pokes, buffers=None):
+    """`gemdos_fs.dispatch_slice` over the same staging."""
+    return fs.dispatch_slice(leaf, words, engine(pokes, buffers))
 
 
 def rwabs_calls():

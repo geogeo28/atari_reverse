@@ -48,7 +48,7 @@ def _bodies(clusters, seed):
             for index, cluster in enumerate(clusters)}
 
 
-FILES = io.disk(fat={**_chain(BROKEN), **_chain(MIXED)},
+FILES = fs.disk(fat={**_chain(BROKEN), **_chain(MIXED)},
                 clusters={**_bodies(BROKEN, BROKEN_SEED), **_bodies(MIXED, MIXED_SEED)})
 BROKEN_BODY = fs.body(BROKEN_SEED, CHAIN_BYTES)
 MIXED_BODY = fs.body(MIXED_SEED, MIXED_BYTES)
@@ -89,8 +89,8 @@ def test_the_user_buffer_is_dead_memory_clear_of_the_ram_disk_and_the_stack():
 
 
 def test_a_disk_variant_with_no_changes_is_the_staged_disk():
-    """`fs_io.disk` re-encodes the base FAT; this is what says the re-encoding is exact."""
-    assert io.disk()[fs.IMAGE_AT] == fs.DISK
+    """`gemdos_fs.disk` re-encodes the base FAT; this is what says the re-encoding is exact."""
+    assert fs.disk()[fs.IMAGE_AT] == fs.DISK
 
 
 # ---- advance, $fc61d6 -------------------------------------------------------------------------------
@@ -224,7 +224,7 @@ def test_the_odd_reserved_entry_sends_the_cursor_into_the_pseudo_clusters():
     """The signed shift at the end of the chain walk: an odd cluster whose entry is $ff8 — end of
     chain to DOS — is followed to cluster -8, and the cursor's record is -16."""
     result = _next(io.open_file(9, CLUSTER, **io.at_cursor(0, 9, 0)),
-                   pokes=io.disk(fat={9: 0xFF8}))
+                   pokes=fs.disk(fat={9: 0xFF8}))
     assert result.info["ret"] == 0
     assert Cursor(result).at(0, -8, 0)
 
@@ -251,15 +251,15 @@ def test_allocating_for_an_empty_file_sets_its_first_cluster_and_dirties_it():
 def test_the_search_wraps_modulo_m_numcl():
     """From cluster 30 with 31 in use, `(31 + 1) % 32` is 0, lifted to 2 — the first free cluster
     after the wrap is 7."""
-    pokes = io.disk(fat={30: EOC, 31: EOC})
+    pokes = fs.disk(fat={30: EOC, 31: EOC})
     result = _next(io.open_file(30, CLUSTER, **io.at_cursor(CLUSTER, 30, 0)), allocate=1,
                    pokes=pokes)
     assert Cursor(result).cluster == 7
 
 
 def _all_used(except_for=()):
-    return {cluster: EOC for cluster in range(fs.FIRST_DATA_CLUSTER, io.FAT_ENTRIES)
-            if cluster not in except_for and cluster not in io.BASE_FAT_USED}
+    return {cluster: EOC for cluster in range(fs.FIRST_DATA_CLUSTER, fs.FAT_ENTRIES)
+            if cluster not in except_for and cluster not in fs.BASE_FAT_USED}
 
 
 @pytest.mark.parametrize("last,free,why", (
@@ -268,7 +268,7 @@ def _all_used(except_for=()):
     (33, (31,), "from cluster 33, m_numcl - 2 probes run out one short of cluster 31"),
 ))
 def test_a_full_disk_is_minus_one_and_writes_no_fat(last, free, why):
-    pokes = io.disk(fat=_all_used(except_for=free))
+    pokes = fs.disk(fat=_all_used(except_for=free))
     result = _next(io.open_file(last, CLUSTER, **io.at_cursor(CLUSTER, last, 0)), allocate=1,
                    pokes=pokes)
     assert result.info["ret"] == MINUS_ONE, why
@@ -435,7 +435,7 @@ def test_a_write_past_the_last_cluster_allocates_one():
     the new cluster's first sector, in the cache."""
     new = bytes(range(0x20, 0x20 + 100))
     result = _write(short_file(CLUSTER, **io.at_cursor(CLUSTER, 3, CLUSTER)), new,
-                    pokes=io.disk())
+                    pokes=fs.disk())
     cursor = Cursor(result)
     table = io.fat_after(result)
     assert result.info["ret"] == len(new)
@@ -447,7 +447,7 @@ def test_a_whole_cluster_write_allocates_and_goes_straight_to_the_disk():
     """Two clusters at the end of an empty file: two allocations (7, then 8 — contiguous), and ONE
     Rwabs write of four sectors, the cache bypassed."""
     new = fs.body(0x33, 2 * CLUSTER)
-    result = _write(io.open_file(0, 0), new, pokes=io.disk())
+    result = _write(io.open_file(0, 0), new, pokes=fs.disk())
     assert result.info["ret"] == len(new)
     assert [call for call in io.data_transfers() if call[0] == fs.RWABS_WRITE] == [
         (fs.RWABS_WRITE, 4, io.data_record(7))]
@@ -455,7 +455,7 @@ def test_a_whole_cluster_write_allocates_and_goes_straight_to_the_disk():
 
 
 def test_a_write_to_a_full_disk_moves_nothing():
-    pokes = io.disk(fat={**_all_used(), **_chain(BROKEN), **_chain(MIXED)})
+    pokes = fs.disk(fat={**_all_used(), **_chain(BROKEN), **_chain(MIXED)})
     result = _write(short_file(CLUSTER, **io.at_cursor(CLUSTER, 3, CLUSTER)), b"x" * 100,
                     pokes=pokes)
     assert result.info["ret"] == 0
@@ -490,7 +490,7 @@ def _register_all():
                 _read_pokes(short_file(**io.at_cursor(90, 3, 90)), 50))
     io.register("ofd_write, allocating a cluster", addrs.GEMDOS_OFD_WRITE,
                 _write_pokes(short_file(CLUSTER, **io.at_cursor(CLUSTER, 3, CLUSTER)), b"x" * 100,
-                             pokes=io.disk()))
+                             pokes=fs.disk()))
 
 
 _register_all()

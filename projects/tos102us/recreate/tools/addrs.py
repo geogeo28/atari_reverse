@@ -8,7 +8,8 @@ binds them as module attributes, so a case and the core it proves cannot disagre
     addrs.XBIOS_RANDOM      # 0xfc1510
     addrs.SYSVAR_HZ_200     # 0x4ba
 
-Only simple integer defines are taken (decimal or `0x`, with an optional `u` suffix) and ALIASES of
+Only simple integer defines are taken (decimal or `0x`, with an optional `u` suffix, or a NEGATIVE one
+in the parentheses C needs around it — `(-1)`) and ALIASES of
 one already defined above it — `#define TRAP_EXCEPTION_FRAME_BYTES EXCEPTION_FRAME_BYTES`, which is
 how the header says "the same value under a second name" without spelling the number twice for one
 of the two to be corrected alone. Anything else — a macro with arguments, a string, an expression —
@@ -22,10 +23,12 @@ from pathlib import Path
 HEADER = Path(__file__).resolve().parents[1] / "include" / "addrs.h"
 
 # `#define NAME <integer>`, or `#define NAME <ANOTHER NAME THE HEADER DEFINES>`, and nothing else:
-# the name, then a decimal or hex literal with an optional unsigned suffix, or a bare identifier,
-# then end-of-value (a comment may follow).
+# the name, then a decimal or hex literal with an optional unsigned suffix, or one NEGATED inside
+# parentheses (a bare `-1` would bind wrongly in an expression, so C headers never write one), or a
+# bare identifier, then end-of-value (a comment may follow).
+_LITERAL = r"(?:0[xX][0-9a-fA-F]+|\d+)[uUlL]*"
 _DEFINE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
-                     r"((?:0[xX][0-9a-fA-F]+|\d+)[uUlL]*|[A-Za-z_][A-Za-z0-9_]*)\s*(?:/\*.*)?$")
+                     rf"({_LITERAL}|\(\s*-\s*{_LITERAL}\s*\)|[A-Za-z_][A-Za-z0-9_]*)\s*(?:/\*.*)?$")
 
 
 def parse(header=HEADER):
@@ -45,6 +48,8 @@ def parse(header=HEADER):
         name, value = match.group(1), match.group(2)
         if value[0].isdigit():
             values[name] = int(value.rstrip("uUlL"), 0)
+        elif value[0] == "(":
+            values[name] = -int(value.strip("() \t").lstrip("-").strip().rstrip("uUlL"), 0)
         else:
             aliases[name] = value
     for name, target in aliases.items():

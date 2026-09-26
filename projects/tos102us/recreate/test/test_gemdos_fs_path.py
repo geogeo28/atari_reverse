@@ -112,8 +112,7 @@ def test_the_current_directory_is_the_process_s_own_and_not_the_root():
     """The snapshot's p_curdir[0] names the root node itself, so "curdir" and "root" answer alike
     over it; a directory staged elsewhere is what tells the two arms apart."""
     slot = 5
-    pokes = {fs.curdir_at(LOGGED_IN): bytes([slot]),
-             fs.node_slot(slot): struct.pack(">I", SOME_NODE)}
+    pokes = fs.current_directory_poke(LOGGED_IN, slot, SOME_NODE)
     assert SOME_NODE != _root_node(LOGGED_IN)
     info, _final = _path_start("A:FOO", pokes)
     assert info["ret"] == SOME_NODE

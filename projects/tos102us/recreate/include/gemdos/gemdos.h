@@ -16,40 +16,86 @@
 #include "addrs.h"
 #include "machine.h"
 
-/* ---- a frame local whose ADDRESS a core hands on ---------------------------------------------------
- * The ROM's file system passes the address of a word in its own stack frame as a transfer's buffer
- * (`$fc6038` and `$fc5f44`'s `-2(a6)`). On target the C local IS such a word and its address is the
- * one passed. Off target a C local is host memory the image cannot reach, so the word goes to
- * `GEMDOS_HOST_FRAME_WORD` instead: inside the oracle's stack band, which the differential drops on
- * both shores — exactly where the ROM's own copy of the word lives — and below the deepest frame the
- * kit calls legitimate (`test_gemdos_fs_fat.py` pins both).
+/* ---- HOST SLOTS: a frame local whose ADDRESS a core hands on ---------------------------------------
+ * The ROM's file system passes the address of a local in its own stack frame to a routine that reaches
+ * memory through the image: `$fc6038`/`$fc5f44` hand the engine `-2(a6)` as a FAT transfer's buffer,
+ * `$fc663c` hands its pattern `-24(a6)` to `$fc5d28`, `$fc5672` and `$fc5c9a`, `$fc696c` its component
+ * FCB `-24(a6)` and its path cursor `-4(a6)` (to `$fc68dc`, which reads AND writes it), and `$fc7824`
+ * the byte `-4(a6)` its `$e5` mark is written from. ON TARGET the C local IS that frame slot and its
+ * address is the one passed. OFF TARGET a C local is host memory the image cannot reach, so each role
+ * has a fixed address instead: inside the oracle's stack band, which the differential drops on both
+ * shores — exactly where the ROM's own copy of the local lives — and below the deepest frame the kit
+ * calls legitimate. ONE TABLE, here, of every such address and its width; `test_gemdos_host_slots.py`
+ * reads it and pins every span inside that band and apart from every other.
  *
- * ONE WORD, so only one such local may be live at a time. The host build makes that a FACT rather
- * than a claim: a claim while the word is held is an assert, and every claim is released by the
- * helper that made it. (The FAT routines are the only users today, and they never nest: the FAT
- * OFD's clusters are negative, so a transfer through it never reaches `$fc6038` again.) */
-#define GEMDOS_HOST_FRAME_WORD 0x7f200
+ * A SLOT IS CLAIMED FOR ITS LIVE RANGE AND RELEASED AFTER IT, and the host build makes "never two
+ * users at once" a fact rather than a comment: a claim of a slot that is held is an assert. So the
+ * nestings that do happen (a walk holding its name and cursor while it searches, a search holding its
+ * pattern while the FAT routines take the frame word underneath it) are checked on every run, and the
+ * one that must not (a routine re-entering itself) cannot pass silently. */
+#define GEMDOS_HOST_SLOT_SEARCH_PATTERN        0x7f1e0  /* $fc663c's pattern: the FCB name, then the attribute */
+#define GEMDOS_HOST_SLOT_SEARCH_PATTERN_BYTES  12       /* `link #-24` less the two words and two longs beside it */
+#define GEMDOS_HOST_SLOT_WALK_NAME             0x7f1ec  /* $fc696c's component FCB, the same twelve bytes */
+#define GEMDOS_HOST_SLOT_WALK_NAME_BYTES       GEMDOS_HOST_SLOT_SEARCH_PATTERN_BYTES
+#define GEMDOS_HOST_SLOT_WALK_CURSOR           0x7f1f8  /* $fc696c's path cursor, carried in AND out */
+#define GEMDOS_HOST_SLOT_WALK_CURSOR_BYTES     4
+#define GEMDOS_HOST_SLOT_DELETE_MARK           0x7f1fe  /* $fc7824's `$e5`, the byte its write moves */
+#define GEMDOS_HOST_SLOT_DELETE_MARK_BYTES     1
+#define GEMDOS_HOST_SLOT_FRAME_WORD            0x7f200  /* $fc6038/$fc5f44's FAT word */
+#define GEMDOS_HOST_SLOT_FRAME_WORD_BYTES      2
+
+/* Each slot's bit in the held mask. */
+enum gemdos_host_slot {
+    GEMDOS_HOST_SLOT_ID_SEARCH_PATTERN,
+    GEMDOS_HOST_SLOT_ID_WALK_NAME,
+    GEMDOS_HOST_SLOT_ID_WALK_CURSOR,
+    GEMDOS_HOST_SLOT_ID_DELETE_MARK,
+    GEMDOS_HOST_SLOT_ID_FRAME_WORD,
+};
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-extern int gemdos_host_frame_word_held;     /* defined with its user, `src/gemdos/fs_io.c` */
+extern unsigned gemdos_host_slots_held;     /* one bit per slot; defined in `src/gemdos/dispatch.c` */
+
+static inline uint32_t gemdos_host_slot_take(enum gemdos_host_slot slot, uint32_t host_at)
+{
+    assert(!(gemdos_host_slots_held & 1u << slot));
+    gemdos_host_slots_held |= 1u << slot;
+    return host_at;
+}
+
+static inline void gemdos_host_slot_give_back(enum gemdos_host_slot slot)
+{
+    gemdos_host_slots_held &= ~(1u << slot);
+}
+
+/* The image address a frame local of role ROLE is handed on at: its slot, claimed, off target... */
+#define gemdos_host_slot_claim(ROLE, local) \
+    ((void)(local), gemdos_host_slot_take(GEMDOS_HOST_SLOT_ID_##ROLE, GEMDOS_HOST_SLOT_##ROLE))
+#define gemdos_host_slot_release(ROLE) gemdos_host_slot_give_back(GEMDOS_HOST_SLOT_ID_##ROLE)
+#else
+/* ...and the local's own address on target, where nothing is held. */
+#define gemdos_host_slot_claim(ROLE, local) ((uint32_t)(uintptr_t)(local))
+#define gemdos_host_slot_release(ROLE) ((void)0)
 #endif
 
-static inline uint32_t gemdos_frame_word_claim(uint16_t *local)
+/* A slot that carries a LONGWORD IN and OUT of the call it is handed to (the walk's cursor): off target
+ * the local's value is copied into the slot before and back out after; on target the slot is the local
+ * and there is nothing to copy. */
+static inline void gemdos_host_slot_store_long(uint8_t *image, uint32_t slot_at, const uint32_t *local)
 {
 #ifdef RECREATE_HOST_DIFFERENTIAL
-    (void)local;
-    assert(!gemdos_host_frame_word_held);
-    gemdos_host_frame_word_held = 1;
-    return GEMDOS_HOST_FRAME_WORD;
+    wr32(image + slot_at, *local);
 #else
-    return (uint32_t)(uintptr_t)local;
+    (void)image, (void)slot_at, (void)local;
 #endif
 }
 
-static inline void gemdos_frame_word_release(void)
+static inline void gemdos_host_slot_load_long(const uint8_t *image, uint32_t slot_at, uint32_t *local)
 {
 #ifdef RECREATE_HOST_DIFFERENTIAL
-    gemdos_host_frame_word_held = 0;
+    *local = be32(image + slot_at);
+#else
+    (void)image, (void)slot_at, (void)local;
 #endif
 }
 
@@ -115,6 +161,16 @@ static inline void gemdos_set_basepage_field(uint8_t *image, uint32_t basepage, 
 static inline uint8_t *gemdos_basepage_byte(uint8_t *image, uint32_t basepage, uint32_t field)
 {
     return gemdos_image_byte(image, addr_add(basepage, field));
+}
+
+/* The running process's current drive, `p_curdrv`, as the SIGNED byte every reader widens (`Dgetdrv`,
+ * `$fc68dc`, the drive leaves' argument 0). */
+static inline int8_t gemdos_current_drive(const uint8_t *image)
+{
+    uint32_t at = addr_add(gemdos_basepage(image), BASEPAGE_CURDRV);
+
+    gemdos_assert_inside_ram(at, 1);
+    return (int8_t)image[at];
 }
 
 /* One of the six STANDARD HANDLES of the RUNNING process, as the signed byte it is: 0..5 are the

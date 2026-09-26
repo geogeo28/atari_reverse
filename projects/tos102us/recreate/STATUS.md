@@ -12,7 +12,7 @@ counts in this file against its rows.
 | boot | 0 | — | — | NOT STARTED |
 | bios | 20 | — | 0.88–3.63x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
-| gemdos | 86 | — | 0.35–1.75x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
+| gemdos | 94 | — | 0.35–1.75x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
 | vdi + linea | 0 | — | — | NOT STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
@@ -98,7 +98,7 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
 | `0xfc2b5c` | `kbd_scancode` (`src/bios/keyboard.c`) | 26 | 70 / 842 a key | **1.61** a key (accepted: (A)+(M), plus the ROM's FALL-THROUGH into `$fc2c42` where the C makes a call of it) | ✅ verified | the eight modifier arms from a clear byte and from every bit set, so an arm that cleared the byte or set the wrong bit diverges; CapsLock as a `bchg` from three states, and its RELEASE proved NOT to be in the chain; the click on the same `conterm` bit as the key path's; a make arming the repeat from `Kbrate`'s own bytes; a second key zeroing both countdowns and LEAVING the held scancode; a break disarming and queueing nothing; and the two breaks ALT turns into mouse-button releases, with and without ALT |
 | `0xfc2c42` | `kbd_queue_key` (same file; TIMER C's auto-repeat calls it too) | 88 (+3 from `$fc30c4`) | 43 / 560 a key | **1.85** a key (accepted: (A)+(M) over the table reads and the ring put) | ✅ verified | five keys through each of the three `Keytbl` tables with the ASCII read out of the table the snapshot's pointers name; SHIFT overriding CapsLock and not the reverse; all ten shifted F-keys, the keys either side of the run, and the test proved to be on the MASKED scancode; CONTROL's mask, its three named characters, its CR→LF (which survives the three scancode arms) and its three renumbered keys; ALTERNATE's screen dump as a WORD increment; the four mouse-button codes read out of the ROM's own table, each moving its own kbshift bit and sending a packet whose header is what it just wrote; the four arrows at both step sizes; the whole number row renumbered by a BYTE add; every letter's ASCII dropped, tested on the ASCII; `conterm` bit 3 over three shift states; the ring at four tails, both wrap boundaries and three full-ring pairs; the click made BEFORE the ring is looked at; and the ring being the one A0 names |
 
-## Verified — gemdos (86)
+## Verified — gemdos (94)
 
 GEMDOS waves 1 and 2, seven groups: the `trap #1` ENTRY and the dispatcher behind it, the RAM-only
 LEAVES, the CHARACTER DEVICES and the MEMORY MANAGER (wave 1 — `src/gemdos/trap1.S`, `dispatch.c`,
@@ -181,7 +181,7 @@ below `savptr` is DECLARED into the band the differential drops (`test/gemdos.py
 | `0xfc52de` | `Fforce` ($46, `src/gemdos/handles.c`) | 35 | 31 / 446 | **0.54** | ✅ verified | the SIGNED bound at both ends and at every one of the six slots; a source handle in 0..5 refused rather than aliased; and the pair that makes the descriptor's SIGN load-bearing — a record naming a DEVICE stores the device byte and takes no reference, one naming a FILE stores the handle NUMBER and counts the new holder (driven at two counts) |
 | `0xfc52f8` | `gemdos_force_handle`, `Fforce`'s body over a named basepage (same file) | 36 | 23 / 316 | **0.74** | ✅ verified | every claim above runs through it, plus the one that is about the ARGUMENT: a handle forced into a staged CHILD's table with `p_run`'s left untouched — which is what `Pexec` needs it for |
 | `0xfc5216` | `Fdup` ($45, same file) | 12 | 49 / 692 | **0.75** | ✅ verified | the search is for a free OWNER, at four positions incl. the last; ENHNDL (−35) over a full table with nothing stored; `ble`, so an unused slot takes the DEVICE arm and the new record names 0; and the ROM's own defect reproduced — the value copied, the count started at ONE however many holders the source had |
-| `0xfc56c6` | `Fclose` ($3e, same file) | 17 | 42 / 648 | **0.66** | ✅ verified | FOUR of the five arms: a negative handle doing nothing at all, a standard handle cleared BEFORE the ROM knows what was in it, a descriptor's count dropped — one byte and two bytes of store respectively, counted — and the EIHNDL a handle that names NOTHING answers with nothing stored, which is `$fc51c0` reading a value of 0 and is the state `Fdup` of an unused standard handle really leaves. The last holder zeroes the value and the OWNER, which is what puts the slot back in `Fdup`'s search. Only the open-FILE arm halts |
+| `0xfc56c6` | `Fclose` ($3e, same file) | 24 | 42 / 648 device, 6173 / 72460 file | **0.63**, **0.98** | ✅ verified | every arm: the three device arms; EIHNDL; the FILE arm closes the OFD FIRST (`$fc57ee`, flags 0) whoever else holds it, then drops the count, and the last holder frees the OFD and releases the descriptor; EINTRN for an OFD already off its list; through p_uft; the dispatcher slice; and Fdup+Fclose+Fclose chained — TOS 1.02's DOUBLE FREE (the second close runs on the freed OFD, answers EINTRN and frees it again: a self-looped pool chain, the same record handed out twice) |
 | `0xfc51de` | `gemdos_inherit_curdir` (`src/gemdos/process.c`) | 13 | 17 / 226 | **0.70** | ✅ verified | the byte into the child's `p_curdir[entry]` and the shared count bumped, at both ends of the sixteen slots and at a node the machine does not use |
 | `0xfc5092` | `gemdos_resync_clock` (same file) | 9 | 272 / 3184 | **1.04** | ✅ verified | the probe's three ordered stores and the read-back masked `$0f0f` — read as two SEQUENCED statements, because `movep.w` reads +5 then +7 and two `io_read8`s in one C expression have no order; then thirteen BCD registers read TWICE into `$e94`/`$ea1` and compared, and six pairs of digits turned into the two DOS words at two readings that share no free digit. Every case declares a MEGA ST, and the plain-ST arm is an ORACLE claim (see "Not reconstructed") |
 | `0xfc8092` | `gemdos_release_process` (same file) | 9 | 1015 / 12568 | **0.53** | ✅ verified | all four loops and the ORDER of the first two: a handle closed before the table is walked is not found again by it. The walk is BY OWNER (a descriptor the desktop owns survives); a directory entry of 0 is skipped and a NEGATIVE one decrements BELOW the table; the process's blocks coalesce back into the free list and the desktop's fourteen do not move |
@@ -223,6 +223,14 @@ below `savptr` is DECLARED into the band the differential drops (`test/gemdos.py
 | `0xfc7e52` | `gemdos_dot_name` (same file) | 13 | 34 / 376 | **0.66** | ✅ verified | "" = `moveq #1` (the whole register), "." -1 and ".." -2 only when the TERMINATOR follows, "..." / ".X" / "..X" ordinary, a terminator of '.' making ".." SELF, the terminator's low byte alone compared; the caller's high half on every other answer |
 | `0xfc5e08` | `gemdos_split_path` (same file) | 12 | 364 / 3810 | **0.57** | ✅ verified | the tail NOT taken without the flag (tested BEFORE the dots, so ".." as a tail is 0), -1/-2 with nothing built, a zero-length component building nothing, and the three high halves of D0 — the caller's, 0 after a build, 0 after `$fc7e52`'s empty answer |
 | `0xfc7e94` | `gemdos_strneq` (same file) | 10 | 74 / 850 | **0.47** | ✅ verified | STANDALONE (its caller is the dispatcher's device-name arm, a later band): no NUL stops it, a count of 0 is equal, case-sensitive, bit-7 bytes, and 0 over the caller's high half on a miss |
+| `0xfc663c` | `gemdos_dir_search` (`src/gemdos/fs_dir.c`) | 40 | 3957 / 49972, 6194 / 84734, 4497 / 57726 | **0.75**, **0.82**, **0.81** | ✅ verified | first match (wildcards, attributes, only the low attribute byte); runs to the end and marks it OFD_SCANNED; an `$e5` search reuses a deleted entry or takes the end-of-directory entry unmarked; a directory ending with its chain; its OFD made on first use; DNDs made for every subdirectory passed beyond the SIGNED mark (from position 0 and, from the mark, raised SIGNED from −32); the known-name arm along the WHOLE child list; from the mark it answers the LAST DND MADE and un-reads the found entry; a spent pool at both requests |
+| `0xfc696c` | `gemdos_find_dir` (same file) | 15 | 9084 / 111134, 1792 / 20484 | **0.75**, **0.72** | ✅ verified | two levels, take_tail on a directory and on a file, `.`/`..` climbing and reuse, staged DNDs with no disk read, the child list walked PAST its head (the common walk), `..` off the root, the tail left AT or PAST a missing component by miss kind, the end flag, the current directory, a drive that will not open. `tst.l a4` at $fc6a00 dropped (unreachable) |
+| `0xfc6df4` | `Fsnext` ($4f, same file) | 5 | 2080 / 25596, 5985 / 74346, 5532 / 73344 | **0.88**, **0.84**, **0.83** | ✅ verified | the DTA's unaligned position/DND byte-wise; the next match with the DTA filled; across a cluster making the DNDs it passes; ENMFIL with the DTA untouched; a DTA position of −1 filling the DTA from a DND; the dispatcher slice |
+| `0xfc57ee` | `gemdos_ofd_close` (`src/gemdos/fs_file.c`) | 11 | 6076 / 71088, 1591 / 19672 | **0.98**, **0.94** | ✅ verified | clean and dirty (cluster and length turned round in the OFD and back, time/date as stored, OFD_DIRTY never cleared); flag 2 writes length 0 and does not unlink, 6 does (`btst #2`); unlink at head, middle and tail; EINTRN before the flush; every buffer of every list flushed (dirty written and kept, clean EMPTIED) |
+| `0xfc7824` | `gemdos_delete_entry` (same file) | 9 | 9178 / 116440, 34 / 564 | **0.97**, **1.02** | ✅ verified | a three-cluster chain, one odd cluster, cluster 0; the `$e5` mark and the flag-2 directory close flushing FAT and root; EACCDN for another process's open, after the caller's earlier handles were closed (and never released); an open file at another position ignored; the caller's second close of one OFD is unobservable (unpinned) |
+| `0xfc772e` | `Fdatime` ($57, same file) | 7 | 1535 / 18760, 6023 / 70294 | **0.96**, **0.99** | ✅ verified | read (handle record and standard handle; D0 = the swapped date over the count), a NULL buffer answering the cache pointer's high half, write leaving the caller's buffer swapped, the slice; NO OFD check — the NULL-OFD arm halts here (oracle-only claims: GET swaps only the caller's buffer, SET never returns) |
+| `0xfc7a68` | `Dfree` ($36, `src/gemdos/fs_leaves.c`) | 10 | 12401 / 175344 | **0.96** | ✅ verified | clusters 2..m_numcl−1 scanned, the two past the scan staged FREE and not counted; from cluster 2; the current drive; FAT16 incl. a used entry with a zero low byte; a new drive logged in; −1 for ENSMEM and a bad drive; the slice |
+| `0xfc6c1a` | `Dgetpath` ($47, same file) | 6 | 291 / 3590 | **0.93** | ✅ verified | NUL over `$fc6bd2`'s last `\` (the root as ""), two levels, the current drive, EDRIVE with the empty string, the slice |
 
 THE THREE DISK ROWS' ~1.00 IS A RATIO OF THE WHOLE CALL AND NOT OF THE CORE, and it is worth reading
 that way. `gemdos_buffer_flush`, `gemdos_buffer_get` and `gemdos_rwabs_data` each end in a `Rwabs`
@@ -614,20 +622,38 @@ is a bench change and is PARKED below.
   constraint (no build flag isolates it). Parked: a kit-level `poison_exempt` for machine-owned pointers (savptr,
   pool heads — five fs batteries run unpoisoned for that reason); the RAM disk and user buffer as `project.toml`
   tenants; `claim()` allocating addresses; running the pure-arithmetic routines without the whole staged disk.
-* **Next** — THE REST OF GEMDOS, bands 2-4 of the fs wave: the directory search `$fc663c` → `$fc696c` find_dir →
-  `Fsnext`; `$fc57ee` ofd_close → `$fc7824` delete_entry, `Fdatime`, `Dfree`, `Dgetpath`, `Fclose`'s file arm; then
-  `Fsfirst`/`Dsetpath`/`Fopen`/`Fattrib`/`Fdelete` beside `Fcreate` (`$fc71b6`)/`Ddelete`; then `Dcreate`, `Frename`;
+* **Wave 9 band 2 (2026-09-25) — the DIRECTORY LAYER and the FILE LAYER.** Two agents: (D) `src/gemdos/fs_dir.c` — the search
+  `$fc663c`, the walk `$fc696c` and `Fsnext`, over a staged directory tree; (E) `src/gemdos/fs_file.c` — close `$fc57ee`, delete
+  `$fc7824`, `Fdatime`, and `Fclose`'s FILE arm in `handles.c`; `Dfree`/`Dgetpath` in a new `fs_leaves.c` (moved there by the fix
+  pass so the drive layer stays at the bottom). FINDINGS: the DND tree is built as a SIDE EFFECT of searching, and a search from
+  the mark answers the LAST DND MADE rather than the matched entry's; the walk's tail lands AT or PAST a missing component by how it
+  missed; `$fd2fe8` is the mask table's two `$ffff` entries read as -1; a close flushes EVERY buffer of every drive, writing dirty
+  ones and EMPTYING clean ones; OFD_DIRTY is never cleared; `Fdatime` has no OFD check; `Dfree` never counts the last two clusters;
+  and a real TOS 1.02 DOUBLE FREE — `Fdup` gives the new descriptor its own count of one over the same OFD, so closing both frees
+  the OFD twice: a self-looped pool chain and the same record handed out by the next two `pool_get`s, pinned by chained
+  differentials. REVIEW (4 finders; C faithful to the asm) found the tests weaker than their claims: find_dir's sibling walk (the
+  COMMON walk) and the known-name walk never crossed a link, the mark-raise signedness was unpinned, a Dfree case could not see
+  what it named — each proved SURVIVED then killed by staged data — and band 2 had re-invented band 1's host frame word four times
+  over three mechanisms: now ONE host-slot table in `include/gemdos/gemdos.h` (`GEMDOS_HOST_SLOT_*`, claim/release with a held mask,
+  so nesting is ASSERTED) and one table-driven placement test; one leaf/dispatch-slice door with one table test over every fs leaf;
+  `tools/addrs.py` reads `(-1)`. Mutation 114/116 (fs_dir 47/47, fs_file 41/42, handles 7/7, fs_leaves 14/14, shared 5/6): the
+  survivors are the caller's unobservable second close in `delete_entry` and the held-mask assert (an equivalent guard, proven live).
+  Unpinned: the NULL-OFD `Fdatime`; `$ff8`..`$ffe` chain ends in delete; `ofd_close`'s failing seek; `Fclose` on p_uft 1..5; a
+  parent with children but no OFD; `Fsnext` on a garbage DND; Fsnext's re-read of p_dta after the search ($fc6e7e/$fc6ea0,
+  equivalent on reachable data); Dfree/Dgetpath storing the resolved drive into their argument word (dropped band).
+* **Next** — THE REST OF GEMDOS, bands 3-4 of the fs wave: `Fsfirst`/`Dsetpath`/`Fopen`/`Fattrib`/`Fdelete` beside
+  `Fcreate` (`$fc71b6`)/`Ddelete`; then `Dcreate`, `Frename`;
   then the dispatcher's redirected (`$fd328a`) and device-name (`$fc9aca`) arms and the Pexec loader `$fc85ea`.
   Then VDI and Line-A.
   Earlier lists, still open: the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **2,808 passed** (1 skipped) and `make guarded` the same count (3,690 candidate runs guarded, no fault),
-re-summed at the fs wave-3 band-1 commit on 2026-09-25 after a forced relink of the oracle and every candidate;
-`make bench` judges 264 rows (185 ok / 58 accepted / 12 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
+`make test` — **2,941 passed** (1 skipped) and `make guarded` the same count (3,798 candidate runs guarded, no fault),
+re-summed at the fs wave-3 band-2 commit on 2026-09-25 after a forced relink of the oracle and every candidate;
+`make bench` judges 281 rows (202 ok / 58 accepted / 12 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
 printed table. The kit's own suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged
-(3,851) as the PRG controls. `names.txt`: 458 fn / 305 var / 208 cmt.
+(3,851) as the PRG controls. `names.txt`: 461 fn / 305 var / 216 cmt.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.

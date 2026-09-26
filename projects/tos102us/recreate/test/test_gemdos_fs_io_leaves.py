@@ -12,21 +12,14 @@ handler behind it was the file system's; now both shores run a leaf, so the whol
 differential — our dispatcher calling our `Fread` through the hook, bound by the address the ROM's
 table holds.
 """
-import ctypes
-import struct
-
 import pytest
 
-from harness import _lib, addrs
+from harness import addrs
 
-import case
 import fs_io as io
 import gemdos
 import gemdos_fs as fs
 import gemdos_process as process
-
-for _name in ("gemdos_fread", "gemdos_fwrite", "gemdos_fseek", "gemdos_dispatch_selector"):
-    getattr(_lib, _name).restype = ctypes.c_uint32
 
 EIHNDL = addrs.GEMDOS_EIHNDL
 EINVFN = addrs.GEMDOS_EINVFN
@@ -40,33 +33,24 @@ NAMES_NOTHING = process.descriptor_poke(A_HANDLE, 0, OWNER)
 SPAN = io.open_file(fs.SPAN_CLUSTER, fs.SPAN_BYTES, **io.at_cursor(1100, 5, 76))
 
 
-# Each leaf's C symbol and its frame, as the ROM's caller lays it: `Fseek`'s is the offset first.
-FREAD = (addrs.GEMDOS_FREAD, "gemdos_fread", ">hII")
-FWRITE = (addrs.GEMDOS_FWRITE, "gemdos_fwrite", ">hII")
-FSEEK = (addrs.GEMDOS_FSEEK, "gemdos_fseek", ">IhH")
-
-
 def _leaf_pokes(leaf, values, pokes):
-    _entry, _symbol, frame = leaf
-    return {**SPAN, **pokes, **case.args(frame, *values)}
+    return fs.leaf_pokes(leaf, values, {**SPAN, **pokes})
 
 
 def _leaf(leaf, values, pokes):
-    entry, symbol, _frame = leaf
-    return io.run(entry, lambda lib, buf: getattr(lib, symbol)(buf, *values),
-                  _leaf_pokes(leaf, values, pokes))
+    return io.run(leaf.entry, fs.leaf_glue(leaf, values), _leaf_pokes(leaf, values, pokes))
 
 
 def _fread(handle, count, pokes=NAMES_THE_FILE):
-    return _leaf(FREAD, (handle, count, fs.USER_AT), pokes)
+    return _leaf(fs.FREAD, (handle, count, fs.USER_AT), pokes)
 
 
 def _fwrite(handle, data, pokes=NAMES_THE_FILE):
-    return _leaf(FWRITE, (handle, len(data), fs.USER_AT), {**fs.user_buffer(data), **pokes})
+    return _leaf(fs.FWRITE, (handle, len(data), fs.USER_AT), {**fs.user_buffer(data), **pokes})
 
 
 def _fseek(offset, handle, mode, pokes=NAMES_THE_FILE):
-    return _leaf(FSEEK, (offset & 0xFFFF_FFFF, handle, mode), pokes)
+    return _leaf(fs.FSEEK, (offset & fs.LONG_MASK, handle, mode), pokes)
 
 
 # ---- Fread / Fwrite ----------------------------------------------------------------------------------
@@ -120,49 +104,20 @@ def test_fseek_with_a_bad_handle_is_eihndl_before_the_mode_is_read():
 
 # ---- through the dispatcher -------------------------------------------------------------------------
 
-def _argument_values(buf, arguments, frame):
-    """The words the dispatcher copied, read back out of the CANDIDATE's image in `frame`'s shape —
-    which is what proves our dispatcher passed the frame the leaf reads, rather than the case
-    handing the leaf the values it hoped were there."""
-    raw = ctypes.string_at(ctypes.addressof(buf.contents) + arguments, struct.calcsize(frame))
-    return struct.unpack(frame, raw)
+@pytest.mark.parametrize("leaf", fs.LEAVES, ids=lambda leaf: leaf.symbol)
+def test_every_fs_leaf_is_what_the_dispatch_table_names(leaf):
+    """EVERY file-system leaf a battery here dispatches (`gemdos_fs.LEAVES`), not only this file's
+    three: the handler address a slice binds our leaf at is the one the ROM's table holds for its
+    selector."""
+    assert gemdos.rom_handler(leaf.selector) == leaf.entry
 
 
-# Each leaf's handler as the dispatcher's hook reaches it: keyed by the address the ROM's table
-# holds, which `test_each_leaf_is_what_the_table_names` checks is the leaf's own.
-LEAVES = {addrs.GEMDOS_FREAD_FN: FREAD, addrs.GEMDOS_FWRITE_FN: FWRITE, addrs.GEMDOS_FSEEK_FN: FSEEK}
-
-
-def _handler(symbol, frame):
-    return lambda buf, arguments, _width: getattr(_lib, symbol)(
-        buf, *_argument_values(buf, arguments, frame))
-
-
-HANDLERS = {entry: _handler(symbol, frame) for entry, symbol, frame in LEAVES.values()}
-
-
-@pytest.mark.parametrize("selector", sorted(LEAVES))
-def test_each_leaf_is_what_the_table_names(selector):
-    assert gemdos.rom_handler(selector) == LEAVES[selector][0]
-
-
-def _dispatch(selector, words, pokes):
-    """A dispatcher slice (`gemdos.slice_pokes`) over the staged disk. Not `gemdos.run_slice`: that
-    policy poisons, and a run that reaches the BIOS cannot (`test/gemdos_fs.py`, `run`). The one fs
-    case that is not `gemdos_fs.run`'s shape: its glue is the dispatcher's, with the leaves bound
-    behind it, and the handler calls it records are part of the claim."""
-    def glue(lib, buf):
-        return lib.gemdos_dispatch_selector(buf, gemdos.ARGUMENTS_AT)
-
-    with gemdos.bound_handlers(HANDLERS):
-        result = io.run(gemdos.TRAMPOLINE_AT, gemdos.recording(glue),
-                        {**SPAN, **pokes, **gemdos.slice_pokes(selector, words)})
-    assert [call[0] for call in gemdos.HANDLER_CALLS] == [gemdos.rom_handler(selector)]
-    return result
+def _dispatch(leaf, words, pokes):
+    return io.dispatch_slice(leaf, words, {**SPAN, **pokes})
 
 
 def test_a_dispatched_fread_on_a_file_handle_runs_the_leaf():
-    result = _dispatch(addrs.GEMDOS_FREAD_FN,
+    result = _dispatch(fs.FREAD,
                        (A_HANDLE, *gemdos.long_words(300), *gemdos.long_words(fs.USER_AT)),
                        NAMES_THE_FILE)
     assert result.info["ret"] == 300
@@ -171,7 +126,7 @@ def test_a_dispatched_fread_on_a_file_handle_runs_the_leaf():
 
 def test_a_dispatched_fwrite_on_a_standard_handle_runs_the_leaf():
     new = b"through the dispatcher"
-    result = _dispatch(addrs.GEMDOS_FWRITE_FN,
+    result = _dispatch(fs.FWRITE,
                        (A_STANDARD, *gemdos.long_words(len(new)), *gemdos.long_words(fs.USER_AT)),
                        {**NAMES_THE_FILE, **gemdos.standard_handles_poke([0, A_HANDLE]),
                         **fs.user_buffer(new)})
@@ -179,7 +134,7 @@ def test_a_dispatched_fwrite_on_a_standard_handle_runs_the_leaf():
 
 
 def test_a_dispatched_fseek_takes_its_handle_from_the_third_word():
-    result = _dispatch(addrs.GEMDOS_FSEEK_FN,
+    result = _dispatch(fs.FSEEK,
                        (*gemdos.long_words(2100), A_HANDLE, fs.GEMDOS_SEEK_FROM_START),
                        NAMES_THE_FILE)
     assert result.info["ret"] == 2100
@@ -188,12 +143,12 @@ def test_a_dispatched_fseek_takes_its_handle_from_the_third_word():
 # ---- the registry ------------------------------------------------------------------------------------
 
 def _register_all():
-    io.register("Fread, a handle record", addrs.GEMDOS_FREAD,
-                _leaf_pokes(FREAD, (A_HANDLE, 200, fs.USER_AT), NAMES_THE_FILE))
-    io.register("Fwrite, a handle record", addrs.GEMDOS_FWRITE,
-                _leaf_pokes(FWRITE, (A_HANDLE, 26, fs.USER_AT), {**fs.user_buffer(b"x" * 26), **NAMES_THE_FILE}))
-    io.register("Fseek, from the end", addrs.GEMDOS_FSEEK,
-                _leaf_pokes(FSEEK, ((-100) & 0xFFFF_FFFF, A_HANDLE, fs.GEMDOS_SEEK_FROM_END), NAMES_THE_FILE))
+    io.register("Fread, a handle record", fs.FREAD.entry,
+                _leaf_pokes(fs.FREAD, (A_HANDLE, 200, fs.USER_AT), NAMES_THE_FILE))
+    io.register("Fwrite, a handle record", fs.FWRITE.entry,
+                _leaf_pokes(fs.FWRITE, (A_HANDLE, 26, fs.USER_AT), {**fs.user_buffer(b"x" * 26), **NAMES_THE_FILE}))
+    io.register("Fseek, from the end", fs.FSEEK.entry,
+                _leaf_pokes(fs.FSEEK, ((-100) & fs.LONG_MASK, A_HANDLE, fs.GEMDOS_SEEK_FROM_END), NAMES_THE_FILE))
 
 
 _register_all()

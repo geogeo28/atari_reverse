@@ -75,7 +75,7 @@ uint32_t gemdos_fsetdta(uint8_t *image, uint32_t entry_d0, uint32_t dta)
  * a basepage holding $ff answers -1 rather than 255. */
 uint32_t gemdos_dgetdrv(const uint8_t *image)
 {
-    return sign_ext8(image[gemdos_basepage(image) + BASEPAGE_CURDRV]);
+    return sign_ext8((uint8_t)gemdos_current_drive(image));
 }
 
 /* Where this routine's own BIOS call returns to — `$fc6cdc`, the `unlk` six bytes past its

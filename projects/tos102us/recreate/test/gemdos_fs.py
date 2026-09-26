@@ -67,13 +67,14 @@ empty file, a deleted entry and a volume label — the six shapes the directory 
 apart. `SPAN.DAT`'s three-cluster chain (4 -> 5 -> 6) is what makes a read cross both a sector and a
 cluster boundary in one call.
 """
+import collections
 import contextlib
 import ctypes
 import struct
 import sys
 from pathlib import Path
 
-from harness import BASE_IMAGE, addrs
+from harness import BASE_IMAGE, _lib, addrs
 
 import case
 import gemdos
@@ -90,9 +91,12 @@ from opcodes import (ADDA_L_D0_A0, BTST_IMMEDIATE_STACK, DBF_D1, DBF_D2, LEA_ABS
 # `test/gemdos_memory.py` reads its group's header. The layers' own headers are read too — the drive
 # builder's quirks (`drive()` below is the DMD as `$fc53c0` builds it) and the I/O engine's FAT12
 # packing and seek modes — so every fs battery reads ONE namespace, this module's, and no battery
-# keeps a dictionary of its own over a header.
+# keeps a dictionary of its own over a header. `gemdos/gemdos.h` is read for its HOST SLOTS, the frame
+# locals the fs routines hand on (`test_gemdos_host_slots.py`).
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-FS_HEADERS = tuple(_INCLUDE / name for name in ("gemdos/fs.h", "gemdos/fs_drive.h", "gemdos/fs_io.h"))
+FS_HEADERS = tuple(_INCLUDE / name for name in ("gemdos/gemdos.h", "gemdos/fs.h", "gemdos/fs_drive.h",
+                                                "gemdos/fs_io.h", "gemdos/fs_dir.h", "gemdos/fs_file.h",
+                                                "gemdos/fs_leaves.h"))
 CONSTANTS = {name: value for header in FS_HEADERS for name, value in addrs.parse(header).items()}
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -188,6 +192,7 @@ SLACK_FILL = 0xA5
 # enters with it, and the half it expects back is `callers_high_half(ENTRY_D0)`.
 ENTRY_D0 = 0xDEC0_DE00
 D0_LOW_WORD = 0xFFFF
+LONG_MASK = 0xFFFF_FFFF                 # a Python int as the longword the 68000 holds
 
 
 def callers_high_half(d0):
@@ -199,6 +204,12 @@ def byte_swapped(value, fmt):
     """`value` as a word (`fmt` "H") or a long ("I") reads once `$fc4f10`/`$fc4f22` has turned it
     round — how a little-endian on-disk field reads on a 68000."""
     return int.from_bytes(struct.pack("<" + fmt, value), "big")
+
+
+def as_stored(word):
+    """An entry's little-endian time or date word as the 68000 reads it WITHOUT turning it round —
+    how a DND (`$fc6616`) and an OFD (`$fc70da`) keep them (`include/gemdos/fs.h`)."""
+    return byte_swapped(word, "H")
 
 
 # ---- the three stubs -----------------------------------------------------------------------------
@@ -496,6 +507,17 @@ DMD_AT, ROOT_DND_AT, ROOT_OFD_AT, FAT_OFD_AT = (DRIVE_RECORDS_AT + slot * DRIVE_
                                                 for slot in range(4))
 
 
+def root_dnd_bytes(root_ofd_at, dmd_at, **fields):
+    """The root directory's DND as `$fc53c0` builds it, with `fields` over it (a child list, a mark)."""
+    return dnd_bytes(**{"strtcl": ROOT_START_CLUSTER, "ofd": root_ofd_at, "dmd": dmd_at, **fields})
+
+
+def root_ofd_bytes(dmd_at, **fields):
+    """...and the root directory's pseudo-file, with `fields` over it (OFD_SCANNED)."""
+    return ofd_bytes(**{"strtcl": ROOT_START_CLUSTER, "fileln": ROOT_SECTORS * SECTOR_BYTES, "dmd": dmd_at,
+                        **fields})
+
+
 def drive_records(number, dmd_at, root_dnd_at, root_ofd_at, fat_ofd_at, **dmd_fields):
     """The DMD, its root DND and the two pseudo-OFDs, for a drive of the geometry above, laid out
     for records at the four given addresses — each exactly as long as the pool record it models,
@@ -510,8 +532,8 @@ def drive_records(number, dmd_at, root_dnd_at, root_ofd_at, fat_ofd_at, **dmd_fi
         "clsiz_mask": SECTORS_PER_CLUSTER - 1, "recsiz_log2": log2(SECTOR_BYTES),
         "recsiz_mask": SECTOR_BYTES - 1, "clsizb_log2": log2(CLUSTER_BYTES),
         "fat_ofd": fat_ofd_at, "root_dnd": root_dnd_at, **dmd_fields})
-    root_dnd = dnd_bytes(strtcl=ROOT_START_CLUSTER, ofd=root_ofd_at, dmd=dmd_at)
-    root_ofd = ofd_bytes(strtcl=ROOT_START_CLUSTER, fileln=ROOT_SECTORS * SECTOR_BYTES, dmd=dmd_at)
+    root_dnd = root_dnd_bytes(root_ofd_at, dmd_at)
+    root_ofd = root_ofd_bytes(dmd_at)
     # THE FAT PSEUDO-FILE STARTS AT POSITION 3, byte 3 of its cluster ($fc55be, $fc55ca) — the one
     # field this staging did not have until the builder's own output was compared against it.
     fat_ofd = ofd_bytes(strtcl=FAT_START_CLUSTER, fileln=FAT_SECTORS * SECTOR_BYTES, dmd=dmd_at,
@@ -537,6 +559,17 @@ def node_slot(node):
 def curdir_at(drive):
     """The running process's `p_curdir` byte for `drive`."""
     return gemdos.BASEPAGE + addrs.BASEPAGE_CURDIR + drive
+
+
+def dmd_pointer_poke(drive, dmd_at=DMD_AT):
+    """`drive`'s table slot pointed at a DMD — the staged one unless a case says otherwise."""
+    return {dmd_slot(drive): struct.pack(">I", dmd_at)}
+
+
+def current_directory_poke(drive, node, dnd):
+    """The running process's current directory on `drive`: its `p_curdir` byte naming `node`, and
+    that node's slot pointing at `dnd`."""
+    return {curdir_at(drive): bytes([node]), node_slot(node): struct.pack(">I", dnd)}
 
 
 def record_of(region, record):
@@ -630,20 +663,26 @@ def cache(fat=(), data=()):
     return pokes
 
 
+def linked(read_long, head_at, link, cap):
+    """The records on a linked list after a run, head first: the head longword at `head_at`, each
+    record's next at `+link`. `read_long(address)` is the run's own view of memory (`Result.long`).
+
+    CAPPED one past `cap`, the most records a case can stage on it, so a list the run made circular or
+    too long is a wrong ANSWER rather than a hang."""
+    at = read_long(head_at)
+    for _record in range(cap + 1):
+        if at == 0:
+            return
+        yield at
+        at = read_long(at + link)
+
+
 def cache_order(read_long, which):
     """Which BCB indices list `which` holds AFTER a run, head first — so a case states the MRU order
-    rather than three separate link longwords.
-
-    `read_long(address)` is the run's own view of memory: the base image with the case's pokes and
-    the oracle's writes over it (`Result`, below). The walk is capped at the number of BCBs a case
-    can stage, so a list the run made circular is a wrong ANSWER rather than a hang.
-    """
-    at = read_long(addrs.SYSVAR_BUFL + which * addrs.SYSVAR_BUFL_ENTRY_BYTES)
-    order = []
-    while at != 0 and len(order) <= BCB_COUNT:
-        order.append((at - BUFFERS_AT) // BCB_STRIDE)
-        at = read_long(at + BCB_LINK)
-    return order
+    rather than three separate link longwords."""
+    return [(at - BUFFERS_AT) // BCB_STRIDE
+            for at in linked(read_long, addrs.SYSVAR_BUFL + which * addrs.SYSVAR_BUFL_ENTRY_BYTES, BCB_LINK,
+                             BCB_COUNT)]
 
 
 # ---- the disk image ------------------------------------------------------------------------------
@@ -686,10 +725,15 @@ STAGED_DIRENT_TIME = 0x1234
 STAGED_DIRENT_DATE = 0x5678
 
 
-def _dirent(name, extension, attr, cluster, length, deleted=False):
-    """One of the staged disk's own entries: `dirent_bytes` with the staged time and date."""
+def staged_dirent(name, extension="", attr=ATTR_NONE, cluster=0, length=0, deleted=False):
+    """An entry as the staged disk writes every one: `dirent_bytes` with the staged time and date."""
     return dirent_bytes(name, extension, attr, cluster, length, time=STAGED_DIRENT_TIME,
                         date=STAGED_DIRENT_DATE, deleted=deleted)
+
+
+def dots(cluster, parent_cluster):
+    """The `.` and `..` a subdirectory opens with — `..` of a directory in the root naming cluster 0."""
+    return [staged_dirent(".", "", GEMDOS_ATTR_SUBDIR, cluster), staged_dirent("..", "", GEMDOS_ATTR_SUBDIR, parent_cluster)]
 
 
 SUBDIR_CLUSTER = 2
@@ -709,6 +753,15 @@ ROOT_FILES = (
 )
 
 
+def index_by_name(rows):
+    """`{name: index}` over directory rows in `ROOT_FILES`' shape — an entry's index is its byte
+    position / 32, the `OFD_DIRPOS` an open copy of it holds and the position a search leaves."""
+    return {name: index for index, (name, *_rest) in enumerate(rows)}
+
+
+ROOT_INDEX = index_by_name(ROOT_FILES)
+
+
 def body(seed, length):
     """A file's bytes: a ramp keyed on the file, so a read landing on the wrong cluster is a wrong
     BYTE rather than a plausible one."""
@@ -721,6 +774,12 @@ SHORT_SEED = 0x11
 SPAN_SEED = 0x40
 SHORT_BODY = body(SHORT_SEED, SHORT_BYTES)
 SPAN_BODY = body(SPAN_SEED, SPAN_BYTES)
+
+
+def _write_both_fats(sectors, table):
+    """`table` as BOTH FAT copies of `sectors`, in place — how a formatted disk has them."""
+    for record in (FAT1_RECORD, FAT2_RECORD):
+        sectors[record * SECTOR_BYTES:(record + FAT_SECTORS) * SECTOR_BYTES] = table
 
 
 def _write_cluster(sectors, cluster, contents):
@@ -758,20 +817,16 @@ def _disk_image():
         SPAN_CLUSTER + 1: SPAN_CLUSTER + 2,
         SPAN_CLUSTER + 2: FAT12_END_OF_CHAIN,
     })
-    for at in (FAT1_RECORD, FAT2_RECORD):
-        sectors[at * SECTOR_BYTES:(at + FAT_SECTORS) * SECTOR_BYTES] = fat
+    _write_both_fats(sectors, fat)
 
     root = bytearray(ROOT_SECTORS * SECTOR_BYTES)
     for index, entry in enumerate(ROOT_FILES):
-        root[index * DIRENT_BYTES:(index + 1) * DIRENT_BYTES] = _dirent(*entry)
+        root[index * DIRENT_BYTES:(index + 1) * DIRENT_BYTES] = staged_dirent(*entry)
     sectors[ROOT_RECORD * SECTOR_BYTES:(ROOT_RECORD + ROOT_SECTORS) * SECTOR_BYTES] = root
 
     # `SUBDIR`'s own cluster: `.`, `..` and nothing else, which is what a search below the root
     # walks into.
-    subdir = bytearray(CLUSTER_BYTES)
-    subdir[0:DIRENT_BYTES] = _dirent(".", "", GEMDOS_ATTR_SUBDIR, SUBDIR_CLUSTER, 0)
-    subdir[DIRENT_BYTES:2 * DIRENT_BYTES] = _dirent("..", "", GEMDOS_ATTR_SUBDIR, 0, 0)
-    _write_cluster(sectors, SUBDIR_CLUSTER, bytes(subdir))
+    _write_cluster(sectors, SUBDIR_CLUSTER, b"".join(dots(SUBDIR_CLUSTER, 0)).ljust(CLUSTER_BYTES, b"\0"))
     _write_cluster(sectors, SHORT_CLUSTER, SHORT_BODY)
     for index in range(SPAN_CLUSTERS):
         _write_cluster(sectors, SPAN_CLUSTER + index,
@@ -787,6 +842,40 @@ def sector_of(source, record, at=0):
     """One sector out of the staged disk, or out of a run's final memory (`at=IMAGE_AT`)."""
     start = at + record * SECTOR_BYTES
     return bytes(source[start:start + SECTOR_BYTES])
+
+
+# ---- VARIANTS of the staged disk ------------------------------------------------------------------
+# Every FAT entry the base disk holds, read back out of its own FAT — the six-file layout above, which
+# a variant keeps and adds to — and the one writer of a variant, so a battery that needs another FAT
+# (a broken chain, a full disk, a directory tree) states only what differs.
+FAT_ENTRIES = FIRST_DATA_CLUSTER + DATA_CLUSTERS
+
+
+def fat_sectors(disk, first_record):
+    """The FAT copy starting at `first_record`, out of a disk image."""
+    at = first_record * SECTOR_BYTES
+    return bytes(disk[at:at + FAT_SECTORS * SECTOR_BYTES])
+
+
+BASE_FAT = {cluster: fat12_entry(fat_sectors(DISK, FAT1_RECORD), cluster) for cluster in range(FAT_ENTRIES)}
+BASE_FAT_USED = {cluster for cluster, entry in BASE_FAT.items() if cluster >= FIRST_DATA_CLUSTER and entry != 0}
+
+
+def with_fat(disk, table):
+    """`disk` with `table` as BOTH FAT copies."""
+    disk = bytearray(disk)
+    _write_both_fats(disk, table)
+    return disk
+
+
+def disk(fat=None, clusters=None):
+    """The staged disk with FAT12 entries changed (`{cluster: value}`, over the base ones) and data
+    clusters overwritten (`{cluster: bytes}`). Returned as the poke at `IMAGE_AT` that replaces the
+    base disk in `machine`."""
+    image = with_fat(DISK, fat12_table({**BASE_FAT, **(fat or {})}))
+    for cluster, contents in (clusters or {}).items():
+        _write_cluster(image, cluster, contents)
+    return {IMAGE_AT: bytes(image)}
 
 
 # ---- the machine a file-system case starts from --------------------------------------------------
@@ -900,6 +989,7 @@ class Result:
 
     def __init__(self, info, pokes):
         self.info = info
+        self.staged = pokes
         self.final = case.final_image(info, pokes)
 
     def after(self, at, length):
@@ -939,6 +1029,64 @@ def run(entry, glue, pokes, *, regs=None, poison=False, **kwargs):
         info = case.run(entry, {"a5": 0, **(regs or {}), "_pokes": staged}, recording(glue),
                         poison=poison, **kwargs)
     return Result(info, staged)
+
+
+# ---- a GEMDOS LEAF, entered at its own address or through the dispatcher -----------------------------
+# Every file-system leaf, once: its selector, the handler address the ROM's dispatch table holds for
+# it (`test_gemdos_fs_io_leaves.py` checks each against the table), its C core, and its argument frame
+# as the ROM's caller lays it — a `struct` format, big-endian.
+Leaf = collections.namedtuple("Leaf", "selector entry symbol frame")
+FREAD = Leaf(addrs.GEMDOS_FREAD_FN, addrs.GEMDOS_FREAD, "gemdos_fread", ">hII")
+FWRITE = Leaf(addrs.GEMDOS_FWRITE_FN, addrs.GEMDOS_FWRITE, "gemdos_fwrite", ">hII")
+FSEEK = Leaf(addrs.GEMDOS_FSEEK_FN, addrs.GEMDOS_FSEEK, "gemdos_fseek", ">IhH")     # the offset first
+FCLOSE = Leaf(addrs.GEMDOS_FCLOSE_FN, addrs.GEMDOS_FCLOSE, "gemdos_fclose", ">h")
+FDATIME = Leaf(addrs.GEMDOS_FDATIME_FN, addrs.GEMDOS_FDATIME, "gemdos_fdatime", ">IhH")
+DFREE = Leaf(addrs.GEMDOS_DFREE_FN, addrs.GEMDOS_DFREE, "gemdos_dfree", ">Ih")
+DGETPATH = Leaf(addrs.GEMDOS_DGETPATH_FN, addrs.GEMDOS_DGETPATH, "gemdos_dgetpath", ">Ih")
+FSNEXT = Leaf(addrs.GEMDOS_FSNEXT_FN, addrs.GEMDOS_FSNEXT, "gemdos_fsnext", ">")    # the DTA is its input
+LEAVES = (FREAD, FWRITE, FSEEK, FCLOSE, FDATIME, DFREE, DGETPATH, FSNEXT)
+for _leaf in LEAVES:
+    getattr(_lib, _leaf.symbol).restype = ctypes.c_uint32
+_lib.gemdos_dispatch_selector.restype = ctypes.c_uint32
+
+
+def leaf_pokes(leaf, values, pokes):
+    """The case's pokes, then `values` laid out as the leaf's frame."""
+    return {**pokes, **case.args(leaf.frame, *values)}
+
+
+def leaf_glue(leaf, values):
+    """...and our C core of the leaf over the same values."""
+    return lambda lib, buf: getattr(lib, leaf.symbol)(buf, *values)
+
+
+def argument_values(buf, arguments, frame):
+    """The words the dispatcher copied, read back out of the CANDIDATE's image in `frame`'s shape —
+    which is what proves our dispatcher passed the frame the leaf reads, rather than the case handing
+    the leaf the values it hoped were there."""
+    raw = ctypes.string_at(ctypes.addressof(buf.contents) + arguments, struct.calcsize(frame))
+    return struct.unpack(frame, raw)
+
+
+def leaf_handler(leaf):
+    """The leaf's C core as the dispatcher's handler hook reaches it: handed the copied frame."""
+    return lambda buf, arguments, _width: getattr(_lib, leaf.symbol)(buf, *argument_values(buf, arguments, leaf.frame))
+
+
+def dispatch_slice(leaf, words, pokes):
+    """A dispatcher slice (`gemdos.slice_pokes`) over the staged disk: our dispatcher calling our leaf
+    through the hook, bound at the address the ROM's table holds, against the ROM's own dispatch of
+    the same frame. `pokes` are the whole staging under the slice (a layer's cache and drive included).
+
+    Not `gemdos.run_slice`: that policy poisons, and a run that reaches the BIOS cannot (`run` above).
+    The handler calls it records are part of the claim — the leaf, exactly once."""
+    def glue(lib, buf):
+        return lib.gemdos_dispatch_selector(buf, gemdos.ARGUMENTS_AT)
+
+    with gemdos.bound_handlers({leaf.entry: leaf_handler(leaf)}):
+        result = run(gemdos.TRAMPOLINE_AT, gemdos.recording(glue), {**pokes, **gemdos.slice_pokes(leaf.selector, words)})
+    assert [call[0] for call in gemdos.HANDLER_CALLS] == [leaf.entry]
+    return result
 
 
 # ---- the registry --------------------------------------------------------------------------------

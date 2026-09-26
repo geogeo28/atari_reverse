@@ -371,7 +371,7 @@ def test_the_geometry_is_the_ofds_drive_and_the_cache_is_asked_with_the_dnds(sec
     geometry = fs.drive(clsiz=sectors, recsiz=HALF_SECTOR)[fs.DMD_AT]
     pattern = fs.body(SUBDIR_PATTERN_SEED, fs.CLUSTER_BYTES)
     info, final = _zero_cluster({**_cluster_directory(SUBDIR_RECORD, GEOMETRY_AT), GEOMETRY_AT: geometry,
-                                 **io.disk(clusters={fs.SUBDIR_CLUSTER: pattern})},
+                                 **fs.disk(clusters={fs.SUBDIR_CLUSTER: pattern})},
                                 {"data": [(index, fs.EMPTY) for index in range(sectors)]})
     first = fs.record_of_cluster(fs.SUBDIR_CLUSTER)
     for index in range(sectors):

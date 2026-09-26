@@ -129,6 +129,13 @@ import test_gemdos_fs_records_pool                          # noqa: E402,F401
 import test_gemdos_fs_fat                                   # noqa: E402,F401
 import test_gemdos_fs_io                                    # noqa: E402,F401
 import test_gemdos_fs_io_leaves                             # noqa: E402,F401
+# ...the fs DIRECTORY layer: the search, the walk and Fsnext, over `test/fs_dir.py`'s tree.
+import test_gemdos_fs_dir                                   # noqa: E402,F401
+import test_gemdos_fs_search                                # noqa: E402,F401
+# ...and the fs FILE layer: the close, the delete, Fclose's file arm, Fdatime — and the drive leaves Dfree and Dgetpath.
+import test_gemdos_fs_close                                 # noqa: E402,F401
+import test_gemdos_fs_delete                                # noqa: E402,F401
+import test_gemdos_fs_leaves2                               # noqa: E402,F401
 import fs_records                                           # noqa: E402
 import gemdos_fs                                            # noqa: E402
 import gemdos_process                                       # noqa: E402

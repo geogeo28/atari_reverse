@@ -15,8 +15,8 @@ index into the running process's own `p_uft`, and 6 and up is an open file descr
 first longword is then a device or a file. Three kinds, two levels, and the sign decides at both.
 
 WHAT IS PROVED AGAINST WHAT. `Fforce` and `Fdup` are ordinary leaves and are whole-function
-differentials. `Fclose` is one on its three DEVICE arms and halts on a handle that names an open
-FILE — `$fc51c0` and `$fc57ee` are the file system's close, not a branch of this. The dispatcher's
+differentials. `Fclose` is one here on its three DEVICE arms; its open-FILE arm closes through the
+file system's own `$fc57ee` and needs a staged disk, so it is `test_gemdos_fs_close.py`'s. The dispatcher's
 RESOLUTION is not a routine at all, so it is driven as a SLICE of `gemdos_dispatch_selector`
 (`test/gemdos.py`), on the only three selectors whose descriptor has bit 7: `Fread`, `Fwrite` and
 `Fseek`.
@@ -284,7 +284,7 @@ def test_fclose_of_a_descriptor_that_names_nothing_is_eihndl(handle):
     """THE ARM BOTH `bge`s FALL INTO, and it has two outcomes rather than one. A descriptor whose
     value is not negative is looked up ONE MORE TIME ($fc51c0) and branched on: 0 is a handle that
     names nothing and answers EIHNDL with NOTHING stored, and only a positive value is the open
-    FILE whose close ($fc57ee) this does not reconstruct.
+    FILE whose close ($fc57ee) `test_gemdos_fs_close.py` drives over a staged disk.
 
     The state is one `Fdup` really makes. `Fdup(4)` on the captured machine — whose `p_uft[4]` is 0,
     an unused slot — takes the `ble` arm and leaves the new descriptor naming 0; closing it is this.
@@ -297,7 +297,7 @@ def test_fclose_of_a_descriptor_that_names_nothing_is_eihndl(handle):
 
 def test_fdup_of_an_unused_slot_makes_a_descriptor_fclose_answers_eihndl_for():
     """...and the pair, end to end: `Fdup` of a standard handle holding 0, then `Fclose` of what it
-    answered. Two runs rather than one claim, because it is the SECOND that would have halted."""
+    answered. Two runs rather than one claim, because it is the SECOND that reaches the lookup."""
     standard, pokes = 4, gemdos.standard_handles_poke([0] * addrs.BASEPAGE_STANDARD_HANDLES)
     duplicated = run_leaf(addrs.GEMDOS_FDUP, lambda lib, buf: lib.gemdos_fdup(buf, standard),
                           pokes | case.word_arg(standard))

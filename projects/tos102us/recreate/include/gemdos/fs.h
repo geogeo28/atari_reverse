@@ -69,6 +69,11 @@
 #define DIRENT_STRTCL        26     /* word, LE: first cluster             ($fc70b2 `26(a5)`)     */
 #define DIRENT_FILELN        28     /* long, LE: length in bytes           ($fc70c6 `28(a5)`)     */
 #define DIRENT_BYTES         32     /* the directory read step ($fc674c `move.l #32`), and $fc6612 */
+/* The part of an entry an OFD mirrors, DIRENT_TIME to the end — time, date, first cluster, length:
+ * the ten bytes `$fc57ee` writes back ($fc5850 `move.l #10`) — and its first two words, the four
+ * `Fdatime` moves ($fc7760 `move.l #4`). */
+#define DIRENT_TAIL_BYTES      (DIRENT_BYTES - DIRENT_TIME)
+#define DIRENT_TIME_DATE_BYTES (DIRENT_STRTCL - DIRENT_TIME)
 /* The FCB form those eleven name bytes are: a stem and an extension, each padded with spaces, no
  * dot between them ($fc5d28 builds it, $fc6b66 reads it back). */
 #define FCB_STEM_BYTES       DIRENT_EXT
@@ -87,11 +92,14 @@
  * only loses the "an entry attribute of 0 matches anything" shortcut below it — the `and.w` test
  * every other pattern takes still runs, so it matches any entry sharing bit 3. */
 #define GEMDOS_ATTR_VOLUME    8
-/* The other attribute bits the file system TESTS or WRITES. Hidden ($02) and system ($04) are not
- * here: no routine in `$fc4e5e..$fc9f0b` names either — they reach `$fc5c9a` only inside a
- * caller's pattern attribute, through its generic `and.w`. */
+/* The other attribute bits the file system TESTS or WRITES. */
 #define GEMDOS_ATTR_READ_ONLY 0x01  /* `btst #0,11(an)` at $fc737e, $fc764e, $fc77fa (EACCDN)     */
 #define GEMDOS_ATTR_SUBDIR    0x10  /* `btst #4,11(a3)` at $fc66f6; written `move.b #16` $fc74f2  */
+/* ...and two it never names: no routine in `$fc4e5e..$fc9f0b` tests or writes hidden or system — each
+ * reaches `$fc5c9a` only inside a caller's pattern attribute, through its generic `and.w` ($fc5d14).
+ * Named for the entries a battery stages with them. */
+#define GEMDOS_ATTR_HIDDEN    0x02
+#define GEMDOS_ATTR_SYSTEM    0x04
 /* Only ever inside `ori.w #33` at $fc6d24: Fsfirst with any attribute but VOLUME also matches
  * read-only and archive entries. No routine tests or sets it alone. */
 #define GEMDOS_ATTR_ARCHIVE   0x20
@@ -226,6 +234,13 @@
 #define BCB_TYPE_DATA         2
 #define BCB_LIST_COUNT        2
 #define BCB_EMPTY             0xffff  /* the `b_bufdrv` of a buffer holding nothing (`move.w #-1`) */
+
+/* The head longword of buffer list `list` in `_bufl` — the lookup (`$fc5ace`) and the close's flush of
+ * every buffer (`$fc58cc`) both index it. */
+static inline uint32_t gemdos_buffer_list_head(uint16_t list)
+{
+    return SYSVAR_BUFL + (uint32_t)list * SYSVAR_BUFL_ENTRY_BYTES;
+}
 
 /* `Rwabs`' first argument, as this group passes it: bit 0 is the direction and nothing else in the
  * word is ever set here ($fc5b78 `clr.w -(sp)`, $fc5950/$fc59a2 `move.w #1,-(sp)`). */

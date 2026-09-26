@@ -1177,6 +1177,10 @@
 #define GEMDOS_FWRITE_FN      0x40
 #define GEMDOS_FSEEK_FN       0x42
 #define GEMDOS_PEXEC_FN       0x4b
+#define GEMDOS_DFREE_FN       0x36
+#define GEMDOS_DGETPATH_FN    0x47
+#define GEMDOS_FSNEXT_FN      0x4f
+#define GEMDOS_FDATIME_FN     0x57
 
 /* Sversion's answer, and the DOS date/time fields Tsetdate and Tsettime bound. The date word is
  * `(year - 1980) << 9 | month << 5 | day` and the time word `hour << 11 | minute << 5 | second / 2`,
@@ -1384,6 +1388,17 @@
 #define GEMDOS_FCB_TO_TEXT    0xfc6b66  /* eleven FCB bytes -> "NAME.EXT", NUL-ended */
 #define GEMDOS_DND_PATH       0xfc6bd2  /* a DND -> "\A\B\", root first, unterminated */
 #define GEMDOS_FILL_DTA       0xfc6ebc  /* a found entry's attribute, time, date, length, name */
+/* fs wave 3: the file layer (`src/gemdos/fs_file.c`) — its _FN numbers are above, with the table. */
+#define GEMDOS_OFD_CLOSE      0xfc57ee  /* entry rewritten if dirty, OFD unlinked, EVERY buffer flushed */
+#define GEMDOS_DELETE_ENTRY   0xfc7824  /* open copies closed or EACCDN, chain freed, `$e5` written */
+#define GEMDOS_FDATIME        0xfc772e  /* an open file's time and date, read or written in its entry */
+/* fs wave 3: the two leaves over a whole drive (`src/gemdos/fs_leaves.c`). */
+#define GEMDOS_DFREE          0xfc7a68  /* free and total clusters, by a FAT scan, and the geometry */
+#define GEMDOS_DGETPATH       0xfc6c1a  /* the process's directory on a drive, as "\A\B" */
+/* fs wave 3: the DIRECTORY layer (`src/gemdos/fs_dir.c`, `include/gemdos/fs_dir.h`). */
+#define GEMDOS_DIR_SEARCH     0xfc663c  /* one directory from a position: the first entry a pattern matches */
+#define GEMDOS_FIND_DIR       0xfc696c  /* a path walked down the DND tree to the directory of its last component */
+#define GEMDOS_FSNEXT         0xfc6df4  /* the next match of the search a DTA holds, or ENMFIL */
 
 /* WHERE EACH OF THIS GROUP'S BIOS CALLS RETURNS TO — the longword `GEMDOS_BIOS_TRAMPOLINE` parks,
  * one per call site, exactly as `src/gemdos/console.c` keeps its fourteen. Each is the address of

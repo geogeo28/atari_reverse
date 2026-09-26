@@ -44,7 +44,8 @@
 /* ---- the HANDLE RECORD ($8092, 75 records of ten bytes) ---------------------------------------- */
 /* What a handle NAMES, and the one field whose sign decides everything: `Fclose` ($fc571c) and the
  * dispatcher's resolution ($fc995c) both read it and branch on `bge`. Negative is a character
- * device; anything else is the file system's own pointer, which no routine here follows. */
+ * device; anything else is the file system's own pointer — an OFD, which `Fclose` hands to the file
+ * system's close ($fc57ee) and, on the last reference, back to the pool ($fc7f9c). */
 #define HANDLE_VALUE         0
 #define HANDLE_OWNER         4      /* long: the basepage that opened it — `Fdup` $fc526c stores */
                                     /*   `p_run` here and `gemdos_release_process` $fc80ce hunts it */

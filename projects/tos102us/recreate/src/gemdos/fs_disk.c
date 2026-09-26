@@ -111,7 +111,7 @@ void gemdos_buffer_flush(uint8_t *image, uint32_t bcb)
  * the directory and the data regions ($fc5ace: `type ? 1 : 0`, then `<< 2`). */
 static uint32_t list_head_of(uint16_t region)
 {
-    return SYSVAR_BUFL + (region != BCB_TYPE_FAT ? 1u : 0u) * SYSVAR_BUFL_ENTRY_BYTES;
+    return gemdos_buffer_list_head(region != BCB_TYPE_FAT ? 1u : 0u);
 }
 
 /* $fc59f2 — a span of DATA records straight to `Rwabs`, bypassing the cache.

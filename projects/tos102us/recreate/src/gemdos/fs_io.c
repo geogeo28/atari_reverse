@@ -63,11 +63,6 @@
 
 #define FAT_ENTRY_READ     2        /* every FAT access moves exactly one word ($fc5fda `#2`) */
 
-#ifdef RECREATE_HOST_DIFFERENTIAL
-/* `include/gemdos/gemdos.h`'s frame-word guard, defined here with the helpers below that are its only users. */
-int gemdos_host_frame_word_held;
-#endif
-
 /* A word field of a DMD or an OFD, as the SIGNED word every compare in this engine makes of it. */
 static int16_t field_word(const uint8_t *image, uint32_t record, uint32_t field)
 {
@@ -131,20 +126,20 @@ static int32_t fat16_offset(int16_t cluster)
     return (int32_t)cluster * FAT16_ENTRY_BYTES;
 }
 
-/* One FAT word read through the FAT OFD into a frame word (`include/gemdos/gemdos.h`), then turned round IN
- * PLACE by `$fc4f10` — the ROM's own call ($fc5fee, $fc6084, $fc60c0) — and read back out of it. */
+/* One FAT word read through the FAT OFD into a frame word (`include/gemdos/gemdos.h`'s host slots), then
+ * turned round IN PLACE by `$fc4f10` — the ROM's own call ($fc5fee, $fc6084, $fc60c0) — and read back out of it. */
 static uint16_t read_fat_word(uint8_t *image, uint32_t dmd, int32_t offset)
 {
     uint32_t fat = be32(image + dmd + DMD_FAT_OFD);
     uint16_t local;
-    uint32_t word_at = gemdos_frame_word_claim(&local);
+    uint32_t word_at = gemdos_host_slot_claim(FRAME_WORD, &local);
     uint16_t word;
 
     gemdos_ofd_seek(image, fat, (uint32_t)offset);
     gemdos_ofd_read(image, fat, FAT_ENTRY_READ, word_at);
     os_swap_word(image, word_at);
     word = be16(image + word_at);
-    gemdos_frame_word_release();
+    gemdos_host_slot_release(FRAME_WORD);
     return word;
 }
 
@@ -159,13 +154,13 @@ static void write_fat_word(uint8_t *image, uint32_t dmd, int32_t offset, uint16_
 {
     uint32_t fat = be32(image + dmd + DMD_FAT_OFD);
     uint16_t local;
-    uint32_t word_at = gemdos_frame_word_claim(&local);
+    uint32_t word_at = gemdos_host_slot_claim(FRAME_WORD, &local);
 
     wr16(image + word_at, value);
     os_swap_word(image, word_at);
     gemdos_ofd_seek(image, fat, (uint32_t)offset);
     gemdos_ofd_write(image, fat, FAT_ENTRY_READ, word_at);
-    gemdos_frame_word_release();
+    gemdos_host_slot_release(FRAME_WORD);
 }
 
 /* $fc6038 — the entry `cluster` holds.

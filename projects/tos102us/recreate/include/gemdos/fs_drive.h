@@ -29,9 +29,12 @@
  * directory's pseudo-file starts at 0 like every other OFD. Reproduced, not explained. */
 #define FAT_OFD_START_POSITION 3
 
-/* `$fc7e52`'s answer for an EMPTY component (`moveq #1` at $fc7e62). The other two are the number
- * of dots NEGATED — -1 for ".", -2 for ".." — and 0 is "an ordinary name". */
+/* `$fc7e52`'s answer for an EMPTY component (`moveq #1` at $fc7e62); the other two are the number
+ * of dots NEGATED, and 0 is "an ordinary name". `$fc696c` climbs on DOT_NAME_PARENT ($fc69ae `cmp.w
+ * #-2`) and steps over either. */
 #define DOT_NAME_EMPTY        1
+#define DOT_NAME_SELF         (-1)  /* "." */
+#define DOT_NAME_PARENT       (-2)  /* ".." */
 
 uint32_t gemdos_dmd_alloc(uint8_t *image, int16_t drive);
 uint32_t gemdos_dmd_build(uint8_t *image, uint32_t bpb, int16_t drive);
@@ -42,5 +45,9 @@ uint32_t gemdos_split_path(uint32_t entry_d0, uint8_t *image, uint32_t path, uin
                            uint16_t take_tail);
 uint32_t gemdos_strneq(uint32_t entry_d0, const uint8_t *image, uint16_t count, uint32_t left,
                        uint32_t right);
+/* A drive's DMD, out of its table slot (0 for one never logged in), and the running process's current
+ * directory node on it — its `p_curdir` byte's slot — for the leaves above this layer. */
+uint32_t gemdos_drive_dmd(const uint8_t *image, int16_t drive);
+uint32_t gemdos_current_directory(uint8_t *image, int16_t drive);
 
 #endif /* TOS102US_GEMDOS_FS_DRIVE_H */
