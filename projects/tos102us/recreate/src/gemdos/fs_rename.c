@@ -48,7 +48,7 @@
 #define ENTRY_BUFFER_BYTES    DIRENT_NAME_BYTES
 #define DELETE_MARK_BYTES     1
 _Static_assert(DIRENT_TAIL_BYTES <= ENTRY_BUFFER_BYTES, "the entry's tail does not fit the name buffer");
-_Static_assert(GEMDOS_HOST_SLOT_RENAME_ENTRY_BYTES == ENTRY_BUFFER_BYTES,
+_Static_assert(HOST_SLOT_RENAME_ENTRY_BYTES == ENTRY_BUFFER_BYTES,
                "a host slot narrower or wider than the frame local it stands in for");
 
 /* The drive a directory is on: its DMD's drive word. */
@@ -118,7 +118,7 @@ uint32_t gemdos_frename(uint8_t *image, uint16_t reserved, uint32_t old, uint32_
     file = (uint32_t)gemdos_ofd_of_handle(image, (int16_t)opened);
     directory = be32(image + file + OFD_DIR_OFD);
     position = be32(image + file + OFD_DIRPOS);
-    buffer = gemdos_host_slot_claim(RENAME_ENTRY, buffer_local);
+    buffer = host_slot_claim(RENAME_ENTRY, buffer_local);
     image[buffer] = DIRENT_DELETED;
     gemdos_ofd_seek(image, directory, position);
     if (old_dnd != new_dnd) {
@@ -127,7 +127,7 @@ uint32_t gemdos_frename(uint8_t *image, uint16_t reserved, uint32_t old, uint32_
         gemdos_build_fcb_name(image, new_tail, buffer);
         gemdos_ofd_write(image, directory, DIRENT_NAME_BYTES, buffer);
     }
-    gemdos_host_slot_release(RENAME_ENTRY);
+    host_slot_release(RENAME_ENTRY);
 
     closed = gemdos_fclose(image, (int16_t)opened);
     if ((int32_t)closed < 0)

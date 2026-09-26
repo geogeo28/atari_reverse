@@ -24,6 +24,8 @@ RTE = b"\x4e\x73"                       # ...the way out of an exception handler
 TRAP_BIOS = b"\x4e\x4d"                 # trap    #13
 TRAP_XBIOS = b"\x4e\x4e"                # trap    #14
 TRAP_GEMDOS = b"\x4e\x41"                # trap    #1, the GEMDOS entry
+JSR_ABSOLUTE_LONG = b"\x4e\xb9"          # jsr     <xxx>.l
+LINE_A = 0xA000                         # $Axxx: the Line-A exception, the low twelve bits its opcode
 
 # ---- the stack ----------------------------------------------------------------------------------
 PUSH_WORD_IMMEDIATE = b"\x3f\x3c"       # move.w  #<imm>,-(sp)

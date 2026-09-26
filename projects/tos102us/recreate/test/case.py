@@ -13,7 +13,7 @@ staging that is the same for all of them.
 import struct
 
 import abi
-from harness import differential, make_image, report
+from harness import differential, emu, make_image, report
 
 # The width of a result, as the C signature declares it. A core that returns nothing (`void` — the
 # ROM routine sets no result, or reports only through memory) says so with `None`, which is a claim
@@ -163,3 +163,88 @@ def final_image(info, pokes):
     for at, value in info["writes"].items():
         image[at] = value
     return image
+
+
+# ---- what every staging module shares ----------------------------------------------------------------
+
+# The byte an output buffer is pre-filled with before a run: one no routine here leaves in a field it
+# answers, so a store the reconstruction SKIPPED reads as something no arm produces. It is
+# `vt52.CANARY`'s value for the same reason; GEMDOS, the file system and the VDI all stage with it.
+SLACK_FILL = 0xA5
+
+
+def merge_pokes(*layers):
+    """Poke dicts laid over each other BYTE BY BYTE, later layers winning, as one dict of runs.
+
+    `{**a, **b}` merges by KEY: a one-word poke at an address that is also the start of a staged
+    record REPLACES the whole record, and a poke inside a record but at a different key is applied in
+    whatever order `make_image` happens to walk them. Flattening onto bytes makes an overlap mean what
+    it says — the later layer's bytes, the earlier layer's everywhere else — whatever the keys were.
+    """
+    flat = {}
+    for layer in layers:
+        for at, data in (layer or {}).items():
+            for offset, value in enumerate(data):
+                flat[at + offset] = value
+    runs, start, run = {}, None, bytearray()
+    for address in sorted(flat):
+        if start is not None and address == start + len(run):
+            run.append(flat[address])
+            continue
+        if start is not None:
+            runs[start] = bytes(run)
+        start, run = address, bytearray([flat[address]])
+    if start is not None:
+        runs[start] = bytes(run)
+    return runs
+
+
+def verified_row(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule=()):
+    """One `test_boot_snapshot.VERIFIED_CASES` row in its seven-field shape — the ONE builder every
+    component's `register` uses, so the shape cannot drift between them."""
+    return (name, entry, dict(regs), dict(pokes), psg_seed, io_seed, schedule)
+
+
+class Result:
+    """A run, and what the machine held AFTER it: the snapshot, the case's pokes, then the ORACLE's
+    writes (`final_image`), composed once per run rather than per read."""
+
+    def __init__(self, info, pokes):
+        self.info = info
+        self.staged = pokes
+        self.final = final_image(info, pokes)
+
+    def after(self, at, length):
+        return bytes(self.final[at:at + length])
+
+    def long(self, at):
+        return int.from_bytes(self.after(at, 4), "big")
+
+    def word(self, at):
+        return int.from_bytes(self.after(at, 2), "big")
+
+    def words(self, at, count):
+        """`count` big-endian words from `at`, as a list."""
+        return list(struct.unpack(f">{count}H", self.after(at, 2 * count)))
+
+
+# ---- one run's end, as the next run's start ------------------------------------------------------
+# A SEQUENCE a program makes — `Fsfirst` then `Fsnext`, `v_opnwk` then a drawing call — is proved one
+# routine at a time, each run starting from the machine the one before it ENDED in. That is a real
+# differential rather than a replay: the end state carried is the ORACLE's, and BOTH shores start the
+# next run from it — a candidate that had ended anywhere else failed the previous run's compare.
+#
+# WHAT IS CARRIED: every staged poke re-read from the run's final memory, and each byte the oracle
+# wrote that no poke covered. WHAT IS NOT: the stack band, which the differential drops and every run
+# re-stages with its own arguments, and `refilled` — the addresses a component's own machine staging
+# fills afresh on every run, so that the next run's stores to them are still changes.
+def continued(result, refilled=()):
+    """The pokes the run after `result` (a `Result`) starts from — its end state, as above."""
+    stack_band = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
+    refilled = set(refilled)
+    covered = {address for at, data in result.staged.items() for address in range(at, at + len(data))}
+    pokes = {at: result.after(at, len(data)) for at, data in result.staged.items()
+             if at not in stack_band and at not in refilled}
+    pokes.update({at: bytes([value]) for at, value in result.info["writes"].items()
+                  if at not in covered and at not in stack_band})
+    return pokes

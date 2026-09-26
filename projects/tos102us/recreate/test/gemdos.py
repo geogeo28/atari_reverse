@@ -40,7 +40,7 @@ import case
 import staging
 import trap
 from address_hook import AddressHook, bind_pointer
-from opcodes import LOAD_ADDRESS_IMMEDIATE, SET_USER_STACK, TRAP_GEMDOS
+from opcodes import JSR_ABSOLUTE_LONG, LOAD_ADDRESS_IMMEDIATE, SET_USER_STACK, TRAP_GEMDOS
 
 # ---- the band this module owns, inside the one `staging.py` describes ---------------------------
 # `trap.py` took +0x800..+0xc00 and `isr.py` the top from +0xd00; the pointer-argument batteries fill
@@ -339,8 +339,8 @@ assert emu.STACK_GUARD_LO <= FRAME_AT
 assert SAVPTR_AT <= emu.STACK_TOP - emu.STACK_SCRATCH
 
 # A byte no field these routines write can be left holding: attribution, in place of the poison pass
-# above. $A5 is `vt52.CANARY`'s value for the same reason.
-FILL = 0xA5
+# above (`case.SLACK_FILL`, the one every staging module shares).
+FILL = case.SLACK_FILL
 
 
 def machine(pokes=None):
@@ -357,8 +357,7 @@ def machine(pokes=None):
 
 
 # The trampoline's own opcode, so that the longword a run parks can be checked to BE a return from
-# a `jsr` to it rather than taken on trust. `4eb9` is `jsr <abs.l>`.
-JSR_ABSOLUTE_LONG = b"\x4e\xb9"
+# a `jsr` to it rather than taken on trust.
 JSR_BYTES = len(JSR_ABSOLUTE_LONG) + 4
 JSR_TRAMPOLINE = JSR_ABSOLUTE_LONG + addrs.GEMDOS_BIOS_TRAMPOLINE.to_bytes(4, "big")
 
@@ -533,7 +532,7 @@ def register(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule=(),
     `priced=False` puts it in `UNPRICED` instead — same tuple, and still a case the snapshot mask
     has to be checked against, but no Tier 3 row (see above, and the battery that says why).
     """
-    row = (name, entry, dict(regs), dict(pokes), psg_seed, io_seed, schedule)
+    row = case.verified_row(name, entry, regs, pokes, psg_seed, io_seed, schedule)
     (CASES if priced else UNPRICED).append(row)
     return row
 

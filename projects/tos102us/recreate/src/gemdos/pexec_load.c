@@ -28,7 +28,7 @@
 #include "m68k_idioms.h"
 #include "machine.h"
 
-_Static_assert(GEMDOS_HOST_SLOT_PEXEC_LOCALS_BYTES == LOAD_LOCALS_BYTES,
+_Static_assert(HOST_SLOT_PEXEC_LOCALS_BYTES == LOAD_LOCALS_BYTES,
                "a host slot narrower or wider than the frame locals it stands in for");
 _Static_assert(LOAD_SLEN + PRG_LENGTH_BYTES == LOAD_LENGTHS + PRG_LENGTHS_BYTES,
                "the four lengths are not the one sixteen-byte read");
@@ -248,8 +248,8 @@ uint32_t gemdos_pexec_load(uint8_t *image, uint32_t name, uint32_t basepage, uin
 
     if (handle < 0)
         return (uint32_t)(int32_t)handle;
-    locals = gemdos_host_slot_claim(PEXEC_LOCALS, frame);
+    locals = host_slot_claim(PEXEC_LOCALS, frame);
     result = load(image, basepage, handle, locals);
-    gemdos_host_slot_release(PEXEC_LOCALS);
+    host_slot_release(PEXEC_LOCALS);
     return result;
 }

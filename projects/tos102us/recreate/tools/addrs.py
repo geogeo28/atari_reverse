@@ -31,7 +31,7 @@ _DEFINE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
                      rf"({_LITERAL}|\(\s*-\s*{_LITERAL}\s*\)|[A-Za-z_][A-Za-z0-9_]*)\s*(?:/\*.*)?$")
 
 
-def parse(header=HEADER):
+def parse(header=HEADER, known=None):
     """``{name: value}`` for every plain integer `#define` in ``header``, aliases resolved.
 
     Aliases are resolved AFTER the whole file is read, not as they are met, so the header may put
@@ -39,6 +39,10 @@ def parse(header=HEADER):
     something this parser does not bind — a macro with arguments, an expression — is dropped rather
     than raised on: those are defines it deliberately does not read, and a name bound to a
     half-understood value is worse than a missing one.
+
+    `known` is what the header's OWN includes define — `{name: value}` already parsed — so that an
+    alias of a name from another header resolves instead of being dropped: `vdi/linea.h` spells the
+    Line-A block's first field as the console's `CON_PLANES` rather than as a second number.
     """
     values, aliases = {}, {}
     for line in Path(header).read_text().splitlines():
@@ -55,6 +59,8 @@ def parse(header=HEADER):
     for name, target in aliases.items():
         if target in values:
             values[name] = values[target]
+        elif known and target in known:
+            values[name] = known[target]
     if not values:
         raise RuntimeError(f"{header} defined no integer constants — the parser and the header have "
                            f"drifted apart, and every address below would be missing rather than "

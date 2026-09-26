@@ -394,7 +394,7 @@ fn 0xfc9e1a Tgetdate
 fn 0xfc9e2a Tsetdate
 fn 0xfc9ea2 Tgettime
 fn 0xfc9eb2 Tsettime
-fn 0xfc9f34 linea_init   # ctx
+fn 0xfc9f34 linea_init
 fn 0xfca05e linea_filled_poly   # ctx
 fn 0xfca1ea linea_line   # ctx
 fn 0xfca57e linea_hline   # ctx
@@ -424,7 +424,7 @@ fn 0xfcb30a vq_key_s   # ctx
 fn 0xfcb32e vswr_mode   # ctx
 fn 0xfcb388 vsin_mode   # ctx
 fn 0xfcb3f6 vqin_mode   # ctx
-fn 0xfcb45c vsf_perimeter   # ctx
+fn 0xfcb45c vsf_perimeter
 fn 0xfcb4a2 vsl_udsty   # ctx
 fn 0xfcb4ba vs_clip   # ctx
 fn 0xfcb5aa vro_cpyfm   # ctx

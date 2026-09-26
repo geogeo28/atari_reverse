@@ -23,8 +23,8 @@
 
 /* The pattern and the walk's component FCB are frame locals whose ADDRESS these routines hand on, so
  * off target each is a host slot (`include/gemdos/gemdos.h`) of the same twelve bytes. */
-_Static_assert(GEMDOS_HOST_SLOT_SEARCH_PATTERN_BYTES == GEMDOS_SEARCH_PATTERN_BYTES
-               && GEMDOS_HOST_SLOT_WALK_NAME_BYTES == GEMDOS_SEARCH_PATTERN_BYTES,
+_Static_assert(HOST_SLOT_SEARCH_PATTERN_BYTES == GEMDOS_SEARCH_PATTERN_BYTES
+               && HOST_SLOT_WALK_NAME_BYTES == GEMDOS_SEARCH_PATTERN_BYTES,
                "a host slot narrower or wider than the frame local it stands in for");
 
 /* Is `entry` a subdirectory this search owes a DND? Only one past the directory's mark — SIGNED, and
@@ -130,9 +130,9 @@ static uint32_t search(uint8_t *image, uint32_t dnd, uint32_t name, uint16_t att
 uint32_t gemdos_dir_search(uint8_t *image, uint32_t dnd, uint32_t name, uint16_t attr, int32_t *position)
 {
     uint8_t pattern_local[GEMDOS_SEARCH_PATTERN_BYTES];
-    uint32_t found = search(image, dnd, name, attr, position, gemdos_host_slot_claim(SEARCH_PATTERN, pattern_local));
+    uint32_t found = search(image, dnd, name, attr, position, host_slot_claim(SEARCH_PATTERN, pattern_local));
 
-    gemdos_host_slot_release(SEARCH_PATTERN);
+    host_slot_release(SEARCH_PATTERN);
     return found;
 }
 
@@ -141,13 +141,13 @@ uint32_t gemdos_dir_search(uint8_t *image, uint32_t dnd, uint32_t name, uint16_t
 /* `$fc68dc` over the path cursor, which it reads and writes through an ADDRESS — the frame local. */
 static uint32_t path_start(uint8_t *image, uint32_t *cursor)
 {
-    uint32_t cursor_at = gemdos_host_slot_claim(WALK_CURSOR, cursor);
+    uint32_t cursor_at = host_slot_claim(WALK_CURSOR, cursor);
     uint32_t dir;
 
-    gemdos_host_slot_store_long(image, cursor_at, cursor);
+    host_slot_store_long(image, cursor_at, cursor);
     dir = gemdos_path_start(image, cursor_at);
-    gemdos_host_slot_load_long(image, cursor_at, cursor);
-    gemdos_host_slot_release(WALK_CURSOR);
+    host_slot_load_long(image, cursor_at, cursor);
+    host_slot_release(WALK_CURSOR);
     return dir;
 }
 
@@ -232,9 +232,9 @@ static uint32_t walk(uint8_t *image, uint32_t path, uint32_t *tail, uint16_t tak
 uint32_t gemdos_find_dir(uint8_t *image, uint32_t path, uint32_t *tail, uint16_t take_tail)
 {
     uint8_t name_local[GEMDOS_SEARCH_PATTERN_BYTES];
-    uint32_t dir = walk(image, path, tail, take_tail, gemdos_host_slot_claim(WALK_NAME, name_local));
+    uint32_t dir = walk(image, path, tail, take_tail, host_slot_claim(WALK_NAME, name_local));
 
-    gemdos_host_slot_release(WALK_NAME);
+    host_slot_release(WALK_NAME);
     return dir;
 }
 

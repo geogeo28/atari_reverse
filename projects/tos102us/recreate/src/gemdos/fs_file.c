@@ -154,11 +154,11 @@ static void free_chain(uint8_t *image, uint16_t cluster, uint32_t dmd)
 static void write_deleted_mark(uint8_t *image, uint32_t directory)
 {
     uint8_t mark;
-    uint32_t mark_at = gemdos_host_slot_claim(DELETE_MARK, &mark);
+    uint32_t mark_at = host_slot_claim(DELETE_MARK, &mark);
 
     image[mark_at] = DIRENT_DELETED;
     gemdos_ofd_write(image, directory, 1, mark_at);
-    gemdos_host_slot_release(DELETE_MARK);
+    host_slot_release(DELETE_MARK);
 }
 
 /* $fc7824 — delete the entry `dirent` that sits at byte `position` of `dnd`'s directory: EACCDN if

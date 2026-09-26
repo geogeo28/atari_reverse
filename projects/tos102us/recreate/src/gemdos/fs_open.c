@@ -37,7 +37,7 @@
 
 /* The one byte `Fattrib` moves — through its host slot, which is exactly as wide. */
 #define ATTRIBUTE_BYTES       1
-_Static_assert(GEMDOS_HOST_SLOT_ATTRIBUTE_BYTES == ATTRIBUTE_BYTES,
+_Static_assert(HOST_SLOT_ATTRIBUTE_BYTES == ATTRIBUTE_BYTES,
                "a host slot narrower or wider than the frame local it stands in for");
 
 /* ---- the two steps -------------------------------------------------------------------------------- */
@@ -206,7 +206,7 @@ uint32_t gemdos_fattrib(uint8_t *image, uint32_t name, uint16_t set, uint16_t at
         return GEMDOS_EFILNF;
     directory = be32(image + dnd + DND_OFD);
     gemdos_ofd_seek(image, directory, (uint32_t)position - ATTRIBUTE_BEHIND_POSITION);
-    attribute_at = gemdos_host_slot_claim(ATTRIBUTE, &attribute_local);
+    attribute_at = host_slot_claim(ATTRIBUTE, &attribute_local);
     image[attribute_at] = (uint8_t)attribute;
     if (set == 0) {
         result = gemdos_ofd_read(image, directory, ATTRIBUTE_BYTES, attribute_at);
@@ -215,7 +215,7 @@ uint32_t gemdos_fattrib(uint8_t *image, uint32_t name, uint16_t set, uint16_t at
         result = gemdos_ofd_close(image, directory, OFD_CLOSE_DIRECTORY);
     }
     result = set_low_word(result, (uint16_t)sign_ext8(image[attribute_at]));
-    gemdos_host_slot_release(ATTRIBUTE);
+    host_slot_release(ATTRIBUTE);
     return result;
 }
 

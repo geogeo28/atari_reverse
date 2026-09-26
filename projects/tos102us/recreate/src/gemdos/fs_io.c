@@ -132,14 +132,14 @@ static uint16_t read_fat_word(uint8_t *image, uint32_t dmd, int32_t offset)
 {
     uint32_t fat = be32(image + dmd + DMD_FAT_OFD);
     uint16_t local;
-    uint32_t word_at = gemdos_host_slot_claim(FRAME_WORD, &local);
+    uint32_t word_at = host_slot_claim(FRAME_WORD, &local);
     uint16_t word;
 
     gemdos_ofd_seek(image, fat, (uint32_t)offset);
     gemdos_ofd_read(image, fat, FAT_ENTRY_READ, word_at);
     os_swap_word(image, word_at);
     word = be16(image + word_at);
-    gemdos_host_slot_release(FRAME_WORD);
+    host_slot_release(FRAME_WORD);
     return word;
 }
 
@@ -154,13 +154,13 @@ static void write_fat_word(uint8_t *image, uint32_t dmd, int32_t offset, uint16_
 {
     uint32_t fat = be32(image + dmd + DMD_FAT_OFD);
     uint16_t local;
-    uint32_t word_at = gemdos_host_slot_claim(FRAME_WORD, &local);
+    uint32_t word_at = host_slot_claim(FRAME_WORD, &local);
 
     wr16(image + word_at, value);
     os_swap_word(image, word_at);
     gemdos_ofd_seek(image, fat, (uint32_t)offset);
     gemdos_ofd_write(image, fat, FAT_ENTRY_READ, word_at);
-    gemdos_host_slot_release(FRAME_WORD);
+    host_slot_release(FRAME_WORD);
 }
 
 /* $fc6038 — the entry `cluster` holds.

@@ -32,7 +32,8 @@ INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # a hand-written list has. `gemdos/gemdos.h` is not a group header, and the old flat `gemdos_*.h`
 # glob never matched it, so it stays out.
 HEADERS = [INCLUDE / "addrs.h"] + sorted(header for header in (INCLUDE / "gemdos").glob("*.h")
-                                         if header.name != "gemdos.h")
+                                         if header.name != "gemdos.h") \
+    + [INCLUDE / "host_slot.h"] + sorted((INCLUDE / "vdi").glob("*.h"))
 
 # Where a value starts being an ADDRESS rather than an offset, a size, a count or a mask: $400 is the
 # top of the 68000's own vector table and the bottom of the system variables, so every location this
@@ -49,6 +50,11 @@ ALLOWED_ALIASES = {
         "function, and a wave that moves either must not silently move the other",
     frozenset(("RANDOM_MASK", "BOOT_SERIAL_MAX")):
         "two 24-bit MASKS, not addresses: XBIOS Random's state and Protobt's serial bound",
+    frozenset(("CON_PLANES", "LINEA_BASE")):
+        "the Line-A block's base and the field at +0 of it — a pointer to the block and one word "
+        "in it, which the published layout puts at the same address",
+    frozenset(("GEMDOS_FAT12_ENTRY_MASK", "LINEA_OPCODE_MASK")):
+        "two 12-bit MASKS, not addresses: a FAT12 entry and the low bits of a $Axxx opcode",
 }
 
 

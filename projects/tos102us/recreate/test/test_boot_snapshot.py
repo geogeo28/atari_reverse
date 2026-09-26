@@ -158,6 +158,10 @@ import fs_pexec                                             # noqa: E402
 import fs_records                                           # noqa: E402
 import gemdos_fs                                            # noqa: E402
 import gemdos_process                                       # noqa: E402
+# ...and the VDI's: its batteries register their rows through `vdi.register` as they are built.
+import test_vdi_vsf_perimeter                               # noqa: E402,F401
+import test_vdi_linea_init                                  # noqa: E402,F401
+import vdi                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
 import case                                                # noqa: E402
@@ -344,11 +348,11 @@ def test_a_verified_function_reads_no_io_byte_the_model_does_not_serve():
     fabrication. Random touches no hardware at all; Giaccess is served by the PSG model, which sits
     in front of the tally.
 
-    `gemdos.UNPRICED` is swept here too. Such a row is VERIFIED and only unpriceable, so the claim
+    `UNPRICED_CASES` are swept here too. Such a row is VERIFIED and only unpriceable, so the claim
     applies to it exactly as to the rest — it is kept out of `VERIFIED_CASES` because `bench/
     tier3.py` reds on a verified case it cannot make a row for, which is a fact about the table
     rather than about the case."""
-    for row in VERIFIED_CASES + tuple(gemdos.UNPRICED):
+    for row in VERIFIED_CASES + UNPRICED_CASES:
         name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(row)
         _final, _writes, o_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
                                           io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
@@ -450,7 +454,10 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                # ...and `Pexec`'s loader: the saved D5 its open mode is the high half of.
                *fs_pexec.CASE_FIELDS,
                # ...and the dispatcher's redirected write: the byte its broken pointer names.
-               *dispatch_io.CASE_FIELDS)
+               *dispatch_io.CASE_FIELDS,
+               # ...and the VDI's: the Line-A block, the physical workstation, the entry's RAM, the
+               # screen, and every band of the VDI's staged window.
+               *vdi.CASE_FIELDS)
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():
@@ -744,7 +751,15 @@ VERIFIED_CASES = (
     # `rts` there is still none of). The file system's and the handle group's own rows arrive with
     # the rest of `gemdos.CASES` above.
     *gemdos_process.CHECKPOINT_CASES,
+    # ...and the VDI's, each a function entered as the dispatcher's `jsr` leaves the machine.
+    *vdi.CASES,
 )
+
+
+# ...and every row that is VERIFIED but has no Tier 3 column (`gemdos.UNPRICED`, `vdi.UNPRICED`): kept
+# out of `VERIFIED_CASES` because `bench/tier3.py` reds on a verified case it cannot price, and swept
+# by the claims below that are about the CASE rather than the table.
+UNPRICED_CASES = tuple(gemdos.UNPRICED) + tuple(vdi.UNPRICED)
 
 
 def test_every_scheduled_case_is_read_triggered():
@@ -864,7 +879,7 @@ def _dispatch_entries(table):
 
 RECONSTRUCTED_TRAP_ROUTINES = sorted(
     {(_table_of(TRAP_ROUTINE_NAMES[entry]), TRAP_ROUTINE_NAMES[entry])
-     for _name, entry, *_rest in VERIFIED_CASES + tuple(gemdos.UNPRICED)
+     for _name, entry, *_rest in VERIFIED_CASES + UNPRICED_CASES
      if entry in TRAP_ROUTINE_NAMES})
 
 

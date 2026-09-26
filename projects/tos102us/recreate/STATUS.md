@@ -13,7 +13,7 @@ counts in this file against its rows.
 | bios | 20 | — | 0.88–3.63x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
-| vdi + linea | 0 | — | — | NOT STARTED |
+| vdi + linea | 2 | — | 0.70–2.43x (`$a000` accepted: mechanism (N), an answer in several registers) | STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
@@ -254,6 +254,21 @@ identical on both shores. The core's own share is ~1-2k, so a change to it moves
 a fraction of what it moved the core by, and these three rows are a weaker instrument than their
 figures suggest. NETTING THE STUB OUT (a per-row `staged_entry` measured from a zero-count `Rwabs`)
 is a bench change and is PARKED below.
+
+## Verified — vdi (2)
+
+The VDI + Line-A component (`$fc9f0c..$fd2f21`, `src/vdi/`), started 2026-09-26 on a read-only map of the whole range and a
+FOUNDATION every band builds on: `include/vdi/{linea,vdi,font}.h` (every field cited to a ROM access and TAGGED with its width,
+which is what `test/vdi.py`'s `FIELDS` parses), `test/vdi.py` (the one staging door: records by name, a workstation staged AS THE
+DISPATCHER LEAVES IT — record plus its 21 copies into Line-A, pinned against the ROM's own dispatcher — pokes merged byte by byte,
+the screen and pixels, `run_function` / `declare_primitive` + `run_primitive` / `run_through_exception`, `register`). DECISIONS
+(the user's): the hand-written 68000 pixel loops are ported to C first and fall back to a byte-pinned `.S` transcription only where
+the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not reconstructed`).
+
+| address | function | cases | original insns / cycles | Tier 3 | state | what the cases pin |
+|---|---|---|---|---|---|---|
+| `0xfcb45c` | `vsf_perimeter` (VDI opcode 104, `src/vdi/vdi.c`) | 10 | 16 / 314 outlined, 17 / 322 not outlined | **0.72** outlined, **0.70** not outlined | ✅ verified | the VDI's worked example, entered as the dispatcher's `jsr` leaves the machine, over a DISPATCHED workstation (record + the dispatcher's copies): six intin words incl. $0100 and $8000/$ffff, stored normalised to 0/1 in intout[0] and `WS_FILL_PER` over a stale $5a5a; the workstation written is the one `LINEA_CUR_WORK` names (a virtual one, the physical record untouched); contrl[4] = 1 written LAST, pinned by laying intout over it. Opcode 104 read out of the ROM's table. Mutation 10/10 |
+| `0xfc9f34` | `$a000` linea_init (Line-A, `src/vdi/linea.c`) | 3 | 6 / 96 | **2.43** (accepted: (N), the answer registers written through a results pointer) | ✅ verified | the primitive doors' example: D0/A0 = the Line-A base, A1 = $a000's font table, A2 = the opcode table, EACH compared register by register on both shores (Tier 3's column holds D0: the core returns it); entered by `jsr` and — unpriced, entered at a stub — THROUGH the Line-A exception, where the handler preserves D3/A3 and the `rts` after the opcode word is reached. Mutation 3/3 |
 
 ## Harness
 
@@ -693,15 +708,30 @@ is a bench change and is PARKED below.
   a span dropped by name with its reason. Mutation 144/156 over the band (survivors equivalent / unreachable / unpinnable,
   listed in the rows). Remaining in GEMDOS: the E_CHG recovery behind the termination record's longjmp (see `## Not
   reconstructed`); the aes/desk boundary and VDI/Line-A are the next components.
-* **Next** — GEMDOS is COMPLETE but for the E_CHG recovery behind the termination record's longjmp (a whole-dispatcher
-  entry that arms `$7ef4`, plus a non-local exit the host build can take — design first). Then VDI and Line-A.
+* **Wave 10 (2026-09-26) — VDI + LINE-A FOUNDATION.** A read-only map of `$fc9f0c..$fd2f21` (199 functions; the Line-A
+  rasterizers set up then `jmp` through RAM vectors `$2A24..$2A38`, which boot fills with the CPU set — ~11 KB of CPU pixel
+  loops Ghidra never decompiled; the blitter set unreachable on this machine), then ONE foundation agent: `include/vdi/`
+  headers (every field cited, width-tagged), `test/vdi.py` (records by name, the workstation staged AS THE DISPATCHER LEAVES
+  IT — record + its 21 copies into Line-A, pinned against the ROM's dispatcher — byte-wise merged pokes, screen/pixel helpers
+  and a compact screen diff, run doors for functions, register-contract primitives and the Line-A exception), shared machinery
+  hoisted for every component (`case.merge_pokes` / `verified_row` / `Result` / `continued` / `SLACK_FILL`; the host-slot table
+  moved to `include/host_slot.h` + `src/host_slot.c`; `include/ram_vector.h`), and tier3 deriving every VDI row from its
+  `VDI_ROM_*`/`_OPCODE` pair (the kit's `os.h` already owns `VDI_<FN>` as opcode numbers, hence `VDI_ROM_`). Review (2 finders:
+  every header field correct) found the staging helpers would have tested the WRONG MACHINE silently — the dispatcher's copies
+  not staged, pokes replacing each other by address, non-fields accepted as fields, an unbounded ptsin — each fixed RED→GREEN.
+  Worked examples: `vsf_perimeter` 0.72 and `$a000` 2.43 (accepted: (N), the dual of (M) — a C core answers in D0 alone, so
+  several answer registers go through a results pointer; Tier 1 compares all of them, Tier 3 holds D0).
+* **Next** — VDI band 0 (four parallel groups): pure helpers; attribute setters; inquiries + palette; the pixel / hline / rectangle /
+  line primitives with their CPU bodies. Then the blit, text, fill and mouse bands, wide lines / text C / timer, arcs / v_gtext /
+  workstations, and the entries (Line-A `.S`, `vdi_entry`, `vdi_dispatch`, the BIOS-range escape `$fc427a`). GEMDOS: only the
+  E_CHG recovery behind the termination record's longjmp remains (design first).
   Earlier lists, still open: the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **3,280 passed** (1 skipped) and `make guarded` the same count (4,093 candidate runs guarded, no fault),
-re-summed at the fs wave-3 band-4 commit on 2026-09-26 after a forced relink of the oracle and every candidate;
-`make bench` judges 326 rows (246 ok / 59 accepted / 12 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
+`make test` — **3,375 passed** (1 skipped) and `make guarded` the same count (4,119 candidate runs guarded, no fault),
+re-summed at the VDI-foundation commit on 2026-09-26 after a forced relink of the oracle and every candidate;
+`make bench` judges 329 rows (248 ok / 60 accepted / 12 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
 printed table. The kit's own suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged
 (3,851) as the PRG controls. `names.txt`: 468 fn / 308 var / 232 cmt.
 
@@ -719,6 +749,13 @@ other five priced by nothing at all: `bench/tier3.py` resolved a case's entry th
 (M), the register-argument marshalling the ROM gets free from A0/D0. `acia_take_byte` is DEFERRED behind a case that
 enters it directly — every case reaches it through one of the two service entries, so nothing pins the register contract
 a row would have to be called through.
+
+**vdi — the BLITTER set of the Line-A rasterizers is DEFERRED (the user's call, 2026-09-26).** `$fc4dde` fills the ten drawing
+vectors `$2A14..$2A38` from the blitter table `$fc4e0e` or the CPU table `$fc4e36` by bit 0 of its argument, and boot passes the
+probe's 0/2 — so boot ALWAYS installs the CPU set and only XBIOS `Blitmode` on a machine with the chip can flip it. The blitter
+bodies (`$fca20a`, `$fca5ca`, `$fcee66..$fcf963`, `$fcf9be`, `$fcfccc`, `$fd0674`; ~4.4 KB) start the chip with a `bset #7`
+busy loop on `$FF8A3C` and let it move memory the kit does not model, so their RESULT is invisible to every surface; at best a
+register-write ledger. They stay unreconstructed, with the four console blitter routines below, until the kit has a blitter model.
 
 **bios — the console's four BLITTER screen routines** (`$fc47be`, `$fc4852`, `$fc48b6`, `$fc4936`): TOS 1.02 installs
 them on a machine with a blitter; the captured ST holds the CPU set, and each reconstruction halts on a vector that is

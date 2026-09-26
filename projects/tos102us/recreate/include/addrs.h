@@ -1011,7 +1011,7 @@
 #define GEMDOS_DISPATCH_FRAME_BYTES 54
 #define GEMDOS_DISPATCH_SELECTOR_LOCAL 0xffde
 /* ...and the byte a REDIRECTED read `Fread`s into, `-14(a6)` ($fc97b6), which the case staging a stale
- * one has to find in the ROM's frame (the reconstruction's is `GEMDOS_HOST_SLOT_REDIRECTED_BYTE`). */
+ * one has to find in the ROM's frame (the reconstruction's is `HOST_SLOT_REDIRECTED_BYTE`). */
 #define GEMDOS_DISPATCH_REDIRECTED_BYTE_LOCAL (-14)
 #define GEMDOS_SETJMP         0xfc4f38  /* the three-longword frame record the dispatcher arms */
 #define GEMDOS_TERMINATION_JMPBUF 0x7ef4   /* ...and where it writes it */
@@ -1546,5 +1546,47 @@
 #define GEMDOS_CALL_TERM_VECTOR 0xfc4f0a
 #define BIOS_RTC_PROBE        0xfc4c0c
 #define GEMDOS_LONGJMP        0xfc4f54
+
+/* ---- the VDI and LINE-A ($fc9f0c..$fd2f21) ------------------------------------------------------
+ *
+ * The STRUCTURES — the Line-A variable block, the workstation, the font header, the tables — are the
+ * component's own headers (`include/vdi/`); only routine addresses are here, for the registries' sake.
+ *
+ * A VDI FUNCTION IS REACHED BY OPCODE, not by a trap function number, so it is spelt:
+ *   `VDI_ROM_<FN>`            the routine's address, whose C core is `vdi_<fn>`. The `ROM_` is not
+ *                             decoration: the kit's `os.h`, which this header includes, already defines
+ *                             `VDI_<FN>` as the OPCODE for the functions its game model serves
+ *                             (`VDI_VSF_INTERIOR`, `VDI_V_OPNVWK`, ...);
+ *   `VDI_ROM_<FN>_OPCODE`     the opcode `$fca9f6`'s tables serve it for — deliberately not `_FN`,
+ *                             which `test_boot_snapshot.py` reads as a BIOS/XBIOS/GEMDOS table slot;
+ *   `..._OPCODE_<k>`          each further opcode the SAME routine serves (a shared stub);
+ *   `..._SUBFUNCTION`         for an ARM behind a sub-dispatcher: `_OPCODE` is then the parent's opcode
+ *                             and this is contrl[5] (escape 5.n, GDP 11.n — `vdi/vdi.h`).
+ * `test_vdi_staging.py` holds every one of them against the ROM's own opcode and sub-function tables,
+ * and `bench/tier3.py` derives a function's Tier 3 entry from its `_OPCODE`, so a new VDI function is
+ * one pair of lines here. */
+#define VECTOR_LINE_A         0x28       /* the Line-A exception -> LINEA_DISPATCH */
+#define LINEA_DISPATCH        0xfc9f0c   /* the $Axxx handler: `rte`, not `rts` */
+#define LINEA_INIT            0xfc9f34   /* $a000 */
+#define LINEA_SEEDABORT_DEFAULT 0xfc9f9a /* `moveq #0,d0 / rts`: v_contourfill's SEEDABORT ($fd08e4) */
+#define VDI_ENTRY             0xfc9f9e   /* where SYSVAR_VDI_ENTRY's routine calls in, D1 = the parameter block */
+#define VDI_DISPATCH          0xfca9f6
+#define VDI_ROM_V_OPNWK           0xfcb694
+#define VDI_ROM_V_OPNWK_OPCODE    1
+#define VDI_ROM_V_OPNVWK          0xfcd612
+#define VDI_ROM_V_OPNVWK_OPCODE   100
+#define VDI_ROM_NOP               0xfca652   /* `rts`: four opcodes' entry, and USER_TIM's default */
+#define VDI_ROM_NOP_OPCODE        4
+#define VDI_ROM_NOP_OPCODE_10     10
+#define VDI_ROM_NOP_OPCODE_27     27
+#define VDI_ROM_NOP_OPCODE_34     34
+#define VDI_ROM_ESCAPE            0xfc427a   /* the escape sub-dispatcher, in the BIOS's range */
+#define VDI_ROM_ESCAPE_OPCODE     5
+#define VDI_ROM_GDP               0xfcbbcc   /* the GDP sub-dispatcher */
+#define VDI_ROM_GDP_OPCODE        11
+#define VDI_ROM_V_CONTOURFILL     0xfd08e0   /* installs LINEA_SEEDABORT_DEFAULT, then $a00f */
+#define VDI_ROM_V_CONTOURFILL_OPCODE 103
+#define VDI_ROM_VSF_PERIMETER     0xfcb45c
+#define VDI_ROM_VSF_PERIMETER_OPCODE 104
 
 #endif /* TOS102US_ADDRS_H */

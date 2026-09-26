@@ -1,5 +1,5 @@
-"""The HOST SLOTS — `include/gemdos/gemdos.h`'s one table of the fixed addresses that stand in, off
-target, for a ROM frame local whose ADDRESS a GEMDOS routine hands on — all twelve roles: the FAT
+"""The HOST SLOTS — `include/host_slot.h`'s one table, shared by every component, of the fixed addresses
+that stand in, off target, for a ROM frame local whose ADDRESS a routine hands on. GEMDOS's twelve: the FAT
 routines' word, the directory search's pattern, the walk's name and cursor, the delete's mark byte,
 `Fattrib`'s attribute byte, `create`'s free-slot search name and new entry's FCB name, `Frename`'s entry
 buffer, `Pexec`'s loader's header locals, and the dispatcher's two — the argument words of its nested
@@ -12,12 +12,15 @@ asserts a slot is never claimed twice, but two ROLES live at once (a walk's name
 searches, a search's pattern while the FAT word is taken beneath it) are two different slots, and only
 their addresses keep them apart.
 """
-from harness import emu
+from pathlib import Path
+
+from harness import addrs, emu
 
 import gemdos
-import gemdos_fs as fs
 
-SLOT_PREFIX = "GEMDOS_HOST_SLOT_"
+HEADER = Path(__file__).resolve().parents[1] / "include" / "host_slot.h"
+CONSTANTS = addrs.parse(HEADER)
+SLOT_PREFIX = "HOST_SLOT_"
 WIDTH_SUFFIX = "_BYTES"
 
 
@@ -40,7 +43,7 @@ def misplaced(slots):
 
 
 def test_every_host_slot_is_inside_the_dropped_band_and_apart():
-    slots = host_slots(fs.CONSTANTS)
+    slots = host_slots(CONSTANTS)
     assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
                           "CREATE_FREE_NAME", "CREATE_FCB", "RENAME_ENTRY", "C_ENTRY_ARGUMENTS",
                           "REDIRECTED_BYTE", "PEXEC_LOCALS"}
@@ -50,7 +53,7 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
 def test_the_check_refuses_a_slot_moved_onto_another():
     """...and the check is not vacuous: the frame word moved onto the delete mark, or out of the band,
     is refused by name."""
-    slots = host_slots(fs.CONSTANTS)
+    slots = host_slots(CONSTANTS)
     mark_at, _width = slots["DELETE_MARK"]
     word_bytes = slots["FRAME_WORD"][1]
     assert misplaced({**slots, "FRAME_WORD": (mark_at, word_bytes)})

@@ -64,8 +64,8 @@
 #define FREE_SLOT_NAME_BYTES  2
 
 /* Both frame locals `create` hands on stand in off target as host slots exactly as wide. */
-_Static_assert(GEMDOS_HOST_SLOT_CREATE_FREE_NAME_BYTES == FREE_SLOT_NAME_BYTES
-               && GEMDOS_HOST_SLOT_CREATE_FCB_BYTES == DIRENT_NAME_BYTES,
+_Static_assert(HOST_SLOT_CREATE_FREE_NAME_BYTES == FREE_SLOT_NAME_BYTES
+               && HOST_SLOT_CREATE_FCB_BYTES == DIRENT_NAME_BYTES,
                "a host slot narrower or wider than the frame local it stands in for");
 
 /* ---- $fc71b6, create --------------------------------------------------------------------------- */
@@ -94,7 +94,7 @@ static void store_disk_word(uint8_t *image, uint32_t at, uint16_t value)
 static uint32_t free_slot(uint8_t *image, uint32_t dnd, uint32_t directory, int32_t *position)
 {
     uint8_t name_local[FREE_SLOT_NAME_BYTES];
-    uint32_t name = gemdos_host_slot_claim(CREATE_FREE_NAME, name_local);
+    uint32_t name = host_slot_claim(CREATE_FREE_NAME, name_local);
     uint32_t slot;
 
     image[name] = DIRENT_DELETED;
@@ -106,7 +106,7 @@ static uint32_t free_slot(uint8_t *image, uint32_t dnd, uint32_t directory, int3
         gemdos_dir_zero_cluster(image, dnd);
         *position = 0;
     }
-    gemdos_host_slot_release(CREATE_FREE_NAME);
+    host_slot_release(CREATE_FREE_NAME);
     return slot;
 }
 
@@ -118,7 +118,7 @@ static void write_new_entry(uint8_t *image, uint32_t directory, uint32_t slot, u
                             uint32_t tail, uint16_t attr)
 {
     uint8_t fcb_local[DIRENT_NAME_BYTES];
-    uint32_t fcb = gemdos_host_slot_claim(CREATE_FCB, fcb_local);
+    uint32_t fcb = host_slot_claim(CREATE_FCB, fcb_local);
     int16_t reserved;
 
     gemdos_build_fcb_name(image, tail, fcb);
@@ -131,7 +131,7 @@ static void write_new_entry(uint8_t *image, uint32_t directory, uint32_t slot, u
     wr32(image + slot + DIRENT_FILELN, 0);
     gemdos_ofd_seek(image, directory, position);
     gemdos_ofd_write(image, directory, DIRENT_NAME_BYTES, fcb);
-    gemdos_host_slot_release(CREATE_FCB);
+    host_slot_release(CREATE_FCB);
     gemdos_ofd_close(image, directory, OFD_CLOSE_DIRECTORY);
 }
 

@@ -72,6 +72,8 @@ import gemdos                                              # noqa: E402
 # termination record it arms is entered through a stub of its own, which costs two instructions
 # where the dispatcher's costs three (`SLICE_ENTRY_COST` below).
 import gemdos_process                                      # noqa: E402
+# ...and the VDI's door, whose `addrs.h` convention and primitive declarations the VDI rows derive from.
+import vdi                                                 # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -603,6 +605,16 @@ PERF_ACCEPTED = {
               "switch becomes under -fno-jump-tables, and `redirect_jump_d0`'s record arithmetic for the "
               "D0 this arm alone hands back — 538 -> 892 cycles, 39 instructions to 77. The same arm over "
               "three bytes measures 0.96"),
+    # (N) (M)'s DUAL: A ROUTINE WHOSE ANSWER IS SEVERAL REGISTERS. A Line-A primitive answers in D0-D2/A0-A2
+    #     and a C function returns one register, so the core returns D0 and writes the rest through a
+    #     pointer (`src/vdi/linea.c`, `test/vdi.py`'s `declare_primitive`): one `movea.l 8(sp),a0` plus
+    #     a store per register, where the ROM's `lea`s WERE the answer. Tier 1 compares every register;
+    #     this column holds D0 and the cost. On a body of four loads it is the whole of the excess.
+    ("linea_init", "by jsr"): (
+        2.43, "(N) alone: $a000's four `lea`/`move.l` are the answer, and ours stores four longwords "
+              "through its results pointer and reloads D0 — 96 -> 176 cycles, 6 instructions to 8 "
+              "(both incl. the reset's 1 / 40). Every multi-register Line-A primitive pays this per "
+              "answer register; on the real primitives it is amortised by their bodies"),
 }
 
 # ---- THE LEAF RULE — the rows where a ratio is the wrong instrument ------------------------------
@@ -1197,6 +1209,27 @@ UNNUMBERED_ROUTINE_ROLES = {
     # ...and the CREATE layer (`src/gemdos/fs_create.c`; Fcreate, Ddelete and Dcreate are dispatched by number).
     "GEMDOS_CREATE": "GEMDOS create",
 }
+
+# ---- the VDI's, DERIVED rather than listed, so a band adds one `addrs.h` pair and no line here ----
+# A VDI FUNCTION (`VDI_ROM_<FN>` with an `_OPCODE` sibling — `addrs.h`'s convention) takes nothing and
+# answers only through memory: its arguments are the arrays the Line-A pointers name, which the case
+# staged as image. A LINE-A PRIMITIVE is called as `test/vdi.py`'s `declare_primitive` says — its C
+# arguments are the registers named there, and it is priced on D0: `RomBench.measure` compares D0 at the
+# signature's width, and a C function cannot leave A0-A2 as a 68000 routine does — so a primitive that
+# answers in SEVERAL registers returns D0 and writes the rest through a last pointer, which this column
+# hands `POINTER_STORAGE` (the dropped band's floor, see above). Those other registers are Tier 1's to
+# compare, register by register (`vdi._run_primitive_at`); this column prices the cost and holds D0.
+VDI_FUNCTIONS = sorted(name for name in dir(addrs)
+                       if name.startswith(vdi.ROUTINE_PREFIX) and hasattr(addrs, name + "_OPCODE"))
+CALL.update({name: Call((IMAGE,), RETURNS_NOTHING) for name in VDI_FUNCTIONS})
+UNNUMBERED_ROUTINE_ROLES.update({name: f"VDI {vdi.core_symbol(name)[len('vdi_'):]}" for name in VDI_FUNCTIONS})
+CALL.update({name: Call((IMAGE, *(EntryRegister(register) for register in contract.arguments),
+                         *((POINTER_STORAGE,) if len(contract.results) > 1 else ())),
+                        RETURNS_LONG if "d0" in contract.results else RETURNS_NOTHING)
+             for name, contract in vdi.PRIMITIVES.items()})
+UNNUMBERED_ROUTINE_ROLES.update({name: f"Line-A {name.lower()}" for name in vdi.PRIMITIVES})
+# ...and the one place a core's symbol is NOT its `addrs.h` name lower-cased.
+SYMBOL_OF_ROUTINE = {name: vdi.core_symbol(name) for name in VDI_FUNCTIONS}
 UNNUMBERED_ROUTINE_NAMES = {getattr(addrs, name): name for name in UNNUMBERED_ROUTINE_ROLES}
 
 # How a TRANSCRIPTION row names itself, keyed by the blob symbol: `src/bios/trap.S`'s entries and
@@ -1273,7 +1306,8 @@ def _function_label(entry):
 
 def _symbol(entry):
     """...and the C core's name, which is the same `addrs.h` name lower-cased."""
-    return _routine(entry).lower()
+    name = _routine(entry)
+    return SYMBOL_OF_ROUTINE.get(name, name.lower())
 
 
 def _case_label(name, symbol):

@@ -41,6 +41,7 @@
 #include "recreate.h"
 #include "addrs.h"
 #include "bios/vt52.h"
+#include "ram_vector.h"
 
 /* Every group of 16 screen pixels is `plane_words` words side by side, and the mask that selects a
  * pixel column inside one is the same word in each of them. */
@@ -98,15 +99,6 @@ static const uint8_t *font_column(const uint8_t *image, uint32_t at, unsigned ro
 {
     assert_in_machine_memory(at, addr_add(at, sign_ext16(stride) * (rows - 1)));
     return image + at;
-}
-
-/* `move.l CON_VECTOR_*(a4),a5 / jmp (a5)` — the vector, checked against the one routine this file
- * reconstructs. `what` names the caller for a reader who hits the halt. */
-static void require_cpu_routine(const uint8_t *image, uint32_t vector, uint32_t cpu_routine,
-                                const char *what)
-{
-    if (be32(image + vector) != cpu_routine)
-        recreate_not_reconstructed(what);
 }
 
 /* ---- $fd141c: one glyph, one byte-wide column at a time ----------------------------------------

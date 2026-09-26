@@ -63,7 +63,7 @@ def test_a_redirected_read_is_one_byte_of_the_file_sign_extended(what, selector,
 # build's host slot for it, both staged with it.
 STALE = 0x9C
 STALE_BYTE = {gemdos.DISPATCHER_FRAME_AT + addrs.GEMDOS_DISPATCH_REDIRECTED_BYTE_LOCAL: bytes([STALE]),
-              fs.CONSTANTS["GEMDOS_HOST_SLOT_REDIRECTED_BYTE"]: bytes([STALE])}
+              fs.CONSTANTS["HOST_SLOT_REDIRECTED_BYTE"]: bytes([STALE])}
 
 
 def test_a_redirected_read_at_the_end_of_the_file_answers_the_stale_frame_byte():

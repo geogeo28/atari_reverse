@@ -75,16 +75,10 @@
 #define IO_COUNT        4
 #define IO_COUNT_LOW    6
 #define IO_BUFFER       8
-_Static_assert(GEMDOS_HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES == IO_BUFFER + 4,
+_Static_assert(HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES == IO_BUFFER + 4,
                "the C entry's host slot is not the four words `$fc5078`'s caller pushes");
 /* `subq.w #1 / asl.w #2` at $fc98e8: the redirection table is longwords indexed from `Cconin`. */
 #define REDIRECT_ENTRY_BYTES 4
-
-#ifdef RECREATE_HOST_DIFFERENTIAL
-/* `include/gemdos/gemdos.h`'s host-slot guard: defined in the dispatcher, the one core every GEMDOS
- * routine sits under, rather than beside any one of the slots' users. */
-unsigned gemdos_host_slots_held;
-#endif
 
 /* How many BYTES of the caller's words the dispatcher copies for each of the four argument classes,
  * indexed by `descriptor & GEMDOS_DESC_ARGUMENT_MASK`. Not a formula: the widest is 14, which is
@@ -210,8 +204,8 @@ static uint32_t call_handler(uint8_t *image, uint32_t handler, uint32_t argument
  * arm. The words are the door's own frame, laid in the host slot off target and in this local on it. */
 static uint32_t nested_fwrite(uint8_t *image, int16_t handle, uint32_t count, uint32_t buffer)
 {
-    uint8_t words_local[GEMDOS_HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES];
-    uint32_t words = gemdos_host_slot_claim(C_ENTRY_ARGUMENTS, words_local);
+    uint8_t words_local[HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES];
+    uint32_t words = host_slot_claim(C_ENTRY_ARGUMENTS, words_local);
     uint32_t result;
 
     wr16(image + words, GEMDOS_FWRITE_FN);
@@ -219,7 +213,7 @@ static uint32_t nested_fwrite(uint8_t *image, int16_t handle, uint32_t count, ui
     wr32(image + words + IO_COUNT, count);
     wr32(image + words + IO_BUFFER, buffer);
     result = gemdos_dispatch(image, words);
-    gemdos_host_slot_release(C_ENTRY_ARGUMENTS);
+    host_slot_release(C_ENTRY_ARGUMENTS);
     return result;
 }
 
@@ -238,12 +232,12 @@ __attribute__((noinline))
 static uint32_t redirected_read_character(uint8_t *image, int16_t handle)
 {
     uint8_t byte_local;
-    uint32_t byte = gemdos_host_slot_claim(REDIRECTED_BYTE, &byte_local);
+    uint32_t byte = host_slot_claim(REDIRECTED_BYTE, &byte_local);
     uint32_t result;
 
     gemdos_fread(image, handle, 1, byte);
     result = sign_ext8(image[byte]);
-    gemdos_host_slot_release(REDIRECTED_BYTE);
+    host_slot_release(REDIRECTED_BYTE);
     return result;
 }
 
@@ -307,8 +301,8 @@ static uint32_t redirected_read_line(uint8_t *image, int16_t handle, uint32_t bu
         if (image[at] == CON_CR) {
             uint8_t byte_local;
 
-            gemdos_fread(image, handle, 1, gemdos_host_slot_claim(REDIRECTED_BYTE, &byte_local));
-            gemdos_host_slot_release(REDIRECTED_BYTE);
+            gemdos_fread(image, handle, 1, host_slot_claim(REDIRECTED_BYTE, &byte_local));
+            host_slot_release(REDIRECTED_BYTE);
             break;
         }
         length++;

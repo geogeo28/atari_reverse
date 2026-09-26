@@ -74,7 +74,7 @@ import struct
 import sys
 from pathlib import Path
 
-from harness import BASE_IMAGE, _lib, addrs, emu
+from harness import BASE_IMAGE, _lib, addrs
 
 import case
 import gemdos
@@ -91,10 +91,10 @@ from opcodes import (ADDA_L_D0_A0, BTST_IMMEDIATE_STACK, DBF_D1, DBF_D2, LEA_ABS
 # `test/gemdos_memory.py` reads its group's header. The layers' own headers are read too — the drive
 # builder's quirks (`drive()` below is the DMD as `$fc53c0` builds it) and the I/O engine's FAT12
 # packing and seek modes — so every fs battery reads ONE namespace, this module's, and no battery
-# keeps a dictionary of its own over a header. `gemdos/gemdos.h` is read for its HOST SLOTS, the frame
-# locals the fs routines hand on (`test_gemdos_host_slots.py`).
+# keeps a dictionary of its own over a header. `host_slot.h` is read for the HOST SLOTS, the frame
+# locals the fs routines hand on (`test_host_slots.py`).
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-FS_HEADERS = tuple(_INCLUDE / name for name in ("gemdos/gemdos.h", "gemdos/fs.h", "gemdos/fs_drive.h",
+FS_HEADERS = tuple(_INCLUDE / name for name in ("host_slot.h", "gemdos/fs.h", "gemdos/fs_drive.h",
                                                 "gemdos/fs_io.h", "gemdos/fs_dir.h", "gemdos/fs_file.h",
                                                 "gemdos/fs_leaves.h"))
 CONSTANTS = {name: value for header in FS_HEADERS for name, value in addrs.parse(header).items()}
@@ -190,7 +190,7 @@ ATTR_BIT_7 = 0x80
 # What fills a staged buffer nothing else claims, so that a routine reading past what a case staged
 # reads something a comparison notices rather than zeros. `vt52.CANARY`'s value, for its reason — and
 # the ONE fill every fs battery pre-fills an output buffer with.
-SLACK_FILL = 0xA5
+SLACK_FILL = case.SLACK_FILL
 
 # A D0 whose HIGH half none of the file system's routines writes, for the ones that return through a
 # `move.w`/`clr.w` over the caller's (`include/gemdos/fs.h`, "what the cores export"): such a case
@@ -982,29 +982,13 @@ def staged_disk():
 
 # ---- one case over the staged disk ----------------------------------------------------------------
 
-class Result:
-    """A run, and what the machine held AFTER it.
+class Result(case.Result):
+    """`case.Result` — a run and the machine after it — with the staged disk's own readers.
 
     `harness.differential` hands back the oracle's WRITE LEDGER rather than its final image, which
-    is the sharper thing for a field the routine stores — a `KeyError` names a field nothing wrote
-    — but the disk, the buffers and the list links are mostly bytes a case POKED and the routine
-    left alone. So `final` is `case.final_image`: the captured snapshot, the case's pokes, and then
-    the oracle's writes, composed once per run rather than per read.
+    is the sharper thing for a field the routine stores, but the disk, the buffers and the list links
+    are mostly bytes a case POKED and the routine left alone, so these read the composed image.
     """
-
-    def __init__(self, info, pokes):
-        self.info = info
-        self.staged = pokes
-        self.final = case.final_image(info, pokes)
-
-    def after(self, at, length):
-        return bytes(self.final[at:at + length])
-
-    def long(self, at):
-        return int.from_bytes(self.after(at, 4), "big")
-
-    def word(self, at):
-        return int.from_bytes(self.after(at, 2), "big")
 
     def sector(self, record):
         """...and one sector of the staged disk."""
@@ -1045,28 +1029,13 @@ def run(entry, glue, pokes, *, regs=None, poison=False, **kwargs):
 
 
 # ---- one run's end, as the next run's start --------------------------------------------------------
-# A SEQUENCE a program makes — `Fsfirst` then `Fsnext`, `Fdup` then two `Fclose`s — is proved one
-# routine at a time, each run starting from the machine the one before it ENDED in. That is a real
-# differential rather than a replay: the end state carried is the ORACLE's, and BOTH shores start the
-# next run from it — a candidate that had ended anywhere else failed the previous run's compare.
-#
-# WHAT IS CARRIED: every staged poke re-read from the run's final memory (its staging with the
-# oracle's writes over it), and each byte the oracle wrote that no poke covered. WHAT IS NOT: the stack
-# band, which the differential drops and every run re-stages with its own arguments, and the fields
-# `gemdos.machine` stages (`savptr`, the trap frame, the BIOS return slot), which the next run's
-# `machine` fills afresh so that its own stores to them are still changes.
-_STACK_BAND = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
-
+# `case.continued`, with the fields `gemdos.machine` stages (`savptr`, the trap frame, the BIOS return
+# slot) refilled by the next run's own `machine` rather than carried, so its stores to them are still
+# changes.
 
 def continued(result):
-    """The pokes the run after `result` starts from — its end state, as above."""
-    refilled = gemdos.machine().keys()
-    covered = {address for at, data in result.staged.items() for address in range(at, at + len(data))}
-    pokes = {at: result.after(at, len(data)) for at, data in result.staged.items()
-             if at not in _STACK_BAND and at not in refilled}
-    pokes.update({at: bytes([value]) for at, value in result.info["writes"].items()
-                  if at not in covered and at not in _STACK_BAND})
-    return pokes
+    """The pokes the run after `result` starts from — its end state (`case.continued`)."""
+    return case.continued(result, refilled=gemdos.machine().keys())
 
 
 # ---- a GEMDOS LEAF, entered at its own address or through the dispatcher -----------------------------
