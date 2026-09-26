@@ -19,7 +19,7 @@ import ctypes
 
 import pytest
 
-from harness import _lib, addrs, emu
+from harness import _lib, addrs
 
 import case
 import fs_file as ff
@@ -208,21 +208,8 @@ def test_fclose_of_a_standard_handle_naming_a_file_closes_through_its_record():
 
 # ---- Fdup, Fclose, Fclose: the double free -------------------------------------------------------
 # THREE CHAINED DIFFERENTIALS, then the two pool_gets that show what they left: each step starts from
-# the machine the previous one ENDED in (its staging with the oracle's writes over it — both shores
-# ended there, or the step before would have failed), so the sequence is proved one routine at a time.
-
-STACK_BAND = range(emu.STACK_GUARD_LO, emu.STACK_TOP)
-
-
-def _continued(result):
-    """The staging of the next step: this one's, with the oracle's writes laid over it — each staged
-    poke re-read from the run's final memory, and a write no poke covers added as its own byte. The
-    stack band is left as staged: it is each run's own scratch, re-staged by every `machine()`."""
-    pokes = {at: data if at in STACK_BAND else result.after(at, len(data)) for at, data in result.staged.items()}
-    covered = {address for at, data in result.staged.items() for address in range(at, at + len(data))}
-    pokes.update({at: bytes([value]) for at, value in result.info["writes"].items()
-                  if at not in covered and at not in STACK_BAND})
-    return pokes
+# the machine the previous one ENDED in (`gemdos_fs.continued`), so the sequence is proved one routine
+# at a time.
 
 
 def _step(entry, glue, pokes, frame):
@@ -244,13 +231,13 @@ def test_fdup_and_two_fcloses_free_the_ofd_twice():
     duplicate = duplicated.info["ret"]
     assert duplicate == ff.ANOTHER_HANDLE and _descriptor(duplicated, duplicate) == (FILE_OFD, ff.P_RUN, 1)
 
-    first = _step(fs.FCLOSE.entry, fs.leaf_glue(fs.FCLOSE, (ff.A_HANDLE,)), _continued(duplicated),
+    first = _step(fs.FCLOSE.entry, fs.leaf_glue(fs.FCLOSE, (ff.A_HANDLE,)), fs.continued(duplicated),
                   case.word_arg(ff.A_HANDLE))
     assert first.info["ret"] == 0 and ff.files_after(first) == []
     assert first.long(records.POOL_CHAIN) == FILE_OFD and first.long(FILE_OFD) == 0, "freed onto an empty chain"
     ff.assert_every_buffer_flushed(first)
 
-    second = _step(fs.FCLOSE.entry, fs.leaf_glue(fs.FCLOSE, (duplicate,)), _continued(first), case.word_arg(duplicate))
+    second = _step(fs.FCLOSE.entry, fs.leaf_glue(fs.FCLOSE, (duplicate,)), fs.continued(first), case.word_arg(duplicate))
     assert second.info["ret"] == EINTRN
     assert _descriptor(second, duplicate) == (0, 0, 0)
     assert second.long(records.POOL_CHAIN) == FILE_OFD and second.long(FILE_OFD) == FILE_OFD, "the self-loop"
@@ -260,12 +247,12 @@ def test_fdup_and_two_fcloses_free_the_ofd_twice():
     assert second.word(fs.bcb_at(root_buffer) + fs.BCB_DIRTY) == fs.BCB_MARKED_DIRTY, "the freed OFD rewrote its entry"
 
     handed_out = []
-    pokes = _continued(second)
+    pokes = fs.continued(second)
     for _get in range(2):
         got = _step(addrs.GEMDOS_POOL_GET, lambda lib, buf: lib.gemdos_pool_get(buf, fs.NODE_POOL_CLASS), pokes,
                     case.word_arg(fs.NODE_POOL_CLASS))
         handed_out.append(got.info["ret"])
-        pokes = _continued(got)
+        pokes = fs.continued(got)
     assert handed_out == [FILE_OFD, FILE_OFD], "the same record handed out twice"
 
 

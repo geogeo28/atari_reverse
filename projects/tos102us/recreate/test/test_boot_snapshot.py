@@ -136,6 +136,16 @@ import test_gemdos_fs_search                                # noqa: E402,F401
 import test_gemdos_fs_close                                 # noqa: E402,F401
 import test_gemdos_fs_delete                                # noqa: E402,F401
 import test_gemdos_fs_leaves2                               # noqa: E402,F401
+# ...and the NAME leaves: sfirst/Fsfirst, Dsetpath, open/Fopen, Fattrib and Fdelete, over the same tree.
+import test_gemdos_fs_sfirst                                # noqa: E402,F401
+import test_gemdos_fs_setpath                               # noqa: E402,F401
+import test_gemdos_fs_open                                  # noqa: E402,F401
+import test_gemdos_fs_attrib                                # noqa: E402,F401
+import test_gemdos_fs_fdelete                               # noqa: E402,F401
+# ...and the CREATE layer: create/Fcreate, Ddelete and Dcreate, over the same tree grown by two empty directories.
+import test_gemdos_fs_create                                # noqa: E402,F401
+import test_gemdos_fs_ddelete                               # noqa: E402,F401
+import test_gemdos_fs_dcreate                               # noqa: E402,F401
 import fs_records                                           # noqa: E402
 import gemdos_fs                                            # noqa: E402
 import gemdos_process                                       # noqa: E402

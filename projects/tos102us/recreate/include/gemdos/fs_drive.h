@@ -20,9 +20,67 @@
 
 #include <stdint.h>
 
+#include "gemdos/gemdos.h"
+#include "gemdos/fs.h"
+#include "machine.h"
+
 /* The two drive tables' stride: `GEMDOS_DMD_TABLE` and `GEMDOS_DIRECTORY_NODES` hold one pointer per
  * entry, indexed `adda.l a0,a0` twice ($fc5112, $fc6852). */
 #define DRIVE_TABLE_ENTRY_BYTES 4
+
+/* ---- a path's drive prefix, and the directory node slots -----------------------------------------
+ * `Dsetpath` ($fc6a7e) repeats two pieces of this layer instruction for instruction: `$fc6a8a..$fc6aa6`
+ * reads `X:` exactly as `$fc68dc` does, and `$fc6ae8..$fc6afe` searches the node slots exactly as
+ * `$fc67de` does. Written once, here, for both. */
+#define DRIVE_LETTER_SEPARATOR ':'
+#define FIRST_DRIVE_LETTER     'A'
+/* `X:` — the letter and its colon, consumed together ($fc6902 `addq.l #2`, $fc6aa6). */
+#define DRIVE_PREFIX_BYTES     2
+/* The directory slot search starts at 1: a p_curdir byte of 0 means "no directory", so node 0 is
+ * never handed out ($fc6862 `moveq #1,d6`). */
+#define FIRST_DIRECTORY_SLOT   1
+
+/* The drive `X:` at `text` names, with `*text` stepped past the prefix — or, with no `:` as the text's
+ * SECOND byte, the running process's current drive and `*text` untouched. The letter is upper-cased and
+ * `'A'` subtracted as a WORD, with no bound: `1:` is drive -16. The `:` test reads the second byte
+ * before anything checks the first, so an empty text reads one byte past its NUL. */
+static inline int16_t gemdos_drive_of_prefix(const uint8_t *image, uint32_t *text)
+{
+    int16_t drive;
+
+    if (image[*text + 1] != DRIVE_LETTER_SEPARATOR)
+        return gemdos_current_drive(image);
+    drive = (int16_t)(uint16_t)(gemdos_fs_toupper(0, (uint16_t)sign_ext8(image[*text])) - FIRST_DRIVE_LETTER);
+    *text += DRIVE_PREFIX_BYTES;
+    return drive;
+}
+
+/* The first directory node slot from FIRST_DIRECTORY_SLOT with no holder (a reference count of 0), or
+ * GEMDOS_DIRECTORY_NODE_COUNT when all are held. */
+static inline int16_t gemdos_free_directory_slot(const uint8_t *image)
+{
+    int16_t slot;
+
+    for (slot = FIRST_DIRECTORY_SLOT;
+         slot < GEMDOS_DIRECTORY_NODE_COUNT && image[GEMDOS_CURDIR_REFCOUNTS + slot] != 0;
+         slot++)
+        ;
+    return slot;
+}
+
+/* Every index into the drive tables is a SIGNED word, widened by the ROM's `movea.w` or `ext.w`
+ * before it is scaled, and none is bounded: a node out of range addresses outside its table, as the
+ * ROM does. `node`'s longword in `GEMDOS_DIRECTORY_NODES`: */
+static inline uint32_t gemdos_node_slot(int16_t node)
+{
+    return addr_add(GEMDOS_DIRECTORY_NODES, (uint32_t)(int32_t)node * DRIVE_TABLE_ENTRY_BYTES);
+}
+
+/* ...and the running process's p_curdir byte for `drive`, which holds a node as a signed byte. */
+static inline uint8_t *gemdos_curdir_entry(uint8_t *image, int16_t drive)
+{
+    return gemdos_basepage_byte(image, gemdos_basepage(image), BASEPAGE_CURDIR + (uint32_t)(int32_t)drive);
+}
 
 /* THE FAT PSEUDO-FILE STARTS AT POSITION 3, byte offset 3 in its cluster ($fc55be `move.l #3`,
  * $fc55ca `move.w #3`), with no current cluster. Nothing in the builder says why; the root

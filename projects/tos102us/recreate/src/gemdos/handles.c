@@ -25,9 +25,10 @@
  * THE TABLE IS WALKED BY ADDRESS, NOT BY INDEX, and the arithmetic is signed on purpose. The ROM
  * computes `(handle - 6) * 10 + $8092` with `muls.w`, and `Fdup` reaches it with a handle it has
  * only proved to be `> 0` — so a standard handle of 1..5 in `p_uft` makes a NEGATIVE displacement
- * and reads the ten bytes before the table. That is the ROM's own shape and `descriptor_of` below
- * keeps it; what it adds is a host-only bound, the way `gemdos/gemdos.h`'s handle accessor does, so the
- * reconstruction says which addresses it claims to describe rather than indexing off its array.
+ * and reads the ten bytes before the table. That is the ROM's own shape and `gemdos_descriptor_of`
+ * (`include/gemdos/process.h`) keeps it; what it adds is a host-only bound, the way `gemdos/gemdos.h`'s
+ * handle accessor does, so the reconstruction says which addresses it claims to describe rather than
+ * indexing off its array.
  */
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #include <assert.h>
@@ -51,13 +52,6 @@ uint32_t gemdos_descriptor_at(int16_t index)
     assert(at >= 0 && (uint32_t)at + GEMDOS_HANDLE_STRIDE <= ST_RAM_BYTES);
 #endif
     return (uint32_t)at;
-}
-
-/* ...and the descriptor a HANDLE names. Every caller has already decided the handle is 6 or above,
- * except `Fdup`, which is where the negative displacement comes from. */
-static uint32_t descriptor_of(int16_t handle)
-{
-    return gemdos_descriptor_at((int16_t)(handle - GEMDOS_FIRST_FILE_HANDLE));
 }
 
 /* One of the six standard handles of a basepage that is NOT necessarily `p_run` — `Pexec` forces
@@ -127,7 +121,7 @@ uint32_t gemdos_force_handle(uint8_t *image, int16_t standard, int16_t handle, u
     if (handle < GEMDOS_FIRST_FILE_HANDLE)
         return GEMDOS_EIHNDL;
 
-    descriptor = descriptor_of(handle);
+    descriptor = gemdos_descriptor_of(handle);
     named = (int32_t)be32(image + descriptor + HANDLE_VALUE);
     if (named < 0) {
         set_standard_handle(image, basepage, standard, (uint8_t)named);
@@ -178,7 +172,7 @@ uint32_t gemdos_fdup(uint8_t *image, int16_t standard)
      * descriptor is left naming 0. The dispatcher's resolution answers EIHNDL for exactly that. */
     if (source > 0)
         wr32(image + descriptor + HANDLE_VALUE,
-             be32(image + descriptor_of(source) + HANDLE_VALUE));
+             be32(image + gemdos_descriptor_of(source) + HANDLE_VALUE));
     else
         wr32(image + descriptor + HANDLE_VALUE, (uint32_t)(int32_t)source);
     wr16(image + descriptor + HANDLE_REFCOUNT, 1);
@@ -192,14 +186,6 @@ static int drop_reference(uint8_t *image, uint32_t descriptor)
 
     wr16(image + descriptor + HANDLE_REFCOUNT, left);
     return left == 0;
-}
-
-/* ...and the last holder's release: the value and the OWNER zeroed, which is what puts the slot
- * back in `Fdup`'s search. */
-static void release_descriptor(uint8_t *image, uint32_t descriptor)
-{
-    wr32(image + descriptor + HANDLE_VALUE, 0);
-    wr32(image + descriptor + HANDLE_OWNER, 0);
 }
 
 /* $fc56c6 ($3e) — close a handle: 0, or EIHNDL, or what the file system's close answered.
@@ -244,10 +230,10 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
             return 0;
         looked_up = named;
     } else {
-        descriptor = descriptor_of(handle);
+        descriptor = gemdos_descriptor_of(handle);
         if ((int32_t)be32(image + descriptor + HANDLE_VALUE) < 0) {
             if (drop_reference(image, descriptor))
-                release_descriptor(image, descriptor);
+                gemdos_release_descriptor(image, descriptor);
             return 0;
         }
         looked_up = handle;
@@ -257,10 +243,10 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
     if (ofd == 0)
         return GEMDOS_EIHNDL;
     closed = gemdos_ofd_close(image, ofd, 0);
-    descriptor = descriptor_of(looked_up);
+    descriptor = gemdos_descriptor_of(looked_up);
     if (drop_reference(image, descriptor)) {
         gemdos_pool_free(image, be32(image + descriptor + HANDLE_VALUE));
-        release_descriptor(image, descriptor);
+        gemdos_release_descriptor(image, descriptor);
     }
     return closed;
 }
@@ -283,11 +269,11 @@ int32_t gemdos_resolve_handle(const uint8_t *image, uint32_t arguments, uint16_t
     int16_t handle = (int16_t)be16(image + at);
 
     if (handle >= GEMDOS_FIRST_FILE_HANDLE)
-        return (int32_t)be32(image + descriptor_of(handle) + HANDLE_VALUE);
+        return (int32_t)be32(image + gemdos_descriptor_of(handle) + HANDLE_VALUE);
     if (handle < 0)
         return handle;
     handle = gemdos_standard_handle(image, (unsigned)handle);
     if (handle > 0)
-        return (int32_t)be32(image + descriptor_of(handle) + HANDLE_VALUE);
+        return (int32_t)be32(image + gemdos_descriptor_of(handle) + HANDLE_VALUE);
     return handle;
 }

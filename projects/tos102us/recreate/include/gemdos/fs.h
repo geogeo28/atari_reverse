@@ -74,6 +74,10 @@
  * `Fdatime` moves ($fc7760 `move.l #4`). */
 #define DIRENT_TAIL_BYTES      (DIRENT_BYTES - DIRENT_TIME)
 #define DIRENT_TIME_DATE_BYTES (DIRENT_STRTCL - DIRENT_TIME)
+/* A search or a read leaves the directory's position ONE ENTRY PAST the entry it has just read, so
+ * that entry's own position is this far behind it ($fc660c and $fc704c `addl #-32`, $fc724e and
+ * $fc72be `subi.l #32`, $fc7806 `subi.l #32`). */
+#define ENTRY_BEHIND_POSITION  DIRENT_BYTES
 /* The FCB form those eleven name bytes are: a stem and an extension, each padded with spaces, no
  * dot between them ($fc5d28 builds it, $fc6b66 reads it back). */
 #define FCB_STEM_BYTES       DIRENT_EXT
@@ -100,8 +104,9 @@
  * Named for the entries a battery stages with them. */
 #define GEMDOS_ATTR_HIDDEN    0x02
 #define GEMDOS_ATTR_SYSTEM    0x04
-/* Only ever inside `ori.w #33` at $fc6d24: Fsfirst with any attribute but VOLUME also matches
- * read-only and archive entries. No routine tests or sets it alone. */
+/* Only ever inside a search attribute: `ori.w #33` at $fc6d24 (Fsfirst with any attribute but VOLUME
+ * also matches read-only and archive entries) and `move.w #39` at $fc7630/$fc76a4/$fc77dc (the name
+ * leaves' GEMDOS_ATTR_ANY_FILE, `include/gemdos/fs_dir.h`). No routine tests or sets it alone. */
 #define GEMDOS_ATTR_ARCHIVE   0x20
 
 /* ---- the DMD: one per open drive, built by `$fc53c0` out of the BPB -----------------------------
@@ -189,6 +194,13 @@
  * open overwrites it, so it is not a chain; nothing in $fc4e5e..$fc9f0b reads it. */
 #define OFD_NEXT_SAME_FILE   44
 #define OFD_MODE             48     /* word: Fopen/Fcreate's mode ($fc7006); no reader in the group */
+#define OFD_MODE_BYTES        2
+/* ...and what it holds: `Fopen`'s mode argument, the WORD — read, write, both. One routine tests it,
+ * `open`, and only for 0 ($fc7656 `tst.w`); `create` stores read or read/write by the new entry's
+ * read-only bit ($fc7386 `clr.w`, $fc738a `move.w #2`). */
+#define OPEN_MODE_READ        0
+#define OPEN_MODE_WRITE       1
+#define OPEN_MODE_READ_WRITE  2
 #define OFD_BYTES            64     /* pool size class 4 — `pool_get(4)` at $fc6ff0               */
 /* A directory read as a file has no length of its own: the largest positive long ($fc5c62). */
 #define DIRECTORY_LENGTH     0x7fffffffu
@@ -348,10 +360,11 @@ static inline uint32_t bios_getbpb(uint8_t *image, uint32_t return_site, uint16_
 }
 
 /* ---- the ROM's mask table ----------------------------------------------------------------------
- * `$fd2fc8`: the word `(1 << n) - 1` for n = 0..17 (16 and 17 both `$ffff`), then the ROM's next
- * bytes (text) from 18 on. Both readers index it with a SIGNED word and no bound — `movea.w` then
- * `adda.l` at $fc549e (the DMD builder) and $fc7e28 (`$fc7e24`) — so a log2 of -1 reads the word
- * BELOW it, and any index at all reads SOME word of the ROM. The one reading of it, for both. */
+ * `$fd2fc8`: the word `(1 << n) - 1` for n = 0..17 (16 and 17 both `$ffff`), and from 18 on the ROM's
+ * next bytes — `GEMDOS_DOT_ENTRY_HEAD`, the template `Dcreate` copies `.`'s entry from. Both readers
+ * index it with a SIGNED word and no bound — `movea.w` then `adda.l` at $fc549e (the DMD builder) and
+ * $fc7e28 (`$fc7e24`) — so a log2 of -1 reads the word BELOW it, and any index at all reads SOME word
+ * of the ROM. The one reading of it, for both. */
 #define GEMDOS_BIT_MASK_ENTRY_BYTES 2
 
 static inline uint16_t gemdos_bit_mask(const uint8_t *image, uint16_t index)

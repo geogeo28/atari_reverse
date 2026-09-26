@@ -1077,3 +1077,16 @@ cmt 0xfc57ee close: dirty -> 10 entry bytes from OFD+6 (cluster/length swapped);
 cmt 0xfc7824 delete_entry(dnd,dirent,pos): caller's handles on the entry closed (not released), another's -> EACCDN; chain freed to 0/-1; $e5 written; dir closed flag 2
 cmt 0xfc772e Fdatime: no OFD check (NULL -> reads vectors 6/7); set leaves the caller's buffer byte-swapped; get D0 = read count with the swapped date as its low word
 cmt 0xfc7a68 Dfree: counts clusters 2..numcl-1 free, reports numcl; any negative open_drive word -> -1
+fn 0xfc6d14 gemdos_sfirst
+fn 0xfc7606 gemdos_open
+fn 0xfc71b6 gemdos_create
+var 0xfd2fec gemdos_dot_entry_head
+var 0xfd3002 gemdos_dot_dot_entry_head
+cmt 0xfc6d14 sfirst(name,attr.w,dta): attr|=$21 unless the word is 8; find_dir+dir_search from 0; EFILNF for either miss; dta 0 stores nothing; DTA gets 12 bytes of the tail (past its NUL), attr, pos, DND, then fill_dta
+cmt 0xfc6a7e Dsetpath: drops the old node's count BEFORE the slot search and the walk, never restored on EPTHNF; X: selects the drive for the log-in only, the walk runs on the CURRENT drive (and its log-in can take the slot just chosen); a negative drive's log-in answer reads as an error
+cmt 0xfc7606 open(name,mode): search attr $27 (no plain subdir or volume label); EFILNF for either miss; read-only with a non-zero mode WORD -> EACCDN; handle_alloc
+cmt 0xfc7678 Fattrib: EPTHNF/EFILNF; one byte at pos-21 through the dir OFD into/out of its own arg byte 15(a6); set closes flag 2; no checks; returns ext.w of the byte
+cmt 0xfc77b2 Fdelete: search attr $27; EFILNF for any miss; read-only -> EACCDN; delete_entry at pos-32
+cmt 0xfc71b6 create: an existing entry DELETED via $fc7824 (answer unread: a duplicate entry if another process holds it), slot reused; only RO/subdir refuse (and.w #17); root cannot grow; a subdir grows by a zeroed cluster
+cmt 0xfc73ce Dcreate: ./.. from $fd2fec/$fd3002, clocks unswapped; the 50-byte OFD copy + close(6) unlinks every OFD opened earlier in the parent; ENSMEM paths leak; full disk rolled back via Ddelete
+cmt 0xfc792a Ddelete: no current-directory check; EACCDN non-empty; EINTRN for child DNDs or open files; an empty root never returns (child walk from address 28); the made OFD leaks

@@ -74,7 +74,7 @@ import struct
 import sys
 from pathlib import Path
 
-from harness import BASE_IMAGE, _lib, addrs
+from harness import BASE_IMAGE, _lib, addrs, emu
 
 import case
 import gemdos
@@ -181,6 +181,11 @@ ROOT_ENTRIES = ROOT_SECTORS * SECTOR_BYTES // DIRENT_BYTES
 
 # A plain file's attribute: no bit set. Every bit this module writes is `include/gemdos/fs.h`'s.
 ATTR_NONE = 0x00
+# ...and two shapes of an attribute or mode ARGUMENT that no attribute bit names: a WORD whose high
+# byte is not 0 (`Fattrib`, `create` and `Fcreate` keep only the low byte, `open` tests and stores the
+# whole word), and bit 7 of the byte, which `ext.w` makes a sign.
+ARGUMENT_HIGH_BYTE = 0x1200
+ATTR_BIT_7 = 0x80
 
 # What fills a staged buffer nothing else claims, so that a routine reading past what a case staged
 # reads something a comparison notices rather than zeros. `vt52.CANARY`'s value, for its reason — and
@@ -1005,6 +1010,14 @@ class Result:
         """...and one sector of the staged disk."""
         return self.after(IMAGE_AT + record * SECTOR_BYTES, SECTOR_BYTES)
 
+    def root_entry(self, index):
+        """...and the 32 bytes of root entry `index` ON THE DISK — what a flush left there."""
+        return self.after(IMAGE_AT + ROOT_RECORD * SECTOR_BYTES + index * DIRENT_BYTES, DIRENT_BYTES)
+
+    def cluster_entry(self, cluster, index):
+        """...and entry `index` of the directory whose first cluster is `cluster`, on the disk."""
+        return self.after(IMAGE_AT + record_of_cluster(cluster) * SECTOR_BYTES + index * DIRENT_BYTES, DIRENT_BYTES)
+
     def order(self, which):
         return cache_order(self.long, which)
 
@@ -1031,6 +1044,31 @@ def run(entry, glue, pokes, *, regs=None, poison=False, **kwargs):
     return Result(info, staged)
 
 
+# ---- one run's end, as the next run's start --------------------------------------------------------
+# A SEQUENCE a program makes — `Fsfirst` then `Fsnext`, `Fdup` then two `Fclose`s — is proved one
+# routine at a time, each run starting from the machine the one before it ENDED in. That is a real
+# differential rather than a replay: the end state carried is the ORACLE's, and BOTH shores start the
+# next run from it — a candidate that had ended anywhere else failed the previous run's compare.
+#
+# WHAT IS CARRIED: every staged poke re-read from the run's final memory (its staging with the
+# oracle's writes over it), and each byte the oracle wrote that no poke covered. WHAT IS NOT: the stack
+# band, which the differential drops and every run re-stages with its own arguments, and the fields
+# `gemdos.machine` stages (`savptr`, the trap frame, the BIOS return slot), which the next run's
+# `machine` fills afresh so that its own stores to them are still changes.
+_STACK_BAND = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
+
+
+def continued(result):
+    """The pokes the run after `result` starts from — its end state, as above."""
+    refilled = gemdos.machine().keys()
+    covered = {address for at, data in result.staged.items() for address in range(at, at + len(data))}
+    pokes = {at: result.after(at, len(data)) for at, data in result.staged.items()
+             if at not in _STACK_BAND and at not in refilled}
+    pokes.update({at: bytes([value]) for at, value in result.info["writes"].items()
+                  if at not in covered and at not in _STACK_BAND})
+    return pokes
+
+
 # ---- a GEMDOS LEAF, entered at its own address or through the dispatcher -----------------------------
 # Every file-system leaf, once: its selector, the handler address the ROM's dispatch table holds for
 # it (`test_gemdos_fs_io_leaves.py` checks each against the table), its C core, and its argument frame
@@ -1044,10 +1082,37 @@ FDATIME = Leaf(addrs.GEMDOS_FDATIME_FN, addrs.GEMDOS_FDATIME, "gemdos_fdatime", 
 DFREE = Leaf(addrs.GEMDOS_DFREE_FN, addrs.GEMDOS_DFREE, "gemdos_dfree", ">Ih")
 DGETPATH = Leaf(addrs.GEMDOS_DGETPATH_FN, addrs.GEMDOS_DGETPATH, "gemdos_dgetpath", ">Ih")
 FSNEXT = Leaf(addrs.GEMDOS_FSNEXT_FN, addrs.GEMDOS_FSNEXT, "gemdos_fsnext", ">")    # the DTA is its input
-LEAVES = (FREAD, FWRITE, FSEEK, FCLOSE, FDATIME, DFREE, DGETPATH, FSNEXT)
+# ...and the leaves that find a NAME (`src/gemdos/fs_open.c`).
+FSFIRST = Leaf(addrs.GEMDOS_FSFIRST_FN, addrs.GEMDOS_FSFIRST, "gemdos_fsfirst", ">IH")
+DSETPATH = Leaf(addrs.GEMDOS_DSETPATH_FN, addrs.GEMDOS_DSETPATH, "gemdos_dsetpath", ">I")
+FOPEN = Leaf(addrs.GEMDOS_FOPEN_FN, addrs.GEMDOS_FOPEN, "gemdos_fopen", ">IH")
+FATTRIB = Leaf(addrs.GEMDOS_FATTRIB_FN, addrs.GEMDOS_FATTRIB, "gemdos_fattrib", ">IHH")
+FDELETE = Leaf(addrs.GEMDOS_FDELETE_FN, addrs.GEMDOS_FDELETE, "gemdos_fdelete", ">I")
+# ...and the leaves that make and unmake an entry (`src/gemdos/fs_create.c`).
+FCREATE = Leaf(addrs.GEMDOS_FCREATE_FN, addrs.GEMDOS_FCREATE, "gemdos_fcreate", ">IH")
+DDELETE = Leaf(addrs.GEMDOS_DDELETE_FN, addrs.GEMDOS_DDELETE, "gemdos_ddelete", ">I")
+DCREATE = Leaf(addrs.GEMDOS_DCREATE_FN, addrs.GEMDOS_DCREATE, "gemdos_dcreate", ">I")
+LEAVES = (FREAD, FWRITE, FSEEK, FCLOSE, FDATIME, DFREE, DGETPATH, FSNEXT, FSFIRST, DSETPATH, FOPEN, FATTRIB, FDELETE,
+          FCREATE, DDELETE, DCREATE)
 for _leaf in LEAVES:
     getattr(_lib, _leaf.symbol).restype = ctypes.c_uint32
 _lib.gemdos_dispatch_selector.restype = ctypes.c_uint32
+
+
+# THE SAME DOOR FOR A ROUTINE THAT IS NO LEAF. `sfirst`, `open` and `create` are in no dispatch table —
+# a leaf (and `Frename`, `Pexec`) calls each by name — but each takes its arguments the way a leaf does,
+# on the stack in its caller's frame. So each is a `Leaf` with NO SELECTOR, and a case enters it exactly
+# as it enters a leaf at its own address (`leaf_pokes`, `leaf_glue`); `dispatch_slice` refuses one, there
+# being nothing to dispatch.
+def routine(entry, symbol, frame):
+    """An unnumbered routine taking a leaf's frame, as a `Leaf` with no selector."""
+    getattr(_lib, symbol).restype = ctypes.c_uint32
+    return Leaf(None, entry, symbol, frame)
+
+
+SFIRST = routine(addrs.GEMDOS_SFIRST, "gemdos_sfirst", ">IHI")
+OPEN = routine(addrs.GEMDOS_OPEN, "gemdos_open", ">IH")
+CREATE = routine(addrs.GEMDOS_CREATE, "gemdos_create", ">IH")
 
 
 def leaf_pokes(leaf, values, pokes):
@@ -1080,6 +1145,8 @@ def dispatch_slice(leaf, words, pokes):
 
     Not `gemdos.run_slice`: that policy poisons, and a run that reaches the BIOS cannot (`run` above).
     The handler calls it records are part of the claim — the leaf, exactly once."""
+    assert leaf.selector is not None, f"{leaf.symbol} is no leaf: the dispatcher has no selector for it"
+
     def glue(lib, buf):
         return lib.gemdos_dispatch_selector(buf, gemdos.ARGUMENTS_AT)
 

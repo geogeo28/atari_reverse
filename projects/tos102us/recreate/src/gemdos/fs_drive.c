@@ -25,37 +25,17 @@
 #include "m68k_idioms.h"
 #include "machine.h"
 
-#define DRIVE_LETTER_SEPARATOR ':'
-#define FIRST_DRIVE_LETTER     'A'
-/* `X:` — the letter and its colon, consumed together ($fc6902 `addq.l #2`). */
-#define DRIVE_PREFIX_BYTES     2
-
 /* `m_fat16` is BPB_BFLAGS with every bit but this one dropped ($fc5448 `and.w #1`). */
 #define BPB_BFLAGS_FAT16       0x0001
 
-/* The directory slot search starts at 1: a p_curdir byte of 0 means "no directory", so node 0 is
- * never handed out ($fc6862 `moveq #1,d6`). */
-#define FIRST_DIRECTORY_SLOT   1
-
 /* ---- the drive tables ---------------------------------------------------------------------------
  * Every index here is a SIGNED word, widened by the ROM's `movea.w` or `ext.w` before it is scaled,
- * and none is bounded: a drive or a node out of range addresses outside its table, as the ROM does. */
+ * and none is bounded: a drive out of range addresses outside its table, as the ROM does (and a node
+ * outside its own, `gemdos_node_slot` in `include/gemdos/fs_drive.h`). */
 
 static uint32_t dmd_slot(int16_t drive)
 {
     return addr_add(GEMDOS_DMD_TABLE, (uint32_t)(int32_t)drive * DRIVE_TABLE_ENTRY_BYTES);
-}
-
-static uint32_t node_slot(int16_t node)
-{
-    return addr_add(GEMDOS_DIRECTORY_NODES, (uint32_t)(int32_t)node * DRIVE_TABLE_ENTRY_BYTES);
-}
-
-/* The running process's p_curdir entry for `drive`, as the signed byte it is. */
-static uint8_t *curdir_entry(uint8_t *image, int16_t drive)
-{
-    return gemdos_basepage_byte(image, gemdos_basepage(image),
-                                BASEPAGE_CURDIR + (uint32_t)(int32_t)drive);
 }
 
 uint32_t gemdos_drive_dmd(const uint8_t *image, int16_t drive)
@@ -70,7 +50,7 @@ static uint32_t root_node_of(const uint8_t *image, int16_t drive)
 
 uint32_t gemdos_current_directory(uint8_t *image, int16_t drive)
 {
-    return be32(image + node_slot((int8_t)*curdir_entry(image, drive)));
+    return be32(image + gemdos_node_slot((int8_t)*gemdos_curdir_entry(image, drive)));
 }
 
 /* ---- $fc50fa: the four records ------------------------------------------------------------------ */
@@ -255,19 +235,16 @@ uint32_t gemdos_open_drive(uint8_t *image, int16_t drive)
         wr16(image + GEMDOS_DRIVES_OPENED, be16(image + GEMDOS_DRIVES_OPENED) | bit);
     }
 
-    node = (int8_t)*curdir_entry(image, drive);
-    if (node != 0 && be32(image + node_slot(node)) != 0)
+    node = (int8_t)*gemdos_curdir_entry(image, drive);
+    if (node != 0 && be32(image + gemdos_node_slot(node)) != 0)
         return sign_ext16((uint16_t)drive);
 
-    for (slot = FIRST_DIRECTORY_SLOT;
-         slot < GEMDOS_DIRECTORY_NODE_COUNT && image[GEMDOS_CURDIR_REFCOUNTS + slot] != 0;
-         slot++)
-        ;
+    slot = gemdos_free_directory_slot(image);
     if (slot == GEMDOS_DIRECTORY_NODE_COUNT)
         return GEMDOS_ERROR;
     image[GEMDOS_CURDIR_REFCOUNTS + slot]++;
-    wr32(image + node_slot(slot), root_node_of(image, drive));
-    *curdir_entry(image, drive) = (uint8_t)slot;
+    wr32(image + gemdos_node_slot(slot), root_node_of(image, drive));
+    *gemdos_curdir_entry(image, drive) = (uint8_t)slot;
     return sign_ext16((uint16_t)drive);
 }
 
@@ -277,23 +254,14 @@ uint32_t gemdos_open_drive(uint8_t *image, int16_t drive)
  * past the `X:` and the leading `\` it consumed; 0 (and the pointer untouched) if the drive will not
  * open.
  *
- * The drive letter is upper-cased and `'A'` subtracted as a WORD, with no bound: `1:` is drive -16,
- * which `$fc67de` then asks the BIOS about. The `:` test reads the SECOND byte before anything checks
- * the first, so an empty path reads one byte past its NUL.
+ * The prefix is `gemdos_drive_of_prefix`'s (`include/gemdos/fs_drive.h`): `1:` is drive -16, which
+ * `$fc67de` then asks the BIOS about, and an empty path reads one byte past its NUL.
  */
 uint32_t gemdos_path_start(uint8_t *image, uint32_t path_pointer)
 {
     uint32_t text = be32(image + path_pointer);
-    int16_t drive;
+    int16_t drive = gemdos_drive_of_prefix(image, &text);
     uint32_t node;
-
-    if (image[text + 1] == DRIVE_LETTER_SEPARATOR) {
-        drive = (int16_t)(uint16_t)(gemdos_fs_toupper(0, (uint16_t)sign_ext8(image[text]))
-                                    - FIRST_DRIVE_LETTER);
-        text += DRIVE_PREFIX_BYTES;
-    } else {
-        drive = gemdos_current_drive(image);
-    }
 
     if ((int32_t)gemdos_open_drive(image, drive) < 0)
         return 0;

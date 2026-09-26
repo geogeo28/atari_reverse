@@ -1181,6 +1181,12 @@
 #define GEMDOS_DGETPATH_FN    0x47
 #define GEMDOS_FSNEXT_FN      0x4f
 #define GEMDOS_FDATIME_FN     0x57
+#define GEMDOS_DCREATE_FN     0x39
+#define GEMDOS_DDELETE_FN     0x3a
+#define GEMDOS_DSETPATH_FN    0x3b
+#define GEMDOS_FDELETE_FN     0x41
+#define GEMDOS_FATTRIB_FN     0x43
+#define GEMDOS_FSFIRST_FN     0x4e
 
 /* Sversion's answer, and the DOS date/time fields Tsetdate and Tsettime bound. The date word is
  * `(year - 1980) << 9 | month << 5 | day` and the time word `hour << 11 | minute << 5 | second / 2`,
@@ -1399,6 +1405,24 @@
 #define GEMDOS_DIR_SEARCH     0xfc663c  /* one directory from a position: the first entry a pattern matches */
 #define GEMDOS_FIND_DIR       0xfc696c  /* a path walked down the DND tree to the directory of its last component */
 #define GEMDOS_FSNEXT         0xfc6df4  /* the next match of the search a DTA holds, or ENMFIL */
+/* fs wave 3: the NAME leaves (`src/gemdos/fs_open.c`, `include/gemdos/fs_open.h`). Their selectors are
+ * above, with the table. */
+#define GEMDOS_SFIRST         0xfc6d14  /* a path's first match, and the search's state, into a DTA */
+#define GEMDOS_FSFIRST        0xfc6cf6  /* ...into the running process's DTA */
+#define GEMDOS_DSETPATH       0xfc6a7e  /* a path made the drive's current directory; EPTHNF */
+#define GEMDOS_OPEN           0xfc7606  /* a path's file into a handle; EACCDN writing a read-only one */
+#define GEMDOS_FOPEN          0xfc75f2
+#define GEMDOS_FATTRIB        0xfc7678  /* the entry's attribute byte, read or written */
+#define GEMDOS_FDELETE        0xfc77b2  /* a path's file deleted; EACCDN for a read-only one */
+/* fs wave 3: the CREATE layer (`src/gemdos/fs_create.c`, `include/gemdos/fs_create.h`). Selectors above. */
+#define GEMDOS_CREATE         0xfc71b6  /* an entry made (an existing one deleted first) and opened */
+#define GEMDOS_FCREATE        0xfc719a  /* ...Fcreate: the same, the subdirectory bit masked off */
+#define GEMDOS_DDELETE        0xfc792a  /* an empty directory's DND freed and its entry deleted */
+#define GEMDOS_DCREATE        0xfc73ce  /* a subdirectory entry, a zeroed cluster, `.` and `..` */
+/* The first 22 bytes — name, attribute, the ten reserved — of the `.` and `..` entries `Dcreate`
+ * copies into a new directory's first cluster ($fc74e2, $fc752e `move.l #$fd2fec`/`#$fd3002`). */
+#define GEMDOS_DOT_ENTRY_HEAD     0xfd2fec
+#define GEMDOS_DOT_DOT_ENTRY_HEAD 0xfd3002
 
 /* WHERE EACH OF THIS GROUP'S BIOS CALLS RETURNS TO — the longword `GEMDOS_BIOS_TRAMPOLINE` parks,
  * one per call site, exactly as `src/gemdos/console.c` keeps its fourteen. Each is the address of

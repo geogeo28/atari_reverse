@@ -31,8 +31,7 @@ def entry_position(name):
 
 def root_entry_after(result, name):
     """The 32 bytes of a root entry ON THE DISK after a run — what a flush left there."""
-    at = fs.IMAGE_AT + fs.ROOT_RECORD * fs.SECTOR_BYTES + entry_position(name)
-    return result.after(at, fs.DIRENT_BYTES)
+    return result.root_entry(fs.ROOT_INDEX[name])
 
 
 def open_entry(name, at=io.OFD_AT, **fields):

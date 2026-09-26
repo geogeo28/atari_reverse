@@ -57,7 +57,7 @@ def text(value):
 
 # ---- the tree -------------------------------------------------------------------------------------
 
-def directory_tree(root, directories=()):
+def directory_tree(root, directories=(), fat=None):
     """The staged disk with its ROOT DIRECTORY replaced and SUBDIRECTORIES written, as the poke at
     `IMAGE_AT` that replaces the base disk.
 
@@ -65,17 +65,18 @@ def directory_tree(root, directories=()):
     is `((chain, entries), ...)`: each directory's clusters in order — linked in BOTH FAT copies, the
     last one the end of the chain — and its entries laid across them. Every byte after a directory's
     last entry is 0, which is the end-of-directory entry; a directory whose entries fill its whole
-    chain has none. Everything else is the base disk's, its files and their chains included.
+    chain has none. `fat` is FAT12 entries laid over all of that (`{cluster: value}`). Everything else
+    is the base disk's, its files and their chains included.
     """
     assert len(root) <= fs.ROOT_ENTRIES, "more entries than the root directory has room for"
-    fat, clusters = {}, {}
+    chains, clusters = {}, {}
     for chain, entries in directories:
         contents = b"".join(entries).ljust(len(chain) * fs.CLUSTER_BYTES, b"\0")
         assert len(contents) == len(chain) * fs.CLUSTER_BYTES, "more entries than the directory's clusters hold"
         for index, cluster in enumerate(chain):
-            fat[cluster] = chain[index + 1] if index + 1 < len(chain) else fs.FAT12_END_OF_CHAIN
+            chains[cluster] = chain[index + 1] if index + 1 < len(chain) else fs.FAT12_END_OF_CHAIN
             clusters[cluster] = contents[index * fs.CLUSTER_BYTES:(index + 1) * fs.CLUSTER_BYTES]
-    image = bytearray(fs.disk(fat, clusters)[fs.IMAGE_AT])
+    image = bytearray(fs.disk({**chains, **(fat or {})}, clusters)[fs.IMAGE_AT])
     root_at, root_bytes = fs.ROOT_RECORD * fs.SECTOR_BYTES, fs.ROOT_SECTORS * fs.SECTOR_BYTES
     image[root_at:root_at + root_bytes] = b"".join(root).ljust(root_bytes, b"\0")
     return {fs.IMAGE_AT: bytes(image)}
@@ -111,7 +112,8 @@ ROOT_INDEX = fs.index_by_name(ROOT_ROWS)
 ROOT_END = len(ROOT)                    # the index of the root's end-of-directory entry
 BIG_FILLER = ENTRIES_PER_CLUSTER - DOT_ENTRIES
 FULL_FILLER = ENTRIES_PER_CLUSTER - DOT_ENTRIES
-TREE = directory_tree(ROOT, (
+# The tree's subdirectories, in `directory_tree`'s shape — for a battery that grows the tree by its own.
+DIRECTORIES = (
     ((fs.SUBDIR_CLUSTER,), fs.dots(fs.SUBDIR_CLUSTER, 0) + [directory("INNER", INNER_CLUSTER),
                                                              entry("NOTE", "TXT")]),
     ((INNER_CLUSTER,), fs.dots(INNER_CLUSTER, fs.SUBDIR_CLUSTER) + [entry("DEEP", "TXT"),
@@ -121,7 +123,8 @@ TREE = directory_tree(ROOT, (
      + [directory("LATE", LATE_CLUSTER), entry("LAST", "TXT")]),
     ((LATE_CLUSTER,), fs.dots(LATE_CLUSTER, BIG_CHAIN[0])),
     ((FULL_CLUSTER,), fs.dots(FULL_CLUSTER, 0) + _numbered("G", FULL_FILLER)),
-))
+)
+TREE = directory_tree(ROOT, DIRECTORIES)
 
 
 def position_of(index):

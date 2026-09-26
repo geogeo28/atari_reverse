@@ -44,6 +44,12 @@ def fat_after(result):
     return bytes(table)
 
 
+def fat_entries_after(result):
+    """...and the same, cluster by cluster: `{cluster: entry}`."""
+    table = fat_after(result)
+    return {cluster: fs.fat12_entry(table, cluster) for cluster in range(fs.FAT_ENTRIES)}
+
+
 def drive(**dmd_fields):
     """`gemdos_fs.drive()` with DMD fields replaced by `gemdos_fs.DMD_FIELDS` key — `drive(fat16=1)`."""
     return fs.drive(DRIVE, **dmd_fields)

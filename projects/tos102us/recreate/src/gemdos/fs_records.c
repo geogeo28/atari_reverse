@@ -25,10 +25,6 @@
 #include "gemdos/process.h"
 #include "machine.h"
 
-/* An entry's position is its directory's read position one entry back — the search has just read it
- * ($fc660c, $fc704c `addl #-32`). */
-#define ENTRY_JUST_READ      DIRENT_BYTES
-
 /* The first twelve bytes of an OFD's state a second open copies from the first: time, date, first
  * cluster, length — and the HIGH WORD of `OFD_DMD`, since 6 + 12 = 18 ($fc709e `move.w #12`). */
 #define SHARED_STATE_BYTES   12
@@ -92,7 +88,7 @@ uint32_t gemdos_dnd_new(uint8_t *image, uint32_t parent, uint32_t dirent)
     os_swap_word(image, child + DND_STRTCL);
     wr32(image + child + DND_DMD, be32(image + parent + DND_DMD));
     wr32(image + child + DND_PARENT_OFD, parent_ofd);
-    wr32(image + child + DND_DIRPOS, be32(image + parent_ofd + OFD_POS) - ENTRY_JUST_READ);
+    wr32(image + child + DND_DIRPOS, be32(image + parent_ofd + OFD_POS) - ENTRY_BEHIND_POSITION);
     wr16(image + child + DND_TIME, be16(image + dirent + DIRENT_TIME));
     wr16(image + child + DND_DATE, be16(image + dirent + DIRENT_DATE));
     gemdos_bcopy(image, DIRENT_NAME_BYTES, dirent + DIRENT_NAME, child + DND_NAME);
@@ -141,14 +137,14 @@ uint32_t gemdos_ofd_open(uint8_t *image, uint32_t dirent, uint32_t dnd, int16_t 
         return GEMDOS_ENSMEM;
     wr16(image + ofd + OFD_MODE, mode);
     wr32(image + ofd + OFD_DMD, dmd);
-    wr32(image + gemdos_descriptor_at((int16_t)(handle - GEMDOS_FIRST_FILE_HANDLE)) + HANDLE_VALUE, ofd);
+    wr32(image + gemdos_descriptor_of(handle) + HANDLE_VALUE, ofd);
     wr16(image + ofd + OFD_UNUSED, 0);
     wr16(image + ofd + OFD_CURCL, 0);
     wr16(image + ofd + OFD_CLOFF, 0);
     wr32(image + ofd + OFD_DIR_DND, dnd);
     dir_ofd = be32(image + dnd + DND_OFD);
     wr32(image + ofd + OFD_DIR_OFD, dir_ofd);
-    wr32(image + ofd + OFD_DIRPOS, be32(image + dir_ofd + OFD_POS) - ENTRY_JUST_READ);
+    wr32(image + ofd + OFD_DIRPOS, be32(image + dir_ofd + OFD_POS) - ENTRY_BEHIND_POSITION);
 
     first = ofd_already_open(image, dnd, be32(image + ofd + OFD_DIRPOS));
     wr32(image + ofd + OFD_LINK, be32(image + dnd + DND_FILES));

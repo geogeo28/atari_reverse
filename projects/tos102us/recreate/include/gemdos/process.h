@@ -40,6 +40,7 @@
 #include <stdint.h>
 
 #include "addrs.h"
+#include "machine.h"
 
 /* ---- the HANDLE RECORD ($8092, 75 records of ten bytes) ---------------------------------------- */
 /* What a handle NAMES, and the one field whose sign decides everything: `Fclose` ($fc571c) and the
@@ -142,6 +143,21 @@ int32_t gemdos_resolve_handle(const uint8_t *image, uint32_t arguments, uint16_t
 /* The handle table's record at a signed INDEX (`handle - 6` for a file handle): `muls.w #10` then
  * `addl #$8092`, no bound of the ROM's own — the host build asserts it stays in RAM. */
 uint32_t gemdos_descriptor_at(int16_t index);
+
+/* ...the record a HANDLE names. Every caller has already decided the handle is 6 or above, except
+ * `Fdup`, which is where the negative displacement comes from. */
+static inline uint32_t gemdos_descriptor_of(int16_t handle)
+{
+    return gemdos_descriptor_at((int16_t)(handle - GEMDOS_FIRST_FILE_HANDLE));
+}
+
+/* ...and a record given back: its value and its OWNER zeroed, which is what puts it back in the free
+ * searches (`Fdup`'s, `$fc6f5c`'s). The reference count is left as it was. */
+static inline void gemdos_release_descriptor(uint8_t *image, uint32_t descriptor)
+{
+    wr32(image + descriptor + HANDLE_VALUE, 0);
+    wr32(image + descriptor + HANDLE_OWNER, 0);
+}
 
 /* $fc51c0 — the first longword of the record a handle names (via $fc5186, which reads `p_uft` for
  * 0..5): 0 for nothing, the file system's OFD for an open file. No bound, the ROM's own. */

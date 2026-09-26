@@ -21,11 +21,13 @@
  * memory through the image: `$fc6038`/`$fc5f44` hand the engine `-2(a6)` as a FAT transfer's buffer,
  * `$fc663c` hands its pattern `-24(a6)` to `$fc5d28`, `$fc5672` and `$fc5c9a`, `$fc696c` its component
  * FCB `-24(a6)` and its path cursor `-4(a6)` (to `$fc68dc`, which reads AND writes it), and `$fc7824`
- * the byte `-4(a6)` its `$e5` mark is written from. ON TARGET the C local IS that frame slot and its
- * address is the one passed. OFF TARGET a C local is host memory the image cannot reach, so each role
- * has a fixed address instead: inside the oracle's stack band, which the differential drops on both
- * shores — exactly where the ROM's own copy of the local lives — and below the deepest frame the kit
- * calls legitimate. ONE TABLE, here, of every such address and its width; `test_gemdos_host_slots.py`
+ * the byte `-4(a6)` its `$e5` mark is written from, and `$fc71b6` its free-slot search name `-10(a6)`
+ * (to `$fc663c`) and the new entry's FCB name `-22(a6)` (built by `$fc5d28`, written by `$fc5f1c`), and
+ * `$fc7678` (`Fattrib`) the low byte of its own attribute ARGUMENT `15(a6)`, read or written in place.
+ * ON TARGET the C local IS that frame slot and its address is the one passed. OFF TARGET a C local is
+ * host memory the image cannot reach, so each role has a fixed address instead: inside the oracle's
+ * stack band, which the differential drops on both shores — exactly where the ROM's own copy of the
+ * local lives — and below the deepest frame the kit calls legitimate. ONE TABLE, here, of every such address and its width; `test_gemdos_host_slots.py`
  * reads it and pins every span inside that band and apart from every other.
  *
  * A SLOT IS CLAIMED FOR ITS LIVE RANGE AND RELEASED AFTER IT, and the host build makes "never two
@@ -41,8 +43,14 @@
 #define GEMDOS_HOST_SLOT_WALK_CURSOR_BYTES     4
 #define GEMDOS_HOST_SLOT_DELETE_MARK           0x7f1fe  /* $fc7824's `$e5`, the byte its write moves */
 #define GEMDOS_HOST_SLOT_DELETE_MARK_BYTES     1
+#define GEMDOS_HOST_SLOT_ATTRIBUTE             0x7f1ff  /* $fc7678's attribute byte, moved by a one-byte transfer */
+#define GEMDOS_HOST_SLOT_ATTRIBUTE_BYTES       1
 #define GEMDOS_HOST_SLOT_FRAME_WORD            0x7f200  /* $fc6038/$fc5f44's FAT word */
 #define GEMDOS_HOST_SLOT_FRAME_WORD_BYTES      2
+#define GEMDOS_HOST_SLOT_CREATE_FREE_NAME      0x7f240  /* $fc71b6's "\xe5", the name a free slot is searched by */
+#define GEMDOS_HOST_SLOT_CREATE_FREE_NAME_BYTES 2
+#define GEMDOS_HOST_SLOT_CREATE_FCB            0x7f244  /* $fc71b6's new entry's FCB name, written into it */
+#define GEMDOS_HOST_SLOT_CREATE_FCB_BYTES      11
 
 /* Each slot's bit in the held mask. */
 enum gemdos_host_slot {
@@ -50,7 +58,10 @@ enum gemdos_host_slot {
     GEMDOS_HOST_SLOT_ID_WALK_NAME,
     GEMDOS_HOST_SLOT_ID_WALK_CURSOR,
     GEMDOS_HOST_SLOT_ID_DELETE_MARK,
+    GEMDOS_HOST_SLOT_ID_ATTRIBUTE,
     GEMDOS_HOST_SLOT_ID_FRAME_WORD,
+    GEMDOS_HOST_SLOT_ID_CREATE_FREE_NAME,
+    GEMDOS_HOST_SLOT_ID_CREATE_FCB,
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL

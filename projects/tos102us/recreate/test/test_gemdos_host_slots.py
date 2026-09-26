@@ -1,6 +1,7 @@
 """The HOST SLOTS — `include/gemdos/gemdos.h`'s one table of the fixed addresses that stand in, off
 target, for a ROM frame local whose ADDRESS a GEMDOS routine hands on (the FAT routines' word, the
-directory search's pattern, the walk's name and cursor, the delete's mark byte).
+directory search's pattern, the walk's name and cursor, the delete's mark byte, `Fattrib`'s attribute
+byte, and `create`'s free-slot search name and new entry's FCB name).
 
 Every slot must sit where the differential drops bytes on both shores — the oracle's stack band, above
 its guard — and below both the deepest frame the kit calls legitimate and the `savptr` frame the
@@ -38,7 +39,8 @@ def misplaced(slots):
 
 def test_every_host_slot_is_inside_the_dropped_band_and_apart():
     slots = host_slots(fs.CONSTANTS)
-    assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "FRAME_WORD"}
+    assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
+                          "CREATE_FREE_NAME", "CREATE_FCB"}
     assert not misplaced(slots)
 
 

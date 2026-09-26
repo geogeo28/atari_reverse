@@ -995,6 +995,19 @@ CALL = {
     "GEMDOS_FDATIME": Call((IMAGE, arg_long(0), arg_signed_word(4), arg_word(6)), RETURNS_LONG),
     "GEMDOS_DFREE": Call((IMAGE, arg_long(0), arg_signed_word(4)), RETURNS_LONG),
     "GEMDOS_DGETPATH": Call((IMAGE, arg_long(0), arg_signed_word(4)), RETURNS_LONG),
+    # ...and the NAME leaves (`src/gemdos/fs_open.c`): a path, then an attribute, mode or flag WORD.
+    "GEMDOS_SFIRST": Call((IMAGE, arg_long(0), arg_word(4), arg_long(6)), RETURNS_LONG),
+    "GEMDOS_FSFIRST": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_DSETPATH": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_OPEN": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_FOPEN": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_FATTRIB": Call((IMAGE, arg_long(0), arg_word(4), arg_word(6)), RETURNS_LONG),
+    "GEMDOS_FDELETE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    # ...and the CREATE layer (`src/gemdos/fs_create.c`): a path, and create's attribute WORD.
+    "GEMDOS_CREATE": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_FCREATE": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
+    "GEMDOS_DDELETE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    "GEMDOS_DCREATE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
     # ---- the PROCESS group and the HANDLE machinery (GEMDOS wave 2) ----
     # A handle is SIGNED everywhere in this group — the bound `Fforce` applies is `bge`/`ble` over
     # -1..5 — so its argument words are `arg_signed_word` and its C parameters are `int16_t`
@@ -1148,6 +1161,11 @@ UNNUMBERED_ROUTINE_ROLES = {
     # ...and the fs FILE layer (`src/gemdos/fs_file.c`; `Fdatime`, and `fs_leaves.c`'s `Dfree` and `Dgetpath`, by number).
     "GEMDOS_OFD_CLOSE": "GEMDOS OFD close",
     "GEMDOS_DELETE_ENTRY": "GEMDOS directory entry delete",
+    # ...and the NAME leaves (`src/gemdos/fs_open.c`; the five leaves over these two are dispatched by number).
+    "GEMDOS_SFIRST": "GEMDOS first search",
+    "GEMDOS_OPEN": "GEMDOS open",
+    # ...and the CREATE layer (`src/gemdos/fs_create.c`; Fcreate, Ddelete and Dcreate are dispatched by number).
+    "GEMDOS_CREATE": "GEMDOS create",
 }
 UNNUMBERED_ROUTINE_NAMES = {getattr(addrs, name): name for name in UNNUMBERED_ROUTINE_ROLES}
 

@@ -27,13 +27,6 @@ _Static_assert(GEMDOS_HOST_SLOT_SEARCH_PATTERN_BYTES == GEMDOS_SEARCH_PATTERN_BY
                && GEMDOS_HOST_SLOT_WALK_NAME_BYTES == GEMDOS_SEARCH_PATTERN_BYTES,
                "a host slot narrower or wider than the frame local it stands in for");
 
-/* The next entry of the directory `ofd` reads: a pointer into the cache (`$fc5e9c` with no buffer),
- * or 0 when the directory — its length, or its cluster chain — has ended ($fc674a). */
-static uint32_t next_entry(uint8_t *image, uint32_t ofd)
-{
-    return gemdos_ofd_read(image, ofd, DIRENT_BYTES, 0);
-}
-
 /* Is `entry` a subdirectory this search owes a DND? Only one past the directory's mark — SIGNED, and
  * an entry exactly at the mark is not — while no search has reached the directory's end, and never
  * `.`/`..` (a name starting with a dot, $fc66f0 `cmpi.b #46`) or a deleted one ($fc66de..$fc6702). */
@@ -101,7 +94,7 @@ static uint32_t search(uint8_t *image, uint32_t dnd, uint32_t name, uint16_t att
     gemdos_ofd_seek(image, ofd, (uint32_t)start);
 
     child = known_child(image, dnd, pattern, &is_known);
-    for (entry = next_entry(image, ofd); entry != 0 && image[entry] != 0; entry = next_entry(image, ofd)) {
+    for (entry = gemdos_next_entry(image, ofd); entry != 0 && image[entry] != 0; entry = gemdos_next_entry(image, ofd)) {
         if (is_unmade_subdirectory(image, dnd, ofd, entry)
             && ((uint16_t)gemdos_fcb_name_eq(0, image, pattern, entry) == 0 || is_known == 0)) {
             child = gemdos_dnd_new(image, dnd, entry);
@@ -127,7 +120,7 @@ static uint32_t search(uint8_t *image, uint32_t dnd, uint32_t name, uint16_t att
         return 0;
     }
     if (*position == GEMDOS_SEARCH_FROM_SCANNED) {
-        gemdos_ofd_seek(image, ofd, be32(image + ofd + OFD_POS) - DIRENT_BYTES);
+        gemdos_ofd_seek(image, ofd, be32(image + ofd + OFD_POS) - ENTRY_BEHIND_POSITION);
         return child;
     }
     return entry;
