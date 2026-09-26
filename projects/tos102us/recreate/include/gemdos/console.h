@@ -71,4 +71,16 @@ uint32_t gemdos_cconos(uint8_t *image);
 uint32_t gemdos_cprnos(uint8_t *image);
 uint32_t gemdos_cauxos(uint8_t *image);
 
+/* ---- the layer under them, as the DISPATCHER reaches it ($fc8fc6, $fc9226, $fc8e3c) ------------ */
+
+/* The dispatcher serves an `Fread`/`Fwrite` on a character-device handle itself, through these: one
+ * record read and echoed RAW; an edited line of up to `maximum` characters into `line` (its length in
+ * the low word, over `entry_d0`'s high half); one character out with TAB expanded; and `Bconout` through
+ * the trampoline, parking `return_site` — the call site's own address — as every BIOS call here does. */
+uint32_t gemdos_device_get_echoing(uint8_t *image, uint16_t device);
+uint32_t gemdos_device_read_line(uint8_t *image, uint32_t entry_d0, uint16_t device, uint16_t maximum,
+                                 uint32_t line);
+uint32_t gemdos_device_put_expanding_tabs(uint8_t *image, uint16_t device, uint16_t character);
+uint32_t gemdos_device_bconout(uint8_t *image, uint32_t return_site, uint16_t device, uint16_t character);
+
 #endif /* TOS102US_GEMDOS_CONSOLE_H */

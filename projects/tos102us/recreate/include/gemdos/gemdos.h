@@ -23,7 +23,11 @@
  * FCB `-24(a6)` and its path cursor `-4(a6)` (to `$fc68dc`, which reads AND writes it), and `$fc7824`
  * the byte `-4(a6)` its `$e5` mark is written from, and `$fc71b6` its free-slot search name `-10(a6)`
  * (to `$fc663c`) and the new entry's FCB name `-22(a6)` (built by `$fc5d28`, written by `$fc5f1c`), and
- * `$fc7678` (`Fattrib`) the low byte of its own attribute ARGUMENT `15(a6)`, read or written in place.
+ * `$fc7af0` (`Frename`) its entry buffer `-20(a6)` (a `$e5` mark, an entry's ten tail bytes, a new FCB name), and
+ * `$fc7678` (`Fattrib`) the low byte of its own attribute ARGUMENT `15(a6)`, read or written in place, and the
+ * dispatcher `$fc94e4` the byte `-14(a6)` a redirected read lands in and — through `$fc5078` — the argument words of
+ * its own nested `Fwrite`, pushed on its stack, and `Pexec`'s loader `$fc85ea` the five locals it `Fread`s the
+ * program's header and first relocation offset into (`-8`, `-66`, `-30`, `-10`, `-38(a6)`), laid out as one slot.
  * ON TARGET the C local IS that frame slot and its address is the one passed. OFF TARGET a C local is
  * host memory the image cannot reach, so each role has a fixed address instead: inside the oracle's
  * stack band, which the differential drops on both shores — exactly where the ROM's own copy of the
@@ -51,6 +55,14 @@
 #define GEMDOS_HOST_SLOT_CREATE_FREE_NAME_BYTES 2
 #define GEMDOS_HOST_SLOT_CREATE_FCB            0x7f244  /* $fc71b6's new entry's FCB name, written into it */
 #define GEMDOS_HOST_SLOT_CREATE_FCB_BYTES      11
+#define GEMDOS_HOST_SLOT_RENAME_ENTRY          0x7f250  /* $fc7af0's `-20(a6)`: `$e5`, an entry's tail, or the new FCB name */
+#define GEMDOS_HOST_SLOT_RENAME_ENTRY_BYTES    11
+#define GEMDOS_HOST_SLOT_PEXEC_LOCALS         0x7f280  /* $fc85ea's header fields and first fixup, each read by `Fread` */
+#define GEMDOS_HOST_SLOT_PEXEC_LOCALS_BYTES   28       /* `LOAD_LOCALS_BYTES` (`gemdos/pexec_load.h`) */
+#define GEMDOS_HOST_SLOT_C_ENTRY_ARGUMENTS     0x7f300  /* $fc5078's caller's words: the dispatcher's own nested `Fwrite` */
+#define GEMDOS_HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES 12     /* selector.w, handle.w, count.l, buffer.l */
+#define GEMDOS_HOST_SLOT_REDIRECTED_BYTE       0x7f310  /* $fc94e4's `-14(a6)`: the byte a redirected read lands in */
+#define GEMDOS_HOST_SLOT_REDIRECTED_BYTE_BYTES 1
 
 /* Each slot's bit in the held mask. */
 enum gemdos_host_slot {
@@ -62,6 +74,10 @@ enum gemdos_host_slot {
     GEMDOS_HOST_SLOT_ID_FRAME_WORD,
     GEMDOS_HOST_SLOT_ID_CREATE_FREE_NAME,
     GEMDOS_HOST_SLOT_ID_CREATE_FCB,
+    GEMDOS_HOST_SLOT_ID_RENAME_ENTRY,
+    GEMDOS_HOST_SLOT_ID_PEXEC_LOCALS,
+    GEMDOS_HOST_SLOT_ID_C_ENTRY_ARGUMENTS,
+    GEMDOS_HOST_SLOT_ID_REDIRECTED_BYTE,
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
@@ -216,6 +232,23 @@ static inline uint16_t gemdos_descriptor(const uint8_t *image, int selector)
 {
     return be16(image + gemdos_record(selector) + GEMDOS_RECORD_DESCRIPTOR);
 }
+
+/* ---- the dispatcher (`src/gemdos/dispatch.c`) --------------------------------------------------------
+ * `arguments` is the address of a caller's words, the function number first. The dispatcher is also
+ * called from INSIDE itself: a redirected `Cconrs` echoes each character through a whole nested
+ * dispatch ($fc5078). */
+uint32_t gemdos_dispatch(uint8_t *image, uint32_t arguments);            /* $fc94e4 */
+uint32_t gemdos_dispatch_selector(uint8_t *image, uint32_t arguments);   /* $fc973e, past the record */
+
+/* ...and the media-change recovery's two helpers, reconstructed ahead of the recovery that calls them.
+ * $fc93f4 — a DND and every DND reachable from it given back to the pool. */
+void gemdos_free_dnd_tree(uint8_t *image, uint32_t dnd);
+
+/* $fc9468 — the open files whose OFD names the DMD in `caller_a4` released. THE ROM NEVER LOADS ITS
+ * ARGUMENT (the core says so), so the drive compared is whatever A4 its caller left: a caller written
+ * for the E_CHG recovery ($fc951e) must pass "whatever A4 the innermost file-system routine left" — NOT
+ * the DMD the ROM pushes — or it silently fixes the ROM's bug. */
+void gemdos_free_drive_ofds(uint8_t *image, uint32_t caller_a4);
 
 /* ---- the two doors out of a reconstructed GEMDOS routine ---------------------------------------
  *

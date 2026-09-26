@@ -26,18 +26,15 @@
  * `Pterm`'s own unwind is the epilogue above and nothing else. (`recreate/STATUS.md`'s wave-7 note
  * says "the termination record longjmp"; the record is real, the caller is not `Pterm`.)
  *
- * THE FOUR HALTS IN THIS FILE, each a component rather than a branch:
+ * NOTHING IN THIS FILE HALTS. The last halt it reached — `Fclose` of a handle naming an open FILE, from
+ * `gemdos_release_process` and `Pterm` — is the file system's own close now (`src/gemdos/handles.c`).
+ * What is left are two LIMITS a case has to carry:
  *
- *   * `gemdos_release_process` and `Pterm` reach `Fclose`, which halts on a handle that names an
- *     open FILE (`src/gemdos/handles.c`). Every DEVICE arm runs.
- *   * `gemdos_resync_clock` has NO halt, but it has a limit the case has to carry: the probe writes
- *     two registers and reads them back, and the kit's declared I/O map has exactly two forms for
- *     that — a CONSTANT, which a store makes stale and the harness refuses, and WRITE-THROUGH,
- *     which is what a chip that is really there does. So every case here declares a machine WITH a
- *     Mega ST clock, and the `bcs` that skips the whole routine on a plain ST is driven by an
- *     ORACLE claim alone (`recreate/STATUS.md`, "Not reconstructed").
- *   * `Pexec` modes 0 and 3 LOAD a program — `$fc6d14` looks the file up and `$fc85ea` is the
- *     loader and the relocator — and both halt for want of the file system.
+ *   * `gemdos_resync_clock`: the probe writes two registers and reads them back, and the kit's
+ *     declared I/O map has exactly two forms for that — a CONSTANT, which a store makes stale and the
+ *     harness refuses, and WRITE-THROUGH, which is what a chip that is really there does. So every
+ *     case here declares a machine WITH a Mega ST clock, and the `bcs` that skips the whole routine
+ *     on a plain ST is driven by an ORACLE claim alone (`recreate/STATUS.md`, "Not reconstructed").
  *   * `Pexec` mode 4 and mode 0's tail END IN THE EPILOGUE, like `Pterm`, and are checkpoints for
  *     the same reason.
  */
@@ -48,12 +45,14 @@
 
 #include "bios/bcon.h"
 #include "gemdos/gemdos.h"
+#include "gemdos/fs_dir.h"
+#include "gemdos/fs_open.h"
 #include "gemdos/memory.h"
+#include "gemdos/pexec_load.h"
 #include "gemdos/process.h"
 #include "hw.h"
 #include "ipl.h"
 #include "machine.h"
-#include "recreate.h"
 #include "staged_call.h"
 
 /* ---- the Mega ST battery clock, which is the one piece of hardware GEMDOS itself touches --------
@@ -450,8 +449,8 @@ uint32_t gemdos_ptermres(uint8_t *image, uint32_t keep, uint16_t status)
  *                        runs.
  *   4  JUST GO.          Take a basepage somebody already filled, build the child's initial STACK
  *                        inside it, make it `p_run` and leave through the trap epilogue.
- *   3  LOAD.             5, and then read the program into it. HALTS at the loader.
- *   0  LOAD AND GO.      3 and then 4. HALTS at the same loader.
+ *   3  LOAD.             5, and then read the program into it (`src/gemdos/pexec_load.c`).
+ *   0  LOAD AND GO.      3 and then 4.
  *
  * THE SPLIT INTO TWO CORES IS THE DISPATCHER'S, for the dispatcher's reason. Between the mode check
  * and the work, `Pexec` saves the outer termination record and arms one of its OWN at $7ef4 — and
@@ -469,6 +468,11 @@ uint32_t gemdos_ptermres(uint8_t *image, uint32_t keep, uint16_t status)
 /* $fc817a ($4b) — the mode check, the file lookup, and the record. See the note above for why
  * everything past `gemdos_pexec_create` is a routine of its own.
  *
+ * THE LOOKUP IS `sfirst` WITH NO DTA and the attribute word 0, which `sfirst` widens to plain,
+ * read-only and archived files — so a HIDDEN or SYSTEM program is EFILNF here although `Fopen`, which
+ * the loader opens it with, would find it. Only the low word of the answer is tested (`tst.w`), and any
+ * miss is EFILNF, a missing directory included.
+ *
  * The record ARMED at $fc81e0 is omitted, exactly as the dispatcher's is; the one SAVED at $fc81c2
  * is reproduced, and it is the ROM's own `$fc564a` byte copy — not reconstructed as a routine of its
  * own because thirteen of its fourteen callers are the file system's.
@@ -478,12 +482,11 @@ uint32_t gemdos_pexec(uint8_t *image, uint16_t mode_word, uint32_t name, uint32_
     int16_t mode = (int16_t)mode_word;
     uint32_t byte;
 
-    /* The FILENAME is read by the two modes that load, and by nothing this file reconstructs. */
-    (void)name;
     if (mode != PEXEC_LOAD_AND_GO && (mode < PEXEC_LOAD || mode > PEXEC_CREATE_BASEPAGE))
         return GEMDOS_EINVFN;
-    if (mode == PEXEC_LOAD_AND_GO || mode == PEXEC_LOAD)
-        recreate_not_reconstructed("GEMDOS: Pexec's file lookup ($fc6d14) — EFILNF or the load");
+    if ((mode == PEXEC_LOAD_AND_GO || mode == PEXEC_LOAD)
+        && (uint16_t)gemdos_sfirst(image, name, GEMDOS_SFIRST_PLAIN_FILES, GEMDOS_SFIRST_NO_DTA) != 0)
+        return GEMDOS_EFILNF;
     for (byte = 0; byte < JMPBUF_BYTES; byte++)
         image[PEXEC_OUTER_JMPBUF + byte] = image[GEMDOS_TERMINATION_JMPBUF + byte];
     return gemdos_pexec_create(image, mode_word, name, tail, env);
@@ -514,6 +517,15 @@ static uint16_t environment_bytes(const uint8_t *image, uint32_t env)
     if (length & 1)
         length++;
     return length;
+}
+
+/* The trapping caller's D5, out of the frame the trap entry saved it in — which is what D5 still holds
+ * when the loader runs, and the loader's `Fopen` mode is its high half (`include/gemdos/pexec_load.h`). */
+static uint32_t caller_d5(uint8_t *image)
+{
+    uint32_t frame = gemdos_basepage_field(image, gemdos_basepage(image), BASEPAGE_SAVED_FRAME);
+
+    return be32(gemdos_image_bytes(image, addr_add(frame, GEMDOS_SAVED_FRAME_D5), GEMDOS_SAVED_REGISTER_BYTES));
 }
 
 /* The basepage half of modes 0, 3 and 5 ($fc824c..$fc84b8). Answers the basepage, or `GEMDOS_ENSMEM`
@@ -642,7 +654,6 @@ uint32_t gemdos_pexec_create(uint8_t *image, uint16_t mode_word, uint32_t name, 
     int16_t mode = (int16_t)mode_word;
     uint32_t basepage = tail;
 
-    (void)name;                         /* see `gemdos_pexec` */
     if (mode != PEXEC_JUST_GO) {
         /* An error code comes back in the same slot an address does, exactly as `Malloc`'s 0 does.
          * Not ambiguous on this machine: every basepage is an address inside a 1 MB TPA. */
@@ -650,10 +661,18 @@ uint32_t gemdos_pexec_create(uint8_t *image, uint16_t mode_word, uint32_t name, 
         if (basepage == GEMDOS_ENSMEM)
             return GEMDOS_ENSMEM;
     }
-    if (mode == PEXEC_LOAD_AND_GO || mode == PEXEC_LOAD)
-        /* $fc85ea, and the release below it: a load that fails gives the whole child back
-         * (`gemdos_release_process`) and answers the loader's own error. */
-        recreate_not_reconstructed("GEMDOS: Pexec's program loader and relocator ($fc85ea)");
+    if (mode == PEXEC_LOAD_AND_GO || mode == PEXEC_LOAD) {
+        /* A load that fails RELEASES THE CHILD and answers the loader's error as a sign-extended word
+         * ($fc84d6 `ext.l`). The release gives back what the child OWNS — which for mode 3 is not its
+         * two blocks (`create_basepage` charged them to the CALLER), so a failed `Pexec(3)` leaves its
+         * TPA and environment allocated to whoever asked. */
+        uint32_t refused = (uint32_t)(int32_t)(int16_t)gemdos_pexec_load(image, name, basepage, caller_d5(image));
+
+        if (refused != 0) {
+            gemdos_release_process(image, basepage);
+            return refused;
+        }
+    }
     if (mode != PEXEC_LOAD_AND_GO && mode != PEXEC_JUST_GO)
         return basepage;                /* modes 3 and 5 hand the basepage back and return */
 

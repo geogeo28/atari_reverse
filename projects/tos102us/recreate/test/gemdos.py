@@ -194,10 +194,17 @@ def dispatcher_trampoline(selector):
     return stub, cost
 
 
+# ...and the one other word of the frame an arm past the record READS without writing it: the stack
+# slot the prologue's `setjmp` call took its argument in (`move.l #$7ef4,(sp)` at $fc950a), whose low
+# half the redirected `Cconout` turns into half of a buffer pointer ($fc97dc). The trampoline makes no
+# such call, so the slice stands the longword there as the prologue leaves it.
+SETJMP_ARGUMENT = {DISPATCHER_SP: trap.longword(addrs.GEMDOS_TERMINATION_JMPBUF)}
+
+
 def slice_pokes(selector, words=(), pokes=None):
-    """...and the whole poke set for a slice case: the trampoline, the argument list and the
-    pointer to it."""
-    return {TRAMPOLINE_AT: dispatcher_trampoline(selector)[0],
+    """...and the whole poke set for a slice case: the trampoline, what the prologue left in the frame,
+    the argument list and the pointer to it."""
+    return {TRAMPOLINE_AT: dispatcher_trampoline(selector)[0], **SETJMP_ARGUMENT,
             **dispatch_pokes(selector, words, pokes)}
 
 

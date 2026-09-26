@@ -908,7 +908,7 @@ cmt 0x7ef4 The process-termination record: the dispatcher's own A6, its own stac
 cmt 0x8840 GEMDOS's own DOS date word: (year-1980)<<9 | month<<5 | day. Seeded from os_dosdate at $fc0460, advanced by the tick at $fc9cc0, read by Tgetdate and written by Tsetdate.
 cmt 0x75b0 GEMDOS's own DOS time word: hour<<11 | minute<<5 | second/2.
 cmt 0xfd3060 Thirteen words: Tsetdate's day bound indexed by month. Entry 0 is 0, so month 0 admits only day 0; February's 28 is the non-leap arm ($fc9e78).
-cmt 0xfd328a Nineteen longwords indexed by selector-1: what a character-device call becomes when Fforce has pointed its standard handle at a file (Cconin -> Fread, Cconws -> a loop of Fwrites).
+cmt 0xfd328a Nineteen longwords indexed by selector-1: a character-device call whose standard handle is a FILE (Cconin -> Fread, Cconws -> Fwrites, status -> $ff). Crawio's entry $fc97aa is dead: its descriptor is 0.
 
 # ---- the character-device layer under the fifteen leaves ----
 fn 0xfc8b44 gemdos_device_input_status
@@ -1090,3 +1090,16 @@ cmt 0xfc77b2 Fdelete: search attr $27; EFILNF for any miss; read-only -> EACCDN;
 cmt 0xfc71b6 create: an existing entry DELETED via $fc7824 (answer unread: a duplicate entry if another process holds it), slot reused; only RO/subdir refuse (and.w #17); root cannot grow; a subdir grows by a zeroed cluster
 cmt 0xfc73ce Dcreate: ./.. from $fd2fec/$fd3002, clocks unswapped; the 50-byte OFD copy + close(6) unlinks every OFD opened earlier in the parent; ENSMEM paths leak; full disk rolled back via Ddelete
 cmt 0xfc792a Ddelete: no current-directory check; EACCDN non-empty; EINTRN for child DNDs or open files; an empty root never returns (child walk from address 28); the made OFD leaks
+fn 0xfc85ea gemdos_pexec_load
+fn 0xfc4b7c clear_span
+fn 0xfc93f4 gemdos_free_dnd_tree
+fn 0xfc9468 gemdos_free_drive_ofds
+var 0xfd32d6 gemdos_device_names
+cmt 0xfc85ea Pexec's loader: Fopen(name, <caller's D5 high half>), magic, lengths, signed BSS fit, TEXT+DATA read (no Fread checked), symbol Fseek, relocation in chunks into the TPA past DATA (bounds only at first fixup and chunk ends), the whole TPA past DATA cleared ($fc4b7c), Fclose on success only.
+cmt 0xfc4b7c BIOS bzero(from, to): odd byte, 256-byte movem blocks, tail bytes; `to` compared for EQUALITY, so a span ending below its start runs on through memory.
+cmt 0xfc93f4 Media-change helper: a DND's child tree, sibling tree, directory OFD, every node slot naming it, then the DND, back to the pool.
+cmt 0xfc9468 Media-change helper: frees handle records whose OFD is on the DMD in the CALLER'S A4 - ROM bug, the pushed argument is never loaded.
+cmt 0xfd32d6 "CON:","con:","AUX:","aux:","PRN:","prn:" with NULs, five bytes each: the dispatcher's Fopen/Fcreate device-name compare.
+cmt 0xfc97dc Redirected Cconout/Cauxout/Cprnout: Fwrite(h, 1, <char word>:$7ef4) - ROM bug, the character is the HIGH half of the buffer pointer.
+cmt 0xfc982c Redirected Cconrs: maximum read SIGNED; each byte echoed through a nested dispatch ($fc5078) that re-arms $7ef4.
+cmt 0xfc7af0 Frename: sfirst(new, 0) EACCDN; find_dir x2 EPTHNF; drive words ENSAME; Fopen(old,2); same DND = 11 FCB bytes, else $e5 + UNCHECKED Fcreate + 10-byte tail copy (a refusal reads p_tlen -> record 0: the file loses its name, answers 0).

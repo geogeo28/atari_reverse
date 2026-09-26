@@ -643,8 +643,13 @@ static uint32_t device_erase_last_character(uint8_t *image, uint32_t entry_d0, u
  *
  * THE KEY IS THE LOW WORD OF THE RECORD, SIGN-EXTENDED (`ext.l d0`) — so the IKBD's scancode half is
  * discarded before the comparison, and the whole key set is the eight codes below plus the default
- * arm the table's ninth (zero) entry shares with "no match" (see the header note). */
-static uint32_t device_read_line(uint8_t *image, uint32_t entry_d0, uint16_t device,
+ * arm the table's ninth (zero) entry shares with "no match" (see the header note).
+ *
+ * ALWAYS INLINED because it has two callers — `Cconrs` and the dispatcher's door below — and as a
+ * call `Cconrs` would pay a second frame for what it inlined before the door existed: its "a maximum
+ * of zero" row measured 686 cycles against 538 that way. */
+__attribute__((always_inline))
+static inline uint32_t device_read_line(uint8_t *image, uint32_t entry_d0, uint16_t device,
                                  uint16_t maximum, uint32_t line)
 {
     uint16_t start_column = be16(image + device_column_slot(device));
@@ -723,4 +728,34 @@ uint32_t gemdos_cconrs(uint8_t *image, uint32_t entry_d0, uint32_t buffer)
 
     image[addr_add(buffer, GEMDOS_CCONRS_LENGTH)] = (uint8_t)result;
     return result;
+}
+
+/* ================================================================================================
+ * The layer the DISPATCHER reaches by address ($fc8fc6, $fc9226, $fc8e3c and the trampoline).
+ * ============================================================================================= */
+
+/* An `Fread` or `Fwrite` whose handle resolves to a character device is served by the dispatcher's
+ * own code (`src/gemdos/dispatch.c`, `$fc99bc`), and what that code calls is this layer: `jsr $fc8fc6`
+ * for one character, `jsr $fc9226` for more, `jsr $fc8e3c` for the console's output and the
+ * trampoline's `Bconout` for the other two devices. Doors rather than `static` dropped, so the leaves
+ * above keep the code they are priced at. */
+uint32_t gemdos_device_get_echoing(uint8_t *image, uint16_t device)
+{
+    return device_get_echoing(image, device);
+}
+
+uint32_t gemdos_device_read_line(uint8_t *image, uint32_t entry_d0, uint16_t device, uint16_t maximum,
+                                 uint32_t line)
+{
+    return device_read_line(image, entry_d0, device, maximum, line);
+}
+
+uint32_t gemdos_device_put_expanding_tabs(uint8_t *image, uint16_t device, uint16_t character)
+{
+    return device_put_expanding_tabs(image, device, character);
+}
+
+uint32_t gemdos_device_bconout(uint8_t *image, uint32_t return_site, uint16_t device, uint16_t character)
+{
+    return bios_output(image, return_site, device, character);
 }

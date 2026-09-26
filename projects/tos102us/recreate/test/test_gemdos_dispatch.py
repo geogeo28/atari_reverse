@@ -303,13 +303,16 @@ def test_the_standard_handles_a_fresh_process_has_are_the_three_devices():
         [-1, -1, -2, -3], "the snapshot's standard handles are not stdin/stdout/stdaux/stdprn"
 
 
-@pytest.mark.parametrize("selector,argument_bytes", (
+REWRITTEN_FRAMES = (
     (0x01, addrs.GEMDOS_ARGUMENT_BYTES_0),      # Cconin — nothing to pass
     (0x02, addrs.GEMDOS_ARGUMENT_BYTES_0),      # Cconout — the character, in the four bytes
     (0x09, addrs.GEMDOS_ARGUMENT_BYTES_1),      # Cconws — a POINTER, so the descriptor becomes 1
     (0x0A, addrs.GEMDOS_ARGUMENT_BYTES_1),      # Cconrs — ...and so does this one's
     (0x10, addrs.GEMDOS_ARGUMENT_BYTES_0),      # Cconos
-))
+)
+
+
+@pytest.mark.parametrize("selector,argument_bytes", REWRITTEN_FRAMES)
 def test_an_unredirected_device_call_has_its_descriptor_rewritten(selector, argument_bytes):
     """THE REWRITE, which is the half of the redirection that runs on every ordinary machine.
 
@@ -326,19 +329,30 @@ def test_an_unredirected_device_call_has_its_descriptor_rewritten(selector, argu
         list(ARGUMENT_WORDS[:argument_bytes // gemdos.WORD_BYTES])
 
 
+@pytest.mark.parametrize("selector,argument_bytes", REWRITTEN_FRAMES)
+def test_our_dispatcher_hands_the_rewritten_frame_to_the_handler(selector, argument_bytes):
+    """...and the CANDIDATE's half of the same claim: the width our dispatcher hands the handler hook is
+    the width the original pushed above. Candidate-only, because the handlers are the console's, whose
+    ROM bodies would run the BIOS on the other side — the ORACLE's half is the case above."""
+    handler = gemdos.rom_handler(selector)
+    gemdos.run_candidate_only(lambda lib, buf: lib.gemdos_dispatch_selector(buf, gemdos.ARGUMENTS_AT),
+                              gemdos.slice_pokes(selector, ARGUMENT_WORDS), {handler: lambda *_call: 0})
+    assert [(call[0], call[2]) for call in gemdos.HANDLER_CALLS] == [(handler, argument_bytes)]
+
+
 @pytest.mark.parametrize("selector,arm", (
     (0x01, 0xFC97B6),       # Cconin  -> read one byte through Fread
     (0x02, 0xFC97DC),       # Cconout -> write it through Fwrite
     (0x09, 0xFC97FA),       # Cconws  -> a loop of Fwrites
-    (0x0A, 0xFC982C),       # Cconrs  -> the line editor, which also Fseeks
+    (0x0A, 0xFC982C),       # Cconrs  -> Freads, each echoed through a nested Fwrite
     (0x0B, 0xFC98DC),       # Cconis  -> a constant: a file is always ready
 ))
 def test_a_redirected_standard_handle_takes_the_table_arm_instead(selector, arm):
     """...and the other half: point the process's standard handle at a FILE and the handler is not
     called at all. `$fd328a`'s 19 longwords, indexed by selector - 1, are what runs instead.
 
-    NOT RECONSTRUCTED — every arm is an `Fread`, an `Fwrite` or an `Fseek` and the file system is
-    not written — so the claim is made as a slice: the run is required to arrive at the arm.
+    Made here about the ORIGINAL — the run is required to arrive at the arm — and as whole
+    differentials over a staged file in `test_gemdos_dispatch_redirect.py`.
     """
     handle = 6       # the first real file handle; anything > 0 takes this arm
     staged = gemdos.slice_pokes(selector, words=ARGUMENT_WORDS,

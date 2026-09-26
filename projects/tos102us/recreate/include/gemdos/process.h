@@ -30,13 +30,18 @@
  *     first longword is then NEGATIVE for a device (that is how `Fdup` of a standard handle names
  *     one) and a file-system pointer otherwise.
  *
- * ...so "resolve a handle" is a two-step walk that can end on any of the three, and it is written
- * once — `gemdos_resolve_handle` below — because the dispatcher, `Fclose` and `gemdos_force_handle`
- * each walk part of it and a second copy is a second place for the signs to go wrong.
+ * ...so "resolve a handle" is a two-step walk that can end on any of the three, and each step is
+ * written once — `gemdos_standard_handle` (`gemdos/gemdos.h`) and `gemdos_descriptor_of` below —
+ * because the dispatcher's resolution ($fc9924, `src/gemdos/dispatch.c`), `Fclose` and
+ * `gemdos_force_handle` each walk part of it and a second copy is a second place for the signs to go
+ * wrong.
  */
 #ifndef TOS102US_GEMDOS_PROCESS_H
 #define TOS102US_GEMDOS_PROCESS_H
 
+#ifdef RECREATE_HOST_DIFFERENTIAL
+#include <assert.h>
+#endif
 #include <stdint.h>
 
 #include "addrs.h"
@@ -135,14 +140,20 @@ uint32_t gemdos_fdup(uint8_t *image, int16_t standard);
 /* $fc56c6 ($3e) — close a handle. Always 0 on the arms this reconstructs (see the core). */
 uint32_t gemdos_fclose(uint8_t *image, int16_t handle);
 
-/* $fc9924 — the dispatcher's own resolution of a handle ARGUMENT, walking `p_uft` and the table.
- * `arguments` is the caller's word list and `descriptor` the table's, because WHICH word holds the
- * handle is what the descriptor decides. */
-int32_t gemdos_resolve_handle(const uint8_t *image, uint32_t arguments, uint16_t descriptor);
-
 /* The handle table's record at a signed INDEX (`handle - 6` for a file handle): `muls.w #10` then
- * `addl #$8092`, no bound of the ROM's own — the host build asserts it stays in RAM. */
-uint32_t gemdos_descriptor_at(int16_t index);
+ * `addl #$8092`, exactly as the ROM's copies of this arithmetic do it, with no bound of the ROM's own —
+ * the host build asserts it stays in RAM. INLINE because its callers are table WALKS (`$fc9468`,
+ * `$fc6f5c`'s free-record search, the file layer's): as a call from another file, the release of a
+ * drive's open files measured 1.33x the ROM's 75-record loop, and 0.41x with the arithmetic in place. */
+static inline uint32_t gemdos_descriptor_at(int16_t index)
+{
+    int32_t at = (int32_t)GEMDOS_HANDLE_TABLE + (int32_t)index * GEMDOS_HANDLE_STRIDE;
+
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    assert(at >= 0 && (uint32_t)at + GEMDOS_HANDLE_STRIDE <= ST_RAM_BYTES);
+#endif
+    return (uint32_t)at;
+}
 
 /* ...the record a HANDLE names. Every caller has already decided the handle is 6 or above, except
  * `Fdup`, which is where the negative displacement comes from. */

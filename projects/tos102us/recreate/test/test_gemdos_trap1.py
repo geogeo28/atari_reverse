@@ -152,6 +152,8 @@ def test_the_rest_of_the_frame_is_on_the_callers_own_stack():
     assert registers == [trap.ENTRY_REGS[name] for name in
                          ("d1", "d2", "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2")]
     assert addrs.GEMDOS_SAVED_FRAME_BYTES == 4 + 2 + 4 + 4 * addrs.GEMDOS_SAVED_REGISTERS
+    # ...and the one slot a reconstruction reads by name: `Pexec`'s loader takes its `Fopen` mode out of it.
+    assert case.long_in(final, frame + addrs.GEMDOS_SAVED_FRAME_D5) == trap.ENTRY_REGS["d5"]
 
 
 def test_the_dispatcher_runs_on_the_operating_systems_own_stack():

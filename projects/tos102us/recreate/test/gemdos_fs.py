@@ -1092,8 +1092,10 @@ FDELETE = Leaf(addrs.GEMDOS_FDELETE_FN, addrs.GEMDOS_FDELETE, "gemdos_fdelete", 
 FCREATE = Leaf(addrs.GEMDOS_FCREATE_FN, addrs.GEMDOS_FCREATE, "gemdos_fcreate", ">IH")
 DDELETE = Leaf(addrs.GEMDOS_DDELETE_FN, addrs.GEMDOS_DDELETE, "gemdos_ddelete", ">I")
 DCREATE = Leaf(addrs.GEMDOS_DCREATE_FN, addrs.GEMDOS_DCREATE, "gemdos_dcreate", ">I")
+# ...and `Frename` (`src/gemdos/fs_rename.c`): the ABI's unused word, then the old and the new path.
+FRENAME = Leaf(addrs.GEMDOS_FRENAME_FN, addrs.GEMDOS_FRENAME, "gemdos_frename", ">HII")
 LEAVES = (FREAD, FWRITE, FSEEK, FCLOSE, FDATIME, DFREE, DGETPATH, FSNEXT, FSFIRST, DSETPATH, FOPEN, FATTRIB, FDELETE,
-          FCREATE, DDELETE, DCREATE)
+          FCREATE, DDELETE, DCREATE, FRENAME)
 for _leaf in LEAVES:
     getattr(_lib, _leaf.symbol).restype = ctypes.c_uint32
 _lib.gemdos_dispatch_selector.restype = ctypes.c_uint32
@@ -1104,9 +1106,14 @@ _lib.gemdos_dispatch_selector.restype = ctypes.c_uint32
 # on the stack in its caller's frame. So each is a `Leaf` with NO SELECTOR, and a case enters it exactly
 # as it enters a leaf at its own address (`leaf_pokes`, `leaf_glue`); `dispatch_slice` refuses one, there
 # being nothing to dispatch.
-def routine(entry, symbol, frame):
-    """An unnumbered routine taking a leaf's frame, as a `Leaf` with no selector."""
-    getattr(_lib, symbol).restype = ctypes.c_uint32
+def routine(entry, symbol, frame, returns=ctypes.c_uint32):
+    """An unnumbered routine taking a leaf's frame, as a `Leaf` with no selector. `returns` is None for a
+    `void` core — a ROM routine that sets no result, which the case then runs at `case.NO_RESULT`.
+
+    ONLY A CORE WHOSE C ARGUMENTS ARE ITS FRAME fits this door, because `leaf_glue` hands it the frame's
+    values. A core that also takes a REGISTER the ROM routine reads without its caller pushing it —
+    `$fc9468`'s A4, the loader's D5 — is glued by hand beside its own case, which says why."""
+    getattr(_lib, symbol).restype = returns
     return Leaf(None, entry, symbol, frame)
 
 
@@ -1138,20 +1145,26 @@ def leaf_handler(leaf):
     return lambda buf, arguments, _width: getattr(_lib, leaf.symbol)(buf, *argument_values(buf, arguments, leaf.frame))
 
 
-def dispatch_slice(leaf, words, pokes):
-    """A dispatcher slice (`gemdos.slice_pokes`) over the staged disk: our dispatcher calling our leaf
-    through the hook, bound at the address the ROM's table holds, against the ROM's own dispatch of
-    the same frame. `pokes` are the whole staging under the slice (a layer's cache and drive included).
+def slice_run(selector, words, pokes, leaves=(), **kwargs):
+    """A dispatcher slice (`gemdos.slice_pokes`) over the staged disk, with `leaves` bound as handlers at
+    the addresses the ROM's table holds — none for an arm the dispatcher serves itself, so a handler it
+    reached anyway is a refusal. `pokes` are the whole staging under the slice (a layer's cache and drive
+    included); `kwargs` go to `run` (seeds, `max_insns`).
 
-    Not `gemdos.run_slice`: that policy poisons, and a run that reaches the BIOS cannot (`run` above).
-    The handler calls it records are part of the claim — the leaf, exactly once."""
-    assert leaf.selector is not None, f"{leaf.symbol} is no leaf: the dispatcher has no selector for it"
-
+    Not `gemdos.run_slice`: that policy poisons, and a run that reaches the BIOS cannot (`run` above)."""
     def glue(lib, buf):
         return lib.gemdos_dispatch_selector(buf, gemdos.ARGUMENTS_AT)
 
-    with gemdos.bound_handlers({leaf.entry: leaf_handler(leaf)}):
-        result = run(gemdos.TRAMPOLINE_AT, gemdos.recording(glue), {**pokes, **gemdos.slice_pokes(leaf.selector, words)})
+    with gemdos.bound_handlers({leaf.entry: leaf_handler(leaf) for leaf in leaves}):
+        return run(gemdos.TRAMPOLINE_AT, gemdos.recording(glue), {**pokes, **gemdos.slice_pokes(selector, words)},
+                   **kwargs)
+
+
+def dispatch_slice(leaf, words, pokes):
+    """...our dispatcher calling our leaf through the hook, against the ROM's own dispatch of the same
+    frame. The handler calls it records are part of the claim — the leaf, exactly once."""
+    assert leaf.selector is not None, f"{leaf.symbol} is no leaf: the dispatcher has no selector for it"
+    result = slice_run(leaf.selector, words, pokes, (leaf,))
     assert [call[0] for call in gemdos.HANDLER_CALLS] == [leaf.entry]
     return result
 

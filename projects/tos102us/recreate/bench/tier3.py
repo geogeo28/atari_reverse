@@ -582,11 +582,27 @@ PERF_ACCEPTED = {
     # (`src/gemdos/process.c`) the row measures 1.04 with the same reads in the same order, so the
     # acceptance is DELETED rather than re-pinned — `test_no_pinned_ratio_is_stale`'s own rule.
     ("gemdos_pexec", "a refused mode"): (
-        1.75, "(A), at the size where a ratio is a poor instrument. The whole routine on this arm "
+        1.79, "(A), at the size where a ratio is a poor instrument. The whole routine on this arm "
               "is two `tst.w 8(a6)` and a `moveq #-32,d0` — 104 cycles; our C is handed an image "
-              "pointer and four arguments it never reads, and loading them off the frame is the "
-              "entire excess of 78 cycles. The structural lever is (A)'s: a shipped build with the "
-              "base fixed at 0."),
+              "pointer and four arguments, and copies the three pointers into its own frame before "
+              "the mode test because the file lookup's call must keep them alive — three hoisted "
+              "`move.l` spills of about 84 cycles, which is about the whole excess of 82 (78 before "
+              "the lookup existed; splitting the "
+              "admitted modes into a function of their own measured WORSE, the sibling call "
+              "reloading all four). The structural lever is (A)'s: a shipped build with the base "
+              "fixed at 0."),
+
+    # ---- the DISPATCHER's own arms (fs wave 3) ----
+    # ONE entry. The device arm's short rows (one byte, a count of 0 or of 64 KB, `Fseek` on the console)
+    # sit at 0.98-1.07 once the resolution and the device arm are one call (`src/gemdos/dispatch.c`); this
+    # is the one arm with no body at all to amortise a call against.
+    ("gemdos_dispatch_selector", "Cconws of an empty string redirected to a file"): (
+        1.71, "the redirection table's `jmp (a0)` against a C call: the ROM reaches `Cconws`'s arm in one "
+              "indexed jump and the empty string ends it at its first `tst.b`; ours pays the call into "
+              "`character_call` (four arguments pushed, three registers saved), the compare chain its "
+              "switch becomes under -fno-jump-tables, and `redirect_jump_d0`'s record arithmetic for the "
+              "D0 this arm alone hands back — 538 -> 892 cycles, 39 instructions to 77. The same arm over "
+              "three bytes measures 0.96"),
 }
 
 # ---- THE LEAF RULE — the rows where a ratio is the wrong instrument ------------------------------
@@ -727,6 +743,8 @@ class EntryRegister:
 
 ENTRY_D0 = EntryRegister("d0")
 ENTRY_A0 = EntryRegister("a0")
+ENTRY_D5 = EntryRegister("d5")
+ENTRY_A4 = EntryRegister("a4")
 
 
 def arg_word(offset):
@@ -875,6 +893,10 @@ CALL = {
     # the trap entry's `lea 50(frame),a0` hands them.
     "GEMDOS_DISPATCH": Call((IMAGE, gemdos.ARGUMENTS_AT), RETURNS_LONG),
     "GEMDOS_DISPATCH_SELECTOR": Call((IMAGE, gemdos.ARGUMENTS_AT), RETURNS_LONG),
+    # ...and its media-change recovery's two helpers. The second never reads its argument — it
+    # compares against the A4 its caller left (`src/gemdos/dispatch.c`) — so the C takes that register.
+    "GEMDOS_FREE_DND_TREE": Call((IMAGE, arg_long(0)), RETURNS_NOTHING),
+    "GEMDOS_FREE_DRIVE_OFDS": Call((IMAGE, ENTRY_A4), RETURNS_NOTHING),
     # ---- the GEMDOS CHARACTER DEVICES (GEMDOS wave 1) ----
     # The DEVICE is not an argument to any of these: each leaf reads its own standard handle out of
     # the running process's basepage and adds three (`src/gemdos/console.c`). What IS an argument is
@@ -1008,6 +1030,8 @@ CALL = {
     "GEMDOS_FCREATE": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_LONG),
     "GEMDOS_DDELETE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
     "GEMDOS_DCREATE": Call((IMAGE, arg_long(0)), RETURNS_LONG),
+    # ...and `Frename` (`src/gemdos/fs_rename.c`): the ABI's unused word, then the two paths.
+    "GEMDOS_FRENAME": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
     # ---- the PROCESS group and the HANDLE machinery (GEMDOS wave 2) ----
     # A handle is SIGNED everywhere in this group — the bound `Fforce` applies is `bge`/`ble` over
     # -1..5 — so its argument words are `arg_signed_word` and its C parameters are `int16_t`
@@ -1030,6 +1054,9 @@ CALL = {
                          RETURNS_LONG),
     "GEMDOS_PEXEC_CREATE": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6), arg_long(10)),
                                 RETURNS_LONG),
+    # ...and its loader, whose `Fopen` mode is the high half of the D5 it runs with — an ENTRY REGISTER
+    # the case declares, which our core takes as its last argument (`src/gemdos/pexec_load.c`).
+    "GEMDOS_PEXEC_LOAD": Call((IMAGE, arg_long(0), arg_long(4), ENTRY_D5), RETURNS_LONG),
 }
 
 # Cases this file adds to the verified set, in `VERIFIED_CASES`' own shape.
@@ -1106,6 +1133,8 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_MD_FREE_INSERT": "GEMDOS free-list insert",
     "GEMDOS_DISPATCH": "GEMDOS dispatcher",
     "GEMDOS_DISPATCH_SELECTOR": "GEMDOS dispatcher, past the record",
+    "GEMDOS_FREE_DND_TREE": "GEMDOS DND tree release",
+    "GEMDOS_FREE_DRIVE_OFDS": "GEMDOS drive's OFDs release",
     "GEMDOS_UNIMPLEMENTED": "GEMDOS undefined selector",
     # ...and GEMDOS wave 2's, which are the same kind: the file system's eight cores and the process
     # group's five, all of them called BY NAME out of GEMDOS's own C.
@@ -1122,6 +1151,7 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_INHERIT_CURDIR": "GEMDOS curdir inherit",
     "GEMDOS_RESYNC_CLOCK": "GEMDOS clock resync",
     "GEMDOS_PEXEC_CREATE": "GEMDOS Pexec, past the record",
+    "GEMDOS_PEXEC_LOAD": "GEMDOS Pexec loader",
     # ...fs wave 3's drive and path layer (`src/gemdos/fs_drive.c`).
     "GEMDOS_DMD_ALLOC": "GEMDOS drive records",
     "GEMDOS_DMD_BUILD": "GEMDOS BPB -> DMD",

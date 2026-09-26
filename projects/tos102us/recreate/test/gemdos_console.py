@@ -56,12 +56,13 @@ HANDLE_INDEX = {"stdin": addrs.GEMDOS_STDIN, "stdout": addrs.GEMDOS_STDOUT,
 
 # The three standard handle values, by the device each becomes. `handle + 3` is the whole of GEMDOS's
 # device model (`src/gemdos/console.c`), so these are the only three a leaf is ever entered with.
-HANDLE_CON = -1
-HANDLE_AUX = -2
-HANDLE_PRN = -3
-DEVICE_PRINTER = 0
-DEVICE_RS232 = 1
-DEVICE_CONSOLE = 2
+HANDLE_CON = addrs.GEMDOS_CON_HANDLE
+HANDLE_AUX = HANDLE_CON - 1
+HANDLE_PRN = HANDLE_CON - 2
+DEVICE_PRINTER = HANDLE_PRN + addrs.GEMDOS_HANDLE_TO_DEVICE
+DEVICE_RS232 = HANDLE_AUX + addrs.GEMDOS_HANDLE_TO_DEVICE
+DEVICE_CONSOLE = addrs.GEMDOS_CONSOLE_DEVICE
+assert DEVICE_CONSOLE == HANDLE_CON + addrs.GEMDOS_HANDLE_TO_DEVICE
 
 
 def handle_slot(which):

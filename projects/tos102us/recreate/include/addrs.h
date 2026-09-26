@@ -1002,12 +1002,17 @@
 #define GEMDOS_TRAP1_END      0xfc5092  /* one past the last byte src/gemdos/trap1.S transcribes */
 #define GEMDOS_DISPATCH       0xfc94e4  /* the C dispatcher the entry calls, with the frame pointer */
 #define GEMDOS_DISPATCH_SELECTOR 0xfc973e  /* ...and where it dispatches, PAST the `setjmp` */
+#define GEMDOS_FREE_DND_TREE  0xfc93f4  /* the media-change recovery: a DND tree back to the pool */
+#define GEMDOS_FREE_DRIVE_OFDS 0xfc9468 /* ...and the open files on the drive in the caller's A4 */
 /* The dispatcher's own frame: `link a6,#-54`, and the ONE local a case entering the slice above has
  * to stand in for — the selector, which the prologue read out of the argument list before the
  * `setjmp` and every arm past it reads back from here. (The argument POINTER is at `8(a6)`, which
  * is where an ordinary `jsr` frame already puts it.) */
 #define GEMDOS_DISPATCH_FRAME_BYTES 54
 #define GEMDOS_DISPATCH_SELECTOR_LOCAL 0xffde
+/* ...and the byte a REDIRECTED read `Fread`s into, `-14(a6)` ($fc97b6), which the case staging a stale
+ * one has to find in the ROM's frame (the reconstruction's is `GEMDOS_HOST_SLOT_REDIRECTED_BYTE`). */
+#define GEMDOS_DISPATCH_REDIRECTED_BYTE_LOCAL (-14)
 #define GEMDOS_SETJMP         0xfc4f38  /* the three-longword frame record the dispatcher arms */
 #define GEMDOS_TERMINATION_JMPBUF 0x7ef4   /* ...and where it writes it */
 #define GEMDOS_CALL_DEPTH     0x68fa    /* word: cleared then bumped on every trap #1 ($fc94e8) */
@@ -1017,6 +1022,12 @@
  * displacement from the frame's base back up to the argument words. */
 #define GEMDOS_SUPERVISOR_STACK 0x16ce  /* where the entry parks A7 before calling the dispatcher */
 #define GEMDOS_SAVED_FRAME_BYTES 50     /* `lea 50(a5),a0`: 4 + 2 + 4 + 10 * 4 */
+/* One register of the ten, `movem.l d1-a2`: a longword each, D1 first — the other stack pointer (4), the
+ * SR (2) and the PC (4) are under them. D5 is the fifth, which `Pexec`'s loader reads its `Fopen` mode out
+ * of (`include/gemdos/pexec_load.h`); `test_gemdos_trap1.py` reads each slot back out of a frame the ROM's
+ * own entry built. */
+#define GEMDOS_SAVED_REGISTER_BYTES 4
+#define GEMDOS_SAVED_FRAME_D5 26        /* 4 + 2 + 4 + 4 * 4: past D1..D4 */
 /* Where the ARGUMENTS are, measured from three different places, which is why there are three
  * names: from the argument list itself (the function number is the first word), from a supervisor
  * caller's stack pointer inside the entry (the exception frame is still on it), and from the
@@ -1109,6 +1120,9 @@
  * one pointer argument for the two console calls that take a string, and none for the rest. */
 #define GEMDOS_CCONWS_FN      0x09
 #define GEMDOS_CCONRS_FN      0x0a
+/* ...and what a status call answers once its standard handle is a FILE: always ready, whichever of
+ * the five it is (`move.l #255,d0` at $fc98dc). */
+#define GEMDOS_REDIRECTED_READY 0xff
 
 /* The HANDLE RECORDS $8092 holds — ten bytes each, whose own first longword POINTS at the 64-byte
  * open file descriptor the file system keeps (or, negative, names a character device). Named because
@@ -1187,6 +1201,7 @@
 #define GEMDOS_FDELETE_FN     0x41
 #define GEMDOS_FATTRIB_FN     0x43
 #define GEMDOS_FSFIRST_FN     0x4e
+#define GEMDOS_FRENAME_FN     0x56
 
 /* Sversion's answer, and the DOS date/time fields Tsetdate and Tsettime bound. The date word is
  * `(year - 1980) << 9 | month << 5 | day` and the time word `hour << 11 | minute << 5 | second / 2`,
@@ -1278,7 +1293,19 @@
 #define GEMDOS_STDAUX         2
 #define GEMDOS_STDPRN         3
 #define GEMDOS_HANDLE_TO_DEVICE 3       /* `addq.w #3,(sp)` on the sign-extended handle byte */
+#define GEMDOS_CON_HANDLE     (-1)      /* CON:'s handle, AUX: and PRN: counting down from it */
+#define GEMDOS_CONSOLE_DEVICE 2         /* ...which makes CON:'s -1 this (`cmpi.w #2` at $fc9a5e) */
 #define GEMDOS_CONSOLE_DEVICES 3        /* ...and how many devices the state below is sized for */
+
+/* The six device NAMES the dispatcher compares an `Fopen`/`Fcreate` filename against ($fc9aca..$fc9b96):
+ * "CON:", "con:", "AUX:", "aux:", "PRN:", "prn:", each with its NUL, five bytes at a time through
+ * `$fc7e94` — so a name matches only WHOLE, and only in one of the two cases spelt. A match is answered
+ * with the device's handle as an unsigned WORD, CON: first and the other two counting down from it:
+ * $0000ffff, $0000fffe, $0000fffd. */
+#define GEMDOS_DEVICE_NAMES   0xfd32d6
+#define GEMDOS_DEVICE_NAME_BYTES 5
+#define GEMDOS_DEVICE_NAME_SPELLINGS 2  /* upper case, then lower */
+#define GEMDOS_DEVICE_NAME_COUNT 3
 
 /* GEMDOS's own console state, all of it indexed by that device number. */
 #define GEMDOS_DEVICE_COLUMN  0x68f4    /* word[3]: which column the device's cursor is in */
@@ -1419,6 +1446,8 @@
 #define GEMDOS_FCREATE        0xfc719a  /* ...Fcreate: the same, the subdirectory bit masked off */
 #define GEMDOS_DDELETE        0xfc792a  /* an empty directory's DND freed and its entry deleted */
 #define GEMDOS_DCREATE        0xfc73ce  /* a subdirectory entry, a zeroed cluster, `.` and `..` */
+/* fs wave 3: `Frename` (`src/gemdos/fs_rename.c`, `include/gemdos/fs_rename.h`). Selector above. */
+#define GEMDOS_FRENAME        0xfc7af0  /* renamed in place, or moved: `$e5` + `Fcreate`, the chain handed over */
 /* The first 22 bytes — name, attribute, the ten reserved — of the `.` and `..` entries `Dcreate`
  * copies into a new directory's first cluster ($fc74e2, $fc752e `move.l #$fd2fec`/`#$fd3002`). */
 #define GEMDOS_DOT_ENTRY_HEAD     0xfd2fec
@@ -1434,6 +1463,7 @@
 #define BIOS_RETURN_BUFFER_READ 0xfc5b84     /* $fc5b7e: the miss that fills an evicted buffer */
 #define BIOS_RETURN_BUFFER_MEDIACH 0xfc5bd6  /* $fc5bd0: the hit's media-change interrogation */
 #define BIOS_RETURN_OPEN_DRIVE_GETBPB 0xfc6806 /* $fc6800: the drive's BPB — `Getbpb`'s one caller */
+#define BIOS_RETURN_DEVICE_WRITE 0xfc9a9a    /* $fc9a94: the dispatcher's device arm, `Fwrite` to AUX:/PRN: */
 
 /* fs wave 3: the DRIVE and PATH layer (`src/gemdos/fs_drive.c`, `include/gemdos/fs_drive.h`). */
 #define GEMDOS_DMD_ALLOC      0xfc50fa  /* the DMD, root DND, root OFD and FAT OFD out of the pool */
@@ -1500,10 +1530,11 @@
 #define GEMDOS_FFORCE_FN      0x46
 #define GEMDOS_FCLOSE         0xfc56c6
 #define GEMDOS_FCLOSE_FN      0x3e
-/* ...and the five with no function number: GEMDOS's own C calls each by name. `GEMDOS_PEXEC_CREATE`
+/* ...and the six with no function number: GEMDOS's own C calls each by name. `GEMDOS_PEXEC_CREATE`
  * is `Pexec` PAST the termination record it arms, which is where a case can enter it at all — the
  * dispatcher's own split, for the dispatcher's reason (`src/gemdos/dispatch.c`). */
 #define GEMDOS_PEXEC_CREATE   0xfc8242
+#define GEMDOS_PEXEC_LOAD     0xfc85ea  /* the program loader and relocator modes 0 and 3 call */
 #define GEMDOS_RELEASE_PROCESS 0xfc8092 /* handles, descriptors, directories and memory, given back */
 #define GEMDOS_FORCE_HANDLE   0xfc52f8  /* `Fforce`'s body, over a basepage the caller names */
 #define GEMDOS_INHERIT_CURDIR 0xfc51de  /* one p_curdir entry copied, and its node's count bumped */

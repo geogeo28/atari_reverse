@@ -51,7 +51,7 @@ def _string(text):
     return {console.STRING_AT: text + b"\0"}
 
 
-def _console_machine(column=START_COLUMN, row=0, *, cursor_depth=1, pokes=None):
+def console_machine(column=START_COLUMN, row=0, *, cursor_depth=1, pokes=None):
     """The console as a program finds it, with the IKBD ring empty and both columns in step.
 
     `cursor_depth=1` keeps the cursor OFF the screen, which is what makes a glyph case about the
@@ -68,20 +68,20 @@ def _console_machine(column=START_COLUMN, row=0, *, cursor_depth=1, pokes=None):
 
 CCONOUT_GLYPH = {"name": "gemdos_cconout, a glyph", "leaf": console.CCONOUT,
                  "argument": A_CHARACTER,
-                 "pokes": _console_machine(pokes=vt52.canary(START_COLUMN, 0))}
+                 "pokes": console_machine(pokes=vt52.canary(START_COLUMN, 0))}
 CCONOUT_TAB = {"name": "gemdos_cconout, TAB mid-stop", "leaf": console.CCONOUT,
-               "argument": addrs.CON_TAB, "pokes": _console_machine()}
+               "argument": addrs.CON_TAB, "pokes": console_machine()}
 CCONOUT_TAB_ON_A_STOP = {"name": "gemdos_cconout, TAB already on a stop", "leaf": console.CCONOUT,
                          "argument": addrs.CON_TAB,
-                         "pokes": _console_machine(column=addrs.CON_TAB_WIDTH)}
+                         "pokes": console_machine(column=addrs.CON_TAB_WIDTH)}
 CCONOUT_CR = {"name": "gemdos_cconout, CR", "leaf": console.CCONOUT, "argument": addrs.CON_CR,
-              "pokes": _console_machine()}
+              "pokes": console_machine()}
 CCONOUT_LF = {"name": "gemdos_cconout, LF", "leaf": console.CCONOUT, "argument": addrs.CON_LF,
-              "pokes": _console_machine()}
+              "pokes": console_machine()}
 CCONOUT_BS = {"name": "gemdos_cconout, BS", "leaf": console.CCONOUT, "argument": addrs.CON_BS,
-              "pokes": _console_machine()}
+              "pokes": console_machine()}
 CCONOUT_HIGH_BYTE = {"name": "gemdos_cconout, a byte with bit 7 set", "leaf": console.CCONOUT,
-                     "argument": HIGH_BYTE, "pokes": _console_machine()}
+                     "argument": HIGH_BYTE, "pokes": console_machine()}
 CCONOUT_ON_AUX = {"name": "gemdos_cconout, stdout redirected to AUX:", "leaf": console.CCONOUT,
                   "argument": A_CHARACTER,
                   "pokes": {**console.handles(stdout=console.HANDLE_AUX),
@@ -104,30 +104,30 @@ CPRNOUT = {"name": "gemdos_cprnout", "leaf": console.CPRNOUT, "argument": A_CHAR
 # driver as a `Cconout`, reached by the leaf that has no column counter and no poll in front of it.
 CAUXOUT_ON_CONSOLE = {"name": "gemdos_cauxout, stdaux redirected to CON:", "leaf": console.CAUXOUT,
                       "argument": A_CHARACTER,
-                      "pokes": {**_console_machine(pokes=vt52.canary(START_COLUMN, 0)),
+                      "pokes": {**console_machine(pokes=vt52.canary(START_COLUMN, 0)),
                                 **console.handles(stdaux=console.HANDLE_CON)}}
 CRAWIO_WRITE = {"name": "gemdos_crawio, write", "leaf": console.CRAWIO, "argument": A_CHARACTER,
-                "pokes": _console_machine()}
+                "pokes": console_machine()}
 CRAWIO_WRITE_HIGH_HALF = {"name": "gemdos_crawio, write with a high half", "leaf": console.CRAWIO,
-                          "argument": 0x40FF, "pokes": _console_machine()}
+                          "argument": 0x40FF, "pokes": console_machine()}
 
 CCONWS_TEXT = {"name": "gemdos_cconws, a string", "leaf": console.CCONWS,
                "argument": console.STRING_AT,
-               "pokes": {**_console_machine(), **_string(TEXT)}}
+               "pokes": {**console_machine(), **_string(TEXT)}}
 CCONWS_EMPTY = {"name": "gemdos_cconws, the empty string", "leaf": console.CCONWS,
                 "argument": console.STRING_AT,
-                "pokes": {**_console_machine(), **_string(b"")}}
+                "pokes": {**console_machine(), **_string(b"")}}
 CCONWS_HIGH_BYTE = {"name": "gemdos_cconws, a byte with bit 7 set", "leaf": console.CCONWS,
                     "argument": console.STRING_AT,
-                    "pokes": {**_console_machine(), **_string(bytes([HIGH_BYTE]))}}
+                    "pokes": {**console_machine(), **_string(bytes([HIGH_BYTE]))}}
 CCONWS_WRAPS_AND_SCROLLS = {"name": "gemdos_cconws, over a wrap and a scroll",
                             "leaf": console.CCONWS, "argument": console.STRING_AT,
-                            "pokes": {**_console_machine(column=vt52.MAX_COLUMN - 1,
+                            "pokes": {**console_machine(column=vt52.MAX_COLUMN - 1,
                                                          row=vt52.MAX_ROW),
                                       **_string(LONG_TEXT)}}
 CCONWS_TAB = {"name": "gemdos_cconws, a TAB in the string", "leaf": console.CCONWS,
               "argument": console.STRING_AT,
-              "pokes": {**_console_machine(), **_string(bytes([addrs.CON_TAB]))}}
+              "pokes": {**console_machine(), **_string(bytes([addrs.CON_TAB]))}}
 
 REGISTERED = (CCONOUT_GLYPH, CCONOUT_TAB, CCONOUT_TAB_ON_A_STOP, CCONOUT_CR, CCONOUT_LF,
               CCONOUT_BS, CCONOUT_HIGH_BYTE, CCONOUT_ON_AUX, CAUXOUT, CPRNOUT, CRAWIO_WRITE,
@@ -190,7 +190,7 @@ def test_the_tab_expansion_ends_on_a_stop_whatever_column_it_started_in():
     """Every column of one stop's width, each its own run — which is what says the loop's condition
     is the column's PHASE and not a count the reconstruction could have guessed."""
     for column in range(addrs.CON_TAB_WIDTH):
-        info = console.run(CCONOUT_TAB, pokes=_console_machine(column=column))
+        info = console.run(CCONOUT_TAB, pokes=console_machine(column=column))
         assert _column_after(info) % addrs.CON_TAB_WIDTH == 0
         assert _column_after(info) == column + addrs.CON_TAB_WIDTH - column % addrs.CON_TAB_WIDTH
 

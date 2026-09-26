@@ -223,6 +223,12 @@ def test_fcreate_masks_the_subdirectory_bit_off(attr, written):
     assert result.root_entry(fc.ROOT_INDEX["GONE"])[fs.DIRENT_ATTR] == written
 
 
+def test_a_dispatched_fcreate_of_a_file_runs_the_leaf():
+    """Past the dispatcher's device-name arm, which "NEW.TXT" does not match, our dispatcher calls our leaf."""
+    result = io.dispatch_slice(FCREATE, (*gemdos.long_words(d.TEXT_AT), FILE_ATTR), fc.staged("A:\\NEW.TXT"))
+    _assert_opened(result, fc.ROOT_INDEX["GONE"], fc.new_entry("NEW", "TXT"))
+
+
 # ---- the registry ------------------------------------------------------------------------------------
 
 def _register_all():

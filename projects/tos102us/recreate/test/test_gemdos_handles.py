@@ -372,13 +372,10 @@ def test_fseek_takes_its_handle_from_the_THIRD_word():
      process.descriptor_poke(A_FILE_HANDLE, A_FILE, P_RUN), 0xFC9AC6),
 ), ids=lambda arg: arg if isinstance(arg, str) else "")
 def test_where_a_resolved_handle_sends_the_ORIGINAL(what, handle, pokes, reaches):
-    """A claim about the ORACLE, because neither arm is a differential this wave can make: a DEVICE
-    routes into the console leaves under an `Fread` that does not exist, and a FILE falls through to
-    the ordinary dispatch and the file system's own handler.
-
-    What the case can say is WHICH of the two the walk reached, and it says it at the instruction —
-    `$fc99bc` is the device routing and `$fc9ac6` the ordinary dispatch. That is what makes the
-    reconstruction's halt (`src/gemdos/dispatch.c`) a halt on the right arm.
+    """A claim about the ORACLE: WHICH of the two arms the walk reached, said at the instruction —
+    `$fc99bc` is the device routing and `$fc9ac6` the ordinary dispatch. Both are whole differentials
+    elsewhere: the device arm in `test_gemdos_dispatch_device.py`, a file handle's leaf in
+    `test_gemdos_fs_io_leaves.py`.
     """
     staged = gemdos.slice_pokes(FREAD, (handle, 0, 0, 0, 0, 0), pokes)
     _final, _writes, regs = emu.run(make_image(staged), gemdos.TRAMPOLINE_AT,

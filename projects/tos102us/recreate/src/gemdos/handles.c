@@ -1,7 +1,8 @@
-/* handles.c — GEMDOS's handle machinery: `Fforce` ($fc52de), `Fdup` ($fc5216), `Fclose` ($fc56c6)
- * and the resolution the dispatcher does before it calls a handler at all ($fc9924).
+/* handles.c — GEMDOS's handle machinery: `Fforce` ($fc52de), `Fdup` ($fc5216) and `Fclose` ($fc56c6).
+ * The resolution the dispatcher does before it calls a handler at all ($fc9924) is the dispatcher's own
+ * arm, and lives with it (`src/gemdos/dispatch.c`).
  *
- * THE LAYER THESE FOUR MAKE UP is the one between a program's handle and whatever the handle names:
+ * THE LAYER THESE THREE MAKE UP is the one between a program's handle and whatever the handle names:
  * a device, a standard-handle index, or an open-file descriptor (`include/gemdos/process.h`). A
  * descriptor naming a character device is theirs whole — its sign is all they read of it. One naming
  * a file is `Fclose`'s to hand on: its OFD goes to the file system's own close (`src/gemdos/fs_file.c`)
@@ -17,10 +18,6 @@
  *             naming one — including the release when the last reference goes — the EIHNDL a
  *             handle that names NOTHING answers, which is `$fc51c0` answering 0, and a handle that
  *             resolves to an open FILE, closed through `$fc57ee`.
- *   resolve   the walk itself, whole, and the EIHNDL it answers for a handle that names nothing.
- *             What halts is the routing BELOW it ($fc99bc), where a resolved CHARACTER DEVICE turns
- *             an `Fread` into a console read — that one needs `src/gemdos/console.c`'s leaves under
- *             a `Fread`/`Fwrite` that do not exist yet.
  *
  * THE TABLE IS WALKED BY ADDRESS, NOT BY INDEX, and the arithmetic is signed on purpose. The ROM
  * computes `(handle - 6) * 10 + $8092` with `muls.w`, and `Fdup` reaches it with a handle it has
@@ -41,19 +38,6 @@
 #include "gemdos/process.h"
 #include "machine.h"
 
-/* The descriptor at an INDEX into the table — `muls.w #10` on a signed word, exactly as the ROM's
- * five copies of this arithmetic do it, with no bound of the ROM's own. Exported: the file system's
- * record layer claims and fills these records too (`src/gemdos/fs_records.c`). */
-uint32_t gemdos_descriptor_at(int16_t index)
-{
-    int32_t at = (int32_t)GEMDOS_HANDLE_TABLE + (int32_t)index * GEMDOS_HANDLE_STRIDE;
-
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    assert(at >= 0 && (uint32_t)at + GEMDOS_HANDLE_STRIDE <= ST_RAM_BYTES);
-#endif
-    return (uint32_t)at;
-}
-
 /* One of the six standard handles of a basepage that is NOT necessarily `p_run` — `Pexec` forces
  * into the child's. `gemdos_standard_handle` is the `p_run` case of this and reads where this
  * writes; both go through `gemdos/gemdos.h`'s one host-only bound. */
@@ -71,7 +55,7 @@ static int is_a_standard_handle(int16_t handle)
 }
 
 /* $fc5186 — WHICH RECORD a handle names, as a signed index into the table. A walk of its own and not
- * `gemdos_resolve_handle`'s: 6 and up is `handle - 6`, and 0..5 is the running process's `p_uft`
+ * the dispatcher's resolution ($fc9924): 6 and up is `handle - 6`, and 0..5 is the running process's `p_uft`
  * byte, minus six again if that byte is POSITIVE. A byte of 0 or below becomes the INDEX ITSELF — so
  * a standard handle naming nothing indexes record 0 and one naming a device indexes before the
  * table. The ROM applies no bound and neither does this.
@@ -249,31 +233,4 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
         gemdos_release_descriptor(image, descriptor);
     }
     return closed;
-}
-
-/* $fc9924 — which handle a call's arguments name, and what it resolves to.
- *
- * WHICH WORD holds the handle is the descriptor's to say, and it says it by being $81: that is
- * `Fseek`, whose first argument is a LONGWORD offset, so its handle is the third word. `Fread` and
- * `Fwrite` are $82 and take the handle first. No other selector reaches here — the character-device
- * group has had its descriptor rewritten by the time the `btst #7` runs (`src/gemdos/dispatch.c`).
- *
- * The walk itself is `gemdos/process.h`'s three kinds, and what comes back is a LONGWORD rather than
- * a handle: 0 for a handle that names nothing, negative for a character device, and the file
- * system's own pointer otherwise.
- */
-int32_t gemdos_resolve_handle(const uint8_t *image, uint32_t arguments, uint16_t descriptor)
-{
-    uint32_t at = arguments + (descriptor == GEMDOS_DESC_HANDLE_AT_THIRD_WORD
-                               ? GEMDOS_ARGUMENT_THIRD_WORD : GEMDOS_ARGUMENT_WORD);
-    int16_t handle = (int16_t)be16(image + at);
-
-    if (handle >= GEMDOS_FIRST_FILE_HANDLE)
-        return (int32_t)be32(image + gemdos_descriptor_of(handle) + HANDLE_VALUE);
-    if (handle < 0)
-        return handle;
-    handle = gemdos_standard_handle(image, (unsigned)handle);
-    if (handle > 0)
-        return (int32_t)be32(image + gemdos_descriptor_of(handle) + HANDLE_VALUE);
-    return handle;
 }

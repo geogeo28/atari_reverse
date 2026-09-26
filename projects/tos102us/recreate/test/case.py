@@ -22,7 +22,7 @@ FULL_D0 = 32
 NO_RESULT = None
 
 
-def run(entry, regs, glue, *, width=FULL_D0, poison=True, **seeds):
+def run(entry, regs, glue, *, width=FULL_D0, poison=True, dropped=(), **seeds):
     """One differential at `entry`. Returns the oracle's `info` once everything always-checked holds.
 
     `regs` are the oracle's input registers plus the case's `_pokes`; `glue(lib, buf)` runs the
@@ -31,12 +31,19 @@ def run(entry, regs, glue, *, width=FULL_D0, poison=True, **seeds):
     byte already held the right value; it is on by default because these are leaf routines, and a
     battery that turns it off says why.
 
+    `dropped` is `((lo, hi, why), ...)`: a span the ORIGINAL writes and the reconstruction deliberately
+    does not, left out of the compare with the reason beside it. It is for a divergence the project
+    documents, never for scratch — the kit's own `exclude` is that, and refuses any band that is not
+    the stack's. A reason is required so that no span is dropped without one.
+
     `seeds` are `harness.differential`'s remaining keyword arguments — `io_seed`, `psg_seed`,
     `schedule`, `wait_sites` — forwarded rather than enumerated. Every one of them is a DECLARATION
     the case makes about the machine, and the four steps around it are the same whichever is
     present, so naming them here would be a second list to keep level with the kit's.
     """
+    assert all(why for _lo, _hi, why in dropped), "a span dropped from the compare with no reason given"
     diffs, info = differential(entry, regs, glue, poison=poison, **seeds)
+    diffs = [diff for diff in diffs if not any(lo <= diff[0] < hi for lo, hi, _why in dropped)]
     assert not diffs, report(diffs)
     assert_result_is_d0(info, width)
     return info

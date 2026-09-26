@@ -201,10 +201,14 @@ gemdos_trap1_epilogue:
     rte
 
 /* ---- the OS's own door into GEMDOS --------------------------------------------------------------
- * The ROM calls GEMDOS from inside itself — the dispatcher's own redirection arms reach `Fwrite`
- * this way ($fc9886) — and it cannot use `trap #1` to do it, because that would frame the process
- * a second time over the frame it is already in. So there is a second entry whose only trick is
- * `lea 8(a6),a0`: it hands the dispatcher the address of ITS OWN caller's argument list.
+ * The ROM calls GEMDOS from inside itself — the dispatcher's own redirected `Cconrs` echoes through
+ * `Fwrite` this way ($fc9886) — and it cannot use `trap #1` to do it, because that would frame the
+ * process a second time over the frame it is already in. So there is a second entry whose only trick
+ * is `lea 8(a6),a0`: it hands the dispatcher the address of ITS OWN caller's argument list.
+ *
+ * NOTHING IN THIS RECONSTRUCTION CALLS IT YET. It is transcribed because it is part of the entry's
+ * span, held byte for byte to the ROM; the echo's reconstruction makes the same nested dispatch in C
+ * (`nested_fwrite`, `src/gemdos/dispatch.c`, which says why not through here).
  *
  * That is what keeps it out of C as well. A C function can read its arguments; it cannot take the
  * address of the list the caller pushed and pass it on, which is this routine's whole body.

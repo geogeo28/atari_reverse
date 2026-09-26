@@ -18,6 +18,10 @@
 
 #include <stdint.h>
 
+/* `sfirst`'s DTA argument when the caller wants to know only whether the name is there (`clr.l` at
+ * $fc81a8 and $fc7af8): nothing is stored, and the answer is all there is. */
+#define GEMDOS_SFIRST_NO_DTA 0
+
 uint32_t gemdos_sfirst(uint8_t *image, uint32_t name, uint16_t attr, uint32_t dta);
 uint32_t gemdos_fsfirst(uint8_t *image, uint32_t name, uint16_t attr);
 uint32_t gemdos_dsetpath(uint8_t *image, uint32_t path);

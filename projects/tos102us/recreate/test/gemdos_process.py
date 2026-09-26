@@ -338,6 +338,17 @@ COMMAND_TAIL_AT = gemdos.BUFFER_AT + 0x40
 assert COMMAND_TAIL_AT + PEXEC_COMMAND_TAIL_MAX + 1 <= gemdos.BUFFER_AT + gemdos.BUFFER_BYTES
 
 
+# THE CHILD'S INITIAL STACK, as `Pexec` builds it downwards from `p_hitpa` (`include/gemdos/process.h`):
+# the basepage longword, a zero and `PEXEC_STACK_ZERO_LONGS` more, then the entry point.
+STACK_LONG_BYTES = 4
+
+
+def child_entry_at(hitpa):
+    """Where the child's ENTRY POINT sits on the stack `Pexec` built under `hitpa` — the zero word and
+    the return address `PEXEC_RETURN_ADDRESS` are below it."""
+    return hitpa - STACK_LONG_BYTES * (1 + 1 + PEXEC_STACK_ZERO_LONGS + 1)
+
+
 def pexec_args(mode, name=0, tail=0, env=0):
     """`Pexec`'s own frame: the mode WORD and then three longwords, which is the widest argument
     class the dispatcher has (`GEMDOS_ARGUMENT_BYTES_3` = 14 bytes)."""

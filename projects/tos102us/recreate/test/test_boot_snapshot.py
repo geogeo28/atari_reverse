@@ -117,6 +117,7 @@ import test_gemdos_fs_name                                  # noqa: E402
 import test_gemdos_handles                                  # noqa: E402,F401
 import test_gemdos_process                                  # noqa: E402,F401
 import test_gemdos_process_pexec                            # noqa: E402,F401
+import test_gemdos_process_pexec_load                       # noqa: E402,F401  (Pexec's loader)
 # ...and fs WAVE 3's: the drive and path layer (whose out-of-table slots it declares), the shared
 # byte copies and the record layer, and the I/O engine — seek, the FAT, the transfer and
 # Fread/Fwrite/Fseek. Every band they stage in is a claim on `gemdos_fs.SPAN`, splatted below once
@@ -146,6 +147,14 @@ import test_gemdos_fs_fdelete                               # noqa: E402,F401
 import test_gemdos_fs_create                                # noqa: E402,F401
 import test_gemdos_fs_ddelete                               # noqa: E402,F401
 import test_gemdos_fs_dcreate                               # noqa: E402,F401
+# ...and Frename, over that tree, its moves made through the create layer.
+import test_gemdos_fs_rename                                # noqa: E402,F401
+# ...and the dispatcher's own I/O: the device-name and device arms, and the redirected arms over a file.
+import test_gemdos_dispatch_device                          # noqa: E402,F401
+import test_gemdos_dispatch_redirect                        # noqa: E402,F401
+import test_gemdos_dispatch_media_change                    # noqa: E402,F401
+import dispatch_io                                          # noqa: E402
+import fs_pexec                                             # noqa: E402
 import fs_records                                           # noqa: E402
 import gemdos_fs                                            # noqa: E402
 import gemdos_process                                       # noqa: E402
@@ -437,7 +446,11 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                # fields its batteries reach outside it.
                *gemdos_fs.SPAN.claims,
                *test_gemdos_fs_drive.CASE_FIELDS,
-               *fs_records.CASE_FIELDS)
+               *fs_records.CASE_FIELDS,
+               # ...and `Pexec`'s loader: the saved D5 its open mode is the high half of.
+               *fs_pexec.CASE_FIELDS,
+               # ...and the dispatcher's redirected write: the byte its broken pointer names.
+               *dispatch_io.CASE_FIELDS)
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():

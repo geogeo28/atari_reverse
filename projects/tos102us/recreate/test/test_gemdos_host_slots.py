@@ -1,7 +1,9 @@
 """The HOST SLOTS — `include/gemdos/gemdos.h`'s one table of the fixed addresses that stand in, off
-target, for a ROM frame local whose ADDRESS a GEMDOS routine hands on (the FAT routines' word, the
-directory search's pattern, the walk's name and cursor, the delete's mark byte, `Fattrib`'s attribute
-byte, and `create`'s free-slot search name and new entry's FCB name).
+target, for a ROM frame local whose ADDRESS a GEMDOS routine hands on — all twelve roles: the FAT
+routines' word, the directory search's pattern, the walk's name and cursor, the delete's mark byte,
+`Fattrib`'s attribute byte, `create`'s free-slot search name and new entry's FCB name, `Frename`'s entry
+buffer, `Pexec`'s loader's header locals, and the dispatcher's two — the argument words of its nested
+`Fwrite` ($fc5078) and the byte a redirected read lands in.
 
 Every slot must sit where the differential drops bytes on both shores — the oracle's stack band, above
 its guard — and below both the deepest frame the kit calls legitimate and the `savptr` frame the
@@ -40,7 +42,8 @@ def misplaced(slots):
 def test_every_host_slot_is_inside_the_dropped_band_and_apart():
     slots = host_slots(fs.CONSTANTS)
     assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
-                          "CREATE_FREE_NAME", "CREATE_FCB"}
+                          "CREATE_FREE_NAME", "CREATE_FCB", "RENAME_ENTRY", "C_ENTRY_ARGUMENTS",
+                          "REDIRECTED_BYTE", "PEXEC_LOCALS"}
     assert not misplaced(slots)
 
 

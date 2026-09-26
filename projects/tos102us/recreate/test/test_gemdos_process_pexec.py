@@ -15,10 +15,10 @@ that returns before the record it arms — the refused mode — and everything p
 (`src/gemdos/dispatch.c` carries the argument; the record is the 68000 frame of the `jsr` that armed
 it and a C core has no counterpart for it).
 
-WHAT IS RECONSTRUCTED IS MODES 4 AND 5, which is the whole of what `Pexec` does that is not the file
-system: cut a TPA and an environment, fill a basepage, inherit the parent's handles and directories,
-copy the command tail (mode 5) and build the child's initial stack and go (mode 4). Modes 0 and 3
-LOAD, and halt at `$fc6d14` and `$fc85ea`.
+WHAT IS HERE IS MODES 4 AND 5, which is the whole of what `Pexec` does that is not the file system:
+cut a TPA and an environment, fill a basepage, inherit the parent's handles and directories, copy the
+command tail (mode 5) and build the child's initial stack and go (mode 4). Modes 0 and 3 LOAD a program
+off the staged disk, and are `test_gemdos_process_pexec_load.py`'s.
 """
 import ctypes
 import struct
@@ -411,7 +411,7 @@ def test_mode_4_builds_the_child_s_initial_stack_under_its_own_p_hitpa():
     assert case.long_in(final, top - 4) == child.basepage
     assert all(case.long_in(final, top - 8 - 4 * step) == 0
                for step in range(process.PEXEC_STACK_ZERO_LONGS + 1))
-    entry_at = top - 8 - 4 * (process.PEXEC_STACK_ZERO_LONGS + 1)
+    entry_at = process.child_entry_at(top)
     assert case.long_in(final, entry_at) == A_TEXT_BASE
     assert case.word_in(final, entry_at - 2) == 0
     assert case.long_in(final, entry_at - 6) == process.PEXEC_RETURN_ADDRESS

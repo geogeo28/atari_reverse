@@ -8,10 +8,9 @@ Either miss, the directory's or the name's, is EFILNF. The mode is a WORD throug
 test is a `tst.w` and `$fc6f5c` stores all sixteen bits at OFD_MODE, so a mode whose low byte is read's
 is still a write.
 
-`Fopen` IS ENTERED AT ITS OWN ADDRESS ONLY. The dispatcher compares an `Fopen`'s file name against the
-device names before it calls the leaf (`$fc9aca`), and that arm is not reconstructed
-(`src/gemdos/dispatch.c` halts on it), so a dispatched `Fopen` has no candidate to run; its Leaf entry
-still holds the dispatch table to naming it.
+`Fopen` IS ALSO DISPATCHED. The dispatcher compares an `Fopen`'s file name against the device names
+before it calls the leaf (`$fc9aca`); a name that is not one goes on to the leaf, which is the slice below.
+The device names themselves are `test_gemdos_dispatch_device.py`'s.
 
 Unpoisoned, for `test_gemdos_fs_dir.py`'s reasons.
 """
@@ -22,6 +21,7 @@ import fs_file as ff
 import fs_io as io
 import fs_open as fo
 import fs_records as records
+import gemdos
 import gemdos_fs as fs
 import gemdos_process as process
 
@@ -134,6 +134,12 @@ def test_a_spent_pool_is_ensmem_with_the_record_already_claimed():
     result = _fopen("A:\\SHORT.TXT", READ, {**fo.walked_root(), **records.pool_spent()})
     assert result.info["ret"] == process.GEMDOS_ENSMEM
     assert _record(result, ff.A_HANDLE)[1] == ff.P_RUN
+
+
+def test_a_dispatched_fopen_of_a_file_runs_the_leaf():
+    """Past the device-name arm, which "SHORT.TXT" does not match, our dispatcher calls our leaf."""
+    result = fo.dispatch(FOPEN, (*gemdos.long_words(fo.NAME_AT), READ), "A:\\SHORT.TXT")
+    _assert_opened(result, ff.A_HANDLE, ROOT, d.ROOT_INDEX["SHORT"])
 
 
 def test_open_at_its_own_address():

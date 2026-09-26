@@ -58,6 +58,10 @@ static inline void gemdos_dta_store_long(uint8_t *image, uint32_t at, uint32_t v
 /* ...what `$fc6d14` ORs into any search attribute but VOLUME's (`ori.w #33` at $fc6d24): an `Fsfirst`
  * also finds read-only and archive entries whatever it asked for. */
 #define GEMDOS_SFIRST_ALSO_MATCHES 0x21
+/* ...so the EXISTENCE PROBE `Pexec` and `Frename` make — `sfirst` with no attribute bit at all (`clr.w`
+ * at $fc81aa and $fc7afa) — sees exactly plain, read-only and archive files, and a hidden, system or
+ * directory entry of the name is not there to it. */
+#define GEMDOS_SFIRST_PLAIN_FILES  0
 /* ...and `create`'s two searches, for the name and for a free slot (`move.w #-1` at $fc7222, $fc7272):
  * every attribute. */
 #define GEMDOS_ATTR_ANY            ((uint16_t)-1)
