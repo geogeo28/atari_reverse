@@ -100,7 +100,7 @@ isr_vbl_entry:
  * acknowledgement are on BOTH paths — a tick that does no work still counts and still clears
  * channel 5's in-service bit, which is what keeps the channel firing.
  *
- * THE ACKNOWLEDGEMENT IS ONE INSTRUCTION HERE and two bus accesses in the C (`include/mfp.h`: a
+ * THE ACKNOWLEDGEMENT IS ONE INSTRUCTION HERE and two bus accesses in the C (`include/xbios/mfp.h`: a
  * declared read and a ledgered store, because $fffa11's other seven bits are seven other channels'
  * flags and a door whose read half is a fabricated 0 cannot hold them). The ROM's `bclr` on memory
  * IS a read and a write, so the two are the same ordered traffic; what differs is the cycles, which

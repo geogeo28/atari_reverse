@@ -68,7 +68,7 @@
 #include "m68k_idioms.h"
 #include "hw.h"
 #include "addrs.h"
-#include "vt52.h"
+#include "bios/vt52.h"
 #include "staged_call.h"
 
 /* ---- the monitor follower ----------------------------------------------------------------------
@@ -139,10 +139,10 @@ static void follow_the_monitor(uint8_t *image)
 /* ---- the alpha cursor's blink ($fc4666), and the cell inversion it ends in ($fc4a1e) ------------ */
 
 /* `$fc4a1e` — `not.b` down one column of every bit plane — is `console_invert_cursor_cell`, a
- * `static inline` in `include/vt52.h`. It moved there when `Bconout(CON:)` landed: this blink and
+ * `static inline` in `include/bios/vt52.h`. It moved there when `Bconout(CON:)` landed: this blink and
  * the console driver are two callers of one routine, and a copy here would be a second place for
  * the plane step to be corrected alone. The HEADER rather than one of the two `.c` files because a
- * cross-file call is not free on this path — vt52.h's note beside it has the measurement — and its
+ * cross-file call is not free on this path — bios/vt52.h's note beside it has the measurement — and its
  * note also carries the two `dbf` counts and the `addq.w #2,a1` plane step. */
 
 /* The blink itself. Three gates, and each of the writes below happens whether or not it CHANGES

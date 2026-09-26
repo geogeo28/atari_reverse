@@ -6,7 +6,7 @@
  * Everything above this layer (the buffer cache, the directory search, the file leaves) runs off
  * those four records; nothing below it knows what a path is.
  *
- * THE DMD'S ONE IDEA is the cluster-numbered address space `include/gemdos_fs.h` describes: data
+ * THE DMD'S ONE IDEA is the cluster-numbered address space `include/gemdos/fs.h` describes: data
  * clusters from 2, the root directory in the clusters just below 0, the FAT below that. The builder
  * is where those negative starting clusters and the three record biases that undo them are made.
  *
@@ -17,11 +17,11 @@
  */
 #include <stdint.h>
 
-#include "gemdos.h"
-#include "gemdos_fs.h"
-#include "gemdos_fs_drive.h"
-#include "gemdos_memory.h"
-#include "gemdos_process.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/fs.h"
+#include "gemdos/fs_drive.h"
+#include "gemdos/memory.h"
+#include "gemdos/process.h"
 #include "m68k_idioms.h"
 #include "machine.h"
 
@@ -112,7 +112,7 @@ static uint16_t fs_log2(uint16_t value)
 }
 
 /* A log2 field and the mask beside it, the mask read out of the ROM's table by the log2 it has just
- * stored — so log2(0) = -1 reads the word below the table (`include/gemdos_fs.h`). */
+ * stored — so log2(0) = -1 reads the word below the table (`include/gemdos/fs.h`). */
 static void set_log2_and_mask(uint8_t *image, uint32_t dmd, uint32_t log2_field, uint32_t mask_field,
                               uint16_t value)
 {

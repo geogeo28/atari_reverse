@@ -1,4 +1,4 @@
-/* iorec.h — TOS's IOREC ring, which is one data structure and three routines' worth of arithmetic.
+/* bios/iorec.h — TOS's IOREC ring, which is one data structure and three routines' worth of arithmetic.
  *
  * Every character device TOS buffers — the IKBD, MIDI, the RS232's two directions — is the same
  * six-field record in low RAM: a buffer pointer, the buffer's size, a head index, a tail index and

@@ -17,7 +17,7 @@
  *      bclr    #5,$fffa11          ; the MFP's in-service bit for channel 5
  *      rte
  *
- * THE ACKNOWLEDGEMENT GOES THROUGH `mfp.h`'s DECLARED-MAP read-modify-write rather than `hw.h`'s
+ * THE ACKNOWLEDGEMENT GOES THROUGH `xbios/mfp.h`'s DECLARED-MAP read-modify-write rather than `hw.h`'s
  * `hw_bclr8`, and that header carries the argument: $fffa11's other seven bits are seven other
  * channels' in-service flags, and a door whose read half is a fabricated 0 can pin the address and
  * the fact of the store but not the bits the instruction PRESERVES. A case declares what the
@@ -50,8 +50,8 @@
 #include "hw.h"
 #include "psg.h"
 #include "addrs.h"
-#include "mfp.h"
-#include "keyboard.h"
+#include "xbios/mfp.h"
+#include "bios/keyboard.h"
 #include "staged_call.h"
 
 /* ---- the Dosound driver's one step ($fc312a) ---------------------------------------------------

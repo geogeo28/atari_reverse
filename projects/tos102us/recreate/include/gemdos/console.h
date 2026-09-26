@@ -1,9 +1,9 @@
-/* gemdos_console.h — GEMDOS's fifteen character-device leaves, for the dispatcher that calls them.
+/* gemdos/console.h — GEMDOS's fifteen character-device leaves, for the dispatcher that calls them.
  *
  * `src/gemdos/console.c` is selectors $01..$0b and $10..$13. Each is an ordinary Alcyon C routine
  * with its arguments on the stack, so the GEMDOS dispatcher reaches it with a plain `jsr` and these
  * declarations are what let the compiler check that call. Nothing else in the file is declared —
- * `include/xbios.h`'s rule: what crosses a translation unit, and no inventory.
+ * `include/xbios/xbios.h`'s rule: what crosses a translation unit, and no inventory.
  *
  * `entry_d0` IS AN ARGUMENT to the two that can return without writing D0 at all: `Cconws` over an
  * EMPTY string makes no call and touches nothing, and `Cconrs`' result is a `move.w d5,d0` whose

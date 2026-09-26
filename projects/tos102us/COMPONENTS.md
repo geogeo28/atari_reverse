@@ -343,7 +343,7 @@ full extent of the GEMDOS BSS was not established — but the MEMORY MANAGER's p
 (see below).
 
 **The memory manager's own RAM**, established by the recreate's GEMDOS memory group
-(`recreate/src/gemdos/memory.c`, `recreate/include/gemdos_memory.h`):
+(`recreate/src/gemdos/memory.c`, `recreate/include/gemdos/memory.h`):
 
 | range | what | evidence |
 |---|---|---|
@@ -418,7 +418,7 @@ The dispatcher looks that handle up in `p_uft` and either takes the 19-entry tab
 to 1 for `Cconws`/`Cconrs` and 0 for the rest and calls the handler directly (`0xFC98FE`).
 
 **THE FILE SYSTEM's data structures** (`0xFC5216..0xFC7CCE`), established by the recreate's GEMDOS
-file-system group (`recreate/src/gemdos/fs_disk.c`, `fs_name.c`, `recreate/include/gemdos_fs.h`).
+file-system group (`recreate/src/gemdos/fs_disk.c`, `fs_name.c`, `recreate/include/gemdos/fs.h`).
 GEMDOS reaches a disk through exactly three BIOS calls — `Rwabs`, `Getbpb`, `Mediach` — all three
 of them **indirect** through the RAM vectors `hdv_rw` `$476` / `hdv_bpb` `$472` / `hdv_mediach`
 `$47E` (the table entries with bit 31 set, above). There is no fourth door: the "zero hardware
@@ -480,7 +480,7 @@ free-cluster search (a wrapping scan bounded by `m_numcl`) under it.
 
 **THE PROCESS and its HANDLES** (`0xFC5216`, `0xFC52DE`, `0xFC56C6`, `0xFC7FD8..0xFC85D4`),
 established by the recreate's GEMDOS process group (`recreate/src/gemdos/process.c`, `handles.c`,
-`recreate/include/gemdos_process.h`).
+`recreate/include/gemdos/process.h`).
 
 **A HANDLE IS THREE DIFFERENT THINGS SPELT AS ONE SIGNED WORD**, and every routine in the group
 branches on which: NEGATIVE is a character DEVICE (-1/-2/-3 = CON:/AUX:/PRN:, which is what a fresh

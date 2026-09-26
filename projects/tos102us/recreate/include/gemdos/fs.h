@@ -1,4 +1,4 @@
-/* gemdos_fs.h — the GEMDOS file system's DATA STRUCTURES, and the one door it reaches the disk by.
+/* gemdos/fs.h — the GEMDOS file system's DATA STRUCTURES, and the one door it reaches the disk by.
  *
  * GEMDOS makes no hardware access at all (`COMPONENTS.md`: zero in the whole `$fc4e5e..$fc9f0b`
  * range). It reaches a disk through exactly three BIOS calls — `Rwabs`, `Getbpb` and `Mediach` —
@@ -8,7 +8,7 @@
  * boot left — or a hard-disk driver replaced it with — so it is an INPUT of the file system, in
  * exactly the sense `include/staged_call.h`'s vectors are inputs of the interrupt handlers.
  *
- * WHICH IS WHY THESE THREE ARE NOT IN `include/bcon.h`. That header declares RECONSTRUCTED BIOS
+ * WHICH IS WHY THESE THREE ARE NOT IN `include/bios/bcon.h`. That header declares RECONSTRUCTED BIOS
  * cores another translation unit calls; there is no core behind `hdv_rw` to declare. It is reused
  * here for the half that does transfer: `BIOS_TRAP_CLOBBERS`, the published register contract of a
  * real `trap #13`.
@@ -35,7 +35,7 @@
 #include <stdint.h>
 
 #include "addrs.h"
-#include "bcon.h"       /* read-only: BIOS_TRAP_CLOBBERS, the `trap #13` register contract */
+#include "bios/bcon.h"       /* read-only: BIOS_TRAP_CLOBBERS, the `trap #13` register contract */
 #include "machine.h"
 
 /* ---- the BPB, as BIOS `Getbpb` answers it ------------------------------------------------------
@@ -235,7 +235,7 @@
 
 /* ---- what the file system answers ---------------------------------------------------------------
  * Only the codes no other header defines: EFILNF (-33), ENHNDL (-35) and ENSMEM (-39) are in
- * `include/gemdos_process.h`, EIHNDL (-37) in `include/addrs.h`. Each is a `moveq` at the sites
+ * `include/gemdos/process.h`, EIHNDL (-37) in `include/addrs.h`. Each is a `moveq` at the sites
  * cited. */
 /* `moveq #-1`: GEMDOS's generic ERROR — `$fc67de` for a drive with no BPB ($fc680e) or no free
  * directory node ($fc6880), and the I/O engine for a cluster chain that ended ($fc7dde, $fc61b0). */
@@ -272,7 +272,7 @@ static inline void gemdos_park_bios_return(uint8_t *image, uint32_t return_site)
 /* BIOS 4 — `Rwabs(rwflag.w, buffer.l, count.w, recno.w, dev.w)`: the function number, four
  * argument words and one argument longword — 14 bytes, which is what the `lea` drops.
  *
- * The pushes take `d` constraints for `include/bcon.h`'s measured reason: a `g` operand may be a
+ * The pushes take `d` constraints for `include/bios/bcon.h`'s measured reason: a `g` operand may be a
  * memory operand relative to SP, and the second push would then read it through a stack pointer the
  * first push has already moved. `fn` is an immediate, as it is at every ROM call site. */
 static inline uint32_t bios_rwabs(uint8_t *image, uint32_t return_site, uint16_t rwflag,

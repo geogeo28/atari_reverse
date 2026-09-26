@@ -1,6 +1,6 @@
 /* fs_io.c — the GEMDOS file system's I/O ENGINE ($fc5e6a..$fc65a0, $fc7cce..$fc7e50).
  *
- * WHAT THE ENGINE IS. An open file is an OFD (`include/gemdos_fs.h`): a first cluster, a length, and
+ * WHAT THE ENGINE IS. An open file is an OFD (`include/gemdos/fs.h`): a first cluster, a length, and
  * a CURSOR — the byte position, the cluster it is in, that cluster's first record and the byte
  * offset inside it. Four routines keep the cursor and one moves bytes under it:
  *
@@ -52,11 +52,11 @@
  */
 #include <stdint.h>
 
-#include "gemdos.h"
-#include "gemdos_fs.h"
-#include "gemdos_fs_copy.h"
-#include "gemdos_fs_io.h"
-#include "gemdos_process.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/fs.h"
+#include "gemdos/fs_copy.h"
+#include "gemdos/fs_io.h"
+#include "gemdos/process.h"
 #include "m68k_idioms.h"
 #include "machine.h"
 #include "recreate.h"
@@ -64,7 +64,7 @@
 #define FAT_ENTRY_READ     2        /* every FAT access moves exactly one word ($fc5fda `#2`) */
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-/* `include/gemdos.h`'s frame-word guard, defined here with the helpers below that are its only users. */
+/* `include/gemdos/gemdos.h`'s frame-word guard, defined here with the helpers below that are its only users. */
 int gemdos_host_frame_word_held;
 #endif
 
@@ -81,7 +81,7 @@ static int16_t field_word(const uint8_t *image, uint32_t record, uint32_t field)
  * `ext.l`-ed ($fc7e34). The table is a mask, `(1 << shift) - 1` as a word, for shifts 0..17 only (16
  * and 17 are both $ffff, a whole-longword mask once sign-extended); the DMD builder makes -1 of a
  * zero geometry field, and the table read and the shift here are the ROM's for any word at all
- * (`include/gemdos_fs.h`, `include/m68k_idioms.h`). */
+ * (`include/gemdos/fs.h`, `include/m68k_idioms.h`). */
 static int32_t split(const uint8_t *image, int16_t *remainder, int32_t value, uint16_t shift)
 {
     *remainder = (int16_t)((int32_t)(int16_t)gemdos_bit_mask(image, shift) & value);
@@ -131,7 +131,7 @@ static int32_t fat16_offset(int16_t cluster)
     return (int32_t)cluster * FAT16_ENTRY_BYTES;
 }
 
-/* One FAT word read through the FAT OFD into a frame word (`include/gemdos.h`), then turned round IN
+/* One FAT word read through the FAT OFD into a frame word (`include/gemdos/gemdos.h`), then turned round IN
  * PLACE by `$fc4f10` — the ROM's own call ($fc5fee, $fc6084, $fc60c0) — and read back out of it. */
 static uint16_t read_fat_word(uint8_t *image, uint32_t dmd, int32_t offset)
 {

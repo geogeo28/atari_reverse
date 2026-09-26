@@ -72,7 +72,7 @@
 #include "ipl.h"
 #include "m68k_idioms.h"
 #include "machine.h"
-#include "mfp.h"
+#include "xbios/mfp.h"
 #include "addrs.h"
 
 /* `tst.w 8(sp) / bmi / move.b 9(sp),reg` — one optional USART register, stored as its LOW byte. */

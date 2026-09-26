@@ -1,11 +1,11 @@
 /* fs_copy.c — THE SHARED byte copies ($fc55fa, $fc5622, $fc564a) and byte swaps ($fc4f10, $fc4f22).
  *
- * One loop and three entry points, each with the ROM's own argument order (`include/gemdos_fs_copy.h`
+ * One loop and three entry points, each with the ROM's own argument order (`include/gemdos/fs_copy.h`
  * says which caller reaches which). The ROM keeps the loop three times; here it is `copy_forward`.
  */
 #include <stdint.h>
 
-#include "gemdos_fs_copy.h"
+#include "gemdos/fs_copy.h"
 #include "m68k_idioms.h"
 #include "machine.h"
 

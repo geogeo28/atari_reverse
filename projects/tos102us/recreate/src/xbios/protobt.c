@@ -65,7 +65,7 @@
 #include "machine.h"
 #include "addrs.h"
 #include "m68k_idioms.h"
-#include "xbios.h"      /* xbios_random: the ROM's own call at $fc1636, reconstructed as a call */
+#include "xbios/xbios.h"      /* xbios_random: the ROM's own call at $fc1636, reconstructed as a call */
 
 #define BPB_TABLE_ENTRY_BYTES 1     /* the prototype table is a table of BYTES */
 

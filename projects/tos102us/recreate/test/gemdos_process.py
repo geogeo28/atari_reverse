@@ -41,11 +41,11 @@ import staging
 from opcodes import RTS
 
 # ---- this group's own structure constants, out of the C header that defines them ----------------
-# `include/gemdos_process.h` holds the OPEN FILE DESCRIPTOR's layout, parsed by the same
+# `include/gemdos/process.h` holds the OPEN FILE DESCRIPTOR's layout, parsed by the same
 # `tools/addrs.py` that binds `addrs.h` — `test/gemdos_memory.py`'s arrangement, for its reason: a
 # case and the core it proves cannot disagree about a field offset they read from one file. The
 # ROUTINE addresses stay in `addrs.h`, where the registries key on them.
-GEMDOS_PROCESS_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos_process.h"
+GEMDOS_PROCESS_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos" / "process.h"
 CONSTANTS = addrs.parse(GEMDOS_PROCESS_HEADER)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -203,7 +203,7 @@ def terminate_vector_poke(routine=TERMINATE_ROUTINE_AT):
 # `gemdos_resync_clock` is a no-op there; that arm is driven by an ORACLE claim
 # (`test_gemdos_process.py`) and recorded unpinned, and the kit door that would close it is a THIRD
 # form — "a register a store does not reach".
-# The chip's GEOMETRY is `include/gemdos_process.h`'s and is already bound above (`CONSTANTS`) —
+# The chip's GEOMETRY is `include/gemdos/process.h`'s and is already bound above (`CONSTANTS`) —
 # `RTC_BASE`, `RTC_RESET`, `RTC_PROBE_HIGH`/`_LOW`, `RTC_DIGITS`, `RTC_FIRST_DIGIT` and
 # `RTC_REGISTER_STEP` — because the core reads the same registers and a second spelling here is how
 # a case and the core it proves come to disagree about which address is which. The header's three

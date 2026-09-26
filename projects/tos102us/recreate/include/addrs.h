@@ -523,7 +523,7 @@
  * controller and timers, one of the two 6850 ACIAs, or the MFP's own USART. They are the first
  * reconstructions here to WRITE hardware (TRAP_MODEL.md, Phase 10) and the first to change a bit of
  * a register they had to read first, which is what the DECLARED I/O MAP (Phase 15) makes provable —
- * `include/mfp.h` carries that argument, and the bound on it.
+ * `include/xbios/mfp.h` carries that argument, and the bound on it.
  * ============================================================================================= */
 
 /* ---- the MFP 68901's registers -----------------------------------------------------------------
@@ -558,7 +558,7 @@
 #define MFP_HALF_B_STEP       2        /* ...and 0..7 are register B's, two bytes above it */
 #define MFP_BIT_NUMBER_MASK   0x07     /* `bclr d1,(a1)`: a bit number on MEMORY is modulo 8, which
                                         * is what bounds the half-select's answer for a channel byte
-                                        * `Xbtimer` never masked (`include/mfp.h`) */
+                                        * `Xbtimer` never masked (`include/xbios/mfp.h`) */
 #define MFP_VECTOR_TABLE      0x100    /* `addi.l #256,d2` — the MFP's base vector register is $40,
                                         * so its sixteen channels are exception vectors $40..$4f */
 
@@ -1113,7 +1113,7 @@
 /* The HANDLE RECORDS $8092 holds — ten bytes each, whose own first longword POINTS at the 64-byte
  * open file descriptor the file system keeps (or, negative, names a character device). Named because
  * the dispatcher indexes them; `src/gemdos/handles.c` walks them, and nothing here follows that
- * pointer. NOT the OFD itself, which is `include/gemdos_fs.h`'s and keeps the `OFD_` prefix. */
+ * pointer. NOT the OFD itself, which is `include/gemdos/fs.h`'s and keeps the `OFD_` prefix. */
 #define GEMDOS_HANDLE_TABLE   0x8092    /* handle 6.. -> (handle - 6) * 10 + here ($fc9950) */
 #define GEMDOS_HANDLE_STRIDE  10
 #define GEMDOS_FIRST_FILE_HANDLE 6
@@ -1320,7 +1320,7 @@
 /* ---- the GEMDOS MEMORY MANAGER (selectors $48..$4a, and the five routines under them) -----------
  *
  * `src/gemdos/memory.c`; the STRUCTURES it reads — the MPB, the descriptors and the record pool —
- * are `include/gemdos_memory.h`'s. The addresses are here because this header is the one the
+ * are `include/gemdos/memory.h`'s. The addresses are here because this header is the one the
  * registries key on: `test_boot_snapshot.py` pairs every `<NAME>`/`<NAME>_FN` it finds against the
  * ROM's own dispatch table, and `bench/tier3.py` names a row by the same pair. A routine whose
  * address lived anywhere else would be a row nothing could label and an entry nothing could pin. */
@@ -1343,8 +1343,8 @@
  * `src/gemdos/fs_disk.c` (the buffer cache over BIOS `Rwabs`) and `src/gemdos/fs_name.c` (the 8.3
  * name layer, which touches no disk at all); the STRUCTURES they read — the BPB, the drive media
  * descriptor, the buffer control block, the directory node and the open-file descriptor — are
- * `include/gemdos_fs.h`'s, by the wave's one-header-per-subsystem rule. The addresses are here for
- * `include/gemdos_memory.h`'s reason: this header is the one the registries key on.
+ * `include/gemdos/fs.h`'s, by the wave's one-header-per-subsystem rule. The addresses are here for
+ * `include/gemdos/memory.h`'s reason: this header is the one the registries key on.
  *
  * None of these carries a `_FN`: GEMDOS's own C calls them by name, so nothing dispatches them. */
 #define GEMDOS_FS_LOG2        0xfc539a  /* `asr` until the word is 0, minus 1 — log2 of a power of 2 */
@@ -1396,7 +1396,7 @@
 #define BIOS_RETURN_BUFFER_MEDIACH 0xfc5bd6  /* $fc5bd0: the hit's media-change interrogation */
 #define BIOS_RETURN_OPEN_DRIVE_GETBPB 0xfc6806 /* $fc6800: the drive's BPB — `Getbpb`'s one caller */
 
-/* fs wave 3: the DRIVE and PATH layer (`src/gemdos/fs_drive.c`, `include/gemdos_fs_drive.h`). */
+/* fs wave 3: the DRIVE and PATH layer (`src/gemdos/fs_drive.c`, `include/gemdos/fs_drive.h`). */
 #define GEMDOS_DMD_ALLOC      0xfc50fa  /* the DMD, root DND, root OFD and FAT OFD out of the pool */
 #define GEMDOS_DMD_BUILD      0xfc53c0  /* BPB -> DMD: three record biases, two pseudo-files */
 #define GEMDOS_OPEN_DRIVE     0xfc67de  /* log a drive in through `Getbpb`; a curdir slot for p_run */
@@ -1408,7 +1408,7 @@
  * for n = 0..17 ($fc54a4, $fc7e2e); both index it with a signed word and no bound. */
 #define GEMDOS_BIT_MASK_TABLE 0xfd2fc8
 
-/* The two BIOS entries this group reaches that `include/bcon.h` does not declare, because they are
+/* The two BIOS entries this group reaches that `include/bios/bcon.h` does not declare, because they are
  * not reconstructed BIOS cores at all: entries 4, 7 and 9 of the table at `$fc0846` have bit 31 set
  * and the dispatcher's `movea.l (a0),a0` turns each into a jump through a RAM VECTOR, so what runs
  * is whatever the boot (or a hard-disk driver) left there. `BIOS_RWABS_FN`/`HDV_RWABS` are above,
@@ -1444,7 +1444,7 @@
 /* ---- the GEMDOS PROCESS group and the HANDLE machinery under it ---------------------------------
  *
  * `src/gemdos/process.c` and `src/gemdos/handles.c`; the STRUCTURES — the open-file descriptor and
- * what a handle means — are `include/gemdos_process.h`'s, and the BASEPAGE's own offsets are up
+ * what a handle means — are `include/gemdos/process.h`'s, and the BASEPAGE's own offsets are up
  * with the rest of the basepage above. The addresses are here for the registries' sake, exactly as
  * the memory manager's are: `test_boot_snapshot.py` pairs every `<NAME>`/`<NAME>_FN` against the
  * ROM's own dispatch table and `bench/tier3.py` labels a row by the same pair. */

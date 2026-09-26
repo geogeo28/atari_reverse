@@ -115,7 +115,7 @@ def test_each_routine_is_the_one_its_own_kbdvecs_slot_names():
 
 @pytest.mark.parametrize("isrb", (0xFF, 0x40, 0xBF, 0x00, 0x5A))
 def test_the_channel_is_acknowledged_with_every_other_channel_s_bit_kept(isrb):
-    """`bclr #6,$fffa11` through the declared map (`include/mfp.h`): the other seven bits are seven
+    """`bclr #6,$fffa11` through the declared map (`include/xbios/mfp.h`): the other seven bits are seven
     other channels' in-service flags, and the byte stored is a function of what the case says the
     register held."""
     info = run(isrb=isrb)

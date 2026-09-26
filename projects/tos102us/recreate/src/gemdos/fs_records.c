@@ -17,12 +17,12 @@
  */
 #include <stdint.h>
 
-#include "gemdos.h"
-#include "gemdos_fs.h"
-#include "gemdos_fs_copy.h"
-#include "gemdos_fs_records.h"
-#include "gemdos_memory.h"
-#include "gemdos_process.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/fs.h"
+#include "gemdos/fs_copy.h"
+#include "gemdos/fs_records.h"
+#include "gemdos/memory.h"
+#include "gemdos/process.h"
 #include "machine.h"
 
 /* An entry's position is its directory's read position one entry back — the search has just read it

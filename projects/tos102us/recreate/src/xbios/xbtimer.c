@@ -43,7 +43,7 @@
  * bits 0-3, clearing its own field at bits 4-6) and D's is `$f8` (keep bits 3-7, clearing bits 0-2).
  * A reconstruction that wiped `$fffa1d` for timer D would stop timer C dead, and the only surface
  * that separates the two is the hardware write ledger's VALUE — which is why these go through the
- * declared I/O map rather than through `hw.h`'s `hw_and8` (`include/mfp.h` has that argument).
+ * declared I/O map rather than through `hw.h`'s `hw_and8` (`include/xbios/mfp.h` has that argument).
  *
  * THE TABLES ARE READ OUT OF THE IMAGE, not copied into C arrays, and `adda.w d0,a3` is a WORD add
  * SIGN-EXTENDED into the address (`m68k_idioms.h`, `word_index`) — so the routine is unbounded in
@@ -86,7 +86,7 @@
 
 #include "machine.h"
 #include "m68k_idioms.h"
-#include "mfp.h"
+#include "xbios/mfp.h"
 #include "addrs.h"
 
 #ifndef __m68k__
@@ -189,7 +189,7 @@ void mfp_timer_program(const uint8_t *image, uint16_t timer, uint16_t control, u
  * `$fc302e`, the first byte of the `tst.l 10(sp)` that follows the table, and installs the handler
  * on "channel $4a". Two things follow, and neither is what masking would have given. The vector slot
  * is `$100 + $4a * 4` = `$228`, which is exception vector $8a and not one of the MFP's sixteen. And
- * the half-select at `$fc26e6` is a SIGNED byte compare (`include/mfp.h`), so a byte of $80 or more
+ * the half-select at `$fc26e6` is a SIGNED byte compare (`include/xbios/mfp.h`), so a byte of $80 or more
  * is negative and takes the B register's arm where masking would have left it in A's. Reproduced by
  * calling the body rather than the door: `mfp_install_vector_and_enable`, not `xbios_mfpint`.
  */

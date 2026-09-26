@@ -387,7 +387,7 @@ PERF_ACCEPTED = {
     #
     #   (H) THE MFP ACKNOWLEDGEMENT. Timer C and the ACIA handler each end by clearing their own bit
     #       of $fffa11, which the ROM does in ONE `bclr` and the reconstruction does as a declared
-    #       read and a ledgered store (`include/mfp.h` carries the argument: the seven bits the
+    #       read and a ledgered store (`include/xbios/mfp.h` carries the argument: the seven bits the
     #       instruction preserves are seven other channels, and a door whose read half is a
     #       fabricated 0 cannot hold them). Two bus accesses where the original makes one, on a
     #       routine whose whole fast path is four instructions.
@@ -840,7 +840,7 @@ CALL = {
     # ---- the ACIA INPUT CHAIN, reached through KBDVECS (BIOS wave 3) ----
     # None returns anything and none reads an argument frame: each is entered by the routine above it
     # with the registers the ROM's own callers leave, and the C takes exactly those as parameters
-    # (`include/acia_packets.h`, `include/keyboard.h`). The two service routines take only the image
+    # (`include/bios/acia_packets.h`, `include/bios/keyboard.h`). The two service routines take only the image
     # — their chip and their IOREC are the three instructions that are all each entry is.
     "MIDI_ACIA_SERVICE": Call((IMAGE,), RETURNS_NOTHING),
     "IKBD_ACIA_SERVICE": Call((IMAGE,), RETURNS_NOTHING),
@@ -879,7 +879,7 @@ CALL = {
     # The DEVICE is not an argument to any of these: each leaf reads its own standard handle out of
     # the running process's basepage and adds three (`src/gemdos/console.c`). What IS an argument is
     # the character word or the buffer longword the caller pushed — and, for the two that can return
-    # without any call writing D0, the caller's own D0 (`include/gemdos_console.h`).
+    # without any call writing D0, the caller's own D0 (`include/gemdos/console.h`).
     "GEMDOS_CCONIN": Call((IMAGE,), RETURNS_LONG),
     "GEMDOS_CRAWCIN": Call((IMAGE,), RETURNS_LONG),
     "GEMDOS_CNECIN": Call((IMAGE,), RETURNS_LONG),

@@ -49,7 +49,7 @@
 #include "machine.h"
 #include "recreate.h"
 #include "addrs.h"
-#include "vt52.h"
+#include "bios/vt52.h"
 
 #define CURSCONF_JUMP_TABLE_ENTRY_BYTES 2   /* signed WORD displacements */
 

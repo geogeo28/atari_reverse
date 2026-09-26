@@ -1,4 +1,4 @@
-/* ikbd.h — the two ACIA senders `src/xbios/acia.c` holds, for the cores that send through them.
+/* xbios/ikbd.h — the two ACIA senders `src/xbios/acia.c` holds, for the cores that send through them.
  *
  * `Initmous` builds an IKBD command packet in RAM and then `bsr`s into `Ikbdws`'s own loop at
  * `$fc221c`, and `Initmous(0)` `bsr`s into the single-byte sender at `$fc21f2` — so these are calls

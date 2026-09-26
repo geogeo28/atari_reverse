@@ -23,6 +23,13 @@ include $(KIT)/kit.mk
 # atari/target.mk is reached through this file.)
 $(BENCH_ELF): $(wildcard atari/shim_include/*.h) atari/target.mk
 
+# kit.mk's two compile rules depend on `include/*.h`, which is only this project's SHARED headers:
+# a component's own sit one level down (include/bios/, include/xbios/, include/gemdos/), and an edit
+# to one of them must rebuild both the candidate and the Tier 3 blob just as a top-level one does.
+COMPONENT_HEADERS := $(wildcard include/*/*.h)
+$(CAND): $(COMPONENT_HEADERS)
+$(BENCH_ELF): $(COMPONENT_HEADERS)
+
 # The snapshot is a BUILD PRODUCT, captured out of headless Hatari from the user's own ROM — which
 # is why it is a make rule and not a checked-in file (the ROM is Atari's, and so is its RAM image).
 # Capturing costs ~15 s of real time per run, because emulation is real time; it happens once, and

@@ -127,7 +127,7 @@ Ratios run from 0.38x to 1.75x and every priced row is under the bar or carries 
 acceptance. THE TARGET BUILD TAKES THE ROM'S OWN
 `trap #13` wherever the ROM reaches the BIOS through `gemdos_bios_trampoline` ($fc4eac), so both
 columns of a character-device row carry the trap, the BIOS dispatcher and the driver, and what the
-ratio compares is the GEMDOS layer itself (`src/gemdos/console.c`, `include/bcon.h`). The HOST build
+ratio compares is the GEMDOS layer itself (`src/gemdos/console.c`, `include/bios/bcon.h`). The HOST build
 calls the BIOS core directly — there is no 68000 to take a trap — and that is the stand-in ROM mode
 asks for rather than a decision about the routine; the register-save frame the oracle's trap leaves
 below `savptr` is DECLARED into the band the differential drops (`test/gemdos.py`, `machine`).
@@ -439,7 +439,7 @@ is a bench change and is PARKED below.
   as to those rows — closed with a third `_routine` relation, five priced rows and `acia_take_byte` deferred; the
   scroll and the clear running at 2x for a reason the compiler CONTRADICTED, respelled to the ROM's own loops (scroll
   2.03 -> 1.03, clear 2.24 -> 1.49) and the rows re-pinned; the IOREC ring step, the Dosound list plant and the
-  differential runner each spelt three times by the wave's two halves (now `include/iorec.h`, `include/sound.h` and
+  differential runner each spelt three times by the wave's two halves (now `include/bios/iorec.h`, `include/sound.h` and
   `test/acia.py`); the A5 pin spelt five times in `staged_call.h`; and the `Bconin(AUX:)` and printer wait-site
   comments both describing something the code does not do.
   Parked: `-ffixed-a5` plus the ROM's own `suba.l a5,a5` in each `isr.S` stub as the deeper A5 lever (mechanism (K)) —
@@ -584,7 +584,7 @@ is a bench change and is PARKED below.
   the FAT is read as a pseudo-FILE through the same transfer engine it serves ({`$fc7d2a` seek, `$fc6038`/`$fc5f44`
   FAT get/set, `$fc60f2` next_cluster, `$fc6218` xfer, `$fc5e9c`/`$fc5f1c` read/write}), terminating only because
   the FAT OFD's clusters are negative — so it was built as ONE unit. The record layouts (OFD/DND/DTA/directory
-  entry, every field cited to a ROM instruction) landed in `include/gemdos_fs.h` FIRST so three agents shared one
+  entry, every field cited to a ROM instruction) landed in `include/gemdos/fs.h` FIRST so three agents shared one
   spelling; the map's guesses it refuted: OFD+0x14 is the HOLDING directory's DND, OFD+0x2c is not a chain, the open
   mode is never read, DND/OFD time and date are NOT byte-swapped. (A) `src/gemdos/fs_drive.c`: the DMD builder
   `$fc53c0` — the staged descriptor is now PROVED equal to what the ROM builds, which found the FAT pseudo-file's

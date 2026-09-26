@@ -65,7 +65,7 @@
 #include "addrs.h"
 #include "m68k_idioms.h"
 #include "sound.h"
-#include "vt52.h"
+#include "bios/vt52.h"
 
 /* The driver's two live registers, carried together because one of them is the result. D0 holds the
  * COLUMN the position routines take and, at the `rts`, whatever `Bconout` hands its caller — and

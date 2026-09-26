@@ -2,7 +2,7 @@
  * and the resolution the dispatcher does before it calls a handler at all ($fc9924).
  *
  * THE LAYER THESE FOUR MAKE UP is the one between a program's handle and whatever the handle names,
- * and it is separable from the file system in exactly the way `include/gemdos_process.h` describes:
+ * and it is separable from the file system in exactly the way `include/gemdos/process.h` describes:
  * a handle is a device, a standard-handle index, or an open-file descriptor, and the only thing
  * these routines ever do with the THIRD one's contents is read its sign. A descriptor naming a
  * character device is theirs whole; one naming a file is the file system's the moment its reference
@@ -28,7 +28,7 @@
  * computes `(handle - 6) * 10 + $8092` with `muls.w`, and `Fdup` reaches it with a handle it has
  * only proved to be `> 0` — so a standard handle of 1..5 in `p_uft` makes a NEGATIVE displacement
  * and reads the ten bytes before the table. That is the ROM's own shape and `descriptor_of` below
- * keeps it; what it adds is a host-only bound, the way `gemdos.h`'s handle accessor does, so the
+ * keeps it; what it adds is a host-only bound, the way `gemdos/gemdos.h`'s handle accessor does, so the
  * reconstruction says which addresses it claims to describe rather than indexing off its array.
  */
 #ifdef RECREATE_HOST_DIFFERENTIAL
@@ -36,8 +36,8 @@
 #endif
 #include <stdint.h>
 
-#include "gemdos.h"
-#include "gemdos_process.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/process.h"
 #include "machine.h"
 #include "recreate.h"
 
@@ -63,7 +63,7 @@ static uint32_t descriptor_of(int16_t handle)
 
 /* One of the six standard handles of a basepage that is NOT necessarily `p_run` — `Pexec` forces
  * into the child's. `gemdos_standard_handle` is the `p_run` case of this and reads where this
- * writes; both go through `gemdos.h`'s one host-only bound. */
+ * writes; both go through `gemdos/gemdos.h`'s one host-only bound. */
 static void set_standard_handle(uint8_t *image, uint32_t basepage, int16_t standard, uint8_t value)
 {
     *gemdos_basepage_byte(image, basepage, BASEPAGE_HANDLES + (uint32_t)(int32_t)standard) = value;
@@ -245,7 +245,7 @@ uint32_t gemdos_fclose(uint8_t *image, int16_t handle)
  * `Fwrite` are $82 and take the handle first. No other selector reaches here — the character-device
  * group has had its descriptor rewritten by the time the `btst #7` runs (`src/gemdos/dispatch.c`).
  *
- * The walk itself is `gemdos_process.h`'s three kinds, and what comes back is a LONGWORD rather than
+ * The walk itself is `gemdos/process.h`'s three kinds, and what comes back is a LONGWORD rather than
  * a handle: 0 for a handle that names nothing, negative for a character device, and the file
  * system's own pointer otherwise.
  */

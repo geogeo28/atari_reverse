@@ -58,7 +58,7 @@
 
 #include "ipl.h"
 #include "addrs.h"
-#include "xbios.h"
+#include "xbios/xbios.h"
 
 /* The data word `Giaccess` is given for the READ: the ROM leaves whatever the caller had in D0
  * there, and the routine never looks at it — bit 7 of the register argument is clear, so the write

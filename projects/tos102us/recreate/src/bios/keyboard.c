@@ -28,8 +28,8 @@
 
 #include "machine.h"
 #include "addrs.h"
-#include "iorec.h"
-#include "keyboard.h"
+#include "bios/iorec.h"
+#include "bios/keyboard.h"
 #include "sound.h"
 #include "staged_call.h"
 
@@ -51,7 +51,7 @@ static void kbd_key_click(uint8_t *image)
 static void kbd_queue_record(uint8_t *image, uint32_t iorec, uint16_t code, uint16_t ascii)
 {
     uint16_t key = (uint16_t)((uint16_t)(code << 8) + ascii);
-    /* The step and the wrap are `include/iorec.h`'s — the ROM's own `$fc28ea` — and the FULL rule is
+    /* The step and the wrap are `include/bios/iorec.h`'s — the ROM's own `$fc28ea` — and the FULL rule is
      * this writer's own: the key is DROPPED. Nothing moves, not the tail and not the head, so a full
      * ring loses the newest key rather than the oldest. */
     uint16_t next = iorec_index_after(image, iorec, be16(image + iorec + IOREC_TAIL),

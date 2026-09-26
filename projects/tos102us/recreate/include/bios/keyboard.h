@@ -1,6 +1,6 @@
-/* keyboard.h — the scancode half of the IKBD's input chain, and the record it leaves in the IOREC.
+/* bios/keyboard.h — the scancode half of the IKBD's input chain, and the record it leaves in the IOREC.
  *
- * `include/acia_packets.h` is the other half: it decides a byte under $f6 is a scancode and hands it
+ * `include/bios/acia_packets.h` is the other half: it decides a byte under $f6 is a scancode and hands it
  * here. What follows is the whole of TOS's keyboard, in two routines — the shift/CapsLock/auto-
  * repeat state machine, and the translation of a scancode into the four-byte record `Bconin` reads.
  *

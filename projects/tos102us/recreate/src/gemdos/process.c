@@ -46,10 +46,10 @@
 #endif
 #include <stdint.h>
 
-#include "bcon.h"
-#include "gemdos.h"
-#include "gemdos_memory.h"
-#include "gemdos_process.h"
+#include "bios/bcon.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/memory.h"
+#include "gemdos/process.h"
 #include "hw.h"
 #include "ipl.h"
 #include "machine.h"
@@ -69,7 +69,7 @@
  * ROM reports ABSENCE THROUGH THE CARRY FLAG (`ori #1,ccr`), which is why this returns a flag of its
  * own rather than the D0 the ROM leaves — D0 holds the pattern either way and says nothing.
  */
-/* The chip's geometry is `include/gemdos_process.h`'s, because the CASES declare the same registers
+/* The chip's geometry is `include/gemdos/process.h`'s, because the CASES declare the same registers
  * to the harness and must not spell them a second time. What is here is what only this file has: */
 #define RTC_NO_CLOCK          0xffffffffu /* `moveq #-1,d0` at $fc4cfe — what a read with no chip is */
 

@@ -1,4 +1,4 @@
-/* gemdos_fs_copy.h — THE SHARED byte copies and byte swaps of the GEMDOS file system.
+/* gemdos/fs_copy.h — THE SHARED byte copies and byte swaps of the GEMDOS file system.
  *
  * `$fc55fa`, `$fc5622` and `$fc564a` are the same forty bytes of Alcyon output three times: a
  * `link`, then `move.b (a1),(a0)` with both pointers bumped IN THE FRAME, until a word count that
@@ -28,7 +28,7 @@
  * `gemdos_copy_in` both have this shape; what they do with the two addresses is their difference.
  *
  * NOT what the engine is HANDED. `gemdos_ofd_xfer`'s `copy` parameter is the ROM ADDRESS its caller
- * pushes (`$fc55fa` or `$fc5622`, `include/gemdos_fs_io.h`), because that is the ROM's own argument
+ * pushes (`$fc55fa` or `$fc5622`, `include/gemdos/fs_io.h`), because that is the ROM's own argument
  * and what a case stages in the frame; the engine maps it to one of these once, at its entry
  * (`src/gemdos/fs_io.c`, `copy_routine_at`), and calls through the pointer from there on. */
 typedef void (*gemdos_copy_fn)(uint8_t *image, uint16_t count, uint32_t cache, uint32_t user);

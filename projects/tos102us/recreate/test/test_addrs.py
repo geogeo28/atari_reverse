@@ -1,6 +1,6 @@
 """The headers' own constants, held to ONE name per value and ONE value per name.
 
-`include/addrs.h` and the four `include/gemdos_*.h` are the single source of truth this project's
+`include/addrs.h` and the four `include/gemdos/<group>.h` are the single source of truth this project's
 cores and its cases both read (`tools/addrs.py` parses them; a battery binds them as module
 attributes). Nothing in C diagnoses a SECOND SPELLING of one address: no translation unit includes
 every header, so two names for one location never meet the compiler, and a case that pokes one while
@@ -28,9 +28,11 @@ from harness import addrs
 
 INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # `addrs.h` plus the per-subsystem headers the batteries parse. Globbed rather than listed: a wave
-# that adds `gemdos_<group>.h` gets it checked without editing this file, which is the failure mode
-# a hand-written list has.
-HEADERS = [INCLUDE / "addrs.h"] + sorted(INCLUDE.glob("gemdos_*.h"))
+# that adds `gemdos/<group>.h` gets it checked without editing this file, which is the failure mode
+# a hand-written list has. `gemdos/gemdos.h` is not a group header, and the old flat `gemdos_*.h`
+# glob never matched it, so it stays out.
+HEADERS = [INCLUDE / "addrs.h"] + sorted(header for header in (INCLUDE / "gemdos").glob("*.h")
+                                         if header.name != "gemdos.h")
 
 # Where a value starts being an ADDRESS rather than an offset, a size, a count or a mask: $400 is the
 # top of the 68000's own vector table and the bottom of the system variables, so every location this

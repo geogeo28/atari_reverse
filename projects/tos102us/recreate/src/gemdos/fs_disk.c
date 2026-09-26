@@ -2,7 +2,7 @@
  *
  * GEMDOS never touches hardware. Every sector it reads or writes goes through BIOS `Rwabs`, which
  * is an INDIRECT dispatch-table entry — a jump through the RAM vector `hdv_rw` — so what actually
- * moves the bytes is whatever driver the boot left there. `include/gemdos_fs.h` is that door.
+ * moves the bytes is whatever driver the boot left there. `include/gemdos/fs.h` is that door.
  *
  * WHAT THE CACHE IS. Two singly-linked lists of buffer control blocks, headed at `_bufl` ($4b2):
  * list 0 holds FAT sectors and list 1 holds directory and data sectors. Each BCB names one record,
@@ -35,7 +35,7 @@
  */
 #include <stdint.h>
 
-#include "gemdos_fs.h"
+#include "gemdos/fs.h"
 #include "machine.h"
 #include "recreate.h"
 

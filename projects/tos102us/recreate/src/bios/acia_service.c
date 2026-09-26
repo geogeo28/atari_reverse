@@ -46,9 +46,9 @@
 #include "machine.h"
 #include "hw.h"
 #include "addrs.h"
-#include "iorec.h"
-#include "keyboard.h"
-#include "acia_packets.h"
+#include "bios/iorec.h"
+#include "bios/keyboard.h"
+#include "bios/acia_packets.h"
 #include "staged_call.h"
 
 /* One byte off a 6850, through whichever model owns that address off target. */
@@ -154,7 +154,7 @@ static void continue_packet(uint8_t *image, uint8_t byte)
 
 void midi_queue_byte(uint8_t *image, uint32_t iorec, uint8_t byte)
 {
-    /* The step and the wrap are `include/iorec.h`'s — the ROM's own `$fc28ea` — and what is here is
+    /* The step and the wrap are `include/bios/iorec.h`'s — the ROM's own `$fc28ea` — and what is here is
      * this writer's own FULL rule: the byte is DROPPED and nothing moves, not the tail and not the
      * head. A ring whose tail is one record behind its head never holds that last record. */
     uint16_t next = iorec_index_after(image, iorec, be16(image + iorec + IOREC_TAIL),

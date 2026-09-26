@@ -1,4 +1,4 @@
-/* gemdos_fs_drive.h — the file system's DRIVE and PATH layer: logging a drive in, and the first steps
+/* gemdos/fs_drive.h — the file system's DRIVE and PATH layer: logging a drive in, and the first steps
  * of walking a path on it (`src/gemdos/fs_drive.c`).
  *
  *   $fc50fa  gemdos_dmd_alloc      the four records one drive needs, out of the GEMDOS pool
@@ -9,10 +9,10 @@
  *   $fc5e08  gemdos_split_path     the next component of a path, into an FCB name
  *   $fc7e94  gemdos_strneq         n bytes of two strings equal? (the dispatcher's device-name arm)
  *
- * The records these routines build and read are `include/gemdos_fs.h`'s; the RAM tables they index
+ * The records these routines build and read are `include/gemdos/fs.h`'s; the RAM tables they index
  * (`GEMDOS_DMD_TABLE`, `GEMDOS_DIRECTORY_NODES`, `GEMDOS_DRIVES_OPENED`) are `include/addrs.h`'s.
  *
- * `entry_d0` ON THE THREE STRING ROUTINES is `include/gemdos_fs.h`'s convention: each can return
+ * `entry_d0` ON THE THREE STRING ROUTINES is `include/gemdos/fs.h`'s convention: each can return
  * through a `move.w`/`clr.w` that leaves the caller's high half of D0 standing.
  */
 #ifndef TOS102US_GEMDOS_FS_DRIVE_H

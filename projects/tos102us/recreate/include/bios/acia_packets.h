@@ -1,4 +1,4 @@
-/* acia_packets.h — the input half of the two 6850s: what the ACIA handler's two KBDVECS vectors do.
+/* bios/acia_packets.h — the input half of the two 6850s: what the ACIA handler's two KBDVECS vectors do.
  *
  * `src/bios/ikbd.c` is the handler; it asks each chip in turn through `midisys` and `ikbdsys`, which
  * are the two routines declared here. Everything below them reads ONE byte out of a data port and
@@ -7,7 +7,7 @@
  *   * a MIDI byte goes straight to `midivec`, which in a stock machine is `midi_queue_byte` below;
  *   * an IKBD byte is either the CONTINUATION of a packet the previous byte started — the state is
  *     one byte, `IKBD_PACKET_KIND` — or a PACKET HEADER ($f6..$ff) or a SCANCODE (anything under
- *     it), and the scancode half is `include/keyboard.h`'s.
+ *     it), and the scancode half is `include/bios/keyboard.h`'s.
  *
  * WHAT MAKES ANY OF IT RUNNABLE is the declared SEQUENCE (`TRAP_MODEL.md`, Phase 16): every read of
  * a 6850's data port POPS the receive register, so a case drains a packet by declaring a LIST of

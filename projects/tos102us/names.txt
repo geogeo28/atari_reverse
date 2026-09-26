@@ -710,7 +710,7 @@ fn 0xfc203a midi_send_string
 cmt 0xfc203a Midiws's loop: count+1 bytes, each through the MIDI sender at $fc201a. Same shape as Ikbdws's at $fc221c.
 cmt 0xfc0a46 BIOS $00 Getmpb: builds the initial GEMDOS MPB over the OS's descriptor at $48e from _membot/_memtop (read AFTER the caller's MPB is stored -- the two can alias). Returns memtop-membot in D0. Verified by recreate/test/test_bios_getmpb.py.
 cmt 0xfc07c4 The VBL's exit, where both paths meet: movem.l (sp)+,d0-a6 then addq.w #1,vblsem (a re-read, not the entry's value) and rte. src/bios/isr.S transcribes these six words verbatim.
-cmt 0xfc311c Timer C's exit, on both paths: bclr #5,$fffa11 acknowledges channel 5 and rte. src/bios/isr.S transcribes it; the C core spells the same read-modify-write through include/mfp.h.
+cmt 0xfc311c Timer C's exit, on both paths: bclr #5,$fffa11 acknowledges channel 5 and rte. src/bios/isr.S transcribes it; the C core spells the same read-modify-write through include/xbios/mfp.h.
 cmt 0xfc29f6 The ACIA handler's exit: movem.l (sp)+,d0-d3/a0-a3/a5 -- the list IS the handler's contract, D4-D7/A4/A6 are NOT given back -- and rte. src/bios/isr.S transcribes it.
 
 # --- BIOS wave 3 / wave 5 (2026-09-16): Bcostat's whole table, and the two reasons the rest halts ---

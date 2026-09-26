@@ -5,7 +5,7 @@ driver's step, and the keyboard's auto-repeat countdowns, behind a divider that 
 run at 50 Hz.
 
 WHAT EVERY CASE HERE DECLARES. The handler ends by clearing its own bit of the MFP's in-service
-register — a READ-MODIFY-WRITE of $fffa11, spelt through `include/mfp.h`'s declared-map door — so
+register — a READ-MODIFY-WRITE of $fffa11, spelt through `include/xbios/mfp.h`'s declared-map door — so
 every case says what that register held (`io_seed`) and the byte stored is compared against it. A
 case that touches the Dosound driver's mixer register declares the chip too (`psg_seed`), because
 that register is read back before it is written and the six bits the list does not supply are

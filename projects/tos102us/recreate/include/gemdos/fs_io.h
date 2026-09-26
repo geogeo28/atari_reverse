@@ -1,11 +1,11 @@
-/* gemdos_fs_io.h — the GEMDOS file system's I/O ENGINE: seek, the FAT, the cluster chain and the
+/* gemdos/fs_io.h — the GEMDOS file system's I/O ENGINE: seek, the FAT, the cluster chain and the
  * transfer, and the three leaves over them (`Fread`, `Fwrite`, `Fseek`). `src/gemdos/fs_io.c`.
  *
  * ONE UNIT, because it is one strongly-connected component of the call graph: the FAT is read and
  * written as a PSEUDO-FILE (the DMD's `DMD_FAT_OFD`) through the very transfer engine it serves —
  * `$fc6038` seeks and reads the FAT OFD, the read reaches `$fc6218`, and `$fc6218` steps clusters
  * through `$fc60f2`, which calls `$fc6038` again. The recursion ENDS because the FAT OFD's clusters
- * are NEGATIVE pseudo-clusters (`include/gemdos_fs.h`, the DMD) and `$fc6038` answers `cl + 1` for a
+ * are NEGATIVE pseudo-clusters (`include/gemdos/fs.h`, the DMD) and `$fc6038` answers `cl + 1` for a
  * negative cluster without reading anything.
  */
 #ifndef TOS102US_GEMDOS_FS_IO_H
@@ -34,7 +34,7 @@
 
 /* $fc7e24 — `*rem = value & mask[shift]` (a WORD store), and `value >> shift`, arithmetic. The mask
  * table is one for shifts 0..17; past it, and below it, the ROM reads whatever word is there
- * (`include/gemdos_fs.h`, `gemdos_bit_mask`). */
+ * (`include/gemdos/fs.h`, `gemdos_bit_mask`). */
 uint32_t gemdos_split_shift(uint8_t *image, uint32_t rem, uint32_t value, uint16_t shift);
 
 /* $fc61d6 — move an OFD's position on by `count`, its in-cluster offset too when `in_cluster`, and
@@ -45,7 +45,7 @@ void gemdos_ofd_advance(uint8_t *image, uint32_t ofd, uint32_t count, uint16_t i
  * ends before it. */
 uint32_t gemdos_ofd_seek(uint8_t *image, uint32_t ofd, uint32_t position);
 
-/* $fc6038 — the FAT entry of `cluster`. `entry_d0` for `include/gemdos_fs.h`'s Alcyon reason: the
+/* $fc6038 — the FAT entry of `cluster`. `entry_d0` for `include/gemdos/fs.h`'s Alcyon reason: the
  * negative-cluster arm writes only D0's low word. */
 uint32_t gemdos_fat_get(uint32_t entry_d0, uint8_t *image, uint16_t cluster, uint32_t dmd);
 

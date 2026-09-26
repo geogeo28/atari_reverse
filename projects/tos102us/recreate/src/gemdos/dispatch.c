@@ -44,8 +44,8 @@
  */
 #include <stdint.h>
 
-#include "gemdos.h"
-#include "gemdos_process.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/process.h"
 #include "machine.h"
 #include "recreate.h"
 
@@ -220,7 +220,7 @@ uint32_t gemdos_dispatch(uint8_t *image, uint32_t arguments)
 }
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-/* The one definition of the two hooks `include/gemdos.h` declares. On target this file's target
+/* The one definition of the two hooks `include/gemdos/gemdos.h` declares. On target this file's target
  * build has neither: the machine has a `jsr` and a `trap #14`. */
 int32_t (*recreate_call_gemdos_handler)(uint8_t *image, uint32_t handler, uint32_t arguments,
                                         uint16_t argument_bytes);

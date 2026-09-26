@@ -2,7 +2,7 @@
 
 Four batteries share this — `test_gemdos_memory_pool.py`, `..._malloc.py`, `..._mfree.py` and
 `..._mshrink.py`. What it owns is the three things all of them need and none of them should spell
-twice: the ADDRESSES (read out of `include/gemdos_memory.h`, so a case and the core it proves cannot
+twice: the ADDRESSES (read out of `include/gemdos/memory.h`, so a case and the core it proves cannot
 disagree), a READER for the two lists and the record pool, and a STAGER that puts the machine into a
 pool state the case wants.
 
@@ -47,13 +47,13 @@ import case
 # ---- the addresses, out of the C header that defines them ---------------------------------------
 # `tools/addrs.py` binds `include/addrs.h` and is reached THROUGH `harness` (the shim is what puts
 # the project's own tools on `sys.path`). This group's own constants live in
-# `include/gemdos_memory.h` — the wave's ownership rule is one header per subsystem — so they are
+# `include/gemdos/memory.h` — the wave's ownership rule is one header per subsystem — so they are
 # parsed out of it by that same parser and bound here. One source of truth, one parser, two headers.
-GEMDOS_MEMORY_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos_memory.h"
+GEMDOS_MEMORY_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos" / "memory.h"
 CONSTANTS = addrs.parse(GEMDOS_MEMORY_HEADER)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
-# THE ROUTINE ADDRESSES ARE `addrs.h`'S, not this header's. `include/gemdos_memory.h` holds the
+# THE ROUTINE ADDRESSES ARE `addrs.h`'S, not this header's. `include/gemdos/memory.h` holds the
 # STRUCTURES the cores compile against; an entry point is something the REGISTRIES key on — the
 # dispatch-table pin pairs every `<NAME>`/`<NAME>_FN` it finds there against the ROM's own table, and
 # `bench/tier3.py` labels a row by the same pair — so the eight live in `addrs.h` with every other

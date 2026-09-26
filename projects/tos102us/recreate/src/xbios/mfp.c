@@ -74,7 +74,7 @@
 #include <stdint.h>
 
 #include "machine.h"
-#include "mfp.h"
+#include "xbios/mfp.h"
 #include "addrs.h"
 
 /* `$fc268c` — `Jdisint`'s body: disable one MFP channel and forget any request it had outstanding. */

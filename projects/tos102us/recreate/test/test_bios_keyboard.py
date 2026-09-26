@@ -78,7 +78,7 @@ def record_at(info, offset=RECORD):
 
 
 def expected_record(scancode, ascii_byte, kbshift=0):
-    """kbshift, scancode, a zero, ASCII — the record's own layout (`include/keyboard.h`)."""
+    """kbshift, scancode, a zero, ASCII — the record's own layout (`include/bios/keyboard.h`)."""
     return (kbshift << 24) | ((scancode & 0xFF) << 16) | ascii_byte
 
 

@@ -69,7 +69,7 @@
  *      rts
  *
  * ON TARGET this reconstruction takes that trap too: the four wrappers below push the trampoline's
- * own frame and `trap #13` (`include/bcon.h`), so a GEMDOS leaf pays the dispatcher the original
+ * own frame and `trap #13` (`include/bios/bcon.h`), so a GEMDOS leaf pays the dispatcher the original
  * pays and `bench/tier3.py`'s numerator is our leaf over the ROM's own BIOS — the bench blob's
  * vector $b4 holds `$fc07f8` — while our `bios_*` cores are priced in their own rows alone. OFF
  * TARGET there is no 68000 to take it, so the same wrapper calls the BIOS core directly, which is
@@ -98,9 +98,9 @@
 #include "machine.h"
 #include "recreate.h"
 #include "addrs.h"
-#include "bcon.h"
-#include "gemdos.h"
-#include "gemdos_console.h"
+#include "bios/bcon.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/console.h"
 
 /* WHERE EACH BIOS CALL RETURNS TO — the longword `GEMDOS_BIOS_TRAMPOLINE` parks, and therefore an
  * output of this layer rather than a detail of it (see the header note). Thirteen call sites, each
@@ -230,7 +230,7 @@ static void park_bios_return(uint8_t *image, uint32_t return_site)
  *
  * `entry_d0` FOR THE DIRECT CALL is the ROUTINE'S OWN ADDRESS: the trap dispatcher's
  * `move.l 0(a0,d0.w),d0` loads the table entry in order to jump through it and leaves it there, and
- * a driver that writes no D0 hands exactly that back (`include/bcon.h`). The target build needs no
+ * a driver that writes no D0 hands exactly that back (`include/bios/bcon.h`). The target build needs no
  * such argument — the machine's own dispatcher leaves it there for real. */
 static uint32_t bios_input_status(uint8_t *image, uint32_t return_site, uint16_t device)
 {
@@ -277,7 +277,7 @@ static uint32_t bios_output_status(uint8_t *image, uint32_t return_site, uint16_
  * The standard handles.
  * ============================================================================================= */
 
-/* `move.b <which>(a0),d0 / ext.w d0`: `gemdos.h`'s accessor — the one signed basepage byte the
+/* `move.b <which>(a0),d0 / ext.w d0`: `gemdos/gemdos.h`'s accessor — the one signed basepage byte the
  * dispatcher's redirection reads too — widened here to the WORD the `ext.w` leaves.
  *
  * IT IS READ INTO D0, and that is not only bookkeeping: the `ext.w` leaves the handle in D0's LOW

@@ -1,4 +1,4 @@
-/* vt52.h — the BIOS console, for the two other files that reach into it.
+/* bios/vt52.h — the BIOS console, for the two other files that reach into it.
  *
  * `src/bios/vt52.c` is the driver `Bconout(CON:)` and `Bconout(RAW:)` jump into, and
  * `src/bios/conout_glyph.c` is the four screen routines it reaches through the RAM vectors at

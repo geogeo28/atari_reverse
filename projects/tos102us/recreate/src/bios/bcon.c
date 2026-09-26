@@ -125,11 +125,11 @@
 #include "ipl.h"
 #include "sched.h"
 #include "addrs.h"
-#include "ikbd.h"
-#include "iorec.h"
+#include "xbios/ikbd.h"
+#include "bios/iorec.h"
 #include "m68k_idioms.h"
-#include "vt52.h"
-#include "xbios.h"
+#include "bios/vt52.h"
+#include "xbios/xbios.h"
 
 /* What a status driver answers: `moveq #-1` for "there is input" and `moveq #0` for "there is not",
  * both of which set the whole of D0. */

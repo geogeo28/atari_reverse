@@ -56,7 +56,7 @@
 #include "machine.h"
 #include "hw.h"
 #include "addrs.h"
-#include "mfp.h"
+#include "xbios/mfp.h"
 #include "staged_call.h"
 
 void isr_acia(uint8_t *image)

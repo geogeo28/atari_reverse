@@ -1,4 +1,4 @@
-/* mfp.h — the MFP 68901's register arithmetic, and the one door a reconstruction changes a bit of
+/* xbios/mfp.h — the MFP 68901's register arithmetic, and the one door a reconstruction changes a bit of
  * one of its registers through.
  *
  * Three ROM routines share it verbatim — `Jdisint`, `Jenabint` and the timer programmer the ROM

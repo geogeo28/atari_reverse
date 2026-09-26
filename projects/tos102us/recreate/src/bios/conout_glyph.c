@@ -1,7 +1,7 @@
 /* The BIOS console's four SCREEN routines — $fd141c, $fd149a, $fd14de and $fd1542.
  *
  * (The fifth thing the driver writes screen with, the cursor cell inversion at $fc4a1e, is NOT here:
- * the vertical blank calls it too, so it is a `static inline` in `include/vt52.h` and that header's
+ * the vertical blank calls it too, so it is a `static inline` in `include/bios/vt52.h` and that header's
  * note says what the cross-file call would have cost.)
  *
  * The console driver next door ($fc42f2, `src/bios/vt52.c`) never touches the screen itself. It
@@ -40,7 +40,7 @@
 #include "machine.h"
 #include "recreate.h"
 #include "addrs.h"
-#include "vt52.h"
+#include "bios/vt52.h"
 
 /* Every group of 16 screen pixels is `plane_words` words side by side, and the mask that selects a
  * pixel column inside one is the same word in each of them. */

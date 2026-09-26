@@ -60,7 +60,7 @@ def _fat_get(cluster, pokes=None):
 
 
 # ---- the host build's frame word -----------------------------------------------------------------
-GEMDOS_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos.h"
+GEMDOS_HEADER = Path(__file__).resolve().parents[1] / "include" / "gemdos" / "gemdos.h"
 
 def test_the_host_frame_word_is_inside_the_dropped_band_below_every_frame():
     """`GEMDOS_HOST_FRAME_WORD` stands in, off target, for the ROM's `-2(a6)`: the word a FAT

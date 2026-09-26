@@ -1,4 +1,4 @@
-/* gemdos.h — what the GEMDOS cores share: the basepage view, the dispatch table's records, and the
+/* gemdos/gemdos.h — what the GEMDOS cores share: the basepage view, the dispatch table's records, and the
  * two doors a reconstruction needs that a ROM routine reaches through a trap.
  *
  * The ADDRESSES are all in `addrs.h`, which both this header and the cases read; what is here is the

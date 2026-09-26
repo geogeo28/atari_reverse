@@ -30,8 +30,8 @@
 #endif
 #include <stdint.h>
 
-#include "bcon.h"
-#include "gemdos.h"
+#include "bios/bcon.h"
+#include "gemdos/gemdos.h"
 #include "machine.h"
 
 /* ---- the two constants --------------------------------------------------------------------- */

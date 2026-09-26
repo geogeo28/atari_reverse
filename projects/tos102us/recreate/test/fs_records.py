@@ -2,7 +2,7 @@
 buffers, and the record pool's two staged states.
 
 The records themselves are built by `test/gemdos_fs.py` (`dnd_bytes`, `ofd_bytes`, `dirent_bytes`,
-...), out of `include/gemdos_fs.h`'s own offsets; this module says WHERE they go.
+...), out of `include/gemdos/fs.h`'s own offsets; this module says WHERE they go.
 
 WHERE THEY GO. `staging.SCRATCH`'s 4 KB is claimed to its last byte by `test/staging.py`'s registry,
 so these records live where the 8.3 name battery's buffers already do: in the RAM disk's own span

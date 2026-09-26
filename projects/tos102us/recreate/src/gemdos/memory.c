@@ -2,7 +2,7 @@
  * and the four routines under them: the descriptor allocator $fc886a, the free-list insert with
  * coalescing $fc89dc, and the record pool $fc7f1a/$fc7f9c over the bump arena $fc7ed0.
  *
- * `include/gemdos_memory.h` has the three structures and where they live. What is here is the
+ * `include/gemdos/memory.h` has the three structures and where they live. What is here is the
  * BEHAVIOUR, and the five things about it a reconstruction gets wrong by writing the obvious C:
  *
  *   1. THE SEARCH IS NEXT-FIT, NOT FIRST-FIT. `gemdos_md_alloc` starts at `mp_rover` and takes the
@@ -49,8 +49,8 @@
 
 #include "machine.h"
 #include "addrs.h"
-#include "gemdos.h"
-#include "gemdos_memory.h"
+#include "gemdos/gemdos.h"
+#include "gemdos/memory.h"
 
 /* One field of a descriptor, or of the MPB read as one. Spelt as helpers because every routine
  * below is pointer chasing and `be32(image + addr_add(md, MD_LINK))` six times a function reads as

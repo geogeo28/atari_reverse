@@ -1,4 +1,4 @@
-/* gemdos_process.h — the GEMDOS PROCESS group and the HANDLE machinery under it.
+/* gemdos/process.h — the GEMDOS PROCESS group and the HANDLE machinery under it.
  *
  * `src/gemdos/process.c` is `Pterm`/`Pterm0`/`Ptermres`/`Pexec` and the release routine all four
  * reach; `src/gemdos/handles.c` is `Fforce`/`Fdup`/`Fclose` and the dispatcher's own handle
@@ -15,7 +15,7 @@
  *     fields are below, and each carries the instruction that establishes it.
  *
  *     IT IS NOT THE OPEN FILE DESCRIPTOR, and the two were spelt `OFD_` alike until this wave. The
- *     OFD is the FILE SYSTEM's 64-byte record (`include/gemdos_fs.h`, `OFD_DMD`/`OFD_STRTCL`/…);
+ *     OFD is the FILE SYSTEM's 64-byte record (`include/gemdos/fs.h`, `OFD_DMD`/`OFD_STRTCL`/…);
  *     what is here is the ten-byte slot whose first longword POINTS at one — or, when it is
  *     negative, names a character device instead. Nothing in this group follows that pointer.
  *

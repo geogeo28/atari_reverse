@@ -292,7 +292,7 @@ def pushed_arguments(final, argument_bytes):
 # A GEMDOS routine reaches the BIOS through `GEMDOS_BIOS_TRAMPOLINE`, which takes the machine's own
 # `trap #13`; the ROM's trap dispatcher then pushes a 46-byte register-save frame below `savptr`
 # ($4a2) and pops it again on the way out. The HOST build of the reconstruction calls `bios_bconout`
-# and its siblings directly (`include/bcon.h`) — there is no trap, so there is no frame — and those
+# and its siblings directly (`include/bios/bcon.h`) — there is no trap, so there is no frame — and those
 # 46 bytes are the one part of the image the two sides cannot agree about.
 #
 # They are not excluded from the comparison. `savptr` is an ordinary writable system variable, so a

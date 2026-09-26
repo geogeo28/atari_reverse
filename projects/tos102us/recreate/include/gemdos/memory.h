@@ -1,4 +1,4 @@
-/* gemdos_memory.h — GEMDOS's memory manager: the MPB, the memory descriptors, and the pool the
+/* gemdos/memory.h — GEMDOS's memory manager: the MPB, the memory descriptors, and the pool the
  * descriptors themselves come out of.
  *
  * THREE STRUCTURES, ONE OF WHICH IS NOT THE ONE A PROGRAMMER EXPECTS.
@@ -42,7 +42,7 @@
 #include "addrs.h"
 
 /* ---- the GEMDOS globals these routines reach by absolute address ------------------------------ */
-/* `GEMDOS_P_RUN` is not here: `addrs.h` has it, the whole wave reads it through `gemdos.h`'s
+/* `GEMDOS_P_RUN` is not here: `addrs.h` has it, the whole wave reads it through `gemdos/gemdos.h`'s
  * `gemdos_basepage`, and the same address in two headers is two places to keep one fact right. */
 #define GEMDOS_MPB          0x7e8e  /* GEMDOS's own memory parameter block — mfl, mal, rover */
 #define GEMDOS_P_ROOT       0x7e9c  /* the pool's free chain per size class; OS header +$20 */

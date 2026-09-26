@@ -1,11 +1,11 @@
-/* bcon.h — the BIOS cores another translation unit calls, and the door it calls them through.
+/* bios/bcon.h — the BIOS cores another translation unit calls, and the door it calls them through.
  *
  * `src/bios/bcon.c` is `Bconstat`/`Bconin`/`Bconout`/`Bcostat` and `src/bios/drvmap.c` is `Drvmap`
  * — `trap #13` leaves the rest of TOS reaches a character device (and the drive map) through.
  * GEMDOS is the first caller outside the BIOS, and it is a caller BY TRAP: the ROM reaches all five
  * through `GEMDOS_BIOS_TRAMPOLINE` ($fc4eac), which parks its own return address at
  * `GEMDOS_BIOS_RETURN_SLOT` and takes the machine's own `trap #13` over the frame its caller
- * pushed. Deliberately not an inventory of `src/bios/`: `include/xbios.h`'s rule, said for the
+ * pushed. Deliberately not an inventory of `src/bios/`: `include/xbios/xbios.h`'s rule, said for the
  * BIOS — what is declared is what another translation unit calls.
  *
  * THE TWO BUILDS REACH THEM TWO WAYS, and that is what the helpers at the bottom are:

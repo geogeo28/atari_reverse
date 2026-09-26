@@ -19,7 +19,7 @@ THE PAIR IS THE SHAPE, exactly as `test/isr.py` stages a RAM vector for an inter
     byte the case poked (`mediach_answer` below, which is what makes the protocol's other two arms
     reachable at all);
   * for the CANDIDATE, the hook below, bound to `recreate_call_disk_vector`
-    (`include/gemdos_fs.h`) — the same three effects in Python, over the same image bytes.
+    (`include/gemdos/fs.h`) — the same three effects in Python, over the same image bytes.
 
 ...and the DISK IS COMPARED IMAGE. The sectors, the buffer control blocks, their buffers and the
 staged BPB all live in ordinary RAM inside the differential's byte compare, so "the ROM wrote this
@@ -85,14 +85,14 @@ from opcodes import (ADDA_L_D0_A0, BTST_IMMEDIATE_STACK, DBF_D1, DBF_D2, LEA_ABS
                      MOVEQ_0_D0, MULU_W_IMMEDIATE_D0, RTS_WORD, SUBQ_W_1_D1)
 
 # ---- the headers' constants, out of the C the cores compile against ------------------------------
-# `include/gemdos_fs.h` holds the STRUCTURES (the wave's one-header-per-subsystem rule) and
+# `include/gemdos/fs.h` holds the STRUCTURES (the wave's one-header-per-subsystem rule) and
 # `include/addrs.h` the routine addresses; both are read by the one parser, exactly as
 # `test/gemdos_memory.py` reads its group's header. The layers' own headers are read too — the drive
 # builder's quirks (`drive()` below is the DMD as `$fc53c0` builds it) and the I/O engine's FAT12
 # packing and seek modes — so every fs battery reads ONE namespace, this module's, and no battery
 # keeps a dictionary of its own over a header.
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-FS_HEADERS = tuple(_INCLUDE / name for name in ("gemdos_fs.h", "gemdos_fs_drive.h", "gemdos_fs_io.h"))
+FS_HEADERS = tuple(_INCLUDE / name for name in ("gemdos/fs.h", "gemdos/fs_drive.h", "gemdos/fs_io.h"))
 CONSTANTS = {name: value for header in FS_HEADERS for name, value in addrs.parse(header).items()}
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -175,7 +175,7 @@ BOOT_HEADS = 26
 
 ROOT_ENTRIES = ROOT_SECTORS * SECTOR_BYTES // DIRENT_BYTES
 
-# A plain file's attribute: no bit set. Every bit this module writes is `include/gemdos_fs.h`'s.
+# A plain file's attribute: no bit set. Every bit this module writes is `include/gemdos/fs.h`'s.
 ATTR_NONE = 0x00
 
 # What fills a staged buffer nothing else claims, so that a routine reading past what a case staged
@@ -184,7 +184,7 @@ ATTR_NONE = 0x00
 SLACK_FILL = 0xA5
 
 # A D0 whose HIGH half none of the file system's routines writes, for the ones that return through a
-# `move.w`/`clr.w` over the caller's (`include/gemdos_fs.h`, "what the cores export"): such a case
+# `move.w`/`clr.w` over the caller's (`include/gemdos/fs.h`, "what the cores export"): such a case
 # enters with it, and the half it expects back is `callers_high_half(ENTRY_D0)`.
 ENTRY_D0 = 0xDEC0_DE00
 D0_LOW_WORD = 0xFFFF
@@ -348,7 +348,7 @@ def vectors():
 
 
 def bpb_record():
-    """The BPB `hdv_bpb` answers with: the nine words, in the order `include/gemdos_fs.h` names them.
+    """The BPB `hdv_bpb` answers with: the nine words, in the order `include/gemdos/fs.h` names them.
 
     `fatrec` is the SECOND FAT's first record, which is TOS's convention and not a slip — `$fc5568`
     derives `m_recoff[0]` from it and `$fc59b2` writes the FIRST copy `m_fsiz` records lower.
@@ -806,7 +806,7 @@ def user_buffer(contents=None):
 
 
 # ---- the candidate's half of the pair ------------------------------------------------------------
-# `include/gemdos_fs.h`'s `recreate_call_disk_vector`, bound here for the process's lifetime through
+# `include/gemdos/fs.h`'s `recreate_call_disk_vector`, bound here for the process's lifetime through
 # `test/address_hook.py`'s record-and-refuse hook, keyed by BIOS FUNCTION NUMBER and recording
 # (fn, rwflag, buffer, count, recno, dev) so a case can assert the ordered BIOS traffic.
 DISK_CALL = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint16,

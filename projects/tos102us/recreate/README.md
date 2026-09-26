@@ -199,7 +199,7 @@ routines an interrupt handler calls, and `include/staged_call.h` for the handler
   uses), assembled offline by `m68k-elf-as` to get them right, and pinned by EXECUTION: a stub
   reading `recno` or the buffer pointer from the wrong stack slot transfers the wrong sector, and
   the candidate — handed the same arguments by C — transfers the right one, so the byte diff reds;
-* for the CANDIDATE, a hook the case binds to `recreate_call_disk_vector` (`include/gemdos_fs.h`),
+* for the CANDIDATE, a hook the case binds to `recreate_call_disk_vector` (`include/gemdos/fs.h`),
   with the same three effects in Python over the same image bytes.
 
 **The disk is COMPARED IMAGE, and that is the whole of why this works.** The sectors, the buffer
@@ -320,6 +320,8 @@ recreate/
 │                       `RomBench` can refuse an overlap between them
 ├── Makefile            the kit's lines, the snapshot rule, and Tier 3's BENCH_CFLAGS + table
 ├── include/addrs.h     every ROM and system address this project names — the source of truth
+├── include/<component>/ a component's own headers (bios/, xbios/, gemdos/); the shared ones stay
+│                       at the top of include/, and every #include is written from include/
 ├── src/<component>/    the reconstruction, one directory per ROM component
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the

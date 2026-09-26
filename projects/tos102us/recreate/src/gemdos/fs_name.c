@@ -15,10 +15,10 @@
  */
 #include <stdint.h>
 
-#include "gemdos_fs.h"
+#include "gemdos/fs.h"
 #include "machine.h"
 
-/* The two characters the FCB form is built out of beyond `include/gemdos_fs.h`'s FCB_PAD, and the
+/* The two characters the FCB form is built out of beyond `include/gemdos/fs.h`'s FCB_PAD, and the
  * three the parser stops a field at besides it (NAME_DOT and PATH_SEPARATOR are that header's too:
  * a path separator ends the name as surely as a NUL does). */
 #define FCB_ANY           '?'     /* one position a pattern matches anything in */
