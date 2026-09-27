@@ -19,10 +19,6 @@ def rom_long(address):
     return case.long_in(BASE_IMAGE, address)
 
 
-def rom_word(address):
-    return case.word_in(BASE_IMAGE, address)
-
-
 # ---- the window ------------------------------------------------------------------------------------
 
 def test_the_window_is_dead_ram_in_this_snapshot():
@@ -41,8 +37,8 @@ def test_the_window_is_clear_of_every_other_tenant():
 # ---- the Line-A block and its vectors, as the boot left them -----------------------------------------
 
 def test_the_line_a_exception_and_a000_are_where_the_headers_say():
-    assert case.long_in(BASE_IMAGE, addrs.VECTOR_LINE_A) == addrs.LINEA_DISPATCH
-    assert rom_long(vdi.LINEA_OPCODE_TABLE) == addrs.LINEA_INIT
+    assert case.long_in(BASE_IMAGE, addrs.VECTOR_LINE_A) == addrs.LINEA_ROM_DISPATCH
+    assert rom_long(vdi.LINEA_OPCODE_TABLE) == addrs.LINEA_ROM_INIT
 
 
 def test_the_ten_drawing_vectors_hold_the_cpu_set():
@@ -77,10 +73,10 @@ MOVE_LONG_IMMEDIATE_TO_ABSOLUTE = 0x23FC
 
 
 def test_contour_fill_installs_the_seedabort_default():
-    """v_contourfill stores `LINEA_SEEDABORT_DEFAULT` — `moveq #0,d0 / rts` — in SEEDABORT ($fd08e4)."""
+    """v_contourfill stores `LINEA_ROM_SEEDABORT_DEFAULT` — `moveq #0,d0 / rts` — in SEEDABORT ($fd08e4)."""
     store = addrs.VDI_ROM_V_CONTOURFILL + LINK_BYTES
-    assert rom_word(store) == MOVE_LONG_IMMEDIATE_TO_ABSOLUTE
-    assert rom_long(store + vdi.WORD_BYTES) == addrs.LINEA_SEEDABORT_DEFAULT
+    assert vdi.rom_word(store) == MOVE_LONG_IMMEDIATE_TO_ABSOLUTE
+    assert rom_long(store + vdi.WORD_BYTES) == addrs.LINEA_ROM_SEEDABORT_DEFAULT
     assert rom_long(store + vdi.WORD_BYTES + vdi.LONG_BYTES) == vdi.LINEA_SEEDABORT
 
 
@@ -135,7 +131,7 @@ PER_MILLE_FULL = 1000
 
 
 def test_the_vq_color_level_table_runs_zero_to_a_thousand():
-    levels = [rom_word(vdi.VDI_VQ_COLOR_LEVELS + i * vdi.WORD_BYTES) for i in range(SHIFTER_LEVELS)]
+    levels = [vdi.rom_word(vdi.VDI_VQ_COLOR_LEVELS + i * vdi.WORD_BYTES) for i in range(SHIFTER_LEVELS)]
     assert levels[0] == 0 and levels[-1] == PER_MILLE_FULL and levels == sorted(levels)
 
 
@@ -143,9 +139,9 @@ TRAP_2_ARM_HEAD_BYTES = 0x10           # the arm tests D0 twice before its `jsr`
 
 
 def test_the_vdi_entry_is_what_the_trap_2_arm_calls():
-    """`SYSVAR_VDI_ENTRY`'s routine calls `VDI_ENTRY` by `jsr <abs.l>` within its first few words."""
+    """`SYSVAR_VDI_ENTRY`'s routine calls `VDI_ROM_ENTRY` by `jsr <abs.l>` within its first few words."""
     routine = case.long_in(BASE_IMAGE, addrs.SYSVAR_VDI_ENTRY)
-    assert JSR_ABSOLUTE_LONG + addrs.VDI_ENTRY.to_bytes(4, "big") in \
+    assert JSR_ABSOLUTE_LONG + addrs.VDI_ROM_ENTRY.to_bytes(4, "big") in \
         bytes(BASE_IMAGE[routine:routine + TRAP_2_ARM_HEAD_BYTES])
 
 
@@ -236,7 +232,7 @@ def dispatcher_run(staged):
     """The ROM's own dispatcher over `staged`, called with an opcode it serves nothing for."""
     pokes = vdi.merge_pokes(staged, vdi.pointer_pokes(),
                             {vdi.CONTRL_AT: vdi.contrl(UNSERVED_OPCODE, handle=A_HANDLE)})
-    final, _writes, _regs = emu.run(make_image(pokes), addrs.VDI_DISPATCH, {})
+    final, _writes, _regs = emu.run(make_image(pokes), addrs.VDI_ROM_DISPATCH, {})
     return final
 
 

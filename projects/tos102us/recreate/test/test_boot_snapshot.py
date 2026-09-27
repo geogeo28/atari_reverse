@@ -161,6 +161,29 @@ import gemdos_process                                       # noqa: E402
 # ...and the VDI's: its batteries register their rows through `vdi.register` as they are built.
 import test_vdi_vsf_perimeter                               # noqa: E402,F401
 import test_vdi_linea_init                                  # noqa: E402,F401
+# ...the pure helpers and vr_trnfm (`src/vdi/helpers.c`).
+import test_vdi_helpers_arithmetic                          # noqa: E402,F401
+import test_vdi_helpers_geometry                            # noqa: E402,F401
+import test_vdi_helpers_text                                # noqa: E402,F401
+import test_vdi_helpers_input                               # noqa: E402,F401
+import test_vdi_helpers_trnfm                               # noqa: E402,F401
+import test_vdi_helpers_gemdos                              # noqa: E402,F401
+# ...the pixel / scanline primitives and their CPU bodies (`src/vdi/raster.c`).
+import test_vdi_raster_pixel                                # noqa: E402,F401
+import test_vdi_raster_hline                                # noqa: E402,F401
+import test_vdi_raster_rect                                 # noqa: E402,F401
+import test_vdi_line                                        # noqa: E402,F401
+# ...the attribute setters, st_fl_ptr and arb_corner (`src/vdi/attributes.c`).
+import test_vdi_attr_line                                   # noqa: E402,F401
+import test_vdi_attr_marker                                 # noqa: E402,F401
+import test_vdi_attr_fill                                   # noqa: E402,F401
+import test_vdi_attr_text                                   # noqa: E402,F401
+import test_vdi_attr_modes                                  # noqa: E402,F401
+import test_vdi_attr_vectors                                # noqa: E402,F401
+# ...the inquiries and the palette pair (`src/vdi/inquire.c`, `src/vdi/palette.c`).
+import test_vdi_inquire                                     # noqa: E402,F401
+import test_vdi_inquire_text                                # noqa: E402,F401
+import test_vdi_color                                       # noqa: E402,F401
 import vdi                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
@@ -456,8 +479,8 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                # ...and the dispatcher's redirected write: the byte its broken pointer names.
                *dispatch_io.CASE_FIELDS,
                # ...and the VDI's: the Line-A block, the physical workstation, the entry's RAM, the
-               # screen, and every band of the VDI's staged window.
-               *vdi.CASE_FIELDS)
+               # screen, what a battery declared outside them, and every band of the staged window.
+               *vdi.case_fields())
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():

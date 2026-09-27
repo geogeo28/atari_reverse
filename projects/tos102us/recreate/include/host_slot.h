@@ -27,7 +27,8 @@
  * `$fc7678` (`Fattrib`) the low byte of its own attribute ARGUMENT `15(a6)`, read or written in place, and the
  * dispatcher `$fc94e4` the byte `-14(a6)` a redirected read lands in and — through `$fc5078` — the argument words of
  * its own nested `Fwrite`, pushed on its stack, and `Pexec`'s loader `$fc85ea` the five locals it `Fread`s the
- * program's header and first relocation offset into (`-8`, `-66`, `-30`, `-10`, `-38(a6)`), laid out as one slot.
+ * program's header and first relocation offset into (`-8`, `-66`, `-30`, `-10`, `-38(a6)`), laid out as one slot;
+ * and the VDI's `trap #1` door `$fcfa9c` the words its caller pushed, which the host build hands the dispatcher.
  * ON TARGET the C local IS that frame slot and its address is the one passed. OFF TARGET a C local is
  * host memory the image cannot reach, so each role has a fixed address instead: inside the oracle's
  * stack band, which the differential drops on both shores — exactly where the ROM's own copy of the
@@ -63,6 +64,8 @@
 #define HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES 12     /* selector.w, handle.w, count.l, buffer.l */
 #define HOST_SLOT_REDIRECTED_BYTE       0x7f310  /* $fc94e4's `-14(a6)`: the byte a redirected read lands in */
 #define HOST_SLOT_REDIRECTED_BYTE_BYTES 1
+#define HOST_SLOT_VDI_GEMDOS_WORDS      0x7f320  /* $fcfa9c's caller's words: the VDI's `Malloc`/`Mfree` */
+#define HOST_SLOT_VDI_GEMDOS_WORDS_BYTES 6       /* function.w, argument.l */
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -78,6 +81,7 @@ enum host_slot {
     HOST_SLOT_ID_PEXEC_LOCALS,
     HOST_SLOT_ID_C_ENTRY_ARGUMENTS,
     HOST_SLOT_ID_REDIRECTED_BYTE,
+    HOST_SLOT_ID_VDI_GEMDOS_WORDS,
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL

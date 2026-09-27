@@ -52,6 +52,10 @@ uint32_t bios_drvmap(const uint8_t *image);
  * (`src/gemdos/process.c`). It takes no `entry_d0` because it writes the whole register itself. */
 uint32_t bios_setexc(uint8_t *image, uint16_t vector, uint32_t handler);
 
+/* $fc0a8a — the system timer's period in milliseconds, zero-extended. `src/bios/sysvars.c`. The VDI's
+ * `vex_timv` answers with it, through its own `trap #13` (`src/vdi/attributes.c`). */
+uint32_t bios_tickcal(const uint8_t *image);
+
 #ifndef RECREATE_HOST_DIFFERENTIAL
 /* ---- the trampoline's frame, on target ---------------------------------------------------------
  *

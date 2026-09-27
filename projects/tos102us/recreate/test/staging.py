@@ -91,3 +91,12 @@ def band(offset, size, owner):
 # stub. That overlap is deliberate and is asserted where it matters, in `test/isr.py`.
 POINTER_ARGUMENTS_BYTES = 0x400
 POINTER_ARGUMENTS = band(0, POINTER_ARGUMENTS_BYTES, "the single-buffer batteries (staging.SCRATCH)")
+
+
+# ---- the free RAM ABOVE the oracle's stack band --------------------------------------------------
+# The capture's free window runs on past the stack band to $f7fa1 (`project.toml`), and a buffer too big
+# for any band below — a whole 64K-word font form — takes its room there, CLAIMED here so a second
+# tenant cannot land on it unseen. Unlike the stack band it is compared, like any image; each tenant
+# holds its own claim dead in the snapshot beside the cases that use it.
+FREE_WINDOW_END = 0xF7FA2       # one past the capture's last zero byte of the free TPA
+HIGH_BANDS = Registry(harness.emu.STACK_BAND_HI, FREE_WINDOW_END, "the free RAM above the oracle's stack band")

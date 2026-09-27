@@ -23,6 +23,7 @@ unless `PERF_ACCEPTED` carries it, and every pinned row still measuring what it 
 file also refuses a verified case with NO row here. This file prints; that file decides.
 """
 import argparse
+import ctypes
 import struct
 import sys
 from collections import namedtuple
@@ -72,8 +73,10 @@ import gemdos                                              # noqa: E402
 # termination record it arms is entered through a stub of its own, which costs two instructions
 # where the dispatcher's costs three (`SLICE_ENTRY_COST` below).
 import gemdos_process                                      # noqa: E402
-# ...and the VDI's door, whose `addrs.h` convention and primitive declarations the VDI rows derive from.
+# ...and the VDI's door, whose `addrs.h` convention and primitive declarations the VDI rows derive from,
+# and the pure helpers' module, whose C signatures their calls derive from.
 import vdi                                                 # noqa: E402
+import vdi_helpers                                         # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -100,8 +103,9 @@ RATIO_TOLERANCE = 0.02
 #
 # `test_tier3.py` refuses a stale entry: one naming no row, one that has drifted, and one recorded
 # above the bar whose row has since come back under it.
-# WHAT THE ROWS ABOVE THE BAR HAVE IN COMMON, said once so seventeen entries need not each say it.
-# Three mechanisms cover all of them, and none is a defect in a reconstruction:
+# WHAT THE ROWS ABOVE THE BAR HAVE IN COMMON, said once so no entry need say it again. The lettered
+# mechanisms below cover all of them, and none is a defect in a reconstruction. All but one are named
+# by the entries that carry them; (T) is a RULE, and carries its rows with no entry at all:
 #
 #   (A) THE IMAGE POINTER. Every core takes `uint8_t *image` and loads it out of the frame —
 #       `moveal %sp@(4),%a0`, 12 cycles — where the ROM reaches the same memory through the
@@ -159,6 +163,20 @@ RATIO_TOLERANCE = 0.02
 #       of one fewer allocatable address register in every core the shipped build compiles. What is
 #       in the tree is the interim: correct everywhere, paid per call, and priced by these rows.
 #
+#   (T) SHIPS AS THE ROM'S OWN INSTRUCTIONS. The user's rule for the hand-written 68000: port it to C
+#       first, and where the C measures over the bar, SHIP a byte-pinned `.S` transcription instead —
+#       `include/vdi/transcribed.h`, the TRANSCRIBED table, is the one place that says which. A C row of
+#       a routine in that table is over the bar by design and is admitted, verdict `transcribed`, ONLY
+#       while EVERY one of the routine's `.S` rows measures at or under the bar (`ships_within_bar`):
+#       derived from the measurements, never typed, so deleting a `.S` row or letting one drift over the
+#       bar reds the C rows with it. What those C rows price is the C Tier 1 proves, and where their
+#       cycles go is the same few things each time: (A) and (M) on every entry, the callee-saved `movem`
+#       pair GCC opens before the first branch, and hand 68000 GCC does not emit — (E) twice over in the
+#       palette pair; in the raster primitives a write-mode arm reached by `jmp (a5)` through a
+#       PC-relative table, a Bresenham that runs per-plane code it built on the stack, a span count spent
+#       by two `subq`/`bcs` before a `dbf`; and in the pure helpers the carry an `add.w` leaves, a
+#       `-(An)`, a compare against memory in a `dbf` loop.
+#
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
 PERF_ACCEPTED = {
@@ -168,6 +186,23 @@ PERF_ACCEPTED = {
               "this cycle count is the whole surface the mask has"),
     ("xbios_giaccess", "write"): (
         0.74, "the same bracket, over the write path's extra port access — see the row above"),
+    # WHAT THIS PIN CANNOT SEE: it catches the bracket DELETED (about -0.05), but a cycle count is blind
+    # to every mutant that spends the same instructions — the restore moved BEFORE the exchange, the
+    # exchange moved OUTSIDE the bracket, the restore writing `mask | $700` (the tick masked for good on
+    # target). The surface that sees them is the SR itself: the target C run from SR = $2000 / $2300
+    # with the SR recorded at the USER_TIM write and on return, which needs the kit to report SR (the
+    # oracle enters at IPL 7 and reports none) — PARKED as a kit item, with SR/A7 in `emu.REPORTED_REGS`.
+    ("vdi_vex_timv", "exchange"): (
+        1.09, "under the bar and pinned for `xbios_giaccess`'s reason: the `ori.w #$700,sr` bracket "
+              "round the USER_TIM exchange (ipl.h) is this cycle count's alone to see — its deletion, "
+              "not its placement (above)"),
+    # vq_key_s, Alcyon C calling the register helper get_kbshift: (A) and (D) THROUGH A CALL — the
+    # helper's C form takes the image and the caller's D0 as arguments (`vdi/helpers.h`), two pushes and a
+    # pop where the ROM's `jsr` passes nothing. NOT (T): vq_key_s is not transcribed, and the call it
+    # makes is to the C core, which is what a target build runs until the ROM build links cores
+    # (`include/vdi/transcribed.h`, the declarations).
+    ("vdi_vq_key_s", "every bit set but Control"): (1.48, "(A) + (D) through get_kbshift's frame: 180 -> 266 cycles, 12 "
+                                             "instructions to 19"),
 
     # (A) alone, on a trap leaf, is not written down at all any more: those rows are admitted by
     # THE LEAF RULE below, which measures the excess against the dispatched call the machine really
@@ -669,6 +704,7 @@ IMAGE = 0
 
 # What `returns` a C signature declares, in the bytes of D0 `RomBench.measure` compares.
 RETURNS_LONG = 4            # uint32_t
+RETURNS_WORD = 2            # int16_t — an Alcyon `int`, whose callers read D0.w alone (`vdi/helpers.h`)
 RETURNS_BYTE = 1            # uint8_t — GCC leaves the caller's high word alone; the ROM clears it
 RETURNS_NOTHING = 0         # void
 
@@ -1222,20 +1258,60 @@ UNNUMBERED_ROUTINE_ROLES = {
 VDI_FUNCTIONS = sorted(name for name in dir(addrs)
                        if name.startswith(vdi.ROUTINE_PREFIX) and hasattr(addrs, name + "_OPCODE"))
 CALL.update({name: Call((IMAGE,), RETURNS_NOTHING) for name in VDI_FUNCTIONS})
-UNNUMBERED_ROUTINE_ROLES.update({name: f"VDI {vdi.core_symbol(name)[len('vdi_'):]}" for name in VDI_FUNCTIONS})
 CALL.update({name: Call((IMAGE, *(EntryRegister(register) for register in contract.arguments),
                          *((POINTER_STORAGE,) if len(contract.results) > 1 else ())),
                         RETURNS_LONG if "d0" in contract.results else RETURNS_NOTHING)
              for name, contract in vdi.PRIMITIVES.items()})
-UNNUMBERED_ROUTINE_ROLES.update({name: f"Line-A {name.lower()}" for name in vdi.PRIMITIVES})
-# ...and the one place a core's symbol is NOT its `addrs.h` name lower-cased.
-SYMBOL_OF_ROUTINE = {name: vdi.core_symbol(name) for name in VDI_FUNCTIONS}
+# ...and the VDI's C HELPERS the attribute setters share, entered by `jsr` over an Alcyon frame rather
+# than by opcode (`src/vdi/attributes.c`): `VDI_ROM_<HELPER>` in `addrs.h`, core `vdi_<helper>`.
+CALL.update({"VDI_ROM_ST_FL_PTR": Call((IMAGE,), RETURNS_NOTHING),
+             "VDI_ROM_ARB_CORNER": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_NOTHING)})
+# ...and the PURE HELPERS (`src/vdi/helpers.c`): Alcyon calls whose WORD arguments are decoded out of
+# the frame the case poked and whose answer is an `int` in D0.w. DERIVED from the one statement of each
+# core's C signature, `test/vdi_helpers.py`'s ctypes `SIGNATURES`: the image where the core takes it, and
+# every other argument read out of the frame at the offset the widths before it add up to. (The three
+# register routines among them are `declare_primitive`s above.)
+_FRAME_DECODERS = {vdi_helpers.WORD_ARG: (arg_signed_word, vdi_helpers.WORD_BYTES),
+                   vdi_helpers.LONG_ARG: (arg_long, vdi_helpers.LONG_BYTES)}
+_ALCYON_RETURNS = {ctypes.c_uint16: RETURNS_WORD, None: RETURNS_NOTHING}
+
+
+def _alcyon_call(symbol):
+    """The `Call` of the Alcyon helper whose C core is `symbol`, out of its ctypes signature."""
+    restype, argtypes = vdi_helpers.SIGNATURES[symbol]
+    args, offset = [], 0
+    for argtype in argtypes:
+        if argtype is vdi_helpers.IMAGE_ARG:
+            args.append(IMAGE)
+            continue
+        decode, width = _FRAME_DECODERS[argtype]
+        args.append(decode(offset))
+        offset += width
+    return Call(tuple(args), _ALCYON_RETURNS[restype])
+
+
+_VDI_HELPER_CALLS = {vdi.ROUTINE_PREFIX + symbol[len("vdi_"):].upper(): _alcyon_call(symbol)
+                     for symbol in vdi_helpers.ALCYON_CORES}
+CALL.update(_VDI_HELPER_CALLS)
+
+
+def _vdi_role(name):
+    """A VDI or Line-A routine's label, by `test/vdi.py`'s naming rule: `Line-A linea_hline`, `VDI vsl_type`."""
+    core = vdi.core_symbol(name)
+    return f"Line-A {core}" if name.startswith(vdi.LINEA_ROUTINE_PREFIX) else f"VDI {core[len('vdi_'):]}"
+
+
+# Every VDI and Line-A routine `CALL` prices is named by that rule — its label and its C core both — so
+# none needs a line here, and a register helper is labelled `VDI` whichever door declared its contract.
+VDI_ROUTINES = sorted(name for name in CALL if vdi.is_routine(name))
+UNNUMBERED_ROUTINE_ROLES.update({name: _vdi_role(name) for name in VDI_ROUTINES})
+SYMBOL_OF_ROUTINE = {name: vdi.core_symbol(name) for name in VDI_ROUTINES}
 UNNUMBERED_ROUTINE_NAMES = {getattr(addrs, name): name for name in UNNUMBERED_ROUTINE_ROLES}
 
 # How a TRANSCRIPTION row names itself, keyed by the blob symbol: `src/bios/trap.S`'s entries and
 # `src/gemdos/trap1.S` in one map, because `_transcription_row` reads one list of labels and each
 # wave's module owns its own (`trap.LABELS`, `gemdos.LABELS`).
-TRANSCRIPTION_LABELS = {**trap.LABELS, **gemdos.LABELS}
+TRANSCRIPTION_LABELS = {**trap.LABELS, **gemdos.LABELS, **vdi.LABELS}
 
 
 # ...and what each SLICE TRAMPOLINE costs, which is not one number. A slice case is entered at a
@@ -1305,7 +1381,8 @@ def _function_label(entry):
 
 
 def _symbol(entry):
-    """...and the C core's name, which is the same `addrs.h` name lower-cased."""
+    """...and the C core's name, which is the same `addrs.h` name lower-cased (less a VDI or Line-A
+    routine's `ROM_` — `SYMBOL_OF_ROUTINE`)."""
     name = _routine(entry)
     return SYMBOL_OF_ROUTINE.get(name, name.lower())
 
@@ -1416,6 +1493,14 @@ def _isr_transcription_row(case):
                RETURNS_NOTHING, True, case.handler.entry, (0, 0), case.shared_entry)
 
 
+def _vdi_transcription_row(case):
+    """One VDI hand-68000 routine's `.S` row (`test/vdi.py`'s `register_transcription`): the trap
+    entries' shape, plus the I/O a case declares — the palette pair reads and writes the shifter."""
+    name, symbol, caller, regs, pokes, caller_cost, io_seed = case
+    return Row(TRANSCRIPTION_LABELS[symbol], name, caller, symbol, (), regs, pokes, None, io_seed,
+               RETURNS_NOTHING, True, getattr(addrs, vdi.transcription_routine(symbol)), (0, 0), caller_cost)
+
+
 ISR_TRANSCRIPTION_CASES = (test_bios_hbl.TRANSCRIPTION_CASES + test_bios_vbl.TRANSCRIPTION_CASES
                            + test_bios_timerc.TRANSCRIPTION_CASES
                            + test_bios_ikbd.TRANSCRIPTION_CASES)
@@ -1423,7 +1508,8 @@ ISR_TRANSCRIPTION_CASES = (test_bios_hbl.TRANSCRIPTION_CASES + test_bios_vbl.TRA
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_transcription_row(case) for case in trap.CASES + tuple(gemdos.TRANSCRIPTIONS))
-        + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES))
+        + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES)
+        + tuple(_vdi_transcription_row(case) for case in vdi.TRANSCRIPTIONS))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -1434,6 +1520,31 @@ UNPRICED = tuple(case[0] for case in ALL_CASES
 # silent — the table prints them under itself — but NOT in `UNPRICED`, because that list is the
 # gate's "somebody forgot to say how this is called" and these are said.
 CHECKPOINTS = tuple(case[0] for case in ALL_CASES if _stop_pc(case))
+
+
+def rom_address(row):
+    """The ROM address a row is ABOUT — the key a routine's C rows and its `.S` rows share."""
+    return row.address or row.entry
+
+
+# MECHANISM (T), derived from `include/vdi/transcribed.h` (`vdi.TRANSCRIBED`): each TRANSCRIBED routine,
+# by its ROM address, and the `.S` rows that price what a target build ships for it.
+TRANSCRIBED_AT = {getattr(addrs, vdi.transcription_routine(entry)): entry for entry in vdi.TRANSCRIBED}
+SHIPPED_ROWS = {address: tuple(row for row in ROWS if row.transcription and rom_address(row) == address)
+                for address in TRANSCRIBED_AT}
+
+
+def is_transcribed_c_row(row):
+    """A C row of a routine the target build ships as its `.S` — the rows (T) is asked about."""
+    return not row.transcription and rom_address(row) in TRANSCRIBED_AT
+
+
+def ships_within_bar(row, ratio_of):
+    """(T): is the `.S` a target build ships for `row`'s routine priced, and at or under the bar on EVERY
+    row? `ratio_of(row)` is how a caller hands over a measurement — the table has every row measured, the
+    gate measures on demand — so the rule is stated once whoever asks. No `.S` row at all is a no."""
+    shipped = SHIPPED_ROWS.get(rom_address(row), ())
+    return bool(shipped) and all(ratio_of(each) <= TIER3_FUNCTION_BAR for each in shipped)
 
 
 def measure(row, bench):
@@ -1500,13 +1611,14 @@ def rule_admits(row, measured, dispatch):
         excess <= LEAF_SLACK_FRACTION * (dispatch + measured.original_net)
 
 
-def verdict(row, measured, dispatch):
+def verdict(row, measured, dispatch, ratio_of):
     """What the gate makes of one measurement — THE SINGLE RULE, read by the table and the gate.
 
     "ok" — under the bar and not pinned. "pinned" — under the bar, measuring what it was pinned at.
-    "accepted" — over the bar, and a written entry says so. "rule" — over the bar, and the LEAF RULE
-    admits it on the measured excess. "DRIFTED" — pinned, and no longer that number. "OVER" — over
-    the bar with nothing carrying it.
+    "accepted" — over the bar, and a written entry says so. "transcribed" — over the bar, the C of a
+    routine the target build ships as its `.S`, every row of which is under it (mechanism (T); `ratio_of`
+    measures those rows). "rule" — over the bar, and the LEAF RULE admits it on the measured excess.
+    "DRIFTED" — pinned, and no longer that number. "OVER" — over the bar with nothing carrying it.
     """
     pin = pin_of(row)
     if pin and abs(measured.ratio - pin[0]) > RATIO_TOLERANCE:
@@ -1515,6 +1627,8 @@ def verdict(row, measured, dispatch):
         return "pinned" if pin else "ok"
     if pin:
         return "accepted"
+    if is_transcribed_c_row(row):
+        return "transcribed" if ships_within_bar(row, ratio_of) else "OVER"
     return "rule" if rule_admits(row, measured, dispatch) else "OVER"
 
 
@@ -1536,6 +1650,9 @@ def table(bench):
     measured = [(row, measure(row, bench)) for row in ROWS]
     by_name = {(row.symbol, row.case): m for row, m in measured}
     dispatch = dispatch_cycles(by_name.__getitem__)
+
+    def ratio_of(row):
+        return by_name[(row.symbol, row.case)].ratio
     overhead_insns, overhead_cycles = bench.overhead
     lines = [
         "Tier 3 — the recreate against the original, same case, same instrument (Musashi).",
@@ -1550,6 +1667,8 @@ def table(bench):
         f"`rule`: over the bar, and admitted by the LEAF RULE — an (A)-only trap leaf whose excess "
         f"is <= {LEAF_SLACK_CYCLES} cycles and <= {LEAF_SLACK_FRACTION:.1%} of the "
         f"{dispatch} cycles this table measures a trap dispatch at, plus the leaf's own.",
+        f"`transcribed`: over the bar, the C of a routine the target build ships as its `.S` "
+        f"(include/vdi/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f}.",
         "",
     ]
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
@@ -1565,7 +1684,7 @@ def table(bench):
                  f"{'insns/cycles':>14}{'insns/cycles':>14}")
     failed = []
     for row, m in measured:
-        state = verdict(row, m, dispatch)
+        state = verdict(row, m, dispatch, ratio_of)
         lines.append(f"{row.function:<{name_width}}"
                      f"{f'${row.address or row.entry:x}':<{ADDRESS_WIDTH}}"
                      f"{row.case:<{case_width}}"

@@ -15,10 +15,17 @@
 #ifndef TOS102US_VDI_VDI_H
 #define TOS102US_VDI_VDI_H
 
+/* GUARDED as `addrs.h` is: `src/vdi/palette.S` reads the ROM tables below, and everything outside the
+ * guards is a plain integer `#define` both languages read. */
+#ifndef __ASSEMBLER__
 #include <stdint.h>
+#endif
 
 #include "addrs.h"
 #include "vdi/linea.h"
+
+/* An Alcyon `int`: every element of contrl/intin/ptsin/intout/ptsout, and of the ROM's word tables. */
+#define VDI_WORD_BYTES        2
 
 /* ---- the parameter block D1 points at: five array pointers -------------------------------------- */
 #define PB_CONTRL             0          /* long                                ($fc9fb0)           */
@@ -49,6 +56,7 @@
 #define VDI_PTSIN_CAP_POINTS  512        /*                                     ($fc9fd2)           */
 #define VDI_RESULT            0x171e     /* word: the D0 trap #2 answers; cleared by the dispatcher,
                                           * set by the few functions that answer ($fc9ff4, $fcaa12)  */
+#define VDI_RESULT_SET        1          /* the one value those functions store  ($fcae46 move.w #1) */
 /* The VDI's scratch is the BIOS DISK BUFFER: `_dskbufp` is $16da ($fc02dc), and the VDI borrows its
  * kilobyte — `$a006` builds its crossing list there, and the entry's PTSIN copy starts 0x300 in. */
 #define VDI_SCRATCH           0x16da     /* ...up to VDI_TEXT_H_ALIGN           ($fca070 lea)       */
@@ -57,6 +65,11 @@
 /* A SHARED word: vqt_extent sums a string's width in it ($fce63e, $fce67a) and v_gtext reads it back
  * ($fcd898); the floppy BIOS uses the same word of the disk buffer for its own ($fc3aee). */
 #define VDI_EXTENT_SCRATCH    0x1706     /* word                                ($fce63e)           */
+/* The text-effects buffer a workstation's WS_SCRTCHP starts at — init_wk and vst_unload_fonts both
+ * store this constant ($fcd570, $fcedb4) — and the ROM word its WS_SCRPT2 starts at, which sits in
+ * vst_unload_fonts' own tail rather than in the data block ($fcd568, $fcedac: 204). */
+#define VDI_TEXT_SCRATCH      0x17c6     /* ($fcedb4 move.l #$17c6)                                 */
+#define VDI_SCRPT2_DEFAULT    0xfcedce   /* ROM ($fcedac move.w $fcedce)                            */
 
 /* ---- the workstation list, and the dispatch ------------------------------------------------------ */
 #define VDI_PHYS_WORK         0x7f2e     /* the physical workstation, list head ($fcaa28)           */
@@ -137,12 +150,33 @@
 #define VDI_DEV_TAB_COLOURS_INDEX 13     /* the bound every colour index is tested against ($fcad98) */
 #define VDI_INQ_TAB_MAX_VERTICES_INDEX 14 /*                                    ($fcb6d0 -> $26a8)  */
 #define VDI_INQ_TAB_CLIP_INDEX 19        /* the dispatcher's copy of WS_CLIP    ($fcaa50 -> $26b2)  */
+#define VDI_INQ_TAB_SPEED_INDEX 6        /* the drawing speed vq_extnd answers  ($fcb97a 12(a0))    */
+#define VDI_DEV_TAB_MAX_X_INDEX 0        /* the last pixel column               ($fcb508 -> $26e6)  */
+#define VDI_DEV_TAB_MAX_Y_INDEX 1        /* ...and row                          ($fcb520 -> $26e8)  */
+#define VDI_INQ_TAB_EFFECTS_INDEX 2      /* the text effects the device has     ($fce3be -> $2690)  */
+#define VDI_INQ_TAB_PLANES_INDEX 4       /*                                     ($fcd71e -> $2694)  */
+#define VDI_SIZ_TAB_MAX_LINE_WIDTH_INDEX 6 /*                                   ($fcacda -> $27b4)  */
+#define VDI_SIZ_TAB_MIN_MARK_WIDTH_INDEX 8 /*                                   ($fcae34 -> $27b8)  */
+#define VDI_SIZ_TAB_MIN_MARK_HEIGHT_INDEX 9 /*                                  ($fcadde -> $27ba)  */
+#define VDI_SIZ_TAB_MAX_MARK_HEIGHT_INDEX 11 /*                                 ($fcadee -> $27be)  */
 
 /* ---- the ROM data the VDI reads, $fd32f4..$fd39f5 ---------------------------------------------- */
 #define VDI_MAX_VERTICES_DEFAULT 0xfd32f4 /* word -> INQ_TAB[14]                ($fcb6d0)           */
 #define VDI_LINE_STYLES       0xfd32f6   /* the style masks; [0] is WS_UD_LS's default ($fcd5b2)    */
 #define VDI_UD_PATTERN_DEFAULT 0xfd3304  /* 16 words -> WS_UD_PATRN             ($fcd596)           */
-#define VDI_FILL_PATTERNS     0xfd3324   /* the pattern tables st_fl_ptr indexes ($fcc9f8)          */
+/* The pattern tables st_fl_ptr indexes, starting at VDI_PATTERNS_UPPER ($fcc9f8): FOUR, each a ROW MASK
+ * word (rows - 1, what st_fl_ptr stores as WS_PATMSK) and then its patterns, (mask + 1) rows each; a
+ * style index picks a table by a threshold and is rebased into it. Then the one-row HOLLOW and SOLID
+ * "patterns", whose mask st_fl_ptr leaves at 0. */
+#define VDI_PATTERNS_UPPER    0xfd3324   /* pattern styles 9..24, 16 x 8 rows ($fcc9f8 mask)       */
+#define VDI_PATTERNS_LOWER    0xfd3426   /* pattern styles 1..8, 8 x 4 rows     ($fcc9dc mask)      */
+#define VDI_PATTERNS_LOWER_COUNT 8       /*                                     ($fcc9d6 cmp.w #8)  */
+#define VDI_HATCHES_LOWER     0xfd3468   /* hatch styles 1..6, 6 x 8 rows       ($fcca1c mask)      */
+#define VDI_HATCHES_LOWER_COUNT 6        /*                                     ($fcca16 cmp.w #6)  */
+#define VDI_HATCHES_UPPER     0xfd34ca   /* hatch styles 7..12, 6 x 16 rows     ($fcca38 mask)      */
+#define VDI_PATTERN_TABLE_HEADER_BYTES 2 /* the mask word the rows follow     ($fcc9f0 +2)        */
+#define VDI_PATTERN_HOLLOW    0xfd358c   /* one row, $0000                      ($fcc9c2)           */
+#define VDI_PATTERN_SOLID     0xfd358e   /* one row, $ffff                      ($fcc9cc)           */
 #define VDI_DEV_TAB_DEFAULT   0xfd3598   /* VDI_DEV_TAB_WORDS                   ($fcb69c)           */
 #define VDI_SIZ_TAB_DEFAULT   0xfd35f2   /* VDI_SIZ_TAB_WORDS                   ($fcb6da)           */
 #define VDI_INQ_TAB_DEFAULT   0xfd360a   /* VDI_INQ_TAB_WORDS                   ($fcb6b6)           */
@@ -160,9 +194,76 @@
 #define VDI_DEFAULT_MOUSE_FORM 0xfd39ac  /* the arrow                           ($fca81c)           */
 /* ...and one table before that range: vq_color's 3-bit shifter level -> per-mille, eight words. */
 #define VDI_VQ_COLOR_LEVELS   0xfd2f22   /*                                     ($fd2efc)           */
+/* ...and just before THAT, the highest colour index per plane count: bytes indexed by LINEA_PLANES
+ * itself, so entry 0 is the low byte of the `rts` in front of them ($fd2de0 `(pc,d1.w)` at $fd2e3f). */
+#define VDI_PEN_MASKS         0xfd2e3f   /*                                     ($fd2de0, $fd2ea8)  */
+/* Two of LINEA_STYLE's text-effect bits, as vqt_fontinfo tests them in its low byte. */
+#define VDI_STYLE_THICKEN_MASK 0x0001    /* bold                                ($fce984 btst #0)   */
+#define VDI_STYLE_SKEW_MASK   0x0004     /* italic                              ($fce99a btst #2)   */
 /* The value WS_FILL_STYLE holds for the user-defined pattern — the one interior whose planes the
  * dispatcher copies into LINEA_MULTIFILL. A VALUE of the field, not a field. */
 #define VDI_INTERIOR_USER     4          /*                                     ($fcaa8e cmpi.w #4) */
+/* ...and the other four, in st_fl_ptr's switch order ($fd397c). */
+#define VDI_INTERIOR_HOLLOW   0          /*                                     ($fcc9c2)           */
+#define VDI_INTERIOR_SOLID    1          /*                                     ($fcc9cc)           */
+#define VDI_INTERIOR_PATTERN  2          /*                                     ($fcaf6c cmpi.w #2) */
+#define VDI_INTERIOR_HATCH    3          /*                                     ($fcca16)           */
+
+#ifndef __ASSEMBLER__
+#include "machine.h"
+
+/* ---- THE CALL, as a function reaches it: through the Line-A pointers -----------------------------
+ * The one set of accessors every VDI function's C uses. Each reads its Line-A pointer AT THE CALL, so a
+ * read placed after a store sees that store — the ROM's own order, which only shows when the arrays
+ * overlap each other or the Line-A variables. A core that reads a pointer once and keeps it, as a ROM
+ * routine that loads it into a register does, holds it in a local from `linea_pointer`. */
+static inline uint32_t linea_pointer(const uint8_t *image, uint32_t variable)
+{
+    return be32(image + variable);
+}
+
+/* `array[index]`'s address, for `array` one of LINEA_CONTRL/INTIN/PTSIN/INTOUT/PTSOUT. */
+static inline uint32_t call_element(const uint8_t *image, uint32_t array, unsigned index)
+{
+    return linea_pointer(image, array) + index * VDI_WORD_BYTES;
+}
+
+static inline int16_t intin_word(const uint8_t *image, unsigned index)
+{
+    return (int16_t)be16(image + call_element(image, LINEA_INTIN, index));
+}
+
+static inline int16_t ptsin_word(const uint8_t *image, unsigned index)
+{
+    return (int16_t)be16(image + call_element(image, LINEA_PTSIN, index));
+}
+
+static inline void answer_intout(uint8_t *image, unsigned index, uint16_t value)
+{
+    wr16(image + call_element(image, LINEA_INTOUT, index), value);
+}
+
+static inline void answer_ptsout(uint8_t *image, unsigned index, uint16_t value)
+{
+    wr16(image + call_element(image, LINEA_PTSOUT, index), value);
+}
+
+/* contrl[2] and contrl[4], each written only by the functions that answer that array. */
+static inline void answer_points(uint8_t *image, uint16_t points)
+{
+    wr16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_PTSOUT, points);
+}
+
+static inline void answer_words(uint8_t *image, uint16_t words)
+{
+    wr16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_INTOUT, words);
+}
+
+/* The workstation the dispatcher made current, by its record's address. */
+static inline uint32_t current_work(const uint8_t *image)
+{
+    return linea_pointer(image, LINEA_CUR_WORK);
+}
 
 /* ---- the reconstructed functions --------------------------------------------------------------- */
 void vdi_vsf_perimeter(uint8_t *image);
@@ -170,5 +271,6 @@ void vdi_vsf_perimeter(uint8_t *image);
 /* $a000, whose answer is FOUR registers: `results` gets D0, A0, A1, A2 in that order, and D0 is
  * also returned. */
 uint32_t linea_init(uint8_t *image, uint32_t *results);
+#endif /* __ASSEMBLER__ */
 
 #endif /* TOS102US_VDI_VDI_H */

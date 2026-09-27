@@ -27,7 +27,7 @@ _RATIO_RE = re.compile(r"\d+\.\d\d")
 # One measured row of `build/bench/tier3.txt`: its ROM address and the ratio at the end of the line.
 # The costs on the way past are `insns/cycles` pairs and carry no decimal point, so the ratio is the
 # only thing on a row that looks like one.
-_TABLE_ROW_RE = re.compile(r"^.*\$(?P<addr>fc[0-9a-f]+)\s.*?(?P<ratio>\d+\.\d\d)\s*\S*$", re.M)
+_TABLE_ROW_RE = re.compile(r"^.*\$(?P<addr>f[cd][0-9a-f]+)\s.*?(?P<ratio>\d+\.\d\d)\s*\S*$", re.M)
 
 # The table `make bench` writes, which `../Makefile` makes a prerequisite of `test` — so it is
 # always present and always current when this runs. STATUS.md QUOTES it; nothing re-derives a

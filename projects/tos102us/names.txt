@@ -396,75 +396,75 @@ fn 0xfc9ea2 Tgettime
 fn 0xfc9eb2 Tsettime
 fn 0xfc9f34 linea_init
 fn 0xfca05e linea_filled_poly   # ctx
-fn 0xfca1ea linea_line   # ctx
-fn 0xfca57e linea_hline   # ctx
+fn 0xfca1ea linea_line
+fn 0xfca57e linea_hline
 fn 0xfca652 vdi_nop
 cmt 0xfca652 Dispatch-table target for: VDI 4, VDI 10, VDI 27, VDI 34
 fn 0xfca654 v_clrwk   # ctx
-fn 0xfca6a4 vex_timv   # ctx
-fn 0xfcac76 vsl_type   # ctx
-fn 0xfcacc0 vsl_width   # ctx
-fn 0xfcad20 vsl_ends   # ctx
-fn 0xfcad7c vsl_color   # ctx
-fn 0xfcadcc vsm_height   # ctx
-fn 0xfcae58 vsm_type   # ctx
-fn 0xfcaea8 vsm_color   # ctx
-fn 0xfcaefe vsf_interior   # ctx
-fn 0xfcaf4a vsf_style   # ctx
-fn 0xfcafb2 vsf_color   # ctx
+fn 0xfca6a4 vex_timv
+fn 0xfcac76 vsl_type
+fn 0xfcacc0 vsl_width
+fn 0xfcad20 vsl_ends
+fn 0xfcad7c vsl_color
+fn 0xfcadcc vsm_height
+fn 0xfcae58 vsm_type
+fn 0xfcaea8 vsm_color
+fn 0xfcaefe vsf_interior
+fn 0xfcaf4a vsf_style
+fn 0xfcafb2 vsf_color
 fn 0xfcb002 vdi_locator   # ctx
 fn 0xfcb120 linea_show_mouse   # ctx
 cmt 0xfcb120 Dispatch-table target for: VDI 122, Line-A 9
 fn 0xfcb148 v_hide_c   # ctx
-fn 0xfcb156 vq_mouse   # ctx
-fn 0xfcb198 vdi_valuator   # ctx
+fn 0xfcb156 vq_mouse
+fn 0xfcb198 vdi_valuator
 fn 0xfcb1a0 vdi_choice   # ctx
 fn 0xfcb22a vdi_string   # ctx
-fn 0xfcb30a vq_key_s   # ctx
-fn 0xfcb32e vswr_mode   # ctx
-fn 0xfcb388 vsin_mode   # ctx
-fn 0xfcb3f6 vqin_mode   # ctx
+fn 0xfcb30a vq_key_s
+fn 0xfcb32e vswr_mode
+fn 0xfcb388 vsin_mode
+fn 0xfcb3f6 vqin_mode
 fn 0xfcb45c vsf_perimeter
-fn 0xfcb4a2 vsl_udsty   # ctx
-fn 0xfcb4ba vs_clip   # ctx
+fn 0xfcb4a2 vsl_udsty
+fn 0xfcb4ba vs_clip
 fn 0xfcb5aa vro_cpyfm   # ctx
 fn 0xfcb5dc vrt_cpyfm   # ctx
 fn 0xfcb614 vr_recfl   # ctx
 fn 0xfcb694 v_opnwk   # ctx
-fn 0xfcb8d0 vq_extnd   # ctx
+fn 0xfcb8d0 vq_extnd
 fn 0xfcb998 v_clswk   # ctx
 fn 0xfcb9e0 v_pline   # ctx
 fn 0xfcba7a v_pmarker   # ctx
 fn 0xfcbbc0 v_fillarea   # ctx
 fn 0xfcbbcc vdi_gdp   # ctx
-fn 0xfcbd7e vql_attributes   # ctx
-fn 0xfcbdda vqm_attributes   # ctx
-fn 0xfcbe3a vqf_attributes   # ctx
+fn 0xfcbd7e vql_attributes
+fn 0xfcbdda vqm_attributes
+fn 0xfcbe3a vqf_attributes
 fn 0xfcd612 v_opnvwk   # ctx
 fn 0xfcd6a4 v_clsvwk   # ctx
-fn 0xfcd6fa vsf_udpat   # ctx
+fn 0xfcd6fa vsf_udpat
 fn 0xfcd756 v_gtext   # ctx
 fn 0xfcdfd0 vst_height   # ctx
 fn 0xfce26c vst_point   # ctx
-fn 0xfce3b2 vst_effects   # ctx
-fn 0xfce3e6 vst_alignment   # ctx
-fn 0xfce442 vst_rotation   # ctx
+fn 0xfce3b2 vst_effects
+fn 0xfce3e6 vst_alignment
+fn 0xfce442 vst_rotation
 fn 0xfce47c vst_font   # ctx
-fn 0xfce560 vst_color   # ctx
-fn 0xfce5b0 vqt_attributes   # ctx
+fn 0xfce560 vst_color
+fn 0xfce5b0 vqt_attributes
 fn 0xfce62a vqt_extent   # ctx
 fn 0xfce7f0 vqt_width   # ctx
-fn 0xfce8ca vqt_name   # ctx
-fn 0xfce95a vqt_fontinfo   # ctx
+fn 0xfce8ca vqt_name
+fn 0xfce95a vqt_fontinfo
 fn 0xfced06 vst_load_fonts   # ctx
-fn 0xfced9a vst_unload_fonts   # ctx
+fn 0xfced9a vst_unload_fonts
 fn 0xfcee54 linea_textblt   # ctx
-fn 0xfcface linea_put_pixel   # ctx
-fn 0xfcfb16 linea_get_pixel   # ctx
-fn 0xfcfc56 linea_filled_rect   # ctx
-fn 0xfcff68 vex_butv   # ctx
-fn 0xfcff80 vex_motv   # ctx
-fn 0xfcff98 vex_curv   # ctx
+fn 0xfcface linea_put_pixel
+fn 0xfcfb16 linea_get_pixel
+fn 0xfcfc56 linea_filled_rect
+fn 0xfcff68 vex_butv
+fn 0xfcff80 vex_motv
+fn 0xfcff98 vex_curv
 fn 0xfcffb0 linea_draw_sprite   # ctx
 fn 0xfd0184 linea_undraw_sprite   # ctx
 fn 0xfd0254 linea_hide_mouse   # ctx
@@ -475,9 +475,9 @@ fn 0xfd05fc linea_bitblt   # ctx
 fn 0xfd08e0 v_contourfill   # ctx
 fn 0xfd08f4 linea_contour_fill   # ctx
 fn 0xfd0fde v_get_pixel   # ctx
-fn 0xfd2d32 vr_trnfm   # ctx
-fn 0xfd2dd2 vs_color   # ctx
-fn 0xfd2e84 vq_color   # ctx
+fn 0xfd2d32 vr_trnfm
+fn 0xfd2dd2 vs_color
+fn 0xfd2e84 vq_color
 fn 0xfe5db2 appl_init   # ctx
 fn 0xfe5df2 appl_read   # ctx
 fn 0xfe5df6 appl_write   # ctx
@@ -1103,3 +1103,77 @@ cmt 0xfd32d6 "CON:","con:","AUX:","aux:","PRN:","prn:" with NULs, five bytes eac
 cmt 0xfc97dc Redirected Cconout/Cauxout/Cprnout: Fwrite(h, 1, <char word>:$7ef4) - ROM bug, the character is the HIGH half of the buffer pointer.
 cmt 0xfc982c Redirected Cconrs: maximum read SIGNED; each byte echoed through a nested dispatch ($fc5078) that re-arms $7ef4.
 cmt 0xfc7af0 Frename: sfirst(new, 0) EACCDN; find_dir x2 EPTHNF; drive words ENSAME; Fopen(old,2); same DND = 11 FCB bytes, else $e5 + UNCHECKED Fcreate + 10-byte tail copy (a refusal reads p_tlen -> record 0: the file loses its name, answers 0).
+fn 0xfc9ffc vec_len
+fn 0xfca164 sort_words
+fn 0xfca186 smul_div
+fn 0xfcab68 isin
+fn 0xfcac4c icos
+fn 0xfcc092 clip_code
+fn 0xfcc6b4 clc_nsteps
+fn 0xfcced6 quad_xform
+fn 0xfcedd0 clc_dda
+fn 0xfcee02 act_siz
+fn 0xfce0ee copy_name
+fn 0xfcfaac font_byteswap
+fn 0xfcd056 s_fa_attr
+fn 0xfcd0c2 r_fa_attr
+fn 0xfcfedc clamp_mouse
+fn 0xfca648 get_kbshift
+fn 0xfcfa9c gemdos_call
+fn 0xfca1b8 linea_concat
+fn 0xfca58a linea_hline_patterned
+fn 0xfca5a2 linea_hline_span
+fn 0xfca3f4 linea_line_plane_words
+fn 0xfcc9a6 st_fl_ptr
+fn 0xfcb55e arb_corner
+fn 0xfd1ae0 linea_cpu_hline
+fn 0xfd1b16 linea_cpu_rect_fill
+fn 0xfd19dc linea_cpu_vline
+fn 0xfd2d80 trnfm_in_place
+fn 0xfd2db4 trnfm_copy
+fn 0xfd2e6e vs_color_mono_level
+fn 0xfc4e06 blit_mode_get
+fn 0xfd1bae span_arm_xor
+fn 0xfd1bda span_arm_replace
+fn 0xfd1c40 span_arm_transparent
+fn 0xfd1c5e span_arm_reverse
+fn 0xfd1c7c span_reset
+fn 0xfd1ca2 span_set
+var 0xfd3848 sine_table
+var 0xfd3900 isin_switch
+var 0x2624 n_steps
+var 0x2628 s_begsty
+var 0x262a s_endsty
+var 0x262c s_fil_col
+var 0x262e s_fill_per
+var 0x263a xrad
+var 0x2640 yrad
+var 0xfd3426 vdi_patterns_lower
+var 0xfd3468 vdi_hatches_lower
+var 0xfd34ca vdi_hatches_upper
+var 0xfd358c vdi_pattern_hollow
+var 0xfd358e vdi_pattern_solid
+var 0xfd2e3f vdi_pen_masks
+var 0xfd2f22 vdi_vq_color_levels
+var 0x17c6 vdi_text_scratch
+var 0xfcedce vdi_scrpt2_default
+var 0xfca1e2 concat_shift_table
+var 0xfca3d4 line_octant_table
+var 0xfca41a line_plane_opcodes
+var 0xfca54c blitter_op_table
+var 0xfca55c fringe_mask_table
+var 0xfd1a72 vline_mode_table
+var 0xfd1b0e span_arm_table
+cmt 0xfca186 round(a*b/c): remainder read via neg.l of the whole register (|r|-1 when negative over a nonzero quotient); divs overflow leaves the product.
+cmt 0xfd2d32 vr_trnfm: dst.stand := !src.stand; same address -> in-place rotation ($fd2d80), else copy ($fd2db4); clobbers D7 outside its movem.
+cmt 0xfcc9a6 st_fl_ptr: an interior >4 stores an unloaded A5 (unreachable: callers clamp); a pattern style carried into hatch points past the table (index 23 -> MAP_COL)
+cmt 0xfcb3f6 vqin_mode answers the stored mode-1: sample (2) reports 1
+cmt 0xfca6a4 vex_timv: exchange under ori #$700, Tickcal via trap #13, contrl[4] never set
+cmt 0xfce8ca writes 34 intout words and reports 33: the NUL is written, not counted
+cmt 0xfcbdda answers the marker type 0-based and sets VDI_RESULT (vql does neither)
+cmt 0xfcb8d0 intin[0] read twice; the second read alone decides the speed word
+cmt 0xfd2dd2 hand 68000; the index bound is cmp.b, then indexed by the whole word; the palette address wraps at 24 bits
+cmt 0xfca58a $a004 mid-entry: D4/D5/D6 = x1/y/x2 from the caller (contour fill $fcfb62)
+cmt 0xfca2e0 $a003 horizontal arm: XOR without LSTLIN moves X2 toward X1 and stores it; LN_MASK is the one-row pattern
+cmt 0xfca320 $a003 diagonal arm: Bresenham running per-plane code built on the stack by $fca3f4
+cmt 0xfcfc50 $a005 clip miss: stores the partially clipped corners, draws nothing

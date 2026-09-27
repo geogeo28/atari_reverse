@@ -32,6 +32,14 @@
 /* ---- the negative half: mouse, tables, fonts, input modes, cursor, user vectors ---------------- */
 #define LINEA_CUR_FONT        0x2610     /* long: the text font in use          ($fcaace move.l)    */
 #define LINEA_GDP_SCRATCH     0x2614     /* words[23]: arc/ellipse scratch      ($fcbca6..$fcbca0)  */
+/* ...and the words of it a reconstructed routine reads or writes by name (DRI's names): */
+#define LINEA_GDP_N_STEPS     0x2624     /* word: segments per arc              ($fcc6e4 clc_nsteps) */
+#define LINEA_GDP_SAVED_BEG_STYLE 0x2628 /* word: s_fa_attr's WS_LINE_BEG       ($fcd0a0)           */
+#define LINEA_GDP_SAVED_END_STYLE 0x262a /* word: ...and WS_LINE_END            ($fcd0a8)           */
+#define LINEA_GDP_SAVED_FILL_COLOR 0x262c /* word: ...and WS_FILL_COLOR         ($fcd06e)           */
+#define LINEA_GDP_SAVED_FILL_PER 0x262e  /* word: ...and WS_FILL_PER            ($fcd07c)           */
+#define LINEA_GDP_XRAD        0x263a     /* word: the x radius                  ($fcc6b8)           */
+#define LINEA_GDP_YRAD        0x2640     /* word: the y radius                  ($fcc6be)           */
 #define LINEA_M_POS_HX        0x2642     /* word: mouse hot spot x              ($fd02e2)           */
 #define LINEA_M_POS_HY        0x2644     /* word: ...and y                      ($fd02ee)           */
 #define LINEA_M_PLANES        0x2646     /* word: mouse form planes             ($fd02f4)           */
@@ -218,5 +226,8 @@
 #define MFDB_WDWIDTH          8          /* word: width in words                ($fd03b2)           */
 #define MFDB_STAND            10         /* word: 1 = device-independent format ($fd2d50)           */
 #define MFDB_NPLANES          12         /* word                                ($fd03ae)           */
+/* MFDB_STAND's two values, as vr_trnfm stores them into its destination. */
+#define MFDB_FORMAT_DEVICE    0          /* planes interleaved word by word     ($fd2d60 clr.w)     */
+#define MFDB_FORMAT_STANDARD  1          /* one plane after another             ($fd2d56 move.w #1) */
 
 #endif /* TOS102US_VDI_LINEA_H */

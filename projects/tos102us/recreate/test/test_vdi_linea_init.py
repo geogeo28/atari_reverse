@@ -14,7 +14,7 @@ from harness import addrs
 
 import vdi
 
-NAME = "LINEA_INIT"
+NAME = "LINEA_ROM_INIT"
 OPCODE = 0
 RESULTS = ("d0", "a0", "a1", "a2")
 vdi.declare_primitive(NAME, results=RESULTS)
@@ -40,6 +40,6 @@ def test_through_the_exception_the_answer_survives_the_handler(scratch):
     assert regs["a2"] == vdi.LINEA_OPCODE_TABLE
 
 
-vdi.register("linea_init, by jsr", addrs.LINEA_INIT, {}, regs=ENTRY)
+vdi.register("linea_init, by jsr", addrs.LINEA_ROM_INIT, {}, regs=ENTRY)
 vdi.register("linea_init, through the exception", vdi.STUB_AT, vdi.exception_stub_pokes(OPCODE),
              regs=ENTRY, priced=False)

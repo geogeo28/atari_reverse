@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "machine.h"
+#include "recreate.h"
 
 /* A TABLE INDEX COMPUTED INSIDE A WORD, AND THEN SIGN-EXTENDED INTO THE ADDRESS — which is not the
  * same function as `entry * entry_bytes` and diverges from it in two ways at once:
@@ -78,7 +79,8 @@ static inline int word_difference_is_negative(uint16_t left, uint16_t right)
  * long shifted 32..63 places right ARITHMETICALLY is its sign. C leaves both of those undefined, and
  * the file system reaches them: `$fc53c0` makes a log2 of -1 ($ffff, a count of 63) out of a zero
  * geometry field, and every shift by a DMD log2 then takes it; `$fc67de` shifts a drive's bit by the
- * drive number itself.
+ * drive number itself; and Line-A's concat (`$fca1b8`) shifts by a byte of its own code when a caller's
+ * plane count runs past its table.
  *
  * ON TARGET THE INSTRUCTION IS THE DEFINITION, so it is spelt as the instruction: the 68000's own
  * shift already does all of the above, and a C spelling of it would cost a mask and a compare the
@@ -110,6 +112,62 @@ static inline int32_t asr_long_by(int32_t value, uint16_t count)
 
     return value >> (bits < M68K_LONG_BITS ? bits : M68K_LONG_BITS - 1);
 #endif
+}
+
+/* ---- the 68000's two 16-bit DIVIDES, as the instruction defines them ----------------------------
+ * `divs.w` / `divu.w` divide a LONGWORD by a word and leave `remainder << 16 | quotient` in the whole
+ * register — and when the quotient does not fit a word they set V and leave the register UNCHANGED,
+ * which two VDI helpers reach (`clc_dda` over equal sizes, `smul_div` over a product too large for
+ * its divisor). A zero divisor takes the zero-divide exception, vector 5.
+ *
+ * ON TARGET THE INSTRUCTION IS THE DEFINITION — the rule for a shift above: all of the above,
+ * vector 5 included, is what the one instruction does, and it is what the ROM pays. OFF TARGET the
+ * portable form computes the same register, and REFUSES a zero divisor BY NAME rather than dividing by
+ * it: there is no vector 5 to take, and a host `SIGFPE` would name nothing. */
+static inline uint32_t m68k_divs_w(uint32_t dividend, uint16_t divisor)
+{
+#ifdef __m68k__
+    __asm__("divs.w %1,%0" : "+d"(dividend) : "d"(divisor) : "cc");
+    return dividend;
+#else
+    int64_t quotient, remainder;
+
+    if (divisor == 0)
+        recreate_not_reconstructed("divs.w by zero: the 68000 takes vector 5 (zero divide)");
+    quotient = (int64_t)(int32_t)dividend / (int16_t)divisor;
+    remainder = (int64_t)(int32_t)dividend % (int16_t)divisor;
+    if (quotient < INT16_MIN || quotient > INT16_MAX)
+        return dividend;
+    return ((uint32_t)(uint16_t)remainder << 16) | (uint16_t)quotient;
+#endif
+}
+
+static inline uint32_t m68k_divu_w(uint32_t dividend, uint16_t divisor)
+{
+#ifdef __m68k__
+    __asm__("divu.w %1,%0" : "+d"(dividend) : "d"(divisor) : "cc");
+    return dividend;
+#else
+    uint32_t quotient;
+
+    if (divisor == 0)
+        recreate_not_reconstructed("divu.w by zero: the 68000 takes vector 5 (zero divide)");
+    quotient = dividend / divisor;
+    if (quotient > UINT16_MAX)
+        return dividend;
+    return ((dividend % divisor) << 16) | quotient;
+#endif
+}
+
+/* ...and the two halves of the register a divide leaves, as the signed words a caller reads. */
+static inline int16_t quotient_word(uint32_t divided)
+{
+    return (int16_t)(uint16_t)divided;
+}
+
+static inline int16_t remainder_word(uint32_t divided)
+{
+    return (int16_t)(uint16_t)(divided >> M68K_WORD_BITS);
 }
 
 #endif /* TOS102US_M68K_IDIOMS_H */

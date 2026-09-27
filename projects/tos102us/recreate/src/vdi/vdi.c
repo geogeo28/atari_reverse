@@ -15,11 +15,11 @@
  * word answered) last — the ROM's order, which only shows when the arrays overlap each other. */
 void vdi_vsf_perimeter(uint8_t *image)
 {
-    uint32_t work = be32(image + LINEA_CUR_WORK);
-    uint32_t intout = be32(image + LINEA_INTOUT);
-    uint16_t outlined = be16(image + be32(image + LINEA_INTIN)) != 0;
+    uint32_t work = current_work(image);
+    uint32_t intout = linea_pointer(image, LINEA_INTOUT);
+    uint16_t outlined = intin_word(image, 0) != 0;
 
     wr16(image + intout, outlined);
     wr16(image + work + WS_FILL_PER, outlined);
-    wr16(image + be32(image + LINEA_CONTRL) + CONTRL_N_INTOUT, 1);
+    answer_words(image, 1);
 }

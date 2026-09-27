@@ -41,7 +41,7 @@ snapshot and clear of every other tenant. A battery that needs another buffer cl
     routines address the block through A2, and the split is not pinned by any access read so far;
   * the published byte at $283f between CUR_MS_STAT and V_HID_CNT;
   * the individual words of `LINEA_GDP_SCRATCH` ($2614..$2641) and of `VDI_SCRATCH` ($16da..$1701) —
-    each belongs to the routine that uses it;
+    each belongs to the routine that uses it, and is named (`LINEA_GDP_*`) once a reconstructed one does;
   * MFDB +4 (`fd_w`) and the reserved +14..+19: nothing in the ROM reads them;
   * FONT_HEADER +88, the 45th word TOS copies: 0 in all three ROM fonts and never read;
   * $fd3664..$fd36eb, between INQ_TAB's defaults and MAP_COL: no access found.
@@ -53,12 +53,14 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
-from harness import BASE_IMAGE, _lib, addrs, make_image
+from harness import BASE_IMAGE, _lib, addrs, emu, make_image
 
+import abi
 import case
 import staging
 from case import merge_pokes
-from opcodes import LINE_A, RTS
+from isr import blob as bench     # the cross-compiled blob, loaded once per process (`isr.blob`)
+from opcodes import LINE_A, PUSH_STACK_LONG, RTS
 
 # ---- the headers' constants, out of the C the cores compile against ------------------------------
 # One namespace for every VDI battery. Parsed IN INCLUDE ORDER with what came before as `known`,
@@ -175,6 +177,9 @@ VIRTUAL_WORK_AT = SPAN.claim(PTSIN_AT + PTSIN_BYTES, WS_BYTES, "a virtual workst
 RECORDS_AT = SPAN.claim(VIRTUAL_WORK_AT + WS_BYTES, RECORDS_BYTES, "staged MFDBs and a BITBLT block")
 FONT_AT = SPAN.claim(RECORDS_AT + RECORDS_BYTES, FONT_BAND_BYTES, "a staged font header and form")
 STUB_AT = SPAN.claim(FONT_AT + FONT_BAND_BYTES, STUB_BYTES, "a Line-A exception stub")
+TRANSCRIPTION_CALLER_BYTES = 0x8        # `move.l 4(sp),-(sp) / rts`
+TRANSCRIPTION_CALLER_AT = SPAN.claim(STUB_AT + STUB_BYTES, TRANSCRIPTION_CALLER_BYTES,
+                                     "the staged caller a transcription is entered through")
 SOURCE_MFDB_AT = RECORDS_AT
 DESTINATION_MFDB_AT = RECORDS_AT + 0x20
 BITBLT_AT = RECORDS_AT + 0x40
@@ -359,6 +364,21 @@ def call_pokes(opcode, intin=(), ptsin=(), *, workstation_pokes=None, ptsin_at=V
     return merge_pokes(staged_work, pointer_pokes(ptsin=ptsin_at), arrays)
 
 
+def function_pokes(name, intin=(), ptsin=(), **kwargs):
+    """`call_pokes` for the VDI FUNCTION `addrs.<name>` (a `VDI_ROM_<FN>`), by its `_OPCODE`."""
+    return call_pokes(getattr(addrs, name + "_OPCODE"), intin, ptsin, **kwargs)
+
+
+# THE OVERLAP A STORE ORDER SHOWS ON: intout laid over contrl[4], so the word left there says whether the
+# count or the first answer was stored last. Every VDI function that answers is held to it.
+COUNT_OVERLAP = CONTRL_AT + CONTRL_N_INTOUT
+
+
+def intout_over(pokes, at=COUNT_OVERLAP):
+    """`pokes` with LINEA_INTOUT pointed at `at` — over contrl[4] by default."""
+    return merge_pokes(pokes, linea_pokes(INTOUT=at))
+
+
 def pointer_pokes(*, ptsin=VDI_PTSIN_COPY):
     """The five Line-A array pointers, at this module's arrays."""
     return linea_pokes(**dict(zip(POINTER_VARIABLES, (CONTRL_AT, INTIN_AT, ptsin, INTOUT_AT, PTSOUT_AT))))
@@ -372,6 +392,17 @@ def parameter_block_pokes():
 
 
 # ---- (d) reading a run back: `case.Result`, with the VDI's readers ---------------------------------
+
+def rom_word(at):
+    """A word of the ROM (or of the snapshot's RAM) as the capture holds it."""
+    return case.word_in(BASE_IMAGE, at)
+
+
+def signed_word(word):
+    """A 16-bit word as the signed Alcyon `int` it is."""
+    return word - 0x10000 if word & 0x8000 else word
+
+
 
 class Result(case.Result):
     """A run and the machine after it (`case.Result`), read as the VDI's arrays and records."""
@@ -481,14 +512,26 @@ def _core(symbol, restype):
     return core
 
 
-ROUTINE_PREFIX = "VDI_ROM_"      # `addrs.h`: a VDI function's address is VDI_ROM_<FN>, its core vdi_<fn>
+# THE ONE NAMING RULE (`addrs.h`, the VDI block): every VDI routine address is `VDI_ROM_<X>` and every
+# Line-A primitive's `LINEA_ROM_<X>` — a `VDI_`/`LINEA_` name without the `ROM_` is data or a field. The
+# C core DROPS the `rom_` (`VDI_ROM_VSF_PERIMETER` -> `vdi_vsf_perimeter`, `LINEA_ROM_HLINE` ->
+# `linea_hline`) and a `.S` transcription KEEPS it (`vdi_rom_vsf_perimeter`, `linea_rom_hline`), so both
+# directions are a case change and nothing is guessed. `bench/tier3.py` derives its symbols from these.
+ROUTINE_PREFIX = "VDI_ROM_"      # ...of which a VDI FUNCTION is the one with an `_OPCODE` sibling
+LINEA_ROUTINE_PREFIX = "LINEA_ROM_"
+ROUTINE_PREFIXES = (ROUTINE_PREFIX, LINEA_ROUTINE_PREFIX)
+ROM_INFIX = "ROM_"
+
+
+def is_routine(name):
+    """Whether `name` is an `addrs.h` VDI or Line-A ROUTINE address, by the naming rule."""
+    return name.startswith(ROUTINE_PREFIXES)
 
 
 def core_symbol(name):
-    """The C core an `addrs.h` VDI routine name is reconstructed as: `VDI_ROM_VSF_PERIMETER` ->
-    `vdi_vsf_perimeter`. `bench/tier3.py` derives its symbol the same way."""
-    assert name.startswith(ROUTINE_PREFIX), f"{name} is not a `{ROUTINE_PREFIX}<FN>` routine name"
-    return "vdi_" + name[len(ROUTINE_PREFIX):].lower()
+    """The C core an `addrs.h` routine name is reconstructed as: its name less the `ROM_`, lower-cased."""
+    assert is_routine(name), f"{name} is not a `{ROUTINE_PREFIX}<X>` or `{LINEA_ROUTINE_PREFIX}<X>` routine name"
+    return name.replace(ROM_INFIX, "", 1).lower()
 
 
 def run_function(name, pokes, **kwargs):
@@ -512,7 +555,7 @@ RESULTS_ARRAY = ctypes.c_uint32 * RESULTS_MAX
 
 
 def declare_primitive(name, *, arguments=(), results=()):
-    """Declare `addrs.<name>`'s contract. The C core is `<name lower-cased>(image, *arguments)`,
+    """Declare `addrs.<name>`'s contract. The C core is `<core_symbol(name)>(image, *arguments)`,
     RETURNING D0 when "d0" is among `results` (`void` otherwise) and, when `results` names more than one
     register, taking a last `uint32_t *results` parameter it fills in `results` order. Tier 1 compares
     every declared register; Tier 3's second column compares D0 (`bench/tier3.py`)."""
@@ -526,7 +569,7 @@ def _run_primitive_at(entry, name, registers, pokes, **kwargs):
     several = len(contract.results) > 1
     answers_d0 = "d0" in contract.results
     assert several or answers_d0 or not contract.results, "a lone answer in a register but D0 is not modelled"
-    core = _core(name.lower(), ctypes.c_uint32 if answers_d0 else None)
+    core = _core(core_symbol(name), ctypes.c_uint32 if answers_d0 else None)
     answers = []
 
     def glue(_lib_, buf):
@@ -587,11 +630,176 @@ def register(name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, sche
     return row
 
 
+# ---- (h) a TRANSCRIPTION: a hand-68000 routine the target build ships as the ROM's own `.S` ---------
+# The user's rule for the hand-written routines: C first (Tier 1 proves it), and where the C measures
+# over the 1.10 bar, the ROM's own instructions in a `src/vdi/*.S`, byte-pinned and held by Tier 3's
+# TRANSCRIPTION relation (`RomBench.measure_transcription`) to the same image, the WHOLE register file
+# and the same chip traffic. The `.S` entry is the ROM routine's `addrs.h` name lower-cased
+# (`VDI_ROM_VS_COLOR` -> `vdi_rom_vs_color`), which is how `bench/tier3.py` finds the address a row is
+# about.
+#
+# ONE IMAGE SERVES BOTH SIDES (`test/trap.py`'s arrangement): both are entered at a staged CALLER that
+# jumps through the longword at `abi.FIRST_ARG` — the ROM routine, as the case pokes it, or the blob's,
+# which `run_bench` writes over that slot — with the sentinel still under it, so the routine sees the
+# `jsr` frame the dispatcher leaves. The caller's own cost is in both columns and comes off both.
+#
+# A staged caller as a row carries it: where it is, its bytes, and what it costs (off both columns). A
+# battery whose routine needs another shape stages its own in its own band through `staged_caller`, which
+# REGISTERS it: `test_vdi_transcribed.py` measures every registered caller's cost against the one it
+# declares (`assert_caller_cost`), so no caller's number is a literal nobody re-derives.
+Caller = namedtuple("Caller", "at stub cost")
+CALLERS = []
+
+
+def staged_caller(at, stub, cost):
+    """A transcription caller at `at`, declared to cost `(instructions, cycles)` — and registered."""
+    caller = Caller(at, stub, cost)
+    CALLERS.append(caller)
+    return caller
+
+
+def assert_caller_cost(caller, regs=None):
+    """`caller` entered with a bare `rts` for the routine costs its declared `cost` and nothing else: the
+    oracle's reset (`RomBench.overhead`, which `test_tier3.py` pins) and that `rts` (`RTS_COST`) are all
+    the rest of the run. Answers the register file it left, for a caller that also promises what it does
+    to one."""
+    pokes = {caller.at: caller.stub, STUB_AT: RTS, abi.FIRST_ARG: struct.pack(">I", STUB_AT)}
+    _final, _writes, left = emu.run(make_image(pokes), caller.at, {**DIRTY, **(regs or {})})
+    reset, rts, cost = bench().overhead, RTS_COST, caller.cost
+    assert (left["ninsns"], left["cycles"]) == (reset[0] + cost[0] + rts[0], reset[1] + cost[1] + rts[1]), (
+        f"the caller at {caller.at:#x} costs {left['ninsns']} / {left['cycles']} with the reset and an `rts`, "
+        f"not the declared {cost} over {reset} and {rts}")
+    return left
+
+
+RTS_COST = (1, 16)              # the bare `rts` a caller is measured over
+# THE REGISTER FILE every transcription is entered with, under the case's own registers: every register
+# different, so a register the `.S` left where the ROM changed it — or changed where the ROM left it —
+# shows.
+DIRTY = {name: 0x0D0D_0000 + index * 0x1111 for index, name in enumerate(emu.REPORTED_REGS)}
+TRANSCRIPTION_CALLER = PUSH_STACK_LONG + struct.pack(">h", abi.FIRST_ARG - emu.STACK_TOP) + RTS
+PLAIN_CALLER = staged_caller(TRANSCRIPTION_CALLER_AT, TRANSCRIPTION_CALLER, (2, 40))
+TRANSCRIPTIONS = []
+LABELS = {}
+TRANSCRIPTION_ROLES = {"vdi_rom_": "VDI", "linea_rom_": "Line-A"}
+
+
+def transcription_symbol(name):
+    """The `.S` entry a `VDI_ROM_<X>` or `LINEA_ROM_<X>` routine is transcribed as: its name lower-cased."""
+    assert is_routine(name), f"{name} is not a `{ROUTINE_PREFIX}<X>` or `{LINEA_ROUTINE_PREFIX}<X>` routine name"
+    return name.lower()
+
+
+def transcription_routine(symbol):
+    """...and back: the `addrs.h` name of the routine a `.S` entry transcribes."""
+    name = symbol.upper()
+    assert is_routine(name) and hasattr(addrs, name), f"{symbol} transcribes no routine `addrs.h` names"
+    return name
+
+
+# THE BYTE PIN, one comparator for every `.S`. A transcription lays out a ROM REGION in the ROM's own
+# order, so one entry in it (the `anchor` routine) places the whole region in the blob. The spelling
+# policy (`include/m68k_encodings.h`) leaves exactly one kind of word that may differ: a reference that
+# measures to where the `.S` itself is linked — a branch displacement from one region into another, or
+# an absolute address of the transcription's own table. Each is RELOCATED: `width` says which (a word is
+# a displacement from the extension word, a long an absolute address), and the comparator computes the
+# EXACT value it must hold from the ROM's own reference and where `target_anchor`'s region is in the blob.
+Relocated = namedtuple("Relocated", "width target_anchor why")
+PC_RELATIVE = WORD_BYTES
+ABSOLUTE = LONG_BYTES
+
+
+def transcribed_address(anchor, rom_address):
+    """Where the blob holds `rom_address` of the region the `.S` entry of routine `anchor` lays out."""
+    return bench().entry(transcription_symbol(anchor)) + rom_address - getattr(addrs, anchor)
+
+
+def _blob_bytes(address, size):
+    blob = bench()
+    return bytes(blob.blob[address - blob.base:address - blob.base + size])
+
+
+def _relocated_value(at, placed_at, relocation):
+    """The exact bytes the reference at ROM address `at`, placed at blob address `placed_at`, must hold:
+    the ROM's own reference followed to its target, and that target's place in the blob."""
+    pc_relative = relocation.width == PC_RELATIVE
+    rom = int.from_bytes(bytes(BASE_IMAGE[at:at + relocation.width]), "big", signed=pc_relative)
+    if pc_relative:
+        displacement = transcribed_address(relocation.target_anchor, at + rom) - placed_at
+        return displacement.to_bytes(WORD_BYTES, "big", signed=True)
+    return transcribed_address(relocation.target_anchor, rom).to_bytes(LONG_BYTES, "big")
+
+
+def assert_transcribed(anchor, lo, hi, *, entries=(), relocated=None):
+    """The ROM's bytes `lo`..`hi` against the blob's, the region laid out from the `.S` entry of `anchor`:
+    every other routine in `entries` where the ROM has it, and every word EQUAL but the references
+    `relocated` names — `{ROM address: Relocated}` — which must hold exactly the value their target's
+    place in the blob gives them. A relocation that happens to equal the ROM's word is refused too: it
+    names a word that needs no excuse."""
+    relocated = relocated or {}
+    start = transcribed_address(anchor, lo)
+    for name in entries:
+        assert transcribed_address(anchor, getattr(addrs, name)) == bench().entry(transcription_symbol(name)), (
+            f"{name} is not where the ROM has it in the region {anchor} lays out")
+    at = lo
+    while at < hi:
+        relocation = relocated.get(at)
+        size = relocation.width if relocation else WORD_BYTES
+        placed_at = start + at - lo
+        ours, theirs = _blob_bytes(placed_at, size), bytes(BASE_IMAGE[at:at + size])
+        if relocation:
+            expected = _relocated_value(at, placed_at, relocation)
+            assert ours != theirs, f"${at:x} is relocated ({relocation.why}) and equals the ROM's — drop it"
+            assert ours == expected, (f"${at:x} ({relocation.why}) holds {ours.hex()}, not the {expected.hex()} its "
+                                      f"target's place in the blob gives")
+        else:
+            assert ours == theirs, f"the transcription of ${at:x} holds {ours.hex()} against the ROM's {theirs.hex()}"
+        at += size
+    assert not set(relocated) - set(range(lo, hi, WORD_BYTES)), "a relocation outside the region pinned"
+
+
+def transcription_pokes(name, pokes, caller=PLAIN_CALLER):
+    """`pokes` with the staged caller and the ROM routine it enters on the ORIGINAL's side."""
+    return merge_pokes(pokes, {caller.at: caller.stub, abi.FIRST_ARG: struct.pack(">I", getattr(addrs, name))})
+
+
+def run_transcription(name, pokes, regs=None, *, io_seed=None, caller=PLAIN_CALLER):
+    """The `.S` of `addrs.<name>` against the ROM routine over `pokes`, through the transcription
+    relation, entered with `regs` laid over `DIRTY` — the WHOLE register file. Answers the `Measurement`."""
+    return bench().measure_transcription(caller.at, transcription_symbol(name), {**DIRTY, **(regs or {})},
+                                         pokes=transcription_pokes(name, pokes, caller), io_seed=io_seed,
+                                         shared_entry=caller.cost)
+
+
+def register_transcription(name, label, pokes, regs=None, *, io_seed=None, caller=PLAIN_CALLER):
+    """One Tier 3 TRANSCRIPTION row (`bench/tier3.py` reads `TRANSCRIPTIONS`), entered as
+    `run_transcription` enters it: `label` is the case, and the function's own label is its `.S` entry's."""
+    symbol = transcription_symbol(name)
+    spelt = next(spelt for spelt in TRANSCRIPTION_ROLES if symbol.startswith(spelt))
+    LABELS[symbol] = f"{TRANSCRIPTION_ROLES[spelt]} {symbol[len(spelt):]} (.S)"
+    row = (label, symbol, caller.at, {**DIRTY, **(regs or {})}, transcription_pokes(name, pokes, caller), caller.cost,
+           io_seed)
+    TRANSCRIPTIONS.append(row)
+    return row
+
+
+# ---- (i) the TRANSCRIBED table: which routines SHIP as their `.S` (`include/vdi/transcribed.h`) --------
+# `{`.S` entry: the GCC callee-saved registers it leaves changed}`, parsed out of the header's rows as
+# `addrs.py` parses a `#define`: the one source Tier 3's (T) rule, the build contract and the C
+# declarations all read. `test_vdi_transcribed.py` holds it to the `.S` sources, the makefile and the
+# ROM's measured register file.
+TRANSCRIBED_HEADER = _INCLUDE / "vdi" / "transcribed.h"
+_TRANSCRIBED_ROW = re.compile(r'^\s*ENTRY\((?P<entry>[a-z0-9_]+),\s*"(?P<destroys>[^"]*)"\)')
+TRANSCRIBED = {match["entry"]: tuple(match["destroys"].split())
+               for match in map(_TRANSCRIBED_ROW.match, TRANSCRIBED_HEADER.read_text().splitlines()) if match}
+assert TRANSCRIBED, f"{TRANSCRIBED_HEADER} has no `ENTRY(...)` row this parser reads"
+
+
 # Every span a VDI case reads or pokes, in `test_boot_snapshot.CASE_FIELDS`' shape. The Line-A block
 # is declared WHOLE, because a case overrides any field of it by name.
 LINEA_BLOCK_START = LINEA_CUR_FONT
 LINEA_BLOCK_END = LINEA_BLIT_MODE + WORD_BYTES
-CASE_FIELDS = (
+_CASE_FIELDS = [
     (LINEA_BLOCK_START, LINEA_BLOCK_END - LINEA_BLOCK_START, "the Line-A variables a case stages by name"),
     (VDI_PHYS_WORK, WS_BYTES, "the physical workstation"),
     (VDI_PTSIN_COPY, VDI_PTSIN_COPY_BYTES, "the entry's copy of ptsin"),
@@ -599,5 +807,15 @@ CASE_FIELDS = (
     (FONT_RAM_8X8, FONT_HEADER_BYTES, "the RAM 8x8 font header"),
     (FONT_RAM_8X16, FONT_HEADER_BYTES, "the RAM 8x16 font header"),
     (SCREEN.base, SCREEN.bytes, "the screen a drawing case stages and reads pixels of"),
-    *SPAN.claims,
-)
+]
+
+
+def declare_case_field(at, size, why):
+    """A span a battery's cases reach OUTSIDE the window and the fields above — the one door for it."""
+    _CASE_FIELDS.append((at, size, why))
+
+
+def case_fields():
+    """Every span a VDI case reads or pokes: the fields above, every battery's `declare_case_field`, and
+    every band of the window AS CLAIMED WHEN ASKED — a battery claims its band after this module loads."""
+    return (*_CASE_FIELDS, *SPAN.claims)

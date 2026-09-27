@@ -268,10 +268,10 @@ where GCC's `__mulsi3` does the three and stops. The LEAF routines come out behi
 structural: every core takes `uint8_t *image` and loads it out of the frame, where the ROM reaches
 the same memory through the trap dispatcher's own `suba.l a5,a5` at no cost — on a routine whose
 whole body is `move.l _drvbits,d0 / rts` that one instruction is +16 cycles and reads as 1.50x.
-`bench/tier3.py`'s `PERF_ACCEPTED` records every such row with its measured cost and which of three
-mechanisms it is. Being faster is not a licence and being slower is not a defect: the reconstruction
-is held to the ROM's BEHAVIOUR, and the ratio is what says how a 2020s compiler prices the same
-algorithm.
+`bench/tier3.py`'s `PERF_ACCEPTED` records every such row with its measured cost and which lettered
+mechanism it is — save the TRANSCRIBED routines' C rows, which one rule carries (below). Being
+faster is not a licence and being slower is not a defect: the reconstruction is held to the ROM's
+BEHAVIOUR, and the ratio is what says how a 2020s compiler prices the same algorithm.
 
 ### How a row is made, and what makes it honest
 
@@ -285,7 +285,7 @@ the registry adds is the one thing that list cannot carry: a `CALL` entry per RO
 our C is called (its arguments and the width its signature returns).
 
 The gate then holds three things: every row at or under **1.10** unless `PERF_ACCEPTED` carries it
-with its measured cost and a reason; every PINNED row still measuring what it was pinned at, within
+with its measured cost and a reason (or, for a TRANSCRIBED routine's C, its `.S` rows do); every PINNED row still measuring what it was pinned at, within
 0.02; and **every verified case having a row at all** — a function reconstructed without one carries
 no ratio and no second differential, and before this nothing said so.
 
@@ -308,6 +308,30 @@ of headers), and `shim_include/`, where the headers the kit declares "off-target
 target halves — `psg.h` writes the real `$ff8800`/`$ff8802` and `hw.h` reads the real `$ff8260`,
 which under the oracle are decoded into the same seeded models and the same ordered ledgers the ROM's
 own `move.b` reaches, and `ipl.h` is the real `move.w sr,d0` / `ori.w #$700,sr` pair.
+
+### What ships as the ROM's own instructions — the TRANSCRIBED table
+
+The rule for the ROM's HAND-WRITTEN 68000 (the VDI's pixel loops, its palette pair, its register
+helpers) is: port it to C first — Tier 1 proves the C — and where the C measures over the 1.10 bar,
+SHIP a byte-pinned `.S` transcription instead. `include/vdi/transcribed.h` is the one place that says
+which routines, one row per `.S` entry, with the entry's register contract against the GCC m68k ABI
+(the callee-saved registers it leaves changed). Everything else is derived from it:
+
+* **Tier 3's mechanism (T)**: a TRANSCRIBED routine's C rows may be over the bar only while EVERY one
+  of its `.S` rows is at or under it — verdict `transcribed`, read off the measurements, with no
+  per-row entry. Delete a `.S` row, or let one drift over the bar, and the C rows go red with it.
+* **The build contract** (`atari/target.mk`): `TRANSCRIBED_ENTRIES`/`TRANSCRIBED_SOURCES` are what the
+  ROM build links for these routines and `TRANSCRIBED_C_CORES` the C twins it must not. The Tier 3 blob
+  links both, because it measures both.
+* **The declarations** at the end of the header: each entry as a LABEL a C caller reaches through glue
+  naming the row's registers as clobbers — a plain C call of one does not compile. The one C that still
+  calls a transcribed C core (`vq_key_s` → `get_kbshift`) switches when the ROM build links cores.
+
+`test/test_vdi_transcribed.py` holds the table to all of it — the make lists, every `.globl` of the
+`.S` sources, the measured register sets, the list of C callers read out of the m68k build — and every
+transcription is pinned to the ROM byte for byte by one comparator (`vdi.assert_transcribed`) under one
+spelling policy (`include/m68k_encodings.h`: an encoding GNU as would change is spelt as the ROM's
+word, never excused).
 
 ## Layout
 

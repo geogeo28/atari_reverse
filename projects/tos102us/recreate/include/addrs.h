@@ -1552,11 +1552,16 @@
  * The STRUCTURES — the Line-A variable block, the workstation, the font header, the tables — are the
  * component's own headers (`include/vdi/`); only routine addresses are here, for the registries' sake.
  *
+ * ONE RULE FOR EVERY ROUTINE ADDRESS in this block: `VDI_ROM_<X>` for a VDI routine — a function, a
+ * dispatcher, a helper reached by `jsr` — and `LINEA_ROM_<X>` for a Line-A primitive or body. A `VDI_`
+ * or `LINEA_` name WITHOUT the `ROM_` is data or a field (`include/vdi/`). The C core is the name less its
+ * `ROM_`, lower-cased (`vdi_<x>`, `linea_<x>`), and a `.S` transcription's entry is the name lower-cased
+ * (`vdi_rom_<x>`, `linea_rom_<x>`) — `test/vdi.py`'s `core_symbol` / `transcription_symbol`. The `ROM_`
+ * is not decoration: the kit's `os.h`, which this header includes, already defines `VDI_<FN>` as the
+ * OPCODE for the functions its game model serves (`VDI_VSF_INTERIOR`, `VDI_V_OPNVWK`, ...).
+ *
  * A VDI FUNCTION IS REACHED BY OPCODE, not by a trap function number, so it is spelt:
- *   `VDI_ROM_<FN>`            the routine's address, whose C core is `vdi_<fn>`. The `ROM_` is not
- *                             decoration: the kit's `os.h`, which this header includes, already defines
- *                             `VDI_<FN>` as the OPCODE for the functions its game model serves
- *                             (`VDI_VSF_INTERIOR`, `VDI_V_OPNVWK`, ...);
+ *   `VDI_ROM_<FN>`            the routine's address, whose C core is `vdi_<fn>`;
  *   `VDI_ROM_<FN>_OPCODE`     the opcode `$fca9f6`'s tables serve it for — deliberately not `_FN`,
  *                             which `test_boot_snapshot.py` reads as a BIOS/XBIOS/GEMDOS table slot;
  *   `..._OPCODE_<k>`          each further opcode the SAME routine serves (a shared stub);
@@ -1565,12 +1570,27 @@
  * `test_vdi_staging.py` holds every one of them against the ROM's own opcode and sub-function tables,
  * and `bench/tier3.py` derives a function's Tier 3 entry from its `_OPCODE`, so a new VDI function is
  * one pair of lines here. */
-#define VECTOR_LINE_A         0x28       /* the Line-A exception -> LINEA_DISPATCH */
-#define LINEA_DISPATCH        0xfc9f0c   /* the $Axxx handler: `rte`, not `rts` */
-#define LINEA_INIT            0xfc9f34   /* $a000 */
-#define LINEA_SEEDABORT_DEFAULT 0xfc9f9a /* `moveq #0,d0 / rts`: v_contourfill's SEEDABORT ($fd08e4) */
-#define VDI_ENTRY             0xfc9f9e   /* where SYSVAR_VDI_ENTRY's routine calls in, D1 = the parameter block */
-#define VDI_DISPATCH          0xfca9f6
+#define VECTOR_LINE_A         0x28       /* the Line-A exception -> LINEA_ROM_DISPATCH */
+#define LINEA_ROM_DISPATCH        0xfc9f0c   /* the $Axxx handler: `rte`, not `rts` */
+#define LINEA_ROM_INIT            0xfc9f34   /* $a000 */
+/* The PIXEL / SCANLINE primitives (`src/vdi/raster.c`), each with the register contract its battery
+ * declares; `_PATTERNED` and `_SPAN` are MID-FUNCTION entries of $a004 that other routines enter at,
+ * and the three `_CPU_` bodies are what drawing vectors 6..8 hold in the captured machine. */
+#define LINEA_ROM_CONCAT          0xfca1b8   /* (x, y) in D0/D1 -> screen offset in D1, bit in D0 */
+#define LINEA_ROM_LINE            0xfca1ea   /* $a003 */
+#define LINEA_ROM_LINE_PLANE_WORDS 0xfca3f4  /* the diagonal/vertical line's per-plane opcode words */
+#define LINEA_ROM_HLINE           0xfca57e   /* $a004 */
+#define LINEA_ROM_HLINE_PATTERNED 0xfca58a   /* $a004 past its coordinate load: contour fill ($fcfb62) */
+#define LINEA_ROM_HLINE_SPAN      0xfca5a2   /* ...past its pattern too: $a003's horizontal arm ($fca312) */
+#define LINEA_ROM_PUT_PIXEL       0xfcface   /* $a001 */
+#define LINEA_ROM_GET_PIXEL       0xfcfb16   /* $a002 */
+#define LINEA_ROM_FILLED_RECT     0xfcfc56   /* $a005 */
+#define LINEA_ROM_CPU_VLINE       0xfd19dc   /* LINEA_VECTOR_VLINE's CPU body */
+#define LINEA_ROM_CPU_HLINE       0xfd1ae0   /* LINEA_VECTOR_HLINE's CPU body */
+#define LINEA_ROM_CPU_RECT_FILL   0xfd1b16   /* LINEA_VECTOR_RECT_FILL's CPU body */
+#define LINEA_ROM_SEEDABORT_DEFAULT 0xfc9f9a /* `moveq #0,d0 / rts`: v_contourfill's SEEDABORT ($fd08e4) */
+#define VDI_ROM_ENTRY             0xfc9f9e   /* where SYSVAR_VDI_ENTRY's routine calls in, D1 = the parameter block */
+#define VDI_ROM_DISPATCH          0xfca9f6
 #define VDI_ROM_V_OPNWK           0xfcb694
 #define VDI_ROM_V_OPNWK_OPCODE    1
 #define VDI_ROM_V_OPNVWK          0xfcd612
@@ -1584,9 +1604,112 @@
 #define VDI_ROM_ESCAPE_OPCODE     5
 #define VDI_ROM_GDP               0xfcbbcc   /* the GDP sub-dispatcher */
 #define VDI_ROM_GDP_OPCODE        11
-#define VDI_ROM_V_CONTOURFILL     0xfd08e0   /* installs LINEA_SEEDABORT_DEFAULT, then $a00f */
+#define VDI_ROM_V_CONTOURFILL     0xfd08e0   /* installs LINEA_ROM_SEEDABORT_DEFAULT, then $a00f */
 #define VDI_ROM_V_CONTOURFILL_OPCODE 103
 #define VDI_ROM_VSF_PERIMETER     0xfcb45c
 #define VDI_ROM_VSF_PERIMETER_OPCODE 104
+/* The ATTRIBUTE SETTERS (`src/vdi/attributes.c`), and the two helpers they share with other layers:
+ * the fill-pattern pointer and the corner sort, reached by `jsr` with a C frame rather than by opcode. */
+#define VDI_ROM_VSL_TYPE          0xfcac76
+#define VDI_ROM_VSL_TYPE_OPCODE   15
+#define VDI_ROM_VSL_WIDTH         0xfcacc0
+#define VDI_ROM_VSL_WIDTH_OPCODE  16
+#define VDI_ROM_VSL_ENDS          0xfcad20
+#define VDI_ROM_VSL_ENDS_OPCODE   108
+#define VDI_ROM_VSL_COLOR         0xfcad7c
+#define VDI_ROM_VSL_COLOR_OPCODE  17
+#define VDI_ROM_VSM_HEIGHT        0xfcadcc
+#define VDI_ROM_VSM_HEIGHT_OPCODE 19
+#define VDI_ROM_VSM_TYPE          0xfcae58
+#define VDI_ROM_VSM_TYPE_OPCODE   18
+#define VDI_ROM_VSM_COLOR         0xfcaea8
+#define VDI_ROM_VSM_COLOR_OPCODE  20
+#define VDI_ROM_VSF_INTERIOR      0xfcaefe
+#define VDI_ROM_VSF_INTERIOR_OPCODE 23
+#define VDI_ROM_VSF_STYLE         0xfcaf4a
+#define VDI_ROM_VSF_STYLE_OPCODE  24
+#define VDI_ROM_VSF_COLOR         0xfcafb2
+#define VDI_ROM_VSF_COLOR_OPCODE  25
+#define VDI_ROM_VSWR_MODE         0xfcb32e
+#define VDI_ROM_VSWR_MODE_OPCODE  32
+#define VDI_ROM_VSIN_MODE         0xfcb388
+#define VDI_ROM_VSIN_MODE_OPCODE  33
+#define VDI_ROM_VQIN_MODE         0xfcb3f6
+#define VDI_ROM_VQIN_MODE_OPCODE  115
+#define VDI_ROM_VSL_UDSTY         0xfcb4a2
+#define VDI_ROM_VSL_UDSTY_OPCODE  113
+#define VDI_ROM_VS_CLIP           0xfcb4ba
+#define VDI_ROM_VS_CLIP_OPCODE    129
+#define VDI_ROM_VSF_UDPAT         0xfcd6fa
+#define VDI_ROM_VSF_UDPAT_OPCODE  112
+#define VDI_ROM_VST_EFFECTS       0xfce3b2
+#define VDI_ROM_VST_EFFECTS_OPCODE 106
+#define VDI_ROM_VST_ALIGNMENT     0xfce3e6
+#define VDI_ROM_VST_ALIGNMENT_OPCODE 39
+#define VDI_ROM_VST_ROTATION      0xfce442
+#define VDI_ROM_VST_ROTATION_OPCODE 13
+#define VDI_ROM_VST_COLOR         0xfce560
+#define VDI_ROM_VST_COLOR_OPCODE  22
+#define VDI_ROM_VEX_TIMV          0xfca6a4
+#define VDI_ROM_VEX_TIMV_OPCODE   118
+#define VDI_ROM_VEX_BUTV          0xfcff68
+#define VDI_ROM_VEX_BUTV_OPCODE   125
+#define VDI_ROM_VEX_MOTV          0xfcff80
+#define VDI_ROM_VEX_MOTV_OPCODE   126
+#define VDI_ROM_VEX_CURV          0xfcff98
+#define VDI_ROM_VEX_CURV_OPCODE   127
+#define VDI_ROM_ST_FL_PTR         0xfcc9a6   /* WS_PATPTR/PATMSK from the interior and style index */
+#define VDI_ROM_ARB_CORNER        0xfcb55e   /* (corners.l, order.w): sort a rectangle's two corners */
+/* The INQUIRIES (`src/vdi/inquire.c`) and the PALETTE pair (`src/vdi/palette.c`). */
+#define VDI_ROM_VALUATOR          0xfcb198   /* `link / unlk / rts`: valuator input is not served */
+#define VDI_ROM_VALUATOR_OPCODE   29
+#define VDI_ROM_VQL_ATTRIBUTES    0xfcbd7e
+#define VDI_ROM_VQL_ATTRIBUTES_OPCODE 35
+#define VDI_ROM_VQM_ATTRIBUTES    0xfcbdda
+#define VDI_ROM_VQM_ATTRIBUTES_OPCODE 36
+#define VDI_ROM_VQF_ATTRIBUTES    0xfcbe3a
+#define VDI_ROM_VQF_ATTRIBUTES_OPCODE 37
+#define VDI_ROM_VQT_ATTRIBUTES    0xfce5b0
+#define VDI_ROM_VQT_ATTRIBUTES_OPCODE 38
+#define VDI_ROM_VQ_EXTND          0xfcb8d0
+#define VDI_ROM_VQ_EXTND_OPCODE   102
+#define VDI_ROM_VST_UNLOAD_FONTS  0xfced9a
+#define VDI_ROM_VST_UNLOAD_FONTS_OPCODE 120
+#define VDI_ROM_VQ_MOUSE          0xfcb156
+#define VDI_ROM_VQ_MOUSE_OPCODE   124
+#define VDI_ROM_VQ_KEY_S          0xfcb30a
+#define VDI_ROM_VQ_KEY_S_OPCODE   128
+#define VDI_ROM_VQT_NAME          0xfce8ca
+#define VDI_ROM_VQT_NAME_OPCODE   130
+#define VDI_ROM_VQT_FONTINFO      0xfce95a
+#define VDI_ROM_VQT_FONTINFO_OPCODE 131
+#define VDI_ROM_VS_COLOR          0xfd2dd2   /* hand 68000; the mono clamp is its local $fd2e6e */
+#define VDI_ROM_VS_COLOR_OPCODE   14
+#define VDI_ROM_VQ_COLOR          0xfd2e84   /* hand 68000 */
+#define VDI_ROM_VQ_COLOR_OPCODE   26
+/* The PURE HELPERS (`src/vdi/helpers.c`, `vdi/helpers.h`): Alcyon C calls taking WORD arguments on the
+ * stack, and three register routines — sort_words, clamp_mouse, get_kbshift — whose contracts their
+ * battery declares. vr_trnfm is the one VDI function among them, with its two transposes. */
+#define VDI_ROM_VEC_LEN           0xfc9ffc   /* isqrt(dx^2 + dy^2) by bisection */
+#define VDI_ROM_SORT_WORDS        0xfca164   /* D0.w words at A0, bubble-sorted, signed */
+#define VDI_ROM_SMUL_DIV          0xfca186   /* a * b / c rounded half away from zero, by `divs.w` */
+#define VDI_ROM_ISIN              0xfcab68   /* sine x 32767 of an angle in tenths of a degree */
+#define VDI_ROM_ICOS              0xfcac4c   /* ...cosine, as isin(angle + 900) */
+#define VDI_ROM_CLIP_CODE         0xfcc092   /* a point's outcode against the Line-A clip rectangle */
+#define VDI_ROM_CLC_NSTEPS        0xfcc6b4   /* LINEA_GDP_N_STEPS from the larger radius */
+#define VDI_ROM_QUAD_XFORM        0xfcced6   /* (x, y) signed into a quadrant, through two pointers */
+#define VDI_ROM_CLC_DDA           0xfcedd0   /* the text scaler's increment and direction */
+#define VDI_ROM_ACT_SIZ           0xfcee02   /* a size stepped through the text scaler's DDA */
+#define VDI_ROM_COPY_NAME         0xfce0ee   /* a font's 32-byte name, copied */
+#define VDI_ROM_CLAMP_MOUSE       0xfcfedc   /* D0/D1 clamped to the screen */
+#define VDI_ROM_FONT_BYTESWAP     0xfcfaac   /* an Intel-order font form turned round in place */
+#define VDI_ROM_GEMDOS_CALL       0xfcfa9c   /* `trap #1` with its return address parked at LINEA_RETSAV */
+#define VDI_ROM_GET_KBSHIFT       0xfca648   /* the shift state's four modifier bits, in D0.w */
+#define VDI_ROM_S_FA_ATTR         0xfcd056   /* the fill attributes saved, a solid outline set */
+#define VDI_ROM_R_FA_ATTR         0xfcd0c2   /* ...and restored */
+#define VDI_ROM_VR_TRNFM          0xfd2d32   /* device <-> standard raster form */
+#define VDI_ROM_VR_TRNFM_OPCODE   110
+#define VDI_ROM_TRNFM_IN_PLACE    0xfd2d80   /* vr_trnfm's transpose over one buffer */
+#define VDI_ROM_TRNFM_COPY        0xfd2db4   /* ...and from one buffer into another */
 
 #endif /* TOS102US_ADDRS_H */

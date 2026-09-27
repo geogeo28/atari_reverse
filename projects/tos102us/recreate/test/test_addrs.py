@@ -55,6 +55,9 @@ ALLOWED_ALIASES = {
         "in it, which the published layout puts at the same address",
     frozenset(("GEMDOS_FAT12_ENTRY_MASK", "LINEA_OPCODE_MASK")):
         "two 12-bit MASKS, not addresses: a FAT12 entry and the low bits of a $Axxx opcode",
+    frozenset(("BCB_EMPTY", "VDI_DDA_DOUBLE")):
+        "two word MARKERS, not addresses, both a `-1`: a buffer holding no drive and the text scaler's "
+        "doubling increment",
 }
 
 

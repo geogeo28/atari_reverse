@@ -46,3 +46,24 @@ TARGET_INCLUDES := -I$(RECREATE)/atari/shim_include -I$(RECREATE)/include -I$(KI
 # small as XBIOS Random does not link without it (the ROM's own code calls Alcyon's `lmul` at the
 # same place, for the same reason).
 TARGET_LDLIBS := -lgcc
+
+# THE TRANSCRIBED ROUTINES — the build contract for the day the ROM build links cores. The user's rule
+# for the hand-written 68000 is C first, and where the C measures over Tier 3's bar, SHIP the ROM's own
+# instructions: `include/vdi/transcribed.h` is the one table that says which, and both lists below are
+# read out of it rather than kept beside it (`test/test_vdi_transcribed.py` pins that they agree with the
+# Python view Tier 3 judges by, and that every `.globl` of the `.S` sources is a row of it).
+#
+#   * TRANSCRIBED_SOURCES / TRANSCRIBED_ENTRIES — what the ROM build LINKS for these routines: the `.S`
+#     files and the entries they define. (Tier 3's blob links them today, beside the C: it measures both.)
+#   * TRANSCRIBED_C_CORES — the C twins it must NOT link. Each is still compiled — its file holds other
+#     cores — so the ROM build compiles with -ffunction-sections, links with --gc-sections, and refuses an
+#     image whose symbol table still names one of these: a survivor means some C still CALLS the C core,
+#     and on target that call must go through glue to the `.S` entry (the declarations in the header).
+#
+# `sed` rather than the Python parser because this file is read by two makefiles that share no `$(PY)`,
+# and `ENTRY.` rather than `ENTRY(` because make counts every parenthesis in a `$(shell ...)`;
+# the pin above is what keeps the two parsers honest.
+TRANSCRIBED_TABLE   := $(RECREATE)/include/vdi/transcribed.h
+TRANSCRIBED_SOURCES := $(wildcard $(RECREATE)/src/vdi/*.S)
+TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
+TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))

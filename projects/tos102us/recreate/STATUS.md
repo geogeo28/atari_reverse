@@ -13,7 +13,7 @@ counts in this file against its rows.
 | bios | 20 | — | 0.88–3.63x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
-| vdi + linea | 2 | — | 0.70–2.43x (`$a000` accepted: mechanism (N), an answer in several registers) | STARTED |
+| vdi + linea | 72 | — | shipped code 0.36–1.48x (`vq_key_s` and `$a000` accepted); the hand-68000 routines ship as `.S` at 1.00 (their C, 1.06–3.25x, carried by (T) — `include/vdi/transcribed.h`) | STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
@@ -255,7 +255,7 @@ a fraction of what it moved the core by, and these three rows are a weaker instr
 figures suggest. NETTING THE STUB OUT (a per-row `staged_entry` measured from a zero-count `Rwabs`)
 is a bench change and is PARKED below.
 
-## Verified — vdi (2)
+## Verified — vdi (72)
 
 The VDI + Line-A component (`$fc9f0c..$fd2f21`, `src/vdi/`), started 2026-09-26 on a read-only map of the whole range and a
 FOUNDATION every band builds on: `include/vdi/{linea,vdi,font}.h` (every field cited to a ROM access and TAGGED with its width,
@@ -269,6 +269,76 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 |---|---|---|---|---|---|---|
 | `0xfcb45c` | `vsf_perimeter` (VDI opcode 104, `src/vdi/vdi.c`) | 10 | 16 / 314 outlined, 17 / 322 not outlined | **0.72** outlined, **0.70** not outlined | ✅ verified | the VDI's worked example, entered as the dispatcher's `jsr` leaves the machine, over a DISPATCHED workstation (record + the dispatcher's copies): six intin words incl. $0100 and $8000/$ffff, stored normalised to 0/1 in intout[0] and `WS_FILL_PER` over a stale $5a5a; the workstation written is the one `LINEA_CUR_WORK` names (a virtual one, the physical record untouched); contrl[4] = 1 written LAST, pinned by laying intout over it. Opcode 104 read out of the ROM's table. Mutation 10/10 |
 | `0xfc9f34` | `$a000` linea_init (Line-A, `src/vdi/linea.c`) | 3 | 6 / 96 | **2.43** (accepted: (N), the answer registers written through a results pointer) | ✅ verified | the primitive doors' example: D0/A0 = the Line-A base, A1 = $a000's font table, A2 = the opcode table, EACH compared register by register on both shores (Tier 3's column holds D0: the core returns it); entered by `jsr` and — unpriced, entered at a stub — THROUGH the Line-A exception, where the handler preserves D3/A3 and the `rts` after the opcode word is reached. Mutation 3/3 |
+| `0xfc9ffc` | `vec_len` (`src/vdi/helpers.c`) | 18 | 243 / 2344 bisection, 64 / 636 exact square | **0.94**, **1.02** | ✅ verified | isqrt(dx²+dy²) by bisection: both halves of the log search, sums ≥2^30 (the $10000→$ffff fix), negatives; clobbers D3/D4 (harmless in every caller) |
+| `0xfca164` | `sort_words` (same file; `helpers.S`) | 18 | 195 / 1858 eight reversed, 13 / 138 two in order | **1.54**, **2.33** (T); `.S` **1.00**, **1.00** | ✅ verified | register D0.w/A0; empty, one, equal (kept), reversed, signed extremes, count as a word; the `.S` clobbers D2 |
+| `0xfca186` | `smul_div` (same; `.S`) | 22 | 19 / 380 rounded up, 22 / 390 neg / neg | **1.06**, **1.14** (T); `.S` **1.00**, **1.00** | ✅ verified | round(a*b/c): the remainder read through `neg.l` of the whole register (|r|−1 when negative over a nonzero quotient), a divisor of −32768 rounds any remainder, `divs` overflow leaves the product; c=0 REFUSED by name on the host (vector 5 on the 68000); the `.S` clobbers D2 |
+| `0xfcab68` | `isin` (same) | 30 | 53 / 1236 interpolated, 40 / 916 whole degree | **0.71**, **0.70** | ✅ verified | the five arms of $fd3900, the table ends, interpolation, the turn loop; negative angles index BELOW the sine table |
+| `0xfcac4c` | `icos` (same) | 11 | 61 / 1360 | **0.71** | ✅ verified | isin(a+900) with the word wrap past 32767 |
+| `0xfcc092` | `clip_code` (same) | 15 | 20 / 292 corner, 18 / 264 inside | **0.60**, **0.66** | ✅ verified | every edge inclusive, the four corners, signed |
+| `0xfcc6b4` | `clc_nsteps` (same) | 14 | 16 / 262 minimum, 15 / 256 within | **0.68**, **0.81** | ✅ verified | max radius / 4 clamped 32..128, signed shift |
+| `0xfcced6` | `quad_xform` (same) | 16 | 24 / 288 | **0.90** | ✅ verified | written from the asm (the one hard decompile failure); quadrants 1..4 and the ones storing nothing |
+| `0xfcedd0` | `clc_dda` (same; `.S`) | 22 | 12 / 276 down, 13 / 278 up, 11 / 132 doubled | **1.05**, **1.04**, **1.15** (T); `.S` **1.00** ×3 | ✅ verified | (actual, requested); the doubling marker; equal sizes answer 0 (`divu` overflow) and an actual ≤ 0 — both ROM-UNREACHABLE (the only caller $fce076 skips equal sizes), pinned anyway; a requested ≤ 0 is reachable (ptsin[1]) |
+| `0xfcee02` | `act_siz` (same; `.S`) | 35 | 79 / 638 down, 81 / 670 up, 12 / 180 doubled, 20 / 250 one line | **1.21**, **1.19**, **0.73**, **1.02** (T); `.S` **1.00** ×4 | ✅ verified | `btst #0,$29df` (bit 0 of the LOW byte); size −32768 = 32768 steps |
+| `0xfce0ee` | `copy_name` (same) | 2 | 141 / 1322 | **0.71** | ✅ verified | exactly 32 bytes, forward (an overlap smear pins it) |
+| `0xfcfaac` | `font_byteswap` (same) | 9 | 71 / 928 sixteen words, 11 / 208 one word | **1.01**, **1.04** | ✅ verified | the product's low-word truncation; a zero count = 65536 words (a 128 KB form claimed in `staging.HIGH_BANDS` at $90000, held dead) |
+| `0xfcd056` | `s_fa_attr` (same) | 3 | 20 / 420 | **0.82** | ✅ verified | every store, on CUR_WORK (a virtual one; the physical untouched) |
+| `0xfcd0c2` | `r_fa_attr` (same) | 2 | 12 / 256 | **0.63** | ✅ verified | the round trip via `case.continued` |
+| `0xfcfedc` | `clamp_mouse` (same; `.S`) | 17 | 11 / 136 both clamped, 10 / 136 inside | **2.27**, **2.29** (T); `.S` **1.00**, **1.00** | ✅ verified | D0/D1 in and out against DEV_TAB[0/1], high words kept |
+| `0xfca648` | `get_kbshift` (same; `.S`) | 11 | 4 / 80 | **2.10** (T); `.S` **1.00** | ✅ verified | its `rts` is vdi_nop's ($fca652) |
+| `0xfcfa9c` | `gemdos_call` (same; `.S`) | 6 | `.S` 16 / 362 | C unpriced — its TARGET branch is UNEXERCISED (the ROM build links the `.S`); `.S` **1.00** | ✅ verified | Tier 1 through the REAL `trap #1` into the ROM's GEMDOS vs the reconstructed dispatcher + memory manager (Malloc, Mfree, a refused Mfree), three documented spans dropped (p_run's register save, GEMDOS's stack, the termination record); the `.S` over a staged recording trap handler; returns through whatever RETSAV holds (not exercised with a changed value) |
+| `0xfd2d32` | `vr_trnfm` (opcode 110, same; `.S`) | 67 | 134 / 1522, 122 / 1420 copy; 537 / 4910, 527 / 4828 in place; 35 / 580 one word | **0.94**, **0.94**, **1.32**, **1.35**, **1.04** (T); `.S` **1.00** ×5 | ✅ verified | copy $fd2db4 and in-place $fd2d80; 1-4 planes, odd width, both directions, one MFDB as both; the `.S` clobbers D7 outside its movem |
+| `0xfca1b8` | `concat` (`src/vdi/raster.c`; `raster.S`) | 36 | 15 / 216 | **1.70** (T); `.S` **1.00** | ✅ verified | offset = y·BYTES_LIN + ((x&~15) asr SHIFT[PLANES]); the shift table starts at the low byte of its own `rts` (only 1/2/4/8 planes right) and its count is taken mod 64, ≥16 leaving x's sign (13/18 planes pinned); D0.w = x&15, D2's high word clobbered |
+| `0xfcface` | `$a001 put_pixel` (same) | 37 | 47 / 552 | **1.39** (T); `.S` **1.00** | ✅ verified | colours 0..15, 1/2/4 planes and a 13-plane large-x case; unclipped; also through the Line-A exception |
+| `0xfcfb16` | `$a002 get_pixel` (same) | 15 | 55 / 526 | **1.28** (T); `.S` **1.00** | ✅ verified | D0 whole, last plane first, a WORD accumulator (17 planes pinned). Unstaged: PLANES 0's 65536-pass runaway |
+| `0xfca57e` | `$a004 hline` (same) | 228 | 99 / 870 one pixel, 330 / 3204 many groups, 108 / 938 two groups xor | **2.60**, **1.42**, **2.53** (T); `.S` **1.00** ×3 | ✅ verified | 4 write modes × colours × 6 span shapes; real patterns incl. multi-plane; row 0 by BYTES_LIN with WIDTH ± 8; the style sits on the screen's 16-pixel grid |
+| `0xfca58a` | `$a004` patterned entry (same) | 72 | 124 / 1116 | **2.18** (T); `.S` **1.00** | ✅ verified | contour fill's D4/D5/D6 mid-function entry |
+| `0xfca5a2` | `$a004` span entry (same) | 96 | 89 / 760 | **2.83** (T); `.S` **1.00** | ✅ verified | A0 = the pattern word, D0 = the stride |
+| `0xfd1ae0` | CPU hline body, vector 8 (same) | 96 | `.S` 77 / 710, 291 / 2826 | C unpriced (8 C arguments; priced inside the `$a004` rows); `.S` **1.00**, **1.00** | ✅ verified | entered directly; stride-32 user-pattern cases |
+| `0xfcfc56` | `$a005 filled_rect` (same) | 203 | 126 / 1120, 1536 / 13940, 702 / 5830, 23 / 262 | **2.30**, **2.17**, **2.18**, **2.28** (T); `.S` **1.00** ×4 | ✅ verified | clip cutting/touching/missing every side, the partially clipped corners STORED even on a miss; the pattern row wraps by compare past PATMSK·2; rows placed with BYTES_LIN, stepped with WIDTH |
+| `0xfd1b16` | CPU rect-fill body, vector 6 (same) | 64 | `.S` 107 / 980, 4900 / 46450 | C unpriced (7 C arguments); `.S` **1.00**, **1.00** | ✅ verified | entered directly; hatch and MULTIFILL cases |
+| `0xfca1ea` | `$a003 line` (same) | 525 | 129 / 1214 … 841 / 7334 | **1.85**, **2.97**, **2.39**, **3.25**, **1.77**, **2.46**, **1.47** (T); `.S` **1.00** ×7 | ✅ verified | three arms: horizontal (XOR without LSTLIN writes the shortened X2 back), vertical, and the DIAGONAL Bresenham that runs per-plane code BUILT ON THE STACK by $fca3f4; 8 octants, the 45° and error-0 slopes, LSTLIN, LN_MASK rotation; PLANES 8 draws, 9 returns untouched |
+| `0xfd19dc` | CPU vline, vector 7 (same) | 40 | 584 / 5756, 83 / 830 | **3.18**, **1.37** (T); `.S` **1.00**, **1.00** | ✅ verified | entered directly, all modes, up and down (its only callee is $fca3f4 — the map's textblt-helper claim was wrong) |
+| `0xfca3f4` | `line_plane_words` (same) | 16 | 23 / 252 | **2.70** (T); `.S` **1.00** | ✅ verified | the per-plane and/or opcodes a line body runs + `jmp (a3)` |
+| `0xfcac76` | `vsl_type` (`src/vdi/attributes.c`) | 14 | 22 / 306 in range, 21 / 298 out of range | **0.68** in range, **0.73** out of range | ✅ verified | style 1..7 stored 0-based, else 0; contrl[4] first |
+| `0xfcacc0` | `vsl_width` (same file) | 23 | 27 / 536 capped, 26 / 508 below 1 | **0.59** capped, **0.45** below 1 | ✅ verified | clamp 1..SIZ_TAB[6] with the ROM's truncating `divs.w #2` round-down to odd (a staged odd cap and caps below 1); point order pinned by ptsout laid over contrl[2] and WS_LINE_WIDTH |
+| `0xfcad20` | `vsl_ends` (same file) | 11 | 28 / 408, 28 / 398 | **0.70** in range, **0.73** both out of range | ✅ verified | both ends 0..2 else 0 |
+| `0xfcad7c` | `vsl_color` (same file) | 21 | 22 / 332, 21 / 324 | **0.78** in range, **0.72** out of range | ✅ verified | the bound is DEV_TAB[13] itself (`cmp.w; bge`): a colour count of $8000 makes every index 1; MAP_COL pen stored |
+| `0xfcb4a2` | `vsl_udsty` (same file) | 6 | 7 / 140 | **0.92** | ✅ verified | stored raw; no answer, no count, LN_MASK untouched |
+| `0xfcadcc` | `vsm_height` (same file) | 31 | 32 / 868 rounded up, 33 / 882 capped | **0.83** rounded up, **0.81** capped | ✅ verified | clamp to SIZ_TAB, scale by `divs.w`, sets VDI_RESULT; point order pinned (ptsout over contrl[2], MARK_HEIGHT, MARK_SCALE). Unpinned: a zero smallest height (the divide) |
+| `0xfcae58` | `vsm_type` (same file) | 13 | 24 / 314, 25 / 322 | **0.66** in range, **0.67** out of range | ✅ verified | 1..6 else the default; contrl[4] last |
+| `0xfcaea8` | `vsm_color` (same file) | 16 | 24 / 340, 25 / 348 | **0.76** in range, **0.70** out of range | ✅ verified | as vsl_color, contrl[4] last |
+| `0xfcaefe` | `vsf_interior` (same file) | 16 | 54 / 750, 42 / 632 | **0.80** hatch, upper table, **0.69** out of range | ✅ verified | 0..4 else hollow; then st_fl_ptr |
+| `0xfcaf4a` | `vsf_style` (same file) | 24 | 58 / 808, 56 / 792 | **0.83** pattern, upper table, **0.85** out of range | ✅ verified | bound 24 under pattern, 12 otherwise; a pattern style carried into hatch points PATPTR at MAP_COL (a chained case) |
+| `0xfcafb2` | `vsf_color` (same file) | 16 | 22 / 332, 21 / 324 | **0.78** in range, **0.72** out of range | ✅ verified | as vsl_color |
+| `0xfcd6fa` | `vsf_udpat` (same file) | 10 | 280 / 2316, 84 / 832, 18 / 332 | **0.95** every plane, **0.85** one plane, **0.54** refused | ✅ verified | 16 or 16×planes words, else refused silently (nothing stored, not even MULTIFILL). Unpinned: more than 4 planes |
+| `0xfcc9a6` | `st_fl_ptr` (same file) | 12 | 34 / 472, 24 / 362 | **0.84** pattern, upper table, **0.81** user | ✅ verified | the five interiors via $fd397c, both thresholds of both tables. An interior >4 stores an unloaded A5 — callers clamp, the C halts, an oracle-only case pins it |
+| `0xfce3b2` | `vst_effects` (same file) | 15 | 13 / 224 | **0.91** | ✅ verified | masked by INQ_TAB[2] |
+| `0xfce3e6` | `vst_alignment` (same file) | 16 | 28 / 424, 30 / 428 | **0.70** in range, **0.70** out of range | ✅ verified | h 0..2, v 0..5; intin[1] read after intout[0] |
+| `0xfce442` | `vst_rotation` (same file) | 25 | 16 / 428, 16 / 428 | **0.97** rounded up, **0.97** negative | ✅ verified | `add.w #450` wraps (32318 → -32400), `divs.w`/`muls.w #900` |
+| `0xfce560` | `vst_color` (same file) | 16 | 22 / 332, 21 / 324 | **0.79** in range, **0.73** out of range | ✅ verified | as vsl_color |
+| `0xfcb32e` | `vswr_mode` (same file) | 13 | 28 / 346, 28 / 340 | **0.61** in range, **0.64** out of range | ✅ verified | 1..4 stored 0-based; the dispatcher's Line-A copy NOT updated (no setter writes one) |
+| `0xfcb388` | `vsin_mode` (same file) | 45 | 25 / 366, 24 / 350 | **0.72** string, sample, **0.52** no such device | ✅ verified | mode echoed raw, stored minus one; device read after the echo (overlap (1,3)) |
+| `0xfcb3f6` | `vqin_mode` (same file) | 12 | 22 / 330 | **0.73** | ✅ verified | answers the stored mode (mode−1): sample reports 1 |
+| `0xfcb4ba` | `vs_clip` (same file) | 39 | 69 / 914, 16 / 350 | **1.06** reversed, cut, **0.70** off | ✅ verified | sorts ptsin in place (arb_corner); flag stored raw; one-sided bounds |
+| `0xfcb55e` | `arb_corner` (same file) | 28 | 26 / 364 | **0.81** | ✅ verified | x always ascending, y by order; sorts in place |
+| `0xfca6a4` | `vex_timv` (same file) | 6 | 40 / 770 | **1.09** (pinned) | ✅ verified | exchange under `ori #$700`, Tickcal via trap #13; contrl[4] never set. Same-cost SR mutants unpinned (the SR surface is a kit item) |
+| `0xfcff68` | `vex_butv` (same file) | 4 | 5 / 140 | **1.08** | ✅ verified | exchange order pinned (contrl[9..10] over USER_BUT); runs unmasked |
+| `0xfcff80` | `vex_motv` (same file) | 4 | 5 / 140 | **1.08** | ✅ verified | same |
+| `0xfcff98` | `vex_curv` (same file) | 4 | 5 / 140 | **1.08** | ✅ verified | same |
+| `0xfca652` | `vdi_nop` (opcodes 4/10/27/34, `src/vdi/inquire.c`) | 4 | 2 / 56 | **1.00** | ✅ verified | nothing written, not even a count |
+| `0xfcb198` | `vdi_valuator` (opcode 29, same file) | 1 | 4 / 84 | **0.36** | ✅ verified | link/unlk/rts |
+| `0xfcbd7e` | `vql_attributes` (same file) | 28 | 25 / 394 | **0.90** | ✅ verified | mode = the Line-A copy + 1; REV_MAP_COL; no VDI_RESULT; ptsout pointer read after the intout stores |
+| `0xfcbdda` | `vqm_attributes` (same file) | 25 | 24 / 406 | **0.89** | ✅ verified | marker type 0-based; sets VDI_RESULT; contrl[4] before [2]; ptsout pointer read after intout |
+| `0xfcbe3a` | `vqf_attributes` (same file) | 24 | 23 / 362 | **0.89** | ✅ verified | no points |
+| `0xfcb8d0` | `vq_extnd` (same file, + `$fc4e06`) | 23 | 258 / 2390, 251 / 2420 | **0.81** plain, **0.81** extended | ✅ verified | intin[0] read twice (the second decides the speed); the intout pointer reloaded for it; VDI_RESULT=1 |
+| `0xfced9a` | `vst_unload_fonts` (same file) | 2 | 12 / 256 | **0.72** | ✅ verified | leaves the ring's loaded slot and WS_CUR_FONT naming the unloaded font |
+| `0xfcb156` | `vq_mouse` (same file) | 5 | 15 / 292 | **0.71** | ✅ verified | |
+| `0xfcb30a` | `vq_key_s` (same file) | 8 | 13 / 220 | **1.48** (accepted: (A)+(D) through get_kbshift's C frame) | ✅ verified | count before answer |
+| `0xfce5b0` | `vqt_attributes` (same file) | 26 | 32 / 538 | **0.99** | ✅ verified | write mode 0-based FROM THE RECORD; FONT_TOP read after ptsout[0]; ptsout pointer after intout |
+| `0xfce8ca` | `vqt_name` (same file) | 17 | 184 / 1654, 243 / 2252, 268 / 2452 | **0.91** face 1, **0.86** last loaded face, **0.85** past the ring | ✅ verified | 34 words written, 33 counted; a 32-char name runs into FONT_FIRST_ADE; ring walk stops at an empty slot; the 6x6 fallback |
+| `0xfce95a` | `vqt_fontinfo` (same file) | 12 | 32 / 552, 30 / 524 | **0.94** bold italic, **0.95** plain | ✅ verified | LINEA_STYLE tested twice at the ROM's points; ptsout pointer after intout |
+| `0xfd2dd2` | `vs_color` (`src/vdi/palette.c` + `palette.S`) | 92 | 56 / 978 low res, 49 / 540 mono white, 8 / 128 refused | C **1.68**, **1.84**, **2.77** (T); `.S` **1.00**, **1.00**, **1.00** | ✅ verified | byte bound; the palette address folded to 24 bits (30 low-res indexes wrap into $40..$5e); per-mille → 3 bits; the mono arm; `.S` byte-exact. Unpinned: a row-below-0 store (bus error on iron, dropped by the oracle) |
+| `0xfd2e84` | `vq_color` (same files) | 114 | 44 / 516 realized, 23 / 338 requested, 28 / 330 mono, 16 / 236 refused | C **1.81**, **2.59**, **1.56**, **1.53** (T); `.S` **1.00** ×4 | ✅ verified | requested row interleaved read/write; realized from folded low RAM; a row below 0 read from the I/O page (declared); STE fourth bit ignored |
 
 ## Harness
 
@@ -721,19 +791,42 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
   not staged, pokes replacing each other by address, non-fields accepted as fields, an unbounded ptsin — each fixed RED→GREEN.
   Worked examples: `vsf_perimeter` 0.72 and `$a000` 2.43 (accepted: (N), the dual of (M) — a C core answers in D0 alone, so
   several answer registers go through a results pointer; Tier 1 compares all of them, Tier 3 holds D0).
-* **Next** — VDI band 0 (four parallel groups): pure helpers; attribute setters; inquiries + palette; the pixel / hline / rectangle /
-  line primitives with their CPU bodies. Then the blit, text, fill and mouse bands, wide lines / text C / timer, arcs / v_gtext /
-  workstations, and the entries (Line-A `.S`, `vdi_entry`, `vdi_dispatch`, the BIOS-range escape `$fc427a`). GEMDOS: only the
+* **Wave 10 band 0 (2026-09-26) — the VDI's HELPERS, SETTERS, INQUIRIES, PALETTE and the PIXEL / SCANLINE primitives.** Four
+  agents, 70 routines: `src/vdi/helpers.c` (the math/geometry/text helpers, `vr_trnfm`), `attributes.c` (every attribute setter,
+  `st_fl_ptr`, `arb_corner`, the vex exchanges), `inquire.c` + `palette.c` (the inquiries, `vs_color`/`vq_color`), `raster.c` (concat,
+  `$a001`..`$a005`, the three arms of `$a003` incl. the diagonal Bresenham that runs code BUILT ON THE STACK, and the CPU bodies of
+  vectors 6/7/8). THE USER'S POLICY for the hand-written 68000 — C first, a byte-pinned `.S` where the C is over 1.10 — ran for the
+  first time: 22 routines ship as `helpers.S` / `palette.S` / `raster.S`, every one BYTE-EXACT to the ROM (named encodings, no
+  avoidable excusals; raster's cross-region displacements and its fringe-table reference pinned to their exact relocated values) and
+  1.00 on every `.S` row. REVIEW (5 finders) found the policy had NO MECHANISM behind it — the bench linked both twins and ~40 over-bar
+  C rows were justified by hand-typed prose — now ONE table, `include/vdi/transcribed.h` (entry, ROM routine, C core, the registers
+  it leaves changed vs the GCC ABI), from which Tier 3's rule (T) is DERIVED (a transcribed routine's C rows pass only while every
+  `.S` row is ≤ the bar — shown RED on a deleted and on a drifted `.S`), the future ROM build's contract (`atari/target.mk`
+  TRANSCRIBED_*, pinned) and the `.S` entry declarations for C callers. Real divergences fixed RED→GREEN: the palette address not
+  folded to 24 bits (30 low-res indexes wrap into the vector page), `vq_color`'s and the inquiries' read points, the four colour
+  setters' bound wrapping at DEV_TAB[13]=$8000, concat's shift count (mod 64, ≥16 sign fill), get_pixel's word accumulator; and the
+  tests made honest: a weakened mutant restored (row placement by BYTES_LIN), the "unreachable" PLANES>8 guards reached, the `.S`
+  pattern paths exercised, ptsout store-order overlaps, the code-pointer masks narrowed to the registers that really hold code.
+  Names unified: `VDI_ROM_*` / `LINEA_ROM_*` for routine addresses. FINDINGS: no setter updates the dispatcher's Line-A copies (Line-A
+  draws with the old write mode/clip until the next VDI call); a pattern style carried into hatch points PATPTR at MAP_COL; vqin_mode
+  does not round-trip; vqt_name writes 34 words and reports 33; smul_div's `neg.l` rounding; clc_dda's equal-size arm unreachable;
+  concat's shift table starts at its own `rts`; `$a005` stores clipped corners on a miss. Mutation (logged, private builds): helpers.c
+  83/88, attributes.c 105/108, inquire+palette 92/92, raster.c 89/91, raster.S 55/57, helpers.S 32/33 — every survivor named in the
+  sweep logs and equivalent or a documented memory smash.
+* **Next** — VDI band 1: the bit-blit engine + `$a007`/`$a00e` + cpyfm/recfl; the text raster (`$a008`, the CPU TextBlt, fast text);
+  polygon/fill (`$a006`, clip_line, polyline, plygn, contour fill); mouse/input (sprites `$a009`..`$a00d`, the mouse ISR, the VBL cursor,
+  locator/choice/string). Then wide lines / text C / timer, arcs / v_gtext / workstations, and the entries (Line-A `.S`,
+  `vdi_entry`, `vdi_dispatch`, the escape `$fc427a`). GEMDOS: only the
   E_CHG recovery behind the termination record's longjmp remains (design first).
   Earlier lists, still open: the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **3,375 passed** (1 skipped) and `make guarded` the same count (4,119 candidate runs guarded, no fault),
-re-summed at the VDI-foundation commit on 2026-09-26 after a forced relink of the oracle and every candidate;
-`make bench` judges 329 rows (248 ok / 60 accepted / 12 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
+`make test` — **5,966 passed** (1 skipped) and `make guarded` the same count (7,906 candidate runs guarded, no fault),
+re-summed at the VDI band-0 commit on 2026-09-26 after a forced relink of the oracle and every candidate;
+`make bench` judges 507 rows (384 ok / 61 accepted / 40 transcribed / 13 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
 printed table. The kit's own suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged
-(3,851) as the PRG controls. `names.txt`: 468 fn / 308 var / 232 cmt.
+(3,851) as the PRG controls. `names.txt`: 504 fn / 333 var / 245 cmt.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.

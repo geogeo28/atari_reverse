@@ -340,7 +340,7 @@ WORD_BYTES = 2
 _BENCH = None
 
 
-def _blob():
+def blob():
     """The cross-compiled cores, loaded once per process.
 
     Lazily, because a battery must still IMPORT when the blob has not been built — `make test`
@@ -357,7 +357,7 @@ def _blob():
 
 def assert_the_stub_is_the_rom_s_bytes(constant):
     """Every literal word of one handler's `src/bios/isr.S` stub against the ROM's own."""
-    bench = _blob()
+    bench = blob()
     symbol = stub_symbol(constant)
     at = bench.entry(symbol) - bench.base
     for span in LITERAL_SPANS[constant]:

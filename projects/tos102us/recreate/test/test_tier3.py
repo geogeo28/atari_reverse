@@ -25,6 +25,7 @@ same return value, the same callee-saved file, the same off-image streams and no
 side (`tools/recreate_kit/rom_bench.py`). `docs/on-target-execution.md`'s bug class 6 is exactly a
 target build going wrong where a host build is right, and nothing else in this project looks for it.
 """
+import ctypes
 import sys
 from pathlib import Path
 
@@ -35,6 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 import tier3                                               # noqa: E402  (the registry and the bar)
 # ...and the caller a transcription row is netted by, whose cost `trap.py` measures.
 import trap                                                # noqa: E402
+# ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
+import vdi                                                 # noqa: E402
+import vdi_helpers                                         # noqa: E402
 from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
 
 
@@ -57,6 +61,20 @@ def dispatch(bench):
     and it is two more oracle runs, not a number to re-measure per row.
     """
     return tier3.dispatch_cycles(lambda key: tier3.measure(tier3.row_named(key), bench))
+
+
+@pytest.fixture(scope="module")
+def ratio_of(bench):
+    """A row's measured ratio, measured once per worker — mechanism (T) asks it of a routine's `.S` rows
+    for each of its C rows, and those are the same few rows every time."""
+    measured = {}
+
+    def ratio(row):
+        key = (row.symbol, row.case)
+        if key not in measured:
+            measured[key] = tier3.measure(row, bench).ratio
+        return measured[key]
+    return ratio
 
 
 def _row_id(row):
@@ -88,11 +106,11 @@ def test_no_two_rows_share_a_name():
 
 
 @pytest.mark.parametrize("row", tier3.ROWS, ids=_row_id)
-def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch):
+def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch, ratio_of):
     """One row: measure both sides over one case — which raises if the m68k build diverged — then
     put the measurement through the same `verdict` the table prints."""
     measured = tier3.measure(row, bench)
-    state = tier3.verdict(row, measured, dispatch)
+    state = tier3.verdict(row, measured, dispatch, ratio_of)
     assert state not in tier3.FAILED, _why(row, measured, state)
 
 
@@ -107,6 +125,11 @@ def _why(row, measured, state):
                 f"{tier3.RATIO_TOLERANCE:.2f}, which is a change somebody made: nothing here is "
                 f"sampled. Re-pin it in tier3.PERF_ACCEPTED with the new measurement, or put back "
                 f"what moved")
+    if tier3.is_transcribed_c_row(row):
+        return (f"{cost}, over the {tier3.TIER3_FUNCTION_BAR:.2f} bar — and the routine is TRANSCRIBED "
+                f"(include/vdi/transcribed.h), but its `.S` rows no longer carry it: one is over the bar, "
+                f"or there is none. Mechanism (T) admits the C only while the `.S` a target build ships is "
+                f"priced at or under the bar on every row")
     return (f"{cost}, over the {tier3.TIER3_FUNCTION_BAR:.2f} bar. Bring it under — the levers are "
             f"in ../README.md, \"Tier 3\" — or accept it in tier3.PERF_ACCEPTED with the measured "
             f"cost and a reason")
@@ -136,6 +159,71 @@ def test_no_pinned_ratio_is_stale(bench):
             f"tier3.PERF_ACCEPTED carries {key} as an ACCEPTANCE ({pinned:.3f}x, over the "
             f"{tier3.TIER3_FUNCTION_BAR:.2f} bar), but it now measures {measured.ratio:.3f}x — "
             f"under it. Drop the acceptance: it is excusing a cost that is no longer paid")
+
+
+# ---- the VDI helpers' calls: ONE statement of each C signature --------------------------------------
+
+REGISTER_HELPERS = [name for name in vdi.PRIMITIVES if vdi.core_symbol(name) in vdi_helpers.SIGNATURES]
+
+
+@pytest.mark.parametrize("name", REGISTER_HELPERS)
+def test_a_register_helper_s_host_signature_is_its_declared_contract(name):
+    """The Alcyon helpers' Tier 3 calls are DERIVED from `vdi_helpers.SIGNATURES`; the three register
+    routines' come from `vdi.declare_primitive` instead, so this is where the two statements of one C
+    signature are held equal: the image, a longword per argument register, a results pointer when the
+    answer is several registers, and D0 returned when it is among them."""
+    contract = vdi.PRIMITIVES[name]
+    restype, argtypes = vdi_helpers.SIGNATURES[vdi.core_symbol(name)]
+    several = (ctypes.POINTER(vdi_helpers.LONG_ARG),) if len(contract.results) > 1 else ()
+    assert tuple(argtypes) == (vdi_helpers.IMAGE_ARG, *(vdi_helpers.LONG_ARG,) * len(contract.arguments), *several)
+    assert (restype is vdi_helpers.LONG_ARG) == ("d0" in contract.results)
+
+
+# ---- MECHANISM (T): a TRANSCRIBED routine's C rows, carried by its `.S` rows and by nothing else ----
+
+# A C row (T) carries — far over the bar, so no pin or leaf rule could be what admits it instead.
+TRANSCRIBED_C_ROW = ("linea_hline", "one pixel, replace")
+
+
+def test_every_transcribed_routine_ships_a_priced_s_row():
+    """(T) is only as good as the `.S` rows it reads: a TRANSCRIBED routine with none has nothing to be
+    carried by, and its C rows would red — this names the routine instead of each of its rows."""
+    unpriced = sorted(tier3.TRANSCRIBED_AT[address] for address, rows in tier3.SHIPPED_ROWS.items() if not rows)
+    assert not unpriced, (f"{unpriced} are in include/vdi/transcribed.h with no `.S` row in Tier 3 — register "
+                          f"their transcription cases (`vdi.register_transcription`)")
+
+
+def test_no_transcribed_c_row_carries_a_written_acceptance():
+    """The rule REPLACES the entries: an acceptance beside it would carry the C rows on its own the day
+    the `.S` stopped doing so, which is exactly the state (T) exists to refuse."""
+    written = sorted(key for key in tier3.PERF_ACCEPTED if tier3.is_transcribed_c_row(tier3.row_named(key)))
+    assert not written, f"tier3.PERF_ACCEPTED writes down {written}, which mechanism (T) carries — drop them"
+
+
+def test_the_rule_carries_a_transcribed_c_row(bench, dispatch, ratio_of):
+    row = tier3.row_named(TRANSCRIBED_C_ROW)
+    measured = tier3.measure(row, bench)
+    assert measured.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: this C row is over the bar"
+    assert tier3.verdict(row, measured, dispatch, ratio_of) == "transcribed"
+
+
+def test_one_s_row_drifting_over_the_bar_reds_the_c_rows(bench, dispatch, ratio_of):
+    """Every `.S` row but one measured as it is, that one just over the bar: the C row goes OVER."""
+    row = tier3.row_named(TRANSCRIBED_C_ROW)
+    measured = tier3.measure(row, bench)
+    drifted = tier3.SHIPPED_ROWS[tier3.rom_address(row)][-1]
+    over = tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE
+
+    def with_one_drifted(each):
+        return over if each is drifted else ratio_of(each)
+    assert tier3.verdict(row, measured, dispatch, with_one_drifted) == "OVER"
+
+
+def test_a_routine_whose_s_rows_are_gone_reds_the_c_rows(bench, dispatch, ratio_of, monkeypatch):
+    row = tier3.row_named(TRANSCRIBED_C_ROW)
+    measured = tier3.measure(row, bench)
+    monkeypatch.setitem(tier3.SHIPPED_ROWS, tier3.rom_address(row), ())
+    assert tier3.verdict(row, measured, dispatch, ratio_of) == "OVER"
 
 
 # ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------
