@@ -57,8 +57,11 @@ TARGET_LDLIBS := -lgcc
 #     files and the entries they define. (Tier 3's blob links them today, beside the C: it measures both.)
 #   * TRANSCRIBED_C_CORES — the C twins it must NOT link. Each is still compiled — its file holds other
 #     cores — so the ROM build compiles with -ffunction-sections, links with --gc-sections, and refuses an
-#     image whose symbol table still names one of these: a survivor means some C still CALLS the C core,
-#     and on target that call must go through glue to the `.S` entry (the declarations in the header).
+#     image in which one of these is still a C BODY: some C still CALLS the core, and on target that call
+#     must go through glue to the `.S` entry. The glue carries the core's NAME (a call inside one file is
+#     resolved against the section, so only a weak core and a same-named thunk redirect it — see
+#     `TRANSCRIBED_CORE`): `bench/shipped_glue.py` generates it from the table, and Tier 3's shipped-
+#     configuration blob (`../Makefile`) links and measures exactly that arrangement today.
 #
 # `sed` rather than the Python parser because this file is read by two makefiles that share no `$(PY)`,
 # and `ENTRY.` rather than `ENTRY(` because make counts every parenthesis in a `$(shell ...)`;

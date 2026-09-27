@@ -1588,6 +1588,12 @@
 #define LINEA_ROM_CPU_VLINE       0xfd19dc   /* LINEA_VECTOR_VLINE's CPU body */
 #define LINEA_ROM_CPU_HLINE       0xfd1ae0   /* LINEA_VECTOR_HLINE's CPU body */
 #define LINEA_ROM_CPU_RECT_FILL   0xfd1b16   /* LINEA_VECTOR_RECT_FILL's CPU body */
+/* The TEXT raster (`src/vdi/text_raster.c`): $a008 and v_gtext's byte-aligned fast path, each a front end
+ * that jumps through its drawing vector — 9 and 5 — to the `_CPU_` body the captured machine has there. */
+#define LINEA_ROM_TEXTBLT         0xfcee54   /* $a008: A6 = the Line-A base, A5/A6 pushed, `jmp` vector 9 */
+#define LINEA_ROM_CPU_TEXTBLT     0xfd1df6   /* LINEA_VECTOR_TEXTBLT's CPU body */
+#define LINEA_ROM_FAST_TEXT       0xfcf96a   /* v_gtext's `jsr`: D0 = 1 drawn, 0 refused ($fcdba2) */
+#define LINEA_ROM_CPU_FAST_TEXT   0xfd1cc4   /* LINEA_VECTOR_FAST_TEXT's CPU body */
 #define LINEA_ROM_SEEDABORT_DEFAULT 0xfc9f9a /* `moveq #0,d0 / rts`: v_contourfill's SEEDABORT ($fd08e4) */
 #define VDI_ROM_ENTRY             0xfc9f9e   /* where SYSVAR_VDI_ENTRY's routine calls in, D1 = the parameter block */
 #define VDI_ROM_DISPATCH          0xfca9f6
@@ -1711,5 +1717,66 @@
 #define VDI_ROM_VR_TRNFM_OPCODE   110
 #define VDI_ROM_TRNFM_IN_PLACE    0xfd2d80   /* vr_trnfm's transpose over one buffer */
 #define VDI_ROM_TRNFM_COPY        0xfd2db4   /* ...and from one buffer into another */
+/* The BIT-BLOCK TRANSFER (`src/vdi/blit.c`): the two Line-A front ends, the CPU engine drawing vector 4
+ * holds in the captured machine and the threaded logic-op code it jumps through, and the three VDI
+ * functions over them. The register contracts are `test/vdi_blit.py`'s `declare_primitive`s. */
+#define LINEA_ROM_COPY_RASTER     0xfd0346   /* $a00e: two MFDBs, ptsin's two rectangles, intin's mode */
+#define LINEA_ROM_BITBLT          0xfd05fc   /* $a007: A6 = the caller's BITBLT block */
+#define LINEA_ROM_CPU_BLIT        0xfd1038   /* LINEA_VECTOR_BITBLT's CPU body: D0/D2/D4/D6 edges, A6 frame */
+#define LINEA_ROM_CPU_BLIT_OPS    0xfd1694   /* its fragments: the pattern row, the aligners, 16 logic ops */
+#define VDI_ROM_VRO_CPYFM         0xfcb5aa
+#define VDI_ROM_VRO_CPYFM_OPCODE  109
+#define VDI_ROM_VRT_CPYFM         0xfcb5dc
+#define VDI_ROM_VRT_CPYFM_OPCODE  121
+#define VDI_ROM_VR_RECFL          0xfcb614
+#define VDI_ROM_VR_RECFL_OPCODE   114
+/* POLYGONS and FILLS (`src/vdi/fill.c`, `vdi/fill.h`): $a006's scanline fill and the Alcyon geometry
+ * over it, and $a00f's contour (seed) fill with its hand-68000 span and scan helpers. */
+#define LINEA_ROM_FILLED_POLY     0xfca05e   /* $a006: one scanline, Y1, of the polygon ptsin closes */
+#define VDI_ROM_POLYLINE          0xfcbe8c   /* contrl[1] points joined by $a003, clipped when CLIP */
+#define VDI_ROM_CLIP_LINE         0xfcbf16   /* X1,Y1..X2,Y2 cut to the clip rectangle -> D0.w: 0 = none left */
+#define VDI_ROM_PLYGN             0xfcc0ea   /* the polygon filled row by row, then its perimeter */
+#define VDI_ROM_V_FILLAREA        0xfcbbc0
+#define VDI_ROM_V_FILLAREA_OPCODE 9
+#define LINEA_ROM_CONTOUR_FILL    0xfd08f4   /* $a00f */
+#define LINEA_ROM_FILL_SPAN       0xfcfb54   /* Alcyon (x1, x2, y) -> $a004's patterned entry */
+#define LINEA_ROM_END_PTS         0xfcfb66   /* Alcyon (x, y, &xleft, &xright): the seed colour's run */
+#define LINEA_ROM_CRUNCH_QUEUE    0xfd0dc8   /* the queue's empty top records dropped; SEEDABORT per pass */
+#define LINEA_ROM_GET_SEED        0xfd0e22   /* Alcyon (x, y, &xleft, &xright, &collide): a span queued */
+#define VDI_ROM_V_GET_PIXEL       0xfd0fde
+#define VDI_ROM_V_GET_PIXEL_OPCODE 105
+/* The MOUSE, CURSOR and INPUT routines (`src/vdi/mouse.c`): the sprite pair and the hide/show count
+ * ($a009..$a00d), the IKBD mouse vector and the VBL's redraw, the device polls and the three input
+ * functions. The register routines' contracts are `test/vdi_mouse.py`'s `declare_primitive`s. */
+#define LINEA_ROM_DRAW_SPRITE     0xfcffb0   /* $a00d: A0 form, A2 save block, D0/D1 position */
+#define LINEA_ROM_UNDRAW_SPRITE   0xfd0184   /* $a00c: A2 save block */
+#define LINEA_ROM_HIDE_MOUSE      0xfd0254   /* $a00a; also v_hide_c's body */
+#define VDI_ROM_SHOW_CURSOR       0xfd0286   /* the hide count down one; drawn at GCURX/GCURY on reaching 0 */
+#define VDI_ROM_V_SHOW_C          0xfcb120   /* also $a009 */
+#define VDI_ROM_V_SHOW_C_OPCODE   122
+#define VDI_ROM_V_HIDE_C          0xfcb148
+#define VDI_ROM_V_HIDE_C_OPCODE   123
+#define VDI_ROM_VSC_FORM          0xfd02ca   /* also $a00b */
+#define VDI_ROM_VSC_FORM_OPCODE   111
+#define VDI_ROM_MOUSE_ISR         0xfcfe28   /* KBDVECS' mousevec: A0 the relative packet */
+#define VDI_ROM_DEFAULT_USER_CUR  0xfcff0a   /* USER_CUR's default: D0/D1 queued for the VBL */
+#define VDI_ROM_VBL_DRAW_CURSOR   0xfcff2a   /* _vblqueue[0]: the queued position redrawn */
+#define VDI_ROM_MOUSE_INIT        0xfca7f8   /* user vectors, the arrow, the VBL slot, XBIOS Initmous */
+#define VDI_ROM_USER_VECTOR_DEFAULT 0xfca870 /* mouse_init's own closing `rts`: USER_BUT/MOT's default ($fca7f8) */
+#define VDI_ROM_MOUSE_OFF         0xfca872   /* the VBL slot cleared, XBIOS Initmous(0) */
+#define VDI_ROM_POLL_LOCATOR      0xfca88a   /* -> D0: 0 nothing, 1 a button or key, 2 motion */
+#define VDI_ROM_POLL_CHOICE       0xfca7c0   /* TERM_CH = 1; D0 is the CALLER'S */
+#define VDI_ROM_POLL_KEY          0xfca7ca   /* -> D0: 1 a key read into TERM_CH, 0 none waiting */
+#define VDI_ROM_LOCATOR           0xfcb002
+#define VDI_ROM_LOCATOR_OPCODE    28
+#define VDI_ROM_CHOICE            0xfcb1a0
+#define VDI_ROM_CHOICE_OPCODE     30
+#define VDI_ROM_STRING            0xfcb22a
+#define VDI_ROM_STRING_OPCODE     31
+/* The REQUEST spins' WAIT SITES (sched.h): each loop's `jsr` to its poll, where a pass re-enters and where
+ * a case's schedule lands an interrupt's store — before the poll reads CUR_MS_STAT or the keyboard ring. */
+#define VDI_LOCATOR_WAIT_SITE     0xfcb03c
+#define VDI_CHOICE_WAIT_SITE      0xfcb1b8
+#define VDI_STRING_WAIT_SITE      0xfcb268
 
 #endif /* TOS102US_ADDRS_H */

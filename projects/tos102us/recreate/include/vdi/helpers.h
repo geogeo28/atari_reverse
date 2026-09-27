@@ -38,6 +38,11 @@ int16_t vdi_smul_div(int16_t multiplicand, int16_t multiplier, int16_t divisor);
 int16_t vdi_isin(const uint8_t *image, int16_t angle);                         /* $fcab68 */
 int16_t vdi_icos(const uint8_t *image, int16_t angle);                         /* $fcac4c */
 int16_t vdi_clip_code(const uint8_t *image, int16_t x, int16_t y);             /* $fcc092 */
+/* ...its OUTCODE bits, which clip_line ($fcbf16) tests one by one (`btst #0..#3`). */
+#define OUTCODE_LEFT          1
+#define OUTCODE_RIGHT         2
+#define OUTCODE_ABOVE         4
+#define OUTCODE_BELOW         8
 void vdi_clc_nsteps(uint8_t *image);                                           /* $fcc6b4 */
 /* `x_out` / `y_out` are the image addresses the signed coordinates are stored at. */
 void vdi_quad_xform(uint8_t *image, int16_t quadrant, int16_t x, int16_t y,

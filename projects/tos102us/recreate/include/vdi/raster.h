@@ -59,5 +59,12 @@
 #ifndef __ASSEMBLER__
 /* The byte offset of (x, y)'s group from the screen base — `$fca1b8`'s D1 — for the C of every layer. */
 int32_t concat_offset(const uint8_t *image, uint16_t x, uint16_t y);
+/* ...and the primitives other layers' C calls: $a004 (X1..X2 on Y1), its patterned entry ($fca58a,
+ * the contour fill's), $a003 (X1,Y1..X2,Y2) and $a002 (ptsin[0]'s colour). */
+void linea_hline(uint8_t *image);
+void linea_hline_patterned(uint8_t *image, uint32_t x1, uint32_t y, uint32_t x2);
+void linea_line(uint8_t *image);
+uint32_t linea_get_pixel(uint8_t *image);
+void linea_filled_rect(uint8_t *image);     /* $a005 X1,Y1..X2,Y2 — vr_recfl's */
 #endif
 #endif /* TOS102US_VDI_RASTER_H */

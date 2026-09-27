@@ -18,6 +18,7 @@
 #include "vdi/vdi.h"
 #include "vdi/font.h"
 #include "vdi/helpers.h"
+#include "vdi/transcribed.h"
 
 #define WORD_BYTES 2
 
@@ -81,6 +82,7 @@ int16_t vdi_vec_len(int16_t dx, int16_t dy)
  * crossings with it. */
 #define SORT_MINIMUM_WORDS 2
 
+TRANSCRIBED_CORE
 void vdi_sort_words(uint8_t *image, uint32_t count, uint32_t array)
 {
     uint16_t last_pair = (uint16_t)((uint16_t)count - SORT_MINIMUM_WORDS);   /* both `dbf` counts */
@@ -116,6 +118,7 @@ void vdi_sort_words(uint8_t *image, uint32_t count, uint32_t array)
  *   * a quotient too big for a word leaves `divs.w`'s register unchanged, so the "quotient" is then the
  *     product's low word and the "remainder" its high word.
  * A divisor of 0 takes vector 5 (`vdi/helpers.h`'s divide). */
+TRANSCRIBED_CORE
 int16_t vdi_smul_div(int16_t multiplicand, int16_t multiplier, int16_t divisor)
 {
     int32_t product = (int32_t)multiplicand * multiplier;
@@ -216,11 +219,7 @@ int16_t vdi_icos(const uint8_t *image, int16_t angle)
  * ============================================================================================= */
 
 /* $fcc092 — the Cohen-Sutherland outcode of (x, y) against the Line-A clip rectangle: left or right,
- * plus above or below, signed compares, inclusive edges. */
-#define OUTCODE_LEFT          1
-#define OUTCODE_RIGHT         2
-#define OUTCODE_ABOVE         4
-#define OUTCODE_BELOW         8
+ * plus above or below, signed compares, inclusive edges (the codes are `vdi/helpers.h`'s). */
 
 int16_t vdi_clip_code(const uint8_t *image, int16_t x, int16_t y)
 {
@@ -292,6 +291,7 @@ void vdi_quad_xform(uint8_t *image, int16_t quadrant, int16_t x, int16_t y, uint
  * so is an `actual` of 0 or below, which no font the ROM has carries. A `requested` of 0 or below IS
  * reachable — it is a word the application hands vst_height. The cases pin every arm regardless: the
  * routine is the ROM's, and a caller of the `.S` could reach them. */
+TRANSCRIBED_CORE
 int16_t vdi_clc_dda(uint8_t *image, int16_t actual, int16_t requested)
 {
     uint16_t numerator;
@@ -312,6 +312,7 @@ int16_t vdi_clc_dda(uint8_t *image, int16_t actual, int16_t requested)
  * increment `size` times, and each CARRY out of it is one more line. Scaling up adds one line besides
  * per step; scaling down answers at least 1. VDI_DDA_DOUBLE doubles instead, and a size below 1 (the
  * `subq.w #1` goes negative) answers 0 in either direction. */
+TRANSCRIBED_CORE
 int16_t vdi_act_siz(const uint8_t *image, int16_t size)
 {
     uint16_t increment = be16(image + LINEA_DDA_INC);
@@ -396,6 +397,7 @@ static uint32_t clamp_word(uint32_t coordinate, int16_t last)
     return coordinate;
 }
 
+TRANSCRIBED_CORE
 uint32_t vdi_clamp_mouse(const uint8_t *image, uint32_t x, uint32_t y, uint32_t *results)
 {
     int16_t last_x = (int16_t)be16(image + LINEA_DEV_TAB + VDI_DEV_TAB_MAX_X_INDEX * WORD_BYTES);
@@ -410,6 +412,7 @@ uint32_t vdi_clamp_mouse(const uint8_t *image, uint32_t x, uint32_t y, uint32_t 
  * KBSHIFT, below Caps Lock. `move.b` then `andi.w`: D0's low word, over the caller's high word. */
 #define KBSHIFT_MODIFIER_KEYS_MASK ((1u << KBSHIFT_CAPSLOCK_BIT) - 1)   /* ($fca64e andi.w #15) */
 
+TRANSCRIBED_CORE
 uint32_t vdi_get_kbshift(const uint8_t *image, uint32_t entry_d0)
 {
     return set_low_word(entry_d0, (uint16_t)(image[KBSHIFT] & KBSHIFT_MODIFIER_KEYS_MASK));
@@ -462,6 +465,7 @@ static uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_
 }
 #endif
 
+TRANSCRIBED_CORE
 uint32_t vdi_gemdos_call(uint8_t *image, uint32_t return_site, uint16_t function, uint32_t argument)
 {
     wr32(image + LINEA_RETSAV, return_site);
@@ -580,6 +584,7 @@ static void transpose_in_place(uint8_t *image, uint32_t base, uint16_t columns, 
  * destination's address, and the DESTINATION MFDB's `stand` flag set to the format it now holds. Its
  * other fields are not written: GEM's caller fills them. The source's geometry and flag are read before
  * the destination's flag is stored, and both addresses after — the ROM's order. */
+TRANSCRIBED_CORE
 void vdi_vr_trnfm(uint8_t *image)
 {
     uint32_t contrl = linea_pointer(image, LINEA_CONTRL);

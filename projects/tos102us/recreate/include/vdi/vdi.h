@@ -197,9 +197,11 @@
 /* ...and just before THAT, the highest colour index per plane count: bytes indexed by LINEA_PLANES
  * itself, so entry 0 is the low byte of the `rts` in front of them ($fd2de0 `(pc,d1.w)` at $fd2e3f). */
 #define VDI_PEN_MASKS         0xfd2e3f   /*                                     ($fd2de0, $fd2ea8)  */
-/* Two of LINEA_STYLE's text-effect bits, as vqt_fontinfo tests them in its low byte. */
+/* LINEA_STYLE's text-effect bits: vqt_fontinfo tests two of them in its low byte, TextBlt all four. */
 #define VDI_STYLE_THICKEN_MASK 0x0001    /* bold                                ($fce984 btst #0)   */
+#define VDI_STYLE_LIGHTEN_MASK 0x0002    /* light                               ($fd2424 btst #1)   */
 #define VDI_STYLE_SKEW_MASK   0x0004     /* italic                              ($fce99a btst #2)   */
+#define VDI_STYLE_OUTLINE_MASK 0x0010    /* outlined                            ($fd1ea2 btst #4)   */
 /* The value WS_FILL_STYLE holds for the user-defined pattern — the one interior whose planes the
  * dispatcher copies into LINEA_MULTIFILL. A VALUE of the field, not a field. */
 #define VDI_INTERIOR_USER     4          /*                                     ($fcaa8e cmpi.w #4) */
@@ -257,6 +259,29 @@ static inline void answer_points(uint8_t *image, uint16_t points)
 static inline void answer_words(uint8_t *image, uint16_t words)
 {
     wr16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_INTOUT, words);
+}
+
+/* ---- a WORD of the VDI's own RAM — a Line-A variable, a scratch word — by its address ------------
+ * Signed where the ROM's Alcyon C reads an `int` (`ram_word`), unsigned where its hand 68000 reads a
+ * pattern or a count (`ram_uword`). */
+static inline int16_t ram_word(const uint8_t *image, uint32_t at)
+{
+    return (int16_t)be16(image + at);
+}
+
+static inline uint16_t ram_uword(const uint8_t *image, uint32_t at)
+{
+    return be16(image + at);
+}
+
+static inline void set_ram_word(uint8_t *image, uint32_t at, uint16_t value)
+{
+    wr16(image + at, value);
+}
+
+static inline void add_ram_word(uint8_t *image, uint32_t at, uint16_t delta)
+{
+    wr16(image + at, (uint16_t)(be16(image + at) + delta));
 }
 
 /* The workstation the dispatcher made current, by its record's address. */

@@ -74,7 +74,7 @@ def test_get_kbshift_answers_the_four_modifier_bits(state):
     assert regs["d0"] == (KBSHIFT_ENTRY_D0 & 0xFFFF_0000) | (state & 0x0F)
 
 
-# ---- the transcriptions (`src/vdi/helpers.S`), over the same shapes ---------------------------------
+# ---- the transcriptions (clamp_mouse in `src/vdi/mouse.S`, get_kbshift in `helpers.S`), same shapes ------
 
 @pytest.mark.parametrize("x,y", ((160, 100), (-1, LAST_Y + 1), (LAST_X + 1, -1), (-32768, 32767), (LAST_X, 0)))
 def test_clamp_mouse_transcription_behaves_as_the_rom(x, y):

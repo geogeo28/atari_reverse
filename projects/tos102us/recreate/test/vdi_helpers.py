@@ -8,7 +8,7 @@ the high word (`vdi/helpers.h`). So `run_call` stages the words where `jsr` leav
 `vdi.declare_primitive` / `vdi.run_primitive` instead, which is the one register map `bench/tier3.py`
 reads too.
 
-`bench/tier3.py` DERIVES its `CALL` entries for the Alcyon calls from the cores' ctypes signatures below,
+`bench/tier3.py` DERIVES its `CALL` entries for the Alcyon calls from the signatures below (`vdi.ALCYON`),
 decoding each argument out of the same frame at the offset the widths before it add up to — so the two
 halves of the one fact are stated once.
 """
@@ -23,6 +23,7 @@ from harness import BASE_IMAGE, LIB, _lib, addrs
 import abi
 import case
 import vdi
+from vdi import IMAGE_ARG, LONG_ARG, LONG_BYTES, WORD_ARG, WORD_BYTES, WORD_RESULT
 from opcodes import DROP_STACK_BYTES, LOAD_IMMEDIATE, PUSH_RETURN_PC, PUSH_STACK_LONG, RTE, RTS
 
 # `vdi/helpers.h`'s own constants — the scaler's markers — parsed as `test/vdi.py` parses its headers.
@@ -30,53 +31,48 @@ CONSTANTS = addrs.parse(Path(__file__).resolve().parents[1] / "include" / "vdi" 
                         known={**addrs.ADDRS, **vdi.CONSTANTS})
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
-# An Alcyon `int` — the width every helper's answer is compared at (see the module docstring).
-WORD_RESULT = 16
-WORD_BYTES = 2
-LONG_BYTES = 4
+# The C signature of every ALCYON core `src/vdi/helpers.c` reconstructs, declared through `vdi.declare_alcyon`
+# (the one registry `bench/tier3.py` and the shipped build's glue read). The words are declared SIGNED where
+# the C is `int16_t` — Apple's arm64 ABI leaves a caller to extend a short argument, so a value passed
+# without its declared type would reach the core as the wrong word.
+for _name, _restype, _argtypes in (
+        ("VDI_ROM_VEC_LEN", ctypes.c_uint16, (WORD_ARG, WORD_ARG)),
+        ("VDI_ROM_SMUL_DIV", ctypes.c_uint16, (WORD_ARG, WORD_ARG, WORD_ARG)),
+        ("VDI_ROM_ISIN", ctypes.c_uint16, (IMAGE_ARG, WORD_ARG)),
+        ("VDI_ROM_ICOS", ctypes.c_uint16, (IMAGE_ARG, WORD_ARG)),
+        ("VDI_ROM_CLIP_CODE", ctypes.c_uint16, (IMAGE_ARG, WORD_ARG, WORD_ARG)),
+        ("VDI_ROM_CLC_NSTEPS", None, (IMAGE_ARG,)),
+        ("VDI_ROM_QUAD_XFORM", None, (IMAGE_ARG, WORD_ARG, WORD_ARG, WORD_ARG, LONG_ARG, LONG_ARG)),
+        ("VDI_ROM_CLC_DDA", ctypes.c_uint16, (IMAGE_ARG, WORD_ARG, WORD_ARG)),
+        ("VDI_ROM_ACT_SIZ", ctypes.c_uint16, (IMAGE_ARG, WORD_ARG)),
+        ("VDI_ROM_COPY_NAME", None, (IMAGE_ARG, LONG_ARG, LONG_ARG)),
+        ("VDI_ROM_FONT_BYTESWAP", None, (IMAGE_ARG,)),
+        ("VDI_ROM_S_FA_ATTR", None, (IMAGE_ARG,)),
+        ("VDI_ROM_R_FA_ATTR", None, (IMAGE_ARG,))):
+    vdi.declare_alcyon(_name, _restype, _argtypes)
 
-IMAGE_ARG = ctypes.POINTER(ctypes.c_uint8)
-WORD_ARG = ctypes.c_int16
-LONG_ARG = ctypes.c_uint32
-
-# The C signature of every core `src/vdi/helpers.c` reconstructs, as ctypes spells it: (restype, argtypes). The
-# words are declared SIGNED where the C is `int16_t` — Apple's arm64 ABI leaves a caller to extend a
-# short argument, so a value passed without its declared type would reach the core as the wrong word.
-SIGNATURES = {
-    "vdi_vec_len": (ctypes.c_uint16, (WORD_ARG, WORD_ARG)),
-    "vdi_smul_div": (ctypes.c_uint16, (WORD_ARG, WORD_ARG, WORD_ARG)),
-    "vdi_isin": (ctypes.c_uint16, (IMAGE_ARG, WORD_ARG)),
-    "vdi_icos": (ctypes.c_uint16, (IMAGE_ARG, WORD_ARG)),
-    "vdi_clip_code": (ctypes.c_uint16, (IMAGE_ARG, WORD_ARG, WORD_ARG)),
-    "vdi_clc_nsteps": (None, (IMAGE_ARG,)),
-    "vdi_quad_xform": (None, (IMAGE_ARG, WORD_ARG, WORD_ARG, WORD_ARG, LONG_ARG, LONG_ARG)),
-    "vdi_clc_dda": (ctypes.c_uint16, (IMAGE_ARG, WORD_ARG, WORD_ARG)),
-    "vdi_act_siz": (ctypes.c_uint16, (IMAGE_ARG, WORD_ARG)),
-    "vdi_copy_name": (None, (IMAGE_ARG, LONG_ARG, LONG_ARG)),
-    "vdi_font_byteswap": (None, (IMAGE_ARG,)),
-    "vdi_s_fa_attr": (None, (IMAGE_ARG,)),
-    "vdi_r_fa_attr": (None, (IMAGE_ARG,)),
+# ...and the host signatures of the cores that are NOT Alcyon calls: the three REGISTER ROUTINES, whose
+# contracts are declared below and held to these by `test_tier3.py`, and `gemdos_call`, whose C takes the
+# return site its Alcyon frame cannot carry.
+REGISTER_SIGNATURES = {
     "vdi_sort_words": (None, (IMAGE_ARG, LONG_ARG, LONG_ARG)),
     "vdi_clamp_mouse": (LONG_ARG, (IMAGE_ARG, LONG_ARG, LONG_ARG, ctypes.POINTER(LONG_ARG))),
     "vdi_get_kbshift": (LONG_ARG, (IMAGE_ARG, LONG_ARG)),
     "vdi_gemdos_call": (LONG_ARG, (IMAGE_ARG, LONG_ARG, ctypes.c_uint16, LONG_ARG)),
 }
-for _symbol, (_restype, _argtypes) in SIGNATURES.items():
+for _symbol, (_restype, _argtypes) in REGISTER_SIGNATURES.items():
     getattr(_lib, _symbol).restype = _restype
     getattr(_lib, _symbol).argtypes = list(_argtypes)
 
 # THE REGISTER ROUTINES' CONTRACTS, declared in this SHARED module rather than in the battery that runs
 # each, so `bench/tier3.py` — which builds its calls from `vdi.PRIMITIVES` — sees them whichever battery
-# was imported first. `test_tier3.py` holds each against its ctypes signature above.
+# was imported first.
 vdi.declare_primitive("VDI_ROM_SORT_WORDS", arguments=("d0", "a0"))
 vdi.declare_primitive("VDI_ROM_CLAMP_MOUSE", arguments=("d0", "d1"), results=("d0", "d1"))
 vdi.declare_primitive("VDI_ROM_GET_KBSHIFT", arguments=("d0",), results=("d0",))
 # ...and the one core with no Tier 3 C row: `vdi_gemdos_call`'s cases are registered UNPRICED
-# (`test_vdi_helpers_gemdos.py` says why). Every other core above that is not a register routine is an
-# ALCYON CALL, and `bench/tier3.py` derives its call — frame offsets and all — from its signature here.
+# (`test_vdi_helpers_gemdos.py` says why).
 UNPRICED_CORES = ("vdi_gemdos_call",)
-ALCYON_CORES = tuple(symbol for symbol in SIGNATURES if symbol not in UNPRICED_CORES
-                     and not any(vdi.core_symbol(name) == symbol for name in vdi.PRIMITIVES))
 
 
 def core(name):
@@ -87,7 +83,7 @@ def core(name):
 
 def uses_image(name):
     """Whether the core's first argument is the image (every one but the two pure arithmetic ones)."""
-    return SIGNATURES[vdi.core_symbol(name)][1][:1] == (IMAGE_ARG,)
+    return vdi.ALCYON[name].argtypes[:1] == (IMAGE_ARG,)
 
 
 def run_call(name, frame, arguments=(), pokes=None, **kwargs):
@@ -95,7 +91,7 @@ def run_call(name, frame, arguments=(), pokes=None, **kwargs):
     pokes at `abi.FIRST_ARG`) over `pokes`, against its core called with `arguments` — the same values
     as C arguments. Answers a `vdi.Result`; `kwargs` are `case.run`'s."""
     function = core(name)
-    returns = SIGNATURES[vdi.core_symbol(name)][0]
+    returns = vdi.ALCYON[name].restype
     staged = vdi.merge_pokes(pokes, frame)
 
     def glue(_lib_, buf):

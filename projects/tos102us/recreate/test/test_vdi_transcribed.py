@@ -12,7 +12,9 @@ tree does another:
 * each row names a ROM routine, a host C core, and a blob entry for both;
 * each row's REGISTER CONTRACT is the ROM's own, measured: the callee-saved registers the routine leaves
   changed over every registered `.S` case — which the transcription relation proves the `.S` leaves too;
-* the C that still CALLS a transcribed C core is the list the header names, read out of the m68k build;
+* every C core is defined `TRANSCRIBED_CORE`, so it stays a call glue can replace;
+* the C that still CALLS a transcribed C core is the list `vdi.C_CALLERS_OF_TRANSCRIBED_CORES` names, read
+  out of the m68k build — and in the SHIPPED blob each of those calls reaches the core's generated glue;
 * and every staged caller a transcription row is entered through costs what both columns are net of.
 """
 import re
@@ -30,6 +32,7 @@ import vdi
 RECREATE = Path(__file__).resolve().parents[1]
 KIT = RECREATE.parents[2] / "tools" / "recreate_kit"
 BENCH_ELF = RECREATE / "build" / "bench" / "bench.elf"
+SHIPPED_ELF = RECREATE / "build" / "bench_shipped" / "bench.elf"
 MAKE_LISTS = ("TRANSCRIBED_ENTRIES", "TRANSCRIBED_C_CORES", "TRANSCRIBED_SOURCES")
 # The GCC m68k ABI: D0/D1/A0/A1 are the callee's to change, and these the caller's to keep (A7 is SP).
 GCC_CALLEE_SAVED = ("d2", "d3", "d4", "d5", "d6", "d7", "a2", "a3", "a4", "a5", "a6")
@@ -39,13 +42,8 @@ UNOBSERVED = {
     "vdi_rom_gemdos_call": ({"d2", "a2"}, "its cases take a RECORDING `trap #1` handler "
                                           "(`test_vdi_helpers_gemdos.py`); GEMDOS itself keeps only D3-D7/A3-A6"),
 }
-# The C that calls a transcribed C core from outside the transcribed set, and so must switch to glue the
-# day the ROM build links cores (`include/vdi/transcribed.h`, the declarations): (caller, core).
-C_CALLERS_OF_TRANSCRIBED_CORES = {("vdi_vq_key_s", "vdi_get_kbshift")}
-
-
 def _core(entry):
-    return vdi.core_symbol(vdi.transcription_routine(entry))
+    return vdi.transcribed_core(entry)
 
 
 @pytest.fixture(scope="module")
@@ -102,22 +100,36 @@ def test_each_row_declares_the_callee_saved_registers_the_rom_leaves_changed(ent
         f"over its registered cases{f' (and {sorted(unobserved)} unobservable here)' if unobserved else ''}")
 
 
-def test_the_c_callers_of_a_transcribed_core_are_the_ones_the_header_names():
-    """Read out of the m68k build, where the compiler has said which calls survived inlining: every
-    reference to a transcribed C core from a function outside the transcribed set."""
-    cores = {_core(entry) for entry in vdi.TRANSCRIBED}
-    listing = subprocess.run(["m68k-elf-objdump", "-d", str(BENCH_ELF)], capture_output=True, text=True,
-                             check=True).stdout
-    function, callers = None, set()
-    for line in listing.splitlines():
-        start = re.match(r"^[0-9a-f]+ <(\w+)>:$", line)
-        if start:
-            function = start.group(1)
-            continue
-        for target in re.findall(r"<(\w+)>", line):
-            if target in cores and target != function and function not in cores:
-                callers.add((function, target))
-    assert callers == C_CALLERS_OF_TRANSCRIBED_CORES
+def test_the_c_callers_of_a_transcribed_core_are_the_ones_the_door_names():
+    """Read out of the m68k build, where the compiler has said which calls it made: every reference to a
+    transcribed C core from a function outside the table — the list the shipped build's glue is made for."""
+    assert vdi.callers_of_transcribed_cores(vdi.call_graph(BENCH_ELF)) == vdi.C_CALLERS_OF_TRANSCRIBED_CORES
+
+
+# `TRANSCRIBED_CORE` on the line before a definition: the attribute, then the return type and the name.
+_MARKED_DEFINITION = re.compile(r"^TRANSCRIBED_CORE\n[a-z][\w ]*?\b(\w+)\(", re.MULTILINE)
+
+
+def test_every_transcribed_core_is_defined_as_one():
+    """Without the attribute GCC may inline a core into its caller, where no link-time glue reaches it:
+    the shipped build would go on running the C, and the caller pairs above would name the wrong call."""
+    marked = {name for source in (RECREATE / "src").glob("*/*.c")
+              for name in _MARKED_DEFINITION.findall(source.read_text())}
+    assert marked == set(vdi.TRANSCRIBED_CORES), (
+        f"cores defined without TRANSCRIBED_CORE: {sorted(set(vdi.TRANSCRIBED_CORES) - marked)}; "
+        f"marked functions no row names: {sorted(marked - set(vdi.TRANSCRIBED_CORES))}")
+
+
+def test_in_the_shipped_configuration_every_called_core_is_its_glue():
+    """The shipped blob (`build/bench_shipped/`): each call a C caller makes of a core still names the core,
+    and that name is now the GENERATED thunk, whose one reference is the core's `.S` entry — not the C body,
+    which the weak attribute let the thunk displace."""
+    graph = vdi.call_graph(SHIPPED_ELF)
+    assert vdi.callers_of_transcribed_cores(graph) == vdi.C_CALLERS_OF_TRANSCRIBED_CORES
+    for core in sorted({core for _caller, core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES}):
+        assert graph[core] == {vdi.TRANSCRIBED_CORES[core]}, (
+            f"{core} in the shipped blob references {sorted(graph[core])}, not its `.S` entry alone — the "
+            f"call links to the C body rather than to bench/shipped_glue.py's thunk")
 
 
 def test_the_declarations_compile_and_refuse_a_plain_call():

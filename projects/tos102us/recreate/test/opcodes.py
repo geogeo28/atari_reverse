@@ -45,6 +45,10 @@ LOAD_IMMEDIATE = {"d0": b"\x20\x3c", "d1": b"\x22\x3c", "d2": b"\x24\x3c",
 # than a second constant — two spellings of one word is how they come to disagree.
 LOAD_ADDRESS_IMMEDIATE = LOAD_IMMEDIATE["a0"]
 STORE_A5_ABSOLUTE = b"\x23\xcd"         # move.l  a5,<xxx>.l
+STORE_LONG_REGISTER = {"d0": b"\x23\xc0", "d1": b"\x23\xc1"}     # move.l  Dn,<xxx>.l
+# `suba.l An,An`, per register: how a staged caller zeroes a code pointer a transcription leaves behind.
+CLEAR_ADDRESS_REGISTER = {"a2": b"\x95\xca", "a3": b"\x97\xcb", "a4": b"\x99\xcc", "a5": b"\x9b\xcd",
+                          "a6": b"\x9d\xce"}
 COPY_LONG_ABSOLUTE = b"\x23\xf9"        # move.l  <xxx>.l,<yyy>.l
 
 # ---- ...and the same instructions as WORDS -------------------------------------------------------
@@ -71,3 +75,6 @@ MOVE_B_A0_TO_A1 = 0x12D8                # move.b  (a0)+,(a1)+
 MOVE_B_A1_TO_A0 = 0x10D9                # move.b  (a1)+,(a0)+
 DBF_D2 = 0x51CA                         # dbf     d2,<d16>
 DBF_D1 = 0x51C9                         # dbf     d1,<d16>
+SUBQ_W_1_ABSOLUTE_LONG = 0x5379         # subq.w  #1,<xxx>.l
+SEQ_D0 = 0x57C0                         # seq     d0
+EXT_W_D0 = 0x4880                       # ext.w   d0

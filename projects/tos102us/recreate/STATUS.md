@@ -13,7 +13,7 @@ counts in this file against its rows.
 | bios | 20 | — | 0.88–3.63x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
-| vdi + linea | 72 | — | shipped code 0.36–1.48x (`vq_key_s` and `$a000` accepted); the hand-68000 routines ship as `.S` at 1.00 (their C, 1.06–3.25x, carried by (T) — `include/vdi/transcribed.h`) | STARTED |
+| vdi + linea | 112 | — | shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 42 hand-68000 routines ship as byte-exact `.S` at 1.00 (their C carried by (T)); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.78–1.08) | STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
@@ -255,7 +255,7 @@ a fraction of what it moved the core by, and these three rows are a weaker instr
 figures suggest. NETTING THE STUB OUT (a per-row `staged_entry` measured from a zero-count `Rwabs`)
 is a bench change and is PARKED below.
 
-## Verified — vdi (72)
+## Verified — vdi (112)
 
 The VDI + Line-A component (`$fc9f0c..$fd2f21`, `src/vdi/`), started 2026-09-26 on a read-only map of the whole range and a
 FOUNDATION every band builds on: `include/vdi/{linea,vdi,font}.h` (every field cited to a ROM access and TAGGED with its width,
@@ -269,6 +269,46 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 |---|---|---|---|---|---|---|
 | `0xfcb45c` | `vsf_perimeter` (VDI opcode 104, `src/vdi/vdi.c`) | 10 | 16 / 314 outlined, 17 / 322 not outlined | **0.72** outlined, **0.70** not outlined | ✅ verified | the VDI's worked example, entered as the dispatcher's `jsr` leaves the machine, over a DISPATCHED workstation (record + the dispatcher's copies): six intin words incl. $0100 and $8000/$ffff, stored normalised to 0/1 in intout[0] and `WS_FILL_PER` over a stale $5a5a; the workstation written is the one `LINEA_CUR_WORK` names (a virtual one, the physical record untouched); contrl[4] = 1 written LAST, pinned by laying intout over it. Opcode 104 read out of the ROM's table. Mutation 10/10 |
 | `0xfc9f34` | `$a000` linea_init (Line-A, `src/vdi/linea.c`) | 3 | 6 / 96 | **2.43** (accepted: (N), the answer registers written through a results pointer) | ✅ verified | the primitive doors' example: D0/A0 = the Line-A base, A1 = $a000's font table, A2 = the opcode table, EACH compared register by register on both shores (Tier 3's column holds D0: the core returns it); entered by `jsr` and — unpriced, entered at a stub — THROUGH the Line-A exception, where the handler preserves D3/A3 and the `rts` after the opcode word is reached. Mutation 3/3 |
+| `0xfd1038` | `linea_cpu_blit` (`src/vdi/blit.c`; `blit.S`) | 613 | 962 / 9074, 4997 / 39776, 686 / 5910, 244 / 2790 | **7.47**, **7.30**, **3.77**, **2.83** (T); `.S` **1.00** ×4 | ✅ verified | the threaded engine: all 16 aligners × both directions × widths (shift 0 with odd spans = aligner 8), 16 ops with and without a pattern, the fast copy, direction by a 32-bit address compare, the latch's stale high half; P_ADDR re-tested PER PLANE (a plane stepped to P_ADDR 0 ANDs nothing); MIDDLE_COUNT re-read before every row and per plane on the no-source path; the runaway counts pinned (height 0 → 65536 rows, plane count 0 → 65536 planes, a one-word-source fast copy). `.S` byte-exact but for 57 pinned relocations. Strict mutation: C 101/109 (6 survivors equivalent or host-UB, 2 abnormal = process aborts), `.S` 54/56 |
+| `0xfd05fc` | `linea_bitblt` $a007 (same) | (engine battery) | 711 / 6774, 274 / 3002 | **7.46**, **2.70** (T); `.S` **1.00** ×2 | ✅ verified | a6 = the caller's block `adda #76`; the far corners and engine scratch stored back into it |
+| `0xfd0346` | `linea_copy_raster` $a00e (same) | 120 | 5891 / 48308, 4620 / 37956, 92 / 1318 | **8.70**, **9.18**, **1.39** (T); `.S` **1.00** ×3 | ✅ verified | MFDB → BITBLT frame (null base = the screen, WIDTH); bit 4 = the PATTERN flag (the map had it as opaque/transparent); transparency via COPY_TRAN; clips only a screen destination; the pen test `bmi` (negatives index MAP_COL backwards); the dest-plane `btst` mod 32; six refusals |
+| `0xfcb5aa` | `vro_cpyfm` (109, same) | 5 | 5457 / 48236 | **1.00** (T→ through) | ✅ verified | both rectangles sorted in place (arb_corner); measured as it ships (through the `.S`) |
+| `0xfcb5dc` | `vrt_cpyfm` (121, same) | 5 | 5142 / 42774 | **1.00** (T→) | ✅ verified | COPY_TRAN = $ffff |
+| `0xfcb614` | `vr_recfl` (114, same) | 28 | 6563 / 60778, 863 / 7040 | **1.00**, **1.04** (T→) | ✅ verified | WS_FILL_COLOR spread into COLBIT; `$a005`; saves D6 unused |
+| `0xfcee54` | `$a008 textblt` (`src/vdi/text_raster.c`; `text_raster.S`) | 1675 | 1487 / 15522 two words, 723 / 8676 one word, 5390 / 52130 bold italic, 2726 / 29456 light, 4682 / 45304 outlined turned, 8834 / 85130 scaled, 68 / 892 clipped away | **4.41**, **3.55**, **3.40**, **4.30**, **2.72**, **3.67**, **1.51** (T); `.S` **1.00** ×7 | ✅ verified | all 20 write modes + the stray modes past 19 that land on ops (the ones read from the easter egg `"  Dave StaUgas loves Bea Hablig "`), every effect alone and combined, four row loops, the skew step's two polarities, rotation 90/180/270/other, DDA scaling, each clip edge, 1-4 planes; an ODD op index (the ROM's address error) and an op slot naming an EFFECT fragment HALT on both builds (mode 44 + LIGHTEN spins in the ROM). Strict mutation: C 203/224 (18 equivalent — six thicken-first reasoned, not proved; 3 abnormal = the C's own halts) |
+| `0xfd1df6` | CPU TextBlt, vector 9 (same) | (above) | `.S` 1490 / 15572 … 71 / 942 | C unpriced (entered only below `$a008`'s frame); `.S` **1.00** ×7 | ✅ verified | the `.S` held to the ROM for every write mode up to 576 (the computed limit where the op tables leave the transcribed region); `.S` 24/28 strict (4 equivalent, one believed not proved) |
+| `0xfcf96a` | `fast_text_try` (same) | 163 | 11359 / 108310 forty chars, 2581 / 22398 six, 10 / 128 refused | **3.10**, **1.95**, **1.25** (T); `.S` **1.00** ×3 | ✅ verified | shared refusal BEFORE its entry ($fcf964), a conservative clip test (a glyph touching the far edge refused), the count a whole word |
+| `0xfd1cc4` | CPU fast text, vector 5 (same) | (above) | `.S` 11349 / 108242, 2555 / 22228 | C unpriced; `.S` **1.00** ×2 | ✅ verified | `dbf d3` into the character loop's own `dbf`; the odd/even byte walk |
+| `0xfca05e` | `$a006 filled_poly` (`src/vdi/fill.c`; `fill.S`) | 170 | 445 / 4664 pentagram row, 2306 / 25264 comb row | **1.78**, **1.68** (T); `.S` **1.00**, **1.00** | ✅ verified | half-open crossings; on a `divs.w` overflow the crossing takes the sign of the 32-bit PRODUCT (the $8000 low-word case pinned); an odd crossing dropped; the crossing list at $16da unbounded (24 crossings pass $1702); x-clip only |
+| `0xfcbf16` | `clip_line` (same) | 14 | 244 / 3554, 56 / 802 | **0.89**, **0.86** (T→) | ✅ verified | Cohen–Sutherland by the lowest outcode bit, first end first; smul_div stored before the edge |
+| `0xfcbe8c` | `polyline` (same) | 14 | 10305 / 91874 | **1.00** (T→) | ✅ verified | LSTLIN cleared BEFORE contrl[1] is read, set on the last segment and left at 1 |
+| `0xfcc0ea` | `plygn` (same) | 41 | 38114 / 393842 | **1.04** (T→) | ✅ verified | rows maxy..miny+1; a top clip gives YMINCL−1 floored at 1 (rows 0/1 never filled when the clip top is 0); the closing point at ptsin[n]; a perimeter (FILL_PER == 1) PERMANENTLY increments the caller's contrl[1] |
+| `0xfcbbc0` | `v_fillarea` (opcode 9, same) | 38 | 29851 / 304280, 68 / 920 | **1.06**, **0.78** (T→) | ✅ verified | plygn |
+| `0xfd08f4` | `$a00f contour_fill` (same) | 30 | 5085 / 40174 | **1.05** (T→) | ✅ verified | DRI's seedfill globals at $16da..$1704, a 1920-word queue from $1706 running through the PTSIN copy to $2605; true signed walk compares (a span wider than a word pinned); seed colour vs search colour; SEEDABORT per pass through the ONE register hook. THE ROM CAN HANG: a patterned or same-colour fill never ends by itself — only SEEDABORT stops it |
+| `0xfd08e0` | `v_contourfill` (opcode 103, same) | 4 | 19322 / 144280 | **1.03** (T→) | ✅ verified | installs $fc9f9a (never aborts) over any staged SEEDABORT |
+| `0xfcfb54` | `fill_span` (same; `.S`) | 8 | 296 / 2524 | **1.68** (T); `.S` **1.00** | ✅ verified | (x1, x2, y) into `$a004`'s patterned entry |
+| `0xfcfb66` | `end_pts` (same; `.S`) | 24 | 3939 / 25402, 6 / 98 | **1.89**, **5.14** (T); `.S` **1.00**, **1.00** | ✅ verified | walks the seed pixel's own colour; `adda.w` sign-extends the plane step and A5 drifts as the ROM's `-(a5)` reads leave it (PLANES $4000/$7fff/$8000/$c001/0 pinned in claimed high bands); top by `bmi`; x unchecked |
+| `0xfd0dc8` | `crunch_queue` (same) | 8 | 40 / 558 | **0.95** | ✅ verified | reads queue[−3] ($1700) when the queue is empty; long queue indices (the word-wide reach is the I/O page — unpinned) |
+| `0xfd0e22` | `get_seed` (same) | 10 | 4130 / 27770, 4234 / 28352 | **1.01**, **1.02** (T→) | ✅ verified | twin = same row, other direction, same left end: drawn and taken; first hole reused; QTMP re-read between the record's three stores |
+| `0xfd0fde` | `v_get_pixel` (opcode 105, same) | 13 | 75 / 826 | **1.08** (T→) | ✅ verified | intout[0] stored BEFORE INQ_TAB[4] is read; 1 plane nonzero or 2 planes pen 3 → index 15; REV_MAP_COL index sign-extended |
+| `0xfcffb0` | `$a00d draw_sprite` (`src/vdi/mouse.c`; `mouse.S`) | 120 | 1611 / 13686 two groups, 1227 / 10594 clipped left, 406 / 3814 one plane xor | **3.08**, **4.06**, **3.36** (T); `.S` **1.00** ×3 | ✅ verified | each row SAVED before its form words are read (a save area over the form pinned); every alignment, each edge/corner (unsigned clip), 1/2/4/0/3/8 planes, 8 fragments, WIDTH vs BYTES_LIN, the `adda.w` wrap |
+| `0xfd0184` | `$a00c undraw_sprite` (same) | 30 | three cases | **8.45**, **3.37**, **7.09** (T); `.S` **1.00** ×2 | ✅ verified | three layouts (3 / 5+ planes restored as 4); round trips. Unstaged: a saved length of 0 (65,536 rows) |
+| `0xfd0254` | `$a00a hide_mouse` (same) | 12 | 211 / 2322, 7 / 146 | **7.90**, **1.28** (T); `.S` **1.00** ×2 | ✅ verified | undraws only on reaching 1; CUR_FLAG cleared |
+| `0xfd0286` | `show_cursor` (same) | 14 | 1501 / 14450, 6 / 126 | **3.08**, **1.67** (T); `.S` **1.00** ×2 | ✅ verified | `bgt`/`bmi`: depth $8000 draws, below 0 reset undrawn |
+| `0xfcb120` | `v_show_c` (122, `$a009`, same) | 12 | 1511 / 14594 | **1.01** (T→) | ✅ verified | intin[0]=0 forces depth 1 unless 0 |
+| `0xfcb148` | `v_hide_c` (123, same) | 2 | 215 / 2386 | **1.06** (T→) | ✅ verified | |
+| `0xfd02ca` | `vsc_form` (111, `$a00b`, same; `.S`) | 13 | 74 / 984 | **2.54** (T); `.S` **1.00** | ✅ verified | 4-bit hot spot; `bmi` colour test (reads below MAP_COL); mask/data read-store order |
+| `0xfcfe28` | `mouse_isr` (same) | 26 | three cases | **1.69**, **1.74** (T), **0.98**; `.S` **1.00** ×3 | ✅ verified | user vectors through the ONE D0/D1/A0 hook: dx/dy and `moved` read through the A0 USER_BUT hands back, USER_CUR given USER_MOT's A0; the second clamp; the lock |
+| `0xfcff0a` | `default_user_cur` (same) | 5 | 11 / 174 | **1.12** (T); `.S` **1.00** | ✅ verified | queues only while shown; its IPL bracket and the MOUSE_FLAG lock held by the `.S` byte pin only |
+| `0xfcff2a` | `vbl_draw_cursor` (same) | 10 | 1700 / 16532, 6 / 114 | **3.76**, **1.65** (T); `.S` **1.00** ×2 | ✅ verified | lock, bit taken, arrow moved |
+| `0xfca7f8` | `mouse_init` (same) | 1 | 20191 / 295942 | **1.00** (T→) | ✅ verified | the real XBIOS Initmous trap on target; default user vectors = its own `rts` $fca870; vblqueue[0] |
+| `0xfca872` | `mouse_off` (same) | 1 | 2903 / 42686 | **1.00** | ✅ verified | |
+| `0xfca7ca` | `poll_key` (same) | 7 | 106 / 1634, 47 / 742 | **1.06**, **1.09** | ✅ verified | scancode byte over the ASCII word |
+| `0xfca7c0` | `poll_choice` (same; `.S`) | 3 | 3 / 76 | **1.78** (T); `.S` **1.00** | ✅ verified | never writes D0 |
+| `0xfca88a` | `poll_locator` (same; `.S`) | 13 | 57 / 882, 14 / 172 | **1.10**, **1.67** (T); `.S` **1.00** ×2 | ✅ verified | button beats key beats motion; D1 (CUR_MS_STAT) held across `trap #13` |
+| `0xfcb002` | `vdi_locator` (28, same) | 13 | 1851 / 18866 request, 87 / 1322 sample | **1.03**, **1.01** (T→) | ✅ verified | writes intin[0]=1 into the CALLER's array; request forces the hide count to 1 and draws without removing; the request spin through the kit's wait-site door (loop-back cases: 2 and 5 passes, motion then a key) |
+| `0xfcb1a0` | `vdi_choice` (30, same) | 7 | 16 / 270 | **1.49** (accepted: its own call through the glue) | ✅ verified | D0 = the dispatcher's MONO_STATUS (0/8): REQUEST MODE HANGS FOR EVER in the ROM (poll_choice never writes D0) — the spin pinned to the door's cap host-side, the hang oracle-only |
+| `0xfcb22a` | `vdi_string` (31, same) | 13 | 385 / 5730, 303 / 4520 | **0.95**, **0.97** | ✅ verified | RETURN stored not counted; a negative count reads whole scancode words (RETURN never ends it), −32768 reads nothing; late keys through the wait-site door |
 | `0xfc9ffc` | `vec_len` (`src/vdi/helpers.c`) | 18 | 243 / 2344 bisection, 64 / 636 exact square | **0.94**, **1.02** | ✅ verified | isqrt(dx²+dy²) by bisection: both halves of the log search, sums ≥2^30 (the $10000→$ffff fix), negatives; clobbers D3/D4 (harmless in every caller) |
 | `0xfca164` | `sort_words` (same file; `helpers.S`) | 18 | 195 / 1858 eight reversed, 13 / 138 two in order | **1.54**, **2.33** (T); `.S` **1.00**, **1.00** | ✅ verified | register D0.w/A0; empty, one, equal (kept), reversed, signed extremes, count as a word; the `.S` clobbers D2 |
 | `0xfca186` | `smul_div` (same; `.S`) | 22 | 19 / 380 rounded up, 22 / 390 neg / neg | **1.06**, **1.14** (T); `.S` **1.00**, **1.00** | ✅ verified | round(a*b/c): the remainder read through `neg.l` of the whole register (|r|−1 when negative over a nonzero quotient), a divisor of −32768 rounds any remainder, `divs` overflow leaves the product; c=0 REFUSED by name on the host (vector 5 on the 68000); the `.S` clobbers D2 |
@@ -283,7 +323,7 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfcfaac` | `font_byteswap` (same) | 9 | 71 / 928 sixteen words, 11 / 208 one word | **1.01**, **1.04** | ✅ verified | the product's low-word truncation; a zero count = 65536 words (a 128 KB form claimed in `staging.HIGH_BANDS` at $90000, held dead) |
 | `0xfcd056` | `s_fa_attr` (same) | 3 | 20 / 420 | **0.82** | ✅ verified | every store, on CUR_WORK (a virtual one; the physical untouched) |
 | `0xfcd0c2` | `r_fa_attr` (same) | 2 | 12 / 256 | **0.63** | ✅ verified | the round trip via `case.continued` |
-| `0xfcfedc` | `clamp_mouse` (same; `.S`) | 17 | 11 / 136 both clamped, 10 / 136 inside | **2.27**, **2.29** (T); `.S` **1.00**, **1.00** | ✅ verified | D0/D1 in and out against DEV_TAB[0/1], high words kept |
+| `0xfcfedc` | `clamp_mouse` (`mouse.S`; C in `helpers.c`) | 20 | 11 / 136, 10 / 136 | **2.27**, **2.29** (T); `.S` **1.00**, **1.00** | ✅ verified | moved into `mouse.S` (the ISR reaches it by `bsr.s`); a negative DEV_TAB bound (x=0) pinned on the `.S` too |
 | `0xfca648` | `get_kbshift` (same; `.S`) | 11 | 4 / 80 | **2.10** (T); `.S` **1.00** | ✅ verified | its `rts` is vdi_nop's ($fca652) |
 | `0xfcfa9c` | `gemdos_call` (same; `.S`) | 6 | `.S` 16 / 362 | C unpriced — its TARGET branch is UNEXERCISED (the ROM build links the `.S`); `.S` **1.00** | ✅ verified | Tier 1 through the REAL `trap #1` into the ROM's GEMDOS vs the reconstructed dispatcher + memory manager (Malloc, Mfree, a refused Mfree), three documented spans dropped (p_run's register save, GEMDOS's stack, the termination record); the `.S` over a staged recording trap handler; returns through whatever RETSAV holds (not exercised with a changed value) |
 | `0xfd2d32` | `vr_trnfm` (opcode 110, same; `.S`) | 67 | 134 / 1522, 122 / 1420 copy; 537 / 4910, 527 / 4828 in place; 35 / 580 one word | **0.94**, **0.94**, **1.32**, **1.35**, **1.04** (T); `.S` **1.00** ×5 | ✅ verified | copy $fd2db4 and in-place $fd2d80; 1-4 planes, odd width, both directions, one MFDB as both; the `.S` clobbers D7 outside its movem |
@@ -333,7 +373,7 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfcb8d0` | `vq_extnd` (same file, + `$fc4e06`) | 23 | 258 / 2390, 251 / 2420 | **0.81** plain, **0.81** extended | ✅ verified | intin[0] read twice (the second decides the speed); the intout pointer reloaded for it; VDI_RESULT=1 |
 | `0xfced9a` | `vst_unload_fonts` (same file) | 2 | 12 / 256 | **0.72** | ✅ verified | leaves the ring's loaded slot and WS_CUR_FONT naming the unloaded font |
 | `0xfcb156` | `vq_mouse` (same file) | 5 | 15 / 292 | **0.71** | ✅ verified | |
-| `0xfcb30a` | `vq_key_s` (same file) | 8 | 13 / 220 | **1.48** (accepted: (A)+(D) through get_kbshift's C frame) | ✅ verified | count before answer |
+| `0xfcb30a` | `vq_key_s` (same file) | 8 | 13 / 220 | **1.52** (accepted: (A)+(D) — its own call through the glue, measured as it ships) | ✅ verified | count before answer |
 | `0xfce5b0` | `vqt_attributes` (same file) | 26 | 32 / 538 | **0.99** | ✅ verified | write mode 0-based FROM THE RECORD; FONT_TOP read after ptsout[0]; ptsout pointer after intout |
 | `0xfce8ca` | `vqt_name` (same file) | 17 | 184 / 1654, 243 / 2252, 268 / 2452 | **0.91** face 1, **0.86** last loaded face, **0.85** past the ring | ✅ verified | 34 words written, 33 counted; a 32-char name runs into FONT_FIRST_ADE; ring walk stops at an empty slot; the 6x6 fallback |
 | `0xfce95a` | `vqt_fontinfo` (same file) | 12 | 32 / 552, 30 / 524 | **0.94** bold italic, **0.95** plain | ✅ verified | LINEA_STYLE tested twice at the ROM's points; ptsout pointer after intout |
@@ -813,20 +853,42 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
   concat's shift table starts at its own `rts`; `$a005` stores clipped corners on a miss. Mutation (logged, private builds): helpers.c
   83/88, attributes.c 105/108, inquire+palette 92/92, raster.c 89/91, raster.S 55/57, helpers.S 32/33 — every survivor named in the
   sweep logs and equivalent or a documented memory smash.
-* **Next** — VDI band 1: the bit-blit engine + `$a007`/`$a00e` + cpyfm/recfl; the text raster (`$a008`, the CPU TextBlt, fast text);
-  polygon/fill (`$a006`, clip_line, polyline, plygn, contour fill); mouse/input (sprites `$a009`..`$a00d`, the mouse ISR, the VBL cursor,
-  locator/choice/string). Then wide lines / text C / timer, arcs / v_gtext / workstations, and the entries (Line-A `.S`,
+* **Wave 10 band 1 (2026-09-27) — BIT-BLIT, TEXT RASTER, POLYGONS & FILLS, MOUSE & INPUT.** Four agents, ~50 routines: `blit.c`/`.S`
+  (the threaded CPU blit engine — 57 absolute fragment addresses relocated and pinned — `$a007`, `$a00e`, vro/vrt_cpyfm, vr_recfl),
+  `text_raster.c`/`.S` (TextBlt $fd1df6, the ROM's largest hand loop, and fast text; the `.S` generated from the disassembly),
+  `fill.c`/`.S` (`$a006`, clip_line/polyline/plygn, the contour seed fill with DRI's globals and a 1920-word queue), `mouse.c`/`.S`
+  (sprites, hide/show, vsc_form, the mouse ISR, the VBL cursor, mouse_init/off, the polls, locator/choice/string). REVIEW (5
+  finders) found ~12 real divergences — each RED-before/GREEN-after: the blit re-tests P_ADDR PER PLANE and re-reads MIDDLE_COUNT
+  per row; an odd TextBlt op index is the ROM's address error and an op slot naming an effect fragment must halt (mode 44 + LIGHTEN
+  hung the suite); `$a006` takes an overflowed crossing's sign from the 32-bit PRODUCT; the contour fill's walks are true signed
+  compares; polyline clears LSTLIN and v_get_pixel answers BEFORE their reads; end_pts' `adda.w` sign extension and A5 drift;
+  draw_sprite saves a row BEFORE reading its form words; the mouse ISR reads through the A0 a user vector hands back — and a
+  BUILD-CONTRACT HOLE (GCC inlined transcribed C cores into their callers: now `TRANSCRIBED_CORE` = noipa on all 42). The 16
+  hand-typed "(T) through a call" acceptances are GONE: a SECOND bench blob (`build/bench_shipped/`) links every C caller of a
+  transcribed core to the `.S` through glue thunks GENERATED from the table (`bench/shipped_glue.py`) — band 0's deferred call-site
+  glue, built and exercised by every bench run — and legend rule (T→) prices those rows AS THEY SHIP (0.78–1.08; drifting a callee's
+  `.S` reddens them, shown). ONE register-carrying RAM-vector hook (D0/D1/A0) in staged_call.h; one Alcyon signature registry;
+  cross-file `.S` relocations must land in a byte-pinned region; every ROM-address-as-data site enumerated (test_vdi_rom_data.py).
+  MUTATION TOTALS WERE UNRELIABLE (every sweep counted any nonzero exit — timeouts and an agent's `pkill` SIGTERMs — as a kill):
+  a STRICT classifier (README "Mutation sweeps") found 10 real holes, all now killed; honest totals blit.c 101/109, blit.S 54/56,
+  text_raster.c 203/224 (six thicken-first survivors equivalent by argument, not proof), text_raster.S 24/28, fill.c 123/145 (11
+  abnormal = non-terminating mutants), fill.S 47/51, mouse.c 157/161, mouse.S 58/59. FINDINGS: the ROM's CONTOUR FILL CAN HANG
+  (only SEEDABORT stops it) and `v_choice` REQUEST MODE HANGS FOR EVER; `$a00e`'s bit 4 is the pattern flag; TextBlt modes past
+  19 read an easter egg as op indexes; vdi_locator writes the caller's intin; plygn permanently increments the caller's contrl[1].
+* **Next** — VDI band 2: wide lines (cir_dda, perp_off, do_circ, wline, arrow, do_arrow, v_pline, v_pmarker); text C (text_init,
+  make_header, vst_height/point/font, vqt_extent/width, vst_load_fonts); timer/screen (setres, init_timer_mouse, timer_tick, v_clrwk).
+  Then arcs / v_gtext + d_justified / workstations (init_wk, v_opnwk, v_opnvwk, v_clsvwk, v_clswk), and the entries (Line-A `.S`,
   `vdi_entry`, `vdi_dispatch`, the escape `$fc427a`). GEMDOS: only the
   E_CHG recovery behind the termination record's longjmp remains (design first).
   Earlier lists, still open: the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **5,966 passed** (1 skipped) and `make guarded` the same count (7,906 candidate runs guarded, no fault),
-re-summed at the VDI band-0 commit on 2026-09-26 after a forced relink of the oracle and every candidate;
-`make bench` judges 507 rows (384 ok / 61 accepted / 40 transcribed / 13 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
-printed table. The kit's own suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged
-(3,851) as the PRG controls. `names.txt`: 504 fn / 333 var / 245 cmt.
+`make test` — **9,360 passed** (1 skipped) and `make guarded` the same count (11,517 candidate runs guarded, no fault),
+re-summed at the VDI band-1 commit on 2026-09-27 after a forced relink of the oracle, every candidate and both bench blobs;
+`make bench` judges 630 rows (444 ok / 62 accepted / 82 transcribed / 20 through / 13 pinned / 9 rule, none OVER or DRIFTED),
+re-counted from the printed table. The kit's own suite: **1,126 passed**. Zynaps unchanged (4,751 / 4 skipped) and Flying Shark unchanged
+(3,851) as the PRG controls. `names.txt`: 544 fn / 347 var / 253 cmt.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.

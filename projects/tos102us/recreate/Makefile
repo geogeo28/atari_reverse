@@ -79,7 +79,47 @@ snapshot: $(SNAPSHOT)
 # ROWS are `test_boot_snapshot.VERIFIED_CASES` (see bench/tier3.py).
 BENCH_TABLE := $(BENCH_DIR)/tier3.txt
 
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(CAND) $(ORACLE) $(SNAPSHOT)
+# THE SHIPPED CONFIGURATION — Tier 3's SECOND blob, for the C that calls a transcribed core. A shipped ROM
+# links a routine's `.S` in place of its C twin (`include/vdi/transcribed.h`), so the C that calls one
+# reaches the ROM's instructions through glue; $(BENCH_ELF) links the C twins beside the `.S` and would
+# price every such caller with the twin's cycles in it. This blob is the same sources built the way the
+# ROM build will be (`-ffunction-sections`, atari/target.mk), with every transcribed core WEAK
+# (`TRANSCRIBED_CORES_WEAK`, the header says why it is the source's attribute) and a GENERATED thunk of
+# the same name linked beside it (`bench/shipped_glue.py`): each call lands in the thunk, and the thunk
+# enters the `.S`. `bench/tier3.py` measures every row whose C reaches a transcribed core on this blob
+# (legend `through`), which is also the glue's own differential.
+#
+# The glue is regenerated every make and REWRITTEN only when its text changes (`snapshot-inputs`'s
+# arrangement): it is derived from test/*.py, and a dependency on those would relink the blob for every
+# edit to a battery.
+SHIPPED_DIR    := build/bench_shipped
+SHIPPED_ELF    := $(SHIPPED_DIR)/bench.elf
+SHIPPED_BIN    := $(SHIPPED_DIR)/bench.bin
+SHIPPED_GLUE   := $(SHIPPED_DIR)/glue.S
+SHIPPED_OBJ    := $(SHIPPED_DIR)/obj
+SHIPPED_CFLAGS := $(BENCH_CFLAGS) -ffunction-sections -DTRANSCRIBED_CORES_WEAK
+# The per-source compiles are independent, so they run side by side: one `m68k-elf-gcc` per source.
+SHIPPED_JOBS   := 8
+
+.PHONY: shipped-glue
+shipped-glue: $(CAND) $(SNAPSHOT)
+	@$(PY) bench/shipped_glue.py $(SHIPPED_GLUE)
+
+$(SHIPPED_GLUE): shipped-glue ;
+
+$(SHIPPED_ELF): $(BENCH_SRC) $(SHIPPED_GLUE) $(wildcard include/*.h) $(COMPONENT_HEADERS) \
+                $(wildcard $(KIT)/include/*.h) $(wildcard atari/shim_include/*.h) atari/target.mk \
+                $(KIT)/kit.mk $(KIT)/rom_bench.py $(PROJECT_CONFIG) $(PROJECT_MAKEFILE)
+	rm -rf $(SHIPPED_OBJ) && mkdir -p $(SHIPPED_OBJ)
+	printf '%s\n' $(BENCH_SRC) | xargs -P $(SHIPPED_JOBS) -n 1 sh -c \
+	  'm68k-elf-gcc $(SHIPPED_CFLAGS) -c "$$0" -o $(SHIPPED_OBJ)/$$(echo "$$0" | tr ./ __).o'
+	m68k-elf-gcc $(SHIPPED_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BENCH_BASE) \
+	  $(SHIPPED_OBJ)/*.o $(SHIPPED_GLUE) $(BENCH_LDLIBS) -o $@
+
+$(SHIPPED_BIN): $(SHIPPED_ELF)
+	m68k-elf-objcopy -O binary $(SHIPPED_ELF) $(SHIPPED_BIN)
+
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(CAND) $(ORACLE) $(SNAPSHOT)
 	$(PY) bench/tier3.py --out $@
 
 .PHONY: bench

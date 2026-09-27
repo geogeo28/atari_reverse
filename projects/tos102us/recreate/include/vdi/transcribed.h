@@ -56,7 +56,27 @@
     ENTRY(linea_rom_filled_rect,      "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* $a005                       */ \
     ENTRY(linea_rom_cpu_vline,        "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* D4-D7, D0 = 2, A4           */ \
     ENTRY(linea_rom_cpu_hline,        "d3 d5 d7 a2 a3 a4 a5")               /* D0-D2, D4-D6, A0, A4        */ \
-    ENTRY(linea_rom_cpu_rect_fill,    "d2 d3 d5 d7 a2 a3 a4 a5")            /* D0, D1, D4-D7, A2           */
+    ENTRY(linea_rom_cpu_rect_fill,    "d2 d3 d5 d7 a2 a3 a4 a5")            /* D0, D1, D4-D7, A2           */ \
+    ENTRY(vdi_rom_mouse_isr,          "")                                   /* A0 packet: `movem` round it */ \
+    ENTRY(vdi_rom_default_user_cur,   "")                                   /* D0, D1                      */ \
+    ENTRY(vdi_rom_vbl_draw_cursor,    "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5 a6")   /* _vblqueue[0]                */ \
+    ENTRY(linea_rom_draw_sprite,      "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5 a6")   /* $a00d: A0 form, A2, D0/D1   */ \
+    ENTRY(linea_rom_undraw_sprite,    "d2 d3 d4 d5 a2 a3 a4 a5")            /* $a00c: A2 save block        */ \
+    ENTRY(linea_rom_hide_mouse,       "d2 d3 d4 d5 a2 a3 a4 a5")            /* $a00a                       */ \
+    ENTRY(vdi_rom_show_cursor,        "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* A6 kept round the draw      */ \
+    ENTRY(vdi_rom_vsc_form,           "")                                   /* function 111, $a00b         */ \
+    ENTRY(vdi_rom_poll_choice,        "")                                   /* D0 the caller's             */ \
+    ENTRY(vdi_rom_poll_locator,       "a2")                                 /* -> D0; `trap #13` keeps less */ \
+    ENTRY(linea_rom_filled_poly,      "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* $a006                       */ \
+    ENTRY(linea_rom_fill_span,        "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* Alcyon (x1, x2, y)          */ \
+    ENTRY(linea_rom_end_pts,          "d2 d3 d4 d6 d7 a2 a3 a4 a5")         /* Alcyon (x,y,&l,&r) -> D0.w */ \
+    ENTRY(linea_rom_copy_raster,      "")                                   /* $a00e: `movem` round it all */ \
+    ENTRY(linea_rom_bitblt,           "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5 a6")   /* $a007: A6 block -> +76      */ \
+    ENTRY(linea_rom_textblt,          "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* $a008: A5/A6 kept           */ \
+    ENTRY(linea_rom_cpu_textblt,      "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* A6 base, A5/A6 pushed       */ \
+    ENTRY(linea_rom_fast_text,        "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* -> D0 1 drawn, 0 refused    */ \
+    ENTRY(linea_rom_cpu_fast_text,    "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* D0-D3, A5 &FBASE pushed     */ \
+    ENTRY(linea_rom_cpu_blit,         "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* D0/D2/D4/D6 x edges, A6     */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a
@@ -67,13 +87,41 @@
  *     __asm__ volatile ("jsr vdi_rom_get_kbshift" : "+d"(d0) : : "d1", "a0", "a1", "cc", "memory");
  *
  * naming its inputs and answers as operands, and the scratch registers plus the row's callee-saved set
- * as clobbers. THE CALL SITES SWITCH WHEN THE ROM BUILD LINKS CORES: today no build ships a core (the
- * ROM is a boot stub), and the one C caller of a core here — `vdi_vq_key_s`'s call of `vdi_get_kbshift`
- * — stays on the C core, which Tier 1 proves; `test_vdi_transcribed.py` pins that list. */
+ * as clobbers.
+ *
+ * THE C THAT STILL CALLS A C CORE HERE — the VDI functions and fill layer round the raster, sprite and
+ * contour primitives, listed as `(caller, core)` pairs in `test/vdi.py`'s C_CALLERS_OF_TRANSCRIBED_CORES
+ * and held to the m68k build's own calls by `test_vdi_transcribed.py` — calls it by its C name in the host
+ * build, where Tier 1 proves it. A shipped build reaches the `.S` instead, through a GLUE THUNK carrying
+ * the core's name: `bench/shipped_glue.py` generates one per called core from this table (the row's
+ * destroyed registers saved round the `jsr`) and the entry's declared contract, and Tier 3 builds and
+ * measures that SHIPPED CONFIGURATION as a second blob (`../README.md`, "What ships as the ROM's own
+ * instructions"). */
 #ifndef __ASSEMBLER__
 #define VDI_TRANSCRIBED_DECLARATION(entry, destroys) extern const char entry[];
 VDI_TRANSCRIBED(VDI_TRANSCRIBED_DECLARATION)
 #undef VDI_TRANSCRIBED_DECLARATION
+
+/* THE ATTRIBUTE EVERY C CORE OF THIS TABLE IS DEFINED WITH. A core must stay a CALLED function in every
+ * build of it: the shipped configuration replaces its body with a glue thunk at link time, which reaches
+ * only a real call — a copy GCC inlined, cloned or specialised into its caller would go on shipping the C,
+ * and the caller pairs above would name the wrong call sites. `noipa` is GCC's "treat the body as unknown":
+ * no inlining, no clone, and no interprocedural register allocation, without which a caller could keep a
+ * value in a scratch register the C core happens not to touch and the `.S` does.
+ *
+ * In the SHIPPED CONFIGURATION's build (`TRANSCRIBED_CORES_WEAK`, the Makefile's shipped blob) each core is
+ * also WEAK, so the thunk of the same name is the definition every call links to. It must be weak in the
+ * SOURCE: the assembler resolves a call to a global function of its own file against the function's
+ * SECTION rather than its name — past the reach of anything done to the symbol afterwards — and leaves a
+ * weak one by name. The host differential is built by clang, which spells none of this and needs only the
+ * call kept (`noinline`). */
+#if defined(__GNUC__) && !defined(__clang__) && defined(TRANSCRIBED_CORES_WEAK)
+#define TRANSCRIBED_CORE __attribute__((noipa, weak))
+#elif defined(__GNUC__) && !defined(__clang__)
+#define TRANSCRIBED_CORE __attribute__((noipa))
+#else
+#define TRANSCRIBED_CORE __attribute__((noinline))
+#endif
 #endif
 
 #endif /* TOS102US_VDI_TRANSCRIBED_H */

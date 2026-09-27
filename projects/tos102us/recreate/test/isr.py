@@ -419,6 +419,16 @@ NO_ARGUMENT = 0xFFFF_FFFF           # staged_call.h's STAGED_CALL_NO_ARGUMENT
 _HOOK = AddressHook("recreate_call_vector", CALL_VECTOR)
 CALLS = _HOOK.calls
 
+# ...and `staged_call.h`'s REGISTER-CARRYING shape: (image, routine address, the D0/D1/A0 file handed in
+# and handed back). ONE binding for every battery that stages such a routine (the mouse ISR's user vectors,
+# the contour fill's SEEDABORT): the pointer is one symbol in the `.so`, so a hook object per battery would
+# leave whichever bound last serving both. An effect is `effect(image, registers)`, `registers` indexed in
+# `STAGED_REGISTERS` order.
+CALL_VECTOR_REGISTERS = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32,
+                                         ctypes.POINTER(ctypes.c_uint32))
+REGISTERS_HOOK = AddressHook("recreate_call_vector_registers", CALL_VECTOR_REGISTERS)
+STAGED_REGISTERS = ("d0", "d1", "a0")       # staged_call.h's STAGED_D0, STAGED_D1, STAGED_A0
+
 
 def store_byte(value, address):
     """`move.b #value,(address).l` — the smallest stub that leaves a mark in compared image."""

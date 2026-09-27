@@ -163,20 +163,20 @@ def test_no_pinned_ratio_is_stale(bench):
 
 # ---- the VDI helpers' calls: ONE statement of each C signature --------------------------------------
 
-REGISTER_HELPERS = [name for name in vdi.PRIMITIVES if vdi.core_symbol(name) in vdi_helpers.SIGNATURES]
+REGISTER_HELPERS = [name for name in vdi.PRIMITIVES if vdi.core_symbol(name) in vdi_helpers.REGISTER_SIGNATURES]
 
 
 @pytest.mark.parametrize("name", REGISTER_HELPERS)
 def test_a_register_helper_s_host_signature_is_its_declared_contract(name):
-    """The Alcyon helpers' Tier 3 calls are DERIVED from `vdi_helpers.SIGNATURES`; the three register
-    routines' come from `vdi.declare_primitive` instead, so this is where the two statements of one C
-    signature are held equal: the image, a longword per argument register, a results pointer when the
-    answer is several registers, and D0 returned when it is among them."""
+    """The Alcyon helpers' Tier 3 calls are DERIVED from `vdi.ALCYON`; the three register routines' come
+    from `vdi.declare_primitive` instead, so this is where the two statements of one C signature are held
+    equal: the image, a longword per argument register, a results pointer when the answer is several
+    registers, and D0 returned when it is among them."""
     contract = vdi.PRIMITIVES[name]
-    restype, argtypes = vdi_helpers.SIGNATURES[vdi.core_symbol(name)]
-    several = (ctypes.POINTER(vdi_helpers.LONG_ARG),) if len(contract.results) > 1 else ()
-    assert tuple(argtypes) == (vdi_helpers.IMAGE_ARG, *(vdi_helpers.LONG_ARG,) * len(contract.arguments), *several)
-    assert (restype is vdi_helpers.LONG_ARG) == ("d0" in contract.results)
+    restype, argtypes = vdi_helpers.REGISTER_SIGNATURES[vdi.core_symbol(name)]
+    several = (ctypes.POINTER(vdi.LONG_ARG),) if len(contract.results) > 1 else ()
+    assert tuple(argtypes) == (vdi.IMAGE_ARG, *(vdi.LONG_ARG,) * len(contract.arguments), *several)
+    assert (restype is vdi.LONG_ARG) == ("d0" in contract.results)
 
 
 # ---- MECHANISM (T): a TRANSCRIBED routine's C rows, carried by its `.S` rows and by nothing else ----
@@ -224,6 +224,43 @@ def test_a_routine_whose_s_rows_are_gone_reds_the_c_rows(bench, dispatch, ratio_
     measured = tier3.measure(row, bench)
     monkeypatch.setitem(tier3.SHIPPED_ROWS, tier3.rom_address(row), ())
     assert tier3.verdict(row, measured, dispatch, ratio_of) == "OVER"
+
+
+# ---- MECHANISM (T→): the C that calls a transcribed routine, measured as it ships -------------------
+
+# A row whose whole excess, measured on the C twins, is the callee's C: far over the bar there, and at the
+# ROM's cost once the call enters the `.S` — so which blob measured it is unmistakable.
+THROUGH_A_CALL_ROW = ("vdi_v_hide_c", "the arrow removed")
+
+
+def test_every_c_caller_of_a_transcribed_core_ships_through_a_call():
+    """The rows (T→) measures as shipped include every direct caller the door names: the reach is DERIVED
+    from the m68k build's call graph, and a caller outside it would be priced with the C twin in it."""
+    callers = {caller for caller, _core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES}
+    assert callers <= tier3._reaching_transcribed_cores()
+
+
+def test_a_row_that_ships_through_a_call_is_measured_on_the_shipped_blob(bench, dispatch, ratio_of):
+    row = tier3.row_named(THROUGH_A_CALL_ROW)
+    assert tier3.ships_through_a_call(row)
+    on_the_twins = bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
+                                 returns=row.returns)
+    assert on_the_twins.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: through the C twin it is over the bar"
+    measured = tier3.measure(row, bench)
+    assert measured.ratio <= tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, measured, dispatch, ratio_of) == "through"
+
+
+def test_a_row_that_ships_through_a_call_goes_over_with_its_callee(bench, dispatch, ratio_of):
+    """Nothing carries a (T→) row but its own measurement: the same row costing what a drifted `.S` would
+    make it cost is OVER — there is no entry for it to hide behind."""
+    row = tier3.row_named(THROUGH_A_CALL_ROW)
+    measured = tier3.measure(row, bench)
+    over = Measurement((0, measured.original_cycles),
+                       (0, round(measured.original_cycles * (tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE))),
+                       bench.overhead)
+    assert tier3.pin_of(row) is None
+    assert tier3.verdict(row, over, dispatch, ratio_of) == "OVER"
 
 
 # ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------

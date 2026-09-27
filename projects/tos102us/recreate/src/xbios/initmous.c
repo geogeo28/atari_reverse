@@ -46,6 +46,7 @@
 #include <stdint.h>
 
 #include "xbios/ikbd.h"
+#include "xbios/xbios.h"
 #include "machine.h"
 #include "addrs.h"
 

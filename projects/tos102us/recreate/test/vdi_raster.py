@@ -9,16 +9,13 @@ A4 (A2 for the rectangle body) is the Line-A base, and the vertical body's D0 is
 those entries stages them from `BASE_REGISTERS` rather than leaving them to the snapshot.
 """
 import random
-import struct
 from pathlib import Path
 
-from harness import BASE_IMAGE, addrs, emu
+from harness import BASE_IMAGE, addrs
 
-import abi
 import case
 import vdi
 from case import merge_pokes
-from opcodes import PUSH_RETURN_PC, PUSH_STACK_LONG, RTS
 
 vdi.declare_primitive("LINEA_ROM_CONCAT", arguments=("d0", "d1"), results=("d0", "d1"))
 vdi.declare_primitive("LINEA_ROM_PUT_PIXEL")
@@ -170,52 +167,17 @@ def drawing_pokes(*, mode, colour, extra=None):
 #   * `$a003`'s DIAGONAL arm leaves the same pair in A3/A4, and in A5 the octant arm's own address until
 #     a pixel sets it to a screen pointer. Its vertical and horizontal arms jump through a drawing vector,
 #     which is the ROM's body on BOTH sides, and leave nothing to mask.
-# Each such case is entered through a caller that returns through itself and zeroes exactly those
-# registers on BOTH sides, so every other register — and these, in every routine that holds data in
-# them — is still compared:
-#
-#     pea     back(pc) / move.l 8(sp),-(sp) / rts / back: suba.l An,An ... / rts
+# Each such case is entered through one of `vdi.CallerPool`'s callers, which zeroes exactly those registers
+# on BOTH sides, so every other register — and these, in every routine that holds data in them — is still
+# compared.
 CODE_POINTERS = {"LINEA_ROM_CPU_HLINE": ("a5",), "LINEA_ROM_CPU_RECT_FILL": ("a5",), "LINEA_ROM_CPU_VLINE": ("a3", "a4")}
 DIAGONAL_CODE_POINTERS = ("a3", "a4", "a5")
-CLEAR_ADDRESS_REGISTER = {"a3": b"\x97\xcb", "a4": b"\x99\xcc", "a5": b"\x9b\xcd"}    # suba.l An,An
-_ROUTINE_SLOT = abi.FIRST_ARG - emu.STACK_TOP + vdi.LONG_BYTES     # FIRST_ARG, past the pushed return
-_JUMP_BYTES = len(PUSH_STACK_LONG) + vdi.WORD_BYTES + len(RTS)
-# pea + move.l + rts in and an rts out, and one suba.l per register (6 cycles as Musashi counts it): the
-# declared cost of each caller is their sum, and `test_vdi_transcribed.py` measures every one against it.
-CODE_POINTER_CALLER_COST = (4, 72)
-CLEAR_COST = (1, 6)
 CODE_POINTER_CALLER_BYTES = 0x12        # room for the longest, which clears three
-_code_pointer_callers = {}
-
-
-def code_pointer_caller(registers):
-    """The caller that clears `registers` on the way out, staged once per register set in this band."""
-    if registers not in _code_pointer_callers:
-        clears = b"".join(CLEAR_ADDRESS_REGISTER[register] for register in registers)
-        stub = (PUSH_RETURN_PC + struct.pack(">h", _JUMP_BYTES + vdi.WORD_BYTES)
-                + PUSH_STACK_LONG + struct.pack(">h", _ROUTINE_SLOT) + RTS + clears + RTS)
-        at = PLANE_WORDS_AT + PLANE_WORDS_BYTES + len(_code_pointer_callers) * CODE_POINTER_CALLER_BYTES
-        assert len(stub) <= CODE_POINTER_CALLER_BYTES and at + CODE_POINTER_CALLER_BYTES <= BAND_AT + BAND_BYTES
-        cost = tuple(base + len(registers) * each for base, each in zip(CODE_POINTER_CALLER_COST, CLEAR_COST))
-        _code_pointer_callers[registers] = vdi.staged_caller(at, stub, cost)
-    return _code_pointer_callers[registers]
-
-
-# Every code-pointer caller the batteries use, built at import so each is registered (and measured).
-for _registers in {*CODE_POINTERS.values(), DIAGONAL_CODE_POINTERS}:
-    code_pointer_caller(_registers)
-
-
-def caller_for(name, code_pointers=None):
-    """The caller `name`'s transcription is entered through: `code_pointers` cleared (the routine's own,
-    `CODE_POINTERS`, by default), or the plain one when there are none."""
-    registers = CODE_POINTERS.get(name, ()) if code_pointers is None else code_pointers
-    return code_pointer_caller(registers) if registers else vdi.PLAIN_CALLER
-
-
-def run_transcription(name, pokes, regs=None, *, code_pointers=None):
-    """`raster.S`'s `name` against the ROM routine over `pokes`, through the transcription relation."""
-    return vdi.run_transcription(name, pokes, regs, caller=caller_for(name, code_pointers))
+CALLERS = vdi.CallerPool(PLANE_WORDS_AT + PLANE_WORDS_BYTES, BAND_AT + BAND_BYTES, CODE_POINTER_CALLER_BYTES,
+                         CODE_POINTERS, built=(DIAGONAL_CODE_POINTERS,))
+code_pointer_caller = CALLERS.caller
+caller_for = CALLERS.caller_for
+run_transcription = CALLERS.run_transcription
 
 
 def register(label, name, pokes, *, regs=None, c_row=True, code_pointers=None):

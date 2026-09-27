@@ -24,8 +24,11 @@
  * one's set, measured: `sort_words` and `smul_div` destroy D2, `vr_trnfm`'s in-place transpose D7
  * outside its `movem` pair (harmless in the ROM only because its caller, the Alcyon dispatcher `$fca9f6`,
  * restores D7 from its own frame), and `gemdos_call` whatever its `trap #1` does not keep — D2/A2.
- * `act_siz` saves what it uses and `clc_dda`, `clamp_mouse` and `get_kbshift` touch only D0/D1. A C
- * caller in a shipped build reaches these through glue that names those sets as clobbers.
+ * `act_siz` saves what it uses and `clc_dda` and `get_kbshift` touch only D0/D1. A C caller in a shipped
+ * build reaches these through glue that names those sets as clobbers.
+ *
+ * `clamp_mouse` ($fcfedc) is a helper of this file's kind transcribed in `mouse.S` instead: the mouse ISR
+ * reaches it by `bsr.s`, whose displacement only the ROM's own layout of the two reproduces.
  */
 #include "addrs.h"
 #include "m68k_encodings.h"
@@ -165,29 +168,6 @@ vdi_rom_act_siz:
     addq.w  #1,%d0
 .Lsiz_done:
     movem.l (%sp)+,%d2-%d3
-    rts
-
-/* ---- clamp_mouse, $fcfedc: D0/D1 held to DEV_TAB's last column and row ------------------------- */
-    .globl  vdi_rom_clamp_mouse
-vdi_rom_clamp_mouse:
-    tst.w   %d0
-    bge.s   .Lclamp_x_high
-    clr.w   %d0
-    bra.s   .Lclamp_y
-.Lclamp_x_high:
-    cmp.w   (LINEA_DEV_TAB + VDI_DEV_TAB_MAX_X_INDEX * VDI_WORD_BYTES).l,%d0
-    ble.s   .Lclamp_y
-    move.w  (LINEA_DEV_TAB + VDI_DEV_TAB_MAX_X_INDEX * VDI_WORD_BYTES).l,%d0
-.Lclamp_y:
-    tst.w   %d1
-    bge.s   .Lclamp_y_high
-    clr.w   %d1
-    rts
-.Lclamp_y_high:
-    cmp.w   (LINEA_DEV_TAB + VDI_DEV_TAB_MAX_Y_INDEX * VDI_WORD_BYTES).l,%d1
-    ble.s   .Lclamp_done
-    move.w  (LINEA_DEV_TAB + VDI_DEV_TAB_MAX_Y_INDEX * VDI_WORD_BYTES).l,%d1
-.Lclamp_done:
     rts
 
 /* ---- vr_trnfm, $fd2d32 (opcode 110), and its two transposes, $fd2d80 and $fd2db4 ------------------

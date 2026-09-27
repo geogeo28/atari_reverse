@@ -43,7 +43,9 @@
 #include "addrs.h"
 #include "m68k_idioms.h"
 #include "ram_vector.h"
+#include "vdi/vdi.h"
 #include "vdi/raster.h"
+#include "vdi/transcribed.h"
 
 #define PIXEL_IN_GROUP_MASK  15u        /* x & 15: the pixel's column in its 16-pixel group */
 #define GROUP_SHIFT          4          /* x >> 4 (`asr.w #4`): its group */
@@ -63,20 +65,9 @@ static inline uint32_t screen_base(const uint8_t *image)
     return be32(image + SYSVAR_V_BAS_AD);
 }
 
-static inline int16_t linea_word(const uint8_t *image, uint32_t field)
-{
-    return (int16_t)be16(image + field);
-}
-
 static inline uint16_t fringe_mask(const uint8_t *image, unsigned index)
 {
     return be16(image + RASTER_FRINGE_MASK_TABLE + index * RASTER_FRINGE_MASK_ENTRY_BYTES);
-}
-
-/* `muls.w`: both factors are the low words, signed, and the product is the whole long. */
-static inline int32_t muls_word(uint16_t left, uint16_t right)
-{
-    return (int32_t)(int16_t)left * (int16_t)right;
 }
 
 /* `exg`: the line is drawn from its left end. */
@@ -102,15 +93,16 @@ static inline int more_planes(uint16_t *planes_left)
  * ROM's shift does on target, where a word shift would cost GCC a register. */
 int32_t concat_offset(const uint8_t *image, uint16_t x, uint16_t y)
 {
-    uint16_t shift = image[RASTER_CONCAT_SHIFT_TABLE + linea_word(image, LINEA_PLANES)];
+    uint16_t shift = image[RASTER_CONCAT_SHIFT_TABLE + ram_word(image, LINEA_PLANES)];
     int32_t group_bytes = asr_long_by((int16_t)(x & ~PIXEL_IN_GROUP_MASK), shift);
 
-    return muls_word(y, be16(image + LINEA_BYTES_LIN)) + group_bytes;
+    return m68k_muls_w(y, be16(image + LINEA_BYTES_LIN)) + group_bytes;
 }
 
 /* $fca1b8 — concat as a primitive: D1 = the offset, D0's low word = x & 15 (its high word untouched).
  * It also leaves D2's HIGH word holding x's sign (`ext.l d2` before a word-sized restore), which no
  * caller reads and this contract does not declare. */
+TRANSCRIBED_CORE
 uint32_t linea_concat(uint8_t *image, uint32_t x_register, uint32_t y_register, uint32_t *results)
 {
     results[CONCAT_D0] = (x_register & ~(uint32_t)WHOLE_WORD) | (x_register & PIXEL_IN_GROUP_MASK);
@@ -132,6 +124,7 @@ static inline const uint8_t *first_point(const uint8_t *image)
 }
 
 /* $fcface — $a001 put_pixel: intin[0]'s bits, plane 0 first, into ptsin[0]'s pixel. No clipping. */
+TRANSCRIBED_CORE
 void linea_put_pixel(uint8_t *image)
 {
     const uint8_t *point = first_point(image);
@@ -151,6 +144,7 @@ void linea_put_pixel(uint8_t *image)
 
 /* $fcfb16 — $a002 get_pixel: ptsin[0]'s colour index in D0, read from the LAST plane down. `addx.w`
  * builds it in a WORD, so past 16 planes the planes read first are shifted out of it. */
+TRANSCRIBED_CORE
 uint32_t linea_get_pixel(uint8_t *image)
 {
     const uint8_t *point = first_point(image);
@@ -299,8 +293,8 @@ static inline void cpu_hline(uint8_t *image, int16_t pattern_stride, uint16_t le
 
     span.planes = be16(image + LINEA_PLANES);
     span.group_bytes = (uint16_t)(span.planes * PLANE_WORD_BYTES);
-    span.first = image + screen_base(image) + muls_word(y, be16(image + LINEA_BYTES_LIN))
-                 + muls_word(left_group, span.group_bytes);
+    span.first = image + screen_base(image) + m68k_muls_w(y, be16(image + LINEA_BYTES_LIN))
+                 + m68k_muls_w(left_group, span.group_bytes);
     span.pattern = image + pattern;
     span.pattern_stride = pattern_stride;
     span.left_mask = left_mask;
@@ -309,6 +303,7 @@ static inline void cpu_hline(uint8_t *image, int16_t pattern_stride, uint16_t le
     span_row(image, &span, be16(image + LINEA_WRT_MODE));
 }
 
+TRANSCRIBED_CORE
 void linea_cpu_hline(uint8_t *image, uint32_t pattern_stride, uint32_t left_group, uint32_t words,
                      uint32_t left_mask, uint32_t y, uint32_t right_mask, uint32_t pattern)
 {
@@ -328,6 +323,7 @@ static inline void hline_span(uint8_t *image, uint16_t x1, uint16_t y, uint16_t 
               fringes.right_mask, pattern);
 }
 
+TRANSCRIBED_CORE
 void linea_hline_span(uint8_t *image, uint32_t x1, uint32_t y, uint32_t x2, uint32_t pattern,
                       uint32_t pattern_stride)
 {
@@ -345,12 +341,14 @@ static inline void hline_patterned(uint8_t *image, uint16_t x1, uint16_t y, uint
     hline_span(image, x1, y, x2, pattern, stride);
 }
 
+TRANSCRIBED_CORE
 void linea_hline_patterned(uint8_t *image, uint32_t x1, uint32_t y, uint32_t x2)
 {
     hline_patterned(image, (uint16_t)x1, (uint16_t)y, (uint16_t)x2);
 }
 
 /* $fca57e — $a004 hline: X1..X2 on row Y1 in the fill pattern, unclipped. */
+TRANSCRIBED_CORE
 void linea_hline(uint8_t *image)
 {
     hline_patterned(image, be16(image + LINEA_X1), be16(image + LINEA_Y1), be16(image + LINEA_X2));
@@ -379,8 +377,8 @@ static inline void cpu_rect_fill(uint8_t *image, uint16_t left_group, uint16_t w
     span.group_bytes = (uint16_t)(span.planes * PLANE_WORD_BYTES);
     /* the arms step A1 past the planes, and the frame's `WIDTH - planes * 2` takes it to the next row */
     row_step = span.group_bytes + (int16_t)(be16(image + LINEA_WIDTH) - span.group_bytes);
-    row = image + screen_base(image) + muls_word(y1, be16(image + LINEA_BYTES_LIN))
-          + 2 * muls_word(left_group, span.planes);
+    row = image + screen_base(image) + m68k_muls_w(y1, be16(image + LINEA_BYTES_LIN))
+          + 2 * m68k_muls_w(left_group, span.planes);
     span.pattern_stride = be16(image + LINEA_MULTIFILL) ? RASTER_MULTIFILL_PLANE_BYTES : 0;
     span.left_mask = left_mask;
     span.right_mask = right_mask;
@@ -398,6 +396,7 @@ static inline void cpu_rect_fill(uint8_t *image, uint16_t left_group, uint16_t w
     }
 }
 
+TRANSCRIBED_CORE
 void linea_cpu_rect_fill(uint8_t *image, uint32_t left_group, uint32_t words, uint32_t left_mask,
                          uint32_t y1, uint32_t right_mask, uint32_t y2)
 {
@@ -424,15 +423,16 @@ static int clip_axis(int16_t *low, int16_t *high, int16_t min, int16_t max)
 
 /* $fcfc56 — $a005 filled rectangle X1,Y1 .. X2,Y2 in the fill pattern. With CLIP on, the corners are
  * clipped and STORED BACK — on a miss too ($fcfc50), as far as the clip had got. */
+TRANSCRIBED_CORE
 void linea_filled_rect(uint8_t *image)
 {
-    int16_t x1 = linea_word(image, LINEA_X1), y1 = linea_word(image, LINEA_Y1);
-    int16_t x2 = linea_word(image, LINEA_X2), y2 = linea_word(image, LINEA_Y2);
+    int16_t x1 = ram_word(image, LINEA_X1), y1 = ram_word(image, LINEA_Y1);
+    int16_t x2 = ram_word(image, LINEA_X2), y2 = ram_word(image, LINEA_Y2);
     struct fringes fringes;
 
     if (be16(image + LINEA_CLIP)) {
-        int visible = clip_axis(&x1, &x2, linea_word(image, LINEA_XMINCL), linea_word(image, LINEA_XMAXCL))
-                      && clip_axis(&y1, &y2, linea_word(image, LINEA_YMINCL), linea_word(image, LINEA_YMAXCL));
+        int visible = clip_axis(&x1, &x2, ram_word(image, LINEA_XMINCL), ram_word(image, LINEA_XMAXCL))
+                      && clip_axis(&y1, &y2, ram_word(image, LINEA_YMINCL), ram_word(image, LINEA_YMAXCL));
 
         wr16(image + LINEA_X1, (uint16_t)x1);
         wr16(image + LINEA_Y1, (uint16_t)y1);
@@ -464,6 +464,7 @@ static inline uint16_t colour_planes(const uint8_t *image, uint16_t planes)
 
 /* $fca3f4 — line_plane_words: D3 (PLANES) opcode words into the buffer at A2, each plane's clear or set
  * by its COLBIT, and the `jmp (a3)` that ends the run. */
+TRANSCRIBED_CORE
 void linea_line_plane_words(uint8_t *image, uint32_t planes, uint32_t buffer)
 {
     uint8_t *word = image + buffer;
@@ -561,11 +562,12 @@ static inline void pen_colour(const uint8_t *image, struct pen *pen, uint16_t pl
 /* $fd19dc — vector 7's CPU body: the vertical line x1 (D4), y1 (D5) .. y2 (D7); D6 = x2 = x1 places
  * the group. Entered with D0 = 2 (see `raster.h`). Each row is WIDTH bytes from the last, where the
  * first was placed by BYTES_LIN. */
+TRANSCRIBED_CORE
 void linea_cpu_vline(uint8_t *image, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2)
 {
     uint16_t planes = be16(image + LINEA_PLANES);
     uint16_t group_bytes = (uint16_t)(planes * PLANE_WORD_BYTES);
-    int16_t step = linea_word(image, LINEA_WIDTH);
+    int16_t step = ram_word(image, LINEA_WIDTH);
     uint16_t count = (uint16_t)(y2 - y1);
     struct pen pen;
 
@@ -576,8 +578,8 @@ void linea_cpu_vline(uint8_t *image, uint32_t x1, uint32_t y1, uint32_t x2, uint
         count = (uint16_t)-count;
     }
     pen_colour(image, &pen, planes, (uint16_t)x1);
-    pen.group = image + screen_base(image) + muls_word((uint16_t)((int16_t)x2 >> GROUP_SHIFT), group_bytes)
-                + muls_word(be16(image + LINEA_BYTES_LIN), (uint16_t)y1);
+    pen.group = image + screen_base(image) + m68k_muls_w((uint16_t)((int16_t)x2 >> GROUP_SHIFT), group_bytes)
+                + m68k_muls_w(be16(image + LINEA_BYTES_LIN), (uint16_t)y1);
     count = pen_start(image, &pen, count);
     do {
         pen_pixel(&pen);
@@ -592,7 +594,7 @@ static void line_diagonal(uint8_t *image, int16_t x1, int16_t y1, int16_t x2, in
 {
     uint16_t planes = be16(image + LINEA_PLANES);
     uint16_t group_bytes = (uint16_t)(planes * PLANE_WORD_BYTES);
-    int16_t step_y = linea_word(image, LINEA_WIDTH);
+    int16_t step_y = ram_word(image, LINEA_WIDTH);
     int16_t dx, dy, major, minor, error, error_straight, error_diagonal;
     int y_major;
     uint16_t count;
@@ -611,8 +613,8 @@ static void line_diagonal(uint8_t *image, int16_t x1, int16_t y1, int16_t x2, in
         step_y = (int16_t)-step_y;
     }
     pen_colour(image, &pen, planes, (uint16_t)x1);
-    pen.group = image + screen_base(image) + muls_word(be16(image + LINEA_BYTES_LIN), (uint16_t)y1)
-                + muls_word((uint16_t)(x1 >> GROUP_SHIFT), group_bytes);
+    pen.group = image + screen_base(image) + m68k_muls_w(be16(image + LINEA_BYTES_LIN), (uint16_t)y1)
+                + m68k_muls_w((uint16_t)(x1 >> GROUP_SHIFT), group_bytes);
     y_major = dy > dx;
     major = y_major ? dy : dx;
     minor = y_major ? dx : dy;
@@ -651,10 +653,11 @@ static void line_horizontal(uint8_t *image, int16_t x1, int16_t y, int16_t x2)
 }
 
 /* $fca1ea — $a003 line X1,Y1 .. X2,Y2 in LN_MASK's style, unclipped. */
+TRANSCRIBED_CORE
 void linea_line(uint8_t *image)
 {
-    int16_t x1 = linea_word(image, LINEA_X1), y1 = linea_word(image, LINEA_Y1);
-    int16_t x2 = linea_word(image, LINEA_X2), y2 = linea_word(image, LINEA_Y2);
+    int16_t x1 = ram_word(image, LINEA_X1), y1 = ram_word(image, LINEA_Y1);
+    int16_t x2 = ram_word(image, LINEA_X2), y2 = ram_word(image, LINEA_Y2);
 
     if (y1 == y2) {
         line_horizontal(image, x1, y1, x2);

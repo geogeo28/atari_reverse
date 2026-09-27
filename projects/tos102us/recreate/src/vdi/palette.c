@@ -33,6 +33,7 @@
 #include "vdi/inquire.h"
 #include "vdi/palette.h"
 #include "vdi/vdi.h"
+#include "vdi/transcribed.h"
 
 #define WORD_BYTES 2
 #define GUNS       PALETTE_GUNS
@@ -134,6 +135,7 @@ static void set_mono(uint8_t *image, uint32_t requested, const uint8_t *intin, u
 /* $fd2dd2 — vs_color (14): intin[0] = index, intin[1..3] = red, green, blue per mille. An index over
  * the plane count's bound changes nothing; otherwise the request is stored as given and the register
  * written. It answers nothing. */
+TRANSCRIBED_CORE
 void vdi_vs_color(uint8_t *image)
 {
     const uint8_t *intin = image + linea_pointer(image, LINEA_INTIN);
@@ -195,6 +197,7 @@ static void answer_realized(const uint8_t *image, uint8_t *intout, uint16_t inde
     }
 }
 
+TRANSCRIBED_CORE
 void vdi_vq_color(uint8_t *image)
 {
     const uint8_t *intin;

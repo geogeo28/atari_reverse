@@ -19,7 +19,10 @@
  * oracle. Keyed BY ADDRESS, which is what makes a decoy staged beside the named routine mean
  * something on this side too.
  *
- * IT IS A SECOND HOOK BESIDE `src/xbios/supexec.c`'s `recreate_call_routine`, deliberately and not
+ * A SECOND HOOK HERE, `recreate_call_vector_registers`, serves the one shape that passes REGISTERS
+ * back (the end of this file): a hook of `recreate_call_vector`'s signature has nowhere to put them.
+ *
+ * IT IS ANOTHER HOOK BESIDE `src/xbios/supexec.c`'s `recreate_call_routine`, deliberately and not
  * happily. The two have different signatures — Supexec TAIL-JUMPS and its routine's D0 is the XBIOS
  * call's result, so its hook returns one; a handler CALLS and ignores what comes back, and one of
  * its two forms pushes a word first. And both are bound at their own battery's import, so a single
@@ -40,12 +43,18 @@
  * host routine can tell "nothing was pushed" from "a zero was". */
 #define STAGED_CALL_NO_ARGUMENT 0xffffffffu
 
+/* The REGISTER-CARRYING shape's register file, in the order its host hook hands it over. */
+enum { STAGED_D0, STAGED_D1, STAGED_A0, STAGED_REGISTERS };
+
 #ifdef RECREATE_HOST_DIFFERENTIAL
 /* Bound by the case through the candidate `.so`'s symbol table (ctypes) — see `test/isr.py`.
  * Deliberately not a parameter of the handlers: the ROM's operand is the address in the vector, and
  * a signature that took a host callable would be a different function from the one the target
  * build compiles. */
 extern void (*recreate_call_vector)(uint8_t *image, uint32_t routine, uint32_t argument);
+/* ...and the register-carrying shape's (`call_vector_registers`, the end of this file): `registers`
+ * is D0, D1, A0 (`STAGED_REGISTERS`), handed in and handed back. Bound in `test/isr.py` too. */
+extern void (*recreate_call_vector_registers)(uint8_t *image, uint32_t routine, uint32_t *registers);
 #endif
 
 /* WHAT THE TWO `jsr`s BELOW CLOBBER, and it is not the C ABI's list. A routine in a RAM vector owes
@@ -73,7 +82,8 @@ extern void (*recreate_call_vector)(uint8_t *image, uint32_t routine, uint32_t a
  * their callees read A0, so A0 cannot hold it — and a register an `asm` names as an operand may not
  * also be clobbered. Two lists written out in full would be one rule spelt twice, and the second
  * copy is the one that would miss a register. */
-#define STAGED_CALL_CLOBBERS_D1_D7 "d1", "d2", "d3", "d4", "d5", "d6", "d7"
+#define STAGED_CALL_CLOBBERS_D2_D7 "d2", "d3", "d4", "d5", "d6", "d7"
+#define STAGED_CALL_CLOBBERS_D1_D7 "d1", STAGED_CALL_CLOBBERS_D2_D7
 #define STAGED_CALL_CLOBBERS_A2_A4 "a2", "a3", "a4"
 #define STAGED_CALL_CLOBBERS STAGED_CALL_CLOBBERS_D1_D7, "a1", STAGED_CALL_CLOBBERS_A2_A4, \
                              "memory", "cc"
@@ -230,6 +240,45 @@ static inline void call_vector_byte(uint8_t *image, uint32_t routine, uint32_t i
                       : "+a"(target), "+a"(record), "+d"(received), STAGED_CALL_BASE_OPERAND
                       :
                       : STAGED_CALL_CLOBBERS_ROUTINE_IN_A1);
+#endif
+}
+
+/* ---- the REGISTER-CARRYING shape: D0, D1 and A0 in AND out --------------------------------------
+ *
+ * The VDI's two RAM vectors that talk in registers: the mouse ISR's USER_BUT, USER_MOT and USER_CUR
+ * (`movea.l USER_x,a1 / jsr (a1)`, D0/D1 handed in and answered, A0 whatever the ISR or the previous
+ * routine left — the ISR goes on reading its packet through the A0 USER_BUT hands back, `$fcfe7e`), and
+ * the contour fill's SEEDABORT (`movea.l SEEDABORT,a0 / jsr (a0)`, D0.w the answer — its caller loads A0
+ * with the routine and this reproduces that). One shape carries all three registers both ways, on
+ * target and off, so no caller has to know which of them its routine reads.
+ *
+ * THE ROUTINE IS IN A1, because A0 is a value here. For SEEDABORT that is a residual beside the ROM,
+ * whose A1 at the `jsr` is what the fill left in it: a staged routine reading A1 would diverge, rightly.
+ *
+ * A5 IS CLOBBERED, NOT PINNED — these callers are no interrupt handler of `src/bios/isr.S`'s, and owe
+ * their routine no A5; a routine that uses it (nothing forbids a program's SEEDABORT to) must not take a
+ * C local of ours with it. A6 is the toolchain bound above, and here it is not covered by a `movem`
+ * bracket: a routine that changes A6 leaves our caller's A6 changed. No routine TOS installs does, and a
+ * staged one that did would be a register this project cannot pin. */
+static inline void call_vector_registers(uint8_t *image, uint32_t routine, uint32_t registers[STAGED_REGISTERS])
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    recreate_call_vector_registers(image, routine, registers);
+#else
+    /* D0, D1, A0 as the table names them, and the routine in A1. */
+    register uint32_t first __asm__("d0") = registers[STAGED_D0];
+    register uint32_t second __asm__("d1") = registers[STAGED_D1];
+    register uint32_t pointer __asm__("a0") = registers[STAGED_A0];
+    register uint32_t target __asm__("a1") = routine;
+
+    (void)image;
+    __asm__ volatile ("jsr (%3)"
+                      : "+d"(first), "+d"(second), "+a"(pointer), "+a"(target)
+                      :
+                      : STAGED_CALL_CLOBBERS_D2_D7, STAGED_CALL_CLOBBERS_A2_A4, "a5", "memory", "cc");
+    registers[STAGED_D0] = first;
+    registers[STAGED_D1] = second;
+    registers[STAGED_A0] = pointer;
 #endif
 }
 

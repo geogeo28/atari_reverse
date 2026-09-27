@@ -37,8 +37,6 @@ snapshot and clear of every other tenant. A battery that needs another buffer cl
 
 ---- WHAT THE HEADERS DO NOT NAME, AND WHY ----------------------------------------------------------
 `include/vdi/*.h` carries only fields a ROM instruction was found reading or writing. Left out:
-  * the published SAVE_LEN / SAVE_ADDR / SAVE_STAT / SAVE_AREA split of `LINEA_SAVE_BLOCK` — the sprite
-    routines address the block through A2, and the split is not pinned by any access read so far;
   * the published byte at $283f between CUR_MS_STAT and V_HID_CNT;
   * the individual words of `LINEA_GDP_SCRATCH` ($2614..$2641) and of `VDI_SCRATCH` ($16da..$1701) —
     each belongs to the routine that uses it, and is named (`LINEA_GDP_*`) once a reconstructed one does;
@@ -47,8 +45,10 @@ snapshot and clear of every other tenant. A battery that needs another buffer cl
   * $fd3664..$fd36eb, between INQ_TAB's defaults and MAP_COL: no access found.
 """
 import ctypes
+import importlib
 import re
 import struct
+import subprocess
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -60,7 +60,7 @@ import case
 import staging
 from case import merge_pokes
 from isr import blob as bench     # the cross-compiled blob, loaded once per process (`isr.blob`)
-from opcodes import LINE_A, PUSH_STACK_LONG, RTS
+from opcodes import CLEAR_ADDRESS_REGISTER, LINE_A, PUSH_RETURN_PC, PUSH_STACK_LONG, RTS
 
 # ---- the headers' constants, out of the C the cores compile against ------------------------------
 # One namespace for every VDI battery. Parsed IN INCLUDE ORDER with what came before as `known`,
@@ -563,7 +563,9 @@ def declare_primitive(name, *, arguments=(), results=()):
     return PRIMITIVES[name]
 
 
-def _run_primitive_at(entry, name, registers, pokes, **kwargs):
+def _run_primitive_at(entry, name, registers, pokes, *, recording=None, **kwargs):
+    """`recording` is an `AddressHook.recording` for a primitive that calls out through a hook the case
+    staged (`test/vdi_mouse.py`'s user vectors): it opens the hook's pass round each candidate run."""
     contract = PRIMITIVES[name]
     values = [registers[register] for register in contract.arguments]
     several = len(contract.results) > 1
@@ -580,7 +582,7 @@ def _run_primitive_at(entry, name, registers, pokes, **kwargs):
         answers.append(list(out)[:len(contract.results)])
         return returned
 
-    info = case.run(entry, {**registers, "_pokes": pokes}, glue,
+    info = case.run(entry, {**registers, "_pokes": pokes}, recording(glue) if recording else glue,
                     width=case.FULL_D0 if answers_d0 else case.NO_RESULT, **kwargs)
     if several:
         # The FIRST candidate call is the differential's own; the attribution pass re-runs it over a
@@ -647,28 +649,31 @@ def register(name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, sche
 # battery whose routine needs another shape stages its own in its own band through `staged_caller`, which
 # REGISTERS it: `test_vdi_transcribed.py` measures every registered caller's cost against the one it
 # declares (`assert_caller_cost`), so no caller's number is a literal nobody re-derives.
-Caller = namedtuple("Caller", "at stub cost")
+# A caller that enters a routine BELOW a frame the routine's front end would have built (a body whose own
+# epilogue pops what that front end pushed) is measured over that epilogue instead of a bare `rts`: its
+# `routine` stand-in and the stand-in's `routine_cost` (None: the bare `rts`, `RTS_COST`).
+Caller = namedtuple("Caller", "at stub cost routine routine_cost", defaults=(RTS, None))
 CALLERS = []
 
 
-def staged_caller(at, stub, cost):
+def staged_caller(at, stub, cost, *, routine=RTS, routine_cost=None):
     """A transcription caller at `at`, declared to cost `(instructions, cycles)` — and registered."""
-    caller = Caller(at, stub, cost)
+    caller = Caller(at, stub, cost, routine, routine_cost)
     CALLERS.append(caller)
     return caller
 
 
 def assert_caller_cost(caller, regs=None):
-    """`caller` entered with a bare `rts` for the routine costs its declared `cost` and nothing else: the
-    oracle's reset (`RomBench.overhead`, which `test_tier3.py` pins) and that `rts` (`RTS_COST`) are all
-    the rest of the run. Answers the register file it left, for a caller that also promises what it does
-    to one."""
-    pokes = {caller.at: caller.stub, STUB_AT: RTS, abi.FIRST_ARG: struct.pack(">I", STUB_AT)}
+    """`caller` entered with a bare `rts` for the routine (or its declared stand-in) costs its declared `cost`
+    and nothing else: the oracle's reset (`RomBench.overhead`, which `test_tier3.py` pins) and that `rts`
+    (`RTS_COST`) are all the rest of the run. Answers the register file it left, for a caller that also
+    promises what it does to one."""
+    pokes = {caller.at: caller.stub, STUB_AT: caller.routine, abi.FIRST_ARG: struct.pack(">I", STUB_AT)}
     _final, _writes, left = emu.run(make_image(pokes), caller.at, {**DIRTY, **(regs or {})})
-    reset, rts, cost = bench().overhead, RTS_COST, caller.cost
+    reset, rts, cost = bench().overhead, caller.routine_cost or RTS_COST, caller.cost
     assert (left["ninsns"], left["cycles"]) == (reset[0] + cost[0] + rts[0], reset[1] + cost[1] + rts[1]), (
-        f"the caller at {caller.at:#x} costs {left['ninsns']} / {left['cycles']} with the reset and an `rts`, "
-        f"not the declared {cost} over {reset} and {rts}")
+        f"the caller at {caller.at:#x} costs {left['ninsns']} / {left['cycles']} with the reset and its routine's "
+        f"stand-in, not the declared {cost} over {reset} and {rts}")
     return left
 
 
@@ -682,6 +687,70 @@ PLAIN_CALLER = staged_caller(TRANSCRIPTION_CALLER_AT, TRANSCRIPTION_CALLER, (2, 
 TRANSCRIPTIONS = []
 LABELS = {}
 TRANSCRIPTION_ROLES = {"vdi_rom_": "VDI", "linea_rom_": "Line-A"}
+
+
+# A CODE-POINTER CALLER: for a `.S` that returns with an address INSIDE ITSELF in a register — a fragment
+# it reached through `jsr (a5)`, a loop it left in A3 — which is the one thing a transcription linked
+# anywhere else must differ in. The case is entered through a caller that returns through itself and
+# zeroes exactly those registers on BOTH sides, so every other register is still compared:
+#
+#     pea     back(pc) / move.l 8(sp),-(sp) / rts / back: suba.l An,An ... / rts
+#
+# Which registers, per routine, is MEASURED by each battery and declared to its `CallerPool`.
+_ROUTINE_SLOT = abi.FIRST_ARG - emu.STACK_TOP + LONG_BYTES     # FIRST_ARG, past the pushed return
+_JUMP_BYTES = len(PUSH_STACK_LONG) + WORD_BYTES + len(RTS)
+# pea + move.l + rts in and an rts out, and one suba.l per register (6 cycles as Musashi counts it): the
+# declared cost of each caller is their sum, and `test_vdi_transcribed.py` measures every one against it.
+CODE_POINTER_CALLER_COST = (4, 72)
+CLEAR_COST = (1, 6)
+
+
+def code_pointer_stub(registers):
+    """The bytes of a caller that clears `registers` on the way out, and the cost it declares — position
+    independent, so each battery stages its own in its own band (`CallerPool`)."""
+    clears = b"".join(CLEAR_ADDRESS_REGISTER[register] for register in registers)
+    stub = (PUSH_RETURN_PC + struct.pack(">h", _JUMP_BYTES + WORD_BYTES)
+            + PUSH_STACK_LONG + struct.pack(">h", _ROUTINE_SLOT) + RTS + clears + RTS)
+    cost = tuple(base + len(registers) * each for base, each in zip(CODE_POINTER_CALLER_COST, CLEAR_COST))
+    return stub, cost
+
+
+class CallerPool:
+    """One battery's CODE-POINTER CALLERS, staged in its own band `[at, end)` one `stride` apart: the
+    caller that clears a register set is built on first ask and registered (`staged_caller`), and the
+    plain caller answers for an empty set. `code_pointers` is the battery's MEASURED `{routine: registers}`
+    — what `caller_for` enters a routine through when a case names none."""
+
+    def __init__(self, at, end, stride, code_pointers=None, *, built=()):
+        self.at, self.end, self.stride = at, end, stride
+        self.code_pointers = dict(code_pointers or {})
+        self._callers = {}
+        # Built now, so each is registered — and its cost measured — before any case asks for it.
+        for registers in (*self.code_pointers.values(), *built):
+            self.caller(registers)
+
+    def caller(self, registers):
+        if not registers:
+            return PLAIN_CALLER
+        if registers not in self._callers:
+            stub, cost = code_pointer_stub(registers)
+            at = self.at + len(self._callers) * self.stride
+            assert len(stub) <= self.stride and at + self.stride <= self.end, (
+                f"no room for a caller clearing {registers} in [{self.at:#x}, {self.end:#x})")
+            self._callers[registers] = staged_caller(at, stub, cost)
+        return self._callers[registers]
+
+    def caller_for(self, name, code_pointers=None):
+        """The caller `name`'s transcription is entered through: `code_pointers` cleared, or the routine's
+        own declared set when the case names none."""
+        return self.caller(self.code_pointers.get(name, ()) if code_pointers is None else code_pointers)
+
+    def run_transcription(self, name, pokes, regs=None, *, code_pointers=None, **kwargs):
+        return run_transcription(name, pokes, regs, caller=self.caller_for(name, code_pointers), **kwargs)
+
+    def register_transcription(self, name, label, pokes, regs=None, *, code_pointers=None, **kwargs):
+        return register_transcription(name, label, pokes, regs, caller=self.caller_for(name, code_pointers),
+                                      **kwargs)
 
 
 def transcription_symbol(name):
@@ -719,15 +788,53 @@ def _blob_bytes(address, size):
     return bytes(blob.blob[address - blob.base:address - blob.base + size])
 
 
+def _relocation_target(at, relocation):
+    """The ROM address the ROM's own reference at `at` names: a displacement from its extension word, or
+    an absolute address."""
+    pc_relative = relocation.width == PC_RELATIVE
+    rom = int.from_bytes(bytes(BASE_IMAGE[at:at + relocation.width]), "big", signed=pc_relative)
+    return at + rom if pc_relative else rom
+
+
 def _relocated_value(at, placed_at, relocation):
     """The exact bytes the reference at ROM address `at`, placed at blob address `placed_at`, must hold:
     the ROM's own reference followed to its target, and that target's place in the blob."""
-    pc_relative = relocation.width == PC_RELATIVE
-    rom = int.from_bytes(bytes(BASE_IMAGE[at:at + relocation.width]), "big", signed=pc_relative)
-    if pc_relative:
-        displacement = transcribed_address(relocation.target_anchor, at + rom) - placed_at
-        return displacement.to_bytes(WORD_BYTES, "big", signed=True)
-    return transcribed_address(relocation.target_anchor, rom).to_bytes(LONG_BYTES, "big")
+    target = transcribed_address(relocation.target_anchor, _relocation_target(at, relocation))
+    if relocation.width == PC_RELATIVE:
+        return (target - placed_at).to_bytes(WORD_BYTES, "big", signed=True)
+    return target.to_bytes(LONG_BYTES, "big")
+
+
+# THE REGIONS THE BATTERIES PIN, declared where each battery lays its own out (`pinned_region`). A
+# relocation's value is computed from where its TARGET routine's region sits in the blob — sound only if the
+# target, and the routine it is measured from, lie in ONE region some battery byte-pins: the `.S` lays a
+# region out contiguously and the pin proves it did. A reference into bytes nobody pins would be a value
+# computed against a layout nobody checked (`text_raster.S`'s `lea` of raster.S's fringe table is the case
+# that asks it).
+Region = namedtuple("Region", "lo hi anchor entries", defaults=((),))
+PINNED_REGIONS = []
+_DECLARES_A_REGION = "vdi.pinned_region("
+
+
+def pinned_region(lo, hi, anchor, entries=()):
+    """Declare the ROM bytes `lo`..`hi`, laid out from the `.S` entry of `anchor` (and holding `entries`'),
+    as a region this battery byte-pins — at import, so every region is known before any pin runs."""
+    region = Region(lo, hi, anchor, tuple(entries))
+    PINNED_REGIONS.append(region)
+    return region
+
+
+def every_pinned_region():
+    """Every battery's regions, whichever batteries this process has imported: each test module that
+    declares one is imported here first (a no-op for one already loaded)."""
+    for path in sorted(Path(__file__).resolve().parent.glob("test_*.py")):
+        if _DECLARES_A_REGION in path.read_text():
+            importlib.import_module(path.stem)
+    return tuple(PINNED_REGIONS)
+
+
+def _one_pinned_region_holds(*addresses):
+    return any(all(region.lo <= address < region.hi for address in addresses) for region in every_pinned_region())
 
 
 def assert_transcribed(anchor, lo, hi, *, entries=(), relocated=None):
@@ -737,6 +844,13 @@ def assert_transcribed(anchor, lo, hi, *, entries=(), relocated=None):
     place in the blob gives them. A relocation that happens to equal the ROM's word is refused too: it
     names a word that needs no excuse."""
     relocated = relocated or {}
+    assert Region(lo, hi, anchor) in {region._replace(entries=()) for region in every_pinned_region()}, (
+        f"${lo:x}..${hi:x} from {anchor} is pinned but no battery declares it (`vdi.pinned_region`)")
+    for at, relocation in relocated.items():
+        target = _relocation_target(at, relocation)
+        assert _one_pinned_region_holds(target, getattr(addrs, relocation.target_anchor)), (
+            f"${at:x} ({relocation.why}) is relocated to ${target:x} as measured from {relocation.target_anchor}, "
+            f"but no byte-pinned region holds both — its value would be computed against a layout nobody checks")
     start = transcribed_address(anchor, lo)
     for name in entries:
         assert transcribed_address(anchor, getattr(addrs, name)) == bench().entry(transcription_symbol(name)), (
@@ -793,6 +907,122 @@ _TRANSCRIBED_ROW = re.compile(r'^\s*ENTRY\((?P<entry>[a-z0-9_]+),\s*"(?P<destroy
 TRANSCRIBED = {match["entry"]: tuple(match["destroys"].split())
                for match in map(_TRANSCRIBED_ROW.match, TRANSCRIBED_HEADER.read_text().splitlines()) if match}
 assert TRANSCRIBED, f"{TRANSCRIBED_HEADER} has no `ENTRY(...)` row this parser reads"
+
+
+def transcribed_core(entry):
+    """The C core a `.S` entry is the transcription of: `linea_rom_hline` -> `linea_hline`."""
+    return core_symbol(transcription_routine(entry))
+
+
+TRANSCRIBED_CORES = {transcribed_core(entry): entry for entry in TRANSCRIBED}
+
+# THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
+# calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
+# `test_vdi_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
+C_CALLERS_OF_TRANSCRIBED_CORES = {
+    ("vdi_vq_key_s", "vdi_get_kbshift"),
+    # the polygon and contour-fill layer (`src/vdi/fill.c`)
+    ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),
+    ("vdi_v_get_pixel", "linea_get_pixel"),
+    ("linea_get_seed", "linea_end_pts"), ("linea_get_seed", "linea_fill_span"),
+    ("linea_contour_fill", "linea_end_pts"), ("linea_contour_fill", "linea_get_pixel"),
+    ("linea_contour_fill", "linea_fill_span"),
+    # the raster functions (`src/vdi/blit.c`)
+    ("vdi_vro_cpyfm", "linea_copy_raster"), ("vdi_vrt_cpyfm", "linea_copy_raster"), ("vdi_vr_recfl", "linea_filled_rect"),
+    # the mouse and input functions (`src/vdi/mouse.c`)
+    ("vdi_v_show_c", "vdi_show_cursor"), ("vdi_v_hide_c", "linea_hide_mouse"),
+    ("vdi_locator", "vdi_show_cursor"), ("vdi_locator", "vdi_poll_locator"), ("vdi_locator", "linea_hide_mouse"),
+    ("vdi_choice", "vdi_poll_choice"), ("vdi_mouse_init", "vdi_vsc_form"),
+}
+
+# A function's name as `m68k-elf-objdump` labels it, the one GCC split off it (`name.part.0`, `.constprop.0`,
+# `.isra.0`) folded back into it, and an offset into it (`name+0x12`) dropped.
+_LISTED_FUNCTION = re.compile(r"^([0-9a-f]+) <([\w.]+)>:$")
+_LISTED_INSTRUCTION = re.compile(r"^\s+([0-9a-f]+):")
+_LISTED_REFERENCE = re.compile(r"<([\w.]+)(?:\+0x[0-9a-f]+)?>")
+
+
+def _unsplit(name):
+    return name.split(".")[0]
+
+
+def _function_ends(elf):
+    """`{address: end}` of every function the symbol table SIZES. A disassembly runs a function on to the
+    next label, and in the shipped blob the next label is not always the next function: a weak C core the
+    glue displaced keeps its body but loses its name, so its instructions would be read as its neighbour's."""
+    table = subprocess.run(["m68k-elf-nm", "-S", "--defined-only", str(elf)], capture_output=True, text=True,
+                           check=True).stdout
+    return {int(fields[0], 16): int(fields[0], 16) + int(fields[1], 16)
+            for fields in (line.split() for line in table.splitlines()) if len(fields) == 4}
+
+
+def call_graph(elf):
+    """`{function: every function its code references}` out of the m68k build at `elf` — a `jsr`, a
+    branch, or a `lea` of an address GCC then calls through a register, which is how it calls one it
+    names more than once. A function the symbol table sizes is read to its end and no further."""
+    listing = subprocess.run(["m68k-elf-objdump", "-d", str(elf)], capture_output=True, text=True,
+                             check=True).stdout
+    ends = _function_ends(elf)
+    graph, function, end = {}, None, None
+    for line in listing.splitlines():
+        start = _LISTED_FUNCTION.match(line)
+        if start:
+            function, end = _unsplit(start.group(2)), ends.get(int(start.group(1), 16))
+            graph.setdefault(function, set())
+            continue
+        instruction = _LISTED_INSTRUCTION.match(line)
+        if function and instruction and (end is None or int(instruction.group(1), 16) < end):
+            graph[function] |= {_unsplit(target) for target in _LISTED_REFERENCE.findall(line)} - {function}
+    return graph
+
+
+def callers_of_transcribed_cores(graph):
+    """The `(caller, core)` references to a transcribed C core from a function outside the table."""
+    return {(function, target) for function, targets in graph.items() if function not in TRANSCRIBED_CORES
+            for target in targets if target in TRANSCRIBED_CORES}
+
+
+def reaching_transcribed_cores(graph):
+    """Every function outside the table from which a transcribed C core is reachable: its direct callers
+    and whatever calls them — the C whose cost, as shipped, includes a `.S`."""
+    reaching = {function for function, _core in callers_of_transcribed_cores(graph)}
+    grown = True
+    while grown:
+        more = {function for function, targets in graph.items()
+                if function not in TRANSCRIBED_CORES and function not in reaching and targets & reaching}
+        reaching |= more
+        grown = bool(more)
+    return reaching
+
+
+# ---- (j) the ALCYON calls: the C signature a frame's words and longwords are decoded into ---------------
+# An Alcyon C routine is entered by `jsr` over the frame its caller pushed — WORD arguments (an Alcyon `int`
+# is 16 bits), LONG addresses — and answers a word in D0.w, which is all its callers read. `declare_alcyon`
+# is the ONE statement of each such core's C signature: the batteries stage the frame from it, the host
+# core's ctypes signature is set from it, `bench/tier3.py` decodes its Tier 3 call out of the same frame by
+# it, and `bench/shipped_glue.py` repacks a GCC call into that frame by it.
+IMAGE_ARG = ctypes.POINTER(ctypes.c_uint8)
+WORD_ARG = ctypes.c_int16
+LONG_ARG = ctypes.c_uint32
+ARG_BYTES = {WORD_ARG: WORD_BYTES, LONG_ARG: LONG_BYTES}
+WORD_RESULT = 16                # the bits of D0 an Alcyon `int` answer is compared at
+Alcyon = namedtuple("Alcyon", "restype argtypes")
+ALCYON = {}
+
+
+def declare_alcyon(name, restype, argtypes):
+    """`addrs.<name>`'s core is an Alcyon call `restype core(argtypes)` — the image first where it takes
+    one, then the frame's arguments in push order; `restype` None for no answer."""
+    ALCYON[name] = Alcyon(restype, tuple(argtypes))
+    core = getattr(_lib, core_symbol(name))
+    core.restype, core.argtypes = restype, list(argtypes)
+    return ALCYON[name]
+
+
+def frame_argtypes(name):
+    """The argument types an Alcyon routine's FRAME carries: its signature less the image."""
+    argtypes = ALCYON[name].argtypes
+    return argtypes[1:] if argtypes[:1] == (IMAGE_ARG,) else argtypes
 
 
 # Every span a VDI case reads or pokes, in `test_boot_snapshot.CASE_FIELDS`' shape. The Line-A block

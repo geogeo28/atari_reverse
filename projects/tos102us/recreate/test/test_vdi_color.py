@@ -436,12 +436,13 @@ def test_a_colour_set_reads_back_requested_and_realized(planes, index):
 # the ROM over every arm above — image, whole register file, palette traffic — through Tier 3's
 # transcription relation (`vdi.run_transcription`).
 BLOCK_BYTES = 0x160                           # $fd2dd2..$fd2f31: both routines and both tables
+REGION = vdi.pinned_region(addrs.VDI_ROM_VS_COLOR, addrs.VDI_ROM_VS_COLOR + BLOCK_BYTES, SET, (GET,))
 
 
 def test_the_transcription_is_the_rom_s_bytes_exactly():
     """THE BYTE PIN: no word excused — the six `<op>.w #imm,Dn` GNU as would encode as CMPI/ADDI/ANDI are
     spelt as the ROM's words (`m68k_encodings.h`)."""
-    vdi.assert_transcribed(SET, addrs.VDI_ROM_VS_COLOR, addrs.VDI_ROM_VS_COLOR + BLOCK_BYTES, entries=(GET,))
+    vdi.assert_transcribed(REGION.anchor, REGION.lo, REGION.hi, entries=REGION.entries)
 
 
 TRANSCRIBED = (

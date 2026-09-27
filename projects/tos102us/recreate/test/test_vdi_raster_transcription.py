@@ -6,7 +6,6 @@ references that measure to where raster.S itself is linked (each relocated to it
 BEHAVES as the ROM over the batteries' own cases — the same image, the whole register file and the same
 traffic, through Tier 3's transcription relation (`vdi.run_transcription`).
 """
-from collections import namedtuple
 
 import pytest
 
@@ -22,13 +21,12 @@ from vdi_raster import MODES
 
 # ---- the words -------------------------------------------------------------------------------------------
 # Each region the ROM's, with the `.S` entry whose offset in it anchors it and every other entry inside.
-Region = namedtuple("Region", "lo hi anchor entries")
 REGIONS = (
-    Region(0xFCA1B8, 0xFCA20A, "LINEA_ROM_CONCAT", ("LINEA_ROM_LINE",)),
-    Region(0xFCA2E0, 0xFCA5CA, "LINEA_ROM_LINE_PLANE_WORDS", ("LINEA_ROM_HLINE", "LINEA_ROM_HLINE_PATTERNED", "LINEA_ROM_HLINE_SPAN")),
-    Region(0xFCFACE, 0xFCFB54, "LINEA_ROM_PUT_PIXEL", ("LINEA_ROM_GET_PIXEL",)),
-    Region(0xFCFC50, 0xFCFCCC, "LINEA_ROM_FILLED_RECT", ()),
-    Region(0xFD19DC, 0xFD1CC4, "LINEA_ROM_CPU_VLINE", ("LINEA_ROM_CPU_HLINE", "LINEA_ROM_CPU_RECT_FILL")),
+    vdi.pinned_region(0xFCA1B8, 0xFCA20A, "LINEA_ROM_CONCAT", ("LINEA_ROM_LINE",)),
+    vdi.pinned_region(0xFCA2E0, 0xFCA5CA, "LINEA_ROM_LINE_PLANE_WORDS", ("LINEA_ROM_HLINE", "LINEA_ROM_HLINE_PATTERNED", "LINEA_ROM_HLINE_SPAN")),
+    vdi.pinned_region(0xFCFACE, 0xFCFB54, "LINEA_ROM_PUT_PIXEL", ("LINEA_ROM_GET_PIXEL",)),
+    vdi.pinned_region(0xFCFC50, 0xFCFCCC, "LINEA_ROM_FILLED_RECT", ()),
+    vdi.pinned_region(0xFD19DC, 0xFD1CC4, "LINEA_ROM_CPU_VLINE", ("LINEA_ROM_CPU_HLINE", "LINEA_ROM_CPU_RECT_FILL")),
 )
 # The words no spelling reproduces, each relocated to its target's place in the blob (`vdi.Relocated`):
 # the displacements of the branches from one region into another, and the one absolute reference to a

@@ -1,4 +1,4 @@
-/* m68k_idioms.h — the two 68000 shapes the BIOS/XBIOS leaves repeat, spelt once.
+/* m68k_idioms.h — the 68000 shapes more than one core repeats, spelt once.
  *
  * Both are things a reconstruction gets WRONG by writing the obvious C, so each one spelt again in
  * another core is another place to get it wrong — and each has a case battery behind it here, which
@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "machine.h"
+#include "os.h"
 #include "recreate.h"
 
 /* A TABLE INDEX COMPUTED INSIDE A WORD, AND THEN SIGN-EXTENDED INTO THE ADDRESS — which is not the
@@ -159,6 +160,26 @@ static inline uint32_t m68k_divu_w(uint32_t dividend, uint16_t divisor)
 #endif
 }
 
+/* ...and the same divide with its V FLAG answered in `overflowed`: the quotient did not fit a word, so the
+ * register was left UNCHANGED — and N with it, as the instruction before the divide set it (Musashi; the
+ * 68000's manual leaves N undefined there). One divide on target: `divs.w` then `svs`. */
+static inline uint32_t m68k_divs_w_v(uint32_t dividend, uint16_t divisor, int *overflowed)
+{
+#ifdef __m68k__
+    uint8_t set;
+
+    __asm__("divs.w %2,%0\n\tsvs %1" : "+d"(dividend), "=d"(set) : "d"(divisor) : "cc");
+    *overflowed = set != 0;
+    return dividend;
+#else
+    uint32_t divided = m68k_divs_w(dividend, divisor);
+    int64_t quotient = (int64_t)(int32_t)dividend / (int16_t)divisor;
+
+    *overflowed = quotient < INT16_MIN || quotient > INT16_MAX;
+    return divided;
+#endif
+}
+
 /* ...and the two halves of the register a divide leaves, as the signed words a caller reads. */
 static inline int16_t quotient_word(uint32_t divided)
 {
@@ -168,6 +189,26 @@ static inline int16_t quotient_word(uint32_t divided)
 static inline int16_t remainder_word(uint32_t divided)
 {
     return (int16_t)(uint16_t)(divided >> M68K_WORD_BITS);
+}
+
+/* `muls.w`: both factors are the LOW WORDS, signed, and the product is the whole long — which a C `*` of
+ * two `int16_t` promoted to `int` already is, spelt once so no core writes the unsigned product instead. */
+static inline int32_t m68k_muls_w(uint16_t left, uint16_t right)
+{
+    return (int32_t)(int16_t)left * (int16_t)right;
+}
+
+/* `swap Dn`: the register's two words exchanged. */
+static inline uint32_t m68k_swap(uint32_t value)
+{
+    return rotate_left32(value, M68K_WORD_BITS);
+}
+
+/* An address as the 68000 DRIVES it: a register holds 32 bits and the bus carries 24, so a sum that ran
+ * past $ffffff wraps rather than leaving the image (`OS_BUS_ADDR_MASK`). */
+static inline uint32_t bus_address(uint32_t address)
+{
+    return address & OS_BUS_ADDR_MASK;
 }
 
 #endif /* TOS102US_M68K_IDIOMS_H */

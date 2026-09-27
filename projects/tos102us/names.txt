@@ -395,7 +395,7 @@ fn 0xfc9e2a Tsetdate
 fn 0xfc9ea2 Tgettime
 fn 0xfc9eb2 Tsettime
 fn 0xfc9f34 linea_init
-fn 0xfca05e linea_filled_poly   # ctx
+fn 0xfca05e linea_filled_poly
 fn 0xfca1ea linea_line
 fn 0xfca57e linea_hline
 fn 0xfca652 vdi_nop
@@ -412,14 +412,14 @@ fn 0xfcaea8 vsm_color
 fn 0xfcaefe vsf_interior
 fn 0xfcaf4a vsf_style
 fn 0xfcafb2 vsf_color
-fn 0xfcb002 vdi_locator   # ctx
-fn 0xfcb120 linea_show_mouse   # ctx
+fn 0xfcb002 vdi_locator
+fn 0xfcb120 linea_show_mouse
 cmt 0xfcb120 Dispatch-table target for: VDI 122, Line-A 9
-fn 0xfcb148 v_hide_c   # ctx
+fn 0xfcb148 v_hide_c
 fn 0xfcb156 vq_mouse
 fn 0xfcb198 vdi_valuator
-fn 0xfcb1a0 vdi_choice   # ctx
-fn 0xfcb22a vdi_string   # ctx
+fn 0xfcb1a0 vdi_choice
+fn 0xfcb22a vdi_string
 fn 0xfcb30a vq_key_s
 fn 0xfcb32e vswr_mode
 fn 0xfcb388 vsin_mode
@@ -427,15 +427,15 @@ fn 0xfcb3f6 vqin_mode
 fn 0xfcb45c vsf_perimeter
 fn 0xfcb4a2 vsl_udsty
 fn 0xfcb4ba vs_clip
-fn 0xfcb5aa vro_cpyfm   # ctx
-fn 0xfcb5dc vrt_cpyfm   # ctx
-fn 0xfcb614 vr_recfl   # ctx
+fn 0xfcb5aa vro_cpyfm
+fn 0xfcb5dc vrt_cpyfm
+fn 0xfcb614 vr_recfl
 fn 0xfcb694 v_opnwk   # ctx
 fn 0xfcb8d0 vq_extnd
 fn 0xfcb998 v_clswk   # ctx
 fn 0xfcb9e0 v_pline   # ctx
 fn 0xfcba7a v_pmarker   # ctx
-fn 0xfcbbc0 v_fillarea   # ctx
+fn 0xfcbbc0 v_fillarea
 fn 0xfcbbcc vdi_gdp   # ctx
 fn 0xfcbd7e vql_attributes
 fn 0xfcbdda vqm_attributes
@@ -458,23 +458,23 @@ fn 0xfce8ca vqt_name
 fn 0xfce95a vqt_fontinfo
 fn 0xfced06 vst_load_fonts   # ctx
 fn 0xfced9a vst_unload_fonts
-fn 0xfcee54 linea_textblt   # ctx
+fn 0xfcee54 linea_textblt
 fn 0xfcface linea_put_pixel
 fn 0xfcfb16 linea_get_pixel
 fn 0xfcfc56 linea_filled_rect
 fn 0xfcff68 vex_butv
 fn 0xfcff80 vex_motv
 fn 0xfcff98 vex_curv
-fn 0xfcffb0 linea_draw_sprite   # ctx
-fn 0xfd0184 linea_undraw_sprite   # ctx
-fn 0xfd0254 linea_hide_mouse   # ctx
-fn 0xfd02ca linea_transform_mouse   # ctx
+fn 0xfcffb0 linea_draw_sprite
+fn 0xfd0184 linea_undraw_sprite
+fn 0xfd0254 linea_hide_mouse
+fn 0xfd02ca linea_transform_mouse
 cmt 0xfd02ca Dispatch-table target for: VDI 111, Line-A 11
-fn 0xfd0346 linea_copy_raster   # ctx
-fn 0xfd05fc linea_bitblt   # ctx
-fn 0xfd08e0 v_contourfill   # ctx
-fn 0xfd08f4 linea_contour_fill   # ctx
-fn 0xfd0fde v_get_pixel   # ctx
+fn 0xfd0346 linea_copy_raster
+fn 0xfd05fc linea_bitblt
+fn 0xfd08e0 v_contourfill
+fn 0xfd08f4 linea_contour_fill
+fn 0xfd0fde v_get_pixel
 fn 0xfd2d32 vr_trnfm
 fn 0xfd2dd2 vs_color
 fn 0xfd2e84 vq_color
@@ -1177,3 +1177,65 @@ cmt 0xfca58a $a004 mid-entry: D4/D5/D6 = x1/y/x2 from the caller (contour fill $
 cmt 0xfca2e0 $a003 horizontal arm: XOR without LSTLIN moves X2 toward X1 and stores it; LN_MASK is the one-row pattern
 cmt 0xfca320 $a003 diagonal arm: Bresenham running per-plane code built on the stack by $fca3f4
 cmt 0xfcfc50 $a005 clip miss: stores the partially clipped corners, draws nothing
+fn 0xfd1038 linea_cpu_blit
+fn 0xfd1df6 linea_cpu_textblt
+fn 0xfcf96a linea_fast_text
+fn 0xfd1cc4 linea_cpu_fast_text
+fn 0xfcbf16 clip_line
+fn 0xfcbe8c polyline
+fn 0xfcc0ea plygn
+fn 0xfcfb54 linea_fill_span
+fn 0xfcfb66 linea_end_pts
+fn 0xfd0dc8 crunch_queue
+fn 0xfd0e22 get_seed
+fn 0xfd0286 show_cursor
+fn 0xfcfe28 mouse_isr
+fn 0xfcff0a default_user_cur
+fn 0xfcff2a vbl_draw_cursor
+fn 0xfca7f8 mouse_init
+fn 0xfca872 mouse_off
+fn 0xfca7ca poll_key
+fn 0xfca7c0 poll_choice
+fn 0xfca88a poll_locator
+fn 0xfd12e2 blit_edge_masks
+fn 0xfd1326 blit_source_word
+fn 0xfd133c blit_destination_word
+fn 0xfd1694 blit_pattern_row
+fn 0xfd2268 textblt_blit
+fn 0xfd29da textblt_rotate
+fn 0xfd2b54 textblt_scale
+fn 0xfd2c1c textblt_scale_row
+fn 0xfd2c7c textblt_select_scratch
+fn 0xfd2c9a textblt_outline
+fn 0xfd2506 textblt_rows_one_word
+fn 0xfd2534 textblt_rows_two_words
+fn 0xfd2580 textblt_rows_left
+fn 0xfd261c textblt_rows_right
+fn 0xfd2784 textblt_thicken_first
+fn 0xfd27ea textblt_thicken_middle
+fn 0xfd281c textblt_thicken_edge
+fn 0xfd28b2 textblt_lighten_first
+fn 0xfd28de textblt_skew_first
+fn 0xfd2944 textblt_skew_step
+var 0xfd1158 blit_word_rotate_table
+var 0xfd1168 blit_aligner_table
+var 0xfd1278 blit_op_table
+var 0xfd1304 blit_edge_mask_table
+var 0xfd1d42 fast_text_arms
+var 0xfd215a textblt_group_bytes
+var 0xfd2372 textblt_op_masked
+var 0xfd2392 textblt_op_whole
+var 0xfd23b2 textblt_op_index
+var 0xfd2402 textblt_easter_egg
+var 0xfd3590 fill_pen_masks
+var 0x2852 SAVE_ADDR
+var 0x2856 SAVE_STAT
+var 0x2858 SAVE_AREA
+cmt 0xfd1694 the engine's threaded fragments: pattern row, ten first-word aligners, eight middle loops, row ends, 16 ops at A2+0/+8/+22 (A2-2 = the pattern entry)
+cmt 0xfd2944 steps on a CLEAR SKEWMASK bit, the opposite of $fd28de
+cmt 0xfcf964 fast_text_try's shared refusal, before its entry
+cmt 0xfd08f4 $a00f seed fill: DRI seedfill globals at $16da..$1704, queue (row|DOWN, left, right) from $1706 up to 1920 words; first pass UP; a patterned or same-colour fill never ends by itself - only SEEDABORT ($2a10) does
+cmt 0xfcb1a0 poll_choice never writes D0: the dispatcher's MONO_STATUS (0/8) is the answer, so request mode spins for ever
+cmt 0xfcb03c vdi_locator's request spin: the wait site (VDI_LOCATOR_WAIT_SITE)
+cmt 0xfcb1b8 vdi_choice's request spin: the wait site (VDI_CHOICE_WAIT_SITE)
+cmt 0xfcb268 vdi_string's request spin: the wait site (VDI_STRING_WAIT_SITE)

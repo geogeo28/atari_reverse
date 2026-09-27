@@ -33,6 +33,9 @@
 #define LINEA_CUR_FONT        0x2610     /* long: the text font in use          ($fcaace move.l)    */
 #define LINEA_GDP_SCRATCH     0x2614     /* words[23]: arc/ellipse scratch      ($fcbca6..$fcbca0)  */
 /* ...and the words of it a reconstructed routine reads or writes by name (DRI's names): */
+#define LINEA_GDP_FILL_INT    0x261e     /* word: $a006's crossings on this row ($fca076 clr.w)     */
+#define LINEA_GDP_FILL_MAXY   0x2620     /* word: plygn's lowest row, filled first ($fcc142)        */
+#define LINEA_GDP_FILL_MINY   0x2622     /* word: ...and the row above its highest ($fcc13c)        */
 #define LINEA_GDP_N_STEPS     0x2624     /* word: segments per arc              ($fcc6e4 clc_nsteps) */
 #define LINEA_GDP_SAVED_BEG_STYLE 0x2628 /* word: s_fa_attr's WS_LINE_BEG       ($fcd0a0)           */
 #define LINEA_GDP_SAVED_END_STYLE 0x262a /* word: ...and WS_LINE_END            ($fcd0a8)           */
@@ -84,6 +87,12 @@
 #define LINEA_RETSAV          0x2848     /* long                                ($fcfa9c)           */
 #define LINEA_SAVE_BLOCK      0x2850     /* bytes[LINEA_SAVE_BLOCK_BYTES]: the sprite's save block ($fcff4a) */
 #define LINEA_SAVE_BLOCK_BYTES 0x108     /* ...up to USER_TIM, the next field   ($fca670)           */
+/* ...and the block's four fields, as the sprite pair reaches them through A2 = LINEA_SAVE_BLOCK (every
+ * caller: $fcff4a, $fd026c, $fd02aa). Their offsets in ANY save block are `vdi/mouse.h`'s SPRITE_SAVE_*. */
+#define LINEA_SAVE_LEN        LINEA_SAVE_BLOCK /* word: rows saved, at the block's +0 ($fd0068 `0(a2)`) */
+#define LINEA_SAVE_ADDR       0x2852     /* long: the screen word of plane 0, first row ($fd0064)   */
+#define LINEA_SAVE_STAT       0x2856     /* byte: bit 0 valid, bit 1 two words a row ($fd006c bset) */
+#define LINEA_SAVE_AREA       0x2858     /* longs[64]: the rows, plane by plane ($fd0072 `8(a2)`)  */
 #define LINEA_USER_TIM        0x2958     /* long: the timer routine vex_timv installs ($fca670)     */
 #define LINEA_NEXT_TIM        0x295c     /* long: the etv_timer it chains to    ($fca692)           */
 #define LINEA_USER_BUT        0x2960     /* long: button-change routine         ($fca7fe)           */
@@ -218,6 +227,18 @@
 #define BITBLT_P_NXPL         48         /* word                                ($fd0372 -28)       */
 #define BITBLT_P_MASK         50         /* word                                ($fd037c -26)       */
 #define BITBLT_SPACE          52         /* bytes[24]: the CPU engine's own scratch ($fd10bc -24)   */
+/* ...and the fields in it: the far corners both front ends compute before they enter the engine, and
+ * the engine's own working words — all of them STORED into the caller's block by a $a007 call. */
+#define BITBLT_P_INDEX        52         /* word: the pattern row's byte offset ($fd1202 -24)       */
+#define BITBLT_S_START        54         /* long: this plane's first source word ($fd111c -22)      */
+#define BITBLT_S_XMAX         58         /* word                                ($fd0628 -18)       */
+#define BITBLT_S_YMAX         60         /* word                                ($fd062c -16)       */
+#define BITBLT_D_START        62         /* long: this plane's first destination word ($fd1120 -14) */
+#define BITBLT_D_XMAX         66         /* word                                ($fd0630 -10)       */
+#define BITBLT_D_YMAX         68         /* word                                ($fd0634 -8)        */
+#define BITBLT_MIDDLE_COUNT   70         /* word: destination words between a row's two ends, less one ($fd107a -6) */
+#define BITBLT_D_WRAP         72         /* word: a row's last destination word to the next row's first ($fd1100 -4) */
+#define BITBLT_S_WRAP         74         /* word: ...and the source's            ($fd10fc -2)       */
 #define BITBLT_BYTES          76         /* ($fd034a link #-76, $fd05fc adda.w #76)                 */
 
 /* ---- the MFDB (memory form definition block) as $a00e and vr_trnfm read it -------------------- */

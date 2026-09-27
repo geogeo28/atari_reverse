@@ -33,5 +33,15 @@
 /* `move.w <d16>(An),Dn` and `movea.l <d16>(An),Am`, for the displacement of 0 gas would drop */
 #define M68K_MOVE_W_D16(an, dn)    (0x3028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
 #define M68K_MOVEA_L_D16(an, am)   (0x2068 + ((am) << M68K_DATA_REGISTER_SHIFT) + (an))
+/* ...and `sub.w <d16>(An),Dn` / `add.w <d16>(An),Dn`, $a006's two reads of an edge's x1 at 0(a0) */
+#define M68K_SUB_W_D16(an, dn)     (0x9068 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
+#define M68K_ADD_W_D16(an, dn)     (0xd068 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
+/* ...and the store the other way, `move.w Dn,<d16>(An)`: the sprite's row count into 0(a2) ($fd0068) */
+#define M68K_MOVE_W_TO_D16(dn, an) (0x3140 + ((an) << M68K_DATA_REGISTER_SHIFT) + (dn))
+/* `sub.w #<imm>,Dn` in the register form, AND's and ADD's family: the sprite's clip ($fcffd8, $fd0002) */
+#define M68K_SUB_W_IMMEDIATE(dn)   (0x907c + ((dn) << M68K_DATA_REGISTER_SHIFT))
+/* `move.l <d16>(An),Dn` and `tst.l <d16>(An)` at 0: $a00e's reads of an MFDB's base ($fd0394, $fd04f6) */
+#define M68K_MOVE_L_D16(an, dn)    (0x2028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
+#define M68K_TST_L_D16(an)         (0x4aa8 + (an))
 
 #endif /* TOS102US_M68K_ENCODINGS_H */

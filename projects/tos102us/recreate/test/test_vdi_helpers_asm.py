@@ -14,14 +14,14 @@ import vdi
 from opcodes import RTS
 
 # Each routine's extent in the ROM: where the next routine starts. get_kbshift's last word is the `rts`
-# the ROM ALSO enters as vdi_nop ($fca652), so its extent runs through that word.
+# the ROM ALSO enters as vdi_nop ($fca652), so its extent runs through that word. (clamp_mouse is not here:
+# `mouse.S` carries it, in the mouse ISR's region, and pins it there.)
 ROUTINE_BYTES = {
     "VDI_ROM_SORT_WORDS": 0x22,
     "VDI_ROM_SMUL_DIV": 0x32,
     "VDI_ROM_GET_KBSHIFT": 0x0C,
     "VDI_ROM_CLC_DDA": 0x32,
     "VDI_ROM_ACT_SIZ": 0x52,
-    "VDI_ROM_CLAMP_MOUSE": 0x2E,
     "VDI_ROM_GEMDOS_CALL": 0x10,
     "VDI_ROM_VR_TRNFM": 0xA0,
 }
@@ -30,12 +30,15 @@ FOLLOWED_BY = {"VDI_ROM_SORT_WORDS": "VDI_ROM_SMUL_DIV", "VDI_ROM_SMUL_DIV": "LI
                "VDI_ROM_GEMDOS_CALL": "VDI_ROM_FONT_BYTESWAP", "VDI_ROM_VR_TRNFM": "VDI_ROM_VS_COLOR"}
 
 
+REGIONS = {name: vdi.pinned_region(getattr(addrs, name), getattr(addrs, name) + size, name)
+           for name, size in ROUTINE_BYTES.items()}
+
+
 @pytest.mark.parametrize("name", sorted(ROUTINE_BYTES))
 def test_the_transcription_is_the_rom_s_bytes_exactly(name):
     """THE BYTE PIN: no word excused — where GNU as would choose another encoding, `helpers.S` spells the
     ROM's words (`m68k_encodings.h`)."""
-    start = getattr(addrs, name)
-    vdi.assert_transcribed(name, start, start + ROUTINE_BYTES[name])
+    vdi.assert_transcribed(name, REGIONS[name].lo, REGIONS[name].hi)
 
 
 @pytest.mark.parametrize("name,following", sorted(FOLLOWED_BY.items()))

@@ -24,6 +24,7 @@ file also refuses a verified case with NO row here. This file prints; that file 
 """
 import argparse
 import ctypes
+import functools
 import struct
 import sys
 from collections import namedtuple
@@ -37,7 +38,7 @@ sys.path.insert(0, str(RECREATE / "test"))                 # ...and the cases th
 from recreate_kit import project                           # noqa: E402
 project.load(RECREATE)
 
-from recreate_kit.rom_bench import RomBench                # noqa: E402
+from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench   # noqa: E402
 from harness import addrs, emu                             # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
 # THE REGISTER OF VERIFIED CASES, and with it every battery whose constructors built one. Importing a
@@ -73,10 +74,9 @@ import gemdos                                              # noqa: E402
 # termination record it arms is entered through a stub of its own, which costs two instructions
 # where the dispatcher's costs three (`SLICE_ENTRY_COST` below).
 import gemdos_process                                      # noqa: E402
-# ...and the VDI's door, whose `addrs.h` convention and primitive declarations the VDI rows derive from,
-# and the pure helpers' module, whose C signatures their calls derive from.
+# ...and the VDI's door, whose `addrs.h` convention, primitive contracts and Alcyon signatures the VDI rows
+# derive from — every battery that declares one is imported by `test_boot_snapshot` above.
 import vdi                                                 # noqa: E402
-import vdi_helpers                                         # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -104,8 +104,8 @@ RATIO_TOLERANCE = 0.02
 # `test_tier3.py` refuses a stale entry: one naming no row, one that has drifted, and one recorded
 # above the bar whose row has since come back under it.
 # WHAT THE ROWS ABOVE THE BAR HAVE IN COMMON, said once so no entry need say it again. The lettered
-# mechanisms below cover all of them, and none is a defect in a reconstruction. All but one are named
-# by the entries that carry them; (T) is a RULE, and carries its rows with no entry at all:
+# mechanisms below cover all of them, and none is a defect in a reconstruction. All but two are named
+# by the entries that carry them; (T) and (T→) are RULES, and carry their rows with no entry at all:
 #
 #   (A) THE IMAGE POINTER. Every core takes `uint8_t *image` and loads it out of the frame —
 #       `moveal %sp@(4),%a0`, 12 cycles — where the ROM reaches the same memory through the
@@ -176,6 +176,15 @@ RATIO_TOLERANCE = 0.02
 #       PC-relative table, a Bresenham that runs per-plane code it built on the stack, a span count spent
 #       by two `subq`/`bcs` before a `dbf`; and in the pure helpers the carry an `add.w` leaves, a
 #       `-(An)`, a compare against memory in a `dbf` loop.
+#   (T→) SHIPS THROUGH A CALL. The C that CALLS a transcribed routine — a VDI function round `$a00e`, the
+#       polygon layer round `$a003`/`$a006`, `v_show_c` round the sprite — reaches the `.S` on target, through
+#       glue, and the C twin's cycles are nobody's cost. So every row whose C reaches a transcribed core (the
+#       m68k build's own call graph, `vdi.reaching_transcribed_cores`) is measured on the SHIPPED
+#       CONFIGURATION's blob instead (`build/bench_shipped/`, `../Makefile`): the same sources with each
+#       called core replaced by a thunk GENERATED from the table (`bench/shipped_glue.py`) that enters the
+#       `.S`. Its verdict is `through` at or under the bar and OVER above it — derived, never typed: a `.S`
+#       that drifts moves its callers' rows with it, and `test_tier3.py` refuses a written entry for any of
+#       them. The ratio includes the thunk's `movem` pair, which a shipped build pays.
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -196,13 +205,16 @@ PERF_ACCEPTED = {
         1.09, "under the bar and pinned for `xbios_giaccess`'s reason: the `ori.w #$700,sr` bracket "
               "round the USER_TIM exchange (ipl.h) is this cycle count's alone to see — its deletion, "
               "not its placement (above)"),
-    # vq_key_s, Alcyon C calling the register helper get_kbshift: (A) and (D) THROUGH A CALL — the
-    # helper's C form takes the image and the caller's D0 as arguments (`vdi/helpers.h`), two pushes and a
-    # pop where the ROM's `jsr` passes nothing. NOT (T): vq_key_s is not transcribed, and the call it
-    # makes is to the C core, which is what a target build runs until the ROM build links cores
-    # (`include/vdi/transcribed.h`, the declarations).
-    ("vdi_vq_key_s", "every bit set but Control"): (1.48, "(A) + (D) through get_kbshift's frame: 180 -> 266 cycles, 12 "
-                                             "instructions to 19"),
+    # The two rows that are over the bar EVEN AS SHIPPED (T→): the callee is the `.S`, and what is left is
+    # the caller's own body — (A) and (D) through the call. Each C passes the image and the caller's D0 to
+    # a register routine the ROM enters with nothing (`vdi/helpers.h`, `vdi/mouse.h`), and the call lands
+    # in a thunk that loads D0 and enters the `.S`: two pushes, a pop, and the thunk's `move.l`/`jsr`/`rts`
+    # where the ROM's one `jsr` was the whole of it.
+    ("vdi_vq_key_s", "every bit set but Control"): (1.52, "(A) + (D) through get_kbshift's glue, as shipped: "
+                                                          "220 -> 314 cycles"),
+    ("vdi_choice", "sampled"): (1.49, "(A) + (D) through poll_choice's glue, as shipped: 270 -> 382 cycles. "
+                                      "It read 0.62 while GCC inlined poll_choice's C; a core the target "
+                                      "build replaces with its `.S` cannot be inlined (`TRANSCRIBED_CORE`)"),
 
     # (A) alone, on a trap leaf, is not written down at all any more: those rows are admitted by
     # THE LEAF RULE below, which measures the excess against the dispatched call the machine really
@@ -1266,33 +1278,28 @@ CALL.update({name: Call((IMAGE, *(EntryRegister(register) for register in contra
 # than by opcode (`src/vdi/attributes.c`): `VDI_ROM_<HELPER>` in `addrs.h`, core `vdi_<helper>`.
 CALL.update({"VDI_ROM_ST_FL_PTR": Call((IMAGE,), RETURNS_NOTHING),
              "VDI_ROM_ARB_CORNER": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_NOTHING)})
-# ...and the PURE HELPERS (`src/vdi/helpers.c`): Alcyon calls whose WORD arguments are decoded out of
-# the frame the case poked and whose answer is an `int` in D0.w. DERIVED from the one statement of each
-# core's C signature, `test/vdi_helpers.py`'s ctypes `SIGNATURES`: the image where the core takes it, and
-# every other argument read out of the frame at the offset the widths before it add up to. (The three
-# register routines among them are `declare_primitive`s above.)
-_FRAME_DECODERS = {vdi_helpers.WORD_ARG: (arg_signed_word, vdi_helpers.WORD_BYTES),
-                   vdi_helpers.LONG_ARG: (arg_long, vdi_helpers.LONG_BYTES)}
+# ...and every ALCYON call (`vdi.declare_alcyon`: the pure helpers of `src/vdi/helpers.c`, the polygon and
+# contour-fill layer of `src/vdi/fill.c`): WORD arguments decoded out of the frame the case poked and an
+# `int` answer in D0.w. DERIVED from the one statement of each core's C signature: the image where the core
+# takes it, and every other argument read out of the frame at the offset the widths before it add up to.
+# (The register routines among the helpers are `declare_primitive`s above.)
+_FRAME_DECODERS = {vdi.WORD_ARG: arg_signed_word, vdi.LONG_ARG: arg_long}
 _ALCYON_RETURNS = {ctypes.c_uint16: RETURNS_WORD, None: RETURNS_NOTHING}
 
 
-def _alcyon_call(symbol):
-    """The `Call` of the Alcyon helper whose C core is `symbol`, out of its ctypes signature."""
-    restype, argtypes = vdi_helpers.SIGNATURES[symbol]
+def _alcyon_call(signature):
+    """The `Call` of an Alcyon routine out of its `vdi.Alcyon` signature."""
     args, offset = [], 0
-    for argtype in argtypes:
-        if argtype is vdi_helpers.IMAGE_ARG:
+    for argtype in signature.argtypes:
+        if argtype is vdi.IMAGE_ARG:
             args.append(IMAGE)
             continue
-        decode, width = _FRAME_DECODERS[argtype]
-        args.append(decode(offset))
-        offset += width
-    return Call(tuple(args), _ALCYON_RETURNS[restype])
+        args.append(_FRAME_DECODERS[argtype](offset))
+        offset += vdi.ARG_BYTES[argtype]
+    return Call(tuple(args), _ALCYON_RETURNS[signature.restype])
 
 
-_VDI_HELPER_CALLS = {vdi.ROUTINE_PREFIX + symbol[len("vdi_"):].upper(): _alcyon_call(symbol)
-                     for symbol in vdi_helpers.ALCYON_CORES}
-CALL.update(_VDI_HELPER_CALLS)
+CALL.update({name: _alcyon_call(signature) for name, signature in vdi.ALCYON.items()})
 
 
 def _vdi_role(name):
@@ -1547,19 +1554,43 @@ def ships_within_bar(row, ratio_of):
     return bool(shipped) and all(ratio_of(each) <= TIER3_FUNCTION_BAR for each in shipped)
 
 
+# MECHANISM (T→): the C whose cost, as shipped, includes a `.S`, and the blob that prices it as shipped.
+SHIPPED_BENCH_DIR = RECREATE / "build" / "bench_shipped"
+BUILT_ELF = RECREATE / BENCH_DIR / BENCH_ELF
+
+
+@functools.cache
+def _reaching_transcribed_cores():
+    return frozenset(vdi.reaching_transcribed_cores(vdi.call_graph(BUILT_ELF)))
+
+
+def ships_through_a_call(row):
+    """(T→): is `row` the C of a routine that reaches a transcribed core — measured on the shipped blob?"""
+    return not row.transcription and row.symbol in _reaching_transcribed_cores()
+
+
+@functools.cache
+def shipped_bench():
+    """The SHIPPED CONFIGURATION's blob, loaded once per process."""
+    return RomBench(SHIPPED_BENCH_DIR)
+
+
 def measure(row, bench):
     """One row's `Measurement` — which is also its second differential, so this raises on a target
     build that does not equal the original.
 
     The two relations are the kit's, not a choice made here: a C core owes its caller a return value
     and the callee-saved file, and an m68k transcription owes it the WHOLE register file the ROM's
-    own instructions leave (`tools/recreate_kit/rom_bench.py`).
+    own instructions leave (`tools/recreate_kit/rom_bench.py`). A row that ships through a call (T→) is
+    measured on the shipped blob, whatever `bench` was handed.
     """
     if row.transcription:
         return bench.measure_transcription(row.entry, row.symbol, row.regs, pokes=row.pokes,
                                            psg_seed=row.psg_seed, io_seed=row.io_seed,
                                            staged_entry=row.staged_entry,
                                            shared_entry=row.shared_entry)
+    if ships_through_a_call(row):
+        bench = shipped_bench()
     return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
                          psg_seed=row.psg_seed, io_seed=row.io_seed, returns=row.returns,
                          staged_entry=row.staged_entry, schedule=row.schedule)
@@ -1618,15 +1649,20 @@ def verdict(row, measured, dispatch, ratio_of):
     "accepted" — over the bar, and a written entry says so. "transcribed" — over the bar, the C of a
     routine the target build ships as its `.S`, every row of which is under it (mechanism (T); `ratio_of`
     measures those rows). "rule" — over the bar, and the LEAF RULE admits it on the measured excess.
-    "DRIFTED" — pinned, and no longer that number. "OVER" — over the bar with nothing carrying it.
+    "through" — the C of a routine that reaches a transcribed core, measured as shipped (mechanism (T→))
+    and at or under the bar; over it, such a row is OVER unless an entry accepts its OWN body's cost, which
+    it can only do at the shipped number. "DRIFTED" — pinned, and no longer that number. "OVER" — over the bar with
+    nothing carrying it.
     """
     pin = pin_of(row)
     if pin and abs(measured.ratio - pin[0]) > RATIO_TOLERANCE:
         return "DRIFTED"
     if measured.ratio <= TIER3_FUNCTION_BAR:
-        return "pinned" if pin else "ok"
+        return "pinned" if pin else "through" if ships_through_a_call(row) else "ok"
     if pin:
         return "accepted"
+    if ships_through_a_call(row):
+        return "OVER"
     if is_transcribed_c_row(row):
         return "transcribed" if ships_within_bar(row, ratio_of) else "OVER"
     return "rule" if rule_admits(row, measured, dispatch) else "OVER"
@@ -1669,6 +1705,8 @@ def table(bench):
         f"{dispatch} cycles this table measures a trap dispatch at, plus the leaf's own.",
         f"`transcribed`: over the bar, the C of a routine the target build ships as its `.S` "
         f"(include/vdi/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f}.",
+        f"`through`: <= {TIER3_FUNCTION_BAR:.2f} as SHIPPED — C that reaches a transcribed core, measured with "
+        f"each such call entering the `.S` through generated glue (build/bench_shipped/).",
         "",
     ]
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
