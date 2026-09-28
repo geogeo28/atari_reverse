@@ -42,9 +42,11 @@ snapshot and clear of every other tenant. A battery that needs another buffer cl
     each belongs to the routine that uses it, and is named (`LINEA_GDP_*`) once a reconstructed one does;
   * MFDB +4 (`fd_w`) and the reserved +14..+19: nothing in the ROM reads them;
   * FONT_HEADER +88, the 45th word TOS copies: 0 in all three ROM fonts and never read;
-  * $fd3664..$fd36eb, between INQ_TAB's defaults and MAP_COL: no access found.
+  * $fd3664..$fd36eb, between INQ_TAB's defaults and MAP_COL: v_pmarker's six shapes, reached only through
+    the pointers at VDI_MARKER_SHAPES (`vdi/lines.h` says their layout).
 """
 import ctypes
+import functools
 import importlib
 import re
 import struct
@@ -66,6 +68,8 @@ from opcodes import CLEAR_ADDRESS_REGISTER, LINE_A, PUSH_RETURN_PC, PUSH_STACK_L
 # One namespace for every VDI battery. Parsed IN INCLUDE ORDER with what came before as `known`,
 # because `linea.h` spells fields as ALIASES of `addrs.h`'s console names rather than as second numbers.
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
+# The SHIPPED CONFIGURATION's blob (the Makefile's shipped-blob rule): the build the (T→) rows are priced on.
+SHIPPED_ELF = Path(__file__).resolve().parents[1] / "build" / "bench_shipped" / "bench.elf"
 VDI_HEADERS = tuple(_INCLUDE / name for name in ("vdi/linea.h", "vdi/vdi.h", "vdi/font.h"))
 CONSTANTS = {}
 for _header in VDI_HEADERS:
@@ -76,6 +80,9 @@ WORD_BYTES = 2
 LONG_BYTES = 4
 POINTER_VARIABLES = ("CONTRL", "INTIN", "PTSIN", "INTOUT", "PTSOUT")    # the order $fc9fb2.. stores
 FILL = case.SLACK_FILL
+# A word a case stages where the routine should store and the ROM does (or should not, and does not): any
+# value the answer cannot be, $5a5a, so a store one side makes and the other does not is a changed word.
+STALE_WORD = 0x5A5A
 
 # ---- the FIELDS: every tagged `#define`, by record -------------------------------------------------
 # A record is a constant-name prefix: LINEA (absolute addresses), WS, FONT, BITBLT, MFDB, PB, CONTRL (offsets).
@@ -544,6 +551,14 @@ def run_function(name, pokes, **kwargs):
     return Result(info, pokes)
 
 
+# THE ATTRIBUTION PASS OFF (`case.run`'s poison), for a routine that READS A POINTER IT ALSO WRITES. The pass
+# inverts every byte the ROM wrote and re-runs both shores over that image, so a pointer the routine reads and
+# then stores back (even unchanged) is inverted BEFORE its first read: the poisoned run follows it to $ffxxxx and
+# reads the I/O page, which no model serves. One knob for every layer; each battery that uses it names the
+# pointer, and the staging (stale fields, a pseudo-random canvas) that stands in for the pass.
+READS_A_POINTER_IT_WRITES = {"poison": False}
+
+
 # A PRIMITIVE's register contract, declared once: the registers that are its C arguments, in order,
 # and the registers its answer is in. `bench/tier3.py` builds the Tier 3 call from the same entry.
 Primitive = namedtuple("Primitive", "arguments results")
@@ -933,6 +948,16 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("vdi_v_show_c", "vdi_show_cursor"), ("vdi_v_hide_c", "linea_hide_mouse"),
     ("vdi_locator", "vdi_show_cursor"), ("vdi_locator", "vdi_poll_locator"), ("vdi_locator", "linea_hide_mouse"),
     ("vdi_choice", "vdi_poll_choice"), ("vdi_mouse_init", "vdi_vsc_form"),
+    # the wide lines and arrowheads (`src/vdi/lines.c`): the aspect scaling and the discs' rows
+    ("vdi_wline", "vdi_smul_div"), ("vdi_do_arrow", "vdi_smul_div"), ("draw_arrowhead", "vdi_smul_div"),
+    ("vdi_do_circ", "linea_line"),
+    # the screen clear (`src/vdi/screen.c`), which GCC inlines into the two routines that end in it — and the
+    # BIOS span clear's other caller, GEMDOS's program loader (`src/gemdos/pexec_load.c`)
+    ("vdi_v_clrwk", "vdi_clear_span"), ("vdi_init_timer_mouse", "vdi_clear_span"),
+    ("vdi_restore_timer_mouse", "vdi_clear_span"), ("gemdos_pexec_load", "vdi_clear_span"),
+    # the text layer's C (`src/vdi/text.c`): the scaler's two helpers
+    ("vdi_vst_height", "vdi_clc_dda"), ("vdi_make_header", "vdi_act_siz"), ("vdi_vqt_extent", "vdi_act_siz"),
+    ("vdi_vqt_width", "vdi_act_siz"),
 }
 
 # A function's name as `m68k-elf-objdump` labels it, the one GCC split off it (`name.part.0`, `.constprop.0`,
@@ -940,29 +965,66 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
 _LISTED_FUNCTION = re.compile(r"^([0-9a-f]+) <([\w.]+)>:$")
 _LISTED_INSTRUCTION = re.compile(r"^\s+([0-9a-f]+):")
 _LISTED_REFERENCE = re.compile(r"<([\w.]+)(?:\+0x[0-9a-f]+)?>")
+# ...and a function's address loaded as an IMMEDIATE, which objdump prints in decimal without its name:
+# GCC's way of calling one function several times through a register (`move.l #243526,d2`) or a frame slot
+# it spills to (`move.l #212346,84(sp)`). ONLY that shape — a `move.l`/`movea.l` of the immediate into a
+# register or a stack slot: a constant compared (`cmp.l #N,d0`), added or stored into the image that merely
+# EQUALS a function's start is data, and read as a call it would forge an edge into (T→).
+_LISTED_IMMEDIATE = re.compile(r"\tmovea?l #(\d+),(?:%[ad]\d|%(?:sp|fp)@\(-?\d+\))$")
 
 
 def _unsplit(name):
     return name.split(".")[0]
 
 
+# One line of `m68k-elf-nm -S --defined-only`: `size` is None for a symbol the table does not size.
+Symbol = namedtuple("Symbol", "start size kind name")
+
+
+@functools.cache
+def _symbol_table_at(path):
+    table = subprocess.run(["m68k-elf-nm", "-S", "--defined-only", path], capture_output=True, text=True,
+                           check=True).stdout
+    symbols = []
+    for fields in (line.split() for line in table.splitlines()):
+        if len(fields) == 4:
+            symbols.append(Symbol(int(fields[0], 16), int(fields[1], 16), fields[2], fields[3]))
+        elif len(fields) == 3:
+            symbols.append(Symbol(int(fields[0], 16), None, fields[1], fields[2]))
+    return tuple(symbols)
+
+
+def symbol_table(elf):
+    """Every symbol `elf` defines, as `Symbol`s — one `nm` run per ELF per process, whoever asks (the call
+    graph's ends and starts, `bench/tier3.py`'s glue ranges)."""
+    return _symbol_table_at(str(Path(elf).resolve()))
+
+
 def _function_ends(elf):
     """`{address: end}` of every function the symbol table SIZES. A disassembly runs a function on to the
     next label, and in the shipped blob the next label is not always the next function: a weak C core the
     glue displaced keeps its body but loses its name, so its instructions would be read as its neighbour's."""
-    table = subprocess.run(["m68k-elf-nm", "-S", "--defined-only", str(elf)], capture_output=True, text=True,
-                           check=True).stdout
-    return {int(fields[0], 16): int(fields[0], 16) + int(fields[1], 16)
-            for fields in (line.split() for line in table.splitlines()) if len(fields) == 4}
+    return {symbol.start: symbol.start + symbol.size for symbol in symbol_table(elf) if symbol.size is not None}
+
+
+def _function_starts(elf):
+    """`{address: name}` of every function the symbol table places, for an immediate that names one."""
+    return {symbol.start: symbol.name for symbol in symbol_table(elf) if symbol.kind in "Tt"}
 
 
 def call_graph(elf):
     """`{function: every function its code references}` out of the m68k build at `elf` — a `jsr`, a
-    branch, or a `lea` of an address GCC then calls through a register, which is how it calls one it
-    names more than once. A function the symbol table sizes is read to its end and no further."""
+    branch, or a `lea` or `move.l #` of an address GCC then calls through a register or a frame slot, which
+    is how it calls one it names more than once. A function the symbol table sizes is read to its end and no
+    further."""
     listing = subprocess.run(["m68k-elf-objdump", "-d", str(elf)], capture_output=True, text=True,
                              check=True).stdout
-    ends = _function_ends(elf)
+    return graph_of_listing(listing, _function_ends(elf), _function_starts(elf))
+
+
+def graph_of_listing(listing, ends, starts):
+    """`call_graph`'s reading of one `objdump -d` listing, given the symbol table's `{address: end}` sizes and
+    `{address: name}` starts — apart from the ELF so a synthetic listing can pin each rule."""
     graph, function, end = {}, None, None
     for line in listing.splitlines():
         start = _LISTED_FUNCTION.match(line)
@@ -972,7 +1034,9 @@ def call_graph(elf):
             continue
         instruction = _LISTED_INSTRUCTION.match(line)
         if function and instruction and (end is None or int(instruction.group(1), 16) < end):
-            graph[function] |= {_unsplit(target) for target in _LISTED_REFERENCE.findall(line)} - {function}
+            named = set(_LISTED_REFERENCE.findall(line))
+            named |= {starts[value] for value in map(int, _LISTED_IMMEDIATE.findall(line)) if value in starts}
+            graph[function] |= {_unsplit(target) for target in named} - {function}
     return graph
 
 

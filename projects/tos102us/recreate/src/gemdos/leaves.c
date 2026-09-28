@@ -32,6 +32,7 @@
 
 #include "bios/bcon.h"
 #include "gemdos/gemdos.h"
+#include "xbios/xbios.h"
 #include "machine.h"
 
 /* ---- the two constants --------------------------------------------------------------------- */
@@ -144,17 +145,7 @@ static void publish_clock(uint8_t *image)
            "a case that reaches XBIOS Settime must bind recreate_publish_clock (test/gemdos.py)");
     recreate_publish_clock(image, date, time);
 #else
-    register uint16_t pushed_time __asm__("d0") = time;
-    register uint16_t pushed_date __asm__("d1") = date;
-
-    __asm__ volatile ("move.w %0,-(%%sp)\n\t"
-                      "move.w %1,-(%%sp)\n\t"
-                      "move.w #%c2,-(%%sp)\n\t"
-                      "trap #14\n\t"
-                      "addq.w #6,%%sp"
-                      : "+d"(pushed_time), "+d"(pushed_date)
-                      : "i"(XBIOS_SETTIME_FN)
-                      : "d2", "a0", "a1", "a2", "memory", "cc");
+    xbios_trap_word_word(XBIOS_SETTIME_FN, date, time);
 #endif
 }
 

@@ -1,8 +1,8 @@
-/* pexec_load.c — `Pexec`'s PROGRAM LOADER and RELOCATOR ($fc85ea), and the span clear it ends with
- * ($fc4b7c). A file of its own rather than more of `src/gemdos/process.c`: that file is the process
- * group (what a process owns and how it is given back), and this one is a FILE-SYSTEM client — five
- * `Fread`s, an `Fseek`, an `Fopen` and an `Fclose` — whose only link to the group is the basepage it is
- * handed. The file format is `include/gemdos/pexec_load.h`'s.
+/* pexec_load.c — `Pexec`'s PROGRAM LOADER and RELOCATOR ($fc85ea), which ends in the BIOS's span clear
+ * ($fc4b7c, `src/vdi/screen.c`). A file of its own rather than more of `src/gemdos/process.c`: that
+ * file is the process group (what a process owns and how it is given back), and this one is a
+ * FILE-SYSTEM client — five `Fread`s, an `Fseek`, an `Fopen` and an `Fclose` — whose only link to the
+ * group is the basepage it is handed. The file format is `include/gemdos/pexec_load.h`'s.
  *
  * WHAT THE LOADER CHECKS, which is less than a reader expects, and every omission is a ROM fact the
  * cases pin:
@@ -25,6 +25,7 @@
 #include "gemdos/gemdos.h"
 #include "gemdos/pexec_load.h"
 #include "gemdos/process.h"
+#include "vdi/screen.h"
 #include "m68k_idioms.h"
 #include "machine.h"
 
@@ -33,51 +34,8 @@ _Static_assert(HOST_SLOT_PEXEC_LOCALS_BYTES == LOAD_LOCALS_BYTES,
 _Static_assert(LOAD_SLEN + PRG_LENGTH_BYTES == LOAD_LENGTHS + PRG_LENGTHS_BYTES,
                "the four lengths are not the one sixteen-byte read");
 
-/* ---- $fc4b7c, the span clear ------------------------------------------------------------------------
- *
- * The BIOS's own `bzero(from, to)` — hand assembly, and GEMDOS's one caller of it is the loader (the
- * other, $fca666, is outside GEMDOS). Its three steps are the three below: one byte if `from` is odd,
- * then the whole 256-byte blocks — eight `movem.l` of eight zero registers, DOWNWARDS from the top of
- * the blocks, which leaves the same bytes as upwards — then single bytes up to `to`.
- *
- * THE ODD BYTE AND THE BLOCK SIZE ARE THE 68000'S, not the result's: any split of the span clears the
- * same bytes, in any order, so no image compare can tell them apart (the mutation sweep records both as
- * equivalent). What the odd byte buys on target is alignment — a longword store at an odd address is an
- * address error — and what the blocks buy is speed, which is why they are kept rather than folded into
- * the byte loop: the clear runs over the whole TPA past DATA. Each longword goes through `wr32`, the
- * image's own accessor — one `move.l` on target, four byte stores on the host, whose image is a byte
- * array with no longword alignment to rely on.
- *
- * `to` IS COMPARED FOR EQUALITY, never order: a span whose odd first byte already reaches `to` steps
- * past it, and a `to` BELOW `from` makes the block count a huge unsigned one — either way the clear runs
- * on through the address space. Transcribed. The loader reaches the second: TEXT+DATA longer than the
- * TPA leave a NEGATIVE room, a header BSS length of $80000000 or more is negative too and passes the
- * SIGNED check against it (`load` below), and the loader then reads TEXT past `p_hitpa`, asks `Fread`
- * for a ~4 GB relocation chunk, and hands this a span that ends below where it starts. Not staged — on
- * the machine it clears RAM below the TPA until something faults — and the host bound stops it at the
- * image's end.
- */
-#define CLEAR_BLOCK_MASK     0xffffff00u        /* `andl #-256,d0` */
-#define CLEAR_LONG_BYTES     4                  /* `movem.l` of zero registers: a longword each */
-
-static void clear_span(uint8_t *image, uint32_t from, uint32_t to)
-{
-    uint32_t blocks;
-
-    if (from & 1)
-        *gemdos_image_byte(image, from++) = 0;
-    blocks = (to - from) & CLEAR_BLOCK_MASK;
-    if (blocks != 0) {
-        uint8_t *longs = gemdos_image_bytes(image, from, blocks);
-        uint32_t count;
-
-        for (count = blocks / CLEAR_LONG_BYTES; count != 0; count--, longs += CLEAR_LONG_BYTES)
-            wr32(longs, 0);
-        from += blocks;
-    }
-    while (from != to)
-        *gemdos_image_byte(image, from++) = 0;
-}
+/* $fc4b7c, the span clear the loader ends with, is the BIOS's and the VDI's v_clrwk's too: it is
+ * `vdi_clear_span` (`src/vdi/screen.c`), whose target build is the ROM's own instructions. */
 
 /* ---- the loader's locals, read out of the slot `Fread` wrote them into -------------------------------- */
 
@@ -233,7 +191,7 @@ static uint32_t load(uint8_t *image, uint32_t basepage, int16_t handle, uint32_t
         if (refused != 0)
             return refused;
     }
-    clear_span(image, end, end + (uint32_t)room);
+    vdi_clear_span(image, end, end + (uint32_t)room);
     (void)gemdos_fclose(image, handle);
     return 0;
 }

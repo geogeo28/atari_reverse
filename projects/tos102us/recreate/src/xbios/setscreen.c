@@ -50,6 +50,9 @@
  * WHAT IS THEREFORE VERIFIED HERE is the two-argument shape every screen flip uses — which is what
  * `Setscreen` is called for at run time, the resolution being a thing a program does once if ever.
  */
+#ifdef RECREATE_HOST_DIFFERENTIAL
+#include <stdio.h>
+#endif
 #include <stdint.h>
 
 #include "hw.h"
@@ -57,6 +60,24 @@
 #include "recreate.h"
 #include "addrs.h"
 #include "m68k_idioms.h"
+
+/* The halt NAMES THE RESOLUTION ASKED FOR where there is a stderr to name it on, so a caller's case can
+ * pin which mode it asked Setscreen for (`test_vdi_screen.py`'s setres arms) as well as that it asked. */
+#define RESOLUTION_HALT_BYTES 128
+#define RESOLUTION_HALT_ARM "XBIOS Setscreen's resolution change"
+#define RESOLUTION_HALT_WHY "the console re-initialisation at $fca914"
+static RECREATE_NORETURN void halt_resolution_change(uint16_t resolution)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    char what[RESOLUTION_HALT_BYTES];
+
+    snprintf(what, sizeof what, RESOLUTION_HALT_ARM " to %u: " RESOLUTION_HALT_WHY, resolution);
+    recreate_not_reconstructed(what);
+#else
+    (void)resolution;
+    recreate_not_reconstructed(RESOLUTION_HALT_ARM ": " RESOLUTION_HALT_WHY);
+#endif
+}
 
 /* `entry_d0` is the D0 the dispatcher left. Both reconstructed arms end at the same `rts` without
  * touching the register, so what the caller gets back is what it came in with (`gibit.c` makes the
@@ -76,7 +97,6 @@ uint32_t xbios_setscreen(uint8_t *image, uint32_t entry_d0, uint32_t logical, ui
     }
 
     if (!keeps_current_value_word(resolution))
-        recreate_not_reconstructed(
-            "XBIOS Setscreen's resolution change: the console re-initialisation at $fca914");
+        halt_resolution_change(resolution);
     return entry_d0;
 }

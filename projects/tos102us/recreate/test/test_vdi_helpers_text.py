@@ -15,6 +15,7 @@ import staging
 import vdi
 import vdi_helpers
 from vdi_helpers import answer, run_call
+from vdi_text_c import intel_order
 
 WORD_BYTES = vdi_helpers.WORD_BYTES
 STALE = 0x5A5A
@@ -167,10 +168,6 @@ def byteswap_pokes(width, height, form_at=FORM_AT, form_bytes=FORM_ROOM):
                            {form_at: ramp(form_bytes)})
 
 
-def swapped(data):
-    return b"".join(data[i + 1:i + 2] + data[i:i + 1] for i in range(0, len(data) - 1, 2))
-
-
 def font_byteswap(pokes, **kwargs):
     return run_call("VDI_ROM_FONT_BYTESWAP", {}, (), pokes, **kwargs)
 
@@ -181,7 +178,7 @@ def test_font_byteswap_turns_every_word_of_the_form(width, height):
     result = font_byteswap(byteswap_pokes(width, height))
     words = width * height // 2
     form = ramp(FORM_ROOM)
-    assert result.after(FORM_AT, FORM_ROOM) == swapped(form[:2 * words]) + form[2 * words:]
+    assert result.after(FORM_AT, FORM_ROOM) == intel_order(form[:2 * words]) + form[2 * words:]
 
 
 @pytest.mark.parametrize("width,height,words", (
@@ -193,7 +190,7 @@ def test_font_byteswap_turns_every_word_of_the_form(width, height):
 def test_font_byteswap_halves_only_the_product_s_low_word(width, height, words):
     result = font_byteswap(byteswap_pokes(width, height, BIG_FORM_AT, BIG_FORM_BYTES), max_insns=WHOLE_BANK_INSNS)
     form = ramp(BIG_FORM_BYTES)
-    assert result.after(BIG_FORM_AT, BIG_FORM_BYTES) == swapped(form[:2 * words]) + form[2 * words:]
+    assert result.after(BIG_FORM_AT, BIG_FORM_BYTES) == intel_order(form[:2 * words]) + form[2 * words:]
 
 
 # ---- the transcriptions (`src/vdi/helpers.S`), over the same shapes ---------------------------------

@@ -28,7 +28,8 @@
  * dispatcher `$fc94e4` the byte `-14(a6)` a redirected read lands in and — through `$fc5078` — the argument words of
  * its own nested `Fwrite`, pushed on its stack, and `Pexec`'s loader `$fc85ea` the five locals it `Fread`s the
  * program's header and first relocation offset into (`-8`, `-66`, `-30`, `-10`, `-38(a6)`), laid out as one slot;
- * and the VDI's `trap #1` door `$fcfa9c` the words its caller pushed, which the host build hands the dispatcher.
+ * and the VDI's `trap #1` door `$fcfa9c` the words its caller pushed, which the host build hands the dispatcher, and
+ * vst_font `$fce47c` the arrays it points LINEA_INTIN/PTSIN/PTSOUT at round its nested vst_height/vst_point.
  * ON TARGET the C local IS that frame slot and its address is the one passed. OFF TARGET a C local is
  * host memory the image cannot reach, so each role has a fixed address instead: inside the oracle's
  * stack band, which the differential drops on both shores — exactly where the ROM's own copy of the
@@ -66,6 +67,20 @@
 #define HOST_SLOT_REDIRECTED_BYTE_BYTES 1
 #define HOST_SLOT_VDI_GEMDOS_WORDS      0x7f320  /* $fcfa9c's caller's words: the VDI's `Malloc`/`Mfree` */
 #define HOST_SLOT_VDI_GEMDOS_WORDS_BYTES 6       /* function.w, argument.l */
+#define HOST_SLOT_VDI_VST_FONT_CALL     0x7f330  /* $fce47c's `-18(a6)` points and `-6(a6)` size: its nested call's arrays */
+#define HOST_SLOT_VDI_VST_FONT_CALL_BYTES 10     /* ptsin/ptsout's four words, then intin[0]: COMPACTED, not the frame's layout */
+/* ...and the wide lines' and markers' (`vdi/lines.h`): points a frame builds and points LINEA_PTSIN at, and
+ * the two words it hands perp_off and perp_off hands quad_xform. */
+#define HOST_SLOT_VDI_WIDE_CORNERS      0x7f340  /* $fccba0's `-24(a6)`: four corners, and plygn's closing point */
+#define HOST_SLOT_VDI_WIDE_CORNERS_BYTES 20      /* five (x, y) points */
+#define HOST_SLOT_VDI_WIDE_OFFSET       0x7f354  /* $fccba0's `-36`/`-38(a6)`: the offset perp_off turns in place */
+#define HOST_SLOT_VDI_WIDE_OFFSET_BYTES 4        /* x.w, y.w */
+#define HOST_SLOT_VDI_PERP_DIRECTION    0x7f358  /* $fccd92's `-4`/`-6(a6)`: the offset quad_xform folds into quadrant 1 */
+#define HOST_SLOT_VDI_PERP_DIRECTION_BYTES 4     /* x.w, y.w */
+#define HOST_SLOT_VDI_ARROW_TRIANGLE    0x7f360  /* $fcd196's `-28(a6)`: an arrowhead, and plygn's closing point */
+#define HOST_SLOT_VDI_ARROW_TRIANGLE_BYTES 16    /* four (x, y) points */
+#define HOST_SLOT_VDI_MARKER_POINTS     0x7f370  /* $fcba7a's `-32(a6)`: one polyline of a marker, placed */
+#define HOST_SLOT_VDI_MARKER_POINTS_BYTES 20     /* five (x, y) points */
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -82,6 +97,12 @@ enum host_slot {
     HOST_SLOT_ID_C_ENTRY_ARGUMENTS,
     HOST_SLOT_ID_REDIRECTED_BYTE,
     HOST_SLOT_ID_VDI_GEMDOS_WORDS,
+    HOST_SLOT_ID_VDI_VST_FONT_CALL,
+    HOST_SLOT_ID_VDI_WIDE_CORNERS,
+    HOST_SLOT_ID_VDI_WIDE_OFFSET,
+    HOST_SLOT_ID_VDI_PERP_DIRECTION,
+    HOST_SLOT_ID_VDI_ARROW_TRIANGLE,
+    HOST_SLOT_ID_VDI_MARKER_POINTS,
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL

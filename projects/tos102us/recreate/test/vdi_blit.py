@@ -67,10 +67,6 @@ def canvas(extra=None):
 BLOCK_AT = vdi.BITBLT_AT
 FRAME_AT = BLOCK_AT + FRAME_BYTES
 SPACE_BYTES = vdi.field("BITBLT", "SPACE").count
-# A word the ROM never stores: in a field a case does not use, so a store the reconstruction makes and the
-# ROM does not (or the reverse) is a changed word — the pattern's row step is negated going backwards
-# whether or not there is a pattern.
-STALE_WORD = 0x5A5A
 
 
 def block_pokes(*, size, source, destination, source_form=SCREEN_FORM, destination_form=SCREEN_FORM,
@@ -91,7 +87,10 @@ def block_pokes(*, size, source, destination, source_form=SCREEN_FORM, destinati
                   D_NXWD=destination_form.planes * WORD_BYTES, D_NXLN=destination_form.line_bytes,
                   D_NXPL=WORD_BYTES, SPACE=bytes([vdi.FILL]) * SPACE_BYTES)
     if pattern is None:
-        values.update(P_ADDR=0, P_NXLN=STALE_WORD, P_NXPL=STALE_WORD, P_MASK=STALE_WORD)
+        # The pattern fields a case without one does not use, staged stale so a store the reconstruction
+        # makes and the ROM does not (or the reverse) is a changed word — the pattern's row step is negated
+        # going backwards whether or not there is a pattern.
+        values.update(P_ADDR=0, P_NXLN=vdi.STALE_WORD, P_NXPL=vdi.STALE_WORD, P_MASK=vdi.STALE_WORD)
     else:
         values.update(zip(("P_ADDR", "P_NXLN", "P_NXPL", "P_MASK"), pattern))
     # the named fields laid OVER the scratch they sit in, as a second layer

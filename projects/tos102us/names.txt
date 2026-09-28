@@ -400,7 +400,7 @@ fn 0xfca1ea linea_line
 fn 0xfca57e linea_hline
 fn 0xfca652 vdi_nop
 cmt 0xfca652 Dispatch-table target for: VDI 4, VDI 10, VDI 27, VDI 34
-fn 0xfca654 v_clrwk   # ctx
+fn 0xfca654 v_clrwk
 fn 0xfca6a4 vex_timv
 fn 0xfcac76 vsl_type
 fn 0xfcacc0 vsl_width
@@ -433,8 +433,8 @@ fn 0xfcb614 vr_recfl
 fn 0xfcb694 v_opnwk   # ctx
 fn 0xfcb8d0 vq_extnd
 fn 0xfcb998 v_clswk   # ctx
-fn 0xfcb9e0 v_pline   # ctx
-fn 0xfcba7a v_pmarker   # ctx
+fn 0xfcb9e0 v_pline
+fn 0xfcba7a v_pmarker
 fn 0xfcbbc0 v_fillarea
 fn 0xfcbbcc vdi_gdp   # ctx
 fn 0xfcbd7e vql_attributes
@@ -444,19 +444,19 @@ fn 0xfcd612 v_opnvwk   # ctx
 fn 0xfcd6a4 v_clsvwk   # ctx
 fn 0xfcd6fa vsf_udpat
 fn 0xfcd756 v_gtext   # ctx
-fn 0xfcdfd0 vst_height   # ctx
-fn 0xfce26c vst_point   # ctx
+fn 0xfcdfd0 vst_height
+fn 0xfce26c vst_point
 fn 0xfce3b2 vst_effects
 fn 0xfce3e6 vst_alignment
 fn 0xfce442 vst_rotation
-fn 0xfce47c vst_font   # ctx
+fn 0xfce47c vst_font
 fn 0xfce560 vst_color
 fn 0xfce5b0 vqt_attributes
-fn 0xfce62a vqt_extent   # ctx
-fn 0xfce7f0 vqt_width   # ctx
+fn 0xfce62a vqt_extent
+fn 0xfce7f0 vqt_width
 fn 0xfce8ca vqt_name
 fn 0xfce95a vqt_fontinfo
-fn 0xfced06 vst_load_fonts   # ctx
+fn 0xfced06 vst_load_fonts
 fn 0xfced9a vst_unload_fonts
 fn 0xfcee54 linea_textblt
 fn 0xfcface linea_put_pixel
@@ -1096,7 +1096,7 @@ fn 0xfc93f4 gemdos_free_dnd_tree
 fn 0xfc9468 gemdos_free_drive_ofds
 var 0xfd32d6 gemdos_device_names
 cmt 0xfc85ea Pexec's loader: Fopen(name, <caller's D5 high half>), magic, lengths, signed BSS fit, TEXT+DATA read (no Fread checked), symbol Fseek, relocation in chunks into the TPA past DATA (bounds only at first fixup and chunk ends), the whole TPA past DATA cleared ($fc4b7c), Fclose on success only.
-cmt 0xfc4b7c BIOS bzero(from, to): odd byte, 256-byte movem blocks, tail bytes; `to` compared for EQUALITY, so a span ending below its start runs on through memory.
+cmt 0xfc4b7c BIOS bzero(from, to): odd byte, 256-byte movem blocks stored downwards, tail bytes; `to` compared for EQUALITY, so a span ending below its start runs on through memory. Shipped as its own bytes (src/vdi/screen.S).
 cmt 0xfc93f4 Media-change helper: a DND's child tree, sibling tree, directory OFD, every node slot naming it, then the DND, back to the pool.
 cmt 0xfc9468 Media-change helper: frees handle records whose OFD is on the DMD in the CALLER'S A4 - ROM bug, the pushed argument is never loaded.
 cmt 0xfd32d6 "CON:","con:","AUX:","aux:","PRN:","prn:" with NULs, five bytes each: the dispatcher's Fopen/Fcreate device-name compare.
@@ -1239,3 +1239,34 @@ cmt 0xfcb1a0 poll_choice never writes D0: the dispatcher's MONO_STATUS (0/8) is 
 cmt 0xfcb03c vdi_locator's request spin: the wait site (VDI_LOCATOR_WAIT_SITE)
 cmt 0xfcb1b8 vdi_choice's request spin: the wait site (VDI_CHOICE_WAIT_SITE)
 cmt 0xfcb268 vdi_string's request spin: the wait site (VDI_STRING_WAIT_SITE)
+# ---- VDI band 2 (2026-09-28): wide lines and markers, the text layer's C, the timer and screen plumbing ----
+fn 0xfcca86 cir_dda
+fn 0xfccba0 wline
+fn 0xfccd92 perp_off
+fn 0xfccf4e do_circ
+fn 0xfcd0fa arrow
+fn 0xfcd196 do_arrow
+fn 0xfcde9c text_init
+fn 0xfce116 make_header
+fn 0xfca670 init_timer_mouse
+fn 0xfca6d4 setres
+fn 0xfca78a timer_tick
+fn 0xfca7a2 restore_timer_mouse
+var 0xfd3664 marker_shapes_data
+var 0xfd393c marker_shapes
+var 0x1708 vdi_extent_height_scratch
+var 0xfca762 vdi_palette_medium
+var 0xfca76a vdi_palette_low
+var 0x2958 linea_user_tim
+var 0x295c linea_next_tim
+cmt 0xfccba0 wline: leaves caller contrl[1]=5 (plygn outline); quarter circle cached by LINE_CW only; a begin/end word of 1 (arrow) also gets the round disc (tst.w $2628/$262a)
+cmt 0xfcba7a v_pmarker: leaves LINEA_CLIP=1 and contrl[1]=last polyline count
+cmt 0xfce62a vqt_extent: sums the width IN MEMORY at $1706, height at $1708, both read back per corner; at 2700 it answers (0,h)(0,0)(h,0)(w,h) (ROM bug); other rotations answer no corners though contrl[2]=4
+cmt 0xfcdfd0 vst_height: a face not in the ring (after vst_unload_fonts) leaves a4=0: the vector table at address 0 is scaled as the font
+cmt 0xfcde9c text_init: byte-swaps an unflagged form WITHOUT setting FONT_FLAG_SWAPPED (a second call swaps it back)
+cmt 0xfced06 vst_load_fonts: GDOS contrl[7..11]: scratch buffer, its split, the font chain; once only (WS_LOADED_FONTS != 0 answers 0); no GEMDOS call
+cmt 0xfca654 v_clrwk (VDI 3): $fc4b7c(_v_bas_ad, _v_bas_ad + 32000), a long sum. Also the tail of init_timer_mouse, restore_timer_mouse and console_reinit.
+cmt 0xfca670 v_opnwk's: USER_TIM = $fca652; under ori #$700 NEXT_TIM = Setexc($100, $fca78a); mouse_init; console cursor locked ($fc45d8); bra v_clrwk. A second open chains the tick to itself.
+cmt 0xfca6d4 Getrez; mono -> Setpalette($fca762), D0=3; intin[0]: 1 keeps the colour mode, 3 asks medium, anything else low; Setscreen(-1,-1,mode) only if it differs (halts in the recreate); Setpalette $fca762 medium / $fca76a low; D0 = 2 / 1.
+cmt 0xfca78a etv_timer the VDI installs: movem.l d0-a6; jsr (USER_TIM); movem back; move.l NEXT_TIM,-(sp) / rts (the chain, with the tick word still at 4(sp)). Shipped as its own bytes (src/vdi/screen.S).
+cmt 0xfca7a2 v_clswk's: Setexc($100, NEXT_TIM) unmasked; mouse_off; v_clrwk; bra $fc45be (ESC e, cursor forced on).

@@ -35,9 +35,6 @@
 #include "vdi/fill.h"
 #include "vdi/transcribed.h"
 
-#define POINT_BYTES          4          /* (x, y), two words */
-#define POINT_Y              2
-#define FILL_COLOUR_PLANES   4          /* COLBIT0..3 from the fill colour's low four bits ($fcc0fe..) */
 #define PIXEL_IN_GROUP_MASK  15u
 #define LEFTMOST_PIXEL_BIT   0x8000u
 #define RIGHTMOST_PIXEL_BIT  0x0001u
@@ -81,20 +78,6 @@ static inline int16_t queued(const uint8_t *image, int32_t index)
     return ram_word(image, queue_word(index));
 }
 
-static inline int16_t contrl_word(const uint8_t *image, unsigned offset)
-{
-    return (int16_t)be16(image + linea_pointer(image, LINEA_CONTRL) + offset);
-}
-
-/* COLBIT0..3 = WS_FILL_COLOR & 1, 2, 4, 8 — the drawing colour plygn and the contour fill both set. */
-static void fill_colour_bits(uint8_t *image)
-{
-    uint16_t colour = be16(image + current_work(image) + WS_FILL_COLOR);
-    unsigned plane;
-
-    for (plane = 0; plane < FILL_COLOUR_PLANES; plane++)
-        wr16(image + LINEA_COLBIT0 + plane * VDI_WORD_BYTES, colour & (1u << plane));
-}
 
 /* ================================================================================================
  * $a006 and the polygon.
@@ -157,7 +140,7 @@ static void fill_pair(uint8_t *image, int16_t left, int16_t right, int clipped)
 TRANSCRIBED_CORE
 void linea_filled_poly(uint8_t *image)
 {
-    uint16_t edges = be16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_PTSIN);
+    uint16_t edges = (uint16_t)contrl_word(image, CONTRL_N_PTSIN);
     uint32_t point = linea_pointer(image, LINEA_PTSIN);
     uint32_t crossing = VDI_SCRATCH;
     uint16_t count, pairs;
@@ -165,8 +148,8 @@ void linea_filled_poly(uint8_t *image)
 
     wr16(image + LINEA_GDP_FILL_INT, 0);
     do {                                            /* `subq.w #1` / `dbf`: 0 edges is 65,536 */
-        int16_t x1 = ram_word(image, point), y1 = ram_word(image, point + POINT_Y);
-        int16_t x2 = ram_word(image, point + POINT_BYTES), y2 = ram_word(image, point + POINT_BYTES + POINT_Y);
+        int16_t x1 = ram_word(image, point), y1 = ram_word(image, point + VDI_POINT_Y);
+        int16_t x2 = ram_word(image, point + VDI_POINT_BYTES), y2 = ram_word(image, point + VDI_POINT_BYTES + VDI_POINT_Y);
         int16_t dy = (int16_t)(y2 - y1);
 
         if (dy != 0) {
@@ -179,7 +162,7 @@ void linea_filled_poly(uint8_t *image)
                 wr16(image + LINEA_GDP_FILL_INT, (uint16_t)(be16(image + LINEA_GDP_FILL_INT) + 1));
             }
         }
-        point += POINT_BYTES;
+        point += VDI_POINT_BYTES;
     } while (--edges != 0);
 
     count = be16(image + LINEA_GDP_FILL_INT);
@@ -199,7 +182,7 @@ void linea_filled_poly(uint8_t *image)
 static void load_end(uint8_t *image, uint32_t end, uint32_t at)
 {
     wr16(image + end, be16(image + at));
-    wr16(image + end + (LINEA_Y1 - LINEA_X1), be16(image + at + POINT_Y));
+    wr16(image + end + (LINEA_Y1 - LINEA_X1), be16(image + at + VDI_POINT_Y));
 }
 
 /* $fcbf16 — clip_line: X1,Y1..X2,Y2 cut to the clip rectangle in place, one end at a time — the first
@@ -263,7 +246,7 @@ void vdi_polyline(uint8_t *image)
         if (segments == 1)
             wr16(image + LINEA_LSTLIN, 1);
         load_end(image, LINEA_X1, point);
-        point += POINT_BYTES;
+        point += VDI_POINT_BYTES;
         load_end(image, LINEA_X2, point);
         if (be16(image + LINEA_CLIP) == 0 || vdi_clip_line(image))
             linea_line(image);
@@ -273,16 +256,16 @@ void vdi_polyline(uint8_t *image)
 /* plygn's rows: the lowest and highest y of contrl[1] points, into FILL_MAXY / FILL_MINY. */
 static void polygon_rows(uint8_t *image, uint32_t points)
 {
-    int16_t first = ram_word(image, points + POINT_Y);
+    int16_t first = ram_word(image, points + VDI_POINT_Y);
     int16_t left = (int16_t)(contrl_word(image, CONTRL_N_PTSIN) - 1);
-    uint32_t y_at = points + POINT_BYTES + POINT_Y;
+    uint32_t y_at = points + VDI_POINT_BYTES + VDI_POINT_Y;
 
     set_ram_word(image, LINEA_GDP_FILL_MINY, first);
     set_ram_word(image, LINEA_GDP_FILL_MAXY, first);
     for (; left > 0; left--) {
         int16_t y = ram_word(image, y_at);
 
-        y_at += POINT_BYTES;
+        y_at += VDI_POINT_BYTES;
         if (y < ram_word(image, LINEA_GDP_FILL_MINY))
             set_ram_word(image, LINEA_GDP_FILL_MINY, y);
         else if (y > ram_word(image, LINEA_GDP_FILL_MAXY))
@@ -320,26 +303,24 @@ void vdi_plygn(uint8_t *image)
     uint32_t points = linea_pointer(image, LINEA_PTSIN);
     uint32_t closing;
 
-    fill_colour_bits(image);
+    set_fill_colour_bits(image);
     wr16(image + LINEA_LSTLIN, 0);
     polygon_rows(image, points);
     if (be16(image + LINEA_CLIP) && !clip_polygon_rows(image))
         return;
     points = linea_pointer(image, LINEA_PTSIN);
     closing = word_entry(points, (int16_t)(contrl_word(image, CONTRL_N_PTSIN) * 2));
-    wr16(image + closing, be16(image + points));
-    wr16(image + closing + POINT_Y, be16(image + points + POINT_Y));
+    copy_point(image, closing, points);
     wr16(image + LINEA_Y1, be16(image + LINEA_GDP_FILL_MAXY));
     while (ram_word(image, LINEA_Y1) > ram_word(image, LINEA_GDP_FILL_MINY)) {
         wr16(image + LINEA_GDP_FILL_INT, 0);
         linea_filled_poly(image);
         wr16(image + LINEA_Y1, (uint16_t)(be16(image + LINEA_Y1) - 1));
     }
-    if (be16(image + current_work(image) + WS_FILL_PER) != PERIMETER_ON)
+    if (current_work_word(image, WS_FILL_PER) != PERIMETER_ON)
         return;
     wr16(image + LINEA_LN_MASK, PERIMETER_STYLE);
-    wr16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_PTSIN,
-         (uint16_t)(contrl_word(image, CONTRL_N_PTSIN) + 1));
+    set_contrl_word(image, CONTRL_N_PTSIN, (uint16_t)(contrl_word(image, CONTRL_N_PTSIN) + 1));
     vdi_polyline(image);
 }
 
@@ -668,7 +649,7 @@ static int choose_search_colour(uint8_t *image)
     uint16_t pen, mask;
 
     set_ram_word(image, VDI_FILL_SEARCH_COLOR, index);
-    if (ram_word(image, LINEA_DEV_TAB + VDI_DEV_TAB_COLOURS_INDEX * VDI_WORD_BYTES) <= index)
+    if (table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_COLOURS_INDEX) <= index)
         return 0;
     if (index < 0) {
         set_ram_word(image, VDI_FILL_SEARCH_COLOR, (int16_t)linea_get_pixel(image));
@@ -677,7 +658,7 @@ static int choose_search_colour(uint8_t *image)
     }
     pen = be16(image + word_entry(VDI_MAP_COL, index));
     mask = be16(image + word_entry(VDI_FILL_PEN_MASKS,
-                                   (int32_t)ram_word(image, LINEA_INQ_TAB + VDI_INQ_TAB_PLANES_INDEX * VDI_WORD_BYTES) - 1));
+                                   (int32_t)table_word(image, LINEA_INQ_TAB, VDI_INQ_TAB_PLANES_INDEX) - 1));
     set_ram_word(image, VDI_FILL_SEARCH_COLOR, (int16_t)(pen & mask));
     set_ram_word(image, VDI_FILL_SEED_TYPE, SEED_UP_TO_A_COLOUR);
     return 1;
@@ -700,7 +681,7 @@ void linea_contour_fill(uint8_t *image)
         return;
     if (!choose_search_colour(image))
         return;
-    fill_colour_bits(image);
+    set_fill_colour_bits(image);
     wr16(image + LINEA_LSTLIN, 0);
     set_ram_word(image, VDI_FILL_GOTSEED, linea_end_pts(image, ram_word(image, VDI_FILL_XLEFT),
                                                       ram_word(image, VDI_FILL_OLDY), VDI_FILL_OLDXLEFT,
@@ -743,7 +724,7 @@ void vdi_v_get_pixel(uint8_t *image)
     int16_t planes;
 
     wr16(image + intout, value);
-    planes = ram_word(image, LINEA_INQ_TAB + VDI_INQ_TAB_PLANES_INDEX * VDI_WORD_BYTES);
+    planes = table_word(image, LINEA_INQ_TAB, VDI_INQ_TAB_PLANES_INDEX);
     if ((planes == MONO_PLANES && value != 0) || (planes == MEDIUM_PLANES && value == MEDIUM_LAST_PEN))
         value = REV_MAP_LAST_INDEX;
     wr16(image + intout + VDI_WORD_BYTES, be16(image + word_entry(VDI_REV_MAP_COL, (int16_t)value)));

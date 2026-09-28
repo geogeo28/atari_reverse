@@ -483,7 +483,6 @@ uint32_t vdi_gemdos_call(uint8_t *image, uint32_t return_site, uint16_t function
  * ROM's order, which only shows when the workstation overlaps the Line-A block. */
 #define LINE_STYLE_SOLID      VDI_LINE_STYLES    /* the table's first mask ($fcd064) */
 #define PERIMETER_ON          1                  /* ($fcd084 move.w #1)              */
-#define LINE_END_SQUARE       0                  /* ($fcd0b0 clr.w)                  */
 
 void vdi_s_fa_attr(uint8_t *image)
 {
@@ -499,8 +498,8 @@ void vdi_s_fa_attr(uint8_t *image)
     wr16(image + LINEA_MULTIFILL, 0);
     wr16(image + LINEA_GDP_SAVED_BEG_STYLE, be16(image + work + WS_LINE_BEG));
     wr16(image + LINEA_GDP_SAVED_END_STYLE, be16(image + work + WS_LINE_END));
-    wr16(image + work + WS_LINE_BEG, LINE_END_SQUARE);
-    wr16(image + work + WS_LINE_END, LINE_END_SQUARE);
+    wr16(image + work + WS_LINE_BEG, VDI_LINE_END_SQUARE);
+    wr16(image + work + WS_LINE_END, VDI_LINE_END_SQUARE);
 }
 
 /* $fcd0c2 — ...and the four put back. The Line-A pattern and line style are NOT: the dispatcher copies

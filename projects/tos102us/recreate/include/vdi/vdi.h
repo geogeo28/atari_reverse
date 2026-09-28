@@ -26,6 +26,8 @@
 
 /* An Alcyon `int`: every element of contrl/intin/ptsin/intout/ptsout, and of the ROM's word tables. */
 #define VDI_WORD_BYTES        2
+/* ...and a longword: a pointer, as the Line-A variables and the font ring hold one. */
+#define VDI_LONG_BYTES        4
 
 /* ---- the parameter block D1 points at: five array pointers -------------------------------------- */
 #define PB_CONTRL             0          /* long                                ($fc9fb0)           */
@@ -45,8 +47,13 @@
 #define CONTRL_HANDLE         12         /* word: contrl[6]                     ($fcaa04)           */
 /* contrl[7..8] and [9..10] carry two LONGWORDS where a function takes pointers: the source and
  * destination MFDB of a raster copy, or the new and the old routine of a vex_* exchange. */
-#define CONTRL_POINTER_A      14         /* long ($fd038c source MFDB, $fca6b8 new vector)          */
+#define CONTRL_POINTER_A      14         /* long ($fd038c source MFDB, $fca6b8 new vector, $fced36 text-effects buffer) */
 #define CONTRL_POINTER_B      18         /* long ($fd0390 destination MFDB, $fca6b0 old vector)     */
+/* ...and vst_load_fonts' own reading of contrl[7..11], GDOS's call: the text-effects buffer (CONTRL_POINTER_A),
+ * the offset of its second half, and the first header of the chain of loaded fonts — which runs one word
+ * PAST the eleven the other functions use. */
+#define CONTRL_FONT_SCRPT2    18         /* word: -> WS_SCRPT2                  ($fced30)           */
+#define CONTRL_FONT_CHAIN     20         /* long: -> WS_LOADED_FONTS            ($fced3c)           */
 
 /* ---- the entry's own RAM -------------------------------------------------------------------------
  * PTSIN is COPIED, capped at 1024 words: past the cap `$fc9f9e` writes VDI_PTSIN_CAP_POINTS into the
@@ -65,6 +72,8 @@
 /* A SHARED word: vqt_extent sums a string's width in it ($fce63e, $fce67a) and v_gtext reads it back
  * ($fcd898); the floppy BIOS uses the same word of the disk buffer for its own ($fc3aee). */
 #define VDI_EXTENT_SCRATCH    0x1706     /* word                                ($fce63e)           */
+/* ...and the word after it, where vqt_extent builds the string's HEIGHT before answering both. */
+#define VDI_EXTENT_HEIGHT_SCRATCH 0x1708 /* word                                ($fce6fc)           */
 /* The text-effects buffer a workstation's WS_SCRTCHP starts at — init_wk and vst_unload_fonts both
  * store this constant ($fcd570, $fcedb4) — and the ROM word its WS_SCRPT2 starts at, which sits in
  * vst_unload_fonts' own tail rather than in the data block ($fcd568, $fcedac: 204). */
@@ -153,12 +162,21 @@
 #define VDI_INQ_TAB_SPEED_INDEX 6        /* the drawing speed vq_extnd answers  ($fcb97a 12(a0))    */
 #define VDI_DEV_TAB_MAX_X_INDEX 0        /* the last pixel column               ($fcb508 -> $26e6)  */
 #define VDI_DEV_TAB_MAX_Y_INDEX 1        /* ...and row                          ($fcb520 -> $26e8)  */
+/* A pixel's width and height in microns: the device's aspect, which the wide lines scale by. */
+#define VDI_DEV_TAB_PIXEL_WIDTH_INDEX 3  /*                                     ($fcca9a -> $26ec)  */
+#define VDI_DEV_TAB_PIXEL_HEIGHT_INDEX 4 /*                                     ($fccaa2 -> $26ee)  */
 #define VDI_INQ_TAB_EFFECTS_INDEX 2      /* the text effects the device has     ($fce3be -> $2690)  */
 #define VDI_INQ_TAB_PLANES_INDEX 4       /*                                     ($fcd71e -> $2694)  */
 #define VDI_SIZ_TAB_MAX_LINE_WIDTH_INDEX 6 /*                                   ($fcacda -> $27b4)  */
 #define VDI_SIZ_TAB_MIN_MARK_WIDTH_INDEX 8 /*                                   ($fcae34 -> $27b8)  */
 #define VDI_SIZ_TAB_MIN_MARK_HEIGHT_INDEX 9 /*                                  ($fcadde -> $27ba)  */
 #define VDI_SIZ_TAB_MAX_MARK_HEIGHT_INDEX 11 /*                                 ($fcadee -> $27be)  */
+/* ...and the character sizes text_init measures over the system face (`src/vdi/text.c`). */
+#define VDI_SIZ_TAB_MIN_CHAR_WIDTH_INDEX 0 /*                                   ($fcdea4 -> $27a8)  */
+#define VDI_SIZ_TAB_MIN_CHAR_HEIGHT_INDEX 1 /*                                  ($fcdeac -> $27aa)  */
+#define VDI_SIZ_TAB_MAX_CHAR_WIDTH_INDEX 2 /*                                   ($fcdeb4 -> $27ac)  */
+#define VDI_SIZ_TAB_MAX_CHAR_HEIGHT_INDEX 3 /*                                  ($fcdeba -> $27ae)  */
+#define VDI_DEV_TAB_CHAR_HEIGHTS_INDEX 5 /* the system face's fonts, counted    ($fcdfa0 -> $26f0)  */
 
 /* ---- the ROM data the VDI reads, $fd32f4..$fd39f5 ---------------------------------------------- */
 #define VDI_MAX_VERTICES_DEFAULT 0xfd32f4 /* word -> INQ_TAB[14]                ($fcb6d0)           */
@@ -205,6 +223,12 @@
 /* The value WS_FILL_STYLE holds for the user-defined pattern — the one interior whose planes the
  * dispatcher copies into LINEA_MULTIFILL. A VALUE of the field, not a field. */
 #define VDI_INTERIOR_USER     4          /*                                     ($fcaa8e cmpi.w #4) */
+/* The value WS_LINE_BEG / WS_LINE_END hold for a plain SQUARE end (bit 0 set asks for an arrowhead). A VALUE
+ * of the fields, not a field. */
+#define VDI_LINE_END_SQUARE   0          /*                                     ($fcd0b0 clr.w)     */
+/* A point of ptsin / ptsout, or of a frame's own point list: (x, y), two words. */
+#define VDI_POINT_BYTES       4
+#define VDI_POINT_Y           2          /* y, the second word                                      */
 /* ...and the other four, in st_fl_ptr's switch order ($fd397c). */
 #define VDI_INTERIOR_HOLLOW   0          /*                                     ($fcc9c2)           */
 #define VDI_INTERIOR_SOLID    1          /*                                     ($fcc9cc)           */
@@ -250,15 +274,26 @@ static inline void answer_ptsout(uint8_t *image, unsigned index, uint16_t value)
     wr16(image + call_element(image, LINEA_PTSOUT, index), value);
 }
 
+/* A word of contrl by its byte offset (CONTRL_*), read or stored through the pointer at the call. */
+static inline int16_t contrl_word(const uint8_t *image, uint32_t offset)
+{
+    return (int16_t)be16(image + linea_pointer(image, LINEA_CONTRL) + offset);
+}
+
+static inline void set_contrl_word(uint8_t *image, uint32_t offset, uint16_t value)
+{
+    wr16(image + linea_pointer(image, LINEA_CONTRL) + offset, value);
+}
+
 /* contrl[2] and contrl[4], each written only by the functions that answer that array. */
 static inline void answer_points(uint8_t *image, uint16_t points)
 {
-    wr16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_PTSOUT, points);
+    set_contrl_word(image, CONTRL_N_PTSOUT, points);
 }
 
 static inline void answer_words(uint8_t *image, uint16_t words)
 {
-    wr16(image + linea_pointer(image, LINEA_CONTRL) + CONTRL_N_INTOUT, words);
+    set_contrl_word(image, CONTRL_N_INTOUT, words);
 }
 
 /* ---- a WORD of the VDI's own RAM — a Line-A variable, a scratch word — by its address ------------
@@ -288,6 +323,70 @@ static inline void add_ram_word(uint8_t *image, uint32_t at, uint16_t delta)
 static inline uint32_t current_work(const uint8_t *image)
 {
     return linea_pointer(image, LINEA_CUR_WORK);
+}
+
+/* A word of the workstation record at `work` (WS_*), for a routine that HOLDS the record as the ROM holds it
+ * in a register (`movea.l $27ca,a4` once) — signed, as its Alcyon `int`. */
+static inline int16_t work_word(const uint8_t *image, uint32_t work, uint32_t field)
+{
+    return (int16_t)be16(image + work + field);
+}
+
+/* ...and a store into the CURRENT workstation's, LINEA_CUR_WORK read at the store. */
+static inline void set_current_work_word(uint8_t *image, uint32_t field, uint16_t value)
+{
+    wr16(image + current_work(image) + field, value);
+}
+
+/* ...and a read of one, LINEA_CUR_WORK read at the read — unsigned, for a mode compared or a pen passed on. */
+static inline uint16_t current_work_word(const uint8_t *image, uint32_t field)
+{
+    return be16(image + current_work(image) + field);
+}
+
+/* ---- a word of a Line-A DEVICE TABLE (LINEA_DEV_TAB / SIZ_TAB / INQ_TAB) by its index ----------------
+ * Signed where the ROM's Alcyon C reads an `int` (`table_word`), unsigned where it compares one as a count
+ * (`table_uword`) — `ram_word`'s pair, over the table's own index. */
+static inline int16_t table_word(const uint8_t *image, uint32_t table, unsigned index)
+{
+    return ram_word(image, table + index * VDI_WORD_BYTES);
+}
+
+static inline uint16_t table_uword(const uint8_t *image, uint32_t table, unsigned index)
+{
+    return ram_uword(image, table + index * VDI_WORD_BYTES);
+}
+
+static inline void set_table_word(uint8_t *image, uint32_t table, unsigned index, uint16_t value)
+{
+    set_ram_word(image, table + index * VDI_WORD_BYTES, value);
+}
+
+/* The drawing colour as every VDI caller of a rasterizer stages it: COLBITn = colour & (1 << n) — the
+ * plane's BIT, not 0/1 ($fcba16.., $fcc0fe..). */
+#define VDI_COLBIT_PLANES     4          /* COLBIT0..COLBIT3                                        */
+
+static inline void set_colour_bits(uint8_t *image, uint16_t colour)
+{
+    unsigned plane;
+
+    for (plane = 0; plane < VDI_COLBIT_PLANES; plane++)
+        wr16(image + LINEA_COLBIT0 + plane * VDI_WORD_BYTES, colour & (uint16_t)(1u << plane));
+}
+
+/* ...staged from the current workstation's fill pen, as the fill and area callers stage it. ALWAYS inlined:
+ * as a plain inline GCC lays out contour_fill's tail differently, and one of its paths gains a `bra.w`
+ * (measured on the shipped flags) — the helper is to change the spelling, not the code. */
+static inline __attribute__((always_inline)) void set_fill_colour_bits(uint8_t *image)
+{
+    set_colour_bits(image, current_work_word(image, WS_FILL_COLOR));
+}
+
+/* A point (x, y) copied from `from` to `to`: x first, then y (`move.w (a4),8(a5) / move.w 2(a4),10(a5)`). */
+static inline void copy_point(uint8_t *image, uint32_t to, uint32_t from)
+{
+    wr16(image + to, be16(image + from));
+    wr16(image + to + VDI_POINT_Y, be16(image + from + VDI_POINT_Y));
 }
 
 /* ---- the reconstructed functions --------------------------------------------------------------- */

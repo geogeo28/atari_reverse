@@ -11,7 +11,6 @@ form, which is what reaches the multi-word row loops, and the BitBlt write modes
 import ctypes
 import random
 import struct
-import tempfile
 from pathlib import Path
 
 from harness import BASE_IMAGE, addrs, emu
@@ -194,18 +193,10 @@ def masked_only_modes():
 
 
 def refusal(pokes):
-    """What vector 9's C body says over `pokes` in a CHILD process (`vdi_helpers.refusal`), where its halt can
-    end the run without ending pytest's — or its spin be timed out. The child's image is the staged one,
-    copied into its fresh buffer. Answers (returncode, stderr)."""
-    image = bytes(vdi.make_image(pokes))
-    assert len(image) == vdi_helpers.IMAGE_BYTES
-    with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as handle:
-        handle.write(image)
-    try:
-        return vdi_helpers.refusal("linea_cpu_textblt", ["ctypes.c_void_p"],
-                                   f"(ctypes.memmove(buf, open({handle.name!r}, 'rb').read(), {len(image)}), buf)[1]")
-    finally:
-        Path(handle.name).unlink()
+    """What vector 9's C body says over `pokes` in a CHILD process (`vdi_helpers.refusal_over`), where its halt
+    can end the run without ending pytest's — or its spin be timed out. Answers (returncode, stderr)."""
+    returncode, stderr, _image = vdi_helpers.refusal_over("linea_cpu_textblt", pokes)
+    return returncode, stderr
 
 
 # ---- the window ----------------------------------------------------------------------------------------------

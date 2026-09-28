@@ -3,7 +3,8 @@ that stand in, off target, for a ROM frame local whose ADDRESS a routine hands o
 routines' word, the directory search's pattern, the walk's name and cursor, the delete's mark byte,
 `Fattrib`'s attribute byte, `create`'s free-slot search name and new entry's FCB name, `Frename`'s entry
 buffer, `Pexec`'s loader's header locals, and the dispatcher's two — the argument words of its nested
-`Fwrite` ($fc5078) and the byte a redirected read lands in.
+`Fwrite` ($fc5078) and the byte a redirected read lands in. The VDI's seven: its `Malloc`/`Mfree` words,
+vst_font's nested call's arrays, and the wide lines', arrowheads' and markers' points (`vdi/lines.h`).
 
 Every slot must sit where the differential drops bytes on both shores — the oracle's stack band, above
 its guard — and below both the deepest frame the kit calls legitimate and the `savptr` frame the
@@ -46,7 +47,9 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
     slots = host_slots(CONSTANTS)
     assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
                           "CREATE_FREE_NAME", "CREATE_FCB", "RENAME_ENTRY", "C_ENTRY_ARGUMENTS",
-                          "REDIRECTED_BYTE", "PEXEC_LOCALS", "VDI_GEMDOS_WORDS"}
+                          "REDIRECTED_BYTE", "PEXEC_LOCALS", "VDI_GEMDOS_WORDS", "VDI_VST_FONT_CALL",
+                          "VDI_WIDE_CORNERS", "VDI_WIDE_OFFSET", "VDI_PERP_DIRECTION", "VDI_ARROW_TRIANGLE",
+                          "VDI_MARKER_POINTS"}
     assert not misplaced(slots)
 
 

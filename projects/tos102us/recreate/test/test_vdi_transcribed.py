@@ -32,7 +32,6 @@ import vdi
 RECREATE = Path(__file__).resolve().parents[1]
 KIT = RECREATE.parents[2] / "tools" / "recreate_kit"
 BENCH_ELF = RECREATE / "build" / "bench" / "bench.elf"
-SHIPPED_ELF = RECREATE / "build" / "bench_shipped" / "bench.elf"
 MAKE_LISTS = ("TRANSCRIBED_ENTRIES", "TRANSCRIBED_C_CORES", "TRANSCRIBED_SOURCES")
 # The GCC m68k ABI: D0/D1/A0/A1 are the callee's to change, and these the caller's to keep (A7 is SP).
 GCC_CALLEE_SAVED = ("d2", "d3", "d4", "d5", "d6", "d7", "a2", "a3", "a4", "a5", "a6")
@@ -124,7 +123,7 @@ def test_in_the_shipped_configuration_every_called_core_is_its_glue():
     """The shipped blob (`build/bench_shipped/`): each call a C caller makes of a core still names the core,
     and that name is now the GENERATED thunk, whose one reference is the core's `.S` entry — not the C body,
     which the weak attribute let the thunk displace."""
-    graph = vdi.call_graph(SHIPPED_ELF)
+    graph = vdi.call_graph(vdi.SHIPPED_ELF)
     assert vdi.callers_of_transcribed_cores(graph) == vdi.C_CALLERS_OF_TRANSCRIBED_CORES
     for core in sorted({core for _caller, core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES}):
         assert graph[core] == {vdi.TRANSCRIBED_CORES[core]}, (

@@ -211,4 +211,20 @@ static inline uint32_t bus_address(uint32_t address)
     return address & OS_BUS_ADDR_MASK;
 }
 
+/* ...and an address that is only DEREFERENCED — its value never stored, compared or carried on — reaches
+ * the same byte masked or not ON TARGET. PRECONDITION: the target image base is 0 and the 68000 drives 24
+ * address lines, so the bus drops the top byte itself and the mask there is COST ONLY; it is spelt for the
+ * host's 16 MB image alone, and the builds compute the same function (`tools/recreate_kit/kit.mk`,
+ * RECREATE_HOST_DIFFERENTIAL). A value that IS stored or compared keeps its top byte on both builds, and a
+ * sum that must wrap before it is used goes through `bus_address` on both. The font layer reads headers
+ * this way (`src/vdi/text.c`), reached through vector longwords whose high bytes are not zero. */
+static inline uint32_t bus_dereference(uint32_t address)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    return bus_address(address);
+#else
+    return address;
+#endif
+}
+
 #endif /* TOS102US_M68K_IDIOMS_H */

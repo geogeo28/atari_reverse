@@ -32,6 +32,7 @@ PUSH_WORD_IMMEDIATE = b"\x3f\x3c"       # move.w  #<imm>,-(sp)
 PUSH_RETURN_PC = b"\x48\x7a"            # pea     <d16>(pc)
 PUSH_SR = b"\x40\xe7"                   # move.w  sr,-(sp)
 PUSH_STACK_LONG = b"\x2f\x2f"           # move.l  <d16>(sp),-(sp)
+PUSH_STACK_WORD = b"\x3f\x2f"           # move.w  <d16>(sp),-(sp)
 DROP_STACK_BYTES = b"\x4f\xef"          # lea     <d16>(sp),sp
 SET_USER_STACK = b"\x4e\x60"            # move.l  a0,usp
 
@@ -50,6 +51,7 @@ STORE_LONG_REGISTER = {"d0": b"\x23\xc0", "d1": b"\x23\xc1"}     # move.l  Dn,<x
 CLEAR_ADDRESS_REGISTER = {"a2": b"\x95\xca", "a3": b"\x97\xcb", "a4": b"\x99\xcc", "a5": b"\x9b\xcd",
                           "a6": b"\x9d\xce"}
 COPY_LONG_ABSOLUTE = b"\x23\xf9"        # move.l  <xxx>.l,<yyy>.l
+MOVEM_L_ABSOLUTE_TO_REGISTERS = b"\x4c\xf9"     # movem.l <xxx>.l,<list>: the mask word, then the address
 
 # ---- ...and the same instructions as WORDS -------------------------------------------------------
 # A stub built with `struct.pack` needs the opcode as an INT, not as bytes: `test/gemdos_fs.py`'s

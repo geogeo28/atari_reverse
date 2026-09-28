@@ -22,7 +22,14 @@
 #   absolute address is exactly what -Warray-bounds is built to shout about — right on a host, wrong
 #   on a machine whose OS lives there. The Tier 3 build dereferences MORE of them, not fewer: its
 #   image base is 0, which is the machine's own arrangement (tools/recreate_kit/rom_bench.py).
-TARGET_CFLAGS := -m68000 -O2 -fomit-frame-pointer -ffreestanding -nostdlib -fno-jump-tables \
+# -fno-strict-aliasing: the cores reach one memory through typed accessors of every width (the kit's
+#   `be16`/`be32`/`wr16` are `uint16_t`/`uint32_t` accesses on target), and the ROM's order is a read AFTER a
+#   store whatever their widths — an overlap a caller can stage. Under type-based aliasing GCC may keep a
+#   longword read across a word store: vqt_width's FONT_HOR_TABLE re-read after ptsout[2] was fused into one
+#   (a ptsout over the font's header left a different byte than the ROM, Tier 3's second differential RED).
+#   The host `.so` reads bytes and can never show it, so the flag is what makes the target the ROM's program.
+#   `test/test_tier3.py` pins it in both makefiles' expanded flags.
+TARGET_CFLAGS := -m68000 -O2 -fomit-frame-pointer -ffreestanding -nostdlib -fno-jump-tables -fno-strict-aliasing \
                  -Wall -Wextra -Werror -Wno-array-bounds
 
 # ...and the HEADERS those flags compile the cores against, here for the same reason the flags are:

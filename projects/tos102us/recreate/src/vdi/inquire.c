@@ -123,21 +123,14 @@ void vdi_vqt_attributes(uint8_t *image)
     uint32_t work = linea_pointer(image, LINEA_CUR_WORK);
     uint32_t font = linea_pointer(image, LINEA_CUR_FONT);
     uint8_t *intout = image + linea_pointer(image, LINEA_INTOUT);
-    uint8_t *ptsout;
-    uint16_t top;
 
-    wr16(intout, be16(image + font + FONT_ID));
+    wr16(intout, font_word(image, font, FONT_ID));
     wr16(intout + WORD_BYTES, vdi_index_of_pen(image, be16(image + work + WS_TEXT_COLOR)));
     wr16(intout + 2 * WORD_BYTES, be16(image + work + WS_CHUP));
     wr16(intout + 3 * WORD_BYTES, be16(image + work + WS_H_ALIGN));
     wr16(intout + 4 * WORD_BYTES, be16(image + work + WS_V_ALIGN));
     wr16(intout + 5 * WORD_BYTES, be16(image + work + WS_WRT_MODE));
-    ptsout = image + linea_pointer(image, LINEA_PTSOUT);
-    wr16(ptsout, be16(image + font + FONT_MAX_CHAR_WIDTH));
-    top = be16(image + font + FONT_TOP);           /* read after that store (`$fce5f2`), kept in D7 */
-    wr16(ptsout + WORD_BYTES, top);
-    wr16(ptsout + 2 * WORD_BYTES, be16(image + font + FONT_MAX_CELL_WIDTH));
-    wr16(ptsout + 3 * WORD_BYTES, top + be16(image + font + FONT_BOTTOM) + 1);
+    answer_font_size(image, font);                 /* the top read after the first store (`$fce5f2`), kept in D7 */
     answer_points(image, VQT_PTSOUT_POINTS);
     answer_words(image, VQT_INTOUT_WORDS);
     wr16(image + VDI_RESULT, VDI_RESULT_SET);

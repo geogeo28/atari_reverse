@@ -349,9 +349,22 @@ Every row whose C REACHES a transcribed core (the m68k build's call graph, `vdi.
 bar and OVER above it, with no entry — the measurement is also the glue's own second differential. A `.S`
 that drifts takes its callers' rows over with it (measured: a 2,000-pass delay in `linea_rom_hide_mouse`
 takes `v_hide_c / the arrow removed` from 1.06 to 9.61 and `vdi_locator / requested, a key` from 1.02 to
-2.09, both OVER). A row over the bar even as shipped is its OWN body's cost, and is accepted, if at all, by
-a lettered mechanism at the SHIPPED number (`vq_key_s` and `vdi_choice`'s sampled arm: (A) and (D) through
-the glue); an entry typed at the C twin's number drifts and reds.
+2.09, both OVER).
+
+**The glue's own cost — mechanism (T→G), derived.** A thunk is the one thing in the shipped configuration
+no ROM routine has: the ROM's compiled caller pushed the Alcyon frame (or loaded the argument registers)
+inline on its way to the `jsr`, where a GCC caller hands its longword slots to a thunk that saves the
+callee-saved registers the entry changes, re-pushes them as the entry's frame and makes a second `jsr`.
+Measured on `do_arrow`'s arrowhead that is 128 cycles per `smul_div` call and 216 per `filled_poly` one —
+94% of the row's excess, its C bodies at parity. So every (T→) row is PROFILED as it is measured (the
+oracle's cycle-per-PC tally) and the cycles spent inside the thunks' own bytes are counted — the shipped
+ELF's sized symbols of the generated thunks (`bench/tier3.py`, `glue_ranges`; `shipped_glue.py` emits the
+`.size`). A row over the bar as shipped whose ratio NET OF THAT GLUE is at or under it is verdict `glue`,
+with no entry; the table prints the net ratio on a line under every (T→) row over the bar as shipped, and
+`test/test_tier3.py` refuses a written acceptance for a row the rule carries. A row over the bar even net
+of the glue is its OWN body's cost, and is accepted, if at all, by a lettered mechanism at the SHIPPED
+number (`vq_key_s` and `vdi_choice`'s sampled arm: (A) and (D) through the call, 1.23 and 1.26 net); an
+entry typed at the C twin's number drifts and reds.
 
 **ROM addresses used as values — what a rebuilt ROM owes them.** With the image based at 0, `image +
 VDI_MAP_COL` reads the 1987 table where it lies and `mouse_init` stores 1987 code addresses into RAM

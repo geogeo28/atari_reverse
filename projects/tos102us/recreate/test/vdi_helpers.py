@@ -16,9 +16,10 @@ import ctypes
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-from harness import BASE_IMAGE, LIB, _lib, addrs
+from harness import BASE_IMAGE, LIB, _lib, addrs, emu
 
 import abi
 import case
@@ -108,17 +109,52 @@ def answer(result):
 
 
 IMAGE_BYTES = len(BASE_IMAGE)
+FRESH_IMAGE = f"buf = (ctypes.c_uint8 * {IMAGE_BYTES})()"
 
 
-def refusal(symbol, argtypes, arguments):
+def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE):
     """What the host core `symbol` says when called with `arguments` in a CHILD process, where its
     refusal — `recreate_not_reconstructed`, an `abort()` — can end the run without ending pytest's.
-    `arguments` is Python source; `buf` names a fresh image. Answers `(returncode, stderr)`."""
-    probe = (f"import ctypes; lib = ctypes.CDLL({str(LIB)!r}); buf = (ctypes.c_uint8 * {IMAGE_BYTES})(); "
+    `arguments` is Python source; `prelude` is the statements before the call, which bind `buf` (a fresh
+    image by default). Answers `(returncode, stderr)`."""
+    probe = (f"import ctypes, mmap; lib = ctypes.CDLL({str(LIB)!r}); {prelude}; "
              f"lib.{symbol}.argtypes = [{', '.join(argtypes)}]; lib.{symbol}({arguments})")
     run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60)
     return run.returncode, run.stderr
 
+
+def _io_declaration(io_seed):
+    """The child's `g_io_reset` call declaring the I/O bytes `io_seed` ({address: byte}), encoded as `case.run`
+    encodes them — routed by `emu.seed_split`, all three columns from `emu.io_seed_entries`. The child installs
+    that one table alone, so a Phase-7 named slot or a declared sequence, which have installers of their own,
+    is refused rather than dropped."""
+    named, declared, sequences = emu.seed_split(None, io_seed)
+    assert not named and not sequences, (
+        f"refusal_over installs plain I/O bytes only, not the named slots {named} or the sequences {sequences}")
+    addresses, values, writeback = emu.io_seed_entries(declared)
+    count = len(addresses)
+    return (f"lib.g_io_reset((ctypes.c_uint32 * {count})(*{list(addresses)}), (ctypes.c_uint8 * {count})(*{list(values)}), "
+            f"(ctypes.c_uint8 * {count})(*{list(writeback)}), {count})")
+
+
+def refusal_over(symbol, pokes, io_seed=None):
+    """What the host core `symbol(image)` says over the image `pokes` stage, with the I/O bytes `io_seed`
+    declared, in a CHILD process (`refusal`) — and the image AS THE CHILD LEFT IT: the child's `buf` is a
+    SHARED mapping of the staged image's file, so every store the core made before it halted is still there
+    for the caller to read. Answers `(returncode, stderr, image)`."""
+    image = bytes(vdi.make_image(pokes))
+    assert len(image) == IMAGE_BYTES
+    with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as handle:
+        handle.write(image)
+    try:
+        prelude = (f"image_file = open({handle.name!r}, 'r+b'); "
+                   f"buf = (ctypes.c_uint8 * {IMAGE_BYTES}).from_buffer(mmap.mmap(image_file.fileno(), {IMAGE_BYTES}))")
+        if io_seed:
+            prelude += f"; {_io_declaration(io_seed)}"
+        returncode, stderr = refusal(symbol, ["ctypes.c_void_p"], "buf", prelude=prelude)
+        return returncode, stderr, Path(handle.name).read_bytes()
+    finally:
+        Path(handle.name).unlink()
 
 
 # ---- the band these batteries stage buffers in ----------------------------------------------------

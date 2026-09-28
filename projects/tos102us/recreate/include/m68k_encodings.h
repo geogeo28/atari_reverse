@@ -29,6 +29,8 @@
 #define M68K_AND_W_IMMEDIATE(dn)   (0xc07c + ((dn) << M68K_DATA_REGISTER_SHIFT))
 #define M68K_ADD_W_IMMEDIATE(dn)   (0xd07c + ((dn) << M68K_DATA_REGISTER_SHIFT))
 #define M68K_CMP_W_IMMEDIATE(dn)   (0xb07c + ((dn) << M68K_DATA_REGISTER_SHIFT))
+/* ...and `and.l #<imm>,Dn` the same way: the span clear's block mask ($fc4ba6) */
+#define M68K_AND_L_IMMEDIATE(dn)   (0xc0bc + ((dn) << M68K_DATA_REGISTER_SHIFT))
 
 /* `move.w <d16>(An),Dn` and `movea.l <d16>(An),Am`, for the displacement of 0 gas would drop */
 #define M68K_MOVE_W_D16(an, dn)    (0x3028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))

@@ -26,6 +26,8 @@ side (`tools/recreate_kit/rom_bench.py`). `docs/on-target-execution.md`'s bug cl
 target build going wrong where a host build is right, and nothing else in this project looks for it.
 """
 import ctypes
+import functools
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +41,8 @@ import trap                                                # noqa: E402
 # ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
 import vdi                                                 # noqa: E402
 import vdi_helpers                                         # noqa: E402
+# ...and the glue generator, whose thunks mechanism (T→G) counts.
+import shipped_glue                                        # noqa: E402
 from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
 
 
@@ -161,6 +165,29 @@ def test_no_pinned_ratio_is_stale(bench):
             f"under it. Drop the acceptance: it is excusing a cost that is no longer paid")
 
 
+# ---- the numerator's flags: the target build keeps the ROM's read-after-store order ------------------
+
+RECREATE = Path(__file__).resolve().parents[1]
+# The flag `atari/target.mk` carries for it (its comment says why), and every expansion that must carry it:
+# the ROM build's, and both Tier 3 blobs' — the C twins' and the shipped configuration's.
+NO_STRICT_ALIASING = "-fno-strict-aliasing"
+TARGET_FLAG_EXPANSIONS = ((RECREATE, "BENCH_CFLAGS"), (RECREATE, "SHIPPED_CFLAGS"), (RECREATE / "atari", "CFLAGS"))
+
+
+def _expanded(directory, variable):
+    """`variable` as the makefile in `directory` expands it — make's answer, not a reading of the text."""
+    probe = f"include Makefile\nprint-flags:\n\t@echo $({variable})\n"
+    return subprocess.run(["make", "-s", "-f", "-", "print-flags"], input=probe, cwd=directory, capture_output=True,
+                          text=True, check=True).stdout.split()
+
+
+@pytest.mark.parametrize("directory, variable", TARGET_FLAG_EXPANSIONS, ids=lambda each: str(each))
+def test_every_target_build_compiles_without_type_based_aliasing(directory, variable):
+    assert NO_STRICT_ALIASING in _expanded(directory, variable), (
+        f"{variable} ({directory.name}/Makefile) lacks {NO_STRICT_ALIASING}: GCC may then carry a read across a "
+        f"store of another width, which the ROM never does and only an overlap case on target would show")
+
+
 # ---- the VDI helpers' calls: ONE statement of each C signature --------------------------------------
 
 REGISTER_HELPERS = [name for name in vdi.PRIMITIVES if vdi.core_symbol(name) in vdi_helpers.REGISTER_SIGNATURES]
@@ -228,6 +255,15 @@ def test_a_routine_whose_s_rows_are_gone_reds_the_c_rows(bench, dispatch, ratio_
 
 # ---- MECHANISM (T→): the C that calls a transcribed routine, measured as it ships -------------------
 
+@functools.cache
+def _shipped_measurement(key):
+    """A (T→) row's `Measurement`, once per process: the shipped blob prices it whatever bench is handed, and
+    no test mutates it (`_with_body_grown_to` builds a new one)."""
+    row = tier3.row_named(key)
+    assert tier3.ships_through_a_call(row), key
+    return tier3.measure(row, tier3.shipped_bench())
+
+
 # A row whose whole excess, measured on the C twins, is the callee's C: far over the bar there, and at the
 # ROM's cost once the call enters the `.S` — so which blob measured it is unmistakable.
 THROUGH_A_CALL_ROW = ("vdi_v_hide_c", "the arrow removed")
@@ -246,21 +282,130 @@ def test_a_row_that_ships_through_a_call_is_measured_on_the_shipped_blob(bench, 
     on_the_twins = bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
                                  returns=row.returns)
     assert on_the_twins.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: through the C twin it is over the bar"
-    measured = tier3.measure(row, bench)
+    measured = _shipped_measurement(THROUGH_A_CALL_ROW)
     assert measured.ratio <= tier3.TIER3_FUNCTION_BAR
     assert tier3.verdict(row, measured, dispatch, ratio_of) == "through"
 
 
 def test_a_row_that_ships_through_a_call_goes_over_with_its_callee(bench, dispatch, ratio_of):
     """Nothing carries a (T→) row but its own measurement: the same row costing what a drifted `.S` would
-    make it cost is OVER — there is no entry for it to hide behind."""
+    make it cost — the thunks' cycles unchanged, everything behind them over the bar — is OVER; there is no
+    entry for it to hide behind, and the glue rule (T→G) takes off only the thunks."""
     row = tier3.row_named(THROUGH_A_CALL_ROW)
-    measured = tier3.measure(row, bench)
-    over = Measurement((0, measured.original_cycles),
-                       (0, round(measured.original_cycles * (tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE))),
-                       bench.overhead)
+    measured = _shipped_measurement(THROUGH_A_CALL_ROW)
+    over = _with_body_grown_to(measured, bench, tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE)
     assert tier3.pin_of(row) is None
     assert tier3.verdict(row, over, dispatch, ratio_of) == "OVER"
+
+
+# ---- the CALL GRAPH (T→) is derived from: its IMMEDIATE-ADDRESS rule, on a synthetic listing ---------------
+# GCC calls a function it names several times through a register it loaded with `move.l #<address>`, which
+# objdump prints in DECIMAL and without the name — so only the symbol table can say it is a call. Nothing
+# in today's build reaches a transcribed core that way (the rule's edges are GEMDOS callbacks), so no row
+# would redden if it went: this listing is its pin.
+LOADER_AT, HELPER_AT, INSIDE_HELPER = 0x30000, 0x30100, 0x30102
+IMMEDIATE_CALL_LISTING = f"""
+{LOADER_AT:08x} <loader>:
+   {LOADER_AT:x}:\t243c 0003 0100 \tmovel #{HELPER_AT},%d2
+   {LOADER_AT + 6:x}:\t4e92           \tjsr %a2@
+   {LOADER_AT + 8:x}:\t263c 0003 0102 \tmovel #{INSIDE_HELPER},%d3
+{HELPER_AT:08x} <helper>:
+   {HELPER_AT:x}:\t4e75           \trts
+"""
+
+
+def test_the_call_graph_reads_an_address_loaded_as_an_immediate():
+    """`#<decimal>` equal to a function's START is a reference to it; one inside a function is not."""
+    starts = {LOADER_AT: "loader", HELPER_AT: "helper"}
+    graph = vdi.graph_of_listing(IMMEDIATE_CALL_LISTING, {}, starts)
+    assert graph == {"loader": {"helper"}, "helper": set()}
+
+
+# ...and the same immediate used as DATA: compared, and stored into the image (a Line-A field), where no call
+# can follow — the value only happens to equal a function's start.
+COMPARER_AT = 0x30200
+IMMEDIATE_DATA_LISTING = f"""
+{COMPARER_AT:08x} <comparer>:
+   {COMPARER_AT:x}:\t0c80 0003 0100 \tcmpil #{HELPER_AT},%d0
+   {COMPARER_AT + 6:x}:\t277c 0003 0100 2958 \tmovel #{HELPER_AT},%a3@(10584)
+   {COMPARER_AT + 14:x}:\t0681 0003 0100 \taddil #{HELPER_AT},%d1
+{HELPER_AT:08x} <helper>:
+   {HELPER_AT:x}:\t4e75           \trts
+"""
+
+
+def test_the_call_graph_reads_no_call_into_an_immediate_used_as_data():
+    starts = {COMPARER_AT: "comparer", HELPER_AT: "helper"}
+    graph = vdi.graph_of_listing(IMMEDIATE_DATA_LISTING, {}, starts)
+    assert graph == {"comparer": set(), "helper": set()}
+
+
+# ---- MECHANISM (T→G): a (T→) row over the bar only by the cycles of the thunks it calls through ------------
+
+# The row the glue carries: do_arrow's arrowhead, whose shipped excess is 94% thunk (13 smul_div calls, 8
+# filled_poly ones) and whose C bodies are at parity net of them.
+GLUE_ROW = ("vdi_do_arrow", "one-pixel line, walked past short segments")
+# ...and a row over the bar EVEN NET of its glue: vq_key_s's own (A) + (D) body, which only its written entry
+# carries — the real row the rule must refuse.
+OVER_NET_OF_GLUE_ROW = ("vdi_vq_key_s", "every bit set but Control")
+
+
+def _with_body_grown_to(measured, bench, net_ratio):
+    """`measured` with the recreate's cycles OUTSIDE the glue grown until its net ratio is `net_ratio`: the
+    shape a regression in the caller's own body would have, the thunks' cycles left as they were."""
+    glue = tier3.glue_cycles_of(measured)
+    grown = Measurement((0, measured.original_cycles), (0, round(net_ratio * measured.original_net) + glue + bench.overhead[1]),
+                        bench.overhead)
+    grown.glue_cycles = glue
+    return grown
+
+
+def test_every_thunk_is_a_sized_range_of_the_shipped_blob():
+    """The glue the rule counts is exactly the generated thunks: one disjoint sized range each."""
+    ranges = tier3.glue_ranges()
+    assert len(ranges) == len(shipped_glue.thunked_cores())
+    assert all(start < end <= following for (start, end), (following, _) in zip(ranges, ranges[1:])), ranges
+
+
+def test_the_glue_rule_carries_a_row_over_the_bar_only_by_its_thunks(bench, dispatch, ratio_of):
+    row = tier3.row_named(GLUE_ROW)
+    measured = _shipped_measurement(GLUE_ROW)
+    assert measured.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: as shipped this row is over the bar"
+    assert tier3.pin_of(row) is None, "the rule carries it, so no entry may"
+    assert tier3.ratio_net_of_glue(measured) <= tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, measured, dispatch, ratio_of) == "glue"
+
+
+def test_the_glue_rule_refuses_the_row_when_its_own_body_grows(bench, dispatch, ratio_of):
+    """The same row with its glue unchanged and its BODY past the bar net of it: OVER, and nothing else."""
+    row = tier3.row_named(GLUE_ROW)
+    measured = _shipped_measurement(GLUE_ROW)
+    grown = _with_body_grown_to(measured, bench, tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE)
+    assert tier3.ratio_net_of_glue(grown) > tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, grown, dispatch, ratio_of) == "OVER"
+
+
+def test_the_glue_rule_refuses_a_real_row_over_the_bar_net_of_its_glue(bench, dispatch, ratio_of, monkeypatch):
+    """RED on a measured row, not a made-up one: vq_key_s pays glue too, but its body alone is over the bar,
+    so with its written entry gone the rule leaves it OVER."""
+    row = tier3.row_named(OVER_NET_OF_GLUE_ROW)
+    measured = _shipped_measurement(OVER_NET_OF_GLUE_ROW)
+    assert tier3.glue_cycles_of(measured) > 0, "the premise: this row calls through a thunk"
+    assert tier3.ratio_net_of_glue(measured) > tier3.TIER3_FUNCTION_BAR
+    monkeypatch.delitem(tier3.PERF_ACCEPTED, OVER_NET_OF_GLUE_ROW)
+    assert tier3.verdict(row, measured, dispatch, ratio_of) == "OVER"
+
+
+def test_no_written_acceptance_is_for_a_row_the_glue_rule_carries(bench):
+    """The rule REPLACES such entries, as (T)'s does: an acceptance over the bar for a (T→) row is only for a
+    body that is over the bar NET of its glue — the day it is not, the entry goes."""
+    carried = []
+    for key, (pinned, _why) in tier3.PERF_ACCEPTED.items():
+        row = tier3.row_named(key)
+        if pinned > tier3.TIER3_FUNCTION_BAR and tier3.ships_through_a_call(row):
+            if tier3.ratio_net_of_glue(tier3.measure(row, bench)) <= tier3.TIER3_FUNCTION_BAR:
+                carried.append(key)
+    assert not carried, f"tier3.PERF_ACCEPTED writes down {carried}, which mechanism (T→G) carries — drop them"
 
 
 # ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------

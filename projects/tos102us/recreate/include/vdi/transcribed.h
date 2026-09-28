@@ -3,8 +3,11 @@
  *
  * THE RULE IT RECORDS is the user's, for the hand-written 68000: port the routine to C first — Tier 1
  * proves the C against the ROM — and where the C measures over Tier 3's 1.10 bar, SHIP a byte-pinned
- * `.S` transcription. This table is the one place "ships as `.S`" is said, and three things are derived
- * from it rather than restated:
+ * `.S` transcription. One row is here for the other reason a ROM routine ships as its own instructions: an
+ * ENTRY a vector holds the address of, entered with a convention no C function has — `vdi_rom_timer_tick`,
+ * etv_timer's (the `src/bios/trap.S` / `isr.S` precedent); its C twin is under the bar, and Tier 1 still
+ * proves it. This table is the one place "ships as `.S`" is said, and three things are derived from it
+ * rather than restated:
  *
  *   * TIER 3 (`bench/tier3.py`, legend (T), verdict `transcribed`): a routine here may have C rows over
  *     the bar ONLY while every one of its `.S` rows measures at or under it. Nothing is typed per row —
@@ -45,6 +48,8 @@
     ENTRY(vdi_rom_vr_trnfm,           "d7")                                 /* function 110                */ \
     ENTRY(vdi_rom_vs_color,           "d2 d3 d4")                           /* function 14                 */ \
     ENTRY(vdi_rom_vq_color,           "d2")                                 /* function 26                 */ \
+    ENTRY(vdi_rom_clear_span,         "d2 a2")                              /* Alcyon (from.l, to.l)       */ \
+    ENTRY(vdi_rom_timer_tick,         "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* etv_timer: word at 4(sp)    */ \
     ENTRY(linea_rom_concat,           "d2")                                 /* D0 x, D1 y -> D0, D1        */ \
     ENTRY(linea_rom_line,             "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* $a003                       */ \
     ENTRY(linea_rom_line_plane_words, "d2 d3")                              /* D3 planes, A2 buffer        */ \

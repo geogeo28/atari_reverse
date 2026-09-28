@@ -62,7 +62,6 @@
 #define SHIFT_THE_SHORT_WAY  8          /* a shift of 8 or more rotates by 16 - n the other way ($fd1094) */
 #define PIXELS_PER_WORD      16
 #define CORNERS_BYTES        8          /* one rectangle of ptsin: x1, y1, x2, y2 */
-#define COLBIT_PLANES        4          /* COLBIT0..COLBIT3 */
 
 /* $fd1168's index bits ($fd107e..$fd10d4) */
 #define ALIGN_SHIFT_RIGHT    1u         /* the source bit is left of the destination bit */
@@ -669,7 +668,7 @@ static struct form mfdb_form(uint8_t *image, uint32_t mfdb)
 static uint16_t transparent_pen(const uint8_t *image, unsigned index)
 {
     uint16_t colour = (uint16_t)intin_word(image, index);
-    uint16_t colours = be16(image + LINEA_DEV_TAB + VDI_DEV_TAB_COLOURS_INDEX * VDI_WORD_BYTES);
+    uint16_t colours = table_uword(image, LINEA_DEV_TAB, VDI_DEV_TAB_COLOURS_INDEX);
 
     if (!((colour - colours) & SIGN_BIT16))
         colour = 1;
@@ -895,14 +894,11 @@ void vdi_vrt_cpyfm(uint8_t *image)
  * dispatcher copied. */
 void vdi_vr_recfl(uint8_t *image)
 {
-    uint16_t colour;
     uint32_t corner;
-    unsigned plane, word;
+    unsigned word;
 
     vdi_arb_corner(image, linea_pointer(image, LINEA_PTSIN), VDI_CORNERS_Y_ASCENDING);
-    colour = be16(image + current_work(image) + WS_FILL_COLOR);
-    for (plane = 0; plane < COLBIT_PLANES; plane++)
-        wr16(image + LINEA_COLBIT0 + plane * VDI_WORD_BYTES, colour & (uint16_t)(1u << plane));
+    set_fill_colour_bits(image);
     corner = linea_pointer(image, LINEA_PTSIN);
     for (word = 0; word < CORNERS_BYTES / VDI_WORD_BYTES; word++)
         wr16(image + LINEA_X1 + word * VDI_WORD_BYTES, be16(bus(image, corner + word * VDI_WORD_BYTES)));

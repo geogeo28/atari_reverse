@@ -47,6 +47,7 @@
 
 /* ---- FONT_FLAGS' bits ------------------------------------------------------------------------ */
 #define FONT_FLAG_DEFAULT_MASK 0x0001    /* the system font                     ($fcb7b6 eori.w #1) */
+#define FONT_FLAG_HOR_TABLE_MASK 0x0002  /* FONT_HOR_TABLE is in use            ($fce87a btst #1)   */
 #define FONT_FLAG_SWAPPED_MASK 0x0004    /* the form is in 68000 byte order     ($fced76 eori.w #4) */
 #define FONT_FLAG_MONOSPACE_MASK 0x0008   /* -> LINEA_MONO_STATUS                ($fcaae2 and.w #8)  */
 
@@ -62,5 +63,54 @@
 #define FONT_ROM_8X16         0xfd5b2e   /*                                     ($fcb708)           */
 #define FONT_RAM_8X8          0x68fe     /*                                     ($fcb6fa)           */
 #define FONT_RAM_8X16         0x87d4     /*                                     ($fcb70e)           */
+/* The FACE all three are: text_init measures SIZ_TAB's character sizes over the ring's fonts of this id
+ * alone, and counts them into DEV_TAB as the character heights ($fcdf0e `cmpi.w #1`). */
+#define FONT_SYSTEM_FACE      1
+
+#ifndef __ASSEMBLER__
+#include <stdint.h>
+
+#include "machine.h"
+#include "m68k_idioms.h"
+#include "vdi/vdi.h"
+
+/* ---- a font header, through the 24-bit bus ------------------------------------------------------
+ * The target build is the ROM's own `move.w 40(a5),d0`, top byte and all (`bus_dereference`). */
+
+/* A font's header in the image. Its fields are then reached off it, which is where the ROM reaches them
+ * (`d16(a5)`) — and exact but for a header in the last 90 bytes of the address space, the I/O page, which
+ * no case can stage a font in. */
+static inline const uint8_t *font_header(const uint8_t *image, uint32_t font)
+{
+    return image + bus_dereference(font);
+}
+
+static inline uint16_t font_word(const uint8_t *image, uint32_t font, uint32_t field)
+{
+    return be16(font_header(image, font) + field);
+}
+
+static inline uint32_t font_long(const uint8_t *image, uint32_t font, uint32_t field)
+{
+    return be32(font_header(image, font) + field);
+}
+
+/* The four points the size setters and vqt_attributes answer for a font (`$fce382..`, `$fce5e8..`, the
+ * same instructions): the widest character, the top, the widest cell and the cell's height — the top read
+ * once, after the first point is stored. The callers' contrl counts and result flag are theirs. */
+#define FONT_SIZE_ANSWER_POINTS 2
+
+static inline void answer_font_size(uint8_t *image, uint32_t font)
+{
+    uint8_t *ptsout = image + linea_pointer(image, LINEA_PTSOUT);
+    uint16_t top;
+
+    wr16(ptsout, font_word(image, font, FONT_MAX_CHAR_WIDTH));
+    top = font_word(image, font, FONT_TOP);
+    wr16(ptsout + VDI_WORD_BYTES, top);
+    wr16(ptsout + 2 * VDI_WORD_BYTES, font_word(image, font, FONT_MAX_CELL_WIDTH));
+    wr16(ptsout + 3 * VDI_WORD_BYTES, (uint16_t)(top + font_word(image, font, FONT_BOTTOM) + 1));
+}
+#endif /* __ASSEMBLER__ */
 
 #endif /* TOS102US_VDI_FONT_H */

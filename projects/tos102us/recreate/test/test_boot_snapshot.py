@@ -187,17 +187,27 @@ import test_vdi_color                                       # noqa: E402,F401
 # ...the polygon and contour-fill layer (`src/vdi/fill.c`).
 import test_vdi_poly                                        # noqa: E402,F401
 import test_vdi_fill_contour                                # noqa: E402,F401
+# ...the polylines, wide lines, arrowheads and markers (`src/vdi/lines.c`).
+import test_vdi_lines_circle                                # noqa: E402,F401
+import test_vdi_lines_wide                                  # noqa: E402,F401
+import test_vdi_lines_functions                             # noqa: E402,F401
 # ...the mouse, cursor and input routines (`src/vdi/mouse.c`).
 import test_vdi_sprite                                      # noqa: E402,F401
 import test_vdi_mouse                                       # noqa: E402,F401
 import test_vdi_input                                       # noqa: E402,F401
 import test_vdi_mouse_transcription                          # noqa: E402,F401  (its `.S` rows)
+# ...the screen and workstation plumbing: the clear, the resolution, the timer (`src/vdi/screen.c`).
+import test_vdi_screen                                      # noqa: E402,F401
 # ...the bit-block transfer: the engine, $a007, $a00e and the raster functions (`src/vdi/blit.c`).
 import test_vdi_blit_engine                                 # noqa: E402,F401
 import test_vdi_blit_copy                                   # noqa: E402,F401
 # ...the text raster: $a008 TextBlt and v_gtext's fast path (`src/vdi/text_raster.c`).
 import test_vdi_textblt                                     # noqa: E402,F401
 import test_vdi_text_raster_fast                            # noqa: E402,F401
+# ...the text layer's C: the ring, the scaled header, the setters, the measures, the loader (`src/vdi/text.c`).
+import test_vdi_text_ring                                   # noqa: E402,F401
+import test_vdi_text_size                                   # noqa: E402,F401
+import test_vdi_text_measure                                # noqa: E402,F401
 import vdi                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

@@ -71,11 +71,6 @@ static inline void poke16(uint8_t *image, uint32_t address, uint16_t value)
     wr16(image + bus_address(address), value);
 }
 
-static inline uint16_t dev_tab(const uint8_t *image, unsigned index)
-{
-    return be16(image + LINEA_DEV_TAB + index * WORD_BYTES);
-}
-
 /* Which of the two groups a row covers: both, or — clipped at an edge — the one left on screen. */
 enum sprite_span {
     SPAN_BOTH_GROUPS,   /* the save block's long rows: ($fd00e8) and ($fd00f4)                */
@@ -172,7 +167,7 @@ void linea_draw_sprite(uint8_t *image, uint32_t form, uint32_t save_block, uint3
     if ((uint16_t)x_register < hot_x) {
         x = (uint16_t)(x + SPRITE_ROWS);
         span = SPAN_RIGHT_GROUP;
-    } else if (x > (uint16_t)(dev_tab(image, VDI_DEV_TAB_MAX_X_INDEX) - SPRITE_EDGE)) {
+    } else if (x > (uint16_t)(table_uword(image, LINEA_DEV_TAB, VDI_DEV_TAB_MAX_X_INDEX) - SPRITE_EDGE)) {
         span = SPAN_LEFT_GROUP;
     } else {
         *stat |= 1u << SPRITE_SAVE_LONG_BIT;
@@ -185,8 +180,8 @@ void linea_draw_sprite(uint8_t *image, uint32_t form, uint32_t save_block, uint3
         rows = (uint16_t)(y + SPRITE_ROWS);
         rows_at -= word_index(y, SPRITE_FORM_ROW_BYTES);
         y = 0;
-    } else if (y > (uint16_t)(dev_tab(image, VDI_DEV_TAB_MAX_Y_INDEX) - SPRITE_EDGE)) {
-        rows = (uint16_t)(dev_tab(image, VDI_DEV_TAB_MAX_Y_INDEX) - y + 1);
+    } else if (y > (uint16_t)(table_uword(image, LINEA_DEV_TAB, VDI_DEV_TAB_MAX_Y_INDEX) - SPRITE_EDGE)) {
+        rows = (uint16_t)(table_uword(image, LINEA_DEV_TAB, VDI_DEV_TAB_MAX_Y_INDEX) - y + 1);
     } else {
         rows = SPRITE_ROWS;
     }
@@ -360,7 +355,7 @@ void vdi_v_hide_c(uint8_t *image)
  * signed compare — so a very negative index reads BELOW MAP_COL (`0(a1,d0.w)`) where it survives. */
 static uint16_t mapped_colour(const uint8_t *image, uint16_t index)
 {
-    if (!word_difference_is_negative(index, dev_tab(image, VDI_DEV_TAB_COLOURS_INDEX)))
+    if (!word_difference_is_negative(index, table_uword(image, LINEA_DEV_TAB, VDI_DEV_TAB_COLOURS_INDEX)))
         index = 1;
     return peek16(image, VDI_MAP_COL + word_index(index, WORD_BYTES));
 }
@@ -536,31 +531,15 @@ void vdi_vbl_draw_cursor(uint8_t *image)
                       sign_ext16((uint16_t)position));
 }
 
-/* XBIOS Initmous(mode, param, vector), as the two workstation calls make it. The function number is pushed
- * as the ROM pushes it, `clr.w -(sp)` — Initmous is XBIOS function 0 — and the frame popped after is the
- * two longwords and the two words pushed. */
-_Static_assert(XBIOS_INITMOUS_FN == 0, "the call pushes Initmous' function number as `clr.w`");
-#define INITMOUS_FRAME_BYTES (2 * sizeof(uint32_t) + 2 * sizeof(uint16_t))
-
+/* XBIOS Initmous(mode, param, vector), as the two workstation calls make it — on target through the machine's
+ * own `trap #14` (`xbios/xbios.h`, which pushes Initmous' function number 0 as the ROM does, `clr.w`). */
 static void initmous(uint8_t *image, uint16_t mode, uint32_t param, uint32_t vector)
 {
 #ifdef RECREATE_HOST_DIFFERENTIAL
     xbios_initmous(image, mode, param, vector);
 #else
-    register uint32_t pushed_vector __asm__("d0") = vector;
-    register uint32_t pushed_param __asm__("d1") = param;
-    register uint32_t pushed_mode __asm__("d2") = mode;
-
     (void)image;
-    __asm__ volatile ("move.l %0,-(%%sp)\n\t"
-                      "move.l %1,-(%%sp)\n\t"
-                      "move.w %2,-(%%sp)\n\t"
-                      "clr.w -(%%sp)\n\t"
-                      "trap #14\n\t"
-                      "lea %c3(%%sp),%%sp"
-                      : "+d"(pushed_vector), "+d"(pushed_param), "+d"(pushed_mode)
-                      : "i"(INITMOUS_FRAME_BYTES)
-                      : "a0", "a1", "a2", "memory", "cc");
+    xbios_trap_word_long_long(XBIOS_INITMOUS_FN, mode, param, vector);
 #endif
 }
 

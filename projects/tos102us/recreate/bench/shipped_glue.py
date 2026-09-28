@@ -104,7 +104,10 @@ def thunk(core):
     else:
         raise LookupError(f"{routine} is transcribed and called from C, but declares no contract a thunk "
                           f"could follow — `vdi.declare_primitive` or `vdi.declare_alcyon` it")
-    return [f"/* {core} -> {entry}: {shape} */", f"    .globl  {core}", f"{core}:", *body, "    rts", ""]
+    # `.type`/`.size` so the symbol table SIZES each thunk: Tier 3's glue rule (T→G) counts the cycles spent
+    # inside exactly these bytes (`bench/tier3.py`, `glue_ranges`), and a disassembly stops at the thunk's end.
+    return [f"/* {core} -> {entry}: {shape} */", f"    .globl  {core}", f"    .type   {core},@function", f"{core}:",
+            *body, "    rts", f"    .size   {core},.-{core}", ""]
 
 
 def glue_text(cores):
@@ -114,10 +117,15 @@ def glue_text(cores):
     return "\n".join(header + [line for core in cores for line in thunk(core)])
 
 
+def thunked_cores():
+    """Every core the glue carries a thunk for, in the file's order: each one some C calls."""
+    return sorted({core for _caller, core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES})
+
+
 def main(argv):
     out = Path(argv[1])
     out.parent.mkdir(parents=True, exist_ok=True)
-    text = glue_text(sorted({core for _caller, core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES}))
+    text = glue_text(thunked_cores())
     if not out.exists() or out.read_text() != text:
         out.write_text(text)
     return 0

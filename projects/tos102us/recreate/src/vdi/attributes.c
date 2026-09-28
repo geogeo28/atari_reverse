@@ -65,16 +65,6 @@
 
 /* ---- the workstation and the device tables (the call's arrays are `vdi/vdi.h`'s) ------------- */
 
-static void set_work(uint8_t *image, unsigned field, uint16_t value)
-{
-    wr16(image + current_work(image) + field, value);
-}
-
-static int16_t table_word(const uint8_t *image, uint32_t table, unsigned index)
-{
-    return (int16_t)be16(image + table + index * VDI_WORD_BYTES);
-}
-
 /* ---- the clamps ------------------------------------------------------------------------------- */
 
 static int16_t within_or(int16_t value, int16_t low, int16_t high, int16_t fallback)
@@ -117,7 +107,7 @@ void vdi_vsl_type(uint8_t *image)
 
     answer_words(image, ONE_WORD);
     style = zero_based_or(image, LINE_STYLE_COUNT, 0);
-    set_work(image, WS_LINE_INDEX, (uint16_t)style);
+    set_current_work_word(image, WS_LINE_INDEX, (uint16_t)style);
     answer_intout(image, 0, (uint16_t)(style + 1));
 }
 
@@ -135,7 +125,7 @@ void vdi_vsl_width(uint8_t *image)
     width = (int16_t)((int16_t)(width - 1) / 2 * 2 + 1);
 
     answer_points(image, ONE_POINT);
-    set_work(image, WS_LINE_WIDTH, (uint16_t)width);
+    set_current_work_word(image, WS_LINE_WIDTH, (uint16_t)width);
     answer_ptsout(image, 0, (uint16_t)width);
     answer_ptsout(image, 1, 0);
 }
@@ -149,9 +139,9 @@ void vdi_vsl_ends(uint8_t *image)
     answer_words(image, TWO_WORDS);
     begin = within_or(intin_word(image, 0), 0, LINE_END_LAST, 0);
     end = within_or(intin_word(image, 1), 0, LINE_END_LAST, 0);
-    set_work(image, WS_LINE_BEG, (uint16_t)begin);
+    set_current_work_word(image, WS_LINE_BEG, (uint16_t)begin);
     answer_intout(image, 0, (uint16_t)begin);
-    set_work(image, WS_LINE_END, (uint16_t)end);
+    set_current_work_word(image, WS_LINE_END, (uint16_t)end);
     answer_intout(image, 1, (uint16_t)end);
 }
 
@@ -163,13 +153,13 @@ void vdi_vsl_color(uint8_t *image)
     answer_words(image, ONE_WORD);
     index = colour_index(image);
     answer_intout(image, 0, (uint16_t)index);
-    set_work(image, WS_LINE_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_LINE_COLOR, mapped_colour(image, index));
 }
 
 /* $fcb4a2 — vsl_udsty (113). The user line style, raw: no clamp and no answer at all. */
 void vdi_vsl_udsty(uint8_t *image)
 {
-    set_work(image, WS_UD_LS, (uint16_t)intin_word(image, 0));
+    set_current_work_word(image, WS_UD_LS, (uint16_t)intin_word(image, 0));
 }
 
 /* ================================================================================================
@@ -192,9 +182,9 @@ void vdi_vsm_height(uint8_t *image)
         height = lowest;
     else if (height > highest)
         height = highest;
-    set_work(image, WS_MARK_HEIGHT, (uint16_t)height);
+    set_current_work_word(image, WS_MARK_HEIGHT, (uint16_t)height);
     scale = quotient_word(m68k_divs_w(sign_ext16((uint16_t)(height + lowest / 2)), (uint16_t)lowest));
-    set_work(image, WS_MARK_SCALE, (uint16_t)scale);
+    set_current_work_word(image, WS_MARK_SCALE, (uint16_t)scale);
 
     answer_points(image, ONE_POINT);
     answer_ptsout(image, 0, (uint16_t)((int32_t)scale * narrowest));
@@ -207,7 +197,7 @@ void vdi_vsm_type(uint8_t *image)
 {
     int16_t type = zero_based_or(image, MARKER_TYPE_COUNT, MARKER_INDEX_DEFAULT);
 
-    set_work(image, WS_MARK_INDEX, (uint16_t)type);
+    set_current_work_word(image, WS_MARK_INDEX, (uint16_t)type);
     answer_intout(image, 0, (uint16_t)(type + 1));
     answer_words(image, ONE_WORD);
 }
@@ -218,7 +208,7 @@ void vdi_vsm_color(uint8_t *image)
     int16_t index = colour_index(image);
 
     answer_intout(image, 0, (uint16_t)index);
-    set_work(image, WS_MARK_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_MARK_COLOR, mapped_colour(image, index));
     answer_words(image, ONE_WORD);
 }
 
@@ -290,7 +280,7 @@ void vdi_vsf_interior(uint8_t *image)
 
     answer_words(image, ONE_WORD);
     interior = within_or(intin_word(image, 0), VDI_INTERIOR_HOLLOW, VDI_INTERIOR_USER, VDI_INTERIOR_HOLLOW);
-    set_work(image, WS_FILL_STYLE, (uint16_t)interior);
+    set_current_work_word(image, WS_FILL_STYLE, (uint16_t)interior);
     answer_intout(image, 0, (uint16_t)interior);
     vdi_st_fl_ptr(image);
 }
@@ -304,11 +294,11 @@ void vdi_vsf_style(uint8_t *image)
 
     answer_words(image, ONE_WORD);
     style = intin_word(image, 0);
-    count = be16(image + current_work(image) + WS_FILL_STYLE) == VDI_INTERIOR_PATTERN
+    count = current_work_word(image, WS_FILL_STYLE) == VDI_INTERIOR_PATTERN
             ? PATTERN_STYLE_COUNT : OTHER_STYLE_COUNT;
     style = within_or(style, 1, count, FILL_STYLE_DEFAULT);
     answer_intout(image, 0, (uint16_t)style);
-    set_work(image, WS_FILL_INDEX, (uint16_t)(style - 1));
+    set_current_work_word(image, WS_FILL_INDEX, (uint16_t)(style - 1));
     vdi_st_fl_ptr(image);
 }
 
@@ -320,7 +310,7 @@ void vdi_vsf_color(uint8_t *image)
     answer_words(image, ONE_WORD);
     index = colour_index(image);
     answer_intout(image, 0, (uint16_t)index);
-    set_work(image, WS_FILL_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_FILL_COLOR, mapped_colour(image, index));
 }
 
 /* $fcd6fa — vsf_udpat (112). contrl[3] words: sixteen are ONE plane, sixteen per screen plane
@@ -359,7 +349,7 @@ void vdi_vst_effects(uint8_t *image)
     uint16_t effects = (uint16_t)intin_word(image, 0)
                        & (uint16_t)table_word(image, LINEA_INQ_TAB, VDI_INQ_TAB_EFFECTS_INDEX);
 
-    set_work(image, WS_STYLE, effects);
+    set_current_work_word(image, WS_STYLE, effects);
     answer_intout(image, 0, effects);
     answer_words(image, ONE_WORD);
 }
@@ -372,10 +362,10 @@ void vdi_vst_alignment(uint8_t *image)
     int16_t vertical;
 
     answer_intout(image, 0, (uint16_t)horizontal);
-    set_work(image, WS_H_ALIGN, (uint16_t)horizontal);
+    set_current_work_word(image, WS_H_ALIGN, (uint16_t)horizontal);
     vertical = within_or(intin_word(image, 1), 0, V_ALIGN_LAST, 0);
     answer_intout(image, 1, (uint16_t)vertical);
-    set_work(image, WS_V_ALIGN, (uint16_t)vertical);
+    set_current_work_word(image, WS_V_ALIGN, (uint16_t)vertical);
     answer_words(image, TWO_WORDS);
 }
 
@@ -388,7 +378,7 @@ void vdi_vst_rotation(uint8_t *image)
     int16_t turns = quotient_word(m68k_divs_w(sign_ext16((uint16_t)shifted), QUARTER_TURN));
     uint16_t rounded = (uint16_t)((int32_t)turns * QUARTER_TURN);
 
-    set_work(image, WS_CHUP, rounded);
+    set_current_work_word(image, WS_CHUP, rounded);
     answer_intout(image, 0, rounded);
     answer_words(image, ONE_WORD);
 }
@@ -400,7 +390,7 @@ void vdi_vst_color(uint8_t *image)
 
     answer_words(image, ONE_WORD);
     answer_intout(image, 0, (uint16_t)index);
-    set_work(image, WS_TEXT_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_TEXT_COLOR, mapped_colour(image, index));
 }
 
 /* ================================================================================================
@@ -414,7 +404,7 @@ void vdi_vswr_mode(uint8_t *image)
 
     answer_words(image, ONE_WORD);
     mode = within_or((int16_t)(intin_word(image, 0) - 1), 0, WRITE_MODE_LAST, 0);
-    set_work(image, WS_WRT_MODE, (uint16_t)mode);
+    set_current_work_word(image, WS_WRT_MODE, (uint16_t)mode);
     answer_intout(image, 0, (uint16_t)(mode + 1));
 }
 
@@ -504,15 +494,20 @@ static int16_t at_most(int16_t value, int16_t bound)
 }
 
 /* The clip-on arm, kept out of line so the clip-off arm — the common call, and a handful of stores —
- * does not pay for the addresses this one precomputes (measured: 1.16 inline, the bar is 1.10). */
+ * does not pay for the addresses this one precomputes (measured: 1.16 inline, the bar is 1.10). PTSIN is
+ * read ONCE, before the sort, and walked (`movea.l $29a6,a5` / `move.w (a5)+,d6`): a ptsin laid over the
+ * pointer itself is sorted under the ROM without moving the words it then reads. */
 __attribute__((noinline))
 static void clip_to_the_corners(uint8_t *image, uint32_t work, int16_t last_x, int16_t last_y)
 {
-    vdi_arb_corner(image, linea_pointer(image, LINEA_PTSIN), VDI_CORNERS_Y_ASCENDING);
-    wr16(image + work + WS_XMN_CLIP, (uint16_t)at_least_zero(ptsin_word(image, 0)));
-    wr16(image + work + WS_YMN_CLIP, (uint16_t)at_least_zero(ptsin_word(image, 1)));
-    wr16(image + work + WS_XMX_CLIP, (uint16_t)at_most(ptsin_word(image, 2), last_x));
-    wr16(image + work + WS_YMX_CLIP, (uint16_t)at_most(ptsin_word(image, 3), last_y));
+    uint32_t ptsin = linea_pointer(image, LINEA_PTSIN);
+    const uint8_t *corner = image + ptsin;
+
+    vdi_arb_corner(image, ptsin, VDI_CORNERS_Y_ASCENDING);
+    wr16(image + work + WS_XMN_CLIP, (uint16_t)at_least_zero((int16_t)be16(corner)));
+    wr16(image + work + WS_YMN_CLIP, (uint16_t)at_least_zero((int16_t)be16(corner + VDI_WORD_BYTES)));
+    wr16(image + work + WS_XMX_CLIP, (uint16_t)at_most((int16_t)be16(corner + 2 * VDI_WORD_BYTES), last_x));
+    wr16(image + work + WS_YMX_CLIP, (uint16_t)at_most((int16_t)be16(corner + 3 * VDI_WORD_BYTES), last_y));
 }
 
 void vdi_vs_clip(uint8_t *image)

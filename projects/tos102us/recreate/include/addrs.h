@@ -176,6 +176,7 @@
 #define BIOS_BCONIN         0xfc098c
 #define BIOS_SETEXC_FN      5
 #define BIOS_SETEXC         0xfc0a72
+#define BIOS_SETEXC_REPORT_ONLY 0x80000000u /* a handler with bit 31 set: Setexc's `bmi`, read only */
 #define BIOS_TICKCAL_FN     6
 #define BIOS_TICKCAL        0xfc0a8a
 #define BIOS_BCOSTAT_FN     8
@@ -327,6 +328,7 @@
 #define XBIOS_PHYSBASE      0xfc0a92
 #define XBIOS_SETSCREEN_FN  0x05
 #define XBIOS_SETSCREEN     0xfc0ab8
+#define XBIOS_SETSCREEN_RESOLUTION_ARM 0xfc0ae0 /* `move.b 13(sp),$44c`: the arm the recreate halts at */
 #define XBIOS_SETPALETTE_FN 0x06
 #define XBIOS_SETPALETTE    0xfc0b06
 #define XBIOS_SETCOLOR_FN   0x07
@@ -455,6 +457,8 @@
  * `OS_HW_MFP_GPIP`, spelt here because `tools/addrs.py` reads integers only and pinned equal to the
  * kit's by `test_bios_vbl.py::test_the_mfp_gpip_this_project_names_is_the_kit_s_own_slot`. */
 #define SHIFTER_PALETTE_ENTRIES    16        /* `move.w #15,d0 / dbf` — the whole row, every VBL */
+#define SHIFTER_MODE_LOW           0         /* Getrez's answers: ST low (setres's `tst.b`, $fca6f2) */
+#define SHIFTER_MODE_MEDIUM        1         /* ...ST medium (setres's `moveq #1`, $fca726) */
 #define SHIFTER_MODE_HIGH          2         /* `cmp.b #2,d0`: ST high, the mono monitor's resolution */
 #define MFP_GPIP                   0xfffa01  /* = OS_HW_MFP_GPIP */
 #define MFP_GPIP_MONOCHROME_BIT    7         /* 0 = a mono monitor is attached */
@@ -1594,6 +1598,22 @@
 #define LINEA_ROM_CPU_TEXTBLT     0xfd1df6   /* LINEA_VECTOR_TEXTBLT's CPU body */
 #define LINEA_ROM_FAST_TEXT       0xfcf96a   /* v_gtext's `jsr`: D0 = 1 drawn, 0 refused ($fcdba2) */
 #define LINEA_ROM_CPU_FAST_TEXT   0xfd1cc4   /* LINEA_VECTOR_FAST_TEXT's CPU body */
+/* The TEXT layer's C (`src/vdi/text.c`, `vdi/text.h`): the font ring's set-up and the scaled header, the
+ * size and face setters, the two measuring inquiries, and the GDOS font loader. */
+#define VDI_ROM_TEXT_INIT         0xfcde9c   /* v_opnwk's: the ring, SIZ_TAB's character sizes, DEF_FONT */
+#define VDI_ROM_MAKE_HEADER       0xfce116   /* WS_CUR_FONT scaled into WS_SCRATCH_HEAD by the text DDA */
+#define VDI_ROM_VST_HEIGHT        0xfcdfd0
+#define VDI_ROM_VST_HEIGHT_OPCODE 12
+#define VDI_ROM_VST_POINT         0xfce26c
+#define VDI_ROM_VST_POINT_OPCODE  107
+#define VDI_ROM_VST_FONT          0xfce47c
+#define VDI_ROM_VST_FONT_OPCODE   21
+#define VDI_ROM_VQT_EXTENT        0xfce62a
+#define VDI_ROM_VQT_EXTENT_OPCODE 116
+#define VDI_ROM_VQT_WIDTH         0xfce7f0
+#define VDI_ROM_VQT_WIDTH_OPCODE  117
+#define VDI_ROM_VST_LOAD_FONTS    0xfced06
+#define VDI_ROM_VST_LOAD_FONTS_OPCODE 119
 #define LINEA_ROM_SEEDABORT_DEFAULT 0xfc9f9a /* `moveq #0,d0 / rts`: v_contourfill's SEEDABORT ($fd08e4) */
 #define VDI_ROM_ENTRY             0xfc9f9e   /* where SYSVAR_VDI_ENTRY's routine calls in, D1 = the parameter block */
 #define VDI_ROM_DISPATCH          0xfca9f6
@@ -1745,6 +1765,18 @@
 #define LINEA_ROM_GET_SEED        0xfd0e22   /* Alcyon (x, y, &xleft, &xright, &collide): a span queued */
 #define VDI_ROM_V_GET_PIXEL       0xfd0fde
 #define VDI_ROM_V_GET_PIXEL_OPCODE 105
+/* POLYLINES and MARKERS (`src/vdi/lines.c`, `vdi/lines.h`): the two functions and the Alcyon geometry of a
+ * WIDE line — its quarter circle, round ends, segments and arrowheads. */
+#define VDI_ROM_V_PLINE           0xfcb9e0   /* the style and colour, then polyline + arrows, or wline */
+#define VDI_ROM_V_PLINE_OPCODE    6
+#define VDI_ROM_V_PMARKER         0xfcba7a   /* each point's shape as polylines through v_pline */
+#define VDI_ROM_V_PMARKER_OPCODE  7
+#define VDI_ROM_CIR_DDA           0xfcca86   /* LINEA_Q_CIRCLE for WS_LINE_WIDTH, in the device's aspect */
+#define VDI_ROM_WLINE             0xfccba0   /* a polyline WS_LINE_WIDTH wide: a polygon a segment, round ends */
+#define VDI_ROM_PERP_OFF          0xfccd92   /* Alcyon (&x, &y): a direction turned into the quarter circle's offset */
+#define VDI_ROM_DO_CIRC           0xfccf4e   /* Alcyon (x, y): a disc of the quarter circle, a line a row */
+#define VDI_ROM_ARROW             0xfcd0fa   /* the arrowheads WS_LINE_BEG/END ask for, the line shortened */
+#define VDI_ROM_DO_ARROW          0xfcd196   /* Alcyon (&point, step): one arrowhead at the point, filled */
 /* The MOUSE, CURSOR and INPUT routines (`src/vdi/mouse.c`): the sprite pair and the hide/show count
  * ($a009..$a00d), the IKBD mouse vector and the VBL's redraw, the device polls and the three input
  * functions. The register routines' contracts are `test/vdi_mouse.py`'s `declare_primitive`s. */
@@ -1773,6 +1805,15 @@
 #define VDI_ROM_CHOICE_OPCODE     30
 #define VDI_ROM_STRING            0xfcb22a
 #define VDI_ROM_STRING_OPCODE     31
+/* The SCREEN AND WORKSTATION PLUMBING (`src/vdi/screen.c`): the screen clear, the resolution v_opnwk opens
+ * in, and the timer and mouse the physical workstation takes over and gives back. */
+#define VDI_ROM_CLEAR_SPAN        0xfc4b7c   /* the BIOS's bzero(from.l, to.l); GEMDOS's loader calls it too */
+#define VDI_ROM_V_CLRWK           0xfca654   /* the span clear over _v_bas_ad .. +32000 */
+#define VDI_ROM_V_CLRWK_OPCODE    3
+#define VDI_ROM_INIT_TIMER_MOUSE  0xfca670   /* v_opnwk's: USER_TIM, etv_timer, mouse_init, cursor off, clear */
+#define VDI_ROM_SETRES            0xfca6d4   /* v_opnwk's: -> D0 = the resolution opened in, plus one */
+#define VDI_ROM_TIMER_TICK        0xfca78a   /* etv_timer: USER_TIM, then NEXT_TIM with the tick word */
+#define VDI_ROM_RESTORE_TIMER_MOUSE 0xfca7a2 /* v_clswk's: etv_timer back, mouse_off, clear, cursor on */
 /* The REQUEST spins' WAIT SITES (sched.h): each loop's `jsr` to its poll, where a pass re-enters and where
  * a case's schedule lands an interrupt's store — before the poll reads CUR_MS_STAT or the keyboard ring. */
 #define VDI_LOCATOR_WAIT_SITE     0xfcb03c

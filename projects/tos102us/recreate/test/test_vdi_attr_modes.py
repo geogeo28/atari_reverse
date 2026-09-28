@@ -215,6 +215,18 @@ def test_vs_clip_reads_the_corners_it_sorted():
     attr.run(CLIP, pokes)
 
 
+def test_vs_clip_reads_the_ptsin_pointer_once_before_its_sort():
+    """ptsin laid over Line-A's own INTIN and PTSIN pointers: the corners' y words are intin's low word and
+    ptsin's, and the sort swaps them — MOVING the PTSIN pointer. The ROM loaded the pointer once, before the
+    sort (`movea.l $29a6,a5`), and walks the corners where it sorted them; a core that re-read the pointer per
+    word would read its corners from wherever the sort pointed it. The routine writes the pointer it reads, so
+    the attribution pass is off (`vdi.READS_A_POINTER_IT_WRITES`)."""
+    ptsin_at = vdi.field("LINEA", "INTIN").at
+    pokes = case.merge_pokes(clip_pokes(1, (100, 150, 10, 20)), vdi.linea_pokes(PTSIN=ptsin_at))
+    result = attr.run(CLIP, pokes, **vdi.READS_A_POINTER_IT_WRITES)
+    assert result.linea("PTSIN") != ptsin_at, "the sort left the pointer where it was: the case shows nothing"
+
+
 # ---- Tier 3 ---------------------------------------------------------------------------------------------
 attr.register("in range", WRMODE, attr.call(WRMODE, (3,)))
 attr.register("out of range", WRMODE, attr.call(WRMODE, (5,)))

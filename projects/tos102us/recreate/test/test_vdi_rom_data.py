@@ -48,6 +48,8 @@ ROM_ADDRESSES_AS_DATA = {
     "helpers.c": {"LINE_STYLE_SOLID": TABLE, "VDI_PATTERN_SOLID": TABLE, "VDI_SINE_TABLE": TABLE},
     "inquire.c": {"FONT_ROM_6X6": TABLE, "VDI_REV_MAP_COL": TABLE, "VDI_SCRPT2_DEFAULT": TABLE},
     "linea.c": {"LINEA_FONT_TABLE": TABLE, "LINEA_OPCODE_TABLE": TABLE},
+    # v_pline's style masks and v_pmarker's shape pointers (the shapes themselves, $fd3664.., are read through them).
+    "lines.c": {"VDI_LINE_STYLES": TABLE, "VDI_MARKER_SHAPES": TABLE},
     "mouse.S": {"VDI_MAP_COL": TABLE},
     # BIOS_BCONSTAT / BIOS_BCONIN: the D0 the BIOS dispatcher would have jumped with, handed to its C core.
     "mouse.c": {"BIOS_BCONIN": CODE, "BIOS_BCONSTAT": CODE, "VDI_DEFAULT_MOUSE_FORM": TABLE,
@@ -60,6 +62,13 @@ ROM_ADDRESSES_AS_DATA = {
     "raster.c": {"LINEA_ROM_CPU_HLINE": CODE, "LINEA_ROM_CPU_RECT_FILL": CODE, "LINEA_ROM_CPU_VLINE": CODE,
                  "RASTER_CONCAT_SHIFT_TABLE": REGION_TABLE, "RASTER_FRINGE_MASK_TABLE": REGION_TABLE,
                  "RASTER_PLANE_OPCODES": REGION_TABLE},
+    # USER_TIM's default and the tick installed as etv_timer, and the two palettes handed to Setpalette. The tick's
+    # shipped address is `screen.S`'s `vdi_rom_timer_tick`; USER_TIM's default is the bare `rts` ending $fca648,
+    # which nothing ships yet — a rebuilt ROM owes it one (STATUS, "Not reconstructed").
+    "screen.c": {"VDI_PALETTE_LOW": TABLE, "VDI_PALETTE_MEDIUM": TABLE, "VDI_ROM_NOP": CODE,
+                 "VDI_ROM_TIMER_TICK": CODE},
+    # The ROM 6x6's header: read, put in the ring's first slot, and vst_font's fallback.
+    "text.c": {"FONT_ROM_6X6": TABLE},
     # The `lea` of raster.S's fringe table, spelt as raster.S's entry plus the table's distance from it.
     "text_raster.S": {"LINEA_ROM_LINE_PLANE_WORDS": DISTANCE, "RASTER_FRINGE_MASK_TABLE": DISTANCE},
     "text_raster.c": {"LINEA_ROM_CPU_FAST_TEXT": CODE, "LINEA_ROM_CPU_TEXTBLT": CODE,

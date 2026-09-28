@@ -77,6 +77,8 @@ import gemdos_process                                      # noqa: E402
 # ...and the VDI's door, whose `addrs.h` convention, primitive contracts and Alcyon signatures the VDI rows
 # derive from — every battery that declares one is imported by `test_boot_snapshot` above.
 import vdi                                                 # noqa: E402
+# ...and the shipped blob's glue generator, for the thunks mechanism (T→G) counts the cycles of.
+import shipped_glue                                        # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -185,6 +187,17 @@ RATIO_TOLERANCE = 0.02
 #       `.S`. Its verdict is `through` at or under the bar and OVER above it — derived, never typed: a `.S`
 #       that drifts moves its callers' rows with it, and `test_tier3.py` refuses a written entry for any of
 #       them. The ratio includes the thunk's `movem` pair, which a shipped build pays.
+#   (T→G) THE GLUE ITSELF. A thunk is the one thing in the shipped configuration no ROM routine has: the ROM's
+#       compiled caller pushed the Alcyon frame, or loaded the argument registers, INLINE on its way to the
+#       `jsr`, where a GCC caller hands its longword slots to a thunk that saves the callee-saved registers
+#       the entry changes, re-pushes the slots as the entry's frame, and makes a second `jsr` — measured on
+#       do_arrow's arrowhead, 128 cycles per smul_div call and 216 per filled_poly one, 94% of that row's
+#       excess. So every (T→) row is PROFILED as it is measured (the oracle's cycle-per-PC tally) and the
+#       cycles spent inside the generated thunks' own bytes are counted (`glue_ranges`: the shipped ELF's
+#       SIZED symbols of `bench/shipped_glue.py`'s thunks). A row over the bar as shipped whose ratio NET OF
+#       THAT GLUE is at or under it is verdict `glue` — derived, never typed; the table prints both ratios.
+#       A row over the bar even net of the glue is its OWN body's cost: OVER, unless an entry accepts that
+#       body's mechanism at the shipped number. (The letter is not (G): that one is taken, above.)
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -205,8 +218,8 @@ PERF_ACCEPTED = {
         1.09, "under the bar and pinned for `xbios_giaccess`'s reason: the `ori.w #$700,sr` bracket "
               "round the USER_TIM exchange (ipl.h) is this cycle count's alone to see — its deletion, "
               "not its placement (above)"),
-    # The two rows that are over the bar EVEN AS SHIPPED (T→): the callee is the `.S`, and what is left is
-    # the caller's own body — (A) and (D) through the call. Each C passes the image and the caller's D0 to
+    # The two rows that are over the bar EVEN NET OF THE GLUE (T→G): the callee is the `.S`, and what is left
+    # is the caller's own body — (A) and (D) through the call. Each C passes the image and the caller's D0 to
     # a register routine the ROM enters with nothing (`vdi/helpers.h`, `vdi/mouse.h`), and the call lands
     # in a thunk that loads D0 and enters the `.S`: two pushes, a pop, and the thunk's `move.l`/`jsr`/`rts`
     # where the ROM's one `jsr` was the whole of it.
@@ -260,20 +273,24 @@ PERF_ACCEPTED = {
     # two rows that need no entry are the two whose driver is big enough to swallow it: `ikbd` at
     # 1.01 (the 951-iteration settle the 6301 is owed) and `printer` at 1.05 (the whole YM2149
     # send). Everything else here is (B) over a body of a handful of instructions, or the console.
+    # FIVE WERE RE-PINNED when the target build dropped type-based aliasing (`atari/target.mk`,
+    # `-fno-strict-aliasing`): GCC allocates the inlined drivers' registers differently (one more callee-saved
+    # register pushed round the whole dispatch), 8-16 cycles either way per arm — on arms this small, a ratio
+    # move of 0.03-0.21.
     ("bios_bconout", "midi"): (
-        2.76, "(A)+(B): 142 -> 392 cycles over a driver whose whole body is a status read and a "
+        2.82, "(A)+(B): 142 -> 400 cycles over a driver whose whole body is a status read and a "
               "data write — the dispatch chain IS the routine"),
     ("bios_bconout", "no driver"): (
-        3.63, "(B) alone, over a driver that is a bare `rts`: 76 -> 276"),
+        3.84, "(B) alone, over a driver that is a bare `rts`: 76 -> 292"),
     ("bios_bconout", "printer held off"): (
-        1.88, "(A)+(B) over the give-up arm, which is two longword reads and a store: 194 -> 364"),
+        1.96, "(A)+(B) over the give-up arm, which is two longword reads and a store: 194 -> 380"),
     ("bios_bconout", "rs232 ring only"): (
-        1.90, "(A)+(B): 302 -> 574. The ring put is six field accesses the ROM makes off one `lea`"),
+        1.87, "(A)+(B): 302 -> 566. The ring put is six field accesses the ROM makes off one `lea`"),
     ("bios_bconout", "rs232 primed"): (
         1.44, "722 -> 1040, and it includes the `ipl.h` bracket around the prime that Tier 1 cannot "
               "see (src/xbios/gibit.c's argument)"),
     ("bios_bconout", "console escape state"): (
-        3.27, "(A)+(B) over a state-machine arm whose whole body is `move.l a0,$4a8`: 212 -> 694"),
+        3.24, "(A)+(B) over a state-machine arm whose whole body is `move.l a0,$4a8`: 212 -> 686"),
     ("bios_bconout", "console line feed"): (
         2.24, "716 -> 1604: the cursor lock, the cell arithmetic and the unlock, each of which is a "
               "handful of field accesses off the ROM's one `lea $2994,a4`. It was 2.21 (1580) until "
@@ -639,7 +656,8 @@ PERF_ACCEPTED = {
               "the lookup existed; splitting the "
               "admitted modes into a function of their own measured WORSE, the sibling call "
               "reloading all four). The structural lever is (A)'s: a shipped build with the base "
-              "fixed at 0."),
+              "fixed at 0. Priced AS SHIPPED (T→) since the loader's span clear became a `.S`; this "
+              "arm reaches none of it, and measures the same 226 cycles on either blob."),
 
     # ---- the DISPATCHER's own arms (fs wave 3) ----
     # ONE entry. The device arm's short rows (one byte, a count of 0 or of 64 KB, `Fseek` on the console)
@@ -1555,7 +1573,7 @@ def ships_within_bar(row, ratio_of):
 
 
 # MECHANISM (T→): the C whose cost, as shipped, includes a `.S`, and the blob that prices it as shipped.
-SHIPPED_BENCH_DIR = RECREATE / "build" / "bench_shipped"
+SHIPPED_BENCH_DIR = vdi.SHIPPED_ELF.parent
 BUILT_ELF = RECREATE / BENCH_DIR / BENCH_ELF
 
 
@@ -1575,6 +1593,59 @@ def shipped_bench():
     return RomBench(SHIPPED_BENCH_DIR)
 
 
+# MECHANISM (T→G): the bytes of the shipped blob that are glue, and what a row spent inside them.
+@functools.cache
+def glue_ranges():
+    """`[(start, end)]` of every generated thunk in the shipped blob — its SIZED symbol (`shipped_glue`
+    emits `.size`), so the range is the thunk's own instructions and not the `.S` it enters. A thunk the
+    generator names and the ELF does not size is refused: counting nothing for it would pass its cycles
+    off as the caller's body."""
+    thunks = set(shipped_glue.thunked_cores())
+    sized = {symbol.name: (symbol.start, symbol.start + symbol.size) for symbol in vdi.symbol_table(vdi.SHIPPED_ELF)
+             if symbol.size is not None and symbol.name in thunks}
+    if set(sized) != thunks:
+        raise LookupError(f"the shipped blob sizes no thunk for {sorted(thunks - set(sized))} — rebuild it "
+                          f"(`make bench`): its glue predates `bench/shipped_glue.py`'s `.size` lines")
+    return sorted(sized.values())
+
+
+# The profile holds one tally per even PC: a byte address is twice its slot.
+PROFILE_SLOT_BYTES = 2
+
+
+def cycles_inside_glue():
+    """The cycles the profiled run spent executing thunk instructions: the glue's own profile slots alone."""
+    return sum(sum(emu.prof_slice(start // PROFILE_SLOT_BYTES, end // PROFILE_SLOT_BYTES)) for start, end in glue_ranges())
+
+
+def _measure_call(bench, row):
+    """A C row's `Measurement` on `bench` — the one spelling of the call, whichever blob prices it."""
+    return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
+                         io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry, schedule=row.schedule)
+
+
+def _measure_as_shipped(row):
+    """A (T→) row on the shipped blob, PROFILED: the `Measurement` carries `glue_cycles` beside its costs."""
+    emu.prof_reset()
+    emu.prof_enable(True)
+    try:
+        measured = _measure_call(shipped_bench(), row)
+    finally:
+        emu.prof_enable(False)
+    measured.glue_cycles = cycles_inside_glue()
+    return measured
+
+
+def glue_cycles_of(measured):
+    """What `measured` spent inside thunks: only a (T→) row's measurement carries it, every other enters none."""
+    return getattr(measured, "glue_cycles", 0)
+
+
+def ratio_net_of_glue(measured):
+    """(T→G): the ratio with the thunks' cycles taken off OUR side alone — the ROM has no thunk to take off."""
+    return (measured.recreate_net - glue_cycles_of(measured)) / measured.original_net
+
+
 def measure(row, bench):
     """One row's `Measurement` — which is also its second differential, so this raises on a target
     build that does not equal the original.
@@ -1582,7 +1653,8 @@ def measure(row, bench):
     The two relations are the kit's, not a choice made here: a C core owes its caller a return value
     and the callee-saved file, and an m68k transcription owes it the WHOLE register file the ROM's
     own instructions leave (`tools/recreate_kit/rom_bench.py`). A row that ships through a call (T→) is
-    measured on the shipped blob, whatever `bench` was handed.
+    measured on the shipped blob, whatever `bench` was handed, and profiled for its glue (T→G); every
+    other row's glue is 0 (`glue_cycles_of`), because it enters no thunk.
     """
     if row.transcription:
         return bench.measure_transcription(row.entry, row.symbol, row.regs, pokes=row.pokes,
@@ -1590,10 +1662,8 @@ def measure(row, bench):
                                            staged_entry=row.staged_entry,
                                            shared_entry=row.shared_entry)
     if ships_through_a_call(row):
-        bench = shipped_bench()
-    return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
-                         psg_seed=row.psg_seed, io_seed=row.io_seed, returns=row.returns,
-                         staged_entry=row.staged_entry, schedule=row.schedule)
+        return _measure_as_shipped(row)
+    return _measure_call(bench, row)
 
 
 def pin_of(row):
@@ -1650,9 +1720,10 @@ def verdict(row, measured, dispatch, ratio_of):
     routine the target build ships as its `.S`, every row of which is under it (mechanism (T); `ratio_of`
     measures those rows). "rule" — over the bar, and the LEAF RULE admits it on the measured excess.
     "through" — the C of a routine that reaches a transcribed core, measured as shipped (mechanism (T→))
-    and at or under the bar; over it, such a row is OVER unless an entry accepts its OWN body's cost, which
-    it can only do at the shipped number. "DRIFTED" — pinned, and no longer that number. "OVER" — over the bar with
-    nothing carrying it.
+    and at or under the bar. "glue" — such a row over the bar as shipped and at or under it NET OF THE
+    GLUE's own cycles (mechanism (T→G)); over it even net, the row is OVER unless an entry accepts its OWN
+    body's cost, which it can only do at the shipped number. "DRIFTED" — pinned, and no longer that number.
+    "OVER" — over the bar with nothing carrying it.
     """
     pin = pin_of(row)
     if pin and abs(measured.ratio - pin[0]) > RATIO_TOLERANCE:
@@ -1662,7 +1733,7 @@ def verdict(row, measured, dispatch, ratio_of):
     if pin:
         return "accepted"
     if ships_through_a_call(row):
-        return "OVER"
+        return "glue" if ratio_net_of_glue(measured) <= TIER3_FUNCTION_BAR else "OVER"
     if is_transcribed_c_row(row):
         return "transcribed" if ships_within_bar(row, ratio_of) else "OVER"
     return "rule" if rule_admits(row, measured, dispatch) else "OVER"
@@ -1707,6 +1778,8 @@ def table(bench):
         f"(include/vdi/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f}.",
         f"`through`: <= {TIER3_FUNCTION_BAR:.2f} as SHIPPED — C that reaches a transcribed core, measured with "
         f"each such call entering the `.S` through generated glue (build/bench_shipped/).",
+        f"`glue`: over the bar as shipped, and <= {TIER3_FUNCTION_BAR:.2f} NET of the cycles spent inside the "
+        f"generated thunks themselves (T→G); every row over the bar as shipped prints that net ratio below it.",
         "",
     ]
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
@@ -1729,6 +1802,9 @@ def table(bench):
                      f"{f'{m.original_insns}/{m.original_cycles}':>14}"
                      f"{f'{m.recreate_insns}/{m.recreate_cycles}':>14}"
                      f"{m.ratio:>8.2f}  {'' if state == 'ok' else state}")
+        if glue_cycles_of(m) and m.ratio > TIER3_FUNCTION_BAR:
+            lines.append(f"{'':<{name_width + ADDRESS_WIDTH}}  net of the glue: {ratio_net_of_glue(m):.2f} "
+                         f"({glue_cycles_of(m)} of the recreate's cycles are inside thunks)")
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:
