@@ -11,8 +11,8 @@ CC      ?= clang
 # -DRECREATE_HOST_DIFFERENTIAL marks THIS build — the candidate .so the harness dlopens — as opposed
 # to a project's own on-target build, which compiles the same cores with its own flags and never
 # defines it. A core keys a HOST-ONLY check on it (a bound the differential cannot state, asserted
-# where there is a process to abort); nothing behavioural may hang off it, or the two builds would
-# stop being the same program.
+# where there is a process to abort), or a step the machine performs itself (a 24-bit bus mask on a
+# base-0 image); the builds must compute the same function, or they would stop being the same program.
 # -DOS_FS_TABLE_RUNTIME makes os.h's OS_FS_TABLE/OS_FS_STAGING variable reads rather than constants,
 # so `fs_base` in a project.toml can place the staged-file window (README.md, "The staged-file window
 # is the second region a project places"). Both OFF-TARGET builds pass it — this one and $(ORACLE)

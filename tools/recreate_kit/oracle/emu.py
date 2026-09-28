@@ -1021,6 +1021,13 @@ def prof_data():
     return list(ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32 * n)).contents)
 
 
+def prof_slice(start, end):
+    """`prof_data()[start:end]` — the tallies of slots [start, end) alone, without copying the whole profile
+    (half a million slots) out for a caller that sums a few ranges of it."""
+    assert 0 <= start <= end <= _LIB.osh_prof_slots(), (start, end)
+    return ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32))[start:end]
+
+
 # How many `audio_capturing()` blocks are open. The mode is an oracle-global toggle, so "is it
 # armed?" cannot say whether THIS caller meant to arm it — and a run made under someone else's
 # capture reads answers shim.c invented (see run()'s one-sided-capture guard). The context manager
