@@ -721,3 +721,91 @@ def test_the_wait_comparison_is_per_address(original, ours, differs):
         return
     with pytest.raises(AssertionError, match="wait"):
         rom_bench._vet_same_wait("core", o_regs, ours)
+
+
+# ---- a row's DROPPED spans: named, reasoned, and live ----------------------------------------------
+
+# A parked return address, as the project's first user drops one: each build parks its OWN caller's return in
+# one longword the ROM also writes — which the ROM's write ledger is what shows.
+FAKE_PARK_AT = 0x600
+FAKE_PARK = (FAKE_PARK_AT, FAKE_PARK_AT + 4, "the door parks its caller's return address")
+FAKE_STALE = b"\x5a" * 4
+
+
+def _real_comparison():
+    """`_fake_harness`, but with the kit's own byte comparison, so the exclusion is what is under test."""
+    def differing_addresses(left, right, spans, excluded):
+        return [a for lo, hi in spans for a in range(lo, hi) if left[a] != right[a] and not excluded(a)]
+
+    return SimpleNamespace(**{**vars(_fake_harness()), "differing_addresses": differing_addresses})
+
+
+def _parked(value, other=None):
+    """An image whose park slot holds `value`, and one other byte `other` changed beyond it."""
+    image = bytearray(FAKE_IMAGE_BYTES)
+    image[FAKE_PARK_AT:FAKE_PARK_AT + 4] = value
+    if other is not None:
+        image[FAKE_PARK_AT + 8] = other
+    return image
+
+
+def test_a_dropped_span_is_left_out_of_the_image_comparison_and_nothing_else_is(monkeypatch):
+    monkeypatch.setitem(sys.modules, "harness", _real_comparison())
+    bench = _unbound_bench()
+    original, ours = _parked(b"\x00\xfc\xd6\x2a"), _parked(b"\x00\x01\x23\x44")
+    with pytest.raises(AssertionError, match="left different memory"):
+        bench._vet_image(FAKE_ENTRY, "core", original, ours)
+    bench._vet_image(FAKE_ENTRY, "core", original, ours, (FAKE_PARK,))
+    with pytest.raises(AssertionError, match=f"{FAKE_PARK_AT + 8:#x}"):
+        bench._vet_image(FAKE_ENTRY, "core", original, _parked(b"\x00\x01\x23\x44", other=1), (FAKE_PARK,))
+
+
+def _stored(*spans):
+    """A write ledger (`emu.run`'s `{address: byte}`) holding a store at every address of `spans`."""
+    return {address: 0 for lo, hi in spans for address in range(lo, hi)}
+
+
+FAKE_PARK_STORED = _stored(FAKE_PARK[:2])
+
+
+def test_a_drop_over_bytes_the_original_never_writes_is_refused():
+    """...because it could only hide OUR stores: the ROM stored nothing there, so anything that differs there is ours."""
+    rom_bench.vet_dropped("core", (FAKE_PARK,), FAKE_PARK_STORED)
+    with pytest.raises(AssertionError, match="never writes"):
+        rom_bench.vet_dropped("core", (FAKE_PARK,), {})
+
+
+def test_a_drop_one_longword_wider_than_the_park_is_refused():
+    """PER BYTE: the ROM stores the parked longword and not the one after it the drop was widened over — which a
+    whole-span "anything changed" test let through, hiding whatever ours stored there."""
+    lo, hi, why = FAKE_PARK
+    with pytest.raises(AssertionError, match=rf"4 byte\(s\) of which the ORIGINAL never writes, the first at {hi:#x}"):
+        rom_bench.vet_dropped("core", ((lo, hi + 4, why),), FAKE_PARK_STORED)
+
+
+def test_a_park_the_original_stores_only_in_part_is_refused():
+    """...and inside the park too: a byte the ROM never stores is one only our build could make differ."""
+    lo, hi, _why = FAKE_PARK
+    stored = _stored((lo, lo + 1), (lo + 2, hi))
+    with pytest.raises(AssertionError, match=f"the first at {lo + 1:#x}"):
+        rom_bench.vet_dropped("core", (FAKE_PARK,), stored)
+
+
+def test_a_drop_over_an_overflowed_ledger_is_refused():
+    """An incomplete ledger cannot vouch for a byte, so no drop is honoured over one — and no drop needs it."""
+    with pytest.raises(AssertionError, match="overflowed"):
+        rom_bench.vet_dropped("core", (FAKE_PARK,), FAKE_PARK_STORED, truncated=True)
+    rom_bench.vet_dropped("core", (), {}, truncated=True)
+
+
+@pytest.mark.parametrize("span", ((FAKE_PARK_AT, FAKE_PARK_AT + 4, ""), (FAKE_PARK_AT, FAKE_PARK_AT, "empty")))
+def test_a_drop_with_no_reason_or_no_bytes_is_refused(span):
+    with pytest.raises(AssertionError, match="documented difference"):
+        rom_bench.vet_dropped("core", (span,), FAKE_PARK_STORED)
+
+
+def test_a_row_that_drops_nothing_is_compared_whole(monkeypatch):
+    """The default every other project's rows take: no argument, no exclusion beyond the blob's span."""
+    monkeypatch.setitem(sys.modules, "harness", _real_comparison())
+    with pytest.raises(AssertionError, match="left different memory"):
+        _unbound_bench()._vet_image(FAKE_ENTRY, "core", _parked(b"\x00\xfc\xd6\x2a"), _parked(FAKE_STALE))

@@ -340,7 +340,7 @@ class RomBench:
         return blob_entry(self.symbols, symbol, "the cross-compiled cores")
 
     def measure(self, entry, symbol, args=(), regs=None, pokes=None, psg_seed=None, hw_seed=None,
-                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None):
+                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None, dropped=()):
         """One case on both sides: the ORIGINAL at `entry`, then our `symbol`, over the same image.
 
         Returns a `Measurement`. `entry`/`regs`/`pokes`/`psg_seed`/`hw_seed`/`io_seed` are the oracle
@@ -349,8 +349,11 @@ class RomBench:
         `returns` is how many bytes of D0 the C signature declares: 4 for a `uint32_t`, 1 for a
         `uint8_t`, 0 for `void`. `staged_entry` is what the ORIGINAL's run spends REACHING the
         routine rather than inside it — see `Measurement`. `schedule` is the SCHEDULED WRITE model's
-        list for a routine that BUSY-WAITS (`_both_sides`). `_both_sides` below owns everything this
-        shares with `measure_transcription`, including the order the two runs must be made in.
+        list for a routine that BUSY-WAITS (`_both_sides`). `dropped` is `((lo, hi, why), ...)`: the
+        spans a project DOCUMENTS as differing by nature between the two builds, left out of the image
+        comparison (`vet_dropped` says what one must be). Empty by default, so a row that names none is
+        compared whole. `_both_sides` below owns everything this shares with `measure_transcription`,
+        including the order the two runs must be made in.
 
         WHY THE RETURN VALUE IS COMPARED AT THAT WIDTH AND THE REGISTER FILE IS NOT. The m68k SysV
         ABI promises a `uint8_t` result in the low BYTE of D0 and nothing above it: measured on
@@ -373,7 +376,7 @@ class RomBench:
         self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
         return self._both_sides(entry, symbol, dict(regs or {}), pokes,
                                 (psg_seed, hw_seed, io_seed), run_ours, vet_ours, staged_entry,
-                                schedule=schedule)
+                                schedule=schedule, dropped=dropped)
 
     def measure_transcription(self, caller, symbol, regs, pokes=None, psg_seed=None, hw_seed=None,
                               io_seed=None, staged_entry=(0, 0), shared_entry=(0, 0)):
@@ -423,7 +426,7 @@ class RomBench:
                                 run_ours, vet_ours, staged_entry, shared_entry)
 
     def _both_sides(self, entry, symbol, regs, pokes, seeds, run_ours, vet_ours,
-                    staged_entry, shared_entry=(0, 0), schedule=None):
+                    staged_entry, shared_entry=(0, 0), schedule=None, dropped=()):
         """The sequence the two `measure*` methods share, with the RELATION as a parameter.
 
         One image, the ORIGINAL over it first, then ours over a copy, then the comparisons and the
@@ -459,7 +462,7 @@ class RomBench:
 
         psg_seed, hw_seed, io_seed = seeds
         image = harness.make_image(pokes or {})
-        o_final, _o_writes, o_regs = emu.run(image, entry, regs, psg_seed=psg_seed,
+        o_final, o_writes, o_regs = emu.run(image, entry, regs, psg_seed=psg_seed,
                                              hw_seed=hw_seed, io_seed=io_seed, schedule=schedule)
         # The denominator gets the same refusals as the numerator. `harness.differential` makes them
         # for a Tier 1 case, but a bench row is a case of its own — and an original measured while
@@ -473,7 +476,10 @@ class RomBench:
         # where the image comparison can only name an address.
         vet_ours(ours, o_regs)
         _vet_same_wait(symbol, o_regs, ours.reads)
-        self._vet_image(entry, symbol, o_final, ours.image)
+        if dropped:
+            vet_dropped(f"{symbol}'s row against the ORIGINAL at {entry:#x}", dropped, o_writes,
+                        o_regs["writes_truncated"])
+        self._vet_image(entry, symbol, o_final, ours.image, dropped)
         for key, original in original_streams.items():
             _vet_ledger(symbol, _STREAMS[key], getattr(emu, key)(), original)
         return Measurement((o_regs["ninsns"], o_regs["cycles"]), (ours.insns, ours.cycles),
@@ -550,7 +556,7 @@ class RomBench:
                     f"cores there and the original would see the poke, and the span is excluded "
                     f"from the comparison. Stage it in the band `staging_base` declares")
 
-    def _vet_image(self, entry, symbol, original, ours):
+    def _vet_image(self, entry, symbol, original, ours, dropped=()):
         """The second differential's memory half: equal everywhere the comparison reaches.
 
         The excluded regions are exactly two, and both are excluded on the ORIGINAL's account rather
@@ -564,6 +570,9 @@ class RomBench:
         is the right answer rather than a hole, because a static has no counterpart in the original's
         image to be compared against. What such a core's statics DO reach, and what is compared, is
         its return value and its off-image traffic.
+
+        A ROW'S `dropped` SPANS are the only other exclusion, and they are the row's, not the kit's:
+        each is vetted before it is honoured (`vet_dropped`).
         """
         import harness
 
@@ -577,7 +586,7 @@ class RomBench:
                 f"`bench_base` in project.toml")
 
         def excluded(address):
-            return self.base <= address < self.end
+            return self.base <= address < self.end or any(lo <= address < hi for lo, hi, _why in dropped)
 
         differing = harness.differing_addresses(memoryview(original), memoryview(bytes(ours)),
                                                 harness.diff_spans(), excluded)
@@ -776,6 +785,42 @@ def _vet_register_file(symbol, ours, original):
         raise AssertionError(
             f"the m68k build of {symbol} left a different register file than the original: {shown}. "
             f"A transcription is held to the whole of it, preserved and clobbered alike")
+
+
+def vet_dropped(who, dropped, writes, truncated=False):
+    """Each `(lo, hi, why)` a comparison drops must be a span the ORIGINAL writes, EVERY BYTE of it.
+
+    THE ONE RULE for a drop, whichever differential makes it: `RomBench.measure`'s (`who` a row) and a
+    project's Tier 1 case (`who` a case), each handing the ORIGINAL's write ledger (`emu.run`'s `writes`,
+    `{address: byte}`) and whether that ledger overflowed — an incomplete one cannot vouch for a byte.
+
+    A DROP IS FOR A DIFFERENCE BY NATURE — a return address each build parks where the ROM parks its own,
+    a trap frame's saved PC, a record the reconstruction documents it omits — never for scratch, and the
+    rule that tells the two apart is checked here rather than trusted: the original's run must STORE every
+    dropped byte. A byte it never stores can only be hiding OUR stores, which is the output the comparison
+    is for; so a span holding one is refused — PER BYTE, since a span the original writes only in part (a
+    longword parked, the longword after it widened into the drop) hides ours in the rest — as a span with
+    no reason or no bytes is.
+
+    WHAT THIS CANNOT SEE is a wrong value ours writes INSIDE a span the original also writes — that is
+    what dropping it means — so a project drops at Tier 3 only what its Tier 1 differential still
+    compares, where the host build parks the value the ROM does.
+    """
+    if dropped and truncated:
+        raise AssertionError(
+            f"{who} drops {len(dropped)} span(s) over a run whose write ledger overflowed — the ledger cannot "
+            f"say the original stores every byte of them. Shorten the run, or drop nothing")
+    for lo, hi, why in dropped:
+        if not why or not lo < hi:
+            raise AssertionError(
+                f"{who} drops [{lo:#x}, {hi:#x}) with {'no reason' if not why else 'no bytes'} — a "
+                f"span is left out of the comparison only as a documented difference, and only a real one")
+        unwritten = [address for address in range(lo, hi) if address not in writes]
+        if unwritten:
+            raise AssertionError(
+                f"{who} drops [{lo:#x}, {hi:#x}) ({why}), {len(unwritten)} byte(s) of which the ORIGINAL "
+                f"never writes, the first at {unwritten[0]:#x} — the drop can only hide our build's stores "
+                f"there. Drop only what the original writes")
 
 
 def _vet_same_wait(symbol, o_regs, ours):
