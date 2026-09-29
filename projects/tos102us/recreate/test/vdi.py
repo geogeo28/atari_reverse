@@ -39,7 +39,9 @@ snapshot and clear of every other tenant. A battery that needs another buffer cl
 `include/vdi/*.h` carries only fields a ROM instruction was found reading or writing. Left out:
   * the published byte at $283f between CUR_MS_STAT and V_HID_CNT;
   * the individual words of `LINEA_GDP_SCRATCH` ($2614..$2641) and of `VDI_SCRATCH` ($16da..$1701) —
-    each belongs to the routine that uses it, and is named (`LINEA_GDP_*`) once a reconstructed one does;
+    each belongs to the routine that uses it, and is named (`LINEA_GDP_*`) once a reconstructed one does.
+    The arc scratch does not start at LINEA_GDP_SCRATCH: two of its words lie below LINEA_CUR_FONT
+    (LINEA_GDP_ANGLE $260c, LINEA_GDP_BEG_ANG $260e), named in `vdi/linea.h` and declared by `test/vdi_arcs.py`;
   * MFDB +4 (`fd_w`) and the reserved +14..+19: nothing in the ROM reads them;
   * FONT_HEADER +88, the 45th word TOS copies: 0 in all three ROM fonts and never read;
   * $fd3664..$fd36eb, between INQ_TAB's defaults and MAP_COL: v_pmarker's six shapes, reached only through
@@ -80,9 +82,12 @@ WORD_BYTES = 2
 LONG_BYTES = 4
 POINTER_VARIABLES = ("CONTRL", "INTIN", "PTSIN", "INTOUT", "PTSOUT")    # the order $fc9fb2.. stores
 FILL = case.SLACK_FILL
+FILL_LONG = FILL * 0x01010101          # ...a longword of it, which a skipped long store leaves
 # A word a case stages where the routine should store and the ROM does (or should not, and does not): any
 # value the answer cannot be, $5a5a, so a store one side makes and the other does not is a changed word.
 STALE_WORD = 0x5A5A
+# ...and a long of it, for a pointer or a long field staged the same way.
+STALE_LONG = STALE_WORD << 16 | STALE_WORD
 
 # ---- the FIELDS: every tagged `#define`, by record -------------------------------------------------
 # A record is a constant-name prefix: LINEA (absolute addresses), WS, FONT, BITBLT, MFDB, PB, CONTRL (offsets).
@@ -637,13 +642,26 @@ def run_through_exception(name, opcode, registers, pokes, **kwargs):
 # has no Tier 3 row (a case entered at the Line-A exception stub rather than the routine).
 CASES = []
 UNPRICED = []
+# ...and, by case name, the spans a PRICED row's Tier 3 image compare leaves out (`RomBench.measure`'s `dropped`,
+# which vets each): a difference BY NATURE between the ROM and a build linked elsewhere, never scratch — and the
+# row's COMPANION, the battery's differential of the same machine with nothing dropped (`test_tier3.py` runs each).
+TIER3_DROPPED = {}
+TIER3_UNDROPPED = {}
 
 
-def register(name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True):
+def register(name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True, dropped=(),
+             undropped=None):
     """One `VERIFIED_CASES` row (`case.verified_row`), recorded and returned so the battery drives the
-    same tuple."""
+    same tuple. `dropped` is `((lo, hi, why), ...)` for its Tier 3 row alone, and `undropped` — required with
+    it — the zero-argument differential that still compares those bytes over the row's machine (a
+    `Result`), which is what makes dropping them at Tier 3 safe."""
     row = case.verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule)
     (CASES if priced else UNPRICED).append(row)
+    if dropped:
+        assert priced and name not in TIER3_DROPPED, f"{name}: a Tier 3 drop is for one priced row"
+        assert callable(undropped), f"{name}: a Tier 3 drop needs the differential that drops nothing"
+        TIER3_DROPPED[name] = tuple(dropped)
+        TIER3_UNDROPPED[name] = undropped
     return row
 
 
@@ -951,6 +969,9 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # the wide lines and arrowheads (`src/vdi/lines.c`): the aspect scaling and the discs' rows
     ("vdi_wline", "vdi_smul_div"), ("vdi_do_arrow", "vdi_smul_div"), ("draw_arrowhead", "vdi_smul_div"),
     ("vdi_do_circ", "linea_line"),
+    # the arcs and rounded boxes (`src/vdi/arcs.c`): a point's projection, the sweep's steps, the aspect
+    ("vdi_clc_pts", "vdi_smul_div"), ("draw_arc", "vdi_smul_div"), ("vdi_gdp_arc", "vdi_smul_div"),
+    ("vdi_gdp_rbox", "vdi_smul_div"),
     # the screen clear (`src/vdi/screen.c`), which GCC inlines into the two routines that end in it — and the
     # BIOS span clear's other caller, GEMDOS's program loader (`src/gemdos/pexec_load.c`)
     ("vdi_v_clrwk", "vdi_clear_span"), ("vdi_init_timer_mouse", "vdi_clear_span"),
@@ -958,13 +979,19 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # the text layer's C (`src/vdi/text.c`): the scaler's two helpers
     ("vdi_vst_height", "vdi_clc_dda"), ("vdi_make_header", "vdi_act_siz"), ("vdi_vqt_extent", "vdi_act_siz"),
     ("vdi_vqt_width", "vdi_act_siz"),
+    # graphic text (`src/vdi/gtext.c`, v_gtext's body past its count test): each glyph through TextBlt, a plain
+    # string through the fast path, the underline's rows through $a003
+    ("place_and_draw", "linea_textblt"), ("place_and_draw", "linea_fast_text"), ("place_and_draw", "linea_line"),
+    # the workstations (`src/vdi/workstation.c`): the open's realized palette, and the GEMDOS door
+    ("vdi_v_opnwk", "vdi_vq_color"), ("vdi_v_opnvwk", "vdi_gemdos_call"), ("vdi_v_clsvwk", "vdi_gemdos_call"),
+    ("vdi_v_clswk", "vdi_gemdos_call"),
 }
 
 # A function's name as `m68k-elf-objdump` labels it, the one GCC split off it (`name.part.0`, `.constprop.0`,
 # `.isra.0`) folded back into it, and an offset into it (`name+0x12`) dropped.
 _LISTED_FUNCTION = re.compile(r"^([0-9a-f]+) <([\w.]+)>:$")
 _LISTED_INSTRUCTION = re.compile(r"^\s+([0-9a-f]+):")
-_LISTED_REFERENCE = re.compile(r"<([\w.]+)(?:\+0x[0-9a-f]+)?>")
+_LISTED_REFERENCE = re.compile(r"(?:\b([0-9a-f]+) )?<([\w.]+)(?:\+0x([0-9a-f]+))?>")
 # ...and a function's address loaded as an IMMEDIATE, which objdump prints in decimal without its name:
 # GCC's way of calling one function several times through a register (`move.l #243526,d2`) or a frame slot
 # it spills to (`move.l #212346,84(sp)`). ONLY that shape — a `move.l`/`movea.l` of the immediate into a
@@ -1012,32 +1039,128 @@ def _function_starts(elf):
     return {symbol.start: symbol.name for symbol in symbol_table(elf) if symbol.kind in "Tt"}
 
 
+# Where a symbol is DEFINED, as `readelf -s` groups it: a LOCAL symbol under the FILE symbol before it (a file name
+# two objects share, `palette.c`, numbered on its second use: `palette.c#2`), every GLOBAL one in the one namespace
+# a link has — `GLOBAL_ORIGIN`. Link-stable, where an address moves with every edit before it.
+GLOBAL_ORIGIN = None
+_CODE_SYMBOL_TYPES = ("FUNC", "NOTYPE")
+_READELF_SYMBOL_FIELDS = 8          # Num: Value Size Type Bind Vis Ndx Name
+_NO_SECTION = ("UND", "ABS")
+
+
+@functools.cache
+def _symbol_origins_at(path):
+    table = subprocess.run(["m68k-elf-readelf", "-sW", path], capture_output=True, text=True, check=True).stdout
+    origins, seen_files, current = {}, {}, None
+    for fields in (line.split() for line in table.splitlines()):
+        if len(fields) != _READELF_SYMBOL_FIELDS or not fields[0].endswith(":"):
+            continue
+        _index, value, _size, kind, bind, _visibility, section, name = fields
+        if kind == "FILE":
+            seen_files[name] = seen_files.get(name, 0) + 1
+            current = name if seen_files[name] == 1 else f"{name}#{seen_files[name]}"
+        elif kind in _CODE_SYMBOL_TYPES and section not in _NO_SECTION:
+            origins[(int(value, 16), name)] = current if bind == "LOCAL" else GLOBAL_ORIGIN
+    return origins
+
+
+def symbol_origins(elf):
+    """`{(address, name): origin}` of every code symbol `elf` defines — its defining file, or `GLOBAL_ORIGIN`."""
+    return _symbol_origins_at(str(Path(elf).resolve()))
+
+
 def call_graph(elf):
     """`{function: every function its code references}` out of the m68k build at `elf` — a `jsr`, a
     branch, or a `lea` or `move.l #` of an address GCC then calls through a register or a frame slot, which
     is how it calls one it names more than once. A function the symbol table sizes is read to its end and no
-    further."""
+    further; one whose name another definition shares is QUALIFIED by its defining file (`nodes_of_labels`)."""
     listing = subprocess.run(["m68k-elf-objdump", "-d", str(elf)], capture_output=True, text=True,
                              check=True).stdout
-    return graph_of_listing(listing, _function_ends(elf), _function_starts(elf))
+    return graph_of_listing(listing, _function_ends(elf), _function_starts(elf), symbol_origins(elf))
 
 
-def graph_of_listing(listing, ends, starts):
-    """`call_graph`'s reading of one `objdump -d` listing, given the symbol table's `{address: end}` sizes and
-    `{address: name}` starts — apart from the ELF so a synthetic listing can pin each rule."""
+def _is_clone(name):
+    return name != _unsplit(name)
+
+
+def _qualifies(defined):
+    """Whether the definitions `[(address, name, origin)]` of ONE base name are more than one function. They are one
+    when they share an origin — a static and the pieces GCC split off it in its own file — or when they are a global
+    and nothing but CLONES in one file, which GCC only makes of a function its own file defines: the global's."""
+    origins = {origin for _address, _name, origin in defined}
+    if len(origins) == 1:
+        return False
+    local_origins = origins - {GLOBAL_ORIGIN}
+    clones_of_the_global = (GLOBAL_ORIGIN in origins and len(local_origins) == 1
+                            and all(_is_clone(name) for _address, name, origin in defined if origin is not GLOBAL_ORIGIN))
+    return not clones_of_the_global
+
+
+def _qualified(base, origin):
+    """A qualified node: the global keeps the bare name — the one a Tier 3 row names — and a local takes its origin's."""
+    if origin is GLOBAL_ORIGIN:
+        return base
+    return f"{base}@{origin:x}" if isinstance(origin, int) else f"{base}@{origin}"
+
+
+def nodes_of_labels(labels, origins=None):
+    """`{(address, name): node}` for every listed function label `(address, name)`: its base name (`_unsplit`),
+    QUALIFIED by its origin when that base names more than one function — so their bodies never merge into one node,
+    and a lookup of the bare name finds the global's (or none) rather than a static's. `origins` is `symbol_origins`'
+    table; without one (a synthetic listing) each label is its own origin, and a shared base is qualified by address."""
+    by_base = {}
+    for address, name in labels:
+        origin = address if origins is None else origins.get((address, name), address)
+        by_base.setdefault(_unsplit(name), []).append((address, name, origin))
+    nodes = {}
+    for base, defined in by_base.items():
+        qualify = _qualifies(defined)
+        nodes.update({(address, name): _qualified(base, origin) if qualify else base
+                      for address, name, origin in defined})
+    return nodes
+
+
+def _references(line, starts, nodes, nodes_of_base):
+    """The functions one listed instruction names: by label (`<name+0x12>`, its start = address - offset) or
+    as an immediate address (`starts`). A label that is no listed function's start — no address printed, or a
+    name several functions share referenced mid-way — names EVERY node of its base: an edge too many only prices a
+    row on the shipped blob, where an edge too few would price it on the C twin."""
+    named = set()
+    for address, name, offset in _LISTED_REFERENCE.findall(line):
+        start = int(address, 16) - int(offset or "0", 16) if address else None
+        node = nodes.get((start, name))
+        named |= {node} if node else nodes_of_base.get(_unsplit(name), {_unsplit(name)})
+    named |= {nodes.get((value, starts[value]), _unsplit(starts[value]))
+              for value in map(int, _LISTED_IMMEDIATE.findall(line)) if value in starts}
+    return named
+
+
+def graph_of_listing(listing, ends, starts, origins=None):
+    """`call_graph`'s reading of one `objdump -d` listing, given the symbol table's `{address: end}` sizes,
+    `{address: name}` starts and `symbol_origins` — apart from the ELF so a synthetic listing can pin each rule."""
+    labels = [(int(match.group(1), 16), match.group(2))
+              for match in map(_LISTED_FUNCTION.match, listing.splitlines()) if match]
+    nodes = nodes_of_labels(labels, origins)
+    nodes_of_base = {}
+    for (_address, name), node in nodes.items():
+        nodes_of_base.setdefault(_unsplit(name), set()).add(node)
     graph, function, end = {}, None, None
     for line in listing.splitlines():
         start = _LISTED_FUNCTION.match(line)
         if start:
-            function, end = _unsplit(start.group(2)), ends.get(int(start.group(1), 16))
+            address = int(start.group(1), 16)
+            function, end = nodes[(address, start.group(2))], ends.get(address)
             graph.setdefault(function, set())
             continue
         instruction = _LISTED_INSTRUCTION.match(line)
         if function and instruction and (end is None or int(instruction.group(1), 16) < end):
-            named = set(_LISTED_REFERENCE.findall(line))
-            named |= {starts[value] for value in map(int, _LISTED_IMMEDIATE.findall(line)) if value in starts}
-            graph[function] |= {_unsplit(target) for target in named} - {function}
+            graph[function] |= _references(line, starts, nodes, nodes_of_base) - {function}
     return graph
+
+
+def qualified_bases(graph):
+    """The base names the graph QUALIFIED — each names more than one function, so a lookup by it is ambiguous."""
+    return {node.split("@")[0] for node in graph if "@" in node}
 
 
 def callers_of_transcribed_cores(graph):
@@ -1067,26 +1190,31 @@ def reaching_transcribed_cores(graph):
 # it, and `bench/shipped_glue.py` repacks a GCC call into that frame by it.
 IMAGE_ARG = ctypes.POINTER(ctypes.c_uint8)
 WORD_ARG = ctypes.c_int16
+UWORD_ARG = ctypes.c_uint16     # ...where the C core takes the word as `uint16_t`
 LONG_ARG = ctypes.c_uint32
-ARG_BYTES = {WORD_ARG: WORD_BYTES, LONG_ARG: LONG_BYTES}
+ARG_BYTES = {WORD_ARG: WORD_BYTES, UWORD_ARG: WORD_BYTES, LONG_ARG: LONG_BYTES}
 WORD_RESULT = 16                # the bits of D0 an Alcyon `int` answer is compared at
-Alcyon = namedtuple("Alcyon", "restype argtypes")
+Alcyon = namedtuple("Alcyon", "restype argtypes host_arguments", defaults=(0,))
 ALCYON = {}
 
 
-def declare_alcyon(name, restype, argtypes):
+def declare_alcyon(name, restype, argtypes, *, host_arguments=0):
     """`addrs.<name>`'s core is an Alcyon call `restype core(argtypes)` — the image first where it takes
-    one, then the frame's arguments in push order; `restype` None for no answer."""
-    ALCYON[name] = Alcyon(restype, tuple(argtypes))
+    one, then the frame's arguments in push order; `restype` None for no answer. `host_arguments` counts
+    the C arguments after the image that NO frame carries: what the machine holds elsewhere and the host
+    build is handed instead (gemdos_call's return site, the address its caller's `jsr` pushed). The shipped
+    glue drops them, and no frame could decode them for a Tier 3 call."""
+    ALCYON[name] = Alcyon(restype, tuple(argtypes), host_arguments)
     core = getattr(_lib, core_symbol(name))
     core.restype, core.argtypes = restype, list(argtypes)
     return ALCYON[name]
 
 
 def frame_argtypes(name):
-    """The argument types an Alcyon routine's FRAME carries: its signature less the image."""
-    argtypes = ALCYON[name].argtypes
-    return argtypes[1:] if argtypes[:1] == (IMAGE_ARG,) else argtypes
+    """The argument types an Alcyon routine's FRAME carries: its signature less the image and the host's own."""
+    signature = ALCYON[name]
+    framed = signature.argtypes[1:] if signature.argtypes[:1] == (IMAGE_ARG,) else signature.argtypes
+    return framed[signature.host_arguments:]
 
 
 # Every span a VDI case reads or pokes, in `test_boot_snapshot.CASE_FIELDS`' shape. The Line-A block

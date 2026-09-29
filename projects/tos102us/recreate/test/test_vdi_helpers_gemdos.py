@@ -8,7 +8,8 @@ GEMDOS and the CANDIDATE handing the same words to the reconstructed dispatcher 
 dispatch.c`), its `Malloc`/`Mfree` handler bound to the reconstructed memory manager. So the claim is
 the whole call: the parked return address, the words GEMDOS was handed, the pool it changed and D0.
 
-THREE SPANS ARE DROPPED, each the reconstruction's own documented hole rather than scratch:
+THREE WINDOWS ARE DROPPED (`vdi_helpers.GEMDOS_DOOR_WINDOWS`; `case.run`'s `dropped_windows`, so only the bytes
+of each the ROM's run stores), each the reconstruction's own documented hole rather than scratch:
   * p_run's REGISTER-SAVE AREA (BASEPAGE_SAVED_D0 .. the frame pointer), which the trap entry writes —
     `src/gemdos/trap1.S` on target, and there is no trap entry on the host;
   * GEMDOS's own STACK below GEMDOS_SUPERVISOR_STACK, which that entry switches to: the ROM
@@ -36,46 +37,21 @@ the transcription's cases point the `trap #1` VECTOR (RAM, `VECTOR_TRAP_GEMDOS`)
 that records the words it was trapped with and answers a D0, identically on both sides: what is priced
 and compared is the door — its park, its trap frame, its answer and its return — and not GEMDOS.
 """
-import ctypes
-
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, emu, make_image
+from harness import BASE_IMAGE, addrs, emu, make_image
 
 import case
 import gemdos
 import gemdos_memory
 import vdi
 import vdi_helpers
+from vdi_helpers import GEMDOS_DOOR_WINDOWS, GEMDOS_HANDLERS, RETSAV_STALE
 
 NAME = "VDI_ROM_GEMDOS_CALL"
 WORKSTATION_BYTES = vdi.WS_BYTES                 # what v_opnvwk asks for ($fcd61a)
-BASEPAGE = case.long_in(BASE_IMAGE, addrs.GEMDOS_P_RUN)
-SAVE_AREA_END = addrs.BASEPAGE_SAVED_FRAME + vdi_helpers.LONG_BYTES
-GEMDOS_STACK_DEPTH = 0x100                       # deeper than Malloc's or Mfree's frames reach
-TERMINATION_RECORD_BYTES = 12
-DROPPED = (
-    (BASEPAGE + addrs.BASEPAGE_SAVED_D0, BASEPAGE + SAVE_AREA_END,
-     "p_run's register-save area, written by the trap entry the host build has no counterpart for"),
-    (addrs.GEMDOS_SUPERVISOR_STACK - GEMDOS_STACK_DEPTH, addrs.GEMDOS_SUPERVISOR_STACK,
-     "GEMDOS's own stack: the ROM dispatcher's frames, which the host build's C does not have"),
-    (addrs.GEMDOS_TERMINATION_JMPBUF, addrs.GEMDOS_TERMINATION_JMPBUF + TERMINATION_RECORD_BYTES,
-     "the termination record, which src/gemdos/dispatch.c omits"),
-)
 # What the ROM parks: the address its caller's `jsr` returns to — here the run's own sentinel.
 RETURN_SITE = emu.SENTINEL
-RETSAV_STALE = vdi.linea_pokes(RETSAV=0x5A5A_5A5A)
-
-
-def _memory_handler(core):
-    """A `Malloc`/`Mfree` handler: its one longword argument, from where the dispatcher left it."""
-    return lambda buf, arguments, _argument_bytes: core(buf, case.long_in(bytes(buf[arguments:arguments + 4]), 0))
-
-
-_lib.gemdos_malloc.restype = ctypes.c_uint32
-_lib.gemdos_mfree.restype = ctypes.c_uint32
-HANDLERS = {gemdos.rom_handler(addrs.GEMDOS_MALLOC_FN): _memory_handler(_lib.gemdos_malloc),
-            gemdos.rom_handler(addrs.GEMDOS_MFREE_FN): _memory_handler(_lib.gemdos_mfree)}
 
 
 def frame(function, argument):
@@ -88,9 +64,9 @@ def gemdos_call(function, argument, pokes=None):
     def glue(lib, buf):
         return lib.vdi_gemdos_call(buf, RETURN_SITE, function, argument)
 
-    with gemdos.bound_handlers(HANDLERS):
+    with gemdos.bound_handlers(GEMDOS_HANDLERS):
         info = case.run(addrs.VDI_ROM_GEMDOS_CALL, {"_pokes": staged}, gemdos.recording(glue), poison=False,
-                        dropped=DROPPED)
+                        dropped_windows=GEMDOS_DOOR_WINDOWS)
     return vdi.Result(info, staged)
 
 
@@ -119,25 +95,18 @@ def test_mfree_of_a_block_gemdos_never_gave_answers_its_error():
 
 # ---- the transcription (`src/vdi/helpers.S`), over a staged `trap #1` --------------------------------
 
-def staged_trap_pokes():
-    """The `trap #1` vector pointed at `vdi_helpers`' recording handler, and its ledger FILLed."""
-    return vdi.merge_pokes(RETSAV_STALE, vdi_helpers.recording_trap_pokes(addrs.VECTOR_TRAP_GEMDOS))
-
-
 @pytest.mark.parametrize("function,argument", ((addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES),
                                                (addrs.GEMDOS_MFREE_FN, vdi_helpers.BAND_AT)))
 def test_the_transcription_behaves_as_the_rom(function, argument):
-    vdi_helpers.run_transcription(NAME, staged_trap_pokes(), frame=frame(function, argument))
+    vdi_helpers.run_transcription(NAME, vdi_helpers.staged_gemdos_trap_pokes(), frame=frame(function, argument))
 
 
 def test_the_staged_handler_records_the_frame_the_rom_door_traps_with():
     """The handler the transcription rows stand in for GEMDOS, run under the ROM's own door: it sees
     the function word and the longword the caller pushed, and its D0 is the door's answer."""
-    pokes = vdi.merge_pokes(staged_trap_pokes(), frame(addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES))
+    pokes = vdi.merge_pokes(vdi_helpers.staged_gemdos_trap_pokes(), frame(addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES))
     final, _writes, regs = emu.run(make_image(pokes), addrs.VDI_ROM_GEMDOS_CALL, {})
-    ledger = vdi_helpers.TRAP_LEDGER_AT
-    assert (case.word_in(final, ledger), case.long_in(final, ledger + vdi_helpers.WORD_BYTES)) == \
-        (addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES)
+    assert vdi_helpers.trapped_calls(final) == [(addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES)]
     assert regs["d0"] == vdi_helpers.TRAP_ANSWER
 
 
@@ -152,5 +121,5 @@ def test_the_c_target_branch_ships_nowhere():
 # ---- the registry -------------------------------------------------------------------------------------
 vdi.register("vdi_gemdos_call, Malloc", addrs.VDI_ROM_GEMDOS_CALL,
              vdi.merge_pokes(RETSAV_STALE, frame(addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES)), priced=False)
-vdi_helpers.register_transcription(NAME, "a trapped Malloc", staged_trap_pokes(),
+vdi_helpers.register_transcription(NAME, "a trapped Malloc", vdi_helpers.staged_gemdos_trap_pokes(),
                                    frame=frame(addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES))

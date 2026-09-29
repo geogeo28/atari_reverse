@@ -155,12 +155,6 @@ static uint16_t blit_mode_get(const uint8_t *image)
 #define VQ_EXTND_SPEED_BLITTER 5000
 #define VQ_EXTND_SPEED_CPU     1000
 
-static void copy_words(uint8_t *to, const uint8_t *from, unsigned words)
-{
-    for (unsigned word = 0; word < words; word++)
-        wr16(to + word * WORD_BYTES, be16(from + word * WORD_BYTES));
-}
-
 static int extended_inquiry(const uint8_t *image)
 {
     return be16(image + linea_pointer(image, LINEA_INTIN)) != 0;
@@ -303,11 +297,6 @@ void vdi_vqt_name(uint8_t *image)
  * before the answer it decides, after the stores ahead of it. */
 #define VQT_FONTINFO_INTOUT_WORDS  2
 #define VQT_FONTINFO_PTSOUT_POINTS 5
-
-static int style_asks_for(const uint8_t *image, uint16_t effect)
-{
-    return (be16(image + LINEA_STYLE) & effect) != 0;
-}
 
 void vdi_vqt_fontinfo(uint8_t *image)
 {

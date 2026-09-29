@@ -27,12 +27,6 @@
 #include "vdi/text.h"
 #include "vdi/text_raster.h"
 
-/* FONT_FLAGS' LOW byte, which is what every `btst` on the flags reads (`btst #n,67(a5)`). */
-static inline int font_flag(const uint8_t *image, uint32_t font, uint16_t mask)
-{
-    return (font_word(image, font, FONT_FLAGS) & mask) != 0;
-}
-
 /* ---- the ring ------------------------------------------------------------------------------------ */
 /* The slot the cursor is at, and the cursor moved past it (`movea.l (a4)+,a5`). */
 static uint32_t next_slot(const uint8_t *image, uint32_t *slot)
@@ -400,7 +394,7 @@ void vdi_vst_font(uint8_t *image)
  * ============================================================================================= */
 static uint16_t advance_in(const uint8_t *image, uint32_t table, uint16_t index)
 {
-    uint32_t entry = table + sign_ext16(index) * VDI_WORD_BYTES;
+    uint32_t entry = font_offset_entry(table, index);
 
     return (uint16_t)(be16(image + bus_dereference(entry + VDI_WORD_BYTES)) - be16(image + bus_dereference(entry)));
 }
@@ -424,11 +418,6 @@ static void scale_in_place(uint8_t *image, uint8_t *width)
         wr16(width, (uint16_t)vdi_act_siz(image, (int16_t)be16(width)));
 }
 
-static int style_asks_for(const uint8_t *image, uint16_t effect)
-{
-    return (be16(image + LINEA_STYLE) & effect) != 0;
-}
-
 /* ================================================================================================
  * $fce62a — vqt_extent (116): the box a string of contrl[3] characters (intin) would fill, as four
  * corners in ptsout for the four right-angle rotations of LINEA_CHUP — and for any other rotation NONE,
@@ -440,7 +429,6 @@ static int style_asks_for(const uint8_t *image, uint16_t effect)
  * rows). AT 270 DEGREES THE ROM SWAPS THE WRONG WORDS: it answers (0,h) (0,0) (h,0) (w,h), where the
  * other three rotations answer the box turned.
  * ============================================================================================= */
-#define EXTENT_ANSWER_POINTS  4
 #define OUTLINE_GROWTH        2          /* a pixel each side ($fce710 asl.w, $fce718 addq.w #2) */
 #define ZERO_WORD             0          /* a corner word that is 0, not one of the two scratch words */
 #define W                     VDI_EXTENT_SCRATCH
@@ -513,7 +501,7 @@ void vdi_vqt_extent(uint8_t *image)
         add_ram_word(image, VDI_EXTENT_SCRATCH, (uint16_t)((uint16_t)count << 1));
         add_ram_word(image, VDI_EXTENT_HEIGHT_SCRATCH, OUTLINE_GROWTH);
     }
-    answer_points(image, EXTENT_ANSWER_POINTS);
+    answer_points(image, VDI_EXTENT_ANSWER_POINTS);
     ptsout = image + linea_pointer(image, LINEA_PTSOUT);
     answer_extent_corners(image, ptsout, be16(image + LINEA_CHUP));
     wr16(image + VDI_RESULT, VDI_RESULT_SET);

@@ -1176,9 +1176,12 @@ EXTRA_CASES = (
 # while the run is in flight, which is what makes a routine that BUSY-WAITS measurable at all (Phase
 # 8). It is `()` for every row but `Vsync`'s, and `RomBench.measure` hands the identical list to both
 # doors — which is why those entries are READ-triggered (`test_xbios_vsync.blank_after`).
+# `dropped` is the case's own `((lo, hi, why), ...)` (`vdi.TIER3_DROPPED`): the spans its image compare leaves
+# out, each vetted by `RomBench` and printed under the row. `()` for every row but a few whose C parks a return
+# address the ROM parks its own in; the battery's own differential still compares those bytes.
 Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns "
-                        "transcription address staged_entry shared_entry schedule",
-                 defaults=(False, None, (0, 0), (0, 0), ()))
+                        "transcription address staged_entry shared_entry schedule dropped",
+                 defaults=(False, None, (0, 0), (0, 0), (), ()))
 
 
 # THE THIRD RELATION: a routine NOTHING DISPATCHES BY NUMBER, so neither table below names it and
@@ -1317,7 +1320,9 @@ def _alcyon_call(signature):
     return Call(tuple(args), _ALCYON_RETURNS[signature.restype])
 
 
-CALL.update({name: _alcyon_call(signature) for name, signature in vdi.ALCYON.items()})
+# ...less the ones whose C takes an argument no frame carries (`vdi.declare_alcyon`'s `host_arguments`: gemdos_call's
+# return site), which no frame could decode — their C rows are unpriced (`test_vdi_helpers_gemdos.py`).
+CALL.update({name: _alcyon_call(signature) for name, signature in vdi.ALCYON.items() if not signature.host_arguments})
 
 
 def _vdi_role(name):
@@ -1486,7 +1491,7 @@ def _row(case):
         address, staged_entry = None, (0, 0)
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
-               call.returns, False, address, staged_entry, (0, 0), schedule)
+               call.returns, False, address, staged_entry, (0, 0), schedule, vdi.TIER3_DROPPED.get(name, ()))
 
 
 def _transcription_row(case):
@@ -1579,7 +1584,19 @@ BUILT_ELF = RECREATE / BENCH_DIR / BENCH_ELF
 
 @functools.cache
 def _reaching_transcribed_cores():
-    return frozenset(vdi.reaching_transcribed_cores(vdi.call_graph(BUILT_ELF)))
+    graph = vdi.call_graph(BUILT_ELF)
+    vet_no_row_is_ambiguous(graph)
+    return frozenset(vdi.reaching_transcribed_cores(graph))
+
+
+def vet_no_row_is_ambiguous(graph):
+    """No row's symbol, and no transcribed core, may be a name the call graph QUALIFIED (`vdi.nodes_of_labels`): its
+    bare-name node would then be one of several functions of that name, and (T→) could read the wrong one's calls
+    — or none — and price the row on the C twin without a word."""
+    ambiguous = vdi.qualified_bases(graph) & ({row.symbol for row in ROWS} | set(vdi.TRANSCRIBED_CORES))
+    assert not ambiguous, (
+        f"{sorted(ambiguous)} name more than one function in the m68k build (a static and a global, or statics in "
+        f"several files) — rename the static, so the call graph has one node for the name a row is priced by")
 
 
 def ships_through_a_call(row):
@@ -1621,7 +1638,8 @@ def cycles_inside_glue():
 def _measure_call(bench, row):
     """A C row's `Measurement` on `bench` — the one spelling of the call, whichever blob prices it."""
     return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
-                         io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry, schedule=row.schedule)
+                         io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry, schedule=row.schedule,
+                         dropped=row.dropped)
 
 
 def _measure_as_shipped(row):
@@ -1780,6 +1798,9 @@ def table(bench):
         f"each such call entering the `.S` through generated glue (build/bench_shipped/).",
         f"`glue`: over the bar as shipped, and <= {TIER3_FUNCTION_BAR:.2f} NET of the cycles spent inside the "
         f"generated thunks themselves (T→G); every row over the bar as shipped prints that net ratio below it.",
+        "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "
+        "by nature (a return address each build parks), which the ROM must write and the case's own differential "
+        "still compares.",
         "",
     ]
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
@@ -1805,6 +1826,8 @@ def table(bench):
         if glue_cycles_of(m) and m.ratio > TIER3_FUNCTION_BAR:
             lines.append(f"{'':<{name_width + ADDRESS_WIDTH}}  net of the glue: {ratio_net_of_glue(m):.2f} "
                          f"({glue_cycles_of(m)} of the recreate's cycles are inside thunks)")
+        lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  dropped from the image compare: [${lo:x}, ${hi:x}) — {why}"
+                  for lo, hi, why in row.dropped]
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

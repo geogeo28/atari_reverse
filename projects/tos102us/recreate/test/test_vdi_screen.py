@@ -42,6 +42,7 @@ import vdi
 import vdi_helpers
 import vdi_mouse
 import vdi_screen as screen
+from vdi_screen import CELL, CURSOR_DRAWN, SNAPSHOT_NEXT_TIM, cursor, restore_pokes
 from case import merge_pokes
 from opcodes import RTS
 
@@ -52,8 +53,6 @@ RESTORE = "VDI_ROM_RESTORE_TIMER_MOUSE"
 H = screen.SCREEN_H
 BASE = screen.SCREEN_BASE
 LOW, MEDIUM = H["VDI_PALETTE_LOW"], H["VDI_PALETTE_MEDIUM"]
-SNAPSHOT_NEXT_TIM = vdi.linea(BASE_IMAGE, "NEXT_TIM")     # GEMDOS's own tick, which v_opnwk displaced
-CURSOR_DRAWN = 1 << addrs.CON_FLAG_DRAWN
 TOP_BYTE = 0xFF00_0000                                  # an address register's bits the 68000's bus drops
 
 
@@ -229,16 +228,6 @@ def test_setres_halts_inside_setscreen_asking_for_the_mode_before_it_stores_a_by
 
 
 # ---- init_timer_mouse / restore_timer_mouse --------------------------------------------------------------------
-# The console's cursor lock is called with a cursor CELL of one row placed in this battery's band, so the
-# hide's inversion lands where the clear that follows cannot erase it (four bytes, one a plane, two apart).
-CELL = {addrs.CON_CELL_HEIGHT: struct.pack(">H", 1), addrs.CON_CURSOR_ADDRESS: struct.pack(">I", screen.CURSOR_CELL_AT),
-        screen.CURSOR_CELL_AT: bytes(range(0x30, 0x30 + screen.CURSOR_CELL_BYTES))}
-
-
-def cursor(depth, flags):
-    return {addrs.CON_CURSOR_DISABLE: struct.pack(">H", depth), addrs.CON_STATE_FLAGS: bytes([flags])}
-
-
 INIT_DEPTH = 2
 
 
@@ -247,7 +236,7 @@ def init_pokes(depth=INIT_DEPTH, flags=CURSOR_DRAWN | 1, etv_timer=SNAPSHOT_NEXT
     etv_timer holding what v_opnwk finds there, and a cursor cell off the screen."""
     return screen.trap_pokes(merge_pokes(
         vdi.function_pokes("VDI_ROM_VSC_FORM"), screen.filled_screen(), CELL, cursor(depth, flags),
-        vdi.linea_pokes(USER_TIM=vdi.FILL * 0x01010101, NEXT_TIM=vdi.FILL * 0x01010101),
+        vdi.linea_pokes(USER_TIM=vdi.FILL_LONG, NEXT_TIM=vdi.FILL_LONG),
         {addrs.SYSVAR_ETV_TIMER: struct.pack(">I", etv_timer), vdi_mouse.VBL_QUEUE: bytes([vdi.FILL]) * 4}))
 
 
@@ -272,15 +261,6 @@ def test_init_keeps_whatever_etv_timer_held():
     """Its own tick included: re-opening over an open workstation chains the tick to itself."""
     result = run_init(init_pokes(etv_timer=addrs.VDI_ROM_TIMER_TICK))
     assert result.linea("NEXT_TIM") == addrs.VDI_ROM_TIMER_TICK
-
-
-def restore_pokes(next_tim=SNAPSHOT_NEXT_TIM, depth=2, flags=1):
-    """The workstation closing: the tick installed, NEXT_TIM what it displaced, the mouse's VBL slot taken, and the
-    console's cursor where the snapshot has it — ON the screen, so the cursor drawn after the clear shows."""
-    return screen.trap_pokes(merge_pokes(
-        screen.filled_screen(), cursor(depth, flags), vdi.linea_pokes(NEXT_TIM=next_tim),
-        {addrs.SYSVAR_ETV_TIMER: struct.pack(">I", addrs.VDI_ROM_TIMER_TICK),
-         vdi_mouse.VBL_QUEUE: struct.pack(">I", addrs.VDI_ROM_VBL_DRAW_CURSOR)}))
 
 
 def run_restore(pokes):

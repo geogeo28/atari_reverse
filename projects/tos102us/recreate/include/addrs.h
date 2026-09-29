@@ -1614,6 +1614,11 @@
 #define VDI_ROM_VQT_WIDTH_OPCODE  117
 #define VDI_ROM_VST_LOAD_FONTS    0xfced06
 #define VDI_ROM_VST_LOAD_FONTS_OPCODE 119
+/* GRAPHIC TEXT (`src/vdi/gtext.c`, `vdi/gtext.h`): v_gtext, and the justified-text worker the GDP's arm 10
+ * `jsr`s ($fcbd56), which draws through it. */
+#define VDI_ROM_V_GTEXT           0xfcd756
+#define VDI_ROM_V_GTEXT_OPCODE    8
+#define VDI_ROM_D_JUSTIFIED       0xfce9e8   /* Alcyon, no arguments: GDP 10's string spread to ptsin[2] */
 #define LINEA_ROM_SEEDABORT_DEFAULT 0xfc9f9a /* `moveq #0,d0 / rts`: v_contourfill's SEEDABORT ($fd08e4) */
 #define VDI_ROM_ENTRY             0xfc9f9e   /* where SYSVAR_VDI_ENTRY's routine calls in, D1 = the parameter block */
 #define VDI_ROM_DISPATCH          0xfca9f6
@@ -1777,6 +1782,13 @@
 #define VDI_ROM_DO_CIRC           0xfccf4e   /* Alcyon (x, y): a disc of the quarter circle, a line a row */
 #define VDI_ROM_ARROW             0xfcd0fa   /* the arrowheads WS_LINE_BEG/END ask for, the line shortened */
 #define VDI_ROM_DO_ARROW          0xfcd196   /* Alcyon (&point, step): one arrowhead at the point, filled */
+/* ARCS, ELLIPSES and ROUNDED BOXES (`src/vdi/arcs.c`, `vdi/arcs.h`): the GDP's curve workers, each entered
+ * by `jsr` from one of vdi_gdp's arms with the arc scratch or the arm's arrays staged. */
+#define VDI_ROM_CLC_PTS           0xfcc914   /* Alcyon (point): the point at LINEA_GDP_ANGLE into ptsin[point] */
+#define VDI_ROM_CLC_ARC           0xfcc79e   /* the curve as points in ptsin, then v_pline or plygn */
+#define VDI_ROM_GDP_ARC           0xfcc62e   /* arc and pie: intin's angles, ptsin's centre and radius */
+#define VDI_ROM_GDP_ELL           0xfcc714   /* the elliptical arc and pie: ...and both radii */
+#define VDI_ROM_GDP_RBOX          0xfcc284   /* the rounded box, outlined or filled: 21 points */
 /* The MOUSE, CURSOR and INPUT routines (`src/vdi/mouse.c`): the sprite pair and the hide/show count
  * ($a009..$a00d), the IKBD mouse vector and the VBL's redraw, the device polls and the three input
  * functions. The register routines' contracts are `test/vdi_mouse.py`'s `declare_primitive`s. */
@@ -1814,6 +1826,13 @@
 #define VDI_ROM_SETRES            0xfca6d4   /* v_opnwk's: -> D0 = the resolution opened in, plus one */
 #define VDI_ROM_TIMER_TICK        0xfca78a   /* etv_timer: USER_TIM, then NEXT_TIM with the tick word */
 #define VDI_ROM_RESTORE_TIMER_MOUSE 0xfca7a2 /* v_clswk's: etv_timer back, mouse_off, clear, cursor on */
+/* The WORKSTATIONS (`src/vdi/workstation.c`, `vdi/workstation.h`): the two closes, and the record set-up both
+ * opens end in. The opens themselves, served without a handle lookup, are named with the dispatcher above. */
+#define VDI_ROM_V_CLSWK           0xfcb998   /* every virtual workstation Mfree'd, then restore_timer_mouse */
+#define VDI_ROM_V_CLSWK_OPCODE    2
+#define VDI_ROM_V_CLSVWK          0xfcd6a4   /* the current one unlinked and Mfree'd, unless handle 1 */
+#define VDI_ROM_V_CLSVWK_OPCODE   101
+#define VDI_ROM_INIT_WK           0xfcd402   /* Alcyon, no arguments: the current record from intin[1..10] */
 /* The REQUEST spins' WAIT SITES (sched.h): each loop's `jsr` to its poll, where a pass re-enters and where
  * a case's schedule lands an interrupt's store — before the poll reads CUR_MS_STAT or the keyboard ring. */
 #define VDI_LOCATOR_WAIT_SITE     0xfcb03c

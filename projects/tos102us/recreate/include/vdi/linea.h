@@ -30,9 +30,15 @@
 #define LINEA_BASE            0x299a     /* what $a000 answers                  ($fc9f34 lea)       */
 
 /* ---- the negative half: mouse, tables, fonts, input modes, cursor, user vectors ---------------- */
+/* Two words of the arc scratch lie just BELOW the published block (DRI's angle and beg_ang): */
+#define LINEA_GDP_ANGLE       0x260c     /* word: the angle clc_pts places      ($fcc854)           */
+#define LINEA_GDP_BEG_ANG     0x260e     /* word: the arc's first angle         ($fcc63c)           */
 #define LINEA_CUR_FONT        0x2610     /* long: the text font in use          ($fcaace move.l)    */
+/* ...and the rest of it, above the font pointer, which splits it from the two words below: */
 #define LINEA_GDP_SCRATCH     0x2614     /* words[23]: arc/ellipse scratch      ($fcbca6..$fcbca0)  */
 /* ...and the words of it a reconstructed routine reads or writes by name (DRI's names): */
+#define LINEA_GDP_DEL_ANG     0x2614     /* word: the angle swept, 0..3600      ($fcc654)           */
+#define LINEA_GDP_END_ANG     0x261c     /* word: the arc's last angle          ($fcc642)           */
 #define LINEA_GDP_FILL_INT    0x261e     /* word: $a006's crossings on this row ($fca076 clr.w)     */
 #define LINEA_GDP_FILL_MAXY   0x2620     /* word: plygn's lowest row, filled first ($fcc142)        */
 #define LINEA_GDP_FILL_MINY   0x2622     /* word: ...and the row above its highest ($fcc13c)        */
@@ -41,7 +47,10 @@
 #define LINEA_GDP_SAVED_END_STYLE 0x262a /* word: ...and WS_LINE_END            ($fcd0a8)           */
 #define LINEA_GDP_SAVED_FILL_COLOR 0x262c /* word: ...and WS_FILL_COLOR         ($fcd06e)           */
 #define LINEA_GDP_SAVED_FILL_PER 0x262e  /* word: ...and WS_FILL_PER            ($fcd07c)           */
+#define LINEA_GDP_START       0x2636     /* word: clc_arc's copy of BEG_ANG     ($fcc812)           */
+#define LINEA_GDP_XC          0x2638     /* word: the centre x                  ($fcc69a)           */
 #define LINEA_GDP_XRAD        0x263a     /* word: the x radius                  ($fcc6b8)           */
+#define LINEA_GDP_YC          0x263e     /* word: the centre y                  ($fcc6a0)           */
 #define LINEA_GDP_YRAD        0x2640     /* word: the y radius                  ($fcc6be)           */
 #define LINEA_M_POS_HX        0x2642     /* word: mouse hot spot x              ($fd02e2)           */
 #define LINEA_M_POS_HY        0x2644     /* word: ...and y                      ($fd02ee)           */

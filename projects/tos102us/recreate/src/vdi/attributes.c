@@ -29,15 +29,7 @@
 #define LINE_END_LAST         2
 /* A line's width is odd: an even one is rounded DOWN, by `((w - 1) / 2) * 2 + 1` ($fcace8). */
 #define LINE_WIDTH_MIN        1
-/* Marker type 1..6 is stored 0-based; anything else is type 3, the asterisk ($fcae6a). */
-#define MARKER_TYPE_COUNT     6
-#define MARKER_INDEX_DEFAULT  2
-/* Any colour index outside 0..DEV_TAB[13]-1 is colour 1 ($fcada4). */
-#define COLOUR_INDEX_DEFAULT  1
-/* Fill style 1..24 under the PATTERN interior, 1..12 under every other ($fcaf74, $fcaf84). */
-#define PATTERN_STYLE_COUNT   24
-#define OTHER_STYLE_COUNT     12
-#define FILL_STYLE_DEFAULT    1
+/* The marker, colour and fill-style clamps are `vdi/attributes.h`'s: init_wk clamps the same way. */
 /* Write mode 1..4 is stored 0-based; anything else is mode 1, replace ($fcb34c). */
 #define WRITE_MODE_LAST       3
 /* Text alignment: horizontal 0..2, vertical 0..5; anything else is 0 ($fce406, $fce41c). */
@@ -51,11 +43,10 @@
 #define DEVICE_VALUATOR       2
 #define DEVICE_CHOICE         3
 #define DEVICE_STRING         4
-/* vsf_udpat: one plane of the user pattern is sixteen rows, and WS_MULTIFILL says whether the
- * pattern is one plane or one per screen plane ($fcd712 cmp.w #16, $fcd724 asl.w #4). */
-#define UD_PATTERN_ROWS       16
+/* vsf_udpat: one plane of the user pattern is VDI_UD_PATTERN_ROWS rows, and WS_MULTIFILL says whether
+ * the pattern is one plane or one per screen plane ($fcd712 cmp.w #16, $fcd724 asl.w #4). */
 #define UD_PATTERN_PLANE_SHIFT 4
-#define UD_PATTERN_ROW_MASK   (UD_PATTERN_ROWS - 1)
+#define UD_PATTERN_ROW_MASK   (VDI_UD_PATTERN_ROWS - 1)
 #define ONE_PLANE             0
 #define EVERY_PLANE           1
 /* vsl_ends and vst_alignment answer two words; everything else here that answers, one. */
@@ -67,33 +58,16 @@
 
 /* ---- the clamps ------------------------------------------------------------------------------- */
 
-static int16_t within_or(int16_t value, int16_t low, int16_t high, int16_t fallback)
-{
-    return value < low || value > high ? fallback : value;
-}
-
-/* A 1-based index from intin[0], 0-based: outside 1..count it is `fallback` (0-based). */
+/* The 1-based index in intin[0], 0-based (`vdi_zero_based_or`). */
 static int16_t zero_based_or(const uint8_t *image, int16_t count, int16_t fallback)
 {
-    return within_or((int16_t)(intin_word(image, 0) - 1), 0, (int16_t)(count - 1), fallback);
+    return vdi_zero_based_or(intin_word(image, 0), count, fallback);
 }
 
-/* The colour index in intin[0], checked against the device's colour count, and the pen it maps to —
- * `movea.w` then `adda.l`, so the index is sign-extended before it is doubled.
- *
- * THE BOUND IS THE COUNT ITSELF (`cmp.w DEV_TAB[13],d7 / bge`), not the count less one: a count of
- * $8000 has no highest index a word can hold, and every index is then colour 1. */
+/* The colour index in intin[0], clamped (`vdi/attributes.h`); the pen it maps to is `vdi_mapped_colour`. */
 static int16_t colour_index(const uint8_t *image)
 {
-    int16_t colours = table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_COLOURS_INDEX);
-    int16_t index = intin_word(image, 0);
-
-    return index >= colours || index < 0 ? COLOUR_INDEX_DEFAULT : index;
-}
-
-static uint16_t mapped_colour(const uint8_t *image, int16_t index)
-{
-    return be16(image + VDI_MAP_COL + (sign_ext16((uint16_t)index) << 1));
+    return vdi_colour_index_or_default(image, intin_word(image, 0));
 }
 
 /* ================================================================================================
@@ -137,8 +111,8 @@ void vdi_vsl_ends(uint8_t *image)
     int16_t end;
 
     answer_words(image, TWO_WORDS);
-    begin = within_or(intin_word(image, 0), 0, LINE_END_LAST, 0);
-    end = within_or(intin_word(image, 1), 0, LINE_END_LAST, 0);
+    begin = vdi_within_or(intin_word(image, 0), 0, LINE_END_LAST, 0);
+    end = vdi_within_or(intin_word(image, 1), 0, LINE_END_LAST, 0);
     set_current_work_word(image, WS_LINE_BEG, (uint16_t)begin);
     answer_intout(image, 0, (uint16_t)begin);
     set_current_work_word(image, WS_LINE_END, (uint16_t)end);
@@ -153,7 +127,7 @@ void vdi_vsl_color(uint8_t *image)
     answer_words(image, ONE_WORD);
     index = colour_index(image);
     answer_intout(image, 0, (uint16_t)index);
-    set_current_work_word(image, WS_LINE_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_LINE_COLOR, vdi_mapped_colour(image, index));
 }
 
 /* $fcb4a2 — vsl_udsty (113). The user line style, raw: no clamp and no answer at all. */
@@ -195,7 +169,7 @@ void vdi_vsm_height(uint8_t *image)
 /* $fcae58 — vsm_type (18). contrl[4] LAST here. */
 void vdi_vsm_type(uint8_t *image)
 {
-    int16_t type = zero_based_or(image, MARKER_TYPE_COUNT, MARKER_INDEX_DEFAULT);
+    int16_t type = zero_based_or(image, VDI_MARKER_TYPE_COUNT, VDI_MARKER_INDEX_DEFAULT);
 
     set_current_work_word(image, WS_MARK_INDEX, (uint16_t)type);
     answer_intout(image, 0, (uint16_t)(type + 1));
@@ -208,7 +182,7 @@ void vdi_vsm_color(uint8_t *image)
     int16_t index = colour_index(image);
 
     answer_intout(image, 0, (uint16_t)index);
-    set_current_work_word(image, WS_MARK_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_MARK_COLOR, vdi_mapped_colour(image, index));
     answer_words(image, ONE_WORD);
 }
 
@@ -279,7 +253,7 @@ void vdi_vsf_interior(uint8_t *image)
     int16_t interior;
 
     answer_words(image, ONE_WORD);
-    interior = within_or(intin_word(image, 0), VDI_INTERIOR_HOLLOW, VDI_INTERIOR_USER, VDI_INTERIOR_HOLLOW);
+    interior = vdi_within_or(intin_word(image, 0), VDI_INTERIOR_HOLLOW, VDI_INTERIOR_USER, VDI_INTERIOR_HOLLOW);
     set_current_work_word(image, WS_FILL_STYLE, (uint16_t)interior);
     answer_intout(image, 0, (uint16_t)interior);
     vdi_st_fl_ptr(image);
@@ -295,8 +269,8 @@ void vdi_vsf_style(uint8_t *image)
     answer_words(image, ONE_WORD);
     style = intin_word(image, 0);
     count = current_work_word(image, WS_FILL_STYLE) == VDI_INTERIOR_PATTERN
-            ? PATTERN_STYLE_COUNT : OTHER_STYLE_COUNT;
-    style = within_or(style, 1, count, FILL_STYLE_DEFAULT);
+            ? VDI_PATTERN_STYLE_COUNT : VDI_OTHER_STYLE_COUNT;
+    style = vdi_within_or(style, VDI_FILL_STYLE_FIRST, count, VDI_FILL_STYLE_DEFAULT);
     answer_intout(image, 0, (uint16_t)style);
     set_current_work_word(image, WS_FILL_INDEX, (uint16_t)(style - 1));
     vdi_st_fl_ptr(image);
@@ -310,7 +284,7 @@ void vdi_vsf_color(uint8_t *image)
     answer_words(image, ONE_WORD);
     index = colour_index(image);
     answer_intout(image, 0, (uint16_t)index);
-    set_current_work_word(image, WS_FILL_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_FILL_COLOR, vdi_mapped_colour(image, index));
 }
 
 /* $fcd6fa — vsf_udpat (112). contrl[3] words: sixteen are ONE plane, sixteen per screen plane
@@ -327,7 +301,7 @@ void vdi_vsf_udpat(uint8_t *image)
     uint8_t *pattern;
     int16_t row;
 
-    if (words == UD_PATTERN_ROWS)
+    if (words == VDI_UD_PATTERN_ROWS)
         wr16(image + work + WS_MULTIFILL, ONE_PLANE);
     else if (words == per_plane)
         wr16(image + work + WS_MULTIFILL, EVERY_PLANE);
@@ -358,12 +332,12 @@ void vdi_vst_effects(uint8_t *image)
  * half's answer. */
 void vdi_vst_alignment(uint8_t *image)
 {
-    int16_t horizontal = within_or(intin_word(image, 0), 0, H_ALIGN_LAST, 0);
+    int16_t horizontal = vdi_within_or(intin_word(image, 0), 0, H_ALIGN_LAST, 0);
     int16_t vertical;
 
     answer_intout(image, 0, (uint16_t)horizontal);
     set_current_work_word(image, WS_H_ALIGN, (uint16_t)horizontal);
-    vertical = within_or(intin_word(image, 1), 0, V_ALIGN_LAST, 0);
+    vertical = vdi_within_or(intin_word(image, 1), 0, V_ALIGN_LAST, 0);
     answer_intout(image, 1, (uint16_t)vertical);
     set_current_work_word(image, WS_V_ALIGN, (uint16_t)vertical);
     answer_words(image, TWO_WORDS);
@@ -390,7 +364,7 @@ void vdi_vst_color(uint8_t *image)
 
     answer_words(image, ONE_WORD);
     answer_intout(image, 0, (uint16_t)index);
-    set_current_work_word(image, WS_TEXT_COLOR, mapped_colour(image, index));
+    set_current_work_word(image, WS_TEXT_COLOR, vdi_mapped_colour(image, index));
 }
 
 /* ================================================================================================
@@ -403,7 +377,7 @@ void vdi_vswr_mode(uint8_t *image)
     int16_t mode;
 
     answer_words(image, ONE_WORD);
-    mode = within_or((int16_t)(intin_word(image, 0) - 1), 0, WRITE_MODE_LAST, 0);
+    mode = vdi_within_or((int16_t)(intin_word(image, 0) - 1), 0, WRITE_MODE_LAST, 0);
     set_current_work_word(image, WS_WRT_MODE, (uint16_t)mode);
     answer_intout(image, 0, (uint16_t)(mode + 1));
 }

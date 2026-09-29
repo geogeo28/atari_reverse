@@ -100,7 +100,8 @@ def register(name, selector, words, pokes, **seeds):
 # (its header says why), and a slice that dispatches in a nested call is the one place it lands INSIDE a
 # compared run: the original leaves it pointing into a nested frame that is dead once the echo returns,
 # and the reconstruction leaves it as it was. A REAL DIVERGENCE, so such a case DROPS the twelve bytes
-# from its compare by name (`NESTED_RECORD`, `case.run`'s `dropped`), and
+# from its compare by name (`NESTED_RECORD`, a `case.run` `dropped_windows` entry: a slice that never nests
+# leaves it unwritten and compared), and
 # `test_a_nested_echo_arms_the_record_with_its_own_frame` holds what the original writes there to being
 # that frame and nothing else.
 NESTED_RECORD = ((addrs.GEMDOS_TERMINATION_JMPBUF, addrs.GEMDOS_TERMINATION_JMPBUF + process.JMPBUF_BYTES,

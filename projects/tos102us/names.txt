@@ -430,9 +430,9 @@ fn 0xfcb4ba vs_clip
 fn 0xfcb5aa vro_cpyfm
 fn 0xfcb5dc vrt_cpyfm
 fn 0xfcb614 vr_recfl
-fn 0xfcb694 v_opnwk   # ctx
+fn 0xfcb694 v_opnwk
 fn 0xfcb8d0 vq_extnd
-fn 0xfcb998 v_clswk   # ctx
+fn 0xfcb998 v_clswk
 fn 0xfcb9e0 v_pline
 fn 0xfcba7a v_pmarker
 fn 0xfcbbc0 v_fillarea
@@ -440,10 +440,10 @@ fn 0xfcbbcc vdi_gdp   # ctx
 fn 0xfcbd7e vql_attributes
 fn 0xfcbdda vqm_attributes
 fn 0xfcbe3a vqf_attributes
-fn 0xfcd612 v_opnvwk   # ctx
-fn 0xfcd6a4 v_clsvwk   # ctx
+fn 0xfcd612 v_opnvwk
+fn 0xfcd6a4 v_clsvwk
 fn 0xfcd6fa vsf_udpat
-fn 0xfcd756 v_gtext   # ctx
+fn 0xfcd756 v_gtext
 fn 0xfcdfd0 vst_height
 fn 0xfce26c vst_point
 fn 0xfce3b2 vst_effects
@@ -1270,3 +1270,28 @@ cmt 0xfca670 v_opnwk's: USER_TIM = $fca652; under ori #$700 NEXT_TIM = Setexc($1
 cmt 0xfca6d4 Getrez; mono -> Setpalette($fca762), D0=3; intin[0]: 1 keeps the colour mode, 3 asks medium, anything else low; Setscreen(-1,-1,mode) only if it differs (halts in the recreate); Setpalette $fca762 medium / $fca76a low; D0 = 2 / 1.
 cmt 0xfca78a etv_timer the VDI installs: movem.l d0-a6; jsr (USER_TIM); movem back; move.l NEXT_TIM,-(sp) / rts (the chain, with the tick word still at 4(sp)). Shipped as its own bytes (src/vdi/screen.S).
 cmt 0xfca7a2 v_clswk's: Setexc($100, NEXT_TIM) unmasked; mouse_off; v_clrwk; bra $fc45be (ESC e, cursor forced on).
+# ---- VDI band 3 (2026-09-28): arcs and rounded boxes, graphic text, the workstations ----
+fn 0xfcc914 clc_pts
+fn 0xfcc79e clc_arc
+fn 0xfcc62e gdp_arc
+fn 0xfcc714 gdp_ell
+fn 0xfcc284 gdp_rbox
+fn 0xfce9e8 d_justified
+fn 0xfcd402 init_wk
+var 0x260c gdp_angle
+var 0x260e gdp_beg_ang
+var 0x2614 gdp_del_ang
+var 0x261c gdp_end_ang
+var 0x2636 gdp_start
+var 0x2638 gdp_xc
+var 0x263e gdp_yc
+var 0x170a vdi_gap_after_space
+var 0x1714 vdi_gap_after_character
+cmt 0xfcc79e clc_arc: angles never normalised; the last point is at END_ANG, not START+DEL; word-sum trivial reject when CLIP; contrl[5] re-read at every test; dead store i = n_steps after the loop
+cmt 0xfcc284 rounded box; arb_corner sorts through the CALLER's A5 (vdi_gdp's PTSIN), not a fresh load; an outline whose wrapped corners send clip_line ($fcbf16) into a cycle never returns
+cmt 0xfcd756 v_gtext: glyph 0 drawn in the A5 font loaded at entry ($fcd76e), CUR_FONT re-read only after each TextBlt ($fcdc38); centred/right leaves VDI_RESULT=1 and the extent in $1706; HOR table read ONE BYTE per glyph (vqt_width reads pairs); a non-right-angle CHUP (3600) draws at stale DESTX/DESTY and underlines from unwritten frame words; underline LN_MASK asr.w with bit15 set when bit0 was; $fcd9f2 ijmp = the V_ALIGN switch ($fd3990); justified (contrl[0]=11) walks the gap records at $170a/$1714
+cmt 0xfce9e8 d_justified (GDP 10, jsr'd from $fcbd56): leaves contrl[3]=n-2 and contrl[2]=n; slack divs.w over spaces then chars, remainder made positive in memory ($170e/$1718); both flags: word step cut to +-max_cell_width/2 and remainder dropped; at a non-right-angle rotation the steps are vqt_extent's stack leftovers
+cmt 0xfcd402 init_wk: current record from intin[1..10]; the fill style stored 1-based (vsf_style stores it -1): ROM bug; line type 0 stored as -1
+cmt 0xfcd612 v_opnvwk: lowest handle in LIST order, linked after the record the walk stops at; duplicates a handle after a mid-list close
+cmt 0xfcd6a4 v_clsvwk: the walk has no end test (a record not on the list wanders through address 0); first match wins
+cmt 0xfcb998 v_clswk: every virtual record Mfree'd in list order, CUR_WORK left 0; the physical WS_NEXT left naming freed memory

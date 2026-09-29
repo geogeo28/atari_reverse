@@ -142,6 +142,12 @@
 #define WS_V_ALIGN            294        /* word                                ($fcab0c)           */
 #define WS_WRT_MODE           296        /* word: write mode 0..3               ($fcaa76)           */
 #define WS_XFM_MODE           298        /* word: coordinate system (intin[10]) ($fcd51e)           */
+/* ...its two values the VDI tells apart. NDC, normalised coordinates, whose y runs up: vst_height turns a
+ * requested height into a distance from the bottom row ($fce022 `tst.w 298(a0)`). RC, raster coordinates:
+ * below it gdp_ell measures its y radius up from the last row instead ($fcc774 cmpi.w #2 / bge). VALUES of
+ * the field, not fields. */
+#define VDI_XFM_MODE_NDC      0
+#define VDI_XFM_MODE_RC       2
 #define WS_XMN_CLIP           300        /* word                                ($fcaa56)           */
 #define WS_XMX_CLIP           302        /* word                                ($fcaa66)           */
 #define WS_YMN_CLIP           304        /* word                                ($fcaa5e)           */
@@ -177,6 +183,13 @@
 #define VDI_SIZ_TAB_MAX_CHAR_WIDTH_INDEX 2 /*                                   ($fcdeb4 -> $27ac)  */
 #define VDI_SIZ_TAB_MAX_CHAR_HEIGHT_INDEX 3 /*                                  ($fcdeba -> $27ae)  */
 #define VDI_DEV_TAB_CHAR_HEIGHTS_INDEX 5 /* the system face's fonts, counted    ($fcdfa0 -> $26f0)  */
+/* ...and the entries v_opnwk patches for a mode the defaults are not (`vdi/workstation.h`), with init_wk's
+ * line width. */
+#define VDI_DEV_TAB_COLOUR_CAPABLE_INDEX 35 /* 0 = no colour                    ($fcb782 -> $272c)  */
+#define VDI_DEV_TAB_PALETTE_INDEX 39     /* colours the palette can show        ($fcb788 -> $2734)  */
+#define VDI_INQ_TAB_BACKGROUNDS_INDEX 1  /* background colours                  ($fcb790 -> $268e)  */
+#define VDI_INQ_TAB_LUT_INDEX 5          /* 1 = a colour look-up table          ($fcb7a0 -> $2696)  */
+#define VDI_SIZ_TAB_MIN_LINE_WIDTH_INDEX 4 /*                                   ($fcd52a -> $27b0)  */
 
 /* ---- the ROM data the VDI reads, $fd32f4..$fd39f5 ---------------------------------------------- */
 #define VDI_MAX_VERTICES_DEFAULT 0xfd32f4 /* word -> INQ_TAB[14]                ($fcb6d0)           */
@@ -220,6 +233,8 @@
 #define VDI_STYLE_LIGHTEN_MASK 0x0002    /* light                               ($fd2424 btst #1)   */
 #define VDI_STYLE_SKEW_MASK   0x0004     /* italic                              ($fce99a btst #2)   */
 #define VDI_STYLE_OUTLINE_MASK 0x0010    /* outlined                            ($fd1ea2 btst #4)   */
+/* ...and the one TextBlt never reads: v_gtext draws the underline itself, a line a row. */
+#define VDI_STYLE_UNDERLINE_MASK 0x0008  /* underlined                          ($fcdd00 btst #3)   */
 /* The value WS_FILL_STYLE holds for the user-defined pattern — the one interior whose planes the
  * dispatcher copies into LINEA_MULTIFILL. A VALUE of the field, not a field. */
 #define VDI_INTERIOR_USER     4          /*                                     ($fcaa8e cmpi.w #4) */
@@ -229,6 +244,7 @@
 /* A point of ptsin / ptsout, or of a frame's own point list: (x, y), two words. */
 #define VDI_POINT_BYTES       4
 #define VDI_POINT_Y           2          /* y, the second word                                      */
+#define VDI_POINT_WORDS       (VDI_POINT_BYTES / VDI_WORD_BYTES) /* a word index into a point list steps by it */
 /* ...and the other four, in st_fl_ptr's switch order ($fd397c). */
 #define VDI_INTERIOR_HOLLOW   0          /*                                     ($fcc9c2)           */
 #define VDI_INTERIOR_SOLID    1          /*                                     ($fcc9cc)           */
@@ -319,6 +335,23 @@ static inline void add_ram_word(uint8_t *image, uint32_t at, uint16_t delta)
     wr16(image + at, (uint16_t)(be16(image + at) + delta));
 }
 
+/* The address of entry `index` of the table at `table`, the index SIGN-EXTENDED first and scaled in the
+ * address register (`movea.w` / `ext.l`, then `adda.l An,An` or `asl.l`): a negative index reads below the
+ * table, and a doubled one parts from m68k_idioms.h's word-wrapped `word_index` from 16,384 on. Summed as an
+ * ADDRESS before it meets the image, so below the table is not 4 GB above it. The product is SIGNED (no index a
+ * word holds overflows it), which leaves GCC free to extend an index it knows is non-negative with `ext.l`
+ * rather than `andi.l #$ffff` — a fill's pen lookup costs 12 cycles more spelt unsigned. */
+static inline uint32_t table_entry(uint32_t table, int32_t index, uint32_t entry_bytes)
+{
+    return table + (uint32_t)(index * (int32_t)entry_bytes);
+}
+
+/* ...and word `index` of a word array (a table, ptsin, the fill queue). */
+static inline uint32_t word_entry(uint32_t array, int32_t index)
+{
+    return table_entry(array, index, VDI_WORD_BYTES);
+}
+
 /* The workstation the dispatcher made current, by its record's address. */
 static inline uint32_t current_work(const uint8_t *image)
 {
@@ -330,6 +363,18 @@ static inline uint32_t current_work(const uint8_t *image)
 static inline int16_t work_word(const uint8_t *image, uint32_t work, uint32_t field)
 {
     return (int16_t)be16(image + work + field);
+}
+
+/* ...and a store into it. */
+static inline void set_work_word(uint8_t *image, uint32_t work, uint32_t field, uint16_t value)
+{
+    wr16(image + work + field, value);
+}
+
+/* ...and a longword store (a pointer field). */
+static inline void set_work_long(uint8_t *image, uint32_t work, uint32_t field, uint32_t value)
+{
+    wr32(image + work + field, value);
 }
 
 /* ...and a store into the CURRENT workstation's, LINEA_CUR_WORK read at the store. */
@@ -380,6 +425,20 @@ static inline void set_colour_bits(uint8_t *image, uint16_t colour)
 static inline __attribute__((always_inline)) void set_fill_colour_bits(uint8_t *image)
 {
     set_colour_bits(image, current_work_word(image, WS_FILL_COLOR));
+}
+
+/* Whether LINEA_STYLE asks for `effect` (a VDI_STYLE_* mask) — the text routines' `btst` on its low byte. */
+static inline int style_asks_for(const uint8_t *image, uint16_t effect)
+{
+    return (be16(image + LINEA_STYLE) & effect) != 0;
+}
+
+/* `words` words from `from` to `to`, in ascending order, one `move.w (a5)+,(a4)+` at a time. Host pointers: a
+ * caller holding image addresses passes `image + address`. */
+static inline void copy_words(uint8_t *to, const uint8_t *from, unsigned words)
+{
+    for (unsigned word = 0; word < words; word++)
+        wr16(to + word * VDI_WORD_BYTES, be16(from + word * VDI_WORD_BYTES));
 }
 
 /* A point (x, y) copied from `from` to `to`: x first, then y (`move.w (a4),8(a5) / move.w 2(a4),10(a5)`). */

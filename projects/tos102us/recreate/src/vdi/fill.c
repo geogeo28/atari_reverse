@@ -55,14 +55,6 @@
 
 /* ---- the words this file keeps in RAM --------------------------------------------------------------- */
 
-/* The address of word `index` of the word table at `table`, the index SIGNED (a `movea.w`, then doubled
- * in the address register) — computed as an address before it meets the image, so a negative one lands
- * below the table rather than 4 GB above it. */
-static inline uint32_t word_entry(uint32_t table, int32_t index)
-{
-    return table + (uint32_t)(index * VDI_WORD_BYTES);
-}
-
 /* A queue word's address — see `vdi/fill.h`. The index is a LONG: the ROM takes a queue variable with
  * `movea.w` and steps it in the address register (`subq.w #3,a0`, `addq.w #1,a0` are whole-register adds),
  * so QTOP $8002 less 3 reaches below the queue — wrapping on the 24-bit bus — not 64K above it. That lands

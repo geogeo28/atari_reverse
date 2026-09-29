@@ -92,7 +92,7 @@ def test_make_header_scales_the_current_font_into_the_scratch_header(font, incre
     image = result.final
     assert vdi.read_field(image, "FONT", "POINT", scratch) == (vdi.read_field(image, "FONT", "POINT", font) * 2) & 0xFFFF
     assert vdi.read_field(image, "FONT", "NAME", scratch) == vdi.read_field(image, "FONT", "NAME", font)
-    assert vdi.read_field(image, "FONT", "NEXT", scratch) == vdi.FILL * 0x01010101     # not copied
+    assert vdi.read_field(image, "FONT", "NEXT", scratch) == vdi.FILL_LONG     # not copied
 
 
 def test_make_header_doubles_the_top_three_plus_one():

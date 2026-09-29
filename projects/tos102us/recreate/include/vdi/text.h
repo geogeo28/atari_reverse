@@ -15,9 +15,9 @@
 /* WS_PTS_MODE's two values: which setter chose the size, and so which one vst_font re-runs. */
 #define VDI_PTS_MODE_HEIGHT   0          /*                                     ($fcdfe6 clr.w)     */
 #define VDI_PTS_MODE_POINT    1          /*                                     ($fce284 move.w #1) */
-/* WS_XFM_MODE's normalised coordinates, whose y runs up: vst_height turns a requested height into a
- * distance from the bottom row ($fce022 `tst.w 298(a0)`). */
-#define VDI_XFM_MODE_NDC      0
+/* vqt_extent's answer: the string's box, four corners ($fce724 `move.w #4`) — what v_gtext and d_justified
+ * give it a frame of their own for. */
+#define VDI_EXTENT_ANSWER_POINTS 4
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>

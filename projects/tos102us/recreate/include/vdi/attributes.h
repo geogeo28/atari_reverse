@@ -13,6 +13,49 @@
 
 #include <stdint.h>
 
+#include "machine.h"
+#include "m68k_idioms.h"
+#include "vdi/vdi.h"
+
+/* ---- the clamps the setters and the workstation's initialisation (init_wk) share --------------------
+ * An out-of-range index becomes the attribute's DEFAULT, not the nearest bound, in both. */
+#define VDI_MARKER_TYPE_COUNT    6    /* marker type 1..6, stored 0-based          ($fcae6a, $fcd452 cmp.w #6) */
+#define VDI_MARKER_INDEX_DEFAULT 2    /* ...anything else type 3, the asterisk     ($fcae6a, $fcd45c moveq #2) */
+#define VDI_COLOUR_INDEX_DEFAULT 1    /* a colour index outside 0..DEV_TAB[13]-1   ($fcada4, $fcd43e moveq #1) */
+#define VDI_PATTERN_STYLE_COUNT  24   /* fill style 1..24 under the PATTERN interior ($fcaf74, $fcd4d2)        */
+#define VDI_OTHER_STYLE_COUNT    12   /* ...1..12 under every other                ($fcaf84, $fcd4e8)          */
+#define VDI_FILL_STYLE_FIRST     1    /*                                           ($fcd4d8 cmp.w #1)          */
+#define VDI_FILL_STYLE_DEFAULT   1    /* ...anything else style 1                  ($fcd4de moveq #1)          */
+#define VDI_UD_PATTERN_ROWS      16   /* one plane of the user pattern             ($fcd712, $fcd5a8 cmp.w #16) */
+
+static inline int16_t vdi_within_or(int16_t value, int16_t low, int16_t high, int16_t fallback)
+{
+    return value < low || value > high ? fallback : value;
+}
+
+/* A 1-based index 0-based: outside 1..count it is `fallback` (0-based). */
+static inline int16_t vdi_zero_based_or(int16_t one_based, int16_t count, int16_t fallback)
+{
+    return vdi_within_or((int16_t)(one_based - 1), 0, (int16_t)(count - 1), fallback);
+}
+
+/* A colour index checked against the device's colour count: outside 0..DEV_TAB[13]-1 it is colour 1.
+ *
+ * THE BOUND IS THE COUNT ITSELF (`cmp.w DEV_TAB[13],d7 / bge`), not the count less one: a count of $8000 has no
+ * highest index a word can hold, and every index is then colour 1. DEV_TAB[13] is read at each call. */
+static inline int16_t vdi_colour_index_or_default(const uint8_t *image, int16_t index)
+{
+    int16_t colours = table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_COLOURS_INDEX);
+
+    return index >= colours || index < 0 ? VDI_COLOUR_INDEX_DEFAULT : index;
+}
+
+/* ...and the pen it maps to — `movea.w` then `adda.l`, so the index is sign-extended before it is doubled. */
+static inline uint16_t vdi_mapped_colour(const uint8_t *image, int16_t index)
+{
+    return be16(image + VDI_MAP_COL + (sign_ext16((uint16_t)index) << 1));
+}
+
 /* ---- the line, marker and fill setters ----------------------------------------------------------- */
 void vdi_vsl_type(uint8_t *image);          /* $fcac76, opcode 15  */
 void vdi_vsl_width(uint8_t *image);         /* $fcacc0, opcode 16  */

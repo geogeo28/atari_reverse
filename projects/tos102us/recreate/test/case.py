@@ -14,6 +14,7 @@ import struct
 
 import abi
 from harness import differential, emu, make_image, report
+from recreate_kit.rom_bench import vet_dropped
 
 # The width of a result, as the C signature declares it. A core that returns nothing (`void` — the
 # ROM routine sets no result, or reports only through memory) says so with `None`, which is a claim
@@ -22,7 +23,7 @@ FULL_D0 = 32
 NO_RESULT = None
 
 
-def run(entry, regs, glue, *, width=FULL_D0, poison=True, dropped=(), **seeds):
+def run(entry, regs, glue, *, width=FULL_D0, poison=True, dropped=(), dropped_windows=(), **seeds):
     """One differential at `entry`. Returns the oracle's `info` once everything always-checked holds.
 
     `regs` are the oracle's input registers plus the case's `_pokes`; `glue(lib, buf)` runs the
@@ -34,19 +35,41 @@ def run(entry, regs, glue, *, width=FULL_D0, poison=True, dropped=(), **seeds):
     `dropped` is `((lo, hi, why), ...)`: a span the ORIGINAL writes and the reconstruction deliberately
     does not, left out of the compare with the reason beside it. It is for a divergence the project
     documents, never for scratch — the kit's own `exclude` is that, and refuses any band that is not
-    the stack's. A reason is required so that no span is dropped without one.
+    the stack's. Each span is held to the ONE rule Tier 3's drops are (`rom_bench.vet_dropped`): a reason,
+    and every byte of it one the original's run stores.
+
+    `dropped_windows` is the same shape, for a documented divergence whose EXTENT the run decides: a
+    machine stack the ROM's frames land in (with the holes a `link` reserves), a record armed only on
+    the path that nests. Only the bytes of a window the ORIGINAL stores are dropped (`written_within`)
+    — the rest of it is compared like any other byte — and those spans then meet the same rule.
 
     `seeds` are `harness.differential`'s remaining keyword arguments — `io_seed`, `psg_seed`,
     `schedule`, `wait_sites` — forwarded rather than enumerated. Every one of them is a DECLARATION
     the case makes about the machine, and the four steps around it are the same whichever is
     present, so naming them here would be a second list to keep level with the kit's.
     """
-    assert all(why for _lo, _hi, why in dropped), "a span dropped from the compare with no reason given"
+    assert all(why for _lo, _hi, why in dropped_windows), "a window dropped from the compare with no reason given"
     diffs, info = differential(entry, regs, glue, poison=poison, **seeds)
+    dropped = (*dropped, *written_within(dropped_windows, info["writes"]))
+    vet_dropped(f"the case at {entry:#x}", dropped, info["writes"], info["regs"]["writes_truncated"])
     diffs = [diff for diff in diffs if not any(lo <= diff[0] < hi for lo, hi, _why in dropped)]
     assert not diffs, report(diffs)
     assert_result_is_d0(info, width)
     return info
+
+
+def written_within(windows, writes):
+    """Each `(lo, hi, why)` of `windows` cut down to the runs of it `writes` (a write ledger) covers."""
+    spans = []
+    for lo, hi, why in windows:
+        start = None
+        for address in range(lo, hi + 1):
+            if address < hi and address in writes:
+                start = address if start is None else start
+            elif start is not None:
+                spans.append((start, address, why))
+                start = None
+    return spans
 
 
 def assert_result_is_d0(info, width=FULL_D0):
@@ -240,11 +263,16 @@ class Result:
 # fills afresh on every run, so that the next run's stores to them are still changes.
 def continued(result, refilled=()):
     """The pokes the run after `result` (a `Result`) starts from — its end state, as above."""
+    return continued_from(result.staged, result.final, result.info["writes"], refilled)
+
+
+def continued_from(staged, final, writes, refilled=()):
+    """...out of a run's parts: the pokes it `staged`, the `final` memory and the `writes` ledger it ended with —
+    for a run made by the oracle alone (`emu.run`), which has no `Result`."""
     stack_band = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
     refilled = set(refilled)
-    covered = {address for at, data in result.staged.items() for address in range(at, at + len(data))}
-    pokes = {at: result.after(at, len(data)) for at, data in result.staged.items()
+    covered = {address for at, data in staged.items() for address in range(at, at + len(data))}
+    pokes = {at: bytes(final[at:at + len(data)]) for at, data in staged.items()
              if at not in stack_band and at not in refilled}
-    pokes.update({at: bytes([value]) for at, value in result.info["writes"].items()
-                  if at not in covered and at not in stack_band})
+    pokes.update({at: bytes([value]) for at, value in writes.items() if at not in covered and at not in stack_band})
     return pokes

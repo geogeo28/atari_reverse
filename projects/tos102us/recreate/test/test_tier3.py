@@ -39,6 +39,7 @@ import tier3                                               # noqa: E402  (the re
 # ...and the caller a transcription row is netted by, whose cost `trap.py` measures.
 import trap                                                # noqa: E402
 # ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
+import case                                                # noqa: E402
 import vdi                                                 # noqa: E402
 import vdi_helpers                                         # noqa: E402
 # ...and the glue generator, whose thunks mechanism (T→G) counts.
@@ -340,6 +341,59 @@ def test_the_call_graph_reads_no_call_into_an_immediate_used_as_data():
     assert graph == {"comparer": set(), "helper": set()}
 
 
+# ...and the QUALIFICATION of a name several functions share, by where each is DEFINED (`vdi.symbol_origins`): two
+# statics' CLONES (`.isra.0` in one file, `.constprop.0` in another) are two functions, where folding the suffixes
+# alone merged them; a global and the clone GCC split off it in its own file are one.
+FIRST_CLONE_AT, SECOND_CLONE_AT, GLOBAL_AT, PART_AT, LEFT_AT, RIGHT_AT = 0x31000, 0x31100, 0x31200, 0x31300, 0x31400, 0x31500
+CLONES_LISTING = f"""
+{FIRST_CLONE_AT:08x} <outline.isra.0>:
+   {FIRST_CLONE_AT:x}:\t4eb9 0003 1400 \tjsr {LEFT_AT:x} <left>
+{SECOND_CLONE_AT:08x} <outline.constprop.0>:
+   {SECOND_CLONE_AT:x}:\t4eb9 0003 1500 \tjsr {RIGHT_AT:x} <right>
+{GLOBAL_AT:08x} <vdi_row>:
+   {GLOBAL_AT:x}:\t6100 00fe      \tbsrw {PART_AT:x} <vdi_row.part.0>
+{PART_AT:08x} <vdi_row.part.0>:
+   {PART_AT:x}:\t4eb9 0003 1400 \tjsr {LEFT_AT:x} <left>
+{LEFT_AT:08x} <left>:
+   {LEFT_AT:x}:\t4e75           \trts
+{RIGHT_AT:08x} <right>:
+   {RIGHT_AT:x}:\t4e75           \trts
+"""
+CLONES_ORIGINS = {(FIRST_CLONE_AT, "outline.isra.0"): "a.c", (SECOND_CLONE_AT, "outline.constprop.0"): "b.c",
+                  (GLOBAL_AT, "vdi_row"): vdi.GLOBAL_ORIGIN, (PART_AT, "vdi_row.part.0"): "row.c",
+                  (LEFT_AT, "left"): vdi.GLOBAL_ORIGIN, (RIGHT_AT, "right"): vdi.GLOBAL_ORIGIN}
+
+
+def test_the_call_graph_keeps_two_statics_clones_apart_and_folds_a_globals_own():
+    graph = vdi.graph_of_listing(CLONES_LISTING, {}, {}, CLONES_ORIGINS)
+    assert graph == {"outline@a.c": {"left"}, "outline@b.c": {"right"}, "vdi_row": {"left"}, "left": set(),
+                     "right": set()}
+
+
+# A reference with no address printed, to a name two functions share: it cannot say which, so it names both — an
+# edge too many prices a row on the shipped blob, where the refusal it met before stopped the whole graph.
+ADDRESSLESS_LISTING = CLONES_LISTING + f"""
+{RIGHT_AT + 0x100:08x} <caller>:
+   {RIGHT_AT + 0x100:x}:\t4ebb 0000      \tjsr %pc@(0) <outline.isra.0>
+"""
+
+
+def test_the_call_graph_reads_an_addressless_reference_to_a_shared_name_as_every_one_of_them():
+    origins = {**CLONES_ORIGINS, (RIGHT_AT + 0x100, "caller"): vdi.GLOBAL_ORIGIN}
+    graph = vdi.graph_of_listing(ADDRESSLESS_LISTING, {}, {}, origins)
+    assert graph["caller"] == {"outline@a.c", "outline@b.c"}
+
+
+@pytest.mark.parametrize("symbol", ("vdi_v_clswk", sorted(vdi.TRANSCRIBED_CORES)[0]))
+def test_a_row_symbol_the_call_graph_qualified_is_refused(symbol):
+    """A static sharing a Tier 3 row's (or a transcribed core's) name: the name is ambiguous in the graph (T→) is
+    derived from, and the gate says so rather than pricing the row on whichever node the bare name finds."""
+    graph = {symbol: set(), f"{symbol}@other.c": set()}
+    with pytest.raises(AssertionError, match=symbol):
+        tier3.vet_no_row_is_ambiguous(graph)
+    tier3.vet_no_row_is_ambiguous({symbol: set()})
+
+
 # ---- MECHANISM (T→G): a (T→) row over the bar only by the cycles of the thunks it calls through ------------
 
 # The row the glue carries: do_arrow's arrowhead, whose shipped excess is 94% thunk (13 smul_div calls, 8
@@ -572,3 +626,55 @@ def test_the_entry_overhead_is_the_reset_and_nothing_else(bench):
         f"the oracle charges {bench.overhead} (insns, cycles) before an entry executes anything, "
         f"not the {RESET_OBSERVATION} a 68000's reset exception costs. Every Tier 3 ratio is "
         f"computed net of that number, so it has to be the right one")
+
+
+# ---- a row's DROPPED spans (`RomBench.measure`'s `dropped`, `vdi.TIER3_DROPPED`) ---------------------------------
+# A row over the staged `trap #1`: the ROM parks its own return site in LINEA_RETSAV and our build its caller's.
+DROPPED_ROW = ("vdi_v_clsvwk", "the middle one")
+
+
+def test_a_rows_drop_is_load_bearing_and_nothing_else_differs():
+    """Without its drop the row's own compare reds at exactly the parked return; with it, it measures."""
+    row = tier3.row_named(DROPPED_ROW)
+    assert row.dropped, "the premise: the row drops a span"
+    with pytest.raises(AssertionError, match=f"left different memory.*first {vdi.LINEA_RETSAV + 1:#x}"):
+        tier3.measure(row._replace(dropped=()), tier3.shipped_bench())
+    tier3.measure(row, tier3.shipped_bench())
+
+
+def test_a_drop_over_bytes_the_original_never_writes_is_refused():
+    """A drop can only hide what the ROM writes too: one over bytes it never stores is refused, since what
+    differs there could only be our build's stores."""
+    row = tier3.row_named(DROPPED_ROW)
+    unwritten = vdi_helpers.ANSWERS_AT          # quad_xform's answer words: nothing this row stages or writes
+    widened = row._replace(dropped=row.dropped + ((unwritten, unwritten + vdi.LONG_BYTES, "nothing the ROM writes"),))
+    with pytest.raises(AssertionError, match="never writes"):
+        tier3.measure(widened, tier3.shipped_bench())
+
+
+def test_a_drop_one_longword_wider_than_the_park_is_refused():
+    """PER BYTE: RETSAV widened by the longword after it — which the ROM never stores — is refused, where a
+    whole-span "the ROM changed something in it" test let it through."""
+    row = tier3.row_named(DROPPED_ROW)
+    (lo, hi, why), = row.dropped
+    widened = row._replace(dropped=((lo, hi + vdi.LONG_BYTES, why),))
+    with pytest.raises(AssertionError, match=f"never writes, the first at {hi:#x}"):
+        tier3.measure(widened, tier3.shipped_bench())
+
+
+@pytest.mark.parametrize("name", sorted(vdi.TIER3_DROPPED))
+def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypatch):
+    """What makes a Tier 3 drop safe is a Tier 1 differential of the SAME machine that still compares those bytes:
+    each dropped row's registered companion runs, every `case.run` it makes is at the row's entry with nothing
+    dropped, and it staged the row's own pokes."""
+    runs, run = [], case.run
+
+    def recorded(entry, regs, glue, **kwargs):
+        runs.append((entry, kwargs.get("dropped", ()), kwargs.get("dropped_windows", ())))
+        return run(entry, regs, glue, **kwargs)
+
+    monkeypatch.setattr(case, "run", recorded)
+    result = vdi.TIER3_UNDROPPED[name]()
+    registered, = (row for row in vdi.CASES if row[0] == name)
+    assert runs and all(entry == registered[1] and not dropped and not windows for entry, dropped, windows in runs), runs
+    assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"

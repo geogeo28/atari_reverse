@@ -23,6 +23,7 @@ from harness import BASE_IMAGE, LIB, _lib, addrs, emu
 
 import abi
 import case
+import gemdos
 import vdi
 from vdi import IMAGE_ARG, LONG_ARG, LONG_BYTES, WORD_ARG, WORD_BYTES, WORD_RESULT
 from opcodes import DROP_STACK_BYTES, LOAD_IMMEDIATE, PUSH_RETURN_PC, PUSH_STACK_LONG, RTE, RTS
@@ -51,15 +52,17 @@ for _name, _restype, _argtypes in (
         ("VDI_ROM_S_FA_ATTR", None, (IMAGE_ARG,)),
         ("VDI_ROM_R_FA_ATTR", None, (IMAGE_ARG,))):
     vdi.declare_alcyon(_name, _restype, _argtypes)
+# ...and `gemdos_call`, whose frame is (function.w, argument.l) and whose C takes one more first: the RETURN SITE
+# the ROM finds on the stack under that frame (its caller's `jsr`), which the host build has no stack to hold. It
+# is the one host argument (`vdi.declare_alcyon`), so a C caller's glue pushes the frame alone.
+vdi.declare_alcyon("VDI_ROM_GEMDOS_CALL", LONG_ARG, (IMAGE_ARG, LONG_ARG, vdi.UWORD_ARG, LONG_ARG), host_arguments=1)
 
 # ...and the host signatures of the cores that are NOT Alcyon calls: the three REGISTER ROUTINES, whose
-# contracts are declared below and held to these by `test_tier3.py`, and `gemdos_call`, whose C takes the
-# return site its Alcyon frame cannot carry.
+# contracts are declared below and held to these by `test_tier3.py`.
 REGISTER_SIGNATURES = {
     "vdi_sort_words": (None, (IMAGE_ARG, LONG_ARG, LONG_ARG)),
     "vdi_clamp_mouse": (LONG_ARG, (IMAGE_ARG, LONG_ARG, LONG_ARG, ctypes.POINTER(LONG_ARG))),
     "vdi_get_kbshift": (LONG_ARG, (IMAGE_ARG, LONG_ARG)),
-    "vdi_gemdos_call": (LONG_ARG, (IMAGE_ARG, LONG_ARG, ctypes.c_uint16, LONG_ARG)),
 }
 for _symbol, (_restype, _argtypes) in REGISTER_SIGNATURES.items():
     getattr(_lib, _symbol).restype = _restype
@@ -110,16 +113,18 @@ def answer(result):
 
 IMAGE_BYTES = len(BASE_IMAGE)
 FRESH_IMAGE = f"buf = (ctypes.c_uint8 * {IMAGE_BYTES})()"
+CHILD_SECONDS = 60      # how long a child is given before `subprocess.TimeoutExpired` ends it
 
 
-def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE):
+def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE, seconds=CHILD_SECONDS):
     """What the host core `symbol` says when called with `arguments` in a CHILD process, where its
     refusal — `recreate_not_reconstructed`, an `abort()` — can end the run without ending pytest's.
     `arguments` is Python source; `prelude` is the statements before the call, which bind `buf` (a fresh
-    image by default). Answers `(returncode, stderr)`."""
+    image by default). Answers `(returncode, stderr)`; a child still running after `seconds` is killed and
+    raises `subprocess.TimeoutExpired`."""
     probe = (f"import ctypes, mmap; lib = ctypes.CDLL({str(LIB)!r}); {prelude}; "
              f"lib.{symbol}.argtypes = [{', '.join(argtypes)}]; lib.{symbol}({arguments})")
-    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60)
+    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=seconds)
     return run.returncode, run.stderr
 
 
@@ -137,11 +142,12 @@ def _io_declaration(io_seed):
             f"(ctypes.c_uint8 * {count})(*{list(writeback)}), {count})")
 
 
-def refusal_over(symbol, pokes, io_seed=None):
+def refusal_over(symbol, pokes, io_seed=None, *, seconds=CHILD_SECONDS, read_back=True):
     """What the host core `symbol(image)` says over the image `pokes` stage, with the I/O bytes `io_seed`
     declared, in a CHILD process (`refusal`) — and the image AS THE CHILD LEFT IT: the child's `buf` is a
     SHARED mapping of the staged image's file, so every store the core made before it halted is still there
-    for the caller to read. Answers `(returncode, stderr, image)`."""
+    for the caller to read. Answers `(returncode, stderr, image)`; a caller that reads no byte of the image
+    passes `read_back=False` and is answered None for it, rather than the whole machine read back."""
     image = bytes(vdi.make_image(pokes))
     assert len(image) == IMAGE_BYTES
     with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as handle:
@@ -151,8 +157,8 @@ def refusal_over(symbol, pokes, io_seed=None):
                    f"buf = (ctypes.c_uint8 * {IMAGE_BYTES}).from_buffer(mmap.mmap(image_file.fileno(), {IMAGE_BYTES}))")
         if io_seed:
             prelude += f"; {_io_declaration(io_seed)}"
-        returncode, stderr = refusal(symbol, ["ctypes.c_void_p"], "buf", prelude=prelude)
-        return returncode, stderr, Path(handle.name).read_bytes()
+        returncode, stderr = refusal(symbol, ["ctypes.c_void_p"], "buf", prelude=prelude, seconds=seconds)
+        return returncode, stderr, Path(handle.name).read_bytes() if read_back else None
     finally:
         Path(handle.name).unlink()
 
@@ -227,22 +233,107 @@ def register_transcription(name, label, pokes, regs=None, frame=None):
 
 # ---- a RECORDING TRAP HANDLER, for the one transcription that takes a trap ---------------------------
 # gemdos_call's `.S` cannot be compared with the ROM through the real GEMDOS (`test_vdi_helpers_gemdos.py`
-# says why), so its rows point the trap's RAM vector at this instead: it copies the caller's function
-# word and longword out of the exception frame into `TRAP_LEDGER_AT`, answers `TRAP_ANSWER` in D0 and
-# returns — the same on both sides.
-MOVE_L_STACK_TO_ABSOLUTE = b"\x23\xef"      # move.l  <d16>(sp),<xxx>.l
-MOVE_W_STACK_TO_ABSOLUTE = b"\x33\xef"      # move.w  <d16>(sp),<xxx>.l
-EXCEPTION_FRAME_BYTES = 6                   # the 68000's SR and PC, above the caller's words
+# says why), so its rows point the trap's RAM vector at this instead: it APPENDS the caller's function word
+# and longword, out of the exception frame, to a LEDGER at `TRAP_LEDGER_AT`, answers `TRAP_ANSWER` (or the
+# answer a case stages) in D0 and returns — the same on both sides. The ledger is a pointer to its next free
+# entry, then the entries: a routine that traps several times (v_clswk's Mfree per record) leaves every call,
+# in order, where a single slot would keep the last alone and let a wrong one before it through.
+PUSH_A0 = b"\x2f\x08"                       # move.l  a0,-(sp)
+POP_A0 = b"\x20\x5f"                        # movea.l (sp)+,a0
+MOVEA_L_ABSOLUTE_A0 = b"\x20\x79"           # movea.l <xxx>.l,a0
+MOVE_L_STACK_TO_A0_POSTINC = b"\x20\xef"    # move.l  <d16>(sp),(a0)+
+MOVE_W_STACK_TO_A0_POSTINC = b"\x30\xef"    # move.w  <d16>(sp),(a0)+
+STORE_A0_ABSOLUTE = b"\x23\xc8"             # move.l  a0,<xxx>.l
+FRAME_WORDS_AT = LONG_BYTES + addrs.TRAP_EXCEPTION_FRAME_BYTES     # the caller's words: above the saved A0, SR and PC
 TRAP_ANSWER = 0x0001_2340
-TRAP_LEDGER_BYTES = WORD_BYTES + LONG_BYTES
-TRAP_HANDLER_STUB = (MOVE_L_STACK_TO_ABSOLUTE + struct.pack(">hI", EXCEPTION_FRAME_BYTES, TRAP_LEDGER_AT)
-                     + MOVE_W_STACK_TO_ABSOLUTE + struct.pack(">hI", EXCEPTION_FRAME_BYTES + LONG_BYTES,
-                                                               TRAP_LEDGER_AT + LONG_BYTES)
-                     + LOAD_IMMEDIATE["d0"] + struct.pack(">I", TRAP_ANSWER)
-                     + RTE)
+TRAP_ENTRY_BYTES = WORD_BYTES + LONG_BYTES  # one call: the function word, the longword
+TRAP_LEDGER_ENTRIES = 8                     # more calls than any routine here makes
+TRAP_ENTRIES_AT = TRAP_LEDGER_AT + LONG_BYTES
+TRAP_LEDGER_BYTES = LONG_BYTES + TRAP_LEDGER_ENTRIES * TRAP_ENTRY_BYTES
+assert TRAP_LEDGER_AT + TRAP_LEDGER_BYTES <= SOURCE_FORM_AT
 
 
-def recording_trap_pokes(vector):
-    """`vector` pointed at the recording handler, which is staged with its ledger FILLed."""
-    return {vector: struct.pack(">I", TRAP_HANDLER_AT), TRAP_HANDLER_AT: TRAP_HANDLER_STUB,
-            TRAP_LEDGER_AT: bytes([vdi.FILL]) * TRAP_LEDGER_BYTES}
+def trap_handler_stub(answer=TRAP_ANSWER):
+    """The recording handler's instructions, answering `answer` in D0 and leaving every other register as found."""
+    return (PUSH_A0 + MOVEA_L_ABSOLUTE_A0 + struct.pack(">I", TRAP_LEDGER_AT)
+            + MOVE_L_STACK_TO_A0_POSTINC + struct.pack(">h", FRAME_WORDS_AT)
+            + MOVE_W_STACK_TO_A0_POSTINC + struct.pack(">h", FRAME_WORDS_AT + LONG_BYTES)
+            + STORE_A0_ABSOLUTE + struct.pack(">I", TRAP_LEDGER_AT) + POP_A0
+            + LOAD_IMMEDIATE["d0"] + struct.pack(">I", answer)
+            + RTE)
+
+
+assert TRAP_HANDLER_AT + len(trap_handler_stub()) <= TRAP_LEDGER_AT
+
+
+def recording_trap_pokes(vector, answer=TRAP_ANSWER):
+    """`vector` pointed at the recording handler, which is staged with its ledger empty and its entries FILLed —
+    answering `answer` (a caller that goes on to use D0 stages the value the real call would have answered)."""
+    return {vector: struct.pack(">I", TRAP_HANDLER_AT), TRAP_HANDLER_AT: trap_handler_stub(answer),
+            TRAP_LEDGER_AT: struct.pack(">I", TRAP_ENTRIES_AT)
+            + bytes([vdi.FILL]) * (TRAP_LEDGER_BYTES - LONG_BYTES)}
+
+
+def recording_trap_handler(function, answer=TRAP_ANSWER):
+    """The recording handler's HOST TWIN, as a `gemdos.bound_handlers` entry for `function`: the same entry appended
+    to the same ledger, and the same answer — so a differential compares every call each side trapped with."""
+    def handler(buf, arguments, _argument_bytes):
+        at = case.long_in(buf, TRAP_LEDGER_AT)
+        stores = {at: struct.pack(">HI", function, case.long_in(buf, arguments)),
+                  TRAP_LEDGER_AT: struct.pack(">I", at + TRAP_ENTRY_BYTES)}
+        for store_at, data in stores.items():
+            for offset, byte in enumerate(data):     # byte by byte: `buf` is a C pointer, which takes no slice store
+                buf[store_at + offset] = byte
+        return answer
+    return handler
+
+
+def trapped_calls(image):
+    """The ledger in `image` as `[(function, longword), ...]`, in the order the calls were made."""
+    count, spare = divmod(case.long_in(image, TRAP_LEDGER_AT) - TRAP_ENTRIES_AT, TRAP_ENTRY_BYTES)
+    assert not spare and 0 <= count <= TRAP_LEDGER_ENTRIES, "the ledger's pointer is not one the handler leaves"
+    entries = (TRAP_ENTRIES_AT + index * TRAP_ENTRY_BYTES for index in range(count))
+    return [(case.word_in(image, at), case.long_in(image, at + WORD_BYTES)) for at in entries]
+
+
+# ---- the GEMDOS DOOR as every battery through it stages it (`test_vdi_helpers_gemdos.py` says why each is so) ----
+# LINEA_RETSAV STALE, so a door that skipped its park shows: the value a case reads back when no call was made.
+RETSAV_STALE_VALUE = vdi.STALE_LONG
+RETSAV_STALE = vdi.linea_pokes(RETSAV=RETSAV_STALE_VALUE)
+# The door's three documented windows (`case.run`'s `dropped_windows`: only what the ROM's run stores in each).
+BASEPAGE = case.long_in(BASE_IMAGE, addrs.GEMDOS_P_RUN)
+SAVE_AREA_END = addrs.BASEPAGE_SAVED_FRAME + LONG_BYTES
+GEMDOS_STACK_DEPTH = 0x100                       # deeper than Malloc's or Mfree's frames reach
+TERMINATION_RECORD_BYTES = 12
+GEMDOS_DOOR_WINDOWS = (
+    (BASEPAGE + addrs.BASEPAGE_SAVED_D0, BASEPAGE + SAVE_AREA_END,
+     "p_run's register-save area, written by the trap entry the host build has no counterpart for"),
+    (addrs.GEMDOS_SUPERVISOR_STACK - GEMDOS_STACK_DEPTH, addrs.GEMDOS_SUPERVISOR_STACK,
+     "GEMDOS's own stack: the ROM dispatcher's frames, which the host build's C does not have"),
+    (addrs.GEMDOS_TERMINATION_JMPBUF, addrs.GEMDOS_TERMINATION_JMPBUF + TERMINATION_RECORD_BYTES,
+     "the termination record, which src/gemdos/dispatch.c omits"),
+)
+
+
+def _memory_handler(core):
+    """A `Malloc`/`Mfree` handler: its one longword argument, from where the dispatcher left it."""
+    return lambda buf, arguments, _argument_bytes: core(buf, case.long_in(buf, arguments))
+
+
+_lib.gemdos_malloc.restype = ctypes.c_uint32
+_lib.gemdos_mfree.restype = ctypes.c_uint32
+# The CANDIDATE's side of a real `trap #1`: the dispatcher's Malloc and Mfree bound to the reconstructed memory manager.
+GEMDOS_HANDLERS = {gemdos.rom_handler(addrs.GEMDOS_MALLOC_FN): _memory_handler(_lib.gemdos_malloc),
+                   gemdos.rom_handler(addrs.GEMDOS_MFREE_FN): _memory_handler(_lib.gemdos_mfree)}
+
+
+def staged_gemdos_trap_pokes(answer=TRAP_ANSWER):
+    """The `trap #1` vector pointed at the recording handler, answering `answer`, with LINEA_RETSAV stale."""
+    return vdi.merge_pokes(RETSAV_STALE, recording_trap_pokes(addrs.VECTOR_TRAP_GEMDOS, answer))
+
+
+def staged_gemdos_handlers(answer=TRAP_ANSWER):
+    """...and its host twin for the two calls the VDI makes."""
+    return {gemdos.rom_handler(function): recording_trap_handler(function, answer)
+            for function in (addrs.GEMDOS_MALLOC_FN, addrs.GEMDOS_MFREE_FN)}
+

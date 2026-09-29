@@ -61,9 +61,12 @@ ALLOWED_ALIASES = {
     frozenset(("GEMDOS_TIME_MAX_MINUTE", "VDI_FILL_QUEUE_LAST")):
         "two COUNTS, not addresses, both 1920: a day's minutes in two-minute steps and the contour fill's "
         "queue in words",
-    frozenset(("VDI_DDA_ACCUMULATOR_START", "VDI_FILL_ROW_MASK")):
-        "a start value and a MASK, not addresses, both $7fff: half the text scaler's 65536 and a queued "
-        "row without its direction flag",
+    frozenset(("VDI_DDA_ACCUMULATOR_START", "VDI_FILL_ROW_MASK", "VDI_TRIG_SCALE")):
+        "a start value, a MASK and a SCALE, not addresses, all $7fff: half the text scaler's 65536, a queued "
+        "row without its direction flag, and isin's answer for 90 degrees",
+    frozenset(("LINEA_GDP_SCRATCH", "LINEA_GDP_DEL_ANG")):
+        "the arc scratch's 23 words above CUR_FONT (two more lie below it) and the first of them, the arc's "
+        "sweep — a region and one word in it, as the Line-A base and its +0 field are",
 }
 
 

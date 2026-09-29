@@ -90,9 +90,23 @@ static inline uint16_t font_word(const uint8_t *image, uint32_t font, uint32_t f
     return be16(font_header(image, font) + field);
 }
 
+/* A bit of FONT_FLAGS (FONT_FLAG_*): its LOW byte is what every `btst` on the flags reads (`btst #n,67(a5)`). */
+static inline int font_flag(const uint8_t *image, uint32_t font, uint16_t mask)
+{
+    return (font_word(image, font, FONT_FLAGS) & mask) != 0;
+}
+
 static inline uint32_t font_long(const uint8_t *image, uint32_t font, uint32_t field)
 {
     return be32(font_header(image, font) + field);
+}
+
+/* Where glyph `index` (a character less FONT_FIRST_ADE, a WORD) has its entry in the offset table at `table`:
+ * the index SIGN-EXTENDED into the address (`movea.w`) and doubled in 32 bits, so an index of $8000 or more
+ * reads BELOW the table. The glyph's column is that entry; its right edge the next, a word on. */
+static inline uint32_t font_offset_entry(uint32_t table, uint16_t index)
+{
+    return table + sign_ext16(index) * VDI_WORD_BYTES;
 }
 
 /* The four points the size setters and vqt_attributes answer for a font (`$fce382..`, `$fce5e8..`, the

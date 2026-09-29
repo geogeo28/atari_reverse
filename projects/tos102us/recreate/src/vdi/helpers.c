@@ -151,7 +151,6 @@ int16_t vdi_smul_div(int16_t multiplicand, int16_t multiplier, int16_t divisor)
  * NEGATIVE whole-degree index reads the ROM BELOW the table — kept, since nothing refuses it. */
 #define TENTHS_PER_QUARTER    900
 #define TENTHS_PER_HALF       1800
-#define TENTHS_PER_TURN       3600
 #define TENTHS_PER_DEGREE     10
 #define LOWER_HALF_FIRST_QUADRANT 2     /* quadrants past 1 are negated ($fcac32 cmpi.w #1 / ble) */
 
@@ -169,8 +168,8 @@ int16_t vdi_isin(const uint8_t *image, int16_t angle)
     int16_t quadrant, degree, tenths, sine;
     uint32_t divided;
 
-    while (angle > TENTHS_PER_TURN)
-        angle = (int16_t)(angle - TENTHS_PER_TURN);
+    while (angle > VDI_TENTHS_PER_TURN)
+        angle = (int16_t)(angle - VDI_TENTHS_PER_TURN);
     quadrant = quotient_word(m68k_divs_w((uint32_t)(int32_t)angle, TENTHS_PER_QUARTER));
     switch (quadrant) {
     case QUADRANT_SECOND:
@@ -180,10 +179,10 @@ int16_t vdi_isin(const uint8_t *image, int16_t angle)
         angle = (int16_t)(angle - TENTHS_PER_HALF);
         break;
     case QUADRANT_FOURTH:
-        angle = (int16_t)(TENTHS_PER_TURN - angle);
+        angle = (int16_t)(VDI_TENTHS_PER_TURN - angle);
         break;
     case QUADRANT_FULL_TURN:
-        angle = (int16_t)(angle - TENTHS_PER_TURN);
+        angle = (int16_t)(angle - VDI_TENTHS_PER_TURN);
         break;
     default:
         break;
@@ -209,8 +208,8 @@ int16_t vdi_isin(const uint8_t *image, int16_t angle)
 int16_t vdi_icos(const uint8_t *image, int16_t angle)
 {
     angle = (int16_t)(uint16_t)(angle + TENTHS_PER_QUARTER);
-    if (angle > TENTHS_PER_TURN)
-        angle = (int16_t)(angle - TENTHS_PER_TURN);
+    if (angle > VDI_TENTHS_PER_TURN)
+        angle = (int16_t)(angle - VDI_TENTHS_PER_TURN);
     return vdi_isin(image, angle);
 }
 

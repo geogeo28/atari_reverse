@@ -192,7 +192,7 @@ def _line_buffer(maximum):
 
 def _cconrs(pokes, maximum=MAXIMUM, leaves=()):
     return dio.run(CCONRS, CCONRS_WORDS, {**_line_buffer(maximum), **pokes}, leaves, max_insns=ECHO_BUDGET,
-                   dropped=dio.NESTED_RECORD)
+                   dropped_windows=dio.NESTED_RECORD)
 
 
 def _line(result, length):

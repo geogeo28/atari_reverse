@@ -34,6 +34,7 @@ import case
 import gemdos
 import isr
 import vdi
+import vdi_mouse
 from case import merge_pokes
 from opcodes import DROP_STACK_BYTES, MOVEM_L_ABSOLUTE_TO_REGISTERS, PUSH_RETURN_PC, PUSH_STACK_LONG, PUSH_STACK_WORD, RTS
 
@@ -216,3 +217,26 @@ SCREEN_FILL = 0xA7
 def filled_screen(base=SCREEN_BASE, extra=PAST_SCREEN_BYTES):
     """The whole screen at `base`, and `extra` bytes past it, FILLed."""
     return {base: bytes([SCREEN_FILL]) * (SCREEN_BYTES + extra)}
+
+
+# ---- the timer and the mouse's world, as a workstation's open and close find it ------------------------------------
+SNAPSHOT_NEXT_TIM = vdi.linea(BASE_IMAGE, "NEXT_TIM")     # GEMDOS's own tick, which v_opnwk displaced
+CURSOR_DRAWN = 1 << addrs.CON_FLAG_DRAWN
+# The console's cursor lock is called with a cursor CELL of one row placed in this module's band, so the
+# hide's inversion lands where the clear that follows cannot erase it (four bytes, one a plane, two apart).
+CELL = {addrs.CON_CELL_HEIGHT: struct.pack(">H", 1), addrs.CON_CURSOR_ADDRESS: struct.pack(">I", CURSOR_CELL_AT),
+        CURSOR_CELL_AT: bytes(range(0x30, 0x30 + CURSOR_CELL_BYTES))}
+
+
+def cursor(depth, flags):
+    return {addrs.CON_CURSOR_DISABLE: struct.pack(">H", depth), addrs.CON_STATE_FLAGS: bytes([flags])}
+
+
+def restore_pokes(next_tim=SNAPSHOT_NEXT_TIM, depth=2, flags=1):
+    """The workstation closing: the tick installed, NEXT_TIM what it displaced, the mouse's VBL slot taken, and the
+    console's cursor where the snapshot has it — ON the screen, so the cursor drawn after the clear shows."""
+    return trap_pokes(merge_pokes(
+        filled_screen(), cursor(depth, flags), vdi.linea_pokes(NEXT_TIM=next_tim),
+        {addrs.SYSVAR_ETV_TIMER: struct.pack(">I", addrs.VDI_ROM_TIMER_TICK),
+         vdi_mouse.VBL_QUEUE: struct.pack(">I", addrs.VDI_ROM_VBL_DRAW_CURSOR)}))
+

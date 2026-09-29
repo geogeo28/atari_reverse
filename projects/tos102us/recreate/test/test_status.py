@@ -196,3 +196,31 @@ def test_every_address_the_table_prices_has_a_verified_row():
         + ", ".join(f"{address:#x} ({_as_text(measured[address])})" for address in missing)
         + ". The ledger is the document reports quote; a measured function missing from it is a "
           "function nobody can find")
+
+
+# ...and the row a routine verified but NOT priced carries instead: its Status cell `⚠️ verified, unpriced`.
+_UNPRICED_ROW_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|(?:[^|]*\|){4}[^|]*⚠️ verified, unpriced[^|]*\|", re.M)
+
+
+def _unpriced_rom_entries():
+    """The ROM addresses of every case registered VERIFIED and UNPRICED (`test_boot_snapshot.UNPRICED_CASES`) — a
+    case entered at a staged stub in RAM names no routine, and is priced, if at all, by the routine's own rows."""
+    import test_boot_snapshot
+    from harness import addrs
+
+    rom = range(addrs.ROM_BASE, addrs.ROM_BASE + addrs.ROM_BYTES)
+    return {entry: name for name, entry, *_rest in test_boot_snapshot.UNPRICED_CASES if entry in rom}
+
+
+def test_every_routine_verified_unpriced_has_a_row_too():
+    """THE UNPRICED CASES' half of the pin above: a table walk cannot see a routine the table does not price, so a
+    routine whose only cases are UNPRICED could be verified, swept and absent from the ledger. Each such address needs
+    a row — `✅ verified` when another of its rows is priced (the pin above then holds its ratios to the table), or
+    `⚠️ verified, unpriced` when none is, which the pin above leaves alone and a `✅` it would red."""
+    rows = {address for address, _cell in _verified_rows()}
+    rows |= {int(match["addr"], 16) for match in _UNPRICED_ROW_RE.finditer(_status())}
+    missing = {entry: name for entry, name in _unpriced_rom_entries().items() if entry not in rows}
+    assert not missing, (
+        f"{len(missing)} routine(s) with verified, unpriced cases have no STATUS.md row: "
+        + ", ".join(f"{entry:#x} ({name})" for entry, name in sorted(missing.items()))
+        + ". Add one — `⚠️ verified, unpriced` with the reason, when no row of the routine is priced")

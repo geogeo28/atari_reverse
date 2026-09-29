@@ -19,6 +19,9 @@
 
 /* ---- v_pline's line style: WS_LINE_INDEX below this reads VDI_LINE_STYLES, from it WS_UD_LS ------ */
 #define VDI_LINE_STYLE_USER   6          /*                                     ($fcb9f2 cmp.w #6)  */
+/* The one-pixel WS_LINE_WIDTH: v_pline's and the rounded box's polyline test ($fcba46, $fcc60c), the arrowhead's
+ * short length ($fcd1a8) and the width v_pmarker borrows ($fcbab0). */
+#define VDI_THIN_LINE_WIDTH   1
 
 /* ---- the MARKER SHAPES VDI_MARKER_SHAPES points at, one per WS_MARK_INDEX (0-based) --------------
  * A shape is a count of polylines, then each polyline as a count of points and that many (x, y) word
@@ -42,6 +45,9 @@
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
+/* The line attributes of the workstation at `work` into Line-A: LN_MASK as WS_LINE_INDEX names it, and COLBIT
+ * from WS_LINE_COLOR — what v_pline and the rounded box's outline stage alike ($fcb9f2, $fcc5b8). */
+void set_line_attributes(uint8_t *image, uint32_t work);
 void vdi_v_pline(uint8_t *image);                                          /* $fcb9e0, opcode 6 */
 void vdi_v_pmarker(uint8_t *image);                                        /* $fcba7a, opcode 7 */
 void vdi_cir_dda(uint8_t *image);                                          /* $fcca86 */

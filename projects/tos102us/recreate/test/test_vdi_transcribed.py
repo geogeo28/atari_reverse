@@ -105,6 +105,29 @@ def test_the_c_callers_of_a_transcribed_core_are_the_ones_the_door_names():
     assert vdi.callers_of_transcribed_cores(vdi.call_graph(BENCH_ELF)) == vdi.C_CALLERS_OF_TRANSCRIBED_CORES
 
 
+# Two `static` functions of ONE name in two files (and a split piece of one of them): the graph is keyed by name,
+# so without the qualification their bodies would merge and each would appear to call what the other calls.
+FIRST_AT, SECOND_AT, SPLIT_AT, CALLEE_AT, OTHER_AT = 0x40000, 0x40100, 0x40200, 0x40300, 0x40400
+SHARED_NAME_LISTING = f"""
+{FIRST_AT:08x} <outline>:
+   {FIRST_AT:x}:\t6100 02fe      \tbsrw {CALLEE_AT:x} <callee>
+{SECOND_AT:08x} <outline>:
+   {SECOND_AT:x}:\t4eb9 0004 0200 \tjsr {SPLIT_AT:x} <outline.part.0>
+{SPLIT_AT:08x} <outline.part.0>:
+   {SPLIT_AT:x}:\t4eb9 0004 0404 \tjsr {OTHER_AT + 4:x} <other+0x4>
+{CALLEE_AT:08x} <callee>:
+   {CALLEE_AT:x}:\t4e75           \trts
+{OTHER_AT:08x} <other>:
+   {OTHER_AT:x}:\t4eb9 0004 0100 \tjsr {SECOND_AT:x} <outline>
+"""
+
+
+def test_the_call_graph_keeps_two_functions_of_one_name_apart():
+    graph = vdi.graph_of_listing(SHARED_NAME_LISTING, {}, {})
+    assert graph == {f"outline@{FIRST_AT:x}": {"callee"}, f"outline@{SECOND_AT:x}": {f"outline@{SPLIT_AT:x}"},
+                     f"outline@{SPLIT_AT:x}": {"other"}, "callee": set(), "other": {f"outline@{SECOND_AT:x}"}}
+
+
 # `TRANSCRIBED_CORE` on the line before a definition: the attribute, then the return type and the name.
 _MARKED_DEFINITION = re.compile(r"^TRANSCRIBED_CORE\n[a-z][\w ]*?\b(\w+)\(", re.MULTILINE)
 

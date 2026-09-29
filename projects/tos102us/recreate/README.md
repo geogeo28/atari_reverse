@@ -173,6 +173,10 @@ assert info["ret"] == info["regs"]["d0"]
     `test/test_bios_ikbd.py`'s two-pass case is the worked example.
 * **Off-image effects are compared automatically**: the PSG access ledger and register file, the
   hardware read and write ledgers, the scheduled-write wait counts.
+* **A difference by nature is dropped by name, per byte**: `case.run(dropped=((lo, hi, why),))`, and every
+  dropped byte must be one the ORIGINAL wrote (`rom_bench.vet_dropped`, the rule Tier 3's drops share). Where
+  the run decides the extent (a stack with `link` holes, a record armed on one path), use
+  `case.run(dropped_windows=...)`: only the bytes of the window the original stores are dropped.
 
 ## A STAGED RAM DISK — the shape the file system needed
 
@@ -301,6 +305,9 @@ this one — so `RomBench.measure` requires the m68k build to leave the same ima
 value (at the width the C signature declares), the same callee-saved registers and the same chip
 traffic as the ROM did, and refuses a run that read an I/O byte no seeded model serves.
 `tools/recreate_kit/README.md`, "Tier 3's numerator", has the mechanism and the measured sharpness.
+**A Tier 3 drop needs `undropped=`**: `vdi.register(..., dropped=((lo, hi, why),), undropped=<differential>)`
+refuses a drop without a companion Tier 1 run over the row's own pokes that drops nothing, and
+`test_tier3.py` runs every companion (the table prints each drop under its row).
 
 Two things a target build needs that the host build does not, both in `atari/`: `target.mk`, the one
 definition of the flags **and of the include paths** (the ROM build and this one read it, so a ratio

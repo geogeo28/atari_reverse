@@ -13,7 +13,7 @@ counts in this file against its rows.
 | bios | 20 | — | 0.88–3.84x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
-| vdi + linea | 134 | — | shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 44 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.78–1.10), four rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–1.15 shipped, 0.99–1.08 net of the thunks) | STARTED |
+| vdi + linea | 146 | — | shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 44 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.42–1.10), ten rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–1.17 shipped, 0.90–1.08 net of the thunks); the GEMDOS-trap rows priced over a staged `trap #1` with LINEA_RETSAV dropped by name | STARTED |
 | aes | 0 | — | — | NOT STARTED |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
@@ -255,7 +255,7 @@ a fraction of what it moved the core by, and these three rows are a weaker instr
 figures suggest. NETTING THE STUB OUT (a per-row `staged_entry` measured from a zero-count `Rwabs`)
 is a bench change and is PARKED below.
 
-## Verified — vdi (134)
+## Verified — vdi (146)
 
 The VDI + Line-A component (`$fc9f0c..$fd2f21`, `src/vdi/`), started 2026-09-26 on a read-only map of the whole range and a
 FOUNDATION every band builds on: `include/vdi/{linea,vdi,font}.h` (every field cited to a ROM access and TAGGED with its width,
@@ -325,7 +325,7 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfcd0c2` | `r_fa_attr` (same) | 2 | 12 / 256 | **0.63** | ✅ verified | the round trip via `case.continued` |
 | `0xfcfedc` | `clamp_mouse` (`mouse.S`; C in `helpers.c`) | 20 | 11 / 136, 10 / 136 | **2.27**, **2.29** (T); `.S` **1.00**, **1.00** | ✅ verified | moved into `mouse.S` (the ISR reaches it by `bsr.s`); a negative DEV_TAB bound (x=0) pinned on the `.S` too |
 | `0xfca648` | `get_kbshift` (same; `.S`) | 11 | 4 / 80 | **2.10** (T); `.S` **1.00** | ✅ verified | its `rts` is vdi_nop's ($fca652) |
-| `0xfcfa9c` | `gemdos_call` (same; `.S`) | 6 | `.S` 16 / 362 | C unpriced — its TARGET branch is UNEXERCISED (the ROM build links the `.S`); `.S` **1.00** | ✅ verified | Tier 1 through the REAL `trap #1` into the ROM's GEMDOS vs the reconstructed dispatcher + memory manager (Malloc, Mfree, a refused Mfree), three documented spans dropped (p_run's register save, GEMDOS's stack, the termination record); the `.S` over a staged recording trap handler; returns through whatever RETSAV holds (not exercised with a changed value) |
+| `0xfcfa9c` | `gemdos_call` (same; `.S`) | 6 | `.S` 20 / 410 | C unpriced — its TARGET branch is UNEXERCISED (the ROM build links the `.S`); `.S` **1.00** | ✅ verified | Tier 1 through the REAL `trap #1` into the ROM's GEMDOS vs the reconstructed dispatcher + memory manager (Malloc, Mfree, a refused Mfree), three documented WINDOWS (p_run's register save, GEMDOS's stack, the termination record) of which only the bytes the ROM writes are dropped (`case.run(dropped_windows=)`, band 3 — the stack drop had covered 124–200 bytes the ROM never writes); the `.S` over a staged recording trap handler whose ledger now APPENDS (8 entries; +4 insns / +48 cycles a trap on both columns); returns through whatever RETSAV holds (not exercised with a changed value). Band 3's workstation rows execute its generated glue thunk (136 cycles) |
 | `0xfd2d32` | `vr_trnfm` (opcode 110, same; `.S`) | 67 | 134 / 1522, 122 / 1420 copy; 537 / 4910, 527 / 4828 in place; 35 / 580 one word | **0.94**, **0.94**, **1.32**, **1.35**, **1.04** (T); `.S` **1.00** ×5 | ✅ verified | copy $fd2db4 and in-place $fd2d80; 1-4 planes, odd width, both directions, one MFDB as both; the `.S` clobbers D7 outside its movem |
 | `0xfca1b8` | `concat` (`src/vdi/raster.c`; `raster.S`) | 36 | 15 / 216 | **1.70** (T); `.S` **1.00** | ✅ verified | offset = y·BYTES_LIN + ((x&~15) asr SHIFT[PLANES]); the shift table starts at the low byte of its own `rts` (only 1/2/4/8 planes right) and its count is taken mod 64, ≥16 leaving x's sign (13/18 planes pinned); D0.w = x&15, D2's high word clobbered |
 | `0xfcface` | `$a001 put_pixel` (same) | 37 | 47 / 552 | **1.39** (T); `.S` **1.00** | ✅ verified | colours 0..15, 1/2/4 planes and a 13-plane large-x case; unclipped; also through the Line-A exception |
@@ -401,6 +401,18 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfce62a` | `vqt_extent` (opcode 116, same) | 52 | 263 / 2568 twelve, 572 / 4830 effects, 65 / 918 one | **0.80** twelve characters, 8x8, **0.91** every effect, scaled, **0.95** one character (T→) | ✅ verified | sums IN MEMORY at $1706 and re-reads $1706/$1708 per corner; other rotations answer no corners (contrl[2] still 4); the 270° box is wrong (ROM bug, pinned) |
 | `0xfce7f0` | `vqt_width` (opcode 117, same) | 31 | 41 / 578, 81 / 996, 22 / 408, 53 / 692 | **0.94** 8x8, **1.15** proportional, offsets, scaled (T→G `glue`), **0.96** outside the font, **0.95** ptsout over the font's HOR_TABLE (T→) | ✅ verified | offsets cleared before intin; unsigned bounds; the HOR index wraps at $4000 where the offset index does not; HOR_TABLE RE-READ after the left offset's store, pinned in BOTH tiers (target TBAA had fused it). The proportional row is 1.15 as shipped, NET OF THE GLUE 1.08: the rest is the faithful second read and GCC's spills round the conditional act_siz under `-fno-strict-aliasing` |
 | `0xfced06` | `vst_load_fonts` (opcode 119, same) | 7 | 6468 / 77936, 15 / 326 | **1.00** three GDOS fonts, two forms turned, **0.98** already loaded | ✅ verified | once only; turns and FLAGS each Intel form; faces = id changes; NO GEMDOS call (the map was wrong); reads contrl[10..11], past the 11 words the others use |
+| `0xfcc914` | `clc_pts` (the arcs' point, `src/vdi/arcs.c`) | 126 | 191 / 3806 | **0.87** an interpolated angle (T→) | ✅ verified | every octant, 0 / 3599 / 3600 / 3601 / 5000 / two turns and negative angles (isin reads below its table); radii 0, negative and 30000 (the word wraps); indices 0..258 and a NEGATIVE one (sign-extended, then doubled); PTSIN read once, YRAD/YC RE-READ after the x store (ptsin laid over YRAD). Entered by `jsr` as vdi_gdp's arms leave the machine (band 4 reconstructs the arms) |
+| `0xfcc79e` | `clc_arc` (same) | 35 | 93297 / 937800 circle, 13 / 238 clipped away | **1.01** circle, radius 60, filled and outlined, **0.69** trivially clipped away (T→) | ✅ verified | the circle and ellipse arms' scratch, 32 and 128 steps; the trivial reject as WORD sums when CLIP is on (each side one past and exactly at the edge, the sums wrapped both ways), none with CLIP off; the LAST point at END_ANG, not START + DEL; contrl[1] = N + 1, a pie N + 1 more and its centre, contrl[5] RE-READ at every test (a pie whose centre lands on contrl[5] turns into an arc). The curve sits in a `noinline` `draw_arc` (the clipped-away row was 1.27 with the 8-register `movem` on the reject path). Dead store: i = n_steps after the loop |
+| `0xfcc62e` | `gdp_arc` (GDP 2 / 3, same) | 35 | 91209 / 922848 pie, 16933 / 239968 dash-dot | **1.01** pie, three quadrants, outlined, **0.95** arc, dash-dot (T→) | ✅ verified | nine sweeps × {arc, pie} (past 0, a whole turn, none, past a turn, negative begin, backwards, reflex): angles NEVER normalised, only DEL lifted by 3600 below 0; END read after BEG is stored (intin over GDP_ANGLE); radius ptsin[6], the y radius by the aspect (three aspects), radii 0 / −30 / 1 / 700; seven line styles, widths 3 and 9 through wline, unclipped |
+| `0xfcc714` | `gdp_ell` (GDP 6 / 7, same) | 26 | 74685 / 768596, 14192 / 215798, 52 / 876 | **1.01** elliptical pie, wraps past 0, **0.95** elliptical arc, one quadrant, **0.77** clipped away (T→) | ✅ verified | the same sweeps × {6, 7}; below XFM mode 2 (signed) the y radius is DEV_TAB[1] − yrad (NDC, the GEM behaviour; −1 / 0 / 1 / 2 / 3); arrowheads through v_pline. The ellipse arm stages END_ANG = 0 where the circle arm stages 3600 — the same point |
+| `0xfcc284` | `gdp_rbox` (GDP 8 / 9, same) | 91 | 7589 / 83262, 96232 / 1075730, 27928 / 278492, 1331 / 17904 | **1.03** outlined, one pixel, **1.06** outlined, width 3, **1.04** filled, outlined, **1.03** a point, filled (T→) | ✅ verified | four corner orders; narrow, short, line and point boxes, odd half-sizes; XRAD = DEV_TAB[0] >> 6 held to the half-width, the centre RE-READ at every store (y before x on backward corners, x before y on forward ones); seven styles and a negative index, widths 3 / 9 and −3 / −1 (vsl_width's stored negatives, SIZ_TAB[6] lowered: kills `== 1` → `<= 1`), modes × colours × patterns, clipped, medium / high; PTSIN RE-READ after the sort (ptsin at `$29a4`); seven WRAPPED geometries that return, filled and outlined w3 and poisoned, each behind a 10 s host-return bound. arb_corner sorts through the CALLER's A5 — at both of vdi_gdp's `jsr`s A5 = PTSIN (review A read it), so the C's LINEA_PTSIN read is equivalent. Unpinned: outlines whose wrapped segments send clip_line into a CYCLE (the ROM never returns; `## Not reconstructed`). Mutation 82/83 (one equivalent `>` → `>=`) |
+| `0xfcd756` | `v_gtext` (VDI opcode 8, `src/vdi/gtext.c`) | 410 | 23888 / 255990 twelve, 10909 / 104414 fast, 3804 / 40194 one centred, 58790 / 566800 turned, 10 / 206 none, 4879 / 61092 forty clipped, 8401 / 112368 ninety missing clipped | **1.00** twelve characters through TextBlt, **1.00** thirty-eight, the fast path, **0.99** one character, centred, underlined, clipped, **1.00** turned, every effect, three-row underline, **0.42** no characters, **1.01** forty clipped away, proportional, **1.06** ninety missing characters clipped away (T→) | ✅ verified | over REAL fonts (the three ROM faces and GDOS-shaped RAM copies: proportional with a HOR table, a deep bottom, a three-row underline): every H × V alignment in five fonts, italic leans (`mulu.w` LOW word / `divu.w`), the four right angles and other rotations (3600, −900, 450, 1 draw at the STALE DESTX/DESTY, chained through `case.continued`), every effect, the UL_SIZE-row underline clipped row by row with LN_MASK `asr.w` + bit 15, the drop 1 / 0 / −1, DDA scaling, the fast path and all eight refusals, '?' by unsigned bounds, offset/HOR tables sign-extended (HOR ONE BYTE a glyph), justified gaps. GLYPH 0 IS DRAWN IN THE FONT LOADED AT ENTRY (`$fcd76e`; CUR_FONT re-read only after each TextBlt, `$fcdc38` — the review's defect, a font at `$b0010`); the font's lines read after the DESTX store; H > 2 / V > 5 and the non-right-angle underline pinned on the harness's zeroed frame words. Includes 6 host TextBlt scratch refusals and 3 zero-divide refusals (TOP/BOTTOM 0 = the ROM's vector 5). Unpinned: the BOTTOM re-read at 1800/2700 (a header there reads the I/O page). Mutation 143/144 (1 abnormal = the named scratch refusal) |
+| `0xfce9e8` | `d_justified` (GDP 10's worker, same) | 59 | 33121 / 330142 turned, 17073 / 182194 one word, 105 / 1812 nothing, 2793 / 36368 clipped, 10964 / 139438, 16164 / 204228, 11444 / 147434 long spaced lines clipped | **1.01** words and characters, turned, **1.00** one word, characters spread, **0.76** nothing to draw, **1.06** clipped away (T→), **1.11** eighty characters, forty spaces, **1.11** a hundred and twenty characters, **1.13** eighty spaces, all three both spread and clipped away (T→G `glue`) | ✅ verified | the slack's `divs.w` over spaces then characters, the remainder made positive IN MEMORY with its sign as the unit; with both flags the word step cut at ± half the widest cell and the cut remainder DROPPED; gaps turned for the right angles (3600 keeps the stale steps, only the counts written); width := length; contrl[3] LEFT at n − 2, contrl[2] := n; ptsin[2] read after vqt_extent and after contrl[2] = 0 (overlaps). The three worst realistic rows (long spaced lines scrolled out of view, the review's) are NET OF THE GLUE 0.99, 1.00 and 1.02. Divergence, documented: at a non-right-angle rotation the ROM's gap steps are vqt_extent's stack LEFTOVERS, the C's 0 |
+| `0xfcd402` | `init_wk` (the opens' record set-up, `src/vdi/workstation.c`) | 63 | 443 / 4422 GEM's open, 455 / 4540 a pattern fill | **1.07** GEM's open, **1.07** a pattern fill | ✅ verified | intin[1..10] clamped in intin's order, intin and the record loaded once; line type 0 stored as −1; the FILL STYLE stored 1-BASED (vsf_style stores it less one, so a fresh workstation's pattern is the one after — ROM bug, pinned); DEV_TAB[13] read at the compare; intin over the record reads the stores before it; counts, then intout, then ptsout (its pointer reloaded), a forward word copy. The interior and fill-style clamps stay spelt out: through `vdi_within_or` they cost 2–4 cycles (high bound compared first) |
+| `0xfcb694` | `v_opnwk` (opcode 1, same) | 19 | 23674 / 395360 low, 23052 / 388334 medium, 22915 / 386888 mono | **1.01** low kept, **1.01** medium kept, **1.01** mono kept (T→) | ✅ verified | tables from the ROM defaults (copied before intin is read), INQ_TAB[14], RAM font headers, ring[1]; medium/mono patches (mono makes the 8x16 the default); handle 1 alone and current; text_init, init_wk, modes, M_HID_CT, GCUR, init_timer_mouse; REQ_COL = vq_color REALIZED per colour over a host-slot frame (16 / 4 / 2 declared palette reads; the map's "`$fd2e84`" callee IS vq_color). The two SWITCHING arms halt in Setscreen with the child image equal to the ROM's at the checkpoint (savptr excluded on the ROM side only; ours must be as staged) |
+| `0xfcd612` | `v_opnvwk` (opcode 100, same) | 6 + 3 | 488 / 5132 first, 497 / 5232 a second 3, 29 / 552 refused | **1.07** the first, **1.07** a second 3 inserted (T→), **1.17** Malloc refused (T→G `glue`) | ✅ verified | Tier 1 through the REAL `trap #1` into the ROM's GEMDOS (ours on the host); the list built by CHAINED runs, never fabricated (a chain pin holds the rows' staging to it): the lowest handle in LIST order, linked after the record the walk stopped at, so 1,2,4 → 3 appended and the next open a DUPLICATE 3 (ROM bug, pinned); Malloc asked for 308 (spied); Malloc failing answers contrl[6] = 0 and links nothing. Tier 3 over the STAGED recording `trap #1` (an appending ledger), `[$2848, $284c)` LINEA_RETSAV dropped there only — the 3 companions run each row's pokes with nothing dropped. Refused row NET OF THE GLUE 0.90 |
+| `0xfcd6a4` | `v_clsvwk` (opcode 101, same) | 5 + 2 | 11 / 206 handle 1, 38 / 674 middle, 42 / 728 last of four | **0.63** the physical workstation (T→), **1.12** the middle one, **1.10** the last of four (T→G `glue`) | ✅ verified | handle 1 refused (no trap); the walk crosses 0 / 1 / 2 links and the FIRST match wins (closing the second 3 of 1,2,4,3,3 drops the first 3 off the list, still allocated); the record relinked, then Mfree; the whole ordered trap ledger compared. Staged `trap #1`, RETSAV dropped at Tier 3 only, companions as v_opnvwk's. NET OF THE GLUE 0.91 and 0.91. Unpinned: the not-found walk (no end test — it wanders through address 0's vectors; no dispatcher call reaches it) |
+| `0xfcb998` | `v_clswk` (opcode 2, same) | 2 + 1 | 4366 / 119510 none open, 4447 / 121142 four open | **1.01** none open, **1.01** four open (T→) | ✅ verified | every record after the physical one Mfree'd IN LIST ORDER through CUR_WORK (left 0) — the four Mfrees pinned in order by the appending ledger (a swapped-order mutant survived the single-slot one); the physical WS_NEXT left naming freed memory (ROM quirk); restore_timer_mouse. The four-open row over the staged trap, RETSAV dropped at Tier 3 only |
 
 ## Harness
 
@@ -939,20 +951,67 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
   graphs unchanged). Harness: one `symbol_table(elf)` and one `vdi.SHIPPED_ELF`; the glue read as slices (`emu.prof_slice`, ~27 ms a
   (T→) row, was ~49); `glue_cycles_of` defaults 0; `refusal_over` encodes its I/O seed through the kit. Cleanups left every object
   byte-identical but one operand swap (`asks_for_arrows`).
-* **Next** — VDI band 3: the arcs (clc_pts `$fcc284`, clc_arc `$fcc62e`, gdp_arc `$fcc714`, gdp_ell `$fcc79e`, gdp_rbox `$fcc914`),
-  v_gtext `$fcd756` + d_justified `$fce9e8`, the workstations (init_wk `$fcd402`, v_opnwk, v_opnvwk, v_clsvwk, v_clswk); then the
-  entries (Line-A `.S`, `vdi_entry`, `vdi_dispatch`, `vdi_gdp`, the escape `$fc427a`). GEMDOS: only the E_CHG recovery behind the
-  termination record's longjmp remains (design first).
+* **Wave 10 band 3 (2026-09-28) — ARCS & ROUNDED BOXES, GRAPHIC TEXT, the WORKSTATIONS.** Three agents, 12 routines, all Alcyon C:
+  `arcs.c` (clc_pts, clc_arc, gdp_arc, gdp_ell, gdp_rbox, entered by `jsr` as vdi_gdp's arms leave the machine; the seven arc-scratch
+  words named, two of them below CUR_FONT; v_pline and the rounded box share `line_style_mask`/`set_line_attributes` with no non-arc
+  row moved), `gtext.c` (v_gtext and d_justified over REAL fonts — the ROM faces and GDOS-shaped RAM copies — through TextBlt, the fast
+  path and `$a003`; `style_asks_for`/`font_flag` hoisted with objects byte-identical; the empty string was 1.71 until the body moved out
+  of line behind the count test), `workstation.c` (init_wk, v_opnwk over a FILLed machine with the shifter and palette declared and
+  its switching arms pinned as halts equal to the ROM's image, v_opnvwk/v_clsvwk/v_clswk through the REAL `trap #1` into the ROM's
+  GEMDOS, their list built by chained opens and closes that reach the duplicate-handle bug by themselves). Every row is priced: (T→)
+  through the shipped blob at 0.42–1.07, six (T→G) at 1.10–1.17 shipped and 0.90–1.02 net, init_wk plain at 1.07; no acceptance.
+  REVIEW (3 finders + a seams pass) found real defects, each fixed RED→GREEN: v_gtext RE-READ CUR_FONT for the first glyph where the
+  ROM draws glyph 0 in the A5 font it loaded at entry (`$fcd76e`, reloading only after each TextBlt at `$fcdc38`; a font at `$b0010`
+  pins it, and the "DELY stored once" mutant it kills had been labelled equivalent); place_origin read the font's lines before the
+  DESTX store. TESTS WEAKER THAN CLAIMED: v_clsvwk's walk never crossed more than one link (`while` → `if` survived; now close the last
+  of four and the second of two 3s — first match wins, the first 3 falls off the list still allocated); arms called unreachable were
+  reached (H_ALIGN > 2 / V_ALIGN > 5 through the workstation record's copies, the 3600-rotation underline via vst_rotation(3150),
+  vsl_width's stored negatives −3 / −1, seven WRAPPED rounded boxes that do return — the "y wraps" one killed a half-height word-wrap
+  hole); cases that had silently taken the fast path (x on a byte) made TextBlt twins; the WORST realistic rows were unregistered
+  (d_justified's long spaced lines scrolled away, 1.11 / 1.11 / 1.13, and v_gtext's ninety missing characters, 1.06) — registered;
+  a Malloc spy (= 308) killed the Malloc(307) survivor. Band 1's HOST TextBlt OVERRAN its scratch: a huge WEIGHT or a wide glyph turned
+  SIGSEGV'd/SIGBUS'd in the pre-pass and the quarter/half turns, and the DDA SCALE copy of a 22,330-wide glyph doubled wrote 37,954 B
+  over the vectors, VDI and Line-A RAM before anything refused — both now named host refusals (`require_scratch_room`, a row at a time
+  `require_scaled_row_room`; legitimate copies peak at 228 B, more than one 204-byte half, inside the 532 B before the PTSIN copy),
+  target `.text` identical. The GEMDOS-trap rows were first UNPRICED ("the whole-image relation differs by nature"); now priced over the
+  STAGED recording `trap #1`, and the kit's `RomBench.measure(dropped=)` names `[$2848, $284c)` LINEA_RETSAV. THE CODE-REVIEW GATE
+  (my-code-review, high) then made that drop rule PER BYTE and SHARED: `rom_bench.vet_dropped` refuses a dropped byte the ORIGINAL did
+  not write (a drop one longword wider than the park went through before) or a truncated ledger, and `case.run` calls the same rule —
+  which TIGHTENED committed Tier 1 drops: the GEMDOS door's 0x100-deep stack drop covered 124–200 bytes the ROM never writes, and the
+  save-area/termination-record drops were dead in the no-trap cases and two never-nesting Cconrs cases; they became
+  `case.run(dropped_windows=)` (only the window's bytes the original stores are dropped, the rest compared again). A Tier 3 drop now
+  needs `undropped=` (a companion differential over the row's own pokes that drops nothing, run by `test_tier3`). The staged trap's
+  ledger APPENDS (8 entries; a v_clswk mutant freeing records in a swapped order survived the single slot, now red; +4 insns / +48
+  cycles a trap on BOTH columns, so seven rows moved toward 1). The call graph QUALIFIES a function name objdump gives twice by its
+  defining FILE (`readelf` FILE symbols; two statics' `.isra`/`.constprop` clones had folded into one node), an address-less
+  reference to a shared name reaches every node of it, and a qualified base that is a row symbol or a transcribed core is refused.
+  `declare_alcyon(host_arguments=)` lets glue be generated for C calling gemdos_call (its thunk now executes, 136 cycles). DRY: one
+  `table_entry`/`word_entry`, `copy_words`, `set_work_word`/`set_work_long`, the colour clamp/map helpers and clamp constants in
+  `attributes.h` (init_wk's high-first interior and fill-style clamps kept spelt out: 2–4 cycles through the helper), one XFM family,
+  `VDI_POINT_WORDS`; the ROM-data census now reads `include/vdi/*.h` inlines. MUTATION (strict, private .so per mutant): arcs.c 82/83
+  (1 equivalent), gtext.c 143/144 (1 abnormal = the named scratch refusal), workstation.c 141/152 (8 equivalent, 3 abnormal = a host
+  abort and two non-terminating walks), the gate's C changes 15/15. FINDINGS: v_opnvwk hands out a DUPLICATE HANDLE after a close from
+  the middle (1,2,4 → 3 appended, then a second 3 inserted); init_wk stores the fill style 1-BASED where vsf_style stores it 0-based,
+  and line type 0 as −1; v_clswk leaves the physical WS_NEXT naming freed memory; v_clsvwk's walk has NO END TEST (a record not on the
+  list wanders through address 0's vectors); gdp_rbox sorts through its CALLER's A5 (= PTSIN at both of vdi_gdp's `jsr`s); an OUTLINED
+  box whose wrapped segments send clip_line into a cycle never returns; the last arc point is END_ANG, never START + DEL, and angles
+  are never normalised; the HOR table is read ONE BYTE a glyph where vqt_width reads (left, right) pairs; centred or right-aligned
+  text leaves VDI_RESULT = 1 and the extent in `$1706`/`$1708`; a non-right-angle rotation draws at the stale DESTX/DESTY; the map's
+  "`$fd2e84`" is vq_color, v_gtext is 1862 bytes (cfg.txt said 1682), and `$fcd9f2`'s `ijmp` is the V_ALIGN switch (`$fd3990`).
+* **Next** — VDI band 4: `vdi_gdp` `$fcbbcc` (the 10-arm switch at `$fd3954`, incl. the circle / ellipse / bar / justified arms that
+  stage band 3's arcs and d_justified), then the ENTRIES — the Line-A dispatch `$fc9f0c` + linea_init's `.S`, `vdi_entry` `$fc9f9e`,
+  `vdi_dispatch` `$fca9f6` — and the escape `$fc427a` with its 20 arms. Then the E_CHG recovery behind GEMDOS's termination record
+  (design first), then aes/desk.
   Earlier lists, still open: the aes/desk code boundary; the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **10,192 passed** (1 skipped) and `make guarded` the same count (12,801 candidate runs guarded across 10 workers,
-no fault), re-summed at the VDI band-2 code-review gate's fix pass on 2026-09-28 after a forced rebuild (`rm build/*.so`, both bench
-blobs, the table and `__pycache__` removed first); `make bench` judges 680 rows (453 ok / 84 transcribed / 62 accepted / 55 through /
-13 pinned / 9 rule / 4 glue, none OVER or DRIFTED), re-counted from the printed table. `make -C atari -B all` builds. The kit's own
-suite: **1,126 passed** (re-run: `kit.mk` changed, a comment only, and the oracle gained `emu.prof_slice`). The PRG controls (Zynaps, Flying Shark) were NOT re-run this band. `names.txt`: 556 fn /
-354 var / 264 cmt.
+`make test` — **11,127 passed** (1 skipped) and `make guarded` the same count (14,049 candidate runs guarded across 10 workers,
+no fault), re-summed at the VDI band-3 docs pass on 2026-09-28 after a forced rebuild (`rm build/*.so`, both bench blobs, the table
+and `__pycache__` removed first); `make bench` judges 718 rows (455 ok / 85 through / 84 transcribed / 62 accepted / 13 pinned /
+10 glue / 9 rule, none OVER or DRIFTED), re-counted from the printed table. `make -C atari -B all` builds. The kit's own suite:
+**1,134 passed** (re-run: `rom_bench.py` gained `measure(dropped=)` and the shared per-byte `vet_dropped`). The PRG controls
+(Zynaps, Flying Shark) were NOT re-run this band. `names.txt`: 563 fn / 363 var / 272 cmt.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.
@@ -1006,6 +1065,23 @@ register (init_timer_mouse's Setexc vector sits in D4) — the class `xbios.h` f
 files keep local `WORD_BYTES`/`LONG_BYTES` copies of `VDI_WORD_BYTES`/`VDI_LONG_BYTES` (`helpers.c`, `inquire.c`, `mouse.c`,
 `palette.c`, `text_raster.c`).
 
+**vdi — band 3's honest gaps and what its code-review gate PARKED (each its own change).** A DOCUMENTED DIVERGENCE: at a rotation
+that is not a right angle, d_justified's gap steps are whatever vqt_extent left in the stack frame (the ROM reads its leftovers, the C
+reads 0); through v_gtext's own entry the same frame words are pinned on the harness's zeroed band, through d_justified they are
+not pinnable. UNPINNED: a gdp_rbox OUTLINE whose wrapped segments send clip_line (`$fcbf16`) into a CYCLE never returns in the ROM
+(four measured geometries — HUGE at any width, (0,40,32767,160) at width 3, (−16384,40,16400,160), the flat (−20000,100,20000,100);
+period 196), so the seven wrapped geometries that DO return are pinned and these are not; v_clsvwk's not-found walk has no end test
+and wanders through address 0's vectors, but no dispatcher call reaches it, so it is not staged. init_wk's interior and fill-style
+clamps are spelt out rather than calling `attributes.h`'s `vdi_within_or`: the ROM compares the HIGH bound first and GCC lays the
+helper out differently (eight spellings tried), +2 to +4 cycles on every init_wk and v_opnwk row. The HOST SIGBUS CLASS: every raw
+Line-A pointer accessor (`linea_pointer` / `contrl_word` / `answer_intout` in `vdi.h`) dereferences a caller's pointer unmasked on
+the host, so a stray pointer (poison, a mutant) is a dead worker rather than a red; no pointer the real machine hands reaches it, and
+the overlap cases that need it run under `vdi.READS_A_POINTER_IT_WRITES` — routing the layer through `bus_dereference` is the
+layer-wide fix. PARKED at the gate: the boot-snapshot audits run unsharded (+2 s per band); the gtext italic alignment grid (90
+cases) could be trimmed; a general host WATCHDOG instead of the per-case `host_returns` bound; a per-span poison exclusion
+(`poison_except=`) instead of the whole-routine opt-out; the bench table is rebuilt on every test edit (its prerequisite is `test/`);
+the `always_inline`/`noinline` codegen choices (`line_style_mask`, `draw_arc`, `place_and_draw`) are held only by the Tier 3 bar.
+
 **bios — the console's four BLITTER screen routines** (`$fc47be`, `$fc4852`, `$fc48b6`, `$fc4936`): TOS 1.02 installs
 them on a machine with a blitter; the captured ST holds the CPU set, and each reconstruction halts on a vector that is
 not it. Likewise a console of six or more bit planes — the ROM's own fill table at `$fd15ba` has three entries — and
@@ -1044,7 +1120,8 @@ caller of `gemdos_free_drive_ofds` must pass whatever A4 the innermost fs routin
 ROM's bug. Two DIVERGENCES are recorded, not pinned: the redirected `Cconin` at EOF answers the stale `-14(a6)` byte (pinned
 off target only; on target it is an uninitialised C local), and after an echoing redirected `Cconrs` the ROM's `$7ef4`
 record points into a dead nested frame while the C leaves it untouched (the cases drop that span from the compare by name,
-`case.run(dropped=…)`, and the Tier 3 row carries the same named mask). The
+since VDI band 3 as a `case.run(dropped_windows=…)` window — a slice that never nests leaves it unwritten and compared — and the
+Tier 3 row carries the same named mask). The
 PROCESS-TERMINATION RECORD at `$7ef4` is omitted
 rather than halted, because the ROM arms it before any reconstructed arm and a halt would stop every case: it is the
 68000 frame of the `jsr` that armed it, which a C core has no counterpart for, and `test_gemdos_dispatch.py` measures

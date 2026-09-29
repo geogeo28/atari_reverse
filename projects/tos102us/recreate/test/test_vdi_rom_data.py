@@ -16,9 +16,14 @@ build owes it (`../README.md`, "What ships as the ROM's own instructions"):
 * DISTANCE — two ROM addresses subtracted, a distance inside one transcribed region, which relocation keeps;
 * WAIT_SITE — a busy-wait's site, the scheduled-write model's key for counting the ROM's arrivals against the
   C's polls (`sched.h`). No obligation: the target's `sched.h` ignores it, since a machine has a PC.
+* RETURN_SITE — the instruction after a ROM caller's `jsr` to the GEMDOS door, which the host build hands the
+  door so LINEA_RETSAV holds what the ROM's `jsr` leaves (`vdi/workstation.h`). No obligation: the shipped door is
+  the `.S`, which parks its own caller's address, and the glue drops the argument.
 
-`test_the_census_is_the_list` is the surface: a new use of a ROM address anywhere in `src/vdi/` reds until it
-is listed with its kind, and `test_a_table_s_kind_is_where_it_lies` holds each TABLE / REGION_TABLE to the
+`test_the_census_is_the_list` is the surface: a new use of a ROM address anywhere in `src/vdi/` — or in the
+CODE of an `include/vdi/` header, an inline that reads a table, keyed `vdi/<name>.h` — reds until it is listed
+with its kind (a header inline is compiled into every file that calls it, and a call names the function, not
+the table), and `test_a_table_s_kind_is_where_it_lies` holds each TABLE / REGION_TABLE to the
 byte-pinned regions (`vdi.every_pinned_region`).
 """
 import re
@@ -30,14 +35,17 @@ import vdi
 
 RECREATE = Path(__file__).resolve().parents[1]
 SOURCES = RECREATE / "src" / "vdi"
+INCLUDE = RECREATE / "include"
+VDI_HEADERS = INCLUDE / "vdi"
 HEADERS = sorted((RECREATE / "include").glob("*.h")) + sorted((RECREATE / "include").glob("*/*.h"))
 # The 68000's view of the ROM: 192 KB below the I/O page, which is where a VALUE is an obligation. The I/O
 # page ($ff0000 up) is the machine's own address in any build.
 ROM_LO, ROM_HI = 0xFC0000, 0xFF0000
 
-TABLE, CODE, REGION_TABLE, DISTANCE, WAIT_SITE = "TABLE", "CODE", "REGION_TABLE", "DISTANCE", "WAIT_SITE"
+TABLE, CODE, REGION_TABLE, DISTANCE, WAIT_SITE, RETURN_SITE = (
+    "TABLE", "CODE", "REGION_TABLE", "DISTANCE", "WAIT_SITE", "RETURN_SITE")
 ROM_ADDRESSES_AS_DATA = {
-    "attributes.c": {"VDI_HATCHES_LOWER": TABLE, "VDI_HATCHES_UPPER": TABLE, "VDI_MAP_COL": TABLE,
+    "attributes.c": {"VDI_HATCHES_LOWER": TABLE, "VDI_HATCHES_UPPER": TABLE,
                      "VDI_PATTERNS_LOWER": TABLE, "VDI_PATTERNS_UPPER": TABLE, "VDI_PATTERN_HOLLOW": TABLE,
                      "VDI_PATTERN_SOLID": TABLE},
     "blit.S": {"VDI_MAP_COL": TABLE},
@@ -75,6 +83,16 @@ ROM_ADDRESSES_AS_DATA = {
                       "RASTER_FRINGE_MASK_TABLE": REGION_TABLE, "TEXT_FAST_ARM_TABLE": REGION_TABLE,
                       "TEXT_GROUP_BYTES_TABLE": REGION_TABLE, "TEXT_OP_INDEX_TABLE": REGION_TABLE,
                       "TEXT_OP_MASKED_TABLE": REGION_TABLE, "TEXT_OP_WHOLE_TABLE": REGION_TABLE},
+    # The workstations: the device tables' defaults, the ROM fonts' headers v_opnwk copies, init_wk's defaults, and
+    # the three return sites the GEMDOS door parks.
+    "workstation.c": {"FONT_ROM_8X16": TABLE, "FONT_ROM_8X8": TABLE, "VDI_DEV_TAB_DEFAULT": TABLE,
+                      "VDI_INQ_TAB_DEFAULT": TABLE, "VDI_LINE_STYLES": TABLE,
+                      "VDI_MAX_VERTICES_DEFAULT": TABLE, "VDI_SCRPT2_DEFAULT": TABLE, "VDI_SIZ_TAB_DEFAULT": TABLE,
+                      "VDI_UD_PATTERN_DEFAULT": TABLE, "VDI_OPNVWK_MALLOC_RETURN": RETURN_SITE,
+                      "VDI_CLSVWK_MFREE_RETURN": RETURN_SITE, "VDI_CLSWK_MFREE_RETURN": RETURN_SITE},
+    # ---- header inlines, compiled into each file that calls them ----
+    # vdi_mapped_colour: the MAP_COL lookup attributes.c's colour setters and workstation.c's open share.
+    "vdi/attributes.h": {"VDI_MAP_COL": TABLE},
 }
 
 _COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
@@ -101,18 +119,25 @@ def _value(token, constants):
     return int(token, 16) if token[:2].lower() == "0x" else constants.get(token)
 
 
+def _scanned():
+    """`{key: path}`: every VDI source by its name, and every VDI header by its `vdi/<name>.h`."""
+    sources = {source.name: source for source in sorted(SOURCES.glob("*.[cS]"))}
+    headers = {str(header.relative_to(INCLUDE)): header for header in sorted(VDI_HEADERS.glob("*.h"))}
+    return {**sources, **headers}
+
+
 def census():
-    """`{file: {token}}`: every name or literal in a VDI source's CODE (comments and `#define` lines left out,
-    which name an address rather than use it) whose value is a ROM address."""
+    """`{file: {token}}`: every name or literal in a VDI source's or header's CODE (comments and `#define`
+    lines left out, which name an address rather than use it) whose value is a ROM address."""
     known, found = _constants(), {}
-    for source in sorted(SOURCES.glob("*.[cS]")):
-        constants = _defines(source, known)
-        code = "\n".join(line for line in _COMMENT.sub(" ", source.read_text()).splitlines()
+    for key, path in _scanned().items():
+        constants = _defines(path, known)
+        code = "\n".join(line for line in _COMMENT.sub(" ", path.read_text()).splitlines()
                          if not line.lstrip().startswith("#define"))
         uses = {token for token in _TOKEN.findall(code)
                 if isinstance(_value(token, constants), int) and ROM_LO <= _value(token, constants) < ROM_HI}
         if uses:
-            found[source.name] = uses
+            found[key] = uses
     return found
 
 
@@ -125,7 +150,7 @@ def test_a_table_s_kind_is_where_it_lies():
     """A REGION_TABLE lies inside a byte-pinned region and a TABLE outside every one."""
     known, regions = _constants(), vdi.every_pinned_region()
     for source, uses in ROM_ADDRESSES_AS_DATA.items():
-        constants = _defines(SOURCES / source, known)
+        constants = _defines(_scanned()[source], known)
         for name, kind in uses.items():
             inside = any(region.lo <= constants[name] < region.hi for region in regions)
             if kind in (TABLE, REGION_TABLE):

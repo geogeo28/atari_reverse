@@ -27,6 +27,10 @@
 #define VDI_SCALE_UP          1          /* ($fceddc move.w #1)                                     */
 #define VDI_SCALE_UP_MASK     0x0001
 
+/* ---- isin / icos: angles in TENTHS OF A DEGREE, answers x 32767 ----------------------------------- */
+#define VDI_TENTHS_PER_TURN   3600       /* an angle over it is brought down    ($fcab74 cmpi.w)   */
+#define VDI_TRIG_SCALE        32767      /* sin 90 degrees; the arcs divide it back out ($fcc922)  */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 

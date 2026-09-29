@@ -32,7 +32,6 @@
 #include "vdi/fill.h"
 #include "vdi/lines.h"
 
-#define THIN_WIDTH           1          /* a WS_LINE_WIDTH v_pline draws with polyline ($fcba46 cmpi.w #1) */
 /* What v_pmarker borrows the line fields as: the solid style, the thin width, plain ends ($fcbaa6..$fcbaba),
  * and clipping on ($fcbabe). */
 #define SOLID_STYLE_INDEX    0
@@ -75,17 +74,11 @@ static inline int asks_for_arrows(const uint8_t *image, uint32_t work)
     return ((work_word(image, work, WS_LINE_BEG) | work_word(image, work, WS_LINE_END)) & ARROW_END_BIT) != 0;
 }
 
-/* Entry `index` of the table at `table`, the index SIGN-EXTENDED first and scaled in the address register
- * (`movea.w` / `adda.l An,An`): a negative one reads below the table, and a doubled one parts from the word
- * doubling above from 16,384 on. Summed as an ADDRESS before it meets the image. */
-static inline uint32_t table_entry(uint32_t table, int32_t index, uint32_t entry_bytes)
-{
-    return table + (uint32_t)index * entry_bytes;
-}
-
+/* ...and the same word with its index SIGN-EXTENDED first (`vdi/vdi.h`'s `word_entry`), which parts from the
+ * word doubling above from 16,384 on. */
 static inline uint32_t quarter_circle_entry(int32_t index)
 {
-    return table_entry(LINEA_Q_CIRCLE, index, VDI_WORD_BYTES);
+    return word_entry(LINEA_Q_CIRCLE, index);
 }
 
 /* `tst.w` / `bmi` / `neg.w`: -32768 stays itself. */
@@ -383,7 +376,7 @@ static int16_t arrow_length(const uint8_t *image)
 {
     int16_t width = work_word(image, current_work(image), WS_LINE_WIDTH);
 
-    return width == THIN_WIDTH ? VDI_ARROW_LENGTH_THIN
+    return width == VDI_THIN_LINE_WIDTH ? VDI_ARROW_LENGTH_THIN
                                : (int16_t)(m68k_muls_w((uint16_t)width, VDI_ARROW_LENGTH_PER_WIDTH) - 1);
 }
 
@@ -504,6 +497,23 @@ void vdi_arrow(uint8_t *image)
  * The two functions.
  * ============================================================================================= */
 
+/* The LN_MASK WS_LINE_INDEX names: VDI_LINE_STYLES' entry below VDI_LINE_STYLE_USER — the index SIGN-EXTENDED
+ * before it is doubled (`movea.w` / `adda.l`), so a negative one reads below the table — else WS_UD_LS. */
+static uint16_t line_style_mask(const uint8_t *image, uint32_t work)
+{
+    int16_t style = work_word(image, work, WS_LINE_INDEX);
+
+    return style < VDI_LINE_STYLE_USER ? be16(image + word_entry(VDI_LINE_STYLES, style))
+                                       : be16(image + work + WS_UD_LS);
+}
+
+/* Inlined into v_pline, as the ROM spells it there, and linked out of line for the rounded box's outline. */
+inline __attribute__((always_inline)) void set_line_attributes(uint8_t *image, uint32_t work)
+{
+    set_ram_word(image, LINEA_LN_MASK, line_style_mask(image, work));
+    set_colour_bits(image, (uint16_t)work_word(image, work, WS_LINE_COLOR));
+}
+
 /* $fcb9e0 — v_pline (opcode 6): LN_MASK from WS_LINE_INDEX — the ROM's style table below
  * VDI_LINE_STYLE_USER, a negative index reading the words before it — or WS_UD_LS; COLBIT from
  * WS_LINE_COLOR; then a width of exactly 1 is a polyline with any arrowheads drawn over it, and any other
@@ -511,13 +521,9 @@ void vdi_arrow(uint8_t *image)
 void vdi_v_pline(uint8_t *image)
 {
     uint32_t work = current_work(image);
-    int16_t style = work_word(image, work, WS_LINE_INDEX);
 
-    wr16(image + LINEA_LN_MASK, style < VDI_LINE_STYLE_USER
-                                    ? be16(image + table_entry(VDI_LINE_STYLES, style, VDI_WORD_BYTES))
-                                    : be16(image + work + WS_UD_LS));
-    set_colour_bits(image, be16(image + work + WS_LINE_COLOR));
-    if (work_word(image, work, WS_LINE_WIDTH) != THIN_WIDTH) {
+    set_line_attributes(image, work);
+    if (work_word(image, work, WS_LINE_WIDTH) != VDI_THIN_LINE_WIDTH) {
         vdi_wline(image);
         return;
     }
@@ -583,7 +589,7 @@ void vdi_v_pmarker(uint8_t *image)
     save_line_fields(image, work, &saved);
     wr16(image + work + WS_LINE_INDEX, SOLID_STYLE_INDEX);
     wr16(image + work + WS_LINE_COLOR, be16(image + work + WS_MARK_COLOR));
-    wr16(image + work + WS_LINE_WIDTH, THIN_WIDTH);
+    wr16(image + work + WS_LINE_WIDTH, VDI_THIN_LINE_WIDTH);
     wr16(image + work + WS_LINE_BEG, VDI_LINE_END_SQUARE);
     wr16(image + work + WS_LINE_END, VDI_LINE_END_SQUARE);
     wr16(image + LINEA_CLIP, CLIP_ON);

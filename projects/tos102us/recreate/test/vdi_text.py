@@ -28,7 +28,11 @@ vdi.declare_primitive("LINEA_ROM_FAST_TEXT", results=("d0",))
 
 HEADER = addrs.parse(Path(__file__).resolve().parents[1] / "include/vdi/text_raster.h",
                      known={**addrs.ADDRS, **vdi.CONSTANTS})
-ROTATIONS = (0, HEADER["TEXT_ROTATION_90"], HEADER["TEXT_ROTATION_180"], HEADER["TEXT_ROTATION_270"])
+QUARTER_TURN, HALF_TURN, THREE_QUARTER_TURN = (HEADER["TEXT_ROTATION_90"], HEADER["TEXT_ROTATION_180"],
+                                               HEADER["TEXT_ROTATION_270"])
+ROTATIONS = (0, QUARTER_TURN, HALF_TURN, THREE_QUARTER_TURN)
+FULL_TURN = addrs.parse(Path(__file__).resolve().parents[1] / "include/vdi/helpers.h",
+                        known={**addrs.ADDRS, **vdi.CONSTANTS})["VDI_TENTHS_PER_TURN"]
 FAST_GLYPH_PIXELS = 1 << HEADER["TEXT_FAST_GLYPH_SHIFT"]
 
 # ---- the fonts ---------------------------------------------------------------------------------------------
@@ -195,7 +199,7 @@ def masked_only_modes():
 def refusal(pokes):
     """What vector 9's C body says over `pokes` in a CHILD process (`vdi_helpers.refusal_over`), where its halt
     can end the run without ending pytest's — or its spin be timed out. Answers (returncode, stderr)."""
-    returncode, stderr, _image = vdi_helpers.refusal_over("linea_cpu_textblt", pokes)
+    returncode, stderr, _image = vdi_helpers.refusal_over("linea_cpu_textblt", pokes, read_back=False)
     return returncode, stderr
 
 
@@ -244,13 +248,18 @@ def run_textblt(pokes, **kwargs):
 GTEXT_OPCODE = 8               # v_gtext's contrl[0] — which the fast path does not read; contrl[3] it does
 
 
+def codes(text):
+    """A string's intin words: each character's code, or the code itself where the string gives a number."""
+    return tuple(ord(character) if isinstance(character, str) else character for character in text)
+
+
 def fast_text_pokes(text, *, font="8x16", x=96, y=60, mode="replace", colour=0b1010, window=WINDOW, extra=None):
     """A string as v_gtext stages it before `jsr $fcf96a`: the characters in intin and their count in
     contrl[3], DESTX/DESTY/DELY, the form, and the colour."""
-    codes = [ord(character) if isinstance(character, str) else character for character in text]
-    arrays = {vdi.CONTRL_AT: vdi.contrl(GTEXT_OPCODE, 0, len(codes))}
-    if codes:
-        arrays[vdi.INTIN_AT] = vdi.pack_words(*codes)
+    characters = codes(text)
+    arrays = {vdi.CONTRL_AT: vdi.contrl(GTEXT_OPCODE, 0, len(characters))}
+    if characters:
+        arrays[vdi.INTIN_AT] = vdi.pack_words(*characters)
     staged = vdi.linea_pokes(FBASE=font_field(font, "DAT_TABLE"), FWIDTH=font_field(font, "FORM_WIDTH"),
                              DELY=font_field(font, "FORM_HEIGHT"), DESTX=x, DESTY=y, WRT_MODE=mode_number(mode),
                              TEXT_FG=colour)

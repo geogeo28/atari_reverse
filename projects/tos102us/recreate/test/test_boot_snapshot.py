@@ -208,6 +208,16 @@ import test_vdi_text_raster_fast                            # noqa: E402,F401
 import test_vdi_text_ring                                   # noqa: E402,F401
 import test_vdi_text_size                                   # noqa: E402,F401
 import test_vdi_text_measure                                # noqa: E402,F401
+# ...graphic text: v_gtext and GDP 10's justified worker (`src/vdi/gtext.c`).
+import test_vdi_gtext                                       # noqa: E402,F401
+import test_vdi_gtext_justified                             # noqa: E402,F401
+# ...the arcs, ellipses and rounded boxes (`src/vdi/arcs.c`).
+import test_vdi_arcs                                        # noqa: E402,F401
+import test_vdi_arcs_rbox                                   # noqa: E402,F401
+# ...the workstations: the opens, the closes and the record set-up (`src/vdi/workstation.c`).
+import test_vdi_workstation                                 # noqa: E402,F401
+import test_vdi_workstation_init                            # noqa: E402,F401
+import test_vdi_workstation_virtual                         # noqa: E402,F401
 import vdi                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

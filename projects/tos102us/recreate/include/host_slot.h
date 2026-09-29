@@ -81,6 +81,16 @@
 #define HOST_SLOT_VDI_ARROW_TRIANGLE_BYTES 16    /* four (x, y) points */
 #define HOST_SLOT_VDI_MARKER_POINTS     0x7f370  /* $fcba7a's `-32(a6)`: one polyline of a marker, placed */
 #define HOST_SLOT_VDI_MARKER_POINTS_BYTES 20     /* five (x, y) points */
+/* ...and graphic text's (`vdi/gtext.h`): the box vqt_extent answers into a frame LINEA_PTSOUT is pointed at. */
+#define HOST_SLOT_VDI_GTEXT_EXTENT      0x7f600  /* $fcd756's `-52(a6)`: the string's four corners, for its alignment */
+#define HOST_SLOT_VDI_GTEXT_EXTENT_BYTES 16      /* four (x, y) points */
+#define HOST_SLOT_VDI_JUSTIFIED_EXTENT  0x7f610  /* $fce9e8's `-36(a6)`: ...and the justified string's */
+#define HOST_SLOT_VDI_JUSTIFIED_EXTENT_BYTES 16  /* four (x, y) points */
+/* ...and the workstation's (`vdi/workstation.h`): the arrays v_opnwk points LINEA_CONTRL/INTIN/INTOUT at round
+ * each of its vq_color calls. */
+#define HOST_SLOT_VDI_OPNWK_COLOUR_CALL 0x7f400  /* $fcb694's `-38`/`-30`/`-26(a6)`: intout, intin, contrl */
+#define HOST_SLOT_VDI_OPNWK_COLOUR_CALL_BYTES 22 /* VDI_OPNWK_CALL_BYTES: the frame's own layout from -38, contrl cut after
+                                                  * contrl[4], the last word vq_color writes ($fd2e8c) */
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -103,6 +113,9 @@ enum host_slot {
     HOST_SLOT_ID_VDI_PERP_DIRECTION,
     HOST_SLOT_ID_VDI_ARROW_TRIANGLE,
     HOST_SLOT_ID_VDI_MARKER_POINTS,
+    HOST_SLOT_ID_VDI_GTEXT_EXTENT,
+    HOST_SLOT_ID_VDI_JUSTIFIED_EXTENT,
+    HOST_SLOT_ID_VDI_OPNWK_COLOUR_CALL,
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL

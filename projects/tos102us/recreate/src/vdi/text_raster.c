@@ -760,6 +760,33 @@ static uint32_t select_scratch(const uint8_t *image, struct textblt *frame)
     return buffer;
 }
 
+/* HOST-ONLY (kit.mk's RECREATE_HOST_DIFFERENTIAL rule): a scratch copy `span` bytes long at `copy` must fit
+ * before the next thing in RAM — for the workstation's own effects buffer (below the PTSIN copy) the PTSIN copy
+ * itself, for a buffer elsewhere (a GDOS one) the end of RAM — and within the 32 KB an `adda.w` of its size
+ * reaches (the pre-pass lays its copy at the buffer plus its fill as a SIGNED word). The legitimate copies
+ * peak at 228 bytes, which a second half ($17c6 + 204) still fits before the PTSIN copy at +532. What does
+ * not fit is a WEIGHT, or italic offsets, thousands of pixels wide: the ROM then writes over the VDI's own
+ * RAM (or below its buffer, through the bus's wrap) and runs on in garbage, where the host would run off its
+ * image — so the host names it and stops, and the machine, which has no such bound to state, runs on.
+ * Every copy that WRITES the buffer is checked before its first store past it: the pre-pass's, both turns', and
+ * the scale's a row at a time. The outline needs none: it rewrites the pre-pass's copy in place, which that
+ * check already covered, and reads at most a long past its last row — still inside the image. */
+#define SCRATCH_SIGNED_REACH  0x8000u
+
+static void require_scratch_room(uint32_t copy, uint32_t span)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    uint32_t end = copy < VDI_PTSIN_COPY ? VDI_PTSIN_COPY : ST_RAM_BYTES;
+
+    if (!(copy <= end && span <= end - copy && span <= SCRATCH_SIGNED_REACH))
+        recreate_not_reconstructed("TextBlt: a scratch copy past the effects buffer (a WEIGHT or italic offsets "
+                                   "thousands of pixels wide) overwrites the VDI's own RAM");
+#else
+    (void)copy;
+    (void)span;
+#endif
+}
+
 /* $fd2ade — the copy at `copy` is the source from its first pixel on. */
 static void source_is_copy(uint8_t *image, struct textblt *frame, uint32_t copy)
 {
@@ -809,6 +836,14 @@ static void scale_row(const uint8_t *image, const struct textblt *frame, const u
     *dest += (int16_t)row_bytes;
 }
 
+/* HOST-ONLY: the scaled copy at `copy` has room for one more row at `dest`. Checked a row at a time because the
+ * rows it lays depend on the DDA's carries, which only the loop itself counts. */
+static inline void require_scaled_row_room(const uint8_t *image, uint32_t copy, const uint8_t *dest,
+                                           uint16_t row_bytes)
+{
+    require_scratch_room(copy, (uint32_t)(dest - (image + copy)) + row_bytes);
+}
+
 /* $fd2b54 — SCALING, before anything else: the glyph at (SOURCEX, SOURCEY) redrawn into the scratch
  * buffer through the DDA, down the rows (each source row once per carry — twice enlarging) and across
  * each row (`scale_row`). DELX/DELY become the scaled size and XACC_DDA the width's DDA left over. */
@@ -819,6 +854,7 @@ static void scale(uint8_t *image, struct textblt *frame)
     uint16_t increment = ram_uword(image, LINEA_DDA_INC);
     const uint8_t *source;
     uint16_t first_bit, row_bytes, rows, accumulator, columns, scaled_width;
+    uint32_t copy;
     uint8_t *dest;
 
     frame->source_bit = source_x & PIXEL_IN_GROUP_MASK;
@@ -827,7 +863,8 @@ static void scale(uint8_t *image, struct textblt *frame)
     first_bit = (uint16_t)(LEFTMOST_BIT >> frame->source_bit);
     frame->height = ram_uword(image, LINEA_DELY);
     frame->width = ram_uword(image, LINEA_DELX);
-    dest = image + select_scratch(image, frame);
+    copy = select_scratch(image, frame);
+    dest = image + copy;
     row_bytes = (uint16_t)(((frame->width >> SCALE_HALVED_WIDTH) * WORD_BYTES) + ROW_WORD_PAD);
     frame->dest_step = row_bytes;
     accumulator = VDI_DDA_ACCUMULATOR_START;
@@ -836,10 +873,14 @@ static void scale(uint8_t *image, struct textblt *frame)
         int carried = word_add_extend(accumulator, increment);
 
         accumulator = (uint16_t)(accumulator + increment);
-        if (carried)
+        if (carried) {
+            require_scaled_row_room(image, copy, dest, row_bytes);
             scale_row(image, frame, source, &dest, first_bit, enlarge, row_bytes);
-        if (enlarge)
+        }
+        if (enlarge) {
+            require_scaled_row_room(image, copy, dest, row_bytes);
             scale_row(image, frame, source, &dest, first_bit, enlarge, row_bytes);
+        }
         source += (int16_t)frame->source_step;
     } while (rows-- != 0);
     accumulator = ram_uword(image, LINEA_XACC_DDA);
@@ -879,8 +920,11 @@ static void rotate_half_turn(uint8_t *image, struct textblt *frame, const uint8_
 {
     uint16_t row_bytes = padded_row_bytes((uint16_t)(ram_uword(image, LINEA_DELX) + frame->source_bit - 1));
     uint16_t last_word = (uint16_t)((row_bytes >> 1) - 1);
-    uint8_t *dest = image + copy + mulu_word(row_bytes, rows);
+    uint32_t copy_bytes = mulu_word(row_bytes, rows);
+    uint8_t *dest;
 
+    require_scratch_room(copy, copy_bytes);
+    dest = image + copy + copy_bytes;
     frame->dest_step = row_bytes;
     for (; rows != 0; rows--) {
         const uint8_t *read = source;
@@ -930,6 +974,7 @@ static void rotate(uint8_t *image, struct textblt *frame)
         source += mulu_word((uint16_t)(source_y + frame->height - 1), step);
     }
     row_bytes = padded_row_bytes(ram_uword(image, LINEA_DELY));
+    require_scratch_room(copy, mulu_word(row_bytes, ram_uword(image, LINEA_DELX)));
     frame->dest_step = row_bytes;
     dest = image + copy;
     if (angle != TEXT_ROTATION_270) {
@@ -1073,6 +1118,7 @@ static void prepass(uint8_t *image, struct textblt *frame, uint16_t offsets)
     frame->dest_step = (uint16_t)-row_bytes;
     fill = mulu_word(row_bytes, (uint16_t)(rows - 1));
     buffer = select_scratch(image, frame);
+    require_scratch_room(buffer, fill + row_bytes);
     if (style & (VDI_STYLE_OUTLINE_MASK | VDI_STYLE_SKEW_MASK)) {
         uint16_t words = (uint16_t)((uint16_t)(fill + row_bytes) >> 1);
         uint8_t *clear = image + buffer;
