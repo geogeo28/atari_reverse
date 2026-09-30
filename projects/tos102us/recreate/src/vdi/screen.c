@@ -30,7 +30,7 @@
 #include "vdi/vdi.h"
 #include "vdi/mouse.h"
 #include "vdi/screen.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 _Static_assert(VDI_TIMER_VECTOR * VECTOR_BYTES == SYSVAR_ETV_TIMER, "Setexc's number is not etv_timer's slot");
 
@@ -93,7 +93,7 @@ static void setpalette(uint8_t *image, uint32_t palette)
 
 /* The BIOS's own `bzero(from, to)` — hand assembly, reached by `jsr` with two longwords (Alcyon's frame)
  * from v_clrwk ($fca666) and from `Pexec`'s loader (`src/gemdos/pexec_load.c`). Named in the VDI's block
- * because the transcription table is the VDI's (`vdi/transcribed.h`): the target ships `screen.S`, the
+ * because its transcription is the VDI's (`screen.S`, a row of `transcribed.h`): the target ships the
  * ROM's own `movem` loop, which this C measures at nearly four times the cost of. Its three steps are the
  * three below: one byte if `from` is odd, then the whole 256-byte blocks — eight `movem.l` of eight zero
  * registers, DOWNWARDS from the top of the blocks, which leaves the same bytes as upwards — then single
@@ -235,7 +235,7 @@ void vdi_init_timer_mouse(uint8_t *image)
  * value. What the ROM does and this cannot spell from C is the CHAIN itself: `movem.l (sp)+,d0-a6 /
  * move.l NEXT_TIM,-(sp) / rts` enters the old handler with the caller's own registers and return address,
  * where this calls it — pushing the tick word again — and comes back. So the SHIPPED build takes the ROM's
- * own entry (`screen.S`, `vdi/transcribed.h`): etv_timer holds that entry's address, and timer C enters it
+ * own entry (`screen.S`, `transcribed.h`): etv_timer holds that entry's address, and timer C enters it
  * with its convention, which a C function of `(image, tick)` does not have. This twin is what Tier 1 proves
  * the order against; the handler it calls reads the same word at 4(sp), and only one that read a register
  * timer C left, or looked past its own frame, could tell the two apart. */

@@ -27,6 +27,7 @@ from pathlib import Path
 from harness import _lib, addrs
 
 import case
+import routines
 import vdi
 import vdi_fill
 import vdi_lines
@@ -59,7 +60,7 @@ ARC_INSNS = vdi_lines.LINE_INSNS
 def run_call(name, arguments, pokes, *, regs=None, **kwargs):
     """The Alcyon routine `addrs.<name>` entered by `jsr` over its frame, the oracle's registers `regs` staged,
     against its core called with the same `arguments`. Answers a `vdi.Result`."""
-    core = getattr(_lib, vdi.core_symbol(name))
+    core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi_fill.as_signed(name, arguments)
     staged = merge_pokes(pokes, vdi_fill.frame(name, *arguments))
     info = case.run(getattr(addrs, name), {**(regs or {}), "_pokes": staged}, lambda _lib_, buf: core(buf, *arguments),
@@ -69,7 +70,7 @@ def run_call(name, arguments, pokes, *, regs=None, **kwargs):
 
 def register_call(label, name, arguments, pokes, *, regs=None):
     """One Tier 3 row of an Alcyon call, staged as `run_call` stages it."""
-    vdi.register(f"{vdi.core_symbol(name)}, {label}", getattr(addrs, name),
+    vdi.register(f"{routines.core_symbol(name)}, {label}", getattr(addrs, name),
                  merge_pokes(pokes, vdi_fill.frame(name, *arguments)), regs=regs)
 
 

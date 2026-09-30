@@ -30,6 +30,7 @@ from harness import BASE_IMAGE, _lib, addrs
 
 import case
 import gemdos
+import routines
 import vdi
 import vdi_mouse as mouse
 from case import merge_pokes
@@ -117,7 +118,7 @@ def run_function(name, pokes, registers=None, schedule=()):
     """`vdi.run_function`, entered with `registers` as well — vdi_choice's D0 is the dispatcher's — and
     unpoisoned (the module docstring); its request spin's wait site declared, and `schedule` the interrupts
     that land there."""
-    core = getattr(_lib, vdi.core_symbol(name))
+    core = getattr(_lib, routines.core_symbol(name))
     core.restype = None
     return vdi.Result(case.run(getattr(addrs, name), {**(registers or {}), "_pokes": pokes},
                                lambda _lib_, buf: core(buf), width=case.NO_RESULT, poison=False,

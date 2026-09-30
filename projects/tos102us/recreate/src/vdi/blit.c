@@ -53,7 +53,7 @@
 #include "vdi/attributes.h"
 #include "vdi/raster.h"
 #include "vdi/blit.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define GROUP_SHIFT          4          /* x >> 4 (`lsr.w #4`: the x is UNSIGNED here) */
 #define PIXEL_IN_GROUP_MASK  15u

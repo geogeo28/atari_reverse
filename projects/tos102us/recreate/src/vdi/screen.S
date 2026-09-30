@@ -8,7 +8,7 @@
  * registers, eight to a 256-byte block — which no C spelling reaches: its C measures nearly four times the ROM
  * over v_clrwk's 32000 bytes (`bench/tier3.py`). By the user's rule for the hand-written routines — C first,
  * and where the C is over the 1.10 bar, the ROM's own instructions pinned byte for byte — the target carries
- * this, `include/vdi/transcribed.h` says so, and v_clrwk and GEMDOS's loader reach it by name.
+ * this, `include/transcribed.h` says so, and v_clrwk and GEMDOS's loader reach it by name.
  *
  * WHY THE TICK IS ASSEMBLY, though its C is under the bar: the etv_timer vector holds its ADDRESS, and what
  * timer C enters through it is a routine with the ROM's convention — the tick word under the return address,
@@ -18,14 +18,14 @@
  * which C cannot spell (`screen.c` says what its twin does instead).
  *
  * WHAT PINS THEM. `test_vdi_screen.py` compares the assembled bytes with the ROM's EXACTLY
- * (`vdi.assert_transcribed`), no word excused, and runs both through Tier 3's TRANSCRIPTION relation — the
+ * (`transcription.assert_transcribed`), no word excused, and runs both through Tier 3's TRANSCRIPTION relation — the
  * same image and the WHOLE register file. Two encodings GNU as would change are spelt out: the clear's
  * `and.l #-256,d0` as the ROM's register-form word (`m68k_encodings.h`), where as would pick ANDI; and the
  * tick's two absolute addresses as `(X).l`, which as would otherwise shorten to the word form.
  *
  * REGISTERS, as the ROM leaves them. The clear: D3-D7/A3 are saved round the loop and restored; D0-D2 and
  * A0-A2 are changed (A0 ends at `to`, A1 is `to`, A2 at the bottom of the blocks), and the callee-saved ones
- * among those, D2 and A2, are its row in `include/vdi/transcribed.h`. The tick: USER_TIM's registers are
+ * among those, D2 and A2, are its row in `include/transcribed.h`. The tick: USER_TIM's registers are
  * restored by the bracket, but NEXT_TIM runs with the caller's and returns straight to it, so whatever the
  * chained handler changes reaches the caller — the row charges it the vector set, as every front end that
  * jumps through a vector is.

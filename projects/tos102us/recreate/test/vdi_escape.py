@@ -27,13 +27,14 @@ from harness import addrs
 
 import gemdos
 import isr
+import routines
 import vdi
 import vdi_raster
 import vt52
 from case import merge_pokes
 
 ESCAPE = "VDI_ROM_ESCAPE"
-CORE = vdi.core_symbol(ESCAPE)             # vdi_escape, the C twin Tier 1 proves
+CORE = routines.core_symbol(ESCAPE)             # vdi_escape, the C twin Tier 1 proves
 ESCAPE_H = addrs.parse(Path(__file__).resolve().parents[1] / "include" / "vdi" / "escape.h",
                        known={**addrs.ADDRS, **vdi.CONSTANTS})
 # Every `VDI_ESCAPE_<ARM>` is an arm but the `VDI_ESCAPE_ANSWER_*` constants — a rule of the header's, which

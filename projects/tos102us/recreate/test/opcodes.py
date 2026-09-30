@@ -26,14 +26,19 @@ TRAP_XBIOS = b"\x4e\x4e"                # trap    #14
 TRAP_GEMDOS = b"\x4e\x41"                # trap    #1, the GEMDOS entry
 JSR_ABSOLUTE_LONG = b"\x4e\xb9"          # jsr     <xxx>.l
 LINE_A = 0xA000                         # $Axxx: the Line-A exception, the low twelve bits its opcode
+LINE_F = 0xF000                         # $Fxxx: the Line-F exception, GEM's call and return (`aes/aes.h`)
+EXCEPTION_LINE_MASK = 0xF000            # the top nibble a Line-A / Line-F word is recognised by
 
 # ---- the stack ----------------------------------------------------------------------------------
 PUSH_WORD_IMMEDIATE = b"\x3f\x3c"       # move.w  #<imm>,-(sp)
+PUSH_LONG_IMMEDIATE = b"\x2f\x3c"       # move.l  #<imm>,-(sp)
 PUSH_RETURN_PC = b"\x48\x7a"            # pea     <d16>(pc)
 PUSH_SR = b"\x40\xe7"                   # move.w  sr,-(sp)
 PUSH_STACK_LONG = b"\x2f\x2f"           # move.l  <d16>(sp),-(sp)
 PUSH_STACK_WORD = b"\x3f\x2f"           # move.w  <d16>(sp),-(sp)
 DROP_STACK_BYTES = b"\x4f\xef"          # lea     <d16>(sp),sp
+DROP_STACK_LONG = b"\x58\x8f"           # addq.l  #4,sp
+PUSH_ADDRESS_SHORT = b"\x48\x78"        # pea     <xxx>.w
 SET_USER_STACK = b"\x4e\x60"            # move.l  a0,usp
 
 # ---- loads and stores ---------------------------------------------------------------------------

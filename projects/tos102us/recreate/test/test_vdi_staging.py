@@ -10,6 +10,7 @@ from harness import BASE_IMAGE, addrs, emu, make_image
 
 import case
 import gemdos_fs
+import routines
 import staging
 import vdi
 from opcodes import JSR_ABSOLUTE_LONG
@@ -173,11 +174,12 @@ OPCODE_SUFFIX = "_OPCODE"
 
 
 def opcode_claims():
-    """`[(routine name, opcode, subfunction or None)]` for every `_OPCODE` / `_OPCODE_<k>` in addrs.h."""
+    """`[(routine name, opcode, subfunction or None)]` for every VDI `_OPCODE` / `_OPCODE_<k>` in addrs.h (the AES's
+    are held to the AES dispatcher's table by `test_aes_door.py`)."""
     claims = []
     for name in dir(addrs):
         routine, marker, _extra = name.partition(OPCODE_SUFFIX)
-        if marker and hasattr(addrs, routine) and (name == routine + OPCODE_SUFFIX
+        if marker and routines.is_routine(routine, routines.VDI_COMPONENT_PREFIXES) and hasattr(addrs, routine) and (name == routine + OPCODE_SUFFIX
                                                    or name.startswith(routine + OPCODE_SUFFIX + "_")):
             claims.append((routine, getattr(addrs, name), getattr(addrs, routine + "_SUBFUNCTION", None)))
     return sorted(claims)

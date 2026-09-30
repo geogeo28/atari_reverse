@@ -1,7 +1,7 @@
 /* text_raster.S — the TEXT RASTER as the ROM wrote it: $a008 TextBlt, v_gtext's byte-aligned fast path, and
  * the CPU bodies behind drawing vectors 9 and 5 — the TRANSCRIPTION of `src/vdi/text_raster.c` the target
  * build ships (the user's rule for the hand-written 68000: C first, and where the C measures over Tier 3's
- * 1.10 bar, the ROM's own instructions; `include/vdi/transcribed.h` records it, entry by entry).
+ * 1.10 bar, the ROM's own instructions; `include/transcribed.h` records it, entry by entry).
  *
  * WHY THIS IS ASSEMBLY. The C is the reconstruction — Tier 1 proves it against the ROM over every arm — and
  * it runs several times the ROM's cycles (STATUS.md has the rows). TextBlt is the ROM's longest hand loop,
@@ -11,7 +11,7 @@
  * sequence, proved two ways that need no C:
  *
  *   * BYTE FOR BYTE — `test_vdi_text_raster_transcription.py` reads the assembled words back out of the
- *     cross-compiled blob and compares them with the ROM's, region by region (`vdi.assert_transcribed`).
+ *     cross-compiled blob and compares them with the ROM's, region by region (`transcription.assert_transcribed`).
  *     Four references differ, each RELOCATED there by name and pinned to the exact value it must hold: the
  *     `bsr.w` to act_siz (`helpers.S`) and the `jsr` to concat (`raster.S`), the `lea` of the fringe masks —
  *     raster.S's copy of the ROM's table, reached through its region's entry — and the `movea.l #` of this

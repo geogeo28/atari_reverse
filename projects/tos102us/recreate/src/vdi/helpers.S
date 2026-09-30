@@ -3,14 +3,14 @@
  *
  * WHY THESE ARE ASSEMBLY. Each is hand-written 68000 in the ROM, and each C port measures over the
  * 1.10 bar against it (`bench/tier3.py`'s mechanism (T) says where the cycles go, and
- * `include/vdi/transcribed.h` is the table that makes these entries what ships): the register routines
+ * `include/transcribed.h` is the table that makes these entries what ships): the register routines
  * pay for C's calling convention itself — their arguments and answers are REGISTERS, which a C core can
  * only take off the stack and hand back through memory — and the others a carry flag, a `-(An)` or a
  * `dbf` GCC does not emit. The user's rule for the hand-written routines is C first, and where the C
  * is over the bar, the ROM's own instructions.
  *
  * WHAT PINS THEM. `test/test_vdi_helpers_asm.py` reads every routine back out of the cross-compiled blob
- * and compares it with the ROM's bytes EXACTLY (`vdi.assert_transcribed`) — no word excused: where GNU
+ * and compares it with the ROM's bytes EXACTLY (`transcription.assert_transcribed`) — no word excused: where GNU
  * as would pick another encoding for an instruction (`cmp.w #imm` as `cmpi.w`, a zero displacement
  * dropped) the ROM's words are spelt with `.word` (`m68k_encodings.h`, the one spelling policy every
  * transcription follows) — and runs each through Tier 3's TRANSCRIPTION relation over its Tier 1 cases:
@@ -20,7 +20,7 @@
  * `vdi_rom_sort_words`), which is how Tier 3 finds the ROM address a transcription row is about.
  *
  * REGISTERS, as the ROM leaves them — the relation compares all of them. Against the GCC m68k ABI,
- * whose callers keep D2-D7/A2-A6, four entries are hazards and `include/vdi/transcribed.h` lists each
+ * whose callers keep D2-D7/A2-A6, four entries are hazards and `include/transcribed.h` lists each
  * one's set, measured: `sort_words` and `smul_div` destroy D2, `vr_trnfm`'s in-place transpose D7
  * outside its `movem` pair (harmless in the ROM only because its caller, the Alcyon dispatcher `$fca9f6`,
  * restores D7 from its own frame), and `gemdos_call` whatever its `trap #1` does not keep — D2/A2.

@@ -30,6 +30,7 @@ import pytest
 
 from harness import BASE_IMAGE
 
+import routines
 import vdi
 import vdi_arcs
 import vdi_helpers
@@ -65,7 +66,7 @@ def host_returns(pokes):
     """The host gdp_rbox over `pokes`, alone in a child process: a core that cycles, or faults off the image,
     FAILS the case here, where the differential would hang or kill its worker."""
     try:
-        returncode, stderr, _image = vdi_helpers.refusal_over(vdi.core_symbol("VDI_ROM_GDP_RBOX"), pokes,
+        returncode, stderr, _image = vdi_helpers.refusal_over(routines.core_symbol("VDI_ROM_GDP_RBOX"), pokes,
                                                               seconds=HOST_RETURN_SECONDS, read_back=False)
     except subprocess.TimeoutExpired:
         pytest.fail(f"the host gdp_rbox did not return within {HOST_RETURN_SECONDS} s")

@@ -18,7 +18,7 @@
 #include "vdi/vdi.h"
 #include "vdi/font.h"
 #include "vdi/helpers.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define WORD_BYTES 2
 
@@ -432,7 +432,7 @@ uint32_t vdi_get_kbshift(const uint8_t *image, uint32_t entry_d0)
  * them directly — its handler then through the hook a case binds. The parked longword is the
  * caller's ROM return site on both. The TARGET branch is UNEXERCISED: no differential runs it
  * (`test_vdi_helpers_gemdos.py` says why), and the shipped build links `helpers.S` in this core's
- * place (`vdi/transcribed.h`). */
+ * place (`transcribed.h`). */
 #ifdef RECREATE_HOST_DIFFERENTIAL
 static uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
 {

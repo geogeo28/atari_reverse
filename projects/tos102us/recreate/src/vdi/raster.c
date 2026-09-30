@@ -45,7 +45,7 @@
 #include "ram_vector.h"
 #include "vdi/vdi.h"
 #include "vdi/raster.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define PIXEL_IN_GROUP_MASK  15u        /* x & 15: the pixel's column in its 16-pixel group */
 #define GROUP_SHIFT          4          /* x >> 4 (`asr.w #4`): its group */

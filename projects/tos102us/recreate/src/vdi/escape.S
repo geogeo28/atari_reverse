@@ -6,7 +6,7 @@
  * table, arms of two to ten instructions that address the console's block off the `lea $2994,a4` the dispatch
  * made, and tail-jumps into the console's own routines. Its C twin measures 1.20x-3.13x against it, over the
  * 1.10 bar, and the user's rule for the hand-written routines is the ROM's own instructions, pinned byte for
- * byte (`include/vdi/transcribed.h`).
+ * byte (`include/transcribed.h`).
  *
  * WHAT IS NOT HERE is the VT52 console, whose code the escape's arms lie among and its table points into: ESC's
  * bodies (`ESC A` is v_curup's whole arm), the cursor's lock, the cell placement, the character entry. The
@@ -25,7 +25,7 @@
  * with the VDI convention (`test_vdi_rom_data.py`), as `entry.S`'s longword for $a009 does.
  *
  * REGISTERS: the transcription relation compares the escape's own (A4 the console block, D0 where an arm writes
- * it); its table row's set (`vdi/transcribed.h`) is the ROM's, whose console bodies use D2-D7/A2/A3/A5 as scratch —
+ * it); its table row's set (`transcribed.h`) is the ROM's, whose console bodies use D2-D7/A2/A3/A5 as scratch —
  * this file, reaching C bodies instead, changes A4 alone of those, which the row's superset leaves safe.
  *
  * NO WORD EXCUSED otherwise: the three `cmp.w #imm,d0` are the register form GNU as would turn into CMPI, spelt

@@ -1,5 +1,5 @@
 /* blit.S — the bit-block transfer AS THE ROM WROTE IT: the TRANSCRIPTION of `src/vdi/blit.c`'s $a00e, $a007
- * and CPU engine the target build ships (`include/vdi/transcribed.h` is the table that says so, entry by
+ * and CPU engine the target build ships (`include/transcribed.h` is the table that says so, entry by
  * entry, with each one's registers).
  *
  * WHY THIS IS ASSEMBLY. The engine is THREADED CODE: after its setup a row is a chain of `jmp`s through
@@ -11,7 +11,7 @@
  * routine is the ROM's own sequence, proved two ways that need no C:
  *
  *   * BYTE FOR BYTE — `test_vdi_blit_transcription.py` compares the assembled words with the ROM's,
- *     region by region (`vdi.assert_transcribed`). Fifty-seven longwords differ, each RELOCATED there by
+ *     region by region (`transcription.assert_transcribed`). Fifty-seven longwords differ, each RELOCATED there by
  *     name and pinned to the exact value it must hold: the engine's two dispatch tables (36 + 16
  *     fragment addresses) and its five `lea (fragment).l` — absolute references from the engine's region
  *     into the fragments', which name where THIS file puts them.

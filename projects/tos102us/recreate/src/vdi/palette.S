@@ -5,11 +5,11 @@
  * vq_color's D4, two PC-relative tables and an I/O address held in an address register. The C port
  * measures 1.19x-2.55x against it (`bench/tier3.py`'s mechanism (T) says where the cycles go), over
  * the 1.10 bar — and the user's rule for the hand-written routines is: C first, and where the C is
- * over the bar, the ROM's own instructions, pinned byte for byte. `include/vdi/transcribed.h` is the
+ * over the bar, the ROM's own instructions, pinned byte for byte. `include/transcribed.h` is the
  * table that makes these two entries what ships.
  *
  * WHAT PINS IT. `test_vdi_color.py` reads the assembled block back out of the cross-compiled blob and
- * compares it with the ROM's $160 bytes EXACTLY (`vdi.assert_transcribed`), no word excused: the six
+ * compares it with the ROM's $160 bytes EXACTLY (`transcription.assert_transcribed`), no word excused: the six
  * `<op>.w #imm,Dn` the ROM's assembler encoded in the register form, where GNU as would pick CMPI/ADDI/
  * ANDI, are spelt as the ROM's words (`m68k_encodings.h`, which says why that matters to the cycle
  * count too). And it runs the pair through Tier 3's TRANSCRIPTION relation
@@ -26,7 +26,7 @@
  * clobbers D0-D4/A0/A1 (D3 and D4 are an Alcyon caller's register variables, which is harmless only
  * because `$fc9f9e`, the trap #2 entry, saves D1-A6 around the whole dispatch); vq_color saves D4 and
  * clobbers D0-D2/A0/A1. The callee-saved ones among those are each entry's row in
- * `include/vdi/transcribed.h`.
+ * `include/transcribed.h`.
  */
 #include "addrs.h"
 #include "m68k_encodings.h"

@@ -18,6 +18,7 @@ from harness import addrs
 
 import test_vdi_linea_init  # noqa: F401  ($a000's contract)
 import test_vdi_raster_pixel as pixel
+import transcription
 import vdi
 import vdi_entry as entry
 import vdi_fill
@@ -94,4 +95,4 @@ for _label, _word, _pokes in (("$a000", LINE_A | INIT_OPCODE, None),
                               ("$a001", LINE_A | PUT_OPCODE, pixel.point_pokes(*POINT, colour=COLOUR)),
                               ("$a010, unserved", LINE_A | 0x10, None)):
     vdi.register(f"linea_dispatch, {_label}", entry.TRAMPOLINE_AT, entry.direct_pokes(_word, _pokes),
-                 regs=dict(vdi.DIRTY), priced=False)
+                 regs=dict(transcription.DIRTY), priced=False)

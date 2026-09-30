@@ -22,6 +22,8 @@ from harness import BASE_IMAGE, _lib, addrs
 import case
 import iorec
 import isr
+import routines
+import transcription
 import vdi
 import vdi_raster
 from case import merge_pokes
@@ -51,7 +53,7 @@ _IMAGE = ctypes.POINTER(ctypes.c_uint8)
 _LONG = ctypes.c_uint32
 for _name, _contract in CONTRACTS.items():
     vdi.declare_primitive(_name, **_contract)
-    getattr(_lib, vdi.core_symbol(_name)).argtypes = [_IMAGE] + [_LONG] * len(_contract.get("arguments", ()))
+    getattr(_lib, routines.core_symbol(_name)).argtypes = [_IMAGE] + [_LONG] * len(_contract.get("arguments", ()))
 
 # ---- this module's band of the VDI window -----------------------------------------------------------
 BAND_OFFSET = 0x1E00
@@ -231,12 +233,12 @@ vdi.declare_case_field(VBL_QUEUE, 4, "_vblqueue[0], which mouse_init and mouse_o
 # row loop), so a routine that draws returns with four code addresses — the one thing a transcription linked
 # anywhere else must differ in. MEASURED, not read: every other register a case leaves is equal. show_cursor
 # keeps A6 round its draw, so it leaves three; the restore leaves only data. Each caller clears exactly those
-# on BOTH sides (`vdi.CallerPool`, in this module's band), so everything else is still compared.
+# on BOTH sides (`transcription.CallerPool`, in this module's band), so everything else is still compared.
 DRAWN_CODE_POINTERS = ("a3", "a4", "a5", "a6")
 SHOWN_CODE_POINTERS = ("a3", "a4", "a5")
 CODE_POINTERS = {"LINEA_ROM_DRAW_SPRITE": DRAWN_CODE_POINTERS, "VDI_ROM_VBL_DRAW_CURSOR": DRAWN_CODE_POINTERS,
                  "VDI_ROM_SHOW_CURSOR": SHOWN_CODE_POINTERS}
-CALLERS = vdi.CallerPool(CALLERS_AT, SAVE_BLOCK_AT, CALLER_BYTES, CODE_POINTERS)
+CALLERS = transcription.CallerPool(CALLERS_AT, SAVE_BLOCK_AT, CALLER_BYTES, CODE_POINTERS)
 caller_for = CALLERS.caller_for
 run_transcription = CALLERS.run_transcription
 register_transcription = CALLERS.register_transcription

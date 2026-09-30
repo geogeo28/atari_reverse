@@ -2,7 +2,7 @@
  * for every byte-pinned transcription (`src/vdi/helpers.S`, `palette.S`, `raster.S`).
  *
  * THE SPELLING POLICY. A transcription ships the ROM's own instructions and is pinned to the ROM BYTE
- * FOR BYTE (`test/vdi.py`'s `assert_transcribed`). Where gas, handed the instruction, would emit a
+ * FOR BYTE (`test/transcription.py`'s `assert_transcribed`). Where gas, handed the instruction, would emit a
  * different word of the same meaning, the `.S` does not excuse the word in the pin: it spells the ROM's
  * encoding as `.word <ENCODING>(register), <operand>` with the instruction in its comment. An excusal
  * is left only for a word NO spelling can reproduce — a displacement or address that measures to where

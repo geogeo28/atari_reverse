@@ -56,12 +56,15 @@ TARGET_LDLIBS := -lgcc
 
 # THE TRANSCRIBED ROUTINES — the build contract for the day the ROM build links cores. The user's rule
 # for the hand-written 68000 is C first, and where the C measures over Tier 3's bar, SHIP the ROM's own
-# instructions: `include/vdi/transcribed.h` is the one table that says which, and both lists below are
-# read out of it rather than kept beside it (`test/test_vdi_transcribed.py` pins that they agree with the
-# Python view Tier 3 judges by, and that every `.globl` of the `.S` sources is a row of it).
+# instructions: `include/transcribed.h` is the one table that says which — for every component — and both
+# lists below are read out of it rather than kept beside it (`test/test_transcribed.py` pins that they agree
+# with the Python view Tier 3 judges by, and that every `.globl` of the `.S` sources is a row of it).
 #
 #   * TRANSCRIBED_SOURCES / TRANSCRIBED_ENTRIES — what the ROM build LINKS for these routines: the `.S`
 #     files and the entries they define. (Tier 3's blob links them today, beside the C: it measures both.)
+#     The sources are the TABLE COMPONENTS' `.S` — the VDI's and the AES's — and not `src/*/*.S`: the BIOS's
+#     `trap.S`/`isr.S` and GEMDOS's `trap1.S` are entries of another kind, with no table row, and every `.globl`
+#     here must be one.
 #   * TRANSCRIBED_C_CORES — the C twins it must NOT link. Each is still compiled — its file holds other
 #     cores — so the ROM build compiles with -ffunction-sections, links with --gc-sections, and refuses an
 #     image in which one of these is still a C BODY: some C still CALLS the core, and on target that call
@@ -73,7 +76,7 @@ TARGET_LDLIBS := -lgcc
 # `sed` rather than the Python parser because this file is read by two makefiles that share no `$(PY)`,
 # and `ENTRY.` rather than `ENTRY(` because make counts every parenthesis in a `$(shell ...)`;
 # the pin above is what keeps the two parsers honest.
-TRANSCRIBED_TABLE   := $(RECREATE)/include/vdi/transcribed.h
-TRANSCRIBED_SOURCES := $(wildcard $(RECREATE)/src/vdi/*.S)
+TRANSCRIBED_TABLE   := $(RECREATE)/include/transcribed.h
+TRANSCRIBED_SOURCES := $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S)
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
 TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))

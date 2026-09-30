@@ -56,7 +56,7 @@
 #include "vdi/helpers.h"
 #include "vdi/raster.h"
 #include "vdi/text_raster.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define PIXEL_IN_GROUP_MASK   15u       /* x & 15 */
 #define GROUP_SHIFT           4         /* x >> 4 */

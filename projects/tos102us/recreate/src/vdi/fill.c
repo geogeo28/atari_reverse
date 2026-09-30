@@ -33,7 +33,7 @@
 #include "vdi/helpers.h"
 #include "vdi/raster.h"
 #include "vdi/fill.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define PIXEL_IN_GROUP_MASK  15u
 #define LEFTMOST_PIXEL_BIT   0x8000u

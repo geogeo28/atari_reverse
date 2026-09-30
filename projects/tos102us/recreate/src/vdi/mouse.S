@@ -1,6 +1,6 @@
 /* mouse.S — the mouse and cursor routines AS THE ROM WROTE THEM: the TRANSCRIPTION of `src/vdi/mouse.c`'s
  * hand-written 68000 the target build ships, because each one's C measures over Tier 3's 1.10 bar
- * (`include/vdi/transcribed.h` says which entries, with each one's registers; STATUS.md has the rows).
+ * (`include/transcribed.h` says which entries, with each one's registers; STATUS.md has the rows).
  *
  * WHY THIS IS ASSEMBLY. The sprite pair is three fragments per row reached by `jsr (a6)` / `jmp (a3)` /
  * `jmp (a4)` / `jmp (a5)` out of two PC-relative tables, chosen once per call by the clip and once per
@@ -10,7 +10,7 @@
  *
  * WHAT PINS IT, needing no C:
  *   * BYTE FOR BYTE — `test_vdi_mouse_transcription.py` reads every word back out of the cross-compiled
- *     blob against the ROM's (`vdi.assert_transcribed`). The references that differ are RELOCATED there by
+ *     blob against the ROM's (`transcription.assert_transcribed`). The references that differ are RELOCATED there by
  *     name, each to its exact value: draw_sprite's `bsr.w` to concat (raster.S), the two `lea`s of the
  *     spread fragments and the fourteen longwords of the two fragment tables — which name THIS file's
  *     fragments, as the ROM's name its own.

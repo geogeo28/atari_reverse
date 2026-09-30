@@ -38,6 +38,7 @@ from harness import BASE_IMAGE, addrs, emu
 
 import case
 import isr
+import transcription
 import vdi
 import vdi_helpers
 import vdi_mouse
@@ -73,19 +74,19 @@ def test_the_two_palettes_are_one_table_read_at_two_starts():
 # ---- the span clear, $fc4b7c ---------------------------------------------------------------------------------------
 # Its ROM extent: to the `rts` at $fc4be6, before the BIOS code that follows.
 CLEAR_BYTES = 0x6C
-CLEAR_REGION = vdi.pinned_region(addrs.VDI_ROM_CLEAR_SPAN, addrs.VDI_ROM_CLEAR_SPAN + CLEAR_BYTES, screen.CLEAR)
+CLEAR_REGION = transcription.pinned_region(addrs.VDI_ROM_CLEAR_SPAN, addrs.VDI_ROM_CLEAR_SPAN + CLEAR_BYTES, screen.CLEAR)
 BLOCK = 0x100
 
 
 # ...and the tick's: from its entry, exactly where the low palette ends, to restore_timer_mouse's.
 TICK_BYTES = 0x18
-TICK_REGION = vdi.pinned_region(addrs.VDI_ROM_TIMER_TICK, addrs.VDI_ROM_TIMER_TICK + TICK_BYTES, screen.TICK)
+TICK_REGION = transcription.pinned_region(addrs.VDI_ROM_TIMER_TICK, addrs.VDI_ROM_TIMER_TICK + TICK_BYTES, screen.TICK)
 REGIONS = {"the clear": CLEAR_REGION, "the tick": TICK_REGION}
 
 
 @pytest.mark.parametrize("region", REGIONS.values(), ids=REGIONS.keys())
 def test_each_transcription_is_the_rom_s_bytes_exactly(region):
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi)
+    transcription.assert_transcribed(region)
 
 
 @pytest.mark.parametrize("region", REGIONS.values(), ids=REGIONS.keys())
@@ -297,7 +298,7 @@ NEXT_TIM_STORED = re.compile(rf"\bmovel %d\d,%a\d@\({vdi.field('LINEA', 'NEXT_TI
 
 def instructions(symbol):
     """`symbol`'s instructions in the shipped build, as `m68k-elf-objdump` prints them, operand text only."""
-    listing = subprocess.run(["m68k-elf-objdump", "-d", f"--disassemble={symbol}", str(vdi.SHIPPED_ELF)], capture_output=True,
+    listing = subprocess.run(["m68k-elf-objdump", "-d", f"--disassemble={symbol}", str(transcription.SHIPPED_ELF)], capture_output=True,
                              text=True, check=True).stdout
     return [line.split("\t")[-1].strip() for line in listing.splitlines() if re.match(r"^\s+[0-9a-f]+:\t", line)]
 
@@ -348,7 +349,7 @@ def test_the_default_user_tim_is_the_rom_s_own_rts():
 def test_what_init_installs_ships_as_its_own_entry():
     """etv_timer is handed VDI_ROM_TIMER_TICK as a CODE value: a rebuilt ROM owes it the address its entry is
     linked at, and there is one to link — the transcription, which has timer C's convention."""
-    assert vdi.transcription_symbol(screen.TICK) in vdi.TRANSCRIBED
+    assert transcription.transcription_symbol(screen.TICK) in transcription.TRANSCRIBED
 
 
 # The transcription's cases: every tick word, and each USER_TIM — the marking one, the one that repoints NEXT_TIM,
@@ -359,16 +360,16 @@ TICK_TRANSCRIPTIONS = ((20, screen.USER_TIM_STUB_AT), (0, screen.USER_TIM_STUB_A
 
 @pytest.mark.parametrize("tick,user_tim", TICK_TRANSCRIPTIONS)
 def test_the_tick_s_transcription_behaves_as_the_rom(tick, user_tim):
-    vdi.run_transcription(screen.TICK, screen.tick_transcription_pokes(tick, user_tim), caller=screen.WORD_CALLER)
+    transcription.run_transcription(screen.TICK, screen.tick_transcription_pokes(tick, user_tim), caller=screen.WORD_CALLER)
 
 
 def test_the_rom_s_chain_hands_the_caller_what_the_handler_left():
     """What makes the relation above more than a register file handed through: on the ROM, USER_TIM's clobbers
     are gone again (the `movem` bracket) and NEXT_TIM's reach the caller (the chain) — with the tick word."""
-    pokes = vdi.transcription_pokes(screen.TICK, screen.tick_transcription_pokes(20), screen.WORD_CALLER)
-    final, _writes, left = emu.run(vdi.make_image(pokes), screen.WORD_CALLER.at, dict(vdi.DIRTY))
+    pokes = transcription.transcription_pokes(screen.TICK, screen.tick_transcription_pokes(20), screen.WORD_CALLER)
+    final, _writes, left = emu.run(vdi.make_image(pokes), screen.WORD_CALLER.at, dict(transcription.DIRTY))
     chained = screen.clobbered(screen.CHAIN_CLOBBERS)
-    assert {name: left[name] for name in emu.REPORTED_REGS} == {**vdi.DIRTY, **chained}
+    assert {name: left[name] for name in emu.REPORTED_REGS} == {**transcription.DIRTY, **chained}
     assert bytes(final[screen.NEXT_TIM_WORD_AT:screen.NEXT_TIM_WORD_AT + 2]) == struct.pack(">H", 20)
 
 
@@ -388,4 +389,4 @@ vdi.register("vdi_init_timer_mouse, the workstation opened", addrs.VDI_ROM_INIT_
 vdi.register("vdi_restore_timer_mouse, the workstation closed", addrs.VDI_ROM_RESTORE_TIMER_MOUSE, restore_pokes())
 vdi.register("vdi_timer_tick, a tick chained", addrs.VDI_ROM_TIMER_TICK, screen.tick_pokes(20),
              regs=dict(isr.DIRTY_REGISTERS))
-vdi.register_transcription(screen.TICK, "a tick chained", screen.tick_transcription_pokes(20), caller=screen.WORD_CALLER)
+transcription.register_transcription(screen.TICK, "a tick chained", screen.tick_transcription_pokes(20), caller=screen.WORD_CALLER)

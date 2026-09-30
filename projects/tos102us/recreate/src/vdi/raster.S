@@ -1,7 +1,7 @@
 /* raster.S — the Line-A pixel / scanline primitives and their CPU bodies AS THE ROM WROTE THEM: the
  * TRANSCRIPTION of `src/vdi/raster.c`'s routines the target build ships (the user's rule for the hand-
  * written 68000: C first, and where the C measures over Tier 3's 1.10 bar, the ROM's own instructions;
- * `include/vdi/transcribed.h` is the table that says so, entry by entry, with each one's registers).
+ * `include/transcribed.h` is the table that says so, entry by entry, with each one's registers).
  *
  * WHY THIS IS ASSEMBLY. The C is the reconstruction — Tier 1 proves it against the ROM over every arm —
  * and it is two to three times the ROM's cycles here (STATUS.md has the rows): these are hand-written
@@ -12,7 +12,7 @@
  * the ROM's own sequence, and it is proved two ways that need no C:
  *
  *   * BYTE FOR BYTE — `test_vdi_raster_transcription.py` reads the assembled words back out of the
- *     cross-compiled blob and compares them with the ROM's, region by region (`vdi.assert_transcribed`).
+ *     cross-compiled blob and compares them with the ROM's, region by region (`transcription.assert_transcribed`).
  *     Six references differ, each RELOCATED there by name and pinned to the exact value it must hold:
  *     five displacements of a `bsr`/`bcc` from one region into another, which measure to where this file
  *     puts the other region rather than where the ROM does, and $a005's absolute `lea` of the fringe

@@ -33,6 +33,8 @@ import abi
 import case
 import gemdos
 import isr
+import routines
+import transcription
 import vdi
 import vdi_mouse
 from case import merge_pokes
@@ -49,7 +51,7 @@ REGISTER_CONTRACTS = {
 }
 for _name, _contract in REGISTER_CONTRACTS.items():
     vdi.declare_primitive(_name, **_contract)
-    getattr(_lib, vdi.core_symbol(_name)).argtypes = [vdi.IMAGE_ARG]
+    getattr(_lib, routines.core_symbol(_name)).argtypes = [vdi.IMAGE_ARG]
 TICK = "VDI_ROM_TIMER_TICK"
 vdi.declare_alcyon(TICK, None, (vdi.IMAGE_ARG, vdi.WORD_ARG))
 CLEAR = "VDI_ROM_CLEAR_SPAN"
@@ -183,7 +185,7 @@ WORD_CALLER_STUB = (PUSH_STACK_WORD + WORD.pack(_TICK_FROM_ENTRY_SP)
                     + DROP_STACK_BYTES + WORD.pack(WORD.size)
                     + RTS)
 assert len(WORD_CALLER_STUB) <= WORD_CALLER_BYTES
-WORD_CALLER = vdi.staged_caller(WORD_CALLER_AT, WORD_CALLER_STUB, (6, 96))
+WORD_CALLER = transcription.staged_caller(WORD_CALLER_AT, WORD_CALLER_STUB, (6, 96))
 
 
 def tick_transcription_pokes(tick, user_tim=USER_TIM_STUB_AT):

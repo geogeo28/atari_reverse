@@ -1,5 +1,5 @@
 """`src/vdi/text_raster.S` — the text raster as the ROM wrote it, which the target build ships because its C
-measures over Tier 3's 1.10 bar (`include/vdi/transcribed.h`).
+measures over Tier 3's 1.10 bar (`include/transcribed.h`).
 
 Two claims hold it, neither of which needs the C: its WORDS are the ROM's, region by region, save the four
 references that measure to where the blob links things (each relocated to its exact value); and it BEHAVES as
@@ -18,10 +18,9 @@ and its carry mask ($ffff) takes every bit from the carried word — believed EQ
 
 import pytest
 
-from harness import emu
-
 import test_vdi_text_raster_fast as fast
 import test_vdi_textblt as textblt
+import transcription
 import vdi
 import vdi_raster
 import vdi_text
@@ -30,34 +29,32 @@ from vdi_text import LIGHTEN, OUTLINE, SKEW, THICKEN, textblt_pokes
 
 # ---- the words ------------------------------------------------------------------------------------------------
 REGIONS = (
-    vdi.pinned_region(0xFCEE54, 0xFCEE66, "LINEA_ROM_TEXTBLT", ()),
-    vdi.pinned_region(0xFCF964, 0xFCF9BE, "LINEA_ROM_FAST_TEXT", ()),
-    vdi.pinned_region(*vdi_text.BODIES_REGION, "LINEA_ROM_CPU_FAST_TEXT", ("LINEA_ROM_CPU_TEXTBLT",)),
+    transcription.pinned_region(0xFCEE54, 0xFCEE66, "LINEA_ROM_TEXTBLT", ()),
+    transcription.pinned_region(0xFCF964, 0xFCF9BE, "LINEA_ROM_FAST_TEXT", ()),
+    transcription.pinned_region(*vdi_text.BODIES_REGION, "LINEA_ROM_CPU_FAST_TEXT", ("LINEA_ROM_CPU_TEXTBLT",)),
 )
 _ACROSS = "a reference from this file into another's region, which measures to where the blob links it"
 RELOCATED = {
-    0xFD1E3A: vdi.Relocated(vdi.PC_RELATIVE, "VDI_ROM_ACT_SIZ", f"TextBlt's `bsr.w` to act_siz: {_ACROSS}"),
-    0xFD21C0: vdi.Relocated(vdi.ABSOLUTE, "LINEA_ROM_CONCAT", f"the final blit's `jsr` to concat: {_ACROSS}"),
-    0xFD2286: vdi.Relocated(vdi.ABSOLUTE, "LINEA_ROM_LINE_PLANE_WORDS",
-                            "the blit's `lea (table).l` of the fringe masks: the ROM's own table at $fca55c, which "
-                            "raster.S carries in its second region — so the reference is to raster.S's copy"),
-    0xFD24DA: vdi.Relocated(vdi.ABSOLUTE, "LINEA_ROM_CPU_FAST_TEXT",
-                            "the row loops' `movea.l #.Lfragments,a3`: this file's own fragment base"),
+    0xFD1E3A: transcription.Relocated(transcription.PC_RELATIVE, "VDI_ROM_ACT_SIZ", f"TextBlt's `bsr.w` to act_siz: {_ACROSS}"),
+    0xFD21C0: transcription.Relocated(transcription.ABSOLUTE, "LINEA_ROM_CONCAT", f"the final blit's `jsr` to concat: {_ACROSS}"),
+    0xFD2286: transcription.Relocated(transcription.ABSOLUTE, "LINEA_ROM_LINE_PLANE_WORDS",
+                                      "the blit's `lea (table).l` of the fringe masks: the ROM's own table at $fca55c, which "
+                                      "raster.S carries in its second region — so the reference is to raster.S's copy"),
+    0xFD24DA: transcription.Relocated(transcription.ABSOLUTE, "LINEA_ROM_CPU_FAST_TEXT",
+                                      "the row loops' `movea.l #.Lfragments,a3`: this file's own fragment base"),
 }
 
 
 @pytest.mark.parametrize("region", REGIONS, ids=[f"${region.lo:x}" for region in REGIONS])
 def test_each_region_is_the_rom_s_words(region):
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi, entries=region.entries,
-                           relocated={at: relocation for at, relocation in RELOCATED.items()
-                                      if region.lo <= at < region.hi})
+    transcription.assert_transcribed(region, relocated=RELOCATED)
 
 
 def test_the_textblt_body_s_caller_clears_a3_and_keeps_every_other_register():
-    """Its cost is `test_vdi_transcribed.py`'s to measure, with every other caller's: here, that the
+    """Its cost is `test_transcribed.py`'s to measure, with every other caller's: here, that the
     epilogue stand-in hands back A5/A6 as the caller pushed them and only A3 is changed."""
-    left = vdi.assert_caller_cost(vdi_text.TEXTBLT_BODY_CALLER)
-    assert {name for name in emu.REPORTED_REGS if left[name] != vdi.DIRTY[name]} == {"a3"}
+    left = transcription.assert_caller_cost(vdi_text.TEXTBLT_BODY_CALLER)
+    assert transcription.changed_from_dirty(left) == {"a3"}
     assert left["a3"] == 0
 
 

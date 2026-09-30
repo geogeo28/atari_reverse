@@ -35,6 +35,7 @@ from harness import BASE_IMAGE, _lib, addrs, emu, make_image
 import case
 import gemdos
 import gemdos_memory as mem
+import routines
 import vdi
 import vdi_helpers
 import vdi_mouse
@@ -48,8 +49,8 @@ INIT_WK = "VDI_ROM_INIT_WK"
 vdi.declare_alcyon(INIT_WK, None, (vdi.IMAGE_ARG,))
 OPNWK, CLSWK, OPNVWK, CLSVWK = "VDI_ROM_V_OPNWK", "VDI_ROM_V_CLSWK", "VDI_ROM_V_OPNVWK", "VDI_ROM_V_CLSVWK"
 for _name in (OPNWK, CLSWK, OPNVWK, CLSVWK):
-    getattr(_lib, vdi.core_symbol(_name)).argtypes = [vdi.IMAGE_ARG]
-    getattr(_lib, vdi.core_symbol(_name)).restype = None
+    getattr(_lib, routines.core_symbol(_name)).argtypes = [vdi.IMAGE_ARG]
+    getattr(_lib, routines.core_symbol(_name)).restype = None
 
 # ---- the open call's intin: [0] the device (setres's), [1..10] the attributes init_wk takes ----------------------
 INTIN_WORDS = WORKSTATION_H["VDI_OPEN_XFM_MODE"] + 1
@@ -153,7 +154,7 @@ UNPOISONED = vdi.READS_A_POINTER_IT_WRITES
 
 def through_the_door(name, staged, handlers, **kwargs):
     """`addrs.<name>` over `staged`, the candidate's GEMDOS calls answered by `handlers` (`gemdos.bound_handlers`)."""
-    core = getattr(_lib, vdi.core_symbol(name))
+    core = getattr(_lib, routines.core_symbol(name))
     with gemdos.bound_handlers(handlers):
         info = case.run(getattr(addrs, name), {"_pokes": staged}, gemdos.recording(lambda _lib_, buf: core(buf)),
                         width=case.NO_RESULT, **UNPOISONED, **kwargs)

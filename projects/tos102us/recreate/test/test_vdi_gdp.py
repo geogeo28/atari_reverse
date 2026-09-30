@@ -35,6 +35,7 @@ import subprocess
 
 import pytest
 
+import routines
 import vdi
 import vdi_arcs
 import vdi_gdp
@@ -56,7 +57,7 @@ def host_returns(pokes):
     """The host vdi_gdp over `pokes` alone in a child: a core that follows a pointer the case moved off the image
     FAILS here, where the differential would kill its worker."""
     try:
-        returncode, stderr, _image = vdi_helpers.refusal_over(vdi.core_symbol("VDI_ROM_GDP"), pokes,
+        returncode, stderr, _image = vdi_helpers.refusal_over(routines.core_symbol("VDI_ROM_GDP"), pokes,
                                                               seconds=HOST_RETURN_SECONDS, read_back=False)
     except subprocess.TimeoutExpired:
         pytest.fail(f"the host vdi_gdp did not return within {HOST_RETURN_SECONDS} s")

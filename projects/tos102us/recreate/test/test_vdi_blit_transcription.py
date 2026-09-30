@@ -1,5 +1,5 @@
 """`src/vdi/blit.S` — $a00e, $a007 and the CPU blit engine as the ROM wrote them, which the target build ships
-because their C measures over Tier 3's 1.10 bar (`include/vdi/transcribed.h`, the TRANSCRIBED table).
+because their C measures over Tier 3's 1.10 bar (`include/transcribed.h`, the TRANSCRIBED table).
 
 Two claims hold it, neither of which needs the C: its WORDS are the ROM's, region by region, save the
 fifty-seven longwords that name where blit.S itself puts the engine's fragments (each relocated to its exact
@@ -23,6 +23,7 @@ from harness import BASE_IMAGE
 
 import test_vdi_blit_copy as copy
 import test_vdi_blit_engine as engine
+import transcription
 import vdi
 import vdi_blit
 import vdi_raster
@@ -32,9 +33,9 @@ from vdi_blit import OP_S
 # ---- the words -------------------------------------------------------------------------------------------
 FRAGMENTS = "LINEA_ROM_CPU_BLIT_OPS"
 REGIONS = (
-    vdi.pinned_region(0xFD0346, 0xFD0640, "LINEA_ROM_COPY_RASTER", ("LINEA_ROM_BITBLT",)),
-    vdi.pinned_region(0xFD1038, 0xFD141C, "LINEA_ROM_CPU_BLIT", ()),
-    vdi.pinned_region(0xFD1694, 0xFD19DC, FRAGMENTS, ()),
+    transcription.pinned_region(0xFD0346, 0xFD0640, "LINEA_ROM_COPY_RASTER", ("LINEA_ROM_BITBLT",)),
+    transcription.pinned_region(0xFD1038, 0xFD141C, "LINEA_ROM_CPU_BLIT", ()),
+    transcription.pinned_region(0xFD1694, 0xFD19DC, FRAGMENTS, ()),
 )
 # The engine's two dispatch tables — the word rotates and aligners ($fd1158, 36 longwords) and the ops
 # ($fd1278, 16) — and the five `lea (fragment).l` operands: every absolute reference from the engine's
@@ -44,9 +45,9 @@ LEAS = {0xFD113E: "the single-word rows' row end", 0xFD11F0: "the pattern row", 
         0xFD12CA: "the no-source rows' middle loop", 0xFD12D4: "the no-source single word's row end"}
 _OWN = "an absolute address of a fragment, which names where blit.S puts it"
 RELOCATED = {
-    **{at: vdi.Relocated(vdi.ABSOLUTE, FRAGMENTS, f"{what}: {_OWN}")
+    **{at: transcription.Relocated(transcription.ABSOLUTE, FRAGMENTS, f"{what}: {_OWN}")
        for lo, hi, what in TABLES for at in range(lo, hi, vdi.LONG_BYTES)},
-    **{at: vdi.Relocated(vdi.ABSOLUTE, FRAGMENTS, f"`lea` of {what}: {_OWN}") for at, what in LEAS.items()},
+    **{at: transcription.Relocated(transcription.ABSOLUTE, FRAGMENTS, f"`lea` of {what}: {_OWN}") for at, what in LEAS.items()},
 }
 
 
@@ -61,15 +62,13 @@ def test_every_relocated_longword_is_a_fragment_address():
 
 @pytest.mark.parametrize("region", REGIONS, ids=[f"${region.lo:x}" for region in REGIONS])
 def test_each_region_is_the_rom_s_words(region):
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi, entries=region.entries,
-                           relocated={at: relocation for at, relocation in RELOCATED.items()
-                                      if region.lo <= at < region.hi})
+    transcription.assert_transcribed(region, relocated=RELOCATED)
 
 
 @pytest.mark.parametrize("registers", sorted({vdi_blit.ENGINE_CODE_POINTERS, vdi_blit.PATTERN_CODE_POINTERS}))
 def test_a_code_pointer_caller_clears_its_registers_and_nothing_else(registers):
-    left = vdi.assert_caller_cost(vdi_blit.code_pointer_caller(registers))
-    assert {name for name in vdi.emu.REPORTED_REGS if left[name] != vdi.DIRTY[name]} == set(registers)
+    left = transcription.assert_caller_cost(vdi_blit.code_pointer_caller(registers))
+    assert transcription.changed_from_dirty(left) == set(registers)
     assert all(left[name] == 0 for name in registers)
 
 
@@ -152,27 +151,27 @@ def test_bitblt(shift, direction):
 
 @pytest.mark.parametrize("op", (OP_S, 6, 12))
 def test_copy_raster_opaque(op):
-    vdi.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.COPY, copy.ON_SCREEN, mode=op))
+    transcription.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.COPY, copy.ON_SCREEN, mode=op))
 
 
 @pytest.mark.parametrize("corners", copy.CLIP_CASES.values(), ids=copy.CLIP_CASES.keys())
 def test_copy_raster_clipped(corners):
-    vdi.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.COPY, corners, mode=OP_S, clip=copy.CLIP))
+    transcription.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.COPY, corners, mode=OP_S, clip=copy.CLIP))
 
 
 @pytest.mark.parametrize("mode", vdi_blit.MODES.values(), ids=vdi_blit.MODES.keys())
 @pytest.mark.parametrize("colours", copy.COLOURS.values(), ids=copy.COLOURS.keys())
 def test_copy_raster_transparent(mode, colours):
-    vdi.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.TRANSPARENT_COPY, copy.FROM_FORM, mode=mode, colours=colours,
-                                                             source_form=copy.ONE_PLANE, transparent=1))
+    transcription.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.TRANSPARENT_COPY, copy.FROM_FORM, mode=mode, colours=colours,
+                                                                       source_form=copy.ONE_PLANE, transparent=1))
 
 
 @pytest.mark.parametrize("refusal", copy.REFUSALS.values(), ids=copy.REFUSALS.keys())
 def test_copy_raster_refusals(refusal):
-    vdi.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.COPY, copy.ON_SCREEN, **refusal))
+    transcription.run_transcription("LINEA_ROM_COPY_RASTER", copy.call(copy.COPY, copy.ON_SCREEN, **refusal))
 
 
 def test_copy_raster_through_the_pattern():
-    vdi.run_transcription("LINEA_ROM_COPY_RASTER",
-                          copy.call(copy.COPY, copy.ON_SCREEN, mode=vdi_blit.PATTERN_MODE | 6,
-                                    extra=merge_pokes(vdi_raster.user_pattern_pokes(), vdi.linea_pokes(MULTIFILL=1))))
+    transcription.run_transcription("LINEA_ROM_COPY_RASTER",
+                                    copy.call(copy.COPY, copy.ON_SCREEN, mode=vdi_blit.PATTERN_MODE | 6,
+                                              extra=merge_pokes(vdi_raster.user_pattern_pokes(), vdi.linea_pokes(MULTIFILL=1))))

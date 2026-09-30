@@ -11,7 +11,7 @@
  * All six are hand 68000 reached by `jsr`/`bra`, so their contracts are `test/vdi_screen.py`'s
  * declarations: clear_span an Alcyon frame, v_clrwk a VDI function, setres an answer in D0, timer_tick the
  * etv_timer word under its return address, the other two nothing either way. clear_span and timer_tick
- * ship as the ROM's own instructions (`src/vdi/screen.S`, `vdi/transcribed.h`): the clear because its C is
+ * ship as the ROM's own instructions (`src/vdi/screen.S`, `transcribed.h`): the clear because its C is
  * nearly four times the ROM's `movem` loop, the tick because etv_timer holds its ADDRESS and timer C enters
  * it with a convention no C function has.
  */

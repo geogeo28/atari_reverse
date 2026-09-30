@@ -1,20 +1,19 @@
 """`src/vdi/raster.S` — the pixel / scanline primitives as the ROM wrote them, which the target build
-ships because their C measures over Tier 3's 1.10 bar (`include/vdi/transcribed.h`, the TRANSCRIBED table).
+ships because their C measures over Tier 3's 1.10 bar (`include/transcribed.h`, the TRANSCRIBED table).
 
 Two claims hold it, neither of which needs the C: its WORDS are the ROM's, region by region, save the
 references that measure to where raster.S itself is linked (each relocated to its exact value); and it
 BEHAVES as the ROM over the batteries' own cases — the same image, the whole register file and the same
-traffic, through Tier 3's transcription relation (`vdi.run_transcription`).
+traffic, through Tier 3's transcription relation (`transcription.run_transcription`).
 """
 
 import pytest
-
-from harness import emu
 
 import test_vdi_line as line
 import test_vdi_raster_hline as hline
 import test_vdi_raster_pixel as pixel
 import test_vdi_raster_rect as rect
+import transcription
 import vdi
 import vdi_raster
 from vdi_raster import MODES
@@ -22,43 +21,41 @@ from vdi_raster import MODES
 # ---- the words -------------------------------------------------------------------------------------------
 # Each region the ROM's, with the `.S` entry whose offset in it anchors it and every other entry inside.
 REGIONS = (
-    vdi.pinned_region(0xFCA1B8, 0xFCA20A, "LINEA_ROM_CONCAT", ("LINEA_ROM_LINE",)),
-    vdi.pinned_region(0xFCA2E0, 0xFCA5CA, "LINEA_ROM_LINE_PLANE_WORDS", ("LINEA_ROM_HLINE", "LINEA_ROM_HLINE_PATTERNED", "LINEA_ROM_HLINE_SPAN")),
-    vdi.pinned_region(0xFCFACE, 0xFCFB54, "LINEA_ROM_PUT_PIXEL", ("LINEA_ROM_GET_PIXEL",)),
-    vdi.pinned_region(0xFCFC50, 0xFCFCCC, "LINEA_ROM_FILLED_RECT", ()),
-    vdi.pinned_region(0xFD19DC, 0xFD1CC4, "LINEA_ROM_CPU_VLINE", ("LINEA_ROM_CPU_HLINE", "LINEA_ROM_CPU_RECT_FILL")),
+    transcription.pinned_region(0xFCA1B8, 0xFCA20A, "LINEA_ROM_CONCAT", ("LINEA_ROM_LINE",)),
+    transcription.pinned_region(0xFCA2E0, 0xFCA5CA, "LINEA_ROM_LINE_PLANE_WORDS", ("LINEA_ROM_HLINE", "LINEA_ROM_HLINE_PATTERNED", "LINEA_ROM_HLINE_SPAN")),
+    transcription.pinned_region(0xFCFACE, 0xFCFB54, "LINEA_ROM_PUT_PIXEL", ("LINEA_ROM_GET_PIXEL",)),
+    transcription.pinned_region(0xFCFC50, 0xFCFCCC, "LINEA_ROM_FILLED_RECT", ()),
+    transcription.pinned_region(0xFD19DC, 0xFD1CC4, "LINEA_ROM_CPU_VLINE", ("LINEA_ROM_CPU_HLINE", "LINEA_ROM_CPU_RECT_FILL")),
 )
-# The words no spelling reproduces, each relocated to its target's place in the blob (`vdi.Relocated`):
+# The words no spelling reproduces, each relocated to its target's place in the blob (`transcription.Relocated`):
 # the displacements of the branches from one region into another, and the one absolute reference to a
 # table of the transcription's own.
 _ACROSS = "a displacement from one region into another, which measures to where raster.S puts it"
 _LINE_ARMS = "LINEA_ROM_LINE_PLANE_WORDS"            # the region $a003's two arms are in
 RELOCATED = {
-    0xFCA1FC: vdi.Relocated(vdi.PC_RELATIVE, _LINE_ARMS, f"$a003's `beq.w` to its horizontal arm: {_ACROSS}"),
-    0xFCA202: vdi.Relocated(vdi.PC_RELATIVE, _LINE_ARMS, f"$a003's `bne.w` to its diagonal arm: {_ACROSS}"),
-    0xFCFADC: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_CONCAT", f"put_pixel's `bsr.w` to concat: {_ACROSS}"),
-    0xFCFB22: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_CONCAT", f"get_pixel's `bsr.w` to concat: {_ACROSS}"),
-    0xFD19F6: vdi.Relocated(vdi.PC_RELATIVE, _LINE_ARMS,
-                            f"the vertical body's `bsr.w` to line_plane_words: {_ACROSS}"),
-    0xFCFCA6: vdi.Relocated(vdi.ABSOLUTE, _LINE_ARMS,
-                            "$a005's `lea (table).l` of the fringe masks: the ROM's own table at $fca55c, which "
-                            "raster.S carries in its second region — so the reference is to raster.S's copy"),
+    0xFCA1FC: transcription.Relocated(transcription.PC_RELATIVE, _LINE_ARMS, f"$a003's `beq.w` to its horizontal arm: {_ACROSS}"),
+    0xFCA202: transcription.Relocated(transcription.PC_RELATIVE, _LINE_ARMS, f"$a003's `bne.w` to its diagonal arm: {_ACROSS}"),
+    0xFCFADC: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_CONCAT", f"put_pixel's `bsr.w` to concat: {_ACROSS}"),
+    0xFCFB22: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_CONCAT", f"get_pixel's `bsr.w` to concat: {_ACROSS}"),
+    0xFD19F6: transcription.Relocated(transcription.PC_RELATIVE, _LINE_ARMS,
+                                      f"the vertical body's `bsr.w` to line_plane_words: {_ACROSS}"),
+    0xFCFCA6: transcription.Relocated(transcription.ABSOLUTE, _LINE_ARMS,
+                                      "$a005's `lea (table).l` of the fringe masks: the ROM's own table at $fca55c, which "
+                                      "raster.S carries in its second region — so the reference is to raster.S's copy"),
 }
 
 
 @pytest.mark.parametrize("region", REGIONS, ids=[f"${region.lo:x}" for region in REGIONS])
 def test_each_region_is_the_rom_s_words(region):
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi, entries=region.entries,
-                           relocated={at: relocation for at, relocation in RELOCATED.items()
-                                      if region.lo <= at < region.hi})
+    transcription.assert_transcribed(region, relocated=RELOCATED)
 
 
 @pytest.mark.parametrize("registers", sorted({*vdi_raster.CODE_POINTERS.values(), vdi_raster.DIAGONAL_CODE_POINTERS}))
 def test_a_code_pointer_caller_clears_its_registers_and_nothing_else(registers):
-    """Its cost is `test_vdi_transcribed.py`'s to measure, with every other caller's; what is this file's
+    """Its cost is `test_transcribed.py`'s to measure, with every other caller's; what is this file's
     is the promise that makes it a narrow mask — the named registers zeroed, every other left as it was."""
-    left = vdi.assert_caller_cost(vdi_raster.code_pointer_caller(registers))
-    assert {name for name in emu.REPORTED_REGS if left[name] != vdi.DIRTY[name]} == set(registers)
+    left = transcription.assert_caller_cost(vdi_raster.code_pointer_caller(registers))
+    assert transcription.changed_from_dirty(left) == set(registers)
     assert all(left[name] == 0 for name in registers)
 
 

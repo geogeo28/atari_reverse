@@ -1320,3 +1320,31 @@ fn 0xfc4a42 v_fontinit
 cmt 0xfc427a VDI escape (opcode 5), in the BIOS's range: lea $2994,a4 then contrl[5] through the word table at $fc4298. vs_curaddress does no validation (0 -> $ffff); v_dspcur clears the caller's intin[0] and jmps into v_show_c; v_curtext's count is an unsigned dbf; v_offset never re-places the cursor; vq_chcells stores columns before rows. Ships as src/vdi/escape.S (4 byte-pinned spans + 13 thunks into the C console)
 cmt 0xfc4a42 Escape 102: the console's cell height, row bytes, last row/column (divu by the header's height and max cell width; a 0 takes vector 5), form width, first/last character, form and offset table, from the font header at intin[0..1]; stores interleave with reads. console_reinit ($fca914) bsr's into $fc4a48, past the intin read
 cmt 0xfc4464 ESC E's body: v_exit_cur ($fc4460) falls into it and v_enter_cur's bsr.s reaches it; src/vdi/escape.S lays its thunk exactly here
+# ---- AES foundation (2026-09-30): the scheduler, the object library, the rectangle helper ----
+fn 0xfed382 get_par
+cmt 0xfed382 AES get_par (Alcyon C, in the "optimize" range): an object's parent — walk ob_next until the object whose ob_tail is the one just left; -1 for the root. Signed word index (muls.w #24).
+fn 0xfea584 ob_offset
+cmt 0xfea584 AES ob_offset (objc_offset, opcode 44): clears *y then *x, then per ancestor *x += ob_x, *y += ob_y (stored through each step) until get_par answers -1, which it returns in D0 (the desk's binding hands it on). Line-F call words $f208 x4 (the desk's binding $fde278 and three AES callers, the dispatcher's arm 44 among them) and $f154 x3 (the object library's own call sites $fea070/$fea404/$fea506).
+fn 0xfecd22 rc_intersect
+cmt 0xfecd22 AES rc_intersect (hand 68000): the second GRECT cut to its intersection with the first, x/w stored before y/h are read; D0.w = both axes non-empty (the ble after each sub.w: a V-aware signed compare), via the shared tails at 0xfed066/0xfed06a (word writes: D0.hi is the caller's).
+fn 0xfed19e ob_sst
+cmt 0xfed19e AES ob_sst (Alcyon C): an object's spec, state, type, flags, rectangle and border into its caller's locals (called by ob_change 0xfea3bc). Not a tree walker.
+fn 0xfed27c everyobj
+cmt 0xfed27c AES everyobj (Alcyon C): depth-first walk of a tree, calling jsr (a0) per object with the accumulated offsets; skips HIDETREE (bit 7 of ob_flags' low byte).
+fn 0xfe387c aes_dsptch
+fn 0xfe38d4 aes_savestate
+fn 0xfe3930 aes_switchto
+fn 0xfe4d9e disp
+fn 0xfe4bc6 forker
+fn 0xfe40b2 ev_mwait
+fn 0xfe4e02 tchange # ctx
+fn 0xfe5180 kchange # ctx
+fn 0xfe51d8 bchange # ctx
+fn 0xfe534c mchange # ctx
+cmt 0xfe671e ap_tplay's forkq call: pushes its local fcode, not an immediate fork-function address
+var 0xc794 aes_rlr
+var 0xc726 aes_nrl
+var 0x9c16 aes_drl
+var 0xc67e aes_indisp
+cmt 0xc67e AES dispatcher guard (byte): savestate sets it (addq.b #1), switchto clears it; dsptch is a bare rts while set — 1 in the boot snapshot (inside disp's idle loop).
+var 0x9c58 aes_theglo

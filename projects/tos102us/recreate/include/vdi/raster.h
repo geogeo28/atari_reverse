@@ -24,7 +24,7 @@
  * The C reads each BY ITS ROM ADDRESS, the project's convention for a ROM table (`addrs.h`'s
  * KEYTBL_*_ROM are the precedent): the host runs over the captured ROM, so the address IS the table.
  * `raster.S` instead carries its own copy of every table it reads, in the ROM's layout, and references
- * the copy. The transcribed C cores are never linked by a ROM build (`vdi/transcribed.h`), but the C
+ * the copy. The transcribed C cores are never linked by a ROM build (`transcribed.h`), but the C
  * that is not transcribed still reads a ROM address — `concat_offset`, which other layers call, reads
  * RASTER_CONCAT_SHIFT_TABLE — so a ROM build that lays its image out differently must hand that C a
  * table the build itself carries. */

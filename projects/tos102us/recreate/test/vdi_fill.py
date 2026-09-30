@@ -24,6 +24,8 @@ from harness import _lib, addrs
 import abi
 import case
 import isr
+import routines
+import transcription
 import vdi
 import vdi_raster
 from vdi import IMAGE_ARG, LONG_ARG, LONG_BYTES, WORD_ARG, WORD_BYTES, WORD_RESULT
@@ -54,27 +56,16 @@ for _name, _restype, _argtypes in (
         ("LINEA_ROM_CRUNCH_QUEUE", None, (IMAGE_ARG,)),
         ("LINEA_ROM_GET_SEED", ctypes.c_uint16, (IMAGE_ARG, WORD_ARG, WORD_ARG, LONG_ARG, LONG_ARG, LONG_ARG))):
     vdi.declare_alcyon(_name, _restype, _argtypes)
-FRAME_FORMATS = {WORD_ARG: "h", LONG_ARG: "I"}
-
-
-def as_signed(name, arguments):
-    """`arguments` with every WORD one as the signed word it is — a row with its direction flag set is
-    written $8000-up by a case and is negative to the frame and the core alike."""
-    return tuple(vdi.signed_word(value & 0xFFFF) if argtype is WORD_ARG else value
-                 for argtype, value in zip(vdi.frame_argtypes(name), arguments))
-
-
-def frame(name, *arguments):
-    """The Alcyon frame of `name`'s arguments, where `jsr` leaves it (`abi.FIRST_ARG`)."""
-    formats = "".join(FRAME_FORMATS[argtype] for argtype in vdi.frame_argtypes(name))
-    return {abi.FIRST_ARG: struct.pack(">" + formats, *as_signed(name, arguments))}
+# The frame of an Alcyon call, and its words as the signed words they are: `test/vdi.py`'s, which the AES shares.
+as_signed = vdi.as_signed
+frame = vdi.alcyon_frame
 
 
 def run_call(name, arguments, pokes, **kwargs):
     """The Alcyon routine `addrs.<name>` entered by `jsr` over its frame, against its core called with the
     same `arguments`; a word answer compared at 16 bits. Answers a `vdi.Result`."""
     restype = vdi.ALCYON[name].restype
-    core = getattr(_lib, vdi.core_symbol(name))
+    core = getattr(_lib, routines.core_symbol(name))
     arguments = as_signed(name, arguments)
     staged = merge_pokes(pokes, frame(name, *arguments))
     info = hooked_run(getattr(addrs, name), staged, lambda _lib_, buf: core(buf, *arguments),
@@ -84,7 +75,7 @@ def run_call(name, arguments, pokes, **kwargs):
 
 def register_call(label, name, arguments, pokes):
     """One Tier 3 row of an Alcyon call: its frame staged as `run_call` stages it."""
-    vdi.register(f"{vdi.core_symbol(name)}, {label}", getattr(addrs, name), merge_pokes(pokes, frame(name, *arguments)))
+    vdi.register(f"{routines.core_symbol(name)}, {label}", getattr(addrs, name), merge_pokes(pokes, frame(name, *arguments)))
 
 
 def answer(result):
@@ -139,7 +130,7 @@ def hooked_run(entry, pokes, glue, **kwargs):
 
 
 def contour_core():
-    core = getattr(_lib, vdi.core_symbol("LINEA_ROM_CONTOUR_FILL"))
+    core = getattr(_lib, routines.core_symbol("LINEA_ROM_CONTOUR_FILL"))
     core.restype = None
     return core
 
@@ -155,7 +146,7 @@ def run_contour(pokes, **kwargs):
 # ---- the TRANSCRIPTIONS' caller (`src/vdi/fill.S`) ---------------------------------------------------
 # `test/vdi_helpers.py`'s frame caller, one longword wider: end_pts takes TWELVE bytes of Alcyon frame (two
 # words, two addresses) where every pure helper takes eight. The frame is staged ABOVE the routine longword
-# `vdi.run_transcription` plants at `abi.FIRST_ARG`, and the caller pushes it — three longwords, each now
+# `transcription.run_transcription` plants at `abi.FIRST_ARG`, and the caller pushes it — three longwords, each now
 # as far up as the last — calls through that longword, and drops the frame: a `jsr` with the ROM's frame.
 FRAME_LONGWORDS = 3
 FRAME_ARGUMENTS_AT = abi.FIRST_ARG + LONG_BYTES
@@ -169,7 +160,7 @@ FRAME_CALLER_STUB = (FRAME_LONGWORDS * (PUSH_STACK_LONG + struct.pack(">h", _FRO
                      + DROP_STACK_BYTES + struct.pack(">h", FRAME_LONGWORDS * LONG_BYTES)
                      + RTS)
 assert FRAME_CALLER_AT + len(FRAME_CALLER_STUB) <= BAND_AT + BAND_BYTES
-FRAME_CALLER = vdi.staged_caller(FRAME_CALLER_AT, FRAME_CALLER_STUB, (8, 152))
+FRAME_CALLER = transcription.staged_caller(FRAME_CALLER_AT, FRAME_CALLER_STUB, (8, 152))
 
 
 def transcription_frame_pokes(name, arguments):
@@ -178,20 +169,20 @@ def transcription_frame_pokes(name, arguments):
 
 
 def run_transcription(name, pokes, arguments=None):
-    """`fill.S`'s `name` against the ROM routine over `pokes`: a Line-A primitive through `vdi`'s plain
+    """`fill.S`'s `name` against the ROM routine over `pokes`: a Line-A primitive through `transcription`'s plain
     caller, an Alcyon routine through the frame caller with `arguments` staged."""
     if arguments is None:
-        return vdi.run_transcription(name, pokes)
-    return vdi.run_transcription(name, merge_pokes(pokes, transcription_frame_pokes(name, arguments)),
-                                 caller=FRAME_CALLER)
+        return transcription.run_transcription(name, pokes)
+    return transcription.run_transcription(name, merge_pokes(pokes, transcription_frame_pokes(name, arguments)),
+                                           caller=FRAME_CALLER)
 
 
 def register_transcription(label, name, pokes, arguments=None):
     """...and the same as a Tier 3 row."""
     if arguments is None:
-        return vdi.register_transcription(name, label, pokes)
-    return vdi.register_transcription(name, label, merge_pokes(pokes, transcription_frame_pokes(name, arguments)),
-                                      caller=FRAME_CALLER)
+        return transcription.register_transcription(name, label, pokes)
+    return transcription.register_transcription(name, label, merge_pokes(pokes, transcription_frame_pokes(name, arguments)),
+                                                caller=FRAME_CALLER)
 
 
 # ---- the fill attributes, as the dispatcher leaves them ------------------------------------------------

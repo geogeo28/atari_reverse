@@ -17,6 +17,7 @@ from harness import BASE_IMAGE, addrs, emu
 
 import abi
 import case
+import transcription
 import vdi
 import vdi_helpers
 import vdi_raster
@@ -274,7 +275,7 @@ def run_fast_text(pokes, **kwargs):
 # The front ends are entered through the plain caller and jump through their vectors into the ROM's bodies on
 # BOTH sides. The BODIES are entered below the frame their front ends build — TextBlt's A5/A6 under the return
 # address, the fast path's A5 — so each has a caller that builds it and jumps through the routine slot, and is
-# measured over its body's own epilogue (`vdi.staged_caller`'s stand-in). TextBlt's body leaves A3 at its
+# measured over its body's own epilogue (`transcription.staged_caller`'s stand-in). TextBlt's body leaves A3 at its
 # fragment base — a code address, the ROM's or the blob's — which its caller clears on the way out on both
 # sides; every other register is compared.
 BAND_OFFSET = 0x1A00
@@ -298,11 +299,11 @@ def _body_caller(at, frame_code, pushed_bytes, back_code, cost, routine, routine
     slot = abi.FIRST_ARG - emu.STACK_TOP + vdi.LONG_BYTES + pushed_bytes
     stub = (PUSH_RETURN_PC + struct.pack(">h", to_back) + frame_code
             + PUSH_STACK_LONG + struct.pack(">h", slot) + RTS + back_code + RTS)
-    return vdi.staged_caller(at, stub, cost, routine=routine, routine_cost=routine_cost)
+    return transcription.staged_caller(at, stub, cost, routine=routine, routine_cost=routine_cost)
 
 
 # (instructions, cycles) of each caller and of its body's epilogue — declared, and measured against every
-# declaration by `test_vdi_transcribed.py` (`vdi.assert_caller_cost`).
+# declaration by `test_transcribed.py` (`transcription.assert_caller_cost`).
 TEXTBLT_BODY_CALLER_COST = (7, 114)
 TEXTBLT_EPILOGUE_COST = (2, 44)
 FAST_BODY_CALLER_COST = (6, 96)
@@ -319,11 +320,11 @@ assert all(len(caller.stub) <= BAND_BYTES // 2 for caller in BODY_CALLERS.values
 
 def run_transcription(name, pokes, regs=None):
     """`text_raster.S`'s `name` against the ROM routine, through the transcription relation."""
-    return vdi.run_transcription(name, pokes, regs, caller=BODY_CALLERS.get(name, vdi.PLAIN_CALLER))
+    return transcription.run_transcription(name, pokes, regs, caller=BODY_CALLERS.get(name, transcription.PLAIN_CALLER))
 
 
 def register_transcription(name, label, pokes, regs=None):
-    vdi.register_transcription(name, label, pokes, regs, caller=BODY_CALLERS.get(name, vdi.PLAIN_CALLER))
+    transcription.register_transcription(name, label, pokes, regs, caller=BODY_CALLERS.get(name, transcription.PLAIN_CALLER))
 
 
 def fast_body_registers(pokes):

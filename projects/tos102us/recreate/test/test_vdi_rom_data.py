@@ -24,13 +24,14 @@ build owes it (`../README.md`, "What ships as the ROM's own instructions"):
 CODE of an `include/vdi/` header, an inline that reads a table, keyed `vdi/<name>.h` — reds until it is listed
 with its kind (a header inline is compiled into every file that calls it, and a call names the function, not
 the table), and `test_a_table_s_kind_is_where_it_lies` holds each TABLE / REGION_TABLE to the
-byte-pinned regions (`vdi.every_pinned_region`).
+byte-pinned regions (`transcription.every_pinned_region`).
 """
 import re
 from pathlib import Path
 
 from harness import addrs
 
+import transcription
 import vdi
 
 RECREATE = Path(__file__).resolve().parents[1]
@@ -159,7 +160,7 @@ def test_the_census_is_the_list():
 
 def test_a_table_s_kind_is_where_it_lies():
     """A REGION_TABLE lies inside a byte-pinned region and a TABLE outside every one."""
-    known, regions = _constants(), vdi.every_pinned_region()
+    known, regions = _constants(), transcription.every_pinned_region()
     for source, uses in ROM_ADDRESSES_AS_DATA.items():
         constants = _defines(_scanned()[source], known)
         for name, kind in uses.items():

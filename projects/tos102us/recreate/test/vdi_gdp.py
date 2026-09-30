@@ -16,6 +16,7 @@ from pathlib import Path
 import harness
 from harness import addrs, emu
 
+import routines
 import vdi
 import vdi_arcs
 
@@ -37,7 +38,7 @@ def run_gdp(pokes, **kwargs):
 
 
 def register(label, pokes):
-    vdi.register(f"{vdi.core_symbol('VDI_ROM_GDP')}, {label}", addrs.VDI_ROM_GDP, pokes)
+    vdi.register(f"{routines.core_symbol('VDI_ROM_GDP')}, {label}", addrs.VDI_ROM_GDP, pokes)
 
 
 def bar_pokes(corners, *, perimeter=vdi.VDI_FILL_PERIMETER_ON, pattern="8 rows", colour=BAR_FILL_COLOUR, **line):

@@ -72,6 +72,17 @@ class Registry:
         """...the same, at an OFFSET from the span's base."""
         return self.claim(self.lo + offset, size, owner)
 
+    def require_claimed(self, at, size):
+        """A poke into the span must lie inside ONE claimed band — `claim` refuses overlapping claims, this
+        refuses a poke that runs out of its own. Outside the span it is the caller's."""
+        if at + size <= self.lo or at >= self.hi:
+            return
+        for claim_at, claim_size, _owner in self.claims:
+            if claim_at <= at and at + size <= claim_at + claim_size:
+                return
+        raise AssertionError(f"a {size}-byte poke at {at:#x} is not inside one band of {self.label}: "
+                             f"{[(hex(a), hex(s), o) for a, s, o in self.claims]}")
+
 
 SCRATCH_BANDS = Registry(SCRATCH, SCRATCH + SCRATCH_BYTES, "the staging band `project.toml` declares")
 

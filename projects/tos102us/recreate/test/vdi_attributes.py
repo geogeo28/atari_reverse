@@ -12,6 +12,7 @@ also run with intout laid over contrl[4], over the workstation field it sets, an
 from harness import BASE_IMAGE, addrs, emu
 
 import case
+import routines
 import vdi
 from case import merge_pokes
 
@@ -78,7 +79,7 @@ def assert_physical_untouched(result):
 
 def register(label, name, pokes):
     """A Tier 3 row for `addrs.<name>`, labelled as the other VDI rows are: `vdi_<fn>, <label>`."""
-    return vdi.register(f"{vdi.core_symbol(name)}, {label}", getattr(addrs, name), pokes)
+    return vdi.register(f"{routines.core_symbol(name)}, {label}", getattr(addrs, name), pokes)
 
 
 # ---- the store-order cases every setter shares ------------------------------------------------------

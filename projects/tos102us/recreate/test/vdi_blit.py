@@ -17,7 +17,9 @@ from collections import namedtuple
 
 from harness import addrs
 
+import routines
 import staging
+import transcription
 import vdi
 import vdi_raster
 from case import merge_pokes
@@ -153,7 +155,7 @@ def raster_call_pokes(opcode, corners, *, mode, source_form=None, destination_fo
 # A2 and its aligner's fragments in A3 / A4 on every path but the fast copy — the no-source rows restore
 # A3 / A4 from the stack, to the aligner's pair — and with a pattern, the aligner's first fragment in A5.
 # The front ends run the ROM's engine through vector 4 on BOTH sides, and $a00e restores everything, so
-# they leave nothing to mask. Each caller that clears them is a `vdi.CallerPool`'s, staged in this
+# they leave nothing to mask. Each caller that clears them is a `transcription.CallerPool`'s, staged in this
 # module's own band.
 ENGINE_CODE_POINTERS = ("a2", "a3", "a4")
 PATTERN_CODE_POINTERS = ("a2", "a3", "a4", "a5")
@@ -161,8 +163,8 @@ BAND_OFFSET = 0x1C00
 BAND_BYTES = 0x40
 BAND_AT = vdi.SPAN.band(BAND_OFFSET, BAND_BYTES, "test/vdi_blit.py: the engine's code-pointer callers")
 CALLER_BYTES = 0x14                     # room for the longest, which clears four
-CALLERS = vdi.CallerPool(BAND_AT, BAND_AT + BAND_BYTES, CALLER_BYTES,
-                         built=(ENGINE_CODE_POINTERS, PATTERN_CODE_POINTERS))
+CALLERS = transcription.CallerPool(BAND_AT, BAND_AT + BAND_BYTES, CALLER_BYTES,
+                                   built=(ENGINE_CODE_POINTERS, PATTERN_CODE_POINTERS))
 code_pointer_caller = CALLERS.caller
 
 
@@ -173,5 +175,5 @@ def run_transcription(name, pokes, regs=None, *, code_pointers=()):
 
 def register(label, name, pokes, *, regs=None, code_pointers=()):
     """One case as the C row (`vdi.register`) and the `.S` row, over the canvas."""
-    vdi.register(f"{vdi.core_symbol(name)}, {label}", getattr(addrs, name), canvas(pokes), regs=regs)
+    vdi.register(f"{routines.core_symbol(name)}, {label}", getattr(addrs, name), canvas(pokes), regs=regs)
     CALLERS.register_transcription(name, label, canvas(pokes), regs, code_pointers=code_pointers)

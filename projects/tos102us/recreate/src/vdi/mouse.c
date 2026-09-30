@@ -39,7 +39,7 @@
 #include "vdi/raster.h"
 #include "vdi/helpers.h"
 #include "vdi/mouse.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define WORD_BYTES           2
 #define PIXEL_IN_GROUP_MASK  15u     /* concat's D0: the x within its group */

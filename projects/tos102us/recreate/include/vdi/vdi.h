@@ -354,16 +354,7 @@ static inline int16_t caller_word(const uint8_t *image, uint32_t at)
     return (int16_t)be16(image + bus_dereference(at));
 }
 
-/* The address of entry `index` of the table at `table`, the index SIGN-EXTENDED first and scaled in the
- * address register (`movea.w` / `ext.l`, then `adda.l An,An` or `asl.l`): a negative index reads below the
- * table, and a doubled one parts from m68k_idioms.h's word-wrapped `word_index` from 16,384 on. Summed as an
- * ADDRESS before it meets the image, so below the table is not 4 GB above it. The product is SIGNED (no index a
- * word holds overflows it), which leaves GCC free to extend an index it knows is non-negative with `ext.l`
- * rather than `andi.l #$ffff` — a fill's pen lookup costs 12 cycles more spelt unsigned. */
-static inline uint32_t table_entry(uint32_t table, int32_t index, uint32_t entry_bytes)
-{
-    return table + (uint32_t)(index * (int32_t)entry_bytes);
-}
+/* `table_entry` — the address of a sign-extended table index — is m68k_idioms.h's (the AES's object layer shares it). */
 
 /* ...and word `index` of a word array (a table, ptsin, the fill queue). */
 static inline uint32_t word_entry(uint32_t array, int32_t index)

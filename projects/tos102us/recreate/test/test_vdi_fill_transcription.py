@@ -1,5 +1,5 @@
 """`src/vdi/fill.S` — $a006 filled_poly, fill_span and end_pts as the ROM wrote them, which the target build
-ships because their C measures over Tier 3's 1.10 bar (`include/vdi/transcribed.h`).
+ships because their C measures over Tier 3's 1.10 bar (`include/transcribed.h`).
 
 Two claims hold it, neither needing the C: its WORDS are the ROM's, region by region, save the five branch
 displacements into helpers.S and raster.S (each relocated to its exact value); and it BEHAVES as the ROM
@@ -17,31 +17,30 @@ import pytest
 
 import test_vdi_fill_contour as contour
 import test_vdi_poly as poly
+import transcription
 import vdi
 import vdi_fill
 import vdi_raster
 from case import merge_pokes
 
 REGIONS = (
-    vdi.pinned_region(0xFCA05E, 0xFCA164, "LINEA_ROM_FILLED_POLY", ()),
-    vdi.pinned_region(0xFCFB54, 0xFCFC50, "LINEA_ROM_FILL_SPAN", ("LINEA_ROM_END_PTS",)),
+    transcription.pinned_region(0xFCA05E, 0xFCA164, "LINEA_ROM_FILLED_POLY", ()),
+    transcription.pinned_region(0xFCFB54, 0xFCFC50, "LINEA_ROM_FILL_SPAN", ("LINEA_ROM_END_PTS",)),
 )
 _ACROSS = "a displacement into another file's region, which measures to where the blob links it"
 RELOCATED = {
-    0xFCA0E0: vdi.Relocated(vdi.PC_RELATIVE, "VDI_ROM_SORT_WORDS", f"$a006's `bsr.w` to sort_words: {_ACROSS}"),
-    0xFCA106: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_HLINE", f"$a006's unclipped `bsr.w` to $a004: {_ACROSS}"),
-    0xFCA158: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_HLINE", f"$a006's clipped `bsr.w` to $a004: {_ACROSS}"),
-    0xFCFB64: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_HLINE_PATTERNED",
-                            f"fill_span's `bra.w` into $a004's patterned entry: {_ACROSS}"),
-    0xFCFB96: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_CONCAT", f"end_pts' `bsr.w` to concat: {_ACROSS}"),
+    0xFCA0E0: transcription.Relocated(transcription.PC_RELATIVE, "VDI_ROM_SORT_WORDS", f"$a006's `bsr.w` to sort_words: {_ACROSS}"),
+    0xFCA106: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_HLINE", f"$a006's unclipped `bsr.w` to $a004: {_ACROSS}"),
+    0xFCA158: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_HLINE", f"$a006's clipped `bsr.w` to $a004: {_ACROSS}"),
+    0xFCFB64: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_HLINE_PATTERNED",
+                                      f"fill_span's `bra.w` into $a004's patterned entry: {_ACROSS}"),
+    0xFCFB96: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_CONCAT", f"end_pts' `bsr.w` to concat: {_ACROSS}"),
 }
 
 
 @pytest.mark.parametrize("region", REGIONS, ids=[f"${region.lo:x}" for region in REGIONS])
 def test_each_region_is_the_rom_s_words(region):
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi, entries=region.entries,
-                           relocated={at: relocation for at, relocation in RELOCATED.items()
-                                      if region.lo <= at < region.hi})
+    transcription.assert_transcribed(region, relocated=RELOCATED)
 
 
 # ---- the behaviour ----------------------------------------------------------------------------------------

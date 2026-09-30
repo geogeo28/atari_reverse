@@ -1,10 +1,10 @@
 """`src/vdi/mouse.S` — the mouse and cursor routines as the ROM wrote them, which the target build ships because
-their C measures over Tier 3's 1.10 bar (`include/vdi/transcribed.h`).
+their C measures over Tier 3's 1.10 bar (`include/transcribed.h`).
 
 Two claims hold it, neither of which needs the C: its WORDS are the ROM's, region by region, save the
 references that measure to where mouse.S itself is linked (each relocated to its exact value); and it BEHAVES as
 the ROM over the batteries' own cases — the same image, the whole register file and the same traffic, through
-Tier 3's transcription relation (`vdi.run_transcription`), the fragment pointers a draw leaves cleared on both
+Tier 3's transcription relation (`transcription.run_transcription`), the fragment pointers a draw leaves cleared on both
 sides (`vdi_mouse.CODE_POINTERS`).
 
 THE STRICT MUTATION SWEEP over mouse.S's behaviour cases: one survivor, clamp_mouse's high bound `ble` as
@@ -20,6 +20,7 @@ import test_vdi_helpers_input as helpers_input_cases
 import test_vdi_input as input_cases
 import test_vdi_mouse as mouse_cases
 import test_vdi_sprite as sprite_cases
+import transcription
 import vdi
 import vdi_mouse as mouse
 from case import merge_pokes
@@ -29,12 +30,12 @@ from case import merge_pokes
 # their bytes, so the pin skips them — and the VBL's `bsr.s` across them, pinned in the first region, is
 # what holds the second where the ROM has it.
 REGIONS = (
-    vdi.pinned_region(0xFCFE28, addrs.VDI_ROM_VEX_BUTV, "VDI_ROM_MOUSE_ISR",
-                      ("VDI_ROM_CLAMP_MOUSE", "VDI_ROM_DEFAULT_USER_CUR", "VDI_ROM_VBL_DRAW_CURSOR")),
-    vdi.pinned_region(addrs.LINEA_ROM_DRAW_SPRITE, 0xFD0346, "LINEA_ROM_DRAW_SPRITE",
-                      ("LINEA_ROM_UNDRAW_SPRITE", "LINEA_ROM_HIDE_MOUSE", "VDI_ROM_SHOW_CURSOR", "VDI_ROM_VSC_FORM")),
-    vdi.pinned_region(0xFCA7C0, 0xFCA7CA, "VDI_ROM_POLL_CHOICE", ()),
-    vdi.pinned_region(0xFCA88A, 0xFCA914, "VDI_ROM_POLL_LOCATOR", ()),
+    transcription.pinned_region(0xFCFE28, addrs.VDI_ROM_VEX_BUTV, "VDI_ROM_MOUSE_ISR",
+                                ("VDI_ROM_CLAMP_MOUSE", "VDI_ROM_DEFAULT_USER_CUR", "VDI_ROM_VBL_DRAW_CURSOR")),
+    transcription.pinned_region(addrs.LINEA_ROM_DRAW_SPRITE, 0xFD0346, "LINEA_ROM_DRAW_SPRITE",
+                                ("LINEA_ROM_UNDRAW_SPRITE", "LINEA_ROM_HIDE_MOUSE", "VDI_ROM_SHOW_CURSOR", "VDI_ROM_VSC_FORM")),
+    transcription.pinned_region(0xFCA7C0, 0xFCA7CA, "VDI_ROM_POLL_CHOICE", ()),
+    transcription.pinned_region(0xFCA88A, 0xFCA914, "VDI_ROM_POLL_LOCATOR", ()),
 )
 _OWN = "LINEA_ROM_DRAW_SPRITE"
 _FRAGMENT = "an absolute address of one of draw_sprite's own fragments, which names mouse.S's"
@@ -42,11 +43,11 @@ _SPREAD_LEA = (0xFD0034, 0xFD0042)                       # `lea (fragment).l,a3`
 _ROW_TABLE = range(0xFD007C, 0xFD0094, 4)                # (store, row loop) per clip
 _OP_TABLE = range(0xFD00C8, 0xFD00E8, 4)                 # the eight combines
 RELOCATED = {
-    0xFD0028: vdi.Relocated(vdi.PC_RELATIVE, "LINEA_ROM_CONCAT",
-                            "draw_sprite's `bsr.w` to concat, which measures to where raster.S puts it"),
-    **{at: vdi.Relocated(vdi.ABSOLUTE, _OWN, f"a `lea` of a spread fragment: {_FRAGMENT}") for at in _SPREAD_LEA},
-    **{at: vdi.Relocated(vdi.ABSOLUTE, _OWN, f"the clip table: {_FRAGMENT}") for at in _ROW_TABLE},
-    **{at: vdi.Relocated(vdi.ABSOLUTE, _OWN, f"the combine table: {_FRAGMENT}") for at in _OP_TABLE},
+    0xFD0028: transcription.Relocated(transcription.PC_RELATIVE, "LINEA_ROM_CONCAT",
+                                      "draw_sprite's `bsr.w` to concat, which measures to where raster.S puts it"),
+    **{at: transcription.Relocated(transcription.ABSOLUTE, _OWN, f"a `lea` of a spread fragment: {_FRAGMENT}") for at in _SPREAD_LEA},
+    **{at: transcription.Relocated(transcription.ABSOLUTE, _OWN, f"the clip table: {_FRAGMENT}") for at in _ROW_TABLE},
+    **{at: transcription.Relocated(transcription.ABSOLUTE, _OWN, f"the combine table: {_FRAGMENT}") for at in _OP_TABLE},
 }
 
 
@@ -58,9 +59,7 @@ def test_the_regions_are_where_the_rom_s_routines_are():
 
 @pytest.mark.parametrize("region", REGIONS, ids=[f"${region.lo:x}" for region in REGIONS])
 def test_each_region_is_the_rom_s_words(region):
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi, entries=region.entries,
-                           relocated={at: relocation for at, relocation in RELOCATED.items()
-                                      if region.lo <= at < region.hi})
+    transcription.assert_transcribed(region, relocated=RELOCATED)
 
 
 # ---- the behaviour, over the batteries' own cases ---------------------------------------------------------

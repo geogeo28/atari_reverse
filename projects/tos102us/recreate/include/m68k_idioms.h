@@ -37,6 +37,18 @@ static inline uint32_t word_index(uint32_t entry, uint32_t entry_bytes)
     return sign_ext16((uint16_t)(entry * entry_bytes));
 }
 
+/* The address of entry `index` of the table at `table`, the index SIGN-EXTENDED first and scaled in the
+ * address register (`movea.w` / `ext.l`, then `adda.l An,An` or `asl.l`): a negative index reads below the
+ * table, and a doubled one parts from the word-wrapped `word_index` above from 16,384 on. Summed as an
+ * ADDRESS before it meets the image, so below the table is not 4 GB above it. The product is SIGNED (no index a
+ * word holds overflows it), which leaves GCC free to extend an index it knows is non-negative with `ext.l`
+ * rather than `andi.l #$ffff` — a fill's pen lookup costs 12 cycles more spelt unsigned. The AES's object
+ * layer indexes a tree the same way (`muls.w #24` — a signed product — then `adda.l`, `aes/objects.h`). */
+static inline uint32_t table_entry(uint32_t table, int32_t index, uint32_t entry_bytes)
+{
+    return table + (uint32_t)(index * (int32_t)entry_bytes);
+}
+
 /* "A NEGATIVE ARGUMENT MEANS REPORT ONLY" — TOS's way of spelling an optional argument, and it is
  * tested AT THE ROM's OWN WIDTH, which is the half a reconstruction drops. Kbshift and Kbrate test
  * a WORD (`tst.w 4(sp)` / `bmi`), so $0080 is a store — bit 7 of the byte they go on to store is not

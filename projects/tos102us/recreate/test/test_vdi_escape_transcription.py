@@ -1,5 +1,5 @@
 """`src/vdi/escape.S` — the VDI escape's own code as the ROM spells it, which the target build ships because its C
-measures over Tier 3's 1.10 bar (`include/vdi/transcribed.h`), and the thunks through which it reaches the console.
+measures over Tier 3's 1.10 bar (`include/transcribed.h`), and the thunks through which it reaches the console.
 
 Two claims hold it. Its WORDS are the ROM's, span by span, save the references that measure to where escape.S is
 linked — the table's twenty displacements, the `beq.w` to v_fontinit, and the branches into the VT52 console —
@@ -8,7 +8,7 @@ body the ROM's code there is. And it BEHAVES as the ROM over every row Tier 3 pr
 relation: the same image and the same register file, less what the layout or the C decides —
 
 * D0, where an arm ends without writing it: the dispatch leaves the table's own displacement there, which is a
-  distance between two of escape.S's labels (the CODE-POINTER CALLER's rule, `vdi.code_pointer_stub`: a register
+  distance between two of escape.S's labels (the CODE-POINTER CALLER's rule, `transcription.code_pointer_stub`: a register
   is cleared only where it holds a fact about the layout — a code address there, a code distance here);
 * the registers a console arm's C body leaves, where the ROM's body left its own (the ROM's moves and clears use
   D0-D7/A0-A3/A5 as scratch; the C keeps what the GCC ABI keeps). What the escape's own instructions leave is
@@ -27,6 +27,7 @@ import pytest
 from harness import addrs, make_image
 
 import test_vdi_escape as escape_cases
+import transcription
 import vdi
 import vdi_escape as escape
 from opcodes import RTS_WORD
@@ -52,10 +53,10 @@ def through_rts(at):
 ESC_E_BODY = table_entry(addrs.CON_ESCAPE_UPPER_TABLE, ord("E") - addrs.CON_ESCAPE_UPPER_FIRST)
 V_RMCUR = table_entry(vdi.VDI_ESCAPE_TABLE, escape.ARMS["V_RMCUR"])
 REGIONS = (
-    vdi.pinned_region(addrs.VDI_ROM_ESCAPE, addrs.XCONOUT_RAW, "VDI_ROM_ESCAPE"),
-    vdi.pinned_region(addrs.VDI_ROM_VQ_CHCELLS, ESC_E_BODY, "VDI_ROM_VQ_CHCELLS"),
-    vdi.pinned_region(addrs.VDI_ROM_VS_CURADDRESS, V_RMCUR + JMP_ABSOLUTE_LONG_BYTES, "VDI_ROM_VS_CURADDRESS"),
-    vdi.pinned_region(addrs.VDI_ROM_V_FONTINIT, through_rts(addrs.VDI_ROM_V_FONTINIT), "VDI_ROM_V_FONTINIT"),
+    transcription.pinned_region(addrs.VDI_ROM_ESCAPE, addrs.XCONOUT_RAW, "VDI_ROM_ESCAPE"),
+    transcription.pinned_region(addrs.VDI_ROM_VQ_CHCELLS, ESC_E_BODY, "VDI_ROM_VQ_CHCELLS"),
+    transcription.pinned_region(addrs.VDI_ROM_VS_CURADDRESS, V_RMCUR + JMP_ABSOLUTE_LONG_BYTES, "VDI_ROM_VS_CURADDRESS"),
+    transcription.pinned_region(addrs.VDI_ROM_V_FONTINIT, through_rts(addrs.VDI_ROM_V_FONTINIT), "VDI_ROM_V_FONTINIT"),
 )
 
 # THE CONSOLE's ROUTINES the spans reach, and the C each ships as (`bios/vt52.h`): ESC's own bodies, which ESC's
@@ -89,9 +90,9 @@ def _reference(at, why, base=None):
     of the console body it names."""
     target = _target(at, base)
     if target in CONSOLE_BODIES:
-        return vdi.Relocated(vdi.PC_RELATIVE, None, f"{why}: the console's ${target:x}, which ships as "
-                             f"{CONSOLE_BODIES[target]}", base, THUNK_PREFIX + CONSOLE_BODIES[target])
-    return vdi.Relocated(vdi.PC_RELATIVE, _anchor_of(target), why, base)
+        return transcription.Relocated(transcription.PC_RELATIVE, None, f"{why}: the console's ${target:x}, which ships as "
+                                       f"{CONSOLE_BODIES[target]}", base, THUNK_PREFIX + CONSOLE_BODIES[target])
+    return transcription.Relocated(transcription.PC_RELATIVE, _anchor_of(target), why, base)
 
 
 TABLE_WORDS = range(vdi.VDI_ESCAPE_TABLE, vdi.VDI_ESCAPE_TABLE + (vdi.VDI_ESCAPE_LAST + 1) * vdi.WORD_BYTES,
@@ -119,15 +120,14 @@ RELOCATED = {
 
 @pytest.mark.parametrize("region", REGIONS, ids=[f"${region.lo:x}" for region in REGIONS])
 def test_each_span_is_the_rom_s_words(region):
-    relocated = {at: relocation for at, relocation in RELOCATED.items() if region.lo <= at < region.hi}
-    vdi.assert_transcribed(region.anchor, region.lo, region.hi, relocated=relocated)
+    transcription.assert_transcribed(region, relocated=RELOCATED)
 
 
 def test_esc_e_s_thunk_is_where_the_rom_has_the_body():
     """v_exit_cur FALLS into ESC E's body and v_enter_cur reaches it by `bsr.s`, whose byte is the ROM's: the thunk
     must be laid exactly where the ROM has the body, at the end of the span before it."""
     thunk = THUNK_PREFIX + CONSOLE_BODIES[ESC_E_BODY]
-    assert vdi.bench().entry(thunk) == vdi.transcribed_address(REGIONS[1].anchor, ESC_E_BODY)
+    assert transcription.bench().entry(thunk) == transcription.transcribed_address(REGIONS[1].anchor, ESC_E_BODY)
 
 
 def _reachable(graph, start):
@@ -143,7 +143,7 @@ def _reachable(graph, start):
 def test_each_thunk_calls_the_c_its_console_routine_ships_as_and_nothing_else():
     """Read out of the m68k build's call graph: every thunk makes one call, to its body — which the escape's C twin
     reaches too, so Tier 1's proof of that twin against the ROM covers every body a thunk enters."""
-    graph = vdi.call_graph(BENCH_ELF)
+    graph = transcription.call_graph(BENCH_ELF)
     for body in set(CONSOLE_BODIES.values()):
         assert graph[THUNK_PREFIX + body] == {body}, body
     assert set(CONSOLE_BODIES.values()) <= _reachable(graph, escape.CORE)
@@ -183,7 +183,7 @@ CALLERS_OFFSET = 0xC00
 CALLER_STRIDE = 0x40
 CALLERS_BYTES = CALLER_STRIDE * len(DISTINCT_MASKS)
 CALLERS_AT = vdi.SPAN.band(CALLERS_OFFSET, CALLERS_BYTES, "test_vdi_escape_transcription.py: the masking callers")
-POOL = vdi.CallerPool(CALLERS_AT, CALLERS_AT + CALLERS_BYTES, CALLER_STRIDE, built=DISTINCT_MASKS)
+POOL = transcription.CallerPool(CALLERS_AT, CALLERS_AT + CALLERS_BYTES, CALLER_STRIDE, built=DISTINCT_MASKS)
 
 
 def subfunction_of(pokes):
@@ -226,7 +226,7 @@ _REGISTER_IN_MESSAGE = re.compile(r"\b([ad][0-7]) 0x")
 def _registers_that_differ(pokes):
     """Through the PLAIN caller: which registers the transcription relation finds different, none if it holds."""
     try:
-        vdi.run_transcription(escape.ESCAPE, pokes)
+        transcription.run_transcription(escape.ESCAPE, pokes)
     except AssertionError as refused:
         return set(_REGISTER_IN_MESSAGE.findall(str(refused)))
     return set()
@@ -263,5 +263,5 @@ def test_tier3_splits_the_rows_by_exactly_these_thunks_and_the_c_they_reach():
     thunks, callees = tier3.into_c_ranges(BENCH_ELF, THUNK_PREFIX)
     bodies = set(CONSOLE_BODIES.values())
     assert len(thunks) == len(bodies)
-    starts = {symbol.start for symbol in vdi.symbol_table(BENCH_ELF) if symbol.name in bodies}
+    starts = {symbol.start for symbol in transcription.symbol_table(BENCH_ELF) if symbol.name in bodies}
     assert starts <= {start for start, _end in callees}

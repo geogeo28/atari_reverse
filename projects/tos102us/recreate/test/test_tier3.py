@@ -42,6 +42,8 @@ import tier3                                               # noqa: E402  (the re
 import trap                                                # noqa: E402
 # ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
 import case                                                # noqa: E402
+import routines                                            # noqa: E402
+import transcription                                       # noqa: E402
 import vdi                                                 # noqa: E402
 import vdi_helpers                                         # noqa: E402
 # ...and the glue generator, whose thunks mechanism (T→G) counts.
@@ -135,7 +137,7 @@ def _why(row, measured, state):
                 f"what moved")
     if tier3.is_transcribed_c_row(row):
         return (f"{cost}, over the {tier3.TIER3_FUNCTION_BAR:.2f} bar — and the routine is TRANSCRIBED "
-                f"(include/vdi/transcribed.h), but its `.S` rows no longer carry it: one is over the bar and not "
+                f"(include/transcribed.h), but its `.S` rows no longer carry it: one is over the bar and not "
                 f"`own` (T←), or there is none. Mechanism (T) admits the C only while the `.S` a target build ships "
                 f"is priced at or under the bar on every row — or, where it calls C, on its own instructions")
     return (f"{cost}, over the {tier3.TIER3_FUNCTION_BAR:.2f} bar. Bring it under — the levers are "
@@ -194,7 +196,7 @@ def test_every_target_build_compiles_without_type_based_aliasing(directory, vari
 
 # ---- the VDI helpers' calls: ONE statement of each C signature --------------------------------------
 
-REGISTER_HELPERS = [name for name in vdi.PRIMITIVES if vdi.core_symbol(name) in vdi_helpers.REGISTER_SIGNATURES]
+REGISTER_HELPERS = [name for name in vdi.PRIMITIVES if routines.core_symbol(name) in vdi_helpers.REGISTER_SIGNATURES]
 
 
 @pytest.mark.parametrize("name", REGISTER_HELPERS)
@@ -204,7 +206,7 @@ def test_a_register_helper_s_host_signature_is_its_declared_contract(name):
     equal: the image, a longword per argument register, a results pointer when the answer is several
     registers, and D0 returned when it is among them."""
     contract = vdi.PRIMITIVES[name]
-    restype, argtypes = vdi_helpers.REGISTER_SIGNATURES[vdi.core_symbol(name)]
+    restype, argtypes = vdi_helpers.REGISTER_SIGNATURES[routines.core_symbol(name)]
     several = (ctypes.POINTER(vdi.LONG_ARG),) if len(contract.results) > 1 else ()
     assert tuple(argtypes) == (vdi.IMAGE_ARG, *(vdi.LONG_ARG,) * len(contract.arguments), *several)
     assert (restype is vdi.LONG_ARG) == ("d0" in contract.results)
@@ -220,8 +222,8 @@ def test_every_transcribed_routine_ships_a_priced_s_row():
     """(T) is only as good as the `.S` rows it reads: a TRANSCRIBED routine with none has nothing to be
     carried by, and its C rows would red — this names the routine instead of each of its rows."""
     unpriced = sorted(tier3.TRANSCRIBED_AT[address] for address, rows in tier3.SHIPPED_ROWS.items() if not rows)
-    assert not unpriced, (f"{unpriced} are in include/vdi/transcribed.h with no `.S` row in Tier 3 — register "
-                          f"their transcription cases (`vdi.register_transcription`)")
+    assert not unpriced, (f"{unpriced} are in include/transcribed.h with no `.S` row in Tier 3 — register "
+                          f"their transcription cases (`transcription.register_transcription`)")
 
 
 def test_no_transcribed_c_row_carries_a_written_acceptance():
@@ -381,7 +383,7 @@ THROUGH_A_CALL_ROW = ("vdi_v_hide_c", "the arrow removed")
 def test_every_c_caller_of_a_transcribed_core_ships_through_a_call():
     """The rows (T→) measures as shipped include every direct caller the door names: the reach is DERIVED
     from the m68k build's call graph, and a caller outside it would be priced with the C twin in it."""
-    callers = {caller for caller, _core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES}
+    callers = {caller for caller, _core in transcription.C_CALLERS_OF_TRANSCRIBED_CORES}
     assert callers <= tier3._reaching_transcribed_cores()
 
 
@@ -426,7 +428,7 @@ IMMEDIATE_CALL_LISTING = f"""
 def test_the_call_graph_reads_an_address_loaded_as_an_immediate():
     """`#<decimal>` equal to a function's START is a reference to it; one inside a function is not."""
     starts = {LOADER_AT: "loader", HELPER_AT: "helper"}
-    graph = vdi.graph_of_listing(IMMEDIATE_CALL_LISTING, {}, starts)
+    graph = transcription.graph_of_listing(IMMEDIATE_CALL_LISTING, {}, starts)
     assert graph == {"loader": {"helper"}, "helper": set()}
 
 
@@ -445,11 +447,11 @@ IMMEDIATE_DATA_LISTING = f"""
 
 def test_the_call_graph_reads_no_call_into_an_immediate_used_as_data():
     starts = {COMPARER_AT: "comparer", HELPER_AT: "helper"}
-    graph = vdi.graph_of_listing(IMMEDIATE_DATA_LISTING, {}, starts)
+    graph = transcription.graph_of_listing(IMMEDIATE_DATA_LISTING, {}, starts)
     assert graph == {"comparer": set(), "helper": set()}
 
 
-# ...and the QUALIFICATION of a name several functions share, by where each is DEFINED (`vdi.symbol_origins`): two
+# ...and the QUALIFICATION of a name several functions share, by where each is DEFINED (`transcription.symbol_origins`): two
 # statics' CLONES (`.isra.0` in one file, `.constprop.0` in another) are two functions, where folding the suffixes
 # alone merged them; a global and the clone GCC split off it in its own file are one.
 FIRST_CLONE_AT, SECOND_CLONE_AT, GLOBAL_AT, PART_AT, LEFT_AT, RIGHT_AT = 0x31000, 0x31100, 0x31200, 0x31300, 0x31400, 0x31500
@@ -468,12 +470,12 @@ CLONES_LISTING = f"""
    {RIGHT_AT:x}:\t4e75           \trts
 """
 CLONES_ORIGINS = {(FIRST_CLONE_AT, "outline.isra.0"): "a.c", (SECOND_CLONE_AT, "outline.constprop.0"): "b.c",
-                  (GLOBAL_AT, "vdi_row"): vdi.GLOBAL_ORIGIN, (PART_AT, "vdi_row.part.0"): "row.c",
-                  (LEFT_AT, "left"): vdi.GLOBAL_ORIGIN, (RIGHT_AT, "right"): vdi.GLOBAL_ORIGIN}
+                  (GLOBAL_AT, "vdi_row"): transcription.GLOBAL_ORIGIN, (PART_AT, "vdi_row.part.0"): "row.c",
+                  (LEFT_AT, "left"): transcription.GLOBAL_ORIGIN, (RIGHT_AT, "right"): transcription.GLOBAL_ORIGIN}
 
 
 def test_the_call_graph_keeps_two_statics_clones_apart_and_folds_a_globals_own():
-    graph = vdi.graph_of_listing(CLONES_LISTING, {}, {}, CLONES_ORIGINS)
+    graph = transcription.graph_of_listing(CLONES_LISTING, {}, {}, CLONES_ORIGINS)
     assert graph == {"outline@a.c": {"left"}, "outline@b.c": {"right"}, "vdi_row": {"left"}, "left": set(),
                      "right": set()}
 
@@ -487,12 +489,12 @@ ADDRESSLESS_LISTING = CLONES_LISTING + f"""
 
 
 def test_the_call_graph_reads_an_addressless_reference_to_a_shared_name_as_every_one_of_them():
-    origins = {**CLONES_ORIGINS, (RIGHT_AT + 0x100, "caller"): vdi.GLOBAL_ORIGIN}
-    graph = vdi.graph_of_listing(ADDRESSLESS_LISTING, {}, {}, origins)
+    origins = {**CLONES_ORIGINS, (RIGHT_AT + 0x100, "caller"): transcription.GLOBAL_ORIGIN}
+    graph = transcription.graph_of_listing(ADDRESSLESS_LISTING, {}, {}, origins)
     assert graph["caller"] == {"outline@a.c", "outline@b.c"}
 
 
-@pytest.mark.parametrize("symbol", ("vdi_v_clswk", sorted(vdi.TRANSCRIBED_CORES)[0]))
+@pytest.mark.parametrize("symbol", ("vdi_v_clswk", sorted(transcription.TRANSCRIBED_CORES)[0]))
 def test_a_row_symbol_the_call_graph_qualified_is_refused(symbol):
     """A static sharing a Tier 3 row's (or a transcribed core's) name: the name is ambiguous in the graph (T→) is
     derived from, and the gate says so rather than pricing the row on whichever node the bare name finds."""
@@ -736,7 +738,7 @@ def test_the_entry_overhead_is_the_reset_and_nothing_else(bench):
         f"computed net of that number, so it has to be the right one")
 
 
-# ---- a row's DROPPED spans (`RomBench.measure`'s `dropped`, `vdi.TIER3_DROPPED`) ---------------------------------
+# ---- a row's DROPPED spans (`RomBench.measure`'s `dropped`, `case.tier3_dropped()`) -------------------------------
 # A row over the staged `trap #1`: the ROM parks its own return site in LINEA_RETSAV and our build its caller's.
 DROPPED_ROW = ("vdi_v_clsvwk", "the middle one")
 
@@ -770,7 +772,7 @@ def test_a_drop_one_longword_wider_than_the_park_is_refused():
         tier3.measure(widened, tier3.shipped_bench())
 
 
-@pytest.mark.parametrize("name", sorted(vdi.TIER3_DROPPED))
+@pytest.mark.parametrize("name", sorted(case.tier3_dropped()))
 def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypatch):
     """What makes a Tier 3 drop safe is a Tier 1 differential of the SAME machine that still compares those bytes:
     each dropped row's registered companion runs, every `case.run` it makes is at the row's entry with nothing
@@ -782,7 +784,7 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
         return run(entry, regs, glue, **kwargs)
 
     monkeypatch.setattr(case, "run", recorded)
-    result = vdi.TIER3_UNDROPPED[name]()
-    registered, = (row for row in vdi.CASES if row[0] == name)
+    result = case.tier3_undropped()[name]()
+    registered = case.registered_case(name)
     assert runs and all(entry == registered[1] and not dropped and not windows for entry, dropped, windows in runs), runs
     assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"

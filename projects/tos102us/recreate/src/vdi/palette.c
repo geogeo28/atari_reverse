@@ -19,7 +19,7 @@
  * register 0 — with the INDEX itself or its complement, the shifter's invert bit being bit 0 of it.
  * Every grey leaves the register alone.
  *
- * WHAT SHIPS IS `palette.S`, the ROM's own instructions — `vdi/transcribed.h` says so, and Tier 3's
+ * WHAT SHIPS IS `palette.S`, the ROM's own instructions — `transcribed.h` says so, and Tier 3's
  * mechanism (T) holds it at the bar: this C is what Tier 1's host differential proves, and it measures
  * over the 1.10 bar against hand 68000 that keeps no frame and saves one register, so the target build
  * carries the transcription (pinned byte for byte, `test_vdi_color.py`) — the user's rule for the
@@ -33,7 +33,7 @@
 #include "vdi/inquire.h"
 #include "vdi/palette.h"
 #include "vdi/vdi.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 #define WORD_BYTES 2
 #define GUNS       PALETTE_GUNS

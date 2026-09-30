@@ -6,7 +6,7 @@
  */
 #include <stdint.h>
 
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 #include "vdi/vdi.h"
 
 /* The order `test_vdi_linea_init.py` declares $a000's answer in. */

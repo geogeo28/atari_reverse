@@ -13,7 +13,7 @@ walks the host out of its image, where the original reads its own RAM.
 """
 import pytest
 
-from harness import addrs
+from harness import addrs, emu
 
 import vdi
 import vdi_entry
@@ -43,7 +43,7 @@ def outside_the_pointers(final, pointers=STORED_AS_GIVEN):
     """The machine a run left, less where the pointers themselves are: the block the case staged, the Line-A
     pointers the entry stores as given, and the stack band (the registers the ROM saves hold them)."""
     image = bytearray(final)
-    spans = [(vdi.PARAMETER_BLOCK_AT, vdi.PB_BYTES), (vdi.emu.STACK_GUARD_LO, vdi.emu.STACK_BAND_HI - vdi.emu.STACK_GUARD_LO)]
+    spans = [(vdi.PARAMETER_BLOCK_AT, vdi.PB_BYTES), (emu.STACK_GUARD_LO, emu.STACK_BAND_HI - emu.STACK_GUARD_LO)]
     spans += [(vdi.field("LINEA", name).at, vdi.field("LINEA", name).width) for name in pointers]
     for at, size in spans:
         image[at:at + size] = bytes(size)

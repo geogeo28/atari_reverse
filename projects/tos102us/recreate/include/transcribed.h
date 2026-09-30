@@ -1,5 +1,7 @@
-/* vdi/transcribed.h — THE TRANSCRIBED TABLE: every ROM routine the shipped build takes as the ROM's own
- * instructions (the `.S` files in `src/vdi/`) instead of its C core, and what a C caller needs to reach one.
+/* transcribed.h — THE TRANSCRIBED TABLE: every ROM routine, of ANY component, the shipped build takes as the
+ * ROM's own instructions (the `.S` files in `src/vdi/` and `src/aes/`) instead of its C core, and what a C caller
+ * needs to reach one. ONE table for every component: a component's rows are a block of it, so there is one list
+ * the build, Tier 3 and the declarations read, and nothing that could forget a component's list.
  *
  * THE RULE IT RECORDS is the user's, for the hand-written 68000: port the routine to C first — Tier 1
  * proves the C against the ROM — and where the C measures over Tier 3's 1.10 bar, SHIP a byte-pinned
@@ -15,20 +17,20 @@
  *     `own`). Nothing is typed per row, and a written entry for a `.S` row carries nothing: delete a `.S`
  *     row, or let one drift over the bar, and the C rows go red.
  *   * THE BUILD CONTRACT (`atari/target.mk`): `TRANSCRIBED_ENTRIES` is what the ROM build links for these
- *     routines and `TRANSCRIBED_C_CORES` the C it must NOT link. `test_vdi_transcribed.py` pins the make
+ *     routines and `TRANSCRIBED_C_CORES` the C it must NOT link. `test_transcribed.py` pins the make
  *     lists against this table, every `.globl` of the `.S` sources against its rows, and the C callers
  *     that still reach a C core here (each needs the glue below once the ROM build links cores).
  *   * THE DECLARATIONS at the end, for that glue.
  *
- * ONE ROW PER `.S` ENTRY, and the naming rule (`addrs.h`, the VDI block) gives the rest: the ROM routine
- * is the entry upper-cased (`linea_rom_hline` -> `LINEA_ROM_HLINE`) and the C core is the entry less its
- * `rom_` (`linea_hline`). The second column is the entry's REGISTER CONTRACT against the GCC m68k ABI:
- * the CALLEE-SAVED registers (D2-D7, A2-A6) it leaves changed. D0/D1/A0/A1 are the ABI's scratch and
- * every entry may change them. A ROM caller never cared — Alcyon keeps less, and the VDI's `trap #2`
- * entry saves D1-A6 round the whole dispatch — but a C caller built by GCC keeps values in exactly these,
- * so a call that does not name them is the d2/a2 corruption class (`docs/on-target-execution.md`). The
- * sets are the ROM's own, measured over every registered `.S` case (`test_vdi_transcribed.py`), where
- * the transcription relation proves the `.S` leaves the same file; a front end that jumps through a
+ * ONE ROW PER `.S` ENTRY, and the naming rule (`test/routines.py`, every component's) gives the rest: the ROM
+ * routine is the entry upper-cased (`linea_rom_hline` -> `LINEA_ROM_HLINE`, `aes_rom_x` -> `AES_ROM_X`) and the C
+ * core is the entry less its `rom_` (`linea_hline`, `aes_x`). The second column is the entry's REGISTER
+ * CONTRACT against the GCC m68k ABI: the CALLEE-SAVED registers (D2-D7, A2-A6) it leaves changed. D0/D1/A0/A1
+ * are the ABI's scratch and every entry may change them. A ROM caller never cared — Alcyon keeps less, and the
+ * VDI's `trap #2` entry saves D1-A6 round the whole dispatch — but a C caller built by GCC keeps values in
+ * exactly these, so a call that does not name them is the d2/a2 corruption class
+ * (`docs/on-target-execution.md`). The sets are the ROM's own, measured over every registered `.S` case
+ * (`test_transcribed.py`), where the transcription relation proves the `.S` leaves the same file; a front end that jumps through a
  * drawing vector is charged all of D2-D7/A2-A5, because what runs there is the vector's. A DOOR is charged
  * the union over the routines it serves: the Line-A exception keeps D3-D7/A3-A5 round its `jsr` and leaves
  * D2, A2 and A6 as the primitive left them — A6 measured through $a007, which returns it 76 on ($fd05fc).
@@ -37,11 +39,18 @@
  * and answers in (the Line-A ones are `test/vdi_raster.py`'s `declare_primitive`s), or "Alcyon" for a
  * word-argument C call answering in D0.w (`vdi/helpers.h`), or "function" for a VDI function reached
  * with the Line-A pointers set (`vdi/vdi.h`).
+ *
+ * AN AES ROW (`../README.md`, "What ships as the ROM's own instructions") is held to two more constraints on its
+ * ROM routine's EXECUTED PATH, which `test_transcribed.py` reads off the oracle's profile over the row's cases: it is
+ * HAND 68000 — it executes no Line-F word (`$Fxxx`), which would run the ROM's code through the handler's table
+ * from inside the blob (the region may still carry another routine's Line-F words as bytes) — and every one of the
+ * optimize layer's shared return tails ($fed066 / $fed06a) it reaches lies in its own pinned region.
  */
-#ifndef TOS102US_VDI_TRANSCRIBED_H
-#define TOS102US_VDI_TRANSCRIBED_H
+#ifndef TOS102US_TRANSCRIBED_H
+#define TOS102US_TRANSCRIBED_H
 
-#define VDI_TRANSCRIBED(ENTRY)                                                                                \
+#define TRANSCRIBED(ENTRY)                                                                                    \
+    /* ---- the VDI and Line-A: `src/vdi`'s `.S` files ------------------------------------------------ */ \
     ENTRY(vdi_rom_sort_words,         "d2")                                 /* D0.w count, A0 array        */ \
     ENTRY(vdi_rom_smul_div,           "d2")                                 /* Alcyon, three words         */ \
     ENTRY(vdi_rom_get_kbshift,        "")                                   /* -> D0.w, high word kept     */ \
@@ -103,17 +112,17 @@
  * as clobbers.
  *
  * THE C THAT STILL CALLS A C CORE HERE — the VDI functions and fill layer round the raster, sprite and
- * contour primitives, listed as `(caller, core)` pairs in `test/vdi.py`'s C_CALLERS_OF_TRANSCRIBED_CORES
- * and held to the m68k build's own calls by `test_vdi_transcribed.py` — calls it by its C name in the host
+ * contour primitives, listed as `(caller, core)` pairs in `test/transcription.py`'s C_CALLERS_OF_TRANSCRIBED_CORES
+ * and held to the m68k build's own calls by `test_transcribed.py` — calls it by its C name in the host
  * build, where Tier 1 proves it. A shipped build reaches the `.S` instead, through a GLUE THUNK carrying
  * the core's name: `bench/shipped_glue.py` generates one per called core from this table (the row's
  * destroyed registers saved round the `jsr`) and the entry's declared contract, and Tier 3 builds and
  * measures that SHIPPED CONFIGURATION as a second blob (`../README.md`, "What ships as the ROM's own
  * instructions"). */
 #ifndef __ASSEMBLER__
-#define VDI_TRANSCRIBED_DECLARATION(entry, destroys) extern const char entry[];
-VDI_TRANSCRIBED(VDI_TRANSCRIBED_DECLARATION)
-#undef VDI_TRANSCRIBED_DECLARATION
+#define TRANSCRIBED_DECLARATION(entry, destroys) extern const char entry[];
+TRANSCRIBED(TRANSCRIBED_DECLARATION)
+#undef TRANSCRIBED_DECLARATION
 
 /* THE ATTRIBUTE EVERY C CORE OF THIS TABLE IS DEFINED WITH. A core must stay a CALLED function in every
  * build of it: the shipped configuration replaces its body with a glue thunk at link time, which reaches
@@ -137,4 +146,4 @@ VDI_TRANSCRIBED(VDI_TRANSCRIBED_DECLARATION)
 #endif
 #endif
 
-#endif /* TOS102US_VDI_TRANSCRIBED_H */
+#endif /* TOS102US_TRANSCRIBED_H */

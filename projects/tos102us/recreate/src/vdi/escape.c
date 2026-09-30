@@ -15,7 +15,7 @@
  * answering arms, the cursor address, the text loop, the two tail-jumps into the mouse's v_show_c / v_hide_c,
  * the Scrdmp trap and the two arms past the table.
  *
- * WHAT SHIPS is the ROM's own instructions for those (`escape.S`, `vdi/transcribed.h`): this C measured
+ * WHAT SHIPS is the ROM's own instructions for those (`escape.S`, `transcribed.h`): this C measured
  * 1.20x-3.13x against them — a compare tree for the ROM's table and a frame round every arm, where the ROM's
  * arms are a few instructions off the `lea` — and is what Tier 1 proves the arms by. The console bodies it
  * enters by name are the ones `escape.S`'s thunks reach.
@@ -40,7 +40,7 @@
 #include "vdi/font.h"
 #include "vdi/mouse.h"
 #include "vdi/escape.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 
 /* ---- the arms that answer ------------------------------------------------------------------------ */
 

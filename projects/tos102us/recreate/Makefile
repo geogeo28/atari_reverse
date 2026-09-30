@@ -80,7 +80,7 @@ snapshot: $(SNAPSHOT)
 BENCH_TABLE := $(BENCH_DIR)/tier3.txt
 
 # THE SHIPPED CONFIGURATION — Tier 3's SECOND blob, for the C that calls a transcribed core. A shipped ROM
-# links a routine's `.S` in place of its C twin (`include/vdi/transcribed.h`), so the C that calls one
+# links a routine's `.S` in place of its C twin (`include/transcribed.h`), so the C that calls one
 # reaches the ROM's instructions through glue; $(BENCH_ELF) links the C twins beside the `.S` and would
 # price every such caller with the twin's cycles in it. This blob is the same sources built the way the
 # ROM build will be (`-ffunction-sections`, atari/target.mk), with every transcribed core WEAK

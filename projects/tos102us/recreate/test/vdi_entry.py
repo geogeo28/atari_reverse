@@ -27,6 +27,8 @@ from harness import _lib, addrs, emu, make_image
 import abi
 import case
 import isr
+import routines
+import transcription
 import vdi
 from case import merge_pokes
 from opcodes import CLEAR_REGISTER, PUSH_RETURN_PC, PUSH_SR, PUSH_STACK_LONG, RTE, RTS
@@ -42,7 +44,7 @@ TRAMPOLINE_AT = BAND_AT                         # `movea.l #frame,sp / jmp $fc9f
 OPCODE_WORD_AT = BAND_AT + 0x10                 # the $Axxx word, then the `rts` the handler resumes at
 EXCEPTION_CALLERS_AT = BAND_AT + 0x20           # `exception_caller`'s, one per (opcode, cleared registers)
 EXCEPTION_CALLER_STRIDE = 0x18
-JSR_CALLERS_AT = BAND_AT + 0xE0                 # ...then a `vdi.CallerPool` of code-pointer callers entered by `jsr`
+JSR_CALLERS_AT = BAND_AT + 0xE0                 # ...then a `transcription.CallerPool` of code-pointer callers entered by `jsr`
 EXCEPTION_CALLERS_END = JSR_CALLERS_AT
 JSR_CALLERS_END = BAND_AT + 0x100
 MOVED_CONTRL_AT = BAND_AT + 0x100               # a contrl array a case places away from `vdi.CONTRL_AT`
@@ -96,7 +98,7 @@ NOP = {addrs.VDI_ROM_NOP: (b"", _nothing)}
 
 def function(name):
     """`{address: routine}` for the VDI function `addrs.<name>`: its C core, run where the dispatcher's `jsr` lands."""
-    core = getattr(_lib, vdi.core_symbol(name))
+    core = getattr(_lib, routines.core_symbol(name))
     core.restype = None
     return {getattr(addrs, name): (b"", lambda buf, _argument: core(buf))}
 
@@ -199,7 +201,7 @@ def primitive(name):
     """`{address: effect}` for the Line-A primitive `addrs.<name>`, its C core called as the hook's effect: the
     registers its declaration answers in, of the three the hook carries, written back."""
     contract = vdi.PRIMITIVES[name]
-    core = getattr(_lib, vdi.core_symbol(name))
+    core = getattr(_lib, routines.core_symbol(name))
     several = len(contract.results) > 1
     core.restype = ctypes.c_uint32 if "d0" in contract.results else None
 
@@ -225,7 +227,7 @@ def run_direct(opcode_word, registers=None, pokes=None, effects=None, compared=i
     serve the primitives the candidate calls (none: any call is refused). The `compared` registers of D0/D1/A0 —
     all three by default, which is what an opcode that calls nothing leaves — are held to the hook's hand-back;
     `vdi.Result.info["regs"]` has the ROM's whole file."""
-    registers = {**vdi.DIRTY, **(registers or {})}
+    registers = {**transcription.DIRTY, **(registers or {})}
     staged = direct_pokes(opcode_word, pokes)
     handed = []
     core = _lib.linea_dispatch
@@ -258,14 +260,14 @@ def _refused(refused):
 #     pea word(pc) / move.w sr,-(sp) / move.l ROUTINE(sp),-(sp) / rts / word: dc.w $A00n / clears / rts
 _ROUTINE_SLOT = abi.FIRST_ARG - emu.STACK_TOP + LONG.size + WORD.size     # past the pushed PC and SR
 _TO_WORD = len(PUSH_SR) + len(PUSH_STACK_LONG) + WORD.size + len(RTS) + WORD.size    # from the `pea`'s extension
-# The caller's own cost, as the stand-in `routine` below lets `vdi.assert_caller_cost` measure it: the four
+# The caller's own cost, as the stand-in `routine` below lets `transcription.assert_caller_cost` measure it: the four
 # instructions in and the `rts` out, and one `suba.l` per cleared register.
 EXCEPTION_CALLER_COST = (5, 86)
 # The stand-in the cost is measured over — the handler's own shape at its smallest: step the stacked PC past the
 # word and return through it (`addq.l #2,2(sp) / rte`).
 STEP_PAST_THE_WORD = b"\x54\xaf" + WORD.pack(addrs.EXCEPTION_FRAME_PC) + RTE
 STEP_PAST_THE_WORD_COST = (2, 44)
-EXCEPTION_CALLERS = vdi.CallerPool(EXCEPTION_CALLERS_AT, EXCEPTION_CALLERS_END, EXCEPTION_CALLER_STRIDE)
+EXCEPTION_CALLERS = transcription.CallerPool(EXCEPTION_CALLERS_AT, EXCEPTION_CALLERS_END, EXCEPTION_CALLER_STRIDE)
 
 
 def exception_stub(opcode_word, cleared):
@@ -273,7 +275,7 @@ def exception_stub(opcode_word, cleared):
     the cost it declares."""
     stub = (PUSH_RETURN_PC + WORD.pack(_TO_WORD) + PUSH_SR + PUSH_STACK_LONG + WORD.pack(_ROUTINE_SLOT) + RTS
             + WORD.pack(opcode_word) + b"".join(CLEAR_REGISTER[register] for register in cleared) + RTS)
-    cost = tuple(base + len(cleared) * each for base, each in zip(EXCEPTION_CALLER_COST, vdi.CLEAR_COST))
+    cost = tuple(base + len(cleared) * each for base, each in zip(EXCEPTION_CALLER_COST, transcription.CLEAR_COST))
     return stub, cost
 
 

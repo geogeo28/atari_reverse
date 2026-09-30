@@ -3,10 +3,10 @@
     python bench/shipped_glue.py build/bench_shipped/glue.S     # run by the Makefile's shipped-blob rule
 
 A shipped ROM does not link the C twin of a routine it takes as the ROM's own instructions
-(`include/vdi/transcribed.h`): C that calls such a core reaches the `.S` entry instead, through glue that
+(`include/transcribed.h`): C that calls such a core reaches the `.S` entry instead, through glue that
 turns a GCC call into the entry's own contract. This writes that glue, GENERATED rather than typed, so the
 second Tier 3 blob (`build/bench_shipped/`) measures the callers as they would ship. The file is a thunk
-NAMED AFTER each core `test/vdi.py`'s C_CALLERS_OF_TRANSCRIBED_CORES lists — the blob's build makes each
+NAMED AFTER each core `test/transcription.py`'s C_CALLERS_OF_TRANSCRIBED_CORES lists — the blob's build makes each
 core WEAK (`TRANSCRIBED_CORE`), so the thunk is what every call links to. A thunk saves
 the callee-saved registers the table's row says the entry changes (and any it loads an argument into),
 moves the C arguments where the entry reads them, `jsr`s the entry and restores. Three shapes, by what the
@@ -16,7 +16,9 @@ core's routine is declared as:
     answered as the entry leaves it (the image-only primitives are this shape with no arguments);
   * an ALCYON call (`vdi.declare_alcyon`): the GCC longword slots repacked into the WORD and LONG frame an
     Alcyon caller pushes, and popped after;
-  * a VDI FUNCTION (an `_OPCODE` sibling in `addrs.h`): entered with nothing, as the dispatcher does.
+  * a VDI FUNCTION (a `VDI_ROM_<FN>` with an `_OPCODE` sibling in `addrs.h`): entered with nothing, as the
+    dispatcher does. Only the VDI's: an AES routine has `_OPCODE` siblings too, and one no contract declares is
+    REFUSED rather than glued as a function entered with nothing.
 
 THE FILE IS WRITTEN ONLY WHEN ITS TEXT CHANGES, so the blob relinks when the glue does and not whenever a
 test file it imports is edited (the Makefile's `snapshot-inputs` arrangement).
@@ -33,7 +35,9 @@ project.load(RECREATE)
 
 from harness import addrs                                  # noqa: E402
 # Every battery, so every register contract and Alcyon signature is declared before a thunk asks for one.
+import routines                                            # noqa: E402
 import test_boot_snapshot                                  # noqa: E402,F401
+import transcription                                       # noqa: E402
 import vdi                                                 # noqa: E402
 
 # The GCC m68k ABI's callee-saved registers, in `movem`'s list order: what a thunk owes its C caller.
@@ -67,7 +71,7 @@ def _register_body(entry, contract):
     if len(contract.results) > 1:
         raise NotImplementedError(f"{entry} answers in {contract.results}: no thunk shape writes those back")
     saved = [register for register in CALLEE_SAVED
-             if register in vdi.TRANSCRIBED[entry] or register in contract.arguments]
+             if register in transcription.TRANSCRIBED[entry] or register in contract.arguments]
     loads = [f"    move{'a' if register.startswith('a') else ''}.l {_slot(index + 1, saved)}(%sp),%{register}"
              for index, register in enumerate(contract.arguments)]
     return [*_save(saved), *loads, f"    jsr     {entry}", *_restore(saved)]
@@ -75,8 +79,8 @@ def _register_body(entry, contract):
 
 def _alcyon_body(entry, signature):
     """The GCC slots re-pushed as the Alcyon frame, last argument first, and dropped after the `jsr`."""
-    saved = [register for register in CALLEE_SAVED if register in vdi.TRANSCRIBED[entry]]
-    first_framed = len(signature.argtypes) - len(vdi.frame_argtypes(vdi.transcription_routine(entry)))
+    saved = [register for register in CALLEE_SAVED if register in transcription.TRANSCRIBED[entry]]
+    first_framed = len(signature.argtypes) - len(vdi.frame_argtypes(transcription.transcription_routine(entry)))
     pushes, pushed = [], 0
     for index in reversed(range(first_framed, len(signature.argtypes))):
         width = vdi.ARG_BYTES[signature.argtypes[index]]
@@ -87,19 +91,19 @@ def _alcyon_body(entry, signature):
 
 
 def _function_body(entry):
-    saved = [register for register in CALLEE_SAVED if register in vdi.TRANSCRIBED[entry]]
+    saved = [register for register in CALLEE_SAVED if register in transcription.TRANSCRIBED[entry]]
     return [*_save(saved), f"    jsr     {entry}", *_restore(saved)]
 
 
 def thunk(core):
     """The glue that answers a C call of `core` by entering its `.S`."""
-    entry = vdi.TRANSCRIBED_CORES[core]
-    routine = vdi.transcription_routine(entry)
+    entry = transcription.TRANSCRIBED_CORES[core]
+    routine = transcription.transcription_routine(entry)
     if routine in vdi.PRIMITIVES:
         body, shape = _register_body(entry, vdi.PRIMITIVES[routine]), "register contract"
     elif routine in vdi.ALCYON:
         body, shape = _alcyon_body(entry, vdi.ALCYON[routine]), "Alcyon frame"
-    elif hasattr(addrs, routine + "_OPCODE"):
+    elif routine.startswith(routines.VDI_PREFIX) and hasattr(addrs, routine + "_OPCODE"):
         body, shape = _function_body(entry), "VDI function"
     else:
         raise LookupError(f"{routine} is transcribed and called from C, but declares no contract a thunk "
@@ -112,14 +116,14 @@ def thunk(core):
 
 def glue_text(cores):
     header = ["/* GENERATED by bench/shipped_glue.py — the shipped configuration's glue: each C call of a",
-              " * transcribed core enters its `.S` (include/vdi/transcribed.h). Do not edit. */",
+              " * transcribed core enters its `.S` (include/transcribed.h). Do not edit. */",
               "    .text", ""]
     return "\n".join(header + [line for core in cores for line in thunk(core)])
 
 
 def thunked_cores():
     """Every core the glue carries a thunk for, in the file's order: each one some C calls."""
-    return sorted({core for _caller, core in vdi.C_CALLERS_OF_TRANSCRIBED_CORES})
+    return sorted({core for _caller, core in transcription.C_CALLERS_OF_TRANSCRIBED_CORES})
 
 
 def main(argv):

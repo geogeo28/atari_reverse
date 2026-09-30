@@ -10,7 +10,7 @@
  *                            workstation whose handle is contrl[6] made current and its fields copied into Line-A
  *                            (an unknown handle returns having called nothing); the function the opcode tables name
  *
- * THE TWO DOORS SHIP AS THE ROM's OWN INSTRUCTIONS (`src/vdi/entry.S`, `vdi/transcribed.h`): each is an ENTRY a
+ * THE TWO DOORS SHIP AS THE ROM's OWN INSTRUCTIONS (`src/vdi/entry.S`, `transcribed.h`): each is an ENTRY a
  * vector or a trap arm reaches with a convention no C function has — an exception frame and `rte`, and a register
  * file kept whole but for D0 — which is `vdi_rom_timer_tick`'s reason. Their C twins below are what Tier 1 proves the
  * ORDER of every read and store against. The dispatcher is compiled C in the ROM and ships as C.

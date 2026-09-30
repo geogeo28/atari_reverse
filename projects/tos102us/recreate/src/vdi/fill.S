@@ -1,6 +1,6 @@
 /* fill.S — the polygon and contour-fill layer's HAND-WRITTEN 68000 as the ROM wrote it: the transcription of
  * `src/vdi/fill.c`'s three routines the target build ships because their C measures over Tier 3's 1.10 bar
- * (`include/vdi/transcribed.h` is the table; the user's rule: C first, Tier 1 proves it, then the ROM's own
+ * (`include/transcribed.h` is the table; the user's rule: C first, Tier 1 proves it, then the ROM's own
  * instructions where the C is too slow).
  *
  *   $fca05e..$fca163  $a006 filled_poly: the crossings of Y1, `bsr` to sort_words, the pairs through $a004

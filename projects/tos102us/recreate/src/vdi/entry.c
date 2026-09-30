@@ -16,7 +16,7 @@
 #include "staged_call.h"
 #include "vdi/entry.h"
 #include "vdi/font.h"
-#include "vdi/transcribed.h"
+#include "transcribed.h"
 #include "vdi/vdi.h"
 #include "vdi/workstation.h"
 

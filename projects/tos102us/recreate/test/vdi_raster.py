@@ -14,6 +14,8 @@ from pathlib import Path
 from harness import BASE_IMAGE, addrs
 
 import case
+import routines
+import transcription
 import vdi
 from case import merge_pokes
 
@@ -154,8 +156,8 @@ def drawing_pokes(*, mode, colour, extra=None):
 # ---- the TRANSCRIPTION: `src/vdi/raster.S`, the ROM's own instructions -----------------------------------
 # Every case a battery here registers for Tier 3 is registered TWICE: the C core against the ROM (the
 # C row), and the `.S` the target build ships against the ROM through Tier 3's transcription relation
-# (`vdi.register_transcription`) — the same image, the WHOLE register file both are entered with
-# (`vdi.DIRTY`, then the case's own registers), and the same chip traffic.
+# (`transcription.register_transcription`) — the same image, the WHOLE register file both are entered with
+# (`transcription.DIRTY`, then the case's own registers), and the same chip traffic.
 #
 # THE CODE POINTERS. Some routines return with an address INSIDE THEMSELVES in a register — the one
 # thing a transcription linked anywhere else must differ in. Which registers, per routine, was MEASURED
@@ -167,14 +169,14 @@ def drawing_pokes(*, mode, colour, extra=None):
 #   * `$a003`'s DIAGONAL arm leaves the same pair in A3/A4, and in A5 the octant arm's own address until
 #     a pixel sets it to a screen pointer. Its vertical and horizontal arms jump through a drawing vector,
 #     which is the ROM's body on BOTH sides, and leave nothing to mask.
-# Each such case is entered through one of `vdi.CallerPool`'s callers, which zeroes exactly those registers
+# Each such case is entered through one of `transcription.CallerPool`'s callers, which zeroes exactly those registers
 # on BOTH sides, so every other register — and these, in every routine that holds data in them — is still
 # compared.
 CODE_POINTERS = {"LINEA_ROM_CPU_HLINE": ("a5",), "LINEA_ROM_CPU_RECT_FILL": ("a5",), "LINEA_ROM_CPU_VLINE": ("a3", "a4")}
 DIAGONAL_CODE_POINTERS = ("a3", "a4", "a5")
 CODE_POINTER_CALLER_BYTES = 0x12        # room for the longest, which clears three
-CALLERS = vdi.CallerPool(PLANE_WORDS_AT + PLANE_WORDS_BYTES, BAND_AT + BAND_BYTES, CODE_POINTER_CALLER_BYTES,
-                         CODE_POINTERS, built=(DIAGONAL_CODE_POINTERS,))
+CALLERS = transcription.CallerPool(PLANE_WORDS_AT + PLANE_WORDS_BYTES, BAND_AT + BAND_BYTES, CODE_POINTER_CALLER_BYTES,
+                                   CODE_POINTERS, built=(DIAGONAL_CODE_POINTERS,))
 code_pointer_caller = CALLERS.caller
 caller_for = CALLERS.caller_for
 run_transcription = CALLERS.run_transcription
@@ -185,5 +187,5 @@ def register(label, name, pokes, *, regs=None, c_row=True, code_pointers=None):
     body whose C signature is past what a Tier 3 call can pass, which the transcription row alone
     prices."""
     if c_row:
-        vdi.register(f"{vdi.core_symbol(name)}, {label}", getattr(addrs, name), pokes, regs=regs)
-    vdi.register_transcription(name, label, pokes, regs, caller=caller_for(name, code_pointers))
+        vdi.register(f"{routines.core_symbol(name)}, {label}", getattr(addrs, name), pokes, regs=regs)
+    transcription.register_transcription(name, label, pokes, regs, caller=caller_for(name, code_pointers))

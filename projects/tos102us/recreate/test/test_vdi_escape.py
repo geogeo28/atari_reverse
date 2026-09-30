@@ -17,7 +17,7 @@ import struct
 
 import pytest
 
-from harness import BASE_IMAGE, addrs
+from harness import BASE_IMAGE, addrs, emu
 from recreate_kit import os_map
 
 import case
@@ -41,7 +41,7 @@ FONTS = {"6x6": vdi.FONT_ROM_6X6, "8x8": vdi.FONT_ROM_8X8, "8x16": vdi.FONT_ROM_
 
 def written_outside_the_stack(result):
     """The addresses the ORACLE stored to, less its own stack band (the frames every run leaves)."""
-    stack = range(vdi.emu.STACK_GUARD_LO, vdi.emu.STACK_BAND_HI)
+    stack = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
     return {at for at in result.info["writes"] if at not in stack}
 
 

@@ -14,7 +14,7 @@ counts in this file against its rows.
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments), and Scrdmp (entered only through the VBL and v_hardcopy's `trap #14`) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
 | vdi + linea | 151 | — | shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 48 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)), the escape's `.S` rows that reach the BIOS console's C through its own thunks 1.31–2.43x as shipped, verdict `own` (T←: its own instructions within the bar, the console's C carried by five cited Bconout(CON:) acceptances); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.42–1.10), fourteen rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–2.05 shipped, 0.69–1.08 net of the thunks); the GEMDOS-trap rows priced over a staged `trap #1` with LINEA_RETSAV dropped by name | COMPLETE but the deferred BLITTER bodies |
-| aes | 0 | — | — | NOT STARTED |
+| aes | 3 | — | 0.33–1.09x, every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion); each routine's Line-F-entered case verified and unpriced | STARTED — the FOUNDATION and two worked examples |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
 
@@ -419,6 +419,24 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfcd6a4` | `v_clsvwk` (opcode 101, same) | 5 + 2 | 11 / 206 handle 1, 38 / 674 middle, 42 / 728 last of four | **0.63** the physical workstation (T→), **1.12** the middle one, **1.10** the last of four (T→G `glue`) | ✅ verified | handle 1 refused (no trap); the walk crosses 0 / 1 / 2 links and the FIRST match wins (closing the second 3 of 1,2,4,3,3 drops the first 3 off the list, still allocated); the record relinked, then Mfree; the whole ordered trap ledger compared. Staged `trap #1`, RETSAV dropped at Tier 3 only, companions as v_opnvwk's. NET OF THE GLUE 0.91 and 0.91. Unpinned: the not-found walk (no end test — it wanders through address 0's vectors; no dispatcher call reaches it) |
 | `0xfcb998` | `v_clswk` (opcode 2, same) | 2 + 1 | 4366 / 119510 none open, 4447 / 121142 four open | **1.01** none open, **1.01** four open (T→) | ✅ verified | every record after the physical one Mfree'd IN LIST ORDER through CUR_WORK (left 0) — the four Mfrees pinned in order by the appending ledger (a swapped-order mutant survived the single-slot one); the physical WS_NEXT left naming freed memory (ROM quirk); restore_timer_mouse. The four-open row over the staged trap, RETSAV dropped at Tier 3 only |
 | `0xfc427a` | `vdi_escape` (VDI opcode 5 — in the BIOS's range, under `vdi` because its code is `src/vdi/`, as `clear_span`'s is; SHIPS as `src/vdi/escape.S`, 4 byte-pinned spans + 13 thunks into `src/bios/vt52.c`; its C twin `src/vdi/escape.c`) | 203 C twin + 92 transcription | C twin 11 / 150 past the table, 19 / 244 vq_chcells, 14155 / 168060 v_exit_cur, 289 / 2954 v_curup drawn, 25096 / 325642 v_curtext line and scroll, 45 / 808 v_hardcopy, 34 / 744 v_fontinit; `.S` 13 / 190 past the table … 25111 / 325780 v_curtext | `.S` **1.00** on the 14 rows that are the escape's own code (the three NOTHING rows, vq_chcells, vq_curaddress, vq_tabstatus, v_rvon, v_rvoff, v_hardcopy, v_dspcur ×2, v_rmcur ×2, v_fontinit); the 24 `.S` rows that reach the console's C **1.31**–**2.43** as shipped, verdict `own` (T←); the C twin **1.09** v_hardcopy, the rest (T) `transcribed` | ✅ verified | THE `.S`: $fc427a..$fc42e5 (dispatch, the 20-word table, the two compares past it, v_offset), $fc442e..$fc4463 (vq_chcells, v_hardcopy, v_enter/exit_cur), $fc44dc..$fc455f (vs_curaddress, v_curtext, rv on/off, the two inquiries, v_dspcur, v_rmcur), $fc4a42..$fc4a9d (v_fontinit) pinned word for word with 27 exact relocations (the 20 table words as displacements from the TABLE — a new `Relocated.base` — eleven to arms, seven to console thunks; seven branch extension words); ESC E's thunk laid at the ROM's own body address so v_exit_cur falls into it and v_enter_cur's `bsr.s` reaches it; the `jmp`s to v_show_c/v_hide_c keep the ROM's addresses (CODE entries). The transcription relation over 55 cases with each ARM's register mask the measured union of what the two sides disagree in (the inquiries, v_hardcopy and v_fontinit clear nothing; the arms reaching the console's C its scratch); contract `d2-d7 a2-a5`, the ROM console's. Tier 3 by the DERIVED (T←) rule: own instructions 1.00 on 19 of the 24, 0.85 on the five edge rows (ESC A-D and J refuse through `beq.s $fc444e`, vq_chcells' `rts` INSIDE the span: 16 console cycles counted as the escape's), the rest carried by five cited `bios_bconout` acceptances. THE C: the dispatch's UNSIGNED `bhi` (negative words and $8000 fall past the table; $0101/$0165/$0166 do nothing) and all 22 arms incl. the undocumented 101 v_offset and 102 v_fontinit; the nine console arms entered by name and proved to be ESC's own table entries; vq_chcells columns-before-rows over contrl and over the console's own geometry; vs_curaddress's unchecked `subq` (0 → $ffff) and the N-flag clamp's exact $8000 boundary; the console cell address WRAPPED on the 24-bit bus (rows 0 and $ccce, ESC Y below the bias — the latent Bconout divergence this band found); v_curtext through the live state machine (controls, ESC Y across two calls, the `dbf` count unsigned at $8000, read-after-draw with intin on screen); v_offset read under the lock and not re-placing the cursor; v_fontinit on the ROM's three fonts, field order pinned by two headers over the console block; v_dspcur clearing the caller's intin[0] before v_show_c; v_hardcopy through the real `trap #14` → Scrdmp into a RECORDING `scr_dump` (one call, `_dumpflg` set after it). Unpinned: column 0 with the cursor drawn (past 1 MB even wrapped; host refusal), a zero-divide v_fontinit (vector 5; host refusal), the real printer dump, an odd intin pointer. Mutation (strict): C 66/68 + 2/2 Scrdmp order and count (+1 ABNORMAL: the bus-wrap revert, caught by the host abort); `.S` 8/9 on a private blob (1 equivalent); a spill in the `.S`'s own code reds 26 of 38 rows |
+
+## Verified — aes (3)
+
+The AES (`$fe387c..$fee8ff`, `src/aes/`), started 2026-09-30 on a read-only map of the whole GEM range and a FOUNDATION
+every later port builds on: `include/aes/{aes,objects}.h` (GEMBSS, THEGLO's tables, the object layer, the resource header, the
+Line-F mechanism — every field cited to a ROM access and width-tagged), `test/aes.py` (the door: `leaf_machine()` stages the
+shell's PD running over a snapshot taken inside disp's idle loop; trees by shape or out of the AES's own relocated resource;
+`run_function` DIRECT — the priced row — or THROUGH LINE-F at a staged caller that makes the ROM's own call word; the Line-F
+handler's self-patched mask word `$cc44` dropped by name, and at Tier 3 with its undropped companion). Every AES case runs
+POISONED — the kit leaves a vetted drop out before it decides to run the attribution pass — and only the Tier 3 companion runs
+without it (`aes.COMPANION_UNPOISONED` says why); answer words are staged stale, and every pointer argument is also handed in
+with a top byte (`aes.BUS_TAG`).
+
+| address | function | cases | original insns / cycles | Tier 3 | state | what the cases pin |
+|---|---|---|---|---|---|---|
+| `0xfed382` | `get_par` (`src/aes/oblib.c`) | 16 + 4 rows | 27 / 398 the root, 39 / 542 one step, 169 / 2082 across 24 siblings | **0.34** the root, **0.52** one step, **0.65** across 24 siblings | ✅ verified | over the snapshot's file selector (the AES resource's tree 0, 25 objects four deep): the first of the root's 24 children (the walk crosses every sibling), the last (one step), the deepest, three siblings to a parent that is not the root, the last of nine; the root answered -1 by `moveq` with nothing read (a tree pointer into the I/O page); the tree pointer put on the 24-bit bus (a top byte); the SIGNED index — an object whose ob_next is -1 walks to the object BELOW the tree (staged there: a next of 2 whose leaf tail -1 ends it, answer 2; unsigned reads 1.5 MB above and answers -1); the test is ob_tail alone (a sibling whose tail names the child is taken for its parent); direct and through Line-F ($f150). Mutation (strict): 5 — 5 killed; the three that make the host loop where the ROM returns were ABNORMAL (a hung case) until the kit's watchdog ended the spin, and each is now KILLED by failed assertions beyond its crashed tests |
+| `0xfea584` | `ob_offset` (opcode 44's implementation, `src/aes/oblib.c`) | 13 + 4 rows | 85 / 1164 the root, 347 / 4450 four levels, 285 / 3594 the first of 24 siblings | **0.34** the root, **0.33** four levels, **0.47** the first of 24 siblings | ✅ verified | the screen position over the snapshot's file selector (root, first child, the deepest, the last of nine), both words stored through at every step in the ROM's order: x laid over the object's own ob_y (x += ob_x lands in ob_y before ob_y is read), x over an ancestor's ob_x (doubled, never summed in a register), one word for both; the sums words that wrap ($7000 + $7000); the tree and both answer words put on the 24-bit bus; the answer the walk's last get_par, -1, which the desk's binding hands on ($fde280); direct and through Line-F by the word MOST of its callers use — `$f208` ×4 (the desk's binding at $fde278 and three AES callers, the dispatcher's arm 44 among them), not `$f154` ×3 (the object library's own callers, ob_find and ob_change), both sets of sites pinned by `test_aes_door`. Mutation (strict): 8 — 7 killed, 1 equivalent (the two clears swapped: nothing is read between them, and the words cannot half-overlap on a 68000); its answer word without the bus mask KILLED |
+| `0xfecd22` | `rc_intersect` (`src/aes/rect.c`) | 29 + 12 rows (2 of the 29 host refusals) | 33 / 376 .. 39 / 426 | **0.93** x overlapping y empty, **0.98** clip inside rect, **0.99** edges touching, **1.00** negative origins, **1.01** rect inside clip and the desktop window, **1.09** x empty beside a non-empty y (the worst) | ✅ verified | hand 68000 ported to C: every branch of both axes' min and max, both answers; word sums that wrap (a far edge going negative is empty); the answer the V-aware signed compare of the `ble` after `sub.w`, not the stored extent's sign ($9000 to $7000: extent $e000, still non-empty); both axes stored whatever the first found; the y pass reads the x pass's stores (a clip laid one word below the rect); a rect with itself; the snapshot's desktop window, WIN_CURR clipped to WIN_FULL in place; both pointers put on the 24-bit bus; returns by `rts`, so the mask word is never stored (the door's drop drops nothing). THE BUS TOP IS A HOST REFUSAL, not a wrap: the C holds each GRECT pointer once (`grect_at`), and a GRECT whose last word passes the top of the bus ($fffffa, $fffffe — as clip and as rect) is refused on the host by an assertion (target code unchanged), the last fitting one ($fffff8) served — a per-word wrap was built and measured 1.25–1.43, OVER on all 11 rows (GCC cannot fold `image + (rect + field)` back into `d16(An)`). Its C holds the two pointers as the ROM's `movem` does, settles each origin before the far edge, and recomputes x's answer from x's own stores after the y pass — kept in a register it measured 1.12–1.17. Mutation (strict): 14 — 12 killed, 2 equivalent (origin ties: equal values; extent stored before origin: no read between); the clip pointer without the bus mask ABNORMAL (a segfaulted worker, no assertion) |
 
 ## Harness
 
@@ -879,8 +897,8 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
   first time: 22 routines ship as `helpers.S` / `palette.S` / `raster.S`, every one BYTE-EXACT to the ROM (named encodings, no
   avoidable excusals; raster's cross-region displacements and its fringe-table reference pinned to their exact relocated values) and
   1.00 on every `.S` row. REVIEW (5 finders) found the policy had NO MECHANISM behind it — the bench linked both twins and ~40 over-bar
-  C rows were justified by hand-typed prose — now ONE table, `include/vdi/transcribed.h` (entry, ROM routine, C core, the registers
-  it leaves changed vs the GCC ABI), from which Tier 3's rule (T) is DERIVED (a transcribed routine's C rows pass only while every
+  C rows were justified by hand-typed prose — now ONE table, `include/vdi/transcribed.h` (`include/transcribed.h` since the AES
+  foundation; entry, ROM routine, C core, the registers it leaves changed vs the GCC ABI), from which Tier 3's rule (T) is DERIVED (a transcribed routine's C rows pass only while every
   `.S` row is ≤ the bar — shown RED on a deleted and on a drifted `.S`), the future ROM build's contract (`atari/target.mk`
   TRANSCRIBED_*, pinned) and the `.S` entry declarations for C callers. Real divergences fixed RED→GREEN: the palette address not
   folded to 24 bits (30 low-res indexes wrap into the vector page), `vq_color`'s and the inquiries' read points, the four colour
@@ -1067,21 +1085,86 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
   walks up to 128 KB), v_offset never re-places the cursor, v_fontinit has no zero-divisor guard, vq_chcells stores columns first and
   the table's entry 0 is its `rts`; the map's "`$fcb148` (hide cursor)" is v_hide_c, the MOUSE hide; and `$fc4a42` is escape 102,
   whose body past its intin read (`$fc4a48`) is what the console re-init `$fca914` `bsr`s into.
-* **Next** — the VDI is COMPLETE except the deferred BLITTER bodies. Candidates: the E_CHG recovery behind GEMDOS's termination
-  record (design first); the aes/desk code boundary; the parked project-wide levers — `-fno-jump-tables` (its premise is false for
-  `m68k-elf-gcc`), the bench table's serial prerequisite and `test_tier3`'s double measurement, a per-span poison exclusion, the ~90
-  raw Line-A pointer sites; and promoting `ganneheim/dev` → `main` (the user's call).
-  Earlier lists, still open: the 73 Alcyon write-to-(sp) decompile failures.
+* **Wave 11 (2026-09-30) — AES FOUNDATION.** THE MAP, read-only over `$fd9eca..$fefff3` (736 functions, the scratch
+  `aes_map.md`): the aes/desk boundary is `$fe387c` — the desk (`$fdb014..$fe387b`) is a SUBROUTINE of the shell in PD0
+  (deskmain `$fe272e`, called once from sh_main) and calls the AES's INTERNAL routines directly through Line-F, never
+  `trap #2` (its own binding layer `$fdde54..$fde4cc`, each `dsptch(); <internal>()`), so the AES's testable surface is ~60
+  internal entry points and the desk can only follow them; the boot snapshot sits INSIDE the dispatcher's idle loop (`rlr`
+  NULL, `indisp` 1, both PDs on `nrl` in evnt_multi, the CPU in `idle` polling the keyboard through the VDI); every
+  internal call is a Line-F word through a Malloc'd RAM copy of the handler (`$2c` → `$cc0e`) that SELF-PATCHES its own
+  `movem` mask word at `$cc44` on every masked Alcyon return — a word a C candidate never writes; and `decomp.c` is
+  UNRELIABLE in this range (472 of 726 functions end in `halt_baddata` at a Line-F return, ~355 Line-F calls mis-decoded as
+  coprocessor ops, some calls simply absent, every call's D0 invisible) — port from the map's own Line-F-aware disassembler.
+  The map was wrong in places a body read corrected: "optimize" is not all hand 68000 (`$fecfb2`, `$fed19e`, `$fed27c`,
+  `$fed382` are Alcyon C), three names in it were misassigned (`$fed19e` is ob_sst, everyobj is `$fed27c`, get_par
+  `$fed382`), `$b74a` is window 0's ORECT list and not a tree, the three UDAs are NOT one stride, and the Line-F table names
+  42 routines more than once. THE DOOR: `test/aes.py` (fields through `test/layouts.py`, the width-tag reader hoisted out of
+  vdi.py; the ROM-routine naming rule hoisted into `test/routines.py`, by which tier3 labels every VDI/Line-A/AES row; every
+  component's rows and drops through `case.Rows`; `staging.Registry.require_claimed`; `table_entry` moved to
+  `m68k_idioms.h` with every other source's m68k code byte-identical), the addrs.h AES block (86 routines, 62 `_OPCODE` pairs
+  held to the dispatcher's arms, the 48 table gaps to its default arm), `include/aes/{aes,objects}.h` (25 table immediates
+  pinned against the ROM, the tables tiling THEGLO). THE `$cc44` DROP: the mask word is dropped by name
+  (`aes.LINE_F_MASK_WINDOW`, a window: only where the ROM's run stores it) and every priced row drops it at Tier 3 with its
+  UNDROPPED companion, the word staged at the value the run leaves. AES CASES RUN POISONED: the foundation found the kit's
+  attribution pass could not coexist with a drop (it pre-inverted every oracle-written byte before `case.run` could drop
+  one, so a case whose ROM run rewrote the word failed the pass and one that changed it skipped the pass in silence) — the
+  kit now takes the drops as DATA, `differential(dropped=drops.Dropped(spans, windows))`, leaves them out of the plain
+  compare BEFORE the pass's gate and neither poisons nor compares them (the gate then held fixed spans to the PLAIN run
+  only, the re-run cutting only windows, and `_vet_poison_is_attributable` leaving dropped bytes out of its clash set, each
+  RED first; `tools/recreate_kit/drops.py`, which imports nothing, so Tier 1 no longer imports the Tier 3 module).
+  COMPONENT-NEUTRAL `.S` MACHINERY: the byte-exact transcription table is `include/transcribed.h` (was
+  `include/vdi/transcribed.h`), its machinery `test/transcription.py` (moved out of vdi.py, ~560 lines), its test
+  `test/test_transcribed.py` (was `test_vdi_transcribed.py`), `atari/target.mk` compiling `src/vdi/*.S` and `src/aes/*.S`;
+  an AES `.S` is held to its EXECUTED path (the oracle's cycle-per-PC profile over the row's cases) running no Line-F word
+  and reaching no return tail outside its own pinned region — a static word scan was tried and REFUTED (`cmp.w #-1` at
+  `$fed04a` reads as a Line-F return word); a scratch `src/aes/rect.S` for `$fecd22..$fed070` went through the whole
+  machinery at 1.00 and was not committed; every object, both blobs and every tier3 number byte-identical across the move.
+  THE KIT WATCHDOG: a mutant that makes host C spin used to hang the run; a per-call faulthandler guard inside
+  `harness.differential` was built, then REFUTED at the gate four ways (the dump lost under fd capture, every differential
+  erroring under `--capture=sys`, pytest's own `faulthandler_timeout` silently disarmed, only two of ~300 call paths
+  covered) and replaced by a PLUGIN, `-p recreate_kit.watchdog` (kit.mk's `test`/`guarded`, the kit's Makefile): one timer
+  per TEST, written to a dup of the REAL stderr taken at configure, budget `TEST_BUDGET_SECONDS` = 300 s from the measured
+  maxima (buggyboy's `test_hi_fuzz` 46 s is the longest; tos102us 5.8 s), `--watchdog-seconds` to change it, an outer
+  `faulthandler_timeout` REFUSED rather than clobbered. THE MUTATION RULE it forced: a watchdog exit or a segfaulted worker
+  is under xdist a "crashed" test counted in `N failed` with exit 1 — the shape of a kill with no assertion — so a run is
+  KILLED only when it failed MORE tests than crashed (README "Mutation sweeps"); re-classifying the saved tails moved TWO
+  verdicts KILLED → ABNORMAL, so the foundation's recorded kill tally was 2 too high. REVIEW (2 reviewers) AND GATE (5
+  finders) FINDINGS, each fixed RED→GREEN or pinned: the kit gap above; test_status's table pattern stopped at `$fd` and
+  would have left every AES row unpinned in both directions (widened to `$fe`); the pointer arguments' 24-bit bus (a
+  top-byte `BUS_TAG` on every pointer); ob_offset's two call words ($f208 ×4, $f154 ×3) pinned site by site; the sixteen
+  fork-function immediates enumerated (`aes.FORK_FUNCTION_IMMEDIATES`: six queue pushes, three ap_tplay stores, three
+  compares in forker's recorder, four in ap_trecd — the review had counted six), with `AES_ROM_{T,K,B,M}CHANGE` in addrs.h;
+  rc_intersect at the bus top (below); the Line-A `.S` rows now labelled by the one naming rule (`Line-A linea_hline
+  (.S)`). MUTATION (strict, a private .so per mutant): 35 — 30 killed, 3 equivalent (ob_offset's swapped clears,
+  rc_intersect's origin ties and extent-before-origin), 2 ABNORMAL (`object_field` and rc_intersect's clip without the bus
+  mask: only a segfaulted worker); get_par 5/5 (its three spins killed by failed assertions beside the crashed tests),
+  ob_offset 7/8 + its answer word's bus mask, rc_intersect 12/14, the headers 5/5 (OB_X, OB_TAIL, GRECT_H, the signed
+  object index, the signed `table_entry` index); the kit's own — the four drop mutants, the watchdog's missing `file=`, its
+  missing refusal and its missing cancel — all killed. The Line-F CALL path costs +15 instructions / +190 cycles through
+  the staged caller; priced rows enter by `jsr`, so the ROM column carries the Line-F RETURN's cost and not the CALL's —
+  conservative.
+* **Next** — AES BAND 0, the LEAVES (the map's §6, ≈3.3 KB): the "optimize" utility layer (`$fecb5a..$fed3bd`: gsx2, mul_div,
+  the string and rectangle helpers round rc_intersect — its hand-68000 loops are the Tier 3 risk, so C first and a
+  byte-pinned `src/aes/*.S` where the C measures over the bar, the shared return tails `$fed066`/`$fed06a` in the same
+  region as their users), the inf-scan helpers and gemrlist (the ORECT pool staged). Then AES BAND 1, OBJECT/RESOURCE
+  (≈5 KB): everyobj, ob_find/add/delete/order, ob_center, rs_obfix/gaddr/saddr/free and the resource relocation
+  (`$fee4de`/`$fee5c8`), sc_read/write — `rlr` and the resource globals staged, the snapshot's trees as data. Still open
+  from the VDI's list: the E_CHG recovery behind GEMDOS's termination record (design first); the parked project-wide levers
+  — `-fno-jump-tables` (its premise is false for `m68k-elf-gcc`), the bench table's serial prerequisite and `test_tier3`'s
+  double measurement, a per-span poison exclusion, the ~90 raw Line-A pointer sites; promoting `ganneheim/dev` → `main`
+  (the user's call); the 73 Alcyon write-to-(sp) decompile failures.
 
 ## Suite
 
-`make test` — **11,793 passed** (2 skipped, one of them the `RUN_SLOW`-gated placement search) and `make guarded` the same count
-(14,808 candidate runs guarded across 10 workers, no fault), re-summed at the VDI band-4 docs pass on 2026-09-29 after a forced
-rebuild (`rm build/*.so`, both bench blobs and the table, and `__pycache__` removed first); `make bench` judges 824 rows (485 ok /
-123 transcribed / 95 through / 61 accepted / 24 own / 14 glue / 13 pinned / 9 rule, none OVER or DRIFTED), re-counted from the
-printed table. `make -C atari -B all` builds. The kit's own suite: **1,134 passed** (re-run: `oracle/shim.c` and `emu.py` gained the
-ROM-window profile and `prof_cycles`, which no kit test pins yet). The PRG controls (Zynaps, Flying Shark) were NOT re-run this band.
-`names.txt`: 575 fn / 368 var / 279 cmt.
+`make test` — **12,022 passed** (2 skipped, one of them the `RUN_SLOW`-gated placement search) and `make guarded` the same count
+(14,918 candidate runs guarded across 10 workers, no fault), re-summed at the AES foundation's docs pass on 2026-09-30 after a
+forced rebuild (`rm build/*.so`, both bench blobs and the table, and every `__pycache__` removed first), both under the kit's
+watchdog plugin; `make bench` judges 841 rows (502 ok / 123 transcribed / 95 through / 61 accepted / 24 own / 14 glue / 13 pinned
+/ 9 rule, none OVER or DRIFTED) — the 824 of the VDI band-4 pass plus the AES's 17 — re-counted from the printed table.
+`make -C atari -B all` builds. The kit's own suite: **1,163 passed** (+29 since band 4: the watchdog plugin's tests and the
+dropped-span tests among them). The PRG controls, re-run by the gate's fix pass under the watchdog plugin with their counts
+unchanged: Zynaps 4,751 passed / 4 skipped, BuggyBoy 296, Joust 4,368, Flying Shark 3,851, Bubble Ghost 1,909, Wonder Boy 6,465
+(not re-run by this docs pass). `names.txt`: 590 fn / 373 var / 286 cmt.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.
@@ -1174,13 +1257,36 @@ unpinned host-only. UNPINNED otherwise: linea_dispatch's opcode-read-before-PC-s
 put-back through a re-read CUR_WORK (reachable only with CUR_WORK → 0, the vector page); the escape's column 0 with the cursor drawn
 (past 1 MB even wrapped), zero-divide v_fontinit (vector 5), the real printer dump and an odd intin pointer — each a named host
 refusal or unstaged. DRY left: `test_vdi_escape_transcription.py` keeps private `BENCH_ELF`/`table_entry`/`_anchor_of` (and
-`test_vdi_escape.py` an `entry()`, `test_vdi_transcribed.py` a `BENCH_ELF`) that `vdi.py` now has. WHAT A REBUILT ROM OWES (CODE /
+`test_vdi_escape.py` an `entry()`) that the shared modules now have (`BENCH_ELF` is `test/transcription.py`'s since the AES
+foundation, and `test_transcribed.py`, was `test_vdi_transcribed.py`, uses it). WHAT A REBUILT ROM OWES (CODE /
 TABLE entries in `test_vdi_rom_data.py`): vector $28 (stored from `$fc037c`) → `linea_rom_dispatch`; the `trap #2` door `$fc4ebc`'s
 `jsr` and its $ffff answer (`$fc4ec8`/`$fc4ed6`) → `vdi_rom_entry`; `entry.S`'s `jsr $fca9f6` → an argument-less entry to the shipped
 vdi_dispatch (the C core takes an image); the `$a009`/`$a00f` table longwords → entries with the Line-A convention; escape.S's `jmp`s
 to `$fcb120`/`$fcb148` → shipped v_show_c/v_hide_c; the 71 function addresses of the opcode tables at `$fd372c`/`$fd37c8`, read in
 place by `entry.c`; `fill.c`'s `LINEA_ROM_SEEDABORT_DEFAULT` (stored from `$fd08e6`) → the stub `$fc9f9a`, a LOCAL label in entry.S's
 region (a global needs a table row); and entry.S's font table, whose three longwords stay the ROM's face headers (FONT_ROM_6X6/8X8/8X16).
+
+**aes — the FOUNDATION's honest gaps: three mechanisms DESIGNED and not built, one assumption pinned as a refusal, and what
+its gate PARKED.** The design note (the README's THE AES DOOR) covers what the gemstart, disp and forker ports need and nothing
+builds yet: (1) THE LINE-F INIT COPY — gemstart's `Malloc(100)` (drop it and every later TPA block moves, the desk's globals at
+`$143b4` included), the 100-byte copy of `$fee8c2` shipped byte for byte (its `movea.l #$fee900` and 38 bytes of the call table's
+head are ORIGINAL ROM addresses kept as data, never relocated), and the `$2c` store under the ROM's condition; the copy's mask word
+then differs from the original forever, by nature, and an init case drops the same window. (2) BLOCKING AND `switchto` — the
+snapshot's `indisp = 1` makes `dsptch` a bare `rts`, a TEST LEVER and not the machine's behaviour; a real switch needs a checkpoint
+at switchto's `rte` (`$fe395a`) through a `staged_call.h`-family hook, or a staged second process whose UDA `rte`s into a
+`jmp ($2).w` sentinel stub, and savestate/switchto ship as byte-pinned `.S` (their saved register block is the oracle's CPU state,
+a by-nature drop for a C twin). (3) THE FORKER MAPPING — forker's `jsr (a0)` on queued ROM addresses needs ONE hook of the
+`staged_call.h` family mapping `AES_ROM_<FN>` → `aes_<fn>` (a pushed-long variant of the register/argument hook, not a second
+hook), and the sixteen fork-function immediates (`aes.FORK_FUNCTION_IMMEDIATES`, kind CODE) join `test_vdi_rom_data.py`'s census
+once their routines have a source file. PINNED AS A HOST REFUSAL: rc_intersect's C holds each GRECT pointer once and adds the
+field offsets unwrapped, which differs from the ROM's `d16(An)` only for a GRECT whose last word passes the top of the 24-bit
+bus — the host refuses that by assertion (`$fffffa`, `$fffffe`, as clip and as rect) and serves the last fitting one; the per-word
+wrap that would model it measured 1.25–1.43, over the bar on every row. PARKED, each its own change: the `shipped-glue` make
+target has no `$(ORACLE)` prerequisite (pre-existing); `tools/recreate_kit/kit.mk` line 105 is 184 columns (pre-existing, the
+oracle link rule); `include/aes/aes.h` is included by no C yet (the scheduler's ports will); the Tier 3 splat of every registered
+row is pinned (`test_boot_snapshot.test_every_registered_row_is_splatted`) rather than derived from `case.ROW_REGISTRIES`, since
+deriving it would make row order depend on import order. The "general host WATCHDOG" band 3 parked now exists as the kit plugin;
+the per-case `host_returns` bounds stay, since they name the case where the watchdog ends the process.
 
 **bios — the console's four BLITTER screen routines** (`$fc47be`, `$fc4852`, `$fc48b6`, `$fc4936`): TOS 1.02 installs
 them on a machine with a blitter; the captured ST holds the CPU set, and each reconstruction halts on a vector that is

@@ -2,7 +2,7 @@
  * the TRANSCRIPTIONS a target build ships, where `entry.c` and `linea.c` are what Tier 1's host differential proves.
  *
  * WHY THIS IS ASSEMBLY. Two of the three are ENTRIES reached with a convention no C function has, which is
- * `vdi_rom_timer_tick`'s reason (`vdi/transcribed.h`): vector $28 enters `linea_rom_dispatch` with an exception
+ * `vdi_rom_timer_tick`'s reason (`transcribed.h`): vector $28 enters `linea_rom_dispatch` with an exception
  * frame and leaves by `rte`, the PC stepped past the $Axxx word, D3-D7/A3-A5 kept and D0-D2/A0-A2 the primitive's
  * answer; `trap #2`'s VDI arm enters `vdi_rom_entry` expecting every register back but D0, the answer's word. And
  * `$a000` (`linea_rom_init`) lies between the first and the table it indexes PC-relative, so the region is one.

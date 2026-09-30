@@ -10,7 +10,7 @@ import pytest
 
 from harness import BASE_IMAGE, addrs
 
-import vdi
+import transcription
 from opcodes import RTS
 
 # Each routine's extent in the ROM: where the next routine starts. get_kbshift's last word is the `rts`
@@ -30,7 +30,7 @@ FOLLOWED_BY = {"VDI_ROM_SORT_WORDS": "VDI_ROM_SMUL_DIV", "VDI_ROM_SMUL_DIV": "LI
                "VDI_ROM_GEMDOS_CALL": "VDI_ROM_FONT_BYTESWAP", "VDI_ROM_VR_TRNFM": "VDI_ROM_VS_COLOR"}
 
 
-REGIONS = {name: vdi.pinned_region(getattr(addrs, name), getattr(addrs, name) + size, name)
+REGIONS = {name: transcription.pinned_region(getattr(addrs, name), getattr(addrs, name) + size, name)
            for name, size in ROUTINE_BYTES.items()}
 
 
@@ -38,7 +38,7 @@ REGIONS = {name: vdi.pinned_region(getattr(addrs, name), getattr(addrs, name) + 
 def test_the_transcription_is_the_rom_s_bytes_exactly(name):
     """THE BYTE PIN: no word excused — where GNU as would choose another encoding, `helpers.S` spells the
     ROM's words (`m68k_encodings.h`)."""
-    vdi.assert_transcribed(name, REGIONS[name].lo, REGIONS[name].hi)
+    transcription.assert_transcribed(REGIONS[name])
 
 
 @pytest.mark.parametrize("name,following", sorted(FOLLOWED_BY.items()))

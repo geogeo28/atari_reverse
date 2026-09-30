@@ -33,7 +33,7 @@ INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # glob never matched it, so it stays out.
 HEADERS = [INCLUDE / "addrs.h"] + sorted(header for header in (INCLUDE / "gemdos").glob("*.h")
                                          if header.name != "gemdos.h") \
-    + [INCLUDE / "host_slot.h"] + sorted((INCLUDE / "vdi").glob("*.h"))
+    + [INCLUDE / "host_slot.h"] + sorted((INCLUDE / "vdi").glob("*.h")) + sorted((INCLUDE / "aes").glob("*.h"))
 
 # Where a value starts being an ADDRESS rather than an offset, a size, a count or a mask: $400 is the
 # top of the 68000's own vector table and the bottom of the system variables, so every location this
@@ -53,8 +53,9 @@ ALLOWED_ALIASES = {
     frozenset(("CON_PLANES", "LINEA_BASE")):
         "the Line-A block's base and the field at +0 of it — a pointer to the block and one word "
         "in it, which the published layout puts at the same address",
-    frozenset(("GEMDOS_FAT12_ENTRY_MASK", "LINEA_OPCODE_MASK")):
-        "two 12-bit MASKS, not addresses: a FAT12 entry and the low bits of a $Axxx opcode",
+    frozenset(("GEMDOS_FAT12_ENTRY_MASK", "LINEA_OPCODE_MASK", "LINEF_OFFSET_MASK")):
+        "three 12-bit MASKS, not addresses: a FAT12 entry, the low bits of a $Axxx opcode and a $Fxxx call's "
+        "table offset",
     frozenset(("BCB_EMPTY", "VDI_DDA_DOUBLE", "VDI_FILL_EMPTY", "VDI_PERIMETER_LINE_MASK")):
         "four word VALUES, not addresses, each a `-1`: a buffer holding no drive, the text scaler's "
         "doubling increment, a taken contour-fill queue record and a fill outline's solid line mask",

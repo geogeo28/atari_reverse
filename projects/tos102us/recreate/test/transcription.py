@@ -1,0 +1,621 @@
+"""THE BYTE-EXACT `.S` MACHINERY — how ANY component's hand-68000 routine ships as the ROM's own instructions.
+
+The user's rule for the hand-written 68000 is component-blind: port it to C first (Tier 1 proves the C), and where the
+C measures over Tier 3's 1.10 bar, SHIP a byte-pinned `.S` transcription. This module is everything that rule needs,
+for the VDI and Line-A (`src/vdi/*.S`) and the AES (`src/aes/*.S`) alike:
+
+  * (a) the STAGED CALLERS a transcription is entered through, and the transcription relation's run and Tier 3 row;
+  * (b) the BYTE PIN: the regions the batteries pin, and the one comparator (`assert_transcribed`);
+  * (c) the TRANSCRIBED TABLE (`include/transcribed.h`), parsed, and the C that still calls a core it names;
+  * (d) the m68k build's CALL GRAPH, which (T→) and the table's caller list are read out of.
+
+A routine is named by the one naming rule (`test/routines.py`): the `.S` entry is its `addrs.h` name lower-cased
+(`VDI_ROM_VS_COLOR` -> `vdi_rom_vs_color`, `AES_ROM_RC_INTERSECT` -> `aes_rom_rc_intersect`) and the C core that name
+less its `rom_`. `bench/tier3.py`, `bench/shipped_glue.py` and `test_transcribed.py` read it all from here.
+"""
+import functools
+import importlib
+import re
+import struct
+import subprocess
+from collections import namedtuple
+from pathlib import Path
+
+from harness import BASE_IMAGE, addrs, emu, make_image
+
+import abi
+import routines
+from case import merge_pokes
+from isr import blob as bench     # the cross-compiled blob, loaded once per process (`isr.blob`)
+from layouts import LONG_BYTES, WORD_BYTES
+from opcodes import CLEAR_REGISTER, PUSH_RETURN_PC, PUSH_STACK_LONG, RTS
+# The plain caller and the stand-in routine a caller's cost is measured over sit in bands of the VDI's staged window
+# (`vdi.SPAN`), where the first transcriptions were staged: one image serves every case, so any component's
+# transcription is entered through them.
+from vdi import STUB_AT, TRANSCRIPTION_CALLER_AT
+
+_RECREATE = Path(__file__).resolve().parents[1]
+# Tier 3's m68k blob (kit.mk's bench rule) — whose call graph the batteries read — and the SHIPPED CONFIGURATION's
+# (the Makefile's shipped-blob rule): the build the (T→) rows are priced on.
+BENCH_ELF = _RECREATE / "build" / "bench" / "bench.elf"
+SHIPPED_ELF = _RECREATE / "build" / "bench_shipped" / "bench.elf"
+
+
+# ---- (a) a TRANSCRIPTION: a hand-68000 routine the target build ships as the ROM's own `.S` ---------
+# The user's rule for the hand-written routines: C first (Tier 1 proves it), and where the C measures
+# over the 1.10 bar, the ROM's own instructions in a `src/<component>/*.S`, byte-pinned and held by Tier 3's
+# TRANSCRIPTION relation (`RomBench.measure_transcription`) to the same image, the WHOLE register file
+# and the same chip traffic. The `.S` entry is the ROM routine's `addrs.h` name lower-cased
+# (`VDI_ROM_VS_COLOR` -> `vdi_rom_vs_color`), which is how `bench/tier3.py` finds the address a row is
+# about.
+#
+# ONE IMAGE SERVES BOTH SIDES (`test/trap.py`'s arrangement): both are entered at a staged CALLER that
+# jumps through the longword at `abi.FIRST_ARG` — the ROM routine, as the case pokes it, or the blob's,
+# which `run_bench` writes over that slot — with the sentinel still under it, so the routine sees the
+# `jsr` frame the dispatcher leaves. The caller's own cost is in both columns and comes off both.
+#
+# A staged caller as a row carries it: where it is, its bytes, and what it costs (off both columns). A
+# battery whose routine needs another shape stages its own in its own band through `staged_caller`, which
+# REGISTERS it: `test_transcribed.py` measures every registered caller's cost against the one it
+# declares (`assert_caller_cost`), so no caller's number is a literal nobody re-derives.
+# A caller that enters a routine BELOW a frame the routine's front end would have built (a body whose own
+# epilogue pops what that front end pushed) is measured over that epilogue instead of a bare `rts`: its
+# `routine` stand-in and the stand-in's `routine_cost` (None: the bare `rts`, `RTS_COST`).
+Caller = namedtuple("Caller", "at stub cost routine routine_cost", defaults=(RTS, None))
+CALLERS = []
+
+
+def staged_caller(at, stub, cost, *, routine=RTS, routine_cost=None):
+    """A transcription caller at `at`, declared to cost `(instructions, cycles)` — and registered."""
+    caller = Caller(at, stub, cost, routine, routine_cost)
+    CALLERS.append(caller)
+    return caller
+
+
+def assert_caller_cost(caller, regs=None):
+    """`caller` entered with a bare `rts` for the routine (or its declared stand-in) costs its declared `cost`
+    and nothing else: the oracle's reset (`RomBench.overhead`, which `test_tier3.py` pins) and that `rts`
+    (`RTS_COST`) are all the rest of the run. Answers the register file it left, for a caller that also
+    promises what it does to one."""
+    pokes = {caller.at: caller.stub, STUB_AT: caller.routine, abi.FIRST_ARG: struct.pack(">I", STUB_AT)}
+    _final, _writes, left = emu.run(make_image(pokes), caller.at, {**DIRTY, **(regs or {})})
+    reset, rts, cost = bench().overhead, caller.routine_cost or RTS_COST, caller.cost
+    assert (left["ninsns"], left["cycles"]) == (reset[0] + cost[0] + rts[0], reset[1] + cost[1] + rts[1]), (
+        f"the caller at {caller.at:#x} costs {left['ninsns']} / {left['cycles']} with the reset and its routine's "
+        f"stand-in, not the declared {cost} over {reset} and {rts}")
+    return left
+
+
+RTS_COST = (1, 16)              # the bare `rts` a caller is measured over
+# THE REGISTER FILE every transcription is entered with, under the case's own registers: every register
+# different, so a register the `.S` left where the ROM changed it — or changed where the ROM left it —
+# shows.
+DIRTY = {name: 0x0D0D_0000 + index * 0x1111 for index, name in enumerate(emu.REPORTED_REGS)}
+
+
+def changed_from_dirty(registers):
+    """The names of a run's reported register file that no longer hold their `DIRTY` value."""
+    return {name for name in emu.REPORTED_REGS if registers[name] != DIRTY[name]}
+
+
+TRANSCRIPTION_CALLER = PUSH_STACK_LONG + struct.pack(">h", abi.FIRST_ARG - emu.STACK_TOP) + RTS
+PLAIN_CALLER = staged_caller(TRANSCRIPTION_CALLER_AT, TRANSCRIPTION_CALLER, (2, 40))
+TRANSCRIPTIONS = []
+LABELS = {}
+
+
+# A CODE-POINTER CALLER: for a `.S` that returns with an address INSIDE ITSELF in a register — a fragment
+# it reached through `jsr (a5)`, a loop it left in A3 — which is the one thing a transcription linked
+# anywhere else must differ in. The case is entered through a caller that returns through itself and
+# zeroes exactly those registers on BOTH sides, so every other register is still compared:
+#
+#     pea     back(pc) / move.l 8(sp),-(sp) / rts / back: suba.l An,An ... / rts
+#
+# (`clr.l Dn` for a data register: a jump table's displacement left in D0 is the same kind of layout fact, and a
+# register a thunk's C body left is not the transcription's at all — `test_vdi_escape_transcription.py`.)
+# Which registers, per routine, is MEASURED by each battery and declared to its `CallerPool`.
+_ROUTINE_SLOT = abi.FIRST_ARG - emu.STACK_TOP + LONG_BYTES     # FIRST_ARG, past the pushed return
+_JUMP_BYTES = len(PUSH_STACK_LONG) + WORD_BYTES + len(RTS)
+# pea + move.l + rts in and an rts out, and one suba.l/clr.l per register (6 cycles as Musashi counts either): the
+# declared cost of each caller is their sum, and `test_transcribed.py` measures every one against it.
+CODE_POINTER_CALLER_COST = (4, 72)
+CLEAR_COST = (1, 6)
+
+
+def code_pointer_stub(registers):
+    """The bytes of a caller that clears `registers` on the way out, and the cost it declares — position
+    independent, so each battery stages its own in its own band (`CallerPool`)."""
+    clears = b"".join(CLEAR_REGISTER[register] for register in registers)
+    stub = (PUSH_RETURN_PC + struct.pack(">h", _JUMP_BYTES + WORD_BYTES)
+            + PUSH_STACK_LONG + struct.pack(">h", _ROUTINE_SLOT) + RTS + clears + RTS)
+    cost = tuple(base + len(registers) * each for base, each in zip(CODE_POINTER_CALLER_COST, CLEAR_COST))
+    return stub, cost
+
+
+POOLS = []
+
+
+class CallerPool:
+    """One battery's STAGED CALLERS, in its own band `[at, end)` one `stride` apart — no two pools' bands
+    overlapping. A caller is built on first ask and registered (`staged_caller`): `staged` for any stub a
+    battery builds, `caller` for the CODE-POINTER caller that clears a register set (the plain caller
+    answering for an empty one). `code_pointers` is the battery's MEASURED `{routine: registers}` — what
+    `caller_for` enters a routine through when a case names none."""
+
+    def __init__(self, at, end, stride, code_pointers=None, *, built=()):
+        overlapping = [(pool.at, pool.end) for pool in POOLS if at < pool.end and pool.at < end]
+        assert not overlapping, f"callers at [{at:#x}, {end:#x}) overlap another pool's {overlapping}"
+        POOLS.append(self)
+        self.at, self.end, self.stride = at, end, stride
+        self.code_pointers = dict(code_pointers or {})
+        self._callers = {}
+        # Built now, so each is registered — and its cost measured — before any case asks for it.
+        for registers in (*self.code_pointers.values(), *built):
+            self.caller(registers)
+
+    def staged(self, key, build, *, routine=RTS, routine_cost=None):
+        """The caller for `key`, from `build()` -> (stub, declared cost) on first ask, at the pool's next stride;
+        `routine` / `routine_cost` are `staged_caller`'s."""
+        if key not in self._callers:
+            stub, cost = build()
+            at = self.at + len(self._callers) * self.stride
+            assert len(stub) <= self.stride and at + self.stride <= self.end, (
+                f"no room for the caller {key} in [{self.at:#x}, {self.end:#x})")
+            self._callers[key] = staged_caller(at, stub, cost, routine=routine, routine_cost=routine_cost)
+        return self._callers[key]
+
+    def caller(self, registers):
+        if not registers:
+            return PLAIN_CALLER
+        return self.staged(registers, lambda: code_pointer_stub(registers))
+
+    def caller_for(self, name, code_pointers=None):
+        """The caller `name`'s transcription is entered through: `code_pointers` cleared, or the routine's
+        own declared set when the case names none."""
+        return self.caller(self.code_pointers.get(name, ()) if code_pointers is None else code_pointers)
+
+    def run_transcription(self, name, pokes, regs=None, *, code_pointers=None, **kwargs):
+        return run_transcription(name, pokes, regs, caller=self.caller_for(name, code_pointers), **kwargs)
+
+    def register_transcription(self, name, label, pokes, regs=None, *, code_pointers=None, **kwargs):
+        return register_transcription(name, label, pokes, regs, caller=self.caller_for(name, code_pointers),
+                                      **kwargs)
+
+
+def transcription_symbol(name):
+    """The `.S` entry an `addrs.h` routine of any component (`test/routines.py`) is transcribed as: its name
+    lower-cased."""
+    assert routines.prefix_of(name), (
+        f"{name} is not a routine name of any component: {', '.join(prefix + '<X>' for prefix in routines.PREFIXES)}")
+    return name.lower()
+
+
+def transcription_routine(symbol):
+    """...and back: the `addrs.h` name of the routine a `.S` entry transcribes."""
+    name = symbol.upper()
+    assert routines.prefix_of(name) and hasattr(addrs, name), f"{symbol} transcribes no routine `addrs.h` names"
+    return name
+
+
+# ---- (b) the BYTE PIN ---------------------------------------------------------------------------------
+# THE BYTE PIN, one comparator for every `.S`. A transcription lays out a ROM REGION in the ROM's own
+# order, so one entry in it (the `anchor` routine) places the whole region in the blob. The spelling
+# policy (`include/m68k_encodings.h`) leaves exactly one kind of word that may differ: a reference that
+# measures to where the `.S` itself is linked — a branch displacement from one region into another, or
+# an absolute address of the transcription's own table. Each is RELOCATED: `width` says which (a word is
+# a displacement from the extension word, a long an absolute address), and the comparator computes the
+# EXACT value it must hold from the ROM's own reference and where `target_anchor`'s region is in the blob.
+# Two further shapes: a JUMP TABLE's word is a displacement from the TABLE (`base`, the ROM address its
+# `(pc,dn.w)` indexes from), not from the word itself; and a reference into code that ships as C rather than
+# as a transcription names a THUNK (`thunk`, the blob symbol of the glue the `.S` carries to reach that C),
+# whose place in the blob is then the exact value, with `target_anchor` None.
+Relocated = namedtuple("Relocated", "width target_anchor why base thunk", defaults=(None, None))
+PC_RELATIVE = WORD_BYTES
+ABSOLUTE = LONG_BYTES
+
+
+def transcribed_address(anchor, rom_address):
+    """Where the blob holds `rom_address` of the region the `.S` entry of routine `anchor` lays out."""
+    return bench().entry(transcription_symbol(anchor)) + rom_address - getattr(addrs, anchor)
+
+
+def _blob_bytes(address, size):
+    blob = bench()
+    return bytes(blob.blob[address - blob.base:address - blob.base + size])
+
+
+def _displaced_from(at, relocation):
+    """What a PC-relative reference at `at` is a displacement from: its extension word, or its table."""
+    return at if relocation.base is None else relocation.base
+
+
+def _relocation_target(at, relocation):
+    """The ROM address the ROM's own reference at `at` names: a displacement from its extension word (or
+    its table), or an absolute address."""
+    pc_relative = relocation.width == PC_RELATIVE
+    rom = int.from_bytes(bytes(BASE_IMAGE[at:at + relocation.width]), "big", signed=pc_relative)
+    return _displaced_from(at, relocation) + rom if pc_relative else rom
+
+
+def _relocated_value(at, placed_at, relocation):
+    """The exact bytes the reference at ROM address `at`, placed at blob address `placed_at`, must hold:
+    the ROM's own reference followed to its target, and that target's place in the blob — or the thunk's."""
+    if relocation.thunk:
+        target = bench().entry(relocation.thunk)
+    else:
+        target = transcribed_address(relocation.target_anchor, _relocation_target(at, relocation))
+    if relocation.width == PC_RELATIVE:
+        origin = placed_at - (at - _displaced_from(at, relocation))
+        return (target - origin).to_bytes(WORD_BYTES, "big", signed=True)
+    return target.to_bytes(LONG_BYTES, "big")
+
+
+# THE REGIONS THE BATTERIES PIN, declared where each battery lays its own out (`pinned_region`). A
+# relocation's value is computed from where its TARGET routine's region sits in the blob — sound only if the
+# target, and the routine it is measured from, lie in ONE region some battery byte-pins: the `.S` lays a
+# region out contiguously and the pin proves it did. A reference into bytes nobody pins would be a value
+# computed against a layout nobody checked (`text_raster.S`'s `lea` of raster.S's fringe table is the case
+# that asks it).
+Region = namedtuple("Region", "lo hi anchor entries", defaults=((),))
+PINNED_REGIONS = []
+# A battery that declares a region calls `pinned_region(` by that name, whatever it imported it as — the marker
+# `every_pinned_region` imports a test module by (`every_pinned_region(` itself is not one).
+_DECLARES_A_REGION = re.compile(r"\bpinned_region\(")
+
+
+def pinned_region(lo, hi, anchor, entries=()):
+    """Declare the ROM bytes `lo`..`hi`, laid out from the `.S` entry of `anchor` (and holding `entries`'),
+    as a region this battery byte-pins — at import, so every region is known before any pin runs."""
+    region = Region(lo, hi, anchor, tuple(entries))
+    PINNED_REGIONS.append(region)
+    return region
+
+
+def every_pinned_region():
+    """Every battery's regions, whichever batteries this process has imported: each test module that
+    declares one is imported here first (a no-op for one already loaded)."""
+    for path in sorted(Path(__file__).resolve().parent.glob("test_*.py")):
+        if _DECLARES_A_REGION.search(path.read_text()):
+            importlib.import_module(path.stem)
+    return tuple(PINNED_REGIONS)
+
+
+def anchor_of(rom_address, regions=None):
+    """The anchor of the one byte-pinned region — of `regions`, or of every battery's — the ROM address lies in."""
+    anchors = [region.anchor for region in (every_pinned_region() if regions is None else regions)
+               if region.lo <= rom_address < region.hi]
+    assert len(anchors) == 1, f"${rom_address:x} lies in {len(anchors)} pinned regions"
+    return anchors[0]
+
+
+def _one_pinned_region_holds(*addresses):
+    return any(all(region.lo <= address < region.hi for address in addresses) for region in every_pinned_region())
+
+
+def assert_transcribed(region, *, relocated=None):
+    """The ROM's bytes of `region` (a `pinned_region`) against the blob's, laid out from the `.S` entry of its
+    anchor: every other routine in its `entries` where the ROM has it, and every word EQUAL but the references
+    `relocated` names — `{ROM address: Relocated}`, the battery's WHOLE map, which this cuts to the region — each
+    of which must hold exactly the value its target's place in the blob gives it. A relocation that happens to
+    equal the ROM's word is refused too: it names a word that needs no excuse. So is one that lies in NO pinned
+    region, or one inside this region the word walk never lands on: either would excuse nothing and say so."""
+    relocated = relocated or {}
+    assert region in every_pinned_region(), (
+        f"${region.lo:x}..${region.hi:x} from {region.anchor} is pinned but no battery declares it (`pinned_region`)")
+    stray = sorted(at for at in relocated if not any(pinned.lo <= at < pinned.hi for pinned in every_pinned_region()))
+    assert not stray, f"relocation(s) at {', '.join(f'${at:x}' for at in stray)} lie in no pinned region"
+    relocated = {at: relocation for at, relocation in relocated.items() if region.lo <= at < region.hi}
+    for at, relocation in relocated.items():
+        target = _relocation_target(at, relocation)
+        assert relocation.base is None or region.lo <= relocation.base < region.hi, f"${at:x}'s table is outside the region"
+        if relocation.thunk:
+            assert not _one_pinned_region_holds(target), (
+                f"${at:x} ({relocation.why}) names the thunk {relocation.thunk}, but ${target:x} is byte-pinned — "
+                f"a reference into a transcription must reach the transcription")
+            continue
+        assert _one_pinned_region_holds(target, getattr(addrs, relocation.target_anchor)), (
+            f"${at:x} ({relocation.why}) is relocated to ${target:x} as measured from {relocation.target_anchor}, "
+            f"but no byte-pinned region holds both — its value would be computed against a layout nobody checks")
+    start = transcribed_address(region.anchor, region.lo)
+    for name in region.entries:
+        assert transcribed_address(region.anchor, getattr(addrs, name)) == bench().entry(transcription_symbol(name)), (
+            f"{name} is not where the ROM has it in the region {region.anchor} lays out")
+    at, walked = region.lo, set()
+    while at < region.hi:
+        relocation = relocated.get(at)
+        size = relocation.width if relocation else WORD_BYTES
+        placed_at = start + at - region.lo
+        ours, theirs = _blob_bytes(placed_at, size), bytes(BASE_IMAGE[at:at + size])
+        if relocation:
+            walked.add(at)
+            expected = _relocated_value(at, placed_at, relocation)
+            assert ours != theirs, f"${at:x} is relocated ({relocation.why}) and equals the ROM's — drop it"
+            assert ours == expected, (f"${at:x} ({relocation.why}) holds {ours.hex()}, not the {expected.hex()} its "
+                                      f"target's place in the blob gives")
+        else:
+            assert ours == theirs, f"the transcription of ${at:x} holds {ours.hex()} against the ROM's {theirs.hex()}"
+        at += size
+    missed = sorted(set(relocated) - walked)
+    assert not missed, f"relocation(s) at {', '.join(f'${at:x}' for at in missed)} fall inside another word of the walk"
+
+
+def transcription_pokes(name, pokes, caller=PLAIN_CALLER):
+    """`pokes` with the staged caller and the ROM routine it enters on the ORIGINAL's side."""
+    return merge_pokes(pokes, {caller.at: caller.stub, abi.FIRST_ARG: struct.pack(">I", getattr(addrs, name))})
+
+
+def run_transcription(name, pokes, regs=None, *, io_seed=None, caller=PLAIN_CALLER):
+    """The `.S` of `addrs.<name>` against the ROM routine over `pokes`, through the transcription
+    relation, entered with `regs` laid over `DIRTY` — the WHOLE register file. Answers the `Measurement`."""
+    return bench().measure_transcription(caller.at, transcription_symbol(name), {**DIRTY, **(regs or {})},
+                                         pokes=transcription_pokes(name, pokes, caller), io_seed=io_seed,
+                                         shared_entry=caller.cost)
+
+
+def register_transcription(name, label, pokes, regs=None, *, io_seed=None, caller=PLAIN_CALLER):
+    """One Tier 3 TRANSCRIPTION row (`bench/tier3.py` reads `TRANSCRIPTIONS`), entered as
+    `run_transcription` enters it: `label` is the case, and the function's own label is its C rows' — the one
+    labelling rule, `routines.role` — marked `(.S)`, so a Line-A `.S` row reads `Line-A linea_hline (.S)` beside
+    its C rows' `Line-A linea_hline`."""
+    symbol = transcription_symbol(name)
+    LABELS[symbol] = f"{routines.role(name)} (.S)"
+    row = (label, symbol, caller.at, {**DIRTY, **(regs or {})}, transcription_pokes(name, pokes, caller), caller.cost,
+           io_seed)
+    TRANSCRIPTIONS.append(row)
+    return row
+
+
+# ---- (c) the TRANSCRIBED table: which routines SHIP as their `.S` (`include/transcribed.h`) ------------
+# `{`.S` entry: the GCC callee-saved registers it leaves changed}`, parsed out of the header's rows as
+# `addrs.py` parses a `#define`: the one source Tier 3's (T) rule, the build contract and the C
+# declarations all read. `test_transcribed.py` holds it to the `.S` sources, the makefile and the
+# ROM's measured register file.
+TRANSCRIBED_HEADER = _RECREATE / "include" / "transcribed.h"
+_TRANSCRIBED_ROW = re.compile(r'^\s*ENTRY\((?P<entry>[a-z0-9_]+),\s*"(?P<destroys>[^"]*)"\)')
+TRANSCRIBED = {match["entry"]: tuple(match["destroys"].split())
+               for match in map(_TRANSCRIBED_ROW.match, TRANSCRIBED_HEADER.read_text().splitlines()) if match}
+assert TRANSCRIBED, f"{TRANSCRIBED_HEADER} has no `ENTRY(...)` row this parser reads"
+
+
+def transcribed_core(entry):
+    """The C core a `.S` entry is the transcription of: `linea_rom_hline` -> `linea_hline`."""
+    return routines.core_symbol(transcription_routine(entry))
+
+
+TRANSCRIBED_CORES = {transcribed_core(entry): entry for entry in TRANSCRIBED}
+
+# THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
+# calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
+# `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
+C_CALLERS_OF_TRANSCRIBED_CORES = {
+    ("vdi_vq_key_s", "vdi_get_kbshift"),
+    # the polygon and contour-fill layer (`src/vdi/fill.c`)
+    ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),
+    ("vdi_v_get_pixel", "linea_get_pixel"),
+    ("linea_get_seed", "linea_end_pts"), ("linea_get_seed", "linea_fill_span"),
+    ("linea_contour_fill", "linea_end_pts"), ("linea_contour_fill", "linea_get_pixel"),
+    ("linea_contour_fill", "linea_fill_span"),
+    # the raster functions (`src/vdi/blit.c`)
+    ("vdi_vro_cpyfm", "linea_copy_raster"), ("vdi_vrt_cpyfm", "linea_copy_raster"), ("vdi_vr_recfl", "linea_filled_rect"),
+    # the mouse and input functions (`src/vdi/mouse.c`)
+    ("vdi_v_show_c", "vdi_show_cursor"), ("vdi_v_hide_c", "linea_hide_mouse"),
+    ("vdi_locator", "vdi_show_cursor"), ("vdi_locator", "vdi_poll_locator"), ("vdi_locator", "linea_hide_mouse"),
+    ("vdi_choice", "vdi_poll_choice"), ("vdi_mouse_init", "vdi_vsc_form"),
+    # the wide lines and arrowheads (`src/vdi/lines.c`): the aspect scaling and the discs' rows
+    ("vdi_wline", "vdi_smul_div"), ("vdi_do_arrow", "vdi_smul_div"), ("draw_arrowhead", "vdi_smul_div"),
+    ("vdi_do_circ", "linea_line"),
+    # the arcs and rounded boxes (`src/vdi/arcs.c`): a point's projection, the sweep's steps, the aspect
+    ("vdi_clc_pts", "vdi_smul_div"), ("draw_arc", "vdi_smul_div"), ("vdi_gdp_arc", "vdi_smul_div"),
+    ("vdi_gdp_rbox", "vdi_smul_div"),
+    # the GDP's circle arm (`src/vdi/gdp.c`): its y radius in the aspect
+    ("vdi_gdp", "vdi_smul_div"),
+    # the screen clear (`src/vdi/screen.c`), which GCC inlines into the two routines that end in it — and the
+    # BIOS span clear's other caller, GEMDOS's program loader (`src/gemdos/pexec_load.c`)
+    ("vdi_v_clrwk", "vdi_clear_span"), ("vdi_init_timer_mouse", "vdi_clear_span"),
+    ("vdi_restore_timer_mouse", "vdi_clear_span"), ("gemdos_pexec_load", "vdi_clear_span"),
+    # the text layer's C (`src/vdi/text.c`): the scaler's two helpers
+    ("vdi_vst_height", "vdi_clc_dda"), ("vdi_make_header", "vdi_act_siz"), ("vdi_vqt_extent", "vdi_act_siz"),
+    ("vdi_vqt_width", "vdi_act_siz"),
+    # graphic text (`src/vdi/gtext.c`, v_gtext's body past its count test): each glyph through TextBlt, a plain
+    # string through the fast path, the underline's rows through $a003
+    ("place_and_draw", "linea_textblt"), ("place_and_draw", "linea_fast_text"), ("place_and_draw", "linea_line"),
+    # the workstations (`src/vdi/workstation.c`): the open's realized palette, and the GEMDOS door
+    ("vdi_v_opnwk", "vdi_vq_color"), ("vdi_v_opnvwk", "vdi_gemdos_call"), ("vdi_v_clsvwk", "vdi_gemdos_call"),
+    ("vdi_v_clswk", "vdi_gemdos_call"),
+}
+
+# ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------
+# A function's name as `m68k-elf-objdump` labels it, the one GCC split off it (`name.part.0`, `.constprop.0`,
+# `.isra.0`) folded back into it, and an offset into it (`name+0x12`) dropped.
+_LISTED_FUNCTION = re.compile(r"^([0-9a-f]+) <([\w.]+)>:$")
+_LISTED_INSTRUCTION = re.compile(r"^\s+([0-9a-f]+):")
+_LISTED_REFERENCE = re.compile(r"(?:\b([0-9a-f]+) )?<([\w.]+)(?:\+0x([0-9a-f]+))?>")
+# ...and a function's address loaded as an IMMEDIATE, which objdump prints in decimal without its name:
+# GCC's way of calling one function several times through a register (`move.l #243526,d2`) or a frame slot
+# it spills to (`move.l #212346,84(sp)`). ONLY that shape — a `move.l`/`movea.l` of the immediate into a
+# register or a stack slot: a constant compared (`cmp.l #N,d0`), added or stored into the image that merely
+# EQUALS a function's start is data, and read as a call it would forge an edge into (T→).
+_LISTED_IMMEDIATE = re.compile(r"\tmovea?l #(\d+),(?:%[ad]\d|%(?:sp|fp)@\(-?\d+\))$")
+
+
+def _unsplit(name):
+    return name.split(".")[0]
+
+
+# One line of `m68k-elf-nm -S --defined-only`: `size` is None for a symbol the table does not size.
+Symbol = namedtuple("Symbol", "start size kind name")
+
+
+@functools.cache
+def _symbol_table_at(path):
+    table = subprocess.run(["m68k-elf-nm", "-S", "--defined-only", path], capture_output=True, text=True,
+                           check=True).stdout
+    symbols = []
+    for fields in (line.split() for line in table.splitlines()):
+        if len(fields) == 4:
+            symbols.append(Symbol(int(fields[0], 16), int(fields[1], 16), fields[2], fields[3]))
+        elif len(fields) == 3:
+            symbols.append(Symbol(int(fields[0], 16), None, fields[1], fields[2]))
+    return tuple(symbols)
+
+
+def symbol_table(elf):
+    """Every symbol `elf` defines, as `Symbol`s — one `nm` run per ELF per process, whoever asks (the call
+    graph's ends and starts, `bench/tier3.py`'s glue ranges)."""
+    return _symbol_table_at(str(Path(elf).resolve()))
+
+
+def _function_ends(elf):
+    """`{address: end}` of every function the symbol table SIZES. A disassembly runs a function on to the
+    next label, and in the shipped blob the next label is not always the next function: a weak C core the
+    glue displaced keeps its body but loses its name, so its instructions would be read as its neighbour's."""
+    return {symbol.start: symbol.start + symbol.size for symbol in symbol_table(elf) if symbol.size is not None}
+
+
+def _function_starts(elf):
+    """`{address: name}` of every function the symbol table places, for an immediate that names one."""
+    return {symbol.start: symbol.name for symbol in symbol_table(elf) if symbol.kind in "Tt"}
+
+
+# Where a symbol is DEFINED, as `readelf -s` groups it: a LOCAL symbol under the FILE symbol before it (a file name
+# two objects share, `palette.c`, numbered on its second use: `palette.c#2`), every GLOBAL one in the one namespace
+# a link has — `GLOBAL_ORIGIN`. Link-stable, where an address moves with every edit before it.
+GLOBAL_ORIGIN = None
+_CODE_SYMBOL_TYPES = ("FUNC", "NOTYPE")
+_READELF_SYMBOL_FIELDS = 8          # Num: Value Size Type Bind Vis Ndx Name
+_NO_SECTION = ("UND", "ABS")
+
+
+@functools.cache
+def _symbol_origins_at(path):
+    table = subprocess.run(["m68k-elf-readelf", "-sW", path], capture_output=True, text=True, check=True).stdout
+    origins, seen_files, current = {}, {}, None
+    for fields in (line.split() for line in table.splitlines()):
+        if len(fields) != _READELF_SYMBOL_FIELDS or not fields[0].endswith(":"):
+            continue
+        _index, value, _size, kind, bind, _visibility, section, name = fields
+        if kind == "FILE":
+            seen_files[name] = seen_files.get(name, 0) + 1
+            current = name if seen_files[name] == 1 else f"{name}#{seen_files[name]}"
+        elif kind in _CODE_SYMBOL_TYPES and section not in _NO_SECTION:
+            origins[(int(value, 16), name)] = current if bind == "LOCAL" else GLOBAL_ORIGIN
+    return origins
+
+
+def symbol_origins(elf):
+    """`{(address, name): origin}` of every code symbol `elf` defines — its defining file, or `GLOBAL_ORIGIN`."""
+    return _symbol_origins_at(str(Path(elf).resolve()))
+
+
+def call_graph(elf):
+    """`{function: every function its code references}` out of the m68k build at `elf` — a `jsr`, a
+    branch, or a `lea` or `move.l #` of an address GCC then calls through a register or a frame slot, which
+    is how it calls one it names more than once. A function the symbol table sizes is read to its end and no
+    further; one whose name another definition shares is QUALIFIED by its defining file (`nodes_of_labels`)."""
+    listing = subprocess.run(["m68k-elf-objdump", "-d", str(elf)], capture_output=True, text=True,
+                             check=True).stdout
+    return graph_of_listing(listing, _function_ends(elf), _function_starts(elf), symbol_origins(elf))
+
+
+def _is_clone(name):
+    return name != _unsplit(name)
+
+
+def _qualifies(defined):
+    """Whether the definitions `[(address, name, origin)]` of ONE base name are more than one function. They are one
+    when they share an origin — a static and the pieces GCC split off it in its own file — or when they are a global
+    and nothing but CLONES in one file, which GCC only makes of a function its own file defines: the global's."""
+    origins = {origin for _address, _name, origin in defined}
+    if len(origins) == 1:
+        return False
+    local_origins = origins - {GLOBAL_ORIGIN}
+    clones_of_the_global = (GLOBAL_ORIGIN in origins and len(local_origins) == 1
+                            and all(_is_clone(name) for _address, name, origin in defined if origin is not GLOBAL_ORIGIN))
+    return not clones_of_the_global
+
+
+def _qualified(base, origin):
+    """A qualified node: the global keeps the bare name — the one a Tier 3 row names — and a local takes its origin's."""
+    if origin is GLOBAL_ORIGIN:
+        return base
+    return f"{base}@{origin:x}" if isinstance(origin, int) else f"{base}@{origin}"
+
+
+def nodes_of_labels(labels, origins=None):
+    """`{(address, name): node}` for every listed function label `(address, name)`: its base name (`_unsplit`),
+    QUALIFIED by its origin when that base names more than one function — so their bodies never merge into one node,
+    and a lookup of the bare name finds the global's (or none) rather than a static's. `origins` is `symbol_origins`'
+    table; without one (a synthetic listing) each label is its own origin, and a shared base is qualified by address."""
+    by_base = {}
+    for address, name in labels:
+        origin = address if origins is None else origins.get((address, name), address)
+        by_base.setdefault(_unsplit(name), []).append((address, name, origin))
+    nodes = {}
+    for base, defined in by_base.items():
+        qualify = _qualifies(defined)
+        nodes.update({(address, name): _qualified(base, origin) if qualify else base
+                      for address, name, origin in defined})
+    return nodes
+
+
+def _references(line, starts, nodes, nodes_of_base):
+    """The functions one listed instruction names: by label (`<name+0x12>`, its start = address - offset) or
+    as an immediate address (`starts`). A label that is no listed function's start — no address printed, or a
+    name several functions share referenced mid-way — names EVERY node of its base: an edge too many only prices a
+    row on the shipped blob, where an edge too few would price it on the C twin."""
+    named = set()
+    for address, name, offset in _LISTED_REFERENCE.findall(line):
+        start = int(address, 16) - int(offset or "0", 16) if address else None
+        node = nodes.get((start, name))
+        named |= {node} if node else nodes_of_base.get(_unsplit(name), {_unsplit(name)})
+    named |= {nodes.get((value, starts[value]), _unsplit(starts[value]))
+              for value in map(int, _LISTED_IMMEDIATE.findall(line)) if value in starts}
+    return named
+
+
+def graph_of_listing(listing, ends, starts, origins=None):
+    """`call_graph`'s reading of one `objdump -d` listing, given the symbol table's `{address: end}` sizes,
+    `{address: name}` starts and `symbol_origins` — apart from the ELF so a synthetic listing can pin each rule."""
+    labels = [(int(match.group(1), 16), match.group(2))
+              for match in map(_LISTED_FUNCTION.match, listing.splitlines()) if match]
+    nodes = nodes_of_labels(labels, origins)
+    nodes_of_base = {}
+    for (_address, name), node in nodes.items():
+        nodes_of_base.setdefault(_unsplit(name), set()).add(node)
+    graph, function, end = {}, None, None
+    for line in listing.splitlines():
+        start = _LISTED_FUNCTION.match(line)
+        if start:
+            address = int(start.group(1), 16)
+            function, end = nodes[(address, start.group(2))], ends.get(address)
+            graph.setdefault(function, set())
+            continue
+        instruction = _LISTED_INSTRUCTION.match(line)
+        if function and instruction and (end is None or int(instruction.group(1), 16) < end):
+            graph[function] |= _references(line, starts, nodes, nodes_of_base) - {function}
+    return graph
+
+
+def qualified_bases(graph):
+    """The base names the graph QUALIFIED — each names more than one function, so a lookup by it is ambiguous."""
+    return {node.split("@")[0] for node in graph if "@" in node}
+
+
+def callers_of_transcribed_cores(graph):
+    """The `(caller, core)` references to a transcribed C core from a function outside the table."""
+    return {(function, target) for function, targets in graph.items() if function not in TRANSCRIBED_CORES
+            for target in targets if target in TRANSCRIBED_CORES}
+
+
+def reaching_transcribed_cores(graph):
+    """Every function outside the table from which a transcribed C core is reachable: its direct callers
+    and whatever calls them — the C whose cost, as shipped, includes a `.S`."""
+    reaching = {function for function, _core in callers_of_transcribed_cores(graph)}
+    grown = True
+    while grown:
+        more = {function for function, targets in graph.items()
+                if function not in TRANSCRIBED_CORES and function not in reaching and targets & reaching}
+        reaching |= more
+        grown = bool(more)
+    return reaching
+

@@ -41,6 +41,7 @@ project.load(RECREATE)
 from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench   # noqa: E402
 from harness import addrs, emu                             # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
+from case import tier3_dropped                             # noqa: E402  (every component's rows' drops)
 # THE REGISTER OF VERIFIED CASES, and with it every battery whose constructors built one. Importing a
 # test module from a bench script is deliberate: that module is where this project keeps the list of
 # what it has verified (it is the list the snapshot mask is checked against), and a Tier 3 row is a
@@ -74,9 +75,13 @@ import gemdos                                              # noqa: E402
 # termination record it arms is entered through a stub of its own, which costs two instructions
 # where the dispatcher's costs three (`SLICE_ENTRY_COST` below).
 import gemdos_process                                      # noqa: E402
+# ...and the byte-exact `.S` machinery — the TRANSCRIBED table, every component's `.S` rows, the call graph (T→) reads.
+import transcription                                       # noqa: E402
 # ...and the VDI's door, whose `addrs.h` convention, primitive contracts and Alcyon signatures the VDI rows
 # derive from — every battery that declares one is imported by `test_boot_snapshot` above.
 import vdi                                                 # noqa: E402
+# ...and the naming rule every ROM-routine row is labelled and symbolled by (VDI, Line-A, AES alike).
+import routines                                            # noqa: E402
 # ...and the shipped blob's glue generator, for the thunks mechanism (T→G) counts the cycles of.
 import shipped_glue                                        # noqa: E402
 # ...and the escape's transcription battery, for the ROM spans escape.S transcribes and the prefix of the thunks it
@@ -170,7 +175,7 @@ RATIO_TOLERANCE = 0.02
 #
 #   (T) SHIPS AS THE ROM'S OWN INSTRUCTIONS. The user's rule for the hand-written 68000: port it to C
 #       first, and where the C measures over the bar, SHIP a byte-pinned `.S` transcription instead —
-#       `include/vdi/transcribed.h`, the TRANSCRIBED table, is the one place that says which. A C row of
+#       `include/transcribed.h`, the TRANSCRIBED table, is the one place that says which. A C row of
 #       a routine in that table is over the bar by design and is admitted, verdict `transcribed`, ONLY
 #       while EVERY one of the routine's `.S` rows measures at or under the bar (`ships_within_bar`):
 #       derived from the measurements, never typed, so deleting a `.S` row or letting one drift over the
@@ -186,7 +191,7 @@ RATIO_TOLERANCE = 0.02
 #   (T→) SHIPS THROUGH A CALL. The C that CALLS a transcribed routine — a VDI function round `$a00e`, the
 #       polygon layer round `$a003`/`$a006`, `v_show_c` round the sprite — reaches the `.S` on target, through
 #       glue, and the C twin's cycles are nobody's cost. So every row whose C reaches a transcribed core (the
-#       m68k build's own call graph, `vdi.reaching_transcribed_cores`) is measured on the SHIPPED
+#       m68k build's own call graph, `transcription.reaching_transcribed_cores`) is measured on the SHIPPED
 #       CONFIGURATION's blob instead (`build/bench_shipped/`, `../Makefile`): the same sources with each
 #       called core replaced by a thunk GENERATED from the table (`bench/shipped_glue.py`) that enters the
 #       `.S`. Its verdict is `through` at or under the bar and OVER above it — derived, never typed: a `.S`
@@ -1197,7 +1202,7 @@ EXTRA_CASES = (
 # while the run is in flight, which is what makes a routine that BUSY-WAITS measurable at all (Phase
 # 8). It is `()` for every row but `Vsync`'s, and `RomBench.measure` hands the identical list to both
 # doors — which is why those entries are READ-triggered (`test_xbios_vsync.blank_after`).
-# `dropped` is the case's own `((lo, hi, why), ...)` (`vdi.TIER3_DROPPED`): the spans its image compare leaves
+# `dropped` is the case's own `((lo, hi, why), ...)` (`case.tier3_dropped()`, every component's): the spans its image compare leaves
 # out, each vetted by `RomBench` and printed under the row. `()` for every row but a few whose C parks a return
 # address the ROM parks its own in; the battery's own differential still compares those bytes.
 Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns "
@@ -1310,7 +1315,7 @@ UNNUMBERED_ROUTINE_ROLES = {
 # hands `POINTER_STORAGE` (the dropped band's floor, see above). Those other registers are Tier 1's to
 # compare, register by register (`vdi._run_primitive_at`); this column prices the cost and holds D0.
 VDI_FUNCTIONS = sorted(name for name in dir(addrs)
-                       if name.startswith(vdi.ROUTINE_PREFIX) and hasattr(addrs, name + "_OPCODE"))
+                       if name.startswith(routines.VDI_PREFIX) and hasattr(addrs, name + "_OPCODE"))
 CALL.update({name: Call((IMAGE,), RETURNS_NOTHING) for name in VDI_FUNCTIONS})
 CALL.update({name: Call((IMAGE, *(EntryRegister(register) for register in contract.arguments),
                          *((POINTER_STORAGE,) if len(contract.results) > 1 else ())),
@@ -1350,23 +1355,20 @@ def _alcyon_call(signature):
 CALL.update({name: _alcyon_call(signature) for name, signature in vdi.ALCYON.items() if not signature.host_arguments})
 
 
-def _vdi_role(name):
-    """A VDI or Line-A routine's label, by `test/vdi.py`'s naming rule: `Line-A linea_hline`, `VDI vsl_type`."""
-    core = vdi.core_symbol(name)
-    return f"Line-A {core}" if name.startswith(vdi.LINEA_ROUTINE_PREFIX) else f"VDI {core[len('vdi_'):]}"
-
-
-# Every VDI and Line-A routine `CALL` prices is named by that rule — its label and its C core both — so
-# none needs a line here, and a register helper is labelled `VDI` whichever door declared its contract.
-VDI_ROUTINES = sorted(name for name in CALL if vdi.is_routine(name))
-UNNUMBERED_ROUTINE_ROLES.update({name: _vdi_role(name) for name in VDI_ROUTINES})
-SYMBOL_OF_ROUTINE = {name: vdi.core_symbol(name) for name in VDI_ROUTINES}
+# Every VDI, Line-A and AES routine `CALL` prices is named by the one naming rule (`test/routines.py`) — its label
+# (`Line-A linea_hline`, `VDI vsl_type`, `AES ob_offset`) and its C core both — so none needs a line here, a register
+# helper is labelled `VDI` whichever door declared its contract, and an AES routine's `CALL` is its `vdi.declare_alcyon`
+# signature's, derived above like every Alcyon core's.
+ROM_ROUTINES = sorted(name for name in CALL if routines.prefix_of(name))
+UNNUMBERED_ROUTINE_ROLES.update({name: routines.role(name) for name in ROM_ROUTINES})
+SYMBOL_OF_ROUTINE = {name: routines.core_symbol(name) for name in ROM_ROUTINES}
 UNNUMBERED_ROUTINE_NAMES = {getattr(addrs, name): name for name in UNNUMBERED_ROUTINE_ROLES}
 
 # How a TRANSCRIPTION row names itself, keyed by the blob symbol: `src/bios/trap.S`'s entries and
 # `src/gemdos/trap1.S` in one map, because `_transcription_row` reads one list of labels and each
-# wave's module owns its own (`trap.LABELS`, `gemdos.LABELS`).
-TRANSCRIPTION_LABELS = {**trap.LABELS, **gemdos.LABELS, **vdi.LABELS}
+# wave's module owns its own (`trap.LABELS`, `gemdos.LABELS`) — and the TRANSCRIBED table's, every
+# component's (`transcription.LABELS`).
+TRANSCRIPTION_LABELS = {**trap.LABELS, **gemdos.LABELS, **transcription.LABELS}
 
 
 # ...and what each SLICE TRAMPOLINE costs, which is not one number. A slice case is entered at a
@@ -1489,6 +1491,10 @@ def _stop_pc(case):
     return test_boot_snapshot.fields(case)[7]
 
 
+# Every component's rows' drops, read once: the registries are complete by now (`test_boot_snapshot`, imported above, imports every battery).
+DROPPED = tier3_dropped()
+
+
 def _row(case):
     """One `VERIFIED_CASES` entry as a bench row, or None when this file cannot make one.
 
@@ -1516,7 +1522,7 @@ def _row(case):
         address, staged_entry = None, (0, 0)
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
-               call.returns, False, address, staged_entry, (0, 0), schedule, vdi.TIER3_DROPPED.get(name, ()))
+               call.returns, False, address, staged_entry, (0, 0), schedule, DROPPED.get(name, ()))
 
 
 def _transcription_row(case):
@@ -1548,12 +1554,13 @@ def _isr_transcription_row(case):
                RETURNS_NOTHING, True, case.handler.entry, (0, 0), case.shared_entry)
 
 
-def _vdi_transcription_row(case):
-    """One VDI hand-68000 routine's `.S` row (`test/vdi.py`'s `register_transcription`): the trap
-    entries' shape, plus the I/O a case declares — the palette pair reads and writes the shifter."""
+def _table_transcription_row(case):
+    """One hand-68000 routine's `.S` row, of any component the TRANSCRIBED table serves (`test/transcription.py`'s
+    `register_transcription`): the trap entries' shape, plus the I/O a case declares — the palette pair reads and
+    writes the shifter."""
     name, symbol, caller, regs, pokes, caller_cost, io_seed = case
     return Row(TRANSCRIPTION_LABELS[symbol], name, caller, symbol, (), regs, pokes, None, io_seed,
-               RETURNS_NOTHING, True, getattr(addrs, vdi.transcription_routine(symbol)), (0, 0), caller_cost)
+               RETURNS_NOTHING, True, getattr(addrs, transcription.transcription_routine(symbol)), (0, 0), caller_cost)
 
 
 ISR_TRANSCRIPTION_CASES = (test_bios_hbl.TRANSCRIPTION_CASES + test_bios_vbl.TRANSCRIPTION_CASES
@@ -1564,7 +1571,7 @@ ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_transcription_row(case) for case in trap.CASES + tuple(gemdos.TRANSCRIPTIONS))
         + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES)
-        + tuple(_vdi_transcription_row(case) for case in vdi.TRANSCRIPTIONS))
+        + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -1582,9 +1589,10 @@ def rom_address(row):
     return row.address or row.entry
 
 
-# MECHANISM (T), derived from `include/vdi/transcribed.h` (`vdi.TRANSCRIBED`): each TRANSCRIBED routine,
+# MECHANISM (T), derived from `include/transcribed.h` (`transcription.TRANSCRIBED`): each TRANSCRIBED routine,
 # by its ROM address, and the `.S` rows that price what a target build ships for it.
-TRANSCRIBED_AT = {getattr(addrs, vdi.transcription_routine(entry)): entry for entry in vdi.TRANSCRIBED}
+TRANSCRIBED_AT = {getattr(addrs, transcription.transcription_routine(entry)): entry
+                  for entry in transcription.TRANSCRIBED}
 SHIPPED_ROWS = {address: tuple(row for row in ROWS if row.transcription and rom_address(row) == address)
                 for address in TRANSCRIBED_AT}
 
@@ -1609,22 +1617,22 @@ def _shipped_row_within_bar(row, measured):
 
 
 # MECHANISM (T→): the C whose cost, as shipped, includes a `.S`, and the blob that prices it as shipped.
-SHIPPED_BENCH_DIR = vdi.SHIPPED_ELF.parent
+SHIPPED_BENCH_DIR = transcription.SHIPPED_ELF.parent
 BUILT_ELF = RECREATE / BENCH_DIR / BENCH_ELF
 
 
 @functools.cache
 def _reaching_transcribed_cores():
-    graph = vdi.call_graph(BUILT_ELF)
+    graph = transcription.call_graph(BUILT_ELF)
     vet_no_row_is_ambiguous(graph)
-    return frozenset(vdi.reaching_transcribed_cores(graph))
+    return frozenset(transcription.reaching_transcribed_cores(graph))
 
 
 def vet_no_row_is_ambiguous(graph):
-    """No row's symbol, and no transcribed core, may be a name the call graph QUALIFIED (`vdi.nodes_of_labels`): its
+    """No row's symbol, and no transcribed core, may be a name the call graph QUALIFIED (`transcription.nodes_of_labels`): its
     bare-name node would then be one of several functions of that name, and (T→) could read the wrong one's calls
     — or none — and price the row on the C twin without a word."""
-    ambiguous = vdi.qualified_bases(graph) & ({row.symbol for row in ROWS} | set(vdi.TRANSCRIBED_CORES))
+    ambiguous = transcription.qualified_bases(graph) & ({row.symbol for row in ROWS} | set(transcription.TRANSCRIBED_CORES))
     assert not ambiguous, (
         f"{sorted(ambiguous)} name more than one function in the m68k build (a static and a global, or statics in "
         f"several files) — rename the static, so the call graph has one node for the name a row is priced by")
@@ -1649,7 +1657,7 @@ def glue_ranges():
     generator names and the ELF does not size is refused: counting nothing for it would pass its cycles
     off as the caller's body."""
     thunks = set(shipped_glue.thunked_cores())
-    sized = {symbol.name: (symbol.start, symbol.start + symbol.size) for symbol in vdi.symbol_table(vdi.SHIPPED_ELF)
+    sized = {symbol.name: (symbol.start, symbol.start + symbol.size) for symbol in transcription.symbol_table(transcription.SHIPPED_ELF)
              if symbol.size is not None and symbol.name in thunks}
     if set(sized) != thunks:
         raise LookupError(f"the shipped blob sizes no thunk for {sorted(thunks - set(sized))} — rebuild it "
@@ -1723,12 +1731,12 @@ def calls_into_c(row):
 
 @functools.cache
 def _function_ranges(elf):
-    """`{node: [(start, end)]}` — every function in `elf`, under the call graph's own node names (`vdi.nodes_of_labels`:
+    """`{node: [(start, end)]}` — every function in `elf`, under the call graph's own node names (`transcription.nodes_of_labels`:
     a static's name qualified where another definition shares it). A function the symbol table sizes ends there; one
     it does not (libgcc's `__mulsi3`) runs on to the next function's start, as the call graph reads it."""
-    functions = sorted({(symbol.start, symbol.name): symbol for symbol in vdi.symbol_table(elf)
+    functions = sorted({(symbol.start, symbol.name): symbol for symbol in transcription.symbol_table(elf)
                         if symbol.kind in "Tt"}.values())
-    nodes = vdi.nodes_of_labels([(symbol.start, symbol.name) for symbol in functions], vdi.symbol_origins(elf))
+    nodes = transcription.nodes_of_labels([(symbol.start, symbol.name) for symbol in functions], transcription.symbol_origins(elf))
     starts = sorted({symbol.start for symbol in functions})
     ranges = {}
     for symbol in functions:
@@ -1744,9 +1752,9 @@ def into_c_ranges(elf, thunk_prefix):
     """`(thunks, callees)`: the `[(start, end)]` of the `.S`→C thunks named `thunk_prefix*` in `elf` — SIZED symbols,
     as `glue_ranges` requires of the generated ones, so a thunk's range is its own bytes and not the `.S` round it —
     and of every C function they reach, the call graph's closure of their callees."""
-    graph = vdi.call_graph(elf)
+    graph = transcription.call_graph(elf)
     ranges = _function_ranges(elf)
-    sized = {symbol.name for symbol in vdi.symbol_table(elf) if symbol.size is not None}
+    sized = {symbol.name for symbol in transcription.symbol_table(elf) if symbol.size is not None}
     thunks = {node for node in graph if node.startswith(thunk_prefix)}
     callees, frontier = set(), set().union(*(graph[thunk] for thunk in thunks))
     while frontier:
@@ -1951,7 +1959,7 @@ def table(bench):
         f"is <= {LEAF_SLACK_CYCLES} cycles and <= {LEAF_SLACK_FRACTION:.1%} of the "
         f"{dispatch} cycles this table measures a trap dispatch at, plus the leaf's own.",
         f"`transcribed`: over the bar, the C of a routine the target build ships as its `.S` "
-        f"(include/vdi/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f} or `own`.",
+        f"(include/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f} or `own`.",
         f"`own`: a `.S` row over the bar whose OWN instructions are <= {TIER3_FUNCTION_BAR:.2f} against the ROM's (T←): "
         f"the rest is the C it reaches through its own thunks, whose cost the Bconout(CON:) acceptances carry; "
         f"the split prints below the row.",

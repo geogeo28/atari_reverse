@@ -24,6 +24,8 @@ from harness import BASE_IMAGE, LIB, _lib, addrs, emu
 import abi
 import case
 import gemdos
+import routines
+import transcription
 import vdi
 from vdi import IMAGE_ARG, LONG_ARG, LONG_BYTES, WORD_ARG, WORD_BYTES, WORD_RESULT
 from opcodes import DROP_STACK_BYTES, LOAD_IMMEDIATE, PUSH_RETURN_PC, PUSH_STACK_LONG, RTE, RTS
@@ -80,9 +82,9 @@ UNPRICED_CORES = ("vdi_gemdos_call",)
 
 
 def core(name):
-    """The C core of `addrs.<name>`: `VDI_ROM_SMUL_DIV` -> `vdi_smul_div` (`vdi.core_symbol`, which is how
+    """The C core of `addrs.<name>`: `VDI_ROM_SMUL_DIV` -> `vdi_smul_div` (`routines.core_symbol`, which is how
     `bench/tier3.py` derives the symbol too)."""
-    return getattr(_lib, vdi.core_symbol(name))
+    return getattr(_lib, routines.core_symbol(name))
 
 
 def uses_image(name):
@@ -182,7 +184,7 @@ DESTINATION_FORM_AT = SOURCE_FORM_AT + RASTER_FORM_BYTES
 
 
 # ---- the TRANSCRIPTIONS (`src/vdi/helpers.S`) ------------------------------------------------------
-# `vdi.run_transcription` enters both sides at a staged caller that jumps through the routine longword
+# `transcription.run_transcription` enters both sides at a staged caller that jumps through the routine longword
 # at `abi.FIRST_ARG` with the sentinel under it — which is a register routine's `jsr`, but leaves an
 # ALCYON routine reading the routine's own address where its first argument should be. So the Alcyon
 # helpers get a caller of their own: the argument words are staged ABOVE that longword
@@ -201,7 +203,7 @@ FRAME_CALLER_STUB = (PUSH_STACK_LONG + struct.pack(">h", _FROM_ENTRY_SP)      # 
                      + RTS                                                   # into the routine
                      + DROP_STACK_BYTES + struct.pack(">h", FRAME_ARGUMENT_BYTES)
                      + RTS)
-FRAME_CALLER = vdi.staged_caller(FRAME_CALLER_AT, FRAME_CALLER_STUB, (7, 128))
+FRAME_CALLER = transcription.staged_caller(FRAME_CALLER_AT, FRAME_CALLER_STUB, (7, 128))
 
 
 def frame_pokes(frame):
@@ -215,20 +217,20 @@ def _entered(pokes, frame):
     """The caller a transcription goes through — the frame caller for an Alcyon `frame`, `vdi`'s own
     otherwise — and the pokes with that frame where it reads it."""
     if frame is None:
-        return vdi.PLAIN_CALLER, pokes
+        return transcription.PLAIN_CALLER, pokes
     return FRAME_CALLER, vdi.merge_pokes(pokes, frame_pokes(frame))
 
 
 def run_transcription(name, pokes, regs=None, frame=None, **kwargs):
-    """`vdi.run_transcription`, entered through the frame caller when the routine takes an Alcyon `frame`."""
+    """`transcription.run_transcription`, entered through the frame caller when the routine takes an Alcyon `frame`."""
     caller, staged = _entered(pokes, frame)
-    return vdi.run_transcription(name, staged, regs, caller=caller, **kwargs)
+    return transcription.run_transcription(name, staged, regs, caller=caller, **kwargs)
 
 
 def register_transcription(name, label, pokes, regs=None, frame=None):
     """...and the same as a Tier 3 row."""
     caller, staged = _entered(pokes, frame)
-    return vdi.register_transcription(name, label, staged, regs, caller=caller)
+    return transcription.register_transcription(name, label, staged, regs, caller=caller)
 
 
 # ---- a RECORDING TRAP HANDLER, for the one transcription that takes a trap ---------------------------

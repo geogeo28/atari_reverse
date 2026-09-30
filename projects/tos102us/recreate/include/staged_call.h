@@ -289,7 +289,7 @@ static inline void call_vector_registers(uint8_t *image, uint32_t routine, uint3
 /* ---- the bare `jsr` for a caller with NOTHING live across it ---------------------------------------------
  *
  * The VDI dispatcher's call into the function its opcode table names is its last act (`src/vdi/entry.c`), and
- * a VDI function may change any register (vs_color D3/D4, vr_trnfm D7 — `vdi/transcribed.h`). `call_vector`'s
+ * a VDI function may change any register (vs_color D3/D4, vr_trnfm D7 — `transcribed.h`). `call_vector`'s
  * clobber list would make GCC save its ten callee-saved registers in the caller's PROLOGUE, paid on every path
  * — the dispatcher's lookups that call nothing included. This shape saves them ITSELF, round the `jsr` alone:
  * the same `movem` pair, spent only where the call is made. A6 goes in the list too, which the clobber lists

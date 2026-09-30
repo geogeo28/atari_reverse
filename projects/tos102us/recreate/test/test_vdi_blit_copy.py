@@ -20,6 +20,7 @@ import pytest
 
 from harness import addrs
 
+import routines
 import test_vdi_raster_rect as rect
 import vdi
 import vdi_blit
@@ -267,7 +268,7 @@ FUNCTION_ROWS = {("VDI_ROM_VRO_CPYFM", "op 6, corners reversed"): call(COPY, (72
 for _label, _pokes in COPY_RASTER_ROWS.items():
     vdi_blit.register(_label, "LINEA_ROM_COPY_RASTER", _pokes)
 for (_name, _label), _pokes in FUNCTION_ROWS.items():
-    vdi.register(f"{vdi.core_symbol(_name)}, {_label}", getattr(addrs, _name), _pokes)
+    vdi.register(f"{routines.core_symbol(_name)}, {_label}", getattr(addrs, _name), _pokes)
 
 
 @pytest.mark.parametrize("row", COPY_RASTER_ROWS, ids=list(COPY_RASTER_ROWS))

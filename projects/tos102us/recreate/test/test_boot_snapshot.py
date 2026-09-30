@@ -228,6 +228,10 @@ import test_vdi_entry                                       # noqa: E402,F401
 import test_vdi_entry_linea                                 # noqa: E402,F401
 import test_vdi_entry_transcription                         # noqa: E402,F401  (its `.S` rows)
 import vdi                                                  # noqa: E402
+# ...and the AES's: the object walks and the rectangle helper (`src/aes/`), registered through `aes.register`.
+import test_aes_oblib                                       # noqa: E402,F401
+import test_aes_rect                                        # noqa: E402,F401
+import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
 import case                                                # noqa: E402
@@ -523,7 +527,9 @@ CASE_FIELDS = ((addrs.RANDOM_SEED, 4, "the OS's random state"),
                *dispatch_io.CASE_FIELDS,
                # ...and the VDI's: the Line-A block, the physical workstation, the entry's RAM, the
                # screen, what a battery declared outside them, and every band of the staged window.
-               *vdi.case_fields())
+               *vdi.case_fields(),
+               # ...and the AES's: the running PD and the dispatcher's guard, the Line-F mask word, the window's bands.
+               *aes.case_fields())
 
 
 def test_the_mask_is_inside_ram_and_clear_of_what_the_cases_use():
@@ -819,13 +825,24 @@ VERIFIED_CASES = (
     *gemdos_process.CHECKPOINT_CASES,
     # ...and the VDI's, each a function entered as the dispatcher's `jsr` leaves the machine.
     *vdi.CASES,
+    # ...and the AES's, each an Alcyon routine entered by `jsr` over its caller's frame.
+    *aes.CASES,
 )
 
 
-# ...and every row that is VERIFIED but has no Tier 3 column (`gemdos.UNPRICED`, `vdi.UNPRICED`): kept
+# ...and every row that is VERIFIED but has no Tier 3 column (`gemdos.UNPRICED`, `vdi.UNPRICED`, `aes.UNPRICED`): kept
 # out of `VERIFIED_CASES` because `bench/tier3.py` reds on a verified case it cannot price, and swept
 # by the claims below that are about the CASE rather than the table.
-UNPRICED_CASES = tuple(gemdos.UNPRICED) + tuple(vdi.UNPRICED)
+UNPRICED_CASES = tuple(gemdos.UNPRICED) + tuple(vdi.UNPRICED) + tuple(aes.UNPRICED)
+
+
+def test_every_registered_row_is_splatted():
+    """Every `case.Rows` registry's rows are in the two tuples above. They are splatted by hand, in the order Tier 3
+    prints them; a component registered through `Rows` and forgotten there would have its companions run in
+    `test_tier3` and yet no Tier 3 row and no mask check."""
+    for rows in case.ROW_REGISTRIES:
+        assert set(map(repr, rows.cases)) <= set(map(repr, VERIFIED_CASES)), f"{rows.component}: a priced row is not splatted"
+        assert set(map(repr, rows.unpriced)) <= set(map(repr, UNPRICED_CASES)), f"{rows.component}: an unpriced row is not"
 
 
 def test_every_scheduled_case_is_read_triggered():

@@ -14,7 +14,7 @@ import struct
 
 import abi
 from harness import differential, emu, make_image, report
-from recreate_kit.rom_bench import vet_dropped
+from recreate_kit.drops import Dropped
 
 # The width of a result, as the C signature declares it. A core that returns nothing (`void` — the
 # ROM routine sets no result, or reports only through memory) says so with `None`, which is a claim
@@ -35,41 +35,24 @@ def run(entry, regs, glue, *, width=FULL_D0, poison=True, dropped=(), dropped_wi
     `dropped` is `((lo, hi, why), ...)`: a span the ORIGINAL writes and the reconstruction deliberately
     does not, left out of the compare with the reason beside it. It is for a divergence the project
     documents, never for scratch — the kit's own `exclude` is that, and refuses any band that is not
-    the stack's. Each span is held to the ONE rule Tier 3's drops are (`rom_bench.vet_dropped`): a reason,
-    and every byte of it one the original's run stores.
-
-    `dropped_windows` is the same shape, for a documented divergence whose EXTENT the run decides: a
+    the stack's. `dropped_windows` is the same shape, for a divergence whose EXTENT the run decides: a
     machine stack the ROM's frames land in (with the holes a `link` reserves), a record armed only on
-    the path that nests. Only the bytes of a window the ORIGINAL stores are dropped (`written_within`)
-    — the rest of it is compared like any other byte — and those spans then meet the same rule.
+    the path that nests. Both go to the kit as DATA (`recreate_kit.drops.Dropped`, which says how each is
+    cut and vetted — the ONE rule Tier 3's drops are held to too): every dropped byte is one the original's
+    run stores, and the rest of a window is compared like any other byte. The kit leaves the drops out
+    BEFORE it decides whether to run the attribution pass, and that pass poisons none of the plain run's
+    drops and compares none of the UNION of both runs' drops — so `poison` keeps its meaning for every
+    other byte of a case that drops.
 
     `seeds` are `harness.differential`'s remaining keyword arguments — `io_seed`, `psg_seed`,
     `schedule`, `wait_sites` — forwarded rather than enumerated. Every one of them is a DECLARATION
     the case makes about the machine, and the four steps around it are the same whichever is
     present, so naming them here would be a second list to keep level with the kit's.
     """
-    assert all(why for _lo, _hi, why in dropped_windows), "a window dropped from the compare with no reason given"
-    diffs, info = differential(entry, regs, glue, poison=poison, **seeds)
-    dropped = (*dropped, *written_within(dropped_windows, info["writes"]))
-    vet_dropped(f"the case at {entry:#x}", dropped, info["writes"], info["regs"]["writes_truncated"])
-    diffs = [diff for diff in diffs if not any(lo <= diff[0] < hi for lo, hi, _why in dropped)]
+    diffs, info = differential(entry, regs, glue, poison=poison, dropped=Dropped(dropped, dropped_windows), **seeds)
     assert not diffs, report(diffs)
     assert_result_is_d0(info, width)
     return info
-
-
-def written_within(windows, writes):
-    """Each `(lo, hi, why)` of `windows` cut down to the runs of it `writes` (a write ledger) covers."""
-    spans = []
-    for lo, hi, why in windows:
-        start = None
-        for address in range(lo, hi + 1):
-            if address < hi and address in writes:
-                start = address if start is None else start
-            elif start is not None:
-                spans.append((start, address, why))
-                start = None
-    return spans
 
 
 def assert_result_is_d0(info, width=FULL_D0):
@@ -226,6 +209,57 @@ def verified_row(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule
     """One `test_boot_snapshot.VERIFIED_CASES` row in its seven-field shape — the ONE builder every
     component's `register` uses, so the shape cannot drift between them."""
     return (name, entry, dict(regs), dict(pokes), psg_seed, io_seed, schedule)
+
+
+# ---- a component's REGISTER of verified rows ------------------------------------------------------
+# Every registry this process built, so the consumers that read ALL rows (`bench/tier3.py`'s drops, `test_tier3.py`'s
+# companions) ask one place rather than naming each component.
+ROW_REGISTRIES = []
+
+
+class Rows:
+    """One component's verified rows: `cases` (priced — `test_boot_snapshot.VERIFIED_CASES` splats them), `unpriced`
+    (verified and swept, no Tier 3 row: a case entered at a stub rather than the routine), and, by case name, a
+    priced row's Tier 3 DROPS (`RomBench.measure`'s `dropped`, vetted per byte: a difference BY NATURE between the ROM
+    and a build linked elsewhere, never scratch) with each drop's COMPANION — the battery's differential of the same
+    machine with nothing dropped (`test_tier3.py` runs each)."""
+
+    def __init__(self, component):
+        self.component = component
+        self.cases, self.unpriced = [], []
+        self.tier3_dropped, self.tier3_undropped = {}, {}
+        ROW_REGISTRIES.append(self)
+
+    def register(self, name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True,
+                 dropped=(), undropped=None):
+        """One `VERIFIED_CASES` row (`verified_row`), recorded and returned so the battery drives the same tuple.
+        `dropped` is `((lo, hi, why), ...)` for its Tier 3 row alone, and `undropped` — required with it — the
+        zero-argument differential that still compares those bytes over the row's machine (a `Result`), which is
+        what makes dropping them at Tier 3 safe."""
+        row = verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule)
+        (self.cases if priced else self.unpriced).append(row)
+        if dropped:
+            assert priced and name not in tier3_dropped(), f"{name}: a Tier 3 drop is for one priced row"
+            assert callable(undropped), f"{name}: a Tier 3 drop needs the differential that drops nothing"
+            self.tier3_dropped[name] = tuple(dropped)
+            self.tier3_undropped[name] = undropped
+        return row
+
+
+def tier3_dropped():
+    """`{row name: its Tier 3 drops}` over every component's registry."""
+    return {name: spans for rows in ROW_REGISTRIES for name, spans in rows.tier3_dropped.items()}
+
+
+def tier3_undropped():
+    """...and `{row name: its companion differential}`."""
+    return {name: companion for rows in ROW_REGISTRIES for name, companion in rows.tier3_undropped.items()}
+
+
+def registered_case(name):
+    """The one PRICED row named `name`, whichever component registered it."""
+    row, = (row for rows in ROW_REGISTRIES for row in rows.cases if row[0] == name)
+    return row
 
 
 class Result:

@@ -1574,9 +1574,10 @@
  * dispatcher, a helper reached by `jsr` — and `LINEA_ROM_<X>` for a Line-A primitive or body. A `VDI_`
  * or `LINEA_` name WITHOUT the `ROM_` is data or a field (`include/vdi/`). The C core is the name less its
  * `ROM_`, lower-cased (`vdi_<x>`, `linea_<x>`), and a `.S` transcription's entry is the name lower-cased
- * (`vdi_rom_<x>`, `linea_rom_<x>`) — `test/vdi.py`'s `core_symbol` / `transcription_symbol`. The `ROM_`
- * is not decoration: the kit's `os.h`, which this header includes, already defines `VDI_<FN>` as the
- * OPCODE for the functions its game model serves (`VDI_VSF_INTERIOR`, `VDI_V_OPNVWK`, ...).
+ * (`vdi_rom_<x>`, `linea_rom_<x>`) — `test/routines.py`'s `core_symbol` and `test/transcription.py`'s
+ * `transcription_symbol`. The `ROM_` is not decoration: the kit's `os.h`, which this header includes,
+ * already defines `VDI_<FN>` as the OPCODE for the functions its game model serves (`VDI_VSF_INTERIOR`,
+ * `VDI_V_OPNVWK`, ...).
  *
  * A VDI FUNCTION IS REACHED BY OPCODE, not by a trap function number, so it is spelt:
  *   `VDI_ROM_<FN>`            the routine's address, whose C core is `vdi_<fn>`;
@@ -1857,5 +1858,185 @@
 #define VDI_LOCATOR_WAIT_SITE     0xfcb03c
 #define VDI_CHOICE_WAIT_SITE      0xfcb1b8
 #define VDI_STRING_WAIT_SITE      0xfcb268
+
+/* ---- the AES ($fe387c..$fee8ff; gemstart and geminit $fd9eca..$fda56d) ---------------------------------------
+ *
+ * The STRUCTURES — GEMBSS, THEGLO's tables, the object layer, the Line-F mechanism — are the component's own headers
+ * (`include/aes/`); only routine addresses are here, for the registries' sake.
+ *
+ * THE VDI's NAMING RULE, one component over (`test/routines.py`): `AES_ROM_<X>` for an AES routine, whose C core is
+ * `aes_<x>`; an `AES_` name without the `ROM_` is data or a field (`include/aes/`). The `ROM_` is needed for the
+ * VDI's reason: the kit's `os.h` already defines `AES_<FN>` as the OPCODE its game model serves (`AES_APPL_INIT`).
+ *
+ * GEM NEVER ENTERS AN AES ROUTINE THROUGH ITS OWN ABI: `trap #2` reaches the dispatcher, whose arms Line-F-call the
+ * implementation, and the desk calls the implementations directly. So an AES FUNCTION is spelt as the VDI's is:
+ *   `AES_ROM_<FN>`            the implementation the dispatcher's arm calls;
+ *   `AES_ROM_<FN>_OPCODE`     the opcode whose arm (`AES_OPCODE_TABLE`, opcode - 10) calls it;
+ *   `..._OPCODE_<k>`          each further opcode whose arm calls the SAME routine.
+ * `test_aes_door.py` holds every one to the arm's own Line-F call (or `movea.l #routine,a0` for 73/74). Names marked
+ * `ctx` are inferred from the opcode arm that calls them, not from a read of the body (`names.txt`'s `# ctx`).
+ * Not paired: 10 appl_init and 77 graf_handle (inline in their arms), 19 appl_exit and 78 graf_mouse (several calls),
+ * 34 menu_text (the string copy), and 11 appl_read — its arm FALLS INTO 12's, so no call of its own names ap_rdwr. */
+#define VECTOR_LINE_F             0x2c       /* the Line-F exception -> the RAM copy of AES_ROM_LINEF_HANDLER */
+#define AES_OPCODE_TABLE          0xfef834   /* longwords for opcodes 10..125, by opcode - 10 ($fe64c8) */
+#define AES_OPCODE_FIRST          10         /* ($fe64ba sub.w #10) */
+#define AES_OPCODE_LAST           125        /* ($fe64be cmp.w #115 over the sub, then `bhi`: unsigned) */
+#define AES_ROM_DEFAULT_ARM       0xfe64a6   /* every gap in the table: an alert, then -1 */
+/* The entries and the dispatcher's own machinery (hand 68000 but for the three Alcyon routines named so). */
+#define AES_ROM_GEM_ENTRY         0xfd9eca   /* gemstart: the entry the memory-usage block at $fefff4 names */
+#define AES_ROM_LINEF_HANDLER     0xfee8c2   /* copied to RAM at init; $2c points at the copy */
+#define AES_ROM_ENTRY             0xfe65aa   /* aes_entry (Alcyon): `trap #2` D0 = 200/201 */
+#define AES_ROM_MARSHAL           0xfe64e6   /* aes_marshal (Alcyon): the arrays in, the dispatch, intout back */
+#define AES_ROM_DISPATCH          0xfe5d9c   /* aes_dispatch (Alcyon): the opcode switch */
+#define AES_ROM_DSPTCH            0xfe387c   /* a bare `rts` while AES_INDISP is set, else into disp */
+#define AES_ROM_SAVESTATE         0xfe38d4
+#define AES_ROM_SWITCHTO          0xfe3930   /* `rte` into another process's UDA: never returns */
+#define AES_ROM_GOTOPGM           0xfe38b0   /* `rte` into the basepage's text, user mode */
+#define AES_ROM_DISP              0xfe4d9e   /* Alcyon: savestate, the lists, forker/idle, switchto */
+#define AES_ROM_DISP_ACT          0xfe4b74
+#define AES_ROM_MWAIT_ACT         0xfe4b9c
+#define AES_ROM_FORKQ             0xfe4b1a
+#define AES_ROM_FORKER            0xfe4bc6   /* `jsr (a0)` on each queued fork function's ROM address ($fe4cba) */
+#define AES_ROM_CHKKBD            0xfe4cd6   /* the keyboard, polled through the VDI (128, 33, 31) */
+#define AES_ROM_IDLE              0xfe4d68   /* chkkbd until a process is ready or a fork is queued */
+/* The FORK FUNCTIONS: forkq queues one by its ROM address, an immediate (`test/aes.py`'s FORK_FUNCTION_IMMEDIATES). */
+#define AES_ROM_TCHANGE           0xfe4e02   /* the timer's */
+#define AES_ROM_KCHANGE           0xfe5180   /* the keyboard's */
+#define AES_ROM_BCHANGE           0xfe51d8   /* the button's */
+#define AES_ROM_MCHANGE           0xfe534c   /* the mouse's */
+#define AES_AP_TPLAY_FORKQ_CALL   0xfe671e   /* ap_tplay's forkq call: it pushes a LOCAL, not an immediate */
+#define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
+#define AES_ROM_GSX2              0xfecb5a   /* the AES's one `trap #2` to the VDI */
+/* The utility layer both the AES and the desk call ("optimize": hand 68000 and a little Alcyon C). */
+#define AES_ROM_RC_INTERSECT      0xfecd22   /* hand 68000: the intersection into the second GRECT, D0 = non-empty */
+#define AES_ROM_RC_RETURN_FALSE   0xfed066   /* the helpers' shared tails, WORD writes (D0.hi is the caller's): `clr.w d0 / bra.s` the rts ... */
+#define AES_ROM_RC_RETURN_TRUE    0xfed06a   /* ...and `move.w #1,d0 / rts` */
+#define AES_ROM_OB_ADDR           0xfed18e   /* hand 68000: A0 += tree + 24 * obj (its field offset) */
+#define AES_ROM_OB_SST            0xfed19e   /* Alcyon: an object's spec, state, type, flags, rectangle and border */
+#define AES_ROM_EVERYOBJ          0xfed27c   /* Alcyon: a depth-first walk calling `jsr (a0)` per object */
+#define AES_ROM_GET_PAR           0xfed382   /* Alcyon: an object's parent, -1 for the root */
+/* The functions the dispatcher's arms call (`ctx` names: see above). */
+#define AES_ROM_AP_RDWR           0xfe65c4   /* ctx */
+#define AES_ROM_AP_RDWR_OPCODE    12
+#define AES_ROM_AP_FIND           0xfe65da   /* ctx */
+#define AES_ROM_AP_FIND_OPCODE    13
+#define AES_ROM_AP_TPLAY          0xfe6610   /* ctx */
+#define AES_ROM_AP_TPLAY_OPCODE   14
+#define AES_ROM_AP_TRECD          0xfe6766   /* ctx */
+#define AES_ROM_AP_TRECD_OPCODE   15
+#define AES_ROM_EV_KEYBD          0xfe6894   /* ctx */
+#define AES_ROM_EV_KEYBD_OPCODE   20
+#define AES_ROM_EV_BUTTON         0xfe68a4   /* ctx */
+#define AES_ROM_EV_BUTTON_OPCODE  21
+#define AES_ROM_EV_MOUSE          0xfe68e4   /* ctx */
+#define AES_ROM_EV_MOUSE_OPCODE   22
+#define AES_ROM_EV_MESAG          0xfe6910   /* ctx */
+#define AES_ROM_EV_MESAG_OPCODE   23
+#define AES_ROM_EV_TIMER          0xfe6936   /* ctx */
+#define AES_ROM_EV_TIMER_OPCODE   24
+#define AES_ROM_EV_MULTI          0xfe6998   /* ctx */
+#define AES_ROM_EV_MULTI_OPCODE   25
+#define AES_ROM_EV_DCLICK         0xfe6c5e   /* ctx */
+#define AES_ROM_EV_DCLICK_OPCODE  26
+#define AES_ROM_MN_BAR            0xfe902a   /* ctx */
+#define AES_ROM_MN_BAR_OPCODE     30
+#define AES_ROM_DO_CHG            0xfe8c14   /* ctx: menu_icheck, menu_ienable, menu_tnormal */
+#define AES_ROM_DO_CHG_OPCODE     31
+#define AES_ROM_DO_CHG_OPCODE_32  32
+#define AES_ROM_DO_CHG_OPCODE_33  33
+#define AES_ROM_MN_REGISTER       0xfe91e2   /* ctx */
+#define AES_ROM_MN_REGISTER_OPCODE 35
+#define AES_ROM_OB_ADD            0xfea1ba   /* ctx */
+#define AES_ROM_OB_ADD_OPCODE     40
+#define AES_ROM_OB_DELETE         0xfea21e   /* ctx */
+#define AES_ROM_OB_DELETE_OPCODE  41
+#define AES_ROM_OB_DRAW           0xfea028   /* ctx */
+#define AES_ROM_OB_DRAW_OPCODE    42
+#define AES_ROM_OB_FIND           0xfea0a8   /* ctx */
+#define AES_ROM_OB_FIND_OPCODE    43
+#define AES_ROM_OB_OFFSET         0xfea584   /* read: the object's screen position, the sum of its and its ancestors' */
+#define AES_ROM_OB_OFFSET_OPCODE  44
+#define AES_ROM_OB_ORDER          0xfea2be   /* ctx */
+#define AES_ROM_OB_ORDER_OPCODE   45
+#define AES_ROM_OB_EDIT           0xfe9678   /* ctx */
+#define AES_ROM_OB_EDIT_OPCODE    46
+#define AES_ROM_OB_CHANGE         0xfea38e   /* ctx */
+#define AES_ROM_OB_CHANGE_OPCODE  47
+#define AES_ROM_FM_DO             0xfe74a4   /* ctx */
+#define AES_ROM_FM_DO_OPCODE      50
+#define AES_ROM_FM_DIAL           0xfe75ec   /* ctx */
+#define AES_ROM_FM_DIAL_OPCODE    51
+#define AES_ROM_FM_ALERT          0xfe7002   /* ctx */
+#define AES_ROM_FM_ALERT_OPCODE   52
+#define AES_ROM_FM_ERROR          0xfe7712   /* ctx */
+#define AES_ROM_FM_ERROR_OPCODE   53
+#define AES_ROM_OB_CENTER         0xfe92ae   /* ctx: form_center */
+#define AES_ROM_OB_CENTER_OPCODE  54
+#define AES_ROM_FM_KEYBD          0xfe7298   /* ctx */
+#define AES_ROM_FM_KEYBD_OPCODE   55
+#define AES_ROM_FM_BUTTON         0xfe7346   /* ctx */
+#define AES_ROM_FM_BUTTON_OPCODE  56
+#define AES_ROM_GR_RUBBOX         0xfe85c6   /* ctx */
+#define AES_ROM_GR_RUBBOX_OPCODE  70
+#define AES_ROM_GR_DRAGBOX        0xfe8640   /* ctx */
+#define AES_ROM_GR_DRAGBOX_OPCODE 71
+#define AES_ROM_GR_MOVEBOX        0xfe8402   /* ctx */
+#define AES_ROM_GR_MOVEBOX_OPCODE 72
+#define AES_ROM_GR_GROWBOX        0xfe8340   /* ctx: the arm's `movea.l #`, then the shared `jsr (a0)` ($fe622e) */
+#define AES_ROM_GR_GROWBOX_OPCODE 73
+#define AES_ROM_GR_SHRINKBOX      0xfe837a   /* ctx: ...the same */
+#define AES_ROM_GR_SHRINKBOX_OPCODE 74
+#define AES_ROM_GR_WATCHBOX       0xfe84ba   /* ctx */
+#define AES_ROM_GR_WATCHBOX_OPCODE 75
+#define AES_ROM_GR_SLIDEBOX       0xfe86fa   /* ctx */
+#define AES_ROM_GR_SLIDEBOX_OPCODE 76
+#define AES_ROM_GR_MKSTATE        0xfe8768   /* ctx */
+#define AES_ROM_GR_MKSTATE_OPCODE 79
+#define AES_ROM_SC_READ           0xfeac80   /* ctx */
+#define AES_ROM_SC_READ_OPCODE    80
+#define AES_ROM_SC_WRITE          0xfeac94   /* ctx */
+#define AES_ROM_SC_WRITE_OPCODE   81
+#define AES_ROM_FS_INPUT          0xfe7d90   /* ctx */
+#define AES_ROM_FS_INPUT_OPCODE   90
+#define AES_ROM_WM_CREATE         0xfec602   /* ctx */
+#define AES_ROM_WM_CREATE_OPCODE  100
+#define AES_ROM_WM_OPEN           0xfec6da   /* ctx */
+#define AES_ROM_WM_OPEN_OPCODE    101
+#define AES_ROM_WM_CLOSE          0xfec6f0   /* ctx */
+#define AES_ROM_WM_CLOSE_OPCODE   102
+#define AES_ROM_WM_DELETE         0xfec706   /* ctx */
+#define AES_ROM_WM_DELETE_OPCODE  103
+#define AES_ROM_WM_GET            0xfec722   /* ctx */
+#define AES_ROM_WM_GET_OPCODE     104
+#define AES_ROM_WM_SET            0xfec83a   /* ctx */
+#define AES_ROM_WM_SET_OPCODE     105
+#define AES_ROM_WM_FIND           0xfeca4a   /* ctx */
+#define AES_ROM_WM_FIND_OPCODE    106
+#define AES_ROM_WM_UPDATE         0xfeca68   /* ctx */
+#define AES_ROM_WM_UPDATE_OPCODE  107
+#define AES_ROM_WM_CALC           0xfecaac   /* ctx */
+#define AES_ROM_WM_CALC_OPCODE    108
+#define AES_ROM_RS_LOAD           0xfeac5c   /* ctx */
+#define AES_ROM_RS_LOAD_OPCODE    110
+#define AES_ROM_RS_FREE           0xfeaa58   /* ctx */
+#define AES_ROM_RS_FREE_OPCODE    111
+#define AES_ROM_RS_GADDR          0xfeaa86   /* ctx */
+#define AES_ROM_RS_GADDR_OPCODE   112
+#define AES_ROM_RS_SADDR          0xfeaab2   /* ctx */
+#define AES_ROM_RS_SADDR_OPCODE   113
+#define AES_ROM_RS_OBFIX          0xfea69c   /* ctx */
+#define AES_ROM_RS_OBFIX_OPCODE   114
+#define AES_ROM_SH_READ           0xfeaca8   /* ctx */
+#define AES_ROM_SH_READ_OPCODE    120
+#define AES_ROM_SH_WRITE          0xfeacd4   /* ctx */
+#define AES_ROM_SH_WRITE_OPCODE   121
+#define AES_ROM_SH_GET            0xfead26   /* ctx */
+#define AES_ROM_SH_GET_OPCODE     122
+#define AES_ROM_SH_PUT            0xfead40   /* ctx */
+#define AES_ROM_SH_PUT_OPCODE     123
+#define AES_ROM_SH_FIND           0xfeafbe   /* ctx */
+#define AES_ROM_SH_FIND_OPCODE    124
+#define AES_ROM_SH_ENVRN          0xfeae36   /* ctx */
+#define AES_ROM_SH_ENVRN_OPCODE   125
 
 #endif /* TOS102US_ADDRS_H */

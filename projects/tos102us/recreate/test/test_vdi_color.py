@@ -18,6 +18,7 @@ from harness import BASE_IMAGE, addrs
 from recreate_kit import os_map
 
 import case
+import transcription
 import vdi
 
 SET = "VDI_ROM_VS_COLOR"
@@ -434,15 +435,15 @@ def test_a_colour_set_reads_back_requested_and_realized(planes, index):
 # The C above measures over the 1.10 bar against hand 68000 (see `bench/tier3.py`), so the target build
 # ships the ROM's pair as `palette.S`. Two claims hold it: its WORDS are the ROM's, and it BEHAVES as
 # the ROM over every arm above — image, whole register file, palette traffic — through Tier 3's
-# transcription relation (`vdi.run_transcription`).
+# transcription relation (`transcription.run_transcription`).
 BLOCK_BYTES = 0x160                           # $fd2dd2..$fd2f31: both routines and both tables
-REGION = vdi.pinned_region(addrs.VDI_ROM_VS_COLOR, addrs.VDI_ROM_VS_COLOR + BLOCK_BYTES, SET, (GET,))
+REGION = transcription.pinned_region(addrs.VDI_ROM_VS_COLOR, addrs.VDI_ROM_VS_COLOR + BLOCK_BYTES, SET, (GET,))
 
 
 def test_the_transcription_is_the_rom_s_bytes_exactly():
     """THE BYTE PIN: no word excused — the six `<op>.w #imm,Dn` GNU as would encode as CMPI/ADDI/ANDI are
     spelt as the ROM's words (`m68k_encodings.h`)."""
-    vdi.assert_transcribed(REGION.anchor, REGION.lo, REGION.hi, entries=REGION.entries)
+    transcription.assert_transcribed(REGION)
 
 
 TRANSCRIBED = (
@@ -471,7 +472,7 @@ TRANSCRIBED = (
 @pytest.mark.parametrize("name,label,pokes,io_seed", TRANSCRIBED, ids=[f"{n[8:]}, {l}" for n, l, _p, _i in TRANSCRIBED])
 def test_the_transcription_behaves_as_the_rom_over_every_arm(name, label, pokes, io_seed):
     del label
-    vdi.run_transcription(name, pokes, io_seed=io_seed)
+    transcription.run_transcription(name, pokes, io_seed=io_seed)
 
 
 # ==== Tier 3: the worst realistic rows ===============================================================
@@ -485,15 +486,15 @@ vdi.register("vdi_vq_color, mono realized", addrs.VDI_ROM_VQ_COLOR, get_pokes(1,
              io_seed=declared(addrs.SHIFTER_PALETTE, 1))
 vdi.register("vdi_vq_color, index refused", addrs.VDI_ROM_VQ_COLOR, get_pokes(16, REALIZED))
 # ...and the same rows for the `.S` the target build ships.
-vdi.register_transcription(SET, "low res", set_pokes(7, (929, 356, 71)))
-vdi.register_transcription(SET, "mono white", set_pokes(1, (1000, 1000, 1000), planes=MONO))
-vdi.register_transcription(SET, "index refused", set_pokes(16, (0, 0, 0)))
-vdi.register_transcription(GET, "realized", get_pokes(7, REALIZED),
-                           io_seed=declared(register_of(7, LOW), realized_word(7)))
-vdi.register_transcription(GET, "requested", get_pokes(7, REQUESTED))
-vdi.register_transcription(GET, "mono realized", get_pokes(1, REALIZED, planes=MONO),
-                           io_seed=declared(addrs.SHIFTER_PALETTE, 1))
-vdi.register_transcription(GET, "index refused", get_pokes(16, REALIZED))
+transcription.register_transcription(SET, "low res", set_pokes(7, (929, 356, 71)))
+transcription.register_transcription(SET, "mono white", set_pokes(1, (1000, 1000, 1000), planes=MONO))
+transcription.register_transcription(SET, "index refused", set_pokes(16, (0, 0, 0)))
+transcription.register_transcription(GET, "realized", get_pokes(7, REALIZED),
+                                     io_seed=declared(register_of(7, LOW), realized_word(7)))
+transcription.register_transcription(GET, "requested", get_pokes(7, REQUESTED))
+transcription.register_transcription(GET, "mono realized", get_pokes(1, REALIZED, planes=MONO),
+                                     io_seed=declared(addrs.SHIFTER_PALETTE, 1))
+transcription.register_transcription(GET, "index refused", get_pokes(16, REALIZED))
 
 # The REQ_COL rows $ff01 and $ff00 alias onto, below the table, which the aliasing cases read and write.
 for _index in (0xFF01, 0xFF00):

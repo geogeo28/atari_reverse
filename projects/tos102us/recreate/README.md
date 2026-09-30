@@ -252,6 +252,54 @@ every buffer starts full of `$a5` and every sector holds its own ramp, so a byte
 did not write reads as something no arm of these routines produces. That is the
 character-device group's rule (`test/gemdos_console.py`) applied one layer down.
 
+## THE AES DOOR — Line-F calls, a machine inside the dispatcher, and what the gemstart, disp and forker ports need
+
+GEM never calls itself by `jsr`: every AES call is a `$F000|off` word, a Line-F exception whose handler — a RAM copy
+at `$cc0e` that gemstart Malloc'd — jumps through the ROM call table, and every Alcyon return a `$F001|m` word whose
+handler restores the registers `m` names. The C calls by `jsr`, which leaves the same machine but for ONE word: the
+handler rewrites its own `movem` mask (`$cc44`) on every masked return. `test/aes.py` is the door (the VDI's shape,
+its field reader hoisted into `test/layouts.py`, its naming rule into `test/routines.py`, its row registry into
+`case.Rows`): an Alcyon AES routine runs over its caller's frame DIRECTLY (the row Tier 3 prices) or THROUGH LINE-F
+at a staged caller that makes the ROM's own call word (verified, unpriced), the mask word dropped by name either way
+(`LINE_F_MASK_WINDOW`) — and at Tier 3 with its `undropped=` companion, the word staged at the value the run leaves.
+The attribution pass RUNS on every AES case: a drop reaches the kit (`harness.differential`'s `dropped`), which leaves
+it out of the plain compare before deciding to run the pass and then neither poisons nor compares it, so every other
+byte keeps skipped-store detection — only the Tier 3 companion runs without it (`aes.COMPANION_UNPOISONED`: with
+nothing dropped the pass would invert the mask word, which the C never writes). The other `dropped_windows` users
+keep their own opt-outs for their own reasons — a poisoned pointer steers the run (`vdi_entry_linea`,
+`vdi_workstation`, the GEMDOS door, the redirect) — while `test_vdi_entry` has always run poisoned while dropping
+its Line-A stack window, which lies in the kit's stack band. Answer words are still staged stale, and every pointer
+argument is also handed in with a top byte (`aes.BUS_TAG`) to hold its 24-bit `bus_dereference`. The snapshot is
+inside disp's idle loop — `rlr` NULL, `indisp` 1 — so `aes.leaf_machine()` stages the shell's PD running over the
+snapshot's guard, a lever inert for a routine that never reaches `dsptch` (one that does will stage both itself); trees
+are staged by SHAPE (`aes.node`/`tree_pokes`, linked as ob_add links them) or read out of the AES's own relocated
+resource (`aes.resource_tree`). A routine with two call words is entered by the one most of its callers use —
+ob_offset's `$f208` (the desk's binding and three AES callers), not `$f154` (the object library's own three).
+
+Three mechanisms are designed and NOT built:
+
+- **The Line-F handler's Malloc(100) and 100-byte copy**, which a rebuilt ROM must keep so every later TPA block stays
+  put (its mask word then differs forever, by nature). The copy carries ORIGINAL ROM code addresses as data — the
+  handler's `movea.l #$fee900,a0` and 38 bytes of the call table's head — kept at the original's value and NEVER
+  relocated, the opposite policy to the fork functions below: on a rebuilt ROM, any Line-F executed jumps through
+  `$fee900` into unrelated bytes. "Nothing else about Line-F is observable" holds only while SP is in the kit's stack
+  band: a case on a UDA's stack (inside THEGLO) or on the dispatcher's stack at `$8c1a` puts the exception frame and
+  every Alcyon `link`/`movem` frame in COMPARED RAM, and needs a stack `dropped_windows` entry (the
+  `LINEA_STACK_WINDOW` precedent).
+- **A real process switch** (a checkpoint at switchto's `rte`, or a staged second process whose UDA `rte`s into a
+  sentinel stub), where `indisp = 1` is only a lever. savestate's CPU state — `movem d0-a5` into the UDA, the
+  frame's SR and PC, SSP and USP — is the ORACLE's registers, ROM return addresses and kit-stack pointers no host C
+  produces: for a C twin that block is a by-nature drop, and only a `.S` transcription compares it byte for byte.
+  savestate's `lea $8c1a,sp` moves disp's frames into compared RAM, which needs a window too. The sentinel stub is
+  `jmp ($2).w` (`4EF8 0002`), which writes nothing — not `pea (2).w; rts`, which writes 4 bytes onto the
+  switched-to process's stack, inside THEGLO.
+- **forker's `jsr (a0)` on ROM fork-function addresses**, which needs one `staged_call.h`-family hook mapping
+  `AES_ROM_<FN>` to `aes_<fn>`. Every forkq caller queues a fork function by an IMMEDIATE ROM address (pushed, or —
+  ap_tplay — stored in the local its forkq call pushes), and forker's recorder and ap_trecd compare against them:
+  sixteen instructions, `aes.FORK_FUNCTION_IMMEDIATES`, CODE values a C port stores as the ROM's and a rebuilt ROM as
+  its own (`test_aes_door` holds them as every longword of the GEM text naming a fork function, and every forkq call
+  as queueing one).
+
 ## Verified functions, and what they cost on each side
 
 The oracle reports `ninsns` and `cycles` for every run (`out_regs`), so the ORIGINAL's cost per
@@ -330,10 +378,14 @@ own `move.b` reaches, and `ipl.h` is the real `move.w sr,d0` / `ori.w #$700,sr` 
 ### What ships as the ROM's own instructions — the TRANSCRIBED table
 
 The rule for the ROM's HAND-WRITTEN 68000 (the VDI's pixel loops, its palette pair, its register
-helpers) is: port it to C first — Tier 1 proves the C — and where the C measures over the 1.10 bar,
-SHIP a byte-pinned `.S` transcription instead. `include/vdi/transcribed.h` is the one place that says
-which routines, one row per `.S` entry, with the entry's register contract against the GCC m68k ABI
-(the callee-saved registers it leaves changed). Everything else is derived from it:
+helpers; the AES's utility layer) is: port it to C first — Tier 1 proves the C — and where the C measures
+over the 1.10 bar, SHIP a byte-pinned `.S` transcription instead. `include/transcribed.h` is the one place
+that says which routines, for EVERY component — one table, a block of rows per component, one row per `.S`
+entry — with the entry's register contract against the GCC m68k ABI (the callee-saved registers it leaves
+changed). Everything else is derived from it, and the machinery is component-neutral: `test/transcription.py`
+holds the staged callers, the transcription relation's runs and rows, the pinned regions and the byte pin, the
+parsed table and the m68k call graph, and a routine of any component is named by one rule (`test/routines.py`:
+`AES_ROM_X` is transcribed as `aes_rom_x`, its C core `aes_x`, its `.S` rows labelled `AES x (.S)`).
 
 * **Tier 3's mechanism (T)**: a TRANSCRIBED routine's C rows may be over the bar only while EVERY one
   of its `.S` rows is at or under it, or `own` by (T←) below — verdict `transcribed`, read off the
@@ -341,7 +393,9 @@ which routines, one row per `.S` entry, with the entry's register contract again
   go red with it. A WRITTEN acceptance of a `.S` row carries no C row.
 * **The build contract** (`atari/target.mk`): `TRANSCRIBED_ENTRIES`/`TRANSCRIBED_SOURCES` are what the
   ROM build links for these routines and `TRANSCRIBED_C_CORES` the C twins it must not. The Tier 3 blob
-  links both, because it measures both.
+  links both, because it measures both. The sources are `src/vdi/*.S` and `src/aes/*.S` — the table's
+  components' — and NOT `src/*/*.S`: the BIOS's `trap.S`/`isr.S` and GEMDOS's `trap1.S` are entries of
+  another kind, with no row, and every `.globl` of a listed source must be a row.
 * **The declarations** at the end of the header: each entry as a LABEL a C caller reaches through glue
   naming the row's registers as clobbers — a plain C call of one does not compile — and
   `TRANSCRIBED_CORE`, the attribute every C core is defined with (`noipa`: never inlined, cloned or
@@ -356,13 +410,15 @@ measures such C on a SECOND blob, `build/bench_shipped/` (the Makefile's shipped
   WEAK (`-DTRANSCRIBED_CORES_WEAK`, which `TRANSCRIBED_CORE` reads — weak in the source, because the
   assembler resolves a call inside one file against the section, out of reach of the symbol table);
 * linked beside `glue.S`, GENERATED by `bench/shipped_glue.py`: one thunk per core
-  `test/vdi.py`'s `C_CALLERS_OF_TRANSCRIBED_CORES` names, carrying the core's name. Its shape is read off
-  the entry's declaration — a register contract (`vdi.declare_primitive`: arguments loaded from the C
-  slots), an Alcyon frame (`vdi.declare_alcyon`: GCC's longword slots repacked into words and longs), or
-  a VDI function (entered with nothing) — and it saves round the `jsr` the callee-saved registers the
-  table's row says the entry changes. It is the glue the declarations describe, built and exercised.
+  `test/transcription.py`'s `C_CALLERS_OF_TRANSCRIBED_CORES` names, carrying the core's name. Its shape is
+  read off the entry's declaration — a register contract (`vdi.declare_primitive`: arguments loaded from the
+  C slots), an Alcyon frame (`vdi.declare_alcyon`, the AES's too: GCC's longword slots repacked into words
+  and longs), or a VDI function (a `VDI_ROM_<FN>` with an `_OPCODE` sibling, entered with nothing) — and it
+  saves round the `jsr` the callee-saved registers the table's row says the entry changes. An AES routine
+  has `_OPCODE` siblings too; a transcribed core that declares no contract is REFUSED, never glued as a
+  function entered with nothing. It is the glue the declarations describe, built and exercised.
 
-Every row whose C REACHES a transcribed core (the m68k build's call graph, `vdi.reaching_transcribed_cores`
+Every row whose C REACHES a transcribed core (the m68k build's call graph, `transcription.reaching_transcribed_cores`
 — `v_fillarea` reaches `$a006` through `plygn`) is measured on that blob: verdict `through` at or under the
 bar and OVER above it, with no entry — the measurement is also the glue's own second differential. A `.S`
 that drifts takes its callers' rows over with it (measured: a 2,000-pass delay in `linea_rom_hide_mouse`
@@ -411,12 +467,36 @@ shipped routine is linked at; a REGION_TABLE — inside a region a `.S` transcri
 in cpu_blit's for one — is read only by that region's own C core, harmless exactly while the ROM build does
 not link it; a DISTANCE between two addresses of one region survives relocation as it is.
 
-`test/test_vdi_transcribed.py` holds the table to all of it — the make lists, every `.globl` of the
+`test/test_transcribed.py` holds the table to all of it — the make lists, every `.globl` of the
 `.S` sources, the measured register sets, every core defined `TRANSCRIBED_CORE`, the list of C callers
 read out of the m68k build and, in the shipped blob, each of those calls landing in its thunk — and every
-transcription is pinned to the ROM byte for byte by one comparator (`vdi.assert_transcribed`) under one
-spelling policy (`include/m68k_encodings.h`: an encoding GNU as would change is spelt as the ROM's
-word, never excused).
+transcription is pinned to the ROM byte for byte by one comparator (`transcription.assert_transcribed`)
+under one spelling policy (`include/m68k_encodings.h`: an encoding GNU as would change is spelt as the ROM's
+word, never excused). A battery declares each region it pins with `transcription.pinned_region(...)`, and
+any test file that calls `pinned_region(` is imported to find them, whatever it imported the function as.
+
+**An AES `.S`** goes through all of the above unchanged — a block of rows in the table, a file in
+`src/aes/`, a battery pinning its region and registering its rows — under two constraints of its own:
+
+* **Only Line-F-free hand 68000.** An Alcyon-compiled AES routine calls and returns through Line-F words
+  (`$Fxxx`, THE AES DOOR above): transcribed, those would run the ROM's code through the handler's table
+  from inside the blob, so it is not a byte-pinnable transcription. What qualifies is the hand-written
+  utility layer (`rc_intersect` $fecd22, the optimize layer round it). A region may still carry another
+  routine's Line-F words as bytes — the span from `rc_intersect` to the tails holds four — so long as no row
+  entry's path executes one (`test_transcribed.py` reads the path off the oracle's profile over the row's cases).
+* **The shared return tails in the SAME pinned region as their users.** The optimize layer's routines leave
+  through `$fed066` (`clr.w d0; bra.s` to the `rts`) and `$fed06a` (`move.w #1,d0; rts`). Laid out in one
+  region with its users (the `rts` at `$fed06e` included, so the span ends at `$fed070`), a user's `ble.w`
+  to a tail is the ROM's own word and the byte pin holds it. Laid out anywhere else, every such branch
+  becomes a `Relocated` displacement — the tails have no entry of their own to measure it from, and one
+  into bytes no battery pins is refused by `assert_transcribed`. `test_transcribed.py` refuses a row whose
+  path reaches a tail outside its region.
+
+Measured on a scratch copy (never committed): `rc_intersect` $fecd22..$fed070 as a `src/aes/rect.S` of the
+ROM's words, one table row, its core marked `TRANSCRIBED_CORE`, and a battery pinning the region and
+registering its shapes through `vdi_fill`'s Alcyon frame caller — the pin, the `.globl` pin, the measured
+register set (D2), ten `AES rc_intersect (.S)` rows at 1.00 and mechanism (T) over its C rows all went
+through, and the `.globl` pin reddened with `src/aes/*.S` dropped from `TRANSCRIBED_SOURCES`.
 
 ## Mutation sweeps — how a mutant is counted
 
@@ -431,6 +511,17 @@ and `.S` (the repository's `docs/agent-playbook.md` §10 has the rebuild traps).
   (usage), 5 (nothing collected), a SIGNAL (a stray `pkill`'s SIGTERM, a segfault of the `.so`) and a
   TIMEOUT (a mutant that spins) are ABNORMAL — re-run, and reported as ABNORMAL if they stay so. A sweep
   that counted any non-zero exit as a kill has credited signals and timeouts to the suite.
+* **A CRASHED TEST IS ABNORMAL, NEVER KILLED — and under xdist it looks like a kill.** Every suite runs under
+  the kit's watchdog (`tools/recreate_kit/watchdog.py`; a sweep that drives pytest itself passes
+  `-p recreate_kit.watchdog` with `reverse/tools` on `PYTHONPATH`), which ends a test that spins past its
+  budget with faulthandler's `Timeout (h:mm:ss)!` dump. Serially that ends the process before any summary.
+  Under xdist the controller prints `worker 'gwN' crashed while running '<test>'` — for a segfault of the
+  `.so` too — and counts that test in `N failed` with exit 1, the exact shape of a kill with no assertion
+  behind it. So a run is KILLED only when it FAILED MORE tests than crashed — the classifier counts the
+  distinct tests named in those lines and subtracts them. Re-classifying the 1,388 tails this project's sweeps
+  had saved (at the AES foundation) under this rule moves two verdicts, KILLED → ABNORMAL, both a mutant whose only "failure" was a segfaulted
+  worker (`rc_intersect`'s and `object_field`'s clip without the bus mask); every other recorded verdict
+  stands.
 * **Save every run's tail** beside its verdict, so the totals can be audited after the fact; report
   KILLED / SURVIVED / ABNORMAL separately, and every survivor named as equivalent, unreachable (say why)
   or killed by a new case.

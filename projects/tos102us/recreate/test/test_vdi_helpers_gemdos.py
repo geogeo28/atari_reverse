@@ -44,6 +44,8 @@ from harness import BASE_IMAGE, addrs, emu, make_image
 import case
 import gemdos
 import gemdos_memory
+import routines
+import transcription
 import vdi
 import vdi_helpers
 from vdi_helpers import GEMDOS_DOOR_WINDOWS, GEMDOS_HANDLERS, RETSAV_STALE
@@ -114,8 +116,8 @@ def test_the_c_target_branch_ships_nowhere():
     """The C core's `trap #1` branch has no differential (the docstring says why), which is safe only
     while nothing ships it: gemdos_call is TRANSCRIBED, so the ROM build takes the `.S`, and the C has no
     Tier 3 row that could be mistaken for a price of that branch."""
-    assert vdi.transcription_symbol(NAME) in vdi.TRANSCRIBED
-    assert vdi.core_symbol(NAME) in vdi_helpers.UNPRICED_CORES
+    assert transcription.transcription_symbol(NAME) in transcription.TRANSCRIBED
+    assert routines.core_symbol(NAME) in vdi_helpers.UNPRICED_CORES
 
 
 # ---- the registry -------------------------------------------------------------------------------------
