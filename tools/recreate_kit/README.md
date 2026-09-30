@@ -20,6 +20,10 @@ tools/recreate_kit/
 │                     shared by the kit's suite and the projects' — likewise needs nothing built
 ├── guarded_image.py  OPT-IN pytest plugin: run every candidate on an image with PROT_NONE either
 │                     side, so a raw `image + <computed address>` that leaves the buffer FAULTS
+├── watchdog.py       pytest plugin every `make test`/`make guarded` loads: ends a test that never
+│                     returns (a spinning candidate), naming it, instead of hanging the run
+├── drops.py          DROPPED SPANS as data (`Dropped(spans, windows)`) and the one rule a drop is held
+│                     to (`vet_dropped`), shared by Tier 1 and Tier 3 — imports nothing
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
 │                     raster.h (the ST device-format raster the VDI opcodes draw through)
@@ -1027,6 +1031,61 @@ every glue and every runner. A project's shim does `from recreate_kit.harness im
 *copies* the name, so the plugin rebinds every module holding the original and **counts** the guarded
 calls: a sweep that guarded nothing, or almost nothing, refuses to exit 0. Both halves of that
 sentence are scar tissue from its own first run.
+
+## Dropped spans: a documented divergence, left out of the compare as data
+
+A drop is for a difference BY NATURE between the original and a reconstruction — a return address
+each build parks where the ROM parks its own, a self-patched word only the original's code stores —
+never for scratch (`exclude` is that, and `_vet_exclude_bands` keeps it to stack bands). Both tiers
+take the same shape from `drops.py`: `harness.differential(..., dropped=Dropped(spans, windows))` at
+Tier 1 and `rom_bench.RomBench.measure` at Tier 3, each `(lo, hi, why)`.
+
+- A **span** is FIXED: every byte of it must be one the original's PLAIN run stores (`vet_dropped`,
+  per byte — a byte the original never stores can only be hiding ours).
+- A **window** is cut PER RUN to the bytes that run stores (`written_within`): a machine stack the
+  ROM's frames land in, a word stored only on some paths. The rest of a window is compared.
+
+THE PER-RUN RULE. The plain run's drops (spans plus its window cut, `plain_run_spans`) are vetted and
+left out of the plain diff BEFORE the `poison` gate, so a case that drops a byte the candidate never
+writes still gets its attribution pass. That pass neither poisons nor compares a dropped byte, and its
+compare leaves out the union of both runs' drops; the re-run's own window cut is vetted against the
+re-run (`rerun_window_spans`), while the fixed spans are not vetted again — poisoning may steer the
+re-run past a span the case describes, and refusing it there would refuse a correct case. The poison
+loop skips only the plain run's drops. Pinned by `test/test_dropped_spans.py` over the smoke project
+(a fixed span vetted on the plain run only, a reasonless window refused even when unstored, a scheduled
+store over a dropped byte), and `test/test_rom_bench.py` for `vet_dropped` itself. First user: tos102us's AES door, whose Line-F handler
+self-patches its `movem` mask word in RAM (`$cc44`) on the original's returns and never on a C
+candidate's — every AES case runs POISONED with that word dropped as a window.
+
+## The watchdog: a test that never returns is ended, and named
+
+A candidate is host C entered through ctypes, and nothing in Python can interrupt a loop there: a
+spinning mutant used to hang `make test`. `watchdog.py` is a pytest plugin that arms faulthandler's
+one timer per TEST (setup, call and teardown), writing to a duplicate of the REAL stderr taken at
+configure time — so the stack survives pytest's capture, as pytest's own faulthandler plugin does it.
+Past the budget it prints every thread's stack and ends the process with status 1; under xdist the
+controller reports `worker ... crashed while running <test>`.
+
+```bash
+# kit.mk's `test` and `guarded` load it (WATCHDOG_PLUGIN, before $(PYTEST_ARGS)), as does this
+# directory's Makefile:
+PYTHONPATH=<reverse>/tools .venv/bin/python -m pytest -p recreate_kit.watchdog test
+make test PYTEST_ARGS="-n auto --watchdog-seconds 60"       # a tighter budget for one run
+make test PYTEST_ARGS="-n auto -p no:recreate_kit.watchdog"  # off (a `-p no:` after the kit's `-p` wins)
+```
+
+- **The budget**, `TEST_BUDGET_SECONDS = 300`, is set from MEASURED maxima under `make test`
+  (`-n auto`, `--durations`): buggyboy's `test_blit_objsprite.py::test_hi_fuzz` at 46 s is the
+  longest single test in the workspace (tos102us 5.8 s, wonderboy 3.8 s, the rest under 3 s), so
+  the budget is ~6.5x that. Only a hang reaches it.
+- **One timer, one owner.** faulthandler has ONE timer per process, so an outer
+  `faulthandler_timeout` is REFUSED at configure (`pytest.UsageError` naming
+  `-p no:recreate_kit.watchdog`) rather than silently disarmed. A debugger session cancels the timer.
+- **A watchdog exit is not a failed test.** No assertion ran, so a mutation sweep's strict classifier
+  counts it ABNORMAL, never KILLED (tos102us `recreate/README.md`, "Mutation sweeps").
+- Pinned by `test/test_watchdog.py`: a child pytest under default fd capture, `--capture=sys` and
+  `-n 2` ends a spinning test with `Timeout` and its frame on the child's real stderr; the timer is
+  re-armed per test; the outer `faulthandler_timeout` is refused.
 
 ## The kit's own tests
 

@@ -7,6 +7,7 @@ driven through ctypes.
 import ctypes
 import re
 
+from . import drops
 from . import os_map
 from . import project
 
@@ -2310,7 +2311,7 @@ def _vet_hw_write_state(entry, o_regs, waived):
         f"through hw_write8/16/32 (tools/recreate_kit/include/hw.h)")
 
 
-def _vet_poison_is_attributable(entry, scheduled, o_writes):
+def _vet_poison_is_attributable(entry, scheduled, o_writes, o_drops):
     """Refuse an attribution pass whose canary a SCHEDULED STORE would overwrite.
 
     The pass poisons every oracle-written byte and re-runs both cores, so a byte the candidate
@@ -2329,7 +2330,8 @@ def _vet_poison_is_attributable(entry, scheduled, o_writes):
     stored = {scheduled[i + emu.OS_SCHED_F_ADDR] + byte
               for i in range(0, len(scheduled), fields)
               for byte in range(scheduled[i + emu.OS_SCHED_F_WIDTH])}
-    clash = sorted(stored & set(o_writes))
+    # A dropped byte is never poisoned (`_attribution_check`), so a schedule storing one clashes with no canary.
+    clash = sorted(address for address in stored & set(o_writes) if not drops.within(address, o_drops))
     assert not clash, (
         f"{label(entry)} @ {entry:#x}: the attribution pass would poison "
         f"{', '.join(f'{addr:#x}' for addr in clash)}, which this run's schedule also stores — the "
@@ -2339,21 +2341,28 @@ def _vet_poison_is_attributable(entry, scheduled, o_writes):
 
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
                        stop_pc, max_insns, psg_seed, hw_seed, io_seed, schedule, wait_sites,
-                       waived):
+                       waived, dropped, o_drops):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
     which every oracle-written byte is poisoned with a canary (its normal final value, inverted). A
     byte the candidate fails to write now stays canary instead of matching, so the omission shows.
     Only meaningful once the normal pass is clean; opt-in (poison=True) since poisoning an output
-    that also steers control flow could perturb a complex function's run."""
+    that also steers control flow could perturb a complex function's run.
+
+    A VETTED DROP (``differential``'s ``dropped``) is neither poisoned nor compared: the candidate
+    never writes it by design, so a canary there could only stay a canary. The compare leaves out the
+    plain run's drops (``o_drops``, in ``excluded``) and, beside them, the part of each WINDOW this
+    poisoned run stores — poisoning can steer the oracle to store a different part of a window than
+    the plain run did. A fixed span is not vetted again here (``drops.rerun_window_spans``)."""
     poisoned = bytearray(img)
     for a in o_writes:
-        if in_diff(a):                       # only the diffed region matters; stack canaries are moot
+        # only the diffed region matters (stack canaries are moot), and never a byte the case drops
+        if in_diff(a) and not drops.within(a, o_drops):
             poisoned[a] = o_final[a] ^ 0xff
-    po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                   psg_seed=psg_seed, hw_seed=hw_seed, io_seed=io_seed,
-                                   schedule=schedule, wait_sites=wait_sites)
+    po_final, po_writes, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
+                                           psg_seed=psg_seed, hw_seed=hw_seed, io_seed=io_seed,
+                                           schedule=schedule, wait_sites=wait_sites)
     # Poisoning can steer the ORACLE into a modeled hardware read the plain run never made, and one
     # the case does not declare would be served a fabricated 0 on this pass too.
     _vet_hw_reads_are_declared(entry, hw_seed, po_regs)
@@ -2384,12 +2393,17 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
     _vet_hw_write_state(entry, po_regs, waived)
     _vet_io_state(entry, po_regs)
     _vet_schedule_ran_the_same_wait(entry, po_regs)
+    po_window_drops = drops.rerun_window_spans(f"{label(entry)} @ {entry:#x} (poisoned run)", dropped, po_writes,
+                                               po_regs["writes_truncated"])
+
+    def excluded_either_run(a):
+        return excluded(a) or drops.within(a, po_window_drops)
     pc_final = bytes(buf)
     # Same fast path as the plain compare in differential(), memoryview slices and all: the
     # byte-by-byte walk below is ~200x the cost of one bytes() compare over the same span, and it is
     # only ever needed to LOCATE a difference. Measured on Zynaps' suite, where every attribution
     # pass is clean: 49 ms per call against 0.24 ms over its 1 MiB prefix, ~15% of the whole run.
-    bad = differing_addresses(memoryview(po_final), memoryview(pc_final), diff_spans(), excluded)
+    bad = differing_addresses(memoryview(po_final), memoryview(pc_final), diff_spans(), excluded_either_run)
     if bad:
         a = bad[0]
         raise AssertionError(
@@ -2401,7 +2415,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
 
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
                  psg_seed=None, hw_seed=None, io_seed=None, schedule=None, wait_sites=None,
-                 hw_waiver=None):
+                 hw_waiver=None, dropped=drops.NOTHING_DROPPED):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -2417,6 +2431,12 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     outside [STACK_GUARD_LO, STACK_BAND_HI), the band ``diff_spans`` already drops (e.g. _start
     moves A7 to 0x1b044). The candidate is pure C and never writes a machine stack, so excluding
     the oracle's stack band is sound.
+    ``dropped`` is for a DOCUMENTED divergence outside the stack: a ``drops.Dropped`` of fixed
+    ``spans`` and per-run ``windows``, each ``(lo, hi, why)`` (the module says which is which). The
+    plain run's drops are held to ``drops.vet_dropped`` — a reason, and every byte one the oracle's
+    plain run stores — and then left out of the plain diff BEFORE the ``poison`` gate, so a case that
+    drops a byte the candidate never writes still gets its attribution pass; ``_attribution_check``
+    neither poisons nor compares it. Not ``exclude``, which ``_vet_exclude_bands`` keeps to stack bands.
     ``max_insns`` caps the oracle run (raise it for data-heavy functions like the unpacker).
     Raises before comparing anything if the candidate made an ``os_*`` call the TOS model refuses
     (``_vet_no_os_refusal``) — such a case tests nothing, however clean its bytes look — or if the
@@ -2499,6 +2519,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
                                         schedule=schedule, wait_sites=wait_sites)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
+    o_drops = drops.plain_run_spans(f"{label(entry)} @ {entry:#x}", dropped, o_writes, o_regs["writes_truncated"])
     _vet_write_ledger_below_cap(entry, o_regs)
     _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs)
     # Before the candidate runs at all: a case whose oracle was served a fabricated hardware byte
@@ -2526,7 +2547,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     _vet_no_os_refusal(entry)
 
     def excluded(a):
-        return any(lo <= a < hi for lo, hi in (exclude or ()))
+        return drops.within(a, exclude or ()) or drops.within(a, o_drops)
 
     # Diff everything but [STACK_GUARD_LO, STACK_BAND_HI): the oracle uses that band as a real
     # machine stack (return address, saved registers) that the C reconstruction has no analogue for.
@@ -2589,10 +2610,10 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     _vet_schedule_ran_the_same_wait(entry, o_regs)
 
     if poison and not diffs:
-        _vet_poison_is_attributable(entry, o_regs["sched"], o_writes)
+        _vet_poison_is_attributable(entry, o_regs["sched"], o_writes, o_drops)
         _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
                            stop_pc, max_insns, psg_seed, hw_seed, io_seed, schedule, wait_sites,
-                           waived)
+                           waived, dropped, o_drops)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

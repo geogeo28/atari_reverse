@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # reverse/tools, so `recreate_kit` imports
-from recreate_kit import project, rom_bench   # noqa: E402  (only importable after the path insert)
+from recreate_kit import drops, project, rom_bench   # noqa: E402  (only importable after the path insert)
 
 KIT = Path(__file__).resolve().parents[1]
 ENTRY_PROBE = KIT / "bench" / "entry_probe.c"
@@ -770,9 +770,9 @@ FAKE_PARK_STORED = _stored(FAKE_PARK[:2])
 
 def test_a_drop_over_bytes_the_original_never_writes_is_refused():
     """...because it could only hide OUR stores: the ROM stored nothing there, so anything that differs there is ours."""
-    rom_bench.vet_dropped("core", (FAKE_PARK,), FAKE_PARK_STORED)
+    drops.vet_dropped("core", (FAKE_PARK,), FAKE_PARK_STORED)
     with pytest.raises(AssertionError, match="never writes"):
-        rom_bench.vet_dropped("core", (FAKE_PARK,), {})
+        drops.vet_dropped("core", (FAKE_PARK,), {})
 
 
 def test_a_drop_one_longword_wider_than_the_park_is_refused():
@@ -780,7 +780,7 @@ def test_a_drop_one_longword_wider_than_the_park_is_refused():
     whole-span "anything changed" test let through, hiding whatever ours stored there."""
     lo, hi, why = FAKE_PARK
     with pytest.raises(AssertionError, match=rf"4 byte\(s\) of which the ORIGINAL never writes, the first at {hi:#x}"):
-        rom_bench.vet_dropped("core", ((lo, hi + 4, why),), FAKE_PARK_STORED)
+        drops.vet_dropped("core", ((lo, hi + 4, why),), FAKE_PARK_STORED)
 
 
 def test_a_park_the_original_stores_only_in_part_is_refused():
@@ -788,20 +788,20 @@ def test_a_park_the_original_stores_only_in_part_is_refused():
     lo, hi, _why = FAKE_PARK
     stored = _stored((lo, lo + 1), (lo + 2, hi))
     with pytest.raises(AssertionError, match=f"the first at {lo + 1:#x}"):
-        rom_bench.vet_dropped("core", (FAKE_PARK,), stored)
+        drops.vet_dropped("core", (FAKE_PARK,), stored)
 
 
 def test_a_drop_over_an_overflowed_ledger_is_refused():
     """An incomplete ledger cannot vouch for a byte, so no drop is honoured over one — and no drop needs it."""
     with pytest.raises(AssertionError, match="overflowed"):
-        rom_bench.vet_dropped("core", (FAKE_PARK,), FAKE_PARK_STORED, truncated=True)
-    rom_bench.vet_dropped("core", (), {}, truncated=True)
+        drops.vet_dropped("core", (FAKE_PARK,), FAKE_PARK_STORED, truncated=True)
+    drops.vet_dropped("core", (), {}, truncated=True)
 
 
 @pytest.mark.parametrize("span", ((FAKE_PARK_AT, FAKE_PARK_AT + 4, ""), (FAKE_PARK_AT, FAKE_PARK_AT, "empty")))
 def test_a_drop_with_no_reason_or_no_bytes_is_refused(span):
     with pytest.raises(AssertionError, match="documented difference"):
-        rom_bench.vet_dropped("core", (span,), FAKE_PARK_STORED)
+        drops.vet_dropped("core", (span,), FAKE_PARK_STORED)
 
 
 def test_a_row_that_drops_nothing_is_compared_whole(monkeypatch):

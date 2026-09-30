@@ -14,9 +14,10 @@ PY ?= ../../projects/buggyboy/recreate/.venv/bin/python
 # scripts that import `emu` without going through a project — is a command that exists.
 ORACLE_VIA ?= ../../projects/buggyboy/recreate
 
+# The kit's suite runs under its own watchdog plugin too, as every project's does (kit.mk, WATCHDOG_PLUGIN).
 .PHONY: test clean oracle
 test: oracle
-	$(PY) -m pytest -q test
+	PYTHONPATH=.. $(PY) -m pytest -q -p recreate_kit.watchdog test
 
 oracle:
 	$(MAKE) -C $(ORACLE_VIA) oracle

@@ -70,6 +70,7 @@ from pathlib import Path
 import subprocess
 
 from . import project
+from .drops import vet_dropped
 from .asm_twin import (CALLEE_SAVED_SEEDS, BLOB_ARG_BYTES, BLOB_FRAME_BYTES, blob_entry,
                        elf_symbols, require_built, stage_stack_args, vet_blob_intact,
                        vet_callee_saved)
@@ -785,42 +786,6 @@ def _vet_register_file(symbol, ours, original):
         raise AssertionError(
             f"the m68k build of {symbol} left a different register file than the original: {shown}. "
             f"A transcription is held to the whole of it, preserved and clobbered alike")
-
-
-def vet_dropped(who, dropped, writes, truncated=False):
-    """Each `(lo, hi, why)` a comparison drops must be a span the ORIGINAL writes, EVERY BYTE of it.
-
-    THE ONE RULE for a drop, whichever differential makes it: `RomBench.measure`'s (`who` a row) and a
-    project's Tier 1 case (`who` a case), each handing the ORIGINAL's write ledger (`emu.run`'s `writes`,
-    `{address: byte}`) and whether that ledger overflowed — an incomplete one cannot vouch for a byte.
-
-    A DROP IS FOR A DIFFERENCE BY NATURE — a return address each build parks where the ROM parks its own,
-    a trap frame's saved PC, a record the reconstruction documents it omits — never for scratch, and the
-    rule that tells the two apart is checked here rather than trusted: the original's run must STORE every
-    dropped byte. A byte it never stores can only be hiding OUR stores, which is the output the comparison
-    is for; so a span holding one is refused — PER BYTE, since a span the original writes only in part (a
-    longword parked, the longword after it widened into the drop) hides ours in the rest — as a span with
-    no reason or no bytes is.
-
-    WHAT THIS CANNOT SEE is a wrong value ours writes INSIDE a span the original also writes — that is
-    what dropping it means — so a project drops at Tier 3 only what its Tier 1 differential still
-    compares, where the host build parks the value the ROM does.
-    """
-    if dropped and truncated:
-        raise AssertionError(
-            f"{who} drops {len(dropped)} span(s) over a run whose write ledger overflowed — the ledger cannot "
-            f"say the original stores every byte of them. Shorten the run, or drop nothing")
-    for lo, hi, why in dropped:
-        if not why or not lo < hi:
-            raise AssertionError(
-                f"{who} drops [{lo:#x}, {hi:#x}) with {'no reason' if not why else 'no bytes'} — a "
-                f"span is left out of the comparison only as a documented difference, and only a real one")
-        unwritten = [address for address in range(lo, hi) if address not in writes]
-        if unwritten:
-            raise AssertionError(
-                f"{who} drops [{lo:#x}, {hi:#x}) ({why}), {len(unwritten)} byte(s) of which the ORIGINAL "
-                f"never writes, the first at {unwritten[0]:#x} — the drop can only hide our build's stores "
-                f"there. Drop only what the original writes")
 
 
 def _vet_same_wait(symbol, o_regs, ours):

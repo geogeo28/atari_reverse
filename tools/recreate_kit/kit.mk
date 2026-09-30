@@ -273,8 +273,13 @@ venv:
 # Run the differential suite in parallel across cores (pytest-xdist). Override with
 # e.g. `make test PYTEST_ARGS=-n0` for a serial run, or `PYTEST_ARGS='-n4 -k fuzz'`.
 PYTEST_ARGS ?= -n auto
+# Every suite runs under the kit's watchdog (`recreate_kit/watchdog.py`): a test that never returns — a candidate
+# spinning in host C, which Python cannot interrupt — ends the process with its stack on the real stderr instead of
+# hanging the run. Imported as `recreate_kit.watchdog`, so PYTHONPATH reaches `tools/`, $(KIT)'s parent. It goes
+# BEFORE $(PYTEST_ARGS), so a `-p no:recreate_kit.watchdog` there still switches it off.
+WATCHDOG_PLUGIN := -p recreate_kit.watchdog
 test: $(CAND) $(ORACLE) $(ASM_BIN)
-	$(PY) -m pytest -q $(PYTEST_ARGS) test
+	PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(WATCHDOG_PLUGIN) $(PYTEST_ARGS) test
 
 # The same suite over an image whose surroundings are PROT_NONE, so a candidate that indexes its
 # `uint8_t *image` past either end FAULTS instead of quietly reading the host heap. It is the
@@ -290,7 +295,7 @@ test: $(CAND) $(ORACLE) $(ASM_BIN)
 # `recreate_kit.guarded_image`; everything else is the `test` target with that plugin loaded.
 GUARDED_PYTEST_ARGS ?= -n auto
 guarded: $(CAND) $(ORACLE) $(ASM_BIN)
-	PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(GUARDED_PYTEST_ARGS) -p recreate_kit.guarded_image test
+	PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(WATCHDOG_PLUGIN) $(GUARDED_PYTEST_ARGS) -p recreate_kit.guarded_image test
 
 # Project artifacts only. The oracle + generated opcode tables in $(GENDIR) are SHARED by every
 # project (and would be deleted out from under a concurrent build), so they have their own target

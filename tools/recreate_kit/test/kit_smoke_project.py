@@ -362,13 +362,59 @@ _HW_POLL_UNTIL_IDLE_CODE = (
     + struct.pack(">Bb", _BEQ_SHORT, -_GPIP_POLL_BYTES)          # beq.s .again
     + struct.pack(">H", 0x4E75))                                 # rts
 
+# ---- a DROPPED byte beside an output: `harness.differential`'s `dropped` ----
+# Two byte stores: an OUTPUT a reconstruction makes, and a byte it deliberately never writes — the shape
+# of the TOS 1.02 AES's Line-F mask word, which every masked return rewrites and a C `rts` does not. The
+# attribution pass must still run over the output while the drop is left out, or a case that drops a
+# byte loses skipped-store detection everywhere else (test_dropped_spans.py).
+DROP_OUTPUT_AT = 0x30050              # in-image, clear of the other routines' results
+DROP_SPAN_AT = 0x30052
+DROP_OUTPUT_VALUE = 0x5A
+DROP_SPAN_VALUE = 0xC3
+
+_OUTPUT_AND_DROP_CODE = (struct.pack(">HHI", _MOVE_B_IMM_ABSL, DROP_OUTPUT_VALUE, DROP_OUTPUT_AT)
+                         + struct.pack(">HHI", _MOVE_B_IMM_ABSL, DROP_SPAN_VALUE, DROP_SPAN_AT)
+                         + struct.pack(">H", 0x4E75))                    # rts
+
+# ...and one whose drop's EXTENT depends on the output byte's staged value: a second dropped byte is
+# stored only when the output does not already hold what the routine leaves. The attribution pass
+# inverts the output, so its poisoned run stores a part of the window the plain run did not.
+DROP_SECOND_SPAN_AT = 0x30054
+_MOVE_B_IMM_ABSL_BYTES = 8            # the store the `beq` skips
+
+_OUTPUT_AND_BRANCHING_DROP_CODE = (
+    struct.pack(">HHI", _CMPI_B_IMM_ABSL, DROP_OUTPUT_VALUE, DROP_OUTPUT_AT)
+    + struct.pack(">Bb", _BEQ_SHORT, _MOVE_B_IMM_ABSL_BYTES)
+    + struct.pack(">HHI", _MOVE_B_IMM_ABSL, DROP_SPAN_VALUE, DROP_SECOND_SPAN_AT)
+    + _OUTPUT_AND_DROP_CODE)
+
+# ...and one that READS its dropped byte before storing it, and skips the output unless the byte is still
+# what the case staged (0): a canary in a dropped byte would steer the ORACLE's poisoned run off the path
+# the plain run took, which is why the attribution pass leaves a drop unpoisoned.
+_TST_B_ABSL = 0x4A39
+
+_READS_ITS_DROP_CODE = (struct.pack(">HI", _TST_B_ABSL, DROP_SPAN_AT)
+                        + struct.pack(">Bb", _BNE_SHORT, _MOVE_B_IMM_ABSL_BYTES)
+                        + _OUTPUT_AND_DROP_CODE)
+
+# ...and the mirror of the branching one: the second dropped byte is stored only when the output ALREADY holds what
+# the routine leaves, so the poisoned run (its output inverted) skips a byte the plain run stored. A FIXED drop of it
+# is right for the case — the plain run is the case — and must not be re-vetted against the poisoned run.
+_OUTPUT_AND_SKIPPABLE_DROP_CODE = (
+    struct.pack(">HHI", _CMPI_B_IMM_ABSL, DROP_OUTPUT_VALUE, DROP_OUTPUT_AT)
+    + struct.pack(">Bb", _BNE_SHORT, _MOVE_B_IMM_ABSL_BYTES)
+    + struct.pack(">HHI", _MOVE_B_IMM_ABSL, DROP_SPAN_VALUE, DROP_SECOND_SPAN_AT)
+    + _OUTPUT_AND_DROP_CODE)
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
              _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
              _EVENT_MALLOC_CODE, _PTERM_CODE, _STAGED_FILE_CODE,
              _IO_READ_CODE, _IO_READ_PAIR_CODE, _IO_WORD_READ_CODE, _IO_WRITE_THEN_READ_CODE,
-             _IO_STORE_AND_VERIFY_CODE, _IO_POLL_UNTIL_READY_CODE, _HW_POLL_UNTIL_IDLE_CODE)
+             _IO_STORE_AND_VERIFY_CODE, _IO_POLL_UNTIL_READY_CODE, _HW_POLL_UNTIL_IDLE_CODE,
+             _OUTPUT_AND_DROP_CODE, _OUTPUT_AND_BRANCHING_DROP_CODE, _READS_ITS_DROP_CODE,
+             _OUTPUT_AND_SKIPPABLE_DROP_CODE)
 
 
 def _entries():
@@ -386,7 +432,9 @@ def _entries():
  ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
  EVENT_MALLOC_ENTRY, PTERM_ENTRY, STAGED_FILE_ENTRY,
  IO_READ_ENTRY, IO_READ_PAIR_ENTRY, IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY,
- IO_STORE_AND_VERIFY_ENTRY, IO_POLL_UNTIL_READY_ENTRY, HW_POLL_UNTIL_IDLE_ENTRY) = _entries()
+ IO_STORE_AND_VERIFY_ENTRY, IO_POLL_UNTIL_READY_ENTRY, HW_POLL_UNTIL_IDLE_ENTRY,
+ OUTPUT_AND_DROP_ENTRY, OUTPUT_AND_BRANCHING_DROP_ENTRY, READS_ITS_DROP_ENTRY,
+ OUTPUT_AND_SKIPPABLE_DROP_ENTRY) = _entries()
 
 # The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
 PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET
