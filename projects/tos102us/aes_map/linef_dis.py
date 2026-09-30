@@ -54,6 +54,11 @@ def objdump(lo, hi):
         match = _OBJDUMP_LINE.match(line)
         if match:
             address, words, text = int(match.group(1), 16), match.group(2).split(), match.group(3).strip()
+            # objdump prints an 8-byte instruction's last extension word on a line of its own, with an address and
+            # no text: it continues the instruction before it, it is not an instruction (`move.l abs.l,d16(An)`).
+            if not text and last is not None and address == last + decoded[last][0]:
+                decoded[last][0] += len(words) * WORD_BYTES
+                continue
             decoded[address] = [len(words) * WORD_BYTES, text]
             last = address
             continue
