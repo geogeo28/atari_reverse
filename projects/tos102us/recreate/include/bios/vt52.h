@@ -21,6 +21,7 @@
 
 #include "machine.h"
 #include "addrs.h"
+#include "m68k_idioms.h"
 
 /* ---- the driver ($fc42f2 and $fc42e6), for `src/bios/bcon.c`'s Bconout dispatch ---------------- */
 
@@ -42,6 +43,27 @@ void console_hide_cursor(uint8_t *image);
 
 /* $fc45be — and back on, whatever depth the lock had reached: `ESC e` and `Cursconf(1)`. */
 void console_show_cursor(uint8_t *image);
+
+/* $fc45ae — one level of that lock off, the cursor drawn again if it was the last. */
+void console_unlock_cursor(uint8_t *image);
+
+/* ---- the bodies the VDI's escape (opcode 5) enters besides those -----------------------------------
+ *
+ * Its jump table holds the addresses ESC's own two do, so each of these is one body alone: `ESC <letter>`
+ * past the state machine, which is left as it was. `src/vdi/escape.c` calls them by name, and the `.S` that
+ * ships (`src/vdi/escape.S`) through one thunk each, as it does the lock, the placement and the entry. */
+void console_cursor_up(uint8_t *image);                 /* $fc4468 — ESC A */
+void console_cursor_down(uint8_t *image);               /* $fc4478 — ESC B */
+void console_cursor_right(uint8_t *image);              /* $fc448c — ESC C */
+void console_cursor_left(uint8_t *image);               /* $fc44a0 — ESC D */
+void console_cursor_home(uint8_t *image);               /* $fc44b0 — ESC H */
+void console_clear_screen_and_home(uint8_t *image);     /* $fc4464 — ESC E */
+void console_clear_to_end_of_screen(uint8_t *image);    /* $fc44b8 — ESC J */
+void console_clear_to_end_of_line(uint8_t *image);      /* $fc44ca — ESC K */
+void console_reverse_video(uint8_t *image, int on);     /* $fc4510 / $fc4516 — ESC p / ESC q */
+
+/* $fc49fc — the cursor to (column, row), each clamped to the screen. */
+void console_place_cursor(uint8_t *image, uint16_t column, uint16_t row);
 
 /* ---- the four screen routines ($fd141c / $fd149a / $fd14de / $fd1542) --------------------------
  *
@@ -73,16 +95,34 @@ void console_clear_cells(uint8_t *image, uint16_t x1, uint16_t y1, uint16_t x2, 
  * queued` row 2400 -> 2552 cycles (measured 2026-09-19, `make bench`), which is a pinned row on the
  * handler that runs fifty times a second. One definition, no call. */
 
-/* The bound on where a console screen write may land. Every address these routines compute comes out
- * of RAM the driver keeps, so a block holding nonsense walks off the image here — where the original
- * walks its own address space. HOST-ONLY, the way the kit prescribes (kit.mk: "asserted where there
- * is a process to abort"); on the machine there is nothing to assert against. */
-static inline uint8_t *console_screen_byte(uint8_t *image, uint32_t at)
+/* THE CONSOLE'S ONE BUS POLICY: the `bytes` of screen a write covers from `at`, for EVERY screen writer —
+ * the cursor inversion below, the glyph, the two scrolls and the rectangle clear (`src/bios/conout_glyph.c`).
+ *
+ * The address is the ROM's plain 32-bit sum, formed first, and the 68000 drives 24 bits of it: a cell
+ * address past 16 MB WRAPS (`bus_dereference`, cost-only on target). That is reachable — a row of $ffff
+ * (vs_curaddress of 0, or `ESC Y` with a row byte below the bias) is $ffff text rows down, which is one
+ * row ABOVE the screen once the bus drops the top byte — so the mask comes before the bound, and so any
+ * raw address in 16 MB + [0, 1 MB) lands in RAM on every console path alike (`test_bios_console_bus.py`).
+ * The bound is then on what is left: every address comes out of RAM the driver keeps, so a block holding
+ * nonsense — or a COLUMN of $ffff, whose cell lies past the 1 MB machine even wrapped
+ * (`test_vdi_escape.py` pins that refusal) — walks off the image here, where the original walks its own
+ * address space. HOST-ONLY, the way the kit prescribes (kit.mk: "asserted where there is a process to
+ * abort"). A span is checked ONCE, at its two ends: the writers walk a host cursor through it. */
+static inline uint8_t *console_screen_block(uint8_t *image, uint32_t at, uint32_t bytes)
 {
+    at = bus_dereference(at);
 #ifdef RECREATE_HOST_DIFFERENTIAL
-    assert(at < ST_RAM_BYTES);
+    assert(bytes <= ST_RAM_BYTES && at <= ST_RAM_BYTES - bytes);
+#else
+    (void)bytes;
 #endif
     return image + at;
+}
+
+/* ...and the one byte the cursor inversion writes. */
+static inline uint8_t *console_screen_byte(uint8_t *image, uint32_t at)
+{
+    return console_screen_block(image, at, 1);
 }
 
 /* $fc4a1e — `not.b` down one column of every bit plane: the cursor cell, inverted in place.

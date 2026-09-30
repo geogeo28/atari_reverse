@@ -70,6 +70,7 @@
 #include "addrs.h"
 #include "bios/vt52.h"
 #include "staged_call.h"
+#include "xbios/xbios.h"
 
 /* ---- the monitor follower ----------------------------------------------------------------------
  * `move.w #2000,d0 / dbf d0,*` — 2001 passes of nothing, which is the shifter being given time to
@@ -267,9 +268,10 @@ static void run_the_vbl_queue(uint8_t *image)
     }
 }
 
-/* BIOS Scrdmp's whole body ($fc0d50): call whatever `scr_dump` names, then set `_dumpflg` so the
- * next frame does not ask again. The VBL reaches it when the flag is ZERO — Alt-Help clears it. */
-static void screen_dump(uint8_t *image)
+/* XBIOS Scrdmp's whole body ($fc0d50): call whatever `scr_dump` names, then set `_dumpflg` so the
+ * next frame does not ask again. The VBL reaches it by `bsr` when the flag is ZERO — Alt-Help clears it —
+ * and the VDI's v_hardcopy by `trap #14` (`xbios/xbios.h`). */
+void xbios_scrdmp(uint8_t *image)
 {
     call_vector(image, be32(image + SYSVAR_SCR_DUMP));
     wr16(image + SYSVAR_DUMPFLG, 0xffff);
@@ -294,7 +296,7 @@ void service_this_vertical_blank(uint8_t *image)
     floppy_vbl(image);
     run_the_vbl_queue(image);
     if (be16(image + SYSVAR_DUMPFLG) == 0)
-        screen_dump(image);
+        xbios_scrdmp(image);
 }
 
 void isr_vbl(uint8_t *image)

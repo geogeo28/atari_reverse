@@ -38,8 +38,6 @@
 #define PIXEL_IN_GROUP_MASK  15u
 #define LEFTMOST_PIXEL_BIT   0x8000u
 #define RIGHTMOST_PIXEL_BIT  0x0001u
-#define PERIMETER_ON         1          /* WS_FILL_PER is tested for exactly 1 ($fcc252 cmpi.w #1) */
-#define PERIMETER_STYLE      0xffff     /* the outline is solid ($fcc25a) */
 #define CLIPPED_TOP_ROW_MIN  1          /* ($fcc1b2 cmpi.w #1) */
 #define SEED_THE_SEED_COLOUR 1          /* VDI_FILL_SEED_TYPE's two values ($fd0986, $fd09bc) */
 #define SEED_UP_TO_A_COLOUR  0
@@ -309,9 +307,9 @@ void vdi_plygn(uint8_t *image)
         linea_filled_poly(image);
         wr16(image + LINEA_Y1, (uint16_t)(be16(image + LINEA_Y1) - 1));
     }
-    if (current_work_word(image, WS_FILL_PER) != PERIMETER_ON)
+    if (current_work_word(image, WS_FILL_PER) != VDI_FILL_PERIMETER_ON)
         return;
-    wr16(image + LINEA_LN_MASK, PERIMETER_STYLE);
+    wr16(image + LINEA_LN_MASK, VDI_PERIMETER_LINE_MASK);
     set_contrl_word(image, CONTRL_N_PTSIN, (uint16_t)(contrl_word(image, CONTRL_N_PTSIN) + 1));
     vdi_polyline(image);
 }

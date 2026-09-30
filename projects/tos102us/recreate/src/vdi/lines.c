@@ -339,8 +339,8 @@ void vdi_wline(uint8_t *image)
         vdi_arrow(image);
     vdi_s_fa_attr(image);
     cursor = segment.caller_points = linea_pointer(image, LINEA_PTSIN);
-    segment.x0 = ram_word(image, cursor);
-    segment.y0 = ram_word(image, cursor + VDI_POINT_Y);
+    segment.x0 = caller_word(image, cursor);
+    segment.y0 = caller_word(image, cursor + VDI_POINT_Y);
     cursor += VDI_POINT_BYTES;
     if (ram_word(image, LINEA_GDP_SAVED_BEG_STYLE))
         vdi_do_circ(image, segment.x0, segment.y0);
@@ -349,8 +349,8 @@ void vdi_wline(uint8_t *image)
     for (index = 1; index < points; index++, cursor += VDI_POINT_BYTES) {
         int16_t dx, dy;
 
-        segment.x1 = ram_word(image, cursor);
-        segment.y1 = ram_word(image, cursor + VDI_POINT_Y);
+        segment.x1 = caller_word(image, cursor);
+        segment.y1 = caller_word(image, cursor + VDI_POINT_Y);
         dx = (int16_t)(segment.x1 - segment.x0);
         dy = (int16_t)(segment.y1 - segment.y0);
         if (dx == 0 && dy == 0)

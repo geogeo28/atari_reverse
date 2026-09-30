@@ -35,6 +35,11 @@ uint32_t xbios_setscreen(uint8_t *image, uint32_t entry_d0, uint32_t logical, ui
                          uint16_t resolution);
 uint32_t xbios_setpalette(uint8_t *image, uint32_t entry_d0, uint32_t palette);
 
+/* $fc0d50 — `Scrdmp`, whose body is the VBL's screen dump (`src/bios/vbl.c`): the VDI's v_hardcopy
+ * (`src/vdi/escape.c`) takes it through `trap #14` on target and calls it directly off it. It writes no D0
+ * of its own, and its one caller discards what the trap answers. */
+void xbios_scrdmp(uint8_t *image);
+
 #ifndef RECREATE_HOST_DIFFERENTIAL
 /* ---- the machine's own `trap #14`, on target ---------------------------------------------------
  *

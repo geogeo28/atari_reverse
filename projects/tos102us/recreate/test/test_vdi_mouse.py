@@ -376,6 +376,15 @@ vdi.register("vdi_v_show_c, forced", addrs.VDI_ROM_V_SHOW_C,
              call("VDI_ROM_V_SHOW_C", (0,), merge_pokes(vdi.linea_pokes(M_HID_CT=3, GCURX=40, GCURY=30),
                                                          vdi_raster.CANVAS)))
 vdi.register("vdi_v_hide_c, the arrow removed", addrs.VDI_ROM_V_HIDE_C, call("VDI_ROM_V_HIDE_C"))
+# ...and the two LIGHT paths, which the escape's v_dspcur/v_rmcur rows reach only as the ROM's own code (escape.S's
+# `jmp`s keep the ROM's addresses), so the C that ships for them is priced here: shown with nothing hidden, and
+# hidden once more with the arrow already gone — the states `test_vdi_escape.py`'s two rows stage — and a show that
+# only unwinds one of two hides, the dearest of the three as shipped.
+vdi.register("vdi_v_show_c, not drawn", addrs.VDI_ROM_V_SHOW_C, call("VDI_ROM_V_SHOW_C", (0,), vdi.linea_pokes(M_HID_CT=0)))
+vdi.register("vdi_v_show_c, still hidden", addrs.VDI_ROM_V_SHOW_C,
+             call("VDI_ROM_V_SHOW_C", (1,), vdi.linea_pokes(M_HID_CT=2)))
+vdi.register("vdi_v_hide_c, already hidden", addrs.VDI_ROM_V_HIDE_C,
+             call("VDI_ROM_V_HIDE_C", onto=vdi.linea_pokes(M_HID_CT=1)))
 vdi.register("vdi_vsc_form, a form", addrs.VDI_ROM_VSC_FORM, call("VDI_ROM_VSC_FORM", FORM_INTIN))
 vdi.register("vdi_default_user_cur, queued", addrs.VDI_ROM_DEFAULT_USER_CUR, {}, regs={"d0": 10, "d1": 20})
 vdi.register("vdi_vbl_draw_cursor, the arrow moved", addrs.VDI_ROM_VBL_DRAW_CURSOR,

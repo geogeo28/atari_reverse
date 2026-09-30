@@ -55,9 +55,9 @@ ALLOWED_ALIASES = {
         "in it, which the published layout puts at the same address",
     frozenset(("GEMDOS_FAT12_ENTRY_MASK", "LINEA_OPCODE_MASK")):
         "two 12-bit MASKS, not addresses: a FAT12 entry and the low bits of a $Axxx opcode",
-    frozenset(("BCB_EMPTY", "VDI_DDA_DOUBLE", "VDI_FILL_EMPTY")):
-        "three word MARKERS, not addresses, each a `-1`: a buffer holding no drive, the text scaler's "
-        "doubling increment and a taken contour-fill queue record",
+    frozenset(("BCB_EMPTY", "VDI_DDA_DOUBLE", "VDI_FILL_EMPTY", "VDI_PERIMETER_LINE_MASK")):
+        "four word VALUES, not addresses, each a `-1`: a buffer holding no drive, the text scaler's "
+        "doubling increment, a taken contour-fill queue record and a fill outline's solid line mask",
     frozenset(("GEMDOS_TIME_MAX_MINUTE", "VDI_FILL_QUEUE_LAST")):
         "two COUNTS, not addresses, both 1920: a day's minutes in two-minute steps and the contour fill's "
         "queue in words",

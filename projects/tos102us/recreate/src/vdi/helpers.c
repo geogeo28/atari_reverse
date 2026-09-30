@@ -481,7 +481,6 @@ uint32_t vdi_gemdos_call(uint8_t *image, uint32_t return_site, uint16_t function
  * style solid; and the line's ends plain, so the outline does not draw arrowheads of its own. In the
  * ROM's order, which only shows when the workstation overlaps the Line-A block. */
 #define LINE_STYLE_SOLID      VDI_LINE_STYLES    /* the table's first mask ($fcd064) */
-#define PERIMETER_ON          1                  /* ($fcd084 move.w #1)              */
 
 void vdi_s_fa_attr(uint8_t *image)
 {
@@ -491,7 +490,7 @@ void vdi_s_fa_attr(uint8_t *image)
     wr16(image + LINEA_GDP_SAVED_FILL_COLOR, be16(image + work + WS_FILL_COLOR));
     wr16(image + work + WS_FILL_COLOR, be16(image + work + WS_LINE_COLOR));
     wr16(image + LINEA_GDP_SAVED_FILL_PER, be16(image + work + WS_FILL_PER));
-    wr16(image + work + WS_FILL_PER, PERIMETER_ON);
+    wr16(image + work + WS_FILL_PER, VDI_FILL_PERIMETER_ON);
     wr32(image + LINEA_PATPTR, VDI_PATTERN_SOLID);
     wr16(image + LINEA_PATMSK, 0);
     wr16(image + LINEA_MULTIFILL, 0);

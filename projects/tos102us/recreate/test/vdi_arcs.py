@@ -119,17 +119,26 @@ def scratch_pokes(xc, yc, xrad, yrad, begin, end, sweep):
                            GDP_END_ANG=end, GDP_DEL_ANG=sweep, GDP_N_STEPS=n_steps(xrad, yrad))
 
 
+def circle_call(xc, yc, radius, work):
+    """GDP 4 as a caller makes it: the centre and, as the third point's x, the radius."""
+    return gdp_pokes(VDI_GDP_CIRCLE, work, ptsin=(xc, yc, 0, 0, radius, 0))
+
+
 def circle_arm_pokes(xc, yc, radius, work):
-    """vdi_gdp's circle arm (GDP 4) up to its `bsr clc_arc` ($fcbc70..$fcbcc0): three points in ptsin."""
+    """vdi_gdp's circle arm (GDP 4) up to its `bsr clc_arc` ($fcbc70..$fcbcc0): the call, and the scratch it makes."""
     yrad = smul_div(radius, PIXEL_WIDTH, PIXEL_HEIGHT)
-    call = gdp_pokes(VDI_GDP_CIRCLE, work, ptsin=(xc, yc, 0, 0, radius, 0))
-    return merge_pokes(call, scratch_pokes(xc, yc, radius, yrad, 0, TURN, TURN))
+    return merge_pokes(circle_call(xc, yc, radius, work), scratch_pokes(xc, yc, radius, yrad, 0, TURN, TURN))
+
+
+def ellipse_call(xc, yc, xrad, yrad, work):
+    """GDP 5 as a caller makes it: the centre and the two radii."""
+    return gdp_pokes(VDI_GDP_ELLIPSE, work, ptsin=(xc, yc, xrad, yrad))
 
 
 def ellipse_pokes(xc, yc, xrad, yrad, work):
-    """vdi_gdp's ellipse arm (GDP 5) up to its `bsr clc_arc` ($fcbcc8..$fcbd18), in raster coordinates."""
-    call = gdp_pokes(VDI_GDP_ELLIPSE, work, ptsin=(xc, yc, xrad, yrad))
-    return merge_pokes(call, scratch_pokes(xc, yc, xrad, yrad, 0, 0, TURN))
+    """vdi_gdp's ellipse arm (GDP 5) up to its `bsr clc_arc` ($fcbcc8..$fcbd18), in raster coordinates: the call, and
+    the scratch it makes."""
+    return merge_pokes(ellipse_call(xc, yc, xrad, yrad, work), scratch_pokes(xc, yc, xrad, yrad, 0, 0, TURN))
 
 
 def rbox_work(*, outlined=True, **fields):

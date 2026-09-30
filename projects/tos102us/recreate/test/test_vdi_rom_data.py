@@ -51,11 +51,22 @@ ROM_ADDRESSES_AS_DATA = {
     "blit.S": {"VDI_MAP_COL": TABLE},
     # BLIT_EDGE_MASK_TABLE ($fd1304) is inside cpu_blit's region, read by cpu_blit's own C core.
     "blit.c": {"BLIT_EDGE_MASK_TABLE": REGION_TABLE, "LINEA_ROM_CPU_BLIT": CODE, "VDI_MAP_COL": TABLE},
+    # The entries: the Line-A handler's font table (the three ROM faces), the two primitives whose C ships and so have
+    # no `.S` entry for its opcode table to name ($a009 v_show_c, $a00f contour fill), and the dispatcher the `trap #2`
+    # entry `jsr`s, whose C ships. The dispatcher reads the VDI's opcode tables in place — tables of CODE addresses,
+    # every one a function a rebuilt ROM owes the table its linked address — and the handler's twin its own table.
+    "entry.S": {"FONT_ROM_6X6": TABLE, "FONT_ROM_8X8": TABLE, "FONT_ROM_8X16": TABLE, "LINEA_ROM_CONTOUR_FILL": CODE,
+                "VDI_ROM_V_SHOW_C": CODE, "VDI_ROM_DISPATCH": CODE},
+    "entry.c": {"LINEA_OPCODE_TABLE": REGION_TABLE, "VDI_OPCODE_TABLE": TABLE, "VDI_OPCODE_TABLE_EXT": TABLE},
+    # The graphic cursor's two arms, whose `jmp` names v_show_c and v_hide_c: their C ships, so the addresses stay the
+    # ROM's own, CODE values a rebuilt ROM owes an entry with the VDI function's convention.
+    "escape.S": {"VDI_ROM_V_HIDE_C": CODE, "VDI_ROM_V_SHOW_C": CODE},
     "fill.c": {"LINEA_ROM_SEEDABORT_DEFAULT": CODE, "VDI_FILL_PEN_MASKS": TABLE, "VDI_MAP_COL": TABLE,
                "VDI_REV_MAP_COL": TABLE},
     "helpers.c": {"LINE_STYLE_SOLID": TABLE, "VDI_PATTERN_SOLID": TABLE, "VDI_SINE_TABLE": TABLE},
     "inquire.c": {"FONT_ROM_6X6": TABLE, "VDI_REV_MAP_COL": TABLE, "VDI_SCRPT2_DEFAULT": TABLE},
-    "linea.c": {"LINEA_FONT_TABLE": TABLE, "LINEA_OPCODE_TABLE": TABLE},
+    # $a000's twin answers the two tables of the region `entry.S` transcribes; the `.S` answers its own.
+    "linea.c": {"LINEA_FONT_TABLE": REGION_TABLE, "LINEA_OPCODE_TABLE": REGION_TABLE},
     # v_pline's style masks and v_pmarker's shape pointers (the shapes themselves, $fd3664.., are read through them).
     "lines.c": {"VDI_LINE_STYLES": TABLE, "VDI_MARKER_SHAPES": TABLE},
     "mouse.S": {"VDI_MAP_COL": TABLE},

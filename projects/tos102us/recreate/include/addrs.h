@@ -197,6 +197,8 @@
 #define XBIOS_KEYTBL        0xfc302e
 #define XBIOS_PROTOBT_FN    18
 #define XBIOS_PROTOBT       0xfc15f8
+#define XBIOS_SCRDMP_FN     20          /* the VBL's screen dump (`src/bios/vbl.c`); v_hardcopy traps to it */
+#define XBIOS_SCRDMP        0xfc0d50
 #define XBIOS_CURSCONF_FN   21
 #define XBIOS_CURSCONF      0xfc4698
 #define XBIOS_BIOSKEYS_FN   24
@@ -922,6 +924,14 @@
 #define CON_STATE_AWAIT_Y_COLUMN    0xfc4388
 #define CON_STATE_AWAIT_FOREGROUND  0xfc43a4
 #define CON_STATE_AWAIT_BACKGROUND  0xfc43b8
+/* ...and the routines the VDI's escape reaches besides ESC's own bodies (`src/vdi/escape.S`'s thunks), each named for
+ * the C body it ships as (`bios/vt52.h`, `console_<name>`). The character entry is `XCONOUT_CON` past its
+ * `move.w 6(sp),d1` argument fetch: the escape enters with D1 already the word. */
+#define CON_HIDE_CURSOR     0xfc45de   /* the cursor's lock, entered past `lea $2994,a4` (A4 already holds it) */
+#define CON_UNLOCK_CURSOR   0xfc45ae
+#define CON_SHOW_CURSOR     0xfc45be   /* ESC e */
+#define CON_PLACE_CURSOR    0xfc49fc   /* D0 the column, D1 the row */
+#define CON_OUTPUT          0xfc42f6
 
 /* The cell geometry and the cursor, in the order the block holds them. `CON_CURSOR_DISABLE`,
  * `CON_CURSOR_ADDRESS`, `CON_CELL_HEIGHT`, `CON_PLANES`, `CON_LINE_BYTES`, `CON_BLINK_RATE` and
@@ -988,6 +998,10 @@
 #define CON_ESCAPE_POSITION    0x59    /* 'Y'   only and would silently skip a character literal   */
 #define CON_ESCAPE_LOWER_FIRST 0x62    /* 'b' */
 #define CON_ESCAPE_LOWER_LAST  0x77    /* 'w' */
+/* ...and the two ranges' jump tables: WORD offsets from the table's own address, one a letter. The VDI's
+ * escape (opcode 5, `VDI_ESCAPE_TABLE`) indexes into the same bodies (`test_vdi_escape.py` holds it to them). */
+#define CON_ESCAPE_UPPER_TABLE 0xfc43e8  /* `A`..`M`                        ($fc43d6)           */
+#define CON_ESCAPE_LOWER_TABLE 0xfc4402  /* `b`..`w`                        ($fc43e0)           */
 
 /* ---- GEMDOS ($fc4f6e trap entry, $fc94e4 dispatcher, the RAM-only leaves) ------------------------
  *
@@ -1633,6 +1647,11 @@
 #define VDI_ROM_NOP_OPCODE_34     34
 #define VDI_ROM_ESCAPE            0xfc427a   /* the escape sub-dispatcher, in the BIOS's range */
 #define VDI_ROM_ESCAPE_OPCODE     5
+/* ...and the escape's own code past its dispatch, in the three spans `src/vdi/escape.S` lays out from their first
+ * routines: the VT52 console's bodies lie between them, and the escape's table names those too. */
+#define VDI_ROM_VQ_CHCELLS        0xfc442e   /* vq_chcells .. v_exit_cur, which ends in ESC E's body */
+#define VDI_ROM_VS_CURADDRESS     0xfc44dc   /* vs_curaddress .. v_rmcur */
+#define VDI_ROM_V_FONTINIT        0xfc4a42   /* escape 102, past the console's cell routines */
 #define VDI_ROM_GDP               0xfcbbcc   /* the GDP sub-dispatcher */
 #define VDI_ROM_GDP_OPCODE        11
 #define VDI_ROM_V_CONTOURFILL     0xfd08e0   /* installs LINEA_ROM_SEEDABORT_DEFAULT, then $a00f */

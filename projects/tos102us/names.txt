@@ -244,9 +244,9 @@ cmt 0xfc4ebc trap #2 (GEM) entry installed at 0xfc4e72 into $88 before the AES e
 fn 0xfe3ea6 gem_trap2_aes
 cmt 0xfe3ea6 trap #2 (GEM) entry installed at 0xfe3c78 into $88 once the AES is up: d0 == 0xC8/0xC9 enters the AES at 0xfe65aa, d0 == 0 terminates via GEMDOS Pterm(0), anything else chains to the vector saved at 0x8c2a.
 fn 0xfc9f9e vdi_entry
-cmt 0xfc9f9e VDI entry (GEM trap #2, d0 = 0x73). Copies the caller's five-array parameter block from d1 into the VDI's own RAM at 0x299e, copies ptsin to 0x19da, calls vdi_dispatch and returns the value at 0x171e.
+cmt 0xfc9f9e VDI entry (GEM trap #2, d0 = 0x73). Copies the caller's five-array parameter block from d1 into the VDI's own RAM at 0x299e, copies ptsin to 0x19da (2n in a WORD, capped unsigned at 1024 words: $8000 points copies nothing, $8200 exactly 1024 with no cap; 512 written into the caller's contrl[1] before the copy), calls vdi_dispatch, gives the caller's count back through LINEA_CONTRL re-read, and returns the word at 0x171e in D0.w (D0's high word is the dispatched function's). Ships as src/vdi/entry.S's vdi_rom_entry.
 fn 0xfca9f6 vdi_dispatch
-cmt 0xfca9f6 VDI opcode dispatcher. Finds the workstation by handle, loads the attribute state, then indexes opcodes 1..39 in the table at 0xfd372c and 100..131 in the table at 0xfd37c8.
+cmt 0xfca9f6 VDI opcode dispatcher. Clears contrl[2]/[4] and VDI_RESULT, finds the workstation by handle (first match wins: v_opnvwk inserts a duplicate handle AHEAD of the older one; opcodes 1 and 100 skip the lookup; an unknown handle returns having called nothing), loads the attribute state (21 copies + MULTIFILL + MONO_STATUS, in a pinned order), then indexes opcodes 1..39 in the table at 0xfd372c and 100..131 in the table at 0xfd37c8; any other opcode still loads the workstation.
 fn 0xfe65aa aes_entry
 cmt 0xfe65aa AES entry (GEM trap #2, d0 = 0xC8). Reached from gem_trap2_aes; calls the AES dispatcher through the Line-F call table.
 fn 0xfe5d9c aes_dispatch
@@ -254,7 +254,7 @@ cmt 0xfe5d9c AES opcode dispatcher: sub #10 / cmp #115 bounds the opcode to 10..
 fn 0xfe64e6 aes_marshal_arrays
 cmt 0xfe64e6 AES parameter-block marshalling: copies the caller's contrl/intin/addrin arrays into local frames, calls aes_dispatch through Line-F $f2b0, then copies intout/addrout back.
 fn 0xfc9f0c linea_dispatch
-cmt 0xfc9f0c Line-A handler, installed at 0xfc037a into $28. Reads the faulting $aXXX word, masks the low 12 bits, bounds-checks it to 15 and jumps through the 16-entry table at 0xfc9f4a, advancing the stacked PC past the word.
+cmt 0xfc9f0c Line-A handler, installed at 0xfc037a into $28. Reads the faulting $aXXX word, masks the low 12 bits, bounds-checks it to 15 and jumps through the 16-entry table at 0xfc9f4a, advancing the stacked PC past the word. Clobbers D2/A2/A6 across the handlers it serves ($a007 adds 76 to A6, $a00d loads it). $fc9f0c..$fc9ffb (with $a000 and vdi_entry) ships as src/vdi/entry.S.
 fn 0xfee8c2 linef_handler
 cmt 0xfee8c2 GEM Line-F call handler, copied into a Malloc'd buffer and installed into $2c by the AES init at 0xfd9f4a. An EVEN $fXXX word is a one-word call through the 658-entry table at 0xfee900 (index = the low 12 bits as a byte offset); an ODD one is a return (unlk a6; rts, plus a movem mask of (op & 0x0ffe) * 4).
 fn 0xfd9eca gem_entry
@@ -308,6 +308,7 @@ fn 0xfc0b06 Setpalette
 fn 0xfc0b0e Setcolor
 fn 0xfc0b34 Puntaes   # ctx
 fn 0xfc0d50 Scrdmp
+cmt 0xfc0d50 XBIOS $14: jsr through scr_dump ($502), THEN _dumpflg ($4ee) := -1 (the dump reads it during the call); the VBL's Alt-Help arm is the same body. src/bios/vbl.c xbios_scrdmp.
 fn 0xfc0e96 Gettime
 fn 0xfc0ea4 Settime
 fn 0xfc0ef6 Blitmode   # ctx
@@ -340,7 +341,7 @@ fn 0xfc3088 Setprt
 fn 0xfc309a Kbrate
 fn 0xfc30bc Kbdvbase
 fn 0xfc31fa Prtblk   # ctx
-fn 0xfc427a vdi_escape   # ctx
+fn 0xfc427a vdi_escape
 fn 0xfc4698 Cursconf
 fn 0xfc5216 Fdup
 fn 0xfc52de Fforce
@@ -436,7 +437,7 @@ fn 0xfcb998 v_clswk
 fn 0xfcb9e0 v_pline
 fn 0xfcba7a v_pmarker
 fn 0xfcbbc0 v_fillarea
-fn 0xfcbbcc vdi_gdp   # ctx
+fn 0xfcbbcc vdi_gdp
 fn 0xfcbd7e vql_attributes
 fn 0xfcbdda vqm_attributes
 fn 0xfcbe3a vqf_attributes
@@ -1295,3 +1296,27 @@ cmt 0xfcd402 init_wk: current record from intin[1..10]; the fill style stored 1-
 cmt 0xfcd612 v_opnvwk: lowest handle in LIST order, linked after the record the walk stops at; duplicates a handle after a mid-list close
 cmt 0xfcd6a4 v_clsvwk: the walk has no end test (a record not on the list wanders through address 0); first match wins
 cmt 0xfcb998 v_clswk: every virtual record Mfree'd in list order, CUR_WORK left 0; the physical WS_NEXT left naming freed memory
+# ---- VDI band 4 (2026-09-29): the GDP, the entries, the escape ----
+var 0xfd3954 vdi_gdp_switch
+cmt 0xfcbbcc GDP (opcode 11): contrl[5] 1..10 through the longword switch at $fd3954 (signed range test; nothing stored outside it), inline arms; A5 = PTSIN held (gdp_rbox sorts through it, reloaded after vr_recfl's sort); bar outlined only for WS_FILL_PER == 1 exactly, in vr_recfl's COLBIT, through polyline; arm 8 clears LINE_BEG/END round gdp_rbox and puts them back; 434 bytes (cfg.txt: 92); $fcbd5e bra and $fcbd60 bhi dead; D7 "restored" by tst.l (sp)+
+var 0xfc9f9a linea_seedabort_default
+cmt 0xfc9f9a moveq #0,d0 / rts: the SEEDABORT v_contourfill installs (never abort); inside entry.S's region as a local label (a rebuilt ROM owes it a global symbol)
+var 0x19da vdi_ptsin_copy
+var 0x171e vdi_result
+var 0xfc4298 vdi_escape_jump_table
+cmt 0xfc4298 The VDI escape's 20 word displacements from the table (contrl[5] 0..19, bound `cmp.w #19 / bhi` UNSIGNED); seven point INTO the VT52 driver's ESC A B C D H J K bodies (escape.S relocates them to thunks into the C console), entry 0 is vq_chcells' own rts; 101 (v_offset) and 102 (v_fontinit) are compared past the table, any other number returns
+fn 0xfc42d0 v_offset
+fn 0xfc442e vq_chcells
+fn 0xfc4450 v_hardcopy
+fn 0xfc445a v_enter_cur
+fn 0xfc4460 v_exit_cur
+fn 0xfc44dc vs_curaddress
+fn 0xfc44ee v_curtext
+fn 0xfc451c vq_curaddress
+fn 0xfc453c vq_tabstatus
+fn 0xfc454e v_dspcur
+fn 0xfc455a v_rmcur
+fn 0xfc4a42 v_fontinit
+cmt 0xfc427a VDI escape (opcode 5), in the BIOS's range: lea $2994,a4 then contrl[5] through the word table at $fc4298. vs_curaddress does no validation (0 -> $ffff); v_dspcur clears the caller's intin[0] and jmps into v_show_c; v_curtext's count is an unsigned dbf; v_offset never re-places the cursor; vq_chcells stores columns before rows. Ships as src/vdi/escape.S (4 byte-pinned spans + 13 thunks into the C console)
+cmt 0xfc4a42 Escape 102: the console's cell height, row bytes, last row/column (divu by the header's height and max cell width; a 0 takes vector 5), form width, first/last character, form and offset table, from the font header at intin[0..1]; stores interleave with reads. console_reinit ($fca914) bsr's into $fc4a48, past the intin read
+cmt 0xfc4464 ESC E's body: v_exit_cur ($fc4460) falls into it and v_enter_cur's bsr.s reaches it; src/vdi/escape.S lays its thunk exactly here

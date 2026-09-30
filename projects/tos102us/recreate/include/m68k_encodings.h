@@ -17,13 +17,31 @@
  *   * `d16(An)` with a displacement of 0, which gas drops to `(An)` — a shorter instruction, so every
  *     byte after it would move.
  *
- * Register numbers are the 68000's: D0..D7 and A0..A7 are 0..7. The fields are ADDED, not OR-ed: they are
+ * Register numbers are the 68000's: D0..D7 and A0..A7 are 0..7, spelt `M68K_D<n>` / `M68K_A<n>`. The fields are ADDED, not OR-ed: they are
  * disjoint bits, and `|` starts a comment in m68k GNU as, where every one of these is used.
  */
 #ifndef TOS102US_M68K_ENCODINGS_H
 #define TOS102US_M68K_ENCODINGS_H
 
 #define M68K_DATA_REGISTER_SHIFT 9        /* the destination Dn / An field, bits 11..9 */
+
+/* The register numbers the fields hold, one spelling for every `.S` */
+#define M68K_D0 0
+#define M68K_D1 1
+#define M68K_D2 2
+#define M68K_D3 3
+#define M68K_D4 4
+#define M68K_D5 5
+#define M68K_D6 6
+#define M68K_D7 7
+#define M68K_A0 0
+#define M68K_A1 1
+#define M68K_A2 2
+#define M68K_A3 3
+#define M68K_A4 4
+#define M68K_A5 5
+#define M68K_A6 6
+#define M68K_A7 7
 
 /* `and.w #<imm>,Dn` / `add.w #<imm>,Dn` / `cmp.w #<imm>,Dn`: the register form with EA mode 7, reg 4 */
 #define M68K_AND_W_IMMEDIATE(dn)   (0xc07c + ((dn) << M68K_DATA_REGISTER_SHIFT))

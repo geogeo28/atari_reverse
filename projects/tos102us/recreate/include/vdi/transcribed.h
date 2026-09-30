@@ -3,15 +3,17 @@
  *
  * THE RULE IT RECORDS is the user's, for the hand-written 68000: port the routine to C first — Tier 1
  * proves the C against the ROM — and where the C measures over Tier 3's 1.10 bar, SHIP a byte-pinned
- * `.S` transcription. One row is here for the other reason a ROM routine ships as its own instructions: an
- * ENTRY a vector holds the address of, entered with a convention no C function has — `vdi_rom_timer_tick`,
- * etv_timer's (the `src/bios/trap.S` / `isr.S` precedent); its C twin is under the bar, and Tier 1 still
- * proves it. This table is the one place "ships as `.S`" is said, and three things are derived from it
- * rather than restated:
+ * `.S` transcription. Three rows are here for the other reason a ROM routine ships as its own
+ * instructions: an ENTRY a vector holds the address of, entered with a convention no C function has —
+ * `vdi_rom_timer_tick`, etv_timer's, `linea_rom_dispatch`, vector $28's, and `vdi_rom_entry`, `trap #2`'s
+ * (the `src/bios/trap.S` / `isr.S` precedent); Tier 1 still proves each one's C twin. This table is the
+ * one place "ships as `.S`" is said, and three things are derived from it rather than restated:
  *
  *   * TIER 3 (`bench/tier3.py`, legend (T), verdict `transcribed`): a routine here may have C rows over
- *     the bar ONLY while every one of its `.S` rows measures at or under it. Nothing is typed per row —
- *     delete a `.S` row, or let one drift over the bar, and the C rows go red.
+ *     the bar ONLY while every one of its `.S` rows measures at or under it — or, for a `.S` that calls C
+ *     through thunks of its own (the escape), has its OWN instructions at or under it (legend (T←), verdict
+ *     `own`). Nothing is typed per row, and a written entry for a `.S` row carries nothing: delete a `.S`
+ *     row, or let one drift over the bar, and the C rows go red.
  *   * THE BUILD CONTRACT (`atari/target.mk`): `TRANSCRIBED_ENTRIES` is what the ROM build links for these
  *     routines and `TRANSCRIBED_C_CORES` the C it must NOT link. `test_vdi_transcribed.py` pins the make
  *     lists against this table, every `.globl` of the `.S` sources against its rows, and the C callers
@@ -27,7 +29,9 @@
  * so a call that does not name them is the d2/a2 corruption class (`docs/on-target-execution.md`). The
  * sets are the ROM's own, measured over every registered `.S` case (`test_vdi_transcribed.py`), where
  * the transcription relation proves the `.S` leaves the same file; a front end that jumps through a
- * drawing vector is charged all of D2-D7/A2-A5, because what runs there is the vector's.
+ * drawing vector is charged all of D2-D7/A2-A5, because what runs there is the vector's. A DOOR is charged
+ * the union over the routines it serves: the Line-A exception keeps D3-D7/A3-A5 round its `jsr` and leaves
+ * D2, A2 and A6 as the primitive left them — A6 measured through $a007, which returns it 76 on ($fd05fc).
  *
  * The trailing comment is the rest of the contract a glue author needs: the registers an entry reads
  * and answers in (the Line-A ones are `test/vdi_raster.py`'s `declare_primitive`s), or "Alcyon" for a
@@ -81,7 +85,11 @@
     ENTRY(linea_rom_cpu_textblt,      "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* A6 base, A5/A6 pushed       */ \
     ENTRY(linea_rom_fast_text,        "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* -> D0 1 drawn, 0 refused    */ \
     ENTRY(linea_rom_cpu_fast_text,    "d2 d3 d4 d5 d6 d7 a2 a3 a4")         /* D0-D3, A5 &FBASE pushed     */ \
-    ENTRY(linea_rom_cpu_blit,         "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* D0/D2/D4/D6 x edges, A6     */
+    ENTRY(linea_rom_cpu_blit,         "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* D0/D2/D4/D6 x edges, A6     */ \
+    ENTRY(linea_rom_dispatch,         "d2 a2 a6")                           /* vector $28: frame, `rte`    */ \
+    ENTRY(linea_rom_init,             "a2")                                 /* $a000 -> D0, A0, A1, A2     */ \
+    ENTRY(vdi_rom_entry,              "")                                   /* trap #2: D1 block -> D0.w   */ \
+    ENTRY(vdi_rom_escape,             "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* function 5: console scratch */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a

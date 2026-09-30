@@ -55,25 +55,15 @@
 #define PLANE_GLYPH          2      /* fg 1, bg 0 — the font byte itself */
 #define PLANE_ALL_FOREGROUND 3      /* fg 1, bg 1 — `moveq #-1,d5` */
 
-/* THE TWO BOUNDS THIS FILE CHECKS, each stated once and each a NO-OP ON TARGET — for
- * `console_screen_byte`'s reason: a bound is something a differential host has a process to abort
- * with, where the machine simply has its own address space. Keeping the `#ifdef` inside them is what
- * lets every caller below read as one line of arithmetic.
+/* THE SCREEN'S BOUND is the console's one bus policy, `console_screen_block` (`include/bios/vt52.h`): every
+ * writer below forms its address as the ROM does and hands it there, which wraps it on the 24-bit bus and only
+ * then bounds it — a NO-OP ON TARGET, where the machine simply has its own address space.
  *
  * A span is checked ONCE, at its two ends, rather than per byte, which is what lets the runs below
  * address through the cursor they advance (`machine.h`, `CURSOR_BARRIER`) instead of recomputing
- * `image + address` every longword. */
-static void assert_in_ram(uint32_t at, uint32_t bytes)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    assert(bytes <= ST_RAM_BYTES && at <= ST_RAM_BYTES - bytes);
-#else
-    (void)at;
-    (void)bytes;
-#endif
-}
-
-/* ...and the FONT's bound, which is the machine's whole memory rather than its RAM: `CON_FONT_FORM`
+ * `image + address` every longword.
+ *
+ * The FONT's bound is this file's own, and it is the machine's whole memory rather than its RAM: `CON_FONT_FORM`
  * is a ROM address on the captured machine and may be a RAM one on a machine that loaded a font.
  * Both ends are named by the caller, because the row stride is a SIGNED word and a negative one
  * walks the column backwards. */
@@ -86,12 +76,6 @@ static void assert_in_machine_memory(uint32_t first, uint32_t last)
     (void)first;
     (void)last;
 #endif
-}
-
-static uint8_t *screen_block(uint8_t *image, uint32_t at, uint32_t bytes)
-{
-    assert_in_ram(at, bytes);
-    return image + at;
 }
 
 static const uint8_t *font_column(const uint8_t *image, uint32_t at, unsigned rows,
@@ -133,7 +117,7 @@ static void draw_plane_column(uint8_t *image, uint32_t glyph, uint32_t cell, uns
      * 4934 cycles on `bios_bconout / console glyph` (2026-09-19). The scroll's and the clear's go
      * the other way, where the step really is a literal. */
     /* The column's own extent: the last row's byte, `rows - 1` line pitches along, plus itself. */
-    uint8_t *to = screen_block(image, cell, (uint32_t)(rows - 1) * sign_ext16(line_bytes) + 1);
+    uint8_t *to = console_screen_block(image, cell, (uint32_t)(rows - 1) * sign_ext16(line_bytes) + 1);
 
     while (rows-- != 0) {
         *to = from_font ? (uint8_t)(*from ^ complement) : solid;
@@ -313,7 +297,7 @@ static void cpu_clear_cells(uint8_t *image, uint16_t x1, uint16_t y1, uint16_t x
          * inside it would put an add and a `lea` in front of every store the ROM makes with a
          * postincrement (`machine.h`, CURSOR_BARRIER). */
         uint32_t run_bytes = (span + 1u) * group_bytes;
-        uint8_t *run = fill_edge_group(screen_block(image, at, run_bytes),
+        uint8_t *run = fill_edge_group(console_screen_block(image, at, run_bytes),
                                        words, left_mask, plane_colour);
 
         if (span != 0) {
@@ -398,7 +382,7 @@ void console_scroll_up(uint8_t *image, uint16_t row)
         unsigned passes = scroll_passes(image, rows_to_move);
         /* The block the two cursors cover between them: the target walks up from `at` and the
          * source one text row ahead of it, so the last byte read is a row past the last written. */
-        uint8_t *target = screen_block(image, at,
+        uint8_t *target = console_screen_block(image, at,
                                        passes * SCROLL_BYTES_PER_PASS + sign_ext16(row_bytes));
         uint8_t *source = target + sign_ext16(row_bytes);
         uint16_t left = (uint16_t)(passes - 1);         /* `subq.w #1,d7`, and then `dbf d7` */
@@ -430,7 +414,7 @@ void console_scroll_down(uint8_t *image, uint16_t row)
         uint32_t walked = passes * SCROLL_BYTES_PER_PASS;
         /* ...and the mirror block: the source walks DOWN from `at` and the target one row above
          * it, so the span runs from `at - walked` to a row past `at`. */
-        uint8_t *source = screen_block(image, addr_add(at, -walked),
+        uint8_t *source = console_screen_block(image, addr_add(at, -walked),
                                        walked + sign_ext16(row_bytes)) + walked;
         uint8_t *target = source + sign_ext16(row_bytes);
         uint16_t left = (uint16_t)(passes - 1);         /* `subq.w #1,d7`, and then `dbf d7` */

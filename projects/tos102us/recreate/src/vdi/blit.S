@@ -64,7 +64,7 @@ linea_rom_copy_raster:
     movem.l %d0-%a5,-(%sp)                          /* $fd0346 */
     link.w  %fp,#-BITBLT_BYTES                      /* $fd034a */
     movea.l (LINEA_INTIN).l,%a2                     /* $fd034e */
-    .word   M68K_MOVE_W_D16(2, 2), 0                /* $fd0354 move.w 0(%a2),%d2 */
+    .word   M68K_MOVE_W_D16(M68K_A2, M68K_D2), 0 /* $fd0354 move.w 0(%a2),%d2 */
     suba.l  %a3,%a3                                 /* $fd0358 */
     bclr    #BLIT_PATTERN_MODE_BIT,%d2              /* $fd035a */
     beq.s   .Lpattern_known                         /* $fd035e */
@@ -82,7 +82,7 @@ linea_rom_copy_raster:
     movea.l (LINEA_CONTRL).l,%a3                    /* $fd0386 */
     movea.l CONTRL_POINTER_A(%a3),%a5               /* $fd038c */
     movea.l CONTRL_POINTER_B(%a3),%a4               /* $fd0390 */
-    .word   M68K_MOVE_L_D16(5, 6), 0                /* $fd0394 move.l 0(%a5),%d6 */
+    .word   M68K_MOVE_L_D16(M68K_A5, M68K_D6), 0 /* $fd0394 move.l 0(%a5),%d6 */
     bne.s   .Lsource_from_mfdb                      /* $fd0398 */
     move.l  (SYSVAR_V_BAS_AD).l,%d6                 /* $fd039a */
     move.w  (LINEA_PLANES).l,%d0                    /* $fd03a0 */
@@ -94,7 +94,7 @@ linea_rom_copy_raster:
     add.w   %d4,%d4                                 /* $fd03b6 */
     mulu.w  %d0,%d4                                 /* $fd03b8 */
 .Ldestination_form:
-    .word   M68K_MOVE_L_D16(4, 7), 0                /* $fd03ba move.l 0(%a4),%d7 */
+    .word   M68K_MOVE_L_D16(M68K_A4, M68K_D7), 0 /* $fd03ba move.l 0(%a4),%d7 */
     bne.s   .Ldestination_from_mfdb                 /* $fd03be */
     move.l  (SYSVAR_V_BAS_AD).l,%d7                 /* $fd03c0 */
     move.w  (LINEA_PLANES).l,%d1                    /* $fd03c6 */
@@ -122,7 +122,7 @@ linea_rom_copy_raster:
     moveq   #2,%d5                                  /* $fd040a */
     tst.w   (LINEA_COPY_TRAN).l                     /* $fd040c */
     beq.w   .Lopaque                                /* $fd0412 */
-    .word   M68K_CMP_W_IMMEDIATE(0), VDI_WORD_BYTES /* $fd0416 cmp.w #2,%d0 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D0), VDI_WORD_BYTES /* $fd0416 cmp.w #2,%d0 */
     bne.w   .Lcopy_raster_done                      /* $fd041a */
     clr.w   %d4                                     /* $fd041e */
     lea     (VDI_MAP_COL).l,%a0                     /* $fd0420 */
@@ -140,13 +140,13 @@ linea_rom_copy_raster:
 .Lforeground_known:
     add.w   %d7,%d7                                 /* $fd0448 */
     move.w  0(%a0,%d7.w),%d7                        /* $fd044a */
-    .word   M68K_CMP_W_IMMEDIATE(2), BLIT_MODE_REPLACE/* $fd044e cmp.w #1,%d2 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D2), BLIT_MODE_REPLACE /* $fd044e cmp.w #1,%d2 */
     beq.s   .Lmode_replace                          /* $fd0452 */
-    .word   M68K_CMP_W_IMMEDIATE(2), BLIT_MODE_TRANSPARENT/* $fd0454 cmp.w #2,%d2 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D2), BLIT_MODE_TRANSPARENT /* $fd0454 cmp.w #2,%d2 */
     beq.s   .Lmode_transparent                      /* $fd0458 */
-    .word   M68K_CMP_W_IMMEDIATE(2), BLIT_MODE_XOR  /* $fd045a cmp.w #3,%d2 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D2), BLIT_MODE_XOR /* $fd045a cmp.w #3,%d2 */
     beq.s   .Lmode_xor                              /* $fd045e */
-    .word   M68K_CMP_W_IMMEDIATE(2), BLIT_MODE_REVERSE/* $fd0460 cmp.w #4,%d2 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D2), BLIT_MODE_REVERSE /* $fd0460 cmp.w #4,%d2 */
     bne.w   .Lcopy_raster_done                      /* $fd0464 */
     move.b  #BLIT_OP_S_AND_D,FRAME(BITBLT_OP_TAB)(%fp)/* $fd0468 */
     move.b  #BLIT_OP_NOT_S_OR_D,FRAME(BITBLT_OP_TAB+1)(%fp)/* $fd046e */
@@ -173,7 +173,7 @@ linea_rom_copy_raster:
     move.b  #BLIT_OP_S_XOR_D,FRAME(BITBLT_OP_TAB)(%fp)/* $fd04be */
     bra.s   .Lops_known                             /* $fd04c4 */
 .Lopaque:
-    .word   M68K_CMP_W_IMMEDIATE(2), BLIT_OP_COUNT  /* $fd04c6 cmp.w #16,%d2 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D2), BLIT_OP_COUNT /* $fd04c6 cmp.w #16,%d2 */
     bcc.w   .Lcopy_raster_done                      /* $fd04ca */
     cmp.w   %d0,%d1                                 /* $fd04ce */
     bne.w   .Lcopy_raster_done                      /* $fd04d0 */
@@ -186,10 +186,10 @@ linea_rom_copy_raster:
     movea.l (LINEA_PTSIN).l,%a2                     /* $fd04e8 */
     tst.w   (LINEA_CLIP).l                          /* $fd04ee */
     beq.s   .Lcorners_given                         /* $fd04f4 */
-    .word   M68K_TST_L_D16(4), 0                    /* $fd04f6 tst.l 0(%a4) */
+    .word   M68K_TST_L_D16(M68K_A4), 0              /* $fd04f6 tst.l 0(%a4) */
     beq.s   .Lcorners_clipped                       /* $fd04fa */
 .Lcorners_given:
-    .word   M68K_MOVE_W_D16(2, 0), 0                /* $fd04fc move.w 0(%a2),%d0 */
+    .word   M68K_MOVE_W_D16(M68K_A2, M68K_D0), 0 /* $fd04fc move.w 0(%a2),%d0 */
     move.w  2(%a2),%d1                              /* $fd0500 */
     move.w  8(%a2),%d2                              /* $fd0504 */
     move.w  10(%a2),%d3                             /* $fd0508 */
@@ -211,7 +211,7 @@ linea_rom_copy_raster:
     move.w  14(%a2),%d7                             /* $fd053c */
     bra.w   .Lfar_corners                           /* $fd0540 */
 .Lcorners_clipped:
-    .word   M68K_MOVE_W_D16(2, 0), 0                /* $fd0544 move.w 0(%a2),%d0 */
+    .word   M68K_MOVE_W_D16(M68K_A2, M68K_D0), 0 /* $fd0544 move.w 0(%a2),%d0 */
     move.w  8(%a2),%d2                              /* $fd0548 */
     move.w  (LINEA_XMINCL).l,%d4                    /* $fd054c */
     cmp.w   %d4,%d2                                 /* $fd0552 */
@@ -335,7 +335,7 @@ linea_rom_cpu_blit:
     bne.s   .Laligned                               /* $fd1062 */
     move.w  %d4,%d7                                 /* $fd1064 */
     add.w   %d6,%d7                                 /* $fd1066 */
-    .word   M68K_CMP_W_IMMEDIATE(7), BLIT_FAST_SPAN_WORDS/* $fd1068 cmp.w #4,%d7 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D7), BLIT_FAST_SPAN_WORDS /* $fd1068 cmp.w #4,%d7 */
     bcs.s   .Laligned                               /* $fd106c */
     tst.l   FRAME(BITBLT_P_ADDR)(%fp)               /* $fd106e */
     beq.w   .Lfast_copy                             /* $fd1072 */
@@ -343,7 +343,7 @@ linea_rom_cpu_blit:
     move.w  %d6,%d0                                 /* $fd1076 */
     subq.w  #1,%d0                                  /* $fd1078 */
     move.w  %d0,FRAME(BITBLT_MIDDLE_COUNT)(%fp)     /* $fd107a */
-    .word   M68K_AND_W_IMMEDIATE(5), 1              /* $fd107e and.w #1,%d5 */
+    .word   M68K_AND_W_IMMEDIATE(M68K_D5), 1        /* $fd107e and.w #1,%d5 */
     lsl.w   #3,%d5                                  /* $fd1082 */
     move.w  %d4,%d7                                 /* $fd1084 */
     move.w  %d1,%d4                                 /* $fd1086 */
@@ -354,11 +354,11 @@ linea_rom_cpu_blit:
     neg.w   %d4                                     /* $fd1090 */
     addq.w  #1,%d5                                  /* $fd1092 */
 .Lshift_distance:
-    .word   M68K_CMP_W_IMMEDIATE(4), 8              /* $fd1094 cmp.w #8,%d4 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D4), 8        /* $fd1094 cmp.w #8,%d4 */
     blt.s   .Lshift_known                           /* $fd1098 */
     addq.w  #2,%d5                                  /* $fd109a */
     neg.w   %d4                                     /* $fd109c */
-    .word   M68K_ADD_W_IMMEDIATE(4), 16             /* $fd109e add.w #16,%d4 */
+    .word   M68K_ADD_W_IMMEDIATE(M68K_D4), 16       /* $fd109e add.w #16,%d4 */
 .Lshift_known:
     move.w  FRAME(BITBLT_S_XMIN)(%fp),%d0           /* $fd10a2 */
     move.w  FRAME(BITBLT_S_YMIN)(%fp),%d1           /* $fd10a6 */
@@ -416,7 +416,7 @@ linea_rom_cpu_blit:
     btst    #6,%d5                                  /* $fd1142 */
     bne.w   .Lpattern_setup                         /* $fd1146 */
     lsr.w   #1,%d5                                  /* $fd114a */
-    .word   M68K_AND_W_IMMEDIATE(5), 12             /* $fd114c and.w #12,%d5 */
+    .word   M68K_AND_W_IMMEDIATE(M68K_D5), 12       /* $fd114c and.w #12,%d5 */
     movea.l .Lword_rotates(%pc,%d5.w),%a4           /* $fd1150 */
     bra.w   .Lpattern_setup                         /* $fd1154 */
 /* $fd1158: one destination word from one source word — a word rotate, by the shift bits alone */
@@ -531,7 +531,7 @@ linea_rom_cpu_blit:
 
 /* The ops that read no source — 0, 10, 15 (5 skips the plane): a row walks the destination alone. */
 .Lno_source:
-    .word   M68K_CMP_W_IMMEDIATE(0), BLIT_OP_D      /* $fd12b8 cmp.w #5,%d0 */
+    .word   M68K_CMP_W_IMMEDIATE(M68K_D0), BLIT_OP_D /* $fd12b8 cmp.w #5,%d0 */
     beq.s   .Lnext_plane                            /* $fd12bc */
     movem.l %a3-%a4,-(%sp)                          /* $fd12be */
     lea     (.Lfirst_no_source).l,%a4               /* $fd12c2 */
@@ -547,12 +547,12 @@ linea_rom_cpu_blit:
 /* $fd12e2 — D6 = the destination's edge masks: high word the right edge's, low word the left's. */
 .Ledge_masks:
     move.w  FRAME(BITBLT_D_XMAX)(%fp),%d0           /* $fd12e2 */
-    .word   M68K_AND_W_IMMEDIATE(0), 15             /* $fd12e6 and.w #15,%d0 */
+    .word   M68K_AND_W_IMMEDIATE(M68K_D0), 15       /* $fd12e6 and.w #15,%d0 */
     add.w   %d0,%d0                                 /* $fd12ea */
     move.w  .Ledge_mask_table+2(%pc,%d0.w),%d6      /* $fd12ec */
     swap    %d6                                     /* $fd12f0 */
     move.w  FRAME(BITBLT_D_XMIN)(%fp),%d0           /* $fd12f2 */
-    .word   M68K_AND_W_IMMEDIATE(0), 15             /* $fd12f6 and.w #15,%d0 */
+    .word   M68K_AND_W_IMMEDIATE(M68K_D0), 15       /* $fd12f6 and.w #15,%d0 */
     add.w   %d0,%d0                                 /* $fd12fa */
     move.w  .Ledge_mask_table(%pc,%d0.w),%d6        /* $fd12fc */
     not.w   %d6                                     /* $fd1300 */

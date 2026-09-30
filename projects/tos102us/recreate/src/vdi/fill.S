@@ -20,10 +20,6 @@
 #include "vdi/vdi.h"
 #include "vdi/fill.h"
 
-#define A0 0
-#define D2 2
-#define D4 4
-
     .text
 
 /* ==== $fca05e..$fca163 =============================================================================
@@ -52,7 +48,7 @@ linea_rom_filled_poly:
     eor.w   %d3,%d2                             /* $fca098 */
     bpl.s   .Lpoly_next_edge                    /* $fca09a */
     move.w  4(%a0),%d2                          /* $fca09c */
-    .word   M68K_SUB_W_D16(A0, D2), 0           /* $fca0a0 sub.w 0(%a0),%d2 */
+    .word   M68K_SUB_W_D16(M68K_A0, M68K_D2), 0 /* $fca0a0 sub.w 0(%a0),%d2 */
     add.w   %d2,%d2                             /* $fca0a4 */
     muls.w  %d2,%d4                             /* $fca0a6 */
     divs.w  %d1,%d4                             /* $fca0a8 */
@@ -66,7 +62,7 @@ linea_rom_filled_poly:
     addq.w  #1,%d4                              /* $fca0b6 */
     asr.w   #1,%d4                              /* $fca0b8 */
 .Lpoly_store:
-    .word   M68K_ADD_W_D16(A0, D4), 0           /* $fca0ba add.w 0(%a0),%d4 */
+    .word   M68K_ADD_W_D16(M68K_A0, M68K_D4), 0 /* $fca0ba add.w 0(%a0),%d4 */
     move.w  %d4,(%a1)+                          /* $fca0be */
     addq.w  #1,(LINEA_GDP_FILL_INT).l           /* $fca0c0 */
 .Lpoly_next_edge:

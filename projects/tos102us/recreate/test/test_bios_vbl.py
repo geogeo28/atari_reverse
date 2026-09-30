@@ -43,6 +43,10 @@ QUEUE_SLOTS = 8
 QUEUE_STUB_STRIDE = 0x10
 QUEUE_STUBS = tuple(isr.STUB_BAND + 0x60 + QUEUE_STUB_STRIDE * slot for slot in range(4))
 MARKS = isr.MARKS                             # one byte per staged routine, so an order is readable
+# ...and the dump routine that REPORTS `_dumpflg` as Scrdmp leaves it during the call, and counts the calls:
+# past the queue's stubs, as it is longer than their stride, with its report past the marks.
+DUMP_RECORDER = isr.STUB_BAND + 0xA0
+DUMP_REPORT = MARKS + 0x10
 PALETTE_SOURCE = isr.STUB_BAND + 0x180        # sixteen colour words
 CURSOR_CELL = isr.STUB_BAND + 0x1C0           # ...and the bytes the cursor inversion walks
 CURSOR_CELL_BYTES = 0x40
@@ -500,6 +504,7 @@ def test_a_queue_routine_that_rewrites_the_queue_does_not_change_the_walk_it_is_
 
 
 # ---- the screen-dump hook ---------------------------------------------------------------------------
+STALE_REPORT = 0x5A5A                         # what the dump's report holds until the routine writes it
 
 def test_a_frame_with_the_dump_flag_set_calls_nothing():
     assert word_in_snapshot(addrs.SYSVAR_DUMPFLG) != 0      # the captured machine's own state
@@ -507,13 +512,16 @@ def test_a_frame_with_the_dump_flag_set_calls_nothing():
     assert addrs.SYSVAR_DUMPFLG not in info["writes"]
 
 
-def test_a_cleared_dump_flag_calls_scr_dump_and_sets_the_flag_again():
-    """`tst.w _dumpflg / bne` — ZERO is the request, which is Alt-Help's doing; Scrdmp answers it and
-    stores -1 so the next frame does not ask again."""
+def test_a_cleared_dump_flag_calls_scr_dump_once_and_then_sets_the_flag_again():
+    """`tst.w _dumpflg / bne` — ZERO is the request, which is Alt-Help's doing; Scrdmp answers it by calling
+    `scr_dump` ONCE, and only then stores -1 so the next frame does not ask again: the routine finds the
+    request still 0 (the ROM's own dump reads it, `$fc0dce` / `$fc324e`)."""
     info = run(quiet_pokes({addrs.SYSVAR_DUMPFLG: b"\x00\x00",
-                              addrs.SYSVAR_SCR_DUMP: struct.pack(">I", DUMP_STUB)}),
-               routines={DUMP_STUB: marker_routine(0)})
-    assert info["writes"][MARKS] == MARK
+                              addrs.SYSVAR_SCR_DUMP: struct.pack(">I", DUMP_RECORDER),
+                              DUMP_REPORT: struct.pack(">HB", STALE_REPORT, 0)}),
+               routines={DUMP_RECORDER: isr.flag_recorder(addrs.SYSVAR_DUMPFLG, DUMP_REPORT)})
+    assert case.written(info, DUMP_REPORT, isr.FLAG_REPORT_BYTES) == 0x000001, "the flag as found, one call"
+    assert [call[0] for call in isr.CALLS] == [DUMP_RECORDER]
     assert case.written(info, addrs.SYSVAR_DUMPFLG, 2) == 0xFFFF
 
 

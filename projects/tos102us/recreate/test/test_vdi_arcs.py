@@ -245,8 +245,10 @@ vdi_arcs.register_call("trivially clipped away", "VDI_ROM_CLC_ARC", (),
 vdi_arcs.register_call("pie, three quadrants, outlined", "VDI_ROM_GDP_ARC", (), arc_pokes(VDI_GDP_PIE, *SWEEPS["three quadrants"]))
 vdi_arcs.register_call("arc, dash-dot", "VDI_ROM_GDP_ARC", (),
                        arc_pokes(VDI_GDP_ARC, *SWEEPS["three quadrants"], work=workstation(index=3)))
-vdi_arcs.register_call("elliptical pie, wraps past 0", "VDI_ROM_GDP_ELL", (),
-                       ell_pokes(VDI_GDP_ELLIPTICAL_PIE, *SWEEPS["wraps past 0"]))
+# The tall ellipse is the dearer wrapping pie: measured 1.019, against 1.010 over ell_pokes' own 90x50.
+TALL = dict(zip(("xc", "yc", "xrad", "yrad"), ELLIPSES["tall"]))
+vdi_arcs.register_call("elliptical pie, tall, wraps past 0", "VDI_ROM_GDP_ELL", (),
+                       ell_pokes(VDI_GDP_ELLIPTICAL_PIE, *SWEEPS["wraps past 0"], **TALL))
 vdi_arcs.register_call("elliptical arc, one quadrant", "VDI_ROM_GDP_ELL", (),
                        ell_pokes(VDI_GDP_ELLIPTICAL_ARC, *SWEEPS["first quadrant"]))
 vdi_arcs.register_call("elliptical arc, clipped away", "VDI_ROM_GDP_ELL", (),

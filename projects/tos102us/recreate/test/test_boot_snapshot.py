@@ -218,6 +218,15 @@ import test_vdi_arcs_rbox                                   # noqa: E402,F401
 import test_vdi_workstation                                 # noqa: E402,F401
 import test_vdi_workstation_init                            # noqa: E402,F401
 import test_vdi_workstation_virtual                         # noqa: E402,F401
+# ...the GDP's switch and its own arms: the bar, the circle, the ellipse (`src/vdi/gdp.c`).
+import test_vdi_gdp                                         # noqa: E402,F401
+# ...the escape: opcode 5's arms, most of them the BIOS console's own bodies (`src/vdi/escape.c`, `escape.S`).
+import test_vdi_escape                                      # noqa: E402,F401
+import test_vdi_escape_transcription                        # noqa: E402,F401  (its `.S` rows)
+# ...the entries: the Line-A exception, the `trap #2` entry and the dispatcher (`src/vdi/entry.c`, `entry.S`).
+import test_vdi_entry                                       # noqa: E402,F401
+import test_vdi_entry_linea                                 # noqa: E402,F401
+import test_vdi_entry_transcription                         # noqa: E402,F401  (its `.S` rows)
 import vdi                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

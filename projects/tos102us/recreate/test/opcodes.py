@@ -48,8 +48,12 @@ LOAD_ADDRESS_IMMEDIATE = LOAD_IMMEDIATE["a0"]
 STORE_A5_ABSOLUTE = b"\x23\xcd"         # move.l  a5,<xxx>.l
 STORE_LONG_REGISTER = {"d0": b"\x23\xc0", "d1": b"\x23\xc1"}     # move.l  Dn,<xxx>.l
 # `suba.l An,An`, per register: how a staged caller zeroes a code pointer a transcription leaves behind.
-CLEAR_ADDRESS_REGISTER = {"a2": b"\x95\xca", "a3": b"\x97\xcb", "a4": b"\x99\xcc", "a5": b"\x9b\xcd",
-                          "a6": b"\x9d\xce"}
+CLEAR_ADDRESS_REGISTER = {"a0": b"\x91\xc8", "a1": b"\x93\xc9", "a2": b"\x95\xca", "a3": b"\x97\xcb", "a4": b"\x99\xcc",
+                          "a5": b"\x9b\xcd", "a6": b"\x9d\xce"}
+# ...and `clr.l Dn`, per register, for a data register it leaves holding what only the layout decides (a jump
+# table's displacement) or what C rather than the ROM computed (the registers a thunk's C body leaves).
+CLEAR_DATA_REGISTER = {f"d{number}": bytes([0x42, 0x80 + number]) for number in range(8)}
+CLEAR_REGISTER = {**CLEAR_DATA_REGISTER, **CLEAR_ADDRESS_REGISTER}
 COPY_LONG_ABSOLUTE = b"\x23\xf9"        # move.l  <xxx>.l,<yyy>.l
 MOVEM_L_ABSOLUTE_TO_REGISTERS = b"\x4c\xf9"     # movem.l <xxx>.l,<list>: the mask word, then the address
 
@@ -80,3 +84,9 @@ DBF_D1 = 0x51C9                         # dbf     d1,<d16>
 SUBQ_W_1_ABSOLUTE_LONG = 0x5379         # subq.w  #1,<xxx>.l
 SEQ_D0 = 0x57C0                         # seq     d0
 EXT_W_D0 = 0x4880                       # ext.w   d0
+MOVE_W_ABSOLUTE_TO_ABSOLUTE = 0x33F9    # move.w  <xxx>.l,<yyy>.l
+MOVE_B_ABSOLUTE_TO_ABSOLUTE = 0x13F9    # move.b  <xxx>.l,<yyy>.l
+ADD_ONE_TO_BYTE_ABSOLUTE = 0x5239       # addq.b  #1,<xxx>.l
+# `cmp.w #<imm>,d0` as the ROM's assembler spelt it — the register form, not gas's CMPI — which a case reads the
+# ROM's code for; `include/m68k_encodings.h` spells the same word for the `.S` files (`test_opcodes.py` pins both).
+CMP_W_IMMEDIATE_D0 = 0xB07C

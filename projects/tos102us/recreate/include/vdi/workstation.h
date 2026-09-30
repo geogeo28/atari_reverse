@@ -66,6 +66,24 @@
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
+#include "machine.h"
+#include "m68k_idioms.h"
+#include "vdi/vdi.h"
+
+/* THE LIST's two reads, for every walk of it (the dispatcher's lookup, the opens' and closes' walks): a
+ * record's field by the address the list holds for it — a WS_NEXT a case or a caller wrote — summed with the
+ * field's offset FIRST and only then put on the bus, as the 68000's `d16(An)` does (`bus_dereference`: free
+ * on target). */
+static inline uint32_t next_of(const uint8_t *image, uint32_t work)
+{
+    return be32(image + bus_dereference(work + WS_NEXT));
+}
+
+static inline int16_t handle_of(const uint8_t *image, uint32_t work)
+{
+    return (int16_t)be16(image + bus_dereference(work + WS_HANDLE));
+}
+
 void vdi_v_opnwk(uint8_t *image);    /* $fcb694, opcode 1 */
 void vdi_v_clswk(uint8_t *image);    /* $fcb998, opcode 2 */
 void vdi_v_opnvwk(uint8_t *image);   /* $fcd612, opcode 100 */

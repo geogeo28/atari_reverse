@@ -47,10 +47,8 @@
  * ($fffffa11 for the MFP, which a 24-bit bus makes `addrs.h`'s $fffa11).
  */
 #include "addrs.h"
-
-/* The pushed image pointer, which every stub below drops after its `jsr`. Named because it is an
- * ARGUMENT SLOT and not a stack tidy-up: the m68k SysV ABI puts the first argument at 4(sp). */
-#define IMAGE_ARGUMENT_BYTES 4
+/* IMAGE_ARGUMENT_BYTES: the pushed image pointer every stub below drops after its `jsr`. */
+#include "c_call_glue.h"
 
     .text
 

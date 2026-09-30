@@ -79,6 +79,9 @@ import gemdos_process                                      # noqa: E402
 import vdi                                                 # noqa: E402
 # ...and the shipped blob's glue generator, for the thunks mechanism (T→G) counts the cycles of.
 import shipped_glue                                        # noqa: E402
+# ...and the escape's transcription battery, for the ROM spans escape.S transcribes and the prefix of the thunks it
+# reaches the console's C through — what mechanism (T←) splits an escape `.S` row by.
+import test_vdi_escape_transcription as escape_transcription   # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -171,9 +174,11 @@ RATIO_TOLERANCE = 0.02
 #       a routine in that table is over the bar by design and is admitted, verdict `transcribed`, ONLY
 #       while EVERY one of the routine's `.S` rows measures at or under the bar (`ships_within_bar`):
 #       derived from the measurements, never typed, so deleting a `.S` row or letting one drift over the
-#       bar reds the C rows with it. What those C rows price is the C Tier 1 proves, and where their
-#       cycles go is the same few things each time: (A) and (M) on every entry, the callee-saved `movem`
-#       pair GCC opens before the first branch, and hand 68000 GCC does not emit — (E) twice over in the
+#       bar reds the C rows with it. A WRITTEN ENTRY for a `.S` row carries nothing here — the one way a
+#       `.S` row over the bar still carries its routine's C rows is mechanism (T←) below, derived as well.
+#       What those C rows price is the C Tier 1 proves, and where their cycles go is the same few things
+#       each time: (A) and (M) on every entry, the callee-saved `movem` pair GCC opens before the first
+#       branch, and hand 68000 GCC does not emit — (E) twice over in the
 #       palette pair; in the raster primitives a write-mode arm reached by `jmp (a5)` through a
 #       PC-relative table, a Bresenham that runs per-plane code it built on the stack, a span count spent
 #       by two `subq`/`bcs` before a `dbf`; and in the pure helpers the carry an `add.w` leaves, a
@@ -198,6 +203,22 @@ RATIO_TOLERANCE = 0.02
 #       THAT GLUE is at or under it is verdict `glue` — derived, never typed; the table prints both ratios.
 #       A row over the bar even net of the glue is its OWN body's cost: OVER, unless an entry accepts that
 #       body's mechanism at the shipped number. (The letter is not (G): that one is taken, above.)
+#   (T←) A `.S` THAT CALLS C — (T→)'s mirror image. The VDI escape (`src/vdi/escape.S`) is the ROM's instructions, but
+#       its table and branches name the VT52 CONSOLE's routines, which ship as C (`src/bios/vt52.c`): escape.S reaches
+#       each through a THUNK of its own (a sized `escape_to_<body>` symbol), and what such a `.S` row measures is its
+#       own instructions PLUS the thunks PLUS the console's C, against the ROM's own instructions plus the ROM's
+#       console. So every `.S` row of a routine in `CALLS_INTO_C` is PROFILED (the oracle's cycle-per-PC tally, both
+#       sides, the ROM window included) and split: OUR side's OWN cycles are everything the blob ran less the thunks'
+#       bytes and less the C they reach (the m68k call graph's closure of the thunks' callees); the ROM's are the
+#       cycles inside the ROM spans the `.S` transcribes. A row over the bar whose OWN ratio is at or under it is
+#       verdict `own` — derived, never typed, and `test_tier3.py` refuses a written entry for it — and the rest of its
+#       cost is the console's C against the ROM's console, which is exactly what `Bconout(CON:)`'s rows price: the
+#       rule carries a row only while every acceptance it CITES (`CONSOLE_C_ACCEPTED_BY`) still stands. A spill in
+#       the `.S`'s own instructions, or a call out of it to C that is not the console's, lands on OUR side of the own
+#       ratio and reds the row — any row of the routine, under the bar as a whole or not. The table prints both ratios.
+#       ONE MEASURED LENIENCE: a ROM byte the escape and the console BOTH execute counts as the escape's on the ROM's
+#       side — vq_chcells' `rts` ($fc444e), which ESC A-D and ESC J branch to when they refuse a move — so the rows
+#       refused at an edge read 0.85 (88 cycles against 104), 16 cycles a spill could hide in on those rows alone.
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -289,6 +310,8 @@ PERF_ACCEPTED = {
     ("bios_bconout", "rs232 primed"): (
         1.44, "722 -> 1040, and it includes the `ipl.h` bracket around the prime that Tier 1 cannot "
               "see (src/xbios/gibit.c's argument)"),
+    # The CONSOLE's accepted rows are also what mechanism (T←) CITES for the escape's `.S` (`CONSOLE_C_ACCEPTED_BY`):
+    # escape.S reaches the same C bodies through its thunks, so their cost is accepted here, once.
     ("bios_bconout", "console escape state"): (
         3.24, "(A)+(B) over a state-machine arm whose whole body is `move.l a0,$4a8`: 212 -> 686"),
     ("bios_bconout", "console line feed"): (
@@ -674,12 +697,10 @@ PERF_ACCEPTED = {
     #     and a C function returns one register, so the core returns D0 and writes the rest through a
     #     pointer (`src/vdi/linea.c`, `test/vdi.py`'s `declare_primitive`): one `movea.l 8(sp),a0` plus
     #     a store per register, where the ROM's `lea`s WERE the answer. Tier 1 compares every register;
-    #     this column holds D0 and the cost. On a body of four loads it is the whole of the excess.
-    ("linea_init", "by jsr"): (
-        2.43, "(N) alone: $a000's four `lea`/`move.l` are the answer, and ours stores four longwords "
-              "through its results pointer and reloads D0 — 96 -> 176 cycles, 6 instructions to 8 "
-              "(both incl. the reset's 1 / 40). Every multi-register Line-A primitive pays this per "
-              "answer register; on the real primitives it is amortised by their bodies"),
+    #     this column holds D0 and the cost. Its one example, $a000 (2.43: four `lea`/`move.l` against four
+    #     stores through the pointer), ships as the ROM's own instructions (`src/vdi/entry.S`), and mechanism
+    #     (T) carries its C row — so no entry here names it.
+
 }
 
 # ---- THE LEAF RULE — the rows where a ratio is the wrong instrument ------------------------------
@@ -1299,6 +1320,10 @@ CALL.update({name: Call((IMAGE, *(EntryRegister(register) for register in contra
 # than by opcode (`src/vdi/attributes.c`): `VDI_ROM_<HELPER>` in `addrs.h`, core `vdi_<helper>`.
 CALL.update({"VDI_ROM_ST_FL_PTR": Call((IMAGE,), RETURNS_NOTHING),
              "VDI_ROM_ARB_CORNER": Call((IMAGE, arg_long(0), arg_word(4)), RETURNS_NOTHING)})
+# ...and the ENTRIES (`src/vdi/entry.c`): the dispatcher, a VDI function's shape less the opcode; and `trap #2`'s
+# entry, D1 the parameter block, answering the WORD VDI_RESULT (the high half of D0 is the dispatched function's).
+CALL.update({"VDI_ROM_DISPATCH": Call((IMAGE,), RETURNS_NOTHING),
+             "VDI_ROM_ENTRY": Call((IMAGE, EntryRegister("d1")), RETURNS_WORD)})
 # ...and every ALCYON call (`vdi.declare_alcyon`: the pure helpers of `src/vdi/helpers.c`, the polygon and
 # contour-fill layer of `src/vdi/fill.c`): WORD arguments decoded out of the frame the case poked and an
 # `int` answer in D0.w. DERIVED from the one statement of each core's C signature: the image where the core
@@ -1569,12 +1594,18 @@ def is_transcribed_c_row(row):
     return not row.transcription and rom_address(row) in TRANSCRIBED_AT
 
 
-def ships_within_bar(row, ratio_of):
+def ships_within_bar(row, measurement_of):
     """(T): is the `.S` a target build ships for `row`'s routine priced, and at or under the bar on EVERY
-    row? `ratio_of(row)` is how a caller hands over a measurement — the table has every row measured, the
-    gate measures on demand — so the rule is stated once whoever asks. No `.S` row at all is a no."""
+    row — or over it only where mechanism (T←) carries that `.S` row on its own instructions? A written entry
+    never counts. `measurement_of(row)` is how a caller hands over a `Measurement` — the table has every row
+    measured, the gate measures on demand — so the rule is stated once whoever asks. No `.S` row at all is a no."""
     shipped = SHIPPED_ROWS.get(rom_address(row), ())
-    return bool(shipped) and all(ratio_of(each) <= TIER3_FUNCTION_BAR for each in shipped)
+    return bool(shipped) and all(_shipped_row_within_bar(each, measurement_of(each)) for each in shipped)
+
+
+def _shipped_row_within_bar(row, measured):
+    return own_within_bar(row, measured) and (measured.ratio <= TIER3_FUNCTION_BAR
+                                              or carried_by_its_own_instructions(row, measured))
 
 
 # MECHANISM (T→): the C whose cost, as shipped, includes a `.S`, and the blob that prices it as shipped.
@@ -1626,13 +1657,14 @@ def glue_ranges():
     return sorted(sized.values())
 
 
-# The profile holds one tally per even PC: a byte address is twice its slot.
-PROFILE_SLOT_BYTES = 2
+def _cycles_in(ranges):
+    """What the profiled run spent at the PCs of `[(lo, hi)]` — blob or ROM, both sides' tallies together."""
+    return sum(emu.prof_cycles(lo, hi) for lo, hi in ranges)
 
 
 def cycles_inside_glue():
     """The cycles the profiled run spent executing thunk instructions: the glue's own profile slots alone."""
-    return sum(sum(emu.prof_slice(start // PROFILE_SLOT_BYTES, end // PROFILE_SLOT_BYTES)) for start, end in glue_ranges())
+    return _cycles_in(glue_ranges())
 
 
 def _measure_call(bench, row):
@@ -1664,6 +1696,118 @@ def ratio_net_of_glue(measured):
     return (measured.recreate_net - glue_cycles_of(measured)) / measured.original_net
 
 
+# MECHANISM (T←): a `.S` that calls C through thunks of its own, and what its rows are split by.
+# `thunk_prefix` names its `.S`→C thunks (sized local symbols); `spans` are the ROM's `[lo, hi)` its own instructions
+# transcribe; `carried_by` are the PERF_ACCEPTED keys that already accept the cost of the C those thunks reach.
+CallsIntoC = namedtuple("CallsIntoC", "thunk_prefix spans carried_by")
+# The console's C as Bconout(CON:) prices it: the cursor lock, placement and unlock (the line feed's), a glyph with and
+# without the cursor, the clear, and the state machine's ESC — every console body escape.S's thunks enter.
+CONSOLE_C_ACCEPTED_BY = (
+    ("bios_bconout", "console escape state"),
+    ("bios_bconout", "console line feed"),
+    ("bios_bconout", "console glyph"),
+    ("bios_bconout", "console glyph with the cursor"),
+    ("bios_bconout", "console clear to end of screen"),
+)
+CALLS_INTO_C = {
+    addrs.VDI_ROM_ESCAPE: CallsIntoC(escape_transcription.THUNK_PREFIX,
+                                     tuple((region.lo, region.hi) for region in escape_transcription.REGIONS),
+                                     CONSOLE_C_ACCEPTED_BY),
+}
+
+
+def calls_into_c(row):
+    """Is `row` a `.S` row of a routine that reaches C through its own thunks (T←)?"""
+    return row.transcription and rom_address(row) in CALLS_INTO_C
+
+
+@functools.cache
+def _function_ranges(elf):
+    """`{node: [(start, end)]}` — every function in `elf`, under the call graph's own node names (`vdi.nodes_of_labels`:
+    a static's name qualified where another definition shares it). A function the symbol table sizes ends there; one
+    it does not (libgcc's `__mulsi3`) runs on to the next function's start, as the call graph reads it."""
+    functions = sorted({(symbol.start, symbol.name): symbol for symbol in vdi.symbol_table(elf)
+                        if symbol.kind in "Tt"}.values())
+    nodes = vdi.nodes_of_labels([(symbol.start, symbol.name) for symbol in functions], vdi.symbol_origins(elf))
+    starts = sorted({symbol.start for symbol in functions})
+    ranges = {}
+    for symbol in functions:
+        end = symbol.start + symbol.size if symbol.size is not None else next(
+            (start for start in starts if start > symbol.start), None)
+        if end is not None:
+            ranges.setdefault(nodes[(symbol.start, symbol.name)], []).append((symbol.start, end))
+    return ranges
+
+
+@functools.cache
+def into_c_ranges(elf, thunk_prefix):
+    """`(thunks, callees)`: the `[(start, end)]` of the `.S`→C thunks named `thunk_prefix*` in `elf` — SIZED symbols,
+    as `glue_ranges` requires of the generated ones, so a thunk's range is its own bytes and not the `.S` round it —
+    and of every C function they reach, the call graph's closure of their callees."""
+    graph = vdi.call_graph(elf)
+    ranges = _function_ranges(elf)
+    sized = {symbol.name for symbol in vdi.symbol_table(elf) if symbol.size is not None}
+    thunks = {node for node in graph if node.startswith(thunk_prefix)}
+    callees, frontier = set(), set().union(*(graph[thunk] for thunk in thunks))
+    while frontier:
+        callees |= frontier
+        frontier = set().union(*(graph.get(node, set()) for node in frontier)) - callees - thunks
+    unplaced = sorted((thunks - sized) | (callees - set(ranges)))
+    if not thunks or unplaced:
+        raise LookupError(f"{elf} places no range for {unplaced or thunk_prefix + '*'} — a `.S`→C thunk needs `.size`, "
+                          f"and every function it reaches a start")
+    return (tuple(span for thunk in sorted(thunks) for span in ranges[thunk]),
+            tuple(span for callee in sorted(callees) for span in ranges[callee]))
+
+
+def _measure_into_c(row, bench):
+    """A (T←) `.S` row, PROFILED: the `Measurement` carries `own_cycles` (ours, the ROM's) and `into_c_cycles` (the
+    thunks', the C's) beside its costs. OURS is everything the blob ran less the thunks and the C — so a spill in the
+    `.S`, or a call to any other C, stays in it — and the ROM's is the cycles inside the spans the `.S` transcribes.
+    Code both sides run from the same bytes (a ROM routine the `.S` jumps to, a staged RAM stub) is in neither."""
+    split = CALLS_INTO_C[rom_address(row)]
+    thunks, callees = into_c_ranges(bench.elf, split.thunk_prefix)
+    emu.prof_reset()
+    emu.prof_enable(True)
+    try:
+        measured = _measure_transcription(row, bench)
+    finally:
+        emu.prof_enable(False)
+    thunk_cycles, c_cycles = _cycles_in(thunks), _cycles_in(callees)
+    measured.into_c_cycles = (thunk_cycles, c_cycles)
+    measured.own_cycles = (emu.prof_cycles(bench.base, bench.end) - thunk_cycles - c_cycles, _cycles_in(split.spans))
+    return measured
+
+
+def own_ratio(measured):
+    """(T←): the `.S`'s own instructions against the ROM's — the only part of a (T←) row the `.S` is answerable for."""
+    ours, original = measured.own_cycles
+    assert original > 0, "the ROM ran none of the spans this `.S` transcribes — the row enters no arm of it"
+    return ours / original
+
+
+def cited_acceptances_stand(row):
+    """Is every acceptance a (T←) routine cites for its C still written, and still an acceptance (over the bar)?"""
+    return all(key in PERF_ACCEPTED and PERF_ACCEPTED[key][0] > TIER3_FUNCTION_BAR
+               for key in CALLS_INTO_C[rom_address(row)].carried_by)
+
+
+def own_within_bar(row, measured):
+    """(T←) holds EVERY row of a `.S` that calls C to its own instructions — under the bar as a whole too, where the
+    code it shares with the ROM (a routine it jumps to) would otherwise dilute a spill of its own into the average."""
+    return not calls_into_c(row) or own_ratio(measured) <= TIER3_FUNCTION_BAR
+
+
+def carried_by_its_own_instructions(row, measured):
+    """(T←): is `row` a `.S` row whose own instructions are at or under the bar, the rest being C already accepted?"""
+    return calls_into_c(row) and own_within_bar(row, measured) and cited_acceptances_stand(row)
+
+
+def _measure_transcription(row, bench):
+    return bench.measure_transcription(row.entry, row.symbol, row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
+                                       io_seed=row.io_seed, staged_entry=row.staged_entry, shared_entry=row.shared_entry)
+
+
 def measure(row, bench):
     """One row's `Measurement` — which is also its second differential, so this raises on a target
     build that does not equal the original.
@@ -1672,13 +1816,13 @@ def measure(row, bench):
     and the callee-saved file, and an m68k transcription owes it the WHOLE register file the ROM's
     own instructions leave (`tools/recreate_kit/rom_bench.py`). A row that ships through a call (T→) is
     measured on the shipped blob, whatever `bench` was handed, and profiled for its glue (T→G); every
-    other row's glue is 0 (`glue_cycles_of`), because it enters no thunk.
+    other row's glue is 0 (`glue_cycles_of`), because it enters no thunk. A `.S` row that calls C through
+    thunks of its own (T←) is profiled on `bench` and split into its own instructions and the rest.
     """
+    if calls_into_c(row):
+        return _measure_into_c(row, bench)
     if row.transcription:
-        return bench.measure_transcription(row.entry, row.symbol, row.regs, pokes=row.pokes,
-                                           psg_seed=row.psg_seed, io_seed=row.io_seed,
-                                           staged_entry=row.staged_entry,
-                                           shared_entry=row.shared_entry)
+        return _measure_transcription(row, bench)
     if ships_through_a_call(row):
         return _measure_as_shipped(row)
     return _measure_call(bench, row)
@@ -1730,30 +1874,37 @@ def rule_admits(row, measured, dispatch):
         excess <= LEAF_SLACK_FRACTION * (dispatch + measured.original_net)
 
 
-def verdict(row, measured, dispatch, ratio_of):
+def verdict(row, measured, dispatch, measurement_of):
     """What the gate makes of one measurement — THE SINGLE RULE, read by the table and the gate.
 
     "ok" — under the bar and not pinned. "pinned" — under the bar, measuring what it was pinned at.
     "accepted" — over the bar, and a written entry says so. "transcribed" — over the bar, the C of a
-    routine the target build ships as its `.S`, every row of which is under it (mechanism (T); `ratio_of`
-    measures those rows). "rule" — over the bar, and the LEAF RULE admits it on the measured excess.
-    "through" — the C of a routine that reaches a transcribed core, measured as shipped (mechanism (T→))
-    and at or under the bar. "glue" — such a row over the bar as shipped and at or under it NET OF THE
-    GLUE's own cycles (mechanism (T→G)); over it even net, the row is OVER unless an entry accepts its OWN
-    body's cost, which it can only do at the shipped number. "DRIFTED" — pinned, and no longer that number.
-    "OVER" — over the bar with nothing carrying it.
+    routine the target build ships as its `.S`, every row of which is under it or carried by (T←) (mechanism
+    (T); `measurement_of` hands over those rows' measurements — a written entry for a `.S` row never counts).
+    "own" — a `.S` row over the bar whose OWN instructions are at or under it, the rest being the C it reaches
+    through its own thunks, which the acceptances it cites carry (mechanism (T←)); a row of such a `.S` whose own
+    instructions are over the bar is OVER whatever its whole ratio. "rule" — over the bar, and
+    the LEAF RULE admits it on the measured excess. "through" — the C of a routine that reaches a transcribed
+    core, measured as shipped (mechanism (T→)) and at or under the bar. "glue" — such a row over the bar as
+    shipped and at or under it NET OF THE GLUE's own cycles (mechanism (T→G)); over it even net, the row is
+    OVER unless an entry accepts its OWN body's cost, which it can only do at the shipped number. "DRIFTED" —
+    pinned, and no longer that number. "OVER" — over the bar with nothing carrying it.
     """
     pin = pin_of(row)
     if pin and abs(measured.ratio - pin[0]) > RATIO_TOLERANCE:
         return "DRIFTED"
+    if not own_within_bar(row, measured):
+        return "OVER"
     if measured.ratio <= TIER3_FUNCTION_BAR:
         return "pinned" if pin else "through" if ships_through_a_call(row) else "ok"
     if pin:
         return "accepted"
+    if calls_into_c(row):
+        return "own" if carried_by_its_own_instructions(row, measured) else "OVER"
     if ships_through_a_call(row):
         return "glue" if ratio_net_of_glue(measured) <= TIER3_FUNCTION_BAR else "OVER"
     if is_transcribed_c_row(row):
-        return "transcribed" if ships_within_bar(row, ratio_of) else "OVER"
+        return "transcribed" if ships_within_bar(row, measurement_of) else "OVER"
     return "rule" if rule_admits(row, measured, dispatch) else "OVER"
 
 
@@ -1762,6 +1913,13 @@ FAILED = ("OVER", "DRIFTED")
 # How wide the ROM-address column renders: `$fc1510` and two spaces. Every entry in this ROM is six
 # hex digits, so it is a constant rather than a measurement over the rows.
 ADDRESS_WIDTH = 9
+
+
+def _own_split_line(measured, indent):
+    """The (T←) split under a `.S` row over the bar: the own ratio, and where the rest of each side went."""
+    (ours, original), (thunks, c_body) = measured.own_cycles, measured.into_c_cycles
+    return (f"{'':<{indent}}  own instructions: {own_ratio(measured):.2f} ({ours} cycles against the ROM's {original}); "
+            f"the rest {thunks} in thunks + {c_body} in the console's C against the ROM's other {measured.original_net - original}")
 
 
 def table(bench):
@@ -1776,8 +1934,8 @@ def table(bench):
     by_name = {(row.symbol, row.case): m for row, m in measured}
     dispatch = dispatch_cycles(by_name.__getitem__)
 
-    def ratio_of(row):
-        return by_name[(row.symbol, row.case)].ratio
+    def measurement_of(row):
+        return by_name[(row.symbol, row.case)]
     overhead_insns, overhead_cycles = bench.overhead
     lines = [
         "Tier 3 — the recreate against the original, same case, same instrument (Musashi).",
@@ -1793,7 +1951,10 @@ def table(bench):
         f"is <= {LEAF_SLACK_CYCLES} cycles and <= {LEAF_SLACK_FRACTION:.1%} of the "
         f"{dispatch} cycles this table measures a trap dispatch at, plus the leaf's own.",
         f"`transcribed`: over the bar, the C of a routine the target build ships as its `.S` "
-        f"(include/vdi/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f}.",
+        f"(include/vdi/transcribed.h), every `.S` row of which is <= {TIER3_FUNCTION_BAR:.2f} or `own`.",
+        f"`own`: a `.S` row over the bar whose OWN instructions are <= {TIER3_FUNCTION_BAR:.2f} against the ROM's (T←): "
+        f"the rest is the C it reaches through its own thunks, whose cost the Bconout(CON:) acceptances carry; "
+        f"the split prints below the row.",
         f"`through`: <= {TIER3_FUNCTION_BAR:.2f} as SHIPPED — C that reaches a transcribed core, measured with "
         f"each such call entering the `.S` through generated glue (build/bench_shipped/).",
         f"`glue`: over the bar as shipped, and <= {TIER3_FUNCTION_BAR:.2f} NET of the cycles spent inside the "
@@ -1816,7 +1977,7 @@ def table(bench):
                  f"{'insns/cycles':>14}{'insns/cycles':>14}")
     failed = []
     for row, m in measured:
-        state = verdict(row, m, dispatch, ratio_of)
+        state = verdict(row, m, dispatch, measurement_of)
         lines.append(f"{row.function:<{name_width}}"
                      f"{f'${row.address or row.entry:x}':<{ADDRESS_WIDTH}}"
                      f"{row.case:<{case_width}}"
@@ -1826,6 +1987,8 @@ def table(bench):
         if glue_cycles_of(m) and m.ratio > TIER3_FUNCTION_BAR:
             lines.append(f"{'':<{name_width + ADDRESS_WIDTH}}  net of the glue: {ratio_net_of_glue(m):.2f} "
                          f"({glue_cycles_of(m)} of the recreate's cycles are inside thunks)")
+        if calls_into_c(row) and m.ratio > TIER3_FUNCTION_BAR:
+            lines.append(_own_split_line(m, name_width + ADDRESS_WIDTH))
         lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  dropped from the image compare: [${lo:x}, ${hi:x}) — {why}"
                   for lo, hi, why in row.dropped]
         if state in FAILED:

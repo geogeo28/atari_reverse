@@ -25,6 +25,7 @@ from pathlib import Path
 from vdi import IMAGE_ARG, WORD_BYTES
 from vdi_text import font_field
 from vdi_text_c import header_at, proportional_font, rom_header_pokes
+from vdi_gdp import VDI_GDP_JUSTIFIED     # the GDP's arm that calls d_justified ($fcbd56)
 
 vdi.declare_alcyon("VDI_ROM_D_JUSTIFIED", None, (IMAGE_ARG,))
 
@@ -156,14 +157,11 @@ def assert_dead_in_the_snapshot():
 
 
 # ---- d_justified: GDP 10, as the GDP's arm `jsr`s it -----------------------------------------------------------
-JUSTIFIED_SUBFUNCTION = 10           # the GDP's arm that calls it ($fcbd56, the switch table's tenth entry)
-
-
 def justified_call(string, length, *, words=1, characters=0, x=20, y=60, **attributes):
     """GDP 10 of `string` spread to `length` pixels at (x, y): intin[0] the word flag, intin[1] the character
     flag, then the text; ptsin[2] the length — over `machine(**attributes)` with STALE gap records."""
     pokes = vdi.call_pokes(JUSTIFIED_OPCODE, intin=(words, characters, *vdi_text.codes(string)), ptsin=(x, y, length, 0),
-                           subfunction=JUSTIFIED_SUBFUNCTION, workstation_pokes=machine(**attributes))
+                           subfunction=VDI_GDP_JUSTIFIED, workstation_pokes=machine(**attributes))
     return vdi.merge_pokes(pokes, STALE_GAPS)
 
 

@@ -49,6 +49,7 @@ import staging
 import test_xbios_supexec as supexec
 from address_hook import AddressHook
 from harness import BASE_IMAGE, addrs, emu
+from opcodes import ADD_ONE_TO_BYTE_ABSOLUTE, MOVE_W_ABSOLUTE_TO_ABSOLUTE
 
 # ---- the band this module and its batteries stage into -------------------------------------------
 # The top of `staging.SCRATCH`, which the other batteries fill from the bottom (Getmpb's parameter
@@ -521,6 +522,25 @@ def marker_routine(index=0):
 def marked(info, index=0):
     """Did the routine `marker_routine(index)` staged run?"""
     return info["writes"].get(MARKS + index) == MARK
+
+
+# A routine that REPORTS what its caller left in memory round the call, and how often it was called.
+FLAG_REPORT_BYTES = 3                   # the word as found, then the count byte
+
+
+def flag_recorder(watched, report):
+    """A staged routine that reports the WORD at `watched` as it finds it — at `report` — and COUNTS its calls
+    in the byte after: `move.w (watched).l,(report).l / addq.b #1,(report+2).l / rts`.
+
+    What a caller does to that word AROUND the call is otherwise invisible when both orders end at the same
+    value (Scrdmp's `_dumpflg`, set after its `jsr` and read by the dump), and a second call looks like the
+    first. A case stages the report STALE and the count 0, so the relation compares both.
+    """
+    def effect(buf, _argument):
+        buf[report], buf[report + 1] = buf[watched], buf[watched + 1]
+        buf[report + 2] = (buf[report + 2] + 1) & 0xFF
+    return (struct.pack(">HIIHI", MOVE_W_ABSOLUTE_TO_ABSOLUTE, watched, report, ADD_ONE_TO_BYTE_ABSOLUTE, report + 2)
+            + RTS), effect
 
 
 def routine_pokes(routines):

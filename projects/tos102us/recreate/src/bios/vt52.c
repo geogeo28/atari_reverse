@@ -676,3 +676,44 @@ uint32_t console_output_raw(uint8_t *image, uint32_t entry_d0, uint16_t characte
     put_glyph(&con, (uint16_t)(character & CON_CHARACTER_MASK));
     return con.result;
 }
+
+/* ---- the VDI's escape (opcode 5, `src/vdi/escape.c`), which enters these bodies by address ---------
+ *
+ * Its jump table ($fc4298) holds addresses ESC's two tables hold too, so each of its console arms is one body
+ * alone — entered past the state machine, which is left as it was. The VDI discards D0, so each starts from
+ * 0, and none of these reads D0 as an input (`ESC l`, the one body that does, is not among them). One entry
+ * per body the table names, so the escape reaches each as the ROM does: directly, with no second dispatch —
+ * and the cursor unlock, which its v_offset arm brackets a store in with the lock. */
+#define CONSOLE_BODY_ENTRY(entry, body)     \
+    void entry(uint8_t *image)              \
+    {                                       \
+        Console con = { image, 0 };         \
+                                            \
+        body(&con);                         \
+    }
+
+CONSOLE_BODY_ENTRY(console_cursor_up, cursor_up)                          /* $fc4468 — ESC A */
+CONSOLE_BODY_ENTRY(console_cursor_down, cursor_down)                      /* $fc4478 — ESC B */
+CONSOLE_BODY_ENTRY(console_cursor_right, cursor_right)                    /* $fc448c — ESC C */
+CONSOLE_BODY_ENTRY(console_cursor_left, cursor_left)                      /* $fc44a0 — ESC D */
+CONSOLE_BODY_ENTRY(console_cursor_home, cursor_home)                      /* $fc44b0 — ESC H */
+CONSOLE_BODY_ENTRY(console_clear_screen_and_home, clear_screen_and_home)  /* $fc4464 — ESC E */
+CONSOLE_BODY_ENTRY(console_clear_to_end_of_screen, clear_to_end_of_screen) /* $fc44b8 — ESC J */
+CONSOLE_BODY_ENTRY(console_clear_to_end_of_line, clear_to_end_of_line)    /* $fc44ca — ESC K */
+CONSOLE_BODY_ENTRY(console_unlock_cursor, unlock_cursor)                  /* $fc45ae */
+#undef CONSOLE_BODY_ENTRY
+
+/* $fc4510 / $fc4516 — ESC p / ESC q. */
+void console_reverse_video(uint8_t *image, int on)
+{
+    Console con = { image, 0 };
+
+    set_state_flag(&con, CON_FLAG_REVERSE, on);
+}
+
+void console_place_cursor(uint8_t *image, uint16_t column, uint16_t row)
+{
+    Console con = { image, 0 };
+
+    place_cursor(&con, column, row);
+}

@@ -64,13 +64,15 @@ import case
 import staging
 from case import merge_pokes
 from isr import blob as bench     # the cross-compiled blob, loaded once per process (`isr.blob`)
-from opcodes import CLEAR_ADDRESS_REGISTER, LINE_A, PUSH_RETURN_PC, PUSH_STACK_LONG, RTS
+from opcodes import CLEAR_REGISTER, LINE_A, PUSH_RETURN_PC, PUSH_STACK_LONG, RTS
 
 # ---- the headers' constants, out of the C the cores compile against ------------------------------
 # One namespace for every VDI battery. Parsed IN INCLUDE ORDER with what came before as `known`,
 # because `linea.h` spells fields as ALIASES of `addrs.h`'s console names rather than as second numbers.
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-# The SHIPPED CONFIGURATION's blob (the Makefile's shipped-blob rule): the build the (T→) rows are priced on.
+# Tier 3's m68k blob (kit.mk's bench rule) — whose call graph the batteries read — and the SHIPPED CONFIGURATION's
+# (the Makefile's shipped-blob rule): the build the (T→) rows are priced on.
+BENCH_ELF = Path(__file__).resolve().parents[1] / "build" / "bench" / "bench.elf"
 SHIPPED_ELF = Path(__file__).resolve().parents[1] / "build" / "bench_shipped" / "bench.elf"
 VDI_HEADERS = tuple(_INCLUDE / name for name in ("vdi/linea.h", "vdi/vdi.h", "vdi/font.h"))
 CONSTANTS = {}
@@ -256,47 +258,98 @@ def fill_pattern_pokes(at, rows):
 
 
 # ---- (b) the workstation, as the dispatcher leaves it ----------------------------------------------
-# `$fca9f6`'s copies of the record into Line-A and VDI RAM ($fcaa40..$fcab14), in the ROM's order:
-# (where the copy goes, the workstation field it is copied from). Widths are the field's own.
-DISPATCH_COPIES = (
-    (LINEA_CLIP, "CLIP"),
-    (LINEA_INQ_TAB + VDI_INQ_TAB_CLIP_INDEX * WORD_BYTES, "CLIP"),
-    (LINEA_XMINCL, "XMN_CLIP"),
-    (LINEA_YMINCL, "YMN_CLIP"),
-    (LINEA_XMAXCL, "XMX_CLIP"),
-    (LINEA_YMAXCL, "YMX_CLIP"),
-    (LINEA_WRT_MODE, "WRT_MODE"),
-    (LINEA_PATPTR, "PATPTR"),
-    (LINEA_PATMSK, "PATMSK"),
-    (LINEA_FONT_RING + LINEA_FONT_RING_LOADED * LONG_BYTES, "LOADED_FONTS"),
-    (LINEA_DEV_TAB + VDI_DEV_TAB_FACES_INDEX * WORD_BYTES, "NUM_FONTS"),
-    (LINEA_DDA_INC, "DDA_INC"),
-    (LINEA_T_SCLSTS, "T_SCLSTS"),
-    (LINEA_SCALE, "SCALED"),
-    (LINEA_CUR_FONT, "CUR_FONT"),
-    (LINEA_SCRPT2, "SCRPT2"),
-    (LINEA_SCRTCHP, "SCRTCHP"),
-    (LINEA_STYLE, "STYLE"),
-    (VDI_TEXT_H_ALIGN, "H_ALIGN"),
-    (VDI_TEXT_V_ALIGN, "V_ALIGN"),
-    (LINEA_CHUP, "CHUP"),
+# `$fca9f6`'s stores after the lookup ($fcaa40..$fcab14), IN THE ROM's ORDER — ONE list, which every mirror folds:
+# `dispatcher_copies` (what every battery stages), `test/vdi_entry.py`'s order model and its stale stores. Each step
+# is where the store goes, how wide, and how its value is had: `copied` the WS field it copies, or `compute(memory,
+# at)` for the three the ROM computes, answering (value, the record offset it was copied from or None). A step reads
+# memory AS THE STORES BEFORE IT LEFT IT, which is the ROM's (and `src/vdi/entry.c` `make_current`'s) sequence:
+# `test_vdi_entry.py` holds this ORDER to the ROM's own stores, and every byte the ROM stores to a step.
+DispatchStep = namedtuple("DispatchStep", "destination width copied compute", defaults=(None, None))
+
+
+def memory_value(memory, at, width):
+    """`width` bytes at `at` of `memory` — an image, or a dict of the bytes that matter — as an unsigned int."""
+    return int.from_bytes(bytes(memory[at + index] for index in range(width)), "big")
+
+
+def _record_address(_memory, at):
+    """CUR_WORK: the record's own address."""
+    return at, None
+
+
+def _multifill_of(memory, at):
+    """MULTIFILL ($fcaa8e): the record's, for the user interior alone — a COPY then — else 0."""
+    if memory_value(memory, at + field("WS", "FILL_STYLE").at, WORD_BYTES) != VDI_INTERIOR_USER:
+        return 0, None
+    offset = field("WS", "MULTIFILL").at
+    return memory_value(memory, at + offset, WORD_BYTES), offset
+
+
+def _mono_of(memory, _at):
+    """MONO_STATUS ($fcaade): the monospace bit of the font LINEA_CUR_FONT names — read back, after its copy."""
+    font = memory_value(memory, LINEA_CUR_FONT, LONG_BYTES)
+    return memory_value(memory, font + field("FONT", "FLAGS").at, WORD_BYTES) & FONT_FLAG_MONOSPACE_MASK, None
+
+
+def _copy(destination, name):
+    return DispatchStep(destination, field("WS", name).width, copied=name)
+
+
+def _computed(name, compute):
+    return DispatchStep(field("LINEA", name).at, field("LINEA", name).width, compute=compute)
+
+
+DISPATCH_STEPS = (
+    _computed("CUR_WORK", _record_address),
+    _copy(LINEA_CLIP, "CLIP"),
+    _copy(LINEA_INQ_TAB + VDI_INQ_TAB_CLIP_INDEX * WORD_BYTES, "CLIP"),
+    _copy(LINEA_XMINCL, "XMN_CLIP"),
+    _copy(LINEA_YMINCL, "YMN_CLIP"),
+    _copy(LINEA_XMAXCL, "XMX_CLIP"),
+    _copy(LINEA_YMAXCL, "YMX_CLIP"),
+    _copy(LINEA_WRT_MODE, "WRT_MODE"),
+    _copy(LINEA_PATPTR, "PATPTR"),
+    _copy(LINEA_PATMSK, "PATMSK"),
+    _computed("MULTIFILL", _multifill_of),
+    _copy(LINEA_FONT_RING + LINEA_FONT_RING_LOADED * LONG_BYTES, "LOADED_FONTS"),
+    _copy(LINEA_DEV_TAB + VDI_DEV_TAB_FACES_INDEX * WORD_BYTES, "NUM_FONTS"),
+    _copy(LINEA_DDA_INC, "DDA_INC"),
+    _copy(LINEA_T_SCLSTS, "T_SCLSTS"),
+    _copy(LINEA_SCALE, "SCALED"),
+    _copy(LINEA_CUR_FONT, "CUR_FONT"),
+    _computed("MONO_STATUS", _mono_of),
+    _copy(LINEA_SCRPT2, "SCRPT2"),
+    _copy(LINEA_SCRTCHP, "SCRTCHP"),
+    _copy(LINEA_STYLE, "STYLE"),
+    _copy(VDI_TEXT_H_ALIGN, "H_ALIGN"),
+    _copy(VDI_TEXT_V_ALIGN, "V_ALIGN"),
+    _copy(LINEA_CHUP, "CHUP"),
 )
+# ...its plain copies alone, as (where the copy goes, the workstation field): a view of the list, not a second one.
+DISPATCH_COPIES = tuple((step.destination, step.copied) for step in DISPATCH_STEPS if step.copied)
+
+
+def dispatch_stores(memory, at, steps=DISPATCH_STEPS):
+    """`steps` run over `memory` (mutable: a bytearray or a dict of the bytes that matter) for the record at `at`,
+    each value STORED before the next step reads: yields (step, value, the record offset it was copied from or None).
+    A read off a dict's bytes is its KeyError."""
+    for step in steps:
+        if step.copied:
+            offset = field("WS", step.copied).at
+            value = memory_value(memory, at + offset, step.width)
+        else:
+            value, offset = step.compute(memory, at)
+        for index, byte in enumerate(value.to_bytes(step.width, "big")):
+            memory[step.destination + index] = byte
+        yield step, value, offset
 
 
 def dispatcher_copies(image, at):
-    """What `$fca9f6` stores before `jsr`ing a function, for the workstation at `at` in `image`: the
-    plain copies above, the two computed ones — MULTIFILL only for the user interior ($fcaa8e), and
-    MONO_STATUS from the font the record names ($fcaade) — and CUR_WORK and a cleared VDI_RESULT."""
-    pokes = {}
-    for destination, name in DISPATCH_COPIES:
-        spec = field("WS", name)
-        pokes[destination] = bytes(image[at + spec.at:at + spec.at + spec.width])
-    user_interior = read_field(image, "WS", "FILL_STYLE", at) == VDI_INTERIOR_USER
-    multifill = read_field(image, "WS", "MULTIFILL", at) if user_interior else 0
-    font = read_field(image, "WS", "CUR_FONT", at)
-    mono = read_field(image, "FONT", "FLAGS", font) & FONT_FLAG_MONOSPACE_MASK
-    return merge_pokes(pokes, linea_pokes(MULTIFILL=multifill, MONO_STATUS=mono, CUR_WORK=at),
-                       {VDI_RESULT: bytes(WORD_BYTES)})
+    """What `$fca9f6` stores before `jsr`ing a function, for the workstation at `at` in `image`: every step of
+    DISPATCH_STEPS, folded in order, and the VDI_RESULT it cleared before the lookup."""
+    pokes = {step.destination: value.to_bytes(step.width, "big")
+             for step, value, _offset in dispatch_stores(bytearray(image), at)}
+    return merge_pokes(pokes, {VDI_RESULT: bytes(WORD_BYTES)})
 
 
 def dispatched_pokes(at=VDI_PHYS_WORK, *, onto=None, **values):
@@ -413,6 +466,11 @@ def rom_word(at):
 def signed_word(word):
     """A 16-bit word as the signed Alcyon `int` it is."""
     return word - 0x10000 if word & 0x8000 else word
+
+
+def rom_table_entry(table, index):
+    """The address a ROM table of WORD displacements from itself names at `index` — the escape's, and ESC's two."""
+    return table + signed_word(rom_word(table + index * WORD_BYTES))
 
 
 
@@ -546,12 +604,23 @@ def core_symbol(name):
     return name.replace(ROM_INFIX, "", 1).lower()
 
 
-def run_function(name, pokes, **kwargs):
+def recorded(glue, recording):
+    """`glue` run inside `recording`'s pass (an `AddressHook.recording`, or `gemdos.recording`) when a case names
+    one — a core that calls out through a hook the case staged — and as it is otherwise."""
+    return recording(glue) if recording else glue
+
+
+def run_function(name, pokes, *, recording=None, **kwargs):
     """The VDI FUNCTION `addrs.<name>` (a `VDI_ROM_<FN>`), entered as the dispatcher's `jsr` leaves the
     machine — so `pokes` should come from `call_pokes`, which stages the dispatched workstation —
-    against the core `void vdi_<fn>(uint8_t *image)`. Answers a `Result`; `kwargs` are `case.run`'s."""
+    against the core `void vdi_<fn>(uint8_t *image)`. Answers a `Result`; `kwargs` are `case.run`'s.
+    `recording` is `_run_primitive_at`'s, for a function that calls out through a hook the case staged."""
     core = _core(core_symbol(name), None)
-    info = case.run(getattr(addrs, name), {"_pokes": pokes}, lambda lib, buf: core(buf),
+
+    def glue(_lib_, buf):
+        return core(buf)
+
+    info = case.run(getattr(addrs, name), {"_pokes": pokes}, recorded(glue, recording),
                     width=case.NO_RESULT, **kwargs)
     return Result(info, pokes)
 
@@ -602,7 +671,7 @@ def _run_primitive_at(entry, name, registers, pokes, *, recording=None, **kwargs
         answers.append(list(out)[:len(contract.results)])
         return returned
 
-    info = case.run(entry, {**registers, "_pokes": pokes}, recording(glue) if recording else glue,
+    info = case.run(entry, {**registers, "_pokes": pokes}, recorded(glue, recording),
                     width=case.FULL_D0 if answers_d0 else case.NO_RESULT, **kwargs)
     if several:
         # The FIRST candidate call is the differential's own; the attribution pass re-runs it over a
@@ -729,10 +798,12 @@ TRANSCRIPTION_ROLES = {"vdi_rom_": "VDI", "linea_rom_": "Line-A"}
 #
 #     pea     back(pc) / move.l 8(sp),-(sp) / rts / back: suba.l An,An ... / rts
 #
+# (`clr.l Dn` for a data register: a jump table's displacement left in D0 is the same kind of layout fact, and a
+# register a thunk's C body left is not the transcription's at all — `test_vdi_escape_transcription.py`.)
 # Which registers, per routine, is MEASURED by each battery and declared to its `CallerPool`.
 _ROUTINE_SLOT = abi.FIRST_ARG - emu.STACK_TOP + LONG_BYTES     # FIRST_ARG, past the pushed return
 _JUMP_BYTES = len(PUSH_STACK_LONG) + WORD_BYTES + len(RTS)
-# pea + move.l + rts in and an rts out, and one suba.l per register (6 cycles as Musashi counts it): the
+# pea + move.l + rts in and an rts out, and one suba.l/clr.l per register (6 cycles as Musashi counts either): the
 # declared cost of each caller is their sum, and `test_vdi_transcribed.py` measures every one against it.
 CODE_POINTER_CALLER_COST = (4, 72)
 CLEAR_COST = (1, 6)
@@ -741,20 +812,27 @@ CLEAR_COST = (1, 6)
 def code_pointer_stub(registers):
     """The bytes of a caller that clears `registers` on the way out, and the cost it declares — position
     independent, so each battery stages its own in its own band (`CallerPool`)."""
-    clears = b"".join(CLEAR_ADDRESS_REGISTER[register] for register in registers)
+    clears = b"".join(CLEAR_REGISTER[register] for register in registers)
     stub = (PUSH_RETURN_PC + struct.pack(">h", _JUMP_BYTES + WORD_BYTES)
             + PUSH_STACK_LONG + struct.pack(">h", _ROUTINE_SLOT) + RTS + clears + RTS)
     cost = tuple(base + len(registers) * each for base, each in zip(CODE_POINTER_CALLER_COST, CLEAR_COST))
     return stub, cost
 
 
+POOLS = []
+
+
 class CallerPool:
-    """One battery's CODE-POINTER CALLERS, staged in its own band `[at, end)` one `stride` apart: the
-    caller that clears a register set is built on first ask and registered (`staged_caller`), and the
-    plain caller answers for an empty set. `code_pointers` is the battery's MEASURED `{routine: registers}`
-    — what `caller_for` enters a routine through when a case names none."""
+    """One battery's STAGED CALLERS, in its own band `[at, end)` one `stride` apart — no two pools' bands
+    overlapping. A caller is built on first ask and registered (`staged_caller`): `staged` for any stub a
+    battery builds, `caller` for the CODE-POINTER caller that clears a register set (the plain caller
+    answering for an empty one). `code_pointers` is the battery's MEASURED `{routine: registers}` — what
+    `caller_for` enters a routine through when a case names none."""
 
     def __init__(self, at, end, stride, code_pointers=None, *, built=()):
+        overlapping = [(pool.at, pool.end) for pool in POOLS if at < pool.end and pool.at < end]
+        assert not overlapping, f"callers at [{at:#x}, {end:#x}) overlap another pool's {overlapping}"
+        POOLS.append(self)
         self.at, self.end, self.stride = at, end, stride
         self.code_pointers = dict(code_pointers or {})
         self._callers = {}
@@ -762,16 +840,21 @@ class CallerPool:
         for registers in (*self.code_pointers.values(), *built):
             self.caller(registers)
 
+    def staged(self, key, build, *, routine=RTS, routine_cost=None):
+        """The caller for `key`, from `build()` -> (stub, declared cost) on first ask, at the pool's next stride;
+        `routine` / `routine_cost` are `staged_caller`'s."""
+        if key not in self._callers:
+            stub, cost = build()
+            at = self.at + len(self._callers) * self.stride
+            assert len(stub) <= self.stride and at + self.stride <= self.end, (
+                f"no room for the caller {key} in [{self.at:#x}, {self.end:#x})")
+            self._callers[key] = staged_caller(at, stub, cost, routine=routine, routine_cost=routine_cost)
+        return self._callers[key]
+
     def caller(self, registers):
         if not registers:
             return PLAIN_CALLER
-        if registers not in self._callers:
-            stub, cost = code_pointer_stub(registers)
-            at = self.at + len(self._callers) * self.stride
-            assert len(stub) <= self.stride and at + self.stride <= self.end, (
-                f"no room for a caller clearing {registers} in [{self.at:#x}, {self.end:#x})")
-            self._callers[registers] = staged_caller(at, stub, cost)
-        return self._callers[registers]
+        return self.staged(registers, lambda: code_pointer_stub(registers))
 
     def caller_for(self, name, code_pointers=None):
         """The caller `name`'s transcription is entered through: `code_pointers` cleared, or the routine's
@@ -806,7 +889,11 @@ def transcription_routine(symbol):
 # an absolute address of the transcription's own table. Each is RELOCATED: `width` says which (a word is
 # a displacement from the extension word, a long an absolute address), and the comparator computes the
 # EXACT value it must hold from the ROM's own reference and where `target_anchor`'s region is in the blob.
-Relocated = namedtuple("Relocated", "width target_anchor why")
+# Two further shapes: a JUMP TABLE's word is a displacement from the TABLE (`base`, the ROM address its
+# `(pc,dn.w)` indexes from), not from the word itself; and a reference into code that ships as C rather than
+# as a transcription names a THUNK (`thunk`, the blob symbol of the glue the `.S` carries to reach that C),
+# whose place in the blob is then the exact value, with `target_anchor` None.
+Relocated = namedtuple("Relocated", "width target_anchor why base thunk", defaults=(None, None))
 PC_RELATIVE = WORD_BYTES
 ABSOLUTE = LONG_BYTES
 
@@ -821,20 +908,29 @@ def _blob_bytes(address, size):
     return bytes(blob.blob[address - blob.base:address - blob.base + size])
 
 
+def _displaced_from(at, relocation):
+    """What a PC-relative reference at `at` is a displacement from: its extension word, or its table."""
+    return at if relocation.base is None else relocation.base
+
+
 def _relocation_target(at, relocation):
-    """The ROM address the ROM's own reference at `at` names: a displacement from its extension word, or
-    an absolute address."""
+    """The ROM address the ROM's own reference at `at` names: a displacement from its extension word (or
+    its table), or an absolute address."""
     pc_relative = relocation.width == PC_RELATIVE
     rom = int.from_bytes(bytes(BASE_IMAGE[at:at + relocation.width]), "big", signed=pc_relative)
-    return at + rom if pc_relative else rom
+    return _displaced_from(at, relocation) + rom if pc_relative else rom
 
 
 def _relocated_value(at, placed_at, relocation):
     """The exact bytes the reference at ROM address `at`, placed at blob address `placed_at`, must hold:
-    the ROM's own reference followed to its target, and that target's place in the blob."""
-    target = transcribed_address(relocation.target_anchor, _relocation_target(at, relocation))
+    the ROM's own reference followed to its target, and that target's place in the blob — or the thunk's."""
+    if relocation.thunk:
+        target = bench().entry(relocation.thunk)
+    else:
+        target = transcribed_address(relocation.target_anchor, _relocation_target(at, relocation))
     if relocation.width == PC_RELATIVE:
-        return (target - placed_at).to_bytes(WORD_BYTES, "big", signed=True)
+        origin = placed_at - (at - _displaced_from(at, relocation))
+        return (target - origin).to_bytes(WORD_BYTES, "big", signed=True)
     return target.to_bytes(LONG_BYTES, "big")
 
 
@@ -866,6 +962,14 @@ def every_pinned_region():
     return tuple(PINNED_REGIONS)
 
 
+def anchor_of(rom_address, regions=None):
+    """The anchor of the one byte-pinned region — of `regions`, or of every battery's — the ROM address lies in."""
+    anchors = [region.anchor for region in (every_pinned_region() if regions is None else regions)
+               if region.lo <= rom_address < region.hi]
+    assert len(anchors) == 1, f"${rom_address:x} lies in {len(anchors)} pinned regions"
+    return anchors[0]
+
+
 def _one_pinned_region_holds(*addresses):
     return any(all(region.lo <= address < region.hi for address in addresses) for region in every_pinned_region())
 
@@ -881,6 +985,12 @@ def assert_transcribed(anchor, lo, hi, *, entries=(), relocated=None):
         f"${lo:x}..${hi:x} from {anchor} is pinned but no battery declares it (`vdi.pinned_region`)")
     for at, relocation in relocated.items():
         target = _relocation_target(at, relocation)
+        assert relocation.base is None or lo <= relocation.base < hi, f"${at:x}'s table is outside the region"
+        if relocation.thunk:
+            assert not _one_pinned_region_holds(target), (
+                f"${at:x} ({relocation.why}) names the thunk {relocation.thunk}, but ${target:x} is byte-pinned — "
+                f"a reference into a transcription must reach the transcription")
+            continue
         assert _one_pinned_region_holds(target, getattr(addrs, relocation.target_anchor)), (
             f"${at:x} ({relocation.why}) is relocated to ${target:x} as measured from {relocation.target_anchor}, "
             f"but no byte-pinned region holds both — its value would be computed against a layout nobody checks")
@@ -972,6 +1082,8 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # the arcs and rounded boxes (`src/vdi/arcs.c`): a point's projection, the sweep's steps, the aspect
     ("vdi_clc_pts", "vdi_smul_div"), ("draw_arc", "vdi_smul_div"), ("vdi_gdp_arc", "vdi_smul_div"),
     ("vdi_gdp_rbox", "vdi_smul_div"),
+    # the GDP's circle arm (`src/vdi/gdp.c`): its y radius in the aspect
+    ("vdi_gdp", "vdi_smul_div"),
     # the screen clear (`src/vdi/screen.c`), which GCC inlines into the two routines that end in it — and the
     # BIOS span clear's other caller, GEMDOS's program loader (`src/gemdos/pexec_load.c`)
     ("vdi_v_clrwk", "vdi_clear_span"), ("vdi_init_timer_mouse", "vdi_clear_span"),

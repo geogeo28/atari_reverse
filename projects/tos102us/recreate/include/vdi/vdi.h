@@ -250,15 +250,27 @@
 #define VDI_INTERIOR_SOLID    1          /*                                     ($fcc9cc)           */
 #define VDI_INTERIOR_PATTERN  2          /*                                     ($fcaf6c cmpi.w #2) */
 #define VDI_INTERIOR_HATCH    3          /*                                     ($fcca16)           */
+/* The value WS_FILL_PER is tested for — EXACTLY 1, so any other value, 2 or -1, leaves a fill unoutlined — and
+ * stored as ($fcd53a v_opnwk's default, $fcd084 s_fa_attr's outlined fill), and the LN_MASK its outline is drawn
+ * in. VALUES, not fields. */
+#define VDI_FILL_PERIMETER_ON 1          /*                                     ($fcbc16, $fcc252 cmpi.w #1) */
+#define VDI_PERIMETER_LINE_MASK 0xffff   /* solid                               ($fcbc1e, $fcc25a)  */
 
 #ifndef __ASSEMBLER__
 #include "machine.h"
+#include "m68k_idioms.h"
 
 /* ---- THE CALL, as a function reaches it: through the Line-A pointers -----------------------------
  * The one set of accessors every VDI function's C uses. Each reads its Line-A pointer AT THE CALL, so a
  * read placed after a store sees that store — the ROM's own order, which only shows when the arrays
  * overlap each other or the Line-A variables. A core that reads a pointer once and keeps it, as a ROM
- * routine that loads it into a register does, holds it in a local from `linea_pointer`. */
+ * routine that loads it into a register does, holds it in a local from `linea_pointer`.
+ *
+ * THE 24-BIT BUS. The pointers are a program's longwords, stored by the `trap #2` entry as they came, top
+ * byte and all (`src/vdi/entry.c`) — and so is a workstation record's address. Every accessor below that
+ * DEREFERENCES one sums the element's or field's offset FIRST and only then puts the address on the bus,
+ * as the 68000's `d16(An)` / `(An,Dn)` does (`bus_dereference`: free on target; `test_vdi_bus_pointers.py`).
+ * `call_element` and `current_work` answer the raw sum, for a core that carries it on. */
 static inline uint32_t linea_pointer(const uint8_t *image, uint32_t variable)
 {
     return be32(image + variable);
@@ -272,33 +284,33 @@ static inline uint32_t call_element(const uint8_t *image, uint32_t array, unsign
 
 static inline int16_t intin_word(const uint8_t *image, unsigned index)
 {
-    return (int16_t)be16(image + call_element(image, LINEA_INTIN, index));
+    return (int16_t)be16(image + bus_dereference(call_element(image, LINEA_INTIN, index)));
 }
 
 static inline int16_t ptsin_word(const uint8_t *image, unsigned index)
 {
-    return (int16_t)be16(image + call_element(image, LINEA_PTSIN, index));
+    return (int16_t)be16(image + bus_dereference(call_element(image, LINEA_PTSIN, index)));
 }
 
 static inline void answer_intout(uint8_t *image, unsigned index, uint16_t value)
 {
-    wr16(image + call_element(image, LINEA_INTOUT, index), value);
+    wr16(image + bus_dereference(call_element(image, LINEA_INTOUT, index)), value);
 }
 
 static inline void answer_ptsout(uint8_t *image, unsigned index, uint16_t value)
 {
-    wr16(image + call_element(image, LINEA_PTSOUT, index), value);
+    wr16(image + bus_dereference(call_element(image, LINEA_PTSOUT, index)), value);
 }
 
 /* A word of contrl by its byte offset (CONTRL_*), read or stored through the pointer at the call. */
 static inline int16_t contrl_word(const uint8_t *image, uint32_t offset)
 {
-    return (int16_t)be16(image + linea_pointer(image, LINEA_CONTRL) + offset);
+    return (int16_t)be16(image + bus_dereference(linea_pointer(image, LINEA_CONTRL) + offset));
 }
 
 static inline void set_contrl_word(uint8_t *image, uint32_t offset, uint16_t value)
 {
-    wr16(image + linea_pointer(image, LINEA_CONTRL) + offset, value);
+    wr16(image + bus_dereference(linea_pointer(image, LINEA_CONTRL) + offset), value);
 }
 
 /* contrl[2] and contrl[4], each written only by the functions that answer that array. */
@@ -335,6 +347,13 @@ static inline void add_ram_word(uint8_t *image, uint32_t at, uint16_t delta)
     wr16(image + at, (uint16_t)(be16(image + at) + delta));
 }
 
+/* ...and a word of a CALLER's array at an address a core holds from `linea_pointer` (a ptsin cursor it
+ * walks), put on the bus as the accessors above put theirs — where `ram_word`'s address is the VDI's own. */
+static inline int16_t caller_word(const uint8_t *image, uint32_t at)
+{
+    return (int16_t)be16(image + bus_dereference(at));
+}
+
 /* The address of entry `index` of the table at `table`, the index SIGN-EXTENDED first and scaled in the
  * address register (`movea.w` / `ext.l`, then `adda.l An,An` or `asl.l`): a negative index reads below the
  * table, and a doubled one parts from m68k_idioms.h's word-wrapped `word_index` from 16,384 on. Summed as an
@@ -362,31 +381,31 @@ static inline uint32_t current_work(const uint8_t *image)
  * in a register (`movea.l $27ca,a4` once) — signed, as its Alcyon `int`. */
 static inline int16_t work_word(const uint8_t *image, uint32_t work, uint32_t field)
 {
-    return (int16_t)be16(image + work + field);
+    return (int16_t)be16(image + bus_dereference(work + field));
 }
 
 /* ...and a store into it. */
 static inline void set_work_word(uint8_t *image, uint32_t work, uint32_t field, uint16_t value)
 {
-    wr16(image + work + field, value);
+    wr16(image + bus_dereference(work + field), value);
 }
 
 /* ...and a longword store (a pointer field). */
 static inline void set_work_long(uint8_t *image, uint32_t work, uint32_t field, uint32_t value)
 {
-    wr32(image + work + field, value);
+    wr32(image + bus_dereference(work + field), value);
 }
 
 /* ...and a store into the CURRENT workstation's, LINEA_CUR_WORK read at the store. */
 static inline void set_current_work_word(uint8_t *image, uint32_t field, uint16_t value)
 {
-    wr16(image + current_work(image) + field, value);
+    wr16(image + bus_dereference(current_work(image) + field), value);
 }
 
 /* ...and a read of one, LINEA_CUR_WORK read at the read — unsigned, for a mode compared or a pen passed on. */
 static inline uint16_t current_work_word(const uint8_t *image, uint32_t field)
 {
-    return be16(image + current_work(image) + field);
+    return be16(image + bus_dereference(current_work(image) + field));
 }
 
 /* ---- a word of a Line-A DEVICE TABLE (LINEA_DEV_TAB / SIZ_TAB / INQ_TAB) by its index ----------------

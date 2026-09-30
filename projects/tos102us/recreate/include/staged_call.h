@@ -7,11 +7,13 @@
  * fills it and anything may replace it — so it is an INPUT of the handler, and a case stages a
  * routine of its own exactly as `test_xbios_supexec.py` stages one for Supexec.
  *
- * TWO SHAPES, because the ROM has two: a bare `jsr`, and the one timer C makes with a word pushed
- * in front of it. The word matters: `move.w %0,-(sp)` is TWO bytes of frame, where a C call would
- * widen the argument to a four-byte slot and a staged routine reading `4(sp).w` would find the high
- * half. So the target build spells both as the ROM's own instructions rather than as a C call
- * through a function pointer.
+ * ONE SHAPE PER CALL THE ROM MAKES, each spelt as the ROM's own instructions rather than as a C call
+ * through a function pointer. The first two are the interrupt handlers': a bare `jsr`, and the one
+ * timer C makes with a word pushed in front of it. The word matters: `move.w %0,-(sp)` is TWO bytes
+ * of frame, where a C call would widen the argument to a four-byte slot and a staged routine reading
+ * `4(sp).w` would find the high half. The IKBD/MIDI chain adds three that put something in A0, and
+ * the VDI two more — a register-carrying one and one that saves round the `jsr` itself — each
+ * introduced where it is defined below.
  *
  * OFF TARGET THE ROUTINE CANNOT RUN AT ALL — it is 68000 code in the image, and the candidate is
  * host code over a byte array — so the host build transfers control through `recreate_call_vector`,
@@ -91,7 +93,9 @@ extern void (*recreate_call_vector_registers)(uint8_t *image, uint32_t routine, 
 #define STAGED_CALL_CLOBBERS_ROUTINE_IN_A1 STAGED_CALL_CLOBBERS_D1_D7, \
                                            STAGED_CALL_CLOBBERS_A2_A4, "memory", "cc"
 
-/* A5 IS AN OPERAND OF EVERY SHAPE BELOW, NOT A CLOBBER, AND THE VALUE IS THE ROM'S OWN ZERO.
+/* A5 IS AN OPERAND OF EVERY INTERRUPT-HANDLER SHAPE BELOW, NOT A CLOBBER, AND THE VALUE IS THE ROM'S OWN
+ * ZERO. (The two VDI shapes at the end of the file serve no handler of `src/bios/isr.S`'s and pin no A5;
+ * each says why.)
  *
  * Each of these handlers opens `lea 0,a5` inside its `movem` bracket, and every routine TOS installs
  * in one of these slots reaches low RAM and the I/O page through `(a5)` displacements: `$fc29fc`'s
@@ -279,6 +283,33 @@ static inline void call_vector_registers(uint8_t *image, uint32_t routine, uint3
     registers[STAGED_D0] = first;
     registers[STAGED_D1] = second;
     registers[STAGED_A0] = pointer;
+#endif
+}
+
+/* ---- the bare `jsr` for a caller with NOTHING live across it ---------------------------------------------
+ *
+ * The VDI dispatcher's call into the function its opcode table names is its last act (`src/vdi/entry.c`), and
+ * a VDI function may change any register (vs_color D3/D4, vr_trnfm D7 — `vdi/transcribed.h`). `call_vector`'s
+ * clobber list would make GCC save its ten callee-saved registers in the caller's PROLOGUE, paid on every path
+ * — the dispatcher's lookups that call nothing included. This shape saves them ITSELF, round the `jsr` alone:
+ * the same `movem` pair, spent only where the call is made. A6 goes in the list too, which the clobber lists
+ * above cannot name (GCC's bound). The routine is in A0, as the ROM's own `movea.l (a0,a1.l),a0 / jsr (a0)`
+ * has it; nothing is pinned in A5 — the ROM's is its CONTRL pointer, which no VDI function reads on entry. Off
+ * target it is `call_vector`'s hook. */
+static inline void call_vector_keeping(uint8_t *image, uint32_t routine)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    recreate_call_vector(image, routine, STAGED_CALL_NO_ARGUMENT);
+#else
+    register uint32_t target __asm__("a0") = routine;
+
+    (void)image;
+    __asm__ volatile ("movem.l %%d2-%%d7/%%a2-%%a6,-(%%sp)\n\t"
+                      "jsr (%0)\n\t"
+                      "movem.l (%%sp)+,%%d2-%%d7/%%a2-%%a6"
+                      : "+a"(target)
+                      :
+                      : "d0", "d1", "a1", "memory", "cc");
 #endif
 }
 

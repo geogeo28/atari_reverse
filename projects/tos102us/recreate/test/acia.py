@@ -34,6 +34,7 @@ import struct
 import case
 import isr
 from harness import addrs, _lib
+from opcodes import MOVE_B_ABSOLUTE_TO_ABSOLUTE
 
 # ---- where this module's stubs and their reports live -------------------------------------------
 # Inside `isr.STUB_BAND`, above the three stubs `test_bios_ikbd.py` stages at its foot (+0x00, +0x10
@@ -84,9 +85,6 @@ assert STUB_BASE >= isr.STUB_BAND, "this module's stubs start below the stub ban
 
 
 # ---- the recorders -------------------------------------------------------------------------------
-# One opcode this module assembles that `test/isr.py` does not already name: `move.b <long>.l,<long>.l`,
-# which is how a stub reports a byte of the image rather than one of its own registers.
-MOVE_B_ABSOLUTE_TO_ABSOLUTE = 0x13F9
 
 def packet_recorder(report):
     """A stub that reports the LONGWORD its caller pushed: `move.l 4(sp),(report).l / rts`."""

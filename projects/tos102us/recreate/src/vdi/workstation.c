@@ -40,26 +40,15 @@
  * The record, and the list through it.
  * ============================================================================================= */
 
-/* A record's field by the address the list holds for it — a WS_NEXT a case or a caller wrote, so through the
- * bus the 68000 would drive (`bus_dereference`: free on target). */
-static uint32_t next_of(const uint8_t *image, uint32_t work)
-{
-    return be32(image + bus_dereference(work + WS_NEXT));
-}
-
+/* ...and its two stores, as `next_of` / `handle_of` read (`vdi/workstation.h`). */
 static void set_next(uint8_t *image, uint32_t work, uint32_t next)
 {
-    wr32(image + bus_dereference(work + WS_NEXT), next);
-}
-
-static int16_t handle_of(const uint8_t *image, uint32_t work)
-{
-    return (int16_t)be16(image + bus_dereference(work + WS_HANDLE));
+    set_work_long(image, work, WS_NEXT, next);
 }
 
 static void set_handle(uint8_t *image, uint32_t work, uint16_t handle)
 {
-    wr16(image + bus_dereference(work + WS_HANDLE), handle);
+    set_work_word(image, work, WS_HANDLE, handle);
 }
 
 /* ================================================================================================
@@ -77,7 +66,6 @@ static void set_handle(uint8_t *image, uint32_t work, uint16_t handle)
 #define LINE_TYPE_DEFAULT     0     /*                                         ($fcd424 clr.w)     */
 #define INTERIOR_DEFAULT      VDI_INTERIOR_HOLLOW /*                           ($fcd4be clr.w)     */
 #define MARK_SCALE_ON         1     /*                                         ($fcd4ac)           */
-#define FILL_PERIMETER_ON     1     /*                                         ($fcd53a)           */
 #define OPEN_ANSWER_POINTS    (VDI_SIZ_TAB_WORDS / VDI_POINT_WORDS)         /* ($fcd5c0 move.w #6)  */
 
 /* The pen a colour index maps to, clamped as the colour setters clamp it. */
@@ -135,7 +123,7 @@ static void open_defaults(uint8_t *image, uint32_t work)
     set_work_word(image, work, WS_LINE_WIDTH, table_uword(image, LINEA_SIZ_TAB, VDI_SIZ_TAB_MIN_LINE_WIDTH_INDEX));
     set_work_word(image, work, WS_LINE_BEG, VDI_LINE_END_SQUARE);
     set_work_word(image, work, WS_LINE_END, VDI_LINE_END_SQUARE);
-    set_work_word(image, work, WS_FILL_PER, FILL_PERIMETER_ON);
+    set_work_word(image, work, WS_FILL_PER, VDI_FILL_PERIMETER_ON);
     set_work_word(image, work, WS_XMN_CLIP, 0);
     set_work_word(image, work, WS_YMN_CLIP, 0);
     set_work_word(image, work, WS_XMX_CLIP, table_uword(image, LINEA_DEV_TAB, VDI_DEV_TAB_MAX_X_INDEX));

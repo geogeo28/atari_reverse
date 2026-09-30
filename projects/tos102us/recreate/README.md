@@ -177,6 +177,16 @@ assert info["ret"] == info["regs"]["d0"]
   dropped byte must be one the ORIGINAL wrote (`rom_bench.vet_dropped`, the rule Tier 3's drops share). Where
   the run decides the extent (a stack with `link` holes, a record armed on one path), use
   `case.run(dropped_windows=...)`: only the bytes of the window the original stores are dropped.
+* **An address a routine FORMS is on the 24-bit bus.** The 68000 drives 24 address lines, so a sum past
+  16 MB lands where the ROM wraps it — and the host, whose image is a flat array, must wrap it the same way
+  before it bounds anything (`include/m68k_idioms.h`'s `bus_dereference`: the identity on target, a mask on
+  the host). Two layer policies hold that: the BIOS console forms every screen address through `vt52.h`'s
+  `console_screen_block(image, at, bytes)` — form, wrap, THEN bound the wrapped span — for the cursor, the
+  glyph, the clear and both scrolls (a cell past 16 MB is the row above the screen, as on the machine); and
+  `vdi.h`'s call and workstation accessors (`intin_word`, `ptsin_word`, `contrl_word`, `answer_intout`,
+  `work_word`, … and `caller_word` for a held cursor) SUM THE FIELD OFFSET, THEN MASK — the 68000's
+  `d16(An)` — never mask the base and add. New code that dereferences a caller's pointer goes through them;
+  a raw `image + linea_pointer(...)` is the parked host-SIGBUS class (`STATUS.md`).
 
 ## A STAGED RAM DISK — the shape the file system needed
 
@@ -326,8 +336,9 @@ which routines, one row per `.S` entry, with the entry's register contract again
 (the callee-saved registers it leaves changed). Everything else is derived from it:
 
 * **Tier 3's mechanism (T)**: a TRANSCRIBED routine's C rows may be over the bar only while EVERY one
-  of its `.S` rows is at or under it — verdict `transcribed`, read off the measurements, with no
-  per-row entry. Delete a `.S` row, or let one drift over the bar, and the C rows go red with it.
+  of its `.S` rows is at or under it, or `own` by (T←) below — verdict `transcribed`, read off the
+  measurements, with no per-row entry. Delete a `.S` row, or let one drift over the bar, and the C rows
+  go red with it. A WRITTEN acceptance of a `.S` row carries no C row.
 * **The build contract** (`atari/target.mk`): `TRANSCRIBED_ENTRIES`/`TRANSCRIBED_SOURCES` are what the
   ROM build links for these routines and `TRANSCRIBED_C_CORES` the C twins it must not. The Tier 3 blob
   links both, because it measures both.
@@ -372,6 +383,23 @@ with no entry; the table prints the net ratio on a line under every (T→) row o
 of the glue is its OWN body's cost, and is accepted, if at all, by a lettered mechanism at the SHIPPED
 number (`vq_key_s` and `vdi_choice`'s sampled arm: (A) and (D) through the call, 1.23 and 1.26 net); an
 entry typed at the C twin's number drifts and reds.
+
+**A `.S` that CALLS C — mechanism (T←), derived, verdict `own`.** The VDI escape (`src/vdi/escape.S`) is
+hand 68000 whose word table points INTO the BIOS console's ESC bodies, which ship as C; so its `.S` reaches
+C through thunks of its own (`escape_to_<body>`, sized local symbols; `include/c_call_glue.h`'s
+`IMAGE_ONLY_THUNK`), and a row that does is the escape's instructions PLUS the console's C. `bench/tier3.py`'s
+`CALLS_INTO_C` names such a routine, its thunk prefix, the ROM spans its `.S` transcribes and the written
+acceptances that carry the C it reaches (`CONSOLE_C_ACCEPTED_BY`: five `bios_bconout` console rows, cited by
+key). Every `.S` row of it is PROFILED on both sides — the kit's per-PC tally covers the ROM window too
+(`emu.prof_cycles`): OURS-OWN is every blob cycle less the thunks and less the C they reach (the m68k call
+graph's closure of the thunks' callees), ROM-OWN the ROM cycles inside the transcribed spans; code both sides
+run from the same bytes (the ROM's v_show_c through a `jmp`, the XBIOS through a `trap`, staged stubs) is in
+neither. A row over the bar is `own` iff its own ratio is at or under the bar AND every cited acceptance still
+stands; an own ratio over the bar reds the row even when the row as a whole is under it (a spill cannot
+hide in the shared average), and the table prints the split under each such row. `test_tier3.py` refuses a
+written entry for a row the rule carries. The lenience is measured and written down: the ROM's ESC A-D and J
+refuse through `beq.s` to vq_chcells' `rts`, inside the span, so five rows count 16 console cycles as the
+escape's own.
 
 **ROM addresses used as values — what a rebuilt ROM owes them.** With the image based at 0, `image +
 VDI_MAP_COL` reads the 1987 table where it lies and `mouse_init` stores 1987 code addresses into RAM

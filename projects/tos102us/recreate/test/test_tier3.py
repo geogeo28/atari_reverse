@@ -25,10 +25,12 @@ same return value, the same callee-saved file, the same off-image streams and no
 side (`tools/recreate_kit/rom_bench.py`). `docs/on-target-execution.md`'s bug class 6 is exactly a
 target build going wrong where a host build is right, and nothing else in this project looks for it.
 """
+import copy
 import ctypes
 import functools
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -45,6 +47,7 @@ import vdi_helpers                                         # noqa: E402
 # ...and the glue generator, whose thunks mechanism (T→G) counts.
 import shipped_glue                                        # noqa: E402
 from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
+from harness import addrs                                   # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -69,17 +72,17 @@ def dispatch(bench):
 
 
 @pytest.fixture(scope="module")
-def ratio_of(bench):
-    """A row's measured ratio, measured once per worker — mechanism (T) asks it of a routine's `.S` rows
+def measurement_of(bench):
+    """A row's `Measurement`, measured once per worker — mechanism (T) asks it of a routine's `.S` rows
     for each of its C rows, and those are the same few rows every time."""
     measured = {}
 
-    def ratio(row):
+    def measurement(row):
         key = (row.symbol, row.case)
         if key not in measured:
-            measured[key] = tier3.measure(row, bench).ratio
+            measured[key] = tier3.measure(row, bench)
         return measured[key]
-    return ratio
+    return measurement
 
 
 def _row_id(row):
@@ -111,11 +114,11 @@ def test_no_two_rows_share_a_name():
 
 
 @pytest.mark.parametrize("row", tier3.ROWS, ids=_row_id)
-def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch, ratio_of):
+def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch, measurement_of):
     """One row: measure both sides over one case — which raises if the m68k build diverged — then
     put the measurement through the same `verdict` the table prints."""
     measured = tier3.measure(row, bench)
-    state = tier3.verdict(row, measured, dispatch, ratio_of)
+    state = tier3.verdict(row, measured, dispatch, measurement_of)
     assert state not in tier3.FAILED, _why(row, measured, state)
 
 
@@ -132,9 +135,9 @@ def _why(row, measured, state):
                 f"what moved")
     if tier3.is_transcribed_c_row(row):
         return (f"{cost}, over the {tier3.TIER3_FUNCTION_BAR:.2f} bar — and the routine is TRANSCRIBED "
-                f"(include/vdi/transcribed.h), but its `.S` rows no longer carry it: one is over the bar, "
-                f"or there is none. Mechanism (T) admits the C only while the `.S` a target build ships is "
-                f"priced at or under the bar on every row")
+                f"(include/vdi/transcribed.h), but its `.S` rows no longer carry it: one is over the bar and not "
+                f"`own` (T←), or there is none. Mechanism (T) admits the C only while the `.S` a target build ships "
+                f"is priced at or under the bar on every row — or, where it calls C, on its own instructions")
     return (f"{cost}, over the {tier3.TIER3_FUNCTION_BAR:.2f} bar. Bring it under — the levers are "
             f"in ../README.md, \"Tier 3\" — or accept it in tier3.PERF_ACCEPTED with the measured "
             f"cost and a reason")
@@ -228,14 +231,14 @@ def test_no_transcribed_c_row_carries_a_written_acceptance():
     assert not written, f"tier3.PERF_ACCEPTED writes down {written}, which mechanism (T) carries — drop them"
 
 
-def test_the_rule_carries_a_transcribed_c_row(bench, dispatch, ratio_of):
+def test_the_rule_carries_a_transcribed_c_row(bench, dispatch, measurement_of):
     row = tier3.row_named(TRANSCRIBED_C_ROW)
     measured = tier3.measure(row, bench)
     assert measured.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: this C row is over the bar"
-    assert tier3.verdict(row, measured, dispatch, ratio_of) == "transcribed"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "transcribed"
 
 
-def test_one_s_row_drifting_over_the_bar_reds_the_c_rows(bench, dispatch, ratio_of):
+def test_one_s_row_drifting_over_the_bar_reds_the_c_rows(bench, dispatch, measurement_of):
     """Every `.S` row but one measured as it is, that one just over the bar: the C row goes OVER."""
     row = tier3.row_named(TRANSCRIBED_C_ROW)
     measured = tier3.measure(row, bench)
@@ -243,15 +246,120 @@ def test_one_s_row_drifting_over_the_bar_reds_the_c_rows(bench, dispatch, ratio_
     over = tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE
 
     def with_one_drifted(each):
-        return over if each is drifted else ratio_of(each)
+        return _ratio_only(over) if each is drifted else measurement_of(each)
     assert tier3.verdict(row, measured, dispatch, with_one_drifted) == "OVER"
 
 
-def test_a_routine_whose_s_rows_are_gone_reds_the_c_rows(bench, dispatch, ratio_of, monkeypatch):
+def test_a_routine_whose_s_rows_are_gone_reds_the_c_rows(bench, dispatch, measurement_of, monkeypatch):
     row = tier3.row_named(TRANSCRIBED_C_ROW)
     measured = tier3.measure(row, bench)
     monkeypatch.setitem(tier3.SHIPPED_ROWS, tier3.rom_address(row), ())
-    assert tier3.verdict(row, measured, dispatch, ratio_of) == "OVER"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "OVER"
+
+
+def _ratio_only(ratio):
+    """A `.S` row's measurement reduced to the one number (T) reads of a routine that calls no C."""
+    return types.SimpleNamespace(ratio=ratio)
+
+
+def test_a_written_entry_for_a_s_row_carries_no_c_row(bench, dispatch, measurement_of, monkeypatch):
+    """(T) is STRICT: a `.S` row over the bar with an acceptance of its own does not carry its routine's C rows — the
+    entry would say nothing about the C, and it once carried the escape's whole C twin on 24 of them."""
+    row = tier3.row_named(TRANSCRIBED_C_ROW)
+    measured = tier3.measure(row, bench)
+    pinned = tier3.SHIPPED_ROWS[tier3.rom_address(row)][0]
+    over = tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE
+    monkeypatch.setitem(tier3.PERF_ACCEPTED, (pinned.symbol, pinned.case), (over, "an entry for a `.S` row"))
+
+    def with_the_pinned_one_over(each):
+        return _ratio_only(over) if each is pinned else measurement_of(each)
+    assert tier3.verdict(row, measured, dispatch, with_the_pinned_one_over) == "OVER"
+
+
+# ---- MECHANISM (T←): a `.S` that calls C through thunks of its own, carried on its OWN instructions ------------
+
+# An escape `.S` row the console's C takes far over the bar, whose own instructions are the ROM's to the cycle...
+OWN_ROW = ("vdi_rom_escape", "v_curup, the cursor drawn")
+# ...and one of the escape's C rows, which (T) carries only while every `.S` row is within the bar or `own`.
+ESCAPE_C_ROW = ("vdi_escape", "v_curup, the cursor drawn")
+# ...and one that jumps to a ROM routine both sides run from the same bytes, so its own instructions are a sliver of it.
+SHARED_CODE_ROW = ("vdi_rom_escape", "v_dspcur, forced")
+# The cheapest spill there is: one callee-saved register pushed and popped round the dispatch, `move.l %d2,-(%sp)` /
+# `move.l (%sp)+,%d2`, 12 cycles each. A private blob with exactly that in escape.S measured the row's own ratio at 1.27.
+SPILL_CYCLES = 24
+
+
+def _with_own_spill(measured, cycles):
+    """`measured` with `cycles` more on OUR side, every one of them inside the `.S`'s own instructions."""
+    spilled = copy.copy(measured)
+    spilled.recreate_cycles += cycles
+    ours, original = measured.own_cycles
+    spilled.own_cycles = (ours + cycles, original)
+    return spilled
+
+
+def test_the_own_rule_carries_a_s_row_over_the_bar_by_its_own_instructions(dispatch, measurement_of):
+    row = tier3.row_named(OWN_ROW)
+    measured = measurement_of(row)
+    assert measured.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: the console's C takes this row over the bar"
+    assert tier3.pin_of(row) is None, "the rule carries it, so no entry may"
+    ours, original = measured.own_cycles
+    assert ours == original, "the escape's own instructions are the ROM's, byte for byte, so they cost the ROM's"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "own"
+
+
+def test_a_spill_in_the_s_own_instructions_reds_its_row(dispatch, measurement_of):
+    row = tier3.row_named(OWN_ROW)
+    spilled = _with_own_spill(measurement_of(row), SPILL_CYCLES)
+    assert tier3.own_ratio(spilled) > tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, spilled, dispatch, measurement_of) == "OVER"
+
+
+def test_a_spill_reds_a_row_even_under_the_bar(dispatch, measurement_of):
+    """A row that only jumps to code both sides share (v_dspcur's v_show_c) is under the bar as a whole — the spill
+    must not hide in that average."""
+    row = tier3.row_named(SHARED_CODE_ROW)
+    spilled = _with_own_spill(measurement_of(row), SPILL_CYCLES)
+    assert spilled.ratio <= tier3.TIER3_FUNCTION_BAR, "the premise: the whole row stays under the bar"
+    assert tier3.verdict(row, spilled, dispatch, measurement_of) == "OVER"
+
+
+def test_a_spilled_s_row_no_longer_carries_the_c_rows(bench, dispatch, measurement_of):
+    row = tier3.row_named(ESCAPE_C_ROW)
+    measured = tier3.measure(row, bench)
+    assert measured.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: the escape's C twin is over the bar"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "transcribed"
+    spilled_row = tier3.row_named(OWN_ROW)
+
+    def with_one_spilled(each):
+        return _with_own_spill(measurement_of(each), SPILL_CYCLES) if each is spilled_row else measurement_of(each)
+    assert tier3.verdict(row, measured, dispatch, with_one_spilled) == "OVER"
+
+
+@pytest.mark.parametrize("cited", tier3.CONSOLE_C_ACCEPTED_BY, ids=lambda key: key[1])
+def test_the_own_rule_carries_nothing_without_each_acceptance_it_cites(cited, dispatch, measurement_of, monkeypatch):
+    """The rest of a (T←) row is the console's C, and its cost is carried where the console's own rows are accepted —
+    CITED, not re-typed: delete one of those acceptances and the escape's rows go OVER with it."""
+    row = tier3.row_named(OWN_ROW)
+    measured = measurement_of(row)
+    monkeypatch.delitem(tier3.PERF_ACCEPTED, cited)
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "OVER"
+
+
+@pytest.mark.parametrize("cited", tier3.CONSOLE_C_ACCEPTED_BY, ids=lambda key: key[1])
+def test_every_cited_acceptance_is_a_console_row_accepted_over_the_bar(cited):
+    row = tier3.row_named(cited)
+    assert row.entry == addrs.BIOS_BCONOUT and row.case.startswith("console"), cited
+    assert tier3.PERF_ACCEPTED[cited][0] > tier3.TIER3_FUNCTION_BAR
+
+
+def test_no_written_acceptance_names_a_row_the_own_rule_carries(bench):
+    """The rule REPLACES the escape's entries, as (T) and (T→G) replace theirs: a written entry for a `.S` row the own
+    rule carries would outlive the day the `.S`'s own instructions grew."""
+    carried = [key for key in tier3.PERF_ACCEPTED
+               if tier3.calls_into_c(row := tier3.row_named(key))
+               and tier3.carried_by_its_own_instructions(row, tier3.measure(row, bench))]
+    assert not carried, f"tier3.PERF_ACCEPTED writes down {carried}, which mechanism (T←) carries — drop them"
 
 
 # ---- MECHANISM (T→): the C that calls a transcribed routine, measured as it ships -------------------
@@ -277,7 +385,7 @@ def test_every_c_caller_of_a_transcribed_core_ships_through_a_call():
     assert callers <= tier3._reaching_transcribed_cores()
 
 
-def test_a_row_that_ships_through_a_call_is_measured_on_the_shipped_blob(bench, dispatch, ratio_of):
+def test_a_row_that_ships_through_a_call_is_measured_on_the_shipped_blob(bench, dispatch, measurement_of):
     row = tier3.row_named(THROUGH_A_CALL_ROW)
     assert tier3.ships_through_a_call(row)
     on_the_twins = bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes,
@@ -285,10 +393,10 @@ def test_a_row_that_ships_through_a_call_is_measured_on_the_shipped_blob(bench, 
     assert on_the_twins.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: through the C twin it is over the bar"
     measured = _shipped_measurement(THROUGH_A_CALL_ROW)
     assert measured.ratio <= tier3.TIER3_FUNCTION_BAR
-    assert tier3.verdict(row, measured, dispatch, ratio_of) == "through"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "through"
 
 
-def test_a_row_that_ships_through_a_call_goes_over_with_its_callee(bench, dispatch, ratio_of):
+def test_a_row_that_ships_through_a_call_goes_over_with_its_callee(bench, dispatch, measurement_of):
     """Nothing carries a (T→) row but its own measurement: the same row costing what a drifted `.S` would
     make it cost — the thunks' cycles unchanged, everything behind them over the bar — is OVER; there is no
     entry for it to hide behind, and the glue rule (T→G) takes off only the thunks."""
@@ -296,7 +404,7 @@ def test_a_row_that_ships_through_a_call_goes_over_with_its_callee(bench, dispat
     measured = _shipped_measurement(THROUGH_A_CALL_ROW)
     over = _with_body_grown_to(measured, bench, tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE)
     assert tier3.pin_of(row) is None
-    assert tier3.verdict(row, over, dispatch, ratio_of) == "OVER"
+    assert tier3.verdict(row, over, dispatch, measurement_of) == "OVER"
 
 
 # ---- the CALL GRAPH (T→) is derived from: its IMMEDIATE-ADDRESS rule, on a synthetic listing ---------------
@@ -421,25 +529,25 @@ def test_every_thunk_is_a_sized_range_of_the_shipped_blob():
     assert all(start < end <= following for (start, end), (following, _) in zip(ranges, ranges[1:])), ranges
 
 
-def test_the_glue_rule_carries_a_row_over_the_bar_only_by_its_thunks(bench, dispatch, ratio_of):
+def test_the_glue_rule_carries_a_row_over_the_bar_only_by_its_thunks(bench, dispatch, measurement_of):
     row = tier3.row_named(GLUE_ROW)
     measured = _shipped_measurement(GLUE_ROW)
     assert measured.ratio > tier3.TIER3_FUNCTION_BAR, "the premise: as shipped this row is over the bar"
     assert tier3.pin_of(row) is None, "the rule carries it, so no entry may"
     assert tier3.ratio_net_of_glue(measured) <= tier3.TIER3_FUNCTION_BAR
-    assert tier3.verdict(row, measured, dispatch, ratio_of) == "glue"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "glue"
 
 
-def test_the_glue_rule_refuses_the_row_when_its_own_body_grows(bench, dispatch, ratio_of):
+def test_the_glue_rule_refuses_the_row_when_its_own_body_grows(bench, dispatch, measurement_of):
     """The same row with its glue unchanged and its BODY past the bar net of it: OVER, and nothing else."""
     row = tier3.row_named(GLUE_ROW)
     measured = _shipped_measurement(GLUE_ROW)
     grown = _with_body_grown_to(measured, bench, tier3.TIER3_FUNCTION_BAR + tier3.RATIO_TOLERANCE)
     assert tier3.ratio_net_of_glue(grown) > tier3.TIER3_FUNCTION_BAR
-    assert tier3.verdict(row, grown, dispatch, ratio_of) == "OVER"
+    assert tier3.verdict(row, grown, dispatch, measurement_of) == "OVER"
 
 
-def test_the_glue_rule_refuses_a_real_row_over_the_bar_net_of_its_glue(bench, dispatch, ratio_of, monkeypatch):
+def test_the_glue_rule_refuses_a_real_row_over_the_bar_net_of_its_glue(bench, dispatch, measurement_of, monkeypatch):
     """RED on a measured row, not a made-up one: vq_key_s pays glue too, but its body alone is over the bar,
     so with its written entry gone the rule leaves it OVER."""
     row = tier3.row_named(OVER_NET_OF_GLUE_ROW)
@@ -447,7 +555,7 @@ def test_the_glue_rule_refuses_a_real_row_over_the_bar_net_of_its_glue(bench, di
     assert tier3.glue_cycles_of(measured) > 0, "the premise: this row calls through a thunk"
     assert tier3.ratio_net_of_glue(measured) > tier3.TIER3_FUNCTION_BAR
     monkeypatch.delitem(tier3.PERF_ACCEPTED, OVER_NET_OF_GLUE_ROW)
-    assert tier3.verdict(row, measured, dispatch, ratio_of) == "OVER"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "OVER"
 
 
 def test_no_written_acceptance_is_for_a_row_the_glue_rule_carries(bench):

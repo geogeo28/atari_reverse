@@ -35,6 +35,7 @@ import struct
 import pytest
 
 from harness import BASE_IMAGE, _lib, addrs
+from recreate_kit import os_map
 
 import bcon
 import case
@@ -490,12 +491,12 @@ def test_escape_y_places_the_cursor_and_clamps_both_coordinates(row_argument, co
                                                                 expected, why):
     """`cmp.w d0,d2 / bpl` twice, and the clamp is what the caller's own D0 comes back as.
 
-    WHICH `b??` THOSE TWO ARE is half driven and half read off the disassembly. `bpl` against a
-    `blt` is DRIVEN, two cases above, at the window where the word difference overflows. `bpl`
-    against a `bcc` is not, and is out of this battery's reach: it would take a coordinate whose
-    unclamped cell address is not in the machine's megabyte, so the reconstruction's own bound
-    fires where the original walks its address space. Recorded as an honest gap rather than
-    claimed (`recreate/STATUS.md`).
+    WHICH `b??` THOSE TWO ARE is mostly driven. `bpl` against a `blt` is DRIVEN, two cases above,
+    at the window where the word difference overflows. `bpl` against a `bcc` is driven for the ROW
+    by the next case (a row of $ffff, which a `bcc` would clamp and the N flag passes). For the
+    COLUMN it is out of this battery's reach: a column of $ffff puts the cell past the machine's
+    megabyte even once the bus wraps, so the reconstruction's own bound fires where the original
+    walks its address space. Recorded as an honest gap rather than claimed (`recreate/STATUS.md`).
     """
     pokes = {**vt52.staged(7, 5, cursor_depth=1),
              **vt52.state(addrs.CON_STATE_AWAIT_Y_COLUMN),
@@ -504,6 +505,26 @@ def test_escape_y_places_the_cursor_and_clamps_both_coordinates(row_argument, co
     assert (cursor_after(info, addrs.CON_CURSOR_COLUMN),
             cursor_after(info, addrs.CON_CURSOR_ROW)) == expected, why
     assert case.written_long(info, addrs.CON_STATE_VECTOR) == addrs.CON_STATE_NORMAL
+
+
+@pytest.mark.parametrize("cursor_depth", (0, 1))
+def test_escape_y_with_a_row_byte_below_the_bias_wraps_on_the_bus(cursor_depth):
+    """A row byte below a space is row $ffff, which the N-flag clamp PASSES (`max - $ffff` is positive
+    as a word). The cell is then $ffff text rows down — past 16 MB — and the 68000 drives 24 address
+    bits, so the cursor drawn there (depth 0) inverts the text row just before the screen, in RAM:
+    the original's plain 32-bit sum, wrapped by the bus, and stored in the cursor's address unwrapped."""
+    column = 8
+    pokes = {**vt52.staged(7, 5, cursor_depth=cursor_depth),
+             **vt52.state(addrs.CON_STATE_AWAIT_Y_COLUMN),
+             addrs.CON_ESCAPE_Y_ROW: struct.pack(">H", 0xFFFF)}
+    info = console(0x20 + column, pokes)
+    assert (cursor_after(info, addrs.CON_CURSOR_COLUMN), cursor_after(info, addrs.CON_CURSOR_ROW)) == (column, 0xFFFF)
+    assert case.written_long(info, addrs.CON_CURSOR_ADDRESS) == vt52.cell_address(column, 0xFFFF) & 0xFFFFFFFF
+    wrapped = [at & os_map.OS_BUS_ADDR_MASK for at in vt52.cell_bytes(column, 0xFFFF)]
+    assert all(at < vt52.SCREEN for at in wrapped), "the wrapped cell is before the screen"
+    drawn = [at for at in wrapped if at in info["writes"]]
+    assert drawn == (wrapped if cursor_depth == 0 else [])
+    assert all(case.written(info, at, 1) == BASE_IMAGE[at] ^ 0xFF for at in drawn)
 
 
 @pytest.mark.parametrize("state, field", ((addrs.CON_STATE_AWAIT_FOREGROUND,

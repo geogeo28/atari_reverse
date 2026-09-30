@@ -31,6 +31,32 @@
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
+#include "vdi/vdi.h"
+#include "vdi/helpers.h"
+
+/* XRAD in the device's aspect: smul_div(XRAD, pixel width, pixel height) — a circle's y radius, which
+ * gdp_arc, the rounded box and vdi_gdp's circle arm ($fcbc86) each compute. */
+static inline int16_t vdi_aspect_y_radius(const uint8_t *image)
+{
+    return vdi_smul_div(ram_word(image, LINEA_GDP_XRAD), table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_PIXEL_WIDTH_INDEX),
+                        table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_PIXEL_HEIGHT_INDEX));
+}
+
+/* An ellipse's centre and radii, (XC, YC, XRAD, YRAD) = the words at `ptsin`, each stored before the next is
+ * read; in normalised coordinates the y radius is taken as DEV_TAB's last row less it. gdp_ell's ($fcc750) and
+ * vdi_gdp's ellipse arm's ($fcbcc8): gdp_ell re-reads LINEA_CUR_WORK for the XFM_MODE test ($fcc76e), the arm tests
+ * the record vdi_gdp's A4 held from entry ($fcbce6) — the same record, as nothing between stores $27ca. */
+static inline void vdi_ellipse_from_ptsin(uint8_t *image, uint32_t ptsin)
+{
+    set_ram_word(image, LINEA_GDP_XC, ram_uword(image, ptsin));
+    set_ram_word(image, LINEA_GDP_YC, ram_uword(image, word_entry(ptsin, 1)));
+    set_ram_word(image, LINEA_GDP_XRAD, ram_uword(image, word_entry(ptsin, 2)));
+    set_ram_word(image, LINEA_GDP_YRAD, ram_uword(image, word_entry(ptsin, 3)));
+    if (work_word(image, current_work(image), WS_XFM_MODE) < VDI_XFM_MODE_RC)
+        set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)(table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_MAX_Y_INDEX)
+                                                       - ram_word(image, LINEA_GDP_YRAD)));
+}
+
 void vdi_clc_pts(uint8_t *image, int16_t point);                          /* $fcc914 */
 void vdi_clc_arc(uint8_t *image);                                          /* $fcc79e */
 void vdi_gdp_arc(uint8_t *image);                                          /* $fcc62e */

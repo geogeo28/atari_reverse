@@ -217,7 +217,9 @@ static inline uint32_t bus_address(uint32_t address)
  * host's 16 MB image alone, and the builds compute the same function (`tools/recreate_kit/kit.mk`,
  * RECREATE_HOST_DIFFERENTIAL). A value that IS stored or compared keeps its top byte on both builds, and a
  * sum that must wrap before it is used goes through `bus_address` on both. The font layer reads headers
- * this way (`src/vdi/text.c`), reached through vector longwords whose high bytes are not zero. */
+ * this way (`src/vdi/text.c`), reached through vector longwords whose high bytes are not zero; the VDI's
+ * call accessors reach a program's arrays this way (`include/vdi/vdi.h`), and the console its screen
+ * (`include/bios/vt52.h`) — each summing its offset FIRST, as `d16(An)` does, and masking the sum. */
 static inline uint32_t bus_dereference(uint32_t address)
 {
 #ifdef RECREATE_HOST_DIFFERENTIAL

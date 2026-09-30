@@ -152,13 +152,6 @@ static void angles_from_intin(uint8_t *image)
         add_ram_word(image, LINEA_GDP_DEL_ANG, VDI_TENTHS_PER_TURN);
 }
 
-/* XRAD in the device's aspect: smul_div(XRAD, pixel width, pixel height) — a circle's y radius. */
-static int16_t aspect_y_radius(const uint8_t *image)
-{
-    return vdi_smul_div(ram_word(image, LINEA_GDP_XRAD), table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_PIXEL_WIDTH_INDEX),
-                        table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_PIXEL_HEIGHT_INDEX));
-}
-
 /* The ptsin index of the arc's radius: the fourth point's x. */
 #define ARC_RADIUS_WORD       6          /*                                     ($fcc670 12(a5))    */
 
@@ -170,7 +163,7 @@ void vdi_gdp_arc(uint8_t *image)
     angles_from_intin(image);
     ptsin = linea_pointer(image, LINEA_PTSIN);
     set_ram_word(image, LINEA_GDP_XRAD, ram_uword(image, word_entry(ptsin, ARC_RADIUS_WORD)));
-    set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)aspect_y_radius(image));
+    set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)vdi_aspect_y_radius(image));
     vdi_clc_nsteps(image);
     set_ram_word(image, LINEA_GDP_XC, ram_uword(image, ptsin));
     set_ram_word(image, LINEA_GDP_YC, ram_uword(image, ptsin + VDI_POINT_Y));
@@ -181,17 +174,8 @@ void vdi_gdp_arc(uint8_t *image)
  * coordinates the y radius is taken as DEV_TAB's last row less it. */
 void vdi_gdp_ell(uint8_t *image)
 {
-    uint32_t ptsin;
-
     angles_from_intin(image);
-    ptsin = linea_pointer(image, LINEA_PTSIN);
-    set_ram_word(image, LINEA_GDP_XC, ram_uword(image, ptsin));
-    set_ram_word(image, LINEA_GDP_YC, ram_uword(image, word_entry(ptsin, 1)));
-    set_ram_word(image, LINEA_GDP_XRAD, ram_uword(image, word_entry(ptsin, 2)));
-    set_ram_word(image, LINEA_GDP_YRAD, ram_uword(image, word_entry(ptsin, 3)));
-    if (work_word(image, current_work(image), WS_XFM_MODE) < VDI_XFM_MODE_RC)
-        set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)word_difference(table_word(image, LINEA_DEV_TAB, VDI_DEV_TAB_MAX_Y_INDEX),
-                                                                      ram_word(image, LINEA_GDP_YRAD)));
+    vdi_ellipse_from_ptsin(image, linea_pointer(image, LINEA_PTSIN));
     vdi_clc_nsteps(image);
     vdi_clc_arc(image);
 }
@@ -209,7 +193,7 @@ static void corner_radii(uint8_t *image, int16_t half_width, int16_t half_height
     set_ram_word(image, LINEA_GDP_XRAD, (uint16_t)radius);
     if (ram_word(image, LINEA_GDP_XRAD) > half_width)
         set_ram_word(image, LINEA_GDP_XRAD, (uint16_t)half_width);
-    set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)aspect_y_radius(image));
+    set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)vdi_aspect_y_radius(image));
     if (ram_word(image, LINEA_GDP_YRAD) > half_height)
         set_ram_word(image, LINEA_GDP_YRAD, (uint16_t)half_height);
 }
