@@ -522,14 +522,14 @@ class RomBench:
         # ABI puts every further argument in the longwords above it — the same staging
         # `asm_twin.AsmTwins.call` does, and the same place the oracle's own case pokes a ROM
         # function's arguments (`abi.FIRST_ARG`), which is inside the band the diff drops.
-        _vet_stack_args_fit(symbol, args)
-        stage_stack_args(image, emu.STACK_TOP, args[1:])
+        sp = emu.STACK_TOP - _stack_args_overflow(args)
+        stage_stack_args(image, sp, args[1:])
 
         entry = self.entry(symbol) if entry_at is None else entry_at
         seed = (list(seed_regs) if seed_regs is not None
                 else [CALLEE_SAVED_SEEDS.get(name, 0) for name in emu.REPORTED_REGS])
         result = emu.run_bench(image, entry, arg0=(int(args[0]) & 0xFFFFFFFF) if args else 0,
-                               sp=emu.STACK_TOP, sentinel=emu.SENTINEL, seed_regs=seed,
+                               sp=sp, sentinel=emu.SENTINEL, seed_regs=seed,
                                io_seed=io_seed, schedule=schedule)
         # Read the instant the run ends, before anything else can run over the shim's one set of
         # counters: `emu` publishes these only through `run()`'s own report, and a bench run needs
@@ -928,20 +928,19 @@ def _vet_snapshot_is_empty(base, end, snapshot):
         f"bytes it overwrote are excluded from the comparison")
 
 
-def _vet_stack_args_fit(symbol, args):
-    """The C arguments must fit the ARGUMENT AREA the harness reserves above the sentinel slot.
+def _stack_args_overflow(args):
+    """How many bytes OUR side's stack pointer is lowered by, so its C arguments fit the ARGUMENT AREA.
 
-    `harness.STACK_ARGS_BYTES` is that area, measured across every project: everything above it is
-    ordinary image the differential compares, so a wider argument list would be staged where a Tier 1
-    case's stray-write guard reports real output — our side only, since the ORIGINAL reads its
-    arguments from the frame the case poked and never sees these words at all.
+    `harness.STACK_ARGS_BYTES` is the area the harness reserves above the sentinel slot, measured
+    across every project: everything above it is ordinary image the differential compares. A call
+    whose arguments reach past it is entered with its stack pointer lowered by exactly the bytes that
+    would not fit, so every argument word still lands inside the band the diff drops — our side
+    only, since the ORIGINAL reads its arguments from the frame the case poked and never sees these
+    words at all. Widening the area instead would stop comparing those bytes in every project's
+    every case. 0 for a call that fits — every call there was before this: no such row moves.
     """
     import harness
 
     written = BLOB_FRAME_BYTES + BLOB_ARG_BYTES * max(len(args) - 1, 0)
     room = harness.SENTINEL_SLOT_BYTES + harness.STACK_ARGS_BYTES
-    if written > room:
-        raise AssertionError(
-            f"{symbol} is called with {len(args)} C argument(s), which reach {written} bytes above "
-            f"the run's stack pointer — past the {room}-byte argument area the harness reserves "
-            f"(harness.STACK_ARGS_BYTES). Beyond it the words land in image the comparison reads")
+    return max(0, written - room)

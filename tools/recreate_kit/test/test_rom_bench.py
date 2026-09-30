@@ -570,11 +570,15 @@ def _fake_emu(calls, bench_reads=None):
                            hw_writes=lambda: [])
 
 
+FAKE_SENTINEL_SLOT_BYTES = 4
+FAKE_STACK_ARGS_BYTES = 24
+
+
 def _fake_harness():
     """...and the `harness` half: an empty image, and a comparison that finds nothing.
 
     The two byte counts are the kit's own (`emu.SENTINEL_SLOT_BYTES` + `STACK_ARGS_BYTES`), spelt
-    here only so `_vet_stack_args_fit` has an argument area to measure against; what they bound is
+    here only so `_stack_args_overflow` has an argument area to measure against; what they bound is
     pinned where they are defined.
     """
     def make_image(pokes=None):
@@ -585,7 +589,7 @@ def _fake_harness():
 
     return SimpleNamespace(make_image=make_image, diff_spans=lambda: ((0, FAKE_IMAGE_BYTES),),
                            differing_addresses=lambda left, right, spans, excluded: [],
-                           SENTINEL_SLOT_BYTES=4, STACK_ARGS_BYTES=24)
+                           SENTINEL_SLOT_BYTES=FAKE_SENTINEL_SLOT_BYTES, STACK_ARGS_BYTES=FAKE_STACK_ARGS_BYTES)
 
 
 def _unbound_bench():
@@ -809,3 +813,44 @@ def test_a_row_that_drops_nothing_is_compared_whole(monkeypatch):
     monkeypatch.setitem(sys.modules, "harness", _real_comparison())
     with pytest.raises(AssertionError, match="left different memory"):
         _unbound_bench()._vet_image(FAKE_ENTRY, "core", _parked(b"\x00\xfc\xd6\x2a"), _parked(FAKE_STALE))
+
+
+# ---- a C call wider than the argument area: OUR side entered lower, by exactly what does not fit ----
+
+# The fake harness's argument area (`_fake_harness`): the sentinel slot and the frame area above it.
+FAKE_ARGUMENT_AREA_TOP = FAKE_STACK_TOP + FAKE_SENTINEL_SLOT_BYTES + FAKE_STACK_ARGS_BYTES
+
+
+@pytest.mark.parametrize("count, lowered", (
+    (1, 0),
+    (6, 0),       # the widest call that fits: 8 + 5 x 4 = 28 bytes, the area exactly
+    (7, 4),       # one word past it...
+    (9, 12),      # ...and ob_sst's nine, which the AES prices this way
+))
+def test_a_call_past_the_argument_area_is_entered_lower_by_exactly_the_bytes_that_do_not_fit(
+        monkeypatch, count, lowered):
+    """Every argument word lands inside the band the diff drops, and no call that fits moves.
+
+    A call reaching past the area used to be refused: its words would land in image the comparison
+    reads. Entering OUR side lower keeps them in the dropped band without widening it — the
+    ORIGINAL reads its arguments from the frame its case poked, and is entered where it always was.
+    """
+    fake = _fake_emu([])
+    serve = fake.run_bench
+    entered = []
+
+    def run_bench(mem, entry, arg0, sp, sentinel, *rest, **named):
+        entered.append((sp, bytes(mem[sp + rom_bench.BLOB_FRAME_BYTES:FAKE_ARGUMENT_AREA_TOP])))
+        return serve(mem, entry, arg0, sp, sentinel, *rest, **named)
+
+    fake.run_bench = run_bench
+    monkeypatch.setitem(sys.modules, "emu", fake)
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    arguments = tuple(range(0x11, 0x11 + count))
+    _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=arguments, returns=1)
+    [(sp, words)] = entered
+    assert sp == FAKE_STACK_TOP - lowered
+    staged = b"".join(value.to_bytes(rom_bench.BLOB_ARG_BYTES, "big") for value in arguments[1:])
+    assert words[:len(staged)] == staged, "the words past arg0 are not where the m68k ABI reads them"
+    assert sp + rom_bench.BLOB_FRAME_BYTES + len(staged) <= FAKE_ARGUMENT_AREA_TOP, (
+        "an argument word landed above the argument area, in image the comparison reads")

@@ -779,6 +779,14 @@ than through this guard at all. `STACK_ARGS_BYTES` is a MEASUREMENT pinned in BO
 now ends — too small and a callee's own frame locals red as masked output, too large and that many
 bytes of real image stop being compared at all.
 
+**A Tier 3 call wider than that area is entered lower, not refused.** `rom_bench` stages a C core's
+arguments above its own entry's stack pointer, and a call whose words would reach past the area —
+tos102us's `ob_sst`, nine arguments — is entered with its stack pointer lowered by exactly the bytes
+that do not fit (`rom_bench._stack_args_overflow`), so every argument still lands in the dropped band.
+Our side only: the ORIGINAL reads the frame its case poked. Every call that fits is entered where it
+always was. Pinned by `test/test_rom_bench.py` (1 / 6 / 7 / 9 arguments lowered 0 / 0 / 4 / 12, the
+staged words where the m68k ABI reads them, none above the area).
+
 ### Capturing the snapshot
 
 That is the project's job, not the kit's: it is one headless Hatari boot of the original ROM, stopped
