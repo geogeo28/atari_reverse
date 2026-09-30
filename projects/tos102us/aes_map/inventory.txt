@@ -1,0 +1,737 @@
+addr   cls size  lf    ghidra  name/role | callees (LF/jsr) | #callers
+fd9eca A   252       252    gem_entry (gemstart: Mshrink, Super, Line-F install, loop gem_main) [GEM-entry] T:#1=3 | fda062 fee4de fee800 | 0
+fd9fc6 S    54 f198/ 54     gem_gemdos_call (asm trap#1 w/ DOS_ERR 98ec) T:#1=1 |  | 4
+fd9ffc A    66 f88c  64      |  | 1
+fda03e S    36 f1c8  26     ap_exit tail/ all_run? | fe387c feca68 | 5
+fda062 A   884       810    gem_main (geminit: build PD/UDA/CDA/EVB/forkq, init ctl+shell, DESKTOP.INF #E, accs, sh_main) | fd9ffc fda03e fda3d6 fda408 fdaa6a fdbecc fe387c fe3890 fe389c fe38a4 fe38aa fe3c62 fe3c6e fe3ca4 fe3cac fe4394 fe4476 fe4a6a fe6c5e fe7782 fe87b0 fe8808 fe8866 fe88de fe8a18 feaa58 feaa86 feac4e fead5a feb0e6 fec424 fecc7e fee5c8 | 1
+fda3d6 A    50 f77c  46      | fece5e | 2
+fda408 A   356 f8a0  324    gem_read_inf_E (reads \DESKTOP.INF for #E resolution/dclick) | fdaf92 fdafca fdbae0 fe39a6 fe3a52 fe3a78 fe3bba fe3c02 fe3c0a fe3c0e fe3c12 fe3c26 fead26 fead40 fee5c8 | 1
+fda56e S    20 f020/ 20      |  | 3
+fda582 S    64 f134  60      | fdac28 fe87f0 | 3
+fda5c2 S   106 f00c  104     | fdaca4 | 2
+fda62c S    62 f140  58      | fda5c2 fdad0a | 3
+fda66a S    90 f12c  90      |  | 2
+fda6c4 S   170 f144  166     | fda8e6 fdad0a fda582 fda62c fda76e | 2
+fda76e S    54       52      | fda9ce | 1
+fda7a4 S    84 f130  76      | fda56e fda97c fe8a72 fe8a8e | 2
+fda7f8 S    78 f090/ 76      | fe8b0e | 27
+fda846 S    30 f114/ 30      |  | 6
+fda864 S    68 f124  68      |  | 1
+fda8a8 D    42 f2d8  42      | fdae38 | 1
+fda8d2 S    20 f14c/ 1       | fe8a72 fe8a8e fe8afa | 4
+fda8e6 S   112 f014/ 108     | fecb5a | 8
+fda956 S    38       38      |  | 2
+fda97c S    22 f024  20      | fe8afa fda956 | 1
+fda992 S    60 f0f8/ 60      |  | 5
+fda9ce S   122 f018  104     | fe8a72 fe8a8e fe8b60 fe8b72 fda992 | 4
+fdaa48 S    34 f6ec  32      | fda9ce | 3
+fdaa6a S    70 f348  68      | fe8b88 fda992 | 3
+fdaab0 A   376 f104  364     | fe87d2 fe87f0 fe8b22 fe8b92 | 1
+fdac28 S   124 f004  116     | fda8e6 fe87f0 fe8b50 fda992 | 6
+fdaca4 S   102 f008  100     | fecbfa | 1
+fdad0a S   106 f010/ 102     | fe8b22 fecb5a | 5
+fdada4 S    42 f084/ 42      | fda956 fdae38 | 2
+fdadce S   112 f080  106     | fdae38 | 1
+fdae38 S    94       88      | fe87f0 fe8afa | 3
+fdae96 D    74 f388  72      |  | 3
+fdaee2 D    62 f58c  60      |  | 1
+fdaf20 S    60 f334  58      |  | 1
+fdaf5c S    54 f338  52      |  | 1
+fdaf92 S    56 f33c  52      | fdaf20 | 3
+fdafca S    74 f398  72      | fdaf5c | 2
+fdb014 D    70 f340  68      |  | 3
+fdb05a D    40 f3a0  38      |  | 1
+fdb082 D   260 f38c  254     | fdaf92 fdb014 | 1
+fdb186 D    66 f368  58      | fdaa6a fde354 fecc7e | 1
+fdb1c8 D    88 f378  84      | fe3a52 fe3c22 feceb8 | 2
+fdb220 D   744 f390  730     | fdaa6a fdb186 fe3bba fecc40 fece2e fece4e fee5c8 fe3db4 | 1
+fdb508 D   244 f2cc  242     | fece42 | 3
+fdb5fc D  1252 f6ac  1226    | fdae96 fdaf92 fdb082 fdb1c8 fdb220 fdb508 fde39e fe39a6 fe3a78 fe3c0a fece5e fed478 fee5c8 | 1
+fdbae0 S    40 f588  38      |  | 2
+fdbb0a D    42 f39c  40      |  | 1
+fdbb34 D   842 f654  786     | fdafca fdb05a fdb1c8 fdbb0a fdbe7e fdbeb6 fdd1a0 fde39e fde3ba fdfdf2 fe2d46 fe3a7c fe3c0a fece5e | 2
+fdbe7e D    56 f3a8  44      | fdbecc fe3ab0 fe3c02 fe3c0e fe3c12 | 1
+fdbeb6 D    22 f3b0  16      | fe3c0e fe3c12 | 1
+fdbecc S    30 f3c8  20      | fe39a6 fe3c12 | 3
+fdbeec D   404 f63c  394     | fdde54 fe08b4 fe0942 fece2e fee488 | 2
+fdc080 D   122 f4fc  116     | fed12e | 5
+fdc0fa D    88 f304  42      | fdc86e fde2a8 | 3
+fdc152 D   104 f2e0  102     | fdded8 | 1
+fdc1ba D   174 f324  172     |  | 1
+fdc268 D   304 f32c  196     | fdb508 fe0c9a | 1
+fdc398 D   192 f2e4  188     | feccbe | 1
+fdc458 D    66 f2e8  64      |  | 1
+fdc49a D   100 f2dc  100     | fda8a8 fde094 | 1
+fdc4fe D   124 f2f8  52      | fdc152 fdc49a | 1
+fdc57a D   756 f328  722     | fda7f8 fda8e6 fdc0fa fdc398 fdc458 fdc4fe fdc9e4 fde142 fde402 fe1bf6 fe2cb8 fecde4 | 1
+fdc86e D   374 f2c4  364     | feccbe fecd22 | 2
+fdc9e4 D   216 f308  212     | fde30e fe0c9a feccca fecd22 | 3
+fdcabc D   366 f31c  232     | fdc86e fe0c9a feccca fecd22 fecd8c | 3
+fdcc2a D   266 f65c  256     | fdc0fa fdc9e4 fdcabc | 1
+fdcd34 D   464 f660  454     | fdc0fa fdc1ba fdc268 fdc57a fdcabc fddf82 fde122 feccbe | 1
+fdcf04 D    68 f3ec  62      | fde054 fde2e8 | 1
+fdcf48 D    96 f418  86      | fdcf04 fdcfea fddfda fea38e | 2
+fdcfa8 D    66 f47c  60      | fddffa fde054 | 2
+fdcfea D    98 f3f0  90      | fddffa fde054 fde2e8 | 3
+fdd04c D    88 f454  80      | fde264 fde2e8 fecc40 | 2
+fdd0a4 D    46 f45c  40      | feceb8 feceda | 2
+fdd0d2 D    56 f458  52      | feceb8 | 1
+fdd10a D    34 f434  30      | feceb8 | 4
+fdd12c D    44 f430  40      | feceb8 | 4
+fdd158 D    72 f410  66      | feceb8 fecf24 | 1
+fdd1a0 D    46 f3ac  44      | fde03e | 6
+fdd1ce D    14 f43c  10      | fdd1a0 fe3c1a | 3
+fdd1dc D   626 f464  576     | fd9fc6 fdcf48 fdd10a fdd12c fdd158 fdd1a0 fdd1ce fdfd58 fe1bdc fe3a52 fe3ae8 fe3c0a fe3c22 fece9c feceb8 fecf58 fecfb2 fecfd6 fed03a | 2
+fdd454 D   782 f474  758     | fdd04c fdd0a4 fdd0d2 fdd10a fdd12c fdd1a0 fdd1ce fdd1dc fe3a1c fe3a46 fe3ac4 fe3c06 fe3c1e feceda fecfb2 fed070 | 2
+fdd762 D    68 f46c  66      |  | 1
+fdd7a6 D   370 f4e4  358     | fdd762 fdfd58 fece8c fece9c feceb8 feceda | 1
+fdd918 D  1230 f4e8  1200    | fdcf48 fdcfa8 fdcfea fdd04c fdd0a4 fdd10a fdd12c fdd1ce fdd1dc fdd454 fddfda fe1bdc fe3a1c fe3ac4 fe3bba fe3be8 fe3c06 fe3c26 feceb8 feceda fecf24 fecf58 fecfb2 fecfd6 fed03a fed070 | 1
+fddde6 S   110 f698  108     |  | 2
+fdde54 D    24 f3dc  22      |  | 1
+fdde6c D    58 f6b0  50      | fda03e fe65c4 fe91a4 | 1
+fddea6 D    32 f4c4  26      | fe387c fe65c4 | 1
+fddec6 S    18 f118  16      |  | 1
+fdded8 D   170 f2c8  164     | fe387c fe6998 | 3
+fddf82 D    64 f330  58      | fe387c fe68a4 | 1
+fddfc2 D    24 f694  18      | fe387c fe6c5e | 1
+fddfda D    32 f3f4  26      | fe1bdc fe387c fe74a4 | 4
+fddffa D    40 f3f8  34      | fe387c fe75ec | 3
+fde022 D    28 f4c0  24      | fe387c fe7002 | 4
+fde03e D    22 f408  16      | fe387c fe7712 | 1
+fde054 D    64 f3e4  58      | fe387c fe92ae | 4
+fde094 S    90 f2d4  78      | fe387c fe8a38 fe8a72 fe8a8e feaa86 | 9
+fde122 D    32 f320  26      | fe387c fe85c6 | 1
+fde142 D    40 f2f0  34      | fe387c fe8768 | 2
+fde16a D    24 f5ac  18      | fe387c fe8340 | 2
+fde182 D    24 f5b8  18      | fe387c fe837a | 2
+fde19a D    58 f680  52      | fe387c fe8c14 | 1
+fde1d4 D    28 f6bc  22      | fe387c fe902a | 1
+fde1f0 D    42 f630  36      | fe387c fe8c14 | 3
+fde21a D    74 f614  68      | fe387c fe8c14 | 2
+fde264 D    40 f3fc  34      | fe387c fea584 | 1
+fde28c D    28 f6dc  22      | fe387c fea2be | 2
+fde2a8 D    36 f2c0  30      | fe387c fea0a8 | 1
+fde2cc D    28 f590  22      | fe387c fea1ba | 2
+fde2e8 S    38 f3e8  32      | fda7f8 fe387c fea028 | 6
+fde30e D    46 f314  40      | fda7f8 fe387c fea38e | 1
+fde33c A    24 f530  18      | fe387c feaa58 | 3
+fde354 S    34 f344  28      | fe387c feaa86 | 8
+fde376 D    40 f59c  36      | fe387c feacd4 | 1
+fde39e D    28 f370  22      | fe387c fead26 | 2
+fde3ba D    28 f3a4  22      | fe387c fead40 | 1
+fde3d6 D    22 f5b4  16      | fe387c fec6f0 | 1
+fde3ec D    22 f6d8  16      | fe387c fec706 | 1
+fde402 D    24 f2fc  18      | fe387c feca4a | 2
+fde41a D    22 f69c  16      | fe387c feca68 | 1
+fde430 D    32 f6d4  26      | fe387c fec602 | 1
+fde450 D    32 f5b0  26      | fe387c fec6da | 1
+fde470 D    60 f4dc  54      | fe387c fec722 | 20
+fde4ac D    32 f4d8  26      | fe387c fec83a | 6
+fde4cc D    52 f6a0  48      | fe387c fecaac | 1
+fde500 S    70 f53c  68      | fed070 | 2
+fde546 S   116 f544  108     | fde500 feceb8 | 2
+fde5ba S    86 f540  78      | fde500 | 2
+fde610 A   420 f548  408     | fde546 fde5ba fecc7e fece8c feceb8 fed070 | 1
+fde7b4 A   144 f554  134     | fda8e6 fdac28 fdad0a fde610 fecbfa | 1
+fde844 A    98       86     desk userdef ub_code (PARMBLK 30 B; formatted dir line %L %W am/pm) | fda7f8 fda846 fde7b4 fecc7e | 1
+fde8a6 D   258 f55c  244     | fdded8 fddfda fddffa fde054 fde2e8 fe2344 | 8
+fde9a8 D    38 f578  34      | fde8a6 | 2
+fde9ce D   144 f574  138     | fdd454 fdea5e | 2
+fdea5e D    60 f560  56      | fecf24 fecfb2 fed070 | 6
+fdea9a D   118 f564  110     | fde546 fde5ba fdea5e fecfb2 | 2
+fdeb10 D   516 f5f0  232     | fdd1a0 fde094 fde8a6 fdea5e fdea9a fdfd58 fe3ba0 fe3c16 fece9c feceb8 fecf58 fecfd6 fecfee fed03a | 1
+fded16 D   218 f5f4  30      | fde094 fde9a8 fde9ce fdea5e fdea9a feceb8 | 1
+fdedf0 D   290 f5f8  26      | fde094 fde9a8 fde9ce fdea5e fe3b02 fe3b6a feceb8 fecf24 fecfb2 | 1
+fdef12 D   368 f64c  358     | fdbae0 fde8a6 fed010 fed03a fee488 | 1
+fdf082 D   150 f5cc  140     | fde8a6 fdea5e fecf58 fecfb2 fecfd6 fed03a | 1
+fdf11a D   686 f638  666     | fdae96 fdaee2 fdb014 fdb508 fde8a6 fece74 fece8c fece9c feceb8 fecfb2 fecfd6 | 1
+fdf3c8 D   776 f640  746     | fdae96 fdb014 fde8a6 fece8c fece9c feceb8 fecf24 fecf58 fecfb2 fecfd6 fed010 | 1
+fdf6d0 D    64 f480  62      |  | 1
+fdf710 D    70 f484  68      |  | 1
+fdf756 D    36 f6b8  30      | fdf6d0 fdf710 | 1
+fdf77a D   122 f494  118     | fece8c | 1
+fdf7f4 D   210 f5e0  190     | fe3c02 | 3
+fdf8c6 D    38 f610  36      |  | 1
+fdf8ec D    28 f488  26      |  | 1
+fdf908 D    30 f4b8  28      |  | 1
+fdf926 D    44 f48c  42      | fdf8ec | 2
+fdf952 D    32 f4b0  30      |  | 1
+fdf972 D    56 f490  54      |  | 1
+fdf9aa D    48 f498  46      | fdf926 | 1
+fdf9da D    66 f504  64      | fdf77a fdf972 | 2
+fdfa20 D    12 f508  10      | fdf9aa | 3
+fdfa2c D   190 f4a4  184     | feceee fecf02 | 1
+fdfaee D    72 f4a8  68      | fdfa2c | 1
+fdfb38 D   260 f4bc  258     | fdfaee | 2
+fdfc3c D   284 f4cc  280     | fdf908 fdf926 fdf952 fdfb38 fe3a1c fe3a46 fe3c06 fece2e fed522 fed534 | 3
+fdfd58 D    78 f438  72      | fde022 fde354 fed070 | 14
+fdfda6 D    76 f4e0  72      | fddea6 | 2
+fdfdf2 D   202 f3bc  24      | fde094 fde470 fde4ac fdfc3c fdfda6 fe0c2a fe2dfc fe37ee fece9c | 7
+fdfebc D   382 f624  354     | fdcfa8 fdcfea fdd10a fdd12c fdd1a0 fddfda fdfd58 fdfdf2 fe1bdc fe3a1c fe3ac4 fe3c06 feceb8 fecf58 fecfb2 fecfd6 fed03a | 1
+fe003a D   262 f4f0  258     | fdd7a6 fdd918 fdfd58 | 2
+fe0140 D   148 f500  144     | fdfd58 fe003a fe0db8 feceb8 | 2
+fe01d6 D   130 f4f4  120     | fe003a feceb8 feceda | 2
+fe0258 D   154 f520  144     | fdfd58 fdfdf2 fe01d6 fe0bbc fe1bf6 fe2cb8 fece9c | 1
+fe02f2 D   154 f524  148     | fdc080 fdfd58 fdfdf2 fe0140 fe2cb8 fe7712 fece9c | 1
+fe038c D   200 f50c  198     | fdf9da fdfa20 fdfc3c fe0140 fe01d6 fe0bbc fe0db8 | 1
+fe0454 D   172 f528  162     | fdfd58 fdfdf2 fe038c fe1bf6 fe2cb8 fe3760 | 1
+fe0500 D   510 f52c  502     | fdc080 fdfd58 fe0a7c fe0ab6 fe0b86 fe0db8 fe1bf6 fe3760 | 1
+fe070a D   108 f664  98      | fdfd58 fe0258 fe02f2 fe0454 fe0500 | 1
+fe0776 D   202 f6cc  196     | fde2cc feccbe fece2e | 1
+fe0840 D   114 f6d0  110     | feccbe | 1
+fe08b4 D   142 f3d4  138     | feccbe | 3
+fe0942 D   136 f3d8  130     | fde2cc feccbe | 2
+fe09cc D   174 f5c8  166     | fe3c0e fe3c12 feceb8 | 6
+fe0a7c D    58 f518  52      | feceb8 | 3
+fe0ab6 D   112 f51c  104     | fe0b26 fe0e38 fece8c | 3
+fe0b26 D    48 f594  20      | fde094 fde376 | 1
+fe0b56 D    24 f6a4  22      | fee5c8 | 1
+fe0b6e S    24 f6a8  20      | fde354 | 2
+fe0b86 D    54 f514  48      | fde354 fecbe6 | 3
+fe0bbc D   110 f4f8  104     | fdcabc fde470 fe2cb8 | 5
+fe0c2a D   112 f4d0  106     | fde470 fe2cb8 fe2f68 | 6
+fe0c9a D   192 f2d0  188     | fde094 fde2e8 fde470 fe2cb8 fecd22 | 8
+fe0d5a D    94 f5a8  92      |  | 3
+fe0db8 D    22 f4ec  20      |  | 6
+fe0dce D   106 f5a4  102     | fde470 fece4e | 4
+fe0e38 D   254 f598  240     | fdc9e4 fde16a fde450 fe0d5a fe0dce | 2
+fe0f36 D   102 f600  96      | fde182 fde3d6 fde470 | 2
+fe0f9c D   204 f688  196     | fde16a fde182 fde470 fde4ac fecd0c | 1
+fe1068 D   330 f5d8  310     | fde4ac fdf9da fdfc3c fdfd58 fe0c2a fe0c9a fe0e38 fe1bdc fe2cf4 fe2d46 fe37ee fe384c feceb8 | 3
+fe11b4 D   566 f5e4  546     | fdf082 fdfd58 fe09cc fe0a7c fe0ab6 fe0b86 fe0d5a feceb8 | 1
+fe13ea D   208 f5ec  188     | fde022 fde354 fe09cc fe0db8 fe1068 fe1ad0 fe1bdc fe2ba2 fe2c5c | 1
+fe14ba D   174 f5e8  160     | fde470 fdfa20 fe09cc fe1068 fe1ad0 fe1bdc | 2
+fe1568 D   382 f61c  358     | fde022 fde354 fdf7f4 fe11b4 fe13ea fe14ba fe1bf6 fe2cb8 fece9c feceda | 1
+fe16e6 D   282 f620  260     | fde8a6 fdeb10 fded16 fdedf0 fdfdf2 fe0db8 fe1ad0 fe1bf6 fe2cb8 | 1
+fe1800 D   228 f62c  218     | fdc080 fdfd58 fe0a7c fe0ab6 fe0b86 fe0db8 fe37c4 feceb8 | 1
+fe18e4 D   142 f604  136     | fde470 fdfa20 fe0c2a fe0f36 fe2c5c fe2d46 | 1
+fe1972 D   166 f608  142     | fde470 fe0f36 fe14ba | 1
+fe1a18 D   184 f628  164     | fde094 fdf7f4 fe18e4 fe1972 fece8c | 1
+fe1ad0 D   268 f5d4  250     | fe1bdc fe3bba fe3c26 fe768c fe7712 fee478 fee488 | 4
+fe1bdc S    26 f1ac/ 26      | fde094 | 17
+fe1bf6 D   150 f30c  144     | fdc080 fdf8c6 fe2cb8 fe37c4 | 8
+fe1c8c D    42 f618  38      | fde21a | 1
+fe1cb6 D   406 f66c  314     | fde21a fe1bf6 fe1c8c fe2d46 fe3760 fece9c | 3
+fe1e4c D    52 f670  48      | fde8a6 | 1
+fe1e80 D   170 f668  70      | fdfebc fe0bbc fe1568 fe16e6 fe1800 fe1a18 fe2d46 fe3760 | 3
+fe1f2a D   180 f674  168     | fde1f0 fe2a7c | 2
+fe1fde D   404 f67c  136     | fdbb34 fdbeec fde022 fde1f0 fde470 fdef12 fdf11a fdf3c8 fe0c9a fe0d5a fe1bdc fe1bf6 fe2536 fe3684 fe36fa fe3760 fe8862 fee488 | 1
+fe2172 D   308 f6c8  288     | fdcc2a fdcd34 fde142 fde402 fde470 fe070a fe0bbc fe0c2a fe1cb6 fe1e80 fe2cb8 | 1
+fe22a6 D    40 f6c4  34      | fdfdf2 fe2d46 | 1
+fe22ce D   118 f684  96      | fde19a fe1bdc fe1e4c fe1e80 fe1f2a fe1fde fe3622 fe3684 fe36fa | 1
+fe2344 D   498 f558  470     | fde470 fde4ac fe0bbc fe0c2a fe0c9a fe0dce fe0f9c fe1cb6 fe1e80 fe22ce fe2536 fe2cb8 fe2cf4 fe3504 fe359a feccbe | 2
+fe2536 D   226 f650  220     | fde470 fe0dce fe2dfc feceb8 | 4
+fe2618 D   278 f6c0  256     | fddfc2 fdf7f4 fe09cc fe0dce fe1068 fe1f2a fe2536 fe2ba2 fe2c5c | 1
+fe272e D   844 f9bc  206    deskmain (desktop main, called by sh_main) | fdb5fc fdbb34 fdbecc fdbeec fddde6 fdde6c fdded8 fde1d4 fde1f0 fde41a fde470 fde4ac fde4cc fdf756 fe0b56 fe0b6e fe0c2a fe0c9a fe1ad0 fe1bdc fe1cb6 fe2172 fe22a6 fe2344 fe2536 fe2618 fe2b64 fe39a6 fe3c02 fea38e fee488 | 1
+fe2a7c D   232 f634  230     |  | 2
+fe2b64 D    62 f6b4  56      | fe0776 fe2a7c | 1
+fe2ba2 D   184 f5d0  176     | fde430 fe0840 fe2c5c | 2
+fe2c5c D    92 f5dc  84      | fde28c fde3ec fe08b4 | 4
+fe2cb8 D    60 f300  58      |  | 14
+fe2cf4 D    82 f5c4  76      | fde28c fe09cc fece9c | 2
+fe2d46 D   128 f3b8  124     | fe09cc fece9c | 6
+fe2dc8 D    52 f6e0  50      |  | 1
+fe2dfc D    22 f4c8  18      | fe2dc8 | 3
+fe2e12 D   248 f6e4  246     | fece42 | 1
+fe2f0a D    94 f6e8  92      | fdc080 | 1
+fe2f68 D   936 f5a0  916     | fde470 fde4ac fe08b4 fe0942 fe2e12 fe2f0a fecb6e fece2e fece42 | 3
+fe3310 D   500 f6f0  488     | fda7f8 fdaa48 fde470 fe0c9a fe2f68 feccca fecd0c fecd22 fece42 fece4e | 2
+fe3504 D   150 f690  142     | fde470 fe2cb8 fe3310 fecb6e | 1
+fe359a D   136 f68c  130     | fe2cb8 fe3310 | 1
+fe3622 D    98 f678  96      | fdfb38 | 1
+fe3684 D   118 f644  114     | fde470 fe2f68 | 2
+fe36fa D   102 f648  98      | fde470 fdfda6 fe2dfc | 2
+fe3760 D   100 f510  98      |  | 5
+fe37c4 D    42 f5fc  40      |  | 2
+fe37ee D    94 f4d4  88      | fde354 fecbe6 fed070 | 2
+fe384c D    48 f5c0  46      |  | 1
+fe387c S    20 f2b8  20     dsptch (yield: if !indisp push sr,a0; jmp disp) |  | 46
+fe3890 S    12 f740  12     spl7_save (sr->0x8996, ipl7) |  | 10
+fe389c S     8 f744  8      spl_restore (0x8996->sr) |  | 10
+fe38a4 A     6 f890  6      cli (ipl7) |  | 1
+fe38aa A     6 f898  6      sti (ipl0) |  | 1
+fe38b0 A    36       36     gotopgm (rte into rlr->p_ldaddr, user mode) |  | 0
+fe38d4 S    92 f7c8  92     savestate(uda) asm |  | 1
+fe3930 S    44 f7d8  44     switchto(uda) asm rte |  | 1
+fe3970 A    10 f948  10     set_word_1 |  | 1
+fe397a A    44 f954  44     psetup(pd,pc) push pc/sr on UDA stack |  | 1
+fe39a6 S    14 f374  14     dos_gdrv/…(Dgetdrv+Dsetdrv glue) | fe3c02 fe3c12 | 5
+fe39b6 S     6       6      __DOS (jmp fe3c3e trap#1 glue) |  | 24
+fe39bc A    72 f76c  72      | fe39b6 | 1
+fe3a04 S     4       4       |  | 4
+fe3a08 S     4       4       |  | 4
+fe3a0c S    16 f848  16      T:#13=1 |  | 1
+fe3a1c S    42 f448  42      | fe39b6 | 7
+fe3a46 S    38 f468  12      | fe39b6 | 4
+fe3a52 S    38 f17c/ 38      | fe39b6 | 6
+fe3a78 S    32 f194/ 4       | fe39b6 | 4
+fe3a7c D    30 f3b4  30      | fe39b6 | 1
+fe3a9a A    22 f97c  22      | fe39b6 | 1
+fe3ab0 D    20 f3c4  20      | fe39b6 | 1
+fe3ac4 D    36 f460  36      | fe39b6 | 3
+fe3ae8 D    26 f440  26      | fe39b6 | 1
+fe3b02 D    98 f580  98      T:#1=1 | fe39b6 | 1
+fe3b6a S    54 f57c  54      T:#1=1 |  | 2
+fe3ba0 D    26 f56c  26      | fe39b6 | 1
+fe3bba S    46 f0fc/ 46      T:#1=1 |  | 14
+fe3be8 S    14 f470  14      T:#1=1 |  | 2
+fe3bf6 A    26 f860  4       | fe39b6 | 1
+fe3bfa A    26 f184  4       | fe39b6 | 5
+fe3c02 S    26 f3c0  4       | fe39b6 | 6
+fe3c06 S    26 f444  4       | fe39b6 | 7
+fe3c0a S    26 f18c/ 4       | fe39b6 | 7
+fe3c0e S    26 f3d0  4       | fe39b6 | 5
+fe3c12 S    26 f3cc  4       | fe39b6 | 7
+fe3c16 D    26 f570  4       | fe39b6 | 1
+fe3c1a D    26 f40c  4       | fe39b6 | 1
+fe3c1e D    26 f44c  4       | fe39b6 | 1
+fe3c22 D    26 f354  4       | fe39b6 | 2
+fe3c26 S    24 f100/ 24      | fe39b6 | 13
+fe3c3e S    36       36     __DOS body: trap#1, DOS_ERR 98ec, DOS_AX c918 T:#1=1 |  | 1
+fe3c62 A    12 f8dc  12     restore_trap2 (8c2a->$88) |  | 1
+fe3c6e A    22 f894  22     install_trap2 ($88 := fe3ea6, old->8c2a) |  | 1
+fe3c84 A    32 f994  16     install_critic (Setexc 0x101 fe3cbe) T:#13=1 |  | 1
+fe3c94 A    16       16      T:#13=1 |  | 2
+fe3ca4 A     8 f8cc  8       |  | 2
+fe3cac A    18 f8ac  18      | fe3c94 | 1
+fe3cbe A   112 f718  112    crit_err (etv_critic handler: stack 0x9446, fe768c eralert) | fe3890 fe389c fe768c | 1
+fe3d2e A   134 f9c8  134     T:#1=1 | fe3890 fe389c | 3
+fe3db4 S    84       84      |  | 3
+fe3e08 S   158       158     |  | 5
+fe3ea6 A   152       98     gem_trap2_aes [AES-trap2] T:#1=1 | fe3890 fe389c | 0
+fe3f08 A    54 f2bc  54      | fe3890 fe389c | 1
+fe3f3e A    32       32     ub_trampoline (G_USERDEF call on 1KB stack 0x8c3a; ptr at 0x8c32) [vec8c32] | fde844 | 0
+fe3f5e S    92 f724  90      |  | 1
+fe3fba S    72 f804  68      | fe3f5e | 7
+fe4002 S    46 f748  42      | fece5e | 1
+fe4030 S    50 f808  48      |  | 5
+fe4062 S    80 f764  78      |  | 1
+fe40b2 S    58 f7e0  54      | fe387c | 2
+fe40ec S   208 f7dc  190     | fe4002 fe4e8e fe5520 fe5566 fe55f8 fe5666 fe5988 | 2
+fe41bc S   190 f7e4  188     |  | 2
+fe427a S   110 f7f8  106     | fe4062 | 1
+fe42e8 A   170 f778  158     | fe39bc fe3a52 fe3c0a fe44d4 fe5886 feceb8 | 1
+fe4394 A   226 f8a4  202     | fe39a6 fe3a1c fe3a46 fe3bba fe3c02 fe3c06 fe3c0e fe3c12 fe3c26 fe42e8 fed478 fed554 | 1
+fe4476 A    94 f8d0  92      | fe3c26 | 1
+fe44d4 A   150 f768  144     | fda3d6 fe3bba | 2
+fe456a A    56 f794  50      | fe387c febdbe | 2
+fe45a2 A   812 f798  700     | fe387c fe456a fe84ba fe85de fe8640 fe86fa fea0a8 fea38e fea584 feb53e feba9c febdbe feca68 fecca6 feccbe | 1
+fe48ce A    58 f7ac  52      | fe45a2 feca4a | 1
+fe4908 A   178 f7b0  168     | fe456a fe8c14 fe8d6e feccd6 | 1
+fe49ba S    24 f830  18      | fe5008 fe504a | 2
+fe49d2 A   150       -       [ptr] | fe48ce fe4908 fe6998 feba54 feca68 feccca | 0
+fe4a6a A    46 f89c  42      | fe5886 | 1
+fe4a98 S   130 f820  116     | fe87d2 fe87f0 fe8a38 fee498 fee4c0 | 2
+fe4b1a S    90 f73c  88     forkq(fcode,fdata) 32-entry queue 0xB296 |  | 6
+fe4b74 S    40 f7c0  38     disp_act(pd) append to rlr |  | 3
+fe4b9c S    42 f7cc  38     mwait_act(pd) ready or -> nrl 0xc726 | fe4b74 | 1
+fe4bc6 S   272 f7d0  268    forker() run fork queue (+appl_trecord hook) | fecc7e | 2
+fe4cd6 S   146 f7c4  136    chkkbd() VDI vq_key_s + vsm_string sample -> forkq(kchange) | fe4b1a fe87d2 | 2
+fe4d68 S    54 f7d4  48     idle loop: chkkbd, drl->rlr, until rlr||fpcnt | fe4b74 fe4cd6 | 1
+fe4d9e S   100       86     disp() the dispatcher | fe38d4 fe3930 fe4b74 fe4b9c fe4bc6 fe4d68 | 1
+fe4e02 A    88       -      tchange (timer fork fn) [ptr] | fe3890 fe389c fe511a | 0
+fe4e5a S    50 f800  48      |  | 2
+fe4e8e S    42 f754  34      | fe3fba fe4030 fe4e5a | 1
+fe4eb8 S    56 fa38  50      | fe387c fe3fba | 1
+fe4ef0 A    80 f8f0  72      | feca4a feccd6 | 1
+fe4f40 A   112       108    b_click (button irq) | fe4b1a | 1
+fe4fb0 A    88 f8f4  82     b_delay (dclick timer) | fe4b1a | 2
+fe5008 S    20 f7a0  16      | feccca | 1
+fe501c S    20 f828  16      | feccca | 1
+fe5030 S    26 f82c  24      |  | 1
+fe504a S    72 f7a4  66      | fe52e2 fe5480 | 1
+fe5092 A    56 f8ec  54      |  | 1
+fe50ca S    46 f7ec  44      |  | 3
+fe50f8 S    34 f840  30      | fe50ca | 1
+fe511a S   102 f7fc  98      | fe3fba | 4
+fe5180 A    34       -      kchange (keyboard fork fn) [ptr] | fe51a2 | 0
+fe51a2 A    54 f8e8  48      | fe5092 fe511a | 1
+fe51d8 A   186       -       [ptr] | fe4ef0 fe52e2 | 0
+fe5292 S    80 f7f0  78      |  | 3
+fe52e2 S   106 f8e4  100     | fe511a fe5292 | 3
+fe534c A   308       -      mchange (mouse fork fn) [ptr] | fe4fb0 fe5480 fe87d2 feccd6 fed412 | 0
+fe5480 S    56 f8e0  50      | fe511a fe54b8 | 2
+fe54b8 S   104 f8fc  100     | feccd6 | 1
+fe5520 S    70 f758  62      | fe3fba fe4030 fe50ca | 1
+fe5566 S   146 f750  140     | fe3890 fe389c | 1
+fe55f8 S   110 f760  102     | fe3fba fe4030 fe5292 | 1
+fe5666 S   144 f75c  134     | fe3fba fe4030 fecc7e feccd6 | 1
+fe56f6 S    90 f944  88      | fece2e fece9c | 1
+fe5750 S   144 f72c  138     | fe56f6 | 2
+fe57e0 A   118 f950  114     | fe3970 | 1
+fe5856 A    48 f918  42      | fece5e fecec4 | 3
+fe5886 A    58 f770  50      | fe397a fe57e0 fe5856 | 3
+fe58c0 S   200 f958  190     | fecc7e fecd8c | 1
+fe5988 S   218 f74c  204     | fe3fba fe4030 fe5750 fe58c0 | 1
+fe5a62 A    74 fa18  72      |  | 1
+fe5aac A    32 fa1c  30      |  | 3
+fe5acc A   220 fa3c  214     | fe5aac fece42 fece4e | 1
+fe5ba8 A   242 fa40  238     | fe5acc | 1
+fe5c9a A    84       -       [ptr] | fe5ba8 | 0
+fe5cee A   174       -       [ptr] | fe5aac feb53e fed27c | 0
+fe5d9c A  1866 f2b0  22     aes_dispatch (crysbind switch) | fda03e fda7f8 fe65c4 fe65da fe6610 fe6766 fe6894 fe68a4 fe68e4 fe6910 fe6936 fe6998 fe6c5e fe7002 fe7298 fe7346 fe74a4 fe75ec fe764c fe7712 fe7d90 fe8402 fe84ba fe85c6 fe8640 fe86fa fe8768 fe8a38 fe8a72 fe8a8e fe8c14 fe902a fe91a4 fe91e2 fe92ae fe9678 fea028 fea0a8 fea1ba fea21e fea2be fea38e fea584 fea69c feaa58 feaa86 feaab2 feac5c feac80 feac94 feaca8 feacd4 fead26 fead40 feae36 feafbe fec602 fec6da fec6f0 fec706 fec722 fec83a feca4a feca68 fecaac fecbe6 | 1
+fe5db2 A    68       64     appl_init #ctx [AES10] |  | 0
+fe5df2 A    34       4      appl_read #ctx [AES11] | fe65c4 | 0
+fe5df6 A    32       20     appl_write #ctx [AES12] | fe65c4 | 0
+fe5e0c A    18       12     appl_find #ctx [AES13] | fe65da | 0
+fe5e1a A    30       16     appl_tplay #ctx [AES14] | fe6610 | 0
+fe5e2c A    28       18     appl_trecord #ctx [AES15] | fe6766 | 0
+fe5e40 A    52       1      appl_exit #ctx [AES19] | fda03e fe65c4 fe91a4 | 0
+fe5e70 A    12       1      evnt_keybd #ctx [AES20] | fe6894 | 0
+fe5e78 A    34       22     evnt_button #ctx [AES21] | fe68a4 | 0
+fe5e90 A    26       16     evnt_mouse #ctx [AES22] | fe68e4 | 0
+fe5ea2 A    18       12     evnt_mesag #ctx [AES23] | fe6910 | 0
+fe5eb0 A    24       16     evnt_timer #ctx [AES24] | fe6936 | 0
+fe5ec2 A   130       124    evnt_multi #ctx [AES25] | fe6998 | 0
+fe5f40 A    22       12     evnt_dclick #ctx [AES26] | fe6c5e | 0
+fe5f4e A    26       16     menu_bar #ctx [AES30] | fe902a | 0
+fe5f60 A    28       26     menu_icheck #ctx [AES31] | fe8c14 | 0
+fe5f7c A    84       66     menu_ienable #ctx [AES32] | fe8c14 | 0
+fe5fc0 A    46       44     menu_tnormal #ctx [AES33] | fe8c14 | 0
+fe5fee A    52       42     menu_text #ctx [AES34] | fecbe6 | 0
+fe601a A    26       18     menu_register #ctx [AES35] | fe91e2 | 0
+fe602e A    30       16     objc_add #ctx [AES40] | fea1ba | 0
+fe6040 A    26       16     objc_delete #ctx [AES41] | fea21e | 0
+fe6052 A    38       22     objc_draw #ctx [AES42] | fda7f8 fea028 | 0
+fe606c A    40       22     objc_find #ctx [AES43] | fea0a8 | 0
+fe6084 A    44       28     objc_offset #ctx [AES44] | fea584 | 0
+fe60a2 A    30       16     objc_order #ctx [AES45] | fea2be | 0
+fe60b4 A    42       40     objc_edit #ctx [AES46] | fe9678 | 0
+fe60de A    44       28     objc_change #ctx [AES47] | fda7f8 fea38e | 0
+fe60fc A    28       18     form_do #ctx [AES50] | fe74a4 | 0
+fe6110 A    40       28     form_dial #ctx [AES51] | fe75ec | 0
+fe612e A    26       18     form_alert #ctx [AES52] | fe7002 | 0
+fe6142 A    18       12     form_error #ctx [AES53] | fe7712 | 0
+fe6150 A    26       18     form_center #ctx [AES54] | fe92ae | 0
+fe6162 A    70       52     form_keybd #ctx [AES55] | fda7f8 fe7298 | 0
+fe619a A    46       30     form_button #ctx [AES56] | fda7f8 fe7346 | 0
+fe61bc A    44       26     graf_rubberbox #ctx [AES70] | fe85c6 | 0
+fe61d8 A    54       34     graf_dragbox #ctx [AES71] | fe8640 | 0
+fe61fa A    42       29     graf_movebox #ctx [AES72] | fe8402 | 0
+fe6216 A    32       -       [AES73] |  | 0
+fe621e A    30       22     graf_shrinkbox #ctx [AES74] |  | 0
+fe6234 A    38       24     graf_watchbox #ctx [AES75] | fe84ba | 0
+fe624e A    36       22     graf_slidebox #ctx [AES76] | fe86fa | 0
+fe6266 A    44       40     graf_handle #ctx [AES77] |  | 0
+fe628e A    94       82     graf_mouse #ctx [AES78] | fe8a38 fe8a72 fe8a8e feaa86 | 0
+fe62e8 A    44       26     graf_mkstate #ctx [AES79] | fe8768 | 0
+fe6304 A    16       10     scrp_read #ctx [AES80] | feac80 | 0
+fe6310 A    16       10     scrp_write #ctx [AES81] | feac94 | 0
+fe631c A    34       20     fsel_input #ctx [AES90] | fe7d90 | 0
+fe6332 A    26       18     wind_create #ctx [AES100] | fec602 | 0
+fe6346 A    24       16     wind_open #ctx [AES101] | fec6da | 0
+fe6358 A    16       10     wind_close #ctx [AES102] | fec6f0 | 0
+fe6364 A    16       10     wind_delete #ctx [AES103] | fec706 | 0
+fe6370 A    26       16     wind_get #ctx [AES104] | fec722 | 0
+fe6382 A    26       16     wind_set #ctx [AES105] | fec83a | 0
+fe6394 A    22       12     wind_find #ctx [AES106] | feca4a | 0
+fe63a2 A    16       57     wind_update #ctx [AES107] | feca68 | 0
+fe63ae A    50       -       [AES108] | fecaac | 0
+fe63dc A    24       16     rsrc_load #ctx [AES110] | feac5c | 0
+fe63ec A    14       10     rsrc_free #ctx [AES111] | feaa58 | 0
+fe63f6 A    34       20     rsrc_gaddr #ctx [AES112] | feaa86 | 0
+fe640c A    34       22     rsrc_saddr #ctx [AES113] | feaab2 | 0
+fe6422 A    28       20     rsrc_obfix #ctx [AES114] | fea69c | 0
+fe6436 A    26       18     shel_read #ctx [AES120] | feaca8 | 0
+fe6448 A    42       28     shel_write #ctx [AES121] | feacd4 | 0
+fe6464 A    26       16     shel_get #ctx [AES122] | fead26 | 0
+fe6476 A    26       16     shel_put #ctx [AES123] | fead40 | 0
+fe6488 A    22       12     shel_find #ctx [AES124] | feafbe | 0
+fe6496 A    24       14     shel_envrn #ctx [AES125] | feae36 | 0
+fe64a6 A    24       18     aes_unimplemented [AES109,AES115,AES116,AES117,AES118,AES119,AES16,AES17,AES18,AES27,AES28,AES29,AES36,AES37,AES38,AES39,AES48,AES49,AES57,AES58,AES59,AES60,AES61,AES62,AES63,AES64,AES65,AES66,AES67,AES68,AES69,AES82,AES83,AES84,AES85,AES86,AES87,AES88,AES89,AES91,AES92,AES93,AES94,AES95,AES96,AES97,AES98,AES99] | fe764c | 1
+fe64ba A  1844       25      | fda03e fda7f8 fe65c4 fe65da fe6610 fe6766 fe6894 fe68a4 fe68e4 fe6910 fe6936 fe6998 fe6c5e fe7002 fe7298 fe7346 fe74a4 fe75ec fe764c fe7712 fe7d90 fe8402 fe84ba fe85c6 fe8640 fe86fa fe8768 fe8a38 fe8a72 fe8a8e fe8c14 fe902a fe91a4 fe91e2 fe92ae fe9678 fea028 fea0a8 fea1ba fea21e fea2be fea38e fea584 fea69c feaa58 feaa86 feaab2 feac5c feac80 feac94 feaca8 feacd4 fead26 fead40 feae36 feafbe fec602 fec6da fec6f0 fec706 fec722 fec83a feca4a feca68 fecaac fecbe6 | 0
+fe64d4 A    18       16      |  | 4
+fe64e6 A   196 f2b4  184    aes_marshal_arrays (xif) | fe5d9c fecc40 | 1
+fe65aa A    26       18     aes_entry (super: 200/201) [ptr] | fe387c fe3f08 fe64e6 | 1
+fe65c4 S    22 f1b4  18     ap_rdwr | fe6874 | 9
+fe65da A    54 f1b8  48     ap_find | fe5750 fecbe6 | 3
+fe6610 A   342 f1bc  310    ap_tplay | fe387c fe4b1a fe6936 fe87d2 fecbc6 fecbda fecc7e fe3db4 fe3e08 | 3
+fe6766 A   180 f1c0  168    ap_trecd | fe3890 fe389c fe6936 | 3
+fe681a S    90 f7e8  88      |  | 3
+fe6874 S    32 f728  24      | fe40b2 fe40ec fe41bc | 6
+fe6894 A    16 f1cc  12     ev_keybd | fe6874 | 3
+fe68a4 S    64 f1d0  58     ev_button | fe681a fe6874 | 5
+fe68e4 A    44 f1d4  38     ev_mouse | fe681a fe6874 | 3
+fe6910 S    38 f1d8  34     ev_mesag | fe65c4 | 4
+fe6936 A    38 f1dc  34     ev_timer | fe6874 fe3e08 | 5
+fe695c S    58 f7f4  54      | feccd6 | 1
+fe6998 S   710 f09c/ 662    ev_multi | fe40b2 fe40ec fe41bc fe427a fe4bc6 fe4cd6 fe50ca fe5292 fe681a fe6910 fe695c fe3e08 | 8
+fe6c5e S    58 f1e4  56     ev_dclick |  | 5
+fe6c98 S   234 f80c  230     | fece4e | 1
+fe6d84 S   116 f814  110     | fe6c98 | 1
+fe6df8 S   522 f818  490     | fea1ba fea55e fecc7e feccbe fece4e | 1
+fe7002 S   396 f220  366    fm_alert | fda7f8 fda846 fe4a98 fe6d84 fe6df8 fe74a4 fe8966 fe8996 fe92ae fea028 fea69c feaa86 feca68 | 7
+fe718e S   134 f83c  63      | fe49ba fe501c fe5030 feca68 | 3
+fe7214 S   102 f834  100     |  | 2
+fe727a S    30 f844  26      | fe7214 | 1
+fe7298 S   218 f22c  40     fm_keybd | fe7214 fe764c fea38e | 4
+fe7346 S   350 f230  338    fm_button | fe68a4 fe84ba fea38e fea4b6 fed382 | 4
+fe74a4 S   328 f218  300    fm_do | fda7f8 fe3a0c fe50f8 fe6998 fe718e fe727a fe7298 fe7346 fe9678 fea0a8 | 7
+fe75ec S    96 f21c  84     fm_dial | fda7f8 fe8340 fe837a feb6c8 fec026 | 5
+fe764c S    64 f1a8  60      | fe7002 fea6e6 fed070 | 7
+fe768c S   134 f60c  130    eralert (crit error alert) | fe764c | 2
+fe7712 S   112 f224  108    fm_error | fe764c | 7
+fe7782 A    44 f8c0  42      | fe92ae feaa86 | 1
+fe77ae A    64 f85c  60      | fe937e | 2
+fe77ee A    56 f87c  50      | fe77ae feceb8 | 1
+fe7826 A   472 f874  454     | fe3a1c fe3a46 fe3bf6 fe3c06 fe8a38 fecbe6 fecf02 fed12e | 1
+fe79fe A    70 f864  68      |  | 1
+fe7a44 A   300 f86c  286     | fecb6e fecbe6 fece42 fece4e fecf24 fecf84 | 2
+fe7b70 A    34 f868  32      | fea38e | 2
+fe7b92 A   360 f888  340     | fda7f8 fda846 fdaa48 fe79fe fe7a44 fe7b70 fea028 fea4e8 | 1
+fe7cfa A   150 f880  138     | fe7826 fe7a44 fea028 fecbe6 feceb8 feceda | 1
+fe7d90 A  1350 f260  1268   fs_input | fda7f8 fe3bba fe3c26 fe718e fe74a4 fe75ec fe77ae fe77ee fe7b70 fe7b92 fe7cfa fe86fa fe8a54 fea028 fea38e fea584 fecb6e fecbe6 fece9c feceb8 feceda fecf24 fecf58 fecf84 fecfd6 fed03a | 3
+fe82d6 S    16       16      |  | 1
+fe82e6 S    56       54      | fe8472 fe82d6 | 1
+fe831e S    34       34      | fe82e6 | 2
+fe8340 S    58 f534  52     gr_growbox? | fe8402 fe8a72 fe8a8e fe831e fe83be | 2
+fe837a S    68 f538  64     gr_shrinkbox? | fe8a72 fe8a8e fe831e fe83be fe8402 | 2
+fe83be S    68 f088  64      | fdada4 fdadce | 3
+fe8402 S   112 f07c/ 106    gr_movebox | fe83be fe8a72 fe8a8e fe8472 | 5
+fe8472 S    72 f078  70      | fe85b0 | 2
+fe84ba S    78 f240  72     gr_watchbox | fda7f8 fea38e fea4e8 fe8508 | 5
+fe8508 S    42 f0b0  40      | fe6998 | 2
+fe8532 S    50       46      | fdada4 | 1
+fe8564 S    18       1       | fe8a72 fe8532 | 1
+fe8576 S    58 f0c4/ 54      | fe8508 fecd0c fe8564 | 2
+fe85b0 S    22 f08c/ 18      | fda7f8 fda8e6 | 3
+fe85c6 S    24 f234  24     gr_rubbox | fe85de | 4
+fe85de S    98 f790  90      | fe8576 fe86dc feca68 fe85b0 | 2
+fe8640 A   130 f0f0/ 116    gr_dragbox | fe8576 fe85b0 fe86dc fe8a54 feca68 fecde4 | 5
+fe86c2 S    26       26      |  | 1
+fe86dc S    30 f0c0/ 28      | fe8a54 fe86c2 | 2
+fe86fa A   110 f244  102    gr_slidebox | fe8640 fea4e8 fea538 fecb6e | 5
+fe8768 S    24 f254  24     gr_mkstate |  | 4
+fe8790 A    32 f99c  28      | fda992 fe3bba | 1
+fe87b0 A    12 f8c8  10      | fe3c26 | 2
+fe87bc S    22 fa30  22      |  | 1
+fe87d2 S    30 f050/ 30     gsx_ncode(op,n,m) |  | 9
+fe87f0 S    24 f000/ 24      | fe87d2 | 9
+fe8808 A    32 f8a8  30      | fdaab0 fe883e fe8876 fe8bb6 | 1
+fe8828 A    58 f998  30      | fe886a fe89c6 | 2
+fe883e A    28       28      | fe89c6 | 1
+fe8862 D     4 f658  4       |  | 1
+fe8866 A    16 f8d8  4       |  | 1
+fe886a S    12       12      |  | 2
+fe8876 A   104       104     | fe8aae | 1
+fe88de A     6 f8d4  6       |  | 1
+fe88e4 A    20 f9a0  20      | fe87f0 | 2
+fe88f8 S   110       108     | fda992 fe8a72 fe8b60 | 2
+fe8966 S    48 f81c  48      | fe88f8 | 2
+fe8996 S    48 f824  48      | fe88f8 | 2
+fe89c6 A    50       50      | fe8bb6 | 2
+fe89f8 A    32       32      | fe8bb6 | 1
+fe8a18 A    32 f8b4  32      | fe8bb6 | 1
+fe8a38 S    28 f250  28     gsx_moff/mon | fe8a72 fe8bba | 8
+fe8a54 S    22 f0d8/ 22      |  | 3
+fe8a6a A     8 f908  8       |  | 1
+fe8a72 S    28 f01c/ 28     gr_mouse arm helper | fe8bb6 | 17
+fe8a8e S    32 f028/ 32     gsx_mfset | fe87f0 | 16
+fe8aae A    76       76      | fe8bba | 1
+fe8afa S    36 f030/ 20      | fe87d2 fe8bae | 3
+fe8b0e S    20 f02c  20      | fe8bae | 1
+fe8b22 S    46 f054/ 46      | fe8bba | 2
+fe8b50 S    16 f064  16      | fe8bae | 1
+fe8b60 S    18 f044  18      | fe8ba2 fe8bae | 2
+fe8b72 S    22 f040  22      | fe8ba2 fe8bae | 1
+fe8b88 S    10 f04c  10      | fe8ba2 | 1
+fe8b92 A    16 f05c  16      |  | 1
+fe8ba2 S    12       12      |  | 3
+fe8bae S     8       8       |  | 5
+fe8bb6 S    22       4       | fe87d2 | 9
+fe8bba S    34       32      | fe87d2 | 8
+fe8bf4 A    32 f904  28      | fea4e8 | 1
+fe8c14 S   102 f1ec  98     do_chg (menu check/enable/normal) | fda7f8 fea38e | 12
+fe8c7a A    60 f90c  56      | fe8c14 | 1
+fe8cb6 A    62 f900  52      | fda7f8 fe8966 fe8996 fea4e8 | 2
+fe8cf4 A   122 f910  116     | fe8c14 fe8cb6 fea028 | 1
+fe8d6e A   700 f79c  662     | fe4a98 fe6998 fe8a6a fe8bf4 fe8c14 fe8c7a fe8cb6 fe8cf4 fea0a8 | 1
+fe902a S   378 f1e8  362    mn_bar | fda7f8 fda8d2 fe52e2 fea028 fea1ba fea4e8 feccca | 4
+fe91a4 S    62 f1c4  58     ap_exit-ish (mn_clsda?) | febdbe | 4
+fe91e2 A   122 f1f0  116    mn_register | fe5856 fecbe6 | 3
+fe9260 S    78 f928  74      | fecc7e | 1
+fe92ae S   164 f228  160    ob_center | feccbe | 7
+fe9352 S    44 f940  42      |  | 1
+fe937e S    92 f858  88      | fece8c | 2
+fe93da S    66 f924  64      |  | 2
+fe941c S   110 f91c  104     | fda5c2 fea4e8 | 1
+fe948a S   140 f934  126     | fda7f8 fda846 fda8d2 fda8e6 fe941c fea028 | 1
+fe9516 S    64 f920  62      |  | 1
+fe9556 S   154 f93c  46      | fe9516 fea6e6 fece74 | 1
+fe95f2 S    56 f930  48      | fe93da fece8c | 1
+fe962a S    78 f938  74      | feceb8 | 1
+fe9678 S  1942 f210  346    ob_edit | fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe9260 fe9352 fe937e fe93da fe948a fe9556 fe95f2 fe962a fe99a4 fe9a46 fecbe6 fecbfa fecc7e fece42 fece4e fece5e fece8c | 4
+fe99a4 S   162 f13c/ 156     | fece8c | 2
+fe9a46 S    66 f148  58      | fda846 fddec6 feccca | 3
+fe9a88 S  1440 f16c  1300    [ptr] | fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda864 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe99a4 fe9a46 fecbe6 fecbfa fecc7e feccca fed19e | 1
+fe9ff0 A    56       38      | fdac28 | 0
+fea01c A    12       10      |  | 0
+fea028 S   128 f200  116    ob_draw | fe8a72 fe8a8e fea584 fed27c fed382 | 13
+fea0a8 S   274 f204  260    ob_find | fea4e8 fea538 fea5dc feccbe feccd6 fed382 | 8
+fea1ba S   100 f1f4  98     ob_add |  | 6
+fea21e S   160 f168/ 154    ob_delete | fea5dc fed382 | 5
+fea2be S   208 f20c  202    ob_order | fea21e fed382 | 5
+fea38e S   296 f098/ 280    ob_change | fdac28 fe8a72 fe8a8e fe9a46 fe9a88 fea584 fed19e | 13
+fea4b6 S    50 f838  48      |  | 1
+fea4e8 S    80 f094/ 76      | fea584 | 8
+fea538 S    38 f0ec  34      | fecc40 | 2
+fea55e S    38 f810  34      | fecc40 | 1
+fea584 S    88 f154/ 84     ob_offset | fed382 | 9
+fea5dc S    68 f164  66      |  | 2
+fea622 S   122 f960  120     |  | 1
+fea69c S    74 f294  70     rs_obfix | fea622 | 5
+fea6e6 S    48 f854  42      | feaa86 fecbe6 | 3
+fea716 S    44 f968  42      |  | 2
+fea742 S   290 f964  276     | fea716 fea742 | 7
+fea86a S    82 f980  76      | fea716 feaa0a | 1
+fea8bc S    92 f98c  48      | fea69c fea742 feaa0a | 1
+fea918 S   188 f984  176     | fea742 fea9f8 fecc6c | 1
+fea9d4 S    36 f988  30      | fea742 feaa0a | 1
+fea9f8 S    18 f970  12      | fea742 feaa0a | 1
+feaa0a S    44 f96c  42      |  | 4
+feaa38 S    32 f978  30      |  | 3
+feaa58 A    46 f28c  44     rs_free | fe3c26 | 5
+feaa86 S    44 f24c  38     rs_gaddr | fea742 feaa38 | 10
+feaab2 A    46 f290  40     rs_saddr | fea742 feaa38 | 3
+feaae2 A   194 f990  180     | fe3a52 fe3a78 fe3a9a fe3bba fe3c0a feaba4 feafbe fecbe6 | 1
+feaba4 S   170 f95c  152     | fea86a fea918 fea9d4 | 2
+feac4e S    14 f8b8  8       | fea8bc feaa38 | 3
+feac5c A    36 f288  30     rs_load | feaae2 feac4e | 3
+feac80 A    20 f258  16     sc_read | fecbe6 | 3
+feac94 A    20 f25c  16     sc_write | fecbe6 | 3
+feaca8 A    44 f298  38     sh_read | fecc7e | 3
+feacd4 S    82 f29c  76     sh_write | fecc7e | 4
+fead26 S    26 f2a0  22     sh_get | fecc7e | 5
+fead40 S    26 f2a4  22     sh_put | fecc7e | 5
+fead5a A    40 f8b0  22      | fda7f8 fe3890 fe389c fe3c84 fe8790 fe8828 fe88e4 fe8a38 | 2
+fead82 A    30 f9b0  14      | fe3890 fe389c fe3ca4 fe87b0 fe8828 fe8a38 fe8a72 | 1
+feada0 A    60 f720  56      | fda7f8 fea028 | 4
+feaddc A    40       -       [ptr] | feada0 | 0
+feae04 A    50 f9a8  46      | fece8c | 2
+feae36 A   232 f2ac  224    sh_envrn | fecbe6 fecc7e fece9c | 4
+feaf1e A   160 f9ac  152     | fea6e6 feae36 fecbe6 | 1
+feafbe A   296 f2a8  278    sh_find | fe3a1c fe3c06 feae04 feaf1e fecbe6 feceb8 feceda | 5
+feb0e6 A   534 f8c4  316    sh_main (AES shell loop) | fe272e fe3d2e fe5856 fe7712 fe88e4 fead5a fead82 feada0 feae04 feafbe feb2fc fec424 fece8c fed5c2 fee488 fee80a fee870 | 1
+feb2fc A   196 f9c4  176    sh_cmd (shell post-exit command byte 0xc42e: FE launch, FD print, FC format, FB copy) | feada0 feceb8 feceda fed61e fed624 fed912 fedde4 | 1
+feb3c0 S    72 f9f8  70      |  | 2
+feb408 S   114 f9e0  112     |  | 3
+feb47a S    68 fa20  66      |  | 2
+feb4be S   120 f9dc  118     |  | 3
+feb53e S    62 f788  56      | feb4be feccca | 10
+feb57c S    24 fa0c  18      | feb4be feccca | 4
+feb594 S   100 f9e4  94      | feb408 feccca | 3
+feb5f8 S    78 f9f0  72      | feb594 | 1
+feb646 S   130 f9e8  124     | fda7f8 fea028 feccca fecd22 | 2
+feb6c8 S    74 f84c  70      | feb646 | 3
+feb712 S    86 f9ec  76      | fda846 feb53e feb646 feba9c | 5
+feb768 S    98 fa34  94      | feb712 | 1
+feb7ca S   132 f9f4  120     | fecb6e feccbe fece4e | 1
+feb84e S   518 f9fc  504     | feb408 feb594 feb5f8 feb7ca | 1
+feba54 S    72 f7a8  66      | fe49ba feb53e | 2
+feba9c S   802 f784  774     | feb3c0 feb53e feb594 feb84e feccca | 2
+febdbe S   108 f780  104     | fe65c4 | 4
+febe2a S   164 fa08  154     | feb53e febdbe fec3ea feccca fecd22 | 1
+febece S    50 fa04  48      | fecd22 | 1
+febf00 S   294 fa14  272     | fda7f8 fdaa48 feb53e feb712 febece feccca fecd8c | 1
+fec026 S   164 f850  152     | fda7f8 fe8a72 fe8a8e feb712 febe2a fecd22 | 3
+fec0ca S   720 fa24  678     | feb4be feb53e feb57c feb6c8 feb712 feba54 febf00 fec026 fecaac feccca fecd0c fecd8c fece4e fed27c | 2
+fec39a S    80 fa2c  76      | feccca fecd22 | 1
+fec3ea S    58 fa00  52      | feccca fecd8c | 1
+fec424 A   478 f8bc  454     | fe5a62 fe5aac feb3c0 feb47a feb57c fece2e fece5e | 2
+fec602 S   116 f264  106    wm_create | feb47a feb57c | 4
+fec676 S   100 fa28  32      | fea21e feb408 feb57c fec0ca feca68 feccca | 2
+fec6da S    22 f268  18     wm_open | fec676 | 4
+fec6f0 S    22 f26c  18     wm_close | fec676 | 4
+fec706 S    28 f270  26     wm_delete |  | 4
+fec722 S   278 f274  268    wm_get | fe87bc feb53e fec39a | 4
+fec83a S   526 f278  510    wm_set | fea2be feb53e feb6c8 feb712 feb768 fec026 fec0ca feca68 fece42 fece4e | 4
+feca4a S    30 f27c  26     wm_find | fea0a8 | 6
+feca68 S    68 f0bc/ 58     wm_update | fe4e5a fe4eb8 fe6874 fe718e | 13
+fecaac S   174 f284  172    wm_calc |  | 5
+fecb5a S    20 f038  20     gsx2 (the ONE trap #2 d0=0x73; pb 0x9466 -> contrl 0xC7E0) T:#2=1 |  | 3
+fecb6e S    28 f0f4  28     mul_div |  | 6
+fecbc6 A    10 f730  10      |  | 1
+fecbda A    12 f738  12      |  | 1
+fecbe6 S    20 f138  20     strcpy (ret len) |  | 22
+fecbfa S    24 f068  24     xstrpix (bytes->words) |  | 4
+fecc12 A    22       22     bfill_w |  | 0
+fecc28 A    24       24     b2w copy |  | 0
+fecc40 S    22 f170  22     wcopy |  | 6
+fecc56 A    22       22     wfill |  | 0
+fecc6c S    18 f974  18     strlen+1 |  | 1
+fecc7e S    40 f128  40     LBCOPY/memmove |  | 23
+fecca6 A    24 f78c  24     r_get |  | 1
+feccbe S    12 f15c  12     r_set |  | 13
+feccca S    12 f110  12     rc_copy |  | 20
+feccd6 S    60 f160  54     inside |  | 7
+fecd0c S    28 f0ac/ 22     rc_equal |  | 4
+fecd22 S   112 f310  106    rc_intersect |  | 10
+fecd8c S    88 f318  88     rc_union |  | 5
+fecde4 S    74 f0dc/ 74     rc_constrain |  | 2
+fece2e S    20 f35c  20     movs |  | 7
+fece42 S    18 f36c  12     min |  | 8
+fece4e S    16 f360  16     max |  | 12
+fece5e S    22 f394  22     bfill |  | 9
+fece74 S    24 f188/ 24     toupper |  | 4
+fece8c S    18 f10c  16     strlen |  | 13
+fece9c S    34 f428  28     streq |  | 16
+feceb8 S    16 f34c  12     strcpy(ret end) |  | 32
+fecec4 A    26 f94c  22     strscn |  | 1
+feceda S    20 f400  20     strcat |  | 10
+feceee D    24 f4a0  20     scasb |  | 1
+fecf02 S    34 f49c  34     strchk |  | 2
+fecf24 S    56 f404  52     fmt_str (8.3) |  | 7
+fecf58 S    44 f42c  44     unfmt_str |  | 7
+fecf84 S    46 f174  44     ob text get (tree,obj) | fecbe6 fed18e | 3
+fecfb2 D    36 f414  34     ob text wrapper | fecf84 | 10
+fecfd6 S    24 f424/ 22     ob text set | fecbe6 fed18e | 8
+fecfee D    34 f568  34     ob_setstate? | fed18e | 1
+fed010 S    42 f178/ 42     ob_...  | fed18e | 3
+fed03a S    50 f41c  46      | fed010 fed18e | 7
+fed06a S     6       6       |  | 5
+fed070 S   190 f450  190    merge_str (sprintf %) | fe3db4 fe3e08 | 9
+fed12e S    96 f3e0  96     wildcmp |  | 3
+fed18e S    16       16     OB_ADDR tree+24*obj |  | 5
+fed19e S   222 f11c  172    everyobj (tree walker) |  | 2
+fed27c S   262 f158/ 260    get_par/ob_find-like walker |  | 3
+fed382 S    60 f150  58      |  | 6
+fed3be A    38       38     USER_BUT handler (stack 0x94f2) -> b_click | fe4f40 | 0
+fed3e4 A    46       46     USER_MOT handler -> forkq(mchange) | fe4b1a | 0
+fed412 A    18 f8f8  18     call saved USER_CUR (0x947a) |  | 1
+fed426 A    82       82     USER_TIM handler (stack 0x9552) -> forkq(tchange), b_delay, chain 0x948a | fe4b1a fe4fb0 | 0
+fed478 S    54 f384  52     cart_init (0xFA0000 magic ABCDEF42) |  | 5
+fed4be S   100 fa44  94      | fecc7e fece5e | 3
+fed522 D    18 f4ac  12      | fed478 fed534 | 1
+fed534 D    30 f4b4  26      | fed4be | 2
+fed554 A   110 f774  96      | fe3d2e fe44d4 fe5886 fed12e fed478 fed4be | 1
+fed5c2 A    92 f9b4  82      | fe3c26 fe3d2e fece9c fed478 fed4be | 1
+fed61e A    16 f9cc  6      sh_cmd launch (0xFE) | fed632 | 1
+fed624 A    14 f9d0  14     print file (via sh_cmd 0xFD) | fed632 | 1
+fed632 A   164       150     | fe3a52 fe3bba fe3bfa fe3c0a fe3c26 fece74 fee488 fed6d6 fed736 fed832 | 2
+fed6d6 A    96       94      | fe3a78 | 2
+fed736 A    90       86      | fd9fc6 fe3bfa fed790 fed7c0 fed7cc | 1
+fed790 A    48       42      | fd9fc6 fe3bfa fece74 fed81a | 1
+fed7c0 A    12       12      | fed7cc | 1
+fed7cc A    78       72      | fe3bfa fee478 fed6d6 fed81a | 2
+fed81a A    24       22      | fe3bfa | 2
+fed832 A    86       78      | fd9fc6 fe1bdc fe764c | 1
+fed888 A   138 f6f4  128     | fddde6 fde354 fe1bdc fe92ae fee5c8 | 2
+fed912 A  1232 f9d4  1180   format disk (desk-ST util, via sh_cmd 0xFC) | fde33c fe1bdc fe3b6a fe3bba fe3c26 fe7002 fecc7e fece4e fed070 fed888 fee166 fee236 fee364 fee3a4 fee450 fee478 fee488 | 1
+fedde4 A   898 f9d8  858    disk copy (via sh_cmd 0xFB) | fde33c fe1bdc fe3bba fe3be8 fe3c26 fed888 fee166 fee236 fee294 fee364 fee478 fee488 fe3e08 | 1
+fee166 A   208 f6fc  202     | fe1bdc fee236 | 2
+fee236 A    94 f6f8  90      | fde2e8 fe74a4 | 4
+fee294 A   208 f714  198     | fee236 fee364 fee488 | 1
+fee364 A    64 f704  56      | fe1bdc fe3cbe fe7002 fee450 | 3
+fee3a4 A   172 f70c  166     | fee466 | 1
+fee450 A    22 f710  18      | feada0 | 2
+fee466 A    18 f71c  18      |  | 1
+fee478 S    16 f1a0/ 16      T:#13=1 |  | 4
+fee488 S    16 f180/ 16      T:#14=1 |  | 10
+fee498 S    40 f7b4  1      gsx_mfsave ($a000; saves 74 B mouse form 0x2642) T:linea_0xa000=1 | fecc7e | 1
+fee4c0 S    30 f7bc  30     gsx_mfrestore | fecc7e | 1
+fee4de A   234       228     | fe3bba fecc7e | 1
+fee5c8 S   556 f358  530     | fe0b6e feaba4 feac4e fecc40 fecc7e | 6
+fee800 A    10       8      gem_mem_size (d0=5387 words cleared) |  | 1
+fee80a A   102 f9b8  88     desk_alloc (Malloc G 19094 ->c6a6, 512->c82e, 920->c85e, 16000->c67a, 1024 stack->8c3a) | fe3bba fece5e | 1
+fee870 A    82 f9c0  78     desk_free | fde33c fe3c26 | 1
+fee8c2 A    62       62     linef_handler |  | 0

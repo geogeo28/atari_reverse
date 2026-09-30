@@ -1,0 +1,132 @@
+# candidate names.txt lines (NOT applied). No-ctx = body read in this pass; # ctx = from the AES opcode arm / call context.
+fn 0xfda062 gem_main
+fn 0xfda408 gem_read_inf
+fn 0xfde844 desk_userdef_draw
+fn 0xfe272e desk_main
+fn 0xfe387c aes_dsptch
+fn 0xfe3890 aes_spl7_save
+fn 0xfe389c aes_spl_restore
+fn 0xfe38a4 aes_cli
+fn 0xfe38aa aes_sti
+fn 0xfe38b0 aes_gotopgm
+fn 0xfe38d4 aes_savestate
+fn 0xfe3930 aes_switchto
+fn 0xfe397a aes_psetup
+fn 0xfe39b6 aes_dos_trampoline
+fn 0xfe3c3e aes_dos_call
+fn 0xfe3c62 aes_trap2_restore
+fn 0xfe3c6e aes_trap2_install
+fn 0xfe3c84 aes_critic_install
+fn 0xfe3cbe aes_crit_err
+fn 0xfe3f3e aes_userdef_trampoline
+fn 0xfe40b2 ev_mwait
+fn 0xfe41bc ev_apret
+fn 0xfe4394 acc_load_all
+fn 0xfe44d4 acc_alloc_pd
+fn 0xfe49d2 ctlmgr   # ctx
+fn 0xfe4b1a forkq
+fn 0xfe4b74 disp_act
+fn 0xfe4b9c mwait_act
+fn 0xfe4bc6 forker
+fn 0xfe4cd6 chkkbd
+fn 0xfe4d68 disp_idle
+fn 0xfe4d9e disp
+fn 0xfe4e02 tchange   # ctx
+fn 0xfe4f40 b_click   # ctx
+fn 0xfe4fb0 b_delay   # ctx
+fn 0xfe5180 kchange   # ctx
+fn 0xfe534c mchange   # ctx
+fn 0xfe57e0 pd_get
+fn 0xfe5856 pd_nameit
+fn 0xfe5886 pd_start
+fn 0xfe65c4 ap_rdwr   # ctx
+fn 0xfe65da ap_find   # ctx
+fn 0xfe6610 ap_tplay   # ctx
+fn 0xfe6766 ap_trecd   # ctx
+fn 0xfe6894 ev_keybd   # ctx
+fn 0xfe68a4 ev_button   # ctx
+fn 0xfe68e4 ev_mouse   # ctx
+fn 0xfe6910 ev_mesag   # ctx
+fn 0xfe6936 ev_timer   # ctx
+fn 0xfe6998 ev_multi   # ctx
+fn 0xfe6c5e ev_dclick   # ctx
+fn 0xfe7002 fm_alert   # ctx
+fn 0xfe7298 fm_keybd   # ctx
+fn 0xfe7346 fm_button   # ctx
+fn 0xfe74a4 fm_do   # ctx
+fn 0xfe75ec fm_dial   # ctx
+fn 0xfe7712 fm_error   # ctx
+fn 0xfe7d90 fs_input   # ctx
+fn 0xfe8402 gr_movebox   # ctx
+fn 0xfe84ba gr_watchbox   # ctx
+fn 0xfe85c6 gr_rubbox   # ctx
+fn 0xfe8640 gr_dragbox   # ctx
+fn 0xfe86fa gr_slidebox   # ctx
+fn 0xfe8768 gr_mkstate   # ctx
+fn 0xfe87d2 gsx_ncode
+fn 0xfe8c14 mn_do_chg   # ctx
+fn 0xfe902a mn_bar   # ctx
+fn 0xfe91e2 mn_register   # ctx
+fn 0xfe92ae ob_center   # ctx
+fn 0xfe9678 ob_edit   # ctx
+fn 0xfea028 ob_draw   # ctx
+fn 0xfea0a8 ob_find   # ctx
+fn 0xfea1ba ob_add   # ctx
+fn 0xfea21e ob_delete   # ctx
+fn 0xfea2be ob_order   # ctx
+fn 0xfea38e ob_change   # ctx
+fn 0xfea584 ob_offset   # ctx
+fn 0xfea69c rs_obfix   # ctx
+fn 0xfeaa58 rs_free   # ctx
+fn 0xfeaa86 rs_gaddr   # ctx
+fn 0xfeaab2 rs_saddr   # ctx
+fn 0xfeac5c rs_load   # ctx
+fn 0xfeac80 sc_read   # ctx
+fn 0xfeac94 sc_write   # ctx
+fn 0xfeaca8 sh_read   # ctx
+fn 0xfeacd4 sh_write   # ctx
+fn 0xfead26 sh_get   # ctx
+fn 0xfead40 sh_put   # ctx
+fn 0xfeae36 sh_envrn   # ctx
+fn 0xfeafbe sh_find   # ctx
+fn 0xfeb0e6 sh_main
+fn 0xfeb2fc sh_cmd
+fn 0xfec602 wm_create   # ctx
+fn 0xfec6da wm_open   # ctx
+fn 0xfec6f0 wm_close   # ctx
+fn 0xfec706 wm_delete   # ctx
+fn 0xfec722 wm_get   # ctx
+fn 0xfec83a wm_set   # ctx
+fn 0xfeca4a wm_find   # ctx
+fn 0xfeca68 wm_update   # ctx
+fn 0xfecaac wm_calc   # ctx
+fn 0xfecb5a gsx2
+fn 0xfecb6e ut_mul_div
+fn 0xfecbe6 ut_strcpy_len
+fn 0xfecc6c ut_strsize
+fn 0xfecc7e ut_lbcopy
+fn 0xfeccca ut_rc_copy
+fn 0xfeccd6 ut_inside
+fn 0xfecd0c ut_rc_equal
+fn 0xfecd22 ut_rc_intersect
+fn 0xfecd8c ut_rc_union
+fn 0xfecde4 ut_rc_constrain
+fn 0xfece42 ut_min
+fn 0xfece4e ut_max
+fn 0xfece5e ut_bfill
+fn 0xfece74 ut_toupper
+fn 0xfece8c ut_strlen
+fn 0xfece9c ut_streq
+fn 0xfeceb8 ut_strcpy
+fn 0xfeceda ut_strcat
+fn 0xfed18e ut_ob_addr
+fn 0xfed3be aes_user_but
+fn 0xfed3e4 aes_user_mot
+fn 0xfed412 aes_call_user_cur
+fn 0xfed424 aes_rts_stub
+fn 0xfed426 aes_user_tim
+fn 0xfed478 cart_probe
+fn 0xfee498 gsx_mfsave
+fn 0xfee4c0 gsx_mfrestore
+fn 0xfee80a desk_alloc
+fn 0xfee870 desk_free

@@ -601,7 +601,13 @@ globals at `0x9C58` (`0xFD9F78`), parks pointers at `0x947A`/`0x947E`, and insta
 to it for the stack), the current-process pointer at `0xC794` (read at `0xFE3ED8` and
 throughout), and `0x8C2A`/`0x8C32`/`0x8C36`/`0x8C3A` around the trap handler.
 
-### desk — inside `0xFD9ECA..0xFEE8FF`; the boundary is NOT established
+### desk — `0xFDB014..0xFE387B` (+ its G_USERDEF draw `0xFDE500..0xFDE8A5`); the boundary is established in `AES_MAP.md`
+
+**Update (2026-09-29, `AES_MAP.md` §2):** the call-graph partition rooted at the desktop's main (`deskmain 0xFE272E`, a
+subroutine of `sh_main 0xFEB0E6`) separates the two cleanly — everything from `0xFE387C` up is the AES, and the desktop
+calls the AES's internal routines directly through Line-F (its binding layer `0xFDDE54..0xFDE4CC`). The DESKTOP.INF reader
+`0xFDA408` is AES-side (gem_main reading the `#E` line), and the "45-entry switch table at `0xFEFB88`" below is three
+ob_edit tables, not a menu-handler set. The paragraphs below are the pre-map record, kept for the signals that failed.
 
 What is established: the desktop's **data** is the block
 `0xFD83BF..0xFD9EC9` — the `'HDESKUSA.RSC'` name at `0xFD83BF`, the menu titles

@@ -1085,8 +1085,8 @@ with a top byte (`aes.BUS_TAG`).
   walks up to 128 KB), v_offset never re-places the cursor, v_fontinit has no zero-divisor guard, vq_chcells stores columns first and
   the table's entry 0 is its `rts`; the map's "`$fcb148` (hide cursor)" is v_hide_c, the MOUSE hide; and `$fc4a42` is escape 102,
   whose body past its intin read (`$fc4a48`) is what the console re-init `$fca914` `bsr`s into.
-* **Wave 11 (2026-09-30) — AES FOUNDATION.** THE MAP, read-only over `$fd9eca..$fefff3` (736 functions, the scratch
-  `aes_map.md`): the aes/desk boundary is `$fe387c` — the desk (`$fdb014..$fe387b`) is a SUBROUTINE of the shell in PD0
+* **Wave 11 (2026-09-30) — AES FOUNDATION.** THE MAP, read-only over `$fd9eca..$fefff3` (736 functions, `projects/tos102us/AES_MAP.md`
+  + `aes_map/`): the aes/desk boundary is `$fe387c` — the desk (`$fdb014..$fe387b`) is a SUBROUTINE of the shell in PD0
   (deskmain `$fe272e`, called once from sh_main) and calls the AES's INTERNAL routines directly through Line-F, never
   `trap #2` (its own binding layer `$fdde54..$fde4cc`, each `dsptch(); <internal>()`), so the AES's testable surface is ~60
   internal entry points and the desk can only follow them; the boot snapshot sits INSIDE the dispatcher's idle loop (`rlr`
@@ -1143,7 +1143,7 @@ with a top byte (`aes.BUS_TAG`).
   missing refusal and its missing cancel — all killed. The Line-F CALL path costs +15 instructions / +190 cycles through
   the staged caller; priced rows enter by `jsr`, so the ROM column carries the Line-F RETURN's cost and not the CALL's —
   conservative.
-* **Next** — AES BAND 0, the LEAVES (the map's §6, ≈3.3 KB): the "optimize" utility layer (`$fecb5a..$fed3bd`: gsx2, mul_div,
+* **Next** — AES BAND 0, the LEAVES (AES_MAP.md §6, ≈3.3 KB): the "optimize" utility layer (`$fecb5a..$fed3bd`: gsx2, mul_div,
   the string and rectangle helpers round rc_intersect — its hand-68000 loops are the Tier 3 risk, so C first and a
   byte-pinned `src/aes/*.S` where the C measures over the bar, the shared return tails `$fed066`/`$fed06a` in the same
   region as their users), the inf-scan helpers and gemrlist (the ORECT pool staged). Then AES BAND 1, OBJECT/RESOURCE

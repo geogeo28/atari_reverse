@@ -1,0 +1,739 @@
+736 entries in range; bytes covered 84170 of 84534
+fd9eca gem_entry                252 sh   0 [fd9eca..fd9fc6) GEM-entry,ghidra C:fda062 fee4de fee800 LF: J: T:#1=3 
+fd9fc6                           54 sh   0 [fd9fc6..fd9ffc) ghidra lff198/f1a4/f1b0 C: LF: J: T:#1=1 
+fd9ffc                           66 sh   0 [fd9ffc..fda03e) ghidra lff88c C: LF: J: T: 
+fda03e                           36 sh   0 [fda03e..fda062) ghidra lff1c8 C: LF:fe387c feca68 J: T: 
+fda062                          884 sh   0 [fda062..fda3d6) ghidra C: LF:fd9ffc fda03e fda3d6 fda408 fdaa6a fdbecc fe387c fe3890 fe389c fe38a4 fe38aa fe3c62 fe3c6e fe3ca4 fe3cac fe4394 fe4476 fe4a6a fe6c5e fe7782 fe87b0 fe8808 fe8866 fe88de fe8a18 feaa58 feaa86 feac4e fead5a feb0e6 fec424 fecc7e fee5c8 J: T: 
+fda3d6                           50 sh   0 [fda3d6..fda408) ghidra lff77c C: LF:fece5e J: T: 
+fda408                          356 sh   0 [fda408..fda56e) ghidra lff8a0 C: LF:fdaf92 fdafca fdbae0 fe39a6 fe3a52 fe3a78 fe3bba fe3c02 fe3c0a fe3c0e fe3c12 fe3c26 fead26 fead40 fee5c8 J: T: 
+fda56e                           20 sh   0 [fda56e..fda582) ghidra lff020/f120 C: LF: J: T: 
+fda582                           64 sh   0 [fda582..fda5c2) ghidra lff134 C: LF:fdac28 fe87f0 J: T: 
+fda5c2                          106 sh   0 [fda5c2..fda62c) ghidra lff00c C: LF:fdaca4 J: T: 
+fda62c                           62 sh   0 [fda62c..fda66a) ghidra lff140 C: LF:fda5c2 fdad0a J: T: 
+fda66a                           90 sh   0 [fda66a..fda6c4) ghidra lff12c C: LF: J: T: 
+fda6c4                          170 sh   0 [fda6c4..fda76e) ghidra lff144 C:fda582 fda62c fda76e LF:fda8e6 fdad0a J: T: 
+fda76e                           54 sh   0 [fda76e..fda7a4) ghidra C: LF:fda9ce J: T: 
+fda7a4                           84 sh   0 [fda7a4..fda7f8) ghidra lff130 C: LF:fda56e fda97c fe8a72 fe8a8e J: T: 
+fda7f8                           78 sh   0 [fda7f8..fda846) ghidra lff090/f0b4/f1fc C: LF:fe8b0e J: T: 
+fda846                           30 sh   0 [fda846..fda864) ghidra lff114/f550 C: LF: J: T: 
+fda864                           68 sh   0 [fda864..fda8a8) ghidra lff124 C: LF: J: T: 
+fda8a8                           42 sh   0 [fda8a8..fda8d2) ghidra lff2d8 C:fdae38 LF: J: T: 
+fda8d2                           20 sh   0 [fda8d2..fda8e6) ghidra lff14c/f914 C: LF:fe8a72 fe8a8e fe8afa J: T: 
+fda8e6                          112 sh   0 [fda8e6..fda956) ghidra lff014/f0b8/f2ec C: LF:fecb5a J: T: 
+fda956                           38 sh   0 [fda956..fda97c) ghidra C: LF: J: T: 
+fda97c                           22 sh   0 [fda97c..fda992) ghidra lff024 C:fda956 LF:fe8afa J: T: 
+fda992                           60 sh   0 [fda992..fda9ce) ghidra lff0f8/f108 C: LF: J: T: 
+fda9ce                          122 sh   0 [fda9ce..fdaa48) ghidra lff018 C:fda992 LF:fe8a72 fe8a8e fe8b60 fe8b72 J: T: 
+fdaa48                           34 sh   0 [fdaa48..fdaa6a) ghidra lff6ec C: LF:fda9ce J: T: 
+fdaa6a                           70 sh   0 [fdaa6a..fdaab0) ghidra lff348 C:fda992 LF:fe8b88 J: T: 
+fdaab0                          376 sh   0 [fdaab0..fdac28) ghidra lff104 C: LF:fe87d2 fe87f0 fe8b22 fe8b92 J: T: 
+fdac28                          124 sh   0 [fdac28..fdaca4) ghidra lff004 C:fda992 LF:fda8e6 fe87f0 fe8b50 J: T: 
+fdaca4                          102 sh   0 [fdaca4..fdad0a) ghidra lff008 C: LF:fecbfa J: T: 
+fdad0a                          106 sh   0 [fdad0a..fdad74) ghidra lff010/f54c C: LF:fe8b22 fecb5a J: T: 
+fdada4                           42 sh   0 [fdada4..fdadce) ghidra lff084/f0a0/f0a4 C:fda956 fdae38 LF: J: T: 
+fdadce                          112 sh   6 [fdadce..fdae96) ghidra lff080 C:fdae38 LF: J: T: 
+fdae38                           94 sh   6 [fdae38..fdae96) ghidra C: LF:fe87f0 fe8afa J: T: 
+fdae96                           74 sh   0 [fdae96..fdaee2) ghidra lff388 C: LF: J: T: 
+fdaee2                           62 sh   0 [fdaee2..fdaf20) ghidra lff58c C: LF: J: T: 
+fdaf20                           60 sh   0 [fdaf20..fdaf5c) ghidra lff334 C: LF: J: T: 
+fdaf5c                           54 sh   0 [fdaf5c..fdaf92) ghidra lff338 C: LF: J: T: 
+fdaf92                           56 sh   0 [fdaf92..fdafca) ghidra lff33c C: LF:fdaf20 J: T: 
+fdafca                           74 sh   0 [fdafca..fdb014) ghidra lff398 C: LF:fdaf5c J: T: 
+fdb014                           70 sh   0 [fdb014..fdb05a) ghidra lff340 C: LF: J: T: 
+fdb05a                           40 sh   0 [fdb05a..fdb082) ghidra lff3a0 C: LF: J: T: 
+fdb082                          260 sh   0 [fdb082..fdb186) ghidra lff38c C: LF:fdaf92 fdb014 J: T: 
+fdb186                           66 sh   0 [fdb186..fdb1c8) ghidra lff368 C: LF:fdaa6a fde354 fecc7e J: T: 
+fdb1c8                           88 sh   0 [fdb1c8..fdb220) ghidra lff378 C: LF:fe3a52 fe3c22 feceb8 J: T: 
+fdb220                          744 sh   0 [fdb220..fdb508) ghidra lff390 C:fe3db4 LF:fdaa6a fdb186 fe3bba fecc40 fece2e fece4e fee5c8 J: T: 
+fdb508                          244 sh   0 [fdb508..fdb5fc) ghidra lff2cc C: LF:fece42 J: T: 
+fdb5fc                         1252 sh   0 [fdb5fc..fdbae0) ghidra lff6ac C: LF:fdae96 fdaf92 fdb082 fdb1c8 fdb220 fdb508 fde39e fe39a6 fe3a78 fe3c0a fece5e fed478 fee5c8 J: T: 
+fdbae0                           40 sh   0 [fdbae0..fdbb0a) ghidra lff588 C: LF: J: T: 
+fdbb0a                           42 sh   0 [fdbb0a..fdbb34) ghidra lff39c C: LF: J: T: 
+fdbb34                          842 sh   0 [fdbb34..fdbe7e) ghidra lff654 C: LF:fdafca fdb05a fdb1c8 fdbb0a fdbe7e fdbeb6 fdd1a0 fde39e fde3ba fdfdf2 fe2d46 fe3a7c fe3c0a fece5e J: T: 
+fdbe7e                           56 sh   0 [fdbe7e..fdbeb6) ghidra lff3a8 C: LF:fdbecc fe3ab0 fe3c02 fe3c0e fe3c12 J: T: 
+fdbeb6                           22 sh   0 [fdbeb6..fdbecc) ghidra lff3b0 C: LF:fe3c0e fe3c12 J: T: 
+fdbecc                           30 sh   0 [fdbecc..fdbeec) ghidra lff3c8 C: LF:fe39a6 fe3c12 J: T: 
+fdbeec                          404 sh   0 [fdbeec..fdc080) ghidra lff63c C: LF:fdde54 fe08b4 fe0942 fece2e fee488 J: T: 
+fdc080                          122 sh   0 [fdc080..fdc0fa) ghidra lff4fc C: LF:fed12e J: T: 
+fdc0fa                           88 sh   0 [fdc0fa..fdc152) ghidra lff304 C: LF:fdc86e fde2a8 J: T: 
+fdc152                          104 sh   0 [fdc152..fdc1ba) ghidra lff2e0 C: LF:fdded8 J: T: 
+fdc1ba                          174 sh   0 [fdc1ba..fdc268) ghidra lff324 C: LF: J: T: 
+fdc268                          304 sh   0 [fdc268..fdc398) ghidra lff32c C: LF:fdb508 fe0c9a J: T: 
+fdc398                          192 sh   0 [fdc398..fdc458) ghidra lff2e4 C: LF:feccbe J: T: 
+fdc458                           66 sh   0 [fdc458..fdc49a) ghidra lff2e8 C: LF: J: T: 
+fdc49a                          100 sh   0 [fdc49a..fdc4fe) ghidra lff2dc C: LF:fda8a8 fde094 J: T: 
+fdc4fe                          124 sh   0 [fdc4fe..fdc57a) ghidra lff2f8 C: LF:fdc152 fdc49a J: T: 
+fdc57a                          756 sh   0 [fdc57a..fdc86e) ghidra lff328 C: LF:fda7f8 fda8e6 fdc0fa fdc398 fdc458 fdc4fe fdc9e4 fde142 fde402 fe1bf6 fe2cb8 fecde4 J: T: 
+fdc86e                          374 sh   0 [fdc86e..fdc9e4) ghidra lff2c4 C: LF:feccbe fecd22 J: T: 
+fdc9e4                          216 sh   0 [fdc9e4..fdcabc) ghidra lff308 C: LF:fde30e fe0c9a feccca fecd22 J: T: 
+fdcabc                          366 sh   0 [fdcabc..fdcc2a) ghidra lff31c C: LF:fdc86e fe0c9a feccca fecd22 fecd8c J: T: 
+fdcc2a                          266 sh   0 [fdcc2a..fdcd34) ghidra lff65c C: LF:fdc0fa fdc9e4 fdcabc J: T: 
+fdcd34                          464 sh   0 [fdcd34..fdcf04) ghidra lff660 C: LF:fdc0fa fdc1ba fdc268 fdc57a fdcabc fddf82 fde122 feccbe J: T: 
+fdcf04                           68 sh   0 [fdcf04..fdcf48) ghidra lff3ec C: LF:fde054 fde2e8 J: T: 
+fdcf48                           96 sh   0 [fdcf48..fdcfa8) ghidra lff418 C: LF:fdcf04 fdcfea fddfda fea38e J: T: 
+fdcfa8                           66 sh   0 [fdcfa8..fdcfea) ghidra lff47c C: LF:fddffa fde054 J: T: 
+fdcfea                           98 sh   0 [fdcfea..fdd04c) ghidra lff3f0 C: LF:fddffa fde054 fde2e8 J: T: 
+fdd04c                           88 sh   0 [fdd04c..fdd0a4) ghidra lff454 C: LF:fde264 fde2e8 fecc40 J: T: 
+fdd0a4                           46 sh   0 [fdd0a4..fdd0d2) ghidra lff45c C: LF:feceb8 feceda J: T: 
+fdd0d2                           56 sh   0 [fdd0d2..fdd10a) ghidra lff458 C: LF:feceb8 J: T: 
+fdd10a                           34 sh   0 [fdd10a..fdd12c) ghidra lff434 C: LF:feceb8 J: T: 
+fdd12c                           44 sh   0 [fdd12c..fdd158) ghidra lff430 C: LF:feceb8 J: T: 
+fdd158                           72 sh   0 [fdd158..fdd1a0) ghidra lff410 C: LF:feceb8 fecf24 J: T: 
+fdd1a0                           46 sh   0 [fdd1a0..fdd1ce) ghidra lff3ac C: LF:fde03e J: T: 
+fdd1ce                           14 sh   0 [fdd1ce..fdd1dc) ghidra lff43c C: LF:fdd1a0 fe3c1a J: T: 
+fdd1dc                          626 sh   0 [fdd1dc..fdd454) ghidra lff464 C: LF:fd9fc6 fdcf48 fdd10a fdd12c fdd158 fdd1a0 fdd1ce fdfd58 fe1bdc fe3a52 fe3ae8 fe3c0a fe3c22 fece9c feceb8 fecf58 fecfb2 fecfd6 fed03a J: T: 
+fdd454                          782 sh   0 [fdd454..fdd762) ghidra lff474 C: LF:fdd04c fdd0a4 fdd0d2 fdd10a fdd12c fdd1a0 fdd1ce fdd1dc fe3a1c fe3a46 fe3ac4 fe3c06 fe3c1e feceda fecfb2 fed070 J: T: 
+fdd762                           68 sh   0 [fdd762..fdd7a6) ghidra lff46c C: LF: J: T: 
+fdd7a6                          370 sh   0 [fdd7a6..fdd918) ghidra lff4e4 C: LF:fdd762 fdfd58 fece8c fece9c feceb8 feceda J: T: 
+fdd918                         1230 sh   0 [fdd918..fddde6) ghidra lff4e8 C: LF:fdcf48 fdcfa8 fdcfea fdd04c fdd0a4 fdd10a fdd12c fdd1ce fdd1dc fdd454 fddfda fe1bdc fe3a1c fe3ac4 fe3bba fe3be8 fe3c06 fe3c26 feceb8 feceda fecf24 fecf58 fecfb2 fecfd6 fed03a fed070 J: T: 
+fddde6                          110 sh   0 [fddde6..fdde54) ghidra lff698 C: LF: J: T: 
+fdde54                           24 sh   0 [fdde54..fdde6c) ghidra lff3dc C: LF: J: T: 
+fdde6c                           58 sh   0 [fdde6c..fddea6) ghidra lff6b0 C: LF:fda03e fe65c4 fe91a4 J: T: 
+fddea6                           32 sh   0 [fddea6..fddec6) ghidra lff4c4 C: LF:fe387c fe65c4 J: T: 
+fddec6                           18 sh   0 [fddec6..fdded8) ghidra lff118 C: LF: J: T: icall@16637650
+fdded8                          170 sh   0 [fdded8..fddf82) ghidra lff2c8 C: LF:fe387c fe6998 J: T: 
+fddf82                           64 sh   0 [fddf82..fddfc2) ghidra lff330 C: LF:fe387c fe68a4 J: T: 
+fddfc2                           24 sh   0 [fddfc2..fddfda) ghidra lff694 C: LF:fe387c fe6c5e J: T: 
+fddfda                           32 sh   0 [fddfda..fddffa) ghidra lff3f4 C: LF:fe1bdc fe387c fe74a4 J: T: 
+fddffa                           40 sh   0 [fddffa..fde022) ghidra lff3f8 C: LF:fe387c fe75ec J: T: 
+fde022                           28 sh   0 [fde022..fde03e) ghidra lff4c0 C: LF:fe387c fe7002 J: T: 
+fde03e                           22 sh   0 [fde03e..fde054) ghidra lff408 C: LF:fe387c fe7712 J: T: 
+fde054                           64 sh   0 [fde054..fde094) ghidra lff3e4 C: LF:fe387c fe92ae J: T: 
+fde094                           90 sh   0 [fde094..fde0ee) ghidra lff2d4 C: LF:fe387c fe8a38 fe8a72 fe8a8e feaa86 J: T: 
+fde122                           32 sh   0 [fde122..fde142) ghidra lff320 C: LF:fe387c fe85c6 J: T: 
+fde142                           40 sh   0 [fde142..fde16a) ghidra lff2f0 C: LF:fe387c fe8768 J: T: 
+fde16a                           24 sh   0 [fde16a..fde182) ghidra lff5ac C: LF:fe387c fe8340 J: T: 
+fde182                           24 sh   0 [fde182..fde19a) ghidra lff5b8 C: LF:fe387c fe837a J: T: 
+fde19a                           58 sh   0 [fde19a..fde1d4) ghidra lff680 C: LF:fe387c fe8c14 J: T: 
+fde1d4                           28 sh   0 [fde1d4..fde1f0) ghidra lff6bc C: LF:fe387c fe902a J: T: 
+fde1f0                           42 sh   0 [fde1f0..fde21a) ghidra lff630 C: LF:fe387c fe8c14 J: T: 
+fde21a                           74 sh   0 [fde21a..fde264) ghidra lff614 C: LF:fe387c fe8c14 J: T: 
+fde264                           40 sh   0 [fde264..fde28c) ghidra lff3fc C: LF:fe387c fea584 J: T: 
+fde28c                           28 sh   0 [fde28c..fde2a8) ghidra lff6dc C: LF:fe387c fea2be J: T: 
+fde2a8                           36 sh   0 [fde2a8..fde2cc) ghidra lff2c0 C: LF:fe387c fea0a8 J: T: 
+fde2cc                           28 sh   0 [fde2cc..fde2e8) ghidra lff590 C: LF:fe387c fea1ba J: T: 
+fde2e8                           38 sh   0 [fde2e8..fde30e) ghidra lff3e8 C: LF:fda7f8 fe387c fea028 J: T: 
+fde30e                           46 sh   0 [fde30e..fde33c) ghidra lff314 C: LF:fda7f8 fe387c fea38e J: T: 
+fde33c                           24 sh   0 [fde33c..fde354) ghidra lff530 C: LF:fe387c feaa58 J: T: 
+fde354                           34 sh   0 [fde354..fde376) ghidra lff344 C: LF:fe387c feaa86 J: T: 
+fde376                           40 sh   0 [fde376..fde39e) ghidra lff59c C: LF:fe387c feacd4 J: T: 
+fde39e                           28 sh   0 [fde39e..fde3ba) ghidra lff370 C: LF:fe387c fead26 J: T: 
+fde3ba                           28 sh   0 [fde3ba..fde3d6) ghidra lff3a4 C: LF:fe387c fead40 J: T: 
+fde3d6                           22 sh   0 [fde3d6..fde3ec) ghidra lff5b4 C: LF:fe387c fec6f0 J: T: 
+fde3ec                           22 sh   0 [fde3ec..fde402) ghidra lff6d8 C: LF:fe387c fec706 J: T: 
+fde402                           24 sh   0 [fde402..fde41a) ghidra lff2fc C: LF:fe387c feca4a J: T: 
+fde41a                           22 sh   0 [fde41a..fde430) ghidra lff69c C: LF:fe387c feca68 J: T: 
+fde430                           32 sh   0 [fde430..fde450) ghidra lff6d4 C: LF:fe387c fec602 J: T: 
+fde450                           32 sh   0 [fde450..fde470) ghidra lff5b0 C: LF:fe387c fec6da J: T: 
+fde470                           60 sh   0 [fde470..fde4ac) ghidra lff4dc C: LF:fe387c fec722 J: T: 
+fde4ac                           32 sh   0 [fde4ac..fde4cc) ghidra lff4d8 C: LF:fe387c fec83a J: T: 
+fde4cc                           52 sh   0 [fde4cc..fde500) ghidra lff6a0 C: LF:fe387c fecaac J: T: 
+fde500                           70 sh   0 [fde500..fde546) ghidra lff53c C: LF:fed070 J: T: 
+fde546                          116 sh   0 [fde546..fde5ba) ghidra lff544 C: LF:fde500 feceb8 J: T: 
+fde5ba                           86 sh   0 [fde5ba..fde610) ghidra lff540 C: LF:fde500 J: T: 
+fde610                          420 sh   0 [fde610..fde7b4) ghidra lff548 C: LF:fde546 fde5ba fecc7e fece8c feceb8 fed070 J: T: 
+fde7b4                          144 sh   0 [fde7b4..fde844) ghidra lff554 C: LF:fda8e6 fdac28 fdad0a fde610 fecbfa J: T: 
+fde844                           98 sh   0 [fde844..fde8a6) ghidra C: LF:fda7f8 fda846 fde7b4 fecc7e J: T: 
+fde8a6                          258 sh   0 [fde8a6..fde9a8) ghidra lff55c C: LF:fdded8 fddfda fddffa fde054 fde2e8 fe2344 J: T: 
+fde9a8                           38 sh   0 [fde9a8..fde9ce) ghidra lff578 C: LF:fde8a6 J: T: 
+fde9ce                          144 sh   0 [fde9ce..fdea5e) ghidra lff574 C: LF:fdd454 fdea5e J: T: 
+fdea5e                           60 sh   0 [fdea5e..fdea9a) ghidra lff560 C: LF:fecf24 fecfb2 fed070 J: T: 
+fdea9a                          118 sh   0 [fdea9a..fdeb10) ghidra lff564 C: LF:fde546 fde5ba fdea5e fecfb2 J: T: 
+fdeb10                          516 sh   0 [fdeb10..fded16) ghidra lff5f0 C: LF:fdd1a0 fde094 fde8a6 fdea5e fdea9a fdfd58 fe3ba0 fe3c16 fece9c feceb8 fecf58 fecfd6 fecfee fed03a J: T: 
+fded16                          218 sh   0 [fded16..fdedf0) ghidra lff5f4 C: LF:fde094 fde9a8 fde9ce fdea5e fdea9a feceb8 J: T: 
+fdedf0                          290 sh   0 [fdedf0..fdef12) ghidra lff5f8 C: LF:fde094 fde9a8 fde9ce fdea5e fe3b02 fe3b6a feceb8 fecf24 fecfb2 J: T: 
+fdef12                          368 sh   0 [fdef12..fdf082) ghidra lff64c C: LF:fdbae0 fde8a6 fed010 fed03a fee488 J: T: 
+fdf082                          150 sh   0 [fdf082..fdf11a) ghidra lff5cc C: LF:fde8a6 fdea5e fecf58 fecfb2 fecfd6 fed03a J: T: 
+fdf11a                          686 sh   0 [fdf11a..fdf3c8) ghidra lff638 C: LF:fdae96 fdaee2 fdb014 fdb508 fde8a6 fece74 fece8c fece9c feceb8 fecfb2 fecfd6 J: T: 
+fdf3c8                          776 sh   0 [fdf3c8..fdf6d0) ghidra lff640 C: LF:fdae96 fdb014 fde8a6 fece8c fece9c feceb8 fecf24 fecf58 fecfb2 fecfd6 fed010 J: T: 
+fdf6d0                           64 sh   0 [fdf6d0..fdf710) ghidra lff480 C: LF: J: T: 
+fdf710                           70 sh   0 [fdf710..fdf756) ghidra lff484 C: LF: J: T: 
+fdf756                           36 sh   0 [fdf756..fdf77a) ghidra lff6b8 C: LF:fdf6d0 fdf710 J: T: 
+fdf77a                          122 sh   0 [fdf77a..fdf7f4) ghidra lff494 C: LF:fece8c J: T: 
+fdf7f4                          210 sh   0 [fdf7f4..fdf8c6) ghidra lff5e0 C: LF:fe3c02 J: T: 
+fdf8c6                           38 sh   0 [fdf8c6..fdf8ec) ghidra lff610 C: LF: J: T: 
+fdf8ec                           28 sh   0 [fdf8ec..fdf908) ghidra lff488 C: LF: J: T: 
+fdf908                           30 sh   0 [fdf908..fdf926) ghidra lff4b8 C: LF: J: T: 
+fdf926                           44 sh   0 [fdf926..fdf952) ghidra lff48c C: LF:fdf8ec J: T: 
+fdf952                           32 sh   0 [fdf952..fdf972) ghidra lff4b0 C: LF: J: T: 
+fdf972                           56 sh   0 [fdf972..fdf9aa) ghidra lff490 C: LF: J: T: 
+fdf9aa                           48 sh   0 [fdf9aa..fdf9da) ghidra lff498 C: LF:fdf926 J: T: 
+fdf9da                           66 sh   0 [fdf9da..fdfa20) ghidra lff504 C: LF:fdf77a fdf972 J: T: 
+fdfa20                           12 sh   0 [fdfa20..fdfa2c) ghidra lff508 C: LF:fdf9aa J: T: 
+fdfa2c                          190 sh   0 [fdfa2c..fdfaee) ghidra lff4a4 C: LF:feceee fecf02 J: T: 
+fdfaee                           72 sh   0 [fdfaee..fdfb38) ghidra lff4a8 C: LF:fdfa2c J: T: 
+fdfb38                          260 sh   0 [fdfb38..fdfc3c) ghidra lff4bc C: LF:fdfaee J: T: 
+fdfc3c                          284 sh   0 [fdfc3c..fdfd58) ghidra lff4cc C: LF:fdf908 fdf926 fdf952 fdfb38 fe3a1c fe3a46 fe3c06 fece2e fed522 fed534 J: T: 
+fdfd58                           78 sh   0 [fdfd58..fdfda6) ghidra lff438 C: LF:fde022 fde354 fed070 J: T: 
+fdfda6                           76 sh   0 [fdfda6..fdfdf2) ghidra lff4e0 C: LF:fddea6 J: T: 
+fdfdf2                          202 sh   0 [fdfdf2..fdfebc) ghidra lff3bc C: LF:fde094 fde470 fde4ac fdfc3c fdfda6 fe0c2a fe2dfc fe37ee fece9c J: T: 
+fdfebc                          382 sh   0 [fdfebc..fe003a) ghidra lff624 C: LF:fdcfa8 fdcfea fdd10a fdd12c fdd1a0 fddfda fdfd58 fdfdf2 fe1bdc fe3a1c fe3ac4 fe3c06 feceb8 fecf58 fecfb2 fecfd6 fed03a J: T: 
+fe003a                          262 sh   0 [fe003a..fe0140) ghidra lff4f0 C: LF:fdd7a6 fdd918 fdfd58 J: T: 
+fe0140                          148 sh   0 [fe0140..fe01d6) ghidra lff500 C: LF:fdfd58 fe003a fe0db8 feceb8 J: T: 
+fe01d6                          130 sh   0 [fe01d6..fe0258) ghidra lff4f4 C: LF:fe003a feceb8 feceda J: T: 
+fe0258                          154 sh   0 [fe0258..fe02f2) ghidra lff520 C: LF:fdfd58 fdfdf2 fe01d6 fe0bbc fe1bf6 fe2cb8 fece9c J: T: 
+fe02f2                          154 sh   0 [fe02f2..fe038c) ghidra lff524 C: LF:fdc080 fdfd58 fdfdf2 fe0140 fe2cb8 fe7712 fece9c J: T: 
+fe038c                          200 sh   0 [fe038c..fe0454) ghidra lff50c C: LF:fdf9da fdfa20 fdfc3c fe0140 fe01d6 fe0bbc fe0db8 J: T: 
+fe0454                          172 sh   0 [fe0454..fe0500) ghidra lff528 C: LF:fdfd58 fdfdf2 fe038c fe1bf6 fe2cb8 fe3760 J: T: 
+fe0500                          510 sh   0 [fe0500..fe070a) ghidra lff52c C: LF:fdc080 fdfd58 fe0a7c fe0ab6 fe0b86 fe0db8 fe1bf6 fe3760 J: T: 
+fe070a                          108 sh   0 [fe070a..fe0776) ghidra lff664 C: LF:fdfd58 fe0258 fe02f2 fe0454 fe0500 J: T: 
+fe0776                          202 sh   0 [fe0776..fe0840) ghidra lff6cc C: LF:fde2cc feccbe fece2e J: T: 
+fe0840                          114 sh   0 [fe0840..fe08b4) ghidra lff6d0 C: LF:feccbe J: T: 
+fe08b4                          142 sh   0 [fe08b4..fe0942) ghidra lff3d4 C: LF:feccbe J: T: 
+fe0942                          136 sh   0 [fe0942..fe09cc) ghidra lff3d8 C: LF:fde2cc feccbe J: T: 
+fe09cc                          174 sh   0 [fe09cc..fe0a7c) ghidra lff5c8 C: LF:fe3c0e fe3c12 feceb8 J: T: 
+fe0a7c                           58 sh   0 [fe0a7c..fe0ab6) ghidra lff518 C: LF:feceb8 J: T: 
+fe0ab6                          112 sh   0 [fe0ab6..fe0b26) ghidra lff51c C: LF:fe0b26 fe0e38 fece8c J: T: 
+fe0b26                           48 sh   0 [fe0b26..fe0b56) ghidra lff594 C: LF:fde094 fde376 J: T: 
+fe0b56                           24 sh   0 [fe0b56..fe0b6e) ghidra lff6a4 C: LF:fee5c8 J: T: 
+fe0b6e                           24 sh   0 [fe0b6e..fe0b86) ghidra lff6a8 C: LF:fde354 J: T: 
+fe0b86                           54 sh   0 [fe0b86..fe0bbc) ghidra lff514 C: LF:fde354 fecbe6 J: T: 
+fe0bbc                          110 sh   0 [fe0bbc..fe0c2a) ghidra lff4f8 C: LF:fdcabc fde470 fe2cb8 J: T: 
+fe0c2a                          112 sh   0 [fe0c2a..fe0c9a) ghidra lff4d0 C: LF:fde470 fe2cb8 fe2f68 J: T: 
+fe0c9a                          192 sh   0 [fe0c9a..fe0d5a) ghidra lff2d0 C: LF:fde094 fde2e8 fde470 fe2cb8 fecd22 J: T: 
+fe0d5a                           94 sh   0 [fe0d5a..fe0db8) ghidra lff5a8 C: LF: J: T: 
+fe0db8                           22 sh   0 [fe0db8..fe0dce) ghidra lff4ec C: LF: J: T: 
+fe0dce                          106 sh   0 [fe0dce..fe0e38) ghidra lff5a4 C: LF:fde470 fece4e J: T: 
+fe0e38                          254 sh   0 [fe0e38..fe0f36) ghidra lff598 C: LF:fdc9e4 fde16a fde450 fe0d5a fe0dce J: T: 
+fe0f36                          102 sh   0 [fe0f36..fe0f9c) ghidra lff600 C: LF:fde182 fde3d6 fde470 J: T: 
+fe0f9c                          204 sh   0 [fe0f9c..fe1068) ghidra lff688 C: LF:fde16a fde182 fde470 fde4ac fecd0c J: T: 
+fe1068                          330 sh   0 [fe1068..fe11b4) ghidra lff5d8 C: LF:fde4ac fdf9da fdfc3c fdfd58 fe0c2a fe0c9a fe0e38 fe1bdc fe2cf4 fe2d46 fe37ee fe384c feceb8 J: T: 
+fe11b4                          566 sh   0 [fe11b4..fe13ea) ghidra lff5e4 C: LF:fdf082 fdfd58 fe09cc fe0a7c fe0ab6 fe0b86 fe0d5a feceb8 J: T: 
+fe13ea                          208 sh   0 [fe13ea..fe14ba) ghidra lff5ec C: LF:fde022 fde354 fe09cc fe0db8 fe1068 fe1ad0 fe1bdc fe2ba2 fe2c5c J: T: 
+fe14ba                          174 sh   0 [fe14ba..fe1568) ghidra lff5e8 C: LF:fde470 fdfa20 fe09cc fe1068 fe1ad0 fe1bdc J: T: 
+fe1568                          382 sh   0 [fe1568..fe16e6) ghidra lff61c C: LF:fde022 fde354 fdf7f4 fe11b4 fe13ea fe14ba fe1bf6 fe2cb8 fece9c feceda J: T: 
+fe16e6                          282 sh   0 [fe16e6..fe1800) ghidra lff620 C: LF:fde8a6 fdeb10 fded16 fdedf0 fdfdf2 fe0db8 fe1ad0 fe1bf6 fe2cb8 J: T: 
+fe1800                          228 sh   0 [fe1800..fe18e4) ghidra lff62c C: LF:fdc080 fdfd58 fe0a7c fe0ab6 fe0b86 fe0db8 fe37c4 feceb8 J: T: 
+fe18e4                          142 sh   0 [fe18e4..fe1972) ghidra lff604 C: LF:fde470 fdfa20 fe0c2a fe0f36 fe2c5c fe2d46 J: T: 
+fe1972                          166 sh   0 [fe1972..fe1a18) ghidra lff608 C: LF:fde470 fe0f36 fe14ba J: T: 
+fe1a18                          184 sh   0 [fe1a18..fe1ad0) ghidra lff628 C: LF:fde094 fdf7f4 fe18e4 fe1972 fece8c J: T: 
+fe1ad0                          268 sh   0 [fe1ad0..fe1bdc) ghidra lff5d4 C: LF:fe1bdc fe3bba fe3c26 fe768c fe7712 fee478 fee488 J: T: 
+fe1bdc                           26 sh   0 [fe1bdc..fe1bf6) ghidra lff1ac/f420 C: LF:fde094 J: T: 
+fe1bf6                          150 sh   0 [fe1bf6..fe1c8c) ghidra lff30c C: LF:fdc080 fdf8c6 fe2cb8 fe37c4 J: T: 
+fe1c8c                           42 sh   0 [fe1c8c..fe1cb6) ghidra lff618 C: LF:fde21a J: T: 
+fe1cb6                          406 sh   0 [fe1cb6..fe1e4c) ghidra lff66c C: LF:fde21a fe1bf6 fe1c8c fe2d46 fe3760 fece9c J: T: 
+fe1e4c                           52 sh   0 [fe1e4c..fe1e80) ghidra lff670 C: LF:fde8a6 J: T: 
+fe1e80                          170 sh   0 [fe1e80..fe1f2a) ghidra lff668 C: LF:fdfebc fe0bbc fe1568 fe16e6 fe1800 fe1a18 fe2d46 fe3760 J: T: 
+fe1f2a                          180 sh   0 [fe1f2a..fe1fde) ghidra lff674 C: LF:fde1f0 fe2a7c J: T: 
+fe1fde                          404 sh   0 [fe1fde..fe2172) ghidra lff67c C: LF:fdbb34 fdbeec fde022 fde1f0 fde470 fdef12 fdf11a fdf3c8 fe0c9a fe0d5a fe1bdc fe1bf6 fe2536 fe3684 fe36fa fe3760 fe8862 fee488 J: T: 
+fe2172                          308 sh   0 [fe2172..fe22a6) ghidra lff6c8 C: LF:fdcc2a fdcd34 fde142 fde402 fde470 fe070a fe0bbc fe0c2a fe1cb6 fe1e80 fe2cb8 J: T: 
+fe22a6                           40 sh   0 [fe22a6..fe22ce) ghidra lff6c4 C: LF:fdfdf2 fe2d46 J: T: 
+fe22ce                          118 sh   0 [fe22ce..fe2344) ghidra lff684 C: LF:fde19a fe1bdc fe1e4c fe1e80 fe1f2a fe1fde fe3622 fe3684 fe36fa J: T: 
+fe2344                          498 sh   0 [fe2344..fe2536) ghidra lff558 C: LF:fde470 fde4ac fe0bbc fe0c2a fe0c9a fe0dce fe0f9c fe1cb6 fe1e80 fe22ce fe2536 fe2cb8 fe2cf4 fe3504 fe359a feccbe J: T: 
+fe2536                          226 sh   0 [fe2536..fe2618) ghidra lff650 C: LF:fde470 fe0dce fe2dfc feceb8 J: T: 
+fe2618                          278 sh   0 [fe2618..fe272e) ghidra lff6c0 C: LF:fddfc2 fdf7f4 fe09cc fe0dce fe1068 fe1f2a fe2536 fe2ba2 fe2c5c J: T: 
+fe272e                          844 sh   0 [fe272e..fe2a7c) ghidra lff9bc C: LF:fdb5fc fdbb34 fdbecc fdbeec fddde6 fdde6c fdded8 fde1d4 fde1f0 fde41a fde470 fde4ac fde4cc fdf756 fe0b56 fe0b6e fe0c2a fe0c9a fe1ad0 fe1bdc fe1cb6 fe2172 fe22a6 fe2344 fe2536 fe2618 fe2b64 fe39a6 fe3c02 fea38e fee488 J: T: 
+fe2a7c                          232 sh   0 [fe2a7c..fe2b64) ghidra lff634 C: LF: J: T: 
+fe2b64                           62 sh   0 [fe2b64..fe2ba2) ghidra lff6b4 C: LF:fe0776 fe2a7c J: T: 
+fe2ba2                          184 sh   0 [fe2ba2..fe2c5c) ghidra lff5d0 C: LF:fde430 fe0840 fe2c5c J: T: 
+fe2c5c                           92 sh   0 [fe2c5c..fe2cb8) ghidra lff5dc C: LF:fde28c fde3ec fe08b4 J: T: 
+fe2cb8                           60 sh   0 [fe2cb8..fe2cf4) ghidra lff300 C: LF: J: T: 
+fe2cf4                           82 sh   0 [fe2cf4..fe2d46) ghidra lff5c4 C: LF:fde28c fe09cc fece9c J: T: 
+fe2d46                          128 sh   0 [fe2d46..fe2dc8) ghidra lff3b8 C: LF:fe09cc fece9c J: T: 
+fe2dc8                           52 sh   0 [fe2dc8..fe2dfc) ghidra lff6e0 C: LF: J: T: 
+fe2dfc                           22 sh   0 [fe2dfc..fe2e12) ghidra lff4c8 C: LF:fe2dc8 J: T: 
+fe2e12                          248 sh   0 [fe2e12..fe2f0a) ghidra lff6e4 C: LF:fece42 J: T: 
+fe2f0a                           94 sh   0 [fe2f0a..fe2f68) ghidra lff6e8 C: LF:fdc080 J: T: 
+fe2f68                          936 sh   0 [fe2f68..fe3310) ghidra lff5a0 C: LF:fde470 fde4ac fe08b4 fe0942 fe2e12 fe2f0a fecb6e fece2e fece42 J: T: 
+fe3310                          500 sh   0 [fe3310..fe3504) ghidra lff6f0 C: LF:fda7f8 fdaa48 fde470 fe0c9a fe2f68 feccca fecd0c fecd22 fece42 fece4e J: T: 
+fe3504                          150 sh   0 [fe3504..fe359a) ghidra lff690 C: LF:fde470 fe2cb8 fe3310 fecb6e J: T: 
+fe359a                          136 sh   0 [fe359a..fe3622) ghidra lff68c C: LF:fe2cb8 fe3310 J: T: 
+fe3622                           98 sh   0 [fe3622..fe3684) ghidra lff678 C: LF:fdfb38 J: T: 
+fe3684                          118 sh   0 [fe3684..fe36fa) ghidra lff644 C: LF:fde470 fe2f68 J: T: 
+fe36fa                          102 sh   0 [fe36fa..fe3760) ghidra lff648 C: LF:fde470 fdfda6 fe2dfc J: T: 
+fe3760                          100 sh   0 [fe3760..fe37c4) ghidra lff510 C: LF: J: T: 
+fe37c4                           42 sh   0 [fe37c4..fe37ee) ghidra lff5fc C: LF: J: T: 
+fe37ee                           94 sh   0 [fe37ee..fe384c) ghidra lff4d4 C: LF:fde354 fecbe6 fed070 J: T: 
+fe384c                           48 sh   0 [fe384c..fe387c) ghidra lff5c0 C: LF: J: T: 
+fe387c                           20 sh   0 [fe387c..fe3890) ghidra lff2b8 C: LF: J:fe4d9e T: 
+fe3890                           12 sh   0 [fe3890..fe389c) ghidra lff740 C: LF: J: T: 
+fe389c                            8 sh   0 [fe389c..fe38a4) ghidra lff744 C: LF: J: T: 
+fe38a4                            6 sh   0 [fe38a4..fe38aa) ghidra lff890 C: LF: J: T: 
+fe38aa                            6 sh   0 [fe38aa..fe38b0) ghidra lff898 C: LF: J: T: 
+fe38b0                           36 sh   0 [fe38b0..fe38d4) ghidra C: LF: J: T: 
+fe38d4                           92 sh   0 [fe38d4..fe3930) ghidra lff7c8 C: LF: J: T: ijmp@16660782
+fe3930                           44 sh   0 [fe3930..fe395c) ghidra lff7d8 C: LF: J: T: 
+fe3970                           10 sh   0 [fe3970..fe397a) ghidra lff948 C: LF: J: T: 
+fe397a                           44 sh   0 [fe397a..fe39a6) ghidra lff954 C: LF: J: T: 
+fe39a6                           14 sh   0 [fe39a6..fe39b4) ghidra lff374 C:fe3c02 fe3c12 LF: J: T: 
+fe39b6                            6 sh   0 [fe39b6..fe39bc) ghidra C: LF: J:fe3c3e T: 
+fe39bc                           72 sh   0 [fe39bc..fe3a04) ghidra lff76c C:fe39b6 LF: J:fe3a08 T: 
+fe3a04                            4 sh   0 [fe3a04..fe3a08) ghidra C: LF: J: T: 
+fe3a08                            4 sh   0 [fe3a08..fe3a0c) ghidra C: LF: J: T: 
+fe3a0c                           16 sh   0 [fe3a0c..fe3a1c) ghidra lff848 C: LF: J: T:#13=1 
+fe3a1c                           42 sh  26 [fe3a1c..fe3a46) ghidra lff448 C:fe39b6 LF: J:fe3a04 fe3a08 T: 
+fe3a46                           38 sh  26 [fe3a2c..fe3a52) ghidra lff468 C:fe39b6 LF: J:fe3a04 fe3a08 T: 
+fe3a52                           38 sh   0 [fe3a52..fe3a78) ghidra lff17c/f350 C:fe39b6 LF: J:fe3a04 T: 
+fe3a78                           32 sh  28 [fe3a78..fe3a9a) ghidra lff194/f37c C:fe39b6 LF: J: T: 
+fe3a7c                           30 sh  28 [fe3a7c..fe3a9a) ghidra lff3b4 C:fe39b6 LF: J: T: 
+fe3a9a                           22 sh   0 [fe3a9a..fe3ab0) ghidra lff97c C:fe39b6 LF: J: T: 
+fe3ab0                           20 sh   0 [fe3ab0..fe3ac4) ghidra lff3c4 C:fe39b6 LF: J: T: 
+fe3ac4                           36 sh   0 [fe3ac4..fe3ae8) ghidra lff460 C:fe39b6 LF: J: T: 
+fe3ae8                           26 sh   0 [fe3ae8..fe3b02) ghidra lff440 C:fe39b6 LF: J: T: 
+fe3b02                           98 sh   0 [fe3b02..fe3b64) ghidra lff580 C:fe39b6 LF: J:fe3a04 fe3a08 T:#1=1 
+fe3b6a                           54 sh   0 [fe3b6a..fe3ba0) ghidra lff57c C: LF: J: T:#1=1 
+fe3ba0                           26 sh   0 [fe3ba0..fe3bba) ghidra lff56c C:fe39b6 LF: J: T: ijmp@16661432
+fe3bba                           46 sh   0 [fe3bba..fe3be8) ghidra lff0fc/f364 C: LF: J: T:#1=1 
+fe3be8                           14 sh   0 [fe3be8..fe3bf6) ghidra lff470 C: LF: J: T:#1=1 
+fe3bf6                           26 sh  22 [fe3bf6..fe3c3e) ghidra lff860 C:fe39b6 LF: J: T: ijmp@16661564
+fe3bfa                           26 sh  22 [fe3bfa..fe3c3e) ghidra lff184 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c02                           26 sh  22 [fe3c02..fe3c3e) ghidra lff3c0 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c06                           26 sh  22 [fe3c06..fe3c3e) ghidra lff444 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c0a                           26 sh  22 [fe3c0a..fe3c3e) ghidra lff18c/f380 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c0e                           26 sh  22 [fe3c0e..fe3c3e) ghidra lff3d0 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c12                           26 sh  22 [fe3c12..fe3c3e) ghidra lff3cc C:fe39b6 LF: J: T: ijmp@16661564
+fe3c16                           26 sh  22 [fe3c16..fe3c3e) ghidra lff570 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c1a                           26 sh  22 [fe3c1a..fe3c3e) ghidra lff40c C:fe39b6 LF: J: T: ijmp@16661564
+fe3c1e                           26 sh  22 [fe3c1e..fe3c3e) ghidra lff44c C:fe39b6 LF: J: T: ijmp@16661564
+fe3c22                           26 sh  22 [fe3c22..fe3c3e) ghidra lff354 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c26                           24 sh  22 [fe3c26..fe3c3e) ghidra lff100/f190/f478 C:fe39b6 LF: J: T: ijmp@16661564
+fe3c3e                           36 sh   0 [fe3c3e..fe3c62) ghidra C: LF: J: T:#1=1 ijmp@16661600
+fe3c62                           12 sh   0 [fe3c62..fe3c6e) ghidra lff8dc C: LF: J: T: 
+fe3c6e                           22 sh   0 [fe3c6e..fe3c84) ghidra lff894 C: LF: J: T: 
+fe3c84                           32 sh  16 [fe3c84..fe3ca4) ghidra lff994 C: LF: J: T:#13=1 
+fe3c94                           16 sh  16 [fe3c94..fe3ca4) ghidra C: LF: J: T:#13=1 
+fe3ca4                            8 sh   0 [fe3ca4..fe3cac) ghidra lff8cc C: LF: J:fe3c94 T: 
+fe3cac                           18 sh   0 [fe3cac..fe3cbe) ghidra lff8ac C:fe3c94 LF: J:fe3c94 T: 
+fe3cbe                          112 sh   0 [fe3cbe..fe3d2e) ghidra lff718 C:fe3890 fe389c fe768c LF: J: T: 
+fe3d2e                          134 sh   0 [fe3d2e..fe3db4) ghidra lff9c8 C:fe3890 fe389c LF: J: T:#1=1 
+fe3db4                           84 sh   0 [fe3db4..fe3e08) ghidra C: LF: J: T: 
+fe3e08                          158 sh   0 [fe3e08..fe3ea6) ghidra C: LF: J: T: 
+fe3ea6 gem_trap2_aes            152 sh  54 [fe3ea6..fe3f3e) AES-trap2,ghidra C:fe3890 fe389c LF: J: T:#1=1 icall@16662278
+fe3f08                           54 sh  54 [fe3f08..fe3f3e) ghidra lff2bc C:fe3890 fe389c LF: J: T: 
+fe3f3e                           32 sh   0 [fe3f3e..fe3f5e) ghidra,vec8c32 C:fde844 LF: J: T: 
+fe3f5e                           92 sh   0 [fe3f5e..fe3fba) ghidra lff724 C: LF: J: T: 
+fe3fba                           72 sh   0 [fe3fba..fe4002) ghidra lff804 C: LF:fe3f5e J: T: 
+fe4002                           46 sh   0 [fe4002..fe4030) ghidra lff748 C: LF:fece5e J: T: 
+fe4030                           50 sh   0 [fe4030..fe4062) ghidra lff808 C: LF: J: T: 
+fe4062                           80 sh   0 [fe4062..fe40b2) ghidra lff764 C: LF: J: T: 
+fe40b2                           58 sh   0 [fe40b2..fe40ec) ghidra lff7e0 C: LF:fe387c J: T: 
+fe40ec                          208 sh   0 [fe40ec..fe41bc) ghidra lff7dc C: LF:fe4002 fe4e8e fe5520 fe5566 fe55f8 fe5666 fe5988 J: T: 
+fe41bc                          190 sh   0 [fe41bc..fe427a) ghidra lff7e4 C: LF: J: T: 
+fe427a                          110 sh   0 [fe427a..fe42e8) ghidra lff7f8 C: LF:fe4062 J: T: 
+fe42e8                          170 sh   0 [fe42e8..fe4394) ghidra lff778 C: LF:fe39bc fe3a52 fe3c0a fe44d4 fe5886 feceb8 J: T: 
+fe4394                          226 sh   0 [fe4394..fe4476) ghidra lff8a4 C: LF:fe39a6 fe3a1c fe3a46 fe3bba fe3c02 fe3c06 fe3c0e fe3c12 fe3c26 fe42e8 fed478 fed554 J: T: 
+fe4476                           94 sh   0 [fe4476..fe44d4) ghidra lff8d0 C: LF:fe3c26 J: T: 
+fe44d4                          150 sh   0 [fe44d4..fe456a) ghidra lff768 C: LF:fda3d6 fe3bba J: T: 
+fe456a                           56 sh   0 [fe456a..fe45a2) ghidra lff794 C: LF:fe387c febdbe J: T: 
+fe45a2                          812 sh   0 [fe45a2..fe48ce) ghidra lff798 C: LF:fe387c fe456a fe84ba fe85de fe8640 fe86fa fea0a8 fea38e fea584 feb53e feba9c febdbe feca68 fecca6 feccbe J: T: 
+fe48ce                           58 sh   0 [fe48ce..fe4908) ghidra lff7ac C: LF:fe45a2 feca4a J: T: 
+fe4908                          178 sh   0 [fe4908..fe49ba) ghidra lff7b0 C: LF:fe456a fe8c14 fe8d6e feccd6 J: T: 
+fe49ba                           24 sh   0 [fe49ba..fe49d2) ghidra lff830 C: LF:fe5008 fe504a J: T: 
+fe49d2                          150 sh   0 [fe49d2..fe4a68) ptr C: LF:fe48ce fe4908 fe6998 feba54 feca68 feccca J: T: 
+fe4a6a                           46 sh   0 [fe4a6a..fe4a98) ghidra lff89c C: LF:fe5886 J: T: 
+fe4a98                          130 sh   0 [fe4a98..fe4b1a) ghidra lff820 C: LF:fe87d2 fe87f0 fe8a38 fee498 fee4c0 J: T: 
+fe4b1a                           90 sh   0 [fe4b1a..fe4b74) ghidra lff73c C: LF: J: T: 
+fe4b74                           40 sh   0 [fe4b74..fe4b9c) ghidra lff7c0 C: LF: J: T: 
+fe4b9c                           42 sh   0 [fe4b9c..fe4bc6) ghidra lff7cc C: LF:fe4b74 J: T: 
+fe4bc6                          272 sh   0 [fe4bc6..fe4cd6) ghidra lff7d0 C: LF:fecc7e J: T: icall@16665786
+fe4cd6                          146 sh   0 [fe4cd6..fe4d68) ghidra lff7c4 C: LF:fe4b1a fe87d2 J: T: 
+fe4d68                           54 sh   0 [fe4d68..fe4d9e) ghidra lff7d4 C: LF:fe4b74 fe4cd6 J: T: 
+fe4d9e                          100 sh   0 [fe4d9e..fe4e02) ghidra C: LF:fe38d4 fe3930 fe4b74 fe4b9c fe4bc6 fe4d68 J: T: 
+fe4e02                           88 sh   0 [fe4e02..fe4e5a) ptr C: LF:fe3890 fe389c fe511a J: T: 
+fe4e5a                           50 sh   0 [fe4e5a..fe4e8e) ghidra lff800 C: LF: J: T: 
+fe4e8e                           42 sh   0 [fe4e8e..fe4eb8) ghidra lff754 C: LF:fe3fba fe4030 fe4e5a J: T: 
+fe4eb8                           56 sh   0 [fe4eb8..fe4ef0) ghidra lffa38 C: LF:fe387c fe3fba J: T: 
+fe4ef0                           80 sh   0 [fe4ef0..fe4f40) ghidra lff8f0 C: LF:feca4a feccd6 J: T: 
+fe4f40                          112 sh   0 [fe4f40..fe4fb0) ghidra C: LF:fe4b1a J: T: 
+fe4fb0                           88 sh   0 [fe4fb0..fe5008) ghidra lff8f4 C: LF:fe4b1a J: T: 
+fe5008                           20 sh   0 [fe5008..fe501c) ghidra lff7a0 C: LF:feccca J: T: 
+fe501c                           20 sh   0 [fe501c..fe5030) ghidra lff828 C: LF:feccca J: T: 
+fe5030                           26 sh   0 [fe5030..fe504a) ghidra lff82c C: LF: J: T: 
+fe504a                           72 sh   0 [fe504a..fe5092) ghidra lff7a4 C: LF:fe52e2 fe5480 J: T: 
+fe5092                           56 sh   0 [fe5092..fe50ca) ghidra lff8ec C: LF: J: T: 
+fe50ca                           46 sh   0 [fe50ca..fe50f8) ghidra lff7ec C: LF: J: T: 
+fe50f8                           34 sh   0 [fe50f8..fe511a) ghidra lff840 C: LF:fe50ca J: T: 
+fe511a                          102 sh   0 [fe511a..fe5180) ghidra lff7fc C: LF:fe3fba J: T: 
+fe5180                           34 sh   0 [fe5180..fe51a2) ptr C: LF:fe51a2 J: T: 
+fe51a2                           54 sh   0 [fe51a2..fe51d8) ghidra lff8e8 C: LF:fe5092 fe511a J: T: 
+fe51d8                          186 sh   0 [fe51d8..fe5292) ptr C: LF:fe4ef0 fe52e2 J: T: 
+fe5292                           80 sh   0 [fe5292..fe52e2) ghidra lff7f0 C: LF: J: T: 
+fe52e2                          106 sh   0 [fe52e2..fe534c) ghidra lff8e4 C: LF:fe511a fe5292 J: T: 
+fe534c                          308 sh   0 [fe534c..fe5480) ptr C: LF:fe4fb0 fe5480 fe87d2 feccd6 fed412 J: T: 
+fe5480                           56 sh   0 [fe5480..fe54b8) ghidra lff8e0 C: LF:fe511a fe54b8 J: T: 
+fe54b8                          104 sh   0 [fe54b8..fe5520) ghidra lff8fc C: LF:feccd6 J: T: 
+fe5520                           70 sh   0 [fe5520..fe5566) ghidra lff758 C: LF:fe3fba fe4030 fe50ca J: T: 
+fe5566                          146 sh   0 [fe5566..fe55f8) ghidra lff750 C: LF:fe3890 fe389c J: T: 
+fe55f8                          110 sh   0 [fe55f8..fe5666) ghidra lff760 C: LF:fe3fba fe4030 fe5292 J: T: 
+fe5666                          144 sh   0 [fe5666..fe56f6) ghidra lff75c C: LF:fe3fba fe4030 fecc7e feccd6 J: T: 
+fe56f6                           90 sh   0 [fe56f6..fe5750) ghidra lff944 C: LF:fece2e fece9c J: T: 
+fe5750                          144 sh   0 [fe5750..fe57e0) ghidra lff72c C: LF:fe56f6 J: T: 
+fe57e0                          118 sh   0 [fe57e0..fe5856) ghidra lff950 C: LF:fe3970 J: T: 
+fe5856                           48 sh   0 [fe5856..fe5886) ghidra lff918 C: LF:fece5e fecec4 J: T: 
+fe5886                           58 sh   0 [fe5886..fe58c0) ghidra lff770 C: LF:fe397a fe57e0 fe5856 J: T: 
+fe58c0                          200 sh   0 [fe58c0..fe5988) ghidra lff958 C: LF:fecc7e fecd8c J: T: 
+fe5988                          218 sh   0 [fe5988..fe5a62) ghidra lff74c C: LF:fe3fba fe4030 fe5750 fe58c0 J: T: 
+fe5a62                           74 sh   0 [fe5a62..fe5aac) ghidra lffa18 C: LF: J: T: 
+fe5aac                           32 sh   0 [fe5aac..fe5acc) ghidra lffa1c C: LF: J: T: 
+fe5acc                          220 sh   0 [fe5acc..fe5ba8) ghidra lffa3c C: LF:fe5aac fece42 fece4e J: T: 
+fe5ba8                          242 sh   0 [fe5ba8..fe5c9a) ghidra lffa40 C: LF:fe5acc J: T: 
+fe5c9a                           84 sh   0 [fe5c9a..fe5cee) ptr C: LF:fe5ba8 J: T: 
+fe5cee                          174 sh   0 [fe5cee..fe5d9c) ptr C: LF:fe5aac feb53e fed27c J: T: 
+fe5d9c aes_dispatch            1866 sh1844 [fe5d9c..fe64e6) ghidra lff2b0 C: LF:fda03e fda7f8 fe65c4 fe65da fe6610 fe6766 fe6894 fe68a4 fe68e4 fe6910 fe6936 fe6998 fe6c5e fe7002 fe7298 fe7346 fe74a4 fe75ec fe764c fe7712 fe7d90 fe8402 fe84ba fe85c6 fe8640 fe86fa fe8768 fe8a38 fe8a72 fe8a8e fe8c14 fe902a fe91a4 fe91e2 fe92ae fe9678 fea028 fea0a8 fea1ba fea21e fea2be fea38e fea584 fea69c feaa58 feaa86 feaab2 feac5c feac80 feac94 feaca8 feacd4 fead26 fead40 feae36 feafbe fec602 fec6da fec6f0 fec706 fec722 fec83a feca4a feca68 fecaac fecbe6 J: T: icall@16671278
+fe5db2 appl_init #ctx            68 sh  68 [fe5db2..fe64e6) AES10,ghidra C: LF: J: T: 
+fe5df2 appl_read #ctx            34 sh  34 [fe5df2..fe64e6) AES11,ghidra C: LF:fe65c4 J: T: 
+fe5df6 appl_write #ctx           32 sh  32 [fe5df6..fe64e6) AES12,ghidra C: LF:fe65c4 J: T: 
+fe5e0c appl_find #ctx            18 sh  18 [fe5e0c..fe64e6) AES13,ghidra C: LF:fe65da J: T: 
+fe5e1a appl_tplay #ctx           30 sh  30 [fe5e1a..fe64e6) AES14,ghidra C: LF:fe6610 J: T: 
+fe5e2c appl_trecord #ctx         28 sh  28 [fe5e2c..fe64e6) AES15,ghidra C: LF:fe6766 J: T: 
+fe5e40 appl_exit #ctx            52 sh  52 [fe5e40..fe64e6) AES19,ghidra C: LF:fda03e fe65c4 fe91a4 J: T: 
+fe5e70 evnt_keybd #ctx           12 sh  12 [fe5e70..fe64e6) AES20,ghidra C: LF:fe6894 J: T: 
+fe5e78 evnt_button #ctx          34 sh  34 [fe5e78..fe64e6) AES21,ghidra C: LF:fe68a4 J: T: 
+fe5e90 evnt_mouse #ctx           26 sh  26 [fe5e90..fe64e6) AES22,ghidra C: LF:fe68e4 J: T: 
+fe5ea2 evnt_mesag #ctx           18 sh  18 [fe5ea2..fe64e6) AES23,ghidra C: LF:fe6910 J: T: 
+fe5eb0 evnt_timer #ctx           24 sh  24 [fe5eb0..fe64e6) AES24,ghidra C: LF:fe6936 J: T: 
+fe5ec2 evnt_multi #ctx          130 sh 130 [fe5ec2..fe64e6) AES25,ghidra C: LF:fe6998 J: T: 
+fe5f40 evnt_dclick #ctx          22 sh  22 [fe5f40..fe64e6) AES26,ghidra C: LF:fe6c5e J: T: 
+fe5f4e menu_bar #ctx             26 sh  26 [fe5f4e..fe64e6) AES30,ghidra C: LF:fe902a J: T: 
+fe5f60 menu_icheck #ctx          28 sh  28 [fe5f60..fe5f7c) AES31,ghidra C: LF:fe8c14 J:fe64d4 T: 
+fe5f7c menu_ienable #ctx         84 sh  84 [fe5f7c..fe64e6) AES32,ghidra C: LF:fe8c14 J: T: 
+fe5fc0 menu_tnormal #ctx         46 sh  46 [fe5fc0..fe5fee) AES33,ghidra C: LF:fe8c14 J:fe64d4 T: 
+fe5fee menu_text #ctx            52 sh  52 [fe5fee..fe64e6) AES34,ghidra C: LF:fecbe6 J: T: 
+fe601a menu_register #ctx        26 sh  26 [fe601a..fe64e6) AES35,ghidra C: LF:fe91e2 J: T: 
+fe602e objc_add #ctx             30 sh  30 [fe602e..fe64e6) AES40,ghidra C: LF:fea1ba J: T: 
+fe6040 objc_delete #ctx          26 sh  26 [fe6040..fe64e6) AES41,ghidra C: LF:fea21e J: T: 
+fe6052 objc_draw #ctx            38 sh  38 [fe6052..fe64e6) AES42,ghidra C: LF:fda7f8 fea028 J: T: 
+fe606c objc_find #ctx            40 sh  40 [fe606c..fe64e6) AES43,ghidra C: LF:fea0a8 J: T: 
+fe6084 objc_offset #ctx          44 sh  44 [fe6084..fe64e6) AES44,ghidra C: LF:fea584 J: T: 
+fe60a2 objc_order #ctx           30 sh  30 [fe60a2..fe64e6) AES45,ghidra C: LF:fea2be J: T: 
+fe60b4 objc_edit #ctx            42 sh  42 [fe60b4..fe60de) AES46,ghidra C: LF:fe9678 J:fe64d4 T: 
+fe60de objc_change #ctx          44 sh  44 [fe60de..fe64e6) AES47,ghidra C: LF:fda7f8 fea38e J: T: 
+fe60fc form_do #ctx              28 sh  28 [fe60fc..fe64e6) AES50,ghidra C: LF:fe74a4 J: T: 
+fe6110 form_dial #ctx            40 sh  40 [fe6110..fe64e6) AES51,ghidra C: LF:fe75ec J: T: 
+fe612e form_alert #ctx           26 sh  26 [fe612e..fe64e6) AES52,ghidra C: LF:fe7002 J: T: 
+fe6142 form_error #ctx           18 sh  18 [fe6142..fe64e6) AES53,ghidra C: LF:fe7712 J: T: 
+fe6150 form_center #ctx          26 sh  26 [fe6150..fe64e6) AES54,ghidra C: LF:fe92ae J: T: 
+fe6162 form_keybd #ctx           70 sh  70 [fe6162..fe64e6) AES55,ghidra C: LF:fda7f8 fe7298 J: T: 
+fe619a form_button #ctx          46 sh  46 [fe619a..fe64e6) AES56,ghidra C: LF:fda7f8 fe7346 J: T: 
+fe61bc graf_rubberbox #ctx       44 sh  44 [fe61bc..fe64e6) AES70,ghidra C: LF:fe85c6 J: T: 
+fe61d8 graf_dragbox #ctx         54 sh  54 [fe61d8..fe64e6) AES71,ghidra C: LF:fe8640 J: T: 
+fe61fa graf_movebox #ctx         42 sh  42 [fe61fa..fe64e6) AES72,ghidra C: LF:fe8402 J: T: 
+fe6216                           32 sh  32 [fe6216..fe64e6) AES73 C: LF: J: T: icall@16671278
+fe621e graf_shrinkbox #ctx       30 sh  30 [fe621e..fe64e6) AES74,ghidra C: LF: J: T: icall@16671278
+fe6234 graf_watchbox #ctx        38 sh  38 [fe6234..fe64e6) AES75,ghidra C: LF:fe84ba J: T: 
+fe624e graf_slidebox #ctx        36 sh  36 [fe624e..fe64e6) AES76,ghidra C: LF:fe86fa J: T: 
+fe6266 graf_handle #ctx          44 sh  44 [fe6266..fe64e6) AES77,ghidra C: LF: J: T: 
+fe628e graf_mouse #ctx           94 sh  94 [fe628e..fe64e6) AES78,ghidra C: LF:fe8a38 fe8a72 fe8a8e feaa86 J: T: 
+fe62e8 graf_mkstate #ctx         44 sh  44 [fe62e8..fe64e6) AES79,ghidra C: LF:fe8768 J: T: 
+fe6304 scrp_read #ctx            16 sh  16 [fe6304..fe64e6) AES80,ghidra C: LF:feac80 J: T: 
+fe6310 scrp_write #ctx           16 sh  16 [fe6310..fe64e6) AES81,ghidra C: LF:feac94 J: T: 
+fe631c fsel_input #ctx           34 sh  34 [fe631c..fe64e6) AES90,ghidra C: LF:fe7d90 J: T: 
+fe6332 wind_create #ctx          26 sh  26 [fe6332..fe64e6) AES100,ghidra C: LF:fec602 J: T: 
+fe6346 wind_open #ctx            24 sh  24 [fe6346..fe64e6) AES101,ghidra C: LF:fec6da J: T: 
+fe6358 wind_close #ctx           16 sh  16 [fe6358..fe64e6) AES102,ghidra C: LF:fec6f0 J: T: 
+fe6364 wind_delete #ctx          16 sh  16 [fe6364..fe64e6) AES103,ghidra C: LF:fec706 J: T: 
+fe6370 wind_get #ctx             26 sh  26 [fe6370..fe64e6) AES104,ghidra C: LF:fec722 J: T: 
+fe6382 wind_set #ctx             26 sh  26 [fe6382..fe64e6) AES105,ghidra C: LF:fec83a J: T: 
+fe6394 wind_find #ctx            22 sh  22 [fe6394..fe64e6) AES106,ghidra C: LF:feca4a J: T: 
+fe63a2 wind_update #ctx          16 sh  16 [fe63a2..fe64e6) AES107,ghidra C: LF:feca68 J: T: 
+fe63ae                           50 sh  50 [fe63ae..fe64e6) AES108 C: LF:fecaac J: T: 
+fe63dc rsrc_load #ctx            24 sh  24 [fe63dc..fe64e6) AES110,ghidra C: LF:feac5c J: T: 
+fe63ec rsrc_free #ctx            14 sh  14 [fe63ec..fe64e6) AES111,ghidra C: LF:feaa58 J: T: 
+fe63f6 rsrc_gaddr #ctx           34 sh  34 [fe63f6..fe64e6) AES112,ghidra C: LF:feaa86 J: T: 
+fe640c rsrc_saddr #ctx           34 sh  34 [fe640c..fe64e6) AES113,ghidra C: LF:feaab2 J: T: 
+fe6422 rsrc_obfix #ctx           28 sh  28 [fe6422..fe64e6) AES114,ghidra C: LF:fea69c J: T: 
+fe6436 shel_read #ctx            26 sh  26 [fe6436..fe64e6) AES120,ghidra C: LF:feaca8 J: T: 
+fe6448 shel_write #ctx           42 sh  42 [fe6448..fe64e6) AES121,ghidra C: LF:feacd4 J: T: 
+fe6464 shel_get #ctx             26 sh  26 [fe6464..fe64e6) AES122,ghidra C: LF:fead26 J: T: 
+fe6476 shel_put #ctx             26 sh  26 [fe6476..fe64e6) AES123,ghidra C: LF:fead40 J: T: 
+fe6488 shel_find #ctx            22 sh  22 [fe6488..fe64e6) AES124,ghidra C: LF:feafbe J: T: 
+fe6496 shel_envrn #ctx           24 sh  24 [fe6496..fe64e6) AES125,ghidra C: LF:feae36 J: T: 
+fe64a6 aes_unimplemented         24 sh  24 [fe64a6..fe64e6) AES109,AES115,AES116,AES117,AES118,AES119,AES16,AES17,AES18,AES27,AES28,AES29,AES36,AES37,AES38,AES39,AES48,AES49,AES57,AES58,AES59,AES60,AES61,AES62,AES63,AES64,AES65,AES66,AES67,AES68,AES69,AES82,AES83,AES84,AES85,AES86,AES87,AES88,AES89,AES91,AES92,AES93,AES94,AES95,AES96,AES97,AES98,AES99,ghidra C: LF:fe764c J: T: 
+fe64ba                         1844 sh1844 [fe5db2..fe64e6) ghidra C: LF:fda03e fda7f8 fe65c4 fe65da fe6610 fe6766 fe6894 fe68a4 fe68e4 fe6910 fe6936 fe6998 fe6c5e fe7002 fe7298 fe7346 fe74a4 fe75ec fe764c fe7712 fe7d90 fe8402 fe84ba fe85c6 fe8640 fe86fa fe8768 fe8a38 fe8a72 fe8a8e fe8c14 fe902a fe91a4 fe91e2 fe92ae fe9678 fea028 fea0a8 fea1ba fea21e fea2be fea38e fea584 fea69c feaa58 feaa86 feaab2 feac5c feac80 feac94 feaca8 feacd4 fead26 fead40 feae36 feafbe fec602 fec6da fec6f0 fec706 fec722 fec83a feca4a feca68 fecaac fecbe6 J:fe64a6 fe64d4 T: icall@16671278
+fe64d4                           18 sh  18 [fe64d4..fe64e6) ghidra C: LF: J: T: 
+fe64e6 aes_marshal_arrays       196 sh   0 [fe64e6..fe65aa) ghidra lff2b4 C: LF:fe5d9c fecc40 J: T: 
+fe65aa aes_entry                 26 sh   0 [fe65aa..fe65c4) ghidra,ptr C: LF:fe387c fe3f08 fe64e6 J: T: 
+fe65c4                           22 sh   0 [fe65c4..fe65da) ghidra lff1b4 C: LF:fe6874 J: T: 
+fe65da                           54 sh   0 [fe65da..fe6610) ghidra lff1b8 C: LF:fe5750 fecbe6 J: T: 
+fe6610                          342 sh   0 [fe6610..fe6766) ghidra lff1bc C:fe3db4 fe3e08 LF:fe387c fe4b1a fe6936 fe87d2 fecbc6 fecbda fecc7e J: T: 
+fe6766                          180 sh   0 [fe6766..fe681a) ghidra lff1c0 C: LF:fe3890 fe389c fe6936 J: T: 
+fe681a                           90 sh   0 [fe681a..fe6874) ghidra lff7e8 C: LF: J: T: 
+fe6874                           32 sh   0 [fe6874..fe6894) ghidra lff728 C: LF:fe40b2 fe40ec fe41bc J: T: 
+fe6894                           16 sh   0 [fe6894..fe68a4) ghidra lff1cc C: LF:fe6874 J: T: 
+fe68a4                           64 sh   0 [fe68a4..fe68e4) ghidra lff1d0 C: LF:fe681a fe6874 J: T: 
+fe68e4                           44 sh   0 [fe68e4..fe6910) ghidra lff1d4 C: LF:fe681a fe6874 J: T: 
+fe6910                           38 sh   0 [fe6910..fe6936) ghidra lff1d8 C: LF:fe65c4 J: T: 
+fe6936                           38 sh   0 [fe6936..fe695c) ghidra lff1dc C:fe3e08 LF:fe6874 J: T: 
+fe695c                           58 sh   0 [fe695c..fe6998) ghidra lff7f4 C: LF:feccd6 J: T: 
+fe6998                          710 sh   0 [fe6998..fe6c5e) ghidra lff09c/f1e0 C:fe3e08 LF:fe40b2 fe40ec fe41bc fe427a fe4bc6 fe4cd6 fe50ca fe5292 fe681a fe6910 fe695c J: T: 
+fe6c5e                           58 sh   0 [fe6c5e..fe6c98) ghidra lff1e4 C: LF: J: T: 
+fe6c98                          234 sh   0 [fe6c98..fe6d84) ghidra lff80c C: LF:fece4e J: T: 
+fe6d84                          116 sh   0 [fe6d84..fe6df8) ghidra lff814 C: LF:fe6c98 J: T: 
+fe6df8                          522 sh   0 [fe6df8..fe7002) ghidra lff818 C: LF:fea1ba fea55e fecc7e feccbe fece4e J: T: 
+fe7002                          396 sh   0 [fe7002..fe718e) ghidra lff220 C: LF:fda7f8 fda846 fe4a98 fe6d84 fe6df8 fe74a4 fe8966 fe8996 fe92ae fea028 fea69c feaa86 feca68 J: T: 
+fe718e                          134 sh   0 [fe718e..fe7214) ghidra lff83c C: LF:fe49ba fe501c fe5030 feca68 J: T: 
+fe7214                          102 sh   0 [fe7214..fe727a) ghidra lff834 C: LF: J: T: 
+fe727a                           30 sh   0 [fe727a..fe7298) ghidra lff844 C: LF:fe7214 J: T: 
+fe7298                          218 sh  44 [fe7298..fe7782) ghidra lff22c C: LF:fe7214 fe764c fea38e J: T: 
+fe7346                          350 sh   0 [fe7346..fe74a4) ghidra lff230 C: LF:fe68a4 fe84ba fea38e fea4b6 fed382 J: T: 
+fe74a4                          328 sh   0 [fe74a4..fe75ec) ghidra lff218 C: LF:fda7f8 fe3a0c fe50f8 fe6998 fe718e fe727a fe7298 fe7346 fe9678 fea0a8 J: T: 
+fe75ec                           96 sh   0 [fe75ec..fe764c) ghidra lff21c C: LF:fda7f8 fe8340 fe837a feb6c8 fec026 J: T: 
+fe764c                           64 sh   0 [fe764c..fe768c) ghidra lff1a8 C: LF:fe7002 fea6e6 fed070 J: T: 
+fe768c                          134 sh   0 [fe768c..fe7712) ghidra lff60c C: LF:fe764c J: T: 
+fe7712                          112 sh  44 [fe7712..fe7782) ghidra lff224 C: LF:fe764c J: T: 
+fe7782                           44 sh   0 [fe7782..fe77ae) ghidra lff8c0 C: LF:fe92ae feaa86 J: T: 
+fe77ae                           64 sh   0 [fe77ae..fe77ee) ghidra lff85c C: LF:fe937e J: T: 
+fe77ee                           56 sh   0 [fe77ee..fe7826) ghidra lff87c C: LF:fe77ae feceb8 J: T: 
+fe7826                          472 sh   0 [fe7826..fe79fe) ghidra lff874 C: LF:fe3a1c fe3a46 fe3bf6 fe3c06 fe8a38 fecbe6 fecf02 fed12e J: T: 
+fe79fe                           70 sh   0 [fe79fe..fe7a44) ghidra lff864 C: LF: J: T: 
+fe7a44                          300 sh   0 [fe7a44..fe7b70) ghidra lff86c C: LF:fecb6e fecbe6 fece42 fece4e fecf24 fecf84 J: T: 
+fe7b70                           34 sh   0 [fe7b70..fe7b92) ghidra lff868 C: LF:fea38e J: T: 
+fe7b92                          360 sh   0 [fe7b92..fe7cfa) ghidra lff888 C: LF:fda7f8 fda846 fdaa48 fe79fe fe7a44 fe7b70 fea028 fea4e8 J: T: 
+fe7cfa                          150 sh   0 [fe7cfa..fe7d90) ghidra lff880 C: LF:fe7826 fe7a44 fea028 fecbe6 feceb8 feceda J: T: 
+fe7d90                         1350 sh   0 [fe7d90..fe82d6) ghidra lff260 C: LF:fda7f8 fe3bba fe3c26 fe718e fe74a4 fe75ec fe77ae fe77ee fe7b70 fe7b92 fe7cfa fe86fa fe8a54 fea028 fea38e fea584 fecb6e fecbe6 fece9c feceb8 feceda fecf24 fecf58 fecf84 fecfd6 fed03a J: T: 
+fe82d6                           16 sh   0 [fe82d6..fe82e6) ghidra C: LF: J: T: 
+fe82e6                           56 sh   0 [fe82e6..fe831e) ghidra C:fe82d6 LF:fe8472 J: T: 
+fe831e                           34 sh   0 [fe831e..fe8340) ghidra C:fe82e6 LF: J: T: 
+fe8340                           58 sh   0 [fe8340..fe837a) ghidra lff534 C:fe831e fe83be LF:fe8402 fe8a72 fe8a8e J: T: 
+fe837a                           68 sh   0 [fe837a..fe83be) ghidra lff538 C:fe831e fe83be fe8402 LF:fe8a72 fe8a8e J: T: 
+fe83be                           68 sh   0 [fe83be..fe8402) ghidra lff088 C: LF:fdada4 fdadce J: T: 
+fe8402                          112 sh   0 [fe8402..fe8472) ghidra lff07c/f23c C:fe8472 LF:fe83be fe8a72 fe8a8e J: T: 
+fe8472                           72 sh   0 [fe8472..fe84ba) ghidra lff078 C: LF:fe85b0 J: T: 
+fe84ba                           78 sh   0 [fe84ba..fe8508) ghidra lff240 C:fe8508 LF:fda7f8 fea38e fea4e8 J: T: 
+fe8508                           42 sh   0 [fe8508..fe8532) ghidra lff0b0 C: LF:fe6998 J: T: 
+fe8532                           50 sh   0 [fe8532..fe8564) ghidra C: LF:fdada4 J: T: 
+fe8564                           18 sh   0 [fe8564..fe8576) ghidra C:fe8532 LF:fe8a72 J:fe8a8e T: 
+fe8576                           58 sh   0 [fe8576..fe85b0) ghidra lff0c4/f0e0 C:fe8564 LF:fe8508 fecd0c J: T: 
+fe85b0                           22 sh   0 [fe85b0..fe85c6) ghidra lff08c/f0d0 C: LF:fda7f8 fda8e6 J: T: 
+fe85c6                           24 sh   0 [fe85c6..fe85de) ghidra lff234 C:fe85de LF: J: T: 
+fe85de                           98 sh   0 [fe85de..fe8640) ghidra lff790 C:fe85b0 LF:fe8576 fe86dc feca68 J: T: 
+fe8640                          130 sh   0 [fe8640..fe86c2) ghidra lff0f0/f238 C: LF:fe8576 fe85b0 fe86dc fe8a54 feca68 fecde4 J: T: 
+fe86c2                           26 sh   0 [fe86c2..fe86dc) ghidra C: LF: J: T: 
+fe86dc                           30 sh   0 [fe86dc..fe86fa) ghidra lff0c0/f0d4 C:fe86c2 LF:fe8a54 J: T: 
+fe86fa                          110 sh   0 [fe86fa..fe8768) ghidra lff244 C: LF:fe8640 fea4e8 fea538 fecb6e J: T: 
+fe8768                           24 sh   0 [fe8768..fe8780) ghidra lff254 C: LF: J: T: 
+fe8790                           32 sh   0 [fe8790..fe87b0) ghidra lff99c C: LF:fda992 fe3bba J: T: 
+fe87b0                           12 sh   0 [fe87b0..fe87bc) ghidra lff8c8 C: LF:fe3c26 J: T: 
+fe87bc                           22 sh   0 [fe87bc..fe87d2) ghidra lffa30 C: LF: J: T: 
+fe87d2                           30 sh   0 [fe87d2..fe87f0) ghidra lff050/f734 C: LF: J:fecb5a T: 
+fe87f0                           24 sh   0 [fe87f0..fe8808) ghidra lff000/f058/f060/f074/f7b8 C:fe87d2 LF: J: T: 
+fe8808                           32 sh   0 [fe8808..fe8828) ghidra lff8a8 C:fe883e fe8876 fe8bb6 LF:fdaab0 J: T: 
+fe8828                           58 sh  28 [fe8828..fe8862) ghidra lff998 C:fe886a fe89c6 LF: J:fe89f8 T: 
+fe883e                           28 sh  28 [fe883e..fe885a) ghidra C:fe89c6 LF: J: T: 
+fe8862                            4 sh   0 [fe8862..fe8866) ghidra lff658 C: LF: J:fe886a T: 
+fe8866                           16 sh  12 [fe8866..fe8876) ghidra lff8d8 C: LF: J:fe8bb6 T: 
+fe886a                           12 sh  12 [fe886a..fe8876) ghidra C: LF: J:fe8bb6 T: 
+fe8876                          104 sh   0 [fe8876..fe88de) ghidra C:fe8aae LF: J: T: 
+fe88de                            6 sh   0 [fe88de..fe88e4) ghidra lff8d4 C: LF: J:fe8bb6 T: 
+fe88e4                           20 sh   0 [fe88e4..fe88f8) ghidra lff9a0 C:fe87f0 LF: J: T: 
+fe88f8                          110 sh   0 [fe88f8..fe8966) ghidra C:fe8a72 fe8b60 LF:fda992 J:fe8a8e T: 
+fe8966                           48 sh   0 [fe8966..fe8996) ghidra lff81c C:fe88f8 LF: J: T: 
+fe8996                           48 sh   0 [fe8996..fe89c6) ghidra lff824 C:fe88f8 LF: J: T: 
+fe89c6                           50 sh   0 [fe89c6..fe89f8) ghidra C:fe8bb6 LF: J: T: 
+fe89f8                           32 sh   0 [fe89f8..fe8a18) ghidra C:fe8bb6 LF: J:fe8bb6 T: 
+fe8a18                           32 sh   0 [fe8a18..fe8a38) ghidra lff8b4 C:fe8bb6 LF: J: T: 
+fe8a38                           28 sh   0 [fe8a38..fe8a54) ghidra lff250 C:fe8a72 fe8bba LF: J:fe8a8e T: 
+fe8a54                           22 sh   0 [fe8a54..fe8a6a) ghidra lff0d8/f0e8/f878 C: LF: J: T: 
+fe8a6a                            8 sh   0 [fe8a6a..fe8a72) ghidra lff908 C: LF: J: T: 
+fe8a72                           28 sh   0 [fe8a72..fe8a8e) ghidra lff01c/f03c/f0a8/f248/f9a4 C:fe8bb6 LF: J: T: 
+fe8a8e                           32 sh   0 [fe8a8e..fe8aae) ghidra lff028/f034/f048 C:fe87f0 LF: J: T: 
+fe8aae                           76 sh   0 [fe8aae..fe8afa) ghidra C:fe8bba LF: J: T: 
+fe8afa                           36 sh  16 [fe8afa..fe8bdc) ghidra lff030/f070 C:fe8bae LF:fe87d2 J: T: 
+fe8b0e                           20 sh   0 [fe8b0e..fe8b22) ghidra lff02c C:fe8bae LF: J:fe8bba T: 
+fe8b22                           46 sh   0 [fe8b22..fe8b50) ghidra lff054/f06c C:fe8bba LF: J: T: 
+fe8b50                           16 sh   0 [fe8b50..fe8b60) ghidra lff064 C:fe8bae LF: J:fe8bba T: 
+fe8b60                           18 sh   0 [fe8b60..fe8b72) ghidra lff044 C:fe8ba2 fe8bae LF: J:fe8bba T: 
+fe8b72                           22 sh   0 [fe8b72..fe8b88) ghidra lff040 C:fe8ba2 fe8bae LF: J:fe8bba T: 
+fe8b88                           10 sh   0 [fe8b88..fe8b92) ghidra lff04c C:fe8ba2 LF: J:fe8bb6 T: 
+fe8b92                           16 sh   0 [fe8b92..fe8ba2) ghidra lff05c C: LF: J:fe8bba T: 
+fe8ba2                           12 sh   0 [fe8ba2..fe8bae) ghidra C: LF: J: T: 
+fe8bae                            8 sh   0 [fe8bae..fe8bb6) ghidra C: LF: J: T: 
+fe8bb6                           22 sh  18 [fe8bb6..fe8bdc) ghidra C: LF:fe87d2 J: T: 
+fe8bba                           34 sh  18 [fe8bba..fe8bdc) ghidra C: LF:fe87d2 J: T: 
+fe8bf4                           32 sh   0 [fe8bf4..fe8c14) ghidra lff904 C: LF:fea4e8 J: T: 
+fe8c14                          102 sh   0 [fe8c14..fe8c7a) ghidra lff1ec C: LF:fda7f8 fea38e J: T: 
+fe8c7a                           60 sh   0 [fe8c7a..fe8cb6) ghidra lff90c C: LF:fe8c14 J: T: 
+fe8cb6                           62 sh   0 [fe8cb6..fe8cf4) ghidra lff900 C: LF:fda7f8 fe8966 fe8996 fea4e8 J: T: 
+fe8cf4                          122 sh   0 [fe8cf4..fe8d6e) ghidra lff910 C: LF:fe8c14 fe8cb6 fea028 J: T: 
+fe8d6e                          700 sh   0 [fe8d6e..fe902a) ghidra lff79c C: LF:fe4a98 fe6998 fe8a6a fe8bf4 fe8c14 fe8c7a fe8cb6 fe8cf4 fea0a8 J: T: 
+fe902a                          378 sh   0 [fe902a..fe91a4) ghidra lff1e8 C: LF:fda7f8 fda8d2 fe52e2 fea028 fea1ba fea4e8 feccca J: T: 
+fe91a4                           62 sh   0 [fe91a4..fe91e2) ghidra lff1c4 C: LF:febdbe J: T: 
+fe91e2                          122 sh   0 [fe91e2..fe9260) ghidra lff1f0 C: LF:fe5856 fecbe6 J: T: 
+fe9260                           78 sh   0 [fe9260..fe92ae) ghidra lff928 C: LF:fecc7e J: T: 
+fe92ae                          164 sh   0 [fe92ae..fe9352) ghidra lff228 C: LF:feccbe J: T: 
+fe9352                           44 sh   0 [fe9352..fe937e) ghidra lff940 C: LF: J: T: 
+fe937e                           92 sh   0 [fe937e..fe93da) ghidra lff858 C: LF:fece8c J: T: 
+fe93da                           66 sh   0 [fe93da..fe941c) ghidra lff924 C: LF: J: T: 
+fe941c                          110 sh   0 [fe941c..fe948a) ghidra lff91c C: LF:fda5c2 fea4e8 J: T: 
+fe948a                          140 sh   0 [fe948a..fe9516) ghidra lff934 C: LF:fda7f8 fda846 fda8d2 fda8e6 fe941c fea028 J: T: 
+fe9516                           64 sh   0 [fe9516..fe9556) ghidra lff920 C: LF: J: T: 
+fe9556                          154 sh   0 [fe9556..fe95f2) ghidra lff93c C: LF:fe9516 fea6e6 fece74 J: T: 
+fe95f2                           56 sh   0 [fe95f2..fe962a) ghidra lff930 C: LF:fe93da fece8c J: T: 
+fe962a                           78 sh   0 [fe962a..fe9678) ghidra lff938 C: LF:feceb8 J: T: 
+fe9678                         1942 sh1130 [fe9678..fea028) ghidra lff210 C: LF:fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe9260 fe9352 fe937e fe93da fe948a fe9556 fe95f2 fe962a fe99a4 fe9a46 fecbe6 fecbfa fecc7e fece42 fece4e fece5e fece8c J: T: 
+fe99a4                          162 sh   0 [fe99a4..fe9a46) ghidra lff13c/f92c C: LF:fece8c J: T: 
+fe9a46                           66 sh   0 [fe9a46..fe9a88) ghidra lff148 C: LF:fda846 fddec6 feccca J: T: 
+fe9a88                         1440 sh1130 [fe9a88..fea028) ghidra,ptr lff16c C: LF:fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda864 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe99a4 fe9a46 fecbe6 fecbfa fecc7e feccca fed19e J: T: 
+fe9ff0                           56 sh  52 [fe9ff0..fea028) ghidra C: LF:fdac28 J: T: 
+fea01c                           12 sh   8 [fea01c..fea028) ghidra C: LF: J: T: 
+fea028                          128 sh   0 [fea028..fea0a8) ghidra lff200 C: LF:fe8a72 fe8a8e fea584 fed27c fed382 J: T: 
+fea0a8                          274 sh   0 [fea0a8..fea1ba) ghidra lff204 C: LF:fea4e8 fea538 fea5dc feccbe feccd6 fed382 J: T: 
+fea1ba                          100 sh   0 [fea1ba..fea21e) ghidra lff1f4 C: LF: J: T: 
+fea21e                          160 sh   0 [fea21e..fea2be) ghidra lff168/f1f8 C: LF:fea5dc fed382 J: T: 
+fea2be                          208 sh   0 [fea2be..fea38e) ghidra lff20c C: LF:fea21e fed382 J: T: 
+fea38e                          296 sh   0 [fea38e..fea4b6) ghidra lff098/f214 C: LF:fdac28 fe8a72 fe8a8e fe9a46 fe9a88 fea584 fed19e J: T: 
+fea4b6                           50 sh   0 [fea4b6..fea4e8) ghidra lff838 C: LF: J: T: 
+fea4e8                           80 sh   0 [fea4e8..fea538) ghidra lff094/f870 C: LF:fea584 J: T: 
+fea538                           38 sh   0 [fea538..fea55e) ghidra lff0ec C: LF:fecc40 J: T: 
+fea55e                           38 sh   0 [fea55e..fea584) ghidra lff810 C: LF:fecc40 J: T: 
+fea584                           88 sh   0 [fea584..fea5dc) ghidra lff154/f208 C: LF:fed382 J: T: 
+fea5dc                           68 sh   0 [fea5dc..fea622) ghidra lff164 C: LF: J: T: 
+fea622                          122 sh   0 [fea622..fea69c) ghidra lff960 C: LF: J: T: 
+fea69c                           74 sh   0 [fea69c..fea6e6) ghidra lff294 C: LF:fea622 J: T: 
+fea6e6                           48 sh   0 [fea6e6..fea716) ghidra lff854 C: LF:feaa86 fecbe6 J: T: 
+fea716                           44 sh   0 [fea716..fea742) ghidra lff968 C: LF: J: T: 
+fea742                          290 sh   0 [fea742..fea86a) ghidra lff964 C: LF:fea716 fea742 J: T: 
+fea86a                           82 sh   0 [fea86a..fea8bc) ghidra lff980 C: LF:fea716 feaa0a J: T: 
+fea8bc                           92 sh   0 [fea8bc..fea918) ghidra lff98c C: LF:fea69c fea742 feaa0a J: T: 
+fea918                          188 sh   0 [fea918..fea9d4) ghidra lff984 C: LF:fea742 fea9f8 fecc6c J: T: 
+fea9d4                           36 sh   0 [fea9d4..fea9f8) ghidra lff988 C: LF:fea742 feaa0a J: T: 
+fea9f8                           18 sh   0 [fea9f8..feaa0a) ghidra lff970 C: LF:fea742 feaa0a J: T: 
+feaa0a                           44 sh   0 [feaa0a..feaa38) ghidra lff96c C: LF: J: T: 
+feaa38                           32 sh   0 [feaa38..feaa58) ghidra lff978 C: LF: J: T: 
+feaa58                           46 sh   0 [feaa58..feaa86) ghidra lff28c C: LF:fe3c26 J: T: 
+feaa86                           44 sh   0 [feaa86..feaab2) ghidra lff24c C: LF:fea742 feaa38 J: T: 
+feaab2                           46 sh   0 [feaab2..feaae2) ghidra lff290 C: LF:fea742 feaa38 J: T: 
+feaae2                          194 sh   0 [feaae2..feaba4) ghidra lff990 C: LF:fe3a52 fe3a78 fe3a9a fe3bba fe3c0a feaba4 feafbe fecbe6 J: T: 
+feaba4                          170 sh   0 [feaba4..feac4e) ghidra lff95c C: LF:fea86a fea918 fea9d4 J: T: 
+feac4e                           14 sh   0 [feac4e..feac5c) ghidra lff8b8 C: LF:fea8bc feaa38 J: T: 
+feac5c                           36 sh   0 [feac5c..feac80) ghidra lff288 C: LF:feaae2 feac4e J: T: 
+feac80                           20 sh   0 [feac80..feac94) ghidra lff258 C: LF:fecbe6 J: T: 
+feac94                           20 sh   0 [feac94..feaca8) ghidra lff25c C: LF:fecbe6 J: T: 
+feaca8                           44 sh   0 [feaca8..feacd4) ghidra lff298 C: LF:fecc7e J: T: 
+feacd4                           82 sh   0 [feacd4..fead26) ghidra lff29c C: LF:fecc7e J: T: 
+fead26                           26 sh   0 [fead26..fead40) ghidra lff2a0 C: LF:fecc7e J: T: 
+fead40                           26 sh   0 [fead40..fead5a) ghidra lff2a4 C: LF:fecc7e J: T: 
+fead5a                           40 sh   0 [fead5a..fead82) ghidra lff8b0 C: LF:fda7f8 fe3890 fe389c fe3c84 fe8790 fe8828 fe88e4 fe8a38 J: T: 
+fead82                           30 sh   0 [fead82..feada0) ghidra lff9b0 C: LF:fe3890 fe389c fe3ca4 fe87b0 fe8828 fe8a38 fe8a72 J: T: 
+feada0                           60 sh   0 [feada0..feaddc) ghidra lff720 C: LF:fda7f8 fea028 J: T: 
+feaddc                           40 sh   0 [feaddc..feae04) ptr C: LF:feada0 J: T: 
+feae04                           50 sh   0 [feae04..feae36) ghidra lff9a8 C: LF:fece8c J: T: 
+feae36                          232 sh   0 [feae36..feaf1e) ghidra lff2ac C: LF:fecbe6 fecc7e fece9c J: T: 
+feaf1e                          160 sh   0 [feaf1e..feafbe) ghidra lff9ac C: LF:fea6e6 feae36 fecbe6 J: T: 
+feafbe                          296 sh   0 [feafbe..feb0e6) ghidra lff2a8 C: LF:fe3a1c fe3c06 feae04 feaf1e fecbe6 feceb8 feceda J: T: icall@16691410
+feb0e6                          534 sh   0 [feb0e6..feb2fc) ghidra lff8c4 C: LF:fe272e fe3d2e fe5856 fe7712 fe88e4 fead5a fead82 feada0 feae04 feafbe feb2fc fec424 fece8c fed5c2 fee488 fee80a fee870 J: T: 
+feb2fc                          196 sh   0 [feb2fc..feb3c0) ghidra lff9c4 C: LF:feada0 feceb8 feceda fed61e fed624 fed912 fedde4 J: T: 
+feb3c0                           72 sh   0 [feb3c0..feb408) ghidra lff9f8 C: LF: J: T: 
+feb408                          114 sh   0 [feb408..feb47a) ghidra lff9e0 C: LF: J: T: 
+feb47a                           68 sh   0 [feb47a..feb4be) ghidra lffa20 C: LF: J: T: 
+feb4be                          120 sh   0 [feb4be..feb53e) ghidra lff9dc C: LF: J: T: 
+feb53e                           62 sh   0 [feb53e..feb57c) ghidra lff788 C: LF:feb4be feccca J: T: 
+feb57c                           24 sh   0 [feb57c..feb594) ghidra lffa0c C: LF:feb4be feccca J: T: 
+feb594                          100 sh   0 [feb594..feb5f8) ghidra lff9e4 C: LF:feb408 feccca J: T: 
+feb5f8                           78 sh   0 [feb5f8..feb646) ghidra lff9f0 C: LF:feb594 J: T: 
+feb646                          130 sh   0 [feb646..feb6c8) ghidra lff9e8 C: LF:fda7f8 fea028 feccca fecd22 J: T: 
+feb6c8                           74 sh   0 [feb6c8..feb712) ghidra lff84c C: LF:feb646 J: T: 
+feb712                           86 sh   0 [feb712..feb768) ghidra lff9ec C: LF:fda846 feb53e feb646 feba9c J: T: 
+feb768                           98 sh   0 [feb768..feb7ca) ghidra lffa34 C: LF:feb712 J: T: 
+feb7ca                          132 sh   0 [feb7ca..feb84e) ghidra lff9f4 C: LF:fecb6e feccbe fece4e J: T: 
+feb84e                          518 sh   0 [feb84e..feba54) ghidra lff9fc C: LF:feb408 feb594 feb5f8 feb7ca J: T: 
+feba54                           72 sh   0 [feba54..feba9c) ghidra lff7a8 C: LF:fe49ba feb53e J: T: 
+feba9c                          802 sh   0 [feba9c..febdbe) ghidra lff784 C: LF:feb3c0 feb53e feb594 feb84e feccca J: T: 
+febdbe                          108 sh   0 [febdbe..febe2a) ghidra lff780 C: LF:fe65c4 J: T: 
+febe2a                          164 sh   0 [febe2a..febece) ghidra lffa08 C: LF:feb53e febdbe fec3ea feccca fecd22 J: T: 
+febece                           50 sh   0 [febece..febf00) ghidra lffa04 C: LF:fecd22 J: T: 
+febf00                          294 sh   0 [febf00..fec026) ghidra lffa14 C: LF:fda7f8 fdaa48 feb53e feb712 febece feccca fecd8c J: T: 
+fec026                          164 sh   0 [fec026..fec0ca) ghidra lff850 C: LF:fda7f8 fe8a72 fe8a8e feb712 febe2a fecd22 J: T: 
+fec0ca                          720 sh   0 [fec0ca..fec39a) ghidra lffa24 C: LF:feb4be feb53e feb57c feb6c8 feb712 feba54 febf00 fec026 fecaac feccca fecd0c fecd8c fece4e fed27c J: T: 
+fec39a                           80 sh   0 [fec39a..fec3ea) ghidra lffa2c C: LF:feccca fecd22 J: T: 
+fec3ea                           58 sh   0 [fec3ea..fec424) ghidra lffa00 C: LF:feccca fecd8c J: T: 
+fec424                          478 sh   0 [fec424..fec602) ghidra lff8bc C: LF:fe5a62 fe5aac feb3c0 feb47a feb57c fece2e fece5e J: T: 
+fec602                          116 sh   0 [fec602..fec676) ghidra lff264 C: LF:feb47a feb57c J: T: 
+fec676                          100 sh   0 [fec676..fec6da) ghidra lffa28 C: LF:fea21e feb408 feb57c fec0ca feca68 feccca J: T: 
+fec6da                           22 sh   0 [fec6da..fec6f0) ghidra lff268 C: LF:fec676 J: T: 
+fec6f0                           22 sh   0 [fec6f0..fec706) ghidra lff26c C: LF:fec676 J: T: 
+fec706                           28 sh   0 [fec706..fec722) ghidra lff270 C: LF: J: T: 
+fec722                          278 sh   0 [fec722..fec83a) ghidra lff274 C: LF:fe87bc feb53e fec39a J: T: 
+fec83a                          526 sh   0 [fec83a..feca4a) ghidra lff278 C: LF:fea2be feb53e feb6c8 feb712 feb768 fec026 fec0ca feca68 fece42 fece4e J: T: 
+feca4a                           30 sh   0 [feca4a..feca68) ghidra lff27c C: LF:fea0a8 J: T: 
+feca68                           68 sh   0 [feca68..fecaac) ghidra lff0bc/f0c8/f0cc/f0e4/f280 C: LF:fe4e5a fe4eb8 fe6874 fe718e J: T: 
+fecaac                          174 sh   0 [fecaac..fecb5a) ghidra lff284 C: LF: J: T: 
+fecb5a                           20 sh   0 [fecb5a..fecb6e) ghidra lff038 C: LF: J: T:#2=1 
+fecb6e                           28 sh   0 [fecb6e..fecb8a) ghidra lff0f4 C: LF: J: T: 
+fecbc6                           10 sh   0 [fecbc6..fecbd0) ghidra lff730 C: LF: J: T: 
+fecbda                           12 sh   0 [fecbda..fecbe6) ghidra lff738 C: LF: J: T: 
+fecbe6                           20 sh   0 [fecbe6..fecbfa) ghidra lff138 C: LF: J: T: 
+fecbfa                           24 sh   0 [fecbfa..fecc12) ghidra lff068 C: LF: J: T: 
+fecc12                           22 sh   0 [fecc12..fecc28) ghidra C: LF: J: T: 
+fecc28                           24 sh   0 [fecc28..fecc40) ghidra C: LF: J: T: 
+fecc40                           22 sh   0 [fecc40..fecc56) ghidra lff170 C: LF: J: T: 
+fecc56                           22 sh   0 [fecc56..fecc6c) ghidra C: LF: J: T: 
+fecc6c                           18 sh   0 [fecc6c..fecc7e) ghidra lff974 C: LF: J: T: 
+fecc7e                           40 sh   0 [fecc7e..fecca6) ghidra lff128 C: LF: J: T: 
+fecca6                           24 sh   0 [fecca6..feccbe) ghidra lff78c C: LF: J: T: 
+feccbe                           12 sh   0 [feccbe..feccca) ghidra lff15c C: LF: J: T: 
+feccca                           12 sh   0 [feccca..feccd6) ghidra lff110 C: LF: J: T: 
+feccd6                           60 sh   6 [feccd6..fed070) ghidra lff160 C: LF: J:fed06a T: 
+fecd0c                           28 sh   6 [fecd0c..fed070) ghidra lff0ac/f5bc C: LF: J:fed06a T: 
+fecd22                          112 sh   6 [fecd22..fed070) ghidra lff310 C: LF: J:fed06a T: 
+fecd8c                           88 sh   0 [fecd8c..fecde4) ghidra lff318 C: LF: J: T: 
+fecde4                           74 sh   0 [fecde4..fece2e) ghidra lff0dc/f2f4 C: LF: J: T: 
+fece2e                           20 sh   0 [fece2e..fece42) ghidra lff35c C: LF: J: T: 
+fece42                           18 sh   6 [fece42..fece5e) ghidra lff36c C: LF: J: T: 
+fece4e                           16 sh   6 [fece4e..fece5e) ghidra lff360 C: LF: J: T: 
+fece5e                           22 sh   0 [fece5e..fece74) ghidra lff394 C: LF: J: T: 
+fece74                           24 sh   0 [fece74..fece8c) ghidra lff188/f19c C: LF: J: T: 
+fece8c                           18 sh   2 [fece8c..fed070) ghidra lff10c C: LF: J: T: 
+fece9c                           34 sh   6 [fece9c..fed070) ghidra lff428 C: LF: J:fed06a T: 
+feceb8                           16 sh   4 [feceb8..feceee) ghidra lff34c C: LF: J: T: 
+fecec4                           26 sh   4 [fecec4..feceee) ghidra lff94c C: LF: J: T: 
+feceda                           20 sh   4 [feceda..feceee) ghidra lff400 C: LF: J: T: 
+feceee                           24 sh   4 [feceea..fecf02) ghidra lff4a0 C: LF: J: T: 
+fecf02                           34 sh   0 [fecf02..fecf24) ghidra lff49c C: LF: J: T: 
+fecf24                           56 sh   4 [fecf24..fecf84) ghidra lff404 C: LF: J: T: 
+fecf58                           44 sh   4 [fecf58..fecf84) ghidra lff42c C: LF: J: T: 
+fecf84                           46 sh   0 [fecf84..fecfb2) ghidra lff174 C:fed18e LF:fecbe6 J: T: 
+fecfb2                           36 sh   0 [fecfb2..fecfd6) ghidra lff414 C: LF:fecf84 J: T: 
+fecfd6                           24 sh   0 [fecfd6..fecfee) ghidra lff424/f884 C:fed18e LF:fecbe6 J: T: 
+fecfee                           34 sh   0 [fecfee..fed010) ghidra lff568 C:fed18e LF: J: T: 
+fed010                           42 sh   0 [fed010..fed03a) ghidra lff178/f584 C:fed18e LF: J: T: 
+fed03a                           50 sh   6 [fed03a..fed070) ghidra lff41c C:fed18e LF:fed010 J:fed06a T: 
+fed06a                            6 sh   2 [fed06a..fed070) ghidra C: LF: J: T: 
+fed070                          190 sh   0 [fed070..fed12e) ghidra lff450 C:fe3db4 fe3e08 LF: J: T: 
+fed12e                           96 sh   0 [fed12e..fed18e) ghidra lff3e0 C: LF: J: T: 
+fed18e                           16 sh   0 [fed18e..fed19e) ghidra C: LF: J: T: 
+fed19e                          222 sh   0 [fed19e..fed27c) ghidra lff11c C: LF: J: T: 
+fed27c                          262 sh   0 [fed27c..fed382) ghidra lff158/fa10 C: LF: J: T: icall@16700176
+fed382                           60 sh   0 [fed382..fed3be) ghidra lff150 C: LF: J: T: 
+fed3be                           38 sh   0 [fed3be..fed3e4) ghidra C:fe4f40 LF: J: T: 
+fed3e4                           46 sh   0 [fed3e4..fed412) ghidra C:fe4b1a LF: J: T: 
+fed412                           18 sh   0 [fed412..fed424) ghidra lff8f8 C: LF: J: T: icall@16700448
+fed426                           82 sh   0 [fed426..fed478) ghidra C:fe4b1a fe4fb0 LF: J: T: icall@16700532
+fed478                           54 sh   0 [fed478..fed4b0) ghidra lff384 C: LF: J: T: 
+fed4be                          100 sh   0 [fed4be..fed522) ghidra lffa44 C: LF:fecc7e fece5e J: T: 
+fed522                           18 sh   0 [fed522..fed534) ghidra lff4ac C: LF:fed478 fed534 J: T: 
+fed534                           30 sh   0 [fed534..fed554) ghidra lff4b4 C: LF:fed4be J: T: 
+fed554                          110 sh   0 [fed554..fed5c2) ghidra lff774 C: LF:fe3d2e fe44d4 fe5886 fed12e fed478 fed4be J: T: 
+fed5c2                           92 sh   0 [fed5c2..fed61e) ghidra lff9b4 C: LF:fe3c26 fe3d2e fece9c fed478 fed4be J: T: 
+fed61e                           16 sh  10 [fed61e..fed632) ghidra lff9cc C:fed632 LF: J: T: 
+fed624                           14 sh  10 [fed624..fed632) ghidra lff9d0 C:fed632 LF: J: T: 
+fed632                          164 sh   0 [fed632..fed6d6) ghidra C:fed6d6 fed736 fed832 LF:fe3a52 fe3bba fe3bfa fe3c0a fe3c26 fece74 fee488 J: T: 
+fed6d6                           96 sh   0 [fed6d6..fed736) ghidra C: LF:fe3a78 J: T: 
+fed736                           90 sh   0 [fed736..fed790) ghidra C:fed790 fed7c0 fed7cc LF:fd9fc6 fe3bfa J: T: 
+fed790                           48 sh   0 [fed790..fed7c0) ghidra C:fed81a LF:fd9fc6 fe3bfa fece74 J: T: 
+fed7c0                           12 sh   0 [fed7c0..fed7cc) ghidra C:fed7cc LF: J: T: 
+fed7cc                           78 sh   0 [fed7cc..fed81a) ghidra C:fed6d6 fed81a LF:fe3bfa fee478 J: T: 
+fed81a                           24 sh   0 [fed81a..fed832) ghidra C: LF:fe3bfa J: T: 
+fed832                           86 sh   0 [fed832..fed888) ghidra C: LF:fd9fc6 fe1bdc fe764c J: T: 
+fed888                          138 sh   0 [fed888..fed912) ghidra lff6f4 C: LF:fddde6 fde354 fe1bdc fe92ae fee5c8 J: T: 
+fed912                         1232 sh   0 [fed912..fedde4) ghidra lff9d4 C: LF:fde33c fe1bdc fe3b6a fe3bba fe3c26 fe7002 fecc7e fece4e fed070 fed888 fee166 fee236 fee364 fee3a4 fee450 fee478 fee488 J: T: 
+fedde4                          898 sh   0 [fedde4..fee166) ghidra lff9d8 C:fe3e08 LF:fde33c fe1bdc fe3bba fe3be8 fe3c26 fed888 fee166 fee236 fee294 fee364 fee478 fee488 J: T: 
+fee166                          208 sh   0 [fee166..fee236) ghidra lff6fc C: LF:fe1bdc fee236 J: T: 
+fee236                           94 sh   0 [fee236..fee294) ghidra lff6f8 C: LF:fde2e8 fe74a4 J: T: 
+fee294                          208 sh   0 [fee294..fee364) ghidra lff714 C: LF:fee236 fee364 fee488 J: T: 
+fee364                           64 sh   0 [fee364..fee3a4) ghidra lff704 C: LF:fe1bdc fe3cbe fe7002 fee450 J: T: 
+fee3a4                          172 sh   0 [fee3a4..fee450) ghidra lff70c C: LF:fee466 J: T: 
+fee450                           22 sh   0 [fee450..fee466) ghidra lff710 C: LF:feada0 J: T: 
+fee466                           18 sh   0 [fee466..fee478) ghidra lff71c C: LF: J: T: 
+fee478                           16 sh   0 [fee478..fee488) ghidra lff1a0/f708 C: LF: J: T:#13=1 
+fee488                           16 sh   0 [fee488..fee498) ghidra lff180/f700 C: LF: J: T:#14=1 
+fee498                           40 sh   0 [fee498..fee4c0) ghidra lff7b4 C:fecc7e LF: J: T:linea_0xa000=1 
+fee4c0                           30 sh   0 [fee4c0..fee4de) ghidra lff7bc C:fecc7e LF: J: T: 
+fee4de                          234 sh   0 [fee4de..fee5c8) ghidra C: LF:fe3bba fecc7e J: T: 
+fee5c8                          556 sh   0 [fee5c8..fee800) ghidra lff358 C: LF:fe0b6e feaba4 feac4e fecc40 fecc7e J: T: 
+fee800                           10 sh   0 [fee800..fee80a) ghidra C: LF: J: T: 
+fee80a                          102 sh   0 [fee80a..fee870) ghidra lff9b8 C: LF:fe3bba fece5e J: T: 
+fee870                           82 sh   0 [fee870..fee8c2) ghidra lff9c0 C: LF:fde33c fe3c26 J: T: 
+fee8c2 linef_handler             62 sh   0 [fee8c2..fee900) ghidra C: LF: J: T: ijmp@16705760
+UNCOVERED: fdad74-fdada4(48) fdd292-fdd296(4) fde0ee-fde122(52) fe0568-fe056c(4) fe05ca-fe05ce(4) fe05e0-fe05e4(4) fe395c-fe3970(20) fe3b64-fe3b6a(6) fe3bfe-fe3c02(4) fe8780-fe8790(16) fe8bdc-fe8bf4(24) fecb8a-fecbc6(60) fecbd0-fecbda(10) fed4b0-fed4be(14) fee614-fee618(4) fee62e-fee632(4) fee656-fee65a(4)
+SWITCHES: fdb102:Tfef364/18 fdb914:Tfef3ac/21 fdbd34:Tfef400/5 fe16de:Tfef61c/5 fe1d7a:Tfef68c/5 fe1f24:Tfef6a0/9 fe1f78:Tfef6c4/7 fe216c:Tfef6e0/8 fe237a:Tfef700/9 fe2520:Tfef724/19 fe3614:Tfef770/8 fe41b4:Tfef7a2/7 fe4824:Tfef7e2/17 fe64d0:Tfef834/116 fe72d8:Tfefa30/-7 fe7758:Tfefa68/17 fe81bc:Tfefab0/19 fe95c0:Tfefb10/-12 fe98e0:Tfefb70/-6 fe9c3c:Tfefba0/11 fe9de8:Tfefbcc/11 fea850:Tfefbf8/17 feb53a:Tfefcca/5 fec826:Tfefcde/14 feca2e:Tfefd16/15 fed264:Tfefd52/13
