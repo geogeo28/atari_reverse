@@ -24,9 +24,11 @@ AES's VDI contrl[] is in the capture MASK; a case reaching the VDI stages its ow
 ---- WHAT THE HEADERS DO NOT NAME, AND WHY ------------------------------------------------------------------------
 `include/aes/*.h` carries only fields a ROM instruction was found reading or writing. Left out, until a reconstructed
 routine reads them by name: PD +32/+38 (p_evbits, p_evlist: the map's reading, uncited), EVB +24 (e_return), the CDA's
-other words, WINDOW +8..+15 and +52.., TEDINFO +12..+22, ICONBLK +12..+32, BITBLK +4..+12, and RSHDR +0/+12/+14/+28..+34
-(version, strings, image data, and the counts rsrc_load reads only through the header copy's length).
+other words, WINDOW +8..+15 and +52.., TEDINFO +12..+20, ICONBLK +12..+32, BITBLK +4..+12, and RSHDR +0/+12/+14/+34
+(version, strings, image data, and the length rsrc_load reads only through its header copy).
 """
+import contextlib
+import ctypes
 import functools
 import struct
 import sys
@@ -36,6 +38,7 @@ from pathlib import Path
 from harness import BASE_IMAGE, _lib, addrs, emu, make_image
 
 import case
+import isr
 import layouts
 import routines
 import staging
@@ -45,15 +48,27 @@ from opcodes import DROP_STACK_LONG, LINE_F, PUSH_ADDRESS_SHORT, RTS
 
 # ---- the headers' constants, and the FIELDS (`test/layouts.py`, the one reader of the width tags) ------------------
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-# `aes/aes.h` is included by no C yet — nothing reconstructed reads the AES's RAM by name — so its constants and widths
-# reach the host through this parse alone; the first core that reads one includes it, and the compiler checks it then.
+# The two headers every AES core reads the machine's records through: the host reads the same constants and widths
+# by this parse, so a case's offset is the header's — the one the compiler checked the C against.
 AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h"))
 CONSTANTS = layouts.parse_constants(AES_HEADERS)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
+
+def header_constants(name):
+    """The constants of one more AES header, `include/aes/<name>` — a slice's own (`rlist.h`, `strings.h`, ...)."""
+    return layouts.parse_constants((_INCLUDE / "aes" / name,))
+
 WORD_BYTES = layouts.WORD_BYTES
 LONG_BYTES = layouts.LONG_BYTES
 STALE_WORD = vdi.STALE_WORD
+
+
+def signed(value, bits=16):
+    """The low `bits` of `value` as the signed integer Alcyon reads them as — an `int` by default, 8 a `char`, 32 a
+    `long`."""
+    value &= (1 << bits) - 1
+    return value - (1 << bits) if value >> (bits - 1) else value
 
 # A record is a constant-name prefix: AES (absolute addresses in GEMBSS), and every record's offsets.
 RECORDS = ("AES", "PD", "UDA", "CDA", "EVB", "FORK", "WIN", "OB", "TE", "IB", "BI", "UB", "GRECT", "ORECT", "RSH")
@@ -204,12 +219,12 @@ def tree_length(tree, image=BASE_IMAGE):
 def parent_of(tree, index, image=BASE_IMAGE):
     """The parent as the tree's links say: the object whose head..tail run of children holds `index`."""
     for candidate in range(tree_length(tree, image)):
-        head = vdi.signed_word(read_field(image, "OB", "HEAD", tree + candidate * OB_BYTES))
+        head = signed(read_field(image, "OB", "HEAD", tree + candidate * OB_BYTES))
         child = head
         while head != OB_NIL and child != candidate:
             if child == index:
                 return candidate
-            child = vdi.signed_word(read_field(image, "OB", "NEXT", tree + child * OB_BYTES))
+            child = signed(read_field(image, "OB", "NEXT", tree + child * OB_BYTES))
     return OB_NIL
 
 
@@ -330,7 +345,11 @@ class Result(case.Result):
 
     def answer(self):
         """The word in D0, as the signed Alcyon `int` a caller reads."""
-        return vdi.signed_word(self.info["regs"]["d0"] & 0xFFFF)
+        return signed(self.info["regs"]["d0"])
+
+    def long_answer(self):
+        """The whole of D0: the pointer or `long` a `LONG_ANSWER` routine answers."""
+        return self.info["regs"]["d0"] & 0xFFFFFFFF
 
 
 def entry_of(name, through_line_f):
@@ -350,17 +369,44 @@ def staged(name, arguments, pokes, *, through_line_f=False):
 # The one exception is the Tier 3 COMPANION (`undropped`, below).
 
 
-def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, **kwargs):
+# The bits of D0 an answer is compared at, by the core's declared `restype`: an Alcyon `int` its word, a POINTER (an
+# ORECT the rectangle lists answer, `move.l a3,d0`) or a `long` the whole register, nothing for a routine that answers
+# nothing. The two restypes by name, for every battery's `declare_alcyon`:
+WORD_ANSWER = ctypes.c_uint16
+LONG_ANSWER = ctypes.c_uint32
+RESULT_WIDTHS = {WORD_ANSWER: WORD_RESULT, LONG_ANSWER: case.FULL_D0, None: case.NO_RESULT}
+
+
+def alcyon_object_hook(routines):
+    """The ALCYON OBJECT-CALL door's binding for one case, as `run_function`'s `hook`: `{address: (68000 stub bytes,
+    effect)}` served through the register-carrying hook (`isr.REGISTERS_HOOK`), which `staged_call.h`'s
+    `call_alcyon_object` — everyobj's routine — reaches on the host."""
+    return functools.partial(isr.REGISTERS_HOOK.staged_routines, routines)
+
+
+def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, hook=None,
+                 **kwargs):
     """The Alcyon AES routine `addrs.<name>` over the frame of `arguments`, against its core called with the same
     values, the answer compared at the signature's width and `dropped_windows` — the mask word, by default — dropped where
-    the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result`."""
+    the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result`. A core over words alone (mul_div, min,
+    max) takes no image.
+
+    `hook` serves a core that calls OUT through a door the host build cannot execute — a `trap #1`, a routine its
+    caller hands in: a zero-argument callable opening the case's binding and yielding the `AddressHook` whose pass
+    wraps each candidate run, built by the door's one builder — `vdi_helpers.staged_gemdos_hook` for the recording
+    trap, `alcyon_object_hook` for a routine called through `call_alcyon_object`. A callable rather than the binding
+    itself because a registered row's companion opens it again, later."""
     signature = vdi.ALCYON[name]
     core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi.as_signed(name, arguments)
     machine_pokes = staged(name, arguments, pokes, through_line_f=through_line_f)
-    info = case.run(entry_of(name, through_line_f), {"_pokes": machine_pokes}, lambda _lib_, buf: core(buf, *arguments),
-                    width=WORD_RESULT if signature.restype is not None else case.NO_RESULT,
-                    dropped_windows=dropped_windows, **kwargs)
+    takes_image = vdi.takes_image(name)
+
+    def glue(_lib_, buf):
+        return core(buf, *arguments) if takes_image else core(*arguments)
+    with hook() if hook else contextlib.nullcontext() as bound:
+        info = case.run(entry_of(name, through_line_f), {"_pokes": machine_pokes}, bound.recording(glue) if bound else glue,
+                        width=RESULT_WIDTHS[signature.restype], dropped_windows=dropped_windows, **kwargs)
     return Result(info, machine_pokes)
 
 
@@ -380,10 +426,10 @@ def settled_mask_word(name, arguments, pokes):
 COMPANION_UNPOISONED = {"poison": False}
 
 
-def undropped(name, arguments, pokes):
+def undropped(name, arguments, pokes, hook=None):
     """A priced row's Tier 3 COMPANION: the SAME machine — the mask word staged at the value the run leaves, which the
     ROM's run then rewrites with itself — as a differential with NOTHING dropped."""
-    return run_function(name, arguments, pokes, dropped_windows=(), **COMPANION_UNPOISONED)
+    return run_function(name, arguments, pokes, dropped_windows=(), hook=hook, **COMPANION_UNPOISONED)
 
 
 # ---- (e) the registry --------------------------------------------------------------------------------------------
@@ -393,10 +439,12 @@ CASES = ROWS.cases
 UNPRICED = ROWS.unpriced
 
 
-def register(label, name, arguments, pokes, *, through_line_f=False):
+def register(label, name, arguments, pokes, *, through_line_f=False, hook=None):
     """One `VERIFIED_CASES` row of `name` over the frame of `arguments`, named `<core>, <label>`. A DIRECT row is
     priced; if the ROM's run stores the mask word, the row stages it at the value the run leaves and drops it at
-    Tier 3, with its companion. A row THROUGH LINE-F is verified and unpriced."""
+    Tier 3, with its companion (a routine calling out with its `hook`, `run_function`'s). A row THROUGH
+    LINE-F is verified and unpriced. A core with more C arguments than the harness's argument area holds (ob_sst's
+    nine) is priced like any other: `rom_bench` enters its C lower by the bytes that do not fit."""
     row_name = f"{routines.core_symbol(name)}, {label}"
     if through_line_f:
         return ROWS.register(row_name, LINE_F_CALLER_AT, staged(name, arguments, pokes, through_line_f=True),
@@ -406,7 +454,7 @@ def register(label, name, arguments, pokes, *, through_line_f=False):
         return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes))
     pokes = merge_pokes(pokes, field_pokes("AES", LINEF_MASK_WORD=settled))
     return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), dropped=LINE_F_MASK_WINDOW,
-                         undropped=functools.partial(undropped, name, arguments, pokes))
+                         undropped=functools.partial(undropped, name, arguments, pokes, hook))
 
 
 # ---- (f) what the snapshot mask is checked against ------------------------------------------------------------------

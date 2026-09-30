@@ -13,7 +13,6 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "addrs.h"
-#include "host_slot.h"
 #include "gemdos/gemdos.h"
 #include "vdi/vdi.h"
 #include "vdi/font.h"
@@ -426,43 +425,10 @@ uint32_t vdi_get_kbshift(const uint8_t *image, uint32_t entry_d0)
  * through whatever the longword holds after it — which is why it is not re-entrant, and why nothing
  * that runs under the trap may touch LINEA_RETSAV (nothing GEMDOS's `Malloc` or `Mfree` reaches does).
  *
- * THE TWO BUILDS TAKE THE TRAP TWO WAYS, `src/gemdos/console.c`'s arrangement one component along: on
- * target the trap is the machine's own, over a frame of the function word and its longword; off target
- * there is no trap to take, so the words go into a host slot and the GEMDOS dispatcher is called on
- * them directly — its handler then through the hook a case binds. The parked longword is the
- * caller's ROM return site on both. The TARGET branch is UNEXERCISED: no differential runs it
+ * The trap itself is `gemdos/gemdos.h`'s one shape, taken two ways by the two builds. The parked longword is the
+ * caller's ROM return site on both. The TARGET branch is UNEXERCISED here: no differential runs it
  * (`test_vdi_helpers_gemdos.py` says why), and the shipped build links `helpers.S` in this core's
  * place (`transcribed.h`). */
-#ifdef RECREATE_HOST_DIFFERENTIAL
-static uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
-{
-    uint8_t words_local[HOST_SLOT_VDI_GEMDOS_WORDS_BYTES];
-    uint32_t words = host_slot_claim(VDI_GEMDOS_WORDS, words_local);
-    uint32_t result;
-
-    wr16(image + words, function);
-    wr32(image + words + GEMDOS_ARGUMENT_WORD, argument);
-    result = gemdos_dispatch(image, words);
-    host_slot_release(VDI_GEMDOS_WORDS);
-    return result;
-}
-#else
-/* The trap entry restores D1-A6 from the frame it builds, so D0 is all it changes. */
-static uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
-{
-    register uint32_t result __asm__("d0");
-
-    (void)image;
-    __asm__ volatile ("move.l %1,-(%%sp)\n\t"
-                      "move.w %2,-(%%sp)\n\t"
-                      "trap #1\n\t"
-                      "addq.l #6,%%sp"
-                      : "=d"(result)
-                      : "d"(argument), "d"(function)
-                      : "memory", "cc");
-    return result;
-}
-#endif
 
 TRANSCRIBED_CORE
 uint32_t vdi_gemdos_call(uint8_t *image, uint32_t return_site, uint16_t function, uint32_t argument)

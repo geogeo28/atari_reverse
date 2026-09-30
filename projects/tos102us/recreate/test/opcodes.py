@@ -79,6 +79,12 @@ MOVE_W_STACK_D0 = 0x302F                # move.w  <d16>(sp),d0
 MOVE_W_STACK_D1 = 0x322F                # move.w  <d16>(sp),d1
 MOVE_W_IMMEDIATE_D2 = 0x343C            # move.w  #<imm>,d2
 MULU_W_IMMEDIATE_D0 = 0xC0FC            # mulu.w  #<imm>,d0
+MULS_W_IMMEDIATE_D0 = 0xC1FC            # muls.w  #<imm>,d0
+MOVEA_L_STACK_A0 = 0x206F               # movea.l <d16>(sp),a0
+MOVE_L_STACK_TO_A0_POSTINC = 0x20EF     # move.l  <d16>(sp),(a0)+
+MOVE_W_STACK_TO_A0_POSTINC = 0x30EF     # move.w  <d16>(sp),(a0)+
+MOVE_W_IMMEDIATE_D16_A0 = 0x317C        # move.w  #<imm>,<d16>(a0)
+BSET_IMMEDIATE_D16_A0 = 0x08E8          # bset    #<imm>,<d16>(a0)
 ADDA_L_D0_A0 = 0xD1C0                   # adda.l  d0,a0
 SUBQ_W_1_D1 = 0x5341                    # subq.w  #1,d1
 BTST_IMMEDIATE_STACK = 0x082F           # btst    #<imm>,<d16>(sp)
@@ -95,3 +101,5 @@ ADD_ONE_TO_BYTE_ABSOLUTE = 0x5239       # addq.b  #1,<xxx>.l
 # `cmp.w #<imm>,d0` as the ROM's assembler spelt it — the register form, not gas's CMPI — which a case reads the
 # ROM's code for; `include/m68k_encodings.h` spells the same word for the `.S` files (`test_opcodes.py` pins both).
 CMP_W_IMMEDIATE_D0 = 0xB07C
+CMP_L_IMMEDIATE_D0 = 0xB0BC             # cmp.l   #<imm>,d0, the same family
+MOVEA_L_IMMEDIATE_A0 = int.from_bytes(LOAD_ADDRESS_IMMEDIATE, "big")     # movea.l #<imm>,a0, as a word

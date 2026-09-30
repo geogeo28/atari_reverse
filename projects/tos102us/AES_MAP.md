@@ -15,6 +15,8 @@ visible-rectangle list (an ORECT via the window record's +48), not a tree; the t
 fed by 16 ROM-code immediates (6 pushes, ap_tplay's local, forker's and ap_trecd's compares — `test/aes.py`
 FORK_FUNCTION_IMMEDIATES); the 100-byte Line-F RAM copy carries ORIGINAL ROM code addresses as data.
 
+**Errata from bands 0+1 (STATUS.md wave 11 bands 0+1):** the TEDINFO text helpers are REVERSED in §2 and the inventory — `0xFECF84` is the text SET (fs_sset) and `0xFECFD6` the GET (fs_sget); `0xFED19E` is ob_sst and `0xFED27C` everyobj (read from the bodies); `0xFEE4DE` ("ROM rsrc fixup") is the resource BUNDLE COPY and its six-part table — the relocation is rom_ram `0xFEE5C8` (through do_rsfix); `0xFE3DB4`/`0xFE3E08` are Alcyon's runtime `lmul`/`ldiv`; `0xFECC6C` is strlen, not strlen+1; `0xFECBC6`/`0xFECBDA` have callers (ap_tplay/ap_trecd) — only `0xFECB8A..0xFECBC5` and `0xFECBD0` are unreached; `0xFED18E` (OB_ADDR) reads its CALLER's frame; the shared tails `0xFED066`/`0xFED06A`/`0xFED06E` are the physical end of inf_what `0xFED03A`; the resources start at `0xFD5B92` (AES) and `0xFD6F52` (desk) — COMPONENTS.md's `0xFD6F3E`/`0xFD83BF` are name strings inside the bundle `0xFD5B88`. The old `linef_dis.py` split 8-byte instructions (a trailing word printed as `.short` or a bogus `LF_CALL 0xFE64A6`) — fixed in `56e22f1`; a "call to aes_unimplemented" read before that fix may not be real.
+
 ## Five things that change the plan
 1. **GEM never enters the AES through its own ABI.** The desktop calls the AES *implementation* functions directly (Line-F), not
    `trap #2`: `0xFE65AA` has one caller (the trap handler), and the desk carries its own binding layer `0xFDDE54..0xFDE4CC` (34

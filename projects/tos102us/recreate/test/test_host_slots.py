@@ -47,10 +47,10 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
     slots = host_slots(CONSTANTS)
     assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
                           "CREATE_FREE_NAME", "CREATE_FCB", "RENAME_ENTRY", "C_ENTRY_ARGUMENTS",
-                          "REDIRECTED_BYTE", "PEXEC_LOCALS", "VDI_GEMDOS_WORDS", "VDI_VST_FONT_CALL",
+                          "REDIRECTED_BYTE", "PEXEC_LOCALS", "GEMDOS_WORDS", "VDI_VST_FONT_CALL",
                           "VDI_WIDE_CORNERS", "VDI_WIDE_OFFSET", "VDI_PERP_DIRECTION", "VDI_ARROW_TRIANGLE",
                           "VDI_MARKER_POINTS", "VDI_GTEXT_EXTENT", "VDI_JUSTIFIED_EXTENT",
-                          "VDI_OPNWK_COLOUR_CALL"}
+                          "VDI_OPNWK_COLOUR_CALL", "AES_OB_FIND_RECTS"}
     assert not misplaced(slots)
 
 

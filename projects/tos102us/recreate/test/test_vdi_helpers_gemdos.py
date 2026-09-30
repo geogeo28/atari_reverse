@@ -37,6 +37,8 @@ the transcription's cases point the `trap #1` VECTOR (RAM, `VECTOR_TRAP_GEMDOS`)
 that records the words it was trapped with and answers a D0, identically on both sides: what is priced
 and compared is the door — its park, its trap frame, its answer and its return — and not GEMDOS.
 """
+import ctypes
+
 import pytest
 
 from harness import BASE_IMAGE, addrs, emu, make_image
@@ -110,6 +112,23 @@ def test_the_staged_handler_records_the_frame_the_rom_door_traps_with():
     final, _writes, regs = emu.run(make_image(pokes), addrs.VDI_ROM_GEMDOS_CALL, {})
     assert vdi_helpers.trapped_calls(final) == [(addrs.GEMDOS_MALLOC_FN, WORKSTATION_BYTES)]
     assert regs["d0"] == vdi_helpers.TRAP_ANSWER
+
+
+# A ledger pointer outside the ledger — the attribution pass inverts it, since the ROM's stub stores it back — is one
+# the host twin must not store through: `buf` is a raw C pointer, so the store would land in host memory.
+OUTSIDE_THE_LEDGER = (vdi_helpers.TRAP_ENTRIES_AT - vdi_helpers.TRAP_ENTRY_BYTES,
+                      vdi_helpers.TRAP_LAST_ENTRY_AT + vdi_helpers.TRAP_ENTRY_BYTES,
+                      ~vdi_helpers.TRAP_ENTRIES_AT & 0xFFFF_FFFF)      # the pointer as the attribution pass inverts it
+
+
+@pytest.mark.parametrize("at", OUTSIDE_THE_LEDGER, ids=("below", "past the last entry", "inverted"))
+def test_a_clobbered_ledger_pointer_is_refused_by_name_and_stores_nothing(at):
+    image = make_image({vdi_helpers.TRAP_LEDGER_AT: at.to_bytes(vdi.LONG_BYTES, "big")})
+    before = bytes(image)
+    buf = ctypes.cast((ctypes.c_uint8 * len(image)).from_buffer(image), ctypes.POINTER(ctypes.c_uint8))
+    with pytest.raises(AssertionError, match="ledger's pointer"):
+        vdi_helpers.recording_trap_handler(addrs.GEMDOS_MALLOC_FN)(buf, vdi_helpers.BAND_AT, 0)
+    assert bytes(image) == before
 
 
 def test_the_c_target_branch_ships_nowhere():

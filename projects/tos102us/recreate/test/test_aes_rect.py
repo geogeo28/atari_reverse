@@ -10,8 +10,6 @@ drop in the door drops nothing (the case that says so is here). Seeded with the 
 window's current and full GRECTs (`aes/aes.h`'s WIN_CURR / WIN_FULL of window 0), the ones wm_calc and the redraw
 clip against each other.
 """
-import ctypes
-
 import pytest
 
 from harness import BASE_IMAGE
@@ -26,7 +24,7 @@ from case import merge_pokes
 
 NAME = "AES_ROM_RC_INTERSECT"
 CORE = routines.core_symbol(NAME)
-aes.declare_alcyon(NAME, ctypes.c_uint16, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
+aes.declare_alcyon(NAME, aes.WORD_ANSWER, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
 
 DESKTOP_CURR = aes.AES_WINDOWS + aes.WIN_CURR
 DESKTOP_FULL = aes.AES_WINDOWS + aes.WIN_FULL
@@ -36,20 +34,20 @@ RECT_AT = aes.RECTS_AT + aes.GRECT_BYTES
 
 def rect_of(image, at):
     """A GRECT back as four signed words."""
-    return tuple(vdi.signed_word(aes.read_field(image, "GRECT", name, at)) for name in ("X", "Y", "W", "H"))
+    return tuple(aes.signed(aes.read_field(image, "GRECT", name, at)) for name in ("X", "Y", "W", "H"))
 
 
 def signed_rect(rect):
     """A staged GRECT's four values as the signed words the machine holds."""
-    return tuple(vdi.signed_word(value & 0xFFFF) for value in rect)
+    return tuple(aes.signed(value) for value in rect)
 
 
 def model(clip, rect):
     """The intersection as the ROM computes it, axis by axis: (the stored GRECT, the answer)."""
     def axis(clip_origin, clip_extent, origin, extent):
-        far = min(vdi.signed_word((origin + extent) & 0xFFFF), vdi.signed_word((clip_origin + clip_extent) & 0xFFFF))
+        far = min(aes.signed(origin + extent), aes.signed(clip_origin + clip_extent))
         near = max(origin, clip_origin)
-        return near, vdi.signed_word((far - near) & 0xFFFF), far > near
+        return near, aes.signed(far - near), far > near
     x, w, across = axis(clip[0], clip[2], rect[0], rect[2])
     y, h, down = axis(clip[1], clip[3], rect[1], rect[3])
     return (x, y, w, h), int(across and down)
@@ -126,7 +124,7 @@ CORE_ARGTYPES = ["ctypes.c_void_p", "ctypes.c_uint32", "ctypes.c_uint32"]
 def test_a_rectangle_straddling_the_top_of_the_bus_is_refused_on_the_host(at):
     for clip, rect in ((CLIP_AT, at), (at, RECT_AT)):
         returncode, stderr = vdi_helpers.refusal(CORE, CORE_ARGTYPES, f"buf, {clip}, {rect}")
-        assert returncode != 0 and "grect_at" in stderr, stderr
+        assert returncode != 0 and "past the top of the 24-bit bus" in stderr, stderr
 
 
 def test_the_last_rectangle_below_the_top_of_the_bus_is_served():

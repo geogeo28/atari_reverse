@@ -105,6 +105,16 @@ def test_a_pass_closes_even_when_its_run_raises():
     assert HOOK.refused == [NAMED]
 
 
+def test_an_effect_that_raises_fails_the_case_by_name():
+    """A ctypes callback cannot raise through to its C caller, so an effect's own refusal (an assertion) is
+    recorded and the case fails on the way out — rather than printed and answered, the run carrying on green."""
+    def refusing(_buf):
+        raise AssertionError("this effect refuses")
+    with pytest.raises(AssertionError, match="this effect refuses"), staged({NAMED: refusing}):
+        results, _buf = in_one_pass(NAMED)
+    assert results == [address_hook.REFUSED_ANSWER]
+
+
 def test_calls_holds_the_first_pass_alone():
     with staged():
         in_one_pass(NAMED)

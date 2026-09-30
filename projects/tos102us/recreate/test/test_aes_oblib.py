@@ -9,8 +9,6 @@ return mask is $30c0, get_par's $00f0). Seeded with the snapshot's own trees —
 GEMBSS at start-up (`aes.resource_tree`): its first is the file selector, 25 objects four deep. Each routine is entered
 DIRECTLY (the row Tier 3 prices) and THROUGH LINE-F, by the call word the ROM's own callers use.
 """
-import ctypes
-
 import pytest
 
 from harness import BASE_IMAGE
@@ -21,12 +19,12 @@ from case import merge_pokes
 
 GET_PAR = "AES_ROM_GET_PAR"
 OB_OFFSET = "AES_ROM_OB_OFFSET"
-aes.declare_alcyon(GET_PAR, ctypes.c_uint16, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG))
-aes.declare_alcyon(OB_OFFSET, ctypes.c_uint16, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
+aes.declare_alcyon(GET_PAR, aes.WORD_ANSWER, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG))
+aes.declare_alcyon(OB_OFFSET, aes.WORD_ANSWER, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
 
 # THE SNAPSHOT's FILE SELECTOR (the resource's tree 0), whose shape the cases name: object 1 is the FIRST of the
-# root's 24 children (get_par walks all 24 siblings), 24 the LAST (one step), 11 the deepest (root -> 7 -> 10 -> 11),
-# 20 the last of 6's nine children.
+# root's ELEVEN children (1..7, 21..24: get_par walks all 11 siblings), 24 the LAST (one step), 11 the deepest
+# (root -> 7 -> 10 -> 11), 20 the last of 6's nine children.
 SELECTOR = aes.resource_tree(0)
 FIRST_CHILD, LAST_CHILD, DEEPEST, LAST_OF_NINE = 1, 24, 11, 20
 # The two answer words, staged STALE so a skipped clear or store shows.
@@ -59,7 +57,7 @@ def ob_offset(tree, index, pokes=None, *, x_at=X_AT, y_at=Y_AT, **kwargs):
 @pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
 @pytest.mark.parametrize("index", (FIRST_CHILD, LAST_CHILD, DEEPEST, 8, LAST_OF_NINE, 12))
 def test_the_parent_is_found_over_the_snapshot_s_file_selector(index, through_line_f):
-    """Every shape of walk: 24 siblings, none, one level down, three siblings to a parent that is not the root."""
+    """Every shape of walk: 11 siblings, none, one level down, three siblings to a parent that is not the root."""
     result = get_par(SELECTOR, index, through_line_f=through_line_f)
     assert result.answer() == aes.parent_of(SELECTOR, index)
 
@@ -145,14 +143,14 @@ def test_one_word_for_both_answers_accumulates_both():
 
 # ---- the registry ------------------------------------------------------------------------------------------------
 # DIRECT rows priced (the mask word staged at what the run leaves, and dropped at Tier 3 with its companion); each
-# routine's THROUGH-LINE-F row verified and unpriced. The worst realistic rows: get_par across all 24 siblings, and
+# routine's THROUGH-LINE-F row verified and unpriced. The worst realistic rows: get_par across all 11 siblings, and
 # ob_offset of that first child, whose one get_par is that walk; the cheapest: the root.
 aes.register("the root", GET_PAR, (SELECTOR, aes.OB_ROOT), aes.leaf_machine())
 aes.register("the last child, one step", GET_PAR, (SELECTOR, LAST_CHILD), aes.leaf_machine())
-aes.register("the first of 24 siblings", GET_PAR, (SELECTOR, FIRST_CHILD), aes.leaf_machine())
-aes.register("the first of 24 siblings", GET_PAR, (SELECTOR, FIRST_CHILD), aes.leaf_machine(), through_line_f=True)
+aes.register("the first of 11 siblings", GET_PAR, (SELECTOR, FIRST_CHILD), aes.leaf_machine())
+aes.register("the first of 11 siblings", GET_PAR, (SELECTOR, FIRST_CHILD), aes.leaf_machine(), through_line_f=True)
 aes.register("the root", OB_OFFSET, (SELECTOR, aes.OB_ROOT, X_AT, Y_AT), aes.leaf_machine(onto=ANSWERS))
 aes.register("the deepest, four levels", OB_OFFSET, (SELECTOR, DEEPEST, X_AT, Y_AT), aes.leaf_machine(onto=ANSWERS))
-aes.register("the first of 24 siblings", OB_OFFSET, (SELECTOR, FIRST_CHILD, X_AT, Y_AT), aes.leaf_machine(onto=ANSWERS))
+aes.register("the first of 11 siblings", OB_OFFSET, (SELECTOR, FIRST_CHILD, X_AT, Y_AT), aes.leaf_machine(onto=ANSWERS))
 aes.register("the deepest, four levels", OB_OFFSET, (SELECTOR, DEEPEST, X_AT, Y_AT), aes.leaf_machine(onto=ANSWERS),
              through_line_f=True)

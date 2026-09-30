@@ -738,6 +738,14 @@ def test_the_entry_overhead_is_the_reset_and_nothing_else(bench):
         f"computed net of that number, so it has to be the right one")
 
 
+def test_an_alcyon_answer_is_priced_at_every_width_the_differential_compares():
+    """Two maps keyed by the same answer types, in two modules — the differential's (`aes.RESULT_WIDTHS`) and the
+    table's (`tier3._ALCYON_RETURNS`): a width one knows and the other does not would be a routine verified at one
+    width and priced at none."""
+    import aes
+    assert set(tier3._ALCYON_RETURNS) == set(aes.RESULT_WIDTHS)
+
+
 # ---- a row's DROPPED spans (`RomBench.measure`'s `dropped`, `case.tier3_dropped()`) -------------------------------
 # A row over the staged `trap #1`: the ROM parks its own return site in LINEA_RETSAV and our build its caller's.
 DROPPED_ROW = ("vdi_v_clsvwk", "the middle one")

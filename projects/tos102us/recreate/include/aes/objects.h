@@ -4,7 +4,7 @@
  * A TREE is an array of 24-byte OBJECTs linked by index: ob_next to the next sibling (the LAST sibling's ob_next
  * is its PARENT), ob_head / ob_tail to the first and last child, -1 for none, the root at index 0. The ROM
  * indexes it as `tree + muls.w #24,obj` then an `adda` of the field ($fea5a6..$fea5ac): the index is a SIGNED
- * word and the sum a 32-bit address, which is `m68k_idioms.h`'s `table_entry` — `object_field` below.
+ * word and the sum a 32-bit address, which is `m68k_idioms.h`'s `table_entry` — `object_address` below.
  *
  * Every field carries one ROM access and its WIDTH TAG (`vdi/linea.h`, "THE WIDTH TAG"), which `test/aes.py`
  * parses; frozen the way `gemdos/fs.h` is — the only permitted edit is adding a field with its own citation. The
@@ -37,9 +37,26 @@
 #define OB_NIL                (-1)       /* no object: an empty head/tail, get_par of the root ($fed398 moveq #-1) */
 #define OB_TYPE_MASK          0x00ff     /* ($fea8f0 and.w #255)                                               */
 #define OB_FLAG_HIDETREE_BIT  7          /* ...of OB_FLAGS' low byte            ($fed33c btst #7)              */
+#define OB_STATE_OUTLINED_BIT 4          /* ...of OB_STATE's low byte           ($fe9316 btst #4)              */
+#define OB_STATE_SELECTED_BIT 0          /* ...of OB_STATE's low byte           ($fed022 btst #0)              */
+#define OB_FLAG_DEFAULT_BIT   1          /* ...of OB_FLAGS' low byte            ($fed242 btst #1,1(a4))        */
+#define OB_FLAG_EXIT_BIT      2          /* ...of OB_FLAGS' low byte            ($fed238 btst #2,1(a4))        */
+#define OB_FLAG_INDIRECT_BIT  0          /* ...of OB_FLAGS' HIGH byte: ob_spec names the spec ($fed204 btst #0,(a4)) */
+#define OB_WORD_LOW_BYTE      1          /* a word field's low byte, which a `btst` reads ($fed010 movea.l #11) */
 /* The resource format's end-of-tree flag. No ROM instruction cited: the AES walks a tree by its links, and only the
  * batteries' model (`test/aes.py`'s tree_length) reads it — every tree of the snapshot's own resource ends on it. */
 #define OB_FLAG_LASTOB        0x0020     /* OB_FLAGS: the tree's last object                                   */
+/* The object TYPES whose ob_spec is a colour word and not a block's address: the load's relocation (fix_objects) leaves it. */
+#define G_BOX                 20         /* ($fea8f4 cmp.w #20)                                                */
+#define G_IBOX                25         /* ($fea8fa cmp.w #25)                                                */
+#define G_BOXCHAR             27         /* ($fea900 cmp.w #27)                                                */
+/* ...and the rest of the types ob_sst's border switch names (`sub.w #20` / `cmp.w #12`, table $fefd52: G_BOX..G_TITLE). */
+#define G_TEXT                21         /* a TEDINFO's thickness               ($fefd56 -> $fed222)           */
+#define G_BOXTEXT             22         /* ($fefd5a -> $fed222)                                               */
+#define G_BUTTON              26         /* -1, one less for EXIT, one less for DEFAULT ($fefd6a -> $fed236)   */
+#define G_FTEXT               29         /* ($fefd76 -> $fed222)                                               */
+#define G_FBOXTEXT            30         /* ($fefd7a -> $fed222)                                               */
+#define G_TITLE               32         /* a thickness of 1                    ($fefd82 -> $fed21e)           */
 
 /* ---- the blocks OB_SPEC points at ---------------------------------------------------------------------------
  * rsrc_gaddr's resource types (`$fea742`'s switch, table $fefbf8) name each pointer field: R_TEPTEXT..R_TEPVALID
@@ -47,7 +64,8 @@
 #define TE_PTEXT              0          /* long: the text                      ($fea78e, R_TEPTEXT's arm)     */
 #define TE_PTMPLT             4          /* long: the template                  ($fea7d2 addq.l #4)            */
 #define TE_PVALID             8          /* long: the validation string         ($fea7dc addq.l #8)            */
-#define TE_TXTLEN             24         /* word: the text's length, fixed by rsrc_obfix ($fea95a addl #24)    */
+#define TE_THICKNESS          22         /* word: the border's thickness        ($fed224 adda.l #22)           */
+#define TE_TXTLEN             24         /* word: the text's length + 1, set by fix_tedinfo ($fea95a addl #24) */
 #define TE_TMPLEN             26         /* word: ...and the template's         ($fea978 addl #26)             */
 #define TE_BYTES              28         /* ($fea790 moveq #28)                                                */
 #define IB_PMASK              0          /* long                                ($fea796, R_IBPMASK's arm)     */
@@ -90,31 +108,43 @@
 #define RSH_NTREE             22         /* word: trees                         ($fea896 adda.l #22)           */
 #define RSH_NTED              24         /* word: TEDINFOs                      ($fea926 adda.l #24)           */
 #define RSH_NIB               26         /* word: ICONBLKs                      ($feabd6 adda.l #26)           */
+#define RSH_NBB               28         /* word: BITBLKs                       ($feac02 movea.l #28)          */
+#define RSH_NSTRING           30         /* word: free strings                  ($feac1c movea.l #30)          */
+#define RSH_NIMAGES           32         /* word: free images                   ($feac36 movea.l #32)          */
 #define RSH_BYTES             36         /* rsrc_load's first read              ($feab32 move.w #36)           */
 /* The globals: which application's `global[]` the calls are for, and its header (global[7..8], ap_pmem). */
 #define AES_RS_GLOBAL         0x9802     /* long: the caller's global[]         ($feaa3c)                      */
 #define AES_RS_HDR            0x9c3c     /* long: its resource header           ($feaa50)                      */
 #define AES_RS_INDEX          0x9ba4     /* word: the trindex byte offset       ($fea762)                      */
 #define AES_RS_SYSTEM_GLOBAL  0x9806     /* long: the AES's own global[], for its ROM resource ($fda02c)       */
+#define AES_RS_STRING         0xb89a     /* rs_str's copy of a free string, and its answer ($fea704 move.l #) */
 #define AES_RS_ADDROUT        0x944c     /* long: rsrc_gaddr's answer, for addrout[0] ($fe65a2)                */
 #define AES_GLOBAL_PMEM       14         /* global[7..8]: the header            ($feaa4a adda.l #14)           */
 #define AES_GLOBAL_PTREE      10         /* global[5..6]: the tree table        ($fea776 adda.l #10)           */
+#define AES_GLOBAL_LMEM       18         /* global[9]: the resource's length    ($feabc2 adda.l #18)           */
 
 #ifndef __ASSEMBLER__
 #include "machine.h"
 #include "m68k_idioms.h"
 
 /* The address of field `field` of object `object` of the tree at `tree`, as the ROM forms it — the signed word
- * index scaled, summed with the tree, the field added — and put on the bus (the tree is a caller's pointer). */
-static inline uint32_t object_field(uint32_t tree, int16_t object, uint32_t field)
+ * index scaled, summed with the tree, the field added — UNMASKED, as the ROM hands it on (wcopy puts each word it
+ * reaches on the bus; a byte is read through `m68k_idioms.h`'s `bus_byte`, which puts it there)... */
+static inline uint32_t object_address(uint32_t tree, int16_t object, uint32_t field)
 {
-    return bus_dereference(table_entry(tree, object, OB_BYTES) + field);
+    return table_entry(tree, object, OB_BYTES) + field;
 }
 
 /* ...a word field of it, as the Alcyon `int` the C reads (`move.w` then compared signed). */
 static inline int16_t object_word(const uint8_t *image, uint32_t tree, int16_t object, uint32_t field)
 {
-    return (int16_t)be16(image + object_field(tree, object, field));
+    return (int16_t)bus_word(image, object_address(tree, object, field));
+}
+
+/* ...and one stored, as the ROM's `move.w` into the same address. */
+static inline void set_object_word(uint8_t *image, uint32_t tree, int16_t object, uint32_t field, int16_t value)
+{
+    set_bus_word(image, object_address(tree, object, field), (uint16_t)value);
 }
 #endif
 

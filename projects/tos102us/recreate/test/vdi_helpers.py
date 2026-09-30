@@ -13,6 +13,7 @@ decoding each argument out of the same frame at the offset the widths before it 
 halves of the one fact are stated once.
 """
 import ctypes
+import functools
 import struct
 import subprocess
 import sys
@@ -251,6 +252,7 @@ TRAP_ANSWER = 0x0001_2340
 TRAP_ENTRY_BYTES = WORD_BYTES + LONG_BYTES  # one call: the function word, the longword
 TRAP_LEDGER_ENTRIES = 8                     # more calls than any routine here makes
 TRAP_ENTRIES_AT = TRAP_LEDGER_AT + LONG_BYTES
+TRAP_LAST_ENTRY_AT = TRAP_ENTRIES_AT + (TRAP_LEDGER_ENTRIES - 1) * TRAP_ENTRY_BYTES
 TRAP_LEDGER_BYTES = LONG_BYTES + TRAP_LEDGER_ENTRIES * TRAP_ENTRY_BYTES
 assert TRAP_LEDGER_AT + TRAP_LEDGER_BYTES <= SOURCE_FORM_AT
 
@@ -278,9 +280,16 @@ def recording_trap_pokes(vector, answer=TRAP_ANSWER):
 
 def recording_trap_handler(function, answer=TRAP_ANSWER):
     """The recording handler's HOST TWIN, as a `gemdos.bound_handlers` entry for `function`: the same entry appended
-    to the same ledger, and the same answer — so a differential compares every call each side trapped with."""
+    to the same ledger, and the same answer — so a differential compares every call each side trapped with.
+
+    The ledger's pointer is READ OUT OF THE IMAGE and stored through, so it is bounded first: `buf` is a raw C pointer,
+    and a pointer the attribution pass inverted (the ROM's stub stores it back, so it is an output) would send the
+    store into host memory. Out of the ledger it is refused by name — the hook fails the case (`address_hook`)."""
     def handler(buf, arguments, _argument_bytes):
         at = case.long_in(buf, TRAP_LEDGER_AT)
+        assert TRAP_ENTRIES_AT <= at <= TRAP_LAST_ENTRY_AT, (
+            f"the trap ledger's pointer {at:#x} is outside the ledger ({TRAP_ENTRIES_AT:#x}..{TRAP_LAST_ENTRY_AT:#x}): "
+            f"the host twin refuses to store through it")
         stores = {at: struct.pack(">HI", function, case.long_in(buf, arguments)),
                   TRAP_LEDGER_AT: struct.pack(">I", at + TRAP_ENTRY_BYTES)}
         for store_at, data in stores.items():
@@ -338,4 +347,9 @@ def staged_gemdos_handlers(answer=TRAP_ANSWER):
     """...and its host twin for the two calls the VDI makes."""
     return {gemdos.rom_handler(function): recording_trap_handler(function, answer)
             for function in (addrs.GEMDOS_MALLOC_FN, addrs.GEMDOS_MFREE_FN)}
+
+
+def staged_gemdos_hook(answer=TRAP_ANSWER):
+    """...bound as the door `aes.run_function`'s `hook` opens, once per run."""
+    return functools.partial(gemdos.bound_handlers, staged_gemdos_handlers(answer))
 

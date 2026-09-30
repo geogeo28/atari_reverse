@@ -12,9 +12,8 @@ import gemdos_fs
 import staging
 import vdi
 from isr import long_in_snapshot, word_in_snapshot
-from opcodes import JSR_ABSOLUTE_LONG, LINE_F, PUSH_LONG_IMMEDIATE
+from opcodes import CMP_L_IMMEDIATE_D0, JSR_ABSOLUTE_LONG, LINE_F, MOVEA_L_IMMEDIATE_A0, PUSH_LONG_IMMEDIATE
 
-MOVEA_L_IMMEDIATE_A0 = 0x207C        # movea.l #<xxx>,a0: the arms of 73/74 load their routine so
 LINEF_RETURN_MOVEM = 0x4CDF          # movem.l (sp)+,<mask>: the word whose mask the handler patches
 LEA_PC_RELATIVE_A0 = 0x41FA          # lea <d16>(pc),a0: how the handler finds that word
 SIGN_BIT_OF_A_SHORT_ADDRESS = 0x8000  # `pea (xxx).w` sign-extends an address from this bit up
@@ -151,7 +150,7 @@ def test_the_mask_word_is_the_one_the_handler_s_lea_names():
     """`lea mask(pc),a0` before the patch: its target is the movem's mask word, at the header's offset."""
     lea = next(at for at in range(addrs.AES_ROM_LINEF_HANDLER, addrs.AES_ROM_LINEF_HANDLER + aes.LINEF_COPY_BYTES, 2)
                if word_in_snapshot(at) == LEA_PC_RELATIVE_A0)
-    target = lea + vdi.WORD_BYTES + vdi.signed_word(word_in_snapshot(lea + vdi.WORD_BYTES))
+    target = lea + vdi.WORD_BYTES + aes.signed(word_in_snapshot(lea + vdi.WORD_BYTES))
     assert target == addrs.AES_ROM_LINEF_HANDLER + aes.LINEF_MASK_OFFSET
     assert word_in_snapshot(target - vdi.WORD_BYTES) == LINEF_RETURN_MOVEM
     assert aes.AES_LINEF_MASK_WORD == aes.AES_LINEF_COPY + aes.LINEF_MASK_OFFSET
@@ -278,7 +277,6 @@ def test_the_blocks_an_ob_spec_points_at_are_staged_by_field():
 # ---- the fork queue: ROM CODE ADDRESSES its callers queue as values ------------------------------------------------
 PUSH_LONG_IMMEDIATE_WORD = case.word_in(PUSH_LONG_IMMEDIATE, 0)
 MOVE_L_IMMEDIATE_TO_FRAME = 0x2D7C   # move.l #<imm>,<d16>(a6): ap_tplay's store into its local fcode
-CMP_L_IMMEDIATE_D0 = 0xB0BC          # cmp.l  #<imm>,d0: the recorder's and appl_trecord's compares
 IMMEDIATE_USES = (PUSH_LONG_IMMEDIATE_WORD, MOVE_L_IMMEDIATE_TO_FRAME, CMP_L_IMMEDIATE_D0)
 PUSH_BYTES = len(PUSH_LONG_IMMEDIATE) + vdi.LONG_BYTES
 FORK_FUNCTIONS = {function for _site, function in aes.FORK_FUNCTION_IMMEDIATES}

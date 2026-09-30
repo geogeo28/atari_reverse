@@ -65,8 +65,12 @@
 #define HOST_SLOT_C_ENTRY_ARGUMENTS_BYTES 12     /* selector.w, handle.w, count.l, buffer.l */
 #define HOST_SLOT_REDIRECTED_BYTE       0x7f310  /* $fc94e4's `-14(a6)`: the byte a redirected read lands in */
 #define HOST_SLOT_REDIRECTED_BYTE_BYTES 1
-#define HOST_SLOT_VDI_GEMDOS_WORDS      0x7f320  /* $fcfa9c's caller's words: the VDI's `Malloc`/`Mfree` */
-#define HOST_SLOT_VDI_GEMDOS_WORDS_BYTES 6       /* function.w, argument.l */
+/* The words a ROM door leaves on the stack for its `trap #1` — the function word over one longword — which the host
+ * build hands the dispatcher (`gemdos/gemdos.h`, gemdos_trap_word_long): the VDI's `Malloc`/`Mfree` door ($fcfa9c's
+ * caller's words) and the AES's glue (dos_free's `move.w d1,-(sp)` over its caller's longword, dos_alloc's two pushes,
+ * $fe3c26 / $fe3bba). ONE slot for both: neither door is reached from under the other's trap. */
+#define HOST_SLOT_GEMDOS_WORDS          0x7f320
+#define HOST_SLOT_GEMDOS_WORDS_BYTES    6        /* function.w, argument.l */
 #define HOST_SLOT_VDI_VST_FONT_CALL     0x7f330  /* $fce47c's `-18(a6)` points and `-6(a6)` size: its nested call's arrays */
 #define HOST_SLOT_VDI_VST_FONT_CALL_BYTES 10     /* ptsin/ptsout's four words, then intin[0]: COMPACTED, not the frame's layout */
 /* ...and the wide lines' and markers' (`vdi/lines.h`): points a frame builds and points LINEA_PTSIN at, and
@@ -91,6 +95,9 @@
 #define HOST_SLOT_VDI_OPNWK_COLOUR_CALL 0x7f400  /* $fcb694's `-38`/`-30`/`-26(a6)`: intout, intin, contrl */
 #define HOST_SLOT_VDI_OPNWK_COLOUR_CALL_BYTES 22 /* VDI_OPNWK_CALL_BYTES: the frame's own layout from -38, contrl cut after
                                                   * contrl[4], the last word vq_color writes ($fd2e8c) */
+/* ...and the AES's (`aes/objops.h`): ob_find's two GRECTs, which it hands ob_actxywh, ob_relxywh, r_set and inside. */
+#define HOST_SLOT_AES_OB_FIND_RECTS     0x7f420  /* $fea0a8's `-22(a6)` origin and `-14(a6)` object rectangle */
+#define HOST_SLOT_AES_OB_FIND_RECTS_BYTES 16     /* two GRECTs, the origin first: the frame's own layout */
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -106,7 +113,7 @@ enum host_slot {
     HOST_SLOT_ID_PEXEC_LOCALS,
     HOST_SLOT_ID_C_ENTRY_ARGUMENTS,
     HOST_SLOT_ID_REDIRECTED_BYTE,
-    HOST_SLOT_ID_VDI_GEMDOS_WORDS,
+    HOST_SLOT_ID_GEMDOS_WORDS,
     HOST_SLOT_ID_VDI_VST_FONT_CALL,
     HOST_SLOT_ID_VDI_WIDE_CORNERS,
     HOST_SLOT_ID_VDI_WIDE_OFFSET,
@@ -116,6 +123,7 @@ enum host_slot {
     HOST_SLOT_ID_VDI_GTEXT_EXTENT,
     HOST_SLOT_ID_VDI_JUSTIFIED_EXTENT,
     HOST_SLOT_ID_VDI_OPNWK_COLOUR_CALL,
+    HOST_SLOT_ID_AES_OB_FIND_RECTS,
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL

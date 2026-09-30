@@ -3,6 +3,8 @@ import each other, so the header's macro is expanded by the C preprocessor and t
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import opcodes
 
 INCLUDE = Path(__file__).resolve().parents[1] / "include"
@@ -16,5 +18,12 @@ def expanded(expression):
     return int(eval(text.strip(), {"__builtins__": {}}))     # the header's arithmetic, and nothing else
 
 
-def test_cmp_w_immediate_d0_is_the_header_s_word():
-    assert opcodes.CMP_W_IMMEDIATE_D0 == expanded("M68K_CMP_W_IMMEDIATE(M68K_D0)")
+@pytest.mark.parametrize("word, macro", (
+    (opcodes.CMP_W_IMMEDIATE_D0, "M68K_CMP_W_IMMEDIATE(M68K_D0)"),
+    (opcodes.CMP_L_IMMEDIATE_D0, "M68K_CMP_L_IMMEDIATE(M68K_D0)"),
+    (opcodes.MOVEA_L_IMMEDIATE_A0, "M68K_MOVEA_L_IMMEDIATE(M68K_A0)"),
+    (int.from_bytes(opcodes.JSR_ABSOLUTE_LONG, "big"), "M68K_JSR_ABSOLUTE_LONG"),
+    (opcodes.LINE_F, "M68K_LINE_F_WORD"),
+), ids=lambda value: value if isinstance(value, str) else None)
+def test_a_python_word_is_the_header_s_word(word, macro):
+    assert word == expanded(macro)

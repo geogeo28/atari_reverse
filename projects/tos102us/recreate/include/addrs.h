@@ -1907,14 +1907,76 @@
 #define AES_AP_TPLAY_FORKQ_CALL   0xfe671e   /* ap_tplay's forkq call: it pushes a LOCAL, not an immediate */
 #define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
 #define AES_ROM_GSX2              0xfecb5a   /* the AES's one `trap #2` to the VDI */
+/* The utility layer's MEMORY and STRING helpers (hand 68000, `aes/strings.h`), each named from its body. */
+#define AES_ROM_MUL_DIV           0xfecb6e   /* m1 * m2 / d, rounded: `muls.w` by 2*m2, `divs.w`, +-1, `asr.w` */
+#define AES_ROM_SET_CONTRL_PTR    0xfecbc6   /* contrl[7..8] := the argument */
+#define AES_ROM_GET_CONTRL_PTR2   0xfecbda   /* *answer := contrl[9..10] */
+#define AES_ROM_LSTCPY            0xfecbe6   /* (dst, src): copy with the NUL, D0.w = the length counted in a BYTE */
+#define AES_ROM_XSTRPIX           0xfecbfa   /* (dst, src): a string's bytes as words, no NUL, D0 = count (a byte) */
+#define AES_ROM_WSET              0xfecc12   /* (dst, count, value): count words, none for 0 (no caller) */
+#define AES_ROM_XSTRPIX_N         0xfecc28   /* (dst, src, count): count bytes as words, 65536 for 0 (no caller) */
+#define AES_ROM_WCOPY             0xfecc40   /* (dst, src, count): count words, none for 0 */
+#define AES_ROM_WFILL             0xfecc56   /* (dst, count, value): its guard tests the VALUE (no caller) */
+#define AES_ROM_LSTRLEN           0xfecc6c   /* a string's length, a word (count, then test) */
+#define AES_ROM_LBCOPY            0xfecc7e   /* (dst, src, count): memmove, the direction a SIGNED compare */
+#define AES_ROM_MOVS              0xfece2e   /* (count, src, dst): count bytes forward (`dbf`) */
+#define AES_ROM_MIN               0xfece42   /* the smaller signed word */
+#define AES_ROM_MAX               0xfece4e   /* the larger signed word */
+#define AES_ROM_BFILL             0xfece5e   /* (count, byte, dst): count bytes (`dbf`) */
+#define AES_ROM_TOUPPER           0xfece74   /* a-z less 32, every other byte sign-extended */
+#define AES_ROM_STRLEN            0xfece8c   /* a string's length, a word (test, then count) */
+#define AES_ROM_STREQ             0xfece9c   /* 1 when two strings are equal, through the shared tails */
+#define AES_ROM_STRCPY            0xfeceb8   /* (src, dst): copy with the NUL, D0 = dst past the NUL */
+#define AES_ROM_STRSCN            0xfecec4   /* (src, dst, stop): copy up to stop or the NUL, D0 = dst's end */
+#define AES_ROM_STRCAT            0xfeceda   /* (src, dst): src after dst's NUL, D0 = dst past the new NUL */
+#define AES_ROM_SCASB             0xfeceee   /* (string, byte): the byte's first place or the NUL's (desk-only) */
+#define AES_ROM_STRCHK            0xfecf02   /* the signed byte difference where two strings first differ, or 0 */
+#define AES_ROM_FMT_STR           0xfecf24   /* "NAME.EXT" -> the 8.3 form "NAME    EXT" */
+#define AES_ROM_UNFMT_STR         0xfecf58   /* ...and back: spaces dropped, the dot put back */
+#define AES_ROM_MERGE_STR         0xfed070   /* (dst, template, parameters): %L %W %S %% into a string */
+#define AES_ROM_WILDCMP           0xfed12e   /* 1 when a name matches a `*`/`?` pattern */
+/* The Alcyon runtime merge_str calls by `jsr` (compiled C: link/unlk, no Line-F). */
+#define AES_ROM_LMUL              0xfe3db4   /* the signed 32x32 multiply, low long in D0 */
+#define AES_ROM_LDIV              0xfe3e08   /* the signed 32/32 divide: quotient in D0, remainder at $8c3e */
+/* The DESKTOP.INF field helpers the AES's `#E` reader and the desk share (Alcyon C, `aes/infscan.h`). */
+#define AES_ROM_HEX_DIG           0xfdaf20   /* a hex digit's value, 0 for no digit (upper case only) */
+#define AES_ROM_UHEX_DIG          0xfdaf5c   /* a value's upper-case hex digit, ' ' past 15 */
+#define AES_ROM_SCAN_2            0xfdaf92   /* (cursor, &value): two hex digits, "ff" -> -1; D0.l = cursor + 3 */
+#define AES_ROM_SAVE_2            0xfdafca   /* (cursor, value): two hex digits and ' '; D0.l = cursor + 3 */
 /* The utility layer both the AES and the desk call ("optimize": hand 68000 and a little Alcyon C). */
+#define AES_ROM_R_GET             0xfecca6   /* hand 68000: a GRECT's four words out through four pointers */
+#define AES_ROM_R_SET             0xfeccbe   /* hand 68000: a GRECT := four frame words, as two longwords */
+#define AES_ROM_RC_COPY           0xfeccca   /* hand 68000: (from, to) two longwords */
+#define AES_ROM_INSIDE            0xfeccd6   /* hand 68000: (x, y, rect) D0 = the point is in it, through the shared tails */
+#define AES_ROM_RC_EQUAL          0xfecd0c   /* hand 68000: D0 = two GRECTs equal (`cmpm.l` twice), through the tails */
 #define AES_ROM_RC_INTERSECT      0xfecd22   /* hand 68000: the intersection into the second GRECT, D0 = non-empty */
+#define AES_ROM_RC_UNION          0xfecd8c   /* hand 68000: (from, into) into grown to cover from */
+#define AES_ROM_RC_CONSTRAIN      0xfecde4   /* hand 68000: (container, rect) rect moved to lie inside container */
 #define AES_ROM_RC_RETURN_FALSE   0xfed066   /* the helpers' shared tails, WORD writes (D0.hi is the caller's): `clr.w d0 / bra.s` the rts ... */
 #define AES_ROM_RC_RETURN_TRUE    0xfed06a   /* ...and `move.w #1,d0 / rts` */
+#define AES_ROM_RC_RETURN_D0      0xfed06e   /* ...and their bare `rts`, D0 as left: strlen's `beq.w` ($fece94), $fed03a's */
+#define AES_ROM_FS_SSET           0xfecf84   /* (tree, obj, text, &ptext, &txtlen): text INTO the TEDINFO's */
+#define AES_ROM_INF_SSET          0xfecfb2   /* Alcyon: (tree, obj, text) fs_sset with its answers in its locals */
+#define AES_ROM_FS_SGET           0xfecfd6   /* (tree, obj, text): the TEDINFO's text OUT into text */
+#define AES_ROM_INF_FLDSET        0xfecfee   /* (tree, obj, field, bits, set, clear): ob_state from a flag test */
+#define AES_ROM_INF_GINDEX        0xfed010   /* (tree, first, count): the first SELECTED of a run, -1 none */
+#define AES_ROM_INF_WHAT          0xfed03a   /* (tree, ok, cancel): 1 OK, 0 the next, -1 neither; its state cleared */
 #define AES_ROM_OB_ADDR           0xfed18e   /* hand 68000: A0 += tree + 24 * obj (its field offset) */
 #define AES_ROM_OB_SST            0xfed19e   /* Alcyon: an object's spec, state, type, flags, rectangle and border */
 #define AES_ROM_EVERYOBJ          0xfed27c   /* Alcyon: a depth-first walk calling `jsr (a0)` per object */
 #define AES_ROM_GET_PAR           0xfed382   /* Alcyon: an object's parent, -1 for the root */
+/* The RECTANGLE LISTS (gemrlist, all Alcyon): the ORECT pool's free list, and a window's visible rectangles cut. */
+#define AES_ROM_OR_START          0xfe5a62   /* every ORECT of the pool onto an emptied free list, the last on top */
+#define AES_ROM_GET_ORECT         0xfe5aac   /* the free list's head, unlinked; 0 when the list is empty */
+#define AES_ROM_MKPIECE           0xfe5acc   /* one piece of a rectangle the cut leaves: above, left, right or below it */
+#define AES_ROM_BRKRCT            0xfe5ba8   /* a listed rectangle the cut overlaps replaced by its pieces, and freed */
+#define AES_ROM_MKRECT            0xfe5c9a   /* everyobj's callback: one window's list cut by the rectangle newrect set */
+/* The OBJECT LIBRARY's own helpers (gemoblib, all Alcyon, laid out after ob_change in the source's order). */
+#define AES_ROM_OB_FS             0xfea4b6   /* an object's flags into a word, its state answered */
+#define AES_ROM_OB_ACTXYWH        0xfea4e8   /* an object's GRECT on the screen: ob_offset, then its width and height */
+#define AES_ROM_OB_RELXYWH        0xfea538   /* an object's GRECT as it stands, relative to its parent: wcopy out */
+#define AES_ROM_OB_SETXYWH        0xfea55e   /* ...and set from a GRECT: wcopy in */
+#define AES_ROM_GET_PREV          0xfea5dc   /* the sibling before an object, -1 when it is its parent's head */
 /* The functions the dispatcher's arms call (`ctx` names: see above). */
 #define AES_ROM_AP_RDWR           0xfe65c4   /* ctx */
 #define AES_ROM_AP_RDWR_OPCODE    12
@@ -1946,17 +2008,17 @@
 #define AES_ROM_DO_CHG_OPCODE_33  33
 #define AES_ROM_MN_REGISTER       0xfe91e2   /* ctx */
 #define AES_ROM_MN_REGISTER_OPCODE 35
-#define AES_ROM_OB_ADD            0xfea1ba   /* ctx */
+#define AES_ROM_OB_ADD            0xfea1ba   /* read: a child linked in as its parent's last */
 #define AES_ROM_OB_ADD_OPCODE     40
-#define AES_ROM_OB_DELETE         0xfea21e   /* ctx */
+#define AES_ROM_OB_DELETE         0xfea21e   /* read: an object unlinked from its parent's children */
 #define AES_ROM_OB_DELETE_OPCODE  41
 #define AES_ROM_OB_DRAW           0xfea028   /* ctx */
 #define AES_ROM_OB_DRAW_OPCODE    42
-#define AES_ROM_OB_FIND           0xfea0a8   /* ctx */
+#define AES_ROM_OB_FIND           0xfea0a8   /* read: the deepest visible object under a point, -1 for none */
 #define AES_ROM_OB_FIND_OPCODE    43
 #define AES_ROM_OB_OFFSET         0xfea584   /* read: the object's screen position, the sum of its and its ancestors' */
 #define AES_ROM_OB_OFFSET_OPCODE  44
-#define AES_ROM_OB_ORDER          0xfea2be   /* ctx */
+#define AES_ROM_OB_ORDER          0xfea2be   /* read: an object moved to a place among its siblings */
 #define AES_ROM_OB_ORDER_OPCODE   45
 #define AES_ROM_OB_EDIT           0xfe9678   /* ctx */
 #define AES_ROM_OB_EDIT_OPCODE    46
@@ -1970,7 +2032,7 @@
 #define AES_ROM_FM_ALERT_OPCODE   52
 #define AES_ROM_FM_ERROR          0xfe7712   /* ctx */
 #define AES_ROM_FM_ERROR_OPCODE   53
-#define AES_ROM_OB_CENTER         0xfe92ae   /* ctx: form_center */
+#define AES_ROM_OB_CENTER         0xfe92ae   /* read: form_center, a tree's root centred on the screen */
 #define AES_ROM_OB_CENTER_OPCODE  54
 #define AES_ROM_FM_KEYBD          0xfe7298   /* ctx */
 #define AES_ROM_FM_KEYBD_OPCODE   55
@@ -1992,9 +2054,9 @@
 #define AES_ROM_GR_SLIDEBOX_OPCODE 76
 #define AES_ROM_GR_MKSTATE        0xfe8768   /* ctx */
 #define AES_ROM_GR_MKSTATE_OPCODE 79
-#define AES_ROM_SC_READ           0xfeac80   /* ctx */
+#define AES_ROM_SC_READ           0xfeac80   /* read: scrp_read, the scrap path lstcpy'd out into the caller's */
 #define AES_ROM_SC_READ_OPCODE    80
-#define AES_ROM_SC_WRITE          0xfeac94   /* ctx */
+#define AES_ROM_SC_WRITE          0xfeac94   /* read: scrp_write, the caller's path lstcpy'd in as the scrap path */
 #define AES_ROM_SC_WRITE_OPCODE   81
 #define AES_ROM_FS_INPUT          0xfe7d90   /* ctx */
 #define AES_ROM_FS_INPUT_OPCODE   90
@@ -2018,21 +2080,42 @@
 #define AES_ROM_WM_CALC_OPCODE    108
 #define AES_ROM_RS_LOAD           0xfeac5c   /* ctx */
 #define AES_ROM_RS_LOAD_OPCODE    110
-#define AES_ROM_RS_FREE           0xfeaa58   /* ctx */
+#define AES_ROM_RS_FREE           0xfeaa58   /* read: the caller's resource Mfree'd; whether GEMDOS took it */
 #define AES_ROM_RS_FREE_OPCODE    111
-#define AES_ROM_RS_GADDR          0xfeaa86   /* ctx */
+#define AES_ROM_RS_GADDR          0xfeaa86   /* read: get_addr's answer stored through the answer pointer, and != -1 */
 #define AES_ROM_RS_GADDR_OPCODE   112
-#define AES_ROM_RS_SADDR          0xfeaab2   /* ctx */
+#define AES_ROM_RS_SADDR          0xfeaab2   /* read: a longword stored at the address get_addr names */
 #define AES_ROM_RS_SADDR_OPCODE   113
-#define AES_ROM_RS_OBFIX          0xfea69c   /* ctx */
+#define AES_ROM_RS_OBFIX          0xfea69c   /* read: an object's four coordinates from character cells to pixels */
 #define AES_ROM_RS_OBFIX_OPCODE   114
-#define AES_ROM_SH_READ           0xfeaca8   /* ctx */
+/* The resource layer's internals (`src/aes/resource.c`), each read from its body: rsrc_gaddr's switch and the load's
+ * relocation, which every rsrc_* call and the ROM's own resources' set-up reach. */
+#define AES_ROM_FIX_CHPOS         0xfea622   /* one coordinate: low byte cells times the cell, high byte a pixel offset */
+#define AES_ROM_RS_STR            0xfea6e6   /* free string n of the AES's own resource, copied to AES_RS_STRING */
+#define AES_ROM_GET_SUB           0xfea716   /* element n of a header section: header + offset word + n * size */
+#define AES_ROM_GET_ADDR          0xfea742   /* rsrc_gaddr's switch: the address of element n of a resource type */
+#define AES_ROM_FIX_TRINDEX       0xfea86a   /* the tree table into global[5..6], every tree pointer relocated */
+#define AES_ROM_FIX_OBJECTS       0xfea8bc   /* every object rs_obfix'd, its ob_spec relocated unless a colour */
+#define AES_ROM_FIX_TEDINFO       0xfea918   /* every TEDINFO's three pointers relocated, its two lengths set */
+#define AES_ROM_FIX_NPTRS         0xfea9d4   /* fix_ptr of one type over elements n..0 */
+#define AES_ROM_FIX_PTR           0xfea9f8   /* fix_long of the address get_addr names */
+#define AES_ROM_FIX_LONG          0xfeaa0a   /* an offset made an address by adding the header's; -1 left */
+#define AES_ROM_RS_SGLOBAL        0xfeaa38   /* the caller's global[] and its header made the resource globals */
+#define AES_ROM_DO_RSFIX          0xfeaba4   /* a resource read in relocated: every pointer but the objects' */
+#define AES_ROM_RS_FIXIT          0xfeac4e   /* rs_sglobal, then fix_objects */
+#define AES_ROM_DOS_ALLOC         0xfe3bba   /* Malloc: the size rounded up to even, 0 -> AES_DOS_ERR; the block too */
+#define AES_ROM_DOS_FREE          0xfe3c26   /* Mfree through __DOS: both return addresses parked, AES_DOS_ERR/AX set */
+#define AES_RS_FREE_MFREE_RETURN  0xfeaa76   /* rs_free's return site from dos_free: what AES_DOS_RETURN holds after */
+#define AES_DOS_TRAP_RETURN       0xfe3c34   /* __DOS's caller's return site inside the glue: AES_TRAP1_RETURN's */
+#define AES_ROM_ROM_RAM           0xfee5c8   /* a part of the ROM's resources: copied, relocated on first use, or its global[] */
+#define AES_ROM_ROM_RSC_INIT      0xfee4de   /* start-up: the ROM's resource bundle copied into a Malloc block, its parts' table set */
+#define AES_ROM_SH_READ           0xfeaca8   /* read: shel_read, the shell's command line and tail out, 128 bytes each */
 #define AES_ROM_SH_READ_OPCODE    120
-#define AES_ROM_SH_WRITE          0xfeacd4   /* ctx */
+#define AES_ROM_SH_WRITE          0xfeacd4   /* read: shel_write, both lines in and sh_main's requests set */
 #define AES_ROM_SH_WRITE_OPCODE   121
-#define AES_ROM_SH_GET            0xfead26   /* ctx */
+#define AES_ROM_SH_GET            0xfead26   /* read: shel_get, `n` bytes of the shell's GEM buffer out */
 #define AES_ROM_SH_GET_OPCODE     122
-#define AES_ROM_SH_PUT            0xfead40   /* ctx */
+#define AES_ROM_SH_PUT            0xfead40   /* read: shel_put, `n` bytes into the shell's GEM buffer */
 #define AES_ROM_SH_PUT_OPCODE     123
 #define AES_ROM_SH_FIND           0xfeafbe   /* ctx */
 #define AES_ROM_SH_FIND_OPCODE    124

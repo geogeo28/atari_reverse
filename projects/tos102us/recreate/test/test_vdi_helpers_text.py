@@ -8,7 +8,7 @@ DIVIDE or a CARRY at their centre, which is where their cases sit.
 """
 import pytest
 
-from harness import BASE_IMAGE, addrs
+from harness import addrs
 
 import case
 import staging
@@ -145,18 +145,12 @@ def test_copy_name_copies_forwards_byte_by_byte():
 # ---- font_byteswap, $fcfaac ------------------------------------------------------------------------
 FORM_AT = vdi_helpers.FONT_FORM_AT
 FORM_ROOM = 0x40
-# A form too big for the window: in the free RAM above the oracle's stack band, CLAIMED there
-# (`staging.HIGH_BANDS`) and held dead below, so the case's own ramp is the only thing in it. Not a
-# registered row — see the wrap test.
-BIG_FORM_BYTES = 0x20000
-BIG_FORM_AT = staging.HIGH_BANDS.claim(0x90000, BIG_FORM_BYTES, "test_vdi_helpers_text.py: a whole-bank font form")
+# A form too big for the window: the whole bank in the free RAM above the oracle's stack band
+# (`staging.WHOLE_BANK_AT`), held dead in the snapshot by `test_boot_snapshot.py`, so the case's own
+# ramp is the only thing in it. Not a registered row — see the wrap test.
+BIG_FORM_BYTES = staging.WHOLE_BANK_BYTES
+BIG_FORM_AT = staging.WHOLE_BANK_AT
 WHOLE_BANK_INSNS = 1_000_000      # 65536 words at four instructions each, and room
-
-
-def test_the_big_form_band_is_dead_memory_in_this_snapshot():
-    """Compared like any image, so live bytes there would not be hidden — they would make the wrap
-    cases a statement about the desktop's leftovers as well as about the routine."""
-    assert bytes(BASE_IMAGE[BIG_FORM_AT:BIG_FORM_AT + BIG_FORM_BYTES]) == bytes(BIG_FORM_BYTES)
 
 
 def ramp(length, seed=0x11):

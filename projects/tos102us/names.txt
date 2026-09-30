@@ -1330,7 +1330,7 @@ cmt 0xfecd22 AES rc_intersect (hand 68000): the second GRECT cut to its intersec
 fn 0xfed19e ob_sst
 cmt 0xfed19e AES ob_sst (Alcyon C): an object's spec, state, type, flags, rectangle and border into its caller's locals (called by ob_change 0xfea3bc). Not a tree walker.
 fn 0xfed27c everyobj
-cmt 0xfed27c AES everyobj (Alcyon C): depth-first walk of a tree, calling jsr (a0) per object with the accumulated offsets; skips HIDETREE (bit 7 of ob_flags' low byte).
+cmt 0xfed27c AES everyobj (Alcyon C): depth-first walk of a tree, calling jsr (a0) per object with the accumulated offsets; skips HIDETREE (bit 7 of ob_flags' low byte); re-reads ob_head/ob_flags after each call. Its levels are two 8-word frame arrays: 8 levels deep x lands on the saved A6 and y on x[0] (>=10 the return address) — reachable through objc_draw's caller depth.
 fn 0xfe387c aes_dsptch
 fn 0xfe38d4 aes_savestate
 fn 0xfe3930 aes_switchto
@@ -1348,3 +1348,185 @@ var 0x9c16 aes_drl
 var 0xc67e aes_indisp
 cmt 0xc67e AES dispatcher guard (byte): savestate sets it (addq.b #1), switchto clears it; dsptch is a bare rts while set — 1 in the boot snapshot (inside disp's idle loop).
 var 0x9c58 aes_theglo
+
+# ---- AES bands 0+1 (2026-09-30): the LEAVES (the optimize layer, gemrlist, the DESKTOP.INF scanners) and the
+# OBJECT/RESOURCE layer — every fn/var below is a body read with a differential behind it (`recreate/STATUS.md`,
+# "Verified — aes"), but those marked `# ctx` (not yet reconstructed: named from their callers and GEM's source order) ----
+# --- the optimize layer's memory and string helpers ($fecb6e..$fed18d, all shipped byte-exact as src/aes/optimize.S) ---
+fn 0xfecb6e mul_div
+cmt 0xfecb6e mul_div(a, b, c) = a*b/c by muls/divs: the overflow arm depends on DIVS's undefined N — Musashi keeps muls' N, the 68000 (Hatari) sets it: mul_div(1000,1000,1) = -15808 vs -15809; the C follows the oracle, the shipped .S the machine.
+fn 0xfecbc6 set_contrl_ptr
+fn 0xfecbda get_contrl_ptr2
+fn 0xfecbe6 lstcpy
+cmt 0xfecbe6 LSTCPY(dst, src): copy with the NUL; D0.w = the length counted in a byte (addq.b) minus 1: a 255-byte copy answers -1.
+fn 0xfecbfa xstrpix
+fn 0xfecc12 wset
+fn 0xfecc28 xstrpix_n
+fn 0xfecc40 wcopy
+fn 0xfecc56 wfill
+cmt 0xfecc56 wfill (hand 68000, no caller): the beq tests the VALUE loaded last — value 0 stores nothing, count 0 stores 65536 words.
+fn 0xfecc6c lstrlen
+cmt 0xfecc6c lstrlen: the string's length (AES_MAP's "strlen+1" is wrong).
+fn 0xfecc7e lbcopy
+cmt 0xfecc7e LBCOPY (hand 68000): memmove; backward iff src < dst as SIGNED longs (top bytes count); a backward count >= 32770 moves one byte.
+fn 0xfece2e movs
+fn 0xfece42 min
+fn 0xfece4e max
+fn 0xfece5e bfill
+fn 0xfece74 toupper
+fn 0xfece8c strlen
+fn 0xfece9c streq
+fn 0xfeceb8 strcpy
+fn 0xfecec4 strscn
+fn 0xfeceda strcat
+fn 0xfeceee scasb
+fn 0xfecf02 strchk
+fn 0xfecf24 fmt_str
+cmt 0xfecf24 fmt_str: a name to its 8.3 form; a dotless name left unpadded; after 8 bytes the 9th is skipped.
+fn 0xfecf58 unfmt_str
+fn 0xfed070 merge_str
+cmt 0xfed070 merge_str(dst, tmpl, parms): %L (signed, via ldiv) %W (a slot's first word) %S %%; 4-byte slots; $80000000 prints "0"; a trailing % reads past the NUL.
+fn 0xfed12e wildcmp
+cmt 0xfed06e The optimize layer's shared bare-rts tail (RC_RETURN_D0), after $fed066/$fed06a: strlen ($fece94 beq.w) and inf_what's $fed03a branch here.
+fn 0xfe3db4 lmul
+cmt 0xfe3db4 Alcyon's runtime lmul (signed 32x32 by three mulu); called by merge_str's %L. Shipped in optimize.S's second region so its jsr relocates into a pinned span.
+fn 0xfe3e08 ldiv
+cmt 0xfe3e08 Alcyon ldiv: quotient in D0, remainder at $8c3e; a $80000000 dividend -> 0 rem $80000000; both negative -> a positive remainder.
+var 0x8c3e ldiv_remainder
+# --- the rectangle helpers (src/aes/rect.c; six ship as optimize.S, inside/rc_intersect as C) ---
+fn 0xfecca6 r_get
+fn 0xfeccbe r_set
+cmt 0xfeccbe r_set(r, x, y, w, h): its four frame words stored as two longwords.
+fn 0xfeccca rc_copy
+fn 0xfeccd6 inside
+fn 0xfecd0c rc_equal
+fn 0xfecd8c rc_union
+fn 0xfecde4 rc_constrain
+cmt 0xfecde4 rc_constrain(container, r): pull r inside on each axis; the container's extent is read AFTER the pulled-up origin is stored.
+# --- the object text and state helpers (src/aes/objtext.c) and ob_sst/everyobj's OB_ADDR ---
+fn 0xfecf84 fs_sset
+cmt 0xfecf84 fs_sset(tree,obj,text,&ptext,&txtlen) (hand 68000): *ptext=te_ptext FIRST, then lstcpy(te_ptext re-read, text), then *txtlen=te_txtlen read after the copy. The map's "ob text get" is this SET.
+fn 0xfecfb2 inf_sset
+fn 0xfecfd6 fs_sget
+cmt 0xfecfd6 fs_sget(tree,obj,text): lstcpy(text, te_ptext) — the GET (the map has get/set reversed).
+fn 0xfecfee inf_fldset
+fn 0xfed010 inf_gindex
+cmt 0xfed010 inf_gindex(tree,first,count): the first SELECTED (low byte bit 0) of count objects, -1 none; a dbf counter: count 0 walks 65536 objects.
+fn 0xfed03a inf_what
+cmt 0xfed03a inf_what(tree,ok,cancel): inf_gindex(tree,ok,2); cancel is never read; adds the index into its own caller's frame word (ok) before clearing that object's state; its body ends IN the shared tails $fed066/$fed06a.
+fn 0xfed18e ob_addr
+cmt 0xfed18e OB_ADDR (hand 68000): A0 += tree + 24*obj, read from its CALLER's frame (4(sp)/8(sp) there) — a bsr helper, no frame of its own.
+# --- the DESKTOP.INF scanners (src/aes/infscan.c) ---
+fn 0xfdaf20 hex_dig
+fn 0xfdaf5c uhex_dig
+fn 0xfdaf92 scan_2
+cmt 0xfdaf92 scan_2(p,&v): two UPPER-case hex digits (lower case reads 0, so only "FF" is the unset -1), cursor += 3 (the separator skipped unread).
+fn 0xfdafca save_2
+# --- gemrlist, the ORECT pool (src/aes/rlist.c) ---
+fn 0xfe5a62 or_start
+cmt 0xfe5a62 or_start: the free head cleared, then all 80 ORECTs threaded, ORECT 0 first (79 on top); window lists untouched — the desktop's ORECT is left on both the free list and window 0's list.
+fn 0xfe5aac get_orect
+fn 0xfe5acc mkpiece
+cmt 0xfe5acc mkpiece: no check of get_orect's 0 — an exhausted pool builds the piece at address 0.
+fn 0xfe5ba8 brkrct
+fn 0xfe5c9a mkrect
+cmt 0xfe5c9a mkrect(tree, wh): everyobj's callback (the tree unused) — reached only through everyobj's jsr (a0) on the address newrect pushes at $fe5d68; cuts window wh's list by gl_mkrect, WIN_BROKEN on a cut.
+fn 0xfe5cee newrect # ctx
+var 0xc824 rul
+var 0xb396 orect_pool
+var 0x96e2 gl_mkrect
+# --- the object-tree operations (src/aes/objects.c) ---
+fn 0xfea0a8 ob_find
+cmt 0xfea0a8 AES ob_find (objc_find, 43): the deepest non-HIDETREE object under (x,y) from obj down depth levels (a word countdown: -1 = all); children tried LAST first (get_prev steps back, only when dosibs && lastfound != -1, $fea182); -1 when obj itself is missed. Origin r_set 0 for the root, else ob_actxywh(get_par).
+fn 0xfea1ba ob_add
+cmt 0xfea1ba AES ob_add (objc_add, 40): child.next = parent; old tail's next (or parent.head) = child; parent.tail = child; nothing if either is -1.
+fn 0xfea21e ob_delete
+cmt 0xfea21e AES ob_delete (objc_delete, 41): unlink obj (not the root): head -> its next (-1 with the tail for an only child), or get_prev's next -> its next and the tail -> prev when it was the tail. Its own ob_next kept.
+fn 0xfea2be ob_order
+cmt 0xfea2be AES ob_order (objc_order, 45): get_par, ob_delete, relink at 0 (head), -1 (after the tail) or after pos-1 next links from the head; tail = obj only when obj.next is the parent (an only child to 0 keeps no tail; to -1 writes 24 bytes below the tree).
+fn 0xfea4b6 ob_fs
+cmt 0xfea4b6 AES ob_fs: *pflag = ob_flags, answers ob_state (fm_button's call $fe7368).
+fn 0xfea4e8 ob_actxywh
+cmt 0xfea4e8 AES ob_actxywh: ob_offset(tree,obj,&r.x,&r.y) then r.w = ob_width, r.h = ob_height.
+fn 0xfea538 ob_relxywh
+cmt 0xfea538 AES ob_relxywh: wcopy(pt, &ob_x, 4), a forward word copy.
+fn 0xfea55e ob_setxywh
+cmt 0xfea55e AES ob_setxywh: wcopy(&ob_x, pt, 4).
+fn 0xfea5dc get_prev
+cmt 0xfea5dc AES get_prev(tree, parent, obj): the sibling whose ob_next is obj, walked from parent's head; -1 when obj is the head (no end otherwise).
+fn 0xfe92ae ob_center
+cmt 0xfe92ae AES ob_center (form_center, 54): root x = ((gl_width-w)/2)/gl_wchar*gl_wchar, y = (gl_height-gl_hbox-h)/2+gl_hbox, stored into the root; OUTLINED root (state bit 4): answer grown 3 a side (origin clamped at 0) via r_set.
+var 0x980a gl_width
+var 0xc78e gl_height
+var 0xc832 gl_wchar
+var 0x9702 gl_hbox
+# --- the resource layer (src/aes/resource.c) and the shell/scrap buffers (src/aes/shell_buf.c) ---
+fn 0xfea622 fix_chpos
+cmt 0xfea622 One resource coordinate from cells: low byte x gl_wchar/gl_hchar (an x/width of 80 = gl_width), plus the high byte as an offset signed only ABOVE 128.
+fn 0xfea69c rs_obfix
+fn 0xfea6e6 rs_str
+fn 0xfea716 get_sub
+fn 0xfea742 get_addr
+cmt 0xfea742 get_addr(type, index): rsrc_gaddr's switch (table $fefbf8, 17 types, unsigned: -1 past them); R_TREE stores the byte offset in $9ba4 and re-reads it movea.w — a tree >= $2000 reads below the table.
+fn 0xfea86a fix_trindex
+fn 0xfea8bc fix_objects
+fn 0xfea918 fix_tedinfo
+cmt 0xfea918 fix_tedinfo: each TEDINFO's text/template/valid pointers fixed, the lengths strlen+1 counted THROUGH the pointer just stored; a -1 pointer keeps its length.
+fn 0xfea9d4 fix_nptrs
+fn 0xfea9f8 fix_ptr
+fn 0xfeaa0a fix_long
+fn 0xfeaa38 rs_sglobal
+fn 0xfeaa58 rs_free
+cmt 0xfeaa58 AES rs_free (rsrc_free, 111): Mfree(global[7..8]) through dos_free — not rs_hdr, which it leaves alone.
+fn 0xfeaa86 rs_gaddr
+fn 0xfeaab2 rs_saddr
+fn 0xfeaae2 rs_readit # ctx
+fn 0xfeaba4 do_rsfix
+fn 0xfeac4e rs_fixit
+fn 0xfeac5c rs_load # ctx
+fn 0xfeac80 sc_read
+fn 0xfeac94 sc_write
+fn 0xfeaca8 sh_read
+fn 0xfeacd4 sh_write
+cmt 0xfeacd4 AES sh_write (shel_write, 121): both lines copied in; doexec stored, isgem stored as a flag, ISDEF/DODEF cleared; isover never read.
+fn 0xfead26 sh_get
+fn 0xfead40 sh_put
+fn 0xfee4de rom_rsc_init
+cmt 0xfee4de Start-up: Malloc(17218) unchecked, the ROM's resource bundle copied in, six parts {addr,len} at $c76a (part 0's length = offset - 5: words subtracted from bytes), three fresh flags.
+fn 0xfee5c8 rom_ram
+cmt 0xfee5c8 rom_ram(part, ptr, n): 3 DESKTOP.INF, 2/4 the desk's icons, 0/1/5 a resource relocated in place on first request (global[] kept) and handed back after; part 1 then sizes the desktop through the desk's own binding.
+var 0x9802 rs_global
+var 0x9c3c rs_hdr
+var 0x9ba4 rs_index
+var 0x9806 rs_system_global
+var 0xb89a rs_string_buffer
+var 0xc76a rom_rsc_table
+var 0x9c40 rom_rsc_aes_fresh
+cmt 0x9c40 The AES resource's fresh flag: 2 in the capture — gem_main's move.w #2 at $fda2f8, a value rom_ram never tests.
+var 0x9bc2 rom_rsc_desk_fresh
+var 0x9c14 rom_rsc_format_fresh
+var 0xc708 rom_rsc_aes_global
+var 0xc688 rom_rsc_desk_global
+var 0xc6ea rom_rsc_format_global
+var 0x96ba desk_app_global
+var 0xc672 gl_hchar
+var 0xc912 gl_ncols
+var 0xc82a shell_tail
+var 0xbc2e shell_gem_buffer
+var 0xba9a scrap_path
+var 0x98a0 sh_doexec
+var 0x96f4 sh_isgem
+var 0x96f2 sh_dodef # ctx
+var 0xc83c sh_isdef # ctx
+var 0xfd5b88 rom_rsc_bundle
+cmt 0xfd5b88 The ROM's resource bundle (17218 bytes, copied by rom_rsc_init): the AES's resource at $fd5b92, the desk's at $fd6f52, the icons $fd92fc, DESKTOP.INF $fd98cc, the format dialogs' $fd9ae2 ($fd6f3e/$fd83bf are NAME strings inside it).
+var 0xfefbf8 get_addr_switch_table
+# --- the AES's GEMDOS glue (src/aes/gemdosif.c) ---
+fn 0xfe3bba dos_alloc
+cmt 0xfe3bba dos_alloc(bytes): Malloc of bytes rounded up to even, the block rounded the same way; 0 sets DOS_ERR = 1 — and a success does NOT clear it.
+fn 0xfe3c26 dos_free
+fn 0xfe3c3e gem_dos_trap # ctx (__DOS's body: trap #1, DOS_AX/DOS_ERR)
+var 0x8c1e dos_return
+var 0x8c22 trap1_return
+var 0x98ec dos_err
+var 0xc918 dos_ax

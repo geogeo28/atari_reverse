@@ -219,8 +219,9 @@ def test_every_staged_caller_costs_what_both_columns_are_net_of(caller):
 # region may carry another routine's Line-F words as bytes (the span from rc_intersect to the tails holds four) so
 # long as no path executes one — and an executed word is an instruction, so a Line-F word there is a call or a return,
 # never an immediate that happens to read `$Fxxx` (`cmp.w #-1` at $fed04a).
-# The optimize layer's shared return tails: every hand-68000 rectangle helper leaves by a branch to one of them.
-AES_RETURN_TAILS = (addrs.AES_ROM_RC_RETURN_FALSE, addrs.AES_ROM_RC_RETURN_TRUE)
+# The optimize layer's shared return tails: every hand-68000 helper that answers a word leaves by a branch to one of
+# them — the two answers, and the bare `rts` that answers D0 as left (strlen's `beq.w`).
+AES_RETURN_TAILS = (addrs.AES_ROM_RC_RETURN_FALSE, addrs.AES_ROM_RC_RETURN_TRUE, addrs.AES_ROM_RC_RETURN_D0)
 _AES_ENTRY_PREFIX = routines.AES_PREFIX.lower()
 Run = namedtuple("Run", "entry regs pokes io_seed")
 
@@ -257,7 +258,8 @@ def _transcription_runs(entry):
 
 
 def test_every_aes_row_executes_no_line_f_and_holds_the_return_tails_it_reaches():
-    """Over the table's AES rows — none yet, so this holds the door rather than a row; the two below are its reds."""
+    """Over the table's AES rows: every transcribed AES routine, over its registered `.S` rows. The tests below are
+    the check's reds."""
     for entry in (entry for entry in transcription.TRANSCRIBED if entry.startswith(_AES_ENTRY_PREFIX)):
         routine = getattr(addrs, transcription.transcription_routine(entry))
         region, = (region for region in transcription.every_pinned_region() if region.lo <= routine < region.hi)
@@ -279,7 +281,7 @@ RC_INTERSECT_ALONE = RC_INTERSECT_WITH_THE_TAILS._replace(hi=addrs.AES_ROM_RC_RE
 def test_a_path_through_the_tails_pinned_with_them_is_accepted_and_one_pinned_apart_is_refused():
     runs = _registered_runs("aes_rc_intersect")
     assert_aes_row_path("aes_rom_rc_intersect", RC_INTERSECT_WITH_THE_TAILS, runs)
-    with pytest.raises(AssertionError, match=r"return tail\(s\) \$fed066, \$fed06a outside"):
+    with pytest.raises(AssertionError, match=r"return tail\(s\) \$fed066, \$fed06a, \$fed06e outside"):
         assert_aes_row_path("aes_rom_rc_intersect", RC_INTERSECT_ALONE, runs)
 
 

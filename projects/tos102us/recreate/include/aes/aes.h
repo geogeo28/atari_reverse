@@ -87,13 +87,56 @@
 #define AES_GSX_PTSIN         0x98c4     /* ptsin[]                             ($fda7fe lea)                  */
 #define AES_GSX_INTOUT        0x9706     /* intout[]                            ($fe4ce8)                      */
 #define AES_GSX_PTSOUT        0x9abc     /* ptsout[]                            ($fdab2e lea)                  */
+/* contrl[7..8] and contrl[9..10]: the two POINTERS a VDI call with an address in contrl carries (the vector
+ * exchanges ap_tplay and ap_trecd make), set and read back through the optimize layer's three tiny helpers. */
+#define AES_GSX_CONTRL_PTR    0xc7ee     /* long: contrl[7..8]                  ($fecbc6 move.l 4(sp),$c7ee)   */
+#define AES_GSX_CONTRL_PTR2   0xc7f2     /* long: contrl[9..10]                 ($fecbda move.l $c7f2,(a0))    */
+/* The Alcyon runtime's long divide (`ldiv`, $fe3e08) leaves its REMAINDER here as well as in no register: the one
+ * trace merge_str's number formatting leaves in RAM. */
+#define AES_LDIV_REMAINDER    0x8c3e     /* long: ldiv's remainder              ($fe3e94 move.l d7,$8c3e)      */
+
+/* ---- the SCREEN's metrics, set once from the workstation's answers (gsx_graphic's init, `$fdaab0`) ---------- */
+#define AES_GL_WIDTH          0x980a     /* word: pixels across, work_out[0] + 1 ($fdaafc)                     */
+#define AES_GL_HEIGHT         0xc78e     /* word: ...and down                   ($fdab0c)                      */
+#define AES_GL_WCHAR          0xc832     /* word: a character cell's width      ($fdab46)                      */
+#define AES_GL_HCHAR          0xc672     /* word: ...and its height             ($fdab4e)                      */
+#define AES_GL_NCOLS          0xc912     /* word: cells across, gl_width / gl_wchar ($fdab88 divs.w)           */
+#define AES_GL_HBOX           0x9702     /* word: a box's height, the menu bar's: the cell's + 3 ($fdab9c)     */
 
 /* ---- the SHELL and the DESK ---------------------------------------------------------------------------------
  * The desk reaches every global of its own through ONE pointer, to a GEMDOS Malloc block in the TPA (desk_alloc
  * `$fee80a`): a desk case stages and compares TPA, not GEMBSS. */
 #define AES_DESK_GLOBALS      0xc6a6     /* long: the desk's global block       ($fdaea2)                      */
+/* The desk's application global[] (15 words): what its AES bindings hand the implementations as `pglobal`. */
+#define AES_DESK_APP_GLOBAL   0x96ba     /* ($fde360 move.l #$96ba, rsrc_gaddr's binding)                      */
 #define AES_SHELL_BUFFER      0xc79e     /* long: the shell's buffer            ($fda00e)                      */
 #define AES_SH_COMMAND        0xc42e     /* byte: sh_cmd's command              ($feb310 move.b)               */
+/* The shell's buffers, as shel_read/shel_write copy them: AES_SHELL_BUFFER's command line and this TAIL (whose
+ * first byte is AES_SH_COMMAND), 128 bytes each; the GEM buffer shel_get/shel_put copy, which holds the DESKTOP.INF
+ * text; and the scrap directory's path, which scrp_read/scrp_write copy. */
+#define AES_SHELL_TAIL        0xc82a     /* long: the command tail              ($fda018)                      */
+#define AES_SHELL_LINE_BYTES  128        /* ($feacac move.w #128)                                              */
+#define AES_SHELL_GEM_BUFFER  0xbc2e     /* ($fead2e move.l #$bc2e)                                            */
+#define AES_SCRAP_PATH        0xba9a     /* ($feac84 move.l #$ba9a)                                            */
+/* shel_write's requests, which sh_main acts on. The two it CLEARS are named after the shell's own flags (`ctx`):
+ * sh_main runs the desk while AES_SH_DODEF is set ($feb1d2), and forces a GEM launch on AES_SH_ISDEF ($feb136). */
+#define AES_SH_DOEXEC         0x98a0     /* word: run the command next          ($feb2f0 tst.w)                */
+#define AES_SH_ISGEM          0x96f4     /* word: ...as a GEM program           ($feb162 move.w)               */
+#define AES_SH_DODEF          0x96f2     /* word                                ($feb1d2 tst.w)                */
+#define AES_SH_ISDEF          0xc83c     /* word                                ($feb136 tst.w)                */
+
+/* ---- the ROM's OWN RESOURCES, as start-up copies them into RAM ($fee4de) and rom_ram hands them out ($fee5c8)
+ * Six PARTS of the copy, each an address and a length (`aes/resource.h`'s ROM_RSC_*); the three resources among
+ * them are relocated in place on their first request, flagged by a word each, and the global[] they were first
+ * requested for kept (15 words) to be handed back on every request after. */
+#define AES_RSC_TABLE         0xc76a     /* ($fee504 move.l a0,$c76a)                                          */
+#define AES_RSC_AES_FRESH     0x9c40     /* word: 1 until the AES's is relocated ($fee670 cmpi.w #1)           */
+#define AES_RSC_DESK_FRESH    0x9bc2     /* word: ...the desk's                 ($fee68c cmpi.w #1)            */
+#define AES_RSC_FORMAT_FRESH  0x9c14     /* word: ...the format dialogs'        ($fee6a8 cmpi.w #1)            */
+#define AES_RSC_AES_GLOBAL    0xc708     /* words[AES_GLOBAL_WORDS]: the AES's global[] ($fee718)              */
+#define AES_RSC_DESK_GLOBAL   0xc688     /* words[AES_GLOBAL_WORDS]: the desk's ($fee6f0)                      */
+#define AES_RSC_FORMAT_GLOBAL 0xc6ea     /* words[AES_GLOBAL_WORDS]: the format dialogs' ($fee702)             */
+#define AES_GLOBAL_WORDS      15         /* an application's global[]           ($fee6ea move.w #15)           */
 
 /* ---- THEGLO: the one block gem_main clears and carves ($fda062) --------------------------------------------- */
 #define AES_THEGLO            0x9c58     /* ($fda06a movea.l #$9c58,a5)                                        */
@@ -156,6 +199,8 @@
 #define AES_ORECT_POOL        0xb396     /* THEGLO + $173e                      ($fe5a82)                      */
 #define AES_ORECT_COUNT       80         /* ($fe5aa4 cmp.w #80)                                                */
 #define AES_ORECT_FREE        0xc824     /* long: the free ORECTs               ($fe5a6a clr.l)                */
+/* The ORECT newrect cuts every other window's list by (its fields ORECT_*): outside the pool, never freed. */
+#define AES_GL_MKRECT         0x96e2     /* ($fe5cb8 move.l #$96e2, $fe5d3a its x at +4)                       */
 /* The WINDOW records: eight of 56 bytes, the last ending two bytes before the clear does ($c670). */
 #define AES_WINDOWS           0xc4ae     /* THEGLO + $2856                      ($feb492 adda.l #10326)         */
 #define AES_WINDOW_COUNT      8          /* ($fd9f78's clear ends at THEGLO + $2a18 = AES_WINDOWS + 8 x 56 + 2) */

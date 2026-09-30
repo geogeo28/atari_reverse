@@ -944,8 +944,7 @@ CALL = {
     "XBIOS_KBDVBASE": Call((), RETURNS_LONG),
     "XBIOS_INITMOUS": Call((IMAGE, arg_word(0), arg_long(2), arg_long(6)), RETURNS_LONG),
     # ...and this one takes the caller's whole ARGUMENT BLOCK, as the ROM does — six optional words
-    # it reads off the frame. `arg_address(0)` is the copy of that frame at POINTER_STORAGE, which
-    # is also the only form seven values could be passed in (`rom_bench._vet_stack_args_fit`).
+    # it reads off the frame. `arg_address(0)` is the copy of that frame at POINTER_STORAGE.
     "XBIOS_RSCONF": Call((IMAGE, arg_address(0)), RETURNS_LONG),
     # ---- the INTERRUPT HANDLERS (BIOS wave 2) ----
     # None takes an argument — nothing calls one, the machine dispatches it — and none returns a
@@ -1335,7 +1334,8 @@ CALL.update({"VDI_ROM_DISPATCH": Call((IMAGE,), RETURNS_NOTHING),
 # takes it, and every other argument read out of the frame at the offset the widths before it add up to.
 # (The register routines among the helpers are `declare_primitive`s above.)
 _FRAME_DECODERS = {vdi.WORD_ARG: arg_signed_word, vdi.LONG_ARG: arg_long}
-_ALCYON_RETURNS = {ctypes.c_uint16: RETURNS_WORD, None: RETURNS_NOTHING}
+# The answer widths are the differential's own set (`aes.RESULT_WIDTHS`, its keys `test_tier3.py` pins equal to these).
+_ALCYON_RETURNS = {ctypes.c_uint16: RETURNS_WORD, ctypes.c_uint32: RETURNS_LONG, None: RETURNS_NOTHING}
 
 
 def _alcyon_call(signature):

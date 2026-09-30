@@ -21,7 +21,9 @@ served calls from outside a pass):
   exception is printed and the call returns — so a key nothing staged, and ANY call made while no pass
   is open, is written to `refused` and answered with `REFUSED_ANSWER`, and `staged()` fails the case
   on the way out. A call outside a pass is refused rather than served because no case is in flight:
-  answering it out of the last case's table would be the worst answer available.
+  answering it out of the last case's table would be the worst answer available. An EFFECT THAT RAISES
+  (its own refusal, e.g. a pointer read out of the image it will not store through) is recorded the same
+  way and fails the case by its own message, where ctypes alone would print it and carry the run on.
 
 WHAT STAYS IN THE BATTERY is the table and the claim: which keys are staged, what each effect does to
 the image, and the wording of the failure — those are statements about the routine.
@@ -69,6 +71,7 @@ class AddressHook:
         self._pass_open = False
         self.calls = []                 # the recorded pass's calls — the one every claim is about
         self.refused = []               # keys answered with REFUSED_ANSWER, in the order they came
+        self.raised = []                # (key, exception) for each effect that raised, answered the same way
         self._trampoline = prototype(self._dispatch)
         bind_pointer(symbol, self._trampoline)
 
@@ -89,10 +92,12 @@ class AddressHook:
         self._passes_begun = 0
         self.calls.clear()
         self.refused.clear()
+        self.raised.clear()
         try:
             yield self
         finally:
             self._effects = {}
+        assert not self.raised, f"the effect staged at {self.raised[0][0]:#x} raised: {self.raised[0][1]}"
         assert not self.refused, describe_refusals(self.refused)
 
     def staged_routines(self, routines):
@@ -126,4 +131,8 @@ class AddressHook:
         if effect is None:
             self.refused.append(key)
             return REFUSED_ANSWER
-        return effect(buf, *arguments)
+        try:
+            return effect(buf, *arguments)
+        except Exception as raised:    # the callback cannot raise into C: recorded, and `staged()` fails the case
+            self.raised.append((key, raised))
+            return REFUSED_ANSWER

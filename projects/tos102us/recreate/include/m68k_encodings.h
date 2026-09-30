@@ -1,5 +1,5 @@
 /* m68k_encodings.h — the 68000 words the ROM's assembler chose where GNU as chooses another, spelt ONCE
- * for every byte-pinned transcription (`src/vdi/helpers.S`, `palette.S`, `raster.S`).
+ * for every byte-pinned transcription (`src/vdi/helpers.S`, `palette.S`, `raster.S`, `src/aes/optimize.S`).
  *
  * THE SPELLING POLICY. A transcription ships the ROM's own instructions and is pinned to the ROM BYTE
  * FOR BYTE (`test/transcription.py`'s `assert_transcribed`). Where gas, handed the instruction, would emit a
@@ -63,5 +63,19 @@
 /* `move.l <d16>(An),Dn` and `tst.l <d16>(An)` at 0: $a00e's reads of an MFDB's base ($fd0394, $fd04f6) */
 #define M68K_MOVE_L_D16(an, dn)    (0x2028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
 #define M68K_TST_L_D16(an)         (0x4aa8 + (an))
+/* `cmp.b #<imm>,Dn` / `cmp.l #<imm>,Dn` in the register form, CMP.W's family: merge_str's codes ($fed090..),
+ * unfmt_str's space ($fecf68), ldiv's divide bound ($fe3e50) */
+#define M68K_CMP_B_IMMEDIATE(dn)   (0xb03c + ((dn) << M68K_DATA_REGISTER_SHIFT))
+#define M68K_CMP_L_IMMEDIATE(dn)   (0xb0bc + ((dn) << M68K_DATA_REGISTER_SHIFT))
+/* `movea.l #<imm>,An`, which gas shortens to `movea.w` for an immediate that fits a word: the object-text helpers'
+ * field offsets ($fecf88) */
+#define M68K_MOVEA_L_IMMEDIATE(an) (0x207c + ((an) << M68K_DATA_REGISTER_SHIFT))
+/* Two words a transcription carries as BYTES of a routine it does not enter: `bsr.w` (its displacement word after
+ * it), and the Line-F exception word, GEM's call (`$F000` + the call table's byte offset, `aes/aes.h`) */
+#define M68K_BSR_W                 0x6100
+#define M68K_LINE_F_WORD           0xf000
+/* `jsr <xxx>.l`, which gas turns into `jsr <d16>(pc)` for a label of the same section: merge_str's calls of the
+ * Alcyon runtime ($fed0e6, $fed0f0) */
+#define M68K_JSR_ABSOLUTE_LONG     0x4eb9
 
 #endif /* TOS102US_M68K_ENCODINGS_H */

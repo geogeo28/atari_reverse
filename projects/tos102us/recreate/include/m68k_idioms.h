@@ -241,4 +241,61 @@ static inline uint32_t bus_dereference(uint32_t address)
 #endif
 }
 
+/* ---- a byte, word or longword READ OR STORED through a caller's pointer ------------------------------------------
+ * `bus_dereference` above, spelt once for the accessors every AES core reaches its caller's memory through: the
+ * offset summed FIRST (`d16(An)`), the sum put on the bus, then the access. ON TARGET each is the plain access.
+ *
+ * OFF TARGET a word or longword the 68000 could not make is REFUSED BY NAME rather than made: at an ODD address it
+ * takes an address error (vector 3), which the oracle's Musashi — built without address errors — does not model; and
+ * one whose bytes run past the top of the bus would reach past the host's 16 MB image, where the 68000 wraps the
+ * second word to $000000. The bound is written so it cannot wrap: `at <= OS_BUS_ADDR_MASK - (bytes - 1)`. */
+#define M68K_WORD_BYTES       2
+#define M68K_LONG_BYTES       4
+#define M68K_ODD_ADDRESS_BIT  1u
+
+static inline uint32_t bus_span(uint32_t address, uint32_t bytes)
+{
+    uint32_t at = bus_dereference(address);
+
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    if (at & M68K_ODD_ADDRESS_BIT)
+        recreate_not_reconstructed("a word or longword at an odd address: the 68000's address error (vector 3)");
+    if (at > OS_BUS_ADDR_MASK - (bytes - 1))
+        recreate_not_reconstructed("an access running past the top of the 24-bit bus: the 68000 wraps it to $000000");
+#else
+    (void)bytes;
+#endif
+    return at;
+}
+
+static inline uint8_t bus_byte(const uint8_t *image, uint32_t address)
+{
+    return image[bus_dereference(address)];
+}
+
+static inline void set_bus_byte(uint8_t *image, uint32_t address, uint8_t value)
+{
+    image[bus_dereference(address)] = value;
+}
+
+static inline uint16_t bus_word(const uint8_t *image, uint32_t address)
+{
+    return be16(image + bus_span(address, M68K_WORD_BYTES));
+}
+
+static inline void set_bus_word(uint8_t *image, uint32_t address, uint16_t value)
+{
+    wr16(image + bus_span(address, M68K_WORD_BYTES), value);
+}
+
+static inline uint32_t bus_long(const uint8_t *image, uint32_t address)
+{
+    return be32(image + bus_span(address, M68K_LONG_BYTES));
+}
+
+static inline void set_bus_long(uint8_t *image, uint32_t address, uint32_t value)
+{
+    wr32(image + bus_span(address, M68K_LONG_BYTES), value);
+}
+
 #endif /* TOS102US_M68K_IDIOMS_H */

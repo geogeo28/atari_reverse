@@ -8,8 +8,12 @@
  * `.S` transcription. Three rows are here for the other reason a ROM routine ships as its own
  * instructions: an ENTRY a vector holds the address of, entered with a convention no C function has —
  * `vdi_rom_timer_tick`, etv_timer's, `linea_rom_dispatch`, vector $28's, and `vdi_rom_entry`, `trap #2`'s
- * (the `src/bios/trap.S` / `isr.S` precedent); Tier 1 still proves each one's C twin. This table is the
- * one place "ships as `.S`" is said, and three things are derived from it rather than restated:
+ * (the `src/bios/trap.S` / `isr.S` precedent); Tier 1 still proves each one's C twin. One AES row is
+ * here for a third: `aes_rom_lmul`, the Alcyon runtime a transcribed merge_str `jsr`s, whose call it can
+ * relocate only into a region a battery pins (`src/aes/optimize.S`), though its own C is under the bar
+ * (its sibling `aes_rom_ldiv` is here by the rule: its C is over the bar on its callers' divisors). This
+ * table is the one place "ships as `.S`" is said, and three things are derived
+ * from it rather than restated:
  *
  *   * TIER 3 (`bench/tier3.py`, legend (T), verdict `transcribed`): a routine here may have C rows over
  *     the bar ONLY while every one of its `.S` rows measures at or under it — or, for a `.S` that calls C
@@ -98,7 +102,43 @@
     ENTRY(linea_rom_dispatch,         "d2 a2 a6")                           /* vector $28: frame, `rte`    */ \
     ENTRY(linea_rom_init,             "a2")                                 /* $a000 -> D0, A0, A1, A2     */ \
     ENTRY(vdi_rom_entry,              "")                                   /* trap #2: D1 block -> D0.w   */ \
-    ENTRY(vdi_rom_escape,             "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* function 5: console scratch */
+    ENTRY(vdi_rom_escape,             "d2 d3 d4 d5 d6 d7 a2 a3 a4 a5")      /* function 5: console scratch */ \
+    /* ---- the AES: `src/aes`'s `.S` files --------------------------------------------------------------- */ \
+    ENTRY(aes_rom_mul_div,            "")                                   /* Alcyon (m1, m2, d) -> D0.w  */ \
+    ENTRY(aes_rom_set_contrl_ptr,     "")                                   /* Alcyon (pointer)            */ \
+    ENTRY(aes_rom_get_contrl_ptr2,    "")                                   /* Alcyon (answer)             */ \
+    ENTRY(aes_rom_lstcpy,             "")                                   /* Alcyon (dst, src) -> D0.w   */ \
+    ENTRY(aes_rom_xstrpix,            "")                                   /* Alcyon (dst, src) -> D0.w   */ \
+    ENTRY(aes_rom_wset,               "")                                   /* Alcyon (dst, count, value)  */ \
+    ENTRY(aes_rom_xstrpix_n,          "")                                   /* Alcyon (dst, src, count)    */ \
+    ENTRY(aes_rom_wcopy,              "")                                   /* Alcyon (dst, src, count)    */ \
+    ENTRY(aes_rom_wfill,              "")                                   /* Alcyon (dst, count, value)  */ \
+    ENTRY(aes_rom_lstrlen,            "")                                   /* Alcyon (string) -> D0.w     */ \
+    ENTRY(aes_rom_lbcopy,             "")                                   /* Alcyon (dst, src, count)    */ \
+    ENTRY(aes_rom_movs,               "")                                   /* Alcyon (count, src, dst)    */ \
+    ENTRY(aes_rom_min,                "")                                   /* Alcyon (a, b) -> D0.w       */ \
+    ENTRY(aes_rom_max,                "")                                   /* Alcyon (a, b) -> D0.w       */ \
+    ENTRY(aes_rom_bfill,              "")                                   /* Alcyon (count, byte, dst)   */ \
+    ENTRY(aes_rom_toupper,            "")                                   /* Alcyon (character) -> D0.w  */ \
+    ENTRY(aes_rom_strlen,             "")                                   /* Alcyon (string) -> D0.w     */ \
+    ENTRY(aes_rom_streq,              "")                                   /* Alcyon (a, b) -> D0.w       */ \
+    ENTRY(aes_rom_strcpy,             "")                                   /* Alcyon (src, dst) -> D0.l   */ \
+    ENTRY(aes_rom_strscn,             "")                                   /* Alcyon (src, dst, stop) -> D0.l */ \
+    ENTRY(aes_rom_strcat,             "")                                   /* Alcyon (src, dst) -> D0.l   */ \
+    ENTRY(aes_rom_scasb,              "")                                   /* Alcyon (string, byte) -> D0.l */ \
+    ENTRY(aes_rom_strchk,             "")                                   /* Alcyon (a, b) -> D0.w       */ \
+    ENTRY(aes_rom_fmt_str,            "")                                   /* Alcyon (src, dst)           */ \
+    ENTRY(aes_rom_unfmt_str,          "")                                   /* Alcyon (src, dst)           */ \
+    ENTRY(aes_rom_merge_str,          "d2")                                 /* Alcyon (dst, template, parameters) */ \
+    ENTRY(aes_rom_wildcmp,            "")                                   /* Alcyon (pattern, name) -> D0.w */ \
+    ENTRY(aes_rom_lmul,               "d2")                                 /* Alcyon (a.l, b.l) -> D0.l: merge_str's callee */ \
+    ENTRY(aes_rom_ldiv,               "")                                   /* Alcyon (a.l, b.l) -> D0.l: merge_str's callee */ \
+    ENTRY(aes_rom_r_get,              "a2")                                 /* Alcyon (rect, &x, &y, &w, &h) */ \
+    ENTRY(aes_rom_r_set,              "a2")                                 /* Alcyon (rect, x, y, w, h)   */ \
+    ENTRY(aes_rom_rc_copy,            "")                                   /* Alcyon (from, to)           */ \
+    ENTRY(aes_rom_rc_equal,           "")                                   /* Alcyon (one, other) -> D0.w */ \
+    ENTRY(aes_rom_rc_union,           "d2")                                 /* Alcyon (from, into)         */ \
+    ENTRY(aes_rom_rc_constrain,       "")                                   /* Alcyon (container, rect)    */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a

@@ -53,7 +53,7 @@ by this project's loader (`tools/ghidra_scripts/RomLoader.java`, `LineFResolve.j
 | `0xFC9F0C..0xFD2F21` | 36,886 | **linea + vdi**: the Line-A handler and table, the rasterizers, the VDI dispatcher and its functions | Line-A vector `$28` := `0xFC9F0C` at `0xFC037A`; VDI table targets to `0xFD2E84` |
 | `0xFD2F22..0xFD39F5` | 2,772 | **data**: VDI/Line-A switch and state tables | e.g. the 5-arm switch table at `0xFD3900` used by `0xFCABD0` |
 | `0xFD39F6..0xFD5B85` | 8,592 | **data**: the three system fonts (6×6, 8×8, 8×16) | header chain parsed below; `0xFC9F8A` points at all three |
-| `0xFD5B86..0xFD9EC9` | 17,220 | **data**: the AES resource, the desktop resource, the default `DESKTOP.INF` text, the FORMAT/DISKCOPY dialogs | `'GEMUSA.RSC'` `0xFD6F3E`, `'HDESKUSA.RSC'` `0xFD83BF`, `'#a000000'` `0xFD98CC`, `'FORMAT'` `0xFD9DEA` |
+| `0xFD5B86..0xFD9EC9` | 17,220 | **data**: the AES resource, the desktop resource, the default `DESKTOP.INF` text, the FORMAT/DISKCOPY dialogs | the bundle at `0xFD5B88` (17,218 B, copied by `rom_rsc_init` `0xFEE4DE`): the AES's resource starts at `0xFD5B92`, the desk's at `0xFD6F52`, the icons `0xFD92FC`, `DESKTOP.INF` `0xFD98CC`, the format dialogs' resource `0xFD9AE2` (STATUS.md wave 11 bands 0+1); `'GEMUSA.RSC'` `0xFD6F3E` and `'HDESKUSA.RSC'` `0xFD83BF` are NAME STRINGS inside the bundle, not the resources' starts |
 | `0xFD9ECA..0xFEE8FF` | 84,534 | **aes + desk** text (compiled C, Line-F calls) | `0xFD9ECA` is the GEM entry named by the MUPB |
 | `0xFEE900..0xFEFFF3` | 5,876 | **aes/desk** data: the Line-F call table, compiler switch tables, strings | `0xFEE900` is read by the Line-F handler at `0xFEE8D6` |
 | `0xFEFFF4..0xFEFFFF` | 12 | the GEM memory-usage parameter block | `os_magic` at `0xFC0014` points here |
@@ -610,7 +610,7 @@ calls the AES's internal routines directly through Line-F (its binding layer `0x
 ob_edit tables, not a menu-handler set. The paragraphs below are the pre-map record, kept for the signals that failed.
 
 What is established: the desktop's **data** is the block
-`0xFD83BF..0xFD9EC9` — the `'HDESKUSA.RSC'` name at `0xFD83BF`, the menu titles
+`0xFD83BF..0xFD9EC9` — the `'HDESKUSA.RSC'` name at `0xFD83BF` (a string inside the resource bundle: the desk's resource itself starts at `0xFD6F52`), the menu titles
 (`' Desk '` `0xFD83FE`, `' File '` `0xFD8405`, `' View '` `0xFD840C`, `' Options '`
 `0xFD8413`), every dialog and alert string through `0xFD92D3`, the `GEM, Graphics
 Environment Manager` / `Copyright (c) 1986, 1987` / `Digital Research, Inc.` /
@@ -661,7 +661,7 @@ is the string `qwertyuiop[]` (`0xFC2318` `QWERTYUIOP{}`, `0xFC2398` `QWERTYUIOP[
 **The boot palette**: 16 words at `0xFC06A8`, copied to `$ffff8240` at `0xFC00C0`.
 
 **The two embedded GEM resources** are described under `desk` above; the AES's own
-(`'GEMUSA.RSC'` at `0xFD6F3E`) holds the file selector (`'ITEM SELECTOR'` `0xFD6630`) and the
+(its resource at `0xFD5B92`; `'GEMUSA.RSC'` at `0xFD6F3E` is a name string inside the bundle) holds the file selector (`'ITEM SELECTOR'` `0xFD6630`) and the
 AES alert strings (`0xFD698F..0xFD6F0C`). Their exact header offsets and object trees were
 **not** parsed — the resources are pre-fixed-up in ROM and the `rsrc_gaddr` path that indexes
 them was not read.

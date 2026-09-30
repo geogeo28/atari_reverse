@@ -131,6 +131,42 @@ static inline uint16_t gemdos_descriptor(const uint8_t *image, int selector)
 uint32_t gemdos_dispatch(uint8_t *image, uint32_t arguments);            /* $fc94e4 */
 uint32_t gemdos_dispatch_selector(uint8_t *image, uint32_t arguments);   /* $fc973e, past the record */
 
+/* THE ONE `trap #1` SHAPE A ROM DOOR MAKES from another component — the function word over one longword (the VDI's
+ * `$fcfa9c`, the AES's glue `$fe3bba` / `$fe3c26`). THE TWO BUILDS TAKE IT TWO WAYS, `src/gemdos/console.c`'s
+ * arrangement: on target the machine's own trap over that frame; off target there is no trap to take, so the words go
+ * into a host slot and the reconstructed dispatcher is called on them — its handler through the hook a case binds.
+ * `static inline`, so each door's code is the one it had when it spelt this itself. */
+#ifdef RECREATE_HOST_DIFFERENTIAL
+static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
+{
+    uint8_t words_local[HOST_SLOT_GEMDOS_WORDS_BYTES];
+    uint32_t words = host_slot_claim(GEMDOS_WORDS, words_local);
+    uint32_t result;
+
+    wr16(image + words, function);
+    wr32(image + words + GEMDOS_ARGUMENT_WORD, argument);
+    result = gemdos_dispatch(image, words);
+    host_slot_release(GEMDOS_WORDS);
+    return result;
+}
+#else
+/* The trap entry restores D1-A6 from the frame it builds (`src/gemdos/trap1.S`), so D0 is all it changes. */
+static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
+{
+    register uint32_t result __asm__("d0");
+
+    (void)image;
+    __asm__ volatile ("move.l %1,-(%%sp)\n\t"
+                      "move.w %2,-(%%sp)\n\t"
+                      "trap #1\n\t"
+                      "addq.l #6,%%sp"
+                      : "=d"(result)
+                      : "d"(argument), "d"(function)
+                      : "memory", "cc");
+    return result;
+}
+#endif
+
 /* ...and the media-change recovery's two helpers, reconstructed ahead of the recovery that calls them.
  * $fc93f4 — a DND and every DND reachable from it given back to the pool. */
 void gemdos_free_dnd_tree(uint8_t *image, uint32_t dnd);

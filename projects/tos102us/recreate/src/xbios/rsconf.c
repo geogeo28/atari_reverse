@@ -84,9 +84,9 @@ static void rsconf_store(uint32_t reg, uint16_t argument)
 
 /* THE SIX ARGUMENTS ARE A BLOCK IN MEMORY, not six C parameters, and it is the ROM's own shape: the
  * routine reads `4(sp)` through `14(sp)` out of its caller's frame and never takes a register. The
- * C says the same — `arguments` is where that frame is — which is also the only form Tier 3 can
- * measure: seven C parameters reach thirty-two bytes above the stack pointer, past the twenty-eight
- * the harness reserves for a call's arguments (`rom_bench._vet_stack_args_fit`). */
+ * C says the same — `arguments` is where that frame is — rather than seven C parameters, which
+ * Tier 3 could price too (`rom_bench._stack_args_overflow` enters a call wider than the harness's
+ * argument area lower) but which would be a shape the ROM does not have. */
 static uint16_t rsconf_argument(const uint8_t *image, uint32_t arguments, uint32_t field)
 {
     return be16(image + addr_add(arguments, field));

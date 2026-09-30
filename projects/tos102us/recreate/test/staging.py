@@ -111,3 +111,10 @@ POINTER_ARGUMENTS = band(0, POINTER_ARGUMENTS_BYTES, "the single-buffer batterie
 # holds its own claim dead in the snapshot beside the cases that use it.
 FREE_WINDOW_END = 0xF7FA2       # one past the capture's last zero byte of the free TPA
 HIGH_BANDS = Registry(harness.emu.STACK_BAND_HI, FREE_WINDOW_END, "the free RAM above the oracle's stack band")
+
+# ONE WHOLE 64K-WORD BANK, SHARED: a case that needs 128 KB at once — a font form of 65536 words, a word
+# loop whose zero count runs 65536 passes — takes it here, one case at a time, as the single-buffer
+# batteries share `SCRATCH`. Claimed once, so no other tenant lands on it; and up here rather than in
+# the free TPA below the staging band, which is where Tier 3's blob grows from `bench_base`.
+WHOLE_BANK_BYTES = 0x20000
+WHOLE_BANK_AT = HIGH_BANDS.claim(0x90000, WHOLE_BANK_BYTES, "a whole 64K-word bank, one case at a time")

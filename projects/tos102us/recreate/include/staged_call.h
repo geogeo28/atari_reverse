@@ -21,8 +21,9 @@
  * oracle. Keyed BY ADDRESS, which is what makes a decoy staged beside the named routine mean
  * something on this side too.
  *
- * A SECOND HOOK HERE, `recreate_call_vector_registers`, serves the one shape that passes REGISTERS
- * back (the end of this file): a hook of `recreate_call_vector`'s signature has nowhere to put them.
+ * A SECOND HOOK HERE, `recreate_call_vector_registers`, serves the shape that passes REGISTERS back
+ * (`call_vector_registers`): a hook of `recreate_call_vector`'s signature has nowhere to put them.
+ * The AES's Alcyon object call (the end of this file) reaches it too, with its frame's three values.
  *
  * IT IS ANOTHER HOOK BESIDE `src/xbios/supexec.c`'s `recreate_call_routine`, deliberately and not
  * happily. The two have different signatures — Supexec TAIL-JUMPS and its routine's D0 is the XBIOS
@@ -310,6 +311,47 @@ static inline void call_vector_keeping(uint8_t *image, uint32_t routine)
                       : "+a"(target)
                       :
                       : "d0", "d1", "a1", "memory", "cc");
+#endif
+}
+
+/* ---- the ALCYON OBJECT CALL: a tree walker's routine, over an Alcyon frame ------------------------------------------
+ *
+ * The AES's everyobj (`$fed27c`) calls the routine its caller hands it once per object, as Alcyon calls anything:
+ * `move.w y,-(sp) / move.w x,-(sp) / move.w object,-(sp) / move.l tree,-(sp) / movea.l <routine>,a0 / jsr (a0) /
+ * adda.l #10,sp` — a TEN-byte frame of a longword and three words, which the routine (ob_draw's just_draw, the
+ * rectangle lists' mkrect) reads as its own arguments. What it owes the caller is ALCYON's contract, not a vector's:
+ * it keeps D3-D7/A3-A6 and may change D0-D2/A0-A2 (everyobj keeps nothing live in those across the call), so those are
+ * the clobbers — GCC's D2 and A2 among them.
+ *
+ * OFF TARGET it reaches the REGISTER-CARRYING hook above rather than a hook of its own (there is ONE such hook): the
+ * frame's values in its three slots — the object in D0, x and y as D1's two words (x high), the tree in A0. A host
+ * stub has no register file, so nothing on this side could observe which slot a value came in; what the frame's
+ * layout IS pinned by is Tier 3, where the cross-compiled blob pushes it for the case's staged 68000 routine (the
+ * everyobj rows, `test/test_aes_oblib_walk.py`: a logger that stores each frame it is handed, compared byte for byte). */
+static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t tree, int16_t object, int16_t x,
+                                      int16_t y)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    uint32_t registers[STAGED_REGISTERS];
+
+    registers[STAGED_D0] = (uint16_t)object;
+    registers[STAGED_D1] = (uint32_t)(uint16_t)x << 16 | (uint16_t)y;
+    registers[STAGED_A0] = tree;
+    recreate_call_vector_registers(image, routine, registers);
+#else
+    register uint32_t target __asm__("a0") = routine;
+
+    (void)image;
+    /* Every value in a REGISTER ("d", "r"): a stack operand would move under the pushes. */
+    __asm__ volatile ("move.w %3,-(%%sp)\n\t"
+                      "move.w %2,-(%%sp)\n\t"
+                      "move.w %1,-(%%sp)\n\t"
+                      "move.l %4,-(%%sp)\n\t"
+                      "jsr (%0)\n\t"
+                      "lea 10(%%sp),%%sp"
+                      : "+a"(target)
+                      : "d"(object), "d"(x), "d"(y), "r"(tree)
+                      : "d0", "d1", "d2", "a1", "a2", "memory", "cc");
 #endif
 }
 

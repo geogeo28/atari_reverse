@@ -654,10 +654,15 @@ def declare_alcyon(name, restype, argtypes, *, host_arguments=0):
     return ALCYON[name]
 
 
+def takes_image(name):
+    """Whether the Alcyon routine's core takes the image first — every one but a core over words alone (mul_div)."""
+    return ALCYON[name].argtypes[:1] == (IMAGE_ARG,)
+
+
 def frame_argtypes(name):
     """The argument types an Alcyon routine's FRAME carries: its signature less the image and the host's own."""
     signature = ALCYON[name]
-    framed = signature.argtypes[1:] if signature.argtypes[:1] == (IMAGE_ARG,) else signature.argtypes
+    framed = signature.argtypes[1:] if takes_image(name) else signature.argtypes
     return framed[signature.host_arguments:]
 
 

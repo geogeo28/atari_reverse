@@ -388,6 +388,18 @@ TRANSCRIBED_CORES = {transcribed_core(entry): entry for entry in TRANSCRIBED}
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
 # `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
 C_CALLERS_OF_TRANSCRIBED_CORES = {
+    # the object library's C (`src/aes/objects.c`): ob_find's and ob_center's rectangles
+    ("aes_ob_find", "aes_r_set"), ("aes_ob_center", "aes_r_set"),
+    # ...and its word copies of an object's rectangle (`optimize.S`'s wcopy)
+    ("aes_ob_find", "aes_wcopy"), ("aes_ob_setxywh", "aes_wcopy"), ("aes_ob_relxywh", "aes_wcopy"),
+    # the rectangle lists (`src/aes/rlist.c`): mkpiece's edges; the resource fix-ups (`src/aes/resource.c`)
+    ("aes_mkpiece", "aes_min"), ("aes_mkpiece", "aes_max"), ("aes_fix_tedinfo", "aes_lstrlen"),
+    ("aes_rs_str", "aes_lstcpy"), ("resource_part", "aes_wcopy"), ("aes_rom_ram", "aes_lbcopy"),
+    ("aes_sc_read", "aes_lstcpy"), ("aes_sc_write", "aes_lstcpy"), ("aes_sh_read", "aes_lbcopy"),
+    ("aes_sh_write", "aes_lbcopy"), ("aes_sh_get", "aes_lbcopy"), ("aes_sh_put", "aes_lbcopy"),
+    ("aes_rom_rsc_init", "aes_lbcopy"),
+    # the object-text helpers (`src/aes/objtext.c`): every text in or out of a TEDINFO through lstcpy
+    ("aes_fs_sset", "aes_lstcpy"), ("aes_inf_sset", "aes_lstcpy"), ("aes_fs_sget", "aes_lstcpy"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),

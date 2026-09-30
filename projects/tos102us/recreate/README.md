@@ -186,7 +186,17 @@ assert info["ret"] == info["regs"]["d0"]
   `vdi.h`'s call and workstation accessors (`intin_word`, `ptsin_word`, `contrl_word`, `answer_intout`,
   `work_word`, … and `caller_word` for a held cursor) SUM THE FIELD OFFSET, THEN MASK — the 68000's
   `d16(An)` — never mask the base and add. New code that dereferences a caller's pointer goes through them;
-  a raw `image + linea_pointer(...)` is the parked host-SIGBUS class (`STATUS.md`).
+  a raw `image + linea_pointer(...)` is the parked host-SIGBUS class (`STATUS.md`). The AES reaches EVERY caller's
+  pointer through one family, `m68k_idioms.h`'s `bus_span(address, bytes)` and the `bus_byte`/`bus_word`/`bus_long`
+  readers with their `set_bus_*` setters (sum, wrap, access — the plain access on target). Off target it REFUSES BY
+  NAME what the 68000 could not do: a word or longword at an ODD address (the address error, vector 3 — the oracle's
+  Musashi is built without address errors, so no differential could show it) and an access whose bytes run PAST THE
+  TOP of the bus (the host image ends there; the bound is written `at <= OS_BUS_ADDR_MASK - (bytes - 1)` so it cannot
+  wrap). One spelling, so a bound is fixed once — it replaced a dozen re-spellings under nine names.
+* **Stage EVEN pointers in-process.** A refusal is `recreate_not_reconstructed`, an `abort()`: an odd word pointer (or a
+  span over the bus top) handed to an AES core inside pytest ends the WORKER, not the case. A case that means to show
+  the refusal runs the core in a CHILD process through `vdi_helpers.refusal()` / `refusal_over()` and asserts on its
+  stderr (`test_aes_resource.py`'s bus-top cases are the pattern).
 
 ## A STAGED RAM DISK — the shape the file system needed
 
@@ -262,7 +272,9 @@ its field reader hoisted into `test/layouts.py`, its naming rule into `test/rout
 `case.Rows`): an Alcyon AES routine runs over its caller's frame DIRECTLY (the row Tier 3 prices) or THROUGH LINE-F
 at a staged caller that makes the ROM's own call word (verified, unpriced), the mask word dropped by name either way
 (`LINE_F_MASK_WINDOW`) — and at Tier 3 with its `undropped=` companion, the word staged at the value the run leaves.
-The attribution pass RUNS on every AES case: a drop reaches the kit (`harness.differential`'s `dropped`), which leaves
+The attribution pass RUNS on every AES case but those that opt out ONE BY ONE, each with the reason forcing it on
+measured (a routine that reads back a link or a ledger pointer it stored — `LINKS_UNPOISONED` in the edit battery, the
+staged-trap battery as a whole): a drop reaches the kit (`harness.differential`'s `dropped`), which leaves
 it out of the plain compare before deciding to run the pass and then neither poisons nor compares it, so every other
 byte keeps skipped-store detection — only the Tier 3 companion runs without it (`aes.COMPANION_UNPOISONED`: with
 nothing dropped the pass would invert the mask word, which the C never writes). The other `dropped_windows` users
@@ -275,6 +287,13 @@ snapshot's guard, a lever inert for a routine that never reaches `dsptch` (one t
 are staged by SHAPE (`aes.node`/`tree_pokes`, linked as ob_add links them) or read out of the AES's own relocated
 resource (`aes.resource_tree`). A routine with two call words is entered by the one most of its callers use —
 ob_offset's `$f208` (the desk's binding and three AES callers), not `$f154` (the object library's own three).
+
+A core that calls OUT takes `run_function`'s `hook=`, built by its door's ONE builder: `aes.alcyon_object_hook` for a
+routine handed in and called Alcyon-style (`staged_call.h`'s `call_alcyon_object`, everyobj's), and
+`vdi_helpers.staged_gemdos_hook` for the recording `trap #1` (whose host twin bounds the ledger pointer it reads out of
+the image before storing through it). A core with more than six C arguments (ob_sst, everyobj, inf_fldset) is priced
+like any other: the kit enters OUR side with its stack pointer lowered by the bytes that do not fit its argument area
+(`tools/recreate_kit/README.md`).
 
 Three mechanisms are designed and NOT built:
 

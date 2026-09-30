@@ -230,7 +230,23 @@ import test_vdi_entry_transcription                         # noqa: E402,F401  (
 import vdi                                                  # noqa: E402
 # ...and the AES's: the object walks and the rectangle helper (`src/aes/`), registered through `aes.register`.
 import test_aes_oblib                                       # noqa: E402,F401
+import test_aes_objects_edit                                # noqa: E402,F401
+import test_aes_objects_find                                # noqa: E402,F401
 import test_aes_rect                                        # noqa: E402,F401
+import test_aes_rect_helpers                                # noqa: E402,F401
+import test_aes_rect_transcription                          # noqa: E402,F401  (its `.S` rows)
+import test_aes_infscan                                     # noqa: E402,F401
+import test_aes_objtext                                     # noqa: E402,F401
+import test_aes_oblib_walk                                  # noqa: E402,F401
+import test_aes_rlist                                       # noqa: E402,F401
+import test_aes_resource                                    # noqa: E402,F401
+import test_aes_resource_fix                                # noqa: E402,F401
+import test_aes_shell_buf                                   # noqa: E402,F401
+import test_aes_rom_ram                                     # noqa: E402,F401
+import test_aes_resource_dos                                # noqa: E402,F401
+import test_aes_strings                                     # noqa: E402,F401
+import test_aes_strings_text                                # noqa: E402,F401
+import test_aes_strings_asm                                 # noqa: E402,F401  (the .S rows, `transcription`)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
@@ -308,6 +324,18 @@ def test_the_case_staging_band_is_dead_memory_in_this_snapshot():
         f"capture leaves clear, keeping it clear of `bench_base` and of the oracle's stack band")
     assert staging.SCRATCH + staging.SCRATCH_BYTES <= emu.STACK_GUARD_LO, (
         "the staging band runs into the oracle's stack band, whose bytes no case can see")
+
+
+def test_the_whole_bank_is_dead_memory_in_this_snapshot():
+    """`staging.WHOLE_BANK_AT`, the one 64K-word bank above the stack band its tenants share one case at a time (a
+    whole font form, a word loop's 65536 passes). Compared like any image, so live bytes there would not be hidden —
+    they would make every case staged in it a statement about the desktop's leftovers as well as about the routine.
+    Held here, once, beside the claim's other half, rather than by each battery that stages in it."""
+    end = staging.WHOLE_BANK_AT + staging.WHOLE_BANK_BYTES
+    band = bytes(BASE_IMAGE[staging.WHOLE_BANK_AT:end])
+    assert band == bytes(len(band)), (
+        f"the snapshot is not empty in [{staging.WHOLE_BANK_AT:#x}, {end:#x}) — move `staging.WHOLE_BANK_AT` to a "
+        f"band of `staging.HIGH_BANDS` this capture leaves clear")
 
 
 def test_the_diff_covers_everything_but_that_band():

@@ -492,10 +492,11 @@ def _describe_unbound(unbound):
 def bound_handlers(handlers):
     """Bind `{rom_handler_address: effect}` for ONE case and clear the ledgers
     (`AddressHook.staged` says why per case); a handler the candidate reached that nothing bound
-    fails the case on the way out — it proved nothing, the reconstruction was answered with a 0."""
+    fails the case on the way out — it proved nothing, the reconstruction was answered with a 0.
+    Yields the hook, whose `recording` opens each candidate run's pass (`aes.run_function`'s)."""
     CLOCK_PUBLICATIONS.clear()
-    with _HANDLER_HOOK.staged(handlers, _describe_unbound):
-        yield
+    with _HANDLER_HOOK.staged(handlers, _describe_unbound) as hook:
+        yield hook
 
 
 def assert_the_clock_was_not_published():
