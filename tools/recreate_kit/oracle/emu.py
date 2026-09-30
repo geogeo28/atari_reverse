@@ -511,6 +511,8 @@ _LIB.osh_cov_bytes.restype = ctypes.c_uint32
 _LIB.osh_prof_enable.argtypes = [ctypes.c_int]
 _LIB.osh_prof_data.restype = _u32p
 _LIB.osh_prof_slots.restype = ctypes.c_uint32
+_LIB.osh_prof_slot.argtypes = [ctypes.c_uint32]
+_LIB.osh_prof_slot.restype = ctypes.c_uint32
 # The opt-in audio-capture mode (see audio_capture below). No probe: the mode is a documented
 # RELAXATION of the seeded read model, and ships in the same shim.c as the symbols required above —
 # so an .so that has those and not these does not exist, and a `if _HAS_AUDIO_CAPTURE:` branch here
@@ -1006,7 +1008,7 @@ def cov_data():
 
 
 def prof_enable(on=True):
-    """Turn on the cycle-per-PC profile in run_bench (off by default; adds nothing when off)."""
+    """Turn on the cycle-per-PC profile in run and run_bench (off by default; adds nothing when off)."""
     _LIB.osh_prof_enable(1 if on else 0)
 
 
@@ -1016,7 +1018,8 @@ def prof_reset():
 
 
 def prof_data():
-    """The accumulated profile as a list of cycle tallies, one per even PC (index i = PC 2*i)."""
+    """The accumulated profile as a list of cycle tallies, one per even PC (index i = PC 2*i below 1 MiB; the
+    ROM window's follow in ROM mode — `prof_cycles` maps an address range to its slots)."""
     n = _LIB.osh_prof_slots()
     return list(ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32 * n)).contents)
 
@@ -1026,6 +1029,22 @@ def prof_slice(start, end):
     (half a million slots) out for a caller that sums a few ranges of it."""
     assert 0 <= start <= end <= _LIB.osh_prof_slots(), (start, end)
     return ctypes.cast(_LIB.osh_prof_data(), ctypes.POINTER(ctypes.c_uint32))[start:end]
+
+
+# The profile holds one tally per even PC: a byte address is twice its slot.
+PROF_SLOT_BYTES = 2
+
+
+def prof_cycles(lo, hi):
+    """The cycles the profile tallied at the PCs of [lo, hi) — RAM below 1 MiB, or (ROM mode) the ROM window,
+    whichever one holds the whole range (`osh_prof_slot`). A range no slot covers, or one straddling the two,
+    is refused rather than summed short: a cost split read off it would be missing cycles without a word."""
+    if hi <= lo:
+        return 0
+    first, last = _LIB.osh_prof_slot(lo), _LIB.osh_prof_slot(hi - PROF_SLOT_BYTES)
+    assert last < _LIB.osh_prof_slots() and last - first == (hi - PROF_SLOT_BYTES - lo) // PROF_SLOT_BYTES, (
+        f"[{lo:#x}, {hi:#x}) is not wholly inside one profiled window (RAM below 1 MiB, or the ROM in ROM mode)")
+    return sum(prof_slice(first, last + 1))
 
 
 # How many `audio_capturing()` blocks are open. The mode is an oracle-global toggle, so "is it

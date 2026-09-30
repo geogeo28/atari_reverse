@@ -979,6 +979,18 @@ everything but a ROM project. A `.PRG` project's numerator is a third arrangemen
 in its own memory with the game image beside it — and has two worked examples,
 `projects/zynaps/recreate/atari/bench_tier.py` and `projects/buggyboy/remaster/tools/bench.py`.
 
+**The cycle-per-PC PROFILE covers both doors and, in ROM mode, the ROM.** `emu.prof_enable()` /
+`prof_reset()` arm a tally of 68000 cycles per even PC, added to by `run` (the ORIGINAL's door) and
+`run_bench` alike (`prof_tally()` in both loops; nothing is added while it is off). The slots below 1 MiB
+are RAM, as they always were — a `.PRG` project's `profile.py` reads the same list, only longer — and in ROM
+mode `PROF_ROM_SIZE` more follow for the ROM window, both mapped by the one `osh_prof_slot(pc)`.
+`emu.prof_cycles(lo, hi)` sums the tallies of one address range and REFUSES a range that lies in neither
+window or straddles the two, rather than summing it short; `prof_slice(start, end)` reads raw slots without
+copying the whole profile. It is what a ROM project's cost SPLITS are read off: `tos102us`'s (T→G) glue
+cycles (the generated thunks' sized symbols in the blob) and its (T←) `own` rule, which needs the ROM side's
+cycles inside the spans a `.S` transcribes — the reason the ROM window and `emu.run` were added
+(2026-09-29).
+
 **Rebuild before you trust a mutation.** The blob is one `make` rule over a handful of sources, so a
 mutation and its re-link inside the same filesystem second leave the PREVIOUS blob on disk and the
 suite measuring it (`docs/agent-playbook.md` §10 — it happened while this was being built). Delete

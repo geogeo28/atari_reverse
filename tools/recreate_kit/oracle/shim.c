@@ -92,6 +92,37 @@ void osh_rom_window(uint32_t ram_end, uint32_t rom_lo, uint32_t rom_hi) {
  * show up as an ordinary image difference the oracle could never produce. */
 uint32_t osh_rom_stores(void) { return g_rom_stores; }
 int      osh_rom_mode(void)   { return rom_mode(); }
+
+/* --- optional cycle-per-PC profile (off by default; osh_prof_enable turns it on) -------------
+ * One uint32 cycle tally per even PC in [0, PROF_SIZE), accumulated across osh_run and
+ * osh_run_bench calls (reset with osh_prof_reset). Sized for the cross-compiled recon/remaster
+ * ELFs, which link at base 0 and stay well under 1 MiB of text. remaster's tools/profile.py maps
+ * the tallies back to symbols. Gated so it adds nothing to a normal run.
+ *
+ * IN ROM MODE THE ROM WINDOW IS PROFILED TOO, in the slots after the RAM ones: the ORIGINAL's side of
+ * a bench row runs the ROM in place, and splitting its cycles between two ROM routines — a caller's
+ * own instructions and a callee the reconstruction ships as C — needs the ROM's PCs, which lie far
+ * above 1 MiB. osh_prof_slot is the one map from a PC to its slot. */
+#define PROF_SIZE     (1u << 20)            /* RAM PCs covered: [0, 1 MiB) */
+#define PROF_ROM_SIZE (1u << 20)            /* ...and ROM-mode PCs [g_rom_lo, g_rom_lo + 1 MiB) */
+#define PROF_SLOTS    ((PROF_SIZE + PROF_ROM_SIZE) / 2)
+static uint32_t g_prof[PROF_SLOTS];         /* tally per even PC */
+static int      g_prof_on;
+void osh_prof_enable(int on) { g_prof_on = on; }
+void osh_prof_reset(void)    { for (uint32_t i = 0; i < PROF_SLOTS; i++) g_prof[i] = 0; }
+const uint32_t *osh_prof_data(void)  { return g_prof; }
+uint32_t        osh_prof_slots(void) { return PROF_SLOTS; }
+/* The slot `pc`'s tally is kept in, or PROF_SLOTS for a PC no slot covers. */
+uint32_t osh_prof_slot(uint32_t pc) {
+    if (pc < PROF_SIZE) return pc >> 1;
+    if (rom_mode() && pc >= g_rom_lo && pc < g_rom_hi && pc - g_rom_lo < PROF_ROM_SIZE)
+        return (PROF_SIZE + (pc - g_rom_lo)) >> 1;
+    return PROF_SLOTS;
+}
+static void prof_tally(uint32_t pc, uint32_t cycles) {
+    uint32_t slot = osh_prof_slot(pc);
+    if (slot < PROF_SLOTS) g_prof[slot] += cycles;
+}
 /* Reads of the I/O page the last run made that no model served, and the first such address (0 when
  * there were none) — see g_io_unmodeled_reads. */
 uint32_t osh_io_unmodeled_reads(void) { return g_io_unmodeled_reads; }
@@ -124,18 +155,6 @@ void osh_cov_enable(int on) { g_cov_on = on; }
 void osh_cov_reset(void)    { for (uint32_t i = 0; i < sizeof g_cov; i++) g_cov[i] = 0; }
 int  osh_cov_visited(uint32_t pc) { return pc < COV_SIZE && ((g_cov[pc >> 3] >> (pc & 7)) & 1); }
 
-/* --- optional cycle-per-PC profile (off by default; osh_prof_enable turns it on) -------------
- * One uint32 cycle tally per even PC in [0, PROF_SIZE), accumulated across osh_run_bench calls
- * (reset with osh_prof_reset). Sized for the cross-compiled recon/remaster ELFs, which link at
- * base 0 and stay well under 1 MiB of text. remaster's tools/profile.py maps the tallies back to
- * symbols. Gated so it adds nothing to a normal bench run. */
-#define PROF_SIZE (1u << 20)                /* PCs covered: [0, 1 MiB) */
-static uint32_t g_prof[PROF_SIZE / 2];      /* tally per even PC */
-static int      g_prof_on;
-void osh_prof_enable(int on) { g_prof_on = on; }
-void osh_prof_reset(void)    { for (uint32_t i = 0; i < PROF_SIZE / 2; i++) g_prof[i] = 0; }
-const uint32_t *osh_prof_data(void)  { return g_prof; }
-uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
 
 /* --- SCHEDULED WRITES: the oracle side of the external-agent model (os.h, "Phase 8") ---------
  *
@@ -1813,7 +1832,11 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
         else if (trap_model && pc == MAGIC_XBIOS)  handle_trap(14);
         else if (trap_model && pc == MAGIC_BIOS)   handle_trap(13);
         else if (trap_model && pc == MAGIC_GEM)    handle_trap(2);
-        else                         g_ncycles += (uint32_t)m68k_execute(1);   /* one insn; tally its cycles */
+        else {                                      /* one insn; tally its cycles */
+            uint32_t cycles = (uint32_t)m68k_execute(1);
+            g_ncycles += cycles;
+            if (g_prof_on) prof_tally(pc, cycles);
+        }
     }
     g_ninsns = n;                                   /* instruction count for perf profiling */
     /* The four PSG rejections (mixed paths, an unservable access, an unseeded read, a read with no
@@ -1975,7 +1998,7 @@ static int bench_loop(uint32_t sentinel, uint32_t max_insns) {
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
         uint32_t cyc = (uint32_t)m68k_execute(1);
         g_ncycles += cyc;
-        if (g_prof_on && pc < PROF_SIZE) g_prof[pc >> 1] += cyc;
+        if (g_prof_on) prof_tally(pc, cyc);
     }
     g_ninsns += n;
     return (m68k_get_reg(0, M68K_REG_PC) == sentinel) ? OSH_BENCH_SENTINEL
