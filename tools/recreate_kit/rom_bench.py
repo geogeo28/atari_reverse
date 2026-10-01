@@ -470,8 +470,10 @@ class RomBench:
         # reading a fabricated byte is measuring a machine that does not exist, whichever side did it.
         _vet_no_refusals(f"the ORIGINAL entered at {entry:#x}", _refusal_tallies())
         original_streams = {key: o_regs[key] for key in _STREAMS}
+        original_odd = emu.odd_accesses()
 
         ours = run_ours(bytearray(image))
+        _vet_no_odd_access(symbol, emu.odd_accesses(), original_odd)
 
         # The relation's own comparisons first: they name what diverged (a return value, a register)
         # where the image comparison can only name an address.
@@ -737,6 +739,33 @@ def _vet_no_refusals(who, tallies):
     if not fired:
         return
     raise AssertionError(f"{who} " + "; and ".join(fired))
+
+
+def _vet_no_odd_access(symbol, ours, original):
+    """Refuse an m68k build whose word and long accesses at an odd address are not the ORIGINAL's.
+
+    A 68000 takes an ADDRESS ERROR there and the machine bombs; this oracle's Musashi completes the
+    access, so the run otherwise reports the right answer and the row goes green over a crash
+    (measured: `uint8_t` frame locals of an odd size, which GCC packed at an odd offset). `ours` and
+    `original` are `emu.odd_accesses()` read after each run. Odd accesses the original makes too are
+    the case's and not the build's: a case may drive the ROM itself through some (TRAP_MODEL.md, "Odd
+    word and long accesses"), and the build then faults where the ROM does. "The same" is the same
+    COUNT and the same ADDRESSES in order, as far as the ledger keeps them — not the same PCs, which
+    differ by construction (the ROM runs in place, the build from its blob).
+    """
+    if not ours["odd_accesses"]:
+        return
+    if (ours["odd_accesses"], ours["odd_addresses"]) == (original["odd_accesses"], original["odd_addresses"]):
+        return
+    raise AssertionError(
+        f"the m68k build of {symbol} made {ours['odd_accesses']} word/long access(es) at an odd address "
+        f"{_hex_list(ours['odd_addresses'])}, the first by the instruction at {ours['odd_first_pc']:#x}, where "
+        f"the original made {original['odd_accesses']} {_hex_list(original['odd_addresses'])} — an address "
+        f"error on a 68000. A `uint8_t` array of odd size is the usual cause: declare such a local word-aligned")
+
+
+def _hex_list(addresses):
+    return "[" + ", ".join(f"{address:#x}" for address in addresses) + "]"
 
 
 def _vet_return_value(symbol, ours, original, returns):

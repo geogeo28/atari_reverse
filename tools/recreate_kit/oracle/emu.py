@@ -593,6 +593,17 @@ for _symbol in ("osh_io_unmodeled_reads", "osh_io_unmodeled_first"):
             "both sides, and a ROM function that reads one would verify against that fabrication.")
 _LIB.osh_io_unmodeled_reads.restype = ctypes.c_uint32
 _LIB.osh_io_unmodeled_first.restype = ctypes.c_uint32
+# WORD AND LONG ACCESSES AT AN ODD ADDRESS, which a 68000 faults on and this Musashi completes
+# (shim.c, g_odd_accesses), read through `odd_accesses()` after a run; `rom_bench` refuses them.
+for _symbol in ("osh_odd_accesses", "osh_odd_ledger_cap", "osh_odd_address", "osh_odd_first_pc"):
+    if not hasattr(_LIB, _symbol):
+        raise _stale_oracle(
+            _symbol,
+            "so a word or long access at an odd address — an address error that bombs a real 68000 — "
+            "cannot be seen: this CPU completes it and the run reports the right answer.")
+    getattr(_LIB, _symbol).restype = ctypes.c_uint32
+_LIB.osh_odd_address.argtypes = [ctypes.c_uint32]
+ODD_LEDGER_CAP = _LIB.osh_odd_ledger_cap()     # how many odd addresses a run keeps, in order
 # EVERY trap the model served this run, whatever door it was. Required for the same reason: the
 # per-door tallies above it (Malloc, poked input, the event and Dosound ledgers) miss the GEMDOS
 # file, Super and Mfree doors entirely, so "no trap model ran" cannot be stated from them.
@@ -758,6 +769,16 @@ def _bench_result(status, out, entry, max_insns):
             "sched_applied": _LIB.osh_sched_applied(),
             "sched_read_sites": sched_read_sites(),
             "sched_read_arrivals": sched_read_arrivals()}
+
+
+def odd_accesses():
+    """The run's word and long accesses at an odd address (shim.c, g_odd_accesses), which a 68000 takes
+    an address error on: how many, the first `ODD_LEDGER_CAP` addresses in order, and the PC of
+    the instruction that made the first one (for an odd instruction fetch, the one that jumped there)."""
+    count = _LIB.osh_odd_accesses()
+    recorded = min(count, ODD_LEDGER_CAP)
+    return {"odd_accesses": count, "odd_addresses": tuple(_LIB.osh_odd_address(i) for i in range(recorded)),
+            "odd_first_pc": _LIB.osh_odd_first_pc()}
 
 
 def _bench_seed(seed_regs):

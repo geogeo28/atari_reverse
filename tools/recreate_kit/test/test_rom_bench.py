@@ -467,6 +467,45 @@ def test_an_off_image_ledger_is_compared_in_order():
         rom_bench._vet_ledger("core", "the ordered PSG accesses", list(reversed(events)), events)
 
 
+# ---- odd word/long accesses: the build's must BE the original's, not merely start where it does --
+# An original that makes two odd accesses (TOS 1.02's vst_height: the font header in the vector page,
+# first at $20027), and what the build's run may answer. A PC is carried but never compared: the ROM
+# runs in place and the build from its blob, so the two always differ.
+ODD_CASE_ADDRESS = 0x20027
+ODD_CASE_SECOND = 0x20029
+ODD_FRAME_LOCAL = 0x7FF1              # an odd frame local of the build's own
+ODD_CASE = {"odd_accesses": 2, "odd_addresses": (ODD_CASE_ADDRESS, ODD_CASE_SECOND), "odd_first_pc": 0xFCE040}
+NO_ODD = {"odd_accesses": 0, "odd_addresses": (), "odd_first_pc": 0}
+BUILD_PC = 0x30010
+# A ledger the shim has filled — it keeps the first few addresses, and only the count goes on.
+FULL_LEDGER = tuple(ODD_CASE_ADDRESS + 2 * i for i in range(8))
+
+
+def _build_odd(count, addresses):
+    return {"odd_accesses": count, "odd_addresses": tuple(addresses), "odd_first_pc": BUILD_PC}
+
+
+@pytest.mark.parametrize("ours, original", [
+    (_build_odd(5, (ODD_CASE_ADDRESS, ODD_CASE_SECOND, ODD_FRAME_LOCAL, ODD_FRAME_LOCAL, ODD_FRAME_LOCAL)), ODD_CASE),
+    (_build_odd(2, (ODD_CASE_ADDRESS, ODD_FRAME_LOCAL)), ODD_CASE),
+    (_build_odd(1, (ODD_CASE_ADDRESS,)), ODD_CASE),
+    (_build_odd(len(FULL_LEDGER) + 3, FULL_LEDGER), _build_odd(len(FULL_LEDGER) + 1, FULL_LEDGER)),
+    (_build_odd(1, (ODD_FRAME_LOCAL,)), NO_ODD),
+], ids=["extra accesses after the original's", "same count, one elsewhere", "fewer than the original",
+        "past the ledger, the count still decides", "the original made none"])
+def test_an_odd_access_that_is_not_the_originals_is_refused(ours, original):
+    with pytest.raises(AssertionError, match="address error on a 68000"):
+        rom_bench._vet_no_odd_access("core", ours, original)
+
+
+def test_the_originals_own_odd_accesses_are_the_cases():
+    """vst_height's row: the build makes the ROM's two, at the ROM's addresses, from its own PCs."""
+    rom_bench._vet_no_odd_access("core", _build_odd(2, ODD_CASE["odd_addresses"]), ODD_CASE)
+    rom_bench._vet_no_odd_access("core", NO_ODD, NO_ODD)
+    # A build that makes none cannot fault, whatever the original did.
+    rom_bench._vet_no_odd_access("core", NO_ODD, ODD_CASE)
+
+
 # ---- the machine the m68k build is measured over -------------------------------------------------
 
 # A machine small enough to hand a FAKE ORACLE: the blob low, the run's stack above it, and no ROM.
@@ -567,7 +606,8 @@ def _fake_emu(calls, bench_reads=None):
                            REPORTED_REGS=tuple(rom_bench.CALLEE_SAVED_SEEDS), PSG_NREGS=16,
                            _LIB=_QuietLib(), hw_unseeded_addrs=lambda: (), _hw_addrs_of=lambda _m: (),
                            psg_events=lambda: [], hw_events=lambda: [], io_events=lambda: [],
-                           hw_writes=lambda: [])
+                           hw_writes=lambda: [],
+                           odd_accesses=lambda: {"odd_accesses": 0, "odd_addresses": (), "odd_first_pc": 0})
 
 
 FAKE_SENTINEL_SLOT_BYTES = 4

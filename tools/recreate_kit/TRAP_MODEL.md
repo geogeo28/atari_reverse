@@ -132,6 +132,43 @@ Not built: nothing has needed a second option pinned, and the trace flag was pin
 mechanism depends on it. Until it is, a fresh clone at a later upstream commit can move the oracle's
 ground truth under every project at once with nothing red.
 
+### Odd word and long accesses — counted, not taken
+
+`M68K_EMULATE_ADDRESS_ERROR` is OFF (the header's default), so a word or long access at an odd
+address — an ADDRESS ERROR that bombs a real 68000 — simply completes here, and a run that would
+crash on the machine reports the right answer. Measured on TOS 1.02's recreate: its `sh_envrn` /
+`sh_find` C kept their frames in `uint8_t` locals of an odd size, which GCC packed at an odd offset,
+and every Tier 3 row over them went green over a build that bombs on every call.
+
+Turning the flag on was measured and not taken: it changes every project's CPU (an `#ifndef` -D
+cannot be scoped to one project — one `liboracle.so` serves them all), and the run it produces ends
+in the snapshot's bomb handler as a 16-million-instruction timeout naming nothing. Instead `shim.c`
+COUNTS every word/long access at an odd address in its memory callbacks, keeps the first
+`ODD_LEDGER_CAP` (8) addresses in order, and the PC of the instruction that made the first:
+`osh_odd_accesses` / `osh_odd_address(i)` / `osh_odd_first_pc`, read through `emu.odd_accesses()`.
+That PC is the instruction that MADE the access — for an instruction fetch at an odd PC, the
+jmp/jsr/rts that went there, which the run loops remember (`g_last_executed_pc`), because by the
+opcode fetch Musashi's previous-PC already holds the odd target itself. The CPU's behaviour is
+unchanged for every project. (The shim's own word and long accesses pass the same callbacks, all at
+even addresses.)
+
+Who refuses is the caller's decision. Today `rom_bench` does, for the m68k BUILD's side of a bench
+row: a build that makes any odd access passes only when its COUNT equals the original's and its
+ledger holds the original's ADDRESSES in the same order (`_vet_no_odd_access`); the PCs are never
+compared, since the ROM runs in place and the build from its blob. The original's side is not
+refused, because a verified case may drive the ROM itself through one: TOS 1.02's `vst_height`
+"chain on from 0 through the 24-bit bus" reads a font header out of the vector page and makes two odd
+accesses at `$20027` (ROM PC `$fce040`) — the build makes the same two, and is the ROM's faithful
+port of a run a real machine would bomb on.
+
+**What it does NOT cover — unpinned for this class.** Only `rom_bench` consults the counter, and only
+over the paths a Tier 3 row's case drives. Tier 1 (the host-C differential, every case and fuzz
+battery) cannot see an odd access at all: its candidate is host code. `asm_twin`'s bench runs do not
+consult it either — so for the game projects (BuggyBoy, Joust, Zynaps, Wonder Boy, Flying Shark,
+Bubble Ghost) the target build's C has NO odd-access surface: an odd-offset word access there goes
+green and bombs on the machine. Nor do the OS models that read a program's pointers through `g_mem`
+byte by byte (an odd VDI parameter block, an odd GEMDOS buffer pointer).
+
 ### The entry state every run begins from
 
 A second decision about the same CPU, and the same kind: it is stated here because it is not an

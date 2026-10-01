@@ -128,6 +128,50 @@ static void prof_tally(uint32_t pc, uint32_t cycles) {
 uint32_t osh_io_unmodeled_reads(void) { return g_io_unmodeled_reads; }
 uint32_t osh_io_unmodeled_first(void) { return g_io_unmodeled_first; }
 
+/* WORD AND LONG ACCESSES AT AN ODD ADDRESS. A 68000 takes an ADDRESS ERROR on every one — the access
+ * faults and the machine bombs — but this oracle's Musashi is built with M68K_EMULATE_ADDRESS_ERROR
+ * off (m68kconf.h's default, shared by every project), so here the access simply completes and a run
+ * that would crash on the machine reports the right answer. They are COUNTED rather than taken, which
+ * leaves every project's CPU exactly as it was. (The shim's own word and long accesses go through the
+ * same callbacks, and every one is at an even address: a stack slot, a vector, a trap frame's field.)
+ * Who refuses one is the caller's decision (TRAP_MODEL.md, "Odd word and long accesses"). Per run,
+ * like the instruction count: osh_run and osh_run_bench clear them, osh_bench_resume accumulates.
+ *
+ * Kept: the total, the first ODD_LEDGER_CAP addresses in order (a caller compares them against the
+ * original's — the PCs it cannot compare, the two sides' code sits at different addresses), and the
+ * PC of the instruction that made the first one. */
+#define ODD_LEDGER_CAP 8
+static uint32_t g_odd_accesses;
+static uint32_t g_odd_ledger[ODD_LEDGER_CAP];
+static uint32_t g_odd_first_pc;
+/* The PC of the instruction the run loop last executed. An instruction FETCH at an odd PC is the
+ * fault of the jmp/jsr/rts/branch that went there, and by then Musashi's REG_PPC already holds the
+ * odd target itself (m68k_execute sets it before the opcode fetch), so the loops keep this one. */
+static uint32_t g_last_executed_pc;
+uint32_t osh_odd_accesses(void)   { return g_odd_accesses; }
+uint32_t osh_odd_ledger_cap(void) { return ODD_LEDGER_CAP; }
+uint32_t osh_odd_address(uint32_t i) { return i < ODD_LEDGER_CAP ? g_odd_ledger[i] : 0; }
+uint32_t osh_odd_first_pc(void)   { return g_odd_first_pc; }
+
+static void odd_accesses_clear(void) {
+    g_odd_accesses = g_odd_first_pc = g_last_executed_pc = 0;
+    for (int i = 0; i < ODD_LEDGER_CAP; i++) g_odd_ledger[i] = 0;
+}
+
+/* The instruction that made an access at `a` during the current one: itself, unless `a` IS its
+ * opcode word — an odd PC, whose fault belongs to the instruction that transferred control there. */
+static uint32_t accessing_instruction(unsigned int a) {
+    uint32_t current = m68k_get_reg(0, M68K_REG_PPC);
+    return a == current ? g_last_executed_pc : current;
+}
+
+/* A word or long access at `a`: noted when it is odd. */
+static inline void note_width_access(unsigned int a) {
+    if (!(a & 1)) return;
+    if (!g_odd_accesses) g_odd_first_pc = accessing_instruction(a);
+    if (g_odd_accesses < ODD_LEDGER_CAP) g_odd_ledger[g_odd_accesses] = a;
+    g_odd_accesses++;
+}
 
 /* THE WRITE LEDGER'S CAP, and `logw` SATURATES at it rather than wrapping — so a run past it leaves
  * `g_wn` sitting here and every further address is dropped uncounted. That silence is why the cap is
@@ -1149,6 +1193,7 @@ unsigned int m68k_read_memory_8(unsigned int a) {
 }
 unsigned int m68k_read_memory_16(unsigned int a) {
     SCHED_READ_TICK(a);
+    note_width_access(a);
     if (a + 1 < g_ram_end) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
     unsigned int declared;
     if (io_serve(a, 2, &declared)) return declared;   /* the device first; see read_memory_8 */
@@ -1159,6 +1204,7 @@ unsigned int m68k_read_memory_16(unsigned int a) {
 }
 unsigned int m68k_read_memory_32(unsigned int a) {
     SCHED_READ_TICK(a);
+    note_width_access(a);
     if (a + 3 >= g_ram_end) {
         unsigned int declared;
         if (io_serve(a, 4, &declared)) return declared;   /* the device first; see read_memory_8 */
@@ -1263,6 +1309,7 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
     hw_log_write(a, OS_HW_WRITE_WIDTH_8, v);       /* ...and it is comparable (Phase 10) */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
+    note_width_access(a);
     if (a + 1 < g_ram_end) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
     if (in_rom(a, 2)) { g_rom_stores++; return; }
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
@@ -1271,6 +1318,7 @@ void m68k_write_memory_16(unsigned int a, unsigned int v) {
     hw_log_write(a, OS_HW_WRITE_WIDTH_16, v);
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
+    note_width_access(a);
     if (a + 3 >= g_ram_end) {
         if (in_rom(a, 4)) { g_rom_stores++; return; }
         psg_note_unmodeled(a, 4);
@@ -1755,6 +1803,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     g_rom_stores = 0;
     g_io_unmodeled_reads = 0;     /* ...and the I/O reads no model served (see the tally) */
     g_io_unmodeled_first = 0;
+    odd_accesses_clear();
 
     enter_from_reset();
     for (int i = 0; i < 8; i++) {
@@ -1834,6 +1883,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
         else if (trap_model && pc == MAGIC_GEM)    handle_trap(2);
         else {                                      /* one insn; tally its cycles */
             uint32_t cycles = (uint32_t)m68k_execute(1);
+            g_last_executed_pc = pc;
             g_ncycles += cycles;
             if (g_prof_on) prof_tally(pc, cycles);
         }
@@ -1997,6 +2047,7 @@ static int bench_loop(uint32_t sentinel, uint32_t max_insns) {
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
         uint32_t cyc = (uint32_t)m68k_execute(1);
+        g_last_executed_pc = pc;
         g_ncycles += cyc;
         if (g_prof_on) prof_tally(pc, cyc);
     }
@@ -2040,6 +2091,7 @@ int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
     g_rom_stores = 0;
     g_io_unmodeled_reads = 0;     /* ...and the I/O reads no model served (see the tally) */
     g_io_unmodeled_first = 0;
+    odd_accesses_clear();
     enter_from_reset();
     if (g_bench_seed_on) {
         for (int i = 0; i < OSH_OUT_DREGS; i++)
