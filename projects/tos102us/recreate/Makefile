@@ -23,13 +23,6 @@ include $(KIT)/kit.mk
 # atari/target.mk is reached through this file.)
 $(BENCH_ELF): $(wildcard atari/shim_include/*.h) atari/target.mk
 
-# kit.mk's two compile rules depend on `include/*.h`, which is only this project's SHARED headers:
-# a component's own sit one level down (include/bios/, include/xbios/, include/gemdos/), and an edit
-# to one of them must rebuild both the candidate and the Tier 3 blob just as a top-level one does.
-COMPONENT_HEADERS := $(wildcard include/*/*.h)
-$(CAND): $(COMPONENT_HEADERS)
-$(BENCH_ELF): $(COMPONENT_HEADERS)
-
 # The snapshot is a BUILD PRODUCT, captured out of headless Hatari from the user's own ROM — which
 # is why it is a make rule and not a checked-in file (the ROM is Atari's, and so is its RAM image).
 # Capturing costs ~15 s of real time per run, because emulation is real time; it happens once, and
@@ -107,7 +100,7 @@ shipped-glue: $(CAND) $(SNAPSHOT)
 
 $(SHIPPED_GLUE): shipped-glue ;
 
-$(SHIPPED_ELF): $(BENCH_SRC) $(SHIPPED_GLUE) $(wildcard include/*.h) $(COMPONENT_HEADERS) \
+$(SHIPPED_ELF): $(BENCH_SRC) $(SHIPPED_GLUE) $(PROJECT_HEADERS) \
                 $(wildcard $(KIT)/include/*.h) $(wildcard atari/shim_include/*.h) atari/target.mk \
                 $(KIT)/kit.mk $(KIT)/rom_bench.py $(PROJECT_CONFIG) $(PROJECT_MAKEFILE)
 	rm -rf $(SHIPPED_OBJ) && mkdir -p $(SHIPPED_OBJ)

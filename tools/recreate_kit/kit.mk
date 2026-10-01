@@ -45,6 +45,13 @@ PROJECT_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 # `.c` and is still built by the twin rules below.
 SRC     := $(wildcard src/*.c) $(wildcard src/*/*.c) $(wildcard $(KIT)/src/*.c)
 
+# EVERY header under include/, at any depth: both compile rules below depend on it. A wildcard one
+# level deep missed a component's own headers (projects/tos102us keeps include/aes/, include/vdi/…),
+# so a header-only edit there left a stale .so the suite went on dlopening; make has no recursive
+# wildcard, hence the `find`. Dotfiles are left out, as the wildcard left them: an editor's `.#x.h`
+# lockfile is a dangling link that would stop every make with "No rule to make target".
+PROJECT_HEADERS := $(shell find include -name '*.h' ! -name '.*' 2>/dev/null)
+
 # A VARIANT build of the same candidate — a tool that compiles the cores with an extra header or an
 # extra translation unit and wants ONE set of build rules, not a copy of them. It overrides CAND on
 # the command line and adds its flags/sources here, e.g. BuggyBoy's
@@ -79,7 +86,7 @@ OCFLAGS := -O2 -fPIC -DM68K_EMULATE_TRACE=0 -DOS_FS_TABLE_RUNTIME \
 
 # On this file too, as $(ORACLE) is: CFLAGS and SRC are decided here, so a candidate built
 # before a change to either is a stale .so the suite would go on dlopening.
-$(CAND): $(SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h) $(KIT)/kit.mk
+$(CAND): $(SRC) $(PROJECT_HEADERS) $(wildcard $(KIT)/include/*.h) $(KIT)/kit.mk
 	@mkdir -p build
 	$(CC) $(CFLAGS) -shared $(SRC) -o $(CAND)
 
@@ -243,7 +250,7 @@ BENCH_SRC := $(wildcard src/*.c) $(wildcard src/*/*.c) \
 # the first carries `bench_base`, which is the link address, and the second carries BENCH_CFLAGS,
 # which is what the cores are compiled with. Without them a change to either leaves make reporting
 # "up to date" and the suite measuring a blob built under the previous configuration.
-$(BENCH_ELF): $(BENCH_SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h) $(KIT)/kit.mk \
+$(BENCH_ELF): $(BENCH_SRC) $(PROJECT_HEADERS) $(wildcard $(KIT)/include/*.h) $(KIT)/kit.mk \
               $(KIT)/rom_bench.py $(PROJECT_CONFIG) $(PROJECT_MAKEFILE)
 	@mkdir -p $(BENCH_DIR)
 	m68k-elf-gcc $(BENCH_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BENCH_BASE) \
