@@ -11,6 +11,7 @@
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #include <assert.h>
+#include <limits.h>
 #endif
 #include <stdint.h>
 
@@ -105,6 +106,28 @@
 #define HOST_SLOT_AES_SH_ENVRN_FRAME_BYTES 47    /* SH_ENVRN_SLOT_BYTES: the frame, then the saved A6's top byte */
 #define HOST_SLOT_AES_SH_FIND_FRAME     0x7f480  /* $feafbe's -22(a6) up: the name part, the first-try flag, the PATH index */
 #define HOST_SLOT_AES_SH_FIND_FRAME_BYTES 23     /* SH_FIND_SLOT_BYTES: the frame, then the saved A6's top byte */
+/* ...and gsx_start's (`aes/gsxif.h`): the stack word its second vst_height hands all four answer pointers, the answers
+ * discarded — the large font's size set back after the small one's was asked. */
+#define HOST_SLOT_AES_GSX_START_DISCARD 0x7f4a0  /* $fdab72's `lea (sp),a0`: the word under the pointers it pushes */
+#define HOST_SLOT_AES_GSX_START_DISCARD_BYTES 2
+/* ...and the graphics library's (`aes/gemgraf.h`): frames the ROM hands on by address — gsx_cline's own two points
+ * (its arguments), gr_gtext's copy of its GRECT and gr_just's character count (saved D0/D1 words its `movem` restores),
+ * gr_box's inner GRECT, gr_xor's GRECT (its arguments, stepped in place), and the step words gr_movebox and
+ * gr_growbox / gr_shrinkbox keep in their saved registers' words. */
+#define HOST_SLOT_AES_CLINE_POINTS      0x7f500  /* $fda8d2's `lea 4(sp),a0`: its arguments, two (x, y) points */
+#define HOST_SLOT_AES_CLINE_POINTS_BYTES 8
+#define HOST_SLOT_AES_GTEXT_RECT        0x7f508  /* $fda62c's `movea.l sp,a3`: a GRECT over its saved D0/D1 */
+#define HOST_SLOT_AES_GTEXT_RECT_BYTES  8
+#define HOST_SLOT_AES_JUST_COUNT        0x7f510  /* $fda5c2's `lea 2(sp)`: its saved D0's low word */
+#define HOST_SLOT_AES_JUST_COUNT_BYTES  2
+#define HOST_SLOT_AES_BOX_RECT          0x7f514  /* $fda7a4's `lea 8(sp),a4`: the GRECT each line is drawn round */
+#define HOST_SLOT_AES_BOX_RECT_BYTES    8
+#define HOST_SLOT_AES_XOR_RECT          0x7f51c  /* $fe83be's `pea` of its own arguments' GRECT */
+#define HOST_SLOT_AES_XOR_RECT_BYTES    8
+#define HOST_SLOT_AES_MOVEBOX_STEPS     0x7f524  /* $fe8402's `pea 6(sp)`..: its saved D1's low word and D2 */
+#define HOST_SLOT_AES_MOVEBOX_STEPS_BYTES 6
+#define HOST_SLOT_AES_GROWBOX_STEPS     0x7f52a  /* $fe8340/$fe837a's saved D2's low word, D3 and D4 ($fe831e) */
+#define HOST_SLOT_AES_GROWBOX_STEPS_BYTES 10
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -133,21 +156,33 @@ enum host_slot {
     HOST_SLOT_ID_AES_OB_FIND_RECTS,
     HOST_SLOT_ID_AES_SH_ENVRN_FRAME,
     HOST_SLOT_ID_AES_SH_FIND_FRAME,
+    HOST_SLOT_ID_AES_GSX_START_DISCARD,
+    HOST_SLOT_ID_AES_CLINE_POINTS,
+    HOST_SLOT_ID_AES_GTEXT_RECT,
+    HOST_SLOT_ID_AES_JUST_COUNT,
+    HOST_SLOT_ID_AES_BOX_RECT,
+    HOST_SLOT_ID_AES_XOR_RECT,
+    HOST_SLOT_ID_AES_MOVEBOX_STEPS,
+    HOST_SLOT_ID_AES_GROWBOX_STEPS,
+    HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-extern unsigned host_slots_held;     /* one bit per slot; defined in `src/host_slot.c` */
+/* One bit per slot, defined in `src/host_slot.c`: a long long, as the table has outgrown a 32-bit mask. */
+extern unsigned long long host_slots_held;
+_Static_assert(HOST_SLOT_ID_COUNT <= sizeof host_slots_held * CHAR_BIT,
+               "a slot past the held mask's width would alias a low one's bit, silently");
 
 static inline uint32_t host_slot_take(enum host_slot slot, uint32_t host_at)
 {
-    assert(!(host_slots_held & 1u << slot));
-    host_slots_held |= 1u << slot;
+    assert(!(host_slots_held & 1ull << slot));
+    host_slots_held |= 1ull << slot;
     return host_at;
 }
 
 static inline void host_slot_give_back(enum host_slot slot)
 {
-    host_slots_held &= ~(1u << slot);
+    host_slots_held &= ~(1ull << slot);
 }
 
 /* The image address a frame local of role ROLE is handed on at: its slot, claimed, off target... */

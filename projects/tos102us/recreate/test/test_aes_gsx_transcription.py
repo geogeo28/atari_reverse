@@ -62,11 +62,17 @@ def test_each_region_ends_on_the_rom_s_own_rts():
 
 
 # ---- the frame callers ----------------------------------------------------------------------------------------------
-CALLERS_OFFSET = gsx.BAND_OFFSET + gsx.BAND_BYTES + 0x100     # above the door's band, a gap left for its growth
-CALLERS_BYTES = 0x100
-CALLER_STRIDE = 0x30                    # rect's frame caller is at most 36 bytes (`frame_caller_stub`)
+# One caller per distinct frame size, every battery entering through `entered` sharing them (five in use at wave 2:
+# frames of 0, 1, 2, 3 and 6 longwords). `frame_caller_stub(n)` is 16 + 4n bytes, so the stride holds a frame of up to
+# MAX_FRAME_LONGS, and the band one caller for every size 0..MAX_FRAME_LONGS, with a spare.
+MAX_FRAME_LONGS = 8
+CALLER_STRIDE = 0x30
+assert len(rect_transcription.frame_caller_stub(MAX_FRAME_LONGS)[0]) <= CALLER_STRIDE
+CALLERS_BYTES = (MAX_FRAME_LONGS + 1 + 1) * CALLER_STRIDE
+CALLERS_OFFSET = gsx.BAND_OFFSET + gsx.BAND_BYTES     # right above the door's band
 CALLERS_AT = aes.SPAN.claim(aes.WINDOW_AT + CALLERS_OFFSET, CALLERS_BYTES, "test/test_aes_gsx_transcription.py: frame callers")
-POOL = transcription.CallerPool(CALLERS_AT, CALLERS_AT + CALLERS_BYTES, CALLER_STRIDE)
+POOL = transcription.CallerPool(CALLERS_AT, CALLERS_AT + CALLERS_BYTES, CALLER_STRIDE,
+                                grow="test_aes_gsx_transcription.MAX_FRAME_LONGS (and CALLER_STRIDE past 8 longwords)")
 FRAME_ARGUMENTS_AT = rect_transcription.FRAME_ARGUMENTS_AT
 
 

@@ -137,8 +137,7 @@ uint32_t aes_dos_lseek(uint8_t *image, int16_t handle, int16_t mode, uint32_t of
     uint32_t answer;
 
     wr32(image + AES_TRAP1_RETURN, AES_DOS_LSEEK_TRAP_RETURN);
-    answer = gemdos_trap_word_long_long(image, GEMDOS_FSEEK_FN, offset,
-                                        (uint32_t)(uint16_t)handle << M68K_WORD_BITS | (uint16_t)mode);
+    answer = gemdos_trap_word_long_long(image, GEMDOS_FSEEK_FN, offset, words_long(handle, mode));
     (void)dos_verdict(image, answer);
     return answer;
 }

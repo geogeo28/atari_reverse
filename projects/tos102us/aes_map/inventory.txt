@@ -484,8 +484,8 @@ fe7d90 A  1350 f260  1268   fs_input | fda7f8 fe3bba fe3c26 fe718e fe74a4 fe75ec
 fe82d6 S    16       16      |  | 1
 fe82e6 S    56       54      | fe8472 fe82d6 | 1
 fe831e S    34       34      | fe82e6 | 2
-fe8340 S    58 f534  52     gr_growbox? | fe8402 fe8a72 fe8a8e fe831e fe83be | 2
-fe837a S    68 f538  64     gr_shrinkbox? | fe8a72 fe8a8e fe831e fe83be fe8402 | 2
+fe8340 S    58 f534  52     gr_growbox | fe8402 fe8a72 fe8a8e fe831e fe83be | 2
+fe837a S    68 f538  64     gr_shrinkbox | fe8a72 fe8a8e fe831e fe83be fe8402 | 2
 fe83be S    68 f088  64      | fdada4 fdadce | 3
 fe8402 S   112 f07c/ 106    gr_movebox | fe83be fe8a72 fe8a8e fe8472 | 5
 fe8472 S    72 f078  70      | fe85b0 | 2

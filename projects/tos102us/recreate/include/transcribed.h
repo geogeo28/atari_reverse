@@ -143,7 +143,16 @@
     ENTRY(aes_rom_gsx_ncode,          "")                                   /* Alcyon (op, n_ptsin, n_intin) -> D0.w */ \
     ENTRY(aes_rom_gsx_1code,          "")                                   /* Alcyon (op, value) -> D0.w  */ \
     ENTRY(aes_rom_gsx_mon,            "")                                   /* Alcyon ()                   */ \
-    ENTRY(aes_rom_gsx_fix,            "a2")                                 /* Alcyon (mfdb, address, bytes, height) */
+    ENTRY(aes_rom_gsx_fix,            "a2")                                 /* Alcyon (mfdb, address, bytes, height) */ \
+    ENTRY(aes_rom_gr_inside,          "")                                   /* Alcyon (rect, thickness)    */ \
+    ENTRY(aes_rom_gr_crack,           "d2")                                 /* Alcyon (colour, five answer pointers) */ \
+    ENTRY(aes_rom_gsx_gclip,          "")                                   /* Alcyon (rect)               */ \
+    ENTRY(aes_rom_gsx_chkclip,        "d2 a2")                              /* Alcyon (rect) -> D0.l       */ \
+    ENTRY(aes_rom_gsx_bxpts,          "d2")                                 /* Alcyon (rect)               */ \
+    ENTRY(aes_rom_gsx_mret,           "")                                   /* Alcyon (&address, &length)  */ \
+    ENTRY(aes_rom_ratinit,            "")                                   /* Alcyon ()                   */ \
+    ENTRY(aes_rom_gsx_mxmy,           "")                                   /* Alcyon (&x, &y)             */ \
+    ENTRY(aes_rom_gsx_button,         "")                                   /* Alcyon () -> D0.w           */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a

@@ -39,8 +39,9 @@ AES = rom_data.component("aes")
 # ---- (a) the sources --------------------------------------------------------------------------------------------
 ROM_ADDRESSES_AS_DATA = {
     # The `trap #2` door's two hops the graphics bridge checks before it calls the VDI's C twin (`require_cpu_routine`):
-    # the AES's handler in vector $88 and the VDI door it chains through $8c2a.
-    "aes/gsx.h": {"GEM_TRAP2": CODE, "GEM_TRAP2_VDI_DOOR": CODE},
+    # the AES's handler in vector $88 and the VDI door it chains through $8c2a — and the `$a000` bridge's one, the
+    # VDI's Line-A dispatcher in vector $28.
+    "aes/gsx.h": {"GEM_TRAP2": CODE, "GEM_TRAP2_VDI_DOOR": CODE, "LINEA_ROM_DISPATCH": CODE},
     # The glue's parked return sites: __DOS's own (dos_free, dos_sdta, dos_close) and the four calls' `bsr __DOS`.
     "gemdosif.c": {"AES_DOS_TRAP_RETURN": RETURN_SITE, "AES_DOS_SFIRST_TRAP_RETURN": RETURN_SITE,
                    "AES_DOS_OPEN_TRAP_RETURN": RETURN_SITE, "AES_DOS_READ_TRAP_RETURN": RETURN_SITE,
@@ -53,6 +54,9 @@ ROM_ADDRESSES_AS_DATA = {
     # dos_close (host arguments).
     "resource.c": {"AES_RSC_BUNDLE": TABLE, "AES_RS_FREE_MFREE_RETURN": RETURN_SITE,
                    "AES_RS_READIT_CLOSE_RETURN": RETURN_SITE},
+    # gsx_setmb_aes hands vex_butv/vex_motv the AES's interrupt glue by its ROM address (rows $fe884a/$fe8844 of (b)), and
+    # gsx_mfree's dos_free parks the word after its Line-F call.
+    "gsxif.c": {"AES_ROM_BUTTON_GLUE": CODE, "AES_ROM_MOTION_GLUE": CODE, "AES_GSX_MFREE_RETURN": RETURN_SITE},
     # sh_find's return site from dos_sdta (a host argument, as rsrc_free's).
     "shell_find.c": {"AES_SH_FIND_SDTA_RETURN": RETURN_SITE},
     # newrect hands everyobj mkrect by its ROM address ($fe5d68 `move.l #$fe5c9a,-(sp)`, row (b) below).
@@ -94,7 +98,7 @@ Immediate = namedtuple("Immediate", "value owner owed_by", defaults=(None,))
 CODE_IMMEDIATES = {
     0xFD9F4A: Immediate(0xFEE8C2, "gem_entry: the Line-F handler's ROM body, copied into its RAM block"),
     0xFD9F86: Immediate(0xFED424, "gem_entry: a bare `rts`, into $947a"),
-    0xFD9F92: Immediate(0xFED426, "gem_entry: interrupt glue, into $947e"),
+    0xFD9F92: Immediate(addrs.AES_ROM_TICK_GLUE, "gem_entry: interrupt glue, into $947e"),
     0xFD9F9E: Immediate(0xFE3F3E, "gem_entry: into $8c32"),
     0xFE3C78: Immediate(0xFE3EA6, "install_trap2: the AES's `trap #2` handler into vector $88"),
     0xFE3C84: Immediate(0xFE3EA6, "$fe3c84 (ctx): the same handler into $88 again, then the critic's install"),
@@ -109,8 +113,8 @@ CODE_IMMEDIATES = {
     0xFE621E: Immediate(0xFE837A, "the dispatcher's graf_shrinkbox arm (ctx): gr_shrinkbox"),
     0xFE6698: Immediate(0xFED424, "ap_tplay: the bare `rts` as a vex routine (set_contrl_ptr)"),
     0xFE66B6: Immediate(0xFED424, "ap_tplay: ...and again"),
-    0xFE8844: Immediate(0xFED3E4, "gsx_setmb: the mouse-motion interrupt glue, for vex_motv"),
-    0xFE884A: Immediate(0xFED3BE, "gsx_setmb: the button interrupt glue, for vex_butv"),
+    0xFE8844: Immediate(addrs.AES_ROM_MOTION_GLUE, "gsx_setmb_aes: the mouse-motion interrupt glue, for vex_motv", "gsxif.c"),
+    0xFE884A: Immediate(addrs.AES_ROM_BUTTON_GLUE, "gsx_setmb_aes: the button interrupt glue, for vex_butv", "gsxif.c"),
     0xFEA08C: Immediate(0xFE9A88, "ob_draw: just_draw, everyobj's routine"),
     0xFEB272: Immediate(0xFEADDC, "sh_main: sh_find's optional routine"),
     0xFEC146: Immediate(addrs.AES_ROM_NEWRECT, "$fec0ca (ctx, gemwmlib's window-change redraw): newrect, everyobj's"),

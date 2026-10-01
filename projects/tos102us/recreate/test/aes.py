@@ -48,16 +48,18 @@ from opcodes import DROP_STACK_LONG, LINE_F, PUSH_ADDRESS_SHORT, RTS
 
 # ---- the headers' constants, and the FIELDS (`test/layouts.py`, the one reader of the width tags) ------------------
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-# The headers every AES core reads the machine's records through (`gsx.h`: the VDI binding's): the host reads the same
-# constants and widths by this parse, so a case's offset is the header's — the one the compiler checked the C against.
-AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h"))
-CONSTANTS = layouts.parse_constants(AES_HEADERS)
+# The headers every AES core reads the machine's records through (`gsx.h` and `gsxif.h`: the VDI binding's): the host
+# reads the same constants and widths by this parse, so a case's offset is the header's — the one the compiler checked
+# the C against.
+# `gsx.h` includes `vdi/vdi.h`, so the VDI's constants are `known`: a define spelt as an alias of one resolves.
+AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h"))
+CONSTANTS = layouts.parse_constants(AES_HEADERS, known=vdi.CONSTANTS)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
 
 def header_constants(name):
     """The constants of one more AES header, `include/aes/<name>` — a slice's own (`rlist.h`, `strings.h`, ...)."""
-    return layouts.parse_constants((_INCLUDE / "aes" / name,))
+    return layouts.parse_constants((_INCLUDE / "aes" / name,), known={**vdi.CONSTANTS, **CONSTANTS})
 
 WORD_BYTES = layouts.WORD_BYTES
 LONG_BYTES = layouts.LONG_BYTES
@@ -112,6 +114,16 @@ def field_pokes(record, base=0, **values):
 def read_field(image, record, name, base=0):
     """A field back out of `image`: an int, or a list of elements for an array."""
     return LAYOUTS.read(image, record, name, base)
+
+
+def stale_fields(*names):
+    """Each AES field in `names` staged as STALE words (a GRECT's or an array's every word)."""
+    pokes = {}
+    for name in names:
+        spec = field("AES", name)
+        words = (spec.count or 1) * spec.width // WORD_BYTES
+        pokes[spec.at] = vdi.pack_words(*[STALE_WORD] * words)
+    return pokes
 
 
 # ---- (a) the MACHINE: the snapshot's scheduler state, and the running process a case stages ------------------------
@@ -441,11 +453,11 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
     return (result or Result)(info, machine_pokes)
 
 
-def settled_mask_word(name, arguments, pokes):
+def settled_mask_word(name, arguments, pokes, io_seed=None):
     """The mask word the ROM's own run of `name` over `pokes` leaves — or None when it never stores it (a routine
     that returns by `rts` and calls none that return by a mask)."""
     image = make_image(staged(name, vdi.as_signed(name, arguments), pokes))
-    _final, writes, _regs = emu.run(image, getattr(addrs, name))
+    _final, writes, _regs = emu.run(image, getattr(addrs, name), io_seed=io_seed)
     if AES_LINEF_MASK_WORD not in writes:
         return None
     return writes[AES_LINEF_MASK_WORD] << 8 | writes[AES_LINEF_MASK_WORD + 1]
@@ -457,10 +469,10 @@ def settled_mask_word(name, arguments, pokes):
 COMPANION_UNPOISONED = {"poison": False}
 
 
-def undropped(name, arguments, pokes, hook=None):
+def undropped(name, arguments, pokes, hook=None, io_seed=None):
     """A priced row's Tier 3 COMPANION: the SAME machine — the mask word staged at the value the run leaves, which the
     ROM's run then rewrites with itself — as a differential with NOTHING dropped."""
-    return run_function(name, arguments, pokes, dropped_windows=(), hook=hook, **COMPANION_UNPOISONED)
+    return run_function(name, arguments, pokes, dropped_windows=(), hook=hook, io_seed=io_seed, **COMPANION_UNPOISONED)
 
 
 # ---- (e) the registry --------------------------------------------------------------------------------------------
@@ -470,22 +482,24 @@ CASES = ROWS.cases
 UNPRICED = ROWS.unpriced
 
 
-def register(label, name, arguments, pokes, *, through_line_f=False, hook=None):
+def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, io_seed=None):
     """One `VERIFIED_CASES` row of `name` over the frame of `arguments`, named `<core>, <label>`. A DIRECT row is
     priced; if the ROM's run stores the mask word, the row stages it at the value the run leaves and drops it at
     Tier 3, with its companion (a routine calling out with its `hook`, `run_function`'s). A row THROUGH
     LINE-F is verified and unpriced. A core with more C arguments than the harness's argument area holds (ob_sst's
-    nine) is priced like any other: `rom_bench` enters its C lower by the bytes that do not fit."""
+    nine) is priced like any other: `rom_bench` enters its C lower by the bytes that do not fit. `io_seed` declares
+    the I/O bytes the run reads (`case.run`'s), for a routine that reaches the hardware through the OS."""
     row_name = f"{routines.core_symbol(name)}, {label}"
     if through_line_f:
         return ROWS.register(row_name, LINE_F_CALLER_AT, staged(name, arguments, pokes, through_line_f=True),
-                             priced=False)
-    settled = settled_mask_word(name, arguments, pokes)
+                             priced=False, io_seed=io_seed)
+    settled = settled_mask_word(name, arguments, pokes, io_seed)
     if settled is None:
-        return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes))
+        return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed)
     pokes = merge_pokes(pokes, field_pokes("AES", LINEF_MASK_WORD=settled))
-    return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), dropped=LINE_F_MASK_WINDOW,
-                         undropped=functools.partial(undropped, name, arguments, pokes, hook))
+    return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
+                         dropped=LINE_F_MASK_WINDOW, undropped=functools.partial(undropped, name, arguments, pokes, hook,
+                                                                                 io_seed))
 
 
 # ---- (f) what the snapshot mask is checked against ------------------------------------------------------------------

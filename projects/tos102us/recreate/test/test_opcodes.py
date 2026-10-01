@@ -24,6 +24,7 @@ def expanded(expression):
     (opcodes.MOVEA_L_IMMEDIATE_A0, "M68K_MOVEA_L_IMMEDIATE(M68K_A0)"),
     (int.from_bytes(opcodes.JSR_ABSOLUTE_LONG, "big"), "M68K_JSR_ABSOLUTE_LONG"),
     (opcodes.LINE_F, "M68K_LINE_F_WORD"),
+    (opcodes.LINE_A, "M68K_LINE_A_INIT"),
 ), ids=lambda value: value if isinstance(value, str) else None)
 def test_a_python_word_is_the_header_s_word(word, macro):
     assert word == expanded(macro)

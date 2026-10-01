@@ -79,5 +79,7 @@
 #define M68K_JSR_ABSOLUTE_LONG     0x4eb9
 /* ...and `jmp <xxx>.l`, the same: gsx_ncode's tail call of gsx2 ($fe87ea) */
 #define M68K_JMP_ABSOLUTE_LONG     0x4ef9
+/* `$a000`, the Line-A exception word of its opcode 0 (Line-A init), which has no mnemonic: gsx_mfsave's ($fee498) */
+#define M68K_LINE_A_INIT           0xa000
 
 #endif /* TOS102US_M68K_ENCODINGS_H */

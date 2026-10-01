@@ -1924,6 +1924,70 @@
 #define AES_ROM_VRN_TRNFM         0xfe8b88   /* (source mfdb, destination mfdb) */
 #define AES_ROM_VSL_WIDTH         0xfe8b92   /* (width): ptsin[0..1] = width, 0 */
 #define AES_ROM_GSX_FIX           0xfda992   /* (mfdb, address, bytes across, height): an MFDB, 0 the screen's */
+/* ...and the rest of gemgsxif (`aes/gsxif.h`), each read from its body. */
+#define AES_ROM_GSX_MALLOC        0xfe8790   /* gl_tmp the screen's MFDB, its buffer Malloc'd ($3400) */
+#define AES_ROM_GSX_MFREE         0xfe87b0   /* ...Mfree'd */
+#define AES_ROM_GSX_MRET          0xfe87bc   /* (&address, &length): gl_tmp's buffer and gl_mlen out */
+#define AES_ROM_GSX_INIT          0xfe8808   /* gsx_wsopen, gsx_start, the AES's mouse routines, vq_mouse */
+#define AES_ROM_GSX_GRAPHIC       0xfe8828   /* (graphic): escape 2 + the AES's mouse routines, or escape 3 + the old */
+#define AES_ROM_GSX_SETMB_AES     0xfe883e   /* gsx_setmb(button glue, motion glue, &drwaddr): gsx_graphic's tail */
+#define AES_ROM_GSX_ESCAPES       0xfe8866   /* (escape): contrl[5], VDI 5 */
+#define AES_ROM_GSX_WSOPEN        0xfe8876   /* v_opnwk on gl_restype; gl_restype from the size answered */
+#define AES_ROM_GSX_WSCLOSE       0xfe88de   /* v_clswk */
+#define AES_ROM_RATINIT           0xfe88e4   /* v_show_c(0); the hide nest 0 */
+#define AES_ROM_BB_SET            0xfe88f8   /* (x, y, w, h, pts1, pts2, mfdb, src, dst): a word-aligned vro_cpyfm */
+#define AES_ROM_BB_SAVE           0xfe8966   /* (rect): the screen under it into gl_tmp */
+#define AES_ROM_BB_RESTORE        0xfe8996   /* (rect): ...and back */
+#define AES_ROM_GSX_SETMB         0xfe89c6   /* (button, motion, &drwaddr): vex_butv, vex_motv, the old ones kept */
+#define AES_ROM_GSX_RESETMB       0xfe89f8   /* ...the old ones put back */
+#define AES_ROM_GSX_TICK          0xfe8a18   /* (routine, &old): vex_timv; intout[0] answered */
+#define AES_ROM_GSX_MFSET         0xfe8a38   /* (form): the cursor hidden, 37 words into intin, vsc_form, shown */
+#define AES_ROM_GSX_MXMY          0xfe8a54   /* (&x, &y): xrat, yrat */
+#define AES_ROM_GSX_BUTTON        0xfe8a6a   /* the buttons' word */
+#define AES_ROM_V_OPNWK           0xfe8aae   /* (work_in, &handle, work_out): the block's arrays for the one call */
+#define AES_ROM_GSX_START         0xfdaab0   /* the caches, the clip, the screen's metrics and GRECTs */
+#define AES_ROM_GSX_MFSAVE        0xfee498   /* `$a000`; the Line-A mouse form saved */
+#define AES_ROM_GSX_MFRESTORE     0xfee4c0   /* ...and copied back */
+/* The AES's interrupt GLUE: ROM code the AES hands the VDI as VALUES and never calls (`test_aes_rom_data.py` lists
+ * each). Each parks the interrupted SP and runs on a stack of the AES's own: the button and motion glue on $94f2 (SP
+ * in $9482), saving D0-D2/A0-A2 around one call; the tick glue on $9552 (SP in $9486), then chaining on. */
+#define AES_ROM_BUTTON_GLUE       0xfed3be   /* vex_butv's routine: b_click(D0) called directly ($fe4f40)
+                                                ($fe884a pea, gsx_setmb_aes) */
+#define AES_ROM_MOTION_GLUE       0xfed3e4   /* vex_motv's: forkq(mchange, D0, D1) ($fe8844 pea, gsx_setmb_aes) */
+#define AES_ROM_TICK_GLUE         0xfed426   /* vex_timv's: while a count is set ($9492) it counts the ticks ($948e)
+                                                down and at zero forkq(tchange, elapsed); then b_delay(1) ($fe4fb0)
+                                                always, the interrupted SP back, and `jsr` to the routine displaced
+                                                ($948a) ($fd9f92 lea, into $947e by gem_entry) */
+/* The GRAPHICS LIBRARY (gemgraf, hand 68000, `aes/gemgraf.h`), each read from its body; gr_movebox, gr_growbox and
+ * gr_shrinkbox are the dispatcher's AES_ROM_GR_* below. */
+#define AES_ROM_GR_INSIDE         0xfda56e   /* (rect, thickness): shrunk by it on every side */
+#define AES_ROM_GR_RECT           0xfda582   /* (colour, pattern, rect): vsf_color, bb_fill in replace mode */
+#define AES_ROM_GR_JUST           0xfda5c2   /* (just, font, text, w, h, rect): gsx_tcalc, the corner justified; D0 the count */
+#define AES_ROM_GR_GTEXT          0xfda62c   /* (just, font, text, rect): a copy of rect justified, gsx_tblt */
+#define AES_ROM_GR_CRACK          0xfda66a   /* (colour, &border, &text, &pattern, &interior, &mode) */
+#define AES_ROM_GR_GICON          0xfda6c4   /* (state, mask, data, text, char, cx, cy, icon rect, text rect) */
+#define AES_ROM_GR_BOX            0xfda7a4   /* (x, y, w, h, thickness): gr_inside + gsx_box per line */
+#define AES_ROM_GSX_SCLIP         0xfda7f8   /* (rect): the clip words, vs_clip; D0 = 1 */
+#define AES_ROM_GSX_GCLIP         0xfda846   /* (rect): the clip words out */
+#define AES_ROM_GSX_CHKCLIP       0xfda864   /* (rect): D0 = 1 when it touches the clip, or the clip is empty */
+#define AES_ROM_GSX_CLINE         0xfda8d2   /* (x1, y1, x2, y2): v_pline over its own frame, the cursor hidden */
+#define AES_ROM_GSX_ATTR          0xfda8e6   /* (text, mode, colour): vswr_mode, vst_color or vsl_color through caches */
+#define AES_ROM_GSX_BXPTS         0xfda956   /* (rect): its five corners into ptsin */
+#define AES_ROM_GSX_BOX           0xfda97c   /* (rect): v_pline of gsx_bxpts' corners */
+#define AES_ROM_GSX_BLT           0xfda9ce   /* (src, sx, sy, swb, dst, dx, dy, dwb, w, h, rule, fg, bg) */
+#define AES_ROM_BB_SCREEN         0xfdaa48   /* (rule, sx, sy, dx, dy, w, h): gsx_blt screen to screen */
+#define AES_ROM_GSX_TRANS         0xfdaa6a   /* (src, swb, dst, dwb, h): vrn_trnfm of a standard form */
+#define AES_ROM_BB_FILL           0xfdac28   /* (mode, interior, style, x, y, w, h): vr_recfl through the caches */
+#define AES_ROM_GSX_TCALC         0xfdaca4   /* (font, text, &w, &h, &count): xstrpix into intin, its size */
+#define AES_ROM_GSX_TBLT          0xfdad0a   /* (font, x, y, count): the font set, v_gtext of intin */
+#define AES_ROM_GSX_XBOX          0xfdada4   /* (rect): a dotted box */
+#define AES_ROM_GSX_XCBOX         0xfdadce   /* (rect): ...its four corners */
+#define AES_ROM_GSX_XLINE         0xfdae38   /* (count, points): dotted lines, the dots in step with the screen's */
+/* ...and the box animations' helpers (gemgrlib, hand 68000): the names GEM's sources give them. */
+#define AES_ROM_GR_SETUP          0xfe85b0   /* (colour): the clip the screen, XOR */
+#define AES_ROM_GR_SCALE          0xfe8472   /* (dx, dy, &count, &xstep, &ystep): gr_setup, the steps */
+#define AES_ROM_GR_STEPCALC       0xfe82e6   /* (w, h, rect, &cx, &cy, &count, &xstep, &ystep): centred, gr_scale */
+#define AES_ROM_GR_XOR            0xfe83be   /* (corners, count, x, y, w, h, xstep, ystep, grows): stepped XOR boxes */
 /* The utility layer's MEMORY and STRING helpers (hand 68000, `aes/strings.h`), each named from its body. */
 #define AES_ROM_MUL_DIV           0xfecb6e   /* m1 * m2 / d, rounded: `muls.w` by 2*m2, `divs.w`, +-1, `asr.w` */
 #define AES_ROM_SET_CONTRL_PTR    0xfecbc6   /* contrl[7..8] := the argument */
@@ -2063,17 +2127,17 @@
 #define AES_ROM_GR_RUBBOX_OPCODE  70
 #define AES_ROM_GR_DRAGBOX        0xfe8640   /* ctx */
 #define AES_ROM_GR_DRAGBOX_OPCODE 71
-#define AES_ROM_GR_MOVEBOX        0xfe8402   /* ctx */
+#define AES_ROM_GR_MOVEBOX        0xfe8402   /* read: (w, h, sx, sy, dx, dy) gr_scale, gr_xor drawn and undrawn */
 #define AES_ROM_GR_MOVEBOX_OPCODE 72
-#define AES_ROM_GR_GROWBOX        0xfe8340   /* ctx: the arm's `movea.l #`, then the shared `jsr (a0)` ($fe622e) */
+#define AES_ROM_GR_GROWBOX        0xfe8340   /* read: (from, to); the arm's `movea.l #`, then the shared `jsr (a0)` ($fe622e) */
 #define AES_ROM_GR_GROWBOX_OPCODE 73
-#define AES_ROM_GR_SHRINKBOX      0xfe837a   /* ctx: ...the same */
+#define AES_ROM_GR_SHRINKBOX      0xfe837a   /* read: (from, to) ...the same */
 #define AES_ROM_GR_SHRINKBOX_OPCODE 74
 #define AES_ROM_GR_WATCHBOX       0xfe84ba   /* ctx */
 #define AES_ROM_GR_WATCHBOX_OPCODE 75
 #define AES_ROM_GR_SLIDEBOX       0xfe86fa   /* ctx */
 #define AES_ROM_GR_SLIDEBOX_OPCODE 76
-#define AES_ROM_GR_MKSTATE        0xfe8768   /* ctx */
+#define AES_ROM_GR_MKSTATE        0xfe8768   /* read: xrat, yrat, the buttons, the shift state out through four pointers */
 #define AES_ROM_GR_MKSTATE_OPCODE 79
 #define AES_ROM_SC_READ           0xfeac80   /* read: scrp_read, the scrap path lstcpy'd out into the caller's */
 #define AES_ROM_SC_READ_OPCODE    80

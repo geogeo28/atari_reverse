@@ -22,6 +22,8 @@ repointed one, the blitter's) and a device code other than the snapshot's in `$8
 """
 import functools
 
+import pytest
+
 from harness import addrs, emu, make_image
 
 import aes
@@ -29,6 +31,7 @@ import case
 import isr
 import vdi
 import vdi_entry
+import vdi_helpers
 from case import merge_pokes
 
 # ---- the VDI functions a candidate's call is served by --------------------------------------------------------------
@@ -100,6 +103,20 @@ def points_pokes(*coordinates, at=POINTS_AT):
     return {at: vdi.pack_words(*coordinates)}
 
 
+STALE_ANSWERS = {ANSWERS_AT: vdi.pack_words(*[aes.STALE_WORD] * (ANSWERS_BYTES // aes.WORD_BYTES))}
+MFDB_FIELDS = ("ADDR", "W", "H", "WDWIDTH", "STAND", "NPLANES")
+
+
+def mfdb_of(result, at):
+    """The MFDB at `at` as `result` left it, its fields in MFDB_FIELDS' order."""
+    return tuple(vdi.read_field(result.final, "MFDB", name, at) for name in MFDB_FIELDS)
+
+
+# The AES's own two MFDBs, gl_src and gl_dst, staged stale: a blit's case sees every field its call stores.
+GL_MFDBS_STALE = {aes.AES_GL_SRC: bytes([case.SLACK_FILL]) * aes.AES_MFDB_BYTES,
+                  aes.AES_GL_DST: bytes([case.SLACK_FILL]) * aes.AES_MFDB_BYTES}
+
+
 # ---- the fields the cases reach outside the window (`aes.declare_case_field`) -----------------------------------------
 # contrl[0..3] are NOT among them: the snapshot's MASK covers them, which is why every machine below stages them.
 CASE_WORDS_OF_AN_ARRAY = 8              # intin's and ptsin's first words: the most any atom's call writes or a case stages
@@ -112,8 +129,7 @@ for _array in (aes.AES_GSX_INTIN, aes.AES_GSX_PTSIN, aes.AES_GSX_PTSOUT, aes.AES
 
 
 # ---- the machine -----------------------------------------------------------------------------------------------------
-CONTRL_STALE = aes.field_pokes("AES", GSX_OPCODE=aes.STALE_WORD, GSX_N_PTSIN=aes.STALE_WORD,
-                               GSX_N_PTSOUT=aes.STALE_WORD, GSX_N_INTIN=aes.STALE_WORD)
+CONTRL_STALE = aes.stale_fields("GSX_OPCODE", "GSX_N_PTSIN", "GSX_N_PTSOUT", "GSX_N_INTIN")
 NEST_SHOWN = 0                          # the snapshot's gl_moff
 NEST_HIDDEN = 1                         # ...and after the one gsx_moff `machine` is continued from
 
@@ -146,7 +162,34 @@ def run_gsx(name, arguments, pokes=None, *, onto=None, **kwargs):
     return aes.run_function(name, arguments, staged, hook=vdi_hook, **kwargs)
 
 
-def register(label, name, arguments, pokes=None, *, onto=None, through_line_f=False):
+def register(label, name, arguments, pokes=None, *, onto=None, through_line_f=False, io_seed=None):
     """...and the same machine as a `VERIFIED_CASES` row (`aes.register`), its companion served the same way."""
     staged = merge_pokes(machine() if onto is None else onto, pokes)
-    return aes.register(label, name, arguments, staged, through_line_f=through_line_f, hook=vdi_hook)
+    return aes.register(label, name, arguments, staged, through_line_f=through_line_f, hook=vdi_hook, io_seed=io_seed)
+
+
+def register_rows(rows, line_f=()):
+    """A battery's rows `{label: (name, arguments, pokes)}`, each registered direct, then those labelled in `line_f`
+    once more through the routine's Line-F call word."""
+    for label, (name, arguments, pokes) in rows.items():
+        register(label, name, arguments, pokes)
+    for label in line_f:
+        name, arguments, pokes = rows[label]
+        register(label, name, arguments, pokes, through_line_f=True)
+
+
+# Each case run twice: entered direct, and through the routine's Line-F call word.
+THROUGH = pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
+
+
+# ---- the host's refusals -----------------------------------------------------------------------------------------------
+def pointer(value):
+    """A pointer argument of a host core's child call (`vdi_helpers.refusal_over`'s `arguments`)."""
+    return ("ctypes.c_uint32", str(value))
+
+
+def odd_pointer_refused(symbol, arguments, pokes=None):
+    """A host core's refusal of a word or longword through an odd pointer: the 68000's address error, which the
+    oracle's Musashi does not raise (`m68k_idioms.h`'s bus family)."""
+    returncode, stderr, _image = vdi_helpers.refusal_over(symbol, machine(pokes), arguments=arguments, read_back=False)
+    assert returncode != 0 and "address error" in stderr, stderr

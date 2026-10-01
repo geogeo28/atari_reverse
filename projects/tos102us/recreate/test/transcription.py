@@ -140,13 +140,14 @@ class CallerPool:
     overlapping. A caller is built on first ask and registered (`staged_caller`): `staged` for any stub a
     battery builds, `caller` for the CODE-POINTER caller that clears a register set (the plain caller
     answering for an empty one). `code_pointers` is the battery's MEASURED `{routine: registers}` — what
-    `caller_for` enters a routine through when a case names none."""
+    `caller_for` enters a routine through when a case names none. `grow` names the constant sizing the band,
+    for the message when it is full."""
 
-    def __init__(self, at, end, stride, code_pointers=None, *, built=()):
+    def __init__(self, at, end, stride, code_pointers=None, *, built=(), grow="the pool's band"):
         overlapping = [(pool.at, pool.end) for pool in POOLS if at < pool.end and pool.at < end]
         assert not overlapping, f"callers at [{at:#x}, {end:#x}) overlap another pool's {overlapping}"
         POOLS.append(self)
-        self.at, self.end, self.stride = at, end, stride
+        self.at, self.end, self.stride, self.grow = at, end, stride, grow
         self.code_pointers = dict(code_pointers or {})
         self._callers = {}
         # Built now, so each is registered — and its cost measured — before any case asks for it.
@@ -159,8 +160,11 @@ class CallerPool:
         if key not in self._callers:
             stub, cost = build()
             at = self.at + len(self._callers) * self.stride
-            assert len(stub) <= self.stride and at + self.stride <= self.end, (
-                f"no room for the caller {key} in [{self.at:#x}, {self.end:#x})")
+            assert len(stub) <= self.stride, (
+                f"the caller {key} is {len(stub)} bytes, over the pool's {self.stride:#x}-byte stride")
+            assert at + self.stride <= self.end, (
+                f"no room for the caller {key} in [{self.at:#x}, {self.end:#x}): its {len(self._callers)} "
+                f"slots are taken — grow {self.grow}")
             self._callers[key] = staged_caller(at, stub, cost, routine=routine, routine_cost=routine_cost)
         return self._callers[key]
 
@@ -412,6 +416,27 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("gsx_moff_hide", "aes_gsx_ncode"), ("aes_v_pline", "aes_gsx_ncode"), ("aes_vs_clip", "aes_gsx_ncode"),
     ("aes_vst_height", "aes_gsx_ncode"), ("aes_vr_recfl", "aes_gsx_ncode"), ("aes_vro_cpyfm", "aes_gsx_ncode"),
     ("aes_vrt_cpyfm", "aes_gsx_ncode"), ("aes_vrn_trnfm", "aes_gsx_ncode"), ("aes_vsl_width", "aes_gsx_ncode"),
+    # ...and the rest of gemgsxif (`src/aes/gsxif.c`): its calls through gsx_ncode (`gsx_call`, inlined), gsx_1code
+    # and gsx_mon, gsx_fix's MFDBs, and the mouse form's copies
+    ("aes_gsx_escapes", "aes_gsx_ncode"), ("graphic_mode_change", "aes_gsx_ncode"), ("aes_gsx_init", "aes_gsx_ncode"),
+    ("aes_gsx_resetmb", "aes_gsx_ncode"), ("aes_gsx_setmb", "aes_gsx_ncode"), ("aes_gsx_setmb_aes", "aes_gsx_ncode"),
+    ("aes_gsx_start", "aes_gsx_ncode"), ("aes_gsx_tick", "aes_gsx_ncode"), ("aes_gsx_wsclose", "aes_gsx_ncode"),
+    ("aes_gsx_wsopen", "aes_gsx_ncode"), ("aes_v_opnwk", "aes_gsx_ncode"), ("aes_gsx_mfset", "aes_gsx_ncode"),
+    ("aes_gsx_mfset", "aes_gsx_mon"), ("aes_bb_set", "aes_gsx_mon"), ("aes_gsx_start", "aes_gsx_1code"),
+    ("aes_bb_set", "aes_gsx_fix"), ("aes_gsx_malloc", "aes_gsx_fix"),
+    ("aes_gsx_mfsave", "aes_lbcopy"), ("aes_gsx_mfrestore", "aes_lbcopy"), ("aes_bb_save", "aes_gsx_fix"),
+    ("aes_bb_save", "aes_gsx_mon"), ("aes_bb_restore", "aes_gsx_fix"), ("aes_bb_restore", "aes_gsx_mon"),
+    # the graphics library (`src/aes/gemgraf.c`, `grlib.c`): gsx2's hand-built calls, the one-word calls, the MFDBs, the
+    # cursor shown again, gsx_tcalc's string, and its own leaves (gr_box's through gsx_box, inlined into it)
+    ("aes_gsx_attr", "aes_gsx2"), ("aes_gsx_tblt", "aes_gsx2"),
+    ("aes_gr_box", "aes_gr_inside"), ("aes_gr_box", "aes_gsx_bxpts"), ("aes_gsx_box", "aes_gsx_bxpts"),
+    ("aes_gsx_xbox", "aes_gsx_bxpts"),
+    ("aes_bb_fill", "aes_gsx_1code"), ("aes_gr_rect", "aes_gsx_1code"), ("aes_gsx_xline", "aes_gsx_1code"),
+    ("aes_gsx_xbox", "aes_gsx_1code"), ("aes_gsx_xcbox", "aes_gsx_1code"),
+    ("aes_bb_fill", "aes_gsx_fix"), ("aes_gsx_blt", "aes_gsx_fix"), ("aes_gsx_trans", "aes_gsx_fix"),
+    ("aes_gsx_blt", "aes_gsx_mon"), ("aes_gsx_cline", "aes_gsx_mon"), ("aes_gr_box", "aes_gsx_mon"),
+    ("aes_gr_movebox", "aes_gsx_mon"), ("aes_gr_growbox", "aes_gsx_mon"), ("aes_gr_shrinkbox", "aes_gsx_mon"),
+    ("aes_gsx_tcalc", "aes_xstrpix"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),

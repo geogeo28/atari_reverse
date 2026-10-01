@@ -284,6 +284,13 @@ PERF_ACCEPTED = {
     # A byte-exact `.S` is impossible: the hide path's Line-F call word cannot execute in an AES `.S`, and a `.S` that
     # reached C instead through a thunk of its own ((T←), as the VDI escape does) would no longer be the ROM's bytes.
     ("aes_gsx_moff", "the nest already open"): (1.23, "(A) on its own cycles, nothing shared: 62 -> 76 cycles"),
+    # ...and gsx_graphic's mode already held — the start-up's own call ($fead68, gl_graphic 1 since gsx_wsopen): the
+    # ROM's `move.w 4(sp),d0 / lea $c90c,a1 / cmp.w (a1),d0 / beq / rts`, 58 cycles. The C's floor, counted from its
+    # instructions: the image pointer loaded (`movea.l 4(sp)`, 16), $c90c's displacement SPLIT between a `lea d16(a0)`
+    # (8) and the compare's own (`cmp.w d16(a0)`, 12), the argument word (12), the branch not taken (8) and `rts` (16)
+    # = 72 — 4 under an `adda.l` of the whole address (the change of mode split off, `src/aes/gsxif.c`). No `.S`: its
+    # other arms make the escapes' Line-F call.
+    ("aes_gsx_graphic", "the mode held"): (1.24, "(A) on its own cycles, nothing shared: 58 -> 72 cycles"),
 
     # (A) alone, on a trap leaf, is not written down at all any more: those rows are admitted by
     # THE LEAF RULE below, which measures the excess against the dispatched call the machine really

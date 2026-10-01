@@ -8,6 +8,9 @@ It is run twice — by `jsr`, as the VDI enters primitives, and THROUGH the Line
 program does. The first is priced: Tier 3's column compares D0 (the core returns it and writes all four
 through its pointer), Tier 1 here compares all four. The second is not — it is entered at a stub.
 """
+import re
+from pathlib import Path
+
 import pytest
 
 from harness import addrs
@@ -20,6 +23,18 @@ RESULTS = ("d0", "a0", "a1", "a2")
 vdi.declare_primitive(NAME, results=RESULTS)
 # What the registers hold on entry, distinct from every answer, so an answer left unwritten shows.
 ENTRY = {register: 0xDEC0_DE00 + index for index, register in enumerate(RESULTS)}
+VDI_H = Path(__file__).resolve().parents[1] / "include" / "vdi" / "vdi.h"
+LINEA_INIT_ENUM = re.compile(r"enum \{ (LINEA_INIT_\w+(?:, LINEA_INIT_\w+)*) \};")
+
+
+def test_the_c_twin_s_answers_are_declared_in_this_battery_s_order():
+    """`vdi/vdi.h`'s LINEA_INIT_* index the C twin's answers, and the AES's `$a000` bridge (`aes/gsx.h`) takes
+    LINEA_INIT_A0 out of them; RESULTS here is the order of its own. Held equal: D0 and A0 both answer LINEA_BASE, so
+    a swap of the two is invisible to any run."""
+    declared = LINEA_INIT_ENUM.search(VDI_H.read_text())
+    assert declared, f"vdi.h's LINEA_INIT_* enum is no longer one line matching {LINEA_INIT_ENUM.pattern!r}"
+    names = [name.removeprefix("LINEA_INIT_").lower() for name in declared.group(1).split(", ")]
+    assert names == [*RESULTS, "answers"]
 
 
 def test_by_jsr_answers_the_block_and_both_tables():

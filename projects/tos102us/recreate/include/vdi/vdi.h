@@ -461,8 +461,9 @@ static inline void copy_point(uint8_t *image, uint32_t to, uint32_t from)
 /* ---- the reconstructed functions --------------------------------------------------------------- */
 void vdi_vsf_perimeter(uint8_t *image);
 
-/* $a000, whose answer is FOUR registers: `results` gets D0, A0, A1, A2 in that order, and D0 is
- * also returned. */
+/* $a000, whose answer is FOUR registers: `results` gets D0, A0, A1, A2 in that order (the order
+ * `test_vdi_linea_init.py` declares them in), and D0 is also returned. */
+enum { LINEA_INIT_D0, LINEA_INIT_A0, LINEA_INIT_A1, LINEA_INIT_A2, LINEA_INIT_ANSWERS };
 uint32_t linea_init(uint8_t *image, uint32_t *results);
 #endif /* __ASSEMBLER__ */
 

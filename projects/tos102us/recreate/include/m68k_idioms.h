@@ -103,6 +103,13 @@ static inline int word_difference_is_negative(uint16_t left, uint16_t right)
 #define M68K_WORD_BITS        16
 #define M68K_LONG_BITS        32
 
+/* Two words as the one longword a `move.l` moves them as: `high` the one at the lower address. Taken signed, as the
+ * coordinates most callers hand it are (unsigned parameters cost a register swap in gsx_blt's m68k code). */
+static inline uint32_t words_long(int16_t high, int16_t low)
+{
+    return (uint32_t)(uint16_t)high << M68K_WORD_BITS | (uint16_t)low;
+}
+
 static inline uint16_t asl_word_by(uint16_t value, uint16_t count)
 {
 #ifdef __m68k__

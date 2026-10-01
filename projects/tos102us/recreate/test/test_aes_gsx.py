@@ -47,7 +47,7 @@ SIGNATURES = {
 for _name, (_restype, _argtypes) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, _argtypes)
 
-THROUGH = pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
+THROUGH = gsx.THROUGH
 SCREEN = vdi.SCREEN
 INTIN, PTSIN, PTSOUT = aes.AES_GSX_INTIN, aes.AES_GSX_PTSIN, aes.AES_GSX_PTSOUT
 POINTS, ANSWERS = gsx.POINTS_AT, gsx.ANSWERS_AT
@@ -258,7 +258,7 @@ def test_moff_then_mon_is_the_snapshot_s_cursor_again():
 
 
 # ---- the wrappers ---------------------------------------------------------------------------------------------------
-STALE_PTSIN = aes.field_pokes("AES", GSX_PB_PTSIN=vdi.STALE_LONG)
+STALE_PTSIN = aes.stale_fields("GSX_PB_PTSIN")
 TRIANGLE = (20, 30, 120, 30, 70, 110, 20, 30)
 
 
@@ -334,10 +334,8 @@ def test_an_odd_answer_pointer_is_an_address_error_on_the_host():
     host refuses it by name (`m68k_idioms.h`'s bus family). The child binds no VDI function, so the call is made on
     a handle no workstation has — the dispatcher's arm that calls nothing — and the answers are stored after it."""
     pointers = (ANSWERS + 1, *answer_pointers()[1:])
-    arguments = (("ctypes.c_int16", "6"), *(("ctypes.c_uint32", str(at)) for at in pointers))
-    pokes = gsx.machine(aes.field_pokes("AES", GL_HANDLE=UNKNOWN_HANDLE))
-    returncode, stderr, _image = vdi_helpers.refusal_over("aes_vst_height", pokes, arguments=arguments, read_back=False)
-    assert returncode != 0 and "address error" in stderr, stderr
+    arguments = (("ctypes.c_int16", "6"), *(gsx.pointer(at) for at in pointers))
+    gsx.odd_pointer_refused("aes_vst_height", arguments, aes.field_pokes("AES", GL_HANDLE=UNKNOWN_HANDLE))
 
 
 @THROUGH
@@ -461,10 +459,6 @@ def test_a_ptsin_left_elsewhere_is_read_and_put_back(name, arguments, points):
 
 
 # ---- gsx_fix ------------------------------------------------------------------------------------------------------
-def mfdb_of(result, at):
-    return tuple(vdi.read_field(result.final, "MFDB", name, at) for name in ("ADDR", "W", "H", "WDWIDTH", "STAND", "NPLANES"))
-
-
 STALE_MFDB = {gsx.mfdb_at(0): bytes([case.SLACK_FILL]) * aes.AES_MFDB_BYTES}
 WORD_ZERO_FORM = 0x10000                # a form's address with its low word 0 (stored, never read through)
 
@@ -479,7 +473,7 @@ def test_gsx_fix_of_the_screen(through_line_f):
     result = fix(gsx.mfdb_at(0), 0, 0, 0, through_line_f=through_line_f)
     work = aes.read_field(BASE_IMAGE, "AES", "GL_WS")
     width = work[0] + 1
-    assert mfdb_of(result, gsx.mfdb_at(0)) == (0, width, work[1] + 1, width >> 4, 0, aes.read_field(BASE_IMAGE, "AES", "GL_NPLANES"))
+    assert gsx.mfdb_of(result, gsx.mfdb_at(0)) == (0, width, work[1] + 1, width >> 4, 0, aes.read_field(BASE_IMAGE, "AES", "GL_NPLANES"))
 
 
 @pytest.mark.parametrize("bytes_across, height", ((2, 16), (40, 200), (0x2000, -1), (0x1FFF, 3)),
@@ -488,24 +482,24 @@ def test_gsx_fix_of_a_form(bytes_across, height):
     """A form: eight pixels a byte and a word width of that / 16, each a WORD that wraps; one plane, device format."""
     result = fix(gsx.mfdb_at(0), gsx.form_at(0), bytes_across, height)
     width = (bytes_across << 3) & 0xFFFF
-    assert mfdb_of(result, gsx.mfdb_at(0)) == (gsx.form_at(0), width, height & 0xFFFF, width >> 4, 0, 1)
+    assert gsx.mfdb_of(result, gsx.mfdb_at(0)) == (gsx.form_at(0), width, height & 0xFFFF, width >> 4, 0, 1)
 
 
 def test_gsx_fix_tests_the_whole_address_longword():
     """`move.l (a0)+,(a2)+; bne`: a form at $10000, whose low word is 0, is a form — not the screen."""
     result = fix(gsx.mfdb_at(0), WORD_ZERO_FORM, 2, 16)
-    assert mfdb_of(result, gsx.mfdb_at(0)) == (WORD_ZERO_FORM, 16, 16, 1, 0, 1)
+    assert gsx.mfdb_of(result, gsx.mfdb_at(0)) == (WORD_ZERO_FORM, 16, 16, 1, 0, 1)
 
 
 def test_gsx_fix_tests_the_address_before_the_bus_drops_its_top_byte():
     """`bne` on all 32 bits: an address of $5a000000 — bus address 0 — is a FORM, not the screen."""
     result = fix(gsx.mfdb_at(0), aes.BUS_TAG, 2, 16)
-    assert mfdb_of(result, gsx.mfdb_at(0)) == (aes.BUS_TAG, 16, 16, 1, 0, 1)
+    assert gsx.mfdb_of(result, gsx.mfdb_at(0)) == (aes.BUS_TAG, 16, 16, 1, 0, 1)
 
 
 def test_gsx_fix_s_mfdb_pointer_is_put_on_the_bus():
     result = fix(gsx.mfdb_at(0) | aes.BUS_TAG, 0, 0, 0)
-    assert mfdb_of(result, gsx.mfdb_at(0))[0] == 0
+    assert gsx.mfdb_of(result, gsx.mfdb_at(0))[0] == 0
 
 
 def test_gsx_fix_reads_work_out_after_storing_the_address():
@@ -567,12 +561,8 @@ _ROWS = {
     "the screen": ("AES_ROM_GSX_FIX", (gsx.mfdb_at(0), 0, 0, 0), STALE_MFDB),
     "an icon's form": ("AES_ROM_GSX_FIX", (gsx.mfdb_at(0), _FORM, 2, 16), STALE_MFDB),
 }
-for _label, (_name, _arguments, _pokes) in _ROWS.items():
-    gsx.register(_label, _name, _arguments, _pokes)
+gsx.register_rows(_ROWS, line_f=("vsl_color 3, contrl staged", "vqt_attributes", "vswr_mode 3", "the nest already open",
+                                 "the nest unwound: v_show_c", "a triangle", "on, a rectangle", "the large font's",
+                                 "a rectangle", "screen to screen", "a form onto the screen", "standard to device", "3",
+                                 "the screen"))
 gsx.register("the snapshot's cursor: v_hide_c", "AES_ROM_GSX_MOFF", (), None, onto=gsx.shown_machine())
-_LINE_F_ROWS = ("vsl_color 3, contrl staged", "vqt_attributes", "vswr_mode 3", "the nest already open",
-                "the nest unwound: v_show_c", "a triangle", "on, a rectangle", "the large font's", "a rectangle",
-                "screen to screen", "a form onto the screen", "standard to device", "3", "the screen")
-for _label in _LINE_F_ROWS:
-    _name, _arguments, _pokes = _ROWS[_label]
-    gsx.register(_label, _name, _arguments, _pokes, through_line_f=True)

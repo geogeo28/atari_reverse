@@ -250,6 +250,13 @@ import test_aes_strings_text                                # noqa: E402,F401
 import test_aes_strings_asm                                 # noqa: E402,F401  (the .S rows, `transcription`)
 import test_aes_gsx                                         # noqa: E402,F401
 import test_aes_gsx_transcription                           # noqa: E402,F401  (its `.S` rows)
+import test_aes_gsxif                                       # noqa: E402,F401
+import test_aes_gsxif_workstation                           # noqa: E402,F401
+import test_aes_gsxif_transcription                         # noqa: E402,F401  (its `.S` rows)
+import test_aes_gemgraf                                     # noqa: E402,F401
+import test_aes_gemgraf_gr                                  # noqa: E402,F401
+import test_aes_grlib                                       # noqa: E402,F401
+import test_aes_gemgraf_transcription                      # noqa: E402,F401  (its `.S` rows)
 import test_aes_shell_find                                  # noqa: E402,F401
 import test_aes_resource_load                               # noqa: E402,F401
 import aes                                                  # noqa: E402

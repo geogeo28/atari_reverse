@@ -317,6 +317,13 @@ is the cursor HIDDEN the way the AES hides it (the snapshot run through the ROM'
 inverts the nest both read and write, steering the ROM onto the counter path), so their cases stage every word those
 arms store to something else.
 
+The bridge has a second, smaller half: the AES's one `$a000` (Line-A init), gsx_mfsave's, which hands it the Line-A
+base to find the mouse form (`gsx.h`'s `gsx_linea_base`). On target it is the ROM's own word (`.short
+M68K_LINE_A_INIT`), with A0 the answer and D0/D2/A1/A2 clobbered (the dispatcher saves D3-D7/A3-A5 round it). On the
+host, vector `$28` is CHECKED against the ROM's Line-A dispatcher (`$fc9f0c`) — a moved vector halts by name — and the
+VDI's own `linea_init` C twin answers A0, read by the `LINEA_INIT_*` order `vdi.h` declares (pinned to the VDI
+battery's). It makes no `trap #2`, so it needs no VDI cores bound.
+
 Three mechanisms are designed and NOT built:
 
 - **The Line-F handler's Malloc(100) and 100-byte copy**, which a rebuilt ROM must keep so every later TPA block stays

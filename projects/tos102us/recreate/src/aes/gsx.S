@@ -71,7 +71,7 @@ aes_rom_gsx_1code:
  * ============================================================================================================= */
     .globl  aes_rom_gsx_mon
 aes_rom_gsx_mon:
-    moveq   #GSX_SHOW_AT_ONCE,%d0
+    moveq   #GSX_SHOW_COUNTED,%d0
     sub.w   %d0,AES_GL_MOFF
     bne.s   .Lgsx_mon_done
     move.w  %d0,-(%sp)
@@ -112,3 +112,7 @@ aes_rom_gsx_fix:
     clr.w   (%a2)+
     move.w  #GSX_FORM_PLANES,(%a2)
     rts
+/* SIZED, as the file's last entry: in the shipped blob `gsx.c`'s weak C twins follow it, nameless once their glue
+ * displaces them, and the m68k call graph reads an unsized function on to the next label — gsx_ncode's twin's
+ * `jmp gsx2` would be read as gsx_fix's call (`test/transcription.py`, `_function_ends`). */
+    .size   aes_rom_gsx_fix,.-aes_rom_gsx_fix

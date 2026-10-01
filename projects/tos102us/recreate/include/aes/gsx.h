@@ -28,10 +28,14 @@
  * `#define` both languages read. */
 #ifndef __ASSEMBLER__
 #include <stdint.h>
+
+#include "machine.h"
 #endif
 
 #include "addrs.h"
+#include "m68k_encodings.h"
 #include "aes/aes.h"
+#include "vdi/vdi.h"
 
 /* ---- the parameter block D1 names ($9466): five array pointers, the VDI's PB_* order --------------------------- */
 #define AES_GSX_PB_CONTRL     0x9466     /* long: pb[0], := AES_GSX_CONTRL     ($fecb60 move.l #$c7e0,(a0))    */
@@ -69,7 +73,8 @@
 #define AES_GL_FIS            0x9aec     /* word: the fill interior            ($fdac3c lea, $fdaada move.w)   */
 #define AES_GL_PATT           0x98a2     /* word: the fill style               ($fdac54 lea, $fdaad4 move.w)   */
 #define AES_GL_FONT           0x980c     /* word: the text font                ($fdad12 lea, $fdaace move.w)   */
-/* v_opnwk's answer: its intout (45 words) then its ptsout (6 points) — the wrapper points PTSOUT 90 bytes in. */
+/* v_opnwk's answer: its intout (45 words) then its ptsout (6 points) — the wrapper points PTSOUT 90 bytes in. A number
+ * (VDI_DEV_TAB_WORDS + VDI_SIZ_TAB_WORDS) for the width tag below, held to that sum by `test_aes_gsxif.py`. */
 #define AES_GL_WS_WORDS       57         /* ($fe8ac0 lea 90(a1),a1: 45 words, then 12)                          */
 #define AES_GL_WS             0xc892     /* words[AES_GL_WS_WORDS]: work_out   ($fda996 lea, $fe8892 pea)      */
 #define AES_GL_NPLANES        0xc914     /* word: the screen's planes          ($fda9b2, $fdab20 move.w d1)    */
@@ -78,7 +83,9 @@
 #define AES_GL_SRC            0x9ba6     /* bytes[AES_MFDB_BYTES]: a blit's source ($fda9d6 lea)               */
 #define AES_GL_DST            0x9bde     /* bytes[AES_MFDB_BYTES]: ...destination ($fda9dc lea)                */
 #define AES_GL_TMP            0x9c44     /* bytes[AES_MFDB_BYTES]: the save buffer's ($fe87a4 move.l d0)       */
-#define AES_GL_MFORM_AT       0xc844     /* long: where gsx_mfset copies a form ($fdac14 move.l #$95ba)        */
+/* GEM's ad_intin: the address of the AES's intin, set by gsx_start ($fdac14 move.l #$95ba) — where gsx_mfset copies
+ * a form and gsx_tcalc's xstrpix writes its string. */
+#define AES_AD_INTIN          0xc844     /* long                               ($fdac14 move.l #$95ba)         */
 #define AES_XRAT              0x9c0c     /* word: the mouse's x                ($fe537e move.w)                */
 #define AES_YRAT              0x9c0e     /* word: ...and y                     ($fe539e move.w)                */
 #define AES_BUTTON            0xc90a     /* word: the buttons' state           ($fe526c move.w 8(a6))          */
@@ -86,9 +93,10 @@
 
 /* ---- the binding's immediates, one name for `gsx.c` and `gsx.S` alike ------------------------------------------- */
 #define GSX_ONE_WORD          1          /* gsx_1code's `move.l #1,-(sp)`: no points, one word ($fe87f8)        */
-/* gsx_mon's v_show_c(1), which ignores the VDI's own hide depth — and, in the same `moveq #1,d0`, the step it counts
- * its nest down by ($fe8a8e). */
-#define GSX_SHOW_AT_ONCE      1
+/* gsx_mon's v_show_c(1), which counts the VDI's own hide depth down one rather than forcing it to 0 as v_show_c(0)
+ * does ($fcb12a tst.w intin[0]; ratinit's) — and, in the same `moveq #1,d0`, the step it counts its nest down by
+ * ($fe8a8e). */
+#define GSX_SHOW_COUNTED      1
 #define GSX_MOUSE_HIDDEN      0          /* AES_GL_MOUSE_SHOWN's two values ($fe8a80 clr.w, $fe8aa4 move.w #1)  */
 #define GSX_MOUSE_SHOWN       1
 /* gsx_fix's MFDB of a form in memory: a byte width is eight pixels, a word sixteen ($fda9bc lsl.w #3, lsr.w #4), and
@@ -96,6 +104,27 @@
 #define GSX_PIXELS_PER_BYTE_SHIFT 3
 #define GSX_PIXELS_PER_WORD_SHIFT 4
 #define GSX_FORM_PLANES       1
+
+/* ---- the AES's arrays a word at a time, and the calls' other common values: ONE spelling for every caller --------- */
+#define GSX_INTIN_WORD(index) (AES_GSX_INTIN + (index) * VDI_WORD_BYTES)
+#define GSX_PTSIN_WORD(index) (AES_GSX_PTSIN + (index) * VDI_WORD_BYTES)
+#define GSX_WS_WORD(index)    (AES_GL_WS + (index) * VDI_WORD_BYTES)    /* gl_ws, v_opnwk's work_out */
+#define GSX_NO_POINTS         0          /* contrl[1] of a call that carries no points                          */
+#define GSX_NO_WORDS          0          /* contrl[3] of a call that carries no intin words                     */
+/* work_out's words the AES reads (GSX_WS_WORD's indexes): the size, the pixel's microns, the colours, the character
+ * heights. */
+#define GSX_WS_XRES           VDI_DEV_TAB_MAX_X_INDEX
+#define GSX_WS_YRES           VDI_DEV_TAB_MAX_Y_INDEX
+#define GSX_WS_WPIXEL         VDI_DEV_TAB_PIXEL_WIDTH_INDEX   /* ($fdaba4 move.w (a3)+)                             */
+#define GSX_WS_HPIXEL         VDI_DEV_TAB_PIXEL_HEIGHT_INDEX
+#define GSX_WS_NCOLORS        VDI_DEV_TAB_COLOURS_INDEX       /* ($fdab12 move.w 22(a3))                            */
+/* ...and two of ptsout's, past intout's 45: numbers, not sums, so `test/aes.py`'s parse reads them (it binds no
+ * expression); `test_aes_gsxif.py` holds them to VDI_DEV_TAB_WORDS + the SIZ_TAB index. */
+#define GSX_WS_CHMINH         46         /* the small font's height            ($fdab6c move.w 88(a3))         */
+#define GSX_WS_CHMAXH         48         /* the large font's, := vqt_attributes' ($fdab3a move.w (a1),92(a3))  */
+/* vsl_udsty's solid line, every pixel set: gsx_start's style and the one gsx_xline puts back ($fdabc0 and $fdae86,
+ * each `pea $71ffff`: the opcode 113 and this word). */
+#define GSX_STYLE_SOLID       0xffff
 
 #ifndef __ASSEMBLER__
 /* ---- the atoms (`src/aes/gsx.c`). A word argument is an Alcyon `int`; each VDI call answers D0.w as the trap left
@@ -118,6 +147,19 @@ uint16_t aes_vrn_trnfm(uint8_t *image, uint32_t source, uint32_t destination);  
 uint16_t aes_vsl_width(uint8_t *image, int16_t width);                                              /* $fe8b92 */
 void aes_gsx_fix(uint8_t *image, uint32_t mfdb, uint32_t address, int16_t bytes_across, int16_t height);
                                                                                                     /* $fda992 */
+
+/* $fe8bb6 / $fe8bba, folded: the call (Line-F to gsx_ncode), then PTSIN pointed back at the AES's ptsin — which a
+ * wrapper that never moved it stores all the same. Every wrapper's tail, gemgsxif's and gemgraf's alike: one
+ * definition, INLINED into each — as a function of its own it re-pushed its caller's four arguments for gsx_ncode's
+ * frame (Tier 3: gsx_escapes' own cycles 550 against the ROM's 474, Line-F handler and all). */
+static inline __attribute__((always_inline)) uint16_t gsx_call(uint8_t *image, int16_t opcode, int16_t n_ptsin,
+                                                               int16_t n_intin)
+{
+    uint16_t answer = aes_gsx_ncode(image, opcode, n_ptsin, n_intin);
+
+    wr32(image + AES_GSX_PB_PTSIN, AES_GSX_PTSIN);
+    return answer;
+}
 
 /* ---- THE BRIDGE: the block at AES_GSX_PB through `trap #2`, its D0.w answered ---------------------------------- */
 #ifdef RECREATE_HOST_DIFFERENTIAL
@@ -143,6 +185,34 @@ static inline uint16_t gsx_trap(uint8_t *image)
     (void)image;
     __asm__ volatile ("trap #2" : "+d"(answer) : "d"(block) : "memory", "cc");
     return (uint16_t)answer;
+}
+#endif
+
+/* ---- THE LINE-A BRIDGE: `$a000`, the Line-A block's base answered (gsx_mfsave, $fee498) ---------------------------
+ * The exception's one hop is RAM — vector $28, the VDI's Line-A dispatcher (`jsr` through its ROM table, `rte`) — and
+ * $a000 itself reads nothing. The `trap #2` arrangement above, taken the same two ways: OFF TARGET the hop CHECKED
+ * against the snapshot's (a repointed vector halts by name) and the VDI's C twin of $a000 answering; ON TARGET the
+ * machine's own exception word. */
+#ifdef RECREATE_HOST_DIFFERENTIAL
+static inline uint32_t gsx_linea_base(uint8_t *image)
+{
+    uint32_t answers[LINEA_INIT_ANSWERS];
+
+    require_cpu_routine(image, VECTOR_LINE_A, LINEA_ROM_DISPATCH,
+                        "the AES's $a000: vector $28 no longer the VDI's Line-A dispatcher $fc9f0c");
+    linea_init(image, answers);
+    return answers[LINEA_INIT_A0];
+}
+#else
+/* The ROM's own word: A0 is the base answered; the dispatcher saves D3-D7/A3-A5 round $a000 and changes D2 (the
+ * opcode's table index, 0) and A1 itself, and $a000 loads D0, A1 and A2 — so those are what the call clobbers. */
+static inline uint32_t gsx_linea_base(uint8_t *image)
+{
+    register uint32_t base __asm__("a0");
+
+    (void)image;
+    __asm__ volatile (".short %c1" : "=a"(base) : "i"(M68K_LINE_A_INIT) : "d0", "d2", "a1", "a2", "memory", "cc");
+    return base;
 }
 #endif
 #endif /* !__ASSEMBLER__ */

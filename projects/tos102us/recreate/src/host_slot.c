@@ -6,5 +6,5 @@
 #include "host_slot.h"
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-unsigned host_slots_held;
+unsigned long long host_slots_held;
 #endif

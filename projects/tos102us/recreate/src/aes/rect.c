@@ -75,8 +75,8 @@ void aes_r_set(uint8_t *image, uint32_t rect, int16_t x, int16_t y, int16_t w, i
 {
     uint8_t *to = grect_at(image, rect);
 
-    wr32(to + GRECT_X, (uint32_t)(uint16_t)x << M68K_WORD_BITS | (uint16_t)y);
-    wr32(to + GRECT_W, (uint32_t)(uint16_t)w << M68K_WORD_BITS | (uint16_t)h);
+    wr32(to + GRECT_X, words_long(x, y));
+    wr32(to + GRECT_W, words_long(w, h));
 }
 
 /* $feccca — rc_copy: the GRECT at `from` into `to`, as two longwords each read and stored in turn

@@ -23,13 +23,14 @@ _TAGGED = re.compile(r"^\s*#define\s+(?P<name>[A-Z][A-Z0-9_]*)\s+\S+\s*/\*\s*(?P
                      r"(?P<plural>s\[(?P<count>\w+)\])?(?=[\s:*])")
 
 
-def parse_constants(headers):
+def parse_constants(headers, known=None):
     """Every plain integer `#define` of `headers`, parsed IN INCLUDE ORDER with what came before as `known` — a
     header may spell a field as an ALIAS of an earlier header's name (`linea.h` of the console's) rather than as a
-    second number."""
+    second number. `known` is another component's constants its headers include (the AES's, the VDI's): aliases of
+    them resolve, and they are not answered."""
     constants = {}
     for header in headers:
-        constants.update(addrs.parse(header, known={**addrs.ADDRS, **constants}))
+        constants.update(addrs.parse(header, known={**addrs.ADDRS, **(known or {}), **constants}))
     return constants
 
 

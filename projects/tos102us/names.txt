@@ -1580,3 +1580,131 @@ cmt 0xfeb4be w_getxptr(which, wh): table $fefcca — 0 WS_FULL rec+16, 1 WS_CURR
 fn 0xfeb53e w_getsize
 cmt 0xfeb53e w_getsize(which, wh, pt): rc_copy(w_getxptr(which, wh), pt); WS_TRUE's w and h +2 when both, read back from pt, are non-zero.
 var 0x9734 w_tree
+# ---- AES band 2 wave 2 (2026-10-01): the rest of gemgsxif (+ the $a000 bridge), gemgraf, gemgrlib's non-interactive part ----
+# --- the rest of gemgsxif (src/aes/gsxif.c; gsx_mret/ratinit/gsx_mxmy/gsx_button also ship as src/aes/gsxif.S) ---
+fn 0xfe8768 gr_mkstate
+cmt 0xfe8768 gr_mkstate(&x, &y, &button, &kstate): xrat, yrat, button, kstate ($c72a) through the pc-relative address table at $fe8780, each stored before the next is read
+fn 0xfe8790 gsx_malloc
+cmt 0xfe8790 gl_tmp := the screen's MFDB, its buffer Malloc($3400) (13,312 bytes; never checked against a drop-down's size)
+fn 0xfe87b0 gsx_mfree
+fn 0xfe87bc gsx_mret
+cmt 0xfe87bc gsx_mret(&addr, &len): gl_tmp's buffer, then gl_mlen ($c920) — which nothing in the AES writes, so the length is always 0
+fn 0xfe8808 gsx_init
+fn 0xfe8828 gsx_graphic
+cmt 0xfe8828 gsx_graphic(mode): a WORD compare with gl_graphic; into alpha = escape 3 + gsx_resetmb, into graphics = escape 2 + gsx_setmb_aes. The ROM's two callers are start-up ($fead68, mode already held) and shutdown ($fead9a, into alpha): the into-graphics arm is never taken
+fn 0xfe883e gsx_setmb_aes
+cmt 0xfe883e gsx_graphic's tail, gsx_init's bsr: gsx_setmb($fed3be button glue, $fed3e4 motion glue, &drwaddr $947a) — the third argument is never read
+fn 0xfe8862 gsx_hardcopy # ctx
+fn 0xfe8866 gsx_escapes
+cmt 0xfe886a gsx_escapes' register entry (D0 = the escape): contrl[5] := D0, then VDI 5 through $fe8bb6
+fn 0xfe8876 gsx_wsopen
+fn 0xfe88de gsx_wsclose
+fn 0xfe88e4 ratinit
+cmt 0xfe88e4 ratinit: v_show_c(0) — which FORCES the cursor shown (the VDI sets its hide depth to 1 first) — and gl_moff := 0
+fn 0xfe88f8 bb_set
+cmt 0xfe88f8 bb_set: the word index is a LOGICAL shift (lsr.w) — a rectangle straddling x = 0 makes a ~61,000-word-wide form (latent, unreachable from real menus)
+fn 0xfe8966 bb_save
+fn 0xfe8996 bb_restore
+fn 0xfe89c6 gsx_setmb
+fn 0xfe89f8 gsx_resetmb
+fn 0xfe8a18 gsx_tick
+fn 0xfe8a38 gsx_mfset
+fn 0xfe8a54 gsx_mxmy
+fn 0xfe8a6a gsx_button
+fn 0xfe8aae aes_v_opnwk
+fn 0xfdaab0 gsx_start
+cmt 0xfdaab0 gsx_start: attribute caches := -1 (incl. $c916, read by nothing), metrics, two vst_height calls (the 2nd's four answers discarded into one stack word), the five screen GRECTs, ad_intin := $95ba
+fn 0xfee498 gsx_mfsave
+cmt 0xfee498 gsx_mfsave: the $a000 Line-A init (A0 = the Line-A base), then the form at *$9560 copied to $9564 — the recreate's $a000 bridge (include/aes/gsx.h gsx_linea_base)
+fn 0xfee4c0 gsx_mfrestore
+fn 0xfed3be aes_button_glue # ctx
+fn 0xfed3e4 aes_motion_glue # ctx
+fn 0xfed426 aes_tick_glue # ctx
+var 0xfe8780 gr_mkstate_fields
+var 0x8908 gl_restype
+var 0x890a gl_rschange
+var 0xc90c gl_graphic
+var 0xc7fc gl_old_button
+var 0xc91c gl_old_motion
+var 0x947a drwaddr
+var 0xc920 gl_mlen
+var 0x9c44 gl_tmp
+var 0x9ba6 gl_src
+var 0x9bde gl_dst
+var 0x9560 gl_mform_at
+var 0x9564 gl_mform_save
+var 0xc844 ad_intin
+var 0xc72a kstate
+var 0x9c0c xrat
+var 0x9c0e yrat
+var 0xc90a button
+var 0x9ba2 gl_nrows
+var 0x9ad6 gl_wbox
+var 0x9c08 gl_wptschar
+var 0x9ad2 gl_hptschar
+var 0x9c0a gl_wsptschar
+var 0x9ad4 gl_hsptschar
+var 0x97f4 gl_wschar
+var 0xc842 gl_hschar
+var 0xc916 gl_dead_cache
+var 0x98a4 gl_rscreen
+var 0x98ac gl_rfull
+var 0x9b30 gl_rzero
+var 0x971c gl_rmenu
+var 0xc862 gl_rcenter
+var 0xc914 gl_nplanes
+# --- gemgraf (src/aes/gemgraf.c; gr_inside/gr_crack/gsx_gclip/gsx_chkclip/gsx_bxpts also ship as src/aes/gemgraf.S) ---
+fn 0xfda56e gr_inside
+fn 0xfda582 gr_rect
+fn 0xfda5c2 gr_just
+fn 0xfda62c gr_gtext
+fn 0xfda66a gr_crack
+fn 0xfda6c4 gr_gicon
+cmt 0xfda6c4 gr_gicon pushes an extra word (2) under gr_gtext's frame: GEM's dropped tmode argument, never read
+fn 0xfda7a4 gr_box
+cmt 0xfda7a4 gr_box: a negative thickness draws |t|+1 lines (subq #1 first); -32768 wraps to 32767 (reachable via te_thickness at $fed22a)
+fn 0xfda7f8 gsx_sclip
+fn 0xfda846 gsx_gclip
+fn 0xfda864 gsx_chkclip
+cmt 0xfda864 gsx_chkclip: x+w (y+h) EQUAL to the clip's x (y) still counts as touching (blt, not ble); the sums wrap as words
+fn 0xfda8d2 gsx_cline
+fn 0xfda8e6 gsx_attr
+fn 0xfda956 gsx_bxpts
+fn 0xfda97c gsx_box
+fn 0xfda9ce gsx_blt
+fn 0xfdaa48 bb_screen
+fn 0xfdaa6a gsx_trans
+fn 0xfdac28 bb_fill
+cmt 0xfdac28 bb_fill passes gsx_attr the text colour's OWN cache: only the writing mode can change there
+fn 0xfdaca4 gsx_tcalc
+cmt 0xfdaca4 gsx_tcalc: the count is xstrpix's BYTE count (a string of 256+ chars wraps); the string goes to ad_intin
+fn 0xfdad0a gsx_tblt
+cmt 0xfdad0a gsx_tblt never sets the parameter block's PTSIN: v_gtext reads PTSIN as the last call left it
+fn 0xfdada4 gsx_xbox
+fn 0xfdadce gsx_xcbox
+fn 0xfdae38 gsx_xline
+fn 0xfda76e gicon_blit # ctx
+var 0xfdad74 tblt_fonts
+var 0x95b6 gl_xclip
+var 0x9704 gl_yclip
+var 0x95b8 gl_wclip
+var 0xc7de gl_hclip
+var 0xc848 gl_mode
+var 0x971a gl_tcolor
+var 0xc904 gl_lcolor
+var 0x9aec gl_fis
+var 0x98a2 gl_patt
+var 0x980c gl_font
+# --- gemgrlib's non-interactive part (src/aes/grlib.c); gr_clamp $fe86dc, gr_draw $fe8532, gr_xdraw $fe8564 are band 3's ---
+fn 0xfe85b0 gr_setup
+cmt 0xfe85b0 gr_setup clips to gl_rscreen ($98a4). gr_watchbox ($fe84ca, band 3) reads this routine's own move.l #$98a4 immediate at $fe85b2 AS DATA
+fn 0xfe8472 gr_scale
+cmt 0xfe8472 gr_scale (AES_MAP had it as gr_stepcalc): the step count from lsr.w of x+y — -32768 gives 15 steps; floor 1
+fn 0xfe82e6 gr_stepcalc
+fn 0xfe82d6 stepcalc_half # ctx
+fn 0xfe83be gr_xor
+fn 0xfe8402 gr_movebox
+fn 0xfe8340 gr_growbox
+fn 0xfe837a gr_shrinkbox
+fn 0xfe831e grow_prologue # ctx
+cmt 0xfe831e reads its CALLER's args at 44(sp); hands gr_stepcalc 5 pointers into the caller's saved D2-D4
