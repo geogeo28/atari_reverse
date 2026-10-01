@@ -376,14 +376,14 @@ def test_mkrect_never_reads_its_tree():
 WINDOW_TREE = aes.TREE_AT                                   # the desktop (0) and window 1, its child
 
 
-def _mkrect_called(buf, registers):
+def mkrect_called(buf, registers):
     """The C mkrect on the object (the window) everyobj's call hands it."""
     tree, window, _x, _y = walkmod.frame_of(registers)
     MKRECT_CORE(buf, tree, window)
 
 
 MKRECT_CORE = getattr(_lib, routines.core_symbol(MKRECT))
-MKRECT_HOOK = aes.alcyon_object_hook({addrs.AES_ROM_MKRECT: (b"", _mkrect_called)})
+MKRECT_HOOK = aes.alcyon_object_hook({addrs.AES_ROM_MKRECT: (b"", mkrect_called)})
 
 
 @pytest.mark.parametrize("last", (aes.OB_NIL, 1), ids=("the whole tree", "the desktop alone"))

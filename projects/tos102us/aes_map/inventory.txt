@@ -522,11 +522,11 @@ fe8996 S    48 f824  48      | fe88f8 | 2
 fe89c6 A    50       50      | fe8bb6 | 2
 fe89f8 A    32       32      | fe8bb6 | 1
 fe8a18 A    32 f8b4  32      | fe8bb6 | 1
-fe8a38 S    28 f250  28     gsx_moff/mon | fe8a72 fe8bba | 8
+fe8a38 S    28 f250  28     gsx_mfset | fe8a72 fe8bba | 8
 fe8a54 S    22 f0d8/ 22      |  | 3
 fe8a6a A     8 f908  8       |  | 1
-fe8a72 S    28 f01c/ 28     gr_mouse arm helper | fe8bb6 | 17
-fe8a8e S    32 f028/ 32     gsx_mfset | fe87f0 | 16
+fe8a72 S    28 f01c/ 28     gsx_moff | fe8bb6 | 17
+fe8a8e S    32 f028/ 32     gsx_mon | fe87f0 | 16
 fe8aae A    76       76      | fe8bba | 1
 fe8afa S    36 f030/ 20      | fe87d2 fe8bae | 3
 fe8b0e S    20 f02c  20      | fe8bae | 1
@@ -565,7 +565,7 @@ fe99a4 S   162 f13c/ 156     | fece8c | 2
 fe9a46 S    66 f148  58      | fda846 fddec6 feccca | 3
 fe9a88 S  1440 f16c  1300    [ptr] | fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda864 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe99a4 fe9a46 fecbe6 fecbfa fecc7e feccca fed19e | 1
 fe9ff0 A    56       38      | fdac28 | 0
-fea01c A    12       10      |  | 0
+fea01c A    12       10     just_draw's tail, not a function |  | 0
 fea028 S   128 f200  116    ob_draw | fe8a72 fe8a8e fea584 fed27c fed382 | 13
 fea0a8 S   274 f204  260    ob_find | fea4e8 fea538 fea5dc feccbe feccd6 fed382 | 8
 fea1ba S   100 f1f4  98     ob_add |  | 6

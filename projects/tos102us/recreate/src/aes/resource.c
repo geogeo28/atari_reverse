@@ -17,6 +17,7 @@
 #include "aes/gemdosif.h"
 #include "aes/objects.h"
 #include "aes/resource.h"
+#include "aes/shell.h"
 #include "aes/strings.h"
 
 /* get_sub's SECTION is the index of the header word holding its offset — the byte offset halved. */
@@ -445,6 +446,65 @@ int16_t aes_rs_free(uint8_t *image, uint32_t global)
     wr32(image + AES_RS_GLOBAL, global);
     (void)aes_dos_free(image, AES_RS_FREE_MFREE_RETURN, bus_long(image, be32(image + AES_RS_GLOBAL) + AES_GLOBAL_PMEM));
     return (int16_t)!be16(image + AES_DOS_ERR);
+}
+
+/* ================================================================================================
+ * Loading a resource file: rs_readit, rs_load.
+ * ============================================================================================= */
+
+#define RS_OPEN_READ          0          /* Fopen's mode ($feab16 clr.w (sp))                                  */
+#define RS_SEEK_FROM_START    0          /* Fseek's mode and offset ($feab60 clr.l (sp); clr.w -(sp))          */
+#define RS_SEEK_TO_START      0
+
+/* The file, its header read: the whole of it (the header's rsh_rssize, a word) into a block of its own, AES_RS_HDR,
+ * from the start — the seek's answer unchecked — and relocated in place. Each step only if the one before left
+ * AES_DOS_ERR clear; AES_RS_HDR is re-read for the read and the relocation, as the ROM does. */
+static void read_the_whole_file(uint8_t *image, int16_t handle)
+{
+    uint16_t bytes = be16(image + AES_RS_HEADER_COPY + RSH_RSSIZE);
+
+    wr32(image + AES_RS_HDR, aes_dos_alloc(image, bytes));
+    if (aes_dos_failed(image))
+        return;
+    (void)aes_dos_lseek(image, handle, RS_SEEK_FROM_START, RS_SEEK_TO_START);
+    (void)aes_dos_read(image, handle, (int16_t)bytes, be32(image + AES_RS_HDR));
+    if (aes_dos_failed(image))
+        return;
+    aes_do_rsfix(image, be32(image + AES_RS_HDR), (int16_t)bytes);
+}
+
+/* $feaae2 — rs_readit: the file `name` looked for by sh_find through the shell's buffer (AES_SHELL_BUFFER, re-read at
+ * each use), and, found, `global` made the resource's caller, the file opened, its header read into
+ * AES_RS_HEADER_COPY and the whole file read and relocated; then CLOSED whatever happened — on a failed open, handle
+ * 0, which is what dos_open answers then. Answers whether AES_DOS_ERR came out clear; not found, 0 and nothing
+ * opened. */
+int16_t aes_rs_readit(uint8_t *image, uint32_t global, uint32_t name)
+{
+    int16_t handle, loaded;
+
+    (void)aes_lstcpy(image, be32(image + AES_SHELL_BUFFER), name);
+    if (!aes_sh_find(image, be32(image + AES_SHELL_BUFFER), SH_FIND_NO_ROUTINE))
+        return 0;
+    wr32(image + AES_RS_GLOBAL, global);
+    handle = (int16_t)aes_dos_open(image, be32(image + AES_SHELL_BUFFER), RS_OPEN_READ);
+    if (!aes_dos_failed(image))
+        (void)aes_dos_read(image, handle, RSH_BYTES, AES_RS_HEADER_COPY);
+    if (!aes_dos_failed(image))
+        read_the_whole_file(image, handle);
+    loaded = !aes_dos_failed(image);
+    (void)aes_dos_close(image, AES_RS_READIT_CLOSE_RETURN, handle);
+    return loaded;
+}
+
+/* $feac5c — rs_load (rsrc_load): rs_readit, and, if it read the file, the objects fixed too (rs_fixit). Answers
+ * rs_readit's word. */
+int16_t aes_rs_load(uint8_t *image, uint32_t global, uint32_t name)
+{
+    int16_t loaded = aes_rs_readit(image, global, name);
+
+    if (loaded)
+        (void)aes_rs_fixit(image, global);
+    return loaded;
 }
 
 /* $fee4de — rom_rsc_init, at start-up: the ROM's whole resource bundle copied into a block of its own — NOT

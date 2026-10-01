@@ -77,5 +77,7 @@
 /* `jsr <xxx>.l`, which gas turns into `jsr <d16>(pc)` for a label of the same section: merge_str's calls of the
  * Alcyon runtime ($fed0e6, $fed0f0) */
 #define M68K_JSR_ABSOLUTE_LONG     0x4eb9
+/* ...and `jmp <xxx>.l`, the same: gsx_ncode's tail call of gsx2 ($fe87ea) */
+#define M68K_JMP_ABSOLUTE_LONG     0x4ef9
 
 #endif /* TOS102US_M68K_ENCODINGS_H */

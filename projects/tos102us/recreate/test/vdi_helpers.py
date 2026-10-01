@@ -145,12 +145,14 @@ def _io_declaration(io_seed):
             f"(ctypes.c_uint8 * {count})(*{list(writeback)}), {count})")
 
 
-def refusal_over(symbol, pokes, io_seed=None, *, seconds=CHILD_SECONDS, read_back=True):
-    """What the host core `symbol(image)` says over the image `pokes` stage, with the I/O bytes `io_seed`
+def refusal_over(symbol, pokes, io_seed=None, *, arguments=(), seconds=CHILD_SECONDS, read_back=True, bind=None):
+    """What the host core `symbol(image, *arguments)` says over the image `pokes` stage, with the I/O bytes `io_seed`
     declared, in a CHILD process (`refusal`) — and the image AS THE CHILD LEFT IT: the child's `buf` is a
     SHARED mapping of the staged image's file, so every store the core made before it halted is still there
-    for the caller to read. Answers `(returncode, stderr, image)`; a caller that reads no byte of the image
-    passes `read_back=False` and is answered None for it, rather than the whole machine read back."""
+    for the caller to read. `arguments` are the core's C arguments after the image, as `(ctypes type, value)`
+    source pairs (`("ctypes.c_uint32", "0x78c41")`). Answers `(returncode, stderr, image)`; a caller that reads no
+    byte of the image passes `read_back=False` and is answered None for it, rather than the whole machine read back.
+    `bind` is Python source the child runs after `buf` is bound and before the call — a hook a core reaches first."""
     image = bytes(vdi.make_image(pokes))
     assert len(image) == IMAGE_BYTES
     with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as handle:
@@ -160,7 +162,11 @@ def refusal_over(symbol, pokes, io_seed=None, *, seconds=CHILD_SECONDS, read_bac
                    f"buf = (ctypes.c_uint8 * {IMAGE_BYTES}).from_buffer(mmap.mmap(image_file.fileno(), {IMAGE_BYTES}))")
         if io_seed:
             prelude += f"; {_io_declaration(io_seed)}"
-        returncode, stderr = refusal(symbol, ["ctypes.c_void_p"], "buf", prelude=prelude, seconds=seconds)
+        if bind:
+            prelude += f"; {bind}"
+        returncode, stderr = refusal(symbol, ["ctypes.c_void_p", *(argtype for argtype, _value in arguments)],
+                                     ", ".join(("buf", *(value for _argtype, value in arguments))), prelude=prelude,
+                                     seconds=seconds)
         return returncode, stderr, Path(handle.name).read_bytes() if read_back else None
     finally:
         Path(handle.name).unlink()

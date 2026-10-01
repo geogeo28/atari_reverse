@@ -41,6 +41,7 @@ import tier3                                               # noqa: E402  (the re
 # ...and the caller a transcription row is netted by, whose cost `trap.py` measures.
 import trap                                                # noqa: E402
 # ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
+import aes                                                 # noqa: E402
 import case                                                # noqa: E402
 import routines                                            # noqa: E402
 import transcription                                       # noqa: E402
@@ -48,8 +49,11 @@ import vdi                                                 # noqa: E402
 import vdi_helpers                                         # noqa: E402
 # ...and the glue generator, whose thunks mechanism (T→G) counts.
 import shipped_glue                                        # noqa: E402
+from recreate_kit import rom_bench                          # noqa: E402
 from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
-from harness import addrs                                   # noqa: E402
+from harness import addrs, emu, make_image                  # noqa: E402
+import opcodes                                             # noqa: E402
+import staging                                             # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -165,9 +169,9 @@ def test_no_pinned_ratio_is_stale(bench):
         if pinned <= tier3.TIER3_FUNCTION_BAR:
             continue
         measured = tier3.measure(rows[key], bench)
-        assert measured.ratio > tier3.TIER3_FUNCTION_BAR, (
+        assert tier3.gated_ratio(rows[key], measured) > tier3.TIER3_FUNCTION_BAR, (
             f"tier3.PERF_ACCEPTED carries {key} as an ACCEPTANCE ({pinned:.3f}x, over the "
-            f"{tier3.TIER3_FUNCTION_BAR:.2f} bar), but it now measures {measured.ratio:.3f}x — "
+            f"{tier3.TIER3_FUNCTION_BAR:.2f} bar), but it now measures {tier3.gated_ratio(rows[key], measured):.3f}x — "
             f"under it. Drop the acceptance: it is excusing a cost that is no longer paid")
 
 
@@ -572,6 +576,168 @@ def test_no_written_acceptance_is_for_a_row_the_glue_rule_carries(bench):
     assert not carried, f"tier3.PERF_ACCEPTED writes down {carried}, which mechanism (T→G) carries — drop them"
 
 
+# ---- MECHANISM (V): C that reaches the VDI by `trap #2`, priced on the AES's own cycles -----------------------------
+# A drawing call whose whole run is the ROM's VDI on both sides (the polyline's 31,000 cycles round its AES wrapper's
+# few hundred), and a body the rule cannot carry: gsx_moff's open nest, where nothing is shared and its own ratio is
+# the whole one — over the bar by the image pointer, (A), and accepted at that number.
+OS_ROW = ("aes_v_pline", "a triangle")
+OS_ROW_ACCEPTED = ("aes_gsx_moff", "the nest already open")
+# A cost moved into the OS both run, as a refused measurement stages it: one instruction's worth.
+SHARED_CYCLES_MOVED = 4
+# A body delayed by a loop of about this many cycles: the size of spill the rule exists to see, and a fraction of the
+# polyline's whole run the whole-run ratio would never notice.
+DELAY_CYCLES = 2000
+
+
+def _with_own_delay(measured, cycles):
+    """`measured` with `cycles` more on OUR side, every one of them inside the AES's own C."""
+    delayed = copy.copy(measured)
+    delayed.recreate_cycles += cycles
+    ours, original = measured.own_cycles
+    delayed.own_cycles = (ours + cycles, original)
+    return delayed
+
+
+def test_a_row_through_the_os_is_priced_on_its_own_cycles(dispatch, measurement_of):
+    row = tier3.row_named(OS_ROW)
+    measured = measurement_of(row)
+    ours, original = measured.own_cycles
+    assert 0 < ours < measured.recreate_net and 0 < original < measured.original_net, "the OS both ran is in neither"
+    assert tier3.gated_ratio(row, measured) == tier3.own_ratio(measured) != measured.ratio
+    assert tier3.pin_of(row) is None, "the rule carries it, so no entry may"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "net"
+
+
+def test_a_delayed_body_reds_its_row_while_the_whole_run_stays_under_the_bar(dispatch, measurement_of):
+    """THE RED the mechanism exists for: ~2,000 cycles more of the AES's own C is a few percent of a polyline's run —
+    the whole ratio stays under the bar — and several times the wrapper's own cost, which the own ratio shows."""
+    row = tier3.row_named(OS_ROW)
+    delayed = _with_own_delay(measurement_of(row), DELAY_CYCLES)
+    assert delayed.ratio <= tier3.TIER3_FUNCTION_BAR, "the premise: the whole run hides the delay"
+    assert tier3.own_ratio(delayed) > tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, delayed, dispatch, measurement_of) == "OVER"
+
+
+# The rows under the bar on their own cycles only while the thunks' are off: with the glue counted back, over it.
+OS_ROWS_UNDER_ONLY_NET_OF_THE_GLUE = (("aes_vst_height", "the large font's"), ("aes_gsx_moff", "the snapshot's cursor: v_hide_c"))
+
+
+@pytest.mark.parametrize("key", OS_ROWS_UNDER_ONLY_NET_OF_THE_GLUE, ids=lambda key: f"{key[0]} / {key[1]}")
+def test_a_row_through_the_os_under_the_bar_only_net_of_its_glue_is_glue(key, dispatch, measurement_of):
+    """(V) stacks (T→G)'s lenience — its own cycles exclude the thunks — so it LABELS it as (T→G) does: a row whose own
+    ratio is under the bar and whose ratio with the glue counted back is over it reads `glue`, never `net`."""
+    row = tier3.row_named(key)
+    measured = measurement_of(row)
+    assert tier3.own_ratio(measured) <= tier3.TIER3_FUNCTION_BAR < tier3.own_ratio_with_glue(measured)
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "glue"
+
+
+def test_a_row_through_the_os_is_net_only_with_its_glue_under_the_bar(dispatch, measurement_of):
+    """The polyline is `net` with its thunks counted back too; the same row with its glue grown past the bar is not."""
+    row = tier3.row_named(OS_ROW)
+    measured = measurement_of(row)
+    assert tier3.own_ratio_with_glue(measured) <= tier3.TIER3_FUNCTION_BAR
+    ours, original = measured.own_cycles
+    heavy = copy.copy(measured)
+    heavy.glue_cycles = int(original * tier3.TIER3_FUNCTION_BAR) - ours + 1
+    assert tier3.verdict(row, heavy, dispatch, measurement_of) == "glue"
+
+
+def test_an_accepted_row_through_the_os_is_held_to_its_own_number(dispatch, measurement_of, monkeypatch):
+    """The open nest's entry is written at its OWN ratio — the number that ships, as it enters no thunk: gone, the row
+    is OVER; moved, it has DRIFTED."""
+    row = tier3.row_named(OS_ROW_ACCEPTED)
+    measured = measurement_of(row)
+    assert tier3.own_ratio(measured) > tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "accepted"
+    assert tier3.verdict(row, _with_own_delay(measured, DELAY_CYCLES), dispatch, measurement_of) == "DRIFTED"
+    monkeypatch.delitem(tier3.PERF_ACCEPTED, OS_ROW_ACCEPTED)
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "OVER"
+
+
+def test_a_pin_on_a_row_through_the_os_is_its_own_ratio_with_the_glue(dispatch, measurement_of, monkeypatch):
+    """A pin under the bar (a cost no differential sees) is written at the number that SHIPS, as a (T→) row's is: the
+    own ratio with the thunks' cycles counted back. The polyline pinned there holds; pinned at its own ratio net of
+    the glue, or at its whole one, it has drifted."""
+    row = tier3.row_named(OS_ROW)
+    measured = measurement_of(row)
+    shipped = tier3.own_ratio_with_glue(measured)
+    assert min(abs(measured.ratio - shipped), abs(tier3.own_ratio(measured) - shipped)) > tier3.RATIO_TOLERANCE, (
+        "the premise: the three differ")
+    monkeypatch.setitem(tier3.PERF_ACCEPTED, OS_ROW, (shipped, "pinned by this test"))
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "pinned"
+    for elsewhere in (tier3.own_ratio(measured), measured.ratio):
+        monkeypatch.setitem(tier3.PERF_ACCEPTED, OS_ROW, (elsewhere, "pinned by this test"))
+        assert tier3.verdict(row, measured, dispatch, measurement_of) == "DRIFTED"
+
+
+@pytest.mark.parametrize("key", OS_ROWS_UNDER_ONLY_NET_OF_THE_GLUE, ids=lambda key: f"{key[0]} / {key[1]}")
+def test_a_pinned_row_through_the_os_still_splits_net_from_glue(key, dispatch, measurement_of, monkeypatch):
+    """A pin does not end the split: a row under the bar only net of its glue, pinned at what ships, still reads `glue`."""
+    row = tier3.row_named(key)
+    measured = measurement_of(row)
+    monkeypatch.setitem(tier3.PERF_ACCEPTED, key, (tier3.own_ratio_with_glue(measured), "pinned by this test"))
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "glue"
+
+
+def test_no_written_acceptance_names_a_row_the_os_rule_carries(measurement_of):
+    """The rule REPLACES such entries, as (T→G)'s does: an entry over the bar for a (V) row is only for a body over the
+    bar on its OWN cycles — the day it is not, the entry goes."""
+    carried = [key for key, (pinned, _why) in tier3.PERF_ACCEPTED.items()
+               if pinned > tier3.TIER3_FUNCTION_BAR and tier3.goes_through_the_os(row := tier3.row_named(key))
+               and tier3.own_ratio(measurement_of(row)) <= tier3.TIER3_FUNCTION_BAR]
+    assert not carried, f"tier3.PERF_ACCEPTED writes down {carried}, which mechanism (V) carries — drop them"
+
+
+def test_only_the_aes_s_graphics_go_through_the_os():
+    """The rule is derived from the m68k call graph, so it is pinned to what it reaches: C of the AES's own text, and
+    every one of those rows' symbols holding or calling a `trap #2`."""
+    through = [row for row in tier3.ROWS if tier3.goes_through_the_os(row)]
+    assert through, "the premise: some row reaches the VDI by `trap #2`"
+    assert all(aes.AES_TEXT[0] <= tier3.rom_address(row) < aes.AES_TEXT[1] for row in through), (
+        sorted({row.symbol for row in through if not aes.AES_TEXT[0] <= tier3.rom_address(row) < aes.AES_TEXT[1]}))
+    assert "aes_gsx2" in tier3.trap_2_functions(tier3.BUILT_ELF)
+
+
+def test_the_os_rule_refuses_our_build_running_the_aes_s_own_rom_bytes(bench, monkeypatch):
+    """Our side may reach the ROM only through the trap: a run whose AES spans hold more than the original spent
+    there (here: the original's own count understated by one instruction) is refused, never credited to the ROM."""
+    row = tier3.row_named(OS_ROW)
+    understated = tier3._original_own_cycles(row) - 4
+    monkeypatch.setattr(tier3, "_original_own_cycles", lambda _row: understated)
+    with pytest.raises(AssertionError, match="inside the AES's own ROM spans"):
+        tier3.measure(row, bench)
+
+
+class _Vetted(Exception):
+    """Raised by a stand-in for the vet, to show a derivation calls it."""
+
+
+def test_the_os_rule_vets_the_call_graph_it_derives_from(monkeypatch):
+    """(V) reads the same call graph (T→) does, so it runs the same vet ITSELF — a row whose symbol the graph qualified
+    would otherwise silently not be (V), whichever derivation happened to run first."""
+    def vetted(_graph):
+        raise _Vetted
+    monkeypatch.setattr(tier3, "vet_no_row_is_ambiguous", vetted)
+    with pytest.raises(_Vetted):
+        tier3._reaching_the_trap.__wrapped__()
+
+
+def test_the_os_rule_refuses_a_shared_cost_the_two_sides_do_not_share(bench, monkeypatch):
+    """The measurement itself holds the OS both run to the same cycles on both sides: our run made to spend a cycle more
+    OUTSIDE our blob (here: added to its whole count, as a jump into ROM code past the trap would) is refused."""
+    row = tier3.row_named(OS_ROW)
+    measure_call = tier3._measure_call
+
+    def spent_more_outside(blob, row):
+        measured = measure_call(blob, row)
+        measured.recreate_cycles += SHARED_CYCLES_MOVED
+        return measured
+    monkeypatch.setattr(tier3, "_measure_call", spent_more_outside)
+    with pytest.raises(AssertionError, match="the OS both sides run cost"):
+        tier3.measure(row, bench)
+
+
 # ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------
 
 # What a `trap #13` costs before the leaf it dispatches to runs, as this table measures it. Pinned
@@ -796,3 +962,57 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
     registered = case.registered_case(name)
     assert runs and all(entry == registered[1] and not dropped and not windows for entry, dropped, windows in runs), runs
     assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
+
+
+# ---- THE ODD-ACCESS SURFACE: what a 68000 bombs on and this oracle's CPU completes ------------------------------------
+# kit.mk builds Musashi with address errors off, so a word or long access at an odd address runs to the right answer
+# here and takes an ADDRESS ERROR on the machine. The shim counts them (`emu.odd_accesses`) and `rom_bench` refuses an
+# m68k build that makes one the original did not — which is what reddened every sh_envrn / sh_find row while their
+# frame locals were `uint8_t` arrays of an odd size. These pin the instrument itself: a probe of absolute accesses, staged in
+# the single-buffer band, at even and at odd addresses — a word and a long, read and written: the four callbacks.
+_PROBE_AT = staging.POINTER_ARGUMENTS
+_PROBE_TARGET = _PROBE_AT + 0x100
+_ABSOLUTE_ACCESS_BYTES = 6                 # the opcode word and a long address
+_WIDE_ACCESSES = {"move.w d0,<xxx>.l": opcodes.MOVE_W_D0_ABSOLUTE, "move.l d0,<xxx>.l": opcodes.MOVE_L_D0_ABSOLUTE,
+                  "move.w <xxx>.l,d0": opcodes.MOVE_W_ABSOLUTE_D0, "move.l <xxx>.l,d0": opcodes.MOVE_L_ABSOLUTE_D0}
+
+
+def _odd_accesses_of(opcode, *targets):
+    """What the oracle counted over a run of `opcode` (an absolute word or long access) at each of `targets`."""
+    image = make_image({})
+    program = b"".join(opcode.to_bytes(2, "big") + target.to_bytes(4, "big") for target in targets) + opcodes.RTS
+    image[_PROBE_AT:_PROBE_AT + len(program)] = program
+    emu.run_bench(image, _PROBE_AT, arg0=0, sp=emu.STACK_TOP, sentinel=emu.SENTINEL)
+    return emu.odd_accesses()
+
+
+@pytest.mark.parametrize("opcode", _WIDE_ACCESSES.values(), ids=_WIDE_ACCESSES)
+def test_the_oracle_counts_a_word_or_long_access_at_an_odd_address(opcode):
+    """...every one, keeping the addresses in order and the instruction that made the first; and per run: an even access after them counts
+    none."""
+    odd = _odd_accesses_of(opcode, _PROBE_TARGET, _PROBE_TARGET + 1, _PROBE_TARGET + 3)
+    assert odd == {"odd_accesses": 2, "odd_addresses": (_PROBE_TARGET + 1, _PROBE_TARGET + 3),
+                   "odd_first_pc": _PROBE_AT + _ABSOLUTE_ACCESS_BYTES}
+    assert _odd_accesses_of(opcode, _PROBE_TARGET)["odd_accesses"] == 0
+
+
+def test_the_bench_refuses_an_odd_access_the_original_did_not_make():
+    odd = _odd_accesses_of(opcodes.MOVE_W_D0_ABSOLUTE, _PROBE_TARGET + 1)
+    none = {"odd_accesses": 0, "odd_addresses": (), "odd_first_pc": 0}
+    with pytest.raises(AssertionError, match="address error on a 68000"):
+        rom_bench._vet_no_odd_access("the probe", odd, none)
+    elsewhere = dict(odd, odd_addresses=(_PROBE_TARGET + 3,))
+    with pytest.raises(AssertionError, match="address error on a 68000"):
+        rom_bench._vet_no_odd_access("the probe", odd, elsewhere)
+    # ...and the ones the ORIGINAL makes too, at the same addresses, are the case's (vst_height's chain from 0).
+    rom_bench._vet_no_odd_access("the probe", odd, odd)
+    rom_bench._vet_no_odd_access("the probe", none, none)
+
+
+def test_a_row_is_refused_on_an_odd_access_its_build_alone_makes(bench, monkeypatch):
+    """...and the measurement asks it: a row whose m68k build is answered an odd access the original's run was not."""
+    none = {"odd_accesses": 0, "odd_addresses": (), "odd_first_pc": 0}
+    answers = iter((none, dict(none, odd_accesses=1, odd_addresses=(_PROBE_TARGET + 1,))))
+    monkeypatch.setattr(emu, "odd_accesses", lambda: next(answers))
+    with pytest.raises(AssertionError, match="address error on a 68000"):
+        tier3.measure(tier3.row_named(tier3.DISPATCH_LEAF), bench)

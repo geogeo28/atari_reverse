@@ -390,6 +390,9 @@
 #define GEM_TRAP2_AES_ARM     0xfe3eca
 #define GEM_TRAP2_VDI_ARM     0xfe3eb8  /* everything else: `move.l SYSVAR_VDI_ENTRY,-(sp) / rts` */
 #define SYSVAR_VDI_ENTRY      0x8c2a    /* long: where that arm jumps — $fc4ebc in this snapshot */
+/* ...which is the BIOS's own VDI door: D0 0 -> Pterm0's arm, $73 -> `jsr VDI_ROM_ENTRY` then `rte` ($fc4ec0 cmp.w). */
+#define GEM_TRAP2_VDI_DOOR    0xfc4ebc
+#define GEM_SELECTOR_VDI      0x0073    /* the VDI's selector ($fc4ec0 cmp.w #$73; the AES's gsx2 $fecb68 moveq) */
 
 /* ================================================================================================
  * THE INTERRUPT HANDLERS (BIOS wave 2) — the every-tick code, entered through a LIVE VECTOR
@@ -1907,6 +1910,20 @@
 #define AES_AP_TPLAY_FORKQ_CALL   0xfe671e   /* ap_tplay's forkq call: it pushes a LOCAL, not an immediate */
 #define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
 #define AES_ROM_GSX2              0xfecb5a   /* the AES's one `trap #2` to the VDI */
+/* The VDI BINDING (gemgsxif, hand 68000, `aes/gsx.h`): contrl filled, gsx2 reached; each wrapper read from its body. */
+#define AES_ROM_GSX_NCODE         0xfe87d2   /* (opcode, points, words): contrl[0,1,3], the AES's handle, gsx2 */
+#define AES_ROM_GSX_1CODE         0xfe87f0   /* (opcode, value): intin[0], then gsx_ncode(opcode, 0, 1) */
+#define AES_ROM_GSX_MOFF          0xfe8a72   /* the AES's cursor hidden (v_hide_c) on the first of a nest */
+#define AES_ROM_GSX_MON           0xfe8a8e   /* ...and shown again (v_show_c 1) when the nest unwinds */
+#define AES_ROM_V_PLINE           0xfe8afa   /* (count, points): ptsin pointed at the caller's points for the call */
+#define AES_ROM_VS_CLIP           0xfe8b0e   /* (flag, points) */
+#define AES_ROM_VST_HEIGHT        0xfe8b22   /* (height, &w, &h, &cell w, &cell h): ptsout's four words out */
+#define AES_ROM_VR_RECFL          0xfe8b50   /* (points, mfdb) */
+#define AES_ROM_VRO_CPYFM         0xfe8b60   /* (mode, points, source mfdb, destination mfdb) */
+#define AES_ROM_VRT_CPYFM         0xfe8b72   /* (mode, points, source, destination, foreground, background) */
+#define AES_ROM_VRN_TRNFM         0xfe8b88   /* (source mfdb, destination mfdb) */
+#define AES_ROM_VSL_WIDTH         0xfe8b92   /* (width): ptsin[0..1] = width, 0 */
+#define AES_ROM_GSX_FIX           0xfda992   /* (mfdb, address, bytes across, height): an MFDB, 0 the screen's */
 /* The utility layer's MEMORY and STRING helpers (hand 68000, `aes/strings.h`), each named from its body. */
 #define AES_ROM_MUL_DIV           0xfecb6e   /* m1 * m2 / d, rounded: `muls.w` by 2*m2, `divs.w`, +-1, `asr.w` */
 #define AES_ROM_SET_CONTRL_PTR    0xfecbc6   /* contrl[7..8] := the argument */
@@ -1971,6 +1988,10 @@
 #define AES_ROM_MKPIECE           0xfe5acc   /* one piece of a rectangle the cut leaves: above, left, right or below it */
 #define AES_ROM_BRKRCT            0xfe5ba8   /* a listed rectangle the cut overlaps replaced by its pieces, and freed */
 #define AES_ROM_MKRECT            0xfe5c9a   /* everyobj's callback: one window's list cut by the rectangle newrect set */
+#define AES_ROM_NEWRECT           0xfe5cee   /* everyobj's callback too: a window's list rebuilt, the windows before it cut */
+/* A WINDOW's rectangles (gemwmlib, Alcyon). */
+#define AES_ROM_W_GETXPTR         0xfeb4be   /* the address of a window's rectangle by WS_* (switch table $fefcca) */
+#define AES_ROM_W_GETSIZE         0xfeb53e   /* a window's rectangle copied out; WS_TRUE's grown by its border */
 /* The OBJECT LIBRARY's own helpers (gemoblib, all Alcyon, laid out after ob_change in the source's order). */
 #define AES_ROM_OB_FS             0xfea4b6   /* an object's flags into a word, its state answered */
 #define AES_ROM_OB_ACTXYWH        0xfea4e8   /* an object's GRECT on the screen: ob_offset, then its width and height */
@@ -2078,7 +2099,7 @@
 #define AES_ROM_WM_UPDATE_OPCODE  107
 #define AES_ROM_WM_CALC           0xfecaac   /* ctx */
 #define AES_ROM_WM_CALC_OPCODE    108
-#define AES_ROM_RS_LOAD           0xfeac5c   /* ctx */
+#define AES_ROM_RS_LOAD           0xfeac5c   /* read: rs_readit, then the objects fixed (rs_fixit) if it read one */
 #define AES_ROM_RS_LOAD_OPCODE    110
 #define AES_ROM_RS_FREE           0xfeaa58   /* read: the caller's resource Mfree'd; whether GEMDOS took it */
 #define AES_ROM_RS_FREE_OPCODE    111
@@ -2107,6 +2128,25 @@
 #define AES_ROM_DOS_FREE          0xfe3c26   /* Mfree through __DOS: both return addresses parked, AES_DOS_ERR/AX set */
 #define AES_RS_FREE_MFREE_RETURN  0xfeaa76   /* rs_free's return site from dos_free: what AES_DOS_RETURN holds after */
 #define AES_DOS_TRAP_RETURN       0xfe3c34   /* __DOS's caller's return site inside the glue: AES_TRAP1_RETURN's */
+/* The rest of the glue the shell and the resource load reach, each read from its body: `__DOS` reached by `bsr`, so
+ * AES_TRAP1_RETURN is parked with the return site inside the glue — or (dos_sdta, dos_close) through $fe3c28 as
+ * dos_free is, its caller's return parked in AES_DOS_RETURN too. */
+#define AES_ROM_DOS_SFIRST        0xfe3a1c   /* Fsfirst: 1 found; EFILNF or ENMFIL -> AES_DOS_AX 18 */
+#define AES_ROM_DOS_OPEN          0xfe3a52   /* Fopen: the handle, or 0 on AES_DOS_ERR; EFILNF -> AES_DOS_AX 2 */
+#define AES_ROM_DOS_READ          0xfe3a78   /* Fread of a WORD count, zero-extended */
+#define AES_ROM_DOS_LSEEK         0xfe3a9a   /* Fseek (handle, mode, offset) */
+#define AES_ROM_DOS_SDTA          0xfe3c06   /* Fsetdta through $fe3c28 */
+#define AES_ROM_DOS_CLOSE         0xfe3c0a   /* Fclose through $fe3c28 */
+#define AES_DOS_SFIRST_TRAP_RETURN 0xfe3a2a  /* dos_sfirst's `bsr __DOS` return: AES_TRAP1_RETURN's after it */
+#define AES_DOS_OPEN_TRAP_RETURN  0xfe3a62   /* ...dos_open's */
+#define AES_DOS_READ_TRAP_RETURN  0xfe3a94   /* ...dos_read's */
+#define AES_DOS_LSEEK_TRAP_RETURN 0xfe3aaa   /* ...dos_lseek's */
+/* The shell's file finding (`aes/shell.h`) and the resource load's read, each read from its body. */
+#define AES_ROM_SH_NAME           0xfeae04   /* the name part of a path: past its last `\` or `:` */
+#define AES_ROM_SH_PATH           0xfeaf1e   /* PATH's element n, `\` and the name after it, into a buffer; n + 1 */
+#define AES_ROM_RS_READIT         0xfeaae2   /* a resource file found, read whole into a Malloc block, relocated */
+#define AES_SH_FIND_SDTA_RETURN   0xfeafca   /* sh_find's return site from dos_sdta: what AES_DOS_RETURN holds after */
+#define AES_RS_READIT_CLOSE_RETURN 0xfeaba0  /* rs_readit's return site from dos_close: the same */
 #define AES_ROM_ROM_RAM           0xfee5c8   /* a part of the ROM's resources: copied, relocated on first use, or its global[] */
 #define AES_ROM_ROM_RSC_INIT      0xfee4de   /* start-up: the ROM's resource bundle copied into a Malloc block, its parts' table set */
 #define AES_ROM_SH_READ           0xfeaca8   /* read: shel_read, the shell's command line and tail out, 128 bytes each */
@@ -2117,9 +2157,9 @@
 #define AES_ROM_SH_GET_OPCODE     122
 #define AES_ROM_SH_PUT            0xfead40   /* read: shel_put, `n` bytes into the shell's GEM buffer */
 #define AES_ROM_SH_PUT_OPCODE     123
-#define AES_ROM_SH_FIND           0xfeafbe   /* ctx */
+#define AES_ROM_SH_FIND           0xfeafbe   /* read: a file looked for as given, at the root, then down PATH */
 #define AES_ROM_SH_FIND_OPCODE    124
-#define AES_ROM_SH_ENVRN          0xfeae36   /* ctx */
+#define AES_ROM_SH_ENVRN          0xfeae36   /* read: where a name's value starts in the environment, or 0 */
 #define AES_ROM_SH_ENVRN_OPCODE   125
 
 #endif /* TOS102US_ADDRS_H */

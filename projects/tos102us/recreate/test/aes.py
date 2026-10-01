@@ -24,8 +24,8 @@ AES's VDI contrl[] is in the capture MASK; a case reaching the VDI stages its ow
 ---- WHAT THE HEADERS DO NOT NAME, AND WHY ------------------------------------------------------------------------
 `include/aes/*.h` carries only fields a ROM instruction was found reading or writing. Left out, until a reconstructed
 routine reads them by name: PD +32/+38 (p_evbits, p_evlist: the map's reading, uncited), EVB +24 (e_return), the CDA's
-other words, WINDOW +8..+15 and +52.., TEDINFO +12..+20, ICONBLK +12..+32, BITBLK +4..+12, and RSHDR +0/+12/+14/+34
-(version, strings, image data, and the length rsrc_load reads only through its header copy).
+other words, WINDOW +8..+15 and +52.., TEDINFO +12..+20, ICONBLK +12..+32, BITBLK +4..+12, and RSHDR +0/+12/+14
+(version, strings, image data).
 """
 import contextlib
 import ctypes
@@ -48,9 +48,9 @@ from opcodes import DROP_STACK_LONG, LINE_F, PUSH_ADDRESS_SHORT, RTS
 
 # ---- the headers' constants, and the FIELDS (`test/layouts.py`, the one reader of the width tags) ------------------
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
-# The two headers every AES core reads the machine's records through: the host reads the same constants and widths
-# by this parse, so a case's offset is the header's — the one the compiler checked the C against.
-AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h"))
+# The headers every AES core reads the machine's records through (`gsx.h`: the VDI binding's): the host reads the same
+# constants and widths by this parse, so a case's offset is the header's — the one the compiler checked the C against.
+AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h"))
 CONSTANTS = layouts.parse_constants(AES_HEADERS)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -246,6 +246,9 @@ LINE_F_MASK_WHY = ("the Line-F handler's own `movem` mask, rewritten by every ma
                    "the C returns by `rts` and never writes it")
 LINE_F_MASK_WINDOW = ((AES_LINEF_MASK_WORD, AES_LINEF_MASK_WORD + WORD_BYTES, LINE_F_MASK_WHY),)
 
+# GEM's TEXT, `[lo, hi)`: from its entry to the Line-F call table, where the AES's own data begins.
+AES_TEXT = (addrs.AES_ROM_GEM_ENTRY, AES_LINEF_TABLE)
+
 
 def line_f_target(word):
     """The routine a Line-F CALL word names through the ROM's call table — None for any other word (a return, or
@@ -259,7 +262,7 @@ def line_f_target(word):
 def line_f_call_sites(name):
     """`{call word: (address, ...)}`: every even word of the GEM text that Line-F-calls `addrs.<name>`, by word."""
     routine, sites = getattr(addrs, name), {}
-    for at in range(addrs.AES_ROM_GEM_ENTRY, AES_LINEF_TABLE, WORD_BYTES):
+    for at in range(*AES_TEXT, WORD_BYTES):
         word = case.word_in(BASE_IMAGE, at)
         if line_f_target(word) == routine:
             sites[word] = (*sites.get(word, ()), at)
@@ -297,12 +300,12 @@ def line_f_caller_pokes(name):
 # address, an IMMEDIATE — pushed straight onto the call's frame, or (ap_tplay) stored in the local its one forkq call
 # pushes — and forker later `jsr`s through it; forker's recorder and ap_trecd then COMPARE a queued entry against
 # three of them. A host C port must store and compare the ROM's values; a rebuilt ROM, the address its own fork
-# function is linked at: the CODE kind of `test_vdi_rom_data.py`'s census, listed here until those routines have a
-# source file to be listed under (`test_aes_door` holds that these are every longword of the GEM text naming a fork
-# function, and that every forkq call queues one). The OPPOSITE policy holds for the Line-F handler's 100-byte RAM
-# copy: it carries `movea.l #$fee900,a0` and the head of the call table as ORIGINAL ROM addresses, kept at the
-# original's value and never relocated (so on a rebuilt ROM a Line-F executed jumps through $fee900 into unrelated
-# bytes).
+# function is linked at: the CODE kind of `rom_data.py`'s census, listed here until those routines have a source file
+# to be listed under (`test_aes_door` holds that these are every longword of the GEM text naming a fork function, and
+# that every forkq call queues one; `test_aes_rom_data.py` folds them into its census of the AES text's immediates).
+# The OPPOSITE policy holds for the Line-F handler's 100-byte RAM copy: it carries `movea.l #$fee900,a0` and the head
+# of the call table as ORIGINAL ROM addresses, kept at the original's value and never relocated (so on a rebuilt ROM a
+# Line-F executed jumps through $fee900 into unrelated bytes).
 TCHANGE, KCHANGE, BUTTON_CHANGE, MCHANGE = (addrs.AES_ROM_TCHANGE, addrs.AES_ROM_KCHANGE, addrs.AES_ROM_BCHANGE,
                                            addrs.AES_ROM_MCHANGE)
 FORK_FUNCTION_IMMEDIATES = (    # (the instruction whose immediate names it, the fork function)
@@ -380,22 +383,49 @@ RESULT_WIDTHS = {WORD_ANSWER: WORD_RESULT, LONG_ANSWER: case.FULL_D0, None: case
 def alcyon_object_hook(routines):
     """The ALCYON OBJECT-CALL door's binding for one case, as `run_function`'s `hook`: `{address: (68000 stub bytes,
     effect)}` served through the register-carrying hook (`isr.REGISTERS_HOOK`), which `staged_call.h`'s
-    `call_alcyon_object` — everyobj's routine — reaches on the host."""
+    `call_alcyon_object` — everyobj's routine — reaches on the host, and `call_alcyon_pointer` — sh_find's — too."""
     return functools.partial(isr.REGISTERS_HOOK.staged_routines, routines)
 
 
+class _Passes:
+    """The bindings of several doors opened for one case: a candidate run wrapped in each one's pass, the first
+    door's innermost."""
+
+    def __init__(self, bindings):
+        self.bindings = bindings
+
+    def recording(self, glue):
+        for binding in self.bindings:
+            glue = binding.recording(glue)
+        return glue
+
+
+def doors(*hooks):
+    """SEVERAL doors as ONE `run_function` `hook` — a routine that traps AND calls a routine it is handed: each of
+    `hooks` a zero-argument callable opening its binding, all opened, in order, for the case."""
+    @contextlib.contextmanager
+    def opened():
+        with contextlib.ExitStack() as stack:
+            yield _Passes([stack.enter_context(hook()) for hook in hooks])
+    return opened
+
+
 def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, hook=None,
-                 **kwargs):
+                 regs=None, host_arguments=(), result=None, **kwargs):
     """The Alcyon AES routine `addrs.<name>` over the frame of `arguments`, against its core called with the same
     values, the answer compared at the signature's width and `dropped_windows` — the mask word, by default — dropped where
-    the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result`. A core over words alone (mul_div, min,
-    max) takes no image.
+    the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result` (or the `result` subclass a battery reads
+    the run through). A core over words alone (mul_div, min, max) takes no image.
 
     `hook` serves a core that calls OUT through a door the host build cannot execute — a `trap #1`, a routine its
     caller hands in: a zero-argument callable opening the case's binding and yielding the `AddressHook` whose pass
     wraps each candidate run, built by the door's one builder — `vdi_helpers.staged_gemdos_hook` for the recording
-    trap, `alcyon_object_hook` for a routine called through `call_alcyon_object`. A callable rather than the binding
-    itself because a registered row's companion opens it again, later."""
+    trap, `alcyon_object_hook` for a routine called through `call_alcyon_object`, `doors` for several. A callable
+    rather than the binding itself because a registered row's companion opens it again, later.
+
+    `regs` are the ROM's entry registers beyond the frame (sh_path reads its caller's D6); `host_arguments` are the
+    values the core takes after the image and before the frame's — what no frame carries (a return address the ROM's
+    glue parks, dos_free's precedent)."""
     signature = vdi.ALCYON[name]
     core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi.as_signed(name, arguments)
@@ -403,11 +433,12 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
     takes_image = vdi.takes_image(name)
 
     def glue(_lib_, buf):
-        return core(buf, *arguments) if takes_image else core(*arguments)
+        return core(buf, *host_arguments, *arguments) if takes_image else core(*arguments)
     with hook() if hook else contextlib.nullcontext() as bound:
-        info = case.run(entry_of(name, through_line_f), {"_pokes": machine_pokes}, bound.recording(glue) if bound else glue,
+        info = case.run(entry_of(name, through_line_f), {**(regs or {}), "_pokes": machine_pokes},
+                        bound.recording(glue) if bound else glue,
                         width=RESULT_WIDTHS[signature.restype], dropped_windows=dropped_windows, **kwargs)
-    return Result(info, machine_pokes)
+    return (result or Result)(info, machine_pokes)
 
 
 def settled_mask_word(name, arguments, pokes):

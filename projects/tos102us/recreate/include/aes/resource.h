@@ -10,8 +10,9 @@
  * rom_ram hands on and none of its callers reads.
  *
  * Also here, the ROM's OWN resources (rom_rsc_init, rom_ram): one bundle in the ROM, copied at start-up, its
- * resources relocated in place on their first request. And rsrc_free, the layer's one GEMDOS call beside the
- * start-up's Malloc, through the AES's own glue.
+ * resources relocated in place on their first request. And the layer's GEMDOS calls, through the AES's own glue: the
+ * start-up's Malloc, rsrc_free's Mfree, and the load (rs_readit, rs_load) — a file found by the shell's sh_find
+ * (`aes/shell.h`), read whole into a Malloc block and relocated.
  */
 #ifndef TOS102US_AES_RESOURCE_H
 #define TOS102US_AES_RESOURCE_H
@@ -79,5 +80,7 @@ uint32_t aes_rs_str(uint8_t *image, int16_t string);                            
 int16_t aes_rom_ram(uint8_t *image, int16_t part, uint32_t pointer, int16_t size);                    /* $fee5c8 */
 int16_t aes_rs_free(uint8_t *image, uint32_t global);                                                  /* $feaa58 */
 void aes_rom_rsc_init(uint8_t *image);                                                                 /* $fee4de */
+int16_t aes_rs_readit(uint8_t *image, uint32_t global, uint32_t name);                                /* $feaae2 */
+int16_t aes_rs_load(uint8_t *image, uint32_t global, uint32_t name);                                  /* $feac5c */
 
 #endif /* TOS102US_AES_RESOURCE_H */

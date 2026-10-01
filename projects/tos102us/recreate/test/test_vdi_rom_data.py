@@ -1,50 +1,18 @@
 """EVERY ROM ADDRESS THE VDI's C AND `.S` USE AS A VALUE — enumerated, and held to the sources.
 
-The reconstruction runs with the image based at 0, so `image + VDI_MAP_COL` reads the ROM's own table at its
-1987 address and `wr32(... USER_BUT, VDI_ROM_USER_VECTOR_DEFAULT)` stores a 1987 code address. Both are right
-against this ROM and both are OBLIGATIONS on a rebuilt one, which links its own code and data where its
-linker puts them. So every such use is listed here, by file, with its KIND — which is what says what the ROM
-build owes it (`../README.md`, "What ships as the ROM's own instructions"):
+The census, its KINDS and what each owes a rebuilt ROM are `rom_data.py`'s; this is the VDI's table. Its RETURN_SITEs
+are the instructions after a ROM caller's `jsr` to the GEMDOS door, which the host build hands the door so
+LINEA_RETSAV holds what the ROM's `jsr` leaves (`vdi/workstation.h`): the shipped door is the `.S`, which parks its own
+caller's address, and the glue drops the argument.
 
-* TABLE — a data table outside every transcribed region, read in place: the ROM build keeps it at this
-  address (its data band), or relocates every reference listed here;
-* CODE — a routine's address as a value: stored in a RAM vector, compared with one (`require_cpu_routine`),
-  or handed on as the dispatcher's D0. The ROM build must use the address the SHIPPED routine is linked at;
-* REGION_TABLE — a table INSIDE a region a `.S` transcribes (a code region). The C that reads it is that
-  region's own C core, which the ROM build does not link (`TRANSCRIBED_C_CORES`): harmless exactly while
-  that stays true. A shipped C that read one would have to read the `.S`'s copy instead;
-* DISTANCE — two ROM addresses subtracted, a distance inside one transcribed region, which relocation keeps;
-* WAIT_SITE — a busy-wait's site, the scheduled-write model's key for counting the ROM's arrivals against the
-  C's polls (`sched.h`). No obligation: the target's `sched.h` ignores it, since a machine has a PC.
-* RETURN_SITE — the instruction after a ROM caller's `jsr` to the GEMDOS door, which the host build hands the
-  door so LINEA_RETSAV holds what the ROM's `jsr` leaves (`vdi/workstation.h`). No obligation: the shipped door is
-  the `.S`, which parks its own caller's address, and the glue drops the argument.
-
-`test_the_census_is_the_list` is the surface: a new use of a ROM address anywhere in `src/vdi/` — or in the
-CODE of an `include/vdi/` header, an inline that reads a table, keyed `vdi/<name>.h` — reds until it is listed
-with its kind (a header inline is compiled into every file that calls it, and a call names the function, not
-the table), and `test_a_table_s_kind_is_where_it_lies` holds each TABLE / REGION_TABLE to the
-byte-pinned regions (`transcription.every_pinned_region`).
+`test_the_census_is_the_list` is the surface: a new use of a ROM address anywhere in `src/vdi/` — or in the CODE of an
+`include/vdi/` header, keyed `vdi/<name>.h` — reds until it is listed with its kind, and
+`test_a_table_s_kind_is_where_it_lies` holds each TABLE / REGION_TABLE to the byte-pinned regions.
 """
-import re
-from pathlib import Path
+import rom_data
+from rom_data import CODE, DISTANCE, REGION_TABLE, RETURN_SITE, TABLE, WAIT_SITE
 
-from harness import addrs
-
-import transcription
-import vdi
-
-RECREATE = Path(__file__).resolve().parents[1]
-SOURCES = RECREATE / "src" / "vdi"
-INCLUDE = RECREATE / "include"
-VDI_HEADERS = INCLUDE / "vdi"
-HEADERS = sorted((RECREATE / "include").glob("*.h")) + sorted((RECREATE / "include").glob("*/*.h"))
-# The 68000's view of the ROM: 192 KB below the I/O page, which is where a VALUE is an obligation. The I/O
-# page ($ff0000 up) is the machine's own address in any build.
-ROM_LO, ROM_HI = 0xFC0000, 0xFF0000
-
-TABLE, CODE, REGION_TABLE, DISTANCE, WAIT_SITE, RETURN_SITE = (
-    "TABLE", "CODE", "REGION_TABLE", "DISTANCE", "WAIT_SITE", "RETURN_SITE")
+VDI = rom_data.component("vdi")
 ROM_ADDRESSES_AS_DATA = {
     "attributes.c": {"VDI_HATCHES_LOWER": TABLE, "VDI_HATCHES_UPPER": TABLE,
                      "VDI_PATTERNS_LOWER": TABLE, "VDI_PATTERNS_UPPER": TABLE, "VDI_PATTERN_HOLLOW": TABLE,
@@ -107,64 +75,15 @@ ROM_ADDRESSES_AS_DATA = {
     "vdi/attributes.h": {"VDI_MAP_COL": TABLE},
 }
 
-_COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
-_TOKEN = re.compile(r"\b0[xX][0-9a-fA-F]+\b|\b[A-Za-z_]\w*\b")
-
-
-def _defines(path, known):
-    """`path`'s `#define`s over `known` — `addrs.parse` refuses a file that has none, which a header of
-    declarations or a source with no constants of its own is."""
-    try:
-        return {**known, **addrs.parse(path, known=known)}
-    except RuntimeError:
-        return known
-
-
-def _constants():
-    known = dict(vdi.CONSTANTS)
-    for header in HEADERS:
-        known = _defines(header, known)
-    return known
-
-
-def _value(token, constants):
-    return int(token, 16) if token[:2].lower() == "0x" else constants.get(token)
-
-
-def _scanned():
-    """`{key: path}`: every VDI source by its name, and every VDI header by its `vdi/<name>.h`."""
-    sources = {source.name: source for source in sorted(SOURCES.glob("*.[cS]"))}
-    headers = {str(header.relative_to(INCLUDE)): header for header in sorted(VDI_HEADERS.glob("*.h"))}
-    return {**sources, **headers}
-
-
 def census():
-    """`{file: {token}}`: every name or literal in a VDI source's or header's CODE (comments and `#define`
-    lines left out, which name an address rather than use it) whose value is a ROM address."""
-    known, found = _constants(), {}
-    for key, path in _scanned().items():
-        constants = _defines(path, known)
-        code = "\n".join(line for line in _COMMENT.sub(" ", path.read_text()).splitlines()
-                         if not line.lstrip().startswith("#define"))
-        uses = {token for token in _TOKEN.findall(code)
-                if isinstance(_value(token, constants), int) and ROM_LO <= _value(token, constants) < ROM_HI}
-        if uses:
-            found[key] = uses
-    return found
+    """`{file: {token}}`: every ROM address a VDI source or header uses as a value (`rom_data.census`)."""
+    return rom_data.census(VDI)
 
 
 def test_the_census_is_the_list():
-    listed = {source: set(uses) for source, uses in ROM_ADDRESSES_AS_DATA.items()}
-    assert census() == listed
+    assert census() == rom_data.listed(ROM_ADDRESSES_AS_DATA)
 
 
 def test_a_table_s_kind_is_where_it_lies():
     """A REGION_TABLE lies inside a byte-pinned region and a TABLE outside every one."""
-    known, regions = _constants(), transcription.every_pinned_region()
-    for source, uses in ROM_ADDRESSES_AS_DATA.items():
-        constants = _defines(_scanned()[source], known)
-        for name, kind in uses.items():
-            inside = any(region.lo <= constants[name] < region.hi for region in regions)
-            if kind in (TABLE, REGION_TABLE):
-                assert inside == (kind == REGION_TABLE), f"{source}: {name} is a {kind}, but it lies " \
-                                                         f"{'inside' if inside else 'outside'} every pinned region"
+    assert rom_data.kind_mismatches(VDI, ROM_ADDRESSES_AS_DATA) == []

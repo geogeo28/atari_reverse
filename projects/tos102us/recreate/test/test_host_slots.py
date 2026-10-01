@@ -50,7 +50,8 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
                           "REDIRECTED_BYTE", "PEXEC_LOCALS", "GEMDOS_WORDS", "VDI_VST_FONT_CALL",
                           "VDI_WIDE_CORNERS", "VDI_WIDE_OFFSET", "VDI_PERP_DIRECTION", "VDI_ARROW_TRIANGLE",
                           "VDI_MARKER_POINTS", "VDI_GTEXT_EXTENT", "VDI_JUSTIFIED_EXTENT",
-                          "VDI_OPNWK_COLOUR_CALL", "AES_OB_FIND_RECTS"}
+                          "VDI_OPNWK_COLOUR_CALL", "AES_OB_FIND_RECTS", "AES_SH_ENVRN_FRAME",
+                          "AES_SH_FIND_FRAME"}
     assert not misplaced(slots)
 
 

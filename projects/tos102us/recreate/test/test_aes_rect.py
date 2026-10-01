@@ -7,8 +7,8 @@
 Hand 68000 in the ROM — the utility layer both the AES and the desk call, returning by `rts` through the helpers'
 shared tails — so a Line-F CALL reaches it and no Line-F RETURN leaves it: the mask word is never stored, and its
 drop in the door drops nothing (the case that says so is here). Seeded with the snapshot's own rectangles: the desktop
-window's current and full GRECTs (`aes/aes.h`'s WIN_CURR / WIN_FULL of window 0), the ones wm_calc and the redraw
-clip against each other.
+window's full and previous GRECTs (`aes/aes.h`'s WIN_FULL / WIN_PREV of window 0: the area below the menu bar, and
+the whole screen).
 """
 import pytest
 
@@ -26,8 +26,8 @@ NAME = "AES_ROM_RC_INTERSECT"
 CORE = routines.core_symbol(NAME)
 aes.declare_alcyon(NAME, aes.WORD_ANSWER, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
 
-DESKTOP_CURR = aes.AES_WINDOWS + aes.WIN_CURR
 DESKTOP_FULL = aes.AES_WINDOWS + aes.WIN_FULL
+DESKTOP_PREV = aes.AES_WINDOWS + aes.WIN_PREV
 CLIP_AT = aes.RECTS_AT
 RECT_AT = aes.RECTS_AT + aes.GRECT_BYTES
 
@@ -139,10 +139,10 @@ def test_a_rectangle_with_itself_is_unchanged():
 
 
 def test_the_desktop_window_s_rectangles_over_the_snapshot():
-    """Real data: the window's current area clipped to its full area, in place — (0, 11, 320, 189) inside
+    """Real data: the window's full area clipped to its previous one (the screen), in place — (0, 11, 320, 189) inside
     (0, 0, 320, 200)."""
-    result = aes.run_function(NAME, (DESKTOP_FULL, DESKTOP_CURR), aes.leaf_machine())
-    assert rect_of(result.final, DESKTOP_CURR) == model(rect_of(BASE_IMAGE, DESKTOP_FULL), rect_of(BASE_IMAGE, DESKTOP_CURR))[0]
+    result = aes.run_function(NAME, (DESKTOP_PREV, DESKTOP_FULL), aes.leaf_machine())
+    assert rect_of(result.final, DESKTOP_FULL) == model(rect_of(BASE_IMAGE, DESKTOP_PREV), rect_of(BASE_IMAGE, DESKTOP_FULL))[0]
     assert result.answer() == 1
 
 
@@ -160,7 +160,7 @@ for _shape in sorted(SHAPES):
     _clip, _rect = SHAPES[_shape]
     aes.register(_shape, NAME, (CLIP_AT, RECT_AT),
                  aes.leaf_machine(onto=merge_pokes(aes.grect_pokes(CLIP_AT, *_clip), aes.grect_pokes(RECT_AT, *_rect))))
-aes.register("the desktop window", NAME, (DESKTOP_FULL, DESKTOP_CURR), aes.leaf_machine())
+aes.register("the desktop window", NAME, (DESKTOP_PREV, DESKTOP_FULL), aes.leaf_machine())
 _clip, _rect = SHAPES["clip inside rect"]
 aes.register("clip inside rect", NAME, (CLIP_AT, RECT_AT),
              aes.leaf_machine(onto=merge_pokes(aes.grect_pokes(CLIP_AT, *_clip), aes.grect_pokes(RECT_AT, *_rect))),

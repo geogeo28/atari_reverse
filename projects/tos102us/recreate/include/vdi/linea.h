@@ -252,6 +252,7 @@
 
 /* ---- the MFDB (memory form definition block) as $a00e and vr_trnfm read it -------------------- */
 #define MFDB_ADDR             0          /* long: base, 0 = the screen          ($fd0394)           */
+#define MFDB_W                4          /* word: width in pixels               ($fda9a6 gsx_fix)   */
 #define MFDB_H                6          /* word: height                        ($fd2d48)           */
 #define MFDB_WDWIDTH          8          /* word: width in words                ($fd03b2)           */
 #define MFDB_STAND            10         /* word: 1 = device-independent format ($fd2d50)           */

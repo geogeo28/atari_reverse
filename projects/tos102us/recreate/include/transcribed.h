@@ -138,7 +138,12 @@
     ENTRY(aes_rom_rc_copy,            "")                                   /* Alcyon (from, to)           */ \
     ENTRY(aes_rom_rc_equal,           "")                                   /* Alcyon (one, other) -> D0.w */ \
     ENTRY(aes_rom_rc_union,           "d2")                                 /* Alcyon (from, into)         */ \
-    ENTRY(aes_rom_rc_constrain,       "")                                   /* Alcyon (container, rect)    */
+    ENTRY(aes_rom_rc_constrain,       "")                                   /* Alcyon (container, rect)    */ \
+    ENTRY(aes_rom_gsx2,               "")                                   /* trap #2 -> D0.w             */ \
+    ENTRY(aes_rom_gsx_ncode,          "")                                   /* Alcyon (op, n_ptsin, n_intin) -> D0.w */ \
+    ENTRY(aes_rom_gsx_1code,          "")                                   /* Alcyon (op, value) -> D0.w  */ \
+    ENTRY(aes_rom_gsx_mon,            "")                                   /* Alcyon ()                   */ \
+    ENTRY(aes_rom_gsx_fix,            "a2")                                 /* Alcyon (mfdb, address, bytes, height) */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a

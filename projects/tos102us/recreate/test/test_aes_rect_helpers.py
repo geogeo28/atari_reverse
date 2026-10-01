@@ -10,7 +10,7 @@ $feccd6, rc_equal $fecd0c, rc_union $fecd8c, rc_constrain $fecde4.
     rc_constrain(container, rect)   per axis: the origin pulled up to the container's, then back so the far edge fits
 
 Hand 68000 returning by `rts` (so no mask word is ever stored), seeded with the snapshot's own rectangles: the
-desktop window's current and full GRECTs, and an object's ob_x..ob_height — the GRECT inside every OBJECT, which
+desktop window's full and previous GRECTs, and an object's ob_x..ob_height — the GRECT inside every OBJECT, which
 the object library copies and tests (the AES resource's file selector, `aes.resource_tree(0)`).
 """
 import pytest
@@ -34,8 +34,8 @@ aes.declare_alcyon(RC_EQUAL, aes.WORD_ANSWER, (vdi.IMAGE_ARG, L, L))
 aes.declare_alcyon(RC_UNION, None, (vdi.IMAGE_ARG, L, L))
 aes.declare_alcyon(RC_CONSTRAIN, None, (vdi.IMAGE_ARG, L, L))
 
-DESKTOP_CURR = aes.AES_WINDOWS + aes.WIN_CURR
 DESKTOP_FULL = aes.AES_WINDOWS + aes.WIN_FULL
+DESKTOP_PREV = aes.AES_WINDOWS + aes.WIN_PREV
 SELECTOR = aes.resource_tree(0)
 # The file selector's object 12, the first of its nine file rows: its ob_x..ob_height, a GRECT inside the OBJECT.
 FILE_ROW = SELECTOR + 12 * aes.OB_BYTES + aes.OB_X
@@ -59,8 +59,8 @@ def two_rects(first, second):
 
 @pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
 def test_r_get_answers_the_desktop_window_s_four_words(through_line_f):
-    result = run(R_GET, (DESKTOP_CURR, *ANSWER_WORDS), STALE_ANSWERS, through_line_f=through_line_f)
-    assert tuple(aes.signed(result.word(at)) for at in ANSWER_WORDS) == rect_of(BASE_IMAGE, DESKTOP_CURR)
+    result = run(R_GET, (DESKTOP_FULL, *ANSWER_WORDS), STALE_ANSWERS, through_line_f=through_line_f)
+    assert tuple(aes.signed(result.word(at)) for at in ANSWER_WORDS) == rect_of(BASE_IMAGE, DESKTOP_FULL)
 
 
 def test_r_get_stores_each_word_before_it_reads_the_next():
@@ -73,8 +73,8 @@ def test_r_get_stores_each_word_before_it_reads_the_next():
 
 
 def test_r_get_puts_every_pointer_on_the_24_bit_bus():
-    result = run(R_GET, (DESKTOP_CURR | aes.BUS_TAG, *(at | aes.BUS_TAG for at in ANSWER_WORDS)), STALE_ANSWERS)
-    assert tuple(aes.signed(result.word(at)) for at in ANSWER_WORDS) == rect_of(BASE_IMAGE, DESKTOP_CURR)
+    result = run(R_GET, (DESKTOP_FULL | aes.BUS_TAG, *(at | aes.BUS_TAG for at in ANSWER_WORDS)), STALE_ANSWERS)
+    assert tuple(aes.signed(result.word(at)) for at in ANSWER_WORDS) == rect_of(BASE_IMAGE, DESKTOP_FULL)
 
 
 @pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
@@ -145,7 +145,7 @@ POINTS = {
 def test_inside(shape, through_line_f):
     x, y, rect = POINTS[shape]
     if rect is None:
-        at, pokes, model_rect = DESKTOP_CURR, None, rect_of(BASE_IMAGE, DESKTOP_CURR)
+        at, pokes, model_rect = DESKTOP_FULL, None, rect_of(BASE_IMAGE, DESKTOP_FULL)
     else:
         at, pokes, model_rect = FIRST_AT, aes.grect_pokes(FIRST_AT, *rect), signed_rect(rect)
     result = run(INSIDE, (x, y, at), pokes, through_line_f=through_line_f)
@@ -153,7 +153,7 @@ def test_inside(shape, through_line_f):
 
 
 def test_inside_puts_its_rectangle_on_the_24_bit_bus():
-    assert run(INSIDE, (160, 100, DESKTOP_CURR | aes.BUS_TAG)).answer() == 1
+    assert run(INSIDE, (160, 100, DESKTOP_FULL | aes.BUS_TAG)).answer() == 1
 
 
 PAIRS = {
@@ -174,9 +174,9 @@ def test_rc_equal(shape, through_line_f):
 
 
 def test_rc_equal_over_the_snapshot_and_the_24_bit_bus():
-    """The desktop's current area against itself (1) and against its full area (0), every pointer tagged."""
-    assert run(RC_EQUAL, (DESKTOP_CURR | aes.BUS_TAG, DESKTOP_CURR | aes.BUS_TAG)).answer() == 1
-    assert run(RC_EQUAL, (DESKTOP_FULL | aes.BUS_TAG, DESKTOP_CURR | aes.BUS_TAG)).answer() == 0
+    """The desktop's full area against itself (1) and against its previous one, the screen (0), every pointer tagged."""
+    assert run(RC_EQUAL, (DESKTOP_FULL | aes.BUS_TAG, DESKTOP_FULL | aes.BUS_TAG)).answer() == 1
+    assert run(RC_EQUAL, (DESKTOP_PREV | aes.BUS_TAG, DESKTOP_FULL | aes.BUS_TAG)).answer() == 0
 
 
 # ---- rc_union ---------------------------------------------------------------------------------------------------
@@ -229,10 +229,10 @@ def test_rc_union_puts_both_pointers_on_the_24_bit_bus():
 
 
 def test_rc_union_of_the_desktop_window_s_rectangles():
-    """Real data: the full area joined into the current one, in place."""
-    result = run(RC_UNION, (DESKTOP_FULL, DESKTOP_CURR))
-    assert rect_of(result.final, DESKTOP_CURR) == union_model(rect_of(BASE_IMAGE, DESKTOP_FULL),
-                                                              rect_of(BASE_IMAGE, DESKTOP_CURR))
+    """Real data: the previous area (the screen) joined into the full one, in place."""
+    result = run(RC_UNION, (DESKTOP_PREV, DESKTOP_FULL))
+    assert rect_of(result.final, DESKTOP_FULL) == union_model(rect_of(BASE_IMAGE, DESKTOP_PREV),
+                                                              rect_of(BASE_IMAGE, DESKTOP_FULL))
 
 
 # ---- rc_constrain -----------------------------------------------------------------------------------------------
@@ -287,8 +287,8 @@ def test_rc_constrain_puts_both_pointers_on_the_24_bit_bus():
 
 def test_rc_constrain_of_an_object_to_the_desktop():
     """Real data: the selector's first file row, taken as a screen rectangle, kept inside the desktop's area."""
-    result = run(RC_CONSTRAIN, (DESKTOP_CURR, FILE_ROW))
-    assert rect_of(result.final, FILE_ROW) == constrain_model(rect_of(BASE_IMAGE, DESKTOP_CURR),
+    result = run(RC_CONSTRAIN, (DESKTOP_FULL, FILE_ROW))
+    assert rect_of(result.final, FILE_ROW) == constrain_model(rect_of(BASE_IMAGE, DESKTOP_FULL),
                                                               rect_of(BASE_IMAGE, FILE_ROW))
 
 
@@ -299,8 +299,8 @@ def test_no_helper_stores_the_mask_word():
 
 
 # ---- the registry: each routine's dearest realistic shapes priced, and one through Line-F -------------------------
-aes.register("the desktop window", R_GET, (DESKTOP_CURR, *ANSWER_WORDS), aes.leaf_machine(onto=STALE_ANSWERS))
-aes.register("the desktop window", R_GET, (DESKTOP_CURR, *ANSWER_WORDS), aes.leaf_machine(onto=STALE_ANSWERS),
+aes.register("the desktop window", R_GET, (DESKTOP_FULL, *ANSWER_WORDS), aes.leaf_machine(onto=STALE_ANSWERS))
+aes.register("the desktop window", R_GET, (DESKTOP_FULL, *ANSWER_WORDS), aes.leaf_machine(onto=STALE_ANSWERS),
              through_line_f=True)
 aes.register("the desktop's words", R_SET, (FIRST_AT, 0, 11, 320, 189), aes.leaf_machine())
 aes.register("the desktop's words", R_SET, (FIRST_AT, 0, 11, 320, 189), aes.leaf_machine(), through_line_f=True)
@@ -309,20 +309,20 @@ aes.register("an object's rectangle", RC_COPY, (FILE_ROW, FIRST_AT), aes.leaf_ma
 for _shape in ("the origin", "left of it", "the last row", "the far edge down", "the desktop's middle",
                "the menu bar, above the desktop"):
     _x, _y, _rect = POINTS[_shape]
-    _at, _pokes = (DESKTOP_CURR, None) if _rect is None else (FIRST_AT, aes.grect_pokes(FIRST_AT, *_rect))
+    _at, _pokes = (DESKTOP_FULL, None) if _rect is None else (FIRST_AT, aes.grect_pokes(FIRST_AT, *_rect))
     aes.register(_shape, INSIDE, (_x, _y, _at), aes.leaf_machine(onto=_pokes))
-aes.register("the desktop's middle", INSIDE, (160, 100, DESKTOP_CURR), aes.leaf_machine(), through_line_f=True)
+aes.register("the desktop's middle", INSIDE, (160, 100, DESKTOP_FULL), aes.leaf_machine(), through_line_f=True)
 for _shape in ("equal", "x differs", "h differs"):
     aes.register(_shape, RC_EQUAL, (FIRST_AT, SECOND_AT), aes.leaf_machine(onto=two_rects(*PAIRS[_shape])))
 aes.register("equal", RC_EQUAL, (FIRST_AT, SECOND_AT), aes.leaf_machine(onto=two_rects(*PAIRS["equal"])),
              through_line_f=True)
 for _shape in sorted(UNIONS):
     aes.register(_shape, RC_UNION, (FIRST_AT, SECOND_AT), aes.leaf_machine(onto=two_rects(*UNIONS[_shape])))
-aes.register("the desktop window", RC_UNION, (DESKTOP_FULL, DESKTOP_CURR), aes.leaf_machine())
+aes.register("the desktop window", RC_UNION, (DESKTOP_PREV, DESKTOP_FULL), aes.leaf_machine())
 aes.register("disjoint", RC_UNION, (FIRST_AT, SECOND_AT), aes.leaf_machine(onto=two_rects(*UNIONS["disjoint"])),
              through_line_f=True)
 for _shape in sorted(CONSTRAINTS):
     aes.register(_shape, RC_CONSTRAIN, (FIRST_AT, SECOND_AT), aes.leaf_machine(onto=two_rects(*CONSTRAINTS[_shape])))
-aes.register("an object to the desktop", RC_CONSTRAIN, (DESKTOP_CURR, FILE_ROW), aes.leaf_machine())
+aes.register("an object to the desktop", RC_CONSTRAIN, (DESKTOP_FULL, FILE_ROW), aes.leaf_machine())
 aes.register("off to the lower right", RC_CONSTRAIN, (FIRST_AT, SECOND_AT),
              aes.leaf_machine(onto=two_rects(*CONSTRAINTS["off to the lower right"])), through_line_f=True)

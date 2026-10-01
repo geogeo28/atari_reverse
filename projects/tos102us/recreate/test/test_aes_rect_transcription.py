@@ -80,7 +80,7 @@ def register(label, name, arguments, pokes=None):
 
 # ---- the relation over the C battery's shapes ---------------------------------------------------------------------
 CASES = {
-    (R_GET, "the desktop window"): ((helpers.DESKTOP_CURR, *helpers.ANSWER_WORDS), helpers.STALE_ANSWERS),
+    (R_GET, "the desktop window"): ((helpers.DESKTOP_FULL, *helpers.ANSWER_WORDS), helpers.STALE_ANSWERS),
     (R_GET, "each word before the next"): ((helpers.FIRST_AT, helpers.FIRST_AT + aes.GRECT_Y, *helpers.ANSWER_WORDS[1:]),
                                            merge_pokes(helpers.STALE_ANSWERS, aes.grect_pokes(helpers.FIRST_AT, 3, 4, 5, 6))),
     (R_SET, "the desktop's words"): ((helpers.FIRST_AT, 0, 11, 320, 189), None),
@@ -90,13 +90,13 @@ CASES = {
                                              aes.grect_pokes(helpers.FIRST_AT, 1, 2, 3, 4)),
     **{(RC_EQUAL, shape): ((helpers.FIRST_AT, helpers.SECOND_AT), helpers.two_rects(*rects))
        for shape, rects in helpers.PAIRS.items()},
-    (RC_EQUAL, "the desktop's two rectangles"): ((helpers.DESKTOP_FULL, helpers.DESKTOP_CURR), None),
+    (RC_EQUAL, "the desktop's two rectangles"): ((helpers.DESKTOP_PREV, helpers.DESKTOP_FULL), None),
     **{(RC_UNION, shape): ((helpers.FIRST_AT, helpers.SECOND_AT), helpers.two_rects(*rects))
        for shape, rects in helpers.UNIONS.items()},
-    (RC_UNION, "the desktop window"): ((helpers.DESKTOP_FULL, helpers.DESKTOP_CURR), None),
+    (RC_UNION, "the desktop window"): ((helpers.DESKTOP_PREV, helpers.DESKTOP_FULL), None),
     **{(RC_CONSTRAIN, shape): ((helpers.FIRST_AT, helpers.SECOND_AT), helpers.two_rects(*rects))
        for shape, rects in helpers.CONSTRAINTS.items()},
-    (RC_CONSTRAIN, "an object to the desktop"): ((helpers.DESKTOP_CURR, helpers.FILE_ROW), None),
+    (RC_CONSTRAIN, "an object to the desktop"): ((helpers.DESKTOP_FULL, helpers.FILE_ROW), None),
 }
 
 
@@ -108,7 +108,7 @@ def test_the_transcription_behaves_as_the_rom(name, shape):
 
 def test_the_pointers_top_bytes_reach_the_transcription_as_they_reach_the_rom():
     """Every pointer tagged: the ROM's `movem` loads all 32 bits and the bus drops the top byte — so does the `.S`."""
-    tagged = tuple(at | aes.BUS_TAG for at in (helpers.DESKTOP_CURR, *helpers.ANSWER_WORDS))
+    tagged = tuple(at | aes.BUS_TAG for at in (helpers.DESKTOP_FULL, *helpers.ANSWER_WORDS))
     run(R_GET, tagged, helpers.STALE_ANSWERS)
     run(RC_UNION, (helpers.FIRST_AT | aes.BUS_TAG, helpers.SECOND_AT | aes.BUS_TAG),
         helpers.two_rects(*helpers.UNIONS["disjoint"]))

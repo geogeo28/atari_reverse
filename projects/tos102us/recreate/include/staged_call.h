@@ -355,4 +355,36 @@ static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t
 #endif
 }
 
+/* ---- the ALCYON CALL OF ONE LONGWORD: a routine a caller hands in, over a frame of one pointer -----------------------
+ *
+ * The shell's sh_find (`$feb0c8`) calls the routine its caller hands it — only sh_main hands one, `$feaddc` — over the
+ * path it found: `move.l <path>,-(sp) / movea.l <routine>,a0 / jsr (a0) / addq.l #4,sp`. ALCYON's contract, as
+ * call_alcyon_object's: the routine keeps D3-D7/A3-A6 and may change D0-D2/A0-A2.
+ *
+ * OFF TARGET it reaches the REGISTER-CARRYING hook (there is ONE such hook): the longword in A0's slot, D0 and D1 handed
+ * nothing (`STAGED_CALL_NO_ARGUMENT`). A host stub has no register file, so the frame's layout is pinned at Tier 3, where
+ * the cross-compiled blob pushes it for the case's staged 68000 routine. */
+static inline void call_alcyon_pointer(uint8_t *image, uint32_t routine, uint32_t pointer)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    uint32_t registers[STAGED_REGISTERS];
+
+    registers[STAGED_D0] = STAGED_CALL_NO_ARGUMENT;
+    registers[STAGED_D1] = STAGED_CALL_NO_ARGUMENT;
+    registers[STAGED_A0] = pointer;
+    recreate_call_vector_registers(image, routine, registers);
+#else
+    register uint32_t target __asm__("a0") = routine;
+
+    (void)image;
+    /* The value in a REGISTER ("r"): a stack operand would move under the push. */
+    __asm__ volatile ("move.l %1,-(%%sp)\n\t"
+                      "jsr (%0)\n\t"
+                      "addq.l #4,%%sp"
+                      : "+a"(target)
+                      : "r"(pointer)
+                      : "d0", "d1", "d2", "a1", "a2", "memory", "cc");
+#endif
+}
+
 #endif /* TOS102US_STAGED_CALL_H */

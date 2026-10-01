@@ -111,6 +111,7 @@
 #define RSH_NBB               28         /* word: BITBLKs                       ($feac02 movea.l #28)          */
 #define RSH_NSTRING           30         /* word: free strings                  ($feac1c movea.l #30)          */
 #define RSH_NIMAGES           32         /* word: free images                   ($feac36 movea.l #32)          */
+#define RSH_RSSIZE            34         /* word: the file's whole length       ($feab44 move.w $c88e,d7)      */
 #define RSH_BYTES             36         /* rsrc_load's first read              ($feab32 move.w #36)           */
 /* The globals: which application's `global[]` the calls are for, and its header (global[7..8], ap_pmem). */
 #define AES_RS_GLOBAL         0x9802     /* long: the caller's global[]         ($feaa3c)                      */
@@ -119,6 +120,7 @@
 #define AES_RS_SYSTEM_GLOBAL  0x9806     /* long: the AES's own global[], for its ROM resource ($fda02c)       */
 #define AES_RS_STRING         0xb89a     /* rs_str's copy of a free string, and its answer ($fea704 move.l #) */
 #define AES_RS_ADDROUT        0x944c     /* long: rsrc_gaddr's answer, for addrout[0] ($fe65a2)                */
+#define AES_RS_HEADER_COPY    0xc86c     /* bytes[RSH_BYTES]: rsrc_load's read of the file's header ($feab2c)   */
 #define AES_GLOBAL_PMEM       14         /* global[7..8]: the header            ($feaa4a adda.l #14)           */
 #define AES_GLOBAL_PTREE      10         /* global[5..6]: the tree table        ($fea776 adda.l #10)           */
 #define AES_GLOBAL_LMEM       18         /* global[9]: the resource's length    ($feabc2 adda.l #18)           */

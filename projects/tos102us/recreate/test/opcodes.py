@@ -24,6 +24,7 @@ RTE = b"\x4e\x73"                       # ...the way out of an exception handler
 TRAP_BIOS = b"\x4e\x4d"                 # trap    #13
 TRAP_XBIOS = b"\x4e\x4e"                # trap    #14
 TRAP_GEMDOS = b"\x4e\x41"                # trap    #1, the GEMDOS entry
+TRAP_GEM = b"\x4e\x42"                   # trap    #2, GEM's entry: the AES and the VDI
 JSR_ABSOLUTE_LONG = b"\x4e\xb9"          # jsr     <xxx>.l
 LINE_A = 0xA000                         # $Axxx: the Line-A exception, the low twelve bits its opcode
 LINE_F = 0xF000                         # $Fxxx: the Line-F exception, GEM's call and return (`aes/aes.h`)
@@ -93,9 +94,18 @@ MOVE_B_A1_TO_A0 = 0x10D9                # move.b  (a1)+,(a0)+
 DBF_D2 = 0x51CA                         # dbf     d2,<d16>
 DBF_D1 = 0x51C9                         # dbf     d1,<d16>
 SUBQ_W_1_ABSOLUTE_LONG = 0x5379         # subq.w  #1,<xxx>.l
+CMPI_W_STACK = 0x0C6F                   # cmpi.w  #<imm>,<d16>(sp)
+CLR_W_A0_POSTINC = 0x4258               # clr.w   (a0)+
+MOVE_L_A0_POSTINC_D0 = 0x2018           # move.l  (a0)+,d0
+# A short branch's HIGH BYTE alone: a stub that lays itself out puts the displacement in the low byte.
+BRA_S = 0x60                            # bra.s   <d8>
+BEQ_S = 0x67                            # beq.s   <d8>
 SEQ_D0 = 0x57C0                         # seq     d0
 EXT_W_D0 = 0x4880                       # ext.w   d0
 MOVE_W_ABSOLUTE_TO_ABSOLUTE = 0x33F9    # move.w  <xxx>.l,<yyy>.l
+MOVE_W_D0_ABSOLUTE = 0x33C0             # move.w  d0,<xxx>.l
+MOVE_L_D0_ABSOLUTE = 0x23C0             # move.l  d0,<xxx>.l
+MOVE_W_ABSOLUTE_D0 = 0x3039             # move.w  <xxx>.l,d0
 MOVE_B_ABSOLUTE_TO_ABSOLUTE = 0x13F9    # move.b  <xxx>.l,<yyy>.l
 ADD_ONE_TO_BYTE_ABSOLUTE = 0x5239       # addq.b  #1,<xxx>.l
 # `cmp.w #<imm>,d0` as the ROM's assembler spelt it — the register form, not gas's CMPI — which a case reads the

@@ -16,7 +16,7 @@ either README for the concrete wiring. This doc generalises the lessons.
 **It is a long file, so here is what is in it.** *Getting there:* the harness's blindness and
 [measuring it before you choose what to port](#measure-the-blindness-before-you-choose-what-to-reconstruct);
 [the seam pattern](#the-seam-pattern) and the two ways a seam leaks. *What goes wrong:* the
-[thirteen-class bug taxonomy](#bug-taxonomy-1-5-in-buggyboy-6-8-in-joust-9-12-in-wonder-boy-13-in-zynaps),
+[fourteen-class bug taxonomy](#bug-taxonomy-1-5-in-buggyboy-6-8-in-joust-9-12-in-wonder-boy-13-in-zynaps-14-in-the-tos-102-recreate),
 each written from a build that hit it. *Going faster:* [sizing the gap](#sizing-the-gap-in-class-13--the-ways-a-cost-instrument-lies),
 [the asm twin](#the-asm-twin--the-originals-own-instructions-inside-the-port),
 [fitting the machine](#fitting-the-machine--measuring-a-memory-budget-instead-of-assuming-one).
@@ -204,7 +204,7 @@ A bound that legitimately differs across the two shores is a third shape and is 
 still a residual: see "Fitting the machine" below for the image-bounds helper whose two arms stop at
 different addresses off target and on, and which is recorded as unpinned rather than argued away.
 
-## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps, 14 in the TOS 1.02 recreate)
 
 Entries **1-9 and 11-13 were each HIT in a real build** and are written from the wreckage — 11 and
 12 on a real Atari, by a person who switched the machine on, and 13 by a port that passed every
@@ -215,7 +215,9 @@ anyway. A shape that is cheap to avoid once you have seen it named is exactly wh
 for; the honest label there is "avoided", not "survived". **Two more "avoided" shapes are written up
 outside this list** because they belong beside the mechanism they abuse — the harness cap and the
 per-build `#ifdef` in "Two ways a seam leaks the harness into the shipped program" above. Each would
-have shipped a real defect and each was caught in review; read them with these.
+have shipped a real defect and each was caught in review; read them with these. **Entry 14 sits
+between the two**: it was in a real build — the cross-compiled ELF the bench measures — and was caught
+by the pre-commit code-review gate reading that ELF's disassembly, before any machine ran it.
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -808,6 +810,60 @@ on target a slower frame draws the same pixels because a frame-locked game reads
   gap in class 13** below. When the answer turns out to be "the compiled C costs three times the
   routine it replaced", **The asm twin** after it is the method that collects it.
 
+### 14. An odd-sized byte array at an odd stack offset — an address error the oracle completes
+
+**Caught by the code-review gate in the built ELF, never run on iron.** TOS 1.02's `sh_envrn` and
+`sh_find` (`projects/tos102us/recreate/src/aes/shell_find.c`) keep the ROM's frame whole in a local
+array and reach its fields with `wr16`/`wr32`/`be16`/`be32` — which on target are native
+`move.w`/`move.l` (class 1). Every Tier 3 row over them was green. On a 68000 every call would have
+bombed.
+
+**The bug shape.** A `uint8_t` array has alignment 1, so GCC is free to place it at an ODD stack
+offset, and it does when the array's size is odd. The frame base came out at `sp+29` (envrn_search)
+and `sp+37` (aes_sh_find), and the emitted code then made word and long accesses through it —
+`move.w %d1,36(%a6)`, `move.l %a3,38(%a6)`, `move.l %d0,14(%a2)`. A word or long access at an odd
+address is an ADDRESS ERROR on the 68000: three bombs, every time.
+
+**How it slipped in, and it is the transferable half.** The arrays had been 46 and 22 bytes, and the
+same compile put them at `sp+30` and `sp+38` — even by luck of the size, and nothing said so. A review
+fix then grew each slot by ONE byte, to cover the caller's saved A6's top byte the ROM writes one past
+the frame (an overrun bound moved one byte later). 47 and 23: both frames went odd, and the fix's own
+`_Static_assert`s pinned slot == frame size, not alignment. **An even size was an invariant nobody had
+written down, and a +1 removed it silently.**
+
+**Why nothing saw it.** The host `.so` assembles every word byte by byte (class 1's little-endian
+arm), so it has no alignment to get wrong. And Tier 3 runs the cross-compiled code in Musashi, which
+the kit builds with `M68K_EMULATE_ADDRESS_ERROR` OFF (`tools/recreate_kit/oracle/musashi/m68kconf.h`,
+the header's default) — so the odd access simply completes and the row reports the right answer, for
+a build a real machine cannot run one instruction of.
+
+- **Symptom (predicted, not observed):** three bombs on every `shel_envrn`, `shel_find` and
+  `rsrc_load` call.
+- **Diagnosis:** `m68k-elf-objdump -d` the linked ELF and read the `lea %sp@(n)` that forms the frame
+  base: an odd `n` under a word or long access through that register is the bug. A scan of every
+  sp-relative word/long access at an odd offset across the ELFs is a minute's work.
+- **Fix:** declare the frame word-aligned — `uint16_t frame_local[(SLOT_BYTES + 1) / 2]` with a
+  `_Static_assert(sizeof frame_local >= SLOT_BYTES)`, the precedent `src/vdi/text.c` and
+  `src/vdi/workstation.c` already followed (`FRAME_LOCAL_WORDS` in `shell_find.c`). The bases became
+  `sp+28` and `sp+36`. Odd-sized `uint8_t` locals that are only ever accessed by BYTE are harmless
+  (two remain, `aes_merge_str` and `redirected_read_character`, and `fs_create.c`'s 11-byte
+  `fcb_local`); what makes one a bug is the first word or long access through it.
+- **The surface, and why it is not the Musashi flag.** Turning `M68K_EMULATE_ADDRESS_ERROR` on was
+  measured and not taken, for two reasons. One `liboracle.so` serves every project, so the flag would
+  change every project's CPU and cannot be scoped to one. And **the ROM itself makes an odd access in
+  a verified case**: TOS 1.02's `vst_height` "chain on from 0 through the 24-bit bus" reads a font
+  header out of the vector page and makes two odd accesses (the first at `$20027`, PC `$fce040`), so
+  the flag reds a faithful row. Instead the shim COUNTS: its four 16/32-bit memory callbacks note
+  every odd address, keep the first eight in order and the PC of the instruction that made the first
+  (`osh_odd_accesses` / `osh_odd_address(i)` / `osh_odd_first_pc`, `emu.odd_accesses()`), and the CPU
+  is unchanged for everyone. `rom_bench` REFUSES an m68k-build row that made an odd access, unless the
+  ORIGINAL made the same number at the same addresses in the same order — exactly vst_height's case,
+  which the build reproduces. RED-proved: with the
+  `uint8_t` arrays restored, exactly the 10 shell rows red, each naming the address, the PC and the
+  cause. `tools/recreate_kit/TRAP_MODEL.md`, "Odd word and long accesses — counted, not taken", has
+  the mechanism. **Its honest limit:** only `rom_bench` consults the counter today — the `asm_twin`
+  bench runs and Tier 1 do not, so the PRG projects have no such refusal yet.
+
 ## Sizing the gap in class 13 — the ways a cost instrument lies
 
 Class 13 is about a gap no surface reports. *Sizing* it is a second problem, and Zynaps' five asm
@@ -1250,7 +1306,7 @@ have shown me if it were wrong?"**
 | **the hardware-state vector** | the registers themselves, read back at a frame anchor — shifter pens, resolution, YM file, video base | the ORDER things reached them, and anything between two anchors. **And any register whose value is a PHASE rather than a state**: if the game has music playing at the anchor, the PSG's sound registers depend on which vblank the boot finished on, and two boots of the *same binary* disagree about them. Measure that before comparing them (boot the original twice and diff the vectors); what moves is not evidence, and the surface that can compare it is the timeline below |
 | **rendered pixels** | Hatari `screenshot`, i.e. the emulator's real video path | nothing about *why*; and it is only as reproducible as the emulator's frame rendering |
 | **timelines** | the ordered stream of hardware writes (`--trace video_color,psg_write`), reduced to a per-phase shape — **and the run's own PACING**: vertical blanks per frame, interrupt service rates, taken from the program's record or from a repeating `:quiet` breakpoint's `VBL=`/`FrameCycles=` lines (taxonomy 13) | values it does not sample; it is a shape, not a state. Pacing measured on the host's clock rather than the machine's is worth nothing at all |
-| **exit status and the log** | the emulator's own return code plus its bus/address-error and halt lines | anything the machine survives *and* does not log |
+| **exit status and the log** | the emulator's own return code plus its bus/address-error and halt lines — the on-target surface for taxonomy 14's address error; off target, the stand-in is the oracle shim's odd-access counter, which `rom_bench` refuses on | anything the machine survives *and* does not log |
 
 **A gotcha that makes one of these surfaces lie, and it is the emulator's rather than the machine's.**
 Hatari 2.6.1 exits on `--run-vbls` **without writing a modified `.ST` floppy image back to the host

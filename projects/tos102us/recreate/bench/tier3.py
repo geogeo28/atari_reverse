@@ -25,6 +25,7 @@ file also refuses a verified case with NO row here. This file prints; that file 
 import argparse
 import ctypes
 import functools
+import re
 import struct
 import sys
 from collections import namedtuple
@@ -39,7 +40,7 @@ from recreate_kit import project                           # noqa: E402
 project.load(RECREATE)
 
 from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench   # noqa: E402
-from harness import addrs, emu                             # noqa: E402  (binds the kit)
+from harness import addrs, emu, make_image                 # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
 from case import tier3_dropped                             # noqa: E402  (every component's rows' drops)
 # THE REGISTER OF VERIFIED CASES, and with it every battery whose constructors built one. Importing a
@@ -87,6 +88,11 @@ import shipped_glue                                        # noqa: E402
 # ...and the escape's transcription battery, for the ROM spans escape.S transcribes and the prefix of the thunks it
 # reaches the console's C through — what mechanism (T←) splits an escape `.S` row by.
 import test_vdi_escape_transcription as escape_transcription   # noqa: E402
+# ...and the AES's door, for the spans mechanism (V) holds the ROM's side of a row through the OS to: its text and the
+# Line-F handler's RAM copy.
+import aes                                                 # noqa: E402
+# ...and the opcode words, for the one a listing is searched for: `trap #2`.
+import opcodes                                             # noqa: E402
 
 # THE BAR, named once and read by both this file and the gate. A function above it is a perf item
 # rather than a verified row (../README.md, "Tier 3 — performance"): it is brought under by the
@@ -224,6 +230,23 @@ RATIO_TOLERANCE = 0.02
 #       ONE MEASURED LENIENCE: a ROM byte the escape and the console BOTH execute counts as the escape's on the ROM's
 #       side — vq_chcells' `rts` ($fc444e), which ESC A-D and ESC J branch to when they refuse a move — so the rows
 #       refused at an edge read 0.85 (88 cycles against 104), 16 cycles a spill could hide in on those rows alone.
+#   (V) THROUGH THE OS. The AES draws through the VDI by `trap #2` (`aes/gsx.h`), and on target our C's trap lands in
+#       the snapshot's own vector — GEM's selector switch, the BIOS's VDI door, the ROM's VDI, Line-A — exactly where
+#       the ROM's does: both columns run those bytes, and they dwarf the AES's part (measured: v_pline's triangle row,
+#       the OS both run is 31,224 of the ROM's 31,774 cycles, 98%), so a whole-run ratio would let an AES body twice the
+#       ROM's pass. So every row whose m68k C REACHES the trap (the call graph's closure onto a function holding
+#       `trap #2`) is PROFILED and priced on its OWN cycles: OURS every blob cycle less the glue's (T→G); the ROM's the cycles
+#       at PCs in the AES text and in the Line-F handler's RAM copy (`AES_OWN_SPANS`: the Line-F overhead IS the ROM
+#       AES's own cost), less the trap's selector switch both sides run. Everything else — the trap path, the VDI,
+#       Line-A, code the VDI builds on the stack, staged stubs — is in neither, and the ROM's own is measured on a run
+#       of the original ALONE, so a C that strayed into the AES's ROM bytes cannot be credited with them
+#       (`_measure_through_the_os` refuses it). The own ratio is printed in the ratio column, the whole run's beneath.
+#       At or under the bar it is `net` only while it stays there WITH the glue counted back on our side ((ours + glue)
+#       / the ROM's); a row under the bar only because the thunks are off is verdict `glue`, exactly as (T→G) labels the
+#       same lenience, and the line beneath prints the ratio with the glue. Over the bar on the own ratio, OVER unless
+#       an entry accepts it. An entry — an acceptance or a pin under the bar — is written at the number that SHIPS, the
+#       own ratio WITH the glue counted back, as a (T→) row's is at its shipped one; a pinned row still splits `net`
+#       from `glue`. Derived, never typed: `test_tier3.py` refuses a written entry for a row the rule carries.
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -254,6 +277,13 @@ PERF_ACCEPTED = {
     ("vdi_choice", "sampled"): (1.49, "(A) + (D) through poll_choice's glue, as shipped: 270 -> 382 cycles. "
                                       "It read 0.62 while GCC inlined poll_choice's C; a core the target "
                                       "build replaces with its `.S` cannot be inlined (`TRANSCRIBED_CORE`)"),
+    # A (V) row over the bar on its OWN cycles, where nothing is shared: gsx_moff's open nest calls nothing, and the
+    # ROM's `tst.w $c86a / bne / addq.w #1,$c86a / rts` is the whole of it. The C's floor is (A): the image pointer
+    # loaded (`movea.l 4(sp),a0`) and $c86a, past a 16-bit displacement, added to it (`adda.l #imm`) — the rest is the
+    # ROM's own `move.w/beq/addq.w/move.w/rts` (the hide path split off so this one builds no frame, `src/aes/gsx.c`).
+    # A byte-exact `.S` is impossible: the hide path's Line-F call word cannot execute in an AES `.S`, and a `.S` that
+    # reached C instead through a thunk of its own ((T←), as the VDI escape does) would no longer be the ROM's bytes.
+    ("aes_gsx_moff", "the nest already open"): (1.23, "(A) on its own cycles, nothing shared: 62 -> 76 cycles"),
 
     # (A) alone, on a trap leaf, is not written down at all any more: those rows are admitted by
     # THE LEAF RULE below, which measures the excess against the dispatched call the machine really
@@ -1682,14 +1712,19 @@ def _measure_call(bench, row):
                          dropped=row.dropped)
 
 
-def _measure_as_shipped(row):
-    """A (T→) row on the shipped blob, PROFILED: the `Measurement` carries `glue_cycles` beside its costs."""
+def _profiled(run):
+    """`run()`'s answer, measured with the cycle profile cleared first and enabled only while it runs."""
     emu.prof_reset()
     emu.prof_enable(True)
     try:
-        measured = _measure_call(shipped_bench(), row)
+        return run()
     finally:
         emu.prof_enable(False)
+
+
+def _measure_as_shipped(row):
+    """A (T→) row on the shipped blob, PROFILED: the `Measurement` carries `glue_cycles` beside its costs."""
+    measured = _profiled(lambda: _measure_call(shipped_bench(), row))
     measured.glue_cycles = cycles_inside_glue()
     return measured
 
@@ -1775,12 +1810,7 @@ def _measure_into_c(row, bench):
     Code both sides run from the same bytes (a ROM routine the `.S` jumps to, a staged RAM stub) is in neither."""
     split = CALLS_INTO_C[rom_address(row)]
     thunks, callees = into_c_ranges(bench.elf, split.thunk_prefix)
-    emu.prof_reset()
-    emu.prof_enable(True)
-    try:
-        measured = _measure_transcription(row, bench)
-    finally:
-        emu.prof_enable(False)
+    measured = _profiled(lambda: _measure_transcription(row, bench))
     thunk_cycles, c_cycles = _cycles_in(thunks), _cycles_in(callees)
     measured.into_c_cycles = (thunk_cycles, c_cycles)
     measured.own_cycles = (emu.prof_cycles(bench.base, bench.end) - thunk_cycles - c_cycles, _cycles_in(split.spans))
@@ -1788,10 +1818,16 @@ def _measure_into_c(row, bench):
 
 
 def own_ratio(measured):
-    """(T←): the `.S`'s own instructions against the ROM's — the only part of a (T←) row the `.S` is answerable for."""
+    """(T←) and (V): our own cycles against the ROM's — the only part of such a row our build is answerable for."""
     ours, original = measured.own_cycles
-    assert original > 0, "the ROM ran none of the spans this `.S` transcribes — the row enters no arm of it"
+    assert original > 0, "the ROM spent nothing in the spans this row is answerable for — the row enters no arm of it"
     return ours / original
+
+
+def own_ratio_with_glue(measured):
+    """(V): the own ratio with the thunks' cycles counted back on our side — what decides `net` against `glue`."""
+    ours, original = measured.own_cycles
+    return (ours + glue_cycles_of(measured)) / original
 
 
 def cited_acceptances_stand(row):
@@ -1804,6 +1840,87 @@ def own_within_bar(row, measured):
     """(T←) holds EVERY row of a `.S` that calls C to its own instructions — under the bar as a whole too, where the
     code it shares with the ROM (a routine it jumps to) would otherwise dilute a spill of its own into the average."""
     return not calls_into_c(row) or own_ratio(measured) <= TIER3_FUNCTION_BAR
+
+
+# MECHANISM (V): C that reaches the VDI through `trap #2`, priced on the AES's own cycles (the legend above).
+# The ROM's side: the AES's text and the Line-F handler's RAM copy, less GEM's selector switch (the trap arm a VDI
+# call runs, `move.l SYSVAR_VDI_ENTRY,-(sp); rts`), which our build's trap runs from the same bytes.
+LINE_F_HANDLER_COPY = (aes.AES_LINEF_COPY, aes.AES_LINEF_COPY + aes.LINEF_COPY_BYTES)
+GEM_SELECTOR_SWITCH = (addrs.GEM_TRAP2, addrs.GEM_TRAP2_PTERM_ARM)
+AES_OWN_SPANS = ((aes.AES_TEXT[0], GEM_SELECTOR_SWITCH[0]), (GEM_SELECTOR_SWITCH[1], aes.AES_TEXT[1]), LINE_F_HANDLER_COPY)
+# `trap #2` as the m68k listing spells it: its opcode word, and the mnemonic.
+_LISTED_TRAP_2 = re.compile(rf"^\s+([0-9a-f]+):\s+{opcodes.TRAP_GEM.hex()}\s+trap #2\s*$", re.M)
+
+
+@functools.cache
+def trap_2_functions(elf):
+    """The call-graph nodes of `elf` whose OWN instructions include a `trap #2` — the bridge, inlined wherever a
+    caller compiled it (`aes/gsx.h`'s `gsx_trap`)."""
+    traps = [int(at, 16) for at in _LISTED_TRAP_2.findall(transcription.listing(elf))]
+    return frozenset(node for node, spans in _function_ranges(elf).items()
+                     if any(lo <= at < hi for lo, hi in spans for at in traps))
+
+
+@functools.cache
+def _reaching_the_trap():
+    """Every function of the m68k build from which a `trap #2` is reachable: the bridge's holders and their callers,
+    closed over the call graph."""
+    graph = transcription.call_graph(BUILT_ELF)
+    vet_no_row_is_ambiguous(graph)
+    return frozenset(transcription.callers_closure(graph, trap_2_functions(BUILT_ELF)))
+
+
+def goes_through_the_os(row):
+    """(V): is `row` the C of a routine that reaches the VDI by `trap #2` — priced on its own cycles?"""
+    return not row.transcription and row.symbol in _reaching_the_trap()
+
+
+def _original_own_cycles(row):
+    """The ROM's own cycles over `row`'s case: the ORIGINAL run alone, profiled, inside `AES_OWN_SPANS`."""
+    _profiled(lambda: emu.run(make_image(row.pokes), row.entry, dict(row.regs or {}), psg_seed=row.psg_seed,
+                              io_seed=row.io_seed, schedule=row.schedule))
+    return _cycles_in(AES_OWN_SPANS)
+
+
+def _measure_through_the_os(row, bench):
+    """A (V) row, PROFILED: the `Measurement` carries `own_cycles` (ours, the ROM's) beside its costs — and, measured
+    as shipped, `glue_cycles` too. Ours is every cycle at the blob's PCs less the thunks'; the ROM's comes from its
+    own run (`_original_own_cycles`), and the measurement's run of BOTH must spend exactly that much in the AES's
+    spans: a cycle more is our build executing the AES's ROM bytes, which would be counted as the ROM's own."""
+    original_own = _original_own_cycles(row)
+    if ships_through_a_call(row):
+        blob, measured = shipped_bench(), _measure_as_shipped(row)
+    else:
+        blob, measured = bench, _profiled(lambda: _measure_call(bench, row))
+    both_in_the_aes = _cycles_in(AES_OWN_SPANS)
+    assert both_in_the_aes == original_own, (
+        f"{row.symbol} / {row.case}: our build spent {both_in_the_aes - original_own} cycles inside the AES's own ROM "
+        f"spans — a (V) row's C reaches the ROM only through the trap, never the AES's code itself")
+    # Net of the reset both entries are charged (`Measurement`), which each tally places at its entry: own spans both.
+    reset = measured.overhead_cycles
+    measured.own_cycles = (emu.prof_cycles(blob.base, blob.end) - glue_cycles_of(measured) - reset, original_own - reset)
+    shared, original_shared = shared_cycles(measured)
+    assert shared == original_shared, (
+        f"{row.symbol} / {row.case}: the OS both sides run cost ours {shared} cycles and the ROM's {original_shared} — "
+        f"cost moved into code counted as shared (a jump into ROM code past the trap, other VDI arguments)")
+    return measured
+
+
+def shared_cycles(measured):
+    """(V): `(ours, the ROM's)` cycles in the OS both sides run — each side's whole, less its own and our thunks'."""
+    ours, original = measured.own_cycles
+    return measured.recreate_net - ours - glue_cycles_of(measured), measured.original_net - original
+
+
+def gated_ratio(row, measured):
+    """The ratio the bar is held to, and the table prints: a (V) row's OWN ratio, every other row's whole one."""
+    return own_ratio(measured) if goes_through_the_os(row) else measured.ratio
+
+
+def pinned_ratio(row, measured):
+    """The ratio a pin or an acceptance is written at: the number that SHIPS — a (V) row's own ratio with its thunks'
+    cycles counted back, as a (T→) row's whole ratio already includes them; every other row's whole one."""
+    return own_ratio_with_glue(measured) if goes_through_the_os(row) else measured.ratio
 
 
 def carried_by_its_own_instructions(row, measured):
@@ -1831,6 +1948,8 @@ def measure(row, bench):
         return _measure_into_c(row, bench)
     if row.transcription:
         return _measure_transcription(row, bench)
+    if goes_through_the_os(row):
+        return _measure_through_the_os(row, bench)
     if ships_through_a_call(row):
         return _measure_as_shipped(row)
     return _measure_call(bench, row)
@@ -1895,12 +2014,26 @@ def verdict(row, measured, dispatch, measurement_of):
     the LEAF RULE admits it on the measured excess. "through" — the C of a routine that reaches a transcribed
     core, measured as shipped (mechanism (T→)) and at or under the bar. "glue" — such a row over the bar as
     shipped and at or under it NET OF THE GLUE's own cycles (mechanism (T→G)); over it even net, the row is
-    OVER unless an entry accepts its OWN body's cost, which it can only do at the shipped number. "DRIFTED" —
-    pinned, and no longer that number. "OVER" — over the bar with nothing carrying it.
+    OVER unless an entry accepts its OWN body's cost, which it can only do at the shipped number. "net" — the C
+    of a routine that reaches the VDI by `trap #2`, at or under the bar on its OWN cycles against the AES's
+    (mechanism (V)), whatever its whole run, and still at or under it with its glue counted back; under the bar only
+    net of that glue, the row is `glue` as (T→G) labels it, pinned or not; over the bar on its own cycles, OVER unless
+    an entry accepts it or its routine's `.S` carries it (T). "DRIFTED" — pinned, and no longer that number, which is
+    `pinned_ratio`'s: what ships. "OVER" — over the bar with nothing carrying it.
     """
     pin = pin_of(row)
-    if pin and abs(measured.ratio - pin[0]) > RATIO_TOLERANCE:
+    if pin and abs(pinned_ratio(row, measured) - pin[0]) > RATIO_TOLERANCE:
         return "DRIFTED"
+    if goes_through_the_os(row):
+        if own_ratio(measured) <= TIER3_FUNCTION_BAR:
+            if own_ratio_with_glue(measured) > TIER3_FUNCTION_BAR:
+                return "glue"
+            return "pinned" if pin else "net"
+        if pin:
+            return "accepted"
+        if is_transcribed_c_row(row):
+            return "transcribed" if ships_within_bar(row, measurement_of) else "OVER"
+        return "OVER"
     if not own_within_bar(row, measured):
         return "OVER"
     if measured.ratio <= TIER3_FUNCTION_BAR:
@@ -1921,6 +2054,16 @@ FAILED = ("OVER", "DRIFTED")
 # How wide the ROM-address column renders: `$fc1510` and two spaces. Every entry in this ROM is six
 # hex digits, so it is a constant rather than a measurement over the rows.
 ADDRESS_WIDTH = 9
+
+
+def _through_the_os_line(measured, indent):
+    """The (V) split under a row through the OS: the whole run's ratio, and what each side spent of its own."""
+    ours, original = measured.own_cycles
+    glue = glue_cycles_of(measured)
+    shared, original_shared = shared_cycles(measured)
+    return (f"{'':<{indent}}  whole run: {measured.ratio:.2f} — own {ours} cycles against the ROM's {original} in the "
+            f"AES's text and Line-F handler; the OS both run {shared} against {original_shared}"
+            + (f", and {glue} in thunks: {own_ratio_with_glue(measured):.2f} with them" if glue else ""))
 
 
 def _own_split_line(measured, indent):
@@ -1967,6 +2110,10 @@ def table(bench):
         f"each such call entering the `.S` through generated glue (build/bench_shipped/).",
         f"`glue`: over the bar as shipped, and <= {TIER3_FUNCTION_BAR:.2f} NET of the cycles spent inside the "
         f"generated thunks themselves (T→G); every row over the bar as shipped prints that net ratio below it.",
+        f"`net`: C that reaches the VDI by `trap #2`, its ratio its OWN cycles against the ROM's in the AES's text and "
+        f"Line-F handler (V) — the OS both run from the same bytes in neither — <= {TIER3_FUNCTION_BAR:.2f}, and so "
+        f"with its thunks' cycles counted back; the whole run's ratio prints below it. A (V) row <= "
+        f"{TIER3_FUNCTION_BAR:.2f} only net of its thunks is `glue`, as (T→G), its ratio with them printed below.",
         "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "
         "by nature (a return address each build parks), which the ROM must write and the case's own differential "
         "still compares.",
@@ -1991,7 +2138,9 @@ def table(bench):
                      f"{row.case:<{case_width}}"
                      f"{f'{m.original_insns}/{m.original_cycles}':>14}"
                      f"{f'{m.recreate_insns}/{m.recreate_cycles}':>14}"
-                     f"{m.ratio:>8.2f}  {'' if state == 'ok' else state}")
+                     f"{gated_ratio(row, m):>8.2f}  {'' if state == 'ok' else state}")
+        if goes_through_the_os(row):
+            lines.append(_through_the_os_line(m, name_width + ADDRESS_WIDTH))
         if glue_cycles_of(m) and m.ratio > TIER3_FUNCTION_BAR:
             lines.append(f"{'':<{name_width + ADDRESS_WIDTH}}  net of the glue: {ratio_net_of_glue(m):.2f} "
                          f"({glue_cycles_of(m)} of the recreate's cycles are inside thunks)")

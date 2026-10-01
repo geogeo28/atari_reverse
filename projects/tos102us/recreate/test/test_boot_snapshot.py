@@ -239,6 +239,7 @@ import test_aes_infscan                                     # noqa: E402,F401
 import test_aes_objtext                                     # noqa: E402,F401
 import test_aes_oblib_walk                                  # noqa: E402,F401
 import test_aes_rlist                                       # noqa: E402,F401
+import test_aes_newrect                                     # noqa: E402,F401
 import test_aes_resource                                    # noqa: E402,F401
 import test_aes_resource_fix                                # noqa: E402,F401
 import test_aes_shell_buf                                   # noqa: E402,F401
@@ -247,6 +248,10 @@ import test_aes_resource_dos                                # noqa: E402,F401
 import test_aes_strings                                     # noqa: E402,F401
 import test_aes_strings_text                                # noqa: E402,F401
 import test_aes_strings_asm                                 # noqa: E402,F401  (the .S rows, `transcription`)
+import test_aes_gsx                                         # noqa: E402,F401
+import test_aes_gsx_transcription                           # noqa: E402,F401  (its `.S` rows)
+import test_aes_shell_find                                  # noqa: E402,F401
+import test_aes_resource_load                               # noqa: E402,F401
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

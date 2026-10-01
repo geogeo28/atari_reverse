@@ -295,6 +295,28 @@ the image before storing through it). A core with more than six C arguments (ob_
 like any other: the kit enters OUR side with its stack pointer lowered by the bytes that do not fit its argument area
 (`tools/recreate_kit/README.md`).
 
+The AES's FILE calls (the shell's sh_find, the resource load) take GEMDOS two ways (`test/aes_shell.py`). Over REAL
+GEMDOS on the STAGED RAM DISK: the ROM's glue traps into the ROM's GEMDOS and our C hands the same frame to the
+reconstructed dispatcher, its handlers bound to the reconstructed leaves, the disk holding the ROM's own resources as
+files — the GEMDOS door's three windows dropped (the trap entry's register save, GEMDOS's stack, deepened for the file
+system's frames, and the termination record). And over a SCRIPTED trap: a staged handler that records every call's
+function and frame and answers a script — for the answers no disk gives, and for Tier 3, where real GEMDOS's register
+save would differ by nature. Its host twin is reached through the reconstructed dispatcher, which RESOLVES a file handle
+before Fread/Fseek; the scripted handle is staged open for it. sh_find's routine is `staged_call.h`'s
+`call_alcyon_pointer` (one pushed longword), through the register-carrying hook like `call_alcyon_object`.
+
+The AES's GRAPHIC calls all cross ONE `trap #2`, gsx2's (`include/aes/gsx.h`'s `gsx_trap`, the bridge). On target it is
+the machine's own trap: vector `$88` (GEM's selector switch), `SYSVAR_VDI_ENTRY` (the BIOS's VDI door), the ROM's VDI,
+which restores D1-A6, so D0 is all a call changes. On the host both hops are CHECKED against the snapshot's — a case
+that repoints either halts by name, never served by the wrong code — and the VDI's own C twin of its entry is called on
+the block, its dispatcher leaving through `staged_call.h`'s bare hook, which `test/aes_gsx.py` binds per case to the
+C cores of every VDI function the AES's graphics reach (`vdi_functions`): both shores run a VDI, so an AES case is a
+second differential of the VDI as well, compared over the whole image, the screen included. The door's default machine
+is the cursor HIDDEN the way the AES hides it (the snapshot run through the ROM's own gsx_moff and continued from);
+`shown_machine` is the snapshot's own. The attribution pass is vacuous on gsx_moff's and gsx_mon's call arms (it
+inverts the nest both read and write, steering the ROM onto the counter path), so their cases stage every word those
+arms store to something else.
+
 Three mechanisms are designed and NOT built:
 
 - **The Line-F handler's Malloc(100) and 100-byte copy**, which a rebuilt ROM must keep so every later TPA block stays
@@ -386,6 +408,16 @@ traffic as the ROM did, and refuses a run that read an I/O byte no seeded model 
 refuses a drop without a companion Tier 1 run over the row's own pokes that drops nothing, and
 `test_tier3.py` runs every companion (the table prints each drop under its row).
 
+**It also refuses an odd word or long access.** Musashi is built with address errors off, so a 68000
+address error simply completes under the oracle; the shim counts such accesses instead
+(`emu.odd_accesses()`), and `RomBench.measure` reds a row whose m68k build made one — naming the
+address and the PC — unless the ROM made the same number at the same addresses. That exception has exactly
+one user: `vst_height`'s "chain on from 0 through the 24-bit bus", where the ROM itself makes two odd
+accesses (`$20027`, PC `$fce040`) and the build faithfully makes the same two. The refusal exists
+because sh_envrn's and sh_find's odd-sized `uint8_t` frames went green here while bombing on a 68000
+(`docs/on-target-execution.md`, taxonomy 14; `tools/recreate_kit/TRAP_MODEL.md`, "Odd word and long
+accesses — counted, not taken").
+
 Two things a target build needs that the host build does not, both in `atari/`: `target.mk`, the one
 definition of the flags **and of the include paths** (the ROM build and this one read it, so a ratio
 cannot be measured under flags nobody ships, and neither can compile a core against a different set
@@ -476,15 +508,36 @@ written entry for a row the rule carries. The lenience is measured and written d
 refuse through `beq.s` to vq_chcells' `rts`, inside the span, so five rows count 16 console cycles as the
 escape's own.
 
+**C that reaches the VDI by `trap #2` — mechanism (V), derived, verdict `net`.** On target the AES's C traps into
+the snapshot's own vector exactly where the ROM's does, so both columns run GEM's selector switch, the BIOS's VDI door,
+the ROM's VDI and Line-A from the same bytes — 98% of the ROM's cycles on `v_pline`'s triangle row — and a whole-run
+ratio would pass an AES body twice the ROM's. Every row whose m68k C REACHES a `trap #2` (the call graph's closure onto
+a function holding one) is PROFILED and priced on its OWN cycles: ours every blob cycle less the thunks' (T→G), the
+ROM's the cycles in the AES text and the Line-F handler's RAM copy (the Line-F overhead IS the ROM AES's own cost) less
+the selector switch, measured on a run of the original ALONE. The measurement refuses a run of ours that spent cycles
+in the AES's ROM spans, or whose remainder (the OS both run) differs from the ROM's by a cycle. The table's ratio
+column is the own ratio, the whole run's printed beneath. A row is `net` only while its own ratio stays at or under
+the bar WITH ITS GLUE COUNTED BACK ((ours + glue) / the ROM's); one under the bar only net of the thunks is `glue`,
+exactly as (T→G) labels the same lenience (`vst_height`'s large font and `gsx_moff`'s v_hide_c, pinned in
+`test_tier3.py`). Over the bar on its own cycles a row is OVER unless an entry accepts it AT THE OWN NUMBER — gsx_moff's
+open nest, 62 -> 76 cycles, the image pointer and `$c86a`'s address being the C's floor — or its routine's `.S`
+carries it (T).
+
 **ROM addresses used as values — what a rebuilt ROM owes them.** With the image based at 0, `image +
-VDI_MAP_COL` reads the 1987 table where it lies and `mouse_init` stores 1987 code addresses into RAM
-vectors; both are right against this ROM and obligations on a rebuilt one. `test/test_vdi_rom_data.py`
-enumerates every such use in `src/vdi/` by file and KIND (a new one reds until listed): a TABLE outside the
-transcribed regions must stay at its address or have every listed reference relocated; a CODE address
-(stored in or compared with a vector, or handed on as a dispatcher's D0) must become the address the
-shipped routine is linked at; a REGION_TABLE — inside a region a `.S` transcribes, `BLIT_EDGE_MASK_TABLE`
-in cpu_blit's for one — is read only by that region's own C core, harmless exactly while the ROM build does
-not link it; a DISTANCE between two addresses of one region survives relocation as it is.
+VDI_MAP_COL` reads the 1987 table where it lies and `mouse_init` stores 1987 code addresses into RAM vectors;
+both are right against this ROM and obligations on a rebuilt one. The census's scanner and its KINDS are
+shared, `test/rom_data.py`'s, one census per component; `test/test_vdi_rom_data.py` enumerates every such use
+in `src/vdi/` by file and KIND (a new one reds until listed): a TABLE outside the transcribed regions must
+stay at its address or have every listed reference relocated; a CODE address (stored in or compared with a
+vector, or handed on as a dispatcher's D0) must become the address the shipped routine is linked at; a
+REGION_TABLE — inside a region a `.S` transcribes, `BLIT_EDGE_MASK_TABLE` in cpu_blit's for one — is read only
+by that region's own C core, harmless exactly while the ROM build does not link it; a DISTANCE between two
+addresses of one region survives relocation as it is. `test/test_aes_rom_data.py` holds `src/aes/` and
+`include/aes/` to the AES's table, and also reads the other way — every instruction of the AES's ROM text
+whose operand NAMES AES code (a fork function, a walker's routine, a vector start-up installs) is listed with
+the routine that holds it and the band that ports it, and every pc-relative data reference of the text,
+including the three that read an instruction's own immediate and the Line-F handler's write of its own movem
+mask (CODE_BYTES); a new one reds.
 
 `test/test_transcribed.py` holds the table to all of it — the make lists, every `.globl` of the
 `.S` sources, the measured register sets, every core defined `TRANSCRIBED_CORE`, the list of C callers

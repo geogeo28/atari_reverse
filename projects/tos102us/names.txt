@@ -1431,7 +1431,6 @@ cmt 0xfe5acc mkpiece: no check of get_orect's 0 — an exhausted pool builds the
 fn 0xfe5ba8 brkrct
 fn 0xfe5c9a mkrect
 cmt 0xfe5c9a mkrect(tree, wh): everyobj's callback (the tree unused) — reached only through everyobj's jsr (a0) on the address newrect pushes at $fe5d68; cuts window wh's list by gl_mkrect, WIN_BROKEN on a cut.
-fn 0xfe5cee newrect # ctx
 var 0xc824 rul
 var 0xb396 orect_pool
 var 0x96e2 gl_mkrect
@@ -1480,10 +1479,10 @@ fn 0xfeaa58 rs_free
 cmt 0xfeaa58 AES rs_free (rsrc_free, 111): Mfree(global[7..8]) through dos_free — not rs_hdr, which it leaves alone.
 fn 0xfeaa86 rs_gaddr
 fn 0xfeaab2 rs_saddr
-fn 0xfeaae2 rs_readit # ctx
+fn 0xfeaae2 rs_readit
 fn 0xfeaba4 do_rsfix
 fn 0xfeac4e rs_fixit
-fn 0xfeac5c rs_load # ctx
+fn 0xfeac5c rs_load
 fn 0xfeac80 sc_read
 fn 0xfeac94 sc_write
 fn 0xfeaca8 sh_read
@@ -1530,3 +1529,54 @@ var 0x8c1e dos_return
 var 0x8c22 trap1_return
 var 0x98ec dos_err
 var 0xc918 dos_ax
+# ---- AES band 2 wave 1 (2026-10-01): the trap #2 bridge and gemgsxif's atoms, shell find + resource load, newrect ----
+# --- gemgsxif's atoms (src/aes/gsx.c; gsx2/gsx_ncode/gsx_1code/gsx_mon/gsx_fix also ship as src/aes/gsx.S) ---
+fn 0xfecb5a gsx2
+cmt 0xfecb5a the AES's one trap #2 (D0=$73, D1=$9466); ships as src/aes/gsx.S
+fn 0xfe87d2 gsx_ncode
+fn 0xfe87f0 gsx_1code
+fn 0xfe8a72 gsx_moff
+cmt 0xfe8a7c gsx_moff's hide arm: v_hide_c by Line-F, gl_mouse_shown = 0, then the count
+fn 0xfe8a8e gsx_mon
+fn 0xfe8afa aes_v_pline
+fn 0xfe8b0e aes_vs_clip
+fn 0xfe8b22 aes_vst_height
+fn 0xfe8b50 aes_vr_recfl
+fn 0xfe8b60 aes_vro_cpyfm
+fn 0xfe8b72 aes_vrt_cpyfm
+fn 0xfe8b88 aes_vrn_trnfm
+fn 0xfe8b92 aes_vsl_width
+fn 0xfda992 gsx_fix
+fn 0xfe8bb6 gsx_call_none # ctx
+fn 0xfe8bba gsx_call_row # ctx
+cmt 0xfe8bb6 internal: gsx_ncode(d0, 0, 0) by Line-F, then PTSIN := $98c4; $fe8bba the same by a $fe8bdc row's counts
+var 0xfe8bdc gsx_op_rows
+var 0x9466 gl_pb
+var 0xc86a gl_moff
+var 0x9b6e gl_mouse_shown
+var 0xc766 gl_handle
+var 0xc892 gl_ws
+# --- the shell's find and the resource load (src/aes/shell_find.c, src/aes/resource.c) and their GEMDOS glue (src/aes/gemdosif.c) ---
+fn 0xfeae04 sh_name
+fn 0xfeae36 sh_envrn
+fn 0xfeaf1e sh_path
+fn 0xfeafbe sh_find
+fn 0xfe3a1c dos_sfirst
+fn 0xfe3a52 dos_open
+fn 0xfe3a78 dos_read
+fn 0xfe3a9a dos_lseek
+fn 0xfe3c06 dos_sdta
+fn 0xfe3c0a dos_close
+var 0xc800 sh_path_pointer
+var 0xbb3e sh_path_buffer
+var 0xc924 sh_environment
+var 0x9b70 sh_scratch
+var 0xc86c rs_header_copy
+# --- newrect and the window helpers (src/aes/wrect.c) ---
+fn 0xfe5cee newrect
+cmt 0xfe5cee newrect(tree, wh): everyobj's callback (pushed at $fec146) — wh's ORECT list freed whole, WIN_BROKEN cleared, gl_mkrect := w_getsize(WS_TRUE); with an area: everyobj(tree, 0, wh, mkrect, 0, 0, 8) cuts every window BEFORE wh, then wh's list := one fresh ORECT of the same rectangle (none left: built at $0).
+fn 0xfeb4be w_getxptr
+cmt 0xfeb4be w_getxptr(which, wh): table $fefcca — 0 WS_FULL rec+16, 1 WS_CURR / 4 WS_TRUE the window tree's ob_x ($9734 + wh*24 + 16), 2 WS_PREV rec+32, 3 WS_WORK rec+24; past 4 (unsigned) D0 is left with `which` in its low word.
+fn 0xfeb53e w_getsize
+cmt 0xfeb53e w_getsize(which, wh, pt): rc_copy(w_getxptr(which, wh), pt); WS_TRUE's w and h +2 when both, read back from pt, are non-zero.
+var 0x9734 w_tree

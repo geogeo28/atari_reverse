@@ -131,26 +131,85 @@ static inline uint16_t gemdos_descriptor(const uint8_t *image, int selector)
 uint32_t gemdos_dispatch(uint8_t *image, uint32_t arguments);            /* $fc94e4 */
 uint32_t gemdos_dispatch_selector(uint8_t *image, uint32_t arguments);   /* $fc973e, past the record */
 
-/* THE ONE `trap #1` SHAPE A ROM DOOR MAKES from another component — the function word over one longword (the VDI's
- * `$fcfa9c`, the AES's glue `$fe3bba` / `$fe3c26`). THE TWO BUILDS TAKE IT TWO WAYS, `src/gemdos/console.c`'s
- * arrangement: on target the machine's own trap over that frame; off target there is no trap to take, so the words go
- * into a host slot and the reconstructed dispatcher is called on them — its handler through the hook a case binds.
- * `static inline`, so each door's code is the one it had when it spelt this itself. */
+/* THE `trap #1` SHAPES A ROM DOOR MAKES from another component — the function word over the caller's arguments, in
+ * the order it pushed them: one longword (the VDI's `$fcfa9c`, the AES's dos_alloc / dos_free / dos_sdta), one word
+ * (dos_close), a longword and a word (dos_sfirst, dos_open), two words and two longwords (dos_read), two longwords
+ * (dos_lseek, whose glue moves its handle and mode as ONE longword under the offset). THE TWO BUILDS TAKE EACH TWO
+ * WAYS, `src/gemdos/console.c`'s arrangement: on target the machine's own trap over that frame; off target there is no
+ * trap to take, so the frame goes into a host slot and the reconstructed dispatcher is called on it — its handler
+ * through the hook a case binds. `static inline`, so each door's code is the one it had when it spelt this itself. */
+#define GEMDOS_FRAME_WORD     2
+#define GEMDOS_FRAME_LONG     4
+#define GEMDOS_FRAME_MOST_BYTES 12       /* dos_read's: the function, the handle, the count and the buffer */
+_Static_assert(GEMDOS_FRAME_MOST_BYTES == HOST_SLOT_GEMDOS_WORDS_BYTES, "the GEMDOS words' host slot is not the widest frame");
 #ifdef RECREATE_HOST_DIFFERENTIAL
-static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
+/* The frame, built by the shape in host memory, laid in the slot and dispatched. */
+static inline uint32_t gemdos_host_trap(uint8_t *image, const uint8_t *frame, uint32_t frame_bytes)
 {
     uint8_t words_local[HOST_SLOT_GEMDOS_WORDS_BYTES];
     uint32_t words = host_slot_claim(GEMDOS_WORDS, words_local);
-    uint32_t result;
+    uint32_t result, at;
 
-    wr16(image + words, function);
-    wr32(image + words + GEMDOS_ARGUMENT_WORD, argument);
+    assert(frame_bytes <= HOST_SLOT_GEMDOS_WORDS_BYTES);
+    for (at = 0; at < frame_bytes; at++)
+        image[words + at] = frame[at];
     result = gemdos_dispatch(image, words);
     host_slot_release(GEMDOS_WORDS);
     return result;
 }
+
+static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
+{
+    uint8_t frame[GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_LONG];
+
+    wr16(frame, function);
+    wr32(frame + GEMDOS_ARGUMENT_WORD, argument);
+    return gemdos_host_trap(image, frame, sizeof frame);
+}
+
+static inline uint32_t gemdos_trap_word_word(uint8_t *image, uint16_t function, uint16_t argument)
+{
+    uint8_t frame[GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_WORD];
+
+    wr16(frame, function);
+    wr16(frame + GEMDOS_ARGUMENT_WORD, argument);
+    return gemdos_host_trap(image, frame, sizeof frame);
+}
+
+static inline uint32_t gemdos_trap_word_long_word(uint8_t *image, uint16_t function, uint32_t first, uint16_t second)
+{
+    uint8_t frame[GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_LONG + GEMDOS_FRAME_WORD];
+
+    wr16(frame, function);
+    wr32(frame + GEMDOS_ARGUMENT_WORD, first);
+    wr16(frame + GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_LONG, second);
+    return gemdos_host_trap(image, frame, sizeof frame);
+}
+
+static inline uint32_t gemdos_trap_word_long_long(uint8_t *image, uint16_t function, uint32_t first, uint32_t second)
+{
+    uint8_t frame[GEMDOS_ARGUMENT_WORD + 2 * GEMDOS_FRAME_LONG];
+
+    wr16(frame, function);
+    wr32(frame + GEMDOS_ARGUMENT_WORD, first);
+    wr32(frame + GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_LONG, second);
+    return gemdos_host_trap(image, frame, sizeof frame);
+}
+
+static inline uint32_t gemdos_trap_word_word_long_long(uint8_t *image, uint16_t function, uint16_t first,
+                                                       uint32_t second, uint32_t third)
+{
+    uint8_t frame[GEMDOS_FRAME_MOST_BYTES];
+
+    wr16(frame, function);
+    wr16(frame + GEMDOS_ARGUMENT_WORD, first);
+    wr32(frame + GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_WORD, second);
+    wr32(frame + GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_WORD + GEMDOS_FRAME_LONG, third);
+    return gemdos_host_trap(image, frame, sizeof frame);
+}
 #else
-/* The trap entry restores D1-A6 from the frame it builds (`src/gemdos/trap1.S`), so D0 is all it changes. */
+/* The trap entry restores D1-A6 from the frame it builds (`src/gemdos/trap1.S`), so D0 is all it changes. Each
+ * shape pushes the arguments last first, then the function word, and drops the frame after. */
 static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
 {
     register uint32_t result __asm__("d0");
@@ -162,6 +221,83 @@ static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, 
                       "addq.l #6,%%sp"
                       : "=d"(result)
                       : "d"(argument), "d"(function)
+                      : "memory", "cc");
+    return result;
+}
+
+/* The shapes below PIN every operand to a register the trap restores and C may clobber (D0, D1, A0, A1): an operand
+ * left to a plain "d" can land in a callee-saved register, which the C then saves and restores round the call — the
+ * cost `xbios/xbios.h`'s helpers measured. The function word goes in D0, where the answer comes back; the rest are
+ * inputs only, since the entry restores D1-A6. A word operand is a 16-bit variable, so it is loaded as the word it is. */
+static inline uint32_t gemdos_trap_word_word(uint8_t *image, uint16_t function, uint16_t argument)
+{
+    register uint32_t result __asm__("d0") = function;
+    register uint16_t word __asm__("d1") = argument;
+
+    (void)image;
+    __asm__ volatile ("move.w %1,-(%%sp)\n\t"
+                      "move.w %0,-(%%sp)\n\t"
+                      "trap #1\n\t"
+                      "addq.l #4,%%sp"
+                      : "+d"(result)
+                      : "d"(word)
+                      : "memory", "cc");
+    return result;
+}
+
+static inline uint32_t gemdos_trap_word_long_word(uint8_t *image, uint16_t function, uint32_t first, uint16_t second)
+{
+    register uint32_t result __asm__("d0") = function;
+    register uint32_t longword __asm__("d1") = first;
+    register uint16_t word __asm__("a0") = second;
+
+    (void)image;
+    __asm__ volatile ("move.w %2,-(%%sp)\n\t"
+                      "move.l %1,-(%%sp)\n\t"
+                      "move.w %0,-(%%sp)\n\t"
+                      "trap #1\n\t"
+                      "addq.l #8,%%sp"
+                      : "+d"(result)
+                      : "d"(longword), "a"(word)
+                      : "memory", "cc");
+    return result;
+}
+
+static inline uint32_t gemdos_trap_word_long_long(uint8_t *image, uint16_t function, uint32_t first, uint32_t second)
+{
+    register uint32_t result __asm__("d0") = function;
+    register uint32_t longword __asm__("d1") = first;
+    register uint32_t last __asm__("a0") = second;
+
+    (void)image;
+    __asm__ volatile ("move.l %2,-(%%sp)\n\t"
+                      "move.l %1,-(%%sp)\n\t"
+                      "move.w %0,-(%%sp)\n\t"
+                      "trap #1\n\t"
+                      "lea 10(%%sp),%%sp"
+                      : "+d"(result)
+                      : "d"(longword), "a"(last)
+                      : "memory", "cc");
+    return result;
+}
+
+static inline uint32_t gemdos_trap_word_word_long_long(uint8_t *image, uint16_t function, uint16_t first,
+                                                       uint32_t second, uint32_t third)
+{
+    register uint32_t result __asm__("d0") = function;
+    register uint16_t word __asm__("d1") = first;
+    register uint32_t longword __asm__("a0") = second;
+    register uint32_t last __asm__("a1") = third;
+
+    (void)image;
+    __asm__ volatile ("move.l %3,-(%%sp)\n\t"
+                      "move.l %2,-(%%sp)\n\t"
+                      "move.w %1,-(%%sp)\n\t"
+                      "move.w %0,-(%%sp)\n\t"
+                      "trap #1\n\t"
+                      "lea 12(%%sp),%%sp"
+                      : "+d"(result)
+                      : "d"(word), "a"(longword), "a"(last)
                       : "memory", "cc");
     return result;
 }

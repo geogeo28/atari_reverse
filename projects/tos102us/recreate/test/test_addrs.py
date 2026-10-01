@@ -68,6 +68,12 @@ ALLOWED_ALIASES = {
     frozenset(("LINEA_GDP_SCRATCH", "LINEA_GDP_DEL_ANG")):
         "the arc scratch's 23 words above CUR_FONT (two more lie below it) and the first of them, the arc's "
         "sweep — a region and one word in it, as the Line-A base and its +0 field are",
+    frozenset(("AES_GSX_PB", "AES_GSX_PB_CONTRL")):
+        "the AES's VDI parameter block (gsx2's `lea`, D1 of its trap) and its first pointer, the one gsx2 stores — "
+        "a block and the field at +0 of it, as the Line-A base and its +0 field are",
+    frozenset(("AES_GSX_CONTRL", "AES_GSX_OPCODE")):
+        "the AES's contrl[] (the address the block's first pointer holds) and contrl[0], the opcode word — an array "
+        "and its first element",
 }
 
 

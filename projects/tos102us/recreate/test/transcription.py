@@ -394,12 +394,24 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_ob_find", "aes_wcopy"), ("aes_ob_setxywh", "aes_wcopy"), ("aes_ob_relxywh", "aes_wcopy"),
     # the rectangle lists (`src/aes/rlist.c`): mkpiece's edges; the resource fix-ups (`src/aes/resource.c`)
     ("aes_mkpiece", "aes_min"), ("aes_mkpiece", "aes_max"), ("aes_fix_tedinfo", "aes_lstrlen"),
+    # a window's rectangles (`src/aes/wrect.c`): w_getsize's copy, and newrect's (w_getsize inlined into it)
+    ("aes_w_getsize", "aes_rc_copy"), ("aes_newrect", "aes_rc_copy"),
     ("aes_rs_str", "aes_lstcpy"), ("resource_part", "aes_wcopy"), ("aes_rom_ram", "aes_lbcopy"),
     ("aes_sc_read", "aes_lstcpy"), ("aes_sc_write", "aes_lstcpy"), ("aes_sh_read", "aes_lbcopy"),
     ("aes_sh_write", "aes_lbcopy"), ("aes_sh_get", "aes_lbcopy"), ("aes_sh_put", "aes_lbcopy"),
     ("aes_rom_rsc_init", "aes_lbcopy"),
     # the object-text helpers (`src/aes/objtext.c`): every text in or out of a TEDINFO through lstcpy
     ("aes_fs_sset", "aes_lstcpy"), ("aes_inf_sset", "aes_lstcpy"), ("aes_fs_sget", "aes_lstcpy"),
+    # the shell's find (`src/aes/shell_find.c`: sh_name inlined into sh_find) and the resource load's spec copy
+    ("aes_sh_name", "aes_strlen"), ("aes_sh_find", "aes_strlen"), ("aes_sh_find", "aes_lstcpy"),
+    ("aes_sh_find", "aes_strcpy"), ("aes_sh_find", "aes_strcat"), ("aes_sh_path", "aes_lstcpy"),
+    ("envrn_search", "aes_lstcpy"), ("envrn_search", "aes_lbcopy"), ("envrn_search", "aes_streq"),
+    ("aes_rs_readit", "aes_lstcpy"),
+    # the VDI binding's C (`src/aes/gsx.c`): every wrapper's call, and gsx_moff's v_hide_c (its static `gsx_moff_hide`),
+    # through gsx_ncode
+    ("gsx_moff_hide", "aes_gsx_ncode"), ("aes_v_pline", "aes_gsx_ncode"), ("aes_vs_clip", "aes_gsx_ncode"),
+    ("aes_vst_height", "aes_gsx_ncode"), ("aes_vr_recfl", "aes_gsx_ncode"), ("aes_vro_cpyfm", "aes_gsx_ncode"),
+    ("aes_vrt_cpyfm", "aes_gsx_ncode"), ("aes_vrn_trnfm", "aes_gsx_ncode"), ("aes_vsl_width", "aes_gsx_ncode"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),
@@ -519,14 +531,23 @@ def symbol_origins(elf):
     return _symbol_origins_at(str(Path(elf).resolve()))
 
 
+@functools.cache
+def _listing_at(path):
+    return subprocess.run(["m68k-elf-objdump", "-d", path], capture_output=True, text=True, check=True).stdout
+
+
+def listing(elf):
+    """`elf`'s `objdump -d` listing — one disassembly per ELF per process, whoever asks (the call graph, the
+    functions `bench/tier3.py` finds a `trap #2` in)."""
+    return _listing_at(str(Path(elf).resolve()))
+
+
 def call_graph(elf):
     """`{function: every function its code references}` out of the m68k build at `elf` — a `jsr`, a
     branch, or a `lea` or `move.l #` of an address GCC then calls through a register or a frame slot, which
     is how it calls one it names more than once. A function the symbol table sizes is read to its end and no
     further; one whose name another definition shares is QUALIFIED by its defining file (`nodes_of_labels`)."""
-    listing = subprocess.run(["m68k-elf-objdump", "-d", str(elf)], capture_output=True, text=True,
-                             check=True).stdout
-    return graph_of_listing(listing, _function_ends(elf), _function_starts(elf), symbol_origins(elf))
+    return graph_of_listing(listing(elf), _function_ends(elf), _function_starts(elf), symbol_origins(elf))
 
 
 def _is_clone(name):
@@ -622,11 +643,17 @@ def callers_of_transcribed_cores(graph):
 def reaching_transcribed_cores(graph):
     """Every function outside the table from which a transcribed C core is reachable: its direct callers
     and whatever calls them — the C whose cost, as shipped, includes a `.S`."""
-    reaching = {function for function, _core in callers_of_transcribed_cores(graph)}
+    direct = {function for function, _core in callers_of_transcribed_cores(graph)}
+    return callers_closure(graph, direct, excluded=TRANSCRIBED_CORES)
+
+
+def callers_closure(graph, seeds, excluded=frozenset()):
+    """`seeds` and every function outside `excluded` from which one of them is reachable over `graph`."""
+    reaching = set(seeds)
     grown = True
     while grown:
         more = {function for function, targets in graph.items()
-                if function not in TRANSCRIBED_CORES and function not in reaching and targets & reaching}
+                if function not in excluded and function not in reaching and targets & reaching}
         reaching |= more
         grown = bool(more)
     return reaching

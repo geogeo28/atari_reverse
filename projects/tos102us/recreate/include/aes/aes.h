@@ -124,6 +124,14 @@
 #define AES_SH_ISGEM          0x96f4     /* word: ...as a GEM program           ($feb162 move.w)               */
 #define AES_SH_DODEF          0x96f2     /* word                                ($feb1d2 tst.w)                */
 #define AES_SH_ISDEF          0xc83c     /* word                                ($feb136 tst.w)                */
+/* sh_find's working path (the pointer; the buffer it names in the capture is $bb3e, which sh_find hands sh_name by
+ * address), the environment sh_envrn searches, and the scratch both use: sh_envrn's copy of the environment, sh_find's
+ * `\` + path for its try at the root. */
+#define AES_SH_PATH_POINTER   0xc800     /* long: the working path          ($feafce move.l $c800,-(sp))       */
+#define AES_SH_PATH_BUFFER    0xbb3e     /* what it points at: sh_name's argument ($feafd8 move.l #)           */
+#define AES_SH_ENVIRONMENT    0xc924     /* long: the environment           ($feae70 move.l $c924,-(sp))       */
+#define AES_SH_SCRATCH        0x9b70     /* bytes[AES_SH_SCRATCH_BYTES]: the copy ($feae76), the root's path ($feb03a) */
+#define AES_SH_SCRATCH_BYTES  50         /* sh_envrn's copy                 ($feae6c move.w #50)               */
 
 /* ---- the ROM's OWN RESOURCES, as start-up copies them into RAM ($fee4de) and rom_ram hands them out ($fee5c8)
  * Six PARTS of the copy, each an address and a length (`aes/resource.h`'s ROM_RSC_*); the three resources among
@@ -208,9 +216,11 @@
 #define WIN_FLAGS             0          /* word: WIN_IN_USE, WIN_BROKEN        ($feb49e ori.w #1)             */
 #define WIN_OWNER             2          /* long: the owning PD                 ($feb498)                      */
 #define WIN_KIND              6          /* word: its gadgets                   ($feb4a2)                      */
-#define WIN_CURR              16         /* words[4]: the current GRECT         ($feb51e adda +$2866)           */
-#define WIN_PREV              24         /* words[4]: the previous one          ($feb508 +$286e)               */
-#define WIN_FULL              32         /* words[4]: the full one              ($feb4f2 +$2876)               */
+/* The three GRECTs by w_getxptr's arm and the wind_get WF_*XYWH arm that hands its index (`aes/wrect.h`); the CURRENT
+ * one is not in the record but the window tree's object (AES_WINDOW_TREE). */
+#define WIN_FULL              16         /* words[4]: the full GRECT            ($feb51e addl #10342, WS_FULL)  */
+#define WIN_WORK              24         /* words[4]: the work area             ($feb508 addl #10350, WS_WORK)  */
+#define WIN_PREV              32         /* words[4]: the previous one          ($feb4f2 addl #10358, WS_PREV)  */
 #define WIN_HSLIDE            40         /* word                                ($feb4ae)                      */
 #define WIN_VSLIDE            42         /* word                                ($feb4aa)                      */
 #define WIN_HSLSIZE           44         /* word                                ($feb4b8)                      */
@@ -218,6 +228,8 @@
 #define WIN_RLIST             48         /* long: its ORECT list, the visible rectangles ($fe5cc0 lea 48(a5)) */
 #define WIN_IN_USE            1          /* ($feb49e ori.w #1)                                                 */
 #define WIN_BROKEN            2          /* a rectangle was split               ($fe5cdc ori.w #2)             */
+/* The WINDOW TREE: one OBJECT per window, its handle the index, whose OB_X..OB_H are where the window is. */
+#define AES_WINDOW_TREE       0x9734     /* an OBJECT array, OB_BYTES apart     ($feb4d2 muls.w #24, addl #38708) */
 
 /* ---- LINE-F: how GEM calls itself ---------------------------------------------------------------------------
  * GEM's own code never `jsr`s an AES routine: every call is a `$F000|off` word, a Line-F EXCEPTION, whose handler
