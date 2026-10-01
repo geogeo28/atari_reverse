@@ -411,12 +411,13 @@ def test_dos_lseek_moves_the_handle_and_mode_under_the_offset(answer, through_li
     assert verdict(result) == [vdi.STALE_LONG, addrs.AES_DOS_LSEEK_TRAP_RETURN, int(answer < 0), answer & 0xFFFF]
 
 
-# dos_open's name has no such case: the host's trap reaches the reconstructed dispatcher, whose device-name test
-# (`src/gemdos/dispatch.c` device_named, through gemdos_strneq) reads the name off the bus unmasked — a GEMDOS-side
-# gap, out of this battery's reach, that a tagged name turns into a read past the image.
+# dos_open's name reaches the reconstructed dispatcher's device-name test (`src/gemdos/dispatch.c` device_named,
+# through gemdos_strneq) before the scripted handler, so its case also holds that test reading through the bus.
 @pytest.mark.parametrize("name, arguments, answer, function, recorded", (
     (sh.DOS_READ, (HANDLE, HEADER_BYTES, sh.SPEC_AT | aes.BUS_TAG), HEADER_BYTES, addrs.GEMDOS_FREAD_FN,
-     (("w", HANDLE), ("l", HEADER_BYTES), ("l", sh.SPEC_AT | aes.BUS_TAG))),), ids=("dos_read's buffer",))
+     (("w", HANDLE), ("l", HEADER_BYTES), ("l", sh.SPEC_AT | aes.BUS_TAG))),
+    (sh.DOS_OPEN, (sh.SPEC_AT | aes.BUS_TAG, 2), HANDLE, addrs.GEMDOS_FOPEN_FN,
+     (("l", sh.SPEC_AT | aes.BUS_TAG), ("w", 2)))), ids=("dos_read's buffer", "dos_open's name"))
 def test_the_glue_traps_with_a_pointer_as_its_caller_pushed_it(name, arguments, answer, function, recorded):
     """The glue dereferences nothing: GEMDOS is handed the longword, top byte and all."""
     result = glue(name, arguments, [answer])

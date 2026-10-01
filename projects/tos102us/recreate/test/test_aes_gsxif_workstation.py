@@ -294,15 +294,26 @@ def test_v_opnwk_answers_the_handle_before_putting_the_pointers_back():
     assert result.field("AES", "GSX_PB_INTOUT") == aes.AES_GSX_INTOUT
 
 
-# v_opnwk's ARRAY pointers are not tagged here: the reconstructed VDI's init_wk (`src/vdi/workstation.c`) reaches the
-# open's intin and intout as `image + pointer`, unmasked, so a tagged one takes the host past its image — where the
-# ROM's VDI drives 24 bits. A gap in the VDI's host model, not in this routine's (the AES stores the pointers as they
-# come either way); the handle's pointer, which this routine stores through, is tagged.
 def test_v_opnwk_s_handle_pointer_is_put_on_the_bus():
     pokes, io_seed = open_machine(aes.GSX_RESTYPE_LOW, addrs.SHIFTER_MODE_LOW, merge_pokes(OPEN_INTIN, STALE_WORK_OUT, gsx.STALE_ANSWERS))
     result = gsx.run_gsx("AES_ROM_V_OPNWK", (WORK_IN, leaves.ANSWERS | aes.BUS_TAG, WORK_OUT), pokes, io_seed=io_seed,
                          **UNPOISONED)
     assert result.word(leaves.ANSWERS) == vdi.VDI_PHYS_HANDLE
+
+
+# The ARRAY pointers go into the block as they come, top byte and all, and the VDI's open reads work_in and answers
+# work_out through them on the 24-bit bus.
+@pytest.mark.parametrize("work_in_tag, work_out_tag", ((aes.BUS_TAG, 0), (0, aes.BUS_TAG), (aes.BUS_TAG, aes.BUS_TAG)),
+                         ids=("work_in", "work_out", "both"))
+def test_v_opnwk_s_array_pointers_are_put_on_the_bus(work_in_tag, work_out_tag):
+    pokes, io_seed = open_machine(aes.GSX_RESTYPE_LOW, addrs.SHIFTER_MODE_LOW, merge_pokes(OPEN_INTIN, STALE_WORK_OUT,
+                                                                         gsx.STALE_ANSWERS))
+    result = gsx.run_gsx("AES_ROM_V_OPNWK", (WORK_IN | work_in_tag, leaves.ANSWERS, WORK_OUT | work_out_tag), pokes,
+                         io_seed=io_seed, **UNPOISONED)
+    assert result.word(leaves.ANSWERS) == vdi.VDI_PHYS_HANDLE
+    assert result.words(WORK_OUT, 2) == [319, 199]
+    assert [result.field("AES", name) for name in ("GSX_PB_INTIN", "GSX_PB_INTOUT")] == [aes.AES_GSX_INTIN,
+                                                                                       aes.AES_GSX_INTOUT]
 
 
 # Everything gsx_start writes, STALE first.

@@ -337,12 +337,14 @@ uint32_t gemdos_split_path(uint32_t entry_d0, uint8_t *image, uint32_t path, uin
 }
 
 /* $fc7e94 — are the `count` bytes at `left` and `right` equal? 1, or 0 over the caller's high half.
- * No NUL stops it, and the count is a word decremented to 0, so a count of 0 compares nothing. */
+ * No NUL stops it, and the count is a word decremented to 0, so a count of 0 compares nothing.
+ * Both pointers reach the bus as the caller passed them — an `Fopen` name is a program's longword,
+ * top byte and all — so each byte is read through the 24-bit bus (`bus_byte`). */
 uint32_t gemdos_strneq(uint32_t entry_d0, const uint8_t *image, uint16_t count, uint32_t left,
                        uint32_t right)
 {
     while (count-- != 0)
-        if (image[left++] != image[right++])
+        if (bus_byte(image, left++) != bus_byte(image, right++))
             return set_low_word(entry_d0, 0);
     return 1;
 }

@@ -20,10 +20,12 @@ import pytest
 
 from harness import addrs
 
+import routines
 import vdi
 import vdi_helpers
 import vdi_inquire
 import vdi_workstation as ws
+import test_vdi_bus_pointers as bus
 from case import merge_pokes
 
 H = ws.WORKSTATION_H
@@ -183,6 +185,27 @@ def test_the_contrl_pointer_is_loaded_once_for_both_counts():
     result = init(pokes=vdi.linea_pokes(CONTRL=at), **vdi.READS_A_POINTER_IT_WRITES)
     assert result.word(vdi.LINEA_CONTRL) == 6
     assert result.word(at + vdi.CONTRL_N_INTOUT) == vdi.VDI_DEV_TAB_WORDS
+
+
+def tagged_arrays():
+    """The four pointers init_wk dereferences, each with a TOP BYTE."""
+    arrays = {"CONTRL": vdi.CONTRL_AT, "INTIN": vdi.INTIN_AT, "INTOUT": vdi.INTOUT_AT, "PTSOUT": vdi.PTSOUT_AT}
+    return vdi.linea_pokes(**{name: bus.TOP_BYTE | at for name, at in arrays.items()})
+
+
+def test_the_open_s_arrays_are_reached_through_the_24_bit_bus():
+    """The four pointers init_wk dereferences, each with a TOP BYTE: the 68000 drives 24 bits, so the attributes
+    are read, and the counts and both tables answered, where the clean pointers put them."""
+    clean, dirty = init(), init(pokes=tagged_arrays())
+    assert bus.outside_the_pointers(dirty.final) == bus.outside_the_pointers(clean.final)
+
+
+def test_the_host_core_returns_over_tagged_arrays():
+    """...and the host core alone over them, in a child: a pointer the C dereferences unmasked reaches past the
+    host image and faults, which FAILS here rather than killing the differential's worker."""
+    returncode, stderr, _image = vdi_helpers.refusal_over(routines.core_symbol(ws.INIT_WK),
+                                                          init_pokes(pokes=tagged_arrays()), read_back=False)
+    assert returncode == 0, stderr
 
 
 # The DEV_TAB word the reload case lays on LINEA_PTSOUT's high word: the LAST, so no later word lands on its low

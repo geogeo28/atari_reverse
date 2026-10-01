@@ -74,9 +74,19 @@ static uint16_t open_colour(const uint8_t *image, int16_t index)
     return vdi_mapped_colour(image, vdi_colour_index_or_default(image, index));
 }
 
+/* The open's contrl, intin, intout and ptsout are a program's pointers, top byte and all: each element's address is
+ * summed, then put on the 24-bit bus (`m68k_idioms.h`). */
 static int16_t open_intin(const uint8_t *image, uint32_t intin, unsigned index)
 {
-    return (int16_t)be16(image + intin + index * VDI_WORD_BYTES);
+    return (int16_t)bus_word(image, intin + index * VDI_WORD_BYTES);
+}
+
+/* A device table answered into a caller's array a word at a time, forwards (`move.w (a4)+,(a5)+`: a4 the table,
+ * a5 the caller's array). */
+static void answer_table(uint8_t *image, uint32_t array, uint32_t table, unsigned words)
+{
+    for (unsigned word = 0; word < words; word++)
+        set_bus_word(image, array + word * VDI_WORD_BYTES, be16(image + table + word * VDI_WORD_BYTES));
 }
 
 /* intin[1..4], [6]: the line and marker attributes, and the text colour. */
@@ -155,12 +165,12 @@ void vdi_init_wk(uint8_t *image)
     open_fill(image, intin, work);
     open_defaults(image, work);
     contrl = linea_pointer(image, LINEA_CONTRL);
-    wr16(image + contrl + CONTRL_N_PTSOUT, OPEN_ANSWER_POINTS);
-    wr16(image + contrl + CONTRL_N_INTOUT, VDI_DEV_TAB_WORDS);
+    set_bus_word(image, contrl + CONTRL_N_PTSOUT, OPEN_ANSWER_POINTS);
+    set_bus_word(image, contrl + CONTRL_N_INTOUT, VDI_DEV_TAB_WORDS);
     intout = linea_pointer(image, LINEA_INTOUT);
-    copy_words(image + intout, image + LINEA_DEV_TAB, VDI_DEV_TAB_WORDS);
+    answer_table(image, intout, LINEA_DEV_TAB, VDI_DEV_TAB_WORDS);
     ptsout = linea_pointer(image, LINEA_PTSOUT);
-    copy_words(image + ptsout, image + LINEA_SIZ_TAB, VDI_SIZ_TAB_WORDS);
+    answer_table(image, ptsout, LINEA_SIZ_TAB, VDI_SIZ_TAB_WORDS);
     wr16(image + VDI_RESULT, VDI_RESULT_SET);
 }
 

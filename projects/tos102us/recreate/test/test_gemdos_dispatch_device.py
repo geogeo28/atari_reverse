@@ -20,6 +20,8 @@ import pytest
 
 from harness import BASE_IMAGE, addrs
 
+from aes import BUS_TAG
+
 import dispatch_io as dio
 import fs_create as fc
 import fs_dir as d
@@ -72,6 +74,16 @@ def test_the_rom_spells_each_device_twice_upper_case_first():
 def test_fopen_of_a_device_name_answers_its_handle_and_calls_no_leaf(name, handle):
     """Every name, so the walk crosses all three pairs and both spellings of each."""
     result = _fopen(name)
+    assert result.info["ret"] == _device_word(handle)
+    assert not gemdos.HANDLER_CALLS, "the device-name arm called the file system's leaf"
+
+
+@pytest.mark.parametrize("name,handle", (DEVICE_NAMES[0], DEVICE_NAMES[-1]), ids=lambda arg: str(arg))
+def test_fopen_reads_a_device_name_through_the_24_bit_bus(name, handle):
+    """A name pointer with a TOP BYTE: the 68000's bus drops it, so the ROM compares the name at the low 24 bits —
+    the first pair and the last, so the walk reads the tagged name against every spelling."""
+    result = dio.run(FOPEN.selector, (*gemdos.long_words(fo.NAME_AT | BUS_TAG), fs.OPEN_MODE_READ), fo.staging(name),
+                     leaves=(FOPEN,))
     assert result.info["ret"] == _device_word(handle)
     assert not gemdos.HANDLER_CALLS, "the device-name arm called the file system's leaf"
 

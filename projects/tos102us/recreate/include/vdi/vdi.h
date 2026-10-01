@@ -270,7 +270,9 @@
  * byte and all (`src/vdi/entry.c`) — and so is a workstation record's address. Every accessor below that
  * DEREFERENCES one sums the element's or field's offset FIRST and only then puts the address on the bus,
  * as the 68000's `d16(An)` / `(An,Dn)` does (`bus_dereference`: free on target; `test_vdi_bus_pointers.py`).
- * `call_element` and `current_work` answer the raw sum, for a core that carries it on. */
+ * `call_element` and `current_work` answer the raw sum, for a core that carries it on. NEW code reaching a
+ * caller's word through a held pointer uses m68k_idioms.h's `bus_word` / `set_bus_word` (they also refuse an odd
+ * address); `caller_word` below is the older reader that only masks. */
 static inline uint32_t linea_pointer(const uint8_t *image, uint32_t variable)
 {
     return be32(image + variable);

@@ -493,8 +493,8 @@ void vdi_r_fa_attr(uint8_t *image)
 static void transpose_copy(uint8_t *image, uint32_t source, uint32_t destination, uint16_t columns, uint16_t rows)
 {
     int16_t stride = (int16_t)(rows + rows);
-    const uint8_t *from = image + source;
-    uint8_t *column_top = image + destination;
+    const uint8_t *from = image + bus_dereference(source);
+    uint8_t *column_top = image + bus_dereference(destination);
 
     for (uint16_t row = rows; row-- != 0; column_top += WORD_BYTES) {
         uint8_t *to = column_top;
@@ -514,7 +514,7 @@ static void transpose_copy(uint8_t *image, uint32_t source, uint32_t destination
  * next pass continues from the last word moved. */
 static void transpose_in_place(uint8_t *image, uint32_t base, uint16_t columns, uint16_t rows)
 {
-    uint8_t *cursor = image + base;
+    uint8_t *cursor = image + bus_dereference(base);
 
     if (rows == 0)
         return;
@@ -546,24 +546,29 @@ static void transpose_in_place(uint8_t *image, uint32_t base, uint16_t columns, 
 /* $fd2d32 — vr_trnfm (opcode 110): the source MFDB (contrl[7..8]) turned into the other format at the
  * destination's address, and the DESTINATION MFDB's `stand` flag set to the format it now holds. Its
  * other fields are not written: GEM's caller fills them. The source's geometry and flag are read before
- * the destination's flag is stored, and both addresses after — the ROM's order. */
+ * the destination's flag is stored, and both addresses after — the ROM's order.
+ * contrl, both MFDBs and both forms are a program's pointers, top byte and all, each reached through the
+ * 24-bit bus (`m68k_idioms.h`); the forms' WHOLE longwords are compared (`cmpa.l`), so a source and a
+ * destination differing only in the top byte are two forms to the ROM and are copied, not rotated. A form
+ * walking past the top of the bus (the 68000 wraps it to $000000) is not modelled: the host masks each
+ * form's base only. */
 TRANSCRIBED_CORE
 void vdi_vr_trnfm(uint8_t *image)
 {
     uint32_t contrl = linea_pointer(image, LINEA_CONTRL);
-    uint32_t source_mfdb = be32(image + contrl + CONTRL_POINTER_A);
-    uint32_t destination_mfdb = be32(image + contrl + CONTRL_POINTER_B);
-    uint16_t planes = be16(image + source_mfdb + MFDB_NPLANES);
-    uint16_t words = (uint16_t)((uint32_t)be16(image + source_mfdb + MFDB_H) *
-                                be16(image + source_mfdb + MFDB_WDWIDTH));
-    int to_standard = be16(image + source_mfdb + MFDB_STAND) == 0;
+    uint32_t source_mfdb = bus_long(image, contrl + CONTRL_POINTER_A);
+    uint32_t destination_mfdb = bus_long(image, contrl + CONTRL_POINTER_B);
+    uint16_t planes = bus_word(image, source_mfdb + MFDB_NPLANES);
+    uint16_t words = (uint16_t)((uint32_t)bus_word(image, source_mfdb + MFDB_H) *
+                                bus_word(image, source_mfdb + MFDB_WDWIDTH));
+    int to_standard = bus_word(image, source_mfdb + MFDB_STAND) == 0;
     uint16_t columns = to_standard ? planes : words;
     uint16_t rows = to_standard ? words : planes;
     uint32_t source, destination;
 
-    wr16(image + destination_mfdb + MFDB_STAND, to_standard ? MFDB_FORMAT_STANDARD : MFDB_FORMAT_DEVICE);
-    source = be32(image + source_mfdb + MFDB_ADDR);
-    destination = be32(image + destination_mfdb + MFDB_ADDR);
+    set_bus_word(image, destination_mfdb + MFDB_STAND, to_standard ? MFDB_FORMAT_STANDARD : MFDB_FORMAT_DEVICE);
+    source = bus_long(image, source_mfdb + MFDB_ADDR);
+    destination = bus_long(image, destination_mfdb + MFDB_ADDR);
     if (source == destination)
         transpose_in_place(image, source, columns, rows);
     else

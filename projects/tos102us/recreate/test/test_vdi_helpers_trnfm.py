@@ -15,8 +15,10 @@ import pytest
 from harness import addrs
 
 import case
+import routines
 import vdi
 import vdi_helpers
+import test_vdi_bus_pointers as bus
 
 NAME = "VDI_ROM_VR_TRNFM"
 SOURCE_MFDB = vdi.SOURCE_MFDB_AT
@@ -41,10 +43,11 @@ def standard_form(planes, words):
     return [form_word(plane, word) for plane in range(planes) for word in range(words)]
 
 
-def trnfm_pokes(planes, height, width, stand, *, in_place=False, same_mfdb=False):
+def trnfm_pokes(planes, height, width, stand, *, in_place=False, same_mfdb=False, tag=0, form_tags=(0, 0)):
     """A source MFDB and form of `planes` x `height` x `width` words in format `stand`, and a
     destination MFDB whose `stand` is stale — at the same address as the source when `in_place`, and the
-    source record itself when `same_mfdb`. Every other word of both forms is FILLed."""
+    source record itself when `same_mfdb`. Every other word of both forms is FILLed. `tag` is a top byte on
+    LINEA_CONTRL and both MFDB pointers, `form_tags` the (source, destination) forms' own."""
     words = height * width
     form = device_form(planes, words) if stand == DEVICE else standard_form(planes, words)
     destination_at = SOURCE_AT if in_place else DESTINATION_AT
@@ -52,11 +55,11 @@ def trnfm_pokes(planes, height, width, stand, *, in_place=False, same_mfdb=False
     pokes = vdi.merge_pokes(
         {SOURCE_AT: vdi.pack_words(*form) + bytes([vdi.FILL]) * (2 * (FORM_WORDS - len(form))),
          DESTINATION_AT: bytes([vdi.FILL]) * vdi_helpers.RASTER_FORM_BYTES},
-        vdi.mfdb_pokes(SOURCE_MFDB, ADDR=SOURCE_AT, STAND=stand, **geometry),
-        vdi.mfdb_pokes(DESTINATION_MFDB, ADDR=destination_at, STAND=STALE_STAND, **geometry))
+        vdi.mfdb_pokes(SOURCE_MFDB, ADDR=SOURCE_AT | form_tags[0], STAND=stand, **geometry),
+        vdi.mfdb_pokes(DESTINATION_MFDB, ADDR=destination_at | form_tags[1], STAND=STALE_STAND, **geometry))
     destination_mfdb = SOURCE_MFDB if same_mfdb else DESTINATION_MFDB
-    return vdi.merge_pokes(pokes, vdi.call_pokes(addrs.VDI_ROM_VR_TRNFM_OPCODE,
-                                                 pointers=(SOURCE_MFDB, destination_mfdb)))
+    call = vdi.call_pokes(addrs.VDI_ROM_VR_TRNFM_OPCODE, pointers=(SOURCE_MFDB | tag, destination_mfdb | tag))
+    return vdi.merge_pokes(pokes, call, vdi.linea_pokes(CONTRL=vdi.CONTRL_AT | tag))
 
 
 def vr_trnfm(pokes):
@@ -123,6 +126,35 @@ def test_there_and_back_in_place():
     second = vr_trnfm(case.continued(first))
     assert second.words(SOURCE_AT, 24) == device_form(4, 6)
     assert second.word(SOURCE_MFDB + vdi.MFDB_STAND) == DEVICE
+
+
+# ---- the 24-bit bus: contrl, both MFDBs and both forms are a program's pointers -----------------------------------
+
+@pytest.mark.parametrize("in_place", (False, True))
+@pytest.mark.parametrize("stand", (DEVICE, STANDARD))
+def test_every_pointer_with_a_top_byte_reaches_the_same_forms(stand, in_place):
+    every = bus.TOP_BYTE
+    tagged = vr_trnfm(trnfm_pokes(4, 2, 3, stand, in_place=in_place, tag=every, form_tags=(every, every)))
+    at = SOURCE_AT if in_place else DESTINATION_AT
+    assert tagged.words(at, 24) == (standard_form if stand == DEVICE else device_form)(4, 6)
+    assert tagged.word(DESTINATION_MFDB + vdi.MFDB_STAND) == (STANDARD if stand == DEVICE else DEVICE)
+
+
+@pytest.mark.parametrize("in_place", (False, True))
+def test_the_host_core_returns_over_tagged_pointers(in_place):
+    """...and the host core alone over them, in a child, through both transposes: a pointer the C dereferences
+    unmasked reaches past the host image and faults, which FAILS here rather than killing the differential's worker."""
+    every = bus.TOP_BYTE
+    pokes = trnfm_pokes(4, 2, 3, DEVICE, in_place=in_place, tag=every, form_tags=(every, every))
+    returncode, stderr, _image = vdi_helpers.refusal_over(routines.core_symbol(NAME), pokes, read_back=False)
+    assert returncode == 0, stderr
+
+
+def test_forms_differing_only_in_the_top_byte_are_copied_not_rotated():
+    """`cmpa.l` compares the WHOLE longwords: one form, named once tagged, is two forms to the ROM — the copy
+    transposes it over itself, word by word, reading what it already wrote (not the rotation's standard form)."""
+    result = vr_trnfm(trnfm_pokes(4, 2, 3, DEVICE, in_place=True, form_tags=(bus.TOP_BYTE, 0)))
+    assert result.words(SOURCE_AT, 24) != standard_form(4, 6)
 
 
 # ---- the transcription (`src/vdi/helpers.S`), over the same shapes ----------------------------------

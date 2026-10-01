@@ -516,10 +516,16 @@ def test_gsx_trans_sets_each_mfdb_from_its_own_width():
     assert gsx.mfdb_of(result, aes.AES_GL_SRC) == (MASK_AT, 32, 16, 2, 1, 1)
 
 
-# NO TOP-BYTE CASE for gsx_trans: it hands its two addresses on as they are (gsx_fix stores them into gl_src / gl_dst,
-# which `test_gsx_blt_s_form_pointer_is_put_on_the_bus` holds), and the VDI's C vr_trnfm ($fd2d32, `src/vdi/helpers.c`)
-# reads a form through the image UNMASKED — a tagged one, which the 68000's bus reaches, faults the host build. A VDI
-# finding, reported, not this battery's to work round.
+@pytest.mark.parametrize("source_tag, destination_tag", ((aes.BUS_TAG, 0), (0, aes.BUS_TAG), (aes.BUS_TAG, aes.BUS_TAG)),
+                         ids=("source", "destination", "both"))
+def test_gsx_trans_hands_its_forms_on_as_they_come(source_tag, destination_tag):
+    """Top byte and all into gl_src / gl_dst, and vr_trnfm reaches both forms through the 24-bit bus."""
+    pokes = merge_pokes(ICON_FORM, gsx.GL_MFDBS_STALE)
+    arguments = (MASK_AT | source_tag, ICON_BYTES_ACROSS, FORM_AT | destination_tag, ICON_BYTES_ACROSS, 32)
+    result = gsx.run_gsx("AES_ROM_GSX_TRANS", arguments, pokes)
+    assert gsx.mfdb_of(result, aes.AES_GL_SRC)[0] == MASK_AT | source_tag
+    assert gsx.mfdb_of(result, aes.AES_GL_DST)[0] == FORM_AT | destination_tag
+    assert result.after(FORM_AT, ICON_FORM_BYTES) != bytes(ICON_FORM_BYTES)
 
 
 # ---- bb_fill -------------------------------------------------------------------------------------------------------------
