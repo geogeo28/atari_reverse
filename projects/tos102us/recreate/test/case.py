@@ -228,16 +228,20 @@ class Rows:
         self.component = component
         self.cases, self.unpriced = [], []
         self.tier3_dropped, self.tier3_undropped = {}, {}
+        self.unanswered = set()
         ROW_REGISTRIES.append(self)
 
     def register(self, name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True,
-                 dropped=(), undropped=None):
+                 dropped=(), undropped=None, answered=True):
         """One `VERIFIED_CASES` row (`verified_row`), recorded and returned so the battery drives the same tuple.
         `dropped` is `((lo, hi, why), ...)` for its Tier 3 row alone, and `undropped` — required with it — the
         zero-argument differential that still compares those bytes over the row's machine (a `Result`), which is
-        what makes dropping them at Tier 3 safe."""
+        what makes dropping them at Tier 3 safe. `answered` False for a row whose routine sets no D0 on its arm — it
+        leaves its caller's, which no C is handed — so Tier 3 compares no answer (`tier3_unanswered`)."""
         row = verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule)
         (self.cases if priced else self.unpriced).append(row)
+        if not answered:
+            self.unanswered.add(name)
         if dropped:
             assert priced and name not in tier3_dropped(), f"{name}: a Tier 3 drop is for one priced row"
             assert callable(undropped), f"{name}: a Tier 3 drop needs the differential that drops nothing"
@@ -254,6 +258,11 @@ def tier3_dropped():
 def tier3_undropped():
     """...and `{row name: its companion differential}`."""
     return {name: companion for rows in ROW_REGISTRIES for name, companion in rows.tier3_undropped.items()}
+
+
+def tier3_unanswered():
+    """...and the rows whose answer is not compared (`Rows.register`'s `answered`)."""
+    return frozenset(name for rows in ROW_REGISTRIES for name in rows.unanswered)
 
 
 def registered_case(name):

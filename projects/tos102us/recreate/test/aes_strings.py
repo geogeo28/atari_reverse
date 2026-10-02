@@ -54,11 +54,11 @@ for _name, (_restype, _argtypes) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, _argtypes)
 
 # ---- where the cases stage ----------------------------------------------------------------------------------------
-# THE BAND: the top 2 KB of the AES's window — two string buffers, a template and its parameters, and the staged
+# THE BAND: 2 KB at +$1800 of the AES's window — two string buffers, a template and its parameters, and the staged
 # callers of the transcriptions.
+BAND_OFFSET = 0x1800
 BAND_BYTES = 0x800
-BAND_AT = aes.SPAN.claim(aes.WINDOW_AT + aes.WINDOW_BYTES - BAND_BYTES, BAND_BYTES,
-                         "test/aes_strings.py: strings, buffers, templates and callers")
+BAND_AT = aes.SPAN.claim(aes.WINDOW_AT + BAND_OFFSET, BAND_BYTES, "test/aes_strings.py: strings, buffers, templates and callers")
 BUFFER_BYTES = 0x200                        # a 256-word row, or a string past the byte counters' wrap
 SOURCE_AT = BAND_AT
 DESTINATION_AT = SOURCE_AT + BUFFER_BYTES

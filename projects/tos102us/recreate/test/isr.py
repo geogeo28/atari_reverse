@@ -417,7 +417,8 @@ NO_ARGUMENT = 0xFFFF_FFFF           # staged_call.h's STAGED_CALL_NO_ARGUMENT
 # `btst #4,$fffa01 / beq` is a real one) calls a staged routine per pass, which is what the hook's
 # cap is for — and the VBL's own semaphore, inverted by the attribution pass, closes the whole body,
 # which is why `CALLS` is the PLAIN pass's alone.
-_HOOK = AddressHook("recreate_call_vector", CALL_VECTOR)
+CALL_VECTOR_SYMBOL = "recreate_call_vector"
+_HOOK = AddressHook(CALL_VECTOR_SYMBOL, CALL_VECTOR)
 CALLS = _HOOK.calls
 
 # ...and `staged_call.h`'s REGISTER-CARRYING shape: (image, routine address, the D0/D1/A0 file handed in

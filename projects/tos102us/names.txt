@@ -1738,3 +1738,81 @@ fn 0xfeada0 sh_draw
 cmt 0xfeada0 if (*$9b2a && !sh_dodef): gsx_sclip(gl_rscreen); *ad_pfile := the command (te_ptext of tree 2 obj 2, $feadca); ob_draw(ad_stdesk, start, depth)
 var 0xc7a2 ad_pfile
 var 0xc820 ad_stdesk
+# ---- AES band 3 wave 0 (2026-10-02): THE EVENT DOOR + pilots, the object editor, the window library's pure half ----
+# --- the event door's entries and the scheduler labels the derivations stop at (test/aes_event.py, include/aes/evdoor.h) ---
+fn 0xfe6998 ev_multi
+cmt 0xfe6998 Event-door entry (band 4, served on the host by a nested ROM run, on target by an inline Alcyon jsr): MU_BUTTON bit 1 ($fe69fa), MU_M1 bit 2 ($fe6a72); mouse2/timer/message read only under btst #3/#5/#4
+fn 0xfe65c4 ap_rdwr
+cmt 0xfe65c4 Event-door entry: link, pea fp+10, ev_block $fe6874. A WM_REDRAW for a window already queued is MERGED (the pipe stays at one message); to the screen manager (PD1) a message lands in its pipe; a send to a pid with no PD spins
+fn 0xfe427a acancel
+cmt 0xfe427a acancel(mask): rlr's PD_EVLIST walked, every EVB whose EVB_MASK & mask cancelled
+cmt 0xfe4dda disp's loop: forker, idle until a process is ready, then switchto the first — where the snapshot waits
+cmt 0xfe6c5c ev_multi's Line-F return: where a process the dispatcher switched to comes out of its evnt_multi
+# --- the pilots (src/aes/grwait.c, apmsg.c, ctrl.c) ---
+fn 0xfe8508 gr_stilldn
+cmt 0xfe8508 ev_multi(BUTTON|M1, &its own args as the MOBLK, 0, 0, $00010100 = one rise of the left button, 0, &12 bytes below its return); D0 = !(events & MU_BUTTON). Entered by bsr (gr_watchbox) and Line-F $f0b0
+fn 0xfe84ba gr_watchbox
+cmt 0xfe84ba gsx_sclip(*$fe85b2 = gl_rscreen); ob_actxywh into the words its movem saved D2/D3 in (restores D4-D7/A5/A6 only); toggle in/out state + gr_stilldn until the button rises; D0 = 1 if it rose on `in`
+fn 0xfebdbe ap_sendmsg
+fn 0xfe4a98 ct_mouse
+cmt 0xfe4afc ct_mouse(0) re-show: `clr.w (sp); move.w #122,-(sp)` then Line-F gsx_ncode, which takes THREE words: contrl[3] = the frame's never-written -2(a6) (a missing argument in the source)
+var 0xc762 ad_armice
+var 0xc908 ct_mouse_shown
+var 0x9bba ct_mouse_nest
+var 0xc6ca gl_click_ticks
+# --- the object editor, gemobed/objop (src/aes/obedit.c) ---
+fn 0xfe9260 ob_getsp
+cmt 0xfe9260 TEDINFO copied (lbcopy 28) from ob_spec, or *ob_spec when OB_FLAGS' HIGH byte bit 0 (INDIRECT)
+fn 0xfe9352 scan_to_end
+fn 0xfe937e ins_char
+cmt 0xfe937e Room compared SIGNED with strlen+1; else NUL at str[room-1] (room<=0 writes below the string); also fs_back's
+fn 0xfe93da find_pos
+cmt 0xfe93da Template place of raw char idx: the first walk reads on past the NUL until idx placeholders passed
+fn 0xfe941c pxl_rect
+fn 0xfe948a curfld
+cmt 0xfe948a n=0: XOR black line, cell y-3..h+6; n>0: ob_draw(tree,obj,0) under a clip n cells wide; clip restored
+fn 0xfe9516 instr
+cmt 0xfe9516 Set membership, "a..z" ranges, SIGNED byte compares; a range ending at the NUL walks on past it
+fn 0xfe9556 check
+cmt 0xfe9556 Table $fefb10 (11 chars + 0): rs_str 4..12 then instr; upcase except '9','a','n'; 'x' upcases, 'X' anything
+fn 0xfe95f2 ob_stfn
+fn 0xfe962a ob_delit
+fn 0xfe9678 ob_edit
+cmt 0xfe9678 Validation stretched to te_tmplen with no 81-byte bound (lstcpy's byte count: 255+ chars not stretched); refused typed key past the end un-steps d3 (reached by an index near $7fff); bfill byte pushed as word $3920
+var 0xb7f8 aes_valstr
+# --- the window library's pure half, gemwmlib (src/aes/wmlib.c) ---
+fn 0xfeb3c0 w_nilit
+fn 0xfeb408 w_obadd
+fn 0xfeb47a w_setup
+fn 0xfeb57c w_setsize
+fn 0xfeb594 w_adjust
+fn 0xfeb5f8 w_hvassign
+fn 0xfeb646 w_clipdraw
+cmt 0xfeb646 w_clipdraw(wh, tree, obj, depth, pc): gl_wfrozen ($c940) || wh == -1 -> 1; pc ? rc_intersect(&gl_rfull, pc) : pc = &gl_rfull; ob_draw per ORECT of wh's list meeting pc; D0 0.
+fn 0xfeb6c8 w_drawdesk
+fn 0xfeb712 w_cpwalk
+fn 0xfeb768 w_strchg
+fn 0xfeb7ca w_barcalc
+fn 0xfeb84e w_bldbar
+fn 0xfeba9c w_bldactive
+fn 0xfebece w_mvfix
+fn 0xfebf00 w_move
+fn 0xfec39a w_owns
+fn 0xfec3ea w_union
+fn 0xfec424 wm_start
+fn 0xfec602 wm_create
+fn 0xfec706 wm_delete
+cmt 0xfec706 wm_delete(wh): flags &= ~1; D0 is left THEGLO + 56*wh, which the desk's binding stores as the answer.
+fn 0xfec722 wm_get
+fn 0xfeca4a wm_find
+fn 0xfecaac wm_calc
+var 0x98ee W_ACTIVE
+var 0x96f6 gl_awind
+var 0x9b2c gl_wtree
+var 0x9bdc gl_wtop
+var 0x9ab6 gl_newroot
+var 0xc7a6 gl_aname
+var 0xc7c2 gl_ainfo
+var 0xc940 gl_wfrozen # ctx
+cmt 0xc940 Hold window drawing: wind_set field 13 (WF_RESVD) with a non-zero handle sets it, handle 0 clears it (+ a desktop redraw); w_clipdraw / w_move do nothing while set, draw_change returns early
+cmt 0xfec722 wind_get's jump table $fefcde; fields 13 and 14 (WF_NEWDESK) have NO arm; D0 left per arm (rect arms the xptr's low word, word arms (field-4)*4, past the table field-4) — the desk's binding stores it

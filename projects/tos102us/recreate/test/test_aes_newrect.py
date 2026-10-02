@@ -37,7 +37,7 @@ from case import merge_pokes
 WRECT = aes.header_constants("wrect.h")
 WS_FULL, WS_CURR, WS_PREV, WS_WORK, WS_TRUE = (WRECT[name] for name in ("WS_FULL", "WS_CURR", "WS_PREV", "WS_WORK",
                                                                           "WS_TRUE"))
-WS_TRUE_BORDER = WRECT["WS_TRUE_BORDER"]
+W_BORDER = WRECT["W_BORDER"]
 
 W_GETXPTR, W_GETSIZE, NEWRECT = "AES_ROM_W_GETXPTR", "AES_ROM_W_GETSIZE", "AES_ROM_NEWRECT"
 L, W = vdi.LONG_ARG, vdi.WORD_ARG
@@ -57,12 +57,12 @@ SCREEN = (0, 0, 320, 200)                               # the desktop's tree obj
 DESKTOP_AREA = (0, 11, 320, 189)                        # ...its full and work areas (below the menu bar)
 WINDOW = 1
 WINDOW_AT = (100, 50, 80, 60)                           # where window 1 is staged open: over the desktop's middle
-WINDOW_TRUE = (100, 50, 80 + WS_TRUE_BORDER, 60 + WS_TRUE_BORDER)
+WINDOW_TRUE = (100, 50, 80 + W_BORDER, 60 + W_BORDER)
 
 
 def grown(rect):
     x, y, w, h = rect
-    return (x, y, w + WS_TRUE_BORDER, h + WS_TRUE_BORDER) if w and h else rect
+    return (x, y, w + W_BORDER, h + W_BORDER) if w and h else rect
 
 
 def window_object(window):
@@ -301,7 +301,7 @@ def test_newrect_of_a_window_with_no_area_frees_its_list_and_stops(rect):
     assert window_rects(result.final, DESKTOP) == [DESKTOP_AREA]
 
 
-WRAPPING_EXTENT = 0xFFFE                                # grows by WS_TRUE_BORDER to 0 in a word
+WRAPPING_EXTENT = 0xFFFE                                # grows by W_BORDER to 0 in a word
 
 
 @pytest.mark.parametrize("rect", ((100, 50, WRAPPING_EXTENT, 60), (100, 50, 80, WRAPPING_EXTENT)),
@@ -313,7 +313,7 @@ def test_newrect_s_area_is_the_grown_rectangle_s(rect):
     result = newrect(WINDOW, merge_pokes(taken_orect_pokes(), open_window_pokes(at=rect, rlist=TAKEN_ORECT)))
     x, y, w, h = rect
     assert result.long(list_head(WINDOW)) == 0
-    assert mkrect_cut(result) == (x, y, (w + WS_TRUE_BORDER) & 0xFFFF, (h + WS_TRUE_BORDER) & 0xFFFF)
+    assert mkrect_cut(result) == (x, y, (w + W_BORDER) & 0xFFFF, (h + W_BORDER) & 0xFFFF)
     assert walk(result.final, aes.AES_ORECT_FREE) == walk(BASE_IMAGE, aes.AES_ORECT_FREE)
     assert window_rects(result.final, DESKTOP) == [DESKTOP_AREA]
 

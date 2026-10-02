@@ -19,11 +19,6 @@
 
 #define START_POSITION        0          /* everyobj's starting x and y: the window tree's own origin ($fe5d66 clr.l) */
 
-static inline uint32_t window_record(int16_t window)
-{
-    return table_entry(AES_WINDOWS, window, WIN_BYTES);
-}
-
 /* $feb4be — the address of rectangle `which` of window `window` (`aes/wrect.h`'s WS_*), both indices signed words
  * (`muls.w`). An index past WS_TRUE — compared UNSIGNED (`cmp.w #4; bhi`), so a negative one too — matches no arm and
  * the ROM leaves by the return with D0 as the switch left it: `which` in the LOW word, its caller's D0 in the high
@@ -53,8 +48,8 @@ void aes_w_getsize(uint8_t *image, int16_t which, int16_t window, uint32_t rect)
 {
     aes_rc_copy(image, aes_w_getxptr(which, window), rect);
     if (which == WS_TRUE && bus_word(image, rect + GRECT_W) && bus_word(image, rect + GRECT_H)) {
-        set_bus_word(image, rect + GRECT_W, (uint16_t)(bus_word(image, rect + GRECT_W) + WS_TRUE_BORDER));
-        set_bus_word(image, rect + GRECT_H, (uint16_t)(bus_word(image, rect + GRECT_H) + WS_TRUE_BORDER));
+        set_bus_word(image, rect + GRECT_W, (uint16_t)(bus_word(image, rect + GRECT_W) + W_BORDER));
+        set_bus_word(image, rect + GRECT_H, (uint16_t)(bus_word(image, rect + GRECT_H) + W_BORDER));
     }
 }
 

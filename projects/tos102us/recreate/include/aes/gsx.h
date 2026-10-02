@@ -97,6 +97,8 @@
  * does ($fcb12a tst.w intin[0]; ratinit's) — and, in the same `moveq #1,d0`, the step it counts its nest down by
  * ($fe8a8e). */
 #define GSX_SHOW_COUNTED      1
+/* ...and v_show_c(0): shown at once, whatever the VDI's hide depth (ratinit's; ct_mouse's grab, $fe4ac8 clr.w (sp)). */
+#define GSX_SHOW_AT_ONCE      0
 #define GSX_MOUSE_HIDDEN      0          /* AES_GL_MOUSE_SHOWN's two values ($fe8a80 clr.w, $fe8aa4 move.w #1)  */
 #define GSX_MOUSE_SHOWN       1
 /* gsx_fix's MFDB of a form in memory: a byte width is eight pixels, a word sixteen ($fda9bc lsl.w #3, lsr.w #4), and

@@ -14,6 +14,8 @@ halves of the one fact are stated once.
 """
 import ctypes
 import functools
+import math
+import os
 import struct
 import subprocess
 import sys
@@ -117,6 +119,16 @@ def answer(result):
 IMAGE_BYTES = len(BASE_IMAGE)
 FRESH_IMAGE = f"buf = (ctypes.c_uint8 * {IMAGE_BYTES})()"
 CHILD_SECONDS = 60      # how long a child is given before `subprocess.TimeoutExpired` ends it
+# A child must not OUTLIVE ITS PARENT: a core spinning in it (a mutant's loop) was orphaned for hours whenever the parent
+# died while waiting — the watchdog's `_exit` of the worker (`recreate_kit/watchdog.py`, which can run no cleanup), a
+# sweep killing pytest — and nothing the parent does can help once it is gone. So the child ends ITSELF: a thread blocks
+# on a pipe only the parent holds the write end of, and exits at its EOF, which the kernel delivers at the parent's
+# death; and SIGALRM, past its `seconds` and this grace, ends a child whose spin holds the GIL and starves that thread.
+# The grace keeps the parent's own timeout first, so a hang is still reported as one.
+CHILD_GRACE_SECONDS = 2
+CHILD_ORPHANED = 4      # the child's exit status when it saw its parent die (nobody is left to read it)
+_CHILD_GUARD = ("import os, signal, threading; signal.signal(signal.SIGALRM, signal.SIG_DFL); signal.alarm({alarm}); "
+                "threading.Thread(target=lambda: (os.read({parent_alive}, 1), os._exit({orphaned})), daemon=True).start()")
 
 
 def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE, seconds=CHILD_SECONDS):
@@ -124,10 +136,18 @@ def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE, seconds=CHILD_S
     refusal — `recreate_not_reconstructed`, an `abort()` — can end the run without ending pytest's.
     `arguments` is Python source; `prelude` is the statements before the call, which bind `buf` (a fresh
     image by default). Answers `(returncode, stderr)`; a child still running after `seconds` is killed and
-    raises `subprocess.TimeoutExpired`."""
-    probe = (f"import ctypes, mmap; lib = ctypes.CDLL({str(LIB)!r}); {prelude}; "
+    raises `subprocess.TimeoutExpired`, and one whose parent dies ends with it (`_CHILD_GUARD`)."""
+    parent_alive, held_by_parent = os.pipe()
+    guard = _CHILD_GUARD.format(alarm=math.ceil(seconds) + CHILD_GRACE_SECONDS, parent_alive=parent_alive,
+                                orphaned=CHILD_ORPHANED)
+    probe = (f"{guard}; import ctypes, mmap; lib = ctypes.CDLL({str(LIB)!r}); {prelude}; "
              f"lib.{symbol}.argtypes = [{', '.join(argtypes)}]; lib.{symbol}({arguments})")
-    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=seconds)
+    try:
+        run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=seconds,
+                             pass_fds=(parent_alive,))
+    finally:
+        os.close(parent_alive)
+        os.close(held_by_parent)
     return run.returncode, run.stderr
 
 

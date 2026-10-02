@@ -48,13 +48,14 @@ REFUSED_ANSWER = 0
 RECORDED_PASS = 1
 
 
-def bind_pointer(symbol, trampoline):
-    """Point the candidate `.so`'s function pointer `symbol` at a ctypes `trampoline`.
+def bind_pointer(symbol, trampoline, lib=_lib):
+    """Point the candidate `.so`'s function pointer `symbol` at a ctypes `trampoline` — in `lib`, the harness's
+    candidate unless a caller names the one it calls (a CHILD process's, which may not be the harness's).
 
     The CALLER must hold `trampoline` for the process's lifetime: the `.so` keeps only the raw
     pointer, and a trampoline the garbage collector freed would be a jump into released memory.
     """
-    ctypes.c_void_p.in_dll(_lib, symbol).value = ctypes.cast(trampoline, ctypes.c_void_p).value
+    ctypes.c_void_p.in_dll(lib, symbol).value = ctypes.cast(trampoline, ctypes.c_void_p).value
 
 
 class AddressHook:
@@ -121,11 +122,16 @@ class AddressHook:
                 self._pass_open = False
         return one_pass
 
+    @property
+    def in_recorded_pass(self):
+        """Whether a call now is one `calls` records: inside the RECORDED pass."""
+        return self._pass_open and self._passes_begun == RECORDED_PASS
+
     def _dispatch(self, buf, key, *arguments):
         if not self._pass_open:
             self.refused.append(key)
             return REFUSED_ANSWER
-        if self._passes_begun == RECORDED_PASS and len(self.calls) < CALLS_MAX:
+        if self.in_recorded_pass and len(self.calls) < CALLS_MAX:
             self.calls.append((key, *arguments))
         effect = self._effects.get(key)
         if effect is None:

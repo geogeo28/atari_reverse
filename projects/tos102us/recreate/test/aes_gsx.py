@@ -139,14 +139,18 @@ def shown_machine(onto=None):
     return aes.leaf_machine(onto=merge_pokes(CONTRL_STALE, onto))
 
 
-@functools.cache
-def _hidden():
-    """The snapshot after the ROM's own gsx_moff: its end state, as the pokes a run starts from."""
-    pokes = shown_machine()
+def hidden(pokes):
+    """`pokes` after the ROM's own gsx_moff over them, its cursor shown: its end state, as the pokes a run starts from."""
     final, writes, regs = emu.run(make_image(pokes), addrs.AES_ROM_GSX_MOFF)
     assert not regs.get("writes_truncated"), "gsx_moff's run overflowed the write ledger"
     assert aes.read_field(final, "AES", "GL_MOFF") == NEST_HIDDEN, "the ROM's gsx_moff did not hide the cursor"
     return case.continued_from(pokes, final, writes)
+
+
+@functools.cache
+def _hidden():
+    """The snapshot after the ROM's own gsx_moff (`hidden`)."""
+    return hidden(shown_machine())
 
 
 def machine(onto=None):

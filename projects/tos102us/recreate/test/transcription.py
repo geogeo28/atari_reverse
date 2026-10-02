@@ -422,6 +422,14 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_mkpiece", "aes_min"), ("aes_mkpiece", "aes_max"), ("aes_fix_tedinfo", "aes_lstrlen"),
     # a window's rectangles (`src/aes/wrect.c`): w_getsize's copy, and newrect's (w_getsize inlined into it)
     ("aes_w_getsize", "aes_rc_copy"), ("aes_newrect", "aes_rc_copy"),
+    # the window library (`src/aes/wmlib.c`, w_getsize/w_setsize inlined into its callers): the rectangles copied and
+    # cut, the slider's sums, the clip read back, the save buffer, wm_start's clears
+    ("aes_w_setsize", "aes_rc_copy"), ("aes_w_clipdraw", "aes_rc_copy"), ("aes_w_move", "aes_rc_copy"),
+    ("aes_w_owns", "aes_rc_copy"), ("aes_w_union", "aes_rc_copy"), ("aes_wm_create", "aes_rc_copy"),
+    ("aes_wm_start", "aes_rc_copy"), ("build_active", "aes_rc_copy"), ("aes_w_move", "aes_rc_union"),
+    ("aes_w_union", "aes_rc_union"), ("aes_w_barcalc", "aes_max"), ("aes_w_barcalc", "aes_mul_div"),
+    ("aes_w_barcalc", "aes_r_set"), ("aes_w_cpwalk", "aes_gsx_gclip"), ("aes_wm_get", "aes_gsx_mret"),
+    ("aes_wm_start", "aes_bfill"),
     ("aes_rs_str", "aes_lstcpy"), ("resource_part", "aes_wcopy"), ("aes_rom_ram", "aes_lbcopy"),
     ("aes_sc_read", "aes_lstcpy"), ("aes_sc_write", "aes_lstcpy"), ("aes_sh_read", "aes_lbcopy"),
     ("aes_sh_write", "aes_lbcopy"), ("aes_sh_get", "aes_lbcopy"), ("aes_sh_put", "aes_lbcopy"),
@@ -467,6 +475,14 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_ob_format", "aes_strlen"), ("aes_ob_user", "aes_rc_copy"), ("aes_ob_user", "aes_gsx_gclip"),
     # ...and just_draw's two callers (`src/aes/obdraw.c`): the cursor shown again after the walk and after a change
     ("aes_ob_draw", "aes_gsx_mon"), ("aes_ob_change", "aes_gsx_mon"),
+    # ...and the control manager's mouse grab (`src/aes/ctrl.c`): the arrow shown, the cursor hidden and shown again
+    ("aes_ct_mouse", "aes_gsx_1code"), ("aes_ct_mouse", "aes_gsx_ncode"),
+    # the object editor (`src/aes/obedit.c`): its copies and lengths (ob_getsp and ob_delit inlined into ob_edit too),
+    # check's upcase, the redraw's bounds, and the cursor's clip saved
+    ("aes_ob_getsp", "aes_lbcopy"), ("aes_ins_char", "aes_strlen"), ("aes_ob_stfn", "aes_strlen"),
+    ("aes_ob_delit", "aes_strcpy"), ("aes_check", "aes_toupper"), ("aes_curfld", "aes_gsx_gclip"),
+    ("aes_ob_edit", "aes_lbcopy"), ("aes_ob_edit", "aes_lstcpy"), ("aes_ob_edit", "aes_strlen"),
+    ("aes_ob_edit", "aes_strcpy"), ("aes_ob_edit", "aes_bfill"), ("aes_ob_edit", "aes_min"), ("aes_ob_edit", "aes_max"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),

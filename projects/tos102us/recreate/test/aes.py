@@ -23,8 +23,8 @@ AES's VDI contrl[] is in the capture MASK; a case reaching the VDI stages its ow
 
 ---- WHAT THE HEADERS DO NOT NAME, AND WHY ------------------------------------------------------------------------
 `include/aes/*.h` carries only fields a ROM instruction was found reading or writing. Left out, until a reconstructed
-routine reads them by name: PD +32/+38 (p_evbits, p_evlist: the map's reading, uncited), EVB +24 (e_return), the CDA's
-other words, WINDOW +8..+15 and +52.., TEDINFO +14/+20, ICONBLK +22/+24/+30/+32 (the GRECTs' sizes, read by gr_gicon
+routine reads them by name: PD +32 (p_evbits: the map's reading, uncited), EVB +24 (e_return), the CDA's
+other words, TEDINFO +14/+20, ICONBLK +22/+24/+30/+32 (the GRECTs' sizes, read by gr_gicon
 through the copy's address), and RSHDR +0/+12/+14 (version, strings, image data).
 """
 import contextlib
@@ -53,7 +53,8 @@ _INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # the C against.
 # `gsx.h` includes `vdi/vdi.h`, so the VDI's constants are `known`: a define spelt as an alias of one resolves.
 AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h",
-                                                   "aes/objdraw.h", "aes/obuser.h"))
+                                                   "aes/objdraw.h", "aes/obuser.h", "aes/obedit.h",
+                                                   "aes/evdoor.h", "aes/ctrl.h"))
 CONSTANTS = layouts.parse_constants(AES_HEADERS, known=vdi.CONSTANTS)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -81,9 +82,11 @@ RECORD_BYTES = {"PD": PD_BYTES, "UDA": UDA_STATE_BYTES, "CDA": CDA_BYTES, "EVB":
                 "PARM": PARM_BYTES, "GRECT": GRECT_BYTES, "ORECT": ORECT_BYTES, "RSH": RSH_BYTES}
 
 # ---- the window, and the bands in it --------------------------------------------------------------------------------
-# Above the VDI's window and below the stack guard, dead in the snapshot (`test_aes_door.py` holds both).
+# Above the VDI's window and below the stack guard, dead in the snapshot (`test_aes_door.py` holds both). 16 KB: the
+# first 8 KB are the bands the object, graphics and string layers stage in (full, measured, when the event door claimed
+# its 48 bytes); the rest is room for the form, menu and window layers' own.
 WINDOW_AT = 0x78000
-WINDOW_BYTES = 0x2000
+WINDOW_BYTES = 0x4000
 SPAN = staging.Registry(WINDOW_AT, WINDOW_AT + WINDOW_BYTES, "the AES's staged window")
 LAYOUTS = layouts.Layouts(AES_HEADERS, RECORDS, CONSTANTS, require=SPAN.require_claimed, where="`aes/aes.h`, THE WIDTH TAG")
 FIELDS = LAYOUTS.fields
@@ -151,8 +154,8 @@ SNAPSHOT_MASK_WORD = case.word_in(BASE_IMAGE, AES_LINEF_MASK_WORD)     # the las
 def leaf_machine(onto=None):
     """The AES as a routine that never reaches `dsptch` runs in it, over `onto`: the shell's PD RUNNING (`AES_RLR`,
     NULL in the snapshot) and the dispatcher's guard `AES_INDISP` at the snapshot's own 1 — a lever that makes
-    `dsptch` a bare `rts`, inert for such a routine. A routine that DOES reach `dsptch` needs the running process and
-    the guard as its own case's choices (a clear guard really enters disp), which no battery stages yet."""
+    `dsptch` a bare `rts`, inert for such a routine. A routine that reaches the EVENT LAYER runs over the scheduler's
+    own running process instead (`aes_event.machine`), and the door refuses any wait of it that reaches dsptch."""
     return merge_pokes(onto, field_pokes("AES", RLR=SHELL_PD, INDISP=AES_INDISP_SET))
 
 
@@ -292,14 +295,23 @@ def line_f_target(word):
 
 
 @functools.cache
-def line_f_call_sites(name):
-    """`{call word: (address, ...)}`: every even word of the GEM text that Line-F-calls `addrs.<name>`, by word."""
-    routine, sites = getattr(addrs, name), {}
+def _line_f_call_index():
+    """`{routine: {call word: (address, ...)}}`: every even word of the GEM text that is a Line-F CALL, by the routine
+    it names — ONE pass over the text, which every `line_f_call_sites` answers from (a battery asks for tens of names
+    at import, in every worker)."""
+    index = {}
     for at in range(*AES_TEXT, WORD_BYTES):
         word = case.word_in(BASE_IMAGE, at)
-        if line_f_target(word) == routine:
+        routine = line_f_target(word)
+        if routine is not None:
+            sites = index.setdefault(routine, {})
             sites[word] = (*sites.get(word, ()), at)
-    return sites
+    return index
+
+
+def line_f_call_sites(name):
+    """`{call word: (address, ...)}`: every even word of the GEM text that Line-F-calls `addrs.<name>`, by word."""
+    return dict(_line_f_call_index().get(getattr(addrs, name), {}))
 
 
 def line_f_call_word(name):
@@ -444,7 +456,7 @@ def doors(*hooks):
 
 
 def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, hook=None,
-                 regs=None, host_arguments=(), result=None, **kwargs):
+                 regs=None, host_arguments=(), result=None, answer_compared=True, **kwargs):
     """The Alcyon AES routine `addrs.<name>` over the frame of `arguments`, against its core called with the same
     values, the answer compared at the signature's width and `dropped_windows` — the mask word, by default — dropped where
     the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result` (or the `result` subclass a battery reads
@@ -458,7 +470,11 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
 
     `regs` are the ROM's entry registers beyond the frame (sh_path reads its caller's D6); `host_arguments` are the
     values the core takes after the image and before the frame's — what no frame carries (a return address the ROM's
-    glue parks, dos_free's precedent)."""
+    glue parks, dos_free's precedent).
+
+    `answer_compared` False for an arm on which the ROM sets no D0 — it leaves its CALLER's, which no core is handed
+    (w_move while drawing is held): the case enters with a D0 of its own (`regs`) to show it, and the answer is not
+    compared."""
     signature = vdi.ALCYON[name]
     core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi.as_signed(name, arguments)
@@ -466,12 +482,20 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
     takes_image = vdi.takes_image(name)
 
     def glue(_lib_, buf):
-        return core(buf, *host_arguments, *arguments) if takes_image else core(*arguments)
+        answer = core(buf, *host_arguments, *arguments) if takes_image else core(*arguments)
+        return answer if answer_compared else None
     with hook() if hook else contextlib.nullcontext() as bound:
         info = case.run(entry_of(name, through_line_f), {**(regs or {}), "_pokes": machine_pokes},
                         bound.recording(glue) if bound else glue,
-                        width=RESULT_WIDTHS[signature.restype], dropped_windows=dropped_windows, **kwargs)
+                        width=RESULT_WIDTHS[signature.restype] if answer_compared else case.NO_RESULT,
+                        dropped_windows=dropped_windows, **kwargs)
     return (result or Result)(info, machine_pokes)
+
+
+def stored_nothing(result):
+    """Whether a run stored no byte outside the stack band but the Line-F mask word (a masked Alcyon return's)."""
+    mask = range(AES_LINEF_MASK_WORD, AES_LINEF_MASK_WORD + WORD_BYTES)
+    return not case.written_by(result.info["writes"]).keys() - set(mask)
 
 
 def settled_mask_word(name, arguments, pokes, io_seed=None):
@@ -490,10 +514,11 @@ def settled_mask_word(name, arguments, pokes, io_seed=None):
 COMPANION_UNPOISONED = {"poison": False}
 
 
-def undropped(name, arguments, pokes, hook=None, io_seed=None):
+def undropped(name, arguments, pokes, hook=None, io_seed=None, answer_compared=True):
     """A priced row's Tier 3 COMPANION: the SAME machine — the mask word staged at the value the run leaves, which the
     ROM's run then rewrites with itself — as a differential with NOTHING dropped."""
-    return run_function(name, arguments, pokes, dropped_windows=(), hook=hook, io_seed=io_seed, **COMPANION_UNPOISONED)
+    return run_function(name, arguments, pokes, dropped_windows=(), hook=hook, io_seed=io_seed,
+                        answer_compared=answer_compared, **COMPANION_UNPOISONED)
 
 
 # ---- (e) the registry --------------------------------------------------------------------------------------------
@@ -503,24 +528,27 @@ CASES = ROWS.cases
 UNPRICED = ROWS.unpriced
 
 
-def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, io_seed=None):
+def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, io_seed=None, answer_compared=True):
     """One `VERIFIED_CASES` row of `name` over the frame of `arguments`, named `<core>, <label>`. A DIRECT row is
     priced; if the ROM's run stores the mask word, the row stages it at the value the run leaves and drops it at
     Tier 3, with its companion (a routine calling out with its `hook`, `run_function`'s). A row THROUGH
     LINE-F is verified and unpriced. A core with more C arguments than the harness's argument area holds (ob_sst's
     nine) is priced like any other: `rom_bench` enters its C lower by the bytes that do not fit. `io_seed` declares
-    the I/O bytes the run reads (`case.run`'s), for a routine that reaches the hardware through the OS."""
+    the I/O bytes the run reads (`case.run`'s), for a routine that reaches the hardware through the OS.
+    `answer_compared` False for an arm on which the ROM sets no D0 (`run_function`'s): the row and its companion
+    compare no answer."""
     row_name = f"{routines.core_symbol(name)}, {label}"
     if through_line_f:
         return ROWS.register(row_name, LINE_F_CALLER_AT, staged(name, arguments, pokes, through_line_f=True),
-                             priced=False, io_seed=io_seed)
+                             priced=False, io_seed=io_seed, answered=answer_compared)
     settled = settled_mask_word(name, arguments, pokes, io_seed)
     if settled is None:
-        return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed)
+        return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
+                             answered=answer_compared)
     pokes = merge_pokes(pokes, field_pokes("AES", LINEF_MASK_WORD=settled))
     return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
-                         dropped=LINE_F_MASK_WINDOW, undropped=functools.partial(undropped, name, arguments, pokes, hook,
-                                                                                 io_seed))
+                         dropped=LINE_F_MASK_WINDOW, answered=answer_compared,
+                         undropped=functools.partial(undropped, name, arguments, pokes, hook, io_seed, answer_compared))
 
 
 # ---- (f) what the snapshot mask is checked against ------------------------------------------------------------------

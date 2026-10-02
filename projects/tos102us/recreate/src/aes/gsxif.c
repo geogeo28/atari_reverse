@@ -255,7 +255,7 @@ void aes_gsx_mfrestore(uint8_t *image)
 TRANSCRIBED_CORE
 void aes_ratinit(uint8_t *image)
 {
-    aes_gsx_1code(image, VDI_ROM_V_SHOW_C_OPCODE, 0);
+    aes_gsx_1code(image, VDI_ROM_V_SHOW_C_OPCODE, GSX_SHOW_AT_ONCE);
     wr16(image + AES_GL_MOFF, 0);
 }
 

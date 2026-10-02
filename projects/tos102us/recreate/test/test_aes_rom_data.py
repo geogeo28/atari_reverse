@@ -64,6 +64,10 @@ ROM_ADDRESSES_AS_DATA = {
     # ob_draw hands everyobj just_draw by its ROM address on the host ($fea08c `move.l #$fe9a88,-(sp)`, row (b) below);
     # on target, its Alcyon entry (`obdraw.S`) — the rebuilt ROM's own.
     "obdraw.c": {"AES_ROM_JUST_DRAW": CODE},
+    # The event door's entries, `jsr`ed at their ROM addresses on target and keyed by them off it — the routines a
+    # rebuilt ROM keeps where they are until the event layer is C — and the call table the Line-F handler's RAM copy
+    # must still name (the door's check before it calls).
+    "aes/evdoor.h": {"AES_ROM_EV_MULTI": CODE, "AES_ROM_AP_RDWR": CODE, "AES_LINEF_TABLE": TABLE},
 }
 
 
@@ -133,7 +137,7 @@ PC_RELATIVE_DATA = {
     0xFDAD28: PcRelative(0xFDAD8C, TEXT_TABLE, "gsx_tblt: ...for font 5"),
     0xFE39BE: PcRelative(0xFE39B4, TEXT_TABLE, "$fe39bc (ctx, Pexec glue): the empty tail string, a zero word"),
     0xFE3B20: PcRelative(0xFE3B64, TEXT_TABLE, "$fe3b02 (ctx, desk): the `:\\*.*` search suffix"),
-    0xFE84CA: PcRelative(0xFE85B2, CODE_BYTES, "gr_watchbox: gr_setup's `move.l #` immediate, read"),
+    0xFE84CA: PcRelative(0xFE85B2, CODE_BYTES, "gr_watchbox: gr_setup's `move.l #` immediate, read (grwait.c: its value)"),
     0xFE85CE: PcRelative(0xFE8586, CODE_BYTES, "gr_rubbox: gr_draw's (ctx) `move.l #` immediate, read"),
     0xFE869C: PcRelative(0xFE8586, CODE_BYTES, "gr_dragbox: ...the same immediate, read"),
     0xFE8768: PcRelative(0xFE8780, TEXT_TABLE, "gr_mkstate: its table of RAM addresses"),

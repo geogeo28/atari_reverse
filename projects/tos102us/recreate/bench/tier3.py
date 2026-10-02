@@ -42,7 +42,7 @@ project.load(RECREATE)
 from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench   # noqa: E402
 from harness import addrs, emu, make_image                 # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
-from case import tier3_dropped                             # noqa: E402  (every component's rows' drops)
+from case import tier3_dropped, tier3_unanswered           # noqa: E402  (every component's rows' drops, unanswered)
 # THE REGISTER OF VERIFIED CASES, and with it every battery whose constructors built one. Importing a
 # test module from a bench script is deliberate: that module is where this project keeps the list of
 # what it has verified (it is the list the snapshot mask is checked against), and a Tier 3 row is a
@@ -91,6 +91,8 @@ import test_vdi_escape_transcription as escape_transcription   # noqa: E402
 # ...and the AES's door, for the spans mechanism (V) holds the ROM's side of a row through the OS to: its text and the
 # Line-F handler's RAM copy.
 import aes                                                 # noqa: E402
+# ...and the event door, whose watch over a run (`DoorStops`) mechanism (EV) windows BOTH sides' runs with.
+import aes_event                                           # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -247,6 +249,17 @@ RATIO_TOLERANCE = 0.02
 #       an entry accepts it. An entry — an acceptance or a pin under the bar — is written at the number that SHIPS, the
 #       own ratio WITH the glue counted back, as a (T→) row's is at its shipped one; a pinned row still splits `net`
 #       from `glue`. Derived, never typed: `test_tier3.py` refuses a written entry for a row the rule carries.
+#   (EV) THROUGH THE EVENT LAYER — (V) for the AES's own event layer, which no C holds yet. A row whose C reaches the
+#       event door (`aes/evdoor.h`: on target the ROM's call itself, its frame pushed and a `jsr` to ev_multi or ap_rdwr)
+#       runs that ROM code on both sides, and it is AES text: so BOTH runs are WATCHED, stopped at each door entry and at
+#       the return address its call left (`DoorWindows`: our `jsr`'s, the ROM's Line-F word's), and the AES-span cycles
+#       between are a WINDOW, the event layer's. The two sides' windows must be EQUAL, one by one (the event layer is
+#       the same code over the same machine on both); the ROM's own is its AES-span cycles LESS them; ours is (V)'s, the
+#       frame's pushes in it as the ROM's Line-F word is in its; an AES-span cycle of ours outside every window is
+#       refused by name, and the OS both ran must still cost both sides the same. Priced, judged and labelled as (V)
+#       rows are (`net`/`glue`/OVER), the table's line beneath counting the windows. Derived: the door calls are the
+#       blob's `jsr`s into the AES text, the rows the call graph's callers of the functions holding one. (The letter is
+#       not (E): that one is taken, above.)
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -1530,6 +1543,8 @@ def _stop_pc(case):
 
 # Every component's rows' drops, read once: the registries are complete by now (`test_boot_snapshot`, imported above, imports every battery).
 DROPPED = tier3_dropped()
+# ...and the rows whose answer is compared at no width: an arm on which the ROM leaves its caller's D0.
+UNANSWERED = tier3_unanswered()
 
 
 def _row(case):
@@ -1559,7 +1574,8 @@ def _row(case):
         address, staged_entry = None, (0, 0)
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
-               call.returns, False, address, staged_entry, (0, 0), schedule, DROPPED.get(name, ()))
+               RETURNS_NOTHING if name in UNANSWERED else call.returns, False, address, staged_entry, (0, 0), schedule,
+               DROPPED.get(name, ()))
 
 
 def _transcription_row(case):
@@ -1727,11 +1743,12 @@ def cycles_inside_glue():
     return _cycles_in(glue_ranges())
 
 
-def _measure_call(bench, row):
-    """A C row's `Measurement` on `bench` — the one spelling of the call, whichever blob prices it."""
+def _measure_call(bench, row, watch=None):
+    """A C row's `Measurement` on `bench` — the one spelling of the call, whichever blob prices it. `watch` is (EV)'s
+    door windows (`DoorWindows`), for a row whose C reaches the event layer."""
     return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
                          io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry, schedule=row.schedule,
-                         dropped=row.dropped)
+                         dropped=row.dropped, watch=watch)
 
 
 def _profiled(run):
@@ -1744,9 +1761,9 @@ def _profiled(run):
         emu.prof_enable(False)
 
 
-def _measure_as_shipped(row):
+def _measure_as_shipped(row, watch=None):
     """A (T→) row on the shipped blob, PROFILED: the `Measurement` carries `glue_cycles` beside its costs."""
-    measured = _profiled(lambda: _measure_call(shipped_bench(), row))
+    measured = _profiled(lambda: _measure_call(shipped_bench(), row, watch))
     measured.glue_cycles = cycles_inside_glue()
     return measured
 
@@ -1893,8 +1910,89 @@ def _reaching_the_trap():
 
 
 def goes_through_the_os(row):
-    """(V): is `row` the C of a routine that reaches the VDI by `trap #2` — priced on its own cycles?"""
-    return not row.transcription and row.symbol in _reaching_the_trap()
+    """(V) and (EV): is `row` the C of a routine that reaches the VDI by `trap #2`, or the event layer through the event
+    door — priced on its own cycles?"""
+    return not row.transcription and (row.symbol in _reaching_the_trap() or goes_through_the_door(row))
+
+
+# MECHANISM (EV): C that reaches the EVENT LAYER through the event door (`aes/evdoor.h`): on target each door call is
+# the ROM's own — the frame pushed, a `jsr` to ev_multi or ap_rdwr at its ROM address — which our C runs from the same
+# bytes the ROM's caller reaches by its Line-F word. Those routines are AES TEXT, so (V)'s accounting would book their
+# cycles as the ROM's own on one side and refuse them on ours. So our run is WATCHED (`RomBench.measure`'s `watch`):
+# stopped at every door entry the blob `jsr`s (each exact PC) and at the return address the `jsr` left, the
+# AES-span cycles between each pair a WINDOW — and so is the ROM's own run (`_original_windows`), stopped at the same
+# entries and at the address its Line-F word returns to. The windows are the event layer's cost, run on both sides from
+# the same bytes over the same machine, and held EQUAL one by one, as (V)'s shared cycles are: a door call that took the
+# event layer down a cheaper path than the ROM's would otherwise be credited to the ROM's own. The ROM's own is its
+# AES-span cycles less its windows; ours keeps (V)'s, every blob cycle less the glue — the frame's pushes included, as
+# the ROM's own includes its Line-F word's handler — and an AES-span cycle of ours OUTSIDE a window is refused by name:
+# our C reaches the AES's ROM bytes only through the door. (V)'s shared-cycle equality still holds the OS both ran.
+# Derived, never typed: the door calls are the blob's own `jsr`s into the AES text, the rows the call graph's callers of
+# the functions holding one, the windows read off the two runs.
+_LISTED_JSR_ABSOLUTE = re.compile(r"^\s+([0-9a-f]+):\s+4eb9 ([0-9a-f]{4}) ([0-9a-f]{4})\s+jsr ", re.M)
+JSR_ABSOLUTE_BYTES = 6                 # `jsr <abs.l>`: the opcode word and the address
+
+
+@functools.cache
+def door_calls(elf):
+    """`{call site: door entry}`: every `jsr` of `elf` to an absolute address in the AES's text — the event door's calls,
+    the only way the C reaches that text."""
+    return {int(at, 16): int(high + low, 16) for at, high, low in _LISTED_JSR_ABSOLUTE.findall(transcription.listing(elf))
+            if aes.AES_TEXT[0] <= int(high + low, 16) < aes.AES_TEXT[1]}
+
+
+@functools.cache
+def _reaching_the_door():
+    """Every function of the m68k build from which a door call is reachable: the functions holding one (the wrappers
+    are inline) and their callers, closed over the call graph."""
+    graph = transcription.call_graph(BUILT_ELF)
+    vet_no_row_is_ambiguous(graph)
+    sites = door_calls(BUILT_ELF)
+    holders = frozenset(node for node, spans in _function_ranges(BUILT_ELF).items()
+                        if any(lo <= at < hi for lo, hi in spans for at in sites))
+    return frozenset(transcription.callers_closure(graph, holders))
+
+
+def goes_through_the_door(row):
+    """(EV): is `row` the C of a routine that reaches the event layer through the event door?"""
+    return not row.transcription and row.symbol in _reaching_the_door()
+
+
+class DoorWindows(aes_event.DoorStops):
+    """(EV)'s watch over a PROFILED run (`aes_event.DoorStops`): a stop at a door entry opens a window — the AES-span
+    cycles so far kept, and what the call hands the entry (`aes_event.handed_at`: its frame, above the return address,
+    read through its pointers) — and the stop at the return address the call left closes it. Refused by name: an entry
+    reached from no call's return address. `windows` is each window's AES-span cycles, in order; `handed` each call's
+    frame."""
+
+    def __init__(self, entries, returns):
+        super().__init__(entries, returns, self._window_opened, self._window_closed)
+        self.windows, self.handed = [], []
+        self._opened_at = None
+
+    def _window_opened(self, pc, sp, memory):
+        self.handed.append(aes_event.handed_at(pc, sp, memory))
+        self._opened_at = _cycles_in(AES_OWN_SPANS)
+
+    def _window_closed(self):
+        self.windows.append(_cycles_in(AES_OWN_SPANS) - self._opened_at)
+
+
+def our_windows(elf):
+    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr`."""
+    calls = door_calls(elf)
+    return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls))
+
+
+def _original_windows(row):
+    """(EV): the ROM's own run of `row`, WATCHED at the door's entries and the addresses their Line-F words return to
+    (`aes_event.ROM_RETURNS`) and PROFILED (`aes_event.run_watched`, over the case's image): its `DoorWindows`, and the
+    whole run's cycles."""
+    assert not (row.regs or row.psg_seed or row.schedule), (
+        f"{row.symbol} / {row.case}: a door row's ORIGINAL is re-run watched with the case's image and I/O map alone")
+    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS)
+    run = _profiled(lambda: aes_event.run_watched(bytearray(make_image(row.pokes)), row.entry, watch, row.io_seed))
+    return watch, run["cycles"]
 
 
 def _original_own_cycles(row):
@@ -1909,19 +2007,38 @@ def _measure_through_the_os(row, bench):
     as shipped, `glue_cycles` too. Ours is every cycle at the blob's PCs less the thunks'; the ROM's comes from its
     own run (`_original_own_cycles`), and the measurement's run of BOTH must spend exactly that much in the AES's
     spans: a cycle more is our build executing the AES's ROM bytes, which would be counted as the ROM's own."""
+    through_the_door = goes_through_the_door(row)
+    original, original_watched = _original_windows(row) if through_the_door else (None, None)
     original_own = _original_own_cycles(row)
-    if ships_through_a_call(row):
-        blob, measured = shipped_bench(), _measure_as_shipped(row)
+    shipped = ships_through_a_call(row)
+    blob = shipped_bench() if shipped else bench
+    windows = our_windows(blob.elf) if through_the_door else None
+    if shipped:
+        measured = _measure_as_shipped(row, windows)
     else:
-        blob, measured = bench, _profiled(lambda: _measure_call(bench, row))
+        measured = _profiled(lambda: _measure_call(bench, row, windows))
         measured.glue_cycles = _cycles_in(alcyon_entry_ranges(bench.elf))
-    both_in_the_aes = _cycles_in(AES_OWN_SPANS)
-    assert both_in_the_aes == original_own, (
-        f"{row.symbol} / {row.case}: our build spent {both_in_the_aes - original_own} cycles inside the AES's own ROM "
-        f"spans — a (V) row's C reaches the ROM only through the trap, never the AES's code itself")
+    measured.door_windows = tuple(windows.windows) if windows else ()
+    if through_the_door:
+        assert original_watched == measured.original_cycles, (
+            f"{row.symbol} / {row.case}: the ORIGINAL's watched run cost {original_watched} cycles and its run "
+            f"{measured.original_cycles} — the windows were read off another run")
+        assert original.handed == windows.handed, (
+            f"{row.symbol} / {row.case}: our build handed the door {windows.handed} where the ROM's run hands "
+            f"{original.handed} — a frame the image does not show")
+        assert tuple(original.windows) == measured.door_windows, (
+            f"{row.symbol} / {row.case}: the event layer cost the ROM's run {tuple(original.windows)} and ours "
+            f"{measured.door_windows}, window by window — the door's calls took it down another path than the ROM's")
+    in_the_event_layer = sum(original.windows) if through_the_door else 0
+    ours_in_the_aes = _cycles_in(AES_OWN_SPANS) - original_own
+    assert ours_in_the_aes == in_the_event_layer, (
+        f"{row.symbol} / {row.case}: our build spent {ours_in_the_aes - in_the_event_layer} cycles inside the AES's own "
+        f"ROM spans OUTSIDE the event door's windows — a (V) or (EV) row's C reaches the ROM only through the trap and "
+        f"the door, never the AES's code itself")
     # Net of the reset both entries are charged (`Measurement`), which each tally places at its entry: own spans both.
     reset = measured.overhead_cycles
-    measured.own_cycles = (emu.prof_cycles(blob.base, blob.end) - glue_cycles_of(measured) - reset, original_own - reset)
+    measured.own_cycles = (emu.prof_cycles(blob.base, blob.end) - glue_cycles_of(measured) - reset,
+                           original_own - in_the_event_layer - reset)
     shared, original_shared = shared_cycles(measured)
     assert shared == original_shared, (
         f"{row.symbol} / {row.case}: the OS both sides run cost ours {shared} cycles and the ROM's {original_shared} — "
@@ -2081,12 +2198,14 @@ ADDRESS_WIDTH = 9
 
 
 def _through_the_os_line(measured, indent):
-    """The (V) split under a row through the OS: the whole run's ratio, and what each side spent of its own."""
+    """The (V)/(EV) split under a row through the OS: the whole run's ratio, and what each side spent of its own."""
     ours, original = measured.own_cycles
     glue = glue_cycles_of(measured)
     shared, original_shared = shared_cycles(measured)
+    windows = getattr(measured, "door_windows", ())
     return (f"{'':<{indent}}  whole run: {measured.ratio:.2f} — own {ours} cycles against the ROM's {original} in the "
             f"AES's text and Line-F handler; the OS both run {shared} against {original_shared}"
+            + (f", the event layer's {sum(windows)} of it in {len(windows)} door window(s)" if windows else "")
             + (f", and {glue} in thunks: {own_ratio_with_glue(measured):.2f} with them" if glue else ""))
 
 
@@ -2137,7 +2256,9 @@ def table(bench):
         f"`net`: C that reaches the VDI by `trap #2`, its ratio its OWN cycles against the ROM's in the AES's text and "
         f"Line-F handler (V) — the OS both run from the same bytes in neither — <= {TIER3_FUNCTION_BAR:.2f}, and so "
         f"with its thunks' cycles counted back; the whole run's ratio prints below it. A (V) row <= "
-        f"{TIER3_FUNCTION_BAR:.2f} only net of its thunks is `glue`, as (T→G), its ratio with them printed below.",
+        f"{TIER3_FUNCTION_BAR:.2f} only net of its thunks is `glue`, as (T→G), its ratio with them printed below. (EV): C "
+        f"that reaches the event layer through the event door is priced the same way, the ROM routine its `jsr` "
+        f"enters taken off both sides (the door's windows, counted below the row).",
         "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "
         "by nature (a return address each build parks), which the ROM must write and the case's own differential "
         "still compares.",

@@ -42,6 +42,7 @@ import tier3                                               # noqa: E402  (the re
 import trap                                                # noqa: E402
 # ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
 import aes                                                 # noqa: E402
+import aes_event                                           # noqa: E402
 import case                                                # noqa: E402
 import routines                                            # noqa: E402
 import transcription                                       # noqa: E402
@@ -742,13 +743,139 @@ def test_the_os_rule_refuses_a_shared_cost_the_two_sides_do_not_share(bench, mon
     row = tier3.row_named(OS_ROW)
     measure_call = tier3._measure_call
 
-    def spent_more_outside(blob, row):
-        measured = measure_call(blob, row)
+    def spent_more_outside(blob, row, watch=None):
+        measured = measure_call(blob, row, watch)
         measured.recreate_cycles += SHARED_CYCLES_MOVED
         return measured
     monkeypatch.setattr(tier3, "_measure_call", spent_more_outside)
     with pytest.raises(AssertionError, match="the OS both sides run cost"):
         tier3.measure(row, bench)
+
+
+# ---- (EV): C that reaches the event layer through the event door ------------------------------------------------------
+# Two door rows: gr_stilldn over ev_multi answering its mouse rectangle under the button down (the event layer's longest
+# answering run of the battery's), and gr_watchbox, which draws (V) and waits (EV) in one row.
+EV_ROW = ("aes_gr_stilldn", "the button down, inside, waiting to enter: the rectangle")
+EV_DRAWING_ROW = ("aes_gr_watchbox", "OK, selected while inside: it rose, inside")
+
+
+@pytest.mark.parametrize("key", (EV_ROW, EV_DRAWING_ROW), ids=lambda key: key[0])
+def test_a_row_through_the_event_door_is_priced_net_of_its_windows(key, dispatch, measurement_of):
+    """The ROM's ev_multi runs on both sides and is in neither's own: one window, its cycles off the ROM's AES-span
+    cycles, the whole run's ratio near 1 and the own ratio the C's."""
+    row = tier3.row_named(key)
+    measured = measurement_of(row)
+    assert tier3.goes_through_the_door(row) and len(measured.door_windows) == 1
+    ours, original = measured.own_cycles
+    assert 0 < ours < measured.recreate_net and 0 < original < measured.original_net - sum(measured.door_windows)
+    assert tier3.verdict(row, measured, dispatch, measurement_of) in ("net", "glue")
+
+
+# A body delayed by about three times gr_stilldn's own cost — a fraction of the event layer's run it waits in.
+EV_DELAY_CYCLES = 1000
+
+
+def test_a_delayed_body_through_the_door_reds_its_row_while_the_whole_run_stays_under_the_bar(dispatch, measurement_of):
+    """THE RED (EV) exists for: ~1,000 cycles more of gr_stilldn's C are a fraction of the event layer's run — the whole
+    ratio stays under the bar — and three times the routine's own cost."""
+    row = tier3.row_named(EV_ROW)
+    delayed = _with_own_delay(measurement_of(row), EV_DELAY_CYCLES)
+    assert delayed.ratio <= tier3.TIER3_FUNCTION_BAR, "the premise: the whole run hides the delay"
+    assert tier3.verdict(row, delayed, dispatch, measurement_of) == "OVER"
+
+
+def test_the_door_rule_holds_the_two_sides_windows_equal(bench, monkeypatch):
+    """THE RED for the ROM's side: its windows are measured off its own watched run, never assumed to be ours — a window
+    of the ROM's one cycle dearer than ours (a door call taking the event layer down a cheaper path) is refused, never
+    credited to the ROM's own."""
+    row = tier3.row_named(EV_ROW)
+    original_windows = tier3._original_windows
+
+    def one_cycle_dearer(row):
+        watch, cycles = original_windows(row)
+        watch.windows[0] += 1
+        return watch, cycles
+    monkeypatch.setattr(tier3, "_original_windows", one_cycle_dearer)
+    with pytest.raises(AssertionError, match="window by window"):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_the_original_s_windows_are_read_off_its_own_run(bench):
+    """The ROM's watched run is its run — the same cycles as the one priced — and has as many windows as ours, each the
+    event layer's cost in AES text."""
+    row = tier3.row_named(EV_ROW)
+    watch, cycles = tier3._original_windows(row)
+    measured = tier3._measure_through_the_os(row, bench)
+    assert cycles == measured.original_cycles
+    assert tuple(watch.windows) == measured.door_windows and len(watch.windows) == 1 and watch.windows[0] > 0
+
+
+def test_the_door_rule_holds_the_two_sides_frames_equal(bench, monkeypatch):
+    """...and what each call hands the door, the same way: a frame the event layer's answer would not show (a timer
+    nothing asks for) is red on the target build too, where the frame sits in the uncompared stack band."""
+    row = tier3.row_named(EV_ROW)
+    original_windows = tier3._original_windows
+
+    def another_timer(row):
+        watch, cycles = original_windows(row)
+        call = watch.handed[0]
+        flags, first, second, timer, *rest = call.arguments
+        watch.handed[0] = call._replace(arguments=(flags, first, second, timer + 1, *rest))
+        return watch, cycles
+    monkeypatch.setattr(tier3, "_original_windows", another_timer)
+    with pytest.raises(AssertionError, match="a frame the image does not show"):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_the_door_rule_refuses_rom_aes_code_run_outside_a_window(bench, monkeypatch):
+    """Our side may reach the AES's text only through the door: the same row measured with no window opened (its run
+    unwatched, as a C reaching ROM code by any other road would be) is refused, never credited to the ROM."""
+    row = tier3.row_named(EV_ROW)
+    monkeypatch.setattr(tier3, "goes_through_the_door", lambda _row: False)
+    with pytest.raises(AssertionError, match="OUTSIDE the event door's windows"):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_the_door_watch_stops_at_the_entries_alone_and_refuses_one_entered_but_by_a_door_call():
+    """The watch stops at the door's entries THEMSELVES (a set of exact PCs, never a band that would swallow the AES
+    text between them), then at the return address the call left; and a door entry reached from a return address no
+    door call leaves is refused."""
+    windows = tier3.our_windows(tier3.BUILT_ELF)
+    entry, back = min(windows.entries), min(windows.returns)
+    stack = 0x100
+    memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(max(aes_event.FRAME_BYTES.values()))
+    assert windows.first == frozenset(aes_event.ENTRIES)
+    assert windows.stopped(entry, stack, memory) == frozenset({back})
+    memory[stack:stack + 4] = (back + 2).to_bytes(4, "big")
+    with pytest.raises(AssertionError, match="not a door call"):
+        tier3.our_windows(tier3.BUILT_ELF).stopped(entry, stack, memory)
+
+
+# A row registered with its answer not compared (`aes.register`'s `answer_compared`): w_move while drawing is held, which
+# leaves its caller's D0.
+UNANSWERED_ROW = ("aes_w_move", "drawing held, moved")
+
+
+def test_a_row_registered_unanswered_is_priced_comparing_no_answer():
+    assert tier3.row_named(UNANSWERED_ROW).returns == tier3.RETURNS_NOTHING
+    assert tier3.row_named(("aes_w_move", "a window moved")).returns != tier3.RETURNS_NOTHING, "the premise: w_move answers"
+
+
+def test_the_door_calls_are_the_door_s_entries_and_their_users_the_aes_s():
+    """Derived from the blob, held to the door's own list: every `jsr` of the m68k build into the AES's text lands on an
+    entry the event door serves, and every row reaching one is a routine of the AES's text."""
+    assert set(tier3.door_calls(tier3.BUILT_ELF).values()) == set(aes_event.ENTRIES)
+    through = [row for row in tier3.ROWS if tier3.goes_through_the_door(row)]
+    assert {row.symbol for row in through} >= {"aes_gr_stilldn", "aes_gr_watchbox", "aes_ap_sendmsg"}
+    assert all(aes.AES_TEXT[0] <= tier3.rom_address(row) < aes.AES_TEXT[1] for row in through)
+
+
+def test_the_door_rule_vets_the_call_graph_it_derives_from(monkeypatch):
+    def vetted(_graph):
+        raise _Vetted
+    monkeypatch.setattr(tier3, "vet_no_row_is_ambiguous", vetted)
+    with pytest.raises(_Vetted):
+        tier3._reaching_the_door.__wrapped__()
 
 
 # ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------

@@ -1902,6 +1902,9 @@
 #define AES_ROM_FORKER            0xfe4bc6   /* `jsr (a0)` on each queued fork function's ROM address ($fe4cba) */
 #define AES_ROM_CHKKBD            0xfe4cd6   /* the keyboard, polled through the VDI (128, 33, 31) */
 #define AES_ROM_IDLE              0xfe4d68   /* chkkbd until a process is ready or a fork is queued */
+/* ...disp's own LOOP, where the snapshot waits: forker, then idle, until a process is ready; then switchto the first
+ * ready one ($fe4dda..$fe4dfe). The event door's machines are woken by running it (`test/aes_event.py`). */
+#define AES_ROM_DISP_LOOP         0xfe4dda
 /* The FORK FUNCTIONS: forkq queues one by its ROM address, an immediate (`test/aes.py`'s FORK_FUNCTION_IMMEDIATES). */
 #define AES_ROM_TCHANGE           0xfe4e02   /* the timer's */
 #define AES_ROM_KCHANGE           0xfe5180   /* the keyboard's */
@@ -1909,6 +1912,10 @@
 #define AES_ROM_MCHANGE           0xfe534c   /* the mouse's */
 #define AES_AP_TPLAY_FORKQ_CALL   0xfe671e   /* ap_tplay's forkq call: it pushes a LOCAL, not an immediate */
 #define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
+#define AES_ROM_ACANCEL           0xfe427a   /* (mask): the running PD's EVBs of those events cancelled (ev_multi's tail) */
+/* ev_multi's Line-F RETURN word: its answers written, its waits cancelled — where a process the dispatcher switched to
+ * comes out of the evnt_multi it was parked in. */
+#define AES_ROM_EV_MULTI_RETURN   0xfe6c5c
 #define AES_ROM_GSX2              0xfecb5a   /* the AES's one `trap #2` to the VDI */
 /* The VDI BINDING (gemgsxif, hand 68000, `aes/gsx.h`): contrl filled, gsx2 reached; each wrapper read from its body. */
 #define AES_ROM_GSX_NCODE         0xfe87d2   /* (opcode, points, words): contrl[0,1,3], the AES's handle, gsx2 */
@@ -1988,6 +1995,12 @@
 #define AES_ROM_GR_SCALE          0xfe8472   /* (dx, dy, &count, &xstep, &ystep): gr_setup, the steps */
 #define AES_ROM_GR_STEPCALC       0xfe82e6   /* (w, h, rect, &cx, &cy, &count, &xstep, &ystep): centred, gr_scale */
 #define AES_ROM_GR_XOR            0xfe83be   /* (corners, count, x, y, w, h, xstep, ystep, grows): stepped XOR boxes */
+/* ...and the wait gr_watchbox loops on, which reaches the event layer through `aes/evdoor.h` (hand 68000, the name
+ * GEM's sources give it; entered by `bsr` and by Line-F `$f0b0`). */
+#define AES_ROM_GR_STILLDN        0xfe8508   /* (out, x, y, w, h): ev_multi(BUTTON|M1) over its own frame; 1 = no rise */
+/* The event door's other first users: the window library's message sender and the control manager's mouse grab. */
+#define AES_ROM_AP_SENDMSG        0xfebdbe   /* (buffer, type, to, five words): the message built, ap_rdwr(AQWRT, to, 16) */
+#define AES_ROM_CT_MOUSE          0xfe4a98   /* (grab): the mouse form saved and the arrow shown, or the form put back */
 /* The utility layer's MEMORY and STRING helpers (hand 68000, `aes/strings.h`), each named from its body. */
 #define AES_ROM_MUL_DIV           0xfecb6e   /* m1 * m2 / d, rounded: `muls.w` by 2*m2, `divs.w`, +-1, `asr.w` */
 #define AES_ROM_SET_CONTRL_PTR    0xfecbc6   /* contrl[7..8] := the argument */
@@ -2056,6 +2069,25 @@
 /* A WINDOW's rectangles (gemwmlib, Alcyon). */
 #define AES_ROM_W_GETXPTR         0xfeb4be   /* the address of a window's rectangle by WS_* (switch table $fefcca) */
 #define AES_ROM_W_GETSIZE         0xfeb53e   /* a window's rectangle copied out; WS_TRUE's grown by its border */
+/* The WINDOW LIBRARY (gemwmlib, Alcyon, `aes/wmlib.h`): the gadget tree built and drawn, the window records kept. */
+#define AES_ROM_W_NILIT           0xfeb3c0   /* (count, objects): each one's next, head and tail -1 */
+#define AES_ROM_W_OBADD           0xfeb408   /* (objects, parent, child): ob_add's body over a bare object array */
+#define AES_ROM_W_SETUP           0xfeb47a   /* (pd, window, kind): a window record claimed */
+#define AES_ROM_W_SETSIZE         0xfeb57c   /* (which, window, rect): a window's rectangle copied in */
+#define AES_ROM_W_ADJUST          0xfeb594   /* (parent, obj, x, y, w, h): a gadget placed and added to W_ACTIVE */
+#define AES_ROM_W_HVASSIGN        0xfeb5f8   /* (isvert, parent, obj, vx, vy, hx, hy, w, h): w_adjust, one bar's way */
+#define AES_ROM_W_CLIPDRAW        0xfeb646   /* (window, tree, obj, depth, clip): ob_draw per visible rectangle */
+#define AES_ROM_W_DRAWDESK        0xfeb6c8   /* (rect): the desktop drawn under a rectangle, grown by the border */
+#define AES_ROM_W_CPWALK          0xfeb712   /* (window, obj, depth, usetrue): a window's gadgets built and drawn */
+#define AES_ROM_W_STRCHG          0xfeb768   /* (window, obj, text): a title or information line set and drawn */
+#define AES_ROM_W_BARCALC         0xfeb7ca   /* (isvert, space, value, size, min, &v, &h): a slider's elevator */
+#define AES_ROM_W_BLDBAR          0xfeb84e   /* (kind, istop, bar, value, size, x, y, w, h): a scroll bar built */
+#define AES_ROM_W_BLDACTIVE       0xfeba9c   /* (window): the gadget tree W_ACTIVE built for a window */
+#define AES_ROM_W_MVFIX           0xfebece   /* (from, to): a rectangle clipped to the desktop, its left edge fixed */
+#define AES_ROM_W_MOVE            0xfebf00   /* (window, &stop, rect): a moved window's image blitted, the gap out */
+#define AES_ROM_W_OWNS            0xfec39a   /* (window, orect, rect, out): the next visible rectangle over rect */
+#define AES_ROM_W_UNION           0xfec3ea   /* (orect, rect): the bounding box of a rectangle list */
+#define AES_ROM_WM_START          0xfec424   /* (): the window library set up, the desktop window 0 */
 /* The OBJECT LIBRARY's own helpers (gemoblib, all Alcyon, laid out after ob_change in the source's order). */
 #define AES_ROM_OB_FS             0xfea4b6   /* an object's flags into a word, its state answered */
 #define AES_ROM_OB_ACTXYWH        0xfea4e8   /* an object's GRECT on the screen: ob_offset, then its width and height */
@@ -2067,8 +2099,19 @@
 #define AES_ROM_OB_FORMAT         0xfe99a4   /* read: (just, raw, tmplt, out) an editable text's raw text merged into its template */
 #define AES_ROM_OB_USER           0xfe9a46   /* read: (tree, obj, rect, userblk, curr, new) a USERDEF's routine over a PARMBLK */
 #define AES_ROM_FAR_CALL          0xfddec6   /* read: (code, parm) `jsr` to code over one pushed longword, its D0 answered */
+/* The OBJECT EDITOR (gemobed, Alcyon, `aes/obedit.h`): ob_edit's helpers, in the ROM's order. */
+#define AES_ROM_OB_GETSP          0xfe9260   /* read: (tree, obj, ted) the object's TEDINFO copied, an INDIRECT spec followed */
+#define AES_ROM_SCAN_TO_END       0xfe9352   /* read: (tmplt, idx, chr) the index advanced past the template's placeholders up to chr */
+#define AES_ROM_INS_CHAR          0xfe937e   /* read: (str, pos, chr, room) a character inserted, the string ended within room */
+#define AES_ROM_FIND_POS          0xfe93da   /* read: (tmplt, idx) the template place of raw character idx */
+#define AES_ROM_PXL_RECT          0xfe941c   /* read: (tree, obj, pos, rect) the screen cell of a template place */
+#define AES_ROM_CURFLD            0xfe948a   /* read: (tree, obj, pos, n) the XOR cursor, or n cells of the field redrawn */
+#define AES_ROM_INSTR             0xfe9516   /* read: (chr, set) 1 when chr is in a set of characters and a..z ranges */
+#define AES_ROM_CHECK             0xfe9556   /* read: (&chr, valid) a typed character validated, upcased in place */
+#define AES_ROM_OB_STFN           0xfe95f2   /* read: (idx, &start, &finish) the template places of idx and the raw end */
+#define AES_ROM_OB_DELIT          0xfe962a   /* read: (idx) the raw text's character at idx deleted; 1 at its end */
 /* The functions the dispatcher's arms call (`ctx` names: see above). */
-#define AES_ROM_AP_RDWR           0xfe65c4   /* ctx */
+#define AES_ROM_AP_RDWR           0xfe65c4   /* read: (code, pid, length, buffer) ev_block(code, its own frame +10) */
 #define AES_ROM_AP_RDWR_OPCODE    12
 #define AES_ROM_AP_FIND           0xfe65da   /* ctx */
 #define AES_ROM_AP_FIND_OPCODE    13
@@ -2086,7 +2129,7 @@
 #define AES_ROM_EV_MESAG_OPCODE   23
 #define AES_ROM_EV_TIMER          0xfe6936   /* ctx */
 #define AES_ROM_EV_TIMER_OPCODE   24
-#define AES_ROM_EV_MULTI          0xfe6998   /* ctx */
+#define AES_ROM_EV_MULTI          0xfe6998   /* read: (flags, mouse 1, mouse 2, timer, button, message, answers) */
 #define AES_ROM_EV_MULTI_OPCODE   25
 #define AES_ROM_EV_DCLICK         0xfe6c5e   /* ctx */
 #define AES_ROM_EV_DCLICK_OPCODE  26
@@ -2110,7 +2153,7 @@
 #define AES_ROM_OB_OFFSET_OPCODE  44
 #define AES_ROM_OB_ORDER          0xfea2be   /* read: an object moved to a place among its siblings */
 #define AES_ROM_OB_ORDER_OPCODE   45
-#define AES_ROM_OB_EDIT           0xfe9678   /* ctx */
+#define AES_ROM_OB_EDIT           0xfe9678   /* read: (tree, obj, key, &idx, kind) an editable field's key edited in */
 #define AES_ROM_OB_EDIT_OPCODE    46
 #define AES_ROM_OB_CHANGE         0xfea38e   /* read: (tree, obj, new, redraw) a state set, SELECTED inverted or redrawn */
 #define AES_ROM_OB_CHANGE_OPCODE  47
@@ -2138,7 +2181,7 @@
 #define AES_ROM_GR_GROWBOX_OPCODE 73
 #define AES_ROM_GR_SHRINKBOX      0xfe837a   /* read: (from, to) ...the same */
 #define AES_ROM_GR_SHRINKBOX_OPCODE 74
-#define AES_ROM_GR_WATCHBOX       0xfe84ba   /* ctx */
+#define AES_ROM_GR_WATCHBOX       0xfe84ba   /* read: (tree, obj, in, out) the state toggled until the button rises */
 #define AES_ROM_GR_WATCHBOX_OPCODE 75
 #define AES_ROM_GR_SLIDEBOX       0xfe86fa   /* ctx */
 #define AES_ROM_GR_SLIDEBOX_OPCODE 76
@@ -2150,23 +2193,23 @@
 #define AES_ROM_SC_WRITE_OPCODE   81
 #define AES_ROM_FS_INPUT          0xfe7d90   /* ctx */
 #define AES_ROM_FS_INPUT_OPCODE   90
-#define AES_ROM_WM_CREATE         0xfec602   /* ctx */
+#define AES_ROM_WM_CREATE         0xfec602   /* read: (kind, rect): the first free window claimed, -1 for none */
 #define AES_ROM_WM_CREATE_OPCODE  100
 #define AES_ROM_WM_OPEN           0xfec6da   /* ctx */
 #define AES_ROM_WM_OPEN_OPCODE    101
 #define AES_ROM_WM_CLOSE          0xfec6f0   /* ctx */
 #define AES_ROM_WM_CLOSE_OPCODE   102
-#define AES_ROM_WM_DELETE         0xfec706   /* ctx */
+#define AES_ROM_WM_DELETE         0xfec706   /* read: (window): its record freed */
 #define AES_ROM_WM_DELETE_OPCODE  103
-#define AES_ROM_WM_GET            0xfec722   /* ctx */
+#define AES_ROM_WM_GET            0xfec722   /* read: (window, field, out): wind_get (switch table $fefcde) */
 #define AES_ROM_WM_GET_OPCODE     104
 #define AES_ROM_WM_SET            0xfec83a   /* ctx */
 #define AES_ROM_WM_SET_OPCODE     105
-#define AES_ROM_WM_FIND           0xfeca4a   /* ctx */
+#define AES_ROM_WM_FIND           0xfeca4a   /* read: (x, y): ob_find over the window tree */
 #define AES_ROM_WM_FIND_OPCODE    106
 #define AES_ROM_WM_UPDATE         0xfeca68   /* ctx */
 #define AES_ROM_WM_UPDATE_OPCODE  107
-#define AES_ROM_WM_CALC           0xfecaac   /* ctx */
+#define AES_ROM_WM_CALC           0xfecaac   /* read: (type, kind, x, y, w, h, &x, &y, &w, &h): a border added or taken */
 #define AES_ROM_WM_CALC_OPCODE    108
 #define AES_ROM_RS_LOAD           0xfeac5c   /* read: rs_readit, then the objects fixed (rs_fixit) if it read one */
 #define AES_ROM_RS_LOAD_OPCODE    110

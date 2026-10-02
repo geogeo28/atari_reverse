@@ -328,6 +328,32 @@ A machine a case starts from is DERIVED from a ROM run, never poked: `case.writt
 run wrote (the stack band out), as a delta to lay over another machine (`continued_from` builds on it) — the IBM font as the ROM's gsx_tblt caches it, the
 whole screen's clip as gsx_sclip(gl_rscreen) leaves it (`test/aes_objdraw.py`). A poked cache can describe a state no path
 reaches — gl_font 3 over the VDI's small face drew every label in the wrong font, and every differential over it still passed.
+THE PRINCIPLE holds for the scheduler too: a running process, a parked one, a woken one are states the ROM's own scheduler
+PRODUCES (an event delivered, disp's loop `$fe4dda` run until the woken process leaves its evnt_multi at `$fe6c5c`) — never
+rlr / indisp / PD_STAT / the lists poked into place, and a case no derivation reaches within one oracle run is refused.
+
+THE EVENT DOOR — the AES's C into the event layer and the scheduler (band 4), which no C holds yet. Every C call of one of
+their routines goes through ONE wrapper in `include/aes/evdoor.h`, keyed by the routine's ROM address (wave 0: ev_multi
+`$fe6998` and ap_rdwr `$fe65c4`; ev_button, ev_block, tak_flag, unsync, ct_chgown and post_button join as their first users
+land — one wrapper, one `ENTRIES` line, one census line each). On target the wrapper IS the ROM's call: inline asm pushes the
+Alcyon frame once, from registers or immediates (a constant-zero argument pushes the already-zero A1), and `jsr`s the
+routine, D2/A2 given up (the Line-F handler loads them on every call the routine makes) — no `.S` call-out, which measured
+1.84 against the inline form's 1.04. On the host the wrapper packs the frame big-endian, CHECKS the hop the ROM caller's
+Line-F word takes (vector `$2c` → the handler copy, its `movea.l #` → the call table `$fee900`), and hands it to
+`recreate_call_event_door`, which `test/aes_event.py` binds per case (into the lib the calling process loaded — a child
+process binds its own) to a NESTED ORACLE RUN of the routine over a copy of the candidate's image: its writes laid back,
+its D0 answered, every frame it is handed compared with the frame the ROM's own run hands the same entry (MOBLKs and
+buffers read through their pointers). The nested run is REFUSED by name — halting the core through
+`recreate_not_reconstructed`, never answered with a fabricated 0 — when the entry is not served, when it touches the
+hardware or overflows the write ledger, when it overruns its measured cap (`NESTED_RUN_INSNS`, a margin over the deepest
+reachable call), and when it reaches the dispatcher (`dsptch`): that call WOULD BLOCK, and only the snapshot's indisp = 1
+would turn it into "no event". One thing differs by nature: the BIOS trap's register save under the keyboard poll
+(`$8de..$905`, the CALLER's registers), dropped by name in Tier 1 while priced rows move `savptr` into the stack band.
+Tier 3 prices such C on its own cycles, mechanism (EV): our run is WATCHED at the door entries (the kit's
+`RomBench.measure(watch=)`), each door call a window taken off the ROM's own cycles, an AES cycle of ours outside a window
+refused, and the ORIGINAL's run watched too — its windows must equal ours one by one, cycles and frames. WHEN BAND 4 PORTS
+the event layer, each wrapper's body becomes the call of its C twin on both builds: no caller changes, the host hook stops
+being reached for that address, and the row stops being (EV) by derivation (no `jsr` into the AES text left).
 
 Three mechanisms are designed and NOT built:
 

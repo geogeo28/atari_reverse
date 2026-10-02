@@ -42,6 +42,7 @@
 #define OB_STATE_SELECTED_BIT 0          /* ...of OB_STATE's low byte           ($fed022 btst #0)              */
 #define OB_FLAG_DEFAULT_BIT   1          /* ...of OB_FLAGS' low byte            ($fed242 btst #1,1(a4))        */
 #define OB_FLAG_EXIT_BIT      2          /* ...of OB_FLAGS' low byte            ($fed238 btst #2,1(a4))        */
+#define OB_FLAG_EDITABLE_BIT  3          /* ...of OB_FLAGS' low byte: fm_do's fields (find_obj $fe7222 moveq #8) */
 #define OB_FLAG_INDIRECT_BIT  0          /* ...of OB_FLAGS' HIGH byte: ob_spec names the spec ($fed204 btst #0,(a4)) */
 #define OB_WORD_LOW_BYTE      1          /* a word field's low byte, which a `btst` reads ($fed010 movea.l #11) */
 /* The resource format's end-of-tree flag. No ROM instruction cited: the AES walks a tree by its links, and only the

@@ -141,6 +141,33 @@
 #define HOST_SLOT_AES_OB_DRAW_POSITION_BYTES 4
 #define HOST_SLOT_AES_OB_CHANGE_FRAME   0x7f5a0  /* $fea38e's -20(a6) up: the spec, state, GRECT, border, type, flags */
 #define HOST_SLOT_AES_OB_CHANGE_FRAME_BYTES 20   /* `link a6,#-20` */
+/* ...and the box loops that wait on the mouse (`aes/grwait.h`): gr_stilldn's MOBLK — its own arguments — and its answer
+ * words, which it hands ev_multi through the event door, and gr_watchbox's rectangle, which it hands ob_actxywh. */
+#define HOST_SLOT_AES_GR_STILLDN_RECTANGLE 0x7f640  /* $fe851a `pea 36(sp)`: the leave flag and the rectangle */
+#define HOST_SLOT_AES_GR_STILLDN_RECTANGLE_BYTES 10 /* EV_MOBLK_WORDS words */
+#define HOST_SLOT_AES_GR_STILLDN_ANSWERS 0x7f650  /* $fe850c `move.l sp,-(sp)`: the twelve bytes below its return */
+#define HOST_SLOT_AES_GR_STILLDN_ANSWERS_BYTES 12 /* EV_MULTI_ANSWER_WORDS words */
+#define HOST_SLOT_AES_GR_WATCHBOX_RECT  0x7f660  /* $fe84d0 `move.l a6,-(sp)`: the words its `movem` saved D2/D3 in */
+#define HOST_SLOT_AES_GR_WATCHBOX_RECT_BYTES 8
+/* ...and the object editor's (`aes/obedit.h`): pxl_rect's GRECT, which it hands ob_actxywh and gr_just; curfld's two,
+ * which it hands pxl_rect and the clip calls; and ob_edit's locals whose addresses it hands ob_stfn and check — each
+ * the frame's own layout. */
+#define HOST_SLOT_AES_PXL_RECT_FIELD    0x7f700  /* $fe941c's -8(a6): the field's GRECT, its corner moved by gr_just */
+#define HOST_SLOT_AES_PXL_RECT_FIELD_BYTES 8
+#define HOST_SLOT_AES_CURFLD_RECTS      0x7f708  /* $fe948a's -16(a6) the cursor's GRECT, -8(a6) the clip saved */
+#define HOST_SLOT_AES_CURFLD_RECTS_BYTES 16
+#define HOST_SLOT_AES_OB_EDIT_FRAME     0x7f718  /* $fe9678's -42(a6) the typed character, -40..-34(a6) the four places */
+#define HOST_SLOT_AES_OB_EDIT_FRAME_BYTES 10
+/* ...and the window library's (`aes/wmlib.h`): the GRECTs w_clipdraw, w_cpwalk, w_move and wm_get hand rc_copy,
+ * rc_intersect, w_getsize, gsx_gclip, gsx_sclip and w_mvfix by address — each the frame's own layout. */
+#define HOST_SLOT_AES_W_CLIPDRAW_RECT   0x7f780  /* $feb646's -8(a6): a visible rectangle, cut by the clip */
+#define HOST_SLOT_AES_W_CLIPDRAW_RECT_BYTES 8
+#define HOST_SLOT_AES_W_CPWALK_RECT     0x7f788  /* $feb712's -8(a6): the rectangle the gadgets are drawn under */
+#define HOST_SLOT_AES_W_CPWALK_RECT_BYTES 8
+#define HOST_SLOT_AES_W_MOVE_RECTS      0x7f790  /* $febf00's -16(a6) where the window is, -8(a6) where it was */
+#define HOST_SLOT_AES_W_MOVE_RECTS_BYTES 16
+#define HOST_SLOT_AES_WM_GET_RECT       0x7f7a0  /* $fec722's -8(a6): the work area the list arms walk over */
+#define HOST_SLOT_AES_WM_GET_RECT_BYTES 8
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -181,6 +208,16 @@ enum host_slot {
     HOST_SLOT_ID_AES_JUST_DRAW_FRAME,
     HOST_SLOT_ID_AES_OB_DRAW_POSITION,
     HOST_SLOT_ID_AES_OB_CHANGE_FRAME,
+    HOST_SLOT_ID_AES_GR_STILLDN_RECTANGLE,
+    HOST_SLOT_ID_AES_GR_STILLDN_ANSWERS,
+    HOST_SLOT_ID_AES_GR_WATCHBOX_RECT,
+    HOST_SLOT_ID_AES_PXL_RECT_FIELD,
+    HOST_SLOT_ID_AES_CURFLD_RECTS,
+    HOST_SLOT_ID_AES_OB_EDIT_FRAME,
+    HOST_SLOT_ID_AES_W_CLIPDRAW_RECT,
+    HOST_SLOT_ID_AES_W_CPWALK_RECT,
+    HOST_SLOT_ID_AES_W_MOVE_RECTS,
+    HOST_SLOT_ID_AES_WM_GET_RECT,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 
@@ -221,6 +258,18 @@ static inline void host_slot_store_long(uint8_t *image, uint32_t slot_at, const 
     wr32(image + slot_at, *local);
 #else
     (void)image, (void)slot_at, (void)local;
+#endif
+}
+
+/* ...and a slot whose WORDS a core builds as a C local and hands on to be READ (gr_stilldn's MOBLK): copied into the
+ * slot off target, the local itself on target. */
+static inline void host_slot_store_words(uint8_t *image, uint32_t slot_at, const uint16_t *local, uint32_t words)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    for (uint32_t word = 0; word < words; word++)
+        wr16(image + slot_at + word * sizeof *local, local[word]);
+#else
+    (void)image, (void)slot_at, (void)local, (void)words;
 #endif
 }
 

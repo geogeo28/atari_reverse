@@ -60,6 +60,8 @@
 #define AES_RECORD_LEFT       0x9728     /* word: records left                  ($fe4ca4 subq.w #1)            */
 #define AES_TIMER_COUNTDOWN   0x9492     /* long: ticks to the ev_timer         ($fe4e48)                      */
 #define AES_TIMER_ELAPSED     0x948e     /* long: ...and those counted          ($fe4e50 clr.l)                */
+/* The click count b_click opens and the tick glue's b_delay counts down: a click's count is final at 0. */
+#define AES_GL_CLICK_TICKS    0xc6ca     /* word                                ($fe4f8c move.w $c768,$c6ca; $fe4fc0 sub.w) */
 
 /* ---- the OS doors' parking places: a return address held across a trap, because the glue is not re-entrant -- */
 #define AES_DOS_RETURN        0x8c1e     /* long: __DOS's caller                ($fe3ba0 move.l (sp)+)         */
@@ -182,6 +184,7 @@
 #define PD_STAT               30         /* word: 0 ready, 1 waiting            ($fe4b80 clr.w, $fe40d8)       */
 #define PD_EVWAIT             34         /* word: the events it waits for       ($fe40bc)                      */
 #define PD_EVFLG              36         /* word: the events that came          ($fe40c8, $fe3f76 or.w)        */
+#define PD_EVLIST             38         /* long: its EVBs' list                ($fe428a adda.l #38; $fe4290)  */
 #define PD_QUEUE_ADDRESS      50         /* long: -> PD_QUEUE                   ($fda3ec)                      */
 #define PD_QUEUE_INDEX        54         /* word                                ($fda3f0 clr.w)                */
 #define PD_QUEUE              56         /* bytes[PD_QUEUE_BYTES]: the message pipe ($fda3e8 lea 56(a5))       */
@@ -219,6 +222,8 @@
 #define WIN_FLAGS             0          /* word: WIN_IN_USE, WIN_BROKEN        ($feb49e ori.w #1)             */
 #define WIN_OWNER             2          /* long: the owning PD                 ($feb498)                      */
 #define WIN_KIND              6          /* word: its gadgets                   ($feb4a2)                      */
+#define WIN_NAME              8          /* long: its title's text              ($feb792 move.l d0,10334(a0))  */
+#define WIN_INFO              12         /* long: its information line's text   ($feb7ae move.l d0,10338(a0))  */
 /* The three GRECTs by w_getxptr's arm and the wind_get WF_*XYWH arm that hands its index (`aes/wrect.h`); the CURRENT
  * one is not in the record but the window tree's object (AES_WINDOW_TREE). */
 #define WIN_FULL              16         /* words[4]: the full GRECT            ($feb51e addl #10342, WS_FULL)  */
@@ -229,6 +234,7 @@
 #define WIN_HSLSIZE           44         /* word                                ($feb4b8)                      */
 #define WIN_VSLSIZE           46         /* word                                ($feb4b4)                      */
 #define WIN_RLIST             48         /* long: its ORECT list, the visible rectangles ($fe5cc0 lea 48(a5)) */
+#define WIN_RNEXT             52         /* long: wind_get's cursor into it     ($fec3c8 move.l a5,10378(a0))  */
 #define WIN_IN_USE            1          /* ($feb49e ori.w #1)                                                 */
 #define WIN_BROKEN            2          /* a rectangle was split               ($fe5cdc ori.w #2)             */
 /* The WINDOW TREE: one OBJECT per window, its handle the index, whose OB_X..OB_H are where the window is. */
@@ -237,6 +243,23 @@
  * WF_NEWDESK; in the snapshot the desk's icon tree, three G_ICONs, in the TPA). */
 #define AES_GL_MNTREE         0x9b26     /* long: the menu tree, 0 for none     ($fe903e move.l d7)            */
 #define AES_GL_NEWDESK        0xc942     /* long: the desktop's tree, 0 for none ($fec908 move.l (a5))         */
+#define AES_GL_NEWROOT        0x9ab6     /* word: ...the object it is drawn from ($fec90e move.w 4(a5))       */
+/* The window library's state (wm_start sets each, $fec594..$fec5f6). */
+#define AES_GL_WTOP           0x9bdc     /* word: the top window, -1 for none   ($fec594 move.w #-1)           */
+#define AES_GL_WTREE          0x9b2c     /* long: the window tree               ($fec59c move.l #$9734)        */
+#define AES_GL_AWIND          0x96f6     /* long: the gadget tree a window is drawn with ($fec5a6 move.l #$98ee) */
+/* Window drawing HELD: wind_set's field 13 (`aes/wmlib.h`'s WF_RESVD) sets it for a non-zero handle and clears it
+ * (and redraws the desktop) for handle 0 ($fec8e4 / $fec8ee); while set, w_clipdraw draws nothing and w_move moves
+ * nothing. A `ctx` name. */
+#define AES_GL_WFROZEN        0xc940     /* word                                ($feb656 tst.w)                */
+/* The GADGETS of a window, one tree built afresh for each window drawn (w_bldactive), its objects `aes/wmlib.h`'s
+ * W_*; its title and information line are drawn from the two TEDINFOs below, which wm_start points it at. */
+#define AES_W_ACTIVE          0x98ee     /* an OBJECT array, OB_BYTES apart     ($feb5a6 addl #39150)          */
+#define AES_GL_ANAME          0xc7a6     /* bytes[TE_BYTES]: the title's TEDINFO ($fec5bc move.l #$c7a6)       */
+#define AES_GL_AINFO          0xc7c2     /* bytes[TE_BYTES]: the information line's ($fec5d0 move.l #$c7c2)   */
+/* The AES resource's tree 2, the desktop band (rs_gaddr's answer at start-up, $fda304): wm_start takes the window
+ * tree's root pattern from its root's ob_spec ($fec49c). */
+#define AES_AD_STDESK         0xc820     /* long                                ($fec49c move.l $c820,d6)      */
 
 /* ---- LINE-F: how GEM calls itself ---------------------------------------------------------------------------
  * GEM's own code never `jsr`s an AES routine: every call is a `$F000|off` word, a Line-F EXCEPTION, whose handler
@@ -254,6 +277,7 @@
 #define LINEF_COPY_BYTES      100        /* gemstart's Malloc                   ($fd9f36 move.l #100)          */
 #define LINEF_COPY_WORDS      50         /* ...and its copy: `dbf` from 49      ($fd9f46 move.w #49)           */
 #define LINEF_MASK_OFFSET     0x36       /* the `movem`'s mask word, in the handler ($fee8f6 + 2 - $fee8c2)    */
+#define LINEF_TABLE_OPERAND   0x16       /* the call table's address, in the handler ($fee8d6 + 2 - $fee8c2)   */
 /* Where THIS boot's Malloc put the copy — `$2c` in the snapshot, not a constant of the ROM — and so the word the
  * copy patches. `test_aes_door.py` pins both against the snapshot and the ROM handler. */
 #define AES_LINEF_COPY        0xcc0e     /* bytes[LINEF_COPY_BYTES]: the RAM handler (the snapshot's $2c)      */
