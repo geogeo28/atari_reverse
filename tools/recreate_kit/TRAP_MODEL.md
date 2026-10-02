@@ -2338,6 +2338,14 @@ as a boolean is unaffected. With no `door=` band it behaves as it always has, ra
 does not reach the sentinel; a door-aware caller drives the loop. `bench_door_pc` / `bench_door_sp` /
 `bench_door_return` / `bench_resume` are the rest of the seam.
 
+**A door is a band or a SET of exact PCs** (`emu.bench_door_arm`, shim.c's `osh_bench_door_stops`): a
+WATCHED run (`rom_bench.watched`, `RomBench.measure(watch=)`) that observes calls scattered through a
+text stops at the listed PCs alone — the band is their hull, and an unlisted PC inside it executes
+as an unwatched one does, so a watch over two entries never swallows the routines between them. A
+band armed after a set clears the list (`test_bench_door_stops.py`), and only a PC inside a set's
+hull pays its lookup: every other caller keeps the one unsigned compare. `watched` holds the whole
+run to ONE budget, each resume handed what the segments before it left.
+
 **The budget the loop spends is the RUN's, not the segment's**, and a segment that executed NOTHING
 is a refusal. `bench_resume` takes a fresh cap each time, so without both a twin that keeps
 re-entering the door — a loop around a core call, or a stub whose frame is wrong enough to return

@@ -341,7 +341,7 @@ class RomBench:
         return blob_entry(self.symbols, symbol, "the cross-compiled cores")
 
     def measure(self, entry, symbol, args=(), regs=None, pokes=None, psg_seed=None, hw_seed=None,
-                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None, dropped=()):
+                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None, dropped=(), watch=None):
         """One case on both sides: the ORIGINAL at `entry`, then our `symbol`, over the same image.
 
         Returns a `Measurement`. `entry`/`regs`/`pokes`/`psg_seed`/`hw_seed`/`io_seed` are the oracle
@@ -356,6 +356,14 @@ class RomBench:
         compared whole. `_both_sides` below owns everything this shares with `measure_transcription`,
         including the order the two runs must be made in.
 
+        `watch` WATCHES our run, for a project whose numerator must say WHEN cycles were spent and not only where
+        (a call into the ROM's own code from a known site, priced apart from the C round it). It is an object with
+        `first`, the `(base, span)` band of PCs the run first stops at, and `stopped(pc, sp, memory)`, called at each
+        stop with the PC and A7 the run stopped at and its memory as it stands — observe the run there (the cycle
+        profile, a return address on the stack) and answer the next band, or None to run on unwatched. A stop executes
+        nothing and touches no register (`emu.bench_door_arm`), so the run is the unwatched run, segment by segment;
+        its totals are the whole run's. None, the default, runs as always.
+
         WHY THE RETURN VALUE IS COMPARED AT THAT WIDTH AND THE REGISTER FILE IS NOT. The m68k SysV
         ABI promises a `uint8_t` result in the low BYTE of D0 and nothing above it: measured on
         `xbios_giaccess`, GCC emits `move.b $ff8800,%d0` and leaves the caller's high word in place,
@@ -368,7 +376,7 @@ class RomBench:
         """
         def run_ours(image):
             return self._call(image, symbol, args, io_seed=_bench_io_seed(io_seed),
-                              schedule=schedule)
+                              schedule=schedule, watch=watch)
 
         def vet_ours(ours, o_regs):
             vet_callee_saved(symbol, ours.regs)
@@ -468,7 +476,7 @@ class RomBench:
         # The denominator gets the same refusals as the numerator. `harness.differential` makes them
         # for a Tier 1 case, but a bench row is a case of its own — and an original measured while
         # reading a fabricated byte is measuring a machine that does not exist, whichever side did it.
-        _vet_no_refusals(f"the ORIGINAL entered at {entry:#x}", _refusal_tallies())
+        vet_the_run_just_made(f"the ORIGINAL entered at {entry:#x}")
         original_streams = {key: o_regs[key] for key in _STREAMS}
         original_odd = emu.odd_accesses()
 
@@ -489,7 +497,7 @@ class RomBench:
                            self.overhead, staged_entry, shared_entry)
 
     def _call(self, image, symbol, args=(), io_seed=None, entry_at=None, seed_regs=None,
-              schedule=None):
+              schedule=None, watch=None):
         """Run `symbol` over `image` with the C ABI: `args` as 32-bit stack words, in order.
 
         `entry_at` is where the run is ENTERED when that is not the symbol's own address, and
@@ -531,12 +539,14 @@ class RomBench:
         seed = (list(seed_regs) if seed_regs is not None
                 else [CALLEE_SAVED_SEEDS.get(name, 0) for name in emu.REPORTED_REGS])
         result = emu.run_bench(image, entry, arg0=(int(args[0]) & 0xFFFFFFFF) if args else 0,
-                               sp=sp, sentinel=emu.SENTINEL, seed_regs=seed,
-                               io_seed=io_seed, schedule=schedule)
+                               sp=sp, sentinel=emu.SENTINEL, door=watch.first if watch else None,
+                               seed_regs=seed, io_seed=io_seed, schedule=schedule)
+        if watch:
+            result = watched(result, entry, watch, image)
         # Read the instant the run ends, before anything else can run over the shim's one set of
         # counters: `emu` publishes these only through `run()`'s own report, and a bench run needs
         # the same refusals (`osh_run_bench` clears them per run, as `osh_run` does).
-        _vet_no_refusals(f"the m68k build of {symbol}", _refusal_tallies())
+        vet_the_run_just_made(f"the m68k build of {symbol}")
         vet_blob_intact(symbol, image, (self.base, self.base + len(self.blob)), self.blob)
         return BenchResult(image, result["d0"], result["ninsns"], result["cycles"], result["regs"],
                            zip(result["sched_read_sites"], result["sched_read_arrivals"]))
@@ -647,6 +657,42 @@ _STREAMS = {"psg_events": "the ordered PSG accesses",
             "hw_events": "the ordered modelled-hardware reads",
             "io_events": "the ordered declared-I/O reads",
             "hw_writes": "the ordered hardware writes"}
+
+
+def watched(result, entry, watch, memory, max_insns=None):
+    """A WATCHED run (`RomBench.measure`'s `watch`) carried to its end: at each stop `watch.stopped(pc, sp, memory)`
+    observes and names the next door (`emu.bench_door_arm`: a band, a set of PCs, or None), and the run resumes with
+    nothing touched. `memory` is the run's own — the machine writes it in place. `max_insns` is the WHOLE run's budget
+    (`emu.BENCH_MAX_INSNS` when None, read now): each resume is handed what the segments before it left of it, so a run
+    that spins after a stop is refused at the budget its caller named, not a fresh one per segment. The buffer export is
+    dropped however the loop ends (`emu.bench_abort`) — a `stopped` that raises would otherwise leave the image exported
+    for the worker's life.
+
+    Public for the run measure() does not make: a project watching the ORIGINAL's own run the same way (an
+    `emu.run_bench` of ROM code started with `door=watch.first`), so both sides are observed by one loop. A bench run
+    has NO TRAP MODEL (`emu.run_bench`): the original watched this way is its `emu.run` only for a project whose
+    original serves its traps in ROM code (ROM mode) — a `.PRG` project's original would execute the model's magic PCs
+    as code. The caller vets the run's refusals (`vet_the_run_just_made`) as `RomBench` does."""
+    import emu
+
+    budget = emu.BENCH_MAX_INSNS if max_insns is None else max_insns
+    try:
+        while result["status"] == emu.BENCH_DOOR:
+            emu.bench_door_arm(watch.stopped(emu.bench_door_pc(), emu.bench_door_sp(), memory))
+            left = budget - result["ninsns"]
+            if left <= 0:
+                raise RuntimeError(f"the watched run of {entry:#x} did not return within {budget} instructions")
+            result = emu.bench_resume(entry, max_insns=left)
+    finally:
+        emu.bench_abort()
+    return result
+
+
+def vet_the_run_just_made(who):
+    """Refuse the run that has JUST ended — `who` names it — if the model could not honestly serve it
+    (`_refusal_tallies`, `_vet_no_refusals`): what `RomBench` asks of both its sides, for a run made outside it (a
+    `watched` original)."""
+    _vet_no_refusals(who, _refusal_tallies())
 
 
 def _refusal_tallies():

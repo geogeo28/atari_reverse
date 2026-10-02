@@ -210,6 +210,10 @@ if _LIB.osh_max_writes() != MAX_WRITES:
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_terminated.restype = ctypes.c_int
+if not hasattr(_LIB, "osh_final_pc"):
+    raise _stale_oracle("osh_final_pc", "so a run given a checkpoint (`stop_pc`) cannot say whether it "
+                                        "stopped there or returned first.")
+_LIB.osh_final_pc.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
 _LIB.osh_heap.restype = ctypes.c_uint32
 _LIB.osh_malloc_count.restype = ctypes.c_uint32
@@ -668,7 +672,7 @@ _LIB.osh_run_bench.restype = ctypes.c_int
 # rebuild — which is exactly what _stale_oracle exists to stop.
 for _symbol in ("osh_bench_door", "osh_bench_door_pc", "osh_bench_door_sp", "osh_bench_door_poison",
                 "osh_bench_door_return", "osh_bench_door_extend", "osh_bench_resume",
-                "osh_bench_seed",
+                "osh_bench_seed", "osh_bench_door_stops", "osh_bench_door_stops_max",
                 "osh_bench_status_insns_exhausted", "osh_bench_status_sentinel",
                 "osh_bench_status_door"):
     if not hasattr(_LIB, _symbol):
@@ -677,6 +681,10 @@ for _symbol in ("osh_bench_door", "osh_bench_door_pc", "osh_bench_door_sp", "osh
             "so a bench run cannot be stopped at the CALLBACK DOOR and continued, and an asm twin "
             "that calls a host C core has no way to reach it.")
 _LIB.osh_bench_door.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+_LIB.osh_bench_door_stops.argtypes = [_u32p, ctypes.c_uint32]
+_LIB.osh_bench_door_stops.restype = ctypes.c_int
+_LIB.osh_bench_door_stops_max.restype = ctypes.c_uint32
+BENCH_DOOR_STOPS_MAX = _LIB.osh_bench_door_stops_max()
 _LIB.osh_bench_door_pc.restype = ctypes.c_uint32
 _LIB.osh_bench_door_sp.restype = ctypes.c_uint32
 _LIB.osh_bench_door_poison.restype = ctypes.c_uint32
@@ -883,11 +891,12 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     where ``regs`` is the whole ``REPORTED_REGS`` file the run left. For measuring the
     reconstruction's own on-target cost, alongside the original's (emu.run).
 
-    ``door`` is the CALLBACK DOOR's ``(base, span)`` band, or None for no door — which is what every
-    caller but ``asm_twin.AsmTwins.call`` passes, and behaves exactly as this always has: a run that
-    does not reach the sentinel RAISES. With a band, a PC inside it stops the run and comes back as
-    ``BENCH_DOOR``; the caller services the callback and continues with ``bench_resume``. The band is
-    installed on EVERY call, disarmed included, so one run's door cannot still be armed for the next.
+    ``door`` is the CALLBACK DOOR's ``(base, span)`` band — or a SET of exact PCs to stop at
+    (``bench_door_arm``) — or None for no door, which is what every caller but
+    ``asm_twin.AsmTwins.call`` and a watched run passes, and behaves exactly as this always has: a
+    run that does not reach the sentinel RAISES. With a door, a PC on it stops the run and comes back
+    as ``BENCH_DOOR``; the caller services the callback and continues with ``bench_resume``. The door
+    is installed on EVERY call, disarmed included, so one run's door cannot still be armed for the next.
 
     ``seed_regs`` is the entry register file, one value per ``REPORTED_REGS`` name, or None to enter
     exactly as this always has. Seeding is what lets a caller pin the callee-saved file (see
@@ -935,8 +944,7 @@ def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
     global _bench_buf
     _bench_buf = buf = (ctypes.c_uint8 * size).from_buffer(mem)
     out = (ctypes.c_uint32 * len(REPORTED_REGS))()
-    base, span = door if door else (0, 0)
-    _LIB.osh_bench_door(base & 0xFFFFFFFF, span & 0xFFFFFFFF)
+    bench_door_arm(door)
     _bench_seed(seed_regs)
     _install_io_seed(io_seed)
     # ...and the DECLARED SEQUENCES, per run exactly as the map is — including one on a NAMED SLOT,
@@ -995,6 +1003,27 @@ def bench_door_return(d0, pc, sp, returns=True):
     D0 is as undefined as the rest."""
     _LIB.osh_bench_door_return(d0 & 0xFFFFFFFF, 1 if returns else 0,
                                pc & 0xFFFFFFFF, sp & 0xFFFFFFFF)
+
+
+def bench_door_arm(door):
+    """Arm the callback door at ``door`` — a ``(base, span)`` band, a set (any non-tuple collection) of the exact PCs
+    to stop at, or None to disarm it. ``run_bench`` arms its ``door`` through here; between a ``BENCH_DOOR`` stop and
+    the ``bench_resume`` that continues it, this MOVES the door for the rest of the run in flight.
+
+    A SET is for a watch over calls scattered through a text: a band over them all would also stop at every routine
+    between them, where the set stops at its PCs alone (the band is the set's hull, an unlisted PC in it executes).
+
+    It is what a WATCHED run is made of (`rom_bench.RomBench.measure`'s ``watch``): a stop at a PC to OBSERVE the run
+    there — its cycle profile so far — with nothing serviced and NO register touched, unlike ``bench_door_return``. A
+    stop leaves the CPU BEFORE the instruction at the door PC, so moving the band off that PC is what lets the resume
+    execute it; a band left over it would stop the resume again at once."""
+    if door is None or isinstance(door, tuple):
+        base, span = door if door else (0, 0)
+        _LIB.osh_bench_door(base & 0xFFFFFFFF, span & 0xFFFFFFFF)
+        return
+    stops = sorted(pc & 0xFFFFFFFF for pc in door)
+    if not _LIB.osh_bench_door_stops((ctypes.c_uint32 * len(stops))(*stops), len(stops)):
+        raise ValueError(f"a door of {len(stops)} stops; the shim holds {BENCH_DOOR_STOPS_MAX} at most")
 
 
 def bench_resume(entry=0, max_insns=BENCH_MAX_INSNS):
@@ -2340,6 +2369,11 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # checkpoint diff with a "this routine never returns" proof needs this to say WHY it did not
     # return — without it such a pair passes on a terminating path while proving nothing.
     out_regs["terminated"] = bool(_LIB.osh_terminated())
+    # ...and the other half of the same question: True when it stopped at its `stop_pc` rather than at
+    # its rts. A run given a checkpoint may still return first (a routine that only SOMETIMES reaches
+    # the PC a case stops at — a wait that blocks only when nothing it waits for came), and
+    # `osh_run`'s boolean is one "reached" for both.
+    out_regs["checkpoint"] = bool(stop_pc) and _LIB.osh_final_pc() == stop_pc
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["heap"] = _LIB.osh_heap()       # Malloc bump pointer at the end of the run (diagnostics)
     out_regs["malloc_calls"] = _LIB.osh_malloc_count()   # serviced GEMDOS Malloc traps this run

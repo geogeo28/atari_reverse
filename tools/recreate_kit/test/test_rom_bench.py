@@ -894,3 +894,118 @@ def test_a_call_past_the_argument_area_is_entered_lower_by_exactly_the_bytes_tha
     assert words[:len(staged)] == staged, "the words past arg0 are not where the m68k ABI reads them"
     assert sp + rom_bench.BLOB_FRAME_BYTES + len(staged) <= FAKE_ARGUMENT_AREA_TOP, (
         "an argument word landed above the argument area, in image the comparison reads")
+
+
+# ---- a WATCHED run: stops that observe and touch nothing -------------------------------------------------------------
+# The statuses of the fake's segments: the real values are the shim's (`emu.BENCH_*`), which this file cannot load.
+FAKE_BENCH_SENTINEL, FAKE_BENCH_DOOR = 1, 2
+FAKE_FIRST_BAND = (0x140, 2)             # a call site the watcher opens a window at...
+FAKE_SECOND_BAND = (0x146, 2)            # ...and the return site it closes it at
+FAKE_SEGMENT_CYCLES = (30, 70, 80)       # the running totals the three segments report
+FAKE_DOOR_SP = 0x7F0                     # A7 at every stop
+FAKE_BENCH_MAX_INSNS = 1000              # the default whole-run budget of a watched run
+
+
+class _Watcher:
+    """A `watch` that records each stop's PC and answers the bands of `answers` in turn."""
+
+    def __init__(self, first, answers):
+        self.first, self.answers, self.stops = first, list(answers), []
+
+    def stopped(self, pc, sp, memory):
+        assert sp == FAKE_DOOR_SP and len(memory) == FAKE_IMAGE_BYTES, "a stop is handed the run's A7 and its memory"
+        self.stops.append(pc)
+        return self.answers.pop(0)
+
+
+def _watched_emu(calls):
+    """`_fake_emu`, whose bench run stops at each band it is armed at until the third segment reaches the sentinel —
+    recording every arm, resume and abort in `calls`."""
+    fake = _fake_emu([])
+    segments = iter(FAKE_SEGMENT_CYCLES)
+    armed = []
+
+    def segment(entry):
+        cycles = next(segments)
+        status = FAKE_BENCH_DOOR if armed[-1] else FAKE_BENCH_SENTINEL
+        return {"status": status, "d0": 2, "ninsns": FAKE_SEGMENT_INSNS, "cycles": cycles, "regs": dict(rom_bench.CALLEE_SAVED_SEEDS),
+                "sched_read_sites": (), "sched_read_arrivals": ()}
+
+    def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None, seed_regs=None, **_named):
+        armed.append(door)
+        calls.append(("run_bench", door))
+        return segment(entry)
+
+    def bench_door_arm(door):
+        armed.append(door)
+        calls.append(("arm", door))
+
+    def bench_resume(entry=0, max_insns=None):
+        calls.append(("resume", max_insns))
+        return segment(entry)
+
+    return SimpleNamespace(**{**vars(fake), "run_bench": run_bench, "bench_door_arm": bench_door_arm,
+                              "bench_resume": bench_resume, "BENCH_DOOR": FAKE_BENCH_DOOR,
+                              "BENCH_MAX_INSNS": FAKE_BENCH_MAX_INSNS,
+                              "bench_door_pc": lambda: armed[-1][0], "bench_door_sp": lambda: FAKE_DOOR_SP,
+                              "bench_abort": lambda: calls.append(("abort",))})
+
+
+def test_a_watched_run_stops_at_each_band_the_watcher_names_and_resumes_untouched(monkeypatch):
+    """The watcher sees each stop's PC and moves the band; the run's totals are its LAST segment's (they accumulate),
+    and the export is dropped at the end. Without the loop a stop would come back as the row's whole run."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _watched_emu(calls))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    watch = _Watcher(FAKE_FIRST_BAND, (FAKE_SECOND_BAND, None))
+    measured = _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1, watch=watch)
+    assert watch.stops == [FAKE_FIRST_BAND[0], FAKE_SECOND_BAND[0]]
+    assert [call[0] for call in calls] == ["run_bench", "arm", "resume", "arm", "resume", "abort"]
+    assert [call[1] for call in calls if call[0] == "arm"] == [FAKE_SECOND_BAND, None]
+    assert measured.recreate_cycles == FAKE_SEGMENT_CYCLES[-1]
+
+
+FAKE_SEGMENT_INSNS = 4                   # the running instruction total every fake segment reports
+FAKE_WATCH_BUDGET = 10
+
+
+def test_each_resume_is_handed_what_the_run_s_budget_has_left(monkeypatch):
+    """The budget is the WHOLE run's: a resume gets what the segments before it left, not a fresh default per segment —
+    and a run whose budget is spent at a stop is refused there, not resumed for another sixteen million."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _watched_emu(calls))
+    first = sys.modules["emu"].run_bench(bytearray(FAKE_IMAGE_BYTES), FAKE_ENTRY, 0, 0, 0, door=FAKE_FIRST_BAND)
+    rom_bench.watched(first, FAKE_ENTRY, _Watcher(FAKE_FIRST_BAND, (FAKE_SECOND_BAND, None)),
+                      bytearray(FAKE_IMAGE_BYTES), max_insns=FAKE_WATCH_BUDGET)
+    assert [call[1] for call in calls if call[0] == "resume"] == [FAKE_WATCH_BUDGET - FAKE_SEGMENT_INSNS] * 2
+    calls.clear()
+    monkeypatch.setitem(sys.modules, "emu", _watched_emu(calls))
+    first = sys.modules["emu"].run_bench(bytearray(FAKE_IMAGE_BYTES), FAKE_ENTRY, 0, 0, 0, door=FAKE_FIRST_BAND)
+    with pytest.raises(RuntimeError, match=f"did not return within {FAKE_SEGMENT_INSNS} instructions"):
+        rom_bench.watched(first, FAKE_ENTRY, _Watcher(FAKE_FIRST_BAND, (FAKE_SECOND_BAND,)),
+                          bytearray(FAKE_IMAGE_BYTES), max_insns=FAKE_SEGMENT_INSNS)
+    assert calls[-1] == ("abort",)
+
+
+def test_an_unwatched_run_arms_no_band_and_never_resumes(monkeypatch):
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _watched_emu(calls))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1)
+    assert calls == [("run_bench", None)]
+
+
+def test_a_watcher_that_raises_still_drops_the_export(monkeypatch):
+    """`stopped` refusing (a window the project's accounting rejects) must not leave the image exported."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _watched_emu(calls))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+
+    class Refusing(_Watcher):
+        def stopped(self, pc, sp, memory):
+            raise AssertionError("refused")
+
+    with pytest.raises(AssertionError, match="refused"):
+        _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1,
+                                 watch=Refusing(FAKE_FIRST_BAND, ()))
+    assert calls[-1] == ("abort",)

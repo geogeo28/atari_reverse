@@ -1945,12 +1945,43 @@ static uint32_t g_door_base, g_door_span;   /* the band; span 0 = no door, the d
 static uint32_t g_door_pc;                  /* the PC inside it the run stopped at */
 static uint32_t g_bench_sentinel;           /* remembered so a resume watches the same address */
 
+/* A door may instead STOP AT A SET OF EXACT PCs (osh_bench_door_stops): a watch over a run that calls
+ * several routines scattered through a text, where any band over them all would also swallow the
+ * routines BETWEEN them. The band is then the set's hull, and a PC inside the hull that is not listed
+ * executes as an unwatched one does. 0 stops listed = a plain band, which is what osh_bench_door
+ * resets to, so every caller of the band alone is untouched. */
+#define OSH_DOOR_STOPS_MAX 64
+static uint32_t g_door_stops[OSH_DOOR_STOPS_MAX], g_door_nstops;
+
 /* Arm the door over [base, base + span), or disarm it with span 0. Also clears the reported door
- * PC, so a stale one from an earlier run cannot be read back as this run's. */
+ * PC, so a stale one from an earlier run cannot be read back as this run's, and any stop list. */
 void osh_bench_door(uint32_t base, uint32_t span) {
     g_door_base = base;
     g_door_span = span;
     g_door_pc = 0;
+    g_door_nstops = 0;
+}
+
+/* Arm the door at the `n` exact PCs `pcs` (at most OSH_DOOR_STOPS_MAX; 0 disarms it): the band their
+ * hull, filtered to the list. Answers 0 for a list too long to hold, which arms nothing. */
+int osh_bench_door_stops(const uint32_t *pcs, uint32_t n) {
+    if (n > OSH_DOOR_STOPS_MAX) return 0;
+    uint32_t low = UINT32_MAX, high = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (pcs[i] < low) low = pcs[i];
+        if (pcs[i] > high) high = pcs[i];
+    }
+    osh_bench_door(n ? low : 0, n ? high - low + 1 : 0);
+    for (uint32_t i = 0; i < n; i++) g_door_stops[i] = pcs[i];
+    g_door_nstops = n;
+    return 1;
+}
+uint32_t osh_bench_door_stops_max(void) { return OSH_DOOR_STOPS_MAX; }
+
+static int door_stop_listed(uint32_t pc) {
+    for (uint32_t i = 0; i < g_door_nstops; i++)
+        if (g_door_stops[i] == pc) return 1;
+    return 0;
 }
 
 uint32_t osh_bench_door_pc(void) { return g_door_pc; }
@@ -2038,8 +2069,9 @@ static int bench_loop(uint32_t sentinel, uint32_t max_insns) {
         if (pc == sentinel) break;
         /* ONE unsigned compare, and a disabled door (span 0) is false for free: this runs per
          * emulated instruction, in the loop every pinned perf number in this workspace is taken
-         * with, so the door costs a subtract and a compare whether or not a project has one. */
-        if ((uint32_t)(pc - g_door_base) < g_door_span) {
+         * with, so the door costs a subtract and a compare whether or not a project has one. Only
+         * a PC inside a STOP LIST's hull pays the list's lookup; an unlisted one executes. */
+        if ((uint32_t)(pc - g_door_base) < g_door_span && (!g_door_nstops || door_stop_listed(pc))) {
             g_door_pc = pc;
             g_ninsns += n;
             return OSH_BENCH_DOOR;
@@ -2139,6 +2171,11 @@ uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
 /* Did the last osh_run end at a GEMDOS Pterm rather than at its rts or its checkpoint? See
  * g_terminated; emu.run turns it into a refusal for a run that asked for a `stop_pc`. */
 int             osh_terminated(void)  { return g_terminated; }
+/* Where the last osh_run STOPPED: the sentinel after its rts, or its checkpoint. osh_run's boolean is
+ * one "reached" for both, and a run that may stop at a checkpoint OR return first (a routine that only
+ * sometimes reaches the PC a case stops at) needs to know which; emu.run reports it as
+ * `out_regs["checkpoint"]`. */
+uint32_t        osh_final_pc(void)    { return m68k_get_reg(0, M68K_REG_PC); }
 uint32_t        osh_min_a7(void)      { return g_min_a7; }
 /* The Malloc bump pointer left by the last osh_run — diagnostics only (how far the heap grew). */
 uint32_t        osh_heap(void)        { return g_heap; }

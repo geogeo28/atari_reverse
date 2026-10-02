@@ -49,6 +49,19 @@ def test_the_run_reports_WHICH_ending_it_had():
     assert returning[2]["terminated"] is False, "an ordinary `rts` run was reported as terminated"
 
 
+def test_the_run_reports_whether_it_stopped_at_its_checkpoint():
+    """The other ending a "reached" covers: a run given a `stop_pc` stopped THERE, or returned first.
+    The entry itself as the checkpoint stops before anything executes; an odd checkpoint, a PC no
+    instruction can be at, lets the same run return — and a run with no checkpoint is never reported
+    as having stopped at one."""
+    def run(**checkpoint):
+        return emu.run(harness.make_image(), RMW_ENTRY, psg_seed={MIXER_REG: PORT_DIR_BITS},
+                       **checkpoint)[2]["checkpoint"]
+    assert run(stop_pc=RMW_ENTRY) is True
+    assert run(stop_pc=RMW_ENTRY | 1) is False
+    assert run() is False
+
+
 def test_a_checkpoint_the_run_terminates_before_is_refused():
     """The case named the PC it wanted the state at and did not get there. Comparing at the
     termination instead would answer a different question with no sign that it had."""
