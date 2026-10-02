@@ -146,9 +146,7 @@ STALE_GAPS = vdi.merge_pokes(gap_pokes("space"), gap_pokes("character"))
 
 def screen_changed(result, staged_image=vdi_raster.CANVAS_IMAGE):
     """Whether the run drew anything at all — a text case that draws nothing proves nothing about glyphs."""
-    screen = vdi.SCREEN
-    return bytes(result.final[screen.base:screen.base + screen.bytes]) != \
-        bytes(staged_image[screen.base:screen.base + screen.bytes])
+    return vdi.screen_of(result.final) != vdi.screen_of(staged_image)
 
 
 def assert_dead_in_the_snapshot():

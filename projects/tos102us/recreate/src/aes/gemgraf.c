@@ -172,7 +172,7 @@ TRANSCRIBED_CORE
 void aes_gsx_bxpts(uint8_t *image, uint32_t rect)
 {
     uint32_t corner = bus_long(image, rect + GRECT_X);
-    uint16_t x = (uint16_t)(corner >> M68K_WORD_BITS), y = (uint16_t)corner;
+    uint16_t x = (uint16_t)pair_high(corner), y = (uint16_t)pair_low(corner);
     uint16_t right = (uint16_t)(x + bus_word(image, rect + GRECT_W) - 1);
     uint16_t bottom = (uint16_t)(y + bus_word(image, rect + GRECT_H) - 1);
 
@@ -536,7 +536,7 @@ static void gicon_blit(uint8_t *image, uint32_t form, uint32_t icon, int16_t for
 
     aes_gsx_blt(image, form, 0, 0, quotient_word(m68k_divs_w((uint32_t)(int32_t)width, BITS_PER_BYTE)), 0,
                 (int16_t)bus_word(image, icon + GRECT_X), (int16_t)bus_word(image, icon + GRECT_Y),
-                quotient_word(m68k_divs_w((uint32_t)(int32_t)(int16_t)be16(image + AES_GL_WIDTH), BITS_PER_BYTE)),
+                gsx_screen_row_bytes(image),
                 width, (int16_t)bus_word(image, icon + GRECT_H), GSX_MODE_TRANSPARENT, foreground, background);
 }
 

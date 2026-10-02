@@ -143,8 +143,8 @@ void aes_bb_save(uint8_t *image, uint32_t rect)
     uint32_t size = bus_long(image, rect + GRECT_W);
     uint32_t origin = bus_long(image, rect);
 
-    blit_under(image, (int16_t)(origin >> M68K_WORD_BITS), (int16_t)origin, (int16_t)(size >> M68K_WORD_BITS),
-               (int16_t)size, CORNERS_FIRST, CORNERS_SECOND, AES_GL_SRC, AES_GL_SRC, AES_GL_TMP);
+    blit_under(image, pair_high(origin), pair_low(origin), pair_high(size), pair_low(size),
+               CORNERS_FIRST, CORNERS_SECOND, AES_GL_SRC, AES_GL_SRC, AES_GL_TMP);
 }
 
 /* $fe8996 — bb_restore: gl_tmp back onto the screen under `rect` (gl_dst the screen's MFDB), the corners swapped. */
@@ -153,8 +153,8 @@ void aes_bb_restore(uint8_t *image, uint32_t rect)
     uint32_t size = bus_long(image, rect + GRECT_W);
     uint32_t origin = bus_long(image, rect);
 
-    blit_under(image, (int16_t)(origin >> M68K_WORD_BITS), (int16_t)origin, (int16_t)(size >> M68K_WORD_BITS),
-               (int16_t)size, CORNERS_SECOND, CORNERS_FIRST, AES_GL_DST, AES_GL_TMP, AES_GL_DST);
+    blit_under(image, pair_high(origin), pair_low(origin), pair_high(size), pair_low(size),
+               CORNERS_SECOND, CORNERS_FIRST, AES_GL_DST, AES_GL_TMP, AES_GL_DST);
 }
 
 /* ---- the mouse's routines and form --------------------------------------------------------------------------- */

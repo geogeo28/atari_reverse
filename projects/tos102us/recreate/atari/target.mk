@@ -77,6 +77,12 @@ TARGET_LDLIBS := -lgcc
 # and `ENTRY.` rather than `ENTRY(` because make counts every parenthesis in a `$(shell ...)`;
 # the pin above is what keeps the two parsers honest.
 TRANSCRIBED_TABLE   := $(RECREATE)/include/transcribed.h
-TRANSCRIBED_SOURCES := $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S)
+# THE ALCYON ENTRIES are the one other kind of `.S` in those directories: target-only GLUE that lets a ROM walker's
+# Alcyon call (`jsr (a0)` over a pushed frame) enter a C core — the routine a C caller hands by value where the ROM
+# hands its own ROM address (`src/aes/obdraw.S`). No ROM bytes, so no table row: listed here, apart, and linked as
+# the C is.
+ALCYON_ENTRY_SOURCES := $(RECREATE)/src/aes/obdraw.S
+TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES), \
+                         $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S))
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
 TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))

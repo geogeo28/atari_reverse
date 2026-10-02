@@ -49,7 +49,7 @@ import staging
 import test_xbios_supexec as supexec
 from address_hook import AddressHook
 from harness import BASE_IMAGE, addrs, emu
-from opcodes import ADD_ONE_TO_BYTE_ABSOLUTE, MOVE_W_ABSOLUTE_TO_ABSOLUTE
+from opcodes import ADD_ONE_TO_BYTE_ABSOLUTE, LOAD_IMMEDIATE, MOVE_W_ABSOLUTE_TO_ABSOLUTE
 
 # ---- the band this module and its batteries stage into -------------------------------------------
 # The top of `staging.SCRATCH`, which the other batteries fill from the bottom (Getmpb's parameter
@@ -429,6 +429,7 @@ CALL_VECTOR_REGISTERS = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_ubyte), c
                                          ctypes.POINTER(ctypes.c_uint32))
 REGISTERS_HOOK = AddressHook("recreate_call_vector_registers", CALL_VECTOR_REGISTERS)
 STAGED_REGISTERS = ("d0", "d1", "a0")       # staged_call.h's STAGED_D0, STAGED_D1, STAGED_A0
+REGISTER = {name: index for index, name in enumerate(STAGED_REGISTERS)}    # an effect's `registers[REGISTER["a0"]]`
 
 
 def store_byte(value, address):
@@ -479,6 +480,29 @@ def store_frame_word(address):
     high half here, so this is the stub that tells the ROM's `move.w` from a C call's widening.
     """
     return struct.pack(">HHI", MOVE_W_FRAME_ABSOLUTE, ARGUMENT_AT_4_SP, address)
+
+
+def answer_d0(answer):
+    """`move.l #answer,d0`: a staged routine's D0, answered whole."""
+    return LOAD_IMMEDIATE["d0"] + struct.pack(">I", answer & 0xFFFF_FFFF)
+
+
+def set_d0(registers, answer):
+    """...and its host twin: an effect's D0 slot set to `answer`, whole."""
+    registers[REGISTER["d0"]] = answer & 0xFFFF_FFFF
+
+
+def frame_long_logger(log_at, answer=None):
+    """(68000 bytes, host effect) of a routine an Alcyon caller hands a longword (`move.l <it>,-(sp) / jsr`): it stores
+    that longword at `log_at` — a value, the same on both shores — and, given an `answer`, sets D0 to it. The host's
+    register-carrying call hands the longword in A0's slot and takes D0's back."""
+    code = store_frame_long(log_at) + (b"" if answer is None else answer_d0(answer)) + RTS
+
+    def effect(buf, registers):
+        poke(buf, log_at, struct.pack(">I", registers[REGISTER["a0"]]))
+        if answer is not None:
+            set_d0(registers, answer)
+    return code, effect
 
 
 # ---- what a battery reads out of the snapshot, and the smallest routine it can stage -------------

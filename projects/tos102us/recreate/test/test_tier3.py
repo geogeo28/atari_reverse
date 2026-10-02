@@ -529,9 +529,9 @@ def _with_body_grown_to(measured, bench, net_ratio):
 
 
 def test_every_thunk_is_a_sized_range_of_the_shipped_blob():
-    """The glue the rule counts is exactly the generated thunks: one disjoint sized range each."""
+    """The glue the rule counts is exactly the generated thunks and the Alcyon entries: one disjoint sized range each."""
     ranges = tier3.glue_ranges()
-    assert len(ranges) == len(shipped_glue.thunked_cores())
+    assert len(ranges) == len(shipped_glue.thunked_cores()) + len(tier3.ALCYON_ENTRIES)
     assert all(start < end <= following for (start, end), (following, _) in zip(ranges, ranges[1:])), ranges
 
 
@@ -697,6 +697,19 @@ def test_only_the_aes_s_graphics_go_through_the_os():
     assert all(aes.AES_TEXT[0] <= tier3.rom_address(row) < aes.AES_TEXT[1] for row in through), (
         sorted({row.symbol for row in through if not aes.AES_TEXT[0] <= tier3.rom_address(row) < aes.AES_TEXT[1]}))
     assert "aes_gsx2" in tier3.trap_2_functions(tier3.BUILT_ELF)
+
+
+# A (V) row whose C enters an Alcyon entry: ob_draw hands everyobj `aes_just_draw_alcyon` by value.
+ALCYON_ENTRY_ROW = ("aes_ob_draw", "the window tree")
+
+
+def test_an_alcyon_entry_is_glue_on_a_row_through_the_os_not_measured_as_shipped(bench, monkeypatch):
+    """The Alcyon entries are linked in both blobs, so a (V) row priced on the plain one still books the entry's cycles
+    as glue — never as its C body's. Measured here with the row's shipping forced off."""
+    row = tier3.row_named(ALCYON_ENTRY_ROW)
+    monkeypatch.setattr(tier3, "ships_through_a_call", lambda _row: False)
+    measured = tier3.measure(row, bench)
+    assert tier3.glue_cycles_of(measured) > 0, "the entry's cycles were booked as the C body's"
 
 
 def test_the_os_rule_refuses_our_build_running_the_aes_s_own_rom_bytes(bench, monkeypatch):

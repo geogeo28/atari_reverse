@@ -144,6 +144,16 @@ void aes_gr_movebox(uint8_t *image, int16_t width, int16_t height, int16_t sourc
                     int16_t destination_x, int16_t destination_y);                                  /* $fe8402 */
 void aes_gr_growbox(uint8_t *image, uint32_t from, uint32_t to);                                    /* $fe8340 */
 void aes_gr_shrinkbox(uint8_t *image, uint32_t from, uint32_t to);                                  /* $fe837a */
+
+#include "machine.h"
+#include "m68k_idioms.h"
+
+/* The screen's row in bytes, gl_width / 8 (`divs.w`: toward zero), as gr_gicon's blit ($fda76e) and just_draw's image
+ * ($fe9cfa) each compute it for gsx_blt. */
+static inline int16_t gsx_screen_row_bytes(const uint8_t *image)
+{
+    return quotient_word(m68k_divs_w((uint32_t)(int32_t)(int16_t)be16(image + AES_GL_WIDTH), BITS_PER_BYTE));
+}
 #endif /* !__ASSEMBLER__ */
 
 #endif /* TOS102US_AES_GEMGRAF_H */

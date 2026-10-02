@@ -28,7 +28,7 @@ import vdi
 import vdi_helpers
 import vdi_screen as screen
 import vdi_workstation as ws
-from case import merge_pokes
+from case import STACK_BAND, merge_pokes
 
 H = ws.WORKSTATION_H
 PALETTE = addrs.parse(Path(__file__).resolve().parents[1] / "include/vdi/palette.h", known={**addrs.ADDRS, **vdi.CONSTANTS})
@@ -174,7 +174,6 @@ def test_the_tables_are_copied_before_intin_is_read():
 # ---- the two switching arms: a halt inside Setscreen, everything before it stored -----------------------------------
 SWITCHING = ((addrs.SHIFTER_MODE_LOW, 3, addrs.SHIFTER_MODE_MEDIUM, LOW_PLANES),
              (addrs.SHIFTER_MODE_MEDIUM, 2, addrs.SHIFTER_MODE_LOW, MEDIUM_PLANES))
-STACK_BAND = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
 # ...and `savptr`, which the ROM's XBIOS entry has moved down by the register frame it saved and its exit would put
 # back: in flight at the checkpoint, where the candidate, halting in Setscreen's C, never moved it — so it is left out
 # of the compare on the ROM's side ALONE: the candidate's must still be the staged one.

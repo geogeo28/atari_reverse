@@ -2062,6 +2062,11 @@
 #define AES_ROM_OB_RELXYWH        0xfea538   /* an object's GRECT as it stands, relative to its parent: wcopy out */
 #define AES_ROM_OB_SETXYWH        0xfea55e   /* ...and set from a GRECT: wcopy in */
 #define AES_ROM_GET_PREV          0xfea5dc   /* the sibling before an object, -1 when it is its parent's head */
+/* The OBJECT DRAW PATH (gemobjop/gemoblib, Alcyon, `aes/objdraw.h`). */
+#define AES_ROM_JUST_DRAW         0xfe9a88   /* read: (tree, obj, x, y) one object drawn — ob_draw's everyobj routine */
+#define AES_ROM_OB_FORMAT         0xfe99a4   /* read: (just, raw, tmplt, out) an editable text's raw text merged into its template */
+#define AES_ROM_OB_USER           0xfe9a46   /* read: (tree, obj, rect, userblk, curr, new) a USERDEF's routine over a PARMBLK */
+#define AES_ROM_FAR_CALL          0xfddec6   /* read: (code, parm) `jsr` to code over one pushed longword, its D0 answered */
 /* The functions the dispatcher's arms call (`ctx` names: see above). */
 #define AES_ROM_AP_RDWR           0xfe65c4   /* ctx */
 #define AES_ROM_AP_RDWR_OPCODE    12
@@ -2097,7 +2102,7 @@
 #define AES_ROM_OB_ADD_OPCODE     40
 #define AES_ROM_OB_DELETE         0xfea21e   /* read: an object unlinked from its parent's children */
 #define AES_ROM_OB_DELETE_OPCODE  41
-#define AES_ROM_OB_DRAW           0xfea028   /* ctx */
+#define AES_ROM_OB_DRAW           0xfea028   /* read: (tree, obj, depth) a subtree drawn by everyobj, just_draw per object */
 #define AES_ROM_OB_DRAW_OPCODE    42
 #define AES_ROM_OB_FIND           0xfea0a8   /* read: the deepest visible object under a point, -1 for none */
 #define AES_ROM_OB_FIND_OPCODE    43
@@ -2107,7 +2112,7 @@
 #define AES_ROM_OB_ORDER_OPCODE   45
 #define AES_ROM_OB_EDIT           0xfe9678   /* ctx */
 #define AES_ROM_OB_EDIT_OPCODE    46
-#define AES_ROM_OB_CHANGE         0xfea38e   /* ctx */
+#define AES_ROM_OB_CHANGE         0xfea38e   /* read: (tree, obj, new, redraw) a state set, SELECTED inverted or redrawn */
 #define AES_ROM_OB_CHANGE_OPCODE  47
 #define AES_ROM_FM_DO             0xfe74a4   /* ctx */
 #define AES_ROM_FM_DO_OPCODE      50

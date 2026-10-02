@@ -295,6 +295,10 @@ class Result:
 # wrote that no poke covered. WHAT IS NOT: the stack band, which the differential drops and every run
 # re-stages with its own arguments, and `refilled` — the addresses a component's own machine staging
 # fills afresh on every run, so that the next run's stores to them are still changes.
+# The oracle's stack band: every run's frames, which no differential compares.
+STACK_BAND = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
+
+
 def continued(result, refilled=()):
     """The pokes the run after `result` (a `Result`) starts from — its end state, as above."""
     return continued_from(result.staged, result.final, result.info["writes"], refilled)
@@ -303,10 +307,15 @@ def continued(result, refilled=()):
 def continued_from(staged, final, writes, refilled=()):
     """...out of a run's parts: the pokes it `staged`, the `final` memory and the `writes` ledger it ended with —
     for a run made by the oracle alone (`emu.run`), which has no `Result`."""
-    stack_band = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
     refilled = set(refilled)
     covered = {address for at, data in staged.items() for address in range(at, at + len(data))}
     pokes = {at: bytes(final[at:at + len(data)]) for at, data in staged.items()
-             if at not in stack_band and at not in refilled}
-    pokes.update({at: bytes([value]) for at, value in writes.items() if at not in covered and at not in stack_band})
+             if at not in STACK_BAND and at not in refilled}
+    pokes.update({at: data for at, data in written_by(writes).items() if at not in covered})
     return pokes
+
+
+def written_by(writes):
+    """Only what a run WROTE (its `writes` ledger), the stack band out — the run's change as a DELTA, to lay over a
+    machine other than the one it ran on without restoring that machine's own pokes."""
+    return {at: bytes([value]) for at, value in writes.items() if at not in STACK_BAND}

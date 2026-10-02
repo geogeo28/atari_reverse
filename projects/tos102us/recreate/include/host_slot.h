@@ -128,6 +128,19 @@
 #define HOST_SLOT_AES_MOVEBOX_STEPS_BYTES 6
 #define HOST_SLOT_AES_GROWBOX_STEPS     0x7f52a  /* $fe8340/$fe837a's saved D2's low word, D3 and D4 ($fe831e) */
 #define HOST_SLOT_AES_GROWBOX_STEPS_BYTES 10
+/* ...and the object library's (`aes/obuser.h`): the PARMBLK ob_user builds in its frame and hands a USERDEF's routine. */
+#define HOST_SLOT_AES_OB_USER_PARMBLK   0x7f540  /* $fe9a46's -30(a6): the block, up to the frame's top */
+#define HOST_SLOT_AES_OB_USER_PARMBLK_BYTES 30   /* PARM_BYTES (`aes/objects.h`) */
+/* ...and just_draw's (`aes/objdraw.h`): its WHOLE frame of locals, whose words it hands ob_sst, gr_crack, gsx_chkclip,
+ * the gr_ layer and ob_user by address — the frame's own layout. */
+#define HOST_SLOT_AES_JUST_DRAW_FRAME   0x7f560  /* $fe9a88's -48(a6) up: the clip, the GRECT, the spec, state, colours */
+#define HOST_SLOT_AES_JUST_DRAW_FRAME_BYTES 48   /* `link a6,#-48` */
+/* ...and its two callers' (`aes/objdraw.h`): the position ob_draw hands ob_offset, and ob_change's whole frame, whose
+ * words it hands ob_sst, ob_offset and ob_user by address — each the frame's own layout. */
+#define HOST_SLOT_AES_OB_DRAW_POSITION  0x7f590  /* $fea028's -8(a6) y, -6(a6) x: the walk's start (`clr.l` of both) */
+#define HOST_SLOT_AES_OB_DRAW_POSITION_BYTES 4
+#define HOST_SLOT_AES_OB_CHANGE_FRAME   0x7f5a0  /* $fea38e's -20(a6) up: the spec, state, GRECT, border, type, flags */
+#define HOST_SLOT_AES_OB_CHANGE_FRAME_BYTES 20   /* `link a6,#-20` */
 
 /* Each slot's bit in the held mask. */
 enum host_slot {
@@ -164,6 +177,10 @@ enum host_slot {
     HOST_SLOT_ID_AES_XOR_RECT,
     HOST_SLOT_ID_AES_MOVEBOX_STEPS,
     HOST_SLOT_ID_AES_GROWBOX_STEPS,
+    HOST_SLOT_ID_AES_OB_USER_PARMBLK,
+    HOST_SLOT_ID_AES_JUST_DRAW_FRAME,
+    HOST_SLOT_ID_AES_OB_DRAW_POSITION,
+    HOST_SLOT_ID_AES_OB_CHANGE_FRAME,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 

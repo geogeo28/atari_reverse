@@ -111,6 +111,9 @@
 #define AES_DESK_APP_GLOBAL   0x96ba     /* ($fde360 move.l #$96ba, rsrc_gaddr's binding)                      */
 #define AES_SHELL_BUFFER      0xc79e     /* long: the shell's buffer            ($fda00e)                      */
 #define AES_SH_COMMAND        0xc42e     /* byte: sh_cmd's command              ($feb310 move.b)               */
+/* ad_pfile: where sh_draw stores the desktop band's string — the band's (the AES's tree 2) object 2's ob_spec, its
+ * TEDINFO's te_ptext (sh_draw $feadca stores through it right before its ob_draw). */
+#define AES_AD_PFILE          0xc7a2     /* long: the band's te_ptext's address ($feb102 move.l)               */
 /* The shell's buffers, as shel_read/shel_write copy them: AES_SHELL_BUFFER's command line and this TAIL (whose
  * first byte is AES_SH_COMMAND), 128 bytes each; the GEM buffer shel_get/shel_put copy, which holds the DESKTOP.INF
  * text; and the scrap directory's path, which scrp_read/scrp_write copy. */
@@ -230,6 +233,10 @@
 #define WIN_BROKEN            2          /* a rectangle was split               ($fe5cdc ori.w #2)             */
 /* The WINDOW TREE: one OBJECT per window, its handle the index, whose OB_X..OB_H are where the window is. */
 #define AES_WINDOW_TREE       0x9734     /* an OBJECT array, OB_BYTES apart     ($feb4d2 muls.w #24, addl #38708) */
+/* The two trees the AES draws for the screen's furniture: the menu bar's (mn_bar's) and the desktop's (wind_set's
+ * WF_NEWDESK; in the snapshot the desk's icon tree, three G_ICONs, in the TPA). */
+#define AES_GL_MNTREE         0x9b26     /* long: the menu tree, 0 for none     ($fe903e move.l d7)            */
+#define AES_GL_NEWDESK        0xc942     /* long: the desktop's tree, 0 for none ($fec908 move.l (a5))         */
 
 /* ---- LINE-F: how GEM calls itself ---------------------------------------------------------------------------
  * GEM's own code never `jsr`s an AES routine: every call is a `$F000|off` word, a Line-F EXCEPTION, whose handler

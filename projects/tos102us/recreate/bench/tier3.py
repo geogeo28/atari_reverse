@@ -1687,19 +1687,34 @@ def shipped_bench():
 
 
 # MECHANISM (T→G): the bytes of the shipped blob that are glue, and what a row spent inside them.
+# ...the generated thunks', and the ALCYON ENTRIES': target-only `.S` that takes a ROM walker's Alcyon frame into a C
+# core (`src/aes/obdraw.S`, the just_draw ob_draw hands everyobj) — a thunk's mirror image, which no ROM routine has
+# either. DERIVED: the `.globl`s of `atari/target.mk`'s ALCYON_ENTRY_SOURCES (`transcription.ALCYON_ENTRIES`). Both
+# blobs link them, so a (V) row measured on either counts their cycles as glue (`_measure_through_the_os`).
+ALCYON_ENTRIES = tuple(sorted(transcription.ALCYON_ENTRIES))
+
+
 @functools.cache
-def glue_ranges():
-    """`[(start, end)]` of every generated thunk in the shipped blob — its SIZED symbol (`shipped_glue`
-    emits `.size`), so the range is the thunk's own instructions and not the `.S` it enters. A thunk the
-    generator names and the ELF does not size is refused: counting nothing for it would pass its cycles
-    off as the caller's body."""
-    thunks = set(shipped_glue.thunked_cores())
-    sized = {symbol.name: (symbol.start, symbol.start + symbol.size) for symbol in transcription.symbol_table(transcription.SHIPPED_ELF)
-             if symbol.size is not None and symbol.name in thunks}
-    if set(sized) != thunks:
-        raise LookupError(f"the shipped blob sizes no thunk for {sorted(thunks - set(sized))} — rebuild it "
-                          f"(`make bench`): its glue predates `bench/shipped_glue.py`'s `.size` lines")
+def sized_glue(elf, names):
+    """`[(start, end)]` of the glue `names` in `elf` — each its SIZED symbol (`shipped_glue` emits `.size`, and so does
+    each Alcyon entry), so the range is the glue's own instructions and not the `.S` or the C it enters. Glue the ELF
+    does not size is refused: counting nothing for it would pass its cycles off as the caller's body."""
+    sized = {symbol.name: (symbol.start, symbol.start + symbol.size) for symbol in transcription.symbol_table(elf)
+             if symbol.size is not None and symbol.name in names}
+    if set(sized) != names:
+        raise LookupError(f"{elf} sizes no glue for {sorted(names - set(sized))} — rebuild it (`make bench`): its glue "
+                          f"predates `bench/shipped_glue.py`'s `.size` lines")
     return sorted(sized.values())
+
+
+def glue_ranges():
+    """Every generated thunk and Alcyon entry in the shipped blob."""
+    return sized_glue(transcription.SHIPPED_ELF, frozenset(shipped_glue.thunked_cores()) | frozenset(ALCYON_ENTRIES))
+
+
+def alcyon_entry_ranges(elf):
+    """...and the Alcyon entries alone, in `elf` — the only glue a blob without the thunks links."""
+    return sized_glue(elf, frozenset(ALCYON_ENTRIES))
 
 
 def _cycles_in(ranges):
@@ -1737,7 +1752,7 @@ def _measure_as_shipped(row):
 
 
 def glue_cycles_of(measured):
-    """What `measured` spent inside thunks: only a (T→) row's measurement carries it, every other enters none."""
+    """What `measured` spent inside glue: a (T→) row's and a (V) row's measurements carry it, every other enters none."""
     return getattr(measured, "glue_cycles", 0)
 
 
@@ -1899,6 +1914,7 @@ def _measure_through_the_os(row, bench):
         blob, measured = shipped_bench(), _measure_as_shipped(row)
     else:
         blob, measured = bench, _profiled(lambda: _measure_call(bench, row))
+        measured.glue_cycles = _cycles_in(alcyon_entry_ranges(bench.elf))
     both_in_the_aes = _cycles_in(AES_OWN_SPANS)
     assert both_in_the_aes == original_own, (
         f"{row.symbol} / {row.case}: our build spent {both_in_the_aes - original_own} cycles inside the AES's own ROM "
@@ -1947,7 +1963,8 @@ def measure(row, bench):
     The two relations are the kit's, not a choice made here: a C core owes its caller a return value
     and the callee-saved file, and an m68k transcription owes it the WHOLE register file the ROM's
     own instructions leave (`tools/recreate_kit/rom_bench.py`). A row that ships through a call (T→) is
-    measured on the shipped blob, whatever `bench` was handed, and profiled for its glue (T→G); every
+    measured on the shipped blob, whatever `bench` was handed, and profiled for its glue (T→G); a (V) row
+    is profiled for its glue on whichever blob prices it — an Alcyon entry is glue on both — and every
     other row's glue is 0 (`glue_cycles_of`), because it enters no thunk. A `.S` row that calls C through
     thunks of its own (T←) is profiled on `bench` and split into its own instructions and the rest.
     """

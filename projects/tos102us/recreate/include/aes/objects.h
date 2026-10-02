@@ -8,8 +8,8 @@
  *
  * Every field carries one ROM access and its WIDTH TAG (`vdi/linea.h`, "THE WIDTH TAG"), which `test/aes.py`
  * parses; frozen the way `gemdos/fs.h` is — the only permitted edit is adding a field with its own citation. The
- * blocks' fields not named here (TEDINFO's font/colour words, ICONBLK's geometry, BITBLK's) are read by ob_draw's
- * copies into its frame, and are named when a reconstructed routine reads them by name.
+ * blocks' fields just_draw reads through its copies of them (`aes/objdraw.h`'s AES_EDBLK, AES_BI, AES_IB) are cited
+ * at those copies' addresses; the ones nothing reconstructed reads are not named.
  */
 #ifndef TOS102US_AES_OBJECTS_H
 #define TOS102US_AES_OBJECTS_H
@@ -35,6 +35,7 @@
 #define OB_BYTES              24         /* ($fea5a6 muls.w #24)                                               */
 #define OB_ROOT               0          /* the tree's first object: get_par's `tst.w` ($fed394)               */
 #define OB_NIL                (-1)       /* no object: an empty head/tail, get_par of the root ($fed398 moveq #-1) */
+#define OB_SPEC_NONE          0xffffffffu /* ob_spec -1: nothing drawn or changed ($fe9ad4, $fea3d2 cmpi.l #-1) */
 #define OB_TYPE_MASK          0x00ff     /* ($fea8f0 and.w #255)                                               */
 #define OB_FLAG_HIDETREE_BIT  7          /* ...of OB_FLAGS' low byte            ($fed33c btst #7)              */
 #define OB_STATE_OUTLINED_BIT 4          /* ...of OB_STATE's low byte           ($fe9316 btst #4)              */
@@ -57,6 +58,16 @@
 #define G_FTEXT               29         /* ($fefd76 -> $fed222)                                               */
 #define G_FBOXTEXT            30         /* ($fefd7a -> $fed222)                                               */
 #define G_TITLE               32         /* a thickness of 1                    ($fefd82 -> $fed21e)           */
+/* ...and the types only just_draw's two jump tables tell apart (table $fefba0 / $fefbcc, `sub.w #20` / `#21`). */
+#define G_IMAGE               23         /* a BITBLK blitted                    ($fefbd4 -> $fe9cfa)           */
+#define G_USERDEF             24         /* a USERBLK's routine called          ($fefbd8 -> $fe9db2)           */
+#define G_STRING              28         /* the string path                     ($fe9b2a cmpi.w #28)           */
+#define G_ICON                31         /* an ICONBLK drawn                    ($fefbf4 -> $fe9d56)           */
+/* The rest of OB_STATE's low byte, beside SELECTED and OUTLINED — just_draw's state block tests each ($fe9e88..). */
+#define OB_STATE_CROSSED_BIT  1          /* two diagonals                       ($fe9f9c btst #1)              */
+#define OB_STATE_CHECKED_BIT  2          /* a check mark                        ($fe9f6a btst #2)              */
+#define OB_STATE_DISABLED_BIT 3          /* dimmed by a pattern                 ($fe9fde btst #3)              */
+#define OB_STATE_SHADOWED_BIT 5          /* a shadow below and right            ($fe9ef0 btst #5)              */
 
 /* ---- the blocks OB_SPEC points at ---------------------------------------------------------------------------
  * rsrc_gaddr's resource types (`$fea742`'s switch, table $fefbf8) name each pointer field: R_TEPTEXT..R_TEPVALID
@@ -64,6 +75,9 @@
 #define TE_PTEXT              0          /* long: the text                      ($fea78e, R_TEPTEXT's arm)     */
 #define TE_PTMPLT             4          /* long: the template                  ($fea7d2 addq.l #4)            */
 #define TE_PVALID             8          /* long: the validation string         ($fea7dc addq.l #8)            */
+#define TE_FONT               12         /* word: 3 the IBM font, 5 the small   ($fe9cd6 move.w $9c2c: edblk+12) */
+#define TE_JUST               16         /* word: 0 left, 1 right, 2 centred    ($fe9cdc move.w $9c30: edblk+16) */
+#define TE_COLOR              18         /* word: the colour word gr_crack splits ($fe9b76 move.w $9c32: edblk+18) */
 #define TE_THICKNESS          22         /* word: the border's thickness        ($fed224 adda.l #22)           */
 #define TE_TXTLEN             24         /* word: the text's length + 1, set by fix_tedinfo ($fea95a addl #24) */
 #define TE_TMPLEN             26         /* word: ...and the template's         ($fea978 addl #26)             */
@@ -71,12 +85,34 @@
 #define IB_PMASK              0          /* long                                ($fea796, R_IBPMASK's arm)     */
 #define IB_PDATA              4          /* long                                ($fea7f6 addq.l #4)            */
 #define IB_PTEXT              8          /* long                                ($fea800 addq.l #8)            */
+#define IB_CHAR               12         /* word: colours and a character, gr_gicon's ($fe9d86 move.l $c74c: ib+12) */
+#define IB_XCHAR              14         /* word: the character's place in the icon ($fe9d86: the same long)  */
+#define IB_YCHAR              16         /* word                                ($fe9d80 move.w $c750: ib+16)  */
+#define IB_XICON              18         /* word: the icon's GRECT, x first     ($fe9d68 add.l d0,$c752: ib+18) */
+#define IB_YICON              20         /* word: ...its y, the same longword   ($fe9d68)                      */
+#define IB_XTEXT              26         /* word: the label's GRECT, x first    ($fe9d6e add.l d0,$c75a: ib+26) */
+#define IB_YTEXT              28         /* word: ...its y, the same longword   ($fe9d6e)                      */
 #define IB_BYTES              34         /* ($fea798 moveq #34)                                                */
 #define BI_PDATA              0          /* long                                ($fea79e, R_BIPDATA's arm)     */
+#define BI_WB                 4          /* word: the form's width in bytes     ($fe9d1c move.w $c736: bi+4)   */
+#define BI_HL                 6          /* word: its height in lines           ($fe9d16 move.w $c738: bi+6)   */
+#define BI_X                  8          /* word: the corner blitted from, x first ($fe9d3e move.l $c73a: bi+8) */
+#define BI_Y                  10         /* word: ...its y, the same longword   ($fe9d3e)                      */
+#define BI_COLOR              12         /* word: the foreground colour         ($fe9d0c move.w $c73e: bi+12)  */
 #define BI_BYTES              14         /* ($fea7a0 moveq #14)                                                */
 #define UB_CODE               0          /* long: the drawing routine           ($fe9a7e ob_user)              */
 #define UB_PARM               4          /* long: its argument                  ($fe9a70)                      */
 #define UB_BYTES              8
+/* The PARMBLK ob_user builds in its own frame (`link #-34`, the block at -30(a6)) and hands the USERBLK's routine by
+ * address — the routine's one argument, which the published GEM calls PARMBLK (pb_*). */
+#define PARM_TREE             0          /* long: the tree                      ($fe9a4a move.l 8(a6),-30(a6)) */
+#define PARM_OBJECT           4          /* word: the object                    ($fe9a50 move.w 12(a6),-26(a6)) */
+#define PARM_PREVSTATE        6          /* word: the state before the change   ($fe9a56 move.l 22(a6),-24(a6)) */
+#define PARM_CURRSTATE        8          /* word: ...and after, one longword with it ($fe9a56)                 */
+#define PARM_RECT             10         /* bytes[GRECT_BYTES]: the object on the screen ($fe9a5c pea -20(a6), rc_copy) */
+#define PARM_CLIP             18         /* bytes[GRECT_BYTES]: the clip        ($fe9a66 pea -12(a6), gsx_gclip) */
+#define PARM_PARM             26         /* long: the USERBLK's UB_PARM         ($fe9a70 move.l 4(a0),-4(a6))  */
+#define PARM_BYTES            30         /* ($fe9a76 pea -30(a6)): -30(a6) up to the frame's top               */
 
 /* ---- GRECT and ORECT ---------------------------------------------------------------------------------------
  * A GRECT is four words, x y w h; rc_intersect and the rest of the hand-68000 rectangle layer read it at 0..6

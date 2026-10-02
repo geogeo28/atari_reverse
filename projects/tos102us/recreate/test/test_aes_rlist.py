@@ -22,7 +22,7 @@ import itertools
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, emu
+from harness import BASE_IMAGE, _lib, addrs
 
 import aes
 import aes_rlist
@@ -64,9 +64,8 @@ def free_head(result):
 
 def stored(result):
     """The addresses the ROM's run stored to, but for its stack frames and the Line-F mask word."""
-    frames = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
     mask_word = range(aes.AES_LINEF_MASK_WORD, aes.AES_LINEF_MASK_WORD + aes.WORD_BYTES)
-    return {at for at in result.info["writes"] if at not in frames and at not in mask_word}
+    return {at for at in result.info["writes"] if at not in case.STACK_BAND and at not in mask_word}
 
 
 # ---- or_start ------------------------------------------------------------------------------------------------------

@@ -14,7 +14,7 @@ counts in this file against its rows.
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments), and Scrdmp (entered only through the VBL and v_hardcopy's `trap #14`) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
 | vdi + linea | 151 | — | shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 48 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)), the escape's `.S` rows that reach the BIOS console's C through its own thunks 1.31–2.43x as shipped, verdict `own` (T←: its own instructions within the bar, the console's C carried by five cited Bconout(CON:) acceptances); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.42–1.10), fourteen rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–2.05 shipped, 0.69–1.08 net of the thunks); the GEMDOS-trap rows priced over a staged `trap #1` with LINEA_RETSAV dropped by name | COMPLETE but the deferred BLITTER bodies |
-| aes | 173 | — | shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.71–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks), gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; `dos_free`, `dos_sdta` and `dos_close` verified and unpriced (a host argument) | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations |
+| aes | 179 | — | shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.54–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks); just_draw's ALCYON ENTRY `src/aes/obdraw.S` — the routine the target ob_draw hands everyobj — target-only glue, its cycles counted as glue (T→G: ob_draw 0.75–0.89 own, 0.88–1.01 with it), gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; `dos_free`, `dos_sdta` and `dos_close` verified and unpriced (a host argument) | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations; band 2 wave 3: the object draw path (ob_format, far_call, ob_user, just_draw, ob_draw, ob_change) — BAND 2 COMPLETE |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
 
@@ -420,7 +420,7 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfcb998` | `v_clswk` (opcode 2, same) | 2 + 1 | 4366 / 119510 none open, 4447 / 121142 four open | **1.01** none open, **1.01** four open (T→) | ✅ verified | every record after the physical one Mfree'd IN LIST ORDER through CUR_WORK (left 0) — the four Mfrees pinned in order by the appending ledger (a swapped-order mutant survived the single-slot one); the physical WS_NEXT left naming freed memory (ROM quirk); restore_timer_mouse. The four-open row over the staged trap, RETSAV dropped at Tier 3 only |
 | `0xfc427a` | `vdi_escape` (VDI opcode 5 — in the BIOS's range, under `vdi` because its code is `src/vdi/`, as `clear_span`'s is; SHIPS as `src/vdi/escape.S`, 4 byte-pinned spans + 13 thunks into `src/bios/vt52.c`; its C twin `src/vdi/escape.c`) | 203 C twin + 92 transcription | C twin 11 / 150 past the table, 19 / 244 vq_chcells, 14155 / 168060 v_exit_cur, 289 / 2954 v_curup drawn, 25096 / 325642 v_curtext line and scroll, 45 / 808 v_hardcopy, 34 / 744 v_fontinit; `.S` 13 / 190 past the table … 25111 / 325780 v_curtext | `.S` **1.00** on the 14 rows that are the escape's own code (the three NOTHING rows, vq_chcells, vq_curaddress, vq_tabstatus, v_rvon, v_rvoff, v_hardcopy, v_dspcur ×2, v_rmcur ×2, v_fontinit); the 24 `.S` rows that reach the console's C **1.31**–**2.43** as shipped, verdict `own` (T←); the C twin **1.09** v_hardcopy, the rest (T) `transcribed` | ✅ verified | THE `.S`: $fc427a..$fc42e5 (dispatch, the 20-word table, the two compares past it, v_offset), $fc442e..$fc4463 (vq_chcells, v_hardcopy, v_enter/exit_cur), $fc44dc..$fc455f (vs_curaddress, v_curtext, rv on/off, the two inquiries, v_dspcur, v_rmcur), $fc4a42..$fc4a9d (v_fontinit) pinned word for word with 27 exact relocations (the 20 table words as displacements from the TABLE — a new `Relocated.base` — eleven to arms, seven to console thunks; seven branch extension words); ESC E's thunk laid at the ROM's own body address so v_exit_cur falls into it and v_enter_cur's `bsr.s` reaches it; the `jmp`s to v_show_c/v_hide_c keep the ROM's addresses (CODE entries). The transcription relation over 55 cases with each ARM's register mask the measured union of what the two sides disagree in (the inquiries, v_hardcopy and v_fontinit clear nothing; the arms reaching the console's C its scratch); contract `d2-d7 a2-a5`, the ROM console's. Tier 3 by the DERIVED (T←) rule: own instructions 1.00 on 19 of the 24, 0.85 on the five edge rows (ESC A-D and J refuse through `beq.s $fc444e`, vq_chcells' `rts` INSIDE the span: 16 console cycles counted as the escape's), the rest carried by five cited `bios_bconout` acceptances. THE C: the dispatch's UNSIGNED `bhi` (negative words and $8000 fall past the table; $0101/$0165/$0166 do nothing) and all 22 arms incl. the undocumented 101 v_offset and 102 v_fontinit; the nine console arms entered by name and proved to be ESC's own table entries; vq_chcells columns-before-rows over contrl and over the console's own geometry; vs_curaddress's unchecked `subq` (0 → $ffff) and the N-flag clamp's exact $8000 boundary; the console cell address WRAPPED on the 24-bit bus (rows 0 and $ccce, ESC Y below the bias — the latent Bconout divergence this band found); v_curtext through the live state machine (controls, ESC Y across two calls, the `dbf` count unsigned at $8000, read-after-draw with intin on screen); v_offset read under the lock and not re-placing the cursor; v_fontinit on the ROM's three fonts, field order pinned by two headers over the console block; v_dspcur clearing the caller's intin[0] before v_show_c; v_hardcopy through the real `trap #14` → Scrdmp into a RECORDING `scr_dump` (one call, `_dumpflg` set after it). Unpinned: column 0 with the cursor drawn (past 1 MB even wrapped; host refusal), a zero-divide v_fontinit (vector 5; host refusal), the real printer dump, an odd intin pointer. Mutation (strict): C 66/68 + 2/2 Scrdmp order and count (+1 ABNORMAL: the bus-wrap revert, caught by the host abort); `.S` 8/9 on a private blob (1 equivalent); a spill in the `.S`'s own code reds 26 of 38 rows |
 
-## Verified — aes (173)
+## Verified — aes (179)
 
 The AES (`$fe387c..$fee8ff`, `src/aes/`), started 2026-09-30 on a read-only map of the whole GEM range and a FOUNDATION
 every later port builds on: `include/aes/{aes,objects}.h` (GEMBSS, THEGLO's tables, the object layer, the resource header, the
@@ -462,6 +462,17 @@ gsx_chkclip and gsx_bxpts also in `src/aes/gemgraf.S`) and gemgrlib's non-intera
 Line-A dispatcher `$fc9f0c` and halts by name, then runs the VDI's linea_init C twin and answers A0; the target makes the real
 `$a000` word. Every graphic case compares the whole image, screen included, against the ROM's VDI. gsx_call became one inline in
 gsx.h (no row moved).
+
+BAND 2 WAVE 3 (2026-10-01) adds THE OBJECT DRAW PATH and COMPLETES BAND 2 — 6 ✅ routines over three files: the leaves
+(`src/aes/obuser.c`: ob_format, far_call, ob_user, with `staged_call.h`'s call_alcyon_pointer now answering D0), the per-object
+drawer just_draw (`src/aes/objdraw.c`, over its ROM frame in one host slot, its two jump tables as two `switch`es) and the tree
+walkers ob_draw and ob_change (`src/aes/obdraw.c`). ob_draw hands everyobj just_draw BY VALUE, as the ROM does: on the host the
+value is the ROM address the case's hook binds to the C core; on target it is `src/aes/obdraw.S`'s ALCYON ENTRY (target-only
+GLUE, not a transcription: `atari/target.mk`'s ALCYON_ENTRY_SOURCES, counted by Tier 3 as glue through `tier3.ALCYON_ENTRIES`),
+because the (V) bench refuses a row in which our build runs the ROM's AES code. Every cell is drawn over the snapshot's own trees
+(the AES's and the desk's resources, the menu bar, the desk's icons, the window tree) or staged on a real object where no data
+reaches it; the machines a draw starts from are DERIVED from ROM runs (the IBM font as the ROM's own gsx_tblt leaves it, the
+whole screen's clip as gsx_sclip(gl_rscreen) does — `case.written_by`), never poked.
 
 | address | function | cases | original insns / cycles | Tier 3 | state | what the cases pin |
 |---|---|---|---|---|---|---|
@@ -641,6 +652,12 @@ gsx.h (no row moved).
 | `0xfe8402` | `gr_movebox` (`src/aes/grlib.c`) | 1 row + 1 Line-F | 52641 / 729332 down and right | **0.80** down and right (V, `net`) | ✅ verified | across only, down and right; 0.93 with its thunks |
 | `0xfe8340` | `gr_growbox` (`src/aes/grlib.c`) | 1 row + 1 Line-F | 129965 / 1816122 an icon to a window | **0.84** an icon to a window (V, `net`) | ✅ verified | the shared prologue `$fe831e` folded (it reads its CALLER's arguments); `from` and `to` over ptsin (+0 / +4 / +8), re-read each pass; 0.96 with its thunks |
 | `0xfe837a` | `gr_shrinkbox` (`src/aes/grlib.c`) | 1 row + 1 Line-F | 129670 / 1812978 a window to an icon | **0.84** a window to an icon (V, `net`) | ✅ verified | `to` over ptsin at +0 / +4 / +8, re-read each pass (the ROM's run ends — 2,000,000-instruction budget); `to` over intout; 0.97 with its thunks |
+| `0xfddec6` | `far_call` (`src/aes/obuser.c`) | 1 row | 20 / 320 a logger answering SELECTED | **0.76** a logger answering SELECTED | ✅ verified | ob_user's only call site (`$f118` at `$fe9a80`), direct and through Line-F; `staged_call.h`'s call_alcyon_pointer now ANSWERS D0 whole (on target D0 is held live across the `jsr` by an empty-asm output, so sh_find stays byte-identical — `cmp` of the .o, bench and shipped flags; its Tier 3 rows unchanged); the answer checked as 0, SELECTED and a whole longword; a top-byte code pointer jumps through 24 lines (bus_dereference is the identity on target) |
+| `0xfe99a4` | `ob_format` (`src/aes/obuser.c`) | 7 rows + 1 Line-F | 104 / 1334 an empty template .. 814 / 8468 the selector's path, a full path | **0.82** the selector's path (T→), **0.81** the desk's size, right (T→), **0.80** the desk's file name (T→), **0.83** a file name, set by the desk (T→), **0.83** a size too long, right, set by the desk (T→), **0.87** the selector's path, a full path (T→), **0.66** an empty template (T→) | ✅ verified | every editable field of both resources through just_draw's own buffers (the ODD `AES_TMPLT` `$b7a7` a byte at a time); a raw text not starting '@' seeded by the ROM's own inf_sset; TE_LEFT / TE_RIGHT / TE_CNTR (merged as left), te_just compared as a WORD (`cmpi.w #1`: `$0101`, 5, -1 merge from the left); placeholder with raw left or spent; overlap cases for the '@' clear before strlen(tmplt), the forward re-read (out = tmplt+1), the NUL stored after strlen(raw) and a right merge over its own raw text; all three pointers tagged; both call words (`$f92c` ob_edit, `$f13c` just_draw). The worst row is a FULL 38-character path (every placeholder on the raw-copy arm, the dearest per byte; R2's estimate 0.88). Lengths ≥ 32768 unpinned (a word strlen; no buffer reaches it — just_draw's are 81 bytes). ROM findings: the output's end pointer is stored at -4(a6) and never read; the '@' test runs BEFORE strlen(tmplt), so a raw text that is also the template empties it |
+| `0xfe9a46` | `ob_user` (`src/aes/obuser.c`) | 1 row + 1 Line-F | 152 / 2040 a USERDEF on the selector answering SELECTED | **0.79** a USERDEF on the selector answering SELECTED (T→) | ✅ verified | the PARMBLK built at -30(a6) in host slot AES_OB_USER_PARMBLK (`$7f540`, 30 bytes; `aes.RECORDS`' PARM, its fields tiled); a staged 68000 routine (`test/aes_obuser.py`, the shared USERDEF door) logs its CONTENTS whole — tree, object, prev/curr (one longword from 22(a6): pb_prevstate = curr, pb_currstate = new), rect, clip (the snapshot's and a staged one), ub_parm — and answers 0 / SELECTED / a whole long (`$87650003`); rect, userblk and ub_code tagged. The read order of ub_parm/ub_code against rc_copy/gsx_gclip is unobservable (those callees write only the frame, which differs between the shores) |
+| `0xfe9a88` | `just_draw` (`src/aes/objdraw.c`) | 17 rows + 1 Line-F | 114 / 1640 a hidden object .. 61720 / 562872 an outlined dialog root | **0.77** an outlined dialog root (V, `net`), **0.80** a default exit button (V, `net`), **0.82** a BOXCHAR (V, `net`), **0.85** an FBOXTEXT path field (V, `net`), **0.84** an FBOXTEXT, right (V, `net`), **0.83** a BOXTEXT (V, `net`), **0.94** an image (V, `net`), **0.87** a string (V, `net`), **0.87** a checked menu item (V, `net`), **0.95** an icon (V, `net`), **0.86** a box outside the clip (V, `net`), **0.81** a menu's drop-down (V, `net`), **0.86** an FTEXT, seeded (V, `net`), **0.84** a USERDEF answering SELECTED (V, `net`), **0.70** a hidden object (V, `net`), **0.85** a shadowed box (V, `net`), **0.82** a crossed box (V, `net`) | ✅ verified | every type × state cell over the snapshot's own trees (walked by link: the AES's rsc, the desk's, gl_mntree, the desk's icon tree `$181d2`, the window tree); the cells no real data reaches (SHADOWED, CROSSED, FTEXT, USERDEF, an IBOX border, the small font, HIDETREE, spec -1, types outside 20..32) STAGED on real objects; tree 2's TEXT drawn as sh_draw leaves it (te_ptext = the shell's buffer via ad_pfile `$c7a2`, the whole screen's clip); the default machine's IBM font is the ROM's own gsx_tblt(IBM) write-delta (vst_height made), pinned by the menu title redrawn onto the snapshot's own pixels; a border colour ≠ the text colour, a picked BOXTEXT (as ob_change sets it), a title wider than its label, a check mark with ad_intin moved; packed-longword carries/borrows pinned (OUTLINED y<3, CROSSED h=0 at y 0 and the y+h-1 carry, ICON ib_y carry); order cases over AES_EDBLK/AES_BI/AES_IB/AES_TMPLT/intin; the 48-byte frame (one host slot in `link #-48`'s layout) staged STALE on both shores (it pinned the BUTTON's `clr.l`); nine label/font cases unpoisoned, each measured (a label reads PB_PTSIN before any call points it). 0.91–1.06 with its thunks (1.06 the icon and the image; the hidden object makes no call). ROM findings: a SHADOWED TITLE's shadow colour is an unset frame word; gl_width/8 computed and never read |
+| `0xfea028` | `ob_draw` (`src/aes/obdraw.c`, `src/aes/obdraw.S`) | 9 rows + 1 Line-F | 28137 / 361544 the alert, unbuilt .. 187669 / 1875778 the menu bar | **0.84** the menu bar (V, `net`), **0.82** a desk dialog (V, `net`), **0.82** a desk dialog redrawn (V, `net`), **0.89** the desk's icons (V, `net`), **0.80** the window tree (V, `net`), **0.80** the alert, unbuilt (V, `net`), **0.82** the selector's scroll bar (V, `net`), **0.75** the selector's root alone (V, `net`), **0.82** the selector cut by a window's corner (V, `net`) | ✅ verified | every snapshot tree drawn whole from its root at depth 8 (a first draw unpoisoned where a label reads PTSIN first — measured per tree, 16/16; every tree redrawn POISONED from the state the ROM's own first draw leaves); the desktop band as sh_draw draws it (te_ptext the shell's buffer, the whole screen's clip; root depth 1 and the TEXT alone), and under the desktop's clip its TEXT cut whole; subtrees from the parent's offset (sibling, next = parent, three deep, nine children); depth 0..3; clips cutting / missing (set by the ROM's own gsx_sclip); a USERDEF in a drawn tree; the root's ob_next unread; the position words staged STALE (pins the root's `clr.l`); Line-F `$f200`, the shown cursor, BUS_TAG. Target hands everyobj `obdraw.S`'s ALCYON ENTRY (glue, counted as T→G), RED-proved (the ROM's just_draw on target: 248,590 cycles in the AES spans, refused). 0.88–1.01 with glue (1.01 the desk's icons). The selector's whole draw (256,140 insns) is over the bench's 200,000-instruction cap: priced in a scratch run at 0.83 (0.94 with glue) |
+| `0xfea38e` | `ob_change` (`src/aes/obdraw.c`) | 8 rows + 1 Line-F | 110 / 1558 the state unchanged .. 19629 / 195318 an icon picked | **0.66** a button pressed (V, `net`), **0.56** a title dropped (V, `net`), **0.83** an icon picked (V, `net`), **0.67** a menu item unchecked (V, `net`), **0.77** a button disabled (V, `net`), **0.70** the state unchanged (V, `net`), **0.73** no redraw (V, `net`), **0.54** a USERDEF answering SELECTED (V, `net`) | ✅ verified | XOR in place (border -3 → 0, 1, 2; a dropped title under the whole screen's clip); an icon / any other change redrawn whole (the state stored before the draw); a state changed only in its HIGH byte (word compare); SELECTED+DISABLED only XORed; the USERDEF answer unread (0 and SELECTED identical); unchanged / spec -1 / redraw 0 return early; redraw `$0100` (`tst.w`); the inset corner's packed carry (y -2, border 2); the 20-byte frame (host slot, `link #-20`'s layout) staged STALE; Line-F `$f214` and `$f098` (gr_watchbox), the shown cursor, BUS_TAG. 0.57–0.91 with its thunks. ROM findings: only SELECTED is inverted (another bit's mark waits for a redraw); an ICON is always redrawn whole; the inset is one `add.l` (y in [-th,-1] carries into x); the early returns skip moff/mon |
 
 ## Harness
 
@@ -1497,24 +1514,81 @@ gsx.h (no row moved).
   equivalent), 1 ABNORMAL (`attr-no-handle`: the host VDI aborts on the poisoned handle); every `.S` byte-pinned. FOUND: two
   more VDI host gaps reading guest pointers unmasked (vdi_init_wk's arrays, vdi_vr_trnfm's forms), PARKED with the GEMDOS one
   (`## Not reconstructed`).
-* **Next** — AES BAND 2 WAVE 3, THE OBJECT DRAW: ob_draw / just_draw / ob_change / ob_user / ob_format (census: `$fea08c`,
-  ob_draw's push of just_draw `$fe9a88`, owed_by slice C). Then band 3 (the interactive gemgrlib: gr_watchbox with gr_setup's
-  `$98a4` VALUE, gr_rubbox/gr_dragbox, gr_clamp `$fe86dc` and its fragment `$fe86c2`, gr_draw `$fe8532`, gr_xdraw `$fe8564`).
-  Still open from before: the three PARKED host bus-mask gaps and the kit's header-dependency gap (one follow-up commit); the
-  E_CHG recovery behind GEMDOS's termination record; the parked project-wide levers; promoting `ganneheim/dev` → `main` (the
-  user's call).
+* **Wave 11 band 2 wave 3 (2026-10-01) — THE OBJECT DRAW PATH: ob_format, far_call, ob_user, just_draw, ob_draw, ob_change.
+  BAND 2 COMPLETE.** A read-only SCOPING pass first (the inventory read from the bodies — every routine Alcyon C, so no `.S`
+  question; just_draw's type × state matrix with the real data reaching each cell, by a LINK walk over the snapshot's trees;
+  the ROM's ob_draw / ob_change measured through the oracle), then three slice agents — U and J in parallel, O once J was
+  green — three reviewers (R1 slice J; R2 slice U and cross-cutting; R3 slice O) and one fix agent: 6 ✅ routines, 263 tests in
+  four batteries (`test_aes_obuser.py` 49, `test_aes_just_draw.py` 52 and `_staged.py` 84, `test_aes_ob_draw.py` 78), 43 Tier 3
+  rows (ob_format 7 `through`, far_call 1, ob_user 1 `through`, just_draw 17 / ob_draw 9 / ob_change 8 (V) `net`). SLICE U
+  (`src/aes/obuser.c`): ob_format, far_call and ob_user, `test/aes_obuser.py` the shared USERDEF door (a 68000 routine logging
+  the 30-byte PARMBLK into a compared log and answering D0, with its host twin); `staged_call.h`'s call_alcyon_pointer now
+  ANSWERS D0, held live across the target `jsr` by an empty-asm output so sh_find stays byte-identical (`cmp` of the .o). SLICE
+  J (`src/aes/objdraw.c`): just_draw over its ROM frame (one 48-byte host slot in `link #-48`'s layout; the jump tables
+  `$fefba0`/`$fefbcc` as two `switch`es with their fall-throughs), every type × state cell over the snapshot's own trees or
+  staged on a real object, the packed-longword sites through one helper family (`packed_add`/`packed_sub`/`pair_high`/
+  `pair_low`, hoisted by O into `m68k_idioms.h`), the frame staged STALE on both shores. SLICE O (`src/aes/obdraw.c`): ob_draw
+  and ob_change over their frames, and THE ALCYON ENTRY (`src/aes/obdraw.S`): ob_draw hands everyobj just_draw BY VALUE
+  (`$fea08c`), and a target ob_draw handing it `$fe9a88` would run the ROM's just_draw inside our build — which the (V) bench
+  REFUSES (RED-proved: 248,590 cycles in the AES's spans, refused by name) and which a rebuilt ROM cannot owe. The entry repacks
+  everyobj's 10-byte Alcyon frame into the GCC call (image base 0, each word sign-extended into its slot); it is target-only
+  glue (`atari/target.mk` ALCYON_ENTRY_SOURCES, filtered out of TRANSCRIBED_SOURCES so the `.globl` pin stays exact), Tier 3
+  counts it as glue (`tier3.ALCYON_ENTRIES`, T→G), `test_transcribed.py` pins its `.globl`s to that list. Its four mutants,
+  judged by Tier 3's second differential (no host surface sees it): x/y swapped, the object pushed as x and image base 4 RED;
+  the three `ext.l` dropped GREEN — equivalent BY GCC's design (R3: the m68k callee re-extends an `int16_t` from the slot's
+  low word at every -O level), kept as the correct promotion. THE REVIEW: R1 (just_draw) proved J's "tree 2's TEXT has no
+  writer" ROM finding WRONG — sh_draw (`$feada0`) stores the shell's command through ad_pfile (`$c7a2` = tree 2 obj 2's ob_spec,
+  TEDINFO `$d18c`) at `$feadca` right before its ob_draw; the -1 is the resource's placeholder until the first launch, so TEXT is
+  NOT app-only (RETRACTED, here and in AES_MAP) — and found five non-equivalent survivors J's 114-mutant sweep had passed (every
+  snapshot colour word has border colour = text colour; the only negative-thickness BOXTEXT carries no state; the menu's titles
+  are exactly as wide as their labels; no CHECKED case moved ad_intin), a CROSSED h=0 case whose borrow carried back (y ≠ 0),
+  and a TITLE+SHADOWED row in black that drew like STALE. R2 (ob_format and cross-cutting) found te_just's WORD compare
+  unpinned (0/1/2 only — `$0101`, 5, -1 kill two survivors), the priced worst row a case choice (a FULL 38-character path, est.
+  0.88), and duplication across slices (two `object_word`s, three spellings of "tree N of a resource", copied `tedinfo` /
+  `string_at` / REGISTER / loggers / raw-text seeders / `real()`, PARM missing from `aes.RECORDS`, literals the headers name).
+  R3 (ob_draw / ob_change, C faithful instruction by instruction) found O's desktop-band case DEAD — its TEXT lay wholly above
+  the snapshot's clip, so te_ptext was never read and any string passed — and THE UNREACHABLE FONT MACHINE: J's default
+  `IBM_FONT_CACHED` staged gl_font 3 over the VDI's SMALL face, a pair (3, small) no AES path makes (gl_font's two writers,
+  gsx_start `$fdaace` and gsx_tblt `$fdad4a`, keep it true to the VDI), so every IBM label over the default machine drew in the
+  6×6 font, and one case's "screen changed" evidence held only because of it (in the real font the title redraws the
+  snapshot's own pixels). The lesson: a machine is DERIVED from a ROM run, never poked — a poked cache can describe a state the
+  machine cannot reach, and every differential over it still passes. R3 also recorded the D0 ob_draw / ob_change leave for the
+  bindings `$fde2fe` / `$fde32c` (`## Not reconstructed`). THE FIX (one agent): IBM_FONT_CACHED re-derived as the write-delta of
+  the ROM's own gsx_tblt(IBM, 0 chars) (`case.written_by`, the new helper `continued_from` now shares), the whole-screen-clip
+  machine built OVER it, a permanent pin that the cached font draws the VDI's own IBM face, the menu-title case split into
+  "redrawn in place = the snapshot's pixels" and "drawn elsewhere"; the desktop band staged as sh_draw leaves it in both J and
+  O (`AES_AD_PFILE` `$c7a2` in aes.h) plus R3's dead-staging probe kept as a pin; R1's five survivors and R2's two as permanent
+  cases; the full-path ob_format row (0.87, the new worst); one `object_word`, one `aes.resource_tree(index, image,
+  application_global)`, `isr.REGISTER` / `answer_d0` / `frame_long_logger`, one raw-text seeder, PARM in `aes.RECORDS`; obdraw.S's
+  REGISTERS line widened (D0-D1/A0-A1 with the C core); and the wave-2 files' inline `pair_high`/`pair_low` folded (gsxif.c,
+  grlib.c, gemgraf.c — byte-identical, `cmp` of all 9 objects under three flag sets). The J label rows' whole-run counts moved
+  with the real font; no (V) gated ratio moved and no row outside wave 3 did. MUTATION (strict), honestly as two runs: the
+  authors' sweeps — J 109/114 (5 equivalent), U 32/32, O 41/43 with 2 ABNORMAL (`last-nil`, `last-head`: everyobj's guard aborts
+  on the full battery; each KILLED cleanly by `-k scroll`) — and the reviews showing J's true tally 109/114 PLUS 5 non-equivalent
+  holes (R1) and ob_format 2 more (R2); the fix re-run, all 209 over the fixed batteries: 199 KILLED, 8 SURVIVED (all equivalent:
+  J's clip-w-only, clip-h-only, image-row-16, marks-always, marks-low-byte; R1's set-aside label-chars-byte,
+  userdef-state-low-byte, shadow-after-neg-signed), 2 ABNORMAL (O's two, KILLED by `-k scroll`).
+* **Next** — AES BAND 3, FORM / MENU / WINDOW: gemwmlib with wrect's rest, gemobed/objop (ob_edit — ob_format's other call word
+  `$f92c`), gemfslib (the file selector), gemfmlib, gemmnlib, gemfmalt (the alert), and the INTERACTIVE gemgrlib — gr_watchbox
+  (`$fe84ca`), which must use `$98a4` (`AES_GL_RSCREEN`) DIRECTLY: it reads gr_setup's `move.l #$98a4` immediate at `$fe85b2` as
+  data, and gr_setup is C now; gr_rubbox/gr_dragbox, gr_clamp `$fe86dc` (with `$fe86c2`), gr_draw `$fe8532`, gr_xdraw `$fe8564`.
+  Whoever ports the bindings `$fde2e8`/`$fde30e` owes the D0 ob_draw/ob_change leave (`## Not reconstructed`). Still open from
+  before: the E_CHG recovery behind GEMDOS's termination record; the parked project-wide levers; promoting `ganneheim/dev` →
+  `main` (the user's call).
 
 ## Suite
 
-`make test` — **14,864 passed** (2 skipped, one of them the `RUN_SLOW`-gated placement search), re-summed at the bus-mask
-housekeeping pass on 2026-10-01 after a forced rebuild (`rm build/*.so` and the test `__pycache__`s removed first; the table
-re-made by the run), under the kit's watchdog plugin, `test/test_status.py` included and GREEN; `make guarded` 14,864 passed / 2
-skipped. `make bench` judges 1,278 rows (690 ok / 218 transcribed / 177 through / 63 accepted / 53 net / 31 glue / 24 own / 13
-pinned / 9 rule, none OVER or DRIFTED) — the AES's 454 among them (205 ok, the 87 `.S` rows included / 95 transcribed / 82
-through / 53 net / 17 glue / 2 accepted); `build/bench/tier3.txt` is byte-identical to wave 2's. `make -C atari -B all` builds.
-`tools/recreate_kit/kit.mk` changed in this pass, so the kit's own suite (**1,177 passed**) and the PRG controls (Zynaps 4,751
-passed / 4 skipped, BuggyBoy 296, Joust 4,368, Flying Shark 3,851, Bubble Ghost 1,909, Wonder Boy 6,465) were re-run on it.
-`names.txt`: 772 fn / 465 var / 352 cmt (applied by `reapply.sh` with no failure: 1,319 of 1,392 functions decompiled).
+`make test` — **15,214 passed** (2 skipped, one of them the `RUN_SLOW`-gated placement search), re-summed at the AES band 2
+wave 3 docs pass on 2026-10-01 after a forced rebuild (`rm build/*.so` and the test `__pycache__`s removed first; the table
+re-made by the run, byte-identical to the fix agent's), under the kit's watchdog plugin, `test/test_status.py` included and
+GREEN. `make bench` judges 1,321 rows (691 ok / 218 transcribed / 185 through / 87 net / 63 accepted / 31 glue / 24 own / 13
+pinned / 9 rule, none OVER or DRIFTED) — the AES's 497 among them (206 ok, the 87 `.S` rows included / 95 transcribed / 90
+through / 87 net / 17 glue / 2 accepted). Not re-run in the docs pass: `make guarded` and `make -C atari -B all` (the wave-3 fix
+agent's, after `rm build/*.so`: guarded the same as `make test` with only test_status owed its rows, the target build rc 0);
+nothing under `tools/` changed in wave 3, so the kit's suite and the PRG controls stand at the housekeeping pass's (kit
+**1,177 passed**; Zynaps 4,751 passed / 4 skipped, BuggyBoy 296, Joust 4,368, Flying Shark 3,851, Bubble Ghost 1,909, Wonder
+Boy 6,465). `names.txt`: 779 fn / 475 var / 360 cmt (applied by `reapply.sh` with no failure: 1,319 of 1,392 functions
+decompiled).
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.
@@ -1748,6 +1822,50 @@ pointer today. New VDI code reaches a held caller pointer through m68k_idioms.h'
 `gsx.ANSWERS_AT`. EQUIVALENT MUTANTS: gsx_malloc's fix after the trap (neither reads the other's writes), gsx_start's planes
 loop as `while (c > 1)` (floor(log2) for every word), gsx_mfset reading ad_intin before the hide (v_hide_c never touches it),
 gsx_blt's moff after gl_dst's fix (v_hide_c reads nothing gsx_fix writes).
+
+**aes — band 2 wave 3: the cells real data cannot reach, one retracted finding, what the bindings owe, one row over the
+bench's cap, the ROM's findings, and what stays out of scope.** STAGED ON REAL OBJECTS, because no tree the snapshot holds
+carries them (each said in `test_aes_just_draw_staged.py`): FTEXT, USERDEF, SHADOWED, CROSSED, an IBOX border, the small
+font, HIDETREE and an ob_spec of -1 (no AES writer of either found), types outside 20..32 (19, 33, `$7f`: both tables fall
+through), and a raw text not starting '@' (seeded by the ROM's own inf_sset — every raw text in both resources starts '@').
+TITLE+SHADOWED is pinned on the DIRECT shores only (it reads an unset frame word, which differs on target and through
+Line-F; staged at the ROM's -2(a6) and the C's slot word alike) and is not priced. TEXT IS NOT APP-ONLY — RETRACTED: J's
+finding that tree 2's TEXT (obj 2, TEDINFO `$d18c`) has te_ptext -1 and no writer was wrong. sh_draw (`$feada0`) stores the
+shell's command through ad_pfile (`$c7a2`, set at `$feb102` to `*(ad_stdesk + 60)` = that ob_spec; ad_stdesk `$c820` = tree 2)
+at `$feadca`, right before `ob_draw(ad_stdesk, …)` under gsx_sclip(gl_rscreen); its callers are `$feaddc` (objects 1..2, depth
+0), the launch path (`$feb1a8`/`$feb24c`/`$feb350`/`$feb366`/`$feb384`: ROOT, depth 1, the shell buffer `*$c79e`) and `$fee460`
+(`*$c6e6`), gated by `*$9b2a && !sh_dodef` — off at rest in the snapshot, so the -1 is the resource's placeholder until the
+first launch. Both batteries now draw it as sh_draw leaves it. WHAT THE BINDINGS OWE (R3 F3): ob_draw and ob_change are void
+and so are the C cores, but the ROM leaves D0 defined and the bindings `$fde2fe` (ob_draw, in `$fde2e8`) and `$fde32c`
+(ob_change, in `$fde30e`) store and return it: gsx_mon's D0 (1 unless the nest reaches 0 and gsx_1code runs), or on
+ob_change's three early returns the OLD state word (`$fea3c4`–`$fea3c6`). A port of those wrappers must not assume a defined
+answer, or must model this. OVER THE CAP: the selector's whole draw (256,140 instructions, the longest ROM run in the battery,
+re-measured by `test_the_budget_covers_the_longest_draw`; `OB_DRAW_INSNS` is twice it) cannot be a Tier 3 row — `emu.run`'s
+default 200,000-instruction cap serves the bench and the snapshot sweeps; priced in a scratch run with the cap raised at 0.83
+own, 0.94 with glue. UNPINNED: ob_format lengths ≥ 32768 (a word strlen and word steps; no buffer reaches it); ob_user's read
+order of ub_parm/ub_code against rc_copy/gsx_gclip (those callees write only the frame, which differs between the shores);
+ob_change's `clr.w 16(a6)` writes the CALLER's argument slot, which no caller reads back (gr_watchbox's loop re-pushes all four).
+The adapter's dropped `ext.l` is equivalent under GCC (the m68k callee re-extends an `int16_t` from the slot's low word); a
+compiler trusting a sign-extension ABI attribute could break that, so the `ext.l` stays. ROM FINDINGS (pinned): ob_format stores
+its output's end pointer at -4(a6) and never reads it, tests '@' BEFORE strlen(tmplt) (a raw text that is also the template
+empties it) and stores the NUL at `out + strlen(tmplt)` before the walk (an overlapping raw text reads it back); ob_user passes
+(curr, new) as one longword from 22(a6) (pb_prevstate = curr, pb_currstate = new); a SHADOWED G_TITLE reads its border colour
+from an unset local (-2(a6): no crack, no BUTTON — TITLE is the only type with a non-zero border and neither); gl_width/8
+(`divs`) is computed for gsx_blt and ignored by gsx_fix's screen arm; just_draw's clip-word test is redundant (gsx_chkclip
+answers 1 for an empty clip); G_STRING's rows in both jump tables are dead (STRING branches to the label at `$fe9b2a` first);
+IMAGE/ICON/USERDEF/TITLE/outside types never initialise the colour locals -2..-10 but tmode/tcol (only the TITLE case is
+observable); the packed longwords carry and borrow — OUTLINED's corner at y<3 (the desk's own dialogs sit at (0,0) before
+form_center), CROSSED's far corner at h=0 (y = 0) and past y+h-1 > `$ffff`, ICON's GRECTs when ib_y+y overflows; only
+SELECTED is inverted by ob_change (another bit changing with it waits for a redraw); ob_change ignores ob_user's answer; an
+ICON's change is always a full just_draw; the XOR inset is one `add.l` (y in [-th,-1] carries into x); ob_draw never reads the
+root's ob_next; ob_change's early returns skip moff/mon. gl_font (`$980c`) has exactly two writers, gsx_start (`$fdaace`, -1)
+and gsx_tblt (`$fdad4a`, after its own vst_height): a cache of the VDI's face, so (3, small) is unreachable. OUT OF SCOPE,
+noted only: `aes_resource.header_of` duplicates `aes.resource_header(application_global=…)`, and `aes_objdraw.object_long`
+keeps a (tree, index, name, image) argument order where `aes_objects.object_word` takes (image, tree, index, name).
+EQUIVALENT MUTANTS: clip-w-only / clip-h-only (gsx_chkclip answers 1 on an empty clip; the skipped work writes only the
+dropped frame), image-row-16 (gsx_fix's screen arm never reads it), marks-always / marks-low-byte (with no state bit the
+block only shrinks or negates frame words), label-chars-byte (xstrpix counts a byte), userdef-state-low-byte,
+shadow-after-neg-signed; the adapter's dropped `ext.l`.
 
 **bios — the console's four BLITTER screen routines** (`$fc47be`, `$fc4852`, `$fc48b6`, `$fc4936`): TOS 1.02 installs
 them on a machine with a blitter; the captured ST holds the CPU set, and each reconstruction halts on a vector that is

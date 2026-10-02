@@ -14,8 +14,9 @@ so an outline drawn in the line colour, or through v_pline, changes bits the ROM
 from pathlib import Path
 
 import harness
-from harness import addrs, emu
+from harness import addrs
 
+import case
 import routines
 import vdi
 import vdi_arcs
@@ -55,7 +56,7 @@ def outlined_rbox_pokes(corners, **fields):
 
 
 # ---- the arm's end held to the worker's --------------------------------------------------------------
-STACK_BAND = range(emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
+STACK_BAND = case.STACK_BAND
 
 
 def assert_same_machine(result, reference, *, allowed=()):

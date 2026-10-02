@@ -259,6 +259,10 @@ import test_aes_grlib                                       # noqa: E402,F401
 import test_aes_gemgraf_transcription                      # noqa: E402,F401  (its `.S` rows)
 import test_aes_shell_find                                  # noqa: E402,F401
 import test_aes_resource_load                               # noqa: E402,F401
+import test_aes_obuser                                      # noqa: E402,F401
+import test_aes_just_draw                                   # noqa: E402,F401
+import test_aes_just_draw_staged                            # noqa: E402,F401
+import test_aes_ob_draw                                     # noqa: E402,F401
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

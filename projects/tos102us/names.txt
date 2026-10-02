@@ -1708,3 +1708,33 @@ fn 0xfe8340 gr_growbox
 fn 0xfe837a gr_shrinkbox
 fn 0xfe831e grow_prologue # ctx
 cmt 0xfe831e reads its CALLER's args at 44(sp); hands gr_stepcalc 5 pointers into the caller's saved D2-D4
+# ---- AES band 2 wave 3 (2026-10-01): the object draw path — ob_format, far_call, ob_user, just_draw, ob_draw, ob_change ----
+# --- the leaves (src/aes/obuser.c) ---
+fn 0xfe99a4 ob_format
+cmt 0xfe99a4 Raw text merged into a template; '@' raw = empty (tested BEFORE strlen(tmplt)); TE_RIGHT (1, a word compare) walks back from the ends; -4(a6) end pointer stored, never read
+fn 0xfe9a46 ob_user
+cmt 0xfe9a46 PARMBLK at -30(a6) ((curr, new) as one long from 22(a6)), handed to ub_code through far_call; answers the routine's D0
+fn 0xfddec6 far_call
+# --- just_draw (src/aes/objdraw.c) and its globals ---
+fn 0xfe9a88 just_draw
+cmt 0xfe9a88 AES just_draw (Alcyon C): one object at (x, y) — ob_sst; HIDETREE/spec -1 return; the clip test (grown 3, or 3|border|); border+fill via table $fefba0, the text colour, contents via table $fefbcc (ob_format/BOXCHAR/gr_gtext, IMAGE gsx_blt, ICON gr_gicon, USERDEF ob_user), the label (STRING/TITLE/BUTTON), then OUTLINED/SHADOWED/CHECKED/CROSSED/DISABLED/SELECTED. A SHADOWED TITLE reads its border colour unset (-2(a6)).
+var 0x9c20 aes_edblk
+var 0xb756 aes_rawstr
+var 0xb7a7 aes_tmplt
+var 0xb849 aes_fmtstr
+var 0xc732 aes_bi
+var 0xc740 aes_ib
+var 0x9b26 gl_mntree
+var 0xc942 gl_newdesk
+cmt 0xb7a7 ODD address: byte access only (81 bytes, GEM's MAX_LEN)
+cmt 0x980c a cache of the VDI's face: two writers only, gsx_start $fdaace (-1) and gsx_tblt $fdad4a (after its own vst_height)
+# --- ob_draw / ob_change (src/aes/obdraw.c; target hands everyobj src/aes/obdraw.S's Alcyon entry) ---
+fn 0xfea028 ob_draw
+cmt 0xfea028 Alcyon: (tree, obj, depth) everyobj from obj to its ob_next (-1 from the root) at its parent's offset, just_draw by value ($fea08c), the cursor hidden round the walk; D0 left = gsx_mon's (read back by the binding $fde2fe)
+fn 0xfea38e ob_change
+cmt 0xfea38e Alcyon: (tree, obj, new, redraw) ob_state := new; redraw: USERDEF ob_user (answer unread), SELECTED moved (not ICON) XOR inside the border (packed x,y inset), else just_draw; D0 left = gsx_mon's, or the old state on an early return (binding $fde32c)
+# --- sh_draw, the writer of tree 2's TEXT (read by the wave-3 reviews) ---
+fn 0xfeada0 sh_draw
+cmt 0xfeada0 if (*$9b2a && !sh_dodef): gsx_sclip(gl_rscreen); *ad_pfile := the command (te_ptext of tree 2 obj 2, $feadca); ob_draw(ad_stdesk, start, depth)
+var 0xc7a2 ad_pfile
+var 0xc820 ad_stdesk

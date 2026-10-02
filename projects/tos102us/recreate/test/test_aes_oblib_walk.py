@@ -238,13 +238,12 @@ LOGGER = LOG_CODE + RTS
 HIDER = LOG_CODE + HIDE_CODE + RTS
 PRUNER = LOG_CODE + PRUNE_CODE + RTS
 assert ROUTINE_AT + max(len(HIDER), len(PRUNER)) <= BAND_AT + BAND_BYTES
-REGISTER = {name: isr.STAGED_REGISTERS.index(name) for name in isr.STAGED_REGISTERS}
 
 
 def frame_of(registers):
     """`call_alcyon_object`'s three slots back into the frame's (tree, object, x, y)."""
-    packed = registers[REGISTER["d1"]]
-    return (registers[REGISTER["a0"]], signed(registers[REGISTER["d0"]] & 0xFFFF), signed(packed >> 16),
+    packed = registers[isr.REGISTER["d1"]]
+    return (registers[isr.REGISTER["a0"]], signed(registers[isr.REGISTER["d0"]] & 0xFFFF), signed(packed >> 16),
             signed(packed & 0xFFFF))
 
 

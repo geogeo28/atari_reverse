@@ -35,7 +35,6 @@ import ctypes
 import functools
 import struct
 import types
-from pathlib import Path
 
 from harness import BASE_IMAGE, _lib, addrs
 
@@ -250,11 +249,9 @@ def _run(name, arguments, pokes, *, doors, routines=None, poison=False, **kwargs
 # THE TWO FRAMES' HOST SLOTS, staged FILLED: the C keeps sh_envrn's and sh_find's frames there off target, so a local the
 # C failed to store reads as fill rather than as whatever the slot held — the stack band, which nothing compares, is
 # where the ROM's own frames are too, and they lie elsewhere in it.
-HOST_SLOTS = addrs.parse(Path(__file__).resolve().parents[1] / "include" / "host_slot.h")
-DIRTY_FRAMES = {HOST_SLOTS[f"HOST_SLOT_{role}"]: bytes([vdi.FILL]) * HOST_SLOTS[f"HOST_SLOT_{role}_BYTES"]
-                for role in ("AES_SH_ENVRN_FRAME", "AES_SH_FIND_FRAME")}
+DIRTY_FRAMES = merge_pokes(*(aes.stale_host_slot(role, fill=vdi.FILL) for role in ("AES_SH_ENVRN_FRAME", "AES_SH_FIND_FRAME")))
 # ...and the ledger's entry is the C's GEMDOS words slot, which the host's trap stages the same frame in.
-assert ENTRY_BYTES == HOST_SLOTS["HOST_SLOT_GEMDOS_WORDS_BYTES"]
+assert ENTRY_BYTES == aes.HOST_SLOTS["HOST_SLOT_GEMDOS_WORDS_BYTES"]
 
 
 def run_leaf(name, arguments, pokes=None, **kwargs):
@@ -341,15 +338,10 @@ def handler_stub():
 ROUTINE_AT = HANDLER_AT + len(handler_stub())
 # sh_find's ROUTINE: a LOGGER storing the longword it is called over at LOG_AT, and a SETTER that does that and sets
 # AES_DOS_ERR, which sh_find reads AFTER the call.
-LOGGER = isr.store_frame_long(LOG_AT) + RTS
+LOGGER, _logged = isr.frame_long_logger(LOG_AT)
 SETTER = isr.store_frame_long(LOG_AT) + isr.store_word(1, aes.AES_DOS_ERR) + RTS
 SETTER_AT = ROUTINE_AT + len(LOGGER)
 assert SETTER_AT + len(SETTER) <= LEDGER_AT
-REGISTER = {name: isr.STAGED_REGISTERS.index(name) for name in isr.STAGED_REGISTERS}
-
-
-def _logged(buf, registers):
-    isr.poke(buf, LOG_AT, struct.pack(">I", registers[REGISTER["a0"]]))
 
 
 def _set_dos_err(buf, registers):

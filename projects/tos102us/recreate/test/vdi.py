@@ -490,11 +490,15 @@ def screen_pixels(image, geometry=SCREEN):
             for y in range(geometry.height)]
 
 
+def screen_of(image, geometry=SCREEN):
+    """The screen's bytes of `image`."""
+    return bytes(image[geometry.base:geometry.base + geometry.bytes])
+
+
 def screen_diff(expected, actual, *, limit=8, geometry=SCREEN):
     """A failure message's worth of two screens' difference: how many pixels differ, the bounding box,
     and the first `limit` as (x, y): expected -> actual — not 32,000 bytes of hex."""
-    base, end = geometry.base, geometry.base + geometry.bytes
-    if bytes(expected[base:end]) == bytes(actual[base:end]):
+    if screen_of(expected, geometry) == screen_of(actual, geometry):
         return "the screens are identical"
     differing = [(x, y) for y in range(geometry.height) for x in range(geometry.width)
                  if read_pixel(expected, x, y, geometry) != read_pixel(actual, x, y, geometry)]

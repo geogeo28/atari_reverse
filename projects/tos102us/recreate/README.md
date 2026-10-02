@@ -324,6 +324,11 @@ host, vector `$28` is CHECKED against the ROM's Line-A dispatcher (`$fc9f0c`) �
 VDI's own `linea_init` C twin answers A0, read by the `LINEA_INIT_*` order `vdi.h` declares (pinned to the VDI
 battery's). It makes no `trap #2`, so it needs no VDI cores bound.
 
+A machine a case starts from is DERIVED from a ROM run, never poked: `case.written_by(writes)` keeps only what the ROM's own
+run wrote (the stack band out), as a delta to lay over another machine (`continued_from` builds on it) — the IBM font as the ROM's gsx_tblt caches it, the
+whole screen's clip as gsx_sclip(gl_rscreen) leaves it (`test/aes_objdraw.py`). A poked cache can describe a state no path
+reaches — gl_font 3 over the VDI's small face drew every label in the wrong font, and every differential over it still passed.
+
 Three mechanisms are designed and NOT built:
 
 - **The Line-F handler's Malloc(100) and 100-byte copy**, which a rebuilt ROM must keep so every later TPA block stays
@@ -576,6 +581,16 @@ ROM's words, one table row, its core marked `TRANSCRIBED_CORE`, and a battery pi
 registering its shapes through `vdi_fill`'s Alcyon frame caller — the pin, the `.globl` pin, the measured
 register set (D2), ten `AES rc_intersect (.S)` rows at 1.00 and mechanism (T) over its C rows all went
 through, and the `.globl` pin reddened with `src/aes/*.S` dropped from `TRANSCRIBED_SOURCES`.
+
+**An ALCYON ENTRY `.S` is glue, not a transcription.** When AES C hands a routine BY VALUE to ROM-shaped code that calls it
+the Alcyon way — ob_draw passing just_draw to everyobj (`$fea08c`) — the host case binds the ROM address to the C core, but
+on target the value must be our own routine: the ROM's would run the ROM's AES code inside our build, which the (V) bench
+refuses by name, and a rebuilt ROM would not hold. `src/aes/obdraw.S`'s `aes_just_draw_alcyon` repacks everyobj's 10-byte Alcyon
+frame into the GCC call (the image base, then each word sign-extended into its slot) and enters the C core. It has no ROM
+bytes and no row of `include/transcribed.h`: `atari/target.mk` lists it as ALCYON_ENTRY_SOURCES, filtered out of
+TRANSCRIBED_SOURCES so the transcription `.globl` pin stays exact; Tier 3 counts its cycles as glue (`bench/tier3.py`'s
+ALCYON_ENTRIES, T→G, like a generated thunk); and `test_transcribed.py` pins its `.globl`s to exactly that list, outside the
+table. No host surface sees it, so its mutants are judged by Tier 3's second differential.
 
 ## Mutation sweeps — how a mutant is counted
 

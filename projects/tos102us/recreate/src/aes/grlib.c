@@ -166,7 +166,7 @@ static void grow_steps(uint8_t *image, uint32_t from, uint32_t to, uint32_t step
 {
     uint32_t size = bus_long(image, from + GRECT_W);
 
-    aes_gr_stepcalc(image, (int16_t)(size >> M68K_WORD_BITS), (int16_t)size, to, word_entry(steps, GROW_CENTRE_X),
+    aes_gr_stepcalc(image, pair_high(size), pair_low(size), to, word_entry(steps, GROW_CENTRE_X),
                     word_entry(steps, GROW_CENTRE_Y), word_entry(steps, GROW_COUNT), word_entry(steps, GROW_X_STEP),
                     word_entry(steps, GROW_Y_STEP));
 }
@@ -188,7 +188,7 @@ void aes_gr_growbox(uint8_t *image, uint32_t from, uint32_t to)
     for (pass = 0; pass < GROW_STEPS_PASSES; pass++) {
         size = bus_long(image, from + GRECT_W);
         aes_gr_xor(image, CORNERS, saved_word(image, steps, GROW_COUNT), saved_word(image, steps, GROW_CENTRE_X),
-                   saved_word(image, steps, GROW_CENTRE_Y), (int16_t)(size >> M68K_WORD_BITS), (int16_t)size,
+                   saved_word(image, steps, GROW_CENTRE_Y), pair_high(size), pair_low(size),
                    saved_word(image, steps, GROW_X_STEP), saved_word(image, steps, GROW_Y_STEP), GROWS);
     }
     aes_gsx_mon(image);
@@ -214,7 +214,7 @@ void aes_gr_shrinkbox(uint8_t *image, uint32_t from, uint32_t to)
         size = bus_long(image, to + GRECT_W);
         aes_gr_xor(image, CORNERS, saved_word(image, steps, GROW_COUNT),
                    (int16_t)bus_word(image, to + GRECT_X), (int16_t)bus_word(image, to + GRECT_Y),
-                   (int16_t)(size >> M68K_WORD_BITS), (int16_t)size, x_step, y_step, GROWS);
+                   pair_high(size), pair_low(size), x_step, y_step, GROWS);
     }
     aes_gsx_mon(image);
     aes_gr_movebox(image, (int16_t)bus_word(image, from + GRECT_W), (int16_t)bus_word(image, from + GRECT_H),

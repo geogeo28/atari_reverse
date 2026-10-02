@@ -61,6 +61,9 @@ ROM_ADDRESSES_AS_DATA = {
     "shell_find.c": {"AES_SH_FIND_SDTA_RETURN": RETURN_SITE},
     # newrect hands everyobj mkrect by its ROM address ($fe5d68 `move.l #$fe5c9a,-(sp)`, row (b) below).
     "wrect.c": {"AES_ROM_MKRECT": CODE},
+    # ob_draw hands everyobj just_draw by its ROM address on the host ($fea08c `move.l #$fe9a88,-(sp)`, row (b) below);
+    # on target, its Alcyon entry (`obdraw.S`) — the rebuilt ROM's own.
+    "obdraw.c": {"AES_ROM_JUST_DRAW": CODE},
 }
 
 
@@ -115,7 +118,7 @@ CODE_IMMEDIATES = {
     0xFE66B6: Immediate(0xFED424, "ap_tplay: ...and again"),
     0xFE8844: Immediate(addrs.AES_ROM_MOTION_GLUE, "gsx_setmb_aes: the mouse-motion interrupt glue, for vex_motv", "gsxif.c"),
     0xFE884A: Immediate(addrs.AES_ROM_BUTTON_GLUE, "gsx_setmb_aes: the button interrupt glue, for vex_butv", "gsxif.c"),
-    0xFEA08C: Immediate(0xFE9A88, "ob_draw: just_draw, everyobj's routine"),
+    0xFEA08C: Immediate(addrs.AES_ROM_JUST_DRAW, "ob_draw: just_draw, everyobj's routine", "obdraw.c"),
     0xFEB272: Immediate(0xFEADDC, "sh_main: sh_find's optional routine"),
     0xFEC146: Immediate(addrs.AES_ROM_NEWRECT, "$fec0ca (ctx, gemwmlib's window-change redraw): newrect, everyobj's"),
     0xFED5A6: Immediate(0xFE38B0, "$fed554 (ctx): gotopgm pushed"),

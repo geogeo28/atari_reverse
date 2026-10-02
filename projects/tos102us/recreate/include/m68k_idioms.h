@@ -110,6 +110,29 @@ static inline uint32_t words_long(int16_t high, int16_t low)
     return (uint32_t)(uint16_t)high << M68K_WORD_BITS | (uint16_t)low;
 }
 
+/* An (x, y) or (w, h) pair as the 68000 holds it, ONE longword with x high: a pair moved by `add.l` / `subi.l` lets a
+ * carry or borrow out of the low word (y, h) into the high one (x, w) — the AES's outline corner at y < 3 moves left a
+ * pixel. Every such site goes through these two, and the words come back out through the two after. */
+static inline uint32_t packed_add(uint32_t pair, uint32_t addend)
+{
+    return pair + addend;
+}
+
+static inline uint32_t packed_sub(uint32_t pair, uint32_t subtrahend)
+{
+    return pair - subtrahend;
+}
+
+static inline int16_t pair_high(uint32_t pair)
+{
+    return (int16_t)(pair >> M68K_WORD_BITS);
+}
+
+static inline int16_t pair_low(uint32_t pair)
+{
+    return (int16_t)pair;
+}
+
 static inline uint16_t asl_word_by(uint16_t value, uint16_t count)
 {
 #ifdef __m68k__

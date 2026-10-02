@@ -53,11 +53,6 @@ def test_the_captured_machine_shows_the_arrow_where_the_cases_assume():
     assert vdi.linea(BASE_IMAGE, "SAVE_STAT") & VALID
 
 
-def screen_of(image):
-    screen = vdi.SCREEN
-    return bytes(image[screen.base:screen.base + screen.bytes])
-
-
 # ---- the hide count ------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("depth", (0, 1, 2, 0x7FFF, 0xFFFF, 0x8000))
@@ -75,24 +70,24 @@ def test_show_draws_only_on_reaching_zero(depth):
                         vdi_raster.CANVAS)
     result = vdi.run_primitive(SHOW, {}, pokes)
     drawn = depth in (1, 0x8000)
-    assert (screen_of(result.final) != screen_of(vdi.make_image(pokes))) == drawn
+    assert (vdi.screen_of(result.final) != vdi.screen_of(vdi.make_image(pokes))) == drawn
     assert (result.linea("CUR_FLAG") == 0) == drawn
 
 
 def test_hide_then_show_is_the_arrow_back_where_it_was():
     hidden = vdi.run_primitive(HIDE, {}, {})
-    assert screen_of(hidden.final) != screen_of(BASE_IMAGE)
+    assert vdi.screen_of(hidden.final) != vdi.screen_of(BASE_IMAGE)
     shown = vdi.run_primitive(SHOW, {}, case.continued(hidden))
-    assert screen_of(shown.final) == screen_of(BASE_IMAGE)
+    assert vdi.screen_of(shown.final) == vdi.screen_of(BASE_IMAGE)
 
 
 def test_nested_hides_need_as_many_shows():
     once = vdi.run_primitive(HIDE, {}, {})
     twice = vdi.run_primitive(HIDE, {}, case.continued(once))
     first_show = vdi.run_primitive(SHOW, {}, case.continued(twice))
-    assert first_show.linea("M_HID_CT") == 1 and screen_of(first_show.final) == screen_of(twice.final)
+    assert first_show.linea("M_HID_CT") == 1 and vdi.screen_of(first_show.final) == vdi.screen_of(twice.final)
     second_show = vdi.run_primitive(SHOW, {}, case.continued(first_show))
-    assert screen_of(second_show.final) == screen_of(BASE_IMAGE)
+    assert vdi.screen_of(second_show.final) == vdi.screen_of(BASE_IMAGE)
 
 
 def call(name, intin=(), onto=None):
@@ -324,7 +319,7 @@ def test_default_user_cur_queues_only_while_shown(hidden):
 @pytest.mark.parametrize("flag", (0x00, 0xFE))
 def test_the_vbl_takes_the_bit_and_draws_nothing_without_one(flag):
     result = vdi.run_primitive(VBL, {}, vdi.linea_pokes(CUR_FLAG=flag))
-    assert result.linea("CUR_FLAG") == flag & 0xFE and screen_of(result.final) == screen_of(BASE_IMAGE)
+    assert result.linea("CUR_FLAG") == flag & 0xFE and vdi.screen_of(result.final) == vdi.screen_of(BASE_IMAGE)
 
 
 def test_a_held_lock_skips_the_vbl():

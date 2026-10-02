@@ -45,7 +45,8 @@ RECREATE = Path(__file__).resolve().parents[1]
 KIT = RECREATE.parents[2] / "tools" / "recreate_kit"
 sys.path.insert(0, str(RECREATE / "bench"))
 import shipped_glue  # noqa: E402
-MAKE_LISTS = ("TRANSCRIBED_ENTRIES", "TRANSCRIBED_C_CORES", "TRANSCRIBED_SOURCES")
+import tier3  # noqa: E402
+MAKE_LISTS = ("TRANSCRIBED_ENTRIES", "TRANSCRIBED_C_CORES", "TRANSCRIBED_SOURCES", "ALCYON_ENTRY_SOURCES")
 # The GCC m68k ABI: D0/D1/A0/A1 are the callee's to change, and these the caller's to keep (A7 is SP) — the glue's own.
 GCC_CALLEE_SAVED = shipped_glue.CALLEE_SAVED
 # A register a row declares that its registered cases cannot show, and why. Only a routine whose cases
@@ -76,11 +77,21 @@ def test_the_build_contract_is_the_table(make_lists):
 
 
 def test_every_s_entry_is_a_row_and_every_row_an_s_entry(make_lists):
-    globl = re.compile(r"^\s*\.globl\s+(\w+)", re.MULTILINE)
-    defined = {name for source in make_lists["TRANSCRIBED_SOURCES"] for name in globl.findall(Path(source).read_text())}
+    defined = transcription.globl_entries(make_lists["TRANSCRIBED_SOURCES"])
     assert defined == set(transcription.TRANSCRIBED), (
         f"`.S` entries with no row (shipped with nothing gating them): {sorted(defined - set(transcription.TRANSCRIBED))}; "
         f"rows with no `.S` entry: {sorted(set(transcription.TRANSCRIBED) - defined)}")
+
+
+def test_the_alcyon_entries_are_glue_tier3_counts(make_lists):
+    """The target-only Alcyon entries (`src/aes/obdraw.S`) are NOT transcriptions — no row, kept out of the `.S` list above —
+    and their `.globl`s are exactly the glue Tier 3 counts as such (`bench/tier3.py`, ALCYON_ENTRIES) — which Tier 3
+    derives from the list as `test/transcription.py` reads the makefile's line, held here to make's own expansion."""
+    sources = make_lists["ALCYON_ENTRY_SOURCES"]
+    assert sources and not set(sources) & set(make_lists["TRANSCRIBED_SOURCES"])
+    assert sources == transcription.alcyon_entry_sources(), "test/transcription.py reads ALCYON_ENTRY_SOURCES otherwise"
+    entries = transcription.globl_entries(sources)
+    assert entries == set(tier3.ALCYON_ENTRIES) and not entries & set(transcription.TRANSCRIBED)
 
 
 @pytest.mark.parametrize("entry", list(transcription.TRANSCRIBED))

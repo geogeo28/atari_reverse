@@ -24,8 +24,8 @@ AES's VDI contrl[] is in the capture MASK; a case reaching the VDI stages its ow
 ---- WHAT THE HEADERS DO NOT NAME, AND WHY ------------------------------------------------------------------------
 `include/aes/*.h` carries only fields a ROM instruction was found reading or writing. Left out, until a reconstructed
 routine reads them by name: PD +32/+38 (p_evbits, p_evlist: the map's reading, uncited), EVB +24 (e_return), the CDA's
-other words, WINDOW +8..+15 and +52.., TEDINFO +12..+20, ICONBLK +12..+32, BITBLK +4..+12, and RSHDR +0/+12/+14
-(version, strings, image data).
+other words, WINDOW +8..+15 and +52.., TEDINFO +14/+20, ICONBLK +22/+24/+30/+32 (the GRECTs' sizes, read by gr_gicon
+through the copy's address), and RSHDR +0/+12/+14 (version, strings, image data).
 """
 import contextlib
 import ctypes
@@ -52,7 +52,8 @@ _INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # reads the same constants and widths by this parse, so a case's offset is the header's — the one the compiler checked
 # the C against.
 # `gsx.h` includes `vdi/vdi.h`, so the VDI's constants are `known`: a define spelt as an alias of one resolves.
-AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h"))
+AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h",
+                                                   "aes/objdraw.h", "aes/obuser.h"))
 CONSTANTS = layouts.parse_constants(AES_HEADERS, known=vdi.CONSTANTS)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -73,10 +74,11 @@ def signed(value, bits=16):
     return value - (1 << bits) if value >> (bits - 1) else value
 
 # A record is a constant-name prefix: AES (absolute addresses in GEMBSS), and every record's offsets.
-RECORDS = ("AES", "PD", "UDA", "CDA", "EVB", "FORK", "WIN", "OB", "TE", "IB", "BI", "UB", "GRECT", "ORECT", "RSH")
+RECORDS = ("AES", "PD", "UDA", "CDA", "EVB", "FORK", "WIN", "OB", "TE", "IB", "BI", "UB", "PARM", "GRECT", "ORECT",
+           "RSH")
 RECORD_BYTES = {"PD": PD_BYTES, "UDA": UDA_STATE_BYTES, "CDA": CDA_BYTES, "EVB": EVB_BYTES, "FORK": FORK_ENTRY_BYTES,
                 "WIN": WIN_BYTES, "OB": OB_BYTES, "TE": TE_BYTES, "IB": IB_BYTES, "BI": BI_BYTES, "UB": UB_BYTES,
-                "GRECT": GRECT_BYTES, "ORECT": ORECT_BYTES, "RSH": RSH_BYTES}
+                "PARM": PARM_BYTES, "GRECT": GRECT_BYTES, "ORECT": ORECT_BYTES, "RSH": RSH_BYTES}
 
 # ---- the window, and the bands in it --------------------------------------------------------------------------------
 # Above the VDI's window and below the stack guard, dead in the snapshot (`test_aes_door.py` holds both).
@@ -124,6 +126,17 @@ def stale_fields(*names):
         words = (spec.count or 1) * spec.width // WORD_BYTES
         pokes[spec.at] = vdi.pack_words(*[STALE_WORD] * words)
     return pokes
+
+
+# The C's frames kept off target (`include/host_slot.h`): each slot's address and size, by `HOST_SLOT_<role>`.
+HOST_SLOTS = addrs.parse(_INCLUDE / "host_slot.h")
+
+
+def stale_host_slot(role, fill=None):
+    """The host slot `role` staged whole: STALE words, or `fill` bytes — so a local the C failed to store reads as that
+    rather than as whatever the slot held."""
+    at, size = HOST_SLOTS[f"HOST_SLOT_{role}"], HOST_SLOTS[f"HOST_SLOT_{role}_BYTES"]
+    return {at: vdi.pack_words(*[STALE_WORD] * (size // WORD_BYTES)) if fill is None else bytes([fill]) * size}
 
 
 # ---- (a) the MACHINE: the snapshot's scheduler state, and the running process a case stages ------------------------
@@ -242,14 +255,22 @@ def parent_of(tree, index, image=BASE_IMAGE):
 
 # THE SNAPSHOT'S OWN TREES: the AES's ROM resource, relocated into GEMBSS at start-up and reached as rsrc_gaddr reaches
 # it — AES_RS_SYSTEM_GLOBAL's global[], its header (global[7..8]), the header's tree table. Real data a case seeds from.
-def resource_header(image=BASE_IMAGE):
-    return case.long_in(image, case.long_in(image, AES_RS_SYSTEM_GLOBAL) + AES_GLOBAL_PMEM)
+def resource_header(image=BASE_IMAGE, application_global=None):
+    """The header of the resource the application `global[]` at `application_global` has loaded — the AES's own when
+    None."""
+    if application_global is None:
+        application_global = case.long_in(image, AES_RS_SYSTEM_GLOBAL)
+    return case.long_in(image, application_global + AES_GLOBAL_PMEM)
 
 
-def resource_tree(index, image=BASE_IMAGE):
-    """The address of tree `index` of the AES's own resource, as the captured machine has it."""
-    header = resource_header(image)
-    assert 0 <= index < case.word_in(image, header + RSH_NTREE)
+def resource_tree_count(image=BASE_IMAGE, application_global=None):
+    return case.word_in(image, resource_header(image, application_global) + RSH_NTREE)
+
+
+def resource_tree(index, image=BASE_IMAGE, application_global=None):
+    """The address of tree `index` of that resource (the AES's own by default), as the captured machine has it."""
+    header = resource_header(image, application_global)
+    assert 0 <= index < resource_tree_count(image, application_global)
     return case.long_in(image, header + case.word_in(image, header + RSH_TRINDEX) + index * LONG_BYTES)
 
 

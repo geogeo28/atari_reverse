@@ -358,13 +358,22 @@ static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t
 /* ---- the ALCYON CALL OF ONE LONGWORD: a routine a caller hands in, over a frame of one pointer -----------------------
  *
  * The shell's sh_find (`$feb0c8`) calls the routine its caller hands it — only sh_main hands one, `$feaddc` — over the
- * path it found: `move.l <path>,-(sp) / movea.l <routine>,a0 / jsr (a0) / addq.l #4,sp`. ALCYON's contract, as
- * call_alcyon_object's: the routine keeps D3-D7/A3-A6 and may change D0-D2/A0-A2.
+ * path it found: `move.l <path>,-(sp) / movea.l <routine>,a0 / jsr (a0) / addq.l #4,sp`; and the object library's
+ * far_call (`$fddec6`) a USERDEF object's drawing routine over its PARMBLK, the same three instructions. ALCYON's
+ * contract, as call_alcyon_object's: the routine keeps D3-D7/A3-A6 and may change D0-D2/A0-A2 — and answers in D0,
+ * which far_call hands back as its own answer (the object's state, to ob_user's callers) and sh_find ignores.
  *
  * OFF TARGET it reaches the REGISTER-CARRYING hook (there is ONE such hook): the longword in A0's slot, D0 and D1 handed
- * nothing (`STAGED_CALL_NO_ARGUMENT`). A host stub has no register file, so the frame's layout is pinned at Tier 3, where
- * the cross-compiled blob pushes it for the case's staged 68000 routine. */
-static inline void call_alcyon_pointer(uint8_t *image, uint32_t routine, uint32_t pointer)
+ * nothing (`STAGED_CALL_NO_ARGUMENT`), and D0's slot as the hook hands it back is the answer. A host stub has no register
+ * file, so the frame's layout is pinned at Tier 3, where the cross-compiled blob pushes it for the case's staged 68000
+ * routine.
+ *
+ * ON TARGET D0 IS LIVE ACROSS THE `jsr`, not merely its output: the empty `asm` defines it first and the call reads and
+ * writes it ("+d"), so GCC cannot give the pushed longword D0 — exactly as when D0 was a plain clobber, and a caller that
+ * ignores the answer (sh_find) compiles to the same bytes (measured). An output-only "=d" — early-clobbered or not — let
+ * GCC push the longword from D0 itself: correct, since the push reads it before the routine writes it, but two words
+ * different in sh_find. */
+static inline uint32_t call_alcyon_pointer(uint8_t *image, uint32_t routine, uint32_t pointer)
 {
 #ifdef RECREATE_HOST_DIFFERENTIAL
     uint32_t registers[STAGED_REGISTERS];
@@ -373,17 +382,21 @@ static inline void call_alcyon_pointer(uint8_t *image, uint32_t routine, uint32_
     registers[STAGED_D1] = STAGED_CALL_NO_ARGUMENT;
     registers[STAGED_A0] = pointer;
     recreate_call_vector_registers(image, routine, registers);
+    return registers[STAGED_D0];
 #else
     register uint32_t target __asm__("a0") = routine;
+    register uint32_t answer __asm__("d0");
 
     (void)image;
+    __asm__ volatile ("" : "=d"(answer));       /* D0 defined here, so it is live into the call below */
     /* The value in a REGISTER ("r"): a stack operand would move under the push. */
-    __asm__ volatile ("move.l %1,-(%%sp)\n\t"
-                      "jsr (%0)\n\t"
+    __asm__ volatile ("move.l %2,-(%%sp)\n\t"
+                      "jsr (%1)\n\t"
                       "addq.l #4,%%sp"
-                      : "+a"(target)
+                      : "+d"(answer), "+a"(target)
                       : "r"(pointer)
-                      : "d0", "d1", "d2", "a1", "a2", "memory", "cc");
+                      : "d1", "d2", "a1", "a2", "memory", "cc");
+    return answer;
 #endif
 }
 

@@ -388,6 +388,28 @@ def transcribed_core(entry):
 
 TRANSCRIBED_CORES = {transcribed_core(entry): entry for entry in TRANSCRIBED}
 
+# THE ALCYON ENTRIES: the `.globl`s of `atari/target.mk`'s ALCYON_ENTRY_SOURCES — target-only glue, no table row —
+# read from the makefile's own line, so Tier 3 counts as glue exactly what the build links as it.
+# `test_transcribed.py` holds this parse to make's own expansion of the list.
+TARGET_MK = _RECREATE / "atari" / "target.mk"
+GLOBL = re.compile(r"^\s*\.globl\s+(\w+)", re.MULTILINE)
+_ALCYON_ENTRY_SOURCES = re.compile(r"^ALCYON_ENTRY_SOURCES\s*:=(?P<sources>.*)$", re.MULTILINE)
+
+
+def globl_entries(sources):
+    """Every `.globl` the `.S` files `sources` define."""
+    return {name for source in sources for name in GLOBL.findall(Path(source).read_text())}
+
+
+def alcyon_entry_sources():
+    """ALCYON_ENTRY_SOURCES, as `atari/target.mk` writes it (each `$(RECREATE)` this tree)."""
+    (sources,) = _ALCYON_ENTRY_SOURCES.findall(TARGET_MK.read_text())
+    return [source.replace("$(RECREATE)", str(_RECREATE)) for source in sources.split()]
+
+
+ALCYON_ENTRIES = globl_entries(alcyon_entry_sources())
+assert ALCYON_ENTRIES, f"{TARGET_MK}'s ALCYON_ENTRY_SOURCES define no `.globl` this parser reads"
+
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
 # `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
@@ -437,6 +459,14 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_gsx_blt", "aes_gsx_mon"), ("aes_gsx_cline", "aes_gsx_mon"), ("aes_gr_box", "aes_gsx_mon"),
     ("aes_gr_movebox", "aes_gsx_mon"), ("aes_gr_growbox", "aes_gsx_mon"), ("aes_gr_shrinkbox", "aes_gsx_mon"),
     ("aes_gsx_tcalc", "aes_xstrpix"),
+    # the object draw path (`src/aes/objdraw.c`): just_draw's copies, the clip test, the colours and its marks
+    ("aes_just_draw", "aes_gr_crack"), ("aes_just_draw", "aes_gr_inside"), ("aes_just_draw", "aes_gsx_1code"),
+    ("aes_just_draw", "aes_gsx_chkclip"), ("aes_just_draw", "aes_lbcopy"), ("aes_just_draw", "aes_lstcpy"),
+    ("aes_just_draw", "aes_rc_copy"), ("aes_just_draw", "aes_xstrpix"),
+    # the object draw path's leaves (`src/aes/obuser.c`): ob_format's two lengths, ob_user's PARMBLK rectangles
+    ("aes_ob_format", "aes_strlen"), ("aes_ob_user", "aes_rc_copy"), ("aes_ob_user", "aes_gsx_gclip"),
+    # ...and just_draw's two callers (`src/aes/obdraw.c`): the cursor shown again after the walk and after a change
+    ("aes_ob_draw", "aes_gsx_mon"), ("aes_ob_change", "aes_gsx_mon"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),

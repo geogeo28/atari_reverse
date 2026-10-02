@@ -90,7 +90,7 @@ fddde6 S   110 f698  108     |  | 2
 fdde54 D    24 f3dc  22      |  | 1
 fdde6c D    58 f6b0  50      | fda03e fe65c4 fe91a4 | 1
 fddea6 D    32 f4c4  26      | fe387c fe65c4 | 1
-fddec6 S    18 f118  16      |  | 1
+fddec6 S    18 f118  16    far_call |  | 1
 fdded8 D   170 f2c8  164     | fe387c fe6998 | 3
 fddf82 D    64 f330  58      | fe387c fe68a4 | 1
 fddfc2 D    24 f694  18      | fe387c fe6c5e | 1
@@ -561,9 +561,9 @@ fe9556 S   154 f93c  46      | fe9516 fea6e6 fece74 | 1
 fe95f2 S    56 f930  48      | fe93da fece8c | 1
 fe962a S    78 f938  74      | feceb8 | 1
 fe9678 S  1942 f210  346    ob_edit | fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe9260 fe9352 fe937e fe93da fe948a fe9556 fe95f2 fe962a fe99a4 fe9a46 fecbe6 fecbfa fecc7e fece42 fece4e fece5e fece8c | 4
-fe99a4 S   162 f13c/ 156     | fece8c | 2
-fe9a46 S    66 f148  58      | fda846 fddec6 feccca | 3
-fe9a88 S  1440 f16c  1300    [ptr] | fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda864 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe99a4 fe9a46 fecbe6 fecbfa fecc7e feccca fed19e | 1
+fe99a4 S   162 f13c/ 156    ob_format | fece8c | 2
+fe9a46 S    66 f148  58    ob_user | fda846 fddec6 feccca | 3
+fe9a88 S  1440 f16c  1300    just_draw [ptr] | fda56e fda582 fda62c fda66a fda6c4 fda7a4 fda864 fda8d2 fda8e6 fda9ce fdac28 fdad0a fe87f0 fe99a4 fe9a46 fecbe6 fecbfa fecc7e feccca fed19e | 1
 fe9ff0 A    56       38      | fdac28 | 0
 fea01c A    12       10     just_draw's tail, not a function |  | 0
 fea028 S   128 f200  116    ob_draw | fe8a72 fe8a8e fea584 fed27c fed382 | 13
@@ -605,7 +605,7 @@ fead26 S    26 f2a0  22     sh_get | fecc7e | 5
 fead40 S    26 f2a4  22     sh_put | fecc7e | 5
 fead5a A    40 f8b0  22      | fda7f8 fe3890 fe389c fe3c84 fe8790 fe8828 fe88e4 fe8a38 | 2
 fead82 A    30 f9b0  14      | fe3890 fe389c fe3ca4 fe87b0 fe8828 fe8a38 fe8a72 | 1
-feada0 A    60 f720  56      | fda7f8 fea028 | 4
+feada0 A    60 f720  56    sh_draw | fda7f8 fea028 | 4
 feaddc A    40       -       [ptr] | feada0 | 0
 feae04 A    50 f9a8  46      | fece8c | 2
 feae36 A   232 f2ac  224    sh_envrn | fecbe6 fecc7e fece9c | 4
