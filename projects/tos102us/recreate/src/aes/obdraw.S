@@ -1,5 +1,5 @@
-/* obdraw.S — TARGET ONLY: just_draw's ALCYON ENTRY, the routine the target ob_draw hands everyobj (`obdraw.c`,
- * just_draw_routine). GLUE, NOT A TRANSCRIPTION: the ROM has no such bytes, so it has no row of `include/transcribed.h`
+/* obdraw.S — TARGET ONLY: just_draw's ALCYON ENTRY, the routine the target ob_draw hands everyobj (`obdraw.c`, spelt
+ * at the call by `staged_call.h`'s ALCYON_ROUTINE). GLUE, NOT A TRANSCRIPTION: the ROM has no such bytes, so it has no row of `include/transcribed.h`
  * and `atari/target.mk` lists it apart (ALCYON_ENTRY_SOURCES).
  *
  * WHY IT EXISTS. ob_draw hands everyobj just_draw BY VALUE ($fea08c `move.l #$fe9a88,-(sp)`), and everyobj calls it as
@@ -17,12 +17,6 @@
  */
 #include "c_call_glue.h"
 
-/* The Alcyon frame everyobj pushes, from the first argument (A0 below): the tree, then three words. */
-#define ALCYON_TREE           0
-#define ALCYON_OBJECT         4
-#define ALCYON_X              6
-#define ALCYON_Y              8
-#define ALCYON_FIRST_ARGUMENT 4          /* past the return address */
 /* What the C call pushes after the image: the tree, the object, x and y. */
 #define C_ARGUMENT_SLOTS      4
 

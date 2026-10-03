@@ -51,8 +51,8 @@ static inline int dbf_continues(uint16_t *counter)
 }
 
 /* $fe85b0 — gr_setup: the clip the whole screen (gl_rscreen), and XOR in `colour` (gsx_attr, the line's).
- * gr_watchbox ($fe84ca, still the ROM's) reads this routine's `move.l #$98a4` immediate at $fe85b2 AS DATA: a ROM
- * rebuilt with this C at $fe85b0 must keep those bytes, or port watchbox with the value (the census's CODE_BYTES row). */
+ * The ROM's gr_watchbox ($fe84ca) reads this routine's `move.l #$98a4` immediate at $fe85b2 AS DATA; its C
+ * (`src/aes/grwait.c`) hands gl_rscreen by value instead (the census's CODE_BYTES row). */
 void aes_gr_setup(uint8_t *image, int16_t colour)
 {
     aes_gsx_sclip(image, AES_GL_RSCREEN);

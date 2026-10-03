@@ -30,7 +30,6 @@ aes.declare_alcyon(OR_START, None, (vdi.IMAGE_ARG,))
 aes.declare_alcyon(GET_ORECT, aes.LONG_ANSWER, (vdi.IMAGE_ARG,))
 aes.declare_alcyon(MKPIECE, aes.LONG_ANSWER, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
 aes.declare_alcyon(BRKRCT, aes.LONG_ANSWER, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.LONG_ARG, vdi.LONG_ARG))
-aes.declare_alcyon(MKRECT, None, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG))
 
 POOL_BYTES = aes.AES_ORECT_COUNT * aes.ORECT_BYTES
 WINDOWS_BYTES = aes.AES_WINDOW_COUNT * aes.WIN_BYTES

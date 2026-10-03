@@ -37,5 +37,12 @@ static inline uint32_t window_record(int16_t window)
 uint32_t aes_w_getxptr(int16_t which, int16_t window);                                               /* $feb4be */
 void aes_w_getsize(uint8_t *image, int16_t which, int16_t window, uint32_t rect);                    /* $feb53e */
 void aes_newrect(uint8_t *image, uint32_t tree, int16_t window);                                      /* $fe5cee */
+#ifndef RECREATE_HOST_DIFFERENTIAL
+/* TARGET ONLY (`src/aes/wmupdate.S`): newrect and mkrect entered as everyobj enters the ROM's — over the ten-byte
+ * Alcyon frame of a walker's routine — the routines the target draw_change and newrect hand everyobj BY VALUE where
+ * the ROM hands $fe5cee and $fe5c9a. Never called from C. */
+void aes_newrect_alcyon(void);
+void aes_mkrect_alcyon(void);
+#endif
 
 #endif /* TOS102US_AES_WRECT_H */

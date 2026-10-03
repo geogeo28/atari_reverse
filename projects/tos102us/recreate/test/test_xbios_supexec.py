@@ -40,6 +40,7 @@ from harness import _lib, addrs, emu
 
 import abi
 import case
+import isr
 import staging
 from address_hook import AddressHook
 
@@ -51,7 +52,7 @@ MARKER_AT = staging.SCRATCH + 0x100
 # Where the NAMED stub goes when a case plants a decoy at the default address — far enough above
 # `STUB_AT` that the two are unmistakably different routines. Module-level rather than spelt inside
 # the parametrize because the other tenants of the staging band have to be able to say they are
-# CLEAR of these: `test/isr.py` asserts its own band starts past the last of them.
+# CLEAR of these: `test/isr.py`'s band starts past the last of them (asserted below).
 DECOY_ALTERNATIVES = (0x800, 0xA00, 0xC00)
 MARKER = 0x5A
 A_RESULT = 0x1234_5678
@@ -80,6 +81,12 @@ def move_long_immediate_to_d0(value):
 # a neighbouring tenant of the band asserts it is clear of. Derived from the stub itself, so a
 # longer decoy moves the bound rather than silently overrunning it.
 DECOY_STUB_BYTES = len(move_long_immediate_to_d0(0) + RTS)
+# The decoys are planted at +0x800, +0xa00 and +0xc00 deliberately, inside other batteries' bands, so
+# they are not a claimed band and this is the one place their top edge is held. A collision with
+# `isr.ISR_BAND` would corrupt a trampoline for BOTH cores at once — green on the byte diff, because
+# both read the same wrong image.
+assert STUB_AT + max(DECOY_ALTERNATIVES) + DECOY_STUB_BYTES <= isr.ISR_BAND, (
+    "Supexec's decoys reach into the band test/isr.py stages in")
 
 
 def read_long_from_stack_into_d0():

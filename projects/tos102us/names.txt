@@ -1695,7 +1695,7 @@ var 0xc904 gl_lcolor
 var 0x9aec gl_fis
 var 0x98a2 gl_patt
 var 0x980c gl_font
-# --- gemgrlib's non-interactive part (src/aes/grlib.c); gr_clamp $fe86dc, gr_draw $fe8532, gr_xdraw $fe8564 are band 3's ---
+# --- gemgrlib's non-interactive part (src/aes/grlib.c); the interactive part is src/aes/grdrag.c ---
 fn 0xfe85b0 gr_setup
 cmt 0xfe85b0 gr_setup clips to gl_rscreen ($98a4). gr_watchbox ($fe84ca, band 3) reads this routine's own move.l #$98a4 immediate at $fe85b2 AS DATA
 fn 0xfe8472 gr_scale
@@ -1816,3 +1816,90 @@ var 0xc7c2 gl_ainfo
 var 0xc940 gl_wfrozen # ctx
 cmt 0xc940 Hold window drawing: wind_set field 13 (WF_RESVD) with a non-zero handle sets it, handle 0 clears it (+ a desktop redraw); w_clipdraw / w_move do nothing while set, draw_change returns early
 cmt 0xfec722 wind_get's jump table $fefcde; fields 13 and 14 (WF_NEWDESK) have NO arm; D0 left per arm (rect arms the xptr's low word, word arms (field-4)*4, past the table field-4) — the desk's binding stores it
+# ---- AES band 3 wave 1 (2026-10-02): the window messages and update, the drag loops, the menu library ----
+# the event door's new entries (band 4's code, wrapped in include/aes/evdoor.h)
+fn 0xfe4e5a tak_flag
+cmt 0xfe4e5a tak_flag(spb): count+1; taken when the count is 1 or the owner is rlr, else the count put back and D0 refused by clr.w — only D0's LOW word cleared (the high word is the move.l 2(a5) read)
+fn 0xfe4e8e amutex # ctx
+fn 0xfe4eb8 unsync
+cmt 0xfe4eb8 unsync(spb): count-1; still > 0 → returns leaving its CALLER's D0; 0 with a waiter → hands the lock to the waiter's PD (count 1), zombies its EVB and calls dsptch with the caller still ready (a YIELD, $fe4ed2..$fe4ee6); from a negative count (an unbalanced END_UPDATE) it never reaches 0
+fn 0xfe6874 ev_block
+cmt 0xfe6874 ev_block(code, parameter): an EVB queued and the dispatcher entered — it always waits. Callers: wm_update (code 4 MU_SDMUTEX over *ad_windspb, only after tak_flag refused, so amutex refuses again) and ap_rdwr ($fe65d4, codes 1/2), others 3, 5, 6, 7
+fn 0xfe49ba ct_chgown
+cmt 0xfe49ba ct_chgown(pd, rect) = set_ctrl(rect) + set_mown(pd); answers post_button's walk end, 0, always
+fn 0xfe52e2 post_button
+cmt 0xfe52e2 post_button(pd.l, button.w, clicks.w). Callers: mn_bar (ctl_pd, 1, 1 — a fake click), bchange $fe51d8 ($c90a, clicks) at $fe528c, set_mown $fe504a ($c90a, 1) at $fe5084
+# the control manager's leaves and the window library's event half (src/aes/wmupdate.c)
+fn 0xfe5008 set_ctrl
+fn 0xfe501c get_ctrl
+fn 0xfe5030 get_mown
+cmt 0xfe5030 get_mown(&mouse, &keyboard): the mouse owner stored first (the two pointers may overlap)
+fn 0xfe504a set_mown # ctx
+fn 0xfe718e fm_own
+cmt 0xfe718e fm_own(take): counted at ml_ocnt $9450; taking saves the menu hold, ctrl and both owners ($9452/$9456/$945e/$9462) and ct_chgown(rlr, gl_rscreen); giving back hands back the KEYBOARD's saved owner, then the menu, then the release; D0 ct_chgown's or the lock's
+fn 0xfeba54 w_setactive
+fn 0xfebe2a w_redraw
+cmt 0xfebe2a w_redraw(w, rect): the work-area cut only gates; the bounding box of the visible list replaces it; ap_sendmsg(gl_rmsg $9adc, WM_REDRAW) to the owner
+fn 0xfec026 w_update
+fn 0xfec0ca draw_change
+cmt 0xfec0ca draw_change: everyobj over newrect handed BY VALUE; moved / sized / topped; the "old inside new" test is redundant with the union test; its tail copies the new top's rectangle over the CALLER's rect (why wm_opcl copies first)
+fn 0xfec676 wm_opcl
+cmt 0xfec676 wm_opcl(w, rect, add): the rect copied before the lock; w_obadd($9734, 0, w) or ob_delete(gl_wtree); w_setsize(WS_PREV) reads the CALLER's rect AFTER draw_change
+fn 0xfec6da wm_open
+fn 0xfec6f0 wm_close
+fn 0xfec83a wm_set
+fn 0xfeca68 wm_update
+cmt 0xfeca68 wind_update: <2 the screen lock (tak_flag, else ev_block(MU_SDMUTEX); unsync); >=2 fm_own(code-2), a signed compare. Two call words, $f0bc and $f280. After an unbalanced END_UPDATE the next BEG_UPDATE blocks forever
+var 0x9aee wind_spb
+var 0xc83e ad_windspb # ctx
+var 0x9450 ml_ocnt
+var 0x9452 ml_mnhold
+var 0x9456 ml_ctrl
+var 0x945e ml_pmown
+var 0x9462 ml_pkown
+var 0x9b3e ctrl
+var 0x9afa gl_mowner
+var 0x9ad8 gl_kowner
+var 0xc93e gl_wasclr # ctx
+var 0x9adc gl_rmsg
+# the interactive gemgrlib (src/aes/grdrag.c): hand 68000 in the ROM, ported over its order
+fn 0xfe8576 gr_wait
+cmt 0xfe8576 box XORed (its twin at po+poff unless poff EQUALS gl_rzero: rc_equal's D0 with bit 0 flipped by bchg), gr_stilldn(1, mx, my, 1, 1), XORed away; its move.l #$9b30 at $fe8584 is read AS DATA by gr_rubbox / gr_dragbox ($fe8586)
+fn 0xfe8532 gr_draw
+fn 0xfe8564 gr_xdraw
+fn 0xfe85de gr_rubwind
+fn 0xfe85c6 gr_rubbox
+fn 0xfe8640 gr_dragbox
+cmt 0xfe8640 locals are its saved D2-D5: mouse (D2), box (D3/D4), offset (D5); the corner +1 word by word (add.w / swap / add.l); gr_setup's colour is the 1 pushed for wm_update, still on the stack
+fn 0xfe86dc gr_clamp
+fn 0xfe86c2 gr_clamp_axis # ctx
+fn 0xfe86fa gr_slidebox
+cmt 0xfe86fa gr_slidebox: mul_div runs only when the room is non-zero
+# the menu library (src/aes/mnlib.c)
+fn 0xfe8bf4 rect_change
+cmt 0xfe8bf4 rect_change: gemmnlib's, though it sits inside gemgsxif's range; the flag stored after the rectangle
+fn 0xfe8c14 do_chg
+fn 0xfe8c7a menu_set
+fn 0xfe8cb6 menu_sr
+cmt 0xfe8cb6 menu_sr: the saved rectangle widened 1 left and 2 right / down (the top untouched)
+fn 0xfe8cf4 menu_down
+fn 0xfe8d6e mn_do
+cmt 0xfe8d6e reads tree[-1].ob_state (14 bytes before the tree) when ob_find answers -1; DISABLED compared EQUAL to 8 (a SELECTED|DISABLED title is dropped, then do_chg refuses it); a title DISABLED alone under the mouse busy-loops until the mouse moves
+fn 0xfe902a mn_bar
+cmt 0xfe902a stores the owner's pid sign-extended as a LONG at $9730; the screen manager reads the WORD there ($fe4998), the high half — 0 for every pid. Posts a fake click post_button(ctl_pd, 1, 1), counted in $c6cc so the screen manager swallows it ($fe48de)
+fn 0xfe91a4 mn_clsda
+fn 0xfe91e2 mn_register
+cmt 0xfe91e2 mn_register(-1) copies the name by lstcpy into a 14-byte frame buffer with NO bound (13 characters + NUL fit; 14+ overrun the saved A6 and return address)
+fn 0xfe5856 pd_nameit
+cmt 0xfe5856 pd_nameit: no bound — strscn writes NO NUL, so 8 characters before the '.' leave p_cda whole, the 9th lands alone on its top byte (ignored by the 24-bit bus), the 10th+ change the pointer
+var 0xc928 gl_ctwait_rect
+var 0x96da gl_rmnactv
+var 0x9730 gl_mnppd
+var 0xc686 gl_dabox
+var 0x9bc0 gl_dafirst # ctx
+var 0xc684 gl_dacnt
+var 0xc930 desk_pid
+var 0xc6ce desk_acc
+var 0xc6cc gl_mnclicks # ctx
+var 0x9b3a ctl_pd
+var 0x98b4 ct_msgbuf # ctx

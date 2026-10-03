@@ -3,13 +3,14 @@
  * the window's own, border and all — after cutting every window below it in the tree by that rectangle.
  *
  * newrect is the rectangle lists' entry (`src/aes/rlist.c`): it sets gl_mkrect and walks the window tree with everyobj,
- * handing it mkrect BY ITS ROM ADDRESS, as the ROM's `move.l #$fe5c9a,-(sp)` does — a ROM code address used as a value
- * (`test/test_aes_rom_data.py`, CODE: a rebuilt ROM owes everyobj its own mkrect's linked address).
+ * handing it mkrect BY VALUE, as the ROM's `move.l #$fe5c9a,-(sp)` does — on the host its ROM address, a ROM code
+ * address used as a value (`test/test_aes_rom_data.py`, CODE), on target its Alcyon entry (`staged_call.h`'s ALCYON_ROUTINE).
  */
 #include <stdint.h>
 
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "staged_call.h"
 #include "aes/aes.h"
 #include "aes/objects.h"
 #include "aes/oblib.h"
@@ -85,7 +86,10 @@ void aes_newrect(uint8_t *image, uint32_t tree, int16_t window)
     if (!be16(image + AES_GL_MKRECT + ORECT_W) || !be16(image + AES_GL_MKRECT + ORECT_H))
         return;
     wr32(image + AES_GL_MKRECT + ORECT_LINK, 0);
-    aes_everyobj(image, tree, OB_ROOT, window, AES_ROM_MKRECT, START_POSITION, START_POSITION, NEWRECT_WALK_DEPTH);
+    /* mkrect handed BY VALUE ($fe5d68 `move.l #$fe5c9a,-(sp)`): its ROM address on the host, its Alcyon entry
+     * (`wmupdate.S`) on target — spelt at the call, where the ROM-address census sees the use. */
+    aes_everyobj(image, tree, OB_ROOT, window, ALCYON_ROUTINE(AES_ROM_MKRECT, aes_mkrect_alcyon), START_POSITION,
+                 START_POSITION, NEWRECT_WALK_DEPTH);
     orect = aes_get_orect(image);
     set_bus_long(image, orect + ORECT_LINK, 0);
     aes_w_getsize(image, WS_TRUE, window, orect + ORECT_X);

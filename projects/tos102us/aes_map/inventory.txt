@@ -318,7 +318,7 @@ fe456a A    56 f794  50      | fe387c febdbe | 2
 fe45a2 A   812 f798  700     | fe387c fe456a fe84ba fe85de fe8640 fe86fa fea0a8 fea38e fea584 feb53e feba9c febdbe feca68 fecca6 feccbe | 1
 fe48ce A    58 f7ac  52      | fe45a2 feca4a | 1
 fe4908 A   178 f7b0  168     | fe456a fe8c14 fe8d6e feccd6 | 1
-fe49ba S    24 f830  18      | fe5008 fe504a | 2
+fe49ba S    24 f830  18     ct_chgown (= set_ctrl + set_mown; door entry) | fe5008 fe504a | 2
 fe49d2 A   150       -       [ptr] | fe48ce fe4908 fe6998 feba54 feca68 feccca | 0
 fe4a6a A    46 f89c  42      | fe5886 | 1
 fe4a98 S   130 f820  116    ct_mouse | fe87d2 fe87f0 fe8a38 fee498 fee4c0 | 2
@@ -330,16 +330,16 @@ fe4cd6 S   146 f7c4  136    chkkbd() VDI vq_key_s + vsm_string sample -> forkq(k
 fe4d68 S    54 f7d4  48     idle loop: chkkbd, drl->rlr, until rlr||fpcnt | fe4b74 fe4cd6 | 1
 fe4d9e S   100       86     disp() the dispatcher | fe38d4 fe3930 fe4b74 fe4b9c fe4bc6 fe4d68 | 1
 fe4e02 A    88       -      tchange (timer fork fn) [ptr] | fe3890 fe389c fe511a | 0
-fe4e5a S    50 f800  48      |  | 2
-fe4e8e S    42 f754  34      | fe3fba fe4030 fe4e5a | 1
-fe4eb8 S    56 fa38  50      | fe387c fe3fba | 1
+fe4e5a S    50 f800  48     tak_flag (door entry) |  | 2
+fe4e8e S    42 f754  34     amutex #ctx | fe3fba fe4030 fe4e5a | 1
+fe4eb8 S    56 fa38  50     unsync (door entry) | fe387c fe3fba | 1
 fe4ef0 A    80 f8f0  72      | feca4a feccd6 | 1
 fe4f40 A   112       108    b_click (button irq) | fe4b1a | 1
 fe4fb0 A    88 f8f4  82     b_delay (dclick timer) | fe4b1a | 2
-fe5008 S    20 f7a0  16      | feccca | 1
-fe501c S    20 f828  16      | feccca | 1
-fe5030 S    26 f82c  24      |  | 1
-fe504a S    72 f7a4  66      | fe52e2 fe5480 | 1
+fe5008 S    20 f7a0  16     set_ctrl | feccca | 1
+fe501c S    20 f828  16     get_ctrl | feccca | 1
+fe5030 S    26 f82c  24     get_mown |  | 1
+fe504a S    72 f7a4  66     set_mown #ctx | fe52e2 fe5480 | 1
 fe5092 A    56 f8ec  54      |  | 1
 fe50ca S    46 f7ec  44      |  | 3
 fe50f8 S    34 f840  30      | fe50ca | 1
@@ -348,7 +348,7 @@ fe5180 A    34       -      kchange (keyboard fork fn) [ptr] | fe51a2 | 0
 fe51a2 A    54 f8e8  48      | fe5092 fe511a | 1
 fe51d8 A   186       -       [ptr] | fe4ef0 fe52e2 | 0
 fe5292 S    80 f7f0  78      |  | 3
-fe52e2 S   106 f8e4  100     | fe511a fe5292 | 3
+fe52e2 S   106 f8e4  100     post_button (door entry) | fe511a fe5292 | 3
 fe534c A   308       -      mchange (mouse fork fn) [ptr] | fe4fb0 fe5480 fe87d2 feccd6 fed412 | 0
 fe5480 S    56 f8e0  50      | fe511a fe54b8 | 2
 fe54b8 S   104 f8fc  100     | feccd6 | 1
@@ -359,7 +359,7 @@ fe5666 S   144 f75c  134     | fe3fba fe4030 fecc7e feccd6 | 1
 fe56f6 S    90 f944  88      | fece2e fece9c | 1
 fe5750 S   144 f72c  138     | fe56f6 | 2
 fe57e0 A   118 f950  114     | fe3970 | 1
-fe5856 A    48 f918  42      | fece5e fecec4 | 3
+fe5856 A    48 f918  42     pd_nameit | fece5e fecec4 | 3
 fe5886 A    58 f770  50      | fe397a fe57e0 fe5856 | 3
 fe58c0 S   200 f958  190     | fecc7e fecd8c | 1
 fe5988 S   218 f74c  204     | fe3fba fe4030 fe5750 fe58c0 | 1
@@ -448,7 +448,7 @@ fe65da A    54 f1b8  48     ap_find | fe5750 fecbe6 | 3
 fe6610 A   342 f1bc  310    ap_tplay | fe387c fe4b1a fe6936 fe87d2 fecbc6 fecbda fecc7e fe3db4 fe3e08 | 3
 fe6766 A   180 f1c0  168    ap_trecd | fe3890 fe389c fe6936 | 3
 fe681a S    90 f7e8  88      |  | 3
-fe6874 S    32 f728  24      | fe40b2 fe40ec fe41bc | 6
+fe6874 S    32 f728  24     ev_block (door entry) | fe40b2 fe40ec fe41bc | 6
 fe6894 A    16 f1cc  12     ev_keybd | fe6874 | 3
 fe68a4 S    64 f1d0  58     ev_button | fe681a fe6874 | 5
 fe68e4 A    44 f1d4  38     ev_mouse | fe681a fe6874 | 3
@@ -461,7 +461,7 @@ fe6c98 S   234 f80c  230     | fece4e | 1
 fe6d84 S   116 f814  110     | fe6c98 | 1
 fe6df8 S   522 f818  490     | fea1ba fea55e fecc7e feccbe fece4e | 1
 fe7002 S   396 f220  366    fm_alert | fda7f8 fda846 fe4a98 fe6d84 fe6df8 fe74a4 fe8966 fe8996 fe92ae fea028 fea69c feaa86 feca68 | 7
-fe718e S   134 f83c  63      | fe49ba fe501c fe5030 feca68 | 3
+fe718e S   134 f83c  63     fm_own | fe49ba fe501c fe5030 feca68 | 3
 fe7214 S   102 f834  100     |  | 2
 fe727a S    30 f844  26      | fe7214 | 1
 fe7298 S   218 f22c  40     fm_keybd | fe7214 fe764c fea38e | 4
@@ -491,15 +491,15 @@ fe8402 S   112 f07c/ 106    gr_movebox | fe83be fe8a72 fe8a8e fe8472 | 5
 fe8472 S    72 f078  70      | fe85b0 | 2
 fe84ba S    78 f240  72     gr_watchbox | fda7f8 fea38e fea4e8 fe8508 | 5
 fe8508 S    42 f0b0  40    gr_stilldn | fe6998 | 2
-fe8532 S    50       46      | fdada4 | 1
-fe8564 S    18       1       | fe8a72 fe8532 | 1
-fe8576 S    58 f0c4/ 54      | fe8508 fecd0c fe8564 | 2
+fe8532 S    50       46     gr_draw (bsr-only) | fdada4 | 1
+fe8564 S    18       1     gr_xdraw (bsr-only) | fe8a72 fe8532 | 1
+fe8576 S    58 f0c4/ 54     gr_wait | fe8508 fecd0c fe8564 | 2
 fe85b0 S    22 f08c/ 18      | fda7f8 fda8e6 | 3
 fe85c6 S    24 f234  24     gr_rubbox | fe85de | 4
-fe85de S    98 f790  90      | fe8576 fe86dc feca68 fe85b0 | 2
+fe85de S    98 f790  90     gr_rubwind (bsr + Line-F $f790) | fe8576 fe86dc feca68 fe85b0 | 2
 fe8640 A   130 f0f0/ 116    gr_dragbox | fe8576 fe85b0 fe86dc fe8a54 feca68 fecde4 | 5
-fe86c2 S    26       26      |  | 1
-fe86dc S    30 f0c0/ 28      | fe8a54 fe86c2 | 2
+fe86c2 S    26       26     gr_clamp_axis #ctx (gr_clamp's fragment) |  | 1
+fe86dc S    30 f0c0/ 28     gr_clamp | fe8a54 fe86c2 | 2
 fe86fa A   110 f244  102    gr_slidebox | fe8640 fea4e8 fea538 fecb6e | 5
 fe8768 S    24 f254  24     gr_mkstate |  | 4
 fe8790 A    32 f99c  28      | fda992 fe3bba | 1
@@ -540,12 +540,12 @@ fe8ba2 S    12       12      |  | 3
 fe8bae S     8       8       |  | 5
 fe8bb6 S    22       4       | fe87d2 | 9
 fe8bba S    34       32      | fe87d2 | 8
-fe8bf4 A    32 f904  28    rect_change #ctx (gemmnlib, inside gemgsxif's range) | fea4e8 | 1
+fe8bf4 A    32 f904  28    rect_change (gemmnlib, inside gemgsxif's range) | fea4e8 | 1
 fe8c14 S   102 f1ec  98     do_chg (menu check/enable/normal) | fda7f8 fea38e | 12
-fe8c7a A    60 f90c  56      | fe8c14 | 1
-fe8cb6 A    62 f900  52      | fda7f8 fe8966 fe8996 fea4e8 | 2
-fe8cf4 A   122 f910  116     | fe8c14 fe8cb6 fea028 | 1
-fe8d6e A   700 f79c  662     | fe4a98 fe6998 fe8a6a fe8bf4 fe8c14 fe8c7a fe8cb6 fe8cf4 fea0a8 | 1
+fe8c7a A    60 f90c  56     menu_set | fe8c14 | 1
+fe8cb6 A    62 f900  52     menu_sr | fda7f8 fe8966 fe8996 fea4e8 | 2
+fe8cf4 A   122 f910  116     menu_down | fe8c14 fe8cb6 fea028 | 1
+fe8d6e A   700 f79c  662     mn_do | fe4a98 fe6998 fe8a6a fe8bf4 fe8c14 fe8c7a fe8cb6 fe8cf4 fea0a8 | 1
 fe902a S   378 f1e8  362    mn_bar | fda7f8 fda8d2 fe52e2 fea028 fea1ba fea4e8 feccca | 4
 fe91a4 S    62 f1c4  58    mn_clsda | febdbe | 4
 fe91e2 A   122 f1f0  116    mn_register | fe5856 fecbe6 | 3
@@ -627,19 +627,19 @@ feb712 S    86 f9ec  76    w_cpwalk | fda846 feb53e feb646 feba9c | 5
 feb768 S    98 fa34  94    w_strchg | feb712 | 1
 feb7ca S   132 f9f4  120    w_barcalc | fecb6e feccbe fece4e | 1
 feb84e S   518 f9fc  504    w_bldbar | feb408 feb594 feb5f8 feb7ca | 1
-feba54 S    72 f7a8  66    w_setactive #ctx (door user: ct_chgown) | fe49ba feb53e | 2
+feba54 S    72 f7a8  66    w_setactive (door user: ct_chgown) | fe49ba feb53e | 2
 feba9c S   802 f784  774    w_bldactive | feb3c0 feb53e feb594 feb84e feccca | 2
 febdbe S   108 f780  104    ap_sendmsg | fe65c4 | 4
-febe2a S   164 fa08  154     | feb53e febdbe fec3ea feccca fecd22 | 1
+febe2a S   164 fa08  154     w_redraw | feb53e febdbe fec3ea feccca fecd22 | 1
 febece S    50 fa04  48    w_mvfix | fecd22 | 1
 febf00 S   294 fa14  272    w_move | fda7f8 fdaa48 feb53e feb712 febece feccca fecd8c | 1
-fec026 S   164 f850  152     | fda7f8 fe8a72 fe8a8e feb712 febe2a fecd22 | 3
-fec0ca S   720 fa24  678     | feb4be feb53e feb57c feb6c8 feb712 feba54 febf00 fec026 fecaac feccca fecd0c fecd8c fece4e fed27c | 2
+fec026 S   164 f850  152     w_update | fda7f8 fe8a72 fe8a8e feb712 febe2a fecd22 | 3
+fec0ca S   720 fa24  678     draw_change | feb4be feb53e feb57c feb6c8 feb712 feba54 febf00 fec026 fecaac feccca fecd0c fecd8c fece4e fed27c | 2
 fec39a S    80 fa2c  76    w_owns | feccca fecd22 | 1
 fec3ea S    58 fa00  52    w_union | feccca fecd8c | 1
 fec424 A   478 f8bc  454    wm_start | fe5a62 fe5aac feb3c0 feb47a feb57c fece2e fece5e | 2
 fec602 S   116 f264  106    wm_create | feb47a feb57c | 4
-fec676 S   100 fa28  32      | fea21e feb408 feb57c fec0ca feca68 feccca | 2
+fec676 S   100 fa28  32     wm_opcl | fea21e feb408 feb57c fec0ca feca68 feccca | 2
 fec6da S    22 f268  18     wm_open | fec676 | 4
 fec6f0 S    22 f26c  18     wm_close | fec676 | 4
 fec706 S    28 f270  26     wm_delete |  | 4

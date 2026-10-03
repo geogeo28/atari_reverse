@@ -6,7 +6,7 @@
  * its locals and ob_offset / ob_user its GRECT, so each set of locals lives in one slot laid out as the ROM's `link` lays
  * it, standing in through `host_slot.h` off target.
  *
- * WHAT EVERYOBJ IS HANDED is the one place host and target differ (`just_draw_routine`).
+ * WHAT EVERYOBJ IS HANDED is the one place host and target differ (`staged_call.h`'s ALCYON_ROUTINE).
  */
 #include <stdint.h>
 
@@ -14,25 +14,13 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "staged_call.h"
 #include "aes/gemgraf.h"
 #include "aes/gsx.h"
 #include "aes/objdraw.h"
 #include "aes/objects.h"
 #include "aes/oblib.h"
 #include "aes/obuser.h"
-
-/* The routine ob_draw hands everyobj BY VALUE ($fea08c `move.l #$fe9a88,-(sp)`). On the host it is just_draw's ROM
- * address, as the ROM's: everyobj's call reaches `staged_call.h`'s hook, which a case binds to the C core. On target it
- * is the Alcyon entry linked beside this file (`obdraw.S`), which takes everyobj's ten-byte frame into the C core: the
- * ROM's just_draw run inside our build is what Tier 3's (V) rule refuses (`bench/tier3.py`, AES_OWN_SPANS). */
-static inline uint32_t just_draw_routine(void)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    return AES_ROM_JUST_DRAW;
-#else
-    return (uint32_t)(uintptr_t)aes_just_draw_alcyon;
-#endif
-}
 
 /* ---- ob_draw's frame (`link a6,#-8`): the two words ob_offset fills, y below x --------------------------------------- */
 #define POSITION_WORDS        2
@@ -68,8 +56,10 @@ void aes_ob_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth)
     else
         wr32(image + position, 0);
     aes_gsx_moff(image);
-    aes_everyobj(image, tree, object, last, just_draw_routine(), (int16_t)be16(image + position + POSITION_X),
-                 (int16_t)be16(image + position + POSITION_Y), depth);
+    /* just_draw handed BY VALUE ($fea08c `move.l #$fe9a88,-(sp)`): its ROM address on the host, its Alcyon entry beside
+     * this file (`obdraw.S`) on target — spelt at the call, where the ROM-address census sees the use. */
+    aes_everyobj(image, tree, object, last, ALCYON_ROUTINE(AES_ROM_JUST_DRAW, aes_just_draw_alcyon),
+                 (int16_t)be16(image + position + POSITION_X), (int16_t)be16(image + position + POSITION_Y), depth);
     aes_gsx_mon(image);
     host_slot_release(AES_OB_DRAW_POSITION);
 }

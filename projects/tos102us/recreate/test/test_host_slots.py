@@ -56,8 +56,12 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
                           "AES_GROWBOX_STEPS", "AES_OB_USER_PARMBLK", "AES_JUST_DRAW_FRAME",
                           "AES_OB_DRAW_POSITION", "AES_OB_CHANGE_FRAME",
                           "AES_GR_STILLDN_RECTANGLE", "AES_GR_STILLDN_ANSWERS", "AES_GR_WATCHBOX_RECT",
+                          "AES_GR_DRAW_RECT", "AES_GR_CLAMP_MOUSE", "AES_GR_RUBWIND_RECT", "AES_GR_DRAGBOX_FRAME",
+                          "AES_GR_SLIDEBOX_RECTS", "AES_MENU_SR_RECT", "AES_MN_DO_FRAME", "AES_MN_REGISTER_NAME",
                           "AES_PXL_RECT_FIELD", "AES_CURFLD_RECTS", "AES_OB_EDIT_FRAME",
-                          "AES_W_CLIPDRAW_RECT", "AES_W_CPWALK_RECT", "AES_W_MOVE_RECTS", "AES_WM_GET_RECT"}
+                          "AES_W_CLIPDRAW_RECT", "AES_W_CPWALK_RECT", "AES_W_MOVE_RECTS", "AES_WM_GET_RECT",
+                          "AES_W_SETACTIVE_RECT", "AES_W_REDRAW_RECTS", "AES_DRAW_CHANGE_FRAME", "AES_WM_OPCL_RECT",
+                          "AES_WM_SET_RECT"}
     assert not misplaced(slots)
 
 

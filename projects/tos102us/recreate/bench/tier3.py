@@ -1704,7 +1704,8 @@ def shipped_bench():
 
 # MECHANISM (T→G): the bytes of the shipped blob that are glue, and what a row spent inside them.
 # ...the generated thunks', and the ALCYON ENTRIES': target-only `.S` that takes a ROM walker's Alcyon frame into a C
-# core (`src/aes/obdraw.S`, the just_draw ob_draw hands everyobj) — a thunk's mirror image, which no ROM routine has
+# core (`src/aes/obdraw.S`'s just_draw and `src/aes/wmupdate.S`'s newrect and mkrect, each a routine a C caller
+# hands everyobj) — a thunk's mirror image, which no ROM routine has
 # either. DERIVED: the `.globl`s of `atari/target.mk`'s ALCYON_ENTRY_SOURCES (`transcription.ALCYON_ENTRIES`). Both
 # blobs link them, so a (V) row measured on either counts their cycles as glue (`_measure_through_the_os`).
 ALCYON_ENTRIES = tuple(sorted(transcription.ALCYON_ENTRIES))

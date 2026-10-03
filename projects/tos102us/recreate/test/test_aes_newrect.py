@@ -21,11 +21,10 @@ everyobj calling the ROM's newrect over the whole window tree, against the C pai
 """
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs
+from harness import BASE_IMAGE, addrs
 
 import aes
 import aes_rlist
-import routines
 import test_aes_oblib_walk as walkmod
 import test_aes_rlist as rlist_battery
 import vdi
@@ -43,7 +42,6 @@ W_GETXPTR, W_GETSIZE, NEWRECT = "AES_ROM_W_GETXPTR", "AES_ROM_W_GETSIZE", "AES_R
 L, W = vdi.LONG_ARG, vdi.WORD_ARG
 aes.declare_alcyon(W_GETXPTR, aes.LONG_ANSWER, (W, W))     # a core over words alone: no image
 aes.declare_alcyon(W_GETSIZE, None, (vdi.IMAGE_ARG, W, W, L))
-aes.declare_alcyon(NEWRECT, None, (vdi.IMAGE_ARG, L, W))
 
 WINDOW_TREE = aes.AES_WINDOW_TREE                       # gl_wtree's value in the snapshot: the tree newrect is handed
 TREE_BYTES = aes.AES_WINDOW_COUNT * aes.OB_BYTES
@@ -389,17 +387,7 @@ def test_newrect_reads_its_tree_for_the_walk():
 
 
 # ---- newrect entered as the ROM enters it: everyobj's `jsr (a0)`, over the whole window tree ----------------------
-NEWRECT_CORE = getattr(_lib, routines.core_symbol(NEWRECT))
-
-
-def newrect_called(buf, registers):
-    """The C newrect on the window everyobj's call hands it."""
-    tree, window, _x, _y = walkmod.frame_of(registers)
-    NEWRECT_CORE(buf, tree, window)
-
-
-BOTH_HOOK = aes.alcyon_object_hook({addrs.AES_ROM_NEWRECT: (b"", newrect_called),
-                                    addrs.AES_ROM_MKRECT: (b"", rlist_battery.mkrect_called)})
+BOTH_HOOK = aes.alcyon_object_hook(aes.walkers(NEWRECT, MKRECT))
 
 
 def test_newrect_through_the_rom_s_everyobj_rebuilds_every_window_bottom_up():
@@ -430,8 +418,9 @@ aes.register("the desktop alone", NEWRECT, (WINDOW_TREE, DESKTOP), aes.leaf_mach
 aes.register("a closed window", NEWRECT, (WINDOW_TREE, 2), aes.leaf_machine(), hook=rlist_battery.MKRECT_HOOK)
 aes.register("the desktop, its list of four", NEWRECT, (WINDOW_TREE, DESKTOP), aes.leaf_machine(onto=desktop_in_four()),
              hook=rlist_battery.MKRECT_HOOK)
-# The WORST realistic row: a window over a desktop already cut in four. Both sides run the ROM's own mkrect (shared
-# bytes), so the more pieces lie below the window the nearer 1.0 the ratio — the C's own body is about half the ROM's.
+# The WORST realistic row: a window over a desktop already cut in four — the most mkrect and brkrct work below the
+# window. On target everyobj enters mkrect's C core through its Alcyon entry (`src/aes/wmupdate.S`), so both sides
+# price their own mkrect.
 aes.register("a window over the desktop already cut in four", NEWRECT, (WINDOW_TREE, WINDOW),
              aes.leaf_machine(onto=merge_pokes(desktop_in_four(), open_window_pokes(at=OVER_THE_FOUR_AT))),
              hook=rlist_battery.MKRECT_HOOK)

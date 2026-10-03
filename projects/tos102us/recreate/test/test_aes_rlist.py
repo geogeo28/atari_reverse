@@ -22,12 +22,11 @@ import itertools
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs
+from harness import BASE_IMAGE, addrs
 
 import aes
 import aes_rlist
 import case
-import routines
 import test_aes_oblib_walk as walkmod
 from aes_rlist import (BRKRCT, DESKTOP, DESKTOP_ORECT, GET_ORECT, LAST, MKPIECE, MKRECT, OR_START,
                        SNAPSHOT_FREE_HEAD, cut_pokes, free_list_of, list_head, orect, orect_pokes, rect_of,
@@ -375,14 +374,7 @@ def test_mkrect_never_reads_its_tree():
 WINDOW_TREE = aes.TREE_AT                                   # the desktop (0) and window 1, its child
 
 
-def mkrect_called(buf, registers):
-    """The C mkrect on the object (the window) everyobj's call hands it."""
-    tree, window, _x, _y = walkmod.frame_of(registers)
-    MKRECT_CORE(buf, tree, window)
-
-
-MKRECT_CORE = getattr(_lib, routines.core_symbol(MKRECT))
-MKRECT_HOOK = aes.alcyon_object_hook({addrs.AES_ROM_MKRECT: (b"", mkrect_called)})
+MKRECT_HOOK = aes.alcyon_object_hook(aes.walkers(MKRECT))
 
 
 @pytest.mark.parametrize("last", (aes.OB_NIL, 1), ids=("the whole tree", "the desktop alone"))

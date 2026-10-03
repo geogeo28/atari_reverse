@@ -53,11 +53,6 @@ static inline uint32_t w_active(int16_t object, uint32_t field)
     return object_address(AES_W_ACTIVE, object, field);
 }
 
-static inline int16_t global_word(const uint8_t *image, uint32_t global)
-{
-    return (int16_t)be16(image + global);
-}
-
 static inline int16_t record_word(const uint8_t *image, int16_t window, uint32_t field)
 {
     return (int16_t)bus_word(image, window_record(window) + field);

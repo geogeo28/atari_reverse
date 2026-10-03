@@ -12,6 +12,15 @@
 /* One further argument's slot: a longword the C reads its value out of, a promoted word included. */
 #define SLOT_BYTES 4
 
+/* THE ALCYON FRAME everyobj pushes for the routine a tree walk is handed by value (`staged_call.h`'s
+ * call_alcyon_object), from its first argument: the tree a longword, then the object, x and y words — what each ALCYON
+ * ENTRY (`src/aes/obdraw.S`, `src/aes/wmupdate.S`) repacks into a C call. */
+#define ALCYON_FIRST_ARGUMENT 4          /* past the return address */
+#define ALCYON_TREE           0
+#define ALCYON_OBJECT         4
+#define ALCYON_X              6
+#define ALCYON_Y              8
+
 /* A thunk named `thunk` into a C body the caller enters with nothing but the image: `void body(uint8_t *image)`.
  * (`;` separates the statements: a macro expands onto one logical line.) */
 #define IMAGE_ONLY_THUNK(thunk, body)                                                                                  \

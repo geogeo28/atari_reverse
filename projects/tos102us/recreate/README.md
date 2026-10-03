@@ -334,8 +334,9 @@ rlr / indisp / PD_STAT / the lists poked into place, and a case no derivation re
 
 THE EVENT DOOR — the AES's C into the event layer and the scheduler (band 4), which no C holds yet. Every C call of one of
 their routines goes through ONE wrapper in `include/aes/evdoor.h`, keyed by the routine's ROM address (wave 0: ev_multi
-`$fe6998` and ap_rdwr `$fe65c4`; ev_button, ev_block, tak_flag, unsync, ct_chgown and post_button join as their first users
-land — one wrapper, one `ENTRIES` line, one census line each). On target the wrapper IS the ROM's call: inline asm pushes the
+`$fe6998` and ap_rdwr `$fe65c4`; wave 1: tak_flag `$fe4e5a`, unsync `$fe4eb8`, ev_block `$fe6874`, ct_chgown `$fe49ba`,
+post_button `$fe52e2`, and ev_multi's two-rectangle shape; ev_button joins with its first user — one wrapper, one `ENTRIES`
+line, one census line each). On target the wrapper IS the ROM's call: inline asm pushes the
 Alcyon frame once, from registers or immediates (a constant-zero argument pushes the already-zero A1), and `jsr`s the
 routine, D2/A2 given up (the Line-F handler loads them on every call the routine makes) — no `.S` call-out, which measured
 1.84 against the inline form's 1.04. On the host the wrapper packs the frame big-endian, CHECKS the hop the ROM caller's
@@ -354,6 +355,28 @@ Tier 3 prices such C on its own cycles, mechanism (EV): our run is WATCHED at th
 refused, and the ORIGINAL's run watched too — its windows must equal ours one by one, cycles and frames. WHEN BAND 4 PORTS
 the event layer, each wrapper's body becomes the call of its C twin on both builds: no caller changes, the host hook stops
 being reached for that address, and the row stops being (EV) by derivation (no `jsr` into the AES text left).
+
+INTERRUPTS AT A DOOR ENTRY. A loop like mn_do or gr_dragbox only leaves its later states when the mouse or button changes
+WHILE it runs. `aes_event.interrupted(name, arguments, machine, {k: effect})` delivers that change on both sides. The ROM's
+watched run is stopped at the k-th door entry. The ROM's OWN interrupt code (the VDI mouse ISR and the tick glue: `press`,
+`release`, `move_to`) then runs over a copy of the memory at that point, with its stack frames left out. The bytes it wrote
+are laid in at that same entry. The C, in a child, gets the identical bytes at the same ordinal before its nested run.
+
+The case compares whether the call returned or blocked, the answer, every frame handed over and the whole image. RED tests
+show that dropping the delivery on either side, or shifting it by one ordinal, reds. This obeys THE PRINCIPLE because nothing
+is poked: an interrupt arriving while a process is inside an event call is a reachable interleaving, and its effect is the
+ROM's own ISR run over the ROM's own memory.
+
+Tier 3 cannot price an interrupted row yet. `RomBench.measure`'s original run and the VERIFIED_CASES sweeps replay a row
+unwatched, so they need a kit `original_watch` and a row `delivered` field (`STATUS.md`).
+
+The dispatcher refuses in two ways, matched by `aes_event.BLOCKS` and `YIELDS` (the dispatcher's own words). A call that
+WOULD BLOCK leaves its process waiting. A call that WOULD YIELD keeps the caller ready but switches: unsync handing the lock to
+a queued waiter does this. The core's generic halt line names both, so a bare "would block" substring passed a yield as a
+block. `refused_where_the_rom_blocks(..., switches=)` compares the child's whole image with the ROM's at the refusing entry.
+
+The door also never lays back the nested run's write to the Line-F mask word `$cc44`. A caller's own non-empty masked return
+rewrites that word after its last door call, so the C's image keeps the word as the C found it.
 
 Three mechanisms are designed and NOT built:
 

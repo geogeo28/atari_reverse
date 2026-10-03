@@ -22,8 +22,6 @@ repointed one, the blitter's) and a device code other than the snapshot's in `$8
 """
 import functools
 
-import pytest
-
 from harness import addrs, emu, make_image
 
 import aes
@@ -182,8 +180,13 @@ def register_rows(rows, line_f=()):
         register(label, name, arguments, pokes, through_line_f=True)
 
 
-# Each case run twice: entered direct, and through the routine's Line-F call word.
-THROUGH = pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
+def __getattr__(name):
+    """THROUGH, made when a battery asks for it: each case run twice, entered direct and through the routine's Line-F
+    call word. Made lazily, so this module — imported by every child process a door case runs — imports no pytest."""
+    if name != "THROUGH":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import pytest
+    return pytest.mark.parametrize("through_line_f", (False, True), ids=("direct", "through Line-F"))
 
 
 # ---- the host's refusals -----------------------------------------------------------------------------------------------

@@ -240,30 +240,23 @@ PRUNER = LOG_CODE + PRUNE_CODE + RTS
 assert ROUTINE_AT + max(len(HIDER), len(PRUNER)) <= BAND_AT + BAND_BYTES
 
 
-def frame_of(registers):
-    """`call_alcyon_object`'s three slots back into the frame's (tree, object, x, y)."""
-    packed = registers[isr.REGISTER["d1"]]
-    return (registers[isr.REGISTER["a0"]], signed(registers[isr.REGISTER["d0"]] & 0xFFFF), signed(packed >> 16),
-            signed(packed & 0xFFFF))
-
-
 def _log(buf, registers):
     """The logger's effect over the candidate's image."""
-    tree, index, x, y = frame_of(registers)
+    tree, index, x, y = aes.object_call_frame(registers)
     isr.poke(buf, (LOG_AT + index * LOG_SLOT.size) & OS_BUS_ADDR_MASK, LOG_SLOT.pack(tree, x, y))
 
 
 def _hide(buf, registers):
     """The hider's: the log, then the object's HIDETREE set."""
     _log(buf, registers)
-    tree, index, _x, _y = frame_of(registers)
+    tree, index, _x, _y = aes.object_call_frame(registers)
     buf[(tree + index * aes.OB_BYTES + aes.OB_FLAGS + aes.OB_WORD_LOW_BYTE) & OS_BUS_ADDR_MASK] |= HIDETREE
 
 
 def _prune(buf, registers):
     """The pruner's: the log, then the object's ob_head -1."""
     _log(buf, registers)
-    tree, index, _x, _y = frame_of(registers)
+    tree, index, _x, _y = aes.object_call_frame(registers)
     isr.poke(buf, (tree + index * aes.OB_BYTES + aes.OB_HEAD) & OS_BUS_ADDR_MASK, (aes.OB_NIL & 0xFFFF).to_bytes(2, "big"))
 
 

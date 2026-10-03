@@ -29,15 +29,13 @@ import functools
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, emu, make_image
+from harness import BASE_IMAGE, addrs, emu, make_image
 
 import aes
 import aes_gsx as gsx
 import aes_objdraw as od
 import aes_obuser as obuser
 import case
-import routines
-import test_aes_oblib_walk as walkmod
 import vdi
 from case import merge_pokes
 from opcodes import DROP_STACK_LONG
@@ -63,18 +61,10 @@ OB_DRAW_INSNS = 2 * OB_DRAW_MEASURED_INSNS
 
 
 # ---- the door: just_draw handed by value -------------------------------------------------------------------------------
-JUST_DRAW_CORE = getattr(_lib, routines.core_symbol(od.JUST_DRAW))
-
-
-def just_draw_called(buf, registers):
-    """The C just_draw over the frame everyobj's call hands its routine."""
-    JUST_DRAW_CORE(buf, *walkmod.frame_of(registers))
-
-
 def doors(userdef=None):
-    """The VDI's door and just_draw's, opened together — and, for a tree carrying a USERDEF staged by
+    """The VDI's door and just_draw's (`aes.walkers`), opened together — and, for a tree carrying a USERDEF staged by
     `aes_objdraw.userdef_pokes`, its routine answering `userdef` (one register-carrying hook serves both)."""
-    routines_ = {addrs.AES_ROM_JUST_DRAW: (b"", just_draw_called)}
+    routines_ = aes.walkers(od.JUST_DRAW)
     if userdef is not None:
         routines_[obuser.USERDEF_AT] = obuser.userdef_routine(userdef)
     return aes.doors(gsx.vdi_hook, aes.alcyon_object_hook(routines_))

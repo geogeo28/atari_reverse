@@ -129,19 +129,31 @@ CHILD_GRACE_SECONDS = 2
 CHILD_ORPHANED = 4      # the child's exit status when it saw its parent die (nobody is left to read it)
 _CHILD_GUARD = ("import os, signal, threading; signal.signal(signal.SIGALRM, signal.SIG_DFL); signal.alarm({alarm}); "
                 "threading.Thread(target=lambda: (os.read({parent_alive}, 1), os._exit({orphaned})), daemon=True).start()")
+# A child asked for its core's ANSWER (`refusal`'s `restype`) prints it on this line of its stderr once the call returns.
+ANSWER_LINE = "the core answered: "
 
 
-def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE, seconds=CHILD_SECONDS):
+def answer_in(stderr):
+    """The answer a child printed (`ANSWER_LINE`), or None for one that printed none — it did not return."""
+    lines = [line for line in stderr.splitlines() if line.startswith(ANSWER_LINE)]
+    return int(lines[0].removeprefix(ANSWER_LINE)) if lines else None
+
+
+def refusal(symbol, argtypes, arguments, *, prelude=FRESH_IMAGE, seconds=CHILD_SECONDS, restype=None):
     """What the host core `symbol` says when called with `arguments` in a CHILD process, where its
     refusal — `recreate_not_reconstructed`, an `abort()` — can end the run without ending pytest's.
     `arguments` is Python source; `prelude` is the statements before the call, which bind `buf` (a fresh
     image by default). Answers `(returncode, stderr)`; a child still running after `seconds` is killed and
-    raises `subprocess.TimeoutExpired`, and one whose parent dies ends with it (`_CHILD_GUARD`)."""
+    raises `subprocess.TimeoutExpired`, and one whose parent dies ends with it (`_CHILD_GUARD`). With `restype`
+    (the core's ctypes answer type, as source), a call that returns prints its answer (`answer_in`)."""
     parent_alive, held_by_parent = os.pipe()
     guard = _CHILD_GUARD.format(alarm=math.ceil(seconds) + CHILD_GRACE_SECONDS, parent_alive=parent_alive,
                                 orphaned=CHILD_ORPHANED)
+    call = f"lib.{symbol}({arguments})"
+    if restype:
+        call = f"lib.{symbol}.restype = {restype}; import sys; print({ANSWER_LINE!r} + str({call}), file=sys.stderr)"
     probe = (f"{guard}; import ctypes, mmap; lib = ctypes.CDLL({str(LIB)!r}); {prelude}; "
-             f"lib.{symbol}.argtypes = [{', '.join(argtypes)}]; lib.{symbol}({arguments})")
+             f"lib.{symbol}.argtypes = [{', '.join(argtypes)}]; {call}")
     try:
         run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=seconds,
                              pass_fds=(parent_alive,))
@@ -165,14 +177,16 @@ def _io_declaration(io_seed):
             f"(ctypes.c_uint8 * {count})(*{list(writeback)}), {count})")
 
 
-def refusal_over(symbol, pokes, io_seed=None, *, arguments=(), seconds=CHILD_SECONDS, read_back=True, bind=None):
+def refusal_over(symbol, pokes, io_seed=None, *, arguments=(), seconds=CHILD_SECONDS, read_back=True, bind=None,
+                 restype=None):
     """What the host core `symbol(image, *arguments)` says over the image `pokes` stage, with the I/O bytes `io_seed`
     declared, in a CHILD process (`refusal`) — and the image AS THE CHILD LEFT IT: the child's `buf` is a
     SHARED mapping of the staged image's file, so every store the core made before it halted is still there
     for the caller to read. `arguments` are the core's C arguments after the image, as `(ctypes type, value)`
     source pairs (`("ctypes.c_uint32", "0x78c41")`). Answers `(returncode, stderr, image)`; a caller that reads no
     byte of the image passes `read_back=False` and is answered None for it, rather than the whole machine read back.
-    `bind` is Python source the child runs after `buf` is bound and before the call — a hook a core reaches first."""
+    `bind` is Python source the child runs after `buf` is bound and before the call — a hook a core reaches first;
+    `restype` as `refusal`'s."""
     image = bytes(vdi.make_image(pokes))
     assert len(image) == IMAGE_BYTES
     with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as handle:
@@ -186,7 +200,7 @@ def refusal_over(symbol, pokes, io_seed=None, *, arguments=(), seconds=CHILD_SEC
             prelude += f"; {bind}"
         returncode, stderr = refusal(symbol, ["ctypes.c_void_p", *(argtype for argtype, _value in arguments)],
                                      ", ".join(("buf", *(value for _argtype, value in arguments))), prelude=prelude,
-                                     seconds=seconds)
+                                     seconds=seconds, restype=restype)
         return returncode, stderr, Path(handle.name).read_bytes() if read_back else None
     finally:
         Path(handle.name).unlink()

@@ -46,7 +46,6 @@ from collections import namedtuple
 import abi
 import case
 import staging
-import test_xbios_supexec as supexec
 from address_hook import AddressHook
 from harness import BASE_IMAGE, addrs, emu
 from opcodes import ADD_ONE_TO_BYTE_ABSOLUTE, LOAD_IMMEDIATE, MOVE_W_ABSOLUTE_TO_ABSOLUTE
@@ -58,12 +57,9 @@ from opcodes import ADD_ONE_TO_BYTE_ABSOLUTE, LOAD_IMMEDIATE, MOVE_W_ABSOLUTE_TO
 # `test_boot_snapshot.py`'s claim that the whole staging band is dead RAM in this capture.
 ISR_BAND_BYTES = 0x300
 ISR_BAND = staging.band(0xD00, ISR_BAND_BYTES, "test/isr.py")
-# ...and clear of Supexec's DECOYS, which `staging.band` cannot see: they are planted at +0x800,
-# +0xa00 and +0xc00 deliberately, inside other batteries' bands, so they are not a claimed band and
-# this is the one place their top edge is held. A collision there would corrupt a trampoline for
-# BOTH cores at once — green on the byte diff, because both read the same wrong image.
-assert (supexec.STUB_AT + max(supexec.DECOY_ALTERNATIVES) + supexec.DECOY_STUB_BYTES
-        <= ISR_BAND), "Supexec's decoys reach into the band this module stages in"
+# ...and clear of Supexec's DECOYS, which `staging.band` cannot see: `test_xbios_supexec.py` holds
+# their top edge below ISR_BAND, beside the decoys themselves — this module, imported by every child
+# process a door case runs, imports no test module (and so not pytest).
 
 # TWO TRAMPOLINES PER HANDLER, at a fixed address apiece: `bench/tier3.py` needs to get from the
 # entry a case runs back to the ROM routine the row is about, and a fixed slot is what lets it.
@@ -428,7 +424,8 @@ CALLS = _HOOK.calls
 # `STAGED_REGISTERS` order.
 CALL_VECTOR_REGISTERS = ctypes.CFUNCTYPE(None, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32,
                                          ctypes.POINTER(ctypes.c_uint32))
-REGISTERS_HOOK = AddressHook("recreate_call_vector_registers", CALL_VECTOR_REGISTERS)
+REGISTERS_HOOK_SYMBOL = "recreate_call_vector_registers"
+REGISTERS_HOOK = AddressHook(REGISTERS_HOOK_SYMBOL, CALL_VECTOR_REGISTERS)
 STAGED_REGISTERS = ("d0", "d1", "a0")       # staged_call.h's STAGED_D0, STAGED_D1, STAGED_A0
 REGISTER = {name: index for index, name in enumerate(STAGED_REGISTERS)}    # an effect's `registers[REGISTER["a0"]]`
 

@@ -430,6 +430,23 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_w_union", "aes_rc_union"), ("aes_w_barcalc", "aes_max"), ("aes_w_barcalc", "aes_mul_div"),
     ("aes_w_barcalc", "aes_r_set"), ("aes_w_cpwalk", "aes_gsx_gclip"), ("aes_wm_get", "aes_gsx_mret"),
     ("aes_wm_start", "aes_bfill"),
+    # ...and its half that reaches the event layer (`src/aes/wmupdate.c`): the control rectangle copied, the change's
+    # rectangles copied, joined and compared (draw_change's helpers inlined into it), the sliders clamped, the cursor
+    # shown again
+    ("aes_set_ctrl", "aes_rc_copy"), ("aes_get_ctrl", "aes_rc_copy"), ("aes_fm_own", "aes_rc_copy"),
+    ("aes_w_redraw", "aes_rc_copy"), ("aes_wm_opcl", "aes_rc_copy"), ("aes_draw_change", "aes_rc_copy"),
+    ("aes_draw_change", "aes_rc_union"), ("aes_draw_change", "aes_rc_equal"), ("aes_draw_change", "aes_max"),
+    ("aes_wm_set", "aes_max"), ("aes_wm_set", "aes_min"), ("aes_w_update", "aes_gsx_mon"),
+    # the drag loops (`src/aes/grdrag.c`, gr_clamp inlined into gr_rubwind, gr_draw/gr_xdraw folded): the mouse read,
+    # the box kept in its bound, the offset compared with gl_rzero, the slider's thousandths, the cursor shown again
+    ("aes_gr_clamp", "aes_gsx_mxmy"), ("aes_gr_rubwind", "aes_gsx_mxmy"), ("aes_gr_dragbox", "aes_gsx_mxmy"),
+    ("aes_gr_dragbox", "aes_rc_constrain"), ("aes_gr_wait", "aes_rc_equal"), ("aes_gr_slidebox", "aes_mul_div"),
+    ("gr_xdraw", "aes_gsx_mon"),
+    # the menu library (`src/aes/mnlib.c`, pd_nameit inlined into mn_register): the screen manager's rectangle, the
+    # button read on an item, a name copied, blank-filled and scanned
+    ("aes_mn_bar", "aes_rc_copy"), ("aes_mn_do", "aes_gsx_button"), ("aes_mn_register", "aes_lstcpy"),
+    ("aes_mn_register", "aes_bfill"), ("aes_mn_register", "aes_strscn"), ("aes_pd_nameit", "aes_bfill"),
+    ("aes_pd_nameit", "aes_strscn"),
     ("aes_rs_str", "aes_lstcpy"), ("resource_part", "aes_wcopy"), ("aes_rom_ram", "aes_lbcopy"),
     ("aes_sc_read", "aes_lstcpy"), ("aes_sc_write", "aes_lstcpy"), ("aes_sh_read", "aes_lbcopy"),
     ("aes_sh_write", "aes_lbcopy"), ("aes_sh_get", "aes_lbcopy"), ("aes_sh_put", "aes_lbcopy"),

@@ -283,4 +283,15 @@
 #define AES_LINEF_COPY        0xcc0e     /* bytes[LINEF_COPY_BYTES]: the RAM handler (the snapshot's $2c)      */
 #define AES_LINEF_MASK_WORD   0xcc44     /* word: the last masked return's movem mask (AES_LINEF_COPY + $36)   */
 
+#ifndef __ASSEMBLER__
+#include <stdint.h>
+#include "machine.h"
+
+/* A word of the AES's globals (an AES_GL_* address), as the Alcyon `int` the ROM reads it. */
+static inline int16_t global_word(const uint8_t *image, uint32_t global)
+{
+    return (int16_t)be16(image + global);
+}
+#endif
+
 #endif /* TOS102US_AES_AES_H */

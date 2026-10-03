@@ -1998,9 +1998,38 @@
 /* ...and the wait gr_watchbox loops on, which reaches the event layer through `aes/evdoor.h` (hand 68000, the name
  * GEM's sources give it; entered by `bsr` and by Line-F `$f0b0`). */
 #define AES_ROM_GR_STILLDN        0xfe8508   /* (out, x, y, w, h): ev_multi(BUTTON|M1) over its own frame; 1 = no rise */
+/* ...and the drag loops' own helpers (hand 68000, `aes/grdrag.h`; the names GEM's sources give them), each read from
+ * its body: gr_wait (Line-F `$f0c4`, folding gr_draw $fe8532 and gr_xdraw $fe8564, both reached by `bsr` alone),
+ * gr_rubwind (`bsr` from gr_rubbox, Line-F `$f790` from the control manager) and gr_clamp (Line-F `$f0c0`, folding its
+ * fragment $fe86c2). */
+#define AES_ROM_GR_WAIT           0xfe8576   /* (po, poff, mx, my): the box XORed (two unless poff is gl_rzero's), gr_stilldn */
+#define AES_ROM_GR_RUBWIND        0xfe85de   /* (x, y, wmin, hmin, poff, &w, &h): the screen locked, gr_clamp/gr_wait */
+#define AES_ROM_GR_CLAMP          0xfe86dc   /* (x, y, wmin, hmin, &w, &h): the mouse's distance + 1, at least the min */
+/* The MENU LIBRARY's own helpers (gemmnlib, Alcyon, `aes/mnlib.h`), each read from its body. */
+#define AES_ROM_RECT_CHANGE       0xfe8bf4   /* (tree, moblk, obj, leave): an object's rectangle into a MOBLK */
+#define AES_ROM_MENU_SET          0xfe8c7a   /* (tree, last, cur, set): do_chg(last, SELECTED) unless -1 or cur */
+#define AES_ROM_MENU_SR           0xfe8cb6   /* (save, tree, menu): the screen under a drop-down saved or restored */
+#define AES_ROM_MENU_DOWN         0xfe8cf4   /* (tree, title): the title selected, its drop-down saved and drawn */
+#define AES_ROM_MN_DO             0xfe8d6e   /* (&title, &item): the mouse tracked through the bar until a click */
+#define AES_ROM_MN_CLSDA          0xfe91a4   /* (): AC_CLOSE sent to every registered accessory */
+/* ...and the scheduler's leaf mn_register names a process with (Alcyon, read:), and the event layer's button post
+ * mn_bar reaches through the event door (`aes/evdoor.h`; Alcyon, read:). */
+#define AES_ROM_PD_NAMEIT         0xfe5856   /* (pd, name): the PD's name blank-filled, the name copied up to '.' */
+#define AES_ROM_POST_BUTTON       0xfe52e2   /* (pd, button, clicks): each of pd's button waits it satisfies woken */
 /* The event door's other first users: the window library's message sender and the control manager's mouse grab. */
 #define AES_ROM_AP_SENDMSG        0xfebdbe   /* (buffer, type, to, five words): the message built, ap_rdwr(AQWRT, to, 16) */
 #define AES_ROM_CT_MOUSE          0xfe4a98   /* (grab): the mouse form saved and the arrow shown, or the form put back */
+/* ...and the scheduler's and control manager's routines the window library reaches through the door (Alcyon, read:). */
+#define AES_ROM_TAK_FLAG          0xfe4e5a   /* (spb): the semaphore taken if free or the running PD's, D0 = got it */
+#define AES_ROM_UNSYNC            0xfe4eb8   /* (spb): given up; at count 0 handed to its first wait, dsptch */
+#define AES_ROM_EV_BLOCK          0xfe6874   /* (code, parameter): one EVB queued by iasync, ev_mwait, its event */
+#define AES_ROM_CT_CHGOWN         0xfe49ba   /* (pd, rect): set_ctrl(rect), the mouse and keyboard to pd */
+/* The CONTROL MANAGER's leaves (Alcyon, `aes/wmupdate.h`), each read from its body. */
+#define AES_ROM_SET_CTRL          0xfe5008   /* (rect): the control rectangle copied in */
+#define AES_ROM_GET_CTRL          0xfe501c   /* (rect): ...and out */
+#define AES_ROM_GET_MOWN          0xfe5030   /* (&mouse, &keyboard): the two owners copied out */
+/* The form manager's hold on the screen (Alcyon, `aes/wmupdate.h`): the lock, the menu and the mouse taken. */
+#define AES_ROM_FM_OWN            0xfe718e   /* (take): nested; the first take saves and hands the screen to rlr */
 /* The utility layer's MEMORY and STRING helpers (hand 68000, `aes/strings.h`), each named from its body. */
 #define AES_ROM_MUL_DIV           0xfecb6e   /* m1 * m2 / d, rounded: `muls.w` by 2*m2, `divs.w`, +-1, `asr.w` */
 #define AES_ROM_SET_CONTRL_PTR    0xfecbc6   /* contrl[7..8] := the argument */
@@ -2087,6 +2116,12 @@
 #define AES_ROM_W_MOVE            0xfebf00   /* (window, &stop, rect): a moved window's image blitted, the gap out */
 #define AES_ROM_W_OWNS            0xfec39a   /* (window, orect, rect, out): the next visible rectangle over rect */
 #define AES_ROM_W_UNION           0xfec3ea   /* (orect, rect): the bounding box of a rectangle list */
+/* ...and its half that reaches the event layer (Alcyon, `aes/wmupdate.h`). */
+#define AES_ROM_W_SETACTIVE       0xfeba54   /* (): the top window's owner given the mouse, its work area the control */
+#define AES_ROM_W_REDRAW          0xfebe2a   /* (window, rect): a WM_REDRAW of what of rect it shows, to its owner */
+#define AES_ROM_W_UPDATE          0xfec026   /* (bottom, rect, top, moved): windows top..bottom redrawn under rect */
+#define AES_ROM_DRAW_CHANGE       0xfec0ca   /* (window, rect): a window moved, sized or topped, and drawn */
+#define AES_ROM_WM_OPCL           0xfec676   /* (window, rect, add): added to or taken out of the window tree */
 #define AES_ROM_WM_START          0xfec424   /* (): the window library set up, the desktop window 0 */
 /* The OBJECT LIBRARY's own helpers (gemoblib, all Alcyon, laid out after ob_change in the source's order). */
 #define AES_ROM_OB_FS             0xfea4b6   /* an object's flags into a word, its state answered */
@@ -2133,13 +2168,13 @@
 #define AES_ROM_EV_MULTI_OPCODE   25
 #define AES_ROM_EV_DCLICK         0xfe6c5e   /* ctx */
 #define AES_ROM_EV_DCLICK_OPCODE  26
-#define AES_ROM_MN_BAR            0xfe902a   /* ctx */
+#define AES_ROM_MN_BAR            0xfe902a   /* read: (tree, show): the bar set up and drawn, or none; post_button */
 #define AES_ROM_MN_BAR_OPCODE     30
-#define AES_ROM_DO_CHG            0xfe8c14   /* ctx: menu_icheck, menu_ienable, menu_tnormal */
+#define AES_ROM_DO_CHG            0xfe8c14   /* read: (tree, item, bits, set, redraw, chkdis): menu_icheck/ienable/tnormal */
 #define AES_ROM_DO_CHG_OPCODE     31
 #define AES_ROM_DO_CHG_OPCODE_32  32
 #define AES_ROM_DO_CHG_OPCODE_33  33
-#define AES_ROM_MN_REGISTER       0xfe91e2   /* ctx */
+#define AES_ROM_MN_REGISTER       0xfe91e2   /* read: (pid, name): an accessory's slot, or -1 the caller's name */
 #define AES_ROM_MN_REGISTER_OPCODE 35
 #define AES_ROM_OB_ADD            0xfea1ba   /* read: a child linked in as its parent's last */
 #define AES_ROM_OB_ADD_OPCODE     40
@@ -2171,9 +2206,9 @@
 #define AES_ROM_FM_KEYBD_OPCODE   55
 #define AES_ROM_FM_BUTTON         0xfe7346   /* ctx */
 #define AES_ROM_FM_BUTTON_OPCODE  56
-#define AES_ROM_GR_RUBBOX         0xfe85c6   /* ctx */
+#define AES_ROM_GR_RUBBOX         0xfe85c6   /* read: (x, y, wmin, hmin, &w, &h): gr_rubwind with poff gl_rzero */
 #define AES_ROM_GR_RUBBOX_OPCODE  70
-#define AES_ROM_GR_DRAGBOX        0xfe8640   /* ctx */
+#define AES_ROM_GR_DRAGBOX        0xfe8640   /* read: (w, h, x, y, bound, &x, &y): the box dragged inside bound */
 #define AES_ROM_GR_DRAGBOX_OPCODE 71
 #define AES_ROM_GR_MOVEBOX        0xfe8402   /* read: (w, h, sx, sy, dx, dy) gr_scale, gr_xor drawn and undrawn */
 #define AES_ROM_GR_MOVEBOX_OPCODE 72
@@ -2183,7 +2218,7 @@
 #define AES_ROM_GR_SHRINKBOX_OPCODE 74
 #define AES_ROM_GR_WATCHBOX       0xfe84ba   /* read: (tree, obj, in, out) the state toggled until the button rises */
 #define AES_ROM_GR_WATCHBOX_OPCODE 75
-#define AES_ROM_GR_SLIDEBOX       0xfe86fa   /* ctx */
+#define AES_ROM_GR_SLIDEBOX       0xfe86fa   /* read: (tree, parent, obj, vert): dragged; 0..1000 along it */
 #define AES_ROM_GR_SLIDEBOX_OPCODE 76
 #define AES_ROM_GR_MKSTATE        0xfe8768   /* read: xrat, yrat, the buttons, the shift state out through four pointers */
 #define AES_ROM_GR_MKSTATE_OPCODE 79
@@ -2195,19 +2230,19 @@
 #define AES_ROM_FS_INPUT_OPCODE   90
 #define AES_ROM_WM_CREATE         0xfec602   /* read: (kind, rect): the first free window claimed, -1 for none */
 #define AES_ROM_WM_CREATE_OPCODE  100
-#define AES_ROM_WM_OPEN           0xfec6da   /* ctx */
+#define AES_ROM_WM_OPEN           0xfec6da   /* read: (window, rect): wm_opcl(window, rect, 1) */
 #define AES_ROM_WM_OPEN_OPCODE    101
-#define AES_ROM_WM_CLOSE          0xfec6f0   /* ctx */
+#define AES_ROM_WM_CLOSE          0xfec6f0   /* read: (window): wm_opcl(window, &gl_rzero, 0) */
 #define AES_ROM_WM_CLOSE_OPCODE   102
 #define AES_ROM_WM_DELETE         0xfec706   /* read: (window): its record freed */
 #define AES_ROM_WM_DELETE_OPCODE  103
 #define AES_ROM_WM_GET            0xfec722   /* read: (window, field, out): wind_get (switch table $fefcde) */
 #define AES_ROM_WM_GET_OPCODE     104
-#define AES_ROM_WM_SET            0xfec83a   /* ctx */
+#define AES_ROM_WM_SET            0xfec83a   /* read: (window, field, words): wind_set (switch table $fefd16) */
 #define AES_ROM_WM_SET_OPCODE     105
 #define AES_ROM_WM_FIND           0xfeca4a   /* read: (x, y): ob_find over the window tree */
 #define AES_ROM_WM_FIND_OPCODE    106
-#define AES_ROM_WM_UPDATE         0xfeca68   /* ctx */
+#define AES_ROM_WM_UPDATE         0xfeca68   /* read: (code): the screen lock, or fm_own(code - 2) */
 #define AES_ROM_WM_UPDATE_OPCODE  107
 #define AES_ROM_WM_CALC           0xfecaac   /* read: (type, kind, x, y, w, h, &x, &y, &w, &h): a border added or taken */
 #define AES_ROM_WM_CALC_OPCODE    108

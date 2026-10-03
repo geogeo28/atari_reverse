@@ -84,9 +84,10 @@ def test_every_s_entry_is_a_row_and_every_row_an_s_entry(make_lists):
 
 
 def test_the_alcyon_entries_are_glue_tier3_counts(make_lists):
-    """The target-only Alcyon entries (`src/aes/obdraw.S`) are NOT transcriptions — no row, kept out of the `.S` list above —
-    and their `.globl`s are exactly the glue Tier 3 counts as such (`bench/tier3.py`, ALCYON_ENTRIES) — which Tier 3
-    derives from the list as `test/transcription.py` reads the makefile's line, held here to make's own expansion."""
+    """The target-only Alcyon entries (`src/aes/obdraw.S`, `src/aes/wmupdate.S`) are NOT transcriptions — no row, kept
+    out of the `.S` list above — and their `.globl`s are exactly the glue Tier 3 counts as such (`bench/tier3.py`,
+    ALCYON_ENTRIES) — which Tier 3 derives from the list as `test/transcription.py` reads the makefile's line, held here
+    to make's own expansion."""
     sources = make_lists["ALCYON_ENTRY_SOURCES"]
     assert sources and not set(sources) & set(make_lists["TRANSCRIBED_SOURCES"])
     assert sources == transcription.alcyon_entry_sources(), "test/transcription.py reads ALCYON_ENTRY_SOURCES otherwise"

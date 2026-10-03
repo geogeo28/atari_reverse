@@ -54,7 +54,8 @@ _INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # `gsx.h` includes `vdi/vdi.h`, so the VDI's constants are `known`: a define spelt as an alias of one resolves.
 AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h",
                                                    "aes/objdraw.h", "aes/obuser.h", "aes/obedit.h",
-                                                   "aes/evdoor.h", "aes/ctrl.h"))
+                                                   "aes/evdoor.h", "aes/ctrl.h", "aes/mnlib.h", "aes/apmsg.h",
+                                                   "aes/wmupdate.h"))
 CONSTANTS = layouts.parse_constants(AES_HEADERS, known=vdi.CONSTANTS)
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
@@ -430,6 +431,48 @@ def alcyon_object_hook(routines):
     effect)}` served through the register-carrying hook (`isr.REGISTERS_HOOK`), which `staged_call.h`'s
     `call_alcyon_object` — everyobj's routine — reaches on the host, and `call_alcyon_pointer` — sh_find's — too."""
     return functools.partial(isr.REGISTERS_HOOK.staged_routines, routines)
+
+
+def object_call_frame(registers):
+    """`call_alcyon_object`'s three slots back into the frame everyobj hands its routine: (tree, object, x, y)."""
+    packed = registers[isr.REGISTER["d1"]]
+    return (registers[isr.REGISTER["a0"]], signed(registers[isr.REGISTER["d0"]] & 0xFFFF), signed(packed >> 16),
+            signed(packed & 0xFFFF))
+
+
+# THE ROUTINES A TREE WALK IS HANDED BY VALUE (`staged_call.h`'s ALCYON_ROUTINE), each a C core over the frame everyobj
+# hands it, DECLARED HERE — once, for the batteries that run them and the walks that serve them alike — with the
+# arguments it takes of (tree, object, x, y): ob_draw's just_draw all four, newrect's mkrect and draw_change's newrect
+# the tree and the window.
+WALKED_ROUTINES = ("AES_ROM_JUST_DRAW", "AES_ROM_NEWRECT", "AES_ROM_MKRECT")
+declare_alcyon("AES_ROM_JUST_DRAW", None, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG, vdi.WORD_ARG, vdi.WORD_ARG))
+declare_alcyon("AES_ROM_NEWRECT", None, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG))
+declare_alcyon("AES_ROM_MKRECT", None, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG))
+
+
+def walked_routine_effects(names=WALKED_ROUTINES, lib=_lib):
+    """`{address: effect(buf, registers)}`: each walked routine of `names` served by `lib`'s C core over everyobj's
+    frame — the candidate a case calls in process, or the one a CHILD loaded (`aes_event.bind_in_a_child`), whose own
+    function is handed the signature declared above (`vdi.ALCYON`)."""
+    effects = {}
+    for name in names:
+        signature = vdi.ALCYON[name]
+        core = getattr(lib, routines.core_symbol(name))
+        if lib is not _lib:
+            core.argtypes, core.restype = list(signature.argtypes), signature.restype
+        effects[getattr(addrs, name)] = _walked_by(core, len(signature.argtypes) - 1)
+    return effects
+
+
+def _walked_by(core, taken):
+    return lambda buf, registers: core(buf, *object_call_frame(registers)[:taken])
+
+
+def walkers(*names):
+    """`alcyon_object_hook`'s map of the walked routines `names` (every one, by default), each by the candidate's C core:
+    what a case binds for the routines its C hands a tree walk."""
+    effects = walked_routine_effects(names or WALKED_ROUTINES)
+    return {address: (b"", effect) for address, effect in effects.items()}
 
 
 class _Passes:

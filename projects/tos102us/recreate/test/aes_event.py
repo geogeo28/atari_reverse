@@ -22,7 +22,7 @@ a child process, `refusal`):
     wait, and the dispatcher's guard the snapshot holds (`AES_INDISP`, a bare `rts` in dsptch) would answer "no event":
     an outcome no machine has. A process still READY there would YIELD (switch away and be switched back); no entry's
     answering path does (measured, `test_aes_event.py`), so that is refused too, by its own name;
-  * run past `NESTED_RUN_INSNS`;
+  * run past `NESTED_RUN_INSNS`, or within NESTED_RUN_MARGIN times of it (the cap is re-justified from that run);
   * touch the hardware — every stream of the nested run must be empty, since the candidate's ledgers never see it;
   * overflow the write ledger, which would lay back a partial run.
 
@@ -39,14 +39,23 @@ THE MACHINES: the state the ROM's own SCHEDULER leaves, never a poked list. The 
 loop (`AES_ROM_DISP_LOOP`: forker, then idle until a process is ready) with nothing running and both processes parked
 in their evnt_multi. So a running process is made the way the machine makes one: the event PD0 waits for is delivered
 — a key in the keyboard's ring (`pd0_running`), the left button pressed (`button_down`), each by the interrupt's own
-ROM code over the snapshot as it stands (`_interrupt`: rlr NULL, the dispatcher's guard set, as the machine takes
+ROM code over the snapshot as it stands (`_interrupt_over`: rlr NULL, the dispatcher's guard set, as the machine takes
 them) — and the dispatcher's loop run from where the snapshot waits, its forker posting the event, idle moving PD0 to
 the ready list, switchto entering it; the run stops where PD0 comes out of its evnt_multi (`AES_ROM_EV_MULTI_RETURN`),
 its waits cancelled by ev_multi's own tail. `machine()` then hides the cursor as the running process would (the ROM's
-gsx_moff). Every other derivation runs the ROM's code over such a machine and keeps only what the run wrote
-(`case.written_by`), named with the routine that made it — and none may reach the dispatcher (`derived`).
+gsx_moff); `shown_machine()` leaves it as the snapshot shows it. Every other derivation runs the ROM's code over such a
+machine and keeps only what the run wrote (`case.written_by`), named with the routine that made it — and none may reach
+the dispatcher (`derived`).
+
+INTERRUPTS AT A DOOR ENTRY (`interrupted`): the mouse moved or the button changed WHILE a routine waits — what one run
+cannot reach — delivered as the machine takes them, at the entry of a routine's k-th door call, on both shores: the
+ROM's own interrupt code run over the ROM's memory there, its writes laid into the ROM's run and into the C's image at
+its k-th call alike — the C's image first checked to hold what the ROM's memory held where they land (`_laid_into`);
+the C (in a child) then held to the ROM byte for byte. A case that BLOCKS is held the same way to the ROM's memory at
+the entry of the call that blocks (`refused_where_the_rom_blocks`).
 """
 import ast
+import atexit
 import ctypes
 import functools
 import operator
@@ -101,10 +110,44 @@ def _ap_rdwr_inputs(image, code, process, length, buffer):
     return (code, process, length, _pointee(image, buffer, length) if code == aes.AP_RDWR_WRITE else bool(buffer))
 
 
+# The semaphore calls (tak_flag, unsync) are handed the semaphore, read whole; ev_block its code and parameter as they
+# are (a semaphore's address for the mutex wait, a value for others); ct_chgown the new owner and the control
+# rectangle, read.
+SPB_BYTES = aes.header_constants("wmupdate.h")["SPB_BYTES"]
+SEMAPHORE_FRAME = struct.Struct(">I")
+EV_BLOCK_FRAME = struct.Struct(">hI")
+CT_CHGOWN_FRAME = struct.Struct(">II")
+
+
+def _semaphore_inputs(image, semaphore):
+    return (_pointee(image, semaphore, SPB_BYTES),)
+
+
+def _ev_block_inputs(image, code, parameter):
+    return (code, parameter)
+
+
+def _ct_chgown_inputs(image, owner, rect):
+    return (owner, _pointee(image, rect, aes.GRECT_BYTES))
+
+
+# post_button is handed a PD, the buttons' state and the clicks, each as it is.
+POST_BUTTON_FRAME = struct.Struct(">Ihh")
+
+
+def _post_button_inputs(image, process, button, clicks):
+    return (process, button, clicks)
+
+
 # THE ENTRIES, one row each: the ROM routines the door serves — every C call of the event layer, keyed by its address
 # (`aes/evdoor.h`'s wrappers) — each with its Alcyon frame and how its arguments are read.
 ENTRY_FRAMES = {"AES_ROM_EV_MULTI": (EV_MULTI_FRAME, _ev_multi_inputs),
-                "AES_ROM_AP_RDWR": (AP_RDWR_FRAME, _ap_rdwr_inputs)}
+                "AES_ROM_AP_RDWR": (AP_RDWR_FRAME, _ap_rdwr_inputs),
+                "AES_ROM_TAK_FLAG": (SEMAPHORE_FRAME, _semaphore_inputs),
+                "AES_ROM_UNSYNC": (SEMAPHORE_FRAME, _semaphore_inputs),
+                "AES_ROM_EV_BLOCK": (EV_BLOCK_FRAME, _ev_block_inputs),
+                "AES_ROM_CT_CHGOWN": (CT_CHGOWN_FRAME, _ct_chgown_inputs),
+                "AES_ROM_POST_BUTTON": (POST_BUTTON_FRAME, _post_button_inputs)}
 ENTRY_NAMES = tuple(ENTRY_FRAMES)
 ENTRIES = tuple(getattr(addrs, name) for name in ENTRY_NAMES)
 _FRAME_OF = {getattr(addrs, name): frame for name, frame in ENTRY_FRAMES.items()}
@@ -127,11 +170,13 @@ def handed_at(entry, sp, memory):
 
 
 # ---- what a nested run may spend -----------------------------------------------------------------------------------
-# A nested run's cap. The deepest the batteries reach — every one of them a call the event layer answers — is ap_rdwr
-# handing a message to PD0's parked wait, 933 instructions (`test_aes_event.py` names it, beside ev_multi answering a
-# mouse rectangle, 806, and holds the cap at NESTED_RUN_MARGIN times the deeper); the margin is for the event layer's
-# longer answering paths a later caller stages.
-NESTED_RUN_INSNS = 20_000
+# A nested run's cap, and the margin EVERY nested run is held to under it — at run time (`nested_run`), so no table of
+# the deepest calls can go stale under it. The deepest the batteries reach, every one a call the event layer answers, is
+# mn_do's first ev_multi over its two rectangles with the mouse moved onto a title by an interrupt at its entry, 1,697
+# instructions (`test_aes_event.DEEPEST_CALLS` names it beside each entry's deepest); 20 times that is 33,940, and the
+# cap is 40,000, a round figure with room above that. The margin is for the event layer's longer answering paths a later
+# caller stages: a run inside it is refused by name, the cap to be raised from that run.
+NESTED_RUN_INSNS = 40_000
 NESTED_RUN_MARGIN = 20
 # The hook's answer: served, its D0 in the out-parameter, or refused (AddressHook's REFUSED_ANSWER, 0).
 SERVED = 1
@@ -165,6 +210,9 @@ def nested_run(routine, image, frame, io_seed=None):
     touched = [name for name in HARDWARE_STREAMS if regs[name]]
     assert not touched, f"the event door: {routine:#x} touched the hardware ({', '.join(touched)}) — the door serves none"
     assert not regs["writes_truncated"], f"the event door: {routine:#x} overflowed the write ledger"
+    assert regs["ninsns"] * NESTED_RUN_MARGIN <= NESTED_RUN_INSNS, (
+        f"the event door: {routine:#x} spent {regs['ninsns']} instructions — inside NESTED_RUN_INSNS' margin of "
+        f"{NESTED_RUN_MARGIN}: raise the cap, from this run")
     return Nested(writes, regs["d0"], regs["ninsns"])
 
 
@@ -193,9 +241,21 @@ def _in_the_recorded_pass(call):
         HANDED.append(call)
 
 
+# THE LINE-F MASK WORD IS NOT LAID BACK. It is the Line-F handler's own self-patched `movem` mask
+# (`aes.LINE_F_MASK_WINDOW`): every NON-EMPTY masked Alcyon return of the nested run rewrites it (an empty one, `f001`,
+# skips the store: $fee8e2 `andi.w #$ffe` / $fee8e6 `beq`), and the C — no Line-F return of its own — never does.
+# Where it ends differs BY NATURE: the ROM's caller makes its OWN non-empty masked return after the door call (mn_bar's,
+# gr_rubwind's wm_update's: the word holds that mask), the C makes none (the word would hold the door's last). Tier 1
+# drops it where the ROM's run stores it and Tier 3 drops it with each row's undropped COMPANION (`aes.undropped`),
+# which stages it at the value the ROM's run leaves: leaving the C's image as it found it is what lets the companion
+# still see a C that writes the word itself — laid back, every door row whose routine returns by a mask after its last
+# door call would differ there in the companion (measured: mn_bar, gr_rubbox, mn_do ...).
+LINE_F_MASK_BYTES = frozenset(at for lo, hi, _why in aes.LINE_F_MASK_WINDOW for at in range(lo, hi))
+
+
 def _served(routine, io_seed, noted=_in_the_recorded_pass):
     """The effect serving `routine`: what it was handed `noted` (`HANDED`, in the recorded pass), the nested run over
-    the candidate's image, laid back, its D0 answered."""
+    the candidate's image, laid back (the Line-F mask word aside, above), its D0 answered."""
     def serve(buf, frame, frame_bytes, answer):
         image, frame = ctypes.string_at(buf, IMAGE_BYTES), ctypes.string_at(frame, frame_bytes)
         noted(handed(routine, frame, image))
@@ -205,7 +265,8 @@ def _served(routine, io_seed, noted=_in_the_recorded_pass):
             print(refused, file=sys.stderr)         # the core halts next: this is its reason, in the child's stderr
             raise
         for at, value in nested.writes.items():
-            buf[at] = value
+            if at not in LINE_F_MASK_BYTES:
+                buf[at] = value
         answer[0] = nested.answer
         return SERVED
     return serve
@@ -222,23 +283,47 @@ def event_hook(io_seed=None, entries=ENTRIES):
     return functools.partial(EVENT_DOOR.staged, {entry: _served(entry, io_seed) for entry in entries}, _describe_refusals)
 
 
-def door_hook(drawing, io_seed=None):
+def door_hook(drawing, io_seed=None, objects=None):
     """The binding a door user's case opens: the door alone, or with the VDI's cores (`aes_gsx.vdi_hook`) too for one
-    that `drawing`."""
-    return aes.doors(aes_gsx.vdi_hook, event_hook(io_seed)) if drawing else event_hook(io_seed)
+    that `drawing` — and with the routines a tree walker it reaches is handed (`objects`, `aes.alcyon_object_hook`'s
+    `{address: (stub, effect)}`: ob_draw's just_draw, draw_change's newrect)."""
+    hooks = ((aes_gsx.vdi_hook,) if drawing else ()) + (event_hook(io_seed),)
+    hooks += (aes.alcyon_object_hook(objects),) if objects else ()
+    return aes.doors(*hooks) if len(hooks) > 1 else hooks[0]
 
 
 # THE SAME DOOR IN A CHILD PROCESS (`vdi_helpers.refusal_over`'s `bind`), where a refusal ends the run and the case reads
 # its stderr: every hook a door user's core reaches bound for its one call with no pass to open — the event door, every
-# entry served and any other refused, and the VDI's cores a drawing routine calls through `recreate_call_vector`
-# (`aes_gsx.vdi_functions`) — into `lib`, the candidate the CHILD loaded and calls (which need not be the one its
-# `harness` import would load: a pointer left NULL there is a crash, not a refusal). The frames the door was handed
-# are printed with a refusal (`HANDED_LINE`), for the case to read back (`handed_in`).
+# entry served and any other refused; the VDI's cores a drawing routine calls through `recreate_call_vector`
+# (`aes_gsx.vdi_functions`); and the register-carrying hook (`_child_walkers`) — into `lib`, the candidate the CHILD
+# loaded and calls (which need not be the one its `harness` import would load: a pointer left NULL there is a crash,
+# not a refusal). The frames the door was handed are printed with a refusal (`HANDED_LINE`), for the case to read back
+# (`handed_in`).
 _TEST_DIR = str(Path(__file__).resolve().parent)
-CHILD_BINDING = f"import sys; sys.path.insert(0, {_TEST_DIR!r}); import aes_event; aes_event.bind_in_a_child(lib)"
 _CHILD_TRAMPOLINES = []
 HANDED_LINE = "the door was handed: "
 CHILD_VDI_REFUSED = 3                  # the child's exit status when a VDI call it was not staged for is refused
+# ...when the register hook hands it a routine it does not serve: apart from `vdi_helpers.CHILD_ORPHANED`, its parent
+# gone.
+CHILD_OBJECT_REFUSED = 5
+# ...when the C's image does not hold, at an address an interrupt's delivery writes, what the ROM's memory held there
+# before it (`_laid_into`): the delta is then not the machine's for the C.
+CHILD_DELIVERY_REFUSED = 6
+
+
+def child_binding(*, objects=False, entries=None, interrupts=None, before=""):
+    """The `bind` source of a door user's child (`bind_in_a_child`'s arguments, as source): `objects` serves the walked
+    routines, `entries` narrows the door's, `interrupts` delivers interrupts at door calls (`interrupted`), and `before`
+    is source the child runs first (a case's own change to this module, e.g. a smaller cap)."""
+    arguments = ["lib"]
+    arguments += [f"entries={tuple(entries)!r}"] if entries is not None else []
+    arguments += ["objects=True"] if objects else []
+    arguments += [f"interrupts={interrupts!r}"] if interrupts is not None else []
+    return (f"import sys; sys.path.insert(0, {_TEST_DIR!r}); import aes_event; {before}"
+            f"aes_event.bind_in_a_child({', '.join(arguments)})")
+
+
+CHILD_BINDING = child_binding()
 
 
 def _child_vdi(buf, routine, argument):
@@ -253,7 +338,62 @@ def _child_vdi(buf, routine, argument):
         os._exit(CHILD_VDI_REFUSED)
 
 
-def bind_in_a_child(lib, entries=ENTRIES):
+def _refused_by_the_register_hook(routine):
+    """Why a child refuses `routine`, handed through the register hook: a walked routine it was bound without
+    `objects`, or one of the routines an application or the OS hands by value, which no child serves."""
+    walked = {getattr(addrs, name): name for name in aes.WALKED_ROUTINES}
+    if routine in walked:
+        return (f"the candidate handed a tree walk {walked[routine]} ({routine:#x}), which this child serves only when "
+                f"bound with `objects`")
+    return (f"the candidate called {routine:#x} through the register hook — no walked routine "
+            f"({', '.join(aes.WALKED_ROUTINES)}) but a routine handed by value (a USERDEF's far_call, sh_find's routine, "
+            f"the mouse interrupt's USER_BUT, the fill's SEEDABORT, a Line-A entry), which no child serves")
+
+
+def _child_walkers(lib, objects):
+    """The register-carrying hook in a child, ALWAYS bound: with `objects`, every routine a tree walk is handed by
+    value served by the CHILD's own core (`aes.walked_routine_effects`); any other routine — every one, without
+    `objects` — ENDS the child by name (`_refused_by_the_register_hook`). Left as the child's `isr` import binds it,
+    the hook would refuse such a call SILENTLY (no pass is open, and the hook is `void`): the walk would draw nothing,
+    and the case compare a screen the C never drew (measured: mn_do's drop-down, absent)."""
+    effects = aes.walked_routine_effects(lib=lib) if objects else {}
+
+    def serve(buf, routine, registers):
+        effect = effects.get(routine)
+        if effect is None:
+            print(_refused_by_the_register_hook(routine), file=sys.stderr, flush=True)
+            os._exit(CHILD_OBJECT_REFUSED)
+        effect(buf, registers)
+    return isr.CALL_VECTOR_REGISTERS(serve)
+
+
+def _laid_into(buf, delivery):
+    """An interrupt's `delivery` (`deliveries`: `(found, wrote)`) laid into the candidate's image `buf` (a C pointer,
+    which takes no slice store) at its door call. CHECKED FIRST: the delta is the ROM's interrupt code run over the
+    ROM's memory, so it is the machine's for the C only where the C's image holds what the ROM's memory held — `found`,
+    at every address the delivery writes (what neither shore compares aside, `_NOT_COMPARED`); laid over a C that
+    diverged there, it would erase the divergence. A mismatch ENDS the child by name. The Line-F mask word is not laid,
+    as `_served` lays none: the C's image keeps the word as it found it."""
+    base = ctypes.addressof(buf.contents)
+    found, wrote = delivery
+    differ = [at + offset for at, data in found.items() for offset, value in enumerate(data)
+              if at + offset not in _NOT_COMPARED and ctypes.string_at(base + at + offset, 1)[0] != value]
+    if differ:
+        print(f"the event door: the C's image differs from the ROM's memory where an interrupt is delivered, at "
+              f"{', '.join(f'{at:#x}' for at in differ[:COMPARED_DIFFERENCES_SHOWN])} — the delivery would erase it",
+              file=sys.stderr, flush=True)
+        os._exit(CHILD_DELIVERY_REFUSED)
+    for at, data in wrote.items():
+        for offset, value in enumerate(data):
+            if at + offset not in LINE_F_MASK_BYTES:
+                ctypes.memset(base + at + offset, value, 1)
+
+
+def bind_in_a_child(lib, entries=ENTRIES, objects=False, interrupts=None):
+    """`child_binding`'s call: the door, the VDI's cores and the walked routines bound into `lib`. `interrupts`
+    (`deliveries`' `{ordinal: (found, wrote)}`) lays each interrupt's effect into the image at the door call of that
+    ordinal, before it is served (`_laid_into`) — and the frames handed are printed at the child's exit too, so a call
+    that RETURNS reports them."""
     calls = []
     effects = {entry: _served(entry, None, calls.append) for entry in entries}
 
@@ -261,16 +401,26 @@ def bind_in_a_child(lib, entries=ENTRIES):
         if routine not in effects:
             print(_describe_refusals([routine]), file=sys.stderr)
             return REFUSED_ANSWER
+        if len(calls) in (interrupts or {}):
+            _laid_into(buf, interrupts[len(calls)])
         try:
             return effects[routine](buf, frame, frame_bytes, answer)
         except Exception as refused:   # a callback cannot raise into C (ctypes would answer an undefined word): refused
             if not isinstance(refused, AssertionError):
                 print(f"the event door: serving {routine:#x} raised {refused!r}", file=sys.stderr)
-            print(HANDED_LINE + repr([tuple(call) for call in calls]), file=sys.stderr)
+            print(_handed_line(calls), file=sys.stderr)
             return REFUSED_ANSWER
-    _CHILD_TRAMPOLINES.extend((PROTOTYPE(dispatch), isr.CALL_VECTOR(_child_vdi)))
-    bind_pointer(HOOK_SYMBOL, _CHILD_TRAMPOLINES[-2], lib)
-    bind_pointer(isr.CALL_VECTOR_SYMBOL, _CHILD_TRAMPOLINES[-1], lib)
+    door, vdi_cores, walkers = PROTOTYPE(dispatch), isr.CALL_VECTOR(_child_vdi), _child_walkers(lib, objects)
+    _CHILD_TRAMPOLINES.extend((door, vdi_cores, walkers))
+    bind_pointer(HOOK_SYMBOL, door, lib)
+    bind_pointer(isr.CALL_VECTOR_SYMBOL, vdi_cores, lib)
+    bind_pointer(isr.REGISTERS_HOOK_SYMBOL, walkers, lib)
+    if interrupts is not None:         # a refusal aborts the core, so this runs only for a call that returned
+        atexit.register(lambda: print(_handed_line(calls), file=sys.stderr))
+
+
+def _handed_line(calls):
+    return HANDED_LINE + repr([tuple(call) for call in calls])
 
 
 def handed_in(stderr):
@@ -279,12 +429,37 @@ def handed_in(stderr):
     return [Handed(*call) for call in ast.literal_eval(line.removeprefix(HANDED_LINE))]
 
 
-def refusal(name, pokes, values, *, bind=CHILD_BINDING, io_seed=None):
+def refusal(name, pokes, values, *, bind=CHILD_BINDING, io_seed=None, seconds=vdi_helpers.CHILD_SECONDS, answered=False):
     """What `addrs.<name>`'s core says over `pokes` with the frame `values`, in a CHILD process with the door bound
-    (`vdi_helpers.refusal_over`): `(returncode, stderr, image)`. The values typed as the routine's declared signature."""
-    argtypes = vdi.ALCYON[name].argtypes[1:]
-    arguments = [(f"ctypes.{argtype.__name__}", str(value)) for argtype, value in zip(argtypes, values)]
-    return vdi_helpers.refusal_over(routines.core_symbol(name), pokes, io_seed, arguments=arguments, bind=bind)
+    (`vdi_helpers.refusal_over`): `(returncode, stderr, image)`. The values typed as the routine's declared signature;
+    a child still running after `seconds` raises `subprocess.TimeoutExpired` (a core that loops where the ROM ends).
+    `answered`: a core that returns prints its answer, at its declared width (`vdi_helpers.answer_in`)."""
+    signature = vdi.ALCYON[name]
+    arguments = [(f"ctypes.{argtype.__name__}", str(value)) for argtype, value in zip(signature.argtypes[1:], values)]
+    restype = f"ctypes.{signature.restype.__name__}" if answered and signature.restype else None
+    return vdi_helpers.refusal_over(routines.core_symbol(name), pokes, io_seed, arguments=arguments, bind=bind,
+                                    seconds=seconds, restype=restype)
+
+
+# A DOOR USER'S C RUN FIRST IN A CHILD: a core that loops where the ROM's run ends (each ev_multi it makes answered at
+# once, the loop never left) would hang the case in-process until the watchdog ended the worker — a crash, no failure.
+# In a child it is a timeout, and the case FAILS by it (`refusal`'s `seconds`, far above the measured child's 2-4 s).
+CHILD_RETURN_SECONDS = 30
+# The guards that returned, by (routine, frame, machine, objects): one child per distinct call in a worker — a case run
+# both directly and through its Line-F word is the same C call twice.
+_RETURNED_IN_A_CHILD = set()
+
+
+def returns_in_a_child(name, values, pokes, *, objects=False, seconds=CHILD_RETURN_SECONDS):
+    """`addrs.<name>`'s core over `pokes` with the frame `values` RETURNS in a child (`refusal`, the walked routines
+    served with `objects`) — the guard a door user's case runs before its in-process differential (`run_guarded`)."""
+    guarded = (name, tuple(values), bool(objects), tuple((at, bytes(data)) for at, data in sorted(pokes.items())))
+    if guarded in _RETURNED_IN_A_CHILD:
+        return
+    returncode, stderr, _image = refusal(name, pokes, values, bind=child_binding(objects=bool(objects)),
+                                         seconds=seconds)
+    assert returncode == 0, stderr
+    _RETURNED_IN_A_CHILD.add(guarded)
 
 
 # ---- the ROM's own calls of the door's entries: its run WATCHED ------------------------------------------------------
@@ -333,29 +508,34 @@ def run_watched(memory, entry, watch, io_seed=None):
     door (`emu.run_bench`, `rom_bench.watched`), WATCHED by `watch` (`DoorStops`): the run's result, or None for a run
     the watch ended where it blocks (`Blocked`). The same run as `emu.run`'s, instruction for instruction, held to what
     a derivation is — under DERIVATION_INSNS by DERIVATION_MARGIN, refused if the model could not serve it; `memory` is
-    its own, written in place."""
+    its own, written in place. Vetted HOWEVER the run ends: a watch that ends it early by raising (a run stopped at an
+    entry, `_AtTheEntry`) leaves a prefix a case may build on, held to the same refusals and margin."""
     try:
         result = emu.run_bench(memory, entry, case.long_in(memory, abi.FIRST_ARG), emu.STACK_TOP, emu.SENTINEL,
                                max_insns=DERIVATION_INSNS, door=watch.first, io_seed=io_seed)
         result = rom_bench.watched(result, entry, watch, memory, max_insns=DERIVATION_INSNS)
     except Blocked:
         result = None
-    rom_bench.vet_the_run_just_made(f"the ROM's watched run of {entry:#x}")
-    if result:
-        _vet_the_margin(entry, result["ninsns"])
+    finally:
+        rom_bench.vet_the_run_just_made(f"the ROM's watched run of {entry:#x}")
+        _vet_the_margin(entry, _instructions_run())
     return result
+
+
+def _instructions_run():
+    """The instructions the bench run just ended — at its end or at the stop a watch raised in — has spent: the
+    oracle's running total (what each segment's result reports), read because a run a watch ended by raising hands
+    back no result."""
+    return emu._LIB.osh_num_insns()
 
 
 def rom_watched(name, arguments, pokes, io_seed=None, *, blocks=False):
     """The ROM's own `addrs.<name>`, run over `pokes` with the frame `arguments`, WATCHED at the door's entries
-    (`DoorStops`): `(calls, memory, returned)` — what it hands each entry it calls, in order (`handed_at`: each frame
-    where its Line-F word left it, read through its pointers as it stands at the call), the memory it left, and whether
-    it returned (False: `blocks`, and it reached the dispatcher inside a call)."""
-    calls = []
-    memory = bytearray(make_image(aes.staged(name, arguments, pokes)))
-    result = run_watched(memory, getattr(addrs, name),
-                         DoorStops(ENTRIES, ROM_RETURNS, lambda pc, sp, memory: calls.append(handed_at(pc, sp, memory)),
-                                   blocks=blocks), io_seed)
+    (`_watched_through`, nothing delivered): `(calls, memory, returned)` — what it hands each entry it calls, in order
+    (`handed_at`: each frame where its Line-F word left it, read through its pointers as it stands at the call), the
+    memory it left (at the entry of the blocking call, for one that blocks), and whether it returned (False: `blocks`,
+    and it reached the dispatcher inside a call)."""
+    calls, memory, result = _watched_through(name, arguments, pokes, {}, io_seed=io_seed, blocks=blocks)
     return calls, memory, result is not None
 
 
@@ -398,24 +578,35 @@ def savptr_in_the_band():
 POISON_STEERS_THE_EVENT_LAYER = {"poison": False}
 
 
-def run_event(name, arguments, pokes, *, drawing=False, io_seed=None, dropped_windows=DOOR_DROPS, **kwargs):
-    """`aes.run_function` of `addrs.<name>` over `pokes`, the event door bound (and the VDI's cores, `drawing`), the
-    mask word and the trap's saved registers dropped where the ROM's run stores them, unpoisoned (above) — and every
-    frame the candidate handed the door compared with the ROM's own call's."""
+def run_event(name, arguments, pokes, *, drawing=False, io_seed=None, dropped_windows=DOOR_DROPS, objects=None,
+              **kwargs):
+    """`aes.run_function` of `addrs.<name>` over `pokes`, the event door bound (and the VDI's cores, `drawing`, and a
+    walker's routines, `objects`: `door_hook`), the mask word and the trap's saved registers dropped where the ROM's
+    run stores them, unpoisoned (above) — and every frame the candidate handed the door compared with the ROM's own
+    call's."""
     HANDED.clear()
-    result = aes.run_function(name, arguments, pokes, hook=door_hook(drawing, io_seed), io_seed=io_seed,
+    result = aes.run_function(name, arguments, pokes, hook=door_hook(drawing, io_seed, objects), io_seed=io_seed,
                               dropped_windows=dropped_windows, **{**POISON_STEERS_THE_EVENT_LAYER, **kwargs})
     _vet_the_frames_handed(name, arguments, pokes, io_seed)
     return result
 
 
-def register(label, name, arguments, pokes, *, drawing=False, io_seed=None):
+def run_guarded(name, arguments, pokes, *, objects=None, **kwargs):
+    """A door user's case: its C FIRST IN A CHILD — a PRECONDITION (`returns_in_a_child`, the walked routines served
+    there when `objects` names any): a core that loops where the ROM's run ends fails the case by a timeout, where
+    in-process it would hang the worker — then the differential (`run_event`, `objects` and the rest its)."""
+    returns_in_a_child(name, arguments, pokes, objects=bool(objects))
+    return run_event(name, arguments, pokes, objects=objects, **kwargs)
+
+
+def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, objects=None, answer_compared=True):
     """One priced `VERIFIED_CASES` row of a door user, named `<core>, <label>` (`aes.register`: the mask word staged at
     the value the run leaves, dropped at Tier 3 with its companion) — over `pokes` with `savptr` moved into the stack
     band, so the trap's save lands where neither the row nor its companion compares it and Tier 3 drops nothing else.
-    The cost is the same: the trap saves the same frame, elsewhere."""
-    return aes.register(label, name, arguments, merge_pokes(pokes, savptr_in_the_band()), hook=door_hook(drawing, io_seed),
-                        io_seed=io_seed)
+    The cost is the same: the trap saves the same frame, elsewhere. `objects` and `answer_compared` as `run_event`'s
+    and `aes.register`'s."""
+    return aes.register(label, name, arguments, merge_pokes(pokes, savptr_in_the_band()),
+                        hook=door_hook(drawing, io_seed, objects), io_seed=io_seed, answer_compared=answer_compared)
 
 
 # ---- the machines, each the ROM's own -----------------------------------------------------------------------------------
@@ -429,10 +620,11 @@ WINDOW_RECT_AT = BAND_AT + 0x4         # the GRECT wm_create and wm_open are han
 MESSAGE_AT = BAND_AT + 0x10            # a message buffer
 MESSAGE_BYTES = aes.header_constants("apmsg.h")["AP_MSG_BYTES"]
 assert MESSAGE_AT + MESSAGE_BYTES <= BAND_AT + BAND_BYTES
-# Each derivation's budget, and the margin every derivation is held to under it (`_rom_run`): the deepest of them, a
-# window moved by the ROM's wm_set (`test_aes_wmlib.moved`, which `test_aes_event.py` runs under the margin), measured at
-# 181,233 instructions — 5.5 times under.
-DERIVATION_INSNS = 1_000_000
+# Each derivation's budget, and the margin every derivation is held to under it (`_rom_run`, and the ROM's watched runs):
+# the deepest of them, the ROM's draw_change of a lower window moved and resized, watched for its door calls
+# (`test_aes_wm_update.deepest_derivation()`, which `test_aes_event.py` runs under the margin), measured at 244,097
+# instructions — 6.1 times under.
+DERIVATION_INSNS = 1_500_000
 DERIVATION_MARGIN = 5
 
 
@@ -462,14 +654,6 @@ def derived(entry, pokes, regs=None, frame=b""):
         f"the derivation's run of {entry:#x} reached the dispatcher (dsptch, {addrs.AES_ROM_DSPTCH:#x}): it would "
         f"switch processes")
     return case.written_by(writes), final, regs_out
-
-
-def _interrupt(entry, pokes, regs=None):
-    """What an INTERRUPT's ROM code `entry` WROTE over the snapshot and `pokes` as they stand — no lever beneath them:
-    the machine takes an interrupt with whatever process state it has (the snapshot's: rlr NULL, the dispatcher's guard
-    set) — and the run's final image."""
-    final, writes, _regs = _rom_run(make_image(pokes), entry, regs)
-    return case.written_by(writes), final
 
 
 def scheduler_state(image, pd):
@@ -514,28 +698,84 @@ def keys(*scancodes, onto=None):
     """The IKBD ring holding a key per make code of `scancodes`, unread, over `onto` (the snapshot by default): the
     BIOS's own keyboard handler run once per key from its scancode arm (KBD_SCANCODE) in the state the ACIA interrupt
     reaches it in — D0 the byte, A0 the keyboard's ring (what `acia_take_byte` hands it), A5 the handler's base — the
-    ASCII its own Keytbl lookup. The event layer polls the ring through the VDI on every ev_multi. A delta, to lay over
-    `onto`."""
-    state = {}
+    ASCII its own Keytbl lookup — each an interrupt (`_interrupt_over`) over whatever process state `onto` holds (the
+    snapshot's: rlr NULL, the dispatcher's guard set). The event layer polls the ring through the VDI on every
+    ev_multi. A delta, to lay over `onto`."""
+    image, written = bytearray(make_image(onto or {})), {}
     for scancode in scancodes:
-        delta, _final = _interrupt(addrs.KBD_SCANCODE, merge_pokes(onto, state),
-                                   {"d0": scancode, "a0": addrs.IOREC_IKBD, "a5": ACIA_HANDLER_A5})
-        state = merge_pokes(state, delta)
-    return state
+        written = merge_pokes(written, _interrupt_over(image, addrs.KBD_SCANCODE,
+                                                       {"d0": scancode, "a0": addrs.IOREC_IKBD, "a5": ACIA_HANDLER_A5}))
+    return written
+
+
+def woken_by_a_key(onto=None):
+    """PD0 woken by Return (`keys`) — the key the desk's evnt_multi waits for — and the dispatcher's loop run until PD0
+    comes out of that evnt_multi with it (`_woken`), over `onto` (the snapshot as it waits, by default): what an
+    interrupt delivered before the key (a mouse moved, `mouse_moved_to`) is taken by the same forker. A delta, the
+    key's and `onto`'s pokes in it."""
+    return _woken(merge_pokes(onto, keys(RETURN_KEY, onto=onto)))
 
 
 @functools.cache
 def pd0_running():
-    """PD0 RUNNING, as the scheduler makes it: Return pressed (`keys`) — the key the desk's evnt_multi waits for — and
-    the dispatcher's loop run until PD0 comes out of that evnt_multi with it (`_woken`): PD0 alone on the ready list
-    and off the not-ready list, PD_STAT 0, its waits cancelled, the dispatcher's guard cleared by switchto, PD1 still
-    parked. A delta, to lay over a machine."""
-    return _woken(keys(RETURN_KEY))
+    """PD0 RUNNING, as the scheduler makes it (`woken_by_a_key`, over the snapshot): PD0 alone on the ready list and off
+    the not-ready list, PD_STAT 0, its waits cancelled, the dispatcher's guard cleared by switchto, PD1 still parked.
+    A delta, to lay over a machine."""
+    return woken_by_a_key()
+
+
+# A RUNNING PROCESS PARKS: a call of its that reaches dsptch saves its context in its UDA and enters the dispatcher's
+# loop. `parked` makes that call where the process's own would run — on its OWN supervisor stack, below the SP it last
+# parked with, where nothing live lies — and stops where the loop begins, keeping all it wrote: its frames too, which
+# it comes back out through when it is woken (`_woken`).
+PARKED_FRAME_ROOM = 32                 # below that SP: the return slot and the call's frame (ev_multi's, 26 bytes)
+
+
+COMPARED_BLOCK_BYTES = 0x1000          # images compared a block at a time, bytewise only inside a block that differs
+
+
+def _differing_addresses(one, other):
+    """The addresses two images (bytes-like, of one size) differ at, in order."""
+    one, other = bytes(one), bytes(other)
+    return [at for block in range(0, len(one), COMPARED_BLOCK_BYTES)
+            if one[block:block + COMPARED_BLOCK_BYTES] != other[block:block + COMPARED_BLOCK_BYTES]
+            for at in range(block, min(block + COMPARED_BLOCK_BYTES, len(one))) if one[at] != other[at]]
+
+
+def _changed(before, after):
+    """The bytes `after` differs from `before` at, as pokes."""
+    return {at: bytes([after[at]]) for at in _differing_addresses(before, after)}
+
+
+def parked(entry, frame, onto):
+    """`onto` (a process RUNNING) continued by its call of the ROM's `entry` with the Alcyon `frame`, which PARKS it:
+    the run stopped where the dispatcher's loop begins (`AES_ROM_DISP_LOOP`), the process off the ready list. A delta,
+    `onto`'s pokes in it."""
+    image = make_image(onto)
+    pd = case.long_in(image, aes.AES_RLR) & OS_BUS_ADDR_MASK
+    sp = case.long_in(image, case.long_in(image, pd + aes.PD_UDA) + aes.UDA_SUPER_SP) - PARKED_FRAME_ROOM
+    assert LONG_BYTES + len(frame) <= PARKED_FRAME_ROOM, "the frame does not fit below the process's last SP"
+    memory = bytearray(image)
+    memory[sp + LONG_BYTES:sp + LONG_BYTES + len(frame)] = frame
+    first = int.from_bytes(frame[:LONG_BYTES].ljust(LONG_BYTES, b"\0"), "big")
+    try:
+        result = emu.run_bench(memory, entry, first, sp, emu.SENTINEL, max_insns=DERIVATION_INSNS,
+                               door={addrs.AES_ROM_DISP_LOOP})
+    finally:
+        emu.bench_abort()
+    rom_bench.vet_the_run_just_made(f"the parking run of {entry:#x}")
+    assert result["status"] == emu.BENCH_DOOR, f"the call of {entry:#x} returned: the process did not park"
+    _vet_the_margin(entry, result["ninsns"])
+    assert pd not in aes.list_of(memory, aes.AES_RLR), f"the call of {entry:#x} left its process ready"
+    return merge_pokes(onto, _changed(image, memory))
 
 
 LEFT_BUTTON = 1                        # the AES's record of the buttons down (AES_BUTTON): a bit each, left bit 0
 MOUSE_PACKET_HEADER = vdi_mouse.MOUSE_H["MOUSE_PACKET_HEADER_MASK"]   # a relative packet, no button down
 MOUSE_PACKET_LEFT_BUTTON = 0x02        # ...the left button down: bit 1 of the header's MOUSE_PACKET_BUTTONS_MASK
+MOUSE_PACKET_RIGHT_BUTTON = 0x01       # ...the right: bit 0 — the VDI's numbering SWAPPED (`vdi/mouse.h`)
+MOUSE_STAT_BUTTONS_MASK = vdi_mouse.MOUSE_H["MOUSE_STAT_BUTTONS_MASK"]
+MOUSE_STAT_RIGHT_BUTTON = 0x02         # CUR_MS_STAT's buttons as the VDI numbers them: left bit 0, right bit 1
 
 
 def _packet(header, dx=0, dy=0):
@@ -543,22 +783,66 @@ def _packet(header, dx=0, dy=0):
     return {PACKET_AT: struct.pack(">Bbb", header, dx, dy)}
 
 
+def _interrupt_over(image, entry, regs=None, inputs=None):
+    """An INTERRUPT's ROM code `entry` run over `image` as it stands — a bytearray, the machine at any instruction
+    boundary — with `inputs` (a packet the IKBD hands on) staged for the run alone: what it WROTE, laid into `image`,
+    the stack band out (its own frames, which on the machine land below the interrupted SP)."""
+    run_on = bytearray(image)
+    for at, data in (inputs or {}).items():
+        run_on[at:at + len(data)] = data
+    _final, writes, _regs = _rom_run(run_on, entry, regs)
+    written = case.written_by(writes)
+    for at, data in written.items():
+        image[at:at + len(data)] = data
+    return written
+
+
+def _buttons_changed(image, header):
+    """The buttons changed by a packet with `header` through the VDI's mouse interrupt (`VDI_ROM_MOUSE_ISR`, A0 the
+    packet — what the IKBD's mousevec runs), which records them in its own state (MOUSE_BT, CUR_MS_STAT) and calls the
+    AES's button glue (vex_butv's, `AES_ROM_BUTTON_GLUE`: b_click opens the click count); then the tick glue
+    ($fed426, vex_timv's) until b_delay's count is final (AES_GL_CLICK_TICKS 0) — each an interrupt
+    (`_interrupt_over`), over `image` in place. What they wrote."""
+    written = _interrupt_over(image, addrs.VDI_ROM_MOUSE_ISR, {"a0": PACKET_AT}, _packet(header))
+    for _tick in range(case.word_in(image, aes.AES_GL_CLICK_TICKS)):
+        written = merge_pokes(written, _interrupt_over(image, addrs.AES_ROM_TICK_GLUE))
+    assert case.word_in(image, aes.AES_GL_CLICK_TICKS) == 0, "the ticks did not resolve the click"
+    return written
+
+
+def press(image):
+    """The left button PRESSED over `image` in place, as the machine takes it whatever process runs (`_buttons_changed`):
+    the press queued for forker, posted to no wait yet. What it wrote — an interrupt `interrupted` can deliver."""
+    return _buttons_changed(image, MOUSE_PACKET_HEADER | MOUSE_PACKET_LEFT_BUTTON)
+
+
+def release(image):
+    """...the button RELEASED (a packet with no button down): the release queued for forker the same way."""
+    return _buttons_changed(image, MOUSE_PACKET_HEADER)
+
+
+def _delivered(interrupt, onto):
+    """What `interrupt` (`press`, `release`, `move_to`'s) WROTE over `onto` (the snapshot by default): a delta."""
+    return interrupt(make_image(onto))
+
+
+def pressed(onto=None):
+    """The left button PRESSED over `onto` (`press`). A delta, to lay over `onto`."""
+    return _delivered(press, onto)
+
+
+def released(onto=None):
+    """The left button RELEASED over `onto` (`release`) — the button up again, as no packet that only MOVES the mouse
+    leaves it (`mouse_moved_to` keeps the buttons as they are). A delta, to lay over `onto`."""
+    return _delivered(release, onto)
+
+
 @functools.cache
 def button_down():
-    """The left button DOWN, PD0 running: a packet with the left button down through the VDI's mouse interrupt
-    (`VDI_ROM_MOUSE_ISR`, A0 the packet — what the IKBD's mousevec runs), which records the button in its own state
-    (MOUSE_BT, CUR_MS_STAT) and calls the AES's button glue (vex_butv's, `AES_ROM_BUTTON_GLUE`: b_click opens the
-    click count); then the tick glue ($fed426, vex_timv's) until b_delay's count is final (AES_GL_CLICK_TICKS 0) —
-    each an interrupt over the snapshot (`_interrupt`) — then the dispatcher's loop (`_woken`), whose forker posts the
-    press to the button wait PD0 is parked in (PD0 owns the mouse) and switches to it. The button stays down, the VDI's
-    record and the AES's agreeing. A delta."""
-    state, final = _interrupt(addrs.VDI_ROM_MOUSE_ISR, _packet(MOUSE_PACKET_HEADER | MOUSE_PACKET_LEFT_BUTTON),
-                              {"a0": PACKET_AT})
-    for _tick in range(case.word_in(final, aes.AES_GL_CLICK_TICKS)):
-        delta, final = _interrupt(addrs.AES_ROM_TICK_GLUE, state)
-        state = merge_pokes(state, delta)
-    assert case.word_in(final, aes.AES_GL_CLICK_TICKS) == 0, "the ticks did not resolve the click"
-    woken = _woken(state)
+    """The left button DOWN, PD0 running: the button `pressed` over the snapshot, then the dispatcher's loop
+    (`_woken`), whose forker posts the press to the button wait PD0 is parked in (PD0 owns the mouse) and switches to
+    it. The button stays down, the VDI's record and the AES's agreeing. A delta."""
+    woken = _woken(pressed())
     assert case.word_in(make_image(woken), aes.AES_BUTTON) == LEFT_BUTTON, "the press did not leave the button down"
     return woken
 
@@ -572,25 +856,71 @@ def _hidden_over(woken):
 
 def machine(woken=pd0_running, onto=None):
     """THE DOOR'S MACHINE: PD0 running as `woken` makes it (`pd0_running`, `button_down`), the cursor hidden after
-    (`_hidden_over`), contrl[0..3] stale again (`aes_gsx.machine`'s arrangement), `onto` over it."""
+    (`_hidden_over`) — what an application's graf_mouse(M_OFF) leaves, and every drawing caller's own gsx_moff —
+    contrl[0..3] stale again (`aes_gsx.machine`'s arrangement), `onto` over it."""
     return merge_pokes(_hidden_over(woken), aes_gsx.CONTRL_STALE, onto)
+
+
+def shown_machine(woken=pd0_running, onto=None):
+    """...and the same process running with the cursor SHOWN — the snapshot's own cursor (gl_moff `aes_gsx.NEST_SHOWN`),
+    which nothing hid: what a caller that hides nothing runs over (menu_bar's dispatcher arm, an application's
+    graf_dragbox / graf_rubberbox), contrl[0..3] stale, `onto` over it."""
+    return merge_pokes(woken(), aes_gsx.CONTRL_STALE, onto)
 
 
 MOUSE_STEP = 127                       # the most one packet moves: a signed byte
 
 
-def _mouse_packet(x, y, state):
-    """`state` with ONE relative packet toward (`x`, `y`) through the VDI's mouse interrupt ($fcfe28, A0 the packet —
-    what the IKBD's mousevec runs), which moves the cursor and calls the AES's motion glue (it queues mchange); None
-    once the cursor is there."""
-    image = make_image(state)
-    dx = max(-MOUSE_STEP, min(MOUSE_STEP, x - case.word_in(image, vdi.LINEA_GCURX)))
-    dy = max(-MOUSE_STEP, min(MOUSE_STEP, y - case.word_in(image, vdi.LINEA_GCURY)))
+def _packet_buttons(image):
+    """The buttons a packet the IKBD sends now carries: those the VDI's interrupt recorded from the last one
+    (CUR_MS_STAT), in the packet's own numbering — the IKBD reports the buttons in every packet, moved or not."""
+    held = image[vdi.LINEA_CUR_MS_STAT] & MOUSE_STAT_BUTTONS_MASK
+    return ((MOUSE_PACKET_LEFT_BUTTON if held & LEFT_BUTTON else 0)
+            | (MOUSE_PACKET_RIGHT_BUTTON if held & MOUSE_STAT_RIGHT_BUTTON else 0))
+
+
+def _step_toward(image, x, y):
+    """ONE relative packet toward (`x`, `y`) — the buttons as they are held (`_packet_buttons`) — through the VDI's mouse
+    interrupt ($fcfe28, A0 the packet), which moves the cursor and calls the AES's motion glue (it queues mchange), over
+    `image` in place: what it wrote, or None once the cursor is there. REFUSED by name where the packet leaves the
+    cursor where it was: the interrupt clamps it to the screen, so a point past an edge is one no packet reaches."""
+    cursor = _cursor(image)
+    dx = max(-MOUSE_STEP, min(MOUSE_STEP, x - cursor[0]))
+    dy = max(-MOUSE_STEP, min(MOUSE_STEP, y - cursor[1]))
     if not dx and not dy:
         return None
-    delta, _final = _interrupt(addrs.VDI_ROM_MOUSE_ISR, merge_pokes(state, _packet(MOUSE_PACKET_HEADER, dx, dy)),
-                               {"a0": PACKET_AT})
-    return merge_pokes(state, delta)
+    written = _interrupt_over(image, addrs.VDI_ROM_MOUSE_ISR, {"a0": PACKET_AT},
+                              _packet(MOUSE_PACKET_HEADER | _packet_buttons(image), dx, dy))
+    assert _cursor(image) != cursor, (
+        f"the mouse cannot be moved to ({x}, {y}): a packet of ({dx}, {dy}) left the cursor at {cursor} — the mouse "
+        f"interrupt clamps it to the screen")
+    return written
+
+
+def _cursor(image):
+    """Where the VDI's mouse interrupt has the cursor (GCURX, GCURY)."""
+    return case.word_in(image, vdi.LINEA_GCURX), case.word_in(image, vdi.LINEA_GCURY)
+
+
+def _moved(image, x, y):
+    written = {}
+    while (step := _step_toward(image, x, y)) is not None:
+        written = merge_pokes(written, step)
+    return written
+
+
+def move_to(x, y):
+    """The mouse MOVED to (`x`, `y`): the packets that take it there, one at a time (`_step_toward`), each an interrupt
+    over `image` in place — an interrupt `interrupted` can deliver: `move_to(x, y)(image)` answers what they wrote."""
+    return functools.partial(_moved, x=x, y=y)
+
+
+def mouse_moved_to(x, y, onto):
+    """`onto` continued by the packets that move the mouse to (`x`, `y`) (`move_to`, each an interrupt over whatever
+    process state `onto` holds), the buttons KEPT as `onto` holds them. The AES's own record of the mouse follows only
+    when forker runs the motion glue's queued mchange — in the dispatcher's loop, or the running process's next
+    ev_multi."""
+    return merge_pokes(onto, _delivered(move_to(x, y), onto))
 
 
 # A point of the MENU BAR, one packet up from the snapshot's mouse: the rectangle the screen manager's evnt_multi waits
@@ -598,12 +928,18 @@ def _mouse_packet(x, y, state):
 MENU_BAR_POINT = (159, 5)
 
 
+def woken_onto_the_menu_bar(onto=None):
+    """PD1 — the SCREEN MANAGER — woken over `onto` (the snapshot as it waits, by default): the mouse moved onto the
+    menu bar (`mouse_moved_to`: one packet), the rectangle PD1 waits for it to enter, and the dispatcher's loop run
+    until PD1 comes out of its evnt_multi with it (`_woken`). A delta, `onto`'s pokes in it."""
+    return _woken(mouse_moved_to(*MENU_BAR_POINT, onto or {}), aes.SCREEN_MANAGER_PD)
+
+
 @functools.cache
 def screen_manager_running():
-    """PD1 RUNNING — the SCREEN MANAGER — and PD0 still parked in the desk's evnt_multi, as the scheduler makes it: the
-    mouse moved onto the menu bar (`_mouse_packet`, over the snapshot), the rectangle PD1 waits for it to enter, and
-    the dispatcher's loop run until PD1 comes out of its evnt_multi with it (`_woken`). A delta."""
-    return _woken(_mouse_packet(*MENU_BAR_POINT, {}), aes.SCREEN_MANAGER_PD)
+    """PD1 RUNNING and PD0 still parked in the desk's evnt_multi, as the scheduler makes it
+    (`woken_onto_the_menu_bar`, over the snapshot). A delta."""
+    return woken_onto_the_menu_bar()
 
 
 def window_created(kind, x, y, w, h, onto=None):
@@ -628,3 +964,164 @@ def window_chain(kind, x, y, w, h, onto=None):
 WK_MOVER = 0x0008
 EVERY_GADGET = functools.reduce(operator.or_, (value for name, value in aes.header_constants("wmlib.h").items()
                                                if name.startswith("WK_")), WK_MOVER)
+
+
+# ---- INTERRUPTS AT A DOOR ENTRY: the C and the ROM taken through the same sequence -----------------------------------
+# A real machine takes an interrupt at any instruction boundary — at the entry of a routine's k-th call of the event
+# layer among them. Both shores can deliver exactly that: the ROM's own run, WATCHED at the door's entries (`DoorStops`,
+# its memory the run's own, read on resume), takes the interrupt's effect at the entry of its k-th door call; the C's
+# door applies the SAME bytes at its k-th call, before that call is served (`bind_in_a_child`'s `interrupts`), once it
+# has checked that the C's image holds what the ROM's memory held at every address they write (`_laid_into`). The
+# effect is the ROM's own interrupt code (`press`, `release`, `move_to`: the VDI's mouse interrupt and the AES's tick
+# glue) run over the ROM's memory as it stands at that entry — never a poke. Its frames on the INTERRUPTED stack are
+# left out (`case.written_by`: the stack band, where on the machine they land below the interrupted SP); what the glue
+# writes on the AES's OWN interrupt stacks ($94f2 and $9552 down) is fixed memory the machine writes too, and
+# delivered — the SP the glue parks there ($9482, $9486) the one value no machine holds: the stack-band SP the oracle
+# entered the interrupt on, where the machine parks the interrupted process's SSP. Both shores receive it alike, and
+# only the glue's own exit reads it. A sequence of them reaches what one run cannot: the mouse moving and the button
+# changing WHILE a routine waits.
+#
+# THE COMPARISON is of the whole image, outside the stack band (the C's frame locals are host slots there, the ROM's
+# frames its own) and the door's two documented windows (`DOOR_DROPS`, whole: the mask word the C never writes and the
+# trap's saved registers the C's nested runs leave): with the ROM's final memory when its run returns — its answer and
+# every frame the door was handed too — or with its memory at the ENTRY of the call that blocks, the point where the C's
+# door refuses the same call (`refused_where_the_rom_blocks`).
+COMPARED_DIFFERENCES_SHOWN = 16        # how many differing bytes a failure names
+Interrupted = namedtuple("Interrupted", "calls returned answer rom_memory image delivered")
+_NOT_COMPARED = frozenset(case.STACK_BAND) | frozenset(at for lo, hi, _why in DOOR_DROPS for at in range(lo, hi))
+
+
+def _as_sequence(interrupts):
+    return interrupts if isinstance(interrupts, tuple) else (interrupts,)
+
+
+class _AtTheEntry(Exception):
+    """A watched run stopped at the entry of the door call of the ordinal asked for: its memory there, what was
+    delivered at it laid in, and the call it makes (`handed_at`)."""
+
+    def __init__(self, memory, call):
+        super().__init__()
+        self.memory, self.call = memory, call
+
+
+def _watched_through(name, arguments, pokes, delivered, stop_at=None, *, io_seed=None, blocks=True):
+    """The ROM's own `addrs.<name>` WATCHED at the door's entries, `delivered` (`{ordinal: pokes}`) laid into its memory
+    at the entry of each door call of that ordinal: `(calls, memory, result)` — the frames handed, read after; the memory
+    it left, or at the entry of the call that blocks (`blocks`: stopped at the dispatcher inside a call); its result,
+    None where it blocked. Stopped at the entry of the call of ordinal `stop_at` instead, by `_AtTheEntry`."""
+    calls, at_the_entry = [], []
+    memory = bytearray(make_image(aes.staged(name, arguments, pokes)))
+
+    def opened(pc, sp, memory):
+        for at, data in delivered.get(len(calls), {}).items():
+            memory[at:at + len(data)] = data
+        call = handed_at(pc, sp, memory)
+        if len(calls) == stop_at:
+            raise _AtTheEntry(bytes(memory), call)
+        calls.append(call)
+        at_the_entry[:] = [bytes(memory)]
+    result = run_watched(memory, getattr(addrs, name), DoorStops(ENTRIES, ROM_RETURNS, opened, blocks=blocks), io_seed)
+    return calls, (memory if result else at_the_entry[0]), result
+
+
+def rom_entered(name, arguments, pokes, delivered, ordinal):
+    """The ROM's own `addrs.<name>` over `pokes` with the frame `arguments`, WATCHED and stopped at the entry of its door
+    call of `ordinal`, `delivered` (`{ordinal: pokes}`) laid in at each entry up to it and at it: `(memory, call)` — its
+    memory there, and what the call is handed."""
+    try:
+        _watched_through(name, arguments, pokes, delivered, stop_at=ordinal)
+    except _AtTheEntry as stopped:
+        return stopped.memory, stopped.call
+    raise AssertionError(f"{name}: the ROM's run made no door call of ordinal {ordinal} to interrupt")
+
+
+def deliveries(name, arguments, pokes, interrupts):
+    """What each of `interrupts` (`{ordinal: interrupt or (interrupt, ...)}`) WRITES, run over the ROM's own memory at
+    the entry of the door call of that ordinal (`rom_entered`, the earlier deliveries laid in): `{ordinal: (found,
+    wrote)}` — the bytes that memory held at each address the delivery writes, then what it wrote there. Each
+    interrupt's code runs while NO run is in flight (one oracle, one CPU: an `emu.run` inside a watched run's stop
+    derails it, measured): the run is stopped at the entry, the interrupt run over a copy of its memory there, and the
+    next run lays what it wrote in at the same entry — the run is deterministic, so it reaches that entry with the same
+    memory."""
+    delivered, found = {}, {}
+    for ordinal in sorted(interrupts):
+        memory, _call = rom_entered(name, arguments, pokes, delivered, ordinal)
+        image = bytearray(memory)
+        for interrupt in _as_sequence(interrupts[ordinal]):
+            delivered[ordinal] = merge_pokes(delivered.get(ordinal), interrupt(image))
+        found[ordinal] = {at: memory[at:at + len(data)] for at, data in delivered[ordinal].items()}
+    return {ordinal: (found[ordinal], wrote) for ordinal, wrote in delivered.items()}
+
+
+def rom_interrupted(name, arguments, pokes, interrupts):
+    """The ROM's own `addrs.<name>` over `pokes` with the frame `arguments`, WATCHED at the door's entries, each of
+    `interrupts` delivered over its memory at the entry of that door call (`deliveries`): `(calls, delivered, memory,
+    result)` — the frames handed (each read after the interrupt), the deliveries (`{ordinal: (found, wrote)}`), the
+    memory it left (or, for a run that BLOCKS, its memory at the entry of the blocking call), and the run's result
+    (None: it blocked)."""
+    delivered = deliveries(name, arguments, pokes, interrupts)
+    calls, memory, result = _watched_through(name, arguments, pokes,
+                                             {ordinal: wrote for ordinal, (_found, wrote) in delivered.items()})
+    return calls, delivered, memory, result
+
+
+def differing(image, rom_memory):
+    """The addresses `image` and `rom_memory` differ at, outside what neither shore compares (`_NOT_COMPARED`)."""
+    return [at for at in _differing_addresses(image, rom_memory) if at not in _NOT_COMPARED]
+
+
+def _describe_differences(name, image, rom_memory, differ):
+    shown = ", ".join(f"{at:#x} oracle={rom_memory[at]:#04x} cand={image[at]:#04x}"
+                      for at in differ[:COMPARED_DIFFERENCES_SHOWN])
+    return f"{name}: {len(differ)} bytes differ from the ROM's run: {shown}"
+
+
+def _answer_at_its_width(name, d0):
+    """D0 at the width `addrs.<name>`'s core declares its answer (`vdi.ALCYON`): its word, its long, or None."""
+    restype = vdi.ALCYON[name].restype
+    return None if restype is None else d0 & ((1 << (8 * ctypes.sizeof(restype))) - 1)
+
+
+# How the door refuses a call at whose dsptch the machine would switch processes (`_at_the_dispatcher`'s words): the
+# caller WAITING, or still READY (it made another process ready, which runs first). Its own words, not "would block"
+# alone, which the core's halt line spells for either ("a call that would block ... or yield").
+BLOCKS, YIELDS = "the call would block", "the call would yield"
+
+
+def interrupted(name, arguments, machine, interrupts, *, objects=False, seconds=CHILD_RETURN_SECONDS, switches=BLOCKS):
+    """`addrs.<name>` over `machine` with the frame `arguments`, TAKEN THROUGH `interrupts` — `{ordinal: interrupt or
+    (interrupt, ...)}`, each delivered at the entry of the door call of that ordinal (`press`, `release`, `move_to(x,
+    y)`) — on both shores: the ROM's own run (`rom_interrupted`) and the C in a child (`bind_in_a_child`, the walked
+    routines served with `objects`), the C held to the ROM: whether it returned (else it switched processes at the same
+    call, refused as one that `switches`), its answer, every frame the door was handed and the whole image
+    (`differing`) — and, at each delivery, its image where the delivery writes (`_laid_into`). Answers
+    `Interrupted(calls, returned, answer, rom_memory, image, delivered)` for the case's own assertions."""
+    calls, delivered, rom_memory, result = rom_interrupted(name, arguments, machine, interrupts)
+    returncode, stderr, image = refusal(name, machine, arguments, seconds=seconds, answered=True,
+                                        bind=child_binding(objects=objects, interrupts=delivered))
+    returned = result is not None
+    if returned:
+        assert returncode == 0, f"{name}: the ROM's run returned, the C's child did not:\n{stderr}"
+        answer = _answer_at_its_width(name, result["d0"])
+        assert vdi_helpers.answer_in(stderr) == answer, (
+            f"{name}: the C answered {vdi_helpers.answer_in(stderr)}, the ROM's run {answer}")
+    else:
+        assert returncode != 0 and switches in stderr, (
+            f"{name}: the ROM's run switches at a door call, the C's did not — refused as one that {switches}:\n{stderr}")
+        answer = None
+    assert handed_in(stderr) == calls, f"{name}: the door was handed {handed_in(stderr)}, the ROM's run hands {calls}"
+    differ = differing(image, rom_memory)
+    assert not differ, _describe_differences(name, image, rom_memory, differ)
+    return Interrupted(calls, returned, answer, rom_memory, image, delivered)
+
+
+def refused_where_the_rom_blocks(name, arguments, machine, *, objects=False, seconds=CHILD_RETURN_SECONDS,
+                                 switches=BLOCKS):
+    """A door user's call that BLOCKS (nothing it waits for satisfied) — or, `switches=YIELDS`, yields: the ROM's run
+    reaches dsptch inside a door call, the C's child is refused at the same call as one that would, and up to it the C
+    is the ROM's run stopped there — every frame handed, and the whole image against the ROM's memory at the ENTRY of
+    the call (`interrupted`, with no interrupt). The same `Interrupted`, for the case's own assertions (`.calls`: how
+    many passes it made)."""
+    taken = interrupted(name, arguments, machine, {}, objects=objects, seconds=seconds, switches=switches)
+    assert not taken.returned, f"{name}: the premise — the ROM's run switches at a door call — does not hold: it returned"
+    return taken

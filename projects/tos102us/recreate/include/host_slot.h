@@ -4,14 +4,13 @@
  * GEMDOS needed them first, and the table began in `gemdos/gemdos.h`; it is here because the VDI needs
  * the same thing (`v_opnwk` points LINEA_CONTRL/INTIN/INTOUT at locals of its own frame and calls
  * vq_color over them), and two components keeping two tables in one band could hand out one address
- * twice with nothing to refuse it. ONE table, one held mask, one test (`test/test_host_slots.py`).
+ * twice with nothing to refuse it. ONE table, one set of held flags, one test (`test/test_host_slots.py`).
  */
 #ifndef TOS102US_HOST_SLOT_H
 #define TOS102US_HOST_SLOT_H
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #include <assert.h>
-#include <limits.h>
 #endif
 #include <stdint.h>
 
@@ -149,6 +148,28 @@
 #define HOST_SLOT_AES_GR_STILLDN_ANSWERS_BYTES 12 /* EV_MULTI_ANSWER_WORDS words */
 #define HOST_SLOT_AES_GR_WATCHBOX_RECT  0x7f660  /* $fe84d0 `move.l a6,-(sp)`: the words its `movem` saved D2/D3 in */
 #define HOST_SLOT_AES_GR_WATCHBOX_RECT_BYTES 8
+/* ...and the drag loops' (`aes/grdrag.h`): the words each `movem` saved registers in, which it hands on by address —
+ * gr_draw's summed box (to gsx_xbox), gr_clamp's mouse (to gsx_mxmy), gr_rubwind's box (to gr_clamp and gr_wait),
+ * gr_dragbox's mouse, box and the mouse's offset in it, gr_slidebox's two rectangles (to ob_relxywh / ob_actxywh and
+ * gr_dragbox) — each the frame's own layout. */
+#define HOST_SLOT_AES_GR_DRAW_RECT      0x7f670  /* $fe8544 `lea 4(sp),a0`: the words its `movem` saved D0/D1 in */
+#define HOST_SLOT_AES_GR_DRAW_RECT_BYTES 8
+#define HOST_SLOT_AES_GR_CLAMP_MOUSE    0x7f678  /* $fe86dc `subq.l #4,sp`: the mouse's x, y */
+#define HOST_SLOT_AES_GR_CLAMP_MOUSE_BYTES 4
+#define HOST_SLOT_AES_GR_RUBWIND_RECT   0x7f680  /* $fe85f0 `lea 2(sp),a3`: the words its `movem` saved D3/D4 in */
+#define HOST_SLOT_AES_GR_RUBWIND_RECT_BYTES 8
+#define HOST_SLOT_AES_GR_DRAGBOX_FRAME  0x7f688  /* $fe8652 `lea 6(sp),a0`..: the words saved D2..D5 in, from the mouse */
+#define HOST_SLOT_AES_GR_DRAGBOX_FRAME_BYTES 16
+#define HOST_SLOT_AES_GR_SLIDEBOX_RECTS 0x7f698  /* $fe8708 `movea.l sp,a5`: the words saved D0..D3 in */
+#define HOST_SLOT_AES_GR_SLIDEBOX_RECTS_BYTES 16
+/* ...and the menu library's (`aes/mnlib.h`): menu_sr's GRECT (to ob_actxywh and bb_save / bb_restore), mn_do's
+ * answers and MOBLKs (to rect_change and ev_multi, COMPACTED — `MN_DO_*`), mn_register's copy of a process's name. */
+#define HOST_SLOT_AES_MENU_SR_RECT      0x7f6a8  /* $fe8cb6's -8(a6) */
+#define HOST_SLOT_AES_MENU_SR_RECT_BYTES 8
+#define HOST_SLOT_AES_MN_DO_FRAME       0x7f6b0  /* $fe8d6e's -52(a6) answers, -36(a6) and -26(a6) MOBLKs */
+#define HOST_SLOT_AES_MN_DO_FRAME_BYTES 32       /* MN_DO_FRAME_WORDS words */
+#define HOST_SLOT_AES_MN_REGISTER_NAME  0x7f6d0  /* $fe91e2's -14(a6) */
+#define HOST_SLOT_AES_MN_REGISTER_NAME_BYTES 14  /* MN_REGISTER_NAME_BYTES */
 /* ...and the object editor's (`aes/obedit.h`): pxl_rect's GRECT, which it hands ob_actxywh and gr_just; curfld's two,
  * which it hands pxl_rect and the clip calls; and ob_edit's locals whose addresses it hands ob_stfn and check — each
  * the frame's own layout. */
@@ -168,8 +189,20 @@
 #define HOST_SLOT_AES_W_MOVE_RECTS_BYTES 16
 #define HOST_SLOT_AES_WM_GET_RECT       0x7f7a0  /* $fec722's -8(a6): the work area the list arms walk over */
 #define HOST_SLOT_AES_WM_GET_RECT_BYTES 8
+/* ...and its half that reaches the event layer (`aes/wmupdate.h`): the GRECTs w_setactive, w_redraw, draw_change,
+ * wm_opcl and wm_set hand on by address, and the word draw_change hands w_move — each the frame's own layout. */
+#define HOST_SLOT_AES_W_SETACTIVE_RECT  0x7f880  /* $feba54's -8(a6): the top window's work area, for ct_chgown */
+#define HOST_SLOT_AES_W_SETACTIVE_RECT_BYTES 8
+#define HOST_SLOT_AES_W_REDRAW_RECTS    0x7f888  /* $febe2a's -16(a6) the work area cut, -8(a6) the rectangle asked */
+#define HOST_SLOT_AES_W_REDRAW_RECTS_BYTES 16
+#define HOST_SLOT_AES_DRAW_CHANGE_FRAME 0x7f898  /* $fec0ca's -14(a6) w_move's stop word up to its -8(a6) old GRECT */
+#define HOST_SLOT_AES_DRAW_CHANGE_FRAME_BYTES 14
+#define HOST_SLOT_AES_WM_OPCL_RECT      0x7f8a8  /* $fec676's -8(a6): the caller's GRECT, copied */
+#define HOST_SLOT_AES_WM_OPCL_RECT_BYTES 8
+#define HOST_SLOT_AES_WM_SET_RECT       0x7f8b0  /* $fec83a's -18(a6): WF_TOP's window rectangle */
+#define HOST_SLOT_AES_WM_SET_RECT_BYTES 8
 
-/* Each slot's bit in the held mask. */
+/* Each slot's index in the held flags. */
 enum host_slot {
     HOST_SLOT_ID_SEARCH_PATTERN,
     HOST_SLOT_ID_WALK_NAME,
@@ -211,6 +244,14 @@ enum host_slot {
     HOST_SLOT_ID_AES_GR_STILLDN_RECTANGLE,
     HOST_SLOT_ID_AES_GR_STILLDN_ANSWERS,
     HOST_SLOT_ID_AES_GR_WATCHBOX_RECT,
+    HOST_SLOT_ID_AES_GR_DRAW_RECT,
+    HOST_SLOT_ID_AES_GR_CLAMP_MOUSE,
+    HOST_SLOT_ID_AES_GR_RUBWIND_RECT,
+    HOST_SLOT_ID_AES_GR_DRAGBOX_FRAME,
+    HOST_SLOT_ID_AES_GR_SLIDEBOX_RECTS,
+    HOST_SLOT_ID_AES_MENU_SR_RECT,
+    HOST_SLOT_ID_AES_MN_DO_FRAME,
+    HOST_SLOT_ID_AES_MN_REGISTER_NAME,
     HOST_SLOT_ID_AES_PXL_RECT_FIELD,
     HOST_SLOT_ID_AES_CURFLD_RECTS,
     HOST_SLOT_ID_AES_OB_EDIT_FRAME,
@@ -218,25 +259,29 @@ enum host_slot {
     HOST_SLOT_ID_AES_W_CPWALK_RECT,
     HOST_SLOT_ID_AES_W_MOVE_RECTS,
     HOST_SLOT_ID_AES_WM_GET_RECT,
+    HOST_SLOT_ID_AES_W_SETACTIVE_RECT,
+    HOST_SLOT_ID_AES_W_REDRAW_RECTS,
+    HOST_SLOT_ID_AES_DRAW_CHANGE_FRAME,
+    HOST_SLOT_ID_AES_WM_OPCL_RECT,
+    HOST_SLOT_ID_AES_WM_SET_RECT,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-/* One bit per slot, defined in `src/host_slot.c`: a long long, as the table has outgrown a 32-bit mask. */
-extern unsigned long long host_slots_held;
-_Static_assert(HOST_SLOT_ID_COUNT <= sizeof host_slots_held * CHAR_BIT,
-               "a slot past the held mask's width would alias a low one's bit, silently");
+/* One flag per slot, defined in `src/host_slot.c`: an array, so the table has no width to outgrow (a bit mask did,
+ * twice — 32 bits, then 64). */
+extern unsigned char host_slots_held[HOST_SLOT_ID_COUNT];
 
 static inline uint32_t host_slot_take(enum host_slot slot, uint32_t host_at)
 {
-    assert(!(host_slots_held & 1ull << slot));
-    host_slots_held |= 1ull << slot;
+    assert(!host_slots_held[slot]);
+    host_slots_held[slot] = 1;
     return host_at;
 }
 
 static inline void host_slot_give_back(enum host_slot slot)
 {
-    host_slots_held &= ~(1ull << slot);
+    host_slots_held[slot] = 0;
 }
 
 /* The image address a frame local of role ROLE is handed on at: its slot, claimed, off target... */

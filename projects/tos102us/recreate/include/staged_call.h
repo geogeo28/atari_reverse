@@ -355,6 +355,18 @@ static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t
 #endif
 }
 
+/* ...and THE ROUTINE A CALLER HANDS THE WALKER, BY VALUE (`move.l #<routine>,-(sp)`: ob_draw's just_draw, newrect's
+ * mkrect, draw_change's newrect). OFF TARGET it is the ROM routine's own address, as the ROM's: everyobj's call reaches
+ * the register-carrying hook, which a case binds to the C core by that address. ON TARGET it is the routine's Alcyon
+ * entry linked beside its caller (`obdraw.S`, `wmupdate.S`), which takes everyobj's ten-byte frame into the C core: the
+ * ROM's routine run inside our build is what Tier 3's (V) rule refuses (`bench/tier3.py`, AES_OWN_SPANS). The entry is
+ * named on target alone — off target it is not linked at all. */
+#ifdef RECREATE_HOST_DIFFERENTIAL
+#define ALCYON_ROUTINE(rom_address, alcyon_entry) ((uint32_t)(rom_address))
+#else
+#define ALCYON_ROUTINE(rom_address, alcyon_entry) ((uint32_t)(uintptr_t)(alcyon_entry))
+#endif
+
 /* ---- the ALCYON CALL OF ONE LONGWORD: a routine a caller hands in, over a frame of one pointer -----------------------
  *
  * The shell's sh_find (`$feb0c8`) calls the routine its caller hands it — only sh_main hands one, `$feaddc` — over the

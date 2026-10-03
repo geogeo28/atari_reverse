@@ -14,7 +14,7 @@ the vectors the start-up installs. A ported row names the file whose C now owes 
 the value as CODE. Every pc-relative DATA reference into the text is listed too, by kind: a TEXT_TABLE (a table or a
 string inside the text, which a C port spells as its own data) or CODE_BYTES — an instruction's own bytes READ OR
 WRITTEN AS DATA: gr_watchbox, gr_rubbox and gr_dragbox read the immediates of two `move.l #` in gr_setup and
-gr_draw, and the Line-F handler writes its own `movem` mask. A rebuilt ROM that re-lays those instructions changes
+gr_wait, and the Line-F handler writes its own `movem` mask. A rebuilt ROM that re-lays those instructions changes
 what they read. No obligation while the C uses the value; every one is an order to keep in mind.
 
 THE SURFACES: a new ROM address in an AES source reds (a) until it is listed with its kind; a new immediate naming
@@ -59,15 +59,20 @@ ROM_ADDRESSES_AS_DATA = {
     "gsxif.c": {"AES_ROM_BUTTON_GLUE": CODE, "AES_ROM_MOTION_GLUE": CODE, "AES_GSX_MFREE_RETURN": RETURN_SITE},
     # sh_find's return site from dos_sdta (a host argument, as rsrc_free's).
     "shell_find.c": {"AES_SH_FIND_SDTA_RETURN": RETURN_SITE},
-    # newrect hands everyobj mkrect by its ROM address ($fe5d68 `move.l #$fe5c9a,-(sp)`, row (b) below).
+    # newrect hands everyobj mkrect by its ROM address on the host ($fe5d68 `move.l #$fe5c9a,-(sp)`, row (b) below); on
+    # target, its Alcyon entry (`wmupdate.S`).
     "wrect.c": {"AES_ROM_MKRECT": CODE},
+    # draw_change hands everyobj newrect the same way ($fec146 `move.l #$fe5cee,-(sp)`, row (b) below).
+    "wmupdate.c": {"AES_ROM_NEWRECT": CODE},
     # ob_draw hands everyobj just_draw by its ROM address on the host ($fea08c `move.l #$fe9a88,-(sp)`, row (b) below);
     # on target, its Alcyon entry (`obdraw.S`) — the rebuilt ROM's own.
     "obdraw.c": {"AES_ROM_JUST_DRAW": CODE},
     # The event door's entries, `jsr`ed at their ROM addresses on target and keyed by them off it — the routines a
     # rebuilt ROM keeps where they are until the event layer is C — and the call table the Line-F handler's RAM copy
     # must still name (the door's check before it calls).
-    "aes/evdoor.h": {"AES_ROM_EV_MULTI": CODE, "AES_ROM_AP_RDWR": CODE, "AES_LINEF_TABLE": TABLE},
+    "aes/evdoor.h": {"AES_ROM_EV_MULTI": CODE, "AES_ROM_AP_RDWR": CODE, "AES_LINEF_TABLE": TABLE,
+                     "AES_ROM_TAK_FLAG": CODE, "AES_ROM_UNSYNC": CODE, "AES_ROM_EV_BLOCK": CODE,
+                     "AES_ROM_CT_CHGOWN": CODE, "AES_ROM_POST_BUTTON": CODE},
 }
 
 
@@ -124,7 +129,7 @@ CODE_IMMEDIATES = {
     0xFE884A: Immediate(addrs.AES_ROM_BUTTON_GLUE, "gsx_setmb_aes: the button interrupt glue, for vex_butv", "gsxif.c"),
     0xFEA08C: Immediate(addrs.AES_ROM_JUST_DRAW, "ob_draw: just_draw, everyobj's routine", "obdraw.c"),
     0xFEB272: Immediate(0xFEADDC, "sh_main: sh_find's optional routine"),
-    0xFEC146: Immediate(addrs.AES_ROM_NEWRECT, "$fec0ca (ctx, gemwmlib's window-change redraw): newrect, everyobj's"),
+    0xFEC146: Immediate(addrs.AES_ROM_NEWRECT, "draw_change: newrect, everyobj's routine", "wmupdate.c"),
     0xFED5A6: Immediate(0xFE38B0, "$fed554 (ctx): gotopgm pushed"),
 }
 # The sixteen fork-function immediates are `aes.FORK_FUNCTION_IMMEDIATES` (each with its routine there), folded in
@@ -138,8 +143,8 @@ PC_RELATIVE_DATA = {
     0xFE39BE: PcRelative(0xFE39B4, TEXT_TABLE, "$fe39bc (ctx, Pexec glue): the empty tail string, a zero word"),
     0xFE3B20: PcRelative(0xFE3B64, TEXT_TABLE, "$fe3b02 (ctx, desk): the `:\\*.*` search suffix"),
     0xFE84CA: PcRelative(0xFE85B2, CODE_BYTES, "gr_watchbox: gr_setup's `move.l #` immediate, read (grwait.c: its value)"),
-    0xFE85CE: PcRelative(0xFE8586, CODE_BYTES, "gr_rubbox: gr_draw's (ctx) `move.l #` immediate, read"),
-    0xFE869C: PcRelative(0xFE8586, CODE_BYTES, "gr_dragbox: ...the same immediate, read"),
+    0xFE85CE: PcRelative(0xFE8586, CODE_BYTES, "gr_rubbox: gr_wait's `move.l #` immediate, read (grdrag.c: its value)"),
+    0xFE869C: PcRelative(0xFE8586, CODE_BYTES, "gr_dragbox: ...the same immediate, read (grdrag.c: its value)"),
     0xFE8768: PcRelative(0xFE8780, TEXT_TABLE, "gr_mkstate: its table of RAM addresses"),
     0xFE8BBA: PcRelative(0xFE8BDC, TEXT_TABLE, "the gsx op table, three bytes a row"),
     0xFEE8EE: PcRelative(0xFEE8F8, CODE_BYTES, "linef_handler: its own `movem` mask, WRITTEN (in its RAM copy)"),

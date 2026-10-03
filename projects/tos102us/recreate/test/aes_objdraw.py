@@ -31,7 +31,6 @@ from test_aes_gsx import PTSIN_READ_BEFORE_IT_IS_PUT_BACK, screen_changed
 
 JUST_DRAW = "AES_ROM_JUST_DRAW"
 SCLIP = "AES_ROM_GSX_SCLIP"
-aes.declare_alcyon(JUST_DRAW, None, (vdi.IMAGE_ARG, vdi.LONG_ARG, vdi.WORD_ARG, vdi.WORD_ARG, vdi.WORD_ARG))
 
 # The OB_TYPE values the census names, and the state bits a case sets — `aes/objects.h`'s, by name.
 TYPES = {name: getattr(aes, name) for name in ("G_BOX", "G_TEXT", "G_BOXTEXT", "G_IMAGE", "G_USERDEF", "G_IBOX",

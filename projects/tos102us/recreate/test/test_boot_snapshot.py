@@ -269,6 +269,9 @@ import test_aes_wmlib                                       # noqa: E402,F401
 import test_aes_grwait                                      # noqa: E402,F401  (through the event door)
 import test_aes_apmsg                                       # noqa: E402,F401  (through the event door)
 import test_aes_ct_mouse                                    # noqa: E402,F401
+import test_aes_wm_update                                   # noqa: E402,F401  (through the event door)
+import test_aes_mnlib                                       # noqa: E402,F401  (through the event door)
+import test_aes_grdrag                                      # noqa: E402,F401  (through the event door)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
