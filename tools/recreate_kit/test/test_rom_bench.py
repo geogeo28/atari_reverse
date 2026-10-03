@@ -1009,3 +1009,69 @@ def test_a_watcher_that_raises_still_drops_the_export(monkeypatch):
         _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1,
                                  watch=Refusing(FAKE_FIRST_BAND, ()))
     assert calls[-1] == ("abort",)
+
+
+# ---- a WATCHED ORIGINAL (`original_watch`): the ROM code as a bench run, entered as `emu.run` enters it ---------------
+FAKE_FIRST_ARGUMENT = 0x00ABCDEF           # what the case pokes where `emu.run` leaves the first argument
+FAKE_ENTRY_REGS = {"d3": 7, "a5": 0}       # ...and the register file it enters with
+FAKE_DROP = ((0x200, 0x202, "a byte pair parked by nature"),)
+
+
+def _watching_original_emu(calls, writes=None):
+    """`_watched_emu`, every bench run's entry recorded, the write ledger answering `writes` (`emu.bench_writes`)."""
+    fake = _watched_emu(calls)
+    run_bench = fake.run_bench
+
+    def recorded(mem, entry, arg0, sp, sentinel, max_insns=None, door=None, seed_regs=None, **named):
+        calls.append(("entered", entry, arg0, sp, sentinel, seed_regs))
+        return run_bench(mem, entry, arg0, sp, sentinel, max_insns, door, seed_regs, **named)
+
+    def run(*_args, **_named):
+        raise AssertionError("a watched original was run by emu.run")
+
+    return SimpleNamespace(**{**vars(fake), "run": run, "run_bench": recorded, "SENTINEL_SLOT_BYTES": 4,
+                              "bench_writes": lambda mem: (dict(writes or {}), False),
+                              "install_chip_seeds": lambda *seeds: calls.append(("declared", *seeds))})
+
+
+def _first_argument_pokes():
+    return {FAKE_STACK_TOP + 4: FAKE_FIRST_ARGUMENT.to_bytes(4, "big")}
+
+
+def _measure_watched(monkeypatch, calls, writes=None, **named):
+    monkeypatch.setitem(sys.modules, "emu", _watching_original_emu(calls, writes))
+    monkeypatch.setitem(sys.modules, "harness", _fake_harness())
+    watch = _Watcher(FAKE_FIRST_BAND, (None,))
+    measured = _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1, regs=FAKE_ENTRY_REGS,
+                                        pokes=_first_argument_pokes(), original_watch=watch, **named)
+    return watch, measured
+
+
+def test_a_watched_original_is_a_bench_run_entered_as_emu_run_enters_it(monkeypatch):
+    """No `emu.run`: the ORIGINAL is a bench run at its own entry, watched (stopped at the watch's first band and
+    resumed), entered at the stack top with the sentinel, the case's first argument re-stored as itself and the
+    register file `emu.run` would set from `regs`, the chips declaring nothing just before (`emu.install_chip_seeds`
+    with no seed, as `emu.run` declares them for a case passing none); its cost is the watched run's whole."""
+    calls = []
+    watch, measured = _measure_watched(monkeypatch, calls)
+    entered = [call for call in calls if call[0] == "entered"]
+    seed = [FAKE_ENTRY_REGS.get(name, 0) for name in rom_bench.CALLEE_SAVED_SEEDS]
+    assert entered[0] == ("entered", FAKE_ENTRY, FAKE_FIRST_ARGUMENT, FAKE_STACK_TOP, 2, seed)
+    assert calls[calls.index(entered[0]) - 1] == ("declared",)
+    assert watch.stops == [FAKE_FIRST_BAND[0]]
+    assert measured.original_cycles == FAKE_SEGMENT_CYCLES[1]
+
+
+def test_a_watched_original_takes_no_psg_or_hardware_seed(monkeypatch):
+    """A bench run has no door for either seed, so the original would read the chip the run before left installed."""
+    with pytest.raises(ValueError, match="takes no psg_seed or hw_seed"):
+        _measure_watched(monkeypatch, [], psg_seed={7: 0x3F})
+
+
+def test_a_drop_is_vetted_against_the_watched_original_s_own_ledger(monkeypatch):
+    """`dropped` stays live: vetted against the write ledger of the watched run (`emu.bench_writes`) — refused where
+    the original's run stores none of it, admitted where it stores every byte."""
+    with pytest.raises(AssertionError, match="never writes"):
+        _measure_watched(monkeypatch, [], dropped=FAKE_DROP)
+    lo, hi, _why = FAKE_DROP[0]
+    _measure_watched(monkeypatch, [], writes={at: 0 for at in range(lo, hi)}, dropped=FAKE_DROP)

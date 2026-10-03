@@ -2346,6 +2346,24 @@ band armed after a set clears the list (`test_bench_door_stops.py`), and only a 
 hull pays its lookup: every other caller keeps the one unsigned compare. `watched` holds the whole
 run to ONE budget, each resume handed what the segments before it left.
 
+**The ORIGINAL can be watched too** (`rom_bench.watched_original`, `RomBench.measure(original_watch=)`):
+in ROM mode the ROM code is run in place as a bench run, entered as `emu.run` enters it (the same
+reset, the register file `emu.run` sets, `arg0` the longword the case already poked as the first
+argument, so the entry store rewrites it with itself), and answered in `emu.run`'s shape. It exists
+for a case only a watch can make: the machine doing something BETWEEN two of the routine's
+instructions — an interrupt delivered at the entry of a call it makes — which the watch lays into the
+run's memory at the stop, at no cost. Being a bench run it takes no PSG or named-hardware seed
+(refused by name, not dropped) — and it DECLARES NOTHING for either (`emu.install_chip_seeds()`,
+the one installer `emu.run` calls too), since `run_bench` leaves both as the run before declared
+them: without it a read nothing declared was served the previous case's seed and no refusal fired
+(`rom_bench.original_entered`, the one spelling of the entry; `test_write_ledger.py` pins it). Its
+stores are read through **`emu.bench_writes`**: `osh_run_bench`
+clears the WRITE LEDGER after its two entry stores (the sentinel and `arg0`), as `osh_run` clears it
+after its own, and `osh_bench_resume` keeps it — so a run split at its door reads one ledger, its
+own. Before this the ledger after a bench run still held the last `osh_run`'s stores, which nothing
+read; a row's `dropped` spans are vetted against this ledger exactly as against `emu.run`'s
+(`test_write_ledger.py` pins both halves).
+
 **The budget the loop spends is the RUN's, not the segment's**, and a segment that executed NOTHING
 is a refusal. `bench_resume` takes a fresh cap each time, so without both a twin that keeps
 re-entering the door — a loop around a core call, or a stub whose frame is wrong enough to return

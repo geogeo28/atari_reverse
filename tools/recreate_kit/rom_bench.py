@@ -341,7 +341,8 @@ class RomBench:
         return blob_entry(self.symbols, symbol, "the cross-compiled cores")
 
     def measure(self, entry, symbol, args=(), regs=None, pokes=None, psg_seed=None, hw_seed=None,
-                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None, dropped=(), watch=None):
+                io_seed=None, returns=4, staged_entry=(0, 0), schedule=None, dropped=(), watch=None,
+                original_watch=None):
         """One case on both sides: the ORIGINAL at `entry`, then our `symbol`, over the same image.
 
         Returns a `Measurement`. `entry`/`regs`/`pokes`/`psg_seed`/`hw_seed`/`io_seed` are the oracle
@@ -364,6 +365,12 @@ class RomBench:
         nothing and touches no register (`emu.bench_door_arm`), so the run is the unwatched run, segment by segment;
         its totals are the whole run's. None, the default, runs as always.
 
+        `original_watch` watches the ORIGINAL's run the same way (`watched_original`): a bench run of the ROM code in
+        place instead of `emu.run`, for a case only a watch can make — a stop where the case lays what the machine does
+        between two instructions (an interrupt delivered at a call) before the run goes on. Everything compared is
+        compared as for an unwatched original: its memory, return value, streams, odd accesses and refusals, and its
+        WRITE LEDGER (`emu.bench_writes`), which `dropped` is vetted against. None, the default, runs `emu.run`.
+
         WHY THE RETURN VALUE IS COMPARED AT THAT WIDTH AND THE REGISTER FILE IS NOT. The m68k SysV
         ABI promises a `uint8_t` result in the low BYTE of D0 and nothing above it: measured on
         `xbios_giaccess`, GCC emits `move.b $ff8800,%d0` and leaves the caller's high word in place,
@@ -385,7 +392,7 @@ class RomBench:
         self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
         return self._both_sides(entry, symbol, dict(regs or {}), pokes,
                                 (psg_seed, hw_seed, io_seed), run_ours, vet_ours, staged_entry,
-                                schedule=schedule, dropped=dropped)
+                                schedule=schedule, dropped=dropped, original_watch=original_watch)
 
     def measure_transcription(self, caller, symbol, regs, pokes=None, psg_seed=None, hw_seed=None,
                               io_seed=None, staged_entry=(0, 0), shared_entry=(0, 0)):
@@ -435,7 +442,7 @@ class RomBench:
                                 run_ours, vet_ours, staged_entry, shared_entry)
 
     def _both_sides(self, entry, symbol, regs, pokes, seeds, run_ours, vet_ours,
-                    staged_entry, shared_entry=(0, 0), schedule=None, dropped=()):
+                    staged_entry, shared_entry=(0, 0), schedule=None, dropped=(), original_watch=None):
         """The sequence the two `measure*` methods share, with the RELATION as a parameter.
 
         One image, the ORIGINAL over it first, then ours over a copy, then the comparisons and the
@@ -465,14 +472,22 @@ class RomBench:
         to go first, and our build then runs over the chip the case declared. Everything the run
         leaves off-image is read the instant each run ends, because the shim keeps one set of
         ledgers and clears them per run.
+
+        A WATCHED ORIGINAL (`original_watch`) is a bench run itself, so it declares the machine as
+        ours does: the I/O map per run, and no PSG or named-hardware seed at all (`_vet_watchable`).
         """
         import emu
         import harness
 
         psg_seed, hw_seed, io_seed = seeds
         image = harness.make_image(pokes or {})
-        o_final, o_writes, o_regs = emu.run(image, entry, regs, psg_seed=psg_seed,
-                                             hw_seed=hw_seed, io_seed=io_seed, schedule=schedule)
+        if original_watch:
+            _vet_watchable(entry, psg_seed, hw_seed)
+            o_final, o_writes, o_regs = watched_original(bytearray(image), entry, original_watch, regs,
+                                                         io_seed=io_seed, schedule=schedule)
+        else:
+            o_final, o_writes, o_regs = emu.run(image, entry, regs, psg_seed=psg_seed,
+                                                 hw_seed=hw_seed, io_seed=io_seed, schedule=schedule)
         # The denominator gets the same refusals as the numerator. `harness.differential` makes them
         # for a Tier 1 case, but a bench row is a case of its own — and an original measured while
         # reading a fabricated byte is measuring a machine that does not exist, whichever side did it.
@@ -686,6 +701,75 @@ def watched(result, entry, watch, memory, max_insns=None):
     finally:
         emu.bench_abort()
     return result
+
+
+def watched_original(image, entry, watch, regs=None, *, io_seed=None, schedule=None, max_insns=None):
+    """The ORIGINAL at `entry` over `image` — a bytearray, the run's memory, written in place — as a WATCHED bench run
+    (`watched`), answered in `emu.run`'s shape: `(image, writes, regs)`, `writes` its own stores
+    (`emu.bench_writes`) and `regs` what `RomBench` reads off an original — D0..A6, its cost, the write ledger's
+    truncation, the four streams and the wait's read sites.
+
+    WHY AN ORIGINAL IS EVER RUN THIS WAY: a case only a watch can make, because the machine does something BETWEEN
+    two of the routine's instructions — an interrupt delivered at the entry of a call it makes, a key or a mouse
+    packet arriving while it waits. An unwatched run has no point to lay it at; `watch.stopped` lays it at the stop
+    (the memory is the run's own) and the run goes on, the laying costing nothing.
+
+    THE SAME RUN AS `emu.run`'s, which is what lets it stand in that column: entered from the same reset at
+    `emu.STACK_TOP`, the sentinel above it, with the register file `emu.run` would set from `regs` (0 for a register
+    it does not name), and `arg0` the longword the case already poked where `emu.run` leaves the first argument — so
+    the entry store rewrites it with itself. ROM MODE ONLY (a bench run has no trap model; `watched`), and the caller
+    vets the run's refusals (`vet_the_run_just_made`). ONE DIFFERENCE, THE BUDGET: `max_insns` is the whole run's,
+    `emu.BENCH_MAX_INSNS` when None — the bench's, not `emu.run`'s default (200,000): an original only this run can
+    price (a row taken through interrupts) may run longer than an unwatched one could."""
+    import emu
+
+    budget = emu.BENCH_MAX_INSNS if max_insns is None else max_insns
+    result = original_entered(image, entry, watch.first, regs, io_seed=io_seed, schedule=schedule, max_insns=budget)
+    result = watched(result, entry, watch, image, max_insns=budget)
+    writes, truncated = emu.bench_writes(image)
+    return image, writes, {**result["regs"], "d0": result["d0"], "ninsns": result["ninsns"],
+                           "cycles": result["cycles"], "writes_truncated": truncated,
+                           "sched_read_sites": result["sched_read_sites"],
+                           "sched_read_arrivals": result["sched_read_arrivals"],
+                           **{key: getattr(emu, key)() for key in _STREAMS}}
+
+
+def entry_registers(regs=None):
+    """The register file `emu.run` enters with, as `emu.run_bench`'s `seed_regs`: `regs`' values, 0 for a register it
+    does not name. A bench run of ROM code is SEEDED with it rather than left with what the oracle's previous run left
+    in the CPU — a trap's register save stores what the caller holds, so the run's memory would depend on the run
+    before it."""
+    import emu
+
+    return [(regs or {}).get(name, 0) for name in emu.REPORTED_REGS]
+
+
+def original_entered(image, entry, door, regs=None, *, io_seed=None, schedule=None, max_insns=None):
+    """The FIRST SEGMENT of a bench run of the ORIGINAL at `entry` over `image` (a bytearray, written in place), entered
+    as `emu.run` enters it — the one place that entry is spelled, for `watched_original` and for a caller that drives
+    the segments itself: from the reset at `emu.STACK_TOP`, the sentinel above it, the register file `entry_registers`
+    sets from `regs`, `arg0` the longword the case already poked where `emu.run` leaves the first argument, and the PSG
+    and the named hardware set declaring NOTHING (`emu.install_chip_seeds`), as `emu.run` declares them for a case that
+    passes no seed — a bench run installs neither, so it would otherwise read whatever the run before declared. `door`
+    as `emu.run_bench`'s; the segment's result, as `emu.run_bench` answers it."""
+    import emu
+
+    first_argument = emu.STACK_TOP + emu.SENTINEL_SLOT_BYTES
+    arg0 = int.from_bytes(image[first_argument:first_argument + BLOB_ARG_BYTES], "big")
+    emu.install_chip_seeds()
+    return emu.run_bench(image, entry, arg0, emu.STACK_TOP, emu.SENTINEL, max_insns=max_insns, door=door,
+                         seed_regs=entry_registers(regs), io_seed=io_seed, schedule=schedule)
+
+
+def _vet_watchable(entry, psg_seed, hw_seed):
+    """A WATCHED original is a bench run, which has no door for the PSG's seed or the named hardware set's: it is
+    entered with NOTHING declared (`original_entered` installs "nothing", as `emu.run` does for a case that passes no
+    seed — TRAP_MODEL.md, "The BENCH door in ROM mode"). Refused rather than dropped: a seed the case passed would be
+    silently ignored, the chip it reads the undeclared one."""
+    if psg_seed is None and hw_seed is None:
+        return
+    raise ValueError(f"the ORIGINAL at {entry:#x} is watched — a bench run, which takes no psg_seed or hw_seed: the "
+                     f"seed would be silently ignored, the run declaring no chip. Measure this case unwatched")
 
 
 def vet_the_run_just_made(who):

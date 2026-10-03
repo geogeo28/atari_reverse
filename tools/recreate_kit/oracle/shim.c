@@ -2138,6 +2138,10 @@ int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
     g_min_a7 = sp;
     g_bench_sentinel = sentinel;
 
+    /* The write ledger = this run's own stores, as osh_run's is — cleared AFTER the two entry stores
+     * above, and kept across osh_bench_resume, so a run split at its door reads one ledger
+     * (emu.bench_writes). Without it the ledger would still hold the last osh_run's stores. */
+    g_wn = 0;
     g_ninsns = 0;
     g_ncycles = 0;
     g_door_calls = 0;

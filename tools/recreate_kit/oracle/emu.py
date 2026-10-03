@@ -986,6 +986,27 @@ def bench_abort():
     _bench_buf = None
 
 
+def _ledgered_writes(mem):
+    """The write ledger of the run that has just ended, as ``{address: the byte mem holds there}``."""
+    waddr = _LIB.osh_write_addrs()
+    return {waddr[i]: mem[waddr[i]] for i in range(_LIB.osh_num_writes())}
+
+
+def _writes_truncated():
+    """...and whether it saturated at MAX_WRITES (see ``run``'s ``writes_truncated``)."""
+    return _LIB.osh_num_writes() >= MAX_WRITES
+
+
+def bench_writes(mem):
+    """The WRITE LEDGER of the bench run that has just ended — every segment of it, resumes included — as ``run``'s:
+    ``(writes, truncated)``, ``writes`` being ``{address: byte}`` read off ``mem`` (the run's memory) and
+    ``truncated`` the ledger saturated at MAX_WRITES. ``osh_run_bench`` clears the ledger after its two entry stores
+    (the sentinel and ``arg0``), so it holds the run's own stores alone, as ``osh_run``'s does. For a caller that runs
+    ROM code as a bench run — an ORIGINAL watched at a door (``rom_bench.watched_original``) — and needs what it
+    wrote; a bench run of a cross-compiled build is compared on its memory instead."""
+    return _ledgered_writes(mem), _writes_truncated()
+
+
 def bench_door_pc():
     """The PC inside the door band the last ``run_bench``/``bench_resume`` stopped at."""
     return _LIB.osh_bench_door_pc()
@@ -1241,6 +1262,24 @@ def psg_seed_bytes(psg_seed):
         values[reg] = value
         known |= 1 << reg
     return bytes(values), known
+
+
+def install_chip_seeds(psg_seed=None, hw_seed=None):
+    """Install what the case DECLARES the YM2149's registers and the modeled hardware bytes held on
+    entry (``psg_seed_bytes``, ``hw_seed_bytes``) — None for either: NOTHING declared, so a read of
+    one is refused. ``run`` calls it before every run; a caller that runs ROM code as a BENCH run (an
+    original watched at a door, ``rom_bench.watched_original``) calls it with nothing, because
+    ``run_bench`` leaves both alone (an asm twin's run reads the seed its ``run`` installed).
+
+    Deliberately unconditional, seed or none: leaving the previous run's seed installed would make a
+    case that declares nothing readable through another case's declaration, under -n auto
+    unpredictably. (Under audio capture the shim ignores the PSG's — the file spans runs there by
+    contract — and installs its own profile over the hardware's, which is why ``run`` refuses a seed
+    passed under the mode outright.)"""
+    seed_values, seed_known = psg_seed_bytes(psg_seed)
+    _LIB.osh_psg_seed((ctypes.c_uint8 * PSG_NREGS)(*seed_values), seed_known)
+    hw_values, hw_known = hw_seed_bytes(hw_seed)
+    _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
 
 
 def hw_seed_bytes(hw_seed):
@@ -2193,16 +2232,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
                 f"(emu.hw_capture_profile() is what the run would really read). Disarm the mode "
                 f"(emu.audio_capture(False), or scope it with `with emu.audio_capturing():`) or "
                 f"drop the declaration.")
-    # Deliberately unconditional, seed or none: leaving the previous run's seed installed would make
-    # a case that declares nothing readable through another case's declaration, under -n auto
-    # unpredictably. (Under audio capture the shim ignores it — the file spans runs there by contract
-    # — which is why passing one under the mode is refused outright, just above.)
-    seed_values, seed_known = psg_seed_bytes(psg_seed)
-    _LIB.osh_psg_seed((ctypes.c_uint8 * PSG_NREGS)(*seed_values), seed_known)
-    # ...and the modeled hardware bytes, unconditionally for the same reason (under audio capture the
-    # shim installs its own profile over this, which is why passing one under the mode is refused).
-    hw_values, hw_known = hw_seed_bytes(hw_seed)
-    _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
+    install_chip_seeds(psg_seed, hw_seed)
     _install_io_seed(io_seed)   # ...and the DECLARED I/O MAP (Phase 15), for the same reason
     _install_io_seq(io_seq)     # ...and the DECLARED SEQUENCES (Phase 16), for the same reason
     # ...and the external agent's stores, unconditionally for the same reason: a schedule left
@@ -2346,9 +2376,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
                            + "; also, ".join(causes)
                            + "; its result is fabricated, not trustworthy")
 
-    n = _LIB.osh_num_writes()
-    waddr = _LIB.osh_write_addrs()
-    writes = {waddr[i]: mem[waddr[i]] for i in range(n)}
+    writes = _ledgered_writes(mem)
     out_regs = dict(zip(REPORTED_REGS, out))
     # THE WRITE LEDGER'S OWN TRUNCATION, REPORTED RATHER THAN REFUSED — and it is the quietest of
     # the three ledgers: the PSG's and the hardware's each COUNT what they dropped, while shim.c's
@@ -2363,7 +2391,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # write set becomes a claim, refuses it — `_vet_write_ledger_below_cap`. Same shape as
     # `_vet_hw_reads_are_declared` above: recorded for every run, refused where it could go green
     # for the wrong reason.
-    out_regs["writes_truncated"] = _LIB.osh_num_writes() >= MAX_WRITES
+    out_regs["writes_truncated"] = _writes_truncated()
     # Which ENDING this run had: True when it stopped at a GEMDOS Pterm rather than at its rts or its
     # checkpoint. `osh_run`'s boolean says only that it ended somewhere defined, so a case pairing a
     # checkpoint diff with a "this routine never returns" proof needs this to say WHY it did not
