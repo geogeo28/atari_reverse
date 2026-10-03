@@ -61,7 +61,8 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
                           "AES_PXL_RECT_FIELD", "AES_CURFLD_RECTS", "AES_OB_EDIT_FRAME",
                           "AES_W_CLIPDRAW_RECT", "AES_W_CPWALK_RECT", "AES_W_MOVE_RECTS", "AES_WM_GET_RECT",
                           "AES_W_SETACTIVE_RECT", "AES_W_REDRAW_RECTS", "AES_DRAW_CHANGE_FRAME", "AES_WM_OPCL_RECT",
-                          "AES_WM_SET_RECT"}
+                          "AES_WM_SET_RECT", "AES_FM_PARSE_INDEX", "AES_FM_BUILD_RECTS", "AES_FM_DO_FRAME",
+                          "AES_FM_BUTTON_FRAME", "AES_FM_ALERT_FRAME", "AES_ERALERT_FRAME", "AES_FM_ERROR_CODE"}
     assert not misplaced(slots)
 
 

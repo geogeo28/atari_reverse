@@ -192,7 +192,10 @@ assert info["ret"] == info["regs"]["d0"]
   NAME what the 68000 could not do: a word or longword at an ODD address (the address error, vector 3 — the oracle's
   Musashi is built without address errors, so no differential could show it) and an access whose bytes run PAST THE
   TOP of the bus (the host image ends there; the bound is written `at <= OS_BUS_ADDR_MASK - (bytes - 1)` so it cannot
-  wrap). One spelling, so a bound is fixed once — it replaced a dozen re-spellings under nine names.
+  wrap). One spelling, so a bound is fixed once — it replaced a dozen re-spellings under nine names. The setters also
+  refuse BY NAME a STORE any byte of which lies at or above the top of RAM (`ST_RAM_BYTES`, `$100000`): the oracle drops
+  such a store and an ST loses it or takes a bus error, while the host C would write its image (fm_strbrk's 5th alert
+  button reaches `$ff1100`). Reads are not refused; on target the store is the plain one.
 * **Stage EVEN pointers in-process.** A refusal is `recreate_not_reconstructed`, an `abort()`: an odd word pointer (or a
   span over the bus top) handed to an AES core inside pytest ends the WORKER, not the case. A case that means to show
   the refusal runs the core in a CHILD process through `vdi_helpers.refusal()` / `refusal_over()` and asserts on its
@@ -335,8 +338,8 @@ rlr / indisp / PD_STAT / the lists poked into place, and a case no derivation re
 THE EVENT DOOR — the AES's C into the event layer and the scheduler (band 4), which no C holds yet. Every C call of one of
 their routines goes through ONE wrapper in `include/aes/evdoor.h`, keyed by the routine's ROM address (wave 0: ev_multi
 `$fe6998` and ap_rdwr `$fe65c4`; wave 1: tak_flag `$fe4e5a`, unsync `$fe4eb8`, ev_block `$fe6874`, ct_chgown `$fe49ba`,
-post_button `$fe52e2`, and ev_multi's two-rectangle shape; ev_button joins with its first user — one wrapper, one `ENTRIES`
-line, one census line each). On target the wrapper IS the ROM's call: inline asm pushes the
+post_button `$fe52e2`, and ev_multi's two-rectangle shape; wave 2: ev_button `$fe68a4`, fm_button's wait for the rise —
+one wrapper, one `ENTRIES` line, one census line each). On target the wrapper IS the ROM's call: inline asm pushes the
 Alcyon frame once, from registers or immediates (a constant-zero argument pushes the already-zero A1), and `jsr`s the
 routine, D2/A2 given up (the Line-F handler loads them on every call the routine makes) — no `.S` call-out, which measured
 1.84 against the inline form's 1.04. On the host the wrapper packs the frame big-endian, CHECKS the hop the ROM caller's
@@ -367,8 +370,23 @@ show that dropping the delivery on either side, or shifting it by one ordinal, r
 is poked: an interrupt arriving while a process is inside an event call is a reachable interleaving, and its effect is the
 ROM's own ISR run over the ROM's own memory.
 
-Tier 3 cannot price an interrupted row yet. `RomBench.measure`'s original run and the VERIFIED_CASES sweeps replay a row
-unwatched, so they need a kit `original_watch` and a row `delivered` field (`STATUS.md`).
+Tier 3 prices an interrupted row and vets it in full. The row carries its deliveries (`delivered`, the ninth
+VERIFIED_CASES field, `{door call: (found, wrote)}`), laid at the same door calls at zero cycles on ALL FOUR of the row's
+runs: the measure's original (`RomBench.measure(original_watch=)`) and the windows run — both watched originals, the kit's
+`rom_bench.watched_original`, the bench write ledger keeping the mask word's drop vetted — our blob, and the shipped blob;
+and the VERIFIED_CASES sweeps replay the row watched (`aes_event.replayed`). Each delivery is checked against the memory it
+lands on. Every interrupted case whose ROM run returns, registered or not, also takes the bench's second differential
+inside `aes_event.interrupted` — callee-saved registers, odd accesses, the write ledger, refusal tallies, streams and the
+whole image — by the code path, so no list can fall behind the batteries.
+
+KEYS are delivered as the mouse is. `aes_event.key(scancode)` is the BIOS keyboard handler run at the door entry
+(`scancode_of` reads the snapshot's unshifted Keytbl), and `typed(...)` the next key at each ev_multi entry, all in ONE
+watched run: at each delivery the run is set aside, the interrupt runs over a copy, and the run is continued AT that entry.
+A routine's waits are numbered as it makes them: `aes_event.Waits({k: interrupt or (interrupt, ...)}, at=entry)` delivers at
+the k-th call of `entry` whatever other door calls come between (the entry checked at every call, the count per run;
+`typed` is a Waits of keys); `double_click` is three packets inside the click delay through the VDI mouse ISR, then the
+ticks. Every bench entry of ROM code — watched originals, `parked`, the continued runs — declares no PSG or named-hardware
+seed and enters with `emu.run`'s register file (`rom_bench.original_entered`), so nothing a previous run left reaches it.
 
 The dispatcher refuses in two ways, matched by `aes_event.BLOCKS` and `YIELDS` (the dispatcher's own words). A call that
 WOULD BLOCK leaves its process waiting. A call that WOULD YIELD keeps the caller ready but switches: unsync handing the lock to

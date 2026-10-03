@@ -25,7 +25,7 @@ import pytest
 
 import case
 import isr
-from harness import _lib, addrs, emu
+from harness import _lib, addrs, bench_tier3, emu
 
 _lib.isr_vbl.argtypes = [ctypes.POINTER(ctypes.c_ubyte)]
 _lib.isr_vbl.restype = None
@@ -614,12 +614,9 @@ def test_the_shifter_settle_loop_costs_our_build_exactly_what_it_was_written_at(
     # IMPORTED HERE rather than at the top, and it has to be: `bench/tier3.py` reads this module's
     # own `VERIFIED_CASES` (through `test_boot_snapshot`), so a module-level import of it would be a
     # cycle that fails at collection. By the time a test runs, both are loaded.
-    import sys
-    from pathlib import Path
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
-    import tier3
     from recreate_kit.rom_bench import RomBench
+
+    tier3 = bench_tier3()
 
     measured = tier3.measure(tier3.row_named(SETTLE_ROW), RomBench())
     assert measured.recreate_cycles == SETTLE_ARM_RECREATE_CYCLES, (

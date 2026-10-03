@@ -72,7 +72,10 @@ ROM_ADDRESSES_AS_DATA = {
     # must still name (the door's check before it calls).
     "aes/evdoor.h": {"AES_ROM_EV_MULTI": CODE, "AES_ROM_AP_RDWR": CODE, "AES_LINEF_TABLE": TABLE,
                      "AES_ROM_TAK_FLAG": CODE, "AES_ROM_UNSYNC": CODE, "AES_ROM_EV_BLOCK": CODE,
-                     "AES_ROM_CT_CHGOWN": CODE, "AES_ROM_POST_BUTTON": CODE},
+                     "AES_ROM_CT_CHGOWN": CODE, "AES_ROM_POST_BUTTON": CODE, "AES_ROM_EV_BUTTON": CODE},
+    # eralert's two tables, read in place (an error past them reads on, as the ROM's does), and the bell's Bconout: the
+    # D0 the BIOS dispatcher would have jumped with, handed to its C core off target (`bios/bcon.h`).
+    "fmdo.c": {"AES_ERALERT_STRINGS": TABLE, "AES_ERALERT_LEVELS": TABLE, "BIOS_BCONOUT": CODE},
 }
 
 

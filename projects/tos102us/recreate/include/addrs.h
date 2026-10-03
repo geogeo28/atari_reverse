@@ -2030,6 +2030,20 @@
 #define AES_ROM_GET_MOWN          0xfe5030   /* (&mouse, &keyboard): the two owners copied out */
 /* The form manager's hold on the screen (Alcyon, `aes/wmupdate.h`): the lock, the menu and the mouse taken. */
 #define AES_ROM_FM_OWN            0xfe718e   /* (take): nested; the first take saves and hands the screen to rlr */
+/* The form library's event-free half (Alcyon, `aes/fmlib.h`, read:), and the event layer's keyboard-queue leaves fm_do
+ * flushes the queue with (Alcyon, read:; non-blocking). */
+#define AES_ROM_FM_STRBRK         0xfe6c98   /* (tree, str, obj, &idx, &n, &maxlen): one ']' section into ob_specs */
+#define AES_ROM_FM_PARSE          0xfe6d84   /* (tree, str, &icon, &nmsg, &mlen, &nbut, &blen): an alert string split */
+#define AES_ROM_FM_BUILD          0xfe6df8   /* (tree, icon, nmsg, mlen, nbut, blen): the alert tree laid out */
+#define AES_ROM_FIND_OBJ          0xfe7214   /* (tree, start, which): the next/previous EDITABLE, or the first DEFAULT */
+#define AES_ROM_FM_INIFLD         0xfe727a   /* (tree, fld): fld, or for 0 the first EDITABLE */
+#define AES_ROM_DQ                0xfe50ca   /* (queue): the front key taken off and answered */
+#define AES_ROM_FQ                0xfe50f8   /* (): the running process's key queue emptied */
+/* The form library's half that waits on the user, and its alerts (Alcyon, `aes/fmdo.h`, read:), and the bell fm_do rings
+ * (hand 68000 beside the GEMDOS glue). */
+#define AES_ROM_FM_SHOW           0xfe764c   /* (string, values, default): an AES string, merged, as an alert */
+#define AES_ROM_ERALERT           0xfe768c   /* (error, drive): the critical error handler's alert; 1 to retry */
+#define AES_ROM_BELL              0xfe3a0c   /* (): BIOS Bconout(CON:, BEL) */
 /* The utility layer's MEMORY and STRING helpers (hand 68000, `aes/strings.h`), each named from its body. */
 #define AES_ROM_MUL_DIV           0xfecb6e   /* m1 * m2 / d, rounded: `muls.w` by 2*m2, `divs.w`, +-1, `asr.w` */
 #define AES_ROM_SET_CONTRL_PTR    0xfecbc6   /* contrl[7..8] := the argument */
@@ -2156,7 +2170,7 @@
 #define AES_ROM_AP_TRECD_OPCODE   15
 #define AES_ROM_EV_KEYBD          0xfe6894   /* ctx */
 #define AES_ROM_EV_KEYBD_OPCODE   20
-#define AES_ROM_EV_BUTTON         0xfe68a4   /* ctx */
+#define AES_ROM_EV_BUTTON         0xfe68a4   /* read: (clicks, mask, state, &rets): ev_block(7), then the mouse into rets */
 #define AES_ROM_EV_BUTTON_OPCODE  21
 #define AES_ROM_EV_MOUSE          0xfe68e4   /* ctx */
 #define AES_ROM_EV_MOUSE_OPCODE   22
@@ -2192,19 +2206,19 @@
 #define AES_ROM_OB_EDIT_OPCODE    46
 #define AES_ROM_OB_CHANGE         0xfea38e   /* read: (tree, obj, new, redraw) a state set, SELECTED inverted or redrawn */
 #define AES_ROM_OB_CHANGE_OPCODE  47
-#define AES_ROM_FM_DO             0xfe74a4   /* ctx */
+#define AES_ROM_FM_DO             0xfe74a4   /* read: (tree, start): fields edited, keys and clicks until an exit */
 #define AES_ROM_FM_DO_OPCODE      50
-#define AES_ROM_FM_DIAL           0xfe75ec   /* ctx */
+#define AES_ROM_FM_DIAL           0xfe75ec   /* read: (type, little, big): grown, shrunk, or the screen redrawn */
 #define AES_ROM_FM_DIAL_OPCODE    51
-#define AES_ROM_FM_ALERT          0xfe7002   /* ctx */
+#define AES_ROM_FM_ALERT          0xfe7002   /* read: (default, string): tree 1 laid out, drawn, fm_do; the button */
 #define AES_ROM_FM_ALERT_OPCODE   52
-#define AES_ROM_FM_ERROR          0xfe7712   /* ctx */
+#define AES_ROM_FM_ERROR          0xfe7712   /* read: (code): an MS-DOS error's alert, 0 past 63; 0 for its first button */
 #define AES_ROM_FM_ERROR_OPCODE   53
 #define AES_ROM_OB_CENTER         0xfe92ae   /* read: form_center, a tree's root centred on the screen */
 #define AES_ROM_OB_CENTER_OPCODE  54
-#define AES_ROM_FM_KEYBD          0xfe7298   /* ctx */
+#define AES_ROM_FM_KEYBD          0xfe7298   /* read: (tree, obj, &key, &next): a tab/arrow to a field, Return to the default */
 #define AES_ROM_FM_KEYBD_OPCODE   55
-#define AES_ROM_FM_BUTTON         0xfe7346   /* ctx */
+#define AES_ROM_FM_BUTTON         0xfe7346   /* read: (tree, obj, clicks, &next): a click taken, radio, watched, exit */
 #define AES_ROM_FM_BUTTON_OPCODE  56
 #define AES_ROM_GR_RUBBOX         0xfe85c6   /* read: (x, y, wmin, hmin, &w, &h): gr_rubwind with poff gl_rzero */
 #define AES_ROM_GR_RUBBOX_OPCODE  70

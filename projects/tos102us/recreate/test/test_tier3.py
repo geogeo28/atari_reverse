@@ -28,6 +28,7 @@ target build going wrong where a host build is right, and nothing else in this p
 import copy
 import ctypes
 import functools
+import re
 import subprocess
 import sys
 import types
@@ -35,7 +36,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
+from harness import BENCH_DIR
+
+sys.path.insert(0, str(BENCH_DIR))
 
 import tier3                                               # noqa: E402  (the registry and the bar)
 # ...and the caller a transcription row is netted by, whose cost `trap.py` measures.
@@ -55,6 +58,7 @@ from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
 from harness import addrs, emu, make_image                  # noqa: E402
 import opcodes                                             # noqa: E402
 import staging                                             # noqa: E402
+import test_boot_snapshot                                  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -743,8 +747,8 @@ def test_the_os_rule_refuses_a_shared_cost_the_two_sides_do_not_share(bench, mon
     row = tier3.row_named(OS_ROW)
     measure_call = tier3._measure_call
 
-    def spent_more_outside(blob, row, watch=None):
-        measured = measure_call(blob, row, watch)
+    def spent_more_outside(blob, row, watch=None, original_watch=None):
+        measured = measure_call(blob, row, watch, original_watch)
         measured.recreate_cycles += SHARED_CYCLES_MOVED
         return measured
     monkeypatch.setattr(tier3, "_measure_call", spent_more_outside)
@@ -792,9 +796,9 @@ def test_the_door_rule_holds_the_two_sides_windows_equal(bench, monkeypatch):
     original_windows = tier3._original_windows
 
     def one_cycle_dearer(row):
-        watch, cycles = original_windows(row)
+        watch, cycles, own = original_windows(row)
         watch.windows[0] += 1
-        return watch, cycles
+        return watch, cycles, own
     monkeypatch.setattr(tier3, "_original_windows", one_cycle_dearer)
     with pytest.raises(AssertionError, match="window by window"):
         tier3._measure_through_the_os(row, bench)
@@ -804,10 +808,11 @@ def test_the_original_s_windows_are_read_off_its_own_run(bench):
     """The ROM's watched run is its run — the same cycles as the one priced — and has as many windows as ours, each the
     event layer's cost in AES text."""
     row = tier3.row_named(EV_ROW)
-    watch, cycles = tier3._original_windows(row)
+    watch, cycles, _own = tier3._original_windows(row)
     measured = tier3._measure_through_the_os(row, bench)
     assert cycles == measured.original_cycles
     assert tuple(watch.windows) == measured.door_windows and len(watch.windows) == 1 and watch.windows[0] > 0
+
 
 
 def test_the_door_rule_holds_the_two_sides_frames_equal(bench, monkeypatch):
@@ -817,11 +822,11 @@ def test_the_door_rule_holds_the_two_sides_frames_equal(bench, monkeypatch):
     original_windows = tier3._original_windows
 
     def another_timer(row):
-        watch, cycles = original_windows(row)
+        watch, cycles, own = original_windows(row)
         call = watch.handed[0]
         flags, first, second, timer, *rest = call.arguments
         watch.handed[0] = call._replace(arguments=(flags, first, second, timer + 1, *rest))
-        return watch, cycles
+        return watch, cycles, own
     monkeypatch.setattr(tier3, "_original_windows", another_timer)
     with pytest.raises(AssertionError, match="a frame the image does not show"):
         tier3._measure_through_the_os(row, bench)
@@ -838,14 +843,15 @@ def test_the_door_rule_refuses_rom_aes_code_run_outside_a_window(bench, monkeypa
 
 def test_the_door_watch_stops_at_the_entries_alone_and_refuses_one_entered_but_by_a_door_call():
     """The watch stops at the door's entries THEMSELVES (a set of exact PCs, never a band that would swallow the AES
-    text between them), then at the return address the call left; and a door entry reached from a return address no
-    door call leaves is refused."""
+    text between them), then at the return address the call left — and at the dispatcher, where a call that would
+    switch processes is refused by name; and a door entry reached from a return address no door call leaves is
+    refused."""
     windows = tier3.our_windows(tier3.BUILT_ELF)
     entry, back = min(windows.entries), min(windows.returns)
     stack = 0x100
     memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(max(aes_event.FRAME_BYTES.values()))
     assert windows.first == frozenset(aes_event.ENTRIES)
-    assert windows.stopped(entry, stack, memory) == frozenset({back})
+    assert windows.stopped(entry, stack, memory) == frozenset({back, addrs.AES_ROM_DSPTCH})
     memory[stack:stack + 4] = (back + 2).to_bytes(4, "big")
     with pytest.raises(AssertionError, match="not a door call"):
         tier3.our_windows(tier3.BUILT_ELF).stopped(entry, stack, memory)
@@ -876,6 +882,107 @@ def test_the_door_rule_vets_the_call_graph_it_derives_from(monkeypatch):
     monkeypatch.setattr(tier3, "vet_no_row_is_ambiguous", vetted)
     with pytest.raises(_Vetted):
         tier3._reaching_the_door.__wrapped__()
+
+
+# ---- (EV) a row TAKEN THROUGH INTERRUPTS: the same deliveries at the same door calls on every run ------------------------
+# gr_dragbox with the cursor shown, the mouse moved at its second door call and the button released at its third
+# (`test_aes_grdrag.WORST_INTERRUPTED`): the ROM's watched original (`RomBench.measure`'s `original_watch`), its
+# windows' run (`_original_windows`) and our blob's run each lay the row's deliveries at the entry of the same call.
+INTERRUPTED_ROW = ("aes_gr_dragbox", "moved, the cursor shown")
+
+
+def _interrupted_row():
+    row = tier3.row_named(INTERRUPTED_ROW)
+    assert row.delivered, "the premise: the row is taken through interrupts"
+    return row
+
+
+def _ours_delivered(monkeypatch, delivered_of):
+    """Our blob's watch laying `delivered_of(the row's deliveries)` instead of the row's own."""
+    our_windows = tier3.our_windows
+    monkeypatch.setattr(tier3, "our_windows", lambda elf, delivered=None: our_windows(elf, delivered_of(delivered)))
+
+
+def _refused_inside_call(ordinal):
+    return f"inside door call {ordinal}: {re.escape(aes_event.SWITCHES_AT_THE_DISPATCHER)}"
+
+
+def test_an_interrupted_row_s_windows_are_read_off_its_own_run_too(bench):
+    """...and on a row TAKEN THROUGH INTERRUPTS, whose original has no unwatched run to anchor it: the watched run the
+    windows (and the ROM's own cycles) are read off is the run the measurement priced — its deliveries laid on both."""
+    row = _interrupted_row()
+    watch, cycles, _own = tier3._original_windows(row)
+    measured = tier3._measure_through_the_os(row, bench)
+    assert cycles == measured.original_cycles
+    assert tuple(watch.windows) == measured.door_windows and len(watch.windows) > max(row.delivered)
+
+
+def test_a_row_taken_through_interrupts_is_priced_with_them_laid_on_both_sides(dispatch, measurement_of):
+    """A window per door call on both sides — its first delivery past the first — and the row priced like any (EV) row."""
+    row = _interrupted_row()
+    measured = measurement_of(row)
+    assert len(measured.door_windows) > max(row.delivered) > 0
+    assert tier3.verdict(row, measured, dispatch, measurement_of) in ("net", "glue")
+
+
+def test_an_interrupt_laid_on_the_rom_s_side_alone_is_refused_at_the_call_that_waits_for_it(bench, monkeypatch):
+    """THE RED for our side: our blob handed nothing at the row's first delivery's call reaches the dispatcher there,
+    refused by name — not a run spinning to its budget."""
+    row = _interrupted_row()
+    _ours_delivered(monkeypatch, lambda delivered: {})
+    with pytest.raises(AssertionError, match=_refused_inside_call(min(row.delivered))):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_an_interrupt_laid_on_our_side_alone_is_refused_at_the_call_that_waits_for_it(bench, monkeypatch):
+    """...and for the ROM's: its original handed nothing blocks at the same call, refused by the same words."""
+    row = _interrupted_row()
+    _ours_delivered(monkeypatch, lambda delivered: row.delivered)
+    with pytest.raises(AssertionError, match=_refused_inside_call(min(row.delivered))):
+        tier3._measure_through_the_os(row._replace(delivered={}), bench)
+
+
+def test_an_interrupt_laid_one_call_late_is_refused_at_the_call_that_waits_for_it(bench, monkeypatch):
+    """...and one call late on our side: the call it was owed to waits for it, and is refused there by name."""
+    row = _interrupted_row()
+    _ours_delivered(monkeypatch, lambda delivered: {ordinal + 1: taken for ordinal, taken in delivered.items()})
+    with pytest.raises(AssertionError, match=_refused_inside_call(min(row.delivered))):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_an_interrupt_laid_over_memory_it_was_not_derived_over_is_refused_by_name(bench, monkeypatch):
+    """A delivery is the ROM's interrupt code run over the ROM's memory at that entry: laid over a run whose memory
+    differs where it writes, it would erase the difference — refused by name on whichever side the memory differs."""
+    row = _interrupted_row()
+    ordinal = min(row.delivered)
+    found, wrote = row.delivered[ordinal]
+    at = min(address for address in found if address not in aes_event._NOT_COMPARED)
+
+    def diverged(delivered):
+        return {**delivered, ordinal: ({**found, at: bytes([found[at][0] ^ 1]) + found[at][1:]}, wrote)}
+    _ours_delivered(monkeypatch, diverged)
+    with pytest.raises(AssertionError, match=f"where an interrupt is delivered at door call {ordinal}.*{at:#x}"):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_a_drop_over_bytes_the_watched_original_never_writes_is_refused(bench):
+    """The watched original's WRITE LEDGER (`emu.bench_writes`) keeps the row's drop vetted per byte: the mask word
+    widened by a word the ROM's run never stores is refused, as an unwatched row's is."""
+    row = _interrupted_row()
+    (lo, hi, why), = row.dropped
+    widened = row._replace(dropped=((lo, hi + aes.WORD_BYTES, why),))
+    with pytest.raises(AssertionError, match=f"never writes, the first at {hi:#x}"):
+        tier3.measure(widened, bench)
+
+
+def test_an_interrupted_row_is_refused_on_an_odd_access_its_build_alone_makes(bench, monkeypatch):
+    """The C of a row taken through interrupts gets the full second differential — here the odd-access surface: our
+    build answered an odd access the watched original's run was not is refused."""
+    none = {"odd_accesses": 0, "odd_addresses": (), "odd_first_pc": 0}
+    answers = iter((none, dict(none, odd_accesses=1, odd_addresses=(_PROBE_TARGET + 1,))))
+    monkeypatch.setattr(emu, "odd_accesses", lambda: next(answers))
+    with pytest.raises(AssertionError, match="address error on a 68000"):
+        tier3.measure(_interrupted_row(), bench)
 
 
 # ---- the LEAF RULE, which is the one verdict that is not a written entry ------------------------
@@ -1090,7 +1197,12 @@ def test_a_drop_one_longword_wider_than_the_park_is_refused():
 def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypatch):
     """What makes a Tier 3 drop safe is a Tier 1 differential of the SAME machine that still compares those bytes:
     each dropped row's registered companion runs, every `case.run` it makes is at the row's entry with nothing
-    dropped, and it staged the row's own pokes."""
+    dropped, and it staged the row's own pokes. A row TAKEN THROUGH INTERRUPTS has no `case.run`: its companion is
+    `aes_event.interrupted` itself, every compare it makes leaving out the stack band alone."""
+    registered = case.registered_case(name)
+    if test_boot_snapshot.delivered_of(registered):
+        _an_interrupted_companion_drops_nothing(name, registered, monkeypatch)
+        return
     runs, run = [], case.run
 
     def recorded(entry, regs, glue, **kwargs):
@@ -1099,9 +1211,27 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
 
     monkeypatch.setattr(case, "run", recorded)
     result = case.tier3_undropped()[name]()
-    registered = case.registered_case(name)
     assert runs and all(entry == registered[1] and not dropped and not windows for entry, dropped, windows in runs), runs
     assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
+
+
+def _an_interrupted_companion_drops_nothing(name, registered, monkeypatch):
+    """...an interrupted row's: every `aes_event.differing` its companion makes compares all but the stack band, over
+    the row's own machine — and over the row's own deliveries, neither derived again nor taken through the bench's
+    second differential (the row's own pricing is that)."""
+    left_out, differing = [], aes_event.differing
+
+    def recorded(image, rom_memory, not_compared=None):
+        left_out.append(not_compared)
+        return differing(image, rom_memory, not_compared)
+    monkeypatch.setattr(aes_event, "differing", recorded)
+    redone = []
+    monkeypatch.setattr(aes_event, "deliveries", lambda *case_of: redone.append("deliveries"))
+    monkeypatch.setattr(aes_event, "bench_differential", lambda *case_of: redone.append("bench_differential"))
+    result = case.tier3_undropped()[name]()
+    assert left_out and all(each == frozenset(case.STACK_BAND) for each in left_out), left_out
+    assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
+    assert result.delivered == test_boot_snapshot.delivered_of(registered) and not redone, redone
 
 
 # ---- THE ODD-ACCESS SURFACE: what a 68000 bombs on and this oracle's CPU completes ------------------------------------

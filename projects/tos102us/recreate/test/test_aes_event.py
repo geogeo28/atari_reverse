@@ -22,6 +22,9 @@ import aes_event
 import aes_gsx
 import case
 import test_aes_apmsg as apmsg
+import test_aes_fmalert as fmalert
+import test_aes_fmdo as fmdo
+import test_aes_fmlib as fmlib
 import test_aes_grwait as grwait
 import vdi
 import vdi_helpers
@@ -33,7 +36,7 @@ from harness import BASE_IMAGE, addrs, emu, make_image
 DOOR_ROUTINES = {"AES_ROM_EV_MULTI": addrs.AES_ROM_EV_MULTI, "AES_ROM_AP_RDWR": addrs.AES_ROM_AP_RDWR,
                  "AES_ROM_TAK_FLAG": addrs.AES_ROM_TAK_FLAG, "AES_ROM_UNSYNC": addrs.AES_ROM_UNSYNC,
                  "AES_ROM_EV_BLOCK": addrs.AES_ROM_EV_BLOCK, "AES_ROM_CT_CHGOWN": addrs.AES_ROM_CT_CHGOWN,
-                 "AES_ROM_POST_BUTTON": addrs.AES_ROM_POST_BUTTON}
+                 "AES_ROM_POST_BUTTON": addrs.AES_ROM_POST_BUTTON, "AES_ROM_EV_BUTTON": addrs.AES_ROM_EV_BUTTON}
 
 
 def test_the_door_serves_its_entries_and_nothing_else():
@@ -119,8 +122,7 @@ def rom_s_first_call(name, arguments, machine, interrupt=None):
     `(memory, call)` — the memory as the call finds it, and what it is handed; with `interrupt` delivered there first
     (`aes_event.deliveries`, at ordinal 0)."""
     delivered = aes_event.deliveries(name, arguments, machine, {0: interrupt} if interrupt else {})
-    memory, call = aes_event.rom_entered(name, arguments, machine,
-                                         {ordinal: wrote for ordinal, (_found, wrote) in delivered.items()}, 0)
+    memory, call = aes_event.rom_entered(name, arguments, machine, delivered, 0)
     return bytearray(memory), call
 
 
@@ -160,6 +162,7 @@ def _a_call(machine, pokes, frame):
 # button pressed off the bar, read off the ROM's own call; and the deepest of all, mn_do's first wait with the mouse
 # moved onto a title by an interrupt at its entry — and ap_rdwr handing a message to PD0's parked wait.
 SPB = aes_event.SEMAPHORE_FRAME.pack(WU["AES_WIND_SPB"])
+FM_RISE = aes.header_constants("fmdo.h")     # fm_button's ev_button: one click, the left button, up
 DEEPEST_CALLS = {
     "ev_multi, one rectangle": (addrs.AES_ROM_EV_MULTI,
                                 _a_call(grwait.button_down, *stilldn_frame(grwait.ENTER, grwait.AROUND_THE_MOUSE))),
@@ -179,6 +182,10 @@ DEEPEST_CALLS = {
     # mn_bar's fake click to the screen manager, parked in its button wait: it is woken (251 instructions).
     "post_button": (addrs.AES_ROM_POST_BUTTON, _a_call(aes_event.machine, {}, aes_event.POST_BUTTON_FRAME.pack(
         aes.SCREEN_MANAGER_PD, aes.MN_BAR_BUTTON, aes.MN_BAR_CLICKS))),
+    # fm_button's wait for the rise after an object is taken, the button already up: answered at once (its four answer
+    # words into the band's message buffer, which has the room).
+    "ev_button": (addrs.AES_ROM_EV_BUTTON, _a_call(aes_event.machine, {}, aes_event.EV_BUTTON_FRAME.pack(
+        FM_RISE["FM_RISE_CLICKS"], FM_RISE["FM_RISE_BUTTON"], FM_RISE["FM_RISE_UP"], aes_event.MESSAGE_AT))),
 }
 # The deepest of them, measured (`test_the_deepest_call_is_the_one_the_cap_is_derived_from`).
 DEEPEST = "ev_multi, two rectangles, the mouse moved onto a title"
@@ -490,6 +497,93 @@ def test_interrupts_take_both_shores_through_the_same_sequence():
     assert taken.returned and taken.answer == grwait.LEAVE and len(taken.calls) == ENTERED_THEN_RELEASED
 
 
+def test_a_returning_case_is_taken_through_the_bench_s_second_differential_and_a_blocking_one_is_not(monkeypatch):
+    """`interrupted` measures EVERY case whose ROM run returns as a row (`bench_differential`) — so no list of them can
+    fall behind the batteries — and no case that blocks, which no row could price."""
+    measured = []
+    monkeypatch.setattr(aes_event, "bench_differential", lambda name, *_case: measured.append(name))
+    aes_event.interrupted(*WATCHED_OUTSIDE, grwait.button_down(), entered_then_released(), objects=True)
+    aes_event.refused_where_the_rom_blocks(*WATCHED_OUTSIDE, grwait.button_down(), objects=True)
+    assert measured == [WATCHED_OUTSIDE[0]]
+
+
+UNREAD_BYTE = aes_event.BAND_AT + aes_event.BAND_BYTES - 1     # a byte of the door's band no case here stages or reads
+STALE_BYTE = 0x5A                      # ...and a value laid there
+
+
+class _Measured(Exception):
+    """`bench_differential` reached Tier 3's measurement."""
+
+
+def _a_registered_fm_do_row():
+    """One of fm_do's registered rows taken through interrupts (`aes_event.INTERRUPTED_ROWS`): `(row name, routine,
+    arguments, settled machine, interrupts)` — the case a battery's twin of it hands `bench_differential`."""
+    row_name, (name, arguments, pokes, interrupts, _delivered) = next(
+        (row_name, row) for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row[0] == fmdo.DO)
+    return row_name, name, arguments, pokes, interrupts
+
+
+def _measuring_refused(monkeypatch):
+    def measuring():
+        raise _Measured
+    monkeypatch.setattr(aes_event, "_tier3", measuring)
+
+
+def test_a_case_whose_row_is_registered_is_not_measured_a_third_time(monkeypatch):
+    """A case that IS a registered row — the same routine, staged image and deliveries — is priced by Tier 3's own
+    row test and table: its second differential does not measure it again..."""
+    _row_name, *case_of_the_row = _a_registered_fm_do_row()
+    _measuring_refused(monkeypatch)
+    aes_event.bench_differential(*case_of_the_row)
+
+
+def test_a_case_whose_row_is_not_registered_is_measured(monkeypatch):
+    """...while the same case with no such row registered is."""
+    _row_name, *case_of_the_row = _a_registered_fm_do_row()
+    monkeypatch.setattr(aes_event, "INTERRUPTED_ROWS", {})
+    _measuring_refused(monkeypatch)
+    with pytest.raises(_Measured):
+        aes_event.bench_differential(*case_of_the_row)
+
+
+def test_a_case_unlike_every_registered_row_is_measured(monkeypatch):
+    """...and so is a case of the same routine whose staged image, or whose deliveries, are no registered row's: a
+    byte of the machine changed that nothing reads, or the same machine taken through Return alone."""
+    _row_name, name, arguments, pokes, interrupts = _a_registered_fm_do_row()
+    _measuring_refused(monkeypatch)
+    for unlike in ((name, arguments, merge_pokes(pokes, {UNREAD_BYTE: bytes([STALE_BYTE])}), interrupts),
+                   (name, arguments, pokes, aes_event.typed(aes_event.RETURN_KEY))):
+        with pytest.raises(_Measured):
+            aes_event.bench_differential(*unlike)
+
+
+def test_a_twin_of_a_row_nobody_prices_is_refused_by_name(monkeypatch):
+    """...and a skip is only for a PRICED row: deliveries recorded under a name no registry prices are refused."""
+    row_name, *case_of_the_row = _a_registered_fm_do_row()
+    monkeypatch.setattr(aes.ROWS, "cases", [row for row in aes.ROWS.cases if row[0] != row_name])
+    with pytest.raises(AssertionError, match="no priced row"):
+        aes_event.bench_differential(*case_of_the_row)
+
+
+ODD_ACCESS_AT = aes_event.BAND_AT + 1  # an odd address our build alone is made to report
+
+
+def test_the_second_differential_s_refusal_fails_the_interrupted_case(monkeypatch):
+    """THE RED: our build answered an odd access the original's run was not — what no Tier 1 child reports — fails the
+    interrupted case itself, through its second differential."""
+    measure = aes_event.bench_differential
+
+    def with_an_odd_access_of_ours(*case):
+        none = {"odd_accesses": 0, "odd_addresses": (), "odd_first_pc": 0}
+        answers = iter((none, dict(none, odd_accesses=1, odd_addresses=(ODD_ACCESS_AT,))))
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(emu, "odd_accesses", lambda: next(answers))
+            measure(*case)
+    monkeypatch.setattr(aes_event, "bench_differential", with_an_odd_access_of_ours)
+    with pytest.raises(AssertionError, match="address error on a 68000"):
+        aes_event.interrupted(*WATCHED_OUTSIDE, grwait.button_down(), entered_then_released(), objects=True)
+
+
 def test_an_interrupt_the_c_is_not_handed_is_red(monkeypatch):
     """THE RED for the C's half: the same interrupts delivered to the ROM's run alone — the C's child blocks where the
     ROM's run, handed them, returns."""
@@ -511,11 +605,10 @@ def test_an_interrupt_the_rom_is_not_handed_is_red(monkeypatch):
 
 
 def test_an_interrupt_at_a_call_the_rom_never_makes_is_refused():
-    with pytest.raises(AssertionError, match="no door call of ordinal 5"):
+    with pytest.raises(AssertionError, match=r"no door call to deliver \[5\] at"):
         aes_event.interrupted(*WATCHED_OUTSIDE, grwait.button_down(), {5: aes_event.release}, objects=True)
 
 
-UNREAD_BYTE = aes_event.BAND_AT + aes_event.BAND_BYTES - 1     # a byte of the door's band no case here stages or reads
 
 
 def test_a_blocked_case_compares_the_whole_image_at_the_blocking_entry(monkeypatch):
@@ -724,6 +817,26 @@ def test_a_process_woken_again_after_it_parked_is_running_as_switchto_leaves_it(
     assert aes_event.scheduler_state(image, aes.SHELL_PD) == aes_event.running_as_switchto_leaves_it(aes.SHELL_PD)
 
 
+STALE_REGISTER = 0xA5A5A5A5            # what a run before leaves in every register the next run does not set
+SECOND_STALE_REGISTER = 0x5A5A5A5A
+
+
+def _parked_after_registers_left(value):
+    """`parked` PD0 in its evnt_multi for a key, the screen lock held — right after a run that left every register
+    `value` (the frame and the machine derived first: their own runs would leave registers of their own)."""
+    frame, locked = _wm_update().KEY_WAIT, _locked()
+    _final, _writes, left = emu.run(make_image({}), addrs.AES_ROM_RC_INTERSECT, {name: value for name in emu.REPORTED_REGS})
+    assert value in left.values(), "the premise: the run before leaves a register stale"
+    return aes_event.parked(addrs.AES_ROM_EV_MULTI, frame, locked)
+
+
+def test_a_parked_machine_is_the_same_whatever_ran_before_it():
+    """`parked` enters with `emu.run`'s register file (`rom_bench.entry_registers`), not with what the oracle's previous
+    run left in the CPU: the trap save and the dispatcher's context save store the caller's registers, so an unseeded
+    parking left two different machines after two different stale files (94 bytes apart, measured)."""
+    assert _parked_after_registers_left(STALE_REGISTER) == _parked_after_registers_left(SECOND_STALE_REGISTER)
+
+
 def test_a_call_that_returns_does_not_park():
     """THE RED for `parked`: a call the event layer answers (the free lock taken) returns — refused by name."""
     with pytest.raises(AssertionError, match="did not park"):
@@ -759,7 +872,7 @@ def test_a_derivation_that_reaches_the_dispatcher_is_refused():
 def test_keys_are_what_the_keyboard_poll_takes():
     """Return queued by the BIOS's keyboard handler: the ROM's chkkbd, run over PD0 running, queues the keyboard's fork
     function, and forker running it moves the key into PD0's key queue."""
-    state = merge_pokes(aes_event.pd0_running(), aes_event.keys(aes_event.RETURN_KEY, onto=aes_event.pd0_running()))
+    state = aes_event.typed_ahead(aes_event.pd0_running(), aes_event.RETURN_KEY)
     delta, _final, _regs = aes_event.derived(addrs.AES_ROM_CHKKBD, state)
     delta, final, _regs = aes_event.derived(addrs.AES_ROM_FORKER, merge_pokes(state, delta))
     cda = case.long_in(final, aes.SHELL_PD + aes.PD_CDA)
@@ -847,3 +960,180 @@ def test_every_derivation_is_held_far_under_its_budget(monkeypatch):
     monkeypatch.setattr(aes_event, "DERIVATION_INSNS", TIGHT_BUDGET)
     with pytest.raises(AssertionError, match="inside DERIVATION_INSNS' margin"):
         aes_event._woken(aes_event.keys(aes_event.RETURN_KEY))
+
+
+# ---- ONE RUN delivers every interrupt (`aes_event.deliveries`) -----------------------------------------------------------
+def _one_run_per_ordinal(name, arguments, machine, interrupts):
+    """The scheme `deliveries` replaced, kept as its reference: the ROM's run started afresh and stopped at the entry of
+    each delivery's call (`rom_entered`, the earlier deliveries laid in), the interrupt run over its memory there — a
+    run per ordinal, each as long as the calls before it."""
+    delivered = {}
+    for ordinal in sorted(interrupts):
+        memory, _call = aes_event.rom_entered(name, arguments, machine, delivered, ordinal)
+        delivered[ordinal] = aes_event._taken(memory, interrupts[ordinal])
+    return delivered
+
+
+def _mn_do_interrupted(label):
+    mnlib = _mnlib()
+    at, pokes, interrupts, *_outcome = mnlib.MN_DO_INTERRUPTED[label]
+    return mnlib.MN_DO, (mnlib.TITLE_OUT, mnlib.ITEM_OUT), mnlib.interrupted_machine(at, pokes), interrupts
+
+
+# Cases delivering at several calls, each interrupt a sequence of its own (move_to: a packet per step).
+SEVERAL_DELIVERIES = {
+    "gr_watchbox: in, out again, then the rise": lambda: (*WATCHED_OUTSIDE, grwait.button_down(), entered_then_released()),
+    "mn_do: the menu left, then a click off it": lambda: _mn_do_interrupted("the menu left, then a click off it"),
+    "mn_do: pressed on the title, dragged to an item, released": lambda: _mn_do_interrupted(
+        "pressed on the title, dragged to an item, released: chosen"),
+}
+
+
+@pytest.mark.parametrize("case_of", SEVERAL_DELIVERIES.values(), ids=SEVERAL_DELIVERIES)
+def test_one_run_delivers_what_a_run_per_ordinal_delivers(case_of, monkeypatch):
+    """The run set aside at each delivery's entry and continued there (`aes_event._continued_at`) takes the same
+    interrupts over the same memory as the reference that starts the ROM's run afresh for each: byte for byte. And it
+    IS one run: the routine is entered once, every other entry a continuation at a door entry, one per delivery."""
+    name, arguments, machine, interrupts = case_of()
+    reference = _one_run_per_ordinal(name, arguments, machine, interrupts)
+    entered, run_bench = [], emu.run_bench
+    monkeypatch.setattr(emu, "run_bench", lambda memory, entry, *rest, **named: entered.append(entry) or run_bench(
+        memory, entry, *rest, **named))
+    assert aes_event.deliveries(name, arguments, machine, interrupts) == reference
+    assert entered.count(getattr(addrs, name)) == 1
+    assert len(entered) == 1 + len(reference) and set(entered[1:]) <= set(aes_event.ENTRIES)
+
+
+# ---- KEYS delivered at the door's calls (`aes_event.key`, `typed`): fm_do, the ROM's own, as the oracle ---------------------
+FM_DO_ARGUMENTS = (fmdo.SELECTOR, 0)   # fm_do(the file selector, no start field)
+FM_DO_DEFAULT = fmdo.OK                # what fm_do answers for Return: the selector's DEFAULT button
+
+
+def _fm_do_typed(text):
+    return aes_event.rom_interrupted(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), aes_event.typed(text))
+
+
+def _path_text(image):
+    """The selector's path field's text (its first editable, which its validation upper-cases)."""
+    return fmdo.field_text(image, fmdo.SELECTOR, fmdo.PATH_FIELD)
+
+
+@pytest.mark.parametrize("text", ("\r", "abc\r", "abcdefgh\r"))
+def test_keys_typed_one_per_wait_end_fm_do_where_the_ring_holding_them_all_does(text):
+    """`typed`: each key delivered by the keyboard handler at the entry of the next ev_multi, the ROM's own fm_do
+    taking one per wait — it answers its DEFAULT, the path field holds the text it typed, and its memory is the memory
+    of the same fm_do run over the IKBD ring holding every key before it starts (`keys`): the ROM agreeing with itself
+    on what the keys are. One delivery per key, at as many ev_multi calls; Return alone leaves the path as it was."""
+    calls, delivered, memory, result = _fm_do_typed(text)
+    assert result and result["d0"] == FM_DO_DEFAULT
+    assert len(delivered) == len(text) and all(calls[ordinal].routine == addrs.AES_ROM_EV_MULTI for ordinal in delivered)
+    typed_into_the_path = text[:-1].upper().encode()
+    assert _path_text(memory) == (typed_into_the_path or _path_text(make_image(aes_event.machine())))
+    machine = aes_event.machine()
+    ahead = aes_event.typed_ahead(machine, *aes_event.scancodes_of(text))
+    _calls, _none, typed_ahead, _result = aes_event.rom_interrupted(fmdo.DO, FM_DO_ARGUMENTS, ahead, {})
+    assert not aes_event.differing(memory, typed_ahead, frozenset(case.STACK_BAND))
+
+
+def test_typing_is_one_run_however_long_the_text():
+    """NOT QUADRATIC: the ROM's fm_do is entered once for the deliveries however many keys are typed — the rest are
+    continuations at the ev_multi entries, one a key."""
+    for text in ("\r", "abcdefgh\r"):
+        entered = []
+        run_bench = emu.run_bench
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(emu, "run_bench", lambda memory, entry, *rest, **named: entered.append(entry) or run_bench(
+                memory, entry, *rest, **named))
+            aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), aes_event.typed(text))
+        assert entered == [addrs.AES_ROM_FM_DO] + [addrs.AES_ROM_EV_MULTI] * len(text)
+
+
+def test_a_key_typed_past_the_routine_s_last_wait_is_refused_by_name():
+    """A key no wait takes — Return ends fm_do, so the key after it — is refused, not dropped."""
+    with pytest.raises(AssertionError, match="no door call to deliver"):
+        aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), aes_event.typed("\ra"))
+
+
+def test_a_character_no_unshifted_key_types_is_refused_by_name():
+    assert aes_event.scancode_of("\r") == aes_event.RETURN_KEY
+    with pytest.raises(AssertionError, match="no unshifted key types 'A'"):
+        aes_event.scancode_of("A")
+
+
+OTHER_ENTRY = addrs.AES_ROM_WM_UPDATE   # a door call that is no wait of a key schedule's
+
+
+def test_a_schedule_counts_each_run_s_waits_afresh_and_answers_at_its_own_entry_alone():
+    """`Waits`, asked over two runs whose door calls come in different orders: each run's waits numbered from its own
+    call 0, and a call of another entry answered nothing — never the wait an earlier run made at that ordinal."""
+    first, second = object(), object()
+    waits = aes_event.Waits({0: first, 1: second})
+    runs = ([OTHER_ENTRY, addrs.AES_ROM_EV_MULTI, addrs.AES_ROM_EV_MULTI],
+            [addrs.AES_ROM_EV_MULTI, OTHER_ENTRY, addrs.AES_ROM_EV_MULTI])
+    answered = []
+    for calls in runs:
+        waits.begin_run()
+        answered.append([waits(ordinal, entry) for ordinal, entry in enumerate(calls)])
+    assert answered == [[None, first, second], [first, None, second]]
+    assert waits.pending == ()
+
+
+def test_a_schedule_reused_over_a_run_that_makes_no_door_call_is_refused_by_name():
+    """Each run begins the schedule afresh (`Waits.begin_run`), so a run that makes NO door call leaves every row
+    pending — not the last run's count: Return typed into fm_do, then the same schedule handed to fm_error past its last
+    code (it shows nothing, so it waits for nothing) is refused, not answered with no delivery."""
+    waits = aes_event.typed(aes_event.RETURN_KEY)
+    aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), waits)
+    assert waits.pending == ()
+    with pytest.raises(AssertionError, match="no door call to deliver"):
+        aes_event.deliveries(fmalert.ERROR, (fmalert.PAST_THE_LAST,), aes_event.machine(), waits)
+
+
+def test_an_interrupt_s_own_failure_is_reported_not_the_routine_s_budget(monkeypatch):
+    """An interrupt whose run fails (its ROM code did not return — the tick glue chained through a garbage pointer)
+    surfaces AS ITSELF: the run's vets are made on a run that ended, never over the oracle's counters the failed run
+    left (here, a whole budget's), which would name the routine and the wrong remedy instead."""
+    def failing(_image):
+        raise RuntimeError("the interrupt's run did not reach rts")
+    monkeypatch.setattr(aes_event, "_instructions_run", lambda: aes_event.DERIVATION_INSNS)
+    with pytest.raises(RuntimeError, match="the interrupt's run did not reach rts"):
+        aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), {0: failing})
+
+
+def test_a_schedule_asked_out_of_order_is_refused_by_name():
+    waits = aes_event.Waits({0: object()})
+    with pytest.raises(AssertionError, match="it counts the waits of a run asked at every call, in order"):
+        waits(1, addrs.AES_ROM_EV_MULTI)
+
+
+def test_a_schedule_handed_to_another_routine_delivers_at_that_routine_s_own_waits():
+    """The same Return schedule run over fm_do, then over fm_alert — whose first door calls are its wm_update's, not
+    ev_multi: the key is laid at fm_alert's own first ev_multi, not at the ordinal fm_do's wait had."""
+    waits = aes_event.typed(aes_event.RETURN_KEY)
+    aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), waits)
+    alert = (1, fmlib.ALERTS["AES string 19"])   # fm_alert(default 1, the string)
+    delivered = aes_event.deliveries(fmalert.ALERT, alert, aes_event.machine(), waits)
+    calls, _memory, _result = aes_event._watched_through(fmalert.ALERT, alert, aes_event.machine(), delivered)
+    assert [calls[ordinal].routine for ordinal in delivered] == [addrs.AES_ROM_EV_MULTI]
+
+
+def test_a_schedule_answers_the_same_deliveries_over_a_second_run():
+    """A schedule (`Waits`) is asked again by every run of the same routine — the replay, a row's registration over its
+    settled machine — and must answer the ordinals it answered the first time."""
+    keys = aes_event.typed("ab\r")
+    first = aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), keys)
+    assert aes_event.deliveries(fmdo.DO, FM_DO_ARGUMENTS, aes_event.machine(), keys) == first
+
+
+def test_a_watched_run_is_the_unwatched_run_whatever_ran_before_it():
+    """A watched run of the ROM enters with `emu.run`'s register file (`rom_bench.original_entered`), not with what the oracle's
+    previous run left in the CPU: the BIOS trap under the keyboard poll saves the caller's registers, so its memory —
+    the save area included — is `emu.run`'s, here right after a run that left every register a stale pattern."""
+    machine = aes_event.machine()
+    ahead = aes_event.typed_ahead(machine, aes_event.RETURN_KEY)
+    image = make_image(aes.staged(fmdo.DO, FM_DO_ARGUMENTS, ahead))
+    unwatched, _writes, _regs = emu.run(image, addrs.AES_ROM_FM_DO)
+    _stale, _writes, regs = emu.run(image, addrs.AES_ROM_FM_DO, {name: STALE_REGISTER for name in emu.REPORTED_REGS})
+    assert STALE_REGISTER in regs.values(), "the premise: the run before leaves a register stale"
+    _calls, memory, result = aes_event._watched_through(fmdo.DO, FM_DO_ARGUMENTS, ahead, {})
+    assert result and not aes_event.differing(memory, unwatched, frozenset(case.STACK_BAND))

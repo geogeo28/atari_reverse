@@ -282,7 +282,7 @@ void aes_rs_sglobal(uint8_t *image, uint32_t global)
  * is an address. */
 int16_t aes_rs_gaddr(uint8_t *image, uint32_t global, int16_t type, int16_t index, uint32_t answer)
 {
-    uint8_t *slot = image + bus_span(answer, M68K_LONG_BYTES);    /* loaded ONCE, as the ROM holds A5 ($feaa8e)  */
+    uint8_t *slot = image + ram_store(bus_span(answer, M68K_LONG_BYTES), M68K_LONG_BYTES);   /* loaded ONCE, as A5 ($feaa8e) */
 
     aes_rs_sglobal(image, global);
     wr32(slot, aes_get_addr(image, type, index));

@@ -100,6 +100,14 @@ SETTLE_VBLANKS = 900
 # are wider than any single pair's difference on purpose — a mask measured from one pair would be
 # too narrow for the next capture.
 #
+# ONE REGION WAS NARROWED BY MEASUREMENT. "AES scratch" at $9488 had coalesced the tick glue's
+# ($fed426) own variables — the SP it saves ($9486), the vex_timv routine it chains to ($948a),
+# ev_timer's two counts ($948e, $9492) — in between the only bytes there the three captures differ
+# at: the saved SP's low word ($9488-$9489) and the glue's private stack below `lea $9552,sp`
+# ($954a-$954b). A button press's ticks RUN that glue, so masking its chain pointer sent every click
+# row through a noise pointer once the sweep derived a row's deliveries over the noise as well
+# (`test/test_boot_snapshot.py`, `run_original`).
+#
 # THE RULE THIS BUYS: no case may depend on a byte in here. That is not left to care —
 # `test/test_boot_snapshot.py` re-runs every verified function's differential over a snapshot whose
 # mask regions are filled with pseudo-random bytes, so a function that reads one fails loudly.
@@ -108,7 +116,8 @@ MASK = (
     (0x001464, 0x1ce, "OS BSS scratch / a dead stack frame"),
     (0x0074c0, 0x054, "OS BSS scratch"),
     (0x008930, 0x2d0, "the supervisor stack, below ISP"),
-    (0x009488, 0x0c4, "AES scratch"),
+    (0x009488, 0x002, "the AES tick glue's saved SP (low word; written before every read)"),
+    (0x009496, 0x0b6, "the AES tick glue's private stack, below $9552"),
     (0x009fa5, 0x0cf, "AES scratch"),
     (0x00a19b, 0x079, "AES scratch"),
     (0x00a771, 0x06d, "AES scratch"),

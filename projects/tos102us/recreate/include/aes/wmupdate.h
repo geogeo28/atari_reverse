@@ -46,6 +46,8 @@
 #define AES_FM_OWN_CTRL       0x9456     /* bytes[GRECT_BYTES]: the control rectangle, put aside ($fe71b6)     */
 #define AES_FM_OWN_MOUSE      0x945e     /* long: the mouse's owner, put aside  ($fe71c4 move.l #$945e)        */
 #define AES_FM_OWN_KEYBOARD   0x9462     /* long: the keyboard's owner, put aside ($fe71be move.l #$9462)      */
+#define FM_OWN_TAKE           1          /* fm_own's argument: the screen taken (fm_do's $fe74b0 move.w #1)    */
+#define FM_OWN_GIVE_BACK      0          /* ...and given back                   (fm_do's $fe75e2 clr.w (sp))   */
 
 /* ---- the CONTROL MANAGER's state the three leaves read and write ------------------------------------------------- */
 #define AES_CTRL_RECT         0x9b3e     /* bytes[GRECT_BYTES]: the screen manager's own rectangle ($fe500c)   */

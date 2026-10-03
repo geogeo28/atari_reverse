@@ -38,6 +38,9 @@ TYPES = {name: getattr(aes, name) for name in ("G_BOX", "G_TEXT", "G_BOXTEXT", "
                                                "G_TITLE")}
 STATE_BITS = {name: 1 << getattr(aes, f"OB_STATE_{name}_BIT")
               for name in ("SELECTED", "CROSSED", "CHECKED", "DISABLED", "OUTLINED", "SHADOWED")}
+# ...and OB_FLAGS' low-byte bits, the same way (`aes/objects.h`'s OB_FLAG_*_BIT).
+FLAG_BITS = {name: 1 << getattr(aes, f"OB_FLAG_{name}_BIT")
+             for name in ("SELECTABLE", "DEFAULT", "EXIT", "EDITABLE", "RBUTTON", "TOUCHEXIT", "HIDETREE")}
 
 
 def object_long(tree, index, name, image=BASE_IMAGE):

@@ -260,7 +260,7 @@ fe39b6 S     6       6      __DOS (jmp fe3c3e trap#1 glue) |  | 24
 fe39bc A    72 f76c  72      | fe39b6 | 1
 fe3a04 S     4       4       |  | 4
 fe3a08 S     4       4       |  | 4
-fe3a0c S    16 f848  16      T:#13=1 |  | 1
+fe3a0c S    16 f848  16      bell (fm_do's: BIOS Bconout(CON:, BEL), not the DOS glue) T:#13=1 |  | 1
 fe3a1c S    42 f448  42      | fe39b6 | 7
 fe3a46 S    38 f468  12      | fe39b6 | 4
 fe3a52 S    38 f17c/ 38      | fe39b6 | 6
@@ -341,8 +341,8 @@ fe501c S    20 f828  16     get_ctrl | feccca | 1
 fe5030 S    26 f82c  24     get_mown |  | 1
 fe504a S    72 f7a4  66     set_mown #ctx | fe52e2 fe5480 | 1
 fe5092 A    56 f8ec  54      |  | 1
-fe50ca S    46 f7ec  44      |  | 3
-fe50f8 S    34 f840  30      | fe50ca | 1
+fe50ca S    46 f7ec  44     dq (a CDA key queue's front) |  | 3
+fe50f8 S    34 f840  30     fq (gl_cda's queue flushed) | fe50ca | 1
 fe511a S   102 f7fc  98      | fe3fba | 4
 fe5180 A    34       -      kchange (keyboard fork fn) [ptr] | fe51a2 | 0
 fe51a2 A    54 f8e8  48      | fe5092 fe511a | 1
@@ -450,25 +450,25 @@ fe6766 A   180 f1c0  168    ap_trecd | fe3890 fe389c fe6936 | 3
 fe681a S    90 f7e8  88      |  | 3
 fe6874 S    32 f728  24     ev_block (door entry) | fe40b2 fe40ec fe41bc | 6
 fe6894 A    16 f1cc  12     ev_keybd | fe6874 | 3
-fe68a4 S    64 f1d0  58     ev_button | fe681a fe6874 | 5
+fe68a4 S    64 f1d0  58     ev_button (door entry) | fe681a fe6874 | 5
 fe68e4 A    44 f1d4  38     ev_mouse | fe681a fe6874 | 3
 fe6910 S    38 f1d8  34     ev_mesag | fe65c4 | 4
 fe6936 A    38 f1dc  34     ev_timer | fe6874 fe3e08 | 5
 fe695c S    58 f7f4  54      | feccd6 | 1
 fe6998 S   710 f09c/ 662    ev_multi | fe40b2 fe40ec fe41bc fe427a fe4bc6 fe4cd6 fe50ca fe5292 fe681a fe6910 fe695c fe3e08 | 8
 fe6c5e S    58 f1e4  56     ev_dclick |  | 5
-fe6c98 S   234 f80c  230     | fece4e | 1
-fe6d84 S   116 f814  110     | fe6c98 | 1
-fe6df8 S   522 f818  490     | fea1ba fea55e fecc7e feccbe fece4e | 1
+fe6c98 S   234 f80c  230     fm_strbrk | fece4e | 1
+fe6d84 S   116 f814  110     fm_parse | fe6c98 | 1
+fe6df8 S   522 f818  490     fm_build | fea1ba fea55e fecc7e feccbe fece4e | 1
 fe7002 S   396 f220  366    fm_alert | fda7f8 fda846 fe4a98 fe6d84 fe6df8 fe74a4 fe8966 fe8996 fe92ae fea028 fea69c feaa86 feca68 | 7
 fe718e S   134 f83c  63     fm_own | fe49ba fe501c fe5030 feca68 | 3
-fe7214 S   102 f834  100     |  | 2
-fe727a S    30 f844  26      | fe7214 | 1
+fe7214 S   102 f834  100     find_obj |  | 2
+fe727a S    30 f844  26     fm_inifld | fe7214 | 1
 fe7298 S   218 f22c  40     fm_keybd | fe7214 fe764c fea38e | 4
 fe7346 S   350 f230  338    fm_button | fe68a4 fe84ba fea38e fea4b6 fed382 | 4
 fe74a4 S   328 f218  300    fm_do | fda7f8 fe3a0c fe50f8 fe6998 fe718e fe727a fe7298 fe7346 fe9678 fea0a8 | 7
 fe75ec S    96 f21c  84     fm_dial | fda7f8 fe8340 fe837a feb6c8 fec026 | 5
-fe764c S    64 f1a8  60      | fe7002 fea6e6 fed070 | 7
+fe764c S    64 f1a8  60     fm_show | fe7002 fea6e6 fed070 | 7
 fe768c S   134 f60c  130    eralert (crit error alert) | fe764c | 2
 fe7712 S   112 f224  108    fm_error | fe764c | 7
 fe7782 A    44 f8c0  42      | fe92ae feaa86 | 1

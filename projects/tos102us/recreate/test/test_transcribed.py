@@ -29,11 +29,12 @@ from pathlib import Path
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, emu, make_image
+from harness import BASE_IMAGE, BENCH_DIR, _lib, addrs, emu, make_image
 
 # Every battery, so every transcription row and every staged caller is registered before collection.
 import test_boot_snapshot  # noqa: F401
 import aes
+import aes_event
 import case
 import routines
 import transcription
@@ -43,7 +44,7 @@ from opcodes import EXCEPTION_LINE_MASK, LINE_F
 
 RECREATE = Path(__file__).resolve().parents[1]
 KIT = RECREATE.parents[2] / "tools" / "recreate_kit"
-sys.path.insert(0, str(RECREATE / "bench"))
+sys.path.insert(0, str(BENCH_DIR))
 import shipped_glue  # noqa: E402
 import tier3  # noqa: E402
 MAKE_LISTS = ("TRANSCRIBED_ENTRIES", "TRANSCRIBED_C_CORES", "TRANSCRIBED_SOURCES", "ALCYON_ENTRY_SOURCES")
@@ -279,15 +280,27 @@ def test_every_aes_row_executes_no_line_f_and_holds_the_return_tails_it_reaches(
 
 
 def _registered_runs(core):
-    """The ROM side of the AES battery's priced rows of `core` — real routines over real cases, for the reds."""
+    """The ROM side of the AES battery's priced rows of `core` — real routines over real cases, for the reds. A row
+    taken through interrupts (`test_boot_snapshot.delivered_of`) has no plain run to replay: refused, not run
+    undelivered."""
+    rows = [row for row in aes.CASES if row[0].startswith(f"{core}, ")]
+    assert not any(map(test_boot_snapshot.delivered_of, rows)), f"{core}: a row taken through interrupts has no plain run"
     return [Run(entry, regs, pokes, io_seed)
-            for name, entry, regs, pokes, _psg, io_seed, _schedule in aes.CASES if name.startswith(f"{core}, ")]
+            for _name, entry, regs, pokes, _psg, io_seed, _schedule, _stop_pc in map(test_boot_snapshot.fields, rows)]
 
 
 # The planned layout (`../README.md`, "An AES `.S`"): rc_intersect with the tails, four Line-F calls inside as bytes.
 RC_INTERSECT_WITH_THE_TAILS = transcription.Region(addrs.AES_ROM_RC_INTERSECT, addrs.AES_ROM_RC_RETURN_TRUE + 6,
                                                    "aes_rom_rc_intersect")
 RC_INTERSECT_ALONE = RC_INTERSECT_WITH_THE_TAILS._replace(hi=addrs.AES_ROM_RC_RETURN_FALSE)
+
+
+def test_a_core_with_a_row_taken_through_interrupts_has_no_plain_runs():
+    """THE RED for `_registered_runs`' refusal: a row carrying deliveries replayed by a plain run would run undelivered."""
+    row_name = next(iter(aes_event.INTERRUPTED_ROWS))
+    core = row_name.partition(", ")[0]
+    with pytest.raises(AssertionError, match=f"{core}: a row taken through interrupts has no plain run"):
+        _registered_runs(core)
 
 
 def test_a_path_through_the_tails_pinned_with_them_is_accepted_and_one_pinned_apart_is_refused():

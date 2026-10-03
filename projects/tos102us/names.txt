@@ -548,7 +548,7 @@ fn 0xfe6476 shel_put   # ctx
 fn 0xfe6488 shel_find   # ctx
 fn 0xfe6496 shel_envrn   # ctx
 fn 0xfe64a6 aes_unimplemented
-cmt 0xfe64a6 Dispatch-table target for: AES 16, AES 17, AES 18, AES 27, AES 28, AES 29, AES 36, AES 37, AES 38, AES 39, AES 48, AES 49, AES 57, AES 58, AES 59, AES 60, AES 61, AES 62, AES 63, AES 64, AES 65, AES 66, AES 67, AES 68, AES 69, AES 82, AES 83, AES 84, AES 85, AES 86, AES 87, AES 88, AES 89, AES 91, AES 92, AES 93, AES 94, AES 95, AES 96, AES 97, AES 98, AES 99, AES 109, AES 115, AES 116, AES 117, AES 118, AES 119
+cmt 0xfe64a6 Dispatch-table target for: AES 16, AES 17, AES 18, AES 27, AES 28, AES 29, AES 36, AES 37, AES 38, AES 39, AES 48, AES 49, AES 57, AES 58, AES 59, AES 60, AES 61, AES 62, AES 63, AES 64, AES 65, AES 66, AES 67, AES 68, AES 69, AES 82, AES 83, AES 84, AES 85, AES 86, AES 87, AES 88, AES 89, AES 91, AES 92, AES 93, AES 94, AES 95, AES 96, AES 97, AES 98, AES 99, AES 109, AES 115, AES 116, AES 117, AES 118, AES 119. Its body is fm_show(27 "Bad Function #", NULL, 1)
 
 # --- BIOS wave 1 (2026-09-14): the character-device drivers the three Bcon* entries jump through,
 # and the one helper Protobt calls — all bodies read and verified by recreate/test/test_bios_*.py ---
@@ -1903,3 +1903,49 @@ var 0xc6ce desk_acc
 var 0xc6cc gl_mnclicks # ctx
 var 0x9b3a ctl_pd
 var 0x98b4 ct_msgbuf # ctx
+# ---- AES band 3 wave 2 (2026-10-03): the forms and the alerts ----
+# the event door's new entry (band 4's code, wrapped in include/aes/evdoor.h)
+fn 0xfe68a4 ev_button
+cmt 0xfe68a4 ev_button(clicks, mask, state, &answers): ev_block(7), then the mouse, buttons and shift state into four answer words. Runs NO forker before it waits: a release the AES has not taken blocks it (fm_button's wait for the rise)
+# the forms' event-free half (src/aes/fmlib.c)
+fn 0xfe6c98 fm_strbrk
+cmt 0xfe6c98 fm_strbrk(tree, str, obj, &idx, &n, &maxlen): a ']' section into ob_spec of obj, obj+1, ... — '|' ends a line, a doubled delimiter is itself (at the 31-char cap its second stays a delimiter); NO bound on the line count: objects up to 10 reproduce (a 4th button lands in AES tree 2's root, its G_BOX colour word $1143 taken as the pointer), object 11 (a 5th button or 10th line) stores at $ff1100, ABOVE RAM — lost on the ROM (a bus error on an ST), refused by name on the host; buttons' 11-byte buffers overrun past 10 chars
+fn 0xfe6d84 fm_parse
+cmt 0xfe6d84 fm_parse(tree, str, &icon, &nmsg, &mlen, &nbut, &blen): icon = str[1] - '0' (signed, unchecked); idx 4; strbrk(obj 2); idx++; strbrk(obj 7); ++*blen
+fn 0xfe6df8 fm_build
+cmt 0xfe6df8 fm_build(tree, icon, nmsg, mlen, nbut, blen): the alert tree in cells, ten objects unlinked (lbcopy of $fefa0e's six $ff), icon/lines/buttons ob_add'ed, buttons flags 5, the last $25 (object nbut + 6)
+fn 0xfe7214 find_obj
+cmt 0xfe7214 find_obj(tree, start, which): 0 next EDITABLE, 1 previous, 2 first DEFAULT from the root, else first EDITABLE from 0; stops at LASTOB (tested after the flag) or below 0; answers start when none
+fn 0xfe727a fm_inifld
+fn 0xfe7298 fm_keybd
+cmt 0xfe7298 fm_keybd(tree, obj, &key, &new): table $fefa30 = 7 longs (6 keys + 0) then 7 labels; the 7th, $fefa64 = $fe72da, is key 0's AND every unmatched key's (go on); $fefa68 starts fm_error's table. shift-Tab/Up back, Tab/Down on, Return/Enter the DEFAULT (ob_change SELECTED, drawn, answers 0); a known key cleared before the search. Never alerts, never blocks
+fn 0xfe50ca dq
+cmt 0xfe50ca dq(queue): CQUEUE {keys[8], front +16, rear +18, count +20}: count--, front++ (wraps at 8), answers the old front's key; no empty check (every caller guards the count)
+fn 0xfe50f8 fq
+cmt 0xfe50f8 fq(): while gl_cda's ($97fa) key count, dq(gl_cda + 14) — the RUNNING PD's queue, not gl_kowner's ($9ad8) that chkkbd fills
+var 0xfefa30 fm_keybd_keys
+var 0xfefa0e fm_build_no_links
+# the forms that wait, and the alerts (src/aes/fmdo.c)
+fn 0xfe7346 fm_button
+cmt 0xfe7346 fm_button(tree, obj, clicks, &next): TOUCHEXIT ends (2 clicks: obj|$8000); SELECTABLE & !DISABLED: RBUTTON puts its group down, else gr_watchbox toggles it; going on, ev_button(1,1,0) awaits the rise (no forker first: a held radio blocks); SELECTED EXIT ends; not EDITABLE: next 0. Its andi #9 is redundant (inside the SELECTABLE arm)
+fn 0xfe74a4 fm_do
+cmt 0xfe74a4 fm_do(tree, start): fm_own(1), fq, clip gl_rfull, fm_inifld; per pass ev_multi(KEYBD|BUTTON, 2 clicks any button down): fm_keybd else ob_edit(CHAR); ob_find, -1 -> bell (a held press off the tree spins, a bell per pass), else fm_button (its verdict overwrites fm_keybd's); END on a move or the end
+fn 0xfe75ec fm_dial
+cmt 0xfe75ec fm_dial(type, little, big): clip gl_rscreen; 1 gr_growbox, 2 gr_shrinkbox, 3 w_drawdesk(big, widened 2x2 in place) + w_update; D0 = type for 0/other, else gsx_mon's (1 nest open / 0 shown) or w_clipdraw's 1 when drawing is held
+fn 0xfe7002 fm_alert
+cmt 0xfe7002 fm_alert(def, str): tree 1 OUTLINED, fm_parse/fm_build, object def+6 DEFAULT (UNCHECKED: a negative def leaves DEFAULT on a message line of the shared tree, def 4 on three buttons writes it on tree 2's root), icon BITBLK icon-1, rs_obfix x10, icon 32x32, ob_center, wm_update(1), clip saved, bb_save, ob_draw, ct_mouse(1), fm_do, ct_mouse(0), bb_restore, clip back, wm_update(0); D0 = obj - 6
+fn 0xfe764c fm_show
+cmt 0xfe764c fm_show(n, vals, def): rs_str(n), merge_str into $b99a when vals; fm_alert(def, it). The dispatcher's default arm shows 27 "Bad Function #"
+fn 0xfe768c eralert
+cmt 0xfe768c eralert(err, drv): "A"+drv at -14, &it at -8; string $fefa14[err], default = $fefa22[err] & $ff, %S handed when its high byte is set; D0 0 for the first button, 1 to retry. Tables indexed unchecked; called by crit_err by jsr, which can hand $01xx / $FFxx (see crit_err)
+fn 0xfe7712 fm_error
+cmt 0xfe7712 fm_error(n): n > 63 -> 0, nothing shown; jump table $fefa68 over n-2 (unsigned): 2,3,18 -> 19, 4 -> 21, 5 -> 22, 8,10,11 -> 25, 15 -> 23, else 26 "TOS error #%W" over n's own word (unsigned); fm_show(s, .., 1); D0 0 for the first button, 1 otherwise — reached after an application's form_alert(-1, ...) left DEFAULT on a message line
+fn 0xfe3a0c bell
+cmt 0xfe3a0c fm_do's bell: BIOS Bconout(CON:, BEL) by trap #13 (move.w #7; move.l #$30002), not the DOS glue ($fe3c28 is fs_active's GEMDOS Cconout)
+fn 0xfe3cbe crit_err
+cmt 0xfe3cbe the etv_critic handler, on its own stack $9446: ~error through the byte table $fef790 into eralert's 0..6 — but the byte move keeps ~error's HIGH byte (an error <= -257 reaches eralert as $01xx) and a positive error passes the signed ble and indexes below the table ($FFxx)
+var 0xfefa14 eralert_strings
+var 0xfefa22 eralert_levels
+var 0xfefa68 fm_error_arms
+var 0xfef790 crit_err_map
+var 0xb99a fm_show_alert

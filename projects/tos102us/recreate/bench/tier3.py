@@ -39,7 +39,7 @@ sys.path.insert(0, str(RECREATE / "test"))                 # ...and the cases th
 from recreate_kit import project                           # noqa: E402
 project.load(RECREATE)
 
-from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench   # noqa: E402
+from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench, vet_the_run_just_made, watched_original   # noqa: E402
 from harness import addrs, emu, make_image                 # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
 from case import tier3_dropped, tier3_unanswered           # noqa: E402  (every component's rows' drops, unanswered)
@@ -1254,9 +1254,11 @@ EXTRA_CASES = (
 # `dropped` is the case's own `((lo, hi, why), ...)` (`case.tier3_dropped()`, every component's): the spans its image compare leaves
 # out, each vetted by `RomBench` and printed under the row. `()` for every row but a few whose C parks a return
 # address the ROM parks its own in; the battery's own differential still compares those bytes.
+# `delivered` is the case's own `{door call: (found, wrote)}` (`test_boot_snapshot.delivered_of`): the interrupts a row
+# is TAKEN THROUGH, laid at the entry of the same door call on every run of it — both sides (EV). `{}` for every other.
 Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns "
-                        "transcription address staged_entry shared_entry schedule dropped",
-                 defaults=(False, None, (0, 0), (0, 0), (), ()))
+                        "transcription address staged_entry shared_entry schedule dropped delivered",
+                 defaults=(False, None, (0, 0), (0, 0), (), (), {}))
 
 
 # THE THIRD RELATION: a routine NOTHING DISPATCHES BY NUMBER, so neither table below names it and
@@ -1575,7 +1577,7 @@ def _row(case):
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
                RETURNS_NOTHING if name in UNANSWERED else call.returns, False, address, staged_entry, (0, 0), schedule,
-               DROPPED.get(name, ()))
+               DROPPED.get(name, ()), test_boot_snapshot.delivered_of(case))
 
 
 def _transcription_row(case):
@@ -1744,12 +1746,13 @@ def cycles_inside_glue():
     return _cycles_in(glue_ranges())
 
 
-def _measure_call(bench, row, watch=None):
+def _measure_call(bench, row, watch=None, original_watch=None):
     """A C row's `Measurement` on `bench` — the one spelling of the call, whichever blob prices it. `watch` is (EV)'s
-    door windows (`DoorWindows`), for a row whose C reaches the event layer."""
+    door windows (`DoorWindows`), for a row whose C reaches the event layer; `original_watch` the ROM's side's, for a row
+    taken through interrupts (`aes_event.delivering`)."""
     return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
                          io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry, schedule=row.schedule,
-                         dropped=row.dropped, watch=watch)
+                         dropped=row.dropped, watch=watch, original_watch=original_watch)
 
 
 def _profiled(run):
@@ -1762,9 +1765,9 @@ def _profiled(run):
         emu.prof_enable(False)
 
 
-def _measure_as_shipped(row, watch=None):
+def _measure_as_shipped(row, watch=None, original_watch=None):
     """A (T→) row on the shipped blob, PROFILED: the `Measurement` carries `glue_cycles` beside its costs."""
-    measured = _profiled(lambda: _measure_call(shipped_bench(), row, watch))
+    measured = _profiled(lambda: _measure_call(shipped_bench(), row, watch, original_watch))
     measured.glue_cycles = cycles_inside_glue()
     return measured
 
@@ -1963,11 +1966,13 @@ class DoorWindows(aes_event.DoorStops):
     """(EV)'s watch over a PROFILED run (`aes_event.DoorStops`): a stop at a door entry opens a window — the AES-span
     cycles so far kept, and what the call hands the entry (`aes_event.handed_at`: its frame, above the return address,
     read through its pointers) — and the stop at the return address the call left closes it. Refused by name: an entry
-    reached from no call's return address. `windows` is each window's AES-span cycles, in order; `handed` each call's
-    frame."""
+    reached from no call's return address, and a call that reaches the dispatcher (it would switch processes: a row's
+    run returns). `windows` is each window's AES-span cycles, in order; `handed` each call's frame. `delivered` (a row
+    taken through interrupts: `Row.delivered`) is laid at the entry of its door calls before the window opens, at no
+    cost — on our side the Line-F mask word with it, which the row drops (our C never writes the word)."""
 
-    def __init__(self, entries, returns):
-        super().__init__(entries, returns, self._window_opened, self._window_closed)
+    def __init__(self, entries, returns, delivered=None):
+        super().__init__(entries, returns, self._window_opened, self._window_closed, blocks=True, delivered=delivered)
         self.windows, self.handed = [], []
         self._opened_at = None
 
@@ -1979,21 +1984,26 @@ class DoorWindows(aes_event.DoorStops):
         self.windows.append(_cycles_in(AES_OWN_SPANS) - self._opened_at)
 
 
-def our_windows(elf):
-    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr`."""
+def our_windows(elf, delivered=None):
+    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr` — and
+    `delivered` laid at its calls (`DoorWindows`)."""
     calls = door_calls(elf)
-    return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls))
+    return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls), delivered)
 
 
 def _original_windows(row):
     """(EV): the ROM's own run of `row`, WATCHED at the door's entries and the addresses their Line-F words return to
-    (`aes_event.ROM_RETURNS`) and PROFILED (`aes_event.run_watched`, over the case's image): its `DoorWindows`, and the
-    whole run's cycles."""
+    (`aes_event.ROM_RETURNS`), its deliveries laid at its calls, and PROFILED (`watched_original`, over the case's
+    image): its `DoorWindows`, the whole run's cycles, and its cycles in `AES_OWN_SPANS` — the ROM's own before its
+    windows come off (`_original_own_cycles`' figure, read off this run: an interrupted row's original has no
+    unwatched run)."""
     assert not (row.regs or row.psg_seed or row.schedule), (
         f"{row.symbol} / {row.case}: a door row's ORIGINAL is re-run watched with the case's image and I/O map alone")
-    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS)
-    run = _profiled(lambda: aes_event.run_watched(bytearray(make_image(row.pokes)), row.entry, watch, row.io_seed))
-    return watch, run["cycles"]
+    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, row.delivered)
+    _final, _writes, run = _profiled(lambda: watched_original(bytearray(make_image(row.pokes)), row.entry, watch,
+                                                              io_seed=row.io_seed))
+    vet_the_run_just_made(f"{row.symbol} / {row.case}: the ROM's watched run")
+    return watch, run["cycles"], _cycles_in(AES_OWN_SPANS)
 
 
 def _original_own_cycles(row):
@@ -2009,15 +2019,19 @@ def _measure_through_the_os(row, bench):
     own run (`_original_own_cycles`), and the measurement's run of BOTH must spend exactly that much in the AES's
     spans: a cycle more is our build executing the AES's ROM bytes, which would be counted as the ROM's own."""
     through_the_door = goes_through_the_door(row)
-    original, original_watched = _original_windows(row) if through_the_door else (None, None)
-    original_own = _original_own_cycles(row)
+    assert through_the_door or not row.delivered, f"{row.symbol} / {row.case}: interrupts delivered at no door call"
+    if through_the_door:
+        original, original_watched, original_own = _original_windows(row)
+    else:
+        original_own = _original_own_cycles(row)
     shipped = ships_through_a_call(row)
     blob = shipped_bench() if shipped else bench
-    windows = our_windows(blob.elf) if through_the_door else None
+    windows = our_windows(blob.elf, row.delivered) if through_the_door else None
+    original_watch = aes_event.delivering(row.delivered) if row.delivered else None
     if shipped:
-        measured = _measure_as_shipped(row, windows)
+        measured = _measure_as_shipped(row, windows, original_watch)
     else:
-        measured = _profiled(lambda: _measure_call(bench, row, windows))
+        measured = _profiled(lambda: _measure_call(bench, row, windows, original_watch))
         measured.glue_cycles = _cycles_in(alcyon_entry_ranges(bench.elf))
     measured.door_windows = tuple(windows.windows) if windows else ()
     if through_the_door:
@@ -2196,6 +2210,16 @@ FAILED = ("OVER", "DRIFTED")
 # How wide the ROM-address column renders: `$fc1510` and two spaces. Every entry in this ROM is six
 # hex digits, so it is a constant rather than a measurement over the rows.
 ADDRESS_WIDTH = 9
+COST_HEADER = "insns/cycles"           # what each cost column's cell is
+
+
+def _costs(measured):
+    """A row's two costs, the original's then the recreate's, as `(insns, cycles)` each."""
+    return ((measured.original_insns, measured.original_cycles), (measured.recreate_insns, measured.recreate_cycles))
+
+
+def _cost(insns, cycles):
+    return f"{insns}/{cycles}"
 
 
 def _through_the_os_line(measured, indent):
@@ -2268,22 +2292,26 @@ def table(bench):
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
     # column pushes every figure on that line out of its column, and a table that only lines up for
     # today's labels is one nobody will keep lined up.
+    # ...and the two cost columns the same way, each two wider than its longest cell: a fixed width ran a
+    # long run's two cells together into one unreadable number.
     name_width = max(len(row.function) for row in ROWS) + 2
     case_width = max(len(row.case) for row in ROWS) + 2
+    cost_width = 2 + max([len(COST_HEADER)] + [len(_cost(*side)) for _row, m in measured for side in _costs(m)])
     # The ADDRESS column is what makes the file quotable: STATUS.md's ledger is keyed by ROM address,
     # and `test/test_status.py` pins its Tier 3 cells against these lines by that key.
     lines.append(f"{'function':<{name_width}}{'address':<{ADDRESS_WIDTH}}{'case':<{case_width}}"
-                 f"{'original':>14}{'recreate':>14}{'ratio':>8}")
+                 f"{'original':>{cost_width}}{'recreate':>{cost_width}}{'ratio':>8}")
     lines.append(f"{'':<{name_width}}{'':<{ADDRESS_WIDTH}}{'':<{case_width}}"
-                 f"{'insns/cycles':>14}{'insns/cycles':>14}")
+                 f"{COST_HEADER:>{cost_width}}{COST_HEADER:>{cost_width}}")
     failed = []
     for row, m in measured:
         state = verdict(row, m, dispatch, measurement_of)
+        original, recreate = (_cost(*side) for side in _costs(m))
         lines.append(f"{row.function:<{name_width}}"
                      f"{f'${row.address or row.entry:x}':<{ADDRESS_WIDTH}}"
                      f"{row.case:<{case_width}}"
-                     f"{f'{m.original_insns}/{m.original_cycles}':>14}"
-                     f"{f'{m.recreate_insns}/{m.recreate_cycles}':>14}"
+                     f"{original:>{cost_width}}"
+                     f"{recreate:>{cost_width}}"
                      f"{gated_ratio(row, m):>8.2f}  {'' if state == 'ok' else state}")
         if goes_through_the_os(row):
             lines.append(_through_the_os_line(m, name_width + ADDRESS_WIDTH))

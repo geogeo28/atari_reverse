@@ -272,6 +272,9 @@ import test_aes_ct_mouse                                    # noqa: E402,F401
 import test_aes_wm_update                                   # noqa: E402,F401  (through the event door)
 import test_aes_mnlib                                       # noqa: E402,F401  (through the event door)
 import test_aes_grdrag                                      # noqa: E402,F401  (through the event door)
+import test_aes_fmlib                                       # noqa: E402,F401
+import test_aes_fmdo                                        # noqa: E402,F401  (through the event door)
+import test_aes_fmalert                                     # noqa: E402,F401  (through the event door)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
@@ -476,9 +479,10 @@ def test_a_verified_function_reads_no_io_byte_the_model_does_not_serve():
     tier3.py` reds on a verified case it cannot make a row for, which is a fact about the table
     rather than about the case."""
     for row in VERIFIED_CASES + UNPRICED_CASES:
-        name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(row)
-        _final, _writes, o_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
-                                          io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
+        name = row[0]
+        _final, _writes, o_regs = run_original(row)
+        if delivered_of(row):
+            continue                # replayed watched, its refusals vetted (`aes_event.replayed`), this one included
         assert o_regs["io_unmodeled_reads"] == 0, (
             f"{name} read {o_regs['io_unmodeled_reads']} unmodelled I/O byte(s), the first at "
             f"{o_regs['io_unmodeled_first']:#x}")
@@ -624,6 +628,32 @@ def fields(row):
     name, entry, regs, pokes, psg_seed, io_seed, schedule, *checkpoint = row
     return (name, entry, regs, pokes, psg_seed, io_seed, schedule,
             checkpoint[0] if checkpoint else 0)
+
+
+# THE NINTH FIELD IS `delivered`, AND IT IS OPTIONAL TOO: the interrupts a row is TAKEN THROUGH, `{door call: (found,
+# wrote)}` (`aes_event.register_interrupted`) — the mouse moved or a key pressed while the routine waits, delivered at
+# the entry of its door call of that ordinal. No unwatched run has that point to deliver it at, so every consumer that
+# runs such a row's ORIGINAL runs it WATCHED, laying them there (`run_original`); a row without them reads `{}`.
+def delivered_of(row):
+    """One `VERIFIED_CASES` row's deliveries — `{}` for every row but an interrupted one."""
+    return row[8] if len(row) > 8 else {}
+
+
+def run_original(row, over_noise=False):
+    """The ORIGINAL's run of one `VERIFIED_CASES` row over its pokes, as `emu.run` answers — `(final, writes, regs)`:
+    `emu.run` itself, or for a row taken through interrupts its watched replay (`aes_event.replayed`), refused as
+    `emu.run` refuses a run the model could not serve. `over_noise`: the snapshot's MASK holds noise (the sweep below),
+    so such a row's deliveries are DERIVED AGAIN over it (`aes_event.rederived`) — an interrupt's own code reads the
+    machine too, and a delivery derived over the pristine snapshot would hide what it read."""
+    name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(row)
+    delivered = delivered_of(row)
+    if delivered:
+        import aes_event
+        assert not (psg_seed or schedule or stop_pc), "an interrupted row's original is replayed watched: no seed"
+        if over_noise:
+            delivered = aes_event.rederived(name)
+        return aes_event.replayed(make_image(pokes), entry, delivered, regs, io_seed)
+    return emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed, io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
 
 
 # A SCHEDULE HERE IS READ-TRIGGERED, and the case below refuses any other kind. These rows are run at
@@ -915,17 +945,16 @@ def test_every_scheduled_case_is_read_triggered():
                 f"case at the BENCH door too, where a PC names nothing (TRAP_MODEL.md, Phase 8)")
 
 
-def _oracle_outputs(base, case):
+def _oracle_outputs(base, case, over_noise=False):
     """Everything the ORIGINAL leaves behind for one case run over `base`.
 
     Its registers at rts, the set of addresses it wrote, the bytes it left at them, and its ordered
     PSG access ledger — i.e. every surface a differential compares, gathered from the oracle alone.
+    `over_noise`: `base`'s MASK holds noise (`run_original`).
     """
-    _name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(case)
     previous = set_base_image(base)
     try:
-        final, writes, out_regs = emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed,
-                                          io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
+        final, writes, out_regs = run_original(case, over_noise)
     finally:
         set_base_image(previous)
     written = sorted(set(writes))
@@ -953,11 +982,22 @@ def test_no_verified_function_depends_on_a_byte_the_capture_does_not_reproduce(s
     scrambled = _scrambled_base(seed)
     for case in VERIFIED_CASES:
         name = case[0]
-        assert _oracle_outputs(scrambled, case) == pristine_outputs[name], (
+        assert _oracle_outputs(scrambled, case, over_noise=True) == pristine_outputs[name], (
             f"{name} behaves differently over a snapshot whose masked regions hold noise, so it "
             f"reads a byte two captures of the same boot disagree about — its differential is "
             f"verified against one particular boot and will flake against the next. Find the read: "
             f"either the case must declare that byte, or the region does not belong in MASK.")
+
+
+def test_a_row_taken_through_interrupts_carries_the_deliveries_derived_over_its_settled_machine():
+    """ONE DERIVATION PER ROW (`aes_event._settled_interrupted`): a registered row carries the deliveries derived over
+    its machine before the mask word was settled — and derived again over the settled machine (`aes_event.rederived`)
+    they are the same, byte for byte, on every row the batteries register. Here, where every battery is imported."""
+    import aes_event
+    assert aes_event.INTERRUPTED_ROWS, "the premise: the batteries register rows taken through interrupts"
+    for row in VERIFIED_CASES:
+        if delivered_of(row):
+            assert aes_event.rederived(row[0]) == delivered_of(row), row[0]
 
 
 # ---- the dispatch tables: which function each reconstruction actually IS ---------------------------

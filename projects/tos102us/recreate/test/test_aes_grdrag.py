@@ -518,3 +518,11 @@ for _label, (_w, _h, _x, _y, _bound, _new_x, _new_y) in DRAG.items():
 for _label, (_vertical, _machine, _pokes, _answer) in SELECTOR_SLIDES.items():
     aes_event.register(_label, GR_SLIDEBOX, (SELECTOR, TRACK, ELEVATOR, _vertical), merge_pokes(_machine(), _pokes),
                        drawing=True)
+# ...and the shapes TAKEN THROUGH INTERRUPTS (`aes_event.register_interrupted`) each dearer than its routine's dearest row
+# above, measured by `make bench` over every returning case of INTERRUPTED: the drag with the cursor shown (its xdraws
+# hide and show it), the window's outline stretched, the elevator dragged.
+WORST_INTERRUPTED = ("gr_dragbox: moved, the cursor shown", "gr_rubwind: a window's outline stretched",
+                     "gr_slidebox: the elevator dragged down")
+for _label in WORST_INTERRUPTED:
+    _name, _arguments, _machine, _interrupts, _answer, _out = INTERRUPTED[_label]
+    aes_event.register_interrupted(_label.partition(": ")[2], _name, _arguments, _machine(), _interrupts)

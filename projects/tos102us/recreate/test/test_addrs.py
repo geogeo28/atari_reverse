@@ -79,6 +79,9 @@ ALLOWED_ALIASES = {
     frozenset(("AES_GSX_CONTRL", "AES_GSX_OPCODE")):
         "the AES's contrl[] (the address the block's first pointer holds) and contrl[0], the opcode word — an array "
         "and its first element",
+    frozenset(("FM_DOUBLE_CLICKED", "VDI_FILL_DOWN_FLAG")):
+        "two word FLAGS, not addresses, both a word's top bit $8000: fm_button's double click on a TOUCHEXIT object "
+        "and a queued contour-fill row's direction",
 }
 
 

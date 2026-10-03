@@ -205,10 +205,14 @@ def merge_pokes(*layers):
     return runs
 
 
-def verified_row(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule=()):
-    """One `test_boot_snapshot.VERIFIED_CASES` row in its seven-field shape — the ONE builder every
-    component's `register` uses, so the shape cannot drift between them."""
-    return (name, entry, dict(regs), dict(pokes), psg_seed, io_seed, schedule)
+def verified_row(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule=(), delivered=None):
+    """One `test_boot_snapshot.VERIFIED_CASES` row — seven fields, or nine — the ONE builder every
+    component's `register` uses, so the shape cannot drift between them. A row whose interrupts are
+    `delivered` (`aes_event.register_interrupted`: `{door call: (found, wrote)}`) takes the NINTH field,
+    after a `stop_pc` of 0 — every run of its ORIGINAL lays them at the same door calls
+    (`test_boot_snapshot.delivered_of`)."""
+    row = (name, entry, dict(regs), dict(pokes), psg_seed, io_seed, schedule)
+    return row + (0, delivered) if delivered else row
 
 
 # ---- a component's REGISTER of verified rows ------------------------------------------------------
@@ -232,13 +236,14 @@ class Rows:
         ROW_REGISTRIES.append(self)
 
     def register(self, name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True,
-                 dropped=(), undropped=None, answered=True):
+                 dropped=(), undropped=None, answered=True, delivered=None):
         """One `VERIFIED_CASES` row (`verified_row`), recorded and returned so the battery drives the same tuple.
         `dropped` is `((lo, hi, why), ...)` for its Tier 3 row alone, and `undropped` — required with it — the
         zero-argument differential that still compares those bytes over the row's machine (a `Result`), which is
         what makes dropping them at Tier 3 safe. `answered` False for a row whose routine sets no D0 on its arm — it
-        leaves its caller's, which no C is handed — so Tier 3 compares no answer (`tier3_unanswered`)."""
-        row = verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule)
+        leaves its caller's, which no C is handed — so Tier 3 compares no answer (`tier3_unanswered`). `delivered`
+        the interrupts a row is taken through (`verified_row`)."""
+        row = verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule, delivered)
         (self.cases if priced else self.unpriced).append(row)
         if not answered:
             self.unanswered.add(name)

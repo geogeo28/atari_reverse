@@ -201,6 +201,26 @@
 #define HOST_SLOT_AES_WM_OPCL_RECT_BYTES 8
 #define HOST_SLOT_AES_WM_SET_RECT       0x7f8b0  /* $fec83a's -18(a6): WF_TOP's window rectangle */
 #define HOST_SLOT_AES_WM_SET_RECT_BYTES 8
+/* ...and the form library's (`aes/fmlib.h`): fm_parse's string index, which it hands fm_strbrk twice, and fm_build's four
+ * GRECTs, which it hands r_set and ob_setxywh — each the frame's own layout. */
+#define HOST_SLOT_AES_FM_PARSE_INDEX    0x7f8c0  /* $fe6d84's -2(a6) */
+#define HOST_SLOT_AES_FM_PARSE_INDEX_BYTES 2
+#define HOST_SLOT_AES_FM_BUILD_RECTS    0x7f8c8  /* $fe6df8's -32(a6) ms, -24(a6) bt, -16(a6) ic, -8(a6) al */
+#define HOST_SLOT_AES_FM_BUILD_RECTS_BYTES 32
+/* ...and its half that waits on the user (`aes/fmdo.h`): fm_do's answers, index and next object (to ev_multi, ob_edit,
+ * fm_keybd and fm_button), fm_button's answers and flags (to ev_button and ob_fs), fm_alert's clip, box, tree, icon and
+ * parse answers (to gsx_gclip, ob_center, rs_gaddr and fm_parse), eralert's drive name and the pointer to it, and
+ * fm_error's own argument word — merge_str's %S and %W, handed by address — each the frame's own layout. */
+#define HOST_SLOT_AES_FM_DO_FRAME       0x7f8f0  /* $fe74a4's -20(a6) up                                         */
+#define HOST_SLOT_AES_FM_DO_FRAME_BYTES 20       /* FM_DO_FRAME_BYTES                                            */
+#define HOST_SLOT_AES_FM_BUTTON_FRAME   0x7f908  /* $fe7346's -26(a6) up                                         */
+#define HOST_SLOT_AES_FM_BUTTON_FRAME_BYTES 26   /* FM_BUTTON_FRAME_BYTES                                        */
+#define HOST_SLOT_AES_FM_ALERT_FRAME    0x7f928  /* $fe7002's -34(a6) up                                         */
+#define HOST_SLOT_AES_FM_ALERT_FRAME_BYTES 34    /* FM_ALERT_FRAME_BYTES                                         */
+#define HOST_SLOT_AES_ERALERT_FRAME     0x7f950  /* $fe768c's -14(a6) up to its -8(a6) pointer                   */
+#define HOST_SLOT_AES_ERALERT_FRAME_BYTES 10     /* ERALERT_FRAME_BYTES                                          */
+#define HOST_SLOT_AES_FM_ERROR_CODE     0x7f960  /* $fe7712's 8(a6): its argument, handed as fp+8 ($fe7764)      */
+#define HOST_SLOT_AES_FM_ERROR_CODE_BYTES 2
 
 /* Each slot's index in the held flags. */
 enum host_slot {
@@ -264,6 +284,13 @@ enum host_slot {
     HOST_SLOT_ID_AES_DRAW_CHANGE_FRAME,
     HOST_SLOT_ID_AES_WM_OPCL_RECT,
     HOST_SLOT_ID_AES_WM_SET_RECT,
+    HOST_SLOT_ID_AES_FM_PARSE_INDEX,
+    HOST_SLOT_ID_AES_FM_BUILD_RECTS,
+    HOST_SLOT_ID_AES_FM_DO_FRAME,
+    HOST_SLOT_ID_AES_FM_BUTTON_FRAME,
+    HOST_SLOT_ID_AES_FM_ALERT_FRAME,
+    HOST_SLOT_ID_AES_ERALERT_FRAME,
+    HOST_SLOT_ID_AES_FM_ERROR_CODE,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 

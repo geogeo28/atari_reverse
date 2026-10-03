@@ -592,7 +592,8 @@ void vdi_vst_load_fonts(uint8_t *image)
         }
         if (!font_flag(image, font, FONT_FLAG_SWAPPED_MASK)) {
             swap_form(image, font);
-            wr16(image + bus_dereference(font + FONT_FLAGS), font_word(image, font, FONT_FLAGS) ^ FONT_FLAG_SWAPPED_MASK);
+            wr16(image + ram_store(bus_dereference(font + FONT_FLAGS), M68K_WORD_BYTES),
+                 font_word(image, font, FONT_FLAGS) ^ FONT_FLAG_SWAPPED_MASK);
         }
         font = font_long(image, font, FONT_NEXT);
     } while (font != 0);

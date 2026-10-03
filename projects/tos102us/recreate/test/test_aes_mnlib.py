@@ -719,13 +719,18 @@ MN_DO_INTERRUPTED = {
 }
 
 
+def interrupted_machine(at, pokes):
+    """An `MN_DO_INTERRUPTED` case's machine: the screen manager running with the mouse at `at`, `pokes` over it."""
+    return merge_pokes(screen_manager(at), STALE_TRACK, STALE_SR_RECT, pokes)
+
+
 @pytest.mark.parametrize("at, pokes, interrupts, returned, answer, chosen", MN_DO_INTERRUPTED.values(),
                          ids=MN_DO_INTERRUPTED)
 def test_mn_do_taken_through_interrupts(at, pokes, interrupts, returned, answer, chosen):
     """The C and the ROM taken through the same interrupts at the same passes (`aes_event.interrupted`): the same
     return or block, the same answer, every frame handed the door, the whole image."""
-    machine = merge_pokes(screen_manager(at), STALE_TRACK, STALE_SR_RECT, pokes)
-    taken = aes_event.interrupted(MN_DO, (TITLE_OUT, ITEM_OUT), machine, interrupts, objects=True)
+    taken = aes_event.interrupted(MN_DO, (TITLE_OUT, ITEM_OUT), interrupted_machine(at, pokes), interrupts,
+                                  objects=True)
     assert (taken.returned, taken.answer) == (returned, answer)
     stored = [case.word_in(taken.image, out) for out in (TITLE_OUT, ITEM_OUT)]
     assert stored == ([TITLES[chosen[0]], chosen[1]] if chosen else [aes.STALE_WORD] * 2)
@@ -769,3 +774,10 @@ for _label in ("no accessory", "two: PD0 and the screen manager"):
 for _label, (_at, _pressed) in MN_DO_CASES.items():
     aes_event.register(_label, MN_DO, (TITLE_OUT, ITEM_OUT), merge_pokes(screen_manager(_at, _pressed), STALE_TRACK,
                                                                          STALE_SR_RECT), drawing=True, objects=JUST_DRAW)
+# ...and the worst realistic shape TAKEN THROUGH INTERRUPTS (`aes_event.register_interrupted`), measured by `make bench`
+# over every returning case above: a DISABLED item clicked — the pass that finds it disabled and puts the title back —
+# over the dearest uninterrupted row.
+WORST_INTERRUPTED = "a DISABLED item clicked: nothing chosen, the title put back"
+_at, _pokes, _interrupts, *_outcome = MN_DO_INTERRUPTED[WORST_INTERRUPTED]
+aes_event.register_interrupted(WORST_INTERRUPTED, MN_DO, (TITLE_OUT, ITEM_OUT), interrupted_machine(_at, _pokes),
+                               _interrupts, objects=True)

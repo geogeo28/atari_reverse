@@ -43,6 +43,8 @@ void aes_just_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t x, int
 /* ...and its two callers (`src/aes/obdraw.c`): a subtree drawn, and one object's state changed and redrawn. */
 void aes_ob_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth);                     /* $fea028 */
 void aes_ob_change(uint8_t *image, uint32_t tree, int16_t object, int16_t new_state, int16_t redraw); /* $fea38e */
+/* ob_change's `redraw` as its form callers hand it: the object drawn as it changes ($fe7310, $fe7406 move.w #1). */
+#define OB_CHANGE_REDRAW      1
 #ifndef RECREATE_HOST_DIFFERENTIAL
 /* TARGET ONLY (`src/aes/obdraw.S`): just_draw entered as everyobj enters the ROM's — over its ten-byte Alcyon frame —
  * the routine the target ob_draw hands everyobj BY VALUE where the ROM hands $fe9a88. Never called from C. */

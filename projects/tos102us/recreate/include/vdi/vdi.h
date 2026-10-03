@@ -296,12 +296,12 @@ static inline int16_t ptsin_word(const uint8_t *image, unsigned index)
 
 static inline void answer_intout(uint8_t *image, unsigned index, uint16_t value)
 {
-    wr16(image + bus_dereference(call_element(image, LINEA_INTOUT, index)), value);
+    wr16(image + ram_store(bus_dereference(call_element(image, LINEA_INTOUT, index)), M68K_WORD_BYTES), value);
 }
 
 static inline void answer_ptsout(uint8_t *image, unsigned index, uint16_t value)
 {
-    wr16(image + bus_dereference(call_element(image, LINEA_PTSOUT, index)), value);
+    wr16(image + ram_store(bus_dereference(call_element(image, LINEA_PTSOUT, index)), M68K_WORD_BYTES), value);
 }
 
 /* A word of contrl by its byte offset (CONTRL_*), read or stored through the pointer at the call. */
@@ -312,7 +312,7 @@ static inline int16_t contrl_word(const uint8_t *image, uint32_t offset)
 
 static inline void set_contrl_word(uint8_t *image, uint32_t offset, uint16_t value)
 {
-    wr16(image + bus_dereference(linea_pointer(image, LINEA_CONTRL) + offset), value);
+    wr16(image + ram_store(bus_dereference(linea_pointer(image, LINEA_CONTRL) + offset), M68K_WORD_BYTES), value);
 }
 
 /* contrl[2] and contrl[4], each written only by the functions that answer that array. */
@@ -380,19 +380,19 @@ static inline int16_t work_word(const uint8_t *image, uint32_t work, uint32_t fi
 /* ...and a store into it. */
 static inline void set_work_word(uint8_t *image, uint32_t work, uint32_t field, uint16_t value)
 {
-    wr16(image + bus_dereference(work + field), value);
+    wr16(image + ram_store(bus_dereference(work + field), M68K_WORD_BYTES), value);
 }
 
 /* ...and a longword store (a pointer field). */
 static inline void set_work_long(uint8_t *image, uint32_t work, uint32_t field, uint32_t value)
 {
-    wr32(image + bus_dereference(work + field), value);
+    wr32(image + ram_store(bus_dereference(work + field), M68K_LONG_BYTES), value);
 }
 
 /* ...and a store into the CURRENT workstation's, LINEA_CUR_WORK read at the store. */
 static inline void set_current_work_word(uint8_t *image, uint32_t field, uint16_t value)
 {
-    wr16(image + bus_dereference(current_work(image) + field), value);
+    wr16(image + ram_store(bus_dereference(current_work(image) + field), M68K_WORD_BYTES), value);
 }
 
 /* ...and a read of one, LINEA_CUR_WORK read at the read — unsigned, for a mode compared or a pen passed on. */

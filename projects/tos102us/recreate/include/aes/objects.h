@@ -7,8 +7,9 @@
  * word and the sum a 32-bit address, which is `m68k_idioms.h`'s `table_entry` — `object_address` below.
  *
  * Every field carries one ROM access and its WIDTH TAG (`vdi/linea.h`, "THE WIDTH TAG"), which `test/aes.py`
- * parses; frozen the way `gemdos/fs.h` is — the only permitted edit is adding a field with its own citation. The
- * blocks' fields just_draw reads through its copies of them (`aes/objdraw.h`'s AES_EDBLK, AES_BI, AES_IB) are cited
+ * parses; frozen the way `gemdos/fs.h` is — the only permitted edits are adding a field with its own citation and
+ * adding a named flag or state MASK built from a cited bit (`(1 << *_BIT)`, no width tag: masks are not fields), so
+ * every reader shares one spelling rather than redefining it per file. The blocks' fields just_draw reads through its copies of them (`aes/objdraw.h`'s AES_EDBLK, AES_BI, AES_IB) are cited
  * at those copies' addresses; the ones nothing reconstructed reads are not named.
  */
 #ifndef TOS102US_AES_OBJECTS_H
@@ -43,6 +44,9 @@
 #define OB_FLAG_DEFAULT_BIT   1          /* ...of OB_FLAGS' low byte            ($fed242 btst #1,1(a4))        */
 #define OB_FLAG_EXIT_BIT      2          /* ...of OB_FLAGS' low byte            ($fed238 btst #2,1(a4))        */
 #define OB_FLAG_EDITABLE_BIT  3          /* ...of OB_FLAGS' low byte: fm_do's fields (find_obj $fe7222 moveq #8) */
+#define OB_FLAG_SELECTABLE_BIT 0         /* ...of OB_FLAGS' low byte: fm_button takes it ($fe738a btst #0,-7(a6)) */
+#define OB_FLAG_RBUTTON_BIT   4          /* ...of OB_FLAGS' low byte: a radio button ($fe739e btst #4,-7(a6))   */
+#define OB_FLAG_TOUCHEXIT_BIT 6          /* ...of OB_FLAGS' low byte: exits on a press ($fe7370 btst #6,-7(a6)) */
 #define OB_FLAG_INDIRECT_BIT  0          /* ...of OB_FLAGS' HIGH byte: ob_spec names the spec ($fed204 btst #0,(a4)) */
 #define OB_WORD_LOW_BYTE      1          /* a word field's low byte, which a `btst` reads ($fed010 movea.l #11) */
 /* The resource format's end-of-tree flag. No ROM instruction cited: the AES walks a tree by its links, and only the
@@ -69,6 +73,16 @@
 #define OB_STATE_CHECKED_BIT  2          /* a check mark                        ($fe9f6a btst #2)              */
 #define OB_STATE_DISABLED_BIT 3          /* dimmed by a pattern                 ($fe9fde btst #3)              */
 #define OB_STATE_SHADOWED_BIT 5          /* a shadow below and right            ($fe9ef0 btst #5)              */
+/* The masks of those bits the form library tests (`src/aes/fmlib.c`, `src/aes/fmdo.c`): each one its bit's. */
+#define OB_FLAG_SELECTABLE    (1 << OB_FLAG_SELECTABLE_BIT)
+#define OB_FLAG_DEFAULT       (1 << OB_FLAG_DEFAULT_BIT)
+#define OB_FLAG_EXIT          (1 << OB_FLAG_EXIT_BIT)
+#define OB_FLAG_EDITABLE      (1 << OB_FLAG_EDITABLE_BIT)
+#define OB_FLAG_RBUTTON       (1 << OB_FLAG_RBUTTON_BIT)
+#define OB_FLAG_TOUCHEXIT     (1 << OB_FLAG_TOUCHEXIT_BIT)
+#define OB_STATE_SELECTED     (1 << OB_STATE_SELECTED_BIT)
+#define OB_STATE_DISABLED     (1 << OB_STATE_DISABLED_BIT)
+#define OB_STATE_OUTLINED     (1 << OB_STATE_OUTLINED_BIT)
 
 /* ---- the blocks OB_SPEC points at ---------------------------------------------------------------------------
  * rsrc_gaddr's resource types (`$fea742`'s switch, table $fefbf8) name each pointer field: R_TEPTEXT..R_TEPVALID

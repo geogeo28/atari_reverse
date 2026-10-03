@@ -500,6 +500,11 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_ob_delit", "aes_strcpy"), ("aes_check", "aes_toupper"), ("aes_curfld", "aes_gsx_gclip"),
     ("aes_ob_edit", "aes_lbcopy"), ("aes_ob_edit", "aes_lstcpy"), ("aes_ob_edit", "aes_strlen"),
     ("aes_ob_edit", "aes_strcpy"), ("aes_ob_edit", "aes_bfill"), ("aes_ob_edit", "aes_min"), ("aes_ob_edit", "aes_max"),
+    # the form library (`src/aes/fmlib.c`): a section's longest line, and the alert box's layout; its half that waits
+    # (`src/aes/fmdo.c`, fm_show inlined into eralert and fm_error): an AES string merged, the alert's clip saved
+    ("aes_fm_strbrk", "aes_max"), ("aes_fm_build", "aes_r_set"), ("aes_fm_build", "aes_max"),
+    ("aes_fm_show", "aes_merge_str"), ("aes_eralert", "aes_merge_str"), ("aes_fm_error", "aes_merge_str"),
+    ("aes_fm_alert", "aes_gsx_gclip"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from harness import addrs, make_image
+from harness import addrs, bench_tier3, make_image
 
 import test_vdi_escape as escape_cases
 import transcription
@@ -255,8 +255,7 @@ for _label, _pokes in ROWS:
 def test_tier3_splits_the_rows_by_exactly_these_thunks_and_the_c_they_reach():
     """Mechanism (T←) (`bench/tier3.py`) reads escape.S's rows as its own instructions plus the thunks plus the C
     behind them: the thunks it finds must be one per console body, and the C it counts must hold every body."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
-    import tier3                                            # here: tier3 imports this battery through its registry
+    tier3 = bench_tier3()                           # here: tier3 imports this battery through its registry
 
     split = tier3.CALLS_INTO_C[addrs.VDI_ROM_ESCAPE]
     assert split.thunk_prefix == THUNK_PREFIX and split.spans == tuple((region.lo, region.hi) for region in REGIONS)

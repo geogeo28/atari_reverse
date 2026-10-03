@@ -136,6 +136,23 @@ static inline uint32_t bios_trap_device_char(uint16_t fn, uint16_t device, uint1
                       : BIOS_TRAP_CLOBBERS);
     return result;
 }
+
+/* fn, device, character, every one a CONSTANT — the AES's bell, `Bconout(CON:, BEL)`: pushed as the ROM pushes them,
+ * the character a word and the function and device one longword (`move.w #7; move.l #$30002`, $fe3a0c), so no
+ * register carries them and none is saved round the call but the trap's own clobbers. */
+static inline uint32_t bios_trap_constant_char(uint16_t fn, uint16_t device, uint16_t character)
+{
+    register uint32_t result __asm__("d0");
+
+    __asm__ volatile ("move.w %1,-(%%sp)\n\t"
+                      "move.l %2,-(%%sp)\n\t"
+                      "trap #13\n\t"
+                      "addq.l #6,%%sp"
+                      : "=d"(result)
+                      : "i"(character), "i"((uint32_t)fn << 16 | device)
+                      : BIOS_TRAP_CLOBBERS);
+    return result;
+}
 #endif /* !RECREATE_HOST_DIFFERENTIAL */
 
 #endif /* TOS102US_BCON_H */

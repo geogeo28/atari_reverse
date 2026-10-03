@@ -68,7 +68,7 @@ static inline uint16_t peek16(const uint8_t *image, uint32_t address)
 
 static inline void poke16(uint8_t *image, uint32_t address, uint16_t value)
 {
-    wr16(image + bus_address(address), value);
+    wr16(image + ram_store(bus_address(address), M68K_WORD_BYTES), value);
 }
 
 /* Which of the two groups a row covers: both, or — clipped at an edge — the one left on screen. */
@@ -119,7 +119,7 @@ static uint32_t sprite_row(uint8_t *image, enum sprite_span span, uint32_t at, u
 
     if (span == SPAN_BOTH_GROUPS) {
         screen = (uint32_t)peek16(image, at) << GROUP_BITS | peek16(image, right_at);
-        wr32(image + bus_address(save_at), screen);
+        wr32(image + ram_store(bus_address(save_at), M68K_LONG_BYTES), screen);
         spread_form_row(image, form_row, shift, &mask, &data);
         screen = sprite_op(op, screen, mask, data);
         poke16(image, right_at, (uint16_t)screen);
@@ -154,7 +154,7 @@ void linea_draw_sprite(uint8_t *image, uint32_t form, uint32_t save_block, uint3
     uint16_t bg = peek16(image, form + SPRITE_FORM_BG);
     uint16_t fg = peek16(image, form + SPRITE_FORM_FG);
     unsigned ops = (int16_t)peek16(image, form + SPRITE_FORM_PLANES) < 0 ? SPRITE_OPS_XOR : 0;
-    uint8_t *stat = image + bus_address(save_block + SPRITE_SAVE_STAT);
+    uint8_t *stat = image + ram_store(bus_address(save_block + SPRITE_SAVE_STAT), 1);   /* stored on every path */
     uint16_t x, y, hot_x, hot_y, rows, planes, group_step, line;
     uint32_t rows_at = form + SPRITE_FORM_ROWS;
     uint32_t screen, save_at;
@@ -191,7 +191,7 @@ void linea_draw_sprite(uint8_t *image, uint32_t form, uint32_t save_block, uint3
     planes = be16(image + LINEA_PLANES);
     group_step = (uint16_t)(planes * WORD_BYTES);
     line = be16(image + LINEA_WIDTH);
-    wr32(image + bus_address(save_block + SPRITE_SAVE_ADDR), screen);
+    wr32(image + ram_store(bus_address(save_block + SPRITE_SAVE_ADDR), M68K_LONG_BYTES), screen);
     poke16(image, save_block + SPRITE_SAVE_LEN, rows);
     *stat |= 1u << SPRITE_SAVE_VALID_BIT;
     save_at = save_block + SPRITE_SAVE_AREA;
@@ -225,7 +225,7 @@ static void undraw_one_plane(uint8_t *image, uint32_t at, uint32_t saved, uint16
         if (long_rows) {
             uint32_t row = be32(image + bus_address(saved));
 
-            wr32(image + bus_address(at), row);
+            wr32(image + ram_store(bus_address(at), M68K_LONG_BYTES), row);
             saved += sizeof(uint32_t);
         } else {
             poke16(image, at, peek16(image, saved));
@@ -274,7 +274,7 @@ static void undraw_interleaved(uint8_t *image, uint32_t at, uint32_t saved, uint
 TRANSCRIBED_CORE
 void linea_undraw_sprite(uint8_t *image, uint32_t save_block)
 {
-    uint8_t *stat = image + bus_address(save_block + SPRITE_SAVE_STAT);
+    uint8_t *stat = image + ram_store(bus_address(save_block + SPRITE_SAVE_STAT), 1);   /* stored on every path */
     uint8_t status = *stat;
     uint16_t rows, line, planes, passes;
     uint32_t at, saved;
@@ -563,14 +563,14 @@ void vdi_mouse_init(uint8_t *image)
     wr16(image + LINEA_CUR_X, 0);
     wr16(image + LINEA_CUR_Y, 0);
     image[LINEA_CUR_FLAG] = 0;
-    wr32(image + bus_address(be32(image + SYSVAR_VBLQUEUE)), VDI_ROM_VBL_DRAW_CURSOR);
+    wr32(image + ram_store(bus_address(be32(image + SYSVAR_VBLQUEUE)), M68K_LONG_BYTES), VDI_ROM_VBL_DRAW_CURSOR);
     initmous(image, INITMOUS_RELATIVE, VDI_INITMOUS_PARAMS, VDI_ROM_MOUSE_ISR);
 }
 
 /* $fca872 — the VBL's slot 0 emptied, and the IKBD's mouse off. */
 void vdi_mouse_off(uint8_t *image)
 {
-    wr32(image + bus_address(be32(image + SYSVAR_VBLQUEUE)), 0);
+    wr32(image + ram_store(bus_address(be32(image + SYSVAR_VBLQUEUE)), M68K_LONG_BYTES), 0);
     initmous(image, INITMOUS_DISABLE, MOUSE_INITMOUS_UNUSED, MOUSE_INITMOUS_UNUSED);
 }
 

@@ -39,6 +39,7 @@
 
 /* ---- what the entries are handed --------------------------------------------------------------------------------- */
 /* ev_multi's FLAGS, the events it is asked for, a bit each (`btst #n,d7` over the flags word): */
+#define EV_MU_KEYBD           0x0001     /* ($fe69cc btst #0,d7): a key                                         */
 #define EV_MU_BUTTON          0x0002     /* ($fe69fa btst #1,d7)                                               */
 #define EV_MU_M1              0x0004     /* ($fe6a72 btst #2,d7): the first mouse rectangle                    */
 #define EV_MU_M2              0x0008     /* ($fe6a84 btst #3,d7): the second                                    */
@@ -57,6 +58,8 @@
 #define EV_MOBLK_RECT         2          /* bytes[GRECT_BYTES]                                                 */
 /* ...and the ANSWERS it writes through its last pointer: the mouse, the buttons, the shift keys, the key, the clicks. */
 #define EV_MULTI_ANSWER_WORDS 6
+/* ev_button's ANSWERS, through its last pointer: the mouse, the buttons, the shift keys ($fe681a, four stores). */
+#define EV_BUTTON_ANSWER_WORDS 4
 /* ap_rdwr's CODE: a message written into the receiver's pipe (ap_sendmsg's `move.w #2`, $febe20). */
 #define AP_RDWR_WRITE         2
 
@@ -64,6 +67,8 @@
 /* ev_multi(flags, mouse rectangle 1, mouse rectangle 2, timer, button, message buffer, answers) — the flags a word,
  * the rest longwords ($fe69a0 move.w 8(a6); $fe69a4 movea.l 10(a6) .. $fe69ee movea.l 30(a6)). */
 #define EVDOOR_EV_MULTI_FRAME_BYTES 26
+/* ev_button(clicks, mask, state, answers): three words and a pointer ($fe68aa move.w 8(a6) .. $fe68d8 move.l 14(a6)). */
+#define EVDOOR_EV_BUTTON_FRAME_BYTES 10
 /* ap_rdwr(code, process id, length, buffer): three words and a pointer ($fe65c8: the words from 8(a6), the frame's
  * own address +10 handed on). */
 #define EVDOOR_AP_RDWR_FRAME_BYTES  10
@@ -148,7 +153,8 @@ static inline uint16_t evdoor_ev_multi(uint8_t *image, int16_t flags, uint32_t m
     register uint32_t second __asm__("a1") = mouse2;
 
     (void)image;
-    /* THE TWO SHAPES BUILT, both waiting for nothing timed or sent: ONE rectangle (gr_stilldn's) and TWO (mn_do's). A
+    /* THE TWO SHAPES BUILT, both waiting for nothing timed or sent: ONE rectangle (gr_stilldn's) and TWO (mn_do's);
+     * fm_do's, with no rectangle, is the first with its zero first rectangle pushed from A0 as the value it is. A
      * caller handing a timer or a message is a new shape: added with its own priced row, refused until. */
     if (!(__builtin_constant_p(timer | message) && !(timer | message)))
         evdoor_shape_unbuilt();
@@ -176,6 +182,35 @@ static inline uint16_t evdoor_ev_multi(uint8_t *image, int16_t flags, uint32_t m
     else
         EVDOOR_EV_MULTI_CALL("clr.l -(%%sp)");
 #undef EVDOOR_EV_MULTI_CALL
+    return (uint16_t)answer;
+#endif
+}
+
+/* ev_button's answer, the event's count, is nothing fm_button reads; answered all the same, as every entry is. */
+static inline uint16_t evdoor_ev_button(uint8_t *image, int16_t clicks, int16_t mask, int16_t state, uint32_t answers)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    uint8_t frame[EVDOOR_EV_BUTTON_FRAME_BYTES];
+
+    frame_long(frame, frame_word(frame, frame_word(frame, frame_word(frame, 0, (uint16_t)clicks), (uint16_t)mask),
+                                 (uint16_t)state), answers);
+    return (uint16_t)event_door(image, AES_ROM_EV_BUTTON, frame, sizeof frame);
+#else
+    register uint32_t answer __asm__("d0");
+    register uint32_t scratch __asm__("d1");
+    register uint32_t words __asm__("a0") = answers;
+    register uint32_t other __asm__("a1");
+
+    (void)image;
+    __asm__ volatile ("move.l %2,-(%%sp)\n\t"
+                      "move.w %4,-(%%sp)\n\t"
+                      "move.w %5,-(%%sp)\n\t"
+                      "move.w %6,-(%%sp)\n\t"
+                      "jsr %c7\n\t"
+                      "lea %c8(%%sp),%%sp"
+                      : "=d"(answer), "=d"(scratch), "+a"(words), "=a"(other)
+                      : "ri"(state), "ri"(mask), "ri"(clicks), "i"(AES_ROM_EV_BUTTON), "i"(EVDOOR_EV_BUTTON_FRAME_BYTES)
+                      : "d2", "a2", "memory", "cc");
     return (uint16_t)answer;
 #endif
 }

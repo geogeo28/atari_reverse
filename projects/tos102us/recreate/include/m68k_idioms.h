@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 
+#include "addrs.h"
 #include "machine.h"
 #include "os.h"
 #include "recreate.h"
@@ -278,7 +279,25 @@ static inline uint32_t bus_dereference(uint32_t address)
  * OFF TARGET a word or longword the 68000 could not make is REFUSED BY NAME rather than made: at an ODD address it
  * takes an address error (vector 3), which the oracle's Musashi — built without address errors — does not model; and
  * one whose bytes run past the top of the bus would reach past the host's 16 MB image, where the 68000 wraps the
- * second word to $000000. The bound is written so it cannot wrap: `at <= OS_BUS_ADDR_MASK - (bytes - 1)`. */
+ * second word to $000000. The bound is written so it cannot wrap: `at <= OS_BUS_ADDR_MASK - (bytes - 1)`.
+ *
+ * A STORE is refused by name too where any of its bytes lies AT OR ABOVE THE TOP OF RAM (ST_RAM_BYTES): the ROM, the
+ * I/O page and the unmapped band between them. There the oracle drops the store (it is no RAM byte, `oracle/shim.c`'s
+ * m68k_write_memory_8), an ST loses it or takes a bus error, and the host's flat image would keep it — a divergence,
+ * not a value. An application's alert string with a fifth button reaches it (fm_strbrk's line buffer at $ff1100,
+ * `src/aes/fmlib.c`). The screen ($f8000 on the 1 MB machine) lies below the bound.
+ *
+ * WHAT `ram_store` GUARDS, exactly: the set_bus_* family below; the VDI's call and workstation stores
+ * (`include/vdi/vdi.h`: answer_intout, answer_ptsout, set_contrl_word, set_work_word, set_work_long,
+ * set_current_work_word); the mouse's (`src/vdi/mouse.c`: poke16, the sprite's save-area, status and screen stores,
+ * the VBL-queue slot); the font layer's swapped flag (`src/vdi/text.c`); rs_gaddr's answer slot
+ * (`src/aes/resource.c`); eralert's frame (`src/aes/fmdo.c`) — each refused above RAM in `test/test_ram_store.py`
+ * but the two no case can reach (eralert's frame is a host slot; the sprite's screen word lies below its status byte,
+ * whose guard refuses first). NOT guarded: a store at an address the C names itself
+ * (a Line-A or system variable, `set_ram_word`), a store through a pointer a loop walks (the VDI's ptsout cursors
+ * in `src/vdi/text.c`, the transposes in `src/vdi/helpers.c`, vdi_dispatch's contrl in `src/vdi/entry.c`) — and the
+ * BIOS and GEMDOS cores keep an older spelling of the same bound, an `assert(... <= ST_RAM_BYTES)`, not refused by
+ * name. */
 #define M68K_WORD_BYTES       2
 #define M68K_LONG_BYTES       4
 #define M68K_ODD_ADDRESS_BIT  1u
@@ -298,6 +317,18 @@ static inline uint32_t bus_span(uint32_t address, uint32_t bytes)
     return at;
 }
 
+static inline uint32_t ram_store(uint32_t at, uint32_t bytes)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    if (at > ST_RAM_BYTES - bytes)
+        recreate_not_reconstructed("a store at or above the top of RAM (ST_RAM_BYTES): the oracle drops it, an ST loses it "
+                                   "or takes a bus error");
+#else
+    (void)bytes;
+#endif
+    return at;
+}
+
 static inline uint8_t bus_byte(const uint8_t *image, uint32_t address)
 {
     return image[bus_dereference(address)];
@@ -305,7 +336,7 @@ static inline uint8_t bus_byte(const uint8_t *image, uint32_t address)
 
 static inline void set_bus_byte(uint8_t *image, uint32_t address, uint8_t value)
 {
-    image[bus_dereference(address)] = value;
+    image[ram_store(bus_dereference(address), 1)] = value;
 }
 
 static inline uint16_t bus_word(const uint8_t *image, uint32_t address)
@@ -315,7 +346,7 @@ static inline uint16_t bus_word(const uint8_t *image, uint32_t address)
 
 static inline void set_bus_word(uint8_t *image, uint32_t address, uint16_t value)
 {
-    wr16(image + bus_span(address, M68K_WORD_BYTES), value);
+    wr16(image + ram_store(bus_span(address, M68K_WORD_BYTES), M68K_WORD_BYTES), value);
 }
 
 static inline uint32_t bus_long(const uint8_t *image, uint32_t address)
@@ -325,7 +356,7 @@ static inline uint32_t bus_long(const uint8_t *image, uint32_t address)
 
 static inline void set_bus_long(uint8_t *image, uint32_t address, uint32_t value)
 {
-    wr32(image + bus_span(address, M68K_LONG_BYTES), value);
+    wr32(image + ram_store(bus_span(address, M68K_LONG_BYTES), M68K_LONG_BYTES), value);
 }
 
 #endif /* TOS102US_M68K_IDIOMS_H */
