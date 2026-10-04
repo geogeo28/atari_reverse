@@ -505,6 +505,18 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_fm_strbrk", "aes_max"), ("aes_fm_build", "aes_r_set"), ("aes_fm_build", "aes_max"),
     ("aes_fm_show", "aes_merge_str"), ("aes_eralert", "aes_merge_str"), ("aes_fm_error", "aes_merge_str"),
     ("aes_fm_alert", "aes_gsx_gclip"),
+    # the file selector (`src/aes/fslib.c`): the default path copied, a directory's names copied, matched and compared,
+    # a row's name formatted and the elevator's share, the list's clip saved, and the title's text
+    ("aes_fs_pspec", "aes_strcpy"), ("aes_fs_active", "aes_lstcpy"), ("aes_fs_active", "aes_strchk"),
+    ("aes_fs_active", "aes_wildcmp"), ("aes_fs_format", "aes_fmt_str"), ("aes_fs_format", "aes_lstcpy"),
+    ("aes_fs_format", "aes_max"), ("aes_fs_format", "aes_min"), ("aes_fs_format", "aes_mul_div"),
+    ("aes_fs_nscroll", "aes_gsx_gclip"), ("aes_fs_newdir", "aes_lstcpy"), ("aes_fs_newdir", "aes_strcat"),
+    ("aes_fs_newdir", "aes_strcpy"),
+    # ...and the selector itself: its fields' texts copied in and out, a name formatted and unformatted, the path
+    # compared with the one last read, the mouse asked, the elevator's place scaled to a row
+    ("aes_fs_input", "aes_fmt_str"), ("aes_fs_input", "aes_gsx_mxmy"), ("aes_fs_input", "aes_lstcpy"),
+    ("aes_fs_input", "aes_mul_div"), ("aes_fs_input", "aes_strcat"), ("aes_fs_input", "aes_strcpy"),
+    ("aes_fs_input", "aes_streq"), ("aes_fs_input", "aes_unfmt_str"),
     ("vdi_vq_key_s", "vdi_get_kbshift"),
     # the polygon and contour-fill layer (`src/vdi/fill.c`)
     ("vdi_clip_line", "vdi_smul_div"), ("vdi_polyline", "linea_line"), ("vdi_plygn", "linea_filled_poly"),

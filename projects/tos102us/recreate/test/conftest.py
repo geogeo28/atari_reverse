@@ -1,0 +1,76 @@
+"""How the suite is SPREAD over xdist's workers, and its collection ORDER — where either decides the cost.
+
+THE DISTRIBUTION. xdist's default `load` hands each worker a contiguous run of tests up front — some 450 here — and
+this suite's cost is not spread evenly: one file of whole file-selector SESSIONS (seconds each, where most tests take
+milliseconds) landed on one worker, which ran it alone while the other nine idled (measured: 397 s of wall for 391 s
+of that one file). `worksteal` lets an idle worker take tests from the longest queue. It is set HERE and not in a
+makefile's PYTEST_ARGS, which every override replaces (`make test PYTEST_ARGS="-n4 -k fuzz"`): any run under xdist
+that names no `--dist` of its own gets it, and a run without xdist (`-p no:xdist`, where the option does not exist) is
+left alone.
+
+THE ORDER. What a SESSION costs is paid once per process and shared by its cases: the file selector's is derived once
+(`aes_fs_sessions.machine_of`: the ROM's own run of it over the staged disk, the replay's script) and its C runs in ONE
+child (`aes_fs_sessions.taken`); a priced session's slice rows are measured off one pair of runs (`tier3.Sessions`) and
+share one companion. Collected in pytest's own order — every session through one test function, then every session
+through the next — the cases of one session are a file apart, and a steal hands the far ones to another worker: each
+then derives the session again (measured: the second function's cases 80 s summed on one worker, 164 s spread over
+ten). So the cases of ONE session are collected back to back, where the first of them stood; a steal takes a queue's
+tail half, which splits a group only at its one boundary.
+
+WHICH CASES ARE ONE SESSION'S is the test's to say, not this file's: the marker `collected_with` — on a test, or on a
+whole module (`pytestmark`) — as `collected_with(name)`, the group's name, or `collected_with(by=function)`, a function
+of the case's parameters answering its group's name (None: the case is no session's; a keyword, because pytest takes
+a mark called with one function for that function's decorator). Nothing is added, removed or renamed: the same items,
+the same ids — only their order inside their own module.
+"""
+STEALING = "worksteal"
+XDIST_S_OWN_DEFAULT = "load"           # what `-n` alone makes of `--dist` (xdist's `pytest_cmdline_main`)
+GROUP_MARKER = "collected_with"
+
+
+def _names_a_distribution(arguments):
+    """Did the command line choose a `--dist` (or its short form `-d`) itself?"""
+    return any(argument in ("--dist", "-d") or argument.startswith("--dist=") for argument in arguments)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", f"{GROUP_MARKER}(name) / {GROUP_MARKER}(by=function): the cases of one session, "
+                                       f"collected back to back — by the group's name, or a function of a case's "
+                                       f"parameters answering it")
+    if getattr(config.option, "dist", None) == XDIST_S_OWN_DEFAULT and not _names_a_distribution(config.invocation_params.args):
+        config.option.dist = STEALING
+
+
+def group_of(item):
+    """The group `item` is collected with — `(its module, the key its marker answers)` — or None for every other
+    item: one with no marker, one whose marker's function answers None, an item that is no test function's (a
+    doctest's, a plugin's own: no parameters to ask)."""
+    marker = item.get_closest_marker(GROUP_MARKER)
+    if marker is None:
+        return None
+    if "by" in marker.kwargs:
+        key = marker.kwargs["by"](getattr(getattr(item, "callspec", None), "params", {}))
+    else:
+        key, = marker.args
+    return None if key is None else (item.nodeid.partition("::")[0], key)
+
+
+def grouped(items, group_of=group_of):
+    """`items` with each group's members moved up behind the first of them; every other item stays where it was."""
+    groups = [group_of(item) for item in items]
+    members = {}
+    for item, group in zip(items, groups):
+        if group is not None:
+            members.setdefault(group, []).append(item)
+    ordered, placed = [], set()
+    for item, group in zip(items, groups):
+        if group is None:
+            ordered.append(item)
+        elif group not in placed:
+            placed.add(group)
+            ordered.extend(members[group])
+    return ordered
+
+
+def pytest_collection_modifyitems(items):
+    items[:] = grouped(items)

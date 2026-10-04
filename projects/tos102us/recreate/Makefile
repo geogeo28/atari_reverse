@@ -16,6 +16,9 @@ include atari/target.mk
 BENCH_CFLAGS := $(TARGET_CFLAGS) $(TARGET_INCLUDES)
 BENCH_LDLIBS := $(TARGET_LDLIBS)
 
+# HOW THE SUITE IS SPREAD OVER THE WORKERS (`--dist worksteal`) is test/conftest.py's, not a PYTEST_ARGS of this file:
+# every override of PYTEST_ARGS (`make test PYTEST_ARGS="-n4 -k fuzz"`) would drop it, and `make guarded` has its own.
+
 include $(KIT)/kit.mk
 
 # ...and the one prerequisite kit.mk cannot know: the target header shadows the cores compile

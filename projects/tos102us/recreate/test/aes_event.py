@@ -56,11 +56,19 @@ the entry of the call that blocks (`refused_where_the_rom_blocks`). ONE run of t
 delivery (`deliveries`: set aside at each delivery's entry, continued there), so a long sequence — keys TYPED one per
 wait (`key`, `typed`) — costs a run, not a run per key. A case priced at Tier 3 carries its deliveries in its row
 (`register_interrupted`), and every run of its original lays them at the same calls (`delivering`, `replayed`).
+
+A LONG SESSION (the file selector listing, scrolled, typed into; a dialog typed full) DECLARES ITS OWN DERIVATION
+BUDGET (`budget=`: `_budget_of`, held both ways — the run fits it by the margin, and needed it) and is PRICED BY ITS
+SLICES, a Tier 3 row each (`register_slices`, "A SESSION PRICED BY ITS SLICES" below): the run between two arrivals
+both shores make at one PC, each shore marked there and ours held to the ROM's at both ends.
 """
 import ast
 import atexit
+import copy
 import ctypes
 import functools
+import inspect
+import itertools
 import operator
 import os
 import struct
@@ -337,6 +345,16 @@ def child_binding(*, objects=False, entries=None, interrupts=None, before=""):
 
 
 CHILD_BINDING = child_binding()
+# THE DOORS A ROUTINE'S CHILD NEEDS BESIDE THE EVENT DOOR's (a `trap #1`: the file selector's GEMDOS), as source its
+# child runs before the event door is bound — `lib` the candidate it loaded, `buf` its image — declared once per
+# routine by the module that owns its machines (`declare_child_doors`); `interrupted` binds them in every child of it.
+CHILD_DOORS = {}
+
+
+def declare_child_doors(name, source):
+    """`addrs.<name>`'s core reaches a door beside the event door's: `source` binds it in the routine's children."""
+    assert name not in CHILD_DOORS, f"{name}: its child's doors are declared twice"
+    CHILD_DOORS[name] = source
 
 
 def _child_vdi(buf, routine, argument):
@@ -477,6 +495,9 @@ ROM_RETURNS = frozenset(at + aes.WORD_BYTES for name in ENTRY_NAMES
                         for sites in aes.line_f_call_sites(name).values() for at in sites)
 
 
+EXCEPTION_FRAME_PC = aes.WORD_BYTES     # a 68000 exception frame: the status register's word, then the return PC
+
+
 class Blocked(AssertionError):
     """A watched run (`DoorStops(..., blocks=True)`) reached the dispatcher inside a door call: the call would block.
     An AssertionError, so a run that was not meant to block — a Tier 3 row, a replay — is refused by its words."""
@@ -494,15 +515,41 @@ class DoorStops:
     `delivered` (`deliveries`' `{ordinal: (found, wrote)}`) lays each interrupt into the run's memory at the entry of
     the door call of that ordinal, before `opened` — CHECKED FIRST: the memory must hold `found` at every address the
     delivery writes (what neither shore compares aside, `_NOT_COMPARED`), or the delta is not the machine's for this run
-    and the stop refuses by name (`_vet_found`). `calls`: the door calls entered so far."""
+    and the stop refuses by name (`_vet_found`). `calls`: the door calls entered so far.
 
-    def __init__(self, entries, returns, opened, closed=lambda: None, *, blocks=False, delivered=None):
+    A run MARKED (`marked_with`, a session priced by its slices: `Marks`) is told of every arrival outside a door
+    call — at each door entry, once its delivery is laid, and at each TRAP HANDLER its marks name, which the run then
+    stops at too: there the exception frame's return address becomes the next stop, as a door call's does, so a trap
+    taken inside the trap (GEMDOS's own BIOS calls) or inside a door call (the event layer's keyboard poll) is no
+    arrival, on either shore."""
+
+    def __init__(self, entries, returns, opened=None, closed=None, *, blocks=False, delivered=None):
         self.entries, self.returns = frozenset(entries), frozenset(returns)
         self.first = self.entries
         self._inside = frozenset({addrs.AES_ROM_DSPTCH}) if blocks else frozenset()
-        self._opened, self._closed, self._in_call = opened, closed, False
+        # A watch's own `_opened` / `_closed` (a subclass's methods) are NOT handed here: a bound method kept on its
+        # own instance is a reference cycle, and the watch — with its marks, a memory per slice end — would then
+        # outlive its run until a later collection (measured: 1.9 GB peak in one test where 1 GB is in use).
+        if opened is not None:
+            self._opened = opened
+        if closed is not None:
+            self._closed = closed
+        self._in_call = False
         self._delivered = delivered or {}
         self.calls = 0
+        self.marks, self._marked_trap, self._trap_returns_to = None, None, None
+
+    def _opened(self, pc, sp, memory):
+        """A door call entered at `pc`: nothing, unless `opened` was given or a subclass says."""
+
+    def _closed(self):
+        """...and returned from."""
+
+    def marked_with(self, marks):
+        """This watch, its run MARKED by `marks` (`Marks`): stopped at the trap handlers they name as well."""
+        self.marks = marks
+        self.first = self.entries | marks.traps
+        return self
 
     @property
     def between_calls(self):
@@ -510,6 +557,19 @@ class DoorStops:
         return not self._in_call
 
     def stopped(self, pc, sp, memory):
+        if self._trap_returns_to is not None:
+            assert pc == self._trap_returns_to, (
+                f"the run took the trap at {pc:#x} INSIDE the trap at {self._marked_trap:#x}, and is marked at both: an "
+                f"arrival there counts in a run marked at {pc:#x} alone and not in this one, so a `trap_taken` "
+                f"ordinal at it names two different arrivals — cut the session at one of the two handlers only")
+            self._trap_returns_to = None
+            return self.first
+        if not self._in_call and pc not in self.entries:
+            self.marks.arrived(pc, self.calls, memory)
+            self._marked_trap, self._trap_returns_to = pc, case.long_in(memory, sp + EXCEPTION_FRAME_PC)
+            # Inside a marked trap only its return is an arrival — and the OTHER handlers the run is marked at stay
+            # armed, so that one of them nested in this one is refused by name (above) rather than left uncounted.
+            return frozenset({self._trap_returns_to}) | (self.marks.traps - {pc})
         if not self._in_call:
             back = case.long_in(memory, sp)
             assert back in self.returns, (
@@ -518,6 +578,8 @@ class DoorStops:
                 found, wrote = self._delivered[self.calls]
                 _vet_found(memory, found, f"door call {self.calls} ({pc:#x})")
                 _lay(memory, wrote)
+            if self.marks:
+                self.marks.arrived(pc, self.calls, memory)
             self._opened(pc, sp, memory)
             self.calls += 1
             self._in_call = True
@@ -550,22 +612,26 @@ def _lay(memory, wrote, lays_the_mask_word=True):
                 memory[at + offset] = value
 
 
-def run_watched(memory, entry, watch, io_seed=None):
+def run_watched(memory, entry, watch, io_seed=None, budget=None):
     """The ROM's own `entry` run over `memory` — its frame at `abi.FIRST_ARG`, where `emu.run` leaves it — by the bench's
     door, entered as `emu.run` enters it (`rom_bench.original_entered`: its register file, no chip declared) and
     WATCHED by `watch` (`DoorStops`, `rom_bench.watched`): the run's result, or None for a run the watch ended where it
     blocks (`Blocked`). The same run as `emu.run`'s, instruction for instruction, held to what a derivation is — under
-    DERIVATION_INSNS by DERIVATION_MARGIN, refused if the model could not serve it; `memory` is its own, written in
-    place. Vetted HOWEVER the run ends: a watch that ends it early by raising (a run stopped at an entry,
-    `_AtTheEntry`) leaves a prefix a case may build on, held to the same refusals and margin."""
+    its budget by DERIVATION_MARGIN (DERIVATION_INSNS, or the `budget` its row declares: `_budget_of`), refused if the
+    model could not serve it; `memory` is its own, written in place. Vetted HOWEVER the run ends: a watch that ends it
+    early by raising (a run stopped at an entry, `_AtTheEntry`) leaves a prefix a case may build on, held to the same
+    refusals and margin; a run that ENDED — returned, or blocked — is held to its declared budget from above too
+    (`_vet_not_stale`)."""
+    insns = _budget_of(entry, budget)
     try:
-        result = rom_bench.original_entered(memory, entry, watch.first, io_seed=io_seed, max_insns=DERIVATION_INSNS)
-        result = rom_bench.watched(result, entry, watch, memory, max_insns=DERIVATION_INSNS)
+        result = rom_bench.original_entered(memory, entry, watch.first, io_seed=io_seed, max_insns=insns)
+        result = rom_bench.watched(result, entry, watch, memory, max_insns=insns)
     except Blocked:
         result = None
     finally:
         rom_bench.vet_the_run_just_made(f"the ROM's watched run of {entry:#x}")
-        _vet_the_margin(entry, _instructions_run())
+        _vet_the_margin(entry, _instructions_run(), budget)
+    _vet_not_stale(entry, _instructions_run(), budget)
     return result
 
 
@@ -576,24 +642,30 @@ def _instructions_run():
     return emu._LIB.osh_num_insns()
 
 
-def rom_watched(name, arguments, pokes, io_seed=None, *, blocks=False):
+def run_cost():
+    """`{"insns", "cycles"}`: what the bench run in flight has spent so far — the oracle's running totals, read at a
+    stop (a slice's mark, `Marks`) or once the run has ended."""
+    return {"insns": _instructions_run(), "cycles": emu._LIB.osh_num_cycles()}
+
+
+def rom_watched(name, arguments, pokes, io_seed=None, *, blocks=False, budget=None):
     """The ROM's own `addrs.<name>`, run over `pokes` with the frame `arguments`, WATCHED at the door's entries
     (`_watched_through`, nothing delivered): `(calls, memory, returned)` — what it hands each entry it calls, in order
     (`handed_at`: each frame where its Line-F word left it, read through its pointers as it stands at the call), the
     memory it left (at the entry of the blocking call, for one that blocks), and whether it returned (False: `blocks`,
-    and it reached the dispatcher inside a call)."""
-    calls, memory, result = _watched_through(name, arguments, pokes, {}, io_seed=io_seed, blocks=blocks)
+    and it reached the dispatcher inside a call). `budget`: the run's own, declared (`_budget_of`)."""
+    calls, memory, result = _watched_through(name, arguments, pokes, {}, io_seed=io_seed, blocks=blocks, budget=budget)
     return calls, memory, result is not None
 
 
-def rom_handed(name, arguments, pokes, io_seed=None):
+def rom_handed(name, arguments, pokes, io_seed=None, budget=None):
     """What the ROM's own `addrs.<name>` hands each door entry it calls, in order (`rom_watched`)."""
-    return rom_watched(name, arguments, pokes, io_seed)[0]
+    return rom_watched(name, arguments, pokes, io_seed, budget=budget)[0]
 
 
-def _vet_the_frames_handed(name, arguments, pokes, io_seed):
+def _vet_the_frames_handed(name, arguments, pokes, io_seed, budget=None):
     """The door calls the candidate made (`HANDED`) are the ROM's own, frame for frame (`rom_handed`)."""
-    ours, the_rom_s = list(HANDED), rom_handed(name, arguments, pokes, io_seed)
+    ours, the_rom_s = list(HANDED), rom_handed(name, arguments, pokes, io_seed, budget)
     assert ours == the_rom_s, (
         f"{name}: the door was handed {ours} where the ROM's own run hands {the_rom_s} — a frame the event layer's "
         f"answer did not show")
@@ -626,15 +698,22 @@ POISON_STEERS_THE_EVENT_LAYER = {"poison": False}
 
 
 def run_event(name, arguments, pokes, *, drawing=False, io_seed=None, dropped_windows=DOOR_DROPS, objects=None,
-              **kwargs):
+              budget=None, cap=None, **kwargs):
     """`aes.run_function` of `addrs.<name>` over `pokes`, the event door bound (and the VDI's cores, `drawing`, and a
     walker's routines, `objects`: `door_hook`), the mask word and the trap's saved registers dropped where the ROM's
     run stores them, unpoisoned (above) — and every frame the candidate handed the door compared with the ROM's own
-    call's."""
+    call's. TWO RUNS, TWO LIMITS, each declared only where its run needs it and held both ways by name:
+    `cap` — the differential's own (`emu.run`'s `max_insns`), for an original past DIFFERENTIAL_INSNS: the case's own
+    number, or its battery's (`battery_cap`) — THE ONE DOOR a cap comes in by (`capped`, `vet_the_cap`: a raw
+    `max_insns` is refused by name);
+    `budget` — the derivation budget of the ROM's watched run of the frames (`_budget_of`), for a run past what
+    DERIVATION_INSNS admits. A run that needs the budget needs the cap too, and the one number then serves both."""
     HANDED.clear()
-    result = aes.run_function(name, arguments, pokes, hook=door_hook(drawing, io_seed, objects), io_seed=io_seed,
-                              dropped_windows=dropped_windows, **{**POISON_STEERS_THE_EVENT_LAYER, **kwargs})
-    _vet_the_frames_handed(name, arguments, pokes, io_seed)
+    cap = budget if cap is None else cap
+    result = capped_run(name, cap, kwargs, lambda **limits: aes.run_function(
+        name, arguments, pokes, hook=door_hook(drawing, io_seed, objects), io_seed=io_seed,
+        dropped_windows=dropped_windows, **{**POISON_STEERS_THE_EVENT_LAYER, **limits}))
+    _vet_the_frames_handed(name, arguments, pokes, io_seed, budget)
     return result
 
 
@@ -656,25 +735,37 @@ def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, obje
                         hook=door_hook(drawing, io_seed, objects), io_seed=io_seed, answer_compared=answer_compared)
 
 
-def _settled_interrupted(name, arguments, machine, interrupts):
+Derived = namedtuple("Derived", "delivered rom_memory")
+
+
+def _settled_interrupted(name, arguments, machine, interrupts, budget=None, derived=None):
     """`machine` as a row taken through `interrupts` stages it — `savptr` moved into the stack band (`register`'s
     reason) and the mask word at the value the ROM's run leaves, refused where that run blocks — and the DELIVERIES that
     run took: `(pokes, delivered)`. ONE derivation serves the row: the settled machine differs from the one the
     deliveries were derived over in the mask word alone, which no interrupt reads and no delivery is checked at
     (`_NOT_COMPARED`) — every replay over the settled machine checks the rest (`DoorStops`), and
-    `test_boot_snapshot.py` derives every registered row's deliveries again over its settled machine to pin it."""
+    `test_boot_snapshot.py` derives every registered row's deliveries again over its settled machine to pin it.
+
+    `derived` (a `Derived`): what a ROM run of this very case that RETURNED has already derived over `machine` — its
+    deliveries and the memory it left (`interrupted`'s, handed on to its second differential). It is this function's
+    own run exactly where `machine` already keeps `savptr` in the band (the same bytes run again would derive the same);
+    over any other machine it is not, and the run is made."""
     pokes = merge_pokes(machine, savptr_in_the_band())
-    _calls, delivered, rom_memory, result = rom_interrupted(name, arguments, pokes, interrupts)
-    assert result, f"{name}: a priced row returns — the ROM's run taken through these interrupts blocks"
+    if derived is not None and pokes == merge_pokes(machine):
+        delivered, rom_memory = derived
+    else:
+        _calls, delivered, rom_memory, result = rom_interrupted(name, arguments, pokes, interrupts, budget=budget)
+        assert result, f"{name}: a priced row returns — the ROM's run taken through these interrupts blocks"
     mask_word = case.word_in(rom_memory, aes.AES_LINEF_MASK_WORD)
     return merge_pokes(pokes, aes.field_pokes("AES", LINEF_MASK_WORD=mask_word)), delivered
 
 
-def interrupted_row(label, name, arguments, machine, interrupts):
+def interrupted_row(label, name, arguments, machine, interrupts, budget=None):
     """A `VERIFIED_CASES` row of a door user TAKEN THROUGH `interrupts`, named `<core>, <label>`, over `machine` as such
     a row stages it (`_settled_interrupted`): the row carries its DELIVERIES, which every run of its ORIGINAL lays at
-    the same door calls — Tier 3's on both sides (`delivering`), the snapshot's sweeps (`replayed`)."""
-    return _interrupted_row(label, name, arguments, *_settled_interrupted(name, arguments, machine, interrupts))
+    the same door calls — Tier 3's on both sides (`delivering`), the snapshot's sweeps (`replayed`). `budget`: the
+    row's own derivation budget, declared (`_budget_of`)."""
+    return _interrupted_row(label, name, arguments, *_settled_interrupted(name, arguments, machine, interrupts, budget))
 
 
 def _interrupted_row(label, name, arguments, pokes, delivered):
@@ -682,9 +773,46 @@ def _interrupted_row(label, name, arguments, pokes, delivered):
                              aes.staged(name, arguments, pokes), delivered=delivered)
 
 
-# The rows `register_interrupted` registered, `{row name: (name, arguments, settled pokes, interrupts, delivered)}`: what
-# a row's deliveries were derived from, for the cases that derive them again (`rederived`).
+# The rows `register_interrupted` registered, `{row name: InterruptedRow}`: what a row's deliveries were derived from
+# (and under which declared budget, None for the default), for the cases that derive them again (`rederived`).
+InterruptedRow = namedtuple("InterruptedRow", "name arguments pokes interrupts delivered budget")
 INTERRUPTED_ROWS = {}
+
+
+def session_of(row_name):
+    """The SESSION the registered row `row_name` is of — its `InterruptedRow`, or None for a row not taken through
+    interrupts. The rows `register_slices` registers of one session are ONE record (`is`): one machine, one set of
+    deliveries, one derivation."""
+    return INTERRUPTED_ROWS.get(row_name)
+
+
+class OncePerSession:
+    """What a consumer computes "per row" over the rows of ONE SLICED SESSION is one computation: a session's slice
+    rows differ in their names and their slices alone (`register_slices` registers each from the same
+    `InterruptedRow`), so the ORIGINAL's run of each, its deliveries derived again, its companion's differential, its
+    pair of bench runs are the same run. THE ONE MEMO of it, for every holder (a sweep, a table, a test module).
+
+    A memo answers ONE computation, named where it is built — `compute`, over whatever its holder holds fixed (a base
+    image, a build): a second image or build is a second memo, never this one asked again. `memo(row_name, machine,
+    *arguments)` is `compute(*arguments)`, made for the first row asked of a session and answered to its others —
+    whose `machine` (what the run is over: all of a row but its name and slice) must then EQUAL the first's, refused
+    by name: the premise the answer rests on. Kept for sliced sessions alone: any other row is a session of its own,
+    with nothing to answer it to, and is computed every time."""
+
+    def __init__(self, compute):
+        self._compute = compute
+        self._made = {}                 # by the session's identity; the session kept, so its id is never reused
+
+    def __call__(self, row_name, machine, *arguments):
+        if row_name not in SLICED_ROWS:
+            return self._compute(*arguments)
+        session = session_of(row_name)
+        if id(session) not in self._made:
+            self._made[id(session)] = (session, machine, self._compute(*arguments))
+        _session, made_over, value = self._made[id(session)]
+        assert machine == made_over, (
+            f"{row_name}: the rows of its session are not one machine — they cannot share a run")
+        return value
 
 
 def rederived(row_name):
@@ -693,23 +821,36 @@ def rederived(row_name):
     noise, where an interrupt reading a masked byte must show it (the deliveries derived over the pristine snapshot,
     laid as they are, would hide it)."""
     assert row_name in INTERRUPTED_ROWS, f"{row_name}: no row taken through interrupts registered by that name"
-    name, arguments, pokes, interrupts, _delivered = INTERRUPTED_ROWS[row_name]
-    return deliveries(name, arguments, pokes, interrupts)
+    row = INTERRUPTED_ROWS[row_name]
+    return deliveries(row.name, row.arguments, row.pokes, row.interrupts, row.budget)
 
 
-def register_interrupted(label, name, arguments, machine, interrupts, *, objects=False):
+def register_interrupted(label, name, arguments, machine, interrupts, *, objects=False, budget=None):
     """One PRICED `interrupted_row`, registered (`aes.ROWS`) — the mask word dropped at Tier 3 with the COMPANION a
     drop needs: the same interrupted differential (`interrupted`, `objects` its, over the row's own deliveries),
     comparing every byte outside the stack band. The row's own pricing is its second differential, so the companion
-    does not make one again."""
-    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts)
-    row_name, entry, _regs, staged, *_rest = _interrupted_row(label, name, arguments, pokes, delivered)
-    INTERRUPTED_ROWS[row_name] = (name, arguments, pokes, interrupts, delivered)
-    companion = functools.partial(interrupted, name, arguments, pokes, interrupts, objects=objects,
-                                  not_compared=frozenset(case.STACK_BAND), delivered=delivered,
-                                  second_differential=False)
+    does not make one again. `budget`: the row's own derivation budget, declared (`_budget_of`) — every derivation of
+    the row (this one, its companion's, `rederived`) is held to it, both ways."""
+    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts, budget)
+    return _registered(label, InterruptedRow(name, arguments, pokes, interrupts, delivered, budget),
+                       _companion(name, arguments, pokes, interrupts, delivered, objects, budget))
+
+
+def _companion(name, arguments, pokes, interrupts, delivered, objects, budget):
+    """A registered row's COMPANION: its interrupted differential over the row's own deliveries, every byte outside
+    the stack band compared, the bench's second differential left to the row's pricing."""
+    return functools.partial(interrupted, name, arguments, pokes, interrupts, objects=objects,
+                             not_compared=frozenset(case.STACK_BAND), delivered=delivered, second_differential=False,
+                             budget=budget)
+
+
+def _registered(label, row, companion):
+    """`row` (an `InterruptedRow`, settled) registered as `<core>, <label>` with its `companion`: recorded
+    (`INTERRUPTED_ROWS`), and a priced row of `aes.ROWS` — the mask word dropped at Tier 3."""
+    row_name, entry, _regs, staged, *_rest = _interrupted_row(label, row.name, row.arguments, row.pokes, row.delivered)
+    INTERRUPTED_ROWS[row_name] = row
     return aes.ROWS.register(row_name, entry, staged, dropped=aes.LINE_F_MASK_WINDOW, undropped=companion,
-                             delivered=delivered)
+                             delivered=row.delivered)
 
 
 # ---- the machines, each the ROM's own -----------------------------------------------------------------------------------
@@ -723,25 +864,166 @@ WINDOW_RECT_AT = BAND_AT + 0x4         # the GRECT wm_create and wm_open are han
 MESSAGE_AT = BAND_AT + 0x10            # a message buffer
 MESSAGE_BYTES = aes.header_constants("apmsg.h")["AP_MSG_BYTES"]
 assert MESSAGE_AT + MESSAGE_BYTES <= BAND_AT + BAND_BYTES
-# Each derivation's budget, and the margin every derivation is held to under it (`_rom_run`, and the ROM's watched runs):
+# Each derivation's DEFAULT budget, and the margin every derivation is held to under it (`_rom_run`, and the ROM's watched
+# runs):
 # the deepest of them, the ROM's draw_change of a lower window moved and resized, watched for its door calls
 # (`test_aes_wm_update.deepest_derivation()`, which `test_aes_event.py` runs under the margin), measured at 244,097
 # instructions — 6.1 times under.
 DERIVATION_INSNS = 1_500_000
 DERIVATION_MARGIN = 5
+# A ROW'S OWN BUDGET. A long interactive session — the file selector listing a directory, a dialog typed into for forty
+# keys — runs past what DERIVATION_INSNS admits under its margin (300,000 instructions), and raising the default for
+# it would loosen the bound on every other derivation: a short one that began to spin would run five times longer
+# before it was refused. So the case that needs more DECLARES it (`budget=`, on `interrupted`, `register_interrupted`,
+# `register_slices`, `run_event` ...), from its measured run — and the declaration is held BOTH WAYS, by name:
+#   * the run must fit it by DERIVATION_MARGIN, as every derivation fits the default (`_vet_the_margin`);
+#   * a run that ENDED (returned, or blocked at a door call) must have NEEDED it (`_vet_not_stale`): a run the
+#     default admits by its margin declares for nothing — the question is the RUN's spend, not the declaration's size
+#     (a budget of DERIVATION_INSNS + 1 over a run of 200,000 instructions passed every other rule) — and a
+#     declaration more than DERIVATION_STALE times the least that admits the run (its spend times the margin) is
+#     STALE: written for a longer run than the case now makes, or by guess. One no greater than DERIVATION_INSNS
+#     declares nothing whatever the run, and is refused before it (`_budget_of`).
+# So a declared budget B over a run of N instructions holds  DERIVATION_INSNS < 5 N <= B <= 10 N.
+# THE IN-PROCESS DIFFERENTIAL of a door case (`run_event`) is another run with another default — `emu.run`'s own cap,
+# DIFFERENTIAL_INSNS, a bare limit with no margin under it — so what raises it is declared under its own name (`cap=`)
+# and held the same way (`vet_the_cap`): needed (the run is past the default), fitted by DERIVATION_MARGIN, not stale.
+# A run of 200,001..300,000 instructions needs the cap and no budget; past that it needs both, and one declaration
+# (`budget=`) serves both runs.
+# ONE DOOR FOR A CAP (`capped_run`): every in-process differential of the event door's batteries that runs past the
+# oracle's own cap is capped and vetted there — `run_event`, and the file selector's runs (`aes_fslib`) — and a raw
+# `max_insns` handed past it is refused by name. A BATTERY whose cases share one cap declares it once, from its
+# deepest run measured (`battery_cap`: held to that run both ways at the declaration; every run under it then held to
+# the margin) — the same rule, the need shown where the battery re-measures that run.
+DERIVATION_STALE = 2
+DIFFERENTIAL_INSNS = inspect.signature(emu.run).parameters["max_insns"].default
 
 
-def _vet_the_margin(entry, insns):
-    assert insns * DERIVATION_MARGIN <= DERIVATION_INSNS, (
-        f"the derivation's run of {entry:#x} spent {insns} instructions — inside DERIVATION_INSNS' margin of "
-        f"{DERIVATION_MARGIN}: raise the budget, from this run")
+def _budget_of(entry, declared):
+    """The instructions a derivation's run of `entry` may spend: DERIVATION_INSNS, or the budget its row `declared` —
+    refused by name unless it is above the default, which it would otherwise only restate."""
+    if declared is None:
+        return DERIVATION_INSNS
+    assert declared > DERIVATION_INSNS, (
+        f"the derivation's run of {entry:#x} declares a budget of {declared} instructions, no more than "
+        f"DERIVATION_INSNS ({DERIVATION_INSNS}): the declaration is stale — the default already covers it, drop it")
+    return declared
 
 
-def _rom_run(image, entry, regs=None, stop_pc=0):
-    """`emu.run` of a derivation: under DERIVATION_INSNS by DERIVATION_MARGIN, its write ledger whole."""
-    final, writes, regs_out = emu.run(image, entry, dict(regs or {}), max_insns=DERIVATION_INSNS, stop_pc=stop_pc)
+def _vet_the_margin(entry, insns, declared=None):
+    """A derivation's run of `entry` that spent `insns` fits its budget DERIVATION_MARGIN times over: the default, or
+    the one its row `declared` — each refused in its own words, naming what to raise."""
+    if declared is None:
+        assert insns * DERIVATION_MARGIN <= DERIVATION_INSNS, (
+            f"the derivation's run of {entry:#x} spent {insns} instructions — inside DERIVATION_INSNS' margin of "
+            f"{DERIVATION_MARGIN}: raise the budget, from this run")
+        return
+    assert insns * DERIVATION_MARGIN <= _budget_of(entry, declared), (
+        f"the derivation's run of {entry:#x} spent {insns} instructions — inside its declared budget's ({declared}) "
+        f"margin of {DERIVATION_MARGIN}: raise the row's budget to at least {insns * DERIVATION_MARGIN}, from this run")
+
+
+def _vet_not_stale(entry, insns, declared):
+    """A derivation's run of `entry` that ENDED (returned, or blocked) after `insns` instructions NEEDED the budget its
+    row `declared`: refused by name where DERIVATION_INSNS admits the run by its margin (the default would have served
+    it), and where the declaration is more than DERIVATION_STALE times what admits the run (above). Only a run that
+    ended says what its case needs — a prefix a watch stopped at an entry is held to the margin alone."""
+    if declared is None:
+        return
+    least = insns * DERIVATION_MARGIN
+    assert least > DERIVATION_INSNS, (
+        f"the derivation's run of {entry:#x} declares a budget of {declared} instructions and spent {insns}: the "
+        f"declaration is stale — DERIVATION_INSNS ({DERIVATION_INSNS}) admits this run by its margin of "
+        f"{DERIVATION_MARGIN}, the default already covers it, drop it")
+    assert declared <= least * DERIVATION_STALE, (
+        f"the derivation's run of {entry:#x} declares a budget of {declared} instructions and spent {insns}: the "
+        f"declaration is stale — {least} admits this run (its margin of {DERIVATION_MARGIN}), and a declared budget "
+        f"may be at most {DERIVATION_STALE} times that ({least * DERIVATION_STALE}); declare it again, from this run")
+
+
+class BatteryCap(namedtuple("BatteryCap", "insns deepest")):
+    """A cap ONE declaration makes for a whole BATTERY's in-process runs (`battery_cap`): `insns`, declared from the
+    `deepest` of those runs measured."""
+
+
+def battery_cap(insns, deepest):
+    """A battery's cap of `insns` instructions, DECLARED from its `deepest` run measured — held here as a case's own
+    is (`_vet_a_case_s_cap`): that run needed it, fits it by DERIVATION_MARGIN and did not declare it stale. Each run
+    under it is then held to the margin alone (`vet_the_cap`): whether the battery needs its cap is the deepest run's
+    to show, where the battery re-measures it."""
+    _vet_a_case_s_cap(None, deepest, insns)
+    return BatteryCap(insns, deepest)
+
+
+def capped_run(name, cap, kwargs, run):
+    """THE ONE DOOR an in-process differential of `addrs.<name>` past the oracle's own cap goes through: `run(**limits)`
+    (an `aes.run_function` of it, the case's other `kwargs` among `limits`) capped at `cap` — a case's own number, its
+    battery's `BatteryCap`, or None for a run DIFFERENTIAL_INSNS covers — and the cap then held to the ORIGINAL's
+    spend (`vet_the_cap`). Refused by name: a raw `max_insns` among `kwargs` (a cap no rule would hold), and an
+    original that did not return under a declared cap."""
+    assert "max_insns" not in kwargs, (
+        f"{name}: a raw max_insns ({kwargs['max_insns']}) was handed past the cap's door — declare it as the case's "
+        f"`cap=`, which is held both ways")
+    insns = cap.insns if isinstance(cap, BatteryCap) else cap
+    try:
+        result = run(**kwargs, **({} if insns is None else {"max_insns": insns}))
+    except RuntimeError as refused:
+        if insns is None or f"within {insns} instructions" not in str(refused):
+            raise
+        raise AssertionError(f"{name}: the ROM's run did not return within its declared cap ({insns}): raise the cap, "
+                             f"from this run") from None
+    vet_the_cap(getattr(addrs, name), result.info["regs"]["ninsns"], cap)
+    return result
+
+
+def vet_the_cap(entry, insns, cap):
+    """An in-process differential of `entry` whose ORIGINAL spent `insns` under `cap` is held to it by name: a
+    BATTERY's cap (`BatteryCap`) by DERIVATION_MARGIN — not asked whether this run needed it — and a case's OWN number
+    both ways (`_vet_a_case_s_cap`). None: the run declared no cap."""
+    if cap is None:
+        return
+    if not isinstance(cap, BatteryCap):
+        return _vet_a_case_s_cap(entry, insns, cap)
+    least = insns * DERIVATION_MARGIN
+    assert least <= cap.insns, (
+        f"the differential of {entry:#x} spent {insns} instructions — inside its battery's declared cap's ({cap.insns}) "
+        f"margin of {DERIVATION_MARGIN}: raise the battery's cap to at least {least}, from this run")
+
+
+def _vet_a_case_s_cap(entry, insns, cap):
+    """A differential of `entry` (None: a battery's deepest run, at its declaration) whose ORIGINAL spent `insns` under
+    the `cap` declared for it needed it, fits it by DERIVATION_MARGIN and did not declare it stale — each refused in
+    its own words."""
+    who = "a battery's deepest run" if entry is None else f"the differential of {entry:#x}"
+    assert insns > DIFFERENTIAL_INSNS, (
+        f"{who} declares a cap of {cap} instructions and its original spent {insns}: the "
+        f"declaration is stale — the oracle's own cap ({DIFFERENTIAL_INSNS}) already covers it, drop it")
+    least = insns * DERIVATION_MARGIN
+    assert least <= cap, (
+        f"{who} spent {insns} instructions — inside its declared cap's ({cap}) margin of "
+        f"{DERIVATION_MARGIN}: raise the case's cap to at least {least}, from this run")
+    assert cap <= least * DERIVATION_STALE, (
+        f"{who} declares a cap of {cap} instructions and its original spent {insns}: the "
+        f"declaration is stale — {least} admits this run (its margin of {DERIVATION_MARGIN}), and a declared cap may "
+        f"be at most {DERIVATION_STALE} times that ({least * DERIVATION_STALE}); declare it again, from this run")
+
+
+def _rom_run(image, entry, regs=None, stop_pc=0, budget=None):
+    """`emu.run` of a derivation: under DERIVATION_INSNS — or the `budget` its case declares (`_budget_of`) — by
+    DERIVATION_MARGIN, its write ledger whole."""
+    final, writes, regs_out = emu.run(image, entry, dict(regs or {}), max_insns=_budget_of(entry, budget),
+                                      stop_pc=stop_pc)
     assert not regs_out["writes_truncated"], f"the derivation's run of {entry:#x} overflowed the write ledger"
-    _vet_the_margin(entry, regs_out["ninsns"])
+    _vet_the_margin(entry, regs_out["ninsns"], budget)
+    return final, writes, regs_out
+
+
+def stopped_at(image, entry, stop_pc, budget=None):
+    """A derivation's PREFIX: the ROM's `entry` over `image` (its frame staged) run until it first reaches `stop_pc` —
+    `(final, writes, regs)`, as `emu.run` answers — under the `budget` its case declares (`_budget_of`): the run's CAP,
+    and what it is held to by its margin; refused by name where the run never reaches the stop. A prefix is not asked
+    whether it NEEDED its budget (`_vet_not_stale`): only a run that ended says what its case needs."""
+    final, writes, regs_out = _rom_run(image, entry, stop_pc=stop_pc, budget=budget)
+    assert regs_out["checkpoint"], f"the derivation's run of {entry:#x} never reached {stop_pc:#x}"
     return final, writes, regs_out
 
 
@@ -817,7 +1099,7 @@ def keys(*scancodes, onto=None):
     """The IKBD ring holding a key per make code of `scancodes`, unread, over `onto` (the snapshot by default): each
     `key` an interrupt over whatever process state `onto` holds (the snapshot's: rlr NULL, the dispatcher's guard set).
     A delta, to lay over `onto`."""
-    image, written = bytearray(make_image(onto or {})), {}
+    image, written = make_image(onto or {}), {}
     for scancode in scancodes:
         written = merge_pokes(written, key(scancode)(image))
     return written
@@ -970,9 +1252,11 @@ def _interrupt_over(image, entry, regs=None, inputs=None):
     """An INTERRUPT's ROM code `entry` run over `image` as it stands — a bytearray, the machine at any instruction
     boundary — with `inputs` (a packet the IKBD hands on) staged for the run alone: what it WROTE, laid into `image`,
     the stack band out (its own frames, which on the machine land below the interrupted SP)."""
-    run_on = bytearray(image)
-    for at, data in (inputs or {}).items():
-        run_on[at:at + len(data)] = data
+    run_on = image                      # `emu.run` runs a copy of what it is handed: `image` itself is not written
+    if inputs:
+        run_on = bytearray(image)
+        for at, data in inputs.items():
+            run_on[at:at + len(data)] = data
     _final, writes, _regs = _rom_run(run_on, entry, regs)
     written = case.written_by(writes)
     for at, data in written.items():
@@ -1181,7 +1465,7 @@ EVERY_GADGET = functools.reduce(operator.or_, (value for name, value in aes.head
 # every frame the door was handed too — or with its memory at the ENTRY of the call that blocks, the point where the C's
 # door refuses the same call (`refused_where_the_rom_blocks`).
 COMPARED_DIFFERENCES_SHOWN = 16        # how many differing bytes a failure names
-Interrupted = namedtuple("Interrupted", "calls returned answer rom_memory image delivered staged")
+Interrupted = namedtuple("Interrupted", "calls returned answer rom_memory image delivered staged stderr")
 _NOT_COMPARED = frozenset(case.STACK_BAND) | frozenset(at for lo, hi, _why in DOOR_DROPS for at in range(lo, hi))
 
 
@@ -1198,24 +1482,28 @@ class _AtTheEntry(Exception):
         self.memory, self.call = memory, call
 
 
-def _watched_through(name, arguments, pokes, delivered, stop_at=None, *, io_seed=None, blocks=True):
+def _watched_through(name, arguments, pokes, delivered, stop_at=None, *, io_seed=None, blocks=True, budget=None):
     """The ROM's own `addrs.<name>` WATCHED at the door's entries, `delivered` (`deliveries`' `{ordinal: (found,
     wrote)}`) laid into its memory at the entry of each door call of that ordinal, each checked first (`DoorStops`):
     `(calls, memory, result)` — the frames handed, read after; the memory it left, or at the entry of the call that
     blocks (`blocks`: stopped at the dispatcher inside a call); its result, None where it blocked. Stopped at the entry
     of the call of ordinal `stop_at` instead, by `_AtTheEntry`."""
-    calls, at_the_entry = [], []
-    memory = bytearray(make_image(aes.staged(name, arguments, pokes)))
+    calls = []
+    memory = make_image(aes.staged(name, arguments, pokes))
+    # The memory at the entry of the last call opened — what a run that BLOCKS is compared at — kept in ONE buffer,
+    # stored over at each call: a fresh sixteen-megabyte copy per door call was a third of a replay's cost.
+    at_the_entry = bytearray(len(memory))
 
     def opened(pc, sp, memory):
         call = handed_at(pc, sp, memory)
         if len(calls) == stop_at:
             raise _AtTheEntry(bytes(memory), call)
         calls.append(call)
-        at_the_entry[:] = [bytes(memory)]
+        at_the_entry[:] = memory
     watch = DoorStops(ENTRIES, ROM_RETURNS, opened, blocks=blocks, delivered=delivered)
-    result = run_watched(memory, getattr(addrs, name), watch, io_seed)
-    return calls, (memory if result else at_the_entry[0]), result
+    result = run_watched(memory, getattr(addrs, name), watch, io_seed, budget)
+    assert result or calls, f"{name}: the run blocked before any door call"
+    return calls, (memory if result else bytes(at_the_entry)), result
 
 
 def rom_entered(name, arguments, pokes, delivered, ordinal):
@@ -1275,18 +1563,19 @@ def _taken(memory, interrupt):
     return {at: bytes(memory[at:at + len(data)]) for at, data in wrote.items()}, wrote
 
 
-def _run_interrupting(memory, entry, interrupts):
+def _run_interrupting(memory, entry, interrupts, budget=None):
     """The ROM's own `entry` over `memory` (its frame at abi.FIRST_ARG), ONE watched run that takes each interrupt of
     `interrupts` at the entry of its door call (above): `(delivered, result)` — `{ordinal: (found, wrote)}`, and the
-    run's result, None where it blocked. Held to DERIVATION_INSNS by its margin over every segment, each segment's
-    refusals vetted as it ends. The last segment's vets run on a run that ENDED (returned or blocked) only: after an
+    run's result, None where it blocked. Held to its budget (DERIVATION_INSNS, or the `budget` its row declares:
+    `_budget_of`) by its margin over every segment — and from above (`_vet_not_stale`) — each segment's refusals
+    vetted as it ends. The last segment's vets run on a run that ENDED (returned or blocked) only: after an
     interrupt's own run failed, the oracle's counters are that run's, and a vet of them would replace its error."""
     if isinstance(interrupts, Waits):
         interrupts.begin_run()
-    watch = DoorStops(ENTRIES, ROM_RETURNS, lambda *_stop: None, blocks=True)
-    delivered, spent = {}, 0
+    watch = DoorStops(ENTRIES, ROM_RETURNS, blocks=True)
+    delivered, spent, insns = {}, 0, _budget_of(entry, budget)
     who = f"the ROM's interrupted run of {entry:#x}"
-    result = rom_bench.original_entered(memory, entry, watch.first, max_insns=DERIVATION_INSNS)
+    result = rom_bench.original_entered(memory, entry, watch.first, max_insns=insns)
     try:
         while result["status"] == emu.BENCH_DOOR:
             pc, sp = emu.bench_door_pc(), emu.bench_door_sp()
@@ -1300,41 +1589,44 @@ def _run_interrupting(memory, entry, interrupts):
                 _lay(memory, delivered[watch.calls][1])
                 result = _continued_at(memory, pc, sp, registers)
             emu.bench_door_arm(watch.stopped(pc, sp, memory))
-            left = DERIVATION_INSNS - spent - result["ninsns"]
-            assert left > 0, f"{who} did not return within {DERIVATION_INSNS} instructions"
+            left = insns - spent - result["ninsns"]
+            assert left > 0, f"{who} did not return within {insns} instructions"
             result = emu.bench_resume(entry, max_insns=left)
     except Blocked:
         result = None
     finally:
         emu.bench_abort()
     rom_bench.vet_the_run_just_made(who)
-    _vet_the_margin(entry, spent + _instructions_run())
+    _vet_the_margin(entry, spent + _instructions_run(), budget)
+    _vet_not_stale(entry, spent + _instructions_run(), budget)
     return delivered, result
 
 
-def deliveries(name, arguments, pokes, interrupts):
+def deliveries(name, arguments, pokes, interrupts, budget=None):
     """What each interrupt of `interrupts` WRITES, run over the ROM's own memory at the entry of the door call it is
     delivered at — `{ordinal: interrupt or (interrupt, ...)}`, or a SCHEDULE `interrupts(ordinal, entry)` answering
     one (or None) at every call (`typed`): `{ordinal: (found, wrote)}` — the bytes that memory held at each address the
-    delivery writes, then what it wrote there. ONE run of the routine takes them all (`_run_interrupting`); an ordinal
-    the run never reaches, or a schedule left with interrupts `pending`, is refused by name."""
-    memory = bytearray(make_image(aes.staged(name, arguments, pokes)))
-    delivered, _result = _run_interrupting(memory, getattr(addrs, name), interrupts)
+    delivery writes, then what it wrote there. ONE run of the routine takes them all (`_run_interrupting`, under the
+    `budget` its row declares); an ordinal the run never reaches, or a schedule left with interrupts `pending`, is
+    refused by name."""
+    memory = make_image(aes.staged(name, arguments, pokes))
+    delivered, _result = _run_interrupting(memory, getattr(addrs, name), interrupts, budget)
     undelivered = interrupts.pending if isinstance(interrupts, Waits) else sorted(set(interrupts) - set(delivered))
     assert not undelivered, f"{name}: the ROM's run made no door call to deliver {undelivered} at"
     return delivered
 
 
-def rom_interrupted(name, arguments, pokes, interrupts, delivered=None):
+def rom_interrupted(name, arguments, pokes, interrupts, delivered=None, budget=None):
     """The ROM's own `addrs.<name>` over `pokes` with the frame `arguments`, WATCHED at the door's entries, each of
     `interrupts` delivered over its memory at the entry of that door call (`deliveries`; or `delivered`, derived
     already) — then REPLAYED: one run laying them in at no cost, each checked against the memory it lands on
     (`_watched_through`), the run every shore is compared with: `(calls, delivered, memory, result)` — the frames handed
     (each read after the interrupt), the deliveries (`{ordinal: (found, wrote)}`), the memory it left (or, for a run
-    that BLOCKS, its memory at the entry of the blocking call), and the run's result (None: it blocked)."""
+    that BLOCKS, its memory at the entry of the blocking call), and the run's result (None: it blocked). `budget`:
+    the case's own, declared (`_budget_of`), which both runs are held to."""
     if delivered is None:
-        delivered = deliveries(name, arguments, pokes, interrupts)
-    calls, memory, result = _watched_through(name, arguments, pokes, delivered)
+        delivered = deliveries(name, arguments, pokes, interrupts, budget)
+    calls, memory, result = _watched_through(name, arguments, pokes, delivered, budget=budget)
     return calls, delivered, memory, result
 
 
@@ -1342,7 +1634,7 @@ def delivering(delivered):
     """A watch over a run of a row whose interrupts are DELIVERED (`register_interrupted`): `delivered` laid at its door
     calls, each checked first, and a call that reaches the dispatcher refused by name (`DoorStops`) — the ROM's replays
     (`replayed`) and Tier 3's original."""
-    return DoorStops(ENTRIES, ROM_RETURNS, lambda *_stop: None, blocks=True, delivered=delivered)
+    return DoorStops(ENTRIES, ROM_RETURNS, blocks=True, delivered=delivered)
 
 
 def replayed(image, entry, delivered, regs=None, io_seed=None):
@@ -1361,6 +1653,15 @@ def differing(image, rom_memory, not_compared=None):
     `not_compared`)."""
     excluded = _NOT_COMPARED if not_compared is None else not_compared
     return [at for at in _differing_addresses(image, rom_memory) if at not in excluded]
+
+
+def first_to_differ(ours, the_rom_s):
+    """Where two sequences first differ: the index of the first element that is not the other's — the shorter's
+    length where one only runs on past it — or None for two equal ones."""
+    differ = next((nth for nth, (mine, its) in enumerate(zip(ours, the_rom_s)) if mine != its), None)
+    if differ is None and len(ours) != len(the_rom_s):
+        differ = min(len(ours), len(the_rom_s))
+    return differ
 
 
 def _describe_differences(name, image, rom_memory, differ):
@@ -1385,7 +1686,7 @@ SWITCHES_AT_THE_DISPATCHER = "the call would switch processes (block or yield)"
 
 
 def interrupted(name, arguments, machine, interrupts, *, objects=False, seconds=CHILD_RETURN_SECONDS, switches=BLOCKS,
-                not_compared=None, delivered=None, second_differential=True):
+                not_compared=None, delivered=None, second_differential=True, budget=None):
     """`addrs.<name>` over `machine` with the frame `arguments`, TAKEN THROUGH `interrupts` — `{ordinal: interrupt or
     (interrupt, ...)}`, each delivered at the entry of the door call of that ordinal (`press`, `release`, `move_to(x,
     y)`, `key`), or a schedule (`typed`) — on both shores: the ROM's own run (`rom_interrupted`) and the C in a child
@@ -1397,10 +1698,14 @@ def interrupted(name, arguments, machine, interrupts, *, objects=False, seconds=
     can fall behind the batteries (a case that IS a registered row is priced by Tier 3 already, and skipped there);
     `second_differential=False` only for a registered row's companion, whose row is priced. `delivered`: the
     deliveries, derived already (`rom_interrupted`). Answers `Interrupted(calls, returned, answer, rom_memory, image,
-    delivered, staged)` for the case's own assertions — `staged` the machine with the frame, as a row registers it."""
-    calls, delivered, rom_memory, result = rom_interrupted(name, arguments, machine, interrupts, delivered)
+    delivered, staged, stderr)` for the case's own assertions — `staged` the machine with the frame, as a row registers
+    it; `stderr` what the C's child printed (a routine's own child doors may report there: `declare_child_doors`).
+    `budget`: the case's own derivation budget, DECLARED from its measured run (`_budget_of`) — a session too long for
+    DERIVATION_INSNS' margin; every ROM run of the case is held to it, both ways."""
+    calls, delivered, rom_memory, result = rom_interrupted(name, arguments, machine, interrupts, delivered, budget)
     returncode, stderr, image = refusal(name, machine, arguments, seconds=seconds, answered=True,
-                                        bind=child_binding(objects=objects, interrupts=delivered))
+                                        bind=child_binding(objects=objects, interrupts=delivered,
+                                                           before=CHILD_DOORS.get(name, "")))
     returned = result is not None
     if returned:
         assert returncode == 0, f"{name}: the ROM's run returned, the C's child did not:\n{stderr}"
@@ -1415,8 +1720,8 @@ def interrupted(name, arguments, machine, interrupts, *, objects=False, seconds=
     differ = differing(image, rom_memory, not_compared)
     assert not differ, _describe_differences(name, image, rom_memory, differ)
     if returned and second_differential:
-        bench_differential(name, arguments, machine, interrupts)
-    return Interrupted(calls, returned, answer, rom_memory, image, delivered, aes.staged(name, arguments, machine))
+        bench_differential(name, arguments, machine, interrupts, budget, Derived(delivered, rom_memory))
+    return Interrupted(calls, returned, answer, rom_memory, image, delivered, aes.staged(name, arguments, machine), stderr)
 
 
 @functools.cache
@@ -1430,26 +1735,30 @@ def _tier3():
 @functools.cache
 def _registered_image(row_name):
     """The staged image of the registered row `row_name` (`INTERRUPTED_ROWS`), as its run starts."""
-    name, arguments, pokes, _interrupts, _delivered = INTERRUPTED_ROWS[row_name]
-    return bytes(make_image(aes.staged(name, arguments, pokes)))
+    row = INTERRUPTED_ROWS[row_name]
+    return bytes(make_image(aes.staged(row.name, row.arguments, row.pokes)))
 
 
 def _registered_twin(name, arguments, pokes, delivered):
     """The registered row (`register_interrupted`) this case's row would BE — the same routine, the same staged image
     and the same deliveries — or None."""
     image = bytes(make_image(aes.staged(name, arguments, pokes)))
-    return next((row_name for row_name, (routine, _arguments, _pokes, _interrupts, row_delivered)
-                 in INTERRUPTED_ROWS.items()
-                 if routine == name and row_delivered == delivered and _registered_image(row_name) == image), None)
+    return next((row_name for row_name, row in INTERRUPTED_ROWS.items()
+                 if row.name == name and row.delivered == delivered and _registered_image(row_name) == image), None)
 
 
-def bench_differential(name, arguments, machine, interrupts):
+def bench_differential(name, arguments, machine, interrupts, budget=None, derived=None):
     """The bench's SECOND DIFFERENTIAL of a case TAKEN THROUGH `interrupts` whose ROM run returns: the case as a row
     (`interrupted_row`), measured (`tier3.measure`) — the callee-saved registers, the odd-access surface, the write
     ledger the mask word's drop is vetted against, both sides' refusal tallies, the streams, the whole image: what the
     C's Tier 1 child cannot report. A case whose row IS a registered one (`_registered_twin`) is not measured a third
-    time: Tier 3 prices that row (`make bench`'s table, `test_tier3.py`'s row test) — it must be priced, by name."""
-    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts)
+    time: Tier 3 prices that row (`make bench`'s table, `test_tier3.py`'s row test) — it must be priced, by name.
+    `budget`: the case's own derivation budget, declared (`_budget_of`). `derived`: what the case's ROM run has
+    derived already (`_settled_interrupted`), so a session is not derived a second time for its row — TRUSTED, not
+    re-derived, where `machine` already keeps `savptr` in the band: the row is then priced over the deliveries handed
+    in. Only `interrupted` may pass it, with the deliveries and memory of the ROM run it has just made over this very
+    machine and these interrupts; a caller holding deliveries from anywhere else passes None, and the run is made."""
+    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts, budget, derived)
     twin = _registered_twin(name, arguments, pokes, delivered)
     if twin:
         assert twin in {row[0] for row in aes.ROWS.cases}, f"{twin}: its deliveries are recorded, but no priced row"
@@ -1460,12 +1769,309 @@ def bench_differential(name, arguments, machine, interrupts):
 
 
 def refused_where_the_rom_blocks(name, arguments, machine, *, objects=False, seconds=CHILD_RETURN_SECONDS,
-                                 switches=BLOCKS):
+                                 switches=BLOCKS, budget=None):
     """A door user's call that BLOCKS (nothing it waits for satisfied) — or, `switches=YIELDS`, yields: the ROM's run
     reaches dsptch inside a door call, the C's child is refused at the same call as one that would, and up to it the C
     is the ROM's run stopped there — every frame handed, and the whole image against the ROM's memory at the ENTRY of
     the call (`interrupted`, with no interrupt). The same `Interrupted`, for the case's own assertions (`.calls`: how
-    many passes it made)."""
-    taken = interrupted(name, arguments, machine, {}, objects=objects, seconds=seconds, switches=switches)
+    many passes it made). `budget`: the case's own derivation budget, declared (`_budget_of`)."""
+    taken = interrupted(name, arguments, machine, {}, objects=objects, seconds=seconds, switches=switches, budget=budget)
     assert not taken.returned, f"{name}: the premise — the ROM's run switches at a door call — does not hold: it returned"
     return taken
+
+
+# ---- A SESSION PRICED BY ITS SLICES -----------------------------------------------------------------------------------
+# A long interactive routine — the file selector listing a directory, scrolled, clicked and typed into before its
+# Return — is ONE call no single row prices honestly: its whole run is hundreds of thousands of instructions (past
+# `emu.run`'s 200,000, the bench's cap on an unwatched original), and one ratio over all of it lets the listing's bulk
+# dilute a scroll's or a key's — the worst shape hidden in the average. So the session is priced by its SLICES, a row
+# each: the run between two ARRIVALS both shores make at the SAME PC, running the same bytes from there —
+#   * a DOOR CALL (`door_call`: the nth call of one of the door's entries — a wait, the screen's lock taken);
+#   * a TRAP TAKEN (`trap_taken`: the nth arrival at a trap's handler, outside any door call — a VDI call, a GEMDOS
+#     call: what cuts a stretch that makes no door call);
+#   * the routine's ENTRY and its RETURN.
+# BOTH SHORES RUN THE WHOLE SESSION — the C cannot be entered in the middle of its routine — watched and MARKED at the
+# two arrivals (`Marks`, `DoorStops.marked_with`): what each has spent there, and its memory. The slice's cost is the
+# difference of the two marks, shore by shore (`spent`); and the slice is the ROM's only if the C REACHED ITS START AS
+# THE ROM DID, which is checked, by name (`vet_the_marks_agree`): the same door call (a slice started a call late is
+# another slice), the same memory outside what neither shore compares (a C that diverged before the start runs the
+# slice over another machine — its ratio would be of two different computations), and the same again at its end. The
+# whole run's own differential still holds everything else (the bench's second differential: registers, ledgers, the
+# final image).
+# EACH SLICE IS UNDER THE CAP (SLICE_INSNS, on the ROM's own run of it): one over it is refused by name, to be cut
+# finer — at a trap, where no door call falls inside it.
+# WHAT A MARK HOLDS, AND WHAT IT DOES NOT. A DOOR CALL is matched by its ordinal and by the door calls entered before
+# it (`calls`, held equal on both shores). A TRAP ARRIVAL is matched by its ORDINAL AT ITS HANDLER and by the MEMORY
+# there — nothing counts the traps taken before a mark against the ROM's. So work that touches only registers and
+# the routine's own stack (which no mark compares) may sit on either side of a trap in our build and on the other in
+# the ROM's: its cost then moves between the two slices that meet at that trap, unseen by either mark. Between two
+# REGISTERED slices that is a wash; at the edge of a registered slice it would carry cost out of the table, into a
+# stretch no row prices. What keeps it in is THE PARTITION (`bench/tier3.py`'s `uncovered_stretches`, held by
+# `test_tier3.py`): each session is also cut whole — at every DOOR CALL (the arrivals both shores are held to by
+# count) and at its registered slices' own ends, both shores' timelines held to the same arrivals after the same door
+# calls — and every stretch no registered slice covers is priced like a slice and held at or under the routine's
+# worst registered row. Cost that left a slice across a trap is then in the stretch beside it, and priced there.
+SLICE_INSNS = DIFFERENTIAL_INSNS       # `emu.run`'s own default budget: what one unwatched row may spend
+ENTRY, RETURN = "the routine's entry", "the routine's return"
+
+
+class At(namedtuple("At", "pc nth")):
+    """An ARRIVAL: the `nth` time (from 0) a run reaches `pc` outside a door call — a door's entry (`door_call`) or a
+    trap's handler (`trap_taken`)."""
+
+    def __str__(self):
+        return f"arrival {self.nth} at {self.pc:#x}"
+
+
+def door_call(entry, nth):
+    """The `nth` call (from 0) of the door's `entry` (`addrs.AES_ROM_EV_MULTI` ...): a slice's end."""
+    assert entry in ENTRIES, f"{entry:#x} is no entry of the event door ({', '.join(ENTRY_NAMES)})"
+    return At(entry, nth)
+
+
+def trap_taken(handler, nth):
+    """The `nth` arrival (from 0) at the trap handler `handler`, outside any door call and any marked trap: a slice's
+    end where the routine makes no door call. `handler` is the PC BOTH shores' trap reaches — the ROM's own
+    (`trap_handler`: GEM's `trap #2` for a VDI call), or a stub a case stages in the vector.
+
+    THE ORDINAL IS OF THE RUN'S MARKS: inside a marked trap nothing is an arrival, so were a session cut at two
+    handlers ONE OF WHICH IS TAKEN INSIDE THE OTHER (a GEMDOS call the VDI makes, both marked), the inner one's
+    arrivals would count in a run marked at it alone (`slice_cost`, a row's own runs) and not in the session's one
+    run marked at both (`Marks`' `others`) — the same ordinal, two arrivals. No session does today (the selector's
+    sessions are cut at the VDI's handler and at the replay's GEMDOS stub, which takes no trap, and no VDI call of
+    theirs reaches GEMDOS); a run that did is REFUSED BY NAME where it happens (`DoorStops.stopped`)."""
+    assert handler not in ENTRIES, f"{handler:#x} is a door entry: name its call with `door_call`"
+    return At(handler, nth)
+
+
+def trap_handler(vector, pokes=None):
+    """The handler the exception `vector` (its address: `addrs.VECTOR_TRAP_GEM` ...) holds over `pokes`."""
+    return case.long_in(make_image(pokes or {}), vector) & OS_BUS_ADDR_MASK
+
+
+VDI_TRAP = trap_handler(addrs.VECTOR_TRAP_GEM)        # the ROM's own `trap #2` handler: where a VDI call arrives
+GEMDOS_TRAP = trap_handler(addrs.VECTOR_TRAP_GEMDOS)  # ...and its `trap #1` handler's: a GEMDOS call
+Slice = namedtuple("Slice", "start stop")
+Mark = namedtuple("Mark", "calls spent memory")
+Arrival = namedtuple("Arrival", "at calls spent")
+
+
+class Marks:
+    """The MARKS of one run of a session at the two ends of `slice_` (a `Slice`): at each, the door calls entered so
+    far, what the run has spent (`cost()`: a dict of running totals — instructions, cycles, whatever its shore is
+    priced on) and its memory there. Taken by the run's watch at each arrival (`DoorStops.marked_with`) and, for an
+    end that is the routine's RETURN, by whoever made the run, once it has ended (`returned`). ENTRY is marked from the
+    first: nothing spent, no door call made, and no memory — both shores start from one image.
+
+    ONE RUN MARKS EVERY SLICE OF ITS SESSION: `others` are the session's other slices, marked at their ends by the
+    same run, and `cut_to(slice_)` is this run's marks read for another of them — so a session's rows are priced off
+    one pair of runs, not a pair each. With `every_door_call`, the run's `timeline` is kept too: an `Arrival` at
+    EVERY door call it makes and at every end it is marked at, in order, the RETURN's last, each with what the run
+    had spent — so what each shore spent between any two of them can be read, and the stretches no slice prices
+    priced as well (`bench/tier3.py`'s `uncovered_stretches`). Off by default: the cost is read at every door call."""
+
+    def __init__(self, slice_, cost, others=(), every_door_call=False):
+        for start, stop in (slice_, *others):
+            assert start != RETURN and stop != ENTRY and start != stop, f"no run is between {start} and {stop}"
+        self.slice, self._cost = slice_, cost
+        self._ends = frozenset(end for each in (slice_, *others) for end in each)
+        marked = (*(ENTRIES if every_door_call else ()), *(end.pc for end in self._ends if isinstance(end, At)))
+        self._arrivals = dict.fromkeys(marked, 0)
+        self._taken = {ENTRY: Mark(0, None, None)}
+        self.timeline = [] if every_door_call else None
+
+    def cut_to(self, slice_):
+        """This run's marks, read for `slice_` — one of the slices it was marked at (`others`)."""
+        assert set(slice_) <= self._ends, f"the run was not marked at {slice_.start} and {slice_.stop}"
+        cut = copy.copy(self)           # the same run: its marks and timeline shared, its slice its own
+        cut.slice = slice_
+        return cut
+
+    @property
+    def traps(self):
+        """The PCs this run is stopped at beyond the door's entries: its ends' that are trap handlers."""
+        return frozenset(self._arrivals) - frozenset(ENTRIES)
+
+    def arrived(self, pc, calls, memory):
+        """The run arrived at `pc` (a door entry, a marked trap's handler) with `calls` door calls entered."""
+        if pc not in self._arrivals:
+            return
+        here = At(pc, self._arrivals[pc])
+        self._arrivals[pc] += 1
+        on_the_timeline = self.timeline is not None and (pc in ENTRIES or here in self._ends)
+        if not (on_the_timeline or here in self._ends):
+            return
+        spent = self._cost()
+        if on_the_timeline:
+            self.timeline.append(Arrival(here, calls, spent))
+        if here in self._ends:
+            self._taken[here] = Mark(calls, spent, bytes(memory))
+
+    def returned(self, calls):
+        """The run RETURNED, `calls` door calls made in all: marked, its memory left to the whole run's differential."""
+        self._taken[RETURN] = Mark(calls, self._cost(), None)
+        if self.timeline is not None:
+            self.timeline.append(Arrival(RETURN, calls, self._taken[RETURN].spent))
+
+    def at(self, end, whose):
+        """The mark at `end` — refused by name where the run (`whose`) never arrived there."""
+        assert end in self._taken, (
+            f"{whose} never reached {end}: the session has no such slice (its arrivals at that PC: "
+            f"{self._arrivals.get(getattr(end, 'pc', None), 0)})")
+        return self._taken[end]
+
+    def ends(self, whose):
+        """`(start, stop)`: the two marks — refused by name where the run reached the stop no later than the start."""
+        start, stop = (self.at(end, whose) for end in self.slice)
+        if start.spent is not None:
+            assert stop.spent["insns"] > start.spent["insns"], (
+                f"{whose} reached {self.slice.stop} (after {stop.spent['insns']} instructions) before "
+                f"{self.slice.start} (after {start.spent['insns']}): no slice runs backwards")
+        return start, stop
+
+    def spent(self, whose):
+        """What the run spent INSIDE the slice: each of `cost()`'s totals at the stop, less what it was at the start."""
+        start, stop = self.ends(whose)
+        return {name: total - (start.spent or {}).get(name, 0) for name, total in stop.spent.items()}
+
+
+def vet_the_marks_agree(case_name, ours, the_rom_s, differing_at):
+    """THE SLICE IS THE SAME SLICE ON BOTH SHORES: our run's marks (`ours`, a `Marks`) against the ROM's, end by end —
+    reached after the same number of door calls, and holding the same memory there (`differing_at(ours, the ROM's)`:
+    the addresses two memories differ at, outside what neither shore compares). Refused by name: a slice OUR run
+    starts at another door call than the ROM's, a run that DIVERGED BEFORE THE SLICE'S START, one that diverged
+    inside it."""
+    pairs = zip(ours.slice, the_rom_s.slice, ours.ends("our run"), the_rom_s.ends("the ROM's run"),
+                ("starts", "ends"), ("before the slice's start", "inside the slice"))
+    for end, the_rom_s_end, mine, the_rom, verb, where in pairs:
+        assert mine.calls == the_rom.calls, (
+            f"{case_name}: our slice {verb} at door call {mine.calls} ({end}) where the ROM's {verb} at door call "
+            f"{the_rom.calls} ({the_rom_s_end}) — another slice of the session than the ROM's")
+        if mine.memory is None:
+            continue
+        differ = differing_at(mine.memory, the_rom.memory)
+        shown = ", ".join(f"{at:#x} the ROM's={the_rom.memory[at]:#04x} ours={mine.memory[at]:#04x}"
+                          for at in differ[:COMPARED_DIFFERENCES_SHOWN])
+        assert not differ, (
+            f"{case_name}: our run diverged {where} — at {end} (door call {mine.calls}) {len(differ)} bytes differ "
+            f"from the ROM's run there: {shown}")
+
+
+# A byte of the door's own staging band no case stages, reads or writes: where a RED test takes a run ASTRAY — a
+# divergence nothing else shows.
+UNREAD_BYTE = BAND_AT + BAND_BYTES - 1
+
+
+def astray(watch, flips):
+    """`watch` with its run taken ASTRAY (a RED test's build): UNREAD_BYTE inverted in the run's memory at each stop
+    `flips(watch, nth)` says — `nth` the stop's ordinal, the watch as it stands before the stop is taken. Inverted
+    twice, the byte is the ROM's again: a run astray over a stretch and back, which only a mark inside it can see."""
+    stopped, stops = watch.stopped, itertools.count()
+
+    def inverted(pc, sp, memory):
+        if flips(watch, next(stops)):
+            memory[UNREAD_BYTE] ^= 0xFF
+        return stopped(pc, sp, memory)
+    watch.stopped = inverted
+    return watch
+
+
+def vet_under_the_slice_cap(case_name, slice_, insns):
+    """A slice the ROM's own run spends `insns` instructions in is under SLICE_INSNS — else refused by name."""
+    assert insns <= SLICE_INSNS, (
+        f"{case_name}: the slice from {slice_.start} to {slice_.stop} runs {insns} ROM instructions, past SLICE_INSNS "
+        f"({SLICE_INSNS}): cut it finer — at a door call inside it, or at a trap it takes (`trap_taken`)")
+
+
+def _marked_run(entry, memory, delivered, marks, budget):
+    """The ROM's own `entry` over `memory` (its frame staged, written in place), `delivered` laid at its door calls,
+    WATCHED and marked by `marks` (`Marks`, `Timeline`): the door calls it made. The run must return — a session priced
+    by its slices ends — under the `budget` it declares (`_budget_of`)."""
+    watch = DoorStops(ENTRIES, ROM_RETURNS, blocks=True, delivered=delivered).marked_with(marks)
+    result = run_watched(memory, entry, watch, budget=budget)
+    assert result, f"{entry:#x}: a session priced by its slices returns — this one switches processes at a door call"
+    return watch.calls
+
+
+def rom_sliced(name, arguments, pokes, delivered, slice_, *, budget=None, **marked):
+    """The ROM's own `addrs.<name>` over `pokes` with the frame `arguments`, `delivered` laid at its door calls, WATCHED
+    and MARKED at `slice_`'s ends (`Marks`, each mark `run_cost()` and the memory there; `marked` its options: the
+    session's other slices, every door call): `(marks, memory)` — its marks and the memory it left. The ROM's side of
+    a slice's pricing, and the whole of a slice's measurement where the ROM is the oracle on both shores."""
+    marks, memory = Marks(slice_, run_cost, **marked), make_image(aes.staged(name, arguments, pokes))
+    marks.returned(_marked_run(getattr(addrs, name), memory, delivered, marks, budget))
+    return marks, memory
+
+
+class Timeline:
+    """Every arrival of one run at the door's entries and at the trap handlers `traps`, in order (`arrivals`: an
+    `Arrival` each — the `At` it is, the door calls entered so far, what the run had spent): a watch's marks
+    (`DoorStops.marked_with`), for choosing where a session is cut."""
+
+    def __init__(self, traps=()):
+        self.traps = frozenset(traps)
+        self._counted, self.arrivals = {}, []
+
+    def arrived(self, pc, calls, _memory):
+        nth = self._counted.get(pc, 0)
+        self._counted[pc] = nth + 1
+        self.arrivals.append(Arrival(At(pc, nth), calls, run_cost()))
+
+
+def rom_timeline(name, arguments, pokes, delivered, traps=(), *, budget=None):
+    """The ROM's own session — `addrs.<name>` over `pokes`, `delivered` laid at its door calls — as its `Timeline`'s
+    arrivals: every door call and every arrival at the handlers `traps`, each with what the run had spent there, then
+    `(RETURN, calls, spent)`. What a battery reads to cut the session into slices under the cap."""
+    timeline = Timeline(traps)
+    calls = _marked_run(getattr(addrs, name), make_image(aes.staged(name, arguments, pokes)), delivered, timeline, budget)
+    return timeline.arrivals + [Arrival(RETURN, calls, run_cost())]
+
+
+def slice_cost(name, arguments, pokes, delivered, slice_, *, budget=None):
+    """What the ROM's own run of the session spends inside `slice_` — `{"insns", "cycles"}` — the slice held under the
+    cap (`rom_sliced`, `vet_under_the_slice_cap`): the measurement a battery cuts its session by, before it registers
+    a slice."""
+    marks, _memory = rom_sliced(name, arguments, pokes, delivered, slice_, budget=budget)
+    spent = marks.spent(f"{name}: the ROM's run")
+    vet_under_the_slice_cap(name, slice_, spent["insns"])
+    return spent
+
+
+# ...and the same three over a REGISTERED session (`row`: its `InterruptedRow` — its routine, frame, machine,
+# deliveries and declared budget, as `session_of` / `tier3.registered` answer it).
+def sliced_of(row, slice_, **marked):
+    """`rom_sliced` of the registered session `row`."""
+    return rom_sliced(row.name, row.arguments, row.pokes, row.delivered, slice_, budget=row.budget, **marked)
+
+
+def timeline_of(row, traps=()):
+    """`rom_timeline` of it."""
+    return rom_timeline(row.name, row.arguments, row.pokes, row.delivered, traps, budget=row.budget)
+
+
+def slice_cost_of(row, slice_):
+    """`slice_cost` of it."""
+    return slice_cost(row.name, row.arguments, row.pokes, row.delivered, slice_, budget=row.budget)
+
+
+# The slice each sliced row is priced on, `{row name: Slice}` (`register_slices`): what Tier 3 reads beside the row.
+SLICED_ROWS = {}
+
+
+def register_slices(name, arguments, machine, interrupts, slices, *, objects=False, budget=None):
+    """ONE SESSION — `addrs.<name>` over `machine` with the frame `arguments`, taken through `interrupts`
+    (`register_interrupted`'s row, under the `budget` it declares) — registered as a PRICED ROW PER SLICE of `slices`
+    (`{label: Slice}`), each named `<core>, <label>`: every row the same session's (its machine, its deliveries, ONE
+    derivation for them all; the companion each drop needs is the whole session's differential), each priced by Tier 3
+    on its own slice alone (`SLICED_ROWS`), held there to the ROM at both its ends (`vet_the_marks_agree`) and under
+    the cap. A session with nothing delivered
+    is refused: an unwatched original has no run to mark."""
+    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts, budget)
+    assert delivered, f"{name}: a session priced by its slices is taken through interrupts — this one has none"
+    row = InterruptedRow(name, arguments, pokes, interrupts, delivered, budget)
+    companion = _companion(name, arguments, pokes, interrupts, delivered, objects, budget)
+    registered = []
+    for label, slice_ in slices.items():
+        registered.append(_registered(label, row, companion))
+        SLICED_ROWS[registered[-1][0]] = Slice(*slice_)
+    return registered

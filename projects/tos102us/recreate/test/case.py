@@ -10,6 +10,7 @@ WHAT STAYS IN THE BATTERY is everything that is a claim about the routine — wh
 entered with, what its arguments are, and what the result should be. This module only removes the
 staging that is the same for all of them.
 """
+import bisect
 import struct
 
 import abi
@@ -186,23 +187,26 @@ def merge_pokes(*layers):
     record REPLACES the whole record, and a poke inside a record but at a different key is applied in
     whatever order `make_image` happens to walk them. Flattening onto bytes makes an overlap mean what
     it says — the later layer's bytes, the earlier layer's everywhere else — whatever the keys were.
+
+    RUN-WISE, not a dict entry per byte: the EXTENTS first (the pieces' spans, overlapping or adjacent ones joined —
+    the maximal runs the answer is keyed by), then each piece stored into its extent in layer order, so a later
+    piece overwrites. A session's machine is a megabyte of pokes merged a dozen times; per byte that was a third of
+    every process's import (`test_case.py` holds this equal to the per-byte spelling over random layers).
     """
-    flat = {}
-    for layer in layers:
-        for at, data in (layer or {}).items():
-            for offset, value in enumerate(data):
-                flat[at + offset] = value
-    runs, start, run = {}, None, bytearray()
-    for address in sorted(flat):
-        if start is not None and address == start + len(run):
-            run.append(flat[address])
-            continue
-        if start is not None:
-            runs[start] = bytes(run)
-        start, run = address, bytearray([flat[address]])
-    if start is not None:
-        runs[start] = bytes(run)
-    return runs
+    pieces = [(at, bytes(data)) for layer in layers for at, data in (layer or {}).items() if len(data)]
+    extents = []                            # [start, end), in address order
+    for at, end in sorted((at, at + len(data)) for at, data in pieces):
+        if extents and at <= extents[-1][1]:
+            extents[-1][1] = max(extents[-1][1], end)
+        else:
+            extents.append([at, end])
+    starts = [start for start, _end in extents]
+    runs = [bytearray(end - start) for start, end in extents]
+    for at, data in pieces:
+        extent = bisect.bisect_right(starts, at) - 1
+        offset = at - starts[extent]
+        runs[extent][offset:offset + len(data)] = data
+    return {start: bytes(run) for start, run in zip(starts, runs)}
 
 
 def verified_row(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule=(), delivered=None):

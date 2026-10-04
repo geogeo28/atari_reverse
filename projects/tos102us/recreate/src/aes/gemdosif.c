@@ -43,8 +43,8 @@ static int16_t dos_verdict(uint8_t *image, uint32_t answer)
     return failed;
 }
 
-/* $fe3c28, the way dos_free, dos_sdta and dos_close reach `__DOS`: their caller's return address (a ROM code address,
- * stored as the data it is) parked in AES_DOS_RETURN, and `__DOS`'s own inside the glue in AES_TRAP1_RETURN — both
+/* $fe3c28, the way dos_free, dos_sdta, dos_close and the bell's Cconout reach `__DOS`: their caller's return address (a
+ * ROM code address, stored as the data it is) parked in AES_DOS_RETURN, and `__DOS`'s own inside the glue in AES_TRAP1_RETURN — both
  * before the trap. */
 static void park_both_returns(uint8_t *image, uint32_t return_site)
 {
@@ -52,55 +52,79 @@ static void park_both_returns(uint8_t *image, uint32_t return_site)
     wr32(image + AES_TRAP1_RETURN, AES_DOS_TRAP_RETURN);
 }
 
-/* $fe3c26 — dos_free: Mfree through $fe3c28. */
-uint32_t aes_dos_free(uint8_t *image, uint32_t return_site, uint32_t block)
+/* A call through $fe3c28 over the LONGWORD its caller pushed: both return addresses parked, the trap, the verdict — and
+ * the trap's whole D0 the answer. */
+static inline uint32_t dos_through_with_a_long(uint8_t *image, uint32_t return_site, uint16_t function, uint32_t argument)
 {
     uint32_t answer;
 
     park_both_returns(image, return_site);
-    answer = gemdos_trap_word_long(image, GEMDOS_MFREE_FN, block);
+    answer = gemdos_trap_word_long(image, function, argument);
     (void)dos_verdict(image, answer);
     return answer;
+}
+
+/* ...and over a WORD. */
+static inline uint32_t dos_through_with_a_word(uint8_t *image, uint32_t return_site, uint16_t function, uint16_t argument)
+{
+    uint32_t answer;
+
+    park_both_returns(image, return_site);
+    answer = gemdos_trap_word_word(image, function, argument);
+    (void)dos_verdict(image, answer);
+    return answer;
+}
+
+/* $fe3c26 — dos_free: Mfree through $fe3c28. */
+uint32_t aes_dos_free(uint8_t *image, uint32_t return_site, uint32_t block)
+{
+    return dos_through_with_a_long(image, return_site, GEMDOS_MFREE_FN, block);
 }
 
 /* $fe3c06 — dos_sdta: Fsetdta through $fe3c28. */
 uint32_t aes_dos_sdta(uint8_t *image, uint32_t return_site, uint32_t dta)
 {
-    uint32_t answer;
-
-    park_both_returns(image, return_site);
-    answer = gemdos_trap_word_long(image, GEMDOS_FSETDTA_FN, dta);
-    (void)dos_verdict(image, answer);
-    return answer;
+    return dos_through_with_a_long(image, return_site, GEMDOS_FSETDTA_FN, dta);
 }
 
 /* $fe3c0a — dos_close: Fclose through $fe3c28, over the handle WORD its caller pushed. */
 uint32_t aes_dos_close(uint8_t *image, uint32_t return_site, int16_t handle)
 {
-    uint32_t answer;
+    return dos_through_with_a_word(image, return_site, GEMDOS_FCLOSE_FN, (uint16_t)handle);
+}
 
-    park_both_returns(image, return_site);
-    answer = gemdos_trap_word_word(image, GEMDOS_FCLOSE_FN, (uint16_t)handle);
-    (void)dos_verdict(image, answer);
-    return answer;
+/* $fe3bf6 — Cconout through $fe3c28, over the character WORD its caller pushed: fs_active's bell. */
+uint32_t aes_dos_cconout(uint8_t *image, uint32_t return_site, int16_t character)
+{
+    return dos_through_with_a_word(image, return_site, GEMDOS_CCONOUT_FN, (uint16_t)character);
 }
 
 /* ---- the calls that reach `__DOS` by their own `bsr` ------------------------------------------------------------ */
 
-/* $fe3a1c — dos_sfirst: Fsfirst(name, attributes) into the DTA; 1 when the answer's WORD is 0. Not found — EFILNF, or
+/* The tail dos_sfirst and dos_snext share ($fe3a2c): 1 when the search's answer's WORD is 0. Not found — EFILNF, or
  * ENMFIL, compared as words — is AES_DOS_AX 18 for the caller's retry; any other error leaves the answer's own word. */
-int16_t aes_dos_sfirst(uint8_t *image, uint32_t name, int16_t attributes)
+static inline int16_t search_found(uint8_t *image, uint32_t answer)
 {
-    uint32_t answer;
-
-    wr32(image + AES_TRAP1_RETURN, AES_DOS_SFIRST_TRAP_RETURN);
-    answer = gemdos_trap_word_long_word(image, GEMDOS_FSFIRST_FN, name, (uint16_t)attributes);
     (void)dos_verdict(image, answer);
     if (!(uint16_t)answer)
         return DOS_SFIRST_FOUND;
     if ((uint16_t)answer == (uint16_t)GEMDOS_ENMFIL || (uint16_t)answer == (uint16_t)GEMDOS_EFILNF)
         wr16(image + AES_DOS_AX, DOS_AX_NO_MORE_FILES);
     return DOS_MISSED;
+}
+
+/* $fe3a1c — dos_sfirst: Fsfirst(name, attributes) into the DTA, and whether it found one. */
+int16_t aes_dos_sfirst(uint8_t *image, uint32_t name, int16_t attributes)
+{
+    wr32(image + AES_TRAP1_RETURN, AES_DOS_SFIRST_TRAP_RETURN);
+    return search_found(image, gemdos_trap_word_long_word(image, GEMDOS_FSFIRST_FN, name, (uint16_t)attributes));
+}
+
+/* $fe3a46 — dos_snext: Fsnext over the DTA the search left, and whether it found another. */
+int16_t aes_dos_snext(uint8_t *image)
+{
+    wr32(image + AES_TRAP1_RETURN, AES_DOS_SNEXT_TRAP_RETURN);
+    return search_found(image, gemdos_trap_word(image, GEMDOS_FSNEXT_FN));
 }
 
 /* $fe3a52 — dos_open: Fopen(name, mode); EFILNF (a word compare) is AES_DOS_AX 2. The answer is the trap's whole D0 —

@@ -35,6 +35,7 @@ import ctypes
 import functools
 import struct
 import types
+from collections import namedtuple
 
 from harness import BASE_IMAGE, _lib, addrs
 
@@ -262,7 +263,7 @@ def run_leaf(name, arguments, pokes=None, **kwargs):
 
 
 @contextlib.contextmanager
-def _staged_disk():
+def staged_disk():
     """`gemdos_fs.staged_disk`, yielding what opens its passes (`gemdos_fs.recording`), as the other doors do."""
     with fs.staged_disk():
         yield types.SimpleNamespace(recording=fs.recording)
@@ -272,7 +273,7 @@ def run_real(name, arguments, pokes=None, **kwargs):
     """`name` over the leaf machine on the staged drive, its `trap #1`s into REAL GEMDOS on both shores; `routines`
     is `{address: (68000 stub, effect)}` for sh_find's routine."""
     machine = fs.machine(disk_machine(aes.leaf_machine(onto=merge_pokes(STALE_DOS, DIRTY_FRAMES, pokes))))
-    return _run(name, arguments, machine, doors=(_staged_disk, functools.partial(gemdos.bound_handlers, HANDLERS)),
+    return _run(name, arguments, machine, doors=(staged_disk, functools.partial(gemdos.bound_handlers, HANDLERS)),
                 dropped_windows=REAL_WINDOWS, **kwargs)
 
 
@@ -291,7 +292,75 @@ ARGUMENTS_IN_FRAME = FRAME_WORDS_AT + WORD_BYTES
 BRANCH_BYTES = WORD_BYTES               # a `.s` branch, its displacement in its own word
 
 
-def _laid_out(pieces):
+# ---- THE TWO TABLES OF A RECORDING TRAP HANDLER, spelt once ---------------------------------------------------------------
+# Every recording `trap #1` handler the AES's batteries stage walks two tables: the LEDGER it writes each call into (the
+# function word, then the frame's own bytes padded with zeros) and the SCRIPT it answers the next call from. Its 68000
+# stub is its battery's own (which functions it tells apart, what an answer carries — this file's, and
+# `aes_fslib.replay_handler`, whose answers fill a DTA); what both shores share is the tables: how each is staged, how
+# the HOST TWIN bounds a pointer before it stores through it, records a call, steps a pointer, and how a run's ledger
+# is read back. `vdi_helpers.recording_trap_handler` is not on it: one fixed entry shape at a ledger with no script.
+class Table(namedtuple("Table", "pointer_at entries stride what")):
+    """One table of a recording handler: a longword at `pointer_at` naming the next of `entries` entries of `stride`
+    bytes, the first right after the pointer; `what` it is called in a refusal."""
+
+    @property
+    def first(self):
+        return self.pointer_at + LONG_BYTES
+
+    def staged(self, content=b""):
+        """The table as a run starts on it: its pointer at its first entry, `content`, then FILL to its end."""
+        assert len(content) <= self.entries * self.stride, f"the {self.what} holds {self.entries} entries: too few"
+        return {self.pointer_at: struct.pack(">I", self.first) + content.ljust(self.entries * self.stride, bytes([vdi.FILL]))}
+
+    def next(self, buf):
+        """The entry the pointer in the candidate's image `buf` names, held INSIDE the table and ON an entry first:
+        `buf` is a C pointer the twin stores through, and past the table the 68000 handler would run on over the band."""
+        pointer = case.long_in(buf, self.pointer_at)
+        self._index(pointer, self.entries - 1, "the twin refuses it")
+        return pointer
+
+    def _index(self, pointer, most, refused):
+        """Which entry `pointer` names, from 0 to `most` — refused by name (`refused`: what is then not done) where it
+        is outside those, or between two of them."""
+        index, spare = divmod(pointer - self.first, self.stride)
+        assert self.first <= pointer <= self.first + most * self.stride, (
+            f"the {self.what}'s pointer {pointer:#x} is outside it: {refused}")
+        assert not spare, f"the {self.what}'s pointer {pointer:#x} is between two of its entries: {refused}"
+        return index
+
+    def step(self, buf, entry):
+        """The pointer stored back, one entry past `entry`."""
+        isr.poke(buf, self.pointer_at, struct.pack(">I", entry + self.stride))
+
+    def record(self, buf, entry, function, arguments, frame_bytes):
+        """A LEDGER's entry at `entry`: `function`, then `frame_bytes` of the frame at `arguments` (an offset into
+        `buf`), zero-padded — and the pointer stepped. The padded frame."""
+        frame = ctypes.string_at(ctypes.addressof(buf.contents) + arguments, frame_bytes).ljust(self.stride - WORD_BYTES,
+                                                                                               b"\0")
+        isr.poke(buf, entry, struct.pack(">H", function) + frame)
+        self.step(buf, entry)
+        return frame
+
+    def recorded(self, image):
+        """A LEDGER read back from a run's `image`: `[(function, frame bytes), ...]`, in the order of the calls."""
+        count = self._index(case.long_in(image, self.pointer_at), self.entries, "no ledger can be read off it")
+        entries = (self.first + index * self.stride for index in range(count))
+        return [(case.word_in(image, at), bytes(image[at + WORD_BYTES:at + self.stride])) for at in entries]
+
+    def frame(self, *fields):
+        """A LEDGER entry's frame bytes for fields given as ('w', value) / ('l', value), zero-padded as recorded."""
+        raw = b"".join(struct.pack(">H" if kind == "w" else ">I", value & (0xFFFF if kind == "w" else 0xFFFF_FFFF))
+                       for kind, value in fields)
+        recorded = self.stride - WORD_BYTES
+        return raw[:recorded].ljust(recorded, b"\0")
+
+
+LEDGER = Table(LEDGER_AT, LEDGER_ENTRIES, ENTRY_BYTES, "ledger")
+SCRIPT = Table(SCRIPT_AT, SCRIPT_ANSWERS, LONG_BYTES, "script")
+assert (LEDGER.first, SCRIPT.first) == (ENTRIES_AT, ANSWERS_AT)
+
+
+def laid_out(pieces):
     """68000 bytes out of `pieces`: bytes, ("label", name), or (branch opcode, label) — a `.s` branch, resolved."""
     at, labels = 0, {}
     for piece in pieces:
@@ -332,7 +401,7 @@ def handler_stub():
     pieces += [("label", "done"), STORE_A0_ABSOLUTE + struct.pack(">I", LEDGER_AT) + MOVEA_L_ABSOLUTE_A0
                + struct.pack(">I", SCRIPT_AT) + vdi.pack_words(MOVE_L_A0_POSTINC_D0) + STORE_A0_ABSOLUTE
                + struct.pack(">I", SCRIPT_AT) + POP_A0 + RTE]
-    return _laid_out(pieces)
+    return laid_out(pieces)
 
 
 ROUTINE_AT = HANDLER_AT + len(handler_stub())
@@ -367,29 +436,17 @@ def routine_pokes(which):
 
 def scripted_pokes(answers):
     """The trap vector at the handler, an empty ledger (its entries FILLed) and the script of `answers`."""
-    assert len(answers) <= SCRIPT_ANSWERS
     script = b"".join(struct.pack(">I", answer & 0xFFFF_FFFF) for answer in answers)
     return {addrs.VECTOR_TRAP_GEMDOS: struct.pack(">I", HANDLER_AT), HANDLER_AT: handler_stub(),
-            LEDGER_AT: struct.pack(">I", ENTRIES_AT) + bytes([vdi.FILL]) * (LEDGER_ENTRIES * ENTRY_BYTES),
-            SCRIPT_AT: struct.pack(">I", ANSWERS_AT) + script.ljust(SCRIPT_ANSWERS * LONG_BYTES, bytes([vdi.FILL]))}
-
-
-def _pointer(buf, at, lowest, highest, what):
-    pointer = case.long_in(buf, at)
-    assert lowest <= pointer <= highest, f"the {what}'s pointer {pointer:#x} is outside it: the twin refuses it"
-    return pointer
+            **LEDGER.staged(), **SCRIPT.staged(script)}
 
 
 def _scripted(function):
     """The handler's HOST TWIN for `function`: the same ledger entry, the same answer, both pointers bounded."""
     def handler(buf, arguments, _argument_bytes):
-        entry = _pointer(buf, LEDGER_AT, ENTRIES_AT, ENTRIES_AT + (LEDGER_ENTRIES - 1) * ENTRY_BYTES, "ledger")
-        answer_at = _pointer(buf, SCRIPT_AT, ANSWERS_AT, ANSWERS_AT + (SCRIPT_ANSWERS - 1) * LONG_BYTES, "script")
-        recorded = FRAME_BYTES.get(function, RECORDED_BYTES)
-        frame = ctypes.string_at(ctypes.addressof(buf.contents) + arguments, recorded).ljust(RECORDED_BYTES, b"\0")
-        isr.poke(buf, entry, struct.pack(">H", function) + frame)
-        isr.poke(buf, LEDGER_AT, struct.pack(">I", entry + ENTRY_BYTES))
-        isr.poke(buf, SCRIPT_AT, struct.pack(">I", answer_at + LONG_BYTES))
+        entry, answer_at = LEDGER.next(buf), SCRIPT.next(buf)
+        LEDGER.record(buf, entry, function, arguments, FRAME_BYTES.get(function, RECORDED_BYTES))
+        SCRIPT.step(buf, answer_at)
         return case.long_in(buf, answer_at)
     return handler
 
@@ -409,17 +466,12 @@ def scripted_hook_with(which):
 
 def calls(image):
     """The ledger in `image` as `[(function, frame bytes), ...]`, in the order the calls were made."""
-    count, spare = divmod(case.long_in(image, LEDGER_AT) - ENTRIES_AT, ENTRY_BYTES)
-    assert not spare and 0 <= count <= LEDGER_ENTRIES
-    entries = (ENTRIES_AT + index * ENTRY_BYTES for index in range(count))
-    return [(case.word_in(image, at), bytes(image[at + WORD_BYTES:at + ENTRY_BYTES])) for at in entries]
+    return LEDGER.recorded(image)
 
 
 def frame(*fields):
     """A ledger entry's frame bytes for fields given as ('w', value) / ('l', value), zero-padded to RECORDED_BYTES."""
-    raw = b"".join(struct.pack(">H" if kind == "w" else ">I", value & (0xFFFF if kind == "w" else 0xFFFF_FFFF))
-                   for kind, value in fields)
-    return raw[:RECORDED_BYTES].ljust(RECORDED_BYTES, b"\0")
+    return LEDGER.frame(*fields)
 
 
 # THE HOST'S TRAP REACHES THE RECONSTRUCTED DISPATCHER, which RESOLVES a file handle before it calls Fread's or Fseek's

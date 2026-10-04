@@ -513,6 +513,37 @@ def test_bell_through_its_callers_word(through_line_f):
     bell(through_line_f=through_line_f)
 
 
+# ---- a long typing session: ONE call, priced by its slices (`aes_event.register_slices`) -------------------------------
+# The selector's path field typed full from empty, a key per wait, then Return: 728,664 ROM instructions (measured) —
+# a call no row prices whole (past `emu.run`'s cap), and past what DERIVATION_INSNS admits under its margin: its budget
+# is DECLARED, five times its spend and room. Its slices are the session's shapes: the dialog taken up to its first
+# wait, a key (the last one typed moves the most text: fm_do's worst, measured), the Return that ends it — and the
+# first key cut in two at a VDI call inside it, the cut a stretch with no door call would need.
+SESSION_TEXT = "abcdefghijklmnopqrstuvwxyz0123456789a"
+assert len(SESSION_TEXT) == PATH_ROOM - 1
+SESSION_INSNS = 4_000_000
+WAIT = addrs.AES_ROM_EV_MULTI
+LAST_KEY = len(SESSION_TEXT) - 1        # the wait the last character is typed at; Return's is the next
+VDI_TRAP = aes_event.VDI_TRAP
+VDI_CALL_IN_THE_FIRST_KEY = 14          # the VDI call the first key is cut at: of its 17 (6..22), one near the middle
+KEYS_IN_THE_SESSION = f"a {len(SESSION_TEXT) + 1}-key session"
+SESSION_SLICES = {
+    f"{KEYS_IN_THE_SESSION}: the dialog taken, to its first wait": (aes_event.ENTRY, aes_event.door_call(WAIT, 0)),
+    f"{KEYS_IN_THE_SESSION}: the first key, to a VDI call inside it": (
+        aes_event.door_call(WAIT, 0), aes_event.trap_taken(VDI_TRAP, VDI_CALL_IN_THE_FIRST_KEY)),
+    f"{KEYS_IN_THE_SESSION}: the first key, from that VDI call to the next wait": (
+        aes_event.trap_taken(VDI_TRAP, VDI_CALL_IN_THE_FIRST_KEY), aes_event.door_call(WAIT, 1)),
+    f"{KEYS_IN_THE_SESSION}: the last character typed": (
+        aes_event.door_call(WAIT, LAST_KEY), aes_event.door_call(WAIT, LAST_KEY + 1)),
+    f"{KEYS_IN_THE_SESSION}: Return, to the return": (aes_event.door_call(WAIT, LAST_KEY + 1), aes_event.RETURN),
+}
+
+
+def session():
+    """The long typing session: `(routine, arguments, machine, interrupts)`."""
+    return DO, (SELECTOR, 0), running(), typed(SESSION_TEXT, RETURN)
+
+
 # ---- the registry: Tier 3's rows (each routine's worst realistic shape measured, `make bench`) ------------------------
 def register(label, name, values, pokes):
     aes_event.register(label, name, values, pokes, drawing=True, objects=JUST_DRAW)
@@ -545,6 +576,7 @@ def _register_rows():
     tree, waits, _answer = DIALOGS["a radio button clicked, its sibling put down; then Return"]
     aes_event.register_interrupted("a radio button clicked, then Return", DO, (tree, 0), centred(tree), Waits(waits),
                                    objects=True)
+    aes_event.register_slices(*session(), SESSION_SLICES, objects=True, budget=SESSION_INSNS)
     for label, conterm in (("the bell on", BELL_ON), ("the bell off", 0)):
         aes.register(label, BELL, (), bell_machine(conterm))
     for name in ("ESC", "ESC Y, its row"):

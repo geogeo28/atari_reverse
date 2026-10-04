@@ -1949,3 +1949,44 @@ var 0xfefa22 eralert_levels
 var 0xfefa68 fm_error_arms
 var 0xfef790 crit_err_map
 var 0xb99a fm_show_alert
+# ---- AES band 3 wave 3 (2026-10-03): the file selector ----
+# gemfslib (src/aes/fslib.c): the event-free routines, then fs_input
+fn 0xfe7782 fs_start
+cmt 0xfe7782 fs_start(): rs_gaddr(R_TREE, 0) of the AES's own resource into ad_fstree ($972a); ob_center(ad_fstree, &gl_rfs $9c00). Start-up's.
+fn 0xfe77ae fs_back
+cmt 0xfe77ae fs_back(path, end): end-- until *end is ':' or '\' or end == path (pointers compared whole); on ':' ++end and ins_char(end, 0, '\', 64) — a tail of 63+ bytes is cut by its NUL. D0 = end.
+fn 0xfe77ee fs_pspec
+cmt 0xfe77ee fs_pspec(path, end): fs_back; on '\' the byte after it; else strcpy("A:\*.*" $fefafc, path) and path + 3 — always drive A.
+fn 0xfe7826 fs_active
+cmt 0xfe7826 fs_active(path, spec, &count): gsx_mfset(busy $c6aa); Fsetdta(*$c838); Fsfirst(path,16)/Fsnext: '.' entries skipped; DTA+29 := 7 folder (btst #4 of DTA+21 alone) / ' ' file; a folder or a file wildcmp(spec) keeps is lstcpy'd from DTA+29 to *$c72e + off, off stored LONG at (*$c7f8)[n], off += len + 2; Fsnext after every entry; at 100 names KEPT ret := 0 and Cconout(7) — also for exactly 100. *count, THEN a shell sort of the index through $9afe/$9b46 (strchk, swap if > 0); gsx_mfset(arrow $c762); D0 = 1.
+fn 0xfe79fe fs_1scroll
+cmt 0xfe79fe fs_1scroll(top, count, arrow): arrow.w == 8 top-1 else top+1; < 0 -> +1; count - new < 9 -> -1; count > 9 ? new : top. Signed words.
+fn 0xfe7a44 fs_format
+cmt 0xfe7a44 fs_format(tree, top, count): 9 rows (objects 12..20) from name top: kind + fmt_str(name), or " "; fs_sset then ob_state := 0; elevator (11): h = max(gl_hbox/2, mul_div(9, track, count)), y = mul_div(top, track - h, count - 9) when count > 9, else h = track, y = 0. The max binds for no count <= 100. D0 = 1.
+fn 0xfe7b70 fs_sel
+cmt 0xfe7b70 fs_sel(row, state): row.w != 0: ob_change(ad_fstree, row + 11, state, 1).
+fn 0xfe7b92 fs_nscroll
+cmt 0xfe7b92 fs_nscroll(tree, &row, top, count, arrow, n): n x fs_1scroll; moved: fs_sel(*row, 0), *row := 0, fs_format, gsx_gclip, ob_actxywh(12), bb_screen of the rows that stay (|moved| < 9), gsx_sclip(new rows), ob_draw(6), gsx_sclip(saved), ob_draw(10). D0 = top.
+fn 0xfe7cfa fs_newdir
+cmt 0xfe7cfa fs_newdir(title, path, spec, tree, &count): ob_draw(2); fs_active; fs_format(tree, 0, *count); $9afe := " " + spec + " " (NO BOUND: 40 bytes to gl_mntree $9b26; the title's own 28 bytes run on into row 12's text), lstcpy(title, $9afe); ob_draw of $fefaac's 5, 6, 7.
+fn 0xfe7d90 fs_input
+cmt 0xfe7d90 fs_input(path, sel, &button): dos_alloc 1600/400/256 -> $c72e/$c7f8/$c838 (refused: those before freed, D0 0). fs_sset title " *.* " $fefb05, path, fmt_str(sel); gsx_sclip(gl_rfs) (dead: fm_dial sets the screen); fm_dial(0); $bb3e := ""; ob_draw(tree,0,1). While -42(a6): d7 = -44(a6) ? 0 : fm_do(tree,3); gsx_mxmy; -36(a6) = lstcpy($b89a, path field); !streq($bb3e,$b89a): fs_sel(sel,0), d7 21/22 put down, $bb3e := $b89a, fs_pspec (copied back to the field), "*.*" $fefb0b over $b89a's spec, fs_newdir, sel = top = 0, -44 = 0 — d7 NOT cleared: an edited path + OK reads, then closes answering 0. Switch $fefab0 on (d7 & $7fff) - 4, 19 rows: 4 the folder above (fs_back from the byte BEFORE the last separator: "\*.*" scans below $b89a, through AES_FMTSTR $b849), 5 read again, 6/7 none, 8/9 one row, 10 a page (mouse y > elevator y: down), 11 fm_own/gr_slidebox/fm_own -> top - mul_div(slid, count-9, 1000), 12..20 a row (kind ' ': the selection, dbl: done; any other kind: a folder, unfmt_str into $b89a), 21/22 done. -44: field := $b89a, $bb3e := "", $9aff := 0. -46: selection redrawn, done -> ob_change(OK, SELECTED). d6: fs_nscroll. End: lstcpy(path, field); unfmt_str -> sel; fm_dial(3); *button = inf_what(21,22), -1 -> 0; dos_free $c838, $c7f8, $c72e; D0 1. NEVER RETURNS with -44 set and $b89a empty: fs_input(""), or the close box over "\spec" with a ':' or '\' left in AES_FMTSTR's tail.
+var 0xfefab0 fs_input_arms
+var 0xfefb05 fs_first_title
+var 0xfefb0b fs_every_name
+var 0x972a ad_fstree
+var 0x9c00 gl_rfs
+var 0xc6aa ad_hgmice
+var 0xc838 ad_fsdta
+var 0xc72e ad_fsnames
+var 0xc7f8 ad_fsindex
+var 0x9afe fs_text
+var 0x9b46 fs_name
+# the two GEMDOS glue pieces it reaches (src/aes/gemdosif.c)
+fn 0xfe3a46 dos_snext
+cmt 0xfe3a46 dos_snext(): Fsnext by bsr __DOS, then dos_sfirst's tail $fe3a2c (not $fe3c28): 1 if D0.w == 0; ENMFIL/EFILNF -> DOS_AX 18.
+fn 0xfe3bf6 dos_cconout
+cmt 0xfe3bf6 Cconout through $fe3c28 over the word its caller pushed: fs_active's bell. Siblings: $fe3bfa Crawio, $fe3bfe Cprnout, $fe3c02 Dgetdrv.
+# two buffers of other routines that fs_input borrows (their var lines are above: rs_string_buffer, sh_path_buffer)
+cmt 0xb89a also fs_input's WORKING PATH. Below it lie the AES's four 81-byte text buffers (aes_rawstr $b756, aes_tmplt $b7a7, aes_valstr $b7f8, aes_fmtstr $b849 — its last byte is $b899), then the ORECT pool ($b396..$b755): fs_back called from below the path (the close box over "\*.*") scans down through them.
+cmt 0xbb3e also fs_input's PATH LAST READ: cleared at $fe7eb2 and whenever a read is asked for, so streq($bb3e, $b89a) is true on such a pass only for an empty working path — the pass that never ends.

@@ -308,6 +308,28 @@ save would differ by nature. Its host twin is reached through the reconstructed 
 before Fread/Fseek; the scripted handle is staged open for it. sh_find's routine is `staged_call.h`'s
 `call_alcyon_pointer` (one pushed longword), through the register-carrying hook like `call_alcyon_object`.
 
+A third way, for a routine whose SEARCH must be priced, or whose GEMDOS calls come inside an interactive session:
+GEMDOS REPLAYED (`test/aes_fslib.py`). The scripted trap answers what a case wrote down; the replay answers what THE
+ROM's OWN GEMDOS answered. `replay_script` runs the ROM's routine over the staged disk into real GEMDOS, watched at the
+`trap #1` handler; at each call the ROM's GEMDOS is called by a real `trap #1` over the memory as it stood there, and
+its D0 — and for a search the 44 DTA bytes — become one script entry. `replayed(name, path)` is the machine with that
+script staged behind a `trap #1` handler that answers it call by call and RECORDS every frame in a ledger, both tables
+in the image, so the differential compares them (a call made with other arguments, or one call more, reds though
+nothing the caller can see changed). A test holds the replayed run to the real disk's run wherever the caller can see
+GEMDOS. Both the scripted trap and the replay are one machinery, `aes_shell.Table(pointer_at, entries, stride, what)`: a
+table a longword in the image points into, `staged` at a run's start, `next` bounding the pointer the host twin reads
+out of the candidate's image before it stores through it, `record` and `recorded` for a ledger. The two 68000 stubs
+stay their batteries' own (a new compare in a shared stub would move every priced row over it); `REPLAY_CALLS` (128)
+bounds a script, so a session making more GEMDOS calls than that is refused by name.
+
+WHY TIER 3 CANNOT PRICE OVER REAL GEMDOS: the trap entry's register save holds the CALLER's registers, which differ
+between the ROM's code and GCC's by nature — a priced row may leave nothing out of its image compare without a named,
+vetted drop, and GEMDOS's three windows are too wide for one. Over a staged handler both shores trap into the same few
+instructions at the same PC and the glue parks the ROM's own return sites on both, so the replay needed no drop of its
+own. Real GEMDOS stays a Tier 1 surface: the event-free routines run over the staged disk on both shores, a session's
+replayed run is held to the ROM's real-disk run of it wherever the routine can see GEMDOS, and the arms only real GEMDOS
+makes (keys typed ahead, an exhausted arena) run in process on both shores.
+
 The AES's GRAPHIC calls all cross ONE `trap #2`, gsx2's (`include/aes/gsx.h`'s `gsx_trap`, the bridge). On target it is
 the machine's own trap: vector `$88` (GEM's selector switch), `SYSVAR_VDI_ENTRY` (the BIOS's VDI door), the ROM's VDI,
 which restores D1-A6, so D0 is all a call changes. On the host both hops are CHECKED against the snapshot's — a case
@@ -387,6 +409,83 @@ the k-th call of `entry` whatever other door calls come between (the entry check
 `typed` is a Waits of keys); `double_click` is three packets inside the click delay through the VDI mouse ISR, then the
 ticks. Every bench entry of ROM code — watched originals, `parked`, the continued runs — declares no PSG or named-hardware
 seed and enters with `emu.run`'s register file (`rom_bench.original_entered`), so nothing a previous run left reaches it.
+
+A CASE'S OWN BUDGET, AND ITS CAP. Two runs of a door case have a default limit: the DERIVATION (a watched ROM run:
+`DERIVATION_INSNS`, 1.5 M, which every derivation must fit `DERIVATION_MARGIN` = 5 times over) and the in-process
+DIFFERENTIAL (`emu.run`'s own cap, `DIFFERENTIAL_INSNS`, 200,000). Neither default is raised for a long case — a short
+derivation that began to spin would then run that much longer before it was refused. The case that needs more declares
+it, from its measured run of N instructions, and the declaration is held both ways by name:
+- `budget=B` (on `interrupted`, `refused_where_the_rom_blocks`, `register_interrupted`, `register_slices`, `run_event`,
+  `stopped_at` …) is the derivation's budget AND that run's cap. It must be NEEDED (`5 N > DERIVATION_INSNS`: a run the
+  default admits declares for nothing, whatever the declaration's size), FITTED (`5 N <= B`) and NOT STALE (`B <= 10 N`,
+  `DERIVATION_STALE` = 2: a declaration written for a longer run than the case now makes, or by guess). A prefix a
+  watch stops at an entry is held to the margin alone — it did not end, so it cannot be asked whether it needed it.
+- `cap=C` (on `run_event`, and on `aes_fslib.run` / `run_replayed`) raises the in-process differential's limit only,
+  under the same three rules against `DIFFERENTIAL_INSNS`: a run of 200,001..300,000 instructions needs a cap and no
+  budget; past that one `budget=` serves both runs.
+- THE CAP HAS ONE DOOR, `aes_event.capped_run`: every in-process differential of the event door's batteries that runs
+  past the oracle's own cap is capped and vetted there, and a raw `max_insns=` handed to any of them is refused by
+  name — the oracle's own spelling would otherwise cap a run that no rule holds. An original that does not return
+  under its declared cap is refused as that, not as the oracle's bare overrun.
+- A battery-wide cap (`aes_fslib.RUN_CAP`, `test_aes_wm_update.CASE_CAP`) is ONE declaration, `aes_event.battery_cap(
+  insns, deepest=)`: held to the battery's deepest measured run by the three rules where it is declared, and every run
+  under it then held to the margin (not asked whether it needed it). A battery-wide BUDGET (`aes_fslib.PREFIX_BUDGET`:
+  the selector's prefixes) is held the same way — the declaration against the deepest prefix by a test, each prefix to
+  the margin by `stopped_at`.
+A registered row records its budget (`INTERRUPTED_ROWS[row].budget`), so the noise sweep's re-derivation and the row's
+Tier 3 companion run under it.
+
+A SESSION PRICED BY ITS SLICES. A long interactive routine — the file selector listing a directory, scrolled, clicked
+and typed into — is one call no single row prices honestly: it is past the bench's cap, and one ratio over all of it
+lets the bulk dilute its worst shape. `aes_event.register_slices(name, arguments, machine, interrupts, {label: (start,
+stop)}, budget=)` registers one priced row per SLICE: the run between two ARRIVALS both shores make at the same PC.
+- A slice's ends: `door_call(entry, nth)` (the nth call of a door entry — a wait, the screen lock);
+  `trap_taken(handler, nth)` (the nth arrival at a trap's handler outside any door call — a VDI call through GEM's
+  `trap #2`, a GEMDOS call at the replay's handler; `trap_handler(vector, pokes)` reads the PC); `ENTRY`; `RETURN`.
+  Trap ends exist because a stretch may make no door call at all: fs_input's first comes after ~350,000 instructions.
+- BOTH SHORES RUN THE WHOLE SESSION — the C cannot be entered in the middle of its routine — watched and MARKED at the
+  two arrivals. The row's cost is the difference between its two marks, shore by shore (instructions, cycles, door
+  windows, glue); the reset overhead comes off a slice that starts at `ENTRY` only. Every (EV) vet and the bench's
+  second differential still run over the whole session.
+- MEMORY IS COMPARED AT THE MARKS: our run must reach the slice's start after the same door calls as the ROM's and with
+  the same memory (outside the stack band, the blob and the row's drops), and the same again at its stop — else the
+  ratio would be of two different computations. Refused by name: a slice started one call late, "diverged before the
+  slice's start", "diverged inside the slice", an end never reached, a slice that runs backwards, a session that
+  blocks or has nothing delivered. `ENTRY` and `RETURN` carry no memory of their own (the whole run's differential).
+- EACH SLICE IS UNDER `SLICE_INSNS` (200,000) on the ROM's own run of it; one over it is refused, to be cut finer.
+- Measure before registering: `aes_event.rom_timeline(name, arguments, machine, delivered, traps=(handler, …),
+  budget=)` lists every door call and listed trap with what the ROM had spent there; `slice_cost` prices one cut.
+- A sliced session is taken through interrupts AT ITS WAITS (keys typed ahead leave no waits to cut at), and cannot be
+  `psg_seed` / `schedule` / `regs` seeded.
+- THE PARTITION TEST is what makes "the worst row" a claim about the whole session, since registered slices need not
+  cover it. `tier3.uncovered_stretches(row, bench)` cuts each sliced session whole — at every door call and at every
+  registered slice's ends — in one pair of runs, both shores' timelines held arrival for arrival and the pieces summing
+  to the whole run to the cycle; `test_no_stretch_between_a_session_s_slices_is_dearer_than_its_routine_s_worst_row`
+  holds every stretch no registered slice covers at or under the routine's worst registered own ratio. So a dear
+  stretch must be REGISTERED (and shows in the table) or the test reds. The cut is not at every trap arrival: a trap
+  arrival is matched by its ordinal and the memory there, not by a count, and a few hundred instructions between two
+  traps have a ratio of their own that says nothing about the row they sit in.
+- One session is derived once and shared. `aes_event.OncePerSession` is THE memo: built with the ONE computation it
+  answers (over whatever its holder holds fixed — a base image, a build), it makes it for the first row asked of a
+  SLICED session and answers it to the session's other rows, each of which must be over the same machine (refused by
+  name) — any other row is computed every time and nothing is kept. Its holders: `tier3.Sessions(bench)` (a session's
+  pair of bench runs, one build's — another build asked of it is refused), the snapshot's three sweeps, and Tier 3's
+  companions. A Tier 3 row finds its session by the name its case is registered under (`Row.registered`,
+  `tier3.session_of(row)`: a sliced row that names none is refused). `bench_differential(derived=)` takes what
+  `interrupted` has just derived, and only that.
+- A `trap_taken` ordinal is of the run's marks: a session cut at two trap handlers one of which is taken INSIDE the
+  other would count that arrival differently in a run marked at both and in one marked at the inner alone. No session
+  does; a run that did is refused by name where it happens (`DoorStops.stopped`).
+
+A SESSION OF A ROUTINE THAT ALSO TRAPS (fs_input: `test/aes_fs_sessions.py`, `test_aes_fs_input*.py`). A session is a
+schedule per wait — what the user does there, placed by the ROM's own ob_offset. Its machine carries GEMDOS REPLAYED
+(above), the script derived from the ROM's own run of THE SAME SESSION over the staged disk; its child binds the
+replay's `trap #1` door through `aes_event.declare_child_doors(name, source)`, which the event door's own binding does
+not open. A session is held on four surfaces: the whole image at its END; the image at a WAIT it is cut short at (the
+ROM blocks, the C is refused at the same call, and a dialog still on the screen is compared — a session's end only
+sees a screen already given back); every VDI CALL in order (opcode, intin, ptsin); and WHAT THE ROUTINE HOLDS as each
+VDI call is made (`aes_fslib.held_in`: its tree, its texts, its scratches, hashed into the ledger on both shores), which
+is what sees a word set and put back between two waits.
 
 The dispatcher refuses in two ways, matched by `aes_event.BLOCKS` and `YIELDS` (the dispatcher's own words). A call that
 WOULD BLOCK leaves its process waiting. A call that WOULD YIELD keeps the caller ready but switches: unsync handing the lock to
@@ -659,6 +758,28 @@ TRANSCRIBED_SOURCES so the transcription `.globl` pin stays exact; Tier 3 counts
 ALCYON_ENTRIES, T→G, like a generated thunk); and `test_transcribed.py` pins its `.globl`s to exactly that list, outside the
 table. No host surface sees it, so its mutants are judged by Tier 3's second differential.
 
+## How the suite is spread over the workers
+
+Every run under xdist is distributed by `--dist worksteal`: `test/conftest.py`'s `pytest_configure` sets it wherever
+the command line names no `--dist` of its own — so `make test`, `make guarded` and every `PYTEST_ARGS=` override
+(`-n4 -k fuzz`) get it, a run that asks for another mode keeps its own, and a run with xdist off (`-p no:xdist`, a
+mutation sweep's) is left alone. It is not a makefile `PYTEST_ARGS`, which an override would replace. xdist's default
+`load` hands each worker a contiguous run of tests up front, and this suite's cost is not even: one file of whole
+file-selector sessions is seconds a test where most are milliseconds, so one worker ran it alone while the others
+idled. `worksteal` lets an idle worker take the tail half of the longest queue.
+
+`test/conftest.py` also fixes the COLLECTION ORDER worksteal acts on. A session is derived once per PROCESS and its C
+runs in one child per process, shared by that session's cases; collected in pytest's own order (every session through
+one test function, then every session through the next) the cases of one session are a file apart, and a steal sends
+the far ones to a worker that derives the session again. So the cases of one session are collected back to back, where
+the first of them stood. WHICH cases are one session's is the battery's to say, by the marker `collected_with`: on a
+test (`collected_with(name)`) or on a module (`pytestmark = pytest.mark.collected_with(by=function)`, a function of a
+case's parameters answering its group, None for a case that is no session's). Three batteries declare it: the file
+selector's sessions (`test_aes_fs_input.py`), its priced sessions' cases (`test_aes_fs_input_rows.py`), and Tier 3 —
+a sliced session's rows, companions and partition test (`test_tier3.py`). Nothing is added, removed or renamed — the
+same items and ids, reordered inside their own module. `test/test_conftest.py` pins both: the distribution on real
+runs of xdist, the order on each battery's own declaration.
+
 ## Mutation sweeps — how a mutant is counted
 
 A reconstruction's differential is only as good as the mutants it kills, so every wave sweeps its own C
@@ -707,7 +828,8 @@ recreate/
 │                       rebuilt ROM image and the two measurement programs
 ├── bench/              tier3.py: Tier 3's registry, its bar, its pins, and the table `make bench`
 │                       writes to build/bench/tier3.txt; shipped_glue.py: the shipped blob's thunks
-├── test/               the differentials; `harness.py` is the kit shim plus `addrs`
+├── test/               the differentials; `harness.py` is the kit shim plus `addrs`; `conftest.py` the
+│                       distribution over xdist's workers (worksteal) and the collection order
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python)
 └── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
                         bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,

@@ -221,6 +221,17 @@
 #define HOST_SLOT_AES_ERALERT_FRAME_BYTES 10     /* ERALERT_FRAME_BYTES                                          */
 #define HOST_SLOT_AES_FM_ERROR_CODE     0x7f960  /* $fe7712's 8(a6): its argument, handed as fp+8 ($fe7764)      */
 #define HOST_SLOT_AES_FM_ERROR_CODE_BYTES 2
+/* ...and the file selector's (`aes/fslib.h`): fs_start's tree (to rs_gaddr), fs_format's two answers (to fs_sset),
+ * fs_nscroll's clip and rows (to gsx_gclip, ob_actxywh and gsx_sclip) and fs_input's answers, row, mouse and count (to
+ * fs_sset, ob_offset, fs_nscroll, gsx_mxmy and fs_newdir) — each the frame's own layout. */
+#define HOST_SLOT_AES_FS_START_TREE     0x7f968  /* $fe7782's -4(a6)                                             */
+#define HOST_SLOT_AES_FS_START_TREE_BYTES 4
+#define HOST_SLOT_AES_FS_FORMAT_FRAME   0x7f970  /* $fe7a44's -10(a6) up to its -6(a6) pointer                   */
+#define HOST_SLOT_AES_FS_FORMAT_FRAME_BYTES 8    /* FS_FORMAT_FRAME_BYTES                                        */
+#define HOST_SLOT_AES_FS_NSCROLL_FRAME  0x7f978  /* $fe7b92's -18(a6) clip, -10(a6) rows                         */
+#define HOST_SLOT_AES_FS_NSCROLL_FRAME_BYTES 16  /* FS_NSCROLL_FRAME_BYTES                                       */
+#define HOST_SLOT_AES_FS_INPUT_FRAME    0x7f988  /* $fe7d90's -38(a6) up to its -6(a6) count                     */
+#define HOST_SLOT_AES_FS_INPUT_FRAME_BYTES 34    /* FS_INPUT_FRAME_BYTES                                         */
 
 /* Each slot's index in the held flags. */
 enum host_slot {
@@ -291,6 +302,10 @@ enum host_slot {
     HOST_SLOT_ID_AES_FM_ALERT_FRAME,
     HOST_SLOT_ID_AES_ERALERT_FRAME,
     HOST_SLOT_ID_AES_FM_ERROR_CODE,
+    HOST_SLOT_ID_AES_FS_START_TREE,
+    HOST_SLOT_ID_AES_FS_FORMAT_FRAME,
+    HOST_SLOT_ID_AES_FS_NSCROLL_FRAME,
+    HOST_SLOT_ID_AES_FS_INPUT_FRAME,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 

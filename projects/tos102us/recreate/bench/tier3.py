@@ -39,8 +39,9 @@ sys.path.insert(0, str(RECREATE / "test"))                 # ...and the cases th
 from recreate_kit import project                           # noqa: E402
 project.load(RECREATE)
 
-from recreate_kit.rom_bench import BENCH_DIR, BENCH_ELF, RomBench, vet_the_run_just_made, watched_original   # noqa: E402
-from harness import addrs, emu, make_image                 # noqa: E402  (binds the kit)
+from recreate_kit.rom_bench import (BENCH_DIR, BENCH_ELF, Measurement, RomBench, vet_the_run_just_made,   # noqa: E402
+                                    watched_original)
+from harness import addrs, diff_spans, differing_addresses, emu, make_image   # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
 from case import tier3_dropped, tier3_unanswered           # noqa: E402  (every component's rows' drops, unanswered)
 # THE REGISTER OF VERIFIED CASES, and with it every battery whose constructors built one. Importing a
@@ -259,7 +260,10 @@ RATIO_TOLERANCE = 0.02
 #       refused by name, and the OS both ran must still cost both sides the same. Priced, judged and labelled as (V)
 #       rows are (`net`/`glue`/OVER), the table's line beneath counting the windows. Derived: the door calls are the
 #       blob's `jsr`s into the AES text, the rows the call graph's callers of the functions holding one. (The letter is
-#       not (E): that one is taken, above.)
+#       not (E): that one is taken, above.) A LONG SESSION — one call of hundreds of thousands of instructions — is
+#       priced by its SLICES, a row each (`aes_event.register_slices`): both sides run the whole session and are held
+#       to all of the above over it, and the row's costs are those between two arrivals both sides make at one PC (a
+#       door call, a trap taken, the entry, the return), our run held to the ROM's at both (`_priced_on_its_slice`).
 #
 # Every entry below states the measured ratio and the absolute cycles, because on routines this small
 # the absolute number is the one a reader can act on.
@@ -1256,9 +1260,14 @@ EXTRA_CASES = (
 # address the ROM parks its own in; the battery's own differential still compares those bytes.
 # `delivered` is the case's own `{door call: (found, wrote)}` (`test_boot_snapshot.delivered_of`): the interrupts a row
 # is TAKEN THROUGH, laid at the entry of the same door call on every run of it — both sides (EV). `{}` for every other.
+# `slice` is the case's own `aes_event.Slice` (`aes_event.SLICED_ROWS`): the part of a long session the row is PRICED
+# on — its run between two arrivals both sides make (MECHANISM (EV)'s slices, below). None for every other row.
+# `registered` is the name the row's case is REGISTERED under (`test_boot_snapshot.VERIFIED_CASES`, and for a row taken
+# through interrupts `aes_event.INTERRUPTED_ROWS`): what its session is found by (`session_of`). `case` is that name
+# TRIMMED for the table (`_case_label`), which no registry is keyed by. None for a row no `VERIFIED_CASES` entry makes.
 Row = namedtuple("Row", "function case entry symbol args regs pokes psg_seed io_seed returns "
-                        "transcription address staged_entry shared_entry schedule dropped delivered",
-                 defaults=(False, None, (0, 0), (0, 0), (), (), {}))
+                        "transcription address staged_entry shared_entry schedule dropped delivered slice registered",
+                 defaults=(False, None, (0, 0), (0, 0), (), (), {}, None, None))
 
 
 # THE THIRD RELATION: a routine NOTHING DISPATCHES BY NUMBER, so neither table below names it and
@@ -1577,7 +1586,7 @@ def _row(case):
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
                RETURNS_NOTHING if name in UNANSWERED else call.returns, False, address, staged_entry, (0, 0), schedule,
-               DROPPED.get(name, ()), test_boot_snapshot.delivered_of(case))
+               DROPPED.get(name, ()), test_boot_snapshot.delivered_of(case), aes_event.SLICED_ROWS.get(name), name)
 
 
 def _transcription_row(case):
@@ -1972,15 +1981,15 @@ class DoorWindows(aes_event.DoorStops):
     cost — on our side the Line-F mask word with it, which the row drops (our C never writes the word)."""
 
     def __init__(self, entries, returns, delivered=None):
-        super().__init__(entries, returns, self._window_opened, self._window_closed, blocks=True, delivered=delivered)
+        super().__init__(entries, returns, blocks=True, delivered=delivered)
         self.windows, self.handed = [], []
         self._opened_at = None
 
-    def _window_opened(self, pc, sp, memory):
+    def _opened(self, pc, sp, memory):
         self.handed.append(aes_event.handed_at(pc, sp, memory))
         self._opened_at = _cycles_in(AES_OWN_SPANS)
 
-    def _window_closed(self):
+    def _closed(self):
         self.windows.append(_cycles_in(AES_OWN_SPANS) - self._opened_at)
 
 
@@ -1991,19 +2000,80 @@ def our_windows(elf, delivered=None):
     return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls), delivered)
 
 
-def _original_windows(row):
+def _original_windows(row, **marked):
     """(EV): the ROM's own run of `row`, WATCHED at the door's entries and the addresses their Line-F words return to
     (`aes_event.ROM_RETURNS`), its deliveries laid at its calls, and PROFILED (`watched_original`, over the case's
     image): its `DoorWindows`, the whole run's cycles, and its cycles in `AES_OWN_SPANS` — the ROM's own before its
     windows come off (`_original_own_cycles`' figure, read off this run: an interrupted row's original has no
-    unwatched run)."""
+    unwatched run). A sliced row's run is MARKED too (`_the_rom_s_marks`: the watch's `marks`; `marked` its options)."""
     assert not (row.regs or row.psg_seed or row.schedule), (
         f"{row.symbol} / {row.case}: a door row's ORIGINAL is re-run watched with the case's image and I/O map alone")
     watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, row.delivered)
-    _final, _writes, run = _profiled(lambda: watched_original(bytearray(make_image(row.pokes)), row.entry, watch,
-                                                              io_seed=row.io_seed))
+    if row.slice:
+        watch.marked_with(_the_rom_s_marks(row, **marked))
+
+    def run_and_mark():
+        ran = watched_original(make_image(row.pokes), row.entry, watch, io_seed=row.io_seed)
+        if row.slice:
+            watch.marks.returned(watch.calls)
+        return ran
+    _final, _writes, run = _profiled(run_and_mark)
     vet_the_run_just_made(f"{row.symbol} / {row.case}: the ROM's watched run")
     return watch, run["cycles"], _cycles_in(AES_OWN_SPANS)
+
+
+# (EV)'s SLICES: a row that is ONE SLICE of a long session (`aes_event.register_slices`: the file selector's listing, a
+# key of a long typing session) — both sides run the whole session, as any row taken through interrupts, and the whole
+# run is held to everything (EV) holds a row to; what is PRICED is the slice alone. Each run is MARKED at the slice's
+# two ends (`aes_event.Marks`: arrivals both sides make at one PC — a door call, a trap taken, the entry, the return):
+# what it had spent there, and its memory. Ours must reach each end as the ROM's does — after the same door calls, its
+# memory the ROM's outside the stack band, the blob and the row's drops (`aes_event.vet_the_marks_agree`: a slice
+# started a call late, or by a C that diverged before it, is refused by name) — and the row's costs, windows, own
+# cycles and glue are then the differences between the two marks, the slice under `aes_event.SLICE_INSNS`.
+def _the_rom_s_marks(row, **marked):
+    """A sliced row's marks over the ROM's own run: its instructions and cycles, and its cycles in `AES_OWN_SPANS`.
+    `marked`: `aes_event.Marks`' options — the session's other slices, every arrival."""
+    return aes_event.Marks(row.slice, lambda: {**aes_event.run_cost(), "aes": _cycles_in(AES_OWN_SPANS)}, **marked)
+
+
+def _our_marks(row, blob, glue, **marked):
+    """...and over ours, on `blob`: its instructions and cycles, and its cycles at the blob's PCs and inside `glue`."""
+    return aes_event.Marks(row.slice, lambda: {**aes_event.run_cost(), "blob": emu.prof_cycles(blob.base, blob.end),
+                                                "glue": _cycles_in(glue)}, **marked)
+
+
+def _differing_at_a_mark(row, blob):
+    """How two memories at a slice's end are compared: everywhere the bench's second differential compares the final
+    images — outside the oracle's stack band, the blob's span and the row's drops."""
+    def excluded(address):
+        return blob.base <= address < blob.end or any(lo <= address < hi for lo, hi, _why in row.dropped)
+    return lambda ours, original: differing_addresses(memoryview(original), memoryview(ours), diff_spans(), excluded)
+
+
+def _priced_on_its_slice(row, blob, original, windows, original_marks=None, our_marks=None):
+    """The `Measurement` of a sliced row: the whole run's — measured, and held to (EV) — cut down to the slice. Its
+    costs, windows, glue and own cycles are each side's between its two marks; ours agree with the ROM's at both
+    (above); the slice is under the cap. The windows inside the slice are the event layer's on both sides (the whole
+    run held them equal one by one, and our AES-span cycles to their sum). Net of the entry's reset only where the
+    slice starts at the entry: the reset is spent there. `original` and `windows` are the two runs' watches; the
+    marks are theirs — the row's own runs' — or the two given: its session's runs' marks, read for this row's slice
+    (`Sessions`: one pair of runs for all a session's slices)."""
+    who = f"{row.symbol} / {row.case}"
+    original_marks, our_marks = original_marks or original.marks, our_marks or windows.marks
+    aes_event.vet_the_marks_agree(who, our_marks, original_marks, _differing_at_a_mark(row, blob))
+    ours, the_rom_s = our_marks.spent(f"{who}: our run"), original_marks.spent(f"{who}: the ROM's run")
+    aes_event.vet_under_the_slice_cap(who, row.slice, the_rom_s["insns"])
+    first, last = (mark.calls for mark in original_marks.ends(f"{who}: the ROM's run"))
+    in_the_event_layer = sum(original.windows[first:last])
+    overhead = blob.overhead if row.slice.start == aes_event.ENTRY else (0, 0)
+    sliced = Measurement((the_rom_s["insns"], the_rom_s["cycles"]), (ours["insns"], ours["cycles"]), overhead)
+    sliced.glue_cycles = ours["glue"]
+    sliced.door_windows = tuple(windows.windows[first:last])
+    sliced.own_cycles = (ours["blob"] - ours["glue"] - overhead[1], the_rom_s["aes"] - in_the_event_layer - overhead[1])
+    shared, original_shared = shared_cycles(sliced)
+    assert shared == original_shared, (
+        f"{who}: inside its slice the OS both sides run cost ours {shared} cycles and the ROM's {original_shared}")
+    return sliced
 
 
 def _original_own_cycles(row):
@@ -2017,22 +2087,37 @@ def _measure_through_the_os(row, bench):
     """A (V) row, PROFILED: the `Measurement` carries `own_cycles` (ours, the ROM's) beside its costs — and, measured
     as shipped, `glue_cycles` too. Ours is every cycle at the blob's PCs less the thunks'; the ROM's comes from its
     own run (`_original_own_cycles`), and the measurement's run of BOTH must spend exactly that much in the AES's
-    spans: a cycle more is our build executing the AES's ROM bytes, which would be counted as the ROM's own."""
+    spans: a cycle more is our build executing the AES's ROM bytes, which would be counted as the ROM's own. A SLICED
+    row's is then cut to its slice (`_priced_on_its_slice`)."""
+    measured, blob, original, windows = _held_through_the_os(row, bench)
+    return _priced_on_its_slice(row, blob, original, windows) if row.slice else measured
+
+
+def _held_through_the_os(row, bench, **marked):
+    """...the WHOLE run's `Measurement`, held to everything (V) and (EV) hold a row to — with the blob it was measured
+    on and the two runs' door watches (None for a row that reaches no door): `(measured, blob, original, windows)`. A
+    sliced row's runs are marked (`marked`: `aes_event.Marks`' options)."""
     through_the_door = goes_through_the_door(row)
     assert through_the_door or not row.delivered, f"{row.symbol} / {row.case}: interrupts delivered at no door call"
+    assert row.delivered or not row.slice, f"{row.symbol} / {row.case}: a sliced row is taken through interrupts"
+    original = None
     if through_the_door:
-        original, original_watched, original_own = _original_windows(row)
+        original, original_watched, original_own = _original_windows(row, **marked)
     else:
         original_own = _original_own_cycles(row)
     shipped = ships_through_a_call(row)
     blob = shipped_bench() if shipped else bench
     windows = our_windows(blob.elf, row.delivered) if through_the_door else None
+    if row.slice:
+        windows.marked_with(_our_marks(row, blob, glue_ranges() if shipped else alcyon_entry_ranges(bench.elf), **marked))
     original_watch = aes_event.delivering(row.delivered) if row.delivered else None
     if shipped:
         measured = _measure_as_shipped(row, windows, original_watch)
     else:
         measured = _profiled(lambda: _measure_call(bench, row, windows, original_watch))
         measured.glue_cycles = _cycles_in(alcyon_entry_ranges(bench.elf))
+    if row.slice:
+        windows.marks.returned(windows.calls)
     measured.door_windows = tuple(windows.windows) if windows else ()
     if through_the_door:
         assert original_watched == measured.original_cycles, (
@@ -2058,7 +2143,152 @@ def _measure_through_the_os(row, bench):
     assert shared == original_shared, (
         f"{row.symbol} / {row.case}: the OS both sides run cost ours {shared} cycles and the ROM's {original_shared} — "
         f"cost moved into code counted as shared (a jump into ROM code past the trap, other VDI arguments)")
-    return measured
+    return measured, blob, original, windows
+
+
+# ONE PAIR OF RUNS PRICES EVERY SLICE OF A SESSION. A session's rows are one machine and one set of deliveries
+# (`aes_event.session_of`: one record), so measuring each row whole ran the same three sessions — the ROM's watched
+# run, then the bench's original and ours — once per slice: 29 rows over 5 sessions, 87 whole sessions where 15 do.
+# A `Sessions` measures a session ONCE, both runs marked at the ends of ALL its registered slices
+# (`aes_event.Marks`' `others`), and cuts every row of it out of that pair (`_priced_on_its_slice`: each row still held
+# to the ROM at its own two ends, under the cap, its shared cycles equal). What a row is refused for is kept and
+# raised when that row is asked for. The runs' marks — a memory per end — are dropped once the rows are cut: nothing
+# kept holds a watch (a refusal is kept WITHOUT its traceback, whose frames hold both), and a watch is no reference
+# cycle (`aes_event.DoorStops`), so the marks go when `_session_s_rows_priced` returns.
+# A memo is its holder's (`table`'s, a test module's fixture) and ONE BUILD's — the bench it is made with: a row
+# measured WITHOUT one (`measure(row, bench)`) is always its own three runs, which is what a case that changes the run
+# (a RED test's astray build) needs.
+class Sessions:
+    """`measure(row)` for the sliced rows of sessions over ONE build (`bench`), each session measured once (above):
+    `aes_event.OncePerSession`, the value a session's rows priced."""
+
+    def __init__(self, bench):
+        self.bench = bench
+        self._priced = aes_event.OncePerSession(lambda row: _session_s_rows_priced(row, bench))
+
+    def measure(self, row):
+        if not any(each is row for each in ROWS):
+            return measure(row, self.bench)     # not the table's own row (a case's variant of one): its own runs
+        priced = self._priced(row.registered, _machine_of(row), row)[row.symbol, row.case]
+        if isinstance(priced, AssertionError):
+            raise priced
+        return priced
+
+
+def _machine_of(row):
+    """What `row`'s runs are over: all of it but its names and its slice — what a session's rows share."""
+    return row._replace(case=None, slice=None, registered=None)
+
+
+def session_of(row):
+    """The session `row` is of (`aes_event.session_of`, by the name its case is registered under) — None for a row
+    taken through no interrupts. A SLICED row that names no session is refused by name: priced by its own three
+    runs it would cost the table's one lever without a word."""
+    session = aes_event.session_of(row.registered)
+    assert session is not None or not row.slice, (
+        f"{row.symbol} / {row.case}: a sliced row registered as {row.registered!r}, which names no session "
+        f"(`aes_event.INTERRUPTED_ROWS`)")
+    return session
+
+
+def registered(row):
+    """...and that session's record for a row that has one: its routine, arguments, machine, deliveries and budget."""
+    session = session_of(row)
+    assert session is not None, f"{row.symbol} / {row.case}: no row taken through interrupts ({row.registered!r})"
+    return session
+
+
+def rows_of_the_session(session):
+    """The sliced rows of ROWS that are `session`'s (`session_of`), in the table's order."""
+    return [row for row in ROWS if row.slice and session_of(row) is session]
+
+
+def _session_s_rows_priced(row, bench, **marked):
+    """Every row of `row`'s session priced off ONE pair of runs: `{(symbol, case): its Measurement, or the
+    AssertionError it is refused by}`. The premise is held by name: the session's rows are `row` but for their names
+    and slice. A refusal of the WHOLE run is every row's, and raised here."""
+    rows = rows_of_the_session(session_of(row))
+    assert all(_machine_of(each) == _machine_of(row) for each in rows), (
+        f"{row.symbol} / {row.case}: the rows of its session are not one machine — they cannot share a run")
+    others = tuple(each.slice for each in rows if each.slice != row.slice)
+    _measured, blob, original, windows = _held_through_the_os(row, bench, others=others, **marked)
+    priced = {}
+    for each in rows:
+        try:
+            priced[each.symbol, each.case] = _priced_on_its_slice(
+                each, blob, original, windows, original.marks.cut_to(each.slice), windows.marks.cut_to(each.slice))
+        except AssertionError as refused:
+            priced[each.symbol, each.case] = refused.with_traceback(None)   # its frames hold the watches, and their marks
+    return priced
+
+
+# WHAT NO SLICE PRICES. A session's registered slices need not cover it: between them lie STRETCHES no row prices (a
+# dialog's keys 2..36, the selector's first listing in a session that prices its clicks), and a dear stretch of C
+# placed in one would leave the table without a word. So each session is also cut WHOLE — at every DOOR CALL its run
+# makes and at its registered slices' own ends (`aes_event.Marks`' `every_door_call`, both shores, the two timelines
+# held to the same arrivals after the same door calls) — and every stretch between consecutive cuts that no
+# registered slice covers is priced as a slice is: each shore's OWN cycles between the two (`uncovered_stretches`).
+# `test_tier3.py` holds each at or under its routine's worst registered row.
+# CUT AT DOOR CALLS, NOT AT EVERY TRAP: a door call is the arrival both shores are held to by COUNT, and the stretches
+# between two of them are shapes the size the table prices (a key, a click, a listing). Between two TRAPS the two
+# builds do the same work a handful of instructions either side of the trap, and a stretch that fine has a ratio of
+# its own that no row's average would bound (measured: Fsfirst to the first Fsnext, 158 ROM instructions, 420 own
+# cycles against 468 — 0.90 inside a read priced at 0.84; 1,264 instructions between two of fm_do's VDI calls, 0.85
+# inside a key priced at 0.77).
+Stretch = namedtuple("Stretch", "start stop insns own_cycles")      # `own_cycles`: (ours, the ROM's), as a row's
+
+
+def stretch_ratio(stretch):
+    """A stretch's own ratio — 0 where neither shore spent a cycle of its own in it (all of it the OS both run), and
+    past every bar where ours alone did."""
+    ours, original = stretch.own_cycles
+    return ours / original if original else float("inf") if ours else 0.0
+
+
+def _arrivals_held_equal(who, ours, the_rom_s):
+    """Both shores' timelines are the same arrivals, each after the same door calls — refused by name at the first
+    that is not: a trap our build takes that the ROM's run does not (or the other way), or takes a door call late."""
+    differ = aes_event.first_to_differ(*([(arrival.at, arrival.calls) for arrival in shore] for shore in (ours, the_rom_s)))
+    assert differ is None, (
+        f"{who}: our run's arrival {differ} is {ours[differ].at if differ < len(ours) else 'none'} where the ROM's is "
+        f"{the_rom_s[differ].at if differ < len(the_rom_s) else 'none'} — the two runs do not make the same arrivals "
+        f"(ours {len(ours)}, the ROM's {len(the_rom_s)})")
+
+
+def uncovered_stretches(row, bench, covered=None):
+    """The stretches of `row`'s session that none of the slices `covered` prices (every registered slice of the
+    session, by default), each a `Stretch` priced on both shores' own cycles (above). ONE pair of runs, marked at
+    every door call; the whole run held to (EV) as any row's."""
+    slices = [each.slice for each in rows_of_the_session(session_of(row))]
+    _measured, blob, original, windows = _held_through_the_os(
+        row, bench, others=tuple(each for each in slices if each != row.slice), every_door_call=True)
+    entry = aes_event.Arrival(aes_event.ENTRY, 0, None)
+    the_rom_s, ours = ([entry] + watch.marks.timeline for watch in (original, windows))
+    _arrivals_held_equal(f"{row.symbol} / {row.case}", ours, the_rom_s)
+    index = {arrival.at: nth for nth, arrival in enumerate(the_rom_s)}
+    priced = set()
+    for start, stop in (slices if covered is None else covered):
+        priced.update(range(index[start], index[stop]))
+    return [_stretch(ours[nth:nth + 2], the_rom_s[nth:nth + 2], original.windows, blob.overhead[1] if nth == 0 else 0)
+            for nth in range(len(the_rom_s) - 1) if nth not in priced]
+
+
+def _between(arrivals, total):
+    """What a run spent of the running total `total` between two consecutive `arrivals` of its timeline (the entry's
+    has spent nothing)."""
+    first, last = ((arrival.spent or {}).get(total, 0) for arrival in arrivals)
+    return last - first
+
+
+def _stretch(ours, the_rom_s, windows, reset):
+    """The `Stretch` between two consecutive arrivals — each shore's pair, the ROM's door `windows`, and the entry's
+    `reset` cycles where the stretch starts at the entry: each shore's OWN cycles as a row's are (ours the blob's less
+    its glue, the ROM's its AES spans less the event layer's windows inside the stretch)."""
+    first, last = the_rom_s
+    in_the_event_layer = sum(windows[first.calls:last.calls])
+    mine = _between(ours, "blob") - _between(ours, "glue") - reset
+    its = _between(the_rom_s, "aes") - in_the_event_layer - reset
+    return Stretch(first.at, last.at, _between(the_rom_s, "insns"), (mine, its))
 
 
 def shared_cycles(measured):
@@ -2088,9 +2318,10 @@ def _measure_transcription(row, bench):
                                        io_seed=row.io_seed, staged_entry=row.staged_entry, shared_entry=row.shared_entry)
 
 
-def measure(row, bench):
+def measure(row, bench, sessions=None):
     """One row's `Measurement` — which is also its second differential, so this raises on a target
-    build that does not equal the original.
+    build that does not equal the original. `sessions` (a `Sessions`, made over this `bench`): the holder's
+    memo of sessions measured, through which a session's sliced rows share one pair of runs.
 
     The two relations are the kit's, not a choice made here: a C core owes its caller a return value
     and the callee-saved file, and an m68k transcription owes it the WHOLE register file the ROM's
@@ -2100,6 +2331,10 @@ def measure(row, bench):
     other row's glue is 0 (`glue_cycles_of`), because it enters no thunk. A `.S` row that calls C through
     thunks of its own (T←) is profiled on `bench` and split into its own instructions and the rest.
     """
+    if sessions is not None and row.slice:
+        assert sessions.bench is bench, (
+            f"{row.symbol} / {row.case}: asked of sessions measured over another build — a memo is one build's")
+        return sessions.measure(row)
     if calls_into_c(row):
         return _measure_into_c(row, bench)
     if row.transcription:
@@ -2249,7 +2484,8 @@ def table(bench):
     """
     # One pass, keyed by the row, so `dispatch_cycles` below re-uses the pair rather than running
     # the oracle over them a third and fourth time.
-    measured = [(row, measure(row, bench)) for row in ROWS]
+    sessions = Sessions(bench)
+    measured = [(row, measure(row, bench, sessions)) for row in ROWS]
     by_name = {(row.symbol, row.case): m for row, m in measured}
     dispatch = dispatch_cycles(by_name.__getitem__)
 

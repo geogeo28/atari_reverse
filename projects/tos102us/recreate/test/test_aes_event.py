@@ -6,6 +6,7 @@ The routines that go through it are other batteries' (`test_aes_grwait.py`, `tes
 door's own surface.
 """
 import ctypes
+import functools
 import os
 import shutil
 import signal
@@ -29,6 +30,9 @@ import test_aes_grwait as grwait
 import vdi
 import vdi_helpers
 import vdi_mouse
+import aes_fs_sessions as ss
+import aes_fslib as fsl
+import aes_strings
 from case import merge_pokes
 from harness import BASE_IMAGE, addrs, emu, make_image
 
@@ -507,7 +511,87 @@ def test_a_returning_case_is_taken_through_the_bench_s_second_differential_and_a
     assert measured == [WATCHED_OUTSIDE[0]]
 
 
-UNREAD_BYTE = aes_event.BAND_AT + aes_event.BAND_BYTES - 1     # a byte of the door's band no case here stages or reads
+def _derivations_counted(monkeypatch):
+    """The whole ROM derivations (`aes_event.deliveries`) made from here on, counted: the list they are noted in. The
+    bench is loaded first: its import registers every battery's rows, each a derivation of its own."""
+    aes_event._tier3()
+    made, deliveries = [], aes_event.deliveries
+
+    def counted(*case_of, **kwargs):
+        made.append(case_of[0])
+        return deliveries(*case_of, **kwargs)
+    monkeypatch.setattr(aes_event, "deliveries", counted)
+    return made
+
+
+def test_a_case_over_a_settled_machine_is_derived_once_for_both_its_differentials(monkeypatch):
+    """ONE DERIVATION PER CASE: over a machine that already keeps `savptr` in the band — a session's, a row's — the
+    second differential takes what `interrupted` derived (`Derived`) and derives nothing again; over any other
+    machine it runs its own, as it must (the settled machine is another)."""
+    made = _derivations_counted(monkeypatch)
+    settled = merge_pokes(grwait.button_down(), aes_event.savptr_in_the_band())
+    aes_event.interrupted(*WATCHED_OUTSIDE, settled, entered_then_released(), objects=True)
+    assert len(made) == 1
+    aes_event.interrupted(*WATCHED_OUTSIDE, grwait.button_down(), entered_then_released(), objects=True)
+    assert len(made) == 1 + 2
+
+
+def test_what_a_case_derived_is_what_its_second_differential_would_derive():
+    """...and it is the same row either way: the settled machine and the deliveries `_settled_interrupted` answers
+    from what the case derived are those its own run derives."""
+    name, arguments = WATCHED_OUTSIDE
+    settled = merge_pokes(grwait.button_down(), aes_event.savptr_in_the_band())
+    _calls, delivered, rom_memory, result = aes_event.rom_interrupted(name, arguments, settled, entered_then_released())
+    assert result
+    handed_on = aes_event._settled_interrupted(name, arguments, settled, entered_then_released(),
+                                               derived=aes_event.Derived(delivered, rom_memory))
+    assert handed_on == aes_event._settled_interrupted(name, arguments, settled, entered_then_released())
+
+
+ONE_MACHINE = "one machine"            # what a session's rows share, as its memo is handed it: any value held equal
+
+
+def _counting_memo():
+    """A `OncePerSession` whose computation counts its own runs: `(memo, the rows it was run for)`."""
+    computed = []
+
+    def count(row_name):
+        computed.append(row_name)
+        return len(computed)
+    return aes_event.OncePerSession(count), computed
+
+
+def test_a_sliced_session_s_rows_are_computed_over_once_and_any_other_row_every_time():
+    """`OncePerSession`: the five rows of fm_do's sliced session are ONE record (`session_of`), so a consumer's
+    per-row computation runs for the first and is answered for the rest; a row that is a session of its own (a
+    registered interrupted row, unsliced) and a name that is no interrupted row's are computed each time and NOT
+    KEPT — nothing would ever be answered them; and a second memo, another computation's, holds nothing of the first."""
+    sliced = [f"aes_fm_do, {label}" for label in fmdo.SESSION_SLICES]
+    assert len({id(aes_event.session_of(row_name)) for row_name in sliced}) == 1
+    lone, _row = next((row_name, row) for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row.budget is None)
+    assert aes_event.session_of(lone) is not aes_event.session_of(sliced[0]) and lone not in aes_event.SLICED_ROWS
+    assert aes_event.session_of("no row at all") is None
+    memo, computed = _counting_memo()
+    assert [memo(row_name, ONE_MACHINE, row_name) for row_name in sliced] == [1] * len(sliced)
+    assert [memo(lone, ONE_MACHINE, lone), memo(lone, ONE_MACHINE, lone)] == [2, 3]
+    assert [memo("no row at all", ONE_MACHINE, "no row at all") for _twice in range(2)] == [4, 5]
+    assert computed == [sliced[0], lone, lone, "no row at all", "no row at all"]
+    assert list(memo._made) == [id(aes_event.session_of(sliced[0]))], "kept for the sliced session alone"
+    assert aes_event.OncePerSession(lambda row_name: "another memo")(sliced[1], ONE_MACHINE, sliced[1]) == "another memo"
+
+
+def test_a_session_s_row_over_another_machine_is_not_answered_its_session_s_run():
+    """THE MEMO'S PREMISE, held by name (RED): a session's rows share a run because they are one machine — a later row
+    of the session handed with another is refused, not answered the first's value."""
+    first, second, *_rest = (f"aes_fm_do, {label}" for label in fmdo.SESSION_SLICES)
+    memo, computed = _counting_memo()
+    memo(first, ONE_MACHINE, first)
+    with pytest.raises(AssertionError, match=f"{second}: the rows of its session are not one machine"):
+        memo(second, "another machine", second)
+    assert memo(second, ONE_MACHINE, second) == 1 and computed == [first]
+
+
+UNREAD_BYTE = aes_event.UNREAD_BYTE     # a byte of the door's band no case here stages or reads
 STALE_BYTE = 0x5A                      # ...and a value laid there
 
 
@@ -518,9 +602,9 @@ class _Measured(Exception):
 def _a_registered_fm_do_row():
     """One of fm_do's registered rows taken through interrupts (`aes_event.INTERRUPTED_ROWS`): `(row name, routine,
     arguments, settled machine, interrupts)` — the case a battery's twin of it hands `bench_differential`."""
-    row_name, (name, arguments, pokes, interrupts, _delivered) = next(
-        (row_name, row) for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row[0] == fmdo.DO)
-    return row_name, name, arguments, pokes, interrupts
+    row_name, row = next((row_name, row) for row_name, row in aes_event.INTERRUPTED_ROWS.items()
+                         if row.name == fmdo.DO and row.budget is None)
+    return row_name, row.name, row.arguments, row.pokes, row.interrupts
 
 
 def _measuring_refused(monkeypatch):
@@ -1137,3 +1221,652 @@ def test_a_watched_run_is_the_unwatched_run_whatever_ran_before_it():
     assert STALE_REGISTER in regs.values(), "the premise: the run before leaves a register stale"
     _calls, memory, result = aes_event._watched_through(fmdo.DO, FM_DO_ARGUMENTS, ahead, {})
     assert result and not aes_event.differing(memory, unwatched, frozenset(case.STACK_BAND))
+
+
+# ---- A ROW'S OWN DERIVATION BUDGET (`aes_event._budget_of`), declared and held both ways ---------------------------------
+# fm_do's long typing session (`test_aes_fmdo.session`: 38 keys, 728,664 ROM instructions) is the case: past what
+# DERIVATION_INSNS admits under its margin, so its rows DECLARE their budget.
+SESSION_SPEND = 728_664                # the session's ROM run, measured: what the declarations below are derived from
+# ...and the run that DERIVES its deliveries: re-entered at each delivery's door call (`aes_event._continued_at`), and
+# an entry is charged an instruction — one more per key.
+SESSION_DERIVING_SPEND = SESSION_SPEND + len(fmdo.SESSION_TEXT) + 1
+
+
+def _session_deliveries(budget):
+    name, arguments, machine, interrupts = fmdo.session()
+    return aes_event.deliveries(name, arguments, machine, interrupts, budget)
+
+
+def test_a_long_session_is_refused_under_the_default_budget_by_name():
+    """The premise of a declared budget: under the default the session's derivation is refused — by the margin, the
+    default's own words."""
+    with pytest.raises(AssertionError, match="inside DERIVATION_INSNS' margin of 5: raise the budget"):
+        _session_deliveries(None)
+
+
+def test_a_declared_budget_admits_the_session_and_measures_what_it_was_declared_from():
+    name, arguments, machine, _interrupts = fmdo.session()
+    delivered = _session_deliveries(fmdo.SESSION_INSNS)
+    _calls, _memory, result = aes_event._watched_through(name, arguments, machine, delivered, budget=fmdo.SESSION_INSNS)
+    assert result["ninsns"] == SESSION_SPEND and len(delivered) == len(fmdo.SESSION_TEXT) + 1
+
+
+def test_a_declared_budget_the_run_overruns_is_refused_by_name():
+    """RED from below: a budget the session fits, but not by the margin — one instruction under five times its spend
+    — is refused in the declared budget's own words, naming the least to declare."""
+    least = SESSION_DERIVING_SPEND * aes_event.DERIVATION_MARGIN
+    with pytest.raises(AssertionError, match=rf"inside its declared budget's \({least - 1}\) margin of 5: raise the row's "
+                                             rf"budget to at least {least}"):
+        _session_deliveries(least - 1)
+    _session_deliveries(least)
+
+
+def test_a_declared_budget_far_above_the_spend_is_refused_as_stale():
+    """RED from above: a budget more than DERIVATION_STALE times what admits the run is stale, by name; the most that
+    is not passes."""
+    most = SESSION_DERIVING_SPEND * aes_event.DERIVATION_MARGIN * aes_event.DERIVATION_STALE
+    with pytest.raises(AssertionError, match=rf"declares a budget of {most + 1} instructions and spent {SESSION_DERIVING_SPEND}: "
+                                             rf"the declaration is stale"):
+        _session_deliveries(most + 1)
+    _session_deliveries(most)
+
+
+def test_a_declared_budget_is_the_run_s_cap_whatever_the_default(monkeypatch):
+    """The declared budget is what the session's runs are CAPPED at, not only vetted against: under a default the
+    session's spend is past (here, half of it), both of its runs still end."""
+    monkeypatch.setattr(aes_event, "DERIVATION_INSNS", SESSION_SPEND // 2)
+    name, arguments, machine, interrupts = fmdo.session()
+    _calls, _delivered, _memory, result = aes_event.rom_interrupted(name, arguments, machine, interrupts,
+                                                                    budget=fmdo.SESSION_INSNS)
+    assert result["ninsns"] == SESSION_SPEND
+
+
+def test_the_whole_session_is_held_to_the_rom_under_its_declared_budget():
+    """The session as a Tier 1 case (`interrupted`): the C in a child typed into for 38 keys, held to the ROM's run
+    byte for byte — its second differential the registered slices' own (`bench_differential` finds its twin, which
+    takes the budget too)."""
+    name, arguments, machine, interrupts = fmdo.session()
+    taken = aes_event.interrupted(name, arguments, machine, interrupts, objects=True, budget=fmdo.SESSION_INSNS)
+    assert taken.returned and taken.answer == fmdo.OK
+    assert sum(call.routine == fmdo.WAIT for call in taken.calls) == len(fmdo.SESSION_TEXT) + 1
+    assert fmdo.field_text(taken.image, fmdo.SELECTOR, fmdo.PATH_FIELD) == fmdo.SESSION_TEXT.upper().encode()
+
+
+def test_a_declared_budget_the_default_covers_is_refused_as_stale():
+    """A declaration no greater than DERIVATION_INSNS declares nothing: refused before the run, by name."""
+    name, arguments = WATCHED_OUTSIDE
+    with pytest.raises(AssertionError, match="no more than DERIVATION_INSNS .*the default already covers it"):
+        aes_event.rom_watched(name, arguments, grwait.button_down(), budget=aes_event.DERIVATION_INSNS)
+
+
+def test_a_run_that_blocks_is_held_to_its_declared_budget_both_ways_too():
+    """The session with its Return never typed BLOCKS at its last wait, after nearly all of its run: held to the
+    declared budget's margin, and from above — a run that ended says what its case needs, returned or not."""
+    name, arguments, machine, _interrupts = fmdo.session()
+    typed_no_return = aes_event.typed(fmdo.SESSION_TEXT)
+    _calls, _delivered, _memory, result = aes_event.rom_interrupted(name, arguments, machine, typed_no_return,
+                                                                    budget=fmdo.SESSION_INSNS)
+    assert result is None
+    with pytest.raises(AssertionError, match="the declaration is stale"):
+        aes_event.rom_interrupted(name, arguments, machine, typed_no_return, budget=10 * fmdo.SESSION_INSNS)
+    with pytest.raises(AssertionError, match="inside its declared budget's"):
+        aes_event.rom_interrupted(name, arguments, machine, typed_no_return, budget=aes_event.DERIVATION_INSNS + 1)
+
+
+def test_a_prefix_a_watch_stopped_at_an_entry_is_held_to_the_margin_alone(monkeypatch):
+    """A run a watch ENDS at a door entry is a prefix: it says nothing of what the whole run needs, so the stale check
+    is not made of it (a budget its few instructions are far under would otherwise be stale) — and the margin IS: the
+    same prefix under a budget it fits less than five times over is refused in the declared budget's own words."""
+    name, arguments, machine, _interrupts = fmdo.session()
+    stale, held, vet_the_margin = [], [], aes_event._vet_the_margin
+    monkeypatch.setattr(aes_event, "_vet_not_stale", lambda *run: stale.append(run))
+    monkeypatch.setattr(aes_event, "_vet_the_margin", lambda *run: (held.append(run), vet_the_margin(*run)))
+    with pytest.raises(aes_event._AtTheEntry):
+        aes_event._watched_through(name, arguments, machine, {}, stop_at=0, budget=fmdo.SESSION_INSNS)
+    (_entry, spent, declared), = held
+    assert not stale and spent > 0 and declared == fmdo.SESSION_INSNS
+    monkeypatch.setattr(aes_event, "DERIVATION_INSNS", spent)       # a default under which a tight budget is one
+    tight = spent * aes_event.DERIVATION_MARGIN - 1
+    with pytest.raises(AssertionError, match=rf"inside its declared budget's \({tight}\) margin of 5: raise the row's "
+                                             rf"budget to at least {tight + 1}"):
+        aes_event._watched_through(name, arguments, machine, {}, stop_at=0, budget=tight)
+    assert not stale
+
+
+# fm_alert's documented maximum with its Return queued BEFORE the call: 208,880 ROM instructions with the cursor
+# shown. TWO RUNS, TWO LIMITS (`aes_event.run_event`): the in-process differential's is `emu.run`'s cap (200,000), which
+# this run is past — so the case declares a `cap`; the watched run of its frames is a derivation, and five times its
+# spend is inside DERIVATION_INSNS — so it declares NO budget, and one is refused.
+MAXIMUM_ALERT_SPEND = 208_880
+MAXIMUM_ALERT_CAP = 1_600_000
+
+
+def _maximum_alert(**kwargs):
+    machine = fmalert.answered(aes_event.RETURN_KEY, shown=True, onto={fmalert.STRING_AT: fmalert.MAXIMUM_ALERT + b"\0"})
+    return fmalert.alert(len(fmalert.LONGEST_BUTTONS), fmalert.STRING_AT, machine, **kwargs)
+
+
+def test_an_in_process_door_case_past_the_oracle_s_cap_declares_its_cap():
+    """`run_event(cap=)`: the alert answers its DEFAULT under a declared cap, its original's spend the measure the
+    declaration is from; undeclared, the differential's own run does not return under the oracle's cap."""
+    result = _maximum_alert(cap=MAXIMUM_ALERT_CAP)
+    assert result.answer() == len(fmalert.LONGEST_BUTTONS) and result.info["regs"]["ninsns"] == MAXIMUM_ALERT_SPEND
+    assert aes_event.DIFFERENTIAL_INSNS < MAXIMUM_ALERT_SPEND
+    with pytest.raises(RuntimeError, match=f"within {aes_event.DIFFERENTIAL_INSNS} instructions"):
+        _maximum_alert()
+
+
+def test_a_budget_the_default_would_have_served_the_run_under_is_refused_whatever_its_size():
+    """THE NEED IS THE RUN'S (RED): the same alert under a `budget` — a declaration above DERIVATION_INSNS, inside the
+    margin and not ten times the spend, which every rule about the declaration's SIZE passes — is refused, because
+    five times this run's spend is inside the default."""
+    declared = aes_event.DERIVATION_INSNS + 1
+    least = MAXIMUM_ALERT_SPEND * aes_event.DERIVATION_MARGIN
+    assert least <= declared <= least * aes_event.DERIVATION_STALE, "the premise: the size rules pass it"
+    with pytest.raises(AssertionError, match=rf"declares a budget of {declared} instructions and spent "
+                                             rf"{MAXIMUM_ALERT_SPEND}: the declaration is stale — DERIVATION_INSNS "
+                                             rf".*the default already covers it"):
+        _maximum_alert(budget=declared)
+
+
+@pytest.mark.parametrize("insns, refused", ((aes_event.DERIVATION_INSNS // aes_event.DERIVATION_MARGIN, True),
+                                             (aes_event.DERIVATION_INSNS // aes_event.DERIVATION_MARGIN + 1, False)),
+                         ids=("the last run the default admits", "the first it does not"))
+def test_a_declared_budget_is_needed_from_the_first_run_the_default_does_not_admit(insns, refused):
+    """...to the instruction: a run of DERIVATION_INSNS / DERIVATION_MARGIN is the default's, one more is not."""
+    declared = insns * aes_event.DERIVATION_MARGIN + aes_event.DERIVATION_MARGIN
+    if not refused:
+        return aes_event._vet_not_stale(FS_INPUT, insns, declared)
+    with pytest.raises(AssertionError, match="the default already covers it"):
+        aes_event._vet_not_stale(FS_INPUT, insns, declared)
+
+
+def test_an_in_process_door_case_s_declared_cap_is_held_both_ways_and_must_be_needed():
+    """...and the cap is held as a budget is, in its own words: one instruction short of five times the spend, one
+    past ten times it, and — over a run the oracle's own cap covers — any at all."""
+    least = MAXIMUM_ALERT_SPEND * aes_event.DERIVATION_MARGIN
+    with pytest.raises(AssertionError, match=rf"inside its declared cap's \({least - 1}\) margin of 5: raise the case's "
+                                             rf"cap to at least {least}"):
+        _maximum_alert(cap=least - 1)
+    most = least * aes_event.DERIVATION_STALE
+    with pytest.raises(AssertionError, match=rf"declares a cap of {most + 1} instructions .*the declaration is stale"):
+        _maximum_alert(cap=most + 1)
+    with pytest.raises(AssertionError, match="the oracle's own cap .*already covers it"):
+        fmdo.door_run(fmdo.DO, FM_DO_ARGUMENTS, fmdo.in_the_ring(aes_event.RETURN_KEY), cap=MAXIMUM_ALERT_CAP)
+
+
+CAP_SPEND = aes_event.DIFFERENTIAL_INSNS + 1          # the first run past the oracle's own cap
+CAP_LEAST = CAP_SPEND * aes_event.DERIVATION_MARGIN
+CAP_BOUNDS = {"the last run the oracle's own cap covers": (aes_event.DIFFERENTIAL_INSNS, CAP_LEAST, "already covers it"),
+              "the first run past it, at five times its spend": (CAP_SPEND, CAP_LEAST, None),
+              "one instruction inside the margin": (CAP_SPEND, CAP_LEAST - 1, "margin of 5: raise the case's cap"),
+              "ten times its spend": (CAP_SPEND, CAP_LEAST * aes_event.DERIVATION_STALE, None),
+              "one past ten times": (CAP_SPEND, CAP_LEAST * aes_event.DERIVATION_STALE + 1, "the declaration is stale")}
+
+
+@pytest.mark.parametrize("insns, cap, refusal", CAP_BOUNDS.values(), ids=CAP_BOUNDS)
+def test_a_declared_cap_is_held_to_the_instruction(insns, cap, refusal):
+    """`vet_the_cap`'s three rules for a case's own number, each at its boundary."""
+    if refusal is None:
+        return aes_event.vet_the_cap(FS_INPUT, insns, cap)
+    with pytest.raises(AssertionError, match=refusal):
+        aes_event.vet_the_cap(FS_INPUT, insns, cap)
+
+
+@pytest.mark.parametrize("insns, cap, refusal", CAP_BOUNDS.values(), ids=CAP_BOUNDS)
+def test_a_battery_s_cap_is_declared_from_its_deepest_run_by_the_same_three_rules(insns, cap, refusal):
+    """`battery_cap`: the declaration is held to the battery's deepest run as a case's cap is to its own."""
+    if refusal is None:
+        assert aes_event.battery_cap(cap, deepest=insns) == (cap, insns)
+        return
+    with pytest.raises(AssertionError, match=f"a battery's deepest run .*{refusal}"):
+        aes_event.battery_cap(cap, deepest=insns)
+
+
+def test_a_battery_s_cap_holds_each_of_its_runs_to_the_margin_by_name():
+    """A cap one declaration makes for a whole battery's runs (`aes_fslib.RUN_CAP`): a run that fits it five times
+    over passes however short — it is not asked whether it needed it — and one inside the margin is refused in the
+    battery's cap's own words."""
+    cap = aes_event.battery_cap(CAP_LEAST, deepest=CAP_SPEND)
+    aes_event.vet_the_cap(FS_INPUT, 1, cap)
+    aes_event.vet_the_cap(FS_INPUT, CAP_SPEND, cap)
+    with pytest.raises(AssertionError, match=rf"inside its battery's declared cap's \({CAP_LEAST}\) margin of 5: raise "
+                                             rf"the battery's cap to at least {CAP_LEAST + aes_event.DERIVATION_MARGIN}"):
+        aes_event.vet_the_cap(FS_INPUT, CAP_SPEND + 1, cap)
+
+
+def test_a_raw_instruction_cap_handed_to_a_door_case_is_refused_by_name():
+    """`run_event` OWNS THE CAP (RED): `max_insns` — the spelling every other battery hands `emu.run` — would cap the
+    run past every rule, alone or over a declared `cap`: refused before the run, by name, either way."""
+    for declared in ({}, {"cap": MAXIMUM_ALERT_CAP}):
+        with pytest.raises(AssertionError, match=rf"a raw max_insns \({MAXIMUM_ALERT_CAP}\) was handed past the cap's door"):
+            aes_event.run_event(fmdo.DO, FM_DO_ARGUMENTS, fmdo.in_the_ring(aes_event.RETURN_KEY), drawing=True,
+                                objects=fmdo.JUST_DRAW, max_insns=MAXIMUM_ALERT_CAP, **declared)
+
+
+def test_a_door_case_that_overruns_its_declared_cap_is_refused_by_the_cap_s_name():
+    """...and a run that does not return under its declared cap is refused as that, not as the oracle's bare overrun."""
+    short = MAXIMUM_ALERT_SPEND - 1
+    with pytest.raises(AssertionError, match=rf"did not return within its declared cap \({short}\): raise the cap"):
+        _maximum_alert(cap=short)
+
+
+def test_a_routine_s_child_doors_are_declared_once(monkeypatch):
+    """`declare_child_doors`: a second declaration for a routine is refused by name (the first would be lost). Over a
+    registry of the test's own: the suite's is filled by whichever batteries the process has imported."""
+    monkeypatch.setattr(aes_event, "CHILD_DOORS", {})
+    aes_event.declare_child_doors(fmdo.DO, "")
+    with pytest.raises(AssertionError, match=f"{fmdo.DO}: its child's doors are declared twice"):
+        aes_event.declare_child_doors(fmdo.DO, "")
+
+
+# fm_do's long session with its 38 keys typed BEFORE the call: no interrupt, so ONE run of the oracle makes it in process —
+# a door case past BOTH defaults (the session's 728,664 instructions), which declares one number for both its runs.
+def _session_in_the_ring(**kwargs):
+    codes = aes_event.scancodes_of(fmdo.SESSION_TEXT + "\r")
+    return fmdo.door_run(fmdo.DO, FM_DO_ARGUMENTS, fmdo.in_the_ring(*codes), **kwargs)
+
+
+def test_an_in_process_door_case_past_both_defaults_declares_one_budget_for_both_its_runs():
+    """`run_event(budget=)` with no cap (GREEN): the one number is the differential's cap and the budget of the
+    watched run of its frames, and each run holds it both ways — the run is the declaration's measure."""
+    result = _session_in_the_ring(budget=fmdo.SESSION_INSNS)
+    assert result.answer() == fmdo.OK and result.info["regs"]["ninsns"] == SESSION_SPEND
+    assert SESSION_SPEND * aes_event.DERIVATION_MARGIN > aes_event.DERIVATION_INSNS, "the premise: it needs a budget"
+
+
+def test_an_in_process_door_case_s_declared_budget_is_held_from_above_too():
+    """...and a budget reaches the watched run of the frames, which holds it both ways IN THE DERIVATION'S WORDS: under
+    a cap that fits, a budget one past ten times the frames' run is stale. A budget over a run the oracle's own cap
+    covers never gets that far: with no cap of its own it is the cap, refused in the cap's words."""
+    most = SESSION_SPEND * aes_event.DERIVATION_MARGIN * aes_event.DERIVATION_STALE
+    with pytest.raises(AssertionError, match=rf"the derivation's run of .* declares a budget of {most + 1} instructions "
+                                             rf"and spent {SESSION_SPEND}: the declaration is stale — .* a declared "
+                                             rf"budget may be at most"):
+        _session_in_the_ring(cap=fmdo.SESSION_INSNS, budget=most + 1)
+    with pytest.raises(AssertionError, match=rf"the differential of .* declares a cap of {fmdo.SESSION_INSNS} "
+                                             rf"instructions .*the oracle's own cap .*already covers it"):
+        fmdo.door_run(fmdo.DO, FM_DO_ARGUMENTS, fmdo.in_the_ring(aes_event.RETURN_KEY), budget=fmdo.SESSION_INSNS)
+
+
+def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
+    """A sliced row's deliveries are derived again (`rederived`, the snapshot's noise sweep) under the budget its
+    registration declared — recorded with the row; every other registered row declares none. (The sliced rows are
+    fm_do's long typing session's and the file selector's sessions', each session with its own budget.)"""
+    declared = {row_name: row.budget for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row.budget}
+    assert set(declared) == set(aes_event.SLICED_ROWS)
+    fm_do_s = {row_name: budget for row_name, budget in declared.items() if row_name.startswith("aes_fm_do, ")}
+    assert fm_do_s and set(fm_do_s.values()) == {fmdo.SESSION_INSNS}
+    row_name = next(iter(fm_do_s))
+    assert aes_event.rederived(row_name) == aes_event.INTERRUPTED_ROWS[row_name].delivered
+
+
+# ---- A SESSION PRICED BY ITS SLICES: the ROM's own fs_input, the oracle on both shores ------------------------------------
+# THE MECHANISM, shown on the ROM alone: the file selector's session over its own machine (`aes_fslib.fs_input_machine`:
+# the scheduler's PD0, the staged RAM disk under REAL GEMDOS) is cut into its SHAPES, each under the cap, the cuts
+# partitioning it; two runs of it agree at every cut; and each refusal is RED. The ROM on both shores, because these
+# cuts are at the ROM's own GEMDOS trap handler, which only the ROM's run reaches — the C's GEMDOS is its own
+# dispatcher, so what prices the C is the same session over GEMDOS REPLAYED (`test_aes_fs_input_rows.py`).
+# The directory holds ten names (`aes_fslib.FOLDERS`' TEN): one past the nine rows, so the list scrolls.
+FS_INPUT = addrs.AES_ROM_FS_INPUT
+FS_SECOND_ROW = fsl.FIRST_NAME + 1      # the object of the list's second row: what the click selects
+FS_SELECTED = "F001.DAT"                # ...the name in it, the sorted list's second
+# A wait at a time: a key typed; the second row clicked (TOUCHEXIT: fm_do ends, the name is selected, fm_do begins
+# again); the button released and the down arrow clicked (the list scrolls); released, and Return.
+FS_SESSION = ss.Session(ss.folder("TEN"), "", ss.schedule([ss.typed("a"), ss.click(FS_SECOND_ROW),
+                                                           (ss.release, ss.click(ss.DOWN_ARROW)), (ss.release, ss.RETURN)]),
+                        ss.MIDDLE, shown=True)
+FS_SESSION_SPEND = 631_480             # the session's ROM run, measured: what its declared budget (ss.MIDDLE) is from
+FS_SESSION_DOOR_CALLS = 16             # fm_do entered four times: the lock taken and given back, the mouse's owner, a wait
+
+
+def _fs_machine():
+    """What the session starts from: `aes_fslib.fs_input_machine` over its path, the cursor shown."""
+    return fsl.fs_input_machine(FS_SESSION.path, FS_SESSION.selection, shown=FS_SESSION.shown)
+
+
+def _fs_session_over(machine, session=FS_SESSION):
+    """`(machine, delivered)`: `session` over `machine`, and its deliveries — ONE run of the ROM's fs_input under its
+    declared budget (`aes_event.deliveries`)."""
+    return machine, aes_event.deliveries(fsl.INPUT, fsl.ARGUMENTS, machine, ss.interrupts_of(session, machine), session.budget)
+
+
+@functools.cache
+def _fs_session():
+    """...over the machine as it is staged (`_fs_machine`), derived once per worker."""
+    return _fs_session_over(_fs_machine())
+
+
+GEMDOS_TRAP = fsl.GEMDOS_TRAP
+ENTRY, RETURN, door_call, trap_taken = aes_event.ENTRY, aes_event.RETURN, aes_event.door_call, aes_event.trap_taken
+WAIT, LOCK = addrs.AES_ROM_EV_MULTI, addrs.AES_ROM_TAK_FLAG
+# GEMDOS calls, by their arrival: three Mallocs, then Fsetdta (3) — the dialog is drawn by then — Fsfirst and an Fsnext
+# per entry (the folder's two dots, its ten files), the last (16) answering no more.
+FS_MALLOCS = FS_MFREES = 3
+FS_SETDTA, FS_LAST_SNEXT = FS_MALLOCS, 16
+# THE SESSION'S SHAPES, in order, each cut where both shores arrive at one PC: the dialog drawn; the directory read; the
+# list sorted, formatted and drawn (up to fm_do's own first door call, the screen's lock taken); the dialog taken; a key
+# typed; a slot clicked and its name selected; a scroll; Return and the dialog put away.
+FS_CUTS = (ENTRY, trap_taken(GEMDOS_TRAP, FS_SETDTA), trap_taken(GEMDOS_TRAP, FS_LAST_SNEXT), door_call(LOCK, 0),
+           door_call(WAIT, 0), door_call(WAIT, 1), door_call(WAIT, 2), door_call(WAIT, 3), RETURN)
+FS_SHAPES = dict(zip(("the dialog drawn", "the directory read", "the list sorted, formatted and drawn",
+                      "the dialog taken, to its first wait", "a key typed", "a slot clicked, its name selected",
+                      "the list scrolled", "Return: the dialog put away"),
+                     (aes_event.Slice(*ends) for ends in zip(FS_CUTS, FS_CUTS[1:]))))
+# What the ROM's run spends in each (instructions), measured.
+FS_SHAPE_INSNS = {"the dialog drawn": 184_760, "the directory read": 24_634,
+                  "the list sorted, formatted and drawn": 155_170, "the dialog taken, to its first wait": 5_309,
+                  "a key typed": 18_912, "a slot clicked, its name selected": 29_251, "the list scrolled": 86_287,
+                  "Return: the dialog put away": 127_157}
+
+
+def _fs_marks(slice_, session=None, **marked):
+    """The ROM's run of the session (`session`: `(machine, delivered)`), marked at `slice_`'s ends (`rom_sliced`)."""
+    machine, delivered = session or _fs_session()
+    marks, _memory = aes_event.rom_sliced(fsl.INPUT, fsl.ARGUMENTS, machine, delivered, slice_, budget=FS_SESSION.budget,
+                                          **marked)
+    return marks
+
+
+def _fs_timeline(*traps):
+    machine, delivered = _fs_session()
+    return aes_event.rom_timeline(fsl.INPUT, fsl.ARGUMENTS, machine, delivered, traps, budget=FS_SESSION.budget)
+
+
+def _fs_image(machine=None):
+    """The session staged: the machine with fs_input's frame (`aes.staged`), as an image a run starts on."""
+    return make_image(aes.staged(fsl.INPUT, fsl.ARGUMENTS, _fs_machine() if machine is None else machine))
+
+
+def _everywhere(ours, the_rom_s):
+    """Two ROM runs' memories compared whole: nothing differs by nature between a run and itself."""
+    return aes_event.differing(ours, the_rom_s, frozenset())
+
+
+def test_the_file_selector_s_session_is_refused_under_the_default_budget_by_name():
+    with pytest.raises(AssertionError, match="inside DERIVATION_INSNS' margin"):
+        _fs_session_over(_fs_machine(), FS_SESSION._replace(budget=None))
+
+
+# The prefix of that session up to fm_do's first wait: no interrupt is delivered before it, so `emu.run` makes it —
+# under the budget the selector's battery declares for its prefixes (`aes_fslib.PREFIX_BUDGET`).
+def test_a_prefix_s_declared_budget_is_its_run_s_cap_whatever_the_default(monkeypatch):
+    """`stopped_at`'s declared budget is what its run is CAPPED at, not only vetted against (THE RED: capped at the
+    default, this prefix — past the default as patched here — would end before its stop): under a default the
+    prefix's spend is past, the run still reaches the wait."""
+    monkeypatch.setattr(aes_event, "DERIVATION_INSNS", aes_event.DIFFERENTIAL_INSNS)
+    _final, _writes, regs = aes_event.stopped_at(_fs_image(), FS_INPUT, WAIT, fsl.PREFIX_BUDGET)
+    assert regs["checkpoint"] and regs["ninsns"] > aes_event.DERIVATION_INSNS
+
+
+def test_a_prefix_inside_its_declared_budget_s_margin_is_refused_by_name():
+    """...and it is held to that budget's margin, by name: one the prefix fits less than five times over."""
+    with pytest.raises(AssertionError, match=r"inside its declared budget's \(\d+\) margin of 5: raise the row's budget"):
+        aes_event.stopped_at(_fs_image(), FS_INPUT, WAIT, aes_event.DERIVATION_INSNS + 1)
+
+
+def test_the_file_selector_s_session_is_the_one_its_shapes_describe():
+    """The ROM's fs_input over the session: OK answered, the row clicked the selection, the path as it was."""
+    machine, delivered = _fs_session()
+    timeline = _fs_timeline(GEMDOS_TRAP)
+    assert timeline[-1].at == RETURN and timeline[-1].spent["insns"] == FS_SESSION_SPEND
+    waits = [arrival for arrival in timeline if arrival.at != RETURN and arrival.at.pc == WAIT]
+    assert [arrival.calls for arrival in waits] == sorted(delivered), "the premise: each wait takes a schedule's row"
+    assert [arrival.at for arrival in waits] == [door_call(WAIT, nth) for nth in range(len(waits))]
+    _calls, _delivered, memory, result = aes_event.rom_interrupted(fsl.INPUT, fsl.ARGUMENTS, machine, None, delivered,
+                                                                   FS_SESSION.budget)
+    assert aes.signed(result["d0"]) == 1 and case.word_in(memory, fsl.BUTTON_AT) == 1
+    assert (aes_strings.string_in(memory, fsl.FILE_AT), aes_strings.string_in(memory, fsl.PATH_AT)) == (
+        FS_SELECTED.encode(), FS_SESSION.path.encode())
+
+
+@pytest.mark.parametrize("shape", FS_SHAPES)
+def test_each_shape_of_the_file_selector_s_session_is_a_slice_under_the_cap(shape):
+    """Each shape is a slice of the ROM's run, under the cap, costing what was measured — and two runs of the session
+    agree at both its ends (`vet_the_marks_agree`: the oracle on both shores)."""
+    slice_ = FS_SHAPES[shape]
+    the_rom_s, ours = _fs_marks(slice_), _fs_marks(slice_)
+    aes_event.vet_the_marks_agree(shape, ours, the_rom_s, _everywhere)
+    spent = the_rom_s.spent(shape)
+    aes_event.vet_under_the_slice_cap(shape, slice_, spent["insns"])
+    assert spent["insns"] == FS_SHAPE_INSNS[shape] and ours.spent(shape) == spent
+
+
+def test_the_shapes_partition_the_session():
+    """The cuts leave nothing out and count nothing twice: the shapes' costs sum to the whole run's."""
+    assert sum(FS_SHAPE_INSNS.values()) == FS_SESSION_SPEND
+    session = _fs_marks(aes_event.Slice(ENTRY, RETURN))
+    assert session.at(RETURN, "the session").calls == FS_SESSION_DOOR_CALLS
+    whole = session.spent("the session")
+    spent = [_fs_marks(slice_).spent(shape) for shape, slice_ in FS_SHAPES.items()]
+    assert {name: sum(each[name] for each in spent) for name in whole} == whole
+
+
+def _fs_session_marked(slices, **marked):
+    """ONE run of the session, marked at the ends of ALL of `slices` (`Marks`' `others`): its marks."""
+    first, *others = slices
+    return _fs_marks(first, others=tuple(others), **marked)
+
+
+def test_one_run_marked_at_every_shape_s_ends_prices_each_as_its_own_run_does():
+    """ONE RUN MARKS EVERY SLICE OF ITS SESSION: the eight shapes read off one run (`Marks.cut_to`) are each what a
+    run marked for that shape alone measures — its cost, and the door calls and the memory at both its ends."""
+    shared = _fs_session_marked(tuple(FS_SHAPES.values()))
+    for shape, slice_ in FS_SHAPES.items():
+        cut, alone = shared.cut_to(slice_), _fs_marks(slice_)
+        assert cut.slice == slice_ and cut.spent(shape) == alone.spent(shape), shape
+        assert cut.ends(shape) == alone.ends(shape), shape
+        assert cut.spent(shape)["insns"] == FS_SHAPE_INSNS[shape]
+
+
+def test_a_run_s_marks_are_read_only_for_a_slice_it_was_marked_at():
+    """RED: marks cut to a slice the run was not marked at are refused by name — and so is a slice that is none."""
+    marks = _fs_marks(FS_SHAPES["a key typed"])
+    with pytest.raises(AssertionError, match="the run was not marked at"):
+        marks.cut_to(FS_SHAPES["the list scrolled"])
+    with pytest.raises(AssertionError, match="no run is between"):
+        aes_event.Marks(FS_SHAPES["a key typed"], aes_event.run_cost, others=(aes_event.Slice(RETURN, ENTRY),))
+
+
+def test_a_run_marked_at_every_door_call_keeps_its_timeline():
+    """`every_door_call`: an arrival for each door call the run makes — in order, numbered per entry, after as many
+    calls — and for each end it is marked at (here two GEMDOS calls, where no door call falls), the return last; and
+    the marks are what they are without it. Without it no timeline is kept."""
+    slice_ = FS_SHAPES["the directory read"]
+    marks = _fs_session_marked((slice_,), every_door_call=True)
+    arrivals = [arrival.at for arrival in marks.timeline]
+    assert arrivals[:2] == list(slice_) and arrivals[-1] == RETURN and len(arrivals) == 2 + FS_SESSION_DOOR_CALLS + 1
+    doors = marks.timeline[2:-1]
+    assert [arrival.calls for arrival in doors] == list(range(FS_SESSION_DOOR_CALLS))
+    assert [arrival.at for arrival in doors if arrival.at.pc == WAIT] == [door_call(WAIT, nth) for nth in range(4)]
+    spent = [arrival.spent["insns"] for arrival in marks.timeline]
+    assert spent == sorted(spent) and spent[-1] == FS_SESSION_SPEND
+    assert marks.spent("the read") == _fs_marks(slice_).spent("the read")
+    assert _fs_marks(slice_).timeline is None
+
+
+def test_a_slice_over_the_cap_is_refused_by_name():
+    """RED: the listing uncut — entry to fm_do's first door call, no door call inside it — is past the cap: refused,
+    to be cut at a trap it takes (as the shapes above cut it, at GEMDOS's)."""
+    listing = aes_event.Slice(ENTRY, door_call(LOCK, 0))
+    spent = _fs_marks(listing).spent("the listing")
+    assert spent["insns"] == sum(FS_SHAPE_INSNS[shape] for shape in list(FS_SHAPES)[:3])
+    with pytest.raises(AssertionError, match=rf"runs {spent['insns']} ROM instructions, past SLICE_INSNS \(200000\): "
+                                             rf"cut it finer"):
+        aes_event.vet_under_the_slice_cap("the listing", listing, spent["insns"])
+
+
+def test_the_cap_is_the_most_a_slice_may_run():
+    slice_ = FS_SHAPES["a key typed"]
+    aes_event.vet_under_the_slice_cap("a key typed", slice_, aes_event.SLICE_INSNS)
+    with pytest.raises(AssertionError, match="past SLICE_INSNS"):
+        aes_event.vet_under_the_slice_cap("a key typed", slice_, aes_event.SLICE_INSNS + 1)
+
+
+def test_a_slice_started_one_door_late_is_refused_by_name():
+    """RED: one shore marked a door call late — the next wait, where the ROM's slice starts at this one."""
+    scroll = FS_SHAPES["the list scrolled"]
+    late = aes_event.Slice(door_call(WAIT, scroll.start.nth + 1), RETURN)
+    the_rom_s, ours = _fs_marks(aes_event.Slice(scroll.start, RETURN)), _fs_marks(late)
+    with pytest.raises(AssertionError, match="our slice starts at door call 13 .* where the ROM's starts at door call "
+                                             "8 .* another slice of the session"):
+        aes_event.vet_the_marks_agree("the list scrolled", ours, the_rom_s, _everywhere)
+
+
+def test_a_slice_whose_run_took_another_road_to_its_start_is_refused_by_name():
+    """RED: the same slice by name — the session's third wait — reached after another number of door calls: a session
+    whose first click is a key instead never leaves fm_do before it."""
+    other = _fs_session_over(_fs_machine(), FS_SESSION._replace(waits=ss.schedule([ss.typed("a"), ss.typed("b"), ss.RETURN])))
+    slice_ = aes_event.Slice(door_call(WAIT, 2), RETURN)
+    with pytest.raises(AssertionError, match="our slice starts at door call 4 .* where the ROM's starts at door call 8"):
+        aes_event.vet_the_marks_agree("from the third wait", _fs_marks(slice_, other), _fs_marks(slice_), _everywhere)
+
+
+def test_a_run_that_diverged_before_the_slice_s_start_is_refused_by_name():
+    """RED: one shore's machine differs in a byte nothing reads or writes — every count agrees, and the slice is
+    still refused: its start is not the ROM's machine."""
+    diverged = _fs_session_over(merge_pokes(_fs_machine(), {UNREAD_BYTE: bytes([STALE_BYTE])}))
+    slice_ = FS_SHAPES["a key typed"]
+    with pytest.raises(AssertionError, match=rf"our run diverged before the slice's start — at arrival 0 at "
+                                             rf"{WAIT:#x} \(door call 2\) 1 bytes differ.*{UNREAD_BYTE:#x}"):
+        aes_event.vet_the_marks_agree("a key typed", _fs_marks(slice_, diverged), _fs_marks(slice_), _everywhere)
+
+
+def test_a_run_that_diverged_inside_a_slice_from_the_entry_is_refused_at_its_end():
+    """...and for a slice from the ENTRY (no memory to compare there: both shores start from one image) the same
+    divergence is refused at the slice's end."""
+    diverged = _fs_session_over(merge_pokes(_fs_machine(), {UNREAD_BYTE: bytes([STALE_BYTE])}))
+    slice_ = FS_SHAPES["the dialog drawn"]
+    with pytest.raises(AssertionError, match="our run diverged inside the slice"):
+        aes_event.vet_the_marks_agree("the dialog drawn", _fs_marks(slice_, diverged), _fs_marks(slice_), _everywhere)
+
+
+def test_a_slice_end_the_run_never_reaches_is_refused_by_name():
+    with pytest.raises(AssertionError, match="never reached arrival 4 at .*its arrivals at that PC: 4"):
+        _fs_marks(aes_event.Slice(door_call(WAIT, 3), door_call(WAIT, 4))).ends("the ROM's run")
+
+
+def test_a_slice_that_runs_backwards_is_refused_by_name():
+    with pytest.raises(AssertionError, match="no slice runs backwards"):
+        _fs_marks(aes_event.Slice(door_call(WAIT, 1), door_call(LOCK, 0))).ends("the ROM's run")
+
+
+@pytest.mark.parametrize("ends", ((RETURN, door_call(WAIT, 0)), (door_call(WAIT, 0), ENTRY), (ENTRY, ENTRY),
+                                  (door_call(WAIT, 0), door_call(WAIT, 0))),
+                         ids=("from the return", "to the entry", "entry to entry", "a call to itself"))
+def test_a_slice_between_no_two_points_is_refused(ends):
+    with pytest.raises(AssertionError, match="no run is between"):
+        aes_event.Marks(aes_event.Slice(*ends), aes_event.run_cost)
+
+
+def test_a_slice_end_names_a_door_call_or_a_trap_never_the_other():
+    with pytest.raises(AssertionError, match="is no entry of the event door"):
+        door_call(GEMDOS_TRAP, 0)
+    with pytest.raises(AssertionError, match="is a door entry: name its call with `door_call`"):
+        trap_taken(WAIT, 0)
+
+
+class _EveryTrap:
+    """A watch that counts EVERY arrival at `trap`'s handler — inside door calls too — round another watch (`inner`,
+    which lays the session's deliveries): the count `Timeline`'s is held against."""
+
+    def __init__(self, inner, trap):
+        self._inner, self._trap = inner, trap
+        self.first = self._armed = inner.first | {trap}
+        self.arrivals, self._back = 0, None
+
+    def stopped(self, pc, sp, memory):
+        if pc == self._back:
+            self._back = None
+            return self._armed
+        if pc == self._trap:
+            self.arrivals += 1
+            self._back = case.long_in(memory, sp + aes_event.EXCEPTION_FRAME_PC)
+            return frozenset({self._back})
+        self._armed = frozenset(self._inner.stopped(pc, sp, memory)) | {self._trap}
+        return self._armed
+
+
+VDI_CALLS_OF_A_KEYBOARD_POLL = 3        # chkkbd's, at the head of every ev_multi: vq_key_s, vsin_mode, vsm_string
+
+
+def test_a_marked_trap_taken_inside_another_marked_trap_is_refused_by_name():
+    """A `trap_taken` ordinal is of the run's MARKS (RED, on the watch itself — no session nests one today): a run
+    marked at two handlers that takes one INSIDE the other would count that arrival in no run marked at both and in
+    every run marked at the inner one alone, so the watch keeps the other handler armed inside a marked trap and
+    refuses the nesting by name. Marked at the outer one alone, the same run is as it ever was: only the trap's
+    return is watched."""
+    outer, inner, sp, back = GEMDOS_TRAP, fsl.VDI_TRAP, aes_event.BAND_AT, FS_INPUT
+    memory = bytearray(make_image({sp + aes_event.EXCEPTION_FRAME_PC: struct.pack(">I", back)}))
+
+    def watch_marked_at(*handlers):
+        watch = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS)
+        return watch.marked_with(aes_event.Timeline(handlers))
+    both = watch_marked_at(outer, inner)
+    assert both.stopped(outer, sp, memory) == {back, inner}
+    with pytest.raises(AssertionError, match=rf"took the trap at {inner:#x} INSIDE the trap at {outer:#x}, and is "
+                                             rf"marked at both"):
+        both.stopped(inner, sp, memory)
+    alone = watch_marked_at(outer)
+    assert alone.stopped(outer, sp, memory) == {back}
+    assert alone.stopped(back, sp, memory) == alone.first == {*aes_event.ENTRIES, outer}
+
+
+def test_a_trap_taken_inside_a_door_call_is_no_arrival():
+    """The arrivals at a trap's handler are those the ROUTINE makes, outside its door calls: the event layer's own —
+    the keyboard poll at the head of every ev_multi, through the VDI's `trap #2` — are not counted, on either shore,
+    so the count is one both make. Held against a watch that counts them all: more, by at least each wait's poll."""
+    machine, delivered = _fs_session()
+    vdi_trap = fsl.VDI_TRAP
+    arrivals = [arrival.at.pc for arrival in _fs_timeline(GEMDOS_TRAP, vdi_trap)[:-1]]
+    assert arrivals.count(GEMDOS_TRAP) == FS_LAST_SNEXT + 1 + FS_MFREES
+    every = _EveryTrap(aes_event.delivering(delivered), vdi_trap)
+    assert aes_event.run_watched(_fs_image(machine), FS_INPUT, every, budget=FS_SESSION.budget)
+    waits = arrivals.count(WAIT)
+    assert every.arrivals - arrivals.count(vdi_trap) >= waits * VDI_CALLS_OF_A_KEYBOARD_POLL > 0
+
+
+# ---- ...and fm_do's long typing session, the C against the ROM: its registered slices (`test_aes_fmdo.SESSION_SLICES`) ---
+def test_the_first_key_is_cut_at_a_vdi_call_inside_it():
+    """The cut `VDI_CALL_IN_THE_FIRST_KEY` is where its label says: taken after the first wait and before the second."""
+    name, arguments, machine, _interrupts = fmdo.session()
+    delivered = _session_deliveries(fmdo.SESSION_INSNS)
+    timeline = aes_event.rom_timeline(name, arguments, machine, delivered, (fmdo.VDI_TRAP,), budget=fmdo.SESSION_INSNS)
+    waits = [arrival.calls for arrival in timeline[:-1] if arrival.at.pc == fmdo.WAIT]
+    inside = [arrival.at.nth for arrival in timeline[:-1]
+              if arrival.at.pc == fmdo.VDI_TRAP and waits[0] < arrival.calls <= waits[1]]
+    assert fmdo.VDI_CALL_IN_THE_FIRST_KEY in inside[1:-1], inside
+
+
+@pytest.mark.parametrize("label", fmdo.SESSION_SLICES)
+def test_each_registered_slice_of_the_typing_session_is_under_the_cap_on_the_rom_s_run(label):
+    name, arguments, machine, _interrupts = fmdo.session()
+    spent = aes_event.slice_cost(name, arguments, machine, _session_deliveries(fmdo.SESSION_INSNS),
+                                 aes_event.Slice(*fmdo.SESSION_SLICES[label]), budget=fmdo.SESSION_INSNS)
+    assert 0 < spent["insns"] < aes_event.SLICE_INSNS
+
+
+def test_a_session_that_never_returns_has_no_slices():
+    """The typing session with its Return never typed blocks at its last wait: marked, it is refused by name — a
+    slice is of a run that ends."""
+    name, arguments, machine, _interrupts = fmdo.session()
+    delivered = aes_event.deliveries(name, arguments, machine, aes_event.typed(fmdo.SESSION_TEXT), fmdo.SESSION_INSNS)
+    with pytest.raises(AssertionError, match="a session priced by its slices returns"):
+        aes_event.rom_sliced(name, arguments, machine, delivered, aes_event.Slice(ENTRY, door_call(WAIT, 0)),
+                             budget=fmdo.SESSION_INSNS)
+
+
+def test_a_slice_measured_before_it_is_registered_is_held_under_the_cap():
+    """`slice_cost` — what a battery cuts its session by — refuses the session whole: 728,664 instructions."""
+    name, arguments, machine, _interrupts = fmdo.session()
+    with pytest.raises(AssertionError, match=rf"runs {SESSION_SPEND} ROM instructions, past SLICE_INSNS"):
+        aes_event.slice_cost(name, arguments, machine, _session_deliveries(fmdo.SESSION_INSNS),
+                             aes_event.Slice(ENTRY, RETURN), budget=fmdo.SESSION_INSNS)
+
+
+def test_a_session_nothing_is_delivered_to_registers_no_slices():
+    """A session with its keys in the ring before the call has no delivery: its original would be an unwatched run,
+    which nothing marks — refused by name."""
+    with pytest.raises(AssertionError, match="a session priced by its slices is taken through interrupts"):
+        aes_event.register_slices(fmdo.DO, FM_DO_ARGUMENTS, fmdo.in_the_ring(aes_event.RETURN_KEY), aes_event.Waits({}),
+                                  {"the whole of it": (ENTRY, RETURN)}, objects=True)

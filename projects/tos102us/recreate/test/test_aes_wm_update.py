@@ -110,13 +110,14 @@ SLOTS = merge_pokes(wm.DRAW_SLOTS, *(aes.stale_host_slot(role) for role in (
 # gl_rmsg staged stale: every word of a WM_REDRAW the C skipped shows.
 STALE_MESSAGE = aes.field_pokes("AES", GL_RMSG=bytes([case.SLACK_FILL]) * MESSAGE_BYTES)
 STALE_WORD = int.from_bytes(bytes([case.SLACK_FILL]) * aes.WORD_BYTES, "big")    # a word of it: nothing posted there
-# THE BUDGET: measured, the longest ROM run here is draw_change's of a lower window moved and resized,
-# DEEPEST_ROM_RUN_INSNS (`test_the_longest_run_fits_the_budget`) — past the oracle's default 200,000. The cases run at
-# CASE_MARGIN times it, and every case's ROM run is held that far under CASE_INSNS (`run`): one inside the margin, or
-# past the budget, is refused by name, the budget to be raised from that run.
+# THE CAP: measured, the longest ROM run here is draw_change's of a lower window moved and resized,
+# DEEPEST_ROM_RUN_INSNS (`test_the_longest_run_fits_the_cap`) — past the oracle's default 200,000. So the BATTERY
+# declares one cap from it on the event door's one mechanism (`aes_event.battery_cap`: that run needs it and fits it
+# by the derivations' margin, the least that does), and every case's ROM run is held that far under it at the door
+# (`aes_event.run_event`'s `cap`): one inside the margin, or past the cap, is refused by name, the cap to be raised
+# from that run.
 DEEPEST_ROM_RUN_INSNS = 244_097
-CASE_MARGIN = 2
-CASE_INSNS = CASE_MARGIN * DEEPEST_ROM_RUN_INSNS
+CASE_CAP = aes_event.battery_cap(DEEPEST_ROM_RUN_INSNS * aes_event.DERIVATION_MARGIN, deepest=DEEPEST_ROM_RUN_INSNS)
 
 
 def with_stale_slots(pokes, *over):
@@ -127,20 +128,9 @@ def with_stale_slots(pokes, *over):
 
 def run(name, arguments, pokes, *, over=None, **kwargs):
     """`name` through the event door over `with_stale_slots(pokes, over)`, every door its C reaches bound, its C first in
-    a child (`aes_event.run_guarded`) — the ROM's run held CASE_MARGIN times under CASE_INSNS."""
-    try:
-        result = aes_event.run_guarded(name, arguments, with_stale_slots(pokes, over), drawing=True, objects=WALKERS,
-                                       max_insns=CASE_INSNS, **kwargs)
-    except RuntimeError as refused:
-        if f"within {CASE_INSNS} instructions" not in str(refused):
-            raise
-        raise AssertionError(f"{name}: the ROM's run did not return within CASE_INSNS ({CASE_INSNS}): raise the "
-                             f"budget, from this run") from None
-    spent = result.info["regs"]["ninsns"]
-    assert spent * CASE_MARGIN <= CASE_INSNS, (
-        f"{name}: the ROM's run spent {spent} instructions — inside CASE_INSNS' margin of {CASE_MARGIN}: raise the "
-        f"budget, from this run")
-    return result
+    a child (`aes_event.run_guarded`) — the ROM's run held under the battery's cap by its margin (CASE_CAP)."""
+    return aes_event.run_guarded(name, arguments, with_stale_slots(pokes, over), drawing=True, objects=WALKERS,
+                                 cap=CASE_CAP, **kwargs)
 
 
 def leaf(name, arguments, pokes=None, **kwargs):
@@ -847,26 +837,38 @@ def deepest_derivation():
     return aes_event.rom_watched(DRAW_CHANGE, *_deepest_case())
 
 
-def test_the_longest_run_fits_the_budget():
+def test_the_longest_run_fits_the_cap():
+    """The battery's cap is declared from this run (`aes_event.battery_cap` holds the declaration to it both ways):
+    re-measured here."""
     staged = aes.staged(DRAW_CHANGE, *_deepest_case())
-    _final, _writes, regs = emu.run(make_image(staged), addrs.AES_ROM_DRAW_CHANGE, max_insns=CASE_INSNS)
-    assert regs["ninsns"] == DEEPEST_ROM_RUN_INSNS
+    _final, _writes, regs = emu.run(make_image(staged), addrs.AES_ROM_DRAW_CHANGE, max_insns=CASE_CAP.insns)
+    assert regs["ninsns"] == DEEPEST_ROM_RUN_INSNS == CASE_CAP.deepest
     assert deepest_derivation()[2]
 
 
-def test_a_run_inside_the_case_budget_s_margin_is_refused_by_name(monkeypatch):
-    """THE RED for the margin `run` holds every case to: under a budget the deepest run fits, but not by CASE_MARGIN,
-    that case is refused by name — no hand-kept count has to notice a deeper case."""
-    monkeypatch.setitem(globals(), "CASE_INSNS", DEEPEST_ROM_RUN_INSNS * CASE_MARGIN - 1)
-    with pytest.raises(AssertionError, match="inside CASE_INSNS' margin"):
+# A cap as a battery holds one whose deepest run was measured SHORTER than the run that now comes: built as declared
+# (`aes_event.BatteryCap`), past `battery_cap`'s own vet of the declaration — which is the state these two refuse.
+def test_a_run_inside_the_battery_s_cap_s_margin_is_refused_by_name(monkeypatch):
+    """THE RED for the margin `run` holds every case to: under a cap the deepest run fits, but not by the margin, that
+    case is refused by name — no hand-kept count has to notice a deeper case."""
+    short = DEEPEST_ROM_RUN_INSNS * aes_event.DERIVATION_MARGIN - 1
+    monkeypatch.setitem(globals(), "CASE_CAP", aes_event.BatteryCap(short, DEEPEST_ROM_RUN_INSNS))
+    with pytest.raises(AssertionError, match=rf"inside its battery's declared cap's \({short}\) margin of 5"):
         run(DRAW_CHANGE, *_deepest_case())
 
 
-def test_a_run_past_the_case_budget_is_refused_by_name(monkeypatch):
-    """...and a ROM run past the budget itself is refused by the budget's name, not the oracle's bare overrun."""
-    monkeypatch.setitem(globals(), "CASE_INSNS", DEEPEST_ROM_RUN_INSNS - 1)
-    with pytest.raises(AssertionError, match="did not return within CASE_INSNS"):
+def test_a_run_past_the_battery_s_cap_is_refused_by_name(monkeypatch):
+    """...and a ROM run past the cap itself is refused by the cap's name, not the oracle's bare overrun."""
+    short = DEEPEST_ROM_RUN_INSNS - 1
+    monkeypatch.setitem(globals(), "CASE_CAP", aes_event.BatteryCap(short, DEEPEST_ROM_RUN_INSNS))
+    with pytest.raises(AssertionError, match=rf"did not return within its declared cap \({short}\)"):
         run(DRAW_CHANGE, *_deepest_case())
+
+
+def test_a_raw_instruction_cap_is_no_way_round_the_battery_s(monkeypatch):
+    """...and `max_insns`, the spelling this battery's cases used before the cap had one door, is refused by name."""
+    with pytest.raises(AssertionError, match="a raw max_insns .* was handed past the cap's door"):
+        run(DRAW_CHANGE, *_deepest_case(), max_insns=CASE_CAP.insns)
 
 
 @pytest.mark.parametrize("field, gadget", (("WF_NAME", "NAME"), ("WF_INFO", "INFO")))

@@ -14,7 +14,7 @@ counts in this file against its rows.
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments), and Scrdmp (entered only through the VBL and v_hardcopy's `trap #14`) | STARTED |
 | gemdos | 109 | — | 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
 | vdi + linea | 151 | — | shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 48 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)), the escape's `.S` rows that reach the BIOS console's C through its own thunks 1.31–2.43x as shipped, verdict `own` (T←: its own instructions within the bar, the console's C carried by five cited Bconout(CON:) acceptances); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.42–1.10), fourteen rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–2.05 shipped, 0.69–1.08 net of the thunks); the GEMDOS-trap rows priced over a staged `trap #1` with LINEA_RETSAV dropped by name | COMPLETE but the deferred BLITTER bodies |
-| aes | 262 | — | shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.20–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks); every row whose C reaches the event layer through THE EVENT DOOR priced net of its door windows (EV: 0.20–1.04 — gr_stilldn, gr_watchbox (V+EV), ap_sendmsg; band 3 wave 1's window update, screen lock, drag loops and menus 0.20–0.82; band 3 wave 2's forms and alerts 0.29–0.87 over a sixth door entry, ev_button; the rows taken THROUGH INTERRUPTS (16, 0.58–0.80) priced the same way, their deliveries laid at the same door calls on every run of both sides — our run watched at the door's entries, the original's watched too, both sides' windows equal cycle by cycle and frame by frame); just_draw's ALCYON ENTRY `src/aes/obdraw.S` — the routine the target ob_draw hands everyobj — target-only glue, its cycles counted as glue (T→G: ob_draw 0.75–0.89 own, 0.88–1.01 with it), and newrect's and mkrect's in `src/aes/wmupdate.S` (draw_change's walk) the same way, gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; `dos_free`, `dos_sdta` and `dos_close` verified and unpriced (a host argument) | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations; band 2 wave 3: the object draw path (ob_format, far_call, ob_user, just_draw, ob_draw, ob_change) — BAND 2 COMPLETE; band 3 wave 0: THE EVENT DOOR with its pilots (gr_stilldn, gr_watchbox, ap_sendmsg, ct_mouse), the object editor (ob_edit and its ten helpers) and the window library's pure half (23 routines); band 3 wave 1: the window messages and update with the screen lock (13 routines), the interactive gemgrlib and the menu library (16), five more door entries and interrupts delivered at door entries; band 3 wave 2: the forms and the alerts (gemfmlib, gemfmalt, the keyboard-queue leaves fq / dq and fm_do's bell — 16 routines), ev_button the sixth door entry, the interrupted rows priced and fully vetted, keys delivered through the BIOS keyboard handler |
+| aes | 273 | — | shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.20–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks); every row whose C reaches the event layer through THE EVENT DOOR priced net of its door windows (EV: 0.20–1.04 — gr_stilldn, gr_watchbox (V+EV), ap_sendmsg; band 3 wave 1's window update, screen lock, drag loops and menus 0.20–0.82; band 3 wave 2's forms and alerts 0.29–0.87 over a sixth door entry, ev_button; band 3 wave 3's file selector, fs_input, 0.62–0.96 by the SLICES of six sessions and 0.73–0.77 on its three no-memory arms; the rows taken THROUGH INTERRUPTS (55, 0.58–0.96 — 39 of them SLICES of seven sessions too long for one row, each the run between two arrivals both shores make at one PC, our memory held to the ROM's at both) priced the same way, their deliveries laid at the same door calls on every run of both sides — our run watched at the door's entries, the original's watched too, both sides' windows equal cycle by cycle and frame by frame); just_draw's ALCYON ENTRY `src/aes/obdraw.S` — the routine the target ob_draw hands everyobj — target-only glue, its cycles counted as glue (T→G: ob_draw 0.75–0.89 own, 0.88–1.01 with it), and newrect's and mkrect's in `src/aes/wmupdate.S` (draw_change's walk) the same way, gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; the selector's rows that reach GEMDOS priced over GEMDOS REPLAYED (the ROM's own answers and DTAs, call by call, every frame in a ledger the differential compares); `dos_free`, `dos_sdta`, `dos_close` and the bell's Cconout glue verified and unpriced (a host argument) | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations; band 2 wave 3: the object draw path (ob_format, far_call, ob_user, just_draw, ob_draw, ob_change) — BAND 2 COMPLETE; band 3 wave 0: THE EVENT DOOR with its pilots (gr_stilldn, gr_watchbox, ap_sendmsg, ct_mouse), the object editor (ob_edit and its ten helpers) and the window library's pure half (23 routines); band 3 wave 1: the window messages and update with the screen lock (13 routines), the interactive gemgrlib and the menu library (16), five more door entries and interrupts delivered at door entries; band 3 wave 2: the forms and the alerts (gemfmlib, gemfmalt, the keyboard-queue leaves fq / dq and fm_do's bell — 16 routines), ev_button the sixth door entry, the interrupted rows priced and fully vetted, keys delivered through the BIOS keyboard handler; band 3 wave 3: the file selector (gemfslib's nine event-free routines and fs_input run whole as sessions, dos_snext and the bell's Cconout glue — 11 routines and one unpriced), a case's own derivation budget, sessions priced by their slices with the partition held, GEMDOS replayed — BAND 3 COMPLETE |
 | desk | 0 | — | — | NOT STARTED |
 | data | — | — | — | NOT STARTED |
 
@@ -420,7 +420,7 @@ the C measures over the 1.10 bar; the BLITTER bodies are deferred (see `## Not r
 | `0xfcb998` | `v_clswk` (opcode 2, same) | 2 + 1 | 4366 / 119510 none open, 4447 / 121142 four open | **1.01** none open, **1.01** four open (T→) | ✅ verified | every record after the physical one Mfree'd IN LIST ORDER through CUR_WORK (left 0) — the four Mfrees pinned in order by the appending ledger (a swapped-order mutant survived the single-slot one); the physical WS_NEXT left naming freed memory (ROM quirk); restore_timer_mouse. The four-open row over the staged trap, RETSAV dropped at Tier 3 only |
 | `0xfc427a` | `vdi_escape` (VDI opcode 5 — in the BIOS's range, under `vdi` because its code is `src/vdi/`, as `clear_span`'s is; SHIPS as `src/vdi/escape.S`, 4 byte-pinned spans + 13 thunks into `src/bios/vt52.c`; its C twin `src/vdi/escape.c`) | 203 C twin + 92 transcription | C twin 11 / 150 past the table, 19 / 244 vq_chcells, 14155 / 168060 v_exit_cur, 289 / 2954 v_curup drawn, 25096 / 325642 v_curtext line and scroll, 45 / 808 v_hardcopy, 34 / 744 v_fontinit; `.S` 13 / 190 past the table … 25111 / 325780 v_curtext | `.S` **1.00** on the 14 rows that are the escape's own code (the three NOTHING rows, vq_chcells, vq_curaddress, vq_tabstatus, v_rvon, v_rvoff, v_hardcopy, v_dspcur ×2, v_rmcur ×2, v_fontinit); the 24 `.S` rows that reach the console's C **1.31**–**2.43** as shipped, verdict `own` (T←); the C twin **1.09** v_hardcopy, the rest (T) `transcribed` | ✅ verified | THE `.S`: $fc427a..$fc42e5 (dispatch, the 20-word table, the two compares past it, v_offset), $fc442e..$fc4463 (vq_chcells, v_hardcopy, v_enter/exit_cur), $fc44dc..$fc455f (vs_curaddress, v_curtext, rv on/off, the two inquiries, v_dspcur, v_rmcur), $fc4a42..$fc4a9d (v_fontinit) pinned word for word with 27 exact relocations (the 20 table words as displacements from the TABLE — a new `Relocated.base` — eleven to arms, seven to console thunks; seven branch extension words); ESC E's thunk laid at the ROM's own body address so v_exit_cur falls into it and v_enter_cur's `bsr.s` reaches it; the `jmp`s to v_show_c/v_hide_c keep the ROM's addresses (CODE entries). The transcription relation over 55 cases with each ARM's register mask the measured union of what the two sides disagree in (the inquiries, v_hardcopy and v_fontinit clear nothing; the arms reaching the console's C its scratch); contract `d2-d7 a2-a5`, the ROM console's. Tier 3 by the DERIVED (T←) rule: own instructions 1.00 on 19 of the 24, 0.85 on the five edge rows (ESC A-D and J refuse through `beq.s $fc444e`, vq_chcells' `rts` INSIDE the span: 16 console cycles counted as the escape's), the rest carried by five cited `bios_bconout` acceptances. THE C: the dispatch's UNSIGNED `bhi` (negative words and $8000 fall past the table; $0101/$0165/$0166 do nothing) and all 22 arms incl. the undocumented 101 v_offset and 102 v_fontinit; the nine console arms entered by name and proved to be ESC's own table entries; vq_chcells columns-before-rows over contrl and over the console's own geometry; vs_curaddress's unchecked `subq` (0 → $ffff) and the N-flag clamp's exact $8000 boundary; the console cell address WRAPPED on the 24-bit bus (rows 0 and $ccce, ESC Y below the bias — the latent Bconout divergence this band found); v_curtext through the live state machine (controls, ESC Y across two calls, the `dbf` count unsigned at $8000, read-after-draw with intin on screen); v_offset read under the lock and not re-placing the cursor; v_fontinit on the ROM's three fonts, field order pinned by two headers over the console block; v_dspcur clearing the caller's intin[0] before v_show_c; v_hardcopy through the real `trap #14` → Scrdmp into a RECORDING `scr_dump` (one call, `_dumpflg` set after it). Unpinned: column 0 with the cursor drawn (past 1 MB even wrapped; host refusal), a zero-divide v_fontinit (vector 5; host refusal), the real printer dump, an odd intin pointer. Mutation (strict): C 66/68 + 2/2 Scrdmp order and count (+1 ABNORMAL: the bus-wrap revert, caught by the host abort); `.S` 8/9 on a private blob (1 equivalent); a spill in the `.S`'s own code reds 26 of 38 rows |
 
-## Verified — aes (262)
+## Verified — aes (273)
 
 The AES (`$fe387c..$fee8ff`, `src/aes/`), started 2026-09-30 on a read-only map of the whole GEM range and a FOUNDATION
 every later port builds on: `include/aes/{aes,objects}.h` (GEMBSS, THEGLO's tables, the object layer, the resource header, the
@@ -594,6 +594,61 @@ runs — declares "nothing" for the PSG and the named hardware (`emu.install_chi
 register file (`rom_bench.original_entered`). A seed or register file the previous run left reached the next before:
 measured, a watched original read another case's GPIP seed unrefused, and `parked`'s machine differed in 94 bytes by what
 ran before it.
+
+BAND 3 WAVE 3 (2026-10-03) adds THE FILE SELECTOR and completes band 3: 11 ✅ routines and one ⚠️. `src/aes/fslib.c`
+holds gemfslib whole — fs_start, fs_back, fs_pspec, fs_active, fs_1scroll, fs_format, fs_sel, fs_nscroll, fs_newdir and
+fs_input (`$fe7d90`, AES opcode 90, fsel_input); `gemdosif.c` gains dos_snext and the bell's Cconout glue.
+
+EVERY MACHINE IS THE ROM's OWN fs_input. The snapshot holds no selector state (its three block pointers are 0), and
+nothing is poked: the ROM's fs_input is run over the scheduler's running PD0 and a staged RAM disk into the ROM's REAL
+GEMDOS and stopped where a routine is entered (`aes_fslib.entered`, just past its `link`; `listed`, where the first
+fs_newdir has returned), the case's arguments read off the ROM's own frame. The disk is thirteen directories, one per
+shape — 0, 1, 9, 10, 99, 100 and 101 names; sorted, reversed and shuffled; folders among files; one name held three
+times — and four more disks, each the first plus ONE folder, so no machine over the first moves.
+
+GEMDOS REPLAYED is what Tier 3 prices over. Real GEMDOS cannot be priced (the trap entry's register save is the
+caller's, different by nature), so a staged `trap #1` handler answers a script — D0, and for a search the 44 DTA bytes —
+derived by calling the ROM's own GEMDOS, call by call, over the memory as it stood at each call, and records every
+frame in a ledger the differential compares. A replayed run is held to the real disk's wherever the selector can see
+GEMDOS. The AES staging window grew to 24 KB (`WINDOW_BYTES` `$6000`) for the script.
+
+fs_input's CASES ARE SESSIONS — the routine taken through what a user does at each wait (`test/aes_fs_sessions.py`: a
+schedule per wait, each click placed by the ROM's own ob_offset), every interrupt the ROM's own ISR's, GEMDOS replayed
+from the ROM's own run of the same session. 80 return and 20 are cut short at a wait. Each is held four ways:
+- the whole image at the end;
+- the image where the ROM blocks (the C refused at the same call — the selector still on the screen);
+- every VDI call in order (opcode, intin, ptsin);
+- what the selector HOLDS as each VDI call is made (`aes_fslib.held_in`: its tree's 25 objects, the texts of its three
+  fields and nine rows, its two scratches, the two paths — about 450 points a session), which is what sees a tree word
+  set and put back between two waits.
+Real GEMDOS on both shores, in process, covers what only one run can make: keys typed ahead, the three no-memory arms
+(the arena exhausted by the ROM's own Malloc), Line-F — with the glue's parked return addresses held at every call.
+
+A LONG CASE DECLARES ITS BUDGET, AND A SESSION IS PRICED BY ITS SLICES.
+- `budget=` on a case: its derivation's budget and that run's cap, held both ways by name over a run of N instructions —
+  NEEDED (5N above `DERIVATION_INSNS`, whatever the declaration's size), FITTED (5N <= B), NOT STALE (B <= 10N). The
+  default (1.5 M) is untouched. `cap=` is the in-process differential's own limit, held the same way against
+  `emu.run`'s 200,000. A registered row keeps its budget for every later derivation.
+- `aes_event.register_slices`: one priced row per SLICE, the run between two ARRIVALS both shores make at one PC — a
+  door call, a trap taken (a VDI or GEMDOS call: fs_input makes no door call for its first ~350,000 instructions), the
+  entry, the return. Both shores run the WHOLE session, marked at the two ends; our run must arrive at each after the
+  same door calls and with the ROM's memory, and each slice is at most `SLICE_INSNS` (200,000) of the ROM's own.
+- THE PARTITION TEST (`tier3.uncovered_stretches`) cuts each sliced session whole — at every door call and every
+  registered slice's ends, the pieces summing to the run to the cycle — and holds every stretch no registered slice
+  covers at or under the routine's worst registered row. A dear stretch is registered, or the test reds.
+- fm_do's 38-key session (5 slices) and six fs_input sessions (34 slices) are priced so; fs_input's three no-memory
+  arms are plain rows.
+
+69 priced rows for the eleven routines, 37 of them fs_input's, and 5 more for fm_do. Worst per routine: fs_back 1.04
+(a path of 79 characters with no separator, the longest the selector holds: the per-byte scan, 70 cycles against 64),
+dos_snext 1.01, fs_input 0.96 (the close box's arm alone over a root with no drive: the ROM's own 849-byte defect
+scan), fs_pspec 0.96, fs_format 0.88, fs_active 0.83, fs_newdir 0.82, fs_nscroll 0.80, fs_sel 0.65, fs_start 0.59,
+fs_1scroll 0.42. With their thunks counted back: fs_input 1.00, fs_active 0.94, fs_newdir 0.93, fs_nscroll 0.90,
+fs_sel 0.70. fm_do's worst is now 0.77, the last character of its 38-key session.
+
+`fs_input` WITH A DIRECTORY TO READ AND AN EMPTY WORKING PATH NEVER RETURNS in the ROM — `fs_input("")`, and a second
+road through the close box. The target build does the same; the host build refuses the pass by name (a DIVERGENCE:
+`## Not reconstructed`). Every other ROM defect is reproduced byte for byte.
 
 | address | function | cases | original insns / cycles | Tier 3 | state | what the cases pin |
 |---|---|---|---|---|---|---|
@@ -855,13 +910,25 @@ ran before it.
 | `0xfe50ca` | `dq` (`src/aes/fmlib.c`) | 2 rows + 1 Line-F | 29 / 418 one key, 30 / 432 the front round the ring | **0.46** one key, **0.45** the front round the ring | ✅ verified | the front key of a CDA's queue taken off (count first, then the front on, wrapping at 8, the key read after both): queues the event layer filled (keys typed through the BIOS handler, polled by the ROM's chkkbd + forker), the front at 7 after the ROM's own fq; on the bus; through Line-F |
 | `0xfe50f8` | `fq` (`src/aes/fmlib.c`) | 2 rows + 1 Line-F | 17 / 246 an empty queue, 378 / 5268 a full queue | **0.19** a full queue, **0.56** an empty queue | ✅ verified | gl_cda's queue emptied (gl_cda re-read each key): 0, 1, 3 and 8 keys queued by the event layer, the front round the ring; with the keyboard handed to PD1 by the ROM's own ct_chgown, PD0's queue flushed and PD1's left (none or two of its own); through Line-F. UNPOISONED (its loop count inverted is 65,535 dequeues). Mutation over fmlib.c (strict, final code, xdist): 73 — 66 killed, 7 survived: following-unsigned EQUIVALENT; build-no-min and build-row-unsigned UNREACHABLE; fq-cda-once, build-hchar-unsigned, dq-front-unsigned and keybd-key-unsigned-ok EQUIVALENT on every reachable machine |
 | `0xfe7346` | `fm_button` (`src/aes/fmdo.c`) | 8 rows + 1 Line-F | 81 / 1152 a field: the form goes on in it .. 3963 / 49886 OK: watched, selected, an exit | **0.62** OK: watched, selected, an exit (V+EV, `net`), **0.56** the TOUCHEXIT arrow (V, `net`), **0.56** the arrow, two clicks (V, `net`), **0.61** a field: the form goes on in it (V, `net`), **0.61** the root: nothing (V, `net`), **0.64** a DISABLED OK: not taken (V, `net`), **0.61** a radio button: its group put down (V+EV, `net`), **0.57** a radio exit button among plain siblings (V+EV, `net`) | ✅ verified | TOUCHEXIT (a double click answers obj\|$8000), SELECTABLE not DISABLED taken — a radio group put down (plain siblings, a plain sibling left SELECTED, a LASTOB radio), any other by gr_watchbox — the rise awaited through the NEW door entry ev_button `$fe68a4`; SELECTED EXIT ends; a field goes on in it; a held radio BLOCKS in ev_button and a held OK in gr_watchbox's wait, each held to the ROM stopped there; frame a host slot; the bus; through Line-F. Its `andi #9` is redundant (SELECTABLE arm). Mutation: fmdo.c's line under bell. 0.59–0.65 with thunks, whole run 0.56–0.90 |
-| `0xfe74a4` | `fm_do` (`src/aes/fmdo.c`) | 13 rows (11 INTERRUPTED) + 1 Line-F | 11620 / 142732 Return in the ring .. 78738 / 991374 typed, Left, Delete, Right, Return | **0.67** Return in the ring (V+EV, `net`), **0.70** abc, then Return, in the ring (V+EV, `net`), **0.65** OK clicked, released on it (V+EV, `net`; interrupted), **0.67** off the dialog: the bell, then Return (V+EV, `net`; interrupted), **0.66** the name field clicked, a key typed, Return (V+EV, `net`; interrupted), **0.65** a DISABLED OK clicked, then Return (V+EV, `net`; interrupted), **0.70** typed, Left, Delete, Right, Return (V+EV, `net`; interrupted), **0.67** Tab to the name, typed, Return (V+EV, `net`; interrupted), **0.75** a 37-character path: Backspace, Return (V+EV, `net`; interrupted), **0.75** a 37-character path: a key, Return (V+EV, `net`; interrupted), **0.75** a 37-character path: Left, Delete, Return (V+EV, `net`; interrupted), **0.72** a 37-character path: Escape, Return (V+EV, `net`; interrupted), **0.58** a radio button clicked, then Return (V+EV, `net`; interrupted) | ✅ verified | the selector and the desk's dialogs (centred by the ROM's ob_center): keys in the ring and typed one per wait (every move key fm_keybd takes, Backspace/Esc/Left/Right/Delete/Undo into ob_edit), the path field staged as fs_input fills it (37 of its 38 characters), clicks delivered through the ROM's own ISRs (OK, Cancel, a drag off and release, the TOUCHEXIT arrow and a slot, a DOUBLE CLICK, a field, the edited field, off the tree → the bell, a DISABLED OK, a key + a press in one wait — the click's verdict wins), a key queued before (fq), an EDITABLE\|TOUCHEXIT field; nothing delivered → blocks (refused, held to the ROM); a typing session past ~13 keys is over the bench cap (39 keys: 749,695 insns) and is priced per key shape (the long path's Backspace / key / Left-Delete / Escape, the empty field's Left-Delete-Right and Tab). Frame a host slot; Line-F. 0.61–0.79 with thunks, whole run 0.82–0.94 |
+| `0xfe74a4` | `fm_do` (`src/aes/fmdo.c`) | 18 rows (16 INTERRUPTED, 5 of them SLICES of one 38-key session) + 1 Line-F | 4605 / 58116 a 38-key session: the dialog taken, to its first wait .. 78738 / 991374 typed, Left, Delete, Right, Return | **0.67** Return in the ring (V+EV, `net`), **0.70** abc, then Return, in the ring (V+EV, `net`), **0.65** OK clicked, released on it (V+EV, `net`; interrupted), **0.67** off the dialog: the bell, then Return (V+EV, `net`; interrupted), **0.66** the name field clicked, a key typed, Return (V+EV, `net`; interrupted), **0.65** a DISABLED OK clicked, then Return (V+EV, `net`; interrupted), **0.70** typed, Left, Delete, Right, Return (V+EV, `net`; interrupted), **0.67** Tab to the name, typed, Return (V+EV, `net`; interrupted), **0.75** a 37-character path: Backspace, Return (V+EV, `net`; interrupted), **0.75** a 37-character path: a key, Return (V+EV, `net`; interrupted), **0.75** a 37-character path: Left, Delete, Return (V+EV, `net`; interrupted), **0.72** a 37-character path: Escape, Return (V+EV, `net`; interrupted), **0.58** a radio button clicked, then Return (V+EV, `net`; interrupted), **0.67** a 38-key session: the dialog taken, to its first wait (V+EV, `net`; interrupted, sliced), **0.68** a 38-key session: the first key, to a VDI call inside it (V+EV, `net`; interrupted, sliced), **0.76** a 38-key session: the first key, from that VDI call to the next wait (V+EV, `net`; interrupted, sliced), **0.77** a 38-key session: the last character typed (V+EV, `net`; interrupted, sliced), **0.71** a 38-key session: Return, to the return (V+EV, `net`; interrupted, sliced) | ✅ verified | the selector and the desk's dialogs (centred by the ROM's ob_center): keys in the ring and typed one per wait (every move key fm_keybd takes, Backspace/Esc/Left/Right/Delete/Undo into ob_edit), the path field staged as fs_input fills it (37 of its 38 characters), clicks delivered through the ROM's own ISRs (OK, Cancel, a drag off and release, the TOUCHEXIT arrow and a slot, a DOUBLE CLICK, a field, the edited field, off the tree → the bell, a DISABLED OK, a key + a press in one wait — the click's verdict wins), a key queued before (fq), an EDITABLE\|TOUCHEXIT field; nothing delivered → blocks (refused, held to the ROM); a 38-key session (the path field typed full from empty, then Return: 728,664 insns, declared budget 4,000,000) is PRICED BY ITS SLICES, each cut at a wait or at a VDI call and held to the ROM's memory at both ends; the last character typed is the worst, 0.77 (it was 0.75, the long path's rows), and the partition test holds every stretch between its slices at or under it (the review measured the 35 keys between the first and the last: 0.70 rising to 0.77). Frame a host slot; Line-F. 0.61–0.81 with thunks, whole run 0.81–0.95 |
 | `0xfe75ec` | `fm_dial` (`src/aes/fmdo.c`) | 8 rows + 1 Line-F | 292 / 4232 FMD_START .. 120570 / 1702378 FMD_GROW | **0.79** FMD_START (V, `net`), **0.84** FMD_GROW (V, `net`), **0.84** FMD_SHRINK (V, `net`), **0.87** FMD_FINISH (V, `net`), **0.77** a type it does not know (V, `net`), **0.77** -1 (V, `net`), **0.75** FMD_FINISH over an open window (V+EV, `net`), **0.61** FMD_FINISH, drawing held (V, `net`) | ✅ verified | every arm, cursor hidden and shown; FINISH over a window (a WM_REDRAW to its owner through ap_sendmsg's door, merged by ap_rdwr) and with drawing HELD (the ROM's wind_set(13)); the D0 form_dial stores MODELLED: the type, gsx_mon's 1/0, or w_clipdraw's held 1. 0.64–0.97 with thunks, whole run 0.80–1.00 |
 | `0xfe7002` | `fm_alert` (`src/aes/fmdo.c`) | 6 rows (1 INTERRUPTED) + 1 Line-F | 61844 / 660246 an application's: no icon, one button, Return .. 179063 / 1776364 an application's: five lines at the cap, three buttons, Return | **0.67** the longest alert (AES string 16), Return (V+EV, `net`), **0.61** the shortest alert (AES string 18), Return (V+EV, `net`), **0.60** an application's: no icon, one button, Return (V+EV, `net`), **0.65** an application's: three buttons, Return (V+EV, `net`), **0.68** an application's: five lines at the cap, three buttons, Return (V+EV, `net`), **0.64** the third of three buttons clicked (V+EV, `net`; interrupted) | ✅ verified | all 30 alerts of both resources and an application's (icons 0–3, and 4, 5, 6, 9, ':' past the AES's three BITBLKs; 1–3 buttons; five 31-char lines), defaults 0–4 (none / past the buttons: Return then blocks), a NEGATIVE default (DEFAULT on a message line of the shared tree, answered -1), each button clicked, a key typed into the field-less alert, Tab, a click off it (bell), the cursor hidden and shown; frame a host slot; the bus; Line-F. Over the bench cap and NAMED: five 31-char lines with three 10-character buttons (200,973 ROM insns), priced by its neighbours. Root OUTLINED / ob_draw depth: equivalent mutants. 0.67–0.75 with thunks, whole run 0.93–0.96 |
 | `0xfe764c` | `fm_show` (`src/aes/fmdo.c`) | 3 rows + 1 Line-F | 96860 / 975854 Bad Function #, no values (an unimplemented call's) .. 113035 / 1129794 insert disk %S, a name | **0.61** Bad Function #, no values (an unimplemented call's) (V+EV, `net`), **0.62** TOS error #%W, a word (V+EV, `net`), **0.63** insert disk %S, a name (V+EV, `net`) | ✅ verified | rs_str's copy, merged into `$b99a` when handed values (%W, %S), as the alert; the values pointer on the bus; Line-F. 0.68–0.69 with thunks, whole run 0.95 |
 | `0xfe768c` | `eralert` (`src/aes/fmdo.c`) | 7 rows + 1 Line-F | 90068 / 913556 error 5, Return .. 166355 / 1634806 error 3, Return | **0.68** error 0, Return (V+EV, `net`), **0.68** error 1, Return (V+EV, `net`), **0.68** error 2, Return (V+EV, `net`), **0.69** error 3, Return (V+EV, `net`), **0.67** error 4, Return (V+EV, `net`), **0.60** error 5, Return (V+EV, `net`), **0.63** error 6, Return (V+EV, `net`) | ✅ verified | errors 0–6 × drives A/B (every line, the drive letter merged where named), Retry by Return (1), Cancel clicked (0), and error 3 answering Retry after a negative default; the tables read in place; its name and the pointer to it a host slot; Line-F. A code past 6 (the critic handler keeps ~error's high byte) is refused by name, unpinnable. 0.67–0.75 with thunks, whole run 0.94–0.96 |
 | `0xfe7712` | `fm_error` (`src/aes/fmdo.c`) | 8 rows + 1 Line-F | 24 / 346 code 64: nothing shown .. 151138 / 1480904 code 15, Return | **0.64** code 2, Return (V+EV, `net`), **0.65** code 4, Return (V+EV, `net`), **0.65** code 5, Return (V+EV, `net`), **0.64** code 8, Return (V+EV, `net`), **0.66** code 15, Return (V+EV, `net`), **0.61** code 0, Return (V+EV, `net`), **0.62** code -1, Return (V+EV, `net`), **0.29** code 64: nothing shown (V, `net`) | ✅ verified | codes 2–18 by the table, 0/1/19/63/-1/-32768 "TOS error #" + the word unsigned, >63 nothing (stored nothing), each alert's lines; its `1` answer after an application's form_alert(-1, …) left DEFAULT on a message line (pinned, the machine the ROM's own fm_alert run leaves); its argument word a host slot (merge_str's %W); Line-F. 0.68–0.72 with thunks, whole run 0.29–0.96 |
 | `0xfe3a0c` | `bell` (`src/aes/fmdo.c`) | 4 rows + 1 Line-F | 46 / 792 the bell on, the console mid-escape (ESC Y, its row) .. 57 / 900 the bell on | **1.06** the bell on, **1.06** the bell off, **1.07** the bell on, the console mid-escape (ESC), **1.07** the bell on, the console mid-escape (ESC Y, its row) | ✅ verified | BIOS Bconout(CON:, BEL) by `trap #13` on target (bcon.h's constant shape), the BIOS core off it; conterm's bell bit on (the sound list planted) and off, the console mid-escape (ESC, ESC Y row and column, ESC b); `savptr` in the stack band (the trap's save). Its 1.07 excess is the d2/a2 save round `trap #13` under GCC's ABI (the ROM leaf saves nothing): a floor, not a C spelling. Mutation over fmdo.c + evdoor.h (strict, xdist): 108 — 104 killed, 4 equivalent (r-all-taken, d-init-no-clear, a-no-outline, a-shallow) |
+| `0xfe7782` | `fs_start` (`src/aes/fslib.c`) | 1 row + 1 Line-F | 235 / 3628 the selector's tree, centred | **0.59** the selector's tree, centred (`through`) | ✅ verified | rs_gaddr(R_TREE, 0) of the AES's own resource into ad_fstree `$972a`, ob_center into gl_rfs `$9c00`; over the snapshot, both staged stale, the root moved off-centre first; through Line-F |
+| `0xfe77ae` | `fs_back` (`src/aes/fslib.c`) | 3 rows + 1 Line-F | 58 / 674 a folder's path, from its end .. 585 / 5486 a path of 79 characters with no separator: the longest the selector holds | **1.04** a path of 79 characters with no separator: the longest the selector holds (`through`), **0.66** a drive and a spec: the separator put in (`through`), **0.64** a folder's path, from its end (`through`) | ✅ verified | back from `end` to a `:` or `\` or to the path (the two pointers compared whole: a top byte on one alone walks on below the path); on a `:` a `\` inserted after it by ins_char in 64 bytes of room — a tail of 63 or more is CUT by its NUL, pinned at 62/63/64/70; nothing read below the path; both pointers on the bus; the ROM's own first calls from fs_input for four paths. The 1.04 is the per-byte scan, 70 cycles against 64 (1.094 at the limit): the row is the longest path the selector holds, 79 characters (the path field's text is 80 bytes: fs_sset has no bound, and a longer path runs on over the selection field's); 120 characters measure 1.059, 250 measure 1.077 |
+| `0xfe77ee` | `fs_pspec` (`src/aes/fslib.c`) | 2 rows + 1 Line-F | 100 / 1202 a folder's path .. 659 / 6410 a path of 79 characters with no separator: the longest the selector holds | **0.96** a path of 79 characters with no separator: the longest the selector holds (`through`), **0.39** a folder's path (`through`) | ✅ verified | fs_back, then past its `\`; with none the caller's path becomes the ROM's `"A:\*.*"` (`$fefafc`, always drive A) and the spec is path + 3, the path's top byte kept; an empty spec, a drive and a spec; as fs_input first calls it. The 0.96 is fs_back's scan (250 characters measure 1.045) |
+| `0xfe7826` | `fs_active` (`src/aes/fslib.c`) | 6 rows + 1 Line-F | 874 / 12102 a missing folder .. 154325 / 1563128 a hundred names of eight characters and three: the bell | **0.83** a hundred names of eight characters and three: the bell (V, `net`), **0.83** a missing folder (V, `net`), **0.81** an empty folder (V, `net`), **0.80** nine names (V, `net`), **0.79** a hundred names: the bell (V, `net`), **0.74** the root: its folders and three files (V, `net`) | ✅ verified | busy form; Fsetdta; Fsfirst(path, 16) / Fsnext: `.` entries skipped, DTA+29 marked 7 folder / space file by the SUBDIR BIT alone (`btst #4`: a read-only `$11` and an archived `$30` folder are folders, whatever the spec), every folder and each file wildcmp(spec) keeps copied kind + name into the names block, its offset a LONG in the index; at 100 names KEPT (101 files under `F?0?.DAT` are read to their end, eleven kept, no bell) one more Fsnext, then Cconout(BEL) — also for exactly 100; the count stored BEFORE the sort (laid over the index, a name and the names pointer); shell sort through the two scratches, equal names left in place; arrow form. Machines the ROM's own fs_input stopped at its entry, over a staged disk of thirteen directories (0, 1, 9, 10, 99, 100, 101 names; sorted, reversed, shuffled; folders among files; a name held three times) and four more disks, each the first plus ONE folder (so no machine over the first moves), REAL GEMDOS on both shores: thirteen specs, a missing folder, B:, C:, no separator, uncleared blocks, the cursor shown, the busy form at the first GEMDOS call. Priced over GEMDOS REPLAYED (the ROM's own answers and DTAs, derived call by call; the ledger pins every frame), which leaves what the disk's run leaves. 0.94 with thunks (a hundred names of eight characters and three: the bell); a hundred full-length names SHUFFLED are past the bench cap (sixty and eighty measure 0.816 / 0.815). UNPOISONED. Mutation over fslib.c's event-free half + the glue (strict, final code, xdist, a control every fifteen): 239 — 231 killed, 8 survived, 0 abnormal: act-kind-not-reread, act-bell-first, el-stores-swapped and fmt-no-min EQUIVALENT; act-dta-not-reread and fmt-kind-first EQUIVALENT ON EVERY REACHABLE MACHINE (the second differs only for a name of 72 bytes or more, which no directory gives); fmt-answers-swapped and snext-with-a-word UNOBSERVABLE (a frame nothing reads; a trap frame's length the host cannot see). snext-function is killed on its targeted run and ABNORMAL in its full run (the host's Fsfirst spins over real GEMDOS) |
+| `0xfe79fe` | `fs_1scroll` (`src/aes/fslib.c`) | 2 rows + 1 Line-F | 38 / 476 down .. 40 / 486 up at the top | **0.42** up at the top, **0.36** down | ✅ verified | top - 1 for the up arrow (8), + 1 for any other, kept in 0 .. count - 9, the top itself when count <= 9; 15 tops x 6 arrows x 10 counts incl. -32768 / 32767 (the word difference signed) and an arrow of `$0108` (the arrow is a WORD: down) |
+| `0xfe7a44` | `fs_format` (`src/aes/fslib.c`) | 3 rows + 1 Line-F | 756 / 10126 an empty list .. 2298 / 26546 a hundred names, the first nine | **0.88** a hundred names, the first nine (`through`), **0.86** folders and files (`through`), **0.76** an empty list (`through`) | ✅ verified | nine rows from name `top`: kind + the 8.3 name by fmt_str, a space past the names; each row's text set (fs_sset) THEN its state cleared; the elevator sized AFTER the rows: the rows' share of the track by mul_div, at least gl_hbox / 2, placed by mul_div. Every list shape and page (the other pages measure 0.876-0.878); tops and counts off the list; `count - top` a word that wraps; row + top a LONGWORD sum; both orders by a row's text laid over its own state and over the slider's height; nine names take no share (a child first: the mutant divides by 0). The half-box floor binds for no directory of <= 100 names (pinned by a count of 200) |
+| `0xfe7b70` | `fs_sel` (`src/aes/fslib.c`) | 3 rows + 1 Line-F | 15 / 218 row 0: none .. 4668 / 50790 a row selected, the cursor shown | **0.65** a row selected, the cursor shown (V, `net`), **0.63** a row selected (V, `net`), **0.20** row 0: none (V, `net`) | ✅ verified | row != 0 (a WORD: `$0100` is a row): ob_change(ad_fstree, row + 11, state, drawn); rows 1..9, deselect, the state it has, rows -1 and 10, the tree read from ad_fstree (an application's copy); as fs_input first calls it (row 0). 0.70 with thunks (a row selected, the cursor shown) |
+| `0xfe7b92` | `fs_nscroll` (`src/aes/fslib.c`) | 6 rows + 1 Line-F | 90 / 1142 up at the top: nothing moves .. 192598 / 2113542 a page down, the cursor shown | **0.80** eight rows down, the cursor shown: one row copied (V, `net`), **0.79** a page down, the cursor shown (V, `net`), **0.79** a page down: the whole list drawn (V, `net`), **0.78** one row down, the cursor shown (V, `net`), **0.78** one row down (V, `net`), **0.39** up at the top: nothing moves (V, `net`) | ✅ verified | n x fs_1scroll, each from the last; moved: the selected row deselected and forgotten, fs_format from the new top, the rows that stay copied by bb_screen (up or down; nine or more: none), the new rows drawn under their own clip, the slider under the caller's, which is put back; not moved: nothing stored. 20 scrolls over 5 directories, a selected row, a narrowed clip, pointers on the bus. 0.90 with thunks (eight rows down, the cursor shown: one row copied). The page rows run 188,640 and 192,598 instructions, 4-6% under the bench cap |
+| `0xfe7cfa` | `fs_newdir` (`src/aes/fslib.c`) | 4 rows + 1 Line-F | 156450 / 1555322 an empty folder .. 198776 / 1999354 thirty-four names of eight characters and three | **0.82** thirty-four names of eight characters and three (V, `net`), **0.81** an empty folder (V, `net`), **0.79** twenty-eight names in no order (V, `net`), **0.79** the root (V, `net`) | ✅ verified | the path field drawn; fs_active; fs_format from 0; the title " spec " built in the `$9afe` scratch and copied out; objects 5, 6, 7 drawn from the ROM's list `$fefaac`. Nine paths as fs_input first calls it, the cursor shown, pointers on the bus. A ROM DEFECT reproduced: the title has no bound — a spec of 40 characters writes over gl_mntree, of 50 over gl_rzero (five cases, byte for byte). 0.93 with thunks (thirty-four names of eight characters and three). Thirty-four full-length names are the most under the bench cap (198,776; a hundred run 274,097 over the replay): past them Tier 1 only, the read and the sort priced by fs_active's own rows |
+| `0xfe7d90` | `fs_input` (90, fsel_input, `src/aes/fslib.c`) | 37 rows (34 SLICES of six sessions) + 1 Line-F | 78 / 1164 no memory: the names refused .. 195098 / 2131800 a drag, a page, the title, Cancel: the track clicked: a page scrolled | **0.96** a root with no drive: the close box's arm alone, from the form's end: the scan, to its directory's read (V+EV, `net`; interrupted, sliced), **0.88** a spec that fills the title's scratch: the selector put away: the strings handed back, the screen given back, the blocks freed (V+EV, `net`; interrupted, sliced), **0.88** a spec typed, a row: the selector put away: the strings handed back, the screen given back, the blocks freed (V+EV, `net`; interrupted, sliced), **0.88** a hundred names: the selector put away: the strings handed back, the screen given back, the blocks freed (V+EV, `net`; interrupted, sliced), **0.88** a drag, a page, the title, Cancel: the selector put away: the strings handed back, the screen given back, the blocks freed (V+EV, `net`; interrupted, sliced), **0.88** rows, a scroll, a folder, the close box, Return: the selector put away: the strings handed back, the screen given back, the blocks freed (V+EV, `net`; interrupted, sliced), **0.88** a root with no drive: the selector put away: the strings handed back, the screen given back, the blocks freed (V+EV, `net`; interrupted, sliced), **0.85** a root with no drive: the close box: fs_back's scan below the path's buffer, to its directory's read (V+EV, `net`; interrupted, sliced), **0.84** a spec typed, a row: its directory read: thirteen files (V+EV, `net`; interrupted, sliced), **0.83** a hundred names: its directory read: a hundred names, the bell (V+EV, `net`; interrupted, sliced), **0.82** a drag, a page, the title, Cancel: the elevator dragged: a move (V+EV, `net`; interrupted, sliced), **0.82** a spec typed, a row: the list formatted and drawn (V+EV, `net`; interrupted, sliced), **0.81** a spec that fills the title's scratch: the selector drawn over a path of 46 characters, to its directory's read (V+EV, `net`; interrupted, sliced), **0.81** rows, a scroll, a folder, the close box, Return: an empty list formatted and drawn (V+EV, `net`; interrupted, sliced), **0.81** a spec typed, a row: the selector drawn, to its directory's read (V+EV, `net`; interrupted, sliced), **0.80** a spec typed, a row: the new spec's names read, listed, the row selected (V+EV, `net`; interrupted, sliced), **0.79** rows, a scroll, a folder, the close box, Return: an empty folder read (V+EV, `net`; interrupted, sliced), **0.79** a drag, a page, the title, Cancel: the list scrolled to where it was dragged: ten rows (V+EV, `net`; interrupted, sliced), **0.78** a drag, a page, the title, Cancel: the track clicked: a page scrolled (V+EV, `net`; interrupted, sliced), **0.78** a drag, a page, the title, Cancel: the elevator let go: the screen given back (V+EV, `net`; interrupted, sliced), **0.78** a hundred names: the list sorted (V+EV, `net`; interrupted, sliced), **0.77** the DTA refused: the names and the index freed (V, `net`), **0.76** the index refused: the names freed (V, `net`), **0.73** no memory: the names refused (V, `net`), **0.73** rows, a scroll, a folder, the close box, Return: the down arrow: the list scrolled a row (V+EV, `net`; interrupted, sliced), **0.70** a spec that fills the title's scratch: a row clicked whose kind is the title's overrun: the path made, to its directory's read (V+EV, `net`; interrupted, sliced), **0.70** a drag, a page, the title, Cancel: the title clicked: to its directory's read (V+EV, `net`; interrupted, sliced), **0.69** rows, a scroll, a folder, the close box, Return: the close box: the path cut, to its directory's read (V+EV, `net`; interrupted, sliced), **0.68** a spec typed, a row: the path edited, a row clicked: to its directory's read (V+EV, `net`; interrupted, sliced), **0.67** rows, a scroll, a folder, the close box, Return: a folder's row clicked: the path made, to its directory's read (V+EV, `net`; interrupted, sliced), **0.66** rows, a scroll, a folder, the close box, Return: Return: to the form's end (V+EV, `net`; interrupted, sliced), **0.66** rows, a scroll, a folder, the close box, Return: the same row clicked again (V+EV, `net`; interrupted, sliced), **0.65** rows, a scroll, a folder, the close box, Return: another row clicked: the first put down (V+EV, `net`; interrupted, sliced), **0.65** rows, a scroll, a folder, the close box, Return: the form taken, to its first wait (V+EV, `net`; interrupted, sliced), **0.65** rows, a scroll, a folder, the close box, Return: a file's row clicked: selected, its name the selection (V+EV, `net`; interrupted, sliced), **0.63** a drag, a page, the title, Cancel: Cancel clicked: to the form's end (V+EV, `net`; interrupted, sliced), **0.62** a drag, a page, the title, Cancel: the elevator pressed: the screen taken, to the drag's first wait (V+EV, `net`; interrupted, sliced) | ✅ verified | the file selector run whole: three dos_alloc (a refusal: those before freed, 0), the fields set, fm_dial, the first draw at depth 1; each pass fm_do, the path compared with the one last read ($bb3e) and read when it differs (GEMDOS's spec always `*.*`), the switch `$fefab0` on the object; the strings handed back, *button = inf_what (neither: 0), three dos_free. 80 whole SESSIONS, every interrupt the ROM's own ISR's at a wait, GEMDOS REPLAYED from the ROM's own run of the same session over the staged disk (each replayed run held to the real disk's where the selector can see it): every row of the table but object 7's (its children tile it: no click answers it), each exit, the path edited before each, twelve paths, a hundred names; the read's own order (a row selected, the path edited, Return / OK: the row put down, THEN the button); the top 0 from the read on, in the pass that reads (a page, the path edited, an arrow / the elevator). 20 sessions cut short at a wait (the C refused where the ROM blocks, its image the ROM's there: the selector on the screen); every VDI call of each session held to the ROM's in order, AND WHAT THE SELECTOR HOLDS AS EACH IS MADE (its tree, its fields' and rows' texts, its scratches, the two paths: a tree word set and put back between two waits is seen); real GEMDOS on both shores for keys typed ahead and the three no-memory arms (the arena exhausted by the ROM's own Malloc) with the glue's parked addresses held at every call. ROM DEFECTS reproduced: an edited path + Return reads the directory then answers CANCEL (handing back a selected row's name all the same); the close box over `\*.*` scans below the path's buffer (through the AES's four text buffers into the ORECT pool) and overwrites five bytes of AES data; a stale length puts a second `\` after the drive; a spec past 25 characters runs the title over the first row's text, whose kind is then no space — the row is taken for a FOLDER. `fs_input("")` NEVER RETURNS (the same memory at consecutive passes), and neither does the close box over `\*.*` once a formatted text of 77+ characters was drawn (AES_FMTSTR's tail lies under the path): both refused by name off target, the image the ROM's at that pass. Priced by its slices, cut at door calls, GEMDOS calls and one VDI call. WORST 0.96 (own 0.9553; 1.00 with thunks (a root with no drive: the close box's arm alone, from the form's end: the scan, to its directory's read)): the close box's arm over a root with no drive, cut ALONE from fm_do's end — the ROM's defect scan, 849 bytes, by fs_back CALLED as the ROM calls it there (`fs_back_called`, both of the close box's sites: 78 cycles a byte against the ROM's 64; inlined it was 114, and the arm 1.20 / 1.25 with thunks behind a wait-cut row of 1.03); the same click cut from the wait is 0.85 (0.90). Then the put-away, 0.88 in every session (0.98 with thunks). Frame a host slot; Line-F. Mutation (strict, final code, a control every fifteen): 224 — 217 killed, 7 survived, 0 abnormal: show-tree-before-allocs, pass-length-unsigned, drag-zero-is-down, row-old-put-down-when-none and row-reselected-when-same EQUIVALENT; read-any-put-down EQUIVALENT ON EVERY STAGED MACHINE; row-buttons-are-rows UNREACHABLE (row-folder-is-file, once called equivalent, is KILLED by the long spec's session). Coverage (llvm-cov, an -O0 build of the final code, the three batteries' 492 tests): fslib.c 407 of 410 lines (99.27 %), 132 of 134 branches (98.51 %) — the misses are the host refusal's taken arm (it runs in a child that aborts: no profile is written; its words are asserted) and act_on_the_object's dead upper bound (`object <= FS_LAST_NAME` is never false past a row) |
+| `0xfe3a46` | `dos_snext` (`src/aes/gemdosif.c`) | 2 rows + 1 Line-F | 133 / 1604 found .. 138 / 1652 no more files | **1.01** found, **1.01** no more files | ✅ verified | Fsnext by its own `bsr __DOS`, then dos_sfirst's tail `$fe3a2c` (NOT `$fe3c28`): 1 when the answer's WORD is 0; ENMFIL or EFILNF -> DOS_AX 18. Real GEMDOS: found, and ENMFIL by a chained run; the replay: eight answers no disk gives (a zero word under a set high word is found; under a negative long, found and failed) |
+| `0xfe3bf6` | Cconout glue (`src/aes/gemdosif.c`) | 12 direct/Line-F | — | unpriced — a HOST ARGUMENT (its caller's return site, parked through `$fe3c28`; dos_sdta's precedent) | ⚠️ verified, unpriced | Cconout of the word its caller pushed: real GEMDOS (BEL rings the BIOS's bell, a letter does not, a word whose low byte is BEL does), and the replay (one word under the function, the verdict of 0, the BIOS's own answer and an error); priced inside fs_active's rows that ring it. dos_free, dos_sdta, dos_close and this one now share two helpers, one per frame shape (the target objects of the first three byte-identical) |
 
 ## Harness
 
@@ -2018,34 +2085,213 @@ ran before it.
     the odd-address refusal); ram-long-unchecked and ram-long-as-word UNPINNED (`## Not reconstructed`).
   - FK: 19 — **17 KILLED / 2 SURVIVED**: the chip declaration dropped from `parked` and from `_continued_at`, equivalent
     today and unpinned (`## Not reconstructed`).
-* **Next** — AES BAND 3 WAVE 3 = S, the file selector (gemfslib: fs_input and its helpers). fs_input runs **443K**
-  instructions on a realistic directory, past the bench's 200,000 cap, so plan its pricing PER SHAPE from the start (the
-  listing, a scroll, a click, a typed path — each under the cap, as fm_do's typing session is priced per key) rather than
-  discovering it at review. fs_active's bell is the GEMDOS Cconout glue (`$fe3c28`), not fm_do's. Then BAND 4, the event
-  layer and the scheduler — the door's wrappers become calls of their C twins.
+* **Wave 12 band 3 wave 3 (2026-10-03) — the file selector; a case's own budget, sessions priced by their slices.** A
+  foundation agent (K) and a slice agent (S1, the event-free half) in parallel, then S2 (fs_input) on both; four
+  reviewers (R1 K's machinery and S2's additions to it; R2 slice S1; R3 slice S2; R4 cross-cutting: cost, bands,
+  duplication, conventions); a fix list; two fix agents in parallel (FP performance and mechanism; FT tests, rows and C
+  conventions). Result: 11 ✅ routines and one ⚠️, 74 Tier 3 rows (K 5, S1 29 then 32, S2 27 then 37), every one within
+  the bar; no pre-existing row's numbers moved. BAND 3 IS COMPLETE. The kit is untouched.
+  - K (FOUNDATION, `test/aes_event.py` + `bench/tier3.py`):
+    - THE PER-ROW BUDGET. `DERIVATION_INSNS` (1.5 M) and its margin of 5 are untouched; a case that needs more passes
+      `budget=`, which is also its run's cap, held by name: above the default, fitted by the margin, and — for a run that
+      ended — not stale (`DERIVATION_STALE` = 2), so 5N <= B <= 10N. A registered row records it (`InterruptedRow`).
+      RED on fm_do's 38-key session (728,664 instructions) and on the ROM's own fs_input (635,277), each refused under
+      the default in the default's own words.
+    - SLICE PRICING. Measured first, and it changed the design: door calls alone do not cut fs_input under the cap — its
+      first door call comes after 354K–371K instructions — so a slice end is an ARRIVAL both shores make at one PC:
+      `door_call`, `trap_taken` (a VDI or GEMDOS call outside any door call), `ENTRY`, `RETURN`. Both shores run the
+      whole session, marked at the two ends; the row is the difference of the marks; our memory must equal the ROM's at
+      both, after the same door calls (`vet_the_marks_agree`); a slice past `SLICE_INSNS` (200,000) is refused.
+    - Shown on the ROM's own fs_input as oracle on both shores (eight shapes, 5K–185K, summing to the whole) and, C
+      against ROM, on fm_do's 38-key session: five rows, 0.67 / 0.68 / 0.76 / **0.77** the last character typed / 0.71 —
+      fm_do's new worst (it was 0.75).
+  - S1 (`src/aes/fslib.c`, `gemdosif.c`): fs_start, fs_back, fs_pspec, fs_active, fs_1scroll, fs_format, fs_sel,
+    fs_nscroll, fs_newdir, dos_snext and the Cconout glue. Machines the ROM's own fs_input stopped at each routine's
+    entry over a staged disk and REAL GEMDOS; GEMDOS REPLAYED for Tier 3 (a staged `trap #1` handler with a ledger, the
+    script derived from the ROM's own GEMDOS call by call). dos_sfirst's tail extracted as `search_found`, which
+    dos_snext shares as the ROM does (dos_sfirst's rows unmoved); `gemdos_trap_word`, the function-word-only trap shape.
+    The scoping's "dos_snext shares `$fe3c28`" was wrong: it is dos_sfirst's tail `$fe3a2c`.
+  - S2 (`aes_fs_input`): the selector run whole as SESSIONS — 75 returning and 20 cut short at a wait at first, held at
+    the end, at the wait, and by every VDI call in order; real GEMDOS on both shores for keys typed ahead and the three
+    no-memory arms. Priced as 24 slices of four sessions plus the three no-memory rows. `declare_child_doors` (the
+    child's `trap #1` door), `stopped_at(budget=)`; the AES window to 24 KB; K's survivor b21 pinned by the session that
+    blocks with nothing delivered.
+  THE REVIEWS. Verdict of all four: THE C IS FAITHFUL TO THE ROM EVERYWHERE — R2 and R3 read it instruction by
+  instruction and R3 ran 37 more sessions C against ROM; every finding was a test, pricing, cost or convention defect.
+  - WHAT WAS PRICED (R1). fs_input's proposed worst, 0.84, depended on where the Return row's cut fell: the selector's
+    PUT-AWAY (fm_do's last unsync to the return) measures 0.88 own / 0.98 with thunks in every session, averaged down
+    to 0.81 behind fm_do's own key handling. And the registered slices PARTITIONED NO SESSION: 49–93 % of each session's
+    ROM instructions were in no row, and nothing said so (no gap hid a row over the bar; the mechanism could not show
+    it). A budget could be declared over a run the default covers (the rule tested the declaration's size, never the
+    run's need — K's own positive case sat in that window, its `budget=` really raising `emu.run`'s cap); `stopped_at`'s
+    budget was not pinned as the cap (a surviving mutant); trap arrivals are matched by ordinal and memory, never by
+    count. K's five ABNORMAL mutants were shown honest kills (armed after collection: each KILLED by 7+ tests).
+  - THE EVENT-FREE HALF (R2). Four holes, each a mutant passing all 275 cases and a real-data case that kills it: the
+    folder test is a BIT test and no staged folder carried a second attribute bit; the 100-name cap was never run under
+    a spec that filters (names KEPT against names SEEN); fs_1scroll's arrow and fs_sel's row are WORD tests no case
+    pinned. `fmt-kind-first` was labelled equivalent and is only unreachable; `snext-function` was credited a kill its
+    full run never finishes. The registered rows were not each routine's worst (fs_back 1.03 at 60 characters against
+    1.077 at 250; the with-thunks headlines each ~0.01 low).
+  - fs_input (R3). Three order holes shown by surviving mutants: the read block's order (a row put down against OK put
+    down), `top := 0` by a read pinned only when the read had a pass to itself, and the survivor `row-folder-is-file`,
+    called EQUIVALENT, killed by real data — a NEW ROM FINDING (a spec past ~25 characters overruns the title into
+    the first row's kind byte: the row is taken for a folder). Memory between the last wait and the end was held by
+    nothing but the VDI arguments. The spin refusal's comment claimed no other path reaches it; one does.
+  - COST (R4). `make test` quiet went **140 s → 397 s**: xdist's `load` handed one worker the whole of
+    `test_aes_fs_input.py` (391 s of the 397); each session was derived 5 times where 2 are needed and its C run in
+    two children; the sweeps and Tier 3 redid a whole session once per slice row; registry import +15.7 CPU-s per
+    process and 2.1–2.35 GB peak RSS per worker (the 16 MB image kept per GEMDOS call); `make bench` +56 % CPU. Three
+    generations of recording trap handler; `RUN_INSNS` a second budget mechanism; `aes_fs_input` 87 lines, five deep.
+  THE FIXES.
+  - FP (performance and mechanism; no bench row moved, the table byte-identical before and after its levers; all 1,574
+    rows + 29 slices hash identical under the old and the new `merge_pokes`):
+    - `--dist worksteal` in the PROJECT Makefile's `PYTEST_ARGS` (no kit change) and `test/conftest.py`, which collects
+      the cases of one session back to back so a steal does not split them (the second session test: 163.6 s summed
+      when spread → 33.9 s);
+    - one derivation per case and one child per session (deliveries per session per process 5 → 2; the digest read
+      off the session's own child); the sweeps once per session (`test_boot_snapshot` 195.2 → 97.7 s summed);
+      `tier3.Sessions`, one pair of runs for all of a session's slice rows and companions (35.8 → 8.1 s, 26.0 → 4.3 s);
+    - `case.merge_pokes` run-wise (import 26.7 → 20.9 CPU-s); `GemdosCalls` keeps the low 1 MB only (peak RSS at import
+      2,348 → 510 MB; the bench process 2,500 → 1,278 MB);
+    - `make test`, quiet: **140 s (HEAD) → 397 s (the wave) → 193.03 s** (load 2.6) and 194.64 s (load 8.2), CPU-bound
+      on ten workers (1,476 s summed, with 111 more tests than R4 measured). The slowest test protocol 75.7 → 37.5 s.
+    - THE PARTITION TEST (`tier3.uncovered_stretches`), RED-proved: on the table without the put-away it fails by name
+      on two sessions (0.8784 and 0.8767 against a worst registered 0.8389). One test per sliced session, 3–13 s each.
+    - The budget NEED-BASED (`_vet_not_stale` refuses 5N <= `DERIVATION_INSNS`; RED: fm_alert's 208,880 instructions
+      under 1,500,001, which every size rule passed) and `run_event`'s one number split into `budget=` and `cap=`;
+      `stopped_at`'s budget pinned as the cap (R1's survivor killed); `RUN_MARGIN` gone, `RUN_INSNS` a declared budget
+      held to the margin by name; ONE ledger machinery, `aes_shell.Table`, under the scripted trap and the replay.
+  - FT (tests, rows, C conventions):
+    - PINS: a read-only (`$11`) and an archived (`$30`) folder on a disk of their own; `A:\BIG\F?0?.DAT` (101 read, eleven
+      kept, no bell) with its replay twin; arrow `$0108`, row `$0100`; five sessions (80 now) for the read block's
+      order, `top := 0` in the pass that reads, and the long spec's first row — each of R2's and R3's mutants killed.
+    - WHAT THE SELECTOR HOLDS at every VDI call hashed into the ledger on both shores (`held_in`): R3's
+      `SELECTED | 0x40` mutant, which neither suggested surface could see (inf_what clears OK's whole state word
+      before the first free), is KILLED.
+    - THE SPIN'S SECOND ROAD, derived from a ROM run and pinned (R3's mechanism was misread: under the path lie the
+      AES's four text buffers, not a linked table): the ROM's own ob_draw of a formatted text whose template runs 77
+      characters, then `\*.*` and the close box.
+    - WORST ROWS re-registered from `make bench`: the put-away as its own slice in every priced session (0.88), the
+      Return and Cancel rows split at fm_do's last unsync, fs_back and fs_pspec at 79 characters (1.04 / 0.96),
+      fs_active's hundred 8.3 names (0.83, 0.94 with thunks), fs_nscroll eight rows down (0.80), fs_newdir thirty-four
+      names (0.82), two more priced sessions (a root with no drive; a spec that fills the title's scratch).
+    - `aes_fs_input` split into `struct selector_run` + five helpers (the entry 19 lines; 258 bytes shorter; 18 of its
+      rows moved by -102..+40 cycles, no printed ratio); the glue's park / trap / verdict in one helper per frame shape
+      (the target `gemdosif.o` byte-identical); the duplicated constants onto the existing ones.
+    - THE CLOSE BOX'S ARM, 1.20 → 0.96. Cut alone from fm_do's end (R1's own argument for the put-away), the close box
+      over a root with no drive measured **1.2043 own / 1.2506 with thunks** — over the bar — behind a wait-cut row of
+      1.03: GCC had INLINED fs_back's downward scan into fs_input at both of the close box's sites, reloading the
+      image pointer every byte (94 and 114 cycles a byte against the ROM's 64), and only the ROM's 849-byte defect scan
+      runs it long. The ROM CALLS fs_back there (`$fe815e`, `$fe818a`, Line-F), so the C now does (`fs_back_called`,
+      noinline, 78 cycles a byte): the arm alone **0.96 own (0.9553) / 1.00 with thunks**, registered; the wait-cut row
+      0.85 / 0.90. 19 fs_input rows moved, no other printed ratio.
+  MUTATION (strict: a private `.so` or overlay per mutant, xdist, no `-x`; FT's with a CONTROL every fifteen), as
+  finally reported:
+  - fslib.c's event-free half + fslib.h + the glue: S1 claimed 223 / 8 / 0 of 231 (first pass 211 / 18 / 1). FT's
+    final 239: **231 KILLED / 8 SURVIVED / 0 ABNORMAL** — four equivalent, two equivalent on every reachable machine
+    (`fmt-kind-first` relabelled), two unobservable. `snext-function` is KILLED on its targeted run and ABNORMAL in its
+    full run (the host's Fsfirst spins over real GEMDOS), not repeated.
+  - fs_input: S2 claimed 205 / 8 / 0 of 213 (first pass, stopped at 106, 89 / 14 / 3). FT's final 224: **217 / 7 /
+    0** — five equivalent, one equivalent on every staged machine, one unreachable; `row-folder-is-file` KILLED.
+  - K (`aes_event.py`, `tier3.py`): 70 — **63 KILLED / 2 SURVIVED / 5 ABNORMAL** (first pass 57 / 8 / 5); the five
+    are refused by name at import (a collection error, not a strict kill) and R1 showed each KILLED once armed after
+    collection. Survivors: s19 equivalent; b21 unpinned then, pinned since by S2's blocking session.
+  - FP (S2's `aes_event.py` additions + its own changes): 57 — **54 KILLED / 2 SURVIVED / 1 ABNORMAL**: a badly chosen
+    mutant (it weakens a passing test's own assertion), one equivalent on every caller, and one refused by name at
+    import. All five over S2's `declare_child_doors` / `stopped_at` KILLED.
+  THE GATE (four finders over the fix pass: no candidate against the shipped C, no stale or order-dependent memo; 18
+  items of test honesty, budget doors, memory, duplication and conventions) AND ITS FIX, which supersedes the lines
+  above where it says so:
+  - TEST HONESTY. One test failed ALONE (`test_a_routine_s_child_doors_are_declared_once`: the registry filled by
+    another module's import) — fixed, and every test FUNCTION of the wave's 14 test files run alone, one id each in a
+    fresh process: **515 run, 0 red**. Two REDs passed for another reason than they stated and one asserted nothing of
+    its name's claim; a GREEN half had no case. Now: the cap's and the frames' budget's refusals are matched in their
+    own words; a watched prefix's margin is asserted; fm_do's 38-key session with its keys in the ring (728,664
+    instructions in ONE oracle run) is the in-process door case that declares one `budget=` for both its runs;
+    `aes_shell.Table` refuses in words a pointer outside it or BETWEEN two entries (`next` too); `ram_in` refuses a
+    memory of another length in its own words; the snapshot's three sweeps hold the premise they skip a session's
+    other rows on (one machine), by name.
+  - ONE BUDGET DOOR. `aes_event.capped_run` is where every in-process differential of the door's batteries is capped
+    and vetted: `run_event`, `aes_fslib.run` / `run_replayed` / `run_session`, `test_aes_wm_update.run`. A raw
+    `max_insns` is refused by name; a case's own cap is held both ways whichever battery it comes through (it was
+    held only when it EQUALLED `RUN_INSNS`); a battery's is `aes_event.battery_cap(insns, deepest=)` — `RUN_INSNS` is
+    now `aes_fslib.RUN_CAP`, and test_aes_wm_update's `CASE_INSNS` at a margin of 2 is `CASE_CAP`, re-declared from
+    its measured 244,097 at the one margin (1,220,485). `held_to_the_margin` is gone. No verified content moved.
+  - DISTRIBUTION AND ORDER. `--dist worksteal` is set by `test/conftest.py` for any xdist run that names no `--dist`
+    (it was in the project Makefile's `PYTEST_ARGS`, which every documented override dropped), pinned on real runs;
+    the collection order is declared by each battery with the marker `collected_with` — the selector's sessions, its
+    priced sessions' cases, and Tier 3's sliced sessions (rows, companions and partition back to back) —
+    `test/test_conftest.py`.
+  - MEMORY, measured (`/usr/bin/time -l`, one serial process, before → after): the partition test of the selector's
+    longest session alone **1,924 → 946 MB**; `test_tier3.py` **3,781 → 963 MB**; `test_boot_snapshot.py` **1,071 →
+    730 MB**. A watch was a reference cycle (its own bound methods handed to itself), so a session's marks outlived
+    its pricing until a later collection; a kept refusal's traceback held them too. ONE memo class
+    (`aes_event.OncePerSession`, built with its computation; `tier3.Sessions(bench)` is one build's) keeps sliced
+    sessions alone, the companions' memo keeps four small fields and not two images, the io sweep keeps nothing; a
+    pass's memory is its megabyte of RAM; `_trapped` no longer copies sixteen megabytes per GEMDOS re-enactment. A
+    test with the collector OFF holds the marks' release.
+  - SCAFFOLDING AND DUPLICATION. K's pre-C rig of fs_input (a third staging of its machine, raw object numbers, "no C
+    fs_input exists yet") is gone: the mechanism's tests — the eight-shape partition, every RED — run over
+    `aes_fslib.fs_input_machine` (the TEN folder; 631,480 ROM instructions, the shapes re-measured) through the public
+    `rom_sliced` / `rom_timeline` / `slice_cost`; the private twins are removed. A Tier 3 row carries its registered
+    name (`Row.registered`, `tier3.session_of(row)` — a sliced row that names no session is refused), the nine
+    re-spellings gone. One `string_in`, one set of selector spans, one `folder` / ROOT_PATH, one UNREAD_BYTE and one
+    astray-run helper, one VDI_TRAP; the unused parameters and `DOTTED_DISK` removed; the child's GEMDOS refusal
+    (`CHILD_GEMDOS_REFUSED`) reached by a test. A session cut at two trap handlers one of which nests in the other is
+    refused by name where it happens (RED on the watch; no session does).
+  - CONVENTIONS. The drag distances, the frame offsets (`aes_fslib.active_arguments` / `newdir_arguments`, …) and the
+    priced sessions' wait ordinals are named; `SLICE_INSNS` is `DIFFERENTIAL_INSNS`. `read_directory`'s four levels
+    are two (`marked_entry_is_listed`, the same statements in the same order): the target `fslib.o` is the ONLY object
+    that differs from the pre-fix build (106 of 107 byte-identical), and **15 rows moved** — fs_active's 6, fs_newdir's
+    4, fs_input's 5 that read a directory — by +1..+201 instructions and -378..+6 cycles on ours; no ROM column, no
+    printed ratio and no verdict moved, none added or removed.
+  - MUTATION of the gate fix (strict; Python mutants as private copies loaded in place of the module, in the children
+    too; three CONTROLS, all SURVIVED): 53 over `aes_event.py`, `tier3.py`, `conftest.py`, `aes_shell.Table`,
+    `aes_fslib.py` and the batteries' group declarations — **51 KILLED / 0 SURVIVED / 2 ABNORMAL** (both refused by
+    name at import: a sliced row whose registered name is its label; a watch whose `opened` is not kept — collection
+    errors, not strict kills). Over the restructured `read_directory` and FS_EMPTY_ROW: **10 / 10 KILLED**.
+  COVERAGE (llvm-cov, -O0, after the split and `fs_back_called`; 492 tests): `fslib.c` **99.27 % of lines** (3 of 410
+  missed), **98.51 % of branches** (2 of 134) — the host refusal's taken arm (it runs in a child that aborts: no
+  profile) and `act_on_the_object`'s dead upper bound. S1's own build had the event-free half at 100 % (58 branches).
+* **Next** — BAND 3 IS COMPLETE (the object editor, the windows, the menus, the forms and alerts, the file selector —
+  each reaching the event layer through THE EVENT DOOR). Next is **BAND 4, the event layer and the scheduler** — the
+  routines behind the door's eight entries (ev_multi, ev_button, ev_block, ap_rdwr, tak_flag, unsync,
+  ct_chgown, post_button) and what they reach. Each of the door's wrappers then becomes a call of its C twin on both
+  builds: no caller changes, the host hook stops being reached for that address, and the row stops being (EV) by
+  derivation. The three mechanisms the foundation designed and did not build (the Line-F handler's copy, a real
+  process switch, forker's `jsr (a0)`: `## Not reconstructed`, the FOUNDATION's gaps) are what it needs first.
   - Still owed: the bindings `$fde2e8` / `$fde30e`'s D0; the E_CHG recovery behind GEMDOS's termination record; aes.register's
     settled mask made lazy (its import cost); the per-worker fork server for door children; a pin for the longword
-    store-above-RAM refusal; the parked project-wide levers; promoting `ganneheim/dev` → `main` (the user's call).
+    store-above-RAM refusal; the suite's thin margin under 200 s and the registry's import cost (`## Not reconstructed`,
+    band 3 wave 3: three levers measured and not taken); the parked project-wide levers; promoting `ganneheim/dev` →
+    `main` (the user's call).
 
 ## Suite
 
-`make test`: **17,526 passed**, 2 skipped (one of them the `RUN_SLOW`-gated placement search), 0 failed.
-- Re-summed by the AES band 3 wave 2 docs pass on 2026-10-03, from its own forced run after every row edit: `rm build/*.so`
-  and the test `__pycache__`s removed first, `test/test_status.py` included and GREEN.
-- That is +739 over wave 1's 16,787. The fix agents' own runs had 17,525 with test_status red, waiting on these rows.
-- `make bench` judges **1,614 rows**: 730 ok / 276 net / 250 through / 218 transcribed / 63 accepted / 31 glue / 24 own /
+`make test`: **18,361 passed**, 2 skipped (one of them the `RUN_SLOW`-gated placement search), 0 failed.
+- Re-summed by the AES band 3 wave 3 GATE FIX on 2026-10-03 from its own forced run (`rm build/*.so` first, 22:39, load
+  2.3 at its start), `test/test_status.py` included and GREEN. That is +40 over the docs pass's 18,321 (the gate fix's
+  tests: the cap's door, the memo's premise, `test/test_conftest.py`, the marks' release, …) and +835 over wave 2's 17,526.
+- WALL TIME, quiet: **191.74 s** (that run), 190.62 s and 192.28 s (two earlier ones the same evening, loads 2.5 and
+  2.4 at their starts), under `--dist worksteal`. HEAD was 140 s and the wave before its fix pass 397 s; FP's fix pass
+  ended at 193.03 s. The margin under 200 s is still thin (`## Not reconstructed`).
+- `make bench` judges **1,689 rows**: 734 ok / 338 net / 259 through / 218 transcribed / 63 accepted / 31 glue / 24 own /
   13 pinned / 9 rule, none OVER or DRIFTED.
-- The AES has 790 of them: 276 net / 245 ok (the 87 `.S` rows included) / 155 through / 95 transcribed / 17 glue /
+- The AES has 865 of them: 338 net / 249 ok (the 87 `.S` rows included) / 164 through / 95 transcribed / 17 glue /
   2 accepted.
-- Wave 2 added 81 rows (K 4, M1 20, M2 51, FM 6), 16 of them taken through interrupts. Against wave 1's table no row was
-  removed and no row's numbers moved; only the spacing changed (the cost columns are now sized from the data). The table
-  is byte-identical across this pass's two forced runs.
-- Not re-run in the docs pass: `make guarded` and `make -C atari -B all`. The fix agents ran them after `rm build/*.so`:
-  guarded matched `make test` (test_status alone owed its rows), and the target build was rc 0.
-- The kit changed this wave (its own commit): kit suite **1,192 passed** (FK's run, with K's and FK's new ledger and bench tests). The other
-  projects are unchanged by it, re-run by K and FK: Zynaps 4,751 passed / 4 skipped, BuggyBoy 296, Joust 4,368, Flying
-  Shark 3,851, Bubble Ghost 1,909, Wonder Boy 6,465.
-- `names.txt`: 877 fn / 518 var / 416 cmt, applied by `reapply.sh` with no failure (1,319 of 1,392 functions decompiled).
+- Wave 3 added 74 rows (61 net, 9 through, 4 ok): fm_do's 5 slices, the event-free selector's 32 and fs_input's 37 —
+  39 of them slices of seven sessions. Against HEAD's table (K's saved copy), by row key: none removed, and no row's
+  numbers moved. (The gate fix then moved 15 of the wave's own rows by a few instructions — the wave log's GATE entry.) That table holds 1,615 rows by the same count (277 net; 791 in the AES); wave 2's Suite line quoted
+  1,614 / 276 net / 790, one `net` row fewer than the table holds.
+- `make guarded`: **18,361 passed**, 2 skipped, 0 failed — the same as `make test` (the gate fix's run, 22:44, 191.99 s
+  of pytest, started while the load of the run before it was still decaying).
+- `make -C atari -B all`: rc 0 (the gate fix's run). Every target object of `src/` but `fslib.o` is byte-identical to
+  the build before the gate fix.
+- The kit did NOT change this wave (`git status --short tools` is empty), so its suite and the other six projects' were
+  not re-run: kit **1,192 passed** and Zynaps 4,751 passed / 4 skipped, BuggyBoy 296, Joust 4,368, Flying Shark 3,851,
+  Bubble Ghost 1,909, Wonder Boy 6,465 are wave 2's numbers, carried.
+- `names.txt`: 889 fn / 529 var / 430 cmt (+12 / +11 / +14; one `cmt` per address, checked). `reapply.sh` was NOT run
+  by the docs pass (it rewrites `decomp.c` and the Ghidra project): run it before the next naming pass.
 
 Environment note: the Xcode-licence gate that wave 3 worked around (`/Library/Developer/CommandLineTools/usr/bin` +
 `SDKROOT`) was cleared with `sudo xcodebuild -license accept` before wave 4; the system `cc`/`make`/`git` are in use again.
@@ -2512,7 +2758,9 @@ UNPINNED, each with its reason:
   shell_find's, gsxif's).
 - **The 39-key typing session.** fm_do typing 39 keys into the path field measured 749,695 instructions (3.7× the cap;
   each key ~15–19 K). It is priced PER KEY SHAPE (the long path's Backspace / a key / Left-Delete / Escape, the empty
-  field's moves), each under the cap; the whole session is Tier 1 only.
+  field's moves), each under the cap; the whole session is Tier 1 only. RESOLVED IN WAVE 3: a 38-key session is
+  priced by its slices under a declared budget (five rows, the last character typed 0.77, fm_do's worst), and the
+  partition test holds every key between them at or under it.
 - **The two chip-declaration mutants** in `aes_event.parked` and `_continued_at` (FK's parked-no-chip-declared,
   continued-no-chip-declared): equivalent today — the parking path (ev_multi / wm_update into dsptch) reads no PSG or
   named hardware, and the interrupt run in between is an `emu.run`, which already declared nothing. Both calls are kept;
@@ -2521,7 +2769,8 @@ UNPINNED, each with its reason:
 STILL DEFERRED: the per-worker fork server for door children (the children per suite run grew again with wave 2's
 batteries — fmalert 95, fmdo 67 per R4's count). Also deferred by the code-review gate, each with its measured reason:
 a per-row derivation budget for long interactive rows (fs_input ~443K instructions) instead of raising the global
-DERIVATION_INSNS — band 3 wave 3 needs it; splitting bench/tier3.py's measuring half from its import-time row registries
+DERIVATION_INSNS — DELIVERED in band 3 wave 3 (`budget=` / `cap=`, held both ways);
+splitting bench/tier3.py's measuring half from its import-time row registries
 (the first tier3 import in a battery-only worker costs ~10.8 s; under `make test` it is already paid, and a lazy import
 would cache a partial module); and re-measuring the boot snapshot's MASK from repeated captures (`--twice`): two fresh
 captures each differed from the stored snapshot outside the MASK at a few different small spans (e.g. `$4a5`,
@@ -2580,6 +2829,150 @@ ROM FINDINGS (pinned where reachable):
 
 RESOLVED DEBT: the store above RAM, a host-only class every bus accessor now refuses by name; the stale chip seeds and
 register files across bench runs; the hand-written interrupted-case list (derived by construction now).
+
+**aes — band 3 wave 3: one DIVERGENCE (the pass that never ends, refused off target), what stays unpinned, what is
+deferred, the survivors, and the ROM's findings.**
+
+A DOCUMENTED DIVERGENCE: `fs_input` with a directory to read and its working path EMPTY. The ROM never returns: no
+directory is read, so fm_do is never called, and the selection field is redrawn for ever (the whole memory, stack
+included, is the same at consecutive arrivals at the pass's head, 6,810 instructions apart). There are two roads to it:
+- the caller's path is empty — `fs_input("")`;
+- the close box over a path whose only `\` is its first byte (`\*.*`), after a formatted text left a `:` or a `\` in
+  AES_FMTSTR's last bytes: the copy fs_back's downward scan aims lands its NUL on the path's first byte.
+The TARGET build does the same as the ROM. The HOST build refuses the run by name on its first such pass
+(`refuse_a_pass_that_never_ends`); the condition is exactly the ROM's fixed point — the read flag set and
+streq(path last read, working path), which at a loop top with the flag set is true only for an empty working path — so
+it cannot refuse a pass the ROM would leave. Pinned against the ROM's memory at that pass for both roads; the second
+road's machine is DERIVED (the ROM's own ob_draw of an application's one-object dialog, an FTEXT whose template is 77
+characters ending in `:`, or has `\` as its 78th).
+
+UNPINNED, each with its reason:
+- **Object 7's arm and `object > 22`.** Unreachable by real data: the slider box's three children tile it exactly, so
+  ob_find never answers 7 (same code as 6 anyway), and fm_do answers nothing above 22 (objects 23 / 24 have flags 0 /
+  LASTOB). The tiling is PROVED over the low-resolution snapshot's pixels; the raw resource's character units, which
+  make it true in every resolution, were read by the review and are not pinned.
+- **Between two waits** a session is held at its VDI calls — the calls themselves (opcode, intin, ptsin) and the
+  selector's own memory at each (its tree, texts, scratches, the two paths). Not held there: any other byte, and
+  contrl[5..10] / the MFDBs of a call (the leaves' exposure — bb_screen's — not fs_input's). The screen is held at the
+  20 waits and at the end; on the target build at every slice mark.
+- **Sessions run over GEMDOS REPLAYED**: a child binds no staged disk, and the bench cannot run real GEMDOS. Real
+  GEMDOS on the C's side is the ten in-process runs. The 20 waiting sessions have no second differential (a run that
+  blocks is not benched). A session that reads a hundred-name directory twice is past the replay's 128 calls.
+- **The spin's second road** is pinned for two shapes of stale text; where fs_back's downward scan stops for `\*.*`
+  otherwise depends on what was formatted last and on which ORECTs are free, and is pinned for the snapshot's state
+  only (849 bytes down, at `$b549`).
+- **A path of 80 characters or more** (finding 17 below): by reading, not run.
+- **fs_format's two fs_sset answers** land in its own frame, which nothing reads; **the frame length of dos_snext's
+  trap** cannot be seen on the host (the words above the function word are the caller's stack; 16 cycles on target,
+  inside the pin tolerance); **the DTA global's re-read** in fs_active (nothing the loop stores can reach `$c838`).
+- **`snext-function`** (Fsnext's function word made Fsfirst's) is KILLED on its targeted run, by the replay's ledger;
+  its full run is ABNORMAL — the host's Fsfirst spins over real GEMDOS until the watchdog — and was not repeated.
+- **fs_newdir past thirty-four full-length names** is over the bench cap (a hundred run 274,097 over the replay):
+  Tier 1 only, the read and the sort priced by fs_active's own rows. A SHUFFLED hundred of full-length names is past
+  the cap for fs_active too (sixty and eighty measure 0.816 / 0.815, a hundred reversed 0.818).
+- **Low resolution only** (the snapshot's), fs_start included. Every session and every case over fs_input's machines
+  runs UNPOISONED (the door's and GEMDOS's reasons: savptr and the pool's chain heads). Drive B: is the same staged
+  disk answered for device 1 — it exercises the path, not a second medium.
+- **The partition cuts at door calls and at registered slice ends, not at every trap arrival** (FP's decision). At
+  trap granularity the rule as written cannot hold: 158 ROM instructions between Fsfirst and the first Fsnext are 0.90
+  inside a read priced 0.84, and 1,264 between two of fm_do's VDI calls are 0.85 inside a key priced 0.77. A
+  1,000-instruction grain was built and dropped. So a trap arrival is still matched by ordinal and memory only, and
+  cost that crosses one is seen in the stretch beside it, not at the trap.
+- **A sliced row cannot be `psg_seed` / `schedule` / `regs` seeded** (inherited from the interrupted rows).
+
+DEFERRED, each measured:
+- **The suite's margin under 200 s is thin**: `make test` quiet is 191–195 s (HEAD 140 s, the wave before its fix
+  397 s), CPU-bound on ten workers. Three levers FP measured and did NOT take, each changing something to rule on:
+  a CONTENT-KEYED DISK CACHE of the ROM-only derivations (the bench run would warm it; about 10 CPU-s per process);
+  REUSING THE REAL-DISK RUN'S DELIVERIES for the replay run (one whole-session run fewer per session test; one
+  argument in `_register_rows`); a LIGHTER SECOND DIFFERENTIAL for unregistered session rows, without tier3's own
+  watched ROM run (it drops (EV)'s window vets there).
+- **Registry import is still 22.9 CPU-s per process against HEAD's 13.4** (at the same load). What remains is the
+  derivations themselves: six priced sessions at four whole-session ROM runs each, 686 GEMDOS re-enactments, about 820
+  short ROM runs. Lazy rows would need lazy `pokes` through `case.verified_row` and tier3's `_row`; not attempted.
+  `bench/tier3.py --out` is 103–118 CPU-s against HEAD's 89.4.
+- **`vdi_helpers`' recording trap handler is not merged** into `aes_shell.Table` (the scripted trap and the replay
+  are): one fixed entry shape and no script — not a trivial merge.
+- **Left from the review's convention list** (R4 §9): DONE by the gate fix (the wave log's GATE entry) but for one —
+  the tiling test still reads low-resolution pixels (above). FS_EMPTY_ROW is now spelt as what it is, FS_FILE_MARK (a
+  row past the names is a file's row with no name: its kind byte alone, which is why a click on it is a file's);
+  STRING_SPACE stays its own name (a character of the title's text, no row's kind).
+- **A mark keeps the whole sixteen-megabyte image** (`aes_event.Marks.arrived`), where a GEMDOS call's and a pass's
+  memory are kept as their megabyte of RAM (`aes_fslib.ram_in`): a session of eleven slices holds about a dozen images
+  a shore while its rows are cut (about 1 GB peak in the worker that prices it, measured). Not taken: the marks are
+  compared over the bench's diff spans, which would have to be shown to lie inside RAM first.
+- **`rom_entered` takes no `budget`** (the reference path of `deliveries`): no caller needs one — a session too long
+  for the default's margin cannot be stopped at an entry through it.
+- **The seventh whole-session ROM run** of a file-selector session (`rom_vdi_calls`, over the same replayed machine as
+  the replay's own watched run): 0.17–0.26 CPU-s a session, about 16 s summed over 80. Not merged.
+- **Watch item** (R4): the bench blob grew 153,968 → 159,692 B; 34.7 KB remain below `staging_base`, about six waves
+  of this size. `RomBench._vet_tenancy` refuses the overlap by name.
+
+EQUIVALENT (or unreachable, or unobservable) SURVIVORS:
+- fslib.c's event-free half + the glue: act-kind-not-reread (the kind is re-read from the DTA byte just stored; they
+  differ only for a DTA above RAM, which the host refuses), act-bell-first (a local set before or after the call),
+  el-stores-swapped (two words of one object), fmt-no-min (`row < min(9, n)` is `row < n` for nine rows) — EQUIVALENT;
+  act-dta-not-reread and fmt-kind-first — EQUIVALENT ON EVERY REACHABLE MACHINE (the second differs only for a name of
+  72 bytes or more, which no directory gives); fmt-answers-swapped and snext-with-a-word — UNOBSERVABLE (above).
+- fs_input: show-tree-before-allocs (it masks the AES's own tree pointer, which has no top byte), pass-length-unsigned
+  (a string length under the field's room), drag-zero-is-down (zero rows scroll nothing), row-old-put-down-when-none
+  (fs_sel(0, …) is "no row"), row-reselected-when-same (ob_change to the state an object has draws nothing) —
+  EQUIVALENT; read-any-put-down — EQUIVALENT ON EVERY STAGED MACHINE (every object but OK and Cancel that can end
+  fm_do has state 0 when the read begins); row-buttons-are-rows — UNREACHABLE (the bound matters only past 22).
+- K: s19 (the mark taken before the delivery is laid: both shores mark in the same order). FP:
+  z-isr-inputs-staged-in-place (every caller hands `_interrupt_over` a throwaway image).
+
+ROM FINDINGS (reproduced byte for byte unless marked):
+1. fs_newdir builds the title with NO BOUND. `$9afe` has 40 bytes before gl_mntree (`$9b26`): `" " + spec + " "` fits a
+   37-character spec; from 40 the menu tree's pointer is text, from 50 gl_rzero (`$9b30`) too. An application's
+   fsel_input path is enough. Five cases.
+2. The bell rings for a directory of EXACTLY 100 names: at the 100th name kept, one more Fsnext, its answer
+   discarded, then Cconout(7), whether or not anything was cut. The hundred is of names KEPT (101 files under a spec
+   that keeps eleven ring nothing).
+3. fs_back cuts a long path: the `\` it inserts after a `:` goes through ins_char with a room of 64, so a tail of 63
+   or more bytes is cut by a NUL instead of moved.
+4. fs_pspec's default is always drive A (`"A:\*.*"`, whatever the current drive).
+5. fs_active overwrites the DTA's file length (its low byte is where the kind is stored). Harmless: nothing reads it.
+   A folder is a folder by its SUBDIR bit alone — read-only or archived, whatever the spec.
+6. fs_format's half-box floor is dead for any real directory (it binds only above 100 names; pinned by a count of 200).
+7. dos_snext's "found" is the answer's low WORD: a negative long with a zero low word is found AND sets DOS_ERR.
+8. `fs_input("")` never returns — the divergence above.
+9. A path edited, then Return or OK: the directory is READ, then the selector closes answering CANCEL (the read block
+   puts OK down and does not clear the object in D7, so the switch still ends the loop and inf_what finds neither
+   button). With a row selected before the edit, the row's name is handed back all the same.
+10. The close box over `\*.*` writes BELOW the path's buffer: fs_back is called from one byte below the path and
+    scans DOWN to the first `:` or `\`, inserts a `\` after it and copies `\*.*` over that — five bytes of AES data.
+    Under the path lie the AES's four 81-byte text buffers (AES_RAWSTR `$b756`, AES_TMPLT `$b7a7`, the editor's
+    `$b7f8`, AES_FMTSTR `$b849`), then the ORECT pool (`$b396..$b755`); in the staged machine the scan stops 849 bytes
+    down, at `$b549`, the low byte of free ORECT 36's link (`$0000b53a`). (The review read that address as a linked
+    table's node; it is not.)
+11. The close box uses a STALE LENGTH: with the path typed as one letter, fs_pspec has already rewritten it to
+    `A:\*.*` but the length is the typed one — fs_back starts on the `:` and inserts a second `\`; `A:\\*.*` lists
+    nothing.
+12. The user's spec is lost by the title (the directory is read twice, the second time with `*.*`) and by walking
+    into a folder. GEMDOS is always searched with `*.*`; the spec is wildcmp's alone, which is why folders ignore it.
+13. A key typed ahead is LOST at a hundred names (real GEMDOS): the bell is GEMDOS's Cconout, which polls the console
+    and takes the key out of the BIOS ring into its own type-ahead buffer. The ROM returns over 99 names and blocks
+    over 100.
+14. Smaller: `gsx_sclip(gl_rfs)` at `$fe7e9e` is dead (fm_dial sets the whole screen first); an empty row is a file
+    (clicked: the selection cleared; double-clicked: OK with no name); rows are left SELECTED in the tree when the
+    selector closes; object 7's table row is unreachable and the table's upper bound dead above 22; Cancel hands back
+    both strings as edited; a TOUCHEXIT object held repeats with no new event; the first draw is depth 1; a TOUCHEXIT
+    click ends fm_do, and its release must arrive with the next event (alone it is nothing the wait asks for).
+15. A SECOND ROAD TO THE SPIN (derived, pinned): AES_FMTSTR ends where the path begins and holds whatever FTEXT /
+    FBOXTEXT ob_format merged last (G_TEXT does not pass through it); the selector's own fields are short and
+    overwrite only its head. After a formatted text whose template runs 77 characters and ends in `:`, or has a `\`
+    as its 78th, the close box over `\*.*` lands the copy's NUL on the path's first byte.
+16. A spec past about 25 characters makes the FIRST ROW A FOLDER: the title has 28 bytes of text and the bytes after
+    them are row 12's, so the row's kind byte is a character of the spec, and every kind but a space is a folder's
+    (`$fe80d8 cmpi.b #32`). Clicking it puts the row's text, unformatted, into the path: `A:\MIXED\ABCDEFGH…*.*` and
+    the first row clicked hand back `A:\MIXED\DEFGHABC.DEFGH*.* \ABCDEFGH…*.*`.
+17. The path field's text is 80 bytes (`$d728..$d777`) and fs_sset copies with no bound: a path of 80 characters or
+    more runs on over the selection field's text (`$d778`). BY READING — not run.
+18. COST, not behaviour, found and fixed: the close box's two fs_back scans as GCC inlined them into fs_input (94 and
+    114 cycles a byte against the ROM's 64; the arm alone 1.20) — the C now calls fs_back there as the ROM does
+    (78 cycles a byte; 0.96). Left as it is: the last 8 cycles a byte would take `noclone`, which the host's clang
+    does not know.
 
 **bios — the console's four BLITTER screen routines** (`$fc47be`, `$fc4852`, `$fc48b6`, `$fc4936`): TOS 1.02 installs
 them on a machine with a blitter; the captured ST holds the CPU set, and each reconstruction halts on a vector that is

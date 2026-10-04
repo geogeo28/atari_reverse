@@ -28,10 +28,13 @@ target build going wrong where a host build is right, and nothing else in this p
 import copy
 import ctypes
 import functools
+import gc
 import re
 import subprocess
 import sys
 import types
+import weakref
+from collections import namedtuple
 from pathlib import Path
 
 import pytest
@@ -58,6 +61,7 @@ from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
 from harness import addrs, emu, make_image                  # noqa: E402
 import opcodes                                             # noqa: E402
 import staging                                             # noqa: E402
+import test_aes_fmdo                                       # noqa: E402
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -83,7 +87,13 @@ def dispatch(bench):
 
 
 @pytest.fixture(scope="module")
-def measurement_of(bench):
+def sessions(bench):
+    """The sessions measured, once per worker (`tier3.Sessions`): a session's sliced rows share one pair of runs."""
+    return tier3.Sessions(bench)
+
+
+@pytest.fixture(scope="module")
+def measurement_of(bench, sessions):
     """A row's `Measurement`, measured once per worker — mechanism (T) asks it of a routine's `.S` rows
     for each of its C rows, and those are the same few rows every time."""
     measured = {}
@@ -91,13 +101,32 @@ def measurement_of(bench):
     def measurement(row):
         key = (row.symbol, row.case)
         if key not in measured:
-            measured[key] = tier3.measure(row, bench)
+            measured[key] = tier3.measure(row, bench, sessions)
         return measured[key]
     return measurement
 
 
 def _row_id(row):
     return f"{row.symbol}-{row.case}"
+
+
+def _sliced_session_of_a_case(params):
+    """The SLICED session a case is about, by what it is parametrized over — a Tier 3 row (`row`), a registered row's
+    name (`name`) or a row's key (`key`) — as the group it is collected with (`test/conftest.py`); None for every
+    other case. A session's rows, its companions and its partition then run back to back, on the worker that holds
+    its one pair of runs (`sessions`) and its one companion's (`_COMPANIONS_RUN`)."""
+    row, name, key = params.get("row"), params.get("name"), params.get("key")
+    if isinstance(key, tuple) and key in ROWS_BY_KEY:
+        row = ROWS_BY_KEY[key]
+    if isinstance(row, tier3.Row):
+        name = row.registered
+    if not isinstance(name, str) or name not in aes_event.SLICED_ROWS:
+        return None
+    return next(row_name for row_name, session in aes_event.INTERRUPTED_ROWS.items() if session is aes_event.session_of(name))
+
+
+ROWS_BY_KEY = {(row.symbol, row.case): row for row in tier3.ROWS}
+pytestmark = pytest.mark.collected_with(by=_sliced_session_of_a_case)
 
 
 def test_every_verified_case_carries_a_bench_row():
@@ -125,10 +154,11 @@ def test_no_two_rows_share_a_name():
 
 
 @pytest.mark.parametrize("row", tier3.ROWS, ids=_row_id)
-def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch, measurement_of):
+def test_the_m68k_build_equals_the_original_and_is_within_the_bar(row, bench, dispatch, measurement_of, sessions):
     """One row: measure both sides over one case — which raises if the m68k build diverged — then
-    put the measurement through the same `verdict` the table prints."""
-    measured = tier3.measure(row, bench)
+    put the measurement through the same `verdict` the table prints. (A session's sliced rows are measured
+    off one pair of runs, `sessions`: each still raises for itself.)"""
+    measured = tier3.measure(row, bench, sessions)
     state = tier3.verdict(row, measured, dispatch, measurement_of)
     assert state not in tier3.FAILED, _why(row, measured, state)
 
@@ -965,6 +995,397 @@ def test_an_interrupt_laid_over_memory_it_was_not_derived_over_is_refused_by_nam
         tier3._measure_through_the_os(row, bench)
 
 
+# ---- (EV)'s SLICES: a row priced on one slice of a long session (`aes_event.register_slices`) ----------------------------
+# fm_do's long typing session (`test_aes_fmdo.SESSION_SLICES`): 38 keys, 728,664 ROM instructions, registered as five
+# rows — the slices that start or stop at the entry, a door call, a trap taken and the return.
+WAIT = addrs.AES_ROM_EV_MULTI
+SLICED_ROWS = tuple(("aes_fm_do", label) for label in test_aes_fmdo.SESSION_SLICES)
+A_KEY_S_ROW = ("aes_fm_do", f"{test_aes_fmdo.KEYS_IN_THE_SESSION}: the last character typed")
+# A short session to cut whole: six keys typed one per wait, the last the Return (a registered row, unsliced).
+SHORT_SESSION_ROW = ("aes_fm_do", "typed, Left, Delete, Right, Return")
+UNREAD_BYTE = aes_event.UNREAD_BYTE     # where a RED test takes our run astray (`aes_event.astray`)
+
+
+def _sliced_row(key=A_KEY_S_ROW):
+    row = tier3.row_named(key)
+    assert row.slice and row.delivered, "the premise: the row is one slice of a session taken through interrupts"
+    return row
+
+
+@pytest.mark.parametrize("key", SLICED_ROWS, ids=[case_label for _symbol, case_label in SLICED_ROWS])
+def test_a_sliced_row_is_priced_on_its_slice_alone(key, bench, dispatch, measurement_of):
+    """Each registered slice carries its `Slice` into its row, is priced on what the ROM's own run spends inside it
+    (`aes_event.slice_cost`, the ROM alone) — far under the session's whole run — and passes like any (EV) row."""
+    row = _sliced_row(key)
+    assert row.slice == aes_event.SLICED_ROWS[row.registered]
+    spent = aes_event.slice_cost_of(tier3.registered(row), row.slice)
+    measured = measurement_of(row)
+    assert (measured.original_insns, measured.original_cycles) == (spent["insns"], spent["cycles"])
+    assert measured.original_insns < aes_event.SLICE_INSNS < test_aes_fmdo.SESSION_INSNS
+    assert tier3.verdict(row, measured, dispatch, measurement_of) in ("net", "glue")
+
+
+MEASURED = ("original_insns", "original_cycles", "recreate_insns", "recreate_cycles", "glue_cycles", "own_cycles",
+            "door_windows", "overhead_cycles")
+
+
+def _as_measured(measured):
+    return {total: getattr(measured, total) for total in MEASURED}
+
+
+def test_a_session_s_rows_priced_off_one_pair_of_runs_are_what_each_row_s_own_runs_price(bench):
+    """ONE PAIR OF RUNS FOR A SESSION (`tier3.Sessions`): every one of the session's five rows, cut out of the two
+    runs that mark all their ends at once, is to the cycle the `Measurement` its own three runs make — both sides'
+    costs, glue, own cycles, windows, overhead — and the session was measured once for the five."""
+    measures, held = [], tier3._held_through_the_os
+
+    def counted(*row_of, **marked):
+        measures.append(marked)
+        return held(*row_of, **marked)
+    sessions = tier3.Sessions(bench)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tier3, "_held_through_the_os", counted)
+        shared = {key: _as_measured(tier3.measure(_sliced_row(key), bench, sessions)) for key in SLICED_ROWS}
+    assert len(measures) == 1 and len(measures[0]["others"]) == len(SLICED_ROWS) - 1
+    assert shared == {key: _as_measured(tier3.measure(_sliced_row(key), bench)) for key in SLICED_ROWS}
+
+
+def test_a_row_that_is_no_table_row_of_a_session_is_measured_by_its_own_runs(bench):
+    """...and the memo serves the TABLE's rows alone: a case's variant of one (here its slice replaced) is measured by
+    its own runs, whatever the memo holds."""
+    sessions, row = tier3.Sessions(bench), _sliced_row()
+    whole = row._replace(slice=aes_event.Slice(aes_event.ENTRY, aes_event.RETURN))
+    priced = tier3.measure(row, bench, sessions)
+    with pytest.raises(AssertionError, match="past SLICE_INSNS"):
+        tier3.measure(whole, bench, sessions)
+    assert _as_measured(tier3.measure(row, bench, sessions)) == _as_measured(priced)
+
+
+def test_a_session_s_row_refused_at_its_own_mark_is_refused_alone(bench, monkeypatch):
+    """THE RED through the memo: our run astray until past the first key's wait and back before the last key's — the
+    rows whose ends lie inside that stretch are each refused by name when asked for; the last key's row, whose marks
+    see nothing, is priced."""
+    last_key = _sliced_row()
+    healed_at, went = _door_calls_before(last_key, last_key.slice.start), []
+
+    def from_the_first_stop_until_healed(watch, nth):
+        """At the run's first stop, and again as it is about to enter door call `healed_at`."""
+        flips = nth == 0 or (len(went) == 1 and watch.between_calls and watch.calls == healed_at)
+        if flips:
+            went.append(nth)
+        return flips
+    _our_run_astray(monkeypatch, from_the_first_stop_until_healed)
+    sessions = tier3.Sessions(bench)
+    assert tier3.measure(last_key, bench, sessions).original_insns
+    first_wait = _sliced_row(SLICED_ROWS[0])
+    with pytest.raises(AssertionError, match="our run diverged inside the slice"):
+        tier3.measure(first_wait, bench, sessions)
+
+
+@pytest.mark.parametrize("cap", (None, 1), ids=("its rows priced", "its rows refused, each refusal kept"))
+def test_a_session_s_marks_are_dropped_once_its_rows_are_cut(cap, bench, monkeypatch):
+    """THE MEMO KEEPS NO RUN: a session's two watches and their marks — a memory per slice end, sixteen megabytes each —
+    are gone when `Sessions` has cut its rows, by the last reference going (the collector is OFF here), not by some
+    later collection. RED both ways: a watch that is a reference cycle (its own bound methods handed to itself)
+    outlives the call; so does one a kept refusal's traceback still reaches — here every row refused, under a slice
+    cap of one instruction."""
+    held, runs, row = tier3._held_through_the_os, [], _sliced_row()
+
+    def recorded(*row_of, **marked):
+        measured, blob, original, windows = held(*row_of, **marked)
+        runs.extend(weakref.ref(each) for watch in (original, windows) for each in (watch, watch.marks))
+        return measured, blob, original, windows
+    monkeypatch.setattr(tier3, "_held_through_the_os", recorded)
+    if cap is not None:
+        monkeypatch.setattr(aes_event, "SLICE_INSNS", cap)
+    gc.collect()
+    gc.disable()
+    try:
+        sessions = tier3.Sessions(bench)
+        if cap is None:
+            assert sessions.measure(row).original_insns
+        else:
+            with pytest.raises(AssertionError, match="past SLICE_INSNS"):
+                sessions.measure(row)
+        assert len(runs) == 4 and all(run() is None for run in runs), "a watch or its marks outlived the session's pricing"
+    finally:
+        gc.enable()
+
+
+# ---- WHAT NO SLICE PRICES: every stretch of a session between its registered slices (`tier3.uncovered_stretches`) ----
+def _sessions_sliced():
+    """One row per sliced session, the table's first of each: `{its case: the row}`."""
+    first = {}
+    for row in tier3.ROWS:
+        if row.slice:
+            first.setdefault(id(tier3.session_of(row)), row)
+    return {f"{row.symbol}-{row.case}": row for row in first.values()}
+
+
+SESSIONS_SLICED = _sessions_sliced()
+
+
+def _worst_registered(symbol, measurement_of, but=()):
+    """The worst own ratio among `symbol`'s priced rows through the OS (what the table prints for them), `but` aside."""
+    rows = [row for row in tier3.ROWS if row.symbol == symbol and tier3.goes_through_the_os(row) and row.case not in but]
+    worst = max(rows, key=lambda row: tier3.own_ratio(measurement_of(row)))
+    return worst, tier3.own_ratio(measurement_of(worst))
+
+
+def _vet_no_stretch_is_dearer(row, stretches, worst_row, worst):
+    """Every stretch no slice prices is at or under the routine's worst registered row — else refused, by name."""
+    for stretch in stretches:
+        ratio = tier3.stretch_ratio(stretch)
+        assert ratio <= worst, (
+            f"{row.symbol}: the session of '{row.case}' spends {stretch.insns} ROM instructions from {stretch.start} "
+            f"to {stretch.stop} that no registered slice prices, at an own ratio of {ratio:.4f} "
+            f"({stretch.own_cycles[0]} cycles against the ROM's {stretch.own_cycles[1]}) — dearer than the routine's "
+            f"worst registered row ({worst:.4f}, '{worst_row.case}'): register the stretch as a slice")
+
+
+@pytest.mark.parametrize("row", SESSIONS_SLICED.values(), ids=SESSIONS_SLICED)
+def test_no_stretch_between_a_session_s_slices_is_dearer_than_its_routine_s_worst_row(row, bench, measurement_of):
+    """THE PARTITION: the session cut whole at every door call and every registered end, both shores; every stretch
+    its registered slices leave unpriced is held at or under the worst row the table prints for the routine — so a
+    dear stretch cannot hide in a gap between slices."""
+    stretches = tier3.uncovered_stretches(row, bench)
+    _vet_no_stretch_is_dearer(row, stretches, *_worst_registered(row.symbol, measurement_of))
+
+
+def test_a_session_s_stretches_and_slices_partition_its_run(bench):
+    """...and it IS a partition: with no slice counted as covering, the stretches are the whole run — their ROM
+    instructions and both shores' own cycles sum to the unsliced session's, to the cycle (fm_do's 38 keys)."""
+    row = _sliced_row()
+    stretches = tier3.uncovered_stretches(row, bench, covered=())
+    whole, _blob, _original, _windows = tier3._held_through_the_os(row, bench)
+    assert sum(stretch.insns for stretch in stretches) == whole.original_insns
+    assert tuple(map(sum, zip(*(stretch.own_cycles for stretch in stretches)))) == whole.own_cycles
+    assert stretches[0].start == aes_event.ENTRY and stretches[-1].stop == aes_event.RETURN
+    assert all(before.stop == after.start for before, after in zip(stretches, stretches[1:]))
+    doors = sum(stretch.stop != aes_event.RETURN and stretch.stop.pc in aes_event.ENTRIES for stretch in stretches)
+    assert doors == len(whole.door_windows), "a cut at every door call"
+
+
+def test_a_session_s_uncovered_stretches_are_exactly_what_its_slices_leave(bench, sessions):
+    """...and with the registered slices counted: the stretches and the five slices together are the whole run, no
+    instruction and no own cycle in both or in neither."""
+    row = _sliced_row()
+    rows = tier3.rows_of_the_session(tier3.session_of(row))
+    stretches = tier3.uncovered_stretches(row, bench)
+    priced = [tier3.measure(each, bench, sessions) for each in rows]
+    whole, _blob, _original, _windows = tier3._held_through_the_os(row, bench)
+    assert sum(stretch.insns for stretch in stretches) + sum(each.original_insns for each in priced) == whole.original_insns
+    own = [stretch.own_cycles for stretch in stretches] + [each.own_cycles for each in priced]
+    assert tuple(map(sum, zip(*own))) == whole.own_cycles
+
+
+def test_a_stretch_s_ratio_is_its_own_cycles_and_past_every_bar_where_ours_alone_spent_any():
+    at = aes_event.door_call(WAIT, 0)
+    assert tier3.stretch_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (3, 4))) == 0.75
+    assert tier3.stretch_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (0, 0))) == 0
+    assert tier3.stretch_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (1, 0))) > tier3.TIER3_FUNCTION_BAR
+
+
+def test_the_rows_of_a_session_that_are_not_one_machine_are_refused_by_name(bench, monkeypatch):
+    """THE MEMO'S PREMISE, held: a session's rows share a run because they are one machine — one that is not (here
+    its I/O map another's) is refused before any run is shared."""
+    row = _sliced_row()
+    rows = tier3.rows_of_the_session(tier3.session_of(row))
+    monkeypatch.setattr(tier3, "rows_of_the_session", lambda _session: [rows[0]._replace(io_seed={0: 0}), *rows[1:]])
+    with pytest.raises(AssertionError, match="the rows of its session are not one machine"):
+        tier3.Sessions(bench).measure(row)
+
+
+def test_sessions_measured_over_one_build_are_not_answered_for_another(bench):
+    """A MEMO IS ONE BUILD'S (RED): sessions made over one bench, asked for a row over another, are refused by name —
+    never answered the first build's pricing."""
+    another_build = copy.copy(bench)
+    with pytest.raises(AssertionError, match="asked of sessions measured over another build"):
+        tier3.measure(_sliced_row(), another_build, tier3.Sessions(bench))
+
+
+def test_a_sliced_row_that_names_no_session_is_refused_by_name(bench):
+    """A SLICED ROW IS FOUND BY ITS REGISTERED NAME (RED): one whose name no session answers to would be priced by
+    three runs of its own without a word — the lever lost — so it is refused, wherever its session is asked for."""
+    row = _sliced_row()
+    assert tier3.session_of(row) is aes_event.session_of(row.registered) is tier3.registered(row)
+    unregistered = row._replace(registered="aes_fm_do, a name no battery registered")
+    for asked in (tier3.session_of, tier3.registered, lambda row: tier3.uncovered_stretches(row, bench)):
+        with pytest.raises(AssertionError, match="a sliced row registered as .*which names no session"):
+            asked(unregistered)
+    unsliced = tier3.row_named(SHORT_SESSION_ROW)
+    assert tier3.session_of(unsliced) is aes_event.session_of(unsliced.registered) and not unsliced.slice
+    assert tier3.session_of(tier3.row_named(tier3.DISPATCH_LEAF)) is None
+
+
+def test_a_dear_stretch_left_out_of_the_slice_table_is_refused_by_name(bench, measurement_of):
+    """THE RED: fm_do's session with its worst slice — the last character typed — left out of the table: the stretch
+    it priced is then a gap dearer than every row that is left, and the session is refused by name. (So are the keys
+    just before it, which only that row's ratio covered: the gaps are held to what the table PRINTS.)"""
+    row = _sliced_row()
+    worst_row, _worst = _worst_registered(row.symbol, measurement_of)
+    assert (worst_row.symbol, worst_row.case) == A_KEY_S_ROW, "the premise: the last key is fm_do's worst row"
+    left = [each.slice for each in tier3.rows_of_the_session(tier3.session_of(row)) if each.slice != worst_row.slice]
+    stretches = tier3.uncovered_stretches(row, bench, covered=left)
+    next_worst_row, next_worst = _worst_registered(row.symbol, measurement_of, but={worst_row.case})
+    dearer = {(stretch.start, stretch.stop) for stretch in stretches if tier3.stretch_ratio(stretch) > next_worst}
+    assert tuple(worst_row.slice) in dearer
+    with pytest.raises(AssertionError, match="that no registered slice prices.*dearer than the routine's worst"):
+        _vet_no_stretch_is_dearer(row, stretches, next_worst_row, next_worst)
+
+
+def test_a_trap_our_build_takes_that_the_rom_s_run_does_not_is_refused_by_name(bench, monkeypatch):
+    """THE ARRIVALS ARE HELD EQUAL where the session is cut whole: our timeline with one arrival dropped (an end at a
+    trap the C never took) is refused at the first arrival that differs."""
+    held = tier3._held_through_the_os
+
+    def one_arrival_short(*row_of, **marked):
+        measured, blob, original, windows = held(*row_of, **marked)
+        del windows.marks.timeline[1]
+        return measured, blob, original, windows
+    monkeypatch.setattr(tier3, "_held_through_the_os", one_arrival_short)
+    with pytest.raises(AssertionError, match="the two runs do not make the same arrivals"):
+        tier3.uncovered_stretches(_sliced_row(), bench)
+
+
+TIMELINE_FAULTS = {
+    "its last arrival never made": lambda timeline: timeline[:-1],
+    "an arrival made a door call late": lambda timeline: [timeline[0]._replace(calls=timeline[0].calls + 1), *timeline[1:]],
+}
+
+
+@pytest.mark.parametrize("fault", TIMELINE_FAULTS.values(), ids=TIMELINE_FAULTS)
+def test_our_timeline_is_held_to_the_rom_s_arrival_for_arrival(fault, bench, monkeypatch):
+    """...and so is one that only stops short, or makes the same arrivals after other door calls."""
+    held = tier3._held_through_the_os
+
+    def faulted(*row_of, **marked):
+        measured, blob, original, windows = held(*row_of, **marked)
+        windows.marks.timeline = fault(windows.marks.timeline)
+        return measured, blob, original, windows
+    monkeypatch.setattr(tier3, "_held_through_the_os", faulted)
+    with pytest.raises(AssertionError, match="the two runs do not make the same arrivals"):
+        tier3.uncovered_stretches(_sliced_row(), bench)
+
+
+def _cuts_of(row):
+    """A session cut at every wait: the entry, each ev_multi it makes, the return."""
+    waits = sum(call.routine == WAIT for call in tier3._original_windows(row)[0].handed)
+    return (aes_event.ENTRY, *(aes_event.door_call(WAIT, nth) for nth in range(waits)), aes_event.RETURN)
+
+
+def test_a_session_s_slices_sum_to_its_whole_row(bench):
+    """THE ACCOUNTING: a session cut at every wait is priced slice by slice, and nothing is lost or counted twice —
+    each side's instructions, cycles, glue and OWN cycles (the reset taken off the first slice alone), and the windows
+    in order, sum to the unsliced row's."""
+    row = tier3.row_named(SHORT_SESSION_ROW)
+    whole = tier3.measure(row, bench)
+    cuts = _cuts_of(row)
+    assert len(cuts) > len(row.delivered) + 1
+    slices = [tier3.measure(row._replace(slice=aes_event.Slice(*ends)), bench) for ends in zip(cuts, cuts[1:])]
+    for total in ("original_insns", "original_cycles", "recreate_insns", "recreate_cycles", "glue_cycles"):
+        assert sum(getattr(each, total) for each in slices) == getattr(whole, total), total
+    assert tuple(map(sum, zip(*(each.own_cycles for each in slices)))) == whole.own_cycles
+    assert sum((each.door_windows for each in slices), ()) == whole.door_windows
+    assert [each.overhead_cycles for each in slices] == [whole.overhead_cycles] + [0] * (len(slices) - 1)
+
+
+def test_a_slice_our_build_starts_one_door_late_is_refused_by_name(bench, monkeypatch):
+    """THE RED: our run marked from the NEXT wait — a door call later than the ROM's slice starts at."""
+    row = _sliced_row()
+    late = aes_event.Slice(aes_event.door_call(WAIT, row.slice.start.nth + 1), aes_event.RETURN)
+    our_marks = tier3._our_marks
+    monkeypatch.setattr(tier3, "_our_marks", lambda sliced, *rest: our_marks(sliced._replace(slice=late), *rest))
+    refusal = r"our slice starts at door call (\d+) .* where the ROM's starts at door call (\d+) .* another slice"
+    with pytest.raises(AssertionError, match=refusal) as refused:
+        tier3.measure(row, bench)
+    ours, the_rom_s = map(int, re.search(refusal, str(refused.value)).groups())
+    assert ours == the_rom_s + 1
+
+
+def _our_run_astray(monkeypatch, flips):
+    """Our blob's run taken astray (`aes_event.astray`): UNREAD_BYTE inverted at each stop `flips(watch, nth)` says."""
+    our_windows = tier3.our_windows
+    monkeypatch.setattr(tier3, "our_windows", lambda elf, delivered=None: aes_event.astray(our_windows(elf, delivered), flips))
+
+
+def _our_run_astray_until_after(monkeypatch, healed_after):
+    """Our blob's run with `UNREAD_BYTE` inverted from its first door call until the first one past door call
+    `healed_after`, where it is put back: a C astray over that stretch in a byte nothing reads or rewrites, and whose
+    FINAL image is the ROM's — so the whole run's differential sees nothing."""
+    _our_run_astray(monkeypatch, lambda watch, _nth: watch.between_calls and watch.calls in (0, healed_after + 1))
+
+
+def _door_calls_before(row, end):
+    """How many door calls the ROM's run of `row`'s session has entered when it reaches the slice end `end`."""
+    marks, _memory = aes_event.sliced_of(tier3.registered(row), row.slice)
+    return marks.at(end, "the ROM's run").calls
+
+
+def test_a_slice_our_build_diverged_before_is_refused_by_name(bench, monkeypatch):
+    """THE RED: our run reaches the slice's start after the ROM's door calls, having spent what it spends — over
+    another machine, which it leaves again before it returns: only the mark at the slice's start can see it, and
+    refuses by name."""
+    row = _sliced_row()
+    _our_run_astray_until_after(monkeypatch, _door_calls_before(row, row.slice.start))
+    with pytest.raises(AssertionError, match=rf"our run diverged before the slice's start .*1 bytes differ.*"
+                                             rf"{UNREAD_BYTE:#x}"):
+        tier3.measure(row, bench)
+
+
+def test_a_divergence_healed_before_the_slice_s_start_is_no_refusal(bench, monkeypatch):
+    """...and the same stretch astray, put back BEFORE the slice starts, is not the slice's business: priced as ever."""
+    row = _sliced_row()
+    priced = tier3.measure(row, bench)
+    _our_run_astray_until_after(monkeypatch, 0)
+    assert tier3.measure(row, bench).own_cycles == priced.own_cycles
+
+
+def test_a_slice_our_build_diverged_inside_is_refused_at_its_end(bench, monkeypatch):
+    """A slice from the ENTRY has no memory to compare at its start; astray from the first door call to past its end,
+    it is refused at the end."""
+    row = _sliced_row(SLICED_ROWS[0])
+    assert row.slice.start == aes_event.ENTRY
+    _our_run_astray_until_after(monkeypatch, _door_calls_before(row, row.slice.stop))
+    with pytest.raises(AssertionError, match="our run diverged inside the slice"):
+        tier3.measure(row, bench)
+
+
+def test_a_slice_s_own_cycles_are_held_to_the_os_both_sides_ran_inside_it(bench, monkeypatch):
+    """The slice's own split is held as the whole run's is: what each side spent in the OS both ran — its slice's
+    cycles less its own — must be equal INSIDE the slice. RED: our blob's tally read two cycles short at each mark
+    past the first leaves the whole run's equality standing and the slice's own two cycles light."""
+    row = _sliced_row()
+    our_marks, marked = tier3._our_marks, []
+
+    def two_cycles_short(*slice_of):
+        marks = our_marks(*slice_of)
+        cost = marks._cost
+
+        def short():
+            marked.append(None)
+            return {**cost(), "blob": cost()["blob"] - 2 * (len(marked) > 1)}
+        marks._cost = short
+        return marks
+    monkeypatch.setattr(tier3, "_our_marks", two_cycles_short)
+    with pytest.raises(AssertionError, match="inside its slice the OS both sides run cost ours"):
+        tier3.measure(row, bench)
+
+
+def test_a_slice_over_the_cap_is_refused_by_name(bench, monkeypatch):
+    row = _sliced_row()
+    spent = tier3.measure(row, bench).original_insns
+    monkeypatch.setattr(aes_event, "SLICE_INSNS", spent - 1)
+    with pytest.raises(AssertionError, match=rf"runs {spent} ROM instructions, past SLICE_INSNS \({spent - 1}\): cut it "
+                                             rf"finer"):
+        tier3.measure(row, bench)
+
+
+def test_a_sliced_row_with_nothing_delivered_is_refused_by_name(bench):
+    with pytest.raises(AssertionError, match="a sliced row is taken through interrupts"):
+        tier3.measure(_sliced_row()._replace(delivered={}), bench)
+
+
 def test_a_drop_over_bytes_the_watched_original_never_writes_is_refused(bench):
     """The watched original's WRITE LEDGER (`emu.bench_writes`) keeps the row's drop vetted per byte: the mask word
     widened by a word the ROM's run never stores is refused, as an unwatched row's is."""
@@ -1215,23 +1636,42 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
     assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
 
 
-def _an_interrupted_companion_drops_nothing(name, registered, monkeypatch):
-    """...an interrupted row's: every `aes_event.differing` its companion makes compares all but the stack band, over
-    the row's own machine — and over the row's own deliveries, neither derived again nor taken through the bench's
-    second differential (the row's own pricing is that)."""
-    left_out, differing = [], aes_event.differing
+# A session's slice rows share ONE companion (`aes_event.register_slices`: the whole session's differential), so it
+# is RUN once per worker for them all (`aes_event.OncePerSession`) and every row is then held to it: its own machine,
+# its own deliveries. What is kept of the run is what the rows read — the machine it staged, the deliveries it ran
+# under, what it left out of its compares and what it derived again — not its two sixteen-megabyte images.
+CompanionRun = namedtuple("CompanionRun", "staged delivered left_out redone")
+
+
+def _companion_run(name, monkeypatch):
+    """The companion of the registered row `name`, run with every `aes_event.differing` it makes recorded
+    (`left_out`: what each left uncompared) and every derivation it makes again refused a run of its own (`redone`)."""
+    left_out, redone, differing = [], [], aes_event.differing
 
     def recorded(image, rom_memory, not_compared=None):
         left_out.append(not_compared)
         return differing(image, rom_memory, not_compared)
     monkeypatch.setattr(aes_event, "differing", recorded)
-    redone = []
     monkeypatch.setattr(aes_event, "deliveries", lambda *case_of: redone.append("deliveries"))
     monkeypatch.setattr(aes_event, "bench_differential", lambda *case_of: redone.append("bench_differential"))
     result = case.tier3_undropped()[name]()
-    assert left_out and all(each == frozenset(case.STACK_BAND) for each in left_out), left_out
-    assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
-    assert result.delivered == test_boot_snapshot.delivered_of(registered) and not redone, redone
+    return CompanionRun(result.staged, result.delivered, left_out, redone)
+
+
+_COMPANIONS_RUN = aes_event.OncePerSession(_companion_run)
+
+
+def _an_interrupted_companion_drops_nothing(name, registered, monkeypatch):
+    """...an interrupted row's: every `aes_event.differing` its companion makes compares all but the stack band, over
+    the row's own machine — and over the row's own deliveries, neither derived again nor taken through the bench's
+    second differential (the row's own pricing is that)."""
+    companions = case.tier3_undropped()
+    assert all(companions[name] is companions[row_name] for row_name, session in aes_event.INTERRUPTED_ROWS.items()
+               if session is aes_event.session_of(name)), f"{name}: the rows of its session do not share one companion"
+    ran = _COMPANIONS_RUN(name, registered[1:], name, monkeypatch)
+    assert ran.left_out and all(each == frozenset(case.STACK_BAND) for each in ran.left_out), ran.left_out
+    assert vdi.make_image(registered[3]) == vdi.make_image(ran.staged), f"{name}: the companion ran another machine"
+    assert ran.delivered == test_boot_snapshot.delivered_of(registered) and not ran.redone, ran.redone
 
 
 # ---- THE ODD-ACCESS SURFACE: what a 68000 bombs on and this oracle's CPU completes ------------------------------------

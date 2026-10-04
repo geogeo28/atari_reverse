@@ -45,7 +45,7 @@ ROM_ADDRESSES_AS_DATA = {
     # The glue's parked return sites: __DOS's own (dos_free, dos_sdta, dos_close) and the four calls' `bsr __DOS`.
     "gemdosif.c": {"AES_DOS_TRAP_RETURN": RETURN_SITE, "AES_DOS_SFIRST_TRAP_RETURN": RETURN_SITE,
                    "AES_DOS_OPEN_TRAP_RETURN": RETURN_SITE, "AES_DOS_READ_TRAP_RETURN": RETURN_SITE,
-                   "AES_DOS_LSEEK_TRAP_RETURN": RETURN_SITE},
+                   "AES_DOS_LSEEK_TRAP_RETURN": RETURN_SITE, "AES_DOS_SNEXT_TRAP_RETURN": RETURN_SITE},
     # The `bsr.w` to the shared OB_ADDR helper, spelt as its displacement from each routine's own entry
     # (`BSR_W_TO_OB_ADDR`): a distance inside the optimize region the `.S` transcribes.
     "optimize.S": {"AES_ROM_FS_SGET": DISTANCE, "AES_ROM_FS_SSET": DISTANCE, "AES_ROM_INF_FLDSET": DISTANCE,
@@ -76,6 +76,14 @@ ROM_ADDRESSES_AS_DATA = {
     # eralert's two tables, read in place (an error past them reads on, as the ROM's does), and the bell's Bconout: the
     # D0 the BIOS dispatcher would have jumped with, handed to its C core off target (`bios/bcon.h`).
     "fmdo.c": {"AES_ERALERT_STRINGS": TABLE, "AES_ERALERT_LEVELS": TABLE, "BIOS_BCONOUT": CODE},
+    # The file selector's four strings and its redraw list, read in place, and its return sites through $fe3c28 —
+    # fs_active's from dos_sdta and from the bell's Cconout, fs_input's six from dos_free (host arguments, as sh_find's).
+    "fslib.c": {"AES_FS_DEFAULT_PATH": TABLE, "AES_FS_TITLE_TAIL": TABLE, "AES_FS_REDRAWN": TABLE,
+                "AES_FS_FIRST_TITLE": TABLE, "AES_FS_EVERY_NAME": TABLE,
+                "AES_FS_ACTIVE_SDTA_RETURN": RETURN_SITE, "AES_FS_ACTIVE_BELL_RETURN": RETURN_SITE,
+                "AES_FS_INPUT_NAMES_ONLY_FREE_RETURN": RETURN_SITE, "AES_FS_INPUT_NAMES_FREE_RETURN_NO_DTA": RETURN_SITE,
+                "AES_FS_INPUT_INDEX_FREE_RETURN_NO_DTA": RETURN_SITE, "AES_FS_INPUT_DTA_FREE_RETURN": RETURN_SITE,
+                "AES_FS_INPUT_INDEX_FREE_RETURN": RETURN_SITE, "AES_FS_INPUT_NAMES_FREE_RETURN": RETURN_SITE},
 }
 
 

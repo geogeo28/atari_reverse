@@ -2240,7 +2240,7 @@
 #define AES_ROM_SC_READ_OPCODE    80
 #define AES_ROM_SC_WRITE          0xfeac94   /* read: scrp_write, the caller's path lstcpy'd in as the scrap path */
 #define AES_ROM_SC_WRITE_OPCODE   81
-#define AES_ROM_FS_INPUT          0xfe7d90   /* ctx */
+#define AES_ROM_FS_INPUT          0xfe7d90   /* (path, selection, &button): the file selector run until OK or Cancel; 1, or 0 for no memory */
 #define AES_ROM_FS_INPUT_OPCODE   90
 #define AES_ROM_WM_CREATE         0xfec602   /* read: (kind, rect): the first free window claimed, -1 for none */
 #define AES_ROM_WM_CREATE_OPCODE  100
@@ -2322,5 +2322,32 @@
 #define AES_ROM_SH_FIND_OPCODE    124
 #define AES_ROM_SH_ENVRN          0xfeae36   /* read: where a name's value starts in the environment, or 0 */
 #define AES_ROM_SH_ENVRN_OPCODE   125
+/* The file selector's event-free routines (`aes/fslib.h`), each read from its body — and the two pieces of the GEMDOS
+ * glue fs_active reaches, with the return sites they park (the glue's own, and fs_active's through $fe3c28). */
+#define AES_ROM_FS_START          0xfe7782   /* (): ad_fstree := the AES resource's tree 0, centred into gl_rfs */
+#define AES_ROM_FS_BACK           0xfe77ae   /* (path, end): back from end to a `:` or `\`; a `\` put in after a `:` */
+#define AES_ROM_FS_PSPEC          0xfe77ee   /* (path, end): past the last `\`; with none the path becomes "A:\*.*" */
+#define AES_ROM_FS_ACTIVE         0xfe7826   /* (path, spec, &count): a directory read, filtered by spec, sorted */
+#define AES_ROM_FS_1SCROLL        0xfe79fe   /* (top, count, arrow): the list's top one row up or down, bounded */
+#define AES_ROM_FS_FORMAT         0xfe7a44   /* (tree, top, count): nine names into the list's rows, the elevator sized */
+#define AES_ROM_FS_SEL            0xfe7b70   /* (row, state): the list's row changed and drawn; row 0 none */
+#define AES_ROM_FS_NSCROLL        0xfe7b92   /* (tree, &row, top, count, arrow, n): scrolled n rows on the screen; the top */
+#define AES_ROM_FS_NEWDIR         0xfe7cfa   /* (title, path, spec, tree, &count): a directory read, listed and drawn */
+#define AES_ROM_DOS_SNEXT         0xfe3a46   /* Fsnext, then dos_sfirst's tail: 1 found; ENMFIL or EFILNF -> AES_DOS_AX 18 */
+#define AES_ROM_DOS_CCONOUT       0xfe3bf6   /* Cconout through $fe3c28, over the character word its caller pushed */
+#define AES_DOS_SNEXT_TRAP_RETURN 0xfe3a4e   /* dos_snext's `bsr __DOS` return: AES_TRAP1_RETURN's after it */
+#define AES_FS_ACTIVE_SDTA_RETURN 0xfe784a   /* fs_active's return site from dos_sdta: what AES_DOS_RETURN holds after */
+#define AES_FS_ACTIVE_BELL_RETURN 0xfe7910   /* ...and from the bell's Cconout */
+#define AES_FS_INPUT_NEWDIR_RETURN 0xfe7fd6  /* fs_input, back from its fs_newdir: a directory read, listed and drawn */
+#define AES_FS_INPUT_PASS         0xfe7ed8   /* fs_input's loop: the head of a pass */
+#define AES_FS_INPUT_NO_READ      0xfe7fea   /* fs_input's pass, past the directory read: where a path already read arrives */
+/* fs_input's return sites from dos_free — what AES_DOS_RETURN holds after each: its three blocks freed at its end, and
+ * the one or two it frees where a later Malloc found no memory. */
+#define AES_FS_INPUT_NAMES_ONLY_FREE_RETURN 0xfe7dd8   /* the names, the index refused */
+#define AES_FS_INPUT_NAMES_FREE_RETURN_NO_DTA 0xfe7dfc /* the names, the DTA refused */
+#define AES_FS_INPUT_INDEX_FREE_RETURN_NO_DTA 0xfe7e04 /* ...then the index */
+#define AES_FS_INPUT_DTA_FREE_RETURN   0xfe82c2        /* at its end: the DTA */
+#define AES_FS_INPUT_INDEX_FREE_RETURN 0xfe82ca        /* ...the index */
+#define AES_FS_INPUT_NAMES_FREE_RETURN 0xfe82d2        /* ...the names */
 
 #endif /* TOS102US_ADDRS_H */

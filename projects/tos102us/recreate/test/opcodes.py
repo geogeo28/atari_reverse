@@ -100,6 +100,16 @@ MOVE_L_A0_POSTINC_D0 = 0x2018           # move.l  (a0)+,d0
 # A short branch's HIGH BYTE alone: a stub that lays itself out puts the displacement in the low byte.
 BRA_S = 0x60                            # bra.s   <d8>
 BEQ_S = 0x67                            # beq.s   <d8>
+BNE_S = 0x66                            # bne.s   <d8>
+# ...and the words a trap handler that fills a buffer adds to those (`test/aes_fslib.py`'s replayed search).
+MOVE_L_STACK_TO_ABSOLUTE = 0x23EF       # move.l  <d16>(sp),<xxx>.l
+MOVEA_L_ABSOLUTE_A1 = 0x2279            # movea.l <xxx>.l,a1
+PUSH_A1 = 0x2F09                        # move.l  a1,-(sp)
+POP_A1 = 0x225F                         # movea.l (sp)+,a1
+PUSH_D1 = 0x2F01                        # move.l  d1,-(sp)
+POP_D1 = 0x221F                         # move.l  (sp)+,d1
+MOVEQ_D1 = 0x7200                       # moveq   #<imm8>,d1: the immediate in the low byte
+LEA_D16_A0_A0 = 0x41E8                  # lea     <d16>(a0),a0
 SEQ_D0 = 0x57C0                         # seq     d0
 EXT_W_D0 = 0x4880                       # ext.w   d0
 MOVE_W_ABSOLUTE_TO_ABSOLUTE = 0x33F9    # move.w  <xxx>.l,<yyy>.l

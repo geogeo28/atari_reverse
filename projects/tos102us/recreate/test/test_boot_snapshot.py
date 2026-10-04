@@ -17,6 +17,7 @@ its write set, the bytes it wrote and its PSG ledger all move the moment it read
 bytes, whatever any reconstruction does.
 """
 import random
+import re
 import struct
 import sys
 
@@ -275,6 +276,8 @@ import test_aes_grdrag                                      # noqa: E402,F401  (
 import test_aes_fmlib                                       # noqa: E402,F401
 import test_aes_fmdo                                        # noqa: E402,F401  (through the event door)
 import test_aes_fmalert                                     # noqa: E402,F401  (through the event door)
+import test_aes_fslib_replay                                # noqa: E402,F401  (GEMDOS replayed)
+import test_aes_fs_input_rows                               # noqa: E402,F401  (sessions, GEMDOS replayed)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
@@ -478,11 +481,13 @@ def test_a_verified_function_reads_no_io_byte_the_model_does_not_serve():
     applies to it exactly as to the rest — it is kept out of `VERIFIED_CASES` because `bench/
     tier3.py` reds on a verified case it cannot make a row for, which is a fact about the table
     rather than about the case."""
+    replayed = _once_per_session(_run_for_its_refusals)
     for row in VERIFIED_CASES + UNPRICED_CASES:
         name = row[0]
+        if delivered_of(row):       # replayed watched, its refusals vetted (`aes_event.replayed`), this one included
+            replayed(row, row)
+            continue
         _final, _writes, o_regs = run_original(row)
-        if delivered_of(row):
-            continue                # replayed watched, its refusals vetted (`aes_event.replayed`), this one included
         assert o_regs["io_unmodeled_reads"] == 0, (
             f"{name} read {o_regs['io_unmodeled_reads']} unmodelled I/O byte(s), the first at "
             f"{o_regs['io_unmodeled_first']:#x}")
@@ -637,6 +642,23 @@ def fields(row):
 def delivered_of(row):
     """One `VERIFIED_CASES` row's deliveries — `{}` for every row but an interrupted one."""
     return row[8] if len(row) > 8 else {}
+
+
+def _run_for_its_refusals(row):
+    """`run_original(row)` for what the run REFUSES alone: nothing of it is read, so nothing of it is kept."""
+    run_original(row)
+
+
+def _once_per_session(compute):
+    """A sweep's memo of what it ran over a SESSION (`aes_event.OncePerSession`, `compute` the sweep's computation over
+    its one base image): the slice rows `register_slices` registers of one session are one machine and one set of
+    deliveries, so a sweep over "every row" would run the same original once per slice — 39 rows over 7 sessions,
+    each a whole session of half a million instructions and more. `once(row, *arguments)` is `compute(*arguments)`,
+    made once for the rows of `row`'s session — THE PREMISE HELD: each row's machine (all of it but its name: its
+    entry, registers, pokes, seeds, schedule, deliveries) is the one the run was made over, else refused by name."""
+    import aes_event
+    memo = aes_event.OncePerSession(compute)
+    return lambda row, *arguments: memo(row[0], row[1:], *arguments)
 
 
 def run_original(row, over_noise=False):
@@ -962,10 +984,18 @@ def _oracle_outputs(base, case, over_noise=False):
             written, [final[a] for a in written], out_regs["psg_events"])
 
 
+def _sweep_over(base, over_noise=False):
+    """ONE SWEEP's `outputs(case)` over `base` (`_oracle_outputs`), a session's rows one run — made for the first of
+    them (`_once_per_session`: the memo is this sweep's, over this base, and no other's)."""
+    once = _once_per_session(lambda case: _oracle_outputs(base, case, over_noise))
+    return lambda case: once(case, case)
+
+
 @pytest.fixture(scope="module")
 def pristine_outputs():
     """What each verified case leaves over the snapshot exactly as it was captured."""
-    return {case[0]: _oracle_outputs(BASE_IMAGE, case) for case in VERIFIED_CASES}
+    outputs = _sweep_over(BASE_IMAGE)
+    return {case[0]: outputs(case) for case in VERIFIED_CASES}
 
 
 @pytest.mark.parametrize("seed", (1, 2, 3))
@@ -979,14 +1009,57 @@ def test_no_verified_function_depends_on_a_byte_the_capture_does_not_reproduce(s
     A differential could not ask this: it hands the SAME image to both cores, so a masked-byte
     dependence is fed to the reconstruction too and cancels. The oracle against itself cannot cancel.
     """
-    scrambled = _scrambled_base(seed)
+    # `bytes`: `set_base_image` installs a bytes image as it is, and copies sixteen megabytes of any other — per case.
+    over_noise = _sweep_over(bytes(_scrambled_base(seed)), over_noise=True)
     for case in VERIFIED_CASES:
         name = case[0]
-        assert _oracle_outputs(scrambled, case, over_noise=True) == pristine_outputs[name], (
+        assert over_noise(case) == pristine_outputs[name], (
             f"{name} behaves differently over a snapshot whose masked regions hold noise, so it "
             f"reads a byte two captures of the same boot disagree about — its differential is "
             f"verified against one particular boot and will flake against the next. Find the read: "
             f"either the case must declare that byte, or the region does not belong in MASK.")
+
+
+def _two_rows_of_one_session():
+    """Two slice rows of one session, out of `VERIFIED_CASES`."""
+    import aes_event
+    sliced = [row for row in VERIFIED_CASES if row[0] in aes_event.SLICED_ROWS]
+    return next((one, other) for one in sliced for other in sliced
+                if one is not other and aes_event.session_of(one[0]) is aes_event.session_of(other[0]))
+
+
+def test_a_sweep_runs_a_session_once_for_its_rows_and_again_over_another_base(monkeypatch):
+    """ONE RUN PER SESSION PER SWEEP (`_sweep_over`): two slice rows of one session are one original run under
+    one sweep's memo — each still answered its outputs — and the same rows under ANOTHER sweep's memo (another base
+    image: the noise sweep's) are run again: nothing a sweep ran is answered to the next."""
+    first, second = _two_rows_of_one_session()
+    runs, original = [], run_original
+
+    def counted(row, over_noise=False):
+        runs.append(row[0])
+        return original(row, over_noise)
+    monkeypatch.setattr(sys.modules[__name__], "run_original", counted)
+    sweep = _sweep_over(BASE_IMAGE)
+    assert sweep(first) == sweep(second)
+    assert runs == [first[0]]
+    _sweep_over(BASE_IMAGE)(second)
+    _oracle_outputs(BASE_IMAGE, second)
+    assert runs == [first[0], second[0], second[0]]
+
+
+def test_a_sweep_answers_a_session_s_run_only_to_rows_over_its_machine(monkeypatch):
+    """THE PREMISE the three sweeps skip a session's other rows on, HELD (RED): the rows of one session are one
+    machine. A row registered under the session with another byte staged — which a sweep would never run, answering
+    it the first row's outputs — is refused by name."""
+    first, second = _two_rows_of_one_session()
+    name, entry, regs, _pokes, *rest = second
+    nothing_staged = (name, entry, regs, {}, *rest)
+    monkeypatch.setattr(sys.modules[__name__], "run_original", lambda row, over_noise=False: (b"", (), {}))
+    sweep = _once_per_session(_run_for_its_refusals)
+    sweep(first, first)
+    sweep(second, second)
+    with pytest.raises(AssertionError, match=re.escape(f"{name}: the rows of its session are not one machine")):
+        sweep(nothing_staged, nothing_staged)
 
 
 def test_a_row_taken_through_interrupts_carries_the_deliveries_derived_over_its_settled_machine():
@@ -995,9 +1068,10 @@ def test_a_row_taken_through_interrupts_carries_the_deliveries_derived_over_its_
     they are the same, byte for byte, on every row the batteries register. Here, where every battery is imported."""
     import aes_event
     assert aes_event.INTERRUPTED_ROWS, "the premise: the batteries register rows taken through interrupts"
+    derived_again = _once_per_session(aes_event.rederived)  # a session's rows are derived from one record: once, held by each
     for row in VERIFIED_CASES:
         if delivered_of(row):
-            assert aes_event.rederived(row[0]) == delivered_of(row), row[0]
+            assert derived_again(row, row[0]) == delivered_of(row), row[0]
 
 
 # ---- the dispatch tables: which function each reconstruction actually IS ---------------------------

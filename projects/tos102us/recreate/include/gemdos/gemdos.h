@@ -132,8 +132,8 @@ uint32_t gemdos_dispatch(uint8_t *image, uint32_t arguments);            /* $fc9
 uint32_t gemdos_dispatch_selector(uint8_t *image, uint32_t arguments);   /* $fc973e, past the record */
 
 /* THE `trap #1` SHAPES A ROM DOOR MAKES from another component — the function word over the caller's arguments, in
- * the order it pushed them: one longword (the VDI's `$fcfa9c`, the AES's dos_alloc / dos_free / dos_sdta), one word
- * (dos_close), a longword and a word (dos_sfirst, dos_open), two words and two longwords (dos_read), two longwords
+ * the order it pushed them: none (dos_snext), one longword (the VDI's `$fcfa9c`, the AES's dos_alloc / dos_free /
+ * dos_sdta), one word (dos_close, the bell's Cconout), a longword and a word (dos_sfirst, dos_open), two words and two longwords (dos_read), two longwords
  * (dos_lseek, whose glue moves its handle and mode as ONE longword under the offset). THE TWO BUILDS TAKE EACH TWO
  * WAYS, `src/gemdos/console.c`'s arrangement: on target the machine's own trap over that frame; off target there is no
  * trap to take, so the frame goes into a host slot and the reconstructed dispatcher is called on it — its handler
@@ -156,6 +156,14 @@ static inline uint32_t gemdos_host_trap(uint8_t *image, const uint8_t *frame, ui
     result = gemdos_dispatch(image, words);
     host_slot_release(GEMDOS_WORDS);
     return result;
+}
+
+static inline uint32_t gemdos_trap_word(uint8_t *image, uint16_t function)
+{
+    uint8_t frame[GEMDOS_ARGUMENT_WORD];
+
+    wr16(frame, function);
+    return gemdos_host_trap(image, frame, sizeof frame);
 }
 
 static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
@@ -210,6 +218,20 @@ static inline uint32_t gemdos_trap_word_word_long_long(uint8_t *image, uint16_t 
 #else
 /* The trap entry restores D1-A6 from the frame it builds (`src/gemdos/trap1.S`), so D0 is all it changes. Each
  * shape pushes the arguments last first, then the function word, and drops the frame after. */
+static inline uint32_t gemdos_trap_word(uint8_t *image, uint16_t function)
+{
+    register uint32_t result __asm__("d0") = function;
+
+    (void)image;
+    __asm__ volatile ("move.w %0,-(%%sp)\n\t"
+                      "trap #1\n\t"
+                      "addq.l #2,%%sp"
+                      : "+d"(result)
+                      :
+                      : "memory", "cc");
+    return result;
+}
+
 static inline uint32_t gemdos_trap_word_long(uint8_t *image, uint16_t function, uint32_t argument)
 {
     register uint32_t result __asm__("d0");
