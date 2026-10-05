@@ -30,6 +30,7 @@ import ctypes
 import functools
 import gc
 import re
+import struct
 import subprocess
 import sys
 import types
@@ -866,7 +867,7 @@ def test_the_door_rule_refuses_rom_aes_code_run_outside_a_window(bench, monkeypa
     """Our side may reach the AES's text only through the door: the same row measured with no window opened (its run
     unwatched, as a C reaching ROM code by any other road would be) is refused, never credited to the ROM."""
     row = tier3.row_named(EV_ROW)
-    monkeypatch.setattr(tier3, "goes_through_the_door", lambda _row: False)
+    monkeypatch.setattr(tier3, "arrives_at_an_entry", lambda _row: False)
     with pytest.raises(AssertionError, match="OUTSIDE the event door's windows"):
         tier3._measure_through_the_os(row, bench)
 
@@ -877,10 +878,10 @@ def test_the_door_watch_stops_at_the_entries_alone_and_refuses_one_entered_but_b
     switch processes is refused by name; and a door entry reached from a return address no door call leaves is
     refused."""
     windows = tier3.our_windows(tier3.BUILT_ELF)
-    entry, back = min(windows.entries), min(windows.returns)
-    stack = 0x100
+    entry, back = min(tier3.door_calls(tier3.BUILT_ELF).values()), min(windows.returns)
+    stack = A_STACK_AT
     memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(max(aes_event.FRAME_BYTES.values()))
-    assert windows.first == frozenset(aes_event.ENTRIES)
+    assert windows.first == (frozenset(aes_event.ENTRIES) - aes_event.REBOUND) | frozenset(tier3.twin_entries(tier3.BUILT_ELF))
     assert windows.stopped(entry, stack, memory) == frozenset({back, addrs.AES_ROM_DSPTCH})
     memory[stack:stack + 4] = (back + 2).to_bytes(4, "big")
     with pytest.raises(AssertionError, match="not a door call"):
@@ -899,8 +900,9 @@ def test_a_row_registered_unanswered_is_priced_comparing_no_answer():
 
 def test_the_door_calls_are_the_door_s_entries_and_their_users_the_aes_s():
     """Derived from the blob, held to the door's own list: every `jsr` of the m68k build into the AES's text lands on an
-    entry the event door serves, and every row reaching one is a routine of the AES's text."""
-    assert set(tier3.door_calls(tier3.BUILT_ELF).values()) == set(aes_event.ENTRIES)
+    entry the event door still serves by the ROM's routine — every entry but the rebound ones — and every row reaching
+    one is a routine of the AES's text."""
+    assert set(tier3.door_calls(tier3.BUILT_ELF).values()) == set(aes_event.ENTRIES) - aes_event.REBOUND
     through = [row for row in tier3.ROWS if tier3.goes_through_the_door(row)]
     assert {row.symbol for row in through} >= {"aes_gr_stilldn", "aes_gr_watchbox", "aes_ap_sendmsg"}
     assert all(aes.AES_TEXT[0] <= tier3.rom_address(row) < aes.AES_TEXT[1] for row in through)
@@ -912,6 +914,169 @@ def test_the_door_rule_vets_the_call_graph_it_derives_from(monkeypatch):
     monkeypatch.setattr(tier3, "vet_no_row_is_ambiguous", vetted)
     with pytest.raises(_Vetted):
         tier3._reaching_the_door.__wrapped__()
+
+
+# ---- THE ARRIVALS RULE: a REBOUND entry — an arrival of both runs, no window ---------------------------------------------
+# wind_update(BEG_UPDATE) over the free lock: one door call, tak_flag's, rebound (`src/aes/evsync.c`).
+REBOUND_ROW = ("aes_wm_update", "the lock taken")
+A_STACK_AT = 0x100                     # where a watch's unit tests lay a frame: any address of a scratch memory
+
+
+BLOBS = {"the bench blob": lambda: tier3.BUILT_ELF, "the shipped blob": lambda: transcription.SHIPPED_ELF}
+
+
+@pytest.mark.parametrize("elf", BLOBS.values(), ids=BLOBS)
+def test_no_entry_is_both_a_twin_s_and_a_jsr_into_the_rom(elf):
+    """THE DERIVED REBOUND TEST. Every door entry is reached ONE way by our build: by a `jsr` into the ROM's routine, or
+    by its twin — never both (a twin linked and its wrapper left on the ROM's call would price the row as (EV) and ship
+    the twin unused), never neither. And the twins the blob links are the ones the host's library exports, the set the
+    hook answers ARRIVED for — on both blobs."""
+    served, rebound = set(tier3.door_calls(elf()).values()), set(tier3.twin_entries(elf()).values())
+    assert not served & rebound, f"entries with a twin AND a jsr into the ROM: {[f'{at:#x}' for at in served & rebound]}"
+    assert served | rebound == set(aes_event.ENTRIES)
+    assert rebound == aes_event.REBOUND
+
+
+def _leaf_rows(entries):
+    """`{entry name: its twin's OWN priced rows}` for the door's `entries` — the rows of the registry entered at the
+    routine itself (`<its core>, ...`: its leaf battery's), not at a caller of it."""
+    return {name: [row for row in tier3.ROWS if row.symbol == routines.core_symbol(name) and not row.transcription]
+            for name in aes_event.ENTRY_NAMES if getattr(addrs, name) in entries}
+
+
+def test_every_rebound_entry_has_a_leaf_battery_s_rows():
+    """A REBOUND TWIN IS HELD BY ITS LEAF BATTERY (`aes_event`'s docstring: the door cases reach an entry only in the
+    states its callers make, and the shadow sees no more). WHAT THIS HOLDS, and no more: that such a battery EXISTS —
+    every entry the build rebinds has at least one priced row of its own, entered at the routine itself — so an entry
+    flipped with no battery at all is refused by name. THAT THE BATTERY REACHES EVERY ARM of its twin is not derived
+    here: it is the strict mutation sweep's and the coverage build's to show, entry by entry (STATUS's wave log).
+    RED: ev_multi, taken for rebound, has none."""
+    leaf = _leaf_rows(aes_event.REBOUND)
+    assert set(leaf) and all(leaf.values()), (
+        f"rebound with no leaf battery (no row of its own): {[name for name, rows in leaf.items() if not rows]}")
+    assert all(tier3.rom_address(row) == getattr(addrs, name) for name, rows in leaf.items() for row in rows)
+    unheld = _leaf_rows(aes_event.REBOUND | {addrs.AES_ROM_EV_MULTI})
+    assert [name for name, rows in unheld.items() if not rows] == ["AES_ROM_EV_MULTI"]
+
+
+def test_a_rebound_entry_s_call_is_an_arrival_with_no_window(bench):
+    """Both runs arrive at tak_flag — the ROM's at its routine, ours at the twin — and are handed the same frame; no
+    window is taken off: the ROM routine's cycles (its Line-F word's handler with them) are the ROM's own, the twin's
+    ours, and nothing is shared."""
+    row = tier3.row_named(REBOUND_ROW)
+    measured, _blob, original, windows = tier3._held_through_the_os(row, bench)
+    assert measured.door_windows == (0,) and tuple(original.windows) == (0,)
+    assert original.handed == windows.handed and [call.routine for call in windows.handed] == [addrs.AES_ROM_TAK_FLAG]
+    assert tier3.shared_cycles(measured) == (0, 0)
+    ours, the_rom_s = measured.own_cycles
+    assert 0 < ours < the_rom_s == measured.original_net
+
+
+def test_a_twin_is_an_arrival_only_from_our_build_s_own_text():
+    """A twin's return address is no fixed call site, but it is BOUNDED: inside the blob's text, where every call of
+    our build returns to. Reached with any other — the ROM's text here — it is refused by name, as a served entry
+    reached by no door call is; from the blob's own text it opens its call."""
+    twin = next(iter(tier3.twin_entries(tier3.BUILT_ELF)))
+    lo, hi = tier3.text_span(tier3.BUILT_ELF)
+    stack = A_STACK_AT
+
+    def reached_from(back):
+        memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(2 * 4 + max(aes_event.FRAME_BYTES.values()) * 2)
+        return tier3.our_windows(tier3.BUILT_ELF).stopped(twin, stack, memory)
+    assert reached_from(hi - 2) == frozenset({hi - 2, addrs.AES_ROM_DSPTCH}) and lo <= twin < hi
+    with pytest.raises(AssertionError, match="names the text their calls come from"):
+        aes_event.DoorStops((), (), twins={twin: addrs.AES_ROM_TAK_FLAG})
+    for elsewhere in (hi, lo - 2, addrs.AES_ROM_WM_UPDATE):
+        with pytest.raises(AssertionError, match="not a door call"):
+            reached_from(elsewhere)
+
+
+def test_a_call_s_kind_is_what_the_watch_saw_not_a_window_that_came_out_empty(bench):
+    """The table's line under a row tells a REBOUND entry's call from a served one by what the watch saw the call BE:
+    a served door call that cost no cycle of the AES's ROM is still a door window, and is not printed as a call of a
+    rebound entry — which the lock's one call is."""
+    measured, _blob, _original, _windows = tier3._held_through_the_os(tier3.row_named(REBOUND_ROW), bench)
+    assert (measured.door_windows, measured.rebound_calls) == ((0,), 1)
+    assert "1 call(s) of a rebound entry" in tier3._through_the_os_line(measured, 0)
+    measured.rebound_calls = 0             # the same window of nothing, of a call the ROM SERVED
+    line = tier3._through_the_os_line(measured, 0)
+    assert "the event layer's 0 of it in 1 door window(s)" in line and "rebound" not in line
+
+
+def test_a_twin_s_call_is_read_off_the_frame_gcc_pushes():
+    """A twin's arguments each fill a longword above the return address and the image pointer, a WORD in its low half:
+    ev_button's three words and a pointer, read back as the Alcyon frame its ROM callers push."""
+    clicks, mask, state, answers = 2, 1, -1, aes_event.MESSAGE_AT
+    stack = A_STACK_AT
+    memory = bytearray(stack) + struct.pack(">IIiiiI", 0, 0, clicks, mask, state, answers) + bytes(aes_event.IMAGE_BYTES)
+    call = aes_event.handed_at_a_twin(addrs.AES_ROM_EV_BUTTON, stack, memory)
+    assert call == aes_event.handed(addrs.AES_ROM_EV_BUTTON, aes_event.EV_BUTTON_FRAME.pack(clicks, mask, state, answers),
+                                    memory)
+
+
+def test_our_frame_at_a_twin_is_held_to_the_rom_s_call(bench, monkeypatch):
+    """THE RED for the frames at an arrival: our twin's call read off another slot of GCC's frame (the image pointer's)
+    hands another semaphore than the ROM's call — refused, on the target build, as a served entry's frame is."""
+    row = tier3.row_named(REBOUND_ROW)
+    handed_at_a_twin = aes_event.handed_at_a_twin
+    monkeypatch.setattr(aes_event, "handed_at_a_twin",
+                        lambda entry, sp, memory: handed_at_a_twin(entry, sp - aes.LONG_BYTES, memory))
+    with pytest.raises(AssertionError, match="a frame the image does not show"):
+        tier3._measure_through_the_os(row, bench)
+
+
+def _ours_watched_by(monkeypatch, watch_of):
+    """Our blob's watch made by `watch_of(calls, returns, delivered)` — `calls` the blob's door calls."""
+    def our_windows(elf, delivered=None):
+        calls = tier3.door_calls(elf)
+        return watch_of(calls, [at + tier3.JSR_ABSOLUTE_BYTES for at in calls], delivered)
+    monkeypatch.setattr(tier3, "our_windows", our_windows)
+
+
+def test_an_arrival_our_run_does_not_count_lays_every_delivery_a_call_late(bench, monkeypatch):
+    """THE RED for the arrival's ORDINAL (a delivery laid one arrival late, on a row whose door call 0 is the rebound
+    tak_flag): our run watched at the ROM-served entries alone counts its first wait as door call 0, lays the move
+    owed to it at the next, and is refused at the wait that got nothing — by name."""
+    row = _interrupted_row()
+    assert min(row.delivered) == 1, "the premise: door call 0 is the lock's tak_flag, the first delivery at call 1"
+    _ours_watched_by(monkeypatch, lambda calls, returns, delivered: tier3.DoorWindows(calls.values(), returns, delivered))
+    with pytest.raises(AssertionError, match=_refused_inside_call(0)):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_a_twin_that_runs_the_aes_s_rom_is_refused_by_name(bench, monkeypatch):
+    """A twin's call opens no window, so a cycle of the AES's ROM run inside one would be booked to nobody: refused.
+    Shown by taking the ROM's ev_multi our blob `jsr`s for a twin's first instruction."""
+    row = tier3.row_named(EV_ROW)
+    wait = addrs.AES_ROM_EV_MULTI
+    _ours_watched_by(monkeypatch, lambda calls, returns, delivered: tier3.DoorWindows(
+        (), returns, delivered, twins={wait: wait}, twins_called_from=(min(returns), max(returns) + 1)))
+    with pytest.raises(AssertionError, match=f"our twin of {wait:#x} ran [0-9]+ cycles of the AES's own ROM"):
+        tier3._measure_through_the_os(row, bench)
+
+
+def test_a_row_arriving_at_a_twin_alone_is_watched(monkeypatch):
+    """The rows whose runs are watched are derived from BOTH ways an entry is reached: with no `jsr` into the ROM left
+    (every entry rebound), a caller of a twin still arrives — and the twin's own row does not (it is entered, not
+    called)."""
+    monkeypatch.setattr(tier3, "_reaching_the_door", lambda: frozenset())
+    arriving = tier3._arriving_at_an_entry.__wrapped__()
+    graph = transcription.call_graph(tier3.BUILT_ELF)
+    assert "aes_tak_flag" in graph["aes_wm_update"] and "aes_tak_flag" not in graph["aes_fm_do"], "the premise"
+    assert "aes_wm_update" in arriving and "aes_fm_do" in arriving and "aes_tak_flag" not in arriving
+    monkeypatch.setattr(tier3, "_arriving_at_an_entry", lambda: arriving)
+    monkeypatch.setattr(tier3, "_reaching_the_trap", lambda: frozenset())
+    assert tier3.arrives_at_an_entry(tier3.row_named(REBOUND_ROW)) and tier3.goes_through_the_os(tier3.row_named(REBOUND_ROW))
+    assert not tier3.arrives_at_an_entry(tier3.row_named(EV_ROW)), "the premise: gr_stilldn calls no twin"
+    assert not tier3.arrives_at_an_entry(tier3.row_named(("aes_tak_flag", "free: taken")))
+
+
+def test_the_table_s_line_counts_a_rebound_entry_s_calls_apart_from_the_windows(bench):
+    """Under a row: the windows taken off both sides, and the calls of a rebound entry, which are in the own cycles."""
+    rebound = tier3._through_the_os_line(tier3._measure_through_the_os(tier3.row_named(REBOUND_ROW), bench), 0)
+    served = tier3._through_the_os_line(tier3._measure_through_the_os(tier3.row_named(EV_ROW), bench), 0)
+    assert "1 call(s) of a rebound entry in the own cycles" in rebound and "door window(s)" not in rebound
+    assert "in 1 door window(s)" in served and "rebound" not in served
 
 
 # ---- (EV) a row TAKEN THROUGH INTERRUPTS: the same deliveries at the same door calls on every run ------------------------

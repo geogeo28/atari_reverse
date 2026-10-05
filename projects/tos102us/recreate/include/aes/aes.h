@@ -37,6 +37,7 @@
 #define AES_GL_CDA            0x97fa     /* long: the running PD's CDA          ($fda1c8, $fe4dec)             */
 #define AES_STATIC_PIDS       0xc680     /* word: PDs gem_main set up           ($fda1a6 addq.w #1)            */
 #define AES_ACCESSORY_COUNT   0xc682     /* word: accessories loaded            ($fe439c clr.w)                */
+#define AES_ACCESSORY_PDS     0xc6b2     /* longs[6]: their PDs, in load order  ($fe57a6 movea.l #$c6b2,a1)    */
 /* The three SR saves, one per mechanism, and the DISPATCHER's own stack: savestate leaves the process's super
  * stack for it ($fe3922 `lea $8c1a,sp`), which is the region below $8c1a two captures disagree about. */
 #define AES_SR_DISPATCH       0x8994     /* word: savestate/switchto's SR       ($fe38d4)                      */
@@ -182,9 +183,12 @@
 #define PD_LDADDR             24         /* long: the basepage gotopgm enters   ($fe38c0)                      */
 #define PD_PID                28         /* word                                ($fda19e)                      */
 #define PD_STAT               30         /* word: 0 ready, 1 waiting            ($fe4b80 clr.w, $fe40d8)       */
+#define PD_EVBITS             32         /* word: the event bits its EVBs hold  ($fe414a or.w, $fe4232 and.w) */
 #define PD_EVWAIT             34         /* word: the events it waits for       ($fe40bc)                      */
 #define PD_EVFLG              36         /* word: the events that came          ($fe40c8, $fe3f76 or.w)        */
 #define PD_EVLIST             38         /* long: its EVBs' list                ($fe428a adda.l #38; $fe4290)  */
+#define PD_QUEUE_READERS      42         /* long: the EVBs waiting to read its pipe  ($fe59ea addi.l #42)      */
+#define PD_QUEUE_WRITERS      46         /* long: ...and those waiting to write it   ($fe59e0 addi.l #46)      */
 #define PD_QUEUE_ADDRESS      50         /* long: -> PD_QUEUE                   ($fda3ec)                      */
 #define PD_QUEUE_INDEX        54         /* word                                ($fda3f0 clr.w)                */
 #define PD_QUEUE              56         /* bytes[PD_QUEUE_BYTES]: the message pipe ($fda3e8 lea 56(a5))       */
@@ -195,11 +199,13 @@
 #define AES_CDA_TABLE         0xb086     /* THEGLO + $142e                      ($fda130 addi.l #5166)          */
 #define CDA_BYTES             36         /* ($fda128 muls.w #36)                                               */
 #define CDA_KEY_COUNT         34         /* word: keys queued, 8 a full queue   ($fe4cf8 cmpi.w #8)            */
-/* The EVBs: fifteen event blocks on the free list `AES_EUL`, and the timer list `AES_TIMER_LIST`. */
+/* The EVBs: fifteen event blocks on the free list `AES_EUL`, and the list of COMPLETED ones `AES_ZOMBIE_LIST` (GEM's
+ * zombie list: azombie pushes on it, apret searches it — not a timer list: the delays wait on `AES_DELAY_LIST`,
+ * `aes/evasync.h`). */
 #define AES_EVB_TABLE         0xb0f2     /* THEGLO + $149a                      ($fda0ae)                      */
 #define AES_EVB_COUNT         15         /* ($fda0ce cmp.w #15)                                                */
 #define AES_EUL               0xc676     /* long: the free EVBs                 ($fda0c6, $fe40a4)             */
-#define AES_TIMER_LIST        0xc84a     /* long: the timer EVBs                ($fe3fc6)                      */
+#define AES_ZOMBIE_LIST       0xc84a     /* long: the completed EVBs, by EVB_LINK ($fe3fc6, $fe41f0)           */
 #define EVB_BYTES             28         /* ($fda0a8 muls.w #28, $fe4024 the clear)                            */
 #define EVB_NEXT              0          /* long: the free list's link          ($fe40a4)                      */
 #define EVB_LINK              4          /* long: its list's next               ($fe4054)                      */
@@ -208,6 +214,7 @@
 #define EVB_PARM              16         /* long: a timer's delta               ($fe4094)                      */
 #define EVB_FLAG              20         /* word                                ($fe3ff6 move.w #2)            */
 #define EVB_MASK              22         /* word: the event bit it posts        ($fe3f72)                      */
+#define EVB_RETURN            24         /* long: its answer                    ($fe515c or.l, $fe4252)        */
 /* The fork queue's entries (FORK_* above), and the ORECT pool (`aes/objects.h`'s ORECT_*). */
 #define AES_FORK_QUEUE        0xb296     /* THEGLO + $163e                      ($fe4b3e adda.l #5694)          */
 #define AES_ORECT_POOL        0xb396     /* THEGLO + $173e                      ($fe5a82)                      */

@@ -388,6 +388,11 @@
 #define GEM_SELECTOR_AES_ALT  0x00c9    /* ...and the same arm: $c9 is $c8's alias */
 #define GEM_TRAP2_PTERM_ARM   0xfe3ec0
 #define GEM_TRAP2_AES_ARM     0xfe3eca
+/* Inside that arm: past the caller's registers saved on its user stack ($fe3ed0..$fe3ed6, `move.l usp,a0` — a state no
+ * oracle run stages), where the running PD's UDA is loaded and its stack taken ($fe3eee `movea.l 62(a6),sp`); and where
+ * aes_entry has returned to it. A run between the two is a program's AES call on the stack the AES really runs on. */
+#define GEM_TRAP2_AES_ON_UDA  0xfe3ed8
+#define GEM_TRAP2_AES_BACK    0xfe3f08
 #define GEM_TRAP2_VDI_ARM     0xfe3eb8  /* everything else: `move.l SYSVAR_VDI_ENTRY,-(sp) / rts` */
 #define SYSVAR_VDI_ENTRY      0x8c2a    /* long: where that arm jumps — $fc4ebc in this snapshot */
 /* ...which is the BIOS's own VDI door: D0 0 -> Pterm0's arm, $73 -> `jsr VDI_ROM_ENTRY` then `rte` ($fc4ec0 cmp.w). */
@@ -1913,6 +1918,14 @@
 #define AES_AP_TPLAY_FORKQ_CALL   0xfe671e   /* ap_tplay's forkq call: it pushes a LOCAL, not an immediate */
 #define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
 #define AES_ROM_ACANCEL           0xfe427a   /* (mask): the running PD's EVBs of those events cancelled (ev_multi's tail) */
+/* The event blocks' LISTS (gemasync and geminput's evremove, Alcyon, `aes/evasync.h`, read:). */
+#define AES_ROM_SIGNAL            0xfe3f5e   /* (evb): its event posted to its PD; a PD parked on it moved to the woken list */
+#define AES_ROM_AZOMBIE           0xfe3fba   /* (evb): onto the completed list, EVB_FLAG := complete, signal */
+#define AES_ROM_GET_EVB           0xfe4002   /* (): the first free EVB taken and cleared, or 0 */
+#define AES_ROM_EVINSERT          0xfe4030   /* (evb, list): at the head of a wait list */
+#define AES_ROM_TAKEOFF           0xfe4062   /* (evb): off its wait list (a delay's ticks to its successor), freed */
+#define AES_ROM_APRET             0xfe41bc   /* (mask): the running PD's completed EVB of that event freed, its answer */
+#define AES_ROM_EVREMOVE          0xfe511a   /* (evb, answer): its answer kept, off its wait list, azombie */
 /* ev_multi's Line-F RETURN word: its answers written, its waits cancelled — where a process the dispatcher switched to
  * comes out of the evnt_multi it was parked in. */
 #define AES_ROM_EV_MULTI_RETURN   0xfe6c5c
@@ -2039,6 +2052,15 @@
 #define AES_ROM_FM_INIFLD         0xfe727a   /* (tree, fld): fld, or for 0 the first EDITABLE */
 #define AES_ROM_DQ                0xfe50ca   /* (queue): the front key taken off and answered */
 #define AES_ROM_FQ                0xfe50f8   /* (): the running process's key queue emptied */
+/* PROCESSES AND THEIR PIPES (Alcyon, `aes/pdpipe.h`, read:), and gemdosif's two hand-68000 leaves under pstart. */
+#define AES_ROM_PD_MATCH          0xfe56f6   /* ctx name; read: (name, pid, pd): pd's name is `name`, or with none its id is pid */
+#define AES_ROM_FPDNM             0xfe5750   /* (name, pid): the PD pd_match finds — three static, then the accessories' */
+#define AES_ROM_GETPD             0xfe57e0   /* (): the next PD — a static one, else an accessory's — its id set, in super */
+#define AES_ROM_PSTART            0xfe5886   /* (code, name, ldaddr): getpd, named, psetup(code), onto the woken list */
+#define AES_ROM_DOQ               0xfe58c0   /* (write, pd, qpb): qpb's bytes into pd's pipe (a redraw merged) or out of it */
+#define AES_ROM_AQUEUE            0xfe5988   /* (write, evb, qpb): doq if it can and the other end's first wait served; else queued */
+#define AES_ROM_UDA_INSUPER       0xfe3970   /* (uda): hand 68000 — UDA_IN_SUPER := 1 */
+#define AES_ROM_PSETUP            0xfe397a   /* (pd, pc): hand 68000 — an rte frame (pc, SR $2000) pushed on pd's own stack */
 /* The form library's half that waits on the user, and its alerts (Alcyon, `aes/fmdo.h`, read:), and the bell fm_do rings
  * (hand 68000 beside the GEMDOS glue). */
 #define AES_ROM_FM_SHOW           0xfe764c   /* (string, values, default): an AES string, merged, as an alert */
@@ -2162,7 +2184,7 @@
 /* The functions the dispatcher's arms call (`ctx` names: see above). */
 #define AES_ROM_AP_RDWR           0xfe65c4   /* read: (code, pid, length, buffer) ev_block(code, its own frame +10) */
 #define AES_ROM_AP_RDWR_OPCODE    12
-#define AES_ROM_AP_FIND           0xfe65da   /* ctx */
+#define AES_ROM_AP_FIND           0xfe65da   /* read: (name) copied into the frame, fpdnm by name: its id, or -1 */
 #define AES_ROM_AP_FIND_OPCODE    13
 #define AES_ROM_AP_TPLAY          0xfe6610   /* ctx */
 #define AES_ROM_AP_TPLAY_OPCODE   14

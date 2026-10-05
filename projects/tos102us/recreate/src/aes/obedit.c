@@ -45,12 +45,6 @@
 #define EDIT_FINISH           6          /* -36(a6)                                                           */
 #define EDIT_START            8          /* -34(a6)                                                           */
 
-/* A signed word added to an address, as `movea.w` / `ext.l` then `adda.l` add it. */
-static inline uint32_t offset_by(uint32_t address, int16_t index)
-{
-    return address + (uint32_t)(int32_t)index;
-}
-
 /* $fe9260 — ob_getsp: the object's TEDINFO copied whole into `tedinfo` — its ob_spec, or the longword an INDIRECT
  * ob_spec names (the flags read first). */
 void aes_ob_getsp(uint8_t *image, uint32_t tree, int16_t object, uint32_t tedinfo)

@@ -50,6 +50,13 @@ static inline uint32_t table_entry(uint32_t table, int32_t index, uint32_t entry
     return table + (uint32_t)(index * (int32_t)entry_bytes);
 }
 
+/* A SIGNED WORD added to an address, as `movea.w` — or `ext.l` — then `adda.l` add it: a negative one reaches below
+ * the address, never 64 KB above it. */
+static inline uint32_t offset_by(uint32_t address, int16_t index)
+{
+    return address + (uint32_t)(int32_t)index;
+}
+
 /* "A NEGATIVE ARGUMENT MEANS REPORT ONLY" — TOS's way of spelling an optional argument, and it is
  * tested AT THE ROM's OWN WIDTH, which is the half a reconstruction drops. Kbshift and Kbrate test
  * a WORD (`tst.w 4(sp)` / `bmi`), so $0080 is a store — bit 7 of the byte they go on to store is not
@@ -357,6 +364,14 @@ static inline uint32_t bus_long(const uint8_t *image, uint32_t address)
 static inline void set_bus_long(uint8_t *image, uint32_t address, uint32_t value)
 {
     wr32(image + ram_store(bus_span(address, M68K_LONG_BYTES), M68K_LONG_BYTES), value);
+}
+
+/* A SIGNED WORD OF A RECORD, read through the record's pointer on the 24-bit bus: a count, an index, an id, a
+ * coordinate — what the ROM compares with `cmp.w` and extends with `ext.l` or `movea.w`. One accessor for every record
+ * (a PD's, a QPB's, a rectangle's, a window list's), so that "signed" is said once. */
+static inline int16_t signed_field(const uint8_t *image, uint32_t record, uint32_t field)
+{
+    return (int16_t)bus_word(image, record + field);
 }
 
 #endif /* TOS102US_M68K_IDIOMS_H */

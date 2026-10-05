@@ -22,20 +22,23 @@ dispatcher's guard (`AES_INDISP`, whose 1 makes `dsptch` a bare `rts`: a lever, 
 AES's VDI contrl[] is in the capture MASK; a case reaching the VDI stages its own.
 
 ---- WHAT THE HEADERS DO NOT NAME, AND WHY ------------------------------------------------------------------------
-`include/aes/*.h` carries only fields a ROM instruction was found reading or writing. Left out, until a reconstructed
-routine reads them by name: PD +32 (p_evbits: the map's reading, uncited), EVB +24 (e_return), the CDA's
-other words, TEDINFO +14/+20, ICONBLK +22/+24/+30/+32 (the GRECTs' sizes, read by gr_gicon
-through the copy's address), and RSHDR +0/+12/+14 (version, strings, image data).
+`include/aes/*.h` carries only fields a ROM instruction was found reading or writing — a few of them read so far by a
+battery's Python alone, each saying so where it stands and which routine's C will read it (`aes/evasync.h`'s delay
+list, `aes/pdpipe.h`'s QPB_BYTES). Left out, until a reconstructed routine reads them by name: the CDA's other words,
+TEDINFO +14/+20, ICONBLK +22/+24/+30/+32 (the GRECTs' sizes, read by gr_gicon through the copy's address), and RSHDR
++0/+12/+14 (version, strings, image data).
 """
 import contextlib
 import ctypes
 import functools
+import os
 import struct
 import sys
 from collections import namedtuple
 from pathlib import Path
 
 from harness import BASE_IMAGE, _lib, addrs, emu, make_image
+from recreate_kit.os_map import OS_BUS_ADDR_MASK
 
 import case
 import isr
@@ -66,6 +69,9 @@ def header_constants(name):
 
 WORD_BYTES = layouts.WORD_BYTES
 LONG_BYTES = layouts.LONG_BYTES
+WORD_MASK = (1 << 8 * WORD_BYTES) - 1       # a word of a longword: its low half
+LONG_MASK = (1 << 8 * LONG_BYTES) - 1
+BYTE_MASK = 0xFF
 STALE_WORD = vdi.STALE_WORD
 
 
@@ -158,18 +164,26 @@ def leaf_machine(onto=None):
     """The AES as a routine that never reaches `dsptch` runs in it, over `onto`: the shell's PD RUNNING (`AES_RLR`,
     NULL in the snapshot) and the dispatcher's guard `AES_INDISP` at the snapshot's own 1 — a lever that makes
     `dsptch` a bare `rts`, inert for such a routine. A routine that reaches the EVENT LAYER runs over the scheduler's
-    own running process instead (`aes_event.machine`), and the door refuses any wait of it that reaches dsptch."""
+    own running process instead (`aes_event.machine`), and the door refuses any wait of it that reaches dsptch.
+
+    A TRAP: the lever is laid OVER `onto`, not under it — AES_RLR := the SHELL's PD and AES_INDISP := 1, whatever `onto`
+    held. Over a machine whose running process the scheduler made (`aes_event.screen_manager_running`, a staged
+    application's) it puts PD0 where another process runs and sets a guard no running process has: a machine of
+    neither kind. Such a machine is run as it is (`aes.run_function`), never through this."""
     return merge_pokes(onto, field_pokes("AES", RLR=SHELL_PD, INDISP=AES_INDISP_SET))
 
 
-def list_of(image, head):
-    """The PDs a scheduler list at `head` (AES_RLR, AES_NRL, AES_DRL) links, in order."""
-    pds, at = [], case.long_in(image, head)
+def list_of(image, head, link=PD_LINK, limit=AES_PD_COUNT):
+    """The PDs a scheduler list at `head` (AES_RLR, AES_NRL, AES_DRL) links, in order — or the records of any list
+    whose head is the longword at `head`, linked through the longword at `link` of each (an EVB's EVB_NEXT or
+    EVB_LINK), refused by name past `limit` records: a list that does not end. Each record's address AS THE BUS
+    CARRIES IT: a link stored with a top byte (a caller's tagged pointer, kept as handed) names the same record."""
+    records, at = [], case.long_in(image, head) & OS_BUS_ADDR_MASK
     while at:
-        pds.append(at)
-        assert len(pds) <= AES_PD_COUNT, f"the list at {head:#x} does not end"
-        at = case.long_in(image, at + PD_LINK)
-    return pds
+        records.append(at)
+        assert len(records) <= limit, f"the list at {head:#x} does not end"
+        at = case.long_in(image, at + link) & OS_BUS_ADDR_MASK
+    return records
 
 
 # ---- (b) OBJECT TREES: staged by SHAPE, and the snapshot's own ------------------------------------------------------
@@ -500,8 +514,46 @@ def doors(*hooks):
     return opened
 
 
+# ---- THE ATTRIBUTION PASS, and the cases it STEERS -------------------------------------------------------------------
+# The pass inverts every byte the ROM's run stores before both shores run again. A routine that computes the ADDRESS of
+# a store from a word it also stores — a list's link, a pipe's index, a saved stack pointer, a counter that indexes a
+# table — is STEERED by it: the second run goes elsewhere, and what fails is the run, not a skipped store. Such a case
+# says so ITSELF, `run_function(..., steered=<a Steers, or several>)`, and the opt-out is exactly as wide as its
+# reason: the pass is still made, by hand, with the reason's words LEFT AS THEY ARE and every other stored byte
+# inverted (`_attributed_but_for`). So a reason is an ASSERTION, held on every run of the case — the words it names
+# are all that steers: a label that names the wrong word, or too few, fails the narrowed pass by name. The other
+# direction — a reason named for nothing — is a sweep run on demand (`STEERED_FOR_NOTHING_SWEEP` in the environment:
+# every steered case then makes the pass once more PER REASON, that reason's words inverted too, and a reason the
+# run survives without is refused by name); recreate/README.md says when it was last run.
+Steers = namedtuple("Steers", "why spans")
+STEERED_FOR_NOTHING_SWEEP = "AES_STEERED_FOR_NOTHING"
+STEERED_UNPOISONED = {"poison": False}
+
+
+def steers(why, *spans):
+    """A REASON a case runs without the kit's attribution pass: `why`, in words, and the `(lo, hi)` spans of the words
+    that steer — the only stored bytes its narrowed pass leaves as they are."""
+    return Steers(why, tuple(spans))
+
+
+def _as_reasons(steered):
+    reasons = tuple(steered) if isinstance(steered, (tuple, list)) and not isinstance(steered, Steers) else (steered,)
+    assert reasons and all(isinstance(reason, Steers) for reason in reasons), (
+        f"the attribution pass is opted out of by a reason (`aes.steers`), not by {steered!r}")
+    return reasons
+
+
+def _inverted_but_for(info, reasons, dropped_windows):
+    """Every byte the ROM's run stored (`info`'s ledger, the stack band out), INVERTED from the value the run left —
+    the kit's own canary — but for the words `reasons` name and the case's drops: pokes, to lay over the machine."""
+    kept = [(lo, hi) for reason in reasons for lo, hi in reason.spans] + [(lo, hi) for lo, hi, _why in dropped_windows]
+    return merge_pokes({at: bytes([value[0] ^ BYTE_MASK]) for at, value in case.written_by(info["writes"]).items()
+                        if not any(lo <= at < hi for lo, hi in kept)})
+
+
 def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, hook=None,
-                 regs=None, host_arguments=(), result=None, answer_compared=True, **kwargs):
+                 regs=None, host_arguments=(), result=None, answer_compared=True, steered=None, first=None,
+                 **kwargs):
     """The Alcyon AES routine `addrs.<name>` over the frame of `arguments`, against its core called with the same
     values, the answer compared at the signature's width and `dropped_windows` — the mask word, by default — dropped where
     the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result` (or the `result` subclass a battery reads
@@ -519,22 +571,65 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
 
     `answer_compared` False for an arm on which the ROM sets no D0 — it leaves its CALLER's, which no core is handed
     (w_move while drawing is held): the case enters with a D0 of its own (`regs`) to show it, and the answer is not
-    compared."""
+    compared.
+
+    `steered` (a `Steers`, or several): why THIS case runs without the kit's attribution pass — it then makes the
+    pass NARROWED to its reasons instead (above). `first(call)` is handed every run of the C before it is made in
+    process — `call` the core's call over the very image the kit hands that run, the plain pass's and the attribution
+    pass's alike: the door a battery's child-first guard comes in by (`aes_event.run_core_guarded`)."""
     signature = vdi.ALCYON[name]
     core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi.as_signed(name, arguments)
     machine_pokes = staged(name, arguments, pokes, through_line_f=through_line_f)
     takes_image = vdi.takes_image(name)
+    reasons = _as_reasons(steered) if steered is not None else ()
+    assert not (reasons and "poison" in kwargs), f"{name}: a steered case's pass is its reasons' to decide"
 
     def glue(_lib_, buf):
-        answer = core(buf, *host_arguments, *arguments) if takes_image else core(*arguments)
+        def call():
+            return core(buf, *host_arguments, *arguments) if takes_image else core(*arguments)
+        if first:
+            first(call)
+        answer = call()
         return answer if answer_compared else None
-    with hook() if hook else contextlib.nullcontext() as bound:
-        info = case.run(entry_of(name, through_line_f), {**(regs or {}), "_pokes": machine_pokes},
-                        bound.recording(glue) if bound else glue,
-                        width=RESULT_WIDTHS[signature.restype] if answer_compared else case.NO_RESULT,
-                        dropped_windows=dropped_windows, **kwargs)
+
+    def differential(staged_pokes, **passes):
+        with hook() if hook else contextlib.nullcontext() as bound:
+            return case.run(entry_of(name, through_line_f), {**(regs or {}), "_pokes": staged_pokes},
+                            bound.recording(glue) if bound else glue,
+                            width=RESULT_WIDTHS[signature.restype] if answer_compared else case.NO_RESULT,
+                            dropped_windows=dropped_windows, **{**kwargs, **passes})
+    info = differential(machine_pokes, **(STEERED_UNPOISONED if reasons else {}))
+    if reasons:
+        def narrowed_to(kept):
+            """The differential again, every byte the plain run stored INVERTED but the words of `kept`."""
+            return differential(merge_pokes(machine_pokes, _inverted_but_for(info, kept, dropped_windows)),
+                                **STEERED_UNPOISONED)
+        _attributed_but_for(name, reasons, narrowed_to)
     return (result or Result)(info, machine_pokes)
+
+
+def _attributed_but_for(name, reasons, narrowed_to):
+    """A steered case's ATTRIBUTION PASS, NARROWED to its `reasons` (`narrowed_to(kept)`: the differential over the
+    machine with every stored byte inverted but `kept`'s words): a store the C skipped now differs, and a word that
+    steers the run though no reason names it fails the pass by name. Under the sweep, once more per reason with THAT
+    reason's words inverted too — which the run must not survive."""
+    try:
+        narrowed_to(reasons)
+    except (AssertionError, RuntimeError) as failed:
+        raise AssertionError(
+            f"{name}: the attribution pass NARROWED to what the case says steers it — every byte the ROM's run stored "
+            f"inverted, but [{'; '.join(reason.why for reason in reasons)}] — fails: a store the C skipped, or a word "
+            f"that steers the run and no reason of the case names.\n{failed}") from failed
+    if not os.environ.get(STEERED_FOR_NOTHING_SWEEP):
+        return
+    for reason in reasons:
+        try:
+            narrowed_to([other for other in reasons if other is not reason])
+        except (AssertionError, RuntimeError):
+            continue
+        raise AssertionError(f"{name}: steered for nothing by [{reason.why}] — the case passes the attribution pass "
+                             f"with those words inverted too: drop the reason")
 
 
 def stored_nothing(result):

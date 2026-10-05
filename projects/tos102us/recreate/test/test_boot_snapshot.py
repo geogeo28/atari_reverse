@@ -274,10 +274,14 @@ import test_aes_wm_update                                   # noqa: E402,F401  (
 import test_aes_mnlib                                       # noqa: E402,F401  (through the event door)
 import test_aes_grdrag                                      # noqa: E402,F401  (through the event door)
 import test_aes_fmlib                                       # noqa: E402,F401
+import test_aes_evasync                                     # noqa: E402,F401  (the ROM's own arrivals)
 import test_aes_fmdo                                        # noqa: E402,F401  (through the event door)
 import test_aes_fmalert                                     # noqa: E402,F401  (through the event door)
 import test_aes_fslib_replay                                # noqa: E402,F401  (GEMDOS replayed)
 import test_aes_fs_input_rows                               # noqa: E402,F401  (sessions, GEMDOS replayed)
+import test_aes_evsync                                      # noqa: E402,F401  (the semaphore: tak_flag)
+import test_aes_pdpipe                                      # noqa: E402,F401  (processes and their pipes)
+import test_aes_pdpipe_transcription                        # noqa: E402,F401  (its `.S` rows)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

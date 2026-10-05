@@ -232,6 +232,12 @@
 #define HOST_SLOT_AES_FS_NSCROLL_FRAME_BYTES 16  /* FS_NSCROLL_FRAME_BYTES                                       */
 #define HOST_SLOT_AES_FS_INPUT_FRAME    0x7f988  /* $fe7d90's -38(a6) up to its -6(a6) count                     */
 #define HOST_SLOT_AES_FS_INPUT_FRAME_BYTES 34    /* FS_INPUT_FRAME_BYTES                                         */
+/* ...and the process layer's (`aes/pdpipe.h`): pd_match's copy of a PD's name (to movs and streq) and ap_find's copy of
+ * the name it is asked for (to lstcpy and fpdnm) — each the frame's own layout, ap_find's with the two bytes past it. */
+#define HOST_SLOT_AES_PD_MATCH_NAME     0x7f9b0  /* $fe56f6's -10(a6) up                                         */
+#define HOST_SLOT_AES_PD_MATCH_NAME_BYTES 10     /* PD_MATCH_FRAME_BYTES                                         */
+#define HOST_SLOT_AES_AP_FIND_NAME      0x7f9c0  /* $fe65da's -10(a6) up, then the saved A6's two top bytes      */
+#define HOST_SLOT_AES_AP_FIND_NAME_BYTES 12      /* AP_FIND_SLOT_BYTES                                           */
 
 /* Each slot's index in the held flags. */
 enum host_slot {
@@ -306,8 +312,16 @@ enum host_slot {
     HOST_SLOT_ID_AES_FS_FORMAT_FRAME,
     HOST_SLOT_ID_AES_FS_NSCROLL_FRAME,
     HOST_SLOT_ID_AES_FS_INPUT_FRAME,
+    HOST_SLOT_ID_AES_PD_MATCH_NAME,
+    HOST_SLOT_ID_AES_AP_FIND_NAME,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
+
+/* A frame's slot AS A TARGET LOCAL (`uint16_t frame_local[FRAME_LOCAL_WORDS(<slot bytes>)]`): WORDS, so the frame
+ * starts on an even address. Its words and longs are read and written in place (`wr16`/`be32` are native accesses on
+ * target), and a `uint8_t` array of the slot's odd size is packed at an odd offset — an address error on every call
+ * on a 68000. */
+#define FRAME_LOCAL_WORDS(slot_bytes)  (((slot_bytes) + 1) / 2)
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
 /* One flag per slot, defined in `src/host_slot.c`: an array, so the table has no width to outgrow (a bit mask did,

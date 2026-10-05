@@ -1923,9 +1923,9 @@ def _reaching_the_trap():
 
 
 def goes_through_the_os(row):
-    """(V) and (EV): is `row` the C of a routine that reaches the VDI by `trap #2`, or the event layer through the event
-    door — priced on its own cycles?"""
-    return not row.transcription and (row.symbol in _reaching_the_trap() or goes_through_the_door(row))
+    """(V) and (EV): is `row` the C of a routine that reaches the VDI by `trap #2`, or the event layer through one of
+    the event door's entries — priced on its own cycles?"""
+    return not row.transcription and (row.symbol in _reaching_the_trap() or arrives_at_an_entry(row))
 
 
 # MECHANISM (EV): C that reaches the EVENT LAYER through the event door (`aes/evdoor.h`): on target each door call is
@@ -1971,33 +1971,88 @@ def goes_through_the_door(row):
     return not row.transcription and row.symbol in _reaching_the_door()
 
 
+# THE ARRIVALS RULE: A REBOUND ENTRY (`aes/evdoor.h`: one whose wrapper calls its C twin) is still an ARRIVAL of both
+# runs — the same ordinal among a row's door calls, so a delivery or a slice's mark hangs on it as on any door call, and
+# what the call is handed is held equal — but it OPENS NO WINDOW: nothing is taken off either side. The ROM's routine is
+# then the ROM's OWN cost (its Line-F word and handler with it) and the twin ours, as any C's. Derived: the rebound
+# entries are the door's entries whose twin the blob links (`twin_entries`), our arrivals at them the twins' first
+# instructions; `test_tier3.py` holds that no entry is both — a twin linked, a `jsr` to its ROM routine left. A row's
+# entries may be mixed, some the ROM's and some C: windows are per call. What a twin may NOT do is run the AES's ROM
+# bytes itself (a callee of its own left on the door): refused by name, its callee to be rebound first.
+@functools.cache
+def twin_entries(elf):
+    """`{the twin's first instruction in elf: the ROM entry it stands for}` — the door's REBOUND entries, as `elf`
+    links them (`aes_event.rebound_in`'s derivation, off the blob)."""
+    placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(elf)}
+    return {placed[routines.core_symbol(name)]: getattr(addrs, name) for name in aes_event.ENTRY_NAMES
+            if routines.core_symbol(name) in placed}
+
+
+@functools.cache
+def _arriving_at_an_entry():
+    """Every function of the m68k build from which an ARRIVAL at a door entry is reachable: a door call (above), or a
+    call of a rebound entry's twin — the twins' callers and theirs, the twins themselves not among them (a twin's own
+    row enters it: no call arrives)."""
+    graph = transcription.call_graph(BUILT_ELF)
+    twins = frozenset(routines.core_symbol(name) for name in aes_event.ENTRY_NAMES)
+    callers = frozenset(node for node, callees in graph.items() if callees & twins)
+    return _reaching_the_door() | frozenset(transcription.callers_closure(graph, callers))
+
+
+def arrives_at_an_entry(row):
+    """Is `row` the C of a routine whose run arrives at a door entry — the ROM's routine through the door, or its twin?
+    Its runs are then WATCHED at the entries (`DoorWindows`): what deliveries, slices' marks and frames hang on."""
+    return not row.transcription and row.symbol in _arriving_at_an_entry()
+
+
 class DoorWindows(aes_event.DoorStops):
     """(EV)'s watch over a PROFILED run (`aes_event.DoorStops`): a stop at a door entry opens a window — the AES-span
-    cycles so far kept, and what the call hands the entry (`aes_event.handed_at`: its frame, above the return address,
+    cycles so far kept, and what the call hands the entry (`DoorStops.call_at`: its frame, above the return address,
     read through its pointers) — and the stop at the return address the call left closes it. Refused by name: an entry
     reached from no call's return address, and a call that reaches the dispatcher (it would switch processes: a row's
     run returns). `windows` is each window's AES-span cycles, in order; `handed` each call's frame. `delivered` (a row
     taken through interrupts: `Row.delivered`) is laid at the entry of its door calls before the window opens, at no
-    cost — on our side the Line-F mask word with it, which the row drops (our C never writes the word)."""
+    cost — on our side the Line-F mask word with it, which the row drops (our C never writes the word).
 
-    def __init__(self, entries, returns, delivered=None):
-        super().__init__(entries, returns, blocks=True, delivered=delivered)
-        self.windows, self.handed = [], []
-        self._opened_at = None
+    A REBOUND entry's call (above) is an arrival with a window of NOTHING: at a twin (`twins`: our run, its calls
+    made from `twins_called_from`) — which must have run no cycle of the AES's ROM, refused by name — and at a ROM
+    entry of `rebound` (the ROM's run), whose cycles stay the ROM's own. `to_a_rebound_entry` says which calls those
+    were: the watch's own knowledge, never read back off a window that came out empty."""
+
+    def __init__(self, entries, returns, delivered=None, *, twins=None, twins_called_from=None, rebound=()):
+        super().__init__(entries, returns, blocks=True, delivered=delivered, twins=twins,
+                         twins_called_from=twins_called_from)
+        self.windows, self.handed, self.to_a_rebound_entry = [], [], []
+        self._rebound = frozenset(rebound)
+        self._opened_at = self._open = None
 
     def _opened(self, pc, sp, memory):
-        self.handed.append(aes_event.handed_at(pc, sp, memory))
-        self._opened_at = _cycles_in(AES_OWN_SPANS)
+        self.handed.append(self.call_at(pc, sp, memory))
+        self._opened_at, self._open = _cycles_in(AES_OWN_SPANS), pc
 
     def _closed(self):
-        self.windows.append(_cycles_in(AES_OWN_SPANS) - self._opened_at)
+        in_the_rom = _cycles_in(AES_OWN_SPANS) - self._opened_at
+        assert not (self._open in self.twins and in_the_rom), (
+            f"door call {self.calls - 1}: our twin of {self.entry_at(self._open):#x} ran {in_the_rom} cycles of the "
+            f"AES's own ROM — a twin reaches no ROM routine: rebind the entry it called first")
+        rebound = self._open in self._rebound or self._open in self.twins
+        self.to_a_rebound_entry.append(rebound)
+        self.windows.append(0 if rebound else in_the_rom)      # a twin's ran none of the ROM: held above
+
+
+def text_span(elf):
+    """`(lo, hi)`: the span of `elf` its functions lie in — where a call of our build's own returns to."""
+    spans = [span for spans in _function_ranges(elf).values() for span in spans]
+    return min(lo for lo, _hi in spans), max(hi for _lo, hi in spans)
 
 
 def our_windows(elf, delivered=None):
-    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr` — and
-    `delivered` laid at its calls (`DoorWindows`)."""
+    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr` — its
+    rebound entries' twins with them (`twin_entries`), each reached from the blob's own text — and `delivered` laid at
+    its calls (`DoorWindows`)."""
     calls = door_calls(elf)
-    return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls), delivered)
+    return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls), delivered, twins=twin_entries(elf),
+                       twins_called_from=text_span(elf))
 
 
 def _original_windows(row, **marked):
@@ -2008,7 +2063,7 @@ def _original_windows(row, **marked):
     unwatched run). A sliced row's run is MARKED too (`_the_rom_s_marks`: the watch's `marks`; `marked` its options)."""
     assert not (row.regs or row.psg_seed or row.schedule), (
         f"{row.symbol} / {row.case}: a door row's ORIGINAL is re-run watched with the case's image and I/O map alone")
-    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, row.delivered)
+    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, row.delivered, rebound=aes_event.REBOUND)
     if row.slice:
         watch.marked_with(_the_rom_s_marks(row, **marked))
 
@@ -2069,6 +2124,7 @@ def _priced_on_its_slice(row, blob, original, windows, original_marks=None, our_
     sliced = Measurement((the_rom_s["insns"], the_rom_s["cycles"]), (ours["insns"], ours["cycles"]), overhead)
     sliced.glue_cycles = ours["glue"]
     sliced.door_windows = tuple(windows.windows[first:last])
+    sliced.rebound_calls = sum(windows.to_a_rebound_entry[first:last])
     sliced.own_cycles = (ours["blob"] - ours["glue"] - overhead[1], the_rom_s["aes"] - in_the_event_layer - overhead[1])
     shared, original_shared = shared_cycles(sliced)
     assert shared == original_shared, (
@@ -2097,8 +2153,8 @@ def _held_through_the_os(row, bench, **marked):
     """...the WHOLE run's `Measurement`, held to everything (V) and (EV) hold a row to — with the blob it was measured
     on and the two runs' door watches (None for a row that reaches no door): `(measured, blob, original, windows)`. A
     sliced row's runs are marked (`marked`: `aes_event.Marks`' options)."""
-    through_the_door = goes_through_the_door(row)
-    assert through_the_door or not row.delivered, f"{row.symbol} / {row.case}: interrupts delivered at no door call"
+    through_the_door = arrives_at_an_entry(row)
+    assert through_the_door or not row.delivered, f"{row.symbol} / {row.case}: interrupts delivered at no door entry"
     assert row.delivered or not row.slice, f"{row.symbol} / {row.case}: a sliced row is taken through interrupts"
     original = None
     if through_the_door:
@@ -2119,6 +2175,7 @@ def _held_through_the_os(row, bench, **marked):
     if row.slice:
         windows.marks.returned(windows.calls)
     measured.door_windows = tuple(windows.windows) if windows else ()
+    measured.rebound_calls = sum(windows.to_a_rebound_entry) if windows else 0
     if through_the_door:
         assert original_watched == measured.original_cycles, (
             f"{row.symbol} / {row.case}: the ORIGINAL's watched run cost {original_watched} cycles and its run "
@@ -2462,10 +2519,14 @@ def _through_the_os_line(measured, indent):
     ours, original = measured.own_cycles
     glue = glue_cycles_of(measured)
     shared, original_shared = shared_cycles(measured)
-    windows = getattr(measured, "door_windows", ())
+    # A door call the ROM serves on both sides is a window of its cycles; a rebound entry's opens none — told apart
+    # by what the watch saw each call BE (`DoorWindows.to_a_rebound_entry`), not by a window that came out empty.
+    windows, twins = getattr(measured, "door_windows", ()), getattr(measured, "rebound_calls", 0)
+    served = len(windows) - twins
     return (f"{'':<{indent}}  whole run: {measured.ratio:.2f} — own {ours} cycles against the ROM's {original} in the "
             f"AES's text and Line-F handler; the OS both run {shared} against {original_shared}"
-            + (f", the event layer's {sum(windows)} of it in {len(windows)} door window(s)" if windows else "")
+            + (f", the event layer's {sum(windows)} of it in {served} door window(s)" if served else "")
+            + (f", {twins} call(s) of a rebound entry in the own cycles" if twins else "")
             + (f", and {glue} in thunks: {own_ratio_with_glue(measured):.2f} with them" if glue else ""))
 
 

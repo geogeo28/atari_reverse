@@ -435,6 +435,7 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # shown again
     ("aes_set_ctrl", "aes_rc_copy"), ("aes_get_ctrl", "aes_rc_copy"), ("aes_fm_own", "aes_rc_copy"),
     ("aes_w_redraw", "aes_rc_copy"), ("aes_wm_opcl", "aes_rc_copy"), ("aes_draw_change", "aes_rc_copy"),
+    ("aes_wm_close", "aes_rc_copy"),    # wm_opcl inlined into wm_close, the lock's tak_flag now an ordinary call
     ("aes_draw_change", "aes_rc_union"), ("aes_draw_change", "aes_rc_equal"), ("aes_draw_change", "aes_max"),
     ("aes_wm_set", "aes_max"), ("aes_wm_set", "aes_min"), ("aes_w_update", "aes_gsx_mon"),
     # the drag loops (`src/aes/grdrag.c`, gr_clamp inlined into gr_rubwind, gr_draw/gr_xdraw folded): the mouse read,
@@ -505,6 +506,14 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_fm_strbrk", "aes_max"), ("aes_fm_build", "aes_r_set"), ("aes_fm_build", "aes_max"),
     ("aes_fm_show", "aes_merge_str"), ("aes_eralert", "aes_merge_str"), ("aes_fm_error", "aes_merge_str"),
     ("aes_fm_alert", "aes_gsx_gclip"),
+    # the event blocks' lists (`src/aes/evasync.c`): a free EVB cleared
+    ("aes_get_evb", "aes_bfill"),
+    # processes and their pipes (`src/aes/pdpipe.c`): a PD's name copied out and compared (pd_match, inlined into fpdnm
+    # too), a message moved and a redraw merged, the name ap_find is asked for copied — and gemdosif's two leaves, which
+    # ship as the ROM's own instructions (`pdpipe.S`)
+    ("aes_pd_match", "aes_movs"), ("aes_pd_match", "aes_streq"), ("aes_fpdnm", "aes_movs"), ("aes_fpdnm", "aes_streq"),
+    ("aes_doq", "aes_lbcopy"), ("aes_doq", "aes_rc_union"), ("aes_ap_find", "aes_lstcpy"),
+    ("aes_getpd", "aes_uda_insuper"), ("aes_pstart", "aes_psetup"),
     # the file selector (`src/aes/fslib.c`): the default path copied, a directory's names copied, matched and compared,
     # a row's name formatted and the elevator's share, the list's clip saved, and the title's text
     ("aes_fs_pspec", "aes_strcpy"), ("aes_fs_active", "aes_lstcpy"), ("aes_fs_active", "aes_strchk"),

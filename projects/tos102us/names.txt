@@ -1745,7 +1745,7 @@ cmt 0xfe6998 Event-door entry (band 4, served on the host by a nested ROM run, o
 fn 0xfe65c4 ap_rdwr
 cmt 0xfe65c4 Event-door entry: link, pea fp+10, ev_block $fe6874. A WM_REDRAW for a window already queued is MERGED (the pipe stays at one message); to the screen manager (PD1) a message lands in its pipe; a send to a pid with no PD spins
 fn 0xfe427a acancel
-cmt 0xfe427a acancel(mask): rlr's PD_EVLIST walked, every EVB whose EVB_MASK & mask cancelled
+cmt 0xfe427a acancel(mask): rlr's PD_EVLIST walked; an EVB among the mask with EVB_FLAG & 3 kept, its bit ORed into D0; else off the list, takeoff, bit cleared in PD +32/+34 (not +36); NOCANCEL (bit 0) alone never observable
 cmt 0xfe4dda disp's loop: forker, idle until a process is ready, then switchto the first — where the snapshot waits
 cmt 0xfe6c5c ev_multi's Line-F return: where a process the dispatcher switched to comes out of its evnt_multi
 # --- the pilots (src/aes/grwait.c, apmsg.c, ctrl.c) ---
@@ -1990,3 +1990,48 @@ cmt 0xfe3bf6 Cconout through $fe3c28 over the word its caller pushed: fs_active'
 # two buffers of other routines that fs_input borrows (their var lines are above: rs_string_buffer, sh_path_buffer)
 cmt 0xb89a also fs_input's WORKING PATH. Below it lie the AES's four 81-byte text buffers (aes_rawstr $b756, aes_tmplt $b7a7, aes_valstr $b7f8, aes_fmtstr $b849 — its last byte is $b899), then the ORECT pool ($b396..$b755): fs_back called from below the path (the close box over "\*.*") scans down through them.
 cmt 0xbb3e also fs_input's PATH LAST READ: cleared at $fe7eb2 and whenever a read is asked for, so streq($bb3e, $b89a) is true on such a pass only for an empty working path — the pass that never ends.
+
+# AES band 4 wave 0 (2026-10-04) — gemasync's lists and geminput's evremove (src/aes/evasync.c); acancel 0xfe427a and tak_flag 0xfe4e5a (src/aes/evsync.c) are named above
+fn 0xfe3f5e signal
+cmt 0xfe3f5e signal(evb): evb->pd's PD_EVFLG |= EVB_MASK; nrl walked to that PD or its end; not rlr, (evflg & evwait) and found: PD_STAT 0, off nrl, onto the HEAD of drl. Called by azombie alone; both guards dead on reachable machines
+fn 0xfe3fba azombie
+cmt 0xfe3fba azombie(evb): onto the head of the completed list $c84a (pred = $c84a - elinkoff), EVB_FLAG := 2 (the whole word), signal
+fn 0xfe4002 get_evb
+cmt 0xfe4002 get_evb(): eul's first taken, bfill(28, 0); D0 0 with none — which iasync ($fe40f8) never tests
+fn 0xfe4030 evinsert
+cmt 0xfe4030 evinsert(evb, &list): at the HEAD of the wait list (LIFO); evb's pred = &list - elinkoff, the head's stand-in
+fn 0xfe4062 takeoff
+cmt 0xfe4062 takeoff(evb): off its wait list; EVB_FLAG bit 2 (a delay) with a successor: successor's ticks += its own; onto eul
+fn 0xfe41bc apret
+cmt 0xfe41bc apret(mask): rlr's EVB whose mask EQUALS it, found on the completed list by address: off both, bit cleared in PD +32/+34/+36, freed; D0 = e_return's low word, $c792 := its high word (a mouse wait's rect width); 100 no EVB / 101 not completed: unreachable by ev_block and ev_multi
+fn 0xfe511a evremove
+cmt 0xfe511a evremove(evb, ret): if (parm >> 16 & $ff) > 1 and $c84e > 1: $c84e-- (no kind test: a mouse wait's x counts; a delay's parm is cleared by tchange first); e_return |= (uword) ret; off its wait list; azombie
+var 0xc676 aes_eul
+var 0xc84a aes_zlr
+cmt 0xc84a the COMPLETED (zombie) EVB list — aes.h AES_ZOMBIE_LIST (was misnamed AES_TIMER_LIST): azombie pushes on it, apret searches it by address; the delay list is $9c1a
+var 0x9c1a aes_dlr
+cmt 0x9c1a the DELAY list — evasync.h AES_DELAY_LIST: adelay $fe55a8 inserts delta-sorted, tchange $fe4e0e counts down. Not aes_drl ($9c16, the woken list), whose address is this list's head stand-in (head - elinkoff)
+var 0x97f6 aes_elinkoff
+var 0xc84e gl_bpend
+cmt 0xc84e multi-click waits queued: +1 abutton $fe5648; -1 while > 1 in evremove $fe5150 and in ctlmgr after its ev_multi ($fe4a36 button, $fe4a54 mouse rect); clr in sh_main when deskmain returns $feb1e2; read by b_click $fe4f72 (zero / non-zero)
+var 0xc792 aes_ev_button_state # ctx
+# the PDs and the pipes (src/aes/pdpipe.c; uda_insuper and psetup ship as src/aes/pdpipe.S)
+fn 0xfe56f6 pd_match
+cmt 0xfe56f6 pd_match(name, pid, pd): name != 0 → pd's 8 name bytes copied to -10(a6), NUL at -2(a6), streq(name, copy) — a name matches only blank-padded to eight; name == 0 → pd->p_pid == pid (cmp.w: a whole word)
+fn 0xfe5750 fpdnm
+cmt 0xfe5750 fpdnm(name, pid): the first of the 3 static PDs pd_match accepts, then of the accessories' PDs $c6b2[0..$c682); 0 for none. The spare PD is blank with id 0 until pstart: PD0 shadows it
+fn 0xfe57e0 getpd
+cmt 0xfe57e0 getpd(): $c680 < 3 → static PD $c680 (its id $c680, $c680++), else accessory PD $c6b2[$c682] (id $c682+3, $c682++); uda_insuper(its UDA). No check that a PD is left: with no accessory loaded it takes address 0
+fn 0xfe3970 uda_insuper
+cmt 0xfe3970 uda_insuper(uda): hand 68000, move.w #1,(uda)
+fn 0xfe397a psetup
+cmt 0xfe397a psetup(pd, pc): hand 68000, under IPL 7 (SR parked in $8998): pc.l then $2000.w pushed on the stack pd's UDA saved (+62), the pointer stored back — the frame switchto's rte pops
+fn 0xfe5886 pstart
+cmt 0xfe5886 pstart(pc, name, ldaddr): getpd, p_ldaddr, pd_nameit, psetup(pd, pc), p_stat 0, onto drl's HEAD; answers the PD
+fn 0xfe58c0 doq
+cmt 0xfe58c0 doq(write, pd, qpb{pid.w, cnt.w, buff.l}): cnt read once (d7). write → lbcopy to p_qaddr + p_qindex (ext.l), the message read back at pd+56+p_qindex (re-read); a WM_REDRAW (20) merged (rc_union) into the first queued for its handle (walk steps 16 + msg[2] as a word, bound signed), else p_qindex += cnt; read → lbcopy out from p_qaddr, p_qindex -= cnt, the rest moved down through p_qaddr (re-read). No bound: a read past the pipe moves 64 KB of GEMBSS, the Line-F handler's RAM copy ($cc0e) with it; an odd index is an address error at $fe5906
+fn 0xfe5988 aqueue
+cmt 0xfe5988 aqueue(write, evb, qpb): pd = fpdnm(0, qpb->pid); ready (write: 128 - p_qindex >= cnt, signed words; read: p_qindex > 0) → doq, azombie(evb), and the FIRST EVB at the other end (write^ready on whole words ? +46 writers : +42 readers) served UNCHECKED — e_flag |= 1 (read by the served doq if its buffer is the EVB; azombie then stores 2), unlinked, doq(!write, pd, its e_parm), azombie; else e_parm = qpb, evinsert (head: LIFO)
+fn 0xfe65da ap_find
+cmt 0xfe65da ap_find(name): lstcpy into a 10-byte frame (no bound: 10 and 11 characters land on the top two bytes of the caller's saved A6 — served while its frame is below 64 KB, a static PD's UDA stack; 12+ never return), fpdnm(copy, 0) → its p_pid, or -1
+var 0xc6b2 gl_acc_pds # ctx

@@ -44,12 +44,6 @@
 #define BUILD_ALERT           (3 * GRECT_BYTES)
 #define BUILD_RECTS           4
 
-/* A signed word added to an address, as `movea.w` then `adda.l` add it. */
-static inline uint32_t offset_by(uint32_t address, int16_t index)
-{
-    return address + (uint32_t)(int32_t)index;
-}
-
 static inline int is_alert_delimiter(uint8_t character)
 {
     return character == ALERT_SECTION_END || character == ALERT_SEPARATOR;

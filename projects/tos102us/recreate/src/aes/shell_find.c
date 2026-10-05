@@ -34,11 +34,6 @@ _Static_assert(SH_DRIVE_SEPARATOR == DRIVE_LETTER_SEPARATOR, "sh_name's `:` is n
 _Static_assert(HOST_SLOT_AES_SH_ENVRN_FRAME_BYTES == SH_ENVRN_SLOT_BYTES, "sh_envrn's host slot is not its frame's");
 _Static_assert(HOST_SLOT_AES_SH_FIND_FRAME_BYTES == SH_FIND_SLOT_BYTES, "sh_find's host slot is not its frame's");
 
-/* A frame's slot as a target local: WORDS, so the frame starts on an even address. Its words and longs are read
- * and written in place (`wr16`/`be32` are native accesses on target), and a `uint8_t` array of the slot's odd size
- * is packed at an odd offset — an address error on every call on a 68000. */
-#define FRAME_LOCAL_WORDS(slot_bytes)  (((slot_bytes) + 1) / 2)
-
 /* What both builds halt with where the ROM's string runs past its frame. */
 #define PAST_THE_FRAME(what)  what " past its frame (the ROM runs on over its caller's saved A6, which the C cannot see)"
 

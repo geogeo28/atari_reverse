@@ -38,11 +38,6 @@
 #define TOP_BEHIND            OB_NIL     /* ob_order's place: on top of its siblings ($fec8ac move.w #-1)      */
 #define NO_STRING_GADGET      (-1)       /* wm_set's gadget to redraw a string into: none ($fec854 move.w #-1) */
 
-static inline int16_t rect_word(const uint8_t *image, uint32_t rect, uint32_t field)
-{
-    return (int16_t)bus_word(image, rect + field);
-}
-
 /* The window tree's root's first and last child: the bottom window and the top one. */
 static inline int16_t bottom_window(const uint8_t *image)
 {
@@ -220,24 +215,24 @@ void aes_w_update(uint8_t *image, int16_t bottom, uint32_t rect, int16_t top, in
 /* Whether the GRECT at `inner` lies inside the one at `outer`, edges included (each far edge a word sum). */
 static int lies_inside(const uint8_t *image, uint32_t inner, uint32_t outer)
 {
-    return rect_word(image, outer, GRECT_X) <= rect_word(image, inner, GRECT_X)
-           && rect_word(image, outer, GRECT_Y) <= rect_word(image, inner, GRECT_Y)
-           && (int16_t)(rect_word(image, inner, GRECT_X) + rect_word(image, inner, GRECT_W))
-              <= (int16_t)(rect_word(image, outer, GRECT_X) + rect_word(image, outer, GRECT_W))
-           && (int16_t)(rect_word(image, inner, GRECT_Y) + rect_word(image, inner, GRECT_H))
-              <= (int16_t)(rect_word(image, outer, GRECT_Y) + rect_word(image, outer, GRECT_H));
+    return signed_field(image, outer, GRECT_X) <= signed_field(image, inner, GRECT_X)
+           && signed_field(image, outer, GRECT_Y) <= signed_field(image, inner, GRECT_Y)
+           && (int16_t)(signed_field(image, inner, GRECT_X) + signed_field(image, inner, GRECT_W))
+              <= (int16_t)(signed_field(image, outer, GRECT_X) + signed_field(image, outer, GRECT_W))
+           && (int16_t)(signed_field(image, inner, GRECT_Y) + signed_field(image, inner, GRECT_H))
+              <= (int16_t)(signed_field(image, outer, GRECT_Y) + signed_field(image, outer, GRECT_H));
 }
 
 static inline int same_word(const uint8_t *image, uint32_t first, uint32_t second, uint32_t field)
 {
-    return rect_word(image, first, field) == rect_word(image, second, field);
+    return signed_field(image, first, field) == signed_field(image, second, field);
 }
 
 /* An extent of the old rectangle made the larger of the two, grown by the border ($fec270 max, `addq.w #2`). */
 static void widen(uint8_t *image, uint32_t old, uint32_t rect, uint32_t field)
 {
     set_bus_word(image, old + field,
-                 (uint16_t)(aes_max(rect_word(image, rect, field), rect_word(image, old, field)) + W_BORDER));
+                 (uint16_t)(aes_max(signed_field(image, rect, field), signed_field(image, old, field)) + W_BORDER));
 }
 
 /* What draw_change decides to redraw: from which window up (`start`, 0 the whole tree: the desktop drawn too), and
@@ -254,14 +249,14 @@ static void sized(uint8_t *image, int16_t window, uint32_t rect, uint32_t frame,
 {
     uint32_t old = frame + CHANGE_OLD;
 
-    if (rect_word(image, rect, GRECT_W) <= rect_word(image, old, GRECT_W)
-        && rect_word(image, rect, GRECT_H) <= rect_word(image, old, GRECT_H)) {
+    if (signed_field(image, rect, GRECT_W) <= signed_field(image, old, GRECT_W)
+        && signed_field(image, rect, GRECT_H) <= signed_field(image, old, GRECT_H)) {
         wr16(image + frame + CHANGE_STOP, (uint16_t)window);
         aes_w_cpwalk(image, global_word(image, AES_GL_WTOP), OB_ROOT, WM_MAX_DEPTH, 1);
         change->moved = 1;
     }
-    if (rect_word(image, rect, GRECT_W) < rect_word(image, old, GRECT_W)
-        || rect_word(image, rect, GRECT_H) < rect_word(image, old, GRECT_H))
+    if (signed_field(image, rect, GRECT_W) < signed_field(image, old, GRECT_W)
+        || signed_field(image, rect, GRECT_H) < signed_field(image, old, GRECT_H))
         change->start = 0;
     widen(image, old, rect, GRECT_W);
     widen(image, old, rect, GRECT_H);
@@ -274,7 +269,7 @@ static void moved_away(uint8_t *image, int16_t window, uint32_t rect, uint32_t f
 {
     uint32_t old = frame + CHANGE_OLD;
 
-    if (!rect_word(image, old, GRECT_W) || !rect_word(image, old, GRECT_H) || lies_inside(image, old, rect)) {
+    if (!signed_field(image, old, GRECT_W) || !signed_field(image, old, GRECT_H) || lies_inside(image, old, rect)) {
         aes_rc_copy(image, rect, old);
         return;
     }
@@ -283,7 +278,7 @@ static void moved_away(uint8_t *image, int16_t window, uint32_t rect, uint32_t f
         change->moved = aes_w_move(image, window, frame + CHANGE_STOP, old);
         change->start = 0;
     }
-    if (!rect_word(image, rect, GRECT_W) || !rect_word(image, rect, GRECT_H))
+    if (!signed_field(image, rect, GRECT_W) || !signed_field(image, rect, GRECT_H))
         change->start = 0;
     if (change->start) {
         aes_rc_union(image, rect, old);
@@ -366,8 +361,8 @@ void aes_draw_change(uint8_t *image, int16_t window, uint32_t rect)
     aes_w_setsize(image, WS_PREV, window, old);
     aes_w_setsize(image, WS_CURR, window, rect);
     work = aes_w_getxptr(WS_WORK, window);
-    aes_wm_calc(image, WC_WORK, (int16_t)bus_word(image, window_record(window) + WIN_KIND), rect_word(image, rect, GRECT_X),
-                rect_word(image, rect, GRECT_Y), rect_word(image, rect, GRECT_W), rect_word(image, rect, GRECT_H),
+    aes_wm_calc(image, WC_WORK, (int16_t)bus_word(image, window_record(window) + WIN_KIND), signed_field(image, rect, GRECT_X),
+                signed_field(image, rect, GRECT_Y), signed_field(image, rect, GRECT_W), signed_field(image, rect, GRECT_H),
                 work + GRECT_X, work + GRECT_Y, work + GRECT_W, work + GRECT_H);
     /* newrect handed BY VALUE ($fec146 `move.l #$fe5cee,-(sp)`): its ROM address on the host, its Alcyon entry beside
      * this file (`wmupdate.S`) on target — spelt at the call, where the ROM-address census sees the use. */

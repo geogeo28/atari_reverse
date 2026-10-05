@@ -450,7 +450,7 @@ def test_the_lock_after_an_unbalanced_release_blocks(name, values):
 
 MU_KEYBD = 0x0001                      # ev_multi's keyboard event ($fe69cc btst #0,d7)
 # PD0's evnt_multi for a key alone: its answers where the derivations keep a message buffer.
-KEY_WAIT = aes_event.EV_MULTI_FRAME.pack(MU_KEYBD, 0, 0, 0, 0, 0, aes_event.MESSAGE_AT)
+KEY_WAIT = aes_event.KEY_WAIT
 
 
 @functools.cache

@@ -33,11 +33,6 @@ static inline void set_orect_link(uint8_t *image, uint32_t orect, uint32_t link)
     set_bus_long(image, orect + ORECT_LINK, link);
 }
 
-static inline int16_t orect_word(uint8_t *image, uint32_t orect, uint32_t field)
-{
-    return (int16_t)bus_word(image, orect + field);
-}
-
 static inline void set_orect_word(uint8_t *image, uint32_t orect, uint32_t field, int16_t value)
 {
     set_bus_word(image, orect + field, (uint16_t)value);
@@ -46,7 +41,7 @@ static inline void set_orect_word(uint8_t *image, uint32_t orect, uint32_t field
 /* The far edge on one axis: the origin plus the extent, a WORD sum that wraps (`add.w`). */
 static inline int16_t orect_far(uint8_t *image, uint32_t orect, uint32_t origin_field, uint32_t extent_field)
 {
-    return (int16_t)(orect_word(image, orect, origin_field) + orect_word(image, orect, extent_field));
+    return (int16_t)(signed_field(image, orect, origin_field) + signed_field(image, orect, extent_field));
 }
 
 static inline uint32_t free_orects(const uint8_t *image)
@@ -92,21 +87,21 @@ uint32_t aes_mkpiece(uint8_t *image, int16_t side, uint32_t cut, uint32_t rect)
     uint32_t piece = aes_get_orect(image);
 
     set_orect_link(image, piece, rect);
-    set_orect_word(image, piece, ORECT_X, orect_word(image, rect, ORECT_X));
-    set_orect_word(image, piece, ORECT_W, orect_word(image, rect, ORECT_W));
-    set_orect_word(image, piece, ORECT_Y, aes_max(orect_word(image, rect, ORECT_Y), orect_word(image, cut, ORECT_Y)));
+    set_orect_word(image, piece, ORECT_X, signed_field(image, rect, ORECT_X));
+    set_orect_word(image, piece, ORECT_W, signed_field(image, rect, ORECT_W));
+    set_orect_word(image, piece, ORECT_Y, aes_max(signed_field(image, rect, ORECT_Y), signed_field(image, cut, ORECT_Y)));
     set_orect_word(image, piece, ORECT_H,
                    (int16_t)(aes_min(orect_far(image, rect, ORECT_Y, ORECT_H), orect_far(image, cut, ORECT_Y, ORECT_H))
-                             - orect_word(image, piece, ORECT_Y)));
+                             - signed_field(image, piece, ORECT_Y)));
     switch (side) {
     case ORECT_PIECE_ABOVE:
-        set_orect_word(image, piece, ORECT_Y, orect_word(image, rect, ORECT_Y));
+        set_orect_word(image, piece, ORECT_Y, signed_field(image, rect, ORECT_Y));
         set_orect_word(image, piece, ORECT_H,
-                       (int16_t)(orect_word(image, cut, ORECT_Y) - orect_word(image, rect, ORECT_Y)));
+                       (int16_t)(signed_field(image, cut, ORECT_Y) - signed_field(image, rect, ORECT_Y)));
         break;
     case ORECT_PIECE_LEFT:
         set_orect_word(image, piece, ORECT_W,
-                       (int16_t)(orect_word(image, cut, ORECT_X) - orect_word(image, rect, ORECT_X)));
+                       (int16_t)(signed_field(image, cut, ORECT_X) - signed_field(image, rect, ORECT_X)));
         break;
     case ORECT_PIECE_RIGHT:
         set_orect_word(image, piece, ORECT_X, orect_far(image, cut, ORECT_X, ORECT_W));
@@ -132,13 +127,13 @@ uint32_t aes_brkrct(uint8_t *image, uint32_t cut, uint32_t rect, uint32_t prior)
     int16_t leaves[ORECT_PIECE_SIDES];
     int16_t side;
 
-    if (orect_far(image, rect, ORECT_X, ORECT_W) <= orect_word(image, cut, ORECT_X)
-        || orect_far(image, cut, ORECT_X, ORECT_W) <= orect_word(image, rect, ORECT_X)
-        || orect_far(image, rect, ORECT_Y, ORECT_H) <= orect_word(image, cut, ORECT_Y)
-        || orect_far(image, cut, ORECT_Y, ORECT_H) <= orect_word(image, rect, ORECT_Y))
+    if (orect_far(image, rect, ORECT_X, ORECT_W) <= signed_field(image, cut, ORECT_X)
+        || orect_far(image, cut, ORECT_X, ORECT_W) <= signed_field(image, rect, ORECT_X)
+        || orect_far(image, rect, ORECT_Y, ORECT_H) <= signed_field(image, cut, ORECT_Y)
+        || orect_far(image, cut, ORECT_Y, ORECT_H) <= signed_field(image, rect, ORECT_Y))
         return 0;
-    leaves[ORECT_PIECE_ABOVE] = orect_word(image, cut, ORECT_Y) > orect_word(image, rect, ORECT_Y);
-    leaves[ORECT_PIECE_LEFT] = orect_word(image, cut, ORECT_X) > orect_word(image, rect, ORECT_X);
+    leaves[ORECT_PIECE_ABOVE] = signed_field(image, cut, ORECT_Y) > signed_field(image, rect, ORECT_Y);
+    leaves[ORECT_PIECE_LEFT] = signed_field(image, cut, ORECT_X) > signed_field(image, rect, ORECT_X);
     leaves[ORECT_PIECE_RIGHT] = orect_far(image, cut, ORECT_X, ORECT_W) < orect_far(image, rect, ORECT_X, ORECT_W);
     leaves[ORECT_PIECE_BELOW] = orect_far(image, cut, ORECT_Y, ORECT_H) < orect_far(image, rect, ORECT_Y, ORECT_H);
     for (side = ORECT_PIECE_ABOVE; side < ORECT_PIECE_SIDES; side++) {

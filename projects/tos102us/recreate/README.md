@@ -357,7 +357,46 @@ THE PRINCIPLE holds for the scheduler too: a running process, a parked one, a wo
 PRODUCES (an event delivered, disp's loop `$fe4dda` run until the woken process leaves its evnt_multi at `$fe6c5c`) — never
 rlr / indisp / PD_STAT / the lists poked into place, and a case no derivation reaches within one oracle run is refused.
 
-THE EVENT DOOR — the AES's C into the event layer and the scheduler (band 4), which no C holds yet. Every C call of one of
+A STAGED APPLICATION (`test/aes_pdpipe.py`) is the ONE way the suite makes a third process, and a labelled class of
+its own. What it is allowed to be: the ROM's own pstart run over a stub of EXACTLY three instructions — a push of one
+immediate, ONE Line-F call of a routine `aes_pdpipe.ALLOWED_CALLS` names (each with its reason; a new one is added
+there by the wave that needs it, and the WIDTH its one argument is pushed at), `jmp (SENTINEL).w`.
+`staged_application(call, argument)` makes it; `vet_the_stub` holds the shape where it is made, and EVERY road that
+runs the dispatcher into the stub — `started`, `called`, `at_aqueue_from_the_dispatcher`, a scenario's own watched
+run (`aes_evasync`) — holds the bytes as they LIE in the machine where it is entered (`vet_the_application`: the
+class's shape, the call the application names, the argument it names at that call's width; a stub poked afterwards
+is refused). A QPB whose bytes would land on the stub's room — it lies directly behind the read buffer — is refused
+where it is staged (`qpb_pokes`). The machine differs from its start exactly where pstart's own ledger stored.
+`started` is the dispatcher's own loop entering the application; `called` is that same run carried on until
+the application's one call has parked it — never a call re-entered from the harness. Where it may not be cited:
+- it is TIER 1 ONLY — no row of `case.ROW_REGISTRIES` or `transcription.TRANSCRIPTIONS` may run over one
+  (`test_aes_pdpipe` holds both registries);
+- every case over one carries the label (`aes_pdpipe.STAGED_APPLICATION`) in its name;
+- nothing learnt on one is quoted as what a REAL third process (an accessory) does — a STATUS row or a finding that
+  stands on one says so.
+
+THE `leaf_machine(onto=)` TRAP. `aes.leaf_machine` lays its lever OVER `onto`, not under it: AES_RLR := the shell's PD
+and AES_INDISP := 1, whatever `onto` held. Never hand it an `aes_event` machine — one whose running process the
+scheduler made (`aes_event.machine()`, `screen_manager_running`, a staged application's): it puts PD0 where another
+process may run and sets a guard no running process has, a machine of neither kind. Such a machine is run as it is
+(`aes.run_function`, the battery's own `run`).
+
+A CASE THE ATTRIBUTION PASS STEERS SAYS WHAT STEERS IT, AND THE PASS IS NARROWED TO THAT — one spelling,
+`aes.run_function(..., steered=<reason, or several>)`, used by the processes' and the lists' batteries alike. A
+routine that computes a store's ADDRESS from a word it also stores (a UDA's saved stack pointer, the count getpd
+indexes the PD table by, a pipe's index, a list's links) is steered by the pass's inverted word. A REASON
+(`aes.steers(why, *spans)`; `aes_pdpipe.STEERS_THE_STACK` / `_PD_COUNT` / `_INDEX` / `_LISTS`, and `_QUEUE_POINTER` /
+`_QPB` for the overlap cases whose run stores over what it was handed) names THE WORDS that steer, and it is held on
+every run of the case: the pass is still made, with those words left as they are and every other byte the ROM's run
+stored inverted — so a flag, a mask, an answer, a count the C did not store shows, and a reason that names the wrong
+word, or too few, fails by name. A case names every reason its run meets, the first met first.
+The other direction is a sweep run on demand: `AES_STEERED_FOR_NOTHING=1 pytest test/test_aes_pdpipe.py
+test/test_aes_evasync.py` makes the pass once more per reason with THAT reason's words inverted too, and a reason the
+case survives without is refused by name. Run it when a steered case is added or a routine under one changes (last:
+2026-10-04, band 4 wave 0's gate fix — six labels corrected, 732 cases green under it).
+
+THE EVENT DOOR — the AES's C into the event layer and the scheduler (band 4), which C holds only as far as band 4 has
+ported it (REBINDING THE DOOR, below, says how an entry leaves the door). Every C call of one of
 their routines goes through ONE wrapper in `include/aes/evdoor.h`, keyed by the routine's ROM address (wave 0: ev_multi
 `$fe6998` and ap_rdwr `$fe65c4`; wave 1: tak_flag `$fe4e5a`, unsync `$fe4eb8`, ev_block `$fe6874`, ct_chgown `$fe49ba`,
 post_button `$fe52e2`, and ev_multi's two-rectangle shape; wave 2: ev_button `$fe68a4`, fm_button's wait for the rise —
@@ -377,9 +416,58 @@ would turn it into "no event". One thing differs by nature: the BIOS trap's regi
 (`$8de..$905`, the CALLER's registers), dropped by name in Tier 1 while priced rows move `savptr` into the stack band.
 Tier 3 prices such C on its own cycles, mechanism (EV): our run is WATCHED at the door entries (the kit's
 `RomBench.measure(watch=)`), each door call a window taken off the ROM's own cycles, an AES cycle of ours outside a window
-refused, and the ORIGINAL's run watched too — its windows must equal ours one by one, cycles and frames. WHEN BAND 4 PORTS
-the event layer, each wrapper's body becomes the call of its C twin on both builds: no caller changes, the host hook stops
-being reached for that address, and the row stops being (EV) by derivation (no `jsr` into the AES text left).
+refused, and the ORIGINAL's run watched too — its windows must equal ours one by one, cycles and frames. The inline-asm
+wrapper and the nested run are the shape of an entry the ROM still SERVES; an entry band 4 has ported is REBOUND.
+
+REBINDING THE DOOR. An entry with a C twin is REBOUND: its wrapper keeps its signature and its callers, and calls
+`aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, is the first). On target that call is the whole
+wrapper. Off target it is still an ARRIVAL:
+- THE HOOK'S THIRD ANSWER. The wrapper packs the Alcyon frame and asks `recreate_call_event_door` as before; for a
+  rebound entry the hook answers `EVDOOR_ARRIVED` (not `EVDOOR_SERVED`): the frame is recorded for the frames-handed
+  comparison and the interrupt due at that door call is laid, exactly as at a served call — then the twin runs over
+  the candidate's image and its answer is reported to a second hook, `recreate_event_door_returned`. A wrapper and a
+  hook that disagree halt by name, both ways (a rebound entry served by the nested run; an entry left to a twin its
+  wrapper does not call).
+- `REBOUND` IS DERIVED, never listed: the host's from the candidate library's exports (`aes_event.rebound_in(lib)` —
+  the entries whose core symbol it holds; a child derives its own), Tier 3's from the blob's symbols
+  (`tier3.twin_entries(elf)`), and the two are held equal. An entry that is both a twin's and a `jsr` into the ROM is
+  refused by name (`test_no_entry_is_both_a_twin_s_and_a_jsr_into_the_rom`). To rebind an entry: write its twin and
+  the twin's own battery, change its wrapper's two shapes in `aes/evdoor.h`, put it in `aes_event.SHADOWED` —
+  `REBOUND` follows on both builds.
+- THE SHADOW IS A FLIP'S RED PROOF AND BISECTING TOOL. While an entry is in `aes_event.SHADOWED`, each arrival also
+  makes the ROM routine's nested run over a COPY of the image (`shadow_of`), and at the twin's return its answer and
+  its image are held to that run's (`vet_the_shadow`; the stack band, the mask word and the trap save aside). A wrong
+  twin then reds at its own call, in the shadow's words, instead of at a session's end. An entry leaves the set once
+  its flip has stood.
+- A REBOUND TWIN IS HELD BY ITS LEAF BATTERY; THE DOOR CASES HOLD THE COMPOSITION. A door case reaches an entry only
+  in the states its caller makes, and the shadow sees the same states — it changes where a red is NAMED, never what
+  is covered (measured at the pilot: five real mutants of the twin that are not equivalent pass every door battery,
+  shadow on or off, and the twin's own battery kills all five). So a flip needs the twin's own battery first: its own
+  priced rows, entered at the entry itself, reaching every arm, over machines the ROM's scheduler makes —
+  `test_tier3.py::test_every_rebound_entry_has_a_leaf_battery_s_rows` refuses an entry rebound without them, and "the
+  shadow covers it" is no coverage argument. What the door cases hold is what no leaf battery can: the callers still
+  arrive with the same frames, at the same ordinals, taking the same deliveries.
+- A TWIN CALLS ANOTHER ENTRY'S CORE, NEVER ITS DOOR WRAPPER. `evdoor_<entry>` is for callers OUTSIDE the event layer.
+  The host's hook counts every wrapper call as an arrival; the ROM's watched run and our blob's count the outermost
+  door call only (on target a rebound entry's wrapper IS the core's call). A twin going through a wrapper would shift
+  every later ordinal — frames compared, deliveries laid, slices marked — on the host alone. Held by the build, a
+  DERIVED test: `test_aes_event.py::test_no_twin_reaches_a_door_wrapper` builds THE HOST BUILD'S OWN CALL GRAPH —
+  every source compiled as kit.mk compiles it (`$(CC) $(CFLAGS)`, as make expands them), each object's functions and
+  what each one's instructions refer to (its relocations), closed across files — and holds every function a twin
+  reaches free of the door's two hooks: a wrapper called by a helper in another file is seen too.
+- THE DISPATCH HOOK REFUSES. A twin that reaches dsptch calls `aes_dsptch` (`aes/switch.h`): off target that is
+  `recreate_dispatch`, asked before any guard, whose binding in every case and every child refuses by name — "the
+  call would block" or "would yield", told apart by the running process's PD_STAT as disp tells them — and prints the
+  frames handed so far. A run that blocks inside a rebound entry is compared where its twin stops, AT dsptch; inside a
+  ROM-served one at the entry of the blocking call, as before. The SR save words a twin's bracket parks
+  (`sr_mask_saving` / `sr_restore_from`: nothing stored off target, the ROM's two instructions on it) are each a
+  NAMED drop, declared when a case first reaches that bracket (`aes_event.SR_PSETUP_DROP` is the one that exists).
+- TIER 3: THE ARRIVALS RULE. Both runs still arrive at a rebound entry — the same ordinal, delivery, slice mark and
+  frame — but it opens NO window: the ROM routine's cycles stay the ROM's own, the twin's are ours, and the table's
+  sub-line counts "N call(s) of a rebound entry in the own cycles". A twin that runs an AES ROM cycle is refused by
+  name (rebind the entry it called first). So a flip MOVES every row that reaches the entry: save the table before
+  and after, list every moved row, and hold that no other moved. A row stops being (EV) by derivation when its
+  function's last `jsr` into the AES text is gone.
 
 INTERRUPTS AT A DOOR ENTRY. A loop like mn_do or gr_dragbox only leaves its later states when the mouse or button changes
 WHILE it runs. `aes_event.interrupted(name, arguments, machine, {k: effect})` delivers that change on both sides. The ROM's
@@ -491,6 +579,56 @@ The dispatcher refuses in two ways, matched by `aes_event.BLOCKS` and `YIELDS` (
 WOULD BLOCK leaves its process waiting. A call that WOULD YIELD keeps the caller ready but switches: unsync handing the lock to
 a queued waiter does this. The core's generic halt line names both, so a bare "would block" substring passed a yield as a
 block. `refused_where_the_rom_blocks(..., switches=)` compares the child's whole image with the ROM's at the refusing entry.
+
+THE C RUNS FIRST IN A CHILD. A core of the event layer that goes wrong does not fail an assertion: a door user loops
+where the ROM's run ends, a list routine walks a list that no longer ends or stores through a link that is no address
+(the host's refusal: an abort), a wrapper and a hook disagree (a halt). In process each is a worker spinning until the
+watchdog, or dead — a crash, which a strict sweep counts ABNORMAL. So the C runs in a child first, and the case FAILS
+by a timeout or a non-zero exit (`aes_event._vet_returned`: one assertion, whichever child). Which child:
+- A DOOR USER — a core that reaches a hook: a FRESH INTERPRETER with the door bound, once before the differential
+  (`aes_event.run_guarded` / `returns_in_a_child`; `aes_event.refusal` is where a frame's values become its C
+  arguments). Its hooks must be bound per child. Remembered per worker by CONTENT — routine, frame, binding and THE
+  IMAGE the pokes make (`merge_pokes`: overlapping pokes laid in another order are another machine) — never by the
+  machine's identity.
+- A core that reaches NO hook (the list routines, the processes' and the pipes', tak_flag): a FORK of the worker AT
+  THE CALL ITSELF (`aes_event.run_core_guarded`, through `aes.run_function`'s `first=`). EVERY run of the C the kit
+  makes is forked first — the plain pass's and the attribution pass's, each over the very image and library state
+  the kit hands that run — so the poisoned run is guarded too, and the verdict cannot depend on the test before. A
+  case that MEANS to show a halt or a return in a child uses the same fork (`aes_event.core_in_a_fork`: exit code,
+  stderr, the image as the core left it through a shared mapping, the answer; the library's models armed first, as
+  a differential arms them). No interpreter started, no image file.
+WHICH ROAD IS NOT THE BATTERY'S WORD ALONE: in a fork EVERY hook the library has is bound to a refuser that names it
+and ends the fork (`FORK_UNSERVED_HOOKS`, held to the library's own exports by `nm`) — a core that reaches one is
+refused by name and told to take the other road, never passed vacuously by a `void` hook that did nothing; and the
+host build's own call graph (every source compiled with kit.mk's flags, relocations per function, closed across
+files) holds that the fork-guarded cores reach none on ANY path. The dispatcher's hook alone is served in a fork, as
+everywhere: it refuses, a block told from a yield.
+WHAT A FORK MAY DO: call the C and `_exit` — no test code, no import. Its descriptor 2 AND its Python `sys.stderr` /
+`sys.stdout` are the guard's pipe (so a hook's printed words reach the failure under any capture, and nothing is
+written to xdist's channel); a fork whose own Python raises reports its traceback under an exit status of its own
+(`FORK_RAISED`: the harness's error, never "the C did not return"). A spin ends by `SIGALRM` after
+`CORE_RETURN_SECONDS` (10) — the fork's FIRST act, which is also what bounds an ORPHAN: a fork whose worker died is
+gone within those ten seconds.
+ORPHANS, HOW TO LOOK: `ps -axo ppid,etime,command | awk '$1==1 && (/ctypes/ || /pytest/ || /sys\.stdin\.readline/)'`
+— a fresh-interpreter child shows as `python -c ... ctypes ...`, a fork as its worker's own command line (xdist's
+`python -u -c import sys;exec(eval(sys.stdin.readline()))`, or `python -m pytest ...` run serially). The older check
+for `/ctypes/` alone cannot see a fork. An entry there younger than ten seconds is a fork inside its alarm; anything
+older is a real orphan (measured: a worker killed mid-fork leaves one line, gone at the alarm).
+
+THREE PUBLIC PIECES for a battery whose machines are the ROM's own calls:
+- `aes_event.EntryStops` — a watch at arbitrary ROM entries (not only the door's): the ROM's own run of a scenario
+  stopped at each, so a case is "the ROM's own call, at the machine and with the frame the ROM makes it" (an
+  ARRIVAL). `ends=` / `once_past=` end a run at a PC once another has been passed — refused by name where the run
+  would end having executed nothing (an end that is its own entry, no gate before it: the machine handed on would
+  be the staged one). KNOW WHEN AN ENTRY IS WATCHED AGAIN (its docstring): the entry arrived at is unarmed until
+  the run's next stop, so a recursive entry's inner arrival and a second process's call of an entry whose first
+  caller parked inside it can be missed — the scenario's DECLARED arrivals are what holds a run to what it saw.
+- `aes_event.as_pokes(memory, over, without=, upto=)` — an image as the pokes that make it over another (the stack
+  band left out by `without=`): how an arrival's machine is kept.
+- `aes_event.dispatched(pokes, pd, comes_out_at, alone=)` — the dispatcher's own loop run until process `pd` comes
+  out at a PC, alone on the ready list unless the case says another is ready too: the one spelling of "woken by the
+  scheduler". `aes_event.tick` / `ticks(n)` are the tick glue as a deliverable
+  interrupt; `aes.list_of(image, head, link, limit)` is the one linked-list walker.
 
 The door also never lays back the nested run's write to the Line-F mask word `$cc44`. A caller's own non-empty masked return
 rewrites that word after its last door call, so the C's image keeps the word as the C found it.

@@ -152,7 +152,9 @@
     ENTRY(aes_rom_gsx_mret,           "")                                   /* Alcyon (&address, &length)  */ \
     ENTRY(aes_rom_ratinit,            "")                                   /* Alcyon ()                   */ \
     ENTRY(aes_rom_gsx_mxmy,           "")                                   /* Alcyon (&x, &y)             */ \
-    ENTRY(aes_rom_gsx_button,         "")                                   /* Alcyon () -> D0.w           */
+    ENTRY(aes_rom_gsx_button,         "")                                   /* Alcyon () -> D0.w           */ \
+    ENTRY(aes_rom_uda_insuper,        "")                                   /* Alcyon (uda)                */ \
+    ENTRY(aes_rom_psetup,             "a2")                                 /* Alcyon (pd, pc): supervisor */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a
