@@ -614,10 +614,14 @@ class RomBench:
                 f"`bench_base` in project.toml")
 
         def excluded(address):
-            return self.base <= address < self.end or any(lo <= address < hi for lo, hi, _why in dropped)
+            return any(lo <= address < hi for lo, hi, _why in dropped)
 
+        # THE BLOB'S SPAN IS CUT OUT OF WHAT IS COMPARED, not excluded address by address: over it the two images
+        # ALWAYS differ — our code against the zeroes just checked — so every compare walked its every byte only
+        # for the exclusion to discard each one (measured in projects/tos102us: 168 KB of blob, 25 ms of a 28 ms
+        # compare, 4,500 compares a suite run).
         differing = harness.differing_addresses(memoryview(original), memoryview(bytes(ours)),
-                                                harness.diff_spans(), excluded)
+                                                _spans_without(harness.diff_spans(), self.base, self.end), excluded)
         if differing:
             shown = ", ".join(f"{addr:#x} ({original[addr]:#04x} -> {ours[addr]:#04x})"
                               for addr in differing[:8])
@@ -674,6 +678,35 @@ _STREAMS = {"psg_events": "the ordered PSG accesses",
             "hw_writes": "the ordered hardware writes"}
 
 
+def _spans_without(spans, lo, hi):
+    """`spans` (`(start, stop)` each, as `harness.diff_spans`) with `[lo, hi)` cut out of every one of them."""
+    kept = []
+    for start, stop in spans:
+        kept += [(start, min(stop, lo)), (max(start, hi), stop)]
+    return tuple((start, stop) for start, stop in kept if start < stop)
+
+
+BUS_PC_MASK = 0xFFFFFFFF                 # a door's PCs as the shim holds them (`emu.bench_door_arm` masks the same)
+
+
+def as_armed(door):
+    """`door` — as `emu.bench_door_arm` takes one: a `(base, span)` band, a collection of PCs, or None — READ ONCE: a
+    band or None as it is, any other collection as the frozenset of its PCs. A watch may answer a one-shot iterable
+    (a generator, a `map`): asked about first and armed after, it would arm NOTHING, and the run would go on
+    unwatched with no refusal."""
+    return door if door is None or isinstance(door, tuple) else frozenset(door)
+
+
+def door_holds(door, pc):
+    """Does `door` (`as_armed`) stop a run AT `pc`?"""
+    if not door:
+        return False
+    if isinstance(door, tuple):
+        base, span = door
+        return (pc - base) & BUS_PC_MASK < span & BUS_PC_MASK
+    return pc & BUS_PC_MASK in {stop & BUS_PC_MASK for stop in door}
+
+
 def watched(result, entry, watch, memory, max_insns=None):
     """A WATCHED run (`RomBench.measure`'s `watch`) carried to its end: at each stop `watch.stopped(pc, sp, memory)`
     observes and names the next door (`emu.bench_door_arm`: a band, a set of PCs, or None), and the run resumes with
@@ -682,6 +715,14 @@ def watched(result, entry, watch, memory, max_insns=None):
     that spins after a stop is refused at the budget its caller named, not a fresh one per segment. The buffer export is
     dropped however the loop ends (`emu.bench_abort`) — a `stopped` that raises would otherwise leave the image exported
     for the worker's life.
+
+    A DOOR LEFT OVER THE PC THE RUN RESUMES AT IS REFUSED, BY NAME, before it is armed: a stop leaves the CPU before
+    the instruction at the door, so the resume would stop there again at once having run NOTHING — and the budget
+    above counts instructions, so it would never be spent: the loop span for ever (measured: 1.2 million stops in
+    8 s, ended only by the suite's watchdog). A watch that means to be stopped at that PC again arms it from a
+    LATER stop. THE PC IS READ AFTER `stopped` ANSWERS (`emu.bench_resume_pc`), because a watch may SERVICE its stop
+    there — `emu.bench_door_return`, a callback's `rts` — and one that moved the run past the door and keeps the
+    door is a stub called again and again, not a spin: it resumes, and stops at its door the next time round.
 
     Public for the run measure() does not make: a project watching the ORIGINAL's own run the same way (an
     `emu.run_bench` of ROM code started with `door=watch.first`), so both sides are observed by one loop. A bench run
@@ -693,7 +734,14 @@ def watched(result, entry, watch, memory, max_insns=None):
     budget = emu.BENCH_MAX_INSNS if max_insns is None else max_insns
     try:
         while result["status"] == emu.BENCH_DOOR:
-            emu.bench_door_arm(watch.stopped(emu.bench_door_pc(), emu.bench_door_sp(), memory))
+            door = as_armed(watch.stopped(emu.bench_door_pc(), emu.bench_door_sp(), memory))
+            resumes_at = emu.bench_resume_pc()
+            if door_holds(door, resumes_at):
+                raise RuntimeError(
+                    f"the watch of {entry:#x} armed the PC it is stopped at ({resumes_at:#x}): the resume would stop "
+                    f"there again at once, with no instruction run and none of the run's budget spent — for ever. "
+                    f"Arm a door that leaves that PC out, and arm it again from a later stop")
+            emu.bench_door_arm(door)
             left = budget - result["ninsns"]
             if left <= 0:
                 raise RuntimeError(f"the watched run of {entry:#x} did not return within {budget} instructions")

@@ -1369,8 +1369,28 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
  * that surfaced the defect. */
 #define ENTRY_SR 0x2700
 
+/* The USER stack pointer every run starts from: the same determinism, another register.
+ *
+ * A reset loads the SUPERVISOR stack pointer and leaves the inactive one alone, and Musashi is
+ * faithful about that too: m68k_pulse_reset() never touches the USP. Every run is entered in
+ * supervisor mode with the register file a caller hands it — D0..A6 and the supervisor's A7 — so
+ * nothing said what the USP was, and a run inherited whatever the previous run in the process left
+ * there. Invisible to a routine that never reads it; an operating system's context save does
+ * (`move.l usp,a0` and a store), and what it saved is then part of the image: projects/tos102us
+ * derives machines out of the ROM's own dispatcher, and the same derivation answered two machines
+ * by what had run before it — twenty verified rows hashed differently under `make bench`'s import
+ * order than in an xdist worker's collection order.
+ *
+ * WHY 0: determinism is the requirement, as it is for ENTRY_SR, and 0 is what the first run of a
+ * process always had (the CPU's state starts zeroed) — so every run now begins as the first one
+ * did. It is NOT a claim about the user stack any program holds; a case whose routine needs a
+ * particular one sets it itself, in its own code. Pinned by tools/recreate_kit/test/
+ * test_entry_state.py: the probe reads USP through EACH door, osh_run and osh_run_bench, straight
+ * after a run that leaves one behind — a force in one door alone reddens the other's read. */
+#define ENTRY_USP 0
+
 /* The CPU state EVERY run begins from. Both entry points go through this one place so that the reset
- * and the ENTRY_SR force cannot drift apart — osh_run_bench once reset without forcing, and so
+ * and the two forces cannot drift apart — osh_run_bench once reset without forcing, and so
  * inherited the condition codes of whatever had run before it. */
 /* Put the modeled YM2149 back to this run's declared entry state, and clear its per-run tallies.
  *
@@ -1463,6 +1483,7 @@ static void enter_from_reset(void) {
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     m68k_pulse_reset();
     m68k_set_reg(M68K_REG_SR, ENTRY_SR);
+    m68k_set_reg(M68K_REG_USP, ENTRY_USP);   /* after the SR: S is set, so this names the inactive pointer */
     psg_enter_run();
     hw_enter_run();
     io_enter_run();

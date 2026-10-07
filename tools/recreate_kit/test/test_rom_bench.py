@@ -804,6 +804,41 @@ def test_a_dropped_span_is_left_out_of_the_image_comparison_and_nothing_else_is(
         bench._vet_image(FAKE_ENTRY, "core", original, _parked(b"\x00\x01\x23\x44", other=1), (FAKE_PARK,))
 
 
+def test_the_blob_s_span_is_cut_out_of_the_spans_compared_not_excluded_byte_by_byte(monkeypatch):
+    """THE RED for a compare that walked the blob: our image holds the cross-compiled code where the original's holds
+    zeroes, so over the blob the two ALWAYS differ — and handed the whole image, the comparison walked every byte of
+    it on every row only for the exclusion to discard each. What is compared is the spans WITHOUT the blob's: the
+    same addresses reported (none of the blob's, every other), and no address of the blob so much as asked about."""
+    handed = []
+
+    def differing_addresses(left, right, spans, excluded):
+        handed.append(spans)
+        return [a for lo, hi in spans for a in range(lo, hi) if left[a] != right[a] and not excluded(a)]
+    monkeypatch.setitem(sys.modules, "harness", SimpleNamespace(**{**vars(_fake_harness()),
+                                                                   "differing_addresses": differing_addresses}))
+    bench = _unbound_bench()
+    original, ours = bytearray(FAKE_IMAGE_BYTES), bytearray(FAKE_IMAGE_BYTES)
+    ours[bench.base:bench.end] = bench.blob
+    bench._vet_image(FAKE_ENTRY, "core", original, ours)
+    assert handed == [((0, bench.base), (bench.end, FAKE_IMAGE_BYTES))]
+    ours[bench.base - 1], ours[bench.end] = 1, 1
+    with pytest.raises(AssertionError, match=f"2 byte\\(s\\), first {bench.base - 1:#x} .*, {bench.end:#x} "):
+        bench._vet_image(FAKE_ENTRY, "core", original, ours)
+
+
+@pytest.mark.parametrize("spans, cut, kept", (
+    (((0, 100),), (40, 60), ((0, 40), (60, 100))),
+    (((0, 100),), (0, 60), ((60, 100),)),
+    (((0, 100),), (40, 100), ((0, 40),)),
+    (((0, 100),), (0, 100), ()),
+    (((0, 100),), (100, 200), ((0, 100),)),
+    (((0, 50), (70, 100)), (40, 80), ((0, 40), (80, 100))),
+    (((0, 50), (70, 100)), (55, 65), ((0, 50), (70, 100))),
+), ids=("inside", "from the start", "to the end", "the whole span", "beside it", "across two spans", "between two spans"))
+def test_spans_with_a_span_cut_out(spans, cut, kept):
+    assert rom_bench._spans_without(spans, *cut) == kept
+
+
 def _stored(*spans):
     """A write ledger (`emu.run`'s `{address: byte}`) holding a store at every address of `spans`."""
     return {address: 0 for lo, hi in spans for address in range(lo, hi)}
@@ -947,7 +982,8 @@ def _watched_emu(calls):
     return SimpleNamespace(**{**vars(fake), "run_bench": run_bench, "bench_door_arm": bench_door_arm,
                               "bench_resume": bench_resume, "BENCH_DOOR": FAKE_BENCH_DOOR,
                               "BENCH_MAX_INSNS": FAKE_BENCH_MAX_INSNS,
-                              "bench_door_pc": lambda: armed[-1][0], "bench_door_sp": lambda: FAKE_DOOR_SP,
+                              "bench_door_pc": lambda: armed[-1][0], "bench_resume_pc": lambda: armed[-1][0],
+                              "bench_door_sp": lambda: FAKE_DOOR_SP,
                               "bench_abort": lambda: calls.append(("abort",))})
 
 
@@ -1009,6 +1045,40 @@ def test_a_watcher_that_raises_still_drops_the_export(monkeypatch):
         _unbound_bench().measure(FAKE_ENTRY, "xbios_getrez", args=(0,), returns=1,
                                  watch=Refusing(FAKE_FIRST_BAND, ()))
     assert calls[-1] == ("abort",)
+
+
+STILL_OVER_THE_STOP = (FAKE_FIRST_BAND[0] - 2, 4)      # a band the PC the run is stopped at lies inside
+
+
+@pytest.mark.parametrize("door", [FAKE_FIRST_BAND, STILL_OVER_THE_STOP, frozenset({FAKE_FIRST_BAND[0], 0x200}),
+                                  [FAKE_FIRST_BAND[0] | 1 << 32]],
+                         ids=["the band it stopped in", "a band over the stop", "a stop set that lists it",
+                              "the same PC above the bus"])
+def test_a_watch_that_arms_the_pc_it_is_stopped_at_is_refused_by_name_before_any_resume(monkeypatch, door):
+    """A stop leaves the CPU BEFORE the instruction at the door: a door left over that PC stops the resume again at
+    once, having run nothing — so the run's budget is never spent and the loop spun for ever (1.2 million stops in
+    8 s, ended only by the watchdog). Refused where the watch answers, by name, with the export dropped."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "emu", _watched_emu(calls))
+    first = sys.modules["emu"].run_bench(bytearray(FAKE_IMAGE_BYTES), FAKE_ENTRY, 0, 0, 0, door=FAKE_FIRST_BAND)
+    with pytest.raises(RuntimeError, match=f"armed the PC it is stopped at \\({FAKE_FIRST_BAND[0]:#x}\\)"):
+        rom_bench.watched(first, FAKE_ENTRY, _Watcher(FAKE_FIRST_BAND, (door, None)), bytearray(FAKE_IMAGE_BYTES))
+    assert [call[0] for call in calls] == ["run_bench", "abort"], "the door was armed, or the run resumed"
+
+
+def test_a_door_beside_the_stop_is_no_refusal():
+    """...and the rule's other side: a band that ENDS at the stop, one that begins past it, a set without it."""
+    stop = FAKE_FIRST_BAND[0]
+    assert not any(rom_bench.door_holds(door, stop) for door in (None, (stop - 4, 4), (stop + 2, 2), {stop + 2}, ()))
+
+
+def test_a_door_is_read_once_whatever_it_is_a_collection_of():
+    """A band and None are armed as they are; any other collection of PCs — a one-shot iterable among them, which a
+    check would otherwise EMPTY before the arm read it — is taken once, as the set both the check and the arm see."""
+    band = (0x1000, 4)
+    assert rom_bench.as_armed(band) is band and rom_bench.as_armed(None) is None
+    one_shot = rom_bench.as_armed(iter([0x1000, 0x1004]))
+    assert one_shot == frozenset({0x1000, 0x1004}) and rom_bench.door_holds(one_shot, 0x1004) and len(one_shot) == 2
 
 
 # ---- a WATCHED ORIGINAL (`original_watch`): the ROM code as a bench run, entered as `emu.run` enters it ---------------

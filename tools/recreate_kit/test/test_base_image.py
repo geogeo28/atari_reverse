@@ -59,7 +59,14 @@ def test_a_differential_really_runs_on_the_installed_image(installed_base):
 def test_the_loaded_image_is_what_a_project_gets_by_default():
     """The control, and the restore: outside the fixture the base is the .PRG as loaded."""
     assert bytes(harness.make_image()[PATCH_AT:PATCH_AT + len(RTS)]) != RTS
-    assert bytes(harness.make_image()) == bytes(harness.BASE_IMAGE)
+    assert bytes(harness.make_image()) == bytes(harness.BASE_IMAGE) == bytes(harness.differential_base())
+
+
+def test_the_base_in_force_is_what_make_image_copies_now(installed_base):
+    """`differential_base()` is the image to READ where a caller need not copy it: the installed one inside the
+    fixture — read at call time, as `make_image` reads it — and the loaded one again outside
+    (`test_the_loaded_image_is_what_a_project_gets_by_default` runs both ways round)."""
+    assert bytes(harness.differential_base()) == installed_base == bytes(harness.make_image())
 
 
 def test_set_base_image_hands_back_the_previous_one(installed_base):

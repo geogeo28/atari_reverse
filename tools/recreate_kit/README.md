@@ -668,6 +668,19 @@ second route with different behaviour. `harness.BASE_IMAGE` keeps its meaning ei
 as loaded, which is what a battery reads when it wants the ORIGINAL's own bytes (an entry
 prologue, a shipped table). `test/test_base_image.py` pins it.
 
+`harness.differential_base()` answers the image IN FORCE — what `make_image` copies now — to READ: a
+helper that wants a few fields of the machine a poke dict makes can look them up over it without
+copying a sixteen-megabyte image, and a project that keys an answer by its base need not reach for
+the module's global.
+
+**The compare walks only where the images differ.** `harness.differing_addresses` compares 64 KB
+chunks whole and, inside a chunk that differs, 256-byte lines whole, before any byte is walked — a
+green case's images differ too, in the word a row drops by nature, and the whole chunk round it was
+a tenth of such a battery. `rom_bench`'s second differential cuts the blob's span OUT of the spans it
+hands that compare (over it our code always differs from the original's zeroes: every compare walked
+it only to discard each address). The addresses found, and their order, are the same
+(`test/test_differing_addresses.py`, `test/test_rom_bench.py`).
+
 ## ROM mode: when the target is the operating system, not a program
 
 The kit's default shape is a game: a `.PRG` loaded at `load_base` into a 1 MB image, with a MODELLED

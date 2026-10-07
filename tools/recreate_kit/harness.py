@@ -922,6 +922,13 @@ def set_base_image(image):
     return previous
 
 
+def differential_base():
+    """The image every differential starts from NOW — what `make_image` copies: BASE_IMAGE, or the one a project
+    installed (`set_base_image`). TO READ: a caller that wants a field of the machine a poke dict makes need not copy
+    the whole image to look at it, and one that keys an answer by its base need not reach for this module's global."""
+    return _DIFFERENTIAL_BASE
+
+
 def make_image(pokes=None):
     """Fresh copy of the base image with {addr: bytes} written in.
 
@@ -1008,6 +1015,11 @@ def diff_spans():
 # differing byte turns the FIRST red case into minutes. Chunking keeps the walk proportional to what
 # actually differs: the compare is run per chunk and only the chunks that differ are walked.
 DIFF_CHUNK_BYTES = 1 << 16
+# ...and inside a chunk that differs, the LINES of it that do. A green case's images differ too — in the one word a
+# row drops by nature (a mask word, a status-register save the original stores and a C core does not) — and walking
+# the whole 64 KB chunk around that word, byte by byte, to exclude it was a tenth of such a battery (measured:
+# 3.7 ms a compare, 448 of one battery's 730). The same addresses, in the same order: only fewer bytes looked at.
+DIFF_LINE_BYTES = 1 << 8
 
 
 def differing_addresses(left, right, spans, excluded):
@@ -1021,9 +1033,14 @@ def differing_addresses(left, right, spans, excluded):
     for lo, hi in spans:
         for start in range(lo, hi, DIFF_CHUNK_BYTES):
             stop = min(start + DIFF_CHUNK_BYTES, hi)
-            if bytes(left[start:stop]) == bytes(right[start:stop]):
+            ours, theirs = bytes(left[start:stop]), bytes(right[start:stop])
+            if ours == theirs:
                 continue
-            found += [a for a in range(start, stop) if left[a] != right[a] and not excluded(a)]
+            for line in range(0, stop - start, DIFF_LINE_BYTES):
+                if ours[line:line + DIFF_LINE_BYTES] == theirs[line:line + DIFF_LINE_BYTES]:
+                    continue
+                found += [start + at for at in range(line, min(line + DIFF_LINE_BYTES, stop - start))
+                          if ours[at] != theirs[at] and not excluded(start + at)]
     return found
 
 

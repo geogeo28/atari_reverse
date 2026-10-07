@@ -1017,6 +1017,12 @@ def bench_door_sp():
     return _LIB.osh_bench_door_sp()
 
 
+def bench_resume_pc():
+    """The PC the run in flight RESUMES at: the door's own (a stop leaves the CPU before that instruction) unless
+    what was done at the stop moved it — ``bench_door_return``, a callback serviced."""
+    return _LIB.osh_final_pc()
+
+
 def bench_door_return(d0, pc, sp, returns=True):
     """Apply a serviced callback — ``d0`` into D0 — and resume the twin at ``pc`` with A7 = ``sp``,
     which is the stub's ``rts``. The rest of the caller-saved file and every condition-code bit are

@@ -206,6 +206,22 @@ means giving `emu.run` an entry-CCR parameter; nothing has needed one yet.
 
 Reverting the force reddens both.
 
+> **Both entry points also force `USP = 0`** (`ENTRY_USP`), in the same shared place.
+
+**Why.** The same defect in another register: a reset loads the supervisor stack pointer and leaves the
+inactive one alone, every run is entered in supervisor mode, and the register file a caller hands a
+run is `D0..A6` plus the supervisor's `A7` — so a run inherited the USP of whatever ran before it in
+the process. A routine that never reads it cannot tell; an operating system's context save does
+(`move.l usp,a0` and a store), and what it saved is then part of the image. It surfaced in
+`projects/tos102us`, whose machines are derived out of the ROM's own dispatcher: one derivation
+answered two machines by run order, and twenty verified rows hashed differently under `make bench`'s
+import order than in an xdist worker's. `0` is what the first run of a process always had, so every
+run now begins as the first one did; it is not a claim about any program's user stack. Pinned by the
+same probe (`test_entry_state.py`), which reads USP **through each door** — `osh_run` and
+`osh_run_bench` — straight after a run that leaves one behind: a force that lived in one door alone
+reddens the read through the other (measured on three variants of the shim). The entry SR is read
+through `osh_run_bench` the same way.
+
 ### What a run reports back
 
 A third decision about the same CPU, and the one that decides what a differential can see at all:
@@ -2344,7 +2360,13 @@ text stops at the listed PCs alone — the band is their hull, and an unlisted P
 as an unwatched one does, so a watch over two entries never swallows the routines between them. A
 band armed after a set clears the list (`test_bench_door_stops.py`), and only a PC inside a set's
 hull pays its lookup: every other caller keeps the one unsigned compare. `watched` holds the whole
-run to ONE budget, each resume handed what the segments before it left.
+run to ONE budget, each resume handed what the segments before it left — and REFUSES, by name, a watch
+that arms the PC the run resumes at (`rom_bench.door_holds`): a stop leaves the CPU before that
+instruction, so the resume would stop again at once with nothing run and nothing of the budget spent,
+for ever (`test_bench_door_stops.py` holds it over the real shim, `test_rom_bench.py` for every door shape).
+The PC is read AFTER the watch answers (`emu.bench_resume_pc`): a watch that services its stop there
+(`emu.bench_door_return`) and keeps its door has moved the run past it, and is not refused. A door is
+read once (`rom_bench.as_armed`), so a one-shot iterable of PCs is armed as it was asked about.
 
 **The ORIGINAL can be watched too** (`rom_bench.watched_original`, `RomBench.measure(original_watch=)`):
 in ROM mode the ROM code is run in place as a bench run, entered as `emu.run` enters it (the same
