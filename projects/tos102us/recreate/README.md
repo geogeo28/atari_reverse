@@ -443,8 +443,11 @@ refused, and the ORIGINAL's run watched too — its windows must equal ours one 
 wrapper and the nested run are the shape of an entry the ROM still SERVES; an entry band 4 has ported is REBOUND.
 
 REBINDING THE DOOR. An entry with a C twin is REBOUND: its wrapper keeps its signature and its callers, and calls
-`aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, is the first). On target that call is the whole
-wrapper. Off target it is still an ARRIVAL:
+`aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, was the first). WHICH ENTRIES ARE REBOUND TODAY
+IS NEVER LISTED HERE — ask the build: `aes_event.REBOUND` (the wrappers spelt through the macro, read off the
+library), `aes_event.PENDING` (a twin linked, its wrapper still the ROM's call) and `aes_event.ENTRIES` less both (the
+ROM's own routine through the nested run). On target that call is the whole wrapper. Off target it is still an
+ARRIVAL:
 - THE HOOK'S THIRD ANSWER. The wrapper packs the Alcyon frame and asks `recreate_call_event_door` as before; for a
   rebound entry the hook answers `EVDOOR_ARRIVED` (not `EVDOOR_SERVED`): the frame is recorded for the frames-handed
   comparison and the interrupt due at that door call is laid, exactly as at a served call — then the twin runs over
@@ -473,7 +476,10 @@ wrapper. Off target it is still an ARRIVAL:
   3's lists of door calls follow by derivation. (3) Rehearse it first on a private mirror of the tree (host library
   and both blobs built by the tree's own rules): the whole suite, every door-arriving row measured on its own, the
   table. (4) The flip's commit carries the table before and after, every moved row old → new, and STATUS's ratios
-  re-quoted from its own `make bench` (`test_status` is red until they are).
+  re-quoted from its own `make bench` (`test_status` is red until they are). (5) A flip's twin mutants are swept
+  through the door batteries AND each twin's leaf battery alone; a host sweep through `amut/mutlib_plugin` switches
+  the bench's second differential off, so the five `test_aes_event.py` tests OF that differential are deselected (they
+  fail on the unmutated control).
 - A TWIN IS CALLED, NEVER JUMPED TO. The ROM reaches an entry by a Line-F call word and gets control back. A target
   wrapper that were `return aes_x(...)` alone is, in a caller that returns the wrapper's answer (wind_update's
   `return evdoor_unsync(...)`), a tail `jmp` into the twin: the twin is entered holding its caller's CALLER's return
@@ -1208,7 +1214,7 @@ HOW IT IS RUN:
   `AES_DERIVED_SAMPLE_SEED=<anything>` (another sample of the served answers is made again). INTERNAL, never set
   by hand: `AES_DERIVED_TREE`, a process's tree key and the record it was made with, handed to its children.
 - TELLING A COLD RUN FROM A WARM ONE: collection is 36–40 s a worker cold and about 10 s warm (pytest's own wall:
-  207.4 s for a bare cold `pytest`, 170.8 s for the pytest of a cold `make test`, 151.3 s warm — quiet, ten
+  210.3 s for a bare cold `pytest`, 173.9 s for the pytest of a cold `make test`, 155.3 s warm — quiet, ten
   workers). A timing quoted without saying which is not a timing; for a cold figure empty `build/derived/` or set
   `AES_DERIVED_OFF=1`, and remember that ANY edit under the keyed tree makes the next run cold.
 - WHAT MUST STAY EQUAL cold, warm and off (the content-neutrality check of any change here): the collected case ids

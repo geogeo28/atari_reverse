@@ -56,6 +56,9 @@
 #include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/evsync.h"
+#include "aes/evinput.h"
+#include "aes/evwait.h"
+#include "aes/evlib.h"
 
 /* ---- what the entries are handed --------------------------------------------------------------------------------- */
 /* ev_multi's FLAGS, the events it is asked for, a bit each (`btst #n,d7` over the flags word): */
@@ -182,6 +185,7 @@ static inline uint32_t frame_long(uint8_t *frame, uint32_t at, uint32_t value)
 #endif
 
 /* ---- the wrappers: the ONE call of each entry ---------------------------------------------------------------------
+ * First the entry the ROM still serves (ev_multi, the last one), then the rebound ones.
  * On target the values are pushed from REGISTERS or immediates ("ri" — a stack operand would move under the pushes),
  * and the ones that can travel in the scratch the routine destroys anyway — D0, D1, A0, A1 — are put there as in-out
  * operands, so the call holds no callee-saved register but the D2/A2 GCC must keep round it. */
@@ -243,82 +247,6 @@ static inline uint16_t evdoor_ev_multi(uint8_t *image, int16_t flags, uint32_t m
     return (uint16_t)answer;
 #endif
 }
-
-/* ev_button's answer, the event's count, is nothing fm_button reads; answered all the same, as every entry is. */
-static inline uint16_t evdoor_ev_button(uint8_t *image, int16_t clicks, int16_t mask, int16_t state, uint32_t answers)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_EV_BUTTON_FRAME_BYTES];
-
-    frame_long(frame, frame_word(frame, frame_word(frame, frame_word(frame, 0, (uint16_t)clicks), (uint16_t)mask),
-                                 (uint16_t)state), answers);
-    return (uint16_t)event_door(image, AES_ROM_EV_BUTTON, frame, sizeof frame);
-#else
-    register uint32_t answer __asm__("d0");
-    register uint32_t scratch __asm__("d1");
-    register uint32_t words __asm__("a0") = answers;
-    register uint32_t other __asm__("a1");
-
-    (void)image;
-    __asm__ volatile ("move.l %2,-(%%sp)\n\t"
-                      "move.w %4,-(%%sp)\n\t"
-                      "move.w %5,-(%%sp)\n\t"
-                      "move.w %6,-(%%sp)\n\t"
-                      "jsr %c7\n\t"
-                      "lea %c8(%%sp),%%sp"
-                      : "=d"(answer), "=d"(scratch), "+a"(words), "=a"(other)
-                      : "ri"(state), "ri"(mask), "ri"(clicks), "i"(AES_ROM_EV_BUTTON), "i"(EVDOOR_EV_BUTTON_FRAME_BYTES)
-                      : "d2", "a2", "memory", "cc");
-    return (uint16_t)answer;
-#endif
-}
-
-static inline uint16_t evdoor_ap_rdwr(uint8_t *image, int16_t code, int16_t process, int16_t length, uint32_t buffer)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_AP_RDWR_FRAME_BYTES];
-    uint32_t at = frame_word(frame, 0, (uint16_t)code);
-
-    at = frame_word(frame, at, (uint16_t)process);
-    at = frame_word(frame, at, (uint16_t)length);
-    frame_long(frame, at, buffer);
-    return (uint16_t)event_door(image, AES_ROM_AP_RDWR, frame, sizeof frame);
-#else
-    register uint32_t answer __asm__("d0") = (uint16_t)process;   /* in: the process id; out: the answer */
-    register uint32_t length_word __asm__("d1") = (uint16_t)length;
-    register uint32_t address __asm__("a0") = buffer;
-    register uint32_t scratch __asm__("a1");
-
-    (void)image;
-    __asm__ volatile ("move.l %2,-(%%sp)\n\t"
-                      "move.w %1,-(%%sp)\n\t"
-                      "move.w %0,-(%%sp)\n\t"
-                      "move.w %4,-(%%sp)\n\t"
-                      "jsr %c5\n\t"
-                      "lea %c6(%%sp),%%sp"
-                      : "+d"(answer), "+d"(length_word), "+a"(address), "=a"(scratch)
-                      : "ri"(code), "i"(AES_ROM_AP_RDWR), "i"(EVDOOR_AP_RDWR_FRAME_BYTES)
-                      : "d2", "a2", "memory", "cc");
-    return (uint16_t)answer;
-#endif
-}
-
-#ifndef RECREATE_HOST_DIFFERENTIAL
-/* The call of an entry over ONE longword (ROUTINE an address constant, FRAME_BYTES its frame's): pushed from the A0
- * it is handed in, the frame dropped by `addq`. A macro, as an "i" operand must be a constant where it is spelt. */
-#define EVDOOR_CALL_LONG(ROUTINE, FRAME_BYTES, argument) __extension__({                                            \
-    register uint32_t answer_ __asm__("d0");                                                                         \
-    register uint32_t scratch_ __asm__("d1");                                                                        \
-    register uint32_t pointer_ __asm__("a0") = (argument);                                                           \
-    register uint32_t other_ __asm__("a1");                                                                          \
-    __asm__ volatile ("move.l %2,-(%%sp)\n\t"                                                                        \
-                      "jsr %c4\n\t"                                                                                  \
-                      "addq.l %5,%%sp"                                                                               \
-                      : "=d"(answer_), "=d"(scratch_), "+a"(pointer_), "=a"(other_)                                  \
-                      : "i"(ROUTINE), "i"(FRAME_BYTES)                                                               \
-                      : "d2", "a2", "memory", "cc");                                                                 \
-    (uint16_t)answer_; })
-#endif
 
 /* ---- A REBOUND ENTRY'S WRAPPER, SPELT ONCE ------------------------------------------------------------------------
  * `EVDOOR_REBOUND(entry, ENTRY, (parameters), packed, arguments...)` IS the flip of an entry: it defines
@@ -388,93 +316,40 @@ EVDOOR_REBOUND(tak_flag, TAK_FLAG, (uint8_t *image, uint32_t semaphore),
                frame_long(frame, 0, semaphore),
                semaphore)
 
-static inline uint16_t evdoor_unsync(uint8_t *image, uint32_t semaphore)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_UNSYNC_FRAME_BYTES];
+/* REBOUND: unsync is C (`aes/evwait.h`). The word it answers is nothing the ROM's routine sets and nothing a caller
+ * reads; a release that hands the lock over reaches the dispatcher inside the twin. */
+EVDOOR_REBOUND(unsync, UNSYNC, (uint8_t *image, uint32_t semaphore),
+               frame_long(frame, 0, semaphore),
+               semaphore)
 
-    frame_long(frame, 0, semaphore);
-    return (uint16_t)event_door(image, AES_ROM_UNSYNC, frame, sizeof frame);
-#else
-    (void)image;
-    return EVDOOR_CALL_LONG(AES_ROM_UNSYNC, EVDOOR_UNSYNC_FRAME_BYTES, semaphore);
-#endif
-}
+/* REBOUND: ev_block is C (`aes/evlib.h`): a wait nothing satisfies reaches the dispatcher inside the twin. */
+EVDOOR_REBOUND(ev_block, EV_BLOCK, (uint8_t *image, int16_t code, uint32_t parameter),
+               frame_long(frame, frame_word(frame, 0, (uint16_t)code), parameter),
+               code, parameter)
 
-static inline uint16_t evdoor_ev_block(uint8_t *image, int16_t code, uint32_t parameter)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_EV_BLOCK_FRAME_BYTES];
+/* REBOUND: ap_rdwr is C (`aes/evlib.h`). */
+EVDOOR_REBOUND(ap_rdwr, AP_RDWR, (uint8_t *image, int16_t code, int16_t process, int16_t length, uint32_t buffer),
+               frame_long(frame, frame_word(frame, frame_word(frame, frame_word(frame, 0, (uint16_t)code),
+                                                              (uint16_t)process), (uint16_t)length), buffer),
+               code, process, length, buffer)
 
-    frame_long(frame, frame_word(frame, 0, (uint16_t)code), parameter);
-    return (uint16_t)event_door(image, AES_ROM_EV_BLOCK, frame, sizeof frame);
-#else
-    register uint32_t answer __asm__("d0");
-    register uint32_t scratch __asm__("d1");
-    register uint32_t value __asm__("a0") = parameter;
-    register uint32_t other __asm__("a1");
+/* REBOUND: ev_button is C (`aes/evlib.h`). Its answer, the event's count, is nothing fm_button reads; answered all the
+ * same, as every entry is. */
+EVDOOR_REBOUND(ev_button, EV_BUTTON, (uint8_t *image, int16_t clicks, int16_t mask, int16_t state, uint32_t answers),
+               frame_long(frame, frame_word(frame, frame_word(frame, frame_word(frame, 0, (uint16_t)clicks),
+                                                              (uint16_t)mask), (uint16_t)state), answers),
+               clicks, mask, state, answers)
 
-    (void)image;
-    __asm__ volatile ("move.l %2,-(%%sp)\n\t"
-                      "move.w %4,-(%%sp)\n\t"
-                      "jsr %c5\n\t"
-                      "addq.l %6,%%sp"
-                      : "=d"(answer), "=d"(scratch), "+a"(value), "=a"(other)
-                      : "ri"(code), "i"(AES_ROM_EV_BLOCK), "i"(EVDOOR_EV_BLOCK_FRAME_BYTES)
-                      : "d2", "a2", "memory", "cc");
-    return (uint16_t)answer;
-#endif
-}
+/* REBOUND: ct_chgown is C (`aes/evinput.h`); the word it answers is always 0. */
+EVDOOR_REBOUND(ct_chgown, CT_CHGOWN, (uint8_t *image, uint32_t owner, uint32_t rect),
+               frame_long(frame, frame_long(frame, 0, owner), rect),
+               owner, rect)
 
-static inline uint16_t evdoor_ct_chgown(uint8_t *image, uint32_t owner, uint32_t rect)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_CT_CHGOWN_FRAME_BYTES];
-
-    frame_long(frame, frame_long(frame, 0, owner), rect);
-    return (uint16_t)event_door(image, AES_ROM_CT_CHGOWN, frame, sizeof frame);
-#else
-    register uint32_t answer __asm__("d0");
-    register uint32_t scratch __asm__("d1");
-    register uint32_t pd __asm__("a0") = owner;
-    register uint32_t area __asm__("a1") = rect;
-
-    (void)image;
-    __asm__ volatile ("move.l %3,-(%%sp)\n\t"
-                      "move.l %2,-(%%sp)\n\t"
-                      "jsr %c4\n\t"
-                      "addq.l %5,%%sp"
-                      : "=d"(answer), "=d"(scratch), "+a"(pd), "+a"(area)
-                      : "i"(AES_ROM_CT_CHGOWN), "i"(EVDOOR_CT_CHGOWN_FRAME_BYTES)
-                      : "d2", "a2", "memory", "cc");
-    return (uint16_t)answer;
-#endif
-}
-
-/* post_button leaves D0 its EVB walk's end (`move.l a3,d0`, $fe5346): nothing its caller reads, so nothing answered. */
-static inline void evdoor_post_button(uint8_t *image, uint32_t process, int16_t button, int16_t clicks)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_POST_BUTTON_FRAME_BYTES];
-
-    frame_word(frame, frame_word(frame, frame_long(frame, 0, process), (uint16_t)button), (uint16_t)clicks);
-    event_door(image, AES_ROM_POST_BUTTON, frame, sizeof frame);
-#else
-    register uint32_t answer __asm__("d0");
-    register uint32_t scratch __asm__("d1");
-    register uint32_t pd __asm__("a0") = process;
-    register uint32_t other __asm__("a1");
-
-    (void)image;
-    __asm__ volatile ("move.w %5,-(%%sp)\n\t"
-                      "move.w %4,-(%%sp)\n\t"
-                      "move.l %2,-(%%sp)\n\t"
-                      "jsr %c6\n\t"
-                      "addq.l %7,%%sp"
-                      : "=d"(answer), "=d"(scratch), "+a"(pd), "=a"(other)
-                      : "ri"(button), "ri"(clicks), "i"(AES_ROM_POST_BUTTON), "i"(EVDOOR_POST_BUTTON_FRAME_BYTES)
-                      : "d2", "a2", "memory", "cc");
-#endif
-}
+/* REBOUND: post_button is C (`aes/evinput.h`). The ROM's leaves D0 its EVB walk's end (`move.l a3,d0`, $fe5346):
+ * nothing its caller reads, so nothing answered. */
+EVDOOR_REBOUND_VOID(post_button, POST_BUTTON, (uint8_t *image, uint32_t process, int16_t button, int16_t clicks),
+                    frame_word(frame, frame_word(frame, frame_long(frame, 0, process), (uint16_t)button),
+                               (uint16_t)clicks),
+                    process, button, clicks)
 
 #endif /* TOS102US_AES_EVDOOR_H */
