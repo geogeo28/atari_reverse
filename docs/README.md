@@ -22,7 +22,7 @@ ST binary.
 | [hardware-map](hardware-map.md) | decode direct hardware access (video/sound/MFP/IKBD, the STE sound block), interrupts and the VBL queue | hardware |
 | [graphics](graphics.md) | decode bitmaps: planar format (the shared pixel model in `st_pixels.py` — word/byte granularity, masked sprites), palettes, RLE, extract sprites to PNG | graphics |
 | [sound](sound.md) | find & read the YM2149 sound/music driver; route the STE's LMC1992 mixer so the music is audible at all; **dump a software synth engine that has no note stream — and decide whether the game has music at all** | audio |
-| [on-target-execution](on-target-execution.md) | **run the verified reconstruction on real hardware** — the seam pattern, the fourteen-class bug taxonomy the harness cannot see, the six observable surfaces and the diagnostic toolkit, closing a speed gap, and changing the program on purpose without losing the verification. Long; it opens with its own contents list | on-target / perf |
+| [on-target-execution](on-target-execution.md) | **run the verified reconstruction on real hardware** — the seam pattern, the fifteen-class bug taxonomy the harness cannot see, the six observable surfaces and the diagnostic toolkit, closing a speed gap, and changing the program on purpose without losing the verification. Long; it opens with its own contents list | on-target / perf |
 | [methodology](methodology.md) | actually name functions/variables: anchors→outward, verify, iterate; **land a correction so the old phrase greps to zero, and settle two notes that disagree from the body**; and, once it's named, the **dead-code hunt** | RE methodology |
 
 Cross-domain rule of thumb: **formats → disassembly/ghidra → OS+hardware (to anchor) →

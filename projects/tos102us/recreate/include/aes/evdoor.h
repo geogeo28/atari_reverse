@@ -30,9 +30,9 @@
  * with the ROM's own call's, which sees a wrong rectangle the image cannot) and laid the interrupt due at that call, as
  * at any door call. The twin then runs, and its answer is handed to `recreate_event_door_returned` — where a case may
  * hold the twin, at its own call, to the ROM routine's nested run over the image it arrived with (the SHADOW,
- * `test/aes_event.py`). Which answer an entry gets is the HOOK's, read off the build (the entries whose twin the
- * library exports): a wrapper and the hook that disagree — a twin exported, its wrapper left on the nested run, or the
- * other way — halt by name.
+ * `test/aes_event.py`). Which answer an entry gets is the HOOK's, read off the build (the entries whose wrapper is
+ * spelt through EVDOOR_REBOUND, below: each leaves a marker in the library): a wrapper and the hook that disagree
+ * halt by name. A hook call made WHILE A TWIN RUNS is refused by name too (the next paragraph's rule, at run time).
  *
  * A TWIN CALLS ANOTHER ENTRY'S CORE, NEVER ITS WRAPPER. The wrappers below are for callers OUTSIDE the event layer
  * (band 3's C: wm_update, fm_do, ...). A twin that needs another entry — amutex taking the semaphore, ev_block queueing
@@ -53,6 +53,7 @@
 
 #include "addrs.h"
 #include "machine.h"
+#include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/evsync.h"
 
@@ -64,12 +65,10 @@
 #define EV_MU_M2              0x0008     /* ($fe6a84 btst #3,d7): the second                                    */
 #define EV_MU_MESAG           0x0010     /* ($fe6aae btst #4,d7): a message in the process's pipe               */
 #define EV_MU_TIMER           0x0020     /* ($fe6a98 btst #5,d7): the timer run out                             */
-/* ...its BUTTON parameter, one longword: the clicks in the high word, the button mask and the state wanted in the low
- * word's two bytes ($fe6a18 move.l 22(a6) handed whole to the button test $fe5292). */
-#define EV_BUTTON_CLICKS_SHIFT 16
-#define EV_BUTTON_MASK_SHIFT  8
+/* ...its BUTTON parameter, one longword (`aes/aes.h`'s BUTTON_PARM_*): the clicks in the high word, the button mask
+ * and the state wanted in the low word's two bytes ($fe6a18 move.l 22(a6) handed whole to the button test $fe5292). */
 #define EV_BUTTON_PARAMETER(clicks, mask, state) \
-    ((uint32_t)(clicks) << EV_BUTTON_CLICKS_SHIFT | (uint32_t)(mask) << EV_BUTTON_MASK_SHIFT | (uint32_t)(state))
+    ((uint32_t)(clicks) << BUTTON_PARM_CLICKS_SHIFT | (uint32_t)(mask) << BUTTON_PARM_MASK_SHIFT | (uint32_t)(state))
 #define EV_BUTTON_LEFT        1          /* the mask of the left button                                         */
 #define EV_BUTTON_UP          0          /* the state: none of the mask's buttons down                         */
 /* ...a MOUSE RECTANGLE (GEM's MOBLK): whether the event is the mouse leaving it (1) or entering it (0), then the
@@ -116,7 +115,9 @@
 #define EVDOOR_ARRIVED        2          /* noted, nothing run: the entry is rebound, its twin runs next       */
 extern uint32_t (*recreate_call_event_door)(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes,
                                             uint32_t *answer);
-/* ...and what a rebound entry's twin answered, once it has returned (the word in `answer`). */
+/* ...and what a rebound entry's twin answered, once it has returned (the word in `answer`; EVDOOR_NO_ANSWER from an
+ * entry that answers nothing — which the case knows by the entry, not by this value). */
+#define EVDOOR_NO_ANSWER      0
 extern void (*recreate_event_door_returned)(uint8_t *image, uint32_t routine, uint32_t answer);
 
 /* The hook asked: the hop the ROM's call word takes checked first; a refusal halts. `*answer` is a served call's. */
@@ -319,19 +320,73 @@ static inline uint16_t evdoor_ap_rdwr(uint8_t *image, int16_t code, int16_t proc
     (uint16_t)answer_; })
 #endif
 
-/* REBOUND: tak_flag is C (`aes/evsync.h`). */
-static inline uint16_t evdoor_tak_flag(uint8_t *image, uint32_t semaphore)
-{
+/* ---- A REBOUND ENTRY'S WRAPPER, SPELT ONCE ------------------------------------------------------------------------
+ * `EVDOOR_REBOUND(entry, ENTRY, (parameters), packed, arguments...)` IS the flip of an entry: it defines
+ * `evdoor_<entry>` as the call of ITS OWN twin — `aes_<entry>(image, arguments...)`, the name built here from the
+ * entry's, so a wrapper spelt rebound can call no other twin — on target that call and nothing else; off target the
+ * Alcyon frame packed (`packed`: the `frame_word` / `frame_long` chain over `frame` — what it packs is compared,
+ * field by field, with the frame the ROM's own call hands the entry), the ARRIVAL at the hook, the twin, and its
+ * return reported. And it is what REBOUND is derived from, on both builds: off target the one translation unit that
+ * defines the hooks (`src/aes/evdoor.c`) defines a MARKER per entry spelt through it (`evdoor_rebound_<entry>`, the
+ * entry's ROM address), which is the set the case's hook answers ARRIVED for (`aes_event.rebound_in`); on target an
+ * entry spelt through it has no `jsr` into the ROM left (`bench/tier3.py`). So a twin that merely EXISTS — exported,
+ * its wrapper still the ROM's call — is rebound nowhere: it is a C core like any other until its wrapper is re-spelt.
+ * `EVDOOR_REBOUND_VOID` is the same for an entry that answers nothing (post_button: D0 a callee's leftover no caller
+ * reads) — the return is reported with no answer, and nothing is compared with the ROM routine's D0.
+ *
+ * THE TWIN IS CALLED, NEVER JUMPED TO (`EVDOOR_A_CALL_NOT_A_JUMP`, `transcribed.h`). The ROM's caller reaches the
+ * entry by a Line-F call word and gets control back, whatever it does next; a wrapper that were `return aes_x(...)`
+ * alone is, in a caller that returns the wrapper's answer (wm_update's `return evdoor_unsync(...)`, ap_sendmsg's
+ * `return evdoor_ap_rdwr(...)`), a tail `jmp` into the twin — which then holds its caller's CALLER's return address,
+ * for a row entered at that caller the run's sentinel: an arrival no watch can close (`aes_event.DoorStops`). */
 #ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_TAK_FLAG_FRAME_BYTES];
-
-    frame_long(frame, 0, semaphore);
-    event_door_arrival(image, AES_ROM_TAK_FLAG, frame, sizeof frame);
-    return event_door_returned(image, AES_ROM_TAK_FLAG, aes_tak_flag(image, semaphore));
+#ifdef EVDOOR_DEFINES_THE_MARKERS
+#define EVDOOR_REBOUND_MARKER(entry, ENTRY) const uint32_t evdoor_rebound_##entry = AES_ROM_##ENTRY;
 #else
-    return aes_tak_flag(image, semaphore);
+#define EVDOOR_REBOUND_MARKER(entry, ENTRY)
 #endif
-}
+/* The frame packed and the arrival made: the statements both kinds of wrapper open with. */
+#define EVDOOR_ARRIVING(ENTRY, PACKED)                                                                                \
+    uint8_t frame[EVDOOR_##ENTRY##_FRAME_BYTES];                                                                      \
+                                                                                                                      \
+    (void)(PACKED);                                                                                                   \
+    event_door_arrival(image, AES_ROM_##ENTRY, frame, sizeof frame)
+#define EVDOOR_REBOUND(entry, ENTRY, PARAMETERS, PACKED, ...)                                                         \
+    EVDOOR_REBOUND_MARKER(entry, ENTRY)                                                                               \
+    static inline uint16_t evdoor_##entry PARAMETERS                                                                  \
+    {                                                                                                                 \
+        EVDOOR_ARRIVING(ENTRY, PACKED);                                                                               \
+        return event_door_returned(image, AES_ROM_##ENTRY, aes_##entry(image, __VA_ARGS__));                          \
+    }
+#define EVDOOR_REBOUND_VOID(entry, ENTRY, PARAMETERS, PACKED, ...)                                                    \
+    EVDOOR_REBOUND_MARKER(entry, ENTRY)                                                                               \
+    static inline void evdoor_##entry PARAMETERS                                                                      \
+    {                                                                                                                 \
+        EVDOOR_ARRIVING(ENTRY, PACKED);                                                                               \
+        aes_##entry(image, __VA_ARGS__);                                                                              \
+        recreate_event_door_returned(image, AES_ROM_##ENTRY, EVDOOR_NO_ANSWER);                                       \
+    }
+#else
+#define EVDOOR_REBOUND(entry, ENTRY, PARAMETERS, PACKED, ...)                                                         \
+    static inline uint16_t evdoor_##entry PARAMETERS                                                                  \
+    {                                                                                                                 \
+        uint16_t answer = aes_##entry(image, __VA_ARGS__);                                                            \
+                                                                                                                      \
+        EVDOOR_A_CALL_NOT_A_JUMP;                                                                                     \
+        return answer;                                                                                                \
+    }
+#define EVDOOR_REBOUND_VOID(entry, ENTRY, PARAMETERS, PACKED, ...)                                                    \
+    static inline void evdoor_##entry PARAMETERS                                                                      \
+    {                                                                                                                 \
+        aes_##entry(image, __VA_ARGS__);                                                                              \
+        EVDOOR_A_CALL_NOT_A_JUMP;                                                                                     \
+    }
+#endif
+
+/* REBOUND: tak_flag is C (`aes/evsync.h`). */
+EVDOOR_REBOUND(tak_flag, TAK_FLAG, (uint8_t *image, uint32_t semaphore),
+               frame_long(frame, 0, semaphore),
+               semaphore)
 
 static inline uint16_t evdoor_unsync(uint8_t *image, uint32_t semaphore)
 {

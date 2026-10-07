@@ -15,6 +15,7 @@ import struct
 import aes
 import aes_event
 import aes_gsx as gsx
+import aes_pdpipe
 import case
 import vdi
 from case import merge_pokes
@@ -143,6 +144,28 @@ def test_an_odd_buffer_is_refused_by_name():
     returncode, stderr, _image = aes_event.refusal(
         "AES_ROM_AP_SENDMSG", running(), (BUFFER + 1, WM_REDRAW, SHELL, *WORDS))
     assert returncode != 0 and "address error" in stderr, stderr
+
+
+def full_pipe():
+    """PD0 running, its own pipe FULL: eight messages, the ROM's own appl_writes (`aes_pdpipe.holding`)."""
+    return merge_pokes(aes_pdpipe.holding(aes_pdpipe.PIPE_MESSAGES), stale_buffer())
+
+
+def test_a_message_to_a_full_pipe_parks_the_sender_where_the_rom_does():
+    """THE COMPOSITION'S ONLY BLOCKING ARM OF ap_rdwr: the pipe holds eight messages, the ninth does not fit —
+    ap_rdwr's write wait is queued on the pipe's writers and the sender blocks in its ev_block. The message is BUILT
+    (the buffer is ap_sendmsg's own work, before the call) and nothing of it is in the pipe. WHERE THE C STOPS is the
+    build's (`aes_event._watched_through`): ap_rdwr the ROM's routine, the door refuses the call whole and the image
+    is the ROM's at the call's ENTRY — no wait queued yet; ap_rdwr REBOUND, its twin runs on to the dispatcher's hook
+    and the image is the ROM's AT DSPTCH but for one longword, the parked QPB's address (ap_rdwr's own arguments: a
+    place in each shore's own stack), dropped by name and vetted (`aes_event.parked_qpb_drop`)."""
+    machine = full_pipe()
+    taken = aes_event.refused_where_the_rom_blocks("AES_ROM_AP_SENDMSG", (BUFFER, WM_REDRAW, SHELL, *WORDS), machine)
+    assert [call.routine for call in taken.calls] == [addrs.AES_ROM_AP_RDWR]
+    assert [aes.signed(word) for word in struct.unpack_from(">8h", taken.image, BUFFER)] == [WM_REDRAW, SHELL, 0, *WORDS]
+    assert case.word_in(taken.image, aes.SHELL_PD + aes.PD_QUEUE_INDEX) == aes.PD_QUEUE_BYTES
+    writers = case.long_in(taken.image, aes.SHELL_PD + aes.PD_QUEUE_WRITERS)
+    assert bool(writers) == (addrs.AES_ROM_AP_RDWR in aes_event.REBOUND), "the wait queued where a twin ran on to dsptch"
 
 
 # ---- the registry ----------------------------------------------------------------------------------------------------

@@ -27,11 +27,11 @@ from collections import namedtuple
 
 from harness import BASE_IMAGE, addrs, make_image
 
-import abi
 import aes
 import aes_event
 import aes_pdpipe
 import case
+import derived
 import test_aes_fmlib                   # two scenarios are composed of another battery's machines: its key queue...
 import test_aes_wm_update               # ...and the screen lock held with a process queued on it
 import vdi
@@ -57,9 +57,8 @@ SIGNATURES = {
 for _name, (_restype, _argtypes) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, _argtypes)
 ROUTINES = tuple(SIGNATURES)
-ENTRIES = {getattr(addrs, name): name for name in ROUTINES}
-FRAMES = {name: struct.Struct(">" + "".join(vdi.FRAME_FORMATS[argtype] for argtype in vdi.frame_argtypes(name)))
-          for name in ROUTINES}
+LAYER = aes_event.Layer(ROUTINES)       # a run WATCHED at the eight routines' entries (`aes_event.Layer`)
+ENTRIES, FRAMES = LAYER.entries, LAYER.frames
 
 # ---- the lists, read out of an image ---------------------------------------------------------------------------------
 ZOMBIE_LIST, ELINKOFF, BPEND = aes.AES_ZOMBIE_LIST, EV["AES_ELINKOFF"], EV["AES_GL_BPEND"]
@@ -123,7 +122,7 @@ def moblk(leave, x, y, w, h):
 
 def button_wait(clicks, mask=aes_event.LEFT_BUTTON, state=aes_event.LEFT_BUTTON):
     """ev_multi's button parameter: the clicks, the buttons' mask and the state waited for ($fe68a4 packs the same)."""
-    return clicks << aes.EV_BUTTON_CLICKS_SHIFT | mask << aes.EV_BUTTON_MASK_SHIFT | state
+    return clicks << aes.BUTTON_PARM_CLICKS_SHIFT | mask << aes.BUTTON_PARM_MASK_SHIFT | state
 
 
 def ev_multi_frame(flags, *, first=None, second=None, timer=0, button=0):
@@ -134,39 +133,17 @@ def ev_multi_frame(flags, *, first=None, second=None, timer=0, button=0):
     return frame, pokes
 
 
-# ---- a run WATCHED at the eight routines' entries --------------------------------------------------------------------
-Arrival = namedtuple("Arrival", "name arguments machine")
-
-
-def machine_of(memory):
-    """`memory` as pokes over the snapshot (`aes_event.as_pokes`): every byte of RAM that differs from it, the stack
-    band out (a run's own frames, which every case stages afresh)."""
-    return aes_event.as_pokes(memory, without=case.STACK_BAND, upto=addrs.ST_RAM_BYTES)
-
-
-Watched = namedtuple("Watched", "arrivals machine")
+# ---- a run WATCHED at the eight routines' entries (`aes_event.Layer`: the family every layer's battery shares) ---------
+Arrival, Watched = aes_event.LayerArrival, aes_event.Watched
+machine_of = LAYER.machine_of           # `memory` as pokes over the snapshot, the stack band out
 
 
 def watched(pokes, entry, ends, frame=b"", once_past=None):
     """The ROM's `entry` over `pokes` (its `frame` where a `jsr` leaves it), WATCHED AT THE EIGHT ROUTINES' ENTRIES
-    (`aes_event.EntryStops`: the `Arrival` kept at each — the frame its caller pushed, the machine there) until it
+    (`aes_event.Layer.watched`: the `Arrival` kept at each — the frame its caller pushed, the machine there) until it
     reaches one of `ends` (after `once_past`, when named) — or returns, with no end named for it: every arrival, in
-    order, and the machine at the end (None for a run that returned)."""
-    memory = make_image(merge_pokes(pokes, {abi.FIRST_ARG: frame} if frame else None))
-    arrivals, at_the_end = [], []
-
-    def arrived(pc, sp, memory):
-        name = ENTRIES[pc]
-        frame = bytes(memory[sp + LONG_BYTES:sp + LONG_BYTES + FRAMES[name].size])
-        arrivals.append(Arrival(name, FRAMES[name].unpack(frame), machine_of(memory)))
-    watch = aes_event.EntryStops(ENTRIES, arrived, ends, lambda memory: at_the_end.append(machine_of(memory)), once_past)
-    try:
-        aes_event.run_watched(memory, entry, watch)
-    except aes_event.Ended:
-        pass
-    else:
-        assert not ends, f"the run of {entry:#x} returned before it reached {', '.join(f'{end:#x}' for end in ends)}"
-    return Watched(tuple(arrivals), at_the_end[0] if at_the_end else None)
+    order, and the machine at the end."""
+    return LAYER.watched(pokes, entry, ends, frame, once_past)
 
 
 def arrivals(pokes, entry, ends, frame=b""):
@@ -293,6 +270,21 @@ def parked_for_a_key_after_a_wider_wait():
 # ROM's own pstart over a stub of three instructions that makes ONE Line-F call (here ev_timer). Every scenario over it
 # carries the class's label in its name and registers no row.
 STAGED_APPLICATION = aes_pdpipe.STAGED_APPLICATION
+# A scenario every layer of the family declares under one name: its own run of the same thing a user does.
+THE_BAR_WAKES_THE_MANAGER = "the mouse onto the bar wakes the screen manager"
+
+
+def register_rows(at, register, rows, through_line_f=()):
+    """A LAYER'S ROWS REGISTERED — the one spelling the family's batteries end on. Each of `rows`, `(label, scenario,
+    routine, which)`, is the ROM-made arrival `at(scenario, routine, which)` handed to the layer's `register(label,
+    routine, arguments, machine)`: priced. Each of `through_line_f`, `(scenario, routine, which)`, is registered
+    again as "its caller's call": verified through its Line-F call word, unpriced. A STAGED APPLICATION's machines
+    are Tier 1 only: one named for a row is refused."""
+    called = [("its caller's call", *through) for through in through_line_f]
+    for is_called, (label, scenario, routine, which) in [*((False, row) for row in rows), *((True, row) for row in called)]:
+        assert STAGED_APPLICATION not in scenario, f"{scenario}: a staged application's machines are Tier 1 only"
+        arrival = at(scenario, routine, which)
+        register(label, routine, arrival.arguments, arrival.machine, **({"through_line_f": True} if is_called else {}))
 A_SHORT_TIMER_MS, A_LONGER_TIMER_MS = 200, 600
 
 
@@ -316,7 +308,7 @@ def _a_key_with_two_timers_running(own_ms, application_ms):
 SCENARIOS = {
     "a key wakes the desk": Scenario(
         _woken_by(RETURN), WOKEN + (ACANCEL, TAKEOFF, TAKEOFF, APRET)),
-    "the mouse onto the bar wakes the screen manager": Scenario(
+    THE_BAR_WAKES_THE_MANAGER: Scenario(
         _woken_by(ONTO_THE_BAR), WOKEN + (ACANCEL, TAKEOFF, TAKEOFF, APRET)),
     "a press wakes the desk": Scenario(
         _woken_by(aes_event.press), WOKEN + (ACANCEL, TAKEOFF, TAKEOFF, APRET)),
@@ -373,36 +365,15 @@ SCENARIOS = {
 }
 
 
-@functools.cache
-def scenario(name):
-    """The arrivals of the scenario `name`, held to the sequence it declares."""
-    made = SCENARIOS[name].run()
-    assert tuple(arrival.name for arrival in made) == SCENARIOS[name].arrivals, (
-        f"{name}: the ROM's run arrives at {[arrival.name for arrival in made]}, "
-        f"declared {list(SCENARIOS[name].arrivals)}")
-    return made
+@derived.kept
+def _run_of(name):
+    """The ROM's run of the scenario `name`: a derivation, kept by content."""
+    return SCENARIOS[name].run()
 
 
-def cases(*routines):
-    """`(scenario, nth)` for every declared arrival at one of `routines` (every routine, by default)."""
-    return [(name, nth) for name, declared in SCENARIOS.items() for nth, routine in enumerate(declared.arrivals)
-            if not routines or routine in routines]
-
-
-def case_id(pair):
-    name, nth = pair
-    return f"{name}: {nth} {SCENARIOS[name].arrivals[nth].removeprefix('AES_ROM_').lower()}"
-
-
-def arrival(name, nth):
-    return scenario(name)[nth]
-
-
-def nth_of(name, routine, which=0):
-    """The index of the `which`-th declared arrival at `routine` in the scenario `name`."""
-    return [nth for nth, declared in enumerate(SCENARIOS[name].arrivals) if declared == routine][which]
-
-
-def at(name, routine, which=0):
-    """The `which`-th arrival at `routine` of the scenario `name`."""
-    return arrival(name, nth_of(name, routine, which))
+# What the scenarios declare, and each one's run held to it (`aes_event.Scenarios`): `scenario(name)` its arrivals,
+# `cases(*routines)` the `(scenario, nth)` pairs a battery is parametrized from, `case_id`, `arrival(name, nth)`,
+# `nth_of(name, routine, which)` and `at(name, routine, which)`.
+DECLARED = aes_event.Scenarios({name: declared.arrivals for name, declared in SCENARIOS.items()}, _run_of)
+scenario, cases, case_id = DECLARED.scenario, DECLARED.cases, DECLARED.case_id
+arrival, nth_of, at = DECLARED.arrival, DECLARED.nth_of, DECLARED.at

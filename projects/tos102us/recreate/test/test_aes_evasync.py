@@ -32,7 +32,9 @@ one store is PD_EVFLG, ORed), the acancel that cancels nothing and the aprets th
 byte that is no link inverted, so a flag, a mask, an answer or a count the C did not store shows.
 """
 import inspect
+import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -40,7 +42,7 @@ from harness import BASE_IMAGE, make_image
 from recreate_kit.os_map import OS_BUS_ADDR_MASK
 
 import aes
-import aes_evasync as ev
+import aes_evasync as evasync
 import aes_event
 import aes_pdpipe as pp
 import case
@@ -48,17 +50,16 @@ import vdi
 from aes_gsx import THROUGH
 from aes_evasync import (ACANCEL, APRET, AZOMBIE, EVINSERT, EVREMOVE, GET_EVB, SCREEN_MANAGER, SHELL, SIGNAL, TAKEOFF)
 
-pytestmark = pytest.mark.collected_with(by=lambda params: (params.get("arrival") or (None,))[0])
-KEY, EVERYTHING = "a key wakes the desk", ev.EVERY_EVENT
+pytestmark = pytest.mark.collected_with(by=aes_event.scenario_of_a_case)
+KEY, EVERYTHING = "a key wakes the desk", evasync.EVERY_EVENT
+BAR = evasync.THE_BAR_WAKES_THE_MANAGER
 # evinsert's fourth arrival of that scenario — the second rectangle's wait, onto the list the first one's is on: the
 # one arrival that finds a wait list holding an EVB already.
 ONTO_A_LIST_THAT_HOLDS_ONE = (EVERYTHING, 3)
 
 
 # ---- the run door ----------------------------------------------------------------------------------------------------
-def before(arrival):
-    """The machine an arrival is at, as an image."""
-    return make_image(arrival.machine)
+before = aes_event.before
 
 
 def bus(address):
@@ -75,7 +76,7 @@ def wakes(arrival, evb):
     image = before(arrival)
     pd = process_of(image, evb)
     events = case.word_in(image, pd + aes.PD_EVFLG) | case.word_in(image, bus(evb) + aes.EVB_MASK)
-    return (pd != ev.running(image) and pd in aes.list_of(image, aes.AES_NRL)
+    return (pd != evasync.running(image) and pd in aes.list_of(image, aes.AES_NRL)
             and bool(events & case.word_in(image, pd + aes.PD_EVWAIT)))
 
 
@@ -83,16 +84,16 @@ def cancels_nothing(arrival, mask):
     """Does acancel(mask) over `arrival`'s machine take no EVB off any list — every wait of the running process among
     `mask` completed already (kept), or none among it?"""
     image = before(arrival)
-    return all(evb in ev.completed(image) or not ev.evb_of(image, evb)["MASK"] & mask
-               for evb in ev.evlist(image, bus(ev.running(image))))
+    return all(evb in evasync.completed(image) or not evasync.evb_of(image, evb)["MASK"] & mask
+               for evb in evasync.evlist(image, bus(evasync.running(image))))
 
 
 def frees_nothing(arrival, mask):
     """Does apret(mask) over `arrival`'s machine refuse — the running process holding no completed EVB of exactly
     `mask` — and so store nothing?"""
     image = before(arrival)
-    return not any(ev.evb_of(image, evb)["MASK"] == mask and evb in ev.completed(image)
-                   for evb in ev.evlist(image, bus(ev.running(image))))
+    return not any(evasync.evb_of(image, evb)["MASK"] == mask and evb in evasync.completed(image)
+                   for evb in evasync.evlist(image, bus(evasync.running(image))))
 
 
 # The cases that run the WHOLE attribution pass: each stores through no link it reads after storing it.
@@ -131,30 +132,30 @@ def run(arrival, arguments=None, **kwargs):
 
 def lists(image):
     """The scheduler's three lists and the EVBs' two, as a dict."""
-    return {"running": ev.running(image), "not ready": aes.list_of(image, aes.AES_NRL),
-            "woken": aes.list_of(image, aes.AES_DRL), "completed": ev.completed(image), "free": ev.free_evbs(image)}
+    return {"running": evasync.running(image), "not ready": aes.list_of(image, aes.AES_NRL),
+            "woken": aes.list_of(image, aes.AES_DRL), "completed": evasync.completed(image), "free": evasync.free_evbs(image)}
 
 
 # ---- every arrival of every scenario, as the ROM calls it and through its call word ----------------------------------
-@pytest.mark.parametrize("name", ev.SCENARIOS)
+@pytest.mark.parametrize("name", evasync.SCENARIOS)
 def test_a_scenario_s_arrivals_are_the_ones_it_declares(name):
-    assert len(ev.scenario(name)) == len(ev.SCENARIOS[name].arrivals)
+    assert len(evasync.scenario(name)) == len(evasync.SCENARIOS[name].arrivals)
 
 
-@pytest.mark.parametrize("name", ev.SCENARIOS)
+@pytest.mark.parametrize("name", evasync.SCENARIOS)
 def test_an_arrival_s_machine_keeps_nothing_of_the_run_s_own_stack(name):
     """A machine is what the ROM's run CHANGED, its own frames aside: no poke of any arrival's lies in the stack band,
     where every case stages its frame afresh — a row made of one carries no dead frame of the run that made it."""
     band = case.STACK_BAND
-    in_the_band = [(arrival.name, at) for arrival in ev.scenario(name) for at, data in arrival.machine.items()
+    in_the_band = [(arrival.name, at) for arrival in evasync.scenario(name) for at, data in arrival.machine.items()
                    if at < band.stop and band.start < at + len(data)]
     assert not in_the_band
 
 
 @THROUGH
-@pytest.mark.parametrize("arrival", ev.cases(), ids=ev.case_id)
+@pytest.mark.parametrize("arrival", evasync.cases(), ids=evasync.case_id)
 def test_every_arrival(arrival, through_line_f):
-    run(ev.arrival(*arrival), through_line_f=through_line_f)
+    run(evasync.arrival(*arrival), through_line_f=through_line_f)
 
 
 def test_a_list_is_walked_through_the_bus_link_by_link():
@@ -162,20 +163,20 @@ def test_a_list_is_walked_through_the_bus_link_by_link():
     caller's tagged pointer, kept as handed) followed like any other: the head's, and one further down the list. A
     walker's own test over a laid list, no machine's state."""
     first, second = pp.EVBS[:2]
-    laid = {ev.ZOMBIE_LIST: (first | aes.BUS_TAG).to_bytes(aes.LONG_BYTES, "big"),
+    laid = {evasync.ZOMBIE_LIST: (first | aes.BUS_TAG).to_bytes(aes.LONG_BYTES, "big"),
             first + aes.EVB_LINK: (second | aes.BUS_TAG).to_bytes(aes.LONG_BYTES, "big"),
             second + aes.EVB_LINK: bytes(aes.LONG_BYTES)}
-    assert ev.completed(make_image(laid)) == [first, second]
+    assert evasync.completed(make_image(laid)) == [first, second]
 
 
 def test_every_routine_arrives_in_some_scenario():
-    assert {routine for declared in ev.SCENARIOS.values() for routine in declared.arrivals} == set(ev.ROUTINES)
+    assert {routine for declared in evasync.SCENARIOS.values() for routine in declared.arrivals} == set(evasync.ROUTINES)
 
 
 # ---- signal ------------------------------------------------------------------------------------------------------------
 def signalled(scenario, which=0):
     """signal's `which`-th arrival of `scenario`: `(the lists before, the result, the EVB's process, its event)`."""
-    arrival = ev.at(scenario, SIGNAL, which)
+    arrival = evasync.at(scenario, SIGNAL, which)
     image = before(arrival)
     evb, = arrival.arguments
     result = run(arrival)
@@ -189,7 +190,7 @@ def posted(result, pd, event):
 def test_signal_wakes_the_first_process_of_the_not_ready_list():
     """Inside forker (AES_RLR -1): the desk, parked first, is posted its key, made ready and moved to the woken list."""
     was, result, pd, event = signalled("a key wakes the desk")
-    assert (was["running"], was["not ready"], was["woken"]) == (ev.RLR_IN_FORKER, [SHELL, SCREEN_MANAGER], [])
+    assert (was["running"], was["not ready"], was["woken"]) == (evasync.RLR_IN_FORKER, [SHELL, SCREEN_MANAGER], [])
     assert pd == SHELL and posted(result, pd, event)
     after = lists(result.final)
     assert (after["not ready"], after["woken"]) == ([SCREEN_MANAGER], [SHELL])
@@ -198,7 +199,7 @@ def test_signal_wakes_the_first_process_of_the_not_ready_list():
 
 def test_signal_walks_the_not_ready_list_to_a_process_behind_another():
     """The screen manager, second on the list: unlinked from the desk, which stays."""
-    was, result, pd, _event = signalled("the mouse onto the bar wakes the screen manager")
+    was, result, pd, _event = signalled(BAR)
     assert was["not ready"] == [SHELL, SCREEN_MANAGER] and pd == SCREEN_MANAGER
     after = lists(result.final)
     assert (after["not ready"], after["woken"]) == ([SHELL], [SCREEN_MANAGER])
@@ -243,109 +244,109 @@ def test_signal_wakes_a_parked_process_while_another_runs():
 # stores the whole set in PD_EVWAIT before it reaches dsptch, $fe40bc). Pinned by handing signal, over a machine of the
 # ROM's, an EVB no caller does: a FREE one, which still names the desk and an event of the wider wait it was part of.
 def test_signal_of_an_event_its_parked_process_does_not_wait_for_wakes_nobody():
-    machine = ev.parked_for_a_key_after_a_wider_wait()
+    machine = evasync.parked_for_a_key_after_a_wider_wait()
     image = make_image(machine)
     waited = case.word_in(image, SHELL + aes.PD_EVWAIT)
-    stale = next(evb for evb in ev.free_evbs(image)
-                 if process_of(image, evb) == SHELL and not ev.evb_of(image, evb)["MASK"] & waited)
-    event = ev.evb_of(image, stale)["MASK"]
-    assert aes.list_of(image, aes.AES_NRL)[0] == SHELL and ev.running(image) != SHELL and event
+    stale = next(evb for evb in evasync.free_evbs(image)
+                 if process_of(image, evb) == SHELL and not evasync.evb_of(image, evb)["MASK"] & waited)
+    event = evasync.evb_of(image, stale)["MASK"]
+    assert aes.list_of(image, aes.AES_NRL)[0] == SHELL and evasync.running(image) != SHELL and event
     result = run_over(SIGNAL, (stale,), machine)
     assert posted(result, SHELL, event) and lists(result.final) == lists(image)
     assert result.word(SHELL + aes.PD_STAT) == aes.PD_STAT_WAITING
 
 
 # ---- azombie -----------------------------------------------------------------------------------------------------------
-HEAD_STAND_IN = ev.ZOMBIE_LIST - case.long_in(BASE_IMAGE, ev.ELINKOFF)
+HEAD_STAND_IN = evasync.ZOMBIE_LIST - case.long_in(BASE_IMAGE, evasync.ELINKOFF)
 
 
 def completed_by(scenario, which=0):
-    arrival = ev.at(scenario, AZOMBIE, which)
+    arrival = evasync.at(scenario, AZOMBIE, which)
     evb, = arrival.arguments
     return before(arrival), run(arrival), evb
 
 
 def test_azombie_onto_an_empty_completed_list():
     image, result, evb = completed_by("a key wakes the desk")
-    assert ev.completed(image) == [] and ev.completed(result.final) == [evb]
-    assert ev.evb_of(result.final, evb)["PRED"] == HEAD_STAND_IN
-    assert ev.evb_of(result.final, evb)["FLAG"] == ev.COMPLETE
+    assert evasync.completed(image) == [] and evasync.completed(result.final) == [evb]
+    assert evasync.evb_of(result.final, evb)["PRED"] == HEAD_STAND_IN
+    assert evasync.evb_of(result.final, evb)["FLAG"] == evasync.COMPLETE
 
 
 def test_azombie_onto_a_completed_list_that_holds_another():
     """The first's predecessor becomes the new head."""
     image, result, evb = completed_by("a press and a key in one idle wake the desk", 1)
-    first, = ev.completed(image)
-    assert ev.completed(result.final) == [evb, first] and ev.evb_of(result.final, first)["PRED"] == evb
+    first, = evasync.completed(image)
+    assert evasync.completed(result.final) == [evb, first] and evasync.evb_of(result.final, first)["PRED"] == evb
 
 
 @pytest.mark.parametrize("scenario, which, flag", (
-    ("a message to the parked desk", 1, ev.NOCANCEL),
-    (EVERYTHING, 0, ev.DELAY),
-    ("the mouse leaves a rectangle while a double click is waited for", 0, ev.LEAVING),
+    ("a message to the parked desk", 1, evasync.NOCANCEL),
+    (EVERYTHING, 0, evasync.DELAY),
+    ("the mouse leaves a rectangle while a double click is waited for", 0, evasync.LEAVING),
 ), ids=("a wait being served", "a delay", "a mouse wait for a rectangle left"))
 def test_azombie_leaves_the_flag_complete_alone(scenario, which, flag):
     image, result, evb = completed_by(scenario, which)
-    assert ev.evb_of(image, evb)["FLAG"] == flag and ev.evb_of(result.final, evb)["FLAG"] == ev.COMPLETE
+    assert evasync.evb_of(image, evb)["FLAG"] == flag and evasync.evb_of(result.final, evb)["FLAG"] == evasync.COMPLETE
 
 
 # ---- get_evb -----------------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("arrival", ev.cases(GET_EVB), ids=ev.case_id)
+@pytest.mark.parametrize("arrival", evasync.cases(GET_EVB), ids=evasync.case_id)
 def test_get_evb_takes_the_first_free_evb_and_clears_it(arrival):
-    arrival = ev.arrival(*arrival)
-    free = ev.free_evbs(before(arrival))
+    arrival = evasync.arrival(*arrival)
+    free = evasync.free_evbs(before(arrival))
     result = run(arrival)
-    assert result.long_answer() == free[0] and ev.free_evbs(result.final) == free[1:]
+    assert result.long_answer() == free[0] and evasync.free_evbs(result.final) == free[1:]
     assert result.after(free[0], aes.EVB_BYTES) == bytes(aes.EVB_BYTES)
 
 
 def test_get_evb_clears_an_evb_that_held_a_wait():
     """The free list's first is the EVB the desk's last wait used: its fields are not zero before."""
-    arrival = ev.at("a key ends a wait with a timer running", GET_EVB)
+    arrival = evasync.at("a key ends a wait with a timer running", GET_EVB)
     image = before(arrival)
-    assert any(image[ev.free_evbs(image)[0]:][:aes.EVB_BYTES])
+    assert any(image[evasync.free_evbs(image)[0]:][:aes.EVB_BYTES])
     run(arrival)
 
 
 # ---- evinsert ----------------------------------------------------------------------------------------------------------
 def inserted(scenario, which):
-    arrival = ev.at(scenario, EVINSERT, which)
+    arrival = evasync.at(scenario, EVINSERT, which)
     evb, head = arrival.arguments
-    return ev.wait_list(before(arrival), head), run(arrival), evb, head
+    return evasync.wait_list(before(arrival), head), run(arrival), evb, head
 
 
 def test_evinsert_onto_an_empty_wait_list():
     """The keyboard wait of the desk's CDA: the EVB alone on it, its predecessor the head's stand-in."""
     was, result, evb, head = inserted(EVERYTHING, 0)
-    assert was == [] and ev.wait_list(result.final, head) == [evb]
-    assert ev.evb_of(result.final, evb)["PRED"] == head - aes.EVB_LINK
+    assert was == [] and evasync.wait_list(result.final, head) == [evb]
+    assert evasync.evb_of(result.final, evb)["PRED"] == head - aes.EVB_LINK
 
 
 def test_evinsert_puts_the_last_to_wait_first():
     """The second mouse rectangle, onto the list the first one waits on: at the HEAD, the first behind it and its
     predecessor now this EVB."""
     was, result, evb, head = inserted(*ONTO_A_LIST_THAT_HOLDS_ONE)
-    assert len(was) == 1 and ev.wait_list(result.final, head) == [evb, was[0]]
-    assert ev.evb_of(result.final, was[0])["PRED"] == evb
+    assert len(was) == 1 and evasync.wait_list(result.final, head) == [evb, was[0]]
+    assert evasync.evb_of(result.final, was[0])["PRED"] == evb
 
 
 # ---- takeoff -----------------------------------------------------------------------------------------------------------
 def taken_off(scenario, which):
-    arrival = ev.at(scenario, TAKEOFF, which)
+    arrival = evasync.at(scenario, TAKEOFF, which)
     evb, = arrival.arguments
     return before(arrival), run(arrival), evb
 
 
 def head_of(image, evb):
     """The wait list's head an EVB at the front of it hangs from: its stand-in predecessor's link."""
-    return ev.evb_of(image, evb)["PRED"] + aes.EVB_LINK
+    return evasync.evb_of(image, evb)["PRED"] + aes.EVB_LINK
 
 
 def test_takeoff_of_the_only_evb_on_its_wait_list():
     image, result, evb = taken_off("a key wakes the desk", 0)
     head = head_of(image, evb)
-    assert ev.wait_list(image, head) == [evb] and ev.wait_list(result.final, head) == []
-    assert ev.free_evbs(result.final) == [evb] + ev.free_evbs(image)
+    assert evasync.wait_list(image, head) == [evb] and evasync.wait_list(result.final, head) == []
+    assert evasync.free_evbs(result.final) == [evb] + evasync.free_evbs(image)
 
 
 def test_takeoff_of_an_evb_with_one_after_it():
@@ -354,36 +355,36 @@ def test_takeoff_of_an_evb_with_one_after_it():
     of its own (its rectangle's x and y)."""
     image, result, evb = taken_off(EVERYTHING, 1)
     head = head_of(image, evb)
-    after, = ev.wait_list(image, head)[1:]
-    assert ev.evb_of(image, evb)["PARM"] and not ev.evb_of(image, evb)["FLAG"] & ev.DELAY
-    assert ev.wait_list(result.final, head) == [after]
-    assert ev.evb_of(result.final, after)["PRED"] == ev.evb_of(image, evb)["PRED"]
-    assert ev.evb_of(result.final, after)["PARM"] == ev.evb_of(image, after)["PARM"]
+    after, = evasync.wait_list(image, head)[1:]
+    assert evasync.evb_of(image, evb)["PARM"] and not evasync.evb_of(image, evb)["FLAG"] & evasync.DELAY
+    assert evasync.wait_list(result.final, head) == [after]
+    assert evasync.evb_of(result.final, after)["PRED"] == evasync.evb_of(image, evb)["PRED"]
+    assert evasync.evb_of(result.final, after)["PARM"] == evasync.evb_of(image, after)["PARM"]
 
 
 def test_takeoff_of_a_delay_with_none_after_it():
     """A key ends a wait whose timer still runs: the delay list emptied, nothing handed on."""
     image, result, evb = taken_off("a key ends a wait with a timer running", 0)
-    fields = ev.evb_of(image, evb)
-    assert fields["FLAG"] == ev.DELAY and fields["LINK"] == 0 and fields["PARM"]
-    assert ev.wait_list(result.final, head_of(image, evb)) == []
+    fields = evasync.evb_of(image, evb)
+    assert fields["FLAG"] == evasync.DELAY and fields["LINK"] == 0 and fields["PARM"]
+    assert evasync.wait_list(result.final, head_of(image, evb)) == []
 
 
 # TWO DELAYS PENDING needs a third process: the screen manager asks for no timer, and a process has one evnt_multi at a
 # time. Over the labelled class (`aes_evasync.STAGED_APPLICATION`): Tier 1 only, and no claim about a real machine's
 # third process, which is an accessory.
-DELAY_LIST = ev.EV["AES_DELAY_LIST"]
-TICK_MS = ev.TICK_MS
-TWO_DELAYS = {"ahead": f"{ev.STAGED_APPLICATION}: a key ends a wait whose delay has a longer one behind it",
-              "behind": f"{ev.STAGED_APPLICATION}: a key ends a wait whose delay is behind a shorter one"}
+DELAY_LIST = evasync.EV["AES_DELAY_LIST"]
+TICK_MS = evasync.TICK_MS
+TWO_DELAYS = {"ahead": f"{evasync.STAGED_APPLICATION}: a key ends a wait whose delay has a longer one behind it",
+              "behind": f"{evasync.STAGED_APPLICATION}: a key ends a wait whose delay is behind a shorter one"}
 
 
 def ticks_left(image):
     """The delay list, as each EVB's ticks after the one before it."""
-    return [ev.evb_of(image, evb)["PARM"] for evb in ev.wait_list(image, DELAY_LIST)]
+    return [evasync.evb_of(image, evb)["PARM"] for evb in evasync.wait_list(image, DELAY_LIST)]
 
 
-SHORT_TICKS, LONGER_TICKS = ev.A_SHORT_TIMER_MS // TICK_MS, ev.A_LONGER_TIMER_MS // TICK_MS
+SHORT_TICKS, LONGER_TICKS = evasync.A_SHORT_TIMER_MS // TICK_MS, evasync.A_LONGER_TIMER_MS // TICK_MS
 
 
 def test_takeoff_of_a_delay_hands_its_ticks_to_the_one_after_it():
@@ -391,7 +392,7 @@ def test_takeoff_of_a_delay_hands_its_ticks_to_the_one_after_it():
     holds differences, so the application's 400 after the desk's becomes 600 from now."""
     image, result, evb = taken_off(TWO_DELAYS["ahead"], 0)
     short, longer = SHORT_TICKS, LONGER_TICKS
-    assert ev.wait_list(image, DELAY_LIST)[0] == evb and ticks_left(image) == [short, longer - short]
+    assert evasync.wait_list(image, DELAY_LIST)[0] == evb and ticks_left(image) == [short, longer - short]
     assert ticks_left(result.final) == [longer]
 
 
@@ -400,7 +401,7 @@ def test_takeoff_of_a_delay_behind_another_hands_nothing_on():
     application's untouched."""
     image, result, evb = taken_off(TWO_DELAYS["behind"], 0)
     short, longer = SHORT_TICKS, LONGER_TICKS
-    assert ev.wait_list(image, DELAY_LIST)[1] == evb and ticks_left(image) == [short, longer - short]
+    assert evasync.wait_list(image, DELAY_LIST)[1] == evb and ticks_left(image) == [short, longer - short]
     assert ticks_left(result.final) == [short]
 
 
@@ -423,8 +424,8 @@ def test_every_case_over_the_staged_application_names_the_class():
                   if name.startswith("test_") and callable(function) and OVER_THE_APPLICATION in inspect.getsource(function)
                   and "STAGED_APPLICATION" not in inspect.getsource(function)]
     assert not unlabelled, unlabelled
-    assert all(ev.STAGED_APPLICATION in scenario for scenario in TWO_DELAYS.values())
-    over_a_third_process = [name for name in ev.SCENARIOS if "application" in inspect.getsource(ev.SCENARIOS[name].run)]
+    assert all(evasync.STAGED_APPLICATION in scenario for scenario in TWO_DELAYS.values())
+    over_a_third_process = [name for name in evasync.SCENARIOS if "application" in inspect.getsource(evasync.SCENARIOS[name].run)]
     assert sorted(over_a_third_process) == sorted(TWO_DELAYS.values()), "a scenario over an application without the label"
 
 
@@ -437,28 +438,44 @@ def test_a_scenario_s_application_is_vetted_before_the_dispatcher_enters_it(monk
     names (here: another delay than its stub pushes) is refused before the loop runs."""
     made = pp.staged_application
     monkeypatch.setattr(pp, "staged_application",
-                        lambda call, argument: made(call, argument)._replace(argument=argument + ev.TICK_MS))
+                        lambda call, argument: made(call, argument)._replace(argument=argument + evasync.TICK_MS))
     with pytest.raises(AssertionError, match="does not push the argument its application names"):
-        ev.SCENARIOS[TWO_DELAYS["ahead"]].run()
+        evasync.SCENARIOS[TWO_DELAYS["ahead"]].run()
 
 
 # ---- apret -------------------------------------------------------------------------------------------------------------
 def answered(scenario, which=0):
-    arrival = ev.at(scenario, APRET, which)
+    arrival = evasync.at(scenario, APRET, which)
     mask, = arrival.arguments
     image = before(arrival)
-    return image, run(arrival), next(evb for evb in ev.evlist(image, ev.running(image))
-                                     if ev.evb_of(image, evb)["MASK"] == mask)
+    return image, run(arrival), next(evb for evb in evasync.evlist(image, evasync.running(image))
+                                     if evasync.evb_of(image, evb)["MASK"] == mask)
 
 
-HIGH_WORD = ev.EV["EVB_RETURN_HIGH_SHIFT"]     # an answer's high word: the buttons' state, a rectangle's width
-CLICKS = ev.EV["EVB_PARM_CLICKS_SHIFT"]        # a parameter's: a button wait's clicks, a mouse wait's x
+HIGH_WORD = aes.HIGH_WORD_SHIFT                # an answer's high word: the buttons' state, a rectangle's width
+CLICKS = aes.BUTTON_PARM_CLICKS_SHIFT          # a parameter's: a button wait's clicks, a mouse wait's x
+# The names these two layouts went by before they had one each (three headers named the button parameter's shifts,
+# five spellings the high word's): none may come back, in a header or a source.
+ONE_NAME_EACH = ("HIGH_WORD_SHIFT", "BUTTON_PARM_SENSE_SHIFT", "BUTTON_PARM_CLICKS_SHIFT", "BUTTON_PARM_MASK_SHIFT",
+                 "BUTTON_PARM_BYTE")
+RETIRED_NAMES = ("EV_BUTTON_CLICKS_SHIFT", "EV_BUTTON_MASK_SHIFT", "EVB_PARM_CLICKS_SHIFT", "EVB_PARM_CLICKS_MASK",
+                 "EVB_RETURN_HIGH_SHIFT", "BUTTON_RETURN_STATE_SHIFT", "MOUSE_WAIT_HIGH_SHIFT", "RECORD_KEY_SHIFT")
+RECREATE = Path(__file__).resolve().parents[1]
 
 
 def test_a_wait_s_clicks_lie_where_ev_multi_packs_them():
-    """ONE LAYOUT, named by two headers — the shift evremove reads a button wait's clicks by (`aes/evasync.h`) and the
-    one ev_multi's callers pack them by (`aes/evdoor.h`): pinned equal, no header including the other."""
-    assert CLICKS == aes.EV_BUTTON_CLICKS_SHIFT
+    """ONE LAYOUT, ONE NAME: the button wait's parameter (ev_multi's and ev_button's argument, then the wait's
+    EVB_PARM) and the high word of a longword the event layer packs two words into are each defined ONCE, in
+    `aes/aes.h`, whoever packs and whoever takes apart — derived from the headers and the sources themselves: every
+    name defined exactly once, and none of the names they replaced spelt anywhere."""
+    headers = sorted((RECREATE / "include").rglob("*.h"))
+    text = {path: path.read_text() for path in [*headers, *sorted((RECREATE / "src").rglob("*.[cS]"))]}
+    for name in ONE_NAME_EACH:
+        defined = [path.name for path in headers if re.search(rf"^#define\s+{name}\b", text[path], re.MULTILINE)]
+        assert defined == ["aes.h"], f"{name} is defined in {defined}"
+    spelt = sorted({name for name in RETIRED_NAMES for source in text.values() if re.search(rf"\b{name}\b", source)})
+    assert not spelt, f"a retired name of one of the two layouts is back: {spelt}"
+    assert (aes.BUTTON_PARM_SENSE_SHIFT, CLICKS, aes.BUTTON_PARM_MASK_SHIFT) == (24, HIGH_WORD, 8), "a byte each"
 
 
 def button_answer(clicks):
@@ -468,46 +485,46 @@ def button_answer(clicks):
 
 def test_apret_answers_the_key_and_frees_its_evb():
     image, result, evb = answered("a key wakes the desk")
-    answer = ev.evb_of(image, evb)["RETURN"]
-    assert result.answer() == answer and answer >> HIGH_WORD == 0 and result.word(ev.BUTTON_STATE) == 0
-    assert ev.completed(result.final) == [] and ev.evlist(result.final, SHELL) == []
-    assert ev.free_evbs(result.final)[0] == evb
+    answer = evasync.evb_of(image, evb)["RETURN"]
+    assert result.answer() == answer and answer >> HIGH_WORD == 0 and result.word(evasync.BUTTON_STATE) == 0
+    assert evasync.completed(result.final) == [] and evasync.evlist(result.final, SHELL) == []
+    assert evasync.free_evbs(result.final)[0] == evb
     assert [result.word(SHELL + field) for field in (aes.PD_EVBITS, aes.PD_EVWAIT, aes.PD_EVFLG)] == [0, 0, 0]
 
 
 def test_apret_answers_the_clicks_and_leaves_the_buttons_state():
     """A double click: the answer's low word the clicks, its high word — the buttons — left in the word ev_rets reads."""
     image, result, evb = answered("a double click ends a double-click wait")
-    assert ev.evb_of(image, evb)["RETURN"] == button_answer(ev.DOUBLE)
-    assert result.answer() == ev.DOUBLE and result.word(ev.BUTTON_STATE) == aes_event.LEFT_BUTTON
+    assert evasync.evb_of(image, evb)["RETURN"] == button_answer(evasync.DOUBLE)
+    assert result.answer() == evasync.DOUBLE and result.word(evasync.BUTTON_STATE) == aes_event.LEFT_BUTTON
 
 
 def test_apret_of_a_mouse_wait_leaves_its_rectangle_s_width_as_the_buttons_state():
     """A ROM QUIRK: a mouse wait keeps its rectangle's width and height where a button wait keeps its answer, and
     apret stores the high word of whichever it frees."""
     image, result, evb = answered("the mouse leaves a rectangle while a double click is waited for")
-    _x, _y, width, height = ev.ROUND_THE_MOUSE
-    assert ev.evb_of(image, evb)["RETURN"] == width << HIGH_WORD | height
-    assert result.answer() == height and result.word(ev.BUTTON_STATE) == width
+    _x, _y, width, height = evasync.ROUND_THE_MOUSE
+    assert evasync.evb_of(image, evb)["RETURN"] == width << HIGH_WORD | height
+    assert result.answer() == height and result.word(evasync.BUTTON_STATE) == width
 
 
 def test_apret_finds_an_evb_behind_others_on_both_lists():
     """A press, then the mouse leaving: the button's EVB is second on the process's list and second on the completed
     list — taken off both, the mouse's left on both, and the mouse's bit left in the three event words."""
     image, result, evb = answered("a press, then the mouse leaves, in one idle")
-    other, = (each for each in ev.evlist(image, SHELL) if each != evb)
-    assert ev.evlist(image, SHELL) == [other, evb] and ev.completed(image) == [other, evb]
-    assert ev.evlist(result.final, SHELL) == [other] and ev.completed(result.final) == [other]
-    kept = ev.evb_of(image, other)["MASK"]
+    other, = (each for each in evasync.evlist(image, SHELL) if each != evb)
+    assert evasync.evlist(image, SHELL) == [other, evb] and evasync.completed(image) == [other, evb]
+    assert evasync.evlist(result.final, SHELL) == [other] and evasync.completed(result.final) == [other]
+    kept = evasync.evb_of(image, other)["MASK"]
     assert [result.word(SHELL + field) for field in (aes.PD_EVBITS, aes.PD_EVWAIT, aes.PD_EVFLG)] == [kept] * 3
 
 
 def test_apret_takes_the_head_of_a_completed_list_with_one_behind():
     """A press and a key: the key's EVB heads the completed list, the press's behind it becomes its head."""
     image, result, evb = answered("a press and a key in one idle wake the desk")
-    assert ev.completed(image)[0] == evb and len(ev.completed(image)) == 2
-    behind = ev.completed(image)[1]
-    assert ev.completed(result.final) == [behind] and ev.evb_of(result.final, behind)["PRED"] == HEAD_STAND_IN
+    assert evasync.completed(image)[0] == evb and len(evasync.completed(image)) == 2
+    behind = evasync.completed(image)[1]
+    assert evasync.completed(result.final) == [behind] and evasync.evb_of(result.final, behind)["PRED"] == HEAD_STAND_IN
 
 
 # apret's two refusals: NO CALLER REACHES THEM. ev_block and ev_multi call apret only for a mask iasync answered them
@@ -522,9 +539,9 @@ NO_SUCH_EVENT = 0x4000
 def at_the_cancel(scenario="a key wakes the desk"):
     """evnt_multi's acancel arrival, as a machine to hand apret over — and the running process's EVBs there, by mask
     (in its list's order)."""
-    arrival = ev.at(scenario, ACANCEL)
+    arrival = evasync.at(scenario, ACANCEL)
     image = before(arrival)
-    waits = {ev.evb_of(image, evb)["MASK"]: evb for evb in ev.evlist(image, ev.running(image))}
+    waits = {evasync.evb_of(image, evb)["MASK"]: evb for evb in evasync.evlist(image, evasync.running(image))}
     return arrival._replace(name=APRET), waits, image
 
 
@@ -535,31 +552,31 @@ def refused(mask):
 
 def test_apret_of_an_event_no_evb_has_answers_100_and_stores_nothing():
     result = refused(NO_SUCH_EVENT)
-    assert result.answer() == ev.EV["APRET_NO_EVB"] and aes.stored_nothing(result)
+    assert result.answer() == evasync.EV["APRET_NO_EVB"] and aes.stored_nothing(result)
 
 
 def test_apret_of_a_wait_not_completed_answers_101_and_stores_nothing():
     _arrival, waits, image = at_the_cancel()
-    pending = next(mask for mask, evb in waits.items() if evb not in ev.completed(image))
+    pending = next(mask for mask, evb in waits.items() if evb not in evasync.completed(image))
     result = refused(pending)
-    assert result.answer() == ev.EV["APRET_NOT_COMPLETE"] and aes.stored_nothing(result)
+    assert result.answer() == evasync.EV["APRET_NOT_COMPLETE"] and aes.stored_nothing(result)
 
 
 def test_apret_matches_the_whole_mask():
     """Two waits' masks ORed is no EVB's mask — though each bit is one's."""
     _arrival, waits, _image = at_the_cancel()
     one, other = sorted(waits)[:2]
-    assert refused(one | other).answer() == ev.EV["APRET_NO_EVB"]
+    assert refused(one | other).answer() == evasync.EV["APRET_NO_EVB"]
 
 
 def test_apret_of_the_completed_wait_among_pending_ones():
     """...and over the same machine, the mask of the wait that DID complete: found behind two pending waits on the
     desk's list, which stay."""
     arrival, waits, image = at_the_cancel()
-    done, = (mask for mask, evb in waits.items() if evb in ev.completed(image))
-    assert ev.evlist(image, SHELL)[-1] == waits[done]
+    done, = (mask for mask, evb in waits.items() if evb in evasync.completed(image))
+    assert evasync.evlist(image, SHELL)[-1] == waits[done]
     result = run(arrival, (done,))
-    assert ev.evlist(result.final, SHELL) == ev.evlist(image, SHELL)[:-1]
+    assert evasync.evlist(result.final, SHELL) == evasync.evlist(image, SHELL)[:-1]
 
 
 # THE UNLINK FROM THE PROCESS'S LIST STORES THE FREED EVB'S OWN LINK ($fe4226 `move.l (a5),(a4)`) — and in every call
@@ -572,26 +589,26 @@ def test_apret_of_the_completed_wait_among_pending_ones():
 def test_apret_of_a_completed_wait_with_another_behind_it_on_its_process_s_list(scenario):
     arrival, waits, image = at_the_cancel(scenario)
     listed = list(waits.values())
-    mask, evb = next((mask, evb) for mask, evb in waits.items() if evb in ev.completed(image) and evb != listed[-1])
-    assert ev.evb_of(image, evb)["NEXT"], "the premise: the EVB freed is not the last of its process's list"
+    mask, evb = next((mask, evb) for mask, evb in waits.items() if evb in evasync.completed(image) and evb != listed[-1])
+    assert evasync.evb_of(image, evb)["NEXT"], "the premise: the EVB freed is not the last of its process's list"
     result = run(arrival, (mask,))
-    assert ev.evlist(result.final, ev.running(image)) == [each for each in listed if each != evb]
+    assert evasync.evlist(result.final, evasync.running(image)) == [each for each in listed if each != evb]
 
 
 # ---- acancel -----------------------------------------------------------------------------------------------------------
 def cancelled(scenario):
-    arrival = ev.at(scenario, ACANCEL)
+    arrival = evasync.at(scenario, ACANCEL)
     image = before(arrival)
-    return image, run(arrival), ev.evlist(image, ev.running(image))
+    return image, run(arrival), evasync.evlist(image, evasync.running(image))
 
 
 def test_acancel_keeps_the_completed_wait_and_frees_the_rest():
     image, result, waits = cancelled(EVERYTHING)
-    done, = (evb for evb in waits if evb in ev.completed(image))
-    assert result.answer() == ev.evb_of(image, done)["MASK"] == ev.MU_TIMER
-    assert ev.evlist(result.final, SHELL) == [done] and len(waits) == ev.WAITS_OF_EVERY_EVENT
-    assert result.word(SHELL + aes.PD_EVBITS) == result.word(SHELL + aes.PD_EVWAIT) == ev.MU_TIMER
-    assert ev.free_evbs(result.final)[:ev.QUEUED_OF_EVERY_EVENT] == [evb for evb in reversed(waits) if evb != done]
+    done, = (evb for evb in waits if evb in evasync.completed(image))
+    assert result.answer() == evasync.evb_of(image, done)["MASK"] == evasync.MU_TIMER
+    assert evasync.evlist(result.final, SHELL) == [done] and len(waits) == evasync.WAITS_OF_EVERY_EVENT
+    assert result.word(SHELL + aes.PD_EVBITS) == result.word(SHELL + aes.PD_EVWAIT) == evasync.MU_TIMER
+    assert evasync.free_evbs(result.final)[:evasync.QUEUED_OF_EVERY_EVENT] == [evb for evb in reversed(waits) if evb != done]
 
 
 def test_acancel_leaves_the_event_that_came_posted():
@@ -599,7 +616,7 @@ def test_acancel_leaves_the_event_that_came_posted():
     PD_EVWAIT lose the cancelled waits' bits. (A cancelled wait's own bit is never set in PD_EVFLG: only signal sets
     one, for a completed EVB.)"""
     image, result, waits = cancelled("a key wakes the desk")
-    done, = (ev.evb_of(image, evb)["MASK"] for evb in waits if evb in ev.completed(image))
+    done, = (evasync.evb_of(image, evb)["MASK"] for evb in waits if evb in evasync.completed(image))
     assert result.word(SHELL + aes.PD_EVFLG) == case.word_in(image, SHELL + aes.PD_EVFLG) == done
     assert result.word(SHELL + aes.PD_EVBITS) == result.word(SHELL + aes.PD_EVWAIT) == done
 
@@ -607,15 +624,15 @@ def test_acancel_leaves_the_event_that_came_posted():
 def test_acancel_answers_every_completed_wait():
     """A press and a key: both kept, both answered."""
     image, result, waits = cancelled("a press and a key in one idle wake the desk")
-    done = [evb for evb in waits if evb in ev.completed(image)]
-    assert len(done) == 2 and ev.evlist(result.final, SHELL) == done
-    assert result.answer() == ev.evb_of(image, done[0])["MASK"] | ev.evb_of(image, done[1])["MASK"]
+    done = [evb for evb in waits if evb in evasync.completed(image)]
+    assert len(done) == 2 and evasync.evlist(result.final, SHELL) == done
+    assert result.answer() == evasync.evb_of(image, done[0])["MASK"] | evasync.evb_of(image, done[1])["MASK"]
 
 
 def test_acancel_of_a_completed_wait_at_the_head_goes_on_from_it():
     """The screen manager's mouse wait, completed, heads its list; the two behind it are cancelled."""
-    image, result, waits = cancelled("the mouse onto the bar wakes the screen manager")
-    assert waits[0] in ev.completed(image) and ev.evlist(result.final, SCREEN_MANAGER) == waits[:1]
+    image, result, waits = cancelled(BAR)
+    assert waits[0] in evasync.completed(image) and evasync.evlist(result.final, SCREEN_MANAGER) == waits[:1]
 
 
 # acancel's SKIP — an EVB whose event is not among the mask — no caller reaches: evnt_multi cancels with the masks of
@@ -623,45 +640,45 @@ def test_acancel_of_a_completed_wait_at_the_head_goes_on_from_it():
 # mask of fewer events.
 @pytest.mark.parametrize("which", (0, 1, 2), ids=("the first wait alone", "the second", "the third"))
 def test_acancel_of_some_events_leaves_the_other_waits(which):
-    arrival = ev.at("a key wakes the desk", ACANCEL)
+    arrival = evasync.at("a key wakes the desk", ACANCEL)
     image = before(arrival)
-    waits = ev.evlist(image, SHELL)
-    mask = ev.evb_of(image, waits[which])["MASK"]
+    waits = evasync.evlist(image, SHELL)
+    mask = evasync.evb_of(image, waits[which])["MASK"]
     result = run(arrival, (mask,))
-    pending = waits[which] not in ev.completed(image)
-    assert ev.evlist(result.final, SHELL) == [evb for evb in waits if not (pending and evb == waits[which])]
+    pending = waits[which] not in evasync.completed(image)
+    assert evasync.evlist(result.final, SHELL) == [evb for evb in waits if not (pending and evb == waits[which])]
     assert result.answer() == (0 if pending else mask)
 
 
 def test_acancel_of_no_event_stores_nothing():
-    result = run(ev.at("a key wakes the desk", ACANCEL), (0,))
+    result = run(evasync.at("a key wakes the desk", ACANCEL), (0,))
     assert result.answer() == 0 and aes.stored_nothing(result)
 
 
 # ---- evremove ----------------------------------------------------------------------------------------------------------
 def removed(scenario, which=0):
-    arrival = ev.at(scenario, EVREMOVE, which)
+    arrival = evasync.at(scenario, EVREMOVE, which)
     evb, answer = arrival.arguments
     return before(arrival), run(arrival), evb, answer & aes.WORD_MASK
 
 
 def pending(image):
-    return case.word_in(image, ev.BPEND)
+    return case.word_in(image, evasync.BPEND)
 
 
 def test_evremove_keeps_the_answer_and_completes_the_wait():
     """The desk's key: the key's word ORed into the answer, the EVB off the keyboard wait and onto the completed list."""
     image, result, evb, answer = removed("a key wakes the desk")
-    assert ev.evb_of(result.final, evb)["RETURN"] == ev.evb_of(image, evb)["RETURN"] | answer
-    assert ev.wait_list(result.final, head_of(image, evb)) == [] and ev.completed(result.final) == [evb]
+    assert evasync.evb_of(result.final, evb)["RETURN"] == evasync.evb_of(image, evb)["RETURN"] | answer
+    assert evasync.wait_list(result.final, head_of(image, evb)) == [] and evasync.completed(result.final) == [evb]
     assert pending(result.final) == pending(image)
 
 
 def test_evremove_ors_the_clicks_into_the_buttons_state():
     """A button wait's answer already holds the buttons in its high word (post_button's): the clicks are ORed in."""
     image, result, evb, answer = removed("a double click ends a double-click wait")
-    assert ev.evb_of(image, evb)["RETURN"] == button_answer(0) and answer == ev.DOUBLE
-    assert ev.evb_of(result.final, evb)["RETURN"] == button_answer(ev.DOUBLE)
+    assert evasync.evb_of(image, evb)["RETURN"] == button_answer(0) and answer == evasync.DOUBLE
+    assert evasync.evb_of(result.final, evb)["RETURN"] == button_answer(evasync.DOUBLE)
 
 
 def test_evremove_counts_a_multi_click_wait_down():
@@ -673,13 +690,13 @@ def test_evremove_counts_a_multi_click_wait_down():
 def test_evremove_never_counts_the_multi_click_waits_below_one():
     """The desk's own double-click wait, the only one pending in the snapshot: the count stays 1."""
     image, result, evb, _answer = removed("a press wakes the desk")
-    assert ev.evb_of(image, evb)["PARM"] >> CLICKS == ev.DOUBLE and (pending(image), pending(result.final)) == (1, 1)
+    assert evasync.evb_of(image, evb)["PARM"] >> CLICKS == evasync.DOUBLE and (pending(image), pending(result.final)) == (1, 1)
 
 
 def test_evremove_of_a_wait_for_no_clicks_counts_nothing_down():
     """A key, with a double click waited for beside it (2 pending): a keyboard wait's parameter is 0."""
     image, result, evb, _answer = removed("a key ends a wait for a double click")
-    assert ev.evb_of(image, evb)["PARM"] == 0 and (pending(image), pending(result.final)) == (2, 2)
+    assert evasync.evb_of(image, evb)["PARM"] == 0 and (pending(image), pending(result.final)) == (2, 2)
 
 
 def test_evremove_reads_a_mouse_wait_s_rectangle_as_its_clicks():
@@ -687,33 +704,33 @@ def test_evremove_reads_a_mouse_wait_s_rectangle_as_its_clicks():
     The mouse leaves a rectangle at x 150 while a double click is waited for: the pending multi-click waits are
     counted down by a wait that asked for no click."""
     image, result, evb, _answer = removed("the mouse leaves a rectangle while a double click is waited for")
-    assert ev.evb_of(image, evb)["PARM"] >> CLICKS == ev.ROUND_THE_MOUSE[0]
+    assert evasync.evb_of(image, evb)["PARM"] >> CLICKS == evasync.ROUND_THE_MOUSE[0]
     assert (pending(image), pending(result.final)) == (2, 1)
 
 
 def test_evremove_reads_the_low_byte_of_the_clicks():
     """...and at x 257 — a low byte of 1, one click — it is not."""
     image, result, evb, _answer = removed("the mouse enters a rectangle at x 257 while a double click is waited for")
-    x = ev.evb_of(image, evb)["PARM"] >> CLICKS
-    assert x == ev.AT_X_257[0] and x & ev.EV["EVB_PARM_CLICKS_MASK"] == ev.EV["ONE_CLICK"]
+    x = evasync.evb_of(image, evb)["PARM"] >> CLICKS
+    assert x == evasync.AT_X_257[0] and x & aes.BUTTON_PARM_BYTE == evasync.EV["ONE_CLICK"]
     assert (pending(image), pending(result.final)) == (2, 2)
 
 
 def test_evremove_of_a_wait_behind_another_on_its_list():
     """Two rectangles, the first one's wait behind the second's on the mouse wait: taken off the list's end."""
     image, result, evb, _answer = removed("two rectangles, the first one waited for left")
-    ahead = ev.evb_of(image, evb)["PRED"]
+    ahead = evasync.evb_of(image, evb)["PRED"]
     head = head_of(image, ahead)
-    assert ev.wait_list(image, head) == [ahead, evb] and ev.wait_list(result.final, head) == [ahead]
+    assert evasync.wait_list(image, head) == [ahead, evb] and evasync.wait_list(result.final, head) == [ahead]
 
 
 def test_evremove_of_a_wait_ahead_of_another_on_its_list():
     """...and the second one's, at the head: the first's becomes the head, its predecessor the head's stand-in."""
     image, result, evb, _answer = removed("two rectangles, the second one waited for left")
     head = head_of(image, evb)
-    behind, = ev.wait_list(image, head)[1:]
-    assert ev.wait_list(result.final, head) == [behind]
-    assert ev.evb_of(result.final, behind)["PRED"] == ev.evb_of(image, evb)["PRED"]
+    behind, = evasync.wait_list(image, head)[1:]
+    assert evasync.wait_list(result.final, head) == [behind]
+    assert evasync.evb_of(result.final, behind)["PRED"] == evasync.evb_of(image, evb)["PRED"]
 
 
 A_KEY_FROM_80_UP = 0x9C0D                # a key's word, its scan code $9c: the top bit set
@@ -722,10 +739,10 @@ A_KEY_FROM_80_UP = 0x9C0D                # a key's word, its scan code $9c: the 
 def test_evremove_s_answer_is_an_unsigned_word():
     """A key's word with its top bit set — a scan code from $80 up, which a Keytbl table can map — ORed in as a word:
     the answer's high word stays 0. No delivery here types one, so the frame's word is the case's."""
-    arrival = ev.at("a key wakes the desk", EVREMOVE)
+    arrival = evasync.at("a key wakes the desk", EVREMOVE)
     evb, _answer = arrival.arguments
     result = run(arrival, (evb, A_KEY_FROM_80_UP))
-    assert ev.evb_of(result.final, evb)["RETURN"] == A_KEY_FROM_80_UP
+    assert evasync.evb_of(result.final, evb)["RETURN"] == A_KEY_FROM_80_UP
 
 
 # ---- pointers with a top byte: the bus drops it, the lists keep it ---------------------------------------------------
@@ -740,19 +757,19 @@ TAGGED = {
 @pytest.mark.parametrize("routine", TAGGED, ids=lambda name: name.removeprefix("AES_ROM_").lower())
 def test_a_pointer_with_a_top_byte_is_put_on_the_bus(routine, through_line_f):
     """Each pointer argument tagged: dereferenced through the 24-bit bus, and STORED in the lists as it was handed."""
-    arrival = ev.at(TAGGED[routine][0], routine, TAGGED[routine][1])
+    arrival = evasync.at(TAGGED[routine][0], routine, TAGGED[routine][1])
     pointers = vdi.frame_argtypes(routine)
-    tagged = tuple(value | aes.BUS_TAG if argtype is ev.LONG else value
+    tagged = tuple(value | aes.BUS_TAG if argtype is evasync.LONG else value
                    for argtype, value in zip(pointers, arrival.arguments))
     assert tagged != arrival.arguments
     run(arrival, tagged, through_line_f=through_line_f)
 
 
 def test_azombie_stores_the_pointer_it_was_handed_top_byte_and_all():
-    arrival = ev.at(TAGGED[AZOMBIE][0], AZOMBIE, TAGGED[AZOMBIE][1])
+    arrival = evasync.at(TAGGED[AZOMBIE][0], AZOMBIE, TAGGED[AZOMBIE][1])
     evb, = arrival.arguments
     result = run(arrival, (evb | aes.BUS_TAG,))
-    assert result.long(ev.ZOMBIE_LIST) == evb | aes.BUS_TAG
+    assert result.long(evasync.ZOMBIE_LIST) == evb | aes.BUS_TAG
 
 
 # ---- the ORDER of reads and stores, shown by a list that lies over the EVB put on it ---------------------------------
@@ -761,22 +778,22 @@ def test_evinsert_reads_the_list_s_first_before_it_stores():
     """The "list" is the EVB's own predecessor field: its old value is the first, read before the EVB's predecessor is
     stored over it — so the EVB's link is that old value, and the store through the stand-in (the head itself) puts
     the EVB there."""
-    arrival = ev.at(ONTO_A_LIST_THAT_HOLDS_ONE[0], EVINSERT, ONTO_A_LIST_THAT_HOLDS_ONE[1])
+    arrival = evasync.at(ONTO_A_LIST_THAT_HOLDS_ONE[0], EVINSERT, ONTO_A_LIST_THAT_HOLDS_ONE[1])
     evb, _head = arrival.arguments
     image = before(arrival)
-    old = ev.evb_of(image, evb)["PRED"]
+    old = evasync.evb_of(image, evb)["PRED"]
     result = run(arrival, (evb, evb + aes.EVB_PRED))
-    assert ev.evb_of(result.final, evb)["LINK"] == old and ev.evb_of(result.final, evb)["PRED"] == evb
+    assert evasync.evb_of(result.final, evb)["LINK"] == old and evasync.evb_of(result.final, evb)["PRED"] == evb
 
 
 def test_azombie_of_the_evb_already_at_the_head_of_the_completed_list():
     """The completed list's head completed again: its link is read from the list AFTER nothing — it links to itself,
     and its predecessor, stored twice, ends as the head's stand-in."""
-    arrival = ev.at("a key wakes the desk", SIGNAL)._replace(name=AZOMBIE)      # where the EVB heads the list
+    arrival = evasync.at("a key wakes the desk", SIGNAL)._replace(name=AZOMBIE)      # where the EVB heads the list
     evb, = arrival.arguments
-    assert ev.completed(before(arrival))[:1] == [evb]
+    assert evasync.completed(before(arrival))[:1] == [evb]
     result = run(arrival)
-    assert ev.evb_of(result.final, evb)["LINK"] == evb and ev.evb_of(result.final, evb)["PRED"] == HEAD_STAND_IN
+    assert evasync.evb_of(result.final, evb)["LINK"] == evb and evasync.evb_of(result.final, evb)["PRED"] == HEAD_STAND_IN
 
 
 # ---- the registry: Tier 3's rows ---------------------------------------------------------------------------------------
@@ -785,13 +802,6 @@ def test_azombie_of_the_evb_already_at_the_head_of_the_completed_list():
 # shapes. Measured and left out, none any routine's worst: the rest of the arrivals, each within its routine's range —
 # signal 0.65..0.77, azombie 0.56..0.63, get_evb 0.83 every one, evinsert 0.48..0.50, takeoff 0.60..0.63, apret
 # 0.72..0.79, acancel 0.68..0.78, evremove 0.51..0.57.
-def register(label, scenario, routine, which=0, **kwargs):
-    assert ev.STAGED_APPLICATION not in scenario, f"{scenario}: a staged application's machines are Tier 1 only"
-    arrival = ev.at(scenario, routine, which)
-    aes.register(label, routine, arrival.arguments, arrival.machine, **kwargs)
-
-
-BAR = "the mouse onto the bar wakes the screen manager"
 PRESS_THEN_LEAVE = "a press, then the mouse leaves, in one idle"
 ROWS = (
     ("a process woken from behind another on the not-ready list", BAR, SIGNAL, 0),
@@ -820,11 +830,5 @@ ROWS = (
 THROUGH_LINE_F = {**TAGGED, GET_EVB: ("a key ends a wait with a timer running", 0), APRET: (KEY, 0), ACANCEL: (KEY, 0)}
 
 
-def _register_rows():
-    for label, scenario, routine, which in ROWS:
-        register(label, scenario, routine, which)
-    for routine, (scenario, which) in THROUGH_LINE_F.items():
-        register("its caller's call", scenario, routine, which, through_line_f=True)
-
-
-_register_rows()
+evasync.register_rows(evasync.at, aes.register, ROWS,
+                      [(scenario, routine, which) for routine, (scenario, which) in THROUGH_LINE_F.items()])

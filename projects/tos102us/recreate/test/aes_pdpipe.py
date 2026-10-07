@@ -43,9 +43,9 @@ import abi
 import aes
 import aes_event
 import case
+import derived
 import routines
 import vdi
-import vdi_helpers
 from case import merge_pokes
 from opcodes import LINE_F, PUSH_LONG_IMMEDIATE, PUSH_WORD_IMMEDIATE
 
@@ -112,7 +112,7 @@ def name_pokes(name, at=NAME_AT):
     return {at: name + b"\0" + bytes([case.SLACK_FILL]) * (NAME_BYTES - len(name) - 1)}
 
 
-QPB = struct.Struct(">hhI")            # the process, the count, the buffer (`aes/pdpipe.h`'s QPB_*)
+QPB = aes_event.QPB                    # the process, the count, the buffer: the one layout (`aes_event.QPB`)
 
 
 def qpb_pokes(pid, count, buffer, at=QPB_AT):
@@ -182,11 +182,11 @@ def appl_find_by_trap(name, machine=None):
 # ---- psetup's SR: the one word of these routines that differs by nature ------------------------------------------------
 # psetup parks the status register in its own save word round its stores (`move.w sr,$8998`): the caller's condition
 # codes, whatever instruction ran last — another's for any C caller, and nothing a host core can store. Dropped by
-# name (`aes_event.SR_PSETUP_DROP`, the one definition), only where the ROM's run stores it; a priced row stages the
-# word at the value the run leaves and takes its companion with nothing dropped (`register`), as every row does for
-# the Line-F mask word.
+# name (`aes_event.SR_DROPS`, the one table), only where the ROM's run stores it — so by every case of this module,
+# whichever routine it runs: which ones reach psetup's bracket is the ROM's run's to say, not a list's. A priced row
+# stages the word at the value the run leaves and takes its companion with nothing dropped (`register`), as every row
+# does for the Line-F mask word.
 DROPS = aes.LINE_F_MASK_WINDOW + aes_event.SR_PSETUP_DROP
-REACH_PSETUP = frozenset({PSETUP, PSTART})
 
 
 # ---- THE ATTRIBUTION PASS, and the cases it STEERS ----------------------------------------------------------------------
@@ -247,8 +247,7 @@ def run(name, arguments, machine, **kwargs):
     `aes.leaf_machine`'s lever, which would put PD0 over the screen manager where it runs) — psetup's SR save word
     dropped where the ROM's run stores it. `steered=`: why THIS case runs without the kit's attribution pass (the
     reasons above); without it, it runs with it."""
-    if name in REACH_PSETUP:
-        kwargs.setdefault("dropped_windows", DROPS)
+    kwargs.setdefault("dropped_windows", DROPS)
     return aes_event.run_core_guarded(name, arguments, machine, **kwargs)
 
 
@@ -278,24 +277,23 @@ def answered(name, arguments, machine):
     return said.returncode, said.stderr, None if said.answer is None else aes.signed(said.answer)
 
 
-# Whether a ROUTINE's run stores psetup's SR word is the routine's (the bracket is unconditional in psetup, and pstart
-# always calls it): asked of the ROM at its FIRST row and, where that stored none, not again — a ROM run per row was
-# two dozen in every importing process.
-_REACHES_THE_BRACKET = {}
+@derived.kept
+def _stores_of_psetup_s_sr_word(name, arguments, pokes):
+    """What the ROM's own run of ONE ROW stores of psetup's SR save word — `{address: byte}`, empty for a run that
+    never reaches the bracket. WHICH ROWS REACH IT IS EACH ROW'S RUN'S TO SAY (the rule above), so each is asked: a
+    routine's first row once answered for all of them, and a later row that reached the bracket where the first did
+    not went unsettled. A derivation like any other (`aes_event._rom_run`: its ledger whole, its budget held by the
+    margin), kept by content — a ROM run per row is two dozen, once per tree."""
+    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), pokes))
+    _final, writes, _regs = aes_event._rom_run(image, getattr(addrs, name))
+    return {at: value for at, value in writes.items() if aes.AES_SR_PSETUP <= at < aes.AES_SR_PSETUP + aes.WORD_BYTES}
 
 
 def _settled_sr_word(name, arguments, pokes):
-    """The SR save word the ROM's own run of `name` leaves, as pokes — nothing when it never stores it. A derivation
-    like any other (`aes_event._rom_run`: its ledger whole, its budget held by the margin)."""
-    if not _REACHES_THE_BRACKET.get(name, True):
-        return {}
-    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), pokes))
-    _final, writes, _regs = aes_event._rom_run(image, getattr(addrs, name))
-    stored = aes.AES_SR_PSETUP in writes
-    _REACHES_THE_BRACKET.setdefault(name, stored)
-    if not stored:
-        return {}
-    return {aes.AES_SR_PSETUP: bytes(writes[aes.AES_SR_PSETUP + offset] for offset in range(aes.WORD_BYTES))}
+    """The SR save word the ROM's own run of the row leaves, as pokes — nothing when it never stores it."""
+    stored = _stores_of_psetup_s_sr_word(name, arguments, pokes)
+    settled, _drops = aes_event.settled_where_stored({}, stored, ((aes.AES_SR_PSETUP, aes_event.SR_PSETUP_DROP),))
+    return settled
 
 
 def register(label, name, arguments, machine, *, through_line_f=False):

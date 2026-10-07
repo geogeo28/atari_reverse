@@ -38,7 +38,6 @@ import functools
 
 import pytest
 
-import abi
 import aes
 import aes_event
 import aes_gsx as gsx
@@ -474,18 +473,24 @@ def lock_waiter(image):
 def test_the_lock_released_to_a_process_waiting_for_it_yields():
     """unsync's HAND-OVER: PD0's END_UPDATE over the lock the screen manager waits for (`waited_on`) — the count reaches
     0 with a waiter, so the ROM hands it the lock, wakes it and calls dsptch with PD0 still ready: the machine would run
-    the screen manager first. The door refuses that yield by name (a child process), and up to it the C is the ROM's
-    run stopped at unsync — the frame handed and the whole image."""
+    the screen manager first. The C's child is refused that yield by name, the frame handed and the whole image the
+    ROM's WHERE THE C STOPS — which is the build's: unsync the ROM's routine, the door refuses the call whole and the
+    image is the ROM's at unsync's ENTRY (the lock still PD0's); unsync REBOUND, its twin runs on to the dispatcher's
+    hook and the image is the ROM's AT DSPTCH (the lock handed over). Either way the ROM's own run of the call reaches
+    dsptch still ready, the lock the screen manager's."""
     pokes = waited_on()
     image = make_image(pokes)
     assert spb_of(image) == (1, aes.SHELL_PD) and lock_waiter(image) == aes.SCREEN_MANAGER_PD
     assert aes.list_of(image, aes.AES_RLR) == [aes.SHELL_PD]
     taken = aes_event.refused_where_the_rom_blocks(WM_UPDATE, (END_UPDATE,), pokes, switches=aes_event.YIELDS)
     assert [call.routine for call in taken.calls] == [addrs.AES_ROM_UNSYNC]
-    at_the_call, frame = bytearray(taken.rom_memory), aes_event.SEMAPHORE_FRAME.pack(WIND_SPB)
-    at_the_call[abi.FIRST_ARG:abi.FIRST_ARG + len(frame)] = frame
-    final, _writes, regs = emu.run(at_the_call, addrs.AES_ROM_UNSYNC, stop_pc=addrs.AES_ROM_DSPTCH)
-    assert regs["checkpoint"] and spb_of(final) == (1, aes.SCREEN_MANAGER_PD), "the premise: the lock handed over"
+    at_dsptch = aes_event.rom_at_dsptch(WM_UPDATE, (END_UPDATE,), pokes)
+    assert at_dsptch.switches == aes_event.YIELDS and spb_of(at_dsptch.memory) == (1, aes.SCREEN_MANAGER_PD), (
+        "the premise: the lock handed over")
+    if addrs.AES_ROM_UNSYNC in aes_event.REBOUND:
+        assert taken.rom_memory == at_dsptch.memory and spb_of(taken.image) == (1, aes.SCREEN_MANAGER_PD)
+    else:
+        assert spb_of(taken.rom_memory) == spb_of(taken.image) == (1, aes.SHELL_PD), "compared at unsync's entry"
 
 
 # ---- w_setactive -------------------------------------------------------------------------------------------------------------

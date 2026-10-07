@@ -2,10 +2,12 @@
 THIS snapshot — held against both rather than trusted, so a header that drifts reddens here instead
 of inside some function's differential.
 """
+import random
 import struct
 
 import pytest
 
+import harness
 from harness import BASE_IMAGE, addrs, emu, make_image
 
 import case
@@ -250,6 +252,56 @@ def test_dispatched_pokes_are_what_the_rom_dispatcher_leaves(user_interior, mono
         assert bytes(make_image(staged)[at:at + len(data)]) == data, f"{at:#x}: staged is not the mirror"
     assert vdi.linea(final, "MULTIFILL") == (A_MULTIFILL if user_interior else 0)
     assert vdi.linea(final, "MONO_STATUS") == (vdi.FONT_FLAG_MONOSPACE_MASK if mono else 0)
+
+
+A_FEW_SEEDS = range(4)
+RUNS_OF_A_RANDOM_MACHINE = 60
+LONGEST_RANDOM_RUN = 9
+ADDRESSES_ASKED = 4000
+ANOTHER_BASE_S_WRT_MODE = 3
+
+
+def _a_random_machine(chosen):
+    """Pokes as `merge_pokes` answers them — runs in address order, none overlapping — above the system's own
+    variables (a random font pointer in the workstation's record would send both spellings off the image alike)."""
+    places = [chosen.randrange(vdi.WINDOW_AT, addrs.ST_RAM_BYTES - LONGEST_RANDOM_RUN) for _each in range(RUNS_OF_A_RANDOM_MACHINE)]
+    return case.merge_pokes(*({at: chosen.randbytes(chosen.randint(1, LONGEST_RANDOM_RUN))} for at in places))
+
+
+@pytest.mark.parametrize("seed", A_FEW_SEEDS)
+def test_a_machine_read_off_its_pokes_is_the_image_they_make(seed):
+    """`dispatched_pokes` reads the workstation's fields off the pokes laid over the base image, where it once built
+    the image (and a copy of it to store into): every byte read that way is `make_image`'s — inside a run, at its
+    two ends, between runs, off the base — and a byte stored is read back; and the pokes it answers are the ones the
+    image-built spelling answers. Under another base image too (`harness.set_base_image`)."""
+    chosen = random.Random(seed)
+    machine = _a_random_machine(chosen)
+    another = make_image(vdi.field_pokes("WS", vdi.VDI_PHYS_WORK, WRT_MODE=ANOTHER_BASE_S_WRT_MODE))
+    another[vdi.WINDOW_AT:addrs.ST_RAM_BYTES] = bytes(byte ^ 0x5A for byte in another[vdi.WINDOW_AT:addrs.ST_RAM_BYTES])
+    for base in (None, bytes(another)):
+        previous = harness.set_base_image(base) if base else None
+        try:
+            image, read = make_image(machine), vdi._LaidOverTheBase(machine)
+            edges = [at + nudge for start, data in machine.items() for at in (start, start + len(data)) for nudge in (-1, 0)]
+            for at in [*edges, *(chosen.randrange(addrs.ST_RAM_BYTES) for _each in range(ADDRESSES_ASKED))]:
+                assert read[at] == image[at], f"{at:#x}"
+            read[edges[0]] = image[edges[0]] ^ 0xFF
+            assert read[edges[0]] == image[edges[0]] ^ 0xFF and read[edges[0] + 1] == image[edges[0] + 1]
+            staged = case.merge_pokes(machine, vdi.field_pokes("WS", vdi.VDI_PHYS_WORK, FILL_STYLE=2))
+            by_the_image = case.merge_pokes(staged, vdi.dispatcher_copies(make_image(staged), vdi.VDI_PHYS_WORK))
+            assert vdi.dispatched_pokes(onto=machine, FILL_STYLE=2) == by_the_image
+            if base:                    # ...a field no poke stages is the base's IN FORCE, not the snapshot's
+                assert vdi.linea(make_image(by_the_image), "WRT_MODE") == ANOTHER_BASE_S_WRT_MODE
+        finally:
+            if base:
+                harness.set_base_image(previous)
+
+
+def test_pokes_laid_in_another_order_are_not_read_by_their_place():
+    """...the reader's premise, held where it is relied on: pokes that are not `merge_pokes`' own (address order) are
+    refused by name rather than read wrong."""
+    with pytest.raises(AssertionError, match="laid in another order"):
+        vdi._LaidOverTheBase({0x200: b"\x01", 0x100: b"\x02"})
 
 
 def test_a_call_stages_the_copies_not_just_the_record():

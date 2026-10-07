@@ -49,6 +49,15 @@
  * HAND 68000 — it executes no Line-F word (`$Fxxx`), which would run the ROM's code through the handler's table
  * from inside the blob (the region may still carry another routine's Line-F words as bytes) — and every one of the
  * optimize layer's shared return tails ($fed066 / $fed06a) it reaches lies in its own pinned region.
+ *
+ * WHAT IS NOT A ROW, though it ships as the ROM's bytes: THE PROCESS SWITCH (`src/aes/switch.S`: dsptch — and, with
+ * the scheduler, savestate, switchto and the mask brackets). A row says "this routine has a C core Tier 1 proves, and
+ * the shipped build links the `.S` INSTEAD": the derived C-core name is the twin the ROM build must not link, and the
+ * shipped blob reaches the entry through a generated thunk of that name. A context switch has no C core to prove or
+ * exclude, and its entry is reached by a plain `jsr` under the very name the C calls (`aes_dsptch`) — a thunk there
+ * would put ITS return address under the frame dsptch builds. So it is a kind of its own in the build contract
+ * (`atari/target.mk`: SWITCH_SOURCES, kept out of TRANSCRIBED_SOURCES as the Alcyon entries are), byte-pinned
+ * (`test/test_tier3.py`) and unpriced: no row's run reaches it.
  */
 #ifndef TOS102US_TRANSCRIBED_H
 #define TOS102US_TRANSCRIBED_H
@@ -200,6 +209,34 @@ TRANSCRIBED(TRANSCRIBED_DECLARATION)
 #else
 #define TRANSCRIBED_CORE __attribute__((noinline))
 #endif
+
+/* ...AND THE ATTRIBUTE THE C TWIN OF EVERY EVENT-DOOR ENTRY IS DEFINED WITH (`aes/evdoor.h`: `aes_tak_flag`, ...), for
+ * the same reason and no table row: a twin's FIRST INSTRUCTION is an ARRIVAL — where Tier 3 and the watches read the
+ * call's frame, lay a delivery and take a slice's mark (`bench/tier3.py`'s `twin_entries`). GCC inlines a small twin
+ * into a caller of its own file, and specialises a larger one, and the arrival is then nowhere: the row goes
+ * unwatched on our side alone. Here, in a header with no include of its own, because a twin's header is one
+ * `aes/evdoor.h` includes. `test/test_tier3.py` holds every linked twin to it, on both blobs. */
+#if defined(__GNUC__) && !defined(__clang__)
+#define EVDOOR_TWIN __attribute__((noipa))
+#else
+#define EVDOOR_TWIN __attribute__((noinline))
+#endif
+
+/* ...AND THE STATEMENT THAT FOLLOWS A TWIN'S CALL WHEREVER THE CALL'S ANSWER IS RETURNED AS IT IS — the rebound
+ * wrappers' (`aes/evdoor.h`), and a twin's own `return aes_<entry>(...)` of another twin's core. An arrival is a CALL:
+ * the watches close it at the return address the call left, inside our build's text, as the ROM's Line-F call word
+ * leaves one inside its caller. GCC compiles a call in return position to a tail `jmp` when the callee's arguments
+ * fit the caller's own, and the twin is then entered holding its caller's CALLER's return address — the run's
+ * sentinel, for a row entered at the caller — which no watch can tell from an entry reached by no call at all
+ * (rehearsed: with unsync and ap_rdwr flipped, 17 of the 222 door rows were refused "not a door call").
+ *
+ * WHAT STANDS BETWEEN THE CALL AND THE RETURN is a read of the function's own return address, its value dropped: a
+ * statement GCC may not move the call past, which expands to no instruction and — unlike an empty `asm`, measured —
+ * weighs NOTHING in the inliner's size estimate (an `asm` statement counts as one instruction, and one unit on
+ * tak_flag's wrapper was enough to stop wm_opcl being inlined into wm_close: a committed object changed for a
+ * statement that assembles to nothing). The call stays a `jsr`, its `rts` behind it. HELD ON THE BLOBS, not trusted
+ * to the compiler: `test/test_tier3.py` — no jump into a twin's first instruction, on either. */
+#define EVDOOR_A_CALL_NOT_A_JUMP (void)__builtin_return_address(0)
 #endif
 
 #endif /* TOS102US_TRANSCRIBED_H */

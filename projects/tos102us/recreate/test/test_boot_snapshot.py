@@ -282,6 +282,10 @@ import test_aes_fs_input_rows                               # noqa: E402,F401  (
 import test_aes_evsync                                      # noqa: E402,F401  (the semaphore: tak_flag)
 import test_aes_pdpipe                                      # noqa: E402,F401  (processes and their pipes)
 import test_aes_pdpipe_transcription                        # noqa: E402,F401  (its `.S` rows)
+import test_aes_evwait                                      # noqa: E402,F401  (a wait queued, and waited for)
+import test_aes_evlib                                       # noqa: E402,F401  (the event library's single waits)
+import test_aes_evinput                                     # noqa: E402,F401  (the input layer's posts)
+import test_aes_evfork                                      # noqa: E402,F401  (the fork queue and what runs off it)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

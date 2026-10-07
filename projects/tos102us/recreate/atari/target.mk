@@ -82,7 +82,12 @@ TRANSCRIBED_TABLE   := $(RECREATE)/include/transcribed.h
 # hands its own ROM address (`src/aes/obdraw.S`: just_draw; `src/aes/wmupdate.S`: newrect, mkrect). No ROM bytes, so
 # no table row: listed here, apart, and linked as the C is.
 ALCYON_ENTRY_SOURCES := $(RECREATE)/src/aes/obdraw.S $(RECREATE)/src/aes/wmupdate.S
-TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES), \
+# THE SWITCH is the third kind: the hand 68000 of the process switch, which has NO C SPELLING at all (a second stack,
+# an rte frame built from the caller's return address) — the ROM's own bytes, like a transcription, but with no C twin
+# to exclude, no row and no bar: every build links it, and its entries carry the names the event layer's C calls
+# (`aes_dsptch`, `include/aes/switch.h`). Listed here, apart; byte-pinned by `test/test_tier3.py`.
+SWITCH_SOURCES := $(RECREATE)/src/aes/switch.S
+TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES) $(SWITCH_SOURCES), \
                          $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S))
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
 TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))

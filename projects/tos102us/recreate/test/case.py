@@ -11,6 +11,7 @@ entered with, what its arguments are, and what the result should be. This module
 staging that is the same for all of them.
 """
 import bisect
+import functools
 import struct
 
 import abi
@@ -163,13 +164,18 @@ def final_image(info, pokes):
     than quietly reconstructed from a partial list. Six batteries had a private copy of these four
     lines and only one of them carried that refusal.
     """
-    assert not info["regs"].get("writes_truncated"), (
-        "the oracle's write ledger overflowed, so the image rebuilt from it would be missing stores "
-        "— shorten the run or read the fields this case needs out of `info[\"writes\"]` directly")
+    vet_the_ledger_is_whole(info)
     image = make_image(pokes)
     for at, value in info["writes"].items():
         image[at] = value
     return image
+
+
+def vet_the_ledger_is_whole(info):
+    """Refuse a run whose write ledger overflowed: an image rebuilt from it would be missing stores."""
+    assert not info["regs"].get("writes_truncated"), (
+        "the oracle's write ledger overflowed, so the image rebuilt from it would be missing stores "
+        "— shorten the run or read the fields this case needs out of `info[\"writes\"]` directly")
 
 
 # ---- what every staging module shares ----------------------------------------------------------------
@@ -282,12 +288,19 @@ def registered_case(name):
 
 class Result:
     """A run, and what the machine held AFTER it: the snapshot, the case's pokes, then the ORACLE's
-    writes (`final_image`), composed once per run rather than per read."""
+    writes (`final_image`), composed once per run rather than per read — and only for a run whose
+    case reads it: sixteen megabytes built and thrown away for every case that asserts on the answer
+    or the ledger alone was a twentieth of a battery. What does NOT wait for a reader is the refusal
+    of an overflowed ledger: every run is held to it as it ends, as it always was."""
 
     def __init__(self, info, pokes):
         self.info = info
         self.staged = pokes
-        self.final = final_image(info, pokes)
+        vet_the_ledger_is_whole(info)
+
+    @functools.cached_property
+    def final(self):
+        return final_image(self.info, self.staged)
 
     def after(self, at, length):
         return bytes(self.final[at:at + length])

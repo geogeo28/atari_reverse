@@ -59,6 +59,10 @@
 /* Its SR is `addrs.h`'s SR_SUPERVISOR alone: supervisor state, no interrupt masked ($fe3996 move.w #$2000,-(a2)). */
 #define PSETUP_FRAME_BYTES    6          /* the SR's word under the PC's longword                              */
 
+/* doq's and aqueue's first argument: the pipe's end the caller is at. */
+#define PIPE_READING          0          /* ($fe4158 clr.w -(sp): iasync's read)                               */
+#define PIPE_WRITING          1          /* ($fe4164 move.w #1,-(sp): its write)                               */
+
 #ifndef __ASSEMBLER__
 int16_t aes_pd_match(uint8_t *image, uint32_t name, int16_t pid, uint32_t pd);                      /* $fe56f6 */
 uint32_t aes_fpdnm(uint8_t *image, uint32_t name, int16_t pid);                                     /* $fe5750 */

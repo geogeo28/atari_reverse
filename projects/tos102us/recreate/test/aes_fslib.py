@@ -43,6 +43,7 @@ import aes_objdraw as od
 import aes_shell as sh
 import aes_strings
 import case
+import derived
 import fs_io as io
 import gemdos
 import gemdos_console as console
@@ -300,11 +301,17 @@ def fs_input_machine(path, selection="", shown=False):
 def stopped(stop, path, selection="", shown=False):
     """The ROM's own fs_input(`path`, `selection`, &button) run until it first reaches `stop`: the machine it leaves —
     what it WROTE laid over the one it started from, its own stack out — with the run's final RAM (`ram_in`: every
-    prefix is kept for its process's life) and registers."""
+    prefix is kept for its process's life) and registers. A derivation, kept by content — the budget it is held to
+    (PREFIX_BUDGET, as it stands when asked) among its inputs."""
+    return _stopped(stop, path, selection, shown, PREFIX_BUDGET)
+
+
+@derived.kept
+def _stopped(stop, path, selection, shown, budget):
     start = fs_input_machine(path, selection, shown)
     frame = aes_event.frame_of(("l", PATH_AT), ("l", FILE_AT), ("l", BUTTON_AT))
     final, writes, registers = aes_event.stopped_at(make_image(merge_pokes(start, {abi.FIRST_ARG: frame})),
-                                                    addrs.AES_ROM_FS_INPUT, stop, PREFIX_BUDGET)
+                                                    addrs.AES_ROM_FS_INPUT, stop, budget)
     return Entered(merge_pokes(start, case.written_by(writes)), ram_in(final), registers, registers["ninsns"])
 
 
@@ -612,6 +619,7 @@ def found(answer):
 
 
 @functools.cache
+@derived.kept
 def whole_search(path, shown=False):
     """Every GEMDOS answer a search of the directory fs_input's first fs_active reads over `path` can get: Fsetdta's,
     then Fsfirst's and each Fsnext's to the one that finds no more — `(D0, the DTA after)` each, every call over
@@ -630,6 +638,7 @@ def whole_search(path, shown=False):
 
 
 @functools.cache
+@derived.kept
 def bell_answer(path, shown=False):
     """...and what the ROM's Cconout of BEL answers over the same machine."""
     machine, _frame = entered(ACTIVE, path, shown=shown)
@@ -637,6 +646,7 @@ def bell_answer(path, shown=False):
 
 
 @functools.cache
+@derived.kept
 def replay_script(path, shown=False):
     """The calls fs_active MAKES of that search, as the ROM's own run of it over the whole search makes them (its
     ledger): the search's answers up to the last it asks for, and the bell's where it rings."""
@@ -802,6 +812,7 @@ def _watched(watch, machine, budget, arguments=ARGUMENTS):
     return aes_event.run_watched(memory, addrs.AES_ROM_FS_INPUT, watch, budget=budget) is not None, memory
 
 
+@derived.kept
 def session_script(machine, interrupts, budget, arguments=ARGUMENTS, blocks=False):
     """The GEMDOS calls the ROM's fs_input makes over `machine` (a REAL-disk one, `fs_input_machine`) taken through
     `interrupts`, each answered by the ROM's own GEMDOS over the memory at the call: `Script(answers, functions,

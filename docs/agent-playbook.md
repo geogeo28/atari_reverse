@@ -307,6 +307,23 @@ And when a survivor really cannot be caught, say so with its proof rather than l
 table: `c_read`'s entry `errno := 0` is overwritten on every path out, so a final-memory diff cannot
 see it — that is a hole in the *comparison*, recorded as one (`projects/bubbleghost/recreate/STATUS.md`).
 
+### What no differential interleaves — audit by the ORIGINAL's reference list
+
+A differential runs a routine from its entry to its return: nothing happens between two of its
+instructions. So a property that only an INTERRUPT between them can show — a count made in a register
+and stored over the interrupt's own, a word read once where the original reads it twice — is correct
+C, green at every tier, and wrong on the machine (`docs/on-target-execution.md`, class 15). No mutant
+of the host `.so` can kill it either: the bug is the SHAPE of the target's instructions.
+
+The audit that finds it is a measurement, not a read-through of what you ported: take the words the
+original's interrupt handlers write, **disassemble the original's whole range for every reference
+to them**, and that list is the denominator — each reference is either in a routine you
+reconstructed (then read the instruction your build emits there) or named as not yours (still
+ROM-served, a later wave's). TOS 1.02: eleven words, 61 references, five counts and two re-reads
+wrong in one slice. Then give the class a surface that RUNS: the original's own interrupt code taken
+at every instruction boundary of the routine, on the original and on your build, the sets of states
+compared — and keep what the sweep finds in the ORIGINAL (its own races) as findings, matched.
+
 ## 11. Before a wave launches — the setup contract
 
 §12 is about running and merging a wave. This one is about what has to be TRUE first, because every

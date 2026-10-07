@@ -393,7 +393,6 @@ TRANSCRIBED_CORES = {transcribed_core(entry): entry for entry in TRANSCRIBED}
 # `test_transcribed.py` holds this parse to make's own expansion of the list.
 TARGET_MK = _RECREATE / "atari" / "target.mk"
 GLOBL = re.compile(r"^\s*\.globl\s+(\w+)", re.MULTILINE)
-_ALCYON_ENTRY_SOURCES = re.compile(r"^ALCYON_ENTRY_SOURCES\s*:=(?P<sources>.*)$", re.MULTILINE)
 
 
 def globl_entries(sources):
@@ -401,14 +400,30 @@ def globl_entries(sources):
     return {name for source in sources for name in GLOBL.findall(Path(source).read_text())}
 
 
-def alcyon_entry_sources():
-    """ALCYON_ENTRY_SOURCES, as `atari/target.mk` writes it (each `$(RECREATE)` this tree)."""
-    (sources,) = _ALCYON_ENTRY_SOURCES.findall(TARGET_MK.read_text())
+def _listed_sources(variable):
+    """The `.S` files `atari/target.mk` lists as `variable := ...` (each `$(RECREATE)` this tree)."""
+    (sources,) = re.findall(rf"^{variable}\s*:=(?P<sources>.*)$", TARGET_MK.read_text(), re.MULTILINE)
     return [source.replace("$(RECREATE)", str(_RECREATE)) for source in sources.split()]
+
+
+def alcyon_entry_sources():
+    """ALCYON_ENTRY_SOURCES, as `atari/target.mk` writes it."""
+    return _listed_sources("ALCYON_ENTRY_SOURCES")
 
 
 ALCYON_ENTRIES = globl_entries(alcyon_entry_sources())
 assert ALCYON_ENTRIES, f"{TARGET_MK}'s ALCYON_ENTRY_SOURCES define no `.globl` this parser reads"
+
+
+# THE SWITCH's sources (`atari/target.mk`: SWITCH_SOURCES — the process switch's hand 68000, the ROM's bytes with no C
+# twin and no table row) and the entries they define, under the names the C calls them by.
+def switch_sources():
+    """SWITCH_SOURCES, as `atari/target.mk` writes it."""
+    return _listed_sources("SWITCH_SOURCES")
+
+
+SWITCH_ENTRIES = globl_entries(switch_sources())
+assert SWITCH_ENTRIES, f"{TARGET_MK}'s SWITCH_SOURCES define no `.globl` this parser reads"
 
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
@@ -514,6 +529,11 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_pd_match", "aes_movs"), ("aes_pd_match", "aes_streq"), ("aes_fpdnm", "aes_movs"), ("aes_fpdnm", "aes_streq"),
     ("aes_doq", "aes_lbcopy"), ("aes_doq", "aes_rc_union"), ("aes_ap_find", "aes_lstcpy"),
     ("aes_getpd", "aes_uda_insuper"), ("aes_pstart", "aes_psetup"),
+    # the waits (`src/aes/evwait.c`, `evlib.c`): amouse's copy of its MOBLK, ev_timer's milliseconds into ticks
+    ("aes_amouse", "aes_lbcopy"), ("aes_ev_timer", "aes_ldiv"),
+    # the fork queue (`src/aes/evfork.c`): the keyboard's and the mouse's polls through the VDI binding, the recorder's
+    # copy of an entry
+    ("aes_chkkbd", "aes_gsx_ncode"), ("aes_mchange", "aes_gsx_ncode"), ("aes_forker", "aes_lbcopy"),
     # the file selector (`src/aes/fslib.c`): the default path copied, a directory's names copied, matched and compared,
     # a row's name formatted and the elevator's share, the list's clip saved, and the title's text
     ("aes_fs_pspec", "aes_strcpy"), ("aes_fs_active", "aes_lstcpy"), ("aes_fs_active", "aes_strchk"),

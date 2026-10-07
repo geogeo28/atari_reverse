@@ -1916,7 +1916,31 @@
 #define AES_ROM_BCHANGE           0xfe51d8   /* the button's */
 #define AES_ROM_MCHANGE           0xfe534c   /* the mouse's */
 #define AES_AP_TPLAY_FORKQ_CALL   0xfe671e   /* ap_tplay's forkq call: it pushes a LOCAL, not an immediate */
+/* THE INPUT LAYER's posts and the click counter (geminput, Alcyon, `aes/evinput.h`, read:). */
+#define AES_ROM_NQ                0xfe5092   /* (key, queue): a key at the rear of a CDA's key queue, dropped when full */
+#define AES_ROM_DOWNORUP          0xfe5292   /* (buttons, parameter): whether the buttons satisfy a button wait */
+#define AES_ROM_POST_KEYBD        0xfe51a2   /* (pd, key): to pd's first keyboard wait, else into its key queue */
+#define AES_ROM_POST_MOUSE        0xfe5480   /* (pd, x, y): each of pd's mouse waits the point satisfies woken */
+#define AES_ROM_INOROUT           0xfe54b8   /* (evb, x, y): the point against a mouse wait's rectangle and sense */
+#define AES_ROM_MOWNER            0xfe4ef0   /* (x, y): 1 the control rectangle, -1 the bar or a window, 0 */
+#define AES_ROM_SET_MOWN          0xfe504a   /* (mouse pd, keyboard pd): the owners set, the mouse's told */
+#define AES_ROM_B_CLICK           0xfe4f40   /* (buttons): the button interrupt's click counter, entered by `jsr` ($fed3d0) */
+#define AES_ROM_B_DELAY           0xfe4fb0   /* (ticks): the click count run down; at 0 forkq(bchange, clicks) */
+/* ...and the cursor call mchange makes while a recording plays (hand 68000: `jsr` through AES_DRWADDR), with the bare
+ * `rts` whose ADDRESS the snapshot holds there. */
+#define AES_ROM_DRAWRAT           0xfed412   /* (x, y): D0, D1 := the words, `jsr (*$947a)` */
+#define AES_ROM_JUSTRETF          0xfed424   /* an `rts`: what AES_DRWADDR holds while no cursor routine is saved */
 #define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
+/* A WAIT QUEUED (gemasync's iasync and geminput's five kinds, Alcyon, `aes/evwait.h`, read:), and the event library's
+ * two helpers ev_multi shares with the single waits (Alcyon, `aes/evlib.h`, read:). */
+#define AES_ROM_IASYNC            0xfe40ec   /* (code, parameter): an EVB for rlr, a free event bit, the wait of `code` queued */
+#define AES_ROM_AMUTEX            0xfe4e8e   /* (evb, spb): tak_flag → completed, else onto the semaphore's wait list */
+#define AES_ROM_AKBIN             0xfe5520   /* (evb): a queued key taken (dq) and completed, else onto the CDA's keyboard wait */
+#define AES_ROM_ADELAY            0xfe5566   /* (evb, ticks): the countdown re-armed under spl7, the EVB into the delta list */
+#define AES_ROM_ABUTTON           0xfe55f8   /* (evb, wanted): downorup now → completed, else onto the CDA's button wait */
+#define AES_ROM_AMOUSE            0xfe5666   /* (evb, moblk): already in/out as asked → completed, else onto the mouse wait */
+#define AES_ROM_EV_RETS           0xfe681a   /* (answers): the mouse (the click's own when one was counted), buttons, shift keys */
+#define AES_ROM_EV_MCHK           0xfe695c   /* (moblk): D0 = rlr owns the mouse and it is where the MOBLK asks */
 #define AES_ROM_ACANCEL           0xfe427a   /* (mask): the running PD's EVBs of those events cancelled (ev_multi's tail) */
 /* The event blocks' LISTS (gemasync and geminput's evremove, Alcyon, `aes/evasync.h`, read:). */
 #define AES_ROM_SIGNAL            0xfe3f5e   /* (evb): its event posted to its PD; a PD parked on it moved to the woken list */

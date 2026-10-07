@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "machine.h"
+#include "recreate.h"
 
 /* ---- HOST SLOTS: a frame local whose ADDRESS a core hands on ---------------------------------------
  * The ROM's file system passes the address of a local in its own stack frame to a routine that reaches
@@ -238,6 +239,25 @@
 #define HOST_SLOT_AES_PD_MATCH_NAME_BYTES 10     /* PD_MATCH_FRAME_BYTES                                         */
 #define HOST_SLOT_AES_AP_FIND_NAME      0x7f9c0  /* $fe65da's -10(a6) up, then the saved A6's two top bytes      */
 #define HOST_SLOT_AES_AP_FIND_NAME_BYTES 12      /* AP_FIND_SLOT_BYTES                                           */
+/* ...and the waits' (`aes/evwait.h`, `aes/evlib.h`): amouse's copy of the MOBLK it is handed (to lbcopy and inside),
+ * and the QPB that ap_rdwr's own arguments are — the process, the length, the buffer — whose address it hands
+ * ev_block (a wait that parks keeps that address in its EVB: a place in its caller's stack, by nature). The QPB is A
+ * SLOT PER PROCESS (below): the wait's EVB points into it for as long as its process is blocked. */
+#define HOST_SLOT_AES_AMOUSE_MOBLK      0x7f7b0  /* $fe5666's -10(a6) up                                         */
+#define HOST_SLOT_AES_AMOUSE_MOBLK_BYTES 10      /* EV_MOBLK_WORDS words                                         */
+#define HOST_SLOT_AES_AP_RDWR_QPB       0x7f7e0  /* $fe65c4's 10(a6) up: its arguments after the code            */
+#define HOST_SLOT_AES_AP_RDWR_QPB_BYTES 72       /* HOST_PROCESSES (9) frames of AP_RDWR_QPB_BYTES (8): evlib.c holds it */
+/* ...and the posts' (`aes/evinput.h`): the rectangle inorout unpacks from a mouse wait's EVB (to inside). */
+#define HOST_SLOT_AES_INOROUT_RECT      0x7f7d0  /* $fe54b8's -8(a6) up                                          */
+#define HOST_SLOT_AES_INOROUT_RECT_BYTES 8       /* INOROUT_RECT_BYTES                                           */
+
+/* A SLOT PER PROCESS: a frame local that stays LIVE WHILE ITS PROCESS IS BLOCKED — its routine reached the dispatcher
+ * with the local's address parked in a record ANOTHER process reads (ap_rdwr's QPB, through its pipe wait's EVB: the
+ * desk parked in its read, the screen manager's write serving it through that address). In the ROM each is on its own
+ * process's stack; off target the role's span is HOST_PROCESSES frames, the running process's id choosing one — an
+ * address the image alone decides, the same in whichever host run the frame was laid — each with its own held flag:
+ * a process is never in the routine twice, which is asserted as every claim is. */
+#define HOST_PROCESSES                  9        /* the AES's: three static PDs and six accessories ($fe445a cmp.w #6) */
 
 /* Each slot's index in the held flags. */
 enum host_slot {
@@ -314,6 +334,10 @@ enum host_slot {
     HOST_SLOT_ID_AES_FS_INPUT_FRAME,
     HOST_SLOT_ID_AES_PD_MATCH_NAME,
     HOST_SLOT_ID_AES_AP_FIND_NAME,
+    HOST_SLOT_ID_AES_AMOUSE_MOBLK,
+    HOST_SLOT_ID_AES_AP_RDWR_QPB,     /* a slot per process: HOST_PROCESSES flags, this one process 0's */
+    HOST_SLOT_ID_AES_AP_RDWR_QPB_LAST = HOST_SLOT_ID_AES_AP_RDWR_QPB + HOST_PROCESSES - 1,
+    HOST_SLOT_ID_AES_INOROUT_RECT,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };
 
@@ -340,14 +364,42 @@ static inline void host_slot_give_back(enum host_slot slot)
     host_slots_held[slot] = 0;
 }
 
+/* ...and of a SLOT PER PROCESS, `process`'s frame of the role's span. A process id that is none of the AES's — a PD
+ * whose id word is out of range, `rlr` holding no PD at all — is REFUSED BY NAME: the ROM's routine never reads the
+ * id (its frame is on whatever stack it is run on) and carries on, and off target there is no frame to hand it. */
+static inline uint32_t host_slot_take_for(enum host_slot slot, uint32_t host_at, uint32_t span_bytes, uint32_t process)
+{
+    if (process >= HOST_PROCESSES)
+        recreate_not_reconstructed("a frame local kept per process, for a running process whose id is none of the "
+                                   "AES's (HOST_PROCESSES): off target its frame is its process's host slot");
+    return host_slot_take((enum host_slot)(slot + process), host_at + process * (span_bytes / HOST_PROCESSES));
+}
+
+/* ...and given back BY THE ADDRESS THE CLAIM ANSWERED — the frame that was claimed, whichever process is running
+ * by now: a routine that blocked comes back after other processes ran, and the running one is asked nothing. */
+static inline void host_slot_give_back_for(enum host_slot slot, uint32_t host_at, uint32_t span_bytes, uint32_t claimed)
+{
+    uint32_t frame = (claimed - host_at) / (span_bytes / HOST_PROCESSES);
+
+    assert(frame < HOST_PROCESSES && host_slots_held[slot + frame]);
+    host_slot_give_back((enum host_slot)(slot + frame));
+}
+
 /* The image address a frame local of role ROLE is handed on at: its slot, claimed, off target... */
 #define host_slot_claim(ROLE, local) \
     ((void)(local), host_slot_take(HOST_SLOT_ID_##ROLE, HOST_SLOT_##ROLE))
 #define host_slot_release(ROLE) host_slot_give_back(HOST_SLOT_ID_##ROLE)
+#define host_slot_claim_for(ROLE, local, process) \
+    ((void)(local), host_slot_take_for(HOST_SLOT_ID_##ROLE, HOST_SLOT_##ROLE, HOST_SLOT_##ROLE##_BYTES, process))
+#define host_slot_release_for(ROLE, claimed) \
+    host_slot_give_back_for(HOST_SLOT_ID_##ROLE, HOST_SLOT_##ROLE, HOST_SLOT_##ROLE##_BYTES, claimed)
 #else
-/* ...and the local's own address on target, where nothing is held. */
+/* ...and the local's own address on target, where nothing is held (and `process` is not evaluated: the local is on
+ * the running process's stack already). */
 #define host_slot_claim(ROLE, local) ((uint32_t)(uintptr_t)(local))
 #define host_slot_release(ROLE) ((void)0)
+#define host_slot_claim_for(ROLE, local, process) ((uint32_t)(uintptr_t)(local))
+#define host_slot_release_for(ROLE, claimed) ((void)0)
 #endif
 
 /* A slot that carries a LONGWORD IN and OUT of the call it is handed to (the walk's cursor): off target

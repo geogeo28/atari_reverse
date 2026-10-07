@@ -15,7 +15,7 @@ uint16_t aes_ap_sendmsg(uint8_t *image, uint32_t buffer, int16_t type, int16_t t
                         int16_t word5, int16_t word6, int16_t word7)
 {
     set_bus_word(image, buffer + AP_MSG_TYPE, (uint16_t)type);
-    set_bus_word(image, buffer + AP_MSG_SENDER, bus_word(image, be32(image + AES_RLR) + PD_PID));
+    set_bus_word(image, buffer + AP_MSG_SENDER, bus_word(image, running(image, PD_PID)));
     set_bus_word(image, buffer + AP_MSG_EXTRA, 0);
     set_bus_word(image, word_entry(buffer + AP_MSG_WORDS, 0), (uint16_t)word3);
     set_bus_word(image, word_entry(buffer + AP_MSG_WORDS, 1), (uint16_t)word4);

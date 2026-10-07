@@ -8,6 +8,9 @@
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #include <stdint.h>
 
+/* THE REBOUND ENTRIES' MARKERS are defined here, once: a `evdoor_rebound_<entry>` for every wrapper the
+ * header spells through EVDOOR_REBOUND — what `aes_event.rebound_in` reads the library by. */
+#define EVDOOR_DEFINES_THE_MARKERS
 #include "aes/evdoor.h"
 #include "aes/switch.h"
 

@@ -16,7 +16,7 @@ either README for the concrete wiring. This doc generalises the lessons.
 **It is a long file, so here is what is in it.** *Getting there:* the harness's blindness and
 [measuring it before you choose what to port](#measure-the-blindness-before-you-choose-what-to-reconstruct);
 [the seam pattern](#the-seam-pattern) and the two ways a seam leaks. *What goes wrong:* the
-[fourteen-class bug taxonomy](#bug-taxonomy-1-5-in-buggyboy-6-8-in-joust-9-12-in-wonder-boy-13-in-zynaps-14-in-the-tos-102-recreate),
+[fifteen-class bug taxonomy](#bug-taxonomy-1-5-in-buggyboy-6-8-in-joust-9-12-in-wonder-boy-13-in-zynaps-14-15-in-the-tos-102-recreate),
 each written from a build that hit it. *Going faster:* [sizing the gap](#sizing-the-gap-in-class-13--the-ways-a-cost-instrument-lies),
 [the asm twin](#the-asm-twin--the-originals-own-instructions-inside-the-port),
 [fitting the machine](#fitting-the-machine--measuring-a-memory-budget-instead-of-assuming-one).
@@ -204,7 +204,7 @@ A bound that legitimately differs across the two shores is a third shape and is 
 still a residual: see "Fitting the machine" below for the image-bounds helper whose two arms stop at
 different addresses off target and on, and which is recorded as unpinned rather than argued away.
 
-## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps, 14 in the TOS 1.02 recreate)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps, 14-15 in the TOS 1.02 recreate)
 
 Entries **1-9 and 11-13 were each HIT in a real build** and are written from the wreckage — 11 and
 12 on a real Atari, by a person who switched the machine on, and 13 by a port that passed every
@@ -217,7 +217,9 @@ outside this list** because they belong beside the mechanism they abuse — the 
 per-build `#ifdef` in "Two ways a seam leaks the harness into the shipped program" above. Each would
 have shipped a real defect and each was caught in review; read them with these. **Entry 14 sits
 between the two**: it was in a real build — the cross-compiled ELF the bench measures — and was caught
-by the pre-commit code-review gate reading that ELF's disassembly, before any machine ran it.
+by the pre-commit code-review gate reading that ELF's disassembly, before any machine ran it. **Entry
+15 is the same kind**: in the cross-compiled blobs, every row green, found by a review reading the
+object — and then given a surface that RUNS it, an interrupt taken between two instructions.
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -863,6 +865,67 @@ a build a real machine cannot run one instruction of.
   cause. `tools/recreate_kit/TRAP_MODEL.md`, "Odd word and long accesses — counted, not taken", has
   the mechanism. **Its honest limit:** only `rom_bench` consults the counter today — the `asm_twin`
   bench runs and Tier 1 do not, so the PRG projects have no such refusal yet.
+
+### 15. A count an interrupt shares, made in a register — and a second read the compiler folds
+
+**Caught by a review reading the cross-compiled object; every differential row was green, and always
+would have been.** TOS 1.02's AES counts its fork queue (`$c906`), the queue's tail (`$c6b0`) and the
+double-click countdown (`$c6ca`) at process level AND from its interrupts: the VDI's motion vector
+queues a move (`forkq`), the button vector counts a click (`b_click`), the tick counts the click
+delay down (`b_delay`). The ROM changes each with ONE instruction whose operand is the word in
+memory — `subq.w #1,$c906`, `addq.w #1,$c6b0`, `sub.w d0,$c6ca` — and the 68000 takes an interrupt
+only BETWEEN instructions, so neither side's change can be lost.
+
+**The bug shape.** The obvious C, `wr16(at, be16(at) - 1)`, is the same function when no interrupt
+arrives — which is all any differential runs — and the compiler is free to make it load / change a
+register / store. `forker`'s count-out came out as `move.w cnt,d0` (kept for the loop's test) ...
+seven instructions ... `subq.w #1,d0 / move.w d0,cnt`. An interrupt's `forkq` landing in that window
+counts the queue up in memory and is then OVERWRITTEN by the store: the entry is in the ring and
+never counted, and every later event is served one event late. Five counts were so in one slice;
+`forkq`'s tail was worse than the ROM's own race (head and tail part for good).
+
+**The companion: a second read the compiler folds.** The ROM tests the click count, runs fourteen
+instructions, and reads it AGAIN to push it (`$fe5376`, `$fe53be`); it compares the buttons and reads
+them again for the entry it queues. C that names the word twice with no call between is ONE read to
+GCC, and the value the first read saw is used after an interrupt changed it — the ROM's
+one-instruction window spread over a dozen instructions and across a branch.
+
+**Why nothing saw it.** Tier 1 (the host `.so` against the ROM) and Tier 3 (the cross-compiled build
+against the ROM, same case) both run a routine from its entry to its return with nothing between two
+of its instructions. The C is correct as a function. This is the class the BuggyBoy `$ffff820a`
+finding belongs to ("hardware READS the oracle returns 0 for are invisible to the whole
+differential"): an input the harness never varies.
+
+- **Symptom (predicted from the blob, then reproduced under the oracle):** an event stranded in the
+  fork queue, everything after it one event late; a double click counted as two clicks.
+- **Diagnosis:** `m68k-elf-objdump -d` the routine and read the instruction that STORES each word an
+  interrupt also writes: a store of a register is the bug where the original has `addq`/`subq`/`sub`
+  with a memory destination. The audit's denominator is the ORIGINAL's complete reference list of
+  those words (a disassembly sweep of the whole OS range: 61 references of eleven words here), so a
+  site in no reconstructed routine is named as such rather than missed.
+- **Fix:** an idiom that is the instruction on target and the plain C off it
+  (`projects/tos102us/recreate/include/m68k_idioms.h`: `add_word_in_memory`, `sub_word_in_memory` —
+  one `add%.w %1,%0` with a `+m` operand — and `word_read_again`, its own `move.w`). "On target the
+  instruction is the definition" is the same rule as class 6's.
+- **The surface** (`projects/tos102us/recreate/test/test_aes_evfork_interrupted.py`), two halves:
+  1. *An interrupt taken at every instruction boundary.* The routine is run once per boundary of its
+     own body — on the ROM and on each cross-compiled blob — and at that boundary the instruction is
+     replaced for one step by a `jsr` to a 30-byte trampoline that saves what an exception saves and
+     calls the ROM's OWN interrupt glue. The rule is derived from the ROM alone: **the set of states
+     ours can be left in == the set the ROM's routine is left in at its own boundaries** — none more
+     (a count lost), none fewer (a word the ROM reads again, read once).
+  2. *Which instruction changes the word.* Stepped with no interrupt, every change a routine's own
+     instructions make to a shared word is read off the instruction that made it — counted in
+     memory, or stored — and ours make the ROM's changes, of the ROM's kinds, in the ROM's order.
+     This half holds a site whatever the compiler happened to choose and wherever the first half's
+     cases can land an interrupt (two of the sites were memory-direct by GCC's own choice before the
+     idiom, and nothing held them).
+- **Its honest limits.** The sweep lays the interrupt whatever the IPL — a bench run is entered at
+  IPL 7 — so a routine that MASKS (an `spl7` bracket) is not its to hold; nor a boundary inside a
+  callee (each callee is its own case). And it found, and the port KEEPS, the original's own races:
+  `forkq` is not interrupt-safe in TOS 1.02 either (an interrupt between its read of the tail and its
+  count puts two entries in one slot). Matching the original includes matching its windows — record
+  them as ROM findings, do not fix them.
 
 ## Sizing the gap in class 13 — the ways a cost instrument lies
 

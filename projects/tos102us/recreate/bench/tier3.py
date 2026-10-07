@@ -25,6 +25,7 @@ file also refuses a verified case with NO row here. This file prints; that file 
 import argparse
 import ctypes
 import functools
+import os
 import re
 import struct
 import sys
@@ -36,12 +37,16 @@ sys.path.insert(0, str(RECREATE.parents[2] / "tools"))     # reverse/tools — t
 sys.path.insert(0, str(RECREATE / "tools"))                # this project's own tools
 sys.path.insert(0, str(RECREATE / "test"))                 # ...and the cases the differentials use
 
+# FIRST, before any module that derives: it stamps the tree's files as this process finds them (`test/derived.py`,
+# "the key names the tree this process is made of").
+import derived                                             # noqa: E402,F401
+import fork_pool                                           # noqa: E402
 from recreate_kit import project                           # noqa: E402
 project.load(RECREATE)
 
 from recreate_kit.rom_bench import (BENCH_DIR, BENCH_ELF, Measurement, RomBench, vet_the_run_just_made,   # noqa: E402
                                     watched_original)
-from harness import addrs, diff_spans, differing_addresses, emu, make_image   # noqa: E402  (binds the kit)
+from harness import BASE_IMAGE, addrs, diff_spans, differing_addresses, emu, make_image   # noqa: E402  (binds the kit)
 import abi                                                 # noqa: E402
 from case import tier3_dropped, tier3_unanswered           # noqa: E402  (every component's rows' drops, unanswered)
 # THE REGISTER OF VERIFIED CASES, and with it every battery whose constructors built one. Importing a
@@ -1759,9 +1764,32 @@ def _measure_call(bench, row, watch=None, original_watch=None):
     """A C row's `Measurement` on `bench` — the one spelling of the call, whichever blob prices it. `watch` is (EV)'s
     door windows (`DoorWindows`), for a row whose C reaches the event layer; `original_watch` the ROM's side's, for a row
     taken through interrupts (`aes_event.delivering`)."""
-    return bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
-                         io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry, schedule=row.schedule,
-                         dropped=row.dropped, watch=watch, original_watch=original_watch)
+    measured = bench.measure(row.entry, row.symbol, args=row.args, regs=row.regs, pokes=row.pokes, psg_seed=row.psg_seed,
+                             io_seed=row.io_seed, returns=row.returns, staged_entry=row.staged_entry,
+                             schedule=row.schedule, dropped=row.dropped, watch=watch, original_watch=original_watch)
+    vet_our_run_stored_its_sr_words(row, emu.bench_writes(BASE_IMAGE)[0] if sr_save_words_dropped(row) else {})
+    return measured
+
+
+# AN SR SAVE WORD'S DROP IS SYMMETRIC ON TARGET. The kit holds a drop to the ORIGINAL's ledger alone (`vet_dropped`:
+# every dropped byte one the ROM's run stored) — enough for a word that differs by nature and proves nothing about OUR
+# side: a build whose mask bracket was lost (`aes/switch.h`'s `sr_mask_saving` compiled away, a wait re-arming the tick
+# with interrupts open) would store no word, and the drop would hide exactly that. So a row that drops one of
+# `aes_event.SR_DROPS`' words is held to OUR run's ledger too — read where our run has just ended, the bench's last
+# (`emu.bench_writes`: the original went first, `RomBench._both_sides`): the word is dropped because both runs STORED
+# it with their own callers' SR, never because one did not.
+def sr_save_words_dropped(row):
+    """The SR save words (`aes_event.SR_DROPS`) `row` drops: `(lo, hi)` each."""
+    return [(lo, hi) for lo, hi, _why in row.dropped if lo in aes_event.SR_DROPS]
+
+
+def vet_our_run_stored_its_sr_words(row, stored):
+    """`stored` (our run's write ledger) holds every byte of the SR save words `row` drops — else refused by name."""
+    missing = [at for lo, hi in sr_save_words_dropped(row) for at in range(lo, hi) if at not in stored]
+    assert not missing, (
+        f"{row.symbol} / {row.case}: the row drops an SR save word the ROM's run stores, and OUR run never stored "
+        f"{[f'{at:#x}' for at in missing]} — its interrupt-mask bracket is missing from the build's path "
+        f"(`aes/switch.h`), which the drop would otherwise hide")
 
 
 def _profiled(run):
@@ -1971,32 +1999,102 @@ def goes_through_the_door(row):
     return not row.transcription and row.symbol in _reaching_the_door()
 
 
-# THE ARRIVALS RULE: A REBOUND ENTRY (`aes/evdoor.h`: one whose wrapper calls its C twin) is still an ARRIVAL of both
-# runs — the same ordinal among a row's door calls, so a delivery or a slice's mark hangs on it as on any door call, and
-# what the call is handed is held equal — but it OPENS NO WINDOW: nothing is taken off either side. The ROM's routine is
-# then the ROM's OWN cost (its Line-F word and handler with it) and the twin ours, as any C's. Derived: the rebound
-# entries are the door's entries whose twin the blob links (`twin_entries`), our arrivals at them the twins' first
-# instructions; `test_tier3.py` holds that no entry is both — a twin linked, a `jsr` to its ROM routine left. A row's
-# entries may be mixed, some the ROM's and some C: windows are per call. What a twin may NOT do is run the AES's ROM
-# bytes itself (a callee of its own left on the door): refused by name, its callee to be rebound first.
+# THE ARRIVALS RULE: A CALL OF AN ENTRY'S C TWIN is still an ARRIVAL of both runs — the same ordinal among a row's door
+# calls, so a delivery or a slice's mark hangs on it as on any door call, and what the call is handed is held equal —
+# but it OPENS NO WINDOW: nothing is taken off either side. The ROM's routine is then the ROM's OWN cost (its Line-F
+# word and handler with it) and the twin ours, as any C's. Derived, off the blob:
+#   * the TWINS are the door's entries whose core the blob links (`twin_entries`), our arrivals at them the twins' first
+#     instructions (`EVDOOR_TWIN`, `include/transcribed.h`, is what keeps a first instruction to arrive at);
+#   * an entry is REBOUND when no `jsr` into its ROM routine is left (`rebound_entries`: its wrapper is spelt through
+#     `EVDOOR_REBOUND`, `aes/evdoor.h`) — the set the host's hook answers ARRIVED for, held equal by `test_tier3.py`;
+#   * a twin whose entry still has its `jsr` is PENDING: the event layer's own C reaches it by its core (an arrival, no
+#     window), the C outside the layer still reaches the ROM's routine through the door (a window). WHICH A ROW'S
+#     CALLS ARE is the row's: `arrived_at_by_a_twin` reads it off the call graph for the ROM's watch, and a row whose
+#     routine reaches one entry BOTH ways is refused by name — its ROM run's arrivals there could not be told apart.
+# A row's entries may be mixed, some the ROM's and some C: windows are per call. What a twin may NOT do is run the
+# AES's ROM bytes itself (a callee of its own left on the door): refused by name, its callee to be rebound first.
 @functools.cache
 def twin_entries(elf):
-    """`{the twin's first instruction in elf: the ROM entry it stands for}` — the door's REBOUND entries, as `elf`
-    links them (`aes_event.rebound_in`'s derivation, off the blob)."""
-    placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(elf)}
+    """`{the twin's first instruction in elf: the ROM entry it stands for}` — the door's entries `elf` links a C twin
+    of, rebound or pending (`aes_event.twins_in`'s derivation, off the blob)."""
+    placed = _placed(elf)
     return {placed[routines.core_symbol(name)]: getattr(addrs, name) for name in aes_event.ENTRY_NAMES
             if routines.core_symbol(name) in placed}
+
+
+def rebound_entries(elf):
+    """The door's REBOUND entries as `elf` links them: a twin linked, and no `jsr` into the ROM's routine left
+    (`aes_event.rebound_in`'s set, off the blob)."""
+    return frozenset(twin_entries(elf).values()) - frozenset(door_calls(elf).values())
+
+
+_A_LISTED_INSTRUCTION = re.compile(r"^\s+[0-9a-f]+:\t[^\t]*\t(\w+)[ \t]+(.*)$", re.M)
+CALLS_LISTED_AS = frozenset({"jsr", "bsr", "bsrs", "bsrw", "bsrl", "jbsr"})
+
+
+def references_to_twins(elf):
+    """`[(mnemonic, the twin's symbol)]`: every instruction of `elf` that names a twin's FIRST INSTRUCTION — a call,
+    a jump, a branch, an address taken. A twin is CALLED (`EVDOOR_A_CALL_NOT_A_JUMP`, `include/transcribed.h`): an
+    arrival is closed at the return address its call left, so every one of these is a `jsr` (CALLS_LISTED_AS), held
+    by `test_tier3.py` on both blobs."""
+    placed = _placed(elf)
+    named = {f"{placed[symbol]:x} <{symbol}>": symbol for symbol in
+             (routines.core_symbol(name) for name in aes_event.ENTRY_NAMES) if symbol in placed}
+    return [(mnemonic, symbol) for mnemonic, operands in _A_LISTED_INSTRUCTION.findall(transcription.listing(elf))
+            for target, symbol in named.items() if target in operands]
+
+
+def twins_reached_otherwise_than_by_a_call(elf):
+    """...and the ones that are NOT a call, each once: what must be empty."""
+    return sorted({(mnemonic, symbol) for mnemonic, symbol in references_to_twins(elf) if mnemonic not in CALLS_LISTED_AS})
+
+
+def _twin_symbols():
+    """`{a twin's symbol in the m68k build: its entry}`."""
+    return {routines.core_symbol(name): getattr(addrs, name) for name in aes_event.ENTRY_NAMES
+            if getattr(addrs, name) in twin_entries(BUILT_ELF).values()}
 
 
 @functools.cache
 def _arriving_at_an_entry():
     """Every function of the m68k build from which an ARRIVAL at a door entry is reachable: a door call (above), or a
-    call of a rebound entry's twin — the twins' callers and theirs, the twins themselves not among them (a twin's own
-    row enters it: no call arrives)."""
+    call of an entry's twin — the twins' callers and theirs. A twin is among them only as the caller of ANOTHER twin
+    (its own row enters it: that is no arrival, `DoorStops`' `entered_at`)."""
     graph = transcription.call_graph(BUILT_ELF)
-    twins = frozenset(routines.core_symbol(name) for name in aes_event.ENTRY_NAMES)
+    twins = frozenset(_twin_symbols())
     callers = frozenset(node for node, callees in graph.items() if callees & twins)
     return _reaching_the_door() | frozenset(transcription.callers_closure(graph, callers))
+
+
+@functools.cache
+def _door_calls_held_by():
+    """`{function of the m68k build: the entries it holds a `jsr` into the ROM of}` (the wrappers are inline)."""
+    sites = door_calls(BUILT_ELF)
+    return {node: frozenset(entry for at, entry in sites.items() if any(lo <= at < hi for lo, hi in spans))
+            for node, spans in _function_ranges(BUILT_ELF).items()}
+
+
+@functools.cache
+def arrived_at_by_a_twin(symbol):
+    """The entries the routine `symbol` of the m68k build ARRIVES AT BY THEIR TWIN — the OUTERMOST calls of its run:
+    the call graph walked from it, a twin reached not walked into (what it calls is inside its call). Refused by name:
+    an entry the same walk also reaches by a `jsr` into the ROM."""
+    graph, twins, held = transcription.call_graph(BUILT_ELF), _twin_symbols(), _door_calls_held_by()
+    by_a_twin, by_a_jsr, seen, walk = set(), set(), {symbol}, [symbol]
+    while walk:
+        node = walk.pop()
+        by_a_jsr |= held.get(node, frozenset())
+        for callee in graph.get(node, ()):
+            if callee in twins:
+                by_a_twin.add(twins[callee])
+            elif callee not in seen:
+                seen.add(callee)
+                walk.append(callee)
+    assert not by_a_twin & by_a_jsr, (
+        f"{symbol} reaches {[f'{at:#x}' for at in sorted(by_a_twin & by_a_jsr)]} BOTH by the twin and by a `jsr` into "
+        f"the ROM's routine: its ROM run's arrivals there are one PC, a window for some and none for others — rebind "
+        f"the entry (`EVDOOR_REBOUND`) or reach it one way")
+    return frozenset(by_a_twin)
 
 
 def arrives_at_an_entry(row):
@@ -2047,12 +2145,18 @@ def text_span(elf):
 
 
 def our_windows(elf, delivered=None):
-    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr` — its
-    rebound entries' twins with them (`twin_entries`), each reached from the blob's own text — and `delivered` laid at
-    its calls (`DoorWindows`)."""
+    """(EV)'s watch over OUR run on the blob `elf`: its door calls' entries, and the address after each `jsr` — the
+    entries' twins with them (`twin_entries`), each reached from the blob's own text — and `delivered` laid at its
+    calls (`DoorWindows`)."""
     calls = door_calls(elf)
     return DoorWindows(calls.values(), (at + JSR_ABSOLUTE_BYTES for at in calls), delivered, twins=twin_entries(elf),
                        twins_called_from=text_span(elf))
+
+
+@functools.cache
+def _placed(elf):
+    """`{symbol: its address in elf}`."""
+    return {symbol.name: symbol.start for symbol in transcription.symbol_table(elf)}
 
 
 def _original_windows(row, **marked):
@@ -2063,7 +2167,8 @@ def _original_windows(row, **marked):
     unwatched run). A sliced row's run is MARKED too (`_the_rom_s_marks`: the watch's `marks`; `marked` its options)."""
     assert not (row.regs or row.psg_seed or row.schedule), (
         f"{row.symbol} / {row.case}: a door row's ORIGINAL is re-run watched with the case's image and I/O map alone")
-    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, row.delivered, rebound=aes_event.REBOUND)
+    watch = DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, row.delivered,
+                        rebound=arrived_at_by_a_twin(row.symbol)).entered_at(row.entry)
     if row.slice:
         watch.marked_with(_the_rom_s_marks(row, **marked))
 
@@ -2163,10 +2268,11 @@ def _held_through_the_os(row, bench, **marked):
         original_own = _original_own_cycles(row)
     shipped = ships_through_a_call(row)
     blob = shipped_bench() if shipped else bench
-    windows = our_windows(blob.elf, row.delivered) if through_the_door else None
+    # A twin's own row ENTERS the twin: no arrival at its first instruction (`DoorStops.entered_at`).
+    windows = our_windows(blob.elf, row.delivered).entered_at(_placed(blob.elf).get(row.symbol)) if through_the_door else None
     if row.slice:
         windows.marked_with(_our_marks(row, blob, glue_ranges() if shipped else alcyon_entry_ranges(bench.elf), **marked))
-    original_watch = aes_event.delivering(row.delivered) if row.delivered else None
+    original_watch = aes_event.delivering(row.delivered, row.entry) if row.delivered else None
     if shipped:
         measured = _measure_as_shipped(row, windows, original_watch)
     else:
@@ -2537,16 +2643,96 @@ def _own_split_line(measured, indent):
             f"the rest {thunks} in thunks + {c_body} in the console's C against the ROM's other {measured.original_net - original}")
 
 
-def table(bench):
+# ---- THE MEASURING PASS, OVER SEVERAL PROCESSES --------------------------------------------------------------------------
+# A row's measurement is its own: two runs of the oracle over the row's machine, entered from the kit's reset — no
+# row's number depends on which row was measured before it (the kit seeds every register a run begins with; the one
+# thing rows share, a session's pair of runs, is shared inside a session). So the pass is cut into SHARES — each
+# session's sliced rows one share, every other row a share of its own — and the shares measured by FORKS of this
+# process taken after the registry is imported and the bench built (each inherits the rows, both blobs and the
+# snapshot for nothing), each measurement sent back as it is made. THE TABLE IS JUDGED AND WRITTEN HERE, from the
+# measurements in ROWS' own order, by the very code that judged a serial pass: the lines cannot differ unless a
+# measurement does (`test_tier3.py` holds a share measured in a fork to the one measured in process; the whole table
+# written by `--jobs 1` is the table written by any other count, line for line).
+SERIAL = 1
+
+
+def _shares(rows):
+    """`rows`' indices, cut into what is measured together: a session's sliced rows (ONE pair of runs prices them
+    all, `Sessions`) one share, every other row its own — the sessions first (they are the long ones: a pool that
+    starts on them ends evenly)."""
+    by_session, alone = {}, []
+    for index, row in enumerate(rows):
+        if row.slice:
+            by_session.setdefault(id(session_of(row)), []).append(index)
+        else:
+            alone.append([index])
+    return [*by_session.values(), *alone]
+
+
+_POOL_S_BENCH = []                      # the bench the pool's forks measure over: set before they are made, inherited
+
+
+def _measured_in_a_fork(share):
+    """IN A FORK (or, for a serial pass, in this process — the same code): the measurements of one share of ROWS,
+    `(index, Measurement)` each — or, for a row whose measurement raises (its second differential's refusal),
+    `(index, the exception)` and the share's later rows left out, as a serial pass would never have reached them."""
+    bench, sessions = _POOL_S_BENCH
+    made = []
+    for index in share:
+        try:
+            made.append((index, measure(ROWS[index], bench, sessions)))
+        except Exception as refused:    # carried to the judge, which raises the FIRST of them in ROWS' order
+            made.append((index, refused.with_traceback(None)))
+            break
+    return made
+
+
+# How long the forks' pass may go with NO share coming back before it is ended by name (`fork_pool.Stuck`). The longest
+# share is a sliced session's pair of runs: 3.2 s on a quiet machine, the longest single row 0.85 s (measured
+# 2026-10-07, ten forks; the whole pass 10 s). A hundred times that: three agents' suites beside the bench have been
+# measured at a load of 190 on ten cores.
+LONGEST_SHARE_SECONDS = 3.2
+MEASURING_STUCK_AFTER_SECONDS = 100 * LONGEST_SHARE_SECONDS
+
+
+def measured_rows(bench, jobs=SERIAL, shares=None):
+    """`[(row, its Measurement)]` over ROWS, in ROWS' order: by this process alone (`jobs` 1), or by `jobs` forks of
+    it (above). A row whose measurement raises ends the pass with that exception either way — the first such row
+    in ROWS' order — and so does a fork that DIES, or a pass that stops coming back (`fork_pool`: by name, where a
+    `multiprocessing.Pool` waited for the lost share for ever). `shares`: the shares to measure, for a case that
+    measures some of ROWS (every share, by default: the table's). EVERY ROW ASKED FOR COMES BACK, or the first row
+    that raised: held here."""
+    shares = _shares(ROWS) if shares is None else shares
+    _POOL_S_BENCH[:] = [bench, Sessions(bench)]
+    try:
+        if jobs <= SERIAL:
+            by_share = [_measured_in_a_fork(share) for share in sorted(shares)]
+        else:
+            by_share = fork_pool.over_forks(_measured_in_a_fork, shares, jobs, MEASURING_STUCK_AFTER_SECONDS,
+                                            "tier3's measuring pass").values()
+    finally:
+        _POOL_S_BENCH.clear()
+    made = dict(pair for share in by_share for pair in share)
+    for index in sorted(made):
+        if isinstance(made[index], Exception):
+            raise made[index]
+    asked = sorted(index for share in shares for index in share)
+    assert sorted(made) == asked, (
+        f"tier3's measuring pass was asked for {len(asked)} rows and {len(made)} came back: missing "
+        f"{[ROWS[index].symbol for index in sorted(set(asked) - set(made))][:8]}")
+    return [(ROWS[index], made[index]) for index in sorted(made)]
+
+
+def table(bench, jobs=SERIAL):
     """Every row measured, as the lines `make bench` writes and STATUS.md quotes.
 
     MEASURED FIRST AND JUDGED AFTER, because one of the verdicts is about the others: the LEAF RULE
     is a fraction of what a trap dispatch costs, and that is two of these rows (`dispatch_cycles`).
+    `jobs`: the processes the measuring pass is spread over (`measured_rows`) — the judging is this one's.
     """
     # One pass, keyed by the row, so `dispatch_cycles` below re-uses the pair rather than running
     # the oracle over them a third and fourth time.
-    sessions = Sessions(bench)
-    measured = [(row, measure(row, bench, sessions)) for row in ROWS]
+    measured = measured_rows(bench, jobs)
     by_name = {(row.symbol, row.case): m for row, m in measured}
     dispatch = dispatch_cycles(by_name.__getitem__)
 
@@ -2560,9 +2746,9 @@ def table(bench):
         f"net of that on both sides.",
         f"Bar: ratio <= {TIER3_FUNCTION_BAR:.2f} per function; a pinned row must stay within "
         f"{RATIO_TOLERANCE:.2f} of what it was pinned at.",
-        f"A TRANSCRIPTION's row is a whole call — an exception handler can only be entered through "
-        f"a caller — so its ratio is also net of the staged caller both sides run (trap.py's "
-        f"`caller_cost`: 7 / 106 with no arguments, +1 / +12 per argument word).",
+        "A TRANSCRIPTION's row is a whole call — an exception handler can only be entered through "
+        "a caller — so its ratio is also net of the staged caller both sides run (trap.py's "
+        "`caller_cost`: 7 / 106 with no arguments, +1 / +12 per argument word).",
         f"`rule`: over the bar, and admitted by the LEAF RULE — an (A)-only trap leaf whose excess "
         f"is <= {LEAF_SLACK_CYCLES} cycles and <= {LEAF_SLACK_FRACTION:.1%} of the "
         f"{dispatch} cycles this table measures a trap dispatch at, plus the leaf's own.",
@@ -2640,9 +2826,12 @@ def main(argv=None):
     parser.add_argument("--out", type=Path, default=None,
                         help="also write the table here — the file `make bench` produces and "
                              "STATUS.md's Tier 3 column is pinned against (test/test_status.py)")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count(),
+                        help="the processes the measuring pass is spread over (default: every core; 1: this "
+                             "process alone, row after row) — the table is the same, line for line")
     options = parser.parse_args(argv)
 
-    lines, refused = table(RomBench())
+    lines, refused = table(RomBench(), options.jobs)
     text = "\n".join(lines) + "\n"
     if options.out:
         options.out.parent.mkdir(parents=True, exist_ok=True)

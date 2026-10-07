@@ -31,9 +31,8 @@
  * The list of COMPLETED EVBs is `aes/aes.h`'s AES_ZOMBIE_LIST ($c84a); the delays wait on another. */
 /* The DELAY list (adelay's, $fe55a8): the EVBs waiting for a timer, each holding the ticks after the one before it —
  * and the milliseconds a tick is, which ev_multi and ev_timer divide a timer by ($fe6b6c, $fe693a).
- * NO C READS EITHER YET, nor EVB_FLAG_LEAVE below: each is a word a ROM instruction was found reading (cited), named
- * here for the lists' battery, which reads the delay list out of an image by them (`test/aes_evasync.py`); their C
- * readers are adelay and tchange, amouse, ev_multi and ev_timer — band 4's later waves. */
+ * Read by adelay (`evwait.c`) and tchange (`evfork.c`), and by ev_timer (`evlib.c`); ev_multi is band 4's later
+ * wave. The lists' battery reads the delay list out of an image by them too (`test/aes_evasync.py`). */
 #define AES_DELAY_LIST        0x9c1a     /* long                                ($fe55b4 movea.l $9c1a,a4)     */
 #define AES_GL_TICK_MS        0xc91a     /* word: 20                            ($fe6b6c move.w $c91a,d0)      */
 /* The offset of EVB_LINK in an EVB, kept in RAM (gem_main stores 4, $fda094) and subtracted from a list head's address
@@ -50,17 +49,15 @@
 #define EVB_FLAG_NOCANCEL     0x0001     /* being served: acancel keeps it      ($fe42a2 btst #0; set $fe5a14) */
 #define EVB_FLAG_COMPLETE     0x0002     /* its event came: azombie's whole word ($fe3ff6 move.w #2)           */
 #define EVB_FLAG_DELAY        0x0004     /* on the delay list                   ($fe4088 btst #2; set $fe55a2) */
-#define EVB_FLAG_LEAVE        0x0008     /* a mouse wait for its rectangle LEFT ($fe56ac ori.w #8; no C reads it) */
+#define EVB_FLAG_LEAVE        0x0008     /* a mouse wait for its rectangle LEFT ($fe56ac ori.w #8: set by amouse, read by inorout) */
+#define EVB_FLAG_LOW_BYTE     (EVB_FLAG + 1)   /* ...where inorout tests it: the word's low byte ($fe54cc btst #3,21(a5)) */
 
 /* ---- apret's answers when the running process has no such EVB ------------------------------------------------------ */
 #define APRET_NO_EVB          100        /* none of that event on its list      ($fe41ea moveq #100)           */
 #define APRET_NOT_COMPLETE    101        /* ...or one that is not completed     ($fe4208 moveq #101)           */
 
-/* ---- evremove: a button wait's clicks, in its parameter ------------------------------------------------------------- */
-#define EVB_PARM_CLICKS_SHIFT 16         /* ($fe512c asr.l d1 of 16)                                           */
-#define EVB_PARM_CLICKS_MASK  0xff       /* ($fe5134 andi.l #255)                                              */
+/* ---- evremove: a button wait's clicks, in its parameter (`aes/aes.h`'s BUTTON_PARM_*) ------------------------------- */
 #define ONE_CLICK             1          /* more than this is a multi-click wait ($fe513e cmpi.w #1)           */
-#define EVB_RETURN_HIGH_SHIFT 16         /* ($fe426c asr.l d1 of 16)                                           */
 
 #ifndef __ASSEMBLER__
 #include "m68k_idioms.h"

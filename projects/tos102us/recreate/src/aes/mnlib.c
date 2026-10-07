@@ -257,7 +257,7 @@ void aes_mn_bar(uint8_t *image, uint32_t tree, int16_t show)
         wr32(image + AES_GL_MNTREE, tree);
         aes_ob_actxywh(image, tree, MN_THEACTIVE, AES_GL_CTWAIT_RECT);
         aes_rc_copy(image, AES_GL_CTWAIT_RECT, AES_GL_RMNACTV);
-        wr32(image + AES_GL_MNPPD, (uint32_t)(int32_t)(int16_t)bus_word(image, be32(image + AES_RLR) + PD_PID));
+        wr32(image + AES_GL_MNPPD, (uint32_t)(int32_t)(int16_t)bus_word(image, running(image, PD_PID)));
         desk_menu(image, tree);
         aes_gsx_sclip(image, AES_GL_RZERO);
         aes_ob_draw(image, tree, MN_THEBAR, MN_DRAW_DEPTH);

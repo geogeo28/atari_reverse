@@ -6,6 +6,7 @@
 
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/evsync.h"
 #include "aes/wmupdate.h"
@@ -13,6 +14,7 @@
 /* $fe4e5a — the caller counted in first (`addq.w #1,(a5)`); the semaphore is its own when the running process already
  * holds it (a deeper hold) or the count is now the first hold's (it was free: the owner left by the last release is
  * not looked at). Otherwise the count is taken back and the call refused — the caller waits (amutex queues it). */
+EVDOOR_TWIN
 uint16_t aes_tak_flag(uint8_t *image, uint32_t semaphore)
 {
     set_bus_word(image, semaphore + SPB_COUNT, (uint16_t)(bus_word(image, semaphore + SPB_COUNT) + 1));

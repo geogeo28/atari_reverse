@@ -41,6 +41,7 @@ from harness import BASE_IMAGE, _lib, addrs, emu, make_image
 from recreate_kit.os_map import OS_BUS_ADDR_MASK
 
 import case
+import derived
 import isr
 import layouts
 import routines
@@ -73,6 +74,16 @@ WORD_MASK = (1 << 8 * WORD_BYTES) - 1       # a word of a longword: its low half
 LONG_MASK = (1 << 8 * LONG_BYTES) - 1
 BYTE_MASK = 0xFF
 STALE_WORD = vdi.STALE_WORD
+
+
+def words_long(high, low=0):
+    """Two words as the long that packs them, `high` the high word (`aes/aes.h`'s HIGH_WORD_SHIFT): a button wait's
+    answer (the buttons, the clicks), a point (x, y), a key's fork data (the key, the shift keys)."""
+    return (high & WORD_MASK) << HIGH_WORD_SHIFT | low & WORD_MASK
+
+
+def high_word(long):
+    return long >> HIGH_WORD_SHIFT & WORD_MASK
 
 
 def signed(value, bits=16):
@@ -551,6 +562,14 @@ def _inverted_but_for(info, reasons, dropped_windows):
                         if not any(lo <= at < hi for lo, hi in kept)})
 
 
+# ONE RUN OF A CORE, BY CONTENT — what `run_function` hands its `first` beside the call itself: the library's function,
+# the values it is called with after the image, the image's buffer (None for a core over words alone) and whether the
+# case SEEDED the library's models for the run (any keyword of `case.run`'s that arms the candidate with more than the
+# kit's defaults — every one but the two below, which decide the compare alone).
+CoreRun = namedtuple("CoreRun", "core typed buf seeded")
+ARMS_NOTHING = frozenset({"poison", "dropped"})
+
+
 def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, hook=None,
                  regs=None, host_arguments=(), result=None, answer_compared=True, steered=None, first=None,
                  **kwargs):
@@ -574,9 +593,10 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
     compared.
 
     `steered` (a `Steers`, or several): why THIS case runs without the kit's attribution pass — it then makes the
-    pass NARROWED to its reasons instead (above). `first(call)` is handed every run of the C before it is made in
-    process — `call` the core's call over the very image the kit hands that run, the plain pass's and the attribution
-    pass's alike: the door a battery's child-first guard comes in by (`aes_event.run_core_guarded`)."""
+    pass NARROWED to its reasons instead (above). `first(call, made)` is handed every run of the C before it is made
+    in process — `call` the core's call over the very image the kit hands that run, the plain pass's and the
+    attribution pass's alike, and `made` the same call BY CONTENT (a `CoreRun`): the door a battery's child-first
+    guard comes in by (`aes_event.run_core_guarded`)."""
     signature = vdi.ALCYON[name]
     core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi.as_signed(name, arguments)
@@ -584,12 +604,14 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
     takes_image = vdi.takes_image(name)
     reasons = _as_reasons(steered) if steered is not None else ()
     assert not (reasons and "poison" in kwargs), f"{name}: a steered case's pass is its reasons' to decide"
+    seeded = bool(kwargs.keys() - ARMS_NOTHING)
 
     def glue(_lib_, buf):
         def call():
             return core(buf, *host_arguments, *arguments) if takes_image else core(*arguments)
         if first:
-            first(call)
+            first(call, CoreRun(core, (*host_arguments, *arguments) if takes_image else arguments,
+                                buf if takes_image else None, seeded))
         answer = call()
         return answer if answer_compared else None
 
@@ -638,14 +660,26 @@ def stored_nothing(result):
     return not case.written_by(result.info["writes"]).keys() - set(mask)
 
 
-def settled_mask_word(name, arguments, pokes, io_seed=None):
-    """The mask word the ROM's own run of `name` over `pokes` leaves — or None when it never stores it (a routine
-    that returns by `rts` and calls none that return by a mask)."""
+def _settled_mask_word(name, arguments, pokes, io_seed):
     image = make_image(staged(name, vdi.as_signed(name, arguments), pokes))
     _final, writes, _regs = emu.run(image, getattr(addrs, name), io_seed=io_seed)
     if AES_LINEF_MASK_WORD not in writes:
         return None
     return writes[AES_LINEF_MASK_WORD] << 8 | writes[AES_LINEF_MASK_WORD + 1]
+
+
+@derived.kept
+def _settled_mask_word_unseeded(name, arguments, pokes):
+    return _settled_mask_word(name, arguments, pokes, None)
+
+
+def settled_mask_word(name, arguments, pokes, io_seed=None):
+    """The mask word the ROM's own run of `name` over `pokes` leaves — or None when it never stores it (a routine
+    that returns by `rts` and calls none that return by a mask). A derivation, kept by content (`derived.kept`) for a
+    run that declares no I/O (a seed's values are the kit's own objects: such a run is asked of the ROM every time)."""
+    if io_seed is not None:
+        return _settled_mask_word(name, arguments, pokes, io_seed)
+    return _settled_mask_word_unseeded(name, tuple(arguments), pokes)
 
 
 # The companion runs WITHOUT the attribution pass: with nothing dropped, the pass would invert the mask word, which

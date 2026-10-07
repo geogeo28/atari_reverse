@@ -47,13 +47,14 @@ snapshot and clear of every other tenant. A battery that needs another buffer cl
   * $fd3664..$fd36eb, between INQ_TAB's defaults and MAP_COL: v_pmarker's six shapes, reached only through
     the pointers at VDI_MARKER_SHAPES (`vdi/lines.h` says their layout).
 """
+import bisect
 import ctypes
 import struct
 import sys
 from collections import namedtuple
 from pathlib import Path
 
-from harness import BASE_IMAGE, _lib, addrs, make_image
+from harness import BASE_IMAGE, _lib, addrs, differential_base, make_image
 
 import abi
 import case
@@ -275,12 +276,41 @@ def dispatch_stores(memory, at, steps=DISPATCH_STEPS):
         yield step, value, offset
 
 
+class _LaidOverTheBase:
+    """WHAT `make_image(pokes)` HOLDS, BYTE BY BYTE, WITHOUT MAKING IT — and the bytes stored over it since. A
+    workstation's dispatch reads a hundred bytes of the machine; building the sixteen-megabyte image to read them —
+    and a second copy of it to store into — was a fifth of every VDI registry's import and 27 CPU-seconds of a suite
+    run (11,196 calls). `pokes` are `merge_pokes`' own: runs in address order that do not overlap, so the run an
+    address lies in is found by its place."""
+
+    def __init__(self, pokes):
+        self._pokes, self._starts, self._stored = pokes, list(pokes), {}
+        assert self._starts == sorted(self._starts), "pokes that are not `merge_pokes`' own: laid in another order"
+        self._base = differential_base()
+
+    def __getitem__(self, at):
+        if at in self._stored:
+            return self._stored[at]
+        run = bisect.bisect_right(self._starts, at) - 1
+        if run >= 0 and at - self._starts[run] < len(self._pokes[self._starts[run]]):
+            return self._pokes[self._starts[run]][at - self._starts[run]]
+        return self._base[at]
+
+    def __setitem__(self, at, byte):
+        self._stored[at] = byte
+
+
+def _dispatcher_copies_over(memory, at):
+    """`dispatcher_copies` over `memory`, which the steps STORE INTO as they go: the caller's own to spend."""
+    pokes = {step.destination: value.to_bytes(step.width, "big")
+             for step, value, _offset in dispatch_stores(memory, at)}
+    return merge_pokes(pokes, {VDI_RESULT: bytes(WORD_BYTES)})
+
+
 def dispatcher_copies(image, at):
     """What `$fca9f6` stores before `jsr`ing a function, for the workstation at `at` in `image`: every step of
     DISPATCH_STEPS, folded in order, and the VDI_RESULT it cleared before the lookup."""
-    pokes = {step.destination: value.to_bytes(step.width, "big")
-             for step, value, _offset in dispatch_stores(bytearray(image), at)}
-    return merge_pokes(pokes, {VDI_RESULT: bytes(WORD_BYTES)})
+    return _dispatcher_copies_over(bytearray(image), at)
 
 
 def dispatched_pokes(at=VDI_PHYS_WORK, *, onto=None, **values):
@@ -290,7 +320,7 @@ def dispatched_pokes(at=VDI_PHYS_WORK, *, onto=None, **values):
     The copies are computed over `onto` too, so stage there anything they READ — a font the record's
     CUR_FONT names decides MONO_STATUS — rather than merging it in afterwards."""
     staged = merge_pokes(onto, field_pokes("WS", at, **values))
-    return merge_pokes(staged, dispatcher_copies(make_image(staged), at))
+    return merge_pokes(staged, _dispatcher_copies_over(_LaidOverTheBase(staged), at))
 
 
 def virtual_workstation(handle, *, onto=None, **values):

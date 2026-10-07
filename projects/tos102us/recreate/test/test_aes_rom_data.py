@@ -31,6 +31,7 @@ from collections import namedtuple
 from harness import addrs
 
 import aes
+import aes_event
 import rom_data
 from rom_data import CODE, DISTANCE, RETURN_SITE, TABLE
 
@@ -69,10 +70,15 @@ ROM_ADDRESSES_AS_DATA = {
     "obdraw.c": {"AES_ROM_JUST_DRAW": CODE},
     # The event door's entries, `jsr`ed at their ROM addresses on target and keyed by them off it — the routines a
     # rebuilt ROM keeps where they are until the event layer is C — and the call table the Line-F handler's RAM copy
-    # must still name (the door's check before it calls).
-    "aes/evdoor.h": {"AES_ROM_EV_MULTI": CODE, "AES_ROM_AP_RDWR": CODE, "AES_LINEF_TABLE": TABLE,
-                     "AES_ROM_TAK_FLAG": CODE, "AES_ROM_UNSYNC": CODE, "AES_ROM_EV_BLOCK": CODE,
-                     "AES_ROM_CT_CHGOWN": CODE, "AES_ROM_POST_BUTTON": CODE, "AES_ROM_EV_BUTTON": CODE},
+    # must still name (the door's check before it calls). A REBOUND entry is no longer among them: its wrapper is
+    # spelt through EVDOOR_REBOUND, which names no ROM routine on target (off it the address is only the hook's key
+    # and the marker's value, pasted from the entry's name). DERIVED from the build's own markers (`aes_event.REBOUND`),
+    # so an entry leaves the list with its flip's re-spelling and no edit here — tak_flag did.
+    "aes/evdoor.h": {"AES_LINEF_TABLE": TABLE,
+                     **{name: CODE for name in aes_event.ENTRY_NAMES if getattr(addrs, name) not in aes_event.REBOUND}},
+    # dsptch's `jmp` into the ROM's own disp: the scheduler a rebuilt ROM keeps where it is until it ships as its own
+    # `.S` (band 4, wave 2) — the one instruction of the switch's entry that names ROM text.
+    "switch.S": {"AES_ROM_DISP": CODE},
     # eralert's two tables, read in place (an error past them reads on, as the ROM's does), and the bell's Bconout: the
     # D0 the BIOS dispatcher would have jumped with, handed to its C core off target (`bios/bcon.h`).
     "fmdo.c": {"AES_ERALERT_STRINGS": TABLE, "AES_ERALERT_LEVELS": TABLE, "BIOS_BCONOUT": CODE},
@@ -84,6 +90,13 @@ ROM_ADDRESSES_AS_DATA = {
                 "AES_FS_INPUT_NAMES_ONLY_FREE_RETURN": RETURN_SITE, "AES_FS_INPUT_NAMES_FREE_RETURN_NO_DTA": RETURN_SITE,
                 "AES_FS_INPUT_INDEX_FREE_RETURN_NO_DTA": RETURN_SITE, "AES_FS_INPUT_DTA_FREE_RETURN": RETURN_SITE,
                 "AES_FS_INPUT_INDEX_FREE_RETURN": RETURN_SITE, "AES_FS_INPUT_NAMES_FREE_RETURN": RETURN_SITE},
+    # ev_dclick's table of the five double-click rates' milliseconds, read in place — and, for a rate outside 0..4,
+    # the ROM words round it, as the ROM's own index reads them.
+    "evlib.c": {"AES_DCLICK_MS_TABLE": TABLE},
+    # The FORK FUNCTIONS' addresses, a queue entry's code: what the ROM's own interrupts queue and the host's forkq
+    # callers store — off target; on target each is the function's own entry (`staged_call.h`'s ALCYON_ROUTINE). Three
+    # of the four: mchange is queued by the motion vector's glue alone, which no C is yet (the dispatcher's `.S`).
+    "aes/evfork.h": {"AES_ROM_KCHANGE": CODE, "AES_ROM_BCHANGE": CODE, "AES_ROM_TCHANGE": CODE},
 }
 
 

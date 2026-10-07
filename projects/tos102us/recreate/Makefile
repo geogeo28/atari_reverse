@@ -115,7 +115,18 @@ $(SHIPPED_ELF): $(BENCH_SRC) $(SHIPPED_GLUE) $(PROJECT_HEADERS) \
 $(SHIPPED_BIN): $(SHIPPED_ELF)
 	m68k-elf-objcopy -O binary $(SHIPPED_ELF) $(SHIPPED_BIN)
 
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(CAND) $(ORACLE) $(SNAPSHOT)
+# THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
+# registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
+# suites makes again — unless they are kept. This step makes them over every core and keeps them under
+# build/derived/, by content (a tree it was run for already costs it a tenth of a second); the table and both suites
+# ask after it and are served. ORDER-ONLY for the table: it must come first, and must never be what rebuilds it.
+.PHONY: derived
+derived: $(CAND) $(ORACLE) $(SNAPSHOT) $(BENCH_BIN) $(SHIPPED_BIN)
+	@$(PY) test/derived.py
+
+# The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
+# process writes, line for line.
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(CAND) $(ORACLE) $(SNAPSHOT) | derived
 	$(PY) bench/tier3.py --out $@
 
 .PHONY: bench
@@ -127,5 +138,36 @@ bench: $(BENCH_TABLE)
 # suite under the guarded-image plugin, and it reads the snapshot at exactly the same import.
 # The TABLE is a prerequisite too, because `test/test_status.py` pins STATUS.md's Tier 3 column
 # against it — a pin that skipped for want of a file would be no pin at all.
-test: $(SNAPSHOT) $(BENCH_TABLE)
-guarded: $(SNAPSHOT) $(BENCH_TABLE)
+test: $(SNAPSHOT) $(BENCH_TABLE) derived
+guarded: $(SNAPSHOT) $(BENCH_TABLE) derived
+
+# ---- THE GATES AS ONE COMMAND ------------------------------------------------------------------------------------------
+# `make test`, `make guarded`, `make bench` and the ROM build (`make -C atari -B all`) are run back to back before
+# every commit. They share ONE build — the libraries, both blobs, the snapshot, the table, the derivations — which is
+# made first, once; what is left is three jobs that read it and write nothing another reads (each suite its own log
+# and its own pytest cache; the ROM build its own directory), so they run SIDE BY SIDE, and `gates` ends non-zero if
+# any of them did, having printed each one's last lines. THE SAME RESULTS AS THE FOUR RUN IN TURN: the same pytest
+# command lines as kit.mk's two targets (PYTEST_ARGS / GUARDED_PYTEST_ARGS apply), over the same files.
+# What it buys is NOT three gates for the wall time of one — the two suites are the same CPU-bound work twice and
+# ten cores are ten cores — but every serial stretch overlapped and nothing built or derived twice (recreate/README.md
+# has the measured table).
+GATES_DIR := build/gates
+GATE_LINES_SHOWN := 6
+GATE_PYTEST = PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(WATCHDOG_PLUGIN) -o cache_dir=$(GATES_DIR)/$(1).cache $(2) test
+GATE_RAN = > $(GATES_DIR)/$(1).log 2>&1; echo $$? > $(GATES_DIR)/$(1).status
+# The ROM build's own make, NAMED HERE and not spelt `$$(MAKE)` in the recipe: a recipe line that spells it is run by
+# `make -n` too (make's rule for recursive makes), and this one line starts both suites.
+ROM_BUILD := $(MAKE) -C atari -B all
+
+.PHONY: gates
+gates: $(CAND) $(ORACLE) $(ASM_BIN) $(SNAPSHOT) $(BENCH_TABLE) derived
+	@rm -rf $(GATES_DIR) && mkdir -p $(GATES_DIR)
+	@( $(call GATE_PYTEST,test,$(PYTEST_ARGS)) $(call GATE_RAN,test) ) & \
+	 ( $(call GATE_PYTEST,guarded,$(GUARDED_PYTEST_ARGS) -p recreate_kit.guarded_image) $(call GATE_RAN,guarded) ) & \
+	 ( $(ROM_BUILD) $(call GATE_RAN,atari) ) & \
+	 wait
+	@failed=0; for gate in test guarded atari; do \
+	   echo "== $$gate: exit status $$(cat $(GATES_DIR)/$$gate.status) ($(GATES_DIR)/$$gate.log)"; \
+	   tail -n $(GATE_LINES_SHOWN) $(GATES_DIR)/$$gate.log; \
+	   [ "$$(cat $(GATES_DIR)/$$gate.status)" = 0 ] || failed=1; \
+	 done; exit $$failed

@@ -12,6 +12,7 @@ import pytest
 from harness import BASE_IMAGE, make_image
 
 import aes_event
+import aes_fs_sessions as ss
 import aes_fslib as fsl
 import aes_shell as sh
 import vdi
@@ -172,3 +173,26 @@ def test_a_raw_instruction_cap_handed_past_the_door_is_refused_by_name(run):
     machine, frame = fsl.replayed(fsl.NEWDIR, "A:\\ONE\\*.*")
     with pytest.raises(AssertionError, match=r"a raw max_insns \(3000000\) was handed past the cap's door"):
         run(fsl.NEWDIR, fsl.newdir_arguments(frame), machine, max_insns=3_000_000)
+
+
+# ---- a session's replay derives its OWN deliveries: the real-disk run's are another machine's ------------------------------
+A_SESSION = ss.Session(ss.MIXED, "", ss.schedule([ss.click(ss.A_C_ROW), (ss.release, ss.RETURN)]), ss.SHORT)
+A_BELL_SESSION = ss.Session(ss.folder("HUNDRED"), "", ss.schedule([ss.RETURN]), ss.MIDDLE)     # a hundred names: fs_active rings
+
+
+def _deliveries_over(session, which):
+    real, replayed, _script = ss.machine_of(session)
+    machine = {"the real disk": real, "the replay": replayed}[which]
+    return aes_event.deliveries(fsl.INPUT, fsl.ARGUMENTS, machine, ss.interrupts_of(session, real), session.budget)
+
+
+def test_the_real_disk_run_s_deliveries_are_not_the_replay_s_to_reuse():
+    """WHY EACH SESSION'S REPLAY DERIVES ITS OWN DELIVERIES (a whole-session ROM run that band 3 parked as a lever:
+    "reuse the real-disk run's"): what an interrupt finds and writes at a door call depends on the machine there, and
+    the replayed machine is not the real disk's wherever GEMDOS itself left a mark an interrupt meets — a session
+    that rings the bell (Cconout, which the replay answers without ringing) leaves the BIOS's sound state another's
+    under the next key's click. In a session with no bell the two happen to be equal; a delivery records only the
+    bytes an interrupt WRITES over (`found`), not those it reads, so "they fit" would not prove "they are the
+    replay's". Kept by content instead (`derived.kept`): the run is made once per tree, not once per process."""
+    assert _deliveries_over(A_SESSION, "the replay") == _deliveries_over(A_SESSION, "the real disk")
+    assert _deliveries_over(A_BELL_SESSION, "the replay") != _deliveries_over(A_BELL_SESSION, "the real disk")

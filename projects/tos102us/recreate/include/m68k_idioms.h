@@ -366,6 +366,53 @@ static inline void set_bus_long(uint8_t *image, uint32_t address, uint32_t value
     wr32(image + ram_store(bus_span(address, M68K_LONG_BYTES), M68K_LONG_BYTES), value);
 }
 
+/* ---- a word COUNTED IN MEMORY by ONE instruction — `addq.w #1,$c906`, `sub.w d0,$c6ca` -----------------------------
+ * A count an INTERRUPT also counts is read, changed and stored by one instruction in the ROM, and an interrupt is
+ * taken only BETWEEN instructions: neither side's change can be lost. The obvious C — `wr16(at, be16(at) - 1)` — is
+ * the same function with no interrupt, which is all a differential runs, and GCC is free to make it load / change a
+ * register / store: an interrupt's own count inside that window is then overwritten by the store (forker's count of
+ * the fork queue lost an interrupt's forkq so: the entry stranded, every later event served one event late).
+ *
+ * ON TARGET THE INSTRUCTION IS THE DEFINITION — the rule for a shift above — and the operand is its own memory
+ * operand, so the word's next use is a fresh read, as the ROM's `tst.w` after it is. Off target, the plain C.
+ * No differential row can hold it; `test/test_aes_evfork_interrupted.py` does, on both blobs, two ways: every change
+ * a routine's own instructions make to a word the interrupts share is read off the INSTRUCTION that makes it and
+ * held to the ROM's — the same word, in the same order, counted in memory where the ROM counts in memory — and the
+ * ROM's own interrupts are taken at every instruction boundary of the routines its cases name. */
+static inline void add_word_in_memory(uint8_t *image, uint32_t address, uint16_t addend)
+{
+#ifdef __m68k__
+    __asm__("add%.w %1,%0" : "+m"(*(uint16_t *)(image + address)) : "id"(addend) : "cc");
+#else
+    wr16(image + address, (uint16_t)(be16(image + address) + addend));
+#endif
+}
+
+static inline void sub_word_in_memory(uint8_t *image, uint32_t address, uint16_t subtrahend)
+{
+#ifdef __m68k__
+    __asm__("sub%.w %1,%0" : "+m"(*(uint16_t *)(image + address)) : "id"(subtrahend) : "cc");
+#else
+    wr16(image + address, (uint16_t)(be16(image + address) - subtrahend));
+#endif
+}
+
+/* ...and a word such an interrupt writes, READ AGAIN where the ROM reads it again with no call between the two reads
+ * (mchange tests the click count, compares four coordinates, then pushes the count: `$fe5376`, `$fe53be`). The C that
+ * reads it twice is one read to GCC, and the value the first read saw is then used after an interrupt has changed
+ * it — the ROM's own window, widened. On target: its own `move.w`. */
+static inline uint16_t word_read_again(const uint8_t *image, uint32_t address)
+{
+#ifdef __m68k__
+    uint16_t value;
+
+    __asm__("move%.w %1,%0" : "=d"(value) : "m"(*(const uint16_t *)(image + address)) : "cc");
+    return value;
+#else
+    return be16(image + address);
+#endif
+}
+
 /* A SIGNED WORD OF A RECORD, read through the record's pointer on the 24-bit bus: a count, an index, an id, a
  * coordinate — what the ROM compares with `cmp.w` and extends with `ext.l` or `movea.w`. One accessor for every record
  * (a PD's, a QPB's, a rectangle's, a window list's), so that "signed" is said once. */

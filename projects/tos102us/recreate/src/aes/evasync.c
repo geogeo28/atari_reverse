@@ -44,7 +44,7 @@ static inline void free_evb(uint8_t *image, uint32_t evb)
 /* One of the running process's event words less the bits of `mask` (`rlr` read for each, as the ROM reads it). */
 static inline void clear_running(uint8_t *image, uint32_t field, uint16_t mask)
 {
-    uint32_t at = be32(image + AES_RLR) + field;
+    uint32_t at = running(image, field);
 
     set_bus_word(image, at, (uint16_t)(bus_word(image, at) & (uint16_t)~mask));
 }
@@ -132,7 +132,7 @@ void aes_takeoff(uint8_t *image, uint32_t evb)
  * that came. */
 int16_t aes_apret(uint8_t *image, int16_t mask)
 {
-    uint32_t link_at = be32(image + AES_RLR) + PD_EVLIST;
+    uint32_t link_at = running(image, PD_EVLIST);
     uint32_t evb = bus_long(image, link_at);
     uint32_t completed;
     int16_t answer;
@@ -154,7 +154,7 @@ int16_t aes_apret(uint8_t *image, int16_t mask)
     clear_running(image, PD_EVFLG, (uint16_t)mask);
     answer = (int16_t)bus_long(image, evb + EVB_RETURN);
     free_evb(image, evb);
-    wr16(image + AES_EV_BUTTON_STATE, (uint16_t)(bus_long(image, evb + EVB_RETURN) >> EVB_RETURN_HIGH_SHIFT));
+    wr16(image + AES_EV_BUTTON_STATE, (uint16_t)(bus_long(image, evb + EVB_RETURN) >> HIGH_WORD_SHIFT));
     return answer;
 }
 
@@ -164,7 +164,7 @@ int16_t aes_apret(uint8_t *image, int16_t mask)
  * EVB before the one taken off. */
 int16_t aes_acancel(uint8_t *image, int16_t mask)
 {
-    uint32_t link_at = be32(image + AES_RLR) + PD_EVLIST;
+    uint32_t link_at = running(image, PD_EVLIST);
     uint32_t evb = bus_long(image, link_at);
     uint16_t kept = 0;
 
@@ -192,7 +192,7 @@ int16_t aes_acancel(uint8_t *image, int16_t mask)
  * rectangle's x. (A delay reaches here from tchange alone, which clears its parameter first: $fe4e28.) */
 void aes_evremove(uint8_t *image, uint32_t evb, int16_t answer)
 {
-    uint16_t clicks = (uint16_t)(bus_long(image, evb + EVB_PARM) >> EVB_PARM_CLICKS_SHIFT) & EVB_PARM_CLICKS_MASK;
+    uint16_t clicks = (uint16_t)(bus_long(image, evb + EVB_PARM) >> BUTTON_PARM_CLICKS_SHIFT) & BUTTON_PARM_BYTE;
 
     if (clicks > ONE_CLICK && (int16_t)be16(image + AES_GL_BPEND) > ONE_CLICK)
         wr16(image + AES_GL_BPEND, (uint16_t)(be16(image + AES_GL_BPEND) - 1));

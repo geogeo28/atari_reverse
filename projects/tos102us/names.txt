@@ -1337,10 +1337,10 @@ fn 0xfe3930 aes_switchto
 fn 0xfe4d9e disp
 fn 0xfe4bc6 forker
 fn 0xfe40b2 ev_mwait
-fn 0xfe4e02 tchange # ctx
-fn 0xfe5180 kchange # ctx
-fn 0xfe51d8 bchange # ctx
-fn 0xfe534c mchange # ctx
+fn 0xfe4e02 tchange
+fn 0xfe5180 kchange
+fn 0xfe51d8 bchange
+fn 0xfe534c mchange
 cmt 0xfe671e ap_tplay's forkq call: pushes its local fcode, not an immediate fork-function address
 var 0xc794 aes_rlr
 var 0xc726 aes_nrl
@@ -1743,7 +1743,7 @@ var 0xc820 ad_stdesk
 fn 0xfe6998 ev_multi
 cmt 0xfe6998 Event-door entry (band 4, served on the host by a nested ROM run, on target by an inline Alcyon jsr): MU_BUTTON bit 1 ($fe69fa), MU_M1 bit 2 ($fe6a72); mouse2/timer/message read only under btst #3/#5/#4
 fn 0xfe65c4 ap_rdwr
-cmt 0xfe65c4 Event-door entry: link, pea fp+10, ev_block $fe6874. A WM_REDRAW for a window already queued is MERGED (the pipe stays at one message); to the screen manager (PD1) a message lands in its pipe; a send to a pid with no PD spins
+cmt 0xfe65c4 ap_rdwr(code, pid, len, buf): ev_block(code, &its own frame + 10) - its arguments ARE the QPB; a parked wait keeps that stack address in its EVB until the other end serves it THROUGH it; D0 = ev_block's (0 for a pipe wait; the key for code 5). An event-door entry. Under ap_sendmsg: a WM_REDRAW for a window already queued is MERGED; a send to a pid with no PD spins (aqueue)
 fn 0xfe427a acancel
 cmt 0xfe427a acancel(mask): rlr's PD_EVLIST walked; an EVB among the mask with EVB_FLAG & 3 kept, its bit ORed into D0; else off the list, takeoff, bit cleared in PD +32/+34 (not +36); NOCANCEL (bit 0) alone never observable
 cmt 0xfe4dda disp's loop: forker, idle until a process is ready, then switchto the first — where the snapshot waits
@@ -1820,11 +1820,11 @@ cmt 0xfec722 wind_get's jump table $fefcde; fields 13 and 14 (WF_NEWDESK) have N
 # the event door's new entries (band 4's code, wrapped in include/aes/evdoor.h)
 fn 0xfe4e5a tak_flag
 cmt 0xfe4e5a tak_flag(spb): count+1; taken when the count is 1 or the owner is rlr, else the count put back and D0 refused by clr.w — only D0's LOW word cleared (the high word is the move.l 2(a5) read)
-fn 0xfe4e8e amutex # ctx
+fn 0xfe4e8e amutex
 fn 0xfe4eb8 unsync
-cmt 0xfe4eb8 unsync(spb): count-1; still > 0 → returns leaving its CALLER's D0; 0 with a waiter → hands the lock to the waiter's PD (count 1), zombies its EVB and calls dsptch with the caller still ready (a YIELD, $fe4ed2..$fe4ee6); from a negative count (an unbalanced END_UPDATE) it never reaches 0
+cmt 0xfe4eb8 unsync(spb): count--; still > 0: returns leaving its CALLER's D0; 0 and no waiter -> owner.l 0 (D0 0); else wait = first->LINK (not ->next; the second's pred NOT rewritten), owner.l = first->pd, count 1, azombie, dsptch with the caller still ready (a YIELD, $fe4ed2..$fe4ee6). From a negative count (an unbalanced END_UPDATE) it never reaches 0
 fn 0xfe6874 ev_block
-cmt 0xfe6874 ev_block(code, parameter): an EVB queued and the dispatcher entered — it always waits. Callers: wm_update (code 4 MU_SDMUTEX over *ad_windspb, only after tak_flag refused, so amutex refuses again) and ap_rdwr ($fe65d4, codes 1/2), others 3, 5, 6, 7
+cmt 0xfe6874 ev_block(code.w, parm.l): mask = iasync(code, parm); mwait(mask); return apret(mask) - returns at once when the wait is satisfied as it is queued, else through the dispatcher. Callers: wm_update (code 4 MU_SDMUTEX over *ad_windspb, only after tak_flag refused, so amutex refuses again), ap_rdwr ($fe65d4, codes 1/2), ev_keybd 5, ev_button 7, ev_mouse 6, ev_timer 3
 fn 0xfe49ba ct_chgown
 cmt 0xfe49ba ct_chgown(pd, rect) = set_ctrl(rect) + set_mown(pd); answers post_button's walk end, 0, always
 fn 0xfe52e2 post_button
@@ -1834,7 +1834,7 @@ fn 0xfe5008 set_ctrl
 fn 0xfe501c get_ctrl
 fn 0xfe5030 get_mown
 cmt 0xfe5030 get_mown(&mouse, &keyboard): the mouse owner stored first (the two pointers may overlap)
-fn 0xfe504a set_mown # ctx
+fn 0xfe504a set_mown
 fn 0xfe718e fm_own
 cmt 0xfe718e fm_own(take): counted at ml_ocnt $9450; taking saves the menu hold, ctrl and both owners ($9452/$9456/$945e/$9462) and ct_chgown(rlr, gl_rscreen); giving back hands back the KEYBOARD's saved owner, then the menu, then the release; D0 ct_chgown's or the lock's
 fn 0xfeba54 w_setactive
@@ -2014,7 +2014,7 @@ cmt 0x9c1a the DELAY list — evasync.h AES_DELAY_LIST: adelay $fe55a8 inserts d
 var 0x97f6 aes_elinkoff
 var 0xc84e gl_bpend
 cmt 0xc84e multi-click waits queued: +1 abutton $fe5648; -1 while > 1 in evremove $fe5150 and in ctlmgr after its ev_multi ($fe4a36 button, $fe4a54 mouse rect); clr in sh_main when deskmain returns $feb1e2; read by b_click $fe4f72 (zero / non-zero)
-var 0xc792 aes_ev_button_state # ctx
+var 0xc792 aes_ev_button_state
 # the PDs and the pipes (src/aes/pdpipe.c; uda_insuper and psetup ship as src/aes/pdpipe.S)
 fn 0xfe56f6 pd_match
 cmt 0xfe56f6 pd_match(name, pid, pd): name != 0 → pd's 8 name bytes copied to -10(a6), NUL at -2(a6), streq(name, copy) — a name matches only blank-padded to eight; name == 0 → pd->p_pid == pid (cmp.w: a whole word)
@@ -2035,3 +2035,75 @@ cmt 0xfe5988 aqueue(write, evb, qpb): pd = fpdnm(0, qpb->pid); ready (write: 128
 fn 0xfe65da ap_find
 cmt 0xfe65da ap_find(name): lstcpy into a 10-byte frame (no bound: 10 and 11 characters land on the top two bytes of the caller's saved A6 — served while its frame is below 64 KB, a static PD's UDA stack; 12+ never return), fpdnm(copy, 0) → its p_pid, or -1
 var 0xc6b2 gl_acc_pds # ctx
+fn 0xfe5092 nq
+cmt 0xfe5092 nq(key.w, queue.l): the key at the queue's rear (+18), rear round 8, count (+20) up; dropped when 8 are queued — no caller reaches that (chkkbd polls no key for a full queue)
+fn 0xfe5292 downorup
+cmt 0xfe5292 downorup(buttons.w, parm.l) = sense != ((mask & (state ^ buttons)) == 0); parm = sense<<24 | clicks<<16 | mask<<8 | state. Callers: post_button, abutton, ev_multi
+fn 0xfe51a2 post_keybd
+cmt 0xfe51a2 post_keybd(pd.l, key.w): pd's CDA's first keyboard wait (+2) evremove'd with the key, else nq into its queue (+14)
+fn 0xfe5480 post_mouse
+cmt 0xfe5480 post_mouse(pd.l, x.w, y.w): each mouse wait (CDA +6) inorout satisfies evremove'd with 0; the link read before the wait is tested
+fn 0xfe54b8 inorout
+cmt 0xfe54b8 inorout(evb.l, x.w, y.w) = inside(x, y, {parm>>16, parm, return>>16, return}) != (flag bit 3: LEAVE)
+fn 0xfe4ef0 mowner
+cmt 0xfe4ef0 mowner(x.w, y.w): 1 inside the control rect $9b3e (tested first), -1 on the bar $971c or a window (wm_find), 0 the desktop
+fn 0xfe4f40 b_click
+cmt 0xfe4f40 b_click(buttons.w), by jsr from the button glue $fed3d0 only (no Line-F word): unchanged ($9ad0) nothing; count open ($c6ca): the button it was opened on ($c798) again = clicks++ ($c72c), ticks += 3 (both ON MEMORY); else if $c84e and a press: open ($c768 ticks); else forkq(bchange, buttons, 1)
+fn 0xfe4fb0 b_delay
+cmt 0xfe4fb0 b_delay(ticks.w): $c6ca -= ticks ON MEMORY ($fe4fc0: b_click adds to it in the button interrupt); at exactly 0 forkq(bchange, $c798, $c72c) and, if $c798 != $9ad0, forkq(bchange, $9ad0 READ AGAIN, 1)
+fn 0xfe4b1a forkq
+cmt 0xfe4b1a forkq(code.l, data.l): {code, data} at the tail $c6b0 of the 32-entry ring $b296, count $c906 up, $9c42 := 1; with 32 queued NOTHING is stored. NOT interrupt-safe: an interrupt's forkq between the tail's read ($fe4b2c) and its addq ($fe4b44) puts both entries in one slot and counts a stale one. Line-F $f73c and jsr (the glues)
+cmt 0xfe4bc6 forker(): rlr := -1; while count: count-- ON MEMORY ($fe4bea: the interrupts' forkq counts it up), entry at head $9bf2 (ring), recorder ($c79a: kchange with $2b1c ends it; a tchange after a tchange is added to it; else lbcopy 8 to $96ee, $9728--), jsr (entry.code)(entry.data); rlr back; $c6ae 1 / 0
+fn 0xfe4cd6 chkkbd
+cmt 0xfe4cd6 chkkbd(): VDI 128 (shift keys); if gl_kowner's key count < 8: VDI 33 (4, 2), 31 (-1, 0) — a key if contrl[4]; key or shift != $c72a -> forkq(kchange, key<<16 | shift)
+cmt 0xfe4e02 tchange(elapsed.l), a fork function: the delay list $9c1a counted down, each delay at or below 0 (signed) cleared and evremove'd, the list read again from its head; under spl7 the tick $9492 re-armed with the first left, $948e cleared
+cmt 0xfe5180 kchange(key.w, shift.w), a fork function: $c72a := shift; a key -> post_keybd(gl_kowner, key)
+cmt 0xfe51d8 bchange(new.w, clicks.w), a fork function: gl_mowner != ctl_pd and new == 1 and button == 0 -> gl_mowner := mowner(xrat, yrat) 1: gl_cowner, -1: ctl_pd, 0: window 0's owner $c4b0; mtrans++, pr_* := the old button / mclick / xrat / yrat; post_button(gl_mowner, new, clicks)
+cmt 0xfe534c mchange(x.w, y.w), a fork function: VDI 124 -> the mouse's own point; a move past 2 px inside a click count -> b_delay(the count, READ AGAIN at $fe53be); xrat / yrat := that point (gl_play: VDI 33, drawrat, VDI 28, the EVENT's words, unclamped); no button, a menu tree, inside($96da) != $96d8 -> gl_mowner := ctl_pd; post_mouse
+cmt 0xfe504a set_mown(mp.l, kp.l): gl_mowner = gl_cowner = mp; post_mouse(mp, xrat, yrat); post_button(mp, button, 1); gl_kowner = kp
+fn 0xfed412 drawrat
+cmt 0xfed412 drawrat(x.w, y.w): d0 := x, d1 := y, jsr (*$947a) — the saved cursor routine: $fed424 (a bare rts) in the snapshot, the VDI's $fcff0a default_user_cur while appl_tplay runs ($fe66ac saves it)
+fn 0xfed424 justretf
+var 0x9ad0 gl_bdesired
+var 0xc798 gl_btrue
+var 0xc72c gl_bclick
+var 0xc768 gl_dclick
+var 0x989c gl_cowner
+var 0x96d8 gl_ctwait_leave
+cmt 0x96d8 the LEAVE word of the screen manager's own MOBLK: cleared once by ctlmgr ($fe49ea), written by nothing else, compared by mchange ($fe5456) — a constant 0
+var 0x9800 gl_play # ctx
+var 0xc836 mtrans
+var 0x9c10 pr_button # ctx
+var 0x972e pr_mclick # ctx
+var 0x9c12 pr_xrat
+var 0x9c1e pr_yrat
+var 0x9af8 mclick # ctx
+var 0xc6ae forker_busy
+cmt 0xc6ae set and cleared by forker ($fe4bce / $fe4cce), cleared by gem_main ($fda108); read by nothing in the ROM
+fn 0xfe40ec iasync
+cmt 0xfe40ec iasync(code.w, parm.l): get_evb (0 untested), onto rlr's list, the first event bit rlr's EVBs do not hold; table $fef7a2: 1 aqueue(0) 2 aqueue(1) 3 adelay 4 amutex 5 akbin 6 amouse 7 abutton, any other code nothing; D0.w the bit
+cmt 0xfe40b2 mwait(mask.w): rlr->evwait = mask; no event of it come: rlr->stat = 1, dsptch; D0.w rlr->evflg (every event come)
+cmt 0xfe4e8e amutex(evb, spb): tak_flag(spb) ? azombie(evb) : evinsert(evb, spb+6)
+fn 0xfe5520 akbin
+cmt 0xfe5520 akbin(evb): gl_cda's key count != 0: evb->return = (uword)dq(cda+14), azombie; else evinsert(evb, cda+2)
+fn 0xfe5566 adelay
+cmt 0xfe5566 adelay(evb, ticks.l): tst.l: 0 -> 1; spl7; $9492 (tst.l) armed (and $948e cleared) or shortened (signed); flag |= 4; WALK the delta list $9c1a past every delay with fewer ticks left (signed), taking each one's off; goes in before the first with >= left, which keeps the difference; spl back
+fn 0xfe55f8 abutton
+cmt 0xfe55f8 abutton(evb, parm.l): downorup($c90a, parm) ? (return = $c90a << 16, azombie) : ((parm >> 16 & $ff) > 1: $c84e++; evb->parm = parm; evinsert(evb, cda+10))
+fn 0xfe5666 amouse
+cmt 0xfe5666 amouse(evb, moblk): lbcopy 10 into the frame FIRST (every later read is the copy's); inside(xrat, yrat, &rect) != leave ? azombie : (flag LEAVE set/cleared; parm = (x << 16) + ext(y); THEN return = (w << 16) + ext(h); evinsert(evb, cda+6))
+fn 0xfe6894 ev_keybd
+fn 0xfe68e4 ev_mouse
+fn 0xfe6910 ev_mesag
+fn 0xfe6936 ev_timer
+cmt 0xfe6936 ev_timer(ms.l): ev_block(3, ldiv(ms, (long)$c91a)) - a negative time queues negative ticks
+fn 0xfe681a ev_rets
+cmt 0xfe681a ev_rets(rets): $c836 ? ($9c12, $9c1e) : (xrat, yrat); rets[2] = $c792 (the high word of the last answer apret took: a parked mouse wait's WIDTH); rets[3] = kstate; $c836 = 0
+fn 0xfe695c ev_mchk
+cmt 0xfe695c ev_mchk(moblk): rlr == gl_mowner && inside(xrat, yrat, moblk+2) != moblk->leave (a word) ? 1 : 0
+fn 0xfe6c5e ev_dclick
+cmt 0xfe6c5e ev_dclick(rate.w, set.w): set: $c79c = rate, $c768 = $fefa04[$c79c] / $c91a (rate unbounded, signed index); D0 $c79c
+cmt 0xc792 the high word of the last answer apret took ($fe4266): the buttons after a button wait, a parked mouse wait's rectangle WIDTH after a mouse wait; ev_rets hands it out as the buttons ($fe6858)
+var 0xc79c gl_dcindex
+var 0x97fe ctl_message_sent # ctx
+var 0xfefa04 dclick_ms_table

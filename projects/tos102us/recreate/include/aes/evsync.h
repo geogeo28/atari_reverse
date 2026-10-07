@@ -9,8 +9,6 @@
 #ifndef TOS102US_AES_EVSYNC_H
 #define TOS102US_AES_EVSYNC_H
 
-#include <stdint.h>
-
 /* tak_flag's ANSWER, the word of D0: `moveq #1,d0` ($fe4e8a) or `clr.w d0` ($fe4e7c). The refusal clears the WORD
  * alone, over the owner it has just loaded (`move.l 2(a5),d0`, $fe4e68): D0's high word is then the owner's — nothing
  * a caller reads (wm_update and amutex test the word, `tst.w d0`). */
@@ -19,6 +17,10 @@
 /* The count a FREE semaphore holds once tak_flag has counted its caller in ($fe4e74 cmpi.w #1,(a5)). */
 #define SPB_FIRST_HOLD        1
 
+#ifndef __ASSEMBLER__
+#include <stdint.h>
+
 uint16_t aes_tak_flag(uint8_t *image, uint32_t semaphore);                                                /* $fe4e5a */
+#endif
 
 #endif /* TOS102US_AES_EVSYNC_H */

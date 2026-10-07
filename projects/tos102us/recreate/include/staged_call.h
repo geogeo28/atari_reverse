@@ -371,7 +371,11 @@ static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t
  *
  * The shell's sh_find (`$feb0c8`) calls the routine its caller hands it — only sh_main hands one, `$feaddc` — over the
  * path it found: `move.l <path>,-(sp) / movea.l <routine>,a0 / jsr (a0) / addq.l #4,sp`; and the object library's
- * far_call (`$fddec6`) a USERDEF object's drawing routine over its PARMBLK, the same three instructions. ALCYON's
+ * far_call (`$fddec6`) a USERDEF object's drawing routine over its PARMBLK, the same three instructions. THE FORK HOOK
+ * is this shape too: forker (`$fe4cb4`) calls each queued FORK FUNCTION — the queue entry's code — over the entry's one
+ * longword of data, `move.l 4(a5),-(sp) / movea.l (a5),a0 / jsr (a0) / addq.l #4,sp`, and ignores what comes back. Off
+ * target the code is the fork function's ROM address (what the ROM's interrupts queue, and the host's forkq callers
+ * store), which a case binds to the C core; on target it is the function's own entry (`src/aes/evfork.c`). ALCYON's
  * contract, as call_alcyon_object's: the routine keeps D3-D7/A3-A6 and may change D0-D2/A0-A2 — and answers in D0,
  * which far_call hands back as its own answer (the object's state, to ob_user's callers) and sh_find ignores.
  *

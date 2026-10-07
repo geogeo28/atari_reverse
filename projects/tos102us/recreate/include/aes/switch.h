@@ -17,21 +17,26 @@
  *     no machine reaches, refused like the blocking one rather than answered "nothing happened".
  *   - the mask brackets store NOTHING: the word the ROM parks is its caller's SR — the condition codes of whatever
  *     instruction ran last — which is the caller's CPU state, by nature another's for any C caller. psetup's save
- *     word is a named, vetted drop of the cases that reach its bracket (`aes_event.SR_PSETUP_DROP`, used by
- *     `aes_pdpipe`'s); the dispatcher's and spl7_save's are named when a case first reaches theirs — none does yet.
+ *     word and spl7_save's are named, vetted drops — one table, a word dropped only where the ROM's run stores it
+ *     (`aes_event.SR_DROPS`); the dispatcher's own is stored after dsptch, where no host core goes.
  *
  * ON TARGET the brackets are the ROM's own two instructions each, inline (no call: the ROM's `spl7_save` is a Line-F
  * call round the same two, and psetup's is inline already). dsptch has no inline form — it needs the caller's return
- * address under an rte frame — and is the entry `aes_dsptch` of the switch's own `.S`, declared here.
+ * address under an rte frame — and is the entry `aes_dsptch` of the switch's own `.S` (`src/aes/switch.S`: the ROM's
+ * twenty bytes, its `jmp` into the ROM's disp until the scheduler ships), declared here.
  */
 #ifndef TOS102US_AES_SWITCH_H
 #define TOS102US_AES_SWITCH_H
 
+#include "addrs.h"
+#include "aes/aes.h"
+
+/* Everything below is C: the switch's own `.S` (`src/aes/switch.S`) includes this header for the protocol it is the
+ * target half of, and reads the addresses alone. */
+#ifndef __ASSEMBLER__
 #include <stdint.h>
 
-#include "addrs.h"
 #include "machine.h"
-#include "aes/aes.h"
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
 /* The hook: the dispatcher entered over `image`; nonzero once the call has returned to its caller, zero to refuse. */
@@ -78,10 +83,10 @@ void aes_dsptch(uint8_t *image);
     } while (0)
 #endif
 
-/* spl7_save / spl_restore ($f740 / $f744): the bracket over the shared save word. NO C CALLS THEM YET — declared with
- * the protocol they belong to, for band 4's next waves: tchange ($fe4e02) and adelay ($fe5566) re-arm the tick under
- * this bracket, as ap_trecd does (band 5). */
+/* spl7_save / spl_restore ($f740 / $f744): the bracket over the shared save word. tchange ($fe4e02, `evfork.c`) and
+ * adelay ($fe5566, `evwait.c`) re-arm the tick under it; ap_trecd does too (band 5). */
 #define aes_spl7_save(image)   sr_mask_saving((image), AES_SR_SPL)
 #define aes_spl_restore(image) sr_restore_from((image), AES_SR_SPL)
+#endif /* __ASSEMBLER__ */
 
 #endif /* TOS102US_AES_SWITCH_H */

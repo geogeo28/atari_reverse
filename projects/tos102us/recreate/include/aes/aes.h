@@ -63,6 +63,17 @@
 #define AES_TIMER_ELAPSED     0x948e     /* long: ...and those counted          ($fe4e50 clr.l)                */
 /* The click count b_click opens and the tick glue's b_delay counts down: a click's count is final at 0. */
 #define AES_GL_CLICK_TICKS    0xc6ca     /* word                                ($fe4f8c move.w $c768,$c6ca; $fe4fc0 sub.w) */
+/* ...the ticks a click's count stays open for (GEM's gl_dclick): ev_dclick sets it, b_click opens the count with it. */
+#define AES_GL_DCLICK         0xc768     /* word                                ($fe4f8c move.w $c768,$c6ca)   */
+/* THE CLICK RECORD bchange keeps at every change of the buttons (GEM's mtrans and pr_*): the changes counted since
+ * ev_rets last answered, and the buttons, the clicks and the mouse AS THEY WERE before the change — where the
+ * click was made, which ev_rets answers in place of where the mouse is now ($fe681e..$fe6834). */
+#define AES_MTRANS            0xc836     /* word: button changes posted         ($fe523e addq.w #1; $fe686c clr.w) */
+#define AES_PR_BUTTON         0x9c10     /* word: the buttons before the change ($fe5244 move.w $c90a,$9c10)   */
+#define AES_PR_MCLICK         0x972e     /* word: ...the clicks                 ($fe524e move.w $9af8,$972e)   */
+#define AES_PR_XRAT           0x9c12     /* word: ...the mouse's x              ($fe5258 move.w $9c0c,$9c12)   */
+#define AES_PR_YRAT           0x9c1e     /* word: ...and y                      ($fe5262 move.w $9c0e,$9c1e)   */
+#define AES_MCLICK            0x9af8     /* word: the clicks of the last change ($fe5274 move.w 10(a6),$9af8)  */
 
 /* ---- the OS doors' parking places: a return address held across a trap, because the glue is not re-entrant -- */
 #define AES_DOS_RETURN        0x8c1e     /* long: __DOS's caller                ($fe3ba0 move.l (sp)+)         */
@@ -198,6 +209,11 @@
 /* The CDAs, one a PD. */
 #define AES_CDA_TABLE         0xb086     /* THEGLO + $142e                      ($fda130 addi.l #5166)          */
 #define CDA_BYTES             36         /* ($fda128 muls.w #36)                                               */
+/* A CDA's three WAIT LISTS, each the head of a doubly linked list of EVBs (`aes/evasync.h`): the process's waits for
+ * a key, for the mouse to cross a rectangle, for the buttons. */
+#define CDA_KEYBOARD_WAIT     2          /* long: the EVBs waiting for a key    ($fe51b6 movea.l 2(a5),a4)     */
+#define CDA_MOUSE_WAIT        6          /* long: ...for the mouse              ($fe5490 movea.l 6(a0),a4)     */
+#define CDA_BUTTON_WAIT       10         /* long: ...for the buttons            ($fe52f6 movea.l 10(a5),a3)    */
 #define CDA_KEY_COUNT         34         /* word: keys queued, 8 a full queue   ($fe4cf8 cmpi.w #8)            */
 /* The EVBs: fifteen event blocks on the free list `AES_EUL`, and the list of COMPLETED ones `AES_ZOMBIE_LIST` (GEM's
  * zombie list: azombie pushes on it, apret searches it — not a timer list: the delays wait on `AES_DELAY_LIST`,
@@ -215,6 +231,17 @@
 #define EVB_FLAG              20         /* word                                ($fe3ff6 move.w #2)            */
 #define EVB_MASK              22         /* word: the event bit it posts        ($fe3f72)                      */
 #define EVB_RETURN            24         /* long: its answer                    ($fe515c or.l, $fe4252)        */
+/* A LONGWORD THE EVENT LAYER PACKS TWO WORDS INTO — an EVB's parameter and its answer (a button's state over its
+ * clicks, a rectangle's x over its y and w over its h), a fork entry's data (a key in the upper one): the first is
+ * its HIGH word. One name for the shift, whoever packs and whoever takes apart. */
+#define HIGH_WORD_SHIFT       16         /* ($fe426c, $fe54e2 asr.l d1 of 16; $fe532c asl.l)                    */
+/* A BUTTON WAIT's parameter — ev_multi's and ev_button's argument, then the EVB_PARM of the wait: one longword, a
+ * byte each. The top byte is the wait's SENSE: 0 waits for the masked buttons to BE in the state, non-zero (GEM's
+ * "either button" bit, clicks | $100) for them NOT to be — downorup compares the byte whole with its 0 / 1 test. */
+#define BUTTON_PARM_SENSE_SHIFT 24       /* ($fe52a0 moveq #24,d1 / asr.l d1,d0)                               */
+#define BUTTON_PARM_CLICKS_SHIFT 16      /* ($fe512c asr.l d1 of 16; packed by ev_button, $fe68a4)              */
+#define BUTTON_PARM_MASK_SHIFT 8         /* ($fe52ae asr.l #8,d0)                                              */
+#define BUTTON_PARM_BYTE      0xff       /* each of the four  ($fe5134, $fe52a4, $fe52b0, $fe52ba andi.l #255) */
 /* The fork queue's entries (FORK_* above), and the ORECT pool (`aes/objects.h`'s ORECT_*). */
 #define AES_FORK_QUEUE        0xb296     /* THEGLO + $163e                      ($fe4b3e adda.l #5694)          */
 #define AES_ORECT_POOL        0xb396     /* THEGLO + $173e                      ($fe5a82)                      */
@@ -298,6 +325,21 @@
 static inline int16_t global_word(const uint8_t *image, uint32_t global)
 {
     return (int16_t)be16(image + global);
+}
+
+/* A field of the RUNNING process's descriptor: its address, `rlr` read where the ROM loads it for this access. */
+static inline uint32_t running(const uint8_t *image, uint32_t field)
+{
+    return be32(image + AES_RLR) + field;
+}
+
+/* THE TICK ARMED for `ticks` from now: its countdown stored, the ticks counted since cleared — adelay's for a first
+ * or a sooner delay, tchange's for the next one on the list. Inside its caller's spl7 bracket: the tick's own glue
+ * counts both longs. */
+static inline void arm_the_tick(uint8_t *image, uint32_t ticks)
+{
+    wr32(image + AES_TIMER_COUNTDOWN, ticks);
+    wr32(image + AES_TIMER_ELAPSED, 0);
 }
 #endif
 

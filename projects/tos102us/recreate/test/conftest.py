@@ -22,7 +22,39 @@ whole module (`pytestmark`) — as `collected_with(name)`, the group's name, or 
 of the case's parameters answering its group's name (None: the case is no session's; a keyword, because pytest takes
 a mark called with one function for that function's decorator). Nothing is added, removed or renamed: the same items,
 the same ids — only their order inside their own module.
+
+THE GUARD'S ZYGOTE (`zygote.py`, `aes_event.guard_fork`) is forked HERE, as the session starts in a process that will
+run tests — an xdist worker, or the one process of a run without xdist — because what a fork costs is what its parent
+holds, and at this moment the process holds the harness and nothing else: the batteries' registries (hundreds of
+megabytes) are imported by the collection that follows. The controller of an xdist run, and a run that only collects,
+make none; nor does any process with AES_NO_ZYGOTE in its environment — every fork is then the worker's own, as it
+was before there was a zygote (the A/B a change to the mechanism is measured and held equal by).
+
+A TEST THAT PATCHES ANYTHING DERIVES EVERYTHING ITSELF, AND FORKS FOR ITSELF. `derived.kept` serves a ROM-only
+derivation from disk by the content of the tree, the base image and its arguments — and a test that takes
+`monkeypatch` may change what none of those sees: a module's budget, a function a derivation calls, a counter on the
+derivations made. And the zygote makes a guard's fork out of the modules as IT holds them, frozen when the session
+started: an attribute a test patches on the fork's side (`arm_candidate`, a refuser, a seed) is seen by the worker's
+own fork and never by the zygote's (measured: a patched arming that raises — exit 8 from the worker's fork, 0 from the
+zygote's, where the patch never ran). So for every such test BOTH are put out of use, for the test alone
+(`derived.DERIVED_OFF`, `aes_event.ZYGOTE_SIDELINED`): what it asks is made, and forked, under its patches. A test
+that MEANS the zygote while it patches the worker's side says so (`aes_event.ZYGOTE_SIDELINED` back to False).
+
+THE TREE'S KEY (`derived.py`) names the tree THIS PROCESS IS MADE OF, so `derived` is this file's FIRST import: it
+stamps the tree's files as the process finds them, before any module that derives is read. What was read before it
+(this file, the kit's plugins named on the command line) is held by the other half of that rule — nothing is kept for
+a process a file changed under since it began.
+
+WHAT THE CACHE WAS HELD TO in a run is said at its end: how many of the answers its processes were served they made
+again and found equal (`derived.SAMPLED`), summed over the workers.
 """
+import derived                          # FIRST (above): the tree stamped before anything that derives is imported
+
+import os
+import sys
+
+import pytest
+
 STEALING = "worksteal"
 XDIST_S_OWN_DEFAULT = "load"           # what `-n` alone makes of `--dist` (xdist's `pytest_cmdline_main`)
 GROUP_MARKER = "collected_with"
@@ -74,3 +106,52 @@ def grouped(items, group_of=group_of):
 
 def pytest_collection_modifyitems(items):
     items[:] = grouped(items)
+
+
+NO_ZYGOTE = "AES_NO_ZYGOTE"
+
+
+def _runs_tests(config):
+    """Will THIS process run tests — a worker, or a session with no workers — rather than only hand them out?"""
+    return hasattr(config, "workerinput") or not getattr(config.option, "numprocesses", None)
+
+
+def pytest_sessionstart(session):
+    config = session.config
+    if _runs_tests(config) and not config.option.collectonly and not os.environ.get(NO_ZYGOTE):
+        import aes_event
+        aes_event.start_the_guard_s_zygote()
+
+
+@pytest.fixture(autouse=True)
+def a_test_that_patches_derives_and_forks_for_itself(request):
+    if "monkeypatch" in request.fixturenames:
+        monkeypatch = request.getfixturevalue("monkeypatch")
+        monkeypatch.setenv(derived.DERIVED_OFF, "patched: this test derives for itself")
+        aes_event = sys.modules.get("aes_event")
+        if aes_event is not None:
+            monkeypatch.setattr(aes_event, "ZYGOTE_SIDELINED", True)
+
+
+# ---- what the cache was held to, said at the run's end -----------------------------------------------------------------
+SAMPLED_BY_A_WORKER = "derived_sampled"
+_SAMPLED_BY_WORKERS = []
+
+
+def pytest_sessionfinish(session):
+    aes_event = sys.modules.get("aes_event")
+    if aes_event is not None:
+        aes_event.stop_the_guard_s_zygote()
+    if hasattr(session.config, "workeroutput"):
+        session.config.workeroutput[SAMPLED_BY_A_WORKER] = len(derived.SAMPLED)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    _SAMPLED_BY_WORKERS.append(getattr(node, "workeroutput", {}).get(SAMPLED_BY_A_WORKER, 0))
+
+
+def pytest_terminal_summary(terminalreporter):
+    sampled = _SAMPLED_BY_WORKERS or [len(derived.SAMPLED)]
+    terminalreporter.write_line(f"derived: {sum(sampled)} kept answers made again and found equal, in {len(sampled)} "
+                                f"process{'es' if len(sampled) > 1 else ''} (`derived.SAMPLED`)")
