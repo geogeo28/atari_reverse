@@ -46,6 +46,7 @@ import aes_event
 import aes_evinput as evinput
 import aes_evlib
 import aes_switch as switch
+import aes_switching
 import case
 import derived
 import isr
@@ -429,11 +430,29 @@ def _by_nature(uda):
 # case's image alone), whose context is dropped whole anyway.
 SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine context regs")
 YIELD = SwitchingRow(YIELD_LABEL, DSPTCH, (), aes_event.machine, switch.line_f_scratch_drop, tuple(YIELD_REGS.items()))
-A_KEY_TYPED_AHEAD = SwitchingRow(
-    "a wait for a key, blocked and woken: the key typed ahead, polled by the dispatcher's own idle",
-    EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), lambda: aes_event.typed_ahead(aes_event.machine(), aes_event.RETURN_KEY),
-    switch.uda_context_drop, ())
-SWITCHING_ROWS = (YIELD, A_KEY_TYPED_AHEAD)
+SWITCHING_ROWS = (YIELD,)
+
+
+def _typed_ahead():
+    return aes_event.typed_ahead(aes_event.machine(), aes_event.RETURN_KEY)
+
+
+# THE ROWS THAT BLOCK AND ARE WOKEN (`aes_switching.register`: watched at the dispatcher on both shores, priced) — the
+# PILOTS of the rows that switch, one of each kind a run through the dispatcher can be:
+#   * no delivery at all — the key is in the keyboard's own ring before the call, and the dispatcher's own idle polls it;
+#   * AN INTERRUPT DELIVERED AT AN IDLE of our own dispatcher (the key; the ticks — whose wait and whose fork function
+#     both raise the interrupt mask in C, so the bracket's save word is a drop held on both shores);
+#   * ANOTHER PROCESS ENTERED: the mouse onto the menu bar wakes the snapshot's own screen manager, which our switchto
+#     enters — the ROM's code, parked by the ROM — and which runs, takes the screen, and waits again; Return is then
+#     delivered at the ROM's idle, and the ROM's dispatcher hands the machine back to OUR mwait (a FOREIGN WINDOW).
+A_KEY_TYPED_AHEAD_LABEL = "a wait for a key, blocked and woken: the key typed ahead, polled by the dispatcher's own idle"
+WOKEN_BY_A_KEY = "a wait for a key, blocked; woken by Return at the first idle"
+A_DELAY_RUN_OUT = "a delay, blocked; run out by its ticks at the first idle"
+THROUGH_THE_SCREEN_MANAGER = "a wait for a key; the mouse onto the bar wakes the screen manager, which runs and waits; then Return"
+A_KEY_TYPED_AHEAD = aes_switching.register(A_KEY_TYPED_AHEAD_LABEL, EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), _typed_ahead)
+WOKEN_ROWS = (A_KEY_TYPED_AHEAD,) + tuple(
+    aes_switching.register(name, CASES[name].name, CASES[name].arguments, CASES[name].machine, CASES[name].at_idle)
+    for name in (WOKEN_BY_A_KEY, A_DELAY_RUN_OUT, THROUGH_THE_SCREEN_MANAGER))
 
 
 def _staged(row, pokes):
@@ -489,18 +508,12 @@ def _row_name(row):
     return f"{routines.core_symbol(row.name)}, {row.label}"
 
 
-# THE YIELD IS PRICED. THE WAIT IS VERIFIED AND, IN THE TABLE, UNPRICED YET: Tier 3 watches a row that arrives at a
-# door entry (ev_block's twin) with the door's own stops, which refuse a run that reaches dsptch — its arrival rule
-# for a run that SWITCHES is the next wave's. It is MEASURED here, on both blobs, with the very drops it would
-# register (`test_a_wait_blocks_and_is_woken_…`).
-PRICED = (YIELD,)
+# THE YIELD IS PRICED HERE, with the bench's own entry registers (so its two saved contexts are one register file's);
+# the rows that block and are woken are priced by `aes_switching.register`, above.
 for _row in SWITCHING_ROWS:
     _pokes, _drops, _ = _settled(_row)
-    if _row in PRICED:
-        aes.ROWS.register(_row_name(_row), getattr(addrs, _row.name), _pokes, regs=dict(_row.regs), dropped=_drops,
-                          undropped=functools.partial(_companion, _row))
-    else:
-        aes.ROWS.register(_row_name(_row), getattr(addrs, _row.name), _pokes, regs=dict(_row.regs), priced=False)
+    aes.ROWS.register(_row_name(_row), getattr(addrs, _row.name), _pokes, regs=dict(_row.regs), dropped=_drops,
+                      undropped=functools.partial(_companion, _row))
 
 
 @pytest.fixture(scope="module", params=BLOBS.values(), ids=BLOBS)
@@ -561,25 +574,25 @@ def test_a_wait_blocks_and_is_woken_through_our_own_dispatcher_on_both_blobs(blo
     nothing; our idle's poll takes the key from the BIOS and queues kchange — OUR entry; forker posts it and wakes
     the desk; idle moves it; switchto resumes it inside mwait, and ev_block answers the key. The image the ROM's but
     for the row's drops, every callee-saved register back."""
-    pokes, drops, _stored = _settled(A_KEY_TYPED_AHEAD)
-    measured = blob.measure(addrs.AES_ROM_EV_BLOCK, "aes_ev_block", (0, *A_KEY_TYPED_AHEAD.arguments), {}, pokes,
-                            returns=WORD_BYTES, dropped=drops)
+    measured, watch, _foreign = aes_switching.measured_on(blob, A_KEY_TYPED_AHEAD)
     assert measured.ratio <= bench_tier3().TIER3_FUNCTION_BAR, (
         f"the wait through our dispatcher costs {measured.ratio:.2f} of the ROM's")
     assert (measured.original_net, measured.recreate_net) == WAIT_CYCLES[blob.elf.parent.name], (
         f"the wait measures {measured.original_net} / {measured.recreate_net} cycles: say why it moved")
+    assert (watch.idles, watch.entered, watch.foreign) == (1, [SHELL], [])
 
 
 def test_the_typed_ahead_wait_really_blocks_and_is_woken_by_the_dispatcher():
-    """The second row's premise, on the ROM's own run: the call reaches dsptch WAITING (it blocks), the dispatcher's
+    """The row's premise, on the ROM's own run: the call reaches dsptch WAITING (it blocks), the dispatcher's
     first idle finds the machine waiting for an interrupt — and its poll finds the key; the desk is entered again,
     and the call answers Return."""
-    pokes, _drops, _stored = _settled(A_KEY_TYPED_AHEAD)
+    made = aes_switching.settled(A_KEY_TYPED_AHEAD)
     at_dsptch = aes_event.rom_at_dsptch(EV_BLOCK, A_KEY_TYPED_AHEAD.arguments, A_KEY_TYPED_AHEAD.machine())
     assert at_dsptch.switches == aes_event.BLOCKS
-    the_rom_s = switch.scheduled(addrs.AES_ROM_EV_BLOCK, pokes[abi.FIRST_ARG], pokes)
+    the_rom_s = aes_switching.scheduled(A_KEY_TYPED_AHEAD, made.pokes)
     assert (the_rom_s.ended, the_rom_s.idles, the_rom_s.entered) == (switch.RETURNED, 1, (SHELL,))
     assert the_rom_s.d0 & aes.WORD_MASK == RETURN_KEY_CODE and not the_rom_s.delivered
+    assert made.switches == aes_event.Switches({}, 1, SHELL) and made.entered == (SHELL,)
 
 
 @pytest.mark.parametrize("row", SWITCHING_ROWS, ids=lambda row: row.label)

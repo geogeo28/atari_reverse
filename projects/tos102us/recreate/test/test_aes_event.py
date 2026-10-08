@@ -4673,6 +4673,9 @@ def _settled_by_the_rom_s_own_run(row):
 # takes a BIOS trap or leaves a QPB's address is staged and dropped in silence unless something says so: this
 # table. A new member reds here until it is written in, with the reason it is right.
 A_QPB_S_ADDRESS, SAVPTR_MOVED_BY_THE_RUN = "a QPB's address left in a freed EVB", "savptr moved by the run alone"
+THE_ROWS_THAT_SWITCH = "the rows that switch"
+THE_CALLER_S_CONTEXT, THE_DISPATCHER_S_STACK = "the caller's saved context", "the dispatcher's stack"
+THE_BRACKET_S_SAVE_WORD = "spl7_save's SR save word"
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
     "the waits": {},
@@ -4684,6 +4687,12 @@ BY_NATURE_CENSUS = {
     # The two rows whose message wait is queued and cancelled: the only runs of the wait path's QPB, a local of the
     # routine's own frame handed on by its address (`test_aes_evmulti.ROWS`).
     "ev_multi": {A_QPB_S_ADDRESS: {"aes_ev_multi": 2}},
+    # THE ROWS THAT SWITCH (`aes_switching.register`; a layer of its own: its rows are settled from a run through the
+    # dispatcher, which no unwatched run of the oracle makes — `test_every_row_that_switches_…`, below). Every one
+    # drops the caller's saved context and the dispatcher's stack (that is what a switch is); the wider kind is the
+    # mask bracket's save word: the delay's row, whose wait (adelay) and whose fork function (tchange) bracket in C.
+    THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: {"aes_ev_block": 4}, THE_DISPATCHER_S_STACK: {"aes_ev_block": 4},
+                           THE_BRACKET_S_SAVE_WORD: {"aes_ev_block": 1}},
 }
 
 
@@ -4727,6 +4736,41 @@ def test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_
     assert census == BY_NATURE_CENSUS[layer], (
         f"{layer}: the rows that settle a wider kind are {census} — a row NEWLY under a bracket, a trap or a QPB is "
         f"settled with no ruling: write it into BY_NATURE_CENSUS with the reason it is right")
+
+
+def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_the_census_says_which():
+    """THE SWITCHING ROWS' LAYER OF THE ONE CENSUS, held to AN INDEPENDENT SPELLING of its own kind: the ROM's
+    scheduled run of each registered row over its UNSETTLED machine (`aes_switch.scheduled` — not the registrar's
+    kept derivation, nor its replay's ledger) and what that run CHANGED in the windows that differ by nature. Every
+    such byte lies in a drop the registry holds for the row — but the dispatcher's own save word, which both builds
+    park alike and the row compares — every drop holds one, and which routines' rows drop which kind is the table's."""
+    import aes_switch
+    import aes_switching
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    registered, census = case.tier3_dropped(), {}
+    assert aes_event.SWITCHING_ROWS, "the premise: the batteries register rows that switch"
+    for name, held in aes_event.SWITCHING_ROWS.items():
+        row = held.row
+        staged = aes.staged(row.name, row.arguments, merge_pokes(row.machine(), aes_event.savptr_in_the_band()))
+        the_rom_s = aes_switching.scheduled(row, staged)
+        uda = aes_event.uda_of(held.switches.process, the_rom_s.memory)
+        kinds = {THE_CALLER_S_CONTEXT: aes_switch.uda_context_drop(uda), THE_DISPATCHER_S_STACK: aes_switch.DISPATCHER_STACK_DROP,
+                 THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP}
+        drops = [(lo, hi) for lo, hi, why in registered[name] if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW]
+        of_a_kind = []
+        for kind, ((lo, hi, _why),) in kinds.items():
+            changed = [at for at in range(lo, hi) if the_rom_s.memory[at] != the_rom_s.started[at]]
+            inside = [(low, high) for low, high in drops if lo <= low and high <= hi]
+            assert all(any(low <= at < high for low, high in inside) for at in changed), f"{name}: {kind} changed and not dropped"
+            assert bool(inside) == bool(changed), f"{name}: a drop of {kind} the ROM's run changes nothing of"
+            of_a_kind += inside
+            if inside:
+                census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
+        assert sorted(of_a_kind) == sorted(drops), f"{name}: a drop of no kind this census knows"
+    census = {kind: dict(sorted(counts.items())) for kind, counts in census.items()}
+    assert census == BY_NATURE_CENSUS[THE_ROWS_THAT_SWITCH], (
+        f"the rows that switch drop {census} — a row NEWLY under a bracket is dropped with no ruling: write it into "
+        f"BY_NATURE_CENSUS with the reason it is right")
 
 
 ALWAYS_SETTLED = (aes.AES_LINEF_MASK_WORD, aes.AES_SR_SPL)

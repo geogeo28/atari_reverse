@@ -3102,6 +3102,9 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
     dropped, and it staged the row's own pokes. A row TAKEN THROUGH INTERRUPTS has no `case.run`: its companion is
     `aes_event.interrupted` itself, every compare it makes leaving out the stack band alone."""
     registered = case.registered_case(name)
+    if aes_event.switching(test_boot_snapshot.delivered_of(registered)):
+        _a_switching_companion_drops_nothing(name, registered, monkeypatch)
+        return
     if test_boot_snapshot.delivered_of(registered):
         _an_interrupted_companion_drops_nothing(name, registered, monkeypatch)
         return
@@ -3189,6 +3192,22 @@ def _an_interrupted_companion_drops_nothing(name, registered, monkeypatch):
     assert ran.left_out and all(each == frozenset(case.STACK_BAND) for each in ran.left_out), ran.left_out
     assert vdi.make_image(registered[3]) == vdi.make_image(ran.staged), f"{name}: the companion ran another machine"
     assert ran.delivered == test_boot_snapshot.delivered_of(registered) and not ran.redone, ran.redone
+
+
+def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
+    """...a row that SWITCHES (`aes_event.Switches`): its companion is the C through its own scheduler held to the
+    ROM's own run through its dispatcher (`aes_switching.companion`) — ONE compare, leaving out the run's own stack
+    alone, over the row's own machine, the run it is held to taking the row's own deliveries at the row's idles."""
+    left_out, differing = [], aes_event.differing
+
+    def recorded(image, rom_memory, not_compared=None):
+        left_out.append(not_compared)
+        return differing(image, rom_memory, not_compared)
+    monkeypatch.setattr(aes_event, "differing", recorded)
+    ran = case.tier3_undropped()[name]()
+    assert left_out == [frozenset(case.STACK_BAND)], left_out
+    assert vdi.make_image(registered[3]) == vdi.make_image(ran.staged), f"{name}: the companion ran another machine"
+    assert ran.delivered == test_boot_snapshot.delivered_of(registered), f"{name}: the companion took other deliveries"
 
 
 # ---- THE ODD-ACCESS SURFACE: what a 68000 bombs on and this oracle's CPU completes ------------------------------------

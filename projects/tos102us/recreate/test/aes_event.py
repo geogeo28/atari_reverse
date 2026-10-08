@@ -96,6 +96,7 @@ import collections
 import contextlib
 import copy
 import ctypes
+import dataclasses
 import faulthandler
 import functools
 import importlib
@@ -3005,11 +3006,52 @@ class OncePerSession:
         return value
 
 
+# ---- A ROW THAT SWITCHES: what its run is taken through, beside the door calls ---------------------------------------------
+# A row whose call BLOCKS AND IS WOKEN leaves by the dispatcher and comes back by it: its interrupts are delivered
+# where the machine WAITS for one — the dispatcher's idle (`aes_switch.scheduled`: the n-th idle of the run, whichever
+# process's dispatch it is in) — and no unwatched run has that point. `Switches` is such a row's NINTH FIELD, in the
+# place a door row's `{door call: (found, wrote)}` has (`test_boot_snapshot.delivered_of`), and NEITHER A DICT NOR A
+# TUPLE: a reader that indexes it by a door call's ordinal fails where it reads (a TypeError), instead of laying an
+# idle's interrupt at a door call — and it is true with nothing delivered too, as a row that switches is one:
+#   `at_idles`  `{idle: (found, wrote)}` — as `deliveries` answers door calls; empty for a wake the dispatcher's own
+#               poll makes (a key typed ahead);
+#   `idles`     how many idles the ROM's own run makes: what every run of the row is held to, on either shore;
+#   `process`   the PD of the process that makes the call: every other one the dispatcher enters is FOREIGN;
+#   `at_calls`  the row's door-call deliveries, where it has any too.
+# The watch that takes a run through one is `aes_switching.Switching` (imported where it is asked for: that module
+# imports this one); `SWITCHING_ROWS` is the registered rows' register, as `INTERRUPTED_ROWS` is the door's.
+@dataclasses.dataclass(frozen=True)
+class Switches:
+    at_idles: dict
+    idles: int
+    process: int
+    at_calls: dict = dataclasses.field(default_factory=dict)
+
+    def _replace(self, **changed):
+        """This, with `changed` — a row's own spelling (`namedtuple._replace`) for a record that is no tuple."""
+        return dataclasses.replace(self, **changed)
+
+
+SWITCHING_ROWS = {}
+
+
+def switching(delivered):
+    """`delivered` (a row's ninth field) as the `Switches` it is, or None for a row whose run switches nowhere."""
+    return delivered if isinstance(delivered, Switches) else None
+
+
+def at_door_calls(delivered):
+    """...and the row's `{door call: (found, wrote)}`, whichever it is."""
+    return delivered.at_calls if isinstance(delivered, Switches) else (delivered or {})
+
+
 def rederived(row_name):
     """The deliveries of the registered row `row_name` DERIVED AGAIN, over the snapshot as it stands now
     (`harness.set_base_image`): the interrupts' own code run afresh — for the sweep that fills the snapshot's MASK with
     noise, where an interrupt reading a masked byte must show it (the deliveries derived over the pristine snapshot,
-    laid as they are, would hide it)."""
+    laid as they are, would hide it). A row that switches is derived again by its own register (`SWITCHING_ROWS`)."""
+    if row_name in SWITCHING_ROWS:
+        return SWITCHING_ROWS[row_name].rederived()
     assert row_name in INTERRUPTED_ROWS, f"{row_name}: no row taken through interrupts registered by that name"
     row = INTERRUPTED_ROWS[row_name]
     return deliveries(row.name, row.arguments, row.pokes, row.interrupts, row.budget)
@@ -4042,7 +4084,11 @@ def delivering(delivered, entered_at=None):
     """A watch over a run of a row whose interrupts are DELIVERED (`register_interrupted`): `delivered` laid at its door
     calls, each checked first, and a call that reaches the dispatcher refused by name (`DoorStops`) — the ROM's replays
     (`replayed`) and Tier 3's original. `entered_at`: the PC the run starts at — a door entry's own row makes no door
-    call of its entry (`DoorStops.entered_at`)."""
+    call of its entry (`DoorStops.entered_at`). A row that SWITCHES (`Switches`) is watched at the dispatcher instead
+    (`aes_switching.the_rom_s`): its interrupts laid at its idles, the processes its dispatcher enters followed."""
+    if switching(delivered):
+        import aes_switching            # ...which imports this module
+        return aes_switching.the_rom_s(delivered, entered_at)
     return DoorStops(ENTRIES, ROM_RETURNS, blocks=True, delivered=delivered, entered_at=entered_at)
 
 
@@ -4051,9 +4097,11 @@ def replayed(image, entry, delivered, regs=None, io_seed=None):
     checks each), answered as `emu.run` answers — `(final, writes, regs)` (`rom_bench.watched_original`) — and refused
     as it is: what an unwatched run of the same row would be, for every consumer that runs a row's ORIGINAL (the
     snapshot's sweeps)."""
-    final, writes, regs_out = rom_bench.watched_original(bytearray(image), entry, delivering(delivered, entry), regs,
-                                                         io_seed=io_seed)
+    watch = delivering(delivered, entry)
+    final, writes, regs_out = rom_bench.watched_original(bytearray(image), entry, watch, regs, io_seed=io_seed)
     rom_bench.vet_the_run_just_made(f"the ROM's replay of {entry:#x}")
+    if switching(delivered):            # ...and a row that switches ended as it says: its idles made, its deliveries laid
+        watch.vet_ended(f"the ROM's replay of {entry:#x}")
     return final, writes, regs_out
 
 
