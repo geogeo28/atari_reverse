@@ -1900,6 +1900,13 @@
 #define AES_ROM_SAVESTATE         0xfe38d4
 #define AES_ROM_SWITCHTO          0xfe3930   /* `rte` into another process's UDA: never returns */
 #define AES_ROM_GOTOPGM           0xfe38b0   /* `rte` into the basepage's text, user mode */
+/* ...the interrupt-mask brackets beside them (hand 68000; Line-F words $f740 / $f744 / $f890 / $f898), and where a run
+ * that follows switchto into another context ends: its `rte`. */
+#define AES_ROM_SPL7_SAVE         0xfe3890   /* the SR parked in AES_SR_SPL, the mask raised to 7 */
+#define AES_ROM_SPL_RESTORE       0xfe389c   /* ...and the SR back from it */
+#define AES_ROM_CLI               0xfe38a4   /* the mask raised to 7, nothing parked (gem_main's) */
+#define AES_ROM_STI               0xfe38aa   /* ...and cleared to 0 */
+#define AES_ROM_SWITCHTO_RTE      0xfe395a   /* switchto's last instruction: the resumed process's frame under SP */
 #define AES_ROM_DISP              0xfe4d9e   /* Alcyon: savestate, the lists, forker/idle, switchto */
 #define AES_ROM_DISP_ACT          0xfe4b74
 #define AES_ROM_MWAIT_ACT         0xfe4b9c
@@ -1910,6 +1917,13 @@
 /* ...disp's own LOOP, where the snapshot waits: forker, then idle, until a process is ready; then switchto the first
  * ready one ($fe4dda..$fe4dfe). The event door's machines are woken by running it (`test/aes_event.py`). */
 #define AES_ROM_DISP_LOOP         0xfe4dda
+/* ...idle's own loop, where the machine WAITS FOR AN INTERRUPT: its chkkbd call, reached with nothing ready, nothing
+ * woken and nothing queued ($fe4d70) — and disp's call of switchto, after which it runs no instruction: the Line-F
+ * return behind it ($fe4e00) is dead. */
+#define AES_ROM_IDLE_LOOP         0xfe4d70
+#define AES_ROM_IDLE_POLLED       0xfe4d72   /* ...and the instruction its chkkbd comes back to */
+#define AES_ROM_DISP_SWITCHTO     0xfe4dfe
+#define AES_ROM_DISP_END          0xfe4e00
 /* The FORK FUNCTIONS: forkq queues one by its ROM address, an immediate (`test/aes.py`'s FORK_FUNCTION_IMMEDIATES). */
 #define AES_ROM_TCHANGE           0xfe4e02   /* the timer's */
 #define AES_ROM_KCHANGE           0xfe5180   /* the keyboard's */
@@ -1931,6 +1945,7 @@
 #define AES_ROM_DRAWRAT           0xfed412   /* (x, y): D0, D1 := the words, `jsr (*$947a)` */
 #define AES_ROM_JUSTRETF          0xfed424   /* an `rts`: what AES_DRWADDR holds while no cursor routine is saved */
 #define AES_ROM_EV_MWAIT          0xfe40b2   /* PD_EVWAIT := mask; blocks through dsptch unless PD_EVFLG has it */
+#define AES_ROM_EV_MWAIT_RESUMED  0xfe40e0   /* ...past its call of dsptch: where a process that waited resumes, woken */
 /* A WAIT QUEUED (gemasync's iasync and geminput's five kinds, Alcyon, `aes/evwait.h`, read:), and the event library's
  * two helpers ev_multi shares with the single waits (Alcyon, `aes/evlib.h`, read:). */
 #define AES_ROM_IASYNC            0xfe40ec   /* (code, parameter): an EVB for rlr, a free event bit, the wait of `code` queued */

@@ -247,6 +247,11 @@
 #define HOST_SLOT_AES_AMOUSE_MOBLK_BYTES 10      /* EV_MOBLK_WORDS words                                         */
 #define HOST_SLOT_AES_AP_RDWR_QPB       0x7f7e0  /* $fe65c4's 10(a6) up: its arguments after the code            */
 #define HOST_SLOT_AES_AP_RDWR_QPB_BYTES 72       /* HOST_PROCESSES (9) frames of AP_RDWR_QPB_BYTES (8): evlib.c holds it */
+/* ...and ev_multi's own QPB (`aes/evmulti.h`): where it waits for a MESSAGE among other events it builds the QPB in
+ * its own frame — the running process, sixteen bytes, the caller's buffer — and hands iasync its address ($fe6b40..
+ * $fe6b54), which the pipe's wait keeps as ap_rdwr's is kept. A SLOT PER PROCESS for the same reason. */
+#define HOST_SLOT_AES_EV_MULTI_QPB      0x7f730  /* $fe6998's -8(a6) up: the process, the length, the buffer     */
+#define HOST_SLOT_AES_EV_MULTI_QPB_BYTES 72      /* HOST_PROCESSES (9) frames of the QPB's eight bytes: evmulti.c holds it */
 /* ...and the posts' (`aes/evinput.h`): the rectangle inorout unpacks from a mouse wait's EVB (to inside). */
 #define HOST_SLOT_AES_INOROUT_RECT      0x7f7d0  /* $fe54b8's -8(a6) up                                          */
 #define HOST_SLOT_AES_INOROUT_RECT_BYTES 8       /* INOROUT_RECT_BYTES                                           */
@@ -337,6 +342,8 @@ enum host_slot {
     HOST_SLOT_ID_AES_AMOUSE_MOBLK,
     HOST_SLOT_ID_AES_AP_RDWR_QPB,     /* a slot per process: HOST_PROCESSES flags, this one process 0's */
     HOST_SLOT_ID_AES_AP_RDWR_QPB_LAST = HOST_SLOT_ID_AES_AP_RDWR_QPB + HOST_PROCESSES - 1,
+    HOST_SLOT_ID_AES_EV_MULTI_QPB,    /* a slot per process too */
+    HOST_SLOT_ID_AES_EV_MULTI_QPB_LAST = HOST_SLOT_ID_AES_EV_MULTI_QPB + HOST_PROCESSES - 1,
     HOST_SLOT_ID_AES_INOROUT_RECT,
     HOST_SLOT_ID_COUNT                /* not a slot: how many there are */
 };

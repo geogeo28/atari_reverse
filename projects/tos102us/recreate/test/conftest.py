@@ -38,7 +38,8 @@ started: an attribute a test patches on the fork's side (`arm_candidate`, a refu
 own fork and never by the zygote's (measured: a patched arming that raises — exit 8 from the worker's fork, 0 from the
 zygote's, where the patch never ran). So for every such test BOTH are put out of use, for the test alone
 (`derived.DERIVED_OFF`, `aes_event.ZYGOTE_SIDELINED`): what it asks is made, and forked, under its patches. A test
-that MEANS the zygote while it patches the worker's side says so (`aes_event.ZYGOTE_SIDELINED` back to False).
+that MEANS the zygote while it patches the worker's side says so (`aes_event.ZYGOTE_SIDELINED` set to
+`aes_event.MEANT_UNDER_PATCHES`).
 
 THE TREE'S KEY (`derived.py`) names the tree THIS PROCESS IS MADE OF, so `derived` is this file's FIRST import: it
 stamps the tree's files as the process finds them, before any module that derives is read. What was read before it

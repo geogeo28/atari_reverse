@@ -52,15 +52,29 @@ uint16_t aes_ev_mwait(uint8_t *image, int16_t mask)
     return bus_word(image, running(image, PD_EVFLG));
 }
 
-/* $fe40ec — iasync: an EVB taken off the free list (get_evb, whose "none" is not tested) and put at the head of the
- * running process's, naming that process, on no wait list; given the first event bit none of the process's EVBs
- * holds — the bit shifted IN THE EVB, so with all sixteen held it leaves the word 0 — and that bit added to the
+/* PAST THE LAST EVB — a ROM defect, refused by name OFF TARGET ALONE. get_evb answers 0 when no EVB is free and
+ * iasync does not test it: the ROM builds the wait in "the EVB at address 0". On a 68000 the first of those stores
+ * (EVB_NEXT, at 0..3: ROM) is a BUS ERROR; the oracle's model lets it through and writes on over the exception
+ * vectors — a state no machine reaches, which a differential would then hold the C to. (The low-memory twin of
+ * `m68k_idioms.h`'s store above RAM.) The target build keeps the ROM's plain stores, and takes the bus error it takes.
+ * UNREACHABLE BY COUNTING on the machine as it boots: fifteen EVBs and five more with each accessory ($fe4536), where
+ * a blocked call asks six at most (ev_multi) and the screen manager's own asks three. */
+#define NO_EVB_FREE  "iasync: no EVB is free (get_evb answers none, which the ROM does not test: it builds the wait " \
+                     "at address 0 — a bus error on a 68000, where the oracle writes on over the exception vectors)"
+
+/* $fe40ec — iasync: an EVB taken off the free list (get_evb, whose "none" is not tested: above) and put at the head
+ * of the running process's, naming that process, on no wait list; given the first event bit none of the process's
+ * EVBs holds — the bit shifted IN THE EVB, so with all sixteen held it leaves the word 0 — and that bit added to the
  * process's. Then the wait of `code` queued over `parameter` (IASYNC_*; any other code queues nothing). Answers the
  * EVB's event bit, read after the wait is queued. */
 uint16_t aes_iasync(uint8_t *image, int16_t code, uint32_t parameter)
 {
     uint32_t evb = aes_get_evb(image);
 
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    if (!evb)
+        recreate_not_reconstructed(NO_EVB_FREE);
+#endif
     set_bus_long(image, evb + EVB_NEXT, bus_long(image, running(image, PD_EVLIST)));
     set_bus_long(image, running(image, PD_EVLIST), evb);
     set_bus_long(image, evb + EVB_PD, be32(image + AES_RLR));

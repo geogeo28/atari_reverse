@@ -726,8 +726,8 @@ def test_fs_input_over_an_empty_path_is_refused_by_name_where_the_rom_s_run_firs
     replayed = fsl.replay_machine(machine, script)
     final, _writes, _regs = aes_event.stopped_at(make_image(aes.staged(INPUT, ARGUMENTS, replayed)),
                                                  addrs.AES_ROM_FS_INPUT, addrs.AES_FS_INPUT_NO_READ)
-    bind = aes_event.child_binding(objects=True, before=aes_event.CHILD_DOORS[INPUT])
-    returncode, stderr, image = aes_event.refusal(INPUT, replayed, ARGUMENTS, bind=bind)
+    returncode, stderr, image = aes_event.door_child(INPUT, ARGUMENTS, replayed, objects=True,
+                                                     before=aes_event.CHILD_DOORS[INPUT])
     assert returncode != 0 and SPIN_REFUSAL in stderr
     differ = aes_event.differing(image, final)
     assert not differ, f"{len(differ)} bytes differ from the ROM's run at its first pass: {_shown(differ)}"
@@ -792,9 +792,9 @@ def test_the_close_box_over_a_root_with_no_drive_never_returns_once_a_long_forma
     stale_replayed = fsl.replay_machine(after_a_formatted_text(replayed, template), script)
     delivered = aes_event.deliveries(INPUT, ARGUMENTS, replayed, interrupts, session.budget)
     _no_calls, replayed_passes = fsl.looping(stale_replayed, first_pass_that_repeats, budget=SHORT, delivered=delivered)
-    bind = aes_event.child_binding(objects=True, interrupts=delivered, before=aes_event.CHILD_DOORS[INPUT])
-    returncode, stderr, image = aes_event.refusal(INPUT, stale_replayed, ARGUMENTS, bind=bind,
-                                                  seconds=aes_event.CHILD_RETURN_SECONDS)
+    returncode, stderr, image = aes_event.door_child(INPUT, ARGUMENTS, stale_replayed, objects=True, interrupts=delivered,
+                                                     before=aes_event.CHILD_DOORS[INPUT],
+                                                     seconds=aes_event.CHILD_RETURN_SECONDS)
     assert returncode != 0 and SPIN_REFUSAL in stderr
     differ = aes_event.differing(image, fsl.whole_image(replayed_passes[first_pass_that_repeats][1]))
     assert not differ, f"{len(differ)} bytes differ from the ROM's run at that pass: {_shown(differ)}"

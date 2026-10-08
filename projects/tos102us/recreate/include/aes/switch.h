@@ -22,8 +22,9 @@
  *
  * ON TARGET the brackets are the ROM's own two instructions each, inline (no call: the ROM's `spl7_save` is a Line-F
  * call round the same two, and psetup's is inline already). dsptch has no inline form — it needs the caller's return
- * address under an rte frame — and is the entry `aes_dsptch` of the switch's own `.S` (`src/aes/switch.S`: the ROM's
- * twenty bytes, its `jmp` into the ROM's disp until the scheduler ships), declared here.
+ * address under an rte frame — and is the entry `aes_dsptch` of the switch's own `.S` (`src/aes/switch.S`: the whole
+ * switch — dsptch's twenty bytes, whose `jmp` lands on the build's own disp `aes_rom_disp`, savestate, switchto, the
+ * mask brackets), declared here.
  */
 #ifndef TOS102US_AES_SWITCH_H
 #define TOS102US_AES_SWITCH_H

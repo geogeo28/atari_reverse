@@ -22,7 +22,7 @@ own in `$947a` (two: a poked field and its code). A recording PLAYED BACK is the
 
 WHAT forker CALLS: each entry's code is the fork function's ROM address (what the ROM's interrupts queued); the
 case's binding of the register-carrying hook serves it by the candidate's own core over the entry's data
-(`aes_evinput.HANDED_ROUTINES`), so a forker case runs kchange / bchange / mchange / tchange and everything under
+(`aes_event.handed_routines`), so a forker case runs kchange / bchange / mchange / tchange and everything under
 them in C — the whole event of an idle, against the ROM's.
 """
 import struct
@@ -217,15 +217,15 @@ def test_forker_calls_a_fork_function_with_no_process_running_and_its_busy_byte_
     arrival, inside = evinput.at(KEY, FORKER, 1), before(evinput.at(KEY, KCHANGE))
     held = []
 
-    def watching(name):
-        function = evinput._fork_function(name)
-
+    def watching(function):
         def effect(buf, registers):
             held.append((bytes(buf[aes.AES_RLR:aes.AES_RLR + aes.LONG_BYTES]), buf[aes.AES_FORKER_BUSY]))
             function(buf, registers)
         return effect
-    handed = {**evinput.HANDED_ROUTINES, **{getattr(addrs, name): (b"", watching(name)) for name in evinput.FORK_FUNCTIONS}}
-    run(arrival, hook=aes.doors(evinput.vdi_hook, aes.alcyon_object_hook(handed)))
+    served = aes_event.handed_routines()
+    handed = {**served, **{getattr(addrs, name): (b"", watching(served[getattr(addrs, name)][1]))
+                           for name in evinput.FORK_FUNCTIONS}}
+    run(arrival, hook=aes.doors(aes_event.vdi_hook, aes.alcyon_object_hook(handed)))
     the_rom_s = (bytes(inside[aes.AES_RLR:aes.AES_RLR + aes.LONG_BYTES]), inside[aes.AES_FORKER_BUSY])
     assert the_rom_s == (aes.AES_RLR_IN_FORKER.to_bytes(aes.LONG_BYTES, "big"), 1), "the premise: the ROM's, inside"
     assert held and set(held) == {the_rom_s}
@@ -685,6 +685,8 @@ ROWS = (                                # each routine's WORST first (measured r
     ("a full queue of moves", OVERFLOW, FORKER, 0),
     ("nothing queued", KEY, FORKER, 0),
     ("a tick recorded", MERGED, FORKER, 0),
+    ("the second tick, merged into the first", MERGED, FORKER, 2),
+    ("Control-backslash ends the recording", END_KEY, FORKER, 1),
     ("no key", KEY, CHKKBD, 1),                                                                  # 0.80; 0.69..0.70
     ("a key polled and queued", KEY, CHKKBD, 0),
     ("no key, the shift keys changed", "the shift key alone", CHKKBD, 0),

@@ -28,7 +28,7 @@ import routines
 from case import merge_pokes
 from isr import blob as bench     # the cross-compiled blob, loaded once per process (`isr.blob`)
 from layouts import LONG_BYTES, WORD_BYTES
-from opcodes import CLEAR_REGISTER, PUSH_RETURN_PC, PUSH_STACK_LONG, RTS
+from opcodes import CLEAR_REGISTER, JSR_ABSOLUTE_LONG, PUSH_RETURN_PC, PUSH_STACK_LONG, RTE, RTS
 # The plain caller and the stand-in routine a caller's cost is measured over sit in bands of the VDI's staged window
 # (`vdi.SPAN`), where the first transcriptions were staged: one image serves every case, so any component's
 # transcription is entered through them.
@@ -343,6 +343,114 @@ def assert_transcribed(region, *, relocated=None):
     assert not missed, f"relocation(s) at {', '.join(f'${at:x}' for at in missed)} fall inside another word of the walk"
 
 
+# THE STREAM KIND — "the ROM's instruction stream with its Line-F call words as `jsr`s": how a routine Alcyon COMPILED
+# ships as assembly where no compiled function can keep its contract (the AES's disp, `src/aes/switch.S`: savestate
+# reads its caller's frame through disp's own A6 and hands it back another stack). Such a routine cannot be a byte-
+# exact transcription — its calls are one-word Line-F exceptions through the ROM's own table, which would run the
+# ROM's code from inside our build — so it is held INSTRUCTION BY INSTRUCTION instead:
+#   - a Line-F CALL word must be NAMED (`CallWord`): the ROM routine its table entry reaches, and the blob symbol our
+#     stream `jsr`s in its place — an absolute `jsr`, six bytes for the ROM's two. A call word nobody named, a named
+#     address that holds none, or a Line-F RETURN (an Alcyon exit: no `jsr` stands for it) is refused;
+#   - a BRANCH's displacement is the ROM's own target followed to where OUR stream holds that instruction (a branch
+#     across a call site is four bytes longer or shorter per site crossed), its opcode byte the ROM's;
+#   - every other instruction is the ROM's bytes, equal — and may not address PC-relatively (a displacement no rule
+#     here follows);
+#   - the stream ends where the declaration says, and our symbol's SIZE is exactly what that gives.
+CallWord = namedtuple("CallWord", "routine symbol")
+Stream = namedtuple("Stream", "lo hi symbol calls")
+STREAMS = []
+JSR_OPCODE_BYTES = WORD_BYTES
+JSR_BYTES = JSR_OPCODE_BYTES + LONG_BYTES
+BRANCH_OPCODE_MASK = 0xF0               # Bcc / BRA / BSR: the opcode word's top nibble is 6
+BRANCH_OPCODE = 0x60
+BRANCH_WORD_DISPLACEMENT = 0x00         # the low byte that says "the displacement is the next word"
+BRANCH_LONG_DISPLACEMENT = 0xFF         # ...and "the next longword" (68020: no 68000 stream holds one)
+
+
+def stream(lo, hi, symbol, calls):
+    """Declare the ROM instructions `lo`..`hi` as a STREAM the blob's `symbol` holds, its Line-F call words `calls`
+    (`{ROM address: CallWord}`) — at import, as a `pinned_region` is declared."""
+    declared = Stream(lo, hi, symbol, dict(calls))
+    STREAMS.append(declared)
+    return declared
+
+
+def _branch_target(at, opcode, extension):
+    """The ROM address a branch at `at` goes to, and how many bytes its displacement is — or None for an instruction
+    that is no branch."""
+    if opcode >> 8 & BRANCH_OPCODE_MASK != BRANCH_OPCODE:
+        return None
+    short = opcode & 0xFF
+    assert short != BRANCH_LONG_DISPLACEMENT, f"${at:x} is a branch with a 32-bit displacement: no 68000 instruction"
+    if short == BRANCH_WORD_DISPLACEMENT:
+        return at + WORD_BYTES + int.from_bytes(extension, "big", signed=True), WORD_BYTES
+    return at + WORD_BYTES + int.from_bytes(bytes([short]), "big", signed=True), 1
+
+
+def _stream_instruction(at, length, text, placed, declared, line_f, blob):
+    """What `blob`'s stream must hold for the ROM instruction at `at` (`length` bytes, objdump's `text`; None: a
+    Line-F word), given where every ROM instruction lies in it (`placed`)."""
+    theirs = bytes(BASE_IMAGE[at:at + length])
+    opcode = int.from_bytes(theirs[:WORD_BYTES], "big")
+    if text is None:
+        assert not opcode & line_f.LINE_F_RETURN_BIT, (
+            f"${at:x} is a Line-F RETURN (${opcode:04x}) inside the stream ${declared.lo:x}..${declared.hi:x}: an "
+            f"Alcyon exit, which no `jsr` stands for — end the stream before it, and prove it dead")
+        call = declared.calls[at]
+        entry_at = line_f.LINE_F_TABLE + (opcode & line_f.LINE_F_INDEX_MASK)
+        reached = int.from_bytes(bytes(BASE_IMAGE[entry_at:entry_at + LONG_BYTES]), "big")
+        assert reached == getattr(addrs, call.routine), (
+            f"${at:x}'s call word ${opcode:04x} reaches ${reached:x} through the ROM's table, not {call.routine}")
+        return JSR_ABSOLUTE_LONG + blob.entry(call.symbol).to_bytes(LONG_BYTES, "big")
+    branch = _branch_target(at, opcode, theirs[WORD_BYTES:])
+    if branch:
+        target, displacement_bytes = branch
+        assert target in placed, (
+            f"${at:x} branches to ${target:x}, which is no instruction of the stream ${declared.lo:x}..${declared.hi:x}")
+        displacement = placed[target] - (placed[at] + WORD_BYTES)
+        if displacement_bytes == WORD_BYTES:
+            return theirs[:WORD_BYTES] + displacement.to_bytes(WORD_BYTES, "big", signed=True)
+        encoded = displacement.to_bytes(1, "big", signed=True)      # raises past a byte: the branch no longer fits
+        assert encoded[0] not in (BRANCH_WORD_DISPLACEMENT, BRANCH_LONG_DISPLACEMENT), (
+            f"${at:x}'s branch would need the displacement {displacement}, which a short branch cannot spell")
+        return theirs[:1] + encoded
+    assert "%pc@" not in text, f"${at:x} ({text}) addresses PC-relatively: a displacement the stream kind does not follow"
+    return theirs
+
+
+def assert_stream(declared, blob=None):
+    """`declared.symbol` of `blob` (the bench blob, by default) against the ROM's instructions
+    `declared.lo`..`declared.hi`, one by one: the rule above. Every named call word must be met, and every Line-F
+    word met must be named."""
+    import rom_data                     # here: `rom_data` imports this module
+
+    blob = blob or bench()
+    assert declared in STREAMS, f"${declared.lo:x}..${declared.hi:x} is held as a stream no battery declares (`stream`)"
+    line_f = rom_data.linef_dis
+    listed = line_f.sweep(declared.lo, declared.hi)
+    undecoded = [f"${at:x}" for at, _length, text in listed if text == line_f.UNDECODED]
+    assert not undecoded and sum(length for _at, length, _text in listed) == declared.hi - declared.lo, (
+        f"the stream ${declared.lo:x}..${declared.hi:x} does not decode whole (undecoded at {undecoded})")
+    words = {at for at, _length, text in listed if text is None}
+    assert words == set(declared.calls), (
+        f"the stream's Line-F words are at {sorted(map(hex, words))}, its named calls at "
+        f"{sorted(map(hex, declared.calls))}: every one is named, and nothing else is")
+    start = blob.entry(declared.symbol)
+    placed, at_ours = {}, start
+    for at, length, text in listed:
+        placed[at] = at_ours
+        at_ours += JSR_BYTES if text is None else length
+    for at, length, text in listed:
+        expected = _stream_instruction(at, length, text, placed, declared, line_f, blob)
+        ours = bytes(blob.blob[placed[at] - blob.base:placed[at] - blob.base + len(expected)])
+        assert ours == expected, (
+            f"the stream of ${at:x} ({text or 'a Line-F call'}) holds {ours.hex()}, not {expected.hex()}")
+    sized = {symbol.name: symbol.size for symbol in symbol_table(blob.elf)}[declared.symbol]
+    assert sized == at_ours - start, (
+        f"{declared.symbol} is {sized} bytes, the stream ${declared.lo:x}..${declared.hi:x} with its "
+        f"{len(declared.calls)} calls as `jsr`s {at_ours - start}: an instruction more, or the stream cut short")
+
+
 def transcription_pokes(name, pokes, caller=PLAIN_CALLER):
     """`pokes` with the staged caller and the ROM routine it enters on the ORIGINAL's side."""
     return merge_pokes(pokes, {caller.at: caller.stub, abi.FIRST_ARG: struct.pack(">I", getattr(addrs, name))})
@@ -422,8 +530,48 @@ def switch_sources():
     return _listed_sources("SWITCH_SOURCES")
 
 
-SWITCH_ENTRIES = globl_entries(switch_sources())
-assert SWITCH_ENTRIES, f"{TARGET_MK}'s SWITCH_SOURCES define no `.globl` this parser reads"
+SWITCH_GLOBLS = globl_entries(switch_sources())
+assert SWITCH_GLOBLS, f"{TARGET_MK}'s SWITCH_SOURCES define no `.globl` this parser reads"
+# ...and THE TABLE OF THE KIND, one row per entry: the ROM routine it is, its length in the ROM, and its EXITS — the
+# blob symbols its bytes name where the ROM's name the ROM's own code (a relocation of its region's pin, a call word
+# of its stream). NO entry of the kind reaches the AES's ROM text: an exit is a symbol of our build, always.
+# `test_aes_switch.py` / `test_aes_irq.py` hold each row to its pin, and the rows to the sources' `.globl`s.
+SwitchEntry = namedtuple("SwitchEntry", "rom bytes exits", defaults=(frozenset(),))
+# The glue's last routine ($fed426..$fed477: to its `rts`) — the one length of the kind no named address closes.
+TICK_GLUE_BYTES = 82
+SWITCH_REGION_END = addrs.AES_ROM_SWITCHTO_RTE + len(RTE)
+GLUE_REGION_END = addrs.AES_ROM_TICK_GLUE + TICK_GLUE_BYTES
+
+
+def _end_to_end(routines, end):
+    """`{entry: SwitchEntry}` of `routines` (`(entry, ROM address, exits)`, in the ROM's order) LAID END TO END: each
+    as long as the distance to the next, the last to `end` — a region's lengths are its routines' addresses."""
+    starts = [rom for _entry, rom, _exits in routines] + [end]
+    return {entry: SwitchEntry(rom, following - rom, frozenset(exits))
+            for (entry, rom, exits), following in zip(routines, starts[1:])}
+
+
+SWITCH_ENTRIES = {
+    # gemdosif's switch, `src/aes/switch.S` ($fe387c..$fe395b): byte-exact but for dsptch's `jmp`, into our disp
+    **_end_to_end((("aes_dsptch", addrs.AES_ROM_DSPTCH, {"aes_rom_disp"}),
+                   ("aes_rom_spl7_save", addrs.AES_ROM_SPL7_SAVE, ()), ("aes_rom_spl_restore", addrs.AES_ROM_SPL_RESTORE, ()),
+                   ("aes_rom_cli", addrs.AES_ROM_CLI, ()), ("aes_rom_sti", addrs.AES_ROM_STI, ()),
+                   ("aes_rom_gotopgm", addrs.AES_ROM_GOTOPGM, ()), ("aes_rom_savestate", addrs.AES_ROM_SAVESTATE, ()),
+                   ("aes_rom_switchto", addrs.AES_ROM_SWITCHTO, ())), SWITCH_REGION_END),
+    # gemdisp's disp, the same file: the ROM's stream to its last call (`stream`), its six call words `jsr`s
+    "aes_rom_disp": SwitchEntry(addrs.AES_ROM_DISP, addrs.AES_ROM_DISP_END - addrs.AES_ROM_DISP,
+                                frozenset({"aes_rom_savestate", "aes_rom_switchto", "disp_to_aes_disp_act",
+                                           "disp_to_aes_mwait_act", "disp_to_aes_forker", "disp_to_aes_idle"})),
+    # the interrupts' glue, `src/aes/irq.S` ($fed3be..$fed477): byte-exact but for its calls of C and the two fork
+    # functions it pushes by value
+    **_end_to_end((("aes_rom_button_glue", addrs.AES_ROM_BUTTON_GLUE, {"aes_b_click_alcyon"}),
+                   ("aes_rom_motion_glue", addrs.AES_ROM_MOTION_GLUE, {"aes_forkq_alcyon", "aes_mchange_fork"}),
+                   ("aes_rom_drawrat", addrs.AES_ROM_DRAWRAT, ()), ("aes_rom_justretf", addrs.AES_ROM_JUSTRETF, ()),
+                   ("aes_rom_tick_glue", addrs.AES_ROM_TICK_GLUE, {"aes_forkq_alcyon", "aes_tchange_fork", "aes_b_delay_alcyon"})),
+                  GLUE_REGION_END),
+}
+assert set(SWITCH_ENTRIES) == SWITCH_GLOBLS, (
+    f"the switch's table and its sources' `.globl`s disagree: {sorted(set(SWITCH_ENTRIES) ^ SWITCH_GLOBLS)}")
 
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
@@ -529,8 +677,9 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_pd_match", "aes_movs"), ("aes_pd_match", "aes_streq"), ("aes_fpdnm", "aes_movs"), ("aes_fpdnm", "aes_streq"),
     ("aes_doq", "aes_lbcopy"), ("aes_doq", "aes_rc_union"), ("aes_ap_find", "aes_lstcpy"),
     ("aes_getpd", "aes_uda_insuper"), ("aes_pstart", "aes_psetup"),
-    # the waits (`src/aes/evwait.c`, `evlib.c`): amouse's copy of its MOBLK, ev_timer's milliseconds into ticks
-    ("aes_amouse", "aes_lbcopy"), ("aes_ev_timer", "aes_ldiv"),
+    # the waits (`src/aes/evwait.c`, `evlib.c`, `evmulti.c`): amouse's copy of its MOBLK, ev_timer's and ev_multi's
+    # milliseconds into ticks
+    ("aes_amouse", "aes_lbcopy"), ("aes_ev_timer", "aes_ldiv"), ("aes_ev_multi", "aes_ldiv"),
     # the fork queue (`src/aes/evfork.c`): the keyboard's and the mouse's polls through the VDI binding, the recorder's
     # copy of an entry
     ("aes_chkkbd", "aes_gsx_ncode"), ("aes_mchange", "aes_gsx_ncode"), ("aes_forker", "aes_lbcopy"),
@@ -585,7 +734,7 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------
 # A function's name as `m68k-elf-objdump` labels it, the one GCC split off it (`name.part.0`, `.constprop.0`,
 # `.isra.0`) folded back into it, and an offset into it (`name+0x12`) dropped.
-_LISTED_FUNCTION = re.compile(r"^([0-9a-f]+) <([\w.]+)>:$")
+LISTED_FUNCTION = re.compile(r"^([0-9a-f]+) <([\w.]+)>:$")
 _LISTED_INSTRUCTION = re.compile(r"^\s+([0-9a-f]+):")
 _LISTED_REFERENCE = re.compile(r"(?:\b([0-9a-f]+) )?<([\w.]+)(?:\+0x([0-9a-f]+))?>")
 # ...and a function's address loaded as an IMMEDIATE, which objdump prints in decimal without its name:
@@ -744,14 +893,14 @@ def graph_of_listing(listing, ends, starts, origins=None):
     """`call_graph`'s reading of one `objdump -d` listing, given the symbol table's `{address: end}` sizes,
     `{address: name}` starts and `symbol_origins` — apart from the ELF so a synthetic listing can pin each rule."""
     labels = [(int(match.group(1), 16), match.group(2))
-              for match in map(_LISTED_FUNCTION.match, listing.splitlines()) if match]
+              for match in map(LISTED_FUNCTION.match, listing.splitlines()) if match]
     nodes = nodes_of_labels(labels, origins)
     nodes_of_base = {}
     for (_address, name), node in nodes.items():
         nodes_of_base.setdefault(_unsplit(name), set()).add(node)
     graph, function, end = {}, None, None
     for line in listing.splitlines():
-        start = _LISTED_FUNCTION.match(line)
+        start = LISTED_FUNCTION.match(line)
         if start:
             address = int(start.group(1), 16)
             function, end = nodes[(address, start.group(2))], ends.get(address)

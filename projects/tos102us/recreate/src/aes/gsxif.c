@@ -10,7 +10,9 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "staged_call.h"
 #include "aes/aes.h"
+#include "aes/evdisp.h"
 #include "aes/gemdosif.h"
 #include "aes/gsx.h"
 #include "aes/gsxif.h"
@@ -172,10 +174,15 @@ void aes_gsx_setmb(uint8_t *image, uint32_t button, uint32_t motion, uint32_t cu
     wr32(image + AES_OLD_MOTION, be32(image + AES_GSX_CONTRL_PTR2));
 }
 
-/* $fe883e — the AES's own: its button and motion interrupt glue (ROM code, handed as values). */
+/* $fe883e — the AES's own: its button and motion interrupt glue, CODE ADDRESSES handed as values (`pea $fed3be`,
+ * `pea $fed3e4`). OFF TARGET the ROM's own, as the ROM's: the image is the ROM's byte for byte. ON TARGET the glue
+ * this build links (`irq.S`): the vectors the VDI's mouse interrupt then calls are ours, and so is everything under
+ * them — b_click, forkq and the fork function it queues (`staged_call.h`'s ALCYON_ROUTINE; gsx_init and gsx_graphic
+ * install through here). */
 void aes_gsx_setmb_aes(uint8_t *image)
 {
-    aes_gsx_setmb(image, AES_ROM_BUTTON_GLUE, AES_ROM_MOTION_GLUE, AES_DRWADDR);
+    aes_gsx_setmb(image, ALCYON_ROUTINE(AES_ROM_BUTTON_GLUE, aes_rom_button_glue),
+                  ALCYON_ROUTINE(AES_ROM_MOTION_GLUE, aes_rom_motion_glue), AES_DRWADDR);
 }
 
 /* $fe89f8 — gsx_resetmb: the routines gsx_setmb displaced, put back. */

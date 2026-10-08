@@ -28,6 +28,8 @@ target build going wrong where a host build is right, and nothing else in this p
 import copy
 import ctypes
 import functools
+import importlib
+import inspect
 import gc
 import os
 import re
@@ -61,12 +63,15 @@ import vdi_helpers                                         # noqa: E402
 # ...and the glue generator, whose thunks mechanism (T→G) counts.
 import shipped_glue                                        # noqa: E402
 from recreate_kit import rom_bench                          # noqa: E402
-from recreate_kit.rom_bench import Measurement, RomBench   # noqa: E402
+from recreate_kit.rom_bench import Measurement             # noqa: E402
 from harness import addrs, emu, make_image                  # noqa: E402
 import opcodes                                             # noqa: E402
 import staging                                             # noqa: E402
 import test_aes_fmdo                                       # noqa: E402
 import test_boot_snapshot                                  # noqa: E402
+
+
+RomBench = tier3.RomBench               # the project's own: the kit's, the fork queue's codes relocated for our shore
 
 
 @pytest.fixture(scope="module")
@@ -885,17 +890,35 @@ def test_the_os_rule_refuses_a_shared_cost_the_two_sides_do_not_share(bench, mon
 # answering run of the battery's), and gr_watchbox, which draws (V) and waits (EV) in one row.
 EV_ROW = ("aes_gr_stilldn", "the button down, inside, waiting to enter: the rectangle")
 EV_DRAWING_ROW = ("aes_gr_watchbox", "OK, selected while inside: it rose, inside")
+# WHICH WAY THOSE ROWS REACH THEIR ONE ENTRY, ev_multi, IS THE BUILD'S (`aes_event.REBOUND`): while the ROM serves it
+# the call is a WINDOW, off both sides; once it is rebound, an arrival at the twin, in both own columns and off the
+# caller's own (the second count). Every case below is spelt for both, so a flip edits nothing here.
+THE_WAIT_IS_SERVED = addrs.AES_ROM_EV_MULTI not in aes_event.REBOUND
+# A case of the road the ROM's NESTED RUN serves an entry by — a `jsr` into the AES's text, a window. With the last
+# entry rebound there is no such call left in the build: the road is dead code, to be retired WITH these cases (the
+# skip's reason says so in every run's summary; nothing is skipped while one entry is served).
+needs_an_entry_the_rom_serves = pytest.mark.skipif(
+    aes_event.REBOUND >= frozenset(aes_event.ENTRIES),
+    reason="every door entry is rebound: no `jsr` into the AES's text is left, the door's WINDOWS are dead code — "
+           "retire them with this case")
 
 
 @pytest.mark.parametrize("key", (EV_ROW, EV_DRAWING_ROW), ids=lambda key: key[0])
 def test_a_row_through_the_event_door_is_priced_net_of_its_windows(key, dispatch, measurement_of):
-    """The ROM's ev_multi runs on both sides and is in neither's own: one window, its cycles off the ROM's AES-span
-    cycles, the whole run's ratio near 1 and the own ratio the C's."""
+    """ev_multi is in neither side's CALLER's own. Served by the ROM it runs on both sides: one window, its cycles
+    off the ROM's AES-span cycles. Rebound, it is an arrival — the ROM routine's cycles the ROM's own, the twin's
+    ours — and the caller's own is each side's own net of it (the second count). Either way the row is priced."""
     row = tier3.row_named(key)
     measured = measurement_of(row)
-    assert tier3.goes_through_the_door(row) and len(measured.door_windows) == 1
+    assert tier3.goes_through_the_door(row) == THE_WAIT_IS_SERVED and tier3.arrives_at_an_entry(row)
+    assert len(measured.door_windows) == 1 and measured.rebound_calls == (0 if THE_WAIT_IS_SERVED else 1)
+    assert (sum(measured.door_windows) > 0) == THE_WAIT_IS_SERVED
     ours, original = measured.own_cycles
     assert 0 < ours < measured.recreate_net and 0 < original < measured.original_net - sum(measured.door_windows)
+    inside_ours, inside_the_rom_s = tier3.rebound_own_of(measured)
+    assert (inside_ours > 0 and inside_the_rom_s > 0) == (not THE_WAIT_IS_SERVED)
+    caller_s, the_rom_caller_s = tier3.caller_own_cycles(measured)
+    assert 0 < caller_s <= ours and 0 < the_rom_caller_s <= original
     assert tier3.verdict(row, measured, dispatch, measurement_of) in ("net", "glue")
 
 
@@ -905,11 +928,173 @@ EV_DELAY_CYCLES = 1000
 
 def test_a_delayed_body_through_the_door_reds_its_row_while_the_whole_run_stays_under_the_bar(dispatch, measurement_of):
     """THE RED (EV) exists for: ~1,000 cycles more of gr_stilldn's C are a fraction of the event layer's run — the whole
-    ratio stays under the bar — and three times the routine's own cost."""
+    ratio stays under the bar — and three times the routine's own cost. RED WHICHEVER WAY ev_multi IS REACHED: served
+    by the ROM, its window is off both own columns and the own ratio shows the delay; REBOUND, the twin is in the
+    own column — the delay is a fraction of THAT too (the own ratio stays under the bar: the dilution the second
+    count exists for) and the CALLER's own, net of the twin's call, shows it."""
     row = tier3.row_named(EV_ROW)
-    delayed = _with_own_delay(measurement_of(row), EV_DELAY_CYCLES)
+    measured = measurement_of(row)
+    delayed = _with_own_delay(measured, EV_DELAY_CYCLES)
     assert delayed.ratio <= tier3.TIER3_FUNCTION_BAR, "the premise: the whole run hides the delay"
+    assert tier3.verdict(row, measured, dispatch, measurement_of) != "OVER", "the premise: undelayed, the row is priced"
     assert tier3.verdict(row, delayed, dispatch, measurement_of) == "OVER"
+    assert tier3.caller_own_ratio(delayed) > tier3.TIER3_FUNCTION_BAR, "the caller's own shows it, either way"
+    assert (tier3.own_ratio(delayed) > tier3.TIER3_FUNCTION_BAR) == THE_WAIT_IS_SERVED, (
+        "served, the two counts are one number; rebound, the own ratio is diluted by the twin and stays under the bar")
+
+
+# wind_update(BEG_UPDATE) over the free lock: one door call, tak_flag's, REBOUND since flip 1 — a row with a call of
+# a rebound entry in it whatever the later flips.
+A_ROW_ROUND_A_REBOUND_ENTRY = ("aes_wm_update", "the lock taken")
+
+
+def _with_a_delay_inside_its_rebound_calls(measured, cycles):
+    """`measured` with `cycles` more on OUR side, every one of them inside a rebound entry's TWIN."""
+    delayed = _with_own_delay(measured, cycles)
+    ours, the_rom_s = tier3.rebound_own_of(measured)
+    delayed.rebound_own = (ours + cycles, the_rom_s)
+    return delayed
+
+
+def test_a_row_round_a_rebound_entry_is_held_on_both_counts(dispatch, measurement_of):
+    """THE TWO COUNTS, each RED alone, on a row whose one door call is a rebound entry's: a delay in the CALLER's
+    body is the caller's own count's (the own ratio, the twin's cycles in it, may hide it); a delay in the TWIN is
+    the own ratio's (the caller's own is net of the twin: it cannot see it). Over the bar on either, the row is
+    OVER."""
+    row = tier3.row_named(A_ROW_ROUND_A_REBOUND_ENTRY)
+    measured = measurement_of(row)
+    assert measured.rebound_calls == 1 and all(inside > 0 for inside in tier3.rebound_own_of(measured))
+    ours, the_rom_s = measured.own_cycles
+    assert tier3.caller_own_cycles(measured) == tuple(
+        own - inside for own, inside in zip((ours, the_rom_s), tier3.rebound_own_of(measured)))
+    assert tier3.counts_within_bar(measured) and tier3.verdict(row, measured, dispatch, measurement_of) != "OVER"
+    caller_s, the_rom_caller_s = tier3.caller_own_cycles(measured)
+    # ...the smallest delay that takes each count over the bar, and no further: the other count still under it.
+    in_the_caller = int(tier3.TIER3_FUNCTION_BAR * the_rom_caller_s) - caller_s + 1
+    in_the_twin = int(tier3.TIER3_FUNCTION_BAR * the_rom_s) - ours + 1
+    assert 0 < in_the_caller < in_the_twin, "the premise: the caller's body is the smaller part of the row"
+    late_caller = _with_own_delay(measured, in_the_caller)
+    assert tier3.own_ratio(late_caller) <= tier3.TIER3_FUNCTION_BAR < tier3.caller_own_ratio(late_caller)
+    assert tier3.verdict(row, late_caller, dispatch, measurement_of) == "OVER"
+    late_twin = _with_a_delay_inside_its_rebound_calls(measured, in_the_twin)
+    assert tier3.caller_own_ratio(late_twin) == tier3.caller_own_ratio(measured) <= tier3.TIER3_FUNCTION_BAR
+    assert tier3.own_ratio(late_twin) > tier3.TIER3_FUNCTION_BAR
+    assert tier3.verdict(row, late_twin, dispatch, measurement_of) == "OVER"
+    line = tier3._through_the_os_line(measured, 0)
+    assert (f"the caller's own, net of them: {caller_s} against {the_rom_caller_s}, "
+            f"{tier3.caller_own_ratio(measured):.2f}") in line
+
+
+def _with_thunks(measured, glue, inside_the_calls):
+    """`measured` as a run would read whose thunks cost `glue` cycles, `inside_the_calls` of them inside its calls of
+    rebound entries."""
+    with_thunks = copy.copy(measured)
+    with_thunks.glue_cycles, with_thunks.rebound_glue = glue, inside_the_calls
+    return with_thunks
+
+
+def test_a_thunk_is_the_caller_s_or_the_entry_s_by_the_side_of_the_call_it_ran_on(dispatch, measurement_of):
+    """THE `glue` VERDICT ON THE SECOND COUNT. RED before the caller's count had its own thunks (the second count was
+    net of ALL the row's thunks, whoever spent them: a transcribed core the CALLER reaches through a generated thunk
+    cost the caller's count nothing): thunk cycles INSIDE a rebound entry's call are the entry's, and the caller's
+    count never sees them; the SAME cycles OUTSIDE the calls are the caller's own, counted back onto its second
+    count — over the bar with them and under it without, the row is `glue`, as a (V) row is on its first."""
+    row = tier3.row_named(A_ROW_ROUND_A_REBOUND_ENTRY)
+    measured = measurement_of(row)
+    caller_s, the_rom_caller_s = tier3.caller_own_cycles(measured)
+    thunks = int(tier3.TIER3_FUNCTION_BAR * the_rom_caller_s) - caller_s + 1
+    assert tier3.own_ratio_with_glue(_with_thunks(measured, thunks, 0)) <= tier3.TIER3_FUNCTION_BAR, (
+        "the premise: on the first count the same thunks stay under the bar — the twin's cycles dilute them")
+    in_the_twin = _with_thunks(measured, thunks, thunks)
+    assert tier3.caller_glue_cycles(in_the_twin) == 0
+    assert tier3.caller_own_ratio_with_glue(in_the_twin) == tier3.caller_own_ratio(measured)
+    assert tier3.verdict(row, in_the_twin, dispatch, measurement_of) == "net"
+    in_the_caller = _with_thunks(measured, thunks, 0)
+    assert tier3.caller_glue_cycles(in_the_caller) == thunks
+    assert tier3.caller_own_ratio(in_the_caller) <= tier3.TIER3_FUNCTION_BAR < tier3.caller_own_ratio_with_glue(in_the_caller)
+    assert tier3.verdict(row, in_the_caller, dispatch, measurement_of) == "glue"
+    line = tier3._two_counts_line(in_the_caller, 0)
+    assert (f"TWO COUNTS: {tier3.own_ratio(measured):.2f} / {tier3.caller_own_ratio(measured):.2f} "
+            f"({caller_s} against {the_rom_caller_s})") in line
+    assert f"{thunks} of the row's {thunks} thunk cycles are the caller's own" in line
+
+
+def test_which_side_of_a_call_a_thunk_ran_on_is_measured_call_by_call(bench):
+    """...and MEASURED, per door call (`DoorWindows.glue_inside`): never more than the run's thunks, nothing on a
+    watch that counts none (the ROM's), and what the measurement's `rebound_glue` sums."""
+    carrying = [row for row in tier3.ROWS if tier3.goes_through_the_os(row) and not row.slice
+                and row.symbol in THE_ROWS_WHOSE_TWINS_RUN_THUNKS]
+    assert carrying, "no row of the routines named reaches a rebound entry"
+    inside_some = 0
+    for row in carrying:
+        measured, _blob, original, windows = tier3._held_through_the_os(row, bench)
+        if not windows:
+            continue
+        assert measured.rebound_glue == sum(windows.glue_inside) <= tier3.glue_cycles_of(measured)
+        assert not any(original.glue_inside), "the ROM's shore runs no thunk"
+        assert all(inside == 0 for inside, rebound in zip(windows.glue_inside, windows.to_a_rebound_entry) if not rebound)
+        assert tier3.caller_glue_cycles(measured) == tier3.glue_cycles_of(measured) - measured.rebound_glue >= 0
+        inside_some += bool(measured.rebound_glue)
+    assert inside_some, "the premise: some twin of these rows reaches a transcribed core through a thunk"
+
+
+# Routines whose calls of rebound entries run thunks INSIDE the call (ap_rdwr's twin reaches the pipe's `.S` cores).
+THE_ROWS_WHOSE_TWINS_RUN_THUNKS = ("aes_ap_sendmsg", "aes_ev_mesag", "aes_ap_rdwr")
+
+
+def test_a_pinned_row_that_calls_a_rebound_entry_is_pinned_on_both_counts(dispatch, measurement_of, monkeypatch):
+    """RED before a pin held the second count (DRIFTED and the acceptance were written on the first alone: a door
+    row accepted over the bar let its caller's own move freely under the entry): pinned on the first count alone the
+    row has DRIFTED; pinned on both at what they measure it is `pinned`; and its second count moved off its pin, it
+    has DRIFTED again."""
+    row = tier3.row_named(A_ROW_ROUND_A_REBOUND_ENTRY)
+    measured, key = measurement_of(row), A_ROW_ROUND_A_REBOUND_ENTRY
+    monkeypatch.setitem(tier3.PERF_ACCEPTED, key, (tier3.pinned_ratio(row, measured), "a pin for this case"))
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "DRIFTED"
+    monkeypatch.setitem(tier3.CALLER_PINS, key, tier3.caller_own_ratio_with_glue(measured))
+    assert tier3.verdict(row, measured, dispatch, measurement_of) == "pinned"
+    moved = _with_own_delay(measured, 0)
+    moved.rebound_own = tuple(inside - A_DRIFT_IN_THE_CALLER for inside in tier3.rebound_own_of(measured))
+    assert abs(tier3.pinned_ratio(row, moved) - tier3.pinned_ratio(row, measured)) <= tier3.RATIO_TOLERANCE
+    assert tier3.verdict(row, moved, dispatch, measurement_of) == "DRIFTED"
+    assert not tier3.CALLER_PINS or set(tier3.CALLER_PINS) == {key}, "no row is pinned on its second count today"
+
+
+A_DRIFT_IN_THE_CALLER = 60              # cycles moved from the twin's call into the caller's body, on both shores
+
+
+def test_a_run_that_ends_inside_a_door_call_is_refused_by_name(bench):
+    """RED before the count was asked (the lists a row is priced from are appended at the CLOSE, the call counted at
+    the OPEN: a run ending inside a call on both shores compared equal, the open call's cycles its caller's): a
+    watch whose last call was opened and never closed is refused, and the real row's watches pass."""
+    row = tier3.row_named(A_ROW_ROUND_A_REBOUND_ENTRY)
+    _measured, _blob, original, windows = tier3._held_through_the_os(row, bench)
+    for watch in (original, windows):
+        assert watch.calls == len(watch.windows) == 1
+        watch.vet_every_call_closed("the case")
+        watch.calls += 1                # ...as a second call opened and the run ended inside it
+        with pytest.raises(AssertionError, match="2 door call\\(s\\) were opened and 1 closed — the run ended INSIDE call 1"):
+            watch.vet_every_call_closed("the case")
+
+
+def test_a_row_with_no_call_of_a_rebound_entry_has_one_count(measurement_of):
+    """...and where no rebound entry is called the two counts are ONE number: nothing is taken off, nothing printed."""
+    row = tier3.row_named(OS_ROW)
+    measured = measurement_of(row)
+    assert tier3.rebound_own_of(measured) == (0, 0) and tier3.caller_own_cycles(measured) == measured.own_cycles
+    assert tier3.caller_own_ratio(measured) == tier3.own_ratio(measured)
+    assert "the caller's own" not in tier3._through_the_os_line(measured, 0)
+
+
+def test_what_a_rebound_entry_s_call_costs_is_read_off_each_shore_s_own_run(bench):
+    """`own_inside`, a figure per door call on each watch: the ROM routine's AES-span cycles on the ROM's run, the
+    twin's blob cycles on ours — both more than nothing, neither taken off its shore's own column, and what the
+    measurement's `rebound_own` sums."""
+    row = tier3.row_named(A_ROW_ROUND_A_REBOUND_ENTRY)
+    measured, _blob, original, windows = tier3._held_through_the_os(row, bench)
+    assert windows.to_a_rebound_entry == original.to_a_rebound_entry == [True]
+    assert tier3.rebound_own_of(measured) == (sum(windows.own_inside), sum(original.own_inside))
+    assert 0 < windows.own_inside[0] < measured.own_cycles[0] and 0 < original.own_inside[0] < measured.own_cycles[1]
 
 
 def test_the_door_rule_holds_the_two_sides_windows_equal(bench, monkeypatch):
@@ -935,8 +1120,9 @@ def test_the_original_s_windows_are_read_off_its_own_run(bench):
     watch, cycles, _own = tier3._original_windows(row)
     measured = tier3._measure_through_the_os(row, bench)
     assert cycles == measured.original_cycles
-    assert tuple(watch.windows) == measured.door_windows and len(watch.windows) == 1 and watch.windows[0] > 0
-
+    assert tuple(watch.windows) == measured.door_windows and len(watch.windows) == 1
+    assert (watch.windows[0] > 0) == THE_WAIT_IS_SERVED, "a served call is a window of its cycles; a rebound entry's, of none"
+    assert watch.to_a_rebound_entry == [not THE_WAIT_IS_SERVED]
 
 
 def test_the_door_rule_holds_the_two_sides_frames_equal(bench, monkeypatch):
@@ -956,10 +1142,11 @@ def test_the_door_rule_holds_the_two_sides_frames_equal(bench, monkeypatch):
         tier3._measure_through_the_os(row, bench)
 
 
+@needs_an_entry_the_rom_serves
 def test_the_door_rule_refuses_rom_aes_code_run_outside_a_window(bench, monkeypatch):
     """Our side may reach the AES's text only through the door: the same row measured with no window opened (its run
     unwatched, as a C reaching ROM code by any other road would be) is refused, never credited to the ROM."""
-    row = tier3.row_named(EV_ROW)
+    row = next(each for each in tier3.ROWS if tier3.goes_through_the_door(each) and not each.delivered)
     monkeypatch.setattr(tier3, "arrives_at_an_entry", lambda _row: False)
     with pytest.raises(AssertionError, match="OUTSIDE the event door's windows"):
         tier3._measure_through_the_os(row, bench)
@@ -971,12 +1158,18 @@ def test_the_door_watch_stops_at_the_entries_alone_and_refuses_one_entered_but_b
     switch processes is refused by name; and a door entry reached from a return address no door call leaves is
     refused."""
     windows = tier3.our_windows(tier3.BUILT_ELF)
-    entry, back = min(tier3.door_calls(tier3.BUILT_ELF).values()), min(windows.returns)
-    stack = A_STACK_AT
-    memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(max(aes_event.FRAME_BYTES.values()))
     assert windows.first == (frozenset(aes_event.ENTRIES) - aes_event.REBOUND) | frozenset(tier3.twin_entries(tier3.BUILT_ELF))
-    assert windows.stopped(entry, stack, memory) == frozenset({back, addrs.AES_ROM_DSPTCH})
-    memory[stack:stack + 4] = (back + 2).to_bytes(4, "big")
+    # ...shown at an entry the ROM still serves — a `jsr`'s target, entered from the address after it — while the
+    # build holds one, and at a twin (entered from our own text) once it holds none: the watch's rule is one.
+    served = tier3.door_calls(tier3.BUILT_ELF)
+    assert bool(served) == (aes_event.REBOUND < frozenset(aes_event.ENTRIES))
+    text_ends = tier3.text_span(tier3.BUILT_ELF)[1]
+    entry, back, from_elsewhere = ((min(served.values()), min(windows.returns), min(windows.returns) + 2) if served else
+                                   (min(tier3.twin_entries(tier3.BUILT_ELF)), text_ends - 2, text_ends))
+    stack = A_STACK_AT
+    memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(2 * 4 + max(aes_event.FRAME_BYTES.values()) * 2)
+    assert windows.stopped(entry, stack, memory) == frozenset({back, addrs.AES_ROM_DSPTCH}) | OUR_DISPATCHERS()
+    memory[stack:stack + 4] = from_elsewhere.to_bytes(4, "big")
     with pytest.raises(AssertionError, match="not a door call"):
         tier3.our_windows(tier3.BUILT_ELF).stopped(entry, stack, memory)
 
@@ -1041,16 +1234,24 @@ def test_the_blob_s_rebound_and_pending_entries_are_the_host_s(elf):
     assert twins & served == aes_event.PENDING
 
 
+A_CALL_SITE_NO_BUILD_HAS = 2            # an address below every blob's text: a `jsr` taken to stand there
+
+
 def test_a_twin_awaiting_its_flip_is_rebound_nowhere(monkeypatch):
-    """RED for the derivation the flips rest on: a twin that merely EXISTS flips nothing. ev_multi's ROM routine taken
-    for a twin's first instruction — linked, its `jsr` still there: pending, not rebound; and the ROM's watch of a row
-    that reaches it through the door still opens its window (`arrived_at_by_a_twin` names no entry the row reaches by
-    a `jsr`)."""
-    twins = {**tier3.twin_entries(tier3.BUILT_ELF), addrs.AES_ROM_EV_MULTI: addrs.AES_ROM_EV_MULTI}
+    """RED for the derivation the flips rest on: a twin that merely EXISTS flips nothing. An entry with a twin linked
+    AND a `jsr` into its ROM routine still there is pending, not rebound — shown on ev_multi, its twin and its `jsr`
+    each taken to be there where the build holds only one of the two; and the ROM's watch of a row that reaches it
+    through the door still opens its window (`arrived_at_by_a_twin` names no entry the row reaches by a `jsr`: for
+    gr_stilldn, ev_multi exactly while the build has rebound it)."""
+    wait = addrs.AES_ROM_EV_MULTI
+    twins = {**tier3.twin_entries(tier3.BUILT_ELF), wait: wait}
+    calls = {**tier3.door_calls(tier3.BUILT_ELF), A_CALL_SITE_NO_BUILD_HAS: wait}
     monkeypatch.setattr(tier3, "twin_entries", lambda _elf: twins)
-    assert addrs.AES_ROM_EV_MULTI not in tier3.rebound_entries(tier3.BUILT_ELF)
+    monkeypatch.setattr(tier3, "door_calls", lambda _elf: calls)
+    assert wait not in tier3.rebound_entries(tier3.BUILT_ELF)
     assert addrs.AES_ROM_TAK_FLAG in tier3.rebound_entries(tier3.BUILT_ELF)
-    assert tier3.arrived_at_by_a_twin.__wrapped__(EV_ROW[0]) == frozenset()
+    monkeypatch.undo()
+    assert tier3.arrived_at_by_a_twin.__wrapped__(EV_ROW[0]) == frozenset({wait}) & aes_event.REBOUND
 
 
 # wind_update's OWN door calls (`src/aes/wmupdate.c`: the lock taken, released, waited for) — fm_own's, which it
@@ -1088,14 +1289,21 @@ def test_every_twin_has_a_leaf_battery_s_rows():
     EVERY TWIN, rebound OR PENDING: a twin's battery is owed the day the twin lands, so the gap is red in the wave
     that built it and not at its flip (ap_rdwr's twin sat a phase with no row, and nothing said so). THAT THE BATTERY
     REACHES EVERY ARM of its twin is not derived here: it is the strict mutation sweep's and the coverage build's to
-    show, entry by entry (STATUS's wave log). RED: ev_multi, taken for a twin, has none."""
+    show, entry by entry (STATUS's wave log). RED: a twin whose rows are taken out of the table has none."""
     twins = aes_event.REBOUND | aes_event.PENDING
     leaf = _leaf_rows(twins)
     assert len(leaf) == len(twins) >= 1 and all(leaf.values()), (
         f"a twin with no leaf battery (no priced row of its own): {[name for name, rows in leaf.items() if not rows]}")
     assert all(tier3.rom_address(row) == getattr(addrs, name) for name, rows in leaf.items() for row in rows)
-    unheld = _leaf_rows(twins | {addrs.AES_ROM_EV_MULTI})
-    assert [name for name, rows in unheld.items() if not rows] == ["AES_ROM_EV_MULTI"]
+
+
+def test_a_twin_with_no_row_of_its_own_is_found(monkeypatch):
+    """...and the derivation above is not blind: with the newest twin's own rows taken out of the table (as the table
+    stood the day that twin was linked and its battery had registered none), it is the one entry named."""
+    twins = aes_event.REBOUND | aes_event.PENDING
+    last = aes_event.ENTRY_NAMES[[getattr(addrs, name) in twins for name in aes_event.ENTRY_NAMES].index(True)]
+    monkeypatch.setattr(tier3, "ROWS", tuple(row for row in tier3.ROWS if row.symbol != routines.core_symbol(last)))
+    assert [name for name, rows in _leaf_rows(twins).items() if not rows] == [last]
 
 
 def test_a_row_arrives_by_a_twin_at_its_outermost_calls_only(monkeypatch):
@@ -1276,9 +1484,17 @@ def test_no_twin_is_jumped_to_on_either_blob(elf, monkeypatch):
     listing = transcription.listing(elf())
     monkeypatch.setattr(transcription, "listing", lambda _elf: listing + f"   30000:\t4ef9 0003 0000 \tjmp {twin:x} <aes_tak_flag>\n")
     assert tier3.twins_reached_otherwise_than_by_a_call(elf()) == [("jmp", "aes_tak_flag")]
+    # ...A TWIN'S ADDRESS LOADED FOR CALLS THROUGH A REGISTER is a call (GCC's, where one function calls a twin
+    # twice); the same load followed by a JUMP through the register is refused — both read off a function's own lines.
+    lo, _hi = next(span for spans in tier3._function_ranges(elf()).values() for span in spans if span[1] - span[0] >= 16)
+    loaded = f"   {lo:x}:\t4bf9 0003 0000 \tlea {twin:x} <aes_tak_flag>,%a5\n   {lo + 6:x}:\t4e95           \tjsr %a5@\n"
+    monkeypatch.setattr(transcription, "listing", lambda _elf: listing + loaded)
+    assert tier3.twins_reached_otherwise_than_by_a_call(elf()) == []
+    monkeypatch.setattr(transcription, "listing", lambda _elf: listing + loaded + f"   {lo + 8:x}:\t4ed5           \tjmp %a5@\n")
+    assert tier3.twins_reached_otherwise_than_by_a_call(elf()) == [("lea %a5, then jmp / jsr", "aes_tak_flag")]
 
 
-# ---- AN SR SAVE WORD'S DROP IS SYMMETRIC: our run stores the word too (`tier3.vet_our_run_stored_its_sr_words`) ----------
+# ---- A DROP IS SYMMETRIC: our run stores the dropped bytes too (`tier3.vet_our_run_stored_its_drops`) --------------------
 # psetup's own row: the ROM's run parks the status register in $8998 round its stores, and so does our build's.
 SR_DROPPING_ROW = ("aes_psetup", "the spare PD")
 
@@ -1294,18 +1510,565 @@ def test_a_row_that_drops_an_sr_save_word_is_held_to_our_run_s_store_of_it(bench
     tier3.measure(row, bench)
     ours = tier3.emu.bench_writes(BASE_IMAGE)[0]
     assert {aes.AES_SR_PSETUP, aes.AES_SR_PSETUP + 1} <= ours.keys(), "our run's own ledger, read once it has ended"
-    tier3.vet_our_run_stored_its_sr_words(row, ours)
+    tier3.vet_our_run_stored_its_drops(row, ours)
     with pytest.raises(AssertionError, match=f"OUR run never stored .'{aes.AES_SR_PSETUP + 1:#x}'"):
-        tier3.vet_our_run_stored_its_sr_words(row, {aes.AES_SR_PSETUP: 0x23})
+        tier3.vet_our_run_stored_its_drops(row, {aes.AES_SR_PSETUP: 0x23})
     assert tier3.sr_save_words_dropped(tier3.row_named(REBOUND_ROW)) == []
-    tier3.vet_our_run_stored_its_sr_words(tier3.row_named(REBOUND_ROW), {})
+    assert tier3.drops_held_to_our_run(tier3.row_named(REBOUND_ROW)) == []
+    tier3.vet_our_run_stored_its_drops(tier3.row_named(REBOUND_ROW), {})
     monkeypatch.setattr(tier3.emu, "bench_writes", lambda _memory: ({}, False))
     with pytest.raises(AssertionError, match="its interrupt-mask bracket is missing from the build's path"):
         tier3.measure(row, bench)
 
 
+# ...AND THE RULE IS ASKED ON EVERY MEASURING PATH. Asked in `_measure_call` alone, a row measured past it (a `.S`
+# row, a (T←) one — and, by reading, a session's) would drop its word one-sidedly. No row that
+# drops one is on those paths today, so each is shown with a row of the path TAKEN FOR one that does (the rule's own
+# question answered yes for it): the vet must then be reached — and, our run having stored no such word, refuse.
+def _taken_to_drop_the_spl_word(monkeypatch, row):
+    """`row`, as if its registration dropped spl7_save's SR save word: the rule's question answered for it."""
+    spl = aes_event.sr_drops(aes.AES_SR_SPL)
+    held = tier3.drops_held_to_our_run
+    monkeypatch.setattr(tier3, "drops_held_to_our_run", lambda asked: list(spl) if asked is row else held(asked))
+
+
+def test_a_sliced_session_s_one_pair_of_runs_is_held_to_the_symmetric_drop_rule(bench, monkeypatch):
+    """A SESSION's rows are cut out of one pair of runs (`Sessions`): that pair is made through `_measure_call`, so the
+    rule is asked of it — shown by a session taken to drop an SR save word neither run stores: refused by name as
+    our run's missing bracket, for the session, where a one-sided drop would have priced every slice of it."""
+    row = next(row for row in tier3.ROWS if row.slice)
+    _taken_to_drop_the_spl_word(monkeypatch, row)
+    with pytest.raises(AssertionError, match=f"OUR run never stored .'{aes.AES_SR_SPL:#x}'"):
+        tier3.Sessions(bench).measure(row)
+
+
+@pytest.mark.parametrize("path", ("a transcription", "a `.S` that calls C (T←)"))
+def test_a_row_measured_past_the_rule_is_refused_by_name(bench, monkeypatch, path):
+    """RED before the rule had ONE home: a `.S` row's run is made by `measure_transcription`, which reads no drop and
+    asked no ledger — a row there that dropped an SR save word was measured green, its drop one-sided. Now `measure`
+    holds that the vet RAN for every row that drops one: a path that made its run past it is refused by name."""
+    row = next(row for row in tier3.ROWS if row.transcription and tier3.calls_into_c(row) == (path != "a transcription"))
+    tier3.measure(row, bench)                                           # the premise: the row itself is measured
+    _taken_to_drop_the_spl_word(monkeypatch, row)
+    with pytest.raises(AssertionError, match="measured on a path that never asked our ledger — the drop would be one-sided"):
+        tier3.measure(row, bench)
+
+
+def test_the_vet_ran_is_asked_of_each_measurement_not_of_the_one_before(bench, monkeypatch):
+    """`measure` forgets, as each measurement begins, which rows the rule was asked about (`_VETTED`) — or the row
+    BEFORE would answer for this one: a row that drops an SR save word measured first, then a `.S` row taken to drop
+    one, which no vet is reached for. RED where the list is kept: the second passed on the first's word, and whether
+    it did depended on the order the tests ran in."""
+    tier3.measure(tier3.row_named(SR_DROPPING_ROW), bench)
+    assert tier3._VETTED, "the premise: the first row's vet left its mark"
+    row = next(row for row in tier3.ROWS if row.transcription and not tier3.calls_into_c(row))
+    _taken_to_drop_the_spl_word(monkeypatch, row)
+    with pytest.raises(AssertionError, match="measured on a path that never asked our ledger — the drop would be one-sided"):
+        tier3.measure(row, bench)
+
+
+def test_a_transcription_row_drops_nothing():
+    """...and a `.S` row that NAMES a drop is refused before any run: `measure_transcription` takes none (both shores
+    are entered with one register file and compared whole), so the drop would be read by nobody."""
+    row = next(row for row in tier3.ROWS if row.transcription and not tier3.calls_into_c(row))
+    with pytest.raises(AssertionError, match="a transcription row drops .* nothing of it differs by nature"):
+        tier3._measure_transcription(row._replace(dropped=aes_event.sr_drops(aes.AES_SR_SPL)), None)
+
+
+def _drops_by_kind():
+    """`{a drop's reason: a row that names it}` over the table: every kind of drop OUR run is held to."""
+    kinds = {}
+    for row in tier3.ROWS:
+        for _lo, _hi, why in tier3.drops_held_to_our_run(row):
+            if not row.slice and not row.delivered:
+                kinds.setdefault(why, row)
+    return kinds
+
+
+DROPS_BY_KIND = _drops_by_kind()
+
+
+@pytest.mark.parametrize("why", DROPS_BY_KIND, ids=lambda why: why[:40])
+def test_every_kind_of_drop_is_held_to_our_run_s_store_of_it(why, bench, monkeypatch):
+    """THE RULE COVERS EVERY KIND OF DROP, not the two it was written for (RED before: "a tick recorded" measured
+    green with our ledger holding no store at the recorded code; the yield's row with the dispatcher's stack and the
+    saved D1/D2 dropped and our ledger EMPTY): a row of each kind the table names is measured — our run stored every
+    dropped byte — and, its ledger taken for empty, refused by name. The one kind exempt is declared: the Line-F
+    mask word, which our C never stores."""
+    row = DROPS_BY_KIND[why]
+    blob = tier3.shipped_bench() if tier3.ships_through_a_call(row) else bench
+    tier3.measure(row, blob)
+    stored = tier3.emu.bench_writes(BASE_IMAGE)[0].keys()
+    assert all(set(range(lo, hi)) <= stored for lo, hi, _why in tier3.drops_held_to_our_run(row))
+    # ...taken for empty where THE RULE reads it: the put-back of the dispatcher's stack reads the run's own.
+    monkeypatch.setattr(tier3, "stored_by_the_run_just_made", lambda memory, read=tier3.emu.bench_writes: read(memory)[0].keys())
+    monkeypatch.setattr(tier3.emu, "bench_writes", lambda _memory: ({}, False))
+    with pytest.raises(AssertionError, match="which the ROM's run stores, and OUR run never stored"):
+        tier3.measure(row, blob)
+
+
+def test_the_one_drop_our_run_need_not_have_stored_is_the_line_f_mask_word():
+    """...and the exemption is ONE window, named: every other drop of every row is held."""
+    assert tier3.ONE_SIDED_BY_NATURE == {(lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW}
+    exempt = {(lo, hi) for row in tier3.ROWS for lo, hi, why in row.dropped
+              if (lo, hi, why) not in tier3.drops_held_to_our_run(row)}
+    assert exempt == tier3.ONE_SIDED_BY_NATURE
+    assert len(DROPS_BY_KIND) >= KINDS_OF_DROP_THE_TABLE_NAMES, sorted(DROPS_BY_KIND)
+
+
+# An SR save word (psetup's, spl7_save's), a return address a door parks, a saved context, the dispatcher's stack.
+KINDS_OF_DROP_THE_TABLE_NAMES = 4
+
+
+# ---- A CODE ADDRESS IN DATA IS NO DROP: relocated, and compared exactly ---------------------------------------------------
+ROUTINES_THAT_QUEUE_BY_AN_IMMEDIATE = ("aes_chkkbd", "aes_b_click", "aes_b_delay")
+
+
+def _a_code_slot_of_any_kind(lo):
+    return lo in tier3.FORK_CODE_SLOTS or lo in tier3.glue_code_slots()
+
+
+def test_no_row_drops_a_code_address_and_a_build_that_queued_another_function_s_is_red(bench, monkeypatch):
+    """RED before the drops went (eight rows NAMED a drop of a queued fork code the relocation already compared
+    exactly — and behind the drop a build that queued ANOTHER fork function's entry was invisible to the image
+    compare): no row drops a code slot; the rows whose routine queues by an immediate are measured with nothing
+    dropped for it; and a build taken to hold kchange's entry where bchange's belongs (the bijection swapped, as the
+    wrong `aes_<fn>_fork` pushed would read) is refused by the image, at the queue."""
+    assert not [(row.symbol, row.case) for row in tier3.ROWS for lo, _hi, _why in row.dropped if _a_code_slot_of_any_kind(lo)]
+    queueing = [row for row in tier3.ROWS if row.symbol in ROUTINES_THAT_QUEUE_BY_AN_IMMEDIATE and not row.transcription]
+    assert {row.symbol for row in queueing} == set(ROUTINES_THAT_QUEUE_BY_AN_IMMEDIATE)
+    for row in queueing:
+        tier3.measure(row, bench)
+    relocation = tier3.fork_relocation(bench.elf, "aes_chkkbd")
+    kchange, bchange = addrs.AES_ROM_KCHANGE, addrs.AES_ROM_BCHANGE
+    swapped = {**relocation, kchange: relocation[bchange], bchange: relocation[kchange]}
+    monkeypatch.setattr(tier3, "fork_relocation", lambda _elf, _symbol: swapped)
+    refused = []
+    for row in queueing:
+        try:
+            tier3.measure(row, bench)
+        except AssertionError as differs:
+            assert "left different memory" in str(differs), differs
+            refused.append(row.symbol)
+    assert {"aes_chkkbd", "aes_b_click"} <= set(refused), refused
+
+
+@pytest.mark.parametrize("elf", (tier3.BUILT_ELF, transcription.SHIPPED_ELF), ids=("the bench blob", "the shipped blob"))
+def test_each_routine_of_ours_names_the_entries_of_the_fork_functions_the_rom_s_names(elf):
+    """...and WHICH entry our build queues is held by the build (our run's memory is the kit's to compare; the code
+    longword is dropped there): every AES routine the ROM's instructions name a fork function in by an immediate
+    (`aes.FORK_FUNCTION_IMMEDIATES`: forker's recorder, chkkbd, b_click, b_delay ...) names, in ITS OWN bytes of
+    our build, the entries of exactly those functions (`aes_<fn>_fork`) — where it is linked; a routine not yet
+    ported is no claim. RED: a build that pushed another function's entry, or the ROM's own address."""
+    placed = tier3._placed(elf)
+    held = {}
+    for routine, functions in tier3.fork_functions_named_by_the_rom().items():
+        symbol = routines.core_symbol(routine)
+        if symbol in placed:
+            held[routine] = (tier3.fork_entries_named_by(elf, symbol), functions)
+    assert {"AES_ROM_FORKER", "AES_ROM_CHKKBD", "AES_ROM_B_CLICK", "AES_ROM_B_DELAY"} <= held.keys(), sorted(held)
+    wrong = {routine: (sorted(ours), sorted(the_rom_s)) for routine, (ours, the_rom_s) in held.items() if ours != the_rom_s}
+    assert not wrong, f"routines naming other fork entries than the ROM's (ours, the ROM's): {wrong}"
+    # ...and the reader is not blind: taken for another function's entries, the same routines are found wrong.
+    kchange, bchange = addrs.AES_ROM_KCHANGE, addrs.AES_ROM_BCHANGE
+    swapped = {**aes_event.FORK_ENTRY_SYMBOLS, kchange: aes_event.FORK_ENTRY_SYMBOLS[bchange],
+               bchange: aes_event.FORK_ENTRY_SYMBOLS[kchange]}
+    original, aes_event.FORK_ENTRY_SYMBOLS = aes_event.FORK_ENTRY_SYMBOLS, swapped
+    try:
+        assert tier3.fork_entries_named_by(elf, "aes_chkkbd") == {bchange}
+    finally:
+        aes_event.FORK_ENTRY_SYMBOLS = original
+
+
+# ---- THE FORK QUEUE'S CODES ARE RELOCATED FOR OUR SHORE (`tier3.fork_relocation`, `tier3.RomBench`) ------------------------
+def _forker_s_rows_over_a_queue_the_rom_filled():
+    """forker's rows that RUN entries — verified, and unpriced where their registration could not price them: each as
+    a bench row all the same (the queue their machine holds was filled by the ROM's own interrupts)."""
+    rows = [tier3._row(each) for each in (*test_boot_snapshot.VERIFIED_CASES, *test_boot_snapshot.UNPRICED_CASES)
+            if each[0].startswith("aes_forker, ") and each[1] == addrs.AES_ROM_FORKER]
+    # (Not while appl_trecord RECORDS: forker then copies each entry into the application's buffer too — a second
+    # place a fork function's address lies, outside the queue, which the queue's relocation does not reach.)
+    return [row for row in rows if row and case.word_in(make_image(row.pokes), aes.AES_FORK_COUNT)
+            and not case.word_in(make_image(row.pokes), aes.AES_GL_RECD)]
+
+
+def test_a_queue_the_rom_s_interrupts_filled_is_run_by_our_forker_its_codes_relocated(bench, monkeypatch):
+    """A QUEUED CODE ADDRESS at Tier 3: forker's row over a ROM-made queue holds the ROM's fork functions' addresses, which our
+    forker would `jsr` — the ROM's bchange run inside our build. RED without the relocation (the mapping taken for
+    empty): refused, by the image or by the AES's own cycles found in our run. With it, our image's code slots are
+    mapped to our entries at the run's entry and back before the compare: the row is MEASURED, our forker ran our
+    fork functions — the profile finds no cycle of ours in the AES's spans beyond the ROM's own run's — and NOTHING is
+    dropped: the compare of the queue is exact."""
+    rows = _forker_s_rows_over_a_queue_the_rom_filled()
+    assert rows, "no row of forker runs a queued entry"
+    for row in rows:
+        assert not any(_a_code_slot_of_any_kind(lo) for lo, _hi, _why in row.dropped)
+        assert tier3.fork_relocation(tier3.shipped_bench().elf, row.symbol)
+        original_own = tier3._original_own_cycles(row)
+        tier3._profiled(lambda row=row: tier3.measure(row, bench))
+        assert tier3._cycles_in(tier3.AES_OWN_SPANS) == original_own, (
+            f"{row.case}: our run spent cycles in the AES's own ROM — our forker called a ROM fork function")
+    # THE RED: the mapping taken for empty, our forker `jsr`s the ROM's fork function — the row's IMAGE is still
+    # "equal" (the ROM's own code made every store, over our memory), which is exactly what must not pass for a
+    # measurement: THE GENERAL GUARD refuses it by name (it was priced, at 1.00, before every row's run was profiled).
+    monkeypatch.setattr(tier3, "fork_relocation", lambda _elf, _symbol: {})
+    for row in rows:
+        with pytest.raises(AssertionError, match=OURS_IN_THE_AES_UNDECLARED):
+            tier3.measure(row, bench)
+
+
+# ---- THE GENERAL GUARD: no run of ours executes the AES's ROM but through a declared window ------------------------------
+OURS_IN_THE_AES_UNDECLARED = "OUR run spent [0-9]+ cycles at the PCs of the AES's own ROM where the row declares 0"
+A_PLAIN_ROW = ("aes_get_par", "the root")
+
+
+def test_every_row_s_own_run_is_profiled_for_the_general_guard(bench):
+    """Whatever its path — plain C, shipped, through the OS, a `.S` — `measure` reads what OUR run spent in the AES's
+    own ROM (one profiled run of ours per measurement) and holds it to what the row declares: nothing, for a row with
+    no door window."""
+    for row in (tier3.row_named(A_PLAIN_ROW), tier3.row_named(OS_ROW), tier3.row_named(REBOUND_ROW),
+                next(row for row in tier3.ROWS if row.transcription and not tier3.calls_into_c(row)),
+                next(row for row in tier3.ROWS if tier3.calls_into_c(row)),
+                next(row for row in tier3.ROWS if tier3.ships_through_a_call(row) and not tier3.goes_through_the_os(row))):
+        measured = tier3.measure(row, bench)
+        assert len(tier3.OUR_RUN) == 1, (row.symbol, row.case)
+        assert tier3.OUR_RUN[0].in_the_aes == tier3.declared_in_the_aes(row, measured) == sum(
+            getattr(measured, "door_windows", ()))
+        assert tier3.OUR_RUN[0].profiled_with_the_original == (
+            tier3.goes_through_the_os(row) or tier3.ships_through_a_call(row) or bool(tier3.calls_into_c(row)))
+
+
+def test_a_measurement_that_made_no_profiled_run_of_ours_is_refused_by_name(bench, monkeypatch):
+    """...and a measuring path that made its run past the bench's own `_call` (so nothing was read) is refused, not
+    passed unguarded."""
+    row = tier3.row_named(A_PLAIN_ROW)
+    measured = tier3.measure(row, bench)
+    monkeypatch.setattr(tier3, "_measured_on_its_path", lambda _row, _bench: measured)
+    with pytest.raises(AssertionError, match="made no profiled run of ours"):
+        tier3.measure(row, bench)
+    # ...where the bench is THIS module's — the table's and the gate's (`main`, this file's fixture). The kit's own
+    # bench profiles nothing and relocates nothing: a case that hands it over measures past both, and says so.
+    assert isinstance(bench, tier3.RomBench) and "RomBench()" in inspect.getsource(tier3.main)
+    monkeypatch.undo()
+    tier3.measure(row, rom_bench.RomBench())
+    assert not tier3.OUR_RUN
+
+
+def test_a_row_declared_to_enter_the_rom_by_the_machine_s_pointer_is_held_to_exactly_that(bench, monkeypatch):
+    """THE ONE DECLARATION (`ENTERED_BY_THE_MACHINE_S_POINTER`): drawrat's `.S` row calls what AES_DRWADDR holds — in
+    the snapshot the ROM's own `rts`. Declared, its sixteen cycles are held exactly; undeclared, the guard refuses the
+    row; and the declaration is no licence — a cycle more than it names is refused too."""
+    (key, declared), = tier3.ENTERED_BY_THE_MACHINE_S_POINTER.items()
+    row = tier3.row_named(key)
+    measured = tier3.measure(row, bench)
+    assert tier3.OUR_RUN[0].in_the_aes == declared.cycles == tier3.declared_in_the_aes(row, measured)
+    assert declared.span[0] == addrs.AES_ROM_JUSTRETF and declared.cycles == tier3.RTS_CYCLES
+    assert tier3.OUR_RUN[0].in_declared_spans == declared.cycles, "spent IN THE SPAN the declaration names"
+    # THE SPAN IS READ: the same sixteen cycles declared for another span of the AES's text are refused...
+    elsewhere = (addrs.AES_ROM_DSPTCH, addrs.AES_ROM_DSPTCH + aes.WORD_BYTES)
+    monkeypatch.setattr(tier3, "DECLARED_SPANS", (elsewhere,))
+    with pytest.raises(AssertionError, match="OUR run spent 0 cycles in the ROM text a declared pointer"):
+        tier3.measure(row, bench)
+    monkeypatch.setattr(tier3, "DECLARED_SPANS", (declared.span,))
+    # ...and A STALE DECLARATION in its own words: the machine's pointer no longer leads where it says.
+    monkeypatch.setitem(tier3.ENTERED_BY_THE_MACHINE_S_POINTER, key, declared._replace(span=elsewhere))
+    with pytest.raises(AssertionError, match="THE DECLARATION IS STALE"):
+        tier3.measure(row, bench)
+    monkeypatch.setitem(tier3.ENTERED_BY_THE_MACHINE_S_POINTER, key, declared)
+    monkeypatch.setitem(tier3.ENTERED_BY_THE_MACHINE_S_POINTER, key, declared._replace(cycles=declared.cycles - 4))
+    with pytest.raises(AssertionError, match=f"OUR run spent {declared.cycles} cycles .* declares {declared.cycles - 4}"):
+        tier3.measure(row, bench)
+    monkeypatch.delitem(tier3.ENTERED_BY_THE_MACHINE_S_POINTER, key)
+    with pytest.raises(AssertionError, match=f"OUR run spent {declared.cycles} cycles .* declares 0"):
+        tier3.measure(row, bench)
+
+
+# ---- ...the recording's records, and the glue the AES hands the VDI --------------------------------------------------------
+A_BUFFER_AT = aes_event.BAND_AT         # where the unit cases below lay a recording: any RAM no case here reads
+AN_ENTRY_OF_OURS, ANOTHER_ENTRY_OF_OURS = 0x31234, 0x35678     # where a build might place two of its entries
+
+
+def _a_recording(records, cursor_after):
+    """An image where appl_trecord records into a buffer at A_BUFFER_AT: `records` (`(code, data)` each) laid from
+    its start, the cursor after the first `cursor_after` of them."""
+    image = bytearray(make_image({}))
+    for nth, (code, data) in enumerate(records):
+        at = A_BUFFER_AT + nth * aes.FORK_ENTRY_BYTES
+        image[at + aes.FORK_CODE:at + aes.FORK_CODE + aes.LONG_BYTES] = code.to_bytes(aes.LONG_BYTES, "big")
+        image[at + aes.FORK_DATA:at + aes.FORK_DATA + aes.LONG_BYTES] = data.to_bytes(aes.LONG_BYTES, "big")
+    image[aes.AES_GL_RECD:aes.AES_GL_RECD + aes.WORD_BYTES] = (1).to_bytes(aes.WORD_BYTES, "big")
+    cursor = A_BUFFER_AT + cursor_after * aes.FORK_ENTRY_BYTES
+    image[aes.AES_RECORD_CURSOR:aes.AES_RECORD_CURSOR + aes.LONG_BYTES] = cursor.to_bytes(aes.LONG_BYTES, "big")
+    return image
+
+
+def _code_of_record(nth):
+    return A_BUFFER_AT + nth * aes.FORK_ENTRY_BYTES + aes.FORK_CODE
+
+
+def test_the_recording_s_records_are_found_by_what_they_hold_and_relocated_both_ways():
+    """`recorded_code_slots`: back from the cursor while a record's code is a fork function's — the record before
+    the cursor is the one forker's merge arm reads — and not a record past the cursor, nor anything while nothing
+    records; `_records_written`: every record between the cursor a run found and the one it left, the recording
+    ended or not."""
+    tchange, mchange = addrs.AES_ROM_TCHANGE, addrs.AES_ROM_MCHANGE
+    mapping = {tchange: AN_ENTRY_OF_OURS, mchange: ANOTHER_ENTRY_OF_OURS}
+    image = _a_recording([(tchange, 1), (mchange, 2), (tchange, 3)], cursor_after=2)
+    assert tier3.recorded_code_slots(image, mapping) == (_code_of_record(1), _code_of_record(0))
+    not_a_recording = bytearray(image)
+    not_a_recording[aes.AES_GL_RECD:aes.AES_GL_RECD + aes.WORD_BYTES] = bytes(aes.WORD_BYTES)
+    assert tier3.recorded_code_slots(not_a_recording, mapping) == () and tier3._recording_cursor(not_a_recording) is None
+    no_fork_function_s = _a_recording([(tchange, 1), (addrs.AES_ROM_FORKQ, 2)], cursor_after=2)
+    assert tier3.recorded_code_slots(no_fork_function_s, mapping) == (), "the walk stops at a code that is no fork function's"
+    found = tier3._recording_cursor(image)
+    left = _a_recording([(tchange, 1), (mchange, 2), (tchange, 3)], cursor_after=3)
+    assert tier3._records_written(left, found) == (_code_of_record(2),) and tier3._records_written(left, None) == ()
+    ended = bytearray(left)
+    ended[aes.AES_GL_RECD:aes.AES_GL_RECD + aes.WORD_BYTES] = bytes(aes.WORD_BYTES)
+    assert tier3._records_written(ended, found) == (_code_of_record(2),), "a recording that ENDED in the run leaves its cursor"
+    tier3.map_code_slots(image, tier3.recorded_code_slots(image, mapping), mapping)
+    assert [tier3._long_at(image, _code_of_record(nth)) for nth in range(3)] == [mapping[tchange], mapping[mchange], tchange]
+    with pytest.raises(AssertionError, match="no recording's"):
+        tier3._records_written(image, found + aes.FORK_ENTRY_BYTES)      # a cursor that went BACKWARDS
+
+
+def test_a_row_run_while_a_recording_runs_is_measured_with_nothing_of_the_buffer_dropped(bench, monkeypatch):
+    """A RECORDED CODE ADDRESS at Tier 3: forker's rows over a machine where appl_trecord RECORDS — the recorder copies each entry
+    out of the queue, code and all — are measured with NOTHING dropped: our run records OUR entries, mapped back to
+    the ROM's before the compare. RED without the buffer's half of the relocation: the image differs at the record."""
+    rows = [tier3._row(each) for each in test_boot_snapshot.VERIFIED_CASES
+            if each[0].startswith("aes_forker, ") and each[1] == addrs.AES_ROM_FORKER]
+    recording = [row for row in rows if row and case.word_in(make_image(row.pokes), aes.AES_GL_RECD)]
+    assert recording, "no row of forker runs while a recording does"
+    for row in recording:
+        assert not [why for _lo, _hi, why in tier3.drops_held_to_our_run(row) if "record" in why], row.dropped
+        tier3.measure(row, bench)
+    monkeypatch.setattr(tier3, "_records_written", lambda _memory, _cursor_found: ())
+    monkeypatch.setattr(tier3, "recorded_code_slots", lambda _memory, _codes: ())
+    refused = 0
+    for row in recording:
+        try:
+            tier3.measure(row, bench)
+        except AssertionError as differs:
+            assert "left different memory" in str(differs), differs
+            refused += 1
+    assert refused, "the premise: some row of them RECORDS an entry (the buffer then holds a code)"
+
+
+A_BUTTON_GLUE, A_MOTION_GLUE = 0xFE0010, 0xFE0020      # two ROM addresses, and where a build might place its own:
+OUR_BUTTON_GLUE, OUR_MOTION_GLUE = 0x31000, 0x32000
+TWO_GLUE_SLOTS = (aes_event.BAND_AT, aes_event.BAND_AT + 8)
+
+
+def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypatch):
+    """THE GLUE'S ADDRESSES at Tier 3: OUR gsx_setmb hands the VDI our own button and motion glue; before the compare each of the
+    glue's slots that holds one of OUR entries is given the ROM routine's address it stands for — the slots alone, a
+    glue's address alone, and never at entry (the machine a row starts from holds the ROM's glue, and what a vex call
+    displaces travels)."""
+    monkeypatch.setattr(tier3, "glue_code_slots", lambda: TWO_GLUE_SLOTS)
+    mapping = {A_BUTTON_GLUE: OUR_BUTTON_GLUE, A_MOTION_GLUE: OUR_MOTION_GLUE}
+    glue_s = [tier3.Relocation("a glue's address", TWO_GLUE_SLOTS, mapping)]
+    first, second = TWO_GLUE_SLOTS
+    beside = second + 2 * aes.LONG_BYTES
+    image = bytearray(make_image({}))
+    for at, value in ((first, OUR_BUTTON_GLUE), (second, A_MOTION_GLUE), (beside, OUR_MOTION_GLUE)):
+        image[at:at + aes.LONG_BYTES] = value.to_bytes(aes.LONG_BYTES, "big")
+    left = bytes(image)
+    tier3.map_code_slots(image, tier3.glue_code_slots(), tier3._backwards(mapping))
+    assert tier3._long_at(image, first) == A_BUTTON_GLUE, "our entry, given the ROM's name"
+    assert tier3._long_at(image, second) == A_MOTION_GLUE, "the ROM's own address there: left as it is"
+    assert tier3._long_at(image, beside) == OUR_MOTION_GLUE, "the same value outside the slots: left, and compared"
+    assert tier3._a_code_relocated(first + 1, left, image, glue_s)
+    assert not tier3._a_code_relocated(beside + 1, left, image, glue_s)
+    # ...and the tables are the REGISTRY's (`aes_event.CODE_RELOCATIONS`), read by one function for every site.
+    assert set(tier3.glue_relocation(tier3.BUILT_ELF)) == set(aes_event.GLUE_CODES.symbols)
+    monkeypatch.undo()
+    read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
+    assert [(each.what, each.slots, each.at_entry) for each in read] == [
+        (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
+    assert [each.at_entry for each in read] == [True, False], "the queue's at entry and exit, the glue's at exit alone"
+    assert [set(each.mapping) for each in read] == [set(each.symbols) for each in aes_event.CODE_RELOCATIONS]
+
+
+# ---- A RELOCATION LEFT UN-APPLIED IN THE BUILD IS REFUSED BY NAME (`tier3.vet_no_slot_names_the_rom`) ---------------------
+def test_a_slot_of_the_registry_that_holds_the_rom_s_own_address_after_our_run_is_refused():
+    """THE RULE'S OWN CASES: a slot holding our entry, a value that is no routine's of the registry, or the ROM's
+    address of a routine the build has NO entry for passes; the ROM's own address of one it has is refused, the
+    slot and the relocation named."""
+    slot, other = TWO_GLUE_SLOTS
+    mapping = {A_BUTTON_GLUE: OUR_BUTTON_GLUE}
+    registry = [tier3.Relocation("a glue's address handed to the VDI", TWO_GLUE_SLOTS, mapping)]
+    image = bytearray(make_image({}))
+    for value in (OUR_BUTTON_GLUE, 0, A_MOTION_GLUE):
+        image[slot:slot + aes.LONG_BYTES] = value.to_bytes(aes.LONG_BYTES, "big")
+        tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, registry)
+    image[other:other + aes.LONG_BYTES] = A_BUTTON_GLUE.to_bytes(aes.LONG_BYTES, "big")
+    with pytest.raises(AssertionError, match=f"THE ROM'S OWN address {A_BUTTON_GLUE:#x} in a glue's address handed to "
+                                             f"the VDI \\(the longword at {other:#x}\\)"):
+        tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, registry)
+    # ...what the run CAME WITH may travel — an argument the call was handed and, for a relocation mapped at exit
+    # alone, what its slots held at entry (a value a vex call displaced or restored) — and that alone.
+    at_exit = [registry[0]._replace(at_entry=False)]
+    tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, at_exit, {at_exit[0].what: frozenset({A_BUTTON_GLUE})})
+    assert tier3.rom_addresses_in(image, at_exit[0]) == {A_BUTTON_GLUE}
+    for came_with in (None, {at_exit[0].what: frozenset()}, {at_exit[0].what: frozenset({A_MOTION_GLUE})}):
+        with pytest.raises(AssertionError, match="no slot of it held that address when our run was entered"):
+            tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, at_exit, came_with)
+
+
+def _a_build_that_stores_the_rom_s_address(monkeypatch, rom_address, symbol):
+    """Every bench's runs, each as a build would leave it whose routine stored THE ROM's `rom_address` where its own
+    entry `symbol` belongs — the host arm of a code address compiled for the target. Answers the slots forged, as
+    they are."""
+    run = rom_bench.RomBench._call
+    slots = [slot for declared in aes_event.CODE_RELOCATIONS for slot in declared.slots]
+    forged = []
+
+    def unrelocated(self, image, called, *args, **kwargs):
+        result = run(self, image, called, *args, **kwargs)
+        ours = self.entry(symbol).to_bytes(aes.LONG_BYTES, "big")
+        for slot in slots:
+            if bytes(result.image[slot:slot + aes.LONG_BYTES]) == ours:
+                result.image[slot:slot + aes.LONG_BYTES] = rom_address.to_bytes(aes.LONG_BYTES, "big")
+                forged.append(slot)
+        return result
+    monkeypatch.setattr(rom_bench.RomBench, "_call", unrelocated)
+    return forged
+
+
+@pytest.mark.parametrize("rom_address, symbol, routines", [
+    (addrs.AES_ROM_BCHANGE, "aes_bchange_fork", ("aes_b_click", "aes_b_delay")),
+    (addrs.AES_ROM_KCHANGE, "aes_kchange_fork", ("aes_chkkbd",)),
+    (addrs.AES_ROM_BUTTON_GLUE, "aes_rom_button_glue", ("aes_gsx_setmb_aes", "aes_gsx_init", "aes_gsx_graphic")),
+], ids=["bchange queued", "kchange queued", "the button glue installed"])
+def test_a_build_that_left_a_relocation_un_applied_is_refused_at_measure_level(bench, monkeypatch, rom_address, symbol, routines):
+    """RED before the rule (a blob built with `fork_bchange()` answering the ROM's address measured 26 of 26 rows of
+    b_click, b_delay, chkkbd, mchange and forker green, ratios unchanged): the back-map leaves a slot that holds the
+    ROM's own address as it is, and it then EQUALS the ROM's memory. Every row whose run stores the code is now
+    refused BY NAME — but, for the glue (mapped at exit alone), a row over a machine that CAME WITH the ROM's glue in
+    one of the slots: there the value may have travelled, and the installers' own test holds the vectors."""
+    rows = [row for row in tier3.ROWS if row.symbol in routines and not row.transcription and not row.slice]
+    for row in rows:
+        tier3.measure(row, tier3.shipped_bench() if tier3.ships_through_a_call(row) else bench)
+    forged = _a_build_that_stores_the_rom_s_address(monkeypatch, rom_address, symbol)
+    refused = set()
+    for row in rows:
+        before = len(forged)
+        try:
+            tier3.measure(row, bench)
+        except AssertionError as named:
+            assert f"THE ROM'S OWN address {rom_address:#x}" in str(named) and "un-applied" in str(named), named
+            refused.add(row.symbol)
+        else:
+            came_with = {tier3._long_at(make_image(row.pokes), slot) for slot in aes_event.GLUE_CODES.slots}
+            assert len(forged) == before or rom_address in came_with, (
+                f"{row.symbol} / {row.case}: its run stored the code and was not refused")
+    assert refused and refused <= set(routines), f"refused: {sorted(refused)}"
+    assert rom_address in aes_event.GLUE_CODES.symbols or refused == set(routines), f"refused: {sorted(refused)}"
+
+
+def test_the_relocation_maps_the_queue_s_code_slots_alone_and_only_a_fork_function_s():
+    """A bijection over thirty-two longwords: a ROM fork function's address in a code slot becomes that function's
+    entry and comes back; the same value in a DATA slot, a value that is no fork function's, and every byte outside
+    the queue are left as they are — so a build that queued another routine still differs after the way back."""
+    mapping = {addrs.AES_ROM_BCHANGE: AN_ENTRY_OF_OURS, addrs.AES_ROM_MCHANGE: ANOTHER_ENTRY_OF_OURS}
+    queue_s = [tier3.Relocation("a fork function's code", tier3.FORK_CODE_SLOTS, mapping)]
+    back = {entry: function for function, entry in mapping.items()}
+    queue = aes.AES_FORK_QUEUE
+    image = bytearray(make_image({}))
+    staged = {queue + aes.FORK_CODE: addrs.AES_ROM_BCHANGE, queue + aes.FORK_DATA: addrs.AES_ROM_BCHANGE,
+              queue + aes.FORK_ENTRY_BYTES + aes.FORK_CODE: addrs.AES_ROM_FORKQ,
+              queue - aes.LONG_BYTES: addrs.AES_ROM_MCHANGE,
+              queue + (aes.AES_FORK_ENTRIES - 1) * aes.FORK_ENTRY_BYTES + aes.FORK_CODE: addrs.AES_ROM_MCHANGE}
+    for at, value in staged.items():
+        image[at:at + aes.LONG_BYTES] = value.to_bytes(aes.LONG_BYTES, "big")
+    before = bytes(image)
+    tier3.map_fork_codes(image, mapping)
+    moved = {at for at in staged if image[at:at + aes.LONG_BYTES] != before[at:at + aes.LONG_BYTES]}
+    assert moved == {queue + aes.FORK_CODE, queue + (aes.AES_FORK_ENTRIES - 1) * aes.FORK_ENTRY_BYTES + aes.FORK_CODE}
+    assert int.from_bytes(image[queue:queue + aes.LONG_BYTES], "big") == mapping[addrs.AES_ROM_BCHANGE]
+    assert tier3._a_code_relocated(queue + 1, image, before, queue_s)
+    assert not tier3._a_code_relocated(queue + aes.FORK_DATA, image, before, queue_s)
+    assert not tier3._a_code_relocated(queue - 1, image, before, queue_s)
+    tier3.map_fork_codes(image, back)
+    assert bytes(image) == before
+    # ...a delivery's runs, each mapped where a code slot lies whole inside it:
+    run = {queue - 2: before[queue - 2:queue + aes.FORK_ENTRY_BYTES], queue + aes.FORK_ENTRY_BYTES + 1: b"\0\xfe\x51"}
+    ours = tier3._pokes_for_our_shore(run, queue_s)
+    assert ours[queue - 2][2:2 + aes.LONG_BYTES] == mapping[addrs.AES_ROM_BCHANGE].to_bytes(aes.LONG_BYTES, "big")
+    assert ours[queue - 2][:2] == run[queue - 2][:2] and ours[queue - 2][6:] == run[queue - 2][6:]
+    assert ours[queue + aes.FORK_ENTRY_BYTES + 1] == run[queue + aes.FORK_ENTRY_BYTES + 1], "a slot not whole in the run"
+
+
+def test_the_dispatcher_s_stack_is_put_back_for_a_row_that_drops_it_and_for_no_other(bench, monkeypatch):
+    """A row whose drop names bytes of the dispatcher's stack has OUR image's stack given back as our run found it —
+    over THE FRAMES OUR RUN PUSHED, the unbroken run of its stores down from the top (what then differs there is what
+    the ROM's run stored: the named drop); a row that names none keeps every byte our run stored there — compared."""
+    (lo, hi), = tier3.spans_put_back()
+    pushed_to = hi - A_FRAME_OF_OURS
+
+    def pushing(self, image, symbol, *args, **kwargs):
+        image[pushed_to:hi] = bytes([case.SLACK_FILL ^ 0xFF]) * A_FRAME_OF_OURS      # "our run" pushes a frame
+        return rom_bench.BenchResult(image, 0, 0, 0, [0] * len(emu.REPORTED_REGS), ())
+    monkeypatch.setattr(rom_bench.RomBench, "_call", pushing)
+    monkeypatch.setattr(tier3, "stored_by_the_run_just_made", lambda _memory: set(range(pushed_to, hi)))
+    before = bytearray(make_image({}))
+    for dropped, put_back in ((((hi - 8, hi - 4, "a part of it the ROM's run stored"),), True), ((), False),
+                              (((lo - 8, lo - 4, "bytes beside it"),), False)):
+        bench._put_back = tuple((low, high) for low, high in tier3.spans_put_back()
+                                if any(low <= at and upto <= high for at, upto, _why in dropped))
+        image = bytearray(before)
+        ours = tier3.RomBench._call(bench, image, "aes_dsptch")
+        assert (bytes(ours.image[lo:hi]) == bytes(before[lo:hi])) == put_back, dropped
+    bench._put_back = ()
+
+
+A_FRAME_OF_OURS = 0x40                  # bytes our run pushes on the dispatcher's stack in the cases here
+A_STRAY_STORE_UNDER_THE_FRAMES = 0x20   # ...and how far under them a store that is no push lies
+
+
+def test_a_store_of_ours_on_the_dispatcher_s_stack_that_is_no_push_is_not_put_back(bench, monkeypatch):
+    """RED before the put-back was the pushed frames alone (the WHOLE stack was given back, whichever bytes the row's
+    drop named: a word our switch parked at a wrong address under its frames was erased before the compare): a store
+    of ours below a gap under the frames it pushed STAYS in the image, and so differs."""
+    (lo, hi), = tier3.spans_put_back()
+    pushed_to = hi - A_FRAME_OF_OURS
+    stray = pushed_to - A_STRAY_STORE_UNDER_THE_FRAMES
+    assert tier3._pushed_from_the_top(set(range(pushed_to, hi)) | {stray}, lo, hi) == pushed_to
+    assert tier3._pushed_from_the_top(set(), lo, hi) == hi and tier3._pushed_from_the_top(set(range(lo, hi)), lo, hi) == lo
+
+    def parking(self, image, symbol, *args, **kwargs):
+        image[pushed_to:hi] = bytes([case.SLACK_FILL ^ 0xFF]) * A_FRAME_OF_OURS
+        image[stray] = case.SLACK_FILL ^ 0xFF
+        return rom_bench.BenchResult(image, 0, 0, 0, [0] * len(emu.REPORTED_REGS), ())
+    monkeypatch.setattr(rom_bench.RomBench, "_call", parking)
+    monkeypatch.setattr(tier3, "stored_by_the_run_just_made", lambda _memory: {*range(pushed_to, hi), stray})
+    before = bytearray(make_image({}))
+    bench._put_back = ((lo, hi),)
+    try:
+        ours = tier3.RomBench._call(bench, bytearray(before), "aes_dsptch")
+    finally:
+        bench._put_back = ()
+    assert bytes(ours.image[pushed_to:hi]) == bytes(before[pushed_to:hi]), "the frames it pushed: given back"
+    assert ours.image[stray] != before[stray], "the store under them: left where it is, for the compare to find"
+
+
+def test_no_fork_code_is_relocated_for_a_routine_that_reaches_the_rom_s_own_forker(bench):
+    """While ev_multi is the ROM's call, a door user's run has the ROM's forker run over OUR memory: its queue must
+    hold the ROM's addresses — no mapping for any routine that reaches that `jsr` (read off the build), the whole
+    mapping for one that does not."""
+    reaching = tier3._reaching_the_rom_s_forker()
+    rebound = addrs.AES_ROM_EV_MULTI in tier3.rebound_entries(tier3.BUILT_ELF)
+    assert bool(reaching) == (not rebound), "the ROM's forker is reached exactly while ev_multi's `jsr` is in the build"
+    for symbol in reaching:
+        assert tier3.fork_relocation(bench.elf, symbol) == {}
+    assert tier3.fork_relocation(bench.elf, None) == {}
+    assert set(tier3.fork_relocation(bench.elf, "aes_forker")) == set(aes_event.FORK_ENTRY_SYMBOLS)
+
+
 # ---- THE SWITCH: dsptch's twenty bytes, a kind of the build contract of its own (`src/aes/switch.S`) ---------------------
 DSPTCH = "aes_dsptch"
+OUR_DISP = "aes_rom_disp"               # the dispatcher's own `.S` entry in a build that links one
 DSPTCH_BYTES = 20                      # $fe387c..$fe388f: spl7_save follows at $fe3890
 A_TWIN_THAT_SWITCHES = """
 #include <stdint.h>
@@ -1339,27 +2102,33 @@ def test_the_switch_is_its_own_kind_of_the_build_contract(make_lists):
     name equal to (a row `aes_rom_dsptch` would make `aes_dsptch` "the C twin the ROM build must not link", and the
     shipped blob would generate a thunk of that name over the entry: G3's C5)."""
     switch = make_lists["SWITCH_SOURCES"]
-    assert switch == transcription.switch_sources() and [Path(source).name for source in switch] == ["switch.S"]
+    assert switch == transcription.switch_sources() and "switch.S" in [Path(source).name for source in switch]
     assert not set(switch) & (set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]))
-    assert transcription.SWITCH_ENTRIES == {DSPTCH}
-    assert not transcription.SWITCH_ENTRIES & (set(transcription.TRANSCRIBED) | set(transcription.ALCYON_ENTRIES))
-    assert not transcription.SWITCH_ENTRIES & {transcription.transcribed_core(entry) for entry in transcription.TRANSCRIBED}
-    assert not transcription.SWITCH_ENTRIES & set(shipped_glue.thunked_cores())
+    entries = set(transcription.SWITCH_ENTRIES)         # the kind's `.globl`s: a set of them, or a table keyed by them
+    assert DSPTCH in entries
+    assert not entries & (set(transcription.TRANSCRIBED) | set(transcription.ALCYON_ENTRIES))
+    assert not entries & {transcription.transcribed_core(entry) for entry in transcription.TRANSCRIBED}
+    assert not set(transcription.SWITCH_ENTRIES) & set(shipped_glue.thunked_cores())
     every_s = set(map(str, (RECREATE / "src" / "aes").glob("*.S"))) | set(map(str, (RECREATE / "src" / "vdi").glob("*.S")))
     assert every_s == set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch), (
         "a `.S` of the table's components that is of none of the three kinds")
 
 
+JMP_OPERAND_BYTES = aes.LONG_BYTES      # dsptch's last instruction is `jmp <disp>.l`: its operand, the last four bytes
+
+
 @pytest.mark.parametrize("blob", (lambda: RomBench(), tier3.shipped_bench), ids=BLOBS)
 def test_dsptch_is_the_rom_s_twenty_bytes_on_both_blobs(blob):
-    """BYTE-EXACT, absolute operands and all: the guard's `tst.b indisp`, the frame's two pushes and the `jmp` to the
-    ROM's own disp — the only instruction of our build but the door's `jsr`s that leaves for the AES's text, and no
-    `jsr`: so no door call of the derivations above."""
+    """BYTE-EXACT but for where its `jmp` lands: the guard's `tst.b indisp`, the frame's two pushes, and the jump to
+    disp — THE BUILD'S OWN (`aes_rom_disp`, the switch's `.S`: the dispatcher's battery pins that region whole, its
+    relocation named), never the ROM's. No `jsr`: no door call of the derivations above."""
     blob = blob()
     at = blob.entry(DSPTCH)
     ours = bytes(blob.blob[at - blob.base:at - blob.base + DSPTCH_BYTES])
-    assert ours == bytes(BASE_IMAGE[addrs.AES_ROM_DSPTCH:addrs.AES_ROM_DSPTCH + DSPTCH_BYTES])
-    assert ours[-aes.LONG_BYTES:] == addrs.AES_ROM_DISP.to_bytes(aes.LONG_BYTES, "big"), "its last operand: disp"
+    the_rom_s = bytes(BASE_IMAGE[addrs.AES_ROM_DSPTCH:addrs.AES_ROM_DSPTCH + DSPTCH_BYTES])
+    assert ours[:-JMP_OPERAND_BYTES] == the_rom_s[:-JMP_OPERAND_BYTES]
+    lands_at = int.from_bytes(ours[-JMP_OPERAND_BYTES:], "big")
+    assert lands_at == blob.entry(OUR_DISP) != addrs.AES_ROM_DISP, f"dsptch jumps to {lands_at:#x}"
     assert addrs.AES_ROM_DISP not in tier3.door_calls(blob.elf).values()
 
 
@@ -1371,14 +2140,47 @@ def test_a_twin_that_calls_the_dispatcher_links_against_the_switch(variable, tmp
     is the ROM's bytes."""
     source, linked = tmp_path / "probe.c", tmp_path / "probe.elf"
     source.write_text(A_TWIN_THAT_SWITCHES)
-    subprocess.run(["m68k-elf-gcc", *_expanded(RECREATE, variable), "-Wl,--build-id=none", "-Wl,-e0", str(source),
-                    *transcription.switch_sources(), "-o", str(linked)], cwd=RECREATE, check=True, capture_output=True)
+    # (The switch's own references — the dispatcher's C its `.S` calls — are not the probe's subject: left unresolved.)
+    subprocess.run(["m68k-elf-gcc", *_expanded(RECREATE, variable), "-Wl,--build-id=none", "-Wl,-e0",
+                    "-Wl,--unresolved-symbols=ignore-all", str(source), *transcription.switch_sources(), "-o", str(linked)],
+                   cwd=RECREATE, check=True, capture_output=True)
     listed = transcription.listing(linked)
     placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(linked)}
     assert re.search(rf"jsr {placed[DSPTCH]:x} <{DSPTCH}>", listed), listed
     unlinked = subprocess.run(["m68k-elf-gcc", *_expanded(RECREATE, variable), "-Wl,-e0", str(source), "-o", str(linked)],
                               cwd=RECREATE, capture_output=True, text=True)
     assert unlinked.returncode != 0 and f"undefined reference to `{DSPTCH}'" in unlinked.stderr, "the premise"
+
+
+def switch_battery():
+    """The dispatcher's battery's helper — imported where it is asked for: it imports the registry's own modules."""
+    return importlib.import_module("aes_switch")
+
+
+AN_INSTRUCTION_AHEAD_OF_ITS_LABEL = "    .text\n    rts\n    .globl a_first_entry\na_first_entry:\n    rts\n"
+SWITCH_SOURCES_FIRST_ENTRIES = {"switch.S": "aes_dsptch", "irq.S": "aes_rom_button_glue"}
+
+
+@pytest.mark.parametrize("variable", ("BENCH_CFLAGS", "SHIPPED_CFLAGS"))
+def test_no_byte_of_a_switch_source_lies_ahead_of_its_first_symbol(variable, tmp_path):
+    """WHAT THE END-TO-END VET CANNOT SEE IN A LINKED BLOB, held on each source's OWN OBJECT under each blob's flags:
+    the first instruction of `switch.S` and of `irq.S` is its first entry's — an instruction ahead of the first label
+    would ride in no symbol, and so in no pin (the vet began at the first symbol: the fill AFTER the last was held,
+    the bytes BEFORE the first were not). RED on a source that has one."""
+    def assembled(source):
+        made = tmp_path / f"{source.stem}.o"
+        subprocess.run(["m68k-elf-gcc", *_expanded(RECREATE, variable), "-c", str(source), "-o", str(made)],
+                       cwd=RECREATE, check=True, capture_output=True)
+        return made
+    sources = [Path(source) if Path(source).is_absolute() else RECREATE / source for source in transcription.switch_sources()]
+    assert {source.name for source in sources} == set(SWITCH_SOURCES_FIRST_ENTRIES)
+    first = switch_battery().first_symbol_offsets([assembled(source) for source in sources])
+    assert {path.stem + ".S": found for path, found in first.items()} == {
+        name: (entry, 0) for name, entry in SWITCH_SOURCES_FIRST_ENTRIES.items()}
+    planted = tmp_path / "planted.S"
+    planted.write_text(AN_INSTRUCTION_AHEAD_OF_ITS_LABEL)
+    (found,) = switch_battery().first_symbol_offsets([assembled(planted)]).values()
+    assert found == ("a_first_entry", len(opcodes.RTS)), "an instruction ahead of the first label: two bytes of no symbol"
 
 
 def test_a_rebound_entry_s_call_is_an_arrival_with_no_window(bench):
@@ -1394,6 +2196,38 @@ def test_a_rebound_entry_s_call_is_an_arrival_with_no_window(bench):
     assert 0 < ours < the_rom_s == measured.original_net
 
 
+A_CASE_OF_THE_PRESS_FAMILY = "a press"  # ev_multi's battery's: the button pressed while the process was busy, bchange queued
+
+
+def _ev_multi_s_row_over(name):
+    """A bench row of ev_multi's own over its battery's returning case `name` — as `aes_event.register_row` would
+    register it, made here for a case its battery has not registered."""
+    evm = importlib.import_module("aes_evmulti")
+    made = evm.RETURNING[name]
+    pokes, drops = aes_event.settled(evm.EV_MULTI, made.arguments, evm.machine_of(made), polls=True)
+    staged = aes.staged(evm.EV_MULTI, made.arguments, pokes)
+    call = tier3.CALL[tier3._routine(addrs.AES_ROM_EV_MULTI)]
+    registered = next(row for row in tier3.ROWS if row.symbol == "aes_ev_multi" and not row.transcription)
+    return registered._replace(case=name, args=tier3._resolve(call.args, staged, None), pokes=tier3._pokes_for(call, staged),
+                               dropped=drops, registered=None)
+
+
+def test_a_rebound_entry_reached_through_a_queued_fork_function_opens_no_window_on_either_shore(bench):
+    """THE PRESS FAMILY, RED before ("the event layer cost the ROM's run (398,) and ours (0,), window by window"): a
+    press queued while the process was busy — ev_multi's forker runs bchange, which posts the button: on the ROM's
+    shore by post_button's Line-F word, on ours by its twin. The ROM's watch read WHICH arrivals open no window off
+    the build's static call graph, and a call through the fork queue's CODE is in no graph: it charged the ROM's
+    post_button as a served window. An entry the build has REBOUND opens none, whatever road reaches it."""
+    row = _ev_multi_s_row_over(A_CASE_OF_THE_PRESS_FAMILY)
+    assert addrs.AES_ROM_POST_BUTTON in aes_event.REBOUND
+    assert addrs.AES_ROM_POST_BUTTON not in tier3.arrived_at_by_a_twin(row.symbol), "the premise: no graph holds that edge"
+    measured, _blob, original, windows = tier3._held_through_the_os(row, bench)
+    assert [call.routine for call in original.handed] == [addrs.AES_ROM_POST_BUTTON] == [call.routine for call in windows.handed]
+    assert measured.door_windows == (0,) and original.to_a_rebound_entry == windows.to_a_rebound_entry == [True]
+    assert all(inside > 0 for inside in tier3.rebound_own_of(measured))
+    tier3.measure(row, bench)
+
+
 def test_a_twin_is_an_arrival_only_from_our_build_s_own_text():
     """A twin's return address is no fixed call site, but it is BOUNDED: inside the blob's text, where every call of
     our build returns to. Reached with any other — the ROM's text here — it is refused by name, as a served entry
@@ -1405,12 +2239,36 @@ def test_a_twin_is_an_arrival_only_from_our_build_s_own_text():
     def reached_from(back):
         memory = bytearray(stack) + back.to_bytes(4, "big") + bytes(2 * 4 + max(aes_event.FRAME_BYTES.values()) * 2)
         return tier3.our_windows(tier3.BUILT_ELF).stopped(twin, stack, memory)
-    assert reached_from(hi - 2) == frozenset({hi - 2, addrs.AES_ROM_DSPTCH}) and lo <= twin < hi
+    assert reached_from(hi - 2) == frozenset({hi - 2, addrs.AES_ROM_DSPTCH}) | OUR_DISPATCHERS() and lo <= twin < hi
     with pytest.raises(AssertionError, match="names the text their calls come from"):
         aes_event.DoorStops((), (), twins={twin: addrs.AES_ROM_TAK_FLAG})
     for elsewhere in (hi, lo - 2, addrs.AES_ROM_WM_UPDATE):
         with pytest.raises(AssertionError, match="not a door call"):
             reached_from(elsewhere)
+
+
+def OUR_DISPATCHERS():
+    return tier3.our_dispatchers(tier3.BUILT_ELF)
+
+
+@pytest.mark.parametrize("elf", BLOBS.values(), ids=BLOBS)
+def test_a_twin_that_blocks_is_refused_at_our_build_s_own_dispatcher(elf):
+    """A twin runs none of the ROM's text: one that WAITS reaches the dispatcher OUR build links (`src/aes/switch.S`'s
+    `aes_dsptch`), never the ROM's. Our watch stops there too, inside a twin's call, and refuses by the same words —
+    where a watch naming the ROM's dsptch alone let the run idle in our dispatcher to the oracle's budget (sixteen
+    million instructions and a RuntimeError, measured on the flipped tree)."""
+    ours = tier3.our_dispatchers(elf())
+    assert ours and not ours & {addrs.AES_ROM_DSPTCH}, "the premise: the blob links a dsptch of its own"
+    twin = next(iter(tier3.twin_entries(elf())))
+    lo, hi = tier3.text_span(elf())
+    stack = A_STACK_AT
+    memory = bytearray(stack) + (hi - 2).to_bytes(4, "big") + bytes(2 * 4 + max(aes_event.FRAME_BYTES.values()) * 2)
+    windows = tier3.our_windows(elf())
+    assert windows.stopped(twin, stack, memory) >= ours
+    with pytest.raises(aes_event.Blocked, match=_refused_inside_call(0)):
+        windows.stopped(next(iter(ours)), stack, memory)
+    with pytest.raises(AssertionError, match="one that `blocks`"):
+        aes_event.DoorStops((), (), dispatchers=ours)
 
 
 def test_a_call_s_kind_is_what_the_watch_saw_not_a_window_that_came_out_empty(bench):
@@ -1448,31 +2306,42 @@ def test_our_frame_at_a_twin_is_held_to_the_rom_s_call(bench, monkeypatch):
 
 
 def _ours_watched_by(monkeypatch, watch_of):
-    """Our blob's watch made by `watch_of(calls, returns, delivered)` — `calls` the blob's door calls."""
+    """Our blob's watch made by `watch_of(elf, calls, returns, delivered)` — `calls` the blob's door calls."""
     def our_windows(elf, delivered=None):
         calls = tier3.door_calls(elf)
-        return watch_of(calls, [at + tier3.JSR_ABSOLUTE_BYTES for at in calls], delivered)
+        return watch_of(elf, calls, [at + tier3.JSR_ABSOLUTE_BYTES for at in calls], delivered)
     monkeypatch.setattr(tier3, "our_windows", our_windows)
 
 
 def test_an_arrival_our_run_does_not_count_lays_every_delivery_a_call_late(bench, monkeypatch):
     """THE RED for the arrival's ORDINAL (a delivery laid one arrival late, on a row whose door call 0 is the rebound
-    tak_flag): our run watched at the ROM-served entries alone counts its first wait as door call 0, lays the move
+    tak_flag): our run watched at every entry BUT THE LOCK'S TWIN counts its first wait as door call 0, lays the move
     owed to it at the next, and is refused at the wait that got nothing — by name."""
     row = _interrupted_row()
     assert min(row.delivered) == 1, "the premise: door call 0 is the lock's tak_flag, the first delivery at call 1"
-    _ours_watched_by(monkeypatch, lambda calls, returns, delivered: tier3.DoorWindows(calls.values(), returns, delivered))
+
+    def but_the_lock_s_twin(elf, calls, returns, delivered):
+        twins = {at: entry for at, entry in tier3.twin_entries(elf).items() if entry != addrs.AES_ROM_TAK_FLAG}
+        return tier3.DoorWindows(calls.values(), returns, delivered, twins=twins, twins_called_from=tier3.text_span(elf),
+                                 dispatchers=tier3.our_dispatchers(elf))
+    _ours_watched_by(monkeypatch, but_the_lock_s_twin)
     with pytest.raises(AssertionError, match=_refused_inside_call(0)):
         tier3._measure_through_the_os(row, bench)
 
 
 def test_a_twin_that_runs_the_aes_s_rom_is_refused_by_name(bench, monkeypatch):
     """A twin's call opens no window, so a cycle of the AES's ROM run inside one would be booked to nobody: refused.
-    Shown by taking the ROM's ev_multi our blob `jsr`s for a twin's first instruction."""
-    row = tier3.row_named(EV_ROW)
+    Shown, while the ROM serves ev_multi, by taking the ROM's routine our blob `jsr`s for a twin's first instruction;
+    and once ev_multi is C, by its twin's own forker handed the ROM's fork functions — a queue the ROM's interrupt
+    filled, the relocation taken away (`fork_relocation`), so that it `jsr`s into the ROM's text."""
     wait = addrs.AES_ROM_EV_MULTI
-    _ours_watched_by(monkeypatch, lambda calls, returns, delivered: tier3.DoorWindows(
-        (), returns, delivered, twins={wait: wait}, twins_called_from=(min(returns), max(returns) + 1)))
+    if THE_WAIT_IS_SERVED:
+        row = tier3.row_named(EV_ROW)
+        _ours_watched_by(monkeypatch, lambda _elf, calls, returns, delivered: tier3.DoorWindows(
+            (), returns, delivered, twins={wait: wait}, twins_called_from=(min(returns), max(returns) + 1)))
+    else:
+        row = _interrupted_row()
+        monkeypatch.setattr(tier3, "fork_relocation", lambda elf, symbol: {})
     with pytest.raises(AssertionError, match=f"our twin of {wait:#x} ran [0-9]+ cycles of the AES's own ROM"):
         tier3._measure_through_the_os(row, bench)
 
@@ -1489,16 +2358,18 @@ def test_a_row_arriving_at_a_twin_alone_is_watched(monkeypatch):
     monkeypatch.setattr(tier3, "_arriving_at_an_entry", lambda: arriving)
     monkeypatch.setattr(tier3, "_reaching_the_trap", lambda: frozenset())
     assert tier3.arrives_at_an_entry(tier3.row_named(REBOUND_ROW)) and tier3.goes_through_the_os(tier3.row_named(REBOUND_ROW))
-    assert not tier3.arrives_at_an_entry(tier3.row_named(EV_ROW)), "the premise: gr_stilldn calls no twin"
+    assert tier3.arrives_at_an_entry(tier3.row_named(EV_ROW)) == (not THE_WAIT_IS_SERVED), (
+        "gr_stilldn's one entry is ev_multi: it calls a twin exactly once the build has rebound that")
     assert not tier3.arrives_at_an_entry(tier3.row_named(("aes_tak_flag", "free: taken")))
 
 
 def test_the_table_s_line_counts_a_rebound_entry_s_calls_apart_from_the_windows(bench):
     """Under a row: the windows taken off both sides, and the calls of a rebound entry, which are in the own cycles."""
     rebound = tier3._through_the_os_line(tier3._measure_through_the_os(tier3.row_named(REBOUND_ROW), bench), 0)
-    served = tier3._through_the_os_line(tier3._measure_through_the_os(tier3.row_named(EV_ROW), bench), 0)
     assert "1 call(s) of a rebound entry in the own cycles" in rebound and "door window(s)" not in rebound
-    assert "in 1 door window(s)" in served and "rebound" not in served
+    # ...and gr_stilldn's one call, ev_multi's: a window while the ROM serves it, a rebound entry's call after.
+    the_wait_s = tier3._through_the_os_line(tier3._measure_through_the_os(tier3.row_named(EV_ROW), bench), 0)
+    assert ("in 1 door window(s)" in the_wait_s) == THE_WAIT_IS_SERVED == ("rebound" not in the_wait_s)
 
 
 # ---- (EV) a row TAKEN THROUGH INTERRUPTS: the same deliveries at the same door calls on every run ------------------------
@@ -1719,8 +2590,17 @@ def _worst_registered(symbol, measurement_of, but=()):
     return worst, tier3.own_ratio(measurement_of(worst))
 
 
-def _vet_no_stretch_is_dearer(row, stretches, worst_row, worst):
-    """Every stretch no slice prices is at or under the routine's worst registered row — else refused, by name."""
+def _worst_registered_caller_s_own(symbol, measurement_of):
+    """...and the worst CALLER'S OWN ratio among them (a row's second count: net of the rebound entries' calls)."""
+    rows = [row for row in tier3.ROWS if row.symbol == symbol and tier3.goes_through_the_os(row)]
+    return max(tier3.caller_own_ratio(measurement_of(row)) for row in rows)
+
+
+def _vet_no_stretch_is_dearer(row, stretches, worst_row, worst, worst_caller_s_own=None):
+    """Every stretch no slice prices is at or under the routine's worst registered row — else refused, by name: on
+    its own ratio, and (`worst_caller_s_own` given) on its CALLER's own, net of the rebound entries' calls inside
+    it — a stretch between two door calls of a rebound entry is mostly the twin's, and a dear stretch of the
+    caller's C would hide in it as a row's body does."""
     for stretch in stretches:
         ratio = tier3.stretch_ratio(stretch)
         assert ratio <= worst, (
@@ -1728,6 +2608,12 @@ def _vet_no_stretch_is_dearer(row, stretches, worst_row, worst):
             f"to {stretch.stop} that no registered slice prices, at an own ratio of {ratio:.4f} "
             f"({stretch.own_cycles[0]} cycles against the ROM's {stretch.own_cycles[1]}) — dearer than the routine's "
             f"worst registered row ({worst:.4f}, '{worst_row.case}'): register the stretch as a slice")
+        caller_s = tier3.stretch_caller_ratio(stretch)
+        assert worst_caller_s_own is None or caller_s <= worst_caller_s_own, (
+            f"{row.symbol}: the session of '{row.case}', from {stretch.start} to {stretch.stop}: the CALLER's own "
+            f"ratio, net of the rebound entries' calls ({stretch.rebound_own} of {stretch.own_cycles}), is "
+            f"{caller_s:.4f} — dearer than the routine's worst registered row's ({worst_caller_s_own:.4f}): register "
+            f"the stretch as a slice")
 
 
 @pytest.mark.parametrize("row", SESSIONS_SLICED.values(), ids=SESSIONS_SLICED)
@@ -1736,7 +2622,8 @@ def test_no_stretch_between_a_session_s_slices_is_dearer_than_its_routine_s_wors
     its registered slices leave unpriced is held at or under the worst row the table prints for the routine — so a
     dear stretch cannot hide in a gap between slices."""
     stretches = tier3.uncovered_stretches(row, bench)
-    _vet_no_stretch_is_dearer(row, stretches, *_worst_registered(row.symbol, measurement_of))
+    _vet_no_stretch_is_dearer(row, stretches, *_worst_registered(row.symbol, measurement_of),
+                              _worst_registered_caller_s_own(row.symbol, measurement_of))
 
 
 def test_a_session_s_stretches_and_slices_partition_its_run(bench):
@@ -1747,6 +2634,8 @@ def test_a_session_s_stretches_and_slices_partition_its_run(bench):
     whole, _blob, _original, _windows = tier3._held_through_the_os(row, bench)
     assert sum(stretch.insns for stretch in stretches) == whole.original_insns
     assert tuple(map(sum, zip(*(stretch.own_cycles for stretch in stretches)))) == whole.own_cycles
+    assert tuple(map(sum, zip(*(stretch.rebound_own for stretch in stretches)))) == tier3.rebound_own_of(whole), (
+        "...and what the rebound entries' calls cost each shore: every call's inside the one stretch it is made in")
     assert stretches[0].start == aes_event.ENTRY and stretches[-1].stop == aes_event.RETURN
     assert all(before.stop == after.start for before, after in zip(stretches, stretches[1:]))
     doors = sum(stretch.stop != aes_event.RETURN and stretch.stop.pc in aes_event.ENTRIES for stretch in stretches)
@@ -1764,6 +2653,9 @@ def test_a_session_s_uncovered_stretches_are_exactly_what_its_slices_leave(bench
     assert sum(stretch.insns for stretch in stretches) + sum(each.original_insns for each in priced) == whole.original_insns
     own = [stretch.own_cycles for stretch in stretches] + [each.own_cycles for each in priced]
     assert tuple(map(sum, zip(*own))) == whole.own_cycles
+    # ...nor any cycle of a rebound entry's call, on either shore: each slice's and each stretch's are its own calls'.
+    inside = [stretch.rebound_own for stretch in stretches] + [tier3.rebound_own_of(each) for each in priced]
+    assert tuple(map(sum, zip(*inside))) == tier3.rebound_own_of(whole)
 
 
 def test_a_stretch_s_ratio_is_its_own_cycles_and_past_every_bar_where_ours_alone_spent_any():
@@ -1771,6 +2663,9 @@ def test_a_stretch_s_ratio_is_its_own_cycles_and_past_every_bar_where_ours_alone
     assert tier3.stretch_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (3, 4))) == 0.75
     assert tier3.stretch_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (0, 0))) == 0
     assert tier3.stretch_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (1, 0))) > tier3.TIER3_FUNCTION_BAR
+    assert tier3.stretch_caller_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (3, 4))) == 0.75, "no rebound call: one number"
+    assert tier3.stretch_caller_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (30, 40), (27, 30))) == 0.3
+    assert tier3.stretch_caller_ratio(tier3.Stretch(aes_event.ENTRY, at, 10, (30, 40), (29, 40))) > tier3.TIER3_FUNCTION_BAR
 
 
 def test_the_rows_of_a_session_that_are_not_one_machine_are_refused_by_name(bench, monkeypatch):
@@ -2217,10 +3112,46 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
         runs.append((entry, kwargs.get("dropped", ()), kwargs.get("dropped_windows", ())))
         return run(entry, regs, glue, **kwargs)
 
+    # ...BUT A VETTED BY-NATURE LONGWORD: the address of a QPB a wait was queued with, left in its freed
+    # EVB — a place in each shore's own frame, on EVERY pair of shores, the host's too. A companion may leave out
+    # exactly the longwords `aes_event.vetted_qpb_addresses` answered IN THIS RUN (each held there to name, on our
+    # shore, the same QPB the ROM's names: the same eight bytes at the address it holds) — and nothing else.
+    vetted, vet = [], aes_event.vetted_qpb_addresses
+
+    def vetting(*asked):
+        vetted.append(tuple(vet(*asked)))
+        return vetted[-1]
+
     monkeypatch.setattr(case, "run", recorded)
+    monkeypatch.setattr(aes_event, "vetted_qpb_addresses", vetting)
     result = case.tier3_undropped()[name]()
-    assert runs and all(entry == registered[1] and not dropped and not windows for entry, dropped, windows in runs), runs
+    by_nature = vetted[-1] if vetted else ()
+    assert runs and all(entry == registered[1] and not dropped and tuple(windows) == by_nature
+                        for entry, dropped, windows in runs), (
+        f"{name}: a companion drops nothing but the longwords the QPB vet answered in its own run ({by_nature}) — "
+        f"its runs: {[(hex(entry), dropped, windows) for entry, dropped, windows in runs]}")
+    assert all(why == aes_event.QPB_ADDRESS_WHY and hi - lo == aes.LONG_BYTES for lo, hi, why in by_nature)
+    assert set(by_nature) <= set(case.tier3_dropped()[name]), "...and the row itself drops each by name at Tier 3"
     assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
+
+
+def test_a_companion_that_leaves_out_an_unvetted_longword_is_refused(monkeypatch):
+    """THE RED for that exception's edge: the rule admits the longwords the vet ANSWERED, never a window a companion
+    merely names — a companion that drops a QPB's address the vet was not asked about is refused as any drop is."""
+    name = next(iter(sorted(case.tier3_dropped())))
+    registered = case.registered_case(name)
+    assert not test_boot_snapshot.delivered_of(registered), "the premise: a direct row's companion"
+    unvetted = ((aes_event.EVBS[0] + aes.EVB_PARM, aes_event.EVBS[0] + aes.EVB_PARM + aes.LONG_BYTES, aes_event.QPB_ADDRESS_WHY),)
+    companion = case.tier3_undropped()[name]
+
+    def leaving_it_out():
+        run = case.run                  # (the rule's own recorder, by now)
+        monkeypatch.setattr(case, "run", lambda entry, regs, glue, **kwargs: run(
+            entry, regs, glue, **{**kwargs, "dropped_windows": unvetted}))
+        return companion()
+    monkeypatch.setattr(case, "tier3_undropped", lambda: {name: leaving_it_out})
+    with pytest.raises(AssertionError, match="a companion drops nothing but the longwords the QPB vet answered"):
+        test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypatch)
 
 
 # A session's slice rows share ONE companion (`aes_event.register_slices`: the whole session's differential), so it

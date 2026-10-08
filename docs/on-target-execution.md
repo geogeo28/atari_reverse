@@ -204,7 +204,7 @@ A bound that legitimately differs across the two shores is a third shape and is 
 still a residual: see "Fitting the machine" below for the image-bounds helper whose two arms stop at
 different addresses off target and on, and which is recorded as unpinned rather than argued away.
 
-## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps, 14-15 in the TOS 1.02 recreate)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps, 14-17 in the TOS 1.02 recreate)
 
 Entries **1-9 and 11-13 were each HIT in a real build** and are written from the wreckage — 11 and
 12 on a real Atari, by a person who switched the machine on, and 13 by a port that passed every
@@ -219,7 +219,9 @@ have shipped a real defect and each was caught in review; read them with these. 
 between the two**: it was in a real build — the cross-compiled ELF the bench measures — and was caught
 by the pre-commit code-review gate reading that ELF's disassembly, before any machine ran it. **Entry
 15 is the same kind**: in the cross-compiled blobs, every row green, found by a review reading the
-object — and then given a surface that RUNS it, an interrupt taken between two instructions.
+object — and then given a surface that RUNS it, an interrupt taken between two instructions. **Entries
+16 and 17 are "avoided" shapes too**: each was in a tree whose every differential was green, each was
+found by a review probing the built blob, and neither had yet cost a machine anything.
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -926,6 +928,75 @@ differential"): an input the harness never varies.
   `forkq` is not interrupt-safe in TOS 1.02 either (an interrupt between its read of the tail and its
   count puts two entries in one slot). Matching the original includes matching its windows — record
   them as ROM findings, do not fix them.
+
+### 16. A hand-`.S` entry that calls C on a stack the original sized
+
+**Caught by a review that measured the path the author's check had not; every differential was
+green.** TOS 1.02's AES runs its dispatcher on a private 640-byte stack (`savestate`'s `lea
+$8c1a,sp`) and its three interrupt glues on private stacks of 92 and 96 bytes. The recreate ships
+the switch and the glue as the original's bytes — and those bytes call C (`forker`, `idle`,
+`b_click`, `forkq`). Byte-pinning the entry says nothing about the C it calls: GCC's frames are not
+the original compiler's, and a stack the original sized for its own frames can be overrun by a build
+whose every differential is green — the overrun lands in the globals below the stack (here: a tick
+countdown, a chained vector, two parked stack pointers).
+
+**The trap in the obvious check.** The first check MEASURED the depth of one run (a bare yield: 230
+/ 240 bytes) and added an interrupt's need written by hand (66: an exception frame and a `movem`).
+Both were understatements, found by measuring: with two fork functions queued the build went 264 /
+274 deep, a press on a window's title 300 / 312, and the original's own Timer C handler goes 140
+bytes down the INTERRUPTED stack (240 with an MFP interrupt nested on a vertical blank). A measured
+depth is met by CASE CHOICE: a frame deepened by 300 bytes on a path the check did not run stayed
+green.
+
+**The surface.** READ the deepest path off the build's listing — every instruction of every function
+reachable from the entry, its effect on SP followed down every branch, each callee added at its call
+site, a call through a register resolved to the functions its caller names by value, and REFUSE what
+cannot be followed, each shape by name (an unknown store to SP, two paths meeting at different
+depths, recursion, a call through a pointer read out of memory that nobody declared, a trap whose
+handler's frames are counted nowhere, a path that falls off a listed body). Hold the reading to runs
+where a run can reach it (the deepest trap the listing predicts must be EXACTLY a run's). Refuse by
+name. `projects/tos102us/recreate/test/aes_switch.py` (`StackReading`).
+
+**The second trap: whose interrupt handlers?** The check then added what an interrupt needs,
+MEASURED — from the ORIGINAL's handlers, entered from the machine's vectors: 240 bytes nested, 596
+of 640, green. But a build that ships its own BIOS installs ITS entries, and each of those is the
+original's register save PLUS a pushed image pointer, a `jsr` and a C body whose prologue saves
+every callee-saved register again: 192 / 188 / 152 against 140 / 140 / 100 — 344 nested, **700 of
+640**. Nothing differed: the bound was the build's, the need the original's, and a BIOS frame that
+grew moved neither. The same holds below a trap (the original's VDI needs 130 bytes, the build's C
+VDI 162). **Measure the interrupted stack with the entries THE BUILD installs** (`our_interrupt_needs`,
+`our_loop_run(our_vdi=True)`), name what is still the original's under them, and where the bound
+does not hold say so: a strict xfail carrying the numbers, and a risk entry in STATUS — not a
+green check of a machine nobody ships. (Measuring it also ran the build's vertical blank over a
+cursor redraw for the first time: the C kept a pointer in A6 across a RAM vector's `jsr`, the one
+register the call's clobber list could not name, and the handler never returned — class 3, at a
+vector, found only because the handler was run over the machine's real routine.)
+
+### 17. A code address the build hands the OS — installed by nobody
+
+**Caught by a review scanning the blob for the original's addresses.** `gsx_setmb_aes` hands the VDI
+the addresses of the AES's button and motion interrupt routines (`vex_butv` / `vex_motv`) BY VALUE.
+The recreate shipped those routines as its own `.S` — pinned, differential-tested on both blobs, an
+interrupt taken at every instruction boundary — and the C that installs them still pushed the
+ORIGINAL's two addresses. Nothing in the built blob referenced the new entries. Every guarantee
+proved of the replacement was proved of code the shipped path would never enter; on a rebuilt ROM
+the vectors would point at whatever is linked at the old addresses.
+
+**Why nothing saw it.** The host build MUST store the original's addresses to stay byte-exact
+against the original's memory, so Tier 1 was right to be green; Tier 3 compared the same two
+longwords and they were equal. The defect is an immediate's VALUE on target, in a place where the
+"correct" value differs from the original's by nature.
+
+- **Fix:** one spelling at the site that is the original's address off target and the build's own
+  entry on it; at the measuring tier the slots that can hold such an address are RELOCATED (build's
+  entry ↔ original's) and compared exactly — never dropped: a build that installed ANOTHER routine's
+  entry maps back to the wrong address and differs.
+- **The surfaces:** (1) scan the built blob for ANY longword that names an address inside a region a
+  `.S` replaces (with the scan's own RED: a planted address found); (2) hold the original's sites
+  that still name such an address, in routines not yet ported, as a LIST against the census of the
+  original's code immediates — port one and forget to re-point it, and the list reds; (3) run the
+  shipped path end to end once: over the machine the build's own installer left, the original's
+  interrupt enters the build's routine and spends no cycle in the original's text.
 
 ## Sizing the gap in class 13 — the ways a cost instrument lies
 

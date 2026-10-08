@@ -115,6 +115,79 @@ def test_an_effect_that_raises_fails_the_case_by_name():
     assert results == [address_hook.REFUSED_ANSWER]
 
 
+class _NoException(BaseException):
+    """Something an effect might raise that is no `Exception`."""
+
+
+WHAT_IS_NO_EXCEPTION = {"pytest.fail": pytest.fail.Exception("a vet inside the effect"),
+                        "a BaseException": _NoException("a vet inside the effect")}
+
+
+@pytest.mark.parametrize("raised", WHAT_IS_NO_EXCEPTION.values(), ids=WHAT_IS_NO_EXCEPTION)
+def test_an_effect_that_raises_what_is_no_exception_fails_the_case_all_the_same(raised):
+    """RED while the hook recorded an `Exception` alone: `pytest.fail` inside an effect — a vet it makes — raises a
+    BaseException that is none, which left the hook's `except`, was printed by ctypes ("Exception ignored on
+    calling ctypes callback") and the case passed GREEN, the effect's work done and its refusal lost. Recorded like
+    any other: the call is answered as a refused one, and the case fails by the effect's own words."""
+    def refusing(buf):
+        buf[0] = NAMED_MARK
+        raise raised
+    with pytest.raises(AssertionError, match=f"the effect staged at {NAMED:#x} raised {type(raised).__name__}: "
+                                             f"a vet inside the effect") as failed:
+        with staged({NAMED: refusing}):
+            results, buf = in_one_pass(NAMED)
+    assert results == [address_hook.REFUSED_ANSWER] and buf[0] == NAMED_MARK, "the effect ran, and raised after its work"
+    assert HOOK.raised == [(NAMED, raised)] and failed.value.__cause__ is raised
+
+
+def _an_effect_that_raises(raised):
+    def effect(buf):
+        buf[0] = NAMED_MARK
+        raise raised
+    return effect
+
+
+def test_an_effect_s_failure_names_its_type_and_where_it_was_raised():
+    """RED while the message was `str(raised)`: a bare `assert` in a helper, a KeyboardInterrupt, a KeyError read
+    "raised: " with nothing after the colon or a bare key — no type, no line. The failure names the exception's
+    TYPE and carries its traceback, down to the line of the effect that raised."""
+    def vetting(_buf):
+        assert HOOK.calls is None                       # an assert with no message of its own
+    with pytest.raises(AssertionError, match="raised AssertionError: ") as failed:
+        with staged({NAMED: vetting}):
+            in_one_pass(NAMED)
+    assert "in vetting" in str(failed.value) and "assert HOOK.calls is None" in str(failed.value)
+    with pytest.raises(AssertionError, match="raised KeyError: 'a key no table holds'"):
+        with staged({NAMED: _an_effect_that_raises(KeyError("a key no table holds"))}):
+            in_one_pass(NAMED)
+
+
+@pytest.mark.parametrize("stop", [KeyboardInterrupt(), SystemExit(3)], ids=["Ctrl-C", "an exit"])
+def test_what_stops_the_session_inside_an_effect_stops_it_once_the_c_has_returned(stop):
+    """RED while it was recorded as one more failure (and, before that, printed by ctypes and the test PASSED): a
+    Ctrl-C that landed inside an effect made one red line with an empty reason and the session went on to the next
+    test. It cannot cross the C callback — the call is answered as a refused one — and it is RAISED AGAIN, itself,
+    where the binding closes: even when the run has by then failed for a reason of its own."""
+    with pytest.raises(type(stop)) as stopped:
+        with staged({NAMED: _an_effect_that_raises(stop)}):
+            results, _buf = in_one_pass(NAMED)
+    assert stopped.value is stop and results == [address_hook.REFUSED_ANSWER]
+    with pytest.raises(type(stop)) as stopped:
+        with staged({NAMED: _an_effect_that_raises(stop)}):
+            in_one_pass(NAMED)
+            raise AssertionError("what the run then failed by: the final image differs")
+    assert stopped.value is stop
+
+
+def test_a_skip_inside_an_effect_is_a_skip():
+    """...and `pytest.skip` inside an effect skips the case — it was FAILED, "raised: skip me"."""
+    skip = pytest.skip.Exception("this machine has no blitter")
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        with staged({NAMED: _an_effect_that_raises(skip)}):
+            in_one_pass(NAMED)
+    assert skipped.value is skip
+
+
 def test_calls_holds_the_first_pass_alone():
     with staged():
         in_one_pass(NAMED)

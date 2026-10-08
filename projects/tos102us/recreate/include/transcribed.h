@@ -50,14 +50,18 @@
  * from inside the blob (the region may still carry another routine's Line-F words as bytes) — and every one of the
  * optimize layer's shared return tails ($fed066 / $fed06a) it reaches lies in its own pinned region.
  *
- * WHAT IS NOT A ROW, though it ships as the ROM's bytes: THE PROCESS SWITCH (`src/aes/switch.S`: dsptch — and, with
- * the scheduler, savestate, switchto and the mask brackets). A row says "this routine has a C core Tier 1 proves, and
- * the shipped build links the `.S` INSTEAD": the derived C-core name is the twin the ROM build must not link, and the
- * shipped blob reaches the entry through a generated thunk of that name. A context switch has no C core to prove or
- * exclude, and its entry is reached by a plain `jsr` under the very name the C calls (`aes_dsptch`) — a thunk there
- * would put ITS return address under the frame dsptch builds. So it is a kind of its own in the build contract
- * (`atari/target.mk`: SWITCH_SOURCES, kept out of TRANSCRIBED_SOURCES as the Alcyon entries are), byte-pinned
- * (`test/test_tier3.py`) and unpriced: no row's run reaches it.
+ * WHAT IS NOT A ROW, though it ships as the ROM's bytes: THE PROCESS SWITCH AND THE INTERRUPTS' GLUE
+ * (`atari/target.mk`, SWITCH_SOURCES — `src/aes/switch.S`: dsptch, disp, savestate, switchto, gotopgm and the mask
+ * brackets; `src/aes/irq.S`: the button, motion and tick glue, drawrat and the bare `rts`). A row says "this routine
+ * has a C core Tier 1 proves, and the shipped build links the `.S` INSTEAD": the derived C-core name is the twin the
+ * ROM build must not link, and the shipped blob reaches the entry through a generated thunk of that name. A context
+ * switch has no C core to exclude, and its entry is reached by a plain `jsr` under the very name the C calls
+ * (`aes_dsptch`) — a thunk there would put ITS return address under the frame dsptch builds; a glue is entered by
+ * the VDI's interrupt code with a register contract no thunk has. (drawrat alone has a C spelling too — `evfork.c`'s
+ * `aes_drawrat`, the one mchange calls: the `.S` is what the build hands whoever takes its address, not a twin the
+ * build must leave out.) So they are a kind of their own in the build contract (kept out of TRANSCRIBED_SOURCES as
+ * the Alcyon entries are), byte-pinned (`test/test_aes_switch.py`, `test/test_aes_irq.py`, `test/test_tier3.py`)
+ * and, but for the rows that enter one from a staged caller, unpriced.
  */
 #ifndef TOS102US_TRANSCRIBED_H
 #define TOS102US_TRANSCRIBED_H

@@ -881,25 +881,11 @@ def reader_parked_in_its_own_frame():
 
 
 # ---- Tier 3's rows -----------------------------------------------------------------------------------------------------
-def settled(name, arguments, machine):
-    """`(pokes, dropped)` of a PRICED row of `name` over `machine`: the words the ROM's run stores that differ by
-    nature — spl7_save's SR save word, the Line-F mask word — each staged at the value the run leaves and dropped at
-    Tier 3 by name, for the row's companion to compare with nothing dropped (`aes.undropped`)."""
-    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))
-    _final, writes, _regs = aes_event._rom_run(image, getattr(addrs, name))     # ONE run settles both words
-    return aes_event.settled_where_stored(dict(machine), writes, aes_event.MASK_WORD_AND_SPL)
-
-
 def register(label, routine, arguments, machine, *, through_line_f=False):
     """One row of `routine` over an arrival's `machine` with its frame `arguments` (`aes_evasync.register_rows`) —
-    priced direct, verified through its call word. A call that reaches the dispatcher is Tier 1 only (a row's run
-    returns)."""
+    priced direct, with what the one settling stages and drops (`aes_event.register_row`); verified through its call
+    word. A call that reaches the dispatcher is Tier 1 only (a row's run returns)."""
     if through_line_f:
         return aes.register(label, routine, arguments, machine, through_line_f=True)
-    pokes, dropped = settled(routine, arguments, machine)
     answered = routine != UNSYNC or unsync_answers(machine, arguments[0])
-    return aes.ROWS.register(
-        f"{aes.routines.core_symbol(routine)}, {label}", getattr(addrs, routine), aes.staged(routine, arguments, pokes),
-        dropped=dropped, answered=answered,
-        undropped=functools.partial(aes.undropped, routine, arguments, pokes, answer_compared=answered) if dropped
-        else None)
+    return aes_event.register_row(label, routine, arguments, machine, answer_compared=answered)

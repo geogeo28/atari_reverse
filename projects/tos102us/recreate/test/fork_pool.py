@@ -31,10 +31,15 @@ def over_forks(function, shares, jobs, seconds, what):
     """`{nth: function(shares[nth])}` for EVERY share, each made in one of `jobs` forks of this process. `what` names
     the pass in a failure; `seconds` is how long the pass may go with NO share coming back — the longest share's own
     time, with a loaded machine's margin."""
-    shares, made = list(shares), {}
+    shares, made, pending = list(shares), {}, {}
     with concurrent.futures.ProcessPoolExecutor(jobs, mp_context=multiprocessing.get_context("fork")) as pool:
-        pending = {pool.submit(function, share): nth for nth, share in enumerate(shares)}
         try:
+            # THE SHARES ARE HANDED OUT INSIDE THE `try`: a fork that dies while they still are (the pool's first
+            # forks are at work from the first `submit`) breaks the pool under a LATER `submit`, which then raises —
+            # and must be named as a death like any other (measured: one full run in fifteen left through `submit`,
+            # a bare BrokenProcessPool, with the share killed at 5 and share 9 not yet handed out).
+            for nth, share in enumerate(shares):
+                pending[pool.submit(function, share)] = nth
             while pending:
                 done, _waiting = concurrent.futures.wait(pending, timeout=seconds,
                                                          return_when=concurrent.futures.FIRST_COMPLETED)
@@ -45,7 +50,7 @@ def over_forks(function, shares, jobs, seconds, what):
                     made[pending[future]] = future.result()
                     del pending[future]
         except BrokenProcessPool as broken:
-            out = sorted(pending.values())
+            out = sorted(set(range(len(shares))) - set(made))       # handed out and unanswered, or never handed out
             raise Died(f"{what}: a fork DIED before it answered (a signal: a segfault, a kill) — {len(out)} of "
                        f"{len(shares)} shares never came back, the first {shares[out[0]]!r}: no verdict on any of "
                        f"them") from broken

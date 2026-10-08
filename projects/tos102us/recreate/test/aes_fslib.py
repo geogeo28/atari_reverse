@@ -952,10 +952,26 @@ def _noted_first(effect, note):
     return noted
 
 
-def _noting_vdi_calls(made):
-    """`aes_gsx.vdi_functions()` with each call noted in `made` (a `VdiCall`) before its core is run."""
+# THE LEDGER IS THE WHOLE SESSION'S ON BOTH SHORES, wherever the C makes the call. A door call the ROM SERVES runs the
+# ROM's event layer on both shores — its VDI traps are the ROM's own, made by no C, and are in neither ledger. A
+# REBOUND entry's call runs OUR C on our shore: every VDI function its twin calls (ev_multi's: chkkbd's vq_key_s,
+# vsin_mode and vsm_string, mchange's vq_mouse) is a core call of ours like any draw, and the ROM's routine takes the
+# same `trap #2` inside its own call. So the ROM's watch keeps the traps taken INSIDE the door calls of the rebound
+# entries too, and our ledger notes every VDI function a binding serves (`_noted_functions`: the polled ones with the
+# rest, where the poll runs in C) — the count, the order, the arguments and what the selector holds at each, the
+# event layer's polls among them. Never "count nothing while a twin runs": that would leave every VDI call the C
+# event layer makes under a session held by no ledger at all. Derived from `aes_event.REBOUND`: a flip edits nothing.
+def _noted(table, made):
+    """`table` (a `{routine: (stub, effect)}` of VDI functions) with each call noted in `made` (a `VdiCall`) before
+    its core is run."""
     return {routine: (stub, _noted_first(effect, lambda buf: made.append(vdi_call_in(buf))))
-            for routine, (stub, effect) in gsx.vdi_functions().items()}
+            for routine, (stub, effect) in table.items()}
+
+
+def _noting_vdi_calls(made):
+    """Every VDI function a door user's binding serves IN PROCESS (`aes_event.door_vdi_functions`), each call noted
+    in `made`."""
+    return _noted(aes_event.door_vdi_functions(), made)
 
 
 def recording_vdi_hook(made):
@@ -964,17 +980,39 @@ def recording_vdi_hook(made):
 
 
 class VdiCalls(aes_event.DoorStops):
-    """A watch over the ROM's run — `delivered` laid at its door calls — that stops at GEM's trap handler outside any
-    door call and keeps the VDI call made there (`made`: a `VdiCall` each)."""
+    """A watch over the ROM's run — `delivered` laid at its door calls — that stops at GEM's trap handler and keeps
+    the VDI call made there (`made`: a `VdiCall` each): outside any door call, and inside the calls of the entries
+    `whole` (the REBOUND ones, by default: above). `inside`: the indices in `made` of the calls kept inside a door
+    call.
 
-    def __init__(self, delivered=None):
+    A stop is taken BEFORE its instruction, and a stop may not arm the PC it stands at: inside a call the handler is
+    armed again at the trap's own return (the exception frame's PC), as a marked trap is outside one."""
+
+    def __init__(self, delivered=None, whole=None):
         super().__init__(aes_event.ENTRIES, aes_event.ROM_RETURNS, blocks=True, delivered=delivered)
         self.marked_with(aes_event.Timeline((VDI_TRAP,)))
-        self.made = []
+        self.made, self.inside = [], []
+        self._whole = aes_event.REBOUND if whole is None else frozenset(whole)
+        self._armed_in_the_call, self._polls_back_at = None, None
 
     def stopped(self, pc, sp, memory):
-        if pc == VDI_TRAP:
+        if self.between_calls:
+            if pc == VDI_TRAP:
+                self.made.append(vdi_call_in(memory))
+            armed = super().stopped(pc, sp, memory)
+            if self.between_calls or self.entry_at(pc) not in self._whole:
+                return armed
+            self._armed_in_the_call = armed         # a call of a rebound entry opened: its traps are the ledger's too
+            return armed | {VDI_TRAP}
+        if self._polls_back_at is None and pc == VDI_TRAP and self._armed_in_the_call is not None:
+            self.inside.append(len(self.made))
             self.made.append(vdi_call_in(memory))
+            self._polls_back_at = case.long_in(memory, sp + aes_event.EXCEPTION_FRAME_PC)
+            return self._armed_in_the_call | {self._polls_back_at}
+        if pc == self._polls_back_at:
+            self._polls_back_at = None
+            return self._armed_in_the_call | {VDI_TRAP}
+        self._armed_in_the_call = None
         return super().stopped(pc, sp, memory)
 
 
@@ -1002,10 +1040,13 @@ def digest(calls):
 
 def note_vdi_calls_in_a_child():
     """In a CHILD, before the event door is bound (`aes_event.declare_child_doors`): the cores `aes_event`'s child
-    serves VDI calls from (`aes_gsx.vdi_functions()`) each wrapped to note its call, for this process alone."""
+    serves VDI calls from each wrapped to note its call, for this process alone."""
     made = []
-    noting = _noting_vdi_calls(made)
-    gsx.vdi_functions = lambda: noting
+    # ...BOTH tables a child's binding may serve from (`aes_event._child_vdi`: the polled functions with the rest
+    # where the CHILD's library polls in C, which only its binding knows) — one list, one note per call.
+    graphics, with_the_polled = _noted(gsx.vdi_functions(), made), _noted(aes_event.vdi_functions(), made)
+    gsx.vdi_functions = lambda: graphics
+    aes_event.vdi_functions = lambda: with_the_polled
     atexit.register(lambda: print(VDI_CALLS_LINE + repr(digest(made)), file=sys.stderr))
 
 
@@ -1019,9 +1060,9 @@ def vdi_digest_in(stderr):
 def child_vdi_calls(machine, delivered):
     """The digest of the VDI calls fs_input's C makes over `machine` in a child, `delivered` laid at its door calls
     (`aes_event.refusal`: the session's own child, its stderr read)."""
-    bind = aes_event.child_binding(objects=True, interrupts=delivered, before=aes_event.CHILD_DOORS[INPUT])
-    returncode, stderr, _image = aes_event.refusal(INPUT, machine, ARGUMENTS, bind=bind,
-                                                   seconds=aes_event.CHILD_RETURN_SECONDS)
+    returncode, stderr, _image = aes_event.door_child(INPUT, ARGUMENTS, machine, objects=True, interrupts=delivered,
+                                                      before=aes_event.CHILD_DOORS[INPUT],
+                                                      seconds=aes_event.CHILD_RETURN_SECONDS, read_back=False)
     assert returncode == 0, stderr
     return vdi_digest_in(stderr)
 
@@ -1066,7 +1107,10 @@ def session_doors(vdi_calls, parked):
     """Every door fs_input's C goes out by IN PROCESS, as one hook: the staged disk and REAL GEMDOS (`doors`: each
     call's parked return addresses noted in `parked`), the VDI — each call noted in `vdi_calls` — and the event door:
     for a session one run can make — its keys typed ahead, or none (no memory: it never waits)."""
-    _vdi, walked = drawing_hooks()
+    # ...and what the event layer's own C calls out through where an entry that polls is rebound — the polled VDI
+    # functions, noted with the rest, and the routines it is handed (`aes_event.door_objects`): the door's standard
+    # binding (`aes_event.door_hook`), spelt here because the VDI's half is this session's recorder.
+    walked = aes.alcyon_object_hook(aes_event.door_objects(aes.walkers(od.JUST_DRAW)))
     return aes.doors(sh.staged_disk, functools.partial(gemdos.bound_handlers, _noting_parks(parked)),
                      recording_vdi_hook(vdi_calls), walked, aes_event.event_hook())
 
@@ -1115,12 +1159,14 @@ def run_session(machine, budget, **kwargs):
     (`run`'s arrangement), the event layer the ROM's (the event door) — and every frame the C handed the door held to
     the ROM's own, every VDI call it made to the ROM's (`rom_vdi_calls`), the return addresses its glue had parked at
     each GEMDOS call to the ROM's (`rom_parks`). `budget`: the run's cap, declared
-    (`aes_event.rom_handed` holds the ROM's run to it both ways) — None for a run inside the oracle's default."""
+    (`aes_event.rom_handed` holds the ROM's run to it both ways) — None for a run inside the oracle's default.
+    THE C RUNS FIRST IN A FORK made inside the session's open pass (`aes_event.forked_inside_its_pass`): a core that
+    halts or spins fails the case by its own words, never the worker."""
     aes_event.HANDED.clear()
     machine, drawn, parked = merge_pokes(machine, STALE_ANSWERS, STALE_SLOTS), [], []
     result = aes_event.capped_run(INPUT, budget, kwargs, lambda **limits: aes.run_function(
         INPUT, ARGUMENTS, machine, hook=session_doors(drawn, parked), dropped_windows=sh.REAL_WINDOWS, poison=False,
-        result=sh.Result, **limits))
+        result=sh.Result, first=aes_event.forked_inside_its_pass(INPUT, ARGUMENTS), **limits))
     _vet_the_parks(parked, rom_parks(machine, budget))
     ours, the_rom_s = list(aes_event.HANDED), aes_event.rom_handed(INPUT, ARGUMENTS, machine, budget=budget)
     assert ours == the_rom_s, f"fs_input handed the door {ours} where the ROM's own run hands {the_rom_s}"

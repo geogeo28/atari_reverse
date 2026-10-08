@@ -26,8 +26,9 @@ from harness import BASE_IMAGE, addrs, make_image
 def a_cache_of_the_test_s_own(tmp_path, monkeypatch):
     """Every test here keeps its answers under its own directory, switched ON whatever the run's environment says —
     and none of them made again as a sample (the tests of the sample ask for it: most derivations here COUNT how
-    often they are made)."""
+    often they are made). It begins holding no claim, whatever a test before it left held as it failed."""
     monkeypatch.setattr(derived, "ROOT", tmp_path / "derived")
+    monkeypatch.setattr(derived, "_CLAIMS_HELD", [])
     monkeypatch.delenv(derived.DERIVED_OFF, raising=False)
     monkeypatch.setattr(derived, "_candidate_is_the_project_s", lambda: True)
     monkeypatch.setattr(derived, "SAMPLED_ONE_IN", 0)
@@ -766,6 +767,585 @@ def test_only_the_trees_most_lately_used_are_kept_however_fresh_the_others(monke
     assert kept == [tree.name for tree in others[:derived.TREES_KEPT - 1]]
 
 
+# ---- a derivation in flight, claimed (`derived._served_or_claimed`) ------------------------------------------------------
+A_DERIVATION_S_SECONDS = 0.5            # long enough that a process forked while it is made asks before it ends
+ENDS_WITHIN_SECONDS = 30                # a fork that asks one question, on a machine three suites are running on
+LOOKED_EVERY_SECONDS = 0.01             # ...and how often this file looks whether it has
+NO_CLAIM_IS_STUCK_SECONDS = 3600        # CLAIM_STUCK_AFTER_SECONDS for a test in which a waiter must not rest on it
+STUCK_AFTER_SECONDS = 1.0               # ...and for one in which it must
+_HELD, _NOT_HELD, _RAISED = 0, 3, 4     # how a fork ends: what it was asked held, did not, or raised
+
+
+@pytest.fixture
+def forked():
+    """`forked(holds)`: the pid of a fork of this process that calls `holds()` and ends with `_HELD` where it answers
+    True. `forked.ended(pid)`: how it ended — None for one killed because it had not after ENDS_WITHIN_SECONDS (a
+    waiter that waits for ever FAILS its test: it does not hang the run). `forked.killed(pid)`: killed, and reaped
+    unless told not to (`forked.reaped(pid)`, later). A fork still out when the test ends is killed."""
+    out = []
+
+    def fork(holds):
+        pid = os.fork()
+        if pid == 0:
+            status = _RAISED
+            try:
+                status = _HELD if holds() is True else _NOT_HELD
+            finally:
+                os._exit(status)
+        out.append(pid)
+        return pid
+
+    def reaped(pid):
+        out.remove(pid)
+        return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+
+    def ended(pid):
+        over = time.monotonic() + ENDS_WITHIN_SECONDS
+        while True:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                out.remove(pid)
+                return os.waitstatus_to_exitcode(status)
+            if time.monotonic() >= over:
+                killed(pid)
+                return None
+            time.sleep(LOOKED_EVERY_SECONDS)
+
+    def killed(pid, and_reaped=True):
+        os.kill(pid, signal.SIGKILL)
+        return reaped(pid) if and_reaped else None
+    fork.ended, fork.killed, fork.reaped = ended, killed, reaped
+    yield fork
+    for pid in list(out):
+        killed(pid)
+
+
+def _until(holds):
+    """Wait until `holds()` — for ENDS_WITHIN_SECONDS at most."""
+    over = time.monotonic() + ENDS_WITHIN_SECONDS
+    while not holds():
+        assert time.monotonic() < over, "what the test waited for never came"
+        time.sleep(LOOKED_EVERY_SECONDS)
+
+
+def _claims():
+    return sorted(derived.ROOT.rglob(f"*{derived.CLAIM_SUFFIX}"))
+
+
+def _said_in(log):
+    """What the derivations that say so said in `log`, in order: `(the word, the pid, when)`."""
+    lines = Path(log).read_text().splitlines() if os.path.exists(log) else []
+    return [(word, int(pid), float(when)) for word, pid, when in map(str.split, lines)]
+
+
+def _say(log, word):
+    with open(log, "a") as said:
+        said.write(f"{word} {os.getpid()} {time.monotonic()}\n")
+
+
+def _made_slowly(log, seconds=0):
+    """A derivation that says in `log` when it begins and when it ends, `seconds` apart."""
+    _say(log, "begins")
+    time.sleep(seconds)
+    _say(log, "ends")
+    return "made slowly", seconds
+
+
+def _raising_slowly(log, seconds):
+    _made_slowly(log, seconds)
+    raise ValueError("what the derivation raises")
+
+
+def _never_made_by_the_first_to_try(log):
+    """A derivation the FIRST process to make it never ends (it is there to be killed); the next one's ends at once."""
+    _say(log, "begins")
+    if len(_said_in(log)) == 1:
+        time.sleep(NO_CLAIM_IS_STUCK_SECONDS)
+    return "made by the second to try"
+
+
+def _the_claims_standing(_question):
+    """A derivation that answers the claims standing while it is made: each one's name, and the maker it names."""
+    return [(claim.name, claim.read_bytes()) for claim in _claims()]
+
+
+def _place_of(asked, *arguments):
+    """Where the answer of `asked(*arguments)` is kept, asked now."""
+    return derived._path_of(derived.key_of(asked.derive, arguments, {}))
+
+
+def _a_claim_planted(asked, *arguments, maker):
+    """Another process's claim on `asked(*arguments)`, as if `maker` were making it: the claim's file."""
+    claim = derived._claim_of(_place_of(asked, *arguments))
+    claim.parent.mkdir(parents=True, exist_ok=True)
+    claim.write_bytes(maker)
+    return claim
+
+
+def test_processes_that_ask_one_cold_question_at_once_make_it_once(forked, tmp_path):
+    """THE RED for a cold tree's workers each making what they all import (measured: ten processes, one battery,
+    72 CPU-seconds for 7 of derivations): the first to ask CLAIMS the derivation, the others wait for its answer —
+    made once, answered to each, and nothing left beside the answer."""
+    asked, log, askers = derived.kept(_made_slowly), str(tmp_path / "made"), 6
+    answered = [forked(lambda: asked(log, A_DERIVATION_S_SECONDS) == ("made slowly", A_DERIVATION_S_SECONDS))
+                for _asker in range(askers)]
+    assert [forked.ended(pid) for pid in answered] == [_HELD] * askers
+    assert [word for word, _pid, _when in _said_in(log)] == ["begins", "ends"], "made by more than one of them"
+    assert [path.suffix for path in _kept_files()] == [".pickle"], "a claim, or a claim's scratch file, was left"
+
+
+def test_a_claim_stands_beside_the_answer_s_place_while_it_is_made_and_names_its_maker():
+    """...a claim is a file beside the answer's place, there from before the derivation's first line to after its
+    answer is written, and it holds its maker's pid and when the kernel says that process began."""
+    standing = derived.kept(_the_claims_standing)("a question")
+    kept_at, = _kept_files()
+    assert standing == [(kept_at.with_suffix(derived.CLAIM_SUFFIX).name, f"{os.getpid()} {derived._began_ns()}".encode())]
+    assert _claims() == [] and derived._CLAIMS_HELD == []
+
+
+def test_a_claim_is_one_process_s_at_a_time():
+    """THE CLAIM IS TAKEN BY ONE: taking it where it stands fails, whoever tries — it is there whole, naming its maker,
+    or not there (linked into place: at no moment does it stand and name nobody) — and only its release frees it."""
+    claim = derived._claim_of(derived.ROOT / "a tree" / "ab" / "a key.pickle")
+    assert derived._claimed(claim) and claim.read_bytes() == derived._claimant()
+    assert not derived._claimed(claim) and derived._CLAIMS_HELD == [claim]
+    assert _kept_files() == [claim], "a scratch file was left beside the claim"
+    derived._given_up(claim)
+    assert _kept_files() == [] and derived._CLAIMS_HELD == [] and derived._claimed(claim)
+    derived._given_up(claim)
+
+
+def test_a_process_is_asked_when_another_began_and_one_that_is_no_more_did_not(forked):
+    """What tells a claim's maker from a later process given its pid — and a maker that lives from one that ended:
+    `_began_ns(pid)` is that process's own beginning (a fork's is not its parent's), and None once it ended, reaped
+    or not."""
+    spawned = time.time_ns()
+    child = forked(lambda: time.sleep(NO_CLAIM_IS_STUCK_SECONDS))
+    assert spawned - derived._NS_PER_MICROSECOND <= derived._began_ns(child) <= time.time_ns()
+    assert derived._began_ns(child) != derived._began_ns() == derived._BEGAN_NS
+    forked.killed(child, and_reaped=False)
+    _until(lambda: derived._began_ns(child) is None)
+    assert forked.reaped(child) == -signal.SIGKILL, "the premise: it ended, and was still to be reaped"
+    assert derived._began_ns(child) is None
+
+
+@pytest.mark.parametrize("and_reaped", (True, False), ids=("and reaped", "and not yet reaped"))
+def test_a_maker_killed_mid_derivation_leaves_its_waiter_to_make_the_answer(forked, tmp_path, monkeypatch, and_reaped):
+    """A worker killed while it makes an answer (the watchdog's exit, an out-of-memory kill) leaves its claim: the
+    process waiting on it sees that the maker is NO MORE — though no time bound is near — takes the claim over, makes
+    the answer and leaves nothing behind. A maker nobody reaped yet is no more either."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", NO_CLAIM_IS_STUCK_SECONDS)
+    asked, log = derived.kept(_never_made_by_the_first_to_try), str(tmp_path / "made")
+    maker = forked(lambda: asked(log) is None)
+    _until(lambda: len(_said_in(log)) == 1 and _claims())
+    waiter = forked(lambda: asked(log) == "made by the second to try")
+    time.sleep(A_DERIVATION_S_SECONDS)
+    assert len(_said_in(log)) == 1, "the premise: while the maker lives, the waiter waits and does not make it too"
+    forked.killed(maker, and_reaped)
+    assert forked.ended(waiter) == _HELD
+    assert [pid for _word, pid, _when in _said_in(log)] == [maker, waiter]
+    assert [path.suffix for path in _kept_files()] == [".pickle"] and asked(log) == "made by the second to try"
+
+
+def _nobody(_forked):
+    return b""
+
+
+def _another_process_given_this_one_s_pid(_forked):
+    return f"{os.getpid()} {derived._began_ns() - derived._NS_PER_MICROSECOND}".encode()
+
+
+def _a_process_that_ended(forked):
+    ended = forked(lambda: True)
+    named = f"{ended} {derived._began_ns(ended)}".encode()
+    assert forked.ended(ended) == _HELD
+    return named
+
+
+@pytest.mark.parametrize("maker", (_nobody, _another_process_given_this_one_s_pid, _a_process_that_ended),
+                         ids=lambda maker: maker.__name__.strip("_").replace("_", " "))
+def test_a_claim_whose_maker_is_no_more_is_taken_over_by_whoever_finds_it(forked, tmp_path, monkeypatch, maker):
+    """...and a claim FOUND with no maker — a run killed days ago, its pid since given to another process (which
+    began at another time), a file that names nobody — is not waited on at all."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", NO_CLAIM_IS_STUCK_SECONDS)
+    asked, log = derived.kept(_made_slowly), str(tmp_path / "made")
+    _a_claim_planted(asked, log, maker=maker(forked))
+    assert forked.ended(forked(lambda: asked(log) == ("made slowly", 0))) == _HELD
+    assert len(_said_in(log)) == 2 and [path.suffix for path in _kept_files()] == [".pickle"]
+
+
+def _a_process_that_lives(forked):
+    """A process that outlives the test's questions, as a claim names it."""
+    alive = forked(lambda: time.sleep(NO_CLAIM_IS_STUCK_SECONDS))
+    return f"{alive} {derived._began_ns(alive)}".encode()
+
+
+def test_a_claim_that_stood_too_long_under_one_maker_is_taken_over_though_the_maker_lives(forked, tmp_path, monkeypatch):
+    """A maker that lives and never answers (stopped, spinning in the oracle) holds its waiters for
+    CLAIM_STUCK_AFTER_SECONDS and no longer: the waiter then makes the answer itself — and a claim that changed
+    hands meanwhile is waited on for its NEW maker's whole time (ten waiters do not all take over from the first of
+    them that did)."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", STUCK_AFTER_SECONDS)
+    asked, log = derived.kept(_made_slowly), str(tmp_path / "made")
+    first, second = _a_process_that_lives(forked), _a_process_that_lives(forked)
+    claim = _a_claim_planted(asked, log, maker=first)
+    waiter = forked(lambda: asked(log) == ("made slowly", 0))
+    time.sleep(STUCK_AFTER_SECONDS / 2)
+    assert _said_in(log) == [] and claim.read_bytes() == first, "the premise: the waiter waits on a maker that lives"
+    claim.write_bytes(second)
+    changed_hands = time.monotonic()
+    assert forked.ended(waiter) == _HELD
+    (_begins, by, began), _ends = _said_in(log)
+    assert by == waiter and began - changed_hands >= STUCK_AFTER_SECONDS, "the second maker was not given its own time"
+    assert [path.suffix for path in _kept_files()] == [".pickle"]
+
+
+def test_a_maker_whose_claim_was_taken_over_leaves_the_new_maker_s_standing():
+    """...and the maker that was taken over from, when it ends at last, removes only a claim that is still its own."""
+    another_s = b"1 1"
+    asked = derived.kept(lambda: [claim.write_bytes(another_s) for claim in _claims()])
+    assert asked() == [len(another_s)]
+    assert [claim.read_bytes() for claim in _claims()] == [another_s] and derived._CLAIMS_HELD == []
+
+
+def test_a_derivation_that_raises_leaves_no_claim_and_its_waiter_makes_it_and_meets_the_same_raise(forked, tmp_path):
+    """A derivation that raises (a vet of its own, a ROM run that does not end) must not leave waiters waiting: its
+    claim goes as the raise passes, nothing is kept, and the process that waited makes the derivation in its turn —
+    AFTER the first, not beside it — and is raised the same."""
+    asked, log = derived.kept(_raising_slowly), str(tmp_path / "made")
+
+    def is_raised_it():
+        with pytest.raises(ValueError, match="what the derivation raises"):
+            asked(log, A_DERIVATION_S_SECONDS)
+        return True
+    maker = forked(is_raised_it)
+    _until(lambda: _said_in(log))
+    waiter = forked(is_raised_it)
+    assert [forked.ended(maker), forked.ended(waiter)] == [_HELD, _HELD]
+    assert [(word, pid) for word, pid, _when in _said_in(log)] == [("begins", maker), ("ends", maker), ("begins", waiter),
+                                                                  ("ends", waiter)]
+    assert _kept_files() == []
+
+
+SEVERAL_ASKERS = 6
+NOT_IN_TURN_WITHIN = 0.67               # of the time the waiters take ONE AFTER ANOTHER: side by side is a sixth of it
+
+
+def test_a_derivation_that_raises_is_made_by_its_waiters_side_by_side_not_one_after_another(forked, tmp_path):
+    """RED before a waiter told a claim GIVEN UP from one it took over: ten askers of a derivation that raises took
+    the claim IN TURN, each making it — and raising — while the rest waited on it (5.4 s where ten unclaimed
+    processes raise in 0.5 s). The claim a waiter rested on went with no answer left: every such waiter makes the
+    derivation itself, unclaimed, at once — after the first maker, beside one another."""
+    asked, log = derived.kept(_raising_slowly), str(tmp_path / "made")
+
+    def is_raised_it():
+        with pytest.raises(ValueError, match="what the derivation raises"):
+            asked(log, A_DERIVATION_S_SECONDS)
+        return True
+    maker = forked(is_raised_it)
+    _until(lambda: _said_in(log) and _claims())
+    waiters = [forked(is_raised_it) for _asker in range(SEVERAL_ASKERS)]
+    assert [forked.ended(pid) for pid in (maker, *waiters)] == [_HELD] * (1 + SEVERAL_ASKERS)
+    said = _said_in(log)
+    assert sorted(pid for word, pid, _when in said if word == "begins") == sorted((maker, *waiters)), "each raised its own"
+    the_maker_ended = next(when for word, pid, when in said if (word, pid) == ("ends", maker))
+    began = sorted(when for word, pid, when in said if word == "begins" and pid != maker)
+    ended = sorted(when for word, pid, when in said if word == "ends" and pid != maker)
+    assert began[0] >= the_maker_ended, "the premise: they waited for the first maker"
+    one_after_another = SEVERAL_ASKERS * A_DERIVATION_S_SECONDS
+    assert ended[-1] - the_maker_ended < one_after_another * NOT_IN_TURN_WITHIN, (
+        f"the {SEVERAL_ASKERS} waiters took {ended[-1] - the_maker_ended:.2f} s to raise: in turn is {one_after_another} s")
+    assert _kept_files() == []
+
+
+def _stopped_while_it_makes(log):
+    """A derivation whose maker STOPS itself as it makes it (as a `kill -STOP` of a sweep does), and answers once
+    continued."""
+    _say(log, "begins")
+    if len(_said_in(log)) == 1:
+        os.kill(os.getpid(), signal.SIGSTOP)
+    return "made"
+
+
+def test_a_stopped_maker_holds_no_waiter_and_its_claim_is_taken_over_at_once(forked, tmp_path):
+    """RED: a maker that is alive and STOPPED held every waiter for the whole CLAIM_STUCK_AFTER_SECONDS (44 s each,
+    polling — a bound no test ran at its own value). A stopped process makes nothing until it is continued: its
+    claim is taken over as soon as a waiter looks, the bound left as it stands. Continued, the first maker ends
+    as any maker taken over from: its answer the same bytes, the new maker's claim not its own to remove."""
+    assert derived.CLAIM_STUCK_AFTER_SECONDS > ENDS_WITHIN_SECONDS, "the premise: the bound is NOT what ends this wait"
+    asked, log = derived.kept(_stopped_while_it_makes), str(tmp_path / "made")
+    maker = forked(lambda: asked(log) == "made")
+    _until(lambda: _claims() and derived._is_stopped(maker))
+    assert derived._began_ns(maker) is not None and not derived._is_no_more(_claims()[0].read_bytes())
+    began = time.monotonic()
+    waiter = forked(lambda: asked(log) == "made")
+    assert forked.ended(waiter) == _HELD and time.monotonic() - began < ENDS_WITHIN_SECONDS
+    assert [pid for _word, pid, _when in _said_in(log)] == [maker, waiter]
+    os.kill(maker, signal.SIGCONT)
+    assert forked.ended(maker) == _HELD
+    assert [path.suffix for path in _kept_files()] == [".pickle"] and asked(log) == "made"
+    assert not derived._is_stopped(os.getpid()) and not derived._is_stopped(maker), "a process that ended is not stopped"
+
+
+class _AClock:
+    """`time`, for `derived`: a clock that only a sleep moves — so a wait of forty seconds is run in none."""
+
+    def __init__(self):
+        self.now, self.rests = 1000.0, []
+
+    def monotonic(self):
+        return self.now
+
+    def monotonic_ns(self):
+        return int(self.now * 10 ** 9)
+
+    def sleep(self, seconds):
+        self.rests.append(seconds)
+        self.now += seconds
+
+    def __getattr__(self, name):        # whatever else `derived` asks of `time` (a file's dates): the real one's
+        return getattr(time, name)
+
+
+def test_a_waiter_rests_longer_at_every_look_and_takes_over_at_the_bound_itself(forked, tmp_path, monkeypatch):
+    """THE BOUND AT ITS OWN VALUE, and the rests on the way to it (every other case patches the bound; a waiter that
+    did not rest at all, or took over at half the time, or never, passed them): under a maker that lives and never
+    answers the waiter's rests GROW FROM ITS FIRST LOOK — CLAIM_ASKED_EVERY_SECONDS, then twice the last each time,
+    up to CLAIM_ASKED_AT_LEAST_EVERY_SECONDS and no further — and it takes the claim over when
+    CLAIM_STUCK_AFTER_SECONDS have gone under that ONE maker, not a rest before. (RED while the longer rest began
+    after a whole second of one question: no question of a measured cold import waits that long — the back-off the
+    constant pinned never engaged.)"""
+    assert derived.CLAIM_STUCK_AFTER_SECONDS == derived.SLOWED_AT_MOST_TIMES * derived.LONGEST_DERIVATION_SECONDS == 44
+    asked, made = _counted(steady="made by the waiter")
+    _a_claim_planted(asked, "a question", maker=_a_process_that_lives(forked))
+    clock = _AClock()
+    monkeypatch.setattr(derived, "time", clock)
+    assert asked("a question") == "made by the waiter" and len(made) == 1
+    waited = sum(clock.rests)
+    shortest, longest = derived.CLAIM_ASKED_EVERY_SECONDS, derived.CLAIM_ASKED_AT_LEAST_EVERY_SECONDS
+    assert derived.CLAIM_STUCK_AFTER_SECONDS <= waited < derived.CLAIM_STUCK_AFTER_SECONDS + 2 * longest
+    growing = [rest for rest in clock.rests if rest < longest]
+    assert growing == [shortest * derived.CLAIM_REST_GROWS_TIMES ** look for look in range(len(growing))] == [0.005, 0.01, 0.02, 0.04]
+    assert clock.rests == growing + [longest] * (len(clock.rests) - len(growing)), "growing rests first, then the bound"
+    # ...so a question answered within THE_MEAN_WAIT_SECONDS is looked at half as often as at a steady 5 ms.
+    looks = next(look for look in range(len(clock.rests)) if sum(clock.rests[:look]) >= THE_MEAN_WAIT_SECONDS)
+    assert looks <= THE_MEAN_WAIT_SECONDS / shortest / 2
+    assert _claims() == [] and derived._CLAIMS_HELD == []
+
+
+THE_MEAN_WAIT_SECONDS = 0.06            # of one question of ten cold importers side by side, measured
+
+
+A_CLAIM_THAT_NAMES_NOBODY = {
+    "thousands of digits": b"1" * 5000 + b" " + b"2" * 5000,
+    "a pid too long for any process": b"1" * 11 + b" 5",
+    "no time": b"12345",
+    "words": b"a maker",
+    "negative numbers": b"-5 -6",
+}
+
+
+@pytest.mark.parametrize("named", A_CLAIM_THAT_NAMES_NOBODY.values(), ids=A_CLAIM_THAT_NAMES_NOBODY)
+def test_a_claim_that_names_nothing_readable_has_no_maker_and_raises_nothing(named):
+    """RED: a claim of five thousand digits raised ValueError out of every asker (an `int` of a string that long is
+    refused by the interpreter itself). A claim names its maker by two SHORT numbers or it names nobody: it is
+    removed by whoever finds it, and the asker makes its answer."""
+    assert derived._named_by(named) is None and derived._is_no_more(named) and derived._makes_nothing_now(named)
+    asked, made = _counted(steady="made")
+    _a_claim_planted(asked, "a question", maker=named)
+    assert asked("a question") == "made" and len(made) == 1 and _claims() == []
+
+
+def test_which_process_a_claim_names_is_its_pid_and_when_it_began_both(forked):
+    """...and the two numbers are read BOTH WAYS: this very process at the time it began is a maker that lives; the
+    same pid at another time is another process (the pid given again) — no more; another pid at this one's time, a
+    process that is not there."""
+    pid, began = os.getpid(), derived._began_ns()
+    assert derived._named_by(f"{pid} {began}".encode()) == (pid, began)
+    assert not derived._is_no_more(f"{pid} {began}".encode())
+    assert derived._is_no_more(f"{pid} {began + 1}".encode()) and derived._is_no_more(f"{pid} {began - 1}".encode())
+    gone = _a_process_that_ended(forked)
+    assert derived._is_no_more(gone) and derived._makes_nothing_now(gone)
+
+
+def test_a_claim_is_removed_only_while_it_names_the_maker_it_was_seen_to_name():
+    """A waiter that takes a claim over removes the claim IT WATCHED: one another process has taken since — it names
+    another maker — is that process's, and stays."""
+    claim = derived.ROOT / "a tree" / "ab" / f"a key{derived.CLAIM_SUFFIX}"
+    claim.parent.mkdir(parents=True)
+    claim.write_bytes(b"1 1")
+    derived._removed_while_it_names(claim, b"2 2")
+    assert claim.read_bytes() == b"1 1"
+    derived._removed_while_it_names(claim, b"1 1")
+    assert not claim.exists()
+    derived._removed_while_it_names(claim, b"1 1")      # gone already: nothing
+
+
+def test_a_place_that_cannot_be_claimed_is_made_unclaimed_and_never_looked_at_for_ever(monkeypatch):
+    """RED, two ways a claim's place can refuse every claim: a file system that makes no hard links (`os.link`
+    raised out of the asker, where there were no claims the derivation was simply made) — and a place that READS as
+    nobody's and still refuses the link (a dangling link left there): looked at again and again, no rest, no bound.
+    Each is made unclaimed, as before there were claims, and kept."""
+    asked, made = _counted(steady="made")
+
+    def no_hard_links(_source, _link):
+        raise OSError(45, "Operation not supported")
+    link = derived.os.link
+    monkeypatch.setattr(derived.os, "link", no_hard_links)
+    assert asked("a question") == "made" and len(made) == 1 and derived._CLAIMS_HELD == []
+    monkeypatch.setattr(derived.os, "link", link)       # (put back by hand: `undo` would undo this file's own cache too)
+    claim = derived._claim_of(_place_of(asked, "another question"))
+    assert derived.ROOT in claim.parents, "the premise: the test's own cache"
+    claim.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(claim.with_name("nothing is here"), claim)
+    assert derived._maker_of(claim) is None and derived._claimed(claim) is False, "the premise: nobody's, and not to be had"
+    assert asked("another question") == "made" and len(made) == 2 and derived._CLAIMS_HELD == []
+    assert asked("another question") == "made" and len(made) == 2, "...and kept: the next asker is served"
+
+
+def test_a_claim_is_given_up_whatever_ends_the_derivation(monkeypatch):
+    """The claim goes in a `finally`: a derivation ended by what is no `Exception` (the watchdog's KeyboardInterrupt,
+    a SystemExit) leaves none standing for the next asker to wait on."""
+    def interrupted():
+        raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        derived.kept(interrupted)()
+    assert _claims() == [] and derived._CLAIMS_HELD == []
+
+
+def test_giving_one_claim_up_leaves_the_others_this_process_holds():
+    """A derivation that asks another holds TWO claims while the inner one is made, and the inner one's release
+    leaves the outer HELD — which is what keeps a process that holds a claim from ever waiting on another's."""
+    inner, _made = _counted(steady="the inner answer")
+    held_after_the_inner = []
+
+    def outer():
+        answer = inner("asked inside")
+        held_after_the_inner.extend(derived._CLAIMS_HELD)
+        return answer
+    assert derived.kept(outer)() == "the inner answer"
+    (still_held,) = held_after_the_inner
+    assert still_held.suffix == derived.CLAIM_SUFFIX and derived._CLAIMS_HELD == [] and _claims() == []
+
+
+def test_an_answer_a_process_waited_for_is_sampled_as_any_it_is_served(forked, monkeypatch):
+    """What a waiter is served goes through everything a hit does — the sample too: made again and held equal where
+    the sample chooses its key."""
+    asked, made = _counted(steady="the answer")
+    place = _place_of(asked, "a question")
+    claim = _a_claim_planted(asked, "a question", maker=_a_process_that_lives(forked))
+    rest = time.sleep
+
+    def the_maker_writes_while_this_one_rests(seconds):
+        place.write_bytes(derived._stored("the answer"))
+        claim.unlink(missing_ok=True)
+        rest(seconds)
+    monkeypatch.setattr(derived.time, "sleep", the_maker_writes_while_this_one_rests)
+    monkeypatch.setattr(derived, "_sampled", lambda _key: True)
+    monkeypatch.setattr(derived, "SAMPLED", [])
+    assert asked("a question") == "the answer"
+    assert len(made) == 1 and len(derived.SAMPLED) == 1, "served by waiting, then made again once: the sample"
+
+
+def test_an_answer_written_between_a_miss_and_the_claim_is_served_and_not_made_again(monkeypatch):
+    """A process that finds no answer and then no claim may be looking a moment AFTER another wrote the one and
+    removed the other: with the claim in hand it reads once more, and is served."""
+    asked, made = _counted()
+    claimed = derived._claimed
+
+    def claimed_a_moment_late(claim):
+        derived._write(_place_of(asked, "a question"), derived._stored("another process's answer"))
+        return claimed(claim)
+    monkeypatch.setattr(derived, "_claimed", claimed_a_moment_late)
+    assert asked("a question") == "another process's answer" and made == []
+    assert [path.suffix for path in _kept_files()] == [".pickle"] and derived._CLAIMS_HELD == []
+
+
+def test_a_waiter_is_served_only_what_a_hit_would_be_served(forked, tmp_path, monkeypatch):
+    """What appears at the answer's place while a process waits is read as a hit's is: a file whose digest is not of
+    what it holds is no answer, though what it holds LOADS — the waiter goes on waiting, and makes the answer when
+    the claim is its own."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", STUCK_AFTER_SECONDS)
+    asked, log = derived.kept(_made_slowly), str(tmp_path / "made")
+    _a_claim_planted(asked, log, maker=_a_process_that_lives(forked))
+    whole = bytearray(derived._stored("not what the derivation answers"))
+    whole[len(derived.PLAIN)] ^= 1                  # the first byte of its digest: the pickle after it is whole
+    assert pickle.loads(whole[derived._HEADER_BYTES:]) == "not what the derivation answers"
+    _place_of(asked, log).write_bytes(whole)
+    assert forked.ended(forked(lambda: asked(log) == ("made slowly", 0))) == _HELD
+    assert len(_said_in(log)) == 2 and [path.suffix for path in _kept_files()] == [".pickle"]
+    assert asked(log) == ("made slowly", 0) and len(_said_in(log)) == 2
+
+
+def test_a_waiter_the_cache_goes_out_of_use_for_stops_waiting_and_makes_its_answer_itself(forked, tmp_path, monkeypatch,
+                                                                                         a_tree):
+    """A tree edited under a process WHILE it waits: that process is served nothing more — not the answer it waits
+    for either — so it stops waiting, makes what it was asked, keeps none of it, and leaves the claim to its maker."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", NO_CLAIM_IS_STUCK_SECONDS)
+    monkeypatch.setattr(derived, "STILL_ASKED_EVERY_SECONDS", 0)
+    _in_use(a_tree(), monkeypatch)
+    asked, log = derived.kept(_made_slowly), str(tmp_path / "made")
+    planted = _a_claim_planted(asked, log, maker=_a_process_that_lives(forked))
+    waiter = forked(lambda: asked(log) == ("made slowly", 0))
+    time.sleep(A_DERIVATION_S_SECONDS)
+    assert _said_in(log) == [], "the premise: while its tree is the one it found, it waits"
+    _a_byte_changed(a_tree.root)
+    assert forked.ended(waiter) == _HELD
+    assert len(_said_in(log)) == 2 and _kept_files() == [planted]
+
+
+def test_a_process_that_holds_a_claim_claims_what_it_asks_in_turn_and_never_waits_for_another_s(forked, monkeypatch):
+    """A derivation that asks another (a session's deliveries ask its run) claims that one too, where nobody has —
+    and where another process HAS, it does not wait: it makes it. A process that waited while it held a claim could
+    be waited on by the one it waits for; one that holds nothing can not."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", NO_CLAIM_IS_STUCK_SECONDS)
+    inner = derived.kept(_the_claims_standing)
+    outer = derived.kept(lambda question: inner(question))
+    assert [maker for _claim, maker in outer("nobody's")] == [derived._claimant()] * 2 and _claims() == []
+
+    another_s = _a_process_that_lives(forked)
+    planted = _a_claim_planted(inner, "another's", maker=another_s)
+    asker = forked(lambda: sorted(maker for _claim, maker in outer("another's")) == sorted([another_s, derived._claimant()]))
+    assert forked.ended(asker) == _HELD, "it waited for the other's claim, or took it"
+    assert _claims() == [planted] and planted.read_bytes() == another_s
+    assert _place_of(inner, "another's").is_file(), "what it made unclaimed is kept all the same"
+
+
+def _switched_off_in_the_environment(monkeypatch, _a_tree):
+    monkeypatch.setenv(derived.DERIVED_OFF, "1")
+
+
+def _a_candidate_that_is_not_the_project_s_build(monkeypatch, _a_tree):
+    monkeypatch.setattr(derived, "_candidate_is_the_project_s", lambda: False)
+
+
+def _a_served_answer_being_made_again(monkeypatch, _a_tree):
+    monkeypatch.setattr(derived, "_MADE_AGAIN_NOW", ["a key"])
+
+
+def _a_tree_edited_under_the_process(monkeypatch, a_tree):
+    _a_byte_changed(a_tree.root)
+    monkeypatch.setattr(derived, "STILL_ASKED_EVERY_SECONDS", 0)
+
+
+@pytest.mark.parametrize("out_of_use", (_switched_off_in_the_environment, _a_candidate_that_is_not_the_project_s_build,
+                                        _a_served_answer_being_made_again, _a_tree_edited_under_the_process),
+                         ids=lambda out_of_use: out_of_use.__name__.strip("_").replace("_", " "))
+def test_a_process_the_cache_is_out_of_use_for_neither_claims_nor_waits(forked, monkeypatch, a_tree, out_of_use):
+    """Whatever puts the cache out of use for a process puts the claims out of use for it: it makes what it is
+    asked, at once — no claim of its own while it does, no wait on a claim that stands, and that claim left alone."""
+    monkeypatch.setattr(derived, "CLAIM_STUCK_AFTER_SECONDS", NO_CLAIM_IS_STUCK_SECONDS)
+    _in_use(a_tree(), monkeypatch)
+    asked = derived.kept(_the_claims_standing)
+    assert len(asked("in use")) == 1, "the premise: in use, this derivation is made under a claim"
+    another_s = _a_process_that_lives(forked)
+    planted = _a_claim_planted(asked, "out of use", maker=another_s)
+    kept_before = _kept_files()
+    out_of_use(monkeypatch, a_tree)
+    assert forked.ended(forked(lambda: asked("out of use") == [(planted.name, another_s)])) == _HELD
+    assert _kept_files() == kept_before and planted.read_bytes() == another_s
+
+
 # ---- a sample of what is served, made again (`derived._made_again_and_equal`) ----------------------------------------------
 @pytest.fixture
 def every_answer_sampled(monkeypatch):
@@ -909,3 +1489,34 @@ def test_a_fork_that_dies_warming_ends_the_pass_by_name(two_modules, monkeypatch
     with pytest.raises(fork_pool.Died, match="derived.warm: a fork DIED"):
         derived.warm(2)
     assert not two_modules.exists()
+
+
+class _APoolThatBreaksAsSharesAreHandedOut:
+    """A stand-in for the executor whose fork DIED while the shares were still being handed out: the `submit` of
+    the share `BREAKS_AT` raises as the real one does (`concurrent.futures.process.BrokenProcessPool`)."""
+    BREAKS_AT = 3
+
+    def __init__(self, *_jobs, **_context):
+        self.submitted = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_raised):
+        return False
+
+    def submit(self, _function, _share):
+        self.submitted += 1
+        if self.submitted > self.BREAKS_AT:
+            raise fork_pool.BrokenProcessPool("a child process terminated abruptly")
+        return fork_pool.concurrent.futures.Future()
+
+
+def test_a_fork_that_dies_while_the_shares_are_handed_out_is_a_death_by_name(monkeypatch):
+    """RED before the shares were submitted inside the `try` (seen once in fifteen full runs, as
+    `test_fork_pool`'s death case: a bare BrokenProcessPool out of `pool.submit`, the pass — `make bench`'s measuring
+    pass — ended unnamed): a pool that breaks under the fourth `submit` ends the pass as `Died`, naming every share
+    that has no answer — the ones handed out and the ones never handed out."""
+    monkeypatch.setattr(fork_pool.concurrent.futures, "ProcessPoolExecutor", _APoolThatBreaksAsSharesAreHandedOut)
+    with pytest.raises(fork_pool.Died, match=r"the bench: a fork DIED before it answered .* 9 of 9 shares never came back, the first 0"):
+        fork_pool.over_forks(abs, range(9), 2, 1, "the bench")

@@ -23,12 +23,17 @@ served calls from outside a pass):
   on the way out. A call outside a pass is refused rather than served because no case is in flight:
   answering it out of the last case's table would be the worst answer available. An EFFECT THAT RAISES
   (its own refusal, e.g. a pointer read out of the image it will not store through) is recorded the same
-  way and fails the case by its own message, where ctypes alone would print it and carry the run on.
+  way and gives the case its outcome, where ctypes alone would print it and carry the run on —
+  WHATEVER it raises (`as_the_case_s_outcome`): a failure by the exception's type, words and traceback
+  (`pytest.fail` raises a `BaseException` that is no `Exception`, and fails its case as an assertion's
+  would); `pytest.skip` a skip; and what stops the session — a Ctrl-C, an exit — raised again, itself.
 
 WHAT STAYS IN THE BATTERY is the table and the claim: which keys are staged, what each effect does to
 the image, and the wording of the failure — those are statements about the routine.
 """
 import contextlib
+import sys
+import traceback
 import ctypes
 
 from harness import _lib
@@ -56,6 +61,28 @@ def bind_pointer(symbol, trampoline, lib=_lib):
     pointer, and a trampoline the garbage collector freed would be a jump into released memory.
     """
     ctypes.c_void_p.in_dll(lib, symbol).value = ctypes.cast(trampoline, ctypes.c_void_p).value
+
+
+STOPS_THE_SESSION = (KeyboardInterrupt, SystemExit)
+PYTEST_S_OUTCOMES = "_pytest.outcomes"  # asked of the modules LOADED: this module is the bench's too, and imports no pytest
+
+
+def _is_a_skip(raised):
+    outcomes = sys.modules.get(PYTEST_S_OUTCOMES)
+    return outcomes is not None and isinstance(raised, outcomes.Skipped)
+
+
+def as_the_case_s_outcome(key, raised):
+    """What an effect that RAISED (`raised`, staged at `key`) makes of its case, to be raised where the binding
+    closes: `pytest.skip` is a skip, itself; anything else the case's FAILURE, carrying the exception's TYPE, its
+    words and its traceback (an `assert` with no message, a KeyError, a `pytest.fail` each read as what it was),
+    chained to it."""
+    if _is_a_skip(raised):
+        return raised
+    where = "".join(traceback.format_exception(type(raised), raised, raised.__traceback__))
+    failure = AssertionError(f"the effect staged at {key:#x} raised {type(raised).__name__}: {raised}\n{where}")
+    failure.__cause__ = raised
+    return failure
 
 
 class AddressHook:
@@ -98,7 +125,13 @@ class AddressHook:
             yield self
         finally:
             self._effects = {}
-        assert not self.raised, f"the effect staged at {self.raised[0][0]:#x} raised: {self.raised[0][1]}"
+            # WHAT STOPS THE SESSION STOPS IT: a Ctrl-C or an exit that landed inside an effect could not cross the C
+            # callback — it is raised again here, in the caller, whatever the run then failed by.
+            stops = [raised for _key, raised in self.raised if isinstance(raised, STOPS_THE_SESSION)]
+            if stops:
+                raise stops[0]
+        if self.raised:
+            raise as_the_case_s_outcome(*self.raised[0])
         assert not self.refused, describe_refusals(self.refused)
 
     def staged_routines(self, routines):
@@ -139,6 +172,6 @@ class AddressHook:
             return REFUSED_ANSWER
         try:
             return effect(buf, *arguments)
-        except Exception as raised:    # the callback cannot raise into C: recorded, and `staged()` fails the case
-            self.raised.append((key, raised))
+        except BaseException as raised:    # the callback cannot raise into C: recorded, whatever it is, and
+            self.raised.append((key, raised))   # `staged()` gives it its outcome (`as_the_case_s_outcome`)
             return REFUSED_ANSWER

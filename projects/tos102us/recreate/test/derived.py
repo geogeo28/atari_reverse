@@ -51,7 +51,11 @@ Once out, a process stays out (said once, on stderr, with the reason).
 WHAT A DERIVATION MUST BE to be decorated: a function of its arguments, the ROM, the base image and the tree alone —
 no candidate code, nothing read from a module's state that a test changes, no effect a caller relies on but its
 answer (a hit runs nothing). Its answer must pickle. The kit seeds every register a run begins with (the user stack
-pointer too, since the kit's own commit of that), so a derivation answers one machine whatever ran before it.
+pointer too), so a derivation answers one machine whatever ran before it.
+ONE KEPT ANSWER DOES RUN THE CANDIDATE, and is sound by the tree's key alone: which steering reasons a case's
+attribution pass needs (`aes_event._reasons_needed`: its trials are differentials of the C). The key holds the
+candidate's library AS THIS PROCESS LOADED IT, so another build of the C is another tree and asks again; and the
+answer decides no verdict — the run that returns the case's result is made every time, with those reasons.
 
 HELD TO IT ON EVERY RUN (`_made_again_and_equal`). A kept answer is made once per tree, so what every process once
 did by itself — make each derivation again, in its own import order, which is how a run-order dependence of the
@@ -66,8 +70,38 @@ same thing write the same bytes. EVERY kept file carries the digest of what it h
 does not hold what its digest says (a disk that filled, a flipped bit, an interpreter's pickle of another day), is
 not an answer — the derivation is made again and the file replaced.
 
-SWITCHED OFF by DERIVED_OFF in the environment (nothing read, nothing written: every derivation made, as before
-there was a cache) — the cold shore of the A/B the cache is held equal by — and for a process whose candidate is not
+A DERIVATION IN FLIGHT IS CLAIMED, so that the processes that ask one question at one moment make it ONCE (a cold
+tree's ten workers each made every derivation of the batteries they all import — none had written when the others
+asked). A process about to MAKE an answer first puts a CLAIM beside the answer's place — a file that names it: its
+pid and when the kernel says it began, whole from the moment it is there (written under another name and LINKED
+into place: the link fails where a claim stands). A process that finds another's claim WAITS for the answer and is
+then served it as any hit is — the tree asked again, the file's digest, the sample. The claim goes when its maker has
+written, or failed: a derivation that raises leaves none, and whoever waited makes it — and meets the same raise.
+  * A CLAIM WHOSE MAKER IS NO MORE — no process of that pid, one that ended and was not reaped, or ANOTHER process
+    that was given the pid (it began at another time) — is removed by whoever finds it, who then claims for itself;
+    so is one whose maker is STOPPED (it makes nothing until somebody continues it: its waiters do not rest on that),
+    and one that stood for CLAIM_STUCK_AFTER_SECONDS under one maker. A claim that names nothing readable — not two
+    short numbers — has no maker.
+  * A CLAIM THAT WENT WITH NO ANSWER LEFT, and not by the waiter's own hand, was its maker's to give up: the
+    derivation RAISED there. Every process that waited on it then makes the derivation ITSELF, UNCLAIMED — side by
+    side, each meeting the same raise — where taking the claim in turn made ten askers wait on one another's
+    failures one after the other (measured: 5.4 s for what ten unclaimed processes raise in 0.5 s).
+  * A WAITER RESTS LONGER AT EVERY LOOK OF ONE QUESTION (`_rest_after`): 5 ms, then 10, 20, 40, and 50 from
+    there on — most derivations take milliseconds and are found at the first or second look, and one that takes
+    longer is looked for ever less often (ten cold importers spent 100 seconds of system time between them asking a
+    claim's maker of the kernel two hundred times a second: each look is a read, a `sysctl` and a missed open; a
+    back-off that began only after a whole second of ONE question never began at all — measured, the mean wait of a
+    question is 60 ms, eight looks at 5 ms where these are four).
+  * A PLACE THAT CANNOT BE CLAIMED IS NOT WAITED ON: a file system that makes no hard links, a claim's path that
+    reads as none and still refuses the link — the derivation is made unclaimed, as before there were claims.
+  * A PROCESS THAT HOLDS A CLAIM NEVER WAITS (`_CLAIMS_HELD`): where a derivation asks another that someone else
+    claimed, it makes that one itself. Only a process that holds nothing waits, and nobody waits for it — no
+    circle of processes waiting on one another can close. A fork made inside a derivation holds what its parent held.
+  * NOTHING HERE DECIDES AN ANSWER. A claim is not read by any key and is no answer; two processes that both make a
+    derivation (a claim taken over, a holder that did not wait) write the same bytes, as they always did.
+
+SWITCHED OFF by DERIVED_OFF in the environment (nothing read, nothing written, nothing claimed or waited for: every
+derivation made, as before there was a cache) — the cold shore of the A/B the cache is held equal by — and for a process whose candidate is not
 the project's own build (a mutation sweep's private library: each mutant would be a tree of its own, written once
 and never read). `make clean` removes `build/`, and the cache with it; a tree nobody used for PRUNE_AFTER_SECONDS,
 or past the TREES_KEPT most lately used, goes when a process first writes to another.
@@ -127,23 +161,47 @@ def _digest(*parts):
 _CTL_KERN, _KERN_PROC, _KERN_PROC_PID = 1, 14, 1        # <sys/sysctl.h>: the kernel's record of one process, by pid
 _KINFO_PROC_BYTES = 648                                 # sizeof(struct kinfo_proc), Darwin's 64-bit
 _STARTED = struct.Struct("@qi")                         # ...which BEGINS with the process's start: a timeval
+_STATE_AT, _ENDED_AND_NOT_REAPED = 36, 5                # ...and holds its state (`p_stat`) here: SZOMB, <sys/proc.h>
+_STOPPED = 4                                            # ...SSTOP: stopped by a signal (job control, a debugger)
 _NS_PER_SECOND, _NS_PER_MICROSECOND = 10 ** 9, 10 ** 3
 
 
-def _began_ns():
-    """When THIS process began, by the kernel's own record — nanoseconds since the epoch, the clock a file's dates are
-    kept by — or None where this module does not know how to ask (anything but Darwin: such a process keeps nothing).
-    A fork inherits its parent's answer, and means it: its modules are the ones the parent read."""
+@functools.cache
+def _libc():
+    """The C library, opened once: a waiter asks the kernel about a claim's maker at every look."""
+    return ctypes.CDLL(None, use_errno=True)
+
+
+def _kernel_s_record_of(pid):
+    """The kernel's record of the process `pid` (`struct kinfo_proc`'s bytes) — None where this module does not know
+    how to ask (anything but Darwin), and for a pid that names no process."""
     if sys.platform != "darwin":
         return None
-    libc = ctypes.CDLL(None, use_errno=True)
-    name = (ctypes.c_int * 4)(_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, os.getpid())
+    name = (ctypes.c_int * 4)(_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid)
     record = ctypes.create_string_buffer(_KINFO_PROC_BYTES)
     size = ctypes.c_size_t(_KINFO_PROC_BYTES)
-    if libc.sysctl(name, len(name), record, ctypes.byref(size), None, 0) != 0 or size.value != _KINFO_PROC_BYTES:
+    if _libc().sysctl(name, len(name), record, ctypes.byref(size), None, 0) != 0 or size.value != _KINFO_PROC_BYTES:
         return None
-    seconds, microseconds = _STARTED.unpack_from(record.raw)
+    return record.raw
+
+
+def _began_ns(pid=None):
+    """When the process `pid` — THIS one, by default — began, by the kernel's own record: nanoseconds since the epoch,
+    the clock a file's dates are kept by. None where this module does not know how to ask (anything but Darwin: such
+    a process keeps nothing), and for a process that is NO MORE: no such pid, or one that ended and waits to be reaped.
+    (This module's `_BEGAN_NS` is this process's, asked as it was imported: a fork inherits it, and means it — its
+    modules are the ones the parent read. Asked of the kernel, a fork began when it was forked.)"""
+    record = _kernel_s_record_of(os.getpid() if pid is None else pid)
+    if record is None or record[_STATE_AT] == _ENDED_AND_NOT_REAPED:
+        return None
+    seconds, microseconds = _STARTED.unpack_from(record)
     return seconds * _NS_PER_SECOND + microseconds * _NS_PER_MICROSECOND
+
+
+def _is_stopped(pid):
+    """Is the process `pid` STOPPED (a signal's stop: it runs nothing until it is continued)?"""
+    record = _kernel_s_record_of(pid)
+    return record is not None and record[_STATE_AT] == _STOPPED
 
 
 # ---- the tree's files --------------------------------------------------------------------------------------------------
@@ -596,6 +654,175 @@ def key_of(derive, arguments, named):
     return _digest(base_key(), fingerprint(derive), fingerprint(arguments), fingerprint(named)).hex()
 
 
+# ---- a derivation in flight, claimed (the module's docstring: A DERIVATION IN FLIGHT IS CLAIMED) --------------------------
+# How much longer than on a quiet machine anything here is given before it is called stuck: three agents' suites side
+# by side have been measured at a load of 190 on ten cores.
+SLOWED_AT_MOST_TIMES = 40
+# The longest single derivation of the whole registry, made cold on a quiet machine, is 1.08 s (a file-selector
+# session's script; of 1108 derivations, measured 2026-10-07) — a claim that stood this long under ONE maker is taken
+# over though its maker lives. Waiting past it costs a derivation made twice, never an answer.
+LONGEST_DERIVATION_SECONDS = 1.1
+CLAIM_STUCK_AFTER_SECONDS = SLOWED_AT_MOST_TIMES * LONGEST_DERIVATION_SECONDS
+# A waiter's sleep before its SECOND look at one question. Half the registry's derivations take under 4 ms and nine
+# in ten under 50: the first rest finds most of them, and each later one is TWICE the last (CLAIM_REST_GROWS_TIMES)
+# up to CLAIM_ASKED_AT_LEAST_EVERY_SECONDS — a waiter is served at most that long after the answer, and catches up
+# on what was written meanwhile as hits.
+CLAIM_ASKED_EVERY_SECONDS = 0.005
+CLAIM_REST_GROWS_TIMES = 2
+CLAIM_ASKED_AT_LEAST_EVERY_SECONDS = 0.05
+# How often in a row a claim's place may refuse the link while it reads as nobody's (a race lost to another asker
+# is one refusal, or two) before it is taken for a place that cannot be claimed.
+CLAIM_REFUSED_AT_MOST_TIMES = 64
+# What a claim's maker is named by: a pid and a time, as decimal digits — and no longer than any pid or any clock's
+# nanoseconds are (a claim of thousands of digits is nobody's, and no number this module should try to read).
+_MOST_DIGITS_OF_A_PID, _MOST_DIGITS_OF_A_TIME = 10, 20
+CLAIM_SUFFIX = ".claim"
+_CLAIMS_HELD = []                       # the claims this process holds — and, in a fork, those its parent held as it forked
+
+
+def _claim_of(path):
+    """Where the derivation whose answer is kept at `path` is claimed while it is made: beside it."""
+    return path.with_suffix(CLAIM_SUFFIX)
+
+
+def _claimant():
+    """THIS process, as its claims name it: its pid, and when the kernel says that pid's process began — the half
+    that tells it from a later process given the same pid."""
+    return f"{os.getpid()} {_began_ns()}".encode()
+
+
+def _maker_of(claim):
+    """What the claim at `claim` says of its maker (`_claimant`) — None where no claim stands."""
+    try:
+        return claim.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _named_by(maker):
+    """`(pid, when it began)` as a claim's bytes `maker` name them — None for bytes that name nothing readable."""
+    pid, _, began = maker.partition(b" ")
+    if not (pid.isdigit() and began.isdigit() and len(pid) <= _MOST_DIGITS_OF_A_PID and len(began) <= _MOST_DIGITS_OF_A_TIME):
+        return None
+    return int(pid), int(began)
+
+
+def _is_no_more(maker):
+    """Is the process a claim names as its `maker` gone — no such pid, ended and not reaped, or the pid another
+    process's now (it began at another time)? A claim that names nothing readable has no maker either."""
+    named = _named_by(maker)
+    return named is None or _began_ns(named[0]) != named[1]
+
+
+def _makes_nothing_now(maker):
+    """...or there and STOPPED: whatever it was making, nobody waits for it to be continued."""
+    return _is_no_more(maker) or _is_stopped(_named_by(maker)[0])
+
+
+CANNOT_BE_CLAIMED = None                # `_claimed`'s answer for a place no claim can be linked into
+
+
+def _claimed(claim):
+    """`claim` TAKEN for this process — or False where a claim stands there already; CANNOT_BE_CLAIMED where the
+    place takes no link at all (a file system with no hard links, a directory that cannot be written). Whole or not
+    at all: its bytes are written under a name of this process's own and LINKED into place, which fails where the
+    place is taken (a claim made by opening its own file would stand there empty before it named anyone)."""
+    scratch = claim.with_name(f"{claim.name}.{os.getpid()}.{time.monotonic_ns()}.part")
+    try:
+        claim.parent.mkdir(parents=True, exist_ok=True)
+        written = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        try:
+            os.write(written, _claimant())
+        finally:
+            os.close(written)
+        os.link(scratch, claim)
+    except FileExistsError:
+        return False
+    except OSError:
+        return CANNOT_BE_CLAIMED
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(scratch)
+    _CLAIMS_HELD.append(claim)
+    return True
+
+
+def _removed_while_it_names(claim, maker):
+    """The claim at `claim` removed if it still names `maker`: a claim another process has taken since is that one's.
+    (Gone already is removed; one that will NOT go is the caller's to see — a waiter would look at it for ever.)"""
+    if _maker_of(claim) == maker:
+        claim.unlink(missing_ok=True)
+
+
+def _given_up(claim):
+    """A claim this process took, released: held no longer, and its file gone — where it is still this process's (a
+    waiter that found it stuck made it its own; a fork that returns through its parent's frames took none)."""
+    _CLAIMS_HELD.remove(claim)
+    _removed_while_it_names(claim, _claimant())
+
+
+def _rest_after(looks):
+    """How long a waiter rests after its `looks`-th unanswered look at ONE question (from 0) before it looks again
+    (the docstring: A WAITER RESTS LONGER AT EVERY LOOK): geometric from the first, bounded."""
+    return min(CLAIM_ASKED_EVERY_SECONDS * CLAIM_REST_GROWS_TIMES ** looks, CLAIM_ASKED_AT_LEAST_EVERY_SECONDS)
+
+
+def _where_no_claim_stands(path, claim, waited_on_another_s):
+    """FOR A QUESTION WHOSE CLAIM'S PLACE READS AS NOBODY'S: `(decided, (found, answer, claim))` — decided, where
+    this process is served, claims, or makes it unclaimed; not, where another asker took the place between the look
+    and the link (look again)."""
+    if waited_on_another_s:
+        # THE CLAIM THIS PROCESS WAITED ON IS GONE, and not by its own hand: its maker wrote and released — the
+        # answer is there — or GAVE UP, the derivation raised. Then this one makes it itself, unclaimed.
+        found, answer = _read(path)
+        return True, (found, answer, None)
+    taken = _claimed(claim)
+    if taken is CANNOT_BE_CLAIMED:
+        return True, (False, None, None)
+    if not taken:
+        return False, None
+    found, answer = _read(path)         # ...made, written and released between this process's miss and its claim?
+    if found:
+        _given_up(claim)
+    return True, (found, answer, None if found else claim)
+
+
+def _served_or_claimed(path):
+    """FOR A QUESTION WITH NO ANSWER AT `path`: `(found, answer, claim)` — the answer another process was making,
+    waited for and read as a hit's is; or none, and this process is to make it, under `claim` (None where it makes
+    it unclaimed: it holds a claim already and another's stands here, the cache went out of use for it as it
+    waited, the claim it waited on went with no answer left — its maker's derivation raised — or the place cannot
+    be claimed)."""
+    claim, watched, since, took_over = _claim_of(path), None, None, False
+    looks = refused = 0
+    while True:
+        maker = _maker_of(claim)
+        if maker is None:
+            decided, outcome = _where_no_claim_stands(path, claim, watched is not None and not took_over)
+            if decided:
+                return outcome
+            refused += 1                # another process took it between the look and the link: look again —
+            if refused > CLAIM_REFUSED_AT_MOST_TIMES:      # ...but not for ever at a place that reads as nobody's
+                return False, None, None
+            continue
+        refused = 0
+        if _CLAIMS_HELD:
+            return False, None, None
+        if maker != watched:            # a claim's time is counted under ONE maker: taken over, it begins again
+            watched, since, took_over = maker, time.monotonic(), False
+        if _makes_nothing_now(maker) or time.monotonic() - since >= CLAIM_STUCK_AFTER_SECONDS:
+            _removed_while_it_names(claim, maker)
+            took_over = True            # ...by THIS process's hand: whoever links first claims, the others wait on it
+            continue
+        time.sleep(_rest_after(looks))
+        looks += 1
+        if switched_off():              # the tree asked again before the read, as before a hit's
+            return False, None, None
+        found, answer = _read(path)
+        if found:
+            return True, answer, None
+
+
 # ---- a sample of what is served, made again (the module's docstring: HELD TO IT ON EVERY RUN) -----------------------------
 SAMPLED_ONE_IN = 256                    # of the answers a process is served (a worker's registry import: some 900)
 SAMPLED_AT_MOST = 4                     # ...and no more than this many a process: seconds of ROM runs, not the import again
@@ -644,7 +871,8 @@ def _made_again_and_equal(derive, arguments, named, key, served):
 def kept(derive):
     """DECORATE A ROM-ONLY DERIVATION (the module's docstring: what it must be): its answer is read from
     `build/derived/` where this tree, this base image and these arguments were asked before — by any process — and
-    made, kept and answered where they were not."""
+    made, kept and answered where they were not: by this process, or by the one that was making them already
+    (`_served_or_claimed`)."""
     @functools.wraps(derive)
     def asked(*arguments, **named):
         if switched_off():
@@ -652,21 +880,29 @@ def kept(derive):
         key = key_of(derive, arguments, named)
         path = _path_of(key)
         found, answer = _read(path)
+        claim = None
+        if not found:
+            found, answer, claim = _served_or_claimed(path)
         if found:
             _in_use(ROOT / tree_key())
             if _sampled(key):
                 _made_again_and_equal(derive, arguments, named, key, answer)
             return answer
-        stored = _stored(derive(*arguments, **named))
-        _write(path, stored)
+        try:
+            stored = _stored(derive(*arguments, **named))
+            _write(path, stored)
+        finally:
+            if claim is not None:       # ...whatever the derivation did: a claim left standing is a queue of waiters
+                _given_up(claim)
         return _loaded(stored)          # ...what a hit answers, to the byte: a miss is not another object's shape
     asked.derive = derive
     return asked
 
 
 # ---- THE REGISTRY'S DERIVATIONS MADE BEFORE THE PROCESSES THAT WILL ALL ASK FOR THEM (`python test/derived.py`) ---------
-# A cold tree's first run would have every xdist worker, and the bench beside them, make the same derivations at the
-# same time — each for itself, twenty-five seconds of import apiece, because none has finished when the others ask. So
+# A cold tree's first run has every xdist worker, and the bench beside them, ask for the same derivations at the same
+# time — each is made once, by whoever asked first, and the others wait for it (a claim: above): nothing is made
+# twice, and little is made side by side where every process imports the same modules in the same order. So
 # the makefile runs this first: the test modules — whose import IS the registry's derivations — imported by a few
 # forks of this process side by side, each taking the next module nobody has yet (the long ones first). What they
 # derive is kept as it is made, so the processes that follow are served. A tree warmed once says so (WARMED, in its
@@ -675,10 +911,10 @@ def kept(derive):
 # A fork that DIES, or a pass that stops coming back, ends the pass by name (`fork_pool`) — and `make` with it.
 WARMED = "warmed"
 # How long the pass may go with no module coming back. The longest module's import, cold and ten forks side by side,
-# is 22 s on a quiet machine (the registry's own: measured 2026-10-07); forty times that — three agents' suites
-# beside it have been measured at a load of 190 on ten cores.
+# is 22 s on a quiet machine (the registry's own: measured 2026-10-07), and a loaded one is given
+# SLOWED_AT_MOST_TIMES that.
 LONGEST_IMPORT_SECONDS = 22
-WARM_STUCK_AFTER_SECONDS = 40 * LONGEST_IMPORT_SECONDS
+WARM_STUCK_AFTER_SECONDS = SLOWED_AT_MOST_TIMES * LONGEST_IMPORT_SECONDS
 
 
 _IMPORTS_A_MODULE = re.compile(r"^\s*(?:import|from)\s+(\w+)", re.MULTILINE)

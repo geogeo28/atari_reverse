@@ -31,8 +31,8 @@
  * The list of COMPLETED EVBs is `aes/aes.h`'s AES_ZOMBIE_LIST ($c84a); the delays wait on another. */
 /* The DELAY list (adelay's, $fe55a8): the EVBs waiting for a timer, each holding the ticks after the one before it —
  * and the milliseconds a tick is, which ev_multi and ev_timer divide a timer by ($fe6b6c, $fe693a).
- * Read by adelay (`evwait.c`) and tchange (`evfork.c`), and by ev_timer (`evlib.c`); ev_multi is band 4's later
- * wave. The lists' battery reads the delay list out of an image by them too (`test/aes_evasync.py`). */
+ * Read by adelay (`evwait.c`) and tchange (`evfork.c`), and by ev_timer (`evlib.c`) and ev_multi (`evmulti.c`).
+ * The lists' battery reads the delay list out of an image by them too (`test/aes_evasync.py`). */
 #define AES_DELAY_LIST        0x9c1a     /* long                                ($fe55b4 movea.l $9c1a,a4)     */
 #define AES_GL_TICK_MS        0xc91a     /* word: 20                            ($fe6b6c move.w $c91a,d0)      */
 /* The offset of EVB_LINK in an EVB, kept in RAM (gem_main stores 4, $fda094) and subtracted from a list head's address

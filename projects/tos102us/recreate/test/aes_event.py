@@ -95,11 +95,13 @@ both shores make at one PC, each shore marked there and ours held to the ROM's a
 """
 import ast
 import atexit
+import collections
 import contextlib
 import copy
 import ctypes
 import faulthandler
 import functools
+import importlib
 import inspect
 import itertools
 import mmap
@@ -108,6 +110,7 @@ import os
 import re
 import signal
 import struct
+import subprocess
 import sys
 import traceback
 from collections import namedtuple
@@ -125,11 +128,13 @@ import gemdos
 import isr
 import routines
 import vdi
+import vdi_entry
 import vdi_helpers
 import vdi_mouse
 import zygote
-from address_hook import REFUSED_ANSWER, AddressHook, bind_pointer
+from address_hook import REFUSED_ANSWER, STOPS_THE_SESSION, AddressHook, as_the_case_s_outcome, bind_pointer
 from case import merge_pokes
+from derived import Unreadable as NotReadableByValue
 from derived import kept as kept_on_disk
 
 # ---- the door's entries: what each is handed, its frame and the inputs it points at --------------------------------
@@ -204,6 +209,29 @@ def _ct_chgown_inputs(image, owner, rect):
     return (owner, _pointee(image, rect, aes.GRECT_BYTES))
 
 
+# WHAT A CALL THAT BLOCKS ON A PIPE MUST BE FOUND TO HAVE PARKED (`Entry.parks`, over what the call was handed —
+# `Handed.arguments` — and the image it blocked over): the QPB's process and count, or None for a call that queues no
+# pipe wait. ap_rdwr's QPB is its own arguments; ev_block's the one its parameter names; ev_multi builds its own for
+# a MESSAGE — the running process, one message's bytes ($fe6b40 `move.w 28(a0),-8(a6)`, $fe6b46 `move.w #16,-6(a6)`).
+def _ap_rdwr_parks(_image, code, process, length, _buffer):
+    return (process, length) if code in PIPE_WAITS else None
+
+
+def _ev_block_parks(_image, code, parameter):
+    return parameter[:2] if code in PIPE_WAITS and parameter else None
+
+
+def _ev_multi_parks(image, flags, *_rest):
+    if not flags & aes.EV_MU_MESAG:
+        return None
+    running = case.long_in(image, aes.AES_RLR) & OS_BUS_ADDR_MASK
+    return aes.signed(case.word_in(image, running + aes.PD_PID)), MESSAGE_BYTES
+
+
+def _parks_nothing(_image, *_arguments):
+    return None
+
+
 # post_button is handed a PD, the buttons' state and the clicks, each as it is.
 POST_BUTTON_FRAME = struct.Struct(">Ihh")
 
@@ -230,14 +258,16 @@ def _ev_button_inputs(image, clicks, mask, state, answers):
 # ENTERED with, which a nested run's is not its caller's — so no shadow compares its word either, though its wrapper
 # hands one on). `test_aes_event.py` holds each row's answer to its wrapper's own return type, that one named. The
 # frame GCC's caller leaves a TWIN is read by the same row (`handed_at_a_twin`: a longword per field of the frame).
+# ...and WHAT IT PARKS where it blocks on a pipe (`parks`, above): asked of the row, so no routine is named where a
+# parked QPB is vetted.
 ANSWERS_A_WORD, ANSWERS_NOTHING = aes.WORD_ANSWER, None
-Entry = namedtuple("Entry", "frame inputs answers")
+Entry = namedtuple("Entry", "frame inputs answers parks", defaults=(_parks_nothing,))
 ENTRY_PREFIX = "AES_ROM_"
-ENTRY_FRAMES = {"AES_ROM_EV_MULTI": Entry(EV_MULTI_FRAME, _ev_multi_inputs, ANSWERS_A_WORD),
-                "AES_ROM_AP_RDWR": Entry(AP_RDWR_FRAME, _ap_rdwr_inputs, ANSWERS_A_WORD),
+ENTRY_FRAMES = {"AES_ROM_EV_MULTI": Entry(EV_MULTI_FRAME, _ev_multi_inputs, ANSWERS_A_WORD, _ev_multi_parks),
+                "AES_ROM_AP_RDWR": Entry(AP_RDWR_FRAME, _ap_rdwr_inputs, ANSWERS_A_WORD, _ap_rdwr_parks),
                 "AES_ROM_TAK_FLAG": Entry(SEMAPHORE_FRAME, _semaphore_inputs, ANSWERS_A_WORD),
                 "AES_ROM_UNSYNC": Entry(SEMAPHORE_FRAME, _semaphore_inputs, ANSWERS_NOTHING),
-                "AES_ROM_EV_BLOCK": Entry(EV_BLOCK_FRAME, _ev_block_inputs, ANSWERS_A_WORD),
+                "AES_ROM_EV_BLOCK": Entry(EV_BLOCK_FRAME, _ev_block_inputs, ANSWERS_A_WORD, _ev_block_parks),
                 "AES_ROM_CT_CHGOWN": Entry(CT_CHGOWN_FRAME, _ct_chgown_inputs, ANSWERS_A_WORD),
                 "AES_ROM_POST_BUTTON": Entry(POST_BUTTON_FRAME, _post_button_inputs, ANSWERS_NOTHING),
                 "AES_ROM_EV_BUTTON": Entry(EV_BUTTON_FRAME, _ev_button_inputs, ANSWERS_A_WORD)}
@@ -257,6 +287,12 @@ def entry_frame(name, *arguments):
 def answers(routine):
     """Does the entry at `routine` answer — the word its callers read — or nothing?"""
     return _ENTRY_AT[routine].answers is not ANSWERS_NOTHING
+
+
+def parked_by(call, image):
+    """The `(process, count)` of the QPB the door `call` (a `Handed`), blocked on a pipe over `image`, must be found
+    to have parked — None for a call that queues no pipe wait (its entry's row says: `Entry.parks`)."""
+    return _ENTRY_AT[call.routine].parks(image, *call.arguments)
 
 
 def handed(routine, frame, image):
@@ -388,75 +424,227 @@ def _not_compared_in_a_shadow(shadow):
     return not_compared_where_the_rom_stored(_LeftBy(shadow.before, shadow.nested.writes), shadow.before)
 
 
-# ---- THE ONE LONGWORD A REBOUND ap_rdwr THAT PARKS DIFFERS IN BY NATURE ----------------------------------------------
-# aqueue keeps a pipe wait's QPB BY ITS ADDRESS in the EVB it queues (`evb->parm = qpb`), and ap_rdwr's QPB is ITS OWN
-# ARGUMENTS from the process id on (`move.l a6,(sp) / addi.l #10,(sp)`, $fe65c8): a place in its caller's stack — the
-# ROM caller's frame on one shore, the C twin's own QPB (off target: its host slot, one per process) on the other. A
-# wait that is served where it is queued leaves nothing of it; one that PARKS leaves that longword in the EVB, at
-# dsptch. It is dropped BY NAME and VETTED, never as a window: only for ap_rdwr waiting on a pipe (`parks_a_qpb` —
-# with any other code it hands ev_block the same address, and no routine keeps it), only the parameter of the EVB the
-# wait took (the newest of the running process's, the same EVB on both shores), and only where each shore's longword
-# NAMES THE SAME QPB in that shore's stack band — the ROM's at its frame's own address where that is known (a nested
-# run's). The waits' leaf battery holds its parked cases by the same rule (`aes_evlib`); here it is the door's: the
-# SHADOW of a rebound ap_rdwr at dsptch, and a door user's run that blocks inside one (`interrupted`).
-def parks_a_qpb(call):
-    """Does the door `call` (a `Handed`), where it blocks, leave a QPB's address parked — ap_rdwr waiting on a pipe?"""
-    return call.routine == addrs.AES_ROM_AP_RDWR and call.arguments[0] in PIPE_WAITS
+# ---- THE LONGWORD A WAIT PARKED ON A PIPE DIFFERS IN BY NATURE ---------------------------------------------------------
+# aqueue keeps a pipe wait's QPB BY ITS ADDRESS in the EVB it queues (`evb->parm = qpb`), and the routines that wait
+# on a pipe keep that QPB IN THEIR OWN FRAME: ap_rdwr's is its own arguments from the process id on (`move.l a6,(sp) /
+# addi.l #10,(sp)`, $fe65c8); ev_multi's, for a MESSAGE, three stores into its locals (`-8(a6)`: $fe6b40..$fe6b4c,
+# its address handed on by `move.l a6,(sp) / subq.l #8,(sp)`, $fe6b52). A place in a stack — the ROM routine's frame
+# on one shore, the C twin's own QPB (off target: its host slot, one per process) on the other. A wait that is served
+# where it is queued leaves nothing of it; one that PARKS leaves that longword in the EVB, at dsptch.
+#
+# WHICH EVB, AND WHOSE QPB, IS READ OFF THE MACHINE — no routine is named: every EVB of the RUNNING process's event
+# list that is queued on a pipe's wait list (any process's readers or writers) and whose parameter is an address IN
+# THE STACK BAND. (Not "the newest EVB": ev_multi queues its timer's wait AFTER its message's, $fe6b88. And a QPB a
+# case stages outside the stack band is one address on both shores: compared, never dropped.) The longword is dropped
+# BY NAME and VETTED, never as a window: the same EVBs on both shores, each shore's longword an address in that
+# shore's stack band, the eight bytes each names the SAME QPB. The waits' leaf battery holds its parked cases by the
+# same rule (`switches_where_the_rom_does` asks it for every case); here it is also the door's: the SHADOW of a rebound
+# entry at dsptch, and a door user's run that blocks inside one (`interrupted`) — which is held, too, to the QPB its
+# entry's row says the call parks (`parked_by`).
+ParkedQpb = namedtuple("ParkedQpb", "evb qpb_at")
+MOST_PIPE_WAITS = aes.AES_EVB_COUNT     # a list of EVBs is no longer than the EVBs there are: a walk past it has a cycle
 
 
-def _newest_evb(image):
-    """The EVB the running process's last wait took: the head of its event list (iasync, $fe410a)."""
+def _evbs_linked_from(image, head_at, link):
+    """The EVBs of the list whose head longword is at `head_at`, each linked to the next through its field `link`."""
+    evbs, evb = [], case.long_in(image, head_at) & OS_BUS_ADDR_MASK
+    while evb and len(evbs) <= MOST_PIPE_WAITS:
+        evbs.append(evb)
+        evb = case.long_in(image, evb + link) & OS_BUS_ADDR_MASK
+    assert len(evbs) <= MOST_PIPE_WAITS, f"the list of EVBs at {head_at:#x} does not end"
+    return evbs
+
+
+def _waiting_on_a_pipe(image):
+    """Every EVB queued on a pipe's wait list over `image`: each static process's readers and writers."""
+    return frozenset(evb for process in range(aes.AES_PD_COUNT) for which in (aes.PD_QUEUE_READERS, aes.PD_QUEUE_WRITERS)
+                     for evb in _evbs_linked_from(image, aes.AES_PD_TABLE + process * aes.PD_BYTES + which, aes.EVB_LINK))
+
+
+def parked_qpbs(image):
+    """The pipe waits the RUNNING process has parked over `image` with a QPB in a stack (above): a `ParkedQpb` each —
+    the wait's EVB, the address its parameter holds — in the order of the process's event list."""
     running = case.long_in(image, aes.AES_RLR) & OS_BUS_ADDR_MASK
-    return case.long_in(image, running + aes.PD_EVLIST) & OS_BUS_ADDR_MASK
+    if not running:
+        return ()
+    on_a_pipe = _waiting_on_a_pipe(image)
+    return tuple(ParkedQpb(evb, case.long_in(image, evb + aes.EVB_PARM) & OS_BUS_ADDR_MASK)
+                 for evb in _evbs_linked_from(image, running + aes.PD_EVLIST, aes.EVB_NEXT)
+                 if evb in on_a_pipe and (case.long_in(image, evb + aes.EVB_PARM) & OS_BUS_ADDR_MASK) in case.STACK_BAND)
 
 
-def _qpb_in_the_stack_band(who, image, at):
+def _qpb_in_the_stack_band(who, read, at):
     assert at in case.STACK_BAND and at + QPB.size - 1 in case.STACK_BAND, (
         f"{who}: the parked wait's parameter {at:#x} is no place in the stack band — not a QPB's address parked")
-    return bytes(image[at:at + QPB.size])
+    return QPB.unpack(read(at, QPB.size))
 
 
-def parked_qpb_drop(who, ours, the_rom_s, *, rom_qpb=None):
-    """The bytes a parked ap_rdwr's two shores differ in by nature (above), VETTED — refused by name otherwise: the
-    EVB_PARM of the wait's EVB, the same EVB on both shores, each shore's longword the address of the same eight
-    bytes in its stack band. `rom_qpb`: `(address, bytes)` of the ROM's QPB where the caller knows them (a nested
-    run, whose frame is not in `the_rom_s`); else read through the ROM's own longword."""
-    evb = _newest_evb(the_rom_s)
-    assert _newest_evb(ours) == evb, (
-        f"{who}: the wait parked in another EVB than the ROM's — {_newest_evb(ours):#x}, the ROM's {evb:#x}")
-    parm = evb + aes.EVB_PARM
-    its, mine = case.long_in(the_rom_s, parm), case.long_in(ours, parm)
-    if rom_qpb is None:
-        rom_qpb = (its, _qpb_in_the_stack_band(f"{who} (the ROM's run)", the_rom_s, its))
-    assert its == rom_qpb[0], (
-        f"{who}: the ROM's parked wait keeps {its:#x}, not its QPB's address {rom_qpb[0]:#x}")
-    our_qpb = _qpb_in_the_stack_band(who, ours, mine)
-    assert our_qpb == rom_qpb[1], (
-        f"{who}: the QPB the parked wait names ({QPB.unpack(our_qpb)}) is not the ROM's ({QPB.unpack(rom_qpb[1])})")
-    return frozenset(range(parm, parm + LONG_BYTES))
+def _read_from(image):
+    return lambda at, size: bytes(image[at:at + size])
+
+
+Parked = namedtuple("Parked", "dropped qpbs")
+# WHERE OUR C KEEPS A QPB IT PARKS, off target: NOT "any stack address that holds the right eight bytes" — THE SLOT
+# of the routine that waits, the running process's frame of it (`host_slot.h`: a role per routine that parks one,
+# HOST_PROCESSES frames each, the process's id choosing one). A twin that built its QPB in ANOTHER process's frame,
+# or in another routine's role, holds the same eight bytes at another address — and the bytes alone would pass it
+# (measured on two mutants of ev_multi's twin: the address differed, the QPB did not, and the vet held).
+QPB_SLOT_OF_AN_ENTRY = {addrs.AES_ROM_EV_MULTI: "HOST_SLOT_AES_EV_MULTI_QPB", addrs.AES_ROM_AP_RDWR: "HOST_SLOT_AES_AP_RDWR_QPB"}
+
+
+def host_qpb_slot(role, process):
+    """Where `host_slot.h` puts the QPB of the process `process` (its id) under the role `role`."""
+    slots = aes.HOST_SLOTS
+    return slots[role] + process * (slots[f"{role}_BYTES"] // slots["HOST_PROCESSES"])
+
+
+def our_qpb_slots(image, routine=None):
+    """The addresses OUR C may park the RUNNING process's QPB at over `image`: its frame of the role of `routine`
+    (an entry that parks one: `QPB_SLOT_OF_AN_ENTRY`) — of every such role, for a routine that is none of them (a
+    routine entered above or below the one that waits: the waits' own leaf cases)."""
+    running = case.long_in(image, aes.AES_RLR) & OS_BUS_ADDR_MASK
+    process = case.word_in(image, running + aes.PD_PID)
+    roles = [QPB_SLOT_OF_AN_ENTRY[routine]] if routine in QPB_SLOT_OF_AN_ENTRY else QPB_SLOT_OF_AN_ENTRY.values()
+    return frozenset(host_qpb_slot(role, process) for role in roles)
+
+
+def _vet_our_qpb_s_place(who, ours, at, routine=None):
+    slots = our_qpb_slots(ours, routine)
+    assert at in slots, (
+        f"{who}: our wait's QPB is at {at:#x}, which is no QPB slot of the running process"
+        + (f" under {routine:#x}'s role" if routine in QPB_SLOT_OF_AN_ENTRY else "")
+        + f" ({', '.join(f'{slot:#x}' for slot in sorted(slots))}: `host_slot.h`) — the QPB was built in another "
+        f"process's frame, or another routine's")
+
+
+def parked_where_blocked(who, ours, the_rom_s, *, rom_stack=None, routine=None):
+    """WHAT TWO SHORES OF A CALL BLOCKED ON A PIPE DIFFER IN BY NATURE (above), VETTED — refused by name otherwise:
+    a `Parked` — the EVB_PARM longword of every wait the ROM's shore parked with a QPB in its stack (`dropped`), and
+    those QPBs (`(process, count, buffer)` each). `ours` must have parked the SAME EVBs, each with a parameter naming
+    the same QPB AT ITS OWN SLOT (`our_qpb_slots`; `routine`: the entry whose call blocked, where the caller knows
+    it). `rom_stack(at, size)`: how the ROM's stack is read where `the_rom_s` does not hold it (a nested run's frames
+    are in its ledger alone); by default out of `the_rom_s` itself."""
+    its, mine = parked_qpbs(the_rom_s), parked_qpbs(ours)
+    assert [each.evb for each in mine] == [each.evb for each in its], (
+        f"{who}: the pipe waits parked with a QPB in a stack are the EVBs {[f'{each.evb:#x}' for each in mine]}, the "
+        f"ROM's {[f'{each.evb:#x}' for each in its]}")
+    dropped, qpbs = set(), []
+    for the_rom, own in zip(its, mine):
+        if own.qpb_at == the_rom.qpb_at:
+            # ONE address on both shores: a wait the MACHINE came with (an earlier routine's, parked before the one
+            # under test was entered — both shores were staged with it), no place of either run's own. Nothing
+            # differs by nature, so nothing is dropped: the longword is compared like any other.
+            # ITS QPB'S BYTES ARE NOT HELD EQUAL, and cannot be: the address is a place in the frame of the routine
+            # that parked the wait, and A STAGED MACHINE CARRIES NO STACK BAND — the ROM's memory holds that frame
+            # (or, by now, whatever lies where it was), our image holds nothing there (measured: the waits' own
+            # battery's ev_mwait entered under a parked message wait — the ROM's eight bytes (254, 16608, 0), ours
+            # zeros; three cases). What holds such a QPB is the case of the routine that PARKED it, compared there.
+            continue
+        rom_qpb = _qpb_in_the_stack_band(f"{who} (the ROM's run)", rom_stack or _read_from(the_rom_s), the_rom.qpb_at)
+        our_qpb = _qpb_in_the_stack_band(who, _read_from(ours), own.qpb_at)
+        assert our_qpb == rom_qpb, (
+            f"{who}: the QPB the parked wait names ({our_qpb}) is not the ROM's ({rom_qpb}) — the wait's EVB {own.evb:#x}")
+        _vet_our_qpb_s_place(who, ours, own.qpb_at, routine)
+        dropped.update(range(own.evb + aes.EVB_PARM, own.evb + aes.EVB_PARM + LONG_BYTES))
+        qpbs.append(rom_qpb)
+    return Parked(frozenset(dropped), tuple(qpbs))
+
+
+def parked_qpb_drop(who, ours, the_rom_s, *, rom_stack=None, routine=None):
+    """...the bytes alone: what a compare of the two shores leaves out (`parked_where_blocked`)."""
+    return parked_where_blocked(who, ours, the_rom_s, rom_stack=rom_stack, routine=routine).dropped
+
+
+# ...AND AT A RETURN the same longword may be LEFT BEHIND: a wait that was queued and then cancelled or answered —
+# ev_multi's message wait taken off by acancel, a woken ap_rdwr's by apret — gives its EVB back to the free list AS IT
+# IS, the QPB's address still in its parameter (get_evb clears an EVB only when it is next taken). Found by the ROM
+# run's LEDGER, which a returning case has: an EVB_PARM the run STORED that holds an address in the stack band. Vetted
+# as the parked one is: on our shore too an address in the stack band, naming the same QPB.
+EVBS = tuple(aes.AES_EVB_TABLE + index * aes.EVB_BYTES for index in range(aes.AES_EVB_COUNT))
+QPB_ADDRESS_WHY = ("a QPB's address a pipe wait was queued with, left in its EVB: a place in the waiting routine's own "
+                   "frame — the ROM routine's on one shore, the C's own on the other (off target its host slot)")
+
+
+def qpb_addresses_kept(read, stored):
+    """`{an EVB_PARM's address: the QPB it names}` for every EVB whose parameter is among the addresses `stored` (a
+    ROM run's write ledger) and holds an address in the stack band — `read(at, size)` that run's memory, its own
+    stack included."""
+    kept = {}
+    for evb in EVBS:
+        at = evb + aes.EVB_PARM
+        parm = int.from_bytes(read(at, LONG_BYTES), "big") & OS_BUS_ADDR_MASK
+        if all(at + offset in stored for offset in range(LONG_BYTES)) and parm in case.STACK_BAND:
+            kept[at] = _qpb_in_the_stack_band("the ROM's run", read, parm)
+    return kept
+
+
+def vetted_qpb_addresses(who, ours, kept, routine=None):
+    """THE LONGWORDS `kept` (`qpb_addresses_kept` of the ROM's run) DIFFER IN BY NATURE, VETTED against `ours` (our
+    shore's image, its stack band in it) — refused by name otherwise: each of ours the address of a QPB SLOT of the
+    running process naming the SAME QPB — the slot of `routine`'s OWN role where the row's routine is an entry that
+    parks one (`our_qpb_slots`: a twin that built its QPB in another entry's slot is refused, as the parked arm
+    refuses it), any role's for a routine that is none (the wait freed is an inner routine's). The `(lo, hi, why)`
+    windows to drop."""
+    for at, rom_qpb in kept.items():
+        ours_at = case.long_in(ours, at) & OS_BUS_ADDR_MASK
+        our_qpb = _qpb_in_the_stack_band(who, _read_from(ours), ours_at)
+        assert our_qpb == rom_qpb, (
+            f"{who}: the QPB the parked wait names ({our_qpb}) is not the ROM's ({rom_qpb}) — left in the EVB at "
+            f"{at - aes.EVB_PARM:#x}")
+        _vet_our_qpb_s_place(who, ours, ours_at, routine)
+    return tuple((at, at + LONG_BYTES, QPB_ADDRESS_WHY) for at in kept)
+
+
+@kept_on_disk
+def _qpb_addresses_a_return_leaves(name, arguments, machine):
+    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))
+    final, writes, regs = emu.run(image, getattr(addrs, name), stop_pc=addrs.AES_ROM_DSPTCH)
+    return {} if regs["checkpoint"] else qpb_addresses_kept(_read_from(final), writes)
+
+
+def qpb_addresses_a_return_leaves(name, arguments, machine):
+    """The QPB addresses the ROM's RETURNING run of `addrs.<name>` over `machine` leaves in EVBs
+    (`qpb_addresses_kept`; none for a run that reaches the dispatcher): a derivation, kept by content."""
+    return _qpb_addresses_a_return_leaves(name, tuple(arguments), machine)
+
+
+def _a_returned_shadow_s_kept_qpbs(shadow, image, _the_rom_s):
+    """...where a SHADOW's nested run RETURNED: read through that run's own memory, vetted against the twin's image."""
+    kept = qpb_addresses_kept(_a_nested_run_s_memory(shadow), shadow.nested.writes)
+    windows = vetted_qpb_addresses(f"the shadow of {shadow.call.routine:#x}", image, kept, shadow.call.routine)
+    return frozenset(at for lo, hi, _why in windows for at in range(lo, hi))
+
+
+def _a_nested_run_s_memory(shadow):
+    """How a SHADOW's ROM run's memory is read, its own stack included: the image the call arrived with, the frame
+    the nested run was staged with at `abi.FIRST_ARG` (`nested_run`), and the run's whole ledger over both."""
+    def read(at, size):
+        staged = {abi.FIRST_ARG + offset: value for offset, value in enumerate(shadow.frame or b"")}
+        return bytes(shadow.nested.writes.get(each, staged.get(each, shadow.before[each])) for each in range(at, at + size))
+    return read
 
 
 def _a_shadow_s_parked_qpb(shadow, image, the_rom_s):
-    """...at a SHADOW's dsptch: the nested run's frame is at `abi.FIRST_ARG`, so the ROM's QPB is the frame past its
-    code word — at that address, holding those bytes."""
-    if not parks_a_qpb(shadow.call):
-        return frozenset()
-    qpb_at = abi.FIRST_ARG + aes.WORD_BYTES
+    """...at a SHADOW's dsptch: the ROM's QPB is in the nested run's own frames — its staged frame (ap_rdwr's
+    arguments) or a local it stored (ev_multi's) — read through that run's memory."""
     return parked_qpb_drop(f"the shadow of {shadow.call.routine:#x}", image, the_rom_s,
-                           rom_qpb=(qpb_at, shadow.frame[aes.WORD_BYTES:aes.WORD_BYTES + QPB.size]))
+                           rom_stack=_a_nested_run_s_memory(shadow), routine=shadow.call.routine)
 
 
-def _a_door_user_s_parked_qpb(name, calls, image, rom_memory):
-    """...and where a door USER's run blocks inside a REBOUND ap_rdwr (`_watched_through`: compared at dsptch): the
-    ROM's QPB is a place in its caller's frame, read through its own longword — and it is the QPB the call was
-    handed. Empty for any other blocked call: one the ROM serves is compared at its ENTRY, nothing parked yet."""
-    if not calls or not parks_a_qpb(calls[-1]) or calls[-1].routine not in REBOUND:
+def _a_door_user_s_parked_qpb(name, calls, image, rom_memory, rebound=None):
+    """...and where a door USER's run blocks inside a REBOUND entry (`_watched_through`: compared at dsptch): the
+    ROM's QPB is a place in its own run's stack, read through its own longword — and it is the QPB the entry's row
+    says that call parks (`parked_by`: its process and count; none, for a call that queues no pipe wait). Empty for a
+    blocked call the ROM serves: it is compared at its ENTRY, nothing parked yet."""
+    if not calls or calls[-1].routine not in (REBOUND if rebound is None else rebound):
         return frozenset()
-    drop = parked_qpb_drop(name, image, rom_memory)
-    process, count, _buffer = QPB.unpack_from(rom_memory, case.long_in(rom_memory, min(drop)))
-    assert (process, count) == calls[-1].arguments[1:3], (
-        f"{name}: the parked QPB names process {process}, {count} bytes — the call was handed {calls[-1].arguments[1:3]}")
-    return drop
+    parked = parked_where_blocked(name, image, rom_memory, routine=calls[-1].routine)
+    expected = parked_by(calls[-1], rom_memory)
+    found = [qpb[:2] for qpb in parked.qpbs]
+    assert found == ([tuple(expected)] if expected is not None else []), (
+        f"{name}: the call that blocked parked the QPBs {found} (process, bytes) — it was handed {calls[-1]}, which "
+        f"parks {expected}")
+    return parked.dropped
 
 
 def _nothing_by_nature(_shadow, _image, _the_rom_s):
@@ -490,7 +678,7 @@ def vet_the_shadow(shadow, image, answer):
     assert not answers(routine) or answer & WORD_MASK == shadow.nested.answer & WORD_MASK, (
         f"the shadow: the twin of {routine:#x} answered {answer & WORD_MASK:#x} where the ROM's routine, run over the "
         f"image the call arrived with, answers {shadow.nested.answer & WORD_MASK:#x} — the call {shadow.call}")
-    _vet_the_shadow_s_image(shadow, image, "left")
+    _vet_the_shadow_s_image(shadow, image, "left", _a_returned_shadow_s_kept_qpbs)
 
 
 def vet_the_shadow_at_dsptch(shadow, image):
@@ -508,12 +696,15 @@ def vet_the_shadow_at_dsptch(shadow, image):
 
 # ---- what a nested run may spend -----------------------------------------------------------------------------------
 # A nested run's cap, and the margin EVERY nested run is held to under it — at run time (`nested_run`), so no table of
-# the deepest calls can go stale under it. The deepest the batteries reach, every one a call the event layer answers, is
-# mn_do's first ev_multi over its two rectangles with the mouse moved onto a title by an interrupt at its entry, 1,697
-# instructions (`test_aes_event.DEEPEST_CALLS` names it beside each entry's deepest); 20 times that is 33,940, and the
-# cap is 40,000, a round figure with room above that. The margin is for the event layer's longer answering paths a later
-# caller stages: a run inside it is refused by name, the cap to be raised from that run.
-NESTED_RUN_INSNS = 40_000
+# the deepest calls can go stale under it. THE DEEPEST NESTED RUN IS A SHADOW'S, not a served call's: a twin's shadow is
+# the ROM routine run to its return OR TO DSPTCH, and a wait that blocks walks every event it was asked for before it
+# gives up — ev_multi asked for EVERY event at once over a machine where none has come, 2,970 instructions to dsptch
+# (`test_aes_event.DEEPEST_BLOCKED`, measured). The deepest call the event layer ANSWERS is mn_do's first ev_multi
+# over its two rectangles with the mouse moved onto a title by an interrupt at its entry, 1,697
+# (`test_aes_event.DEEPEST_CALLS` names it beside each entry's deepest). Twenty times the deepest block is 59,400, and
+# the cap is 60,000. The margin is for the event layer's longer paths a later caller stages: a run inside it is
+# refused by name, the cap to be raised from that run.
+NESTED_RUN_INSNS = 60_000
 NESTED_RUN_MARGIN = 20
 # The hook's answers (`aes/evdoor.h`): SERVED, the ROM routine's D0 in the out-parameter; ARRIVED, nothing run — the
 # entry is rebound, and its twin runs next; or refused (AddressHook's REFUSED_ANSWER).
@@ -758,21 +949,122 @@ def event_hook(io_seed=None, entries=ENTRIES):
         finally:
             # A NESTED ARRIVAL's refusal, kept while the run carried on (`_vet_no_twin_is_running`), then a SHADOW's:
             # each is the case's failure, whatever else the run then failed by (a twin that diverged at its call
-            # usually leaves a final image that differs too) — it names the call the twin went wrong at.
-            refused = nested_arrivals + [raised for _routine, raised in DOOR_RETURNS.raised
-                                         if isinstance(raised, AssertionError)]
+            # usually leaves a final image that differs too) — it names the call the twin went wrong at. WHATEVER
+            # THE EFFECT RAISED: a `pytest.fail` or a KeyError in a vet is no AssertionError, and its words are the
+            # diagnosis all the same (`as_the_case_s_outcome`; what stops the session has stopped it already).
+            refused = nested_arrivals + [raised if isinstance(raised, AssertionError) else as_the_case_s_outcome(routine, raised)
+                                         for routine, raised in DOOR_RETURNS.raised
+                                         if not isinstance(raised, STOPS_THE_SESSION)]
             if refused:
                 raise refused[0]
     return opened
 
 
+# ---- WHAT THE EVENT LAYER'S OWN C CALLS OUT THROUGH: the VDI it polls with, the routines it is handed -------------------
+# The event layer POLLS: chkkbd asks the VDI for the shift keys and a key (vq_key_s, vsin_mode, vsm_string), mchange
+# for the mouse while a recording plays (vsm_locator) — functions the AES's graphics never reach
+# (`aes_gsx.REACHED_FUNCTIONS`), served beside those. And it CALLS WHAT IT IS HANDED through the register-carrying hook:
+# a FORK FUNCTION — the code of a queue entry, the ROM's address off target (`aes/evfork.h`), served by the candidate's
+# own core over the entry's one longword, taken apart as the function's Alcyon frame — and the cursor routine drawrat
+# calls: the ROM's bare `rts` (AES_ROM_JUSTRETF) in the snapshot, and while a recording plays THE VDI's OWN (`$fcff0a`
+# default_user_cur, which ap_tplay saves in `$947a`), served by the candidate's VDI core over D0 and D1.
+# ONE SPELLING, for the input's leaf battery, ev_multi's, and — once ev_multi is REBOUND, so that chkkbd and forker
+# run in C under every door call — the door's own bindings, in process and in a child (`polls_in_c`).
+POLLED_FUNCTIONS = ("VDI_ROM_VQ_KEY_S", "VDI_ROM_VSIN_MODE", "VDI_ROM_STRING", "VDI_ROM_LOCATOR")
+FORK_FUNCTIONS = {"AES_ROM_KCHANGE": (None, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.WORD_ARG)),
+                  "AES_ROM_BCHANGE": (None, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.WORD_ARG)),
+                  "AES_ROM_MCHANGE": (None, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.WORD_ARG)),
+                  "AES_ROM_TCHANGE": (None, (vdi.IMAGE_ARG, vdi.LONG_ARG))}
+for _name, (_restype, _argtypes) in FORK_FUNCTIONS.items():
+    aes.declare_alcyon(_name, _restype, _argtypes)
+
+
+@functools.cache
+def vdi_functions():
+    """`aes_gsx.vdi_functions()` with the input functions the event layer polls with."""
+    table = dict(aes_gsx.vdi_functions())
+    for name in POLLED_FUNCTIONS:
+        aes_gsx.opcode_of(name)             # a name with no `_OPCODE` sibling is no VDI function: refused here
+        table.update(vdi_entry.function(name))
+    return table
+
+
+def vdi_hook():
+    """`aes_gsx.vdi_hook`, the polled functions served too."""
+    return isr.staged_routines(vdi_functions())
+
+
+def _fork_function_served_by(lib, name):
+    signature = vdi.ALCYON[name]
+    core = getattr(lib, routines.core_symbol(name))
+    if lib is not _lib:                 # a child's own library: its function is handed the declared signature
+        core.argtypes, core.restype = list(signature.argtypes), signature.restype
+    frame = struct.Struct(">" + "".join(vdi.FRAME_FORMATS[argtype] for argtype in vdi.frame_argtypes(name)))
+    assert frame.size == LONG_BYTES, f"{name}: a fork function's frame is its queue entry's one longword"
+
+    def effect(buf, registers):
+        core(buf, *frame.unpack(struct.pack(">I", registers[isr.REGISTER["a0"]])))
+    return effect
+
+
+def handed_routine_effects(lib=_lib):
+    """`{address: effect(buf, registers)}` of the routines the event layer's C is handed BY VALUE and calls through
+    the register-carrying hook (above), each served by `lib`'s own core."""
+    def default_user_cur(buf, registers):
+        lib.vdi_default_user_cur(buf, registers[isr.REGISTER["d0"]], registers[isr.REGISTER["d1"]])
+    return {**{getattr(addrs, name): _fork_function_served_by(lib, name) for name in FORK_FUNCTIONS},
+            addrs.AES_ROM_JUSTRETF: lambda buf, registers: None,
+            addrs.VDI_ROM_DEFAULT_USER_CUR: default_user_cur}
+
+
+@functools.cache
+def handed_routines():
+    """...as `aes.alcyon_object_hook`'s map, over the worker's library: `{address: (no stub, effect)}`."""
+    return {address: (b"", effect) for address, effect in handed_routine_effects().items()}
+
+
+def event_layer_hooks():
+    """THE BINDING OF AN EVENT-LAYER CORE THAT POLLS AND RUNS THE FORK QUEUE (chkkbd, mchange, forker, drawrat —
+    and ev_multi, which calls two of them before anything else): `aes.run_function`'s `hook`. A NAMED hook
+    (`named_hook`): the zygote may open it for a fork."""
+    return aes.doors(vdi_hook, aes.alcyon_object_hook(handed_routines()))()
+
+
+EVENT_LAYER_HOOKS = event_layer_hooks   # ...declared a NAMED hook where `named_hook` is defined, further down
+
+
+def polls_in_c(rebound=None):
+    """Does the event layer's keyboard poll run IN C under a door call — ev_multi (the one entry that polls: chkkbd,
+    then forker and whatever was queued) REBOUND in the library a binding serves (`rebound`: the worker's by
+    default)? Then every door case's binding serves what that C calls out through (above), and drops the trap frame's
+    PC and SR no host VDI parks (`TRAP_FRAME_DROP`)."""
+    return addrs.AES_ROM_EV_MULTI in (REBOUND if rebound is None else rebound)
+
+
 def door_hook(drawing, io_seed=None, objects=None):
     """The binding a door user's case opens: the door alone, or with the VDI's cores (`aes_gsx.vdi_hook`) too for one
     that `drawing` — and with the routines a tree walker it reaches is handed (`objects`, `aes.alcyon_object_hook`'s
-    `{address: (stub, effect)}`: ob_draw's just_draw, draw_change's newrect)."""
-    hooks = ((aes_gsx.vdi_hook,) if drawing else ()) + (event_hook(io_seed),)
-    hooks += (aes.alcyon_object_hook(objects),) if objects else ()
+    `{address: (stub, effect)}`: ob_draw's just_draw, draw_change's newrect). WHERE THE POLL RUNS IN C (`polls_in_c`)
+    every case binds the VDI — the polled functions with it — and the handed routines, whatever it draws."""
+    polls = polls_in_c()
+    hooks = ((vdi_hook if polls else aes_gsx.vdi_hook,) if drawing or polls else ()) + (event_hook(io_seed),)
+    handed = door_objects(objects)
+    hooks += (aes.alcyon_object_hook(handed),) if handed else ()
     return aes.doors(*hooks) if len(hooks) > 1 else hooks[0]
+
+
+def door_objects(objects=None):
+    """What a door user's register hook serves IN PROCESS (`aes.alcyon_object_hook`'s map): the case's own walked
+    routines (`objects`) — and, where the poll runs in C, the routines the event layer is handed
+    (`handed_routines`). The one spelling, for `door_hook` and for a battery that builds its binding itself (the file
+    selector's real-GEMDOS sessions)."""
+    return {**(handed_routines() if polls_in_c() else {}), **(objects or {})}
+
+
+def door_vdi_functions():
+    """...and the VDI functions such a binding serves: the AES's graphics', and the polled ones where the poll runs
+    in C."""
+    return vdi_functions() if polls_in_c() else aes_gsx.vdi_functions()
 
 
 # THE SAME DOOR IN A CHILD PROCESS (`vdi_helpers.refusal_over`'s `bind`), where a refusal ends the run and the case reads
@@ -824,8 +1116,9 @@ def declare_child_doors(name, source):
 
 def _child_vdi(buf, routine, argument):
     """The VDI's cores in a child: a routine no reached function is refused by name, and ENDS the child — the hook is
-    `void`, so the core would otherwise carry on as if it had drawn."""
-    function = aes_gsx.vdi_functions().get(routine)
+    `void`, so the core would otherwise carry on as if it had drawn. The polled functions are served where the poll
+    runs in C (`_CHILD_POLLS`: set by the child's binding, off its own library)."""
+    function = (vdi_functions() if _CHILD_POLLS else aes_gsx.vdi_functions()).get(routine)
     try:
         assert function, f"the candidate transferred control to {routine:#x}, which is no VDI function the AES reaches"
         function[1](buf, argument)
@@ -843,16 +1136,21 @@ def _refused_by_the_register_hook(routine):
                 f"bound with `objects`")
     return (f"the candidate called {routine:#x} through the register hook — no walked routine "
             f"({', '.join(aes.WALKED_ROUTINES)}) but a routine handed by value (a USERDEF's far_call, sh_find's routine, "
-            f"the mouse interrupt's USER_BUT, the fill's SEEDABORT, a Line-A entry), which no child serves")
+            f"the mouse interrupt's USER_BUT, the fill's SEEDABORT, a Line-A entry — or a fork function, a cursor "
+            f"routine: served only where the event layer's poll runs in C, `polls_in_c`), which this child does not serve")
 
 
-def _child_walkers(lib, objects):
+_CHILD_POLLS = []                       # a child whose library polls in C (`bind_in_a_child`): not empty
+
+
+def _child_walkers(lib, objects, polls=False):
     """The register-carrying hook in a child, ALWAYS bound: with `objects`, every routine a tree walk is handed by
-    value served by the CHILD's own core (`aes.walked_routine_effects`); any other routine — every one, without
-    `objects` — ENDS the child by name (`_refused_by_the_register_hook`). Left as the child's `isr` import binds it,
+    value served by the CHILD's own core (`aes.walked_routine_effects`) — and, where the poll runs in C (`polls`), the
+    routines the event layer is handed (`handed_routine_effects`); any other routine ENDS the child by name
+    (`_refused_by_the_register_hook`). Left as the child's `isr` import binds it,
     the hook would refuse such a call SILENTLY (no pass is open, and the hook is `void`): the walk would draw nothing,
     and the case compare a screen the C never drew (measured: mn_do's drop-down, absent)."""
-    effects = aes.walked_routine_effects(lib=lib) if objects else {}
+    effects = {**(handed_routine_effects(lib) if polls else {}), **(aes.walked_routine_effects(lib=lib) if objects else {})}
 
     def serve(buf, routine, registers):
         effect = effects.get(routine)
@@ -925,7 +1223,9 @@ def bind_in_a_child(lib, entries=ENTRIES, objects=False, interrupts=None):
                   f"the event door: serving {routine:#x} raised {refused!r}", file=sys.stderr)
             print(_handed_line(calls), file=sys.stderr)
             return REFUSED_ANSWER
-    door, vdi_cores, walkers = PROTOTYPE(dispatch), isr.CALL_VECTOR(_child_vdi), _child_walkers(lib, objects)
+    polls = polls_in_c(rebound)
+    _CHILD_POLLS[:] = [polls] if polls else []
+    door, vdi_cores, walkers = PROTOTYPE(dispatch), isr.CALL_VECTOR(_child_vdi), _child_walkers(lib, objects, polls)
     twins_return, dispatcher = RETURNED_PROTOTYPE(returned), DISPATCH_PROTOTYPE(refused_at_the_dispatcher)
     _CHILD_TRAMPOLINES.extend((door, vdi_cores, walkers, twins_return, dispatcher))
     bind_pointer(HOOK_SYMBOL, door, lib)
@@ -1003,9 +1303,12 @@ assert len(set(_CHILD_STATUSES)) == len(_CHILD_STATUSES), "two kinds of child's 
 # Every hook the candidate has but the dispatcher's — the event door's two, the two the VDI's cores and the walked
 # routines leave through, and the other components' (GEMDOS's handler and clock, Supexec's routine, the disk driver's
 # vectors), each by its pointer's name in the library: `test_aes_event.py` holds the list to the library's own exports.
+# ...and THE SCHEDULER MODEL's two (`aes/evdisp.h`: the idle hook, where the n-th idle's interrupt is laid, and the
+# process hook, a foreign process as a nested ROM run), in a library that links it.
+SCHEDULER_HOOKS = tuple(symbol for symbol in ("recreate_idle", "recreate_process") if hasattr(_lib, symbol))
 FORK_UNSERVED_HOOKS = (HOOK_SYMBOL, RETURNED_SYMBOL, isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL,
                        "recreate_call_gemdos_handler", "recreate_publish_clock", "recreate_call_routine",
-                       "recreate_call_disk_vector")
+                       "recreate_call_disk_vector", *SCHEDULER_HOOKS)
 _HOOK_REFUSER = ctypes.CFUNCTYPE(None)  # whatever a hook's own arguments: its refuser reads none, and never returns
 
 
@@ -1025,9 +1328,14 @@ def _the_fork_s_whole_life(call, said_on, seconds, serves=()):
     status = FORK_RAISED
     try:
         signal.signal(signal.SIGALRM, signal.SIG_DFL)
-        signal.alarm(seconds)                       # FIRST: it bounds all that follows, and an orphan's life
+        # FIRST: it bounds all that follows, and an orphan's life. (The interval timer, not `alarm`: seconds may be a
+        # fraction — `alarm` takes whole ones and raised on 2.5 HERE, before the fork's stderr was its pipe: a fork
+        # that "raised" for no reason anybody could read.)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
         os.dup2(said_on, STDERR_FD)
-        sys.stdout = sys.stderr = open(STDERR_FD, "w", closefd=False)      # a worker's stdout is xdist's own channel
+        # (A worker's stdout is xdist's own channel. LINE-BUFFERED, as an interpreter's own stderr is: what a hook
+        # prints before the C halts — a refusal's words, with no flush of its own — must be out before the abort.)
+        sys.stdout = sys.stderr = open(STDERR_FD, "w", buffering=1, closefd=False)
         faulthandler.disable()                      # the worker's dump on SIGABRT would bury the refusal's own words
         for symbol, refuser in _FORK_REFUSERS.items():
             if symbol not in serves:
@@ -1052,16 +1360,27 @@ FORK_S_PYTHON_RAISED = "the fork's own Python raised — the harness's error, no
 # event layer that draws or calls a fork function and reaches NO DOOR (chkkbd, mchange, forker): a fresh interpreter
 # per case is what such a battery cannot pay. The event door's two hooks are never among them — a door user's child is
 # a fresh interpreter, its door bound for it.
-FORK_SERVABLE_HOOKS = frozenset({isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL})
+# ...and the scheduler model's (SCHEDULER_HOOKS), with the dispatcher's own hook: a case of the model binds all three
+# in its pass (the dispatcher's to the model instead of the refuser) and its fork runs the model — the nested ROM runs
+# of a foreign process and of an idle's interrupt made in the fork.
+FORK_SERVABLE_HOOKS = frozenset({isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL, *SCHEDULER_HOOKS})
+
+
+# ...and ONE KIND OF FORK IS LEFT EVERY HOOK ITS CASE'S PASS BOUND (EVERY_HOOK_OF_THE_PASS): a door user run IN PROCESS
+# with a binding no fresh interpreter can rebuild — the file selector over REAL GEMDOS, its staged disk and its
+# recorders the case's own (`aes_fslib.run_session`). Its guard is the fork made at the call, inside the pass, the
+# event door's two hooks with the rest: what each records there (the frames handed, the VDI calls noted) is the
+# fork's own copy and dies with it, and the run in process a moment later records them once.
+EVERY_HOOK_OF_THE_PASS = frozenset(FORK_UNSERVED_HOOKS)
 
 
 def in_a_fork(call, seconds=CORE_RETURN_SECONDS, serves=()):
     """`call()` made in a FORK of this process (`_the_fork_s_whole_life`): `(exit code, stderr)` — the code negative
     for a signal (the host's refusal aborts; SIGALRM ends a call still running after `seconds`, and with it a fork
     whose parent died), FORK_RAISED for a fork whose Python raised, FORK_REACHED_A_HOOK for a core that reached a
-    hook the fork does not serve (`serves`: FORK_SERVABLE_HOOKS' at most). The fork never returns into this
-    process's code."""
-    assert frozenset(serves) <= FORK_SERVABLE_HOOKS, (
+    hook the fork does not serve (`serves`: FORK_SERVABLE_HOOKS' at most — or EVERY_HOOK_OF_THE_PASS, itself). The
+    fork never returns into this process's code."""
+    assert serves is EVERY_HOOK_OF_THE_PASS or frozenset(serves) <= FORK_SERVABLE_HOOKS, (
         f"a fork serves {sorted(FORK_SERVABLE_HOOKS)} at most, not {sorted(frozenset(serves) - FORK_SERVABLE_HOOKS)}")
     reading, writing = os.pipe()
     pid = os.fork()
@@ -1093,11 +1412,83 @@ def in_a_fork(call, seconds=CORE_RETURN_SECONDS, serves=()):
 # AND NOT FOR A TEST THAT PATCHES (ZYGOTE_SIDELINED, set by `test/conftest.py` for every test that takes
 # `monkeypatch`): the zygote froze this module, and the kit beneath it, as the session started — an attribute patched
 # on the fork's side is the worker's fork's and never the zygote's.
+#
+# A FORK THAT SERVES A HOOK IS THE ZYGOTE'S TOO WHERE THE HOOK IS NAMED (`named_hook`). The worker's own fork of
+# such a run is made inside the case's open pass and inherits its binding; the zygote has no pass of the worker's —
+# but a binding that is a MODULE-LEVEL builder closed over nothing of a case (the event layer's: the VDI's cores and
+# the handed routines, each served by the library's own core) is the same binding wherever it is opened. So it is
+# named, "module:attribute"; the zygote resolves the name in ITS interpreter and its fork opens the pass itself
+# (`_inside_its_own_pass`) round the one call. A hook built per case (a closure, a partial over a case's data) has no
+# name, and its forks stay the worker's.
+#
+# AND A DOOR USER'S CHILD (`door_child`) is a fork of the zygote where its binding is the door's standard one
+# (`bind_in_a_child`: nothing of the worker's needed), in place of a fresh interpreter: the same binding, the same
+# one call, the same exit statuses, the lines a fresh interpreter prints as it exits printed by the fork's own exit
+# functions alone (`_exit_as_an_interpreter_does`).
 GUARD_ZYGOTE = []                       # this process's, or nothing (`start_the_guard_s_zygote`)
 ZYGOTE_SIDELINED = False
-ZYGOTE_SERVED_BY = "aes_event:_forked_in_the_zygote"
-ForkedCore = namedtuple("ForkedCore", "symbol restype argtypes typed takes_image answered seconds")
+ZYGOTE_SERVED_BY = "aes_event:_served_in_the_zygote"
+A_CORE_S_FORK, A_DOOR_CHILD = "a core's fork", "a door user's child"       # what a request of the zygote asks for
+ForkedCore = namedtuple("ForkedCore", "symbol restype argtypes typed takes_image answered seconds hook serves",
+                        defaults=(None, ()))
+DoorChild = namedtuple("DoorChild", "symbol restype argtypes typed objects interrupts answered seconds doors")
 _POINTER_TO = "POINTER:"
+# WHO MADE EACH CHILD OF THIS PROCESS, counted: the zygote's fork, the worker's own, a fresh interpreter — printed as
+# the process ends where AES_FORKS_REPORT is set (the measurement a speed claim about them rests on).
+FORKS_MADE = collections.Counter()
+FORKS_REPORT = "AES_FORKS_REPORT"
+BY_THE_ZYGOTE, BY_THIS_PROCESS, A_FRESH_INTERPRETER = "the zygote's forks", "this process's forks", "fresh interpreters"
+if os.environ.get(FORKS_REPORT):
+    atexit.register(lambda: FORKS_MADE and print(f"aes_event: children made by pid {os.getpid()}: {dict(FORKS_MADE)}",
+                                                 file=sys.stderr))
+_NAMED_HOOKS = {}                       # `{id(a hook): (its name, the hook)}` — the hook kept, so its id is its own
+
+
+def named_hook(module, attribute, hook):
+    """`hook` (an `aes.run_function` `hook`: a zero-argument builder of a binding), DECLARED to be the module-level
+    value `module.attribute` and nothing of a case's: the zygote may then make the forks that serve it (above).
+    Answers the hook, for `ATTRIBUTE = aes_event.named_hook(__name__, "ATTRIBUTE", <the builder>)`.
+
+    ONE NAME PER HOOK: a second declaration of the same object under another name is refused (taken silently, the
+    name would have the zygote resolve a hook its first declarer never bound).
+    AND THE MODULE MUST BE ONE THE ZYGOTE ALREADY HOLDS (`ZYGOTE_HOLDS`: what this process had imported when it
+    forked its zygote — this module and all it imports): the zygote NEVER imports for a hook. A battery's helper
+    module is not among them — importing one makes its machines, and took a zygote from 10 MB to 214 MB, every later
+    fork paying for it. A hook named in such a module is served all the same: by the worker's own forks, as an
+    unnamed one is (`the_zygote_stands_in`). To have the zygote's, alias a hook of this module
+    (`HOOKS = aes_event.EVENT_LAYER_HOOKS`), or declare the builder here."""
+    name = f"{module}:{attribute}"
+    known, _hook = _NAMED_HOOKS.get(id(hook), (name, hook))
+    assert known == name, f"{name}: this hook is declared already, as {known} — one name per hook"
+    _NAMED_HOOKS[id(hook)] = (name, hook)
+    return hook
+
+
+def name_of_a_hook(hook):
+    """The name `hook` was declared under (`named_hook`), or None."""
+    name, named = _NAMED_HOOKS.get(id(hook), (None, None))
+    return name if named is hook else None
+
+
+named_hook(__name__, "EVENT_LAYER_HOOKS", EVENT_LAYER_HOOKS)
+
+
+def hook_named(name):
+    """The hook the name spells, resolved in THIS interpreter — held to be a declared one, in a module this
+    interpreter HOLDS ALREADY: nothing is imported for it (`named_hook`'s rule; the zygote's side of it)."""
+    module, _, attribute = name.partition(":")
+    assert module in sys.modules, (
+        f"{name}: a named hook lives in a module the zygote holds when it starts ({module} is not imported here) — "
+        f"the zygote imports nothing for a hook")
+    hook = getattr(sys.modules[module], attribute)
+    assert name_of_a_hook(hook) == name, f"{name} is no hook declared under that name (`named_hook`)"
+    return hook
+
+
+def _named_where_the_zygote_holds_it(hook):
+    """Is `hook` a NAMED one whose module the zygote holds (`ZYGOTE_HOLDS`)?"""
+    name = name_of_a_hook(hook)
+    return name is not None and name.partition(":")[0] in ZYGOTE_HOLDS
 
 
 def _ctype_name(ctype):
@@ -1130,20 +1521,133 @@ def _one_run_of(core, typed, buffer, answered):
     return call
 
 
+def _typed_core(symbol, restype, argtypes):
+    """The library's function `symbol`, typed for ONE request — a function object OF ITS OWN (`_lib[symbol]`: ctypes
+    makes one per subscript, where the attribute is one object for the library's life): the types a request names
+    are that request's, and the zygote's own `_lib.<symbol>` is left as it was for every fork after it."""
+    core = _lib[symbol]
+    core.restype = _ctype_named(restype)
+    core.argtypes = None if argtypes is None else [_ctype_named(each) for each in argtypes]
+    return core
+
+
+def _served_in_the_zygote(buffer, request):
+    """IN THE ZYGOTE (`ZYGOTE_SERVED_BY`): the fork a request asks for, made over `buffer`, the shared image."""
+    kind, *fields = request
+    return {A_CORE_S_FORK: _forked_in_the_zygote, A_DOOR_CHILD: _a_door_child_in_the_zygote}[kind](buffer, fields)
+
+
 def _forked_in_the_zygote(buffer, request):
-    """IN THE ZYGOTE (`ZYGOTE_SERVED_BY`): `in_a_fork` of one run of a core over `buffer`, the shared image."""
+    """...`in_a_fork` of one run of a core — inside a pass of its named hook the fork opens, where it serves one."""
     made = ForkedCore(*request)
-    core = getattr(_lib, made.symbol)
-    core.restype = _ctype_named(made.restype)
-    core.argtypes = None if made.argtypes is None else [_ctype_named(each) for each in made.argtypes]
-    return in_a_fork(_one_run_of(core, made.typed, buffer if made.takes_image else None, made.answered), made.seconds)
+    core = _typed_core(made.symbol, made.restype, made.argtypes)
+    call = _one_run_of(core, made.typed, buffer if made.takes_image else None, made.answered)
+    if made.hook:
+        call = _inside_its_own_pass(hook_named(made.hook), call)
+    return in_a_fork(call, made.seconds, made.serves)
+
+
+def _exit_as_an_interpreter_does(call):
+    """`call`, in a fork that stands in for a FRESH INTERPRETER: the exit functions it inherited dropped first (they
+    are its parent's), and the ones the call's own code registered — a child's last lines: the frames it was handed,
+    a battery's digest — run once it has returned, as an interpreter runs them when it exits. A call that halts or
+    ends its process runs none, there as here."""
+    def as_a_child():
+        atexit._clear()
+        call()
+        atexit._run_exitfuncs()
+    return as_a_child
+
+
+def _a_door_child_in_the_zygote(buffer, request):
+    """...and of A DOOR USER'S CHILD: the door bound into the library for the fork's one call (`bind_in_a_child`),
+    then the core called over the shared image."""
+    made = DoorChild(*request)
+    core = _typed_core(made.symbol, made.restype, made.argtypes)
+
+    def call():
+        if made.doors:
+            # THE ROUTINE'S DECLARED CHILD DOORS (`declare_child_doors`), run IN THE FORK as a fresh interpreter runs
+            # them first — `lib` the candidate, `buf` its image: whatever they import or bind is this fork's alone
+            # (the zygote itself never imports a battery's module: `named_hook`).
+            exec(made.doors, {"lib": _lib, "buf": buffer})      # the module's own declared source, never a case's
+        bind_in_a_child(_lib, objects=made.objects, interrupts=made.interrupts)
+        answer = core(buffer, *made.typed)
+        if made.answered:
+            print(f"{vdi_helpers.ANSWER_LINE}{answer}", file=sys.stderr)
+    # (Every hook is refused as the fork begins, as in any fork; the child's binding then binds the five it serves.)
+    return in_a_fork(_exit_as_an_interpreter_does(call), made.seconds)
+
+
+# WHAT THE ZYGOTE FROZE, and how a later change of it is SEEN. The zygote is this process as it stood when it was
+# forked: the modules it had imported (ZYGOTE_HOLDS) and every module-level value of the ones a fork's behaviour is
+# read off (FROZEN_MODULES). A test that takes `monkeypatch` has the zygote sidelined by the suite's rule
+# (`test/conftest.py`) — but a value REBOUND any other way (`unittest.mock.patch`, a plain assignment and a `finally`)
+# would split the two makers without a word: the worker's fork under the patch, the zygote's without it. So the
+# zygote stands in only while those modules' values ARE the ones it froze (`_as_the_zygote_froze_them`: by
+# identity, a name at a time; what the worker has ADDED since is its own).
+# A TEST THAT MEANS THE ZYGOTE WHILE IT PATCHES THE WORKER'S SIDE says so by this value of ZYGOTE_SIDELINED (falsy:
+# the zygote is not sidelined — and distinct from the module's own False: the patches are the test's word, so the
+# frozen values are not asked about).
+ZYGOTE_HOLDS = frozenset()
+FROZEN_MODULES = ("aes_event", "aes", "isr", "aes_gsx", "vdi_entry", "vdi_helpers")
+# WHAT IS NOT FROZEN, by module: this module's own two switches for the zygote.
+_NOT_FROZEN = {"aes_event": frozenset({"ZYGOTE_SIDELINED", "ZYGOTE_HOLDS"})}
+# ...and A MODULE'S LAZY CACHE IS FROZEN BY ITS SHAPE: a name bound FROM None, ONCE, by the first asker, to an answer
+# that is the same in any process (the zygote's fork makes its own when it asks): `isr._BENCH`, the cross-compiled
+# blob. Held frozen at None, the first test of a process that loaded the blob — every transcription pin does —
+# sidelined its zygote for the rest of its life (measured: one battery's 1,066 forks the worker's own again after
+# one test of another's). So the ONE transition None -> its first value is the cache's own, and the value it then
+# holds is what is frozen: bound AGAIN — a `mock.patch` of the blob, a sweep's own bench assigned and put back in a
+# `finally` — the worker's fork would run another bench than the zygote's, and the zygote is sidelined as for any
+# other rebound value.
+LAZY_CACHES = {"isr": frozenset({"_BENCH"})}
+_FROZEN = {}                            # `{module name: {attribute: id(value)}}`, as the zygote was forked
+_FIRST_BOUND = {}                       # `{(module name, a lazy cache): the value it was first bound to}`, held alive
+
+
+class _MeantUnderPatches:
+    def __bool__(self):
+        return False
+
+    def __repr__(self):
+        return "MEANT_UNDER_PATCHES"
+
+
+MEANT_UNDER_PATCHES = _MeantUnderPatches()
+
+
+def _values_of(module):
+    not_frozen = _NOT_FROZEN.get(module, frozenset())
+    return {name: id(value) for name, value in vars(sys.modules[module]).items() if name not in not_frozen}
+
+
+def _as_frozen(module, name, now, frozen):
+    """Is `module.name`, which holds `now`, what the zygote froze (`frozen`: its id then) — or a lazy cache's one
+    binding from None (above)?"""
+    if id(now) == frozen:
+        return True
+    if name not in LAZY_CACHES.get(module, ()) or frozen != id(None) or now is None:
+        return False
+    return _FIRST_BOUND.setdefault((module, name), now) is now
+
+
+def _as_the_zygote_froze_them():
+    """Are the FROZEN_MODULES' module-level values the very objects the zygote was forked with?"""
+    return all(_as_frozen(module, name, vars(sys.modules[module]).get(name), value)
+               for module, frozen in _FROZEN.items() for name, value in frozen.items())
 
 
 def start_the_guard_s_zygote():
     """Fork THIS process's zygote now (`test/conftest.py`: as a session starts, before the batteries are imported).
     Ended with the process (`atexit`)."""
+    global ZYGOTE_HOLDS
     assert not the_zygote_runs(), "this process has its zygote already"
+    ZYGOTE_HOLDS = frozenset(sys.modules)
     GUARD_ZYGOTE[:] = [zygote.Zygote(IMAGE_BYTES, ZYGOTE_SERVED_BY)]
+    _FROZEN.clear()
+    _FIRST_BOUND.clear()
+    _FROZEN.update({module: _values_of(module) for module in FROZEN_MODULES if module in sys.modules})
     atexit.register(stop_the_guard_s_zygote)
 
 
@@ -1154,7 +1658,8 @@ def stop_the_guard_s_zygote():
 
 
 def the_zygote_runs():
-    return bool(GUARD_ZYGOTE) and not ZYGOTE_SIDELINED and GUARD_ZYGOTE[0].running()
+    return (bool(GUARD_ZYGOTE) and not ZYGOTE_SIDELINED and GUARD_ZYGOTE[0].running()
+            and (ZYGOTE_SIDELINED is MEANT_UNDER_PATCHES or _as_the_zygote_froze_them()))
 
 
 def _the_dispatcher_s_hook_is_the_refuser():
@@ -1162,33 +1667,44 @@ def _the_dispatcher_s_hook_is_the_refuser():
             == ctypes.cast(DISPATCH_REFUSER, ctypes.c_void_p).value)
 
 
-def the_zygote_stands_in(made, serves=()):
-    """May the zygote make the fork of the run `made` (an `aes.CoreRun`) for this process? The rule above."""
-    return (the_zygote_runs() and not serves and not made.seeded and isinstance(made.core, ctypes._CFuncPtr)
-            and _the_dispatcher_s_hook_is_the_refuser())
+def the_zygote_stands_in(made, serves=(), hook=None):
+    """May the zygote make the fork of the run `made` (an `aes.CoreRun`) for this process? The rule above: a fork that
+    `serves` hooks only where the case's `hook` is a NAMED one."""
+    return (the_zygote_runs() and (not serves or _named_where_the_zygote_holds_it(hook)) and not made.seeded
+            and isinstance(made.core, ctypes._CFuncPtr) and _the_dispatcher_s_hook_is_the_refuser())
 
 
-def _by_the_zygote(made, seconds, answered=False):
+def _ctypes_named(core):
+    return (_ctype_name(core.restype), None if core.argtypes is None else tuple(_ctype_name(each) for each in core.argtypes))
+
+
+def _by_the_zygote(made, seconds, answered=False, serves=(), hook=None):
     """`(exit code, stderr)` of `made`'s run in a fork OF THE ZYGOTE — `in_a_fork`'s answer, made there."""
-    core = made.core
-    argtypes = None if core.argtypes is None else tuple(_ctype_name(each) for each in core.argtypes)
-    request = ForkedCore(core.__name__, _ctype_name(core.restype), argtypes, tuple(made.typed), made.buf is not None,
-                         answered, seconds)
-    return GUARD_ZYGOTE[0].ask(tuple(request), None if made.buf is None else ctypes.addressof(made.buf))
+    request = ForkedCore(made.core.__name__, *_ctypes_named(made.core), tuple(made.typed), made.buf is not None,
+                         answered, seconds, name_of_a_hook(hook) if serves else None, tuple(serves))
+    return GUARD_ZYGOTE[0].ask((A_CORE_S_FORK, *request), None if made.buf is None else ctypes.addressof(made.buf))
 
 
-def guard_fork(call, made, seconds=CORE_RETURN_SECONDS, serves=(), answered=False):
+def _the_zygote_is_gone(gone):
+    GUARD_ZYGOTE.clear()
+    print(f"aes_event: {gone} — this process makes its own forks from here on", file=sys.stderr)
+
+
+def guard_fork(call, made, seconds=CORE_RETURN_SECONDS, serves=(), answered=False, hook=None):
     """THE ONE DOOR A CORE'S FORK IS MADE BY: `(exit code, stderr, the zygote that made the fork — or None)` of
     `call()` — one run of a core, `made` the same run by content (an `aes.CoreRun`; `answered`: its answer printed,
-    `core_in_a_fork`'s) — in a fork: the zygote's where it stands in (`the_zygote_stands_in`), this process's own
-    (`in_a_fork`) everywhere else, and where the zygote died (said once, on stderr: the verdict is the same fork's)."""
-    if the_zygote_stands_in(made, serves):
+    `core_in_a_fork`'s; `hook`: the case's binding, whose pointers the fork `serves`) — in a fork: the zygote's where
+    it stands in (`the_zygote_stands_in`), this process's own (`in_a_fork`) everywhere else, and where the zygote
+    died (said once, on stderr: the verdict is the same fork's)."""
+    if the_zygote_stands_in(made, serves, hook):
         asked = GUARD_ZYGOTE[0]
         try:
-            return (*_by_the_zygote(made, seconds, answered), asked)
+            answer = (*_by_the_zygote(made, seconds, answered, serves, hook), asked)
+            FORKS_MADE[BY_THE_ZYGOTE] += 1
+            return answer
         except zygote.Gone as gone:
-            GUARD_ZYGOTE.clear()
-            print(f"aes_event: {gone} — this process makes its own forks from here on", file=sys.stderr)
+            _the_zygote_is_gone(gone)
+    FORKS_MADE[BY_THIS_PROCESS] += 1
     return (*in_a_fork(call, seconds, serves), None)
 
 
@@ -1202,11 +1718,25 @@ def _vet_returned(name, values, returncode, stderr):
     assert returncode == 0, f"{called}: the C did not return in a child ({returncode}): {stderr}"
 
 
-def forked_first(name, values, serves=()):
+def forked_first(name, values, serves=(), hook=None):
     """`aes.run_function`'s `first` for a core that reaches no door: each of its runs made in a fork first, and held
-    to have returned there (`_vet_returned`) — the hooks it `serves` left as the case's pass bound them."""
+    to have returned there (`_vet_returned`) — the hooks it `serves` left as the case's pass bound them (`hook`: that
+    pass's builder — a named one's forks are the zygote's)."""
     def first(call, made):
-        returncode, stderr, _by = guard_fork(call, made, serves=serves)
+        returncode, stderr, _by = guard_fork(call, made, serves=serves, hook=hook)
+        _vet_returned(name, values, returncode, stderr)
+    return first
+
+
+def forked_inside_its_pass(name, values, seconds=CHILD_RETURN_SECONDS):
+    """`aes.run_function`'s `first` for a DOOR USER RUN IN PROCESS UNDER A BINDING OF ITS CASE'S OWN
+    (EVERY_HOOK_OF_THE_PASS, above): each run of its C made first in a fork of this process — every hook as the open
+    pass bound it — and held to have returned there (`_vet_returned`). A core that halts (a VDI function, a handed
+    routine or a door entry the binding does not serve) or spins fails its case BY ITS OWN WORDS, in the guard's
+    message: in process it was the worker's death, no word said."""
+    def first(call, _made):
+        FORKS_MADE[BY_THIS_PROCESS] += 1
+        returncode, stderr = in_a_fork(call, seconds, EVERY_HOOK_OF_THE_PASS)
         _vet_returned(name, values, returncode, stderr)
     return first
 
@@ -1218,61 +1748,241 @@ def run_core_guarded(name, arguments, pokes, *, serves=(), **kwargs):
     waits' batteries. A core that reaches the DISPATCHER fails its case here by the hook's own words — a block told
     from a yield — in the guard's message: a case that MEANS to show the switch is `switches_where_the_rom_does`'s."""
     assert not serves or kwargs.get("hook"), f"{name}: a fork serves the hooks its case's pass binds — and it binds none"
-    return aes.run_function(name, arguments, pokes, first=forked_first(name, arguments, serves), **kwargs)
+    return aes.run_function(name, arguments, pokes, first=forked_first(name, arguments, serves, kwargs.get("hook")),
+                            **kwargs)
 
 
-def run_core_steered(name, arguments, pokes, certain=(), asked=(), **kwargs):
-    """`run_core_guarded`, THE ATTRIBUTION PASS STEERED AS THE CASE'S LAYER SAYS (`aes.run_function`'s `steered=`):
-    the kit's own pass, whole, where no reason is named; narrowed to `certain` — the reasons that steer every such
-    case — and to each of `asked` ONLY WHERE THE PASS FAILS WITHOUT IT: a reason that steers some cases of a routine
-    and not others (no rule says which) is tried without first, and named only where that fails — so no reason is
-    ever named for nothing, which would leave its words un-inverted and a skipped store of one unseen. The one door
-    for every layer's steered cases; which reasons are `certain` and which `asked` for a routine is the layer's own
-    table (`aes_evlib.steered_by`, `aes_evinput.steered_by`)."""
-    def run(reasons):
-        return run_core_guarded(name, arguments, pokes, **({"steered": reasons} if reasons else {}), **kwargs)
-    named, passed = tuple(certain) + tuple(asked), None
-    # Asked with the on-demand sweep OFF (it would refuse a trial for a reason still to be asked about); under the
-    # sweep the run that returns is made again, so every reason left is re-asked by the sweep itself.
-    sweeping = os.environ.pop(aes.STEERED_FOR_NOTHING_SWEEP, None)
-    try:
-        for reason in asked:
+# ---- THE ONE STEERING LOOP ---------------------------------------------------------------------------------------------
+# A STEERED CASE names the reasons its attribution pass is narrowed to (`aes.run_function`'s `steered=`) — and none
+# for nothing: a reason named where the pass does not need it leaves its words un-inverted and a skipped store of one
+# unseen. Which reasons a case needs is ASKED OF THE PASS: each is tried WITHOUT, and kept only where that fails.
+# Three things about the asking, each measured on the event layer's batteries:
+#   * THE PLAIN PASS IS MADE ONCE (`Trials`): the ROM's run, the C's, the compare are one deterministic run whatever
+#     the narrowed pass is asked — made for the first trial and handed to every other (`aes.run_function`'s `plain=`);
+#   * STEERING IS NOT MONOTONIC, so the asking goes TO A FIXPOINT where the layer says (`fixpoint`): a reason the pass
+#     fails without WHILE ANOTHER IS STILL NAMED can be needless once that other is gone (a key typed and a press
+#     queued: the fork queue's counters). After a round that dropped a reason, the reasons it had kept BEFORE its
+#     last drop are asked again (those kept after it were tried against the set as it now stands). One round ends on
+#     a set the AES_STEERED_FOR_NOTHING sweep may refuse;
+#   * THE ANSWER IS KEPT BY CONTENT (`_reasons_needed`): a trial that FAILS is the dear one (the narrowed ROM run,
+#     derailed, runs to its cap), and every worker that meets the case, the guarded suite beside it and the next run
+#     of the same tree would find the same reasons. What is kept decides NO verdict: the run that returns is made
+#     every time, with exactly those reasons, and the sweep asks each.
+class Trials:
+    """THE DIFFERENTIALS OF ONE RETURNING CASE, AS ITS STEERING ASKS THEM: `trials(reasons)` is the case with its
+    attribution pass narrowed to `reasons` — with none, under the kit's own WHOLE pass. `run(**passes)` is the
+    case's one door (`run_core_guarded` over its routine, frame, machine and limits), handed the passes each trial
+    names. The plain pass is made once (above), and the last run that passed is remembered with its reasons."""
+
+    def __init__(self, run):
+        self._run, self._plain, self.passed = run, None, None
+
+    def __call__(self, reasons):
+        self.passed = None
+        if not reasons:
+            self.passed = reasons, self._run()
+            return self.passed[1]
+        if self._plain is None:
+            self._plain = self._run(poison=False).info
+        self.passed = reasons, self._run(steered=reasons, plain=self._plain)
+        return self.passed[1]
+
+
+# The trials of the question being asked (`_reasons_needed`): a kept derivation is a function of its arguments alone,
+# and the door its trials go through — a function of those arguments and no more — is handed beside them.
+_ASKING = []
+
+
+@kept_on_disk
+def _reasons_needed(question, certain, asked, fixpoint):
+    """WHICH OF `asked` THE CASE'S PASS NEEDS beside `certain`, as their indices (none, and nothing certain: it
+    passes the kit's whole pass): each tried without, kept where that fails — to a fixpoint, with `fixpoint`.
+
+    KEPT BY CONTENT, though its trials run the candidate — which a derivation's contract otherwise excludes — because
+    the tree's key holds the candidate's library as this process loaded it (and a process whose library is not the
+    project's own keeps nothing). `question` is the key's: the case, read by value."""
+    del question
+    trials = _ASKING[-1]
+    named, again = certain + asked, asked
+    while again:
+        kept, kept_before_the_last_drop = [], 0
+        for reason in again:
             without = tuple(other for other in named if other is not reason)
             try:
-                passed, named = run(without), without
+                trials(without)
             except (AssertionError, RuntimeError):
-                continue                # the pass fails without it: the reason stays, held by the run that returns
+                kept.append(reason)     # the pass fails without it: the reason stays, held by the run that returns
+                continue
+            named, kept_before_the_last_drop = without, len(kept)
+        again = tuple(kept[:kept_before_the_last_drop]) if fixpoint else ()
+    return tuple(index for index, reason in enumerate(asked) if any(reason is other for other in named))
+
+
+def steered_as_needed(trials, question, certain, asked, *, fixpoint):
+    """A case's differential (`trials`: a `Trials`) with its attribution pass NARROWED to `certain` and the fewest of
+    `asked` it passes with (`_reasons_needed`: asked once per tree — `question` its key, None for a case nobody can
+    read by value, asked every time). The trials are made with the AES_STEERED_FOR_NOTHING sweep off (it would
+    refuse a trial for a reason still to be asked about); under it the run that returns is made again, so the sweep
+    itself re-asks every reason left, `certain`'s too."""
+    sweeping = os.environ.pop(aes.STEERED_FOR_NOTHING_SWEEP, None)
+    _ASKING.append(trials)
+    try:
+        if question is None:
+            needed = _reasons_needed.derive(question, certain, asked, fixpoint)
+        else:
+            try:
+                needed = _reasons_needed(question, certain, asked, fixpoint)
+            except NotReadableByValue:      # a hook or a reason nobody can read by value: asked every time
+                needed = _reasons_needed.derive(question, certain, asked, fixpoint)
     finally:
+        _ASKING.pop()
         if sweeping is not None:
             os.environ[aes.STEERED_FOR_NOTHING_SWEEP] = sweeping
-    return passed if passed and not sweeping else run(named)
+    reasons = certain + tuple(asked[index] for index in needed)
+    if not sweeping and trials.passed and len(trials.passed[0]) == len(reasons) and all(
+            mine is its for mine, its in zip(trials.passed[0], reasons)):
+        return trials.passed[1]         # ...the last trial was this very run: not made again
+    return trials(reasons)
+
+
+def _question_of(name, arguments, machine, limits):
+    """A steered case as `_reasons_needed`'s key reads it: its routine, frame, machine and limits — its hook BY NAME
+    (`named_hook`); None for a case whose hook has none (a binding built per case: nobody can read it by value)."""
+    hook = limits.get("hook")
+    if hook is not None and name_of_a_hook(hook) is None:
+        return None
+    rest = tuple(sorted((key, value) for key, value in limits.items() if key != "hook"))
+    return name, tuple(arguments), machine, rest, name_of_a_hook(hook) if hook is not None else None
+
+
+def run_core_steered(name, arguments, pokes, certain=(), asked=(), *, fixpoint=False, **kwargs):
+    """`run_core_guarded`, THE ATTRIBUTION PASS STEERED AS THE CASE'S LAYER SAYS (above): the kit's own pass, whole,
+    where no reason is named; narrowed to `certain` — the reasons that steer every such case — and to each of
+    `asked` ONLY WHERE THE PASS FAILS WITHOUT IT. The door for a layer that keeps its own table of which reasons are
+    `certain` and which `asked` for a routine (`aes_evlib.steered_by`, `aes_evinput.steered_by`: one round, as their
+    tables were proved by); a routine that calls into several layers takes `run_layer_case`, which derives them."""
+    certain, asked = tuple(certain), tuple(asked)
+    if not asked:                       # nothing to ask: ONE run, the kit's own plain pass and narrowed one in it
+        return run_core_guarded(name, arguments, pokes, **({"steered": certain} if certain else {}), **kwargs)
+    trials = Trials(lambda **passes: run_core_guarded(name, arguments, pokes, **passes, **kwargs))
+    return steered_as_needed(trials, _question_of(name, arguments, pokes, kwargs), certain, asked, fixpoint=fixpoint)
+
+
+# ---- WHAT STEERS A CASE'S ATTRIBUTION PASS, DERIVED ----------------------------------------------------------------------
+# Each layer's helper module DECLARES its reasons (`aes.steers(...)`: module-level values — a list's links, a pipe's
+# index, the event bits, the fork queue's counters ...) and keeps a table of which routine each steers. A routine
+# that calls into several layers (ev_multi: all four) would need a fifth table restating theirs. It needs none: a
+# reason can steer a case only if the ROM's run STORES one of its words (the pass inverts stored bytes alone), and
+# whether it DOES steer is what the pass itself says (`run_core_steered`'s `asked`: tried without, named only where
+# that fails). So the candidates are read off the modules, the membership off the run; a layer's own table is a
+# speed hint (`certain`: no trial run), held like every reason by the AES_STEERED_FOR_NOTHING sweep.
+STEERING_MODULES = ["aes_pdpipe", "aes_evlib", "aes_evinput"]
+
+
+def declare_steering_module(name):
+    """`name` (a helper module of a layer's battery) declares steering reasons at its top level too."""
+    if name not in STEERING_MODULES:
+        STEERING_MODULES.append(name)
+        steering_reasons.cache_clear()
+
+
+@functools.cache
+def steering_reasons():
+    """Every reason the layers' helper modules declare, once each, in the modules' order."""
+    reasons = []
+    for module in STEERING_MODULES:
+        for value in vars(importlib.import_module(module)).values():
+            if isinstance(value, aes.Steers) and not any(value is known for known in reasons):
+                reasons.append(value)
+    return tuple(reasons)
+
+
+@kept_on_disk
+def _stored_by_the_rom(name, arguments, machine):
+    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))
+    _final, writes, _regs = emu.run(image, getattr(addrs, name), stop_pc=addrs.AES_ROM_DSPTCH)
+    return frozenset(case.written_by(writes))
+
+
+def steering_asked(name, arguments, machine, certain=()):
+    """The reasons a returning case of `addrs.<name>` over `machine` ASKS its pass about (`run_core_steered`): every
+    declared reason, `certain`'s aside, one of whose words the ROM's own run stores."""
+    stored = _stored_by_the_rom(name, tuple(arguments), machine)
+    return tuple(reason for reason in steering_reasons() if not any(reason is known for known in certain)
+                 and any(at in stored for lo, hi in reason.spans for at in range(lo, hi)))
+
+
+def run_layer_case(name, arguments, machine, *, hook=None, certain=(), also=(), dropped_windows=None, **kwargs):
+    """THE DIFFERENTIAL OF AN EVENT-LAYER ROUTINE THAT RETURNS, whatever layers it calls into: every run of its C first
+    in a fork (`run_core_guarded` — `hook`'s pointers left served there, for a core that polls or runs the fork
+    queue: EVENT_LAYER_HOOKS), compared outside EVENT_LAYER_DROPS where the ROM's run stores them (or the case's own
+    `dropped_windows`), THE ATTRIBUTION PASS STEERED BY DERIVATION (above) AND TO A FIXPOINT (`steered_as_needed`):
+    every declared reason whose words the ROM's run stores is asked, with the reasons the CASE says may steer it
+    (`also`); a case that asks none runs under the kit's whole pass. `certain`: reasons taken for needed wherever
+    they are among the asked — A SPEED HINT (it spares the trial that fails without one), held like every reason by
+    the AES_STEERED_FOR_NOTHING sweep. A QPB's address the ROM's run leaves in a freed EVB is dropped by name, vetted
+    against the C's own (`qpb_addresses_a_return_leaves`). A case that names its own `steered=` or `poison=` is run
+    as it says."""
+    hooked = {"hook": hook, "serves": SERVED_IN_A_FORK} if hook else {}
+    drops = EVENT_LAYER_DROPS if dropped_windows is None else dropped_windows
+    kept = qpb_addresses_a_return_leaves(name, arguments, machine)
+    if kept:                            # vetted against the C's own image at its return: one more run of it, in a fork
+        forked = core_in_a_fork(name, arguments, machine, read_back=True, hook=hook)
+        assert forked.returncode == 0, f"{name}: the ROM's run returns; the C's fork ended {forked.returncode}: {forked.stderr}"
+        drops += vetted_qpb_addresses(name, forked.image, kept, getattr(addrs, name))
+    limits = {"dropped_windows": drops, **hooked, **kwargs}
+    if "steered" in kwargs or "poison" in kwargs:
+        return run_core_guarded(name, arguments, machine, **limits)
+    trials = Trials(lambda **passes: run_core_guarded(name, arguments, machine, **passes, **limits))
+    asked = steering_asked(name, arguments, machine) + tuple(also)
+    if not asked:
+        return trials(asked)
+    for_certain = tuple(reason for reason in asked if any(reason is known for known in certain))
+    the_rest = tuple(reason for reason in asked if not any(reason is known for known in for_certain))
+    return steered_as_needed(trials, _question_of(name, arguments, machine, limits), for_certain, the_rest, fixpoint=True)
 
 
 Forked = namedtuple("Forked", "returncode stderr image answer")
 
 
-def core_in_a_fork(name, values, pokes, *, seconds=CORE_RETURN_SECONDS, answered=False, read_back=False):
-    """What `addrs.<name>`'s core — one that reaches no hook — says over `pokes` with the frame `values` in a FORK, for
-    a case that MEANS to show a halt or a return there (`refusal`'s fork kind: no interpreter started, no image
-    file): a `Forked` — the exit code and stderr (`guard_fork`), the image as the core left it (`read_back`: the fork
-    runs over a mapping it shares with this process, so every store made before a halt is there) and the core's
-    answer (`answered`, at its declared width; None for a core that did not return). The library's models are armed
-    as a differential arms them (`arm_candidate`): the verdict is this call's, whatever test ran before."""
+def _inside_its_own_pass(hook, call):
+    """`call`, made INSIDE A PASS OF `hook` THE FORK OPENS ITSELF (`aes.run_function`'s `hook`: a zero-argument
+    builder of a case's binding) — for a core run in a fork outside any case's pass, which calls out through hooks
+    (the VDI's cores under a keyboard poll, a fork function through the register hook) before it returns or halts.
+    A call the binding does not serve is recorded and fails the fork by name as the pass closes (FORK_RAISED)."""
+    def hooked():
+        with hook() as bound:
+            bound.recording(lambda _lib, _buf: call())(None, None)
+    return hooked
+
+
+def core_in_a_fork(name, values, pokes, *, seconds=CORE_RETURN_SECONDS, answered=False, read_back=False, hook=None):
+    """What `addrs.<name>`'s core says over `pokes` with the frame `values` in a FORK, for a case that MEANS to show
+    a halt or a return there (`refusal`'s fork kind: no interpreter started, no image file): a `Forked` — the exit
+    code and stderr (`guard_fork`), the image as the core left it (`read_back`: the fork runs over a mapping it shares
+    with this process, so every store made before a halt is there) and the core's answer (`answered`, at its declared
+    width; None for a core that did not return). The library's models are armed as a differential arms them
+    (`arm_candidate`): the verdict is this call's, whatever test ran before. `hook`: the binding of a core that
+    calls out before it ends, opened by the fork for its one run (`_inside_its_own_pass`) — the two hooks a fork may
+    serve (FORK_SERVABLE_HOOKS) are then left as the worker holds them, every other refused by name as ever."""
     core = getattr(_lib, routines.core_symbol(name))
     typed = vdi.as_signed(name, values)
+    serves = tuple(sorted(FORK_SERVABLE_HOOKS)) if hook else ()
     # THE IMAGE IS COPIED ONCE MORE, into the mapping the fork runs over: the zygote's own (`Zygote.ask` copies it
     # there) where the zygote stands in, one this call shares with its own fork everywhere else.
     start = make_image(pokes)
-    by_the_zygote = the_zygote_stands_in(aes.CoreRun(core, typed, start, seeded=False))
+    by_the_zygote = the_zygote_stands_in(aes.CoreRun(core, typed, start, seeded=False), serves, hook)
     over = start if by_the_zygote else mmap.mmap(-1, IMAGE_BYTES)
     if not by_the_zygote:
         over[:] = start
     buf = (ctypes.c_uint8 * IMAGE_BYTES).from_buffer(over)
-    returncode, stderr, by = guard_fork(_one_run_of(core, typed, buf, answered),
-                                        aes.CoreRun(core, typed, buf, seeded=False), seconds, answered=answered)
+    call = _one_run_of(core, typed, buf, answered)
+    returncode, stderr, by = guard_fork(_inside_its_own_pass(hook, call) if hook else call,
+                                        aes.CoreRun(core, typed, buf, seeded=False), seconds, serves, answered=answered,
+                                        hook=hook)
     if by_the_zygote and by is None:    # the zygote died under this very call, and the worker's fork in its place ran
         # over an image this process does not share: made again, the worker's own from the start
-        return core_in_a_fork(name, values, pokes, seconds=seconds, answered=answered, read_back=read_back)
+        return core_in_a_fork(name, values, pokes, seconds=seconds, answered=answered, read_back=read_back, hook=hook)
     image = None
     if read_back:                       # ...out of the mapping the fork ran over: the zygote's, or this call's own
         image = by.image() if by else bytes(over)
@@ -1288,7 +1998,7 @@ def core_in_a_fork(name, values, pokes, *, seconds=CORE_RETURN_SECONDS, answered
 # switch, for the event layer's own batteries (a door USER's blocking case is `refused_where_the_rom_blocks`).
 HALTED_AT_THE_DISPATCHER = "the dispatcher: the case's hook refused the call"     # `aes/switch.h`'s halt line
 AtDsptch = namedtuple("AtDsptch", "memory writes switches")
-Switched = namedtuple("Switched", "image rom_memory stderr")
+Switched = namedtuple("Switched", "image rom_memory stderr parked", defaults=((),))
 
 
 def _staged(name, arguments, pokes):
@@ -1310,19 +2020,25 @@ def rom_at_dsptch(name, arguments, pokes, *, budget=None):
 
 
 def switches_where_the_rom_does(name, arguments, pokes, *, switches=BLOCKS, dropped=(), budget=None,
-                                seconds=CORE_RETURN_SECONDS):
+                                seconds=CORE_RETURN_SECONDS, hook=None):
     """A case that MEANS the switch: `addrs.<name>`'s core over `pokes` with the frame `arguments`, in a fork, HALTS
     AT THE DISPATCHER'S HOOK — refused as a call that `switches` (BLOCKS, or YIELDS) — where the ROM's own run of the
     routine reaches dsptch asking for the same kind of switch, and the image the C holds there is the ROM's memory at
-    dsptch: everywhere but the stack band, the Line-F mask word, the trap's saved registers and the SR save words
-    the ROM's run stored (`not_compared_where_the_rom_stored`). `dropped` (`(lo, hi, why)` each, as a differential's
-    `dropped_windows`): what THIS case differs in by nature — a pointer into its caller's stack parked in a record —
-    each REQUIRED to be bytes the ROM's run stored, whole: a drop over anything else is refused by name. Answers
-    `Switched(image, rom_memory, stderr)` for the case's own assertions."""
+    dsptch: everywhere but the stack band, the Line-F mask word, the trap's saved registers (and, for a core that
+    polled the keyboard, the trap frame's PC and SR: `TRAP_FRAME_DROP`), the SR save words the ROM's run stored
+    (`not_compared_where_the_rom_stored`) and THE ADDRESS OF A QPB A PIPE WAIT PARKED IN A STACK — found on the
+    machine and vetted (`parked_where_blocked`), for every case, whatever its routine. `dropped` (`(lo, hi, why)` each,
+    as a differential's `dropped_windows`): what THIS case differs in by nature beside — each REQUIRED to be bytes
+    the ROM's run stored, whole: a drop over anything else is refused by name. `hook`: the binding of a core that
+    calls out BEFORE it switches (ev_multi polls the keyboard through the VDI and runs the fork queue first),
+    opened by the fork (`core_in_a_fork`). Answers `Switched(image, rom_memory, stderr, parked)` for the case's own
+    assertions — `parked` the QPBs found parked, `(process, count, buffer)` each."""
     the_rom_s = rom_at_dsptch(name, arguments, pokes, budget=budget)
     assert the_rom_s.switches == switches, (
         f"{name}: the premise — at dsptch the ROM's run is one where {switches} — does not hold: {the_rom_s.switches}")
-    forked = core_in_a_fork(name, arguments, pokes, seconds=seconds, read_back=True)
+    # (Over the machine WITH the call's frame where the ROM's run has it: a frame longer than the stack band's reach —
+    # ev_multi's twenty-six bytes — is compared, and the C, which reads none of it, must not differ there.)
+    forked = core_in_a_fork(name, arguments, _staged(name, arguments, pokes), seconds=seconds, read_back=True, hook=hook)
     assert forked.returncode not in (0, FORK_RAISED, FORK_REACHED_A_HOOK), (
         f"{name}: the ROM's run reaches the dispatcher ({switches}); the C's fork ended {forked.returncode}: {forked.stderr}")
     assert HALTED_AT_THE_DISPATCHER in forked.stderr and switches in forked.stderr, (
@@ -1333,9 +2049,46 @@ def switches_where_the_rom_does(name, arguments, pokes, *, switches=BLOCKS, drop
         f"{name}: dropped at dsptch, and not stored by the ROM's run: "
         f"{[f'{at:#x}' for at in sorted(by_nature - the_rom_s.writes.keys())]} — a drop names what the run WROTE")
     not_compared = not_compared_where_the_rom_stored(the_rom_s.memory, _staged(name, arguments, pokes))
-    differ = differing(forked.image, the_rom_s.memory, not_compared | by_nature)
+    not_compared |= frozenset(at for at in TRAP_FRAME_BYTES if at in the_rom_s.writes)
+    parked = parked_where_blocked(name, forked.image, the_rom_s.memory, routine=getattr(addrs, name))
+    differ = differing(forked.image, the_rom_s.memory, not_compared | by_nature | parked.dropped)
     assert not differ, "at dsptch, " + _describe_differences(name, forked.image, the_rom_s.memory, differ)
-    return Switched(forked.image, the_rom_s.memory, forked.stderr)
+    return Switched(forked.image, the_rom_s.memory, forked.stderr, parked.qpbs)
+
+
+def door_child(name, values, pokes, *, objects=False, interrupts=None, before="", seconds=vdi_helpers.CHILD_SECONDS,
+               answered=False, read_back=True):
+    """A DOOR USER's core `addrs.<name>` over `pokes` with the frame `values`, in a CHILD with the door's standard
+    binding (`bind_in_a_child`: every entry served or an arrival, the VDI's cores, the walked routines with
+    `objects`, `interrupts` laid at its door calls): `refusal`'s `(returncode, stderr, image)`. A FORK OF THE ZYGOTE
+    where one runs for this process (above) — and a fresh interpreter (`refusal`) everywhere else: with no zygote,
+    under a test that patches (ZYGOTE_SIDELINED), and for a child that runs A CASE'S OWN source first (`before`:
+    run in that interpreter). `before` that is THE ROUTINE'S DECLARED CHILD DOORS and nothing else
+    (`CHILD_DOORS[name]`: a constant its module declared once, `declare_child_doors`) is the zygote's all the same —
+    its fork runs that source first, as the interpreter would (the file selector's GEMDOS replay: 117 interpreters a
+    suite run, each importing this whole module again to bind one hook). A child still running after `seconds`
+    raises `subprocess.TimeoutExpired`, whichever made it."""
+    if the_zygote_runs() and before in ("", CHILD_DOORS.get(name, "")):
+        signature, asked = vdi.ALCYON[name], GUARD_ZYGOTE[0]
+        # ...the call typed by the routine's declared signature, its answer printed where it declares one (`refusal`'s
+        # own two rules).
+        request = DoorChild(routines.core_symbol(name), _ctype_name(signature.restype),
+                            tuple(_ctype_name(each) for each in signature.argtypes), tuple(vdi.as_signed(name, values)),
+                            bool(objects), interrupts, answered and signature.restype is not None, seconds, before)
+        start = make_image(pokes)
+        try:
+            returncode, stderr = asked.ask((A_DOOR_CHILD, *request),
+                                           ctypes.addressof((ctypes.c_uint8 * IMAGE_BYTES).from_buffer(start)))
+        except zygote.Gone as gone:
+            _the_zygote_is_gone(gone)
+        else:
+            FORKS_MADE[BY_THE_ZYGOTE] += 1
+            if returncode == -signal.SIGALRM:
+                raise subprocess.TimeoutExpired(f"the zygote's fork of {name}", seconds, stderr=stderr)
+            return returncode, stderr, asked.image() if read_back else None
+    FORKS_MADE[A_FRESH_INTERPRETER] += 1
+    return refusal(name, pokes, values, bind=child_binding(objects=objects, interrupts=interrupts, before=before),
+                   seconds=seconds, answered=answered, read_back=read_back)
 
 
 # The door users' guards that returned, by CONTENT — (routine, frame, binding, THE IMAGE the pokes make: laid over
@@ -1355,7 +2108,7 @@ def returns_in_a_child(name, values, pokes, *, objects=False, seconds=CHILD_RETU
     guarded = (name, tuple(values), bind, tuple(merge_pokes(pokes).items()))
     if guarded in _RETURNED_IN_A_CHILD:
         return
-    returncode, stderr, _image = refusal(name, pokes, values, bind=bind, seconds=seconds, read_back=False)
+    returncode, stderr, _image = door_child(name, values, pokes, objects=bool(objects), seconds=seconds, read_back=False)
     _vet_returned(name, values, returncode, stderr)
     _RETURNED_IN_A_CHILD.add(guarded)
 
@@ -1416,16 +2169,22 @@ class DoorStops:
     event layer's own, and may reach the dispatcher itself, outside any door call: with `blocks` the run ends there
     too (`Blocked`), and `calls` is what it had entered — none, for a wait that blocks at once.
 
+    `dispatchers` (a run of OUR build's, with `blocks`): where that build places ITS OWN dsptch (`aes/switch.h`:
+    the `.S` entry a twin that waits calls) — a stop like the ROM's, for the same refusal. A twin runs none of the
+    ROM's text, so a watch that named the ROM's dsptch alone would let a twin that blocks run our dispatcher's idle
+    loop to the oracle's budget: a spin of sixteen million instructions where the refusal is one stop.
+
     `first`: the stops outside every door call — what the run starts with, and what each stop outside a call arms
     again. A subclass that watches more adds to it (`aes_fslib.GemdosCalls`)."""
 
     def __init__(self, entries, returns, opened=None, closed=None, *, blocks=False, delivered=None, twins=None,
-                 twins_called_from=None, entered_at=None):
+                 twins_called_from=None, entered_at=None, dispatchers=()):
         self.twins = dict(twins or {})
         assert not self.twins or twins_called_from, "a watch at twins names the text their calls come from"
+        assert blocks or not dispatchers, "a watch that names a build's own dispatcher is one that `blocks`"
         self._twins_called_from = twins_called_from
         self.entries, self.returns = frozenset(entries) | frozenset(self.twins), frozenset(returns)
-        self._inside = frozenset({addrs.AES_ROM_DSPTCH}) if blocks else frozenset()
+        self._inside = frozenset({addrs.AES_ROM_DSPTCH, *dispatchers}) if blocks else frozenset()
         self.first = self.entries
         self.entered_at_an_entry, self._enters_at = False, None
         self.entered_at(entered_at)
@@ -1608,6 +2367,16 @@ def _lay(memory, wrote, lays_the_mask_word=True):
         for offset, value in enumerate(data):
             if lays_the_mask_word or at + offset not in LINE_F_MASK_BYTES:
                 memory[at + offset] = value
+
+
+def lay(memory, wrote, lays_the_mask_word=True):
+    """`_lay`, for a battery that lays a delivery itself (the scheduler model's idle hook)."""
+    return _lay(memory, wrote, lays_the_mask_word)
+
+
+def vet_found(memory, found, where):
+    """`_vet_found`, for the same."""
+    return _vet_found(memory, found, where)
 
 
 def run_watched(memory, entry, watch, io_seed=None, budget=None):
@@ -1852,7 +2621,17 @@ TRAP_SAVE_AT = SNAPSHOT_SAVPTR - addrs.TRAP_SAVE_FRAME_BYTES
 TRAP_SAVE_DROP = ((TRAP_SAVE_AT, TRAP_SAVE_AT + addrs.TRAP_SAVED_REGISTERS * LONG_BYTES,
                    "the BIOS trap's saved D3-D7/A3-A7 under the event layer's keyboard poll: the registers it was taken "
                    "with — the caller's frame, depth and whatever it holds in them, which a C caller's are not"),)
-DOOR_DROPS = aes.LINE_F_MASK_WINDOW + TRAP_SAVE_DROP
+# ...and the rest of that trap's save frame, above the ten registers: the exception frame's PC and SR as the BIOS's
+# dispatcher copies them. The PC is the VDI's own `trap #13` return site, which the reconstructed VDI — calling the
+# BIOS's core, no trap taken — never parks; the SR is the status register the VDI was called with. Dropped only
+# under a C that POLLS (chkkbd, mchange while a recording plays, and whatever calls them: the input's leaf battery,
+# ev_multi's — and, once ev_multi is rebound, every door case): while the ROM's own routine polls on both shores (an
+# entry the door still serves by its nested run) the two are laid into the C's image like any byte, and compared.
+TRAP_FRAME_DROP = ((TRAP_SAVE_AT + addrs.TRAP_SAVED_REGISTERS * LONG_BYTES, TRAP_SAVE_AT + addrs.TRAP_SAVE_FRAME_BYTES,
+                    "the PC and SR of the keyboard poll's BIOS trap, as its dispatcher saves them: the VDI's own trap "
+                    "site and its caller's status register — a host VDI takes no trap"),)
+TRAP_FRAME_BYTES = frozenset(at for lo, hi, _why in TRAP_FRAME_DROP for at in range(lo, hi))
+DOOR_DROPS = aes.LINE_F_MASK_WINDOW + TRAP_SAVE_DROP + (TRAP_FRAME_DROP if polls_in_c() else ())
 
 
 # ---- ...and the scheduler's status-register SAVE WORDS -----------------------------------------------------------------
@@ -1862,10 +2641,14 @@ DOOR_DROPS = aes.LINE_F_MASK_WINDOW + TRAP_SAVE_DROP
 # none to store. ONE TABLE, `{save word: why it is dropped}`: a word is dropped BY NAME, only where the ROM's run
 # stores it — so no battery lists the routines that reach a bracket (a `dropped_windows` entry on a case whose run
 # never stores the word drops nothing) — and at Tier 3 with the undropped companion every drop needs. The
-# dispatcher's own (savestate / switchto, AES_SR_DISPATCH) is NOT here: a host core stops at dsptch, before savestate
-# stores it — it gets its row when the switch itself has a model (`test_aes_event.py` holds the table to the header's
-# save words, that one named as the only one left out).
+# dispatcher's own (savestate / switchto, AES_SR_DISPATCH) is here with the switch's host MODEL (`aes/evdisp.h`): a
+# core that stops at dsptch never reaches it — the ROM's run to dsptch stores none either, so nothing is dropped —
+# and one run through the model stores no word where the ROM's savestate and switchto each store theirs
+# (`test_aes_event.py` holds the table to the header's save words, every one).
 SR_DROPS = {
+    aes.AES_SR_DISPATCH: "the dispatcher's SR save word: the status register savestate was entered under and "
+                         "switchto resumes with — the caller's CPU state (`aes/switch.h`); the host model of the "
+                         "switch stores nothing there",
     aes.AES_SR_PSETUP: "psetup's SR save word: the status register of whoever called it, parked round its stores "
                        "(`aes/switch.h`); the C stores nothing there off target and its own caller's on it",
     aes.AES_SR_SPL: "spl7_save's SR save word: the status register of whoever asked for the mask (tchange and adelay "
@@ -1883,21 +2666,163 @@ SR_PSETUP_DROP = sr_drops(aes.AES_SR_PSETUP)
 SR_SAVE_BYTES = frozenset(at for lo, hi, _why in sr_drops() for at in range(lo, hi))
 
 
+def stored_spans(window, stored):
+    """`window` (`(lo, hi, why)`) cut to the runs of bytes of it in `stored` — what a Tier 3 drop may name: a byte
+    the ORIGINAL's run wrote, and no other (`rom_bench.vet_dropped`)."""
+    lo, hi, why = window
+    spans, start = [], None
+    for address in range(lo, hi + 1):
+        inside = address < hi and address in stored
+        if inside and start is None:
+            start = address
+        elif not inside and start is not None:
+            spans.append((start, address, why))
+            start = None
+    return tuple(spans)
+
+
+def settled_in_windows(machine, writes, staged, dropped=None):
+    """A PRICED ROW's bytes that differ by nature, SETTLED — THE ONE SPELLING, for a word and for a window alike:
+    `(pokes, drops)`. `machine` with EVERY BYTE of the windows `staged` (`(lo, hi, why)` each) that the ROM's run
+    which made `writes` STORED, staged at the value that run left — the run reads none of them before it stores it,
+    so it rewrites each with itself, and a differential of the row's machine with nothing dropped then holds a C
+    that stores none (the row's companion). And the windows `dropped` (those staged, unless a row drops fewer: what
+    its own build stores as the ROM does stays compared) cut to the bytes that run stored, in their order: the
+    row's named Tier 3 drops. A byte the run left alone is neither staged nor dropped: the row's compare holds it."""
+    left = {at: bytes([writes[at]]) for lo, hi, _why in staged for at in range(lo, hi) if at in writes}
+    drops = tuple(span for window in (staged if dropped is None else dropped) for span in stored_spans(window, writes))
+    return (merge_pokes(machine, left) if left else machine), drops
+
+
 def settled_where_stored(machine, writes, words):
-    """A PRICED ROW's words that differ by nature, SETTLED: `(pokes, drops)` — `machine` with each of `words` (`(the
-    word's address, its named drop)`: the Line-F mask word, an SR save word) the ROM's run that made `writes` STORED
-    staged at the value that run left, and the drops of those words alone, in `words`' order. A word the run left
-    alone is neither staged nor dropped: the row's Tier 3 compare holds it. The one spelling for every layer's rows."""
-    pokes, drops = machine, ()
-    for word, drop in words:
-        if word in writes:
-            pokes = merge_pokes(pokes, {word: bytes(writes[word + offset] for offset in range(aes.WORD_BYTES))})
-            drops += tuple(drop)
-    return pokes, drops
+    """...for WORDS (`(the word's address, its named drop)`: the Line-F mask word, an SR save word): each one the run
+    STORED staged and dropped, in `words`' order; a word it left alone neither. A WORD IS SETTLED WHOLE: the drop's
+    reason names a `move.w` (the handler's mask store, a status register parked) — a run that stored ONE BYTE of
+    such a word did something else there (another variable's byte store, a wild pointer), which no reason here
+    names: REFUSED by name, a finding to rule on, never staged and dropped in silence."""
+    for word, _drop in words:
+        stored = [at for at in range(word, word + aes.WORD_BYTES) if at in writes]
+        assert len(stored) in (0, aes.WORD_BYTES), (
+            f"the ROM's run stored HALF of the word at {word:#x} that differs by nature (the byte at "
+            f"{stored[0]:#x} alone): not the word store its drop names — rule on it before any row settles it")
+    return settled_in_windows(machine, writes, tuple(window for _word, drop in words for window in drop))
 
 
 # ...and the two a wait's or an input routine's row settles: the Line-F mask word, and spl7_save's SR save word.
 MASK_WORD_AND_SPL = ((aes.AES_LINEF_MASK_WORD, aes.LINE_F_MASK_WINDOW), (aes.AES_SR_SPL, sr_drops(aes.AES_SR_SPL)))
+# EVERY WORD THAT DIFFERS BY NATURE, for a registrar that names no routine: the mask word, then each SR save word of
+# the table — whichever of them a row's ROM run stores is settled, the rest left compared.
+WORDS_BY_NATURE = ((aes.AES_LINEF_MASK_WORD, aes.LINE_F_MASK_WINDOW),) + tuple((word, sr_drops(word)) for word in SR_DROPS)
+# What an event-layer core that POLLS is compared outside of, where the ROM's run stores it: the mask word, the BIOS
+# trap's saved registers and its frame's PC and SR (a host VDI takes no trap), the SR save words.
+EVENT_LAYER_DROPS = aes.LINE_F_MASK_WINDOW + TRAP_SAVE_DROP + TRAP_FRAME_DROP + sr_drops()
+SERVED_IN_A_FORK = (isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL)
+
+
+# ---- A FORK FUNCTION'S ADDRESS IN THE QUEUE IS A CODE VALUE --------------------------------------------------------------
+# b_click, b_delay, chkkbd (and mchange, through b_delay) queue a fork function by an IMMEDIATE — the ROM's address in
+# the ROM, the function's own entry in a build linked elsewhere (`aes/evfork.h`). The host core stores the ROM's, and
+# Tier 1 compares it; at Tier 3 a code longword is RELOCATED between the shores and compared exactly, never dropped
+# (`bench/tier3.py`: the queue's, a recording's, the glue's). ONE SPELLING of where the queue's lie, for that
+# relocation and for every vet of a queued code: each entry's code longword, and the entry of OUR build that stands
+# for each ROM fork function.
+FORK_ENTRIES_AT = range(aes.AES_FORK_QUEUE, aes.AES_FORK_QUEUE + aes.AES_FORK_ENTRIES * aes.FORK_ENTRY_BYTES,
+                        aes.FORK_ENTRY_BYTES)
+FORK_CODE_SLOTS = tuple(entry + aes.FORK_CODE for entry in FORK_ENTRIES_AT)
+FORK_ENTRY_SYMBOLS = {addrs.AES_ROM_KCHANGE: "aes_kchange_fork", addrs.AES_ROM_BCHANGE: "aes_bchange_fork",
+                      addrs.AES_ROM_MCHANGE: "aes_mchange_fork", addrs.AES_ROM_TCHANGE: "aes_tchange_fork"}
+# ...and THE GLUE THE BUILD INSTALLS ITSELF (`gsxif.c`: gsx_setmb_aes hands the VDI the ROM's two off target and the
+# blob's own entries on it) — a code address in compared RAM as a queue entry's code is — and the longwords of the
+# machine that hold one: the VDI's two vectors, the AES's contrl[7..8] it was handed in, and — where a glue was
+# installed already — what a vex call DISPLACED (contrl[9..10], then the AES's two save longwords).
+GLUE_ENTRY_SYMBOLS = {addrs.AES_ROM_BUTTON_GLUE: "aes_rom_button_glue", addrs.AES_ROM_MOTION_GLUE: "aes_rom_motion_glue"}
+GLUE_CODE_SLOTS = (vdi.field("LINEA", "USER_BUT").at, vdi.field("LINEA", "USER_MOT").at, aes.AES_GSX_CONTRL_PTR,
+                   aes.AES_GSX_CONTRL_PTR2, aes.AES_OLD_BUTTON, aes.AES_OLD_MOTION)
+# THE RELOCATION REGISTRY: every place of the machine that holds A CODE ADDRESS OF THE BUILD, declared ONCE, here,
+# beside the slots — `what` it is, the longwords it lies in (`slots`), the entry of our build that stands for each
+# ROM routine (`symbols`), and whether our image is mapped AT A RUN'S ENTRY too (`at_entry`) or only where it ends.
+# Tier 3 reads nothing else (`bench/tier3.py`, `code_relocations`): our image at a run's entry, the image it leaves,
+# a delivery laid into it and a slice's mark are all mapped through it.
+#   * the fork queue's codes ARE mapped at entry: our forker `jsr`s what an entry holds;
+#   * the glue's ARE NOT: a vex call hands what it DISPLACED to wherever its caller's contrl lies — a displaced value
+#     travels out of the registry's slots — so our image at entry is the ROM-made machine as it is.
+RelocatedCode = namedtuple("RelocatedCode", "what slots symbols at_entry")
+FORK_CODES = RelocatedCode("a fork function's code in the fork queue", FORK_CODE_SLOTS, FORK_ENTRY_SYMBOLS, True)
+GLUE_CODES = RelocatedCode("a glue's address handed to the VDI", GLUE_CODE_SLOTS, GLUE_ENTRY_SYMBOLS, False)
+CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES)
+# THE DISPATCHER'S OWN STACK ($899a..$8c1a), which savestate moves to: what a Tier 3 row that drops it has put back
+# on our shore (`bench/tier3.py`, `spans_put_back`), and the dispatcher's battery names its drop by.
+DISPATCHER_STACK = (aes.header_constants("evdisp.h")["AES_DISPATCHER_STACK_BOTTOM"], aes.AES_DISPATCHER_STACK_TOP)
+
+
+# ---- ONE REGISTRAR FOR A LEAF ROW OF THE EVENT LAYER -------------------------------------------------------------------
+_SETTLED_AT = (frozenset(at for word, _drop in WORDS_BY_NATURE for at in range(word, word + aes.WORD_BYTES))
+               | frozenset(range(addrs.SYSVAR_SAVPTR, addrs.SYSVAR_SAVPTR + LONG_BYTES)))
+
+
+@kept_on_disk
+def _stored_where_a_row_settles(name, arguments, machine):
+    """ONE ROM run of `addrs.<name>` over `machine`, kept by content: what it stored of the bytes a row's settling
+    reads — the words that differ by nature, and `savptr`."""
+    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))
+    _final, writes, _regs = _rom_run(image, getattr(addrs, name))
+    return {at: value for at, value in writes.items() if at in _SETTLED_AT}
+
+
+def settled(name, arguments, machine, *, polls=False):
+    """`(pokes, drops)` of a DIRECT PRICED ROW of `addrs.<name>` over `machine`, from one run of the ROM's routine
+    (two, where the first is found to take a BIOS trap): EVERY word that differs by nature which that run stores —
+    the Line-F mask word, an SR save word (`SR_DROPS`) — STAGED at the value the run leaves and dropped at Tier 3 by
+    name, for the row's companion to compare with nothing dropped; `savptr` moved into the stack band where the run
+    takes the trap (`register`'s arrangement: the save lands where nothing compares it) — from the start with
+    `polls`, for a routine a layer knows to poll (chkkbd, forker: the move is then made whether THIS run polls or
+    not, one machine for all a routine's rows). THE ONE SPELLING of a leaf row's settling: no routine is named, the
+    run says. A CODE ADDRESS the run queues or records (a fork function's) is no drop: Tier 3 relocates it and
+    compares it exactly (`bench/tier3.py`), the host stores the ROM's."""
+    if polls:
+        machine = merge_pokes(machine, savptr_in_the_band())
+    stored = _stored_where_a_row_settles(name, tuple(arguments), machine)
+    if addrs.SYSVAR_SAVPTR in stored and not polls:
+        return settled(name, arguments, machine, polls=True)
+    return settled_where_stored(machine, stored, WORDS_BY_NATURE)
+
+
+def register_row(label, name, arguments, machine, *, hook=None, through_line_f=False, priced=True, answer_compared=True,
+                 polls=False):
+    """ONE `VERIFIED_CASES` ROW of an event-layer routine `addrs.<name>` over `machine` with the frame `arguments`,
+    named `<core>, <label>`: priced direct with what `settled` stages and drops, its companion (`aes.undropped`, with
+    the routine's `hook` where it calls out) made for it; verified and unpriced through its Line-F call word
+    (`through_line_f`), or with `priced` False (a row no blob can run yet, said beside it). A call that reaches the
+    dispatcher registers no row: a row's run returns."""
+    if through_line_f:
+        return aes.register(label, name, arguments, machine, through_line_f=True, hook=hook,
+                            answer_compared=answer_compared)
+    row_name, entry = f"{routines.core_symbol(name)}, {label}", getattr(addrs, name)
+    pokes, drops = settled(name, arguments, machine, polls=polls)
+    staged = aes.staged(name, arguments, pokes)
+    if not priced:
+        return aes.ROWS.register(row_name, entry, staged, priced=False, answered=answer_compared)
+    kept = qpb_addresses_a_return_leaves(name, arguments, pokes)
+    if kept:
+        # A QPB's ADDRESS LEFT IN A FREED EVB differs on EVERY pair of shores (the ROM routine's frame, the blob's,
+        # the host slot): dropped at Tier 3 by name, and its companion is the host differential with THAT LONGWORD
+        # ALONE left out — vetted there against the C's own image (`_companion_but_for_the_qpbs`).
+        drops += tuple((at, at + LONG_BYTES, QPB_ADDRESS_WHY) for at in kept)
+        companion = functools.partial(_companion_but_for_the_qpbs, name, arguments, pokes, hook, answer_compared)
+    else:
+        companion = functools.partial(aes.undropped, name, arguments, pokes, hook, None, answer_compared) if drops else None
+    return aes.ROWS.register(row_name, entry, staged, dropped=drops, undropped=companion, answered=answer_compared)
+
+
+def _companion_but_for_the_qpbs(name, arguments, pokes, hook, answer_compared):
+    """A priced row's COMPANION where its run leaves a QPB's address in an EVB: the same machine as a differential
+    with nothing dropped BUT those longwords — each vetted first against the C's own image at its return (a fork)."""
+    kept = qpb_addresses_a_return_leaves(name, arguments, pokes)
+    forked = core_in_a_fork(name, arguments, pokes, read_back=True, hook=hook)
+    assert forked.returncode == 0, f"{name}: the row's C did not return in a fork ({forked.returncode}): {forked.stderr}"
+    vetted = vetted_qpb_addresses(name, forked.image, kept, getattr(addrs, name))
+    return aes.run_function(name, arguments, pokes, dropped_windows=vetted,
+                            hook=hook, answer_compared=answer_compared, **aes.COMPANION_UNPOISONED)
 
 
 def savptr_in_the_band():
@@ -1908,6 +2833,11 @@ def savptr_in_the_band():
 
 
 # ---- the run doors ---------------------------------------------------------------------------------------------------
+# WHAT A DOOR USER'S DIFFERENTIAL DROPS where the ROM's run stores it: the door's two windows, and the SR save words —
+# an entry the door SERVES lays the ROM routine's own SR word into the C's image with its other stores, but a REBOUND
+# entry's twin stores none off target (`aes/switch.h`): the day a door user's call reaches a mask bracket through a
+# twin (ev_multi with a timer reaches adelay; forker, tchange after the ticks) the word differs by nature there too.
+DOOR_RUN_DROPS = DOOR_DROPS + sr_drops()
 # THE ATTRIBUTION PASS DOES NOT RUN through the door, MEASURED: it inverts every byte the ROM's run stored — the event
 # layer's fork queue, its CDA, its EVBs' links — and the poisoned ROM run follows them: over every door row's machine
 # (each the scheduler's own, `machine`) the poisoned run of ap_sendmsg, gr_stilldn and gr_watchbox alike did not
@@ -1917,12 +2847,12 @@ def savptr_in_the_band():
 POISON_STEERS_THE_EVENT_LAYER = {"poison": False}
 
 
-def run_event(name, arguments, pokes, *, drawing=False, io_seed=None, dropped_windows=DOOR_DROPS, objects=None,
+def run_event(name, arguments, pokes, *, drawing=False, io_seed=None, dropped_windows=None, objects=None,
               budget=None, cap=None, **kwargs):
     """`aes.run_function` of `addrs.<name>` over `pokes`, the event door bound (and the VDI's cores, `drawing`, and a
-    walker's routines, `objects`: `door_hook`), the mask word and the trap's saved registers dropped where the ROM's
-    run stores them, unpoisoned (above) — and every frame the candidate handed the door compared with the ROM's own
-    call's. TWO RUNS, TWO LIMITS, each declared only where its run needs it and held both ways by name:
+    walker's routines, `objects`: `door_hook`), the mask word, the trap's saved registers and the SR save words
+    dropped where the ROM's run stores them (`DOOR_RUN_DROPS`), unpoisoned (above) — and every frame the candidate
+    handed the door compared with the ROM's own call's. TWO RUNS, TWO LIMITS, each declared only where its run needs it and held both ways by name:
     `cap` — the differential's own (`emu.run`'s `max_insns`), for an original past DIFFERENTIAL_INSNS: the case's own
     number, or its battery's (`battery_cap`) — THE ONE DOOR a cap comes in by (`capped`, `vet_the_cap`: a raw
     `max_insns` is refused by name);
@@ -1930,6 +2860,7 @@ def run_event(name, arguments, pokes, *, drawing=False, io_seed=None, dropped_wi
     DERIVATION_INSNS admits. A run that needs the budget needs the cap too, and the one number then serves both."""
     HANDED.clear()
     cap = budget if cap is None else cap
+    dropped_windows = DOOR_RUN_DROPS if dropped_windows is None else dropped_windows
     result = capped_run(name, cap, kwargs, lambda **limits: aes.run_function(
         name, arguments, pokes, hook=door_hook(drawing, io_seed, objects), io_seed=io_seed,
         dropped_windows=dropped_windows, **{**POISON_STEERS_THE_EVENT_LAYER, **limits}))
@@ -1951,8 +2882,38 @@ def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, obje
     band, so the trap's save lands where neither the row nor its companion compares it and Tier 3 drops nothing else.
     The cost is the same: the trap saves the same frame, elsewhere. `objects` and `answer_compared` as `run_event`'s
     and `aes.register`'s."""
-    return aes.register(label, name, arguments, merge_pokes(pokes, savptr_in_the_band()),
-                        hook=door_hook(drawing, io_seed, objects), io_seed=io_seed, answer_compared=answer_compared)
+    machine, hook = merge_pokes(pokes, savptr_in_the_band()), door_hook(drawing, io_seed, objects)
+    sr_words = _sr_words_a_row_stores(name, arguments, machine, io_seed)
+    if not sr_words:                    # every row there is today: the mask word alone, `aes.register`'s own rule
+        return aes.register(label, name, arguments, machine, hook=hook, io_seed=io_seed, answer_compared=answer_compared)
+    # A row whose ROM run reaches a mask bracket: the SR save word settled as the mask word is (`settled_where_stored`).
+    settled_pokes, drops = settled_where_stored(machine, _stored_by_a_door_row(name, arguments, machine, io_seed),
+                                                WORDS_BY_NATURE)
+    return aes.ROWS.register(
+        f"{routines.core_symbol(name)}, {label}", getattr(addrs, name), aes.staged(name, arguments, settled_pokes),
+        io_seed=io_seed, dropped=drops, answered=answer_compared,
+        undropped=functools.partial(aes.undropped, name, arguments, settled_pokes, hook, io_seed, answer_compared))
+
+
+def _stored_by_a_door_row(name, arguments, machine, io_seed):
+    """What the ROM's run of a door user's row stores of the words that differ by nature (`_SETTLED_AT`'s) — kept by
+    content for a run that declares no I/O (a seed's values are the kit's own objects: asked of the ROM every time)."""
+    if io_seed is None:
+        return _stored_where_a_row_settles(name, tuple(arguments), machine)
+    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))
+    _final, writes, _regs = emu.run(image, getattr(addrs, name), io_seed=io_seed)
+    return {at: value for at, value in writes.items() if at in _SETTLED_AT}
+
+
+def _sr_words_a_row_stores(name, arguments, machine, io_seed=None):
+    """The SR save words (`SR_DROPS`) the ROM's run of the row stores — ASKED ONLY WHERE A ROUTINE OF THE EVENT LAYER
+    THAT REACHES A BRACKET RUNS IN C under the door (`polls_in_c`: ev_multi rebound — adelay under a timer, tchange
+    under forker). Until then every entry that could reach one is the ROM's own on both shores, its SR word laid
+    into the C's image like any byte: nothing differs, and no run is made to find that out."""
+    if not polls_in_c():
+        return ()
+    stored = _stored_by_a_door_row(name, arguments, machine, io_seed)
+    return tuple(word for word in SR_DROPS if word in stored)
 
 
 Derived = namedtuple("Derived", "delivered rom_memory")
@@ -1974,18 +2935,47 @@ def _settled_interrupted(name, arguments, machine, interrupts, budget=None, deri
     if derived is not None and pokes == merge_pokes(machine):
         delivered, rom_memory = derived
         mask_word = case.word_in(rom_memory, aes.AES_LINEF_MASK_WORD)
+        sr_words = _sr_words_an_interrupted_run_left(rom_memory, aes.staged(name, arguments, pokes), delivered)
     else:
-        delivered, mask_word = _taken_through(name, tuple(arguments), pokes, interrupts, budget)
-    return merge_pokes(pokes, aes.field_pokes("AES", LINEF_MASK_WORD=mask_word)), delivered
+        delivered, mask_word, sr_words = _taken_through(name, tuple(arguments), pokes, interrupts, budget)
+    return _SettledRow(merge_pokes(pokes, aes.field_pokes("AES", LINEF_MASK_WORD=mask_word), sr_words), delivered,
+                       sr_words)
+
+
+class _SettledRow(tuple):
+    """`_settled_interrupted`'s `(pokes, delivered)` — and `sr_words`, the SR save words it staged beside the mask
+    word (the ones the row's Tier 3 drops name: `sr_drops_of`)."""
+
+    def __new__(cls, pokes, delivered, sr_words):
+        settled = super().__new__(cls, (pokes, delivered))
+        settled.sr_words = tuple(sorted(sr_words))
+        return settled
+
+
+def _sr_words_an_interrupted_run_left(rom_memory, staged, delivered):
+    """`{word: its bytes}`: the SR save words an interrupted ROM run's OWN stores changed (`SR_DROPS`; a delivered
+    interrupt's store is laid into both shores alike, and is none of the run's: `_with_the_deliveries_laid`) — what a
+    row taken through interrupts stages at the value the run leaves, and drops (`sr_drops_of`)."""
+    started = _with_the_deliveries_laid(staged, delivered)
+    return {word: bytes(rom_memory[word:word + aes.WORD_BYTES]) for word in SR_DROPS
+            if any(rom_memory[at] != _started_with(started, at) for at in range(word, word + aes.WORD_BYTES))}
+
+
+def sr_drops_of(sr_words):
+    """The drops of the SR save words a settled row staged (`_SettledRow.sr_words`) — none, for every row whose run
+    reaches no bracket."""
+    return sr_drops(*sr_words) if sr_words else ()
 
 
 @kept_on_disk
 def _taken_through(name, arguments, pokes, interrupts, budget):
     """A priced row's own derivation — the ROM's run of `addrs.<name>` over `pokes` taken through `interrupts`
-    (`rom_interrupted`), refused where it blocks: `(its deliveries, the mask word it leaves)`. Kept by content."""
+    (`rom_interrupted`), refused where it blocks: `(its deliveries, the mask word it leaves, the SR save words its own
+    stores changed)`. Kept by content."""
     _calls, delivered, rom_memory, result = rom_interrupted(name, arguments, pokes, interrupts, budget=budget)
     assert result, f"{name}: a priced row returns — the ROM's run taken through these interrupts blocks"
-    return delivered, case.word_in(rom_memory, aes.AES_LINEF_MASK_WORD)
+    return (delivered, case.word_in(rom_memory, aes.AES_LINEF_MASK_WORD),
+            _sr_words_an_interrupted_run_left(rom_memory, aes.staged(name, arguments, pokes), delivered))
 
 
 def interrupted_row(label, name, arguments, machine, interrupts, budget=None):
@@ -2003,7 +2993,7 @@ def _interrupted_row(label, name, arguments, pokes, delivered):
 
 # The rows `register_interrupted` registered, `{row name: InterruptedRow}`: what a row's deliveries were derived from
 # (and under which declared budget, None for the default), for the cases that derive them again (`rederived`).
-InterruptedRow = namedtuple("InterruptedRow", "name arguments pokes interrupts delivered budget")
+InterruptedRow = namedtuple("InterruptedRow", "name arguments pokes interrupts delivered budget sr_words", defaults=((),))
 INTERRUPTED_ROWS = {}
 
 
@@ -2059,8 +3049,9 @@ def register_interrupted(label, name, arguments, machine, interrupts, *, objects
     comparing every byte outside the stack band. The row's own pricing is its second differential, so the companion
     does not make one again. `budget`: the row's own derivation budget, declared (`_budget_of`) — every derivation of
     the row (this one, its companion's, `rederived`) is held to it, both ways."""
-    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts, budget)
-    return _registered(label, InterruptedRow(name, arguments, pokes, interrupts, delivered, budget),
+    settled = _settled_interrupted(name, arguments, machine, interrupts, budget)
+    pokes, delivered = settled
+    return _registered(label, InterruptedRow(name, arguments, pokes, interrupts, delivered, budget, settled.sr_words),
                        _companion(name, arguments, pokes, interrupts, delivered, objects, budget))
 
 
@@ -2077,8 +3068,8 @@ def _registered(label, row, companion):
     (`INTERRUPTED_ROWS`), and a priced row of `aes.ROWS` — the mask word dropped at Tier 3."""
     row_name, entry, _regs, staged, *_rest = _interrupted_row(label, row.name, row.arguments, row.pokes, row.delivered)
     INTERRUPTED_ROWS[row_name] = row
-    return aes.ROWS.register(row_name, entry, staged, dropped=aes.LINE_F_MASK_WINDOW, undropped=companion,
-                             delivered=row.delivered)
+    return aes.ROWS.register(row_name, entry, staged, dropped=aes.LINE_F_MASK_WINDOW + sr_drops_of(row.sr_words),
+                             undropped=companion, delivered=row.delivered)
 
 
 # ---- the machines, each the ROM's own -----------------------------------------------------------------------------------
@@ -2947,7 +3938,7 @@ def rom_entered(name, arguments, pokes, delivered, ordinal):
 # is one CPU: an `emu.run` inside a watched run's stop derails it (measured). So at the entry of each door call an
 # interrupt is delivered at, the run is SET ASIDE (its memory and register file kept; `emu.bench_abort`), the
 # interrupt run over a copy of the memory there, its writes laid in, and the run CONTINUED from that very entry
-# (`_continued_at`): re-entered there by a bench run seeded with the register file the stop left, its door on the entry
+# (`continued_at`): re-entered there by a bench run seeded with the register file the stop left, its door on the entry
 # alone so it stops before executing anything, the return-address slot its entry store overwrote put back. What the
 # re-entry cannot carry is the status register — the oracle's forced entry SR again, the condition codes cleared — which
 # no Alcyon entry reads before it sets them; and the run every case compares against is not this one but the REPLAY
@@ -2959,7 +3950,7 @@ def rom_entered(name, arguments, pokes, delivered, ordinal):
 RE_ENTRY_SLOT_BYTES = LONG_BYTES       # the return-address slot the re-entry's sentinel store overwrites
 
 
-def _continued_at(memory, pc, sp, registers):
+def continued_at(memory, pc, sp, registers):
     """The run set aside at the door entry `pc` (A7 `sp`, `registers` the file the stop left) re-entered there: a bench
     run stopped at `pc` before its first instruction, `memory`'s return-address slot as the call left it."""
     held = bytes(memory[sp:sp + RE_ENTRY_SLOT_BYTES])
@@ -2988,33 +3979,34 @@ def _taken(memory, interrupt):
     return {at: bytes(memory[at:at + len(data)]) for at, data in wrote.items()}, wrote
 
 
-def _run_interrupting(memory, entry, interrupts, budget=None):
-    """The ROM's own `entry` over `memory` (its frame at abi.FIRST_ARG), ONE watched run that takes each interrupt of
-    `interrupts` at the entry of its door call (above): `(delivered, result)` — `{ordinal: (found, wrote)}`, and the
-    run's result, None where it blocked. Held to its budget (DERIVATION_INSNS, or the `budget` its row declares:
-    `_budget_of`) by its margin over every segment — and from above (`_vet_not_stale`) — each segment's refusals
-    vetted as it ends. The last segment's vets run on a run that ENDED (returned or blocked) only: after an
-    interrupt's own run failed, the oracle's counters are that run's, and a vet of them would replace its error."""
-    if isinstance(interrupts, Waits):
-        interrupts.begin_run()
-    watch = DoorStops(ENTRIES, ROM_RETURNS, blocks=True, entered_at=entry)
+def interrupting(memory, entry, watch, due_at, budget=None):
+    """THE ONE LOOP THAT TAKES INTERRUPTS INSIDE A WATCHED ROM RUN (above): the ROM's own `entry` over `memory` (its
+    frame at abi.FIRST_ARG), stopped where `watch` stops it, and at each stop ASKED — `due_at(watch, pc)`, before the
+    watch takes the stop — for the interrupt due there: None, or `(key, interrupt)` — the run then set aside, the
+    interrupt (or tuple of them) taken over the memory as it stands (`_taken`), its writes laid in, the run continued
+    from that very stop (`continued_at`). `(delivered, result)` — `{key: (found, wrote)}`, and the run's result, None
+    where the watch ended it as blocked (`Blocked`); any other end a watch raises (`Ended`) leaves through here, the
+    run aborted. Held to its budget (DERIVATION_INSNS, or the `budget` its row declares: `_budget_of`) by its margin
+    over every segment — and from above (`_vet_not_stale`) — each segment's refusals vetted as it ends. The last
+    segment's vets run on a run that ENDED (returned or blocked) only: after an interrupt's own run failed, the
+    oracle's counters are that run's, and a vet of them would replace its error. WHO ASKS: the door's own deliveries
+    (`_run_interrupting`: at the entry of a door call), and a scheduler driver (at the n-th idle)."""
     delivered, spent, insns = {}, 0, _budget_of(entry, budget)
     who = f"the ROM's interrupted run of {entry:#x}"
     result = rom_bench.original_entered(memory, entry, watch.first, max_insns=insns)
     try:
         while result["status"] == emu.BENCH_DOOR:
             pc, sp = emu.bench_door_pc(), emu.bench_door_sp()
-            # Asked at an ARRIVAL only: the run's own entry (entered, not called) is no door call, and an interrupt
-            # taken there would be door call 0's, delivered a second time when the run reaches it.
-            interrupt = _interrupt_at(interrupts, watch.calls, pc) if watch.opens_a_call_at(pc) else None
-            if interrupt:
+            due = due_at(watch, pc)
+            if due:
+                key, interrupt = due
                 spent += result["ninsns"]
                 rom_bench.vet_the_run_just_made(who)
                 registers = result["regs"]
                 emu.bench_abort()
-                delivered[watch.calls] = _taken(memory, interrupt)
-                _lay(memory, delivered[watch.calls][1])
-                result = _continued_at(memory, pc, sp, registers)
+                delivered[key] = _taken(memory, interrupt)
+                _lay(memory, delivered[key][1])
+                result = continued_at(memory, pc, sp, registers)
             emu.bench_door_arm(watch.stopped(pc, sp, memory))
             left = insns - spent - result["ninsns"]
             assert left > 0, f"{who} did not return within {insns} instructions"
@@ -3027,6 +4019,21 @@ def _run_interrupting(memory, entry, interrupts, budget=None):
     _vet_the_margin(entry, spent + _instructions_run(), budget)
     _vet_not_stale(entry, spent + _instructions_run(), budget)
     return delivered, result
+
+
+def _run_interrupting(memory, entry, interrupts, budget=None):
+    """The ROM's own `entry` over `memory`, ONE watched run that takes each interrupt of `interrupts` at the entry of
+    its door call (`interrupting`): `(delivered, result)` — `{ordinal: (found, wrote)}`, and the run's result, None
+    where it blocked."""
+    if isinstance(interrupts, Waits):
+        interrupts.begin_run()
+
+    def due_at(watch, pc):
+        # Asked at an ARRIVAL only: the run's own entry (entered, not called) is no door call, and an interrupt
+        # taken there would be door call 0's, delivered a second time when the run reaches it.
+        interrupt = _interrupt_at(interrupts, watch.calls, pc) if watch.opens_a_call_at(pc) else None
+        return (watch.calls, interrupt) if interrupt else None
+    return interrupting(memory, entry, DoorStops(ENTRIES, ROM_RETURNS, blocks=True, entered_at=entry), due_at, budget)
 
 
 def deliveries(name, arguments, pokes, interrupts, budget=None):
@@ -3139,6 +4146,9 @@ def _describe_differences(name, image, rom_memory, differ):
     return f"{name}: {len(differ)} bytes differ from the ROM's run: {shown}"
 
 
+describe_differences = _describe_differences      # ...for a battery that words its own compare (the switch's, ev_multi's)
+
+
 def _answer_at_its_width(name, d0):
     """D0 at the width `addrs.<name>`'s core declares its answer (`vdi.ALCYON`): its word, its long, or None."""
     restype = vdi.ALCYON[name].restype
@@ -3169,9 +4179,8 @@ def interrupted(name, arguments, machine, interrupts, *, objects=False, seconds=
     `budget`: the case's own derivation budget, DECLARED from its measured run (`_budget_of`) — a session too long for
     DERIVATION_INSNS' margin; every ROM run of the case is held to it, both ways."""
     calls, delivered, rom_memory, result = rom_interrupted(name, arguments, machine, interrupts, delivered, budget)
-    returncode, stderr, image = refusal(name, machine, arguments, seconds=seconds, answered=True,
-                                        bind=child_binding(objects=objects, interrupts=delivered,
-                                                           before=CHILD_DOORS.get(name, "")))
+    returncode, stderr, image = door_child(name, arguments, machine, objects=objects, interrupts=delivered,
+                                           before=CHILD_DOORS.get(name, ""), seconds=seconds, answered=True)
     returned = result is not None
     # A twin its shadow refused is the case's failure by the shadow's own words, whichever way the ROM's run ended (a
     # twin that RETURNS where the ROM's routine switches ends its child here too, and its refusal names the switch).
@@ -3231,14 +4240,15 @@ def bench_differential(name, arguments, machine, interrupts, budget=None, derive
     re-derived, where `machine` already keeps `savptr` in the band: the row is then priced over the deliveries handed
     in. Only `interrupted` may pass it, with the deliveries and memory of the ROM run it has just made over this very
     machine and these interrupts; a caller holding deliveries from anywhere else passes None, and the run is made."""
-    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts, budget, derived)
+    settled = _settled_interrupted(name, arguments, machine, interrupts, budget, derived)
+    pokes, delivered = settled
     twin = _registered_twin(name, arguments, pokes, delivered)
     if twin:
         assert twin in {row[0] for row in aes.ROWS.cases}, f"{twin}: its deliveries are recorded, but no priced row"
         return
     tier3, bench = _tier3()
     row = tier3._row(_interrupted_row("taken through interrupts", name, arguments, pokes, delivered))
-    tier3.measure(row._replace(dropped=aes.LINE_F_MASK_WINDOW), bench)
+    tier3.measure(row._replace(dropped=aes.LINE_F_MASK_WINDOW + sr_drops_of(settled.sr_words)), bench)
 
 
 def refused_where_the_rom_blocks(name, arguments, machine, *, objects=False, seconds=CHILD_RETURN_SECONDS,
@@ -3539,9 +4549,10 @@ def register_slices(name, arguments, machine, interrupts, slices, *, objects=Fal
     on its own slice alone (`SLICED_ROWS`), held there to the ROM at both its ends (`vet_the_marks_agree`) and under
     the cap. A session with nothing delivered
     is refused: an unwatched original has no run to mark."""
-    pokes, delivered = _settled_interrupted(name, arguments, machine, interrupts, budget)
+    settled = _settled_interrupted(name, arguments, machine, interrupts, budget)
+    pokes, delivered = settled
     assert delivered, f"{name}: a session priced by its slices is taken through interrupts — this one has none"
-    row = InterruptedRow(name, arguments, pokes, interrupts, delivered, budget)
+    row = InterruptedRow(name, arguments, pokes, interrupts, delivered, budget, settled.sr_words)
     companion = _companion(name, arguments, pokes, interrupts, delivered, objects, budget)
     registered = []
     for label, slice_ in slices.items():

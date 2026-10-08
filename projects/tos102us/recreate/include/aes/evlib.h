@@ -51,6 +51,10 @@
 #define AP_RDWR_QPB_BYTES     8
 
 #ifndef __ASSEMBLER__
+#include <stdint.h>
+#include "m68k_idioms.h"
+#include "aes/aes.h"
+
 uint16_t aes_ev_block(uint8_t *image, int16_t code, uint32_t parameter);                             /* $fe6874 */
 uint16_t aes_ap_rdwr(uint8_t *image, int16_t code, int16_t process, int16_t length, uint32_t buffer); /* $fe65c4 */
 uint16_t aes_ev_keybd(uint8_t *image);                                                               /* $fe6894 */
@@ -61,6 +65,14 @@ uint16_t aes_ev_timer(uint8_t *image, int32_t milliseconds);                    
 void aes_ev_rets(uint8_t *image, uint32_t answers);                                                  /* $fe681a */
 uint16_t aes_ev_mchk(uint8_t *image, uint32_t moblk);                                                /* $fe695c */
 int16_t aes_ev_dclick(uint8_t *image, int16_t rate, int16_t set);                                    /* $fe6c5e */
+
+/* The id of the RUNNING process: whose stack a frame of this call is on (`host_slot.h`, A SLOT PER PROCESS), and
+ * the process a QPB of its own names. An INDEX, so unsigned (a routine that hands the id on as the Alcyon `int` it
+ * is reads the signed word: ev_mesag's push, a `move.w`). */
+static inline uint32_t running_process_id(const uint8_t *image)
+{
+    return bus_word(image, running(image, PD_PID));
+}
 #endif
 
 #endif /* TOS102US_AES_EVLIB_H */

@@ -126,3 +126,37 @@ def test_a_word_is_staged_and_dropped_only_where_the_rom_s_run_stored_it():
     pokes, drops = aes_event.settled_where_stored(A_MACHINE, _stored(SPL, MASK_WORD), words)
     assert pokes == case.merge_pokes(A_MACHINE, {MASK_WORD: b"\x27\x00", SPL: b"\x27\x00"}) and drops == mask_drop + spl_drop
     assert aes_event.settled_where_stored(A_MACHINE, _stored(MASK_WORD), words[1:]) == (A_MACHINE, ())
+
+
+@pytest.mark.parametrize("word, half", [(SPL, 0), (SPL, 1), (MASK_WORD, 0), (MASK_WORD, 1)],
+                         ids=["the SR word's high byte", "its low byte", "the mask word's high byte", "its low byte"])
+def test_a_run_that_stored_half_of_a_word_that_differs_by_nature_is_refused(word, half):
+    """RED before the settling was word-granular again (one settling for words and windows made it byte by byte: a
+    lone byte stored into such a word — no `move.w sr`, no mask store: another variable's byte, a wild pointer — was
+    STAGED at the value the run left and DROPPED under the word's own reason, and its companion could not see a C
+    that never stored it): refused by name, for somebody to rule on; the whole word beside it settles as ever."""
+    with pytest.raises(AssertionError, match=f"stored HALF of the word at {word:#x} that differs by nature"):
+        aes_event.settled_where_stored(A_MACHINE, {word + half: 0x04}, aes_event.MASK_WORD_AND_SPL)
+    with pytest.raises(AssertionError, match="stored HALF of the word"):
+        aes_event.settled_where_stored(A_MACHINE, {**_stored(SPL), MASK_WORD + half: 0x04}, aes_event.WORDS_BY_NATURE)
+    assert aes_event.settled_where_stored(A_MACHINE, _stored(word), aes_event.MASK_WORD_AND_SPL)[1]
+
+
+A_WINDOW = (0x8000, 0x8010, "a window that differs by nature")
+ANOTHER = (0x8020, 0x8024, "another")
+
+
+def test_a_window_is_staged_and_dropped_byte_by_byte_where_the_run_stored_it():
+    """`settled_in_windows`, the one settling the words' is a case of: every byte of a staged window the run STORED is
+    staged at the value it left — two runs of a window, cut apart by a byte the run left alone — and the drops are
+    the windows cut to those same runs, in the windows' order; a window may be staged and NOT dropped (a build
+    that stores it as the ROM does stays compared there)."""
+    stored = {0x8001: 0x11, 0x8002: 0x22, 0x8004: 0x44, 0x8021: 0xAA, 0x9000: 0xEE}
+    pokes, drops = aes_event.settled_in_windows(A_MACHINE, stored, (A_WINDOW, ANOTHER))
+    assert pokes == {**A_MACHINE, 0x8001: b"\x11\x22", 0x8004: b"\x44", 0x8021: b"\xaa"}, "nothing outside a window"
+    assert drops == ((0x8001, 0x8003, A_WINDOW[2]), (0x8004, 0x8005, A_WINDOW[2]), (0x8021, 0x8022, ANOTHER[2]))
+    same_pokes, fewer = aes_event.settled_in_windows(A_MACHINE, stored, (A_WINDOW, ANOTHER), dropped=(ANOTHER,))
+    assert same_pokes == pokes and fewer == drops[2:]
+    assert aes_event.settled_in_windows(A_MACHINE, {0x9000: 0xEE}, (A_WINDOW,)) == (A_MACHINE, ())
+    whole = dict.fromkeys(range(A_WINDOW[0], A_WINDOW[1]), 0x5A)
+    assert aes_event.settled_in_windows({}, whole, (A_WINDOW,))[1] == (A_WINDOW,), "a window stored whole is its own drop"

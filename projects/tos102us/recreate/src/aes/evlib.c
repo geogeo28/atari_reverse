@@ -30,14 +30,6 @@
 _Static_assert(HOST_SLOT_AES_AP_RDWR_QPB_BYTES == HOST_PROCESSES * AP_RDWR_QPB_BYTES && AP_RDWR_QPB_BYTES == QPB_BYTES,
                "ap_rdwr's arguments after its code are one QPB, and its host slot holds one per process");
 
-/* The id of the RUNNING process: whose stack a frame of this call is on (`host_slot.h`, A SLOT PER PROCESS). An
- * INDEX, so unsigned — and read off target alone: the ROM's ap_rdwr never reads it (ev_mesag's push of the same word,
- * below, is a `move.w`: the signed word the C's parameter is). */
-static inline uint32_t running_process_id(const uint8_t *image)
-{
-    return bus_word(image, running(image, PD_PID));
-}
-
 /* $fe6874 — ev_block: ONE wait of `code` over `parameter` queued (iasync), waited for (mwait: the dispatcher, unless
  * the wait was satisfied where it was queued) and answered (apret: its EVB freed). */
 EVDOOR_TWIN

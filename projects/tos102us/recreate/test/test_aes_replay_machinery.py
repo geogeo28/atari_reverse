@@ -5,6 +5,7 @@ host twin stages, bounds, records, steps and reads them back (`aes_shell`'s scri
 replay): over a candidate image as a twin is handed one, a C pointer. Then what `aes_fslib` keeps of a run's memory
 (its RAM, the rest held unchanged by name), and the budget its in-process runs are capped at and held to."""
 import ctypes
+import gc
 import struct
 
 import pytest
@@ -25,10 +26,21 @@ FUNCTION = 0x4E
 
 
 def _candidate(pokes):
-    """`pokes` over the snapshot as a host twin is handed the candidate's image: a C pointer to its bytes."""
-    staged = bytes(make_image(pokes))
-    image = (ctypes.c_uint8 * len(staged)).from_buffer_copy(staged)
+    """`pokes` over the snapshot as a host twin is handed the candidate's image: a C pointer to its bytes — the
+    image `make_image` made, IN PLACE (two more copies of its sixteen megabytes a call were three images held by
+    every case until the collector next ran: the worst worker's 400 MB)."""
+    staged = make_image(pokes)
+    image = (ctypes.c_uint8 * len(staged)).from_buffer(staged)
     return ctypes.cast(image, ctypes.POINTER(ctypes.c_uint8)), image
+
+
+@pytest.fixture(autouse=True)
+def _the_images_given_back():
+    """...and what a case still holds as it ends — each `pytest.raises` keeps its frame, and the images in it, in a
+    cycle only the collector frees — is freed THEN, not whenever the worker next collects (measured: this module's
+    29 cases took a process from 200 MB to 640 and left it there; collected a case at a time, to 230)."""
+    yield
+    gc.collect()
 
 
 @pytest.mark.parametrize("table", TABLES.values(), ids=TABLES)

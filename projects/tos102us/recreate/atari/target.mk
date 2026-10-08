@@ -85,8 +85,9 @@ ALCYON_ENTRY_SOURCES := $(RECREATE)/src/aes/obdraw.S $(RECREATE)/src/aes/wmupdat
 # THE SWITCH is the third kind: the hand 68000 of the process switch, which has NO C SPELLING at all (a second stack,
 # an rte frame built from the caller's return address) — the ROM's own bytes, like a transcription, but with no C twin
 # to exclude, no row and no bar: every build links it, and its entries carry the names the event layer's C calls
-# (`aes_dsptch`, `include/aes/switch.h`). Listed here, apart; byte-pinned by `test/test_tier3.py`.
-SWITCH_SOURCES := $(RECREATE)/src/aes/switch.S
+# (`aes_dsptch`, `include/aes/switch.h`). Listed here, apart; pinned by `test/test_aes_switch.py` (the switch's bytes,
+# disp's stream) and `test/test_aes_irq.py` (the glue's).
+SWITCH_SOURCES := $(RECREATE)/src/aes/switch.S $(RECREATE)/src/aes/irq.S
 TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES) $(SWITCH_SOURCES), \
                          $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S))
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))

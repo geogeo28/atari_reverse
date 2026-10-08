@@ -43,8 +43,6 @@ import abi
 import aes
 import aes_event
 import case
-import derived
-import routines
 import vdi
 from case import merge_pokes
 from opcodes import LINE_F, PUSH_LONG_IMMEDIATE, PUSH_WORD_IMMEDIATE
@@ -226,7 +224,7 @@ STEERS_THE_QPB = aes.steers(
 # wait lists' heads (its keyboard's, its mouse's, its buttons': the longwords between its first word and its key
 # queue), the screen lock's waiters, and the lists' own heads.
 CDA_WAIT_LISTS = (aes.WORD_BYTES, aes.header_constants("fmlib.h")["CDA_KEY_QUEUE"])
-EVBS = tuple(aes.AES_EVB_TABLE + index * aes.EVB_BYTES for index in range(aes.AES_EVB_COUNT))
+EVBS = aes_event.EVBS
 CDAS = tuple(aes.AES_CDA_TABLE + index * aes.CDA_BYTES for index in range(aes.AES_PD_COUNT))
 LIST_HEADS = (aes.AES_RLR, aes.AES_NRL, aes.AES_DRL, aes.AES_EUL, aes.AES_ZOMBIE_LIST,
               aes.header_constants("evasync.h")["AES_DELAY_LIST"],
@@ -277,42 +275,12 @@ def answered(name, arguments, machine):
     return said.returncode, said.stderr, None if said.answer is None else aes.signed(said.answer)
 
 
-@derived.kept
-def _stores_of_psetup_s_sr_word(name, arguments, pokes):
-    """What the ROM's own run of ONE ROW stores of psetup's SR save word — `{address: byte}`, empty for a run that
-    never reaches the bracket. WHICH ROWS REACH IT IS EACH ROW'S RUN'S TO SAY (the rule above), so each is asked: a
-    routine's first row once answered for all of them, and a later row that reached the bracket where the first did
-    not went unsettled. A derivation like any other (`aes_event._rom_run`: its ledger whole, its budget held by the
-    margin), kept by content — a ROM run per row is two dozen, once per tree."""
-    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), pokes))
-    _final, writes, _regs = aes_event._rom_run(image, getattr(addrs, name))
-    return {at: value for at, value in writes.items() if aes.AES_SR_PSETUP <= at < aes.AES_SR_PSETUP + aes.WORD_BYTES}
-
-
-def _settled_sr_word(name, arguments, pokes):
-    """The SR save word the ROM's own run of the row leaves, as pokes — nothing when it never stores it."""
-    stored = _stores_of_psetup_s_sr_word(name, arguments, pokes)
-    settled, _drops = aes_event.settled_where_stored({}, stored, ((aes.AES_SR_PSETUP, aes_event.SR_PSETUP_DROP),))
-    return settled
-
-
 def register(label, name, arguments, machine, *, through_line_f=False):
-    """One row of `name` (`aes.register`): priced direct, verified through its call word. A row whose ROM run stores
-    psetup's SR save word stages it at the value the run leaves, drops it at Tier 3 — beside the mask word where the
-    run stores that too — and takes the companion that drops neither (`aes.undropped`)."""
-    pokes = dict(machine)
-    settled = {} if through_line_f else _settled_sr_word(name, arguments, pokes)
-    if not settled:
-        return aes.register(label, name, arguments, pokes, through_line_f=through_line_f)
-    pokes = merge_pokes(pokes, settled)
-    mask = aes.settled_mask_word(name, arguments, pokes)
-    dropped = aes_event.SR_PSETUP_DROP
-    if mask is not None:
-        pokes = merge_pokes(pokes, aes.field_pokes("AES", LINEF_MASK_WORD=mask))
-        dropped = DROPS
-    return aes.ROWS.register(f"{routines.core_symbol(name)}, {label}", getattr(addrs, name),
-                             aes.staged(name, arguments, pokes), dropped=dropped,
-                             undropped=functools.partial(aes.undropped, name, arguments, pokes))
+    """One row of `name` (`aes_event.register_row`): priced direct, verified through its call word. A row whose ROM
+    run stores psetup's SR save word — WHICH ROWS REACH THE BRACKET IS EACH ROW'S OWN RUN'S TO SAY, never a routine's
+    first row's for the rest — stages it at the value the run leaves, drops it at Tier 3 beside the mask word where
+    the run stores that too, and takes the companion that drops neither."""
+    return aes_event.register_row(label, name, arguments, dict(machine), through_line_f=through_line_f)
 
 
 # ---- pipes, as the ROM's own ap_rdwr leaves them ----------------------------------------------------------------------

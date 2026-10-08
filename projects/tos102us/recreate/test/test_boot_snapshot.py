@@ -286,6 +286,11 @@ import test_aes_evwait                                      # noqa: E402,F401  (
 import test_aes_evlib                                       # noqa: E402,F401  (the event library's single waits)
 import test_aes_evinput                                     # noqa: E402,F401  (the input layer's posts)
 import test_aes_evfork                                      # noqa: E402,F401  (the fork queue and what runs off it)
+import test_aes_switch                                      # noqa: E402,F401  (the switch's `.S` rows)
+import test_aes_irq                                         # noqa: E402,F401  (drawrat's and justretf's `.S` rows)
+import test_aes_evdisp                                      # noqa: E402,F401  (disp_act, mwait_act, idle)
+import test_aes_evdisp_model                                # noqa: E402,F401  (the yield through the dispatcher)
+import test_aes_evmulti                                     # noqa: E402,F401  (evnt_multi)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

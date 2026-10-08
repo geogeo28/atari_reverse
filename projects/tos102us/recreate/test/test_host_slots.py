@@ -65,7 +65,7 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
                           "AES_FM_BUTTON_FRAME", "AES_FM_ALERT_FRAME", "AES_ERALERT_FRAME", "AES_FM_ERROR_CODE",
                           "AES_FS_START_TREE", "AES_FS_FORMAT_FRAME", "AES_FS_NSCROLL_FRAME",
                           "AES_FS_INPUT_FRAME", "AES_PD_MATCH_NAME", "AES_AP_FIND_NAME",
-                          "AES_AMOUSE_MOBLK", "AES_AP_RDWR_QPB", "AES_INOROUT_RECT"}
+                          "AES_AMOUSE_MOBLK", "AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB", "AES_INOROUT_RECT"}
     assert not misplaced(slots)
 
 

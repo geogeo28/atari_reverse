@@ -1617,9 +1617,9 @@ cmt 0xfdaab0 gsx_start: attribute caches := -1 (incl. $c916, read by nothing), m
 fn 0xfee498 gsx_mfsave
 cmt 0xfee498 gsx_mfsave: the $a000 Line-A init (A0 = the Line-A base), then the form at *$9560 copied to $9564 — the recreate's $a000 bridge (include/aes/gsx.h gsx_linea_base)
 fn 0xfee4c0 gsx_mfrestore
-fn 0xfed3be aes_button_glue # ctx
-fn 0xfed3e4 aes_motion_glue # ctx
-fn 0xfed426 aes_tick_glue # ctx
+fn 0xfed3be aes_button_glue
+fn 0xfed3e4 aes_motion_glue
+fn 0xfed426 aes_tick_glue
 var 0xfe8780 gr_mkstate_fields
 var 0x8908 gl_restype
 var 0x890a gl_rschange
@@ -1741,7 +1741,7 @@ var 0xc820 ad_stdesk
 # ---- AES band 3 wave 0 (2026-10-02): THE EVENT DOOR + pilots, the object editor, the window library's pure half ----
 # --- the event door's entries and the scheduler labels the derivations stop at (test/aes_event.py, include/aes/evdoor.h) ---
 fn 0xfe6998 ev_multi
-cmt 0xfe6998 Event-door entry (band 4, served on the host by a nested ROM run, on target by an inline Alcyon jsr): MU_BUTTON bit 1 ($fe69fa), MU_M1 bit 2 ($fe6a72); mouse2/timer/message read only under btst #3/#5/#4
+cmt 0xfe6998 ev_multi(flags.w, mo1, mo2, timer, button, message, rets): chkkbd; forker; POLLS FIRST - key in rlr's own CDA queue -> rets[4]=dq; rlr==gl_mowner and ($c836>1 and downorup($9c10) -> $c792=$9c10, rets[5]=$972e; else downorup($c90a) -> $c792=$c90a, rets[5]=$9af8); ev_mchk(mo1/mo2); timer==0 (a long; 1 ms blocks); pipe index>0 -> ev_mesag. Nothing came: iasync 5/7/6/6/1(&QPB at -8(a6))/3(ldiv ticks), mwait(all)|acancel(all). Then ev_rets BEFORE the aprets (rets[2] = STALE $c792 unless BUTTON not asked -> $c90a, or the button wait came -> apret's); clr $97fe if a message came. MU_BUTTON bit 1 ($fe69fa), MU_M1 bit 2 ($fe6a72); mouse2/timer/message read only under btst #3/#5/#4. The event door's last entry: C twin src/aes/evmulti.c, PENDING until FLIP 3 (the door still serves it by a nested ROM run on the host, an inline Alcyon jsr on target)
 fn 0xfe65c4 ap_rdwr
 cmt 0xfe65c4 ap_rdwr(code, pid, len, buf): ev_block(code, &its own frame + 10) - its arguments ARE the QPB; a parked wait keeps that stack address in its EVB until the other end serves it THROUGH it; D0 = ev_block's (0 for a pipe wait; the key for code 5). An event-door entry. Under ap_sendmsg: a WM_REDRAW for a window already queued is MERGED; a send to a pid with no PD spins (aqueue)
 fn 0xfe427a acancel
@@ -2073,11 +2073,11 @@ var 0x96d8 gl_ctwait_leave
 cmt 0x96d8 the LEAVE word of the screen manager's own MOBLK: cleared once by ctlmgr ($fe49ea), written by nothing else, compared by mchange ($fe5456) — a constant 0
 var 0x9800 gl_play # ctx
 var 0xc836 mtrans
-var 0x9c10 pr_button # ctx
-var 0x972e pr_mclick # ctx
+var 0x9c10 pr_button
+var 0x972e pr_mclick
 var 0x9c12 pr_xrat
 var 0x9c1e pr_yrat
-var 0x9af8 mclick # ctx
+var 0x9af8 mclick
 var 0xc6ae forker_busy
 cmt 0xc6ae set and cleared by forker ($fe4bce / $fe4cce), cleared by gem_main ($fda108); read by nothing in the ROM
 fn 0xfe40ec iasync
@@ -2107,3 +2107,33 @@ cmt 0xc792 the high word of the last answer apret took ($fe4266): the buttons af
 var 0xc79c gl_dcindex
 var 0x97fe ctl_message_sent # ctx
 var 0xfefa04 dclick_ms_table
+# ---- AES band 4 wave 2 phase A (2026-10-07): the dispatcher (src/aes/switch.S, irq.S, evdisp.c) and ev_multi's twin (evmulti.c) ----
+# --- gemdosif's hand 68000 ($fe387c..$fe395b: aes_dsptch, aes_savestate, aes_switchto and disp are named above), bodies read and byte-pinned
+fn 0xfe3890 spl7_save
+fn 0xfe389c spl_restore
+fn 0xfe38a4 cli
+fn 0xfe38aa sti
+fn 0xfe38b0 gotopgm
+cmt 0xfe38b0 gotopgm(): SR -> $8996 (spl's word), IPL 7; push rlr->p_ldaddr->p_tbase, the SR with S cleared; rte — a process's first instruction, in user state
+cmt 0xfe38d4 savestate(uda), disp's first call: SR -> $8994, IPL 7; (indisp set: unlk, pop A0, rte — DEAD) indisp++; D0-A5 -> uda+2 (A0 slot := dsptch's pushed A0 through disp's A6), the caller's A6 -> +58, the {SR,PC} frame's address -> +62, USP -> +66; SP := $8c1a; SR back; jmp to its caller, A6 disp's frame, A5 USP, A0 the return address. D1/D2 saved are the Line-F handler's ($7c8, the SR)
+cmt 0xfe3930 switchto(uda): SR -> $8994, IPL 7; D0-A5, USP, A6, SSP from the UDA; indisp := 0; the frame's SR := $8994; rte. Never returns (no branch in its body)
+# --- gemdisp's scheduler: the C of src/aes/evdisp.c, and disp as the ROM's instruction stream in switch.S
+fn 0xfe4b74 disp_act
+cmt 0xfe4b74 disp_act(pd): pd.stat := 0; walk from &rlr to the last link; pd.link := 0 THEN last.link := pd (a pd already last is linked to itself)
+fn 0xfe4b9c mwait_act
+cmt 0xfe4b9c mwait_act(pd): (pd.evwait & pd.evflg, as WORDS) ? disp_act(pd) : pd at the HEAD of nrl. The first arm is reached by no machine: nothing is posted between mwait's test and disp's call
+fn 0xfe4d68 idle
+cmt 0xfe4d68 idle(): do { chkkbd(); while (drl) { pd = drl; drl = pd.link; disp_act(pd) } } while (!rlr && !fpcnt) — rlr tested before the fork count, a WORD ($c908 after it is the control manager's saved cursor count); where the machine waits for an interrupt
+cmt 0xfe4d9e disp(), entered by dsptch's jmp only: savestate(rlr.uda); pd = rlr; rlr = pd.link (the LONG, top byte and all); stat 0 -> disp_act(pd), 1 -> mwait_act(pd), any other -> on NO list; do { forker(); idle() } while (fpcnt); gl_cda = rlr.cda; switchto(rlr.uda). After savestate its SP is $8c1a: its argument slot is the longword AT the dispatcher stack's top. The LF_RET at $fe4e00 is dead
+# --- the interrupts' glue (src/aes/irq.S, $fed3be..$fed477): the three fn lines above lose their ctx tag — bodies read, byte-pinned, differential on both blobs
+cmt 0xfed3be button glue (vex_butv): SP -> $9482, stack $94f2 (92 bytes down to $9496), D0-D2/A0-A2 saved, jsr b_click(d0.w)
+cmt 0xfed3e4 motion glue (vex_motv): the same stack; jsr forkq(#mchange, d0.w, d1.w)
+cmt 0xfed426 tick glue (vex_timv): SP -> $9486, stack $9552; if ($9492) { $948e++; if (--$9492 == 0) forkq(#tchange, $948e) }; b_delay(1); SP back; jsr (*$948a). Saves no register: the VDI's tick ($fca78a) brackets it
+var 0x9482 glue_saved_sp
+var 0x9486 tick_saved_sp
+var 0x948a tick_chain
+# --- ev_multi's body (its fn and its plate cmt are band 3 wave 0's lines, the cmt rewritten by this wave)
+cmt 0xfe6a0e ev_multi's fast button test: more than ONE change posted ($c836, signed) -> the click record's buttons $9c10 and clicks $972e are tried before the buttons as they are
+cmt 0xfe6b40 ev_multi's message wait: a QPB in its own frame (-8(a6): rlr's pid, 16, the buffer), queued BEFORE the timer's wait; its address stays in the EVB after the EVB is freed
+cmt 0xfe6ba8 ev_rets called BEFORE ev_multi's aprets: the buttons it answers are the previous call's leftover ($c792)
+cmt 0xfe40e0 mwait resumes here, past its call of dsptch: where a process that waited continues once the dispatcher runs it again (addrs.h AES_ROM_EV_MWAIT_RESUMED; the woken cases' stop)

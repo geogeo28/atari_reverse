@@ -417,6 +417,22 @@ A REASON IS NAMED WHERE A WORD STEERS, NOT WHERE THE ROM STORES IT — the trap 
 (315 of 1,031 cases narrowed for nothing). Which reason steers which routine is MEASURED, each left out in turn
 (`aes_evinput.STEERS`); a reason that steers some cases of a routine and not others (`STEERS_SOME`) is asked of each
 case — the pass tried WITHOUT it first and the reason named only where that fails (`aes_event.run_core_steered`).
+STEERING IS ASKED TO A FIXPOINT, ONCE PER TREE — one loop for every layer, `aes_event.steered_as_needed` (under
+`run_layer_case` always, and `run_core_steered(fixpoint=True)`). A reason the pass fails without while another is
+still named can be needless
+once that other is dropped (measured: evnt_multi with a key typed and a press queued — the fork queue's counters), so
+after a round that dropped a reason the reasons kept before its last drop are asked again, down to the kit's whole
+pass where none is needed; a table that orders its reasons by hand to dodge this is refused in review. THE PLAIN PASS
+IS MADE ONCE per case and handed to each trial (`aes.run_function(plain=)`: the ROM's run, the C's and the compare do
+not depend on what is asked of the narrowed pass). WHICH REASONS A CASE NEEDS IS KEPT BY CONTENT (`@derived.kept`):
+the trials are the dear part — a narrowed pass that FAILS runs the ROM, derailed, to its cap — and every worker that
+meets the case, the guarded suite and the next run of the tree would find the same answer. It is the ONE kept answer
+that runs the candidate: sound because the tree's key holds the candidate's library as loaded (a private library
+switches the cache off), and because it decides no verdict — the run that returns is made every time with exactly
+those reasons, and the `AES_STEERED_FOR_NOTHING` sweep asks each (last: 2026-10-07 over `test_aes_evmulti.py`,
+`test_aes_evdisp.py`, `test_aes_evlib.py`, `test_aes_evinput.py`, `test_aes_evfork.py`: 1,938 passed). A `certain`
+reason is a SPEED HINT (it spares a failing trial a case) and is held by that sweep like any other: `savptr` steers
+nearly every call that polls — the sweep found the one case it does not, which opts out by name.
 
 THE EVENT DOOR — the AES's C into the event layer and the scheduler (band 4), which C holds only as far as band 4 has
 ported it (REBINDING THE DOOR, below, says how an entry leaves the door). Every C call of one of
@@ -433,14 +449,16 @@ process binds its own) to a NESTED ORACLE RUN of the routine over a copy of the 
 its D0 answered, every frame it is handed compared with the frame the ROM's own run hands the same entry (MOBLKs and
 buffers read through their pointers). The nested run is REFUSED by name — halting the core through
 `recreate_not_reconstructed`, never answered with a fabricated 0 — when the entry is not served, when it touches the
-hardware or overflows the write ledger, when it overruns its measured cap (`NESTED_RUN_INSNS`, a margin over the deepest
-reachable call), and when it reaches the dispatcher (`dsptch`): that call WOULD BLOCK, and only the snapshot's indisp = 1
-would turn it into "no event". One thing differs by nature: the BIOS trap's register save under the keyboard poll
-(`$8de..$905`, the CALLER's registers), dropped by name in Tier 1 while priced rows move `savptr` into the stack band.
-Tier 3 prices such C on its own cycles, mechanism (EV): our run is WATCHED at the door entries (the kit's
-`RomBench.measure(watch=)`), each door call a window taken off the ROM's own cycles, an AES cycle of ours outside a window
-refused, and the ORIGINAL's run watched too — its windows must equal ours one by one, cycles and frames. The inline-asm
-wrapper and the nested run are the shape of an entry the ROM still SERVES; an entry band 4 has ported is REBOUND.
+hardware or overflows the write ledger, when it overruns its measured cap (`NESTED_RUN_INSNS`, 60,000: DERIVED as a margin
+over the deepest BLOCK a shadow runs — ev_multi asked for every event, 2,970 instructions to dsptch; held by
+`test_the_cap_is_derived_from_the_deepest_block_a_shadow_runs`), and when it reaches the dispatcher (`dsptch`): that
+call WOULD BLOCK, and only the snapshot's indisp = 1 would turn it into "no event". One thing differs by nature: the
+BIOS trap's register save under the keyboard poll (`$8de..$905`, the CALLER's registers), dropped by name in Tier 1
+while priced rows move `savptr` into the stack band. Tier 3 prices such C on its own cycles, mechanism (EV): our run
+is WATCHED at the door entries (the kit's `RomBench.measure(watch=)`), each door call a window taken off the ROM's own
+cycles, an AES cycle of ours outside a window refused, and the ORIGINAL's run watched too — its windows must equal
+ours one by one, cycles and frames. The inline-asm wrapper and the nested run are the shape of an entry the ROM still
+SERVES; an entry band 4 has ported is REBOUND.
 
 REBINDING THE DOOR. An entry with a C twin is REBOUND: its wrapper keeps its signature and its callers, and calls
 `aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, was the first). WHICH ENTRIES ARE REBOUND TODAY
@@ -476,7 +494,8 @@ ARRIVAL:
   3's lists of door calls follow by derivation. (3) Rehearse it first on a private mirror of the tree (host library
   and both blobs built by the tree's own rules): the whole suite, every door-arriving row measured on its own, the
   table. (4) The flip's commit carries the table before and after, every moved row old → new, and STATUS's ratios
-  re-quoted from its own `make bench` (`test_status` is red until they are). (5) A flip's twin mutants are swept
+  re-quoted from its own `make bench` (`test_status` is red until they are) — BOTH COUNTS of a row whose two differ
+  by more than 0.05 (TIER 3: … TWO COUNTS, below). (5) A flip's twin mutants are swept
   through the door batteries AND each twin's leaf battery alone; a host sweep through `amut/mutlib_plugin` switches
   the bench's second differential off, so the five `test_aes_event.py` tests OF that differential are deselected (they
   fail on the unmutated control).
@@ -526,6 +545,42 @@ ARRIVAL:
   the binding's: in a CHILD the hook answers REFUSED and the core halts with those words in its stderr; IN PROCESS a
   halt would be the worker's abort and every captured word lost, so the binding KEEPS the refusal, serves the call
   as the door would, and fails the case by those words when its pass closes.
+- A TWIN THAT POLLS AND FORKS (ev_multi: chkkbd's three VDI calls and forker's `jsr (a0)` come before anything else)
+  is run through `aes_event.run_layer_case(…, hook=aes_event.EVENT_LAYER_HOOKS)` and, where it blocks,
+  `switches_where_the_rom_does(…, hook=…)`: the fork opens the hook itself. Its machines are a running process AND
+  what the ROM's own interrupts queued while it was busy (`aes_evmulti.after(machine, interrupts…)`) — the path every
+  caller that does not block takes: the interrupt's bytes are in the fork queue or the keyboard's ring when the call
+  begins, and the C under the twin posts them. A frame whose last word lies ABOVE `case.STACK_BAND` (ev_multi's is 26
+  bytes, the door's widest) is compared at dsptch over the machine WITH the frame staged.
+- THE WAITS SATISFIED WHERE THEY ARE QUEUED are how a leaf battery runs a blocking routine's TAIL with no switch at
+  all: the fast path refuses (the mouse is another process's) and the wait's own test does not ask (abutton, amouse) —
+  acancel, the aprets and their order then run in C in one returning call. What that cannot reach is an answer another
+  process or an interrupt posted; say which.
+- A BLOCKING TWIN'S TAIL IS HELD BEFORE ITS FLIP BY WOKEN CASES (`aes_evmulti.woken` / `rom_woken`; HOST ONLY). A
+  routine that waits has two halves: what it writes before dsptch (held AT DSPTCH) and what it does when the
+  dispatcher runs it again. The second is run in C with the dispatcher's hook SERVED BY THE ROM'S OWN RUN, one
+  derivation kept by content: the ROM parks the process in the routine on its own stack, takes the case's interrupts
+  (and, for a writer's wake, another process's write: the mouse onto the bar wakes the screen manager through the
+  ROM's dispatcher, its appl_write serves the parked wait through the QPB of the waiting call's frame, it parks in an
+  evnt_multi of its own), and runs its own dispatcher to the resume inside mwait (`AES_ROM_EV_MWAIT_RESUMED`,
+  `$fe40e0`) and on to the routine's return.
+  - WHAT THE HOOK LAYS: the ROM's memory at the resume — all of RAM but the stack band — over the candidate's image;
+    it answers "returned"; a second call of the hook is refused by name. WHOSE mwait resumed is held: the parked
+    process's, its frame in that process's UDA, returning into the routine's text.
+  - WHAT IS COMPARED: the twin's answer and the whole image where the ROM's routine returns, with NO window dropped
+    whole. A byte is left out only where it lies in the resumed process's own UDA (the ROM's frames), the Line-F mask
+    word or an SR save word, AND the ROM's run stored it after the resume, AND the C holds the resume's byte there (it
+    stored nothing) — so a mutant that stores in any of the three is red on the woken tests alone (sweep it with `-k
+    woke`).
+  - WHAT IT HOLDS AND WHAT IT DOES NOT: what carries across the hook is the C's own frame (the waits' bits, the flags,
+    what arrived) — exactly what a tail mutant hits — composed with the same call's case AT DSPTCH. It is the HOST
+    build's tail: the switch itself, and the target build's frame across it (saved and restored by savestate /
+    switchto on the process's own stack), are held by rows that switch.
+  - A WAKE NEEDS ITS WRITER: a message wait is woken only by another process's appl_write (an interrupt never posts
+    one), and what both make in ONE wake (the message's and the timer's aprets) needs the write AND the ticks before
+    the dispatcher runs the process again. Plant a trap in each arm of a tail and count the reds before believing a
+    coverage figure: a figure read off an instrumented build OLDER than the battery it describes is not this
+    battery's.
 - A RUN ENTERED AT A DOOR ENTRY (a twin's own row, its leaf battery's watched cases) makes no door call of that
   entry: `DoorStops.entered_at(pc)` leaves the run's own first instruction out of the stops it starts with — the
   bench stops at a listed PC before executing it — and watches it again from the first stop on. The outermost entry
@@ -544,6 +599,38 @@ ARRIVAL:
   call would block" or "would yield", told apart by the running process's PD_STAT as disp tells them — and prints the
   frames handed so far. A run that blocks inside a rebound entry is compared where its twin stops, AT dsptch; inside a
   ROM-served one at the entry of the blocking call, as before.
+- ...UNLESS A CASE SWITCHES THE MODEL ON (`test/aes_switch.py`) — THE DEFAULT IS STILL TO REFUSE.
+  `aes_switch.scheduling(reference, foreign=)` binds, for its own runs alone, `recreate_dispatch` to the C scheduler
+  `aes_disp` (`src/aes/evdisp.c`, host only: disp's own loop), `recreate_idle` to the case's deliveries and
+  `recreate_process` to a nested run of the ROM. No other case of the suite is touched by it.
+  - THE ROM'S SIDE is `aes_switch.scheduled(entry, frame, machine, {idle: interrupt})`: ONE run through the ROM's own
+    dispatcher. An IDLE is idle's poll reached with nothing ready, nothing woken and nothing queued
+    (`AES_ROM_IDLE_LOOP`) — where the machine waits for an interrupt — numbered as the run makes them; a delivery is
+    taken there exactly as `interrupted` takes one at a door call. An idle with nothing due is passed; a second in a
+    row after the last delivery ends the run. A run that reaches its return in ANOTHER process is refused.
+  - THE C'S SIDE is `aes_switch.modelled(symbol, typed, machine, reference, foreign=)`, in a fork: the process the
+    scheduler comes back to is the caller → the C's call RETURNS; the idle hook lays the reference's deliveries at the
+    same ordinals (and refuses an idle the ROM's run did not make: "the call would block"); a FOREIGN process is the
+    ROM's own code from switchto until the ROM's disp is about to enter the caller again. ONE READING of a run's three
+    stops (`dispatcher_stop`), whoever drives the run.
+  - COMPARED (`held_to_the_scheduled_run`): the return, the idle count, the answer, the whole image — outside the
+    caller's saved context, the dispatcher's stack, `$8994` and the event layer's own drops, each only where the ROM's
+    run stored it.
+  - WHAT MAY NOT BE A FOREIGN PROCESS: one parked by a harness call (`aes_event.parked`) — its continuation is the
+    run's sentinel. The snapshot's own screen manager is real. A scheduled run that idles for ever after its
+    deliveries is not kept.
+  - WHAT A HOOK RAISES IS ITS CASE'S OUTCOME, WHATEVER IT IS. ctypes prints and DROPS what a callback raises.
+    `AddressHook._dispatch` (`test/address_hook.py`) records it and answers a refused call; `staged()` then gives
+    the case its outcome (`as_the_case_s_outcome`): a FAILURE carrying the exception's TYPE, words and traceback,
+    chained to it (a bare `assert`, a KeyError, a `pytest.fail` — a `BaseException` that is no `Exception` — each
+    read as what it was, not as "raised: " with nothing after the colon); `pytest.skip` is a SKIP; and a
+    KeyboardInterrupt or a SystemExit — which could not cross the callback — IS RAISED AGAIN, ITSELF, as the binding
+    closes, whatever the run then failed by: the session stops as it was asked to. The door's seam keeps an effect's
+    words when the run fails too, whatever it raised (`event_hook`); the scheduler's hooks
+    (`aes_switch._refusing_what_raises`) answer REFUSED, keep the exception and raise it again as their binding
+    closes. A hook written outside both owes the same.
+  - ITS LEAF HOOKS (`aes_switch.IDLE_HOOKS`) ARE THE WORKER'S FORKS, not the zygote's: a named hook must live in a
+    module the zygote holds (below), and it holds no battery's helper.
 - SR SAVE WORDS, AND THE LEDGER RULE. The words a bracket parks (`sr_mask_saving` / `sr_restore_from`, `aes_spl7_save`
   / `aes_spl_restore`: nothing stored off target, the ROM's two instructions on it) are each a NAMED drop out of ONE
   table, `aes_event.SR_DROPS` `{save word: why}` (psetup's `$8998`, spl7's `$8996`); `sr_drops(*words)` makes a
@@ -551,18 +638,78 @@ ARRIVAL:
   compared, by one rule (`aes_event.not_compared_where_the_rom_stored`: the ROM's memory as compared against what
   its run started with) — no SR byte is left out unconditionally, so no battery lists which routines reach a
   bracket, and a C that writes a save word the ROM's run left alone is red. AT TIER 3 THE DROP IS SYMMETRIC: a row
-  that drops a save word is held to OUR run's ledger having stored it too (`tier3.vet_our_run_stored_its_sr_words`)
+  that drops a save word is held to OUR run's ledger having stored it too (`tier3.vet_what_our_run_stored`, the
+  rule's ONE home — `measure` holds that it RAN, on every measuring path; a transcription row reads no drop)
   — a build whose mask bracket was lost would otherwise hide behind the drop; it is what pins a bracket's PRESENCE
   on target, which no host battery can (the host stores no SR). The dispatcher's own (`$8994`) is stored after
-  dsptch, where no host core goes. A door row that reaches a bracket THROUGH A REBOUND TWIN must name the drop
-  itself (`sr_drops(...)`): the bench's second differential of an interrupted door case drops the mask word only.
-- ONE LONGWORD A PARKED ap_rdwr DIFFERS IN BY NATURE — THE PARKED QPB. aqueue keeps a pipe wait's QPB by its ADDRESS
-  in the EVB it queues, and ap_rdwr's QPB is its own argument frame: a place in its caller's stack on each shore
-  (the twin's: a host slot per process, below). Where the wait PARKS, that EVB_PARM is dropped BY NAME and VETTED
-  (`aes_event.parked_qpb_drop`): only for ap_rdwr on a pipe, only the newest EVB of the running process — the same
-  EVB on both shores — and only where each shore's longword is an address in ITS stack band naming the same eight
-  bytes (process, count, buffer). Used by the leaf batteries (`aes_evlib.held` vets wherever it drops), the shadow
-  at dsptch, and `interrupted` where a door user blocks inside a rebound ap_rdwr. Never a window.
+  dsptch, where no host core goes but the model's (it is in the table for the rows that switch). A door user
+  drops an SR word where the ROM's run stored it (`DOOR_RUN_DROPS`) and an interrupted row settles it, both by
+  derivation — no row names such a drop by hand. (Unexercised: no door row's ROM run stores one, measured before
+  and after flip 3.)
+- A DROP IS SYMMETRIC, WHATEVER ITS KIND: every dropped byte but the Line-F mask word is one OUR run stored too
+  (`tier3.drops_held_to_our_run`; measured over 688 dropping rows: every other kind is stored by our run) — an SR save
+  word, the dispatcher's stack, a saved context's D1/D2. A build that lost the store cannot hide behind the drop. And
+  "a dropped row has a companion that drops nothing" admits exactly the VETTED by-nature longwords: a freed EVB's QPB
+  address (below) and a relocated code pointer.
+- A CODE ADDRESS IN COMPARED RAM IS RELOCATED, NEVER DROPPED (`bench/tier3.py`: `RomBench._call`, `fork_relocation`).
+  Three places hold one: THE FORK QUEUE's 32 code slots (`aes_event.FORK_CODE_SLOTS`, defined once) — a fork
+  function's address is the ROM's in the ROM and `aes_<fn>_fork`'s entry in our build; THE RECORDS OF A RECORDING
+  (appl_trecord's buffer, back from the cursor while a record's code is a fork function's: forker's recorder copies an
+  entry code and all and merges ticks by comparing code addresses); and THE SIX LONGWORDS THAT CAN HOLD A GLUE'S
+  ADDRESS (`aes_event.GLUE_CODE_SLOTS`: the VDI's two vectors, the AES's contrl[7..8] and [9..10], its two save
+  longwords). ONE REGISTRY DECLARES THEM, beside the slots (`aes_event.CODE_RELOCATIONS`: what, the slots, our entry
+  for each ROM routine, mapped at a run's entry or at its exit alone), and ONE READING serves every site that maps a
+  code address (`tier3.code_relocations`: a run's entry and exit, a delivery, a slice's mark) — no table fetched from
+  a battery by its name with a silent default. The queue and the recording are mapped ROM → ours as a machine or an
+  interrupt's delivery is laid into our blob and back before the kit compares; THE GLUE IS MAPPED AT EXIT ONLY — a
+  row's machine holds the ROM's glue in the vectors, and a vex call hands what it DISPLACED to wherever its caller's
+  contrl lies (a displaced value travels: mapped at entry, vex_butv's row differs at its caller's own contrl).
+  Nothing is dropped, the compare is exact, and a build that queued or installed ANOTHER function's entry maps back
+  to the wrong ROM address and differs. AND A RELOCATION THE BUILD LEFT UN-APPLIED IS REFUSED BY NAME
+  (`tier3.vet_no_slot_names_the_rom`): the back-map rewrites only OUR entries, so a slot our run stored THE ROM'S OWN
+  address in (the host arm of `fork_bchange()` compiled into the blob) equalled the ROM's memory and passed — 26 of
+  26 rows green, a queue our forker would `jsr` into the ROM from. After our run no slot of the registry holds a ROM
+  address of it unless the run CAME WITH it: an argument the call was handed (forkq's code, gsx_setmb's routines)
+  or, for the glue, what its slots held at entry. (What that leaves — an installer storing the ROM's glue over a
+  machine that already holds it — is held off the vectors: `test_aes_irq.py`.) Off for a routine whose run still reaches the ROM's own forker (a
+  `jsr` into the ROM's ev_multi), which must find the ROM's addresses. THE HOST STORES THE ROM'S ADDRESSES
+  (`ALCYON_ROUTINE(rom, ours)`: Tier 1 stays exact); the target its own.
+- ONE SETTLING, ONE REGISTRAR. `aes_event.settled_in_windows(machine, writes, staged, dropped=None)` is the one
+  spelling of "a priced row's bytes that differ by nature": every byte of the windows `staged` that the ROM's run
+  STORED is staged at the value the run leaves (the row's companion then compares it with nothing dropped), and the
+  windows `dropped` — those staged, unless a row drops fewer — are cut to the bytes the run stored: the row's named
+  Tier 3 drops. `settled_where_stored` is its case for WORDS (the mask word, an SR save word); `settled(name,
+  arguments, machine, polls=)` makes the ROM run and settles every word that differs by nature, `savptr` moved into
+  the stack band where the run takes the BIOS trap; a switching row settles WINDOWS (the caller's saved context, the
+  dispatcher's stack) and drops fewer than it stages (the SR save words are staged and compared: our build stores them
+  as the ROM does). `aes_event.register_row` is the one registrar of a leaf row of the event layer: the waits'
+  (`aes_evlib.register`), the input's (`aes_evinput.register`, which tells it the two routines that POLL) and the
+  processes-and-pipes' (`aes_pdpipe.register`) all end on it. A WORD IS SETTLED WHOLE OR REFUSED: a run that stored
+  one byte of a word that differs by nature did something its drop's reason does not name (`settled_where_stored`
+  refuses it by name — a finding to rule on, never staged and dropped in silence). Held:
+  `test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_says` — against AN INDEPENDENT
+  SPELLING (the oracle's own run of each row, not the kept derivation the registrar reads: a registry compared with
+  the function its registrar calls holds "no layer bypasses it" and nothing of what it stages) and against THE
+  CENSUS (`BY_NATURE_CENSUS`): the registrar settles whatever a row's ROM run stores, with no ruling, so the rows
+  that use a WIDER kind — psetup's or the dispatcher's bracket, a QPB's address, `savptr` moved by the run alone —
+  are pinned by routine and a new one reds until it is written in with its reason. (The door users' rows and
+  ev_multi's own are not in it yet.) A layer that writes a settling of its own is refused in review — five had
+  grown.
+- ONE LONGWORD A PARKED PIPE WAIT DIFFERS IN BY NATURE — THE PARKED QPB, FOUND ON THE MACHINE. aqueue keeps a pipe
+  wait's QPB by its ADDRESS in the EVB it queues, and that QPB lies in its caller's stack on each shore: ap_rdwr's is
+  its own argument frame, ev_multi's a local of its own frame (the twins': a host slot per process, below). WHO PARKS
+  ONE IS READ OFF THE MACHINE, no routine named (`aes_event.parked_qpbs`): every EVB of the running process queued on
+  a pipe's end whose parameter is a stack address — not "the newest EVB": a blocked ev_multi's pipe wait is followed
+  by its timer's. Where the wait PARKS that EVB_PARM is dropped BY NAME and VETTED pairwise (`parked_where_blocked` /
+  `parked_qpb_drop`): the same EVBs on both shores, each shore's longword an address in ITS stack band naming the same
+  eight bytes (process, count, buffer) — and, off target, OUR address must be THE host slot of the entry's own role
+  and the running process (`our_qpb_slots`: a twin that parked another process's slot, or another routine's, is
+  refused). AND AT A RETURN: a wait cancelled or answered is freed AS IT IS, the frame's address still in EVB_PARM —
+  the same by-nature longword in a FREE EVB, found by the ROM run's ledger (`qpb_addresses_kept`: an EVB_PARM the run
+  STORED whose value is a stack-band address), dropped and vetted the same way. A wait the MACHINE came with holds one
+  address on both shores and is COMPARED (its bytes are not vetted there: a staged machine carries no stack band).
+  Used by the leaf batteries, the shadow at dsptch, a door user blocked inside a rebound entry (held too to what the
+  entry's row says it parks, `Entry.parks`), and `register_row`. Never a window.
 - A HOST SLOT PER PROCESS. A frame local that stays live while its process is BLOCKED — its routine reached the
   dispatcher with the local's address parked in a record another process reads — is live in two processes at once:
   ap_rdwr's QPB, which a parked pipe wait's EVB points into until the other end serves it through that address. In
@@ -570,14 +717,57 @@ ARRIVAL:
   (`host_slot_claim_for(ROLE, local, process)` / `host_slot_release_for`, `include/host_slot.h`), the RUNNING
   process's id choosing one: an address the IMAGE decides, the same in whichever host run laid the frame (a "next
   free slot" would collide across runs — a parked frame is laid in one run and read in another). On target the
-  macro is the local's own address and `process` is not evaluated. Every OTHER slot a routine holds across a wait
+  macro is the local's own address and `process` is not evaluated. ev_multi's QPB is a second such role
+  (`HOST_SLOT_AES_EV_MULTI_QPB`), claimed on its blocking arm only and given back at the return (held by a test
+  that makes two calls in one fork). Every OTHER slot a routine holds across a wait
   has this shape the moment two C processes can be inside one routine (wave 3's audit).
 - TIER 3: THE ARRIVALS RULE. Both runs still arrive at a rebound entry — the same ordinal, delivery, slice mark and
   frame — but it opens NO window: the ROM routine's cycles stay the ROM's own, the twin's are ours, and the table's
   sub-line counts "N call(s) of a rebound entry in the own cycles". A twin that runs an AES ROM cycle is refused by
   name (rebind the entry it called first). So a flip MOVES every row that reaches the entry: save the table before
   and after, list every moved row, and hold that no other moved. A row stops being (EV) by derivation when its
-  function's last `jsr` into the AES text is gone.
+  function's last `jsr` into the AES text is gone. NO WINDOW OPENS AT A REBOUND ENTRY ON EITHER SHORE, however it
+  is reached: the ROM's watch reads the rebound set off the build, not off the static call graph (which holds no
+  edge through a queued fork function's code — the ROM's bchange reaching post_button under the ROM's forker).
+- TIER 3: A ROW THAT CALLS A REBOUND ENTRY IS HELD ON TWO COUNTS. With no window, the row is a differential of the
+  whole call and the CALLER's body could hide in the entry's cost (gr_stilldn is 340 cycles of its own round an
+  ev_multi of 5,374). So every such row — and every uncovered stretch of a session — is held ≤ the bar twice, both by
+  derivation: **own**, the ratio column (every own cycle of ours against the ROM's, the rebound entries' calls in
+  both), and **the caller's own**, each shore's own cycles NET of what the rebound entries' calls cost it (the twins'
+  blob cycles on ours, the ROM routines' AES-span cycles on the original's: `DoorWindows.own_inside`). HOW TO READ A
+  ROW THAT SHOWS BOTH — the line under it: "whole run: W — own A cycles against the ROM's B …; the OS both run X
+  against X, N call(s) of a rebound entry in the own cycles — the caller's own, net of them: C against D, R.RR, and T
+  in thunks: G with them". W is everything, the OS included; A / B is the ratio column; C / D = R.RR is the second
+  count; G counts the thunks back. A second count ABOVE the first says the caller's body is the dearer part and the
+  twin the cheaper (bchange's press on the bar: 0.87 and 1.01); BELOW it, the reverse.
+  THE SECOND COUNT HAS A LINE OF ITS OWN, AND ITS OWN THUNKS: `TWO COUNTS: 0.45 / 0.37 (812 against 2216) — own / the
+  caller's own, net of N call(s) of a rebound entry; T of the row's G thunk cycles are the caller's own: R.RR with
+  them`. Which side of a call a thunk ran on is MEASURED, call by call (`DoorWindows.glue_inside`): a thunk inside
+  a rebound entry's call is the ENTRY's (its twin's road to a transcribed core), every other one the caller's, and
+  counted back onto the caller's count — over the bar with them and under it without, the row is `glue` on the
+  second count as a (V) row is on its first. A PINNED row that calls a rebound entry is pinned on both
+  (`tier3.CALLER_PINS`: DRIFTED on either, and with no second pin at all). STATUS QUOTES THE PAIR IN THE LINE'S OWN
+  FORM — `0.45 / 0.37 (812 against 2216)` — wherever the two differ by more than 0.05, and `test_status.py` PINS
+  IT BOTH WAYS: every pair the ledger quotes is one the table printed for that address, every pair that differs is
+  quoted, and the section's "N rows carry both; they differ … in M" is the table's count. Never typed by hand: re-quote
+  from `make bench`. The ratio cells of the rows are the first count's. The RED:
+  `test_a_delayed_body_through_the_door_reds_its_row…` asserts WHICH count catches a body made dearer, and
+  `test_a_row_round_a_rebound_entry_is_held_on_both_counts` reds each count alone.
+- TIER 3: THE GENERAL GUARD — NO ROW'S RUN OF OURS SPENDS A CYCLE IN THE AES'S ROM OUTSIDE ITS DECLARED WINDOWS
+  (`tier3.vet_our_run_kept_out_of_the_aes`, in `measure`: `RomBench._call` profiles every row's own run). It is what
+  (V) held for `net` rows alone: a plain C row could run the AES's ROM through a CODE POINTER IN DATA — forker over a
+  ROM-made queue with the relocation off spent 61,120 cycles there and was "equal" at 1.00 — and be priced. Sliced
+  rows are not asked (a slice is cut from a whole run that (EV) holds call by call); a case that hands `measure` the
+  KIT's own bench is not this guard's. TO DECLARE AN ENTERED-BY-THE-MACHINE'S-POINTER EXCEPTION — a row whose run must
+  enter ROM text because the MACHINE holds the ROM's address and the row cannot relocate it (a transcription row is
+  held to the whole register file) — add it to `tier3.ENTERED_BY_THE_MACHINE_S_POINTER` with the EXACT cycles it
+  spends there and the reason: the guard holds it to that number, not to "some". ONE stands: drawrat's bare-`rts` `.S`
+  row, 16 cycles in the ROM's justretf (the snapshot's `$947a`). Prefer a relocation; a declaration is for what cannot
+  be relocated.
+- TIER 3: OUR OWN DISPATCHER IS WATCHED (`aes_event.DoorStops(dispatchers=)`, `tier3.our_dispatchers`): inside a door
+  call the watch stops at OUR blob's `aes_dsptch` as at the ROM's, so a twin that blocks where the ROM returns is
+  refused BY NAME in one stop — it used to idle in our dispatcher for 16,000,000 instructions and end in the oracle's
+  RuntimeError, which no strict sweep counts a kill.
 
 INTERRUPTS AT A DOOR ENTRY. A loop like mn_do or gr_dragbox only leaves its later states when the mouse or button changes
 WHILE it runs. `aes_event.interrupted(name, arguments, machine, {k: effect})` delivers that change on both sides. The ROM's
@@ -681,7 +871,11 @@ schedule per wait — what the user does there, placed by the ROM's own ob_offse
 replay's `trap #1` door through `aes_event.declare_child_doors(name, source)`, which the event door's own binding does
 not open. A session is held on four surfaces: the whole image at its END; the image at a WAIT it is cut short at (the
 ROM blocks, the C is refused at the same call, and a dialog still on the screen is compared — a session's end only
-sees a screen already given back); every VDI CALL in order (opcode, intin, ptsin); and WHAT THE ROUTINE HOLDS as each
+sees a screen already given back); every VDI CALL in order (opcode, intin, ptsin) — THE WHOLE SESSION'S LEDGER on both
+shores: every `trap #2` of the ROM's run, those INSIDE its door calls of rebound entries too (`aes_fslib.VdiCalls`),
+against every VDI function a door binding serves on ours, the event layer's own among them (chkkbd's three polls,
+mchange's vq_mouse: `aes_event.door_vdi_functions`), in process and in a child — never "count nothing while a twin
+runs", which would leave the event layer's VDI calls held by no ledger; and WHAT THE ROUTINE HOLDS as each
 VDI call is made (`aes_fslib.held_in`: its tree, its texts, its scratches, hashed into the ledger on both shores), which
 is what sees a word set and put back between two waits.
 
@@ -697,7 +891,9 @@ watchdog, or dead — a crash, which a strict sweep counts ABNORMAL. So the C ru
 by a timeout or a non-zero exit (`aes_event._vet_returned`: one assertion, whichever child). Which child:
 - A DOOR USER — a core that reaches a hook: a FRESH INTERPRETER with the door bound, once before the differential
   (`aes_event.run_guarded` / `returns_in_a_child`; `aes_event.refusal` is where a frame's values become its C
-  arguments). Its hooks must be bound per child. Remembered per worker by CONTENT — routine, frame, binding and THE
+  arguments) — or THE ZYGOTE'S FORK where one runs (`door_child`), a routine's DECLARED child doors included
+  (`declare_child_doors`: the file selector's GEMDOS replay — the fork runs that declared source first, as the
+  interpreter would; a CASE's own `before` is a fresh interpreter still). Its hooks must be bound per child. Remembered per worker by CONTENT — routine, frame, binding and THE
   IMAGE the pokes make (`merge_pokes`: overlapping pokes laid in another order are another machine) — never by the
   machine's identity.
 - A core that reaches NO hook (the list routines, the processes' and the pipes', tak_flag): a FORK of the worker AT
@@ -735,13 +931,43 @@ image the kit handed the run — copied into a mapping both share — go down a 
 the worker would have made (the same alarm, the same refusers, the same two stderrs; the library armed as an
 unseeded differential arms it).
 - WHERE THE ZYGOTE STANDS IN, and only there (`aes_event.the_zygote_stands_in`): an UNSEEDED run (no keyword of
-  `case.run`'s that arms the candidate) of a real function of the library, that serves NO hook, while the worker's
-  dispatcher hook is the module's own refuser. Every other fork — one that serves a hook its case's pass bound, a
-  seeded run, a test's stand-in core — is the worker's own. So is EVERY fork of a test that takes `monkeypatch`
-  (`conftest.py` sidelines the zygote for it: the zygote holds the modules as the session started, and a patch on
-  the fork's side would never run in its fork — measured, a patched arming that raises: exit 8 from the worker's
-  fork, 0 from the zygote's). A process with no zygote (a script, a child interpreter, the bench;
-  `AES_NO_ZYGOTE=1`) forks itself. Every fork test runs under BOTH makers.
+  `case.run`'s that arms the candidate) of a real function of the library that serves NO hook, or serves a NAMED one
+  (below), while the worker's dispatcher hook is the module's own refuser — and a door user's CHILD whose binding is
+  the door's standard one (`aes_event.door_child`: a fork that answers what a fresh interpreter answered — exit,
+  lines, frames handed, answer, image, and a timeout as the same exception; a routine that declares child doors of its
+  own still gets a fresh interpreter). Every other fork — one that serves a hook its case's pass built, a seeded run,
+  a test's stand-in core — is the worker's own. So is EVERY fork of a test that takes `monkeypatch` (`conftest.py`
+  sidelines the zygote for it: the zygote holds the modules as the session started, and a patch on the fork's side
+  would never run in its fork — measured, a patched arming that raises: exit 8 from the worker's fork, 0 from the
+  zygote's). A process with no zygote (a script, a child interpreter, the bench; `AES_NO_ZYGOTE=1`) forks itself.
+  Every fork test runs under BOTH makers.
+- THE NAMED-HOOK CONTRACT. A fork that SERVES a hook is the zygote's only where the hook is NAMED:
+  `aes_event.named_hook(module, attribute, hook)` — a module-level builder closed over no case; the zygote resolves
+  the name and its fork opens the pass itself. THE HOOK MUST LIVE IN A MODULE THE ZYGOTE ALREADY HOLDS when it starts
+  (`aes_event.ZYGOTE_HOLDS`: `aes_event` and everything it imports). The zygote imports NOTHING for a hook: a hook
+  named in a battery's helper module made it import the battery (its resident size ×20, and every later fork dearer),
+  so such a hook is served by the worker's own forks instead — say so beside it (`aes_switch.IDLE_HOOKS`). One name
+  per hook object; a second `named_hook` of one object is refused. A request carries its own function object's types
+  (nothing of the zygote's library is retyped per request), fractional seconds are honoured (`setitimer`), and the
+  zygote's own stderr is line-buffered (a hook's refusal printed before the C aborts is not lost, nor replayed into
+  later forks).
+- IT STANDS IN ONLY WHILE THE FROZEN MODULES HOLD THE VALUES IT WAS FORKED WITH (`aes_event.FROZEN_MODULES`, checked
+  by identity, a name at a time, before each fork: `_as_the_zygote_froze_them`): a value rebound WITHOUT the
+  `monkeypatch` fixture — `unittest.mock`, a plain assignment — sidelines it as the fixture does. **A LAZY CACHE IS
+  FROZEN BY ITS SHAPE** (`aes_event.LAZY_CACHES`, by module): a module-level name bound from None, ONCE, by its first
+  asker to an answer that is the same in any process — `isr._BENCH`, the cross-compiled blob — is no patch, and held
+  frozen at None it put a process's zygote out of use FOR THE REST OF ITS LIFE from the first test that loaded the
+  blob (every transcription pin does; measured: one battery alone, 1,066 forks by the zygote; after one file of
+  another, 0 — and the suite stayed green, the lever silently off in most workers). The ONE transition None → its
+  first value is the cache's own; bound AGAIN (a `mock.patch` of the blob, a sweep's bench put back in a `finally`)
+  it is a value rebound like any other. A new lazy cache in a frozen module must be named there;
+  `test_a_lazy_cache_is_frozen_by_its_shape_none_to_its_first_value_and_no_further` holds the rule WITH NO ZYGOTE
+  (the blob's own test skips with the zygote off). A test that
+  MEANS the zygote while it patches sets `aes_event.ZYGOTE_SIDELINED` to `aes_event.MEANT_UNDER_PATCHES` (not False).
+- WHO MADE THE FORKS IS A MEASUREMENT, NOT AN ASSUMPTION: `AES_FORKS_REPORT=1` makes each process print, as it ends,
+  `{"the zygote's forks": N, "this process's forks": N, "fresh interpreters": N}` (`aes_event.FORKS_MADE`). Any claim
+  about the zygote rests on it: a worker whose line shows NO zygote forks has lost its zygote. A whole run today: the
+  zygote's 5,768, the workers' own 108, fresh interpreters 176.
 - ITS IMAGE IS GUARDED ON EVERY RUN — PROT_NONE below and above, the guarded-image plugin's own distances — in `make
   test` too. Not a choice of strictness: a fork of the worker faults wherever the worker would; a fork of the zygote
   has another address space, and beside an unguarded image a wild store can land on memory mapped THERE alone, pass,
@@ -784,8 +1010,14 @@ battery (`aes_evasync`, `aes_evlib`, `aes_evinput` each bind one and keep module
   `RIGHT_PRESSING` / `moving_to` / `moving_by` / `ticking`: sequences over the machine as it goes — and taken by two
   runners, in place (`taken_in_place`: `press`, `move_to` …) and watched (`aes_evinput.taken_watched`); every
   sequence leaves one machine under either.
-- `aes_event.settled_where_stored` + `MASK_WORD_AND_SPL` settle a row's dropped words from one run;
-  `run_core_steered` is the trial loop of a case whose reason steers only some cases (above).
+- `aes_event.settled` / `settled_in_windows` / `settled_where_stored` + `MASK_WORD_AND_SPL` settle a row's bytes
+  that differ by nature from one run and `register_row` registers it (ONE SETTLING, ONE REGISTRAR, above);
+  `run_core_steered` / `run_layer_case` are the trial loop of a steered case, over `steered_as_needed` (above).
+- WHAT THE EVENT LAYER'S C CALLS OUT THROUGH HAS ONE SPELLING, the event layer's own: `aes_event.vdi_hook`,
+  `handed_routines()` (the four fork functions, justretf, the VDI's default_user_cur), `POLLED_FUNCTIONS`,
+  `SERVED_IN_A_FORK`, `TRAP_FRAME_DROP`, `FORK_CODE_SLOTS`, `EVENT_LAYER_HOOKS` / `EVENT_LAYER_DROPS`. A layer's
+  helper module holds aliases, never a second definition (`aes_evinput.HOOKS`, `CURSOR_HOOKS` built on them); the
+  door's own bindings take them by derivation the day an entry that polls is rebound (`polls_in_c`).
 
 AN INTERRUPT TAKEN BETWEEN TWO INSTRUCTIONS — the fourth surface. No differential row interleaves: Tier 1 and Tier
 3 run a routine from its entry to its return with nothing between two of its instructions, and the plain C is the
@@ -827,7 +1059,7 @@ after it one late). The procedure for a routine that reads or counts a word an I
 The door also never lays back the nested run's write to the Line-F mask word `$cc44`. A caller's own non-empty masked return
 rewrites that word after its last door call, so the C's image keeps the word as the C found it.
 
-Three mechanisms are designed and NOT built (the third in part):
+Of the three mechanisms the foundation designed, ONE is still not built (the first); the other two were built by band 4 wave 2:
 
 - **The Line-F handler's Malloc(100) and 100-byte copy**, which a rebuilt ROM must keep so every later TPA block stays
   put (its mask word then differs forever, by nature). The copy carries ORIGINAL ROM code addresses as data — the
@@ -837,25 +1069,25 @@ Three mechanisms are designed and NOT built (the third in part):
   band: a case on a UDA's stack (inside THEGLO) or on the dispatcher's stack at `$8c1a` puts the exception frame and
   every Alcyon `link`/`movem` frame in COMPARED RAM, and needs a stack `dropped_windows` entry (the
   `LINEA_STACK_WINDOW` precedent).
-- **A real process switch** (a checkpoint at switchto's `rte`, or a staged second process whose UDA `rte`s into a
-  sentinel stub), where `indisp = 1` is only a lever. savestate's CPU state — `movem d0-a5` into the UDA, the
-  frame's SR and PC, SSP and USP — is the ORACLE's registers, ROM return addresses and kit-stack pointers no host C
-  produces: for a C twin that block is a by-nature drop, and only a `.S` transcription compares it byte for byte.
-  savestate's `lea $8c1a,sp` moves disp's frames into compared RAM, which needs a window too. The sentinel stub is
-  `jmp ($2).w` (`4EF8 0002`), which writes nothing — not `pea (2).w; rts`, which writes 4 bytes onto the
-  switched-to process's stack, inside THEGLO.
-- **The RELOCATION of a ROM-made fork queue for our blob.** forker's `jsr (a0)` itself is BUILT (`aes/evfork.h`,
-  band 4 wave 1): it is `staged_call.h`'s `call_alcyon_pointer` — the ONE register-carrying hook, bound by a case
-  to the candidate's fork functions by their ROM addresses (`aes_evinput.HANDED_ROUTINES`; the VDI's
-  `$fcff0a` default_user_cur among them for a playback); on target a queue entry's code is the function's own
-  plain-C entry (`aes_<fn>_fork`), and a row whose run QUEUES one drops that code long at Tier 3 by name
-  (`aes_evinput.queued_code_drops`, derived from the ROM run's own stores). What is not built is laying a queue the
-  ROM's ISRs filled into OUR blob with its code longs relocated — which forker's own pricing waits on. Every forkq
-  caller queues a fork function by an IMMEDIATE ROM address (pushed, or — ap_tplay — stored in the local its forkq
-  call pushes), and forker's recorder and ap_trecd compare against them: sixteen instructions,
-  `aes.FORK_FUNCTION_IMMEDIATES`, CODE values a C port stores as the ROM's and a rebuilt ROM as its own
-  (`test_aes_door` holds them as every longword of the GEM text naming a fork function, and every forkq call as
-  queueing one).
+- **A real process switch — BUILT.** On target the switch is the ROM's own bytes (`src/aes/switch.S`, THE SWITCH kind
+  below) and a yield through our whole dispatcher is a priced row; off target it is a model behind a per-case switch
+  (`aes_switch.scheduling`, above). What the design said of it holds: savestate's CPU state in the UDA is compared
+  byte for byte ONLY by the `.S` rows, entered with one register file on both shores; for a run through C it is a
+  by-nature drop, cut to what the ROM's run stored (the caller's saved D1/D2 for the bare yield, the whole context for
+  a compiled caller), and savestate's `lea $8c1a,sp` puts disp's frames in compared RAM — the dispatcher's stack is
+  dropped by name and, on our shore, PUT BACK as our run found it. What remains is rows that switch WITH A DELIVERY or
+  through a foreign process (Tier 3's arrival rule at a door entry that reaches dsptch).
+- **The RELOCATION of a ROM-made fork queue for our blob — BUILT** (A CODE ADDRESS IN COMPARED RAM IS RELOCATED, NEVER
+  DROPPED, above): forker is priced over queues the ROM's own ISRs filled, its recorder's three arms are rows on both
+  blobs, and no row drops a code address. forker's `jsr (a0)` is `staged_call.h`'s `call_alcyon_pointer` — off target
+  the ONE register-carrying hook, bound by a case to the candidate's fork functions by their ROM addresses
+  (`aes_event.handed_routines()`; the VDI's `$fcff0a` default_user_cur among them for a playback); on target a queue
+  entry's code is the function's own plain-C entry (`aes_<fn>_fork`). Every forkq caller queues a fork function by an
+  IMMEDIATE ROM address (pushed, or — ap_tplay — stored in the local its forkq call pushes), and forker's recorder and
+  ap_trecd compare against them: sixteen instructions, `aes.FORK_FUNCTION_IMMEDIATES`, CODE values a C port stores as
+  the ROM's and a rebuilt ROM as its own (`test_aes_door` holds them as every longword of the GEM text naming a fork
+  function, and every forkq call as queueing one). By nature and left: a recording MADE under the ROM holds ROM
+  fork-function addresses, and played back under our build they are queued as they are.
 
 ## Verified functions, and what they cost on each side
 
@@ -1095,13 +1327,70 @@ registering its shapes through `vdi_fill`'s Alcyon frame caller — the pin, the
 register set (D2), ten `AES rc_intersect (.S)` rows at 1.00 and mechanism (T) over its C rows all went
 through, and the `.globl` pin reddened with `src/aes/*.S` dropped from `TRANSCRIBED_SOURCES`.
 
-**THE SWITCH is a third kind of `.S`** (`atari/target.mk`: `SWITCH_SOURCES`; `src/aes/switch.S`): the process
-switch's hand 68000 — today dsptch's twenty bytes, `$fe387c..$fe388f`, byte-exact, its `jmp` to the ROM's own disp
-until the scheduler ships. It is not a table row: there is no C twin to exclude and no thunk may stand over an entry
-that builds a frame from its caller's return address; its entry carries the name the C calls (`aes_dsptch`), and the
-headers it includes are assembler-safe (`__ASSEMBLER__` guards in `aes/switch.h` / `aes/evsync.h`). `test_tier3.py`
-pins the list (as make expands it), the bytes on both blobs, and that C calling `aes_dsptch` links against it under
-both blobs' flags; `transcription.switch_sources()` / `SWITCH_ENTRIES` are the Python side.
+**THE SWITCH is a third kind of `.S`** (`atari/target.mk`: `SWITCH_SOURCES`; `src/aes/switch.S`, `src/aes/irq.S`): the
+hand 68000 that has NO C SPELLING — the process switch (dsptch, the mask brackets, gotopgm, savestate, switchto:
+`$fe387c..$fe395b`), the interrupts' glue with drawrat and justretf (`$fed3be..$fed477`), and disp. Not table rows:
+there is no C twin to exclude, and no thunk may stand over an entry that builds a frame from its caller's return
+address; an entry carries the name the C calls (`aes_dsptch`), and the headers a source includes are assembler-safe
+(`__ASSEMBLER__` guards in `aes/switch.h` / `aes/evsync.h`). `transcription.SWITCH_ENTRIES` is the kind's table —
+`{entry: SwitchEntry(rom, bytes, exits)}`, its lengths derived from the addresses, `exits` the symbols of OUR build an
+entry's bytes name where the ROM's name the ROM's — held to the sources' `.globl`s and to each entry's pin
+(`test_aes_switch.py`, `test_aes_irq.py`). No entry reaches the AES's ROM text, and NO WORD OF EITHER BLOB NAMES A ROM
+ADDRESS OF THE KIND (`test_aes_irq.py`: every even longword of the blob scanned; the ROM's own sites that still do are
+a held list, `OWED_BY_ROUTINES_NOT_RECONSTRUCTED`, against the census of the ROM's code immediates — port one and
+forget to re-point it, and the list reds). THIS IS THE PROJECT'S "C FIRST, `.S` WHERE C CANNOT MEET THE BAR" APPLIED
+TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/evdisp.c`).
+- THE BYTE-EXACT REGIONS are pinned like any transcription (`pinned_region` / `assert_transcribed`), a word that names
+  code a `Relocated(ABSOLUTE, None, why, thunk=<symbol>)`: dsptch's `jmp` (our disp); the glue's three `jsr`s (local
+  thunks that take its pushed WORDS into the C call) and its two fork functions pushed by value (our entries). A `jsr`
+  of our own entry where the ROM's word named a ROM routine is spelt `M68K_JSR_LONG(entry)` (`m68k_encodings.h`: gas
+  would shorten it to `jsr <d16>(pc)`).
+- **THE `stream` KIND** — for a routine Alcyon COMPILED that must still ship as assembly (disp: savestate reads its
+  frame through A6 and hands it back another stack, a contract no compiled function keeps). Its calls are Line-F
+  words, which would run the ROM's code from inside our build: so it is declared `transcription.stream(lo, hi, symbol,
+  {ROM address: CallWord(routine, symbol)})` and held by `assert_stream` INSTRUCTION BY INSTRUCTION — each Line-F CALL
+  word named (the ROM's table entry must reach `routine`; ours is `jsr symbol`), each branch's displacement the ROM's
+  target followed to where our stream holds it, every other instruction equal, no PC-relative addressing, a Line-F
+  RETURN refused (end the stream before it and prove it dead), the symbol's size exactly the stream's. disp's six
+  substitutions: savestate, disp_act, mwait_act, forker, idle, switchto — the two halves of the switch by their own
+  entries, the four C routines through local thunks.
+- WHAT A PIN OF THE KIND DOES NOT REACH IS HELD BESIDE IT: `aes_switch.vet_a_thunk` (a thunk's body, instruction for
+  instruction: which C it calls, its argument slots, a word's sign extension) and `vet_laid_end_to_end` (the source's
+  symbols tile its text; after the last, the assembler's fill and no instruction — an `rts` after a `.size` passed
+  every pin before).
+- A `.S` ENTRY WITH A REGISTER CONTRACT AND BY-NATURE MEMORY (the glue) has no Tier 3 row: `aes_switch.vet_the_glue`
+  is its differential — the ROM's glue and each blob's over one machine with one register file (an arrival of the
+  ROM's own interrupt code: `glue_arrival`), the private stack and a queued fork code held as what they are.
+- **A CODE ADDRESS THE BUILD HANDS THE OS IS INSTALLED BY THE BUILD.** A routine that hands the VDI a routine's
+  address by value (gsx_setmb_aes: vex_butv / vex_motv) keeps handing the ROM's until somebody re-points it — and then
+  the `.S` that replaces the routine is dead weight, every guarantee proved of it is proved of code the shipped path
+  does not enter, and no differential sees it (the host must store the ROM's address to stay exact). So:
+  `ALCYON_ROUTINE(AES_ROM_<X>, aes_rom_<x>)` at the site (the host the ROM's address, the target ours), the six slots
+  relocated at Tier 3 (above), the scan of both blobs, and one test of the shipped path END TO END — over the machine
+  OUR gsx_init left, the ROM's own VDI mouse interrupt enters OUR glue and spends 0 cycles in the AES's ROM text.
+- **THE DERIVED STACK CHECKS — a `.S` entry that calls C on a stack the ROM sized.** Byte-pinning the entry says
+  nothing about the C it calls: GCC's frames are not Alcyon's, and a stack the ROM sized for its own (the dispatcher's
+  640 bytes, the glue's 92 and 96) can be overrun by a build whose every differential is green — into the globals
+  below it. A MEASURED depth is met by case choice (the first check here was asked of the one path that is not the
+  deepest, and a frame 300 bytes deeper passed it). So THE DEPTH IS READ OFF THE BUILD (`aes_switch.StackReading`):
+  every instruction of every function reachable from the entry, each one's effect on SP followed down every branch,
+  each call's callee added under the depth at its site; a call through a register is the functions THAT REGISTER holds
+  by value where the call is made (read back through its block to the load that reaches it; a function GCC spilt to
+  a frame slot too); a `trap #2`'s depth is answered beside the bound, for the measured need under it; the reading
+  REFUSES what it cannot follow, EACH SHAPE BY NAME — an instruction that sets SP it does not know, two paths that
+  meet at different depths, recursion, A CALL THROUGH A POINTER OF THE MACHINE (read out of memory or handed in:
+  followed only where its caller DECLARES what the pointer can hold — `THROUGH_A_POINTER`: forker's four fork
+  entries, drawrat's two cursor routines; the declarations held to the snapshot), a register nothing loads, a trap
+  other than `trap #2`, a jump through a table, a path that runs off a listed body. Held to the truth by runs (the
+  reading's deepest trap is EXACTLY a run's; the glue's deepest path is its deepest case).
+  WHAT AN INTERRUPT NEEDS ON TOP IS MEASURED TWICE, AND THE TWO DIFFER: the ROM's own handlers from their vectors
+  (`interrupt_needs`, kept by content — cold-sweep a mutant of it) and THE BUILD'S OWN ENTRIES (`our_interrupt_needs`:
+  what a ROM that ships installs — each a pushed image pointer, a `jsr` and a C body's register save deeper than
+  the ROM's); and the OS under a trap twice too — the ROM's VDI and OUR C VDI linked under the trap
+  (`our_loop_run(our_vdi=True)`). A check that adds THE ORIGINAL's handlers to OUR frames passes a build that ships
+  its own. Today: 356 + 240 = 596 of 640 under the ROM's BIOS; **356 + 344 = 700 under our own entries — a strict
+  xfail and STATUS's KNOWN ON-TARGET RISK**; 78 / 60 / 58 of 92 / 92 / 96. A recompile that deepens any frame on a
+  path — one no case runs as on the others — reds by name.
 
 **An ALCYON ENTRY `.S` is glue, not a transcription.** When AES C hands a routine BY VALUE to ROM-shaped code that calls it
 the Alcyon way — ob_draw passing just_draw to everyobj (`$fea08c`) — the host case binds the ROM address to the C core, but
@@ -1129,11 +1418,21 @@ one test function, then every session through the next) the cases of one session
 the far ones to a worker that derives the session again. So the cases of one session are collected back to back, where
 the first of them stood. WHICH cases are one session's is the battery's to say, by the marker `collected_with`: on a
 test (`collected_with(name)`) or on a module (`pytestmark = pytest.mark.collected_with(by=function)`, a function of a
-case's parameters answering its group, None for a case that is no session's). Three batteries declare it: the file
+case's parameters answering its group, None for a case that is no session's). Four batteries declare it (`test_aes_evmulti.py`
+by its case's name, below): the file
 selector's sessions (`test_aes_fs_input.py`), its priced sessions' cases (`test_aes_fs_input_rows.py`), and Tier 3 —
 a sliced session's rows, companions and partition test (`test_tier3.py`). Nothing is added, removed or renamed — the
 same items and ids, reordered inside their own module. `test/test_conftest.py` pins both: the distribution on real
 runs of xdist, the order on each battery's own declaration.
+
+A BATTERY'S MEMO IS BOUNDED AND ITS TESTS ARE GROUPED. A result holds the images its run left, sixteen megabytes each:
+a `functools.cache` over a table of cases was TWO GIGABYTES a worker (ev_multi's battery, 93 results), and with no
+grouping a steal handed the tests of one case to other workers, each of which ran the case again (1.8 times over under
+`-n 8`). `test_aes_evmulti.py` keeps the last three cases (`lru_cache`) and collects the tests of one case back to
+back (`pytestmark = collected_with(by=<the case's name>)`; a test that reads one case by a literal name is marked
+`of_the_case(name)`), so a steal splits a case's tests at one boundary and no worker runs a case for one test of it:
+2,100 → 587 MB, and with the two steering levers 36 → 7 CPU-s warm. Measure a new battery's peak RSS and its ROM runs
+under xdist against serial before it lands.
 
 ## ROM-only derivations kept on disk — `test/derived.py`
 
@@ -1193,10 +1492,26 @@ Beyond the key:
 - a derivation must answer ONE machine whatever ran before it in the process — which is why the kit seeds USP at a
   run's entry (`TRAP_MODEL.md`) and `test_a_derivation_answers_one_machine_whatever_ran_before_it` pins it here.
 
+A DERIVATION IN FLIGHT IS CLAIMED (`derived.py`'s docstring has the whole contract), so the processes that ask one
+question at one moment make it ONCE — ten cold workers importing the registry side by side each made every derivation
+(308–318 → 183–193 CPU-s with the claim; 360 → 275 in the suite's own cold collection). A process about to MAKE an
+answer puts a claim beside the answer's place (a hard link: it fails where a claim stands); one that finds another's
+claim WAITS and is then served the answer as any hit is. What makes it safe to wait: a claim whose maker is no more —
+gone, stopped, or its pid another process's now — is taken over at once, and one that stood
+`CLAIM_STUCK_AFTER_SECONDS` under one maker likewise; a claim that went with NO answer left means the derivation
+RAISED there, and every waiter then makes it itself, UNCLAIMED and side by side (taking the claim in turn made ten
+askers wait on one another's failures); a claim that names nothing readable has no maker; a place that cannot be
+claimed is made unclaimed; a process that HOLDS a claim never waits; a waiter's rests GROW FROM ITS FIRST LOOK at a
+question (5, 10, 20, 40 ms, then 50: a back-off that began after a whole second of one question never began — the
+mean wait is 60 ms). NOTHING HERE DECIDES AN ANSWER: a claim is in no key and is no answer. A test that patches the cache's place
+must leave no `*.claim` behind in the tree's own cache.
+
 TO KEEP A NEW DERIVATION: decorate the function that makes the ROM's run with `@derived.kept`, hand it everything it
 reads as arguments of a kind the key can read (a module global a test may patch becomes an explicit input), and add
 its changed-input cases to `test_derived.py`. NEVER keep anything our build takes part in — a differential, a Tier
-3 measurement, the bench blobs' runs: that is the suite's subject. And the real-disk run's DELIVERIES are not
+3 measurement, the bench blobs' runs: that is the suite's subject. (ONE exception, stated in `derived.py`: which
+steering reasons a case needs — its trials run the candidate; the tree's key holds the candidate's library as loaded,
+and the answer decides no verdict.) And the real-disk run's DELIVERIES are not
 reused for a session's replay: they are another machine's wherever GEMDOS itself left a mark an interrupt meets (a
 session that rings the bell: the BIOS's sound state under the next key's click), and a delivery records the bytes
 an interrupt writes over, not those it reads — so "they fit" would not prove "they are the replay's"
@@ -1211,11 +1526,15 @@ HOW IT IS RUN:
   and one unused for two days goes.
 - THE SWITCHES, all environment variables: `AES_DERIVED_OFF=1` (nothing read or written: the cold shore of any
   A/B); `AES_NO_ZYGOTE=1` (no process forks a zygote: every guard's fork is its worker's own, the other A/B);
-  `AES_DERIVED_SAMPLE_SEED=<anything>` (another sample of the served answers is made again). INTERNAL, never set
+  `AES_DERIVED_SAMPLE_SEED=<anything>` (another sample of the served answers is made again);
+  `AES_FORKS_REPORT=1` (each process prints who made its children as it ends: the zygote's forks / its own / fresh
+  interpreters — THE ZYGOTE, above); `AES_STEERED_FOR_NOTHING=1` (the on-demand sweep of the steering reasons:
+  THE EVENT DOOR, above); `RUN_SLOW=1` (the placement search and the other tests gated as slow). INTERNAL, never set
   by hand: `AES_DERIVED_TREE`, a process's tree key and the record it was made with, handed to its children.
-- TELLING A COLD RUN FROM A WARM ONE: collection is 36–40 s a worker cold and about 10 s warm (pytest's own wall:
-  210.3 s for a bare cold `pytest`, 173.9 s for the pytest of a cold `make test`, 155.3 s warm — quiet, ten
-  workers). A timing quoted without saying which is not a timing; for a cold figure empty `build/derived/` or set
+- TELLING A COLD RUN FROM A WARM ONE: collection is 36–40 s a worker cold and about 10 s warm (pytest's own wall,
+  ten workers, quiet at the start: 209 s and 1,560 CPU-s for a bare cold `pytest`, 146 s and 1,288 CPU-s warm —
+  22,681 tests, 2026-10-07; before the kit read images in place and the zygote's lazy-cache fix: 231 / 170 s). A
+  timing quoted without saying which is not a timing; for a cold figure empty `build/derived/` or set
   `AES_DERIVED_OFF=1`, and remember that ANY edit under the keyed tree makes the next run cold.
 - WHAT MUST STAY EQUAL cold, warm and off (the content-neutrality check of any change here): the collected case ids
   and outcomes, the row hashes and scenario hashes over one pinned `boot_ram.bin`, the table's lines.
@@ -1229,8 +1548,9 @@ non-zero if any did. The same command lines as kit.mk's targets (PYTEST_ARGS / G
 case ids and outcomes as the four run in turn. It starts by removing `build/gates/`, so two of them at once in one
 tree overwrite each other's logs: one at a time. WHAT IT BUYS IS NOT THREE GATES FOR THE WALL OF ONE — the two
 suites are the same CPU-bound work twice and ten cores are ten cores (side by side each takes about twice as long):
-measured, 388 s against 389 s for the four in turn (309 s with the derivations made). It buys one command, one build and one set of derivations. It
-does not `rm build/*.so`: the forced rebuild before a commit is still the committer's own first step.
+measured, 388 s against 389 s for the four in turn (309 s with the derivations made; 375 s and 2,985 CPU-s from an
+EMPTY `build/` at 22,681 tests, 2026-10-07). It buys one command, one build and one set of derivations. It does not
+`rm build/*.so`: the forced rebuild before a commit is still the committer's own first step.
 
 ## Mutation sweeps — how a mutant is counted
 
@@ -1272,6 +1592,26 @@ and `.S` (the repository's `docs/agent-playbook.md` §10 has the rebuild traps).
   on a private BLOB against the surface that reads the blob (`test_aes_evfork_interrupted.py`, the byte pins).
 * **A twin's leaf battery is swept ALONE**: a mutant another battery kills is still a hole in the battery that is
   the twin's only holder once its entry is flipped.
+
+* **A WARM Python sweep is BLIND to a mutant inside a kept derivation** (and to one of a module global a kept
+  derivation reads). A harness mutant applied to the FILE changes the tree's key and runs every derivation cold (3–12
+  minutes a mutant under load); applied AT IMPORT by a meta-path hook — the tree's files untouched, the key the
+  unmutated tree's — the sweep is warm. But then the unmutated answer of a kept derivation is SERVED: two mutants of
+  `aes_switch` (the ticks an interrupt's need is measured over; the bytes the OS uses under a trap) SURVIVED warm and
+  are KILLED with `AES_DERIVED_OFF=1`. Run such mutants cold.
+* **WHICH PART OF A BATTERY HOLDS A MUTANT is asked with `-k`**: a store that a comparison's drop could hide is swept
+  against the tests that use that comparison ALONE (the six stores in the ROM's frames and save words: killed by `-k
+  woke`), so "killed" is not the gift of an unrelated differential.
+* **A host-only stand-in is swept through a test of its own**: a library that keeps a host slot held aborts the WORKER
+  at the next in-process claim — ABNORMAL, never KILLED — wherever the zygote made the fork-first run (its own library
+  is clean). The give-back is held by a test that makes the call twice in one fork
+  (`test_the_qpb_s_host_slot_is_given_back_when_the_call_returns`).
+* **A "mutant" that deletes a TEST's own assertion is no mutant of the code under test** — nothing tests a test. Say
+  so where a sweep lists one. And CHECK THE BASELINE before trusting a kill: a mutant tree gone stale against the
+  shared tree turned a baseline red into a "KILLED".
+* **A control's own machinery is code**: the zygote's frozen-module rule had no test that the zygote still stood in
+  after an ordinary test, and a neighbouring test passed or failed by which tests its worker had run before it. A
+  speed lever needs a test that it is ON (`AES_FORKS_REPORT`), not only that the suite is green with it.
 
 ## Layout
 

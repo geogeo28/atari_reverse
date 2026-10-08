@@ -188,6 +188,12 @@ diff failure is almost always in the new code.
 ## 7. Keep the loop tight
 
 - **Iterate with `reapply.sh`, not `run.sh`** — re-import wipes names; only bootstrap once.
+- **Do not copy what you only compare.** A harness that compares two 16 MB images per case spends
+  its time copying and walking them: find an equal chunk with one `memcmp` over the two buffers IN
+  PLACE and read the candidate's image where it lies, copying only a chunk that differs (the
+  recreate kit's two levers: −14 % of a 22,000-test suite's CPU, content-neutral). What makes it
+  safe is one stated ordering rule — every read of a run's image happens before the next run is
+  handed the buffer — and a test that the compare really is handed the candidate's own buffer.
 - **Shard fuzz tests** so no single test item gates the wall clock: split case-generation from
   checking and parametrize by chunk, so `-n auto` spreads thousands of iterations across workers
   with byte-identical coverage.
@@ -283,6 +289,36 @@ measured in this workspace rather than imagined.
   what is there and refuse a mismatch, so an item written some other legal way is a refusal rather
   than something quietly outside the check. Then flip one thing and watch it redden: a gate nobody has
   seen fail is a gate nobody has tested.
+
+- **A callback into Python swallows what the checker raises.** ctypes prints and DROPS an exception
+  raised inside a callback: a hook's vet that raised read as "the hook served the call", and
+  `pytest.fail` / `pytest.skip` — a `BaseException` that is no `Exception` — slipped past an `except
+  Exception` that did catch an `assert`. The case passed GREEN with the refusal printed to a stream
+  nobody reads. Record whatever a callback raises (`except BaseException`), answer the call as
+  refused, and fail the case when the binding closes (TOS 1.02's `test/address_hook.py`; measured by
+  wrapping every effect so that it does its work and THEN raises).
+- **A "nothing was rebound" identity check must name its lazy caches.** A guard that switches a
+  speed lever off when a module-level value is no longer the object it was at start-up also fires on
+  a module-level `None` bound on first use — which is no patch. Measured: the first test of a
+  process that warmed one such cache switched the lever off FOR THE REST OF THE PROCESS; most
+  workers ran without it, every suite stayed green, and a neighbouring test passed or failed by
+  which tests its worker had run before it. A control's own machinery is code: give a lever a test
+  that it is ON after an ordinary test, and a counter you can print (who made each fork), not only a
+  suite that is green with it.
+- **A warm mutation sweep is blind to a mutant inside a cached derivation.** Mutating a harness FILE
+  changes a content-keyed cache's key and runs every derivation cold (3-12 minutes a mutant under
+  load); applying the mutant AT IMPORT (a meta-path hook, the files untouched) keeps the sweep warm
+  — and then serves the UNMUTATED answer of any derivation the mutant lives in. Two such mutants
+  "survived" warm and were killed with the cache off. Sweep warm, then re-run every survivor cold
+  before arguing it equivalent.
+- **A coverage figure, a probe and a log each describe the tree they were made from.** One wave,
+  three instances: "156/156 regions" read off an instrumented build older than the battery it was
+  quoted for (two arms were executed by no test; a trap planted in each left the battery green); a
+  scratch probe quoted as evidence that no longer ran on the reviewed tree (it read a name deleted
+  since); and a gate log that ended with a summary line although every worker had been killed at
+  once mid-run. Re-make the figure on the final tree, plant a trap in an arm before believing it is
+  executed, and treat a log that ends in a kill as no result — a successor re-runs the proof, it
+  does not read it.
 
 ### A measured survivor is a finding about the SURFACE, not a licence
 

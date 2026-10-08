@@ -55,8 +55,8 @@ ROM_ADDRESSES_AS_DATA = {
     # dos_close (host arguments).
     "resource.c": {"AES_RSC_BUNDLE": TABLE, "AES_RS_FREE_MFREE_RETURN": RETURN_SITE,
                    "AES_RS_READIT_CLOSE_RETURN": RETURN_SITE},
-    # gsx_setmb_aes hands vex_butv/vex_motv the AES's interrupt glue by its ROM address (rows $fe884a/$fe8844 of (b)), and
-    # gsx_mfree's dos_free parks the word after its Line-F call.
+    # gsx_setmb_aes hands vex_butv/vex_motv the AES's interrupt glue by its ROM address on the host (rows $fe884a/$fe8844
+    # of (b)); on target, the glue the build links (`irq.S`). gsx_mfree's dos_free parks the word after its Line-F call.
     "gsxif.c": {"AES_ROM_BUTTON_GLUE": CODE, "AES_ROM_MOTION_GLUE": CODE, "AES_GSX_MFREE_RETURN": RETURN_SITE},
     # sh_find's return site from dos_sdta (a host argument, as rsrc_free's).
     "shell_find.c": {"AES_SH_FIND_SDTA_RETURN": RETURN_SITE},
@@ -76,9 +76,6 @@ ROM_ADDRESSES_AS_DATA = {
     # so an entry leaves the list with its flip's re-spelling and no edit here — tak_flag did.
     "aes/evdoor.h": {"AES_LINEF_TABLE": TABLE,
                      **{name: CODE for name in aes_event.ENTRY_NAMES if getattr(addrs, name) not in aes_event.REBOUND}},
-    # dsptch's `jmp` into the ROM's own disp: the scheduler a rebuilt ROM keeps where it is until it ships as its own
-    # `.S` (band 4, wave 2) — the one instruction of the switch's entry that names ROM text.
-    "switch.S": {"AES_ROM_DISP": CODE},
     # eralert's two tables, read in place (an error past them reads on, as the ROM's does), and the bell's Bconout: the
     # D0 the BIOS dispatcher would have jumped with, handed to its C core off target (`bios/bcon.h`).
     "fmdo.c": {"AES_ERALERT_STRINGS": TABLE, "AES_ERALERT_LEVELS": TABLE, "BIOS_BCONOUT": CODE},
@@ -95,7 +92,7 @@ ROM_ADDRESSES_AS_DATA = {
     "evlib.c": {"AES_DCLICK_MS_TABLE": TABLE},
     # The FORK FUNCTIONS' addresses, a queue entry's code: what the ROM's own interrupts queue and the host's forkq
     # callers store — off target; on target each is the function's own entry (`staged_call.h`'s ALCYON_ROUTINE). Three
-    # of the four: mchange is queued by the motion vector's glue alone, which no C is yet (the dispatcher's `.S`).
+    # of the four: mchange is queued by the motion vector's glue alone (`irq.S`, which pushes the function's own entry).
     "aes/evfork.h": {"AES_ROM_KCHANGE": CODE, "AES_ROM_BCHANGE": CODE, "AES_ROM_TCHANGE": CODE},
 }
 

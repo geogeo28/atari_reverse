@@ -30,9 +30,10 @@ release too many, the hand-over to an only waiter and to the first of two (twice
 the screen manager's, and two waits of the screen manager's own) — the pointer on the bus, the count as the WORD it
 is, the owner as the LONG it is.
 
-UNPINNED, and why: iasync with no EVB free (fifteen EVBs: get_evb's "none" is not tested by the ROM); akbin's key
-count as a byte (the queue holds eight); adelay's ticks counted with no delay pending as a long (65,536 ticks counted
-and none pending).
+REFUSED BY NAME off target: iasync with no EVB free (`evwait.c`: get_evb's "none" is not tested by the ROM, which
+builds the wait at address 0 — a bus error on a 68000; held through ev_multi, `test_aes_evmulti.py`).
+UNPINNED, and why: akbin's key count as a byte (the queue holds eight); adelay's ticks counted with no delay pending
+as a long (65,536 ticks counted and none pending).
 """
 import struct
 

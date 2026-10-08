@@ -9,6 +9,7 @@ import mmap
 import os
 import select
 import signal
+import sys
 import threading
 import time
 
@@ -39,9 +40,31 @@ def _served(buffer, request):
         return [fd for fd in arguments[0] if _is_open(fd)]
     if what == "raise":
         raise RuntimeError("raised in the zygote")
+    if what == "say":                   # ...on the zygote's own stderr, no newline: left in its buffer, unflushed
+        print(arguments[0], end="", file=sys.stderr)
+        return None
+    if what == "a fork's stderr":
+        return _what_a_fork_writes_as_it_takes_its_own_stderr()
     if what == "die":
         os._exit(1)
     raise AssertionError(f"no such request: {what}")
+
+
+def _what_a_fork_writes_as_it_takes_its_own_stderr():
+    """IN THE ZYGOTE: fork; the fork makes a pipe its descriptor 2 and replaces `sys.stderr` — as every fork that
+    reports to its parent does — and leaves at once. What came down the pipe: nothing the fork itself wrote."""
+    reading, writing = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(reading)
+        os.dup2(writing, zygote.STDERR_FD)
+        sys.stdout = sys.stderr = open(zygote.STDERR_FD, "w", buffering=1, closefd=False)   # the old object goes, flushed
+        os._exit(0)
+    os.close(writing)
+    with os.fdopen(reading, "rb") as said:
+        written = said.read().decode()
+    os.waitpid(pid, 0)
+    return written
 
 
 def _is_open(fd):
@@ -109,6 +132,17 @@ def test_a_serving_function_that_raises_fails_the_request_by_its_traceback_and_t
         its.ask(("raise",))
     assert "Traceback" in str(failed.value)
     assert its.ask(("echo", "still there")) == ["still there"]
+
+
+def test_what_the_zygote_itself_printed_is_in_no_fork_s_stderr(made):
+    """RED before the zygote's own stderr was line-buffered and flushed as each request is served: a line the
+    ZYGOTE had printed and not yet written (a hook's module warning at import; here a line with no newline) stayed
+    in its `sys.stderr`'s buffer, every fork inherited the buffer, and wrote it out as its own stderr — a fork's
+    refusal read by its parent began with the zygote's words."""
+    its = made()
+    its.ask(("say", "the zygote's own words"))
+    assert its.ask(("a fork's stderr",)) == ""
+    assert its.ask(("a fork's stderr",)) == ""
 
 
 def test_a_zygote_that_died_is_gone_by_name_and_stays_gone(made):

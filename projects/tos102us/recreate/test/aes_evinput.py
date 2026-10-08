@@ -17,17 +17,15 @@ WHAT RUNS IN A SCENARIO, each step the ROM's own code over the machine the step 
     for a machine nothing wakes until the n-th poll of an idle that would spin for ever.
   * A RUNNING PROCESS'S CALL (`call`): evnt_multi, wind_update, appl_trecord, appl_tplay — to its return or to dsptch.
 """
-import functools
 import struct
 from collections import namedtuple
 
-from harness import BASE_IMAGE, _lib, addrs, emu, make_image
+from harness import BASE_IMAGE, addrs, emu, make_image
 from recreate_kit import rom_bench
 
 import aes
 import aes_event
 import aes_evasync
-import aes_gsx
 import aes_pdpipe
 import case
 import derived
@@ -35,7 +33,6 @@ import isr
 import routines
 import test_aes_wm_update
 import vdi
-import vdi_entry
 from case import merge_pokes
 
 EVI = aes.header_constants("evinput.h")
@@ -687,42 +684,11 @@ fork_queue, button_change = aes_event.fork_queue, aes_event.button_change      #
 
 
 # ---- the run door ---------------------------------------------------------------------------------------------------------
-# WHAT A CORE OF THIS LAYER CALLS THROUGH A HOOK, off target: the VDI's cores (chkkbd's and mchange's polls:
-# `aes_gsx.vdi_hook`) and, through the register-carrying hook, a FORK FUNCTION — the code of a queue entry, the ROM's
-# address off target (`aes/evfork.h`), served by the candidate's own core over the entry's one longword, taken apart
-# as the function's Alcyon frame — and the cursor routine drawrat calls: the ROM's bare `rts` (AES_ROM_JUSTRETF) in the
-# snapshot, and while a recording plays THE VDI's OWN (`$fcff0a` default_user_cur, which ap_tplay saves in `$947a`:
-# the point queued for the VBL), served by the candidate's VDI core over D0 and D1.
-def _fork_function(name):
-    core, frame = getattr(_lib, routines.core_symbol(name)), FRAMES[name]
-
-    def effect(buf, registers):
-        core(buf, *frame.unpack(struct.pack(">I", registers[isr.REGISTER["a0"]])))
-    return effect
-
-
-def _default_user_cur(buf, registers):
-    _lib.vdi_default_user_cur(buf, registers[isr.REGISTER["d0"]], registers[isr.REGISTER["d1"]])
-
-
-HANDED_ROUTINES = {**{getattr(addrs, name): (b"", _fork_function(name)) for name in FORK_FUNCTIONS},
-                   addrs.AES_ROM_JUSTRETF: (b"", lambda buf, registers: None),
-                   addrs.VDI_ROM_DEFAULT_USER_CUR: (b"", _default_user_cur)}
-# The VDI's INPUT functions the layer polls with, beside the ones the AES's graphics reach (`aes_gsx.REACHED_FUNCTIONS`):
-# vq_key_s, vsin_mode and vsm_string (chkkbd), vsm_locator (mchange while a recording plays).
-POLLED_FUNCTIONS = ("VDI_ROM_VQ_KEY_S", "VDI_ROM_VSIN_MODE", "VDI_ROM_STRING", "VDI_ROM_LOCATOR")
-
-
-def vdi_hook():
-    """`aes_gsx.vdi_hook` with the input functions too."""
-    table = dict(aes_gsx.vdi_functions())
-    for name in POLLED_FUNCTIONS:
-        aes_gsx.opcode_of(name)
-        table.update(vdi_entry.function(name))
-    return isr.staged_routines(table)
-
-
-HOOKS = aes.doors(vdi_hook, aes.alcyon_object_hook(HANDED_ROUTINES))
+# WHAT A CORE OF THIS LAYER CALLS THROUGH A HOOK, off target, is the event layer's own to say and is said once
+# (`aes_event`, "WHAT THE EVENT LAYER'S OWN C CALLS OUT THROUGH"): the VDI's cores, the polled input functions among
+# them, and the routines it is handed by value — a fork function, the cursor routine drawrat calls. THE SHARED BINDING
+# is `aes_event.EVENT_LAYER_HOOKS` — a NAMED hook, so the forks that serve it are the zygote's.
+HOOKS, SERVED_IN_A_FORK = aes_event.EVENT_LAYER_HOOKS, aes_event.SERVED_IN_A_FORK
 
 
 # A CURSOR ROUTINE OF A CASE'S OWN, for drawrat's `jsr (*$947a)` — A POKED FIELD AND CODE, labelled as that where it
@@ -744,19 +710,13 @@ def _cursor_logged(buf, registers):
 
 
 CURSOR_STAGED = {CURSOR_ROUTINE_AT: CURSOR_ROUTINE, GSXIF["AES_DRWADDR"]: struct.pack(">I", CURSOR_ROUTINE_AT)}
-CURSOR_HOOKS = aes.doors(vdi_hook, aes.alcyon_object_hook({**HANDED_ROUTINES,
-                                                           CURSOR_ROUTINE_AT: (CURSOR_ROUTINE, _cursor_logged)}))
-SERVED_IN_A_FORK = (isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL)
+CURSOR_HOOKS = aes.doors(aes_event.vdi_hook, aes.alcyon_object_hook({**aes_event.handed_routines(),
+                                                                     CURSOR_ROUTINE_AT: (CURSOR_ROUTINE, _cursor_logged)}))
 # What differs by nature where the ROM's run stores it: the Line-F mask word, the BIOS trap's register save under the
-# keyboard poll (`aes_event.TRAP_SAVE_DROP`) and spl7_save's SR save word under tchange's re-arm of the tick.
-# ...and the rest of that trap's save frame, above the ten registers: the exception frame's PC and SR as the BIOS's
-# dispatcher copies them. The PC is the VDI's own `trap #13` return site, which the reconstructed VDI — calling the
-# BIOS's core, no trap taken — never parks; the SR is the status register the VDI was called with.
-TRAP_FRAME_DROP = ((aes_event.TRAP_SAVE_AT + addrs.TRAP_SAVED_REGISTERS * LONG_BYTES,
-                    aes_event.TRAP_SAVE_AT + addrs.TRAP_SAVE_FRAME_BYTES,
-                    "the PC and SR of the keyboard poll's BIOS trap, as its dispatcher saves them: the VDI's own trap "
-                    "site and its caller's status register — a host VDI takes no trap"),)
-DROPS = aes.LINE_F_MASK_WINDOW + aes_event.TRAP_SAVE_DROP + TRAP_FRAME_DROP + aes_event.sr_drops(aes.AES_SR_SPL)
+# keyboard poll and the PC and SR of its frame (`aes_event.TRAP_SAVE_DROP`, `TRAP_FRAME_DROP`), and spl7_save's SR
+# save word under tchange's re-arm of the tick.
+DROPS = (aes.LINE_F_MASK_WINDOW + aes_event.TRAP_SAVE_DROP + aes_event.TRAP_FRAME_DROP
+         + aes_event.sr_drops(aes.AES_SR_SPL))
 
 
 # ---- what steers the attribution pass in this layer (`aes.run_function`'s `steered=`) ----------------------------------
@@ -868,63 +828,13 @@ def run_over(name, arguments, machine, **kwargs):
 
 
 # ---- the registry: Tier 3's rows ---------------------------------------------------------------------------------------
-# A FORK FUNCTION'S ADDRESS IN THE QUEUE IS A CODE VALUE: b_click, b_delay, chkkbd (and mchange, through b_delay) queue
-# one by an immediate — the ROM's address in the ROM, the function's own entry in our blob (`aes/evfork.h`, ruling Q3).
-# So a row whose run queues an entry drops that entry's CODE longword at Tier 3, by name — never forkq's own rows,
-# which store the code they are HANDED (the same value on both shores), nor a fork function's own (it posts, and
-# queues nothing but through b_delay) — with the companion that drops nothing: the
-# host core stores the ROM's address, and Tier 1 compares it.
-FORK_CODE_WHY = ("a fork queue entry's code: the fork function's address, the ROM's in the ROM and the function's own "
-                 "entry in a build linked elsewhere (`aes/evfork.h`); the host core stores the ROM's, compared at Tier 1")
-FORK_ENTRIES_AT = range(aes.AES_FORK_QUEUE, aes.AES_FORK_QUEUE + aes.AES_FORK_ENTRIES * aes.FORK_ENTRY_BYTES,
-                        aes.FORK_ENTRY_BYTES)
-
-
-def queued_code_drops(name, stored):
-    """The Tier 3 drops of a row of `addrs.<name>` whose ROM run `stored` at those addresses: the code longword of
-    each fork queue entry among them — none for forkq itself, which stores the code it is handed."""
-    if name == FORKQ:
-        return ()
-    return tuple((entry + aes.FORK_CODE, entry + aes.FORK_CODE + LONG_BYTES, FORK_CODE_WHY)
-                 for entry in FORK_ENTRIES_AT if entry + aes.FORK_CODE in stored)
-
-
-# forker's rows are VERIFIED AND UNPRICED: its machine's queue was filled by the ROM's own interrupts, so its entries'
-# codes are ROM addresses, which our blob's forker would `jsr` — the ROM's fork functions run inside our build, what
-# Tier 3 refuses. Pricing it needs the queue's codes relocated for our shore (ruling Q3), which no row can say yet.
-UNPRICED = (FORKER,)
-
-
-def settled(name, arguments, machine, traps=False):
-    """`(pokes, drops)` of a DIRECT row of `addrs.<name>` over an arrival's `machine`, from ONE run of the ROM's
-    routine over it: `savptr` in the stack band for a routine that polls the keyboard — or whose run is found to take
-    a BIOS trap, made again so (`aes_event.register`'s arrangement: the BIOS trap's save is its caller's registers);
-    the two words that differ by nature where the run stores them — the Line-F mask word, spl7_save's SR save word
-    under tchange's bracket — each STAGED at the value the run leaves and dropped at Tier 3 by name, for the row's
-    companion to compare with nothing dropped; and the queued fork functions' codes dropped by name (the companion's
-    host core stores the ROM's)."""
-    if name in (CHKKBD, FORKER) or traps:
-        machine = merge_pokes(machine, aes_event.savptr_in_the_band())
-    image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))
-    _final, writes, regs = emu.run(image, getattr(addrs, name))
-    assert not regs["writes_truncated"], f"{name}: the row's run overflowed the write ledger"
-    if addrs.SYSVAR_SAVPTR in writes and not (name in (CHKKBD, FORKER) or traps):
-        return settled(name, arguments, machine, traps=True)       # mchange while a recording plays: the VDI's locator
-    machine, drops = aes_event.settled_where_stored(machine, writes, aes_event.MASK_WORD_AND_SPL)
-    return machine, drops + queued_code_drops(name, writes)
+POLL_THE_KEYBOARD = (CHKKBD, FORKER)
 
 
 def register(label, name, arguments, machine, *, through_line_f=False):
-    """One `VERIFIED_CASES` row of `addrs.<name>` over an arrival's `machine` (`aes.register`'s naming and rules), with
-    its hooks for its companion and what `settled` stages and drops."""
-    hook = HOOKS if name in REACH_A_HOOK else None
-    row_name = f"{routines.core_symbol(name)}, {label}"
-    if through_line_f:
-        return aes.register(label, name, arguments, machine, through_line_f=True, hook=hook)
-    pokes, drops = settled(name, arguments, machine)
-    if name in UNPRICED:
-        return aes.ROWS.register(row_name, getattr(addrs, name), aes.staged(name, arguments, pokes), priced=False)
-    if not drops:
-        return aes.ROWS.register(row_name, getattr(addrs, name), aes.staged(name, arguments, pokes))
-    return aes.ROWS.register(row_name, getattr(addrs, name), aes.staged(name, arguments, pokes), dropped=drops,
-                             undropped=functools.partial(aes.undropped, name, arguments, pokes, hook))
+    """One `VERIFIED_CASES` row of `addrs.<name>` over an arrival's `machine` (`aes_event.register_row`: the one
+    settling's pokes and drops, the companion with this layer's hooks) — told the one thing this layer knows by name:
+    chkkbd and forker POLL the keyboard, so their rows' `savptr` is in the stack band whether a given run takes the
+    BIOS trap or not."""
+    return aes_event.register_row(label, name, arguments, machine, hook=HOOKS if name in REACH_A_HOOK else None,
+                                  through_line_f=through_line_f, polls=name in POLL_THE_KEYBOARD)

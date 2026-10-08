@@ -142,7 +142,11 @@ def _the_zygote_s_whole_life(requests, replies, address, image_bytes, served_by,
         # NOT be cancelled here: cancelling waits on a lock that thread held, for ever.)
         _holding_only(requests, replies, STDERR_FD)
         sys.stdin = open(os.devnull)
-        sys.stdout = sys.stderr = open(STDERR_FD, "w", closefd=False)
+        # LINE-BUFFERED, AND EMPTY WHENEVER A REQUEST IS SERVED: what the zygote itself has printed and not yet
+        # written (a warning at the serving module's import, a line with no newline) lies in this object's buffer —
+        # and a fork inherits the buffer with the object: every later fork would write it out again as ITS OWN
+        # stderr the moment it replaces the object (measured: three plain forks answered the zygote's import line).
+        sys.stdout = sys.stderr = open(STDERR_FD, "w", buffering=1, closefd=False)
         module, _, function = served_by.partition(":")
         serve = getattr(importlib.import_module(module), function)
         buffer = (ctypes.c_uint8 * image_bytes).from_address(address)
@@ -152,6 +156,7 @@ def _the_zygote_s_whole_life(requests, replies, address, image_bytes, served_by,
             except Gone:
                 break
             try:
+                sys.stderr.flush()                      # nothing of the zygote's own is in a fork's inheritance
                 reply = serve(buffer, request)
             except Exception:                           # the reply names it: the parent raises, the zygote goes on
                 reply = Raised(traceback.format_exc())

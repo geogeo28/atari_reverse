@@ -18,8 +18,9 @@
 #define QPB_PID               0          /* word: the process whose pipe it is  ($fe5998 move.w (a3),(sp))      */
 #define QPB_COUNT             2          /* word: the bytes to move             ($fe58d0 move.w 2(a0),d7)       */
 #define QPB_BUFFER            4          /* long: from where, or to where       ($fe58e2 move.l 4(a0),-(sp))    */
-#define QPB_BYTES             8          /* the three fields' extent: no C reads it (a QPB is read field by field) — the
-                                          * battery reads one whole out of iasync's frame by it (`test/aes_pdpipe.py`) */
+#define QPB_BYTES             8          /* the three fields' extent: a QPB is read field by field — what a C that
+                                          * BUILDS one sizes it by (`evmulti.c`, `evlib.c`: the host's slot), and the
+                                          * battery reads one whole out of iasync's frame (`test/aes_pdpipe.py`)    */
 
 /* ---- the answers ----------------------------------------------------------------------------------------------- */
 #define FPDNM_BY_PID          0          /* fpdnm's name: none, the process looked for by its id ($fe5708 tst.l) */

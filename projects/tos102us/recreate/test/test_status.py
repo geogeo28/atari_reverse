@@ -225,3 +225,74 @@ def test_every_routine_verified_unpriced_has_a_row_too():
         f"{len(missing)} routine(s) with verified, unpriced cases have no STATUS.md row: "
         + ", ".join(f"{entry:#x} ({name})" for entry, name in sorted(missing.items()))
         + ". Add one — `⚠️ verified, unpriced` with the reason, when no row of the routine is priced")
+
+
+# ---- THE SECOND COUNT: a row that calls a rebound entry is held twice, and STATUS.md quotes both ------------------------
+# `bench/tier3.py` prints the pair under such a row on a line of its own (`CALLER_LINE`: `TWO COUNTS: own / the
+# caller's own (ours against the ROM's)`); STATUS.md quotes it in the row's notes in the same form — `0.45 / 0.37 (812
+# against 2216)`. Hand-typed, a second count goes stale the day a caller's codegen moves, so it is held here both
+# ways: a pair the ledger quotes is one the table measured for THAT address, and every pair the table measured
+# whose two counts differ by more than TWO_COUNTS_QUOTED_FROM is quoted.
+_TWO_COUNTS = r"(?P<own>\d+\.\d\d) / (?P<caller>\d+\.\d\d) \((?P<ours>\d+) against (?P<the_rom_s>\d+)\)"
+_TABLE_TWO_COUNTS_RE = re.compile(r"^\s+TWO COUNTS: " + _TWO_COUNTS, re.M)
+_QUOTED_TWO_COUNTS_RE = re.compile(_TWO_COUNTS)
+_VERIFIED_LINE_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|.*✅ verified.*$", re.M)
+_ADDRESS_ON_A_TABLE_ROW_RE = re.compile(r"\$(?P<addr>f[c-e][0-9a-f]+)\s")
+TWO_COUNTS_QUOTED_FROM = 0.05
+# ...and the section's own summary of them, in its words: "<N> rows carry both; they differ by more than 0.05 in <M>".
+_TWO_COUNTS_SUMMARY_RE = re.compile(r"(?P<rows>\d+) rows carry both; they differ by more than 0\.05 in (?P<apart>\d+)")
+
+
+def _pair(match):
+    return match["own"], match["caller"], match["ours"], match["the_rom_s"]
+
+
+def _measured_two_counts():
+    """{ROM address: the `(own, caller's own, ours, the ROM's)` pairs the table printed under its rows} — each
+    `TWO COUNTS` line belongs to the measured row above it."""
+    measured, address = {}, None
+    for line in BENCH_TABLE.read_text().splitlines():
+        counted = _TABLE_TWO_COUNTS_RE.match(line)
+        if counted:
+            assert address is not None, f"a TWO COUNTS line under no measured row: {line.strip()[:80]}"
+            measured.setdefault(address, []).append(_pair(counted))
+        elif _TABLE_ROW_RE.match(line) and not line.startswith(" "):
+            address = int(_ADDRESS_ON_A_TABLE_ROW_RE.search(line)["addr"], 16)
+    return measured
+
+
+def _apart(pair):
+    own, caller, _ours, _the_rom_s = pair
+    return round(abs(float(own) - float(caller)), 2) > TWO_COUNTS_QUOTED_FROM
+
+
+def test_every_second_count_the_ledger_quotes_is_one_the_table_measured():
+    """A `own / the caller's own (ours against the ROM's)` the ledger quotes in a verified row is a pair
+    `make bench` printed for that address — all four numbers."""
+    measured = _measured_two_counts()
+    wrong = [f"{int(row['addr'], 16):#x}: quotes {' / '.join(_pair(quoted)[:2])} ({quoted['ours']} against "
+             f"{quoted['the_rom_s']}), which the table does not print for it"
+             for row in _VERIFIED_LINE_RE.finditer(_status()) for quoted in _QUOTED_TWO_COUNTS_RE.finditer(row[0])
+             if _pair(quoted) not in measured.get(int(row["addr"], 16), ())]
+    assert not wrong, f"{len(wrong)} second count(s) STATUS.md quotes were not measured:" + "".join(f"\n  {line}" for line in wrong)
+
+
+def test_every_row_whose_two_counts_differ_is_quoted_with_both():
+    """THE REVERSE: a row the table holds on two counts that differ by more than 0.05 has BOTH in the ledger's row
+    for its address — and the section's summary of how many there are is the table's count."""
+    measured, status = _measured_two_counts(), _status()
+    quoted = {}
+    for row in _VERIFIED_LINE_RE.finditer(status):
+        quoted.setdefault(int(row["addr"], 16), set()).update(_pair(each) for each in _QUOTED_TWO_COUNTS_RE.finditer(row[0]))
+    missing = [f"{address:#x}: {pair[0]} / {pair[1]} ({pair[2]} against {pair[3]})"
+               for address, pairs in sorted(measured.items()) for pair in pairs
+               if _apart(pair) and pair not in quoted.get(address, ())]
+    assert not missing, (f"{len(missing)} row(s) whose two counts differ by more than {TWO_COUNTS_QUOTED_FROM} are not "
+                         f"quoted with both in STATUS.md:" + "".join(f"\n  {line}" for line in missing))
+    summary = _TWO_COUNTS_SUMMARY_RE.search(status)
+    assert summary, "STATUS.md no longer says how many rows carry both counts (`N rows carry both; they differ … in M`)"
+    rows = sum(len(pairs) for pairs in measured.values())
+    apart = sum(_apart(pair) for pairs in measured.values() for pair in pairs)
+    assert (int(summary["rows"]), int(summary["apart"])) == (rows, apart), (
+        f"STATUS.md says {summary['rows']} rows carry both counts and {summary['apart']} differ by more than 0.05; "
+        f"the table holds {rows} and {apart}")

@@ -77,6 +77,9 @@
 /* `jsr <xxx>.l`, which gas turns into `jsr <d16>(pc)` for a label of the same section: merge_str's calls of the
  * Alcyon runtime ($fed0e6, $fed0f0) */
 #define M68K_JSR_ABSOLUTE_LONG     0x4eb9
+/* ...the whole instruction, for a `.S` that calls its own build's entry where the ROM's word named a ROM routine
+ * (`src/aes/switch.S`: disp's Line-F call words; `src/aes/irq.S`: the glue's `jsr`s) */
+#define M68K_JSR_LONG(entry)       .word M68K_JSR_ABSOLUTE_LONG; .long entry
 /* ...and `jmp <xxx>.l`, the same: gsx_ncode's tail call of gsx2 ($fe87ea) */
 #define M68K_JMP_ABSOLUTE_LONG     0x4ef9
 /* `$a000`, the Line-A exception word of its opcode 0 (Line-A init), which has no mnemonic: gsx_mfsave's ($fee498) */

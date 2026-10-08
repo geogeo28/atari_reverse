@@ -87,7 +87,7 @@ void aes_azombie(uint8_t *image, uint32_t evb)
 }
 
 /* $fe4002 — get_evb: the first free EVB off the free list and cleared — or 0 when none is free, which its one caller
- * (iasync, $fe40f8) does not test. */
+ * (iasync, $fe40f8) does not test (off target iasync refuses it by name: `evwait.c`). */
 uint32_t aes_get_evb(uint8_t *image)
 {
     uint32_t evb = be32(image + AES_EUL);

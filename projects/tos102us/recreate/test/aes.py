@@ -572,7 +572,7 @@ ARMS_NOTHING = frozenset({"poison", "dropped"})
 
 def run_function(name, arguments, pokes, *, through_line_f=False, dropped_windows=LINE_F_MASK_WINDOW, hook=None,
                  regs=None, host_arguments=(), result=None, answer_compared=True, steered=None, first=None,
-                 **kwargs):
+                 plain=None, **kwargs):
     """The Alcyon AES routine `addrs.<name>` over the frame of `arguments`, against its core called with the same
     values, the answer compared at the signature's width and `dropped_windows` — the mask word, by default — dropped where
     the ROM's run stores it. `kwargs` are `case.run`'s. Answers a `Result` (or the `result` subclass a battery reads
@@ -596,7 +596,11 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
     pass NARROWED to its reasons instead (above). `first(call, made)` is handed every run of the C before it is made
     in process — `call` the core's call over the very image the kit hands that run, the plain pass's and the
     attribution pass's alike, and `made` the same call BY CONTENT (a `CoreRun`): the door a battery's child-first
-    guard comes in by (`aes_event.run_core_guarded`)."""
+    guard comes in by (`aes_event.run_core_guarded`).
+
+    `plain` (a steered case's alone): what THIS VERY CASE's plain differential answered — a `Result.info` — where
+    the caller has made it already and asks the pass again with other reasons (a steering trial): the plain pass is
+    one deterministic run whatever is asked of the narrowed one, so it is not made again."""
     signature = vdi.ALCYON[name]
     core = getattr(_lib, routines.core_symbol(name))
     arguments = vdi.as_signed(name, arguments)
@@ -621,7 +625,8 @@ def run_function(name, arguments, pokes, *, through_line_f=False, dropped_window
                             bound.recording(glue) if bound else glue,
                             width=RESULT_WIDTHS[signature.restype] if answer_compared else case.NO_RESULT,
                             dropped_windows=dropped_windows, **{**kwargs, **passes})
-    info = differential(machine_pokes, **(STEERED_UNPOISONED if reasons else {}))
+    assert plain is None or reasons, f"{name}: only a steered case is handed its plain pass"
+    info = plain if plain is not None else differential(machine_pokes, **(STEERED_UNPOISONED if reasons else {}))
     if reasons:
         def narrowed_to(kept):
             """The differential again, every byte the plain run stored INVERTED but the words of `kept`."""

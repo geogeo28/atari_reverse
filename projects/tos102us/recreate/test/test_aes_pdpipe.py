@@ -534,11 +534,15 @@ def test_whether_a_row_s_sr_word_is_settled_is_asked_of_that_row_s_own_run(monke
     """THE RED for an answer kept per ROUTINE from its first row: a routine whose first row's run stores no SR save
     word and whose next one's does — the second was never asked, and went to Tier 3 unsettled. Each row's own run
     says (shown on two runs handed in: one that stores nothing of the word, then one that stores it)."""
-    assert pp._settled_sr_word(PSETUP, (SPARE_PD, CODE), pp.running()), "the premise: psetup's own row stores the word"
+    def settled():
+        return aes_event.settled(PSETUP, (SPARE_PD, CODE), pp.running())
+    assert set(aes_event.SR_PSETUP_DROP) <= set(settled()[1]), "the premise: psetup's own row stores the word"
     stored = iter(({}, {aes.AES_SR_PSETUP: 0x27, aes.AES_SR_PSETUP + 1: 0x04}))
     monkeypatch.setattr(aes_event, "_rom_run", lambda image, entry: (image, next(stored), {}))
-    assert pp._settled_sr_word(PSETUP, (SPARE_PD, CODE), pp.running()) == {}
-    assert pp._settled_sr_word(PSETUP, (SPARE_PD, CODE), pp.running()) == {aes.AES_SR_PSETUP: b"\x27\x04"}
+    assert settled() == (pp.running(), ())
+    pokes, drops = settled()
+    assert drops == aes_event.SR_PSETUP_DROP
+    assert bytes(make_image(pokes)[aes.AES_SR_PSETUP:aes.AES_SR_PSETUP + aes.WORD_BYTES]) == b"\x27\x04"
 
 
 A_LOAD_ADDRESS = 0x000A1B2C            # any address of the machine's RAM: pstart stores it and reads nothing through it
