@@ -55,8 +55,12 @@ USAGE_ERROR = 4                 # pytest's exit status for a refused command lin
 def _child_pytest(tmp_path, suite, *args, conftest=""):
     (tmp_path / "test_child.py").write_text(textwrap.dedent(suite))
     (tmp_path / "conftest.py").write_text(textwrap.dedent(conftest))
+    # THE CHILD IS ROOTED AT ITS OWN DIRECTORY: pytest spells a node id relative to its rootdir — by default the
+    # common ancestor of its working directory and its arguments, so a child run from the kit's directory named its
+    # tests by whatever path lay between the two (`test_child.py::…` only where the temporary directory shared no
+    # ancestor with the kit: red in any copy of the kit under the same root as `$TMPDIR`).
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "recreate_kit.watchdog",
-               "--watchdog-seconds", str(BUDGET_SECONDS), *args, str(tmp_path)]
+               "--rootdir", str(tmp_path), "--watchdog-seconds", str(BUDGET_SECONDS), *args, str(tmp_path)]
     return subprocess.run(command, capture_output=True, text=True, timeout=CHILD_SECONDS,
                           env={"PYTHONPATH": str(TOOLS), "PATH": ""})
 

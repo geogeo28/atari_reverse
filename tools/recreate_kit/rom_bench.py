@@ -620,7 +620,7 @@ class RomBench:
         # ALWAYS differ — our code against the zeroes just checked — so every compare walked its every byte only
         # for the exclusion to discard each one (measured in projects/tos102us: 168 KB of blob, 25 ms of a 28 ms
         # compare, 4,500 compares a suite run).
-        differing = harness.differing_addresses(memoryview(original), memoryview(bytes(ours)),
+        differing = harness.differing_addresses(memoryview(original), memoryview(ours),
                                                 _spans_without(harness.diff_spans(), self.base, self.end), excluded)
         if differing:
             shown = ", ".join(f"{addr:#x} ({original[addr]:#04x} -> {ours[addr]:#04x})"

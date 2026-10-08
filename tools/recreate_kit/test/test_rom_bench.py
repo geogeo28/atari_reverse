@@ -809,10 +809,11 @@ def test_the_blob_s_span_is_cut_out_of_the_spans_compared_not_excluded_byte_by_b
     zeroes, so over the blob the two ALWAYS differ — and handed the whole image, the comparison walked every byte of
     it on every row only for the exclusion to discard each. What is compared is the spans WITHOUT the blob's: the
     same addresses reported (none of the blob's, every other), and no address of the blob so much as asked about."""
-    handed = []
+    handed, images = [], []
 
     def differing_addresses(left, right, spans, excluded):
         handed.append(spans)
+        images.append((left.obj, right.obj))
         return [a for lo, hi in spans for a in range(lo, hi) if left[a] != right[a] and not excluded(a)]
     monkeypatch.setitem(sys.modules, "harness", SimpleNamespace(**{**vars(_fake_harness()),
                                                                    "differing_addresses": differing_addresses}))
@@ -821,6 +822,8 @@ def test_the_blob_s_span_is_cut_out_of_the_spans_compared_not_excluded_byte_by_b
     ours[bench.base:bench.end] = bench.blob
     bench._vet_image(FAKE_ENTRY, "core", original, ours)
     assert handed == [((0, bench.base), (bench.end, FAKE_IMAGE_BYTES))]
+    # ...and BOTH images are compared where they lie: ours was copied whole first (16 MB a row), to be read once.
+    assert images[0][0] is original and images[0][1] is ours
     ours[bench.base - 1], ours[bench.end] = 1, 1
     with pytest.raises(AssertionError, match=f"2 byte\\(s\\), first {bench.base - 1:#x} .*, {bench.end:#x} "):
         bench._vet_image(FAKE_ENTRY, "core", original, ours)

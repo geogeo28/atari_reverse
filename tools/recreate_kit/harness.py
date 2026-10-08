@@ -949,6 +949,22 @@ def make_image(pokes=None):
     return img
 
 
+def image_in_place(buf):
+    """The image a candidate's run LEFT, read where it lies: a view of ``buf``'s own bytes, one byte an item.
+
+    Not a copy (``bytes(buf)`` was one, 16 MB a ROM project's case and twice a poisoned one — measured in
+    projects/tos102us: 2 ms a candidate run, 29,800 a suite run): nothing stores to the buffer once its run has
+    returned, and every read of it is made before the NEXT candidate run is handed a buffer — the attribution pass
+    runs strictly after the plain compare, which is what lets ``guarded_image`` hand back the same storage every
+    call (``candidate_image``, "Never live twice at once"). A reader that must outlive that takes its own copy.
+
+    THE ORDER IS ENFORCED, NOT DESCRIBED: each caller RELEASES the view once its compare is made
+    (``memoryview.release``), so a read that outlives it — a final image kept in a result, a message built after the
+    next run was handed the same storage — raises ``ValueError`` instead of answering with another run's bytes.
+    """
+    return memoryview(buf).cast("B")
+
+
 def candidate_image(img):
     """The mutable buffer the CANDIDATE runs on — ONE seam, deliberately.
 
@@ -1021,6 +1037,35 @@ DIFF_CHUNK_BYTES = 1 << 16
 # 3.7 ms a compare, 448 of one battery's 730). The same addresses, in the same order: only fewer bytes looked at.
 DIFF_LINE_BYTES = 1 << 8
 
+# AN EQUAL CHUNK IS FOUND WHERE IT LIES. Nearly every chunk of nearly every compare is equal — a green case's two
+# images differ in a dropped word or two of 16 MB — and telling that by copying both sides of every chunk out first
+# (`bytes(left[start:stop])`) moves 32 MB to learn that nothing differs. One `memcmp` over the two buffers in place
+# says the same thing and moves nothing (measured in projects/tos102us: 1.1 ms a compare, 34,500 compares a
+# suite run); only a chunk that DIFFERS is copied out and walked, exactly as before.
+_memcmp = ctypes.CDLL(None).memcmp
+_memcmp.restype, _memcmp.argtypes = ctypes.c_int, (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t)
+
+
+def _address_of(image):
+    """Where ``image``'s first byte lies in this process, or None for an image this cannot say it of — the compare
+    then copies each chunk out, as it always did.
+
+    A WRITABLE one-dimensional view of bytes (a ``bytearray``'s, a ctypes array's) through ctypes' own buffer
+    export; a read-only view only where it is the WHOLE of a ``bytes`` object, whose storage ``c_char_p`` names (a
+    slice of one starts somewhere a view does not say). Anything else — an object that is no memoryview, a view of
+    wider items or of a stride — has no address here.
+    """
+    if not isinstance(image, memoryview) or image.ndim != 1 or image.itemsize != 1 or not image.c_contiguous:
+        return None
+    if not len(image):
+        return None                     # ctypes exports no buffer of no bytes: an empty image is compared by its slices
+    if not image.readonly:
+        return ctypes.addressof(ctypes.c_char.from_buffer(image))
+    whole = image.obj
+    if isinstance(whole, bytes) and len(whole) == len(image):
+        return ctypes.cast(ctypes.c_char_p(whole), ctypes.c_void_p).value
+    return None
+
 
 def differing_addresses(left, right, spans, excluded):
     """Every address in ``spans`` where ``left`` and ``right`` differ and ``excluded`` says nothing.
@@ -1030,9 +1075,15 @@ def differing_addresses(left, right, spans, excluded):
     would be a second place for the span arithmetic to go wrong.
     """
     found = []
+    here, there = _address_of(left), _address_of(right)
+    # ...and never outside either buffer: a slice stops at its end by itself and counts a negative index from it,
+    # a `memcmp` would read on past the one and BEFORE the other — unrelated memory, compared equal or not at all.
+    in_place_upto = min(len(left), len(right)) if here is not None and there is not None else 0
     for lo, hi in spans:
         for start in range(lo, hi, DIFF_CHUNK_BYTES):
             stop = min(start + DIFF_CHUNK_BYTES, hi)
+            if 0 <= start and stop <= in_place_upto and _memcmp(here + start, there + start, stop - start) == 0:
+                continue
             ours, theirs = bytes(left[start:stop]), bytes(right[start:stop])
             if ours == theirs:
                 continue
@@ -2415,17 +2466,19 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, excluded,
 
     def excluded_either_run(a):
         return excluded(a) or drops.within(a, po_window_drops)
-    pc_final = bytes(buf)
+    pc_final = image_in_place(buf)
     # Same fast path as the plain compare in differential(), memoryview slices and all: the
     # byte-by-byte walk below is ~200x the cost of one bytes() compare over the same span, and it is
     # only ever needed to LOCATE a difference. Measured on Zynaps' suite, where every attribution
     # pass is clean: 49 ms per call against 0.24 ms over its 1 MiB prefix, ~15% of the whole run.
-    bad = differing_addresses(memoryview(po_final), memoryview(pc_final), diff_spans(), excluded_either_run)
+    bad = differing_addresses(memoryview(po_final), pc_final, diff_spans(), excluded_either_run)
+    first = (bad[0], po_final[bad[0]], pc_final[bad[0]]) if bad else None
+    pc_final.release()                  # every read of the candidate's image is made: see `image_in_place`
     if bad:
-        a = bad[0]
+        a, oracle_s, candidate_s = first
         raise AssertionError(
             f"attribution (poison) check: candidate diverges on a poisoned-output image at "
-            f"{label(a)} @ 0x{a:x} (oracle={po_final[a]:#04x} cand={pc_final[a]:#04x}, {len(bad)} "
+            f"{label(a)} @ 0x{a:x} (oracle={oracle_s:#04x} cand={candidate_s:#04x}, {len(bad)} "
             f"bytes) — it likely never wrote a byte the oracle wrote, passing the plain diff by "
             f"coincidence")
 
@@ -2557,7 +2610,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     # declared wait sites — see `arm_candidate`, which is also what the asm-twin suites call.
     arm_candidate(psg_seed, hw_seed, io_seed, o_regs["sched"], o_regs["sched_sites"])
     cand_ret = glue(_lib, buf)
-    c_final = bytes(buf)
+    c_final = image_in_place(buf)
 
     # Before anything is compared: a candidate that made a refused os_* call has not been tested by
     # this case at all, however clean the bytes look. See _vet_no_os_refusal.
@@ -2577,9 +2630,9 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     # scan cheap as IMAGE_SIZE grows: a ROM project's second span is ~15.5 MB, and the slice is
     # taken through a memoryview because `o_final` is a bytearray whose plain slice COPIES it
     # (measured: 2.9 ms a span against 0.4 ms, on every case and twice more under `poison`).
-    o_view, c_view = memoryview(o_final), memoryview(c_final)
     diffs = [(a, o_final[a], c_final[a])
-             for a in differing_addresses(o_view, c_view, diff_spans(), excluded)]
+             for a in differing_addresses(memoryview(o_final), c_final, diff_spans(), excluded)]
+    c_final.release()                   # every read of the candidate's image is made: see `image_in_place`
 
     # Write-set completeness: dropping the stack band is only sound if the oracle used it purely as
     # stack. Every write inside it that the frame does not explain is program output the diff would

@@ -681,6 +681,35 @@ hands that compare (over it our code always differs from the original's zeroes: 
 it only to discard each address). The addresses found, and their order, are the same
 (`test/test_differing_addresses.py`, `test/test_rom_bench.py`).
 
+**An equal chunk is found where it lies.** `harness.differing_addresses` asks `memcmp` over the two
+buffers IN PLACE, 64 KB at a time, and copies a chunk out — to walk its lines, as before — only when
+it DIFFERS. `_address_of` says where an image's bytes lie: a writable one-dimensional view of bytes
+(a `bytearray`'s, a ctypes array's) through ctypes' own buffer export; a read-only view only where
+it is the WHOLE of a `bytes` object. Any other image (a slice of `bytes`, an object that is no
+memoryview) is compared by the copies, as it always was — the same addresses in the same order
+either way (`test/test_differing_addresses.py`: a lone byte at every edge a chunk has, each kind of
+image). A chunk is compared in place only where BOTH images hold all of it AND IT BEGINS AT OR
+ABOVE 0: a slice stops at a buffer's end by itself and counts a negative index from it; a `memcmp`
+would read on past the one and BEFORE the other — unrelated memory, a dead worker or two regions of
+the heap compared equal (`test_no_chunk_is_compared_in_place_before_the_start_of_an_image`). An image
+of no bytes has no address (ctypes exports no buffer of none): its slices answer.
+
+**The candidate's image is read where it lies** (`harness.image_in_place`): the plain compare and
+the attribution pass's are handed a view of the buffer the candidate ran over, not `bytes(buf)` — 16
+MB a ROM project's case, twice a poisoned one. Sound by ORDER, which `candidate_image`'s "Never live
+twice at once" already states and `test/test_image_in_place.py` holds: every read of a run's image
+is made before the next candidate run is handed a buffer (so `guarded_image`'s one mapping, reused
+every call, is read before it is written again). THE ORDER IS ENFORCED, NOT DESCRIBED: each compare's
+view is RELEASED once its reads are made, so a reader that outlives it — a final image kept in a
+result, a message formatted after the next run was handed the same storage — raises `ValueError`
+instead of answering with another run's bytes
+(`test_the_view_a_compare_was_handed_is_dead_once_the_differential_returns`). A reader that must
+outlive that takes its own copy.
+`RomBench._vet_image` likewise compares OUR image in place (`memoryview(ours)`). Measured on
+projects/tos102us (22,681 tests, ten workers, quiet starts), these two levers with a project-side
+fix beside them: 1,485–1,492 → 1,287–1,288 CPU-s warm, 1,778 → 1,560 cold (the levers alone ≈ −140
+warm); the six other projects' suites and the kit's own unchanged test for test.
+
 ## ROM mode: when the target is the operating system, not a program
 
 The kit's default shape is a game: a `.PRG` loaded at `load_base` into a 1 MB image, with a MODELLED
