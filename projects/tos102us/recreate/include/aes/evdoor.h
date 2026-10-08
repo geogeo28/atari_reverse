@@ -59,6 +59,7 @@
 #include "aes/evinput.h"
 #include "aes/evwait.h"
 #include "aes/evlib.h"
+#include "aes/evmulti.h"
 
 /* ---- what the entries are handed --------------------------------------------------------------------------------- */
 /* ev_multi's FLAGS, the events it is asked for, a bit each (`btst #n,d7` over the flags word): */
@@ -185,68 +186,12 @@ static inline uint32_t frame_long(uint8_t *frame, uint32_t at, uint32_t value)
 #endif
 
 /* ---- the wrappers: the ONE call of each entry ---------------------------------------------------------------------
- * First the entry the ROM still serves (ev_multi, the last one), then the rebound ones.
- * On target the values are pushed from REGISTERS or immediates ("ri" — a stack operand would move under the pushes),
- * and the ones that can travel in the scratch the routine destroys anyway — D0, D1, A0, A1 — are put there as in-out
- * operands, so the call holds no callee-saved register but the D2/A2 GCC must keep round it. */
+ * EVERY ENTRY IS REBOUND (ev_multi the last, FLIP 3): no wrapper is the ROM's call any more, and what served one —
+ * `event_door` above, the compile-time refusal below — has no user left. */
 #ifndef RECREATE_HOST_DIFFERENTIAL
 /* A call no wrapper below has a priced shape for: an error at compile time, never target code nothing measures. */
 extern void evdoor_shape_unbuilt(void) __attribute__((error("the event door: a call shape with no priced Tier 3 row")));
 #endif
-
-static inline uint16_t evdoor_ev_multi(uint8_t *image, int16_t flags, uint32_t mouse1, uint32_t mouse2, uint32_t timer,
-                                       uint32_t button, uint32_t message, uint32_t answers)
-{
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    uint8_t frame[EVDOOR_EV_MULTI_FRAME_BYTES];
-    uint32_t at = frame_word(frame, 0, (uint16_t)flags);
-
-    at = frame_long(frame, at, mouse1);
-    at = frame_long(frame, at, mouse2);
-    at = frame_long(frame, at, timer);
-    at = frame_long(frame, at, button);
-    at = frame_long(frame, at, message);
-    frame_long(frame, at, answers);
-    return (uint16_t)event_door(image, AES_ROM_EV_MULTI, frame, sizeof frame);
-#else
-    register uint32_t answer __asm__("d0") = answers;       /* in: the answers' address; out: the events */
-    register uint32_t rise __asm__("d1") = button;
-    register uint32_t first __asm__("a0") = mouse1;
-    register uint32_t second __asm__("a1") = mouse2;
-
-    (void)image;
-    /* THE TWO SHAPES BUILT, both waiting for nothing timed or sent: ONE rectangle (gr_stilldn's) and TWO (mn_do's);
-     * fm_do's, with no rectangle, is the first with its zero first rectangle pushed from A0 as the value it is. A
-     * caller handing a timer or a message is a new shape: added with its own priced row, refused until. */
-    if (!(__builtin_constant_p(timer | message) && !(timer | message)))
-        evdoor_shape_unbuilt();
-    /* The frame pushed last longword first — answers, message, button, timer, mouse 2, mouse 1, flags — the call, the
-     * frame dropped. One rectangle: the zero second rectangle, timer and message pushed from the A1 the absent second
-     * rectangle holds (a register push is 12 cycles, an immediate's 20). Two: the zero timer and message by `clr.l`, as
-     * mn_do's own call pushes them ($fe8e6c, $fe8e72). */
-/* The one call, ZERO_PUSH the instruction that pushes the zero timer and message: an asm template is a string literal,
- * so the two shapes share their operands, clobbers, call and frame drop by this macro and differ by that string. */
-#define EVDOOR_EV_MULTI_CALL(ZERO_PUSH)                                                                                 \
-    __asm__ volatile ("move.l %0,-(%%sp)\n\t"                                                                           \
-                      ZERO_PUSH "\n\t"                                                                                  \
-                      "move.l %1,-(%%sp)\n\t"                                                                           \
-                      ZERO_PUSH "\n\t"                                                                                  \
-                      "move.l %3,-(%%sp)\n\t"                                                                           \
-                      "move.l %2,-(%%sp)\n\t"                                                                           \
-                      "move.w %4,-(%%sp)\n\t"                                                                           \
-                      "jsr %c5\n\t"                                                                                     \
-                      "lea %c6(%%sp),%%sp"                                                                              \
-                      : "+d"(answer), "+d"(rise), "+a"(first), "+a"(second)                                             \
-                      : "ri"(flags), "i"(AES_ROM_EV_MULTI), "i"(EVDOOR_EV_MULTI_FRAME_BYTES)                            \
-                      : "d2", "a2", "memory", "cc")
-    if (__builtin_constant_p(mouse2) && !mouse2)
-        EVDOOR_EV_MULTI_CALL("move.l %3,-(%%sp)");
-    else
-        EVDOOR_EV_MULTI_CALL("clr.l -(%%sp)");
-#undef EVDOOR_EV_MULTI_CALL
-    return (uint16_t)answer;
-#endif
-}
 
 /* ---- A REBOUND ENTRY'S WRAPPER, SPELT ONCE ------------------------------------------------------------------------
  * `EVDOOR_REBOUND(entry, ENTRY, (parameters), packed, arguments...)` IS the flip of an entry: it defines
@@ -351,5 +296,13 @@ EVDOOR_REBOUND_VOID(post_button, POST_BUTTON, (uint8_t *image, uint32_t process,
                     frame_word(frame, frame_word(frame, frame_long(frame, 0, process), (uint16_t)button),
                                (uint16_t)clicks),
                     process, button, clicks)
+
+/* REBOUND: ev_multi is C (`aes/evmulti.h`): the keyboard poll and the fork queue run in C under every call. */
+EVDOOR_REBOUND(ev_multi, EV_MULTI,
+               (uint8_t *image, int16_t flags, uint32_t mouse1, uint32_t mouse2, uint32_t timer, uint32_t button,
+                uint32_t message, uint32_t answers),
+               frame_long(frame, frame_long(frame, frame_long(frame, frame_long(frame, frame_long(frame, frame_long(
+                   frame, frame_word(frame, 0, (uint16_t)flags), mouse1), mouse2), timer), button), message), answers),
+               flags, mouse1, mouse2, timer, button, message, answers)
 
 #endif /* TOS102US_AES_EVDOOR_H */

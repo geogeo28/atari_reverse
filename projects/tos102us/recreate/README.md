@@ -458,7 +458,9 @@ while priced rows move `savptr` into the stack band. Tier 3 prices such C on its
 is WATCHED at the door entries (the kit's `RomBench.measure(watch=)`), each door call a window taken off the ROM's own
 cycles, an AES cycle of ours outside a window refused, and the ORIGINAL's run watched too — its windows must equal
 ours one by one, cycles and frames. The inline-asm wrapper and the nested run are the shape of an entry the ROM still
-SERVES; an entry band 4 has ported is REBOUND.
+SERVES; an entry band 4 has ported is REBOUND. (SINCE FLIP 3 NO ENTRY IS SERVED: the last such wrapper, ev_multi's,
+is gone from the header, the nested run lives on as the SHADOW alone, and the served road's code and its three
+cases — which skip, saying so — wait for their retirement: STATUS's Next line.)
 
 REBINDING THE DOOR. An entry with a C twin is REBOUND: its wrapper keeps its signature and its callers, and calls
 `aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, was the first). WHICH ENTRIES ARE REBOUND TODAY

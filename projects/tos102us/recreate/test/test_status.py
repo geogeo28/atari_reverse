@@ -296,3 +296,40 @@ def test_every_row_whose_two_counts_differ_is_quoted_with_both():
     assert (int(summary["rows"]), int(summary["apart"])) == (rows, apart), (
         f"STATUS.md says {summary['rows']} rows carry both counts and {summary['apart']} differ by more than 0.05; "
         f"the table holds {rows} and {apart}")
+
+
+# ---- THE EVENT DOOR'S STATE: what the ledger says of each entry's twin is what the BUILD says ------------------------
+# A flip is one edit in `include/aes/evdoor.h` and everything in the suite follows it by derivation — so nothing but
+# the ledger STATES which entries are rebound, and a ledger nothing holds would go on saying "pending" (or "rebound",
+# over a wrapper put back on the ROM's call) with every test green. Each entry's row names its state in its Name cell,
+# and the section's intro counts them in one fixed sentence; both are held to `aes_event.REBOUND` / `PENDING`.
+_DOOR_STATE_RE = re.compile(r"— twin, (?P<state>REBOUND|PENDING)\b")
+_DOOR_SUMMARY_RE = re.compile(r"THE DOOR TODAY: (?P<rebound>\d+) of its (?P<entries>\d+) entries REBOUND, (?P<pending>\d+) PENDING")
+_NAME_CELL_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|(?P<name>[^|]*)\|", re.M)
+NO_TWIN = "no twin"
+
+
+def _door_states_built():
+    """{entry: "REBOUND" | "PENDING" | NO_TWIN} as the host library has them (`test/aes_event.py`)."""
+    import aes_event
+
+    return {entry: "REBOUND" if entry in aes_event.REBOUND else "PENDING" if entry in aes_event.PENDING else NO_TWIN
+            for entry in aes_event.ENTRIES}
+
+
+def test_every_door_entry_s_row_says_what_the_build_says_of_its_twin():
+    """`— twin, REBOUND` / `— twin, PENDING` in the Name cell of each door entry's row (neither, for an entry with no
+    twin yet), and the intro's `THE DOOR TODAY: R of its N entries REBOUND, P PENDING` — against the library's markers."""
+    built, status = _door_states_built(), _status()
+    stated = {int(row["addr"], 16): state["state"] if (state := _DOOR_STATE_RE.search(row["name"])) else NO_TWIN
+              for row in _NAME_CELL_RE.finditer(status)}
+    wrong = [f"{entry:#x}: the build says {state}, its row says {stated.get(entry, 'nothing: it has no row')}"
+             for entry, state in sorted(built.items()) if stated.get(entry) != state]
+    assert not wrong, f"{len(wrong)} door entr(ies) whose STATUS.md row misstates the twin:" + "".join(f"\n  {line}" for line in wrong)
+    strays = sorted(f"{address:#x}" for address, state in stated.items() if state != NO_TWIN and address not in built)
+    assert not strays, f"STATUS.md calls a routine that is no door entry a door twin: {', '.join(strays)}"
+    summary = _DOOR_SUMMARY_RE.search(status)
+    assert summary, "STATUS.md no longer counts the door's entries (`THE DOOR TODAY: R of its N entries REBOUND, P PENDING`)"
+    counted = tuple(sum(state == which for state in built.values()) for which in ("REBOUND", "PENDING"))
+    assert (int(summary["rebound"]), int(summary["entries"]), int(summary["pending"])) == (counted[0], len(built), counted[1]), (
+        f"STATUS.md says {summary[0]!r}; the build has {counted[0]} of {len(built)} rebound and {counted[1]} pending")
