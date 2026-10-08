@@ -67,7 +67,7 @@ import trap                                                # noqa: E402
 # a row's entry back to the ROM address it is about is this module's map to give
 # (`test/isr.py`).
 import isr                                                 # noqa: E402
-# ...and the four ISR batteries, for their TRANSCRIPTION cases — `src/bios/isr.S`, the stubs a
+# ...and the four ISR batteries, for their TRANSCRIPTION cases — `src/bios/isr.S`, the handlers a
 # shipped ROM installs in the four vectors. They live beside each handler's own registered cases
 # (both are built from ONE spec, so the two rows are two relations over one verified run) rather
 # than in a list here, which is `trap.CASES`' arrangement one file per handler.
@@ -174,8 +174,8 @@ RATIO_TOLERANCE = 0.02
 #       the C core by the twin differential, exactly as the game recreates use.
 #   (K) THE RAM-VECTOR BASE REGISTER. Every routine TOS installs in a system vector is entered with
 #       A5 = 0 — the ROM's handlers establish it once with `lea 0,a5` and index low RAM and the I/O
-#       page off it (`$fc2a0c`'s first instruction is `lea $c76(a5),a0`). `src/bios/isr.S` spells
-#       that zero as the PUSHED IMAGE ARGUMENT instead, which the C body needs and the vector does
+#       page off it (`$fc2a0c`'s first instruction is `lea $c76(a5),a0`). A C handler body is handed
+#       that zero as its IMAGE ARGUMENT instead, which the C needs and the vector does
 #       not, so `include/staged_call.h` pins A5 as an OPERAND of every vector call: one
 #       `suba.l %a5,%a5`, 8 cycles, per call. It is a CORRECTNESS guarantee with no Tier 1 surface —
 #       the cross-compiled `isr_acia` spun to the oracle's cap without it in the build that found
@@ -183,11 +183,9 @@ RATIO_TOLERANCE = 0.02
 #       so the rows that carry it are PINNED: deleting it leaves every differential green and moves
 #       them to the ratios each entry names.
 #
-#       THE DEEPER LEVER IS UNMEASURED AND RECORDED RATHER THAN TAKEN: `-ffixed-a5` in
-#       `atari/target.mk` plus the ROM's own `suba.l a5,a5` in each `src/bios/isr.S` stub would set
-#       the register ONCE per interrupt instead of once per call — zero per-call cost — at the price
-#       of one fewer allocatable address register in every core the shipped build compiles. What is
-#       in the tree is the interim: correct everywhere, paid per call, and priced by these rows.
+#       FOR THE THREE HANDLERS IT IS MOOT ON TARGET NOW: `src/bios/isr.S` ships each as the ROM's own
+#       instructions, `lea 0,a5` and all, and the C bodies these rows price are twins no entry calls.
+#       The pin still serves every OTHER C caller of a RAM vector (`src/vdi/screen.c`'s tick chain).
 #
 #   (T) SHIPS AS THE ROM'S OWN INSTRUCTIONS. The user's rule for the hand-written 68000: port it to C
 #       first, and where the C measures over the bar, SHIP a byte-pinned `.S` transcription instead —
@@ -537,7 +535,10 @@ PERF_ACCEPTED = {
     ("xbios_setprt", "report only"): (
         1.80, "the same pair over the arm that only reports: 90 -> 130 cycles"),
 
-    # ---- THE INTERRUPT HANDLERS (BIOS wave 2) ----
+    # ---- THE INTERRUPT HANDLERS (BIOS wave 2) — since wave 18, their C TWINS ----
+    # EVERY `isr_*` ROW WITH AN ENTRY BELOW PRICES C THAT DOES NOT SHIP: the handlers are `src/bios/isr.S`, the ROM's
+    # own instructions, and these are the twins Tier 1 proves. The entries are kept as written (the HBL's always stood
+    # beside a transcribed entry); wiring them into mechanism (T) instead is owed a ruling (STATUS.md, Next).
     # A handler is entered by the MACHINE, and two consequences run through every row below.
     #
     #   (H) THE MFP ACKNOWLEDGEMENT. Timer C and the ACIA handler each end by clearing their own bit
@@ -552,11 +553,10 @@ PERF_ACCEPTED = {
     #       ORIGINAL's column carries them and a C core's does not.
     #
     #       IT IS ANSWERED, and the `... ISR entry` rows are the answer: `src/bios/isr.S` is what a
-    #       shipped ROM installs in each vector — the ROM's own entry sequence around the C body —
-    #       and its rows pay the `movem` pair on both sides, so their ratio is the two handlers' own
-    #       cycles with no hole in it. Each handler therefore has two rows: the C CORE, where (I)
-    #       still stands and a figure under the bar is under it partly for a reason that is not a
-    #       saving, and the ENTRY, where nothing is missing from either column.
+    #       shipped ROM installs in each vector — the ROM's own handler, byte for byte — and its
+    #       rows pay the `movem` pair on both sides. Each handler therefore has two rows: the C TWIN,
+    #       where (I) still stands and a figure under the bar is under it partly for a reason that
+    #       is not a saving, and the ENTRY, where nothing is missing from either column.
     #   (L) A VECTOR ROUTINE KEEPS TO NOTHING. `include/staged_call.h`'s `jsr` tells GCC that every
     #       data register and A0-A5 are gone across a call into `swv_vec`, `_vblqueue`, `scr_dump`,
     #       `etv_timer` or KBDVECS — because what runs there is RAM, and the ROM defends itself by
@@ -578,8 +578,9 @@ PERF_ACCEPTED = {
     ("isr_vbl", "a quiet frame"): (
         0.97, "(I) 736 -> 716 cycles: UNDER the bar, and pinned because the reason is a hole rather "
               "than a saving — the original's column carries the `movem` pair this core has no "
-              "register file for. It is also what says the body has not grown. The row WITHOUT the "
-              "hole is `isr_vbl_entry / a quiet frame` below"),
+              "register file for. It is also what says the TWIN's body has not grown (it ships "
+              "nowhere: `src/bios/isr.S` is the handler). The row WITHOUT the hole is the table's "
+              "`isr_vbl_entry / a quiet frame`, the ROM's own instructions at 1.00, which has no entry"),
     ("isr_vbl", "a monitor change"): (
         1.00, "PINNED, not accepted: the arm is 2001 passes of `dbf` doing nothing — the shifter "
               "settling — and a delay's only surface is its cost. Delete the loop and every Tier 1 "
@@ -588,19 +589,20 @@ PERF_ACCEPTED = {
               "0.0005 — so `test_bios_vbl.py` pins the absolute number as well"),
     ("isr_vbl", "a frame with everything queued"): (
         1.14, "(A) and (L) over a blank that does everything at once: 2062 -> 2356 cycles. The "
-              "queue walk and the dump hook are two staged calls, and the register saves GCC makes "
-              "around them are the ROM's own `movem.l d7/a0` in another place"),
+              "queue walk and the dump hook are two staged calls, and GCC saves round them — though "
+              "NOT what the ROM's `movem.l d7/a0` saves: this twin holds a pointer in A6 across "
+              "each, which is why it does not ship (`src/bios/vbl.c`)"),
     ("isr_timer_c", "a divided-away tick"): (
         1.18, "(A) and (H): 102 -> 120 cycles, 5 instructions to 9. Three of the ROM's five are "
               "`addq.l`/`rol.w`/`bclr` straight to memory, and every one of them is a load, an "
               "operation and a store here"),
     ("isr_timer_c", "a serviced tick"): (
         1.08, "PINNED under the bar: (A), (H) and (L) spread over a tick that steps the sound "
-              "driver, the auto-repeat and the OS vector come to 978 -> 1052 cycles. This is the "
-              "routine that runs 200 times a second, so the pin is what says the body has not "
-              "grown; the row a hand-asm twin would be measured against is its ENTRY below. It was "
+              "driver, the auto-repeat and the OS vector come to 978 -> 1052 cycles. The pin says "
+              "the C TWIN's body has not grown; what runs 200 times a second is `src/bios/isr.S`'s "
+              "entry, the ROM's own instructions, whose row is 1.00 and has no entry. It was "
               "1.06 (1040) until BIOS wave 3: the auto-repeat's injection at `$fc2c42` is a real "
-              "call to `kbd_queue_key` now rather than the halt it was"),
+              "call to `kbd_queue_key` in the twin rather than the halt it was"),
     # ...and the ACIA handler's C core, which BIOS wave 3 moved over the bar with a CORRECTNESS pin
     # rather than a body: mechanism (K).
     ("isr_acia", "one pass"): (
@@ -613,59 +615,18 @@ PERF_ACCEPTED = {
               "without it, 1.03 (606). The pair with the row above says the pin is a RATE (8 cycles "
               "a call) and not a constant"),
 
-    # ---- ...and the same four handlers as `src/bios/isr.S` installs them (BIOS wave 2) ----
-    # No (A) and no (I): the image base is a pushed 0 where the ROM zeroes A5, and both columns pay
-    # the ROM's own `movem` pair. What is left in these rows is the C BODY against the ROM's inline
-    # one, plus the `pea`/`jsr`/`addq` of calling it at all — about 56 cycles — and (L).
+    # ---- ...and the same four handlers as `src/bios/isr.S` installs them: NO ENTRY, BY DESIGN ----
+    # The `... ISR entry` rows carried eight written entries here (the blank 1.23 / 1.24 and its 1.01 pin, the
+    # serviced tick 1.33, the ACIA 1.71 / 1.52 / 1.12 / 1.18) while each handler was the ROM's entry sequence round a
+    # C BODY. They are the ROM's own instructions now (`src/bios/isr.S`, byte-pinned by each handler's battery), by
+    # the project's rule for hand 68000 whose C measures over the bar — and every one of those rows measures 1.00,
+    # instruction for instruction and cycle for cycle. A row at 1.00 needs no entry, and one over the bar here would
+    # be a transcription that stopped being one: `OVER`, with nothing to carry it.
     #
-    # THE LEVER FOR ALL FOUR IS ONE THING: a hand-asm body, pinned to the C core by the same twin
-    # differential the game recreates use. That is a wave of its own and it is the timer C row that
-    # earns it first, at 200 Hz.
-    ("isr_vbl_entry", "a quiet frame"): (
-        1.23, "736 -> 908 cycles. The body is the monitor follower, the cursor blink and the "
-              "floppy gate, none of which does anything on a quiet blank — so this row is very "
-              "nearly the C body's own prologue and the call that reaches it"),
-    ("isr_vbl_entry", "a frame with everything queued"): (
-        1.24, "2062 -> 2548 cycles over a blank thirty times the size of the quiet one above: the "
-              "palette move, the screen base, the queue walk and the dump hook. (L) is most of it. "
-              "Re-pinned from 1.23 (2536) in BIOS wave 3, when `src/bios/vbl.c` moved under it"),
-    ("isr_timer_c_entry", "a serviced tick"): (
-        1.33, "(H) and (L): 978 -> 1296 cycles. The acknowledgement is the ROM's own `bclr` in this "
-              "stub, so what is left is the C body — the Dosound step, the auto-repeat countdowns "
-              "and the register saves GCC makes around the `jsr` into `etv_timer`. It was 1.31 "
-              "until BIOS wave 3, for the C row's reason: the auto-repeat injection is a real call "
-              "now"),
-    ("isr_acia_entry", "one pass"): (
-        1.71, "(H) and (L), and this handler is nothing else: its body is two staged calls and an "
-              "acknowledgement. 384 -> 656 cycles, of which +147 is the clobber list alone "
-              "(measured: the same core was 269 cycles before `staged_call.h` stopped promising "
-              "that a routine in a RAM vector keeps to the C ABI). +28 cycles since the A5 pin "
-              "landed (mechanism (K)); 752 against 480 as the table prints them. Without the pin, "
-              "1.64"),
-    ("isr_acia_entry", "two passes"): (
-        1.52, "THE SAME EXCESS as the row above, over an entry that is 166 cycles longer on "
-              "BOTH sides: 550 -> 834. The handler's loop is free — a second pass costs the two "
-              "builds exactly the same — so the excess this row carries is the one-time one the row "
-              "above measures, amortised, and the ratio falls because the entry grew rather than "
-              "because anything improved. The lever is the same hand-asm body, and the two rows now "
-              "say between them that it would buy a constant, not a rate. 930 against 646 as the "
-              "table prints them; without the A5 pin (mechanism (K)), 1.44"),
-    # ...and the two REAL-VECTOR cases, which price EXACTLY the same thing the two rows above do,
-    # amortised over a chain that does real work. BOTH COLUMNS RUN THE ROM'S CHAIN here, and that is
-    # worth saying plainly: the captured machine's own `$fc29fc`/`$fc2a0c` are left in KBDVECS, and
-    # the cross-compiled `isr_acia` jumps through those slots exactly as the ROM's handler does — so
-    # `acia_service.c` and `keyboard.c` never execute under the recreate's column. What these rows
-    # measure is the handler's own bracket, its loop, its A5 pins and its acknowledgement, over a
-    # denominator the ROM chain makes large. The six cores' own cost is in their own rows.
-    ("isr_acia_entry", "real vectors, a mouse packet"): (
-        1.12, "the handler's bracket over a three-pass loop assembling a packet: 2880 cycles against "
-              "2584. The excess is the same +296 the two rows above carry — the movem clobber list "
-              "plus six A5 pins over three passes (mechanism (K)) — against a denominator the ROM's "
-              "own service routines fill, which is why it reads as 1.12 where the empty entry reads "
-              "as 1.71. Without the pin, 1.10"),
-    ("isr_acia_entry", "real vectors, a keystroke"): (
-        1.18, "one pass of the same chain, the same bracket: 1908 against 1636. Without the pin, "
-              "1.16"),
+    # THE C ROWS ABOVE KEEP THEIR ENTRIES, as the HBL's always has beside its transcribed entry: each prices a C TWIN
+    # no entry calls — what Tier 1 proves and nothing ships — and none of them moved. The two REAL-VECTOR rows of the
+    # ACIA still run the ROM'S OWN chain under both columns (the captured machine's `$fc29fc` / `$fc2a0c` are left in
+    # KBDVECS), so `acia_service.c` and `keyboard.c` are priced by their own rows below and not by those.
 
     # ---- THE ACIA INPUT CHAIN, reached through KBDVECS (BIOS wave 3) ----
     # Five rows, and they exist because the two above cannot price them: a row whose original and
@@ -706,9 +667,6 @@ PERF_ACCEPTED = {
               "here. 520 -> 964 cycles, and it is the widest ratio of the five because its body is "
               "small enough — a table read and a four-byte store — for the marshalling to be a "
               "third of it"),
-    ("isr_vbl_entry", "a monitor change"): (
-        1.01, "PINNED, not accepted, for the C row's reason one line up: 20,870 -> 21,032 cycles "
-              "is the shifter settling, and a delay has no surface but its cost"),
 
     # ---- the GEMDOS RAM-ONLY LEAVES (GEMDOS wave 1) ----
     ("gemdos_fsetdta", "gemdos_fsetdta"): (

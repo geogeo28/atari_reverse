@@ -42,6 +42,7 @@ import aes_evasync
 import aes_event
 import case
 import derived
+import isr
 import rom_data
 import test_aes_wm_update
 import transcription
@@ -66,7 +67,7 @@ FORK_ENTRY_SYMBOLS = aes_event.FORK_ENTRY_SYMBOLS
 
 # THE TWO BLOBS a build is held on, by the directory each is built in (None: the bench blob's own): the one Tier 3
 # prices plain C on, and the shipped configuration's — every pin and differential of the switch's batteries runs on both.
-BLOBS = {"the bench blob": None, "the shipped blob": transcription.SHIPPED_ELF.parent}
+BLOBS = isr.BLOBS
 
 # ---- THE STAGED CALLERS (V6) ----------------------------------------------------------------------------------------------
 # Both shores enter a caller at the run's own stack top, the sentinel under SP, the routine's longword at
@@ -733,12 +734,13 @@ def dispatcher_stack_reading(blob):
 #   * THE ROM'S OWN HANDLERS, entered from their vectors (`interrupt_needs`) — what lands on the dispatcher's stack
 #     while the BIOS under our AES is the ROM's;
 #   * OUR BUILD'S OWN ENTRIES (`our_interrupt_needs`: `src/bios/isr.S`'s isr_acia_entry, isr_timer_c_entry,
-#     isr_vbl_entry — what a ROM that ships puts in the three vectors). Each is the ROM's register save, a pushed
-#     image pointer and a `jsr` (8 bytes the ROM does not push) and then A C BODY whose prologue saves every
-#     callee-saved register GCC's ABI names (40-52 bytes the ROM's handler, which runs on in the registers it has
-#     just saved, never pushes). What the vectors BELOW the entry name is the machine's — the IKBD's service
-#     routine and the BIOS's packet machine (not reconstructed as entries), the VDI's mouse interrupt, tick and
-#     cursor routine and the AES's glue (ours are the ROM's bytes: the same stack).
+#     isr_vbl_entry — what a ROM that ships puts in the three vectors). Each is the ROM's own handler, instruction
+#     for instruction, so it needs what the ROM's needs. MEASURED all the same and not assumed: a C body under an
+#     entry — which is what each had — saves every callee-saved register GCC's ABI names on the interrupted stack
+#     (40-52 bytes the ROM's handler, which runs on in the registers it has just saved, never pushes). What the
+#     vectors BELOW the entry name is the machine's — the IKBD's service routine and the BIOS's packet machine
+#     (not reconstructed as entries), the VDI's mouse interrupt, tick and cursor routine and the AES's glue (ours
+#     are the ROM's bytes: the same stack).
 # THE NESTING THE MASK ALLOWS (read off the ROM, $fc06de / $fc30c4 / $fc29ce, and `isr.S`): the dispatcher's own code
 # runs with interrupts open; a vertical blank is level 4 and its handler never raises the mask (the VDI's cursor
 # routine at $fcff2a draws at the level it was called at), so AN MFP INTERRUPT (level 6: the ACIA's or Timer C's)
@@ -751,13 +753,27 @@ INTERRUPT_STUB_BYTES = 14
 VDI_STUBS_AT = INTERRUPT_STUB_AT + INTERRUPT_STUB_BYTES + WORD_BYTES
 VDI_STUBS_BYTES = 22                                   # the staged door (`jsr`, `rte`) and the thunk into the C dispatcher
 VDI_ENTRY_BYTES = 0x60                                 # vdi_rom_entry, to its `rts` ($fc9f9e..$fc9ff8)
-assert VDI_STUBS_AT + VDI_STUBS_BYTES <= BAND_AT + BAND_BYTES
+# ...and the two slot routines a case stages BESIDE the VDI's own in the machine's `_vblqueue`: one that keeps no
+# register (`isr.keeps_nothing`), a marker behind it, and the byte each leaves.
+KEEPS_NOTHING_AT = VDI_STUBS_AT + VDI_STUBS_BYTES
+SLOT_MARKS_AT = BAND_AT + BAND_BYTES - 2                # the last two bytes of the band
+SLOT_BEHIND_AT = KEEPS_NOTHING_AT + len(isr.keeps_nothing(SLOT_MARKS_AT)[0])
+assert SLOT_BEHIND_AT + len(isr.store_byte(isr.MARK, SLOT_MARKS_AT + 1) + RTS) <= SLOT_MARKS_AT
 PUSH_RETURN_AND_SR = PUSH_RETURN_PC + struct.pack(">h", len(PUSH_SR) + len(JMP_ABSOLUTE_LONG) + LONG_BYTES + WORD_BYTES) + PUSH_SR
 A_MOUSE_PACKET = (aes_event.NO_BUTTON_PACKET, 5, 3)    # the IKBD's three bytes: the header, dx, dy
 ACIA_INTERRUPTING_WITH_A_BYTE = 0x80 | addrs.ACIA_RECEIVE_FULL
 NO_ACIA_WAITS = 0xFF                                   # MFP_GPIP as the handler's loop reads it: nothing more to serve
 A_COLOUR_MONITOR = 0x80                                # ...and as the vertical blank reads it: no monochrome monitor
 TICKS_MEASURED = 8
+# ...and how many more a held key's repeat is waited for: Kbrate's initial delay and its interval are counted in
+# SERVICED ticks, one in four, and the snapshot's are 15 and 2.
+TICKS_TO_A_REPEAT_AT_MOST = 4 * (0xFF + 2)
+THE_DIVIDER_BEFORE_A_SERVICED_TICK = 0x4444            # `rol.w`: the one of its four states that comes out negative
+# (delay, interval left) from which the next serviced tick injects: the delay run out — or running out in that very
+# tick — and one tick of the interval left.
+THE_REPEAT_IS_DUE = ((0, 1), (1, 1))
+AN_ARROW_KEY = addrs.SCANCODE_CURSOR_UP                # with Alternate held, a mouse movement
+MOUSE_POSITION = slice(vdi.LINEA_GCURX, vdi.LINEA_GCURY + WORD_BYTES)
 InterruptNeeds = namedtuple("InterruptNeeds", "acia timer_c vbl")
 # OUR entries by the vector each is installed in.
 OUR_ENTRIES = {addrs.VECTOR_ACIA: "isr_acia_entry", addrs.VECTOR_TIMER_C: "isr_timer_c_entry",
@@ -809,14 +825,47 @@ ACIA_SEEDS = {addrs.IKBD_ACIA_STATUS: ACIA_INTERRUPTING_WITH_A_BYTE, addrs.MFP_G
 VBL_SEEDS = {"hw_seed": {addrs.MFP_GPIP: A_COLOUR_MONITOR}, "psg_seed": QUIET_PSG}
 
 
+def _received(image, entry_of, *scancodes_and_packets):
+    """Each byte through the ACIA's handler at `entry_of(VECTOR_ACIA)`, in turn: the need of each."""
+    return [_interrupt_entered(image, entry_of(addrs.VECTOR_ACIA),
+                               io_seed={**ACIA_SEEDS, addrs.IKBD_ACIA_DATA: byte & aes.BYTE_MASK})
+            for byte in scancodes_and_packets]
+
+
+def _ticked_until_the_held_key_repeats(image, entry_of):
+    """Timer C's handler entered tick after tick until THE AUTO-REPEAT INJECTS THE HELD KEY — the one tick in which
+    the handler calls the keyboard's queue-a-key routine ($fc2c42): the need of each tick, the injecting one last.
+    The state is the machine's own: the key's make code came through the ACIA's handler, and the initial delay and
+    the interval are counted down by the ticks themselves."""
+    needs = []
+    for _tick in range(TICKS_TO_A_REPEAT_AT_MOST):
+        due = (image[addrs.SYSVAR_KB_REPEAT_DELAY], image[addrs.SYSVAR_KB_REPEAT_LEFT]) in THE_REPEAT_IS_DUE
+        serviced = case.word_in(image, addrs.SYSVAR_TIMER_C_DIVIDER) == THE_DIVIDER_BEFORE_A_SERVICED_TICK
+        needs.append(_interrupt_entered(image, entry_of(addrs.VECTOR_TIMER_C), psg_seed=QUIET_PSG))
+        if due and serviced:
+            assert image[addrs.SYSVAR_KB_REPEAT_LEFT] == image[addrs.KBRATE_REPEAT], "the premise: the interval was reloaded"
+            return needs
+    raise AssertionError(f"the held key did not repeat within {TICKS_TO_A_REPEAT_AT_MOST} ticks")
+
+
 def _needs_measured(image, entry_of, vbl_until=0):
-    """The three handlers' needs over `image` (the cursor shown), each entered at `entry_of(vector)`."""
-    received = [_interrupt_entered(image, entry_of(addrs.VECTOR_ACIA),
-                                   io_seed={**ACIA_SEEDS, addrs.IKBD_ACIA_DATA: byte & aes.BYTE_MASK})
-                for byte in (*A_MOUSE_PACKET, aes_event.RETURN_KEY)]
+    """The three handlers' needs over `image` (the cursor shown), each entered at `entry_of(vector)` — THE WORST OF
+    EVERY ARM a handler has here: a mouse packet's bytes and a key's make code; ticks that are divided away and
+    ticks that reach the VDI's; the tick that injects a held PLAIN key's repeat; and the one that injects a held
+    ALT+ARROW's, which is a mouse packet made by the keyboard and so the VDI's mouse interrupt and the AES's glue
+    under timer C. Every state is made by the handlers' own runs."""
+    received = _received(image, entry_of, *A_MOUSE_PACKET, aes_event.RETURN_KEY)
     assert image[CUR_FLAG], "the premise: the packet moved a cursor that is shown — the next vertical blank redraws it"
     ticked = [_interrupt_entered(image, entry_of(addrs.VECTOR_TIMER_C), psg_seed=QUIET_PSG) for _tick in range(TICKS_MEASURED)]
     assert min(ticked) < max(ticked), "the premise: the ticks measured include one that reaches the VDI's tick and one that does not"
+    tail = case.word_in(image, addrs.IOREC_IKBD + addrs.IOREC_TAIL)
+    ticked += _ticked_until_the_held_key_repeats(image, entry_of)
+    assert case.word_in(image, addrs.IOREC_IKBD + addrs.IOREC_TAIL) != tail, "the premise: the repeat queued the held Return"
+    received += _received(image, entry_of, aes_event.RETURN_KEY | addrs.SCANCODE_RELEASE, addrs.SCANCODE_ALTERNATE,
+                          AN_ARROW_KEY)
+    moved_to = bytes(image[MOUSE_POSITION])
+    ticked += _ticked_until_the_held_key_repeats(image, entry_of)
+    assert bytes(image[MOUSE_POSITION]) != moved_to, "the premise: the repeat of Alt + an arrow moved the mouse"
     blank = _interrupt_entered(image, entry_of(addrs.VECTOR_VBL), until=vbl_until, **VBL_SEEDS)
     assert not image[CUR_FLAG], "the premise: the vertical blank redrew the cursor"
     return InterruptNeeds(max(received), max(ticked), blank)
@@ -844,23 +893,62 @@ def _the_shown_machine_with(blob):
 
 def our_interrupt_needs(blob):
     """`InterruptNeeds` of `blob`'s OWN ENTRIES (`OUR_ENTRIES`), over the same machine, bytes and ticks. The vertical
-    blank is read WHERE THE CURSOR ROUTINE RETURNS — the handler's deepest, as the ROM's own is
-    (`interrupt_needs`) — because our entry does not survive that return (`our_vertical_blank_redrawing_the_cursor`)."""
+    blank is read WHERE THE CURSOR ROUTINE RETURNS — the handler's deepest, as the ROM's own is (`interrupt_needs`);
+    the whole run's is `our_vertical_blank_redrawing_the_cursor`'s, and a test holds the two equal."""
     image = _the_shown_machine_with(blob)
     return _needs_measured(image, lambda vector: blob.entry(OUR_ENTRIES[vector]), _where_the_cursor_routine_returns())
 
 
-def our_vertical_blank_redrawing_the_cursor(blob):
-    """`blob`'s isr_vbl_entry run TO ITS `rte` over the machine a mouse packet has just moved the shown cursor in: the
-    bytes of the interrupted stack it used. (It does not get there while `service_this_vertical_blank` keeps its
-    queue pointer in A6 across the slot's `jsr`: `include/staged_call.h` clobbers every register BUT A6, and the VDI's
-    cursor routine leaves $fd00fe in it — the ROM's own handler saves D7/A0 round each slot and keeps nothing else.)"""
+def _the_machine_whose_cursor_moved(blob):
+    """`_the_shown_machine_with(blob)` after a mouse packet through the ROM's own ACIA handler: the shown cursor has
+    moved, and the next vertical blank's first slot — the VDI's cursor routine — redraws it."""
     image = _the_shown_machine_with(blob)
     for byte in A_MOUSE_PACKET:
         _interrupt_entered(image, case.long_in(image, addrs.VECTOR_ACIA),
                            io_seed={**ACIA_SEEDS, addrs.IKBD_ACIA_DATA: byte & aes.BYTE_MASK})
     assert image[CUR_FLAG], "the premise: the packet moved a cursor that is shown"
-    return _interrupt_entered(image, blob.entry(OUR_ENTRIES[addrs.VECTOR_VBL]), **VBL_SEEDS)
+    return image
+
+
+def our_vertical_blank_redrawing_the_cursor(blob):
+    """`blob`'s isr_vbl_entry run TO ITS `rte` over the machine a mouse packet has just moved the shown cursor in: the
+    bytes of the interrupted stack it used. (The VDI's cursor routine returns with A6 = $fd00fe when it redraws, and
+    the ROM's handler holds nothing in a register across a slot: `include/staged_call.h`, the two shapes that give
+    their routine every register.)"""
+    return _interrupt_entered(_the_machine_whose_cursor_moved(blob), blob.entry(OUR_ENTRIES[addrs.VECTOR_VBL]), **VBL_SEEDS)
+
+
+BlankRun = namedtuple("BlankRun", "final registers")
+
+
+def vertical_blanks_over_a_slot_that_keeps_nothing(blob):
+    """`(the ROM's handler's BlankRun, our entry's)` over ONE machine: the cursor shown and just moved (the ROM's own
+    runs), and — A LABELLED ARGUMENT-CLASS STAGING of two slot routines — the machine's own `_vblqueue` holding, behind
+    the VDI's cursor routine, a routine that leaves all ones in D0-D7/A0-A6 and a marker behind that. Each handler is
+    entered with `isr.DIRTY_REGISTERS` and run to its `rte`."""
+    image = _the_machine_whose_cursor_moved(blob)
+    queue = case.long_in(image, addrs.SYSVAR_VBLQUEUE)
+    behind_the_cursor_routine = queue + addrs.VBLQUEUE_ENTRY_BYTES
+    assert case.long_in(image, queue) == addrs.VDI_ROM_VBL_DRAW_CURSOR and case.word_in(image, addrs.SYSVAR_NVBLS) >= 3
+    assert not any(image[behind_the_cursor_routine:behind_the_cursor_routine + 2 * addrs.VBLQUEUE_ENTRY_BYTES])
+    staged = {KEEPS_NOTHING_AT: isr.keeps_nothing(SLOT_MARKS_AT)[0],
+              SLOT_BEHIND_AT: isr.store_byte(isr.MARK, SLOT_MARKS_AT + 1) + RTS,
+              behind_the_cursor_routine: struct.pack(">II", KEEPS_NOTHING_AT, SLOT_BEHIND_AT)}
+    for at, data in staged.items():
+        image[at:at + len(data)] = data
+    runs = []
+    for entry in (case.long_in(image, addrs.VECTOR_VBL), blob.entry(OUR_ENTRIES[addrs.VECTOR_VBL])):
+        stub = PUSH_RETURN_AND_SR + JMP_ABSOLUTE_LONG + struct.pack(">I", entry) + RTS
+        machine = bytearray(image)
+        machine[INTERRUPT_STUB_AT:INTERRUPT_STUB_AT + len(stub)] = stub
+        final, _writes, left = emu.run(machine, INTERRUPT_STUB_AT, dict(isr.DIRTY_REGISTERS), **VBL_SEEDS)
+        runs.append(BlankRun(final, {name: left[name] for name in isr.DIRTY_REGISTERS}))
+    return tuple(runs)
+
+
+# The bytes of the staged entry that name the handler entered: the one place the two runs' machines differ by design.
+THE_ENTRY_NAMED = range(INTERRUPT_STUB_AT + len(PUSH_RETURN_AND_SR) + len(JMP_ABSOLUTE_LONG),
+                        INTERRUPT_STUB_AT + len(PUSH_RETURN_AND_SR) + len(JMP_ABSOLUTE_LONG) + LONG_BYTES)
 
 
 def worst_interrupt_need(needs=None):

@@ -85,9 +85,8 @@
  * the whole of a 2.14x row. The split is on `__m68k__` rather than on the differential's own macro,
  * exactly as `machine.h`'s register barriers are: it is a question about the TARGET's instruction
  * set and not about which harness is looking. Off target the loop is kept (the two builds stay the
- * same program) and its cost is nobody's measurement. */
-#define SHIFTER_SETTLE_DBF_COUNT 2000
-
+ * same program) and its cost is nobody's measurement. `SHIFTER_SETTLE_DBF_COUNT` is `addrs.h`'s: the
+ * handler a ROM ships (`isr.S`) spells the same count. */
 static void wait_for_the_shifter(void)
 {
     unsigned passes = SHIFTER_SETTLE_DBF_COUNT;
@@ -277,15 +276,25 @@ void xbios_scrdmp(uint8_t *image)
     wr16(image + SYSVAR_DUMPFLG, 0xffff);
 }
 
-/* Declared here rather than in a header because `src/bios/isr.S` is its only other caller and an
- * assembler reads no prototype: this says the symbol is deliberately exported, and to whom. */
+/* Declared here rather than in a header because nothing outside this file calls it — `isr_vbl` below is
+ * its one caller. It is not `static` only so that it stays a function of its own (the comment below). */
 void service_this_vertical_blank(uint8_t *image);
 
 /* The SERVICED body — everything past the semaphore, which is what the ROM saves the register file
- * across. EXPORTED because it is what the machine's own entry sequence calls: `src/bios/isr.S` is
- * the handler a shipped ROM installs in vector $70, and the three instructions in front of this one
- * (`_frclock`, the semaphore, the `bmi`) are the handler rather than the body. `isr_vbl` below is
- * the same shape as C, which is what Tier 1 proves. */
+ * across; the three instructions in front of it (`_frclock`, the semaphore, the `bmi`) are `isr_vbl`'s
+ * below, and the two are the handler as C, which is what Tier 1 proves.
+ *
+ * THIS IS THE C TWIN AND NOT WHAT SHIPS. The handler meant for vector $70 is `src/bios/isr.S`'s
+ * `isr_vbl_entry`, the ROM's own instructions, which calls nothing here (NO BUILD STORES THAT ENTRY IN
+ * THE VECTOR YET: the ROM build links no handler). It used to enter this function, which is why it is a
+ * function of its own (and stays one: folded into `isr_vbl` it would move the twin's Tier 3 rows for no
+ * behaviour). The reason is on target only, where no Tier 1 case can stage it: every routine the blank
+ * calls may keep NO register, A6 included, and this body's calls do not say so (`staged_call.h`: a `jsr`
+ * cannot be told to lose A6 by a CLOBBER; an OUTPUT operand in A6 does tell GCC, at a cost over Tier 3's
+ * bar, and is not used). This body HOLDS its queue pointer and its image pointer in A6 across those
+ * calls, and the VDI's cursor routine in `_vblqueue`'s first slot returns with A6 = $fd00fe whenever it
+ * redraws. A C caller of a RAM vector under a `d0-a6` bracket is not something this build means to
+ * ship any more (`isr.S` has the argument). */
 void service_this_vertical_blank(uint8_t *image)
 {
     wr32(image + SYSVAR_VBCLOCK, be32(image + SYSVAR_VBCLOCK) + 1);

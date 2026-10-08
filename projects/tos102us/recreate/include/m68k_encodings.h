@@ -49,6 +49,8 @@
 #define M68K_CMP_W_IMMEDIATE(dn)   (0xb07c + ((dn) << M68K_DATA_REGISTER_SHIFT))
 /* ...and `and.l #<imm>,Dn` the same way: the span clear's block mask ($fc4ba6) */
 #define M68K_AND_L_IMMEDIATE(dn)   (0xc0bc + ((dn) << M68K_DATA_REGISTER_SHIFT))
+/* `and.b #<imm>,Dn`, the same family at byte width: the vertical blank's resolution mask ($fc0700) */
+#define M68K_AND_B_IMMEDIATE(dn)   (0xc03c + ((dn) << M68K_DATA_REGISTER_SHIFT))
 
 /* `move.w <d16>(An),Dn` and `movea.l <d16>(An),Am`, for the displacement of 0 gas would drop */
 #define M68K_MOVE_W_D16(an, dn)    (0x3028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
@@ -58,6 +60,8 @@
 #define M68K_ADD_W_D16(an, dn)     (0xd068 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
 /* ...and the store the other way, `move.w Dn,<d16>(An)`: the sprite's row count into 0(a2) ($fd0068) */
 #define M68K_MOVE_W_TO_D16(dn, an) (0x3140 + ((an) << M68K_DATA_REGISTER_SHIFT) + (dn))
+/* ...and its byte form: the keyboard's mouse packet header, `move.b d0,0(a0)` ($fc2e8e) */
+#define M68K_MOVE_B_TO_D16(dn, an) (0x1140 + ((an) << M68K_DATA_REGISTER_SHIFT) + (dn))
 /* `sub.w #<imm>,Dn` in the register form, AND's and ADD's family: the sprite's clip ($fcffd8, $fd0002) */
 #define M68K_SUB_W_IMMEDIATE(dn)   (0x907c + ((dn) << M68K_DATA_REGISTER_SHIFT))
 /* `move.l <d16>(An),Dn` and `tst.l <d16>(An)` at 0: $a00e's reads of an MFDB's base ($fd0394, $fd04f6) */
@@ -84,5 +88,8 @@
 #define M68K_JMP_ABSOLUTE_LONG     0x4ef9
 /* `$a000`, the Line-A exception word of its opcode 0 (Line-A init), which has no mnemonic: gsx_mfsave's ($fee498) */
 #define M68K_LINE_A_INIT           0xa000
+/* `trap #7` — what `recreate_not_reconstructed` compiles to on the 68000 (the kit's `recreate.h`), where a
+ * transcription lays an UNRECONSTRUCTED arm out as a halt: the floppy's VBL service past its gate (`src/bios/isr.S`) */
+#define M68K_TRAP_NOT_RECONSTRUCTED 0x4e47
 
 #endif /* TOS102US_M68K_ENCODINGS_H */

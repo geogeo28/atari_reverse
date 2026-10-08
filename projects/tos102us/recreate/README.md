@@ -1211,6 +1211,32 @@ parsed table and the m68k call graph, and a routine of any component is named by
   `TRANSCRIBED_CORE`, the attribute every C core is defined with (`noipa`: never inlined, cloned or
   register-allocated across, so a call of it stays a call glue can replace).
 
+**The BIOS's four interrupt handlers — no row, the same rule and the same pin.** `src/bios/isr.S` is the HBL, the
+vertical blank, timer C and the ACIA handler as the ROM has them, with the ROM routines they reach by `bsr` (Scrdmp,
+the cursor's blink and its cell inversion, the Dosound driver's step, the floppy's VBL service to its `flock` gate).
+Their C (`hbl.c`, `vbl.c`, `timerc.c`, `ikbd.c`) is a TWIN: Tier 1 proves it, its Tier 3 rows keep their written
+entries, and no entry calls it. Two things a C body under a handler cannot do sent them there, beside its ratio:
+
+* **keep the register contract.** A handler calls RAM vectors, and the ROM gives the routine there the whole
+  register file. A `jsr` cannot be told to lose A6 by a clobber (`staged_call.h`; an OUTPUT operand in A6 does tell
+  GCC, at a cost over the bar, and is not used), the C blank holds a pointer there, and the VDI's
+  cursor routine in `_vblqueue`'s first slot returns with A6 changed whenever it redraws — the blank after a mouse
+  move never returned. No Tier 1 case can stage that (the host has no register file): `isr.keeps_nothing`, a staged
+  routine that leaves all ones in D0-D7/A0-A6, is run under the blob's entry at each call.
+* **stay off the interrupted stack.** GCC's register save under a call that keeps to nothing was 40 to 52 bytes a
+  handler, on the AES dispatcher's 640-byte stack (the stack reading, further down; STATUS's KNOWN THIN MARGINS).
+
+THE BYTE PIN IS THE TABLE'S (`transcription.pinned_region` / `assert_transcribed`), declared in each handler's
+battery; a routine of `isr.S` is named by `isr.TRANSCRIBED_AS`, because the BIOS's `addrs.h` names carry no `ROM_`.
+A `bsr` from one region into another is `Relocated` to the exact displacement the blob's layout gives. NO call
+leaves for C: timer C's auto-repeat calls the keyboard's queue-a-key routine (`$fc2c42`), which the rest of the build
+has as `kbd_queue_key`, and a thunk into that C cost the interrupted stack 52 bytes on its mouse arm — so the routine
+is laid out in `isr.S` as well, the ROM's bytes for its one interrupt-time caller (606 bytes that exist twice in a
+build: the price of the ROM's frame under an interrupt). NO BUILD STORES THESE ENTRIES IN THE FOUR VECTORS YET — the
+ROM build links no handler — so that store is an unpinned surface (STATUS). An unreconstructed arm
+inside a transcribed routine is a field of `trap #7` laid over the ROM's own words, so the branch round it stays the
+ROM's (`test_past_its_gate_the_floppy_s_service_halts_and_its_return_is_where_the_rom_has_it`).
+
 **The C that CALLS a transcribed routine — the SHIPPED CONFIGURATION (mechanism (T→)).** A VDI function
 round `$a00e`, the polygon layer round `$a003`/`$a006`, `v_show_c` round the sprite: C that calls a
 transcribed core reaches the `.S` on target, so its cost with the C twin inside is nobody's cost. Tier 3
@@ -1385,14 +1411,19 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   entries, drawrat's two cursor routines; the declarations held to the snapshot), a register nothing loads, a trap
   other than `trap #2`, a jump through a table, a path that runs off a listed body. Held to the truth by runs (the
   reading's deepest trap is EXACTLY a run's; the glue's deepest path is its deepest case).
-  WHAT AN INTERRUPT NEEDS ON TOP IS MEASURED TWICE, AND THE TWO DIFFER: the ROM's own handlers from their vectors
-  (`interrupt_needs`, kept by content — cold-sweep a mutant of it) and THE BUILD'S OWN ENTRIES (`our_interrupt_needs`:
-  what a ROM that ships installs — each a pushed image pointer, a `jsr` and a C body's register save deeper than
-  the ROM's); and the OS under a trap twice too — the ROM's VDI and OUR C VDI linked under the trap
+  WHAT AN INTERRUPT NEEDS ON TOP IS MEASURED TWICE: the ROM's own handlers from their vectors (`interrupt_needs`,
+  kept by content — cold-sweep a mutant of it) and THE BUILD'S OWN ENTRIES (`our_interrupt_needs`: what a ROM that
+  ships installs); and the OS under a trap twice too — the ROM's VDI and OUR C VDI linked under the trap
   (`our_loop_run(our_vdi=True)`). A check that adds THE ORIGINAL's handlers to OUR frames passes a build that ships
-  its own. Today: 356 + 240 = 596 of 640 under the ROM's BIOS; **356 + 344 = 700 under our own entries — a strict
-  xfail and STATUS's KNOWN ON-TARGET RISK**; 78 / 60 / 58 of 92 / 92 / 96. A recompile that deepens any frame on a
-  path — one no case runs as on the others — reds by name.
+  its own, and for a wave it did: with a C body under each entry (a pushed image pointer, a `jsr` and GCC's
+  register save) ours needed 192 / 188 / 152 for the ROM's 140 / 140 / 100 — 356 + 344 = 700 of 640. The entries
+  are the ROM's own instructions now (`src/bios/isr.S`: "What ships as the ROM's own instructions") and the two
+  measurements are equal — ONCE EVERY ARM IS MEASURED: the first equality counted eight ticks none of which injected
+  a key repeat, and the tick that injects Alternate + an arrow (a mouse packet, under timer C) was 196 through a
+  thunk into C for the ROM's 144. `_needs_measured` takes the worst of a handler's arms now, the injecting ticks
+  among them, each state made by the handlers' own runs: 140 / 144 / 100 on both shores, 356 + 244 = 600 of 640,
+  held on both blobs; 78 / 60 / 58 of 92 / 92 / 96. A recompile that deepens any frame on a path — one no
+  case runs as on the others — reds by name.
 
 **An ALCYON ENTRY `.S` is glue, not a transcription.** When AES C hands a routine BY VALUE to ROM-shaped code that calls it
 the Alcyon way — ob_draw passing just_draw to everyobj (`$fea08c`) — the host case binds the ROM address to the C core, but

@@ -972,6 +972,23 @@ cursor redraw for the first time: the C kept a pointer in A6 across a RAM vector
 register the call's clobber list could not name, and the handler never returned — class 3, at a
 vector, found only because the handler was run over the machine's real routine.)
 
+**How both closed, and what to take from it.** A C fix of the handler was correct and cost more
+than the code it replaced: what the original keeps on the stack round each call, C has to be made
+to keep there too. For an interrupt handler that is the wrong trade twice — the frame lands on the
+interrupted stack — so the three handlers ship as the original's own instructions, byte-pinned,
+and the stack bound is the original's again (600 of 640, once every arm was measured: below). Two instruments are worth reusing:
+**a staged routine that keeps NO register** (all ones in D0-D7/A0-A6; `test/isr.py`'s
+`keeps_nothing`) run under the cross-compiled entry at every call of a RAM vector, compared with
+the original's handler over the same machine — the host differential cannot stage it, having no
+register file; and **an asm operand that is an OUTPUT in the register a clobber list cannot name**
+(`"=a"` on a variable pinned to A6), which is how GCC is told a call loses it when a clobber makes
+the compiler fail (measured there, and not what was shipped: the handlers went to the original's
+instructions). **And measure EVERY arm of a handler, not the arms the first cases took**: the
+first closure counted eight ticks none of which injected a key repeat — and the tick that injects
+Alt + an arrow went through a thunk into C, 196 bytes for the original's 144, twelve past the
+stack. The equality "ours needs what the original needs" was true of the arms measured and said of
+the handler.
+
 ### 17. A code address the build hands the OS — installed by nobody
 
 **Caught by a review scanning the blob for the original's addresses.** `gsx_setmb_aes` hands the VDI

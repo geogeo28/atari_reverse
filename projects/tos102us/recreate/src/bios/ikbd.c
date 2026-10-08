@@ -48,8 +48,10 @@
  * the oracle came back with its own refusal, and a hung pytest worker is a worse report than a red.
  * `hw_poll8` makes the model's own answer part of the loop's condition (`tools/recreate_kit/
  * include/hw.h`): the loop ends where the case's declaration runs out, with the refusal already
- * tallied, and there is no bound anywhere to be derived or maintained. On target (`src/bios/isr.S`'s
- * stub calls this core) it is the plain volatile read and the loop is the machine's own.
+ * tallied, and there is no bound anywhere to be derived or maintained. On target it is the plain
+ * volatile read and the loop is the machine's own — in this C TWIN, which Tier 3 still runs and prices
+ * and no entry calls: the handler meant for vector $118 is `src/bios/isr.S`'s `isr_acia_entry`, the
+ * ROM's own instructions (which no build stores in the vector yet).
  */
 #include <stdint.h>
 

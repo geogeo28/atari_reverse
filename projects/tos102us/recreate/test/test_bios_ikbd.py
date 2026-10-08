@@ -28,6 +28,7 @@ import acia
 import case
 import iorec
 import isr
+import transcription
 from harness import addrs, emu, make_image, _lib
 
 _lib.isr_acia.argtypes = [ctypes.POINTER(ctypes.c_ubyte)]
@@ -396,8 +397,12 @@ def test_every_registered_case_is_one_this_battery_proves(spec):
     isr.run_spec(spec, _glue)
 
 
+ACIA_REGION = transcription.pinned_region(addrs.ISR_ACIA, addrs.MIDI_ACIA_SERVICE, "ISR_ACIA")     # to its `rte`
+
+
 def test_the_stub_at_the_vector_is_the_rom_s_own_bytes():
-    """`src/bios/isr.S`'s ACIA stub against the ROM's own words — the `movem` pair, which is the
-    whole of the stub: everything this handler does is inside it, so the C core it calls is the
-    whole of `isr_acia`."""
-    isr.assert_the_stub_is_the_rom_s_bytes("ISR_ACIA")
+    """`src/bios/isr.S`'s ACIA entry is the ROM's whole handler, byte for byte, on both blobs — the `movem` pair
+    whose list is its contract, the loop round KBDVECS' two service vectors and its own acknowledgement. It calls
+    nothing else, so no word of it is relocated; `isr_acia` is its C twin, which no entry calls."""
+    transcription.assert_transcribed(ACIA_REGION)
+    transcription.assert_the_shipped_blob_holds_the_same(ACIA_REGION)

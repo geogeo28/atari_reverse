@@ -26,6 +26,7 @@ from harness import BASE_IMAGE, addrs, emu, make_image
 import abi
 import routines
 from case import merge_pokes
+import isr
 from isr import blob as bench     # the cross-compiled blob, loaded once per process (`isr.blob`)
 from layouts import LONG_BYTES, WORD_BYTES
 from opcodes import CLEAR_REGISTER, JSR_ABSOLUTE_LONG, PUSH_RETURN_PC, PUSH_STACK_LONG, RTE, RTS
@@ -38,7 +39,7 @@ _RECREATE = Path(__file__).resolve().parents[1]
 # Tier 3's m68k blob (kit.mk's bench rule) — whose call graph the batteries read — and the SHIPPED CONFIGURATION's
 # (the Makefile's shipped-blob rule): the build the (T→) rows are priced on.
 BENCH_ELF = _RECREATE / "build" / "bench" / "bench.elf"
-SHIPPED_ELF = _RECREATE / "build" / "bench_shipped" / "bench.elf"
+SHIPPED_ELF = isr.SHIPPED_BLOB_DIRECTORY / "bench.elf"
 
 
 # ---- (a) a TRANSCRIPTION: a hand-68000 routine the target build ships as the ROM's own `.S` ---------
@@ -188,7 +189,10 @@ class CallerPool:
 
 def transcription_symbol(name):
     """The `.S` entry an `addrs.h` routine of any component (`test/routines.py`) is transcribed as: its name
-    lower-cased."""
+    lower-cased — or, for a routine of `src/bios/isr.S`, whose names carry no `ROM_`, what `isr.TRANSCRIBED_AS`
+    says."""
+    if name in isr.TRANSCRIBED_AS:
+        return isr.TRANSCRIBED_AS[name]
     assert routines.prefix_of(name), (
         f"{name} is not a routine name of any component: {', '.join(prefix + '<X>' for prefix in routines.PREFIXES)}")
     return name.lower()
@@ -341,6 +345,25 @@ def assert_transcribed(region, *, relocated=None):
         at += size
     missed = sorted(set(relocated) - walked)
     assert not missed, f"relocation(s) at {', '.join(f'${at:x}' for at in missed)} fall inside another word of the walk"
+
+
+def assert_the_shipped_blob_holds_the_same(region):
+    """...and the SHIPPED configuration's blob holds, for `region`, the very bytes the pin above read out of the bench
+    blob. Sound for a `.S` whose every relocated word is a displacement INSIDE its own file (`src/bios/isr.S`): the
+    two blobs link the file at different addresses and the bytes cannot differ. A region holding an ABSOLUTE operand
+    is compared operand by operand instead (`test/test_aes_irq.py`)."""
+    def held_by(blob):
+        return bytes_of(blob, region.anchor, region.lo, region.hi - region.lo)
+
+    assert held_by(isr.shipped_blob()) == held_by(bench()), (
+        f"the shipped blob holds other bytes than the bench blob for ${region.lo:x}..${region.hi:x}")
+
+
+def bytes_of(blob, anchor, rom_address, size):
+    """The `size` bytes `blob` holds where the `.S` entry of `anchor` lays `rom_address` out — on EITHER blob, where
+    `_blob_bytes` reads the bench blob's alone."""
+    at = blob.entry(transcription_symbol(anchor)) + rom_address - getattr(addrs, anchor) - blob.base
+    return bytes(blob.blob[at:at + size])
 
 
 # THE STREAM KIND — "the ROM's instruction stream with its Line-F call words as `jsr`s": how a routine Alcyon COMPILED

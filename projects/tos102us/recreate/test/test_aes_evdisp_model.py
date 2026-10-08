@@ -48,6 +48,7 @@ import aes_evlib
 import aes_switch as switch
 import case
 import derived
+import isr
 import routines
 import test_aes_wm_update as wm_update
 import transcription
@@ -584,8 +585,9 @@ def test_the_yield_s_drops_are_what_they_say():
 # whose C goes 32 bytes deeper. So a recompile that deepens ANY frame under disp moves it, on a path no case runs
 # as on the others.
 # WHAT AN INTERRUPT NEEDS ON TOP is measured twice (`aes_switch`): the ROM's own handlers from their vectors, and
-# OUR OWN ENTRIES (`src/bios/isr.S`), which need more — and the worst nesting the interrupt mask allows is a
-# vertical blank with an MFP interrupt inside it.
+# OUR OWN ENTRIES (`src/bios/isr.S`) — which are the ROM's instructions and need exactly what the ROM's do; while
+# each was a bracket round a C body they needed 192 / 188 / 152, and the worst nesting overran this stack by 60.
+# The worst nesting the interrupt mask allows is a vertical blank with an MFP interrupt inside it.
 # WHAT THE BOUND IS HELD TO: runs from disp's loop over the machines below, on both blobs — never deeper than the
 # bound; their deepest trap EXACTLY the reading's (the recording played back reaches it), which is what says the
 # reading counts the frames the build really pushes.
@@ -609,16 +611,19 @@ DISPATCHER_STACK_BYTES = switch.DISPATCHER_STACK[1] - switch.DISPATCHER_STACK[0]
 # run goes over OUR VDI). An entry that moves says a frame under disp changed: re-read the numbers, and the 640
 # bytes less the interrupt's need.
 OUR_STACK = {"bench": (356, 300, 168, 328), "bench_shipped": (356, 312, 178, 338)}
-THE_ROM_S_INTERRUPTS_NEEDS = switch.InterruptNeeds(acia=140, timer_c=140, vbl=100)
-# OUR OWN ENTRIES', the same on both blobs: each the ROM's need plus the pushed image pointer and the `jsr` (8) and
-# the C body's own register save — isr_acia's 44 (D2-D7/A2-A6), the tick's 40, the blank's 44 and 8 of locals.
-OUR_INTERRUPTS_NEEDS = switch.InterruptNeeds(acia=192, timer_c=188, vbl=152)
+# ...each the worst of every arm measured (`aes_switch._needs_measured`): timer C's 144 is the tick whose auto-repeat
+# injects Alternate + an arrow — a mouse packet built by the keyboard, under the tick; every other tick needs 140.
+THE_ROM_S_INTERRUPTS_NEEDS = switch.InterruptNeeds(acia=140, timer_c=144, vbl=100)
+# OUR OWN ENTRIES', the same on both blobs — and the ROM's own, to the byte: `src/bios/isr.S` is the three handlers
+# as the ROM has them. (With a C body under each entry they were 192 / 188 / 152: the pushed image pointer and the
+# `jsr`, and the 40 to 52 bytes of callee-saved registers GCC saves under a call that keeps to nothing.)
+OUR_INTERRUPTS_NEEDS = THE_ROM_S_INTERRUPTS_NEEDS
 # The most the OS uses below a `trap #2` taken under disp — the AES's trap handler, the BIOS's door, the VDI's entry
 # and the function called (the poll's vsm_string is the deepest): through the ROM's VDI, and through OUR C VDI.
 THE_ROM_S_OS_UNDER_A_TRAP, OUR_VDI_UNDER_A_TRAP = 130, 162
-# THE OVERRUN, by blob: how far below $899a the build's deepest path goes with OUR OWN handlers' worst nesting on
-# top (356 + 152 + 192 = 700 of 640). A KNOWN ON-TARGET RISK, recorded in STATUS.md: it is this number.
-THE_OVERRUN = {"bench": 60, "bench_shipped": 60}
+# WHAT IS LEFT of the dispatcher's 640 bytes under the build's deepest path with the worst nesting on top, by blob:
+# 640 - (356 + 100 + 144). STATUS.md quotes it.
+THE_SLACK = {"bench": 40, "bench_shipped": 40}
 
 
 @functools.cache
@@ -667,45 +672,42 @@ def test_our_frames_fit_the_dispatcher_s_stack_under_the_rom_s_own_handlers(blob
     assert _bound(blob) + need <= DISPATCHER_STACK_BYTES, _refusal(blob, need, "the ROM's interrupt handlers'")
 
 
-OVERRUN_KNOWN = (
-    "KNOWN ON-TARGET RISK (STATUS.md): with OUR OWN interrupt entries the dispatcher's stack overruns — the build's "
-    f"deepest path {OUR_STACK['bench_shipped'][0]} + our vertical blank {OUR_INTERRUPTS_NEEDS.vbl} + our ACIA handler "
-    f"inside it {OUR_INTERRUPTS_NEEDS.acia} = "
-    f"{OUR_STACK['bench_shipped'][0] + OUR_INTERRUPTS_NEEDS.vbl + OUR_INTERRUPTS_NEEDS.acia} of {DISPATCHER_STACK_BYTES} "
-    f"bytes, {THE_OVERRUN['bench_shipped']} over (the ROM's own handlers: "
-    f"{THE_ROM_S_INTERRUPTS_NEEDS.vbl} + {THE_ROM_S_INTERRUPTS_NEEDS.acia}, which fit)")
-
-
-@pytest.mark.xfail(strict=True, reason=OVERRUN_KNOWN)
 def test_our_frames_fit_the_dispatcher_s_stack_under_our_own_handlers(blob):
-    """THE DERIVED CHECK ON A BUILD THAT SHIPS ITS OWN BIOS — RED BY DESIGN until a frame or a handler is made
-    shallower: the same bound with OUR entries' worst nesting on top. Strict: the day it holds, this reds and the
-    mark goes."""
+    """THE DERIVED CHECK ON A BUILD THAT SHIPS ITS OWN BIOS: the same bound with OUR entries' worst nesting on top.
+    (A strict xfail while each entry was a bracket round a C body: 700 of 640.)"""
     need = switch.worst_interrupt_need(switch.our_interrupt_needs(blob))
     assert _bound(blob) + need <= DISPATCHER_STACK_BYTES, _refusal(blob, need, "our own interrupt entries'")
 
 
-def test_the_overrun_under_our_own_handlers_is_what_status_says(blob):
-    """...and the numbers the mark and STATUS.md quote, MEASURED: our three entries' needs, and by how much the
-    worst nesting overruns."""
+def test_our_own_handlers_need_what_the_rom_s_do_and_leave_what_status_says(blob):
+    """...and the numbers STATUS.md quotes, MEASURED: our three entries' needs — the ROM's own — and what the worst
+    nesting leaves of the stack."""
     needs = switch.our_interrupt_needs(blob)
-    assert needs == OUR_INTERRUPTS_NEEDS, f"our interrupt entries need {needs}: say which frame moved"
-    overrun = _bound(blob) + switch.worst_interrupt_need(needs) - DISPATCHER_STACK_BYTES
-    assert overrun == THE_OVERRUN[blob.elf.parent.name], f"the overrun is {overrun} bytes: re-quote STATUS.md's risk entry"
+    assert needs == OUR_INTERRUPTS_NEEDS == switch.interrupt_needs(), f"our interrupt entries need {needs}: say which frame moved"
+    slack = DISPATCHER_STACK_BYTES - _bound(blob) - switch.worst_interrupt_need(needs)
+    assert slack == THE_SLACK[blob.elf.parent.name], f"{slack} bytes are left: re-quote STATUS.md"
 
 
-@pytest.mark.xfail(strict=True, raises=RuntimeError, reason=(
-    "KNOWN ON-TARGET DEFECT (STATUS.md): service_this_vertical_blank keeps its queue pointer in A6 across the slot's "
-    "`jsr` (`include/staged_call.h` cannot clobber A6) and the VDI's cursor routine returns with A6 = $fd00fe — the "
-    "blank that redraws a moved cursor never reaches its `rte`"))
 def test_our_vertical_blank_returns_after_the_vdi_redrew_the_cursor(blob):
-    """RED BY DESIGN: our isr_vbl_entry over a machine whose shown cursor has just moved, run to its `rte`."""
-    try:
-        need = switch.our_vertical_blank_redrawing_the_cursor(blob)
-    except RuntimeError as never_returned:
-        # ...raised again from HERE: the report of an expected failure keeps its frames, and the run's hold three images.
-        raise RuntimeError(str(never_returned)) from None
-    assert need == OUR_INTERRUPTS_NEEDS.vbl
+    """Our isr_vbl_entry over a machine whose shown cursor has just moved, run to its `rte`: the VDI's cursor routine
+    in slot 0 returns with A6 = $fd00fe, and the whole run needs what the entry needs where that routine returns."""
+    assert switch.our_vertical_blank_redrawing_the_cursor(blob) == OUR_INTERRUPTS_NEEDS.vbl
+
+
+def test_our_vertical_blank_walks_on_past_a_slot_that_keeps_no_register(blob):
+    """...and over the same machine with a slot routine behind the VDI's that leaves ALL ONES in D0-D7/A0-A6 — every
+    register the ROM's handler tolerates a slot to change, its own `movem.l d7/a0` round each one and the bracket's
+    `movem.l d0-a6` round the lot — and a marker behind that: our entry leaves the machine the ROM's handler leaves,
+    and gives the interrupted program the same whole file back."""
+    theirs, ours = switch.vertical_blanks_over_a_slot_that_keeps_nothing(blob)
+    marks = bytes(theirs.final[switch.SLOT_MARKS_AT:switch.SLOT_MARKS_AT + 2])
+    assert marks == bytes([isr.MARK] * 2), "the premise: the ROM's walk ran the slot that keeps nothing and the one behind it"
+    assert not theirs.final[switch.CUR_FLAG], "the premise: the ROM's blank redrew the cursor"
+    assert theirs.registers == isr.DIRTY_REGISTERS, "the premise: the ROM's handler gives every register back"
+    differ = [at for at in aes_event._differing_addresses(ours.final, theirs.final, addrs.ST_RAM_BYTES)
+              if at not in case.STACK_BAND and at not in switch.THE_ENTRY_NAMED]
+    assert not differ, f"our blank leaves another machine than the ROM's at {[f'{at:#x}' for at in differ[:8]]}"
+    assert ours.registers == theirs.registers
 
 
 def test_the_stack_reading_is_what_was_measured(blob):
@@ -738,11 +740,13 @@ def test_the_rom_s_own_dispatcher_never_goes_deeper_than_its_keyboard_poll():
 
 
 def test_an_interrupt_s_need_is_the_rom_s_own_handlers_from_their_vectors():
-    """WHAT AN INTERRUPT TAKES of the stack it lands on, measured: 140 bytes for an MFP interrupt at its worst (the
-    mouse packet's last byte, the tick that reaches the VDI's and the AES's), 100 for a vertical blank that redraws
-    the cursor; the worst, one inside the other."""
-    assert switch.interrupt_needs() == THE_ROM_S_INTERRUPTS_NEEDS
-    assert switch.worst_interrupt_need() == THE_ROM_S_INTERRUPTS_NEEDS.vbl + THE_ROM_S_INTERRUPTS_NEEDS.acia
+    """WHAT AN INTERRUPT TAKES of the stack it lands on, measured: for an MFP interrupt at its worst 140 bytes by the
+    ACIA's (the mouse packet's last byte) and 144 by timer C's (the tick that injects Alternate + an arrow's repeat;
+    140 the tick that reaches the VDI's and the AES's), 100 for a vertical blank that redraws the cursor; the worst,
+    the deeper MFP handler inside the blank."""
+    needs = switch.interrupt_needs()
+    assert needs == THE_ROM_S_INTERRUPTS_NEEDS
+    assert switch.worst_interrupt_need() == needs.vbl + max(needs.acia, needs.timer_c) == 244
 
 
 # THE READING'S OWN REDS, each over a listing of its own (`StackReading.of_listing`): the four shapes it used to pass
@@ -803,7 +807,7 @@ def test_the_pointers_the_reading_is_told_of_are_what_the_machine_s_hold():
 
 
 def test_the_build_s_own_interrupt_entries_call_through_the_machine_s_vectors(blob):
-    """...and why OUR handlers' needs are MEASURED, not read: each entry's C calls through a vector of the machine
+    """...and why OUR handlers' needs are MEASURED, not read: each entry calls through a vector of the machine
     (KBDVECS, etv_timer, the vertical blank's queue) — a pointer the reading refuses by name."""
     for entry in switch.OUR_ENTRIES.values():
         with pytest.raises(AssertionError, match="a pointer read out of memory"):

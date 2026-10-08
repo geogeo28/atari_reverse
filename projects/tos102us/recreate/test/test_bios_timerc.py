@@ -25,7 +25,8 @@ import pytest
 import case
 import isr
 import iorec
-from harness import BASE_IMAGE, addrs, _lib
+import transcription
+from harness import BASE_IMAGE, addrs, emu, make_image, _lib
 from recreate_kit import os_map
 
 _lib.isr_timer_c.argtypes = [ctypes.POINTER(ctypes.c_ubyte)]
@@ -469,8 +470,74 @@ def test_every_registered_case_is_one_this_battery_proves(spec):
     isr.run_spec(spec, _glue, poison=False)
 
 
-def test_the_stub_at_the_vector_is_the_rom_s_own_bytes():
-    """`src/bios/isr.S`'s timer C stub against the ROM's own words. The acknowledgement is in there:
-    one `bclr` on $fffa11 where the C core spells a declared read and a ledgered store, which is the
-    difference the Tier 3 row measures and this says is a difference in CYCLES alone."""
-    isr.assert_the_stub_is_the_rom_s_bytes("ISR_TIMER_C")
+# ---- THE ENTRY OVER THE ARMS NO REGISTERED TICK TAKES — on the blob, where the entry is the ROM's instructions --------
+# Unregistered, as the vertical blank's are: they price nothing, and each holds something only the cross-compiled
+# entry has. THE INJECTING TICKS reach the keyboard's queue-a-key routine ($fc2c42), which `src/bios/isr.S` lays out
+# as the ROM's bytes for this one caller: a plain key into the IKBD's ring, and — with Alternate held — an arrow as a
+# mouse packet through KBDVECS' `mousevec`. AN `etv_timer` THAT KEEPS NO REGISTER is what the handler's
+# `movem.l d0-a6` bracket is for.
+KEEPS_NOTHING_MARK = isr.MARKS + 1              # beside the tick vector's own marker
+MOUSE_STUB = DECOY_STUB                         # KBDVECS' mousevec, staged: the packet's own mark
+ALT_HELD = bytes([1 << addrs.KBSHIFT_ALTERNATE_BIT])
+THE_RING = iorec.staged(addrs.IOREC_IKBD, 0, 0)
+BEYOND_THE_REGISTERED = (
+    {"name": "the auto-repeat injects the held key", "entry": addrs.ISR_TIMER_C,
+     "pokes": repeat_pokes(delay=0, interval=1, overrides={**THE_RING, addrs.KBSHIFT: b"\x00"}),
+     "routines": {TIMER_STUB: marker_routine()}, "io_seed": IO_QUIET},
+    {"name": "the auto-repeat injects Alternate + an arrow: a mouse packet", "entry": addrs.ISR_TIMER_C,
+     "pokes": repeat_pokes(delay=0, interval=1, key=addrs.SCANCODE_CURSOR_UP, overrides={
+         **THE_RING, addrs.KBSHIFT: ALT_HELD,
+         addrs.KBDVECS + addrs.KBDVECS_MOUSEVEC: struct.pack(">I", MOUSE_STUB)}),
+     "routines": {TIMER_STUB: marker_routine(), MOUSE_STUB: marker_routine(2)}, "io_seed": IO_QUIET},
+    {"name": "etv_timer keeps no register", "entry": addrs.ISR_TIMER_C,
+     "pokes": quiet_pokes(), "routines": {TIMER_STUB: isr.keeps_nothing(KEEPS_NOTHING_MARK)}, "io_seed": IO_QUIET},
+)
+
+
+@pytest.mark.parametrize("blob", isr.BLOBS)
+@pytest.mark.parametrize("spec", BEYOND_THE_REGISTERED, ids=lambda spec: spec["name"])
+def test_the_entry_is_the_rom_s_handler_over_the_arms_no_registered_tick_takes(spec, blob):
+    """`isr_timer_c_entry` against the ROM's handler over the same machine, on both blobs (`isr.run_transcribed`): the
+    key in the IKBD's ring or the packet `mousevec` was handed, the reloaded interval, the tick vector's mark."""
+    isr.run_transcribed(spec, blob)
+
+
+def _the_rom_s_run(spec):
+    staged = isr.case_pokes(spec["entry"], routines=spec["routines"], pokes=spec["pokes"])
+    return emu.run(make_image(staged), isr.TRAMPOLINE_AT[spec["entry"]], dict(isr.DIRTY_REGISTERS), io_seed=spec["io_seed"])
+
+
+def test_the_injecting_ticks_really_inject_in_the_rom_s_run():
+    """THE PREMISE of the first two cases above, the oracle's alone: over those machines the ROM's handler reaches
+    `$fc2c42` — the held scancode lands in the IKBD's ring, and Alternate + an arrow reaches `mousevec` with the
+    keyboard's own three-byte packet built."""
+    _final, writes, _left = _the_rom_s_run(BEYOND_THE_REGISTERED[0])
+    assert writes[iorec.buffer_of(addrs.IOREC_IKBD) + addrs.IOREC_KEY_BYTES + 1] == A_SCANCODE
+    _final, writes, _left = _the_rom_s_run(BEYOND_THE_REGISTERED[1])
+    assert writes[isr.MARKS + 2] == MARK and addrs.KBD_MOUSE_PACKET in writes
+    assert iorec.buffer_of(addrs.IOREC_IKBD) + addrs.IOREC_KEY_BYTES + 1 not in writes, "a mouse movement queues no key"
+
+
+# THE HANDLER AND THE DOSOUND DRIVER'S STEP BEHIND IT are one span of the ROM, $fc30c4..$fc31c2, and `src/bios/isr.S`
+# lays it out whole — so the handler's `bsr.s` into the step is the ROM's own word. THE KEYBOARD'S QUEUE-A-KEY ROUTINE
+# is a second span, $fc2c42..$fc2ea0: the key path, its mouse arm, and between the two `midivec`'s jump and the MIDI
+# ring's put, carried as bytes so that no branch across them is relocated. ONE word of the two spans differs: the
+# handler's `bsr.w` into the second, held to the displacement the blob's layout gives.
+REGIONS = {
+    "the handler and the sound driver's step": transcription.pinned_region(
+        addrs.ISR_TIMER_C, addrs.BELL_SOUND_LIST, "ISR_TIMER_C", ("SOUND_DRIVER_STEP",)),
+    "the keyboard's queue-a-key routine": transcription.pinned_region(
+        addrs.KBD_QUEUE_KEY, addrs.ALT_MOUSE_BUTTON_KEYS, "KBD_QUEUE_KEY"),
+}
+THE_REPEAT_S_CALL = addrs.TIMER_C_CALLS_QUEUE_KEY + isr.WORD_BYTES      # the displacement word of `bsr.w $fc2c42`
+RELOCATED = {THE_REPEAT_S_CALL: transcription.Relocated(
+    transcription.PC_RELATIVE, "KBD_QUEUE_KEY", "timer C's `bsr` to the keyboard's queue-a-key routine")}
+
+
+@pytest.mark.parametrize("region", REGIONS)
+def test_the_stub_at_the_vector_is_the_rom_s_own_bytes(region):
+    """`src/bios/isr.S`'s timer C entry with the sound driver's step, and the queue-a-key routine, are the ROM's
+    bytes on both blobs but for the one displacement between them — and the ROM's own word there names $fc2c42."""
+    assert transcription._relocation_target(THE_REPEAT_S_CALL, RELOCATED[THE_REPEAT_S_CALL]) == addrs.KBD_QUEUE_KEY
+    transcription.assert_transcribed(REGIONS[region], relocated=RELOCATED)
+    transcription.assert_the_shipped_blob_holds_the_same(REGIONS[region])

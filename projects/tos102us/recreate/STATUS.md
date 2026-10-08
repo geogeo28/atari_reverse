@@ -53,51 +53,6 @@ any reading). NOTHING IS ACCEPTED. Until the ruling, the ratio cells of those ni
 that says "within the bar" — quote the table's whole-run pricing and must be read with this block. The full
 measurement is the wave log's entry 16 (K5) and `scratchpad/b4w2_fix_YZ.md`.
 
-**KNOWN ON-TARGET RISK — THE DISPATCHER STACK'S WORST NESTING OVERRUNS BY 60 BYTES UNDER OUR OWN INTERRUPT ENTRIES
-(measured 2026-10-07, the wave-2 gate; NOT fixed, pinned RED-BY-DESIGN: `test_aes_evdisp_model.py`,
-`test_our_frames_fit_the_dispatcher_s_stack_under_our_own_handlers`, a strict xfail; no differential can see it).**
-The dispatcher runs on a private 640-byte stack (`$899a..$8c1a`). What an interrupt taken there needs was measured from
-the ROM's own handlers (140 ACIA / 140 Timer C / 100 vertical blank: 240 nested) — but a build that ships its own BIOS
-installs ITS entries (`src/bios/isr.S`), and they need more:
-
-| on the interrupted stack | the ROM's handler | our entry (both blobs) | why ours is deeper |
-|---|---|---|---|
-| ACIA, a mouse packet's last byte | 140 | **192** | the pushed image pointer and the `jsr` (8), `isr_acia`'s own register save (44: D2-D7/A2-A6, which `staged_call.h`'s clobber list makes GCC save) |
-| Timer C, the tick that reaches etv_timer | 140 | **188** | 8, and `service_this_timer_c_tick`'s save (40) |
-| vertical blank, the cursor redrawn | 100 | **152** | 8, `service_this_vertical_blank`'s save (44) and 8 of locals — less the ROM's own `movem.l d7/a0` round each slot (8) |
-| WORST NESTING the mask allows: a vertical blank (level 4) with an MFP interrupt (level 6) inside it | 240 | **344** | neither MFP handler lowers the mask (no two nest); the cursor routine draws at level 4 |
-
-Against that, OUR FRAMES UNDER disp, read off both blobs' listings (`aes_switch.StackReading`): **356 bytes** by
-disp → forker (8 + 60) → bchange_fork (16) → bchange (52) → mowner (28) → wm_find (28) → ob_find (100) → ob_actxywh (36) →
-ob_offset (24) + the `jsr`'s 4; the deepest RUN 300 / 312 over the ROM's VDI and **328 / 338 with OUR C VDI under the
-trap** (162 bytes below a `trap #2` against the ROM's 130: vdi_rom_entry → vdi_dispatch → the function). The ROM's own
-loop uses 188 whatever is queued.
-
-- **356 + 344 = 700 of 640: 60 over** on the listing's deepest path (an arm no machine reaches: ob_find's start
-  below the root); **338 + 344 = 682: 42 over on a path a machine DOES run** (a recording played back, the shipped
-  blob, our VDI under mchange's vq_mouse). With the ROM's own BIOS under our AES it fits: 356 + 240 = 596.
-- WHAT AN OVERRUN OVERWRITES, in order below `$899a`: the three SR save words — psetup's `$8998`, spl7_save's `$8996`,
-  the dispatcher's `$8994` (the next spl_restore / switchto then loads a status register an interrupt frame left
-  there) — the word at `$8992` and the longword at `$898e` (AES globals, unnamed), then 52 bytes down to `$895a`.
-- THE CHEAPEST LEVERS, none applied (each moves a committed BIOS object and none is proved to close the gap alone):
-  the three C bodies' register saves are redundant where the entry's own `movem` has saved the file already (the
-  blank's and the tick's entries save D0-A6: −44 and −40; the ACIA's saves nine registers: −20 at most), which
-  would leave 356 + 108 + 172 = 636 — four bytes to spare, on the three numbers being exactly these; or ob_find's
-  100-byte frame; or a larger stack (the ROM's layout is not ours to keep on target).
-- NOT YET OURS UNDER THOSE ENTRIES, so measured with the ROM's: KBDVECS' IKBD / MIDI service routines and the packet
-  machine (`$fc29fc..$fc2e..`), the BIOS's VDI door (`$fc4ebc`) and the AES's `trap #2` handler (`$fe3ea6`); the
-  floppy's VBL service is not reconstructed (our blank is measured with `flock` set).
-
-**KNOWN ON-TARGET DEFECT — OUR VERTICAL BLANK DOES NOT SURVIVE THE VDI'S CURSOR REDRAW (found by the same measurement;
-`src/bios/vbl.c`, BIOS wave; NOT fixed, pinned RED-BY-DESIGN:
-`test_our_vertical_blank_returns_after_the_vdi_redrew_the_cursor`, a strict xfail).** `service_this_vertical_blank`
-walks `_vblqueue` with its queue pointer in A6 across each slot's `jsr` — `include/staged_call.h` clobbers every
-register BUT A6 (a toolchain bound, said there: "only if GCC chose A6 for it"; it did, on both blobs) — and the VDI's
-cursor routine (`$fcff2a`, slot 0) returns with A6 = `$fd00fe` whenever it redraws. The next `movea.l (a6)+,a0`
-reads the queue out of the ROM and the handler never reaches its `rte` (measured: 400,000 instructions). The ROM's own
-handler keeps D7 / A0 round each slot on the stack and nothing in a register. Every blank after a mouse move with
-the cursor shown: no Tier 1 or Tier 3 case stages a slot that clobbers A6.
-
 ## Verified — xbios (29)
 
 Each row is one function of the ORIGINAL ROM, run in place at its own address over the post-boot RAM
@@ -151,9 +106,19 @@ The BIOS wave's first set: the trap #13 leaves that read and write RAM only. `Bc
 CHAIN behind the IKBD handler (wave 6); what still halts is the two `Bconin` drivers that WAIT, and both
 are DEFERRALS rather than limits — `PRT:` a declared GPIP list away, `AUX:` a staged input ring away. Every unreconstructed arm HALTS on both builds
 (`recreate_not_reconstructed`: abort on the host, `trap #7` on the 68000) rather than returning a
-plausible value. The four interrupt vectors' ENTRY sequences are `src/bios/isr.S` (44 of 48 literal words
-byte-identical to the ROM, the four excused words each asserted to differ), proved by the transcription
-differential; the C cores stay as the bodies' own Tier 1 instrument, so each handler carries two rows.
+plausible value. THE FOUR INTERRUPT HANDLERS SHIP AS THE ROM'S OWN INSTRUCTIONS (`src/bios/isr.S`, wave 18): each
+handler whole, and the ROM routines one reaches by `bsr` — Scrdmp, the cursor's blink and the cell inversion, the
+floppy's VBL service to its `flock` gate, the Dosound driver's step, the keyboard's queue-a-key routine — byte-pinned
+against the ROM by each handler's battery (`transcription.assert_transcribed`; five relocated words, each held to its
+exact value) and proved by the transcription differential. The C cores stay as TWINS no entry calls — Tier 1's
+instrument — so each handler carries two rows: the twin's, at its written entry, and the ENTRY's, at 1.00.
+TWO SURFACES OF THOSE ENTRIES ARE UNPINNED, and both predate them: NO BUILD STORES AN ENTRY IN ITS VECTOR ($68 / $70 /
+$114 / $118 — the ROM build links no handler, so the store that would install one is nobody's test); and WITH `flock`
+CLEAR — the idle machine's state — our vertical blank enters the floppy's VBL service past its gate, which is not
+reconstructed, and HALTS (`trap #7`): every case of the blank stages `flock` = 1.
+A THIRD, shared with the C keyboard (`src/bios/keyboard.c`): the queue-a-key region keeps two operands that are ROM
+ADDRESSES — the key-click sound list `$fc31e0` and the Alt button-key table `$fc2ea0` — and no registry or test holds
+that a shipped ROM has those bytes there (with the click on, every auto-repeat hands `$fc31e0` to the sound step).
 
 | Addr (ROM) | Name | Cases | Cost (insns / cycles) | Tier 3 (recreate / original) | Status | Verification |
 |---|---|---|---|---|---|---|
@@ -168,10 +133,10 @@ differential; the C cores stay as the bodies' own Tier 1 instrument, so each han
 | `0xfc0a34` | `Kbshift` (BIOS $0b, `src/bios/kbshift.c`) | 21 | 6 / 94 read, 7 / 104 write | **1.48** read, **1.53** write (accepted: image pointer) | ✅ verified | the `bmi` on the WORD ($ff80 reads, $0080 STORES); the old state zero-extended over seven bytes; seven modes storing their low byte ($7fff stores $ff); and storing the value already held, attributed by the poison pass |
 | `0xfc07f2` | `trap #14` XBIOS entry (`src/bios/trap.S`, `xbios_trap14`) | 34 | 35 / 652 with Logbase (incl. the 7 / 106 staged caller) | **1.01** (35 / 656; +4 cycles: the ROM's `lea (d16,pc)` is absolute long here) | ✅ verified | The second of the dispatcher's two exception entries, six bytes above `$fc07f8`: `lea XBIOS_FUNCTION_TABLE(pc),a0` and a `bra.s` into the shared body — the only thing the two traps differ in, proved by `test_each_entry_indexes_its_own_table`. Same transcription differential as the row below, plus a BYTE PIN of the whole $fc07f2..$fc0845 span against the ROM with only the three link-forced encodings spliced (two `lea`s → absolute long, and the `bra.s` displacement they move) — which is what refuses a `bge.s` transcribed as `bcc.s`, invisible to every other check. 34-test battery shared with the row below |
 | `0xfc07f8` | `trap #13` / `trap #14` dispatcher (`src/bios/trap.S`) | 34 | 26 / 548 dispatcher alone, 34 / 642 with Drvmap (incl. the 7 / 106 staged caller) | **1.01** every case (+4 cycles: the ROM's `lea (d16,pc)` is absolute long here) | ✅ verified | ASSEMBLY, not C — an exception handler, proved by the transcription differential (`RomBench.measure_transcription`): both sides entered with the same whole register file and the whole of D0-D7/A0-A6 required back. The hand-built frame pinned against a real `trap` (only the saved return PC differs); the save-area frame's depth and layout; A5 = 0 read from inside the call; the register contract incl. the d1/d2/a0/a2 pass-through and a1 coming back as savptr; an out-of-range number returning `caller_high \| fn`; the INDIRECT (bit 31) entry through `hdv_rw`; the `move.l usp,sp` arm. 8/8 mutants killed. A whole `Bios(10)` call is 496 cycles, 93.5 % of it this dispatcher |
-| `0xfc06c8` | `isr_hbl` (vector $68, `src/bios/hbl.c`) | 18 | 8 / 126 level zero, 7 / 108 already masked |  **1.09** level zero, **1.18** already masked (accepted: (A), plus the frame address as a second argument); ISR ENTRY (`src/bios/isr.S`): **0.98** level zero, **0.97** already masked | ✅ verified | every masked level 1-7 left alone and six level-0 frames or-ed incl. `$f8ff`; the saved D0 given back; the vector table read out of the snapshot. THE ONLY HANDLER WHOSE FRAME IS IN COMPARED IMAGE (`test/isr.py`'s `STAGED_FRAME`). Mutation 3/3, +1 on the entry stub |
-| `0xfc06de` | `isr_vbl` (vector $70, `src/bios/vbl.c`) | 82 | 38 / 776 quiet, 147 / 2102 full frame, 2048 / 20910 monitor change, 6 / 138 semaphore taken |  **1.00** monitor change (pinned), **0.97** quiet (pinned: (I)), **1.14** everything queued (accepted), **1.27** semaphore taken (accepted: (A)); ISR ENTRY: **1.01** monitor change (pinned), **1.00** semaphore taken, **1.23** quiet (accepted), **1.23** everything queued (accepted) | ✅ verified | both clocks against the semaphore's sign boundary; the release RE-READ, proved by a queue routine storing its own semaphore; the monitor follower over four resolutions × both monitors × eight `defshiftmd` values incl. the signed keep-arm; sixteen palette words as an ordered hardware-write stream and `colorptr` cleared; six screen bases MID-then-HIGH with `screenpt` NOT cleared; the cursor blink's four arms over six cell geometries; the queue walked exactly `nvbls` slots; the dump hook with a decoy. `flock` set on every case: the floppy VBL past that gate HALTS. Mutation 10/11 (the eleventh EQUIVALENT: a `bset` over a bit already set writes the byte that is already there — no image, ledger or cycle surface separates it), +4/4 on the entry stub; the cursor's ZERO-count arm is exercised and its pass count unpinned (the battery says why) |
-| `0xfc30c4` | `isr_timer_c` (vector $114, `src/bios/timerc.c`) | 88 | 6 / 142 divided away, 58 / 1018 serviced |  **1.18** divided away (accepted: (A)+(H)), **1.08** serviced (pinned); ISR ENTRY: **1.00** divided away, **1.33** serviced (accepted: (H)+(L)) | ✅ verified | the divider as a ROTATE over seven words; the tick counted and the channel acknowledged on BOTH paths; the acknowledgement a function of five declared `$fffa11` bytes; the whole Dosound interpreter — five register writes, the mixer's read-modify-write over six declared chip states, `$80`, both `$81` arms, every pause from `$82` to `$ff` incl. the zero that ends the list, a paused driver resuming; the auto-repeat's `conterm` gate and both countdowns to their last tick. The INJECTION at `$fc2c42` is `kbd_queue_key` now (`src/bios/keyboard.c`): three cases drive the last tick of the interval, over three different held scancodes, so the reload from `Kbrate`'s byte and the record the held key leaves in the IOREC are both pinned — the arm that used to halt. Mutation 8/8, +3/3 on the entry stub |
-| `0xfc29ce` | `isr_acia` (vector $118, `src/bios/ikbd.c`) | 30 | 16 / 424 one pass, 26 / 590 two passes, 114 / 1580 real vectors + a keystroke, 182 / 2528 real vectors + a mouse packet |  **1.11** one pass (pinned: (K)), **1.10** two passes (pinned: (K)), **1.03** both real-vector cases; ISR ENTRY: **1.71** one pass, **1.52** two passes, **1.12** a mouse packet, **1.18** a keystroke (all accepted: (H)+(L)+(K)) | ✅ verified | both KBDVECS routines called once each in the ROM's order, each from its own slot with a decoy; the loop ended on GPIP bit 4 ALONE over four bytes differing everywhere else; the channel acknowledged with the other seven bits kept; the `movem.l d0-d3/a0-a3/a5` list read at its edge. The two ROM service routines ($fc29fc/$fc2a0c) are STAGED OVER; the snapshot pinned to still hold them — and the TWO-PASS entry, which a DECLARED SEQUENCE made a case (`io_seed={MFP_GPIP: [asserted, idle]}`, TRAP_MODEL Phase 16): both service routines called again in the ROM's order with both KBDVECS vectors re-read, the channel acknowledged ONCE however many passes, the two GPIP reads compared in order in the named set's stream while the declared map's stays empty. A declaration that never says IDLE — a constant or a list that runs out — spins to the oracle's cap, both driven. TWO CASE SHAPES NOW. The staged shape isolates the handler as before. The REAL-VECTOR shape leaves the captured machine's own `$fc29fc`/`$fc2a0c` in KBDVECS and declares the two 6850s instead, so a three-byte relative-mouse report is assembled over THREE passes of the loop — a `[asserted, asserted, idle]` list on `$fffa01` and a three-byte list on `$fffc02`, which is the first case in this project to need two declared SEQUENCES at once — and a keystroke reaches the IKBD IOREC through the whole chain. A decoy in `midisys`' place is still answered, so the routines are inputs and not calls by name. Mutation 4/4, +2/2 on the entry stub, +2/2 this wave; the A5-pin mutation is a cycle surface only (see (K)) |
+| `0xfc06c8` | `isr_hbl` (vector $68, `src/bios/hbl.c`) | 18 | 8 / 126 level zero, 7 / 108 already masked |  **1.09** level zero, **1.18** already masked (accepted: (A), plus the frame address as a second argument); ISR ENTRY (`src/bios/isr.S`, the ROM's bytes): **1.00** level zero, **1.00** already masked | ✅ verified | every masked level 1-7 left alone and six level-0 frames or-ed incl. `$f8ff`; the saved D0 given back; the vector table read out of the snapshot. THE ONLY HANDLER WHOSE FRAME IS IN COMPARED IMAGE (`test/isr.py`'s `STAGED_FRAME`). Mutation 3/3 on the C twin; the ENTRY (wave 18) 1/1 — its `and.w` as gas's `andi`, killed by the byte pin alone |
+| `0xfc06de` | `isr_vbl` (vector $70, `src/bios/vbl.c`) | 82 | 38 / 776 quiet, 147 / 2102 full frame, 2048 / 20910 monitor change, 6 / 138 semaphore taken |  **1.00** monitor change (pinned), **0.97** quiet (pinned: (I)), **1.14** everything queued (accepted), **1.27** semaphore taken (accepted: (A)); ISR ENTRY (the ROM's bytes, with Scrdmp, the blink, the cell inversion and the floppy's gate): **1.00** on all four | ✅ verified | both clocks against the semaphore's sign boundary; the release RE-READ, proved by a queue routine storing its own semaphore; the monitor follower over four resolutions × both monitors × eight `defshiftmd` values incl. the signed keep-arm; sixteen palette words as an ordered hardware-write stream and `colorptr` cleared; six screen bases MID-then-HIGH with `screenpt` NOT cleared; the cursor blink's four arms over six cell geometries; the queue walked exactly `nvbls` slots; the dump hook with a decoy. `flock` set on every case: the floppy VBL past that gate HALTS. Mutation 10/11 (the eleventh EQUIVALENT: a `bset` over a bit already set writes the byte that is already there — no image, ledger or cycle surface separates it), on the C twin; the ENTRY and its four routines (wave 18) 6/6 — the settle count 1999 and the blink's `bchg` as `bset` (the byte pin alone), the floppy's field one trap short, a trap as a `nop` in the shipped blob only, a `bsr` left as the ROM's (refused by name) and one to the wrong routine; the cursor's ZERO-count arm is exercised and its pass count unpinned (the battery says why) |
+| `0xfc30c4` | `isr_timer_c` (vector $114, `src/bios/timerc.c`) | 88 | 6 / 142 divided away, 58 / 1018 serviced |  **1.18** divided away (accepted: (A)+(H)), **1.08** serviced (pinned); ISR ENTRY (the ROM's bytes, with the sound driver's step; the auto-repeat's key through the ROM's own queue-a-key routine, a further pinned region of `isr.S`): **1.00** divided away, **1.00** serviced | ✅ verified | the divider as a ROTATE over seven words; the tick counted and the channel acknowledged on BOTH paths; the acknowledgement a function of five declared `$fffa11` bytes; the whole Dosound interpreter — five register writes, the mixer's read-modify-write over six declared chip states, `$80`, both `$81` arms, every pause from `$82` to `$ff` incl. the zero that ends the list, a paused driver resuming; the auto-repeat's `conterm` gate and both countdowns to their last tick. The INJECTION at `$fc2c42` is `kbd_queue_key` now (`src/bios/keyboard.c`): three cases drive the last tick of the interval, over three different held scancodes, so the reload from `Kbrate`'s byte and the record the held key leaves in the IOREC are both pinned — the arm that used to halt. Mutation 8/8 on the C twin; the ENTRY, the sound step and the queue-a-key routine (wave 18) 5/5 — `movea.w #0` as `suba.l`, a `move.b #0` as `clr.b` and the fine mouse step 2 (the byte pin alone), the mouse packet's two bytes swapped, the `bsr` left as the ROM's (refused by name) |
+| `0xfc29ce` | `isr_acia` (vector $118, `src/bios/ikbd.c`) | 30 | 16 / 424 one pass, 26 / 590 two passes, 114 / 1580 real vectors + a keystroke, 182 / 2528 real vectors + a mouse packet |  **1.11** one pass (pinned: (K)), **1.10** two passes (pinned: (K)), **1.03** both real-vector cases; ISR ENTRY (the ROM's bytes, no word relocated): **1.00** on all four | ✅ verified | both KBDVECS routines called once each in the ROM's order, each from its own slot with a decoy; the loop ended on GPIP bit 4 ALONE over four bytes differing everywhere else; the channel acknowledged with the other seven bits kept; the `movem.l d0-d3/a0-a3/a5` list read at its edge. The two ROM service routines ($fc29fc/$fc2a0c) are STAGED OVER; the snapshot pinned to still hold them — and the TWO-PASS entry, which a DECLARED SEQUENCE made a case (`io_seed={MFP_GPIP: [asserted, idle]}`, TRAP_MODEL Phase 16): both service routines called again in the ROM's order with both KBDVECS vectors re-read, the channel acknowledged ONCE however many passes, the two GPIP reads compared in order in the named set's stream while the declared map's stays empty. A declaration that never says IDLE — a constant or a list that runs out — spins to the oracle's cap, both driven. TWO CASE SHAPES NOW. The staged shape isolates the handler as before. The REAL-VECTOR shape leaves the captured machine's own `$fc29fc`/`$fc2a0c` in KBDVECS and declares the two 6850s instead, so a three-byte relative-mouse report is assembled over THREE passes of the loop — a `[asserted, asserted, idle]` list on `$fffa01` and a three-byte list on `$fffc02`, which is the first case in this project to need two declared SEQUENCES at once — and a keystroke reaches the IKBD IOREC through the whole chain. A decoy in `midisys`' place is still answered, so the routines are inputs and not calls by name. Mutation 4/4 on the C twin, +2/2 in BIOS wave 3; the ENTRY (wave 18) 1/1 — `lea 0.l` as `.w`, killed by the byte pin alone; the A5-pin mutation is a cycle surface only (see (K)) |
 | `0xfc29fc` | `midi_acia_service` (KBDVECS `midisys`, `src/bios/acia_service.c`) | 20 | 23 / 362 a byte | **1.40** a byte (accepted: (A)+(L) — the vector call's clobber list over a body that is a status read, a data read and that call) | ✅ verified | the shared body's four status arms over both entries — bit 7 clear with every OTHER bit set, and bit 7 set with bits 1–4 set but 0 and 5 clear, so neither test can be the whole byte; the data port left UNDECLARED on those four, so a read the model does not serve refuses by address; the OVERRUN arm's own read; and the case THE SEQUENCE MODEL EXISTS FOR — a byte AND an overrun on one entry, which pops `$fffc06` twice and is a list of two, compared as an ordered stream. The error vector read BEFORE the status byte, proved by having the byte's own vector rewrite the slot mid-run. Five bytes through `midivec` incl. both ends of the header range (a MIDI byte is never a packet). The whole path composed with the ROM's own `$fc2e3a` in the slot, which is what pins A0 |
 | `0xfc2a0c` | `ikbd_acia_service` (KBDVECS `ikbdsys`, same file) | 71 | 48 / 658 a packet's last byte | **1.75** a packet's last byte (accepted: (A)+(L)+(M), two vector calls) | ✅ verified | all ten packet headers against the ROM's two tables, read out of the image rather than written down; the two SIGNED ranges that keep a header ($f8–$fb at `$e44`, $fd–$ff at `$e4d`) and the three that keep none; the five tabled kinds' fill at `end - remaining` at two counts each; the dispatch on the byte that zeroes the count, with the packet address read out of the descriptor and the vector out of the KBDVECS SLOT the descriptor names; the packet passed BOTH pushed and in A0, compared as one address; the state byte cleared AFTER the handler runs, proved by a stub that reports what it finds; kinds 2 and 3 sharing `mousevec` so only the address tells them apart; the two single-stick reports at `$e4e + kind - 6` with `joyvec` handed the header; the `$fd` report overwriting its own header; four bytes below `$f6` handed to the keyboard; and both negative controls — an undeclared port refused by address, a spent list refused by address and READ INDEX |
 | `0xfc2a42` | `acia_take_byte` (same file) | 91 (all of the two rows above enter through it) | 21 / 276 a header | — | ⚠️ verified, unpriced | `cmpa.l #$c76,a0` is the whole discriminant: every case above reaches it, and a byte filed under the wrong IOREC leaves through `midivec` instead of the keyboard. DEFERRED rather than unpriceable — the five routines either side of it are priced now; what this one still has not got is a case that enters it DIRECTLY, so nothing pins the registers its callers leave it (`A0` = the IOREC, `A1` = the 6850) and a Tier 3 row built on a guessed contract would be a number about a call the machine never makes |
@@ -3769,6 +3734,82 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
     alone on the final ledger: green. The boot snapshot's bytes differ from the one the BEFORE table was made over
     (three captures this night, three hashes: the by-nature bytes `atari/README.md` names) and the table does not.
     Strays: none. New untracked files: none. NOT RUN by this pass: `my-code-review` (the orchestrator's gate).
+* **Wave 18 (2026-10-08) — THE INTERRUPT HANDLERS SHIP AS THE ROM'S OWN INSTRUCTIONS; the vertical blank's A6 defect
+  fixed by it, and the dispatcher stack's overrun closed on every arm measured (600 of 640) — after a first closure
+  that had not measured them all.** One agent, alone in the tree, in three passes: a C fix of the blank (correct, and
+  it moved four pinned VBL rows — 0.97 → 0.93, 1.14 → 1.18, 1.23 → 1.20, 1.24 → 1.27: raising an accepted pin is a
+  new acceptance, so the project's rule for hand 68000 whose C measures over the bar applied instead); the
+  transcription; and the gate's fix pass.
+  - WHAT WAS WRONG, and wider than the block this entry removes said: `service_this_vertical_blank` holds its IMAGE
+    POINTER in A6 across `swv_vec` and `scr_dump` as well as its queue pointer across each `_vblqueue` slot. A `jsr`
+    cannot be told to lose A6 by a clobber (measured again: even an empty `asm` clobbering it makes GCC 16 want a
+    frame pointer and die in `print_operand_address`); an OUTPUT operand in A6 does tell it, was measured in the
+    first pass, costs over the bar, and is NOT USED. The VDI's cursor routine in slot 0 returns with A6 = `$fd00fe`
+    when it redraws: the blank after a mouse move never reached its `rte`. The ROM keeps D7/A0 round each slot ON THE
+    STACK and reads everything else through absolute addresses or a re-zeroed A5.
+  - WHAT `src/bios/isr.S` IS NOW: the three handlers WHOLE (the HBL always was), and the ROM routines they reach by
+    `bsr` / `bra` — Scrdmp `$fc0d50`, the cursor's blink `$fc4666` and the cell inversion `$fc4a1e`, the Dosound
+    driver's step `$fc312a`, the keyboard's queue-a-key routine `$fc2c42..$fc2ea0`, and the floppy's VBL service
+    `$fc1bc4` as far as its `flock` gate (past it, to the `rts` the gate branches to, a field of `trap #7`: the arm
+    is not reconstructed and halts as before). 1,406 bytes of text for 132. BYTES EQUAL TO THE ROM'S BUT FIVE WORDS,
+    each the displacement of a `bsr.w` / `bra.w` from one region into another of the same file, held to its exact
+    value by the one pin every `.S` here has (`transcription.pinned_region` / `assert_transcribed`, which takes a
+    routine of `isr.S` by its `addrs.h` name: `isr.TRANSCRIBED_AS`). NO CALL LEAVES FOR C. `isr.LITERAL_SPANS` (48
+    words, four excused) is gone; the HBL is pinned the same way, its `and.w #imm` spelt as the ROM's word.
+  - THE QUEUE-A-KEY ROUTINE IS THERE BECAUSE THE FIRST CLOSURE WAS WRONG ON ITS ARM. Timer C's auto-repeat calls
+    `$fc2c42`, which the build has as `kbd_queue_key`; the transcription first reached that C through a thunk. The
+    stack measurement took eight ticks none of which injects, so "ours needs the ROM's 140" was true of the arms
+    measured and said of the handler. THE GATE MEASURED THE INJECTING TICKS: a plain key 154 for the ROM's 140, and
+    Alternate + an arrow — a mouse packet, the VDI's mouse interrupt and the AES's glue under the tick — **196 for
+    the ROM's 144: 356 + 100 + 196 = 652 of 640, 12 OVER**. `_needs_measured` now takes THE WORST OF EVERY ARM, the
+    two injecting ticks among them, each state made by the handlers' own runs (the key's make code through the
+    ACIA's handler, the delay and the interval counted down by the ticks); RED on the thunk (the needs 140 /
+    196 / 100, 652), GREEN on the ROM's bytes. The routine is 606 bytes, self-contained but for
+    `mousevec`; its span carries `midivec`'s jump and the MIDI ring's put (`$fc2e34..$fc2e5c`) as bytes never
+    entered, so no branch across them is relocated; its two operands that name the ROM (the key click's Dosound
+    list, the Alternate button-key table) stay the ROM's addresses, as the C's are. IT EXISTS TWICE IN A BUILD — the
+    C for the ACIA chain, these bytes for the one caller that is an interrupt handler.
+  - THE C BODIES ARE KEPT AS TWINS (the orchestrator's ruling), as the HBL's always was beside its transcribed entry:
+    `isr_vbl`, `isr_timer_c`, `isr_acia` and the two `service_this_*` functions are what Tier 1 proves and what the C
+    rows price, and NO ENTRY CALLS THEM. Their bytes are HEAD's (`vbl.c`, `timerc.c`, `ikbd.c`: comments only; the
+    settle count moved to `addrs.h`), so their rows and written entries stand unmoved — and the twin of the blank
+    still has the A6 hazard, said at the function. NOT wired into mechanism (T): owed (Next).
+  - TIER 3, `make bench` 0 OVER / 0 DRIFTED, 1,903 rows, ONLY ten of the twelve ISR-entry rows moved (two were
+    1.00): every one **1.00**, instruction for instruction and cycle for cycle (HBL 0.98 / 0.97; VBL 1.01 pinned,
+    1.23, 1.24; timer C 1.33; ACIA 1.71 / 1.52 / 1.12 / 1.18). EIGHT WRITTEN ENTRIES REMOVED from `PERF_ACCEPTED`
+    (seven acceptances and the 1.01 pin), none added, none re-quoted: 56 accepted rows for 63. No registered tick
+    injects, so no row prices the queue-a-key copy: the transcription relation holds it on both blobs, unregistered.
+  - THE INTERRUPTED STACK, measured on both blobs, the worst of every arm: ACIA **140**, Timer C **144**, vertical
+    blank **100** — the ROM's own, which is 140 / 144 / 100 too (192 / 188 / 152 under C bodies, on the arms then
+    measured). Worst nesting 244: **356 + 244 = 600 of 640, 40 to spare**; 582 on the path a machine runs with our C
+    VDI under the trap. `test_our_frames_fit_the_dispatcher_s_stack_under_our_own_handlers` is a plain pass,
+    `test_our_own_handlers_need_what_the_rom_s_do_and_leave_what_status_says` pins the three needs equal to the ROM's
+    and the 40, and `test_our_vertical_blank_returns_after_the_vdi_redrew_the_cursor` lost its mark: no xfail is
+    left. WHAT "EVERY ARM" IS, so that it is not read as more: a mouse packet and a key's make and break through the
+    ACIA; ticks divided away, ticks that reach the VDI's, and the two injecting ticks; a blank that redraws the
+    cursor. NOT MEASURED: a blank that changes resolution (`swv_vec`) or dumps the screen (`scr_dump` — the ROM's own
+    routine prints the screen), a tick whose sound list runs, the Alternate button keys' arm, and anything a
+    program installs in a vector. Still the machine's under those entries, as before: KBDVECS' service routines and
+    the packet machine, the BIOS's VDI door, the AES's `trap #2` handler.
+  - TESTS ADDED: `isr.keeps_nothing` — a staged routine leaving ALL ONES in D0-D7/A0-A6, which only a run of the
+    blob can be held to — under the blank's entry at `swv_vec`, a slot and `scr_dump` (a premise test on the ROM,
+    the transcription relation on both blobs: `isr.run_transcribed`); the same routine behind the VDI's own in the
+    machine's `_vblqueue`, the cursor shown and moved by ROM runs; under timer C's entry the tick that injects a
+    plain key, the one that injects Alternate + an arrow, and an `etv_timer` that keeps nothing; the byte pins of
+    nine regions, each on both blobs; the floppy's field of traps and its `rts`, on both blobs.
+  - MUTATION (private tree, forced rebuild a mutant, the four handler batteries and the dispatcher model), 14 / 14
+    KILLED over the two passes. A behaviour-neutral byte in each transcription, killed by the BYTE PIN ALONE: the
+    blank's settle count 1999, the blink's `bchg` as `bset`, timer C's `movea.w #0` as `suba.l`, the queue-a-key
+    routine's `move.b #0` as `clr.b` and its fine mouse step 2, the ACIA's `lea 0.l` as `.w`, the HBL's `and.w` as
+    gas's `andi`. A relocation left un-applied (the ROM's own displacement kept), the blank's and timer C's: refused
+    BY NAME ("$fc310e is relocated (timer C's `bsr` to the keyboard's queue-a-key routine) and equals the ROM's").
+    A `bsr` to the wrong routine, the mouse packet's two bytes swapped, the floppy's field one trap short: killed.
+    ONE TRAP AS A `nop` IN THE SHIPPED BLOB ALONE: killed by the gate test's shipped-blob case and nothing else.
+    HEAD's `isr.S` back: 25 failed, the cursor test among them. The thunk's own mutant of the first pass (its two
+    slots swapped: killed) died with the thunk. WHAT THE SWEEP SAYS OF THE SETTLE LOOP: its count in the entry is
+    held by the byte pin and by nothing else (the absolute-cycle pin of `test_bios_vbl.py` is the C twin's).
+  - OBJECTS (139 shipped m68k objects against HEAD's): ONE changed, `src_bios_isr_S.o`; both blobs changed; `glue.S`
+    equal. The ROM build links none of it and is byte-identical.
 * **Next** — BAND 4 WAVE 2 IS IN, PHASE A AND FLIP 3: the dispatcher is on target and ALL EIGHT of the door's entries
   are rebound — no door call of the AES's C is the ROM's routine any more, on either build. In this order:
   - **RETIRE THE ROM-SERVED ROAD (dead since FLIP 3; its own small commit)**: in `aes/evdoor.h` `event_door`,
@@ -3796,9 +3837,16 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
     dead arms retired (since flip 3 no window is ROM-served: the first item above); a SPARSE base image in the kit
     (the 16 MB image is 8 % non-zero: bounded 54–168 CPU-s a
     suite run — a kit redesign across seven projects, and not content-neutral without a guard on the hole).
-  - **THE USER'S RULING ON THE DISPATCHER STACK** (the KNOWN ON-TARGET RISK under the Components table): 60 bytes over
-    with our own interrupt entries; and the vertical blank's A6 (the KNOWN ON-TARGET DEFECT beside it) — both BIOS-wave
-    code, both pinned by strict xfails, neither fixed.
+  - **THE INTERRUPT HANDLERS (wave 18)**: the dispatcher stack fits under our own entries on every arm measured
+    (600 of 640; the wave's entry lists the arms that are not) and the blank survives the cursor redraw; no xfail is
+    left. OWED from it: THE STORE OF EACH ENTRY INTO ITS VECTOR — no build makes it, so it is no test's; THE FLOPPY'S
+    VBL SERVICE past its `flock` gate — with `flock` clear, the idle state, our blank halts there (pre-existing;
+    every case stages `flock` = 1); a ruling on wiring the four handlers' C twins into mechanism (T) (nine written
+    entries would go, the twins' three under-bar pins among them: left as they are by ruling); `vbl.c`'s and
+    `timerc.c`'s `service_this_*` functions, which nothing outside their own twins calls and which are not `static`
+    only to keep the twins' rows where they are; the queue-a-key routine's two copies (C and `.S`); the A6 bound for
+    the C that still calls a RAM vector on target (`acia_service.c`'s packet vectors, the VDI's
+    `call_vector_registers` callers): unpinned — `isr.keeps_nothing` is the instrument, and no case stages it there.
   - Then **WAVE 3 — THE ROWS THAT SWITCH**: every blocking entry blocked-then-woken THROUGH OUR DISPATCHER on both
     builds (Tier 3's arrival rule for a run that switches: `ev_block` for a key typed ahead is measured, 0.84 / 0.83,
     and waits for it; ev_timer's first row); the two-process chains (a writer and a reader, the yields, a foreign
@@ -3821,10 +3869,23 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 
 ## Suite
 
-`make test`: **22,724 passed**, 5 skipped (one the `RUN_SLOW`-gated placement search; THREE the cases of the
-ROM-served door road, dead since FLIP 3, each skip naming its retirement), 4 xfailed (STRICT, by design: the
-dispatcher's stack under our own interrupt entries and our vertical blank over a cursor redraw, on both blobs — the
-KNOWN ON-TARGET RISK and DEFECT under the Components table), 0 failed.
+`make test`: **22,754 passed**, 5 skipped (one the `RUN_SLOW`-gated placement search; THREE the cases of the
+ROM-served door road, dead since FLIP 3, each skip naming its retirement), **0 xfailed** (the four strict ones — the
+dispatcher's stack under our own interrupt entries and our vertical blank over a cursor redraw, on both blobs — are
+plain passes since wave 18), 0 failed.
+- Re-summed by WAVE 18's FIX PASS (the interrupt handlers as the ROM's instructions, 2026-10-08) from its own `make
+  gates` FROM AN EMPTY `build/` (the old one moved aside; the snapshot captured again, the derivation cache cold;
+  ended 03:00): **test 22,754 passed / 5 skipped / 0 xfailed, guarded the same** (29,264 candidate runs guarded),
+  the ROM build rc 0 (sha256 1d736545…, unchanged: it links no handler), `make gates` rc 0, `make bench` 0 OVER / 0
+  DRIFTED. +30 over FLIP 3's 22,724: the four xfails now passing, and 26 tests added — 9 keeps-no-register cases of
+  the blank (3 on the ROM, 6 on the blobs), 2 of the ROM-made machine's, 7 of timer C's entry (6 on the blobs, 1
+  premise), 5 more pinned regions (four of the blank's, the queue-a-key routine), the blank's relocation
+  declarations, and the floppy's gate on both blobs (2). No test deleted; the pinned-numbers test renamed
+  (`test_our_own_handlers_need_what_the_rom_s_do_and_leave_what_status_says`). The first attempt of this run ended
+  at the snapshot's capture (Hatari stopped at PC $cc3a, not at the blank's vector: before any of the tree's code
+  ran) and was repeated from empty. NOT A TIMING: the machine loaded throughout (1-minute load 133 at its end). The
+  table: 1,903 rows, ten moved against FLIP 3's, none added or removed; 56 rows `accepted` for 63. (The wave's first
+  gates, before the fix pass: 22,750 passed, 29,275 guarded.)
 - Re-summed by FLIP 3 (band 4 wave 2, 2026-10-08) from its own `make gates` FROM AN EMPTY `build/` (the snapshot
   captured again, the derivation cache cold; 00:12 → 00:19): **test 22,724 passed / 5 skipped / 4 xfailed, guarded
   the same** (29,268 candidate runs guarded), the ROM build rc 0 (sha256 1d736545…, unchanged), `make gates` rc 0,
@@ -5122,9 +5183,10 @@ THE HOST MODEL'S LIMITS:
 
 KNOWN THIN MARGINS, both DERIVED checks now (a deeper frame of a later compiler reds by name, on a path no case runs as on the others):
 - the button glue's private stack — 92 bytes, 78 used by our build (14 to spare; the ROM 70); the dispatcher's stack —
-  640 bytes, 596 at the derived worst with a vertical blank and an MFP interrupt of THE ROM'S OWN nested on top (44
-  to spare; the deepest measured run 300 / 312 + 240) — and **OVERRUN BY 60 with our own interrupt entries on top:
-  the KNOWN ON-TARGET RISK under the Components table**, a strict xfail.
+  640 bytes, 600 at the derived worst with a vertical blank and an MFP interrupt nested on top (40 to spare; the
+  deepest measured run 300 / 312 + 244) — THE ROM'S OWN handlers' need and, since wave 18, OUR OWN ENTRIES', which
+  are the ROM's instructions (under C bodies they needed 104 more, and the stack overran by 60). The 244 is the
+  worst of every arm measured: timer C's tick that injects Alternate + an arrow's repeat is 144, every other 140.
 
 DEFERRED, each measured or named:
 - **THE KNOWN PRICING GAP (K5)** — the block under the Components table: the user's ruling.

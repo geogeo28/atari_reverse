@@ -40,8 +40,10 @@ hook dispatches BY ADDRESS, so a decoy staged beside the named routine means som
 sides.
 """
 import ctypes
+import functools
 import struct
 from collections import namedtuple
+from pathlib import Path
 
 import abi
 import case
@@ -121,8 +123,8 @@ assert SHARED_TRAMPOLINE_BASE + len(HANDLERS) * TRAMPOLINE_STRIDE <= STAGED_FRAM
 assert STAGED_FRAME + addrs.EXCEPTION_FRAME_BYTES <= STUB_BAND
 
 # THE C CORE'S NAME AND THE STUB'S, which are two symbols for one handler: `isr_vbl` is the handler
-# as C, which Tier 1 proves, and `isr_vbl_entry` is `src/bios/isr.S` — the ROM's own entry sequence
-# around it, which is what a shipped ROM installs in the vector. The suffix is the whole of the
+# as C, which Tier 1 proves, and `isr_vbl_entry` is `src/bios/isr.S` — the ROM's own handler, byte for
+# byte, which is the handler FOR the vector (the C is its twin; no build stores it there yet). The suffix is the whole of the
 # convention, so neither `bench/tier3.py` nor a battery spells either name a second time.
 STUB_SUFFIX = "_entry"
 
@@ -277,8 +279,8 @@ Transcription = namedtuple("Transcription",
 def transcribed(spec):
     """One whole-handler TRANSCRIPTION case from the same spec a battery registers.
 
-    `registered` above prices the C CORE against the ROM; this prices `src/bios/isr.S` — the stub a
-    shipped ROM installs in the vector, brackets and all — through `RomBench.measure_transcription`,
+    `registered` above prices the C TWIN against the ROM; this prices `src/bios/isr.S` — the handler
+    for the vector, the ROM's own instructions — through `RomBench.measure_transcription`,
     which holds it to the whole register file the original left as well as to the image and the chip.
     Both are built from the one spec, so the two rows are two relations over one verified run.
     """
@@ -300,40 +302,30 @@ def transcribed(spec):
         spec.get("psg_seed"), spec.get("io_seed"), SHARED_ENTRY_COST, HANDLER_AT[entry])
 
 
-# ---- the LITERAL TRANSCRIPTION, word for word against the ROM -------------------------------------
-# `src/bios/isr.S` carries the ROM's own entry and exit sequences, and this is what says so: the
-# assembled words are read back out of the cross-compiled blob and compared with the ROM's own. The
-# Tier 3 transcription row proves the stub BEHAVES like the original over a handful of cases; this
-# proves the instructions ARE the original's everywhere the stub is not calling our C.
-#
-# THE OFFSETS ARE THE `.S`'s OWN LAYOUT, and they are meant to be: a stub that grew an instruction is
-# a transcription somebody changed, and the right place for that to surface is here.
-LiteralSpan = namedtuple("LiteralSpan", "at rom_at length excused")
-
-# What an ASSEMBLER may legitimately spell differently, per span, by byte offset within it. Each
-# entry is a claim that the two words are the same instruction; `assert_the_stub_is_the_rom_s_bytes`
-# requires an excused word to actually DIFFER, so an excuse that stopped being needed reds instead of
-# standing for ever.
-_BRANCH_TO_OUR_OWN_BODY = ("a branch displacement, which measures to the end of OUR body — the "
-                           "`jsr` into the C core is not the length of the ROM's inline one")
-_ANDI_ENCODING = ("GNU as spells `and.w #imm,Dn` as ANDI ($0240); the ROM's assembler chose AND "
-                  "with an immediate source ($c07c). Same operation, same size, same 8 cycles")
-_SIGN_EXTENDED_IO_ADDRESS = ("the ROM spells the MFP's register sign-extended ($fffffa11) where "
-                             "`addrs.h` names it $fffa11 — one address on a 24-bit bus")
-
-LITERAL_SPANS = {
-    "ISR_HBL": (LiteralSpan(0x00, addrs.ISR_HBL, 0x16, {0x06: _ANDI_ENCODING}),),
-    "ISR_VBL": (LiteralSpan(0x00, addrs.ISR_VBL, 0x14, {0x0E: _BRANCH_TO_OUR_OWN_BODY}),
-                LiteralSpan(0x20, addrs.ISR_VBL_RELEASE, 0x0C, {})),
-    "ISR_TIMER_C": (LiteralSpan(0x00, addrs.ISR_TIMER_C, 0x12, {0x0C: _BRANCH_TO_OUR_OWN_BODY}),
-                    LiteralSpan(0x1E, addrs.ISR_TIMER_C_ACKNOWLEDGE, 0x0E,
-                                {0x08: _SIGN_EXTENDED_IO_ADDRESS})),
-    "ISR_ACIA": (LiteralSpan(0x00, addrs.ISR_ACIA, 0x04, {}),
-                 LiteralSpan(0x10, addrs.ISR_ACIA_RESTORE, 0x06, {})),
+# ---- THE TRANSCRIPTION: `src/bios/isr.S` is the ROM's own bytes ------------------------------------
+# Each handler, and each ROM routine one reaches by `bsr`, is laid out there as the ROM has it, and each battery
+# byte-pins its own spans with the one comparator every `.S` of this project is held by
+# (`transcription.pinned_region` / `assert_transcribed`: every word the ROM's but the references that measure to
+# where the `.S` is linked, each held to its exact value). THIS IS THE NAMING HALF: the `.S` entry each ROM routine
+# is transcribed as, by its `addrs.h` name — a handler's by `stub_symbol`, the routines under them written out,
+# because the BIOS's names carry no `ROM_` for `test/routines.py`'s rule to turn into a symbol.
+TRANSCRIBED_AS = {
+    **{handler.constant: stub_symbol(handler.constant) for handler in HANDLERS},
+    "XBIOS_SCRDMP": "isr_vbl_scrdmp",                       # the blank's `bsr $fc0d50`
+    "VBL_BLINK_CURSOR": "isr_vbl_blink_cursor",             # ...its `bsr $fc4666`
+    "VBL_INVERT_CURSOR_CELL": "isr_vbl_invert_cursor_cell", # ...which ends in a `bra $fc4a1e`
+    "VBL_FLOPPY_SERVICE": "isr_vbl_floppy_service",         # ...its `bsr $fc1bc4`, as far as its `flock` gate
+    "SOUND_DRIVER_STEP": "isr_timer_c_sound_step",          # timer C's `bsr $fc312a`
+    "KBD_QUEUE_KEY": "isr_timer_c_queue_key",               # ...and its `bsr $fc2c42`, the auto-repeat's
 }
-assert set(LITERAL_SPANS) == {handler.constant for handler in HANDLERS}
+for _name in TRANSCRIBED_AS:
+    assert hasattr(addrs, _name), f"{_name} names no ROM routine of `addrs.h`"
 
 WORD_BYTES = 2
+# THE TWO BLOBS a build is held on, by the directory each is built in (None: the bench blob's own): the one Tier 3
+# prices plain C on, and the shipped configuration's. ONE spelling, here because every battery reaches this module.
+SHIPPED_BLOB_DIRECTORY = Path(__file__).resolve().parents[1] / "build" / "bench_shipped"
+BLOBS = {"the bench blob": None, "the shipped blob": SHIPPED_BLOB_DIRECTORY}
 _BENCH = None
 
 
@@ -352,29 +344,27 @@ def blob():
     return _BENCH
 
 
-def assert_the_stub_is_the_rom_s_bytes(constant):
-    """Every literal word of one handler's `src/bios/isr.S` stub against the ROM's own."""
-    bench = blob()
-    symbol = stub_symbol(constant)
-    at = bench.entry(symbol) - bench.base
-    for span in LITERAL_SPANS[constant]:
-        ours = bytes(bench.blob[at + span.at:at + span.at + span.length])
-        theirs = bytes(BASE_IMAGE[span.rom_at:span.rom_at + span.length])
-        assert len(ours) == span.length, f"{symbol} is shorter than its {span.length}-byte span"
-        for offset in range(0, span.length, WORD_BYTES):
-            our_word = ours[offset:offset + WORD_BYTES]
-            their_word = theirs[offset:offset + WORD_BYTES]
-            why = span.excused.get(offset)
-            where = f"{symbol}+{span.at + offset:#x} against {span.rom_at + offset:#06x}"
-            if why is None:
-                assert our_word == their_word, (
-                    f"{where}: the stub assembles to {our_word.hex()} where the ROM has "
-                    f"{their_word.hex()}. It is a TRANSCRIPTION — either put the ROM's instruction "
-                    f"back, or excuse the word in `isr.LITERAL_SPANS` with why they are the same")
-            else:
-                assert our_word != their_word, (
-                    f"{where}: excused as \"{why}\", but the two words are now identical "
-                    f"({our_word.hex()}) — drop the excuse rather than leaving it standing")
+@functools.cache
+def shipped_blob():
+    """...and the shipped configuration's, once per process too."""
+    from recreate_kit.rom_bench import RomBench
+
+    return RomBench(SHIPPED_BLOB_DIRECTORY)
+
+
+def blob_named(name):
+    """One of `BLOBS`, by its name."""
+    return blob() if BLOBS[name] is None else shipped_blob()
+
+
+def run_transcribed(spec, blob_name):
+    """One handler case under the TRANSCRIPTION relation on the blob named: `src/bios/isr.S`'s entry against the ROM's
+    handler over the same machine — the same image, the same WHOLE register file and the same chip traffic
+    (`RomBench.measure_transcription`). For a case no table row prices: an arm only the cross-compiled entry has."""
+    row = transcribed(spec)
+    return blob_named(blob_name).measure_transcription(row.caller, row.symbol, row.regs, pokes=row.pokes,
+                                                       psg_seed=row.psg_seed, io_seed=row.io_seed,
+                                                       shared_entry=row.shared_entry)
 
 
 # ---- the register file a handler is entered with -------------------------------------------------
@@ -563,6 +553,38 @@ def flag_recorder(watched, report):
         buf[report + 2] = (buf[report + 2] + 1) & 0xFF
     return (struct.pack(">HIIHI", MOVE_W_ABSOLUTE_TO_ABSOLUTE, watched, report, ADD_ONE_TO_BYTE_ABSOLUTE, report + 2)
             + RTS), effect
+
+
+# A routine that KEEPS NO REGISTER — what a RAM vector's routine may be under a handler whose `movem` bracket
+# saves the whole file (the VBL's and timer C's: `d0-a6`). ALL ONES, so a caller that went on with any of them as a
+# count walks for ever and as a pointer takes an address error; A7 is the one register a routine owes any caller.
+MOVEQ_ALL_ONES_D0 = 0x70FF          # `moveq #-1,d0`  — the register in bits 9-11
+MOVEA_L_D0_A0 = 0x2040              # `movea.l d0,a0` — likewise
+REGISTER_FIELD_SHIFT = 9
+DATA_REGISTERS, ADDRESS_REGISTERS_BELOW_SP = 8, 7
+ALL_ONES = 0xFFFF_FFFF
+KEEPS_NOTHING_CLOBBER_BYTES = WORD_BYTES * (DATA_REGISTERS + ADDRESS_REGISTERS_BELOW_SP)
+
+
+def keeps_nothing(mark_at):
+    """A staged routine that leaves ALL ONES in D0-D7 and A0-A6, then its mark at `mark_at`, and returns.
+
+    ONLY A RUN OF THE CROSS-COMPILED BLOB CAN BE HELD TO IT (`include/staged_call.h`): the host build has no register
+    file, so the effect half of the pair is the mark alone and a Tier 1 differential over it proves nothing more than
+    `marker_routine` does. `keeps_nothing_returns_at` is where a premise run reads the file it leaves."""
+    def effect(buf, _argument):
+        buf[mark_at] = MARK
+    clobber = b"".join(struct.pack(">H", MOVEQ_ALL_ONES_D0 | register << REGISTER_FIELD_SHIFT)
+                       for register in range(DATA_REGISTERS))
+    clobber += b"".join(struct.pack(">H", MOVEA_L_D0_A0 | register << REGISTER_FIELD_SHIFT)
+                        for register in range(ADDRESS_REGISTERS_BELOW_SP))
+    assert len(clobber) == KEEPS_NOTHING_CLOBBER_BYTES
+    return clobber + store_byte(MARK, mark_at) + RTS, effect
+
+
+def keeps_nothing_returns_at(staged_at, mark_at=MARKS):
+    """The address of the `rts` of `keeps_nothing` staged at `staged_at`: where every register it clobbers is all ones."""
+    return staged_at + len(keeps_nothing(mark_at)[0]) - len(RTS)
 
 
 def routine_pokes(routines):

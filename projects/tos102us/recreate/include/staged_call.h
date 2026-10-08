@@ -32,10 +32,11 @@
  * symbol would have the later import silently win under `pytest -n auto`. Folding them into one
  * hook means changing that core's signature and that battery's binding, which belongs with them.
  *
- * WHAT NEITHER BUILD MODELS is a staged routine that clobbers a register the C ABI calls
- * callee-saved. On TARGET that is answered rather than modelled — the clobber list below says the
- * callee keeps to nothing — but off target there is no register file to clobber, so a case cannot
- * stage a routine that does it and no differential here would see one.
+ * WHAT THE HOST BUILD CANNOT MODEL is a staged routine that clobbers a register the C ABI calls
+ * callee-saved: off target there is no register file to clobber, so no Tier 1 case can stage one. On
+ * TARGET it is answered — the clobber list below says the callee keeps to nothing — for every register
+ * BUT A6 (below), and a routine that keeps none at all is staged where the cross-compiled blob runs it
+ * for real: `test/isr.py`'s `keeps_nothing`, under the vertical blank's entry at each of its three calls.
  */
 #ifndef TOS102US_STAGED_CALL_H
 #define TOS102US_STAGED_CALL_H
@@ -78,9 +79,22 @@ extern void (*recreate_call_vector_registers)(uint8_t *image, uint32_t routine, 
  * A6 IS THE ONE EXCEPTION, and it is a toolchain bound rather than a judgement: GCC 16 cannot
  * compile a `jsr` through an address register with A6 clobbered as well — it runs out of ADDR_REGS,
  * and pinning A0 to free one up ICEs in `print_operand_address` instead. What makes it safe is the
- * layer above: `src/bios/isr.S` brackets the whole handler in the ROM's own `movem` pair, so the
- * INTERRUPTED PROGRAM gets A6 back whatever a staged routine did with it. What is left unguarded is
- * a local of our own C body, and only if GCC chose A6 for it. */
+ * layer above: the handler's own `movem` pair gives the INTERRUPTED PROGRAM A6 back whatever a staged
+ * routine did with it. What is left unguarded is a local of our own C body, and only if GCC chose A6
+ * for it.
+ *
+ * IT CHOSE A6, AND THAT IS WHY NO HANDLER SHIPS AS C. `service_this_vertical_blank` held its image
+ * pointer in A6 across `swv_vec` and `scr_dump` and its queue pointer across each `_vblqueue` slot, and
+ * the VDI's cursor routine (`$fcff2a`, the machine's own slot 0) returns with A6 = `$fd00fe` whenever
+ * it redraws: the blank after a mouse move never reached its `rte`. The ROM's handler holds nothing in
+ * a register across those calls. C can be made to do the same — NOT BY A CLOBBER (a clobber of A6 makes
+ * this compiler want a frame pointer and die in `print_operand_address`, even on an empty `asm`), but A6
+ * named as an OUTPUT OPERAND of the `jsr` works (`"=a"` on a variable pinned to it: measured, and NOT
+ * USED — no shape below carries it) — at a cost over Tier 3's bar, and the project's rule for that is
+ * the ROM's own instructions: `src/bios/isr.S` is the three
+ * handlers whole, and the C bodies these shapes serve there are twins no entry calls. The shapes still
+ * serve the C that calls a RAM vector elsewhere — the ACIA chain's packet vectors, the VDI's — where the
+ * A6 bound stands exactly as written above, and unpinned. */
 /* Spelt in two pieces because the three shapes at the bottom of this file need A1 for the ROUTINE —
  * their callees read A0, so A0 cannot hold it — and a register an `asm` names as an operand may not
  * also be clobbered. Two lists written out in full would be one rule spelt twice, and the second
@@ -100,7 +114,7 @@ extern void (*recreate_call_vector_registers)(uint8_t *image, uint32_t routine, 
  *
  * Each of these handlers opens `lea 0,a5` inside its `movem` bracket, and every routine TOS installs
  * in one of these slots reaches low RAM and the I/O page through `(a5)` displacements: `$fc29fc`'s
- * first instruction is `lea $d84(a5),a0`, the IOREC it is about to service. `src/bios/isr.S` spells
+ * first instruction is `lea $d84(a5),a0`, the IOREC it is about to service. A C handler body is handed
  * that zero as the PUSHED IMAGE ARGUMENT instead — which the C body needs and the vector does not —
  * so the register itself is pinned HERE, at the one place control leaves for a routine that expects
  * it, rather than in a stub whose value a C body is free to allocate over.

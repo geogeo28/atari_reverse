@@ -224,9 +224,9 @@ cmt 0xfc0b50 Exception handler installed into $08..$FC by the loop at 0xfc0334 w
 fn 0xfc07ce os_rte_stub
 cmt 0xfc07ce Bare rte. Installed at 0xfc0340 into $14 (divide by zero), at 0xfc034c into the seven autovectors $64..$7c, and at 0xfc0366 into $88 (trap #2) until the GEM dispatcher replaces it.
 fn 0xfc06c8 hbl_handler
-cmt 0xfc06c8 Vector $68, the horizontal blank: raises the interrupted frame's IPL to 3 when it was 0 (ori.w #$300 on the saved SR) and rte's -- the ROM's guard against a program that unmasked HBL. src/bios/hbl.c; recreate/test/test_bios_hbl.py.
+cmt 0xfc06c8 Vector $68, the horizontal blank: raises the interrupted frame's IPL to 3 when it was 0 (ori.w #$300 on the saved SR) and rte's -- the ROM's guard against a program that unmasked HBL. src/bios/hbl.c; recreate/test/test_bios_hbl.py. SHIPS as the ROM's own bytes, recreate/src/bios/isr.S (byte-pinned).
 fn 0xfc06de vbl_handler
-cmt 0xfc06de Vector $70, the vertical blank: _frclock++ then the vblsem semaphore (re-read before release), _vbclock++; the monitor follower (GPIP bit 7 vs defshiftmd, a SIGNED cmp.b #2, writes $ff8260 from sshiftmd); the palette from colorptr (16 words to $ff8240, colorptr cleared); the screen base from screenpt copied INTO _v_bas_ad and then to $ff8203/$ff8201 (screenpt NOT cleared); the cursor blink; the _vblqueue walk over nvbls slots; the floppy VBL behind flock; the screen-dump hook on _dumpflg. src/bios/vbl.c; recreate/test/test_bios_vbl.py.
+cmt 0xfc06de Vector $70, the vertical blank: _frclock++ then the vblsem semaphore (re-read before release), _vbclock++; the monitor follower (GPIP bit 7 vs defshiftmd, a SIGNED cmp.b #2, writes $ff8260 from sshiftmd); the palette from colorptr (16 words to $ff8240, colorptr cleared); the screen base from screenpt copied INTO _v_bas_ad and then to $ff8203/$ff8201 (screenpt NOT cleared); the cursor blink; the _vblqueue walk over nvbls slots; the floppy VBL behind flock; the screen-dump hook on _dumpflg. src/bios/vbl.c; recreate/test/test_bios_vbl.py. SHIPS as the ROM's own bytes, recreate/src/bios/isr.S (byte-pinned); the C named here is its twin, which no entry calls.
 fn 0xfc07ee etv_critic_default
 cmt 0xfc07ee Default critical-error handler (moveq #-1,d0; rts), installed at 0xfc0386 into etv_critic ($404).
 fn 0xfc07fc trap_dispatch_common
@@ -601,7 +601,7 @@ cmt 0xfd2f32 Four 19-byte BPB prototypes, indexed by `muls.w #19` taken as a WOR
 # --- BIOS wave 2 (2026-09-15): screen/sound XBIOS, MFP/timer/IKBD XBIOS, the interrupt handlers,
 # the trap dispatcher -- bodies read and verified by recreate/test/test_{xbios,bios}_*.py ---
 fn 0xfc312a dosound_driver_step
-cmt 0xfc312a The 200 Hz timer-C sound driver: walks the list at $e8a, writes $ff8800/$ff8802 directly, keeps its pause countdown at $e8e and its ramp accumulator at $e8f. XBIOS Dosound ($fc3074) only hands it a cursor. Reconstructed inside src/bios/timerc.c.
+cmt 0xfc312a The 200 Hz timer-C sound driver: walks the list at $e8a, writes $ff8800/$ff8802 directly, keeps its pause countdown at $e8e and its ramp accumulator at $e8f. XBIOS Dosound ($fc3074) only hands it a cursor. Reconstructed inside src/bios/timerc.c. SHIPS as the ROM's own bytes, recreate/src/bios/isr.S (byte-pinned); the C named here is its twin, which no entry calls.
 fn 0xfca914 console_reinit
 cmt 0xfca914 Console/VT52 re-initialisation after a resolution change: picks a font ($fd40d2 or $fd5b2e), calls the Line-A setup at $fc4a48, rewrites $2974..$2995 and tail-calls $fca654. XBIOS Setscreen's resolution arm ends here, which is why that arm HALTS in the recreate.
 fn 0xfc2ed8 offgibit_clear_bit4
@@ -675,9 +675,9 @@ cmt 0x04a2 Top of the BIOS register-save area. trap_dispatch_common ($fc07fc) pu
 var 0x8c2a vdi_dispatch_vector   # ctx
 cmt 0x8c2a The longword the trap #2 entry ($fe3ea6) jumps through for any selector that is not AES/Pterm: $fc4ebc in the snapshot, the VDI selector arm that calls vdi_entry ($fc9f9e).
 fn 0xfc30c4 timer_c_handler
-cmt 0xfc30c4 MFP channel 5 (timer C, 200 Hz), vector $114: counts _hz_200, rotates the $e88 divider so the body runs at 50 Hz, steps the Dosound driver ($fc312a), counts the keyboard auto-repeat down and calls etv_timer ($400) with timr_ms pushed as a word; clears ISRB bit 5 on both paths. src/bios/timerc.c.
+cmt 0xfc30c4 MFP channel 5 (timer C, 200 Hz), vector $114: counts _hz_200, rotates the $e88 divider so the body runs at 50 Hz, steps the Dosound driver ($fc312a), counts the keyboard auto-repeat down and calls etv_timer ($400) with timr_ms pushed as a word; clears ISRB bit 5 on both paths. src/bios/timerc.c. SHIPS as the ROM's own bytes, recreate/src/bios/isr.S (byte-pinned); the C named here is its twin, which no entry calls.
 fn 0xfc29ce acia_handler
-cmt 0xfc29ce MFP channel 6 (the IKBD and MIDI 6850s share one line), vector $118: calls KBDVECS' midisys ($e2e) then ikbdsys ($e32) and goes round again while GPIP bit 4 is low; clears ISRB bit 6. src/bios/ikbd.c.
+cmt 0xfc29ce MFP channel 6 (the IKBD and MIDI 6850s share one line), vector $118: calls KBDVECS' midisys ($e2e) then ikbdsys ($e32) and goes round again while GPIP bit 4 is low; clears ISRB bit 6. src/bios/ikbd.c. SHIPS as the ROM's own bytes, recreate/src/bios/isr.S (byte-pinned); the C named here is its twin, which no entry calls.
 fn 0xfc4666 blink_cursor
 fn 0xfc4a1e console_invert_cursor_cell
 fn 0xfc1bc4 floppy_vbl

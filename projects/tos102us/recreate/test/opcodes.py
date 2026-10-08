@@ -99,6 +99,8 @@ CLR_W_A0_POSTINC = 0x4258               # clr.w   (a0)+
 MOVE_L_A0_POSTINC_D0 = 0x2018           # move.l  (a0)+,d0
 # A short branch's HIGH BYTE alone: a stub that lays itself out puts the displacement in the low byte.
 BRA_S = 0x60                            # bra.s   <d8>
+BRA_W = 0x6000                          # bra.w   <d16>: the whole word, its displacement in the next
+BSR_W = 0x6100                          # bsr.w   <d16>
 BEQ_S = 0x67                            # beq.s   <d8>
 BNE_S = 0x66                            # bne.s   <d8>
 # ...and the words a trap handler that fills a buffer adds to those (`test/aes_fslib.py`'s replayed search).

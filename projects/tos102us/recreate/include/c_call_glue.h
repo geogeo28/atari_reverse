@@ -1,6 +1,6 @@
 /* c_call_glue.h — the glue an ASSEMBLY entry uses to call one of this recreate's C cores (`void f(uint8_t *image, ...)`)
  * under the m68k SysV ABI: every argument a pushed longword slot, the first at 4(sp), dropped by the caller after the
- * `jsr`. Shared by every `.S` that reaches C (`src/bios/isr.S`'s handler stubs, `src/vdi/escape.S`'s console thunks),
+ * `jsr`. Shared by every `.S` that reaches C (`src/vdi/escape.S`'s console thunks, the AES's Alcyon entries),
  * so the slot arithmetic has one spelling. Assembler-safe: defines only.
  */
 #ifndef C_CALL_GLUE_H

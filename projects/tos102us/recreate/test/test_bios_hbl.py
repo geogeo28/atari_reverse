@@ -27,6 +27,7 @@ import pytest
 import abi
 import case
 import isr
+import transcription
 from harness import _lib, addrs, emu, make_image
 
 _lib.isr_hbl.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32]
@@ -143,10 +144,13 @@ def test_the_shared_entry_costs_what_tier_3_takes_off_both_columns():
                                      SHARED_ENTRY_PROBE_COST[1] - RESET_COST[1] - RTE_COST[1])
 
 
+HBL_REGION = transcription.pinned_region(addrs.ISR_HBL, addrs.ISR_VBL, "ISR_HBL")     # the VBL is straight behind
+
+
 def test_the_stub_at_the_vector_is_the_rom_s_own_bytes():
-    """`src/bios/isr.S`'s HBL stub is the ROM's seven instructions and nothing else — the one
-    handler here whose whole body is transcribed rather than called."""
-    isr.assert_the_stub_is_the_rom_s_bytes("ISR_HBL")
+    """`src/bios/isr.S`'s HBL entry is the ROM's seven instructions and nothing else, byte for byte, on both blobs."""
+    transcription.assert_transcribed(HBL_REGION)
+    transcription.assert_the_shipped_blob_holds_the_same(HBL_REGION)
 
 
 # ---- the cases this battery REGISTERS ---------------------------------------------------------------

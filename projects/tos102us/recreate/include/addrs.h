@@ -420,13 +420,29 @@
 #define ISR_VBL               0xfc06de
 #define ISR_TIMER_C           0xfc30c4
 #define ISR_ACIA              0xfc29ce
-/* ...and where each handler's EXIT sequence begins, which is where the two paths of the VBL and of
- * timer C meet. `src/bios/isr.S` carries those sequences instruction for instruction and
- * `test/isr.py`'s `LITERAL_SPANS` compares the assembled words with the ROM's at these addresses —
- * a transcription that has to name the ROM span it is a transcription OF. */
-#define ISR_VBL_RELEASE            0xfc07c4  /* `movem.l (sp)+,d0-a6`, then `addq.w #1,vblsem` */
-#define ISR_TIMER_C_ACKNOWLEDGE    0xfc311c  /* ...then `bclr #5,$fffa11` on both paths */
-#define ISR_ACIA_RESTORE           0xfc29f6  /* `movem.l (sp)+,d0-d3/a0-a3/a5` and the `rte` */
+/* ...and THE ROM ROUTINES A HANDLER REACHES BY `bsr`. `src/bios/isr.S` lays each handler and each of these out
+ * as the ROM's own bytes, and each handler's battery pins its spans against the ROM (`test/transcription.py`'s
+ * `pinned_region` / `assert_transcribed`): a transcription has to name the ROM span it is a transcription OF.
+ * Where a span ENDS is the next routine's own name wherever the ROM has one straight behind it (the VBL ends at
+ * `XBIOS_VSYNC`, the ACIA handler at `MIDI_ACIA_SERVICE`, the sound step at `BELL_SOUND_LIST`): one name per
+ * address (`test_addrs.py`). Scrdmp is `XBIOS_SCRDMP`, above. */
+#define SOUND_DRIVER_STEP          0xfc312a  /* one pass of the Dosound list: straight behind timer C's `rte` */
+#define VBL_BLINK_CURSOR           0xfc4666  /* the alpha cursor's blink: the blank's `bsr` */
+#define VBL_INVERT_CURSOR_CELL     0xfc4a1e  /* ...and the cell inversion it ends in, by `bra` */
+#define VBL_FLOPPY_SERVICE         0xfc1bc4  /* the floppy's own VBL service: the blank's `bsr` */
+#define VBL_FLOPPY_GATE_END        0xfc1bd6  /* ...past its `flock` gate, which is as far as it is reconstructed */
+#define VBL_FLOPPY_RETURN          0xfc1c46  /* ...and the `rts` that gate branches to */
+/* ...the five words of those spans that measure to where `isr.S` links their target — the displacement of a
+ * `bsr.w` / `bra.w` one word past each of these — which each battery's `Relocated` map is keyed by. */
+#define VBL_CALLS_BLINK_CURSOR     0xfc0748
+#define VBL_CALLS_FLOPPY_SERVICE   0xfc078c
+#define VBL_CALLS_SCRDMP           0xfc07c0
+#define VBL_BLINK_ENDS_IN_INVERT   0xfc468c
+#define TIMER_C_CALLS_QUEUE_KEY    0xfc310c
+/* ...and the two chip registers those handlers reach that no C core names: the YM2149's write port (`psg.h`'s
+ * door owns it in C) and the FDC's DMA mode register, which the floppy's service parks in A6. */
+#define PSG_PORT_DATA              0xff8802
+#define FDC_DMA_MODE               0xff8606
 
 /* ---- the exception frame a handler returns through ---------------------------------------------
  * The 68000's group-1/2 frame: the SR the interrupt was taken at, then the PC it resumes at. The
@@ -467,6 +483,7 @@
  * `OS_HW_MFP_GPIP`, spelt here because `tools/addrs.py` reads integers only and pinned equal to the
  * kit's by `test_bios_vbl.py::test_the_mfp_gpip_this_project_names_is_the_kit_s_own_slot`. */
 #define SHIFTER_PALETTE_ENTRIES    16        /* `move.w #15,d0 / dbf` — the whole row, every VBL */
+#define SHIFTER_SETTLE_DBF_COUNT   2000      /* `move.w #2000,d0 / dbf d0,*`: the shifter settling ($fc0714) */
 #define SHIFTER_MODE_LOW           0         /* Getrez's answers: ST low (setres's `tst.b`, $fca6f2) */
 #define SHIFTER_MODE_MEDIUM        1         /* ...ST medium (setres's `moveq #1`, $fca726) */
 #define SHIFTER_MODE_HIGH          2         /* `cmp.b #2,d0`: ST high, the mono monitor's resolution */

@@ -25,7 +25,10 @@ import pytest
 
 import case
 import isr
-from harness import _lib, addrs, bench_tier3, emu
+import layouts
+import transcription
+from harness import _lib, addrs, bench_tier3, emu, make_image
+from opcodes import BRA_W, BSR_W
 
 _lib.isr_vbl.argtypes = [ctypes.POINTER(ctypes.c_ubyte)]
 _lib.isr_vbl.restype = None
@@ -47,6 +50,11 @@ MARKS = isr.MARKS                             # one byte per staged routine, so 
 # past the queue's stubs, as it is longer than their stride, with its report past the marks.
 DUMP_RECORDER = isr.STUB_BAND + 0xA0
 DUMP_REPORT = MARKS + 0x10
+# ...and the routine that KEEPS NO REGISTER (`isr.keeps_nothing`), past the recorder and below the marks.
+KEEPS_NOTHING_STUB = isr.STUB_BAND + 0xC0
+KEEPS_NOTHING_MARK = MARKS + 4               # past the four queue stubs' own
+assert DUMP_RECORDER + len(isr.flag_recorder(0, 0)[0]) <= KEEPS_NOTHING_STUB
+assert KEEPS_NOTHING_STUB + len(isr.keeps_nothing(KEEPS_NOTHING_MARK)[0]) <= MARKS
 PALETTE_SOURCE = isr.STUB_BAND + 0x180        # sixteen colour words
 CURSOR_CELL = isr.STUB_BAND + 0x1C0           # ...and the bytes the cursor inversion walks
 CURSOR_CELL_BYTES = 0x40
@@ -627,11 +635,122 @@ def test_the_shifter_settle_loop_costs_our_build_exactly_what_it_was_written_at(
         f"own; if the codegen around it moved instead, re-pin this and tier3's ratio together")
 
 
-def test_the_stub_at_the_vector_is_the_rom_s_own_bytes():
-    """`src/bios/isr.S`'s VBL stub against the ROM's own words: the two clocks and the semaphore in
-    front of the `movem`, and the restore, the release and the `rte` behind it. What sits between
-    them is the `jsr` into this file's C core, which is the whole of what a transcription of a
-    handler can legitimately not have."""
-    isr.assert_the_stub_is_the_rom_s_bytes("ISR_VBL")
+# ---- A ROUTINE THAT KEEPS NO REGISTER, at each of the three RAM vectors the blank calls -------------------------------
+# The ROM's handler holds nothing in a register across `swv_vec`, a `_vblqueue` slot or `scr_dump`: the count and
+# the queue pointer are on the stack round each slot (`movem.l d7/a0`), A5 is zeroed again after each group, and the
+# whole file is the interrupted program's, restored at the end. So a routine there may leave ANYTHING in D0-D7/A0-A6 —
+# the VDI's cursor routine in the machine's own slot 0 leaves A6 = $fd00fe every time it redraws — and our entry has
+# to come back from it with the same image and the same register file as the ROM's.
+#
+# ONLY THE BLOB CAN BE HELD TO THAT (`isr.keeps_nothing`): the host build has no register file, so these are
+# TRANSCRIPTION-relation runs of `isr_vbl_entry` on both blobs and not Tier 1 cases — and not table rows either: they
+# price nothing the registered frames do not. Each case has work AFTER the routine that a caller which lost its
+# place does not do (the queue's marker behind it; `_dumpflg` stored after the dump), compared against the ROM's.
+KEEPS_NOTHING = {KEEPS_NOTHING_STUB: isr.keeps_nothing(KEEPS_NOTHING_MARK)}
+MARKER_BEHIND = {QUEUE_STUBS[0]: marker_routine(0)}
+A_ROUTINE_KEEPS_NOTHING = (
+    {"name": "swv_vec keeps no register", "entry": addrs.ISR_VBL,
+     "pokes": quiet_pokes({addrs.SYSVAR_SWV_VEC: struct.pack(">I", KEEPS_NOTHING_STUB),
+                           addrs.SYSVAR_NVBLS: struct.pack(">H", 1),
+                           QUEUE: struct.pack(">I", QUEUE_STUBS[0])}),
+     "routines": {**KEEPS_NOTHING, **MARKER_BEHIND},
+     "io_seed": {addrs.SHIFTER_RESOLUTION: ST_LOW, addrs.MFP_GPIP: MONO_MONITOR}},
+    {"name": "a queue slot keeps no register", "entry": addrs.ISR_VBL,
+     "pokes": quiet_pokes({addrs.SYSVAR_NVBLS: struct.pack(">H", 3),
+                           QUEUE: struct.pack(">3I", KEEPS_NOTHING_STUB, 0, QUEUE_STUBS[0])}),
+     "routines": {**KEEPS_NOTHING, **MARKER_BEHIND}, "io_seed": IO_QUIET},
+    {"name": "scr_dump keeps no register", "entry": addrs.ISR_VBL,
+     "pokes": quiet_pokes({addrs.SYSVAR_DUMPFLG: b"\x00\x00",
+                           addrs.SYSVAR_SCR_DUMP: struct.pack(">I", KEEPS_NOTHING_STUB)}),
+     "routines": KEEPS_NOTHING, "io_seed": IO_QUIET},
+)
+def _the_rom_s_run(spec, **kwargs):
+    """The ROM's own handler over `spec`'s machine, alone: `(final image, writes, registers)`."""
+    staged = isr.case_pokes(spec["entry"], routines=spec["routines"], pokes=spec["pokes"])
+    return emu.run(make_image(staged), isr.TRAMPOLINE_AT[spec["entry"]], dict(isr.DIRTY_REGISTERS),
+                   io_seed=spec["io_seed"], **kwargs)
+
+
+@pytest.mark.parametrize("spec", A_ROUTINE_KEEPS_NOTHING, ids=lambda spec: spec["name"])
+def test_the_rom_s_handler_comes_back_from_a_routine_that_keeps_no_register(spec):
+    """THE PREMISE of the cases below, the ORACLE's alone: the staged routine really leaves all ones in every
+    register but A7, and the ROM's handler really goes on after it — the marker behind it runs, `_dumpflg` is stored
+    — and gives the interrupted program its whole file back."""
+    _final, _writes, inside = _the_rom_s_run(spec, stop_pc=isr.keeps_nothing_returns_at(KEEPS_NOTHING_STUB))
+    assert {name: inside[name] for name in isr.DIRTY_REGISTERS} == dict.fromkeys(isr.DIRTY_REGISTERS, isr.ALL_ONES)
+
+    _final, writes, left = _the_rom_s_run(spec)
+    assert writes[KEEPS_NOTHING_MARK] == MARK
+    if QUEUE_STUBS[0] in spec["routines"]:
+        assert writes[MARKS] == MARK, "the ROM's walk did not go on to the slot behind"
+    else:
+        assert case.word_in(_final, addrs.SYSVAR_DUMPFLG) == 0xFFFF
+    assert {name: left[name] for name in isr.DIRTY_REGISTERS} == isr.DIRTY_REGISTERS
+
+
+@pytest.mark.parametrize("blob", isr.BLOBS)
+@pytest.mark.parametrize("spec", A_ROUTINE_KEEPS_NOTHING, ids=lambda spec: spec["name"])
+def test_our_entry_comes_back_from_a_routine_that_keeps_no_register(spec, blob):
+    """`isr_vbl_entry` against the ROM's handler over the same machine, on both blobs (`isr.run_transcribed`) — which
+    a handler that kept its queue pointer, its count or anything else in a register across the call cannot equal."""
+    isr.run_transcribed(spec, blob)
+
+
+# ---- THE BYTES: the handler and the four ROM routines it reaches by `bsr` or `bra` ------------------------------------
+# `src/bios/isr.S` lays each out as the ROM has it. The only words that differ are the four displacements from one
+# span into another — the handler's three `bsr.w` and the blink's `bra.w` into the cell inversion — each held to the
+# exact value its target's place in the blob gives. The floppy's service is pinned as far as it is reconstructed: the
+# five instructions up to its `flock` gate, whose `bne.s` is the ROM's own word because the `rts` it reaches is where
+# the ROM has it — and between the two, where the ROM drives the drive-select bits, our build holds `trap #7`.
+# Each span ends where the ROM's next routine begins (the handler at Vsync, the blink at Cursconf, the inversion at
+# the VDI's v_fontinit) — but Scrdmp, which nothing named follows: its four instructions.
+SCRDMP_BYTES = 0x12
+REGIONS = {
+    "the handler": transcription.pinned_region(addrs.ISR_VBL, addrs.XBIOS_VSYNC, "ISR_VBL"),
+    "Scrdmp": transcription.pinned_region(addrs.XBIOS_SCRDMP, addrs.XBIOS_SCRDMP + SCRDMP_BYTES, "XBIOS_SCRDMP"),
+    "the cursor's blink": transcription.pinned_region(addrs.VBL_BLINK_CURSOR, addrs.XBIOS_CURSCONF, "VBL_BLINK_CURSOR"),
+    "the cell inversion": transcription.pinned_region(addrs.VBL_INVERT_CURSOR_CELL, addrs.VDI_ROM_V_FONTINIT,
+                                                      "VBL_INVERT_CURSOR_CELL"),
+    "the floppy's service, to its gate": transcription.pinned_region(addrs.VBL_FLOPPY_SERVICE, addrs.VBL_FLOPPY_GATE_END,
+                                                                     "VBL_FLOPPY_SERVICE"),
+}
+WORD_BYTES = isr.WORD_BYTES
+# Each displacement word, by the ROM address of its `bsr.w` / `bra.w`, and the routine the ROM's own word names.
+CALLS = {addrs.VBL_CALLS_BLINK_CURSOR: ("VBL_BLINK_CURSOR", "the blank's `bsr` to the cursor's blink"),
+         addrs.VBL_CALLS_FLOPPY_SERVICE: ("VBL_FLOPPY_SERVICE", "the blank's `bsr` to the floppy's service"),
+         addrs.VBL_CALLS_SCRDMP: ("XBIOS_SCRDMP", "the blank's `bsr` to Scrdmp"),
+         addrs.VBL_BLINK_ENDS_IN_INVERT: ("VBL_INVERT_CURSOR_CELL", "the blink's `bra` into the cell inversion")}
+RELOCATED = {at + WORD_BYTES: transcription.Relocated(transcription.PC_RELATIVE, routine, why)
+             for at, (routine, why) in CALLS.items()}
+# `trap #7`, `recreate_not_reconstructed` on this machine — the word `isr.S` itself lays out (`m68k_encodings.h`).
+TRAP_NOT_RECONSTRUCTED = struct.pack(">H", layouts.parse_constants(
+    (transcription._RECREATE / "include" / "m68k_encodings.h",))["M68K_TRAP_NOT_RECONSTRUCTED"])
+
+
+def test_every_relocated_word_is_a_call_of_the_routine_it_is_declared_as():
+    """The declarations, held to the ROM: each of the four words is the displacement of a `bsr.w` or `bra.w`, and
+    the ROM's own value of it reaches the routine named."""
+    for at, (routine, why) in CALLS.items():
+        assert isr.word_in_snapshot(at) in (BSR_W, BRA_W), f"${at:x} ({why}) is no `bsr.w` / `bra.w`"
+        target = transcription._relocation_target(at + WORD_BYTES, RELOCATED[at + WORD_BYTES])
+        assert target == getattr(addrs, routine), f"${at:x} ({why}) reaches ${target:x} in the ROM, not {routine}"
+
+
+@pytest.mark.parametrize("region", REGIONS)
+def test_the_stub_at_the_vector_is_the_rom_s_own_bytes(region):
+    """`src/bios/isr.S` against the ROM, byte for byte and on both blobs: the handler, Scrdmp, the cursor's blink,
+    the cell inversion and the floppy's service as far as its gate — every word the ROM's but the four displacements."""
+    transcription.assert_transcribed(REGIONS[region], relocated=RELOCATED)
+    transcription.assert_the_shipped_blob_holds_the_same(REGIONS[region])
+
+
+@pytest.mark.parametrize("blob", isr.BLOBS)
+def test_past_its_gate_the_floppy_s_service_halts_and_its_return_is_where_the_rom_has_it(blob):
+    """WHAT IS NOT RECONSTRUCTED, held too, on both blobs: from the gate to the `rts` it branches to, our build holds
+    nothing but `trap #7` — one for each word of the ROM's body — and then the `rts`, at the ROM's own distance."""
+    body = addrs.VBL_FLOPPY_RETURN - addrs.VBL_FLOPPY_GATE_END
+    held = transcription.bytes_of(isr.blob_named(blob), "VBL_FLOPPY_SERVICE", addrs.VBL_FLOPPY_GATE_END, body + len(isr.RTS))
+    assert held[:body] == TRAP_NOT_RECONSTRUCTED * (body // WORD_BYTES)
+    assert held[body:] == isr.RTS == bytes(isr.BASE_IMAGE[addrs.VBL_FLOPPY_RETURN:addrs.VBL_FLOPPY_RETURN + len(isr.RTS)])
 
 

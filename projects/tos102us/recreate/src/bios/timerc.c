@@ -187,14 +187,17 @@ static void step_the_key_repeat(uint8_t *image)
  * where rotating the longword this word sits inside would carry a neighbouring byte's bit into it. */
 #define TIMER_C_DIVIDER_ROTATE 1
 
-/* Declared here rather than in a header because `src/bios/isr.S` is its only other caller and an
- * assembler reads no prototype: this says the symbol is deliberately exported, and to whom. */
+/* Declared here rather than in a header because nothing outside this file calls it — `isr_timer_c` below
+ * is its one caller. It is not `static` only so that it stays a function of its own (the comment below). */
 void service_this_timer_c_tick(uint8_t *image);
 
 /* The SERVICED tick — the one in four the divider lets through, which is what the ROM saves the
- * register file across. EXPORTED for `service_this_vertical_blank`'s reason: `src/bios/isr.S` is
- * the handler a shipped ROM installs in vector $114, and the tick count, the divider and the
- * acknowledgement around this are the handler rather than the body. */
+ * register file across; the tick count, the divider and the acknowledgement round it are
+ * `isr_timer_c`'s below. THE C TWIN, for `service_this_vertical_blank`'s reason (`vbl.c`): the handler
+ * meant for vector $114 is `src/bios/isr.S`'s `isr_timer_c_entry`, the ROM's own instructions, which
+ * enters no C at all — the auto-repeat's key goes to its own copy of the ROM's queue-a-key routine (no
+ * build stores that entry in the vector yet). A function of its own still, so the twin's Tier 3 rows
+ * stay what they measured. */
 void service_this_timer_c_tick(uint8_t *image)
 {
     step_the_sound_driver(image);
