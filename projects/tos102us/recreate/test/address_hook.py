@@ -67,22 +67,50 @@ STOPS_THE_SESSION = (KeyboardInterrupt, SystemExit)
 PYTEST_S_OUTCOMES = "_pytest.outcomes"  # asked of the modules LOADED: this module is the bench's too, and imports no pytest
 
 
-def _is_a_skip(raised):
+def _is_pytest_s(raised, *outcomes_named):
     outcomes = sys.modules.get(PYTEST_S_OUTCOMES)
-    return outcomes is not None and isinstance(raised, outcomes.Skipped)
+    return outcomes is not None and isinstance(raised, tuple(getattr(outcomes, name) for name in outcomes_named))
+
+
+def _stops_the_session(raised):
+    """A Ctrl-C, an exit — or `pytest.exit`, which asks pytest for the same."""
+    return isinstance(raised, STOPS_THE_SESSION) or _is_pytest_s(raised, "Exit")
 
 
 def as_the_case_s_outcome(key, raised):
-    """What an effect that RAISED (`raised`, staged at `key`) makes of its case, to be raised where the binding
-    closes: `pytest.skip` is a skip, itself; anything else the case's FAILURE, carrying the exception's TYPE, its
-    words and its traceback (an `assert` with no message, a KeyError, a `pytest.fail` each read as what it was),
-    chained to it."""
-    if _is_a_skip(raised):
+    """What an effect that RAISED (`raised`, staged at `key`: an address, or a hook's name) makes of its case, to be
+    raised where the binding closes: `pytest.skip` and `pytest.xfail` are the outcomes they ask for, themselves
+    (and what stops the session, should it reach here); anything else the case's FAILURE, carrying the exception's
+    TYPE, its words and its traceback (an `assert` with no message, a KeyError, a `pytest.fail` each read as what it
+    was), chained to it."""
+    if _is_pytest_s(raised, "Skipped", "XFailed") or _stops_the_session(raised):
         return raised
     where = "".join(traceback.format_exception(type(raised), raised, raised.__traceback__))
-    failure = AssertionError(f"the effect staged at {key:#x} raised {type(raised).__name__}: {raised}\n{where}")
+    staged_at = f"{key:#x}" if isinstance(key, int) else key
+    failure = AssertionError(f"the effect staged at {staged_at} raised {type(raised).__name__}: {raised}\n{where}")
     failure.__cause__ = raised
     return failure
+
+
+# ONE MECHANISM FOR A HOOK THAT RAISES, whoever binds the pointer (`AddressHook`, a battery's own binding): a ctypes
+# callback cannot raise into C — ctypes prints what escapes one and hands the C an answer nobody chose — so the
+# effect's raise is RECORDED and the call REFUSED (`answered_or_recorded`), and where the binding closes the record is
+# given its outcome: what stops the session raised again, itself, whatever the run then failed by
+# (`raise_what_stops_the_session`); anything else the case's failure or skip (`as_the_case_s_outcome`).
+def answered_or_recorded(effect, key, raised_in):
+    """`effect()`'s answer — or, WHATEVER it raises, `(key, the exception)` kept in `raised_in` and the call refused."""
+    try:
+        return effect()
+    except BaseException as raised:    # every exception: a `pytest.fail`, a Ctrl-C are no `Exception`
+        raised_in.append((key, raised))
+        return REFUSED_ANSWER
+
+
+def raise_what_stops_the_session(raised_in):
+    """A Ctrl-C, an exit or a `pytest.exit` among what the effects raised (`raised_in`), raised again in the caller."""
+    stops = [raised for _key, raised in raised_in if _stops_the_session(raised)]
+    if stops:
+        raise stops[0]
 
 
 class AddressHook:
@@ -127,9 +155,7 @@ class AddressHook:
             self._effects = {}
             # WHAT STOPS THE SESSION STOPS IT: a Ctrl-C or an exit that landed inside an effect could not cross the C
             # callback — it is raised again here, in the caller, whatever the run then failed by.
-            stops = [raised for _key, raised in self.raised if isinstance(raised, STOPS_THE_SESSION)]
-            if stops:
-                raise stops[0]
+            raise_what_stops_the_session(self.raised)
         if self.raised:
             raise as_the_case_s_outcome(*self.raised[0])
         assert not self.refused, describe_refusals(self.refused)
@@ -170,8 +196,5 @@ class AddressHook:
         if effect is None:
             self.refused.append(key)
             return REFUSED_ANSWER
-        try:
-            return effect(buf, *arguments)
-        except BaseException as raised:    # the callback cannot raise into C: recorded, whatever it is, and
-            self.raised.append((key, raised))   # `staged()` gives it its outcome (`as_the_case_s_outcome`)
-            return REFUSED_ANSWER
+        # (`staged()` gives what it raises its outcome.)
+        return answered_or_recorded(lambda: effect(buf, *arguments), key, self.raised)

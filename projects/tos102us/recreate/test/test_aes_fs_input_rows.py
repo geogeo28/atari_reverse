@@ -271,7 +271,7 @@ def test_a_slice_between_two_gemdos_calls_is_priced_with_our_memory_the_rom_s_at
     spent = aes_event.slice_cost_of(tier3.registered(row), row.slice)
     measured = tier3.measure(row, bench)
     assert (measured.original_insns, measured.original_cycles) == (spent["insns"], spent["cycles"])
-    assert not measured.door_windows, "the premise: no door call inside the read"
+    assert not measured.rebound_calls, "the premise: no door call inside the read"
 
 
 def _our_run_astray(tier3, monkeypatch, from_stop, until_stop):

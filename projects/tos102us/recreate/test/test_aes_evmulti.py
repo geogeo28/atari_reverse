@@ -49,6 +49,7 @@ import aes_evlib as evlib
 import aes_evmulti as evm
 import aes_pdpipe
 import case
+import opcodes
 from aes_evmulti import BUTTON, BUTTONS, CLICKS, EV_MULTI, EVERY_EVENT, KEY, KEYBD, M1, M2, MESAG, STALE, TIMER, Y, call
 from case import merge_pokes
 
@@ -97,6 +98,10 @@ def word(image, at):
 
 def mouse(image):
     return word(image, aes.AES_XRAT), word(image, aes.AES_YRAT)
+
+
+EIGHT_BITS_HELD = 0xFF                  # a process's event bits with the ROM's iasync's eight waits of no kind held
+THE_NINTH_AND_TENTH_BITS = 0x300        # ...and the bits of the two waits queued after them ($100, $200)
 
 
 def events(image, pd=SHELL):
@@ -369,7 +374,8 @@ def test_the_screen_manager_s_own_evnt_multi_answers_216_buttons_on_the_snapshot
 
 
 # `move.l #long,-(sp)`, `clr.l -(sp)`, `move.w #word,-(sp)`: the three instructions the ROM pushes a frame's constants with.
-PUSH_A_LONG, PUSH_NO_LONG, PUSH_A_WORD = 0x2F3C, 0x42A7, 0x3F3C
+PUSH_A_LONG, PUSH_A_WORD = (int.from_bytes(opcode, "big") for opcode in (opcodes.PUSH_LONG_IMMEDIATE, opcodes.PUSH_WORD_IMMEDIATE))
+PUSH_NO_LONG = 0x42A7                   # clr.l -(sp)
 
 
 def test_the_frame_the_rom_s_control_manager_pushes_is_the_case_s():
@@ -454,7 +460,7 @@ def test_event_bits_above_the_low_byte_are_waited_for_and_answered_as_words():
     one is found come, cancelled or answered by its WORD."""
     made = evm.THE_MOUSE_ANOTHER_S["on the bar, eight event bits held (the ROM's iasync): three come at once"]
     image, result = before(made), ran("RETURNING", "on the bar, eight event bits held (the ROM's iasync): three come at once")
-    assert events(image)[0] == 0xFF and events(result.final) == (0xFF, 0, 0)
+    assert events(image)[0] == EIGHT_BITS_HELD and events(result.final) == (EIGHT_BITS_HELD, 0, 0)
     assert sorted(evasync.free_evbs(result.final)) == sorted(evasync.free_evbs(image))
 
 
@@ -741,6 +747,9 @@ def poked(made, **fields):
 
 
 CDA_OF = {pd: case.long_in(BASE_IMAGE, pd + aes.PD_CDA) for pd in (SHELL, SCREEN_MANAGER)}
+# The words the argument-class cases below poke: each chosen for the one test of the ROM's it tells apart.
+THE_TOP_BIT_ALONE, A_NEGATIVE_INDEX = 0x8000, 0xFFF0
+A_COUNT_ABOVE_ITS_LOW_BYTE, A_COUNT_WITH_ITS_TOP_BIT_SET = 0x0100, 0x8001
 POKED = {
     # `cmp.l`: the running process on the bus is not the mouse's owner — the fast path's button test is skipped (the
     # wait itself is satisfied where it is queued: the same answer, through an EVB).
@@ -749,14 +758,14 @@ POKED = {
     # `ble`, signed: a count of changes with its top bit set is "not more than one" — the click record is not tried,
     # and a click that came and went leaves the wait for the button down unanswered.
     "a negative count of button changes": (
-        poked(evm.WHILE_IT_WAS_BUSY["a click, the button wanted down"], count=((aes.AES_MTRANS, WORD_BYTES), 0x8000)), None),
+        poked(evm.WHILE_IT_WAS_BUSY["a click, the button wanted down"], count=((aes.AES_MTRANS, WORD_BYTES), THE_TOP_BIT_ALONE)), None),
     # `ble`, signed: a pipe's index below 0 holds no message.
     "a negative pipe index": (
         poked(evm.POLLS_FIRST["a timer of no time"]._replace(arguments=(MESAG | TIMER, 0, 0, 0, 0, MESSAGE_AT, ANSWERS_AT)),
-              index=((SHELL + aes.PD_QUEUE_INDEX, WORD_BYTES), 0xFFF0)), TIMER),
+              index=((SHELL + aes.PD_QUEUE_INDEX, WORD_BYTES), A_NEGATIVE_INDEX)), TIMER),
     # `tst.w`: a key count whose low byte is 0 is a key queued.
     "a key count above its low byte": (
-        poked(call(evm.desk, KEYBD), count=((CDA_OF[SHELL] + aes.CDA_KEY_COUNT, WORD_BYTES), 0x0100)), KEYBD),
+        poked(call(evm.desk, KEYBD), count=((CDA_OF[SHELL] + aes.CDA_KEY_COUNT, WORD_BYTES), A_COUNT_ABOVE_ITS_LOW_BYTE)), KEYBD),
     # the key queue is the RUNNING PROCESS's own (its PD's CDA), whatever AES_GL_CDA says.
     "the current CDA another process's": (
         poked(evm.POLLS_FIRST["a key queued"], cda=((aes.AES_GL_CDA, LONG_BYTES), CDA_OF[SCREEN_MANAGER])), KEYBD),
@@ -771,7 +780,7 @@ POKED = {
         poked(call(evm.desk, KEYBD), came=((SHELL + aes.PD_EVFLG, WORD_BYTES), 1)), KEYBD),
     # `tst.w / beq`: a key count with its TOP bit set is a key queued — "not zero", never "more than none".
     "a key count with its top bit set": (
-        poked(call(evm.key_queued, KEYBD), count=((CDA_OF[SHELL] + aes.CDA_KEY_COUNT, WORD_BYTES), 0x8001)), KEYBD),
+        poked(call(evm.key_queued, KEYBD), count=((CDA_OF[SHELL] + aes.CDA_KEY_COUNT, WORD_BYTES), A_COUNT_WITH_ITS_TOP_BIT_SET)), KEYBD),
     # the tick's milliseconds are READ where the AES keeps them: halved, a timer is queued for twice the ticks.
     "the tick's milliseconds halved": (
         poked(evm.NOTHING_COME["a timer"], tick=((EV["AES_GL_TICK_MS"], WORD_BYTES), evm.TICK_MS // 2)), None),
@@ -976,7 +985,7 @@ def test_woken_event_bits_above_the_low_byte_are_answered_as_words():
     """AN ARGUMENT-CLASS MACHINE (the ROM's own iasync, eight waits of no kind): the message's and the timer's waits
     hold the bits $100 and $200; both come, both answered, the eight still held."""
     woken = woke("a writer and the ticks: eight bits held, a message and a timer")
-    assert events(woken.resumed)[2] == 0x300 and events(woken.image) == (0xFF, 0, 0)
+    assert events(woken.resumed)[2] == THE_NINTH_AND_TENTH_BITS and events(woken.image) == (EIGHT_BITS_HELD, 0, 0)
 
 
 @of_the_case("a writer, a key and the ticks in one wake: every event")

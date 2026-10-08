@@ -253,9 +253,9 @@ Woken = namedtuple("Woken", "image resumed final came by_nature")
 HOOK_REACHED_AGAIN = "the dispatcher's hook was reached a second time: a woken call's tail waits for nothing"
 
 
-def _uda_of(image, pd):
+def _uda_span_of(image, pd):
     """The addresses of the UDA of the process at `pd`: its saved state and its own supervisor stack."""
-    uda = case.long_in(image, pd + aes.PD_UDA) & BUS
+    uda = aes_event.uda_of(pd, image)
     assert uda in UDAS[:-1], f"the process at {pd:#x} has its UDA at {uda:#x}, none of the three"
     return range(uda, UDAS[UDAS.index(uda) + 1])
 
@@ -275,7 +275,7 @@ def _rom_woken(arguments, machine, written, interrupts):
     # WHOSE mwait resumed: the parked process's, and the one ITS ev_multi called — the frame mwait resumes over is in
     # that process's own stack and returns into ev_multi's text.
     returns_to = case.long_in(resumed, (regs["a6"] & BUS) + LONG_BYTES)
-    assert (evasync.running(resumed) & BUS == pd and regs["a6"] & BUS in _uda_of(resumed, pd)
+    assert (evasync.running(resumed) & BUS == pd and regs["a6"] & BUS in _uda_span_of(resumed, pd)
             and addrs.AES_ROM_EV_MULTI < returns_to < addrs.AES_ROM_EV_MULTI_RETURN), (
         f"the first mwait to resume is not the one the evnt_multi of the PD at {pd:#x} called: running "
         f"{evasync.running(resumed):#x}, its frame at {regs['a6']:#x}, returning to {returns_to:#x}")
@@ -331,7 +331,7 @@ def woken(made, interrupts=(), written=None):
     assert returncode == 0, f"the ROM's evnt_multi is woken and returns; the twin's fork ended {returncode}: {stderr}"
     answered = vdi_helpers.answer_in(stderr) & aes.WORD_MASK
     assert answered == rom.came, f"woken, the twin answers the events {answered:#x}, the ROM's routine {rom.came:#x}"
-    its_own = (*_uda_of(final, rom.pd), *aes_event.LINE_F_MASK_BYTES, *aes_event.SR_SAVE_BYTES)
+    its_own = (*_uda_span_of(final, rom.pd), *aes_event.LINE_F_MASK_BYTES, *aes_event.SR_SAVE_BYTES)
     by_nature = frozenset(at for at in its_own if final[at] != resumed[at])
     wrote_there = [at for at in sorted(by_nature) if image[at] != resumed[at]]
     assert not wrote_there, (

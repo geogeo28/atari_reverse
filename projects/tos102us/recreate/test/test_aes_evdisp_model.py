@@ -67,7 +67,8 @@ A_DELAY_TICKS = 5
 RETURN = aes_event.key(aes_event.RETURN_KEY)
 RETURN_KEY_CODE = evinput.RETURN_KEY_CODE
 ONTO_THE_BAR = aes_event.move_to(*aes_event.MENU_BAR_POINT)
-OFF_THE_BAR = aes_event.move_to(20, 180)
+A_POINT_ON_THE_DESKTOP = (20, 180)     # below the menu bar, on no window
+OFF_THE_BAR = aes_event.move_to(*A_POINT_ON_THE_DESKTOP)
 
 
 # ---- the cases: a running process's call, what is delivered at which idle, and what the dispatcher then enters --------------
@@ -363,16 +364,37 @@ def test_what_a_hook_raises_is_refused_by_name_whatever_it_is(monkeypatch):
 
 def test_what_a_hook_raised_is_raised_again_as_its_binding_closes(monkeypatch):
     """...and in the process that holds the binding it is not lost with the refusal: the hook ANSWERS (refused — the C
-    is never handed Python's exception), and the binding raises it again as it closes."""
+    is never handed Python's exception), and the binding gives it its outcome as it closes: the case's failure,
+    by the exception's type and words, chained to it (`address_hook.as_the_case_s_outcome`)."""
     monkeypatch.setattr(switch.Scheduling, "_idle_over", _a_vet_that_fails)
     over = make_image(aes_event.machine())
     buf = ctypes.cast((ctypes.c_uint8 * len(over)).from_buffer(over), ctypes.POINTER(ctypes.c_uint8))
     answered = []
-    with pytest.raises(pytest.fail.Exception, match="a vet of the hook's own"):
+    with pytest.raises(AssertionError, match="raised Failed: a vet of the hook's own") as failed:
         with switch.scheduling()() as bound:
             answered.append(bound._idle(buf))
-    assert answered == [switch.REFUSED]
+    assert answered == [switch.REFUSED] and isinstance(failed.value.__cause__, pytest.fail.Exception)
     assert aes_event._the_dispatcher_s_hook_is_the_refuser(), "the binding closed: the pointers are back"
+
+
+PYTEST_S_OWN = {"a skip": pytest.skip.Exception, "an xfail": pytest.xfail.Exception, "pytest.exit": pytest.exit.Exception}
+
+
+@pytest.mark.parametrize("outcome", PYTEST_S_OWN.values(), ids=PYTEST_S_OWN)
+def test_an_outcome_pytest_is_asked_for_inside_a_hook_is_that_outcome_as_its_binding_closes(monkeypatch, outcome):
+    """...but what a hook asks OF PYTEST — a skip, an xfail, an exit of the session — is raised again ITSELF as the
+    binding closes, never turned into a failure (the one mechanism's rule, `address_hook`)."""
+    asked = outcome("asked of pytest inside the idle hook")
+
+    def asking(*_arguments):
+        raise asked
+    monkeypatch.setattr(switch.Scheduling, "_idle_over", asking)
+    over = make_image(aes_event.machine())
+    buf = ctypes.cast((ctypes.c_uint8 * len(over)).from_buffer(over), ctypes.POINTER(ctypes.c_uint8))
+    with pytest.raises(outcome) as raised:
+        with switch.scheduling()() as bound:
+            assert bound._idle(buf) == switch.REFUSED
+    assert raised.value is asked
 
 
 # ---- ON TARGET: THE YIELD THROUGH OUR OWN DISPATCHER ----------------------------------------------------------------------

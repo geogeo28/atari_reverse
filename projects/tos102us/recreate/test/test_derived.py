@@ -1513,7 +1513,7 @@ class _APoolThatBreaksAsSharesAreHandedOut:
 
 
 def test_a_fork_that_dies_while_the_shares_are_handed_out_is_a_death_by_name(monkeypatch):
-    """RED before the shares were submitted inside the `try` (seen once in fifteen full runs, as
+    """RED before the shares were submitted inside the `try` (a rare race, seen as
     `test_fork_pool`'s death case: a bare BrokenProcessPool out of `pool.submit`, the pass — `make bench`'s measuring
     pass — ended unnamed): a pool that breaks under the fourth `submit` ends the pass as `Died`, naming every share
     that has no answer — the ones handed out and the ones never handed out."""

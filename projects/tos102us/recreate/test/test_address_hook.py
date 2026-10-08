@@ -162,7 +162,8 @@ def test_an_effect_s_failure_names_its_type_and_where_it_was_raised():
             in_one_pass(NAMED)
 
 
-@pytest.mark.parametrize("stop", [KeyboardInterrupt(), SystemExit(3)], ids=["Ctrl-C", "an exit"])
+@pytest.mark.parametrize("stop", [KeyboardInterrupt(), SystemExit(3), pytest.exit.Exception("the user's own pytest.exit")],
+                         ids=["Ctrl-C", "an exit", "pytest.exit"])
 def test_what_stops_the_session_inside_an_effect_stops_it_once_the_c_has_returned(stop):
     """RED while it was recorded as one more failure (and, before that, printed by ctypes and the test PASSED): a
     Ctrl-C that landed inside an effect made one red line with an empty reason and the session went on to the next
@@ -179,13 +180,20 @@ def test_what_stops_the_session_inside_an_effect_stops_it_once_the_c_has_returne
     assert stopped.value is stop
 
 
-def test_a_skip_inside_an_effect_is_a_skip():
-    """...and `pytest.skip` inside an effect skips the case — it was FAILED, "raised: skip me"."""
-    skip = pytest.skip.Exception("this machine has no blitter")
-    with pytest.raises(pytest.skip.Exception) as skipped:
-        with staged({NAMED: _an_effect_that_raises(skip)}):
+PYTEST_S_OWN_OUTCOMES = {"a skip": lambda: pytest.skip.Exception("this machine has no blitter"),
+                         "an xfail": lambda: pytest.xfail.Exception("a known defect of the ROM's")}
+
+
+@pytest.mark.parametrize("outcome", PYTEST_S_OWN_OUTCOMES.values(), ids=PYTEST_S_OWN_OUTCOMES)
+def test_an_outcome_pytest_is_asked_for_inside_an_effect_is_that_outcome(outcome):
+    """...and `pytest.skip` inside an effect skips the case — it was FAILED, "raised: skip me" — as `pytest.xfail`
+    xfails it: each raised again ITSELF where the binding closes (an xfail is a `Failed` to pytest's own classes:
+    told apart, or it reads as a failure)."""
+    asked = outcome()
+    with pytest.raises(type(asked)) as raised:
+        with staged({NAMED: _an_effect_that_raises(asked)}):
             in_one_pass(NAMED)
-    assert skipped.value is skip
+    assert raised.value is asked
 
 
 def test_calls_holds_the_first_pass_alone():

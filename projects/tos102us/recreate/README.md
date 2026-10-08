@@ -439,41 +439,34 @@ ported it (REBINDING THE DOOR, below, says how an entry leaves the door). Every 
 their routines goes through ONE wrapper in `include/aes/evdoor.h`, keyed by the routine's ROM address (wave 0: ev_multi
 `$fe6998` and ap_rdwr `$fe65c4`; wave 1: tak_flag `$fe4e5a`, unsync `$fe4eb8`, ev_block `$fe6874`, ct_chgown `$fe49ba`,
 post_button `$fe52e2`, and ev_multi's two-rectangle shape; wave 2: ev_button `$fe68a4`, fm_button's wait for the rise —
-one wrapper, one `ENTRIES` line, one census line each). On target the wrapper IS the ROM's call: inline asm pushes the
-Alcyon frame once, from registers or immediates (a constant-zero argument pushes the already-zero A1), and `jsr`s the
-routine, D2/A2 given up (the Line-F handler loads them on every call the routine makes) — no `.S` call-out, which measured
-1.84 against the inline form's 1.04. On the host the wrapper packs the frame big-endian, CHECKS the hop the ROM caller's
-Line-F word takes (vector `$2c` → the handler copy, its `movea.l #` → the call table `$fee900`), and hands it to
-`recreate_call_event_door`, which `test/aes_event.py` binds per case (into the lib the calling process loaded — a child
-process binds its own) to a NESTED ORACLE RUN of the routine over a copy of the candidate's image: its writes laid back,
-its D0 answered, every frame it is handed compared with the frame the ROM's own run hands the same entry (MOBLKs and
-buffers read through their pointers). The nested run is REFUSED by name — halting the core through
-`recreate_not_reconstructed`, never answered with a fabricated 0 — when the entry is not served, when it touches the
-hardware or overflows the write ledger, when it overruns its measured cap (`NESTED_RUN_INSNS`, 60,000: DERIVED as a margin
-over the deepest BLOCK a shadow runs — ev_multi asked for every event, 2,970 instructions to dsptch; held by
-`test_the_cap_is_derived_from_the_deepest_block_a_shadow_runs`), and when it reaches the dispatcher (`dsptch`): that
-call WOULD BLOCK, and only the snapshot's indisp = 1 would turn it into "no event". One thing differs by nature: the
-BIOS trap's register save under the keyboard poll (`$8de..$905`, the CALLER's registers), dropped by name in Tier 1
-while priced rows move `savptr` into the stack band. Tier 3 prices such C on its own cycles, mechanism (EV): our run
-is WATCHED at the door entries (the kit's `RomBench.measure(watch=)`), each door call a window taken off the ROM's own
-cycles, an AES cycle of ours outside a window refused, and the ORIGINAL's run watched too — its windows must equal
-ours one by one, cycles and frames. The inline-asm wrapper and the nested run are the shape of an entry the ROM still
-SERVES; an entry band 4 has ported is REBOUND. (SINCE FLIP 3 NO ENTRY IS SERVED: the last such wrapper, ev_multi's,
-is gone from the header, the nested run lives on as the SHADOW alone, and the served road's code and its three
-cases — which skip, saying so — wait for their retirement: STATUS's Next line.)
+one wrapper, one `ENTRIES` line, one census line each). EVERY ENTRY IS REBOUND (FLIP 3 was the last): the wrapper
+calls the entry's C twin, on both builds, and no wrapper is the ROM's call any more — the header has no spelling for
+one (the inline-asm `jsr` and the hook's SERVED answer are retired; a `jsr` of our build into the AES's text is
+refused by name, `tier3.door_calls`). On the host the wrapper first packs the Alcyon frame big-endian, CHECKS the hop
+the ROM caller's Line-F word takes (vector `$2c` → the handler copy, its `movea.l #` → the call table `$fee900`), and
+hands it to `recreate_call_event_door`, which `test/aes_event.py` binds per case (into the lib the calling process
+loaded — a child process binds its own): an ARRIVAL — every frame it is handed compared with the frame the ROM's own
+run hands the same entry (MOBLKs and buffers read through their pointers). THE NESTED ORACLE RUN of the ROM's routine
+over a copy of the candidate's image is the twin's SHADOW (below): it serves nothing, and is REFUSED by name when it
+touches the hardware or overflows the write ledger, and when it overruns its measured cap (`NESTED_RUN_INSNS`,
+60,000: DERIVED as a margin over the deepest BLOCK a shadow runs — ev_multi asked for every event, 2,970
+instructions to dsptch; held by `test_the_cap_is_derived_from_the_deepest_block_a_shadow_runs`). One thing differs
+by nature: the BIOS trap's register save under the keyboard poll (`$8de..$905`, the CALLER's registers), dropped by
+name in Tier 1 while priced rows move `savptr` into the stack band. Tier 3 prices such C on its own cycles,
+mechanism (EV): our run is WATCHED at the twins (the kit's `RomBench.measure(watch=)`) and the ORIGINAL's at the
+ROM's entries — the same arrivals, the same frames, nothing taken off either side (TWO COUNTS, below) — and an AES
+cycle of ours is refused wherever it is spent.
 
 REBINDING THE DOOR. An entry with a C twin is REBOUND: its wrapper keeps its signature and its callers, and calls
 `aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, was the first). WHICH ENTRIES ARE REBOUND TODAY
 IS NEVER LISTED HERE — ask the build: `aes_event.REBOUND` (the wrappers spelt through the macro, read off the
-library), `aes_event.PENDING` (a twin linked, its wrapper still the ROM's call) and `aes_event.ENTRIES` less both (the
-ROM's own routine through the nested run). On target that call is the whole wrapper. Off target it is still an
-ARRIVAL:
-- THE HOOK'S THIRD ANSWER. The wrapper packs the Alcyon frame and asks `recreate_call_event_door` as before; for a
-  rebound entry the hook answers `EVDOOR_ARRIVED` (not `EVDOOR_SERVED`): the frame is recorded for the frames-handed
-  comparison and the interrupt due at that door call is laid, exactly as at a served call — then the twin runs over
-  the candidate's image and its answer is reported to a second hook, `recreate_event_door_returned`. A wrapper and a
-  hook that disagree halt by name, both ways (a rebound entry served by the nested run; an entry left to a twin its
-  wrapper does not call).
+library: all eight) and `aes_event.PENDING` (a twin linked that no wrapper is spelt for: none). On target that call
+is the whole wrapper. Off target it is an ARRIVAL first:
+- THE HOOK'S ANSWER. The wrapper packs the Alcyon frame and asks `recreate_call_event_door`; the hook answers
+  `EVDOOR_ARRIVED`: the frame is recorded for the frames-handed comparison and the interrupt due at that door call
+  is laid — then the twin runs over the candidate's image and its answer is reported to a second hook,
+  `recreate_event_door_returned`. A wrapper and a hook that disagree halt by name: a hook that knows no twin of the
+  entry REFUSES the arrival, and an answer that is neither (what a callback that raised leaves) halts too.
 - `REBOUND` IS DERIVED FROM THE WRAPPER'S SPELLING, never listed and never from "a twin exists". An entry is rebound
   when its `evdoor_<entry>` is spelt through `EVDOOR_REBOUND(entry, ENTRY, (parameters), packed frame,
   arguments...)` — or `EVDOOR_REBOUND_VOID` for an entry that answers nothing (`aes/evdoor.h`). That one spelling is
@@ -484,9 +477,9 @@ ARRIVAL:
   (`tier3.rebound_entries(elf)`: a twin linked and no `jsr` into the ROM routine left), and
   `test_the_blob_s_rebound_and_pending_entries_are_the_host_s` holds the two equal on both blobs.
 - A TWIN THAT MERELY EXISTS IS PENDING (`aes_event.PENDING` = `twins_in(lib)` − `REBOUND`): exported, defined with
-  `EVDOOR_TWIN`, its wrapper still the ROM's call. Band 3's C keeps reaching the ROM's routine through the door (a
-  window); the event layer's own C reaches the twin by its core (an arrival of nothing: no hook is asked); nothing
-  is flipped. A pending twin already owes what a rebound one owes — its leaf battery's priced rows, no wrapper
+  `EVDOOR_TWIN`, no wrapper spelt for it (the way the eight were staged: while one was pending, band 3's C still
+  reached the ROM's routine through the door's served road, retired since). The event layer's own C reaches the twin
+  by its core (an arrival of nothing: no hook is asked). A pending twin already owes what a rebound one owes — its leaf battery's priced rows, no wrapper
   reached from it — so the day it is flipped nothing is found out.
 - HOW A FLIP IS MADE — ONE EDIT. (1) The twin, `EVDOOR_TWIN aes_<entry>(uint8_t *image, <one parameter per frame
   field>)` (`include/transcribed.h`: `noipa`, so GCC neither inlines it into a same-file caller nor clones it, and its
@@ -599,8 +592,7 @@ ARRIVAL:
 - THE DISPATCH HOOK REFUSES. A twin that reaches dsptch calls `aes_dsptch` (`aes/switch.h`): off target that is
   `recreate_dispatch`, asked before any guard, whose binding in every case and every child refuses by name — "the
   call would block" or "would yield", told apart by the running process's PD_STAT as disp tells them — and prints the
-  frames handed so far. A run that blocks inside a rebound entry is compared where its twin stops, AT dsptch; inside a
-  ROM-served one at the entry of the blocking call, as before.
+  frames handed so far. A run that blocks inside a rebound entry is compared where its twin stops, AT dsptch.
 - ...UNLESS A CASE SWITCHES THE MODEL ON (`test/aes_switch.py`) — THE DEFAULT IS STILL TO REFUSE.
   `aes_switch.scheduling(reference, foreign=)` binds, for its own runs alone, `recreate_dispatch` to the C scheduler
   `aes_disp` (`src/aes/evdisp.c`, host only: disp's own loop), `recreate_idle` to the case's deliveries and
@@ -628,9 +620,10 @@ ARRIVAL:
     read as what it was, not as "raised: " with nothing after the colon); `pytest.skip` is a SKIP; and a
     KeyboardInterrupt or a SystemExit — which could not cross the callback — IS RAISED AGAIN, ITSELF, as the binding
     closes, whatever the run then failed by: the session stops as it was asked to. The door's seam keeps an effect's
-    words when the run fails too, whatever it raised (`event_hook`); the scheduler's hooks
-    (`aes_switch._refusing_what_raises`) answer REFUSED, keep the exception and raise it again as their binding
-    closes. A hook written outside both owes the same.
+    words when the run fails too, whatever it raised (`event_hook`). ONE MECHANISM, whoever binds the pointer
+    (`address_hook.answered_or_recorded`, `raise_what_stops_the_session`, `as_the_case_s_outcome`): the scheduler's
+    hooks (`aes_switch.Scheduling`) answer REFUSED through it, say the raise by name on stderr (a fork's only
+    voice) and give it the same outcome as their binding closes. A hook written outside it owes the same.
   - ITS LEAF HOOKS (`aes_switch.IDLE_HOOKS`) ARE THE WORKER'S FORKS, not the zygote's: a named hook must live in a
     module the zygote holds (below), and it holds no battery's helper.
 - SR SAVE WORDS, AND THE LEDGER RULE. The words a bracket parks (`sr_mask_saving` / `sr_restore_from`, `aes_spl7_save`
@@ -685,8 +678,13 @@ ARRIVAL:
   the stack band where the run takes the BIOS trap; a switching row settles WINDOWS (the caller's saved context, the
   dispatcher's stack) and drops fewer than it stages (the SR save words are staged and compared: our build stores them
   as the ROM does). `aes_event.register_row` is the one registrar of a leaf row of the event layer: the waits'
-  (`aes_evlib.register`), the input's (`aes_evinput.register`, which tells it the two routines that POLL) and the
-  processes-and-pipes' (`aes_pdpipe.register`) all end on it. A WORD IS SETTLED WHOLE OR REFUSED: a run that stored
+  (`aes_evlib.register`), the input's (`aes_evinput.register`, which tells it the two routines that POLL), the
+  processes-and-pipes' (`aes_pdpipe.register`) and ev_multi's own (`aes_evmulti.register`) all end on it — and a DOOR
+  USER's row (`aes_event.register`) is settled by the same spelling (`settled_where_stored` over every word that
+  differs by nature). WHAT A ROW SETTLES BEYOND THE TWO WORDS EVERY LAYER HAS IS PINNED, a census per layer
+  (`test_aes_event.BY_NATURE_CENSUS`, held to an independent spelling of the settling; the door users'
+  `test_tier3.DOOR_USERS_CENSUS`, read off the registry — none today): a row newly under a bracket, a trap or a QPB
+  reds until it is written in. A WORD IS SETTLED WHOLE OR REFUSED: a run that stored
   one byte of a word that differs by nature did something its drop's reason does not name (`settled_where_stored`
   refuses it by name — a finding to rule on, never staged and dropped in silence). Held:
   `test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_says` — against AN INDEPENDENT
@@ -835,7 +833,7 @@ stop)}, budget=)` registers one priced row per SLICE: the run between two ARRIVA
   Trap ends exist because a stretch may make no door call at all: fs_input's first comes after ~350,000 instructions.
 - BOTH SHORES RUN THE WHOLE SESSION — the C cannot be entered in the middle of its routine — watched and MARKED at the
   two arrivals. The row's cost is the difference between its two marks, shore by shore (instructions, cycles, door
-  windows, glue); the reset overhead comes off a slice that starts at `ENTRY` only. Every (EV) vet and the bench's
+  calls, glue); the reset overhead comes off a slice that starts at `ENTRY` only. Every (EV) vet and the bench's
   second differential still run over the whole session.
 - MEMORY IS COMPARED AT THE MARKS: our run must reach the slice's start after the same door calls as the ROM's and with
   the same memory (outside the stack band, the blob and the row's drops), and the same again at its stop — else the

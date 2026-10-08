@@ -95,18 +95,6 @@ def test_the_call_site_index_answers_as_a_scan_for_one_routine_would(name):
 
 
 # ---- the nested run --------------------------------------------------------------------------------------------------
-# THE ENTRIES THE DOOR STILL SERVES BY THE ROM'S NESTED RUN, read off the library (`aes_event.REBOUND`) — and the mark
-# of a case OF THAT ROAD (`aes_event._served`: the nested run laid back, a wrapper left on it). With the last entry
-# rebound nothing takes the road: it is dead code, to be retired WITH its cases — the skip's reason says so in every
-# run's summary, and no case is skipped while one entry is served. gr_stilldn's one entry is ev_multi.
-SERVED_BY_THE_ROM = frozenset(aes_event.ENTRIES) - aes_event.REBOUND
-THE_WAIT_IS_SERVED = addrs.AES_ROM_EV_MULTI in SERVED_BY_THE_ROM
-needs_the_wait_served_by_the_rom = pytest.mark.skipif(
-    not THE_WAIT_IS_SERVED,
-    reason="ev_multi is rebound: no door user's wait is served by the ROM's nested run (`aes_event._served`) — with "
-           "the last entry rebound that road is dead code: retire it with this case")
-
-
 STILLDN_EVENTS = aes.EV_MU_BUTTON | aes.EV_MU_M1
 STILLDN_RISE = aes.EV_BUTTON_LEFT << aes.BUTTON_PARM_MASK_SHIFT | 1 << aes.BUTTON_PARM_CLICKS_SHIFT | aes.EV_BUTTON_UP
 MOBLK_AT = aes_event.MESSAGE_AT
@@ -319,49 +307,16 @@ def bar_hidden_companion():
 A_MASK_NO_ROUTINE_LEAVES = 0            # the Line-F mask word staged stale: an empty mask, which no store makes ($fee8e6)
 
 
-def _served_over(routine, frame, machine):
-    """The image the door leaves a call of `routine` with `frame` over `machine`: the effect that SERVES an entry
-    (`aes_event._served`: the ROM routine's nested run, laid back), run as the hook runs it — whichever entries the
-    build has rebound, the effect is the same."""
-    image = make_image(machine)
-    buf = (ctypes.c_uint8 * aes_event.IMAGE_BYTES).from_buffer(image)
-    aes_event._served(routine, None, lambda _call: None)(buf, ctypes.create_string_buffer(frame, len(frame)), len(frame),
-                                                        (ctypes.c_uint32 * 1)())
-    return bytes(image)
-
-
-def test_the_door_leaves_the_line_f_mask_word_as_the_c_found_it(monkeypatch):
-    """The companion of a door row whose routine returns by a mask after the door passes (mn_bar: green, whichever of
-    its entries are rebound — a twin makes no masked return at all) — and THE MECHANISM, RED with the nested run's
-    mask word laid back, shown on the effect itself so that no flip takes the entry from under it: tak_flag's ROM
-    routine, served over a free lock with the mask word staged stale, stores its own mask there (the premise) and
-    the lock's count — the door lays the count and leaves the word."""
+def test_the_door_leaves_the_line_f_mask_word_as_the_c_found_it():
+    """The companion of a door row whose routine returns by a mask after the door passes (mn_bar) is green: a twin
+    makes no masked return at all, and nothing lays the word into the C's image — where the ROM's own routine, run
+    over the same machine with the word staged stale, rewrites it (the premise of the by-nature drop: tak_flag's
+    masked return, in the shadow's nested run)."""
     bar_hidden_companion()
     stale = merge_pokes(aes_event.machine(), aes.field_pokes("AES", LINEF_MASK_WORD=A_MASK_NO_ROUTINE_LEAVES))
     nested = aes_event.nested_run(addrs.AES_ROM_TAK_FLAG, bytes(make_image(stale)), SPB)
     assert aes_event.LINE_F_MASK_BYTES <= nested.writes.keys() and any(nested.writes[at] for at in aes_event.LINE_F_MASK_BYTES), (
         "the premise: the routine's masked return rewrites the word")
-    served = _served_over(addrs.AES_ROM_TAK_FLAG, SPB, stale)
-    assert case.word_in(served, aes.AES_LINEF_MASK_WORD) == A_MASK_NO_ROUTINE_LEAVES
-    assert _wm_update().spb_of(served) == (1, aes.SHELL_PD), "...and every other write of the run is laid"
-    monkeypatch.setattr(aes_event, "LINE_F_MASK_BYTES", frozenset())
-    assert case.word_in(_served_over(addrs.AES_ROM_TAK_FLAG, SPB, stale), aes.AES_LINEF_MASK_WORD) != A_MASK_NO_ROUTINE_LEAVES
-
-
-@needs_the_wait_served_by_the_rom
-def test_the_door_s_writes_are_compared(monkeypatch):
-    """LOAD-BEARING: a door that answered the nested run's D0 but laid none of its writes back is red — the event layer's
-    cancelled waits are compared memory, which the C reaches only through the door."""
-    def answered_only(routine, io_seed, **_binding):
-        def serve(buf, frame, frame_bytes, answer):
-            nested = aes_event.nested_run(routine, aes_event.ctypes.string_at(buf, aes_event.IMAGE_BYTES),
-                                          aes_event.ctypes.string_at(frame, frame_bytes), io_seed)
-            answer[0] = nested.answer
-            return aes_event.SERVED
-        return serve
-    monkeypatch.setattr(aes_event, "_served", answered_only)
-    with pytest.raises(AssertionError, match="oracle="):
-        aes_event.run_event("AES_ROM_GR_STILLDN", (grwait.ENTER, *grwait.AROUND_THE_MOUSE), grwait.button_down())
 
 
 # ---- what each call hands the door ---------------------------------------------------------------------------------------
@@ -406,13 +361,15 @@ def test_the_rom_s_watch_stops_at_the_entries_alone_and_refuses_one_entered_but_
 
 def test_only_the_recorded_pass_s_frames_are_kept():
     """`HANDED` is the hook's RECORDED pass alone, as its `calls` are: a second pass of the same case (an attribution
-    pass) serving the same call hands nothing more."""
+    pass) making the same arrival hands nothing more."""
     _entry, call = DEEPEST_CALLS["ev_multi, one rectangle"]
     staged, frame = call()
     image = (ctypes.c_uint8 * aes_event.IMAGE_BYTES).from_buffer_copy(staged)
-    frame_buffer, answer = (ctypes.c_uint8 * len(frame)).from_buffer_copy(frame), (ctypes.c_uint32 * 1)()
-    serve = aes_event._served(addrs.AES_ROM_EV_MULTI, None)
-    one_pass = aes_event.EVENT_DOOR.recording(lambda _lib, _buf: serve(image, frame_buffer, len(frame), answer))
+    frame_buffer = (ctypes.c_uint8 * len(frame)).from_buffer_copy(frame)
+
+    def arrive(_lib, _buf):             # each pass its own arrivals in flight: no twin of the last one is running
+        aes_event._arrived(addrs.AES_ROM_EV_MULTI, None, aes_event._in_the_recorded_pass, [])(image, frame_buffer, len(frame))
+    one_pass = aes_event.EVENT_DOOR.recording(arrive)
     aes_event.HANDED.clear()
     with aes_event.EVENT_DOOR.staged({}, aes_event._describe_refusals):
         one_pass(None, None)
@@ -488,7 +445,7 @@ def test_the_snapshot_s_dispatcher_guard_does_not_turn_a_block_into_no_event():
 
 def test_a_door_effect_that_raises_in_a_child_is_refused_not_served():
     """A ctypes callback cannot raise into C: an exception escaping one answers an undefined word, which the core took
-    for SERVED (measured: a frame the door's table could not read let the child's core return 0). Any exception the
+    for an answer (measured: a frame the door's table could not read let the child's core return 0). Any exception the
     effect raises is a refusal, by name."""
     bind = CHILD_BINDING_UNREADABLE_FRAMES
     returncode, stderr, _image = aes_event.refusal(*STILLDN[:1], grwait.button_down(), STILLDN[1], bind=bind)
@@ -1507,7 +1464,7 @@ def test_a_c_that_differs_where_an_interrupt_is_delivered_is_refused_by_name():
 
 
 def test_a_delivery_lays_no_line_f_mask_word_into_the_c():
-    """The C's image keeps the Line-F mask word as it found it at a delivery too, as at every nested run (`_served`):
+    """The C's image keeps the Line-F mask word as it found it at a delivery too (`aes_event.LINE_F_MASK_BYTES`):
     the AES's interrupt glue makes masked returns, so the ROM's deliveries write the word (the premise) — the C's final
     image holds the machine's own value there all the same."""
     machine = grwait.button_down()
@@ -2578,7 +2535,7 @@ def _fs_ledger(whole):
 
 
 def test_the_rom_s_vdi_ledger_keeps_the_traps_inside_a_rebound_entry_s_calls():
-    """RED at flip 3 before the ledger was the whole session's (59 sessions: "fs_input made 215 VDI calls where the
+    """RED before the ledger was the whole session's ("fs_input made 215 VDI calls where the
     ROM's own run makes 214" — mchange's vq_mouse, made by our C under ev_multi's twin, against a ROM list that left
     out every trap taken inside a door call). The ROM's watch, told ev_multi is rebound, keeps the traps its ev_multi
     takes — chkkbd's three polls a call, in order, and the fork functions' — BESIDE the same calls outside as ever;
@@ -2624,7 +2581,7 @@ def vdi_entry_of(name):
 
 
 def test_a_real_gemdos_session_s_core_that_halts_fails_its_case_by_name_not_its_worker(monkeypatch):
-    """RED before `run_session` ran its C first in a fork (six fs_input cases at flip 3: "worker crashed", no word
+    """RED before `run_session` ran its C first in a fork ("worker crashed", no word
     said — the C event layer met a binding built past `door_hook`): a session whose binding serves one door entry
     too few, so the door refuses the selector's first wait and the core HALTS. In process that is the worker's
     abort; in the fork made inside the session's own pass it is the case's failure, the door's words in it."""
@@ -2942,10 +2899,10 @@ def test_the_shadow_holds_the_twin_s_answer_as_the_word_its_wrapper_hands_on():
 
 
 def _a_call_arriving():
-    """What the hook hands an arrival's effect: the image, tak_flag's frame, its size, and no answer."""
+    """What the hook hands an arrival's effect: the image, tak_flag's frame and its size."""
     image = (ctypes.c_uint8 * aes_event.IMAGE_BYTES).from_buffer(make_image(aes_event.machine()))
     frame = aes_event.SEMAPHORE_FRAME.pack(_wm_update().WIND_SPB)
-    return image, ctypes.create_string_buffer(frame, len(frame)), len(frame), None
+    return image, ctypes.create_string_buffer(frame, len(frame)), len(frame)
 
 
 def test_a_refused_shadow_leaves_its_call_s_place_empty_and_the_return_is_refused_over_it(monkeypatch):
@@ -2982,9 +2939,9 @@ def test_an_arrival_at_an_entry_no_shadow_is_made_for_still_takes_its_place(monk
 @pytest.mark.parametrize("shadowed", (True, False), ids=("its entry shadowed", "the shadow off"))
 def test_a_door_call_from_inside_a_twin_is_refused_by_name(monkeypatch, shadowed):
     """THE RUNTIME GUARD of "a twin calls another entry's core, never its wrapper": while a twin runs — its arrival
-    made, its return not reported — any call of the hook is refused by name, an arrival at a rebound entry and a call
-    of an entry the ROM serves alike, BEFORE anything is noted or run. (Counted, the inner call would shift every
-    ordinal after it on the host alone: G3's C1.) Once the twin has returned, the door serves again."""
+    made, its return not reported — any call of the hook is refused by name, an arrival at the same entry and at
+    another alike, BEFORE anything is noted or run. (Counted, the inner call would shift every ordinal after it on
+    the host alone: G3's C1.) Once the twin has returned, the door takes arrivals again."""
     if not shadowed:
         monkeypatch.setattr(aes_event, "SHADOWED", frozenset())
     shadows, noted = [], []
@@ -2993,7 +2950,7 @@ def test_a_door_call_from_inside_a_twin_is_refused_by_name(monkeypatch, shadowed
     with pytest.raises(AssertionError, match="called through its wrapper INSIDE the twin of .* a nested arrival"):
         arrive(*_a_call_arriving())
     with pytest.raises(AssertionError, match=f"{addrs.AES_ROM_EV_BLOCK:#x} was called through its wrapper INSIDE the twin"):
-        aes_event._served(addrs.AES_ROM_EV_BLOCK, None, noted.append, shadows)(*_a_call_arriving())
+        aes_event._arrived(addrs.AES_ROM_EV_BLOCK, None, noted.append, shadows)(*_a_call_arriving())
     assert len(noted) == 1 and len(shadows) == 1, "the refused calls noted nothing and took no place"
     image = _a_call_arriving()[0]
     taken = getattr(aes_event._lib, TAK_FLAG_TWIN)(image, WU["AES_WIND_SPB"])      # the twin itself, as the wrapper runs it
@@ -3006,24 +2963,22 @@ def test_in_process_a_nested_arrival_fails_the_case_by_name_and_halts_no_core():
     """IN PROCESS (`event_hook`, every `run_event`) the same guard, and its words SURVIVE: a hook that refused there
     would halt the core — an abort inside the worker, pytest's captured output lost with it (a serial run of the
     battery reported NOTHING at all). So the binding in process KEEPS the refusal and answers the call as the
-    door would — the arrival noted, the entry served — and the case fails by the guard's words when its pass closes.
+    door would — the arrival noted — and the case fails by the guard's words when its pass closes.
     Shown through the hook's own trampoline, as the C calls it: tak_flag's arrival, then — no return between — a
-    second arrival and a call of unsync (served, or an arrival: whichever the build makes of it)."""
-    image, frame, frame_bytes, _answer = _a_call_arriving()
+    second arrival and one at unsync."""
+    image, frame, frame_bytes = _a_call_arriving()
     bytes_at = ctypes.POINTER(ctypes.c_uint8)
-    answer, verdicts = ctypes.c_uint32(), []
+    verdicts = []
 
     def a_twin_that_calls_two_wrappers(_lib, buf):
         for entry in (addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_UNSYNC):
-            verdicts.append(aes_event.EVENT_DOOR._trampoline(buf, entry, ctypes.cast(frame, bytes_at), frame_bytes,
-                                                             ctypes.byref(answer)))
+            verdicts.append(aes_event.EVENT_DOOR._trampoline(buf, entry, ctypes.cast(frame, bytes_at), frame_bytes))
     hook = aes_event.event_hook()
     with pytest.raises(AssertionError, match=f"{addrs.AES_ROM_TAK_FLAG:#x} was called through its wrapper INSIDE the twin of "
                                              f"{addrs.AES_ROM_TAK_FLAG:#x} — a nested arrival"):
         with hook():
             aes_event.EVENT_DOOR.recording(a_twin_that_calls_two_wrappers)(None, ctypes.cast(image, bytes_at))
-    assert verdicts[:2] == [aes_event.ARRIVED, aes_event.ARRIVED] and verdicts[2] in (aes_event.ARRIVED, aes_event.SERVED), (
-        "answered, never REFUSED: no core halts in the worker")
+    assert verdicts == [aes_event.ARRIVED] * 3, "answered, never REFUSED: no core halts in the worker"
     with hook():                        # ...and the same binding's next pass closes clean: the refusals were that run's
         pass
 
@@ -3044,48 +2999,44 @@ def test_a_binding_s_shadows_are_its_own_and_empty_when_a_case_opens_it(monkeypa
     """The arrivals in flight are a list of the BINDING's, emptied each time a case opens it: a run that ended inside
     a twin's call (a refusal, an exception) leaves nothing for the next run's first return to pop — and two bindings
     share none."""
-    handed_to, arrived, serving, served = [], aes_event._arrived, [], aes_event._served
+    handed_to, arrived = [], aes_event._arrived
     monkeypatch.setattr(aes_event, "_arrived", lambda routine, io_seed, noted, shadows, **binding: (
         handed_to.append(shadows) or arrived(routine, io_seed, noted, shadows, **binding)))
-    monkeypatch.setattr(aes_event, "_served",
-                        lambda routine, io_seed, **binding: serving.append(binding.get("shadows")) or served(routine, io_seed, **binding))
     hook, _another = aes_event.event_hook(), aes_event.event_hook()
     its_own, the_other_s = handed_to[0], handed_to[-1]
     assert its_own is not the_other_s
-    # ...every entry of each binding handed that binding's list: the rebound ones (an arrival each) and the ones the
-    # ROM still serves — as many as the build leaves, none once the last is rebound.
-    arrivals, calls_served = len(aes_event.REBOUND), len(SERVED_BY_THE_ROM)
+    # ...every entry of each binding (an arrival each) handed that binding's list.
+    arrivals = len(aes_event.ENTRIES)
     assert [each is its_own for each in handed_to] == [True] * arrivals + [False] * arrivals
-    assert [each is its_own for each in serving] == [True] * calls_served + [False] * calls_served, (
-        "the entries the ROM serves are told of the binding's twins in flight: a served call INSIDE one is refused")
-    assert all(each is the_other_s for each in handed_to[arrivals:] + serving[calls_served:])
+    assert all(each is the_other_s for each in handed_to[arrivals:])
     its_own.append("an arrival a dead run left")
     with hook():
         assert its_own == []
 
 
-# THE WRAPPER AND THE HOOK MUST AGREE which entries are rebound: each way round the core halts by name.
+# THE WRAPPER AND THE HOOK MUST AGREE which entries are rebound: every wrapper runs a twin, so a hook that knows no
+# twin of an entry — or answers its arrival with any word but ARRIVED — halts the core by name.
 HOOK_KNOWS_NO_TWIN = "aes_event.rebound_in = lambda lib: frozenset(); "
-HOOK_TAKES_EVERY_ENTRY_FOR_REBOUND = ("aes_event.rebound_in = lambda lib: frozenset(aes_event.ENTRIES); "
-                                      "aes_event.SHADOWED = frozenset(); ")
+A_WORD_NO_HOOK_ANSWERS = 7
+HOOK_ANSWERS_ANOTHER_WORD = f"aes_event.ARRIVED = {A_WORD_NO_HOOK_ANSWERS}; "
+assert A_WORD_NO_HOOK_ANSWERS not in (aes_event.ARRIVED, aes_event.REFUSED_ANSWER)
 
 
-def test_a_rebound_entry_served_by_the_nested_run_halts_by_name():
-    """A hook that serves tak_flag by the ROM's nested run — as it did before the entry had a twin — where the wrapper
-    runs the twin: the twin would count the caller in a second time. Halted by name."""
+def test_an_entry_the_hook_knows_no_twin_of_is_refused_and_the_core_halts_by_name():
+    """A hook that reads no marker off the library — tak_flag no rebound entry of its — where the wrapper runs the
+    twin: the arrival is refused (the hook notes nothing, shadows nothing), and the core halts by name before the twin
+    runs unwatched."""
     bind = aes_event.child_binding(before=HOOK_KNOWS_NO_TWIN)
     returncode, stderr, _image = aes_event.refusal(_lock_taken()[0], aes_event.machine(), _lock_taken()[1], bind=bind)
-    assert returncode != 0 and "the hook served a rebound entry by the ROM's nested run" in stderr, stderr
+    assert returncode != 0 and "does not serve" in stderr and "the event door: the case's hook refused the call" in stderr, stderr
 
 
-@needs_the_wait_served_by_the_rom
-def test_an_entry_left_to_a_twin_its_wrapper_does_not_call_halts_by_name():
-    """THE RED for an entry left ROM-served while a twin exists, on the host: the hook answers an arrival (the library
-    exports the twin), and a wrapper still on the nested run has nothing to run — halted by name, never answered the
-    zero the unserved call left. Shown on ev_multi, whose wrapper is on the nested run: the hook told it has a twin."""
-    bind = aes_event.child_binding(before=HOOK_TAKES_EVERY_ENTRY_FOR_REBOUND)
-    returncode, stderr, _image = aes_event.refusal(*STILLDN[:1], grwait.button_down(), STILLDN[1], bind=bind)
-    assert returncode != 0 and "the hook left this entry to a twin, and its wrapper calls none" in stderr, stderr
+def test_a_hook_that_answers_another_word_than_arrived_halts_by_name():
+    """...and an answer that is neither ARRIVED nor a refusal (what a callback that raised leaves in D0, a stale
+    protocol) is no licence to run the twin: halted by name."""
+    bind = aes_event.child_binding(before=HOOK_ANSWERS_ANOTHER_WORD)
+    returncode, stderr, _image = aes_event.refusal(_lock_taken()[0], aes_event.machine(), _lock_taken()[1], bind=bind)
+    assert returncode != 0 and "the hook answered neither ARRIVED nor REFUSED" in stderr, stderr
 
 
 # ---- A TWIN CALLS ANOTHER ENTRY'S CORE, NEVER ITS WRAPPER (`aes/evdoor.h`) -------------------------------------------------
@@ -3266,11 +3217,9 @@ ARRIVALS_NOT_COUNTED = ("arrived = aes_event._arrived; aes_event._arrived = lamb
 
 
 DIES_BEFORE_ANY_DOOR_CALL = "raise SystemExit('the child died before any door call'); "
-# What the C's child says when a wait of its gets nothing where the ROM's run returns: its ev_multi reached dsptch —
-# the ROM's routine in the door's nested run while the ROM serves the entry, the C twin at the dispatcher's hook once
-# it is rebound.
-WHO_REACHED_THE_DISPATCHER = (f"{addrs.AES_ROM_EV_MULTI:#x} reached the dispatcher" if THE_WAIT_IS_SERVED
-                              else "the dispatcher's hook: the C reached the dispatcher")
+# What the C's child says when a wait of its gets nothing where the ROM's run returns: its ev_multi — the C twin —
+# reached the dispatcher's hook.
+WHO_REACHED_THE_DISPATCHER = "the dispatcher's hook: the C reached the dispatcher"
 THE_WAIT_BLOCKED_IN_THE_CHILD = (rf"the C's child did not:[\s\S]*{re.escape(WHO_REACHED_THE_DISPATCHER)}[\s\S]*"
                                  rf"{aes_event.BLOCKS}")
 
@@ -3381,23 +3330,18 @@ def test_only_the_hook_s_refusal_halts_the_dispatcher_s_caller():
     assert returncode == 0, stderr
 
 
-def test_a_blocked_rebound_entry_is_compared_where_its_twin_stops_at_dsptch(monkeypatch):
-    """Where a call that blocks is compared: an entry the ROM serves at its ENTRY (its nested run is refused whole), a
-    REBOUND one AT DSPTCH, where its twin reaches the dispatcher's hook. The watched run of gr_stilldn's blocking wait,
-    its ev_multi taken for rebound, answers the ROM's memory at dsptch — the unwatched run's, stopped there. WHICH
-    entries are rebound is `aes_event.REBOUND` AS IT STANDS WHEN THE RUN IS MADE — the set the hook answers by, read
-    at the same moment (not a copy taken when the module was imported)."""
+def test_a_blocked_rebound_entry_is_compared_where_its_twin_stops_at_dsptch():
+    """Where a call that blocks is compared: AT DSPTCH, where the entry's twin reaches the dispatcher's hook. The
+    watched run of gr_stilldn's blocking wait answers the ROM's memory at dsptch — the unwatched run's, stopped
+    there — and not its memory at the call's entry: the wait wrote before it asked for the switch."""
     name, arguments = WOULD_BLOCK
     machine = grwait.button_down()
-    # (Each way TAKEN, whichever the build is: the rule is the watch's, read off the set as the run is made.)
-    monkeypatch.setattr(aes_event, "REBOUND", aes_event.REBOUND - {addrs.AES_ROM_EV_MULTI})
-    _calls, at_the_entry, blocked = aes_event._watched_through(name, arguments, machine, {})
-    monkeypatch.setattr(aes_event, "REBOUND", aes_event.REBOUND | {addrs.AES_ROM_EV_MULTI})
-    _calls, at_dsptch, _blocked = aes_event._watched_through(name, arguments, machine, {})
-    assert blocked is None
+    calls, at_dsptch, blocked = aes_event._watched_through(name, arguments, machine, {})
+    assert blocked is None and [call.routine for call in calls] == [addrs.AES_ROM_EV_MULTI]
     final, _writes, regs = emu.run(make_image(aes.staged(name, arguments, machine)), getattr(addrs, name),
                                    stop_pc=addrs.AES_ROM_DSPTCH)
     assert regs["checkpoint"] and not aes_event.differing(at_dsptch, final, not_compared=frozenset())
+    at_the_entry, _call = aes_event.rom_entered(name, arguments, machine, {}, 0)
     assert aes_event.differing(at_the_entry, at_dsptch), "the premise: the wait wrote something before dsptch"
 
 
@@ -3422,18 +3366,12 @@ def test_without_it_the_run_s_own_entry_is_refused_as_no_door_call(monkeypatch):
 
 def test_the_outermost_entry_reached_inside_an_entered_entry_is_door_call_0():
     """ev_button waiting for a press nobody makes, entered at the entry: its own entry is no arrival, the ev_block it
-    waits through is DOOR CALL 0 — the frame the ROM's ev_button hands it — and the run blocks inside that call. An
-    entry the ROM serves: compared at the call's ENTRY; taken for a twin's (rebound), AT DSPTCH — the unwatched run's
-    memory there (`rom_at_dsptch`). Each state NAMED (`rebound=`), so the case holds whichever ev_block is in the
-    build."""
-    calls, at_the_entry, result = aes_event._watched_through("AES_ROM_EV_BUTTON", A_PRESS, aes_event.machine(), {},
-                                                             rebound=frozenset())
+    waits through is DOOR CALL 0 — the frame the ROM's ev_button hands it — and the run blocks inside that call:
+    compared AT DSPTCH — the unwatched run's memory there (`rom_at_dsptch`)."""
+    calls, at_dsptch, result = aes_event._watched_through("AES_ROM_EV_BUTTON", A_PRESS, aes_event.machine(), {})
     assert result is None and [call.routine for call in calls] == [addrs.AES_ROM_EV_BLOCK]
-    calls, at_dsptch, _result = aes_event._watched_through("AES_ROM_EV_BUTTON", A_PRESS, aes_event.machine(), {},
-                                                           rebound={addrs.AES_ROM_EV_BLOCK})
     the_rom_s = aes_event.rom_at_dsptch("AES_ROM_EV_BUTTON", A_PRESS, aes_event.machine())
     assert the_rom_s.switches == aes_event.BLOCKS and at_dsptch == the_rom_s.memory
-    assert aes_event.differing(at_the_entry, at_dsptch), "the premise: the wait wrote something before dsptch"
 
 
 def _interrupts_asked_for(monkeypatch):
@@ -3860,7 +3798,7 @@ def test_our_parked_qpb_s_place_is_its_slot_not_any_address_holding_the_right_by
 
 
 def test_a_wait_the_machine_came_with_is_one_address_and_its_qpb_s_bytes_are_no_part_of_a_staged_machine():
-    """THE EQUAL-ADDRESS ARM, and why it holds no bytes (the review asked that it vet them; MEASURED, it cannot): a
+    """THE EQUAL-ADDRESS ARM, and why it holds no bytes (MEASURED: it cannot vet them): a
     wait both shores were staged with names ONE address — nothing dropped, the longword compared — and that address
     is in the frame of the routine that parked it, which a staged machine does not carry (no stack band). Shown on
     the waits' own case: ev_mwait entered under ev_mesag's parked wait — the ROM's memory holds eight bytes there,
@@ -3916,13 +3854,12 @@ def test_a_qpb_outside_every_stack_is_one_address_on_both_shores_and_nothing_is_
     assert aes_event.parked_qpb_drop("the case", parked.image, parked.rom_memory) == frozenset()
 
 
-def test_what_a_blocked_call_parks_is_its_entry_s_row_s_and_a_door_user_s_drop_is_a_rebound_call_s(monkeypatch):
+def test_what_a_blocked_call_parks_is_its_entry_s_row_s_and_a_door_user_s_drop_is_a_rebound_call_s():
     """WHAT a blocked call must be found to have parked is its ENTRY's ROW's to say (`Entry.parks`), no routine
     named where it is vetted: ap_rdwr's own arguments with a pipe's code (not its other waits: the same address
     handed on, kept by no routine), the QPB ev_block's parameter names, ev_multi's own for a MESSAGE. For a door
-    USER's blocked run the drop is made only where its last call's entry is REBOUND (compared at dsptch; an entry the
-    ROM serves is compared at its ENTRY, no wait queued: nothing may be dropped there) — and the QPB parked is the
-    one the row says."""
+    USER's blocked run (compared at dsptch) the drop is its last call's — and the QPB parked is the one the row
+    says."""
     arrival, parked = _a_write_parked_on_a_full_pipe()
     write, process, count, buffer = arrival.arguments
     a_send = aes_event.Handed(addrs.AES_ROM_AP_RDWR, (write, process, count, b"a message's bytes"))
@@ -3939,9 +3876,6 @@ def test_what_a_blocked_call_parks_is_its_entry_s_row_s_and_a_door_user_s_drop_i
     assert aes_event.parked_by(for_a_message, ours) == (running_pid, aes_event.MESSAGE_BYTES)
     assert aes_event.parked_by(for_a_message._replace(arguments=(aes.EV_MU_KEYBD, None, None, 0, 0, True, True)), ours) is None
     drop = aes_event.parked_qpb_drop("the case", ours, the_rom_s)
-    monkeypatch.setattr(aes_event, "REBOUND", aes_event.REBOUND - {addrs.AES_ROM_AP_RDWR})
-    assert aes_event._a_door_user_s_parked_qpb("a user", [a_send], ours, the_rom_s) == frozenset(), "served: at its entry"
-    monkeypatch.setattr(aes_event, "REBOUND", aes_event.REBOUND | {addrs.AES_ROM_AP_RDWR})
     assert aes_event._a_door_user_s_parked_qpb("a user", [a_send], ours, the_rom_s) == drop
     assert aes_event._a_door_user_s_parked_qpb("a user", [], ours, the_rom_s) == frozenset()
     with pytest.raises(AssertionError, match=r"parked the QPBs \[\(.*\)\] \(process, bytes\) — it was handed .* which parks"):
@@ -4057,10 +3991,10 @@ def test_a_blocked_ev_multi_s_message_wait_parks_a_qpb_of_its_own_frame_and_its_
     # ...a door user blocked inside the rebound entry: the same drop, held to what the entry's row says it parks.
     call = aes_event.handed(addrs.AES_ROM_EV_MULTI, aes_event.entry_frame("AES_ROM_EV_MULTI", *arguments), arrived_with)
     drop = frozenset(range(its.evb + aes.EVB_PARM, its.evb + aes.EVB_PARM + aes.LONG_BYTES))
-    assert aes_event._a_door_user_s_parked_qpb("a user", [call], twin_s, the_rom_s, rebound={addrs.AES_ROM_EV_MULTI}) == drop
+    assert aes_event._a_door_user_s_parked_qpb("a user", [call], twin_s, the_rom_s) == drop
     without_a_message = call._replace(arguments=(flags & ~aes.EV_MU_MESAG, *call.arguments[1:]))
     with pytest.raises(AssertionError, match="which parks None"):
-        aes_event._a_door_user_s_parked_qpb("a user", [without_a_message], twin_s, the_rom_s, rebound={addrs.AES_ROM_EV_MULTI})
+        aes_event._a_door_user_s_parked_qpb("a user", [without_a_message], twin_s, the_rom_s)
     # ...a twin whose QPB names another buffer: wholly inside the stack band, seen by the vet alone.
     our_qpb_at = case.long_in(twin_s, its.evb + aes.EVB_PARM)
     another_buffer = _one_byte_off(twin_s, at=our_qpb_at + aes_event.QPB.size - 1)
@@ -4086,11 +4020,10 @@ def test_the_real_twin_s_blocked_message_wait_holds_under_the_shadow_and_the_doo
     assert aes_event.HALTED_AT_THE_DISPATCHER in forked.stderr and aes_event.BLOCKS in forked.stderr, forked.stderr
     the_rom_s = aes_event.rom_at_dsptch("AES_ROM_EV_MULTI", arguments, machine).memory
     call = aes_event.handed(addrs.AES_ROM_EV_MULTI, aes_event.entry_frame("AES_ROM_EV_MULTI", *arguments), arrived_with)
-    rebound = {addrs.AES_ROM_EV_MULTI}
 
     def held_by_both(image):
         aes_event.vet_the_shadow_at_dsptch(shadow, image)
-        return aes_event._a_door_user_s_parked_qpb("a user", [call], image, the_rom_s, rebound=rebound)
+        return aes_event._a_door_user_s_parked_qpb("a user", [call], image, the_rom_s)
     (mine,) = aes_event.parked_qpbs(forked.image)
     parm = mine.evb + aes.EVB_PARM
     assert held_by_both(forked.image) == frozenset(range(parm, parm + aes.LONG_BYTES))
@@ -4115,7 +4048,7 @@ def test_the_real_twin_s_blocked_message_wait_holds_under_the_shadow_and_the_doo
         with pytest.raises(AssertionError, match=refused_by):
             aes_event.vet_the_shadow_at_dsptch(shadow, image)
         with pytest.raises(AssertionError, match=refused_by):
-            aes_event._a_door_user_s_parked_qpb("a user", [call], image, the_rom_s, rebound=rebound)
+            aes_event._a_door_user_s_parked_qpb("a user", [call], image, the_rom_s)
 
 
 # ---- (c) ONE ROW PER ENTRY: its frame, its inputs, what it answers ----------------------------------------------------------
@@ -4655,8 +4588,9 @@ def _every_returning_arrival(layer):
 
 # What a layer knows BY NAME that the one settling is TOLD (`polls`): the routines that poll the keyboard, whose
 # `savptr` is in the band for every row whether a given run takes the trap or not.
-THE_ROUTINES_THAT_POLL = (aes_evinput.CHKKBD, aes_evinput.FORKER)
-ROUTINES_A_LAYER_SETTLES = 5            # at least: each layer registers rows of more routines than this
+THE_ROUTINES_THAT_POLL = (aes_evinput.CHKKBD, aes_evinput.FORKER, "AES_ROM_EV_MULTI")
+# At least: each layer registers rows of more routines than this — but ev_multi's, which is one routine's battery.
+ROUTINES_A_LAYER_SETTLES = collections.defaultdict(lambda: 5, {"ev_multi": 1})
 Registered = namedtuple("Registered", "label name arguments machine")
 
 
@@ -4695,7 +4629,16 @@ def _rows_of_the_input(_monkeypatch):
     return _rows_of_arrivals(aes_evinput, test_aes_evinput, test_aes_evfork)
 
 
-SETTLED_ROWS = {"the waits": _rows_of_the_waits, "the input": _rows_of_the_input, "the processes and pipes": _rows_of_the_pipes}
+def _rows_of_ev_multi(_monkeypatch):
+    """...and ev_multi's own (`aes_evmulti.register`: one routine's rows, every one told to poll)."""
+    import aes_evmulti
+    import test_aes_evmulti
+    return [Registered(label, aes_evmulti.EV_MULTI, made.arguments, aes_evmulti.machine_of(made))
+            for label, made in ((label, aes_evmulti.RETURNING[name]) for label, name in test_aes_evmulti.ROWS)]
+
+
+SETTLED_ROWS = {"the waits": _rows_of_the_waits, "the input": _rows_of_the_input, "the processes and pipes": _rows_of_the_pipes,
+                "ev_multi": _rows_of_ev_multi}
 
 
 def _settled_by_the_rom_s_own_run(row):
@@ -4738,12 +4681,15 @@ BY_NATURE_CENSUS = {
     "the input": {SAVPTR_MOVED_BY_THE_RUN: {"aes_mchange": 1}},
     # psetup's own row and pstart's (which calls it): the bracket is the routine under test.
     "the processes and pipes": {"psetup's SR save word": {"aes_psetup": 1, "aes_pstart": 1}},
+    # The two rows whose message wait is queued and cancelled: the only runs of the wait path's QPB, a local of the
+    # routine's own frame handed on by its address (`test_aes_evmulti.ROWS`).
+    "ev_multi": {A_QPB_S_ADDRESS: {"aes_ev_multi": 2}},
 }
 
 
 @pytest.mark.parametrize("layer", SETTLED_ROWS)
 def test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_says(layer, monkeypatch):
-    """ONE SETTLING, for the waits', the input's and the processes-and-pipes' rows alike (each layer had a spelling of
+    """ONE SETTLING, for the waits', the input's, the processes-and-pipes' and ev_multi's rows alike (each layer had a spelling of
     its own: five of the waits' and the input's 111 arrivals differed between two of them, and the pipes' asked
     after psetup's SR word alone): EVERY priced direct row a layer registers holds, IN THE REGISTRY, the machine the
     ROM's own run of it settles — HELD TO AN INDEPENDENT SPELLING (`_settled_by_the_rom_s_own_run`: the oracle's run,
@@ -4753,7 +4699,7 @@ def test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_
     (a queued or a recorded fork function's is relocated at Tier 3, never dropped). AND THE CENSUS: which routines'
     rows use each of the wider kinds is the table above, exactly."""
     rows = SETTLED_ROWS[layer](monkeypatch)
-    assert len({row.name for row in rows}) >= ROUTINES_A_LAYER_SETTLES, "the premise: the layer's rows, not a few"
+    assert len({row.name for row in rows}) >= ROUTINES_A_LAYER_SETTLES[layer], "the premise: the layer's rows, not a few"
     registered, reasons, census = case.tier3_dropped(), set(), {}
 
     def counted(kind, row):
@@ -4866,18 +4812,18 @@ def test_a_value_rebound_without_the_monkeypatch_fixture_sidelines_the_zygote_to
     aes_event.ZYGOTE_SIDELINED = False      # the module's own value, as a test with no `monkeypatch` finds it (the
     #                                         fixture's own patch of it is undone when this test ends)
     assert aes_event.the_zygote_runs() and aes_event.the_zygote_stands_in(_tak_flag_run())
-    made, real = aes_event.FORKS_MADE[aes_event.BY_THIS_PROCESS], aes_event._one_run_of
+    made, real = aes_event.FORKS_MADE[aes_event.BY_THIS_PROCESS], aes_event.one_run_of
 
     def raising(*_run):
         raise RuntimeError("patched, with no fixture")
-    aes_event._one_run_of = raising
+    aes_event.one_run_of = raising
     try:
         assert not aes_event.the_zygote_runs() and not aes_event.the_zygote_stands_in(_tak_flag_run())
         with pytest.raises(RuntimeError, match="patched, with no fixture"):
             aes_event.core_in_a_fork("AES_ROM_TAK_FLAG", THE_LOCK, aes_event.machine())
         assert aes_event.FORKS_MADE[aes_event.BY_THIS_PROCESS] == made, "the patched code ran HERE: no fork of another maker's"
     finally:
-        aes_event._one_run_of = real
+        aes_event.one_run_of = real
     assert aes_event.the_zygote_runs(), "...and put back, the zygote stands in again"
     another, real_value = aes.signed, aes.signed
     aes.signed = lambda value: another(value)

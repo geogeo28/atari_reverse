@@ -261,9 +261,7 @@ def record(image, events):
             for index in range(events)]
 
 
-def recorder(image):
-    return {"on": case.word_in(image, aes.AES_GL_RECD), "left": case.word_in(image, aes.AES_RECORD_LEFT),
-            "cursor": case.long_in(image, aes.AES_RECORD_CURSOR)}
+recorder = evinput.recorder
 
 
 def test_forker_records_the_entry_it_runs():

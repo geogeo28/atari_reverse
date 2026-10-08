@@ -271,7 +271,7 @@ def test_savestate_s_arm_under_the_guard_is_dead():
 
 # ---- the behaviour: Tier 3's transcription relation -----------------------------------------------------------------------
 def _uda_of(pd, pokes):
-    return case.long_in(make_image(pokes), pd + aes.PD_UDA)
+    return switch.uda_of(pd, make_image(pokes))
 
 
 @derived.kept

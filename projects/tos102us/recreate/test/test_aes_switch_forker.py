@@ -24,6 +24,7 @@ from recreate_kit import rom_bench
 
 import aes
 import aes_event
+import aes_evinput
 import case
 import test_aes_evfork          # noqa: F401  (forker's rows are registered where its battery is imported)
 import transcription
@@ -84,12 +85,6 @@ def test_our_forker_runs_a_rom_made_queue_through_our_own_fork_functions(directo
     assert unrelocated > 0, "the premise: without the relocation our forker runs the ROM's fork function"
 
 
-def _recorder(image):
-    """The recorder's three globals: whether it records, how many records are left, where the next one goes."""
-    return {"on": case.word_in(image, aes.AES_GL_RECD), "left": case.word_in(image, aes.AES_RECORD_LEFT),
-            "cursor": case.long_in(image, aes.AES_RECORD_CURSOR)}
-
-
 def _recording(image, lo, hi):
     return bytes(image[lo:hi])
 
@@ -108,11 +103,11 @@ def test_the_recorder_s_arm_leaves_the_rom_s_recording_on_target(directory, name
     the count left and the recording's switch — and runs no cycle of the AES's ROM text."""
     started, final = _the_rom_s_run(name)
     moved, still_on = ARMS[name]
-    found, left = _recorder(started), _recorder(final)
+    found, left = aes_evinput.recorder(started), aes_evinput.recorder(final)
     assert left["cursor"] - found["cursor"] == moved and bool(left["on"]) == still_on, f"the premise of {name}: {found} -> {left}"
     ours, in_the_rom = _our_run(bench_tier3().RomBench(directory), name)
     assert in_the_rom == 0, f"our forker spent {in_the_rom} cycles in the AES's ROM text"
-    assert _recorder(ours) == left
+    assert aes_evinput.recorder(ours) == left
     lo, hi = found["cursor"] - ENTRY_BYTES, left["cursor"] + ENTRY_BYTES
     assert _recording(ours, lo, hi) == _recording(final, lo, hi), "the recording our forker leaves is not the ROM's"
 
@@ -127,6 +122,6 @@ def test_without_the_recording_relocated_our_forker_does_not_merge(directory):
     _entry, _regs, pokes, *_seeds = FORKER_ROWS[A_TICK_MERGED]
     queue_as_ours = bench_tier3().map_fork_codes(make_image(pokes), bench_tier3().fork_relocation(
         bench_tier3().RomBench(directory).elf, "aes_forker"))
-    assert case.long_in(queue_as_ours, _recorder(queue_as_ours)["cursor"] - ENTRY_BYTES + aes.FORK_CODE) == tchange
+    assert case.long_in(queue_as_ours, aes_evinput.recorder(queue_as_ours)["cursor"] - ENTRY_BYTES + aes.FORK_CODE) == tchange
     ours = rom_bench.RomBench(directory)._call(queue_as_ours, "aes_forker", (0,)).image
-    assert _recorder(ours)["cursor"] == _recorder(final)["cursor"] + ENTRY_BYTES
+    assert aes_evinput.recorder(ours)["cursor"] == aes_evinput.recorder(final)["cursor"] + ENTRY_BYTES

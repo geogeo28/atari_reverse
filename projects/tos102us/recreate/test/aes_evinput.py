@@ -779,6 +779,12 @@ REASONS = (STEERS_THE_LISTS, STEERS_THE_FORK_QUEUE, STEERS_THE_KEY_QUEUE, STEERS
 assert all(reason in REASONS for table in (STEERS, STEERS_SOME) for reasons in table.values() for reason in reasons)
 
 
+def recorder(image):
+    """The recorder's three globals over `image`: whether it records, how many records are left, where the next goes."""
+    return {"on": case.word_in(image, aes.AES_GL_RECD), "left": case.word_in(image, aes.AES_RECORD_LEFT),
+            "cursor": case.long_in(image, aes.AES_RECORD_CURSOR)}
+
+
 @derived.kept
 def _stored_by_the_rom(name, arguments, machine):
     image = make_image(aes.staged(name, vdi.as_signed(name, arguments), machine))

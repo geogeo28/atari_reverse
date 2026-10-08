@@ -1,38 +1,26 @@
 /* aes/evdoor.h — THE EVENT DOOR: how the AES's C reaches the event layer and the scheduler (ev_multi, ap_rdwr, ...: the
- * dispatcher's layer), entry by entry — the ROM's own routine until the entry has a C twin, then the twin.
+ * dispatcher's layer), entry by entry — each by its C twin (every entry is REBOUND: FLIP 3 was the last).
  *
  * WHAT A DOOR ENTRY IS. A ROM routine of that layer, keyed BY ITS ROM ADDRESS, entered over the Alcyon frame its ROM
  * callers push (`move.w`/`move.l -(sp)`, then a Line-F call word) and answering in D0. Every C call of one goes through
- * its wrapper below — `evdoor_<routine>`, the routine's arguments as the ROM's callers hand them — and nowhere else, so
- * the wrapper is the ONE place a port changes: when an entry has a C twin its wrapper's body becomes the call of the
- * twin (`aes_tak_flag(image, ...)`), on both builds, and no caller is touched. An entry is then REBOUND. Until it is:
+ * its wrapper below — `evdoor_<routine>`, the routine's arguments as the ROM's callers hand them — and nowhere else:
+ * the wrapper's body is the call of the entry's C twin (`aes_tak_flag(image, ...)`), on both builds. ON TARGET it is
+ * that call and nothing else.
  *
- * ON TARGET the wrapper is the ROM's call itself: the frame pushed as its callers push it, and a `jsr` to the routine —
- * so the shipped C runs the ROM's own event layer, from the same bytes the ROM's callers reach. The Line-F word's handler
- * is skipped (a `jsr` lands where the call table names: `test_aes_event.py` holds each entry to its callers' call word).
- * An Alcyon routine keeps D3-D7/A3-A6 (its Line-F return restores what its own mask names) and may change D0-D2/A0-A2
- * (the Line-F handler itself loads D1, D2 and A0 on every call the routine makes): all six are given up, GCC's D2 and A2
- * among them — the trap-glue lesson (`docs/on-target-execution.md`).
+ * OFF TARGET A CALL IS AN ARRIVAL FIRST. The wrapper packs the same frame into bytes and hands it to
+ * `recreate_call_event_door`, a hook the case binds (`test/aes_event.py`), which answers EVDOOR_ARRIVED — "noted: run
+ * the twin": the case has recorded the frame (what each call is handed is compared with the ROM's own call's, which
+ * sees a wrong rectangle the image cannot) and laid the interrupt due at that call. Frame locals whose ADDRESS a
+ * caller hands the door (an MOBLK, the answer words) take `host_slot.h` slots, as every escaping local does. Before
+ * the hook, the door CHECKS the hop the ROM's call word takes — vector $2c at the Line-F handler's RAM copy, the copy
+ * naming the ROM call table — and halts by name if a case moved either: the ROM's caller would then run other code,
+ * and the door's would not. A hook that refuses (an entry the case does not bind, a call made WHILE A TWIN RUNS — the
+ * next paragraph's rule, at run time) or answers any other word halts the core by name, never carried on.
  *
- * OFF TARGET the wrapper packs the same frame into bytes and hands it to `recreate_call_event_door`, a hook the case
- * binds (`test/aes_event.py`), which runs the ROM's routine in a NESTED ORACLE RUN over the candidate's own image, lays
- * its writes back and answers its D0 (EVDOOR_SERVED) — so both shores run the ROM's event layer over the same machine,
- * and the differential is about the C round it. Frame locals whose ADDRESS a caller hands the door (an MOBLK, the answer
- * words) take `host_slot.h` slots, as every escaping local does. Before the hook, the door CHECKS the hop the ROM's call
- * word takes — vector $2c at the Line-F handler's RAM copy, the copy naming the ROM call table — and halts by name if a
- * case moved either: the ROM's caller would then run other code, and the door's would not. A hook that refuses (an entry
- * it does not serve; a nested run that reached the dispatcher — the call would BLOCK, nothing it waits for satisfied, and
- * the machine would switch away until something is, or YIELD — or ran past its cap) halts the core by name too, never
- * answered with a fabricated 0 or the "no event" the dispatcher's guard would let a blocked wait return.
- *
- * A REBOUND ENTRY IS STILL AN ARRIVAL, off target. Its wrapper packs the frame and asks the hook all the same, which
- * answers EVDOOR_ARRIVED — "noted: run the twin": the case has recorded the frame (what each call is handed is compared
- * with the ROM's own call's, which sees a wrong rectangle the image cannot) and laid the interrupt due at that call, as
- * at any door call. The twin then runs, and its answer is handed to `recreate_event_door_returned` — where a case may
- * hold the twin, at its own call, to the ROM routine's nested run over the image it arrived with (the SHADOW,
- * `test/aes_event.py`). Which answer an entry gets is the HOOK's, read off the build (the entries whose wrapper is
- * spelt through EVDOOR_REBOUND, below: each leaves a marker in the library): a wrapper and the hook that disagree
- * halt by name. A hook call made WHILE A TWIN RUNS is refused by name too (the next paragraph's rule, at run time).
+ * The twin then runs, and its answer is handed to `recreate_event_door_returned` — where a case holds the twin, at its
+ * own call, to the ROM routine's NESTED ORACLE RUN over the image it arrived with (the SHADOW, `test/aes_event.py`).
+ * Which entries a hook answers for is read off the build (each wrapper spelt through EVDOOR_REBOUND, below, leaves a
+ * marker in the library).
  *
  * A TWIN CALLS ANOTHER ENTRY'S CORE, NEVER ITS WRAPPER. The wrappers below are for callers OUTSIDE the event layer
  * (band 3's C: wm_update, fm_do, ...). A twin that needs another entry — amutex taking the semaphore, ev_block queueing
@@ -43,8 +31,8 @@
  * the host alone, and read as a bug of the twin. Held by the build: no function a twin reaches, in any file, refers to
  * the door's hooks (`test/test_aes_event.py`, over the host build's own call graph).
  *
- * Tier 3 prices a door user on its own cycles: a ROM routine its `jsr` enters runs on both sides and is taken off both;
- * a twin's cycles are ours, against the ROM routine's (`bench/tier3.py`, mechanism (EV)).
+ * Tier 3 prices a door user on its own cycles, a twin's among them, against the ROM's with the ROM routine's — and a
+ * second time net of both (`bench/tier3.py`, mechanism (EV): the caller's own count).
  */
 #ifndef TOS102US_AES_EVDOOR_H
 #define TOS102US_AES_EVDOOR_H
@@ -113,20 +101,19 @@
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #include "ram_vector.h"
 
-/* The hook: `routine` reached over `image` with the Alcyon `frame`. Its answer is one of three: */
-#define EVDOOR_REFUSED        0          /* the case serves no such call (the core halts by name)              */
-#define EVDOOR_SERVED         1          /* the ROM's routine was run over the image, its D0 in `*answer`      */
-#define EVDOOR_ARRIVED        2          /* noted, nothing run: the entry is rebound, its twin runs next       */
-extern uint32_t (*recreate_call_event_door)(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes,
-                                            uint32_t *answer);
-/* ...and what a rebound entry's twin answered, once it has returned (the word in `answer`; EVDOOR_NO_ANSWER from an
+/* The hook: `routine` arrived at over `image` with the Alcyon `frame`. Its answer is one of two: */
+#define EVDOOR_REFUSED        0          /* the case binds no such call, or a twin is running (the core halts) */
+#define EVDOOR_ARRIVED        1          /* noted, nothing run: the entry's twin runs next                     */
+extern uint32_t (*recreate_call_event_door)(uint8_t *image, uint32_t routine, const uint8_t *frame,
+                                            uint32_t frame_bytes);
+/* ...and what the entry's twin answered, once it has returned (the word in `answer`; EVDOOR_NO_ANSWER from an
  * entry that answers nothing — which the case knows by the entry, not by this value). */
 #define EVDOOR_NO_ANSWER      0
 extern void (*recreate_event_door_returned)(uint8_t *image, uint32_t routine, uint32_t answer);
 
-/* The hook asked: the hop the ROM's call word takes checked first; a refusal halts. `*answer` is a served call's. */
-static inline uint32_t event_door_asked(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes,
-                                        uint32_t *answer)
+/* An entry's ARRIVAL: the hop the ROM's call word takes checked first, then the frame noted by the case — nothing
+ * run. A refusal halts, and so does any answer that is not ARRIVED (a callback that raised answers an undefined word). */
+static inline void event_door_arrival(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes)
 {
     uint32_t verdict;
 
@@ -135,33 +122,13 @@ static inline uint32_t event_door_asked(uint8_t *image, uint32_t routine, const 
                         "run other code");
     require_cpu_routine(image, AES_LINEF_COPY + LINEF_TABLE_OPERAND, AES_LINEF_TABLE,
                         "the event door: the Line-F handler's copy no longer names the ROM call table");
-    verdict = recreate_call_event_door(image, routine, frame, frame_bytes, answer);
+    verdict = recreate_call_event_door(image, routine, frame, frame_bytes);
     if (verdict == EVDOOR_REFUSED)
-        recreate_not_reconstructed("the event door: the case's hook refused the call — an entry it does not serve, a "
-                                   "call that would block (nothing it waits for satisfied) or yield, or a nested run "
-                                   "past its cap");
-    return verdict;
-}
-
-/* An entry the ROM still serves: its nested run's D0. */
-static inline uint32_t event_door(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes)
-{
-    uint32_t answer = 0;
-
-    if (event_door_asked(image, routine, frame, frame_bytes, &answer) != EVDOOR_SERVED)
-        recreate_not_reconstructed("the event door: the hook left this entry to a twin, and its wrapper calls none — "
-                                   "an entry whose twin the library exports, its wrapper left on the nested run");
-    return answer;
-}
-
-/* A REBOUND entry's arrival: the frame noted by the case, nothing run. */
-static inline void event_door_arrival(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes)
-{
-    uint32_t unanswered = 0;
-
-    if (event_door_asked(image, routine, frame, frame_bytes, &unanswered) != EVDOOR_ARRIVED)
-        recreate_not_reconstructed("the event door: the hook served a rebound entry by the ROM's nested run — its "
-                                   "wrapper's twin would run over the routine's own writes");
+        recreate_not_reconstructed("the event door: the case's hook refused the call — an entry it does not bind, or "
+                                   "a call made through a wrapper while a twin runs");
+    if (verdict != EVDOOR_ARRIVED)
+        recreate_not_reconstructed("the event door: the hook answered neither ARRIVED nor REFUSED — every entry is "
+                                   "rebound, and its wrapper's twin runs only over an arrival the case noted");
 }
 
 /* ...and its twin's return: the answer shown to the case, and handed on. */
@@ -185,15 +152,7 @@ static inline uint32_t frame_long(uint8_t *frame, uint32_t at, uint32_t value)
 }
 #endif
 
-/* ---- the wrappers: the ONE call of each entry ---------------------------------------------------------------------
- * EVERY ENTRY IS REBOUND (ev_multi the last, FLIP 3): no wrapper is the ROM's call any more, and what served one —
- * `event_door` above, the compile-time refusal below — has no user left. */
-#ifndef RECREATE_HOST_DIFFERENTIAL
-/* A call no wrapper below has a priced shape for: an error at compile time, never target code nothing measures. */
-extern void evdoor_shape_unbuilt(void) __attribute__((error("the event door: a call shape with no priced Tier 3 row")));
-#endif
-
-/* ---- A REBOUND ENTRY'S WRAPPER, SPELT ONCE ------------------------------------------------------------------------
+/* ---- the wrappers: the ONE call of each entry — A REBOUND ENTRY'S WRAPPER, SPELT ONCE -----------------------------
  * `EVDOOR_REBOUND(entry, ENTRY, (parameters), packed, arguments...)` IS the flip of an entry: it defines
  * `evdoor_<entry>` as the call of ITS OWN twin — `aes_<entry>(image, arguments...)`, the name built here from the
  * entry's, so a wrapper spelt rebound can call no other twin — on target that call and nothing else; off target the
@@ -202,8 +161,7 @@ extern void evdoor_shape_unbuilt(void) __attribute__((error("the event door: a c
  * return reported. And it is what REBOUND is derived from, on both builds: off target the one translation unit that
  * defines the hooks (`src/aes/evdoor.c`) defines a MARKER per entry spelt through it (`evdoor_rebound_<entry>`, the
  * entry's ROM address), which is the set the case's hook answers ARRIVED for (`aes_event.rebound_in`); on target an
- * entry spelt through it has no `jsr` into the ROM left (`bench/tier3.py`). So a twin that merely EXISTS — exported,
- * its wrapper still the ROM's call — is rebound nowhere: it is a C core like any other until its wrapper is re-spelt.
+ * entry spelt through it has no `jsr` into the ROM left (`bench/tier3.py`).
  * `EVDOOR_REBOUND_VOID` is the same for an entry that answers nothing (post_button: D0 a callee's leftover no caller
  * reads) — the return is reported with no answer, and nothing is compared with the ROM routine's D0.
  *

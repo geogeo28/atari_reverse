@@ -31,6 +31,7 @@ import re
 import struct
 import subprocess
 import sys
+import types
 from collections import namedtuple
 
 from harness import BASE_IMAGE, _lib, addrs, bench_tier3, emu, make_image
@@ -48,7 +49,7 @@ import test_aes_wm_update
 import transcription
 import vdi
 import vdi_helpers
-from address_hook import bind_pointer
+from address_hook import answered_or_recorded, as_the_case_s_outcome, bind_pointer, raise_what_stops_the_session
 from case import merge_pokes
 from opcodes import (DROP_STACK_BYTES, DROP_STACK_LONG, JSR_ABSOLUTE_LONG, PUSH_ADDRESS_SHORT, PUSH_RETURN_PC, PUSH_SR,
                      PUSH_STACK_LONG, RTE, RTS)
@@ -626,43 +627,65 @@ LoopRun = namedtuple("LoopRun", "deepest traps")      # bytes below disp's SP; `
 THE_SECOND_WAIT = 2
 
 
+PATTERN_STEP, PATTERN_BIAS = 7, 3       # odd, so the 256 bytes of the pattern are all there before one repeats
+
+
 def _untouched(at):
-    return (at * 7 + 3) & aes.BYTE_MASK
+    """The pattern the stack under a trap's frame is laid with: a byte that tells its own address, so the lowest one
+    the OS's code stored over is found by reading."""
+    return (at * PATTERN_STEP + PATTERN_BIAS) & aes.BYTE_MASK
+
+
+class _LoopStops:
+    """THE WATCH OF A RUN FROM DISP'S LOOP (`rom_bench.watched`): stopped at `switchto` and at idle's `poll` — where it
+    ENDS the run (`aes_event.Ended`): at disp's call of switchto, or at the second poll at which the machine waits
+    for an interrupt — and at the VDI's trap handler and where each trap returns: `traps`, `(how deep SP was at the
+    trap, how far the OS wrote under it)` each, the stack below the trap's frame laid with a pattern first."""
+
+    def __init__(self, switchto, poll, lo, sp):
+        self.first = frozenset({switchto, poll, aes_event.VDI_TRAP})
+        self._switchto, self._poll, self._lo, self._sp = switchto, poll, lo, sp
+        self._taken_at, self._waits, self.traps = None, 0, []
+
+    def stopped(self, pc, frame, memory):
+        back = None
+        if pc == self._switchto:
+            raise aes_event.Ended
+        if pc == self._poll:
+            self._waits += waits_for_an_interrupt(memory)
+            if self._waits == THE_SECOND_WAIT:
+                raise aes_event.Ended
+        elif pc == aes_event.VDI_TRAP:
+            self._taken_at, back = frame + EXCEPTION_FRAME_BYTES, case.long_in(memory, frame + aes_event.EXCEPTION_FRAME_PC)
+            for at in range(self._lo, frame):
+                memory[at] = _untouched(at)
+        else:                           # ...back from the trap: what its handler stored under the frame
+            lowest = next((at for at in range(self._lo, self._taken_at) if memory[at] != _untouched(at)), self._taken_at)
+            self.traps.append((self._sp - self._taken_at, self._taken_at - lowest))
+        return (self.first | ({back} if back else set())) - {pc}
 
 
 def _loop_run(memory, loop, switchto, poll):
+    """A `LoopRun` of the dispatcher's loop at `loop` over `memory`, entered on the dispatcher's stack as savestate
+    leaves it and watched to its end (`_LoopStops`): one run, under one budget, vetted."""
     lo, sp = DISPATCHER_STACK[0], DISPATCHER_STACK[1] - BENCH_ENTRY_BYTES
-    stops, back, taken_at, traps, waits = frozenset({switchto, poll, aes_event.VDI_TRAP}), None, None, [], 0
+    watch = _LoopStops(switchto, poll, lo, sp)
     emu.install_chip_seeds()
     try:
-        result = emu.run_bench(memory, loop, 0, sp, emu.SENTINEL, max_insns=SCHEDULED_INSNS, door=stops,
+        result = emu.run_bench(memory, loop, 0, sp, emu.SENTINEL, max_insns=SCHEDULED_INSNS, door=watch.first,
                                seed_regs=rom_bench.entry_registers())
-        while True:
-            assert result["status"] == emu.BENCH_DOOR, f"the loop at {loop:#x} ran to the run's sentinel"
-            pc = emu.bench_door_pc()
-            if pc == switchto:
-                break
-            if pc == poll:
-                waits += waits_for_an_interrupt(memory)
-                if waits == THE_SECOND_WAIT:
-                    break
-            elif pc == aes_event.VDI_TRAP:
-                frame = emu.bench_door_sp()
-                taken_at, back = frame + EXCEPTION_FRAME_BYTES, case.long_in(memory, frame + aes_event.EXCEPTION_FRAME_PC)
-                for at in range(lo, frame):
-                    memory[at] = _untouched(at)
-            else:
-                lowest = next((at for at in range(lo, taken_at) if memory[at] != _untouched(at)), taken_at)
-                traps.append((sp - taken_at, taken_at - lowest))
-                back = None
-            emu.bench_door_arm((stops | ({back} if back else set())) - {pc})
-            result = emu.bench_resume(loop, max_insns=SCHEDULED_INSNS)
-        wrote, truncated = emu.bench_writes(memory)
+        rom_bench.watched(result, loop, watch, memory, max_insns=SCHEDULED_INSNS)
+    except aes_event.Ended:
+        pass
+    else:
+        raise AssertionError(f"the loop at {loop:#x} ran to the run's sentinel")
     finally:
         emu.bench_abort()
+    rom_bench.vet_the_run_just_made(f"the dispatcher's loop at {loop:#x}")
+    wrote, truncated = emu.bench_writes(memory)
     assert not truncated, f"the loop at {loop:#x} overflowed the write ledger"
     on_the_stack = [at for at in wrote if lo <= at < sp]
-    return LoopRun(sp - min(on_the_stack) if on_the_stack else 0, tuple(traps))
+    return LoopRun(sp - min(on_the_stack) if on_the_stack else 0, tuple(watch.traps))
 
 
 @functools.cache
@@ -765,9 +788,16 @@ ACIA_INTERRUPTING_WITH_A_BYTE = 0x80 | addrs.ACIA_RECEIVE_FULL
 NO_ACIA_WAITS = 0xFF                                   # MFP_GPIP as the handler's loop reads it: nothing more to serve
 A_COLOUR_MONITOR = 0x80                                # ...and as the vertical blank reads it: no monochrome monitor
 TICKS_MEASURED = 8
-# ...and how many more a held key's repeat is waited for: Kbrate's initial delay and its interval are counted in
-# SERVICED ticks, one in four, and the snapshot's are 15 and 2.
-TICKS_TO_A_REPEAT_AT_MOST = 4 * (0xFF + 2)
+# ...and how many more a held key's repeat is waited for at most: Kbrate's initial delay and its interval are counted
+# in SERVICED ticks, one in four (the snapshot's are 15 and 2) — a first press repeats within their sum, and a wait
+# longer than that is the "already repeating" arm's wrap, which no case here means to measure.
+TICKS_A_SERVICED_ONE = 4
+
+
+def ticks_to_a_repeat_at_most(image):
+    return TICKS_A_SERVICED_ONE * (image[addrs.KBRATE_DELAY] + image[addrs.KBRATE_REPEAT] + 1)
+
+
 THE_DIVIDER_BEFORE_A_SERVICED_TICK = 0x4444            # `rol.w`: the one of its four states that comes out negative
 # (delay, interval left) from which the next serviced tick injects: the delay run out — or running out in that very
 # tick — and one tick of the interval left.
@@ -837,15 +867,15 @@ def _ticked_until_the_held_key_repeats(image, entry_of):
     the handler calls the keyboard's queue-a-key routine ($fc2c42): the need of each tick, the injecting one last.
     The state is the machine's own: the key's make code came through the ACIA's handler, and the initial delay and
     the interval are counted down by the ticks themselves."""
-    needs = []
-    for _tick in range(TICKS_TO_A_REPEAT_AT_MOST):
+    needs, at_most = [], ticks_to_a_repeat_at_most(image)
+    for _tick in range(at_most):
         due = (image[addrs.SYSVAR_KB_REPEAT_DELAY], image[addrs.SYSVAR_KB_REPEAT_LEFT]) in THE_REPEAT_IS_DUE
         serviced = case.word_in(image, addrs.SYSVAR_TIMER_C_DIVIDER) == THE_DIVIDER_BEFORE_A_SERVICED_TICK
         needs.append(_interrupt_entered(image, entry_of(addrs.VECTOR_TIMER_C), psg_seed=QUIET_PSG))
         if due and serviced:
             assert image[addrs.SYSVAR_KB_REPEAT_LEFT] == image[addrs.KBRATE_REPEAT], "the premise: the interval was reloaded"
             return needs
-    raise AssertionError(f"the held key did not repeat within {TICKS_TO_A_REPEAT_AT_MOST} ticks")
+    raise AssertionError(f"the held key did not repeat within {at_most} ticks")
 
 
 def _needs_measured(image, entry_of, vbl_until=0):
@@ -853,8 +883,17 @@ def _needs_measured(image, entry_of, vbl_until=0):
     EVERY ARM a handler has here: a mouse packet's bytes and a key's make code; ticks that are divided away and
     ticks that reach the VDI's; the tick that injects a held PLAIN key's repeat; and the one that injects a held
     ALT+ARROW's, which is a mouse packet made by the keyboard and so the VDI's mouse interrupt and the AES's glue
-    under timer C. Every state is made by the handlers' own runs."""
+    under timer C. Every state is made by the handlers' own runs.
+    RETURN IS PRESSED, RELEASED AND PRESSED AGAIN: the snapshot was taken with Return the repeating key (the key
+    that ended the boot's last prompt), and a make code of the key ALREADY repeating takes the handler's other arm —
+    both counters zeroed, the next repeat a whole wrap of the interval away (some thousand ticks): that arm is
+    measured by the first make, and not waited on. After its break the make is a first press: Kbrate's delay and interval loaded, the repeat due within `ticks_to_a_repeat_at_most`."""
     received = _received(image, entry_of, *A_MOUSE_PACKET, aes_event.RETURN_KEY)
+    assert (image[addrs.SYSVAR_KB_REPEAT_DELAY], image[addrs.SYSVAR_KB_REPEAT_LEFT]) == (0, 0), (
+        "the premise: the make of the key already repeating took that arm — measured, with the rest")
+    received += _received(image, entry_of, aes_event.RETURN_KEY | addrs.SCANCODE_RELEASE, aes_event.RETURN_KEY)
+    assert (image[addrs.SYSVAR_KB_REPEAT_DELAY], image[addrs.SYSVAR_KB_REPEAT_LEFT]) == (
+        image[addrs.KBRATE_DELAY], image[addrs.KBRATE_REPEAT]), "the premise: a first press loads Kbrate's two counts"
     assert image[CUR_FLAG], "the premise: the packet moved a cursor that is shown — the next vertical blank redraws it"
     ticked = [_interrupt_entered(image, entry_of(addrs.VECTOR_TIMER_C), psg_seed=QUIET_PSG) for _tick in range(TICKS_MEASURED)]
     assert min(ticked) < max(ticked), "the premise: the ticks measured include one that reaches the VDI's tick and one that does not"
@@ -1035,8 +1074,7 @@ short = aes_event.short_name
 
 
 # ---- THE CONTEXT DROPS (V4): `(lo, hi, why)` each, and each ONLY WHERE THE ROM'S RUN STORES IT -----------------------------
-def uda_of(pd, image):
-    return case.long_in(image, pd + aes.PD_UDA) & aes_event.OS_BUS_ADDR_MASK
+uda_of = aes_event.uda_of
 
 
 def uda_context_drop(uda):
@@ -1106,20 +1144,30 @@ def _idle_s_test_of_the_count():
     return at
 
 
+class _InTurn:
+    """A watch (`rom_bench.watched`) that stops a run at each of `stops` in turn and ENDS it at the last."""
+
+    def __init__(self, stops):
+        self.first, self._later = frozenset({stops[0]}), list(stops[1:])
+
+    def stopped(self, _pc, _sp, _memory):
+        if not self._later:
+            raise aes_event.Ended
+        return frozenset({self._later.pop(0)})
+
+
 def _the_rom_s_idle_reaches(machine, *stops):
     """Does the ROM's own idle, entered over `machine`, reach each of `stops` in turn?"""
-    memory = make_image(aes.staged(IDLE, (), machine))
+    memory, watch = make_image(aes.staged(IDLE, (), machine)), _InTurn(stops)
     try:
-        first, *later = stops
-        result = rom_bench.original_entered(memory, addrs.AES_ROM_IDLE, frozenset({first}), max_insns=SCHEDULED_INSNS)
-        for stop in later:
-            if result["status"] != emu.BENCH_DOOR:
-                break
-            emu.bench_door_arm(frozenset({stop}))
-            result = emu.bench_resume(addrs.AES_ROM_IDLE, max_insns=SCHEDULED_INSNS)
-        return result["status"] == emu.BENCH_DOOR
+        result = rom_bench.original_entered(memory, addrs.AES_ROM_IDLE, watch.first, max_insns=SCHEDULED_INSNS)
+        rom_bench.watched(result, addrs.AES_ROM_IDLE, watch, memory, max_insns=SCHEDULED_INSNS)
+    except aes_event.Ended:
+        return True
     finally:
         emu.bench_abort()
+        rom_bench.vet_the_run_just_made(f"the ROM's idle, watched for {[f'{stop:#x}' for stop in stops]}")
+    return False
 
 
 def the_rom_s_idle_tests_the_count(machine):
@@ -1226,17 +1274,16 @@ def _said(words):
     return REFUSED
 
 
-def _refusing_what_raises(hook, raised_in):
-    """`hook()`, WHATEVER IT RAISES turned into a REFUSAL BY NAME and kept in `raised_in`, for the binding to raise
-    again as it closes. ctypes swallows what a callback raises and hands the C an answer nobody chose: a vet that
-    raised inside a hook (the machine differs where a delivery is laid) would otherwise read as an idle SERVED with
-    nothing delivered. EVERY exception — a `pytest.fail` is no `Exception`, and a hook that failed that way must
-    fail its case as any other."""
-    try:
-        return hook()
-    except BaseException as raised:  # every failure of a hook is the same refusal
-        raised_in.append(raised)
-        return _said(f"the scheduler's hook raised {type(raised).__name__}: {raised}")
+def _refusing_what_raises(hook, symbol, raised_in):
+    """`hook()` (the binding of `symbol`), WHATEVER IT RAISES turned into a REFUSAL and kept in `raised_in`, for the
+    binding to give it its outcome as it closes (`address_hook.answered_or_recorded`: the one mechanism) — AND SAID
+    BY NAME on stderr, which is all a fork that serves the C has to say it with: a vet that raised inside a hook
+    (the machine differs where a delivery is laid) would otherwise read as an idle SERVED with nothing delivered."""
+    recorded = len(raised_in)
+    answer = answered_or_recorded(hook, symbol, raised_in)
+    for _symbol, raised in raised_in[recorded:]:
+        _said(f"the scheduler's hook raised {type(raised).__name__}: {raised}")
+    return answer
 
 
 class _BackAtTheCaller(Exception):
@@ -1291,8 +1338,9 @@ class Scheduling:
     def __exit__(self, raising, *_details):
         for symbol, value in zip(HOOK_SYMBOLS, self._previous):
             _pointer(symbol).value = value
+        raise_what_stops_the_session(self._raised)
         if self._raised and raising is None:
-            raise self._raised[0]
+            raise as_the_case_s_outcome(*self._raised[0])
 
     def recording(self, glue):
         def run(lib, buf):
@@ -1310,7 +1358,7 @@ class Scheduling:
         if ordinal in self._delivered:
             found, wrote = self._delivered[ordinal]
             aes_event.vet_found(memory, found, f"idle {ordinal} ({where})")
-            # ...the Line-F mask word left out, as the door leaves it out of a delivery (`aes_event._laid_into`): the
+            # ...the Line-F mask word left out, as the door leaves it out of a delivery (`aes_event.LINE_F_MASK_BYTES`): the
             # ROM's interrupt code rewrites it and no C does.
             aes_event.lay(memory, wrote, lays_the_mask_word=False)
             return SERVED
@@ -1322,10 +1370,10 @@ class Scheduling:
 
     def _idle(self, buf):
         ram = (ctypes.c_uint8 * RAM_BYTES).from_address(ctypes.addressof(buf.contents))
-        return _refusing_what_raises(lambda: self._idle_over(ram, "the C scheduler's"), self._raised)
+        return _refusing_what_raises(lambda: self._idle_over(ram, "the C scheduler's"), IDLE_SYMBOL, self._raised)
 
     def _process(self, buf, uda, caller_s_uda):
-        return _refusing_what_raises(lambda: self._process_run(buf, uda, caller_s_uda), self._raised)
+        return _refusing_what_raises(lambda: self._process_run(buf, uda, caller_s_uda), PROCESS_SYMBOL, self._raised)
 
     def _process_run(self, buf, uda, caller_s_uda):
         if not self._foreign:
@@ -1350,14 +1398,14 @@ class Scheduling:
             if self._idle_over(memory, "a process the ROM's own code runs") == REFUSED:
                 raise _IdleRefused
 
+        watch = types.SimpleNamespace(stopped=lambda pc, _sp, over: dispatcher_stop(pc, over, entered, idles))
         emu.install_chip_seeds()
         try:
             result = emu.run_bench(memory, addrs.AES_ROM_SWITCHTO, uda, emu.STACK_TOP, emu.SENTINEL,
                                    max_insns=SCHEDULED_INSNS, door=EVERY_STOP, seed_regs=rom_bench.entry_registers())
-            while result["status"] == emu.BENCH_DOOR:
-                emu.bench_door_arm(dispatcher_stop(emu.bench_door_pc(), memory, entered, idles))
-                result = emu.bench_resume(addrs.AES_ROM_SWITCHTO, max_insns=SCHEDULED_INSNS)
+            rom_bench.watched(result, addrs.AES_ROM_SWITCHTO, watch, memory, max_insns=SCHEDULED_INSNS)
         except _BackAtTheCaller:
+            rom_bench.vet_the_run_just_made(f"the ROM's run of the process whose UDA is {uda:#x}")
             return SERVED
         except _IdleRefused:
             return REFUSED
@@ -1403,12 +1451,12 @@ def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False):
     over[:] = make_image(pokes)
     buf = (ctypes.c_uint8 * IMAGE_BYTES).from_buffer(over)
     binding = Scheduling(reference, foreign=foreign)
-    run = aes_event._one_run_of(core, typed, buf, answered)
+    run = aes_event.one_run_of(core, typed, buf, answered)
 
     def call():
         run()
         print(f"{IDLES_LINE}{binding.idles}", file=sys.stderr)
-    hooked = aes_event._inside_its_own_pass(aes.doors(aes_event.EVENT_LAYER_HOOKS, lambda: binding), call)
+    hooked = aes_event.inside_its_own_pass(aes.doors(aes_event.EVENT_LAYER_HOOKS, lambda: binding), call)
     returncode, stderr = aes_event.in_a_fork(hooked, MODEL_SECONDS, SERVED_IN_A_FORK)
     return Modelled(returncode, stderr, bytes(over), vdi_helpers.answer_in(stderr) if answered else None, _idles_in(stderr))
 
