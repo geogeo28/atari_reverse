@@ -150,9 +150,14 @@ def test_the_table_prices_a_pilot_on_its_own_process_s_cycles(label):
 
 
 def test_the_table_says_a_foreign_window_under_every_row_that_has_one_and_under_no_other():
-    """...AND OVER THE WHOLE REGISTRY: one such line a row whose dispatcher enters another process than its own."""
+    """...AND OVER THE WHOLE REGISTRY: one such line a row whose dispatcher enters another process than its own —
+    and, of A SESSION CUT INTO SLICES, under each slice a window lies INSIDE (a slice is priced net of the windows
+    between its own two marks, and says so under itself alone: its battery's pins, `test_aes_fs_input_woken`)."""
+    import test_aes_fs_input_woken as sliced_sessions
     table = test_status.BENCH_TABLE.read_text()
-    with_a_window = [held for held in aes_event.SWITCHING_ROWS.values() if set(held.entered) != {held.switches.process}]
+    with_a_window = [name for name, held in aes_event.SWITCHING_ROWS.items()
+                     if name not in aes_event.SLICED_ROWS and set(held.entered) != {held.switches.process}]
+    with_a_window += [key for key, priced in sliced_sessions.WOKEN_PRICED.items() if priced[-1] != switching.NO_WINDOW]
     said = table.count("foreign window(s)")
     assert said == len(with_a_window), (
         f"{test_status.BENCH_TABLE} says a foreign window under {said} row(s) where the registry holds "
@@ -223,14 +228,6 @@ def test_what_a_switching_row_is_taken_through_is_never_read_as_door_calls():
         switches[min(switches.at_idles)]                # ordinal 0, read as a door call's
     with pytest.raises(TypeError):
         min(switches)                                   # ...or walked as `{door call: ...}`
-
-
-def test_a_sliced_session_that_switches_is_refused_by_name():
-    """A SLICE'S MARKS ARE ONE PROCESS'S: no mark is taken across a dispatch, so a sliced row whose run switches is
-    refused where it would be measured — never cut between two marks one of which a foreign window hides."""
-    a_slice = next(iter(aes_event.SLICED_ROWS.values()))
-    with pytest.raises(AssertionError, match="a session cut into slices whose run SWITCHES"):
-        tier3().measure(table_row(ROWS[model.WOKEN_BY_A_KEY])._replace(slice=a_slice), tier3().RomBench())
 
 
 # ---- THE WATCH'S REFUSALS ---------------------------------------------------------------------------------------------------

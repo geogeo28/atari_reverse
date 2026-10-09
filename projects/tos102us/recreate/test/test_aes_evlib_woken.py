@@ -11,8 +11,11 @@ the run's stack. NO ROW is made of these (the staged application's are Tier 1 on
 
 WHAT NO RETURNING RUN WAKES IS SAID, AND HELD ON THE ROM'S OWN RUN (`aes_evlib.NOT_WOKEN`): a rectangle no mouse can
 enter, a negative time, a pipe whose other end is the waiter itself, a lock whose holder is a harness call's — each
-by the delivery its entry names AND BY A SWEEP of every interrupt there is (`aes_evlib.what_wakes`: a hand-picked
-delivery can be the wrong one — the screen manager's rectangle stood in that table until the sweep).
+by the delivery its entry names AND BY A SWEEP of every interrupt there is (`aes_evlib.swept`: a hand-picked
+delivery can be the wrong one — the screen manager's rectangle stood in that table until the sweep), EVERY ANSWER OF
+WHICH IS PINNED: "idles for ever" is evidence; a run that ends IN ANOTHER PROCESS, or a chain never taken, is none —
+and where the lock's holder is a harness-parked process a key ends the run in that holder: the waiter's tail is
+UNPINNED on that machine, not unwakeable.
 
 THE ROWS THAT SWITCH (`test_aes_evlib.WOKEN_ROWS`, `test_aes_evwait.WOKEN_ROWS`: registered, priced): each one's
 premise on the ROM's run, its second differential ON BOTH BLOBS with its cycles pinned, and what the table prices.
@@ -86,14 +89,173 @@ def test_a_wait_no_returning_run_wakes_is_held_on_the_rom_s_own_run(arrival):
     assert (the_rom_s.ended, the_rom_s.entered) == (aes_switch.IDLES, ())
 
 
+# ---- WHAT THE SWEEP ANSWERS OVER NOT_WOKEN BESIDE "IDLES FOR EVER" — pinned by scenario (the same at each of its arrivals) ----
+# (1) THE RUN ENDS IN ANOTHER PROCESS. Two kinds, and only the second is in the table's own words:
+#   * THE HOLDER IS A HARNESS-PARKED PROCESS (`aes_evlib.THE_HOLDER_IS_HARNESS_PARKED`): the desk holds the lock and
+#     was parked FOR A KEY by a harness call — so every member that brings a key at an IDLE un-parks the holder, whose
+#     continuation is the run's sentinel. The waiter's tail is NOT RUN: UNPINNED on this machine, not "unwakeable"
+#     (the same call over a ROM-RUN holder — the screen manager's menu — is `aes_evlib.THE_LOCK_THE_MENU_HOLDS`: both
+#     its blocked arrivals are among WOKEN, taken on to their return, and ev_block's is a registered row).
+#   * A STAGED APPLICATION'S DELAY RUNS OUT FIRST (`NOT_WOKEN`'s own `ANOTHER_PROCESS_RETURNS` entries): the ticks.
+# (2) THE CHAIN IS NEVER TAKEN: over the lock held by the desk, the mouse onto the bar wakes nobody (the screen
+#     manager is the caller, or queued on the lock) — the run makes no poll after its first idle, so the three chains
+#     that deliver there are not delivered. Three of the sweep's 26 members say nothing of those four arrivals.
+A_KEY_AT_AN_IDLE = {"Return", f"{evlib.ONTO_THE_MENU_BAR}, then Return at the next idle", f"{evlib.OFF_IT}, then Return at the next idle"}
+TICKS = "more ticks than any time"
+THE_TICKS_ANYWHERE = {TICKS, f"{TICKS}, at each of four successive idles", f"{evlib.ONTO_THE_MENU_BAR}, then {TICKS} at the next idle",
+                      f"{evlib.ONTO_THE_MENU_BAR}, then {TICKS} at the poll after it", f"{evlib.OFF_IT}, then {TICKS} at the next idle"}
+SAID_TO_END_IN_ANOTHER_PROCESS = {scenario for scenario, (how, _tried, _why) in evlib.NOT_WOKEN.items()
+                                  if how == evlib.ANOTHER_PROCESS_RETURNS}
+ENDS_IN_ANOTHER_PROCESS = {**dict.fromkeys(evlib.THE_HOLDER_IS_HARNESS_PARKED, A_KEY_AT_AN_IDLE),
+                           **dict.fromkeys(SAID_TO_END_IN_ANOTHER_PROCESS, THE_TICKS_ANYWHERE)}
+AT_THE_POLL_AFTER_THE_FIRST_IDLE = {name for name, chain in evlib.EVERY_CHAIN.items() if chain.at_polls}
+NEVER_TAKEN = dict.fromkeys(evlib.THE_HOLDER_IS_HARNESS_PARKED, AT_THE_POLL_AFTER_THE_FIRST_IDLE)
+
+
+def test_the_sweep_s_other_answers_are_of_exactly_the_scenarios_that_say_so():
+    """WHICH scenarios the sweep ends in another process, held to what the tables SAY of them: the two whose lock a
+    harness-parked process holds (their entry and their fact say so: `THE_HOLDER_IS_HARNESS_PARKED`, each with
+    nothing "tried" and a fact read off the machine) and those `NOT_WOKEN` itself calls a return in another process
+    — no other. And the chains never taken are the three at a poll, on the first kind alone."""
+    assert len(SAID_TO_END_IN_ANOTHER_PROCESS) == 2 and not SAID_TO_END_IN_ANOTHER_PROCESS & set(evlib.THE_HOLDER_IS_HARNESS_PARKED)
+    assert set(evlib.THE_HOLDER_IS_HARNESS_PARKED) < set(evlib.ONLY_ANOTHER_PROCESS)
+    assert ENDS_IN_ANOTHER_PROCESS.keys() | NEVER_TAKEN.keys() <= {scenario for scenario, _nth in NOT_WOKEN}
+    assert len(AT_THE_POLL_AFTER_THE_FIRST_IDLE) == len(evlib.TAKEN_BETWEEN_TWO_TURNS)
+    holders = [pair for pair in NOT_WOKEN if pair[0] in evlib.THE_HOLDER_IS_HARNESS_PARKED]
+    assert len(holders) == 4 and all(len(evlib.swept(*pair)) - len(NEVER_TAKEN[pair[0]]) == 23 for pair in holders)
+    # ...and the tail those four leave unrun IS run over a ROM-run holder: the same routines' arrivals, woken.
+    over_a_real_holder = [pair for pair in WOKEN if pair[0] == evlib.THE_LOCK_THE_MENU_HOLDS]
+    assert [evlib.arrival(*pair).name for pair in over_a_real_holder] == [
+        evlib.arrival(*pair).name for pair in holders if pair[0] == evlib.THE_HOLDER_IS_HARNESS_PARKED[0]]
+    assert evlib.WAKES[evlib.THE_LOCK_THE_MENU_HOLDS] is evlib.THE_MENU_LET_GO
+
+
 @pytest.mark.parametrize("arrival", NOT_WOKEN, ids=evlib.case_id)
 def test_no_interrupt_wakes_a_wait_said_never_to_be_woken(arrival):
     """THE CLASS IS HELD BY A SWEEP, NOT BY THE ONE DELIVERY ITS ENTRY PICKED (`aes_evlib.what_wakes`): every kind of
     interrupt there is — a key, each button event, the ticks, the mouse into and out of every rectangle a scenario
-    names, onto the bar (the other process's turn) — taken alone at the dispatcher's first idle, on the ROM's own
-    run: none makes this call return in its caller. A scenario some interrupt wakes is no member of NOT_WOKEN: it
-    has a tail nothing would run."""
+    names, onto the bar (the other process's turn) — taken alone at the dispatcher's first idle, AND EVERY CHAIN
+    (`aes_evlib.EVERY_CHAIN`: the menu chain, ticks at successive idles, each interrupt after the mouse has gone
+    onto the bar or off it, a key, a press and the ticks between two processes' turns), on the ROM's own run: none
+    makes this call return in its caller. A scenario some member wakes is no member of NOT_WOKEN: it has a tail
+    nothing would run.
+    EVERY MEMBER'S ANSWER IS HELD, NOT ONLY "NONE RETURNED" (`aes_evlib.swept`): each idles for ever — the one answer
+    that says the member does not wake the wait — BUT those pinned as ending the run IN ANOTHER PROCESS
+    (`ENDS_IN_ANOTHER_PROCESS`: the waiter was never seen woken or not) and the chains this machine NEVER TAKES
+    (`NEVER_TAKEN`: no evidence at all). None spins."""
     assert evlib.what_wakes(*arrival) == set()
+    expected = {**dict.fromkeys((*evlib.EVERY_INTERRUPT, *evlib.EVERY_CHAIN), evlib.NEVER),
+                **dict.fromkeys(ENDS_IN_ANOTHER_PROCESS.get(arrival[0], ()), evlib.ANOTHER_PROCESS_RETURNS),
+                **dict.fromkeys(NEVER_TAKEN.get(arrival[0], ()), evlib.NOT_TAKEN)}
+    assert evlib.swept(*arrival) == expected
+
+
+@pytest.mark.parametrize("arrival", WOKEN, ids=evlib.case_id)
+def test_the_sweep_wakes_every_arrival_a_registered_wake_is_known_to_wake(arrival):
+    """THE SWEEP IS NOT BLIND WHERE THE BATTERY SEES (its non-vacuity, over EVERY woken arrival — it answered
+    nothing for sixteen of them while it took one interrupt alone at the first idle: the menu chain's, the queued
+    delays'): each arrival `WAKES` takes on through the dispatcher to its return, SOME MEMBER OF THE SWEEP wakes
+    too — so a wake of the kind those rows make cannot hide among NOT_WOKEN behind a sweep that could not find it.
+    (An arrival that needs NO wake — unsync's hand-over, which yields and comes back — returns with nothing
+    delivered and before any idle: there is nothing for a sweep to find, and that is what is held of it.)"""
+    if not evlib.WAKES[arrival[0]]:
+        made = evlib.arrival(*arrival)
+        the_rom_s = aes_switch.scheduled(getattr(addrs, made.name), evlib.frame_of(made.name, made.arguments), made.machine)
+        assert (the_rom_s.ended, the_rom_s.idles) == (aes_switch.RETURNED, 0)
+        return
+    assert evlib.the_sweep_wakes(*arrival), f"{arrival}: WAKES names {sorted(evlib.WAKES[arrival[0]])} idle(s), and no member of the sweep wakes it"
+
+
+CHAINS_ONLY = {("evnt_mesag, none", 0): {"the menu chain"},
+               (evlib.BEHIND_THREE_DELAYS, 0): {"more ticks than any time, at each of four successive idles"}}
+
+
+@pytest.mark.parametrize("arrival", CHAINS_ONLY, ids=evlib.case_id)
+def test_a_wake_that_takes_a_chain_is_found_by_its_chain_and_by_no_interrupt_alone(arrival):
+    """THE RED OF THE CHAINS, on the two kinds the single sweep was blind to: a message only the screen manager's
+    own write brings (three idles, three turns of it) and a time queued behind three delays of its own process (a
+    delay run out at each idle) — no interrupt taken alone wakes either, and exactly its chain does."""
+    assert arrival in WOKEN and evlib.woken_alone_by(*arrival) == set()
+    assert evlib.woken_in_turn_by(*arrival) == CHAINS_ONLY[arrival] == evlib.what_wakes(*arrival)
+
+
+def test_a_button_held_down_on_an_item_of_the_dropped_menu_wakes_nobody_and_never_idles_again():
+    """WHY THE SWEEP'S MENU CHAIN ENDS IN A CLICK, shown once on the ROM's own run of a wait the screen manager's
+    message is not for: the press HELD on the item is waited out by ctlmgr IN A LOOP OF YIELDS — the dispatcher
+    never idles again and the caller never runs (`aes_evlib.SPINS`: a derivation's whole budget spent) — where the
+    same press LET GO leaves the machine idle, unwoken. (Where the desk is the reader the press alone wakes it:
+    `WAKES`' chain, which every wake of a message is taken through.)"""
+    made = evlib.arrival("evnt_mouse to enter a rectangle above the screen", 0)
+    frame = evlib.frame_of(made.name, made.arguments)
+    onto_the_item = (evlib.ONTO_THE_VIEW_TITLE, evlib.ONTO_ITS_PLAIN_ITEM)
+    assert evlib.EVERY_CHAIN["the menu chain"].at_idles == (*onto_the_item, "a click")
+    assert evlib.ends_taken_through(made.name, frame, made.machine, (*onto_the_item, "a press")) == evlib.SPINS
+    assert evlib.ends_taken_through(made.name, frame, made.machine, (*onto_the_item, "a click")) == evlib.NEVER
+
+
+A_KEY_S_WAIT = ("evnt_keybd, none", 0)
+RETURN_AFTER_AN_OPENER = {f"{evlib.ONTO_THE_MENU_BAR}, then Return at the next idle", f"{evlib.OFF_IT}, then Return at the next idle",
+                          f"{evlib.ONTO_THE_MENU_BAR}, then Return at the poll after it"}
+LET_GO_BY_A_CLICK = {"the menu chain", f"{evlib.OFF_IT}, then a click at the next idle"}
+
+
+def test_each_kind_of_chain_wakes_the_registered_wake_of_its_shape_and_the_sweep_names_what_it_found():
+    """EVERY KIND OF MEMBER IS SEEN TO WAKE SOMETHING (a member that could wake nothing holds NOT_WOKEN to nothing):
+    the pairs after each opener and the poll between two turns — a key waited for is woken by Return after the mouse
+    went onto the bar (the screen manager's turn first), after it went off it, and polled while the screen manager
+    stands woken, by exactly those three chains; THE LOCK THE SCREEN MANAGER'S MENU HOLDS (the registered row) is
+    given up to no interrupt alone and to exactly two chains — the mouse off the bar then a click, and the menu
+    chain, whose click on an item ends the menu too. And `the_sweep_wakes` answers THE MEMBER IT FOUND — an
+    interrupt alone before a chain — and None where none wakes."""
+    assert evlib.woken_in_turn_by(*A_KEY_S_WAIT) == RETURN_AFTER_AN_OPENER
+    lock_s = ROWS[f"aes_ev_block, {waits.THE_LOCK_WAITED_FOR}"]
+    frame, machine = evlib.frame_of(lock_s.name, lock_s.arguments), lock_s.machine()
+    assert not [alone for alone in evlib.EVERY_INTERRUPT if evlib._taken_alone(lock_s.name, frame, machine, alone) == evlib.RETURNS]
+    assert {chain for chain in evlib.EVERY_CHAIN if evlib._taken_in_turn(lock_s.name, frame, machine, chain) == evlib.RETURNS} == LET_GO_BY_A_CLICK
+    assert evlib.the_sweep_wakes(*A_KEY_S_WAIT) == "Return" and evlib.the_sweep_wakes("evnt_mesag, none", 0) == "the menu chain"
+    assert evlib.the_sweep_wakes(*NOT_WOKEN[0]) is None
+    kinds = [(len(chain.at_idles), bool(chain.at_polls)) for chain in evlib.EVERY_CHAIN.values()]
+    pairs = 2 * len(evlib.OF_EACH_KIND) - 1                 # each kind after each opener, the mouse off the bar after itself aside
+    assert sorted(kinds) == sorted([(3, False), (evlib.TICKS_AT_SUCCESSIVE_IDLES, False), *[(2, False)] * pairs,
+                                    *[(1, True)] * len(evlib.TAKEN_BETWEEN_TWO_TURNS)])
+
+
+ANOTHER_PROCESS_S = [pair for pair in NOT_WOKEN if pair[0] in evlib.ONLY_ANOTHER_PROCESS]
+
+
+@pytest.mark.parametrize("arrival", ANOTHER_PROCESS_S, ids=evlib.case_id)
+def test_what_only_another_process_could_satisfy_is_a_fact_of_the_machine(arrival):
+    """THE STATED REASON, READ OFF THE ROM-MADE MACHINE at every arrival of the five scenarios nothing was "tried"
+    on (`aes_evlib.ONLY_ANOTHER_PROCESS`): the full pipe is the caller's own, nobody waits to read it and the only
+    other process is parked; the empty pipe has no writer waiting and its owner is parked; the lock is held by
+    another process than the caller, which is parked AND WAITS FOR A KEY (what the holder itself waits for is read:
+    that is why a key ends those runs in the holder, and why their tail is unpinned rather than unwakeable) — or,
+    counted to -1, by nobody."""
+    assert evlib.held_by_no_process_that_could(*arrival)
+
+
+def test_a_fact_of_the_machine_is_false_of_a_machine_it_does_not_describe():
+    """...AND EACH FACT IS ONE (RED): a reason that were true of every machine would say nothing. Asked of the
+    snapshot's desk running — its own pipe empty, the lock free — the only one that holds is the empty pipe's (that
+    IS its scenario's machine); and that one is false once a message lies in the screen manager's pipe (the ROM's
+    own appl_write to it: the pipe holds sixteen bytes, and its owner is no longer parked)."""
+    empty_pipe = "appl_read of the screen manager's pipe, empty"
+    plain = make_image(evlib.desk_running())
+    assert [name for name, fact in evlib.ONLY_ANOTHER_PROCESS.items() if fact(plain)] == [empty_pipe]
+    written = make_image(aes_pdpipe.sent(aes_pdpipe.running(), evlib.SCREEN_MANAGER_PID, evlib.A_MESSAGE))
+    assert not evlib.ONLY_ANOTHER_PROCESS[empty_pipe](written)
+    # ...and WHO IS PARKED is read, not presumed: over that snapshot the screen manager is, the running desk is not.
+    assert evlib._parked(plain, evlib.SCREEN_MANAGER) and not evlib._parked(plain, evlib.SHELL)
+    # ...AND WHAT A PARKED HOLDER WAITS FOR: the desk holding the lock was parked for a key; the screen manager's menu
+    # holding it (the registered wake's machine) waits for no key — the lock's fact, asked of that holder, is false.
+    held_by_the_desk = make_image(evlib.lock_held_by_the_desk())
+    held_by_the_menu = make_image(evlib.the_manager_s_menu_holds_the_lock())
+    assert evlib.waits_for_a_key(held_by_the_desk, evlib.SHELL) and not evlib.waits_for_a_key(plain, evlib.SHELL)
+    assert evlib.lock(held_by_the_menu)[1] == evlib.SCREEN_MANAGER and evlib._parked(held_by_the_menu, evlib.SCREEN_MANAGER)
+    assert not evlib.waits_for_a_key(held_by_the_menu, evlib.SCREEN_MANAGER)
+    assert not evlib._a_lock_whose_holder_is_parked_for_a_key(evlib.SCREEN_MANAGER)(held_by_the_menu)
+    other_s = {scenario for scenario, _nth in ANOTHER_PROCESS_S}
+    assert other_s == set(evlib.ONLY_ANOTHER_PROCESS), "every scenario with a fact has a blocked arrival it is read at"
 
 
 THE_MANAGER_S_WAIT = (evlib.THE_MANAGER_S_RECTANGLE, 3)
@@ -107,7 +269,7 @@ def test_the_sweep_finds_the_wake_a_hand_picked_delivery_missed():
     made = evlib.arrival(*THE_MANAGER_S_WAIT)
     with pytest.raises(AssertionError, match="idles for ever AFTER its deliveries"):
         aes_switch.scheduled(getattr(addrs, made.name), evlib.frame_of(made.name, made.arguments), made.machine, {0: evlib.AWAY})
-    assert evlib.what_wakes(*THE_MANAGER_S_WAIT) == {"the mouse into the rectangle round where it was"}
+    assert evlib.woken_alone_by(*THE_MANAGER_S_WAIT) == {"the mouse into the rectangle round where it was"}
 
 
 # One blocked arrival of each kind of wait an interrupt satisfies, and the members of the sweep that wake it. THREE
@@ -132,7 +294,7 @@ def test_the_sweep_wakes_a_wait_of_each_kind_an_interrupt_satisfies(arrival):
     """...AND THE SWEEP IS NOT VACUOUS: over a wait of each kind an interrupt can satisfy — a key's, a button's (the
     left and the right), a rectangle's to enter and to leave, a timer's — exactly the members that bring that event
     wake it. Every kind NOT_WOKEN could hide a wakeable wait of is one the sweep is seen to wake."""
-    assert arrival in WOKEN and evlib.what_wakes(*arrival) == EACH_KIND_S_WAKERS[arrival]
+    assert arrival in WOKEN and evlib.woken_alone_by(*arrival) == EACH_KIND_S_WAKERS[arrival]
 
 
 def test_a_staged_application_s_woken_cases_register_no_row():

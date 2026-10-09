@@ -592,6 +592,33 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     event, the ticks, the mouse into and out of every rectangle a scenario names, onto the bar), each alone at the
     dispatcher's first idle, on the ROM's own run: none may return in the caller. The sweep is held non-vacuous —
     over a wait of each kind an interrupt satisfies, exactly the members that bring its event wake it.
+    AND WITH EVERY CHAIN (`EVERY_CHAIN`, band 4 wave 3's step S): one interrupt alone at the first idle answers
+    nothing for a wake that takes SEVERAL — the sweep was blind to sixteen arrivals that registered rows do wake.
+    A chain is what arrives at successive idles in order, and at a poll that is no idle: the menu chain (ending in
+    a CLICK — a press held on an item makes ctlmgr spin in yields and the dispatcher never idles again:
+    `evlib.SPINS`, shown once), ticks at four successive idles (a delay queued behind others runs out one an idle),
+    each kind of event after an opener that changes whose the mouse and the screen are (the mouse onto the bar,
+    off it), and a key, a click or the ticks at the poll between two processes' turns. A chain's answer is that of
+    its shortest prefix that does not leave the machine idling. `what_wakes` is both halves
+    (`woken_alone_by` | `woken_in_turn_by`); `the_sweep_wakes(scenario, nth)` is the first member found, and
+    `test_the_sweep_wakes_every_arrival_a_registered_wake_is_known_to_wake` holds it over EVERY woken arrival of
+    `WAKES` — a sweep must find every wake the battery already knows, or its silence over NOT_WOKEN says nothing.
+    WHERE ONLY ANOTHER PROCESS COULD SATISFY THE WAIT (a pipe's other end, a lock's holder: nothing to "try") the
+    stated reason is a FACT OF THE ROM-MADE MACHINE, read at every arrival (`evlib.ONLY_ANOTHER_PROCESS`: the pipe
+    full and the caller's own with no reader waiting; empty with no writer waiting; the lock's holder PARKED — and
+    WHAT THAT HOLDER WAITS FOR — or nobody), with a RED that each is false of a machine it does not describe. A
+    reason left as a sentence is held by nothing.
+    "NONE RETURNED IN THE CALLER" IS NOT "NONE WAKES IT" (gate 13): the sweep has FIVE answers (`evlib.swept`:
+    RETURNS, NEVER, ANOTHER_PROCESS_RETURNS, NOT_TAKEN, SPINS) and only NEVER is evidence that a member does not
+    wake the wait. A run that ends IN ANOTHER PROCESS ended before the waiter could be seen woken or not — over a
+    lock held by a HARNESS-PARKED process (parked for a key) a single Return un-parks the holder, whose
+    continuation is the sentinel: the waiter's TAIL IS NOT RUN, which is an unpinned tail, not an unwakeable wait.
+    A chain NOT_TAKEN (the run makes no such poll) says nothing. So the battery pins EVERY answer of every member
+    over every NOT_WOKEN arrival (`ENDS_IN_ANOTHER_PROCESS`, `NEVER_TAKEN`), says which scenarios are of that kind
+    (`THE_HOLDER_IS_HARNESS_PARKED`), and the tail they leave unrun is run over a ROM-RUN holder
+    (`THE_LOCK_THE_MENU_HOLDS`: the same call against the screen manager's menu, woken by the menu let go). When a
+    harness call parks a process, its continuation is the harness's: give the scenario a real holder, or say
+    "unpinned" — never "cannot be woken".
   - WHAT IS HELD: each wake's events stated in a table and held to the ROM's run (`test_aes_evmulti.WAKE_CAME`),
     the same call's case AT DSPTCH beside it, the answers, the cancel, the order of the aprets (the free list's
     head), and — on the blobs — GCC's frame across savestate / switchto. Plant a trap in each arm of a tail and
@@ -694,6 +721,11 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   interrupt's delivery is laid into our blob and back before the kit compares; THE GLUE IS MAPPED AT EXIT ONLY — a
   row's machine holds the ROM's glue in the vectors, and a vex call hands what it DISPLACED to wherever its caller's
   contrl lies (a displaced value travels: mapped at entry, vex_butv's row differs at its caller's own contrl).
+  THE ROUTINE THAT DRAWS NOTHING IS OF THIS KIND TOO (justretf; `aes_event.HANDED_ENTRY_SYMBOLS`, band 4 wave 3's
+  step T): a playback hands it to the VDI twice (ap_tplay's vex_curv and vex_motv) and gets it back, displaced, in
+  contrl[9..10] where appl_tplay returns — the ROM's `$fed424` there on the ROM's shore, `aes_rom_justretf` on a
+  blob, red in exactly that longword without the mapping. It is in the registry's entry (`GLUE_CODES.symbols`),
+  NOT in `GLUE_ENTRY_SYMBOLS`, which stays the two glues the dispatcher's and the interrupts' batteries hold it to.
   Nothing is dropped, the compare is exact, and a build that queued or installed ANOTHER function's entry maps back
   to the wrong ROM address and differs. AND A RELOCATION THE BUILD LEFT UN-APPLIED IS REFUSED BY NAME
   (`tier3.vet_no_slot_names_the_rom`): the back-map rewrites only OUR entries, so a slot our run stored THE ROM'S OWN
@@ -806,7 +838,7 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   refused BY NAME in one stop — it used to idle in our dispatcher for 16,000,000 instructions and end in the oracle's
   RuntimeError, which no strict sweep counts a kill.
 
-- TIER 3: A ROW THAT SWITCHES (`test/aes_switching.py`; band 4 wave 3 — 87 rows of the table). A call that BLOCKS
+- TIER 3: A ROW THAT SWITCHES (`test/aes_switching.py`; band 4 wave 3 — 108 rows of the table). A call that BLOCKS
   AND IS WOKEN leaves by the dispatcher and comes back by it — ONE RETURNING RUN on both shores: the ROM's routine through the
   ROM's dispatcher, our twin through OUR dsptch, disp, savestate and switchto round the C of forker and idle. Such a
   row says so in its NINTH FIELD: an `aes_event.Switches` where a door row has `{door call: (found, wrote)}` — the
@@ -920,7 +952,8 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     D0, `at_polls=` for what arrives at a poll that is no idle); `measured_on(blob, row)` is the second differential
     on a named blob (the table prices a row on one). ONE REGISTRAR, `aes_switching.register_row(row)`: the waits'
     battery ends on it through `evlib.register_woken`, a door user through `aes_event.register_woken`, ev_multi's
-    wakes directly. AND ONE SPELLING OF WHAT A BATTERY HOLDS OF ITS ROWS (the pilots', the waits', ev_multi's and
+    wakes directly, and a sliced session through `aes_event.register_woken_slices` (`register_row(row, under=<its
+    slices' names>)`: one settling, one record under every name). AND ONE SPELLING OF WHAT A BATTERY HOLDS OF ITS ROWS (the pilots', the waits', ev_multi's and
     the door users' all call it, so none holds less than another): `aes_switching.vet_the_premise(row,
     Premise(...))` — the ROM's own run is what the row says, and the row carries its deliveries;
     `vet_on_a_blob(blob, row, premise, windows, whole)` — the second differential on each blob, its idles, polls,
@@ -929,11 +962,87 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     second count net of a foreign window TWICE is still under the bar: a battery that pinned the first count alone
     passed it), both counts under the bar. A second count has an invariant of its own, held where it is read
     (`tier3.caller_own_cycles`, and call by call in `DoorWindows._closed`): what the calls cost is neither negative
-    nor more than the run they are part of. NOT
-    BUILT, and refused by name: a SLICED session that switches (a slice's marks are one process's — the wave's step
-    S). BUILT SINCE THE FOUNDATION (band 4 wave 3's slices, each above): one derivation that takes interrupts at
-    door calls AND at idles; a parked QPB's address in a row that switches; a door user under the host's model; a
-    door call open across a foreign window.
+    nor more than the run they are part of. `budget=` on a row (`SwitchingRow.budget`, through `woken_row`) is its
+    own derivation budget, declared from its measured run and held both ways as any case's (A CASE'S OWN BUDGET,
+    below): a whole session of the file selector needs one. NOTHING OF THE FOUNDATION'S "NOT BUILT" LIST IS LEFT:
+    one derivation that takes interrupts at door calls AND at idles, a parked QPB's address in a row that switches,
+    a door user under the host's model, a door call open across a foreign window (band 4 wave 3's slices, each
+    above) — and A SLICED SESSION THAT SWITCHES (its step S, next).
+  - A SLICED SESSION THAT SWITCHES (`aes_event.register_woken_slices(row, {label: (start, stop)})`; fs_input's two
+    sessions the user is waited for in, `test_aes_fs_input_woken.py`). A session whose waits BLOCK is a row that
+    switches cut into slices like any other session (A SESSION PRICED BY ITS SLICES, below) — ONE settling from the
+    ROM's own run through its dispatcher, one `Registered` under every slice's name (`aes_event.session_of`), each
+    slice carrying the session's `Switches`, drops and companion. The wait that blocks is a rebound entry's call
+    INSIDE its slice — the block, our dispatcher's park and the wake in the slice's own cost — so the slice is held
+    on two counts. WHAT MAKES IT HONEST IS THAT A SLICE'S MARKS ARE PER PROCESS (`aes_event.Marks`):
+    (1) a mark is an ARRIVAL OF THE ROW'S PROCESS. None is taken inside a foreign window: the screen manager makes
+    door calls and takes traps at the very PCs a slice is cut at, and one counted would shift every later ordinal
+    of the row's own. The dispatcher's watch arms none of the door watch's stops there, the marks are told where a
+    window opens and closes (`foreign_window_opened` / `_closed`, through `DoorStops`), and an arrival handed to
+    them in between is refused by name. (2) EVERY TOTAL A MARK HOLDS IS NET OF THE WINDOWS CLOSED BEFORE IT
+    (instructions and cycles too: the cap is held on the row's own run). The windows inside a slice are kept beside
+    it (`foreign_inside`), printed under the row, in NEITHER column, and held the same on both shores — as many,
+    the same cycles, none of our build's; marks on either side of a window on the two shores are two slices and
+    are refused (`vet_the_marks_agree`). (3) THE MEMORY AT A MARK IS COMPARED OUTSIDE THE ROW'S DROPS AND THE
+    DISPATCHER'S STACK WHOLE (`tier3._differing_at_a_mark`): our dispatcher's frames lie there from the first
+    switch on, deeper than the ROM's, and our image is given back over them only as the run ENDS. Each rule has its
+    RED in the battery (marks deaf to a window price the lock's slice at 0.19 where it is 0.66). A `Timeline` — the
+    ROM-only derivation a battery cuts its session by — is of a run that switches nowhere and refuses a window by
+    name. A sliced row whose run arrives at no door entry has no marks and is refused where it would be measured.
+    TO WRITE ONE: `aes_fs_sessions.Woken(at_waits, at_idles, same, budget, running)` — what the user has done by
+    each wait's entry, what is done WHILE THE SELECTOR WAITS (at the dispatcher's idles), and THE SAME USER NEVER
+    WAITED FOR, the returning session whose script answers its GEMDOS calls. That reuse is a premise, so it is
+    HELD: the woken run makes exactly the script's calls, to its last, EACH HANDED THE FRAME THE SCRIPT'S ANSWER WAS
+    GIVEN TO (`vet_its_gemdos_calls`; `Script.frames` — function numbers alone pass a selector that searched another
+    path and was answered as if it had not), and — over `same`'s own machine — ends as that session ends
+    (`vet_it_ends_as_never_waited_for`); each has a RED. THE END-STATE PROPERTY IS CLAIMED ONLY FOR `running is
+    None`: a session over another machine (`running=`) is refused the question, and what it differs by is pinned as
+    the stated difference instead (the menu's session: the mouse — the cursor's pixels and `gl_mouse_shown`). `running=` is another ROM-made machine whose
+    running process makes the call (the screen's lock held by the screen manager's menu:
+    `aes_evlib.the_manager_s_menu_holds_the_lock`).
+  - A ROUTINE EVERY ARM OF WHICH LEAVES BY THE DISPATCHER HAS NO OTHER KIND OF ROW (the event tape,
+    `src/aes/aptape.c`, band 4 wave 3's step T: ap_trecd sleeps until forker's recorder stops, ap_tplay yields before
+    its first record and after each). What that taught: (1) EVERY CASE IS A `SwitchingRow` — register the ones worth
+    pricing (`aes_switching.register_row`), keep the rest Tier 1 with the reason each is not a row (another count
+    of a priced one; the labelled argument class; what a blob cannot run). `answered=False` for the one that sets
+    no D0; AT DSPTCH `switches=YIELDS` for a bare yield, `BLOCKS` for a sleep. (2) THE MACHINES ARE ROM RUNS'
+    (`aes_switching.left_by`): a playback's machine is what the ROM's own ap_trecd LEFT, real interrupts taken at
+    its dispatcher's idles — nothing of a recording is typed by hand but the one labelled class of records no
+    recording holds. (3) A BARE YIELD INTO ANOTHER PROCESS needs nothing new: the foreign window opens at that
+    process's first instruction after our switchto's `rte`, as after any wait's. (4) WHAT NO RUN OF A BENCH CAN SEE
+    IS READ OFF THE BUILD'S OWN INSTRUCTIONS (`test_aes_evfork_interrupted.blob_body(blob, symbol)`, both blobs): a
+    bench run is entered at IPL 7 and takes no interrupt the watch does not lay, so ap_trecd arming the recorder
+    UNMASKED leaves every image and ledger as they are; and two stores both made before the next compare (the
+    cursor routine exchanged before the motion routine) have no order in any image. Sweep first, then write the
+    instruction pin for the mutant that survives — that is how the second was found; and PIN THE STORES, NOT THE
+    NAMES: the first pin held every instruction that NAMES the recorder's count or cursor inside a bracket, and the
+    flag armed before the mask was raised stayed green (gate 13) — it now holds every STORE to the three words,
+    inside a bracket and in the ROM's order. (5) A LIMIT OF THE MIXTURE,
+    HELD AS A REFUSAL: a recording with another process's turn INSIDE it is red on a blob in the records made
+    inside the foreign window (the ROM's forker ran those events and recorded the ROM's fork-function addresses;
+    ours numbers them 0) — Tier 1 only, the refusal pinned by name so it is not met by surprise. (6) A ROM
+    BEHAVIOUR THAT IS A FAULT IN A RUNTIME HELPER IS REFUSED BY NAME, NOT ANSWERED: a scale of 0 is ldiv's divide
+    by zero, which the ROM survives through vector 5's `rte`; the C halts where ldiv's core does. (7) "UNREACHABLE"
+    IS A CLAIM ABOUT THE ROM, NOT ABOUT THE BATTERY'S BUFFER: "more than 4,095 records cannot be recorded" was true
+    of the 64-byte band the recordings share and false of the machine (a count of 0 records until
+    Control-backslash; any free RAM is a buffer) — two mutants argued equivalent on it answer `$100e` for the ROM's
+    `$f00e`. A long ROM run is a Tier 1 row with a DECLARED BUDGET (`SwitchingRow.budget`), not a reason to argue.
+  - `test_status.py` HOLDS THE LEDGER TO THE REGISTRY BY NAME: each routine's count of rows that switch, the three
+    sentences that count them all, AND WHICH rows — its verified row lists them after `THE ROWS THAT SWITCH:` in
+    the Tier 3 cell, each `**ratio** <the table's name> (`net`…)` (or `THE ROWS THAT SWITCH (each the table's
+    `<prefix>…`):` where every name opens with the same words, said once), both ways. A paraphrase is red: write the
+    name as `make bench` prints it. (It found four of ev_block's so paraphrased the day it landed.) SINCE GATE 13
+    THE LIST IS HELD AS A LIST: no name twice and as many as the Cases cell counts (two SETS of names forgave a row
+    listed twice in place of another); the ratio before each name is THAT ROW'S in the table — `**0.66 / 0.32**`
+    its two counts — not merely one "measured for the address"; and an address has ONE verified row (a second was
+    read over the first). Each with a RED on a made ledger
+    (`test_a_wrong_list_of_the_rows_that_switch_is_refused_each_way`).
+    AND THE OTHER PRESENT-TENSE COUNTS ARE HELD, each in a fixed form: the Components cell's
+    `THROUGH INTERRUPTS (N, lo–hi — M of them SLICES of K sessions` (it said 55 over a registry of 56), a Cases
+    cell's `N rows (… M SLICES of K session(s)`, the two counts' `(N on the unrounded cycles), the caller's own is
+    the HIGHER in N, and N are over 1.00`, and `THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word
+    `$8996` dropped by name in M of the rows that switch`. A count the ledger states in the present tense and
+    nothing derives is deleted or held — the wave logs quote history and are left alone.
 
 INTERRUPTS AT A DOOR ENTRY. A loop like mn_do or gr_dragbox only leaves its later states when the mouse or button changes
 WHILE it runs. `aes_event.interrupted(name, arguments, machine, {k: effect})` delivers that change on both sides. The ROM's
@@ -1010,7 +1119,8 @@ stop)}, budget=)` registers one priced row per SLICE: the run between two ARRIVA
 - Measure before registering: `aes_event.rom_timeline(name, arguments, machine, delivered, traps=(handler, …),
   budget=)` lists every door call and listed trap with what the ROM had spent there; `slice_cost` prices one cut.
 - A sliced session is taken through interrupts AT ITS WAITS (keys typed ahead leave no waits to cut at), and cannot be
-  `psg_seed` / `schedule` / `regs` seeded.
+  `psg_seed` / `schedule` / `regs` seeded. A session whose waits BLOCK — the user acts while the selector waits —
+  is sliced through `register_woken_slices`, its marks per process (TIER 3: A ROW THAT SWITCHES, above).
 - THE PARTITION TEST is what makes "the worst row" a claim about the whole session, since registered slices need not
   cover it. `tier3.uncovered_stretches(row, bench)` cuts each sliced session whole — at every door call and at every
   registered slice's ends — in one pair of runs, both shores' timelines held arrival for arrival and the pieces summing
@@ -1180,7 +1290,9 @@ battery (`aes_evasync`, `aes_evlib`, `aes_evinput` each bind one and keep module
   that differ by nature from one run and `register_row` registers it (ONE SETTLING, ONE REGISTRAR, above);
   `run_core_steered` / `run_layer_case` are the trial loop of a steered case, over `steered_as_needed` (above).
 - WHAT THE EVENT LAYER'S C CALLS OUT THROUGH HAS ONE SPELLING, the event layer's own: `aes_event.vdi_hook`,
-  `handed_routines()` (the four fork functions, justretf, the VDI's default_user_cur), `POLLED_FUNCTIONS`,
+  `handed_routines()` (the four fork functions, justretf, the VDI's default_user_cur), `POLLED_FUNCTIONS` (the
+  keyboard's and the locator's polls, and vex_curv — ap_tplay's exchange of the cursor routine; its vex_motv is
+  `aes_gsx.REACHED_FUNCTIONS`'),
   `SERVED_IN_A_FORK`, `TRAP_FRAME_DROP`, `FORK_CODE_SLOTS`, `EVENT_LAYER_HOOKS` / `EVENT_LAYER_DROPS`. A layer's
   helper module holds aliases, never a second definition (`aes_evinput.HOOKS`, `CURSOR_HOOKS` built on them); the
   door's own bindings take them by derivation the day an entry that polls is rebound (`polls_in_c`).
@@ -1253,8 +1365,12 @@ Of the three mechanisms the foundation designed, ONE is still not built (the fir
   IMMEDIATE ROM address (pushed, or — ap_tplay — stored in the local its forkq call pushes), and forker's recorder and
   ap_trecd compare against them: sixteen instructions, `aes.FORK_FUNCTION_IMMEDIATES`, CODE values a C port stores as
   the ROM's and a rebuilt ROM as its own (`test_aes_door` holds them as every longword of the GEM text naming a fork
-  function, and every forkq call as queueing one). By nature and left: a recording MADE under the ROM holds ROM
-  fork-function addresses, and played back under our build they are queued as they are.
+  function, and every forkq call as queueing one). (This said "a recording MADE under the ROM holds ROM
+  fork-function addresses, and played back under our build they are queued as they are". Read from the bodies —
+  band 4 wave 3's step T — that is true only WHILE IT RECORDS: ap_trecd turns each address into a NUMBER before it
+  returns and ap_tplay turns the number back into the playing build's own fork function. What is queued as it is
+  is a number that is none of the four; and what stays the ROM's on a blob is a record made inside a foreign
+  window — A ROUTINE EVERY ARM OF WHICH LEAVES BY THE DISPATCHER, above.)
 
 ## Verified functions, and what they cost on each side
 

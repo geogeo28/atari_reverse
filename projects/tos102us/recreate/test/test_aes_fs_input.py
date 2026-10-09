@@ -475,17 +475,110 @@ def test_fs_input_up_to_a_wait_nothing_ends(session, shows):
             fsl.row_texts(held.image)[0], selected_objects(held.image)) == shows
 
 
-def test_fs_input_with_nothing_delivered_blocks_at_fm_do_s_first_wait():
-    """...and through the door's own name for it (`aes_event.refused_where_the_rom_blocks`, under the session's declared
+# ---- ...AND ON THROUGH THE WAKE ---------------------------------------------------------------------------------------------
+# The selector as it stands is half of a wait: the other half is what it does ONCE THE USER ACTS — the wait woken
+# through the dispatcher, the form gone on, the session ended. Each waiting session is taken on as a row that switches
+# (`aes_fs_sessions.Woken`): what ends it delivered WHILE IT WAITS (at the dispatcher's idles, in turn), and THE SAME
+# USER NEVER WAITED FOR — the returning session whose script answers its GEMDOS calls and whose end it must reach.
+def woken(name, *wakes, same, budget=None):
+    session, _shows = WAITING[name]
+    return ss.Woken(session.waits, schedule(wakes), same, budget)
+
+
+def _same(name):
+    return SESSIONS[name]
+
+
+WOKEN = {
+    "shown": woken("shown", RETURN, same=_same("Return, the DEFAULT: OK")),
+    "shown, the cursor shown": woken("shown, the cursor shown", RETURN, same=_same("Return, the cursor shown")),
+    "shown with a selection handed in": woken("shown with a selection handed in", RETURN,
+                                              same=short(MIXED, "NAME.EXT", [RETURN], OK_BUTTON, MIXED, "NAME.EXT")),
+    "two letters typed": woken("two letters typed", RETURN,
+                               same=short(MIXED, "", [*typed("ab"), RETURN], OK_BUTTON, MIXED, "AB")),
+    "a file's row clicked": woken("a file's row clicked", RETURN, same=_same("a file's row clicked, Return")),
+    "another row clicked after it": woken(
+        "another row clicked after it", RETURN,
+        same=short(MIXED, "", [click(A_C_ROW), (release, click(AB_TXT_ROW)), (release, RETURN)], OK_BUTTON, MIXED, "AB.TXT")),
+    "the same row clicked again": woken(
+        "the same row clicked again", RETURN,
+        same=short(MIXED, "", [click(A_C_ROW), (release, click(A_C_ROW)), (release, RETURN)], OK_BUTTON, MIXED, "A.C")),
+    "a folder's row clicked": woken("a folder's row clicked", RETURN, same=_same("a folder's row clicked: into it")),
+    "an empty row clicked": woken("an empty row clicked", RETURN, same=_same("an empty row clicked: the selection cleared")),
+    "the down arrow": woken("the down arrow", RETURN, same=_same("the down arrow: a row")),
+    "the up arrow at the top": woken("the up arrow at the top", RETURN, same=_same("the up arrow at the top: nothing moves")),
+    "a row selected, then the down arrow: the row put down": woken(
+        "a row selected, then the down arrow: the row put down", RETURN,
+        same=short(MIXED, "", [click(A_C_ROW), (release, click(DOWN_ARROW)), (release, RETURN)], OK_BUTTON, MIXED, "A.C")),
+    "the track clicked: a page": woken("the track clicked: a page", RETURN,
+                                       same=_same("the track clicked below the elevator: a page down")),
+    # The drag's own wait is the one that blocks: the button let go while it waits, then Return while fm_do's does.
+    "the elevator held mid-drag: its outline on the screen": woken(
+        "the elevator held mid-drag: its outline on the screen", release, RETURN, same=_same("the elevator dragged down")),
+    "the elevator dragged and let go": woken("the elevator dragged and let go", RETURN, same=_same("the elevator dragged down")),
+    "the close box": woken("the close box", RETURN, same=_same("the close box, in a folder")),
+    "the title, a selection handed in: cleared": woken(
+        "the title, a selection handed in: cleared", RETURN,
+        same=long(MIXED, "SEL.TXT", [click(TITLE), (release, RETURN)], OK_BUTTON, MIXED, "")),
+    "the list's box beside its rows": woken("the list's box beside its rows", RETURN,
+                                            same=_same("the list's box clicked beside its rows: nothing")),
+    "the path edited, a row clicked": woken("the path edited, a row clicked", RETURN,
+                                            same=_same("the path edited, a row clicked: the new spec's list, its row")),
+    "the path edited, the down arrow": woken("the path edited, the down arrow", RETURN,
+                                             same=_same("the path edited, the down arrow")),
+}
+assert set(WOKEN) == set(WAITING)
+
+
+@pytest.mark.parametrize("name", WOKEN)
+def test_fs_input_woken_from_its_wait_goes_on_to_its_return(name):
+    """THE WAIT'S OTHER HALF, at Tier 1 (`aes_fs_sessions.held_through_its_wake`): the C through the host's model, the
+    door bound, held to the ROM's own run through its dispatcher — the same idles, the same answer, every frame the
+    door was handed, every byte outside the run's own stack. It answers DONE, makes exactly the GEMDOS calls its
+    script is of, and hands back what the same user never waited for is handed (the selector, both strings, the
+    button, the screen: the ROM's run over the staged disk)."""
+    each = WOKEN[name]
+    ran = ss.held_through_its_wake(each, VISIBLE)
+    assert ran.answer == DONE
+    assert handed_back(ran.image) == (each.same.button, each.same.path_out, each.same.file_out)
+    assert set(ran.entered) == {ran.delivered.process}, "the premise: no other process runs while the selector waits"
+
+
+def test_a_woken_session_held_to_another_session_s_script_or_end_is_refused_by_name():
+    """THE RED of the two premises a woken session's replay stands on (`aes_fs_sessions.vet_its_gemdos_calls`,
+    `vet_it_ends_as_never_waited_for`): the image the selector shown and woken by Return leaves, asked whether it is
+    the session that went into a folder — which reads a second directory (more GEMDOS calls, another path handed
+    back) — is refused on each: the calls made are not that script's, and the end is not that user's.
+    AND THE SAME CALLS HANDED ANOTHER FRAME ARE NOT THE SCRIPT'S EITHER: the run's own image with one byte of one
+    recorded frame changed (its first search's path pointer — a selector that searched another path and was answered
+    as if it had not) is refused by the call and both frames, where the function numbers alone agree."""
+    ran = ss.held_through_its_wake(WOKEN["shown"], VISIBLE)
+    into_a_folder = WOKEN["a folder's row clicked"]
+    with pytest.raises(AssertionError, match="the woken session called GEMDOS .* where the script it was answered from is of"):
+        ss.vet_its_gemdos_calls(into_a_folder, ran.image)
+    with pytest.raises(AssertionError, match="differs from the same user never waited for"):
+        ss.vet_it_ends_as_never_waited_for(into_a_folder, ran.image, VISIBLE)
+    calls = fsl.replay_calls(ran.image)
+    searched = next(nth for nth, call in enumerate(calls) if call.function == fsl.FSFIRST)
+    another_path = bytearray(ran.image)
+    another_path[fsl.LEDGER.first + searched * fsl.LEDGER_ENTRY_BYTES + aes.WORD_BYTES + aes.LONG_BYTES - 1] ^= 1
+    assert [call.function for call in fsl.replay_calls(another_path)] == [call.function for call in calls]
+    with pytest.raises(AssertionError, match=rf"handed GEMDOS other frames .*call {searched} \({fsl.FSFIRST:#x}\)"):
+        ss.vet_its_gemdos_calls(WOKEN["shown"], another_path)
+
+
+def test_fs_input_with_nothing_delivered_blocks_at_fm_do_s_first_wait_and_return_wakes_it():
+    """BOTH HALVES BY THE DOOR'S OWN NAME FOR THEM (`aes_event.blocked_then_woken`, under the session's declared
     budget — a run to that wait is past what the default admits): the screen's lock taken, the mouse's owner changed,
-    then the wait — three door calls, the third the one that blocks."""
-    session, _shows = WAITING["shown"]
-    _real, replayed, _script = ss.machine_of(session)
-    held = aes_event.refused_where_the_rom_blocks(INPUT, ARGUMENTS, replayed, objects=True, budget=session.budget)
-    assert [call.routine for call in held.calls] == [addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_CT_CHGOWN,
-                                                     addrs.AES_ROM_EV_MULTI]
+    then the wait — three door calls, the third the one that blocks; and woken by Return, the owner put back and
+    the lock given back on the way out."""
+    each = WOKEN["shown"]
+    held, ran = aes_event.blocked_then_woken(ss.woken_row(each))
+    blocked_at = [addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_CT_CHGOWN, addrs.AES_ROM_EV_MULTI]
+    assert [call.routine for call in held.calls] == blocked_at
+    assert [call.routine for call in ran.calls] == blocked_at + [addrs.AES_ROM_CT_CHGOWN, addrs.AES_ROM_UNSYNC]
     with pytest.raises(AssertionError, match="inside DERIVATION_INSNS' margin"):
-        aes_event.refused_where_the_rom_blocks(INPUT, ARGUMENTS, replayed, objects=True)
+        aes_event.interrupted(INPUT, ARGUMENTS, ss.machine_of(each.same)[1], {}, objects=True)
 
 
 # ---- a second call ------------------------------------------------------------------------------------------------------------

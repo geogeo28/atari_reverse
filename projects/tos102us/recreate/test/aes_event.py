@@ -967,7 +967,9 @@ def event_hook(io_seed=None, entries=ENTRIES):
 # default_user_cur, which ap_tplay saves in `$947a`), served by the candidate's VDI core over D0 and D1.
 # ONE SPELLING, for the input's leaf battery, ev_multi's, and — once ev_multi is REBOUND, so that chkkbd and forker
 # run in C under every door call — the door's own bindings, in process and in a child (`polls_in_c`).
-POLLED_FUNCTIONS = ("VDI_ROM_VQ_KEY_S", "VDI_ROM_VSIN_MODE", "VDI_ROM_STRING", "VDI_ROM_LOCATOR")
+# ...and ap_tplay's exchange of the cursor routine (vex_curv: a playback hands the VDI justretf at its first mouse
+# record and puts the VDI's own back at its end; its vex_motv is `aes_gsx.REACHED_FUNCTIONS`').
+POLLED_FUNCTIONS = ("VDI_ROM_VQ_KEY_S", "VDI_ROM_VSIN_MODE", "VDI_ROM_STRING", "VDI_ROM_LOCATOR", "VDI_ROM_VEX_CURV")
 FORK_FUNCTIONS = {"AES_ROM_KCHANGE": (None, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.WORD_ARG)),
                   "AES_ROM_BCHANGE": (None, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.WORD_ARG)),
                   "AES_ROM_MCHANGE": (None, (vdi.IMAGE_ARG, vdi.WORD_ARG, vdi.WORD_ARG)),
@@ -1158,21 +1160,32 @@ def _child_walkers(lib, objects, polls=False):
     return isr.CALL_VECTOR_REGISTERS(serve)
 
 
+DELIVERY_NOT_LAID = "the event door: laying an interrupt's delivery at the C's door call raised"
+
+
 def _laid_into(buf, delivery):
     """An interrupt's `delivery` (`deliveries`: `(found, wrote)`) laid into the candidate's image `buf` (a C pointer,
     viewed as the image's bytes) at its door call. CHECKED FIRST: the delta is the ROM's interrupt code run over the
     ROM's memory, so it is the machine's for the C only where the C's image holds what the ROM's memory held — `found`,
     at every address the delivery writes (what neither shore compares aside, `_NOT_COMPARED`); laid over a C that
     diverged there, it would erase the divergence. A mismatch ENDS the child by name. The Line-F mask word is not laid
-    (`LINE_F_MASK_BYTES`): the C's image keeps the word as it found it."""
-    image = (ctypes.c_uint8 * IMAGE_BYTES).from_address(ctypes.addressof(buf.contents))
-    found, wrote = delivery
+    (`LINE_F_MASK_BYTES`): the C's image keeps the word as it found it.
+
+    WHATEVER ELSE THE CHECK OR THE LAYING RAISES ENDS THE CHILD TOO, BY NAME (FORK_RAISED: the harness's error, never
+    the C's). This runs inside the door's callback, where nothing can be raised into C: ctypes would print the
+    exception and carry on, the delivery NOT LAID (or half laid), the twin run over a machine no interrupt reached —
+    and the case's later compare would red on bytes, far from the reason."""
     try:
+        image = (ctypes.c_uint8 * IMAGE_BYTES).from_address(ctypes.addressof(buf.contents))
+        found, wrote = delivery
         _vet_found(image, found, "the C's door call")
+        _lay(image, wrote, lays_the_mask_word=False)
     except AssertionError as refused:
         print(refused, file=sys.stderr, flush=True)
         os._exit(CHILD_DELIVERY_REFUSED)
-    _lay(image, wrote, lays_the_mask_word=False)
+    except Exception as raised:        # ...a delivery that could not be LAID is no delivery laid
+        print(f"{DELIVERY_NOT_LAID}: {raised!r}", file=sys.stderr, flush=True)
+        os._exit(FORK_RAISED)
 
 
 def bind_in_a_child(lib, entries=ENTRIES, objects=False, interrupts=None, dispatching=None):
@@ -2268,11 +2281,16 @@ class DoorStops:
     def foreign_window_opened(self):
         """ANOTHER PROCESS THAN THE RUN'S OWN IS ENTERED (told by the watch that follows the run through the
         dispatcher, `aes_switching.Switching`, which arms none of this watch's stops until that process's turn is
-        over): nothing, for a watch that counts nothing — one that prices its calls says what a call open across
-        the turn is net of (`tier3.DoorWindows`)."""
+        over): a watch that prices its calls says what a call open across the turn is net of
+        (`tier3.DoorWindows`) — and A MARKED RUN'S MARKS ARE TOLD, whatever the watch counts: a mark is an arrival
+        of the run's own process, and what another process's turn spends is no part of any slice (`Marks`)."""
+        if self.marks:
+            self.marks.foreign_window_opened()
 
     def foreign_window_closed(self):
         """...and the run's own process is resumed."""
+        if self.marks:
+            self.marks.foreign_window_closed()
 
     def opens_a_call_at(self, pc):
         """Would a stop at `pc`, as the watch stands, OPEN A DOOR CALL — an arrival, where a delivery is laid and an
@@ -2785,7 +2803,11 @@ GLUE_CODE_SLOTS = (vdi.field("LINEA", "USER_BUT").at, vdi.field("LINEA", "USER_M
 #     travels out of the registry's slots — so our image at entry is the ROM-made machine as it is.
 RelocatedCode = namedtuple("RelocatedCode", "what slots symbols at_entry")
 FORK_CODES = RelocatedCode("a fork function's code in the fork queue", FORK_CODE_SLOTS, FORK_ENTRY_SYMBOLS, True)
-GLUE_CODES = RelocatedCode("a glue's address handed to the VDI", GLUE_CODE_SLOTS, GLUE_ENTRY_SYMBOLS, False)
+# ...and THE ROUTINE THAT DRAWS NOTHING (justretf), which a playback hands the VDI twice (ap_tplay: vex_curv, vex_motv)
+# and gets back, displaced, when it puts the VDI's own back — in contrl[9..10] where appl_tplay returns. The glues'
+# own table stays the two glues (the dispatcher's battery and the interrupts' hold it to them).
+HANDED_ENTRY_SYMBOLS = {**GLUE_ENTRY_SYMBOLS, addrs.AES_ROM_JUSTRETF: "aes_rom_justretf"}
+GLUE_CODES = RelocatedCode("a glue's address handed to the VDI", GLUE_CODE_SLOTS, HANDED_ENTRY_SYMBOLS, False)
 CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES)
 # THE DISPATCHER'S OWN STACK ($899a..$8c1a), which savestate moves to: what a Tier 3 row that drops it has put back
 # on our shore (`bench/tier3.py`, `spans_put_back`), and the dispatcher's battery names its drop by.
@@ -3028,7 +3050,10 @@ INTERRUPTED_ROWS = {}
 def session_of(row_name):
     """The SESSION the registered row `row_name` is of — its `InterruptedRow`, or None for a row not taken through
     interrupts. The rows `register_slices` registers of one session are ONE record (`is`): one machine, one set of
-    deliveries, one derivation."""
+    deliveries, one derivation. A SLICED SESSION THAT SWITCHES (`register_woken_slices`) is one record the same way:
+    its registered `aes_switching.Registered`, the same object under each of its slices' names."""
+    if row_name in SLICED_ROWS and row_name in SWITCHING_ROWS:
+        return SWITCHING_ROWS[row_name]
     return INTERRUPTED_ROWS.get(row_name)
 
 
@@ -4376,15 +4401,17 @@ def refused_where_the_rom_blocks(name, arguments, machine, *, objects=False, sec
 # waits take, as `interrupted` delivers them), and `at_idle`, at an idle (what wakes a wait that blocked).
 # The three spellings a battery needs — a module that imports this one imports the registrar, so each asks for it
 # where it is called.
-def woken_row(label, name, arguments, machine, at_idle, at_calls=None, *, objects=False, answered=True):
+def woken_row(label, name, arguments, machine, at_idle, at_calls=None, *, objects=False, answered=True, budget=None):
     """A DOOR USER'S CALL THAT BLOCKS AND IS WOKEN, as a row that switches (`aes_switching.SwitchingRow`): `machine` a
     zero-argument builder, `at_idle` `{idle: interrupt}`, `at_calls` `{door call: interrupt}` or a schedule
     (`Waits`); `objects`: its C walks trees (the walked routines served in its child); `answered` False for an arm
-    that sets no D0. The routine's declared child doors (`CHILD_DOORS`) are its child's."""
+    that sets no D0; `budget`: its own derivation budget, declared (`_budget_of`: a whole session of the file
+    selector). The routine's declared child doors (`CHILD_DOORS`) are its child's."""
     import aes_switch
     import aes_switching
     door = aes_switch.DoorUser(bool(objects), CHILD_DOORS.get(name, ""))
-    return aes_switching.SwitchingRow(label, name, tuple(arguments), machine, dict(at_idle or {}), answered, at_calls, door)
+    return aes_switching.SwitchingRow(label, name, tuple(arguments), machine, dict(at_idle or {}), answered, at_calls, door,
+                                      budget=budget)
 
 
 def held_through_its_wake(row):
@@ -4403,7 +4430,7 @@ def blocked_then_woken(row, switches=BLOCKS):
     in, and no later compare); `ran` the same call taken on through the dispatcher to its return
     (`held_through_its_wake`)."""
     held = interrupted(row.name, row.arguments, row.machine(), row.at_calls or {}, objects=row.door.objects,
-                       switches=switches)
+                       switches=switches, budget=row.budget)
     assert not held.returned, f"{row.name}: the premise — with nothing delivered at an idle the call switches — does not hold"
     return held, held_through_its_wake(row)
 
@@ -4446,6 +4473,21 @@ def register_woken(row):
 # count) and at its registered slices' own ends, both shores' timelines held to the same arrivals after the same door
 # calls — and every stretch no registered slice covers is priced like a slice and held at or under the routine's
 # worst registered row. Cost that left a slice across a trap is then in the stretch beside it, and priced there.
+# A SLICE'S MARKS ARE ONE PROCESS'S — THE ROW'S (a session whose run SWITCHES: a wait of it blocks, the machine leaves
+# by the dispatcher and comes back by it; `register_woken_slices`). A mark is an ARRIVAL OF THE ROW'S PROCESS, so:
+#   * NO MARK IS TAKEN INSIDE A FOREIGN WINDOW (another process's turn, `aes_switching`): the watch that follows the
+#     run through the dispatcher arms none of the door watch's stops there, the marks are told where a window opens
+#     and closes (`Marks.foreign_window_opened` / `_closed`, through `DoorStops`), and an arrival handed to them in
+#     between is REFUSED BY NAME — the screen manager makes door calls and takes traps at the very PCs a slice is
+#     cut at, and one counted would shift every later ordinal of the row's own;
+#   * WHAT A MARK HOLDS A RUN TO HAVE SPENT IS WHAT THE ROW'S PROCESS SPENT: each running total net of the windows
+#     closed before it (`Marks._spent`) — instructions and cycles too, so the cap is held on the row's own run and a
+#     slice's cost is never another process's. The windows inside a slice are kept beside it (`foreign_inside`: how
+#     many, and what they cost), the two shores held to the same ones (`vet_the_marks_agree`: an end reached on the
+#     other side of another process's turn is another slice);
+#   * THE MEMORY AT A MARK IS COMPARED OUTSIDE WHAT THE ROW DROPS (`tier3._differing_at_a_mark`) — a switching row's
+#     drops among them (the saved context, the dispatcher's stack, the mask word, a bracket's SR word), each of which
+#     differs by nature from the first dispatch on, long before the run's end.
 SLICE_INSNS = DIFFERENTIAL_INSNS       # `emu.run`'s own default budget: what one unwatched row may spend
 ENTRY, RETURN = "the routine's entry", "the routine's return"
 
@@ -4487,7 +4529,10 @@ def trap_handler(vector, pokes=None):
 VDI_TRAP = trap_handler(addrs.VECTOR_TRAP_GEM)        # the ROM's own `trap #2` handler: where a VDI call arrives
 GEMDOS_TRAP = trap_handler(addrs.VECTOR_TRAP_GEMDOS)  # ...and its `trap #1` handler's: a GEMDOS call
 Slice = namedtuple("Slice", "start stop")
-Mark = namedtuple("Mark", "calls spent memory")
+# `windows`: the foreign windows closed before the mark; `foreign`: what they spent, total by total (`Marks`).
+Mark = namedtuple("Mark", "calls spent memory windows foreign", defaults=(0, None))
+A_MARK_OF_ANOTHER_PROCESS = ("a mark is an arrival of the ROW's process, and this one is inside a foreign window — "
+                             "another process's turn: its door calls and its traps are none of the session's slices")
 Arrival = namedtuple("Arrival", "at calls spent")
 
 
@@ -4503,7 +4548,12 @@ class Marks:
     one pair of runs, not a pair each. With `every_door_call`, the run's `timeline` is kept too: an `Arrival` at
     EVERY door call it makes and at every end it is marked at, in order, the RETURN's last, each with what the run
     had spent — so what each shore spent between any two of them can be read, and the stretches no slice prices
-    priced as well (`bench/tier3.py`'s `uncovered_stretches`). Off by default: the cost is read at every door call."""
+    priced as well (`bench/tier3.py`'s `uncovered_stretches`). Off by default: the cost is read at every door call.
+
+    THE MARKS ARE THE ROW'S PROCESS'S (a run that switches; the note above): told where a foreign window opens and
+    closes, they take no arrival inside one (refused by name) and keep every total NET of the windows closed so
+    far — `spent` at a mark, and on the timeline, is what the row's own process had spent; `windows` and `foreign`
+    of a mark are how many windows closed before it and what they cost."""
 
     def __init__(self, slice_, cost, others=(), every_door_call=False):
         for start, stop in (slice_, *others):
@@ -4514,6 +4564,23 @@ class Marks:
         self._arrivals = dict.fromkeys(marked, 0)
         self._taken = {ENTRY: Mark(0, None, None)}
         self.timeline = [] if every_door_call else None
+        self._window_at, self._in_windows, self._windows = None, {}, 0
+
+    def foreign_window_opened(self):
+        """Another process than the row's is entered: no arrival is the row's until it is resumed."""
+        assert self._window_at is None, "a foreign window opened inside a foreign window: the watch lost a resume"
+        self._window_at = self._cost()
+
+    def foreign_window_closed(self):
+        """...and the row's process is resumed: what the window spent comes off every total from here on."""
+        assert self._window_at is not None, "a foreign window closed that never opened"
+        self._in_windows = {name: self._in_windows.get(name, 0) + total - self._window_at[name]
+                            for name, total in self._cost().items()}
+        self._window_at, self._windows = None, self._windows + 1
+
+    def _spent(self):
+        """The run's totals AS THE ROW'S PROCESS SPENT THEM: `cost()`, net of every foreign window closed so far."""
+        return {name: total - self._in_windows.get(name, 0) for name, total in self._cost().items()}
 
     def cut_to(self, slice_):
         """This run's marks, read for `slice_` — one of the slices it was marked at (`others`)."""
@@ -4531,20 +4598,22 @@ class Marks:
         """The run arrived at `pc` (a door entry, a marked trap's handler) with `calls` door calls entered."""
         if pc not in self._arrivals:
             return
+        assert self._window_at is None, f"arrival {self._arrivals[pc]} at {pc:#x}: {A_MARK_OF_ANOTHER_PROCESS}"
         here = At(pc, self._arrivals[pc])
         self._arrivals[pc] += 1
         on_the_timeline = self.timeline is not None and (pc in ENTRIES or here in self._ends)
         if not (on_the_timeline or here in self._ends):
             return
-        spent = self._cost()
+        spent = self._spent()
         if on_the_timeline:
             self.timeline.append(Arrival(here, calls, spent))
         if here in self._ends:
-            self._taken[here] = Mark(calls, spent, bytes(memory))
+            self._taken[here] = Mark(calls, spent, bytes(memory), self._windows, dict(self._in_windows))
 
     def returned(self, calls):
         """The run RETURNED, `calls` door calls made in all: marked, its memory left to the whole run's differential."""
-        self._taken[RETURN] = Mark(calls, self._cost(), None)
+        assert self._window_at is None, f"the run's return: {A_MARK_OF_ANOTHER_PROCESS}"
+        self._taken[RETURN] = Mark(calls, self._spent(), None, self._windows, dict(self._in_windows))
         if self.timeline is not None:
             self.timeline.append(Arrival(RETURN, calls, self._taken[RETURN].spent))
 
@@ -4569,19 +4638,31 @@ class Marks:
         start, stop = self.ends(whose)
         return {name: total - (start.spent or {}).get(name, 0) for name, total in stop.spent.items()}
 
+    def foreign_inside(self, whose):
+        """THE FOREIGN WINDOWS INSIDE THE SLICE: `(how many, {total: what they spent})` — the windows closed between
+        its two marks, in neither shore's figures for it (`spent` is net of them)."""
+        start, stop = self.ends(whose)
+        before = start.foreign or {}
+        return stop.windows - start.windows, {name: total - before.get(name, 0) for name, total in (stop.foreign or {}).items()}
+
 
 def vet_the_marks_agree(case_name, ours, the_rom_s, differing_at):
     """THE SLICE IS THE SAME SLICE ON BOTH SHORES: our run's marks (`ours`, a `Marks`) against the ROM's, end by end —
-    reached after the same number of door calls, and holding the same memory there (`differing_at(ours, the ROM's)`:
-    the addresses two memories differ at, outside what neither shore compares). Refused by name: a slice OUR run
-    starts at another door call than the ROM's, a run that DIVERGED BEFORE THE SLICE'S START, one that diverged
-    inside it."""
+    reached after the same number of door calls AND OF FOREIGN WINDOWS (a run that switches: an end reached on the
+    other side of another process's turn is another slice, its cost net of another thing), and holding the same
+    memory there (`differing_at(ours, the ROM's)`: the addresses two memories differ at, outside what neither shore
+    compares). Refused by name: a slice OUR run starts at another door call than the ROM's, a run that DIVERGED
+    BEFORE THE SLICE'S START, one that diverged inside it."""
     pairs = zip(ours.slice, the_rom_s.slice, ours.ends("our run"), the_rom_s.ends("the ROM's run"),
                 ("starts", "ends"), ("before the slice's start", "inside the slice"))
     for end, the_rom_s_end, mine, the_rom, verb, where in pairs:
         assert mine.calls == the_rom.calls, (
             f"{case_name}: our slice {verb} at door call {mine.calls} ({end}) where the ROM's {verb} at door call "
             f"{the_rom.calls} ({the_rom_s_end}) — another slice of the session than the ROM's")
+        assert mine.windows == the_rom.windows, (
+            f"{case_name}: our slice {verb} ({end}) after {mine.windows} foreign window(s) where the ROM's {verb} after "
+            f"{the_rom.windows} — the mark lies on the other side of another process's turn: another slice than the "
+            f"ROM's, net of another thing")
         if mine.memory is None:
             continue
         differ = differing_at(mine.memory, the_rom.memory)
@@ -4652,6 +4733,12 @@ class Timeline:
         self._counted[pc] = nth + 1
         self.arrivals.append(Arrival(At(pc, nth), calls, run_cost()))
 
+    def foreign_window_opened(self):
+        raise AssertionError("a Timeline is of a run that switches nowhere (`_marked_run`): its arrivals are counted "
+                             "in whichever process makes them — cut a session that switches by its `Marks`")
+
+    foreign_window_closed = foreign_window_opened
+
 
 def rom_timeline(name, arguments, pokes, delivered, traps=(), *, budget=None):
     """The ROM's own session — `addrs.<name>` over `pokes`, `delivered` laid at its door calls — as its `Timeline`'s
@@ -4711,3 +4798,20 @@ def register_slices(name, arguments, machine, interrupts, slices, *, objects=Fal
         registered.append(_registered(label, row, companion))
         SLICED_ROWS[registered[-1][0]] = Slice(*slice_)
     return registered
+
+
+def register_woken_slices(row, slices):
+    """ONE SESSION THAT SWITCHES — `row`, a door user's call whose waits BLOCK and are woken (`woken_row`, with the
+    `budget` it declares) — registered as a PRICED ROW PER SLICE of `slices` (`{label: Slice}`), each named `<core>,
+    <label>`: every row the same session's (ONE settling from the ROM's own run through its dispatcher, one
+    `aes_switching.Registered` under every name: `session_of`), each carrying the session's `Switches`, its Tier 3
+    drops and the companion they need (the door child under the host's model, over the whole session), and each
+    priced on its own slice alone — between two arrivals OF THE ROW'S PROCESS, net of every foreign window
+    (`Marks`), on TWO COUNTS where a rebound entry's call lies inside it: the wait that blocks is one, the switch
+    in its cost. REGISTERED BY THE ONE REGISTRAR (`aes_switching.register_row`, under each slice's name). The
+    session's row as registered."""
+    import aes_switching
+    core = routines.core_symbol(row.name)
+    sliced = {f"{core}, {label}": Slice(*slice_) for label, slice_ in slices.items()}
+    SLICED_ROWS.update(sliced)
+    return aes_switching.register_row(row, under=tuple(sliced))

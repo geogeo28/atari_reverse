@@ -35,6 +35,7 @@ screen's lock, nine event bits held. Their scenarios say so in their names.
 """
 import functools
 import struct
+from collections import namedtuple
 
 from harness import addrs, emu, make_image
 
@@ -492,6 +493,7 @@ def _moblk(leave, rect, at=MOBLK_AT):
     return {at: moblk(leave, *rect)}
 
 
+THE_LOCK_THE_MENU_HOLDS = "wind_update(BEG), the lock the screen manager's menu holds"
 RUNS = {
     # the single waits, as an application calls them
     "evnt_keybd, a key queued": _call(key_queued, EV_KEYBD),
@@ -566,6 +568,9 @@ RUNS = {
     "wind_update(BEG), the lock another's": _call(lock_held_by_the_desk, WM_UPDATE, ("w", BEG_UPDATE)),
     "wind_update(BEG), the lock released once too often": _call(wm_update.released_unbalanced, WM_UPDATE,
                                                                 ("w", BEG_UPDATE)),
+    # ...the lock ANOTHER'S AND ITS HOLDER A ROM-RUN PROCESS: the screen manager's own menu, which gives it up (the
+    # waiter's tail, which the harness-parked holder above leaves unrun, is run here; its builder is made below)
+    THE_LOCK_THE_MENU_HOLDS: _call(lambda: the_manager_s_menu_holds_the_lock(), WM_UPDATE, ("w", BEG_UPDATE)),
     # evnt_multi: every kind of wait queued at once; its fast paths; its tail after a wake
     "evnt_multi for every event": _multi(
         desk_running, MU.MU_KEYBD | MU.MU_BUTTON | MU.MU_M1 | MU.MU_M2 | MU.MU_MESAG | MU.MU_TIMER,
@@ -661,6 +666,7 @@ DECLARED = {
     "wind_update(END), the screen manager waiting for the lock": (UNSYNC,),
     "wind_update(BEG), the lock another's": (EV_BLOCK, IASYNC, AMUTEX, MWAIT),
     "wind_update(BEG), the lock released once too often": (EV_BLOCK, IASYNC, AMUTEX, MWAIT),
+    THE_LOCK_THE_MENU_HOLDS: (EV_BLOCK, IASYNC, AMUTEX, MWAIT),
     "evnt_multi for every event": (
         EV_MCHK, EV_MCHK, IASYNC, AKBIN, IASYNC, ABUTTON, IASYNC, AMOUSE, IASYNC, AMOUSE, IASYNC, IASYNC, ADELAY, MWAIT),
     "evnt_multi for a message, one in the pipe": (EV_MESAG, AP_RDWR, EV_BLOCK, IASYNC, MWAIT, EV_RETS),
@@ -714,6 +720,7 @@ SWITCHING = {
     "wind_update(END), the screen manager waiting for the lock": (0,),
     "wind_update(BEG), the lock another's": (0, 3),
     "wind_update(BEG), the lock released once too often": (0, 3),
+    THE_LOCK_THE_MENU_HOLDS: (0, 3),
     "evnt_multi for every event": (13,),
     "evnt_multi by the screen manager for a rectangle": (3,),
     "evnt_multi for two rectangles, the mouse where neither asks": (6,),
@@ -920,6 +927,11 @@ THE_MANAGER_S_RECTANGLE = "evnt_multi by the screen manager for a rectangle"
 THE_MENU_CHAIN = aes_event.THE_MENU_CHAIN
 ticks = aes_event.ticks
 A_TIMER_TICKS = evasync.A_TIMER_TICKS
+# What gives up the lock the screen manager's menu holds (`the_manager_s_menu_holds_the_lock`), at two idles: the
+# mouse off the bar, then a click — ctlmgr leaves its menu and its own END_UPDATE hands the lock to whoever waits. (A
+# press alone does not: ctlmgr then waits for the button to come up IN A LOOP OF YIELDS — the dispatcher never idles,
+# and there is no idle to deliver the release at.)
+THE_MENU_LET_GO = {0: OFF_THE_BAR, 1: A_CLICK}
 # ...scenario by scenario. A DELAY BEHIND OTHERS OF THE SAME PROCESS is run out a delay at a time: the tick glue
 # counts no tick while a run-out countdown waits for tchange to arm the next, so each delay's ticks are an idle's.
 WAKES = {
@@ -948,6 +960,7 @@ WAKES = {
     BETWEEN_TWO_DELAYS: {0: ticks(10), 1: ticks(5)},
     BEHIND_THREE_DELAYS: {0: ticks(10), 1: ticks(10), 2: ticks(20), 3: ticks(60)},
     TWO_WAITS_OF_ONE_PROCESS: {},
+    THE_LOCK_THE_MENU_HOLDS: THE_MENU_LET_GO,
     f"{STAGED_APPLICATION}: evnt_timer shorter than the delay pending": {0: ticks(A_DELAY_MS // 2 // TICK_MS)},
     f"{STAGED_APPLICATION}: wind_update(END), two processes waiting for the lock": {},
 }
@@ -955,10 +968,20 @@ WAKES = {
 # ROM's own run: `test_aes_evlib_woken.py`) — `(how the ROM's run ends, what was tried, why nothing wakes it)`.
 # "TRIED" IS ONE HAND-PICKED DELIVERY, AND A HAND-PICKED DELIVERY CAN BE THE WRONG ONE (the screen manager's rectangle
 # stood here, "tried" with a move OUT of a rectangle it waits to ENTER). So the class is held by A SWEEP, not by the
-# pick: EVERY_INTERRUPT below, each taken alone at the dispatcher's first idle, over every arrival of every scenario
-# here (`what_wakes`) — none may return in the caller. Where the wait is another PROCESS's to satisfy (a pipe's other
-# end, a lock's holder: `tried` is then nothing) the sweep is what says no interrupt does it instead, and the moves
-# onto the bar give the snapshot's other process its turn.
+# pick: EVERY_INTERRUPT below, each taken alone at the dispatcher's first idle, AND EVERY_CHAIN — what one interrupt
+# alone cannot bring: several in turn at successive idles, one between two processes' turns — over every arrival
+# of every scenario here (`swept`): none may return in the caller. Where the wait is another PROCESS's to
+# satisfy (a pipe's other end, a lock's holder: `tried` is then nothing) the stated reason is A FACT OF THE MACHINE,
+# read off it (`ONLY_ANOTHER_PROCESS`: who holds the lock and what THAT process waits for, who could read or write
+# the pipe), the sweep says no interrupt does it instead, and the moves onto the bar give the snapshot's other
+# process its turns.
+# WHAT THE SWEEP DOES NOT SAY, AND SO SAYS APART (`swept`'s three other answers): a member under which the run ends IN
+# ANOTHER PROCESS shows nothing of the waiter — and for the two scenarios whose lock is held by A HARNESS-PARKED
+# PROCESS (`THE_HOLDER_IS_HARNESS_PARKED`) that is what a key does: it un-parks the holder, whose continuation is the
+# sentinel. Those two are NOT "cannot be woken": their waiter's tail is NOT RUN on this machine — an UNPINNED tail,
+# which the SAME CALL over a ROM-run holder runs instead (`THE_LOCK_THE_MENU_HOLDS`, among `WAKES`: the screen
+# manager's menu holding the lock, given up by the mouse off the bar and a click — ev_block's and mwait's arrivals
+# both taken on to their return). A chain NOT_TAKEN is no evidence at all.
 NEVER = "the ROM's own run idles for ever"
 ANOTHER_PROCESS_RETURNS = "the ROM's own run reaches its return in another process"
 UNDER_THE_RECTANGLE_ABOVE_THE_SCREEN = aes_event.move_to(ABOVE_THE_SCREEN[0] + A_FEW_PIXELS, 0)
@@ -989,8 +1012,10 @@ NOT_WOKEN = {
     "appl_read of the screen manager's pipe, empty": (
         NEVER, {}, "nobody writes to the screen manager's pipe: the desk would, and it is the reader"),
     "wind_update(BEG), the lock another's": (
-        NEVER, {}, "the lock's holder is the desk, parked by a HARNESS call: its release is no ROM run's (the mutex "
-                   "wait that IS woken is the desk's, against the screen manager's menu: `MUTEX_WOKEN`)"),
+        NEVER, {}, "the lock's holder is the desk, parked FOR A KEY by a HARNESS call: its release is no ROM run's — a "
+                   "key un-parks the HOLDER, whose continuation is the run's sentinel, so the waiter's tail is NOT RUN "
+                   "on this machine (UNPINNED here, not unwakeable: the same call over a ROM-RUN holder is "
+                   "`THE_LOCK_THE_MENU_HOLDS`, woken to its return)"),
     "wind_update(BEG), the lock released once too often": (
         NEVER, {}, "a lock counted to -1 has no owner to give it up (the ROM finding of `test_aes_wm_update`)"),
     f"{STAGED_APPLICATION}: evnt_timer longer than the delay pending": (
@@ -1001,7 +1026,8 @@ NOT_WOKEN = {
     f"{STAGED_APPLICATION}: evnt_timer of a negative time, a delay pending": (
         NEVER, {0: ticks(A_TIMER_TICKS)}, "a negative delay goes BEFORE the pending one, which grows: neither runs out"),
     f"{STAGED_APPLICATION}: a second process queues on the lock": (
-        NEVER, {}, "the application waits for a lock the desk holds, and the desk is parked by a harness call"),
+        NEVER, {}, "the application waits for a lock the desk holds, and the desk is parked for a key by a harness call: "
+                   "a key ends the run in the desk (UNPINNED tail, as the lock another's)"),
 }
 assert not WAKES.keys() & NOT_WOKEN.keys() and WAKES.keys() | NOT_WOKEN.keys() == SWITCHING.keys()
 
@@ -1023,12 +1049,222 @@ def _taken_alone(name, frame, machine, interrupt):
     return RETURNS
 
 
-def what_wakes(scenario, nth):
-    """THE SWEEP: the names of EVERY_INTERRUPT that, taken alone at the dispatcher's first idle, make the ROM's own
-    run of the scenario's `nth` arrival — a call that blocks — RETURN IN ITS CALLER."""
+def woken_alone_by(scenario, nth):
+    """THE SWEEP'S FIRST HALF: the names of EVERY_INTERRUPT that, taken alone at the dispatcher's first idle, make the
+    ROM's own run of the scenario's `nth` arrival — a call that blocks — RETURN IN ITS CALLER."""
     made = arrival(scenario, nth)
     frame = frame_of(made.name, made.arguments)
     return {interrupt for interrupt in EVERY_INTERRUPT if _taken_alone(made.name, frame, made.machine, interrupt) == RETURNS}
+
+
+# ---- ...AND THE CHAINS: what no single interrupt at the first idle can bring ---------------------------------------------------
+# One interrupt alone answers nothing for a wake that takes SEVERAL: the screen manager's own write (the mouse onto a
+# title, onto an item, a press: three idles, three turns of it), a delay queued behind others of its process (run
+# out a delay at a time, an idle each), a lock its holder gives up only once its menu is left AND clicked off, a key
+# that arrives between two processes' turns. A CHAIN is what arrives at SUCCESSIVE IDLES, in order (`at_idles`) —
+# the run takes as many of them as it idles before it ends: the chain's answer is that of its SHORTEST PREFIX that
+# does not leave the machine idling — and what arrives at a POLL OF THE DISPATCHER THAT IS NO IDLE (`at_polls`:
+# `aes_switch.scheduled`'s; a chain whose poll the run never makes, or makes as an idle, is not taken at all — the
+# pair that takes the same two at idles 0 and 1 is a member too).
+#   * THE MENU CHAIN — the one writer a returning run of this machine has (its click a press AND its release);
+#   * TICKS AT SUCCESSIVE IDLES — more than any time, four times: the tick glue counts no tick while a run-out
+#     countdown waits for tchange to arm the next, so each queued delay's ticks are an idle's;
+#   * PAIRS AT IDLES 0 AND 1 — an event OF EACH KIND (`OF_EACH_KIND`: a key, a button, the ticks, the mouse into a
+#     rectangle and out of every one) AFTER AN OPENER that changes whose the mouse, the keyboard and the screen
+#     are: the mouse onto the menu bar (the other process's turn: its menu, the lock), and the mouse off it;
+#   * AT THE POLL AFTER THE FIRST IDLE — a key, a click, the ticks, once the mouse onto the bar has woken the screen
+#     manager and before it runs.
+# A chain's interrupts are NAMES (`TAKEN_IN_A_CHAIN`: EVERY_INTERRUPT's, and the menu's two points), so what its first
+# interrupt does alone is the first half's own answer, asked once.
+# THE MENU CHAIN ENDS IN A CLICK, NOT A PRESS HELD (what `WAKES` delivers, where the desk is the one written to and
+# returns at once): a press held on the item is, in every scenario whose caller is NOT that reader, waited out by
+# ctlmgr in a loop of yields — SPINS, below: one fact of the ROM's ctlmgr, shown once (`test_aes_evlib_woken.py`),
+# where each such run would spend a derivation's whole budget to say it again.
+Chain = namedtuple("Chain", "at_idles at_polls", defaults=({},))
+THE_POLL_AFTER_THE_FIRST_IDLE = 1       # poll 0 is idle 0 (the opener); forker runs its fork; idle polls again: this one
+TICKS_AT_SUCCESSIVE_IDLES = 4           # one more than the delays any scenario queues before its own (BEHIND_THREE_DELAYS)
+ONTO_THE_MENU_BAR, OFF_IT = "the mouse onto the menu bar", "the mouse out of both, into neither"
+TAKEN_BETWEEN_TWO_TURNS = ("Return", "a click", "more ticks than any time")
+OF_EACH_KIND = (*TAKEN_BETWEEN_TWO_TURNS, "the mouse into the rectangle round where it was", OFF_IT)
+ONTO_THE_VIEW_TITLE, ONTO_ITS_PLAIN_ITEM = "the mouse onto the View title", "the mouse onto its plain item"
+TAKEN_IN_A_CHAIN = {**EVERY_INTERRUPT, ONTO_THE_VIEW_TITLE: aes_event.ONTO_THE_VIEW_TITLE,
+                    ONTO_ITS_PLAIN_ITEM: aes_event.ONTO_ITS_PLAIN_ITEM}
+NOT_TAKEN = "the ROM's own run makes no such poll: the chain is not this machine's"
+# ...and A THIRD WAY NOT TO BE WOKEN, which only a chain reaches: the button pressed and HELD on an item of the
+# screen manager's dropped menu — ctlmgr waits for it to come up IN A LOOP OF YIELDS, the dispatcher never idles
+# again (there is no idle to deliver the release at) and the caller never runs: a derivation's whole budget spent.
+SPINS = "the ROM's own run neither returns nor idles again: its processes yield to one another for ever"
+OUT_OF_BUDGET = "did not return to the sentinel within"
+EVERY_CHAIN = {
+    "the menu chain": Chain((ONTO_THE_VIEW_TITLE, ONTO_ITS_PLAIN_ITEM, "a click")),
+    "more ticks than any time, at each of four successive idles": Chain(("more ticks than any time",) * TICKS_AT_SUCCESSIVE_IDLES),
+    **{f"{opener}, then {interrupt} at the next idle": Chain((opener, interrupt))
+       for opener in (ONTO_THE_MENU_BAR, OFF_IT) for interrupt in OF_EACH_KIND if interrupt != opener},
+    **{f"{ONTO_THE_MENU_BAR}, then {interrupt} at the poll after it": Chain(
+        (ONTO_THE_MENU_BAR,), {THE_POLL_AFTER_THE_FIRST_IDLE: interrupt}) for interrupt in TAKEN_BETWEEN_TWO_TURNS},
+}
+_ENDS = {"idles for ever AFTER its deliveries": NEVER, "its return in ANOTHER process": ANOTHER_PROCESS_RETURNS,
+         "an idle's delivery is named at the idle": NOT_TAKEN, "polls: nothing was delivered at": NOT_TAKEN}
+
+
+def ends_taken_through(name, frame, machine, at_idles, at_polls=None):
+    """How the ROM's own run ENDS with `at_idles` (names of TAKEN_IN_A_CHAIN) taken at its first idles and `at_polls`
+    (`{poll: name}`) at its polls that are no idle: RETURNS, NEVER, ANOTHER_PROCESS_RETURNS, NOT_TAKEN or SPINS. Any
+    other end is the driver's own refusal, raised."""
+    at_idle = {idle: TAKEN_IN_A_CHAIN[interrupt] for idle, interrupt in enumerate(at_idles)}
+    at_polls = {poll: TAKEN_IN_A_CHAIN[interrupt] for poll, interrupt in (at_polls or {}).items()}
+    try:
+        the_rom_s = aes_switch.scheduled(getattr(addrs, name), frame, machine, at_idle, at_polls=at_polls)
+    except AssertionError as refused:
+        how = [end for said, end in _ENDS.items() if said in str(refused)]
+        if not how:
+            raise
+        return how[0]
+    except RuntimeError as spent:
+        if OUT_OF_BUDGET not in str(spent):
+            raise
+        return SPINS
+    return RETURNS if the_rom_s.ended == aes_switch.RETURNED else NEVER
+
+
+@derived.kept
+def _taken_in_turn(name, frame, machine, chain):
+    """How the ROM's own run of `addrs.<name>` (its frame, over `machine`) ENDS taken through `chain` — a name of
+    EVERY_CHAIN: the answer of the chain's shortest prefix that does not leave the machine idling (a run that has
+    returned takes nothing more) — its first interrupt alone answered as the first half answers it. A derivation,
+    kept by content."""
+    made, how = EVERY_CHAIN[chain], NEVER
+    for taken in range(1, len(made.at_idles) + 1):
+        at_polls = made.at_polls if taken == len(made.at_idles) else {}
+        if taken == 1 and not at_polls and made.at_idles[0] in EVERY_INTERRUPT:
+            how = _taken_alone(name, frame, machine, made.at_idles[0])
+        else:
+            how = ends_taken_through(name, frame, machine, made.at_idles[:taken], at_polls)
+        if how != NEVER:
+            break
+    return how
+
+
+def woken_in_turn_by(scenario, nth):
+    """...THE SECOND HALF: the names of EVERY_CHAIN that make that run return in its caller."""
+    made = arrival(scenario, nth)
+    frame = frame_of(made.name, made.arguments)
+    return {chain for chain in EVERY_CHAIN if _taken_in_turn(made.name, frame, made.machine, chain) == RETURNS}
+
+
+def swept(scenario, nth):
+    """THE SWEEP, WHOLE, AND EVERY ANSWER OF IT: `{member: how the ROM's own run of the scenario's `nth` arrival ends
+    taken through it}` — an interrupt alone, a chain; RETURNS (in its caller), NEVER, ANOTHER_PROCESS_RETURNS,
+    NOT_TAKEN or SPINS. Only the first is a wake; ONLY THE SECOND IS EVIDENCE THAT THE MEMBER DOES NOT WAKE IT:
+      * ANOTHER_PROCESS_RETURNS says the run ENDED before the caller could be seen woken or not — another process
+        reached the run's sentinel (a harness-parked one's continuation, a staged application's way out) — so what
+        that member would have done to the waiter is NOT KNOWN;
+      * NOT_TAKEN says the chain was never delivered (the run makes no such poll): it says nothing at all.
+    A battery that holds "nothing wakes it" pins which members answered which, never only that none returned."""
+    made = arrival(scenario, nth)
+    frame = frame_of(made.name, made.arguments)
+    return {**{interrupt: _taken_alone(made.name, frame, made.machine, interrupt) for interrupt in EVERY_INTERRUPT},
+            **{chain: _taken_in_turn(made.name, frame, made.machine, chain) for chain in EVERY_CHAIN}}
+
+
+def what_wakes(scenario, nth):
+    """Every member of the sweep — an interrupt alone, a chain — that makes the ROM's own run of the scenario's `nth`
+    arrival RETURN IN ITS CALLER."""
+    return {member for member, ended in swept(scenario, nth).items() if ended == RETURNS}
+
+
+def the_sweep_wakes(scenario, nth):
+    """Does SOME member of the sweep wake that arrival — the first found, an interrupt alone before a chain (None:
+    none does)? What holds the sweep to finding every wake a registered row is known to make, at the cost of the
+    members up to the first that does."""
+    made = arrival(scenario, nth)
+    frame = frame_of(made.name, made.arguments)
+    alone = (interrupt for interrupt in EVERY_INTERRUPT if _taken_alone(made.name, frame, made.machine, interrupt) == RETURNS)
+    in_turn = (chain for chain in EVERY_CHAIN if _taken_in_turn(made.name, frame, made.machine, chain) == RETURNS)
+    return next(alone, None) or next(in_turn, None)
+
+
+# ---- WHAT ONLY ANOTHER PROCESS COULD SATISFY: the stated reason, as a fact of the ROM-made machine --------------------------
+# Five scenarios of NOT_WOKEN wait for nothing an interrupt brings (their `tried` is nothing): a pipe's other end, a
+# lock's holder. WHY nothing wakes each is a statement about WHO — and is read off the machine the call is made
+# over, at every arrival of the scenario (`held_by_no_process_that_could`), not left as a sentence.
+def _parked(image, pd):
+    """Is the process `pd` PARKED over `image`: on the not-ready list, neither running nor ready nor woken?"""
+    return (pd in aes.list_of(image, aes.AES_NRL)
+            and pd not in aes.list_of(image, aes.AES_RLR) + aes.list_of(image, aes.AES_DRL))
+
+
+def _pipe(image, pid):
+    """The pipe of the process `pid` as `(the bytes it holds, the processes waiting to read it, ...to write it)`."""
+    pd = aes_pdpipe.STATIC_PDS[pid]
+    waiting = [[case.long_in(image, evb + aes.EVB_PD) for evb in evasync.wait_list(image, pd + queue)]
+               for queue in (aes.PD_QUEUE_READERS, aes.PD_QUEUE_WRITERS)]
+    return case.word_in(image, pd + aes.PD_QUEUE_INDEX), *waiting
+
+
+def _the_others(image):
+    """Every process of the machine but the one making the call: the not-ready list's."""
+    return [pd for pd in aes.list_of(image, aes.AES_NRL) if pd != evasync.running(image)]
+
+
+def _its_own_full_pipe_nobody_else_reads(image):
+    """THE DESK WRITES INTO ITS OWN FULL PIPE: the pipe is the caller's and holds all it can; no process waits to
+    read it; and the machine's only other process is parked — a parked process reads nothing."""
+    held, readers, _writers = _pipe(image, SHELL_PID)
+    others = _the_others(image)
+    return (evasync.running(image) == SHELL and held == aes.PD_QUEUE_BYTES and not readers
+            and others == [SCREEN_MANAGER] and _parked(image, SCREEN_MANAGER))
+
+
+def _an_empty_pipe_nobody_else_writes(image):
+    """THE DESK READS THE SCREEN MANAGER'S EMPTY PIPE: it holds nothing; no process waits to write it; and the
+    machine's only other process — the pipe's own — is parked: a parked process writes nothing."""
+    held, _readers, writers = _pipe(image, SCREEN_MANAGER_PID)
+    return (evasync.running(image) == SHELL and held == 0 and not writers
+            and _the_others(image) == [SCREEN_MANAGER] and _parked(image, SCREEN_MANAGER))
+
+
+def waits_for_a_key(image, pd):
+    """Does the process `pd` WAIT FOR A KEY over `image`: an EVB of its own on its keyboard's wait list?"""
+    keyboard = case.long_in(image, pd + aes.PD_CDA) + aes.CDA_KEYBOARD_WAIT
+    return pd in [case.long_in(image, evb + aes.EVB_PD) for evb in evasync.wait_list(image, keyboard)]
+
+
+def _a_lock_whose_holder_is_parked_for_a_key(holder):
+    """THE LOCK IS ANOTHER PROCESS'S, AND THAT PROCESS IS PARKED WAITING FOR A KEY: held at least once by `holder`,
+    who is not the caller, stands on the not-ready list — AND WHAT IT WAITS FOR IS READ TOO: a key. So this is NOT
+    "nothing can wake the waiter": a key un-parks the HOLDER, whose continuation is a harness call's (the sentinel) —
+    the run ends there, in another process (`swept`: ANOTHER_PROCESS_RETURNS), and the waiter's tail is NOT RUN. The
+    fact says who holds the lock and why no ROM run of this machine gives it up; it does not say the wait cannot be
+    woken (`NOT_WOKEN`'s entry: an UNPINNED tail on this machine; `THE_LOCK_THE_MENU_HOLDS` runs it)."""
+    def fact(image):
+        count, owner, _waiting = lock(image)
+        return (count >= 1 and owner == holder != evasync.running(image) and _parked(image, holder)
+                and waits_for_a_key(image, holder))
+    return fact
+
+
+def _a_lock_nobody_holds(image):
+    """THE LOCK COUNTED TO -1 HAS NO OWNER: nobody to give it up."""
+    count, owner, _waiting = lock(image)
+    return (count, owner) == (-1, 0)
+
+
+ONLY_ANOTHER_PROCESS = {
+    "appl_write to a full pipe": _its_own_full_pipe_nobody_else_reads,
+    "appl_read of the screen manager's pipe, empty": _an_empty_pipe_nobody_else_writes,
+    "wind_update(BEG), the lock another's": _a_lock_whose_holder_is_parked_for_a_key(SHELL),
+    "wind_update(BEG), the lock released once too often": _a_lock_nobody_holds,
+    f"{STAGED_APPLICATION}: a second process queues on the lock": _a_lock_whose_holder_is_parked_for_a_key(SHELL),
+}
+# THE TWO WHOSE HOLDER IS A HARNESS-PARKED PROCESS: not "cannot be woken" — THE WAITER'S TAIL IS NOT RUN ON THIS MACHINE.
+THE_HOLDER_IS_HARNESS_PARKED = ("wind_update(BEG), the lock another's", f"{STAGED_APPLICATION}: a second process queues on the lock")
+assert ONLY_ANOTHER_PROCESS.keys() == {scenario for scenario, (_how, tried, _why) in NOT_WOKEN.items() if not tried}
+
+
+def held_by_no_process_that_could(scenario, nth):
+    """Is the scenario's stated reason TRUE OF THE MACHINE its `nth` arrival is made over (`ONLY_ANOTHER_PROCESS`)?"""
+    return ONLY_ANOTHER_PROCESS[scenario](make_image(arrival(scenario, nth).machine))
 
 
 def a_pipe_wait_s_qpb_is_no_part_of(arrival):
@@ -1067,12 +1303,6 @@ def the_manager_s_menu_holds_the_lock():
     the menu bar — ctlmgr's own BEG_UPDATE takes the lock and it waits, its menu bar live — and Return woke the desk.
     (An application's evnt_keybd: the desk's saved context is then that call's, not an ev_block's own.)"""
     return _answers_stale(after_the_wait(EV_KEYBD, (), aes_event.machine(), A_KEY_AFTER_THE_BAR))
-
-
-# What gives that lock up, at two idles: the mouse off the bar, then a click — ctlmgr leaves its menu and its own
-# END_UPDATE hands the lock to whoever waits. (A press alone does not: ctlmgr then waits for the button to come up
-# IN A LOOP OF YIELDS — the dispatcher never idles, and there is no idle to deliver the release at.)
-THE_MENU_LET_GO = {0: OFF_THE_BAR, 1: A_CLICK}
 
 
 @functools.cache

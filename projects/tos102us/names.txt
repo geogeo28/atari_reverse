@@ -2071,7 +2071,7 @@ var 0xc768 gl_dclick
 var 0x989c gl_cowner
 var 0x96d8 gl_ctwait_leave
 cmt 0x96d8 the LEAVE word of the screen manager's own MOBLK: cleared once by ctlmgr ($fe49ea), written by nothing else, compared by mchange ($fe5456) — a constant 0
-var 0x9800 gl_play # ctx
+var 0x9800 gl_play
 var 0xc836 mtrans
 var 0x9c10 pr_button
 var 0x972e pr_mclick
@@ -2138,3 +2138,16 @@ cmt 0xfe6a0e ev_multi's fast button test: more than ONE change posted ($c836, si
 cmt 0xfe6b40 ev_multi's message wait: a QPB in its own frame (-8(a6): rlr's pid, 16, the buffer), queued BEFORE the timer's wait; its address stays in the EVB after the EVB is freed
 cmt 0xfe6ba8 ev_rets called BEFORE ev_multi's aprets: the buttons it answers are the previous call's leftover ($c792)
 cmt 0xfe40e0 mwait resumes here, past its call of dsptch: where a process that waited continues once the dispatcher runs it again (addrs.h AES_ROM_EV_MWAIT_RESUMED; the woken cases' stop)
+# ---- AES band 4 wave 3 step T (2026-10-08): the event tape, gemaplib's ap_tplay and ap_trecd (src/aes/aptape.c) ----
+# bodies read and differential on the host's scheduler and on both blobs (test/test_aes_aptape.py); gl_play 0x9800 (above) loses its ctx tag
+fn 0xfe6610 ap_tplay
+fn 0xfe6766 ap_trecd
+cmt 0xfe6610 ap_tplay(records.l, count.w, scale.w): dsptch FIRST, nothing stored before it; gl_play := 0; gl_mx / gl_my := xrat / yrat; per record (lbcopy'd byte-wise to a frame local, switch on the code's LOW WORD): 0 ev_timer(data * 100 / scale, lmul then ldiv) and no fork; 1 bchange; 2 mchange (gl_play clear: vex_curv THEN vex_motv := justretf $fed424, the displaced routines -> $947a / $9bbc; gl_play := 1); 3 kchange; any other number queued AS IT IS (a code address forker calls); forkq(code, data) if code; dsptch after each record. At the end, if gl_play: vex_curv then vex_motv put back, gl_play := 0. Sets no D0. A count <= 0 plays nothing (after the first dsptch); a scale of 0 is ldiv's divs.w by zero (vector 5)
+cmt 0xfe6766 ap_trecd(records.l, count.w): under spl7 gl_recd := 1, gl_rlen := count, gl_rbuf := records; while gl_recd: ev_timer(100); under spl7 gl_recd := gl_rlen := 0, n := (word)(gl_rbuf - records) / 8 (a signed word divide), gl_rbuf := 0; then each of the n records' code, a fork function's address as forker copied it, becomes its number: tchange 0, bchange 1, mchange 2, kchange 3 (none of the four: 0 — the compare against tchange decides nothing). D0.w := n (the high word is not set: $00fe, the last code the loop loaded, after a record numbered; the distance's, 0, after none). A count <= 0 records all the same: forker counts gl_rlen down past 0 ($fe4ca4) — so a recording can pass 32,767 bytes, and then n is NEGATIVE (4,110 records: D0.w = $f00e) and NO record is numbered ($fe6812 cmp.w d6,d5 / blt): the buffer keeps the fork functions' addresses
+var 0x9bbc tplay_old_motv
+var 0xc852 gl_mx
+var 0xc854 gl_my
+cmt 0xc852 gl_mx / gl_my ($c854): where the mouse was when a playback began — stored by ap_tplay after its first dsptch ($fe662c, $fe6636), read by nothing in this ROM
+var 0xc79a gl_recd
+var 0x9728 gl_rlen
+var 0x96ee gl_rbuf

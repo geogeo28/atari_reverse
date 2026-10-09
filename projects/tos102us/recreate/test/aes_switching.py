@@ -319,8 +319,10 @@ def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None
 # interrupt}`, as `aes_switch.scheduled` takes them). Everything else is DERIVED from the ROM's own runs.
 # `answered` False for a routine that sets no D0 on the row's arm (it leaves its caller's, which no C is handed).
 # `at_polls`: `{poll: interrupt}` — what arrives at a poll of the dispatcher that is no idle (`aes_switch.scheduled`).
-SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls",
-                          defaults=(True, None, None, None))
+# `budget`: the row's own derivation budget, DECLARED from its measured run (`aes_event._budget_of`: a session too long
+# for the default's margin — the file selector's); every ROM run that derives the row is held to it, both ways.
+SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls budget",
+                          defaults=(True, None, None, None, None))
 NO_FRAME = b""                          # a routine of no argument: nothing at the first argument's place
 # What a registered row keeps (`aes_event.SWITCHING_ROWS`): the row, its settled machine, its Tier 3 drops, what its
 # run is taken through, the processes the ROM's dispatcher enters, its deliveries derived again, and the QPB
@@ -354,7 +356,7 @@ def _staged(row):
 def scheduled(row, pokes):
     """The ROM's own run of `row` through its dispatcher over `pokes` (its machine, staged): `aes_switch.scheduled`."""
     return aes_switch.scheduled(_entry(row), pokes.get(abi.FIRST_ARG, NO_FRAME), pokes, row.at_idle,
-                                at_calls=row.at_calls, at_polls=row.at_polls)
+                                at_calls=row.at_calls, at_polls=row.at_polls, budget=row.budget)
 
 
 def switches_of(reference):
@@ -421,13 +423,13 @@ def left_by(name, arguments, machine, at_idle):
 
 
 @derived.kept
-def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None):
+def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, budget=None):
     """A switching row SETTLED FROM THE ROM'S OWN RUNS (a derivation, kept by content): the scheduled run takes the
     interrupts (`aes_switch.scheduled`: what is delivered at which idle, how many idles, who is entered); its replay
     — one watched run laying them at no cost — is the run every shore is compared with, and its write ledger says
     which bytes of the windows that differ by nature it stored: each staged at the value it leaves, and the row's
     Tier 3 drops cut to them (`aes_event.settled_in_windows`: the one settling)."""
-    row = SwitchingRow("", name, arguments, lambda: machine, at_idle, at_calls=at_calls, at_polls=at_polls)
+    row = SwitchingRow("", name, arguments, lambda: machine, at_idle, at_calls=at_calls, at_polls=at_polls, budget=budget)
     staged = _staged(row)
     reference, watch, final, writes = _replayed(row, staged)
     switches = watch.switches
@@ -475,7 +477,8 @@ def qpb_address_drops(qpbs):
 
 def settled(row):
     """`row`'s `Settled`: its machine, its Tier 3 drops, what its run is taken through, who the dispatcher enters."""
-    return _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls)
+    return _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
+                    *((row.budget,) if row.budget else ()))
 
 
 def rederived(row):
@@ -544,17 +547,21 @@ def register(label, name, arguments, machine, at_idle=None, *, answered=True, at
     return register_row(SwitchingRow(label, name, arguments, machine, at_idle, answered, at_calls, door, at_polls))
 
 
-def register_row(row):
+def register_row(row, under=None):
     """`row` (a `SwitchingRow`) REGISTERED (`aes.ROWS`, `aes_event.SWITCHING_ROWS`) — THE ONE REGISTRAR every
-    battery's own ends on (the pilots', the waits', ev_multi's, the door users'): settled from the ROM's own runs,
-    its `Switches` the ninth field every run of it is taken through, its by-nature windows dropped at Tier 3 with
-    the companion a drop needs. The row as registered."""
+    battery's own ends on (the pilots', the waits', ev_multi's, the door users', the sliced sessions'): settled from
+    the ROM's own runs, its `Switches` the ninth field every run of it is taken through, its by-nature windows
+    dropped at Tier 3 with the companion a drop needs. `under`: THE NAMES it is registered under where they are not
+    its one own (`row_name`) — a session cut into slices (`aes_event.register_woken_slices`): one settling, ONE
+    `Registered` and one companion under every name. The row as registered."""
     row = row._replace(arguments=tuple(row.arguments), at_idle=dict(row.at_idle or {}))
     made = settled(row)
-    aes_event.SWITCHING_ROWS[row_name(row)] = Registered(row, made.pokes, made.drops, made.switches, made.entered,
-                                                         functools.partial(rederived, row), made.qpbs)
-    aes.ROWS.register(row_name(row), _entry(row), made.pokes, dropped=made.drops,
-                      undropped=functools.partial(companion, row), delivered=made.switches, answered=row.answered)
+    held = Registered(row, made.pokes, made.drops, made.switches, made.entered, functools.partial(rederived, row), made.qpbs)
+    undropped = functools.partial(companion, row)
+    for name in under or (row_name(row),):
+        aes_event.SWITCHING_ROWS[name] = held
+        aes.ROWS.register(name, _entry(row), made.pokes, dropped=made.drops, undropped=undropped, delivered=made.switches,
+                          answered=row.answered)
     return row
 
 

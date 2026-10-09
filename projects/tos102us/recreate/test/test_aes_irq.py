@@ -312,10 +312,16 @@ def test_the_differential_sees_the_register_file_an_arrival_hands(blob):
 INSTALLERS = (("aes_gsx_setmb_aes", "over the defaults"), ("aes_gsx_graphic", "back into graphics"),
               ("aes_gsx_init", "the AES's start-up"))
 INSTALLER_S_FILE = "gsxif.c"
+# ...AND HANDED TO THE VDI BY A PLAYBACK: ap_tplay's two sites (the bare `rts` as the cursor routine and as the motion
+# routine), C since band 4 wave 3 — `draws_nothing()` (`aes/aptape.h`: this build's justretf on target). What holds it
+# on a blob is the scan below and the playbacks' own rows, where contrl[9..10] is compared exactly
+# (`test_aes_aptape.py`).
+PLAYBACK_S_FILE = "aes/aptape.h"
 # The ROM's sites that name an entry of the switch's kind BY VALUE and whose routine is NOT reconstructed yet (census
 # (b), `test_aes_rom_data.CODE_IMMEDIATES`): gem_main's two (the bare `rts` into AES_DRWADDR, the tick glue into the
-# longword it later hands vex_timv), the two `pea gotopgm` of the accessory loader and the shell's launch, and
-# ap_tplay's two (the bare `rts` handed to the VDI). Each must name OUR entry the day its routine is C.
+# longword it later hands vex_timv) and the two `pea gotopgm` of the accessory loader and the shell's launch. Each
+# must name OUR entry the day its routine is C — and leave this list that day
+# (`test_aes_rom_data.test_a_row_is_owed_by_a_file_exactly_when_its_routine_is_c`).
 def _entry_named(value):
     """The entry of the switch's kind whose ROM bytes hold the address `value`, or None."""
     return next((name for name, row in ENTRIES.items() if row.rom <= value < row.rom + row.bytes), None)
@@ -327,9 +333,12 @@ _NAMING_AN_ENTRY = {site: (_entry_named(immediate.value), immediate.owed_by)
                     for site, immediate in rom_census.CODE_IMMEDIATES.items() if _entry_named(immediate.value)}
 OWED_BY_ROUTINES_NOT_RECONSTRUCTED = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by is None}
 INSTALLED_BY = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by == INSTALLER_S_FILE}
-INSTALLER_S_SITES, SITES_OWED = 2, 6
-assert (len(INSTALLED_BY), len(OWED_BY_ROUTINES_NOT_RECONSTRUCTED)) == (INSTALLER_S_SITES, SITES_OWED)
+HANDED_BY_A_PLAYBACK = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by == PLAYBACK_S_FILE}
+INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED = 2, 2, 4
+assert (len(INSTALLED_BY), len(HANDED_BY_A_PLAYBACK), len(OWED_BY_ROUTINES_NOT_RECONSTRUCTED)) == (
+    INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED)
 assert set(INSTALLED_BY.values()) == set(switch.GLUE_ENTRY_SYMBOLS.values())
+assert set(HANDED_BY_A_PLAYBACK.values()) == {"aes_rom_justretf"}
 
 
 def _rom_addresses_named_in(blob):
@@ -362,13 +371,15 @@ def test_the_scan_finds_a_rom_address_a_blob_names(blob):
 
 def test_every_rom_site_that_names_the_glue_by_value_is_installed_or_owed():
     """THE LIST, held to the census of the ROM's own immediates: every instruction of the AES that names an entry of
-    the switch's kind as a VALUE is either gsx_setmb_aes's (installed above) or one of a routine not reconstructed
-    yet, by address — a new site, or one ported and not re-pointed, is neither."""
+    the switch's kind as a VALUE is gsx_setmb_aes's (installed above), ap_tplay's (handed to the VDI by a playback)
+    or one of a routine not reconstructed yet, by address — a new site, or one ported and not re-pointed, is none."""
     import test_aes_rom_data as census
     named = {site: _entry_named(row.value) for site, row in census.CODE_IMMEDIATES.items() if _entry_named(row.value)}
-    assert named == {**OWED_BY_ROUTINES_NOT_RECONSTRUCTED, **INSTALLED_BY}
+    assert named == {**OWED_BY_ROUTINES_NOT_RECONSTRUCTED, **INSTALLED_BY, **HANDED_BY_A_PLAYBACK}
     for site in INSTALLED_BY:
-        assert census.CODE_IMMEDIATES[site].owed_by == "gsxif.c"
+        assert census.CODE_IMMEDIATES[site].owed_by == INSTALLER_S_FILE
+    for site in HANDED_BY_A_PLAYBACK:
+        assert census.CODE_IMMEDIATES[site].owed_by == PLAYBACK_S_FILE
     for site in OWED_BY_ROUTINES_NOT_RECONSTRUCTED:
         assert census.CODE_IMMEDIATES[site].owed_by is None, f"${site:x}: ported — it must name our entry, and leave this list"
 

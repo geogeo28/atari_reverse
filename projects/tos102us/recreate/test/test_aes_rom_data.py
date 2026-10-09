@@ -28,11 +28,12 @@ import shutil
 import struct
 from collections import namedtuple
 
-from harness import addrs
+from harness import _lib, addrs
 
 import aes
 import aes_event
 import rom_data
+import routines
 from rom_data import CODE, DISTANCE, RETURN_SITE, TABLE
 
 AES = rom_data.component("aes")
@@ -92,8 +93,13 @@ ROM_ADDRESSES_AS_DATA = {
     "evlib.c": {"AES_DCLICK_MS_TABLE": TABLE},
     # The FORK FUNCTIONS' addresses, a queue entry's code: what the ROM's own interrupts queue and the host's forkq
     # callers store — off target; on target each is the function's own entry (`staged_call.h`'s ALCYON_ROUTINE). Three
-    # of the four: mchange is queued by the motion vector's glue alone (`irq.S`, which pushes the function's own entry).
+    # of the four: mchange is queued by the motion vector's glue (`irq.S`, which pushes the function's own entry) and
+    # by a playback (`aes/aptape.h`, below).
     "aes/evfork.h": {"AES_ROM_KCHANGE": CODE, "AES_ROM_BCHANGE": CODE, "AES_ROM_TCHANGE": CODE},
+    # ...the fourth, which a PLAYBACK queues from C (ap_tplay's mouse record; ap_trecd compares against all four) — and
+    # the routine that draws nothing, which ap_tplay hands the VDI as its cursor and its motion routine: off target
+    # the ROM's addresses, on target `aes_mchange_fork` and `aes_rom_justretf` (ALCYON_ROUTINE).
+    "aes/aptape.h": {"AES_ROM_MCHANGE": CODE, "AES_ROM_JUSTRETF": CODE},
 }
 
 
@@ -144,8 +150,8 @@ CODE_IMMEDIATES = {
     0xFE5D68: Immediate(addrs.AES_ROM_MKRECT, "newrect: mkrect, everyobj's routine", "wrect.c"),
     0xFE6216: Immediate(0xFE8340, "the dispatcher's graf_growbox arm (ctx): gr_growbox"),
     0xFE621E: Immediate(0xFE837A, "the dispatcher's graf_shrinkbox arm (ctx): gr_shrinkbox"),
-    0xFE6698: Immediate(0xFED424, "ap_tplay: the bare `rts` as a vex routine (set_contrl_ptr)"),
-    0xFE66B6: Immediate(0xFED424, "ap_tplay: ...and again"),
+    0xFE6698: Immediate(0xFED424, "ap_tplay: the bare `rts` as a vex routine (set_contrl_ptr)", "aes/aptape.h"),
+    0xFE66B6: Immediate(0xFED424, "ap_tplay: ...and again", "aes/aptape.h"),
     0xFE8844: Immediate(addrs.AES_ROM_MOTION_GLUE, "gsx_setmb_aes: the mouse-motion interrupt glue, for vex_motv", "gsxif.c"),
     0xFE884A: Immediate(addrs.AES_ROM_BUTTON_GLUE, "gsx_setmb_aes: the button interrupt glue, for vex_butv", "gsxif.c"),
     0xFEA08C: Immediate(addrs.AES_ROM_JUST_DRAW, "ob_draw: just_draw, everyobj's routine", "obdraw.c"),
@@ -220,13 +226,51 @@ def test_code_bytes_are_an_instruction_s_own_operand():
 
 
 def test_a_ported_row_is_its_file_s_code():
-    """A row of (b) a port now owes names its file, whose census (a) lists the routine as CODE."""
-    constants = {path.name: rom_data.constants_of(path) for path in AES.scanned().values()}
+    """A row of (b) a port now owes names its file — BY ITS KEY IN CENSUS (a): a source's name, a header's
+    `aes/<name>.h` — whose census lists the routine as CODE."""
+    constants = {key: rom_data.constants_of(path) for key, path in AES.scanned().items()}
     for site, row in CODE_IMMEDIATES.items():
         if row.owed_by is None:
             continue
         codes = {constants[row.owed_by][name] for name, kind in ROM_ADDRESSES_AS_DATA[row.owed_by].items() if kind == CODE}
         assert row.value in codes, f"${site:x}: {row.owed_by} does not list ${row.value:x} as CODE"
+
+
+def _the_c_routine_holding(site):
+    """The `addrs.h` name of THE AES ROUTINE WITH A C CORE whose ROM body holds the instruction at `site`, or None: the
+    nearest entry at or below it that the candidate library exports a core of, where its body — to its one exit
+    (`rom_body`) — reaches the site. A routine between the two that is not C ends the nearer one's body first."""
+    from test_aes_evfork_interrupted import rom_body
+
+    in_c = {getattr(addrs, name): name for name in dir(addrs)
+            if routines.is_routine(name, (routines.AES_PREFIX,)) and hasattr(_lib, routines.core_symbol(name))}
+    at_or_below = [entry for entry in in_c if entry <= site]
+    if not at_or_below:
+        return None
+    entry = max(at_or_below)
+    last_instruction, _length, _text = rom_body(entry)[-1]
+    return in_c[entry] if site <= last_instruction else None
+
+
+def test_a_row_is_owed_by_a_file_exactly_when_its_routine_is_c():
+    """THE RULE `owed_by` STANDS ON, which nothing held (ap_tplay's two rows stood "owed by nobody" beside its C): a
+    row whose routine HAS A C CORE names the file whose C owes the value, and a row that names a file is of a
+    routine that has one. A port that forgets its rows reds here, by site."""
+    held_by = {site: _the_c_routine_holding(site) for site in CODE_IMMEDIATES}
+    forgotten = {f"${site:x}": held_by[site] for site, row in CODE_IMMEDIATES.items() if held_by[site] and row.owed_by is None}
+    assert not forgotten, f"rows of routines that are C, owed by nobody: {forgotten} — name the file (`owed_by`)"
+    unported = {f"${site:x}": row.owed_by for site, row in CODE_IMMEDIATES.items() if row.owed_by and not held_by[site]}
+    assert not unported, f"rows owed by a file whose routine has no C core: {unported}"
+
+
+def test_the_routine_holding_a_site_is_read_off_the_rom_s_own_text():
+    """...AND THAT RULE'S OWN RED: ap_tplay's first immediate lies in ap_tplay, which is C; the instruction after
+    ap_tplay's exit lies in no C routine's body though an entry with a core stands below it (ap_tplay's own); and
+    gem_entry's lie below every C core."""
+    assert _the_c_routine_holding(0xFE6698) == "AES_ROM_AP_TPLAY" == _the_c_routine_holding(addrs.AES_ROM_AP_TPLAY)
+    assert addrs.AES_ROM_AP_TPLAY < addrs.AES_ROM_AP_TRECD - aes.WORD_BYTES
+    assert _the_c_routine_holding(addrs.AES_ROM_AP_TRECD - aes.WORD_BYTES) == "AES_ROM_AP_TPLAY"    # its exit, the last word
+    assert _the_c_routine_holding(0xFE6216) is None and _the_c_routine_holding(0xFD9F86) is None
 
 
 def test_a_planted_immediate_naming_aes_code_is_found(tmp_path):

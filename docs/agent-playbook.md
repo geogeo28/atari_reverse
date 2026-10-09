@@ -346,6 +346,41 @@ measured in this workspace rather than imagined.
   for ever, the test passes, and a whole tail goes unexercised. Try every kind of stimulus the
   driver has, each alone, against every member of the class — and prove the sweep is not vacuous
   by showing each kind wake a wait of its own kind.
+- **...and "each alone" is the sweep's own blind spot: hold it to rediscover EVERY positive the
+  suite already knows.** One stimulus at one delivery point answers nothing for an outcome that
+  takes several in turn. Measured (TOS 1.02, band 4 wave 3): the sweep above woke nothing for
+  sixteen blocked calls that registered rows DO wake (a message only another process's three-step
+  menu chain writes; a delay queued behind three others), so its silence over the "never woken"
+  table proved less than it said. Per-kind non-vacuity did not show it. The test that does: for
+  every case the batteries take to a return, SOME member of the sweep must return it too — then
+  add sequences until that holds. And where the stated reason is "only another process could",
+  turn the sentence into a predicate read off the machine (who holds the lock, who is parked, who
+  could write the pipe), with a RED that it is false of a machine it does not describe.
+- **A ledger pinned by COUNT is satisfied by the wrong names.** A status file that says "N rows
+  do X" and a test that re-derives N passes with a row renamed, a row swapped for another of the
+  same routine, or a ratio quoted under its neighbour's name. Pin the names both ways (the ledger
+  lists exactly what the registry holds). Measured (same wave): the day the pin went from counts
+  to names it found four row names the ledger had paraphrased under twelve green tests.
+- **...and a pin by NAMES compared as SETS is satisfied by a row listed twice in place of another,
+  and says nothing of the number beside each name.** Hold the list as a list (no name twice, as
+  long as the count the same row states), hold each name to ITS OWN number in the generated table
+  (not "a number measured for that address"), and refuse a second row for one key rather than
+  read it over the first. Each of the three was a green wrong ledger the day the names were
+  pinned (same wave's gate); each has a RED on a made ledger now.
+- **A sweep's "nothing returned in the caller" is not "nothing wakes it": pin every answer the
+  sweep can give.** A run that ENDS IN ANOTHER PROCESS (a harness-parked process un-parked by the
+  stimulus, its continuation the harness's sentinel) ended before the waiter could be seen woken
+  or not; a sequence the run never TAKES (it makes no such delivery point) says nothing. Folded
+  into "did not return", both read as evidence. Measured (same gate): two "never woken" lock
+  waits were un-parked-holder runs — an UNPINNED TAIL, not an unwakeable wait — and three of the
+  26 members were never delivered on them. Give the scenario a real (ROM-run) holder, or write
+  "unpinned".
+- **"Unreachable" in an equivalence argument is a claim about the ORIGINAL, and is usually true
+  only of the battery's buffer.** "More than 4,095 records cannot be recorded" was true of the
+  64-byte band the cases shared; the original records until told to stop, and any free RAM is a
+  buffer. Two mutants "equivalent on every reachable machine" answered `$100e` for the ROM's
+  `$f00e` once the long run was simply made (ten seconds). Before accepting a survivor as
+  equivalent, try to BUILD the machine the argument says cannot exist.
 
 ### A measured survivor is a finding about the SURFACE, not a licence
 

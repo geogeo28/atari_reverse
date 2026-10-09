@@ -2264,9 +2264,11 @@ class DoorWindows(aes_event.DoorStops):
         return ForeignInside(_cycles_in(AES_OWN_SPANS), self._own(), self._glue())
 
     def foreign_window_opened(self):
+        super().foreign_window_opened()         # ...a marked run's marks are told too (`aes_event.Marks`)
         self._window_at = self._counts_so_far()
 
     def foreign_window_closed(self):
+        super().foreign_window_closed()
         window = ForeignInside(*(now - then for now, then in zip(self._counts_so_far(), self._window_at)))
         self._window_at = None
         if self.between_calls:
@@ -2570,8 +2572,7 @@ class RomBench(rom_bench.RomBench):
         ONLY WHAT OUR RUN PUSHED IS PUT BACK (`_pushed_from_the_top`): the frames it stored down from the stack's
         top. A store of ours anywhere else in the span — a word parked at a wrong address under its frames — stays
         in the image, and differs."""
-        self._put_back = tuple((lo, hi) for lo, hi in spans_put_back()
-                               if any(lo <= at and upto <= hi for at, upto, _why in dropped))
+        self._put_back = put_back_for(dropped)
         try:
             return super().measure(entry, symbol, *args, dropped=dropped, **kwargs)
         finally:
@@ -2659,6 +2660,11 @@ OUR_RUN = []
 def spans_put_back():
     """The `(lo, hi)` spans a row may ask our image be given back over (`RomBench.measure`): the dispatcher's stack."""
     return frozenset({aes_event.DISPATCHER_STACK})
+
+
+def put_back_for(dropped):
+    """...and the ones a row that drops `dropped` DOES ask for: each span it names a drop inside."""
+    return tuple((lo, hi) for lo, hi in spans_put_back() if any(lo <= at and upto <= hi for at, upto, _why in dropped))
 
 
 def text_span(elf):
@@ -2896,11 +2902,16 @@ def _our_marks(row, blob, glue, **marked):
 
 def _differing_at_a_mark(row, blob):
     """How two memories at a slice's end are compared: everywhere the bench's second differential compares the final
-    images — outside the oracle's stack band, the blob's span and the row's drops."""
+    images — outside the oracle's stack band, the blob's span and the row's drops. A SESSION THAT SWITCHES drops
+    what a switching row drops (its saved context, the mask word, a bracket's SR word: `row.dropped`), AND AT A MARK
+    THE DISPATCHER'S STACK WHOLE: our image is given back over it only as the run ENDS (`put_back_for`: the frames
+    our build pushed there, deeper than the ROM's) — until then it holds them, where the ROM's run stored nothing."""
     relocations = code_relocations(blob.elf, row.symbol)
+    not_yet_put_back = put_back_for(row.dropped)
 
     def excluded(address):
-        return blob.base <= address < blob.end or any(lo <= address < hi for lo, hi, _why in row.dropped)
+        return (blob.base <= address < blob.end or any(lo <= address < hi for lo, hi, _why in row.dropped)
+                or any(lo <= address < hi for lo, hi in not_yet_put_back))
 
     def differing(ours, original):
         # ...and a code address OUR shore holds as the image of the ROM's is no difference (`code_relocations`).
@@ -2930,10 +2941,28 @@ def _priced_on_its_slice(row, blob, original, windows, original_marks=None, our_
     sliced.rebound_own = (sum(windows.own_inside[first:last]), sum(original.own_inside[first:last]))
     sliced.rebound_glue = sum(windows.glue_inside[first:last])
     sliced.own_cycles = (ours["blob"] - ours["glue"] - overhead[1], the_rom_s["aes"] - overhead[1])
+    sliced.foreign = _foreign_inside_the_slice(who, our_marks, original_marks)
     shared, original_shared = shared_cycles(sliced)
     assert shared == original_shared, (
         f"{who}: inside its slice the OS both sides run cost ours {shared} cycles and the ROM's {original_shared}")
     return sliced
+
+
+def _foreign_inside_the_slice(who, our_marks, original_marks):
+    """THE FOREIGN WINDOWS INSIDE A SLICE (a session that switches: another process's turns between the slice's two
+    marks), as the slice's `Foreign` — in NEITHER shore's figures for it: a mark's totals are the row's own process's
+    (`aes_event.Marks`), so the slice's costs, its own cycles and its cap are net of them already, and nothing more
+    comes off here. HELD THE SAME ON BOTH SHORES, by name: as many windows, the same whole cycles, and no cycle of
+    our build inside one (the whole run was held to that window by window, `_vet_switched_alike`; this holds that
+    the two shores' marks put the same ones INSIDE this slice)."""
+    (windows, the_rom_s), (in_our_slice, ours) = (marks.foreign_inside(f"{who}: {whose}") for marks, whose in (
+        (original_marks, "the ROM's run"), (our_marks, "our run")))
+    in_ours = (in_our_slice, ours.get("cycles", 0), ours.get("blob", 0))
+    assert in_ours == (windows, the_rom_s.get("cycles", 0), 0), (
+        f"{who}: inside its slice our run holds {in_ours[0]} foreign window(s) of {in_ours[1]} cycles, {in_ours[2]} of "
+        f"them our build's, where the ROM's holds {windows} of {the_rom_s.get('cycles', 0)} — the two shores' marks do "
+        f"not put the same turns of another process inside the slice")
+    return Foreign(windows, the_rom_s.get("cycles", 0), the_rom_s.get("aes", 0))
 
 
 def _original_own_cycles(row):
@@ -2961,9 +2990,11 @@ def _held_through_the_os(row, bench, **marked):
     who = f"{row.symbol} / {row.case}"
     assert through_the_door or switches or not row.delivered, f"{who}: interrupts delivered at no door entry"
     assert row.delivered or not row.slice, f"{who}: a sliced row is taken through interrupts"
-    assert not (switches and row.slice), (
-        f"{who}: a session cut into slices whose run SWITCHES — a slice's marks are of one run of one process, and "
-        f"no mark is taken across a dispatch yet: price the session's switching call as a row of its own")
+    # (A SLICED SESSION THAT SWITCHES is marked through its door watch, which the dispatcher's watch holds as its
+    # inner one: no mark inside a foreign window, every mark's totals the row's own process's — `aes_event.Marks`.)
+    assert through_the_door or not row.slice, (
+        f"{who}: a sliced row whose run arrives at no door entry — its marks are taken by the door's watch, and this "
+        f"run has none")
     original = switched_original = None
     if through_the_door or switches:
         original, original_watched, original_own = _original_windows(row, **marked)

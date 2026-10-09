@@ -143,13 +143,41 @@ def test_return_answers_the_default_button(default):
     assert alert(default, STRING_AT, answered(RETURN, onto=THREE)).answer() == default
 
 
-@pytest.mark.parametrize("default", (0, 4), ids=("no default", "a default past the three buttons"))
-def test_return_with_no_default_button_waits_as_the_rom_s(default):
+# NO BUTTON THE DEFAULT, by the default asked for: the button the user then clicks, and the row's label.
+NO_DEFAULT = {
+    0: (2, "no button the default: Return taken, the next wait blocked; the second button clicked while it waits"),
+    4: (3, "a default past the three buttons: Return taken, the next wait blocked; the third clicked while it waits"),
+}
+
+
+def _three_buttons():
+    return merge_pokes(running(), THREE)
+
+
+def no_default_then_clicked(default):
+    """fm_alert with no button DEFAULT: Return, taken at the first wait, ends nothing and the next wait BLOCKS; the
+    user then clicks a button WHILE IT WAITS — the press wakes fm_do's wait, the watch of the button blocks in its
+    turn (the button still down, the mouse on it), and the rise ends the alert on that button."""
+    number, label = NO_DEFAULT[default]
+    values = (default, STRING_AT)
+    clicked = (move_to(*button_middle(number, values=values)), press)
+    return aes_event.woken_row(label, ALERT, values, _three_buttons, {0: clicked, 1: release}, Waits({0: key(RETURN)}),
+                               objects=True)
+
+
+@pytest.mark.parametrize("default", NO_DEFAULT, ids=("no default", "a default past the three buttons"))
+def test_return_with_no_default_button_waits_as_the_rom_s_and_a_click_then_answers(default):
     """No button DEFAULT — none asked for, or one past the last button, where find_obj's walk (by index, to the LASTOB
     fm_build puts on the last button) never reaches: Return is taken and the next wait blocks. The default past the
-    buttons is set on object 10, which is AES tree 2's root (the trees lie end to end): the ROM marks THAT DEFAULT."""
-    taken = interrupted(ALERT, (default, STRING_AT), merge_pokes(running(), THREE), {0: key(RETURN)})
-    assert not taken.returned
+    buttons is set on object 10, which is AES tree 2's root (the trees lie end to end): the ROM marks THAT DEFAULT.
+    Up to the wait that blocks the C is the ROM's run where it blocks (the whole image at dsptch, every frame
+    handed) — AND ON THROUGH THE WAKES (`aes_event.blocked_then_woken`): a button clicked while the alert waits
+    answers it, the C through the host's model held to the ROM's own run through its dispatcher."""
+    held, ran = aes_event.blocked_then_woken(no_default_then_clicked(default))
+    waited = [call.routine for call in held.calls].count(addrs.AES_ROM_EV_MULTI)
+    assert held.calls[-1].routine == addrs.AES_ROM_EV_MULTI and waited == 2, "Return taken at the first wait: the SECOND blocks"
+    assert ran.answer == NO_DEFAULT[default][0]
+    assert set(ran.entered) == {ran.delivered.process} and ran.delivered.idles == len(ran.delivered.at_idles) == 2
 
 
 # A NEGATIVE DEFAULT. fm_alert checks no `def`: an application's form_alert(-1, ...) sets DEFAULT on object 5 (def + 6),
@@ -389,6 +417,9 @@ def _register_rows():
                                    (len(LONGEST_BUTTONS), STRING_AT),
                                    merge_pokes(running(shown=True), {STRING_AT: MAXIMUM_ALERT + b"\0"}),
                                    aes_event.typed(RETURN), objects=True)
+    # ...and THE ROWS THAT SWITCH: the wait no default leaves blocked, woken by a click (two waits blocked in turn).
+    for default in NO_DEFAULT:
+        aes_event.register_woken(no_default_then_clicked(default))
     for label, (string, values, pokes) in SHOWN.items():
         register(label, SHOW, (string, values, 1), answered(RETURN, onto=pokes))
     for error in range(ERALERT_ERRORS):

@@ -13,6 +13,8 @@ project is a DIRECTORY under `src/` (`src/xbios/`, later `src/bios/`, `src/gemdo
 import re
 from pathlib import Path
 
+import pytest
+
 REC = Path(__file__).resolve().parents[1]
 
 # `## Verified — <component> (N)`, and the `| `0xADDR` | ... | ✅ verified |` rows beneath it.
@@ -388,3 +390,334 @@ def test_every_count_of_the_rows_that_switch_is_the_registry_s():
     on_two_counts = sum(len(pairs) for pairs in _measured_two_counts().values())
     assert int(in_the_component["rows"]) == on_two_counts, (
         f"the Components table says {in_the_component['rows']} rows are held on two counts; the table holds {on_two_counts}")
+
+
+# ---- ...AND WHICH ROWS: the names, address by address ------------------------------------------------------------------
+# A count of rows that switch is right for a ledger that names the WRONG rows: one renamed in its battery, one
+# replaced by another of the same routine, a ratio quoted under a neighbour's name — all of them green above. Each
+# verified row's Tier 3 cell lists its switching rows BY NAME after `THE ROWS THAT SWITCH:` (a routine all of whose
+# rows switch lists them all there) — or after `THE ROWS THAT SWITCH (each the table's `<prefix>…`):`, where every
+# one of them opens with the same words and the cell says them once (ev_multi's forty-five). Held, both ways:
+#   * THE NAMES, the stated prefix put back, are the registry's;
+#   * THE LIST IS A LIST: no name twice, and as many as the Cases cell counts (a set forgave a row listed twice
+#     where another was missing from a cell whose count was right);
+#   * EACH NAME'S RATIO IS ITS OWN: `**0.66** <name>` is the ratio the table prints on THAT row, and
+#     `**0.66 / 0.32** <name>` the two counts it prints under it (a ratio quoted under a neighbour's name was one
+#     "measured for the address", which is all the Tier 3 column's own pin asks);
+#   * ONE VERIFIED ROW AN ADDRESS: a second one would be read over the first.
+THE_ROWS_THAT_SWITCH = "THE ROWS THAT SWITCH"
+_THE_ROWS_THAT_SWITCH_RE = re.compile(THE_ROWS_THAT_SWITCH + r"(?: \(each the table's `(?P<prefix>[^`]*?)…`\))?:")
+_STATUS_COLUMN = " | ✅ verified"
+# `**0.66** <the row's name> (`net`…)`: a name ends where its mechanism's tag opens (a name may hold parentheses).
+_A_QUOTED_ROW_RE = re.compile(r"\*\*(?P<ratios>\d+\.\d\d(?: / \d+\.\d\d)?)\*\* (?P<case>.+?) \(`(?:net|glue|through|pinned|over)[^)]*\)")
+# One measured row of the table with its NAME picked out: `<role> ($addr)  $addr  <name>  insns/cycles  insns/cycles  ratio`.
+_TABLE_NAMED_ROW_RE = re.compile(r"^\S.*?\s\$(?P<addr>f[c-e][0-9a-f]+)\s+(?P<case>.+?)\s+\d+/\d+\s+\d+/\d+\s+(?P<ratio>\d+\.\d\d)\s")
+_TWO_QUOTED = " / "
+
+
+def _names_of_the_registered_rows_that_switch():
+    """{ROM address: the names of the registered rows that switch of the routine there}, each as the table and the
+    ledger print it — the row's own label, without its routine."""
+    import aes_event
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    from harness import addrs
+
+    names = {}
+    for name, held in aes_event.SWITCHING_ROWS.items():
+        names.setdefault(getattr(addrs, held.row.name), set()).add(name.split(", ", 1)[1])
+    return names
+
+
+def _rows_the_ledger_lists_as_switching(status):
+    """{ROM address: [(the ratio(s) quoted, the name), …] in the order its verified row lists them after
+    THE_ROWS_THAT_SWITCH} — every row that says the words, each name with the prefix its cell states once. REFUSED:
+    a second verified row for an address."""
+    listed, seen = {}, set()
+    for row in _VERIFIED_LINE_RE.finditer(status):
+        address = int(row["addr"], 16)
+        assert address not in seen, f"{address:#x} has two `✅ verified` rows in STATUS.md: the second would be read over the first"
+        seen.add(address)
+        line = row[0][:row[0].index(_STATUS_COLUMN)]
+        said = _THE_ROWS_THAT_SWITCH_RE.search(line)
+        if said:
+            prefix = said["prefix"] or ""
+            listed[address] = [(case["ratios"], prefix + case["case"]) for case in _A_QUOTED_ROW_RE.finditer(line[said.end():])]
+    return listed
+
+
+def _table_s_ratios_by_name(table):
+    """{(ROM address, a row's name): (its ratio, its `own / the caller's own` where the table prints TWO COUNTS under
+    it)} out of the generated table's text."""
+    priced, last = {}, None
+    for line in table.splitlines():
+        row, counted = _TABLE_NAMED_ROW_RE.match(line), _TABLE_TWO_COUNTS_RE.match(line)
+        if row:
+            last = (int(row["addr"], 16), row["case"])
+            priced[last] = (row["ratio"], None)
+        elif counted and last:
+            priced[last] = (priced[last][0], f"{counted['own']}{_TWO_QUOTED}{counted['caller']}")
+    return priced
+
+
+def _counts_stated_of_rows_that_switch(status):
+    """{ROM address: the count of rows that SWITCH its Cases cell states} (0: none stated)."""
+    stated = {}
+    for row in _CASES_CELL_RE.finditer(status):
+        said = _SWITCH_IN_A_CASES_CELL_RE.search(row["cases"])
+        stated[int(row["addr"], 16)] = int(said["count"] or said["every"]) if said else 0
+    return stated
+
+
+def _wrongly_listed(status, registered, priced):
+    """What is wrong with the lists of rows that switch in `status` (a ledger's text), against `registered` (the
+    registry's names by address) and `priced` (`_table_s_ratios_by_name`): a line a complaint, by address."""
+    listed, counted, wrong = _rows_the_ledger_lists_as_switching(status), _counts_stated_of_rows_that_switch(status), []
+    for address in sorted(set(registered) | set(listed)):
+        rows = listed.get(address, [])
+        names = [name for _ratios, name in rows]
+        missing, stale = sorted(registered.get(address, set()) - set(names)), sorted(set(names) - registered.get(address, set()))
+        if missing or stale:
+            wrong.append(f"{address:#x}: registered and not listed {missing}; listed and not registered {stale}")
+        twice = sorted({name for name in names if names.count(name) > 1})
+        if twice:
+            wrong.append(f"{address:#x}: listed twice {twice}")
+        if len(names) != counted.get(address, 0):
+            wrong.append(f"{address:#x}: lists {len(names)} row(s) that switch; its Cases cell counts {counted.get(address, 0)}")
+        for ratios, name in rows:
+            ratio, two_counts = priced.get((address, name), (None, None))
+            its_own = two_counts if _TWO_QUOTED in ratios else ratio
+            if ratio is not None and ratios != its_own:
+                wrong.append(f"{address:#x}: quotes {ratios} for {name!r}; the table prints {its_own} for that row")
+            elif ratio is None and name in registered.get(address, ()):
+                wrong.append(f"{address:#x}: {name!r} is registered and the table prints no row of that name")
+    return wrong
+
+
+def test_every_routine_s_row_names_the_rows_that_switch_the_registry_holds():
+    """WHICH ROWS, NOT ONLY HOW MANY: for every routine the registry holds a switching row of, its verified row
+    lists exactly those rows by name after `THE ROWS THAT SWITCH:` — a row renamed, dropped or added in a battery
+    and not in the ledger reds by its name; no row lists a switching row the registry does not hold; none is listed
+    twice, and the list is as long as the Cases cell's count; and the ratio before each name is THAT ROW'S in the
+    table (`_wrongly_listed`)."""
+    wrong = _wrongly_listed(_status(), _names_of_the_registered_rows_that_switch(), _table_s_ratios_by_name(BENCH_TABLE.read_text()))
+    assert not wrong, (f"{len(wrong)} complaint(s) about the rows that switch STATUS.md lists (`{THE_ROWS_THAT_SWITCH}:` in the "
+                       f"Tier 3 cell) against the registry and {BENCH_TABLE.name}:" + "".join(f"\n  {line}" for line in wrong))
+
+
+_A_MADE_ROW = ("| `0xfe6874` | `ev_block` | 3 rows (2 of them SWITCH) | 1 / 2 | **0.70** a read of a full pipe (`net`); "
+               "THE ROWS THAT SWITCH: **0.67** woken by the screen manager's own write (the menu chain) (`net`, 1 foreign "
+               "window), **0.64** woken by Return at the first idle (`net`) | ✅ verified | notes: **0.99** not a row (`net`) |")
+_THE_MADE_ROW_S_NAMES = ("woken by the screen manager's own write (the menu chain)", "woken by Return at the first idle")
+_A_MADE_TABLE = """\
+AES ev_block ($fe6874)       $fe6874  a read of a full pipe                                       1030/11682    754/8520    0.70  net
+AES ev_block ($fe6874)       $fe6874  woken by the screen manager's own write (the menu chain)    111888/1175772  111340/1169694    0.67  net
+                                        TWO COUNTS: 0.67 / 0.31 (14628 against 21128) — own / the caller's own
+AES ev_block ($fe6874)       $fe6874  woken by Return at the first idle     2130/31730   1651/26282    0.64  net
+"""
+
+
+def test_the_parser_of_the_names_reads_a_name_with_parentheses_and_stops_at_the_status_column():
+    """THE READING, on a made row (RED for the parser itself: a name cut at its own parenthesis, or a note's
+    sentence after the status column read as a row, would hold the test above to the wrong sets) — and the made
+    table's: each row's name, its ratio, the two counts printed under it."""
+    by_name, by_return = _THE_MADE_ROW_S_NAMES
+    assert _rows_the_ledger_lists_as_switching(_A_MADE_ROW) == {0xFE6874: [("0.67", by_name), ("0.64", by_return)]}
+    # ...and a prefix the cell states once is put back before every name it lists.
+    stated_once = _A_MADE_ROW.replace("THE ROWS THAT SWITCH:", "THE ROWS THAT SWITCH (each the table's `blocked; …`):")
+    assert _rows_the_ledger_lists_as_switching(stated_once) == {
+        0xFE6874: [("0.67", f"blocked; {by_name}"), ("0.64", f"blocked; {by_return}")]}
+    assert _table_s_ratios_by_name(_A_MADE_TABLE) == {
+        (0xFE6874, "a read of a full pipe"): ("0.70", None), (0xFE6874, by_name): ("0.67", "0.67 / 0.31"),
+        (0xFE6874, by_return): ("0.64", None)}
+
+
+def test_a_wrong_list_of_the_rows_that_switch_is_refused_each_way():
+    """THE HOLD'S OWN REDs, on the made row against the made table (each of these ledgers was GREEN while the hold
+    compared two sets of names): the made row is right; A ROW LISTED TWICE in place of another is refused (twice,
+    and missing); a list longer than the Cases cell's count; A RATIO QUOTED UNDER A NEIGHBOUR'S NAME (each one
+    "measured for the address"); two counts that are not that row's; and A SECOND VERIFIED ROW FOR THE ADDRESS."""
+    registered, priced = {0xFE6874: set(_THE_MADE_ROW_S_NAMES)}, _table_s_ratios_by_name(_A_MADE_TABLE)
+    by_name, by_return = (f"**{ratio}** {name} (`net`" for ratio, name in zip(("0.67", "0.64"), _THE_MADE_ROW_S_NAMES))
+    assert by_name in _A_MADE_ROW and by_return in _A_MADE_ROW and _wrongly_listed(_A_MADE_ROW, registered, priced) == []
+
+    def complaints(ledger):
+        return " | ".join(_wrongly_listed(ledger, registered, priced))
+    twice_for_another = _A_MADE_ROW.replace(by_name, by_return)
+    assert "listed twice" in complaints(twice_for_another) and "registered and not listed" in complaints(twice_for_another)
+    once_more = _A_MADE_ROW.replace(by_return, f"{by_return}), {by_return}")
+    assert "listed twice" in complaints(once_more) and "its Cases cell counts 2" in complaints(once_more)
+    swapped = _A_MADE_ROW.replace("**0.67** woken", "**0.64** woken").replace("**0.64** woken by Return", "**0.67** woken by Return")
+    assert complaints(swapped).count("the table prints") == 2
+    assert _wrongly_listed(_A_MADE_ROW.replace("**0.67** woken", "**0.67 / 0.31** woken"), registered, priced) == []
+    assert "the table prints 0.67 / 0.31" in complaints(_A_MADE_ROW.replace("**0.67** woken", "**0.67 / 0.32** woken"))
+    assert "the table prints None" in complaints(_A_MADE_ROW.replace("**0.64** woken", "**0.64 / 0.64** woken"))
+    with pytest.raises(AssertionError, match="two `✅ verified` rows"):
+        _wrongly_listed(_A_MADE_ROW.replace("woken by Return", "A ROW THE REGISTRY DOES NOT HOLD") + "\n" + _A_MADE_ROW, registered, priced)
+
+
+# ---- ...AND THE OTHER COUNTS THE LEDGER STATES OF THE TABLE TODAY, each typed by hand until it was held here ------------------
+# Each is a PRESENT-TENSE statement in a fixed form (the wave logs further down quote history and are not held):
+#   * the Components cell: `the rows taken THROUGH INTERRUPTS (N, lo–hi — M of them SLICES of K sessions` — N the
+#     registry's (`aes_event.INTERRUPTED_ROWS`: it said 55 over a registry of 56), lo–hi their ratios in the table, M
+#     and K the sliced ones and their sessions;
+#   * a Cases cell that says `N rows (… M SLICES of K session(s)`: N the table's rows of that address, M and K the
+#     registry's (`aes_event.SLICED_ROWS`; a session is one record, interrupted or switching);
+#   * the two counts' paragraph, beside the summary held above: `(N on the unrounded cycles)`, `the HIGHER in N`,
+#     `N are over 1.00`;
+#   * `THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word `$8996` dropped by name in M of the rows
+#     that switch` — the table's rows with a window printed under them, the registry's rows whose drops name the word.
+_THROUGH_INTERRUPTS_RE = re.compile(r"THROUGH INTERRUPTS \((?P<rows>\d+), (?P<lo>\d\.\d\d)–(?P<hi>\d\.\d\d) — "
+                                    r"(?P<slices>\d+) of them SLICES of (?P<sessions>\d+) sessions")
+_SLICES_IN_A_CASES_CELL_RE = re.compile(r"^\s*(?P<rows>\d+) rows \(.*?(?P<slices>\d+)(?: of them)? SLICES of (?P<sessions>\d+) session")
+_UNROUNDED_RE = re.compile(r"\((?P<apart>\d+) on the unrounded cycles\), the caller's own is the HIGHER in (?P<higher>\d+), "
+                           r"and (?P<over>\d+) are over 1\.00")
+_THE_TABLE_TODAY_RE = re.compile(r"THE TABLE TODAY: a FOREIGN WINDOW in (?P<windows>\d+) of its rows; the save word `\$8996` "
+                                 r"dropped by name in (?P<saved>\d+) of the rows that switch")
+_A_WINDOW_UNDER_A_ROW_RE = re.compile(r"^\s+\d+ foreign window\(s\):", re.M)
+_OWN_CYCLES_RE = re.compile(r"own (?P<ours>\d+) cycles against the ROM's (?P<the_rom_s>\d+)")
+
+
+def _sessions_of(names):
+    """How many SESSIONS the sliced rows `names` are cut from: a session is ONE record of its registry, whichever."""
+    import aes_event
+
+    return len({id(aes_event.INTERRUPTED_ROWS[name] if name in aes_event.INTERRUPTED_ROWS else aes_event.SWITCHING_ROWS[name])
+                for name in names})
+
+
+def _sliced_rows_by_address():
+    """{ROM address: the names of the registered rows of the routine there that are SLICES} (`aes_event.SLICED_ROWS`)."""
+    import aes_event
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    from harness import addrs
+
+    sliced = {}
+    for name in aes_event.SLICED_ROWS:
+        held = aes_event.INTERRUPTED_ROWS.get(name) or aes_event.SWITCHING_ROWS[name].row
+        sliced.setdefault(getattr(addrs, held.name), []).append(name)
+    return sliced
+
+
+def test_the_rows_taken_through_interrupts_are_counted_as_the_registry_and_the_table_have_them():
+    """The Components cell's `THROUGH INTERRUPTS (N, lo–hi — M of them SLICES of K sessions`: the registry's rows
+    taken through interrupts at their door calls, the lowest and the highest ratio the table prints for them, and
+    how many of them are slices, of how many sessions."""
+    import aes_event
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    from harness import addrs
+
+    said = _THROUGH_INTERRUPTS_RE.search(_status())
+    assert said, "STATUS.md no longer counts the rows taken through interrupts (`THROUGH INTERRUPTS (N, lo–hi — M of them SLICES of K sessions`)"
+    interrupted, priced = aes_event.INTERRUPTED_ROWS, _table_s_ratios_by_name(BENCH_TABLE.read_text())
+    ratios = sorted(priced[(getattr(addrs, row.name), name.split(", ", 1)[1])][0] for name, row in interrupted.items())
+    sliced = [name for name in aes_event.SLICED_ROWS if name in interrupted]
+    assert said.groupdict() == {"rows": str(len(interrupted)), "lo": ratios[0], "hi": ratios[-1], "slices": str(len(sliced)),
+                                "sessions": str(_sessions_of(sliced))}, f"STATUS.md says {said[0]!r}"
+
+
+def test_a_cases_cell_that_counts_slices_counts_them_as_the_registry_does():
+    """`N rows (… M SLICES of K session(s)` in a verified row's Cases cell: N the rows the table prints for the
+    address, M the registered slices of its routine and K the sessions they are cut from — for every routine the
+    registry holds a slice of, both ways."""
+    sliced, stated = _sliced_rows_by_address(), {}
+    rows_priced = {}
+    for address, _name in _table_s_ratios_by_name(BENCH_TABLE.read_text()):
+        rows_priced[address] = rows_priced.get(address, 0) + 1
+    for row in _CASES_CELL_RE.finditer(_status()):
+        said = _SLICES_IN_A_CASES_CELL_RE.match(row["cases"])
+        if said:
+            stated[int(row["addr"], 16)] = tuple(int(said[group]) for group in ("rows", "slices", "sessions"))
+    held = {address: (rows_priced[address], len(names), _sessions_of(names)) for address, names in sliced.items()}
+    assert stated == held, (f"STATUS.md's Cases cells count (rows, slices, sessions) as { {hex(at): said for at, said in stated.items()} }; "
+                            f"the table and the registry hold { {hex(at): said for at, said in held.items()} }")
+
+
+def _own_and_caller_s_own_cycles():
+    """[((ours, the ROM's) own, (ours, the ROM's) the caller's own)] for every row the table holds on TWO COUNTS: the
+    own cycles its `whole run` line states, the caller's own its TWO COUNTS line states."""
+    counted, own = [], None
+    for line in BENCH_TABLE.read_text().splitlines():
+        if _TABLE_NAMED_ROW_RE.match(line):
+            own = None
+        elif _TABLE_TWO_COUNTS_RE.match(line):
+            pair = _TABLE_TWO_COUNTS_RE.match(line)
+            assert own, f"a TWO COUNTS line under a row that states no own cycles: {line.strip()[:80]}"
+            counted.append((own, (int(pair["ours"]), int(pair["the_rom_s"]))))
+        elif own is None and _OWN_CYCLES_RE.search(line):
+            stated = _OWN_CYCLES_RE.search(line)
+            own = (int(stated["ours"]), int(stated["the_rom_s"]))
+    return counted
+
+
+def test_the_two_counts_paragraph_counts_what_the_table_holds():
+    """...AND THE REST OF THE TWO COUNTS' SENTENCE (its first two numbers are held above): how many rows differ by
+    more than 0.05 ON THE CYCLES (not on the two decimals printed), in how many the caller's own is the higher, and
+    how many are over 1.00 — each the table's."""
+    said = _UNROUNDED_RE.search(" ".join(_status().split()))             # the sentence, whatever line it wraps at
+    assert said, ("STATUS.md no longer says `(N on the unrounded cycles), the caller's own is the HIGHER in N, and N are "
+                  "over 1.00` after its count of the rows that carry both")
+    pairs = [pair for pairs in _measured_two_counts().values() for pair in pairs]
+    cycles = _own_and_caller_s_own_cycles()
+    assert len(cycles) == len(pairs)
+    held = {"apart": sum(abs(own[0] / own[1] - caller[0] / caller[1]) > TWO_COUNTS_QUOTED_FROM for own, caller in cycles),
+            "higher": sum(float(caller) > float(own) for own, caller, _ours, _the_rom_s in pairs),
+            "over": sum(float(caller) > 1.00 for _own, caller, _ours, _the_rom_s in pairs)}
+    assert {name: int(count) for name, count in said.groupdict().items()} == held, f"STATUS.md says {said[0]!r}; the table holds {held}"
+
+
+def test_the_table_today_sentence_counts_the_windows_and_the_save_word_s_drops():
+    """`THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word `$8996` dropped by name in M of the rows
+    that switch`: the table's rows with a window printed under them, and the registered rows that switch whose
+    Tier 3 drops name the mask bracket's save word."""
+    import aes
+    import aes_event
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+
+    said = _THE_TABLE_TODAY_RE.search(" ".join(_status().split()))       # the sentence, whatever line it wraps at
+    assert said, "STATUS.md no longer has its `THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word …` sentence"
+    windows = len(_A_WINDOW_UNDER_A_ROW_RE.findall(BENCH_TABLE.read_text()))
+    saved = sum(any(lo <= aes.AES_SR_SPL < hi for lo, hi, _why in held.drops) for held in aes_event.SWITCHING_ROWS.values())
+    assert (int(said["windows"]), int(said["saved"])) == (windows, saved), (
+        f"STATUS.md says {said[0]!r}; the table has a window under {windows} rows and {saved} rows that switch drop the word")
+
+
+# ---- ...AND THE SECTION'S PROSE COUNTS OF ev_multi's ROWS -----------------------------------------------------------------
+# The paragraph that opens with EV_MULTI_S_PARAGRAPH counts ev_multi's rows three more times in running prose — `and
+# N WOKEN`, `Its N rows are all`, `the N that switch` — and its table row once more (`N WOKEN` in its notes). They
+# went stale under green tests once (the counts above held the Cases cell and the three sentences, not these). Held
+# here to the registry and to the row's own Cases cell. (The wave logs further down QUOTE HISTORY — "41 WOKEN" of the
+# retired hook — and are not held: only this paragraph and ev_multi's own row state the present.)
+EV_MULTI_S_PARAGRAPH = "ev_multi's TWIN IS HELD ON BOTH HALVES OF A WAIT:"
+_EV_MULTI = "AES_ROM_EV_MULTI"
+_WOKEN_RE = re.compile(r"\b(?P<count>\d+) WOKEN\b")
+_ITS_ROWS_RE = re.compile(r"\bIts (?P<count>\d+) rows are all\b")
+_THE_ONES_THAT_SWITCH_RE = re.compile(r"\bthe (?P<count>\d+) that switch\b")
+_ROWS_IN_A_CASES_CELL_RE = re.compile(r"^\s*(?P<count>\d+) rows\b")
+
+
+def _paragraph_from(status, opening):
+    assert opening in status, f"STATUS.md no longer has the paragraph that opens {opening!r}: the prose counts it held are unheld"
+    start = status.index(opening)
+    return status[start:status.index("\n\n", start)]
+
+
+def test_the_prose_counts_of_ev_multi_s_rows_are_the_registry_s_and_its_row_s():
+    """`and N WOKEN`, `the N that switch` — in the section's paragraph — and every `N WOKEN` of ev_multi's own table
+    row are the number of ev_multi's registered rows that switch; `Its N rows are all` is the row count its Cases
+    cell states (which the ledger's own tests hold to the table)."""
+    from harness import addrs
+
+    status, address = _status(), getattr(addrs, _EV_MULTI)
+    switching = _registered_rows_that_switch()[address]
+    paragraph = _paragraph_from(status, EV_MULTI_S_PARAGRAPH)
+    its_row = next(row for row in _VERIFIED_LINE_RE.finditer(status) if int(row["addr"], 16) == address)[0]
+    cases = next(row["cases"] for row in _CASES_CELL_RE.finditer(status) if int(row["addr"], 16) == address)
+    said = {"WOKEN, in the paragraph": [int(found["count"]) for found in _WOKEN_RE.finditer(paragraph)],
+            "that switch, in the paragraph": [int(found["count"]) for found in _THE_ONES_THAT_SWITCH_RE.finditer(paragraph)],
+            "WOKEN, in ev_multi's row": [int(found["count"]) for found in _WOKEN_RE.finditer(its_row)]}
+    assert all(said.values()), f"STATUS.md no longer counts ev_multi's woken rows where it did: {said}"
+    assert all(set(counts) == {switching} for counts in said.values()), (
+        f"STATUS.md's prose counts ev_multi's rows that switch as {said}; the registry holds {switching}")
+    its_rows = [int(found["count"]) for found in _ITS_ROWS_RE.finditer(paragraph)]
+    assert its_rows == [int(_ROWS_IN_A_CASES_CELL_RE.match(cases)["count"])], (
+        f"the paragraph says `Its {its_rows} rows`; ev_multi's Cases cell opens {cases.strip()[:40]!r}")

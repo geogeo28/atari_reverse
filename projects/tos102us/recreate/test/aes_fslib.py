@@ -284,11 +284,13 @@ PREFIX_BUDGET = 3_000_000
 Entered = namedtuple("Entered", "machine final registers insns")
 
 
-def fs_input_machine(path, selection="", shown=False):
+def fs_input_machine(path, selection="", shown=False, running=None):
     """What an application's fsel_input(path, selection, &button) starts from: PD0 running as the scheduler makes it —
     the cursor hidden by the application, or `shown` — over the staged disk (the one `path` is on, `disk_of`), the two
-    strings and the button word in this module's band."""
-    running = aes_event.shown_machine() if shown else aes_event.machine()
+    strings and the button word in this module's band. `running`: another ROM-made machine whose running process
+    makes the call (pokes: one only a run through the dispatcher makes — the screen's lock another process's)."""
+    if running is None:
+        running = aes_event.shown_machine() if shown else aes_event.machine()
     staged = disk_machine(disk_of(path), merge_pokes(aes.leaf_machine(), running, STALE_ANSWERS, STALE_SLOTS,
                                                      sh.text(PATH_AT, path, PATH_BYTES),
                                                      sh.text(FILE_AT, selection, FILE_BYTES)))
@@ -787,7 +789,7 @@ def whole_image(ram):
     return image
 
 
-Script = namedtuple("Script", "answers functions memory")
+Script = namedtuple("Script", "answers functions memory frames")
 
 
 def _frame_words(frame):
@@ -816,14 +818,21 @@ def _watched(watch, machine, budget, arguments=ARGUMENTS):
 def session_script(machine, interrupts, budget, arguments=ARGUMENTS, blocks=False):
     """The GEMDOS calls the ROM's fs_input makes over `machine` (a REAL-disk one, `fs_input_machine`) taken through
     `interrupts`, each answered by the ROM's own GEMDOS over the memory at the call: `Script(answers, functions,
-    memory)` — the replay's script (`replay_pokes`), the function each call is, in order, and the RAM the
-    real-disk run left (`ram_in`). `blocks`: the session is one that ends WAITING (nothing delivered at its last
-    wait), its memory then the run's as it reached the dispatcher."""
+    memory, frames)` — the replay's script (`replay_pokes`), the function each call is, in order, the RAM the
+    real-disk run left (`ram_in`), and THE FRAME EACH CALL WAS HANDED (its own bytes: what the answer was given
+    TO — a run answered from this script must hand the same, `frames_as_recorded`). `blocks`: the session is one
+    that ends WAITING (nothing delivered at its last wait), its memory then the run's as it reached the dispatcher."""
     delivered = aes_event.deliveries(INPUT, arguments, machine, interrupts, budget)
     watch = GemdosCalls(delivered, SESSION_ARGUMENT_BYTES)
     returned, memory = _watched(watch, machine, budget, arguments)
     assert returned != blocks, f"the session {'returned' if returned else 'blocks'}: the premise was the other"
-    return Script(answers_of(watch.made), tuple(function for function, _frame, _memory in watch.made), ram_in(memory))
+    return Script(answers_of(watch.made), tuple(function for function, _frame, _memory in watch.made), ram_in(memory),
+                  tuple(frame for _function, frame, _memory in watch.made))
+
+
+def frames_as_recorded(script):
+    """`script`'s frames as the replay's ledger records a call's (`replay_calls`): zero-padded to an entry's width."""
+    return tuple(frame.ljust(RECORDED_ARGUMENT_BYTES, b"\0") for frame in script.frames)
 
 
 def looping(machine, last_pass, budget=None, delivered=None):

@@ -291,6 +291,7 @@ import test_aes_irq                                         # noqa: E402,F401  (
 import test_aes_evdisp                                      # noqa: E402,F401  (disp_act, mwait_act, idle)
 import test_aes_evdisp_model                                # noqa: E402,F401  (the yield through the dispatcher)
 import test_aes_evmulti                                     # noqa: E402,F401  (evnt_multi)
+import test_aes_aptape                                      # noqa: E402,F401  (appl_trecord, appl_tplay)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

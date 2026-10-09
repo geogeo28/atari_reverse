@@ -1463,6 +1463,22 @@ def test_a_c_that_differs_where_an_interrupt_is_delivered_is_refused_by_name():
     assert returncode == aes_event.CHILD_DELIVERY_REFUSED and f"{target:#x}" in stderr, stderr
 
 
+def test_a_delivery_that_cannot_be_laid_ends_the_child_by_name_whatever_was_raised():
+    """THE RED for the guard round the whole of it (`aes_event._laid_into` runs inside the door's callback, where
+    nothing can be raised into C): the laying itself failing with anything but the check's own refusal — here a
+    KeyError — used to be printed by ctypes and SWALLOWED, the delivery not laid, the twin run on over a machine no
+    interrupt reached and the case reddened later, on bytes. The child now ends there, by name, with the harness's
+    own status (FORK_RAISED: never booked to the C)."""
+    name, arguments = WATCHED_OUTSIDE
+    machine = grwait.button_down()
+    delivered = aes_event.deliveries(name, arguments, machine, entered_then_released())
+    unlayable = "aes_event._lay = lambda *laid, **how: {}['a delivery no one can lay']; "
+    bind = aes_event.child_binding(objects=True, interrupts=delivered, before=unlayable)
+    returncode, stderr, _image = aes_event.refusal(name, machine, arguments, bind=bind)
+    assert returncode == aes_event.FORK_RAISED, stderr
+    assert aes_event.DELIVERY_NOT_LAID in stderr and "KeyError('a delivery no one can lay')" in stderr
+
+
 def test_a_delivery_lays_no_line_f_mask_word_into_the_c():
     """The C's image keeps the Line-F mask word as it found it at a delivery too (`aes_event.LINE_F_MASK_BYTES`):
     the AES's interrupt glue makes masked returns, so the ROM's deliveries write the word (the premise) — the C's final
@@ -2227,9 +2243,13 @@ def test_an_in_process_door_case_s_declared_budget_is_held_from_above_too():
 def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
     """A sliced row's deliveries are derived again (`rederived`, the snapshot's noise sweep) under the budget its
     registration declared — recorded with the row; every other registered row declares none. (The sliced rows are
-    fm_do's long typing session's and the file selector's sessions', each session with its own budget.)"""
+    fm_do's long typing session's and the file selector's sessions', each session with its own budget — the sessions
+    that SWITCH among them, whose record is the registrar's: `SwitchingRow.budget`.)"""
     declared = {row_name: row.budget for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row.budget}
+    declared.update({row_name: held.row.budget for row_name, held in aes_event.SWITCHING_ROWS.items() if held.row.budget})
     assert set(declared) == set(aes_event.SLICED_ROWS)
+    switching = {name for name in declared if name in aes_event.SWITCHING_ROWS}
+    assert switching and all(aes_event.session_of(name) is aes_event.SWITCHING_ROWS[name] for name in switching)
     fm_do_s = {row_name: budget for row_name, budget in declared.items() if row_name.startswith("aes_fm_do, ")}
     assert fm_do_s and set(fm_do_s.values()) == {fmdo.SESSION_INSNS}
     row_name = next(iter(fm_do_s))
@@ -4679,12 +4699,15 @@ THE_BRACKET_S_SAVE_WORD = "spl7_save's SR save word"
 # The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
 # woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
 # idle) and THE DOOR USERS' — each routine's wait that blocks, woken through the dispatcher (mn_do's three shapes,
-# fm_do's and gr_watchbox's two each).
+# fm_do's, gr_watchbox's and fm_alert's two each; fs_input's five are the SLICES of its two sessions the user is
+# waited for in, each slice a row).
 ROWS_THAT_SWITCH = {
     "aes_ap_rdwr": 2, "aes_ev_block": 12, "aes_ev_button": 2, "aes_ev_keybd": 1, "aes_ev_mesag": 1, "aes_ev_mouse": 1,
     "aes_ev_multi": 45, "aes_ev_mwait": 3, "aes_ev_timer": 4, "aes_unsync": 1,
     "aes_ap_sendmsg": 1, "aes_fm_button": 1, "aes_fm_do": 2, "aes_gr_dragbox": 1, "aes_gr_rubbox": 1, "aes_gr_slidebox": 1,
     "aes_gr_stilldn": 1, "aes_gr_wait": 1, "aes_gr_watchbox": 2, "aes_mn_do": 3, "aes_wm_update": 1,
+    "aes_fm_alert": 2, "aes_fs_input": 5,
+    "aes_ap_tplay": 8, "aes_ap_trecd": 6,
 }
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
@@ -4709,7 +4732,8 @@ BY_NATURE_CENSUS = {
     # No DOOR USER's row drops a bracket's word: none of them waits on a time, and no tick reaches tchange's
     # bracket on a path that does not wait.
     THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: ROWS_THAT_SWITCH, THE_DISPATCHER_S_STACK: ROWS_THAT_SWITCH,
-                           THE_BRACKET_S_SAVE_WORD: {"aes_ev_block": 1, "aes_ev_multi": 19, "aes_ev_timer": 4},
+                           THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 6, "aes_ev_block": 1, "aes_ev_multi": 19,
+                                                     "aes_ev_timer": 4},
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27}},
 }
 
@@ -4759,8 +4783,16 @@ def test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_
 # THE ONE DROP OF A KIND ITS RUN DOES NOT CHANGE: the timer behind three delays pending is queued over a machine the
 # ROM's own iasync made — three delays queued, each under spl7's bracket, which left its save word as this row's own
 # bracket stores it again: stored (so dropped: our build parks GCC's condition codes there), and equal.
-STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = (
-    "aes_ev_timer, behind three delays pending, blocked; run out a delay at a time", THE_BRACKET_S_SAVE_WORD)
+# ...AND EVERY PLAYBACK OF A TIMER RECORD (appl_tplay: `aes_aptape`): its machine is the one the ROM's own appl_trecord
+# left, whose last bracket (ap_trecd's own, disarming the recorder) parked the word the playback's adelay and tchange
+# park again.
+STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = {
+    ("aes_ev_timer, behind three delays pending, blocked; run out a delay at a time", THE_BRACKET_S_SAVE_WORD),
+    ("aes_ap_tplay, four records played: two moves, a wait, a press", THE_BRACKET_S_SAVE_WORD),
+    ("aes_ap_tplay, four records played slowly: the wait is twenty-five ticks", THE_BRACKET_S_SAVE_WORD),
+    ("aes_ap_tplay, a wait and a press played: no mouse record", THE_BRACKET_S_SAVE_WORD),
+    ("aes_ap_tplay, four records played, the cursor shown: the VDI's cursor routine queues each point", THE_BRACKET_S_SAVE_WORD),
+}
 
 
 def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_the_census_says_which():
@@ -4799,7 +4831,7 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
             # (held as that: dropped, and changed nowhere). A row drops what the run STORED — the kit's own rule, on
             # every measurement (`rom_bench.vet_dropped`) — so a second such pair is a finding to name here, not a
             # reason to stop asking.
-            if (name, kind) == STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS:
+            if (name, kind) in STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS:
                 assert inside and not changed, f"{name}: {kind} is no longer stored unchanged — the exemption is stale"
             else:
                 assert bool(inside) == bool(changed), f"{name}: a drop of {kind}, of which the ROM's run changes nothing"
@@ -5158,6 +5190,9 @@ def test_a_foreign_turn_is_not_laid_back_over_the_bytes_no_c_of_ours_stores(monk
 # the screen manager's ctlmgr) each of these owes a frame per process, as the two QPBs have — a new slot held across
 # a wait reds here until it is written in.
 STILLDN_S = ("AES_GR_STILLDN_RECTANGLE", "AES_GR_STILLDN_ANSWERS")
+# fm_alert parks under fm_do's wait and, a button pressed, under fm_button's watch of it; fs_input under fm_do's.
+FM_ALERT_S = ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME")
+FS_INPUT_S = ("AES_FM_DO_FRAME", "AES_FS_INPUT_FRAME")
 SLOTS_HELD_WHERE_PARKED = {
     "aes_gr_stilldn": STILLDN_S,
     "aes_gr_watchbox": (*STILLDN_S, "AES_GR_WATCHBOX_RECT"),
@@ -5170,13 +5205,20 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_fm_button": (*STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
     "aes_ap_sendmsg": ("AES_AP_RDWR_QPB, process 1",),             # the screen manager's own frame of it: per process
     "aes_wm_update": (),                                           # the lock's hand-over: nothing of a frame is live
+    "aes_fm_alert": FM_ALERT_S,                                    # fm_alert's own frame, fm_do's under it, the watch's
+    "aes_fs_input": FS_INPUT_S,                                    # fs_input's own frame, and fm_do's under it
 }
 A_SLOT_PER_PROCESS = ", process "
 
 
 def _door_users_that_switch():
+    """Every door user's registered row that switches, A SLICED SESSION ONCE (its slices are one record, one run)."""
     import test_boot_snapshot  # noqa: F401  (every battery registered)
-    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if held.row.door}
+    sessions = {}
+    for name, held in aes_event.SWITCHING_ROWS.items():
+        if held.row.door:
+            sessions.setdefault(id(held), (name, held))
+    return dict(sessions.values())
 
 
 def _modelled_again(held):
@@ -5283,3 +5325,131 @@ def test_the_door_serves_the_vdi_s_cursor_routine_on_the_register_hook_in_proces
     serve(ctypes.cast(buf, ctypes.POINTER(ctypes.c_uint8)), addrs.VDI_ROM_DEFAULT_USER_CUR, registers)
     assert final[:addrs.ST_RAM_BYTES] != make_image(machine)[:addrs.ST_RAM_BYTES], "the premise: the routine moves the cursor"
     assert not aes_event.differing(image, final), "the child's register hook ran the candidate's default_user_cur"
+
+
+# ---- A SLICE'S MARKS ARE ONE PROCESS'S — THE ROW'S (`aes_event.Marks`, a session that switches) ---------------------------
+A_WAIT = addrs.AES_ROM_EV_MULTI
+
+
+def _marks_over(totals, **marked):
+    """Marks at a session's waits 0 and 1, reading the running `totals` (a dict a case moves on by hand)."""
+    a_slice = aes_event.Slice(aes_event.door_call(A_WAIT, 0), aes_event.door_call(A_WAIT, 1))
+    return aes_event.Marks(a_slice, lambda: dict(totals), **marked)
+
+
+def _through_a_window(marks, totals, before=(10, 100), until=(15, 150), window=(100, 1000), then=(5, 50)):
+    """`marks` taken through: the slice's start, a stretch of the row's own, A FOREIGN WINDOW, another stretch."""
+    memory = bytes(1)
+    totals.update(insns=before[0], cycles=before[1])
+    marks.arrived(A_WAIT, 0, memory)
+    totals.update(insns=until[0], cycles=until[1])
+    marks.foreign_window_opened()
+    totals.update(insns=until[0] + window[0], cycles=until[1] + window[1])
+    return memory, (until[0] + window[0] + then[0], until[1] + window[1] + then[1])
+
+
+def test_a_mark_s_totals_are_the_row_s_own_process_s_net_of_every_foreign_window_before_it():
+    """What a slice SPENT is its two marks' difference in what THE ROW'S PROCESS spent: 10 instructions and 100
+    cycles here, whatever the screen manager's turn between them cost (100 and 1,000) — which is kept BESIDE the
+    slice (`foreign_inside`: one window, its totals), in no figure of it. The run's return is marked the same way."""
+    totals = {}
+    marks = _marks_over(totals, every_door_call=True)
+    memory, after = _through_a_window(marks, totals)
+    marks.foreign_window_closed()
+    totals.update(insns=after[0], cycles=after[1])
+    marks.arrived(A_WAIT, 1, memory)
+    assert marks.spent("the run") == {"insns": 10, "cycles": 100}
+    assert marks.foreign_inside("the run") == (1, {"insns": 100, "cycles": 1000})
+    marks.returned(2)
+    at_the_start, at_the_stop = {"insns": 10, "cycles": 100}, {"insns": 20, "cycles": 200}
+    assert [arrival.spent for arrival in marks.timeline] == [at_the_start, at_the_stop, at_the_stop], (
+        "the timeline's arrivals too: what a stretch between two of them cost is the row's own")
+    unswitched = _marks_over(totals)
+    assert unswitched.at(aes_event.ENTRY, "a run").windows == 0 and unswitched.at(aes_event.ENTRY, "a run").foreign is None
+
+
+def test_a_mark_after_two_foreign_windows_is_net_of_both_and_a_later_slice_holds_the_second_alone():
+    """...AND THE WINDOWS ADD UP: a second turn of another process (50 instructions, 500 cycles) after the first
+    slice's end comes off every later total with the first — the run's return is marked after TWO windows, at what
+    the row's process spent in all — and the slice from the second wait to the return holds that second window
+    alone (`cut_to`: one run's marks read for another of its slices)."""
+    totals = {}
+    first, second = aes_event.door_call(A_WAIT, 0), aes_event.door_call(A_WAIT, 1)
+    marks = aes_event.Marks(aes_event.Slice(first, second), lambda: dict(totals), others=(aes_event.Slice(second, aes_event.RETURN),))
+    memory, after = _through_a_window(marks, totals)
+    marks.foreign_window_closed()
+    totals.update(insns=after[0], cycles=after[1])
+    marks.arrived(A_WAIT, 1, memory)
+    marks.foreign_window_opened()
+    totals.update(insns=after[0] + 50, cycles=after[1] + 500)
+    marks.foreign_window_closed()
+    totals.update(insns=after[0] + 50 + 7, cycles=after[1] + 500 + 70)
+    marks.returned(2)
+    at_the_return = marks.at(aes_event.RETURN, "the run")
+    assert (at_the_return.windows, at_the_return.spent) == (2, {"insns": 27, "cycles": 270})
+    assert at_the_return.foreign == {"insns": 150, "cycles": 1500}
+    to_the_return = marks.cut_to(aes_event.Slice(second, aes_event.RETURN))
+    assert to_the_return.spent("the run") == {"insns": 7, "cycles": 70}
+    assert to_the_return.foreign_inside("the run") == (1, {"insns": 50, "cycles": 500})
+    assert marks.foreign_inside("the run") == (1, {"insns": 100, "cycles": 1000}), "the first slice's own, still"
+
+
+def test_an_arrival_inside_a_foreign_window_is_no_mark_and_is_refused_by_name():
+    """THE RED: an arrival handed to the marks between a window's opening and its close — the screen manager's own
+    evnt_multi, at the very PC the slice is cut at — is ANOTHER PROCESS's, and is refused by name, uncounted: the
+    row's own next arrival there is still its wait of ordinal 1. So is a return marked inside one."""
+    totals = {}
+    marks = _marks_over(totals)
+    memory, after = _through_a_window(marks, totals)
+    for another_process_s in (lambda: marks.arrived(A_WAIT, 1, memory), lambda: marks.returned(1)):
+        with pytest.raises(AssertionError, match="a mark is an arrival of the ROW's process.*inside a foreign window"):
+            another_process_s()
+    marks.foreign_window_closed()
+    totals.update(insns=after[0], cycles=after[1])
+    marks.arrived(A_WAIT, 1, memory)
+    assert marks.at(aes_event.door_call(A_WAIT, 1), "the run").windows == 1
+    with pytest.raises(AssertionError, match="a foreign window closed that never opened"):
+        marks.foreign_window_closed()
+
+
+def test_a_door_watch_tells_its_marks_of_a_foreign_window_and_a_timeline_refuses_one():
+    """WHO TELLS THE MARKS: the run's door watch, told by the watch that follows the run through the dispatcher
+    (`DoorStops.foreign_window_opened` / `_closed`) — whatever else the watch counts. A `Timeline` (a run that
+    switches nowhere: the ROM-only derivations a battery cuts its session by) refuses one by name."""
+    totals = {"insns": 0, "cycles": 0}
+    marks = _marks_over(totals)
+    watch = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS).marked_with(marks)
+    watch.foreign_window_opened()
+    with pytest.raises(AssertionError, match="inside a foreign window"):
+        marks.arrived(A_WAIT, 0, bytes(1))
+    watch.foreign_window_closed()
+    marks.arrived(A_WAIT, 0, bytes(1))
+    unmarked = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS)
+    unmarked.foreign_window_opened(), unmarked.foreign_window_closed()
+    timed = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS).marked_with(aes_event.Timeline())
+    with pytest.raises(AssertionError, match="a Timeline is of a run that switches nowhere"):
+        timed.foreign_window_opened()
+
+
+def test_two_shores_marks_on_either_side_of_a_window_are_two_slices_and_are_refused_by_name():
+    """`vet_the_marks_agree`: an end our run reaches BEFORE another process's turn and the ROM's AFTER it (the same
+    door call, the same memory) is priced net of the window on one shore alone — refused by name."""
+    def taken(window_before_the_end):
+        totals = {}
+        marks = _marks_over(totals)
+        memory, after = _through_a_window(marks, totals)
+        if not window_before_the_end:
+            totals.update(insns=after[0], cycles=after[1])
+            marks.arrived(A_WAIT, 1, memory)
+        marks.foreign_window_closed()
+        if window_before_the_end:
+            totals.update(insns=after[0], cycles=after[1])
+            marks.arrived(A_WAIT, 1, memory)
+        return marks
+    with pytest.raises(AssertionError, match="inside a foreign window"):
+        taken(window_before_the_end=False)
+    the_rom_s, ours = taken(True), taken(True)
+    aes_event.vet_the_marks_agree("a case", ours, the_rom_s, lambda _mine, _its: [])
+    ours._taken[aes_event.door_call(A_WAIT, 1)] = ours._taken[aes_event.door_call(A_WAIT, 1)]._replace(windows=0)
+    with pytest.raises(AssertionError, match=r"our slice ends .* after 0 foreign window\(s\) where the ROM's ends after 1"):
+        aes_event.vet_the_marks_agree("a case", ours, the_rom_s, lambda _mine, _its: [])

@@ -706,6 +706,10 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # the fork queue (`src/aes/evfork.c`): the keyboard's and the mouse's polls through the VDI binding, the recorder's
     # copy of an entry
     ("aes_chkkbd", "aes_gsx_ncode"), ("aes_mchange", "aes_gsx_ncode"), ("aes_forker", "aes_lbcopy"),
+    # the event tape (`src/aes/aptape.c`): a timer record's ticks into milliseconds at the playback's scale, and the
+    # VDI's cursor and motion routines exchanged through the VDI binding
+    ("aes_ap_tplay", "aes_lmul"), ("aes_ap_tplay", "aes_ldiv"), ("aes_ap_tplay", "aes_set_contrl_ptr"),
+    ("aes_ap_tplay", "aes_gsx_ncode"), ("aes_ap_tplay", "aes_get_contrl_ptr2"),
     # the file selector (`src/aes/fslib.c`): the default path copied, a directory's names copied, matched and compared,
     # a row's name formatted and the elevator's share, the list's clip saved, and the title's text
     ("aes_fs_pspec", "aes_strcpy"), ("aes_fs_active", "aes_lstcpy"), ("aes_fs_active", "aes_strchk"),

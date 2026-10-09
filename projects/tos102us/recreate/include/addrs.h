@@ -2242,9 +2242,9 @@
 #define AES_ROM_AP_RDWR_OPCODE    12
 #define AES_ROM_AP_FIND           0xfe65da   /* read: (name) copied into the frame, fpdnm by name: its id, or -1 */
 #define AES_ROM_AP_FIND_OPCODE    13
-#define AES_ROM_AP_TPLAY          0xfe6610   /* ctx */
+#define AES_ROM_AP_TPLAY          0xfe6610   /* read: (records, count, scale) each record queued, a yield round each */
 #define AES_ROM_AP_TPLAY_OPCODE   14
-#define AES_ROM_AP_TRECD          0xfe6766   /* ctx */
+#define AES_ROM_AP_TRECD          0xfe6766   /* read: (records, count) the recorder armed, slept out, its records numbered */
 #define AES_ROM_AP_TRECD_OPCODE   15
 #define AES_ROM_EV_KEYBD          0xfe6894   /* ctx */
 #define AES_ROM_EV_KEYBD_OPCODE   20

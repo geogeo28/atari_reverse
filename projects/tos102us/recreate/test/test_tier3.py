@@ -131,7 +131,8 @@ def _sliced_session_of_a_case(params):
         name = row.registered
     if not isinstance(name, str) or name not in aes_event.SLICED_ROWS:
         return None
-    return next(row_name for row_name, session in aes_event.INTERRUPTED_ROWS.items() if session is aes_event.session_of(name))
+    # ...a session by its FIRST slice's name, whichever registry holds it (a session that switches is the registrar's).
+    return next(row_name for row_name in aes_event.SLICED_ROWS if aes_event.session_of(row_name) is aes_event.session_of(name))
 
 
 ROWS_BY_KEY = {(row.symbol, row.case): row for row in tier3.ROWS}
@@ -3231,9 +3232,11 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
 # routine's): the twin it calls leaves by OUR dispatcher and is resumed through it, the call's arrival and its
 # return on either side of the switch — so its cost, the switch in it, is in both own columns, and the row is held
 # a second time on THE CALLER'S OWN cycles, net of the call. Read off the registry: every switching row whose C is a
-# door user's (`SwitchingRow.door`).
+# door user's (`SwitchingRow.door`) — A SESSION CUT INTO SLICES aside (the file selector's: each slice a row, pinned
+# with its session in its own battery, `test_aes_fs_input_woken.py`, which holds the registry's sliced rows to
+# its own table the same way).
 def door_users_that_switch():
-    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if held.row.door}
+    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if held.row.door and name not in aes_event.SLICED_ROWS}
 
 
 def _table_row(name):
@@ -3251,6 +3254,9 @@ MN_DO_ACROSS_THE_DESK_S_TURN = ("aes_mn_do, on the bar past the titles; the desk
 MN_DO_ACROSS_TWO_TURNS = ("aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, "
                           "in the next wait; the menu left, a click off it")
 THE_DESK_TAKES_TWO_KEYS = (2, 204310, 115094)       # two windows: 58,896 and 56,198 cycles of the AES's text
+FM_ALERT_NO_DEFAULT = "aes_fm_alert, no button the default: Return taken, the next wait blocked; the second button clicked while it waits"
+FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS = ("aes_fm_alert, a default past the three buttons: Return taken, the next wait blocked; "
+                                       "the third clicked while it waits")
 DOOR_USERS_PRICED = {
     "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": ((20598, 30594), (354, 340), 1, NO_WINDOW),
     "aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0": (
@@ -3273,6 +3279,8 @@ DOOR_USERS_PRICED = {
         (78386, 127124), (38182, 65736), 7, NO_WINDOW),
     "aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise": (
         (42026, 65008), (14256, 22318), 3, NO_WINDOW),
+    FM_ALERT_NO_DEFAULT: ((189524, 294660), (136410, 212420), 10, NO_WINDOW),
+    FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: ((188194, 292106), (135080, 209866), 10, NO_WINDOW),
 }
 # ...and THE WHOLE RUN'S CYCLES on each blob, the ROM's and ours net of the entry both share — the second
 # differential's own measurement (`aes_switching.measured_on`: the table prices a row on one blob, a build is held
@@ -3300,6 +3308,8 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (203964, 161472), SHIPPED_BLOB: (203964, 159698)},
     "aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise": {
         BENCH_BLOB: (118976, 99702), SHIPPED_BLOB: (118976, 98222)},
+    FM_ALERT_NO_DEFAULT: {BENCH_BLOB: (1492972, 1413772), SHIPPED_BLOB: (1492972, 1406324)},
+    FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: {BENCH_BLOB: (1490418, 1412202), SHIPPED_BLOB: (1490418, 1404886)},
 }
 
 

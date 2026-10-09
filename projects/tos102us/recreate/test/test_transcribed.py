@@ -193,9 +193,10 @@ def test_the_glue_refuses_an_aes_core_with_no_contract_rather_than_gluing_a_vdi_
     """An AES routine has an `_OPCODE` sibling in `addrs.h` just as a VDI function does, and is no VDI function: a
     transcribed AES core no register contract or Alcyon signature declares is REFUSED, where the thunk shape keyed on
     the sibling alone would have entered its `.S` with nothing. A VDI function of the table is still glued as one."""
-    uncontracted = next(name for name in sorted(dir(addrs))
-                        if routines.prefix_of(name) == routines.AES_PREFIX and hasattr(addrs, name + "_OPCODE")
-                        and name not in vdi.PRIMITIVES and name not in vdi.ALCYON)
+    uncontracted = "AES_ROM_A_ROUTINE_NO_BATTERY_DECLARES"   # planted: every AES routine with an opcode is declared now
+    monkeypatch.setattr(addrs, uncontracted, addrs.AES_ROM_AP_TPLAY, raising=False)
+    monkeypatch.setattr(addrs, uncontracted + "_OPCODE", addrs.AES_ROM_AP_TPLAY_OPCODE, raising=False)
+    assert routines.prefix_of(uncontracted) == routines.AES_PREFIX and uncontracted not in vdi.PRIMITIVES | vdi.ALCYON.keys()
     with pytest.raises(LookupError, match="declares no contract"):
         shipped_glue.thunk(_table_row(monkeypatch, uncontracted))
     assert "VDI function" in shipped_glue.thunk(_table_row(monkeypatch, "VDI_ROM_VS_COLOR"))[0]

@@ -13,6 +13,12 @@ the session's machine (`Places`).
 
 GEMDOS under a session is REPLAYED (`aes_fslib.session_script`): derived from the ROM's own run of the same session
 over the staged disk.
+
+A SESSION THE USER IS WAITED FOR IN (`Woken`): a wait at which nothing has arrived BLOCKS — the machine leaves by the
+dispatcher — and what the user then does is taken where the machine waits for it, at the dispatcher's IDLE: the
+selector is woken through the dispatcher and goes on, to its return. On both shores it is ONE RETURNING RUN (a row
+that switches, `aes_event.woken_row`): the ROM's through its own dispatcher, the C's through the host's model with
+the door bound (Tier 1), our build's through its own dsptch (Tier 3).
 """
 import functools
 from collections import namedtuple
@@ -169,3 +175,90 @@ def drawn_as_the_rom_draws(session):
         return fsl.vet_the_draws_of_a_child_of_its_own(replayed, interrupts_of(session, real), session.budget)
     ours, delivered = _DREW[session]
     return fsl.vet_the_draws(ours, replayed, delivered, session.budget)
+
+
+# ---- A SESSION THE USER IS WAITED FOR IN ---------------------------------------------------------------------------------
+# `at_waits(places)`: what the user has done by the entry of each wait (a session's own `waits`); `at_idles(places)`:
+# what is done WHILE THE SELECTOR WAITS, at each idle of the dispatcher in turn (`schedule`, as a session's waits are
+# written); `same`: THE SAME USER NEVER WAITED FOR — the returning `Session` in which every one of those interrupts is
+# taken at a wait's entry instead. `budget`: the woken run's own, where it is not `same`'s class. `running`: a
+# zero-argument maker of ANOTHER machine whose running process makes the call (`aes_fslib.fs_input_machine`'s) — one
+# in which the selector is kept waiting by more than the user (the screen's lock held by the screen manager's menu).
+# WHY `same`: GEMDOS under the woken run is replayed from `same`'s script. A wake changes WHEN the selector learns of a
+# key or a click, never which GEMDOS calls it then makes (GEMDOS reads no interrupt's state) — and that is HELD, not
+# assumed: the woken run makes exactly the script's calls, in order, to its last, EACH HANDED THE FRAME THE SCRIPT'S
+# ANSWER WAS GIVEN TO (`vet_its_gemdos_calls`: the function numbers alone would pass a selector that searched another
+# path, or freed another block, and was answered as if it had not) — and, WHERE IT RUNS OVER `same`'S OWN MACHINE
+# (`running is None`), leaves the selector, the strings handed back and the screen as `same`'s run over the staged
+# disk leaves them (`vet_it_ends_as_never_waited_for`). THE END-STATE PROPERTY IS CLAIMED FOR NO OTHER MACHINE: a
+# session over `running`'s (the screen manager's menu, the mouse moved to it and off it) ends on another screen by
+# nature — what it differs by is pinned as the stated difference where the session is held
+# (`spans_differing_from_never_waited_for`), not asked to be nothing.
+Woken = namedtuple("Woken", "at_waits at_idles same budget running", defaults=(None, None))
+WOKEN_WHILE_IT_WAITS = "the user waited for: woken through the dispatcher"
+
+
+@functools.cache
+def _replayed_machine_of(woken):
+    """The machine `woken` runs over: `same`'s replayed one — or `running`'s process making the same call over the
+    same disk, GEMDOS replayed from the same script (GEMDOS answers by the disk and its own arena, which no state of
+    the AES reaches: held where the row is taken, `vet_its_gemdos_calls`)."""
+    _real, replayed, script = machine_of(woken.same)
+    if woken.running is None:
+        return replayed
+    same = woken.same
+    return fsl.replay_machine(fsl.fs_input_machine(same.path, same.selection, running=woken.running()), script.answers)
+
+
+@functools.cache
+def woken_row(woken, label=WOKEN_WHILE_IT_WAITS):
+    """`woken` as a row that switches (`aes_event.woken_row`): fs_input over `same`'s replayed machine, the session's
+    interrupts at its waits, the wakes at the dispatcher's idles, under the budget it declares."""
+    places = Places(machine_of(woken.same)[0])
+    return aes_event.woken_row(label, fsl.INPUT, fsl.ARGUMENTS, functools.partial(_replayed_machine_of, woken),
+                               woken.at_idles(places), aes_event.Waits(woken.at_waits(places)), objects=True,
+                               budget=woken.budget or woken.same.budget)
+
+
+def vet_its_gemdos_calls(woken, image):
+    """THE SCRIPT IS THE WOKEN RUN'S OWN: the GEMDOS calls the run that left `image` made (the replay's ledger) are
+    the script's, function for function, to its last — a call more, fewer or other and the answers it was given were
+    another call's — AND FRAME FOR FRAME: each was handed the bytes the script's call was (the path searched, the
+    block freed, the DTA named), so each answer is the ROM's own GEMDOS's TO THAT CALL."""
+    made = fsl.replay_calls(image)
+    script = machine_of(woken.same)[2]
+    assert tuple(call.function for call in made) == script.functions, (
+        f"the woken session called GEMDOS {[f'{call.function:#x}' for call in made]} where the script it was answered "
+        f"from is of {[f'{function:#x}' for function in script.functions]}")
+    other = [f"call {nth} ({call.function:#x}): handed {call.frame.hex()}, the script's {frame.hex()}"
+             for nth, (call, frame) in enumerate(zip(made, fsl.frames_as_recorded(script))) if call.frame != frame]
+    assert not other, (f"the woken session handed GEMDOS other frames than the calls its script's answers were given "
+                       f"to: {'; '.join(other)}")
+
+
+def spans_differing_from_never_waited_for(woken, image, visible):
+    """The spans of `visible` (`(address, size)`: the selector's own memory, what it hands back, the screen) over
+    which `image` is NOT what `same`'s ROM run over the staged disk left: their addresses, in order."""
+    script = machine_of(woken.same)[2]
+    return [at for at, size in visible if bytes(image[at:at + size]) != script.memory[at:at + size]]
+
+
+def vet_it_ends_as_never_waited_for(woken, image, visible):
+    """...AND IT ENDS AS THE SAME USER NEVER WAITED FOR ENDS: over `visible`, `image` is what `same`'s ROM run over
+    the staged disk left. CLAIMED ONLY OF A SESSION OVER `same`'S OWN MACHINE (`woken.running is None`): asked of one
+    over another machine it is refused as a question, not answered."""
+    assert woken.running is None, (
+        "a session over another machine than `same`'s is not claimed to end as `same` ends: pin what it differs by "
+        "(`spans_differing_from_never_waited_for`)")
+    differ = [f"{at:#x}" for at in spans_differing_from_never_waited_for(woken, image, visible)]
+    assert not differ, f"the woken session differs from the same user never waited for in the spans at {differ}"
+
+
+def held_through_its_wake(woken, visible):
+    """`woken` AT TIER 1 (`aes_event.held_through_its_wake`): the C through the host's model, the door bound, held to
+    the ROM's own run through its dispatcher — and that run's premises held on the image they share. The
+    `aes_switching.CompanionRun`."""
+    ran = aes_event.held_through_its_wake(woken_row(woken))
+    vet_its_gemdos_calls(woken, ran.image)
+    vet_it_ends_as_never_waited_for(woken, ran.image, visible)
+    return ran

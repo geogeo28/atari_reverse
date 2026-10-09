@@ -17,12 +17,13 @@ import pytest
 from harness import bench_tier3
 
 import aes_event
+import aes_evlib as evlib
 import aes_fs_sessions as ss
 import aes_fslib as fsl
 import test_aes_fs_input as sessions
 import test_aes_fslib as real
 from aes_fs_sessions import (A_C_ROW, AB_TXT_ROW, AUTO_ROW, CANCEL, CLOSER, DOWN_ARROW, LONG, LONGER, MIDDLE, MIXED, RETURN,
-                             SHUFFLED, TITLE, TOOLS_ROW, Session, at, click, folder, press, release, schedule)
+                             SHORT, SHUFFLED, TITLE, TOOLS_ROW, Session, at, click, folder, press, release, schedule)
 
 INPUT, ARGUMENTS = fsl.INPUT, fsl.ARGUMENTS
 ENTRY, RETURNED = aes_event.ENTRY, aes_event.RETURN
@@ -197,6 +198,56 @@ def slices_of(session_name):
     return {f"{session_name}: {label}": ends for label, ends in cut(script.functions).items()}
 
 
+# ---- THE SESSIONS THE USER IS WAITED FOR IN: their slices are ROWS THAT SWITCH ---------------------------------------------
+# Every session above takes what the user does at the ENTRY of a wait: no wait of it blocks. A user is slower than
+# that — the selector's wait BLOCKS, the machine leaves by the dispatcher, and the click or the key arrives while it
+# idles. Such a session is a row that switches (`aes_fs_sessions.Woken`, `aes_event.register_woken_slices`) cut into
+# slices like any other, each between two arrivals OF THE SELECTOR'S OWN PROCESS (`aes_event.Marks`): the wait that
+# blocks is a rebound entry's call inside its slice — the block, our dispatcher's park and the wake in the slice's
+# own cost — and the slice is held on TWO COUNTS.
+#   WAITED: the selector shown, its first wait blocked; a file's row clicked while it waits; the button let go at
+#     the next wait's entry (a TOUCHEXIT press leaves it owing: alone it is nothing a wait asks for), which blocks;
+#     Return typed while it waits.
+#   HELD UP: the selector called WHILE THE SCREEN MANAGER'S MENU HOLDS THE SCREEN (`aes_evlib.the_manager_s_menu_
+#     holds_the_lock`: the ROM's own run made that machine). fm_do's BEG_UPDATE finds the lock taken and waits for it
+#     (ev_block's mutex wait) — and what ends that wait is ANOTHER PROCESS: the mouse leaves the bar, a click, and the
+#     screen manager, entered three times by the ROM's dispatcher, gives the lock up. ONE FOREIGN WINDOW, INSIDE THE
+#     SLICE AND INSIDE ev_block'S CALL: the slice is priced net of it on both shores (a mark's totals are the
+#     selector's own process's), and no mark is taken at the screen manager's own door calls and VDI traps.
+# (The sessions' names and labels are kept short of the table's widest case: a longer one would re-space every line.)
+WAITED = "the user waited for at each wait"
+WAITED_FOR = ss.Woken(schedule([None, release]), schedule([click(A_C_ROW), RETURN]),
+                      priced(MIXED, [click(A_C_ROW), (release, RETURN)], SHORT))
+HELD_UP = "the screen manager's menu holding the screen"
+KEPT_WAITING = ss.Woken(schedule([]), schedule([evlib.OFF_THE_BAR, evlib.A_CLICK, RETURN]), priced(MIXED, [RETURN], SHORT),
+                        MIDDLE, evlib.the_manager_s_menu_holds_the_lock)
+THE_LOCK_WAITED_FOR = "the lock waited for; the menu left, clicked off: the lock handed over, to the first wait"
+
+
+def waited_slices():
+    return {
+        "the first wait blocked; a file's row clicked while it waits: selected, its name the selection": (wait(0), wait(1)),
+        "the next wait blocked; Return typed while it waits: to the form's end": (wait(1), unlock(1)),
+        PUT_AWAY: (unlock(1), RETURNED),
+    }
+
+
+def held_up_slices():
+    return {
+        THE_LOCK_WAITED_FOR: (lock(0), wait(0)),
+        "the first wait blocked; Return typed while it waits: to the form's end": (wait(0), unlock(0)),
+    }
+
+
+PRICED_WOKEN = {WAITED: (WAITED_FOR, waited_slices), HELD_UP: (KEPT_WAITING, held_up_slices)}
+
+
+def woken_slices_of(session_name):
+    """`{row label: Slice ends}` of the priced session the user is waited for in, `session_name`."""
+    _woken, cut = PRICED_WOKEN[session_name]
+    return {f"{session_name}: {label}": ends for label, ends in cut().items()}
+
+
 # The no-memory arms, by how many bytes GEMDOS's arena is left with.
 NO_MEMORY_ROWS = {"no memory: the names refused": sessions.NO_MEMORY_ARMS["no memory at all: the names refused"][0],
                   "the index refused: the names freed": sessions.NO_MEMORY_ARMS[
@@ -228,6 +279,8 @@ def _register_rows():
         real, replayed, _script = ss.machine_of(session)
         aes_event.register_slices(INPUT, ARGUMENTS, replayed, ss.interrupts_of(session, real), slices_of(session_name),
                                   objects=True, budget=session.budget)
+    for session_name, (woken, _cut) in PRICED_WOKEN.items():
+        aes_event.register_woken_slices(ss.woken_row(woken, session_name), woken_slices_of(session_name))
     for label, left in NO_MEMORY_ROWS.items():
         fsl.register(label, INPUT, ARGUMENTS, sessions.no_memory_replayed(left), door=fsl.replay_doors())
     # ...and through its call word: verified, unpriced.
