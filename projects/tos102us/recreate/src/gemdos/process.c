@@ -250,11 +250,7 @@ static void call_terminate_vector(uint8_t *image, uint32_t routine)
 static uint32_t read_terminate_vector(uint8_t *image)
 {
     wr32(image + GEMDOS_BIOS_RETURN_SLOT, PTERM_BIOS_RETURN_SITE);
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    return bios_setexc(image, GEMDOS_TERM_VECTOR, SETEXC_INQUIRE);
-#else
-    return bios_trap_vector(BIOS_SETEXC_FN, GEMDOS_TERM_VECTOR, SETEXC_INQUIRE);
-#endif
+    return bios_setexc_by_trap(image, GEMDOS_TERM_VECTOR, SETEXC_INQUIRE);
 }
 
 /* ---- the current-directory reference counts ------------------------------------------------------

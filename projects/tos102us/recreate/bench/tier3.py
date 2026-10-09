@@ -2426,6 +2426,29 @@ def glue_relocation(elf):
     return {rom: placed[entry] for rom, entry in aes_event.GLUE_CODES.symbols.items() if entry in placed}
 
 
+@functools.cache
+def text_site_relocation(elf, symbol):
+    """`{a site of the ROM's GEMDOS glue: where the blob's own `.S` has it}` (`aes_event.TEXT_SITES`) for a run of
+    `symbol` on the blob `elf` — FOR A RUN THAT CAN PARK ONE: a `.S` entry's own (`aes_event.TEXT_SITE_ENTRIES`), or
+    a declared C caller's on the SHIPPED blob, where it reaches the `.S` through its thunk
+    (`aes_event.TEXT_SITE_CALLERS`: none yet — the registry says when). Empty for every other run: the C twin, on
+    either blob, parks the ROM's own sites as the data they are (a C function has no return site of that shape) —
+    compared as they stand."""
+    shipped = Path(elf).resolve() == transcription.SHIPPED_ELF.resolve()
+    parks_a_site = symbol in aes_event.TEXT_SITE_ENTRIES or (shipped and symbol in aes_event.TEXT_SITE_CALLERS)
+    placed = _placed(elf)
+    return {rom: placed[site] for rom, site in aes_event.TEXT_SITES.symbols.items() if site in placed and parks_a_site}
+
+
+def vet_no_register_names_the_rom(symbol, regs, mapping):
+    """THE SLOTS' RULE (`vet_no_slot_names_the_rom`) FOR THE REGISTER FILE, asked before it is mapped back: no
+    register our run leaves holds the ROM's own address of a text site the build has a label for."""
+    named = [(name, regs[name]) for name in emu.REPORTED_REGS if regs.get(name) in mapping]
+    assert not named, (
+        f"{symbol}: OUR run left THE ROM'S OWN text site {named[0][1]:#x} in {named[0][0].upper()} — the `.S` this build "
+        f"links has its own (`aes_event.TEXT_SITES`): a relocation left un-applied in the build")
+
+
 A_RECORD = "a record of appl_trecord's buffer"
 # One relocation of the registry AS ONE RUN READS IT: `what` it is, the longwords it lies in, `{the ROM's routine:
 # its entry in the blob}`, and whether our image is mapped at the run's entry too.
@@ -2437,7 +2460,8 @@ def code_relocations(elf, symbol):
     the fork queue's (`fork_relocation`) and the glue's. The
     one reading every site that maps a code address makes: a run's entry and exit, a delivery, a mark."""
     mapped = {aes_event.FORK_CODES.what: (FORK_CODE_SLOTS, fork_relocation(elf, symbol)),
-              aes_event.GLUE_CODES.what: (glue_code_slots(), glue_relocation(elf))}
+              aes_event.GLUE_CODES.what: (glue_code_slots(), glue_relocation(elf)),
+              aes_event.TEXT_SITES.what: (aes_event.TEXT_SITES.slots, text_site_relocation(elf, symbol))}
     declared = {each.what: each.at_entry for each in aes_event.CODE_RELOCATIONS}
     assert sorted(mapped) == sorted(declared), "a relocation the registry declares is mapped by no site"
     return tuple(Relocation(what, *mapped[what], at_entry) for what, at_entry in declared.items())
@@ -2463,6 +2487,17 @@ def map_code_slots(memory, slots, mapping, base=0):
             if code in mapping:
                 memory[slot - base:slot - base + aes.LONG_BYTES] = mapping[code].to_bytes(aes.LONG_BYTES, "big")
     return memory
+
+
+def map_registers(regs, mapping):
+    """The register file `regs` our run left, mapped IN PLACE by `mapping`: each register that holds one of its keys.
+    For the GEMDOS glue's text sites alone (`aes_event.TEXT_SITES`): `__DOS` leaves by `jmp (a0)`, so the site it
+    parked is in A0 where the routine returns — the ROM's on one shore, the `.S`'s own on the other, and a
+    transcription is held to the WHOLE register file."""
+    for name in emu.REPORTED_REGS:
+        if regs.get(name) in mapping:
+            regs[name] = mapping[regs[name]]
+    return regs
 
 
 def map_fork_codes(memory, mapping, base=0):
@@ -2568,6 +2603,7 @@ class RomBench(rom_bench.RomBench):
     leaves, before anything compares it."""
 
     _put_back = ()                      # the spans of the row being measured that our run's image is given back
+    _x_flag_declared = False            # the row being measured declares its X flag differs (`measure`)
 
     def measure(self, entry, symbol, *args, dropped=(), **kwargs):
         """...and THE DISPATCHER'S OWN STACK put back as our run found it, for a row that drops it by name
@@ -2579,10 +2615,15 @@ class RomBench(rom_bench.RomBench):
         top. A store of ours anywhere else in the span — a word parked at a wrong address under its frames — stays
         in the image, and differs."""
         self._put_back = put_back_for(dropped)
+        # ...AND THE X FLAG A ROW DECLARES (`aes_switching.THE_X_FLAG_ALONE`): named among the row's drops and taken
+        # OUT of what the kit drops — no byte is left out of the compare. `_call` flips the one bit in the image our
+        # run leaves, and the byte is compared whole.
+        self._x_flag_declared = any(drop in aes_switching.THE_X_FLAG_ALONE for drop in dropped)
+        compared = tuple(drop for drop in dropped if drop not in aes_switching.THE_X_FLAG_ALONE)
         try:
-            return super().measure(entry, symbol, *args, dropped=dropped, **kwargs)
+            return super().measure(entry, symbol, *args, dropped=compared, **kwargs)
         finally:
-            self._put_back = ()
+            self._put_back, self._x_flag_declared = (), False
 
     def _call(self, image, symbol, *args, **kwargs):
         relocations = [relocation for relocation in code_relocations(self.elf, symbol) if relocation.mapping]
@@ -2626,7 +2667,12 @@ class RomBench(rom_bench.RomBench):
         vet_no_slot_names_the_rom(symbol, ours.image, [Relocation(A_RECORD, recorded + written, forks)], {A_RECORD: handed})
         for relocation in relocations:
             map_code_slots(ours.image, relocation.slots, _backwards(relocation.mapping))
+            if relocation.what == aes_event.TEXT_SITES.what:
+                vet_no_register_names_the_rom(symbol, ours.regs, relocation.mapping)
+                map_registers(ours.regs, _backwards(relocation.mapping))
         map_code_slots(ours.image, recorded + written, _backwards(forks))
+        if self._x_flag_declared:
+            ours.image[aes_switching.X_FLAG_AT] ^= aes_switching.X_FLAG
         return ours
 
 
@@ -3792,8 +3838,10 @@ def table(bench, jobs=SERIAL):
                          f"({glue_cycles_of(m)} of the recreate's cycles are inside thunks)")
         if calls_into_c(row) and m.ratio > TIER3_FUNCTION_BAR:
             lines.append(_own_split_line(m, name_width + ADDRESS_WIDTH))
-        lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  dropped from the image compare: [${lo:x}, ${hi:x}) — {why}"
-                  for lo, hi, why in row.dropped]
+        # (the X flag a row declares is no span left out: one bit flipped, the byte compared — said in those words)
+        lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  "
+                  f"{'ONE BIT excused in' if (lo, hi, why) in aes_switching.THE_X_FLAG_ALONE else 'dropped from'} "
+                  f"the image compare: [${lo:x}, ${hi:x}) — {why}" for lo, hi, why in row.dropped]
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

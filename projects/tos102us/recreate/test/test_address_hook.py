@@ -78,6 +78,13 @@ def test_a_key_nothing_staged_is_refused_recorded_and_reported():
     assert HOOK.refused == [OTHER]
 
 
+# THE THREE TESTS THAT CALL THE HOOK WHILE NO PASS IS OPEN, ON PURPOSE (`address_hook.OUTSIDE_A_PASS`: any other test
+# that does fails at its teardown, `conftest.py`).
+CALLS_OUTSIDE_A_PASS_ON_PURPOSE = ("test_a_call_before_any_pass_is_refused_even_with_its_key_staged",
+                                   "test_a_call_after_a_finished_pass_is_refused_and_not_recorded",
+                                   "test_a_pass_closes_even_when_its_run_raises")
+
+
 def test_a_call_before_any_pass_is_refused_even_with_its_key_staged():
     buf = fresh_image()
     with refusal_expected(), staged():
@@ -239,3 +246,60 @@ def test_the_module_aliases_survive_staging():
         with hook.staged({}, str):
             pass
         assert alias is hook.calls
+
+
+def test_a_call_outside_a_pass_is_kept_for_its_test_s_teardown():
+    """WHAT MAKES AN UNBOUND DOOR LOUD: a call while no pass is open is kept in `address_hook.OUTSIDE_A_PASS` by the
+    pointer's symbol and its key — where `refused` is cleared by the next case's `staged()`, unread — and the fixture
+    that reads it at every test's teardown (`conftest.py`) lets these three by name alone."""
+    assert set(CALLS_OUTSIDE_A_PASS_ON_PURPOSE) <= set(globals())
+    before = list(address_hook.OUTSIDE_A_PASS)
+    call(fresh_image(), NAMED)
+    assert address_hook.OUTSIDE_A_PASS == before + [(HOOK.symbol, NAMED)]
+    with staged():
+        pass
+    assert HOOK.refused == [] and address_hook.OUTSIDE_A_PASS == before + [(HOOK.symbol, NAMED)]
+    address_hook.OUTSIDE_A_PASS.clear()     # this test's own call: read here, not left for its teardown
+
+
+# ---- ...AND IN A PROCESS NOBODY READS THE RECORD OF, THE CALL ENDS IT BY NAME -------------------------------------------------
+def _ended_by_name(returncode, stderr):
+    return returncode == address_hook.OUTSIDE_A_PASS_STATUS and address_hook.OUTSIDE_A_PASS_SAID in stderr and HOOK.symbol in stderr
+
+
+def test_a_call_outside_a_pass_in_a_fork_ends_the_fork_by_name():
+    """A FORK OF THE WORKER LEFT SERVING THE HOOK (the guard's fork made at the call, the zygote's, a model's): its
+    record is its own copy and dies with it — so the call ends the fork at once, with a status of its own and the
+    hook's symbol and key on its stderr, which the fork's parent reads as its case's failure. And the worker's own
+    record is untouched: the fork's call is not this test's."""
+    import aes_event
+
+    returncode, stderr = aes_event.in_a_fork(lambda: call(fresh_image(), NAMED), serves=aes_event.EVERY_HOOK_OF_THE_PASS)
+    assert _ended_by_name(returncode, stderr) and f"{NAMED:#x}" in stderr, (returncode, stderr)
+    assert address_hook.OUTSIDE_A_PASS_STATUS not in aes_event._CHILD_STATUSES + (0,)
+    assert address_hook.OUTSIDE_A_PASS == []
+
+
+A_FRESH_INTERPRETER_S_CALL = ("import ctypes, test_xbios_supexec as supexec; from harness import _lib; "
+                              "_lib.xbios_supexec((ctypes.c_ubyte * 1)(), supexec.STUB_AT)")
+
+
+def test_a_call_outside_a_pass_in_a_fresh_interpreter_ends_it_by_name():
+    """A FRESH INTERPRETER (a door user's child): no fixture of pytest's runs there, so nobody reads its record —
+    the same end, by name."""
+    import os
+    import subprocess
+    import sys
+
+    child = subprocess.run([sys.executable, "-c", A_FRESH_INTERPRETER_S_CALL], capture_output=True, text=True,
+                           env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}, timeout=60)
+    assert _ended_by_name(child.returncode, child.stderr), (child.returncode, child.stderr[-600:])
+
+
+def test_the_record_is_taken_once():
+    """`taken()` hands the record to its one reader and empties it: a record read at a test's setup is not read
+    again at its teardown, and one made before a test is that test's error (`conftest.py`), never cleared unread."""
+    call(fresh_image(), NAMED)
+    assert address_hook.taken() == [(HOOK.symbol, NAMED)] and address_hook.taken() == []
+    assert address_hook.said([(HOOK.symbol, NAMED)]) == f"{HOOK.symbol} at {NAMED:#x}"
+

@@ -282,9 +282,11 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
 * **band 4 — event/scheduler/input (≈9 KB):** gemdosif asm (2.1K: savestate/switchto/dsptch/gotopgm/psetup `.S`), gemdisp (0.75K),
   gemasync (0.9K), geminput (2.4K), gemevlib (1.0K), gemaplib (0.7K), PD/pipes (0.8K), irq glue (0.2K). Needs staged PD/UDA/EVB lists,
   the fork-function address map, direct irq entry, `rte`-terminated runs.
-* **band 5 — application/shell/entry (≈8 KB):** gemsuper (2.1K: trap handler .S + marshal + arms), gemshlib+sh_main+sh_cmd (1.8K),
+* **band 5 — application/shell/entry (MEASURED: 50 routines / 7,826 B, + three desk-range leaves of 96 B; the first estimate was ≈8 KB):** gemsuper (2.1K: trap handler .S + marshal + arms), gemshlib+sh_main+sh_cmd (1.8K),
   accessory loader (0.6K), gemctrl ctlmgr (1.5K), geminit+gemstart (1.7K), desk_alloc/free, the Line-F handler (keep the RAM copy).
   gem_main from scratch writes all of THEGLO and Mallocs → compare against a pre-init image, not the snapshot.
+  DONE SO FAR (STATUS.md, "AES band 5"): wave 0, the pre-init machines and the ROM's own boot; wave 1 slice S — gemsuper's opcode switch `FE5D9C` and marshal `FE64E6`; wave 1 slices H / G — 26 leaves (ini_dlongs, all_run, pinit; sh_tographic / toalpha / draw / show; cart_init / find; size_theglo, desk_alloc / free; app_reschange, set_defdrv, the desk's rsrc_free binding; dos_gdrv / chdir / sdrv, isdrive, pgmld; the five vector takes; trp14).
+  PLAN: wave 1 slice C — gemctrl's four handlers; wave 2, flip 4 — ctlmgr in C; wave 3 — the trap door (`.S`) and the accessory loader; wave 4, flip 5 — gem_entry, gem_main, sh_main, sh_cmd.
 * **band 6 — desktop (≈39 KB):** desk 34.8K (bindings 1.2K first, userdef 0.8K, INF read/write, dir windows, file ops via GEMDOS/RAM
   disk, menus `FE2344` switches `FEF700`/9 `FEF724`/19) + shell post-exit utils 4.1K (format/copy need FDC → XBIOS Flopfmt/Floprd;
   stage like the file system: hardware-free only through the BIOS door).

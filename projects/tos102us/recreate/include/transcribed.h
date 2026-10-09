@@ -167,7 +167,14 @@
     ENTRY(aes_rom_gsx_mxmy,           "")                                   /* Alcyon (&x, &y)             */ \
     ENTRY(aes_rom_gsx_button,         "")                                   /* Alcyon () -> D0.w           */ \
     ENTRY(aes_rom_uda_insuper,        "")                                   /* Alcyon (uda)                */ \
-    ENTRY(aes_rom_psetup,             "a2")                                 /* Alcyon (pd, pc): supervisor */
+    ENTRY(aes_rom_psetup,             "a2")                                 /* Alcyon (pd, pc): supervisor */ \
+    ENTRY(aes_rom_restore_trap2,      "")                                   /* hand asm (): vector $88 put back */ \
+    ENTRY(aes_rom_install_trap2,      "")                                   /* hand asm (): vector $88 taken */ \
+    ENTRY(aes_rom_retake,             "")                                   /* hand asm () -> D0.l: Setexc's answer    */ \
+    ENTRY(aes_rom_giveerr,            "")                                   /* hand asm () -> D0.l: Setexc's answer    */ \
+    ENTRY(aes_rom_takeerr,            "")                                   /* hand asm () -> D0.l: Setexc's answer    */ \
+    ENTRY(aes_rom_pgmld,              "")                                   /* hand asm (handle.w, name, &basepage) -> D0.l */ \
+    ENTRY(aes_rom_trp14,              "d2 a2")                              /* hand asm, an XBIOS frame -> D0.l: `trap #14` keeps less */
 
 /* ---- the DECLARATIONS a C caller reaches an entry through ----------------------------------------
  * Each entry is declared as a LABEL, not as a function: its arguments and answers are registers, so a

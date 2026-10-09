@@ -16,7 +16,8 @@ rom        = "../../../tools/hatari/TOS102US.img"
 rom_base   = 0xfc0000
 
 # The post-boot RAM snapshot the ROM runs over: 1 MB of a real machine's memory, captured once from
-# headless Hatari at the desktop's first settled `evnt_multi` (tools/boot_snapshot.py). It is a
+# headless Hatari with the desktop up and idle — stopped at a fixed vertical blank (VBL 901: not the
+# desktop's first `evnt_multi`, nor its first idle; tools/boot_snapshot.py says why). It is a
 # build product, not a source: `make snapshot` captures it, and build/ is gitignored for the ROM's
 # reason — it is the ROM's own data.
 snapshot   = "build/boot_ram.bin"

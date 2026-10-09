@@ -63,6 +63,49 @@ $(SNAPSHOT): tools/boot_snapshot.py $(SNAPSHOT_INPUTS) $(ROM_IMAGE)
 .PHONY: snapshot
 snapshot: $(SNAPSHOT)
 
+# THE PRE-INIT MACHINES (tools/preinit_snapshot.py): the same machine stopped a boot earlier, at the AES's entry — what
+# test/aes_boot.py boots the ROM's own gem_main from. TWO, each four seconds of Hatari, once: with the snapshot's blank
+# floppy in the drive (the desk's machine), and with the test accessories' (tools/accessory_disk.py) in it FROM POWER-ON
+# (the accessory machine: GEMDOS's cache and the driver's record are then that disk's own, nothing swapped in).
+# Build products of their OWN: the snapshot above, its rule and everything derived from it are untouched, and their
+# names are outside every pattern of test/derived.py's tree key, so capturing them moves no kept derivation —
+# test/aes_boot.py's are keyed by their CONTENT. The suites ask for them as they ask for the snapshot: a test that
+# needs one fails on a missing file, it does not skip.
+#
+# THEIR OWN CONTENT STAMP of the header constants the tool reads, made as the snapshot's is (a word added to
+# SNAPSHOT_CONSTANTS would capture the snapshot again, which this must never do).
+PREINIT := build/preinit.bin
+PREINIT_ACC := build/preinit_acc.bin
+ACC_DISK := build/acc/ACCDISK.ST
+PREINIT_INPUTS := build/preinit_inputs.txt
+PREINIT_CONSTANTS := ST_RAM_BYTES AES_ROM_GEM_ENTRY SR_SUPERVISOR SHIFTER_PALETTE SHIFTER_PALETTE_ENTRIES SHIFTER_RESOLUTION
+PREINIT_TOOL := tools/preinit_snapshot.py tools/boot_snapshot.py
+
+.PHONY: preinit-inputs
+preinit-inputs:
+	@mkdir -p $(dir $(PREINIT_INPUTS))
+	@$(PY) tools/addrs.py $(PREINIT_CONSTANTS) > $(PREINIT_INPUTS).new
+	@cmp -s $(PREINIT_INPUTS).new $(PREINIT_INPUTS) \
+	  && rm -f $(PREINIT_INPUTS).new \
+	  || mv $(PREINIT_INPUTS).new $(PREINIT_INPUTS)
+
+$(PREINIT_INPUTS): preinit-inputs ;
+
+$(PREINIT): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE)
+	$(PY) tools/preinit_snapshot.py --out $@
+
+$(ACC_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/mkprg.py include/gemdos/pexec_load.h
+	$(PY) tools/accessory_disk.py --out $@
+
+$(PREINIT_ACC): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC_DISK)
+	$(PY) tools/preinit_snapshot.py --disk $(ACC_DISK) --work build/preinit_acc_snapshot --out $@
+
+.PHONY: preinit preinit-acc
+preinit: $(PREINIT)
+preinit-acc: $(PREINIT_ACC)
+
+test guarded gates: $(PREINIT) $(PREINIT_ACC)
+
 # TIER 3's table: every verified function's `recreate / original` cycle ratio. It runs the ORIGINAL
 # too, so it needs the snapshot exactly as the suites do; `bench/tier3.py` exits non-zero on a row
 # the gate refuses or a verified case nobody priced, and `test/test_tier3.py` is the same registry

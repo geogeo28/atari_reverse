@@ -56,6 +56,7 @@ import sys
 
 import pytest
 
+import address_hook
 import isr
 
 STEALING = "worksteal"
@@ -134,6 +135,34 @@ def a_test_that_patches_derives_and_forks_for_itself(request):
         aes_event = sys.modules.get("aes_event")
         if aes_event is not None:
             monkeypatch.setattr(aes_event, "ZYGOTE_SIDELINED", True)
+
+
+# ---- A HOOK CALLED WHILE NO PASS IS OPEN FAILS ITS TEST (`address_hook.OUTSIDE_A_PASS`) ----------------------------------
+# Such a call is answered 0 and recorded where nothing else reads it, so a candidate that called through a door its
+# case never bound passed. THIS process reads the record (a child ends itself by name instead: `address_hook.py`):
+#   * AT A TEST'S TEARDOWN: the test that made the call fails, by name — but a test of the mechanism itself, which
+#     opts in BY NAME in its own module;
+#   * AT A TEST'S SETUP: a record already there was made BEFORE the test — at import or collection, or in the setup
+#     of a module's or the session's fixture — and is this test's ERROR, said as that; never cleared unread.
+ON_PURPOSE = "CALLS_OUTSIDE_A_PASS_ON_PURPOSE"
+address_hook.read_by_this_process()
+
+
+@pytest.fixture(autouse=True)
+def a_hook_called_outside_a_pass_fails_its_test(request):
+    before = address_hook.taken()
+    assert not before, (
+        f"{len(before)} call(s) through a hook while NO PASS WAS OPEN were made BEFORE this test — at import or "
+        f"collection, or in the setup of a fixture wider than a test (a module's, the session's): "
+        f"{address_hook.said(before)}. Answered 0, served by nothing: bind the door where that code runs")
+    yield
+    made = address_hook.taken()
+    on_purpose = request.node.originalname in getattr(request.module, ON_PURPOSE, ())
+    assert not made or on_purpose, (
+        f"{len(made)} call(s) through a hook while NO PASS WAS OPEN — answered 0, served by nothing: "
+        f"{address_hook.said(made)}. The candidate called out through a door this case never bound: bind it (an empty "
+        f"table refuses by name) or, for a test of the mechanism, name the test in its module's {ON_PURPOSE}")
+    assert made or not on_purpose, f"named in {ON_PURPOSE}, and made no call outside a pass"
 
 
 # ---- TIER 3'S OWN BENCH OVER EACH OF THE TWO BLOBS a build is held on (`isr.BLOBS`) ---------------------------------------

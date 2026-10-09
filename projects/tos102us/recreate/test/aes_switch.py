@@ -506,6 +506,10 @@ class StackReading:
         if target:
             return [target.group(2)]
         through = _CALL_THROUGH.match(text)
+        # OWED, AES band 5 wave 2: A JUMP THROUGH A TABLE IN THE FUNCTION'S OWN TEXT (`jmp %pc@(2,%d0:w)` — the opcode
+        # switch, `src/aes/gemsuper.c`'s COMPILED_AS_A_JUMP_TABLE, the one function built with one) is refused here
+        # with every other transfer the reading does not follow: the reading learns the table — its sixteen-bit
+        # distances, each an arm of the same body — when a path it is asked for first goes through the switch.
         assert through, f"{function}: the stack reading does not follow the transfer `{text}` at {at:#x}"
         return self._through_a_pointer(function, through.group(1), at)
 

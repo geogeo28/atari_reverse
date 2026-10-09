@@ -85,7 +85,7 @@ _BRANCH = re.compile(r"(?:b(?:ra|hi|ls|cc|cs|ne|eq|vc|vs|pl|mi|ge|lt|gt|le)[swl]
 _LEAVES = re.compile(r"(?:rts|rte|rtr|jmp)$")
 _TARGET = re.compile(r"(?:0x)?([0-9a-f]+)(?: <[^>]*>)?$")
 _LISTED = re.compile(r"^\s*([0-9a-f]+):\t(?:[0-9a-f]{4} )+\s*\t(.*)$", re.MULTILINE)
-ROM_BODY_SCANNED = 0x400                        # further than any routine of the layer runs
+ROM_BODY_SCANNED = 0x800                        # further than any routine runs: the opcode switch's 1,866 bytes
 
 
 Shore = namedtuple("Shore", "entry reach begin text")       # a routine on one shore: `text` its instructions by PC

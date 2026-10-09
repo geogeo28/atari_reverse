@@ -710,6 +710,14 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # VDI's cursor and motion routines exchanged through the VDI binding
     ("aes_ap_tplay", "aes_lmul"), ("aes_ap_tplay", "aes_ldiv"), ("aes_ap_tplay", "aes_set_contrl_ptr"),
     ("aes_ap_tplay", "aes_gsx_ncode"), ("aes_ap_tplay", "aes_get_contrl_ptr2"),
+    # band 5's leaves: pinit's blank name; the cartridge's DTA cleared and filled (`src/aes/cart.c`, the fill inlined);
+    # the desk's globals cleared (`deskmem.c`); the screen switches' vector takes — which ship as the ROM's own
+    # instructions (`gemdosif.S`) — and sh_tographic's mouse counted on (`shlib.c`)
+    ("aes_pinit", "aes_bfill"), ("aes_cart_find", "aes_bfill"), ("aes_cart_find", "aes_lbcopy"),
+    ("aes_desk_alloc", "aes_bfill"), ("aes_sh_tographic", "aes_retake"), ("aes_sh_toalpha", "aes_giveerr"),
+    ("aes_sh_tographic", "aes_ratinit"),
+    # the opcode switch (`src/aes/gemsuper.c`): the marshal's three copies; menu_text's string and graf_mouse's show
+    ("aes_marshal", "aes_wcopy"), ("aes_dispatch", "aes_lstcpy"), ("aes_dispatch", "aes_gsx_mon"),
     # the file selector (`src/aes/fslib.c`): the default path copied, a directory's names copied, matched and compared,
     # a row's name formatted and the elevator's share, the list's clip saved, and the title's text
     ("aes_fs_pspec", "aes_strcpy"), ("aes_fs_active", "aes_lstcpy"), ("aes_fs_active", "aes_strchk"),

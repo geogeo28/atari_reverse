@@ -30,6 +30,8 @@
 
 #include <stdint.h>
 
+#include "addrs.h"          /* BIOS_SETEXC_FN, for the one inline that names its function */
+
 /* $fc0984 — is there a character waiting on `device`? `$ffffffff` if there is, 0 if not. */
 uint32_t bios_bconstat(uint8_t *image, uint32_t entry_d0, uint16_t device);
 
@@ -154,5 +156,18 @@ static inline uint32_t bios_trap_constant_char(uint16_t fn, uint16_t device, uin
     return result;
 }
 #endif /* !RECREATE_HOST_DIFFERENTIAL */
+
+/* Setexc(vector, handler) AS EITHER BUILD MAKES IT — `move.l <handler>,-(sp) / move.w #vector,-(sp) / move.w #5,-(sp) /
+ * trap #13` on target, the BIOS's own C core off it: the vector's holder displaced. The one spelling for every C
+ * caller outside the BIOS (the VDI's tick chain, GEMDOS's Pterm, the AES's critical-error takes). */
+static inline uint32_t bios_setexc_by_trap(uint8_t *image, uint16_t vector, uint32_t handler)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    return bios_setexc(image, vector, handler);
+#else
+    (void)image;
+    return bios_trap_vector(BIOS_SETEXC_FN, vector, handler);
+#endif
+}
 
 #endif /* TOS102US_BCON_H */

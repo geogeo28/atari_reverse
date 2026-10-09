@@ -78,6 +78,8 @@
 #define EV_BUTTON_ANSWER_WORDS 4
 /* ap_rdwr's CODE: a message written into the receiver's pipe (ap_sendmsg's `move.w #2`, $febe20). */
 #define AP_RDWR_WRITE         2
+/* ...and read out of the caller's own (the switch's appl_read and appl_exit: `moveq #1,d0`, $fe5df2; $fe5e62). */
+#define AP_RDWR_READ          1
 
 /* ---- the entries' Alcyon frames: words and longs, in the order the ROM's callers push them ----------------------- */
 /* ev_multi(flags, mouse rectangle 1, mouse rectangle 2, timer, button, message buffer, answers) — the flags a word,

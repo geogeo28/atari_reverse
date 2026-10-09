@@ -4662,6 +4662,10 @@ A_QPB_S_ADDRESS, SAVPTR_MOVED_BY_THE_RUN = "a QPB's address left in a freed EVB"
 THE_ROWS_THAT_SWITCH = "the rows that switch"
 THE_CALLER_S_CONTEXT, THE_DISPATCHER_S_STACK = "the caller's saved context", "the dispatcher's stack"
 THE_BRACKET_S_SAVE_WORD = "spl7_save's SR save word"
+# ...and THE X FLAG of the dispatcher's own save word, on the rows that DECLARE it (`aes_switching.THE_X_FLAG_ALONE`:
+# the caller's last arithmetic's — each build's own; one bit excused, the byte compared): the two rows whose yield
+# follows GCC's `seq` / `neg`, and no other.
+THE_DECLARED_X_FLAG = "the X flag of the dispatcher's save word, declared"
 # The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
 # woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
 # idle) and THE DOOR USERS' — each routine's wait that blocks, woken through the dispatcher (mn_do's three shapes,
@@ -4674,6 +4678,10 @@ ROWS_THAT_SWITCH = {
     "aes_gr_stilldn": 1, "aes_gr_wait": 1, "aes_gr_watchbox": 2, "aes_mn_do": 3, "aes_wm_update": 1,
     "aes_fm_alert": 2, "aes_fs_input": 5,
     "aes_ap_tplay": 8, "aes_ap_trecd": 6,
+    "aes_dispatch": 31, "aes_marshal": 3,   # the opcode switch's arms whose routine waits, each a wake above LIFTED
+    # band 5's leaves that leave by the dispatcher: all_run's three (a yield, then the lock), and the two rows each of
+    # the desk's rsrc_free binding and desk_free (GEMDOS frees the block, or refuses it)
+    "aes_all_run": 3, "aes_desk_rsrc_free": 2, "aes_desk_free": 2,
 }
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
@@ -4698,9 +4706,16 @@ BY_NATURE_CENSUS = {
     # No DOOR USER's row drops a bracket's word: none of them waits on a time, and no tick reaches tchange's
     # bracket on a path that does not wait.
     THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: ROWS_THAT_SWITCH, THE_DISPATCHER_S_STACK: ROWS_THAT_SWITCH,
+                           # the desk's rsrc_free binding where GEMDOS frees the block, and desk_free through it
+                           THE_DECLARED_X_FLAG: {"aes_desk_free": 1, "aes_desk_rsrc_free": 1},
+                           # (...and under the opcode switch's arms, `test_aes_gemsuper.py`: a playback's timer record
+                           # at two speeds, two recordings' sleep, evnt_timer and two evnt_multi with a timer;
+                           # appl_read's read, evnt_mesag's and two evnt_multi that ask a message — one of them at the
+                           # marshal too.)
                            THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 6, "aes_ev_block": 1, "aes_ev_multi": 19,
-                                                     "aes_ev_timer": 4},
-                           A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27}},
+                                                     "aes_ev_timer": 4, "aes_dispatch": 7},
+                           A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
+                                             "aes_dispatch": 4, "aes_marshal": 1}},
 }
 
 
@@ -4758,6 +4773,14 @@ STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = {
     ("aes_ap_tplay, four records played slowly: the wait is twenty-five ticks", THE_BRACKET_S_SAVE_WORD),
     ("aes_ap_tplay, a wait and a press played: no mouse record", THE_BRACKET_S_SAVE_WORD),
     ("aes_ap_tplay, four records played, the cursor shown: the VDI's cursor routine queues each point", THE_BRACKET_S_SAVE_WORD),
+    # ...AND THE X FLAG THE TWO FREED ROWS DECLARE: the ROM's run stores the byte with the value the machine holds
+    # (its X is clear before and after — it is OUR build's that differs), so no byte of the ROM's "changes"; what
+    # holds the declaration is Tier 3 (`aes_switching.THE_X_FLAG_ALONE`: one not needed is refused).
+    ("aes_desk_rsrc_free, the desk's resource freed, then a yield back to the desk", THE_DECLARED_X_FLAG),
+    ("aes_desk_free, the running desk's eight blocks freed in order, a yield after the resource's", THE_DECLARED_X_FLAG),
+    # ...and the same playback through the opcode switch's arm (`test_aes_gemsuper.py`)
+    ("aes_dispatch, opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record", THE_BRACKET_S_SAVE_WORD),
+    ("aes_dispatch, appl_tplay: at half speed, a top byte on its records", THE_BRACKET_S_SAVE_WORD),
 }
 
 
@@ -4766,7 +4789,8 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
     scheduled run of each registered row over its UNSETTLED machine (`aes_switch.scheduled` — not the registrar's
     kept derivation, nor its replay's ledger) and what that run CHANGED in the windows that differ by nature. Every
     such byte lies in a drop the registry holds for the row — but the dispatcher's own save word, which both builds
-    park alike and the row compares — every drop holds one, and which routines' rows drop which kind is the table's.
+    park alike and the row compares (all of it but the X flag, on the two rows that declare it) — every drop holds
+    one, and which routines' rows drop which kind is the table's.
     A QPB'S ADDRESS LEFT IN A FREED EVB is a kind of its own (`aes_switching.settled(row).qpbs`: a wait on a pipe
     that blocked and was woken, or was cancelled): no window but ONE LONGWORD, an EVB's parameter that holds a
     stack-band address when that run ends — and every such longword the run CHANGED is dropped."""
@@ -4781,7 +4805,8 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
         the_rom_s = aes_switching.scheduled(row, staged)
         uda = aes_event.uda_of(held.switches.process, the_rom_s.memory)
         kinds = {THE_CALLER_S_CONTEXT: aes_switch.uda_context_drop(uda), THE_DISPATCHER_S_STACK: aes_switch.DISPATCHER_STACK_DROP,
-                 THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP}
+                 THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP,
+                 THE_DECLARED_X_FLAG: aes_switching.THE_X_FLAG_ALONE}
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
         drops = [(lo, hi) for lo, hi, why in registered[name]
                  if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses]
@@ -4804,6 +4829,9 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
             of_a_kind += inside
             if inside:
                 census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
+        # ...and the X flag is named exactly where the row DECLARES it; the system byte of that word by none.
+        assert (aes_switching.THE_X_FLAG_ALONE[0][:2] in drops) == bool(row.x_flag_differs), name
+        assert not any(low <= aes.AES_SR_DISPATCH < high for low, high in drops), name
         assert sorted(of_a_kind) == sorted(drops), f"{name}: a drop of no kind this census knows"
     census = {kind: dict(sorted(counts.items())) for kind, counts in census.items()}
     assert census == BY_NATURE_CENSUS[THE_ROWS_THAT_SWITCH], (
@@ -5176,8 +5204,17 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_fm_button": (*STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
     "aes_ap_sendmsg": ("AES_AP_RDWR_QPB, process 1",),             # the screen manager's own frame of it: per process
     "aes_wm_update": (),                                           # the lock's hand-over: nothing of a frame is live
+    "aes_all_run": (),                                             # ...and all_run's wait for it: its frame hands on nothing
     "aes_fm_alert": FM_ALERT_S,                                    # fm_alert's own frame, fm_do's under it, the watch's
     "aes_fs_input": FS_INPUT_S,                                    # fs_input's own frame, and fm_do's under it
+    # THE OPCODE SWITCH's door users' arms (`test_aes_gemsuper.py`: each a wake of the arm's routine, lifted): what
+    # the routine under the arm holds — the desk's OWN QPBs among them (process 0: appl_read's ap_rdwr, evnt_multi's
+    # message wait) — and, entered at the marshal, THE MARSHAL'S OWN FRAME: its copies of the program's arrays,
+    # live across every wait an arm makes. One frame for every process, as the rest are.
+    "aes_dispatch": ("AES_AP_RDWR_QPB, process 0", "AES_EV_MULTI_QPB, process 0", "AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME",
+                     *STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME", "AES_GR_RUBWIND_RECT", "AES_GR_DRAGBOX_FRAME",
+                     "AES_GR_SLIDEBOX_RECTS"),
+    "aes_marshal": ("AES_MARSHAL_FRAME", "AES_EV_MULTI_QPB, process 0"),
 }
 A_SLOT_PER_PROCESS = ", process "
 
@@ -5216,7 +5253,9 @@ def test_the_host_slots_held_across_a_wait_are_the_audit_s_and_every_one_is_give
         slots.extend(slot for slot in ran.slots_held if slot not in slots)
     assert {core: tuple(slots) for core, slots in held_by.items()} == SLOTS_HELD_WHERE_PARKED
     per_process = {slot for slots in SLOTS_HELD_WHERE_PARKED.values() for slot in slots if A_SLOT_PER_PROCESS in slot}
-    assert per_process == {"AES_AP_RDWR_QPB, process 1"}, "the one slot per process a door user parks under, today"
+    assert per_process == {"AES_AP_RDWR_QPB, process 1", "AES_AP_RDWR_QPB, process 0", "AES_EV_MULTI_QPB, process 0"}, (
+        "the slots per process a door user parks under, today: the screen manager's write and — under the opcode "
+        "switch's arms — the desk's own read and its evnt_multi's message wait")
 
 
 def test_a_call_that_returns_holding_a_host_slot_is_refused_by_name(monkeypatch):

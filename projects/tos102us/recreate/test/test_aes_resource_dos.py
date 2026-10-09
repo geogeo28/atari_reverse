@@ -243,3 +243,8 @@ aes.register("the desk's", RS_FREE, (rs.DESK_GLOBAL,),
 aes.register("the snapshot's own block", ROM_RSC_INIT, (),
              aes.leaf_machine(onto=merge_pokes(STALE_DOS, STALE_TABLE, vdi_helpers.staged_gemdos_trap_pokes(SNAPSHOT_BUNDLE))),
              hook=vdi_helpers.staged_gemdos_hook(SNAPSHOT_BUNDLE))
+# ...and dos_free itself, VERIFIED AND UNPRICED at its own entry (the host argument above): swept with the registry
+# and listed in the census `test_tier3.UNPRICED_AT_A_ROM_ENTRY` — band 5 wave 1's rule for every such twin.
+aes.ROWS.register(f"{routines.core_symbol(DOS_FREE)}, Mfree of a block (a host argument: its caller's return site)",
+                  addrs.AES_ROM_DOS_FREE, aes.staged(DOS_FREE, (0x2_0000,), aes.leaf_machine(onto=merge_pokes(
+                      STALE_DOS, vdi_helpers.staged_gemdos_trap_pokes(GEMDOS_OK)))), priced=False)

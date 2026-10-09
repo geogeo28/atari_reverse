@@ -55,6 +55,8 @@ GCC_CALLEE_SAVED = shipped_glue.CALLEE_SAVED
 UNOBSERVED = {
     "vdi_rom_gemdos_call": ({"d2", "a2"}, "its cases take a RECORDING `trap #1` handler "
                                           "(`test_vdi_helpers_gemdos.py`); GEMDOS itself keeps only D3-D7/A3-A6"),
+    "aes_rom_trp14": ({"d2", "a2"}, "the door serves ANY XBIOS function and its cases reach Getrez or a recording "
+                                    "`trap #14` (`test_aes_trp14.py`); the XBIOS's dispatcher keeps only D3-D7/A3-A7"),
 }
 def _core(entry):
     return transcription.transcribed_core(entry)

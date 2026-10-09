@@ -119,6 +119,13 @@ the dead stack below each stack pointer plus the scratch those routines churn.
 `MASK` in `tools/boot_snapshot.py` is the union over the three pairwise comparisons, coalesced across
 gaps of 0x100 bytes — deliberately wider than any one pair's difference.
 
+**The mask is what those three boots showed, not a bound — "bit-identical outside it" is false in general.** Over
+three later captures 32 bytes outside it moved (`$1459` +11, `$8920` +14, `$9fa1` +3, `$a075`, `$a098` +4, `$a24a`
++2, `$c7e9`), a fourth showed `$754e` +2, `$95ba` +4, `$9707`, `$1662` +2, and `savptr`'s frame lies at `$93a` or one
+46-byte frame lower: the same phase-of-the-idle-work class at the edges of the regions above. The mask and the
+capture are unchanged; what follows from it is the rule the gate enforces — every test holds over a FRESH capture, and
+a number a capture decides is derived, never pinned.
+
 **Two captures are never bit-identical, so anything that HASHES across trees pins one file.** A row, a
 scenario or a derived machine is a reproducible object PER SNAPSHOT: the same sources over the same
 `build/boot_ram.bin` give the same bytes, and a fresh capture gives others (451 bytes between two made three
@@ -131,6 +138,136 @@ way: a HEAD tree with a fresh capture showed 48 "moved" rows of 1,511; over one 
 `test/test_boot_snapshot.py::test_no_verified_function_depends_on_a_byte_the_capture_does_not_reproduce`
 fills every masked region with pseudo-random bytes and re-runs every verified function's
 differential. **A function added to this project must be added to that case.**
+
+## The pre-init machine and the ROM's own boot
+
+Band 5's subject is what the snapshot lies AFTER — the AES's init, the accessory loader, the shell — so it has two
+more kinds of machine, both made by ROM runs and neither by a poke (`tools/preinit_snapshot.py`,
+`tools/accessory_disk.py`, `test/aes_boot.py`, `test/test_aes_boot.py`).
+
+```
+make preinit        # build/preinit.bin      — the snapshot's machine stopped at gem_entry, blank floppy     (~4 s)
+make preinit-acc    # build/preinit_acc.bin  — the same stop, the test accessories' floppy in A: from power-on (~4 s)
+python tools/preinit_snapshot.py --twice          # capture twice, report what differs
+python tools/preinit_snapshot.py --cross-check    # OPT-IN: the accessory machine against a real Hatari boot
+```
+
+**A pre-init machine** is Hatari stopped by `b pc = $fd9eca` — `gem_entry`, before one instruction of GEM — on the
+snapshot's own machine (arguments, ROM and blank disk read from `boot_snapshot`, which is untouched). The file is the
+megabyte of RAM, THE REGISTERS (PC `$fd9eca`, SR `$0300`: user mode; both stack pointers; every data and address
+register zero but D0 = A6) and the shifter's palette and resolution byte as the debugger reads them. The capture is
+refused unless the PC is the dump's own `exec_os` and the CPU is in user mode. Both files are prerequisites of
+`make test` / `guarded` / `gates`; their names are outside every pattern of `derived.py`'s tree key, and they have a
+content stamp of their own (`build/preinit_inputs.txt`), so neither capturing them nor an edit to their constants
+ever re-captures the snapshot or moves a kept derivation.
+
+**A booted machine** is the ROM's OWN `gem_entry` run in the oracle FROM a pre-init machine — entered with the
+capture's whole register file, in user mode, on the capture's stacks — to THE DESKTOP'S FIRST IDLE: the first arrival
+at idle's poll with nothing ready, nothing woken, no fork queued. GEMDOS, the BIOS, the XBIOS, the VDI, Line-A and
+Line-F are the image's own code through the image's own vectors. `desk_machine()` boots the blank disk's capture
+(592,893 instructions); `accessory_machine(first, second)` the accessory disk's (714,383 for the quiet pair), each
+accessory in its mode. Kept derivations (`derived.kept`), keyed by the pre-init machine's CONTENT: 0.25 s / 0.59 s
+cold, 11 ms served.
+
+**What the oracle serves for that run — the device model** (a boot that meets anything else is refused by name):
+
+1. **The floppy, at the ROM driver's three entries** (the addresses the machine's own `hdv_bpb` / `hdv_mediach` /
+   `hdv_rw` hold). The run is stopped there and answered: `Rwabs` copies sectors between the caller's buffer and a
+   720 KB image held OFF the machine; `Mediach` says UNCHANGED, always; `Getbpb` is never asked (refused by name).
+   The disk served must be THE DISK THE CAPTURE BOOTED WITH — the driver's own record must hold its BPB and its
+   serial, or the boot is refused. The driver's private scratch and timers are not advanced.
+2. **The blitter probe's bus error.** XBIOS `Blitmode`'s probe (`$fc0f1a`) touches `$ffff8a00` behind a bus-error
+   vector; the oracle's CPU takes no bus error and the read is of an unmodelled I/O byte. The run is stopped at that
+   one instruction (`$fc0f34`) and the exception taken as a 68000 takes it: the 14-byte group-0 frame pushed, the PC
+   from vector 2, no data register touched. What that buys is the machine's own path through the probe, not its
+   answer — this call (`Blitmode(-1)`) discards it.
+3. **The shifter, by declaration**: the sixteen palette words (`vq_color` over every pen; they land in
+   `LINEA_REQ_COL`) and the resolution byte (twice), each as the capture read it out of Hatari.
+4. **The keyboard ACIA's status**, by the kit's own model: seven polls, one before each of the seven IKBD bytes the
+   mouse set-up sends (`$08`, `$0b 1 1`, `$10`, `$07 0`), which are dropped as every off-image store is.
+5. **One interrupt, the horizontal blank.** `gem_main`'s `sti` is `andi #$f8ff,sr`; on the machine the ROM's HBL
+   handler then raises the interrupted mask to 3, which is why every SR the AES saves reads `$23xx`. One level-2
+   interrupt is held pending for the run (`m68k_set_irq`), taken through the image's vector, served by the ROM's
+   handler. Every boot takes exactly one.
+
+NO OTHER INTERRUPT IS DELIVERED: nothing between `gem_entry` and the first idle waits on a clock. **No time passes** in
+a booted machine — its clocks are its pre-init machine's, and `colorptr` (`$45a`) is still pending: the first
+vertical blank delivered to one loads the palette.
+
+**Why the disk is in the drive from power-on, and not a RAM disk.** `Pexec` hands a program the LARGEST free block and
+CLEARS it; at the accessory loader's `Pexec(3)` that is all of free memory, a staged RAM disk and its stubs with it
+(measured: the run left the rails). So the disk is a device off the machine. And it is NOT swapped in at `gem_entry`:
+a first version did that (Mediach "changed" once), and against a real boot 821 bytes differed — GEMDOS's two sector
+buffers, its directory records, each basepage's current-directory byte. With the accessory disk in Hatari's drive
+from power-on, GEMDOS's cache and the driver's record are the real ones. One capture serves every mode pair because a
+mode is one word inside an accessory's own cluster: `accessory_disk.disk_of` builds the image from the UNPATCHED file
+(so `st_build`'s content-derived serial is one serial) and patches the word in the image — every byte outside the two
+mode words is equal for all 25 pairs (a test).
+
+**The test accessory** (`test/acc/testacc.S`, linked by `test/acc/acc.ld`, wrapped by `atari/mkprg.py`): `appl_init`,
+then a wait for ever. `QUIET` waits in `evnt_mesag`; `FIND` does `appl_find("TESTACC2")`; `WRITE` an `appl_write` of
+16 bytes to what was found (or to pid 0, the desk); `MULTI` waits in a six-way `evnt_multi`. It keeps every answer of
+the AES in its own DATA, which a test reads through the basepage the PD names.
+
+**How the machines relate to the boot snapshot.** `desk_machine()` is the snapshot's own boot met at its FIRST idle
+instead of nine hundred vertical blanks on: the vectors, the whole TPA (but the Line-F mask word), both processes'
+PDs and saved contexts, the lists and the screen are equal, and that is a test. Byte for byte they differ in 369–425
+bytes, 56–62 outside `boot_snapshot.MASK` — clocks, `colorptr`, the floppy's VBL words, `savptr`'s last frame,
+interrupt frames left on stacks, a few tick-driven AES words — which is NOT pinned: a capture's phase decides it.
+`accessory_machine()` is the desk's plus its accessories (same static PDs, same CPU registers, same screen).
+
+**`--cross-check`** (opt-in; no suite or gate runs it) boots the accessory disk in Hatari to the desktop by the
+snapshot's own procedure and prints what the accessory machine differs from it in, outside both masks. Measured
+2026-10-09, the quiet pair — 109 bytes in 14 runs, none of them a process, list, basepage or GEMDOS record:
+
+| where | bytes | what |
+| --- | ---: | --- |
+| `$45b` | 3 | `colorptr`, still pending |
+| `$92e` | 6 | `savptr`'s last frame |
+| `$a4a`, `$1696`, `$16ab` | 2 + 1 + 21 | apparently the real driver's scratch from the sectors it read (inferred) |
+| `$8920`, `$8c00` | 14 + 10 | dead frames: `gem_entry`'s first stack, the dispatcher's |
+| `$954d` | 5 | the tick glue's stack (no tick ran) |
+| `$9f5f`, `$a318`, `$a759` | 70 + 5 + 23 | interrupt frames in the static UDAs' stacks |
+| `$11bb4`, `$11bca` | 4 + 5 | the same, in the second accessory's UDA |
+| `$cc45` | 1 | the Line-F mask word |
+
+**Capture-phase facts, and the second mask.** Unlike the snapshot, a pre-init capture's CLOCKS move: it stops at an
+instruction, and when the boot reaches it depends on the emulated disk's rotation (`_hz_200` 396..450 over eighteen
+captures). `preinit_snapshot.MASK`: `_vbclock`/`_frclock`, `_hz_200`, the floppy VBL service's words (`$9f8`), the
+timer-C divider, dead frames of the OS stack (`$1455`..`$1676`), GEMDOS's 20 ms accumulator, the floppy driver's
+scratch (`$74b8`), `GEMDOS_TIME`, the 50 Hz millisecond count. Registers, palette and every byte outside it agreed
+in all eighteen — but two regions were first seen at the tenth and twelfth capture, so it may be incomplete, and no
+test depends on its completeness. What IS a test: booted from a pre-init machine whose every masked byte is NOISE,
+the ROM takes the same instructions to the same registers and the same machine outside the mask.
+**`boot_snapshot.MASK` is not complete either**: over three fresh snapshot captures 32 bytes outside it moved
+(`$1459` +11, `$8920` +14, `$9fa1` +3, `$a075`, `$a098` +4, `$a24a` +2, `$c7e9`), and a byte-exact comparison against
+the snapshot went red on a fresh capture — hold a relation to the snapshot by STRUCTURE (pointers, lists, contexts).
+
+**The API** (`test/aes_boot.py`):
+
+```python
+aes_boot.preinit(); aes_boot.accessory_preinit()          # the two PreInit(ram, registers, io)
+aes_boot.desk_machine(machine=None)                        # Machine
+aes_boot.accessory_machine(first=QUIET, second=QUIET, machine=None)
+aes_boot.booted(preinit, disk)                             # the kept derivation -> Boot (ram, registers, ledgers)
+aes_boot.accessory(); aes_boot.accessory_disk_of(*modes); aes_boot.blank_disk()
+# a Machine: .ram .registers .boot .pokes ({0: ram}) .image() .waiting() .named(name) .static_processes()
+#            .static_uda_bytes() .allocated_accessories() .free_events() .results(process) .accessory_word(...)
+```
+
+A row over the accessory machine is run as over the snapshot — its megabyte is the case's pokes. The worked example
+(in the suite, both shores): fpdnm finds the second accessory only by its walk of `$c6b2[]`, the arm no machine
+before this one reached.
+
+```python
+booted = aes_boot.accessory_machine()
+staged = case.merge_pokes(aes.leaf_machine(booted.pokes), pp.name_pokes(b"TESTACC2"))
+assert pp.run(pp.FPDNM, (pp.NAME_AT, 0), staged).long_answer() == booted.named("TESTACC2").pd
+```
+
+Not built: continuing a booted machine from its idle with interrupts (use `aes_switch.scheduled` over
+`machine.pokes`). The register entry, the bus error and the IRQ reach Musashi's `m68k_set_reg` / `m68k_get_reg` /
+`m68k_set_irq` through `emu._LIB` — accepted for now; a kit accessor is owed.
 
 ## Writing a case
 
@@ -716,10 +853,27 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     stops (`dispatcher_stop`), whoever drives the run.
   - COMPARED (`held_to_the_scheduled_run`): the return, the idle count, the answer, the whole image — outside the
     caller's saved context, the dispatcher's stack, `$8994` and the event layer's own drops, each only where the ROM's
-    run stored it.
+    run stored it. (That is the HOST's model, which stores no SR. At Tier 3 the dispatcher's save word `$8994` is
+    COMPARED, both bytes — all of it but the X flag on a row that declares it: `aes_switching.THE_X_FLAG_ALONE`.)
   - WHAT MAY NOT BE A FOREIGN PROCESS: one parked by a harness call (`aes_event.parked`) — its continuation is the
     run's sentinel. The snapshot's own screen manager is real. A scheduled run that idles for ever after its
     deliveries is not kept.
+  - A HOOK CALLED WHILE NO PASS IS OPEN FAILS ITS TEST AT TEARDOWN (band 5 wave 1). Such a call is no case's: it is
+    answered 0 and written to `refused` — which the NEXT case's `staged()` clears unread, so a candidate that called
+    through a door its case never bound (a switch that handed sh_find a routine it must not have) passed. Every
+    such call is now also kept in `address_hook.OUTSIDE_A_PASS` by the pointer's symbol and its key, and an autouse
+    fixture (`conftest.py`) fails the test that made it, by name; a test of the mechanism itself names itself in
+    its module's `CALLS_OUTSIDE_A_PASS_ON_PURPOSE`. The cure in a battery is to BIND the door, with an empty table
+    where the routine must call nothing (`aes.alcyon_object_hook({})`: refused by name, inside the pass). WHO
+    READS THE RECORD: pytest's own process alone (`address_hook.read_by_this_process`, declared by `conftest.py`)
+    — at a test's teardown, and at its SETUP, where a record already there was made before the test (at import
+    or collection, in a module's or the session's fixture) and is that test's error, never cleared unread. IN
+    EVERY OTHER PROCESS — a fork left serving the hook (the guard's fork made at the call, a model's), a fresh
+    interpreter (a door user's child) — nobody would read it, so the call ENDS THE PROCESS AT ONCE, by name on
+    its stderr with a status of its own (`OUTSIDE_A_PASS_STATUS`), which each child road's parent already reads
+    as its case's failure; a fork that serves no hook (the zygote's, `core_in_a_fork`'s without one) never
+    reaches the recorder — every hook is a refuser there (`FORK_REACHED_A_HOOK`). At once, not at the child's
+    exit: a child has many exits (a halt at the dispatcher's hook, an abort, a refuser's `_exit`).
   - WHAT A HOOK RAISES IS ITS CASE'S OUTCOME, WHATEVER IT IS. ctypes prints and DROPS what a callback raises.
     `AddressHook._dispatch` (`test/address_hook.py`) records it and answers a refused call; `staged()` then gives
     the case its outcome (`as_the_case_s_outcome`): a FAILURE carrying the exception's TYPE, words and traceback,
@@ -749,7 +903,9 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   rule's ONE home — `measure` holds that it RAN, on every measuring path; a transcription row reads no drop)
   — a build whose mask bracket was lost would otherwise hide behind the drop; it is what pins a bracket's PRESENCE
   on target, which no host battery can (the host stores no SR). The dispatcher's own (`$8994`) is stored after
-  dsptch, where no host core goes but the model's (it is in the table for the rows that switch). A door user
+  dsptch, where no host core goes but the model's: it is STAGED at the value the ROM's run leaves and, at Tier 3,
+  COMPARED on every row that switches — savestate and switchto are the ROM's instructions in both builds — whole,
+  but for its X FLAG (`$10` of `$8995`) on the rows that DECLARE it (two today: band 5 wave 1). A door user
   drops an SR word where the ROM's run stored it (`DOOR_RUN_DROPS`) and an interrupted row settles it, both by
   derivation — no row names such a drop by hand. (Unexercised: no door row's ROM run stores one, measured before
   and after flip 3.)
@@ -1423,6 +1579,36 @@ Of the three mechanisms the foundation designed, ONE is still not built (the fir
   is a number that is none of the four; and what stays the ROM's on a blob is a record made inside a foreign
   window — A ROUTINE EVERY ARM OF WHICH LEAVES BY THE DISPATCHER, above.)
 
+### The opcode switch's cases are LIFTED — `test/aes_gemsuper.py` (band 5 wave 1)
+
+`aes_dispatch` (`$fe5d9c`) and `aes_marshal` (`$fe64e6`) have no machines of their own to stage: a call of the switch
+is a call of one of its routines, marshalled, and every such routine already has a battery whose registered rows are
+the ROM's calls of it over ROM-made machines. So a case is not written, it is LIFTED:
+
+- `ARMS` is the inverse of what each arm's instructions read — `{the routine: (its frame, its machine) → Call}`, the
+  opcode, int_in and addr_in a program would hand for the arm to make that very call. `lifted(<a registered row's
+  name>)` gives the call, the row's machine and its kind (a row that returns, one taken through interrupts, one that
+  switches); a row renamed in its battery reds this module's import by name. `at_the_switch` / `at_the_marshal`
+  stage it (arrays in a band of their own, every word past what the call hands STALE; the parameter block and
+  control for the marshal).
+- A call no row gives (an inline arm, the default arm, a second value of a word) is a `Special` over a row's
+  machine: `call(arguments)`, or `again(the lifted call)` — `with_words({index: word})`, `top_bytes`.
+- BY STYLE (`style`): a door user's arm runs under the event door with every frame held (`aes_event.run_guarded`,
+  registered by `aes_event.register`); the event layer's own under its layer's hooks (`run_layer_case`,
+  `register_row`); an arm whose routine traps into GEMDOS over its battery's scripted or replayed trap, the C first
+  in a fork made inside the open pass.
+- A wake is the routine's own row that switches with the arm's entry and arguments (`switching_row`): the same
+  deliveries at the same idles — held on the ROM's run that the arm adds no wait.
+- THE RULE A NEW ARM OWES (`test_every_word_an_arm_reads_takes_two_values_across_its_cases`): each word of int_in
+  and longword of addr_in the arm reads takes two values across its cases; a word the ROM's arm never reads is
+  `UNREAD` in `ARMS` (handed stale, and the ROM is asked that it reads none). It is necessary, not sufficient — two
+  values can be one answer (a flag, a rate both rows set to 0): the mutation sweep (`in(k)` made 0 and made 1) is
+  what says a word is read.
+- THE MARSHAL'S FRAME is one host slot (`HOST_SLOT_AES_MARSHAL_FRAME`: the 62 bytes, then sixteen that MODEL what a
+  caller leaves above a frame — the saved A6, the return address, the arguments — which a case stages and the C
+  never writes: `a_caller_s_words`). A copy back of int_out past the frame reads the model off target and the real
+  stack on target; past the model the host refuses by name. One slot for every process until wave 3.
+
 ## Verified functions, and what they cost on each side
 
 The oracle reports `ninsns` and `cycles` for every run (`out_regs`), so the ORIGINAL's cost per
@@ -1533,6 +1719,13 @@ parsed table and the m68k call graph, and a routine of any component is named by
   of its `.S` rows is at or under it, or `own` by (T←) below — verdict `transcribed`, read off the
   measurements, with no per-row entry. Delete a `.S` row, or let one drift over the bar, and the C rows
   go red with it. A WRITTEN acceptance of a `.S` row carries no C row.
+* **THE ONE RULE FOR A C TWIN'S ROWS, when its routine ships as its `.S`** (band 5 wave 1; stated here once): a
+  twin's row OVER the bar is in the table, verdict `transcribed` (above). A twin's row that measures UNDER the bar
+  would print with a blank verdict beside its siblings' `transcribed` and read as C that ships — so it is
+  registered VERIFIED AND UNPRICED instead (`priced=False`), LISTED BY NAME WITH ITS NUMBER in the census
+  `test_tier3.UNPRICED_AT_A_ROM_ENTRY`, and its second differential and cycles are held by its own battery
+  (takeerr's twin, 1.04; pgmld's two arms that reach Mshrink, 1.02). The rule is applied to the AES's twins from
+  band 5 on; earlier components' twins under the bar still print `ok`, and are theirs to bring under it.
 * **The build contract** (`atari/target.mk`): `TRANSCRIBED_ENTRIES`/`TRANSCRIBED_SOURCES` are what the
   ROM build links for these routines and `TRANSCRIBED_C_CORES` the C twins it must not. The Tier 3 blob
   links both, because it measures both. The sources are `src/vdi/*.S` and `src/aes/*.S` — the table's
@@ -1766,6 +1959,57 @@ bytes and no row of `include/transcribed.h`: `atari/target.mk` lists it as ALCYO
 TRANSCRIBED_SOURCES so the transcription `.globl` pin stays exact; Tier 3 counts its cycles as glue (`bench/tier3.py`'s
 ALCYON_ENTRIES, T→G, like a generated thunk); and `test_transcribed.py` pins its `.globl`s to exactly that list, outside the
 table. No host surface sees it, so its mutants are judged by Tier 3's second differential.
+
+**A `.S` THAT LEAVES ADDRESSES OF ITS OWN TEXT IN RAM — mapped through the relocation registry, never dropped**
+(`src/aes/gemdosif.S`: pgmld, band 5 wave 1). pgmld reaches `__DOS` by `bsr`, so the return address `__DOS` parks
+(`$8c22`) is a site inside pgmld, the command tail it hands Pexec is the address of a zero word of its own text, and
+`__DOS` leaves by `jmp (a0)` with that site in A0: the ROM's addresses on one shore, the `.S`'s own labels on the
+other. A transcription row drops nothing, so they are RELOCATED: `aes_event.TEXT_SITES` (a member of
+`CODE_RELOCATIONS`: the ROM address ↦ the local label of the `.S`, mapped where our run ends) and, for this kind
+alone, the register file too (`tier3.map_registers`). A battery whose staged trap RECORDS such an address declares
+the longwords of its ledger that can hold one (`aes_event.declare_text_site_slots`, in the recorder's own module:
+`test/aes_gemdosif.py`). The mapping is in force ONLY FOR A RUN THAT CAN PARK A SITE — the `.S` entry's own, and a
+declared C caller's on the shipped blob (`aes_event.TEXT_SITE_CALLERS`: NONE YET — pgmld has no C caller, so no
+thunk is generated and `aes_pgmld` on the shipped blob is still the weak C twin, which parks the ROM's sites as the
+data they are; its first caller is the accessory loader, wave 3, whose pair in
+`transcription.C_CALLERS_OF_TRANSCRIBED_CORES` — the table `test_transcribed.py` holds to the build's call graph
+and the thunks are generated from — must be named there too: `test_aes_pgmld.py` reds while they disagree). A
+register our run leaves holding the ROM's own site is refused by name before it is mapped, as a slot is.
+To add a site: a local label in the `.S`, a row in `TEXT_SITE_SYMBOLS`, the slot if RAM holds it.
+
+**THE DISPATCHER'S SAVE WORD IS COMPARED — but for ONE BIT on a row that DECLARES it**
+(`aes_switching.THE_X_FLAG_ALONE`, `SwitchingRow.x_flag_differs`). dsptch pushes its caller's status register and
+switchto parks the SR it is entered under: where a yield comes after arithmetic of the caller's own, the X flag in
+`$8995` is the compiler's — Alcyon's in the ROM, GCC's in a build (the desk's rsrc_free binding where GEMDOS frees
+the block: `$00` against `$10`). Measured over the registry, 294 of 298 switching runs hold the byte equal, so this
+is NO kind of every row's: the two rows that need it declare it, the table prints the line under those two, and
+nothing is left out of the compare — Tier 3 flips that one bit in the image our run leaves and compares the byte
+whole. So N, Z, V, C and the system byte `$8994` stay compared; a declaring row whose bytes are equal without the
+flip (a declaration it does not need) is refused; a non-declaring row whose X differs is refused like any byte.
+
+**CALL ORDER ACROSS THE DOORS — `test/aes_trap_order.py`.** A routine that makes several calls out leaves an image
+that says nothing of their order where they commute in memory (a buffer freed before or after the workstation
+closed; a vector stored before or after the Setexc beside it). `aes_trap_order.on_both_shores(tier3, bench, row)`
+measures a C row with BOTH runs watched at the four trap handlers (`trap #1`, `#2`, `#13`, `#14`: where the vectors
+point, the same addresses on both shores) and answers two `TrapOrder`s — `names()` the `(trap, function)` list in
+the order taken, `held(nth, witness)` what a witness longword held at the nth call (by default the two vectors GEM
+takes, what it saved of each, and the mouse's hide count). Assert the ROM's list against what the source says, and
+ours equal to the ROM's (`made`). It stages nothing and moves no cycle; it needs a Tier 3 row, so it is a surface of
+the blobs, not of the host: THE HOST BUILD'S CALL ORDER IS HELD BY NOTHING (it takes no trap — its doors are hooks
+and direct C calls), and is the same C the blobs are built from. The handlers are read BY VECTOR: a machine that
+stages one stub behind two vectors is refused by name.
+
+**A RECORDING, SCRIPTED TRAP PER VECTOR — `test/aes_gemdosif.py`'s `Recorder`.** For a routine whose GEMDOS (BIOS,
+XBIOS) calls are the claim: the vector pointed at a staged 68000 handler that records each call's function word and
+ITS FRAME'S OWN BYTES (never what lies above them on the stack: that is the caller's, and differs by nature), the
+longwords the glue parked at that call, and answers the next longword of a script; `twin()` is the same effect on
+the host. A routine that also SWITCHES binds it in its Tier 1 fork by `SwitchingRow.child_doors`. A handler's
+instructions are cycles in both columns of every row recorded through it — keep it to what the glue itself parks.
+
+**A CASE WHOSE FAILURE WOULD END THE SUITE GOES FIRST, IN A CHILD.** A host twin that halts by name, or walks a wild
+pointer into the bus guard, takes pytest down with it: a mutant that does so is counted ABNORMAL, not killed. The
+case that would catch it is run once more through `aes_event.refusal` (a child: its return code and what it left)
+and placed BEFORE the in-process cases of its file (`…__held_in_a_child` in the batteries of band 5 wave 1).
 
 ## How the suite is spread over the workers
 
@@ -2007,9 +2251,13 @@ recreate/
 │                       process's zygote and the monkeypatch rule; `zygote.py` (who makes a guard's
 │                       fork), `derived.py` (ROM-only derivations kept by content) and `fork_pool.py` (a
 │                       pass over forks that ends, whatever a fork does)
-├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python)
+│                       `aes_boot.py` (the ROM's own boot from a pre-init machine: the desk's and the accessory
+│                       machines) and `acc/` (the test accessory's source and link script)
+├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
+│                       two pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and its floppy)
 └── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
                         bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
                         the shipped configuration's blob and its generated glue; derived/ (the
-                        derivation cache, by tree) and gates/ (`make gates`' logs)
+                        derivation cache, by tree) and gates/ (`make gates`' logs); preinit.bin, preinit_acc.bin
+                        and acc/ (the two pre-init machines and the accessory floppy they need)
 ```

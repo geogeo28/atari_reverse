@@ -2797,7 +2797,38 @@ FORK_CODES = RelocatedCode("a fork function's code in the fork queue", FORK_CODE
 # own table stays the two glues (the dispatcher's battery and the interrupts' hold it to them).
 HANDED_ENTRY_SYMBOLS = {**GLUE_ENTRY_SYMBOLS, addrs.AES_ROM_JUSTRETF: "aes_rom_justretf"}
 GLUE_CODES = RelocatedCode("a glue's address handed to the VDI", GLUE_CODE_SLOTS, HANDED_ENTRY_SYMBOLS, False)
-CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES)
+# ...and THE GEMDOS GLUE'S OWN TEXT, NAMED IN RAM (band 5: pgmld, which ships as the ROM's instructions —
+# `src/aes/gemdosif.S`): `__DOS` parks the return address it was reached with, and pgmld reaches it by `bsr` from its
+# own body, so AES_TRAP1_RETURN holds A SITE INSIDE pgmld — `$fe39ce` / `$fe39fa` in the ROM, the `.S`'s own in a
+# build; the command tail it hands Pexec is the address of a zero word of its own text (`$fe39b4`); and `__DOS`
+# leaves by `jmp (a0)`, the site in A0. Mapped at a run's EXIT alone (a machine holds none of them before pgmld runs).
+# WHICH RUNS ARE MAPPED: those that can PARK a text site — a `.S` entry's own (`TEXT_SITE_ENTRIES`) and a C CALLER's
+# that reaches the `.S` through its thunk on the shipped blob (`TEXT_SITE_CALLERS`). NONE OF THE SECOND KIND EXISTS
+# YET: pgmld has no C caller, so no thunk is generated for it and `aes_pgmld` on the shipped blob is still the weak C
+# twin (which parks the ROM's sites, as the data they are). ITS FIRST C CALLER IS THE ACCESSORY LOADER (sndcli,
+# wave 3): its pair goes into `transcription.C_CALLERS_OF_TRANSCRIBED_CORES` — which `test_transcribed.py` holds to
+# the build's own call graph, and from which `bench/shipped_glue.py` generates the thunk — and its name HERE
+# (`test_aes_pgmld.py` reds while the two disagree).
+# THE SLOTS: the one longword of the machine, and the longwords of a recording trap's ledger that can hold one — its
+# recorder's module declares those where it lays the ledger out (`declare_text_site_slots`: `test/aes_gemdosif.py`,
+# a module this one cannot import — it is built on this one — so the list is completed at ITS import, never a test
+# module's).
+TEXT_SITE_SYMBOLS = {addrs.AES_PGMLD_PEXEC_RETURN: "aes_rom_pgmld_pexec_return",
+                     addrs.AES_PGMLD_MSHRINK_RETURN: "aes_rom_pgmld_mshrink_return",
+                     addrs.AES_PGMLD_EMPTY_TAIL: "aes_rom_pgmld_empty_tail"}
+TEXT_SITE_ENTRIES = ("aes_rom_pgmld",)  # the `.S` entries whose own run parks them
+TEXT_SITE_CORE = "aes_pgmld"            # ...the C core a caller names to reach that `.S` (through its thunk)
+TEXT_SITE_CALLERS = ()                  # ...and the C callers that do: none yet (above)
+TEXT_SITE_SLOTS = [aes.AES_TRAP1_RETURN]
+TEXT_SITES = RelocatedCode("a site of the GEMDOS glue's own text named in RAM", TEXT_SITE_SLOTS, TEXT_SITE_SYMBOLS, False)
+
+
+def declare_text_site_slots(*slots):
+    """Longwords of a recording trap's ledger that can hold one of `TEXT_SITE_SYMBOLS` (its recorder's module's)."""
+    TEXT_SITE_SLOTS.extend(slot for slot in slots if slot not in TEXT_SITE_SLOTS)
+
+
+CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES)
 # THE DISPATCHER'S OWN STACK ($899a..$8c1a), which savestate moves to: what a Tier 3 row that drops it has put back
 # on our shore (`bench/tier3.py`, `spans_put_back`), and the dispatcher's battery names its drop by.
 DISPATCHER_STACK = (aes.header_constants("evdisp.h")["AES_DISPATCHER_STACK_BOTTOM"], aes.AES_DISPATCHER_STACK_TOP)
@@ -2927,17 +2958,21 @@ def run_guarded(name, arguments, pokes, *, objects=None, **kwargs):
 DOOR_USER_ROWS = []
 
 
-def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, objects=None, answer_compared=True):
+def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, objects=None, answer_compared=True,
+             also_dropped=()):
     """One priced `VERIFIED_CASES` row of a door user, named `<core>, <label>` — over `pokes` with `savptr` moved into
     the stack band, so the trap's save lands where neither the row nor its companion compares it and Tier 3 drops
     nothing for it (the cost is the same: the trap saves the same frame, elsewhere). SETTLED BY THE ONE SPELLING
     (`settled_where_stored`, as a leaf row's: `settled`): every word that differs by nature which the ROM's run of
     the row stores — the Line-F mask word, an SR save word a twin's bracket parks — staged at the value the run
     leaves and dropped at Tier 3 by name, with the companion that drops nothing. `objects` and `answer_compared` as
-    `run_event`'s and `aes.register`'s."""
+    `run_event`'s and `aes.register`'s. `also_dropped`: `((lo, hi, why), ...)` THIS ROW's own Tier 3 drops beside
+    them — bytes both builds store, each its own by nature (the marshal's copy back of its caller's stack words) —
+    which the same companion compares, nothing dropped."""
     machine, hook = merge_pokes(pokes, savptr_in_the_band()), door_hook(drawing, objects)
     settled_pokes, drops = settled_where_stored(machine, _stored_by_a_door_row(name, arguments, machine, io_seed),
                                                 WORDS_BY_NATURE)
+    drops = tuple(drops) + tuple(also_dropped)
     row_name = f"{routines.core_symbol(name)}, {label}"
     DOOR_USER_ROWS.append(row_name)
     companion = functools.partial(aes.undropped, name, arguments, settled_pokes, hook, io_seed, answer_compared)

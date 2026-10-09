@@ -2427,5 +2427,53 @@
 #define AES_FS_INPUT_DTA_FREE_RETURN   0xfe82c2        /* at its end: the DTA */
 #define AES_FS_INPUT_INDEX_FREE_RETURN 0xfe82ca        /* ...the index */
 #define AES_FS_INPUT_NAMES_FREE_RETURN 0xfe82d2        /* ...the names */
+/* ---- AES band 5, wave 1's LEAVES (slices H and G), each read from its body ------------------------------------------
+ * geminit's (`aes/geminit.h`), gemshlib's screen switches and the shell's band (`aes/shlib.h`), the cartridge chain
+ * (`aes/cart.h`), the desk's memory (`aes/deskmem.h`), three leaves of the desk's range band-5 code calls
+ * (`aes/deskleaf.h`), and gemdosif's leftovers with the vector takes (`aes/gemdosif.h`). */
+#define AES_ROM_INI_DLONGS        0xfd9ffc   /* (): the AES's five long pointers into THEGLO and the BSS */
+#define AES_ROM_ALL_RUN           0xfda03e   /* (): one yield, then the screen's lock taken and given back */
+#define AES_ROM_PINIT             0xfda3d6   /* (pd, cda): the PD's CDA, its pipe's address and index, its name blank */
+#define AES_ROM_SH_TOGRAPHIC      0xfead5a   /* (): the vectors retaken, the workstation's graphics, the busy mouse -> 1 */
+#define AES_ROM_SH_TOALPHA        0xfead82   /* (): the arrow, the critic given back, the mouse off, text mode -> 1 */
+#define AES_ROM_SH_DRAW           0xfeada0   /* (command, object, depth): the desktop band drawn with the command */
+#define AES_ROM_SH_SHOW           0xfeaddc   /* (command): sh_draw of the band's objects 1 and 2 — sh_find's routine */
+#define AES_ROM_CART_INIT         0xfed478   /* (): the cartridge's magic at $fa0000 -> 1 and the chain's head, else 0 */
+#define AES_ROM_CART_FIND         0xfed4be   /* (fill): the chain's next header, its entry copied into the DTA */
+#define AES_ROM_SIZE_THEGLO       0xfee800   /* () -> 5387: THEGLO's words less one, gem_entry's clear count */
+#define AES_ROM_DESK_ALLOC        0xfee80a   /* (): the desk's five Malloc blocks, its globals cleared */
+#define AES_ROM_DESK_FREE         0xfee870   /* (): ...freed, the desk's resource with them (a yield inside) */
+#define AES_ROM_APP_RESCHANGE     0xfdbae0   /* (device): a resolution change asked for; 0 when it is the current one */
+#define AES_ROM_SET_DEFDRV        0xfdbecc   /* (): drive C: made current when it exists (-> 1), else A: (-> 0) */
+#define AES_ROM_DESK_RSRC_FREE    0xfde33c   /* (): the desk's rsrc_free binding: rs_free, then a yield */
+#define AES_ROM_ISDRIVE           0xfe39a6   /* () -> Dsetdrv(Dgetdrv()): the drive map */
+#define AES_ROM_PGMLD             0xfe39bc   /* (handle, name, &basepage): Pexec(3), then Mshrink to the program's size */
+#define AES_ROM_DOS_GDRV          0xfe3c02   /* Dgetdrv through $fe3c28 */
+#define AES_ROM_DOS_CHDIR         0xfe3c0e   /* Dsetpath through $fe3c28 */
+#define AES_ROM_DOS_SDRV          0xfe3c12   /* Dsetdrv through $fe3c28 */
+#define AES_ROM_RESTORE_TRAP2     0xfe3c62   /* (): vector $88 := what install_trap2 saved */
+#define AES_ROM_INSTALL_TRAP2     0xfe3c6e   /* (): vector $88 saved, then := the AES's trap #2 handler */
+#define AES_ROM_RETAKE            0xfe3c84   /* (): vector $88 := the handler again; Setexc($101, crit_err) */
+#define AES_ROM_GIVEERR           0xfe3ca4   /* (): Setexc($101, the critical-error handler takeerr saved) */
+#define AES_ROM_TAKEERR           0xfe3cac   /* (): the critical-error handler saved (Setexc($101, -1)), then crit_err's set */
+#define AES_ROM_TRP14             0xfee488   /* the XBIOS door: its caller's return parked in AES_XBIOS_RETURN round a trap #14 */
+#define AES_ROM_GEM_DOS_TRAP      0xfe3c3e   /* `__DOS`: its caller's return parked, trap #1, AES_DOS_AX / AES_DOS_ERR */
+#define AES_ROM_CRIT_ERR          0xfe3cbe   /* the critical-error handler GEM installs (band 5, wave 3) */
+#define AES_ISDRIVE_GDRV_RETURN   0xfe39aa   /* isdrive's return site from Dgetdrv: what AES_DOS_RETURN holds after it */
+#define AES_ISDRIVE_SDRV_RETURN   0xfe39b0   /* ...and from Dsetdrv (the snapshot's own AES_DOS_RETURN) */
+#define AES_PGMLD_EMPTY_TAIL      0xfe39b4   /* pgmld's command tail: a zero word in the text ($fe39be pea) */
+#define AES_PGMLD_PEXEC_RETURN    0xfe39ce   /* pgmld's `bsr __DOS` return from Pexec: AES_TRAP1_RETURN's after it */
+#define AES_PGMLD_MSHRINK_RETURN  0xfe39fa   /* ...and from Mshrink */
+#define AES_SET_DEFDRV_C_RETURN   0xfdbede   /* set_defdrv's return site from Dsetdrv(C:) */
+#define AES_SET_DEFDRV_A_RETURN   0xfdbee8   /* ...and from Dsetdrv(A:) */
+/* desk_free's seven return sites from dos_free, in its order: the two blocks the desk's globals name, the userdef
+ * stack, the three of desk_alloc's others and the globals themselves. */
+#define AES_DESK_FREE_FIRST_RETURN   0xfee880
+#define AES_DESK_FREE_SECOND_RETURN  0xfee88c
+#define AES_DESK_FREE_STACK_RETURN   0xfee8a0
+#define AES_DESK_FREE_C82E_RETURN    0xfee8a8
+#define AES_DESK_FREE_GLOBALS_RETURN 0xfee8b0
+#define AES_DESK_FREE_C85E_RETURN    0xfee8b8
+#define AES_DESK_FREE_C67A_RETURN    0xfee8c0
 
 #endif /* TOS102US_ADDRS_H */

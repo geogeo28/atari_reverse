@@ -48,12 +48,7 @@ _Static_assert(VDI_TIMER_VECTOR * VECTOR_BYTES == SYSVAR_ETV_TIMER, "Setexc's nu
 /* Setexc(vector, handler) — `move.l <handler>,-(sp) / move.w #vector,-(sp) / move.w #5,-(sp) / trap #13`. */
 static uint32_t setexc(uint8_t *image, uint16_t vector, uint32_t handler)
 {
-#ifdef RECREATE_HOST_DIFFERENTIAL
-    return bios_setexc(image, vector, handler);
-#else
-    (void)image;
-    return bios_trap_vector(BIOS_SETEXC_FN, vector, handler);
-#endif
+    return bios_setexc_by_trap(image, vector, handler);
 }
 
 /* Only the low BYTE is kept (`move.b d0,d2`): every test below is a byte compare. */

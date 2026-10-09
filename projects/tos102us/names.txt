@@ -250,9 +250,9 @@ cmt 0xfca9f6 VDI opcode dispatcher. Clears contrl[2]/[4] and VDI_RESULT, finds t
 fn 0xfe65aa aes_entry
 cmt 0xfe65aa AES entry (GEM trap #2, d0 = 0xC8). Reached from gem_trap2_aes; calls the AES dispatcher through the Line-F call table.
 fn 0xfe5d9c aes_dispatch
-cmt 0xfe5d9c AES opcode dispatcher: sub #10 / cmp #115 bounds the opcode to 10..125, then jumps through the table at 0xfef834.
+cmt 0xfe5d9c AES opcode dispatcher (opcode.w, global, int_in, int_out, addr_in), ONE routine to 0xfe64e5: moveq #1,d6, then sub #10 / cmp #115 / bhi bounds the opcode UNSIGNED to 10..125 and jumps through the table at 0xfef834 to one of 68 arms or the default (fm_show 'Bad Function #', -1); every arm leaves by the ladder of tst.w (sp)+ to move.w d6,d0. An arm with no move.w d0,d6 answers 1 whatever its routine did (32 of them); graf_mkstate answers -1. Verified in C: recreate/src/aes/gemsuper.c.
 fn 0xfe64e6 aes_marshal_arrays
-cmt 0xfe64e6 AES parameter-block marshalling: copies the caller's contrl/intin/addrin arrays into local frames, calls aes_dispatch through Line-F $f2b0, then copies intout/addrout back.
+cmt 0xfe64e6 AES parameter-block marshalling (C core: aes_marshal): link a6,#-66; copies contrl (4 words), intin (contrl[1] words) and addrin (2*contrl[3] words) into ONE 62-byte frame (addrin[2] at -62, intout[7] at -54, intin[16] at -40, contrl at -8), calls aes_dispatch through Line-F $f2b0, stores its answer in intout[0], copies intout (contrl[2] words) back, and for the COPIED opcode 112 stores $944c through addrout. NO COPY IS BOUNDED: a count past its array runs into the arrays above it, and past the frame into the saved A6 and the return address (intin > 20 words / addrin > 15 longwords: the ROM returns through the caller's words; intout > 27 words hands them back). Verified in C: recreate/src/aes/gemsuper.c.
 fn 0xfc9f0c linea_dispatch
 cmt 0xfc9f0c Line-A handler, installed at 0xfc037a into $28. Reads the faulting $aXXX word, masks the low 12 bits, bounds-checks it to 15 and jumps through the 16-entry table at 0xfc9f4a, advancing the stacked PC past the word. Clobbers D2/A2/A6 across the handlers it serves ($a007 adds 76 to A6, $a00d loads it). $fc9f0c..$fc9ffb (with $a000 and vdi_entry) ships as src/vdi/entry.S.
 fn 0xfee8c2 linef_handler
@@ -2151,3 +2151,79 @@ cmt 0xc852 gl_mx / gl_my ($c854): where the mouse was when a playback began — 
 var 0xc79a gl_recd
 var 0x9728 gl_rlen
 var 0x96ee gl_rbuf
+fn 0xfc0f1a blitter_probe
+cmt 0xfc0f1a XBIOS Blitmode's probe: points the bus-error vector ($8) at its own tail ($fc0f3a), touches $ffff8a00 at $fc0f34 (tst.w, A0 = 0) and answers 2 where the access does not fault, 0 where it does; SR raised to 7 across it, SP reloaded from A2. Callers: the boot ($fc0418) and Blitmode ($fc0ef6). On an ST the access FAULTS — the oracle's CPU takes no bus error, so test/aes_boot.py takes it at $fc0f34.
+fn 0xfc0fca flop_getbpb   # ctx
+fn 0xfc117a flop_mediach   # ctx
+fn 0xfc12b6 flop_rwabs   # ctx
+var 0x7570 flop_bpb_records
+cmt 0x7570 the floppy driver's records, 32 bytes a drive ($fc0fe4 asl.w #5; $fc0fea adda.l #$7570): the nine BPB words Getbpb answers a pointer to, then its geometry words and, at +28, the boot sector's three serial bytes ($fc1130, copied from the boot-sector buffer at $16da)
+var 0x16da flop_boot_sector   # ctx
+var 0x9724 first_acc_basepage   # ctx
+cmt 0x9724 where sndcli ($fe42e8; the store at $fe435a) parks the FIRST accessory's basepage: that one runs in the spare static PD and is not in $c6b2[] — measured on the ROM's own boot (test/aes_boot.py)
+# ---- AES band 5 wave 1, slices H and G (2026-10-09): geminit's leaves, gemshlib's screen switches and band, the cartridge chain,
+# ---- the desk's memory and three desk leaves, gemdosif's leftovers, the vectors GEM takes, pgmld and the XBIOS door.
+# Every body read and differential (test/test_aes_{geminit,all_run,shlib,cart,deskmem,deskleaf,gemdosif_drives,vectors,pgmld,trp14}.py).
+# `# ctx` here marks a NAME taken from memory of the DRI GEM sources (or made up where they have none): the bodies are read.
+fn 0xfd9ffc ini_dlongs   # ctx
+cmt 0xfd9ffc ini_dlongs(): five long pointers stored, four through A5 = THEGLO $9c58 — the shell's command-line pointer $c79e := $bbae (8022(a5)), its tail's $c82a := $c42e (10198), the working path's $c800 := $bb3e (7910), rs_system_global $9806 := $bb90 (7992) — and ad_windspb $c83e := $9aee
+fn 0xfda03e all_run   # ctx
+cmt 0xfda03e all_run(): dsptch ONCE (a loop of one), then wm_update(1) / wm_update(0) — the caller waits for whoever holds the screen's lock; sets no D0. Callers $fda396 (gem_main), $fddea2, $fe5e6c (appl_exit's arm)
+fn 0xfda3d6 pinit   # ctx
+cmt 0xfda3d6 pinit(pd.l, cda.l): pd->p_cda := cda; the pipe's address := pd + its queue, its index WORD := 0; the name := eight blanks (bfill). gem_main's three static PDs and the accessory allocator's PD
+fn 0xfead5a sh_tographic   # ctx
+cmt 0xfead5a sh_tographic(): spl7 / retake / spl back; gsx_graphic(1); gsx_sclip(gl_rscreen); gsx_malloc (its block NOT checked); gsx_mfset(ad_hgmice); ratinit; 1
+fn 0xfead82 sh_toalpha   # ctx
+cmt 0xfead82 sh_toalpha(): gsx_mfset(ad_armice); spl7 / giveerr / spl back; gsx_moff; gsx_mfree; gsx_graphic(0); 1
+fn 0xfeaddc sh_show   # ctx
+cmt 0xfeaddc sh_show(cmd.l): for i = 1, 2: sh_draw(cmd, i, 0). No Line-F word names it: its one caller hands its ADDRESS to sh_find ($feb272 move.l #$feaddc,(sp))
+var 0x9b2a gl_shgem   # ctx
+cmt 0x9b2a whether the program sh_main is launching is GEM's: sh_main copies sh_isgem $96f4 into it ($feb162); sh_draw tests it as a WORD ($feada4)
+fn 0xfed478 cart_init   # ctx
+cmt 0xfed478 cart_init(): the cursor $9ab8 := $fa0000, the longword read THROUGH it compared with $abcdef42; absent: cursor := 0, answers 0; present: cursor := $fa0004, answers 1 (no oracle machine has a cartridge: that arm is read, not run)
+fn 0xfed4be cart_find   # ctx
+cmt 0xfed4be cart_find(fill.w): NULL once the cursor is; else (fill != 0) the DTA at *$96fa cleared 42 bytes, read-only, the header's entry copied in THROUGH THE CURSOR AS IT STANDS after the clear; answers the cursor (read after the fill) and moves it to the header's next
+var 0x9ab8 cart_cursor   # ctx
+var 0x96fa cart_dta   # ctx
+fn 0xfee800 size_theglo   # ctx
+cmt 0xfee800 answers 5387: THEGLO's words less one — the dbmi count gem_entry's clear takes ($fd9f72); called by jsr, no Line-F word
+fn 0xfee80a desk_alloc   # ctx
+cmt 0xfee80a five dos_alloc: the desk's globals $c6a6 (19094 B, cleared by bfill — NO answer checked: a refused first block clears the vector page and the ROM never returns), $c82e (512), $c85e (920), $c67a (16000), the userdef stack $8c3a (1024, its TOP kept: addi.l #1024)
+fn 0xfee870 desk_free   # ctx
+cmt 0xfee870 eight dos_free in order: globals[14206], globals[14202], the desk's resource (the rsrc_free binding $fde33c: A YIELD inside), the userdef stack ($8c3a -= 1024 in memory first), $c82e, the globals, $c85e, $c67a
+var 0xc6a6 desk_globals   # ctx
+var 0xc82e desk_block_512   # ctx
+var 0xc85e desk_block_920   # ctx
+var 0xc67a desk_block_16000   # ctx
+var 0x8c3a userdef_stack_top
+fn 0xfdbae0 app_reschange   # ctx
+cmt 0xfdbae0 app_reschange(device.w): the device in use (gl_restype $8908, a WORD compare) -> 0; else gl_restype := device, gl_rschange $890a := 1, answers 1 — the one store that makes deskmain's tail ($fe2a40) return 0 and gem_main leave
+fn 0xfdbecc set_defdrv   # ctx
+cmt 0xfdbecc set_defdrv(): isdrive()'s map & 4 -> dos_sdrv(2), answers 1; else dos_sdrv(0), answers 0
+fn 0xfde33c desk_rsrc_free   # ctx
+cmt 0xfde33c the desk's rsrc_free binding: rs_free over the desk's own global[] ($96ba), then dsptch (every AES call's end), then rs_free's answer
+fn 0xfe39a6 isdrive   # ctx
+cmt 0xfe39a6 isdrive(): Dsetdrv(Dgetdrv()) — the drive map; the drive handed on as Dgetdrv's low WORD ($fe39aa move.w d0); two bsr's of the glue's own entries, so the sites parked in $8c1e are $fe39aa then $fe39b0
+fn 0xfe39bc pgmld   # ctx
+cmt 0xfe39bc pgmld(handle.w, name.l, &basepage.l): Pexec(3, name, "" at $fe39b4 — a zero word of the text — , 0); failed (the LONG's sign) -> -1; *basepage := D0 BEFORE its lengths are read; Mshrink(0, D0, 256 + tlen + dlen + blen) failed -> -1, else 1 (dos_sfirst's moveq #1 at $fe3a08, shared). The handle is not read. Both calls bsr the hop $fe39b6 (jmp __DOS)
+fn 0xfe3c02 dos_gdrv   # ctx
+cmt 0xfe3c02 Dgetdrv through $fe3c28 (the function word alone); siblings $fe3c0e dos_chdir (Dsetpath over the long its caller pushed) and $fe3c12 dos_sdrv (Dsetdrv over the word)
+fn 0xfe3c0e dos_chdir   # ctx
+fn 0xfe3c12 dos_sdrv   # ctx
+fn 0xfe3c62 restore_trap2   # ctx
+cmt 0xfe3c62 vector $88 := $8c2a (what install_trap2 found there); gem_main's call $fda3d0
+fn 0xfe3c6e install_trap2   # ctx
+cmt 0xfe3c6e $8c2a := vector $88 FIRST (the handler's VDI arm jumps through it), then vector $88 := $fe3ea6; gem_main's call $fda074
+fn 0xfe3c84 retake   # ctx
+cmt 0xfe3c84 retake(): vector $88 := $fe3ea6 BEFORE the trap, then FALLS INTO the shared tail $fe3c94 — Setexc($101, D0 = crit_err $fe3cbe) through the BIOS; nothing is saved; answers Setexc's D0. (AES_MAP's "critic install")
+fn 0xfe3ca4 giveerr   # ctx
+cmt 0xfe3ca4 giveerr(): Setexc($101, old critic $8c26) by a branch into the tail $fe3c94; a saved longword with bit 31 set installs nothing (Setexc's bmi)
+fn 0xfe3cac takeerr   # ctx
+cmt 0xfe3cac takeerr(): $8c26 := Setexc($101, -1) (asks; saved BEFORE the install), then Setexc($101, crit_err). A second takeerr saves crit_err itself
+var 0x8c26 old_critic   # ctx
+fn 0xfee488 trp14   # ctx
+cmt 0xfee488 the AES's XBIOS door: its OWN return address popped into $95b2 so the trap finds its caller's frame at (sp), trap #14, the return pushed back, rts. Serves any function; what comes back in D1/D2/A0-A2 is the function's
+var 0x95b2 trp14_return   # ctx
+cmt 0xfe39b4 a zero WORD in the text: pgmld's empty command tail (pea $fe39b4(pc)); behind it $fe39b6 jmp $fe3c3e.l, the hop every bsr of the glue's later entries takes to __DOS
+cmt 0xfe3c94 the tail retake falls into, giveerr branches into and takeerr calls then branches into: move.l d0,-(sp); move.w #$101,-(sp); move.w #5,-(sp); trap #13; addq.l #8,sp; rts
+cmt 0x8995 the low byte of the dispatcher's SR save word $8994: the CALLER's condition codes as dsptch found them. Its X flag ($10) is the caller's last arithmetic's — Alcyon's in the ROM, GCC's in a rebuilt one — and differs where a yield follows such arithmetic (the desk's rsrc_free binding); every other bit, and the system byte above it, is the same on both

@@ -73,6 +73,10 @@
  * another's trap. */
 #define HOST_SLOT_GEMDOS_WORDS          0x7f320
 #define HOST_SLOT_GEMDOS_WORDS_BYTES    12       /* function.w, then dos_read's handle.w, count.l, buffer.l */
+/* ...and pgmld's Pexec (`src/aes/gemdosif.c`, $fe39bc): the one frame of the AES's glue wider than that slot — the
+ * function, the mode and three longwords — handed to the dispatcher the same way. */
+#define HOST_SLOT_AES_PGMLD_WORDS       0x7f2a0
+#define HOST_SLOT_AES_PGMLD_WORDS_BYTES 16       /* function.w, mode.w, name.l, tail.l, environment.l */
 #define HOST_SLOT_VDI_VST_FONT_CALL     0x7f330  /* $fce47c's `-18(a6)` points and `-6(a6)` size: its nested call's arrays */
 #define HOST_SLOT_VDI_VST_FONT_CALL_BYTES 10     /* ptsin/ptsout's four words, then intin[0]: COMPACTED, not the frame's layout */
 /* ...and the wide lines' and markers' (`vdi/lines.h`): points a frame builds and points LINEA_PTSIN at, and
@@ -239,6 +243,20 @@
 #define HOST_SLOT_AES_PD_MATCH_NAME_BYTES 10     /* PD_MATCH_FRAME_BYTES                                         */
 #define HOST_SLOT_AES_AP_FIND_NAME      0x7f9c0  /* $fe65da's -10(a6) up, then the saved A6's two top bytes      */
 #define HOST_SLOT_AES_AP_FIND_NAME_BYTES 12      /* AP_FIND_SLOT_BYTES                                           */
+/* ...and the opcode switch's (`aes/gemsuper.h`): the marshal's WHOLE frame — its copies of the program's control,
+ * int_in and addr_in and the answer words, whose addresses it hands the switch and every arm hands on — the frame's
+ * own layout, so a count past an array runs into the arrays above it as the ROM's does; and the longword graf_mouse
+ * has rs_gaddr answer a bit image's address into. The marshal's frame is LIVE ACROSS EVERY WAIT an arm makes: one
+ * frame for every process, as the door users' own are (below, THE AUDIT) — ACCEPTED FOR BAND 5 WAVE 1, where the one
+ * C process inside the marshal is the caller; WAVE 3 (an accessory's trap running our marshal on the host while the
+ * desk is parked in its own) OWES `host_slot_claim_for` and HOST_PROCESSES frames of room. THE SLOT RUNS ON PAST THE
+ * FRAME: the copy back of int_out READS past it where the program's count says so (the ROM's saved A6, its return
+ * address, its argument), and off target those words are the slot's last sixteen bytes — a MODEL of what a caller
+ * leaves above the frame, which a case stages and the C never writes (`aes/gemsuper.h`, MARSHAL_HOST_CALLER_BYTES). */
+#define HOST_SLOT_AES_MARSHAL_FRAME     0x7f390  /* $fe64e6's -62(a6) up, then the caller's words above it       */
+#define HOST_SLOT_AES_MARSHAL_FRAME_BYTES 78     /* MARSHAL_FRAME_BYTES + MARSHAL_HOST_CALLER_BYTES              */
+#define HOST_SLOT_AES_DISPATCH_MOUSE_FORM 0x7f25c /* $fe5d9c's -12(a6): graf_mouse's form ($fe62b2 pea)          */
+#define HOST_SLOT_AES_DISPATCH_MOUSE_FORM_BYTES 4
 /* ...and the waits' (`aes/evwait.h`, `aes/evlib.h`): amouse's copy of the MOBLK it is handed (to lbcopy and inside),
  * and the QPB that ap_rdwr's own arguments are — the process, the length, the buffer — whose address it hands
  * ev_block (a wait that parks keeps that address in its EVB: a place in its caller's stack, by nature). The QPB is A
@@ -351,6 +369,9 @@ enum host_slot {
     HOST_SLOT_ID_AES_FS_INPUT_FRAME,
     HOST_SLOT_ID_AES_PD_MATCH_NAME,
     HOST_SLOT_ID_AES_AP_FIND_NAME,
+    HOST_SLOT_ID_AES_MARSHAL_FRAME,
+    HOST_SLOT_ID_AES_DISPATCH_MOUSE_FORM,
+    HOST_SLOT_ID_AES_PGMLD_WORDS,
     HOST_SLOT_ID_AES_AMOUSE_MOBLK,
     HOST_SLOT_ID_AES_AP_RDWR_QPB,     /* a slot per process: HOST_PROCESSES flags, this one process 0's */
     HOST_SLOT_ID_AES_AP_RDWR_QPB_LAST = HOST_SLOT_ID_AES_AP_RDWR_QPB + HOST_PROCESSES - 1,

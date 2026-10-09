@@ -143,17 +143,26 @@ uint32_t gemdos_dispatch_selector(uint8_t *image, uint32_t arguments);   /* $fc9
 #define GEMDOS_FRAME_MOST_BYTES 12       /* dos_read's: the function, the handle, the count and the buffer */
 _Static_assert(GEMDOS_FRAME_MOST_BYTES == HOST_SLOT_GEMDOS_WORDS_BYTES, "the GEMDOS words' host slot is not the widest frame");
 #ifdef RECREATE_HOST_DIFFERENTIAL
-/* The frame, built by the shape in host memory, laid in the slot and dispatched. */
+/* The frame, built by the shape in host memory, laid in the slot and dispatched — `gemdos_host_trap_over` the
+ * laying and the dispatch alone, for a caller whose frame is wider than this slot and claims its own (the AES's
+ * pgmld: Pexec's sixteen bytes). */
+static inline uint32_t gemdos_host_trap_over(uint8_t *image, uint32_t words, const uint8_t *frame, uint32_t frame_bytes)
+{
+    uint32_t at;
+
+    for (at = 0; at < frame_bytes; at++)
+        image[words + at] = frame[at];
+    return gemdos_dispatch(image, words);
+}
+
 static inline uint32_t gemdos_host_trap(uint8_t *image, const uint8_t *frame, uint32_t frame_bytes)
 {
     uint8_t words_local[HOST_SLOT_GEMDOS_WORDS_BYTES];
     uint32_t words = host_slot_claim(GEMDOS_WORDS, words_local);
-    uint32_t result, at;
+    uint32_t result;
 
     assert(frame_bytes <= HOST_SLOT_GEMDOS_WORDS_BYTES);
-    for (at = 0; at < frame_bytes; at++)
-        image[words + at] = frame[at];
-    result = gemdos_dispatch(image, words);
+    result = gemdos_host_trap_over(image, words, frame, frame_bytes);
     host_slot_release(GEMDOS_WORDS);
     return result;
 }

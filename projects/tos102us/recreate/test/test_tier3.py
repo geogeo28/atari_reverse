@@ -68,6 +68,8 @@ from harness import addrs, emu, make_image                  # noqa: E402
 import opcodes                                             # noqa: E402
 import staging                                             # noqa: E402
 import test_aes_fmdo                                       # noqa: E402
+import test_aes_gemsuper                                   # noqa: E402  (its door users that switch, pinned there)
+import test_aes_all_run                                    # noqa: E402  (all_run's rows: door users that switch, pinned there)
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -1192,6 +1194,10 @@ def test_no_jsr_of_the_build_enters_the_aes_s_text_and_the_door_s_users_arrive_a
 # through ev_multi's twin (adelay, tchange). (The rows TAKEN THROUGH INTERRUPTS are settled by their own registrar,
 # `aes_event.register_interrupted`: not this census's.)
 DOOR_USERS_CENSUS = {}
+# ...AND WHAT IS NO BRACKET'S: the marshal's two rows whose copy back of int_out READS PAST ITS FRAME (more than 27
+# words: the ROM hands the program its caller's stack words, and so do we — each build's own, vetted on each blob,
+# `test_aes_gemsuper.py`), each dropped by the row's own name of it.
+DOOR_USERS_CENSUS.update(test_aes_gemsuper.PAST_THE_FRAME_CENSUS)
 DOOR_USERS_AT_LEAST = 5                 # the premise: the door's users, not a few (each a routine with rows of its own)
 
 
@@ -1893,8 +1899,13 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False], "the queue's at entry and exit, the glue's at exit alone"
-    assert [set(each.mapping) for each in read] == [set(each.symbols) for each in aes_event.CODE_RELOCATIONS]
+    assert [each.at_entry for each in read] == [True, False, False], (
+        "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone")
+    # ...each mapped whole for this run — but the GEMDOS glue's text sites, mapped only for a run that reaches the
+    # `.S` that parks them (`tier3.text_site_relocation`: forker's, on the bench's blob, reaches the C twin).
+    assert [set(each.mapping) for each in read] == [
+        set(each.symbols) if each is not aes_event.TEXT_SITES else set() for each in aes_event.CODE_RELOCATIONS]
+    assert set(tier3.code_relocations(tier3.BUILT_ELF, aes_event.TEXT_SITE_ENTRIES[0])[-1].mapping) == set(aes_event.TEXT_SITE_SYMBOLS)
 
 
 # ---- A RELOCATION LEFT UN-APPLIED IN THE BUILD IS REFUSED BY NAME (`tier3.vet_no_slot_names_the_rom`) ---------------------
@@ -3313,6 +3324,15 @@ DOOR_USERS_WHOLE_RUN = {
 }
 
 
+# ...and THE OPCODE SWITCH'S (`test_aes_gemsuper.py`): each a door user's wake LIFTED into the call of the switch — or
+# of the marshal — that makes it, pinned in that battery under its registered name.
+DOOR_USERS_PRICED.update(test_aes_gemsuper.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_aes_gemsuper.DOOR_USERS_WHOLE_RUN)
+# ...and all_run's (`test_aes_all_run.py`): a yield, then the lock asked for — waited for behind the screen manager's menu.
+DOOR_USERS_PRICED.update(test_aes_all_run.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_aes_all_run.DOOR_USERS_WHOLE_RUN)
+
+
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():
     """THE REGISTRY'S DOOR USERS THAT SWITCH ARE THE PINNED ONES — a row registered and pinned nowhere reds here — and
     each is, on the blob, a routine whose run arrives at a door entry (the second count's premise), registered WITH
@@ -3576,3 +3596,95 @@ def test_a_row_is_refused_on_an_odd_access_its_build_alone_makes(bench, monkeypa
     monkeypatch.setattr(emu, "odd_accesses", lambda: next(answers))
     with pytest.raises(AssertionError, match="address error on a 68000"):
         tier3.measure(tier3.row_named(tier3.DISPATCH_LEAF), bench)
+
+
+# ---- THE CENSUS OF ROWS VERIFIED AND NOT PRICED AT A ROM ROUTINE'S OWN ENTRY: every one by name, with its reason -------
+# A row registered `priced=False` is swept and verified like any other and is in NO line of the table — so a routine
+# over the bar can stand "verified, unpriced" behind one keyword, its number printed nowhere. Most unpriced rows are
+# no such thing: a case entered THROUGH LINE-F starts at a staged caller in RAM and is priced by its routine's direct
+# rows. What this census holds is the rest — a case entered AT THE ROUTINE ITSELF and left out of the table: each
+# listed by its registered name with why, and a new one reds until it is listed. `test_status.py` reads the same set
+# (`_unpriced_rom_entries`) and demands each routine's STATUS.md row.
+ROM_ENTRIES = range(addrs.ROM_BASE, addrs.ROM_BASE + addrs.ROM_BYTES)
+A_HOST_ARGUMENT = ("the C takes ITS CALLER's return site, which no frame carries, as a host argument (the glue parks it "
+                   "through `$fe3c28`): Tier 3 enters no such call; priced inside its callers' rows")
+UNPRICED_AT_A_ROM_ENTRY = {
+    "vdi_gemdos_call, Malloc":
+        "the C twin of a TRANSCRIBED routine whose `trap #1` branch has no differential on target; the ROM build "
+        "takes its `.S`, whose rows are the table's (`test_vdi_helpers_gemdos.py`, which holds that it ships nowhere)",
+    "aes_takeerr, ARGUMENT CLASS: the vectors given back (the ROM's own giveerr and restore_trap2)":
+        "the C twin of a routine the target ships as its `.S` (`gemdosif.S`, whose rows the table prices): it measures "
+        "1.04 with the BIOS's whole Setexc — twice — in both columns, some 1.15 on its own cycles, over the bar as "
+        "its four siblings are; printed under the bar with no verdict it would read as a twin that ships",
+    "aes_dos_free, Mfree of a block (a host argument: its caller's return site)": A_HOST_ARGUMENT + " (rs_free's)",
+    "aes_dos_gdrv, Dgetdrv (a host argument: its caller's return site)": A_HOST_ARGUMENT + " (isdrive's, set_defdrv's)",
+    "aes_dos_chdir, Dsetpath (a host argument: its caller's return site)": A_HOST_ARGUMENT + " (none yet: the desk's calls)",
+    "aes_dos_sdrv, Dsetdrv (a host argument: its caller's return site)": A_HOST_ARGUMENT + " (isdrive's, set_defdrv's)",
+    "aes_pgmld, ARGUMENT CLASS (a staged basepage's three lengths): loaded and shrunk":
+        "the C twin of a routine the target ships as its `.S` (`gemdosif.S`): 1.02 on this arm (pinned, with its "
+        "second differential, by `test_aes_pgmld.py`); its arm over the bar is the twin's one table row (`transcribed`)",
+    "aes_pgmld, ARGUMENT CLASS (a staged basepage's three lengths): Mshrink refuses":
+        "(as its sibling above: the C twin's other arm under the bar, 1.02, pinned by `test_aes_pgmld.py`)",
+    "aes_trp14, Getrez, medium resolution (the C twin: a host argument, and the `.S` ships)":
+        "the C twin of the XBIOS door, which ships as `trp14.S` (its five rows are the table's): it takes its "
+        "caller's return site as a host argument and serves one frame, Getrez's",
+}
+# OWED, the same class, registered nowhere yet: dos_sdta, dos_close and dos_cconout (host arguments of the same
+# `$fe3c28` tail; their batteries are bands 3's — STATUS.md's rows say "verified, unpriced").
+
+
+def unpriced_at_a_rom_entry():
+    """`{registered name: the ROM entry}` of every unpriced case entered at a ROM routine."""
+    return {name: entry for name, entry, *_rest in test_boot_snapshot.UNPRICED_CASES if entry in ROM_ENTRIES}
+
+
+def test_every_row_left_out_of_the_table_at_a_rom_entry_is_listed_with_its_reason():
+    found = unpriced_at_a_rom_entry()
+    assert set(found) == set(UNPRICED_AT_A_ROM_ENTRY), (
+        f"unpriced and unlisted: {sorted(set(found) - set(UNPRICED_AT_A_ROM_ENTRY))}; listed and registered no more: "
+        f"{sorted(set(UNPRICED_AT_A_ROM_ENTRY) - set(found))}")
+    assert all(len(why) > 40 for why in UNPRICED_AT_A_ROM_ENTRY.values()), "a reason, not a word"
+
+
+def test_status_md_is_asked_for_the_same_routines():
+    """...and the ledger's own pin reads this set: each listed row's routine must have a STATUS.md row."""
+    # (by name: `derived`'s hand-out order reads a module's import LINES, and the ledger's pins are no battery)
+    test_status = importlib.import_module("test_status")
+    assert test_status._unpriced_rom_entries() == {entry: name for name, entry in unpriced_at_a_rom_entry().items()}
+
+
+# THE REST OF `UNPRICED_CASES` IS ENTERED AT A STUB IN RAM — and that alone proved little (any RAM address passed): each
+# is THE AES's LINE-F CALLER (`aes.LINE_F_CALLER_AT`: the staged stub that makes the ROM's own call word) over a
+# routine the table prices by a direct row of its own — or one of the cases NAMED here, with why.
+UNPRICED_AT_ANOTHER_STUB = {
+    "linea_init, through the exception": "the VDI's Line-A initialiser entered through the `$a000` exception stub; its direct rows are priced",
+    "linea_dispatch, $a000": "the Line-A dispatcher is entered by its exception alone (a staged `$a0xx` word): no C call enters it",
+    "linea_dispatch, $a001": "(as `$a000`)",
+    "linea_dispatch, $a010, unserved": "(as `$a000`)",
+}
+
+
+def test_every_other_unpriced_row_is_a_line_f_case_of_a_routine_the_table_prices():
+    at_a_stub = [(name, entry) for name, entry, *_rest in test_boot_snapshot.UNPRICED_CASES if entry not in ROM_ENTRIES]
+    assert all(entry < addrs.ROM_BASE for _name, entry in at_a_stub)
+    elsewhere = {name for name, entry in at_a_stub if entry != aes.LINE_F_CALLER_AT}
+    assert elsewhere == set(UNPRICED_AT_ANOTHER_STUB), f"unpriced at a stub that is no Line-F caller, and unlisted: {sorted(elsewhere ^ set(UNPRICED_AT_ANOTHER_STUB))}"
+    priced = {row.symbol for row in tier3.ROWS}
+    unpriced_routines = sorted({name.split(", ", 1)[0] for name, entry in at_a_stub if entry == aes.LINE_F_CALLER_AT} - priced)
+    assert not unpriced_routines, f"Line-F cases of routines the table prices by no row of their own: {unpriced_routines}"
+
+
+def test_that_rule_reds_on_a_line_f_case_of_an_unpriced_routine(monkeypatch):
+    """ITS RED: a Line-F case of a routine with no priced row (dos_free's, entered through the stub) is named."""
+    planted = ("aes_dos_free, through Line-F", aes.LINE_F_CALLER_AT, {}, {})
+    monkeypatch.setattr(test_boot_snapshot, "UNPRICED_CASES", (*test_boot_snapshot.UNPRICED_CASES, planted))
+    with pytest.raises(AssertionError, match="aes_dos_free"):
+        test_every_other_unpriced_row_is_a_line_f_case_of_a_routine_the_table_prices()
+
+
+def test_that_rule_reds_on_a_case_at_another_stub_nobody_listed(monkeypatch):
+    """...and a case entered at a stub that is NO Line-F caller, and listed nowhere, is named too."""
+    planted = ("aes_dos_free, at a stub of its own", aes.LINE_F_CALLER_AT + aes.WORD_BYTES, {}, {})
+    monkeypatch.setattr(test_boot_snapshot, "UNPRICED_CASES", (*test_boot_snapshot.UNPRICED_CASES, planted))
+    with pytest.raises(AssertionError, match="no Line-F caller, and unlisted"):
+        test_every_other_unpriced_row_is_a_line_f_case_of_a_routine_the_table_prices()

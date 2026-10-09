@@ -321,8 +321,15 @@ def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None
 # `at_polls`: `{poll: interrupt}` — what arrives at a poll of the dispatcher that is no idle (`aes_switch.scheduled`).
 # `budget`: the row's own derivation budget, DECLARED from its measured run (`aes_event._budget_of`: a session too long
 # for the default's margin — the file selector's); every ROM run that derives the row is held to it, both ways.
-SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls budget",
-                          defaults=(True, None, None, None, None))
+# `child_doors`: source the row's Tier 1 fork runs first (`aes_event.CHILD_DOORS`' kind: `lib` the candidate it
+# loaded) — for a routine that SWITCHES AND REACHES A DOOR OF ITS OWN (a `trap #1` under a scripted GEMDOS) but makes
+# NO DOOR CALL of the event layer: it is no door user (`door` stays None — a door user's row is held to arrive at a
+# door entry), and its companion binds that door all the same.
+# `x_flag_differs`: the row DECLARES that the X flag its yield parks in the dispatcher's save word differs between
+# the two builds by nature (`THE_X_FLAG_ALONE`, below: what that excuses, and how a declaration no row needs is
+# refused).
+SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls budget "
+                                          "child_doors x_flag_differs", defaults=(True, None, None, None, None, "", False))
 NO_FRAME = b""                          # a routine of no argument: nothing at the first argument's place
 # What a registered row keeps (`aes_event.SWITCHING_ROWS`): the row, its settled machine, its Tier 3 drops, what its
 # run is taken through, the processes the ROM's dispatcher enters, its deliveries derived again, and the QPB
@@ -380,9 +387,32 @@ def dropped_at_tier3(uda):
     raised the mask, its condition codes those of the instruction before: Alcyon's in the ROM, GCC's in ours
     (adelay's and tchange's bracket: `aes/switch.h`) — a drop held to OUR run's ledger too (`tier3`: a build that
     lost the bracket stores no word). The dispatcher's own save word is staged and COMPARED: savestate and switchto
-    are the ROM's instructions in both builds, and park the same word."""
+    are the ROM's instructions in both builds, and park the same word — but for ONE BIT of it on a row that
+    DECLARES so (`THE_X_FLAG_ALONE`, below: `settled` adds it)."""
     return (*aes.LINE_F_MASK_WINDOW, *aes_switch.uda_context_drop(uda), *aes_switch.DISPATCHER_STACK_DROP,
             *aes_event.sr_drops(aes.AES_SR_SPL))
+
+
+# THE X FLAG IN THE DISPATCHER'S SAVE WORD, ON A ROW THAT DECLARES IT (`SwitchingRow.x_flag_differs`) — AND ON NO
+# OTHER. dsptch pushes its caller's status register, nothing on a yield's path through disp changes X, and switchto
+# parks the SR it is entered under: where a yield comes AFTER arithmetic of the caller's own, X there is Alcyon's in
+# the ROM and GCC's in ours (measured: the desk's rsrc_free binding where GEMDOS frees the block — GCC's `seq` /
+# `neg` over rs_free's answer: `$8995` holds `$00` on the ROM's shore and `$10` on ours). MEASURED OVER THE WHOLE
+# REGISTRY: 294 of 298 switching runs hold the byte EQUAL; only those two rows, on both blobs, differ — so this is no
+# kind of every row's (a blanket drop hid a byte that was compared and equal on 147 rows, and "held to both ledgers"
+# proved nothing of it: both stores are the same transcribed instructions).
+#   * A ROW DECLARES IT, and names it in its drops (the table prints the line under that row alone);
+#   * ONE BIT is excused, `$10` of `$8995`: N, Z, V and C and the SYSTEM byte `$8994` stay compared;
+#   * NO SPAN IS DROPPED from the compare. Tier 3 FLIPS that bit in the image our run leaves and compares the byte
+#     WHOLE (`tier3.RomBench.measure`): equal exactly when the two shores differ in X and in nothing else. So a
+#     declaring row whose bytes are equal WITHOUT the flip — a drop it does not need — is refused, as is a wrong C
+#     bit beside a differing X, and a non-declaring row whose X differs is refused as any byte is.
+CONDITION_CODE_BYTE = 1                 # of a status-register word: its low byte
+X_FLAG = 0x10                           # the 68000's extend flag in the condition-code byte
+X_FLAG_AT = aes.AES_SR_DISPATCH + CONDITION_CODE_BYTE
+THE_X_FLAG_ALONE = ((X_FLAG_AT, X_FLAG_AT + 1,
+                     "the X flag ($10) ALONE of the dispatcher's SR save word's condition codes: the caller's last "
+                     "arithmetic's — Alcyon's in the ROM, GCC's in a build; the other seven bits compared"),)
 
 
 def _replayed(row, staged):
@@ -477,8 +507,9 @@ def qpb_address_drops(qpbs):
 
 def settled(row):
     """`row`'s `Settled`: its machine, its Tier 3 drops, what its run is taken through, who the dispatcher enters."""
-    return _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
+    made = _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
                     *((row.budget,) if row.budget else ()))
+    return made._replace(drops=tuple(made.drops) + THE_X_FLAG_ALONE) if row.x_flag_differs else made
 
 
 def rederived(row):
@@ -491,6 +522,13 @@ def rederived(row):
 # taken through, the C's answer and the image it returned with — and, of the ROM's run, what each door call was
 # handed (a door user's: the C's are held equal) and the processes its dispatcher entered.
 CompanionRun = namedtuple("CompanionRun", "staged delivered answer calls image entered")
+
+
+def _door_of(row):
+    """What a row's Tier 1 fork binds: its door user's door — or, for a row that reaches A DOOR OF ITS OWN and makes
+    no door call (`child_doors`), a door that serves no entry and runs that source first. Either way the fork notes
+    the image at every dispatch, and the companion holds each to the ROM's."""
+    return row.door or (aes_switch.DoorUser(doors=row.child_doors) if row.child_doors else None)
 
 
 def companion(row):
@@ -510,13 +548,13 @@ def companion(row):
     signature = vdi.ALCYON[row.name]
     foreign = any(pd != made.switches.process for pd in reference.entered)
     ran = aes_switch.modelled(_core(row), vdi.as_signed(row.name, row.arguments), made.pokes, reference,
-                              answered=row.answered and signature.restype is not None, foreign=foreign, door=row.door)
+                              answered=row.answered and signature.restype is not None, foreign=foreign, door=_door_of(row))
     who = row_name(row)
     assert reference.ended == aes_switch.RETURNED and ran.returncode == 0, (
         f"{who}: the ROM's run returned; the C's fork ended {ran.returncode}:\n{ran.stderr}")
     assert ran.idles == reference.idles, f"{who}: the C's run idled {ran.idles} times, the ROM's {reference.idles}"
     assert ran.polls == reference.polls, f"{who}: the C's run polled {ran.polls} times, the ROM's {reference.polls}"
-    assert not row.door or ran.handed == list(reference.calls), (
+    assert not _door_of(row) or ran.handed == list(reference.calls), (
         f"{who}: the door was handed {ran.handed}, the ROM's run hands {list(reference.calls)}")
     answer_bits = aes.RESULT_WIDTHS[signature.restype] if row.answered else case.NO_RESULT
     if answer_bits:
@@ -525,7 +563,7 @@ def companion(row):
     expected = reference.memory
     differ = aes_event.differing(ran.image, expected, frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image))
     assert not differ, f"{who}: " + aes_event.describe_differences(who, ran.image, expected, differ)
-    if row.door:                        # ...and, the END the ROM's: what each call answered and left, and every dispatch
+    if _door_of(row):                   # ...and, the END the ROM's: what each call answered and left, and every dispatch
         aes_event.vet_the_answers_handed_back(who, ran.answered, reference.answers)
         aes_event.vet_the_images_at_the_dispatcher(who, ran.dispatched, reference.dispatches)
     return CompanionRun(made.pokes, switches_of(reference), ran.answer, tuple(reference.calls), ran.image,

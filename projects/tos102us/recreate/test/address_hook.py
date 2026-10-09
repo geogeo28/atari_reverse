@@ -32,6 +32,7 @@ WHAT STAYS IN THE BATTERY is the table and the claim: which keys are staged, wha
 the image, and the wording of the failure — those are statements about the routine.
 """
 import contextlib
+import os
 import sys
 import traceback
 import ctypes
@@ -51,6 +52,52 @@ REFUSED_ANSWER = 0
 
 # The pass whose calls are the case's: the plain run, which a differential makes first.
 RECORDED_PASS = 1
+
+# EVERY CALL MADE WHILE NO PASS WAS OPEN, `(the pointer's symbol, the key)` each, for as long as the TEST that made it
+# runs. `refused` alone does not hold such a call to anything: a hook no case bound has no `staged()` block to fail
+# on the way out, and the next case's `staged()` clears the ledger unread — so a reconstruction that called a routine
+# it should never have been handed (a core given the wrong argument for one) was answered 0 and passed, silently.
+# WHO READS IT, in the one process whose tests' fixtures do (`read_by_this_process`, declared by `conftest.py`): the
+# test that made the call FAILS AT ITS TEARDOWN, and a record found at a test's SETUP — made at import, at
+# collection or in a wider fixture's setup, before any test's own fixture could own it — is that test's error, by
+# name, never cleared unread (`taken`). A test of this very mechanism names itself in its module's
+# CALLS_OUTSIDE_A_PASS_ON_PURPOSE.
+# IN EVERY OTHER PROCESS NOBODY WOULD READ IT — a fork of a worker (the guard's, the zygote's, a model's), a fresh
+# interpreter (a door user's child) — so there the call ENDS THE PROCESS AT ONCE, by name on descriptor 2 and with a
+# status of its own: every child road's parent already turns a child's status and its words into its case's
+# failure. At once and not at the child's exit, because a child has many exits (a halt at the dispatcher's hook,
+# an abort, `_exit` from a refuser) and a core that called through an unbound door before one of them would
+# otherwise leave by it, unread.
+OUTSIDE_A_PASS = []
+OUTSIDE_A_PASS_STATUS = 12              # a child's exit status then: apart from every status `aes_event` gives one
+OUTSIDE_A_PASS_SAID = "called through a hook while NO PASS WAS OPEN — answered by nothing, in a process nobody reads the record of"
+STDERR_FD = 2
+_read_by = None                         # the pid of the process whose fixtures read OUTSIDE_A_PASS
+
+
+def read_by_this_process():
+    """Declare that THIS process reads `OUTSIDE_A_PASS` (pytest's: `conftest.py`, at its import). A fork of it is
+    another process."""
+    global _read_by
+    _read_by = os.getpid()
+
+
+def taken():
+    """The record so far, EMPTIED: `[(symbol, key), ...]` — for the one reader that then answers for it."""
+    made = list(OUTSIDE_A_PASS)
+    OUTSIDE_A_PASS.clear()
+    return made
+
+
+def said(made):
+    """A record's calls in words: `recreate_call_routine at 0x7a000, ...` (the first eight)."""
+    return ", ".join(f"{symbol} at {key:#x}" if isinstance(key, int) else f"{symbol} at {key}" for symbol, key in made[:8])
+
+
+def _nobody_reads_this_process_s_record(symbol, key):
+    """A call outside a pass in a process whose record nobody reads: say it and end the process (above)."""
+    os.write(STDERR_FD, f"{said([(symbol, key)])}: {OUTSIDE_A_PASS_SAID}".encode())
+    os._exit(OUTSIDE_A_PASS_STATUS)
 
 
 def bind_pointer(symbol, trampoline, lib=_lib):
@@ -122,6 +169,7 @@ class AddressHook:
     """
 
     def __init__(self, symbol, prototype):
+        self.symbol = symbol            # the pointer's name in the `.so`: what a call outside a pass is reported by
         self._effects = {}
         self._passes_begun = 0
         self._pass_open = False
@@ -189,6 +237,9 @@ class AddressHook:
     def _dispatch(self, buf, key, *arguments):
         if not self._pass_open:
             self.refused.append(key)
+            OUTSIDE_A_PASS.append((self.symbol, key))
+            if os.getpid() != _read_by:
+                _nobody_reads_this_process_s_record(self.symbol, key)
             return REFUSED_ANSWER
         if self.in_recorded_pass and len(self.calls) < CALLS_MAX:
             self.calls.append((key, *arguments))

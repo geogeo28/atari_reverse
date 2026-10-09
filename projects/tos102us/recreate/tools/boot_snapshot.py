@@ -39,6 +39,8 @@ cycle-driven — but the PHASE of the AES's and the desktop's idle work at the i
 blank interrupts it. Three independent boots stopped with different D0/D7/A0/A6/A7, and 1,929 bytes
 of dead stack and idle scratch differed. `--twice` is what measures that set, `MASK` below records
 it, and `test/test_boot_snapshot.py` is what stops any case depending on a byte inside it.
+THE MASK IS WHAT THREE BOOTS SHOWED, NOT A BOUND: later captures moved bytes outside it (the note
+under `MASK`'s comment below) — "outside the mask" is not "bit-identical between any two captures".
 
 """
 import argparse
@@ -107,6 +109,15 @@ SETTLE_VBLANKS = 900
 # ($954a-$954b). A button press's ticks RUN that glue, so masking its chain pointer sent every click
 # row through a noise pointer once the sweep derived a row's deliveries over the noise as well
 # (`test/test_boot_snapshot.py`, `run_original`).
+#
+# NOT COMPLETE, AND NOT CLAIMED TO BE. "Everything outside these regions is bit-identical" held for
+# the three boots it was measured on and is FALSE in general: over three later captures 32 bytes
+# outside the mask moved — `$1459` +11, `$8920` +14, `$9fa1` +3, `$a075`, `$a098` +4, `$a24a` +2,
+# `$c7e9` — and a fourth showed `$754e` +2, `$95ba` +4, `$9707`, `$1662` +2 (band 5 wave 0's measure;
+# with them the frame under `savptr`, which a capture leaves at `$93a` or one 46-byte frame lower).
+# The same class — the phase of the idle work — at the edges of the regions listed. The mask and
+# the capture are left as they are: a test must hold over a FRESH capture (the gate makes one), so a
+# number a capture decides is derived, never pinned.
 #
 # THE RULE THIS BUYS: no case may depend on a byte in here. That is not left to care —
 # `test/test_boot_snapshot.py` re-runs every verified function's differential over a snapshot whose

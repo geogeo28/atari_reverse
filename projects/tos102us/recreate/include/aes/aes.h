@@ -36,8 +36,10 @@
 #define AES_RLR_IN_FORKER     0xffffffff /* ($fe4bdc move.l #-1,$c794)                                         */
 #define AES_GL_CDA            0x97fa     /* long: the running PD's CDA          ($fda1c8, $fe4dec)             */
 #define AES_STATIC_PIDS       0xc680     /* word: PDs gem_main set up           ($fda1a6 addq.w #1)            */
-#define AES_ACCESSORY_COUNT   0xc682     /* word: accessories loaded            ($fe439c clr.w)                */
-#define AES_ACCESSORY_PDS     0xc6b2     /* longs[6]: their PDs, in load order  ($fe57a6 movea.l #$c6b2,a1)    */
+#define AES_ACCESSORY_COUNT   0xc682     /* word: accessories ALLOCATED         ($fe439c clr.w)                */
+/* ...the PDs of the ALLOCATED accessories only, in load order: the FIRST accessory runs in the spare static PD2 and
+ * is absent from this table (and from the count beside it) — measured on the ROM's own boot (band 5 wave 0). */
+#define AES_ACCESSORY_PDS     0xc6b2     /* longs[6]                            ($fe57a6 movea.l #$c6b2,a1)    */
 /* The three SR saves, one per mechanism, and the DISPATCHER's own stack: savestate leaves the process's super
  * stack for it ($fe3922 `lea $8c1a,sp`), which is the region below $8c1a two captures disagree about. */
 #define AES_SR_DISPATCH       0x8994     /* word: savestate/switchto's SR       ($fe38d4)                      */
@@ -141,6 +143,9 @@
 #define AES_SH_ISGEM          0x96f4     /* word: ...as a GEM program           ($feb162 move.w)               */
 #define AES_SH_DODEF          0x96f2     /* word                                ($feb1d2 tst.w)                */
 #define AES_SH_ISDEF          0xc83c     /* word                                ($feb136 tst.w)                */
+/* ...and whether the program sh_main is launching is a GEM program (GEM's gl_shgem — a `ctx` name): sh_main copies
+ * AES_SH_ISGEM into it before it switches the screen ($feb162), and sh_draw draws only while it is set. */
+#define AES_GL_SHGEM          0x9b2a     /* word                                ($feada4 tst.w $9b2a)          */
 /* sh_find's working path (the pointer; the buffer it names in the capture is $bb3e, which sh_find hands sh_name by
  * address), the environment sh_envrn searches, and the scratch both use: sh_envrn's copy of the environment, sh_find's
  * `\` + path for its try at the root. */

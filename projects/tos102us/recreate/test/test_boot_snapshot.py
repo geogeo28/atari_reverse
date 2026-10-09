@@ -292,6 +292,18 @@ import test_aes_evdisp                                      # noqa: E402,F401  (
 import test_aes_evdisp_model                                # noqa: E402,F401  (the yield through the dispatcher)
 import test_aes_evmulti                                     # noqa: E402,F401  (evnt_multi)
 import test_aes_aptape                                      # noqa: E402,F401  (appl_trecord, appl_tplay)
+import test_aes_geminit                                     # noqa: E402,F401  (band 5's leaves: ini_dlongs, pinit)
+import test_aes_all_run                                     # noqa: E402,F401  (all_run: a yield, then the lock)
+import test_aes_gemdosif_drives                             # noqa: E402,F401  (the drive calls, isdrive)
+import test_aes_vectors                                     # noqa: E402,F401  (the vectors GEM takes)
+import test_aes_gemdosif_transcription                      # noqa: E402,F401  (its `.S` rows)
+import test_aes_pgmld                                       # noqa: E402,F401  (pgmld: Pexec(3), then Mshrink)
+import test_aes_trp14                                       # noqa: E402,F401  (the XBIOS door: its `.S` rows, its twin)
+import test_aes_cart                                        # noqa: E402,F401  (the cartridge chain)
+import test_aes_deskleaf                                    # noqa: E402,F401  (three leaves of the desk's range)
+import test_aes_deskmem                                     # noqa: E402,F401  (the desk's memory)
+import test_aes_shlib                                       # noqa: E402,F401  (the screen switches, the shell's band)
+import test_aes_gemsuper                                    # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
