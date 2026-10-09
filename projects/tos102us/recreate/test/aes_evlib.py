@@ -21,6 +21,12 @@ caller's stack, which a C caller's is not.
 A THIRD PROCESS (two delays pending; two waits on the screen's lock) is `aes_pdpipe`'s STAGED APPLICATION, the
 labelled class: its scenarios carry the label and register no row.
 
+THE WAITS, WOKEN (the module's last part): what takes each blocked scenario on through the dispatcher to its return
+(`WAKES`: the ROM's own interrupts at the dispatcher's idles, and the screen manager's own write for a wait on a
+pipe), the scenarios no returning run wakes and why (`NOT_WOKEN`), the machines only a run through the dispatcher
+makes (the screen manager holding the lock in its menu, queued on it by its own BEG_UPDATE, handed it; writing to a
+full pipe), and the rows that switch (`register_woken`: `aes_switching`).
+
 ARGUMENT-CLASS MACHINES (`after_iasync`): the ROM's own iasync called MORE THAN ONCE for the running process over a
 scheduler's machine — a wait queued and not waited for (iasync does not block: ev_block's mwait does). No ROM caller
 leaves them — evnt_multi queues one wait of each kind — but every list, EVB and event bit in them is the ROM's own
@@ -37,6 +43,8 @@ import aes
 import aes_evasync as evasync
 import aes_event
 import aes_pdpipe
+import aes_switch
+import aes_switching
 import case
 import derived
 import test_aes_fmlib                   # its key queue, polled by the ROM's chkkbd and forker
@@ -884,8 +892,239 @@ def reader_parked_in_its_own_frame():
 def register(label, routine, arguments, machine, *, through_line_f=False):
     """One row of `routine` over an arrival's `machine` with its frame `arguments` (`aes_evasync.register_rows`) —
     priced direct, with what the one settling stages and drops (`aes_event.register_row`); verified through its call
-    word. A call that reaches the dispatcher is Tier 1 only (a row's run returns)."""
+    word. A call that reaches the dispatcher is no row of this kind (its run does not return without the
+    dispatcher): `register_woken`."""
     if through_line_f:
         return aes.register(label, routine, arguments, machine, through_line_f=True)
     answered = routine != UNSYNC or unsync_answers(machine, arguments[0])
     return aes_event.register_row(label, routine, arguments, machine, answer_compared=answered)
+
+
+# ---- THE WAITS, WOKEN: a blocked call taken on through the dispatcher to its return ---------------------------------------
+# WHAT WAKES EACH SCENARIO'S WAIT, by ROM-run means alone (`aes_switching`: `{idle: interrupt}`, each the ROM's own
+# interrupt code taken where the dispatcher idles): a key, a press, a move, ticks — and, for a wait on a pipe, ANOTHER
+# PROCESS'S OWN WRITE: the snapshot's screen manager walked down its menu (THE MENU CHAIN — the mouse onto a title,
+# onto an item, a press: ctlmgr's own appl_write of MN_SELECTED to the desk).
+RETURN, PRESS, AWAY = evasync.RETURN, aes_event.press, evasync.AWAY
+DOUBLE_CLICK = aes_event.double_click
+RIGHT_PRESS = functools.partial(aes_event.taken_in_place, sequence=aes_event.RIGHT_PRESSING)
+A_CLICK = functools.partial(aes_event.taken_in_place, sequence=aes_event.CLICKING)
+ONTO_THE_BAR = evasync.ONTO_THE_BAR
+A_MENU_TITLE, AN_ITEM_UNDER_IT = aes_event.THE_VIEW_TITLE_S_POINT, aes_event.VIEW_S_PLAIN_ITEM_S_POINT
+A_POINT_ON_THE_DESKTOP = aes_event.A_POINT_ON_THE_DESKTOP
+OFF_THE_BAR = aes_event.move_to(*A_POINT_ON_THE_DESKTOP)
+A_FEW_PIXELS = 5                        # ...inside a rectangle's corner, clear of its edge
+INTO_ELSEWHERE = aes_event.move_to(ELSEWHERE[0] + A_FEW_PIXELS, ELSEWHERE[1] + A_FEW_PIXELS)
+INTO_THE_RECTANGLE_ROUND_THE_MOUSE = aes_event.move_to(ROUND_THE_MOUSE[0] + A_FEW_PIXELS, ROUND_THE_MOUSE[1] + A_FEW_PIXELS)
+THE_MANAGER_S_RECTANGLE = "evnt_multi by the screen manager for a rectangle"
+THE_MENU_CHAIN = aes_event.THE_MENU_CHAIN
+ticks = aes_event.ticks
+A_TIMER_TICKS = evasync.A_TIMER_TICKS
+# ...scenario by scenario. A DELAY BEHIND OTHERS OF THE SAME PROCESS is run out a delay at a time: the tick glue
+# counts no tick while a run-out countdown waits for tchange to arm the next, so each delay's ticks are an idle's.
+WAKES = {
+    "evnt_keybd, none": {0: RETURN},
+    "evnt_button for a press": {0: PRESS},
+    "evnt_button for a double click": {0: DOUBLE_CLICK},
+    "evnt_button for the right button down": {0: RIGHT_PRESS},
+    "evnt_button for either button not up, which they are": {0: PRESS},
+    "evnt_button with a state wider than a byte": {0: PRESS},
+    "evnt_button with state bits outside its mask": {0: PRESS},
+    "evnt_button with a mask wider than a byte": {0: PRESS},
+    "evnt_mouse to leave the rectangle the mouse is in": {0: AWAY},
+    "evnt_mouse to enter a rectangle the mouse is not in": {0: INTO_ELSEWHERE},
+    "evnt_timer": {0: ticks(A_TIMER_TICKS)},
+    "evnt_timer after a timer ran out": {0: ticks(A_TIMER_TICKS)},
+    "evnt_timer of no time": {0: ticks(1)},
+    "evnt_mesag, none": THE_MENU_CHAIN,
+    "appl_read, none": THE_MENU_CHAIN,
+    "wind_update(END), the screen manager waiting for the lock": {},
+    "evnt_multi for every event": {0: RETURN},
+    "evnt_multi for two rectangles, the mouse where neither asks": {0: AWAY},
+    # ...the screen manager's own wait: woken by the mouse ENTERING its rectangle, whoever the mouse is (a move out
+    # of it — what this table once tried — satisfies no wait to enter, and the scenario stood among NOT_WOKEN).
+    THE_MANAGER_S_RECTANGLE: {0: INTO_THE_RECTANGLE_ROUND_THE_MOUSE},
+    BEHIND_TWO_DELAYS: {0: ticks(10), 1: ticks(10), 2: ticks(30)},
+    BETWEEN_TWO_DELAYS: {0: ticks(10), 1: ticks(5)},
+    BEHIND_THREE_DELAYS: {0: ticks(10), 1: ticks(10), 2: ticks(20), 3: ticks(60)},
+    TWO_WAITS_OF_ONE_PROCESS: {},
+    f"{STAGED_APPLICATION}: evnt_timer shorter than the delay pending": {0: ticks(A_DELAY_MS // 2 // TICK_MS)},
+    f"{STAGED_APPLICATION}: wind_update(END), two processes waiting for the lock": {},
+}
+# THE BLOCKED SCENARIOS NO RETURNING RUN WAKES, each with what would have to happen and cannot (held, each, by the
+# ROM's own run: `test_aes_evlib_woken.py`) — `(how the ROM's run ends, what was tried, why nothing wakes it)`.
+# "TRIED" IS ONE HAND-PICKED DELIVERY, AND A HAND-PICKED DELIVERY CAN BE THE WRONG ONE (the screen manager's rectangle
+# stood here, "tried" with a move OUT of a rectangle it waits to ENTER). So the class is held by A SWEEP, not by the
+# pick: EVERY_INTERRUPT below, each taken alone at the dispatcher's first idle, over every arrival of every scenario
+# here (`what_wakes`) — none may return in the caller. Where the wait is another PROCESS's to satisfy (a pipe's other
+# end, a lock's holder: `tried` is then nothing) the sweep is what says no interrupt does it instead, and the moves
+# onto the bar give the snapshot's other process its turn.
+NEVER = "the ROM's own run idles for ever"
+ANOTHER_PROCESS_RETURNS = "the ROM's own run reaches its return in another process"
+UNDER_THE_RECTANGLE_ABOVE_THE_SCREEN = aes_event.move_to(ABOVE_THE_SCREEN[0] + A_FEW_PIXELS, 0)
+MORE_TICKS_THAN_ANY_TIME = 300          # every time a scenario waits for is shorter: 60 ticks at most (BEHIND_THREE_DELAYS)
+# WHAT AN INTERRUPT CAN BRING A WAIT: a key, every kind of button event, the ticks, and the mouse INTO AND OUT OF every
+# rectangle a scenario names (and to the screen's nearest point where a rectangle holds none).
+EVERY_INTERRUPT = {
+    "Return": RETURN, "a press": PRESS, "a click": A_CLICK, "a double click": DOUBLE_CLICK, "a right press": RIGHT_PRESS,
+    "more ticks than any time": ticks(MORE_TICKS_THAN_ANY_TIME),
+    "the mouse into the rectangle round where it was": INTO_THE_RECTANGLE_ROUND_THE_MOUSE,
+    "the mouse into the other rectangle": INTO_ELSEWHERE,
+    "the mouse out of both, into neither": aes_event.move_to(*A_POINT_ON_THE_DESKTOP),
+    "the mouse onto the menu bar": ONTO_THE_BAR,
+    "the mouse under the rectangle above the screen": UNDER_THE_RECTANGLE_ABOVE_THE_SCREEN,
+    "the mouse onto the first row of the rectangle of negative height": aes_event.move_to(
+        OF_NEGATIVE_HEIGHT[0] + A_FEW_PIXELS, OF_NEGATIVE_HEIGHT[1]),
+}
+RETURNS = "the ROM's own run returns to the caller"
+NOT_WOKEN = {
+    "evnt_mouse to enter a rectangle above the screen": (
+        NEVER, {0: UNDER_THE_RECTANGLE_ABOVE_THE_SCREEN}, "no place of the mouse is above the screen's first line"),
+    "evnt_mouse to enter a rectangle of negative height": (
+        NEVER, {0: INTO_ELSEWHERE}, "a rectangle of negative height holds no point"),
+    "evnt_timer of a negative time": (
+        NEVER, {0: ticks(A_TIMER_TICKS)}, "a negative countdown is counted further down: no tick brings it to 0"),
+    "appl_write to a full pipe": (
+        NEVER, {}, "the desk waits to write into its own full pipe, which it alone reads"),
+    "appl_read of the screen manager's pipe, empty": (
+        NEVER, {}, "nobody writes to the screen manager's pipe: the desk would, and it is the reader"),
+    "wind_update(BEG), the lock another's": (
+        NEVER, {}, "the lock's holder is the desk, parked by a HARNESS call: its release is no ROM run's (the mutex "
+                   "wait that IS woken is the desk's, against the screen manager's menu: `MUTEX_WOKEN`)"),
+    "wind_update(BEG), the lock released once too often": (
+        NEVER, {}, "a lock counted to -1 has no owner to give it up (the ROM finding of `test_aes_wm_update`)"),
+    f"{STAGED_APPLICATION}: evnt_timer longer than the delay pending": (
+        ANOTHER_PROCESS_RETURNS, {0: ticks(2 * A_DELAY_MS // TICK_MS)},
+        "the application's delay runs out first and its stub's way out is the run's sentinel"),
+    f"{STAGED_APPLICATION}: evnt_timer as long as the delay pending": (
+        ANOTHER_PROCESS_RETURNS, {0: ticks(A_DELAY_MS // TICK_MS)}, "both delays run out in one tick; the application is entered first"),
+    f"{STAGED_APPLICATION}: evnt_timer of a negative time, a delay pending": (
+        NEVER, {0: ticks(A_TIMER_TICKS)}, "a negative delay goes BEFORE the pending one, which grows: neither runs out"),
+    f"{STAGED_APPLICATION}: a second process queues on the lock": (
+        NEVER, {}, "the application waits for a lock the desk holds, and the desk is parked by a harness call"),
+}
+assert not WAKES.keys() & NOT_WOKEN.keys() and WAKES.keys() | NOT_WOKEN.keys() == SWITCHING.keys()
+
+
+@derived.kept
+def _taken_alone(name, frame, machine, interrupt):
+    """How the ROM's own run of `addrs.<name>` (its frame, over `machine`) ENDS with `interrupt` — a name of
+    EVERY_INTERRUPT — taken at the dispatcher's first idle and nothing after: RETURNS, NEVER, or
+    ANOTHER_PROCESS_RETURNS. A derivation, kept by content. Any other end is the driver's own refusal, raised."""
+    try:
+        the_rom_s = aes_switch.scheduled(getattr(addrs, name), frame, machine, {0: EVERY_INTERRUPT[interrupt]})
+    except AssertionError as refused:
+        ends = {"idles for ever AFTER its deliveries": NEVER, "its return in ANOTHER process": ANOTHER_PROCESS_RETURNS}
+        how = [end for said, end in ends.items() if said in str(refused)]
+        if not how:
+            raise
+        return how[0]
+    assert the_rom_s.ended == aes_switch.RETURNED
+    return RETURNS
+
+
+def what_wakes(scenario, nth):
+    """THE SWEEP: the names of EVERY_INTERRUPT that, taken alone at the dispatcher's first idle, make the ROM's own
+    run of the scenario's `nth` arrival — a call that blocks — RETURN IN ITS CALLER."""
+    made = arrival(scenario, nth)
+    frame = frame_of(made.name, made.arguments)
+    return {interrupt for interrupt in EVERY_INTERRUPT if _taken_alone(made.name, frame, made.machine, interrupt) == RETURNS}
+
+
+def a_pipe_wait_s_qpb_is_no_part_of(arrival):
+    """Is `arrival` mwait's own, entered UNDER a wait on a pipe whose QPB lay in its caller's frame (ap_rdwr's
+    arguments, under appl_read and evnt_mesag)? The stack band is no part of a staged machine, so the queued wait
+    names eight bytes of whatever the case's own frame leaves there: a writer would be served through them. (The
+    same wait is woken, its QPB the ROM's own, in the arrivals above it: ap_rdwr's, ev_mesag's, ev_block's.)"""
+    image = make_image(arrival.machine)
+    return arrival.name == MWAIT and any(wait.qpb_at in case.STACK_BAND for wait in aes_event.parked_qpbs(image))
+
+
+def woken_counterpart(scenario, nth):
+    """THE WOKEN COUNTERPART of the scenario's `nth` arrival — a call that reaches the dispatcher — as a row that
+    switches (`aes_switching.SwitchingRow`, registered nowhere): the same routine, frame and machine, taken on through
+    the dispatcher by the scenario's wake. unsync answers nothing a caller reads on its hand-over."""
+    made = arrival(scenario, nth)
+    return aes_switching.SwitchingRow(f"{case_id((scenario, nth))}, woken", made.name, tuple(made.arguments),
+                                      lambda: made.machine, WAKES[scenario], answered=made.name != UNSYNC)
+
+
+# ---- THE MACHINES ONLY A RUN THROUGH THE DISPATCHER MAKES ---------------------------------------------------------------------
+def after_the_wait(name, arguments, machine, at_idle):
+    """`machine` (a running process's) AFTER ITS PROCESS'S OWN CALL of `addrs.<name>` blocked and was woken — the ROM's
+    one run of it through the ROM's dispatcher, the interrupts `at_idle` taken at its idles: what every process of
+    the machine did meanwhile is the ROM's own code (`aes_switching.left_by`: every byte that run stored)."""
+    return aes_switching.left_by(name, arguments, machine, at_idle)
+
+
+A_KEY_S_WAIT = (KEYBOARD, 0)
+A_KEY_AFTER_THE_BAR = {0: ONTO_THE_BAR, 1: RETURN}
+
+
+@functools.cache
+def the_manager_s_menu_holds_the_lock():
+    """PD0 running while THE SCREEN MANAGER HOLDS THE SCREEN'S LOCK: the desk waited for a key, the mouse went onto
+    the menu bar — ctlmgr's own BEG_UPDATE takes the lock and it waits, its menu bar live — and Return woke the desk.
+    (An application's evnt_keybd: the desk's saved context is then that call's, not an ev_block's own.)"""
+    return _answers_stale(after_the_wait(EV_KEYBD, (), aes_event.machine(), A_KEY_AFTER_THE_BAR))
+
+
+# What gives that lock up, at two idles: the mouse off the bar, then a click — ctlmgr leaves its menu and its own
+# END_UPDATE hands the lock to whoever waits. (A press alone does not: ctlmgr then waits for the button to come up
+# IN A LOOP OF YIELDS — the dispatcher never idles, and there is no idle to deliver the release at.)
+THE_MENU_LET_GO = {0: OFF_THE_BAR, 1: A_CLICK}
+
+
+@functools.cache
+def the_manager_queued_itself_on_the_lock():
+    """PD0 running, the lock its own, THE SCREEN MANAGER QUEUED ON IT BY ITS OWN BEG_UPDATE — not a harness call's
+    (`test_aes_wm_update.waited_on`): the desk took the lock and waited for a key, the mouse onto the bar woke ctlmgr,
+    whose BEG_UPDATE tak_flag refused; Return woke the desk. Its continuation is the ROM's: it can be entered."""
+    return _answers_stale(after_the_wait(EV_BLOCK, A_KEY_S_WAIT, wm_update.locked(), A_KEY_AFTER_THE_BAR))
+
+
+@functools.cache
+def the_manager_handed_the_lock():
+    """...and after the desk's unsync: the lock THE SCREEN MANAGER'S, which is READY behind the desk — the next
+    process the dispatcher enters."""
+    return _answers_stale(after_the_wait(UNSYNC, (WIND_SPB,), the_manager_queued_itself_on_the_lock(), {}))
+
+
+@functools.cache
+def the_manager_writing_to_a_full_pipe():
+    """THE SCREEN MANAGER running, the desk's pipe FULL of its own writes (`aes_pdpipe.the_desk_s_pipe_filled_by_the_
+    manager`) and one more staged to write, with its QPB: the write that blocks until the desk has read."""
+    full = aes_pdpipe.the_desk_s_pipe_filled_by_the_manager()
+    blocked = aes_pdpipe.BLOCKED_WRITE
+    return merge_pokes(full, {MESSAGE_AT: blocked}, aes_pdpipe.qpb_pokes(SHELL_PID, len(blocked), MESSAGE_AT))
+
+
+THE_BLOCKED_WRITE = (WRITE, SHELL_PID, len(aes_pdpipe.BLOCKED_WRITE), MESSAGE_AT)
+
+
+# evnt_mesag over an empty pipe, woken by the screen manager's own write (the menu chain): ap_rdwr's wait is queued
+# with the address of its own arguments, served through it by ANOTHER process, and freed with the address still in
+# the EVB. Registered nowhere: the row the registrar's own tests and the blob's QPB vet are made over
+# (`test_aes_switching_registrar.py`, `test_aes_switching.py`).
+A_MESSAGE_WAITED_FOR = aes_switching.SwitchingRow("a wait for a message; woken by the screen manager's own write",
+                                                  EV_MESAG, (BUFFER_AT,), desk_running, THE_MENU_CHAIN)
+
+
+# ---- Tier 3's rows THAT SWITCH ------------------------------------------------------------------------------------------------
+def woken_at(label, scenario, routine):
+    """A row that switches, to be: the scenario's arrival at `routine` — the ROM's own call, where it makes it —
+    taken on through the dispatcher by the scenario's wake (`WAKES`)."""
+    made = at(scenario, routine)
+    return aes_switching.SwitchingRow(label, routine, tuple(made.arguments), lambda: made.machine, WAKES[scenario],
+                                      answered=routine != UNSYNC)
+
+
+def woken_over(label, routine, arguments, machine, at_idle):
+    """...and one over a machine only a run through the dispatcher makes (above), `machine` its zero-argument maker."""
+    return aes_switching.SwitchingRow(label, routine, tuple(arguments), machine, dict(at_idle), answered=routine != UNSYNC)
+
+
+def register_woken(rows):
+    """Each of `rows` (`woken_at` / `woken_over`) registered and priced (`aes_switching.register_row`): `{the row's
+    name in the registry: the row}`."""
+    return {aes_switching.row_name(row): row for row in map(aes_switching.register_row, rows)}

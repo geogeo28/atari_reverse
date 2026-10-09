@@ -384,13 +384,21 @@ def blocked_writing(machine, to, sending=BLOCKED_WRITE, at=MESSAGE_AT):
     return _blocked(merge_pokes(machine, {at: sending}), to, len(sending), at)
 
 
+def the_desk_s_pipe_filled_by_the_manager():
+    """THE SCREEN MANAGER running (the mouse on the menu bar), THE DESK'S PIPE FULL OF ITS WRITES — the ROM's own
+    appl_writes (`sent`): the first handed straight to the desk's parked message wait (the desk woken, onto the woken
+    list), eight more filling its pipe; numbered messages, which the desktop reads and ignores. The one builder of
+    that machine, for every battery whose next write must block. A delta."""
+    return sent(aes_event.screen_manager_running(), SHELL_PID, *numbered(1 + PIPE_MESSAGES))
+
+
 def _manager_waiting_to_write(count, buffer, staged=None):
     """THE SCREEN MANAGER WAITING TO WRITE, PD0 RUNNING over its own FULL pipe. PD1 runs (the mouse on the menu bar),
     PD0 parked in the desk's evnt_multi: PD1's first write is handed straight to PD0's message wait (PD0 woken, onto
     the woken list), its next eight fill PD0's pipe, and its write of `count` more bytes at `buffer` does not fit —
     it PARKS (`aes_event.parked`), its EVB on the pipe's writers' list. The dispatcher's own loop then runs PD0, which
     comes out of the desk's evnt_multi with the first message (`aes_event.dispatched`). A delta."""
-    machine = sent(aes_event.screen_manager_running(), SHELL_PID, *numbered(1 + PIPE_MESSAGES))
+    machine = the_desk_s_pipe_filled_by_the_manager()
     parked = _blocked(merge_pokes(machine, staged), SHELL_PID, count, buffer)
     running, _final, _registers = aes_event.dispatched(parked, aes.SHELL_PD)
     return merge_pokes(running, STALE_BUFFER)
@@ -406,7 +414,7 @@ def writer_waiting(sending=BLOCKED_WRITE, at=MESSAGE_AT):
 def writer_waiting_to_write_its_own_evb(count):
     """...its write `count` bytes FROM THE EVENT BLOCK ITS WAIT WILL BE: the head of the free list as the write
     begins, which iasync takes for it — a caller's pointer like any other. `(the machine, the EVB)`."""
-    machine = sent(aes_event.screen_manager_running(), SHELL_PID, *numbered(1 + PIPE_MESSAGES))
+    machine = the_desk_s_pipe_filled_by_the_manager()
     evb = case.long_in(make_image(machine), aes.AES_EUL)
     return _manager_waiting_to_write(count, evb), evb
 

@@ -29,8 +29,10 @@ walks are handed by value — ob_draw's just_draw, draw_change's newrect and new
 
 THE LOCK'S SWITCHING ARMS are reached by derived states, each refused by the door by name in a child process, the C
 up to it the ROM's own run: its BLOCK — a ROM finding: after an unbalanced END_UPDATE (the count -1) the next
-BEG_UPDATE is refused and waits for good (ev_block) — and unsync's HAND-OVER to a process waiting for the lock, which
-yields (`waited_on`: the waiter queued by the scheduler's own runs). UNPINNED, equivalent over every reachable state:
+BEG_UPDATE is refused and waits FOR GOOD (ev_block: no returning run wakes it, held on the ROM's own run through its
+dispatcher) — and unsync's HAND-OVER to a process waiting for the lock, which yields (`waited_on`: the waiter queued
+by the scheduler's own runs) AND IS TAKEN ON THROUGH THE DISPATCHER to its return: a priced row that SWITCHES, the
+call of unsync open across the yield (`aes_event.blocked_then_woken`). UNPINNED, equivalent over every reachable state:
 wind_update reads the lock it waits on through `ad_windspb`, which start-up sets once to the lock itself ($fda032) and
 nothing changes — a C handing the lock's address directly is indistinguishable.
 """
@@ -442,9 +444,17 @@ def test_the_lock_after_an_unbalanced_release_blocks(name, values):
     process — so the lock is refused (tak_flag answers 0) and the caller WAITS for it (ev_block's mutex wait, which
     amutex's own tak_flag refuses again): the process blocks for good. The door refuses that wait by name (a child
     process), and the C up to that wait — the frames it handed the door, tak_flag's then ev_block's, and the whole
-    image — is the ROM's own run stopped where it blocks."""
-    taken = aes_event.refused_where_the_rom_blocks(name, values, released_unbalanced())
+    image — is the ROM's own run where it blocks (at dsptch).
+    NO RETURNING RUN WAKES IT, so it has no woken counterpart — held on the ROM's own run through its dispatcher: the
+    machine idles for ever (the lock has no owner to release it; the screen manager's own BEG_UPDATE would only
+    queue behind)."""
+    import aes_switch                   # (asked for here: this battery's machines are imported by its helpers)
+    machine = released_unbalanced()
+    taken = aes_event.interrupted(name, values, machine, {})
+    assert not taken.returned
     assert [call.routine for call in taken.calls][-2:] == [addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_EV_BLOCK]
+    the_rom_s = aes_switch.scheduled(getattr(addrs, name), aes_event.frame_of(("w", values[0])), machine)
+    assert (the_rom_s.ended, the_rom_s.entered) == (aes_switch.IDLES, ())
 
 
 MU_KEYBD = 0x0001                      # ev_multi's keyboard event ($fe69cc btst #0,d7)
@@ -470,6 +480,15 @@ def lock_waiter(image):
     return evb and case.long_in(image, evb + aes.EVB_PD)
 
 
+THE_LOCK_HANDED_OVER = "the lock handed to the screen manager, which waits for it: a yield inside unsync's call"
+
+
+def the_lock_s_release():
+    """wind_update(END_UPDATE) over `waited_on`, as a row that switches: the arm sets no D0 (unsync leaves its
+    caller's), nothing is delivered — the releaser stays ready and is resumed first."""
+    return aes_event.woken_row(THE_LOCK_HANDED_OVER, WM_UPDATE, (END_UPDATE,), waited_on, {}, answered=False)
+
+
 def test_the_lock_released_to_a_process_waiting_for_it_yields():
     """unsync's HAND-OVER: PD0's END_UPDATE over the lock the screen manager waits for (`waited_on`) — the count reaches
     0 with a waiter, so the ROM hands it the lock, wakes it and calls dsptch with PD0 still ready: the machine would run
@@ -477,13 +496,17 @@ def test_the_lock_released_to_a_process_waiting_for_it_yields():
     ROM's WHERE THE C STOPS — which is the build's: unsync the ROM's routine, the door refuses the call whole and the
     image is the ROM's at unsync's ENTRY (the lock still PD0's); unsync REBOUND, its twin runs on to the dispatcher's
     hook and the image is the ROM's AT DSPTCH (the lock handed over). Either way the ROM's own run of the call reaches
-    dsptch still ready, the lock the screen manager's."""
+    dsptch still ready, the lock the screen manager's.
+    AND ON THROUGH THE DISPATCHER: the releaser, still ready, is put back and resumed FIRST (the screen manager, made
+    ready, runs when the desk next waits) — the call returns, one frame handed, the lock the screen manager's and
+    the desk alone entered."""
     pokes = waited_on()
     image = make_image(pokes)
     assert spb_of(image) == (1, aes.SHELL_PD) and lock_waiter(image) == aes.SCREEN_MANAGER_PD
     assert aes.list_of(image, aes.AES_RLR) == [aes.SHELL_PD]
-    taken = aes_event.refused_where_the_rom_blocks(WM_UPDATE, (END_UPDATE,), pokes, switches=aes_event.YIELDS)
-    assert [call.routine for call in taken.calls] == [addrs.AES_ROM_UNSYNC]
+    taken, ran = aes_event.blocked_then_woken(the_lock_s_release(), switches=aes_event.YIELDS)
+    assert [call.routine for call in taken.calls] == [call.routine for call in ran.calls] == [addrs.AES_ROM_UNSYNC]
+    assert spb_of(ran.image) == (1, aes.SCREEN_MANAGER_PD) and ran.entered == (aes.SHELL_PD,)
     at_dsptch = aes_event.rom_at_dsptch(WM_UPDATE, (END_UPDATE,), pokes)
     assert at_dsptch.switches == aes_event.YIELDS and spb_of(at_dsptch.memory) == (1, aes.SCREEN_MANAGER_PD), (
         "the premise: the lock handed over")
@@ -1274,3 +1297,5 @@ def _registered():
 
 
 _registered()
+# ...and THE ROW THAT SWITCHES: the lock handed over — unsync's call open across a yield through the whole dispatcher.
+aes_event.register_woken(the_lock_s_release())

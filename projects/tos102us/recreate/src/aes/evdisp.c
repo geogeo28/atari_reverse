@@ -49,13 +49,19 @@ void aes_mwait_act(uint8_t *image, uint32_t pd)
 }
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
+uint32_t (*recreate_poll)(uint8_t *image);
 uint32_t (*recreate_idle)(uint8_t *image);
 uint32_t (*recreate_process)(uint8_t *image, uint32_t uda, uint32_t caller_s_uda);
 
-/* Where the machine WAITS FOR AN INTERRUPT: idle about to poll with nothing ready, nothing woken and nothing queued
- * ($fe4d70). The case's hook lays the interrupt it delivers there; with none left the wait would never end. */
-static void waits_for_an_interrupt(uint8_t *image)
+/* idle ABOUT TO POLL THE KEYBOARD ($fe4d70), which is where a case's interrupts are taken. EVERY poll is told to the
+ * poll hook — the ROM polls with a process ready or woken too, and a key that arrives there is polled before that
+ * process runs. Where the machine WAITS FOR AN INTERRUPT — nothing ready, nothing woken and nothing queued — the
+ * idle hook lays the one the case delivers there; with none left the wait would never end. */
+static void about_to_poll(uint8_t *image)
 {
+    if (!recreate_poll(image))
+        recreate_not_reconstructed("the dispatcher polls the keyboard and the case's hook refuses the poll: what it "
+                                   "delivers there does not fit the machine");
     if (be32(image + AES_RLR) || be32(image + AES_DRL) || be16(image + AES_FORK_COUNT))
         return;
     if (!recreate_idle(image))
@@ -64,7 +70,7 @@ static void waits_for_an_interrupt(uint8_t *image)
                                    "would wait for ever");
 }
 #else
-#define waits_for_an_interrupt(image) ((void)(image))
+#define about_to_poll(image) ((void)(image))
 #endif
 
 /* $fe4d68 — idle: the keyboard polled (chkkbd) and every process an event woke moved to the ready list, turn after
@@ -72,7 +78,7 @@ static void waits_for_an_interrupt(uint8_t *image)
 void aes_idle(uint8_t *image)
 {
     do {
-        waits_for_an_interrupt(image);
+        about_to_poll(image);
         aes_chkkbd(image);
         while (be32(image + AES_DRL)) {
             uint32_t woken = be32(image + AES_DRL);

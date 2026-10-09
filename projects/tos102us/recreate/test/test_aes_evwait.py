@@ -693,7 +693,8 @@ def test_unsync_hands_a_staged_semaphore_to_the_wait_its_own_list_names():
 # bench`'s instrument, 196 arrivals); each routine's WORST is registered first, then the rows that show its other
 # shapes. Measured and left out, none any routine's worst: the rest, each within its routine's range — iasync
 # 0.40..0.72, mwait 0.61 every one, akbin 0.40..0.49, adelay 0.51..0.59, abutton 0.41..0.46, amouse 0.42..0.71, amutex 0.47,
-# unsync 0.45..0.57. A call that reaches the dispatcher is no row (a row's run returns): Tier 1, at dsptch.
+# unsync 0.45..0.57. A call that reaches the dispatcher is no row of THESE (a row's run returns): held at dsptch, and
+# taken on through the dispatcher by the rows that switch (below).
 SERVES_A_WRITER = evlib.SERVES_A_WRITER
 EVERY_EVENT = "evnt_multi for every event"
 ROWS = (
@@ -726,3 +727,23 @@ THROUGH_LINE_F = {routine: next(row[1:] for row in ROWS if row[2] == routine) fo
 
 
 evasync.register_rows(evlib.at, evlib.register, ROWS, THROUGH_LINE_F.values())
+
+
+# ---- the registry: the rows THAT SWITCH -----------------------------------------------------------------------------------
+# mwait blocked and woken, and unsync's hand-over taken on through the dispatcher (`aes_switching`; every blocked
+# arrival's woken counterpart is held at Tier 1 by `test_aes_evlib_woken.py`). Own ratios 0.66..0.70.
+# unsync's hand-over is ONE row: the screen manager queued on the lock BY ITS OWN BEG_UPDATE (a machine the ROM's code
+# made throughout). The same hand-over to a manager queued by the harness's wait is the same run to the cycle — it
+# stays a Tier 1 case (`test_aes_evlib_woken.py`: every blocked arrival, woken; `test_aes_evdisp_model.py`) and is no
+# second row of the table.
+QUEUED_ITSELF = "the lock handed to the screen manager, queued on it by its own BEG_UPDATE: a yield, the releaser resumed first"
+# ...a row whose process is the SCREEN MANAGER and which no other process's turn is part of: it waits for the mouse
+# to enter a rectangle, our dispatcher parks IT, and the move wakes it.
+THE_MANAGER_S_WAIT_WOKEN = "the screen manager's wait for a rectangle, blocked; woken by the mouse entering it"
+WOKEN_ROWS = evlib.register_woken((
+    evlib.woken_at("two rectangles' waits, blocked; both come in one move", "evnt_multi for two rectangles, the mouse where neither asks",
+                   MWAIT),
+    evlib.woken_at("six waits, blocked; the key's alone comes", EVERY_EVENT, MWAIT),
+    evlib.woken_at(THE_MANAGER_S_WAIT_WOKEN, evlib.THE_MANAGER_S_RECTANGLE, MWAIT),
+    evlib.woken_over(QUEUED_ITSELF, UNSYNC, (evlib.WIND_SPB,), evlib.the_manager_queued_itself_on_the_lock, {}),
+))

@@ -16,7 +16,9 @@ THE MACHINES are the scheduler's own (`aes_event.machine`): PD0 running (woken b
 fm_do and fm_button wait in the event layer, so every input is DELIVERED as the machine takes it — keys typed through
 the BIOS's own keyboard handler, the mouse moved and the button pressed or released through the VDI's mouse interrupt —
 either before the call (in the ring, `aes_event.keys`) or at the entry of the wait that takes it, on both shores
-(`aes_event.interrupted`; `aes_event.typed` one key per wait). The dialogs are the snapshot's: the file selector (its
+(`aes_event.interrupted`; `aes_event.typed` one key per wait) — or WHILE THE WAIT IS BLOCKED, at the dispatcher's
+idle: every wait that blocks is held where it blocks and taken on through its wake (`aes_event.blocked_then_woken`),
+and each such shape is a priced row that SWITCHES. The dialogs are the snapshot's: the file selector (its
 two fields, OK the DEFAULT, Cancel, the TOUCHEXIT arrows and file slots), and the desk's dialogs as the desk shows
 them — centred by the ROM's own ob_center first — with their radio groups. The bell's BIOS trap saves the registers
 below `savptr`, so a case that rings it stages `savptr` in the stack band (`aes_event.savptr_in_the_band`).
@@ -355,16 +357,30 @@ def test_fm_do_over_a_desk_dialog(tree, waits, answer):
     assert taken.answer == answer
 
 
-def test_a_radio_button_held_down_waits_as_the_rom_s():
+A_RADIO_BUTTON_HELD = "a radio button pressed and held; the rise waited for, blocked; released, then Return"
+
+
+def a_radio_button_held():
+    """fm_do over the preferences: the radio button pressed at its first wait and HELD — the rise is waited for
+    (ev_button) and blocks; the button released while it is blocked, the form goes on (a radio button is no exit),
+    its next wait blocks too, and Return ends it."""
+    pressed = Waits({0: (move_to(*middle_on_screen(PREFERENCES, RADIO)), press)})
+    return aes_event.woken_row(A_RADIO_BUTTON_HELD, DO, (PREFERENCES, 0), functools.partial(centred, PREFERENCES),
+                               {0: release, 1: key(RETURN)}, pressed, objects=True)
+
+
+def test_a_radio_button_held_down_waits_as_the_rom_s_and_goes_on_when_it_rises():
     """The radio button pressed and held: taken at once, its group redrawn, then the wait for the rise — ev_button,
     which BLOCKS (it runs no forker; the machine switches away until the button rises). Up to it the C is the ROM's run
-    stopped there: the whole image, the radio group's states in it, every frame handed."""
-    machine = centred(PREFERENCES)
-    taken = aes_event.interrupted(DO, (PREFERENCES, 0), machine,
-                                  Waits({0: (move_to(*middle_on_screen(PREFERENCES, RADIO)), press)}), objects=True)
-    assert not taken.returned and taken.calls[-1].routine == addrs.AES_ROM_EV_BUTTON
-    assert [aes.read_object(taken.image, PREFERENCES, index)["STATE"] & SELECTED for index in (ITS_SIBLING, RADIO)] == \
-        [0, SELECTED]
+    where it blocks: the whole image, the radio group's states in it, every frame handed. AND ON THROUGH THE WAKES:
+    the rise delivered while ev_button is blocked, the form's next wait blocked in its turn, Return — the dialog's
+    OK, the radio button still the one selected."""
+    taken, ran = aes_event.blocked_then_woken(a_radio_button_held())
+    assert taken.calls[-1].routine == addrs.AES_ROM_EV_BUTTON
+    for image in (taken.image, ran.image):
+        assert [aes.read_object(image, PREFERENCES, index)["STATE"] & SELECTED for index in (ITS_SIBLING, RADIO)] == \
+            [0, SELECTED]
+    assert ran.answer == PREFERENCES_OK
 
 
 # ---- fm_do: the keys queued before it, a field that exits ------------------------------------------------------------
@@ -392,11 +408,20 @@ def test_a_touchexit_field_clicked_while_edited_ends_its_edit():
 
 
 # ---- fm_do: the wait nothing satisfies, the call word, the tree on the bus ---------------------------------------------
-def test_fm_do_with_nothing_typed_waits_as_the_rom_s():
-    """No key and no press: the first wait blocks; up to it the C is the ROM's run stopped there (the field's edit
-    begun, the cursor drawn)."""
-    taken = aes_event.refused_where_the_rom_blocks(DO, (SELECTOR, 0), running(), objects=True)
+NOTHING_TYPED = "nothing typed: the first wait blocked; woken by Return"
+
+
+def nothing_typed():
+    """fm_do over the selector with no key and no press: its first wait blocks; Return, typed while it is blocked."""
+    return aes_event.woken_row(NOTHING_TYPED, DO, (SELECTOR, 0), running, {0: key(RETURN)}, objects=True)
+
+
+def test_fm_do_with_nothing_typed_waits_as_the_rom_s_and_is_woken_by_return():
+    """No key and no press: the first wait blocks; up to it the C is the ROM's run where it blocks (the field's edit
+    begun, the cursor drawn). Return, typed while the wait is blocked, wakes it: the form ends on its DEFAULT."""
+    taken, ran = aes_event.blocked_then_woken(nothing_typed())
     assert [call.routine for call in taken.calls][-1] == addrs.AES_ROM_EV_MULTI
+    assert ran.answer == OK
 
 
 @THROUGH
@@ -456,12 +481,28 @@ def test_fm_button_through_its_callers_word(through_line_f):
     button(SELECTOR, OK, through_line_f=through_line_f)
 
 
-def test_fm_button_held_down_on_ok_waits_as_the_rom_s():
+HELD_DOWN_ON_OK = "the button held down, OK not under the mouse: the watch blocked; woken by the rise"
+
+
+@functools.cache
+def held_down():
+    """PD0 running, woken by the left button's press — the button still DOWN — the band and the frames stale."""
+    return merge_pokes(aes_event.machine(aes_event.button_down), STALE_BAND, STALE_SLOTS)
+
+
+def held_down_on_ok():
+    """fm_button on OK with the button still down and the mouse elsewhere: gr_watchbox waits for the mouse to enter,
+    which blocks; the button rises while it is blocked."""
+    return aes_event.woken_row(HELD_DOWN_ON_OK, BUTTON, (SELECTOR, OK, 1, NEXT_AT), held_down, {0: release}, objects=True)
+
+
+def test_fm_button_held_down_on_ok_waits_as_the_rom_s_and_ends_when_the_button_rises():
     """The button still down over OK (the snapshot's mouse is not on it): gr_watchbox's first pass waits for the mouse
-    to enter, which blocks — the C held to the ROM's run stopped there."""
-    machine = merge_pokes(aes_event.machine(aes_event.button_down), STALE_BAND, STALE_SLOTS)
-    taken = aes_event.refused_where_the_rom_blocks(BUTTON, (SELECTOR, OK, 1, NEXT_AT), machine, objects=True)
+    to enter, which blocks — the C held to the ROM's run where it blocks. The rise, while it is blocked: the watch
+    ends OUTSIDE the object, OK is not taken, and the form goes on with no object (the answer 1, `next` 0)."""
+    taken, ran = aes_event.blocked_then_woken(held_down_on_ok())
     assert taken.calls[-1].routine == addrs.AES_ROM_EV_MULTI
+    assert (ran.answer, case.word_in(ran.image, NEXT_AT)) == (1, 0)
 
 
 # ---- the bell ----------------------------------------------------------------------------------------------------------
@@ -577,6 +618,9 @@ def _register_rows():
     aes_event.register_interrupted("a radio button clicked, then Return", DO, (tree, 0), centred(tree), Waits(waits),
                                    objects=True)
     aes_event.register_slices(*session(), SESSION_SLICES, objects=True, budget=SESSION_INSNS)
+    # ...and THE ROWS THAT SWITCH: each wait that blocks, woken through the dispatcher.
+    for woken in (nothing_typed, a_radio_button_held, held_down_on_ok):
+        aes_event.register_woken(woken())
     for label, conterm in (("the bell on", BELL_ON), ("the bell off", 0)):
         aes.register(label, BELL, (), bell_machine(conterm))
     for name in ("ESC", "ESC Y, its row"):

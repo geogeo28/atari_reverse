@@ -1884,7 +1884,7 @@ fn 0xfe8cb6 menu_sr
 cmt 0xfe8cb6 menu_sr: the saved rectangle widened 1 left and 2 right / down (the top untouched)
 fn 0xfe8cf4 menu_down
 fn 0xfe8d6e mn_do
-cmt 0xfe8d6e reads tree[-1].ob_state (14 bytes before the tree) when ob_find answers -1; DISABLED compared EQUAL to 8 (a SELECTED|DISABLED title is dropped, then do_chg refuses it); a title DISABLED alone under the mouse busy-loops until the mouse moves
+cmt 0xfe8d6e reads tree[-1].ob_state (14 bytes before the tree) when ob_find answers -1; DISABLED compared EQUAL to 8 (a SELECTED|DISABLED title is dropped, then do_chg refuses it); a title DISABLED alone under the mouse busy-loops until the mouse moves; RECORDED, cause not investigated (band 4 wave 3): over a title left SELECTED|DISABLED with the mouse moved straight off the bar the ROM's run does not return within 1.49 M instructions even with clicks delivered
 fn 0xfe902a mn_bar
 cmt 0xfe902a stores the owner's pid sign-extended as a LONG at $9730; the screen manager reads the WORD there ($fe4998), the high half — 0 for every pid. Posts a fake click post_button(ctl_pd, 1, 1), counted in $c6cc so the screen manager swallows it ($fe48de)
 fn 0xfe91a4 mn_clsda
@@ -2095,8 +2095,9 @@ cmt 0xfe5666 amouse(evb, moblk): lbcopy 10 into the frame FIRST (every later rea
 fn 0xfe6894 ev_keybd
 fn 0xfe68e4 ev_mouse
 fn 0xfe6910 ev_mesag
+cmt 0xfe6910 ev_mesag(buf): the control manager's sent mark $97fe cleared FIRST, then ap_rdwr(1, rlr's pid, 16, buf) - the QPB is the arguments it pushed, and its own Line-F return's trap frame overwrites them before the run ends while the freed EVB still holds their address: read a parked QPB while its frame is live
 fn 0xfe6936 ev_timer
-cmt 0xfe6936 ev_timer(ms.l): ev_block(3, ldiv(ms, (long)$c91a)) - a negative time queues negative ticks
+cmt 0xfe6936 ev_timer(ms.l): ev_block(3, ldiv(ms, (long)$c91a)) - a negative time queues negative ticks; behind other delays of the same process it runs out ONE DELAY AN IDLE (the tick glue $fed426 counts nothing while a run-out countdown waits for tchange)
 fn 0xfe681a ev_rets
 cmt 0xfe681a ev_rets(rets): $c836 ? ($9c12, $9c1e) : (xrat, yrat); rets[2] = $c792 (the high word of the last answer apret took: a parked mouse wait's WIDTH); rets[3] = kstate; $c836 = 0
 fn 0xfe695c ev_mchk
@@ -2123,7 +2124,7 @@ cmt 0xfe4b74 disp_act(pd): pd.stat := 0; walk from &rlr to the last link; pd.lin
 fn 0xfe4b9c mwait_act
 cmt 0xfe4b9c mwait_act(pd): (pd.evwait & pd.evflg, as WORDS) ? disp_act(pd) : pd at the HEAD of nrl. The first arm is reached by no machine: nothing is posted between mwait's test and disp's call
 fn 0xfe4d68 idle
-cmt 0xfe4d68 idle(): do { chkkbd(); while (drl) { pd = drl; drl = pd.link; disp_act(pd) } } while (!rlr && !fpcnt) — rlr tested before the fork count, a WORD ($c908 after it is the control manager's saved cursor count); where the machine waits for an interrupt
+cmt 0xfe4d68 idle(): do { chkkbd(); while (drl) { pd = drl; drl = pd.link; disp_act(pd) } } while (!rlr && !fpcnt) — rlr tested before the fork count, a WORD ($c908 after it is the control manager's saved cursor count); where the machine waits for an interrupt, and chkkbd is polled EVERY pass - with a process woken or ready too: a key that arrives there is polled before that process runs; drl is LAST IN, FIRST OUT (signal and pstart queue at its HEAD, idle drains it head first onto rlr's tail): of the processes woken in ONE pass the last woken is entered first - a key in a press's own idle is that idle's last fork, wakes the desk after the press woke the screen manager, and the desk runs first (it answers the key alone); a key polled ONE PASS LATER (the manager woken, not yet moved) wakes the desk behind it, the manager writes first and the desk answers KEYBD|MESAG (band 4 wave 3)
 cmt 0xfe4d9e disp(), entered by dsptch's jmp only: savestate(rlr.uda); pd = rlr; rlr = pd.link (the LONG, top byte and all); stat 0 -> disp_act(pd), 1 -> mwait_act(pd), any other -> on NO list; do { forker(); idle() } while (fpcnt); gl_cda = rlr.cda; switchto(rlr.uda). After savestate its SP is $8c1a: its argument slot is the longword AT the dispatcher stack's top. The LF_RET at $fe4e00 is dead
 # --- the interrupts' glue (src/aes/irq.S, $fed3be..$fed477): the three fn lines above lose their ctx tag — bodies read, byte-pinned, differential on both blobs
 cmt 0xfed3be button glue (vex_butv): SP -> $9482, stack $94f2 (92 bytes down to $9496), D0-D2/A0-A2 saved, jsr b_click(d0.w)

@@ -82,7 +82,10 @@ def test_mwait_act_puts_a_waiting_process_at_the_head_of_the_not_ready_list():
     assert not_ready(run(blocked).final) == [SHELL, SCREEN_MANAGER]
 
 
-def test_idle_moves_two_processes_woken_at_once_in_the_order_they_were_woken():
+def test_idle_moves_two_processes_woken_at_once_in_the_woken_list_s_order_last_in_first_out():
+    """The woken list is LAST IN, FIRST OUT: the mouse onto the bar woke the screen manager, then the delay's ticks
+    the desk — which stands at the list's HEAD. idle moves both to the ready list in the list's own order: the desk,
+    woken last, is ready first."""
     both = switch.at("a delay run out and the mouse on the bar: two processes woken at once", IDLE)
     before = make_image(both.machine)
     assert aes.list_of(before, aes.AES_DRL) == [SHELL, SCREEN_MANAGER] and ready(before) == []

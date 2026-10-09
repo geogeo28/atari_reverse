@@ -261,7 +261,19 @@
  * desk parked in its read, the screen manager's write serving it through that address). In the ROM each is on its own
  * process's stack; off target the role's span is HOST_PROCESSES frames, the running process's id choosing one — an
  * address the image alone decides, the same in whichever host run the frame was laid — each with its own held flag:
- * a process is never in the routine twice, which is asserted as every claim is. */
+ * a process is never in the routine twice, which is asserted as every claim is.
+ *
+ * THE AUDIT OF EVERY OTHER SLOT HELD ACROSS A WAIT (band 4 wave 3; read off the runs, and pinned:
+ * `test_aes_event.SLOTS_HELD_WHERE_PARKED`). A door user holds frames of its own while its process is PARKED inside
+ * the event layer: gr_stilldn's rectangle and answers (under gr_wait, gr_watchbox, the drag loops and fm_button too),
+ * gr_watchbox's rectangle, gr_rubwind's, gr_dragbox's frame, gr_slidebox's rectangles, mn_do's frame, fm_do's and
+ * fm_button's. EACH IS ONE FRAME FOR EVERY PROCESS, and that is sound only while ONE C process can be inside the
+ * routine: on the host a process other than the caller is the ROM's own code (the model's nested run), which claims
+ * nothing. The day a second process is C (band 5: the screen manager's ctlmgr calls mn_do while the desk sits in
+ * fm_do or a drag) each of them owes HOST_PROCESSES frames, claimed with `host_slot_claim_for` as the two QPBs are —
+ * the assert in `host_slot_take` is what will say so, and a slot NEWLY held across a wait reds that table first.
+ * WHAT IS HELD TODAY, on every door user's run through the host's model: the call RETURNS with no slot held (the
+ * give-back after a wait, which no host run reached before a call could come back from one). */
 #define HOST_PROCESSES                  9        /* the AES's: three static PDs and six accessories ($fe445a cmp.w #6) */
 
 /* Each slot's index in the held flags. */

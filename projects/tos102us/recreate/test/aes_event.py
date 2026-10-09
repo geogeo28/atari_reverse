@@ -458,6 +458,11 @@ def _waiting_on_a_pipe(image):
                      for evb in _evbs_linked_from(image, aes.AES_PD_TABLE + process * aes.PD_BYTES + which, aes.EVB_LINK))
 
 
+def waiting_on_a_pipe(image):
+    """`_waiting_on_a_pipe`, for a watch that reads a queued wait's QPB again (`aes_switching.Switching`)."""
+    return _waiting_on_a_pipe(image)
+
+
 def parked_qpbs(image):
     """The pipe waits the RUNNING process has parked over `image` with a QPB in a stack (above): a `ParkedQpb` each —
     the wait's EVB, the address its parameter holds — in the order of the process's event list."""
@@ -827,8 +832,17 @@ LINE_F_MASK_BYTES = frozenset(at for lo, hi, _why in aes.LINE_F_MASK_WINDOW for 
 # binding's own (`event_hook`, emptied each time a case opens it; `bind_in_a_child`), never the module's. EVERY arrival
 # takes a place in it, shadowed or not, and gives it up when its twin's return is reported: so the list is also what
 # says A TWIN IS RUNNING.
+# THE PLACES THAT ARE NO SHADOW are told apart BY WHAT THEY SAY (the record's third field), not by which object
+# they are: two records equal by value were one place to every reader but an `is`.
 SHADOW_NOT_MADE = None                 # an arrival's place in `shadows` while — and if — its shadow's making raised
-NOT_SHADOWED = Shadow(None, None, None)    # ...and the place of an arrival at an entry no shadow is made for
+# ...and the place of an arrival at an entry no shadow is made for
+NOT_SHADOWED = Shadow(None, None, "no shadow is made for this entry")
+# ...and of an arrival whose twin was HELD TO ITS SHADOW AT THE DISPATCHER and then RUN ON (a door child under the
+# scheduler's model, `bind_in_a_child`'s `dispatching`): the shadow's nested run ended at dsptch, so it has nothing
+# to say of a second dispatch of the same call, nor of the twin's return — the case's own compare of the whole run
+# with the ROM's scheduled run holds those.
+HELD_AT_THE_DISPATCHER = Shadow(None, None, "held to its shadow at the dispatcher, then run on")
+_NOT_COMPARED_AGAIN = (NOT_SHADOWED, HELD_AT_THE_DISPATCHER)
 
 
 def _vet_no_twin_is_running(routine, shadows, nested_arrivals=None):
@@ -844,7 +858,7 @@ def _vet_no_twin_is_running(routine, shadows, nested_arrivals=None):
     the case failed by these words when its pass closes (`event_hook`), whatever else it then failed by."""
     if not shadows:
         return
-    in_flight = [f"{shadow.call.routine:#x}" if shadow not in (SHADOW_NOT_MADE, NOT_SHADOWED) else "a rebound entry"
+    in_flight = [f"{shadow.call.routine:#x}" if shadow is not SHADOW_NOT_MADE and shadow.call else "a rebound entry"
                  for shadow in shadows]
     refusal = AssertionError(
         f"the event door: {routine:#x} was called through its wrapper INSIDE the twin of {in_flight[-1]} — a nested "
@@ -881,7 +895,7 @@ def _returned(routine, shadows):
     def returned(buf, answer):
         assert shadows, f"the shadow: the twin of {routine:#x} returned, and no arrival of this binding is in flight"
         shadow = shadows.pop()
-        if shadow is NOT_SHADOWED:
+        if shadow in _NOT_COMPARED_AGAIN:
             return
         assert shadow is not SHADOW_NOT_MADE and shadow.call.routine == routine, (
             f"the shadow: the twin of {routine:#x} returned, and the arrival it answers has no shadow of its own "
@@ -894,7 +908,7 @@ def _vet_the_twin_at_the_dispatcher(shadows, image):
     """A candidate reached the dispatcher's hook holding `image`: where a twin is running (`shadows`) and its entry is
     shadowed, it is held there to its shadow (`vet_the_shadow_at_dsptch`). Outside any twin — the C of a routine
     entered directly, a leaf battery's — there is nothing to hold it to here: its own case compares it."""
-    if not shadows or shadows[-1] is NOT_SHADOWED:
+    if not shadows or shadows[-1] in _NOT_COMPARED_AGAIN:
         return
     assert shadows[-1] is not SHADOW_NOT_MADE, (
         "the shadow: a twin reached the dispatcher, and its arrival has no shadow (its nested run was refused)")
@@ -1161,25 +1175,52 @@ def _laid_into(buf, delivery):
     _lay(image, wrote, lays_the_mask_word=False)
 
 
-def bind_in_a_child(lib, entries=ENTRIES, objects=False, interrupts=None):
+def bind_in_a_child(lib, entries=ENTRIES, objects=False, interrupts=None, dispatching=None):
     """`child_binding`'s call: the door — each entry `lib` marks rebound an arrival (`rebound_in`; any other refused),
     the twin's return and the dispatcher's hook with it — the VDI's cores and the walked routines bound into `lib`.
     `interrupts` (`deliveries`' `{ordinal: (found, wrote)}`) lays each interrupt's effect into the image at the door
     call of that ordinal, before its twin runs (`_laid_into`) — and the frames handed are printed at
     the child's exit too, so a call that RETURNS reports them; with a refusal at the dispatcher's hook as well, where
-    a twin that blocks ends."""
+    a twin that blocks ends.
+
+    A DOOR CHILD UNDER THE SCHEDULER'S MODEL (`dispatching`: `(buf) -> the dispatcher's answer` — `aes_switch`'s,
+    the C scheduler run over the image): the twin that reaches the dispatcher's hook is held THERE to its shadow, as
+    every twin is, and then RUN ON — the model dispatches, the call comes back and the door user's loop goes on, to
+    its return. The shadow has then said all it can (HELD_AT_THE_DISPATCHER): what the twin does once woken is held
+    by the case, against the ROM's own run through its dispatcher."""
     calls, shadows, rebound = [], [], rebound_in(lib)
     effects = {entry: _arrived(entry, None, calls.append, shadows, rebound) for entry in entries if entry in rebound}
     returns = {entry: _returned(entry, shadows) for entry in effects}
 
-    def refused_at_the_dispatcher(buf):
+    def _the_child_s_own_python_raised(where, raised):
+        """A callback cannot raise into C — ctypes prints what it raised and answers an undefined word, and the twin
+        RUNS ON, to a child that exits 0. So what this child's own Python raises at the dispatcher ends it, by name."""
+        print(f"the event door: {where} raised {raised!r}", file=sys.stderr, flush=True)
         print(_handed_line(calls), file=sys.stderr, flush=True)
+        os._exit(FORK_RAISED)
+
+    def held_to_its_shadow(buf):
         try:                           # a twin's shadow first: the image it holds HERE is the ROM's at dsptch
             _vet_the_twin_at_the_dispatcher(shadows, ctypes.string_at(buf, IMAGE_BYTES))
         except AssertionError as refused:
             print(refused, file=sys.stderr, flush=True)
             os._exit(CHILD_SHADOW_REFUSED)
+        except Exception as raised:    # ...and a vet that could not be MADE is no vet passed: the harness's error
+            _the_child_s_own_python_raised("the shadow's vet at the dispatcher", raised)
+
+    def refused_at_the_dispatcher(buf):
+        print(_handed_line(calls), file=sys.stderr, flush=True)
+        held_to_its_shadow(buf)
         return _refused_at_the_dispatcher(buf)
+
+    def dispatched(buf):
+        held_to_its_shadow(buf)
+        if shadows:
+            shadows[-1] = HELD_AT_THE_DISPATCHER
+        try:
+            return dispatching(buf)
+        except Exception as raised:
+            _the_child_s_own_python_raised("the dispatcher's hook under the model", raised)
 
     def returned(buf, routine, answer):
         try:
@@ -1208,7 +1249,8 @@ def bind_in_a_child(lib, entries=ENTRIES, objects=False, interrupts=None):
     polls = polls_in_c(rebound)
     _CHILD_POLLS[:] = [polls] if polls else []
     door, vdi_cores, walkers = PROTOTYPE(dispatch), isr.CALL_VECTOR(_child_vdi), _child_walkers(lib, objects, polls)
-    twins_return, dispatcher = RETURNED_PROTOTYPE(returned), DISPATCH_PROTOTYPE(refused_at_the_dispatcher)
+    twins_return = RETURNED_PROTOTYPE(returned)
+    dispatcher = DISPATCH_PROTOTYPE(dispatched if dispatching else refused_at_the_dispatcher)
     _CHILD_TRAMPOLINES.extend((door, vdi_cores, walkers, twins_return, dispatcher))
     bind_pointer(HOOK_SYMBOL, door, lib)
     bind_pointer(RETURNED_SYMBOL, twins_return, lib)
@@ -1285,9 +1327,10 @@ assert len(set(_CHILD_STATUSES)) == len(_CHILD_STATUSES), "two kinds of child's 
 # Every hook the candidate has but the dispatcher's — the event door's two, the two the VDI's cores and the walked
 # routines leave through, and the other components' (GEMDOS's handler and clock, Supexec's routine, the disk driver's
 # vectors), each by its pointer's name in the library: `test_aes_event.py` holds the list to the library's own exports.
-# ...and THE SCHEDULER MODEL's two (`aes/evdisp.h`: the idle hook, where the n-th idle's interrupt is laid, and the
-# process hook, a foreign process as a nested ROM run), in a library that links it.
-SCHEDULER_HOOKS = tuple(symbol for symbol in ("recreate_idle", "recreate_process") if hasattr(_lib, symbol))
+# ...and THE SCHEDULER MODEL's three (`aes/evdisp.h`: the poll hook, asked at every poll of idle; the idle hook, where
+# the n-th idle's interrupt is laid; and the process hook, a foreign process as a nested ROM run), in a library that
+# links it.
+SCHEDULER_HOOKS = tuple(symbol for symbol in ("recreate_poll", "recreate_idle", "recreate_process") if hasattr(_lib, symbol))
 FORK_UNSERVED_HOOKS = (HOOK_SYMBOL, RETURNED_SYMBOL, isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL,
                        "recreate_call_gemdos_handler", "recreate_publish_clock", "recreate_call_routine",
                        "recreate_call_disk_vector", *SCHEDULER_HOOKS)
@@ -1342,7 +1385,7 @@ FORK_S_PYTHON_RAISED = "the fork's own Python raised — the harness's error, no
 # event layer that draws or calls a fork function and reaches NO DOOR (chkkbd, mchange, forker): a fresh interpreter
 # per case is what such a battery cannot pay. The event door's two hooks are never among them — a door user's child is
 # a fresh interpreter, its door bound for it.
-# ...and the scheduler model's (SCHEDULER_HOOKS), with the dispatcher's own hook: a case of the model binds all three
+# ...and the scheduler model's (SCHEDULER_HOOKS), with the dispatcher's own hook: a case of the model binds them all
 # in its pass (the dispatcher's to the model instead of the refuser) and its fork runs the model — the nested ROM runs
 # of a foreign process and of an idle's interrupt made in the fork.
 FORK_SERVABLE_HOOKS = frozenset({isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL, *SCHEDULER_HOOKS})
@@ -1539,6 +1582,9 @@ def _exit_as_an_interpreter_does(call):
         call()
         atexit._run_exitfuncs()
     return as_a_child
+
+
+exit_as_an_interpreter_does = _exit_as_an_interpreter_does    # ...for a door child another module forks (`aes_switch`)
 
 
 def _a_door_child_in_the_zygote(buffer, request):
@@ -2218,6 +2264,15 @@ class DoorStops:
     def between_calls(self):
         """Is the run outside every door call — so a stop at an entry opens the next?"""
         return not self._in_call
+
+    def foreign_window_opened(self):
+        """ANOTHER PROCESS THAN THE RUN'S OWN IS ENTERED (told by the watch that follows the run through the
+        dispatcher, `aes_switching.Switching`, which arms none of this watch's stops until that process's turn is
+        over): nothing, for a watch that counts nothing — one that prices its calls says what a call open across
+        the turn is net of (`tier3.DoorWindows`)."""
+
+    def foreign_window_closed(self):
+        """...and the run's own process is resumed."""
 
     def opens_a_call_at(self, pc):
         """Would a stop at `pc`, as the watch stands, OPEN A DOOR CALL — an arrival, where a delivery is laid and an
@@ -3017,7 +3072,12 @@ class OncePerSession:
 #               poll makes (a key typed ahead);
 #   `idles`     how many idles the ROM's own run makes: what every run of the row is held to, on either shore;
 #   `process`   the PD of the process that makes the call: every other one the dispatcher enters is FOREIGN;
-#   `at_calls`  the row's door-call deliveries, where it has any too.
+#   `at_calls`  the row's door-call deliveries, where it has any too;
+#   `at_polls`  `{poll: (found, wrote)}` — what the run takes at a POLL of the dispatcher that is NO IDLE: idle polls the
+#               keyboard every time round its loop, a process ready or woken too, and a key that arrives there is
+#               polled before that process runs (a key and a message in one wake are made no other way);
+#   `polls`     how many polls of the dispatcher's idle the ROM's own run makes, idles among them — every run of the
+#               row is held to it; None for a hand-made record that holds no run to a count.
 # The watch that takes a run through one is `aes_switching.Switching` (imported where it is asked for: that module
 # imports this one); `SWITCHING_ROWS` is the registered rows' register, as `INTERRUPTED_ROWS` is the door's.
 @dataclasses.dataclass(frozen=True)
@@ -3026,6 +3086,8 @@ class Switches:
     idles: int
     process: int
     at_calls: dict = dataclasses.field(default_factory=dict)
+    at_polls: dict = dataclasses.field(default_factory=dict)
+    polls: int = None
 
     def _replace(self, **changed):
         """This, with `changed` — a row's own spelling (`namedtuple._replace`) for a record that is no tuple."""
@@ -3820,6 +3882,15 @@ def mouse_moved_to(x, y, onto):
 # A point of the MENU BAR, one packet up from the snapshot's mouse: the rectangle the screen manager's evnt_multi waits
 # for the mouse to enter (measured: the one move of those tried that wakes it, with MU_M1).
 MENU_BAR_POINT = (159, 5)
+# ...AND THE POINTS OF THE MENU CHAIN, on the snapshot's own screen — one home for every battery that walks it: "View"
+# on the bar, the plain item under it once the menu is dropped, and a point of the desktop below the bar, under no
+# dropped menu and on no window. THE CHAIN, as a scheduled run takes it (`{idle: interrupt}`): the mouse onto the
+# title wakes the screen manager, which drops the menu; the mouse onto the item; the press — and the screen
+# manager's own appl_write of MN_SELECTED to the desk: the one writer a returning run of this machine has.
+THE_VIEW_TITLE_S_POINT, VIEW_S_PLAIN_ITEM_S_POINT = (136, 5), (150, 23)
+A_POINT_ON_THE_DESKTOP = (20, 180)
+ONTO_THE_VIEW_TITLE, ONTO_ITS_PLAIN_ITEM = move_to(*THE_VIEW_TITLE_S_POINT), move_to(*VIEW_S_PLAIN_ITEM_S_POINT)
+THE_MENU_CHAIN = {0: ONTO_THE_VIEW_TITLE, 1: ONTO_ITS_PLAIN_ITEM, 2: press}
 
 
 def woken_onto_the_menu_bar(onto=None):
@@ -3974,6 +4045,26 @@ def _interrupt_at(interrupts, ordinal, entry):
     return interrupts(ordinal, entry) if isinstance(interrupts, Waits) else interrupts.get(ordinal)
 
 
+def interrupt_at(interrupts, ordinal, entry):
+    """`_interrupt_at`, for a driver that takes a run's door-call interrupts itself (`aes_switch.scheduled`: the run
+    that takes them at door calls AND at idles); `interrupts` None for a run that names none."""
+    return _interrupt_at(interrupts or {}, ordinal, entry)
+
+
+def begin_a_schedule(interrupts):
+    """A run that will ask `interrupts` at its door calls BEGINS: a schedule's waits counted from none (`Waits`)."""
+    if isinstance(interrupts, Waits):
+        interrupts.begin_run()
+
+
+def undelivered(interrupts, delivered):
+    """What `interrupts` named that the run which took `delivered` (`{ordinal: (found, wrote)}`) never reached: a
+    schedule's rows still `pending`, or the ordinals no door call had."""
+    if isinstance(interrupts, Waits):
+        return interrupts.pending
+    return sorted(set(interrupts or ()) - set(delivered))
+
+
 def _taken(memory, interrupt):
     """`interrupt` (or a tuple of them) run over a copy of `memory`: `(found, wrote)` — what `memory` holds at every
     address it writes, then what it wrote there."""
@@ -4029,8 +4120,7 @@ def _run_interrupting(memory, entry, interrupts, budget=None):
     """The ROM's own `entry` over `memory`, ONE watched run that takes each interrupt of `interrupts` at the entry of
     its door call (`interrupting`): `(delivered, result)` — `{ordinal: (found, wrote)}`, and the run's result, None
     where it blocked."""
-    if isinstance(interrupts, Waits):
-        interrupts.begin_run()
+    begin_a_schedule(interrupts)
 
     def due_at(watch, pc):
         # Asked at an ARRIVAL only: the run's own entry (entered, not called) is no door call, and an interrupt
@@ -4061,8 +4151,8 @@ def _deliveries(name, arguments, pokes, interrupts, budget):
     caller finds the schedule as a run leaves it either way."""
     memory = make_image(_staged(name, arguments, pokes))
     delivered, _result = _run_interrupting(memory, getattr(addrs, name), interrupts, budget)
-    undelivered = interrupts.pending if isinstance(interrupts, Waits) else sorted(set(interrupts) - set(delivered))
-    assert not undelivered, f"{name}: the ROM's run made no door call to deliver {undelivered} at"
+    never_made = undelivered(interrupts, delivered)
+    assert not never_made, f"{name}: the ROM's run made no door call to deliver {never_made} at"
     return delivered, interrupts.counted() if isinstance(interrupts, Waits) else None
 
 
@@ -4271,6 +4361,58 @@ def refused_where_the_rom_blocks(name, arguments, machine, *, objects=False, sec
     taken = interrupted(name, arguments, machine, {}, objects=objects, seconds=seconds, switches=switches, budget=budget)
     assert not taken.returned, f"{name}: the premise — the ROM's run switches at a door call — does not hold: it returned"
     return taken
+
+
+# ---- A DOOR USER'S CALL THAT BLOCKS, TAKEN ON THROUGH THE WAKE ------------------------------------------------------------
+# A door user that waits (a dialog with nothing typed, a box loop with the mouse still, a menu dropped) has two
+# halves, as a wait of the event layer has: what it does UP TO THE CALL THAT BLOCKS, and what it does once the
+# dispatcher runs it again. The first is held where the C stops when nothing models the switch — at the dispatcher's
+# hook, against the ROM's memory at dsptch (`interrupted`, ending blocked). THE SECOND IS A ROW THAT SWITCHES
+# (`aes_switching`): the same call, the interrupt that wakes it delivered where the machine waits for one — at the
+# dispatcher's idle — and the loop run on to its return, by the ROM through its own dispatcher and by the C through
+# the host's model with THE DOOR BOUND IN THE SAME CHILD (`aes_switch.modelled`'s `door`: every arrival noted and
+# shadowed, the twin held to its shadow at dsptch and then run on). Its interrupts are of two kinds, and one
+# derivation takes both (`aes_switch.scheduled`): `at_calls`, at the entry of a door call (what a loop's earlier
+# waits take, as `interrupted` delivers them), and `at_idle`, at an idle (what wakes a wait that blocked).
+# The three spellings a battery needs — a module that imports this one imports the registrar, so each asks for it
+# where it is called.
+def woken_row(label, name, arguments, machine, at_idle, at_calls=None, *, objects=False, answered=True):
+    """A DOOR USER'S CALL THAT BLOCKS AND IS WOKEN, as a row that switches (`aes_switching.SwitchingRow`): `machine` a
+    zero-argument builder, `at_idle` `{idle: interrupt}`, `at_calls` `{door call: interrupt}` or a schedule
+    (`Waits`); `objects`: its C walks trees (the walked routines served in its child); `answered` False for an arm
+    that sets no D0. The routine's declared child doors (`CHILD_DOORS`) are its child's."""
+    import aes_switch
+    import aes_switching
+    door = aes_switch.DoorUser(bool(objects), CHILD_DOORS.get(name, ""))
+    return aes_switching.SwitchingRow(label, name, tuple(arguments), machine, dict(at_idle or {}), answered, at_calls, door)
+
+
+def held_through_its_wake(row):
+    """`row`'s TIER 1 (`aes_switching.companion`): the C through the host's model, the door bound, held to the ROM's
+    own run through its dispatcher — the same idles, the same answer, every frame the door was handed, every byte
+    outside the run's own stack. Its `CompanionRun`, for the case's own assertions (`.answer`, `.calls`, `.image`,
+    `.entered`)."""
+    import aes_switching
+    return aes_switching.companion(row)
+
+
+def blocked_then_woken(row, switches=BLOCKS):
+    """BOTH HALVES OF A DOOR USER'S CALL THAT SWITCHES: `(held, ran)` — `held` the call taken through its door-call
+    interrupts alone, which ENDS AT THE DISPATCHER: the C refused at its hook as one that `switches` (BLOCKS, or
+    YIELDS), its whole image the ROM's AT DSPTCH (`interrupted`: what a transient store before the switch would show
+    in, and no later compare); `ran` the same call taken on through the dispatcher to its return
+    (`held_through_its_wake`)."""
+    held = interrupted(row.name, row.arguments, row.machine(), row.at_calls or {}, objects=row.door.objects,
+                       switches=switches)
+    assert not held.returned, f"{row.name}: the premise — with nothing delivered at an idle the call switches — does not hold"
+    return held, held_through_its_wake(row)
+
+
+def register_woken(row):
+    """`row` REGISTERED: one priced row that switches (`aes_switching.register_row`) — a door user's, held on TWO
+    COUNTS like any row round a rebound entry, its call open across the switch."""
+    import aes_switching
+    return aes_switching.register_row(row)
 
 
 # ---- A SESSION PRICED BY ITS SLICES -----------------------------------------------------------------------------------

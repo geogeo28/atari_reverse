@@ -26,11 +26,13 @@ resource's tree 0, track 10, elevator 11), and a window's sliders in W_ACTIVE as
 
 WHAT ONE RUN REACHES, AND WHAT INTERRUPTS DO. With the button up every loop ends after one step (gr_stilldn answers
 the rise first). With the button down and the mouse still, a step waits for the mouse to LEAVE the pixel it is on: a
-wait nothing satisfies, REFUSED by the door (would block), the C held to the ROM's own run stopped where it blocks
-(`aes_event.refused_where_the_rom_blocks`, the whole image). Every later step is reached as the machine reaches it —
-the mouse moved and the button released by the ROM's own interrupt code at the entry of a step's wait, on both shores
-(`aes_event.interrupted`): a drag the mouse really moved, a box stretched, gr_rubwind's busy loop (its corner held at
-its minimum away from the mouse, each wait satisfied at once) ended when the button rises.
+wait nothing satisfies, REFUSED by the door (would block), the C held to the ROM's own run where it blocks (the whole
+image, at dsptch) — AND TAKEN ON THROUGH THE WAKE (`aes_event.blocked_then_woken`, WOKEN below): the mouse moved and
+the button released WHILE THE LOOP IS BLOCKED, at the dispatcher's idle, the loop run to its return through the
+ROM's dispatcher and the host's model; each loop's such call is a priced row that SWITCHES. Every later step is
+also reached with the interrupt delivered at the ENTRY of a step's wait, on both shores (`aes_event.interrupted`): a
+drag the mouse really moved, a box stretched, gr_rubwind's busy loop (its corner held at its minimum away from the
+mouse, each wait satisfied at once) ended when the button rises.
 """
 import functools
 import struct
@@ -152,12 +154,6 @@ def run(name, arguments, machine, **kwargs):
 LOCKED_THEN_WAITING = [addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_EV_MULTI]
 
 
-def blocked_calls(name, arguments, machine):
-    """The routines of the door calls a call that BLOCKS made, the C held to the ROM up to the blocking one
-    (`aes_event.refused_where_the_rom_blocks`)."""
-    return [call.routine for call in aes_event.refused_where_the_rom_blocks(name, arguments, machine).calls]
-
-
 # ---- gr_wait ---------------------------------------------------------------------------------------------------------------
 # (machine, the box, the offset box or gl_rzero, the pixel, answer): the button up — it rose, one box or two; the button
 # down and the pixel away from the mouse — it left, still down.
@@ -193,13 +189,6 @@ def test_gr_wait(machine, offset, pixel, answer):
     result = gr_wait(machine, offset, pixel)
     assert result.answer() == answer
     assert not screen_changed(result), "the box drawn and drawn away"
-
-
-def test_gr_wait_waits_for_the_pixel_the_mouse_is_on_to_be_left():
-    """The button down and the pixel the mouse's own: nothing satisfies the wait — refused where the ROM's blocks, the
-    box left drawn."""
-    assert blocked_calls(GR_WAIT, (RECT_AT, OFFSET_AT, *SNAPSHOT_MOUSE), waiting_over(button_down)) == \
-        [addrs.AES_ROM_EV_MULTI]
 
 
 def test_gr_wait_s_offset_equal_to_gl_rzero_by_value_draws_one_box():
@@ -307,11 +296,6 @@ def test_gr_rubbox_stores_the_width_first():
     assert result.word(FIRST_OUT) == 50
 
 
-def test_gr_rubbox_s_wait_at_the_mouse_is_refused_where_the_rom_s_blocks():
-    """The button down, the corner AT the mouse: the box drawn, the wait for the mouse to leave the corner refused."""
-    assert blocked_calls(GR_RUBBOX, (100, 50, 16, 16, FIRST_OUT, SECOND_OUT), button_down()) == LOCKED_THEN_WAITING
-
-
 @functools.cache
 def twin_over(machine):
     """`machine()` with a window's outline offset staged (TWIN_OFFSET)."""
@@ -391,11 +375,6 @@ def test_gr_dragbox_stores_x_first():
     assert dragbox(40, 20, 200, 150, SCREEN, x_out=FIRST_OUT, y_out=FIRST_OUT).word(FIRST_OUT) == 99
 
 
-def test_gr_dragbox_s_wait_at_the_mouse_is_refused_where_the_rom_s_blocks():
-    assert blocked_calls(GR_DRAGBOX, (*DRAG_FROM_INSIDE, SCREEN, FIRST_OUT, SECOND_OUT), bound_over(button_down)) == \
-        LOCKED_THEN_WAITING
-
-
 # ---- gr_slidebox ---------------------------------------------------------------------------------------------------------------
 @functools.cache
 def window_sliders():
@@ -446,10 +425,6 @@ def test_gr_slidebox_through_its_callers_word(through_line_f):
 
 def test_gr_slidebox_puts_the_tree_on_the_bus():
     selector_slide(1, tree=SELECTOR | aes.BUS_TAG)
-
-
-def test_gr_slidebox_s_wait_at_the_mouse_is_refused_where_the_rom_s_blocks():
-    assert blocked_calls(GR_SLIDEBOX, (SELECTOR, TRACK, ELEVATOR, 1), button_down()) == LOCKED_THEN_WAITING
 
 
 # ---- the loops TAKEN THROUGH INTERRUPTS ----------------------------------------------------------------------------------
@@ -503,6 +478,49 @@ def test_taken_through_interrupts(name, arguments, machine, interrupts, answer, 
         assert tuple(aes.signed(case.word_in(taken.image, at)) for at in (FIRST_OUT, SECOND_OUT)) == out
 
 
+# ---- THE WAITS THAT BLOCK, HELD THERE AND WOKEN ----------------------------------------------------------------------------
+# The button down and the mouse still: each loop's first wait — for the mouse to leave the pixel it is on — BLOCKS (the
+# box left drawn; a loop's door calls up to it: the screen lock, then the wait). Then what the machine does while it
+# is blocked, delivered at the dispatcher's idle: the mouse moves (the wait answers, the loop steps and waits again:
+# blocked a second time) and the button rises. (routine, arguments, machine, {idle: interrupt}, the door calls up to
+# the block, the answer, the two words out or None)
+THE_WAIT_ALONE = [addrs.AES_ROM_EV_MULTI]
+WOKEN = {
+    "gr_wait: the pixel the mouse is on, left by the mouse": (
+        GR_WAIT, (RECT_AT, OFFSET_AT, *SNAPSHOT_MOUSE), over(waiting_over, button_down), {0: move_to(170, 110)},
+        THE_WAIT_ALONE, 1, None),
+    "gr_wait: the pixel the mouse is on; the button rises": (
+        GR_WAIT, (RECT_AT, OFFSET_AT, *SNAPSHOT_MOUSE), over(waiting_over, button_down), {0: release}, THE_WAIT_ALONE, 0,
+        None),
+    "gr_rubbox: the corner at the mouse; stretched, then released": (
+        GR_RUBBOX, (100, 50, 16, 16, FIRST_OUT, SECOND_OUT), button_down, {0: move_to(180, 120), 1: release},
+        LOCKED_THEN_WAITING, None, (81, 71)),
+    "gr_dragbox: held at the mouse; moved, then released": (
+        GR_DRAGBOX, (*DRAG_FROM_INSIDE, SCREEN, FIRST_OUT, SECOND_OUT), over(bound_over, button_down),
+        {0: move_to(200, 150), 1: release}, LOCKED_THEN_WAITING, None, (181, 141)),
+    "gr_slidebox: the elevator held; dragged down, then released": (
+        GR_SLIDEBOX, (SELECTOR, TRACK, ELEVATOR, 1), button_down, {0: move_to(188, 140), 1: release},
+        LOCKED_THEN_WAITING, mul_div_model(39, 1000, 48), None),
+}
+
+
+def woken_row(label):
+    name, arguments, machine, at_idle, _calls, _answer, _out = WOKEN[label]
+    return aes_event.woken_row(label.partition(": ")[2], name, arguments, machine, at_idle)
+
+
+@pytest.mark.parametrize("label", WOKEN)
+def test_a_loop_s_wait_that_blocks_is_held_there_and_woken_as_the_rom_s(label):
+    """UP TO THE BLOCK the C is the ROM's run where it blocks (the door calls it made, the whole image at dsptch: the
+    box left drawn) — and ON THROUGH THE WAKE, the interrupts delivered at the dispatcher's idles, both return with
+    the same answer, the same words out, every frame handed the door, the whole image."""
+    _name, _arguments, _machine, _at_idle, calls, answer, out = WOKEN[label]
+    held, ran = aes_event.blocked_then_woken(woken_row(label))
+    assert [call.routine for call in held.calls] == calls and ran.answer == answer
+    if out:
+        assert tuple(aes.signed(case.word_in(ran.image, at)) for at in (FIRST_OUT, SECOND_OUT)) == out
+
+
 # ---- the registry --------------------------------------------------------------------------------------------------------------
 for _label, (_machine, _offset, _pixel, _answer) in GR_WAIT_CASES.items():
     aes_event.register(_label, GR_WAIT, (RECT_AT, _offset, *_pixel), waiting_over(_machine), drawing=True)
@@ -526,3 +544,8 @@ WORST_INTERRUPTED = ("gr_dragbox: moved, the cursor shown", "gr_rubwind: a windo
 for _label in WORST_INTERRUPTED:
     _name, _arguments, _machine, _interrupts, _answer, _out = INTERRUPTED[_label]
     aes_event.register_interrupted(_label.partition(": ")[2], _name, _arguments, _machine(), _interrupts)
+# ...and THE ROWS THAT SWITCH: each loop blocked at its first wait and woken through the dispatcher (the wait woken by
+# the mouse, for gr_wait: the dearer of its two).
+THE_ROWS_THAT_SWITCH = tuple(label for label in WOKEN if "the button rises" not in label)
+for _label in THE_ROWS_THAT_SWITCH:
+    aes_event.register_woken(woken_row(_label))

@@ -333,3 +333,58 @@ def test_every_door_entry_s_row_says_what_the_build_says_of_its_twin():
     counted = tuple(sum(state == which for state in built.values()) for which in ("REBOUND", "PENDING"))
     assert (int(summary["rebound"]), int(summary["entries"]), int(summary["pending"])) == (counted[0], len(built), counted[1]), (
         f"STATUS.md says {summary[0]!r}; the build has {counted[0]} of {len(built)} rebound and {counted[1]} pending")
+
+
+# ---- THE ROWS THAT SWITCH: what the ledger counts is what the registry holds -------------------------------------------
+# A row that switches is registered (`aes_event.SWITCHING_ROWS`), and the ledger states how many there are THREE ways,
+# each typed by hand: in each routine's Cases cell (`N rows (M of them SWITCH…`, `(1 SWITCHES…`, `N rows, ALL OF THEM
+# SWITCH`), in the section's sentence (`N rows of the table are such runs`, `N rows of the table switch`) and in the
+# Components table (`N rows SWITCH since band 4 wave 3`) — beside that cell's own count of the rows held on two
+# counts. All of them are held here: a ledger that named one of a routine's rows fewer, or one more, reds.
+_CASES_CELL_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|[^|]*\|(?P<cases>[^|]*)\|.*✅ verified", re.M)
+_SWITCH_IN_A_CASES_CELL_RE = re.compile(r"(?P<count>\d+)(?: of them)? SWITCH(?:ES)?\b|(?P<every>\d+) rows, ALL OF THEM SWITCH\b")
+_ROWS_THAT_SWITCH_RE = re.compile(r"(?P<rows>\d+) rows of the table (?:are such runs|switch)\b|(?P<component>\d+) rows SWITCH since"
+                                  r"|THE ROWS THAT SWITCH, (?P<dsptch>\d+) since")
+_COMPONENT_TWO_COUNTS_RE = re.compile(r"the caller's own net of those calls: (?P<rows>\d+) rows since")
+
+
+def _registered_rows_that_switch():
+    """{ROM address: how many registered rows that switch are of the routine there} (`aes_event.SWITCHING_ROWS`)."""
+    import collections
+
+    import aes_event
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    from harness import addrs
+
+    return collections.Counter(getattr(addrs, held.row.name) for held in aes_event.SWITCHING_ROWS.values())
+
+
+def test_every_routine_s_row_counts_its_rows_that_switch_as_the_registry_does():
+    """THE CASES CELL of every verified row against the registry, address by address: the count it states of rows
+    that SWITCH (none stated: none) is the number of rows registered for that routine — both ways, so a routine whose
+    rows switch says so, and a cell cannot go on naming a row the registry dropped."""
+    registered, stated = _registered_rows_that_switch(), {}
+    for row in _CASES_CELL_RE.finditer(_status()):
+        said = _SWITCH_IN_A_CASES_CELL_RE.search(row["cases"])
+        stated[int(row["addr"], 16)] = int(said["count"] or said["every"]) if said else 0
+    wrong = [f"{address:#x}: its Cases cell says {stated.get(address, 'nothing: it has no verified row')}, the registry holds "
+             f"{registered.get(address, 0)}" for address in sorted(set(registered) | {at for at, count in stated.items() if count})
+             if stated.get(address) != registered.get(address, 0)]
+    assert not wrong, (f"{len(wrong)} STATUS.md row(s) miscount the routine's rows that switch "
+                       f"(`aes_event.SWITCHING_ROWS`):" + "".join(f"\n  {line}" for line in wrong))
+
+
+def test_every_count_of_the_rows_that_switch_is_the_registry_s():
+    """...AND THE SENTENCES: every `N rows of the table are such runs` / `N rows of the table switch`, the Components
+    cell's `N rows SWITCH since …` and dsptch's `THE ROWS THAT SWITCH, N since …` say the registry's total — and the
+    Components cell's count of the rows held on TWO COUNTS is the table's (the section's own summary of them is held
+    above)."""
+    status, total = _status(), sum(_registered_rows_that_switch().values())
+    said = [int(next(group for group in match.groups() if group)) for match in _ROWS_THAT_SWITCH_RE.finditer(status)]
+    assert len(said) >= 3, "STATUS.md no longer counts the rows that switch in its three places (the section, the Components cell, dsptch's row)"
+    assert set(said) == {total}, f"STATUS.md counts the rows that switch as {sorted(set(said))}; the registry holds {total}"
+    in_the_component = _COMPONENT_TWO_COUNTS_RE.search(status)
+    assert in_the_component, "the Components table no longer counts the rows held on two counts (`…net of those calls: N rows since…`)"
+    on_two_counts = sum(len(pairs) for pairs in _measured_two_counts().values())
+    assert int(in_the_component["rows"]) == on_two_counts, (
+        f"the Components table says {in_the_component['rows']} rows are held on two counts; the table holds {on_two_counts}")

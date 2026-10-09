@@ -68,8 +68,7 @@ A_DELAY_TICKS = 5
 RETURN = aes_event.key(aes_event.RETURN_KEY)
 RETURN_KEY_CODE = evinput.RETURN_KEY_CODE
 ONTO_THE_BAR = aes_event.move_to(*aes_event.MENU_BAR_POINT)
-A_POINT_ON_THE_DESKTOP = (20, 180)     # below the menu bar, on no window
-OFF_THE_BAR = aes_event.move_to(*A_POINT_ON_THE_DESKTOP)
+OFF_THE_BAR = aes_event.move_to(*aes_event.A_POINT_ON_THE_DESKTOP)    # below the menu bar, on no window
 
 
 # ---- the cases: a running process's call, what is delivered at which idle, and what the dispatcher then enters --------------
@@ -444,15 +443,25 @@ def _typed_ahead():
 #     both raise the interrupt mask in C, so the bracket's save word is a drop held on both shores);
 #   * ANOTHER PROCESS ENTERED: the mouse onto the menu bar wakes the snapshot's own screen manager, which our switchto
 #     enters — the ROM's code, parked by the ROM — and which runs, takes the screen, and waits again; Return is then
-#     delivered at the ROM's idle, and the ROM's dispatcher hands the machine back to OUR mwait (a FOREIGN WINDOW).
+#     delivered at the ROM's idle, and the ROM's dispatcher hands the machine back to OUR mwait (a FOREIGN WINDOW);
+#   * AN INTERRUPT DELIVERED AT A POLL THAT IS NO IDLE, of our own dispatcher: the same move wakes the screen manager,
+#     forker has run it, and idle polls the keyboard ONCE MORE — the manager woken, not yet ready — before it is
+#     entered. Return arrives THERE: the key is polled ahead of the manager's turn and the desk answers it after it.
+#     It is what holds WHERE in its loop our idle polls (`aes_switch.what_idle_tests`: a delivery there is checked
+#     against which process stands woken and which ready).
 A_KEY_TYPED_AHEAD_LABEL = "a wait for a key, blocked and woken: the key typed ahead, polled by the dispatcher's own idle"
 WOKEN_BY_A_KEY = "a wait for a key, blocked; woken by Return at the first idle"
 A_DELAY_RUN_OUT = "a delay, blocked; run out by its ticks at the first idle"
 THROUGH_THE_SCREEN_MANAGER = "a wait for a key; the mouse onto the bar wakes the screen manager, which runs and waits; then Return"
+POLLED_WHILE_THE_MANAGER_STANDS_WOKEN = ("a wait for a key; the mouse onto the bar wakes the screen manager; Return polled "
+                                         "while it stands woken, before its turn")
+THE_POLL_AFTER_THE_FIRST_IDLE = 1       # poll 0 is idle 0 (the move); forker runs mchange; idle polls again: this one
 A_KEY_TYPED_AHEAD = aes_switching.register(A_KEY_TYPED_AHEAD_LABEL, EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), _typed_ahead)
 WOKEN_ROWS = (A_KEY_TYPED_AHEAD,) + tuple(
     aes_switching.register(name, CASES[name].name, CASES[name].arguments, CASES[name].machine, CASES[name].at_idle)
-    for name in (WOKEN_BY_A_KEY, A_DELAY_RUN_OUT, THROUGH_THE_SCREEN_MANAGER))
+    for name in (WOKEN_BY_A_KEY, A_DELAY_RUN_OUT, THROUGH_THE_SCREEN_MANAGER)) + (
+    aes_switching.register(POLLED_WHILE_THE_MANAGER_STANDS_WOKEN, EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), aes_event.machine,
+                           {0: ONTO_THE_BAR}, at_polls={THE_POLL_AFTER_THE_FIRST_IDLE: RETURN}),)
 
 
 def _staged(row, pokes):
@@ -514,13 +523,6 @@ for _row in SWITCHING_ROWS:
     _pokes, _drops, _ = _settled(_row)
     aes.ROWS.register(_row_name(_row), getattr(addrs, _row.name), _pokes, regs=dict(_row.regs), dropped=_drops,
                       undropped=functools.partial(_companion, _row))
-
-
-@pytest.fixture(scope="module", params=BLOBS.values(), ids=BLOBS)
-def blob(request):
-    """Tier 3's own bench over each blob (`tier3.RomBench`: our image's dispatcher stack put back for a row that
-    drops it) — imported here, not at this module's import: the registry imports this battery."""
-    return bench_tier3().RomBench(request.param)
 
 
 def _measured(blob):
@@ -592,7 +594,8 @@ def test_the_typed_ahead_wait_really_blocks_and_is_woken_by_the_dispatcher():
     the_rom_s = aes_switching.scheduled(A_KEY_TYPED_AHEAD, made.pokes)
     assert (the_rom_s.ended, the_rom_s.idles, the_rom_s.entered) == (switch.RETURNED, 1, (SHELL,))
     assert the_rom_s.d0 & aes.WORD_MASK == RETURN_KEY_CODE and not the_rom_s.delivered
-    assert made.switches == aes_event.Switches({}, 1, SHELL) and made.entered == (SHELL,)
+    assert made.switches == aes_event.Switches({}, 1, SHELL, polls=the_rom_s.polls) and made.entered == (SHELL,)
+    assert the_rom_s.polls == 2, "the idle, where its poll finds the key; and one more once forker has woken the desk"
 
 
 @pytest.mark.parametrize("row", SWITCHING_ROWS, ids=lambda row: row.label)

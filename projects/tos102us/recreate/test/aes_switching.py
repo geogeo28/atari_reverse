@@ -13,6 +13,10 @@ registrar that makes a row of it (`register`).
     the run makes it and the row's delivery of that ordinal is laid there, at no cost, CHECKED FIRST against the
     memory it lands on — as a door row's is laid at a door call. A run that idles ONCE MORE than the ROM's own did
     is refused there by name: the call would block for ever.
+  * A POLL is every arrival at that same place, an idle or not: idle polls the keyboard each time round its loop,
+    with a process ready or woken too. They are numbered as the run makes them, and a delivery the row names at a
+    poll that is NO idle (`Switches.at_polls`) is laid there the same way — a key that arrives while a woken process
+    has yet to run. A run that polls more or fewer times than the ROM's own did is refused by name.
   * EVERY PROCESS THE DISPATCHER ENTERS IS FOLLOWED, at switchto's `rte` (the ROM's bytes on both shores): the PD it
     enters and the PC that process resumes at, which becomes the next stop.
   * A FOREIGN WINDOW is the run of ANOTHER process than the row's: from its first instruction to the first
@@ -65,6 +69,9 @@ CODE_SLOTS = tuple(slot for relocation in aes_event.CODE_RELOCATIONS for slot in
 # ...and the ROM routines one of them names (the fork functions, the glue): any other value a window leaves in a slot
 # is no code (the AES's contrl words are plain VDI arguments between two vex calls).
 ROM_CODES = frozenset(routine for relocation in aes_event.CODE_RELOCATIONS for routine in relocation.symbols)
+# Every EVB's parameter longword: where a pipe wait keeps its QPB's address (`aes_event.qpb_addresses_kept`).
+EVB_PARMS = tuple(evb + aes.EVB_PARM for evb in aes_event.EVBS)
+QPB_BYTES = aes_event.QPB.size
 
 # OUR BUILD'S DISPATCHER, as a blob places it: `poll`, the keyboard poll's first instruction (`aes_chkkbd`) — an idle's
 # where it is called from `idle` (`aes_idle`'s text: ev_multi polls too) — and `rte`, switchto's last instruction.
@@ -95,37 +102,43 @@ class Switching:
     None — it is handed every stop of its own while the row's process runs, and none inside a foreign window.
     `ours` (an `OurDispatcher`): the run is OUR build's — its own idle and switchto are stops beside the ROM's (a
     foreign window's dispatcher is the ROM's on both shores), and `relocated` is `switches.at_idles` as OUR idle
-    takes them (`tier3.deliveries_for_our_shore`). `tally()`: the holder's running totals, a tuple; `foreign` is then
+    takes them (`tier3.deliveries_for_our_shore`), `relocated_polls` its `at_polls`. `tally()`: the holder's running totals, a tuple; `foreign` is then
     one tuple of differences per window. `observing`: `{PC: observe(memory)}` — further stops of the holder's own,
     in whichever process they are reached. `ledger()`: the addresses the run has stored so far (its write ledger),
     for a holder that must know WHO stored a byte (`stored_outside_the_windows`).
 
-    A DELIVERY NAMED AT AN IDLE THE ROW'S RUN DOES NOT MAKE is refused where the watch is made: it would never be
-    laid, and nothing else would say so.
-    A DOOR CALL OPEN ACROSS A FOREIGN WINDOW is refused by name where the window would open: the call's cost on
-    each shore (`DoorWindows.own_inside`, the twin's AES-ROM cycles) would hold the window, and no rule takes it
-    off them yet. A call open across a SELF-RESUME is priced.
+    A DELIVERY NAMED AT AN IDLE OR A POLL THE ROW'S RUN DOES NOT MAKE is refused where the watch is made: it would
+    never be laid, and nothing else would say so. One named at a poll that turns out an IDLE is refused there.
+    A DOOR CALL OPEN ACROSS A FOREIGN WINDOW is told where the window opens and closes
+    (`inner.foreign_window_opened()` / `foreign_window_closed()`): its holder takes the window off the call's own
+    cost on each shore (`tier3.DoorWindows`). A call open across a SELF-RESUME needs nothing: the switch is its cost.
 
-    AFTER THE RUN: `idles`, `entered` (the PD at each switchto, in order), `foreign`, `foreign_codes` (`{slot: the
-    ROM routine's address a window stored there}`), and `vet_ended(who)`."""
+    AFTER THE RUN: `idles`, `polls`, `entered` (the PD at each switchto, in order), `foreign`, `foreign_codes` (`{slot: the
+    ROM routine's address a window stored there}`), `qpbs_seen` (`{an EVB_PARM's address: the QPB it named}`: every
+    pipe wait's QPB in the run's own stack, read where the row's process stands parked or is resumed — at an idle,
+    whoever's, and at its resume: its frames are live there, which they are not once the call has returned; what
+    `vet_our_qpbs` holds a blob's run to), `qpbs_parked` (`{that address: (where the QPB lay, the row's process's
+    stack pointer there)}`: a QPB is a local of a LIVE frame — at or above that pointer), and `vet_ended(who)`."""
 
-    def __init__(self, switches, *, inner=None, ours=None, relocated=None, tally=_whole_cycles, observing=None,
-                 ledger=None):
-        assert not (ours is None and relocated), "the ROM's shore takes its deliveries as they are"
-        never_made = sorted(idle for idle in switches.at_idles if not 0 <= idle < switches.idles)
-        if never_made:
-            raise Refused(f"a delivery is named at idle {never_made} of a run that makes {switches.idles} idle(s): it "
-                          f"would never be laid")
+    def __init__(self, switches, *, inner=None, ours=None, relocated=None, relocated_polls=None, tally=_whole_cycles,
+                 observing=None, ledger=None):
+        assert not (ours is None and (relocated or relocated_polls)), "the ROM's shore takes its deliveries as they are"
+        _refuse_what_is_never_made("idle", switches.at_idles, switches.idles)
+        if switches.at_polls:
+            assert switches.polls is not None, "a delivery at a poll, and no count of the polls the ROM's run makes"
+            _refuse_what_is_never_made("poll", switches.at_polls, switches.polls)
         self.switches, self.inner, self._ours, self._tally = switches, inner, ours, tally
         self._observing, self._ledger = dict(observing or {}), ledger
         self._stored_outside, self._stores_seen = set(), frozenset()
         self._at_our_idle = switches.at_idles if relocated is None else relocated
+        self._at_our_poll = switches.at_polls if relocated_polls is None else relocated_polls
         self._polls = frozenset({ROM_POLL} | ({ours.poll} if ours else set()))
         self._rtes = frozenset({ROM_RTE} | ({ours.rte} if ours else set()))
         self._inner_armed = frozenset(inner.first) if inner else frozenset()
         self._polled, self._resumes_at, self._entering = set(), None, None
         self._window, self._slots_found = None, None
-        self.idles, self.entered, self.foreign, self.foreign_codes = 0, [], [], {}
+        self.idles, self.polls, self.entered, self.foreign, self.foreign_codes = 0, 0, [], [], {}
+        self.qpbs_seen, self.qpbs_parked, self._qpbs_at = {}, {}, {}
         self.first = self._armed()
 
     def _armed(self):
@@ -136,7 +149,7 @@ class Switching:
 
     def stopped(self, pc, sp, memory):
         if pc == self._resumes_at:
-            self._resumed(memory)
+            self._resumed(sp, memory)
         elif pc in self._rtes:
             return self._entered(sp, memory)
         elif pc in self._polls:
@@ -151,22 +164,33 @@ class Switching:
             self._inner_armed = frozenset(self.inner.stopped(pc, sp, memory))
         return self._armed() - {pc}
 
-    # ---- an idle: where the machine waits for an interrupt ----
+    # ---- a poll of the dispatcher's idle — and, among them, an idle: where the machine waits for an interrupt ----
     def _polling(self, pc, sp, memory):
         ours = self._ours is not None and pc == self._ours.poll
         back = case.long_in(memory, sp) & BUS if ours else ROM_POLLED
         self._polled.add(back)
         if ours and not self._ours.idle[0] <= back < self._ours.idle[1]:
             return                      # a poll of the event layer's own (ev_multi's), not the dispatcher's idle
+        poll, self.polls = self.polls, self.polls + 1
+        whose = f"{OUR_OWN if ours else THE_ROM_S} dispatcher, {pc:#x}"
         if not aes_switch.waits_for_an_interrupt(memory):
+            self._lay((self._at_our_poll if ours else self.switches.at_polls).get(poll), memory, f"poll {poll} ({whose})")
             return
+        self._see_the_qpbs(memory, self._parked_at(memory))
         ordinal, self.idles = self.idles, self.idles + 1
-        where = f"idle {ordinal} ({OUR_OWN if ours else THE_ROM_S} dispatcher, {pc:#x})"
+        where = f"idle {ordinal} ({whose})"
+        if poll in self.switches.at_polls:
+            raise Refused(f"{where}: a delivery is named at poll {poll}, which is this idle — an idle's delivery is "
+                          f"named at the idle")
         if ordinal >= self.switches.idles:
             raise Refused(
                 f"{where}: the dispatcher idles once more than the ROM's own run did ({self.switches.idles}) — the "
                 f"call would block, the machine waiting for an interrupt no case delivers")
-        delivery = (self._at_our_idle if ours else self.switches.at_idles).get(ordinal)
+        self._lay((self._at_our_idle if ours else self.switches.at_idles).get(ordinal), memory, where)
+
+    @staticmethod
+    def _lay(delivery, memory, where):
+        """`delivery` (`(found, wrote)`, or None: nothing is due) laid over `memory`, checked first against it."""
         if delivery:
             found, wrote = delivery
             aes_event.vet_found(memory, found, where)
@@ -179,18 +203,15 @@ class Switching:
         self._resumes_at = case.long_in(memory, sp + aes_event.EXCEPTION_FRAME_PC) & BUS
         return frozenset({self._resumes_at})    # the `rte` alone runs before it
 
-    def _resumed(self, memory):
+    def _resumed(self, sp, memory):
         self._resumes_at = None
         foreign = self._entering != self.switches.process
         if foreign and self._window is None:
             self._vet_no_fork_is_queued(memory, "entered")
-            if self.inner is not None and not self.inner.between_calls:
-                raise Refused(
-                    f"a door call open across a foreign window (the dispatcher enters the PD at {self._entering:#x} "
-                    f"inside door call {self.inner.calls - 1}): not priced yet — the window would be counted in the "
-                    f"call's own cost on each shore (slice U)")
             self._stores_outside_so_far()
             self._window, self._slots_found = self._tally(), self._code_slots(memory)
+            if self.inner is not None:
+                self.inner.foreign_window_opened()
         elif not foreign and self._window is not None:
             self._vet_no_fork_is_queued(memory, "left")
             self._stores_seen = self._stores_now()      # ...the window's own stores: seen, and nobody's of ours
@@ -198,6 +219,30 @@ class Switching:
             self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
                                        if code != self._slots_found[slot] and code in ROM_CODES})
             self._window = self._slots_found = None
+            if self.inner is not None:
+                self.inner.foreign_window_closed()
+        if not foreign:
+            self._see_the_qpbs(memory, sp)
+
+    def _parked_at(self, memory):
+        """The stack pointer the row's process stands PARKED at over `memory`: what savestate kept in its UDA."""
+        return case.long_in(memory, aes_event.uda_of(self.switches.process, memory) + aes.UDA_SUPER_SP) & BUS
+
+    def _see_the_qpbs(self, memory, sp):
+        """Every QPB a pipe wait names IN THE RUN'S OWN STACK as the machine stands (the row's process blocked, or
+        just resumed, its stack pointer `sp`: the frame that holds the QPB is live), by its EVB's parameter — READ
+        THE FIRST TIME THAT ADDRESS IS SEEN THERE, and again only WHILE THE WAIT IS QUEUED on a pipe (a later wait
+        of the same EVB whose QPB lies where the last one's did is another QPB): an EVB freed keeps the address, and
+        the frame it names is gone at the next stop. WHERE it lay is kept with the stack pointer of that moment."""
+        queued = aes_event.waiting_on_a_pipe(memory)
+        for at in EVB_PARMS:
+            qpb_at = case.long_in(memory, at) & BUS
+            if self._qpbs_at.get(at) == qpb_at and at - aes.EVB_PARM not in queued:
+                continue
+            self._qpbs_at[at] = qpb_at
+            if qpb_at in case.STACK_BAND and qpb_at + QPB_BYTES - 1 in case.STACK_BAND:
+                self.qpbs_seen[at] = aes_event.QPB.unpack(bytes(memory[qpb_at:qpb_at + QPB_BYTES]))
+                self.qpbs_parked[at] = (qpb_at, sp)
 
     @staticmethod
     def _code_slots(memory):
@@ -231,13 +276,26 @@ class Switching:
 
     def vet_ended(self, who):
         """THE RUN ENDED AS THE ROW SAYS: in the row's own process (none left entered and not resumed), and every
-        idle of the ROM's run made — a run that made fewer never waited where the ROM did. (Every delivery was then
-        laid: each is named at an idle the run makes — held where the watch is made — and laid where that idle is.)"""
+        idle and every poll of the ROM's run made — a run that made fewer never waited where the ROM did, and one
+        that polled another number of times took a delivery at another point of its dispatch. (Every delivery was
+        then laid: each is named at an idle or a poll the run makes — held where the watch is made — and laid where
+        that idle or poll is.)"""
         if self._resumes_at is not None or self._window is not None:
             raise Refused(f"{who}: the run ended inside another process than the one that made the call "
                           f"(the PD at {self._entering:#x})")
         if self.idles != self.switches.idles:
             raise Refused(f"{who}: the run made {self.idles} idle(s) where the ROM's own makes {self.switches.idles}")
+        if self.switches.polls is not None and self.polls != self.switches.polls:
+            raise Refused(f"{who}: the run's dispatcher polled {self.polls} time(s) where the ROM's own run polls "
+                          f"{self.switches.polls}")
+
+
+def _refuse_what_is_never_made(kind, named, made):
+    """A delivery named at an idle / a poll (`kind`) outside the `made` ones the ROM's own run counts: `Refused`."""
+    never_made = sorted(ordinal for ordinal in named if not 0 <= ordinal < made)
+    if never_made:
+        raise Refused(f"a delivery is named at {kind} {never_made} of a run that makes {made} {kind}(s): it would never "
+                      f"be laid")
 
 
 def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observing=None):
@@ -249,21 +307,31 @@ def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observ
     return Switching(switches, inner=inner, tally=tally, observing=observing)
 
 
-def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None):
-    """OUR SHORE, on `blob`: `relocated` the row's idle deliveries as our own dispatcher takes them."""
-    return Switching(switches, inner=inner, ours=our_dispatcher(blob), relocated=relocated, tally=tally, ledger=ledger)
+def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None, relocated_polls=None):
+    """OUR SHORE, on `blob`: `relocated` the row's idle deliveries as our own dispatcher takes them,
+    `relocated_polls` those it takes at a poll that is no idle."""
+    return Switching(switches, inner=inner, ours=our_dispatcher(blob), relocated=relocated,
+                     relocated_polls=relocated_polls, tally=tally, ledger=ledger)
 
 
 # ---- THE REGISTRAR: a row that blocks and is woken ------------------------------------------------------------------------
 # `name`, `arguments`, `machine` (a zero-argument builder: the scheduler's own, a running process), `at_idle` (`{idle:
 # interrupt}`, as `aes_switch.scheduled` takes them). Everything else is DERIVED from the ROM's own runs.
 # `answered` False for a routine that sets no D0 on the row's arm (it leaves its caller's, which no C is handed).
-SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered", defaults=(True,))
+# `at_polls`: `{poll: interrupt}` — what arrives at a poll of the dispatcher that is no idle (`aes_switch.scheduled`).
+SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls",
+                          defaults=(True, None, None, None))
 NO_FRAME = b""                          # a routine of no argument: nothing at the first argument's place
 # What a registered row keeps (`aes_event.SWITCHING_ROWS`): the row, its settled machine, its Tier 3 drops, what its
-# run is taken through, the processes the ROM's dispatcher enters, and its deliveries derived again.
-Registered = namedtuple("Registered", "row pokes drops switches entered rederived")
-Settled = namedtuple("Settled", "pokes drops switches entered")
+# run is taken through, the processes the ROM's dispatcher enters, its deliveries derived again, and the QPB
+# addresses its ROM run leaves in EVBs (`Settled.qpbs`, below: what `vet_our_qpbs` holds a blob's run of it to).
+Registered = namedtuple("Registered", "row pokes drops switches entered rederived qpbs")
+# ...and what its derivation answers: `qpbs` — `{an EVB_PARM's address: the QPB it names}` — THE QPB ADDRESSES THE
+# ROM'S RUN LEAVES IN FREED EVBs (`aes_event.qpb_addresses_kept`): a wait on a pipe that blocked and was woken, or
+# was cancelled, gives its EVB back with the QPB's address still in its parameter — a place in the waiting routine's
+# own frame, another on every shore. Each is among `drops` by name, and vetted wherever a shore's image is at hand
+# (`_vetted_qpbs`: the companion's; `vet_our_qpbs`: a blob's).
+Settled = namedtuple("Settled", "pokes drops switches entered qpbs")
 
 
 def _entry(row):
@@ -285,12 +353,14 @@ def _staged(row):
 
 def scheduled(row, pokes):
     """The ROM's own run of `row` through its dispatcher over `pokes` (its machine, staged): `aes_switch.scheduled`."""
-    return aes_switch.scheduled(_entry(row), pokes.get(abi.FIRST_ARG, NO_FRAME), pokes, row.at_idle)
+    return aes_switch.scheduled(_entry(row), pokes.get(abi.FIRST_ARG, NO_FRAME), pokes, row.at_idle,
+                                at_calls=row.at_calls, at_polls=row.at_polls)
 
 
 def switches_of(reference):
     """What a run is taken through, read off the ROM's scheduled run `reference` of it."""
-    return aes_event.Switches(reference.delivered, reference.idles, case.long_in(reference.started, aes.AES_RLR) & BUS)
+    return aes_event.Switches(reference.delivered, reference.idles, case.long_in(reference.started, aes.AES_RLR) & BUS,
+                              dict(reference.at_calls), dict(reference.at_polls), reference.polls)
 
 
 def by_nature(uda):
@@ -313,33 +383,99 @@ def dropped_at_tier3(uda):
             *aes_event.sr_drops(aes.AES_SR_SPL))
 
 
+def _replayed(row, staged):
+    """THE ROM'S RUN OF `row` over `staged`, TWICE AND HELD ONE: the scheduled run, which takes the interrupts, and
+    its replay — one watched run laying them at no cost — which has a ledger: `(the scheduled run, the replay's
+    watch, its memory, its write ledger)`."""
+    reference = scheduled(row, staged)
+    assert reference.ended == aes_switch.RETURNED, f"{row.name}: the ROM's scheduled run does not return ({reference.ended})"
+    watch = the_rom_s(switches_of(reference), _entry(row))
+    final, writes, _regs = rom_bench.watched_original(make_image(staged), _entry(row), watch)
+    rom_bench.vet_the_run_just_made(f"the ROM's replay of {row.name} through its dispatcher")
+    watch.vet_ended(f"the ROM's replay of {row.name}")
+    assert bytes(final[:addrs.ST_RAM_BYTES]) == bytes(reference.memory[:addrs.ST_RAM_BYTES]), (
+        f"{row.name}: the replay that lays the deliveries is not the run that took them")
+    return reference, watch, final, writes
+
+
 @derived.kept
-def _settled(name, arguments, machine, at_idle):
+def _left(name, arguments, machine, at_idle):
+    row = SwitchingRow("", name, arguments, lambda: machine, at_idle)
+    staged = _staged(row)
+    reference, _watch, final, writes = _replayed(row, staged)
+    stored = set(writes) | {at + offset for _found, wrote in reference.delivered.values()
+                            for at, data in wrote.items() for offset in range(len(data))}
+    return merge_pokes(staged, {at: bytes([final[at]]) for at in stored if at not in case.STACK_BAND and at < addrs.ST_RAM_BYTES})
+
+
+def left_by(name, arguments, machine, at_idle):
+    """THE MACHINE THE ROM'S OWN RUN OF A CALL THAT SWITCHES LEAVES, as pokes: `machine` (a running process's, as
+    pokes) after its process's call of `addrs.<name>` blocked and was woken through the ROM's dispatcher, the
+    interrupts `at_idle` taken at its idles — EVERY BYTE THE RUN OR AN INTERRUPT STORED, at the value it holds
+    where the run ends, the run's own stack aside. By the LEDGER, not by what differs from the snapshot: a byte the
+    run stored with the value the snapshot happened to hold is the run's all the same, and over another capture of
+    the boot it must not turn back into that capture's (the lock's row over such a machine never returned over a
+    snapshot whose masked bytes held noise). A derivation, kept by content."""
+    return {at: data for at, data in _left(name, tuple(arguments), machine, dict(at_idle)).items()
+            if at not in case.STACK_BAND}
+
+
+@derived.kept
+def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None):
     """A switching row SETTLED FROM THE ROM'S OWN RUNS (a derivation, kept by content): the scheduled run takes the
     interrupts (`aes_switch.scheduled`: what is delivered at which idle, how many idles, who is entered); its replay
     — one watched run laying them at no cost — is the run every shore is compared with, and its write ledger says
     which bytes of the windows that differ by nature it stored: each staged at the value it leaves, and the row's
     Tier 3 drops cut to them (`aes_event.settled_in_windows`: the one settling)."""
-    row = SwitchingRow("", name, arguments, lambda: machine, at_idle)
+    row = SwitchingRow("", name, arguments, lambda: machine, at_idle, at_calls=at_calls, at_polls=at_polls)
     staged = _staged(row)
-    reference = scheduled(row, staged)
-    assert reference.ended == aes_switch.RETURNED, f"{name}: the ROM's scheduled run does not return ({reference.ended})"
-    switches = switches_of(reference)
-    watch = the_rom_s(switches, _entry(row))
-    final, writes, _regs = rom_bench.watched_original(make_image(staged), _entry(row), watch)
-    rom_bench.vet_the_run_just_made(f"the ROM's replay of {name} through its dispatcher")
-    watch.vet_ended(f"the ROM's replay of {name}")
-    assert bytes(final[:addrs.ST_RAM_BYTES]) == bytes(reference.memory[:addrs.ST_RAM_BYTES]), (
-        f"{name}: the replay that lays the deliveries is not the run that took them")
+    reference, watch, final, writes = _replayed(row, staged)
+    switches = watch.switches
     stored = {at: value for at, value in writes.items() if at not in case.STACK_BAND}
     uda = aes_event.uda_of(switches.process, final)
     pokes, drops = aes_event.settled_in_windows(staged, stored, by_nature(uda), dropped=dropped_at_tier3(uda))
-    return Settled(pokes, drops, switches, tuple(reference.entered))
+    qpbs = _qpbs_left(name, final, writes, watch)
+    return Settled(pokes, drops + qpb_address_drops(qpbs), switches, tuple(reference.entered), qpbs)
+
+
+def _qpbs_left(name, final, writes, watch):
+    """`{an EVB_PARM's address: the QPB it named}` for every QPB address the ROM's run (its memory `final`, its
+    ledger `writes`, its `watch`) LEAVES in an EVB — the longwords `aes_event.qpb_addresses_kept` finds: an EVB's
+    parameter the run stored, holding an address in the stack band — EACH QPB AS THE WATCH SAW IT WHILE ITS FRAME
+    WAS LIVE (`Switching.qpbs_seen`), never as the run's end holds it: ev_mesag's QPB is the arguments it pushed for
+    ap_rdwr, and the trap frame of its own Line-F return lands on them (measured: the "QPB" read where the run ends
+    is `(254, 26932, …)` — `$00fe6934`, the address after ev_mesag's return word)."""
+    left = aes_event.qpb_addresses_kept(lambda at, size: bytes(final[at:at + size]), writes)
+    unseen = sorted(at for at in left if at not in watch.qpbs_seen)
+    assert not unseen, (
+        f"{name}: the ROM's run leaves a QPB's address in the EVB(s) at {[f'{at - aes.EVB_PARM:#x}' for at in unseen]} "
+        f"that no stop of its dispatcher saw live (a wait queued and freed between two stops): its QPB is not known")
+    vet_the_qpbs_lay_in_live_frames(f"{name} (the ROM's run)", left, watch)
+    return {at: watch.qpbs_seen[at] for at in left}
+
+
+def vet_the_qpbs_lay_in_live_frames(who, qpbs, watch):
+    """THE PLACE OF A PARKED QPB, held on a watched run (`watch`: its `Switching`): each QPB of `qpbs` (by its EVB's
+    parameter) lay, where the run was seen to hold it, AT OR ABOVE THE STACK POINTER OF THE ROW'S PROCESS — in a
+    frame that process still has. Below it is a frame already popped: an address that names the right eight bytes
+    only until the next call lays its own frame over them, and through which another process's write would land in
+    whatever that is."""
+    for at in qpbs:
+        qpb_at, sp = watch.qpbs_parked[at]
+        assert qpb_at >= sp, (
+            f"{who}: the QPB the wait of the EVB at {at - aes.EVB_PARM:#x} names lies at {qpb_at:#x}, BELOW its process's "
+            f"stack pointer ({sp:#x}) where it stood parked — a frame the process no longer has: a dead frame's address")
+
+
+def qpb_address_drops(qpbs):
+    """The Tier 3 drops of the QPB addresses `qpbs` (a `Settled`'s): one longword each, by name. NOT STAGED, as the
+    windows are: no machine can hold beforehand an address in a frame its run has yet to push."""
+    return tuple((at, at + aes.LONG_BYTES, aes_event.QPB_ADDRESS_WHY) for at in qpbs)
 
 
 def settled(row):
     """`row`'s `Settled`: its machine, its Tier 3 drops, what its run is taken through, who the dispatcher enters."""
-    return _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}))
+    return _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls)
 
 
 def rederived(row):
@@ -348,26 +484,10 @@ def rederived(row):
     return switches_of(scheduled(row, settled(row).pokes))
 
 
-CompanionRun = namedtuple("CompanionRun", "staged delivered answer")
-# THE TWO WINDOWS A FOREIGN PROCESS'S OWN CODE WRITES IN THE HOST'S RUN TOO: the model runs another process as the
-# ROM's code (`aes_switch.Scheduling`: a nested run from switchto until the ROM's disp is about to enter the caller
-# again), and that code runs on the dispatcher's stack and returns by Line-F — where no C of ours stores a byte.
-WRITTEN_BY_A_FOREIGN_TURN = (aes_switch.DISPATCHER_STACK, *((lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW))
-
-
-def _where_the_dispatcher_hands_back(row, made):
-    """`{lo: bytes}` of WRITTEN_BY_A_FOREIGN_TURN as the ROM's own run of `row` holds them at its disp's LAST call of
-    switchto (`AES_ROM_DISP_SWITCHTO`) — the one that enters the row's process again: the run returns in it — which
-    is the very instruction the model's nested run of a foreign process ends at."""
-    held = {}
-
-    def about_to_enter_a_process(memory):
-        held.update({lo: bytes(memory[lo:hi]) for lo, hi in WRITTEN_BY_A_FOREIGN_TURN})     # ...the last one stands
-    watch = the_rom_s(made.switches, _entry(row), observing={addrs.AES_ROM_DISP_SWITCHTO: about_to_enter_a_process})
-    rom_bench.watched_original(make_image(made.pokes), _entry(row), watch)
-    rom_bench.vet_the_run_just_made(f"the ROM's replay of {row.name}, observed where its dispatcher hands back")
-    watch.vet_ended(f"the ROM's replay of {row.name}")
-    return held
+# What a companion answers, for its caller's own assertions on a woken case: the machine it ran, what its run was
+# taken through, the C's answer and the image it returned with — and, of the ROM's run, what each door call was
+# handed (a door user's: the C's are held equal) and the processes its dispatcher entered.
+CompanionRun = namedtuple("CompanionRun", "staged delivered answer calls image entered")
 
 
 def companion(row):
@@ -375,47 +495,66 @@ def companion(row):
     (`aes_switch.modelled`: self-resume a return, a foreign process the ROM's own code) held to the ROM's scheduled
     run over the row's settled machine — the same idles, the same answer, and every byte outside the run's own stack
     equal: each byte the row drops at Tier 3 is one the ROM's run rewrites with the value the machine stages, and
-    the C must not store.
-    WHERE ANOTHER PROCESS RUNS, two windows are held to an EARLIER moment of the same ROM run, and still byte for
-    byte: the dispatcher's stack and the Line-F mask word are written, in the host's run too, by the foreign
-    process's own ROM code — up to where the ROM's disp is about to enter the caller again, which is where the
-    model's nested run ends — so the C's image holds there what the ROM's run holds AT THAT INSTRUCTION
-    (`_where_the_dispatcher_hands_back`), not what its own switchto and the caller's tail then make of it."""
+    the C must not store — BUT A QPB'S ADDRESS LEFT IN A FREED EVB, which no machine can stage and every shore holds
+    its own of: vetted, then left out (`_vetted_qpbs`).
+    WHERE ANOTHER PROCESS RUNS it is the ROM's own code in the host's run too (the model's nested run), and what
+    that code stores where no C ever does — the dispatcher's stack and the Line-F mask word — is NOT laid back
+    over the C's image (`aes_switch.STORED_BY_NO_C`): the image keeps there what the machine stages,
+    which is what the ROM's whole run leaves, however often the row's process is dispatched again afterwards.
+    A DOOR USER's row (`row.door`) binds the door in the same fork, and is held to the frames the ROM's run hands."""
     made = settled(row)
     reference = scheduled(row, made.pokes)
     signature = vdi.ALCYON[row.name]
     foreign = any(pd != made.switches.process for pd in reference.entered)
-    expected = reference.memory
-    if foreign:
-        expected = bytearray(expected)
-        for lo, held in _where_the_dispatcher_hands_back(row, made).items():
-            expected[lo:lo + len(held)] = held
     ran = aes_switch.modelled(_core(row), vdi.as_signed(row.name, row.arguments), made.pokes, reference,
-                              answered=row.answered and signature.restype is not None, foreign=foreign)
+                              answered=row.answered and signature.restype is not None, foreign=foreign, door=row.door)
     who = row_name(row)
     assert reference.ended == aes_switch.RETURNED and ran.returncode == 0, (
         f"{who}: the ROM's run returned; the C's fork ended {ran.returncode}:\n{ran.stderr}")
     assert ran.idles == reference.idles, f"{who}: the C's run idled {ran.idles} times, the ROM's {reference.idles}"
+    assert ran.polls == reference.polls, f"{who}: the C's run polled {ran.polls} times, the ROM's {reference.polls}"
+    assert not row.door or ran.handed == list(reference.calls), (
+        f"{who}: the door was handed {ran.handed}, the ROM's run hands {list(reference.calls)}")
     answer_bits = aes.RESULT_WIDTHS[signature.restype] if row.answered else case.NO_RESULT
     if answer_bits:
         mask = (1 << answer_bits) - 1
         assert ran.answer & mask == reference.d0 & mask, f"{who}: answers {ran.answer & mask:#x}, the ROM's run {reference.d0 & mask:#x}"
-    differ = aes_event.differing(ran.image, expected, frozenset(case.STACK_BAND))
+    expected = reference.memory
+    differ = aes_event.differing(ran.image, expected, frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image))
     assert not differ, f"{who}: " + aes_event.describe_differences(who, ran.image, expected, differ)
-    return CompanionRun(made.pokes, switches_of(reference), ran.answer)
+    return CompanionRun(made.pokes, switches_of(reference), ran.answer, tuple(reference.calls), ran.image,
+                        tuple(reference.entered))
 
 
-def register(label, name, arguments, machine, at_idle=None, *, answered=True):
-    """ONE PRICED ROW THAT SWITCHES, registered (`aes.ROWS`, `aes_event.SWITCHING_ROWS`): settled from the ROM's own
-    runs, its `Switches` the ninth field every run of it is taken through, its by-nature windows dropped at Tier 3
-    with the companion a drop needs. `arguments` `()` for a routine of none; `answered` False for an arm that sets
-    no D0. The `SwitchingRow`."""
-    row = SwitchingRow(label, name, tuple(arguments), machine, dict(at_idle or {}), answered)
+def _vetted_qpbs(row, made, image):
+    """THE ONE THING A COMPANION LEAVES OUT BESIDE THE RUN'S OWN STACK, and only VETTED: the bytes of each QPB address
+    the ROM's run leaves in a freed EVB (`made.qpbs`) — held first, against the C's own `image`, to be the address
+    of the running process's own QPB slot (the row's entry's role, where it is an entry that parks one) naming the
+    same eight bytes (`aes_event.vetted_qpb_addresses`: refused by name otherwise). Nothing, for a row that leaves
+    none: the vet is then not asked."""
+    if not made.qpbs:
+        return frozenset()
+    vetted = aes_event.vetted_qpb_addresses(row_name(row), image, made.qpbs, _entry(row))
+    return frozenset(at for lo, hi, _why in vetted for at in range(lo, hi))
+
+
+def register(label, name, arguments, machine, at_idle=None, *, answered=True, at_calls=None, door=None, at_polls=None):
+    """ONE PRICED ROW THAT SWITCHES, registered (`register_row`). `arguments` `()` for a routine of none; `answered`
+    False for an arm that sets no D0; `at_polls` what arrives at a poll that is no idle. The `SwitchingRow`."""
+    return register_row(SwitchingRow(label, name, arguments, machine, at_idle, answered, at_calls, door, at_polls))
+
+
+def register_row(row):
+    """`row` (a `SwitchingRow`) REGISTERED (`aes.ROWS`, `aes_event.SWITCHING_ROWS`) — THE ONE REGISTRAR every
+    battery's own ends on (the pilots', the waits', ev_multi's, the door users'): settled from the ROM's own runs,
+    its `Switches` the ninth field every run of it is taken through, its by-nature windows dropped at Tier 3 with
+    the companion a drop needs. The row as registered."""
+    row = row._replace(arguments=tuple(row.arguments), at_idle=dict(row.at_idle or {}))
     made = settled(row)
     aes_event.SWITCHING_ROWS[row_name(row)] = Registered(row, made.pokes, made.drops, made.switches, made.entered,
-                                                         functools.partial(rederived, row))
+                                                         functools.partial(rederived, row), made.qpbs)
     aes.ROWS.register(row_name(row), _entry(row), made.pokes, dropped=made.drops,
-                      undropped=functools.partial(companion, row), delivered=made.switches, answered=answered)
+                      undropped=functools.partial(companion, row), delivered=made.switches, answered=row.answered)
     return row
 
 
@@ -428,5 +567,103 @@ def measured_on(blob, row):
     watch, and the windows' `tier3.Foreign`."""
     tier3, made = bench_tier3(), settled(row)
     returns = tier3.CALL[row.name].returns if row.answered else tier3.RETURNS_NOTHING
-    return tier3.switching_run_on(blob, row_name(row), _entry(row), _core(row), (0, *row.arguments), made.pokes,
-                                  made.switches, returns=returns, dropped=made.drops)
+    measured, watch, foreign = tier3.switching_run_on(blob, row_name(row), _entry(row), _core(row), (0, *row.arguments),
+                                                      made.pokes, made.switches, returns=returns, dropped=made.drops)
+    vet_our_qpbs(row_name(row), made.qpbs, watch)
+    return measured, watch, foreign
+
+
+def vet_our_qpbs(who, qpbs, watch):
+    """THE DROPPED QPB ADDRESSES, VETTED ON A BLOB (`watch`: our run's `Switching`): where the ROM's run leaves a
+    QPB's address in an EVB (`qpbs`, a `Settled`'s), our run held there — while its process stood blocked or was
+    resumed — an address in ITS OWN stack naming THE SAME QPB: the process, the count, the buffer. A drop of that
+    longword excuses the two addresses, never a twin that queued its wait with another QPB or with none (the bytes
+    a writer copies by are read through it in another process's turn: a foreign window's, where no compare looks) —
+    AND IN A FRAME ITS PROCESS STILL HAS (`vet_the_qpbs_lay_in_live_frames`: the right eight bytes in a popped frame
+    are right until the next call)."""
+    for at, the_rom_s in qpbs.items():
+        seen = watch.qpbs_seen.get(at)
+        assert seen is not None, (
+            f"{who}: the ROM's run leaves a QPB's address in the EVB at {at - aes.EVB_PARM:#x} and OUR run was never "
+            f"seen to hold one there (at no idle, at no resume of its process): the drop of "
+            f"that longword would stand unvetted")
+        assert seen == the_rom_s, (
+            f"{who}: the QPB our parked wait names ({seen}) is not the ROM's ({the_rom_s}) — the EVB at "
+            f"{at - aes.EVB_PARM:#x}")
+    vet_the_qpbs_lay_in_live_frames(who, qpbs, watch)
+
+
+# ---- WHAT EVERY BATTERY HOLDS OF A ROW IT REGISTERS — ONE SPELLING ----------------------------------------------------------
+# The pilots', the waits', ev_multi's and the door users' batteries each pin their own rows; WHAT a pin holds is said
+# here once, so no battery holds less of a row than another does (a battery that pinned a row's own cycles and not
+# its caller's own passed a second count net of a foreign window twice — measured in review).
+#   `Premise`: what the ROM's own run of the row IS — the idles it takes a delivery at, the idles it makes, the
+#              process that makes the call, the processes its dispatcher enters, the word the call answers (None: an
+#              arm that sets no D0), and the polls that are no idle it takes a delivery at.
+#   `Priced`:  what the table prices — each shore's OWN cycles (ours, the ROM's); THE CALLER'S OWN, net of the calls
+#              of rebound entries, and how many such calls the run closes (None each: the row calls none, and has one
+#              count); and its foreign windows (how many, their whole cycles, their cycles in the AES's text).
+Premise = namedtuple("Premise", "at_idles idles process entered answer at_polls", defaults=((),))
+Priced = namedtuple("Priced", "own callers_own calls windows")
+NO_WINDOW = (0, 0, 0)
+
+
+def table_row(row):
+    """The registered row `row` as the table holds it."""
+    name, tier3 = row_name(row), bench_tier3()
+    return next(each for each in tier3.ROWS if each.registered == name)
+
+
+def vet_the_premise(row, premise):
+    """THE PREMISE of a registered row, on the ROM's run through its own dispatcher over the row's settled machine:
+    it returns to the process that made the call, each interrupt taken at the idle — or the poll — the row names,
+    the dispatcher entering exactly the processes `premise` names, the call answering its word — and THE ROW CARRIES
+    THAT RUN'S DELIVERIES (the settling changed nothing an interrupt reads or writes), derived again equal. The
+    ROM's `Scheduled` run."""
+    who, made = row_name(row), settled(row)
+    the_rom_s = scheduled(row, made.pokes)
+    assert (the_rom_s.ended, the_rom_s.idles, the_rom_s.entered) == (aes_switch.RETURNED, premise.idles, tuple(premise.entered)), (
+        f"{who}: the ROM's run {the_rom_s.ended}, {the_rom_s.idles} idle(s), entered {[f'{pd:#x}' for pd in the_rom_s.entered]}")
+    assert (tuple(sorted(the_rom_s.delivered)), tuple(sorted(the_rom_s.at_polls))) == (tuple(premise.at_idles), tuple(premise.at_polls)), (
+        f"{who}: the ROM's run took deliveries at the idles {sorted(the_rom_s.delivered)} and the polls {sorted(the_rom_s.at_polls)}")
+    assert made.switches == aes_event.Switches(the_rom_s.delivered, premise.idles, premise.process, dict(the_rom_s.at_calls),
+                                               the_rom_s.at_polls, the_rom_s.polls) == rederived(row), who
+    assert (premise.answer is None) == (not row.answered), f"{who}: a row that answers nothing says so (`answered`)"
+    assert premise.answer is None or the_rom_s.d0 & aes.WORD_MASK == premise.answer, f"{who}: answers {the_rom_s.d0 & aes.WORD_MASK:#x}"
+    return the_rom_s
+
+
+def vet_on_a_blob(blob, row, premise, windows, whole):
+    """THE SECOND DIFFERENTIAL OF THE REAL SWITCH on `blob` (`measured_on`: every rule the table's own measurement
+    holds), and beside it: our run made the idles and polls and entered the processes of `premise`, its foreign
+    windows are `windows` (the ROM's own run of the other process: no blob's), and THE WHOLE RUN'S CYCLES — the
+    ROM's, ours, net of the entry both share — are `whole` (`{the blob's directory: (the ROM's, ours)}`). A row that
+    moves says why: a frame, a path, the dispatcher itself. `(measured, our run's watch, the windows)`."""
+    who = row_name(row)
+    measured, watch, foreign = measured_on(blob, row)
+    assert (watch.idles, watch.polls, tuple(watch.entered)) == (premise.idles, settled(row).switches.polls, tuple(premise.entered)), who
+    assert tuple(foreign) == tuple(windows), f"{who}: foreign {tuple(foreign)}: the windows are the ROM's own run of the other process"
+    assert watch.inner is None or watch.inner.closed == watch.inner.calls, f"{who}: every door call opened is closed"
+    assert (measured.original_net, measured.recreate_net) == whole[blob.elf.parent.name], (
+        f"{who} measures {measured.original_net} / {measured.recreate_net} cycles on {blob.elf.parent.name}: say why it moved")
+    return measured, watch, foreign
+
+
+def priced_by_the_table(row):
+    """`(the table's measurement of the registered row, its Priced)` (`tier3.measure`)."""
+    tier3 = bench_tier3()
+    measured = tier3.measure(table_row(row), tier3.RomBench())
+    second = tier3.has_a_second_count(measured)
+    return measured, Priced(measured.own_cycles, tier3.caller_own_cycles(measured) if second else None,
+                            measured.rebound_calls if second else None, tuple(tier3.foreign_of(measured)))
+
+
+def vet_the_table_s_price(row, priced):
+    """WHAT THE TABLE READS of a registered row is `priced` — its OWN cycles on each shore, THE CALLER'S OWN and the
+    calls it is net of where the run calls a rebound entry (pinned, never only "under the bar": a second count net
+    of the wrong thing stays under it), its foreign windows in neither column — AND BOTH COUNTS ARE UNDER THE BAR
+    with their thunks. The table's measurement."""
+    measured, read = priced_by_the_table(row)
+    assert read == priced, f"{row_name(row)}: the table prices {read}: say why it moved"
+    assert bench_tier3().counts_within_bar_with_glue(measured), f"{row_name(row)}: over the bar on one of its counts"
+    return measured

@@ -71,8 +71,12 @@ void aes_rom_motion_glue(void);                                                 
  * binds the hook to this function itself. */
 uint32_t aes_disp(uint8_t *image);                                                                    /* $fe4d9e */
 
-/* THE IDLE HOOK: the machine waits for an interrupt — nothing ready, nothing woken, nothing queued. Nonzero once the
- * case has laid the interrupt it delivers there; zero REFUSES (nothing to deliver: the wait would never end). */
+/* THE POLL HOOK: idle is about to poll the keyboard — at EVERY poll, a process ready or not. Nonzero once the case
+ * has laid what it delivers at that poll (most often nothing); zero REFUSES. */
+extern uint32_t (*recreate_poll)(uint8_t *image);
+/* THE IDLE HOOK, asked after it where the machine waits for an interrupt — nothing ready, nothing woken, nothing
+ * queued. Nonzero once the case has laid the interrupt it delivers there; zero REFUSES (nothing to deliver: the wait
+ * would never end). */
 extern uint32_t (*recreate_idle)(uint8_t *image);
 /* THE PROCESS HOOK: the scheduler enters ANOTHER process than the one that called it, by `uda`. Nonzero once that
  * process — and every other the ROM's own dispatcher entered after it — has run and the machine is about to enter

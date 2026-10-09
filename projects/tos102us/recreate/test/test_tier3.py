@@ -3114,27 +3114,39 @@ def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypat
         runs.append((entry, kwargs.get("dropped", ()), kwargs.get("dropped_windows", ())))
         return run(entry, regs, glue, **kwargs)
 
-    # ...BUT A VETTED BY-NATURE LONGWORD: the address of a QPB a wait was queued with, left in its freed
-    # EVB — a place in each shore's own frame, on EVERY pair of shores, the host's too. A companion may leave out
-    # exactly the longwords `aes_event.vetted_qpb_addresses` answered IN THIS RUN (each held there to name, on our
-    # shore, the same QPB the ROM's names: the same eight bytes at the address it holds) — and nothing else.
+    monkeypatch.setattr(case, "run", recorded)
+    vetted = _the_qpb_vets_answered(monkeypatch)
+    result = case.tier3_undropped()[name]()
+    by_nature = _vetted_by_nature(name, vetted)
+    assert runs and all(entry == registered[1] and not dropped and tuple(windows) == by_nature
+                        for entry, dropped, windows in runs), (
+        f"{name}: a companion drops nothing but the longwords the QPB vet answered in its own run ({by_nature}) — "
+        f"its runs: {[(hex(entry), dropped, windows) for entry, dropped, windows in runs]}")
+    assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
+
+
+def _the_qpb_vets_answered(monkeypatch):
+    """...BUT A VETTED BY-NATURE LONGWORD: the address of a QPB a wait was queued with, left in its freed EVB — a
+    place in each shore's own frame, on EVERY pair of shores, the host's too. A companion may leave out exactly the
+    longwords `aes_event.vetted_qpb_addresses` answered IN ITS OWN RUN (each held there to name, on our shore, the
+    same QPB the ROM's names: the same eight bytes at the address it holds) — and nothing else. The list those
+    answers are kept in, one per vet asked from here on."""
     vetted, vet = [], aes_event.vetted_qpb_addresses
 
     def vetting(*asked):
         vetted.append(tuple(vet(*asked)))
         return vetted[-1]
-
-    monkeypatch.setattr(case, "run", recorded)
     monkeypatch.setattr(aes_event, "vetted_qpb_addresses", vetting)
-    result = case.tier3_undropped()[name]()
+    return vetted
+
+
+def _vetted_by_nature(name, vetted):
+    """What the companion of the row `name` may leave out by that rule: the last vet's answer (none asked: nothing),
+    each a QPB's address by name, one longword, which the row itself drops at Tier 3."""
     by_nature = vetted[-1] if vetted else ()
-    assert runs and all(entry == registered[1] and not dropped and tuple(windows) == by_nature
-                        for entry, dropped, windows in runs), (
-        f"{name}: a companion drops nothing but the longwords the QPB vet answered in its own run ({by_nature}) — "
-        f"its runs: {[(hex(entry), dropped, windows) for entry, dropped, windows in runs]}")
     assert all(why == aes_event.QPB_ADDRESS_WHY and hi - lo == aes.LONG_BYTES for lo, hi, why in by_nature)
     assert set(by_nature) <= set(case.tier3_dropped()[name]), "...and the row itself drops each by name at Tier 3"
-    assert vdi.make_image(registered[3]) == vdi.make_image(result.staged), f"{name}: the companion ran another machine"
+    return by_nature
 
 
 def test_a_companion_that_leaves_out_an_unvetted_longword_is_refused(monkeypatch):
@@ -3197,17 +3209,309 @@ def _an_interrupted_companion_drops_nothing(name, registered, monkeypatch):
 def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
     """...a row that SWITCHES (`aes_event.Switches`): its companion is the C through its own scheduler held to the
     ROM's own run through its dispatcher (`aes_switching.companion`) — ONE compare, leaving out the run's own stack
-    alone, over the row's own machine, the run it is held to taking the row's own deliveries at the row's idles."""
+    alone, over the row's own machine, the run it is held to taking the row's own deliveries at the row's idles.
+    BESIDE THE STACK, as a direct row's: exactly the QPB addresses the vet answered in this run, each dropped by the
+    row by name (a wait on a pipe that blocked and was woken, or was cancelled: `_the_qpb_vets_answered`)."""
     left_out, differing = [], aes_event.differing
 
     def recorded(image, rom_memory, not_compared=None):
         left_out.append(not_compared)
         return differing(image, rom_memory, not_compared)
     monkeypatch.setattr(aes_event, "differing", recorded)
+    vetted = _the_qpb_vets_answered(monkeypatch)
     ran = case.tier3_undropped()[name]()
-    assert left_out == [frozenset(case.STACK_BAND)], left_out
+    by_nature = _vetted_by_nature(name, vetted)
+    assert left_out == [frozenset(case.STACK_BAND) | {at for lo, hi, _why in by_nature for at in range(lo, hi)}], left_out
     assert vdi.make_image(registered[3]) == vdi.make_image(ran.staged), f"{name}: the companion ran another machine"
     assert ran.delivered == test_boot_snapshot.delivered_of(registered), f"{name}: the companion took other deliveries"
+
+
+# ---- THE DOOR USERS THAT SWITCH: a door call left open across the switch, priced on two counts ---------------------------
+# A door user's call that BLOCKS AND IS WOKEN (`aes_event.register_woken`: the users' batteries register each
+# routine's): the twin it calls leaves by OUR dispatcher and is resumed through it, the call's arrival and its
+# return on either side of the switch — so its cost, the switch in it, is in both own columns, and the row is held
+# a second time on THE CALLER'S OWN cycles, net of the call. Read off the registry: every switching row whose C is a
+# door user's (`SwitchingRow.door`).
+def door_users_that_switch():
+    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if held.row.door}
+
+
+def _table_row(name):
+    return next(row for row in tier3.ROWS if row.registered == name)
+
+
+# WHAT THE TABLE PRICES of each (`tier3.measure`): each shore's OWN cycles (ours, the ROM's), THE CALLER'S OWN (net of
+# the rebound entries' calls), how many such calls its run closes, and its foreign windows (how many, their whole
+# cycles, their cycles in the AES's text). A row that moves says why: the caller's body, a twin, the dispatcher.
+NO_WINDOW = (0, 0, 0)
+THE_DESK_READS_ITS_PIPE, THE_DESK_TAKES_A_KEY = (1, 619596, 342354), (1, 103504, 58896)
+SENDMSG_TO_A_FULL_PIPE = "aes_ap_sendmsg, from the screen manager to the desk's full pipe: parked; freed by the desk's own read"
+MN_DO_ACROSS_THE_DESK_S_TURN = ("aes_mn_do, on the bar past the titles; the desk's turn (Return); then a title, the menu "
+                                "left, a click off it")
+MN_DO_ACROSS_TWO_TURNS = ("aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, "
+                          "in the next wait; the menu left, a click off it")
+THE_DESK_TAKES_TWO_KEYS = (2, 204310, 115094)       # two windows: 58,896 and 56,198 cycles of the AES's text
+DOOR_USERS_PRICED = {
+    "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": ((20598, 30594), (354, 340), 1, NO_WINDOW),
+    "aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0": (
+        (90272, 134604), (23464, 36210), 4, NO_WINDOW),
+    "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": (
+        (47436, 70994), (18348, 28420), 3, NO_WINDOW),
+    SENDMSG_TO_A_FULL_PIPE: ((8034, 13066), (360, 678), 1, THE_DESK_READS_ITS_PIPE),
+    "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": (
+        (4974, 7826), (150, 474), 1, NO_WINDOW),
+    "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": (
+        (159216, 252386), (111288, 182290), 3, NO_WINDOW),
+    MN_DO_ACROSS_THE_DESK_S_TURN: ((174546, 273210), (101158, 165168), 3, THE_DESK_TAKES_A_KEY),
+    MN_DO_ACROSS_TWO_TURNS: ((170926, 269486), (101158, 165168), 3, THE_DESK_TAKES_TWO_KEYS),
+    "aes_gr_wait, the pixel the mouse is on, left by the mouse": ((45382, 60676), (24462, 29856), 1, NO_WINDOW),
+    "aes_gr_rubbox, the corner at the mouse; stretched, then released": ((71428, 99632), (29830, 37808), 4, NO_WINDOW),
+    "aes_gr_dragbox, held at the mouse; moved, then released": ((71822, 100176), (30224, 38352), 4, NO_WINDOW),
+    "aes_gr_slidebox, the elevator held; dragged down, then released": ((74828, 106530), (33230, 44706), 4, NO_WINDOW),
+    "aes_fm_do, nothing typed: the first wait blocked; woken by Return": ((76428, 115722), (55594, 82548), 5, NO_WINDOW),
+    "aes_fm_do, a radio button pressed and held; the rise waited for, blocked; released, then Return": (
+        (78386, 127124), (38182, 65736), 7, NO_WINDOW),
+    "aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise": (
+        (42026, 65008), (14256, 22318), 3, NO_WINDOW),
+}
+# ...and THE WHOLE RUN'S CYCLES on each blob, the ROM's and ours net of the entry both share — the second
+# differential's own measurement (`aes_switching.measured_on`: the table prices a row on one blob, a build is held
+# on both).
+BENCH_BLOB, SHIPPED_BLOB = "bench", "bench_shipped"
+DOOR_USERS_WHOLE_RUN = {
+    "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": {BENCH_BLOB: (50880, 43098), SHIPPED_BLOB: (50880, 42020)},
+    "aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0": {
+        BENCH_BLOB: (257418, 221330), SHIPPED_BLOB: (257418, 218346)},
+    "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
+        BENCH_BLOB: (144852, 124862), SHIPPED_BLOB: (144852, 124082)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 635204), SHIPPED_BLOB: (639424, 634768)},
+    "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
+        BENCH_BLOB: (14588, 11890), SHIPPED_BLOB: (14588, 12012)},
+    "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
+        BENCH_BLOB: (1102608, 1031826), SHIPPED_BLOB: (1102608, 1020918)},
+    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1163750), SHIPPED_BLOB: (1237428, 1150816)},
+    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1257824), SHIPPED_BLOB: (1331494, 1244802)},
+    "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203598), SHIPPED_BLOB: (212120, 201938)},
+    "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 278238), SHIPPED_BLOB: (297138, 275710)},
+    "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256966), SHIPPED_BLOB: (275878, 254576)},
+    "aes_gr_slidebox, the elevator held; dragged down, then released": {BENCH_BLOB: (274928, 253022), SHIPPED_BLOB: (274928, 250478)},
+    "aes_fm_do, nothing typed: the first wait blocked; woken by Return": {BENCH_BLOB: (176434, 150854), SHIPPED_BLOB: (176434, 140968)},
+    "aes_fm_do, a radio button pressed and held; the rise waited for, blocked; released, then Return": {
+        BENCH_BLOB: (203964, 161472), SHIPPED_BLOB: (203964, 159698)},
+    "aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise": {
+        BENCH_BLOB: (118976, 99702), SHIPPED_BLOB: (118976, 98222)},
+}
+
+
+def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():
+    """THE REGISTRY'S DOOR USERS THAT SWITCH ARE THE PINNED ONES — a row registered and pinned nowhere reds here — and
+    each is, on the blob, a routine whose run arrives at a door entry (the second count's premise), registered WITH
+    its companion: the door child under the host's model (`aes_switching.companion`, which every dropped row's own
+    test runs)."""
+    registered = door_users_that_switch()
+    assert sorted(registered) == sorted(DOOR_USERS_PRICED) == sorted(DOOR_USERS_WHOLE_RUN)
+    assert all(tier3.arrives_at_an_entry(_table_row(name)) for name in registered)
+    assert all(name in case.tier3_undropped() for name in registered), "a switching row drops, and has its companion"
+
+
+@pytest.mark.parametrize("name", DOOR_USERS_PRICED)
+def test_a_door_user_that_switches_is_priced_on_both_counts_its_call_open_across_the_switch(name):
+    """WHAT THE TABLE READS (`aes_switching.vet_the_table_s_price`): the row's own cycles on each shore — the door
+    call's cost, the switch in it, in both — and THE CALLER'S OWN, net of the calls; every call opened closed (the
+    same entries, the same frames: the measurement refuses otherwise); its foreign windows; and both counts under the
+    bar with their thunks."""
+    import aes_switching
+    priced = aes_switching.Priced(*DOOR_USERS_PRICED[name])
+    measured = aes_switching.vet_the_table_s_price(door_users_that_switch()[name].row, priced)
+    assert tier3.has_a_second_count(measured), "a door user: its run calls a rebound entry"
+
+
+@pytest.mark.parametrize("name", DOOR_USERS_WHOLE_RUN)
+def test_a_door_user_that_switches_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    """THE SECOND DIFFERENTIAL OF THE REAL SWITCH UNDER A DOOR USER, on each blob (`aes_switching.vet_on_a_blob` →
+    `tier3.switching_run_on`): the door watched INSIDE the dispatcher's watch on both shores — the same door calls
+    closed, handed the same frames, net of the same foreign windows — the image the ROM's but for the row's drops,
+    every callee-saved register back (GCC's frames of the user AND of the twin across savestate and switchto)."""
+    import aes_switching
+    held = door_users_that_switch()[name]
+    _own, _callers_own, calls, windows = DOOR_USERS_PRICED[name]
+    as_registered = aes_switching.Premise((), held.switches.idles, held.switches.process, held.entered, None)
+    _measured, watch, _foreign = aes_switching.vet_on_a_blob(blob, held.row, as_registered, windows, DOOR_USERS_WHOLE_RUN[name])
+    assert (watch.inner.closed, watch.inner.calls) == (calls, calls), "every call opened, closed"
+
+
+def test_a_named_blob_s_switching_run_holds_the_two_shores_door_calls_equal(monkeypatch):
+    """...AND THAT PATH REFUSES WHAT THE TABLE'S DOES (`tier3.vet_the_same_door_calls`, asked by `switching_run_on`):
+    our shore's door watch reading another frame than the call was handed — a C that hands the event layer another
+    rectangle, where the event answers the same — is refused by name on a named blob too."""
+    import aes_switching
+    door_watch = tier3.our_door_watch
+
+    def handed_another_frame(*made, **named):
+        watch = door_watch(*made, **named)
+        watch.call_at = lambda pc, sp, memory: "another frame"
+        return watch
+    monkeypatch.setattr(tier3, "our_door_watch", handed_another_frame)
+    held = door_users_that_switch()["aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise"]
+    with pytest.raises(AssertionError, match="our build handed the door \\['another frame'\\] where the ROM's run hands"):
+        aes_switching.measured_on(RomBench(), held.row)
+
+
+def test_the_table_holds_a_registered_row_s_qpb_address_to_the_qpb_our_run_parked(bench, monkeypatch):
+    """A QPB'S ADDRESS A ROW DROPS IS VETTED ON THE TABLE'S PATH TOO (`aes_switching.vet_our_qpbs`, asked by
+    `_held_through_the_os` for a registered row): ap_sendmsg's write parked on the desk's full pipe leaves ap_rdwr's
+    QPB address in its freed EVB — our blob's names the same process, count and buffer the ROM's did, seen by our
+    run's watch while the wait's frame was live. RED: held to another QPB, the row is refused by name."""
+    import aes_switching
+    asked, vet = [], aes_switching.vet_our_qpbs
+    monkeypatch.setattr(aes_switching, "vet_our_qpbs", lambda who, qpbs, watch: asked.append(qpbs) or vet(who, qpbs, watch))
+    tier3.measure(_table_row(SENDMSG_TO_A_FULL_PIPE), bench)
+    assert asked == [door_users_that_switch()[SENDMSG_TO_A_FULL_PIPE].qpbs] and len(asked[0]) == 1
+
+    def another(who, qpbs, watch):
+        return vet(who, {at: (process, count + 1, buffer) for at, (process, count, buffer) in qpbs.items()}, watch)
+    monkeypatch.setattr(aes_switching, "vet_our_qpbs", another)
+    with pytest.raises(AssertionError, match="QPB"):
+        tier3.measure(_table_row(SENDMSG_TO_A_FULL_PIPE), bench)
+
+
+# ---- A DOOR CALL OPEN ACROSS A FOREIGN WINDOW: net of the window on all three counts, or refused ---------------------------
+# mn_do blocked on the bar, the desk's turn inside its first wait (`MN_DO_ACROSS_THE_DESK_S_TURN`): the ROM's own
+# desktop runs 103,504 cycles — 58,896 of them in the AES's text — between the arrival of mn_do's call of ev_multi
+# and its return. Left where they fall, those cycles are IN the call's cost on the ROM's shore (its own count is the
+# AES's text), NOT in ours (the blob's cycles), and in the cycles of the AES's ROM a twin may not have run: three
+# counts, and the row's second one is honest only when the window is off all three (`DoorWindows`).
+def _the_call_across_the_desk_s_turn(bench):
+    return tier3.measure(_table_row(MN_DO_ACROSS_THE_DESK_S_TURN), bench)
+
+
+def _both_door_watches_of(name, bench, monkeypatch):
+    """`(the table's measurement of the row `name`, the ROM's shore's door watch, ours)`."""
+    watches, door_watch, rom_watch = [], tier3.our_door_watch, tier3.the_rom_s_door_watch
+    monkeypatch.setattr(tier3, "our_door_watch", lambda *made, **named: watches.append(door_watch(*made, **named)) or watches[-1])
+    monkeypatch.setattr(tier3, "the_rom_s_door_watch", lambda *made, **named: watches.append(rom_watch(*made, **named)) or watches[-1])
+    measured = tier3.measure(_table_row(name), bench)
+    the_rom_s, ours = watches
+    return measured, the_rom_s, ours
+
+
+def test_a_door_call_open_across_a_foreign_window_is_net_of_it_on_every_count(bench, monkeypatch):
+    """THE PRICED RULE, read off the two watches of one measurement: the window came off ONE call on each shore — the
+    first, mn_do's wait on the bar — whole in the ROM's shore's own count and in its AES-ROM cycles, and on OUR shore
+    out of the AES-ROM cycles alone (no cycle of our build ran in it: 0 off our own count and off our thunks)."""
+    measured, the_rom_s, ours = _both_door_watches_of(MN_DO_ACROSS_THE_DESK_S_TURN, bench, monkeypatch)
+    _windows, _whole, in_the_aes = THE_DESK_TAKES_A_KEY
+    nothing = tier3.NOTHING_FOREIGN_INSIDE
+    assert the_rom_s.foreign_inside == [tier3.ForeignInside(in_the_aes, in_the_aes, 0), nothing, nothing]
+    assert ours.foreign_inside == [tier3.ForeignInside(in_the_aes, 0, 0), nothing, nothing]
+    assert the_rom_s.foreign_between == ours.foreign_between == nothing
+    assert tier3.foreign_of(measured).in_the_aes == in_the_aes
+
+
+THE_FIRST_KEY_S_TURN, THE_SECOND_KEY_S_TURN = 58896, 56198     # the desk's two turns, in the AES's text
+
+
+def test_two_foreign_windows_in_one_run_come_off_the_two_calls_they_lay_inside(bench, monkeypatch):
+    """TWO WINDOWS, ONE RUN (the only registered row with two): the desk takes a key inside mn_do's wait on the bar
+    and another inside its wait under the dropped menu. Each window comes off THE CALL IT LAY INSIDE and no other —
+    a call's windows are its own (set to nothing where the next call opens) — and together they are the run's."""
+    measured, the_rom_s, ours = _both_door_watches_of(MN_DO_ACROSS_TWO_TURNS, bench, monkeypatch)
+    assert THE_DESK_TAKES_TWO_KEYS == (2, tier3.foreign_of(measured).whole, THE_FIRST_KEY_S_TURN + THE_SECOND_KEY_S_TURN)
+    inside = [tier3.ForeignInside(turn, turn, 0) for turn in (THE_FIRST_KEY_S_TURN, THE_SECOND_KEY_S_TURN)]
+    assert the_rom_s.foreign_inside == inside + [tier3.NOTHING_FOREIGN_INSIDE]
+    assert ours.foreign_inside == [window._replace(own=0) for window in inside] + [tier3.NOTHING_FOREIGN_INSIDE]
+    assert the_rom_s.foreign_between == ours.foreign_between == tier3.NOTHING_FOREIGN_INSIDE
+
+
+@pytest.mark.parametrize("left_in, refused", (
+    ("own", r"account for 58896 cycles of foreign windows in the AES's ROM and 0 in this shore's own count, where the "
+            r"run's 1 window\(s\) hold 58896 and 58896 — a window was left INSIDE a door call's cost"),
+    ("in_the_rom", r"our twin of 0xfe6998 ran 58896 cycles of the AES's own ROM"),
+), ids=("left in the call's own cost", "left in the twin's AES-ROM cycles"))
+def test_a_window_left_inside_a_door_call_on_one_count_is_refused_by_name(bench, monkeypatch, left_in, refused):
+    """THE RED OF EACH HALF. The window NOT taken off the calls' own cost: the ROM's shore's call holds 58,896 cycles
+    its own column does not, the caller's own count would be net of another thing on each shore — refused where
+    every window must be accounted. NOT taken off the AES-ROM cycles a twin's call may not run: our twin of
+    ev_multi is refused as having run the ROM — under another routine's name, which is why it comes off there too."""
+    net = tier3.DoorWindows._net_of_its_windows
+    monkeypatch.setattr(tier3.DoorWindows, "_net_of_its_windows", lambda self: net(self)._replace(**{left_in: 0}))
+    with pytest.raises(AssertionError, match=refused):
+        _the_call_across_the_desk_s_turn(bench)
+
+
+def test_a_named_blob_s_switching_run_accounts_for_every_window_as_the_table_s_does(monkeypatch):
+    """...AND THE PATH THAT HOLDS A ROW ON BOTH BLOBS ASKS THE SAME ACCOUNTING (`tier3.switching_run_on`, behind
+    `aes_switching.measured_on`): the window left in the calls' own cost is refused there by the same words — that
+    path prices nothing, and a rule it did not hold would be one the second blob is never held to."""
+    import aes_switching
+    net = tier3.DoorWindows._net_of_its_windows
+    monkeypatch.setattr(tier3.DoorWindows, "_net_of_its_windows", lambda self: net(self)._replace(own=0))
+    held = door_users_that_switch()[MN_DO_ACROSS_THE_DESK_S_TURN]
+    with pytest.raises(AssertionError, match="a window was left INSIDE a door call's cost"):
+        aes_switching.measured_on(RomBench(), held.row)
+
+
+def test_a_cycle_of_our_build_inside_a_window_a_call_is_open_across_is_refused_at_that_call(bench, monkeypatch):
+    """...AND OUR SHORE'S HALF: the window comes off our own count as 0 because NO cycle of our build runs in another
+    process's turn — held where the window closes, for the call it lay inside (the foreign-window rule holds the
+    run's total; this names the call). A build's own count that moved inside the window is refused by name."""
+    counted = tier3.DoorWindows._counts_so_far
+    inside_a_window = []
+
+    def one_own_cycle_more_in_each_window(self):
+        counts = counted(self)
+        if self.twins and self._window_at is not None:
+            inside_a_window.append(self)
+            return counts._replace(own=counts.own + 1)
+        return counts
+    monkeypatch.setattr(tier3.DoorWindows, "_counts_so_far", one_own_cycle_more_in_each_window)
+    with pytest.raises(AssertionError, match=r"door call 0: 1 own cycle\(s\) of OUR build and 0 of its thunks ran inside a "
+                                             r"foreign window the call was open across"):
+        _the_call_across_the_desk_s_turn(bench)
+    assert inside_a_window, "the premise: our shore's door watch was told of the window"
+
+
+def test_a_window_between_two_door_calls_comes_off_no_call():
+    """A WINDOW THE WATCH IS TOLD OF BETWEEN TWO CALLS is the run's, not a call's: kept apart (`foreign_between`),
+    in the same accounting. Stand-in counters: 7 cycles of the AES's ROM pass in a window before any call opens."""
+    counts = iter((0, 7))
+    watch = tier3.DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, blocks=False).counting(lambda: next(counts))
+    aes_rom = iter((0, 7))
+    watch._counts_so_far = lambda: tier3.ForeignInside(next(aes_rom), watch._own(), 0)
+    watch.foreign_window_opened()
+    watch.foreign_window_closed()
+    assert watch.foreign_between == tier3.ForeignInside(7, 7, 0) and not watch.foreign_inside
+    watch.vet_its_windows_came_off("a run", tier3.Foreign(1, 30, 7), own_in_them=7)
+    with pytest.raises(AssertionError, match="a window was left INSIDE a door call's cost"):
+        watch.vet_its_windows_came_off("a run", tier3.Foreign(1, 30, 8), own_in_them=7)
+
+
+def _a_watch_counting(*totals):
+    """A door watch whose three running totals (the AES's ROM, the shore's own, its glue) are read off `totals` in
+    turn — stand-in counters, one reading where a window opens and one where it closes."""
+    readings = iter(totals)
+    watch = tier3.DoorWindows(aes_event.ENTRIES, aes_event.ROM_RETURNS, blocks=False)
+    watch._counts_so_far = lambda: tier3.ForeignInside(*next(readings))
+    return watch
+
+
+def test_windows_accumulate_between_two_calls_and_inside_one():
+    """WHAT NO RUN OF TODAY'S REGISTRY MAKES, HELD ON STAND-IN COUNTERS (and said unpinned in STATUS.md): TWO windows
+    between the same two door calls — a routine that dispatched twice outside every rebound entry: ap_tplay's yields
+    will — and TWO inside ONE call: every rebound entry dispatches at most once a call, and a window ends only where
+    the row's process is resumed. Each pair is ADDED, on all three counts: a second window that replaced the first
+    would leave the first one's cycles in a call's cost, or account for half the run's windows."""
+    between = _a_watch_counting((0, 0, 0), (7, 7, 0), (10, 10, 0), (15, 15, 1))
+    for _window in range(2):
+        between.foreign_window_opened()
+        between.foreign_window_closed()
+    assert between.foreign_between == tier3.ForeignInside(12, 12, 1) and not between.foreign_inside
+    inside = _a_watch_counting((0, 0, 0), (7, 7, 0), (10, 10, 0), (15, 15, 0))
+    inside._in_call, inside._open = True, next(iter(aes_event.ENTRIES))     # A STAGED STATE: a call open, at a ROM entry
+    for _window in range(2):
+        inside.foreign_window_opened()
+        inside.foreign_window_closed()
+    assert inside._net_of_its_windows() == tier3.ForeignInside(12, 12, 0) and inside.foreign_between == tier3.NOTHING_FOREIGN_INSIDE
 
 
 # ---- THE ODD-ACCESS SURFACE: what a 68000 bombs on and this oracle's CPU completes ------------------------------------

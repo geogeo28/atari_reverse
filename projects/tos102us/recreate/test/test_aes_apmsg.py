@@ -9,6 +9,11 @@ while PD0 is still parked in the desk's evnt_multi waiting for a message: one se
 wait; and a pipe already holding one — sent before by the ROM's own ap_sendmsg.
 
 The buffer is staged STALE (`case.SLACK_FILL`), so every word the C skipped differs.
+
+THE BLOCKING ARM (a full pipe) is held where it blocks — and, where another process reads the pipe, TAKEN ON THROUGH
+THE WAKE (`aes_event.blocked_then_woken`): the screen manager's message to the desk's full pipe parks it in
+ap_rdwr's write wait, the dispatcher enters THE DESK — the ROM's own desktop, a foreign window the door call is open
+across — which reads its pipe and frees the writer. A priced row that SWITCHES.
 """
 import struct
 
@@ -160,12 +165,46 @@ def test_a_message_to_a_full_pipe_parks_the_sender_where_the_rom_does():
     and the image is the ROM's AT DSPTCH but for one longword, the parked QPB's address (ap_rdwr's own arguments: a
     place in each shore's own stack), dropped by name and vetted (`aes_event.parked_qpb_drop`)."""
     machine = full_pipe()
-    taken = aes_event.refused_where_the_rom_blocks("AES_ROM_AP_SENDMSG", (BUFFER, WM_REDRAW, SHELL, *WORDS), machine)
+    taken = aes_event.interrupted("AES_ROM_AP_SENDMSG", (BUFFER, WM_REDRAW, SHELL, *WORDS), machine, {})
+    assert not taken.returned
     assert [call.routine for call in taken.calls] == [addrs.AES_ROM_AP_RDWR]
     assert [aes.signed(word) for word in struct.unpack_from(">8h", taken.image, BUFFER)] == [WM_REDRAW, SHELL, 0, *WORDS]
     assert case.word_in(taken.image, aes.SHELL_PD + aes.PD_QUEUE_INDEX) == aes.PD_QUEUE_BYTES
     writers = case.long_in(taken.image, aes.SHELL_PD + aes.PD_QUEUE_WRITERS)
     assert bool(writers) == (addrs.AES_ROM_AP_RDWR in aes_event.REBOUND), "the wait queued where a twin ran on to dsptch"
+    # NO RETURNING RUN WAKES IT: the pipe is the sender's own, and its only reader is the process that waits — held
+    # on the ROM's own run through its dispatcher, which idles for ever.
+    import aes_switch                   # (asked for here: a battery's helper module)
+    frame = aes_event.frame_of(("l", BUFFER), ("w", WM_REDRAW), ("w", SHELL), *(("w", word) for word in WORDS))
+    the_rom_s = aes_switch.scheduled(addrs.AES_ROM_AP_SENDMSG, frame, machine)
+    assert (the_rom_s.ended, the_rom_s.entered) == (aes_switch.IDLES, ())
+
+
+THE_DESK_S_PIPE_FULL = "from the screen manager to the desk's full pipe: parked; freed by the desk's own read"
+
+
+def the_desk_s_pipe_full():
+    """THE SCREEN MANAGER running, the desk's pipe FULL of the ROM's own appl_writes
+    (`aes_pdpipe.the_desk_s_pipe_filled_by_the_manager`), this battery's buffer stale."""
+    return merge_pokes(aes_pdpipe.the_desk_s_pipe_filled_by_the_manager(), stale_buffer())
+
+
+def to_the_desk_s_full_pipe():
+    """ap_sendmsg by the screen manager to the desk over `the_desk_s_pipe_full`: a call that blocks, as a row that
+    switches — nothing is delivered: what wakes it is the desk's own read."""
+    return aes_event.woken_row(THE_DESK_S_PIPE_FULL, "AES_ROM_AP_SENDMSG", (BUFFER, WM_REDRAW, SHELL, *WORDS),
+                               the_desk_s_pipe_full, {})
+
+
+def test_a_message_to_another_process_s_full_pipe_is_parked_and_freed_by_its_read():
+    """THE SAME ARM WITH A READER: the screen manager's ninth message to the desk parks it in ap_rdwr's write wait
+    (the image the ROM's at dsptch, the parked QPB's address vetted); the dispatcher enters the DESK, whose own
+    evnt_multi reads a message out of its pipe — which serves the parked write — and the screen manager is resumed:
+    ap_sendmsg returns, the message built in its buffer, the pipe full again with it at the end."""
+    taken, ran = aes_event.blocked_then_woken(to_the_desk_s_full_pipe())
+    assert [call.routine for call in taken.calls] == [call.routine for call in ran.calls] == [addrs.AES_ROM_AP_RDWR]
+    assert aes.SHELL_PD in ran.entered and ran.entered[-1] == aes.SCREEN_MANAGER_PD
+    assert [aes.signed(word) for word in struct.unpack_from(">8h", ran.image, BUFFER)] == [WM_REDRAW, SCREEN_MANAGER, 0, *WORDS]
 
 
 # ---- the registry ----------------------------------------------------------------------------------------------------
@@ -176,3 +215,5 @@ ROWS = {
 }
 for _label, (_machine, _to) in ROWS.items():
     aes_event.register(_label, "AES_ROM_AP_SENDMSG", (BUFFER, WM_REDRAW, _to, *WORDS), _machine())
+# ...and THE ROW THAT SWITCHES: the write parked on the desk's full pipe, the desk's turn inside ap_rdwr's call.
+aes_event.register_woken(to_the_desk_s_full_pipe())

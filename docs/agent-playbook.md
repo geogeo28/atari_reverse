@@ -319,6 +319,33 @@ measured in this workspace rather than imagined.
   once mid-run. Re-make the figure on the final tree, plant a trap in an arm before believing it is
   executed, and treat a log that ends in a kill as no result — a successor re-runs the proof, it
   does not read it.
+- **A state kept as "the bytes that differ from the snapshot" is the snapshot's, not the run's.** A
+  harness that carries the machine an original's run LEAVES into a second run must keep it by the
+  WRITE LEDGER — every byte the run stored, at its final value. Kept by difference, a byte the run
+  stored with the value the snapshot happened to hold is dropped; staged over ANOTHER capture of
+  the same boot it turns back into that capture's noise. Measured (TOS 1.02, band 4 wave 3): a lock's
+  row built that way was green on the snapshot it was written against and never returned over a
+  second one. It is §"the destination already holds the value you would write", in the fixture
+  instead of the routine — and the sweep over other captures is the surface that finds it.
+- **Read a parameter block while its frame is live.** A record that outlives a call can keep a
+  POINTER into that call's dead frame (TOS's freed event block still names the queue parameter
+  block its waiter pushed as arguments). Read where the run ENDS, those bytes are whatever was
+  pushed next — here the routine's own return trap frame — and a vet of "both shores name the same
+  block" compares garbage with garbage, or passes by accident. Note the block at the first stop
+  that sees the pointer (while the waiter is still parked) and refuse a pointer no stop saw live.
+- **"No run reaches X" is a claim about your DRIVER's delivery points, until you have swept the
+  original's.** A harness that delivers interrupts only where the machine idles proves "X is
+  unreachable from an idle" and nothing more. Measured (TOS 1.02, band 4 wave 3): "a key and a
+  message never come in one wake" was pinned by a passing test — true of a key delivered in the
+  press's own idle, false one keyboard poll later, where the ROM's dispatcher polls with a process
+  already woken. Before writing "never", list every point at which the original samples the
+  outside world (not only the ones the harness stops at) and try the event at each.
+- **A "this is never woken / never returns" table is held by a sweep, not by the one stimulus its
+  author picked.** A hand-picked "what I tried" can be an event that could not have satisfied the
+  wait in the first place (a move OUT of a rectangle the process waits to ENTER): the run idles
+  for ever, the test passes, and a whole tail goes unexercised. Try every kind of stimulus the
+  driver has, each alone, against every member of the class — and prove the sweep is not vacuous
+  by showing each kind wake a wait of its own kind.
 
 ### A measured survivor is a finding about the SURFACE, not a licence
 

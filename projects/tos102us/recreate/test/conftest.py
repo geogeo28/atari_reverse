@@ -56,6 +56,8 @@ import sys
 
 import pytest
 
+import isr
+
 STEALING = "worksteal"
 XDIST_S_OWN_DEFAULT = "load"           # what `-n` alone makes of `--dist` (xdist's `pytest_cmdline_main`)
 GROUP_MARKER = "collected_with"
@@ -132,6 +134,15 @@ def a_test_that_patches_derives_and_forks_for_itself(request):
         aes_event = sys.modules.get("aes_event")
         if aes_event is not None:
             monkeypatch.setattr(aes_event, "ZYGOTE_SIDELINED", True)
+
+
+# ---- TIER 3'S OWN BENCH OVER EACH OF THE TWO BLOBS a build is held on (`isr.BLOBS`) ---------------------------------------
+# One fixture for every battery that holds a row on both (a module that needs another bench under the name defines
+# its own, which wins). `bench/tier3.py` imports every battery, so it is loaded where a test first asks, not here.
+@pytest.fixture(scope="module", params=isr.BLOBS.values(), ids=isr.BLOBS)
+def blob(request):
+    from harness import bench_tier3
+    return bench_tier3().RomBench(request.param)
 
 
 # ---- what the cache was held to, said at the run's end -----------------------------------------------------------------

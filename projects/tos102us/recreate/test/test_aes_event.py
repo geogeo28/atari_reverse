@@ -4676,6 +4676,16 @@ A_QPB_S_ADDRESS, SAVPTR_MOVED_BY_THE_RUN = "a QPB's address left in a freed EVB"
 THE_ROWS_THAT_SWITCH = "the rows that switch"
 THE_CALLER_S_CONTEXT, THE_DISPATCHER_S_STACK = "the caller's saved context", "the dispatcher's stack"
 THE_BRACKET_S_SAVE_WORD = "spl7_save's SR save word"
+# The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
+# woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
+# idle) and THE DOOR USERS' — each routine's wait that blocks, woken through the dispatcher (mn_do's three shapes,
+# fm_do's and gr_watchbox's two each).
+ROWS_THAT_SWITCH = {
+    "aes_ap_rdwr": 2, "aes_ev_block": 12, "aes_ev_button": 2, "aes_ev_keybd": 1, "aes_ev_mesag": 1, "aes_ev_mouse": 1,
+    "aes_ev_multi": 45, "aes_ev_mwait": 3, "aes_ev_timer": 4, "aes_unsync": 1,
+    "aes_ap_sendmsg": 1, "aes_fm_button": 1, "aes_fm_do": 2, "aes_gr_dragbox": 1, "aes_gr_rubbox": 1, "aes_gr_slidebox": 1,
+    "aes_gr_stilldn": 1, "aes_gr_wait": 1, "aes_gr_watchbox": 2, "aes_mn_do": 3, "aes_wm_update": 1,
+}
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
     "the waits": {},
@@ -4689,10 +4699,18 @@ BY_NATURE_CENSUS = {
     "ev_multi": {A_QPB_S_ADDRESS: {"aes_ev_multi": 2}},
     # THE ROWS THAT SWITCH (`aes_switching.register`; a layer of its own: its rows are settled from a run through the
     # dispatcher, which no unwatched run of the oracle makes — `test_every_row_that_switches_…`, below). Every one
-    # drops the caller's saved context and the dispatcher's stack (that is what a switch is); the wider kind is the
-    # mask bracket's save word: the delay's row, whose wait (adelay) and whose fork function (tchange) bracket in C.
-    THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: {"aes_ev_block": 4}, THE_DISPATCHER_S_STACK: {"aes_ev_block": 4},
-                           THE_BRACKET_S_SAVE_WORD: {"aes_ev_block": 1}},
+    # drops the caller's saved context and the dispatcher's stack (that is what a switch is: `ROWS_THAT_SWITCH`, by
+    # routine). The wider kinds:
+    #   * THE MASK BRACKET'S SAVE WORD — a call that waits on a time, whose wait (adelay) and whose fork function
+    #     (tchange) bracket in C: ev_block's delay, ev_timer's four, every ev_multi that asks MU_TIMER (19 of its 45);
+    #   * A QPB'S ADDRESS LEFT IN A FREED EVB — a wait on a pipe, woken or cancelled: ap_rdwr's read and write (the
+    #     QPB its own arguments), ev_mesag's, ap_sendmsg's write to a full pipe (ap_rdwr's twin under a door user),
+    #     and every ev_multi that asks MU_MESAG (27: a local of its own frame), each vetted on every shore.
+    # No DOOR USER's row drops a bracket's word: none of them waits on a time, and no tick reaches tchange's
+    # bracket on a path that does not wait.
+    THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: ROWS_THAT_SWITCH, THE_DISPATCHER_S_STACK: ROWS_THAT_SWITCH,
+                           THE_BRACKET_S_SAVE_WORD: {"aes_ev_block": 1, "aes_ev_multi": 19, "aes_ev_timer": 4},
+                           A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27}},
 }
 
 
@@ -4738,12 +4756,22 @@ def test_every_row_a_layer_registers_is_staged_and_dropped_as_the_rom_s_own_run_
         f"settled with no ruling: write it into BY_NATURE_CENSUS with the reason it is right")
 
 
+# THE ONE DROP OF A KIND ITS RUN DOES NOT CHANGE: the timer behind three delays pending is queued over a machine the
+# ROM's own iasync made — three delays queued, each under spl7's bracket, which left its save word as this row's own
+# bracket stores it again: stored (so dropped: our build parks GCC's condition codes there), and equal.
+STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = (
+    "aes_ev_timer, behind three delays pending, blocked; run out a delay at a time", THE_BRACKET_S_SAVE_WORD)
+
+
 def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_the_census_says_which():
     """THE SWITCHING ROWS' LAYER OF THE ONE CENSUS, held to AN INDEPENDENT SPELLING of its own kind: the ROM's
     scheduled run of each registered row over its UNSETTLED machine (`aes_switch.scheduled` — not the registrar's
     kept derivation, nor its replay's ledger) and what that run CHANGED in the windows that differ by nature. Every
     such byte lies in a drop the registry holds for the row — but the dispatcher's own save word, which both builds
-    park alike and the row compares — every drop holds one, and which routines' rows drop which kind is the table's."""
+    park alike and the row compares — every drop holds one, and which routines' rows drop which kind is the table's.
+    A QPB'S ADDRESS LEFT IN A FREED EVB is a kind of its own (`aes_switching.settled(row).qpbs`: a wait on a pipe
+    that blocked and was woken, or was cancelled): no window but ONE LONGWORD, an EVB's parameter that holds a
+    stack-band address when that run ends — and every such longword the run CHANGED is dropped."""
     import aes_switch
     import aes_switching
     import test_boot_snapshot  # noqa: F401  (every battery registered)
@@ -4756,13 +4784,25 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
         uda = aes_event.uda_of(held.switches.process, the_rom_s.memory)
         kinds = {THE_CALLER_S_CONTEXT: aes_switch.uda_context_drop(uda), THE_DISPATCHER_S_STACK: aes_switch.DISPATCHER_STACK_DROP,
                  THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP}
-        drops = [(lo, hi) for lo, hi, why in registered[name] if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW]
+        qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
+        drops = [(lo, hi) for lo, hi, why in registered[name]
+                 if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses]
+        if qpb_addresses:
+            census.setdefault(A_QPB_S_ADDRESS, collections.Counter())[routines.core_symbol(row.name)] += 1
         of_a_kind = []
         for kind, ((lo, hi, _why),) in kinds.items():
             changed = [at for at in range(lo, hi) if the_rom_s.memory[at] != the_rom_s.started[at]]
             inside = [(low, high) for low, high in drops if lo <= low and high <= hi]
             assert all(any(low <= at < high for low, high in inside) for at in changed), f"{name}: {kind} changed and not dropped"
-            assert bool(inside) == bool(changed), f"{name}: a drop of {kind} the ROM's run changes nothing of"
+            # ...AND THE OTHER WAY: a kind is dropped only where the run CHANGES something of it — on every row and
+            # every kind but ONE NAMED PAIR, which the run STORES with the value its ROM-made machine already holds
+            # (held as that: dropped, and changed nowhere). A row drops what the run STORED — the kit's own rule, on
+            # every measurement (`rom_bench.vet_dropped`) — so a second such pair is a finding to name here, not a
+            # reason to stop asking.
+            if (name, kind) == STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS:
+                assert inside and not changed, f"{name}: {kind} is no longer stored unchanged — the exemption is stale"
+            else:
+                assert bool(inside) == bool(changed), f"{name}: a drop of {kind}, of which the ROM's run changes nothing"
             of_a_kind += inside
             if inside:
                 census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
@@ -4771,6 +4811,23 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
     assert census == BY_NATURE_CENSUS[THE_ROWS_THAT_SWITCH], (
         f"the rows that switch drop {census} — a row NEWLY under a bracket is dropped with no ruling: write it into "
         f"BY_NATURE_CENSUS with the reason it is right")
+
+
+def _the_qpb_addresses_dropped(name, drops, the_rom_s):
+    """Where the switching row `name` drops A QPB'S ADDRESS (`aes_event.QPB_ADDRESS_WHY`), held to its own kind over
+    the ROM's scheduled run `the_rom_s`: each drop one EVB's parameter, whole, holding a stack-band address as the
+    run ends — and no parameter the run CHANGED to such an address left undropped."""
+    dropped = {lo: hi for lo, hi, why in drops if why == aes_event.QPB_ADDRESS_WHY}
+    parameters = {evb + aes.EVB_PARM for evb in aes_event.EVBS}
+
+    def names_the_stack(at):
+        return case.long_in(the_rom_s.memory, at) & aes.OS_BUS_ADDR_MASK in case.STACK_BAND
+    assert all(at in parameters and hi - at == aes.LONG_BYTES and names_the_stack(at) for at, hi in dropped.items()), (
+        f"{name}: a QPB's address dropped where no EVB's parameter holds a stack address")
+    changed = {at for at in parameters if names_the_stack(at)
+               and the_rom_s.memory[at:at + aes.LONG_BYTES] != the_rom_s.started[at:at + aes.LONG_BYTES]}
+    assert changed <= dropped.keys(), f"{name}: a QPB's address left in an EVB and not dropped: {sorted(map(hex, changed))}"
+    return frozenset(dropped)
 
 
 ALWAYS_SETTLED = (aes.AES_LINEF_MASK_WORD, aes.AES_SR_SPL)
@@ -4919,3 +4976,310 @@ def test_a_lazy_cache_bound_since_the_zygote_was_forked_does_not_sideline_it(a_z
     assert isr._BENCH is not None and "_BENCH" in aes_event.LAZY_CACHES["isr"]
     assert aes_event._as_the_zygote_froze_them(), "a name of a frozen module is bound to another object than the zygote froze"
     assert aes_event.the_zygote_runs() and aes_event.the_zygote_stands_in(_tak_flag_run())
+
+
+# ---- A DOOR USER'S CALL THAT BLOCKS, TAKEN ON THROUGH THE WAKE (`aes_event.woken_row`, `aes_switch`) ------------------------
+# The machinery, each piece on the smallest case that shows it: gr_stilldn waiting (the button down) for the mouse
+# to leave the rectangle it is in — one door call, which blocks — and gr_watchbox, whose loop takes an interrupt at a
+# wait's ENTRY before the wait that blocks.
+def _switch():
+    """`aes_switch` and the registrar, asked for where a case needs them (the door's own tests import no battery's
+    helper at this module's import)."""
+    import aes_switch
+    import aes_switching
+    return aes_switch, aes_switching
+
+
+THE_WAIT_TO_LEAVE = ("AES_ROM_GR_STILLDN", (grwait.LEAVE, *grwait.AROUND_THE_MOUSE))
+A_WATCHED_OBJECT = ("AES_ROM_GR_WATCHBOX", (grwait.SELECTOR, grwait.OK, grwait.SELECTED, grwait.CROSSED))
+
+
+def _scheduled(call, at_idle, at_calls=None, machine=None):
+    """The ROM's own run of `call` (`(name, arguments)`) through its dispatcher, over the button down."""
+    aes_switch, _switching = _switch()
+    name, arguments = call
+    staged = aes.staged(name, arguments, merge_pokes(machine or grwait.button_down(), aes_event.savptr_in_the_band()))
+    return aes_switch.scheduled(getattr(addrs, name), staged[abi.FIRST_ARG], staged, at_idle, at_calls=at_calls), staged
+
+
+def _modelled(call, the_rom_s, staged, *, door=True, objects=False):
+    """The C of `call` through the host's model over `staged`, held to `the_rom_s` — a door user's child (the walked
+    routines served with `objects`), or with `door` False a leaf's, which binds no door."""
+    aes_switch, _switching = _switch()
+    name, arguments = call
+    return aes_switch.modelled(routines.core_symbol(name), vdi.as_signed(name, arguments), staged, the_rom_s,
+                               door=aes_switch.DoorUser(objects) if door else None)
+
+
+def test_one_derivation_takes_interrupts_at_door_calls_and_at_idles():
+    """`aes_switch.scheduled` WITH A DOOR WATCH INSIDE: gr_watchbox's second wait takes the mouse's move AT ITS ENTRY
+    (a door call's delivery), its third BLOCKS and the button's rise is taken AT THE IDLE — one run of the ROM, which
+    returns. What it took at the door call is what the door's own derivation takes there (`aes_event.deliveries`:
+    the same bytes found, the same written), and the calls it was handed are the replay's."""
+    aes_switch, _switching = _switch()
+    inside = aes_event.move_to(*grwait.the_middle_of(grwait.OK))
+    the_rom_s, staged = _scheduled(A_WATCHED_OBJECT, {0: aes_event.release}, {1: inside})
+    assert (the_rom_s.ended, the_rom_s.idles, the_rom_s.entered) == (aes_switch.RETURNED, 1, (aes.SHELL_PD,))
+    assert sorted(the_rom_s.delivered) == [0] and sorted(the_rom_s.at_calls) == [1] and len(the_rom_s.calls) == 3
+    name, arguments = A_WATCHED_OBJECT
+    assert the_rom_s.at_calls == aes_event.deliveries(name, arguments, merge_pokes(grwait.button_down(), aes_event.savptr_in_the_band()),
+                                                      {1: inside})
+    calls, _delivered, _memory, result = aes_event.rom_interrupted(name, arguments, staged, {1: inside})
+    assert result is None and tuple(calls) == the_rom_s.calls, "up to the block, the door's own watched run of it"
+
+
+def test_a_delivery_named_at_a_door_call_the_scheduled_run_never_makes_is_refused_by_name():
+    """...and one named at a door call the run never reaches — never laid, and nothing else would say so."""
+    with pytest.raises(AssertionError, match=r"made 2 door call\(s\): nothing was delivered at \[7\]"):
+        _scheduled(A_WATCHED_OBJECT, {0: aes_event.release}, {7: aes_event.release})
+    with pytest.raises(AssertionError, match="idles for ever AFTER its deliveries"):
+        _scheduled(A_WATCHED_OBJECT, {}, {1: aes_event.move_to(*grwait.the_middle_of(grwait.OK))})
+
+
+def test_the_door_watch_of_a_scheduled_run_is_the_caller_s_process_s_alone(monkeypatch):
+    """THE DOOR CALLS OF ANOTHER PROCESS ARE NOT THE ROW'S: the desk's wait for a key during which THE SCREEN MANAGER
+    runs (the mouse onto the bar, then Return) — entered at ev_block, the desk makes no door call. RED: the watch
+    left armed while the screen manager runs counts ITS evnt_multi and its screen lock, made from the very return
+    addresses a caller's calls come from, as door calls of the run."""
+    aes_switch, _switching = _switch()
+    frame = aes_event.frame_of(("w", aes_event.EVWAIT["IASYNC_KEYBOARD"]), ("l", 0))
+    through_the_manager = {0: aes_event.move_to(*aes_event.MENU_BAR_POINT), 1: aes_event.key(aes_event.RETURN_KEY)}
+    the_rom_s = aes_switch.scheduled(addrs.AES_ROM_EV_BLOCK, frame, aes_event.machine(), through_the_manager)
+    assert the_rom_s.entered == (aes.SCREEN_MANAGER_PD, aes.SHELL_PD) and the_rom_s.calls == ()
+    monkeypatch.setattr(aes_switch._Idling, "_entered", lambda self, pd: self.entered.append(pd))
+    armed_throughout = aes_switch.scheduled(addrs.AES_ROM_EV_BLOCK, frame, aes_event.machine(), through_the_manager)
+    assert {call.routine for call in armed_throughout.calls} >= {addrs.AES_ROM_EV_MULTI}
+
+
+def test_a_door_user_under_the_model_binds_the_door_and_the_scheduler_in_one_child():
+    """THE DOOR CHILD UNDER THE MODEL (`aes_switch.modelled`'s `door`): the user's wrapper call is an ARRIVAL (noted,
+    shadowed), its twin blocks, the dispatcher's hook holds it to its shadow and THEN RUNS THE C SCHEDULER — the
+    rise is laid at the idle, the call comes back and the user returns: 0 (it rose), one frame handed, the ROM's.
+    WITHOUT the door (a leaf's binding) the same C ends at the wrapper's hook, refused by name: that is what the
+    companion of a door user could not be."""
+    the_rom_s, staged = _scheduled(THE_WAIT_TO_LEAVE, {0: aes_event.release})
+    ran = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert (ran.returncode, ran.answer, ran.idles) == (0, grwait.RISEN, 1), ran.stderr
+    assert tuple(ran.handed) == the_rom_s.calls and len(ran.handed) == 1
+    aes_switch, _switching = _switch()
+    assert not aes_event.differing(ran.image, the_rom_s.memory,
+                                   aes_switch.not_compared(the_rom_s, aes_switch.model_drops(aes.SHELL_PD)))
+    unbound = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged, door=False)
+    assert unbound.returncode == aes_event.FORK_REACHED_A_HOOK and aes_event.HOOK_SYMBOL in unbound.stderr
+
+
+def test_a_twin_that_is_not_its_shadow_at_dsptch_ends_the_child_before_the_model_runs_on(monkeypatch):
+    """THE SHADOW IS STILL HELD AT DSPTCH UNDER THE MODEL — before the scheduler runs, so a twin that went wrong up to
+    the block is named THERE, not at the end of a run that carried on over its image. RED: the shadow's own image one
+    byte off where the call arrives (as a twin that stored a byte the ROM's routine does not): the child ends with
+    the shadow's status and its words, and the model never ran (no idle counted)."""
+    the_rom_s, staged = _scheduled(THE_WAIT_TO_LEAVE, {0: aes_event.release})
+    shadow_of = aes_event.shadow_of
+
+    def one_byte_off(call, image, frame, io_seed=None):
+        astray = bytearray(image)
+        astray[aes_event.UNREAD_BYTE] ^= 1
+        return shadow_of(call, bytes(astray), frame, io_seed)
+    monkeypatch.setattr(aes_event, "shadow_of", one_byte_off)
+    ran = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert ran.returncode == aes_event.CHILD_SHADOW_REFUSED and ran.idles is None
+    assert "the shadow: the twin of" in ran.stderr and "holds at the dispatcher another image" in ran.stderr
+
+
+def test_a_shadow_held_at_dsptch_says_nothing_of_the_twin_s_return_nor_of_a_second_dispatch():
+    """...AND ONCE HELD THERE THE SHADOW HAS SAID ALL IT CAN (`HELD_AT_THE_DISPATCHER`): its nested run ended at
+    dsptch, so neither the twin's RETURN after the wake nor a second dispatch of the same call is asked of it. RED,
+    on the two effects themselves: the place left as the shadow, the return is refused "returned where the ROM's
+    routine … reaches the dispatcher" — every woken door user would end there."""
+    routine, image = addrs.AES_ROM_EV_MULTI, _an_image_buffer()
+    blocked = aes_event.Shadow(aes_event.Handed(routine, ()), bytes(aes_event.IMAGE_BYTES),
+                               aes_event.Nested({}, 0, 1, aes_event.BLOCKS))
+    with pytest.raises(AssertionError, match="returned where the ROM's routine, run over the image the call arrived with, "
+                                             "reaches the dispatcher"):
+        aes_event._returned(routine, [blocked])(image, 0)
+    assert aes_event.HELD_AT_THE_DISPATCHER != aes_event.NOT_SHADOWED, "two places, told apart by value"
+    assert blocked not in aes_event._NOT_COMPARED_AGAIN
+    held = [aes_event.HELD_AT_THE_DISPATCHER]
+    aes_event._vet_the_twin_at_the_dispatcher(held, bytes(aes_event.IMAGE_BYTES))
+    aes_event._returned(routine, held)(image, 0)
+    assert held == [], "the arrival's place given up, as any twin's return gives it up"
+
+
+def test_a_door_user_s_companion_holds_the_frames_it_handed_the_door(monkeypatch):
+    """THE FRAMES ARE COMPARED ON THE WOKEN ROAD TOO (`aes_switching.companion`): the C's run handed back as one that
+    made a door call fewer, over the very image and answer the ROM's run leaves, is refused by name."""
+    aes_switch, _switching = _switch()
+    modelled = aes_switch.modelled
+    monkeypatch.setattr(aes_switch, "modelled",
+                        lambda *run, **named: (lambda ran: ran._replace(handed=ran.handed[:-1]))(modelled(*run, **named)))
+    with pytest.raises(AssertionError, match="the door was handed .*, the ROM's run hands"):
+        aes_event.held_through_its_wake(grwait.watched(grwait.OK, "a frame fewer", {0: aes_event.release}))
+
+
+def test_a_call_whose_wait_blocks_for_nothing_delivered_is_what_blocked_then_woken_holds_first():
+    """`blocked_then_woken`'s PREMISE: the same call with nothing delivered at an idle BLOCKS. A row whose call
+    returns by itself (the button up: the rise is answered at once) is refused by name — it has no blocked half."""
+    returns = aes_event.woken_row("the button up", "AES_ROM_GR_STILLDN", (grwait.LEAVE, *grwait.AROUND_THE_MOUSE),
+                                  grwait.running, {})
+    with pytest.raises(AssertionError, match="the premise — with nothing delivered at an idle the call switches"):
+        aes_event.blocked_then_woken(returns)
+
+
+# ---- THE HOST'S MODEL, WHERE ANOTHER PROCESS RUNS INSIDE A DOOR USER'S WAIT -------------------------------------------------
+def _mn_do_across_the_desk_s_turn():
+    mnlib = _mnlib()
+    return mnlib.mn_do_woken_row(mnlib.THE_DESK_S_TURN)
+
+
+def test_a_foreign_turn_is_not_laid_back_over_the_bytes_no_c_of_ours_stores(monkeypatch):
+    """`aes_switch.STORED_BY_NO_C`: mn_do blocked on the bar, THE DESK'S TURN, and then mn_do blocks twice more. The
+    ROM's own dispatcher goes on overwriting its stack in every later dispatch of the screen manager; the host's C
+    stores nothing there. RED: the desk's nested ROM run laid back whole (as it was), the image holds in the
+    dispatcher's stack what that turn left and differs from the ROM's run — on no fault of the C."""
+    row = _mn_do_across_the_desk_s_turn()
+    ran = aes_event.held_through_its_wake(row)
+    assert aes.SHELL_PD in ran.entered and ran.entered.count(aes.SCREEN_MANAGER_PD) >= 2, "the premise: blocked again after the turn"
+    aes_switch, _switching = _switch()
+    monkeypatch.setattr(aes_switch, "STORED_BY_NO_C", ())
+    lo, hi = aes_switch.DISPATCHER_STACK
+    with pytest.raises(AssertionError, match="bytes differ from the ROM's run") as differs:
+        aes_event.held_through_its_wake(row)
+    addresses = [int(at, 16) for at in re.findall(r"(0x[0-9a-f]+) oracle=", str(differs.value))]
+    assert addresses and all(lo <= at < hi for at in addresses), "...and nowhere but in the dispatcher's own stack"
+
+
+# ---- THE HOST SLOTS A DOOR USER HOLDS ACROSS A WAIT (`aes_switch.host_slots_held`) -----------------------------------------
+# THE AUDIT, read off the runs: for each door user's registered row that switches, the host slots its routines held
+# WHERE THE PROCESS WAS PARKED. Every one is a frame local whose address the routine handed the event layer (its
+# answer words, a MOBLK) or goes on with after the wait (a GRECT, its frame). ONE is a slot per process today —
+# ap_rdwr's QPB, which another process's read serves through its address. THE OTHERS ARE ONE FRAME FOR EVERY
+# PROCESS, AND THAT IS SOUND ONLY WHILE ONE C PROCESS CAN BE INSIDE THE ROUTINE: in wave 3 the caller is the run's
+# only C process (every other is the ROM's own code, which claims no slot). The day a second process is C (band 5:
+# the screen manager's ctlmgr) each of these owes a frame per process, as the two QPBs have — a new slot held across
+# a wait reds here until it is written in.
+STILLDN_S = ("AES_GR_STILLDN_RECTANGLE", "AES_GR_STILLDN_ANSWERS")
+SLOTS_HELD_WHERE_PARKED = {
+    "aes_gr_stilldn": STILLDN_S,
+    "aes_gr_watchbox": (*STILLDN_S, "AES_GR_WATCHBOX_RECT"),
+    "aes_gr_wait": STILLDN_S,
+    "aes_gr_rubbox": (*STILLDN_S, "AES_GR_RUBWIND_RECT"),
+    "aes_gr_dragbox": (*STILLDN_S, "AES_GR_DRAGBOX_FRAME"),
+    "aes_gr_slidebox": (*STILLDN_S, "AES_GR_DRAGBOX_FRAME", "AES_GR_SLIDEBOX_RECTS"),
+    "aes_mn_do": ("AES_MN_DO_FRAME",),
+    "aes_fm_do": ("AES_FM_DO_FRAME", "AES_FM_BUTTON_FRAME"),       # ...the second under a radio button held: fm_button's
+    "aes_fm_button": (*STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
+    "aes_ap_sendmsg": ("AES_AP_RDWR_QPB, process 1",),             # the screen manager's own frame of it: per process
+    "aes_wm_update": (),                                           # the lock's hand-over: nothing of a frame is live
+}
+A_SLOT_PER_PROCESS = ", process "
+
+
+def _door_users_that_switch():
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if held.row.door}
+
+
+def _modelled_again(held):
+    """A registered door user's row through the model once more (its companion's own run): the `Modelled`."""
+    aes_switch, switching = _switch()
+    row, made = held.row, switching.settled(held.row)
+    the_rom_s = switching.scheduled(row, made.pokes)
+    foreign = any(pd != made.switches.process for pd in the_rom_s.entered)
+    return aes_switch.modelled(routines.core_symbol(row.name), vdi.as_signed(row.name, row.arguments), made.pokes,
+                               the_rom_s, answered=row.answered and vdi.ALCYON[row.name].restype is not None,
+                               foreign=foreign, door=row.door)
+
+
+def test_the_host_slots_held_across_a_wait_are_the_audit_s_and_every_one_is_given_back():
+    """READ OFF EVERY DOOR USER'S ROW THAT SWITCHES: the slots held where its process was parked are the table's, by
+    routine (the union over its rows) — and each run RETURNED with none held (the fork refuses otherwise, by name:
+    the give-back after a wait, which no host run reached before a call could come back from one)."""
+    held_by = {}
+    for name, held in _door_users_that_switch().items():
+        ran = _modelled_again(held)
+        assert ran.returncode == 0, f"{name}: {ran.stderr}"
+        assert ran.parked, f"{name}: the run read its host slots at no dispatch ({ran.parked}): nothing was audited"
+        slots = held_by.setdefault(routines.core_symbol(held.row.name), [])
+        slots.extend(slot for slot in ran.slots_held if slot not in slots)
+    assert {core: tuple(slots) for core, slots in held_by.items()} == SLOTS_HELD_WHERE_PARKED
+    per_process = {slot for slots in SLOTS_HELD_WHERE_PARKED.values() for slot in slots if A_SLOT_PER_PROCESS in slot}
+    assert per_process == {"AES_AP_RDWR_QPB, process 1"}, "the one slot per process a door user parks under, today"
+
+
+def test_a_call_that_returns_holding_a_host_slot_is_refused_by_name(monkeypatch):
+    """RED: a routine that came back from its wait with a slot still claimed (here the flags read as one held) —
+    the model's fork refuses the run by name; the next call of the routine in that process would abort on it."""
+    aes_switch, _switching = _switch()
+    monkeypatch.setattr(aes_switch, "host_slots_held", lambda: ["AES_GR_STILLDN_ANSWERS"])
+    the_rom_s, staged = _scheduled(THE_WAIT_TO_LEAVE, {0: aes_event.release})
+    ran = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert ran.returncode == aes_event.FORK_RAISED
+    assert "the call RETURNED holding the host slot(s) ['AES_GR_STILLDN_ANSWERS']" in ran.stderr
+
+
+def test_what_the_door_child_s_own_python_raises_at_the_dispatcher_ends_the_run_by_name(monkeypatch):
+    """A CALLBACK CANNOT RAISE INTO C: ctypes prints what it raised, answers an undefined word, and THE TWIN RUNS ON —
+    the child then exits 0 with a run nobody audited (measured in review: the slots' reading raising at the first
+    dispatch, the call "returned" and the audit's table still held for a routine that holds none). So the child ends
+    there, by name, with the harness's own status: the reading of the host slots at a dispatch, and a shadow's vet
+    that could not be made (anything but its own refusal, which is the shadow's)."""
+    aes_switch, _switching = _switch()
+    the_rom_s, staged = _scheduled(THE_WAIT_TO_LEAVE, {0: aes_event.release})
+    held = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert (held.returncode, held.parked) == (0, 1), held.stderr
+
+    def unreadable():
+        raise RuntimeError("the flags could not be read")
+    with monkeypatch.context() as patched:
+        patched.setattr(aes_switch, "host_slots_held", unreadable)
+        ran = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert (ran.returncode, ran.parked, ran.answer) == (aes_event.FORK_RAISED, None, None)
+    assert "the dispatcher's hook under the model raised RuntimeError('the flags could not be read')" in ran.stderr
+
+    def no_vet(shadows, image):
+        raise KeyError("a harness error inside the shadow's vet")
+    monkeypatch.setattr(aes_event, "_vet_the_twin_at_the_dispatcher", no_vet)
+    ran = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert ran.returncode == aes_event.FORK_RAISED and ran.idles is None
+    assert "the shadow's vet at the dispatcher raised KeyError" in ran.stderr
+
+
+def test_the_host_slots_roles_are_read_off_the_header_s_own_enum():
+    """`aes_switch.host_slot_ids`: one role per held flag, in the enum's order — a slot per process one name per
+    process's frame — as many as the library's array holds (`HOST_SLOT_ID_COUNT`: the symbol's own size)."""
+    aes_switch, _switching = _switch()
+    roles = aes_switch.host_slot_ids()
+    per_process = aes.HOST_SLOTS["HOST_PROCESSES"]
+    assert len(set(roles)) == len(roles) and roles[0] == "SEARCH_PATTERN" and roles[-1] == "AES_INOROUT_RECT"
+    for role in ("AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB"):
+        frames = [each for each in roles if each.startswith(role + A_SLOT_PER_PROCESS)]
+        assert len(frames) == per_process and roles.index(frames[-1]) - roles.index(frames[0]) == per_process - 1
+    plain = {role for role in roles if A_SLOT_PER_PROCESS not in role}
+    declared = {name.removeprefix("HOST_SLOT_") for name in aes.HOST_SLOTS
+                if name.startswith("HOST_SLOT_") and not name.endswith("_BYTES")}
+    assert plain == declared - {"AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB"}
+    assert aes_switch.host_slots_held() == [], "no slot is held between two runs of this process"
+
+
+# ---- WHAT THE DOOR'S OWN BINDINGS SERVE OF THE ROUTINES THE EVENT LAYER IS HANDED ---------------------------------------------
+A_CURSOR_POINT = (200, 120)
+
+
+def test_the_door_serves_the_vdi_s_cursor_routine_on_the_register_hook_in_process_and_in_a_child():
+    """`$fcff0a`, THE VDI'S default_user_cur — what `$947a` holds while a recording plays, and drawrat calls through
+    the register hook — is among the routines the DOOR's bindings serve wherever the poll runs in C, beside the four
+    fork functions and justretf: in process (`door_objects`) and in a child (`_child_walkers`), each by the
+    candidate's own core. Held on the child's trampoline against the ROM's routine over one machine and (D0, D1)."""
+    handed = {getattr(addrs, name) for name in aes_event.FORK_FUNCTIONS} | {addrs.AES_ROM_JUSTRETF, addrs.VDI_ROM_DEFAULT_USER_CUR}
+    assert aes_event.polls_in_c() and set(aes_event.door_objects()) == set(aes_event.handed_routines()) == handed
+    machine = aes_event.shown_machine()
+    x, y = A_CURSOR_POINT
+    final, _writes, _regs = emu.run(make_image(machine), addrs.VDI_ROM_DEFAULT_USER_CUR, {"d0": x, "d1": y})
+    image = make_image(machine)
+    buf = (ctypes.c_uint8 * aes_event.IMAGE_BYTES).from_buffer(image)
+    registers = (ctypes.c_uint32 * len(isr.REGISTER))()
+    registers[isr.REGISTER["d0"]], registers[isr.REGISTER["d1"]] = x, y
+    serve = aes_event._child_walkers(aes_event._lib, objects=False, polls=True)
+    serve(ctypes.cast(buf, ctypes.POINTER(ctypes.c_uint8)), addrs.VDI_ROM_DEFAULT_USER_CUR, registers)
+    assert final[:addrs.ST_RAM_BYTES] != make_image(machine)[:addrs.ST_RAM_BYTES], "the premise: the routine moves the cursor"
+    assert not aes_event.differing(image, final), "the child's register hook ran the candidate's default_user_cur"

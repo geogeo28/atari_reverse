@@ -31,12 +31,18 @@ read is the snapshot's, but for an item given a CHILD (`ITEM_WITH_A_CHILD`, out 
 
 mn_do's WAITS. A pass's ev_multi is answered at once only by what the machine already holds: a mouse static and a
 button static make every pass after the first ask for what pass 1 just saw change. Pass 1 is pinned whole, and a pass
-nothing satisfies is REFUSED by the door (would block), the C held to the ROM's own run stopped where it blocks
-(`aes_event.refused_where_the_rom_blocks`, the whole image). Every LATER pass is reached as the machine reaches it: by
+nothing satisfies is REFUSED by the door (would block), the C held to the ROM's own run where it blocks (the whole
+image, at dsptch). Every LATER pass is reached as the machine reaches it: by
 INTERRUPTS while mn_do waits — the mouse moved, the button pressed or released by the ROM's own interrupt code at the
 entry of a pass's ev_multi, on both shores (`aes_event.interrupted`) — the mouse onto a title while pass 1 waits on the
 bar, an item chosen, a DISABLED item clicked, the menu left and entered again, title to title, the click on a title and
 the drag to an item, the DISABLED-alone title's busy loop left.
+
+EVERY PASS THAT BLOCKS IS TAKEN ON THROUGH ITS WAKE (`aes_event.blocked_then_woken`): the interrupt delivered WHILE
+mn_do IS BLOCKED, at the dispatcher's idle — the screen manager parked by OUR dispatcher on our shore and woken
+through it — the menu left and a click off it ending the call. One of them with THE DESK'S TURN inside mn_do's
+wait (a key the desk waits for: the ROM's own desktop runs, a FOREIGN WINDOW the door call is open across); it and
+the dearest are priced rows that SWITCH.
 
 UNPINNED, with the reason: menu_bar's desk box height counted in gl_hchar, not gl_wchar (the mutant bar-height-wchar).
 The two differ only on a machine whose character cell is not 8 x 8 — high resolution's 8 x 16 — and every machine here
@@ -649,7 +655,7 @@ def test_mn_do_puts_its_answers_on_the_bus():
 # The waits nothing in a static machine satisfies — each a pass the door refuses, in a child process: the mouse on a
 # title drops its menu in pass 1 and pass 2 waits to LEAVE that title; the mouse on the bar past the titles waits in
 # pass 1 to enter them.
-DROPPED = {"Desk": (40, 5), "File": (88, 5), "View": (136, 5), "Options": (196, 5)}
+DROPPED = {"Desk": (40, 5), "File": (88, 5), "View": aes_event.THE_VIEW_TITLE_S_POINT, "Options": (196, 5)}
 MN_DO_BLOCKS = {**{f"{name} dropped, then waiting to leave it": (at, 2) for name, at in DROPPED.items()},
                 "on the bar past the titles, waiting to enter them": (RIGHT_OF_THE_TITLES, 1)}
 
@@ -660,14 +666,46 @@ SELECTED_AND_DISABLED = od.state_pokes(MENU, TITLES["View"], SELECTED | DISABLED
 MN_DO_BLOCKS["View selected and disabled: taken, nothing drawn"] = (None, 2)
 
 
-@pytest.mark.parametrize("at, door_calls", MN_DO_BLOCKS.values(), ids=MN_DO_BLOCKS)
-def test_mn_do_s_wait_nothing_satisfies_is_refused_where_the_rom_s_blocks(at, door_calls):
-    """Up to the refused wait, the C is the ROM's run stopped where it blocks (`aes_event.refused_where_the_rom_blocks`):
-    the whole image at the blocking call's entry — the title selected, its menu drawn, the screen under it saved — and
-    every frame handed the door, the MOBLKs read through their pointers."""
-    machine = merge_pokes(screen_manager(at), STALE_TRACK, STALE_SR_RECT, None if at else SELECTED_AND_DISABLED)
-    taken = aes_event.refused_where_the_rom_blocks(MN_DO, (TITLE_OUT, ITEM_OUT), machine, objects=True)
-    assert len(taken.calls) == door_calls
+def blocked_machine(at):
+    """A `MN_DO_BLOCKS` case's machine: the screen manager running with the mouse at `at` — or, with none, on the
+    "View" title left SELECTED and DISABLED."""
+    return merge_pokes(screen_manager(at), STALE_TRACK, STALE_SR_RECT, None if at else SELECTED_AND_DISABLED)
+
+
+def mn_do_woken(label, machine, at_idle, at_calls=None):
+    """mn_do over `machine()`, a call that BLOCKS, as a row that switches (`aes_event.woken_row`)."""
+    return aes_event.woken_row(label, MN_DO, (TITLE_OUT, ITEM_OUT), machine, at_idle, at_calls, objects=True)
+
+
+# WHAT ENDS A BLOCKED mn_do, delivered at the dispatcher's idles: the mouse off every menu (the title put back, the
+# next pass waiting for it to come back or for a click), then a click there — nothing chosen. From the bar past the
+# titles a title is entered first. AND FROM THE TITLE LEFT SELECTED AND DISABLED, ANOTHER TITLE FIRST: moved straight
+# off the bar from it, the ROM's own mn_do does not return (measured: past 1.49 M instructions with a click
+# delivered at either of its next two waits — it never idles again; recorded, not pinned further).
+def _left_and_clicked_off(first_idle=0):
+    return {first_idle: aes_event.move_to(*OFF_EVERY_MENU), first_idle + 1: aes_event.press}
+
+
+def _wake_of_a_blocked_pass(label):
+    if label == "on the bar past the titles, waiting to enter them":
+        return {0: aes_event.move_to(*DROPPED["View"]), **_left_and_clicked_off(1)}
+    if label == "View selected and disabled: taken, nothing drawn":
+        return {0: aes_event.move_to(*DROPPED["File"]), **_left_and_clicked_off(1)}
+    return _left_and_clicked_off()
+
+
+@pytest.mark.parametrize("label", MN_DO_BLOCKS)
+def test_mn_do_s_wait_nothing_satisfies_is_held_where_the_rom_s_blocks_and_woken(label):
+    """Up to the wait that blocks, the C is the ROM's run where it blocks: the whole image at dsptch — the title
+    selected, its menu drawn, the screen under it saved — and every frame handed the door, the MOBLKs read through
+    their pointers. AND ON THROUGH THE WAKES, each at an idle of the dispatcher: the menu left, a click off it —
+    mn_do answers 0, nothing chosen stored."""
+    at, door_calls = MN_DO_BLOCKS[label]
+    row = mn_do_woken(f"{label}; then left, a click off it", functools.partial(blocked_machine, at),
+                      _wake_of_a_blocked_pass(label))
+    taken, ran = aes_event.blocked_then_woken(row)
+    assert len(taken.calls) == door_calls and ran.answer == 0
+    assert [case.word_in(ran.image, out) for out in (TITLE_OUT, ITEM_OUT)] == [aes.STALE_WORD] * 2
 
 
 def test_a_child_without_the_walkers_served_ends_by_name():
@@ -682,7 +720,7 @@ def test_a_child_without_the_walkers_served_ends_by_name():
 # the bar), then the mouse MOVED and the button PRESSED or RELEASED by the ROM's own interrupt code at the entry of a
 # pass's ev_multi — door call k is pass k + 1's wait. Points of the desk's menu (the drop-downs' box 11 pixels down):
 ON_THE_CHECKED_ITEM = (150, 15)         # View's first item, CHECKED
-ON_THE_PLAIN_ITEM = (150, 23)           # ...its second
+ON_THE_PLAIN_ITEM = aes_event.VIEW_S_PLAIN_ITEM_S_POINT      # ...its second
 ON_THE_PLAIN_ITEM_S_RIGHT_HALF = (184, 23)    # ...where ITEM_WITH_A_CHILD puts its child
 ON_A_DISABLED_ITEM = (100, 15)          # File's first item, DISABLED
 OFF_EVERY_MENU = (300, 150)
@@ -736,6 +774,64 @@ def test_mn_do_taken_through_interrupts(at, pokes, interrupts, returned, answer,
     assert stored == ([TITLES[chosen[0]], chosen[1]] if chosen else [aes.STALE_WORD] * 2)
 
 
+STILL_WAITING = {label: (at, pokes, interrupts) for label, (at, pokes, interrupts, returned, _answer, _chosen)
+                 in MN_DO_INTERRUPTED.items() if not returned}
+
+
+@pytest.mark.parametrize("label", STILL_WAITING)
+def test_mn_do_left_waiting_by_its_interrupts_is_woken_and_ended(label):
+    """THE CASES ABOVE THAT END BLOCKED, TAKEN ON: the same interrupts at the same passes' entries, and then — while
+    the last pass is blocked — the menu left and a click off it, at the dispatcher's idles (ONE derivation takes the
+    interrupts at door calls and at idles): ONE PASS MORE — the wait the click ends — and mn_do returns 0 with nothing
+    chosen, every frame handed, the whole image."""
+    at, pokes, interrupts = STILL_WAITING[label]
+    row = mn_do_woken(f"{label}; then left, a click off it", functools.partial(interrupted_machine, at, pokes),
+                      _left_and_clicked_off(), interrupts)
+    taken, ran = aes_event.blocked_then_woken(row)
+    assert len(ran.calls) == len(taken.calls) + 1 and ran.answer == 0
+
+
+# mn_do BLOCKED AND WOKEN, the shapes priced: an item reached and clicked with BOTH interrupts taken while a pass
+# is blocked (the dearest returning shape, every wake through the dispatcher); and THE DESK'S TURN INSIDE mn_do's
+# FIRST WAIT — Return, the key the desk's own evnt_multi waits for, typed while the screen manager is blocked on the
+# bar: the dispatcher enters the DESK (the ROM's own desktop: a foreign window), which takes the key and waits
+# again; then a title, the menu left, a click — and that turn TWICE, in two of mn_do's waits (two windows, each inside
+# another door call: the one run in which a call's windows must be told from the next call's).
+RETURN = aes_event.key(aes_event.RETURN_KEY)
+ITEM_CHOSEN_WHILE_BLOCKED = "View dropped; an item reached, then clicked, each while a pass is blocked: chosen"
+THE_DESK_S_TURN = "on the bar past the titles; the desk's turn (Return); then a title, the menu left, a click off it"
+THE_DESK_S_TURN_TWICE = ("on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, in the "
+                         "next wait; the menu left, a click off it")
+THE_DESK_TAKES_A_KEY = (aes.SHELL_PD,) * 4      # the desktop's own waits and yields over one key
+MN_DO_WOKEN = {
+    ITEM_CHOSEN_WHILE_BLOCKED: (DROPPED["View"], {0: aes_event.move_to(*ON_THE_CHECKED_ITEM), 1: aes_event.press},
+                                CHOSEN, ("View", CHECKED_ITEM), (aes.SCREEN_MANAGER_PD,) * 2),
+    THE_DESK_S_TURN: (RIGHT_OF_THE_TITLES, {0: RETURN, 1: aes_event.move_to(*DROPPED["View"]), **_left_and_clicked_off(2)},
+                      0, None, THE_DESK_TAKES_A_KEY + (aes.SCREEN_MANAGER_PD,) * 3),
+    # ...TWO FOREIGN WINDOWS IN ONE RUN, each inside another door call: the desk takes a key while mn_do waits on the
+    # bar, and another while it waits under the dropped menu.
+    THE_DESK_S_TURN_TWICE: (
+        RIGHT_OF_THE_TITLES, {0: RETURN, 1: aes_event.move_to(*DROPPED["View"]), 2: RETURN, **_left_and_clicked_off(3)},
+        0, None, THE_DESK_TAKES_A_KEY + (aes.SCREEN_MANAGER_PD,) + THE_DESK_TAKES_A_KEY + (aes.SCREEN_MANAGER_PD,) * 2),
+}
+
+
+def mn_do_woken_row(label):
+    at, at_idle, _answer, _chosen, _entered = MN_DO_WOKEN[label]
+    return mn_do_woken(label, functools.partial(interrupted_machine, at, None), at_idle)
+
+
+@pytest.mark.parametrize("label", MN_DO_WOKEN)
+def test_mn_do_blocked_and_woken_through_the_dispatcher(label):
+    """...the answer, what is chosen, and WHO THE DISPATCHER ENTERS: the screen manager alone — or the desk first,
+    four times (its own waits and yields over the key), before the screen manager is woken by the mouse."""
+    _at, _at_idle, answer, chosen, entered = MN_DO_WOKEN[label]
+    _taken, ran = aes_event.blocked_then_woken(mn_do_woken_row(label))
+    assert (ran.answer, ran.entered) == (answer, entered)
+    stored = [case.word_in(ran.image, out) for out in (TITLE_OUT, ITEM_OUT)]
+    assert stored == ([TITLES[chosen[0]], chosen[1]] if chosen else [aes.STALE_WORD] * 2)
+
+
 # ---- the registry --------------------------------------------------------------------------------------------------------------
 def register(label, name, arguments, pokes, *, through_line_f=False):
     aes.register(label, name, arguments, pokes, through_line_f=through_line_f, hook=doors())
@@ -781,3 +877,6 @@ WORST_INTERRUPTED = "a DISABLED item clicked: nothing chosen, the title put back
 _at, _pokes, _interrupts, *_outcome = MN_DO_INTERRUPTED[WORST_INTERRUPTED]
 aes_event.register_interrupted(WORST_INTERRUPTED, MN_DO, (TITLE_OUT, ITEM_OUT), interrupted_machine(_at, _pokes),
                                _interrupts, objects=True)
+# ...and THE ROWS THAT SWITCH: mn_do blocked and woken — the second with the desk's turn inside its door call.
+for _label in MN_DO_WOKEN:
+    aes_event.register_woken(mn_do_woken_row(_label))

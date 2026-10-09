@@ -160,3 +160,25 @@ def test_a_window_is_staged_and_dropped_byte_by_byte_where_the_run_stored_it():
     assert aes_event.settled_in_windows(A_MACHINE, {0x9000: 0xEE}, (A_WINDOW,)) == (A_MACHINE, ())
     whole = dict.fromkeys(range(A_WINDOW[0], A_WINDOW[1]), 0x5A)
     assert aes_event.settled_in_windows({}, whole, (A_WINDOW,))[1] == (A_WINDOW,), "a window stored whole is its own drop"
+
+
+# ---- THE DERIVATION EVERY ROW THAT SWITCHES IS REGISTERED THROUGH (`aes_switch.scheduled`) ---------------------------------
+# gr_stilldn waiting, the button down, for the mouse to leave the rectangle it is in — by its ROM entry and frame, no
+# battery imported: its one wait is door call 0 of the run.
+A_RECTANGLE_ROUND_THE_SNAPSHOT_S_MOUSE = (140, 80, 40, 40)
+WAITING_TO_LEAVE = 1
+
+
+def test_a_scheduled_run_keeps_what_it_took_at_a_door_call_apart_from_what_it_took_at_an_idle():
+    """THE ONE DERIVATION THAT TAKES INTERRUPTS AT DOOR CALLS AND AT IDLES books each where it was taken: the rise
+    delivered AT THE WAIT'S ENTRY (door call 0) is answered at once — no idle is made, nothing is delivered at one —
+    and the same rise delivered AT THE IDLE is no door call's. A registrar that read one as the other would lay an
+    idle's interrupt at a door call of every row's replay (and every battery's import would fail on it)."""
+    import aes_switch
+    frame = aes_event.frame_of(("w", WAITING_TO_LEAVE), *(("w", word) for word in A_RECTANGLE_ROUND_THE_SNAPSHOT_S_MOUSE))
+    machine = merge_pokes(aes_event.machine(aes_event.button_down), aes_event.savptr_in_the_band())
+    at_the_wait = aes_switch.scheduled(addrs.AES_ROM_GR_STILLDN, frame, machine, at_calls={0: aes_event.release})
+    assert (sorted(at_the_wait.at_calls), at_the_wait.delivered, at_the_wait.idles, len(at_the_wait.calls)) == ([0], {}, 0, 1)
+    at_the_idle = aes_switch.scheduled(addrs.AES_ROM_GR_STILLDN, frame, machine, {0: aes_event.release})
+    assert (at_the_idle.at_calls, sorted(at_the_idle.delivered), at_the_idle.idles, len(at_the_idle.calls)) == ({}, [0], 1, 1)
+    assert at_the_wait.ended == at_the_idle.ended == aes_switch.RETURNED and at_the_wait.d0 == at_the_idle.d0

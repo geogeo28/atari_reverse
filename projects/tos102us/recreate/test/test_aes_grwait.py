@@ -15,11 +15,17 @@ answering the "no event" the snapshot's dispatcher guard would.
 gr_watchbox's SECOND PASS is reached over the button down with the object NOT under the mouse: the first pass's wait —
 for the mouse to leave an object it is outside — is answered at once (the button still down), the loop draws the `out`
 state and the second pass's wait, for the mouse to enter, BLOCKS. The door refuses that wait (a child process), and the
-case holds what the C did up to it — the whole image, both frames it handed the door — to the ROM's own run stopped at
-the entry of the call that blocks (`aes_event.refused_where_the_rom_blocks`). The passes AFTER it — the mouse moved in,
-out, the button's rise ending an `out` pass with the 0 answer — are what a machine reaches when an interrupt arrives
-while the loop waits: delivered at the entry of a pass's wait, the same on both shores (`aes_event.interrupted`).
+case holds what the C did up to it — the whole image, both frames it handed the door — to the ROM's own run AT DSPTCH.
+The passes AFTER it — the mouse moved in, out, the button's rise ending an `out` pass with the 0 answer — are what a
+machine reaches when an interrupt arrives: delivered at the entry of a pass's wait, the same on both shores
+(`aes_event.interrupted`) — or WHILE THE LOOP IS BLOCKED, where the machine waits for it: at the dispatcher's idle.
+
+EVERY WAIT THAT BLOCKS IS TAKEN ON THROUGH ITS WAKE (`aes_event.blocked_then_woken`: STILLDN_WOKEN, WATCHBOX_WOKEN):
+the call held where it blocks, and then run to its return through the dispatcher — the ROM's own, and the host's
+model with the door bound — the interrupt that wakes it delivered at an idle. The worst of each is a priced row that
+SWITCHES (`aes_event.register_woken`), its door call open across the switch, on two counts.
 """
+import functools
 import struct
 
 import pytest
@@ -35,6 +41,7 @@ aes.declare_alcyon("AES_ROM_GR_WATCHBOX", aes.WORD_ANSWER,
 
 THROUGH = gsx.THROUGH
 LEAVE, ENTER = 1, 0                    # gr_stilldn's flag: wait for the mouse to leave, or to enter
+ENDED_IN, ENDED_OUT = 1, 0             # gr_watchbox's answer: the button rose with the mouse in the object, or out of it
 STILL_DOWN, RISEN = 1, 0
 AROUND_THE_MOUSE = (140, 80, 40, 40)   # a rectangle the snapshot's mouse is inside
 AWAY_FROM_THE_MOUSE = (0, 0, 10, 10)   # ...and one it is not
@@ -121,7 +128,7 @@ WATCHBOX = {
 @pytest.mark.parametrize("machine, obj, states", WATCHBOX.values(), ids=WATCHBOX)
 def test_gr_watchbox_ends_in_its_first_pass_when_the_button_is_up(machine, obj, states):
     result = watchbox(machine, SELECTOR, obj, states)
-    assert result.answer() == LEAVE
+    assert result.answer() == ENDED_IN
     assert result.object(SELECTOR, obj)["STATE"] == states[0], "the object is left drawn in the `in` state"
 
 
@@ -129,24 +136,33 @@ def test_gr_watchbox_ends_in_its_first_pass_when_the_button_is_up(machine, obj, 
 def test_gr_watchbox_through_its_callers_word(through_line_f):
     result = aes_event.run_event("AES_ROM_GR_WATCHBOX", (SELECTOR, OK, SELECTED, NORMAL), running(), drawing=True,
                                  through_line_f=through_line_f)
-    assert result.answer() == LEAVE
+    assert result.answer() == ENDED_IN
 
 
 SECOND_PASS = {"OK": OK, "Cancel": CANCEL, "the arrow": ARROW}
-WATCHBOX_DOOR_CALLS = 2                # pass 1's wait, answered; pass 2's, refused
+WATCHBOX_DOOR_CALLS = 2                # pass 1's wait, answered; pass 2's, which blocks
+
+
+def watched(obj, label, at_idle, at_calls=None):
+    """gr_watchbox over `obj` outside the mouse, the button down — a call that BLOCKS, as a row that switches."""
+    return aes_event.woken_row(label, "AES_ROM_GR_WATCHBOX", (SELECTOR, obj, SELECTED, CROSSED), button_down, at_idle,
+                               at_calls, objects=True)
 
 
 @pytest.mark.parametrize("obj", SECOND_PASS.values(), ids=SECOND_PASS)
-def test_gr_watchbox_s_second_pass_draws_the_out_state_then_waits_as_the_rom_s(obj):
+def test_gr_watchbox_s_second_pass_draws_the_out_state_waits_as_the_rom_s_and_is_woken_by_the_rise(obj):
     """The button down, the object outside the mouse: pass 1 answered, the object drawn `out`, pass 2's wait — for the
-    mouse to enter — refused as one that would block. Up to it, the C is the ROM's run stopped where the ROM blocks:
-    the whole image, the object's state in it, and both frames handed the door (the leave flag toggled between them)."""
-    taken = aes_event.refused_where_the_rom_blocks("AES_ROM_GR_WATCHBOX", (SELECTOR, obj, SELECTED, CROSSED),
-                                                   button_down(), objects=True)
-    assert aes.read_object(taken.image, SELECTOR, obj)["STATE"] == CROSSED
-    assert len(taken.calls) == WATCHBOX_DOOR_CALLS
+    mouse to enter — BLOCKS. Up to it, the C is the ROM's run where the ROM blocks: the whole image at dsptch, the
+    object's state in it, and both frames handed the door (the leave flag toggled between them). AND ON THROUGH THE
+    WAKE: the button's rise, delivered while the loop is blocked, ends the `out` pass with the 0 answer — the object
+    left drawn `out`, no third wait made."""
+    held, ran = aes_event.blocked_then_woken(watched(obj, "the second pass, woken by the rise", {0: aes_event.release}))
+    assert aes.read_object(held.image, SELECTOR, obj)["STATE"] == CROSSED and len(held.calls) == WATCHBOX_DOOR_CALLS
+    assert (ran.answer, len(ran.calls)) == (ENDED_OUT, WATCHBOX_DOOR_CALLS)
+    assert aes.read_object(ran.image, SELECTOR, obj)["STATE"] == CROSSED
 
 
+@functools.cache
 def the_middle_of(obj):
     """The middle of `obj` on the screen, read off the rectangle the ROM's own gr_watchbox hands its first wait."""
     calls, _memory, _returned = aes_event.rom_watched("AES_ROM_GR_WATCHBOX", (SELECTOR, obj, SELECTED, CROSSED),
@@ -162,9 +178,9 @@ ELSEWHERE = (0, 0)                     # a point outside every object of the sel
 INTERRUPTED = {
     "the button rises at the second wait: out, 0": (lambda obj: {1: aes_event.release}, ENTER, 2),
     "the mouse enters, then the button rises: in, 1": (lambda obj: {1: aes_event.move_to(*the_middle_of(obj)),
-                                                                     2: aes_event.release}, LEAVE, 3),
+                                                                     2: aes_event.release}, ENDED_IN, 3),
     "in, out again, then the rise: 0": (lambda obj: {1: aes_event.move_to(*the_middle_of(obj)),
-                                                     2: aes_event.move_to(*ELSEWHERE), 3: aes_event.release}, ENTER, 4),
+                                                     2: aes_event.move_to(*ELSEWHERE), 3: aes_event.release}, ENDED_OUT, 4),
     "the mouse enters, the third wait blocks": (lambda obj: {1: aes_event.move_to(*the_middle_of(obj))}, None, 3),
 }
 
@@ -175,6 +191,70 @@ def test_gr_watchbox_s_later_passes_as_interrupts_reach_them(interrupts, answer,
                                   interrupts(OK), objects=True)
     assert (taken.answer, len(taken.calls)) == (answer, passes)
     assert taken.returned == (answer is not None)
+
+
+# ---- THE WAITS THAT BLOCK, WOKEN: the interrupt delivered at the dispatcher's idle, the loop run to its return ---------
+# gr_stilldn's three waits nothing satisfies (WOULD_BLOCK), each with what ends it: (leave, rectangle, {idle:
+# interrupt}, the answer).
+INTO_THE_FAR_RECTANGLE = (5, 5)        # a point inside AWAY_FROM_THE_MOUSE
+STILLDN_WOKEN = {
+    "the button down, inside, waiting to leave; woken by the rise": (LEAVE, AROUND_THE_MOUSE, {0: aes_event.release}, RISEN),
+    "the button down, inside, waiting to leave; woken by the mouse leaving": (
+        LEAVE, AROUND_THE_MOUSE, {0: aes_event.move_to(*ELSEWHERE)}, STILL_DOWN),
+    "the button down, outside, waiting to enter; woken by the mouse entering": (
+        ENTER, AWAY_FROM_THE_MOUSE, {0: aes_event.move_to(*INTO_THE_FAR_RECTANGLE)}, STILL_DOWN),
+    "the button down, an empty rectangle, waiting to enter; woken by the rise alone": (
+        ENTER, EMPTY_AT_THE_MOUSE, {0: aes_event.release}, RISEN),
+}
+THE_DEAREST_STILLDN = "the button down, inside, waiting to leave; woken by the rise"
+
+
+def still_down(label):
+    leave, rectangle, at_idle, _answer = STILLDN_WOKEN[label]
+    return aes_event.woken_row(label, "AES_ROM_GR_STILLDN", (leave, *rectangle), button_down, at_idle)
+
+
+def test_every_wait_of_gr_stilldn_that_blocks_has_its_woken_counterpart():
+    assert {(leave, rectangle) for leave, rectangle, _at_idle, _answer in STILLDN_WOKEN.values()} == set(WOULD_BLOCK.values())
+
+
+@pytest.mark.parametrize("label", STILLDN_WOKEN, ids=STILLDN_WOKEN)
+def test_gr_stilldn_s_wait_that_blocks_is_woken_as_the_rom_s(label):
+    """The wait held where it blocks — one frame handed, the image the ROM's at dsptch — and taken on through the
+    dispatcher: the interrupt at the idle, the answer the event that came (the rise wins: 0; the rectangle: 1)."""
+    held, ran = aes_event.blocked_then_woken(still_down(label))
+    assert len(held.calls) == len(ran.calls) == 1 and ran.answer == STILLDN_WOKEN[label][3]
+
+
+# gr_watchbox's later passes REACHED FROM A BLOCKED ONE: (label, {idle: interrupt}, {door call: interrupt} or None,
+# the answer, how many passes).
+def _watchbox_woken():
+    inside = aes_event.move_to(*the_middle_of(OK))
+    return {
+        "the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": (
+            {0: aes_event.release}, {1: inside}, ENDED_IN, 3),
+        "blocked three times: the mouse in, out again, then the rise: 0": (
+            {0: inside, 1: aes_event.move_to(*ELSEWHERE), 2: aes_event.release}, None, ENDED_OUT, 4),
+    }
+
+
+WATCHBOX_WOKEN = ("the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1",
+                  "blocked three times: the mouse in, out again, then the rise: 0")
+
+
+def watched_over_ok(label):
+    at_idle, at_calls, _answer, _passes = _watchbox_woken()[label]
+    return watched(OK, label, at_idle, at_calls)
+
+
+@pytest.mark.parametrize("label", WATCHBOX_WOKEN)
+def test_gr_watchbox_s_later_passes_as_the_wakes_of_a_blocked_loop_reach_them(label):
+    """The loop blocked and woken, pass after pass: an interrupt at a wait's ENTRY and then one at an idle (ONE
+    derivation takes both), and a loop that blocks three times in one call — each wake through the dispatcher, the
+    same passes, the same answer, the same frames, the whole image."""
+    _at_idle, _at_calls, answer, passes = _watchbox_woken()[label]
+    _held, ran = aes_event.blocked_then_woken(watched_over_ok(label))
+    assert (ran.answer, len(ran.calls)) == (answer, passes)
 
 
 def test_gr_watchbox_s_tree_is_put_on_the_bus():
@@ -194,3 +274,10 @@ for _label, (_machine, _leave, _rectangle, _answer) in STILLDN.items():
     aes_event.register(_label, "AES_ROM_GR_STILLDN", (_leave, *_rectangle), _machine())
 for _label, (_machine, _obj, _states) in WATCHBOX.items():
     aes_event.register(_label, "AES_ROM_GR_WATCHBOX", (SELECTOR, _obj, *_states), _machine(), drawing=True)
+# ...and THE ROWS THAT SWITCH: gr_stilldn's dearest wait that blocks, woken through the dispatcher, and BOTH of
+# gr_watchbox's shapes — the one that answers 1 takes an interrupt at a door call before the wait that blocks, and
+# is the only blob row a tail of the loop that answered 0 whatever the pass would differ on (measured: that mutant
+# passed the three-wakes row, whose answer is 0).
+aes_event.register_woken(still_down(THE_DEAREST_STILLDN))
+for _label in WATCHBOX_WOKEN:
+    aes_event.register_woken(watched_over_ok(_label))

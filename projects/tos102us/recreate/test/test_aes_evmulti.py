@@ -23,9 +23,9 @@ EVERY MACHINE IS THE ROM'S OWN (`aes_evmulti`), every frame an application's evn
 cases, each labelled where it stands (a pointer with a top byte, the answers laid over a word the routine reads, a
 field poked to the edge of its width).
 
-A CALL THAT BLOCKS is held to the ROM's memory AT DSPTCH — and, WOKEN, by its tail: mwait's return, the cancel and
-the answers run in C over the ROM's own memory where the process resumes, held to the ROM's where its routine
-returns (`aes_evmulti.woken` says what that leaves unheld: the switch itself, and the target build's frame over it).
+A CALL THAT BLOCKS is held to the ROM's memory AT DSPTCH — and, WOKEN, as ONE RETURNING RUN: a row that switches
+(`aes_evmulti.WAKES`), the twin blocked and woken through the host's scheduler at Tier 1 and through OUR dispatcher
+on the bench, each wake priced on its own cycles.
 
 A ROM FINDING the cases pin, from ev_multi's side: THE BUTTONS IT ANSWERS ARE STALE unless a button event came. ev_rets
 runs BEFORE the aprets and hands out $c792, the high word of the last answer apret took IN AN EARLIER CALL — a
@@ -33,6 +33,7 @@ woken mouse wait's rectangle WIDTH. ev_multi stores the real buttons over it onl
 On the snapshot's own machine the screen manager's evnt_multi, asking for the buttons and its rectangle, answers
 buttons = 216 with no button down.
 """
+import collections
 import functools
 import re
 import struct
@@ -40,7 +41,8 @@ from pathlib import Path
 
 import pytest
 
-from harness import BASE_IMAGE, addrs, make_image
+from harness import BASE_IMAGE, addrs, bench_tier3, make_image
+from recreate_kit import rom_bench
 
 import aes
 import aes_evasync as evasync
@@ -48,6 +50,8 @@ import aes_event
 import aes_evlib as evlib
 import aes_evmulti as evm
 import aes_pdpipe
+import aes_switch
+import aes_switching as switching
 import case
 import opcodes
 from aes_evmulti import BUTTON, BUTTONS, CLICKS, EV_MULTI, EVERY_EVENT, KEY, KEYBD, M1, M2, MESAG, STALE, TIMER, Y, call
@@ -84,12 +88,6 @@ CASES_KEPT = 3                          # a test reads two cases at most; a grou
 def ran(table, name):
     """The case of a call of `aes_evmulti`'s tables, run once for the tests of that case (above)."""
     return evm.run(getattr(evm, table)[name])
-
-
-@functools.lru_cache(maxsize=CASES_KEPT)
-def woke(name):
-    """The woken case `name` of `aes_evmulti.WOKEN` (`aes_evmulti.woken`), likewise."""
-    return evm.woken(*evm.WOKEN[name])
 
 
 def word(image, at):
@@ -829,8 +827,13 @@ def test_a_timer_is_divided_by_the_tick_s_milliseconds_as_the_aes_holds_them():
     assert evasync.evb_of(poked_ran("the tick's milliseconds halved").image, timer)["PARM"] == 2 * evm.A_TIMER_TICKS
 
 
-# ---- A CALL THAT BLOCKED, WOKEN: the tail after a real wake (`aes_evmulti.woken`) ---------------------------------------------
-WOKEN_CAME = {
+# ---- A CALL THAT BLOCKED, WOKEN — ONE RETURNING RUN ON EVERY SHORE (`aes_evmulti.WAKES`: rows that switch) --------------------
+# Each wake is a REGISTERED ROW (`WOKEN_ROWS`, at the foot of this file): settled from the ROM's own run through its
+# dispatcher, held at Tier 1 by the twin through the host's scheduler with nothing dropped (`aes_switching.companion`),
+# and on each blob by the twin through OUR dispatcher — parked by our dsptch, disp and savestate on its own stack,
+# resumed inside our mwait — priced on its own cycles. Nothing lays memory under the twin.
+WRITER_WOKEN = MESAG                    # what a writer's wake answers when nothing else came
+WAKE_CAME = {
     "a key wakes: a key, none queued": KEYBD, "a press wakes: the button down, which is up": BUTTON,
     "a release wakes: the button up, which is down": BUTTON, "a double click wakes: a double click": BUTTON,
     "a single click wakes: a double click": BUTTON, "entering wakes: a rectangle the mouse is not in": M1,
@@ -850,128 +853,334 @@ WOKEN_CAME = {
     "the ticks wake: eight bits held, a message and a timer": TIMER,
     "a release wakes: every event, the button held": BUTTON,
     "a key wakes, the sent mark set: a key and a message": KEYBD,
-    "a writer wakes: a message, none in the pipe": MESAG, "a writer wakes: a message and a timer": MESAG,
-    "a writer and the ticks in one wake: a message and a timer": MESAG | TIMER,
-    "a writer wakes: a key and a message": MESAG, "a writer wakes: every event": MESAG,
-    "a writer and the ticks in one wake: every event": MESAG | TIMER,
-    "a writer and the ticks: eight bits held, a message and a timer": MESAG | TIMER,
-    "a writer and a key in one wake: a key and a message": KEYBD | MESAG,
-    "a writer, a key and the ticks in one wake: every event": KEYBD | MESAG | TIMER,
-    # ...the mouse is the WRITER's while it is on the bar: the desk's rectangle waits are not posted in that wake.
-    "a writer and the mouse into the rectangle: a rectangle and a message": MESAG,
-    "a writer, a key, a press, the mouse, the ticks: every event": KEYBD | MESAG | TIMER,
-    "a writer, the desk waiting for the bar's rectangle too": MESAG,
-    "a writer, then the mouse away: both rectangles and a message": MESAG,
+    "a writer wakes: a message, none in the pipe": WRITER_WOKEN,
+    "a writer wakes: a message and a timer not run out": WRITER_WOKEN,
+    "a writer and the press's ticks in one wake: a message and a timer": MESAG | TIMER,
+    "a writer wakes: a key and a message": WRITER_WOKEN,
+    "a writer wakes: every event, the timer not run out": WRITER_WOKEN,
+    "a writer and the press's ticks in one wake: every event": MESAG | TIMER,
+    "a writer and the press's ticks: eight bits held, a message and a timer": MESAG | TIMER,
+    "a writer, a key and the press's ticks in one wake: a key, a message and a timer": KEYBD | MESAG | TIMER,
+    "a writer, a key and the press's ticks in one wake: every event": KEYBD | MESAG | TIMER,
+    # ...the mouse is the WRITER's while its menu is down: the desk's rectangle waits are not posted in that wake.
+    "a writer and the mouse into the rectangle: a rectangle and a message": WRITER_WOKEN,
+    "a writer, a key, the mouse, the press's ticks: every event": KEYBD | MESAG | TIMER,
+    "a writer, the desk waiting for the bar's rectangle too": WRITER_WOKEN,
+    "a writer, then the mouse away: both rectangles and a message": WRITER_WOKEN,
+    evm.A_KEY_BEFORE_THE_WRITER_WRITES: KEYBD,
+    evm.A_WRITER_AND_A_KEY: KEYBD | MESAG,
+    evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN: KEYBD,
+    evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR: KEYBD,
+}
+# THE SCREEN MANAGER'S TURNS in a writer's wake, READ OFF THE ROM'S OWN RUN (each case's premise): entered at the
+# title, at the item and at the press — and once more after its write where the write is what wakes the desk; three
+# where the press's ticks had woken the desk before the press woke it; where a key IN THE PRESS'S IDLE wakes the desk
+# after the press (`aes_evmulti`: last in, first out) the desk runs before its third turn; a key polled AFTER the
+# press's forks ran wakes the desk behind the manager, which has its third turn — and writes — first; and a key polled
+# after the first move's leaves the manager the one turn that move woke it for.
+ITS_TURNS = {name: 4 for name in evm.WAKES_BY_A_WRITER} | {
+    name: 3 for name, came in WAKE_CAME.items() if name in evm.WAKES_BY_A_WRITER and came & TIMER} | {
+    evm.A_KEY_BEFORE_THE_WRITER_WRITES: 2, evm.A_WRITER_AND_A_KEY: 3, evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN: 1}
+tier3 = bench_tier3
+
+
+def premise_of(name):
+    """THE WAKE `name` AS ITS ROW'S PREMISE (`aes_switching.Premise`), out of the tables above: every delivery at the
+    idle — or the poll — the wake names, as many idles as it names, the desk the caller, the screen manager's turns
+    and then the desk, the events of WAKE_CAME answered."""
+    wake = evm.WAKES[name]
+    return switching.Premise(tuple(sorted(wake.at_idle)), len(wake.at_idle), SHELL,
+                             (SCREEN_MANAGER,) * ITS_TURNS.get(name, 0) + (SHELL,), WAKE_CAME[name],
+                             tuple(sorted(wake.at_polls or {})))
+
+
+Woke = collections.namedtuple("Woke", "before after came")
+
+
+@functools.lru_cache(maxsize=CASES_KEPT)
+def through_the_dispatcher(name):
+    """THE WAKE `name`, RUN AND HELD AT TIER 1 (`aes_switching.companion`): the twin, blocked and woken through the
+    host's scheduler — a foreign process's turn the ROM's own code — answers what the ROM's run through its own
+    dispatcher answers and leaves ITS image, every byte outside the run's own stack (a QPB's address in a freed EVB
+    vetted). A `Woke`: the machine the call was made over, THE TWIN'S OWN IMAGE where it returned
+    (`CompanionRun.image`: a test that reads an answer back reads what the C stored, whatever the companion left
+    out) and the events answered."""
+    held = switching.companion(WOKEN_ROWS[name])
+    return Woke(make_image(held.staged), held.image, held.answer & aes.WORD_MASK)
+
+
+def where_the_tail_begins(name):
+    """The ROM's memory where the woken process of the wake `name` — resumed, mwait returned — calls acancel: what
+    the tail of ev_multi finds. (Another process's own ev_multi reaches acancel too: the row's process's is kept.)"""
+    row, found = WOKEN_ROWS[name], []
+    made = switching.settled(row)
+
+    def at_acancel(memory):
+        if evasync.running(memory) & aes_event.OS_BUS_ADDR_MASK == made.switches.process:
+            found.append(bytes(memory[:addrs.ST_RAM_BYTES]))
+    watch = switching.the_rom_s(made.switches, addrs.AES_ROM_EV_MULTI, observing={addrs.AES_ROM_ACANCEL: at_acancel})
+    rom_bench.watched_original(make_image(made.pokes), addrs.AES_ROM_EV_MULTI, watch)
+    rom_bench.vet_the_run_just_made(f"the ROM's replay of {name}, observed where the tail begins")
+    resumed, = found
+    return resumed
+
+
+def test_every_wake_s_events_are_stated_and_every_wake_is_a_registered_row_that_switches():
+    assert WAKE_CAME.keys() == evm.WAKES.keys() == WOKEN_ROWS.keys() == PRICED.keys() == WHOLE_RUN.keys()
+    registered = {name for name, held in aes_event.SWITCHING_ROWS.items() if held.row.name == EV_MULTI}
+    assert registered == {switching.row_name(row) for row in WOKEN_ROWS.values()}
+    assert len(evm.WAKES_BY_AN_INTERRUPT) == 29 and len(evm.WAKES_BY_A_WRITER) == 13 and len(evm.WAKES_AT_A_POLL) == 2
+
+
+@pytest.mark.parametrize("name", evm.WAKES)
+def test_the_rom_s_own_run_of_a_wake_is_what_its_name_says(name):
+    """THE PREMISE, on the ROM's run through its own dispatcher over the row's settled machine: the call BLOCKS (the
+    run idles), every delivery is taken at the idle — or the poll that is no idle — the case names, the dispatcher
+    enters the screen manager as often as the case says and then the process that made the call — and its routine
+    returns the events of the name. The row carries that run's deliveries (`aes_switching.vet_the_premise`: the
+    settling changed nothing an interrupt reads or writes)."""
+    the_rom_s = switching.vet_the_premise(WOKEN_ROWS[name], premise_of(name))
+    assert the_rom_s.idles >= 1 and the_rom_s.polls > the_rom_s.idles, "it blocks: the machine idles, and polls on"
+
+
+@pytest.mark.parametrize("name", evm.WAKES)
+def test_a_call_blocked_and_woken_through_the_scheduler_returns_as_the_rom_s_does(name):
+    """TIER 1 OF A WAKE (`through_the_dispatcher`): the whole call in C — the waits queued, the block, mwait's return, the cancel of
+    the waits that did not come, ev_rets and the answers of those that did — through the host's scheduler: the events
+    answered and the whole image are the ROM's where its routine returns, nothing left out but the run's own stack.
+    WHAT THESE DO NOT HOLD, said: the OR of acancel's ANSWER into what arrived (`arrived |= aes_acancel(...)`,
+    `src/aes/evmulti.c`). In every woken machine a completed EVB's bit is in PD_EVFLG — mwait's answer — and
+    acancel's `kept` is those bits again: a twin that threw acancel's answer away passes all of them, as one that
+    threw mwait's away passes these and dies only by the labelled case `an event come that no wait holds`.
+    EQUIVALENT ON EVERY MACHINE THE ROM MAKES — NOCANCEL without COMPLETE never stands between two calls (`pdpipe.c`
+    sets it and completes the EVB in one routine) — and UNPINNED: what would tell the two apart is an EVB of the
+    mask marked "being served" and not complete at the tail, an argument-class machine no case here stages."""
+    assert through_the_dispatcher(name).came == WAKE_CAME[name]
+
+
+@pytest.mark.parametrize("name", evm.WAKES)
+def test_a_woken_call_is_parked_and_resumed_by_our_own_dispatcher_on_both_blobs(name, blob):
+    """THE SECOND DIFFERENTIAL OF THE REAL SWITCH, on each blob: the twin blocks in OUR mwait, our dsptch, disp and
+    savestate park GCC's frame on the process's own stack, the deliveries land at the idles (and the polls) the ROM's
+    run took them at, and the process is resumed inside our mwait — by our switchto, or, after the screen manager's
+    turns, by the ROM's dispatcher on both shores (ONE foreign window, equal to the cycle, no cycle of our build
+    inside). The image the ROM's but for the row's drops, the answer, every callee-saved register back, the whole
+    run's cycles pinned — and, where a message was waited for, the wait SEEN to name the ROM's QPB in the twin's own
+    frame while it was parked (`aes_switching.vet_our_qpbs`: it is through that frame another process's write lands)."""
+    _measured, watch, foreign = switching.vet_on_a_blob(blob, WOKEN_ROWS[name], premise_of(name), PRICED[name].windows,
+                                                        WHOLE_RUN[name])
+    assert foreign.windows == bool(ITS_TURNS.get(name, 0))
+    assert bool(watch.qpbs_seen) == bool(evm.WAKES[name].call.arguments[0] & MESAG)
+
+
+@pytest.mark.parametrize("name", evm.WAKES)
+def test_the_table_prices_a_woken_call_on_its_own_cycles(name):
+    """WHAT THE TABLE READS (`aes_switching.vet_the_table_s_price`): the row's OWN cycles — ours at the blob's PCs, the
+    ROM's in the AES's text less the screen manager's window — and THE CALLER'S OWN where its forks call a rebound
+    entry, both pinned and both under the bar with their thunks; the window itself, in neither column. A row that
+    moves says why."""
+    switching.vet_the_table_s_price(WOKEN_ROWS[name], PRICED[name])
+
+
+def test_every_wake_by_an_interrupt_is_of_a_call_held_at_dsptch():
+    """THE HALF BEFORE THE BLOCK HAS A SURFACE OF ITS OWN (`aes_event.switches_where_the_rom_does`: it says WHICH half
+    of a blocking call differs): for an interrupt's wake the very `Call` of NOTHING_COME (or that call with the mark
+    staged: below)."""
+    at_dsptch = {id(made) for made in evm.NOTHING_COME.values()}
+    assert all(id(wake.call) in at_dsptch for name, wake in evm.WAKES_BY_AN_INTERRUPT.items() if "the sent mark set" not in name)
+
+
+@pytest.mark.parametrize("name", [name for name, wake in evm.WAKES.items() if wake.call not in evm.NOTHING_COME.values()])
+def test_a_wake_over_a_machine_of_its_own_is_held_at_dsptch_too(name):
+    """...and a writer's case — its machine has the mark staged, some a frame no blocking case has — blocks as the
+    ROM's does over that very machine."""
+    assert isinstance(evm.run(evm.WAKES[name].call), evm.Switched)
+
+
+KINDS_OF_DROP = {       # what a woken row drops at Tier 3, by the events its call asks for
+    "the Line-F mask word": lambda flags: True, "the caller's saved context": lambda flags: True,
+    "the dispatcher's stack": lambda flags: True,
+    # adelay's and tchange's bracket: the call queues a timer
+    "spl7_save's SR save word": lambda flags: bool(flags & TIMER),
+    # the message wait's EVB, freed as it is — served or cancelled
+    "a QPB's address left in a freed EVB": lambda flags: bool(flags & MESAG),
 }
 
 
-def test_every_woken_call_s_events_are_stated():
-    assert WOKEN_CAME.keys() == evm.WOKEN.keys()
+def _kind_of(drop, uda):
+    lo, hi, why = drop
+    windows = {"the Line-F mask word": aes.LINE_F_MASK_WINDOW, "the caller's saved context": aes_switch.uda_context_drop(uda),
+               "the dispatcher's stack": aes_switch.DISPATCHER_STACK_DROP,
+               "spl7_save's SR save word": aes_event.sr_drops(aes.AES_SR_SPL)}
+    if why == aes_event.QPB_ADDRESS_WHY:
+        return "a QPB's address left in a freed EVB"
+    kind, = (kind for kind, ((low, high, _why),) in windows.items() if low <= lo and hi <= high)
+    return kind
 
 
-@pytest.mark.parametrize("name", evm.WOKEN)
-def test_a_call_that_blocked_and_is_woken_returns_as_the_rom_s_does(name):
-    """mwait's return, the cancel of the waits that did not come, ev_rets and the answers of those that did, in C
-    over the ROM's memory where the process resumes: the events answered and the whole image are the ROM's where its
-    routine returns (`aes_evmulti.woken`: but the ROM's own frames and save words, each vetted).
-    WHAT THESE DO NOT HOLD, said: the OR of acancel's ANSWER into what arrived (`arrived |= aes_acancel(...)`,
-    `src/aes/evmulti.c`). In every woken machine a completed EVB's bit is in PD_EVFLG — mwait's answer — and
-    acancel's `kept` is those bits again: a twin that threw acancel's answer away passes all of them (measured: 78
-    of 78, and the whole battery with its rows), as one that threw mwait's away passes these and dies only by the
-    labelled case below. EQUIVALENT ON EVERY MACHINE THE ROM MAKES — NOCANCEL without COMPLETE never stands between
-    two calls (`pdpipe.c` sets it and completes the EVB in one routine) — and UNPINNED: what would tell the two
-    apart is an EVB of the mask marked "being served" and not complete at the tail, an argument-class machine no
-    case here stages."""
-    assert woke(name).came == WOKEN_CAME[name]
-
-
-def test_every_call_woken_by_an_interrupt_is_one_held_at_dsptch():
-    """THE HALF BEFORE THE HOOK of a woken case is the same call's blocking case: for an interrupt's wake the very
-    `Call` of NOTHING_COME (or that call with the mark staged: below)."""
-    at_dsptch = {id(made) for made in evm.NOTHING_COME.values()}
-    assert all(id(wake.call) in at_dsptch for name, wake in evm.WOKEN_BY_AN_INTERRUPT.items() if "the sent mark set" not in name)
-
-
-@pytest.mark.parametrize("name", [name for name, wake in evm.WOKEN.items() if wake.call not in evm.NOTHING_COME.values()])
-def test_a_woken_call_over_a_machine_of_its_own_is_held_at_dsptch_too(name):
-    """...and a writer's case — its machine has the mark staged, some a frame no blocking case has — blocks as the
-    ROM's does over that very machine."""
-    assert isinstance(evm.run(evm.WOKEN[name].call), evm.Switched)
+@pytest.mark.parametrize("name", evm.WAKES)
+def test_what_a_woken_row_drops_is_what_differs_by_nature_and_nothing_else(name):
+    """THE DROPS ARE NAMED, NOT BLANKET — and fewer than the tail-only compare left out: no frame of the ROM's own
+    process stack, no window dropped whole. A woken row drops, each cut to the bytes the ROM's run stored: the Line-F
+    mask word, the caller's saved context and the dispatcher's stack (what a switch is), the mask bracket's save
+    word where the call queues a timer, and the one longword of a freed EVB that holds the message wait's QPB
+    address where it asks for a message — the QPB the twin's own (the running process's, sixteen bytes, the buffer)."""
+    row = WOKEN_ROWS[name]
+    made, flags = switching.settled(row), row.arguments[0]
+    uda = aes_event.uda_of(SHELL, make_image(made.pokes))
+    assert sorted({_kind_of(drop, uda) for drop in made.drops}) == sorted(kind for kind, asked in KINDS_OF_DROP.items() if asked(flags))
+    assert list(made.qpbs.values()) == [(evm.SHELL_PID, evm.MESSAGE_BYTES, MESSAGE_AT)] * bool(flags & MESAG)
+    assert all(hi - lo == LONG_BYTES for lo, hi, why in made.drops if why == aes_event.QPB_ADDRESS_WHY)
 
 
 @of_the_case("a key wakes: a key, none queued")
-def test_a_woken_key_wait_answers_the_key_it_was_posted():
+def test_a_key_wait_woken_through_the_dispatcher_answers_the_key_it_was_posted():
     """evremove kept the key in the wait's EVB; apret answers it into the fifth word, and nothing stays queued."""
-    woken = woke("a key wakes: a key, none queued")
-    answered = evm.answers(woken.image)
+    woken = through_the_dispatcher("a key wakes: a key, none queued")
+    answered = evm.answers(woken.after)
     assert answered[KEY] == aes_event.RETURN_KEY << 8 | ord("\r") and answered[CLICKS] == STALE
-    assert evasync.evlist(woken.image, SHELL) == [] and events(woken.image) == (0, 0, 0)
-    assert sorted(evasync.free_evbs(woken.image)) == sorted(evasync.free_evbs(before(evm.WOKEN["a key wakes: a key, none queued"].call)))
+    assert evasync.evlist(woken.after, SHELL) == [] and events(woken.after) == (0, 0, 0)
+    assert sorted(evasync.free_evbs(woken.after)) == sorted(evasync.free_evbs(woken.before))
 
 
 @pytest.mark.parametrize("name, buttons, clicks", (
     ("a press wakes: the button down, which is up", evm.LEFT, 1), ("a release wakes: the button up, which is down", 0, 1),
     ("a double click wakes: a double click", evm.LEFT, 2), ("a single click wakes: a double click", evm.LEFT, 1),
     ("a double click wakes: every event", evm.LEFT, 2)))
-def test_a_woken_button_wait_answers_its_clicks_and_the_buttons_apret_left(name, buttons, clicks):
+def test_a_button_wait_woken_through_the_dispatcher_answers_its_clicks_and_the_buttons_apret_left(name, buttons, clicks):
     """The clicks are apret's answer (its low word), the buttons its high word — left in $c792, read after."""
-    answered = evm.answers(woke(name).image)
+    answered = evm.answers(through_the_dispatcher(name).after)
     assert (answered[BUTTONS], answered[CLICKS]) == (buttons, clicks) and answered[KEY] == STALE
 
 
 @of_the_case("leaving wakes: a rectangle the mouse is to leave")
-def test_a_woken_mouse_wait_leaves_its_rectangle_s_width_where_the_buttons_are_handed_out():
+def test_a_mouse_wait_woken_through_the_dispatcher_leaves_its_rectangle_s_width_where_the_buttons_are_handed_out():
     """THE ROM FINDING's other half, made by the twin itself: the rectangle's apret parks the wait's high word — the
     rectangle's WIDTH — in $c792. This call answers the real buttons (no button event was asked for); the NEXT one
     that asks for the buttons and gets another event hands the width out."""
-    woken = woke("leaving wakes: a rectangle the mouse is to leave")
-    assert word(woken.image, BUTTON_STATE) == evm.ROUND_THE_MOUSE[2] != 0 and evm.answers(woken.image)[BUTTONS] == 0
-    assert evm.answers(woken.image)[:Y + 1] == list(mouse(woken.image)) == list(evasync.OUTSIDE)
+    woken = through_the_dispatcher("leaving wakes: a rectangle the mouse is to leave")
+    assert word(woken.after, BUTTON_STATE) == evm.ROUND_THE_MOUSE[2] != 0 and evm.answers(woken.after)[BUTTONS] == 0
+    assert evm.answers(woken.after)[:Y + 1] == list(mouse(woken.after)) == list(evasync.OUTSIDE)
 
 
 @of_the_case("a press, then entering, in one idle: the buttons and a rectangle")
-def test_the_buttons_of_a_woken_button_wait_are_read_before_the_next_wait_is_answered():
+def test_of_two_waits_woken_in_one_idle_the_buttons_are_read_before_the_rectangle_s_wait_is_answered():
     """Two waits come in one wake: the buttons' apret leaves the button in $c792, which is stored in the third answer
     BEFORE the rectangle's apret leaves its width there."""
-    woken = woke("a press, then entering, in one idle: the buttons and a rectangle")
-    assert evm.answers(woken.image)[BUTTONS] == evm.LEFT and word(woken.image, BUTTON_STATE) == evm.ELSEWHERE[2]
+    woken = through_the_dispatcher("a press, then entering, in one idle: the buttons and a rectangle")
+    assert evm.answers(woken.after)[BUTTONS] == evm.LEFT and word(woken.after, BUTTON_STATE) == evm.ELSEWHERE[2]
 
 
 @of_the_case("a writer wakes: a message, none in the pipe")
-def test_a_message_another_process_wrote_wakes_the_call_and_clears_the_sent_mark():
-    """The screen manager's own appl_write served the parked wait THROUGH THE QPB OF THE WAITING CALL'S FRAME: the
-    message is in the buffer where the process resumes, its pipe empty. The tail answers the message's wait and —
-    the one place on the wait path — clears the control manager's mark."""
-    woken = woke("a writer wakes: a message, none in the pipe")
-    assert bytes(woken.resumed[MESSAGE_AT:MESSAGE_AT + evm.MESSAGE_BYTES]) == evlib.A_MESSAGE and pipe(woken.resumed) == b""
-    assert word(woken.resumed, SENT_MARK) == 1 and word(woken.image, SENT_MARK) == 0
-    assert evasync.evlist(woken.image, SHELL) == [] and evasync.wait_list(woken.image, SHELL + aes.PD_QUEUE_READERS) == []
+def test_the_screen_manager_s_own_message_wakes_the_call_and_the_tail_clears_the_sent_mark():
+    """The screen manager's own appl_write — its menu's selection — served the parked wait THROUGH THE QPB OF THE
+    WAITING CALL'S FRAME: the message is in the buffer where the process resumes, its pipe empty, the mark as it was
+    staged. The tail answers the message's wait and — the one place on the wait path — clears the control manager's
+    mark."""
+    resumed, woken = where_the_tail_begins("a writer wakes: a message, none in the pipe"), through_the_dispatcher("a writer wakes: a message, none in the pipe")
+    assert bytes(resumed[MESSAGE_AT:MESSAGE_AT + evm.MESSAGE_BYTES]) == evlib.A_MESSAGE and pipe(resumed) == b""
+    assert bytes(woken.before[MESSAGE_AT:MESSAGE_AT + evm.MESSAGE_BYTES]) == evm.STALE_MESSAGE[MESSAGE_AT]
+    assert word(resumed, SENT_MARK) == 1 and word(woken.after, SENT_MARK) == 0
+    assert evasync.evlist(woken.after, SHELL) == [] and evasync.wait_list(woken.after, SHELL + aes.PD_QUEUE_READERS) == []
 
 
 @of_the_case("a key wakes, the sent mark set: a key and a message")
-def test_a_woken_call_no_message_came_for_leaves_the_sent_mark():
+def test_a_call_woken_by_a_key_with_no_message_come_leaves_the_sent_mark():
     """...a message asked for, a key come: the message's wait is cancelled, and the mark stays."""
-    woken = woke("a key wakes, the sent mark set: a key and a message")
-    assert word(woken.image, SENT_MARK) == 1 and evasync.wait_list(woken.image, SHELL + aes.PD_QUEUE_READERS) == []
+    woken = through_the_dispatcher("a key wakes, the sent mark set: a key and a message")
+    assert word(woken.after, SENT_MARK) == 1 and evasync.wait_list(woken.after, SHELL + aes.PD_QUEUE_READERS) == []
 
 
-@of_the_case("a writer and the ticks in one wake: a message and a timer")
-def test_a_message_and_a_timer_come_in_one_wake_are_answered_message_first():
-    """Both waits come — a writer AND the ticks before the dispatcher runs the process again: each apret puts its
-    EVB back at the head of the free list, so the list begins with the timer's, then the message's."""
-    made = evm.WOKEN["a writer and the ticks in one wake: a message and a timer"].call
-    message, timer = taken(before(made), 2)
-    woken = woke("a writer and the ticks in one wake: a message and a timer")
-    assert evasync.free_evbs(woken.image)[:2] == [timer, message] and evasync.completed(woken.image) == []
+@of_the_case(evm.A_KEY_BEFORE_THE_WRITER_WRITES)
+def test_a_key_typed_with_the_press_wakes_the_desk_before_the_writer_writes():
+    """A ROM FACT OF THE REAL CHAIN, pinned (`aes_evmulti`: the woken list is last in, first out, and a key that
+    arrives in the press's own idle is that idle's last fork): Return typed in the idle the press is delivered at, a
+    key and a message asked for. The press wakes the screen manager, the key then the desk — which runs FIRST: it
+    answers the key alone, its message wait CANCELLED, the buffer and the mark untouched, while the screen manager —
+    its menu's selection not yet sent — has had two turns, not four. TRUE OF A KEY IN THAT IDLE, AND NO FURTHER: one
+    that arrives a poll later is answered WITH the message (the next test)."""
+    woken = through_the_dispatcher(evm.A_KEY_BEFORE_THE_WRITER_WRITES)
+    assert woken.came == KEYBD and evm.answers(woken.after)[KEY] == aes_event.RETURN_KEY << 8 | ord("\r")
+    assert bytes(woken.after[MESSAGE_AT:MESSAGE_AT + evm.MESSAGE_BYTES]) == evm.STALE_MESSAGE[MESSAGE_AT]
+    assert word(woken.after, SENT_MARK) == 1 and evasync.wait_list(woken.after, SHELL + aes.PD_QUEUE_READERS) == []
+    assert word(woken.after, SCREEN_MANAGER + aes.PD_STAT) != aes.PD_STAT_WAITING, "the screen manager is ready: its press came"
+
+
+def _stood_at_the_poll(name):
+    """`(the process ready, the one woken, the forks queued)` where the ROM's own run of the wake `name` took its
+    delivery at a poll that is no idle (`aes_switch.what_idle_tests`, kept with the delivery's `found`)."""
+    (found, _wrote), = switching.settled(WOKEN_ROWS[name]).switches.at_polls.values()
+    return (int.from_bytes(found[aes.AES_RLR], "big"), int.from_bytes(found[aes.AES_DRL], "big"),
+            int.from_bytes(found[aes.AES_FORK_COUNT], "big"))
+
+
+@of_the_case(evm.A_WRITER_AND_A_KEY)
+def test_a_key_polled_after_the_press_s_forks_ran_is_answered_with_the_writer_s_message():
+    """A KEY AND A MESSAGE IN ONE WAKE, NOTHING ELSE ($11) — the wake the case above does not make, made by the same
+    chain with the key ONE POLL LATER: the press's forks have run, the screen manager stands WOKEN (not ready yet,
+    nothing queued: the premise, read off the ROM's run) and idle polls the keyboard again before it moves it. The
+    key's wake of the desk is then behind the manager's: the manager has its third turn and writes, and the desk
+    answers both — the key in the fifth word, the message in its buffer, the mark cleared, no wait of its left."""
+    assert _stood_at_the_poll(evm.A_WRITER_AND_A_KEY) == (0, SCREEN_MANAGER, 0)
+    woken = through_the_dispatcher(evm.A_WRITER_AND_A_KEY)
+    assert woken.came == KEYBD | MESAG and evm.answers(woken.after)[KEY] == aes_event.RETURN_KEY << 8 | ord("\r")
+    assert bytes(woken.after[MESSAGE_AT:MESSAGE_AT + evm.MESSAGE_BYTES]) == evlib.A_MESSAGE
+    assert word(woken.before, SENT_MARK) == 1 and word(woken.after, SENT_MARK) == 0
+    assert evasync.evlist(woken.after, SHELL) == [] and evasync.wait_list(woken.after, SHELL + aes.PD_QUEUE_READERS) == []
+
+
+@of_the_case(evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN)
+def test_a_key_polled_by_our_own_idle_while_the_manager_stands_woken_is_answered_after_its_turn():
+    """THE SAME POLL ON OUR OWN DISPATCHER (the first move's: no process has run since the desk blocked, so the idle
+    that polls is the row's own build's on a blob and the C scheduler's on the host). The manager stands woken where
+    the key is laid — the delivery is REFUSED on a shore whose idle moved the woken before it polled — it has its
+    one turn, and the desk answers the key alone; the menu the manager dropped is its own affair."""
+    assert _stood_at_the_poll(evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN) == (0, SCREEN_MANAGER, 0)
+    woken = through_the_dispatcher(evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN)
+    assert woken.came == KEYBD and evm.answers(woken.after)[KEY] == aes_event.RETURN_KEY << 8 | ord("\r")
+    assert evasync.wait_list(woken.after, SHELL + aes.PD_QUEUE_READERS) == [] and evasync.evlist(woken.after, SHELL) == []
+
+
+@of_the_case(evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR)
+def test_two_processes_woken_in_one_idle_are_both_moved_to_the_ready_list_in_one_pass():
+    """THE MOVE WAKES THE SCREEN MANAGER, THE KEY THE DESK, in one idle: forker runs both forks, and idle moves BOTH
+    woken processes before the dispatcher enters one — the desk first (the woken list is last in, first out), the
+    manager READY behind it, nothing left woken. (An idle that moved one a turn would leave the manager on the woken
+    list where the call returns.)"""
+    woken = through_the_dispatcher(evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR)
+    assert woken.came == KEYBD and case.long_in(woken.after, aes.AES_DRL) == 0
+    assert evasync.running(woken.after) & aes_event.OS_BUS_ADDR_MASK == SHELL
+    assert case.long_in(woken.after, SHELL + aes.PD_LINK) & aes_event.OS_BUS_ADDR_MASK == SCREEN_MANAGER
+    assert word(woken.after, SCREEN_MANAGER + aes.PD_STAT) == aes.PD_STAT_READY
+
+
+@of_the_case("a writer and the press's ticks in one wake: a message and a timer")
+def test_a_message_and_a_timer_come_in_one_wake_through_the_menu_are_answered_message_first():
+    """Both waits come — the press's ticks run the timer out, then the writer writes, before the dispatcher runs the
+    process again: each apret puts its EVB back at the head of the free list, so the list begins with the timer's,
+    then the message's."""
+    woken = through_the_dispatcher("a writer and the press's ticks in one wake: a message and a timer")
+    message, timer = taken(woken.before, 2)
+    assert evasync.free_evbs(woken.after)[:2] == [timer, message] and evasync.evlist(woken.after, SHELL) == []
+
+
+@of_the_case("a writer wakes: a message and a timer not run out")
+def test_a_press_brings_the_ticks_of_its_click_count_and_a_longer_timer_has_not_come():
+    """THE PREMISE OF "THE PRESS'S TICKS" (`aes_evmulti`): the machine counts a double-click wait (AES_GL_BPEND), so
+    the menu's press opens a click count of AES_GL_DCLICK ticks and runs it out — more ticks than A_TIMER_MS, fewer
+    than A_LONG_TIMER_MS: the long timer's wait is CANCELLED, its EVB freed, where the short one's is answered."""
+    woken = through_the_dispatcher("a writer wakes: a message and a timer not run out")
+    click_ticks = word(woken.before, aes.AES_GL_DCLICK)
+    assert word(woken.before, BPEND) and evm.A_TIMER_TICKS <= click_ticks < evm.A_LONG_TIMER_MS // evm.TICK_MS
+    assert evasync.wait_list(woken.after, EV["AES_DELAY_LIST"]) == [] and evasync.evlist(woken.after, SHELL) == []
 
 
 @of_the_case("a key wakes: every event")
-def test_the_waits_of_a_woken_call_that_did_not_come_are_cancelled():
+def test_the_waits_that_did_not_come_are_cancelled_after_the_wake():
     """Six waits queued, the key's come: the five others are taken off their lists and freed — the double-click
     wait's count left as it stands (the lists' finding)."""
-    made = evm.WOKEN["a key wakes: every event"].call
-    image, woken = before(made), woke("a key wakes: every event")
-    final = woken.image
+    woken = through_the_dispatcher("a key wakes: every event")
+    image, final = woken.before, woken.after
     cda = case.long_in(final, aes.AES_GL_CDA)
     assert sorted(evasync.free_evbs(final)) == sorted(evasync.free_evbs(image)) and evasync.evlist(final, SHELL) == []
     assert all(evasync.wait_list(final, at) == [] for at in (
@@ -980,23 +1189,13 @@ def test_the_waits_of_a_woken_call_that_did_not_come_are_cancelled():
     assert events(final) == (0, 0, 0) and word(final, BPEND) == word(image, BPEND) + 1
 
 
-@of_the_case("a writer and the ticks: eight bits held, a message and a timer")
-def test_woken_event_bits_above_the_low_byte_are_answered_as_words():
+@of_the_case("a writer and the press's ticks: eight bits held, a message and a timer")
+def test_event_bits_above_the_low_byte_woken_through_the_menu_are_answered_as_words():
     """AN ARGUMENT-CLASS MACHINE (the ROM's own iasync, eight waits of no kind): the message's and the timer's waits
     hold the bits $100 and $200; both come, both answered, the eight still held."""
-    woken = woke("a writer and the ticks: eight bits held, a message and a timer")
-    assert events(woken.resumed)[2] == THE_NINTH_AND_TENTH_BITS and events(woken.image) == (EIGHT_BITS_HELD, 0, 0)
-
-
-@of_the_case("a writer, a key and the ticks in one wake: every event")
-def test_what_a_woken_case_leaves_out_is_the_rom_s_own_frames_and_save_words_alone():
-    """THE DROPS ARE VETTED, NOT BLANKET: what `woken` left out of the compare lies in the resumed process's own UDA,
-    the Line-F mask word or an SR save word — and only where the ROM's run stored after the resume."""
-    woken = woke("a writer, a key and the ticks in one wake: every event")
-    uda = range(aes.AES_THEGLO, aes.AES_UDA1)
-    assert woken.by_nature and all(at in uda or at in aes_event.LINE_F_MASK_BYTES or at in aes_event.SR_SAVE_BYTES
-                                   for at in woken.by_nature)
-    assert all(woken.final[at] != woken.resumed[at] == woken.image[at] for at in woken.by_nature)
+    name = "a writer and the press's ticks: eight bits held, a message and a timer"
+    assert events(where_the_tail_begins(name))[2] == THE_NINTH_AND_TENTH_BITS
+    assert events(through_the_dispatcher(name).after) == (EIGHT_BITS_HELD, 0, 0)
 
 
 # ---- no word an interrupt writes ------------------------------------------------------------------------------------------
@@ -1042,8 +1241,8 @@ def test_the_twin_names_the_globals_the_rom_s_routine_names_and_no_other():
 
 
 # ---- the registry: Tier 3's rows -----------------------------------------------------------------------------------------
-# NO ROW: a call that blocks (a row's run returns: Tier 1, at dsptch, and woken — its tail's cycles wait for a switch
-# both builds can run).
+# A CALL THAT BLOCKS IS A ROW WHERE IT IS WOKEN — a row that switches (`WOKEN_ROWS`, at the foot of this file); one
+# nothing wakes has no run that returns, and is held at dsptch (Tier 1).
 # EVERY RETURNING CALL of the tables was priced as a row would be; each SHAPE's worst is registered, the dearest
 # first. THE ROUTINE'S WORST is the fork queue full of moves (0.87; 0.92 with the glue): the ratio climbs with the
 # entries forker runs — one move 0.81, three 0.83, five 0.84, fifteen 0.87.
@@ -1104,3 +1303,207 @@ def _registered():
 
 
 _registered()
+
+
+# ---- the registry: the rows that switch (`aes_evmulti.WAKES`) ---------------------------------------------------------------
+# EVERY WAKE IS A ROW (`aes_switching.register`): the table, the sweeps, the companion's case and STATUS's pin pick
+# it up. PRICED (`aes_switching.Priced`): what the table prices each on (`tier3.measure`, the shipped blob) — each
+# shore's OWN cycles (ours, the ROM's: the screen manager's window in neither), THE CALLER'S OWN and the calls of
+# rebound entries it is net of where the run makes one (ELEVEN rows: bchange's post_button under our forker, as the
+# press family's rows above; ONE_COUNT for the rest), and the row's foreign window. Own 0.65..0.72, 0.68..0.77 with
+# the thunks: the dispatcher's `.S` is the ROM's bytes less its Line-F traps, so a switch pulls a row DOWN.
+# WHOLE_RUN: the second differential's own measurement on each blob (`aes_switching.measured_on`), the ROM's cycles
+# and ours net of the entry both share. A row that moves says why.
+Premise, Priced, NO_WINDOW, ONE_COUNT = switching.Premise, switching.Priced, switching.NO_WINDOW, (None, None)
+BENCH, SHIPPED = "bench", "bench_shipped"
+PRICED = {
+    "a key wakes: a key, none queued":
+        Priced((14670, 21704), *ONE_COUNT, NO_WINDOW),
+    "a press wakes: the button down, which is up":
+        Priced((16786, 24928), (15256, 21578), 1, NO_WINDOW),
+    "a release wakes: the button up, which is down":
+        Priced((16080, 23920), (14550, 20570), 1, NO_WINDOW),
+    "a double click wakes: a double click":
+        Priced((16876, 24992), (15284, 21596), 1, NO_WINDOW),
+    "a single click wakes: a double click":
+        Priced((18134, 26274), (16274, 22480), 2, NO_WINDOW),
+    "entering wakes: a rectangle the mouse is not in":
+        Priced((19754, 27396), *ONE_COUNT, NO_WINDOW),
+    "leaving wakes: a rectangle the mouse is to leave":
+        Priced((19886, 27562), *ONE_COUNT, NO_WINDOW),
+    "entering wakes: the second rectangle alone":
+        Priced((19786, 27420), *ONE_COUNT, NO_WINDOW),
+    "leaving wakes: two rectangles":
+        Priced((26108, 37524), *ONE_COUNT, NO_WINDOW),
+    "the ticks wake: a timer":
+        Priced((15196, 21698), *ONE_COUNT, NO_WINDOW),
+    "a tick wakes: a timer of less than a tick":
+        Priced((15006, 21508), *ONE_COUNT, NO_WINDOW),
+    "a key wakes: a key and a message":
+        Priced((17972, 27466), *ONE_COUNT, NO_WINDOW),
+    "the ticks wake: a message and a timer":
+        Priced((18522, 27460), *ONE_COUNT, NO_WINDOW),
+    "a key wakes: a key and the buttons":
+        Priced((17976, 27562), *ONE_COUNT, NO_WINDOW),
+    "a press wakes: a key and the buttons":
+        Priced((19422, 29170), (17892, 25820), 1, NO_WINDOW),
+    "a key and a press in one idle: a key and the buttons":
+        Priced((21606, 33358), (20076, 30008), 1, NO_WINDOW),
+    "a press wakes: the buttons and a rectangle":
+        Priced((20824, 31080), (19294, 27730), 1, NO_WINDOW),
+    "a press, then entering, in one idle: the buttons and a rectangle":
+        Priced((25948, 38168), (24418, 34818), 1, NO_WINDOW),
+    "a key wakes: every event":
+        Priced((33810, 51490), *ONE_COUNT, NO_WINDOW),
+    "a double click wakes: every event":
+        Priced((37378, 56750), (35822, 53348), 1, NO_WINDOW),
+    "leaving wakes: every event":
+        Priced((39578, 58940), *ONE_COUNT, NO_WINDOW),
+    "entering wakes: every event":
+        Priced((39578, 58940), *ONE_COUNT, NO_WINDOW),
+    "the ticks wake: every event":
+        Priced((33686, 50908), *ONE_COUNT, NO_WINDOW),
+    "a key, a double click, leaving and the ticks in one idle: every event":
+        Priced((47180, 72062), (45624, 68660), 1, NO_WINDOW),
+    "a key wakes: eight bits held, a key, the buttons, two rectangles":
+        Priced((29900, 43172), *ONE_COUNT, NO_WINDOW),
+    "the ticks wake: eight bits held, a message and a timer":
+        Priced((20472, 29092), *ONE_COUNT, NO_WINDOW),
+    "a release wakes: every event, the button held":
+        Priced((34522, 52072), (32992, 48722), 1, NO_WINDOW),
+    "a key wakes, the sent mark set: a key and a message":
+        Priced((17972, 27466), *ONE_COUNT, NO_WINDOW),
+    "a writer wakes: a message, none in the pipe":
+        Priced((17324, 25028), *ONE_COUNT, (1, 1139762, 278034)),
+    "a writer wakes: a message and a timer not run out":
+        Priced((20634, 29846), *ONE_COUNT, (1, 1139762, 278034)),
+    "a writer and the press's ticks in one wake: a message and a timer":
+        Priced((20996, 30306), *ONE_COUNT, (1, 1131220, 276254)),
+    "a writer wakes: a key and a message":
+        Priced((19970, 29270), *ONE_COUNT, (1, 1139762, 278034)),
+    "a writer wakes: every event, the timer not run out":
+        Priced((35828, 53312), *ONE_COUNT, (1, 1139762, 278034)),
+    "a writer and the press's ticks in one wake: every event":
+        Priced((36190, 53772), *ONE_COUNT, (1, 1131220, 276254)),
+    "a writer and the press's ticks: eight bits held, a message and a timer":
+        Priced((22956, 31938), *ONE_COUNT, (1, 1131220, 276254)),
+    "a writer, a key and the press's ticks in one wake: a key, a message and a timer":
+        Priced((24224, 35212), *ONE_COUNT, (1, 1135928, 279942)),
+    "a writer, a key and the press's ticks in one wake: every event":
+        Priced((36688, 54366), *ONE_COUNT, (1, 1135928, 279942)),
+    "a writer and the mouse into the rectangle: a rectangle and a message":
+        Priced((21368, 31180), *ONE_COUNT, (1, 1146706, 285068)),
+    "a writer, a key, the mouse, the press's ticks: every event":
+        Priced((36688, 54366), *ONE_COUNT, (1, 1142914, 287018)),
+    "a writer, the desk waiting for the bar's rectangle too":
+        Priced((21540, 31380), *ONE_COUNT, (1, 1139762, 278034)),
+    "a writer, then the mouse away: both rectangles and a message":
+        Priced((25758, 37728), *ONE_COUNT, (1, 1150402, 286746)),
+    evm.A_KEY_BEFORE_THE_WRITER_WRITES:
+        Priced((19966, 29342), *ONE_COUNT, (1, 954308, 240372)),
+    evm.A_WRITER_AND_A_KEY:
+        Priced((20382, 29772), *ONE_COUNT, (1, 1142416, 279668)),
+    evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN:
+        Priced((24294, 36578), *ONE_COUNT, (1, 789254, 148618)),
+    evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR:
+        Priced((18694, 27944), *ONE_COUNT, NO_WINDOW),
+}
+WHOLE_RUN = {
+    "a key wakes: a key, none queued":
+        {BENCH: (43010, 37094), SHIPPED: (43010, 36904)},
+    "a press wakes: the button down, which is up":
+        {BENCH: (45214, 38188), SHIPPED: (45214, 38000)},
+    "a release wakes: the button up, which is down":
+        {BENCH: (44206, 37482), SHIPPED: (44206, 37294)},
+    "a double click wakes: a double click":
+        {BENCH: (45278, 38278), SHIPPED: (45278, 38090)},
+    "a single click wakes: a double click":
+        {BENCH: (46560, 39534), SHIPPED: (46560, 39348)},
+    "entering wakes: a rectangle the mouse is not in":
+        {BENCH: (51718, 45632), SHIPPED: (51718, 45296)},
+    "leaving wakes: a rectangle the mouse is to leave":
+        {BENCH: (51884, 45764), SHIPPED: (51884, 45428)},
+    "entering wakes: the second rectangle alone":
+        {BENCH: (51742, 45664), SHIPPED: (51742, 45328)},
+    "leaving wakes: two rectangles":
+        {BENCH: (61846, 52982), SHIPPED: (61846, 51858)},
+    "the ticks wake: a timer":
+        {BENCH: (41984, 36478), SHIPPED: (41984, 36502)},
+    "a tick wakes: a timer of less than a tick":
+        {BENCH: (41794, 36274), SHIPPED: (41794, 36312)},
+    "a key wakes: a key and a message":
+        {BENCH: (48772, 41054), SHIPPED: (48772, 40306)},
+    "the ticks wake: a message and a timer":
+        {BENCH: (47746, 40462), SHIPPED: (47746, 39928)},
+    "a key wakes: a key and the buttons":
+        {BENCH: (48868, 41058), SHIPPED: (48868, 40310)},
+    "a press wakes: a key and the buttons":
+        {BENCH: (49456, 41482), SHIPPED: (49456, 40736)},
+    "a key and a press in one idle: a key and the buttons":
+        {BENCH: (54664, 44682), SHIPPED: (54664, 43940)},
+    "a press wakes: the buttons and a rectangle":
+        {BENCH: (51366, 43226), SHIPPED: (51366, 42246)},
+    "a press, then entering, in one idle: the buttons and a rectangle":
+        {BENCH: (62490, 52478), SHIPPED: (62490, 51590)},
+    "a key wakes: every event":
+        {BENCH: (72796, 60088), SHIPPED: (72796, 56852)},
+    "a double click wakes: every event":
+        {BENCH: (77036, 62628), SHIPPED: (77036, 59400)},
+    "leaving wakes: every event":
+        {BENCH: (83262, 68964), SHIPPED: (83262, 65820)},
+    "entering wakes: every event":
+        {BENCH: (83262, 68964), SHIPPED: (83262, 65820)},
+    "the ticks wake: every event":
+        {BENCH: (71194, 58942), SHIPPED: (71194, 55708)},
+    "a key, a double click, leaving and the ticks in one idle: every event":
+        {BENCH: (97404, 77570), SHIPPED: (97404, 74442)},
+    "a key wakes: eight bits held, a key, the buttons, two rectangles":
+        {BENCH: (64478, 54982), SHIPPED: (64478, 52650)},
+    "the ticks wake: eight bits held, a message and a timer":
+        {BENCH: (49378, 42412), SHIPPED: (49378, 41878)},
+    "a release wakes: every event, the button held":
+        {BENCH: (72358, 59778), SHIPPED: (72358, 56544)},
+    "a key wakes, the sent mark set: a key and a message":
+        {BENCH: (48772, 41054), SHIPPED: (48772, 40306)},
+    "a writer wakes: a message, none in the pipe":
+        {BENCH: (1187094, 1180554), SHIPPED: (1187094, 1180410)},
+    "a writer wakes: a message and a timer not run out":
+        {BENCH: (1191912, 1184402), SHIPPED: (1191912, 1183912)},
+    "a writer and the press's ticks in one wake: a message and a timer":
+        {BENCH: (1183830, 1176222), SHIPPED: (1183830, 1175732)},
+    "a writer wakes: a key and a message":
+        {BENCH: (1191336, 1183858), SHIPPED: (1191336, 1183156)},
+    "a writer wakes: every event, the timer not run out":
+        {BENCH: (1215378, 1202912), SHIPPED: (1215378, 1199722)},
+    "a writer and the press's ticks in one wake: every event":
+        {BENCH: (1207296, 1194732), SHIPPED: (1207296, 1191542)},
+    "a writer and the press's ticks: eight bits held, a message and a timer":
+        {BENCH: (1185462, 1178182), SHIPPED: (1185462, 1177692)},
+    "a writer, a key and the press's ticks in one wake: a key, a message and a timer":
+        {BENCH: (1193444, 1184816), SHIPPED: (1193444, 1183768)},
+    "a writer, a key and the press's ticks in one wake: every event":
+        {BENCH: (1212598, 1199938), SHIPPED: (1212598, 1196748)},
+    "a writer and the mouse into the rectangle: a rectangle and a message":
+        {BENCH: (1200190, 1192542), SHIPPED: (1200190, 1191606)},
+    "a writer, a key, the mouse, the press's ticks: every event":
+        {BENCH: (1219584, 1206924), SHIPPED: (1219584, 1203734)},
+    "a writer, the desk waiting for the bar's rectangle too":
+        {BENCH: (1193446, 1185770), SHIPPED: (1193446, 1184834)},
+    "a writer, then the mouse away: both rectangles and a message":
+        {BENCH: (1210434, 1201628), SHIPPED: (1210434, 1199900)},
+    evm.A_KEY_BEFORE_THE_WRITER_WRITES:
+        {BENCH: (1005954, 998400), SHIPPED: (1005954, 997698)},
+    evm.A_WRITER_AND_A_KEY:
+        {BENCH: (1194492, 1186924), SHIPPED: (1194492, 1186222)},
+    evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN:
+        {BENCH: (855918, 845608), SHIPPED: (855918, 845030)},
+    evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR:
+        {BENCH: (51268, 43178), SHIPPED: (51268, 43038)},
+}
+
+
+def _registered_wakes():
+    return {name: switching.register_row(evm.switching_row(name)) for name in evm.WAKES}
+
+
+WOKEN_ROWS = _registered_wakes()

@@ -777,7 +777,7 @@ def test_ev_dclick_with_a_rate_outside_the_table_reads_the_rom_round_it(rate):
 # ev_block 0.56..0.70, ap_rdwr 0.56..0.69, ev_keybd 0.57, ev_button 0.55, ev_mouse 0.60, ev_mesag 0.60..0.69,
 # ev_rets 0.88..0.91, ev_mchk 0.38..0.67, ev_dclick 0.40..0.81. A pipe's worst is the READ OF A FULL ONE — aqueue
 # moves the seven messages behind the one taken — by a hair over the read that also serves a waiting writer.
-# NO ROW: ev_timer (a delay never returns in one run: Tier 1, at dsptch).
+# NO RETURNING ROW: ev_timer (a delay never returns without the dispatcher: its rows are the ones that switch, below).
 SERVES_A_WRITER = evlib.SERVES_A_WRITER
 A_FULL_PIPE = "appl_read of a full pipe"
 ROWS = (
@@ -810,3 +810,51 @@ THROUGH_LINE_F = {routine: next(row[1:] for row in ROWS if row[2] == routine) fo
 
 
 evasync.register_rows(evlib.at, evlib.register, ROWS, THROUGH_LINE_F.values())
+
+
+# ---- the registry: the rows THAT SWITCH -----------------------------------------------------------------------------------
+# A WAIT BLOCKED AND WOKEN is one returning run through the dispatcher on both shores (`aes_switching`), and a priced
+# row. Every blocked arrival's woken counterpart was priced as a row would be (`test_aes_evlib_woken.py` holds each at
+# Tier 1); registered: ev_block under each of its seven codes (its key's and its delay's are the pilots',
+# `test_aes_evdisp_model.py`), and each single wait's worst and its other shapes. Own ratios 0.62..0.71 (0.65..0.75
+# with their thunks); the single waits are door users of ev_block's twin, held on two counts (the caller's own
+# 0.31..0.78).
+A_DOUBLE_CLICK, A_PRESS = "evnt_button for a double click", "evnt_button for a press"
+LEAVING = "evnt_mouse to leave the rectangle the mouse is in"
+THE_READ_WOKEN = "a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)"
+THE_WRITE_FREED = "the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read"
+THE_LOCK_WAITED_FOR = "a wait for the lock the screen manager's menu holds, blocked; handed it when the menu lets go"
+THE_MANAGER_QUEUES_ITSELF = "a wait for a key, the lock the desk's; the screen manager queues itself on the lock; then Return"
+THE_MANAGER_RUNS_WITH_THE_LOCK = "a wait for a key; the screen manager, handed the lock, runs with it; then Return"
+# ev_timer DIVIDES its milliseconds by the tick's and DROPS THE REMAINDER: a tick and a half is one tick's wait — it
+# runs out with the first tick, where two ticks' does not. (A time shorter than a tick is no time: the same run as
+# the row above it, to the cycle — held at Tier 1 by `test_aes_evlib_woken.py`, not priced twice.)
+THE_REMAINDER_DROPPED = "a time of a tick and a half, blocked; run out by ONE tick: the remainder is dropped"
+A_TICK_AND_A_HALF_MS, HALF_A_TICK_MS = 3 * TICK_MS // 2, TICK_MS // 2
+WOKEN_ROWS = evlib.register_woken((
+    evlib.woken_at("a wait for a double click, blocked; woken by the two presses", A_DOUBLE_CLICK, EV_BLOCK),
+    evlib.woken_at("a wait to leave a rectangle, blocked; woken by the mouse leaving it", LEAVING, EV_BLOCK),
+    evlib.woken_at(THE_READ_WOKEN, "appl_read, none", EV_BLOCK),
+    evlib.woken_over(THE_WRITE_FREED, EV_BLOCK, (evlib.WRITE, evlib.QPB_AT), evlib.the_manager_writing_to_a_full_pipe, {}),
+    evlib.woken_over(THE_LOCK_WAITED_FOR, EV_BLOCK, (evlib.MUTEX, evlib.WIND_SPB), evlib.the_manager_s_menu_holds_the_lock,
+                     evlib.THE_MENU_LET_GO),
+    evlib.woken_over(THE_MANAGER_QUEUES_ITSELF, EV_BLOCK, evlib.A_KEY_S_WAIT, wm_update.locked, evlib.A_KEY_AFTER_THE_BAR),
+    evlib.woken_over(THE_MANAGER_RUNS_WITH_THE_LOCK, EV_BLOCK, evlib.A_KEY_S_WAIT, evlib.the_manager_handed_the_lock,
+                     {0: evlib.RETURN}),
+    evlib.woken_at("no key queued, blocked; woken by Return", "evnt_keybd, none", EV_KEYBD),
+    evlib.woken_at("a double click waited for, blocked; woken by the two presses", A_DOUBLE_CLICK, EV_BUTTON),
+    evlib.woken_at("a press waited for, blocked; woken by it", A_PRESS, EV_BUTTON),
+    evlib.woken_at("the mouse in the rectangle it is to leave, blocked; woken by its leaving", LEAVING, EV_MOUSE),
+    evlib.woken_at("behind three delays pending, blocked; run out a delay at a time", evlib.BEHIND_THREE_DELAYS, EV_TIMER),
+    evlib.woken_at("a time of five ticks, blocked; run out by them", "evnt_timer", EV_TIMER),
+    evlib.woken_at("no time, blocked; run out by the next tick", "evnt_timer of no time", EV_TIMER),
+    evlib.woken_over(THE_REMAINDER_DROPPED, EV_TIMER, (A_TICK_AND_A_HALF_MS,), evlib.desk_running, {0: evlib.ticks(1)}),
+))
+# ...and THE WAITS ON A PIPE, whose other end is ANOTHER PROCESS: the wake is a foreign window INSIDE their call of
+# ev_block's twin — a door call open across it, the window taken off the call's cost on both shores.
+THE_MESSAGE_WOKEN = "no message, blocked; woken by the screen manager's own write (the menu chain)"
+WOKEN_ROWS.update(evlib.register_woken((
+    evlib.woken_at(THE_MESSAGE_WOKEN, "evnt_mesag, none", EV_MESAG),
+    evlib.woken_at(THE_READ_WOKEN, "appl_read, none", AP_RDWR),
+    evlib.woken_over(THE_WRITE_FREED, AP_RDWR, evlib.THE_BLOCKED_WRITE, evlib.the_manager_writing_to_a_full_pipe, {}),
+)))

@@ -33,19 +33,18 @@ import subprocess
 import sys
 import types
 from collections import namedtuple
+from pathlib import Path
 
 from harness import BASE_IMAGE, _lib, addrs, bench_tier3, emu, make_image
 from recreate_kit import rom_bench
 
 import abi
 import aes
-import aes_evasync
 import aes_event
 import case
 import derived
 import isr
 import rom_data
-import test_aes_wm_update
 import transcription
 import vdi
 import vdi_helpers
@@ -1011,8 +1010,23 @@ FORK_GUARDED = {DISP_ACT: (), MWAIT_ACT: (), IDLE: SERVED_IN_A_FORK}
 LAYER = aes_event.Layer(ROUTINES)
 Arrival = aes_event.LayerArrival
 SHELL, SCREEN_MANAGER, SPARE_PD = aes.SHELL_PD, aes.SCREEN_MANAGER_PD, aes.AES_PD_TABLE + 2 * aes.PD_BYTES
-KEY_WAIT_FRAME = aes_evasync.ev_multi_frame(aes.EV_MU_KEYBD)[0]
-END_UPDATE_FRAME = aes_event.frame_of(("w", test_aes_wm_update.END_UPDATE))
+END_UPDATE_FRAME = aes_event.frame_of(("w", aes.header_constants("wmupdate.h")["WM_END_UPDATE"]))
+
+
+# THIS MODULE IMPORTS NO BATTERY, AND NO HELPER THAT IMPORTS ONE: the door users' batteries register their switching
+# rows through it (`aes_switching` stands on it), and `aes_evasync` imports two of them — imported here, a battery
+# that asked for the registrar would find this module half made. What a scenario takes from one is asked for where
+# the scenario is RUN.
+def _key_wait_frame():
+    """PD0's evnt_multi for a key alone, as the asynchronous waits' battery stages it."""
+    import aes_evasync
+    return aes_evasync.ev_multi_frame(aes.EV_MU_KEYBD)[0]
+
+
+def _the_lock_waited_on():
+    """The screen's lock held by the desk, the screen manager queued on it (`test_aes_wm_update.waited_on`)."""
+    import test_aes_wm_update
+    return test_aes_wm_update.waited_on()
 
 
 def _keyed_ahead():
@@ -1026,6 +1040,7 @@ A_DELAY_MS = 100
 def a_delay_run_out_and_the_mouse_on_the_bar():
     """The desk parked in an evnt_multi for a delay (the ROM's own call, to the dispatcher's loop), then the mouse
     moved onto the menu bar and every tick of the delay taken: two forks queued, a wait of each process due."""
+    import aes_evasync
     frame, pokes = aes_evasync.ev_multi_frame(aes.EV_MU_TIMER, timer=A_DELAY_MS)
     image = make_image(aes_event.parked(addrs.AES_ROM_EV_MULTI, frame, merge_pokes(aes_event.machine(), pokes)))
     aes_event.move_to(*aes_event.MENU_BAR_POINT)(image)
@@ -1034,8 +1049,8 @@ def a_delay_run_out_and_the_mouse_on_the_bar():
 
 
 # EACH SCENARIO IS THE ROM'S OWN RUN of something the scheduler does, watched at the three routines' entries: the
-# machine it starts from, the ROM entry it runs, the frame, where it ends (nothing: it returns) and the arrivals it
-# DECLARES, in order.
+# machine it starts from, the ROM entry it runs, the frame (bytes, or a builder asked where the scenario is run),
+# where it ends (nothing: it returns) and the arrivals it DECLARES, in order.
 Scenario = namedtuple("Scenario", "start entry frame ends arrivals")
 SCENARIOS = {
     # forker finds nothing, idle's poll queues the key; forker posts it (the desk woken), idle moves the desk to the
@@ -1043,13 +1058,13 @@ SCENARIOS = {
     "a key wakes the desk": Scenario(_keyed_ahead, addrs.AES_ROM_DISP_LOOP, b"", (addrs.AES_ROM_EV_MULTI_RETURN,),
                                      (IDLE, IDLE, DISP_ACT)),
     # the desk asks for a key and none has come: it is put on the not-ready list, the screen manager's already there.
-    "the desk blocks": Scenario(aes_event.machine, addrs.AES_ROM_EV_MULTI, KEY_WAIT_FRAME, (addrs.AES_ROM_DISP_LOOP,),
+    "the desk blocks": Scenario(aes_event.machine, addrs.AES_ROM_EV_MULTI, _key_wait_frame, (addrs.AES_ROM_DISP_LOOP,),
                                 (MWAIT_ACT,)),
     # the desk calls the dispatcher with nothing else ready: back on the (empty) ready list, one idle poll, resumed.
     "the desk yields": Scenario(aes_event.machine, addrs.AES_ROM_DSPTCH, b"", (), (DISP_ACT, IDLE)),
     # the desk gives the screen's lock to the screen manager, which waits for it: the desk is put back first, then
     # idle moves the woken screen manager BEHIND it — a walk past one process.
-    "the lock handed to the screen manager": Scenario(test_aes_wm_update.waited_on, addrs.AES_ROM_WM_UPDATE,
+    "the lock handed to the screen manager": Scenario(_the_lock_waited_on, addrs.AES_ROM_WM_UPDATE,
                                                       END_UPDATE_FRAME, (), (DISP_ACT, IDLE, DISP_ACT)),
     # both processes parked, and two forks queued by the interrupts before the dispatcher runs: forker wakes BOTH in
     # one pass, and idle moves two woken processes — to where the dispatcher is about to enter the first.
@@ -1063,7 +1078,8 @@ SCENARIOS = {
 def _run_of(name):
     """The ROM's run of the scenario `name`: a derivation, kept by content."""
     declared = SCENARIOS[name]
-    return LAYER.watched(declared.start(), declared.entry, set(declared.ends), declared.frame)
+    frame = declared.frame() if callable(declared.frame) else declared.frame
+    return LAYER.watched(declared.start(), declared.entry, set(declared.ends), frame)
 
 
 _SCENARIOS = aes_event.Scenarios({name: declared.arrivals for name, declared in SCENARIOS.items()}, _run_of,
@@ -1120,8 +1136,28 @@ DISPATCHER_STACK_DROP = ((*DISPATCHER_STACK, DISPATCHER_STACK_WHY),)
 # wrote laid in, the run continued at the very instruction — exactly as `interrupted` delivers at a door call.
 # An idle with nothing to deliver is PASSED (the poll that follows may find a key typed ahead); a second one in a row
 # after the case's last delivery is the machine idling for ever: the run is ended there (IDLES), not spun.
+#
+# ...AND AT A POLL THAT IS NO IDLE (`at_polls`). idle polls the keyboard EVERY time round its loop — with a process
+# ready, one woken or a fork queued too — so an interrupt that arrives between two processes' turns is taken THERE,
+# and a key is then polled before the process an earlier interrupt woke has run: the one way a real machine answers
+# a key AND a message in one wake (the writer woken first, the key posted while it has yet to write). Every arrival
+# at idle's poll is a POLL, numbered from 0 as the run makes them, idles among them; a case names a poll that is no
+# idle by that ordinal. A delivery named at a poll that IS an idle is refused (it is `at_idle`'s, by the idle's own
+# ordinal: one spelling a delivery), and so is one named at a poll the run never makes.
+#
+# ...AND AT THE DOOR CALLS OF THE PROCESS THAT MADE THE CALL, IN THE SAME RUN (a door USER's: a loop whose waits take
+# an interrupt each, the last of which BLOCKS and is woken by one more — taken at an idle). ONE DERIVATION TAKES BOTH:
+# the run is watched at the door's entries too (`aes_event.DoorStops`, as `aes_event.interrupted` watches one), its
+# door calls numbered as the run makes them, what each is handed kept (`calls`), and the interrupt a case names at a
+# call's ordinal taken at that call's entry (`at_calls`). THE DOOR WATCH IS THE CALLER'S OWN PROCESS'S: from the
+# moment the ROM's disp enters ANOTHER process until it enters the caller again no door entry is a stop — the screen
+# manager makes door calls of its own, from the very return addresses the caller's calls come from, and they are no
+# call of the row's (`aes_switching.Switching` follows a row's replay the same way, on both shores).
 RETURNED, IDLES = "the call returned", "the machine idles: every process waits, nothing more is delivered"
-Scheduled = namedtuple("Scheduled", "memory d0 delivered idles entered ended started")
+Scheduled = namedtuple("Scheduled", "memory d0 delivered idles entered ended started calls at_calls polls at_polls",
+                       defaults=((), {}, None, {}))
+# Where a delivery of one scheduled run was taken.
+AT_AN_IDLE, AT_A_DOOR_CALL, AT_A_POLL = "at an idle", "at a door call", "at a poll that is no idle"
 SCHEDULED_INSNS = aes_event.DERIVATION_INSNS       # a nested process's cap: the same order as a derivation's
 _IDLE_STOPS = {addrs.AES_ROM_IDLE_LOOP: frozenset({addrs.AES_ROM_IDLE_POLLED, addrs.AES_ROM_DISP_SWITCHTO}),
                addrs.AES_ROM_IDLE_POLLED: frozenset({addrs.AES_ROM_IDLE_LOOP, addrs.AES_ROM_DISP_SWITCHTO}),
@@ -1134,6 +1170,15 @@ def waits_for_an_interrupt(memory):
     queued — the three words idle's own loop tests."""
     return not (case.long_in(memory, aes.AES_RLR) or case.long_in(memory, aes.AES_DRL)
                 or case.word_in(memory, aes.AES_FORK_COUNT))
+
+
+def what_idle_tests(memory):
+    """...those three words as `memory` holds them, `{address: bytes}`: WHAT A DELIVERY AT A POLL THAT IS NO IDLE IS
+    CHECKED AGAINST, on every shore, beside the bytes it writes — the machine stands there as the ROM's own run did
+    (which process is ready, which woken, how many forks queued). An idle needs no such check (all three are zero);
+    a poll taken at another point of idle's loop — after the woken were moved, say — holds others."""
+    return {at: bytes(memory[at:at + size]) for at, size in ((aes.AES_RLR, LONG_BYTES), (aes.AES_DRL, LONG_BYTES),
+                                                             (aes.AES_FORK_COUNT, WORD_BYTES))}
 
 
 @functools.cache
@@ -1181,37 +1226,76 @@ def the_rom_s_idle_polls_again(machine):
     return _the_rom_s_idle_reaches(machine, addrs.AES_ROM_IDLE_POLLED, addrs.AES_ROM_IDLE_LOOP)
 
 
-def dispatcher_stop(pc, memory, entered, idles, delivered=False):
+def dispatcher_stop(pc, memory, entered, idles, delivered=False, polls=None):
     """ONE STOP of a run through the ROM's own dispatcher, read — the one reading of its three stops, whoever drives
     the run: at disp's call of switchto `entered(pd)`, for the process at the ready list's head; at idle's poll
-    `idles()`, where the machine waits for an interrupt — or waited, and has just been `delivered` one there.
-    Answers the stops to arm next: never the PC it stands at."""
+    `polls()` (where given: every poll, an idle or not) and then `idles()`, where the machine waits for an interrupt
+    — or waited, and has just been `delivered` one there. Answers the stops to arm next: never the PC it stands at."""
     if pc == addrs.AES_ROM_DISP_SWITCHTO:
         entered(case.long_in(memory, aes.AES_RLR) & aes_event.OS_BUS_ADDR_MASK)
-    elif pc == addrs.AES_ROM_IDLE_LOOP and (delivered or waits_for_an_interrupt(memory)):
-        idles()
+    elif pc == addrs.AES_ROM_IDLE_LOOP:
+        waited = delivered or waits_for_an_interrupt(memory)
+        if polls:
+            polls()
+        if waited:
+            idles()
     return _IDLE_STOPS[pc]
 
 
 class _Idling:
     """The watch of one scheduled run (`aes_event.interrupting`'s): stopped at idle's poll, at the instruction after
-    it and at disp's call of switchto — never arming the PC it stands at. It counts the IDLES, says what is due at
-    each (`due`), keeps the processes the dispatcher enters, and ENDS the run (`aes_event.Ended`) where the machine
-    idles for ever."""
+    it and at disp's call of switchto — never arming the PC it stands at — and, WHILE THE CALLER'S OWN PROCESS RUNS,
+    at the door's entries (`door`: an `aes_event.DoorStops` that does not `block`; `caller` the PD that made the
+    call). It counts the POLLS and, among them, the IDLES, says what is due at each and at each door call (`due`:
+    keyed `(AT_AN_IDLE, n)`, `(AT_A_POLL, n)` or `(AT_A_DOOR_CALL, n)`), keeps the processes the dispatcher enters,
+    and ENDS the run (`aes_event.Ended`) where the machine idles for ever."""
 
-    def __init__(self, memory, at_idle):
-        self.first, self._memory, self.at_idle = EVERY_STOP, memory, dict(at_idle)
-        self.idles, self.entered, self._quiet, self._due = 0, [], False, False
+    def __init__(self, memory, at_idle, door, caller, at_calls=None, at_polls=None):
+        self._memory, self.at_idle, self._at_calls, self.at_polls = memory, dict(at_idle), at_calls or {}, dict(at_polls or {})
+        self._door, self._caller, self._door_armed, self._elsewhere = door, caller, frozenset(door.first), False
+        self.first = EVERY_STOP | self._door_armed
+        self.polls, self.idles, self.entered, self._quiet, self._due = 0, 0, [], False, False
+        self.stood = {}                 # `{poll: what_idle_tests}` where a delivery was taken at a poll that is no idle
 
     def due(self, _watch, pc):
-        if pc != addrs.AES_ROM_IDLE_LOOP or not waits_for_an_interrupt(self._memory):
+        if pc not in EVERY_STOP:
+            return self._due_at_a_door_call(pc)
+        if pc != addrs.AES_ROM_IDLE_LOOP:
             return None
+        if not waits_for_an_interrupt(self._memory):
+            interrupt = self.at_polls.pop(self.polls, None)
+            if interrupt is None:
+                return None
+            self.stood[self.polls] = what_idle_tests(self._memory)
+            return (AT_A_POLL, self.polls), interrupt
+        assert self.polls not in self.at_polls, (
+            f"a delivery is named at poll {self.polls}, which is idle {self.idles} of the run: an idle's delivery is "
+            f"named at the idle (`at_idle`)")
         interrupt = self.at_idle.pop(self.idles, None)
         self._due = interrupt is not None
-        return (self.idles, interrupt) if self._due else None
+        return ((AT_AN_IDLE, self.idles), interrupt) if self._due else None
 
-    def stopped(self, pc, _sp, memory):
-        return dispatcher_stop(pc, memory, self.entered.append, self._an_idle, delivered=self._due)
+    def _due_at_a_door_call(self, pc):
+        # Asked at an ARRIVAL only, as the door's own derivation asks (`aes_event._run_interrupting`).
+        if not self._door.opens_a_call_at(pc):
+            return None
+        interrupt = aes_event.interrupt_at(self._at_calls, self._door.calls, pc)
+        return ((AT_A_DOOR_CALL, self._door.calls), interrupt) if interrupt else None
+
+    def stopped(self, pc, sp, memory):
+        if pc in EVERY_STOP:
+            dispatcher_stop(pc, memory, self._entered, self._an_idle, delivered=self._due, polls=self._a_poll)
+        else:
+            self._door_armed = frozenset(self._door.stopped(pc, sp, memory))
+        # (No door entry is a dispatcher's stop, so a stop at one may arm all three of those again.)
+        return (EVERY_STOP - {pc}) | (frozenset() if self._elsewhere else self._door_armed)
+
+    def _entered(self, pd):
+        self.entered.append(pd)
+        self._elsewhere = pd != self._caller
+
+    def _a_poll(self):
+        self.polls += 1
 
     def _an_idle(self):
         if self._quiet and not self._due and not self.at_idle:
@@ -1219,38 +1303,66 @@ class _Idling:
         self._quiet, self._due, self.idles = not self._due, False, self.idles + 1
 
 
-def scheduled(entry, frame, machine, at_idle=None, budget=None):
+def _taken_where(delivered, where):
+    """The deliveries of one scheduled run taken `where` (AT_AN_IDLE / AT_A_DOOR_CALL), by their ordinal there."""
+    return {ordinal: taken for (kind, ordinal), taken in delivered.items() if kind == where}
+
+
+def scheduled(entry, frame, machine, at_idle=None, budget=None, at_calls=None, at_polls=None):
     """THE ROM'S OWN RUN of `entry` (its Alcyon `frame` where a `jsr` leaves it) over `machine`, a running process's
-    call, THROUGH THE DISPATCHER, each interrupt of `at_idle` delivered at the idle of its ordinal
-    (`aes_event.interrupting`: the one loop that takes an interrupt inside a watched run): a `Scheduled` — the memory
-    it left, its D0, `delivered` (`{idle: (found, wrote)}`, as `aes_event.deliveries` answers door calls), how many
-    idles it made, the processes its dispatcher ENTERED in order (each switchto), how it `ended` (RETURNED, or IDLES)
-    and the RAM it `started` from (what a reader compares its stores against — `not_compared`: the megabyte, not the
-    sixteen of the image a second time). `budget`: a derivation's (`aes_event`'s rules), for a run past the default."""
+    call, THROUGH THE DISPATCHER, each interrupt of `at_idle` delivered at the idle of its ordinal — and each of
+    `at_calls` (`{door call: interrupt}`, or a schedule: `aes_event.Waits`) at the entry of the caller's door call of
+    that ordinal, each of `at_polls` at the poll of its ordinal, which is no idle (above) — by
+    `aes_event.interrupting`, the one loop that takes an interrupt inside a watched run: a
+    `Scheduled` — the memory it left, its D0, `delivered` (`{idle: (found, wrote)}`, as `aes_event.deliveries`
+    answers door calls), how many idles it made, the processes its dispatcher ENTERED in order (each switchto), how
+    it `ended` (RETURNED, or IDLES), the RAM it `started` from (what a reader compares its stores against —
+    `not_compared`: the megabyte, not the sixteen of the image a second time), the door `calls` the caller's process
+    made (what each was handed, read after its interrupt), `at_calls`, the deliveries taken at them (`{door call:
+    (found, wrote)}`), how many `polls` its dispatcher's idle made (idles among them) and `at_polls`, the deliveries
+    taken at those that were no idle — each one's `found` WITH the three words idle tests (`what_idle_tests`).
+    `budget`: a derivation's (`aes_event`'s rules), for a run past the default.
+    REFUSED BY NAME: a delivery named at an idle, a poll or a door call the run never makes."""
     memory = make_image(merge_pokes(machine, {abi.FIRST_ARG: frame} if frame else None))
-    started, watch = bytes(memory[:RAM_BYTES]), _Idling(memory, at_idle or {})
+    started, calls = bytes(memory[:RAM_BYTES]), []
     caller = case.long_in(started, aes.AES_RLR)
+    door = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS,
+                               lambda pc, sp, over: calls.append(aes_event.handed_at(pc, sp, over)), entered_at=entry)
+    watch = _Idling(memory, at_idle or {}, door, caller & aes_event.OS_BUS_ADDR_MASK, at_calls, at_polls)
+    aes_event.begin_a_schedule(at_calls)
     try:
         delivered, result = aes_event.interrupting(memory, entry, watch, watch.due, budget)
         ended, d0 = RETURNED, result["d0"]
     except aes_event.Ended:
         # The loop's own ledger of what it delivered goes with the exception: a run that ends idle is one of a case
         # that delivers nothing (a wait nothing wakes).
-        assert not at_idle, f"the scheduled run of {entry:#x} idles for ever AFTER its deliveries: not a case this keeps"
+        assert not at_idle and not at_calls and not at_polls, (
+            f"the scheduled run of {entry:#x} idles for ever AFTER its deliveries: not a case this keeps")
         delivered, ended, d0 = {}, IDLES, None
     assert not watch.at_idle, (f"the scheduled run of {entry:#x} made {watch.idles} idles: nothing was delivered at "
                                f"{sorted(watch.at_idle)}")
+    assert not watch.at_polls, (f"the scheduled run of {entry:#x} made {watch.polls} polls: nothing was delivered at "
+                                f"{sorted(watch.at_polls)}")
+    taken_at_calls = _taken_where(delivered, AT_A_DOOR_CALL)
+    never_made = aes_event.undelivered(at_calls, taken_at_calls)
+    assert not never_made, (f"the scheduled run of {entry:#x} made {door.calls} door call(s): nothing was delivered "
+                            f"at {never_made}")
     assert ended == IDLES or case.long_in(memory, aes.AES_RLR) == caller, (
         f"the scheduled run of {entry:#x} reached its return in ANOTHER process than the one that made the call "
         f"({case.long_in(memory, aes.AES_RLR):#x}): a process of the machine whose own call was the harness's — its "
         f"continuation ends at the run's sentinel, which no process of a real machine does")
-    return Scheduled(memory, d0, delivered, watch.idles, tuple(watch.entered), ended, started)
+    taken_at_polls = {poll: (merge_pokes(watch.stood[poll], found), wrote)
+                      for poll, (found, wrote) in _taken_where(delivered, AT_A_POLL).items()}
+    return Scheduled(memory, d0, _taken_where(delivered, AT_AN_IDLE), watch.idles, tuple(watch.entered), ended, started,
+                     tuple(calls), taken_at_calls, watch.polls, taken_at_polls)
 
 
 # ---- THE HOST'S MODEL OF THE SWITCH, SWITCHED ON PER CASE ------------------------------------------------------------------
 # `aes_dsptch` off target asks `recreate_dispatch` (`aes/switch.h`), whose binding everywhere refuses. A case of this
 # battery binds it — for its own runs alone — to THE C SCHEDULER, `aes_disp` (`src/aes/evdisp.c`: disp's own loop over
 # the savestate and switchto models), and the two hooks that model asks:
+#   * the POLL hook, at every poll of idle, an idle or not: it counts them, and lays the delivery the ROM's run took
+#     at a poll of that ordinal that was no idle (`Scheduled.at_polls`);
 #   * the IDLE hook, at each idle of the run: it lays the delivery the ROM's own scheduled run took at the idle of the
 #     same ordinal (the same bytes, vetted against the memory they land on, as `interrupted` lays one at a door
 #     call), passes an idle the ROM's run passed, and REFUSES one the ROM's run did not make — the C would wait for
@@ -1259,12 +1371,29 @@ def scheduled(entry, frame, machine, at_idle=None, budget=None):
 #     OWN CODE — a nested run of the ROM from switchto over a copy of the image, through whatever its own dispatcher
 #     then does (its idles numbered on in the same sequence), until the ROM's disp is about to enter the CALLER
 #     again; its memory is laid back and the C's call returns. With `foreign=False` it refuses by name.
-IDLE_SYMBOL, PROCESS_SYMBOL = "recreate_idle", "recreate_process"
+#
+# WHAT A FOREIGN PROCESS'S RUN IS NOT LAID BACK OVER (STORED_BY_NO_C): the dispatcher's own stack and the Line-F mask
+# word — the bytes of a run through the dispatcher that are one BUILD's and never the machine's: the ROM's
+# dispatcher frames (dead once its switchto has left them) and the Line-F handler's self-patched mask (rewritten
+# before every use, by no C). The ROM's own code stores them during another process's turn; no C of ours ever does.
+# The image keeps each AS THE C FOUND IT — as the door keeps the mask word out of a delivery
+# (`aes_event.LINE_F_MASK_BYTES`) — so what a companion holds there is one thing on every row, however many times it
+# dispatches: the value its machine stages, which a C that stored there would differ from. (Laid back, the image held
+# there whatever the LAST foreign turn left, which the ROM's own run goes on to overwrite in every later dispatch of
+# the caller — a row that blocked again after another process's turn then differed from the ROM's run in the
+# dispatcher's stack, on no fault of the C: measured, mn_do woken twice after the desk's turn, 24 bytes.)
+# EACH OF THE TWO IS NEEDED, AND NOTHING MORE IS LEFT OUT: without the stack, or without the mask word, the companion
+# of a row another process runs in differs (`test_aes_switching.py` holds each RED). THE SR SAVE WORDS ARE LAID BACK
+# AND COMPARED, as every other byte of the foreign turn is — they stood in this rule once, and no row's companion
+# needed them there: the words a foreign turn's brackets park are what the ROM's whole run leaves.
+POLL_SYMBOL, IDLE_SYMBOL, PROCESS_SYMBOL = "recreate_poll", "recreate_idle", "recreate_process"
+STORED_BY_NO_C = (DISPATCHER_STACK, *((lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW))
 IDLE_PROTOTYPE = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint8))
 PROCESS_PROTOTYPE = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes.c_uint32)
 REFUSED, SERVED = 0, 1
+THE_C_SCHEDULER_S, A_PROCESS_OF_THE_ROM_S = "the C scheduler's", "a process the ROM's own code runs"    # whose dispatcher polls
 IMAGE_BYTES, RAM_BYTES = aes_event.IMAGE_BYTES, addrs.ST_RAM_BYTES
-HOOK_SYMBOLS = (aes_event.DISPATCH_SYMBOL, IDLE_SYMBOL, PROCESS_SYMBOL)
+HOOK_SYMBOLS = (aes_event.DISPATCH_SYMBOL, POLL_SYMBOL, IDLE_SYMBOL, PROCESS_SYMBOL)
 THE_GUARD_COUNTED_ONCE = 1              # AES_INDISP inside disp: savestate's `addq.b #1` over the zero dsptch tested
 A_LEAF_S_FREE_IDLE = 1                  # an idle entered with nothing ready may still find a key at its poll: once
 
@@ -1294,6 +1423,10 @@ class _IdleRefused(Exception):
     """...or idles where the case delivers nothing more."""
 
 
+def _unbound_poll(_buf):
+    return _said("the poll hook: the dispatcher polls, and no case's binding is open (`aes_switch.scheduling`)")
+
+
 def _unbound_idle(_buf):
     return _said("the idle hook: the dispatcher idles, and no case's binding is open (`aes_switch.scheduling`)")
 
@@ -1303,9 +1436,9 @@ def _unbound_process(_buf, uda, _caller_s_uda):
                  f"binding is open (`aes_switch.scheduling`)")
 
 
-_UNBOUND = (IDLE_PROTOTYPE(_unbound_idle), PROCESS_PROTOTYPE(_unbound_process))
-bind_pointer(IDLE_SYMBOL, _UNBOUND[0])
-bind_pointer(PROCESS_SYMBOL, _UNBOUND[1])
+_UNBOUND = (IDLE_PROTOTYPE(_unbound_poll), IDLE_PROTOTYPE(_unbound_idle), PROCESS_PROTOTYPE(_unbound_process))
+for _symbol, _refuser in zip((POLL_SYMBOL, IDLE_SYMBOL, PROCESS_SYMBOL), _UNBOUND):
+    bind_pointer(_symbol, _refuser)
 
 
 def _pointer(symbol):
@@ -1314,25 +1447,26 @@ def _pointer(symbol):
 
 class Scheduling:
     """ONE CASE'S BINDING OF THE MODEL, opened round its runs (`aes.run_function`'s `hook` protocol: `recording(glue)`
-    wraps each run of the candidate). `reference`: the ROM's own `Scheduled` run of the case — its deliveries and its
-    idle count are what the hooks lay and hold; None for a LEAF case of idle, which delivers nothing and may pass
-    A_LEAF_S_FREE_IDLE idle. `model`: the dispatcher's hook bound to the C scheduler. `foreign`: another process
+    wraps each run of the candidate). `reference`: the ROM's own `Scheduled` run of the case — its deliveries (at
+    its idles, and at its polls that are no idle) and its idle count are what the hooks lay and hold; None for a
+    LEAF case of idle, which delivers nothing and may pass A_LEAF_S_FREE_IDLE idle. `model`: the dispatcher's hook bound to the C scheduler. `foreign`: another process
     than the caller run as the ROM's own code."""
 
     def __init__(self, reference=None, *, model=True, foreign=False):
         self._delivered = dict(reference.delivered) if reference else {}
+        self._at_polls = dict(reference.at_polls) if reference else {}
         self._free = reference.idles if reference else A_LEAF_S_FREE_IDLE
         self._model, self._foreign = model, foreign
-        self.idles, self.entered = 0, []
-        self._callbacks = (IDLE_PROTOTYPE(self._idle), PROCESS_PROTOTYPE(self._process))
+        self.polls, self.idles, self.entered = 0, 0, []
+        self._callbacks = (IDLE_PROTOTYPE(self._poll), IDLE_PROTOTYPE(self._idle), PROCESS_PROTOTYPE(self._process))
         self._previous, self._raised = None, []
 
     def __enter__(self):
         self._previous = [_pointer(symbol).value for symbol in HOOK_SYMBOLS]
         if self._model:
             _pointer(aes_event.DISPATCH_SYMBOL).value = ctypes.cast(_lib.aes_disp, ctypes.c_void_p).value
-        bind_pointer(IDLE_SYMBOL, self._callbacks[0])
-        bind_pointer(PROCESS_SYMBOL, self._callbacks[1])
+        for symbol, callback in zip((POLL_SYMBOL, IDLE_SYMBOL, PROCESS_SYMBOL), self._callbacks):
+            bind_pointer(symbol, callback)
         return self
 
     def __exit__(self, raising, *_details):
@@ -1344,9 +1478,19 @@ class Scheduling:
 
     def recording(self, glue):
         def run(lib, buf):
-            self.idles, self.entered = 0, []
+            self.polls, self.idles, self.entered = 0, 0, []
             return glue(lib, buf)
         return run
+
+    def _poll_over(self, memory, where):
+        """The poll of the next ordinal, taken over `memory`: what the ROM's run took at that poll — one that was no
+        idle — laid as an idle's delivery is. SERVED always: a poll with nothing due is passed."""
+        ordinal, self.polls = self.polls, self.polls + 1
+        if ordinal in self._at_polls:
+            found, wrote = self._at_polls[ordinal]
+            aes_event.vet_found(memory, found, f"poll {ordinal} ({where})")
+            aes_event.lay(memory, wrote, lays_the_mask_word=False)
+        return SERVED
 
     def _idle_over(self, memory, where):
         """The idle of the next ordinal, taken over `memory` (anything indexable in place): SERVED, or REFUSED."""
@@ -1368,9 +1512,15 @@ class Scheduling:
                      f"run did ({self._free}): the call would block, the machine waiting for an interrupt no case "
                      f"delivers")
 
+    @staticmethod
+    def _ram_of(buf):
+        return (ctypes.c_uint8 * RAM_BYTES).from_address(ctypes.addressof(buf.contents))
+
+    def _poll(self, buf):
+        return _refusing_what_raises(lambda: self._poll_over(self._ram_of(buf), THE_C_SCHEDULER_S), POLL_SYMBOL, self._raised)
+
     def _idle(self, buf):
-        ram = (ctypes.c_uint8 * RAM_BYTES).from_address(ctypes.addressof(buf.contents))
-        return _refusing_what_raises(lambda: self._idle_over(ram, "the C scheduler's"), IDLE_SYMBOL, self._raised)
+        return _refusing_what_raises(lambda: self._idle_over(self._ram_of(buf), THE_C_SCHEDULER_S), IDLE_SYMBOL, self._raised)
 
     def _process(self, buf, uda, caller_s_uda):
         return _refusing_what_raises(lambda: self._process_run(buf, uda, caller_s_uda), PROCESS_SYMBOL, self._raised)
@@ -1380,9 +1530,12 @@ class Scheduling:
             return _said(f"the process hook: the dispatcher would enter the process whose UDA is {uda:#x} — another "
                          f"than its caller's ({caller_s_uda:#x}) — and the case does not run it: the call would "
                          f"switch away")
+        found = ctypes.string_at(buf, RAM_BYTES)
         memory = bytearray(ctypes.string_at(buf, IMAGE_BYTES))
         served = self._the_rom_runs_the_process(memory, uda, caller_s_uda)
         if served == SERVED:
+            for lo, hi in STORED_BY_NO_C:
+                memory[lo:hi] = found[lo:hi]
             ctypes.memmove(ctypes.addressof(buf.contents), bytes(memory[:RAM_BYTES]), RAM_BYTES)
         return served
 
@@ -1395,10 +1548,13 @@ class Scheduling:
             self.entered.append(pd)
 
         def idles():
-            if self._idle_over(memory, "a process the ROM's own code runs") == REFUSED:
+            if self._idle_over(memory, A_PROCESS_OF_THE_ROM_S) == REFUSED:
                 raise _IdleRefused
 
-        watch = types.SimpleNamespace(stopped=lambda pc, _sp, over: dispatcher_stop(pc, over, entered, idles))
+        def polls():
+            self._poll_over(memory, A_PROCESS_OF_THE_ROM_S)
+
+        watch = types.SimpleNamespace(stopped=lambda pc, _sp, over: dispatcher_stop(pc, over, entered, idles, polls=polls))
         emu.install_chip_seeds()
         try:
             result = emu.run_bench(memory, addrs.AES_ROM_SWITCHTO, uda, emu.STACK_TOP, emu.SENTINEL,
@@ -1431,34 +1587,138 @@ def hooks(reference=None, **kwargs):
 # battery's helper. The forks that serve these are the worker's own.
 IDLE_HOOKS = hooks(model=False)
 
-Modelled = namedtuple("Modelled", "returncode stderr image answer idles")
+Modelled = namedtuple("Modelled", "returncode stderr image answer idles handed slots_held polls parked",
+                      defaults=(None, None, None, None))
 MODEL_SECONDS = 30                      # a nested run of a whole process inside a fork: seconds, not a core's ten
-IDLES_LINE = "the model idled: "
+IDLES_LINE, POLLS_LINE = "the model idled: ", "the model polled: "
+SLOTS_LINE = "the host slots held where the process was parked: "
+PARKED_LINE = "the process was parked, and its host slots read: "
 
 
-def _idles_in(stderr):
-    lines = [line for line in stderr.splitlines() if line.startswith(IDLES_LINE)]
-    return int(lines[0].removeprefix(IDLES_LINE)) if lines else None
+# ---- THE HOST SLOTS A ROUTINE HOLDS ACROSS A WAIT (`include/host_slot.h`) -----------------------------------------------------
+# A door user hands the event layer the ADDRESS of locals of its own frame — its answer words, a MOBLK, a GRECT it
+# goes on with after the wait — and off target each is a host slot, claimed before the wait and given back after it.
+# Until a call could come back from a wait on the host (the model, with the door bound) nothing ever RAN a give-back
+# after a wait, and nothing said which slots are live while their process is parked. Both are read off THE RUN:
+#   * WHERE THE PROCESS IS PARKED (each dispatch of the run), the slots held are kept — what a second C process
+#     inside the same routine would collide with (`host_slot.h`: "A SLOT PER PROCESS"). In wave 3 that cannot happen:
+#     the only C process of a run is the caller, every other is the ROM's own code, which claims nothing. The day
+#     the screen manager is C (band 5), each of these owes a frame per process, as the two QPBs have;
+#   * WHERE THE CALL RETURNS, no slot may be held: a routine that came back from its wait and left a claim behind
+#     would abort the NEXT call of it in the same process (`host_slot_take`'s assert) — refused here, by name, on
+#     every door user's modelled run.
+_SLOT_ID = re.compile(r"^\s*HOST_SLOT_ID_(\w+)(?:\s*=\s*HOST_SLOT_ID_(\w+)\s*\+\s*HOST_PROCESSES\s*-\s*1)?\s*,", re.M)
+A_PROCESS_S_FRAME = "{role}, process {process}"
+HOST_SLOT_HEADER = Path(__file__).resolve().parents[1] / "include" / "host_slot.h"
 
 
-def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False):
+@functools.cache
+def host_slot_ids():
+    """The roles of `host_slot.h`'s held flags, by index: `enum host_slot` read off the header — a slot per process
+    one name per process's frame."""
+    header = HOST_SLOT_HEADER.read_text()
+    body = header[header.index("enum host_slot {"):header.index("HOST_SLOT_ID_COUNT")]
+    roles, per_process = [], aes.HOST_SLOTS["HOST_PROCESSES"]
+    for role, first_frame in _SLOT_ID.findall(body):
+        if first_frame:                 # `<ROLE>_LAST = <ROLE> + HOST_PROCESSES - 1`: the frames of processes 1..8
+            roles[-1] = A_PROCESS_S_FRAME.format(role=first_frame, process=0)
+            roles += [A_PROCESS_S_FRAME.format(role=first_frame, process=process) for process in range(1, per_process)]
+        else:
+            roles.append(role)
+    return tuple(roles)
+
+
+def host_slots_held():
+    """The roles whose host slot the candidate holds claimed, now (`host_slots_held`, the library's own flags)."""
+    held = (ctypes.c_ubyte * len(host_slot_ids())).in_dll(_lib, "host_slots_held")
+    return [role for role, flag in zip(host_slot_ids(), held) if flag]
+
+
+def _slots_in(stderr):
+    lines = [line for line in stderr.splitlines() if line.startswith(SLOTS_LINE)]
+    return tuple(lines[0].removeprefix(SLOTS_LINE).split(" | ")) if lines and lines[0] != SLOTS_LINE else ()
+
+
+# A DOOR USER UNDER THE MODEL: what its fork binds beside the scheduler — the event door's own child binding
+# (`aes_event.bind_in_a_child`): `objects`, the walked routines served (a tree walk's just_draw, newrect); `doors`,
+# source the fork runs first for a routine that reaches a door of its own (`aes_event.CHILD_DOORS`).
+DoorUser = namedtuple("DoorUser", "objects doors", defaults=(False, ""))
+
+
+def _counted_in(stderr, line_said):
+    lines = [line for line in stderr.splitlines() if line.startswith(line_said)]
+    return int(lines[0].removeprefix(line_said)) if lines else None
+
+
+def _the_c_scheduler():
+    """`aes_disp` as a dispatcher's hook calls it: a function object of the fork's own, typed as the hook is."""
+    disp = _lib["aes_disp"]
+    disp.restype, disp.argtypes = ctypes.c_uint32, [ctypes.POINTER(ctypes.c_uint8)]
+    return disp
+
+
+def _a_door_user_s_run(run, buf, binding, door, at_calls):
+    """ONE RUN OF A DOOR USER UNDER THE MODEL, as its fork makes it: THE DOOR'S CHILD BINDING AND THE SCHEDULER'S IN
+    ONE CHILD. The wrapper's arrival hook notes every frame, lays the interrupt due at a door call (`at_calls`) and
+    makes the twin's shadow; where a twin reaches the dispatcher's hook it is held there to its shadow AND THEN THE C
+    SCHEDULER RUNS (`aes_disp`: `binding` lays the idles' deliveries and runs a foreign process as the ROM's own
+    code) — the call comes back, and the door user's loop runs on to its return."""
+    scheduler, parked_holding, readings = _the_c_scheduler(), [], []
+
+    def dispatching(image):
+        parked_holding.extend(role for role in host_slots_held() if role not in parked_holding)
+        readings.append(image)
+        return scheduler(image)
+
+    def call():
+        if door.doors:
+            exec(door.doors, {"lib": _lib, "buf": buf})         # the routine's own declared source, never a case's
+        aes_event.bind_in_a_child(_lib, objects=door.objects, interrupts=at_calls, dispatching=dispatching)
+        with binding:
+            run()
+            print(f"{IDLES_LINE}{binding.idles}\n{POLLS_LINE}{binding.polls}", file=sys.stderr)
+        print(SLOTS_LINE + " | ".join(parked_holding), file=sys.stderr)
+        print(f"{PARKED_LINE}{len(readings)}", file=sys.stderr)
+        left = host_slots_held()
+        assert not left, (f"the call RETURNED holding the host slot(s) {left} — claimed before a wait and not given "
+                          f"back after it: the next call of the routine in this process would find them taken")
+    return aes_event.exit_as_an_interpreter_does(call)
+
+
+def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, door=None):
     """THE C `symbol` of the candidate (a core over the image, `typed` its values after it) run over `pokes` IN A
     FORK with the model switched on and held to `reference` (`hooks`): its exit code and stderr, the image it left —
-    the fork runs over a mapping it shares with this process — its answer and how many idles its run made (None each
-    where it did not return)."""
+    the fork runs over a mapping it shares with this process — its answer and how many idles and polls its run made (None
+    each where it did not return).
+    `door` (a `DoorUser`): the C is a DOOR USER's — a routine outside the event layer, which reaches it through the
+    wrappers. Its fork binds the event door as a door child's is bound (`_a_door_user_s_run`), the interrupts the
+    ROM's run took at its door calls laid at the same calls (`reference.at_calls`), and `handed` is what each of its
+    door calls was handed, in order (None where the fork ended before saying); `slots_held`, the host slots its
+    routines held where its process was parked, and `parked`, how many times it was — each a reading of them: a run
+    that says none was never audited (None where the fork ended before saying) — and a call that returns holding a
+    slot is refused by name."""
     core = getattr(_lib, symbol)
     over = mmap.mmap(-1, IMAGE_BYTES)
     over[:] = make_image(pokes)
     buf = (ctypes.c_uint8 * IMAGE_BYTES).from_buffer(over)
-    binding = Scheduling(reference, foreign=foreign)
     run = aes_event.one_run_of(core, typed, buf, answered)
+    if door:
+        binding = Scheduling(reference, model=False, foreign=foreign)
+        at_calls = dict(reference.at_calls) if reference else {}
+        returncode, stderr = aes_event.in_a_fork(_a_door_user_s_run(run, buf, binding, door, at_calls), MODEL_SECONDS)
+        handed = aes_event.handed_in(stderr) if aes_event.HANDED_LINE in stderr else None
+        slots_held, parked = _slots_in(stderr), _counted_in(stderr, PARKED_LINE)
+    else:
+        binding = Scheduling(reference, foreign=foreign)
 
-    def call():
-        run()
-        print(f"{IDLES_LINE}{binding.idles}", file=sys.stderr)
-    hooked = aes_event.inside_its_own_pass(aes.doors(aes_event.EVENT_LAYER_HOOKS, lambda: binding), call)
-    returncode, stderr = aes_event.in_a_fork(hooked, MODEL_SECONDS, SERVED_IN_A_FORK)
-    return Modelled(returncode, stderr, bytes(over), vdi_helpers.answer_in(stderr) if answered else None, _idles_in(stderr))
+        def call():
+            run()
+            print(f"{IDLES_LINE}{binding.idles}\n{POLLS_LINE}{binding.polls}", file=sys.stderr)
+        hooked = aes_event.inside_its_own_pass(aes.doors(aes_event.EVENT_LAYER_HOOKS, lambda: binding), call)
+        returncode, stderr = aes_event.in_a_fork(hooked, MODEL_SECONDS, SERVED_IN_A_FORK)
+        handed = slots_held = parked = None
+    return Modelled(returncode, stderr, bytes(over), vdi_helpers.answer_in(stderr) if answered else None,
+                    _counted_in(stderr, IDLES_LINE), handed, slots_held, _counted_in(stderr, POLLS_LINE), parked)
 
 
 # What a run of the model differs from the ROM's scheduled run in BY NATURE, each only where the ROM's run stored it

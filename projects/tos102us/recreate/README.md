@@ -551,31 +551,57 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   all: the fast path refuses (the mouse is another process's) and the wait's own test does not ask (abutton, amouse) —
   acancel, the aprets and their order then run in C in one returning call. What that cannot reach is an answer another
   process or an interrupt posted; say which.
-- A BLOCKING TWIN'S TAIL IS HELD BEFORE ITS FLIP BY WOKEN CASES (`aes_evmulti.woken` / `rom_woken`; HOST ONLY). A
+- A BLOCKING TWIN'S TAIL IS HELD BY WAKES THAT REALLY SWITCH (`aes_evmulti.WAKES`, `evlib.WAKES`; band 4 wave 3). A
   routine that waits has two halves: what it writes before dsptch (held AT DSPTCH) and what it does when the
-  dispatcher runs it again. The second is run in C with the dispatcher's hook SERVED BY THE ROM'S OWN RUN, one
-  derivation kept by content: the ROM parks the process in the routine on its own stack, takes the case's interrupts
-  (and, for a writer's wake, another process's write: the mouse onto the bar wakes the screen manager through the
-  ROM's dispatcher, its appl_write serves the parked wait through the QPB of the waiting call's frame, it parks in an
-  evnt_multi of its own), and runs its own dispatcher to the resume inside mwait (`AES_ROM_EV_MWAIT_RESUMED`,
-  `$fe40e0`) and on to the routine's return.
-  - WHAT THE HOOK LAYS: the ROM's memory at the resume — all of RAM but the stack band — over the candidate's image;
-    it answers "returned"; a second call of the hook is refused by name. WHOSE mwait resumed is held: the parked
-    process's, its frame in that process's UDA, returning into the routine's text.
-  - WHAT IS COMPARED: the twin's answer and the whole image where the ROM's routine returns, with NO window dropped
-    whole. A byte is left out only where it lies in the resumed process's own UDA (the ROM's frames), the Line-F mask
-    word or an SR save word, AND the ROM's run stored it after the resume, AND the C holds the resume's byte there (it
-    stored nothing) — so a mutant that stores in any of the three is red on the woken tests alone (sweep it with `-k
-    woke`).
-  - WHAT IT HOLDS AND WHAT IT DOES NOT: what carries across the hook is the C's own frame (the waits' bits, the flags,
-    what arrived) — exactly what a tail mutant hits — composed with the same call's case AT DSPTCH. It is the HOST
-    build's tail: the switch itself, and the target build's frame across it (saved and restored by savestate /
-    switchto on the process's own stack), are held by rows that switch.
+  dispatcher runs it again. The second is A WAKE: the call and a SCHEDULE — what is delivered at which idle of the
+  dispatcher the blocked call left by, as `aes_switch.scheduled` takes it — registered as a row that switches
+  (`aes_switching.register`; below, "TIER 3: A ROW THAT SWITCHES"). The twin then runs its tail over what ITS OWN
+  run made: through the host's scheduler at Tier 1 (`aes_switching.companion`, nothing dropped) and across the real
+  switch on both blobs. (RETIRED by that wave: the hook that laid the ROM's memory at the resume under the C —
+  `aes_evmulti.woken` / `rom_woken`, host only. No test binds `recreate_dispatch` to a memory-laying hook any more.)
+  - BY AN INTERRUPT: the case's interrupts in ONE idle — one delivery, a tuple — the first idle and the only one.
   - A WAKE NEEDS ITS WRITER: a message wait is woken only by another process's appl_write (an interrupt never posts
-    one), and what both make in ONE wake (the message's and the timer's aprets) needs the write AND the ticks before
-    the dispatcher runs the process again. Plant a trap in each arm of a tail and count the reds before believing a
-    coverage figure: a figure read off an instrumented build OLDER than the battery it describes is not this
-    battery's.
+    one), and the harness's `aes_pdpipe.sent` as the screen manager is no writer a returning run can use (its
+    continuation is the run's sentinel). THE WRITER IS THE MENU CHAIN (`aes_evmulti.THE_MENU_CHAIN`,
+    `through_the_menu`): the mouse onto a title wakes the snapshot's own screen manager, which drops the menu; the
+    mouse onto an item; the press — its own appl_write (mn_do's selection, MN_SELECTED byte for byte) serves the
+    parked wait through the QPB of the waiting call's frame. Three idles, and the screen manager's turns are a
+    FOREIGN WINDOW. What a case adds comes WITH THE PRESS, in that idle.
+  - TWO ROM FACTS EVERY SUCH CASE MEETS. A PRESS BRINGS THE TICKS OF ITS CLICK COUNT (`aes_event.PRESSING`; gl_dclick,
+    11 on the snapshot's machine): a short timer runs out with the press, so "a message and a timer NOT run out" needs a
+    timer longer than that. THE WOKEN LIST IS LAST IN, FIRST OUT, and a key THAT ARRIVES IN THE PRESS'S OWN IDLE is
+    that idle's last fork: it wakes the desk AFTER the press woke the screen manager, the desk runs FIRST and answers
+    the key alone — no message is written yet — unless something (the ticks) woke it before the press did. That is a
+    fact of what arrives AT ONE IDLE, and no further (next). And the mouse is the WRITER's while its menu is down:
+    the desk's rectangle waits are not posted in a writer's wake.
+  - AT A POLL THAT IS NO IDLE (`aes_switch.scheduled(..., at_polls={poll: interrupt})`). idle polls the keyboard
+    EVERY time round its loop — with a process woken or ready too — so an interrupt that arrives between two
+    processes' turns is taken THERE. A key that arrives one poll after the press (its forks run, the screen manager
+    woken and not yet moved to the ready list) wakes the desk BEHIND the manager: the manager writes first and the
+    desk answers A KEY AND A MESSAGE IN ONE WAKE ($11) — a wake no delivery at an idle makes. A poll is named by its
+    ordinal among the run's polls (idles among them), held on every shore like an idle (below), and its delivery is
+    checked against the three words idle tests (`aes_switch.what_idle_tests`): where in its loop the dispatcher
+    polled. ("No real run reaches $11" stood here, pinned by a passing test, until the wave's review: it was true
+    of the idles the driver delivered at, and of nothing else. `docs/agent-playbook.md` has the lesson.)
+  - WHAT NO RETURNING RUN WAKES IS A CLASS HELD BY A SWEEP (`aes_evlib.NOT_WOKEN`, `what_wakes`;
+    `test_aes_evlib_woken.py`). A blocked arrival with no woken counterpart must say why — a rectangle no mouse can
+    enter, a negative time, a pipe whose other end is the waiter, a lock whose holder a harness call parked — and
+    the one delivery its entry names proves little: a hand-picked "tried" can be an event that could never have
+    satisfied the wait (the screen manager's wait to ENTER a rectangle stood in that table, tried with a move OUT
+    of it). So every member is swept with EVERY KIND OF INTERRUPT THERE IS (`EVERY_INTERRUPT`: a key, each button
+    event, the ticks, the mouse into and out of every rectangle a scenario names, onto the bar), each alone at the
+    dispatcher's first idle, on the ROM's own run: none may return in the caller. The sweep is held non-vacuous —
+    over a wait of each kind an interrupt satisfies, exactly the members that bring its event wake it.
+  - WHAT IS HELD: each wake's events stated in a table and held to the ROM's run (`test_aes_evmulti.WAKE_CAME`),
+    the same call's case AT DSPTCH beside it, the answers, the cancel, the order of the aprets (the free list's
+    head), and — on the blobs — GCC's frame across savestate / switchto. Plant a trap in each arm of a tail and
+    count the reds before believing a coverage figure: a figure read off an instrumented build OLDER than the
+    battery it describes is not this battery's.
+  - SWEEP A TAIL ON A PRIVATE BUILD AGAINST THE WAKES ALONE, host and blob as TWO runs (a tail mutant the host kills
+    and no blob row kills means the target's frame across the switch is unheld). ev_multi's expressions: host `-k
+    "through_the_scheduler or woken_through or after_the_wake or tail_clears or leaves_the_sent_mark or
+    key_typed_with or key_polled or two_processes_woken or press_brings or woken_in_one_idle or
+    through_the_menu"`, blob `-k both_blobs`.
 - A RUN ENTERED AT A DOOR ENTRY (a twin's own row, its leaf battery's watched cases) makes no door call of that
   entry: `DoorStops.entered_at(pc)` leaves the run's own first instruction out of the stops it starts with — the
   bench stops at a listed PC before executing it — and watches it again from the first stop on. The outermost entry
@@ -588,19 +614,23 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   or YIELDS, dropped=…)` — the core in a fork halts at the dispatcher's hook, as a call that blocks / yields, and its
   image there is the ROM's own run's at dsptch (`rom_at_dsptch`), outside the stack band, the mask word, the trap
   save, the SR save words the ROM's run stored and the case's own named drops (each required to be bytes that run
-  wrote). This is how every blocking arm of a wait is verified; nothing runs after the switch.
+  wrote). This is how every blocking arm of a wait is verified UP TO THE SWITCH — it bisects: it says which half of
+  a blocking call differs. What runs after it is the wake's (below; "TIER 3: A ROW THAT SWITCHES").
 - THE DISPATCH HOOK REFUSES. A twin that reaches dsptch calls `aes_dsptch` (`aes/switch.h`): off target that is
   `recreate_dispatch`, asked before any guard, whose binding in every case and every child refuses by name — "the
   call would block" or "would yield", told apart by the running process's PD_STAT as disp tells them — and prints the
   frames handed so far. A run that blocks inside a rebound entry is compared where its twin stops, AT dsptch.
 - ...UNLESS A CASE SWITCHES THE MODEL ON (`test/aes_switch.py`) — THE DEFAULT IS STILL TO REFUSE.
   `aes_switch.scheduling(reference, foreign=)` binds, for its own runs alone, `recreate_dispatch` to the C scheduler
-  `aes_disp` (`src/aes/evdisp.c`, host only: disp's own loop), `recreate_idle` to the case's deliveries and
-  `recreate_process` to a nested run of the ROM. No other case of the suite is touched by it.
+  `aes_disp` (`src/aes/evdisp.c`, host only: disp's own loop), `recreate_poll` and `recreate_idle` to the case's
+  deliveries (every poll of idle is told to the first — it counts them and lays what is due at one that is no idle;
+  the second is asked where the machine waits) and `recreate_process` to a nested run of the ROM. No other case of the suite is touched by it.
   - THE ROM'S SIDE is `aes_switch.scheduled(entry, frame, machine, {idle: interrupt})`: ONE run through the ROM's own
     dispatcher. An IDLE is idle's poll reached with nothing ready, nothing woken and nothing queued
     (`AES_ROM_IDLE_LOOP`) — where the machine waits for an interrupt — numbered as the run makes them; a delivery is
-    taken there exactly as `interrupted` takes one at a door call. An idle with nothing due is passed; a second in a
+    taken there exactly as `interrupted` takes one at a door call. EVERY arrival at that place is a POLL, numbered
+    too: `at_polls` names one that is no idle (above), and one named at a poll that IS an idle, or that the run
+    never makes, is refused by name. An idle with nothing due is passed; a second in a
     row after the last delivery ends the run. A run that reaches its return in ANOTHER process is refused.
   - THE C'S SIDE is `aes_switch.modelled(symbol, typed, machine, reference, foreign=)`, in a fork: the process the
     scheduler comes back to is the caller → the C's call RETURNS; the idle hook lays the reference's deliveries at the
@@ -623,7 +653,12 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     words when the run fails too, whatever it raised (`event_hook`). ONE MECHANISM, whoever binds the pointer
     (`address_hook.answered_or_recorded`, `raise_what_stops_the_session`, `as_the_case_s_outcome`): the scheduler's
     hooks (`aes_switch.Scheduling`) answer REFUSED through it, say the raise by name on stderr (a fork's only
-    voice) and give it the same outcome as their binding closes. A hook written outside it owes the same.
+    voice) and give it the same outcome as their binding closes. A hook written outside it owes the same — THE DOOR
+    CHILD'S DISPATCHER HOOK UNDER THE MODEL DID NOT (the read of the host slots raising at a dispatch was printed
+    by ctypes and dropped: the twin ran on and the child exited 0): what that child's own Python raises at the
+    dispatcher — the hook, or a shadow's vet that could not be MADE — now ends it by name with the harness's own
+    status (`FORK_RAISED`), and a door user's modelled run says how many times its process was parked
+    (`Modelled.parked`): an audit that read nothing is no audit passed.
   - ITS LEAF HOOKS (`aes_switch.IDLE_HOOKS`) ARE THE WORKER'S FORKS, not the zygote's: a named hook must live in a
     module the zygote holds (below), and it holds no battery's helper.
 - SR SAVE WORDS, AND THE LEDGER RULE. The words a bracket parks (`sr_mask_saving` / `sr_restore_from`, `aes_spl7_save`
@@ -719,8 +754,10 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   free slot" would collide across runs — a parked frame is laid in one run and read in another). On target the
   macro is the local's own address and `process` is not evaluated. ev_multi's QPB is a second such role
   (`HOST_SLOT_AES_EV_MULTI_QPB`), claimed on its blocking arm only and given back at the return (held by a test
-  that makes two calls in one fork). Every OTHER slot a routine holds across a wait
-  has this shape the moment two C processes can be inside one routine (wave 3's audit).
+  that makes two calls in one fork). Every OTHER slot a routine holds across a wait owes this shape the moment two C
+  processes can be inside one routine — band 5. Wave 3's AUDIT names them
+  (`test_aes_event.SLOTS_HELD_WHERE_PARKED`): one frame for every process today, and sound, since a process other
+  than the caller is the ROM's own code on the host.
 - TIER 3: THE ARRIVALS RULE. Both runs still arrive at a rebound entry — the same ordinal, delivery, slice mark and
   frame — but it opens NO window: the ROM routine's cycles stay the ROM's own, the twin's are ours, and the table's
   sub-line counts "N call(s) of a rebound entry in the own cycles". A twin that runs an AES ROM cycle is refused by
@@ -769,8 +806,8 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   refused BY NAME in one stop — it used to idle in our dispatcher for 16,000,000 instructions and end in the oracle's
   RuntimeError, which no strict sweep counts a kill.
 
-- TIER 3: A ROW THAT SWITCHES (`test/aes_switching.py`; band 4 wave 3's foundation). A call that BLOCKS AND IS WOKEN
-  leaves by the dispatcher and comes back by it — ONE RETURNING RUN on both shores: the ROM's routine through the
+- TIER 3: A ROW THAT SWITCHES (`test/aes_switching.py`; band 4 wave 3 — 87 rows of the table). A call that BLOCKS
+  AND IS WOKEN leaves by the dispatcher and comes back by it — ONE RETURNING RUN on both shores: the ROM's routine through the
   ROM's dispatcher, our twin through OUR dsptch, disp, savestate and switchto round the C of forker and idle. Such a
   row says so in its NINTH FIELD: an `aes_event.Switches` where a door row has `{door call: (found, wrote)}` — the
   deliveries at the dispatcher's IDLES (`{idle: (found, wrote)}`, as `aes_switch.scheduled` takes them), how many
@@ -784,14 +821,25 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     tells them apart). The delivery of that ordinal is checked against the memory it lands on and laid, at no cost;
     a run that idles ONCE MORE than the ROM's did is refused there by name (it used to be the oracle's budget), and
     one that made fewer is refused as it ends (`vet_ended`).
+  - A POLL is every arrival at that same place, an idle or not (`Switches.at_polls`, `Switches.polls`): numbered as
+    the run makes them on either shore, the row's delivery of a poll's ordinal checked and laid there as an idle's
+    is — and checked against which process stands ready, which woken and how many forks are queued, as the ROM's
+    run held them (a dispatcher that polled at another point of its loop is refused where the delivery would land:
+    the same key, the same final image, another order). A run that polls more or fewer times than the ROM's is
+    refused as it ends; a delivery named at a poll the run never makes is refused where the watch is made.
   - EVERY PROCESS ENTERED IS FOLLOWED at switchto's `rte` — the ROM's bytes in both builds: the same offset — to
     the instruction it resumes at. THE DOOR WATCH IS THE ROW'S OWN PROCESS'S (`DoorWindows(blocks=False)`, the
     watch's `inner`): a door call that reaches the dispatcher STAYS OPEN ACROSS A SELF-RESUME and closes when its
     process is resumed, its cost — the switch in it — in both own columns, the row held on TWO COUNTS as any door
     user's (measured: wind_update handing the lock over inside unsync's call, 0.64 / 0.32; ev_keybd round ev_block's
-    twin, woken by a key). A DOOR CALL OPEN ACROSS A FOREIGN WINDOW IS REFUSED BY NAME, not priced: the window would
-    sit inside the call's own cost on each shore (`own_inside`, and the twin's "no cycle of the AES's ROM") — it
-    must come off all three before such a row has a second count (the door users' slice).
+    twin, woken by a key). A DOOR CALL OPEN ACROSS A FOREIGN WINDOW IS PRICED NET OF THE WINDOW (band 4 wave 3; the
+    foundation refused it by name): the window sits inside the call's own cost on each shore, so it comes off THREE
+    things together, at the call's close — the call's own cost (`own_inside`), its glue, and the twin's count of
+    AES-ROM cycles (`in_the_rom`: what refuses "our twin ran N cycles of the AES's own ROM"). One left in on any
+    count is refused by name, a cycle of our build inside such a window is refused AT THAT CALL, and a window
+    BETWEEN two door calls comes off no call (`test_tier3.py`: `test_a_door_call_open_across_a_foreign_window_…`,
+    `test_a_window_left_inside_a_door_call_on_one_count_…`, `test_a_window_between_two_door_calls_comes_off_no_call`).
+    Rows: mn_do with the desk's turn inside its ev_multi, ap_sendmsg with the desk's read inside its ap_rdwr.
   - A FOREIGN WINDOW is the run of another process than the row's, from its first instruction to the first of the
     row's process when a dispatcher comes back to it. The snapshot's other process is the screen manager, parked BY
     THE ROM in the ROM's ev_multi, its program (ctlmgr) not reconstructed: its saved PC, its frames and the fork
@@ -822,16 +870,70 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     drop is held to OUR ledger too). The dispatcher's own save word is staged and compared.
   - THE HOST DOES NOT SWITCH STACKS. Tier 1 of such a row is the model (`aes_switch.modelled`: the C scheduler,
     self-resume a return, a foreign process a nested run of the ROM) held to the ROM's scheduled run over the row's
-    settled machine with nothing left out but the run's own stack (`aes_switching.companion`) — where another
-    process ran, the dispatcher's stack and the mask word held to what the ROM's run holds WHERE ITS DISP HANDS THE
-    MACHINE BACK, which is where the model's nested run ends. The switch itself, and GCC's frame across it, are the
-    bench's second differential: the image, the answer, every callee-saved register back after the wake.
+    settled machine with nothing left out but the run's own stack (`aes_switching.companion`) and — vetted first — a
+    QPB's address left in a freed EVB. WHERE ANOTHER PROCESS RAN it is the ROM's own code in the host's run too, and
+    what that code stores where no C ever does — the dispatcher's stack and the Line-F mask word: TWO things, each
+    held needed by a RED (the SR save words stood in the rule too, and no companion needed them left out: they are
+    laid back and compared) — is NOT LAID BACK over the C's image (`aes_switch.STORED_BY_NO_C`): the image keeps
+    there what the machine stages, which is what the ROM's whole run leaves however often the row's process is
+    dispatched afterwards. (The
+    foundation's rule — those bytes held to what the ROM's run holds where its disp hands the machine back — was
+    exact only for a row that never dispatches again: mn_do woken twice after the desk's turn differed in 24 bytes
+    of the dispatcher's stack on no fault of the C.) The switch itself, and GCC's frame across it, are the bench's
+    second differential: the image, the answer, every callee-saved register back after the wake.
+  - A PARKED QPB'S ADDRESS COMPOSES WITH THE REGISTRAR. A pipe wait that blocked and was woken (or cancelled) gives
+    its EVB back with the QPB's address still in EVB_PARM — a place in the waiting routine's own frame, another on
+    every shore. The registrar READS IT WHILE THE FRAME IS LIVE (the watch notes a QPB the first time its address is
+    seen, at an idle or where a process is resumed: ev_mesag's QPB is overwritten by its own Line-F return's trap
+    frame before the run ends), keeps it with the row (`Settled.qpbs`), drops the longword by name at Tier 3, and
+    VETS it on every shore: the companion against the C's own slot of the entry's role (`_vetted_qpbs`), a blob's
+    run against what our parked wait named (`vet_our_qpbs`: the same process, count and buffer) — AND ITS PLACE: the
+    QPB lay at or above the stack pointer its process stood parked at (`vet_the_qpbs_lay_in_live_frames`, on the
+    ROM's replay and on every blob's run: the right eight bytes in a POPPED frame are right until the next call).
+    A wait still queued is read again where its address was seen before (the same EVB, a second wait out of the
+    same frame). An address no stop saw live is refused by name; it is never staged.
+  - A MACHINE A RUN LEAVES IS MADE BY THE WRITE LEDGER (`aes_switching.left_by`): every byte the run or an
+    interrupt stored, at the value it holds where the run ends — NOT "the bytes that differ from the snapshot". A
+    byte the run stored with the value the snapshot happened to hold is the run's all the same; kept by difference,
+    it turned back into noise over another capture of the boot.
+  - THE ROW'S PROCESS NEED NOT BE THE DESK: `Switches.process` is read off the machine. The screen manager's write
+    to the desk's full pipe is the screen manager's row — its saved context the one dropped, the desk's turn the
+    foreign window.
+  - A DOOR USER THAT SWITCHES (a routine above the event layer whose wait blocks: the gr_ loops, fm_do, mn_do,
+    wm_update, ap_sendmsg) is written with three calls of `aes_event`: `woken_row(label, name, arguments, machine,
+    at_idle, at_calls=None, objects=, answered=)`; `blocked_then_woken(row)` → `(held, ran)` — the premise first
+    (with nothing delivered at an idle the call SWITCHES: refused at its hook, its whole image the ROM's AT DSPTCH —
+    where a transient store made before the block and undone after the wake would show, and nowhere later), then
+    the same call taken on to its return; `register_woken(row)` — the priced row, on TWO COUNTS, its call open
+    across the switch. ITS INTERRUPTS ARE OF TWO KINDS IN ONE DERIVATION (`aes_switch.scheduled(..., at_calls=)`):
+    at the entry of a door call (what a loop's earlier waits take) and at an idle (what wakes a wait that
+    blocked); one named at a door call the run never makes is refused. ITS TIER 1 IS A DOOR CHILD UNDER THE MODEL
+    (`aes_switch.modelled(..., door=DoorUser(objects, child doors))`): the door's binding and the scheduler in one
+    fork, the twin held to its shadow AT DSPTCH and then run on, the frames the door was handed held to the ROM's.
+  - THE HOST SLOTS HELD ACROSS A WAIT ARE AUDITED (`test_aes_event.SLOTS_HELD_WHERE_PARKED`, `include/host_slot.h`):
+    each frame a door user holds while its process is parked is ONE frame for every process — sound while one C
+    process can be inside the routine (another process is the ROM's own code, which claims nothing) — and a call
+    that returns with a slot still held is refused by name. A slot NEWLY held across a wait reds that table; band 5
+    (a second C process) owes each of them `HOST_PROCESSES` frames (`host_slot_claim_for`, as the two QPBs have).
   - TO ADD ONE: `aes_switching.register(label, name, arguments, machine, {idle: interrupt})` — everything else is
     derived from the ROM's own runs (`()` for a routine of no argument, `answered=False` for an arm that sets no
-    D0); `measured_on(blob, row)` is the second differential on a named blob (the table prices a row on one). NOT BUILT, and refused by name or absent: a SLICED session that switches (a slice's marks
-    are one process's); one derivation that takes interrupts at door calls AND at idles; a parked QPB's address in a
-    row that waits for a message (the menu chain's writer wake runs end to end on the blob and differs in that one
-    longword); a door user under the host's model (its companion).
+    D0, `at_polls=` for what arrives at a poll that is no idle); `measured_on(blob, row)` is the second differential
+    on a named blob (the table prices a row on one). ONE REGISTRAR, `aes_switching.register_row(row)`: the waits'
+    battery ends on it through `evlib.register_woken`, a door user through `aes_event.register_woken`, ev_multi's
+    wakes directly. AND ONE SPELLING OF WHAT A BATTERY HOLDS OF ITS ROWS (the pilots', the waits', ev_multi's and
+    the door users' all call it, so none holds less than another): `aes_switching.vet_the_premise(row,
+    Premise(...))` — the ROM's own run is what the row says, and the row carries its deliveries;
+    `vet_on_a_blob(blob, row, premise, windows, whole)` — the second differential on each blob, its idles, polls,
+    processes, windows and whole-run cycles pinned; `vet_the_table_s_price(row, Priced(own, the caller's own,
+    calls, windows))` — what the table prices, THE CALLER'S OWN PINNED wherever the run calls a rebound entry (a
+    second count net of a foreign window TWICE is still under the bar: a battery that pinned the first count alone
+    passed it), both counts under the bar. A second count has an invariant of its own, held where it is read
+    (`tier3.caller_own_cycles`, and call by call in `DoorWindows._closed`): what the calls cost is neither negative
+    nor more than the run they are part of. NOT
+    BUILT, and refused by name: a SLICED session that switches (a slice's marks are one process's — the wave's step
+    S). BUILT SINCE THE FOUNDATION (band 4 wave 3's slices, each above): one derivation that takes interrupts at
+    door calls AND at idles; a parked QPB's address in a row that switches; a door user under the host's model; a
+    door call open across a foreign window.
 
 INTERRUPTS AT A DOOR ENTRY. A loop like mn_do or gr_dragbox only leaves its later states when the mouse or button changes
 WHILE it runs. `aes_event.interrupted(name, arguments, machine, {k: effect})` delivers that change on both sides. The ROM's
@@ -1140,7 +1242,7 @@ Of the three mechanisms the foundation designed, ONE is still not built (the fir
   by-nature drop, cut to what the ROM's run stored (the caller's saved D1/D2 for the bare yield, the whole context for
   a compiled caller), and savestate's `lea $8c1a,sp` puts disp's frames in compared RAM — the dispatcher's stack is
   dropped by name and, on our shore, PUT BACK as our run found it. Rows that switch WITH A DELIVERY and through a
-  foreign process are built too (TIER 3: A ROW THAT SWITCHES, above: four pilots); what remains is the wave's own —
+  foreign process are built too (TIER 3: A ROW THAT SWITCHES, above: five pilots, one of them taking its key at a poll that is no idle); what remains is the wave's own —
   every blocking entry and door user as such a row, and the modelling they retire.
 - **The RELOCATION of a ROM-made fork queue for our blob — BUILT** (A CODE ADDRESS IN COMPARED RAM IS RELOCATED, NEVER
   DROPPED, above): forker is priced over queues the ROM's own ISRs filled, its recorder's three arms are rows on both
@@ -1543,7 +1645,9 @@ A STALE ANSWER CANNOT BE SERVED, because "the same question" is CONTENT. WHAT KE
    Python file, every header and source, `aes_map/`'s decoder, the kit's Python and the workspace tools it imports,
    its oracle library, the ROM, the boot snapshots, the makefiles, and the candidate `.so` AS THIS PROCESS LOADED
    IT), with the interpreter's version and whether it runs its `assert`s (`-O`): any edit, a comment's included, is
-   another tree;
+   another tree. THE PROJECT'S `names.txt` IS ONE OF THOSE FILES (`derived.PROJECT_INPUTS`): a `cmt` added by a
+   docs pass makes the next run derive cold, and a run in flight when it is edited loses the cache for the rest of
+   its life — edit it before the suite run whose time is to be quoted, never during it;
 2. THE BASE IMAGE in force (`harness.set_base_image`: the sweep over other captures derives for itself);
 3. THE DERIVING FUNCTION, read as a value (two closures of one `def` are two derivers);
 4. ITS ARGUMENTS BY VALUE — tuples, named tuples, a function by its code, defaults, attributes and what its closure
@@ -1696,8 +1800,11 @@ and `.S` (the repository's `docs/agent-playbook.md` §10 has the rebuild traps).
   `aes_switch` (the ticks an interrupt's need is measured over; the bytes the OS uses under a trap) SURVIVED warm and
   are KILLED with `AES_DERIVED_OFF=1`. Run such mutants cold.
 * **WHICH PART OF A BATTERY HOLDS A MUTANT is asked with `-k`**: a store that a comparison's drop could hide is swept
-  against the tests that use that comparison ALONE (the six stores in the ROM's frames and save words: killed by `-k
-  woke`), so "killed" is not the gift of an unrelated differential.
+  against the tests that use that comparison ALONE, so "killed" is not the gift of an unrelated differential. For a
+  twin's TAIL after a wake those are its wakes, host and blob as two runs (ev_multi's: host `-k "through_the_scheduler
+  or woken_through or after_the_wake or tail_clears or leaves_the_sent_mark or key_typed_with or press_brings or
+  woken_in_one_idle or through_the_menu"`, blob `-k both_blobs` — the hook road's `-k woke` is replaced by these: it
+  now matches every id that says "woken", premises and pricing tests with them).
 * **A host-only stand-in is swept through a test of its own**: a library that keeps a host slot held aborts the WORKER
   at the next in-process claim — ABNORMAL, never KILLED — wherever the zygote made the fork-first run (its own library
   is clean). The give-back is held by a test that makes the call twice in one fork
