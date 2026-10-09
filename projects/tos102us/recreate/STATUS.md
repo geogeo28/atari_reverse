@@ -532,7 +532,10 @@ the snapshot's indisp = 1 would otherwise turn into a "no event" no process can 
 wrapper's body becomes the call of its C twin, and the rows stop being door rows by derivation. Tier 3's mechanism (EV)
 prices such C on its own cycles: our run and the ORIGINAL's are both watched at the door's entries, each door call a window
 taken off the ROM's own, the two sides' windows asserted equal (cycles and frames), and an AES cycle of ours outside a window
-refused. THE MACHINES ARE THE SCHEDULER'S OWN: a running process is made by delivering the event a parked process waits for
+refused. (AS THE DOOR STOOD IN BAND 3. SINCE BAND 4: every entry is its C twin's call, no call is served by the ROM and no
+window is left; band 4 wave 3's step R retired the nested run, its cap, the hop check and the name (EV) — the mechanism is (V)
+with ARRIVALS, TWO COUNTS and FOREIGN WINDOWS: recreate/README.md, "WHAT BAND 4 WAVE 3 RETIRED OF THE DOOR".)
+THE MACHINES ARE THE SCHEDULER'S OWN: a running process is made by delivering the event a parked process waits for
 and running disp's loop (`$fe4dda`: forker, idle, switchto) until the woken process leaves its evnt_multi (`$fe6c5c`) — PD0
 by the Return key or the left button, PD1 (the screen manager) by the mouse on the menu bar — never by poking rlr, indisp,
 PD_STAT or the lists. Beside the door's pilots (`src/aes/grwait.c` gr_stilldn and gr_watchbox, `apmsg.c` ap_sendmsg, `ctrl.c`
@@ -581,8 +584,9 @@ Calls the dispatcher would switch on are refused by name in two kinds, matched b
 - a call that WOULD BLOCK leaves its process waiting;
 - a call that WOULD YIELD keeps the caller ready but switches, as unsync does when it hands the lock to a queued waiter.
 
-`refused_where_the_rom_blocks` compares the child's WHOLE image with the ROM's at the refusing entry, and `returns_in_a_child`
-runs a looping door user's C in a child first (30 s). The machines are the scheduler's and the ISR's:
+A case that ends blocked (`interrupted`, with nothing delivered there: `blocked_then_woken`'s first half — the name
+`refused_where_the_rom_blocks` went with band 4 wave 3's step R) compares the child's WHOLE image with the ROM's where the
+call reaches the dispatcher, and `returns_in_a_child` runs a looping door user's C in a child first (30 s). The machines are the scheduler's and the ISR's:
 - PD0 running by a key or the button, the mouse moved first, or the cursor SHOWN (`shown_machine`, the snapshot's own state);
 - PD1 woken onto the menu bar, then moved or pressed by interrupts — moves keep a held button;
 - a process PARKED in its own evnt_multi while holding the lock (`aes_event.parked`);
@@ -740,8 +744,9 @@ THE RULINGS (the orchestrator's, on the design's open questions — the band's d
 THE DOOR IS REBINDABLE, AND tak_flag IS REBOUND (FLIP 1). The hook has a third answer, ARRIVED: a rebound entry's
 wrapper still packs its frame and asks; the case records the frame and lays the interrupt due at that call; then the
 C twin runs, on both builds. Which entries are rebound is DERIVED (the host's from the library's exports, Tier 3's
-from the blob's symbols, held equal). While a flip is in flight the entry is SHADOWED — the ROM routine's nested run
-over a copy at the arrival, the twin held to it at its return. At Tier 3 a rebound entry's call is still an ARRIVAL
+from the blob's symbols, held equal). While a flip was in flight the entry was SHADOWED — the ROM routine's nested run
+over a copy at the arrival, the twin held to it at its return (retired by band 4 wave 3's step R, every flip made).
+At Tier 3 a rebound entry's call is still an ARRIVAL
 (ordinals, deliveries, slice marks, frames held equal) and opens NO window: the ROM routine's cycles are the ROM's own,
 the twin's ours. The flip moved 88 committed rows — every one a row that takes the lock or runs wm_update's re-compiled
 body — by the ROM's 364 / 384 / 376 cycles a call (its routine and its Line-F return) against the twin's 226 / 214;
@@ -4385,103 +4390,317 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
   - OUT OF SCOPE, NOTED: `aes_fslib.NAME_ROOM` (the selector's name scratch's span) runs to `AES_SH_SCRATCH` and
     so takes in `gl_mouse_shown` (`$9b6e`) — which is how the menu's session "differs in the name scratch".
 
-* **Next** — STEPS S AND T OF BAND 4 WAVE 3 ARE IN (their entry, above; reviewed and fixed: gate 13's entry): 108 rows switch, the event tape's two
-  routines are in C, every case that ended blocked goes on through its wake. The dispatcher is on target, ALL EIGHT of
-  the door's entries are rebound, and every blocking entry AND every session is blocked-then-woken through our own
-  dispatcher on both builds. CLOSED BY THE TWO STEPS, of what this line carried: the last review's four — the
-  NOT_WOKEN sweep takes chains and is held to wake every woken arrival, and "only another process" is a fact of the
-  machine; `test_status` holds WHICH rows switch and ev_multi's prose counts; `aes_event._laid_into` is guarded whole;
-  two foreign windows inside ONE door call is restated as UNREACHABLE with its reason (`## Not reconstructed`) — and
-  the serial steps S (a slice's marks per process, the sliced sessions, fm_alert's two) and T (ap_tplay / ap_trecd,
-  the bare yield into another process as a registered row, `$fcff0a`'s trap-frame half). In this order:
-  - **STEP R — THE RETIREMENT, the next commit, one of its own**: the nested run, the shadow and its vets, the hop
-    checks, mechanism (EV) as a name, `refused_where_the_rom_blocks` (no battery of a routine calls it any more: six
-    calls in `test_aes_event.py`'s own tests are all that stand on it). A RULING FOR STEP R: `blocked_then_woken`
-    KEEPS THE AT-DSPTCH WHOLE-IMAGE COMPARE beside the woken run — a transient store made before the block and undone
-    after the wake shows nowhere else — so "Blocked as a door row's outcome" is NOT retired wholesale;
-    `switches_where_the_rom_does` stays as the bisecting surface (the foundation's ruling 3).
-  - **OWED BY STEPS S AND T (their entry, above; `## Not reconstructed`, band 4 wave 3)**: a recording with another
-    process's turn inside it on a blob (Tier 1 only, by ruling: no relocation maps a recording where a window closes);
-    a playback whose scale makes a wait below −1 tick (never wakes: no case); ap_trecd's D0 high word; two foreign
-    windows BETWEEN the same two door calls (stand-in counters); the host slots of fs_input and fm_alert per process
-    (band 5, with the others).
-  - **FLIP 3's known debts, as they stand**: `sr_drops` — a row that SWITCHES drops `$8996` where the ROM's run stored
-    it, held to our ledger (23 of the wave's rows); on the rows TAKEN THROUGH INTERRUPTS the registrar still reads the
-    words by memory change, not by the ledger (loud, not silent: owed). The three bindings the input's battery made
-    locally: DONE by slice U's report (`$fcff0a` is among the routines the door's bindings serve wherever the poll
-    runs in C: `test_the_door_serves_the_vdi_s_cursor_routine_on_the_register_hook_in_process_and_in_a_child`);
-    `$fcff0a`'s trap-frame half: DONE by step T (`test_the_trap_frame_under_a_playback_is_the_keyboard_poll_s_own` —
-    a playback needs no `TRAP_FRAME_DROP`). What is left of the debts is `sr_drops` on the interrupted rows.
-  - **OWED BY THE THREE SLICES (the wave's entry, above; `## Not reconstructed`, band 4 wave 3)**: a row that wakes
-    two processes in one idle; ev_mesag's sent-mark order in a woken run; the blocked cases no wake reaches; the two
-    registrar mutants left surviving without an argument (`q2b`, `q16`); mn_do's run that does not return over a
-    SELECTED and DISABLED title (finding 8: uninvestigated).
-  - **LEFT BY THE CLEANUP PASS, each with its reason (its entry, above)**: the C's ms→ticks ×3 and mouse-owner test ×2
-    — the twin's source pin would have to be relaxed; the kit's `_memcmp` beside `aes_fslib`'s — the kit exports none;
-    `polls_in_c` and the `rebound=` a child's binding reads (true for every library since FLIP 3); Tier 3's PENDING
-    derivations (`arrived_at_by_a_twin`, `_door_calls_held_by`, `_reaching_the_door`: what tells a `jsr` into the ROM,
-    kept as the refusal's reader). (Gone since wave 3: the second harness for the woken cases, `aes_evmulti.woken`;
-    the Components table's stale count of two-count rows — still prose no pin holds.)
-  - **THE USER'S RULING ON THE KNOWN PRICING GAP** (the block under the Components table; K5): land the wider
-    classifier — then ten AES rows need a fix, an acceptance, or the leaf rule extended to (V) rows — or leave it and
-    keep the caveat. And the same class in the VDI and GEMDOS (nine rows: a component's own span is a design, not a
-    patch). Independent of the flip.
-  - **WAVE 3's FOUNDATION IS IN (its entry, above): of the four prerequisites below, (1) and (2) are BUILT** — a
-    door call stays open across the switch and closes when its process is resumed; nothing of a foreign process is
-    relocated, its run a declared FOREIGN WINDOW held equal on both shores — **(3) is built for the dispatcher's
-    stack and measured NOT NEEDED for a UDA's** (the only C process is the row's, entered on the run's own stack;
-    the screen manager's UDA is written by the ROM's code on both shores: band 5's, with a stack reading per
-    process), **and (4) is BUILT by step S: a slice's marks are per process, and two sliced sessions that switch are
-    priced.**
-  - **WAVE-3 PREREQUISITES (the wave-2 gate's altitude findings; THE FIRST FOUR MUST PRECEDE WAVE 3)**: (1) Tier 3's
-    door windows PER PROCESS — today one open call a watch and `Blocked` at any dispatcher inside it ("a row's run
-    returns"), where a wave-3 row's call leaves by the dispatcher and is closed when its process resumes (every
-    opened call closed is asserted since the gate: `DoorWindows.vet_every_call_closed`); (2) THE RELOCATION REGISTRY
-    (`aes_event.CODE_RELOCATIONS`, one reading for a run's entry and exit, a delivery and a mark since the gate)
-    EXTENDED TO THE SAVED PCs AND FRAMES OF ROM-MADE PARKED PROCESSES — they hold ROM addresses, and how a C process
-    is resumed from a ROM-made frame is wave 3's design question (it collides with "states come from ROM runs":
-    each shore parks its own process, or the span is derived from the pointer slot); (3) the dispatcher stack's
-    put-back PER PROCESS (the pushed frames alone since the gate; a UDA stack needs the same); (4) a slice's MARKS
-    per process. Later: ONE table of "ROM code our run may execute" over the whole ROM (the guard's AES spans and
-    (V)'s `trap #2` classifier are two notions today — the table also settles the K5 pricing gap by design); a SPARSE base image in the kit
-    (the 16 MB image is 8 % non-zero: bounded 54–168 CPU-s a
-    suite run — a kit redesign across seven projects, and not content-neutral without a guard on the hole).
-  - **THE INTERRUPT HANDLERS (wave 18)**: the dispatcher stack fits under our own entries on every arm measured
-    (600 of 640; the wave's entry lists the arms that are not) and the blank survives the cursor redraw; no xfail is
-    left. OWED from it: THE STORE OF EACH ENTRY INTO ITS VECTOR — no build makes it, so it is no test's; THE FLOPPY'S
-    VBL SERVICE past its `flock` gate — with `flock` clear, the idle state, our blank halts there (pre-existing;
-    every case stages `flock` = 1); a ruling on wiring the four handlers' C twins into mechanism (T) (nine written
-    entries would go, the twins' three under-bar pins among them: left as they are by ruling); `vbl.c`'s and
-    `timerc.c`'s `service_this_*` functions, which nothing outside their own twins calls and which are not `static`
-    only to keep the twins' rows where they are; the queue-a-key routine's two copies (C and `.S`); the A6 bound for
-    the C that still calls a RAM vector on target (`acia_service.c`'s packet vectors, the VDI's
-    `call_vector_registers` callers): unpinned — `isr.keeps_nothing` is the instrument, and no case stages it there.
-  - **WAVE 3 — THE ROWS THAT SWITCH, what its slices delivered of the list this line carried**: every blocking entry
-    blocked-then-woken THROUGH OUR DISPATCHER on both builds (after another process's turn the dispatch that wakes
-    ours is that process's — the ROM's on both shores until band 5); ev_timer's first rows; the two-process chains (a
-    writer and a reader, the lock's yields, a foreign process priced by the window rule); THE TARGET FRAME ACROSS A
-    REAL SWITCH (GCC's frame saved and restored by savestate / switchto on the process's own stack: held on both
-    blobs by every row); THE AUDIT OF EVERY HOST SLOT HELD ACROSS A WAIT (fs_input's and fm_alert's by step S);
-    ap_tplay / ap_trecd (step T) and the sessions (step S). LEFT of it: the door's retirement (R) — the first
-    bullet — and the message's apret before the rectangles' (`j09`), which the real menu chain does not reach
-    either: band 5's accessory.
-  - Then **BAND 5**: gem_main, the accessory loader and the shell's launch, the AES's own arms that call ap_tplay
-    and ap_trecd (opcodes 14 and 15: the two bodies are step T's) — with them THE GLUE SITES OWED
-    (`## Not reconstructed`, band 4 wave 2: gem_main's justretf into `$947a`, the tick glue into `$947e` and vex_timv, gotopgm's
-    two callers, cli / sti, the spl entries), gotopgm's row, a third real process (the control arm's and the desktop
-    arm's owners; a writer that does not own the mouse).
-  - Still owed: a ruling on the three interrupt glues' pricing (a register contract and by-nature private-stack
-    frames: neither Tier 3 relation enters them); the single interrupt runner (`taken(layer=)`) and `Layer.restaged`'s
-    generic form (two hand-written spellings stand); the kit's `test_watchdog` test that depends on where `$TMPDIR`
-    lies; `make_image` without the 14.6 MB of unmapped bus (the one large lever left on suite time: counted, not
-    prototyped, NOT content-neutral without a guard); a generator sweep of `aes_event.py` and `tier3.py`; the bindings
-    `$fde2e8` / `$fde30e`'s D0; the E_CHG recovery behind GEMDOS's termination record; a pin for the longword
-    store-above-RAM refusal; the parked project-wide levers; promoting `ganneheim/dev` → `main` (the user's call).
+* **Band 4 wave 3, STEP R (2026-10-09) — THE RETIREMENT: the nested run and the shadow, the hop checks,
+  `refused_where_the_rom_blocks`, the mechanism's name (EV), and the model's tests a registered row now holds —
+  AND THE SHADOW'S ANSWER HALF BUILT AGAIN AT NO RUN: THE ANSWERS HANDED BACK.**
+  CONTENT-NEUTRAL FOR WHAT SHIPS AND FOR TIER 3: every object of both blobs and of the ROM build hashes as at
+  `084c11e` (both `bench.bin`, the shipped configuration's 140 objects, the ROM build's six and `TOS102RC.IMG`);
+  the host library alone moved (the hop checks were host-only code). `make bench` rc 0, 0 OVER, 0 DRIFTED, and THE TABLE DIFFERS IN ONE LINE — line 10,
+  the legend's `net` paragraph, where "(EV): C that reaches the event layer … is priced the same way" now says what
+  the mechanism is: (V), with ARRIVALS, TWO COUNTS and FOREIGN WINDOWS. No row, no number, no verdict moved.
+  THE QUESTION ASKED OF EACH CANDIDATE: not "is it old?" but "what does it still hold that nothing else holds?"
+  - **THE GUARD MAP — what each retired mechanism held, and where that lives now.**
+    - THE SHADOW (`aes_event.nested_run`, `NESTED_RUN_INSNS` / `_MARGIN`, `shadow_of`, `vet_the_shadow`,
+      `vet_the_shadow_at_dsptch`, `SHADOWED`, `HELD_AT_THE_DISPATCHER`, `CHILD_SHADOW_REFUSED`, `Entry.answers`):
+      COUNTED FIRST — 5,473 nested ROM runs a suite run (5,200 that returned: ct_chgown 1,378, ev_multi 1,370,
+      tak_flag 1,137, unsync 1,072, ap_rdwr 160, ev_button 55, post_button 28; 273 that ended at dsptch: ev_multi
+      250, ev_block 7, ap_rdwr 6, unsync 6, ev_button 4 — every one of those inside a door child). What it held:
+      (a) a twin's ANSWER and IMAGE where it returns → the twin's leaf battery, at the entry (every arm, swept
+      alone: `test_tier3.py::test_every_twin_has_a_leaf_battery_s_rows`), and the door case's own compare (the
+      answer its caller reads, the whole image at the end, the frame every later call is handed); (b) a twin's
+      image AT DSPTCH in a door child that ends there → `interrupted` ending blocked, which compares the WHOLE
+      image there, caller and twin (`blocked_then_woken`'s first half: a superset by construction — the shadow
+      started from the C's own image at the arrival and never saw the caller); (c) the same under the model, then
+      run on → the same first half for the run's first block, the wake's companion and the blob's second
+      differential for all that follows, and `switches_where_the_rom_does` for the twin itself at dsptch (228
+      calls a suite run at the wave's census); (d) "the nested run touched no hardware / overflowed no ledger / fits its cap" → guards of the
+      nested run itself, which is gone; (e) a return that answers no arrival → KEPT, and sharpened: `_returned`
+      refuses a return for another entry than the innermost in flight (`CHILD_RETURN_REFUSED`). 
+    - **THE ANSWERS HANDED BACK (`aes_event.vet_the_answers_handed_back`; the orchestrator's ruling on this step) —
+      the successor of the shadow's ANSWER half, and no run of the ROM is made for it.** The return hook is handed
+      the word each twin answered (`recreate_event_door_returned`'s argument, read again); the ROM's own watched
+      run — the one every door case already makes for the frames — reads D0 where it comes back from each door
+      call (`DoorStops.answers`, `Calls.answers`). Held equal call by call, at the WORD, wherever the entry
+      answers one (`ENTRY_FRAMES`' column, back: post_button and unsync answer nothing a caller reads, and are
+      compared with nothing), and refused by name: "door call N, entry X: the twin answered A where the ROM's
+      routine answers B". ON WHICH ROADS (corrected by the review pass, below — "every road" was wrong): in
+      process (`run_event`, and a real-GEMDOS session, `aes_fslib.run_session`), every child `door_child` makes
+      and the model's child (`Scheduled.answers`, `Modelled.answered`, `aes_switching.companion`). REDs: the rule
+      itself, a twin's answer another word in process, in a child, and under the model.
+    - **THE SHADOW'S IMAGE HALF HAS ITS SUCCESSORS TOO (the review pass, below): nothing measured is given up.**
+      As first handed in, this step gave up the twin's image at a call's return and at a modelled run's second
+      and later dispatches, "the leaf batteries' to hold". The review measured that wrong for the second (mutant
+      G4b: 10 door cases red at HEAD, none in the tree). Both are held now, with no run of the ROM. What is left
+      of the shadow's precision: a fault at a stop in the middle is named by its 16 KB PAGE, not its byte.
+    - THE HOP CHECKS (`evdoor.h`: vector `$2c` → the handler's RAM copy → the call table; host only): held "a case
+      that moved the hop halts by name". No case moves it, no other C call of the AES ever checked it (a wrapper
+      is a C call of a C twin like any other), and a machine with the hop moved never passes: the ROM's own run
+      does not return (`test_a_machine_whose_line_f_hop_is_moved_is_refused_on_the_rom_s_shore`, both hops).
+      `AES_LINEF_TABLE` left `test_aes_rom_data`'s census with it: `aes/evdoor.h` names no ROM address.
+    - `refused_where_the_rom_blocks`: a five-line name over `interrupted(…, {})` no battery called. Its six
+      own-tests keep every assertion, spelt on `interrupted` ending blocked (`_ends_blocked`, the test file's).
+      KEPT BY RULING: the at-dsptch whole-image compare itself, and `Blocked` as an outcome.
+    - MECHANISM "(EV)" AS A NAME: the table's legend, `bench/tier3.py`'s mechanism block (rewritten: it still
+      described the served road's WINDOWS) and its comments, `test_tier3.py`'s (`EV_ROW` → `DOOR_ROW`), README.
+    - THE MODEL'S TESTS A REGISTERED ROW HOLDS (`test_aes_evdisp_model.py`): four of its nine cases ARE registered
+      rows — the same entry, arguments, settled machine and deliveries, MEASURED and now HELD
+      (`test_a_case_a_registered_row_holds_is_that_row_s_call_over_its_machine_through_its_deliveries`): the key,
+      the delay, the screen manager's turn (three pilots) and the press (`aes_ev_button, a press waited for,
+      blocked; woken by it`). For those the premise is the row's (`aes_switching.vet_the_premise`: the pilots' and
+      the waits' batteries) and the C through the host's scheduler is the row's companion
+      (`test_tier3.py::test_every_dropped_row_has_a_differential_that_drops_nothing[<row>]`: nothing left out but
+      the run's stack, where the case's compare left out the model's drops) — 8 parametrized instances retired.
+      The other five cases (the two yields, the delay with an idle passed, the harness-queued lock, the manager
+      entered twice) are no row's and stay.
+  - **KEPT, each because it still holds something**: `aes_switch.modelled` (Tier 1 of every row that switches),
+    `scheduled` (the derivation), `switches_where_the_rom_does` (the bisecting surface), the dispatcher hook's
+    default refusal, `blocked_then_woken`'s at-dsptch compare and `Blocked`; `polls_in_c` (always true since FLIP
+    3 — but its removal makes `drawing=` dead at 25 call sites in seven batteries: not mechanical);
+    `DoorWindows`' name (it holds the foreign windows inside a call; 43 uses); Tier 3's `arrived_at_by_a_twin` /
+    `_door_calls_held_by` / `_reaching_the_door` (the refusal's readers, each with a RED);
+    `recreate_event_door_returned`'s answer argument (read by the answers handed back). GONE WITH
+    THE SHADOW: the `rebound=` an arrival read, `io_seed` on `door_hook` / `event_hook`, `parked_where_blocked`'s
+    `rom_stack=`.
+  - **MUTATION — 50 WRONG-TWIN MUTANTS (host C: tak_flag 5, unsync 5, ev_block 3, ap_rdwr 4, ev_button 3, ev_rets
+    3, ct_chgown / set_mown 4, post_button 3, ev_multi 14, what a wait writes before the dispatcher 6), each on a
+    private mirror, the library rebuilt and held to differ, STRICT (found with `-x`, then the tests found run
+    again without it: exit 1 and FAILED).** AFTER THE RETIREMENT (this tree): **49 KILLED, 1 SURVIVED** — 34 in
+    the door USERS' batteries (the composition: fm_alert, wm_update, apmsg, mn_do, fm_do; nine files, then the
+    selector's six), 15 in the event layer's own (leaf) batteries alone; the survivor, ev_multi's zero-timer
+    test moved after its message test, is EQUIVALENT (two tests with no effect on one another: the ROM's order
+    has no surface) and survives at `084c11e` with the shadow on, every battery run. BEFORE (`084c11e`, the
+    shadow on): the same tests kill the same 49 — and there the failures of 32 carry the shadow's words ("the
+    twin of 0x… answered … where the ROM's routine …"): the NAMING is what the retirement gives up.
+    THE SHADOW ADDED ONE DOOR-LEVEL KILL IN FIFTY: of the 15 mutants the door users' batteries let through with
+    the shadow gone, 14 were let through by them BEFORE too, shadow on (users + sessions, 1,758 tests each) — a
+    door user reaches an entry only in the states it makes, and the shadow saw the same states (the pilot's rule,
+    wave 13). THE ONE: ev_multi answering the SECOND rectangle's event as the FIRST's — mn_do does not read which
+    rectangle came. WITH THE ANSWERS HANDED BACK IT IS KILLED AT THE DOOR AGAIN, by name:
+    `test_aes_mnlib.py::test_mn_do_ends_in_its_first_pass[the mouse moved off the bar]` — "AES_ROM_MN_DO: door call
+    0, entry 0xfe6998: the twin answered 0x4 where the ROM's routine answers 0x8" (and by 16 leaf and companion
+    tests beside). The 15 swept again over the door users: TWO are killed there now — that one, and ev_button
+    answering no click (`test_aes_fmdo.py::test_a_radio_button_held_down_waits_as_the_rom_s_and_goes_on_when_it_
+    rises`: an answer after a WAKE, which the shadow never compared — it survived the door at `084c11e`); 13 stay
+    the leaf batteries' alone, as before.
+    THE THREE THE REVIEW NAMED (ev_multi's as-they-are arm answering no event, the first rectangle's test
+    reading the second, a queued key taken and not answered), over the door users' 1,758 tests: 261 / 146 / 308
+    failed at `084c11e` with the shadow on; 194 / 45 / 308 with it gone; **195 / 128 / 308 with the answers handed
+    back** (the third not run again: its count never moved). So OF THE 101 CASES OF THE SECOND THAT THE SHADOW
+    ALONE FAILED, 83 FAIL AGAIN (18 do not); OF THE 67 OF THE FIRST, 1 (66 do not) — and those 66 and 18 are what
+    the image at a return holds now (the review pass, below): the twin's ANSWER there is the ROM's (it took another road to the same word), its IMAGE at
+    the return was not, and the routine's end is the ROM's all the same. No test fails with the answers compare that did not fail under the shadow.
+  - **TESTS: 51 ids retired, 25 added (net −26; the suite 23,946 → 23,920).** Retired: the model's eight; the
+    two hop REDs; 41 of the shadow, its cap and its places. Added: the model's premise (1), the hop on the ROM's
+    shore (2 cases), four of the answers handed back (the rule; a twin's answer another word in process, in a
+    child, under the model) and 18 of those 41 RE-SPELT WITH THEIR ASSERTIONS KEPT — the two blocked message-wait
+    batteries on the door's parked-QPB rule alone (5 + 5), the place an arrival takes and the return that must
+    answer the innermost in flight, the nested arrival, the binding's own list, the child's own library's
+    rebound set, `interrupted` taking no refused return for the switch it waits for, the entries' answered
+    calls, and the lock's argument-class case, which is now a door DIFFERENTIAL ending blocked
+    (`test_the_twin_s_answer_is_the_word_its_wrapper_hands_on_and_the_door_user_goes_on_as_the_rom_s`). The eight
+    `test_an_entry_s_row_answers_what_its_wrapper_returns` stay: the column has a reader again. The other 23 were
+    REDs of the mechanism itself (a made-up nested answer, the one-compare pass, the cap and its margin, the
+    statuses) and go with it.
+  - **SPEED, content-neutral**: no nested run (5,473 a suite run) and no 16 MB copy of the image at an arrival
+    (`aes_event._in_place`: the frame's pointers are read through the image where it lies). Bare warm `pytest -n
+    auto`, one sample a side: 164.1 s / 1,442 CPU-s before (load 23 at its start, 69 at its end), 153.0 s /
+    1,341 CPU-s after (load 23 at its start, 49 at its end).
+  - **A TEST THAT PASSED ONLY IN COMPANY, FOUND AND FIXED — and the standing rule asked again.**
+    `test_aes_event.py::test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation` failed when run
+    ALONE, at `084c11e` as before the fix: it reads three registries (`INTERRUPTED_ROWS`, `SWITCHING_ROWS`,
+    `SLICED_ROWS`) that the batteries' imports fill, and imported none — it now imports what it reads
+    (`test_boot_snapshot`: every battery). THEN, because the rule "every test passes alone" had been broken
+    unnoticed: of the tests added or modified since `d21b493` in `test_aes_event.py`, `test_aes_switching.py`,
+    `test_aes_switching_registrar.py`, `test_tier3.py` and `test_status.py` (117 functions, 1,036 ids) — EACH FILE
+    ALONE in a fresh process, no xdist: 376 / 66 / 22 / 3,107 / 20 passed, none failed; and 40 of those ids drawn
+    at random (seed 4), EACH ALONE in a process of its own: 40 passed. NO OTHER IMPORT-ORDER DEPENDENCE FOUND.
+  - TIMING WITH THE ANSWERS HANDED BACK (it reads D0 at stops the watched runs already make, and parses one line
+    more of a child's stderr): bare warm `pytest -n auto`, one sample, 153.0 s / 1,353 CPU-s (load 21 at its start, 67 at its end).
+  - **THE REVIEW PASS (one real loss and four small ones; all content-neutral for what ships and the table).**
+    - THE IMAGE AT EACH DOOR CALL'S RETURN AND AT EVERY DISPATCH (`aes_event.image_pages`: the 1 MB of RAM as
+      4-byte digests of 16 KB pages). At a RETURN it is the third field of the answers handed back — the
+      candidate's at the return hook, the ROM's where its watched run comes back from the same call, a stop it
+      already makes for D0 ("door call N, entry X: the twin left another image than the ROM's routine where it
+      returns — in $lo..$hi"). At a DISPATCH (`vet_the_images_at_the_dispatcher`): the model child's at each
+      call of the dispatcher's hook, the ROM's at dsptch's entry each time ITS OWN process reaches it
+      (`aes_switch._Idling`, `Scheduled.dispatches`; another process's dispatch is not watched) — "dispatch N:
+      the image the C holds at the dispatcher is not the ROM's …", and the count of dispatches held equal.
+      WHAT A PAGE LEAVES OUT, both shores alike (`image_pages`; wider than a run's END needs, since a stop in
+      the middle cannot ask what the ROM's run stored): the stack band, the Line-F mask word, the keyboard
+      poll's trap save and frame, every SR save word, an EVB's parameter WHERE IT HOLDS A STACK ADDRESS (a QPB's
+      place — MARKED, see the delta review below), and beside — under the model, the caller's saved context
+      and the dispatcher's stack (`left_out_under_the_model`); over real GEMDOS, its three windows. NOT TAKEN: by a case run through its caller's
+      Line-F word (its shores are staged apart; its direct sibling takes them), and by a LEAF's modelled run (no
+      door child: its hook is the C scheduler itself). `interrupted`'s child ends at its FIRST dispatch (the
+      hook refuses, the core halts): "a second block" does not exist there, and its first is the byte compare.
+    - WHO HOLDS A CHILD'S DOOR CALLS IS SAID AT EVERY CALL: `door_child(..., door_calls=)` has no default. WATCHED
+      — `door_child` makes the ROM's watched run and holds the child's frames, answers and images to it (the
+      batteries' refusals in `test_aes_grwait.py` / `test_aes_apmsg.py`, `aes_fslib.child_vdi_calls`; and
+      `returns_in_a_child`, every guarded case's precondition) — or a `HeldElsewhere` with its reason:
+      `interrupted` (holds them itself, after how the run ended), mn_do's binding RED (ended before any door
+      call). (fs_input's two spinning passes and the zygote/timeout tests, first said here, are held since the
+      delta review, below.) A child made by `aes_event.refusal`
+      directly is a RED of the door's own machinery, not a battery's road.
+    - THE CHILD'S REAL EXIT ON A REFUSED RETURN: a real child whose door forgets its arrival in flight ends with
+      `CHILD_RETURN_REFUSED` and the hook's words (it was held only under a monkeypatched `refusal`).
+    - THE TWO UNPINNED INSTRUCTION COUNTS (1,697; 2,970) are deleted from the comments that quoted them.
+      `vet_the_premise` holds the run's END too: the row's process the ready list's head, AES_INDISP clear.
+    - MUTATION, HEAD → the step as first handed in → now (private mirrors, forced rebuild, strict reruns). The
+      reviewer's 18: G4b (ev_multi parks with $c792 scribbled from its second block on) 10 door cases → 0 → 10,
+      each by "dispatch 1: the image the C holds at the dispatcher …"; G4 22 → 1 → 22; G9 66 → 28 → 66; G1 G2 G3
+      G6 G7 G8 N1 N2 N3 N5 N11 A1 killed by door cases at all three; G5 N8 N9 survive the door cases at all
+      three (HEAD's too); the leaf batteries kill them in the tree, then and now (not run at HEAD). Step R's own 50: 49 killed (37 by door cases, 12
+      by leaf / registry), m10 equivalent — as before. NO MUTANT KILLED AT HEAD SURVIVES NOW.
+    - TESTS: 5 added (23,920 → 23,925): the page rule and its exclusions, a store undone after the return RED at
+      its call, the real child's exit, `door_calls` and its RED, the dispatch images with two REDs (ordinal, count).
+    - COST: bare warm `pytest -n auto`, one sample, 158.1 s / 1,379 CPU-s against 153.0 s / 1,353 (load 21 at
+      its start, 53 at its end): about +2% CPU for both images together, under the 10% the review allowed.
+  - **THE DELTA REVIEW OF THE IMAGE COMPARES (one measured false green, one unpinned list; content-neutral).**
+    - A QPB'S PLACE IS MARKED, NOT BLANKED (`aes_event.image_pages`). The exclusion of an EVB's parameter that
+      holds a stack address was decided by each shore's own value and left ZEROS: a stack address compared equal
+      to 0, either way, and the top byte was masked first. The reviewer's X3 (ev_multi, from its second block on,
+      a stack-band address in the last free EVB's parameter across the dispatch) survived 10 of 10 door cases.
+      Now the page's digest reads WHERE a place was left out, and only a WHOLE longword in the stack band is one
+      (the suite stays green unmasked: both shores store a QPB's address with its top byte clear). REDs: stack
+      against 0 both ways, the place in another EVB, an address under a top byte. X3: KILLED, 10 of 10.
+    - THE EXCLUSION LISTS ARE PINNED BY NUMBER, each with the byte before and after every span held red through
+      the candidate's own page road (`test_what_an_image_at_a_stop_leaves_out_is_these_spans_by_number_…`):
+      every page's — the keyboard poll's trap save (one frame under the snapshot's savptr: below), $8994..$899a,
+      $cc44..$cc46, $7f100..$8001c — and, under the model,
+      `aes_switch.left_out_under_the_model`, now ITS OWN LIST and not `model_drops`' (the end compare's, each
+      byte conditioned on what the ROM's run stored): $9c5a..$9c9e the caller's saved context, $899a..$8c1a the
+      dispatcher's stack, and no other. The reviewer's H2 (a page more left out) passed 152 harness tests and,
+      with G4b, all 10 door cases: KILLED now, alone and with G4b, by that test.
+    - BOTH SHORES OR NEITHER: an image at a return on one shore only is refused by name; NO_IMAGE_TAKEN is the
+      one way to carry none, and the Line-F road now tells the ROM's watched run so too (it was silently skipped).
+    - fs_input's TWO SPINNING PASSES ARE HELD: the ROM's run is watched to the refused pass (`fsl.looping`'s
+      `door_calls`), and the child — which the C ends by `abort()` — says each door call as it goes
+      (`SAY_EACH_DOOR_CALL`). Frames, answers and return images held on the close-box road (with two REDs); the
+      empty-path child is held to making NO door call, as the ROM's run makes none before its first pass.
+    - A LATENT ORDER DEPENDENCE OF THE REVIEW PASS, FOUND AND FIXED: `run_guarded`'s guard held its child's door
+      calls under the case's budget, and so preempted the differential's own refusal of a stale budget —
+      unless an earlier test in the same worker had memoized the guard
+      (`test_an_in_process_door_case_s_declared_budget_is_held_from_above_too`, red alone). The guard says its
+      holder now (the in-process differential that follows); `returns_in_a_child` called directly is WATCHED.
+    - The child-machinery tests are WATCHED (gr_stilldn, gr_rubbox) or name the one test that holds them
+      (fs_input over an empty path); `said_in` is the one reader of a child's line.
+    - YIELDS AGAINST BLOCKS (`test_a_call_that_would_yield_is_refused_by_its_own_name` went with the nested run):
+      held by `test_a_yield_is_not_taken_for_a_block` and `test_a_core_that_switches_is_held_to_the_rom_at_dsptch`
+      (unsync handing the lock on: the C halted at the hook as a call that YIELDS, its image the ROM's at dsptch).
+    - UNPINNED, recorded: DISPATCH-ORDINAL ALIGNMENT ACROSS A DELIVERY AT A NON-IDLE POLL. No door row has one (0
+      of the 22 door rows; the three registered rows with `at_polls` are leaf waits, asked no dispatch image).
+    - MUTATION (private mirrors, forced rebuild): X3 10/10 and X1 10/10 by "dispatch 1: the image the C holds at
+      the dispatcher …"; H1 10/10; H2 and H2 + G4b by the pin test; G4b 10, G4 22, G9 66 door cases, as at HEAD.
+    - TESTS: 3 added (23,925 → 23,928): both-or-neither, the pinned lists (2 cases); the other REDs in place.
+  - **A NUMBER A CAPTURE DECIDES WAS PINNED, AND THE GATES FROM AN EMPTY build/ SAID SO.** The pin above first
+    spelt the poll's trap save $90c..$93a; over a freshly captured boot snapshot it is $8de..$90c, and every
+    import of `aes_event` failed. WHY: the span is ONE TRAP FRAME (46 bytes) UNDER THE SNAPSHOT'S `savptr` ($4a2),
+    and the snapshot is taken at vertical blank 900, which interrupts the desktop's idle loop at whatever phase
+    it is in (`tools/boot_snapshot.py`, "WHAT IS NOT DETERMINISTIC") — between two keyboard polls (`savptr` at
+    the save area's top, $93a, where the ROM's boot leaves it: `move.l #$93a,savptr(a5)` at $fc02f2) or INSIDE
+    one BIOS trap (a frame lower, $90c). Same PC, same `_frclock` ($35d) in both logs; ISP $8b7a against $8b5e.
+    410 bytes differ between the two captures. NOW PINNED BY WHAT IT IS
+    (`test_the_poll_s_trap_save_lies_one_frame_under_the_snapshot_s_savptr_which_a_capture_decides`): the top is
+    the ROM's immediate ($93a); `savptr` is that or whole frames below; the span is one frame ending at it; the
+    three other spans by number; the model's two — the dispatcher's stack by number, the caller's context by
+    its place in the shell's UDA (the same on both captures). Byte-before / byte-after REDs kept for every
+    span. HELD OVER BOTH CAPTURES in private copies (2,606 touched tests + `test_status.py` each), then the whole
+    suite over the fresh one. One test added (23,928 → 23,929).
+    - WORTH KNOWING BEYOND THIS STEP: `savptr` ITSELF differs between captures, and so do bytes OUTSIDE the
+      snapshot tool's documented MASK ($4a5; $1461..$1463; $95ba..$95bd; $9707; $9fa1..$9fa4; $a15c..$a19a) —
+      its comment says every system variable is bit-identical, measured over three boots that never landed
+      inside a trap. Not fixed here (the tool is not this step's). A candidate for the "noise over another
+      capture" seen before and for the guarded candidate-run count that varies run to run: any count or address
+      read through `savptr`, or a stack depth at the capture, moves with the phase.
+
+* **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
+  eight of the door's entries are rebound, 108 rows switch through our own dispatcher, every blocking entry and every
+  session is blocked-then-woken on both blobs, the event tape's two routines are in C — and the machinery the flips
+  stood on is retired (the nested run and the shadow, the hop checks, `refused_where_the_rom_blocks`, the mechanism's
+  name (EV)). **BAND 5 IS NEXT**: gem_main, the accessory loader and the shell's launch, ctlmgr (the screen
+  manager's own program), the AES's own arms that call ap_tplay and ap_trecd (opcodes 14 and 15: the two bodies are
+  step T's) — with them THE GLUE SITES OWED (`## Not reconstructed`, band 4 wave 2: gem_main's justretf into `$947a`,
+  the tick glue into `$947e` and vex_timv, gotopgm's two callers, cli / sti, the spl entries), gotopgm's row, a third
+  real process (the control arm's and the desktop arm's owners; a writer that does not own the mouse), and the
+  message's apret before the rectangles' (`j09`: band 5's accessory — the real menu chain does not reach it).
+  - **WHAT BAND 4 LEAVES OWED, AND BAND 5 MUST PAY OR RULE ON** — each stated where it stands today:
+    - **ctlmgr IS STILL THE ROM'S, so the dispatch that wakes our process AFTER ANOTHER PROCESS'S TURN is the
+      ROM's dispatcher on both shores.** "Woken through OUR dispatcher" holds for self-resumes; after a foreign
+      turn only the dispatch that PARKS our process is ours. A foreign process's turn is a FOREIGN WINDOW — the
+      ROM's own code on both shores, equal to the cycle, in neither own column: A PROVISIONAL PRICING RULE (the user
+      may overturn it), honest only while there is nothing of ours in that turn. It becomes ours — and priced — the
+      day the screen manager is C.
+    - **A HOST SLOT PER PROCESS.** Every frame a door user holds while its process is parked is ONE frame for every
+      process today (`test_aes_event.SLOTS_HELD_WHERE_PARKED`: fm_do's, fm_button's, fm_alert's, fs_input's, mn_do's,
+      the gr_ loops'), sound only while one C process can be inside the routine. The moment two can — a second C
+      process — each owes `HOST_PROCESSES` frames (`host_slot_claim_for`, as the two QPBs have).
+    - **THE PROCESS'S OWN STACK MARGIN.** At the block our ev_block stands 54 bytes below its entry where the ROM's
+      stands 28 (`$7ffca` / `$7ffe4`): GCC's frames across a wait are about twice Alcyon's. No C of ours runs on a
+      UDA's stack yet (rows enter twins on the run's own stack; the screen manager is the ROM's). The day ctlmgr is
+      C its frames, the event layer's and an interrupt's 244 bytes land on a 1.2 KB UDA stack: a `StackReading`
+      per process entry is owed there, as the dispatcher's stack has one (600 of 640, 40 to spare, unchanged).
+    - **THE UNPINNED LIST (`## Not reconstructed`, band 4 wave 3)**: a recording with another process's turn
+      inside it on a blob (Tier 1 only, by ruling: no relocation maps a recording where a window closes); a
+      playback whose scale makes a wait below −1 tick (never wakes: no case); ap_trecd's D0 high word; two foreign
+      windows BETWEEN the same two door calls (stand-in counters); a row that wakes two processes in one idle;
+      ev_mesag's sent-mark order in a woken run; the blocked cases no wake reaches; the two registrar mutants left
+      surviving with an argument (`q2b`, `q16`); mn_do's run that does not return over a SELECTED and DISABLED
+      title (finding 8: uninvestigated); and `sr_drops` on the rows TAKEN THROUGH INTERRUPTS — the registrar still
+      reads the save words there by memory change, not by the ledger (loud, not silent; a row that SWITCHES drops
+      `$8996` where the ROM's run stored it, held to our ledger: 23 rows).
+    - **THE USER'S RULING ON THE KNOWN PRICING GAP** (the block under the Components table; K5): land the wider
+      classifier — then ten AES rows need a fix, an acceptance, or the leaf rule extended to (V) rows — or leave it
+      and keep the caveat. And the same class in the VDI and GEMDOS (nine rows: a component's own span is a design,
+      not a patch). Later, by the same design: ONE table of "ROM code our run may execute" over the whole ROM (the
+      guard's AES spans and (V)'s `trap #2` classifier are two notions today — the table also settles K5).
+    - **THE INTERRUPT HANDLERS' C TWINS AND TIER 3 (wave 18)**: a ruling on wiring the four handlers' C twins into
+      mechanism (T) (nine written entries would go, the twins' three under-bar pins among them: left as they are
+      by ruling); a ruling on the three interrupt glues' pricing (a register contract and by-nature private-stack
+      frames: neither Tier 3 relation enters them). The dispatcher stack fits under our own entries on every arm
+      measured (600 of 640; the wave's entry lists the arms that are not) and the blank survives the cursor
+      redraw; no xfail is left. STILL OWED from it: THE STORE OF EACH ENTRY INTO ITS VECTOR — no build makes it, so
+      it is no test's; THE FLOPPY'S VBL SERVICE past its `flock` gate — with `flock` clear, the idle state, our
+      blank halts there (pre-existing; every case stages `flock` = 1); `vbl.c`'s and `timerc.c`'s
+      `service_this_*` functions, which nothing outside their own twins calls and which are not `static` only to
+      keep the twins' rows where they are; the queue-a-key routine's two copies (C and `.S`); the A6 bound for the
+      C that still calls a RAM vector on target (`acia_service.c`'s packet vectors, the VDI's
+      `call_vector_registers` callers): unpinned — `isr.keeps_nothing` is the instrument, and no case stages it
+      there.
+  - **LEFT BY STEP R, each with its reason (its entry, above)**: `polls_in_c` — true for every library since FLIP
+    3, but removing it makes `drawing=` (25 call sites in seven batteries) a dead parameter: not mechanical;
+    `DoorWindows`' name (no window opens at a rebound entry — but the watch holds the
+    FOREIGN windows inside a call, and 43 uses beside `our_windows` / `_original_windows` are no mechanical
+    rename); Tier 3's PENDING derivations (`arrived_at_by_a_twin`, `_door_calls_held_by`, `_reaching_the_door`:
+    what tells a `jsr` into the ROM, kept as the refusal's reader, each with a RED). GIVEN UP AGAINST THE SHADOW,
+    (the entry has the measure): only the BYTE a fault is named by at a stop in the middle of a run — the image
+    at each door call's return and at every dispatch is held page by page, and names the page.
+  - **LEFT BY THE CLEANUP PASS BEFORE WAVE 3, each with its reason (its entry, above)**: the C's ms→ticks ×3 and
+    mouse-owner test ×2 — the twin's source pin would have to be relaxed; the kit's `_memcmp` beside `aes_fslib`'s —
+    the kit exports none. (Gone since: `refused_where_the_rom_blocks`, the `rebound=` an arrival read — step R;
+    the second harness for the woken cases, `aes_evmulti.woken` — wave 3.)
+  - Still owed: the single interrupt runner (`taken(layer=)`) and `Layer.restaged`'s generic form (two hand-written
+    spellings stand); the kit's `test_watchdog` test that depends on where `$TMPDIR` lies; a SPARSE base image in
+    the kit / `make_image` without the 14.6 MB of unmapped bus (the 16 MB image is 8 % non-zero: bounded 54–168
+    CPU-s a suite run, the one large lever left on suite time — a kit redesign across seven projects, counted, not
+    prototyped, NOT content-neutral without a guard on the hole); a generator sweep of `aes_event.py` and
+    `tier3.py`; the bindings `$fde2e8` / `$fde30e`'s D0; the E_CHG recovery behind GEMDOS's termination record; a
+    pin for the longword store-above-RAM refusal; the parked project-wide levers; promoting `ganneheim/dev` →
+    `main` (the user's call).
 
 ## Suite
 
-`make test`: **23,946 passed**, 2 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **23,929 passed**, 2 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives), **0 xfailed**, 0 failed.
+- Re-summed by STEP R of band 4 wave 3 (THE RETIREMENT and the answers handed back, 2026-10-09): **23,929 passed / 2
+  skipped / 0 xfailed**, 0 failed, on a bare `pytest -q -n auto test` over the step's final tree, twice (cold 232.7
+  s; warm 153.0 s / 1,353 CPU-s, the 1-minute load 21 at its start and 67 at its end — against 164.1 s / 1,442
+  CPU-s at `084c11e`, one sample a side). −26 against gate 13's fix pass below (23,946): 51 ids retired with the
+  shadow, the hop checks and the model's subsumed cases, 25 added (the entry's TESTS line). `make bench` rc 0: the
+  table that of gate 13 but for ONE line, the legend's (0 OVER, 0 DRIFTED), and every shipped object's hash
+  unchanged. BEFORE THE ANSWERS HANDED BACK the step's tree (23,908) had passed `make gates` FROM AN EMPTY `build/`
+  (test and guarded side by side, 391 s each, 29,277 candidate runs guarded; the ROM build rc 0 — which
+  re-captured the boot snapshot: 593 bytes of it differ from the capture before, and neither the table nor a test
+  moved with them); THE FULL `make gates` OF THIS STATE IS THE ORCHESTRATOR'S.
 - Re-summed by GATE 13's FIX PASS of band 4 wave 3's steps S and T (2026-10-08): **23,946 passed / 2 skipped / 0
   xfailed**, 0 failed, twice in one `make gates` FROM AN EMPTY `build/` (the old one moved aside; `make test` and
   `make guarded` side by side, 416 s each, 29,233 candidate runs guarded; the ROM build rc 0), the machine loaded
@@ -5456,7 +5675,8 @@ DEFERRED, each measured or named:
 - **Small leftovers**: two private copies of `WORD_MASK` in batteries of other components; `aes_dsptch_entered` is a
   host-only symbol that exists so the dispatch hook can be pinned by a case calling the host's dsptch directly (it
   outlived wave 1, whose twins do call dsptch: the pin still uses it); the (EV) label is static (a row that now
-  reaches only a rebound entry is still labelled through the door until its function's last ROM call is gone).
+  reaches only a rebound entry is still labelled through the door until its function's last ROM call is gone — the
+  label itself went with band 4 wave 3's step R: the legend says (V) with ARRIVALS, TWO COUNTS and FOREIGN WINDOWS).
   (Gone since wave 1: `evsync.h` / `switch.h` carry their `__ASSEMBLER__` guards — `switch.S` includes them — and
   `aes_spl7_save` / `aes_spl_restore` have their users, tchange and adelay.)
 - **Watch item**: the bench blob was 161,940 B at the review (159,488 at HEAD), 32,388 B below `staging_base`; the
@@ -5650,7 +5870,9 @@ DEFERRED, each measured or named:
   two processes inside one routine. `host_slot_claim_for` is the mechanism; the audit is wave 3's.
 - **FLIP 3's known debts** (**Next**): `sr_drops` on door rows that reach a mask bracket through a rebound twin; the
   three bindings the input's battery makes locally, and `$fcff0a`.
-- **`SHADOWED` is every rebound entry, always** — all eight since FLIP 3 (its shadows a suite run were NOT re-counted:
+- **THE SHADOW IS RETIRED (band 4 wave 3, step R: its entry has the census — 5,473 nested runs a suite run — and the
+  mutation table). What stood here until then:** `SHADOWED` is every rebound entry, always — all eight since FLIP 3
+  (its shadows a suite run were NOT re-counted:
   the derivation cache serves kept nested runs since wave 2, and flip 2's counter does not survive the zygote's
   forks). At FLIP 2, seven: 3,541 shadows a suite run (1,063 before it), of
   4,873 nested ROM runs (4,927 before: a served call became a shadow, one nested run either way). The suite cost of
@@ -5838,7 +6060,7 @@ UNPINNED, by name, each with its reason:
   gem_main / appl_tplay install OUR `aes_rom_justretf` on target the declaration goes. (ap_tplay hands the VDI ours
   since band 4 wave 3's step T — for the length of a playback; the snapshot's `$947a` is gem_main's store, band 5's,
   so the declaration stands.) Sliced rows are not asked by
-  the guard (a slice is cut from a whole run (EV) already holds call by call).
+  the guard (a slice is cut from a whole run the ARRIVALS rule already holds call by call).
 - **The recorder's buffer at a slice's mark** is not compared modulo the relocation (no session records): a session
   that records would red by name at the mark, not pass. **The SR settling of a DOOR row is unexercised**: no door
   row's ROM run stores an SR save word, before or after flip 3 (measured) — the code that would settle one is named by
@@ -6075,8 +6297,9 @@ UNPINNED / OWED, by name, each with its reason:
 - **`aes_event.qpb_addresses_kept` reads the QPB where the run ends**, which finding 4 shows is too late for ev_mesag.
   Harmless for today's direct rows (their parked QPB is ap_rdwr's own frame, still live at dsptch); the rows that
   switch read it while its frame is live (`aes_switching`).
-- **`refused_where_the_rom_blocks`** has no caller left in any routine's battery (fs_input's two went with step S:
-  `blocked_then_woken`); six calls in `test_aes_event.py`'s own tests stand on it (step R).
+- **`refused_where_the_rom_blocks`** had no caller left in any routine's battery (fs_input's two went with step S:
+  `blocked_then_woken`); RETIRED BY STEP R — its six own-tests are spelt on `interrupted` ending blocked, each
+  assertion kept.
 - **Two registrar mutants survived in the author's logs with no argument on record; each has one now.** `q2b` — an
   unseen QPB address "settled as none": EQUIVALENT BY THE LINE BEFORE IT (`aes_switching._qpbs_left` refuses a
   non-empty `unseen` by name; the mutant's filter can only drop an address `unseen` holds, so it never drops one).

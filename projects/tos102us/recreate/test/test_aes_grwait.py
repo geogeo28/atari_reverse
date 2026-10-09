@@ -63,9 +63,10 @@ def button_down():
                                           ("AES_ROM_GR_WATCHBOX", (SELECTOR, OK, SELECTED, NORMAL))),
                          ids=("gr_stilldn", "gr_watchbox"))
 def test_each_returns_through_the_door_in_a_child(name, values):
-    """A door call the nested run refuses halts the core (`aes/evdoor.h`); in-process that ends the whole run instead of
-    failing a case, so each routine is first run in a child process over PD0 running, where it must return."""
-    returncode, stderr, _image = aes_event.refusal(name, running(), values)
+    """A door call the hook refuses, or a twin that reaches the dispatcher, halts the core (`aes/evdoor.h`,
+    `aes/switch.h`); in-process that ends the whole run instead of failing a case, so each routine is first run in a
+    child process over PD0 running, where it must return."""
+    returncode, stderr, _image = aes_event.door_child(name, values, running(), door_calls=aes_event.WATCHED)
     assert returncode == 0, stderr
 
 
@@ -85,7 +86,7 @@ STILLDN = {
                                                                                 STILL_DOWN),
 }
 # ...and the waits nothing satisfies: the button down and the mouse where the rectangle says it is to stay. On the
-# machine they BLOCK; the door refuses them (`aes_event.nested_run`), in a child process, since the core then halts.
+# machine they BLOCK; the dispatcher's hook refuses them, in a child process, since the core then halts.
 WOULD_BLOCK = {
     "the button down, inside, waiting to leave": (LEAVE, AROUND_THE_MOUSE),
     "the button down, outside, waiting to enter": (ENTER, AWAY_FROM_THE_MOUSE),
@@ -108,7 +109,8 @@ def test_gr_stilldn_through_its_callers_word(through_line_f):
 
 @pytest.mark.parametrize("leave, rectangle", WOULD_BLOCK.values(), ids=WOULD_BLOCK)
 def test_a_wait_nothing_satisfies_is_refused_as_one_that_would_block(leave, rectangle):
-    returncode, stderr, _image = aes_event.refusal("AES_ROM_GR_STILLDN", button_down(), (leave, *rectangle))
+    returncode, stderr, _image = aes_event.door_child("AES_ROM_GR_STILLDN", (leave, *rectangle), button_down(),
+                                                      door_calls=aes_event.WATCHED)
     assert returncode != 0 and aes_event.BLOCKS in stderr and "hook refused" in stderr, stderr
 
 

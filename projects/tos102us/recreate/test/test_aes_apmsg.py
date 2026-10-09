@@ -71,9 +71,10 @@ def one_queued():
 # ---- the cases -----------------------------------------------------------------------------------------------------
 def test_ap_sendmsg_returns_through_the_door_in_a_child():
     """FIRST, in a child process: a message the event layer can take is served and the core returns. A door call the
-    nested run refuses halts the core (`aes/evdoor.h`), which in-process would end the run rather than fail one case —
+    hook refuses halts the core (`aes/evdoor.h`), which in-process would end the run rather than fail one case —
     here it fails this one, before any in-process case can halt."""
-    returncode, stderr, _image = aes_event.refusal("AES_ROM_AP_SENDMSG", running(), (BUFFER, WM_REDRAW, SHELL, *WORDS))
+    returncode, stderr, _image = aes_event.door_child("AES_ROM_AP_SENDMSG", (BUFFER, WM_REDRAW, SHELL, *WORDS), running(),
+                                                      door_calls=aes_event.WATCHED)
     assert returncode == 0, stderr
 
 

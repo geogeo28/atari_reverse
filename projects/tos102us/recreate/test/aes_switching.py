@@ -525,6 +525,9 @@ def companion(row):
     expected = reference.memory
     differ = aes_event.differing(ran.image, expected, frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image))
     assert not differ, f"{who}: " + aes_event.describe_differences(who, ran.image, expected, differ)
+    if row.door:                        # ...and, the END the ROM's: what each call answered and left, and every dispatch
+        aes_event.vet_the_answers_handed_back(who, ran.answered, reference.answers)
+        aes_event.vet_the_images_at_the_dispatcher(who, ran.dispatched, reference.dispatches)
     return CompanionRun(made.pokes, switches_of(reference), ran.answer, tuple(reference.calls), ran.image,
                         tuple(reference.entered))
 
@@ -623,7 +626,8 @@ def table_row(row):
 
 def vet_the_premise(row, premise):
     """THE PREMISE of a registered row, on the ROM's run through its own dispatcher over the row's settled machine:
-    it returns to the process that made the call, each interrupt taken at the idle — or the poll — the row names,
+    it returns to the process that made the call (its PD the ready list's head where the run ENDS, the dispatcher's
+    guard clear), each interrupt taken at the idle — or the poll — the row names,
     the dispatcher entering exactly the processes `premise` names, the call answering its word — and THE ROW CARRIES
     THAT RUN'S DELIVERIES (the settling changed nothing an interrupt reads or writes), derived again equal. The
     ROM's `Scheduled` run."""
@@ -635,6 +639,9 @@ def vet_the_premise(row, premise):
         f"{who}: the ROM's run took deliveries at the idles {sorted(the_rom_s.delivered)} and the polls {sorted(the_rom_s.at_polls)}")
     assert made.switches == aes_event.Switches(the_rom_s.delivered, premise.idles, premise.process, dict(the_rom_s.at_calls),
                                                the_rom_s.at_polls, the_rom_s.polls) == rederived(row), who
+    at_its_end = the_rom_s.memory
+    assert aes.list_of(at_its_end, aes.AES_RLR)[0] == premise.process and at_its_end[aes.AES_INDISP] == 0, (
+        f"{who}: the ROM's run does not END in the process that made the call, out of the dispatcher")
     assert (premise.answer is None) == (not row.answered), f"{who}: a row that answers nothing says so (`answered`)"
     assert premise.answer is None or the_rom_s.d0 & aes.WORD_MASK == premise.answer, f"{who}: answers {the_rom_s.d0 & aes.WORD_MASK:#x}"
     return the_rom_s

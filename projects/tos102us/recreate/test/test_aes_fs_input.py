@@ -806,6 +806,21 @@ def test_a_looping_run_that_spends_its_budget_is_refused_naming_what_its_watch_d
 MALLOCS_BEFORE_THE_FIRST_PASS = ("the names", "the index", "the DTA")       # fs_input's three blocks, each a GEMDOS call
 
 
+# ...and the child, which the C ends by name (an `abort()`), says each door call as it goes:
+AS_IT_GOES = aes_event.CHILD_DOORS[INPUT] + aes_event.SAY_EACH_DOOR_CALL
+
+
+def watched_to_the_pass(replayed, arrival, **run):
+    """The door calls the ROM's fs_input makes over `replayed` UP TO its arrival of ordinal `arrival` at the pass that
+    reads nothing (`fsl.looping`: frames, answers, the image at each return) — WHAT A CHILD REFUSED AT THAT PASS IS
+    HELD TO (`aes_event.door_child`'s `door_calls`): the ROM's run of such a call never ends, so a watched run to
+    its END does not exist, and this one, ended where the C stops, stands for it."""
+    calls = aes_event.Calls()
+    fsl.looping(replayed, arrival, door_calls=calls, **run)
+    assert len(calls.answers) == len(calls), "the premise: every door call on the way returned before the pass"
+    return calls
+
+
 def _shown(differ):
     """The first addresses of `differ`, as a failure names them."""
     return [hex(address) for address in differ[:aes_event.COMPARED_DIFFERENCES_SHOWN]]
@@ -819,8 +834,10 @@ def test_fs_input_over_an_empty_path_is_refused_by_name_where_the_rom_s_run_firs
     replayed = fsl.replay_machine(machine, script)
     final, _writes, _regs = aes_event.stopped_at(make_image(aes.staged(INPUT, ARGUMENTS, replayed)),
                                                  addrs.AES_ROM_FS_INPUT, addrs.AES_FS_INPUT_NO_READ)
-    returncode, stderr, image = aes_event.door_child(INPUT, ARGUMENTS, replayed, objects=True,
-                                                     before=aes_event.CHILD_DOORS[INPUT])
+    on_the_way = watched_to_the_pass(replayed, 0)
+    assert not on_the_way, "the ROM's run makes NO door call before its first pass: the child is held to making none"
+    returncode, stderr, image = aes_event.door_child(INPUT, ARGUMENTS, replayed, door_calls=on_the_way,
+                                                     objects=True, before=AS_IT_GOES)
     assert returncode != 0 and SPIN_REFUSAL in stderr
     differ = aes_event.differing(image, final)
     assert not differ, f"{len(differ)} bytes differ from the ROM's run at its first pass: {_shown(differ)}"
@@ -885,10 +902,23 @@ def test_the_close_box_over_a_root_with_no_drive_never_returns_once_a_long_forma
     stale_replayed = fsl.replay_machine(after_a_formatted_text(replayed, template), script)
     delivered = aes_event.deliveries(INPUT, ARGUMENTS, replayed, interrupts, session.budget)
     _no_calls, replayed_passes = fsl.looping(stale_replayed, first_pass_that_repeats, budget=SHORT, delivered=delivered)
-    returncode, stderr, image = aes_event.door_child(INPUT, ARGUMENTS, stale_replayed, objects=True, interrupts=delivered,
-                                                     before=aes_event.CHILD_DOORS[INPUT],
+    on_the_way = watched_to_the_pass(stale_replayed, first_pass_that_repeats, budget=SHORT, delivered=delivered)
+    assert on_the_way, "the premise: this run waits (a door call) before it loops"
+    returncode, stderr, image = aes_event.door_child(INPUT, ARGUMENTS, stale_replayed, door_calls=on_the_way,
+                                                     objects=True, interrupts=delivered, before=AS_IT_GOES,
                                                      seconds=aes_event.CHILD_RETURN_SECONDS)
     assert returncode != 0 and SPIN_REFUSAL in stderr
+    # (RED, of that hold itself: the same child's words against a watched run a call short, and one whose last call
+    # came back over another page.)
+    a_call_short = aes_event.Calls(on_the_way[:-1])
+    a_call_short.answers = on_the_way.answers[:-1]
+    with pytest.raises(AssertionError, match="the door was handed"):
+        aes_event.hold_a_child_s_door_calls(INPUT, ARGUMENTS, stale_replayed, stderr, calls=a_call_short)
+    another_page = aes_event.Calls(on_the_way)
+    entry, answer, pages = on_the_way.answers[-1]
+    another_page.answers = [*on_the_way.answers[:-1], (entry, answer, ("another", *pages[1:]))]
+    with pytest.raises(AssertionError, match=r"the twin left another image than the ROM's routine where it returns — in \$0\.\."):
+        aes_event.hold_a_child_s_door_calls(INPUT, ARGUMENTS, stale_replayed, stderr, calls=another_page)
     differ = aes_event.differing(image, fsl.whole_image(replayed_passes[first_pass_that_repeats][1]))
     assert not differ, f"{len(differ)} bytes differ from the ROM's run at that pass: {_shown(differ)}"
 

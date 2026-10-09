@@ -11,14 +11,18 @@
  * `recreate_call_event_door`, a hook the case binds (`test/aes_event.py`), which answers EVDOOR_ARRIVED — "noted: run
  * the twin": the case has recorded the frame (what each call is handed is compared with the ROM's own call's, which
  * sees a wrong rectangle the image cannot) and laid the interrupt due at that call. Frame locals whose ADDRESS a
- * caller hands the door (an MOBLK, the answer words) take `host_slot.h` slots, as every escaping local does. Before
- * the hook, the door CHECKS the hop the ROM's call word takes — vector $2c at the Line-F handler's RAM copy, the copy
- * naming the ROM call table — and halts by name if a case moved either: the ROM's caller would then run other code,
- * and the door's would not. A hook that refuses (an entry the case does not bind, a call made WHILE A TWIN RUNS — the
- * next paragraph's rule, at run time) or answers any other word halts the core by name, never carried on.
+ * caller hands the door (an MOBLK, the answer words) take `host_slot.h` slots, as every escaping local does. A hook
+ * that refuses (an entry the case does not bind, a call made WHILE A TWIN RUNS — the next paragraph's rule, at run
+ * time) or answers any other word halts the core by name, never carried on. (The hop the ROM's call word takes —
+ * vector $2c, the Line-F handler's RAM copy, the call table — is NOT checked here: a wrapper is a C call of a C twin,
+ * as every other Alcyon call of the AES's C is, and a case that moved the vector is refused where it shows — the
+ * ROM's own run never returns. The checks went with the served road they guarded: band 4 wave 3's retirement.)
  *
- * The twin then runs, and its answer is handed to `recreate_event_door_returned` — where a case holds the twin, at its
- * own call, to the ROM routine's NESTED ORACLE RUN over the image it arrived with (the SHADOW, `test/aes_event.py`).
+ * The twin then runs, and its return is reported to `recreate_event_door_returned` with the word it answered —
+ * where the case gives the arrival's place up (a return must answer the innermost arrival in flight) and holds the
+ * answer, and the image the twin returns over, to the ROM routine's own at the same door call of the ROM's watched
+ * run (`test/aes_event.py`; nothing of the ROM is run there — the nested run that once shadowed a twin at its call
+ * went with band 4 wave 3's retirement).
  * Which entries a hook answers for is read off the build (each wrapper spelt through EVDOOR_REBOUND, below, leaves a
  * marker in the library).
  *
@@ -32,7 +36,7 @@
  * the door's hooks (`test/test_aes_event.py`, over the host build's own call graph).
  *
  * Tier 3 prices a door user on its own cycles, a twin's among them, against the ROM's with the ROM routine's — and a
- * second time net of both (`bench/tier3.py`, mechanism (EV): the caller's own count).
+ * second time net of both (`bench/tier3.py`, (V) at the door: ARRIVALS, and TWO COUNTS — the caller's own).
  */
 #ifndef TOS102US_AES_EVDOOR_H
 #define TOS102US_AES_EVDOOR_H
@@ -99,8 +103,6 @@
 #define EVDOOR_POST_BUTTON_FRAME_BYTES 8
 
 #ifdef RECREATE_HOST_DIFFERENTIAL
-#include "ram_vector.h"
-
 /* The hook: `routine` arrived at over `image` with the Alcyon `frame`. Its answer is one of two: */
 #define EVDOOR_REFUSED        0          /* the case binds no such call, or a twin is running (the core halts) */
 #define EVDOOR_ARRIVED        1          /* noted, nothing run: the entry's twin runs next                     */
@@ -111,17 +113,12 @@ extern uint32_t (*recreate_call_event_door)(uint8_t *image, uint32_t routine, co
 #define EVDOOR_NO_ANSWER      0
 extern void (*recreate_event_door_returned)(uint8_t *image, uint32_t routine, uint32_t answer);
 
-/* An entry's ARRIVAL: the hop the ROM's call word takes checked first, then the frame noted by the case — nothing
- * run. A refusal halts, and so does any answer that is not ARRIVED (a callback that raised answers an undefined word). */
+/* An entry's ARRIVAL: the frame noted by the case — nothing run. A refusal halts, and so does any answer that is not
+ * ARRIVED (a callback that raised answers an undefined word). */
 static inline void event_door_arrival(uint8_t *image, uint32_t routine, const uint8_t *frame, uint32_t frame_bytes)
 {
     uint32_t verdict;
 
-    require_cpu_routine(image, VECTOR_LINE_F, AES_LINEF_COPY,
-                        "the event door: vector $2c no longer the Line-F handler's RAM copy — the ROM's call word would "
-                        "run other code");
-    require_cpu_routine(image, AES_LINEF_COPY + LINEF_TABLE_OPERAND, AES_LINEF_TABLE,
-                        "the event door: the Line-F handler's copy no longer names the ROM call table");
     verdict = recreate_call_event_door(image, routine, frame, frame_bytes);
     if (verdict == EVDOOR_REFUSED)
         recreate_not_reconstructed("the event door: the case's hook refused the call — an entry it does not bind, or "

@@ -84,14 +84,17 @@ def _frame_of(name, arguments):
     return b"" if name == DSPTCH else aes.alcyon_frame(name, *arguments)[abi.FIRST_ARG]
 
 
+WOKEN_BY_A_KEY = "a wait for a key, blocked; woken by Return at the first idle"
+WOKEN_BY_A_PRESS = "a wait for a press, blocked; woken by the press at the first idle"
+A_DELAY_RUN_OUT = "a delay, blocked; run out by its ticks at the first idle"
+THROUGH_THE_SCREEN_MANAGER = "a wait for a key; the mouse onto the bar wakes the screen manager, which runs and waits; then Return"
 CASES = {
     "a yield, nothing else ready": Call(DSPTCH, (), aes_event.machine, {}, (SHELL,), NO_ANSWER),
-    "a wait for a key, blocked; woken by Return at the first idle":
-        Call(EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), aes_event.machine, {0: RETURN}, (SHELL,), WORD_ANSWER),
-    "a wait for a press, blocked; woken by the press at the first idle":
+    WOKEN_BY_A_KEY: Call(EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), aes_event.machine, {0: RETURN}, (SHELL,), WORD_ANSWER),
+    WOKEN_BY_A_PRESS:
         Call(EV_BUTTON, (aes_evlib.SINGLE, aes_evlib.LEFT, aes_evlib.DOWN, aes_evlib.ANSWERS_AT), aes_evlib.desk_running,
              {0: aes_event.press}, (SHELL,), WORD_ANSWER),
-    "a delay, blocked; run out by its ticks at the first idle":
+    A_DELAY_RUN_OUT:
         Call(EV_BLOCK, (EVWAIT["IASYNC_DELAY"], A_DELAY_TICKS), aes_event.machine, {0: aes_event.ticks(A_DELAY_TICKS)},
              (SHELL,), WORD_ANSWER),
     "a delay, blocked; two ticks, an idle passed, then the rest":
@@ -103,7 +106,7 @@ CASES = {
     # count, a WORD — read wider, it would never end here.
     "a yield, nothing else ready; the control manager holds a mouse it found shown":
         Call(DSPTCH, (), lambda: switch.grabbed_while_shown(aes_event.machine()), {}, (SHELL,), NO_ANSWER),
-    "a wait for a key; the mouse onto the bar wakes the screen manager, which runs and waits; then Return":
+    THROUGH_THE_SCREEN_MANAGER:
         Call(EV_BLOCK, (EVWAIT["IASYNC_KEYBOARD"], 0), aes_event.machine, {0: ONTO_THE_BAR, 1: RETURN},
              (SCREEN_MANAGER, SHELL), WORD_ANSWER, True),
     "a wait for a key; the mouse onto the bar and off it — the screen manager entered twice; then Return":
@@ -111,6 +114,20 @@ CASES = {
              (SCREEN_MANAGER, SCREEN_MANAGER, SHELL), WORD_ANSWER, True),
 }
 FOREIGN = [name for name, call in CASES.items() if call.foreign]
+# THE CASES A REGISTERED ROW HOLDS — the same call over the same machine through the same deliveries is a row that
+# switches (three of the pilots below, `WOKEN_ROWS`; the press, the waits' own: `test_aes_evlib.py`). Its premise is
+# its row's (`aes_switching.vet_the_premise`, in its battery) and the C through the host's scheduler its row's
+# COMPANION (`aes_switching.companion`, run by `test_tier3.py` for every row: nothing left out but the run's stack,
+# where the case's own compare left out the model's drops) — so neither is made a second time here. Their `Call`
+# stays: the pilots are registered from it, and the REDs below are shown on it.
+HELD_BY_A_REGISTERED_ROW = {
+    WOKEN_BY_A_KEY: "aes_ev_block, a wait for a key, blocked; woken by Return at the first idle",
+    WOKEN_BY_A_PRESS: "aes_ev_button, a press waited for, blocked; woken by it",
+    A_DELAY_RUN_OUT: "aes_ev_block, a delay, blocked; run out by its ticks at the first idle",
+    THROUGH_THE_SCREEN_MANAGER: "aes_ev_block, a wait for a key; the mouse onto the bar wakes the screen manager, which runs and "
+                                "waits; then Return",
+}
+THE_MODEL_S_ALONE = [name for name in CASES if name not in HELD_BY_A_REGISTERED_ROW]
 
 
 # A case's tests run back to back on one worker (`conftest.py`, `collected_with`): the ROM's scheduled run of a case —
@@ -137,7 +154,7 @@ def _modelled(name, **kwargs):
     return switch.modelled(_core_of(call.name), _typed(call), call.machine(), reference(name), **settings)
 
 
-@pytest.mark.parametrize("name", CASES)
+@pytest.mark.parametrize("name", THE_MODEL_S_ALONE)
 def test_the_rom_s_run_is_the_case_its_name_says(name):
     """THE PREMISE of each case, on the ROM's own run: it RETURNS to the process that made the call, every interrupt
     delivered at an idle, the dispatcher having entered exactly the processes the case names."""
@@ -148,7 +165,7 @@ def test_the_rom_s_run_is_the_case_its_name_says(name):
     assert aes.list_of(image, aes.AES_RLR)[0] == SHELL and image[aes.AES_INDISP] == 0
 
 
-@pytest.mark.parametrize("name", CASES)
+@pytest.mark.parametrize("name", THE_MODEL_S_ALONE)
 def test_the_c_through_its_own_scheduler_leaves_the_machine_the_rom_s_dispatcher_leaves(name):
     call = CASES[name]
     left_out = switch.held_to_the_scheduled_run(name, reference(name), _modelled(name), switch.model_drops(SHELL),
@@ -160,6 +177,21 @@ def test_the_c_through_its_own_scheduler_leaves_the_machine_the_rom_s_dispatcher
     elsewhere = by_nature - context - set(range(*switch.DISPATCHER_STACK)) - aes_event.LINE_F_MASK_BYTES - {
         at for lo, hi, _why in aes_event.EVENT_LAYER_DROPS for at in range(lo, hi)}
     assert not elsewhere, f"left out of the compare, and no named drop: {sorted(map(hex, elsewhere))}"
+
+
+def test_a_case_a_registered_row_holds_is_that_row_s_call_over_its_machine_through_its_deliveries():
+    """THE PREMISE OF NOT MAKING THOSE CASES TWICE (`HELD_BY_A_REGISTERED_ROW`): each IS its row — the same entry and
+    arguments, and, settled as the registrar settles a row, the same machine taken through the same deliveries. A
+    row re-registered over another machine, or dropped, reds here: its case then belongs in the two tests above
+    again."""
+    import test_aes_evlib  # noqa: F401  (the press's row is the waits' battery's)
+    for name, row_name in HELD_BY_A_REGISTERED_ROW.items():
+        call, held = CASES[name], aes_event.SWITCHING_ROWS[row_name]
+        assert (held.row.name, tuple(held.row.arguments)) == (call.name, tuple(call.arguments)), name
+        made = aes_switching.settled(aes_switching.SwitchingRow("", call.name, tuple(call.arguments), call.machine,
+                                                                dict(call.at_idle)))
+        assert made.switches == held.switches and make_image(made.pokes) == make_image(held.pokes), name
+        assert row_name in case.tier3_undropped(), f"{row_name}: no companion is registered for it"
 
 
 def test_what_is_dropped_is_the_caller_s_context_and_the_dispatcher_s_own_and_nothing_of_the_lists():
@@ -218,7 +250,7 @@ def test_a_delivery_at_another_idle_than_the_rom_s_is_red():
     """THE HOOK LAYS WHAT THE ROM'S RUN TOOK, WHERE IT TOOK IT — and the comparison holds WHERE. Handed its key one
     idle LATER than the ROM's run took it, the C polls once more for nothing and ends in the very same machine: what
     reds is the count of idles, which is the surface an ordinal has."""
-    name = "a wait for a key, blocked; woken by Return at the first idle"
+    name = WOKEN_BY_A_KEY
     call, the_rom_s = CASES[name], reference(name)
     late = the_rom_s._replace(delivered={1: the_rom_s.delivered[0]}, idles=the_rom_s.idles + 1)
     ran = switch.modelled(_core_of(call.name), _typed(call), call.machine(), late)
@@ -240,7 +272,7 @@ def test_a_run_that_returns_in_another_process_is_refused_by_name():
 
 def test_another_answer_than_the_rom_s_is_red():
     """THE ANSWER IS HELD: the same C run, held to a ROM run that answered otherwise, is refused by name."""
-    name = "a wait for a key, blocked; woken by Return at the first idle"
+    name = WOKEN_BY_A_KEY
     call, the_rom_s = CASES[name], reference(name)
     assert call.answers, "the case answers: the premise"
     with pytest.raises(AssertionError, match="answers .*, the ROM's run"):
@@ -252,7 +284,7 @@ def test_a_delivery_laid_over_another_machine_than_the_rom_s_is_refused_at_the_i
     """THE IDLE HOOK VETS BEFORE IT LAYS: handed a delivery the ROM's run took over a machine that is NOT the C's at
     that idle (one byte of what the ROM found there, changed), the hook refuses at the idle — the delivery would
     erase the difference, and the compare after it would never see it."""
-    name = "a wait for a key, blocked; woken by Return at the first idle"
+    name = WOKEN_BY_A_KEY
     call, the_rom_s = CASES[name], reference(name)
     found, wrote = the_rom_s.delivered[0]
     first = min(found)                                          # the keyboard ring's own words: what a key overwrites
@@ -265,7 +297,7 @@ def test_a_delivery_laid_over_another_machine_than_the_rom_s_is_refused_at_the_i
 
 def test_a_delivery_the_c_is_never_handed_is_red():
     """...and held to a run whose delivery it is NOT handed, the C idles past the ROM's count and is refused."""
-    name = "a wait for a key, blocked; woken by Return at the first idle"
+    name = WOKEN_BY_A_KEY
     call, the_rom_s = CASES[name], reference(name)
     ran = switch.modelled(_core_of(call.name), _typed(call), call.machine(), the_rom_s._replace(delivered={}))
     assert ran.returncode not in (0, aes_event.FORK_RAISED) and "the call would block" in ran.stderr
@@ -450,9 +482,6 @@ def _typed_ahead():
 #     It is what holds WHERE in its loop our idle polls (`aes_switch.what_idle_tests`: a delivery there is checked
 #     against which process stands woken and which ready).
 A_KEY_TYPED_AHEAD_LABEL = "a wait for a key, blocked and woken: the key typed ahead, polled by the dispatcher's own idle"
-WOKEN_BY_A_KEY = "a wait for a key, blocked; woken by Return at the first idle"
-A_DELAY_RUN_OUT = "a delay, blocked; run out by its ticks at the first idle"
-THROUGH_THE_SCREEN_MANAGER = "a wait for a key; the mouse onto the bar wakes the screen manager, which runs and waits; then Return"
 POLLED_WHILE_THE_MANAGER_STANDS_WOKEN = ("a wait for a key; the mouse onto the bar wakes the screen manager; Return polled "
                                          "while it stands woken, before its turn")
 THE_POLL_AFTER_THE_FIRST_IDLE = 1       # poll 0 is idle 0 (the move); forker runs mchange; idle polls again: this one

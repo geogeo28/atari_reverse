@@ -712,7 +712,10 @@ def test_a_child_without_the_walkers_served_ends_by_name():
     """THE RED the child binding's `objects` exists for: without it, the child's first just_draw call — the drop-down's
     items — ends it by name (`aes_event.CHILD_OBJECT_REFUSED`), where an unbound hook would draw nothing and carry on."""
     machine = merge_pokes(screen_manager(DROPPED["File"]), STALE_TRACK, STALE_SR_RECT)
-    returncode, stderr, _image = aes_event.refusal(MN_DO, machine, (TITLE_OUT, ITEM_OUT))
+    ends_at_its_first_walk = aes_event.HeldElsewhere(
+        "a RED of the child's own binding: it is ended by name at its first walked routine, before any door call — "
+        "the same call with the walkers served is `test_mn_do_ends_in_its_first_pass`'s, frames, answers and images held")
+    returncode, stderr, _image = aes_event.door_child(MN_DO, (TITLE_OUT, ITEM_OUT), machine, door_calls=ends_at_its_first_walk)
     assert returncode == aes_event.CHILD_OBJECT_REFUSED and f"{addrs.AES_ROM_JUST_DRAW:#x}" in stderr, stderr
 
 

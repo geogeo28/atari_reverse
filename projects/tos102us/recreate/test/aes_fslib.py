@@ -727,8 +727,8 @@ class GemdosCalls(aes_event.DoorStops):
     `looping` names this stretch in that refusal. Neither use today makes one (fm_do is at the pass's head, the
     directory's read before `loop_at`)."""
 
-    def __init__(self, delivered, argument_bytes, loop_at=None, last_pass=0):
-        super().__init__(aes_event.ENTRIES, aes_event.ROM_RETURNS, blocks=True, delivered=delivered)
+    def __init__(self, delivered, argument_bytes, loop_at=None, last_pass=0, opened=None):
+        super().__init__(aes_event.ENTRIES, aes_event.ROM_RETURNS, opened, blocks=True, delivered=delivered)
         self.marked_with(aes_event.Timeline((GEMDOS_TRAP,)))
         self._argument_bytes, self.made = argument_bytes, []
         self._loop_at, self._last_pass, self.passes = loop_at, last_pass, []
@@ -835,15 +835,24 @@ def frames_as_recorded(script):
     return tuple(frame.ljust(RECORDED_ARGUMENT_BYTES, b"\0") for frame in script.frames)
 
 
-def looping(machine, last_pass, budget=None, delivered=None):
+def looping(machine, last_pass, budget=None, delivered=None, door_calls=None):
     """The ROM's fs_input over `machine` (a real-disk one) run to its arrival of ordinal `last_pass` at the head of
     the pass that reads no directory (AES_FS_INPUT_NO_READ, where its first pass arrives when the path is the one
     last read) and ended there: `(script, passes)` — the replay's script for the GEMDOS calls it made, and at each
     arrival `(the instructions run so far, the memory)`. `budget`: the run's own, declared where it needs one
     (`aes_event`'s `budget=`: a run ended at a pass is a run that ENDED, held both ways — and refused a declaration
     where the default admits it, as the run to the empty path's second pass is admitted). `delivered`: what is laid
-    at its door calls on the way (`aes_event.deliveries`), for a run that waits before it loops."""
-    watch = GemdosCalls(delivered or {}, SESSION_ARGUMENT_BYTES, addrs.AES_FS_INPUT_NO_READ, last_pass)
+    at its door calls on the way (`aes_event.deliveries`), for a run that waits before it loops. `door_calls`: an
+    `aes_event.Calls` to fill with the door calls the run makes UP TO THAT ARRIVAL — what each was handed, what each
+    answered and the image where it came back: what a child refused at the same pass is held to
+    (`aes_event.door_child`), there being no END of this run to watch one to."""
+    opened = None
+    if door_calls is not None:
+        def opened(pc, sp, memory):
+            door_calls.append(aes_event.handed_at(pc, sp, memory))
+    watch = GemdosCalls(delivered or {}, SESSION_ARGUMENT_BYTES, addrs.AES_FS_INPUT_NO_READ, last_pass, opened)
+    if door_calls is not None:
+        door_calls.answers, watch.images = watch.answers, ()
     try:
         returned, _memory = _watched(watch, machine, budget)
     except (RuntimeError, AssertionError) as refused:
@@ -900,7 +909,8 @@ def session(machine, interrupts, budget=SESSION_INSNS, arguments=ARGUMENTS, **kw
 # erases itself; a clip set twice shows the second). So an in-process session's VDI calls are held to the ROM's, call
 # for call: the opcode and the input arrays each `trap #2` is made with, read through the AES's own parameter block —
 # ours where the candidate's call reaches the hook, the ROM's where its run reaches GEM's trap handler outside any door
-# call (the event layer's own keyboard poll is the nested run's on our side, and inside the door on the ROM's).
+# call — and INSIDE a rebound entry's call too, the event layer's own polls among them (below: both shores' calls
+# there are the entry's own code's, the twin's on ours).
 #
 # ...and with each call, WHAT THE SELECTOR HOLDS as it is made (`held`, a hash): its tree's objects, its fields' and
 # rows' texts, its two scratches and the two paths it works in. A word of the tree stored between two waits and put
@@ -1066,10 +1076,12 @@ def vdi_digest_in(stderr):
     return ast.literal_eval(line.removeprefix(VDI_CALLS_LINE))
 
 
-def child_vdi_calls(machine, delivered):
+def child_vdi_calls(machine, delivered, budget):
     """The digest of the VDI calls fs_input's C makes over `machine` in a child, `delivered` laid at its door calls
-    (`aes_event.refusal`: the session's own child, its stderr read)."""
-    returncode, stderr, _image = aes_event.door_child(INPUT, ARGUMENTS, machine, objects=True, interrupts=delivered,
+    (`aes_event.door_child`: the session's own child, its stderr read — its door calls held there to the ROM's
+    watched run of the session, under the session's `budget`)."""
+    returncode, stderr, _image = aes_event.door_child(INPUT, ARGUMENTS, machine, door_calls=aes_event.WATCHED,
+                                                      budget=budget, objects=True, interrupts=delivered,
                                                       before=aes_event.CHILD_DOORS[INPUT],
                                                       seconds=aes_event.CHILD_RETURN_SECONDS, read_back=False)
     assert returncode == 0, stderr
@@ -1090,7 +1102,7 @@ def vet_the_draws_of_a_child_of_its_own(machine, interrupts, budget):
     """...the C's in a child run for it — for a session no child has run yet (every child of fs_input prints the
     digest: a session already taken through `session` has it in its `Interrupted.stderr`, and needs no second child)."""
     delivered = aes_event.deliveries(INPUT, ARGUMENTS, machine, interrupts, budget)
-    vet_the_draws(child_vdi_calls(machine, delivered), machine, delivered, budget)
+    vet_the_draws(child_vdi_calls(machine, delivered, budget), machine, delivered, budget)
 
 
 # ...and WHAT THE GLUE HAS PARKED at each GEMDOS call: the two return addresses (AES_DOS_RETURN, AES_TRAP1_RETURN) it
@@ -1171,14 +1183,16 @@ def run_session(machine, budget, **kwargs):
     (`aes_event.rom_handed` holds the ROM's run to it both ways) — None for a run inside the oracle's default.
     THE C RUNS FIRST IN A FORK made inside the session's open pass (`aes_event.forked_inside_its_pass`): a core that
     halts or spins fails the case by its own words, never the worker."""
-    aes_event.HANDED.clear()
+    aes_event.begin_a_door_run(sh.REAL_WINDOWS)
     machine, drawn, parked = merge_pokes(machine, STALE_ANSWERS, STALE_SLOTS), [], []
     result = aes_event.capped_run(INPUT, budget, kwargs, lambda **limits: aes.run_function(
         INPUT, ARGUMENTS, machine, hook=session_doors(drawn, parked), dropped_windows=sh.REAL_WINDOWS, poison=False,
         result=sh.Result, first=aes_event.forked_inside_its_pass(INPUT, ARGUMENTS), **limits))
     _vet_the_parks(parked, rom_parks(machine, budget))
-    ours, the_rom_s = list(aes_event.HANDED), aes_event.rom_handed(INPUT, ARGUMENTS, machine, budget=budget)
+    ours, the_rom_s = list(aes_event.HANDED), aes_event.rom_handed(INPUT, ARGUMENTS, machine, budget=budget,
+                                                                   left_out_beside=sh.REAL_WINDOWS)
     assert ours == the_rom_s, f"fs_input handed the door {ours} where the ROM's own run hands {the_rom_s}"
+    aes_event.vet_the_answers_handed_back(INPUT, list(aes_event.ANSWERED), the_rom_s.answers)
     _vet_the_calls_drawn(drawn, rom_vdi_calls(machine, budget))
     return result
 

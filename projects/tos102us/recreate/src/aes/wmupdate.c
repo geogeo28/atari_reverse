@@ -78,7 +78,7 @@ void aes_get_mown(uint8_t *image, uint32_t mouse_out, uint32_t keyboard_out)
 /* $feca68 — wind_update: below WM_END_MCTRL the screen lock — released for 0 (unsync), else taken (tak_flag), the
  * running process WAITING for it (ev_block) when another holds it — and from WM_END_MCTRL on fm_own(code - 2). D0 is
  * the last door call's (fm_own's); unsync's, when the lock is still held afterwards, is the D0 it was entered with:
- * the ROM's caller's, which the door's nested run enters with its own (`aes/wmupdate.h`). */
+ * the ROM's caller's, which no C caller holds — the rows on that arm compare no answer (`aes/wmupdate.h`). */
 uint16_t aes_wm_update(uint8_t *image, int16_t code)
 {
     uint16_t answer;

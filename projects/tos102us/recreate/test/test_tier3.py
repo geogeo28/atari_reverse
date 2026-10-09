@@ -886,16 +886,16 @@ def test_the_os_rule_refuses_a_shared_cost_the_two_sides_do_not_share(bench, mon
         tier3.measure(row, bench)
 
 
-# ---- (EV): C that reaches the event layer through the event door ------------------------------------------------------
+# ---- (V) AT THE DOOR: C that reaches the event layer through it ------------------------------------------------------
 # Two door rows: gr_stilldn over ev_multi answering its mouse rectangle under the button down (the event layer's longest
-# answering run of the battery's), and gr_watchbox, which draws (V) and waits (EV) in one row.
-EV_ROW = ("aes_gr_stilldn", "the button down, inside, waiting to enter: the rectangle")
-EV_DRAWING_ROW = ("aes_gr_watchbox", "OK, selected while inside: it rose, inside")
+# answering run of the battery's), and gr_watchbox, which draws and waits in one row.
+DOOR_ROW = ("aes_gr_stilldn", "the button down, inside, waiting to enter: the rectangle")
+DOOR_DRAWING_ROW = ("aes_gr_watchbox", "OK, selected while inside: it rose, inside")
 # Each reaches its one entry, ev_multi, by the twin: an arrival, in both own columns and off the caller's own (the
 # second count).
 
 
-@pytest.mark.parametrize("key", (EV_ROW, EV_DRAWING_ROW), ids=lambda key: key[0])
+@pytest.mark.parametrize("key", (DOOR_ROW, DOOR_DRAWING_ROW), ids=lambda key: key[0])
 def test_a_row_through_the_event_door_is_priced_on_its_own_and_net_of_its_entry_s_call(key, dispatch, measurement_of):
     """ev_multi is in neither side's CALLER's own: its call is an arrival — the ROM routine's cycles the ROM's own,
     the twin's ours — and the caller's own is each side's own net of it (the second count). The row is priced."""
@@ -912,17 +912,17 @@ def test_a_row_through_the_event_door_is_priced_on_its_own_and_net_of_its_entry_
 
 
 # A body delayed by about three times gr_stilldn's own cost — a fraction of the event layer's run it waits in.
-EV_DELAY_CYCLES = 1000
+DOOR_DELAY_CYCLES = 1000
 
 
 def test_a_delayed_body_through_the_door_reds_its_row_while_the_whole_run_stays_under_the_bar(dispatch, measurement_of):
-    """THE RED (EV) exists for: ~1,000 cycles more of gr_stilldn's C are a fraction of the event layer's run — the whole
-    ratio stays under the bar — and three times the routine's own cost. The twin is in the own column — the delay is
+    """THE RED the door's pricing on OWN cycles exists for: ~1,000 cycles more of gr_stilldn's C are a fraction of the
+    event layer's run — the whole ratio stays under the bar — and three times the routine's own cost. The twin is in the own column — the delay is
     a fraction of THAT too (the own ratio stays under the bar: the dilution the second count exists for) — and the
     CALLER's own, net of the twin's call, shows it."""
-    row = tier3.row_named(EV_ROW)
+    row = tier3.row_named(DOOR_ROW)
     measured = measurement_of(row)
-    delayed = _with_own_delay(measured, EV_DELAY_CYCLES)
+    delayed = _with_own_delay(measured, DOOR_DELAY_CYCLES)
     assert delayed.ratio <= tier3.TIER3_FUNCTION_BAR, "the premise: the whole run hides the delay"
     assert tier3.verdict(row, measured, dispatch, measurement_of) != "OVER", "the premise: undelayed, the row is priced"
     assert tier3.verdict(row, delayed, dispatch, measurement_of) == "OVER"
@@ -1084,7 +1084,7 @@ def test_what_a_rebound_entry_s_call_costs_is_read_off_each_shore_s_own_run(benc
 
 def test_the_original_s_calls_are_read_off_its_own_run(bench):
     """The ROM's watched run is its run — the same cycles as the one priced — and closes as many door calls as ours."""
-    row = tier3.row_named(EV_ROW)
+    row = tier3.row_named(DOOR_ROW)
     watch, cycles, _own = tier3._original_windows(row)
     measured = tier3._measure_through_the_os(row, bench)
     assert cycles == measured.original_cycles
@@ -1096,7 +1096,7 @@ def test_the_door_rule_holds_the_two_sides_calls_equal_by_entry_and_in_order(ben
     opened, closed, handed and priced, as a watch that missed an entry would read — is refused by name, on the calls
     alone (before any frame is compared): its `own_inside` would otherwise come off the ROM's column for fewer
     calls than ours, and the caller's own be priced against the ROM's whole entry."""
-    row = tier3.row_named(EV_ROW)
+    row = tier3.row_named(DOOR_ROW)
     original_windows = tier3._original_windows
 
     def blind_to_its_last_arrival(row):
@@ -1114,7 +1114,7 @@ def test_the_door_rule_holds_the_two_sides_calls_equal_by_entry_and_in_order(ben
 def test_the_door_rule_holds_the_two_sides_frames_equal(bench, monkeypatch):
     """...and what each call hands the door, the same way: a frame the event layer's answer would not show (a timer
     nothing asks for) is red on the target build too, where the frame sits in the uncompared stack band."""
-    row = tier3.row_named(EV_ROW)
+    row = tier3.row_named(DOOR_ROW)
     original_windows = tier3._original_windows
 
     def another_timer(row):
@@ -1259,7 +1259,7 @@ def test_a_twin_awaiting_its_flip_is_rebound_nowhere(monkeypatch):
     assert wait not in tier3.rebound_entries(tier3.BUILT_ELF)
     assert addrs.AES_ROM_TAK_FLAG in tier3.rebound_entries(tier3.BUILT_ELF)
     monkeypatch.undo()
-    assert tier3.arrived_at_by_a_twin.__wrapped__(EV_ROW[0]) == frozenset({wait}) & aes_event.REBOUND
+    assert tier3.arrived_at_by_a_twin.__wrapped__(DOOR_ROW[0]) == frozenset({wait}) & aes_event.REBOUND
 
 
 # wind_update's OWN door calls (`src/aes/wmupdate.c`: the lock taken, released, waited for) — fm_own's, which it
@@ -1292,7 +1292,7 @@ def _leaf_rows(entries):
 
 def test_every_twin_has_a_leaf_battery_s_rows():
     """A REBOUND TWIN IS HELD BY ITS LEAF BATTERY (`aes_event`'s docstring: the door cases reach an entry only in the
-    states its callers make, and the shadow sees no more). WHAT THIS HOLDS, and no more: that such a battery EXISTS —
+    states its callers make). WHAT THIS HOLDS, and no more: that such a battery EXISTS —
     every entry the build links a twin of has at least one priced row of its own, entered at the routine itself.
     EVERY TWIN, rebound OR PENDING: a twin's battery is owed the day the twin lands, so the gap is red in the wave
     that built it and not at its flip (ap_rdwr's twin sat a phase with no row, and nothing said so). THAT THE BATTERY
@@ -2064,7 +2064,7 @@ def test_the_fork_codes_are_relocated_for_a_routine_s_run_and_for_no_other_watch
     """Our forker `jsr`s what a queue entry holds, under every routine's run: the whole mapping for a routine's —
     and none for a watch made for no routine's run."""
     assert tier3.fork_relocation(bench.elf, None) == {}
-    for symbol in ("aes_forker", EV_ROW[0]):
+    for symbol in ("aes_forker", DOOR_ROW[0]):
         assert set(tier3.fork_relocation(bench.elf, symbol)) == set(aes_event.FORK_ENTRY_SYMBOLS)
 
 
@@ -2334,7 +2334,7 @@ A_CASE_OF_THE_MOVE_FAMILY = "the mouse moved into the rectangle"    # ev_multi's
 
 
 def test_a_row_whose_run_enters_the_aes_s_rom_outside_any_door_call_is_refused_by_name(bench, monkeypatch):
-    """OUR SIDE REACHES THE AES'S TEXT BY NO ROAD, held where a (V)/(EV) row is measured (a session's slices are cut
+    """OUR SIDE REACHES THE AES'S TEXT BY NO ROAD, held where a (V) row is measured (a session's slices are cut
     out of that one whole run, and the general guard is not asked for them): ev_multi's own row over a move queued
     while the process was busy — entered at the twin, no door call in it — with the fork queue's relocation taken
     away, so that our forker `jsr`s the ROM's mchange: the image is still the ROM's (its own code made every
@@ -2359,19 +2359,19 @@ def test_a_row_arriving_at_a_twin_alone_is_watched(monkeypatch):
     monkeypatch.setattr(tier3, "_arriving_at_an_entry", lambda: arriving)
     monkeypatch.setattr(tier3, "_reaching_the_trap", lambda: frozenset())
     assert tier3.arrives_at_an_entry(tier3.row_named(REBOUND_ROW)) and tier3.goes_through_the_os(tier3.row_named(REBOUND_ROW))
-    assert tier3.arrives_at_an_entry(tier3.row_named(EV_ROW)), "gr_stilldn's one entry is ev_multi: it calls the twin"
+    assert tier3.arrives_at_an_entry(tier3.row_named(DOOR_ROW)), "gr_stilldn's one entry is ev_multi: it calls the twin"
     assert not tier3.arrives_at_an_entry(tier3.row_named(("aes_tak_flag", "free: taken")))
 
 
 def test_the_table_s_line_counts_a_rebound_entry_s_calls(bench):
     """Under a row: the calls of a rebound entry, which are in the own cycles — the lock's one, and gr_stilldn's
     (ev_multi's)."""
-    for key in (REBOUND_ROW, EV_ROW):
+    for key in (REBOUND_ROW, DOOR_ROW):
         line = tier3._through_the_os_line(tier3._measure_through_the_os(tier3.row_named(key), bench), 0)
         assert "1 call(s) of a rebound entry in the own cycles" in line and "door window(s)" not in line
 
 
-# ---- (EV) a row TAKEN THROUGH INTERRUPTS: the same deliveries at the same door calls on every run ------------------------
+# ---- A DOOR ROW TAKEN THROUGH INTERRUPTS: the same deliveries at the same door calls on every run ------------------------
 # gr_dragbox with the cursor shown, the mouse moved at its second door call and the button released at its third
 # (`test_aes_grdrag.WORST_INTERRUPTED`): the ROM's watched original (`RomBench.measure`'s `original_watch`), its
 # windows' run (`_original_windows`) and our blob's run each lay the row's deliveries at the entry of the same call.
@@ -2406,7 +2406,7 @@ def test_an_interrupted_row_s_calls_are_read_off_its_own_run_too(bench):
 
 def test_a_row_taken_through_interrupts_is_priced_with_them_laid_on_both_sides(dispatch, measurement_of):
     """A call closed per door call on both sides — its first delivery past the first — and the row priced like any
-    (EV) row."""
+    door row."""
     row = _interrupted_row()
     measured = measurement_of(row)
     assert measured.rebound_calls > max(row.delivered) > 0
@@ -2453,7 +2453,7 @@ def test_an_interrupt_laid_over_memory_it_was_not_derived_over_is_refused_by_nam
         tier3._measure_through_the_os(row, bench)
 
 
-# ---- (EV)'s SLICES: a row priced on one slice of a long session (`aes_event.register_slices`) ----------------------------
+# ---- THE DOOR'S SLICES: a row priced on one slice of a long session (`aes_event.register_slices`) ----------------------------
 # fm_do's long typing session (`test_aes_fmdo.SESSION_SLICES`): 38 keys, 728,664 ROM instructions, registered as five
 # rows — the slices that start or stop at the entry, a door call, a trap taken and the return.
 WAIT = addrs.AES_ROM_EV_MULTI
@@ -2473,7 +2473,7 @@ def _sliced_row(key=A_KEY_S_ROW):
 @pytest.mark.parametrize("key", SLICED_ROWS, ids=[case_label for _symbol, case_label in SLICED_ROWS])
 def test_a_sliced_row_is_priced_on_its_slice_alone(key, bench, dispatch, measurement_of):
     """Each registered slice carries its `Slice` into its row, is priced on what the ROM's own run spends inside it
-    (`aes_event.slice_cost`, the ROM alone) — far under the session's whole run — and passes like any (EV) row."""
+    (`aes_event.slice_cost`, the ROM alone) — far under the session's whole run — and passes like any door row."""
     row = _sliced_row(key)
     assert row.slice == aes_event.SLICED_ROWS[row.registered]
     spent = aes_event.slice_cost_of(tier3.registered(row), row.slice)

@@ -31,7 +31,6 @@ from collections import namedtuple
 from harness import _lib, addrs
 
 import aes
-import aes_event
 import rom_data
 import routines
 from rom_data import CODE, DISTANCE, RETURN_SITE, TABLE
@@ -69,14 +68,10 @@ ROM_ADDRESSES_AS_DATA = {
     # ob_draw hands everyobj just_draw by its ROM address on the host ($fea08c `move.l #$fe9a88,-(sp)`, row (b) below);
     # on target, its Alcyon entry (`obdraw.S`) — the rebuilt ROM's own.
     "obdraw.c": {"AES_ROM_JUST_DRAW": CODE},
-    # The event door's entries, `jsr`ed at their ROM addresses on target and keyed by them off it — the routines a
-    # rebuilt ROM keeps where they are until the event layer is C — and the call table the Line-F handler's RAM copy
-    # must still name (the door's check before it calls). A REBOUND entry is no longer among them: its wrapper is
-    # spelt through EVDOOR_REBOUND, which names no ROM routine on target (off it the address is only the hook's key
-    # and the marker's value, pasted from the entry's name). DERIVED from the build's own markers (`aes_event.REBOUND`),
-    # so an entry leaves the list with its flip's re-spelling and no edit here — tak_flag did.
-    "aes/evdoor.h": {"AES_LINEF_TABLE": TABLE,
-                     **{name: CODE for name in aes_event.ENTRY_NAMES if getattr(addrs, name) not in aes_event.REBOUND}},
+    # (`aes/evdoor.h` names NO ROM address as a value any more, and has no row: every entry is REBOUND — its wrapper
+    # spelt through EVDOOR_REBOUND, which names no ROM routine on target; off it the address is only the hook's key
+    # and the marker's value, pasted from the entry's name — and the call table its hop check named went with the
+    # check, band 4 wave 3's retirement. An entry `jsr`ed at its ROM address again would red the census below.)
     # eralert's two tables, read in place (an error past them reads on, as the ROM's does), and the bell's Bconout: the
     # D0 the BIOS dispatcher would have jumped with, handed to its C core off target (`bios/bcon.h`).
     "fmdo.c": {"AES_ERALERT_STRINGS": TABLE, "AES_ERALERT_LEVELS": TABLE, "BIOS_BCONOUT": CODE},

@@ -293,7 +293,7 @@ CHILD_CALLS = {
 
 @pytest.mark.parametrize("name, values, machine", CHILD_CALLS.values(), ids=CHILD_CALLS)
 def test_each_returns_through_the_door_in_a_child(name, values, machine):
-    """A door call the nested run refuses halts the core (`aes/evdoor.h`); in-process that ends the whole run, so each
+    """A door call the hook refuses halts the core (`aes/evdoor.h`); in-process that ends the whole run, so each
     door user that does not draw is first run in a child process, where it must return — the unbalanced releases too,
     whose arms a miscounting C turns into a door call the event layer refuses."""
     aes_event.returns_in_a_child(name, values, machine())

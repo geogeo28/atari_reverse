@@ -442,20 +442,18 @@ post_button `$fe52e2`, and ev_multi's two-rectangle shape; wave 2: ev_button `$f
 one wrapper, one `ENTRIES` line, one census line each). EVERY ENTRY IS REBOUND (FLIP 3 was the last): the wrapper
 calls the entry's C twin, on both builds, and no wrapper is the ROM's call any more — the header has no spelling for
 one (the inline-asm `jsr` and the hook's SERVED answer are retired; a `jsr` of our build into the AES's text is
-refused by name, `tier3.door_calls`). On the host the wrapper first packs the Alcyon frame big-endian, CHECKS the hop
-the ROM caller's Line-F word takes (vector `$2c` → the handler copy, its `movea.l #` → the call table `$fee900`), and
-hands it to `recreate_call_event_door`, which `test/aes_event.py` binds per case (into the lib the calling process
-loaded — a child process binds its own): an ARRIVAL — every frame it is handed compared with the frame the ROM's own
-run hands the same entry (MOBLKs and buffers read through their pointers). THE NESTED ORACLE RUN of the ROM's routine
-over a copy of the candidate's image is the twin's SHADOW (below): it serves nothing, and is REFUSED by name when it
-touches the hardware or overflows the write ledger, and when it overruns its measured cap (`NESTED_RUN_INSNS`,
-60,000: DERIVED as a margin over the deepest BLOCK a shadow runs — ev_multi asked for every event, 2,970
-instructions to dsptch; held by `test_the_cap_is_derived_from_the_deepest_block_a_shadow_runs`). One thing differs
-by nature: the BIOS trap's register save under the keyboard poll (`$8de..$905`, the CALLER's registers), dropped by
-name in Tier 1 while priced rows move `savptr` into the stack band. Tier 3 prices such C on its own cycles,
-mechanism (EV): our run is WATCHED at the twins (the kit's `RomBench.measure(watch=)`) and the ORIGINAL's at the
-ROM's entries — the same arrivals, the same frames, nothing taken off either side (TWO COUNTS, below) — and an AES
-cycle of ours is refused wherever it is spent.
+refused by name, `tier3.door_calls`). On the host the wrapper first packs the Alcyon frame big-endian and hands it to
+`recreate_call_event_door`, which `test/aes_event.py` binds per case (into the lib the calling process loaded — a
+child process binds its own): an ARRIVAL — every frame it is handed compared with the frame the ROM's own run hands
+the same entry (MOBLKs and buffers read through their pointers). NOTHING OF THE ROM IS RUN AT AN ARRIVAL, and nothing
+of the machine is checked there (WHAT BAND 4 WAVE 3 RETIRED, below: the nested run — the SHADOW — and the hop
+checks). One thing differs by nature: the BIOS trap's register save under the keyboard poll (`$8de..$905`, the
+CALLER's registers), dropped by name in Tier 1 while priced rows move `savptr` into the stack band. Tier 3 prices
+such C on its own cycles as any (V) row, with three rules more — ARRIVALS (our run is WATCHED at the twins, the
+kit's `RomBench.measure(watch=)`, and the ORIGINAL's at the ROM's entries: the same door calls, the same frames,
+nothing taken off either side), TWO COUNTS and FOREIGN WINDOWS (each below) — and an AES cycle of ours is refused
+wherever it is spent. (The mechanism was called (EV) while the door served the ROM's routines and took a window off
+both sides for each call; the name went with the windows.)
 
 REBINDING THE DOOR. An entry with a C twin is REBOUND: its wrapper keeps its signature and its callers, and calls
 `aes_<entry>(image, …)` on both builds (tak_flag, `src/aes/evsync.c`, was the first). WHICH ENTRIES ARE REBOUND TODAY
@@ -485,10 +483,10 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   field>)` (`include/transcribed.h`: `noipa`, so GCC neither inlines it into a same-file caller nor clones it, and its
   first instruction stays the arrival point both watches stop at), and its leaf battery, land PENDING and are
   reviewed. (2) THE FLIP is the entry's wrapper re-spelt through the macro in `aes/evdoor.h` (and the include that
-  declares the twin) — nothing else by hand: `REBOUND`, the shadowed set, the census's `aes/evdoor.h` row and Tier
-  3's lists of door calls follow by derivation. (3) Rehearse it first on a private mirror of the tree (host library
-  and both blobs built by the tree's own rules): the whole suite, every door-arriving row measured on its own, the
-  table. (4) The flip's commit carries the table before and after, every moved row old → new, and STATUS's ratios
+  declares the twin) — nothing else by hand: `REBOUND` and Tier 3's lists of door calls follow by derivation.
+  (3) Rehearse it first on a private mirror of the tree (host library and both blobs built by the tree's own
+  rules): the whole suite, every door-arriving row measured on its own, the table.
+  (4) The flip's commit carries the table before and after, every moved row old → new, and STATUS's ratios
   re-quoted from its own `make bench` (`test_status` is red until they are) — BOTH COUNTS of a row whose two differ
   by more than 0.05 (TIER 3: … TWO COUNTS, below). (5) A flip's twin mutants are swept
   through the door batteries AND each twin's leaf battery alone; a host sweep through `amut/mutlib_plugin` switches
@@ -504,23 +502,75 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   twin's core's answer spells the same statement after its call. Held on the blobs:
   `test_tier3.py::test_no_twin_is_jumped_to_on_either_blob` (every instruction naming a twin's first instruction is
   a `jsr`) and `::test_a_rebound_wrapper_in_return_position_is_a_call_of_its_twin`.
-- THE SHADOW IS A FLIP'S RED PROOF AND BISECTING TOOL, KEYED ON HOW THE ROM ROUTINE'S RUN ENDS. Every rebound entry
-  of the library a binding serves is shadowed (`aes_event.shadowed_among`; a case may narrow `SHADOWED`): each
-  arrival also makes the ROM routine's nested run over a COPY of the image — to its return, or AS FAR AS DSPTCH. A
-  twin that returns is held to the first (`vet_the_shadow`: the image, and the answer where the entry's
-  `ENTRY_FRAMES` row says it answers — post_button and unsync answer nothing a shadow may compare); a twin that
-  reaches the dispatcher's hook is held THERE to the second (`vet_the_shadow_at_dsptch`: the image at dsptch, the
-  same kind of switch), before the hook refuses. A twin that ends the other way is refused by name at that end. In
-  a child a shadow's refusal ends the run with its own status (`CHILD_SHADOW_REFUSED`), and `interrupted` fails by it
-  whatever the ROM's run did. A wrong twin then reds at its own call, in the shadow's words, instead of at a
-  session's end. One `ENTRY_FRAMES` row per entry decides its frame, its inputs' reader and its answer kind.
+- WHAT BAND 4 WAVE 3 RETIRED OF THE DOOR, AND WHERE EACH GUARD LIVES NOW (step R; STATUS.md's wave log has the
+  mutation table). (1) THE SHADOW — until the last flip had stood, every arrival also made the ROM routine's NESTED
+  RUN over a copy of the image (`aes_event.nested_run`, capped by `NESTED_RUN_INSNS`), and the twin was held to it at
+  its own call: its answer and image where it returned (`vet_the_shadow`), its image at the dispatcher's hook where
+  it blocked (`vet_the_shadow_at_dsptch`), 5,473 nested runs a suite run. It was a flip's RED PROOF and a bisecting
+  tool, never coverage (next bullet) — and with every flip made and every blocked call continued for real it held
+  nothing that is not held elsewhere: a twin at its entry is its LEAF battery's (every arm, swept alone; where it blocks,
+  `switches_where_the_rom_does` against the ROM at dsptch); a door user where it blocks is `blocked_then_woken`'s
+  first half (the WHOLE image at dsptch, caller and twin both); what runs after is the wake's companion and the
+  blob's second differential; and the frames every call is handed are compared at every door call. What went with
+  it is WHERE a wrong twin is named: at its leaf case and at the door case's end, no longer at the call in between.
+  MEASURED BEFORE IT WENT (50 wrong-twin mutants, strict, before and after): the same 49 killed, one equivalent;
+  for 32 the old failures carried the shadow's words; and ONE mutant in fifty the door users' batteries killed by
+  those words alone — ev_multi answering the second rectangle's event as the first's, which mn_do does not read.
+  ITS SUCCESSORS COST NO RUN OF THE ROM — both shores stop where the shadow compared anyway, the candidate at the
+  door's two hooks and the dispatcher's, the ROM's watched run at the address a door call comes back to and at
+  dsptch:
+  - THE ANSWERS HANDED BACK (`aes_event.vet_the_answers_handed_back`): the word each twin returns (the return
+    hook is handed it) held to the ROM routine's D0 where the ROM's own watched run comes back from the same door
+    call (`DoorStops.answers`), named by call and entry: "door call N, entry X: the twin answered A where the
+    ROM's routine answers B". An entry that answers nothing a caller reads (post_button, unsync: `ENTRY_FRAMES`'
+    column) is compared with nothing. It holds, too, the answers of calls that blocked and were woken, which the
+    shadow — done at the first dispatch — never did.
+  - THE IMAGE AT EACH RETURN, its third field (`aes_event.image_pages`): the RAM as each shore holds it where the
+    call comes back, a digest a 16 KB page — "door call N, entry X: the twin left another image than the ROM's
+    routine where it returns — in $lo..$hi". What a twin stored and a later call undoes shows there and at no end.
+  - THE IMAGE AT EVERY DISPATCH of a door user's modelled run (`aes_event.vet_the_images_at_the_dispatcher`;
+    `aes_switch.Scheduled.dispatches`, where the ROM's own process reaches dsptch): the FIRST block is what a case
+    ending blocked compares byte for byte; this holds the second and every later one — "dispatch N: the image the
+    C holds at the dispatcher is not the ROM's …". (A case ending blocked halts at its first dispatch: it has no
+    second.)
+  WHAT A PAGE LEAVES OUT, on both shores alike, is one list (`image_pages`), wider than a run's end needs because
+  a stop in the middle cannot ask what the ROM's run stored: the stack band, the Line-F mask word, the keyboard
+  poll's trap save and frame, every SR save word, and what a road names beside — under the model the caller's
+  saved context and the dispatcher's stack ($9c5a..$9c9e and $899a..$8c1a for the shell: its own list, not the
+  end compare's); over real GEMDOS its three windows. BOTH LISTS ARE PINNED BY NUMBER, the byte either side of
+  each span held red. A QPB'S PLACE (an EVB's parameter whose whole longword is a stack-band address) is left
+  out too, but MARKED, not blanked: the digest reads where one was left out, so a stack address on one shore
+  against zero on the other is another page.
+  WHICH ROADS: in process (`run_event`, and `aes_fslib.run_session` over real GEMDOS), every child `door_child`
+  makes (below), and the model's child (`aes_switching.companion`). `door_child(..., door_calls=)` HAS NO DEFAULT:
+  a road says WATCHED — the child's frames, answers and images are held there to the ROM's watched run of the
+  call — or the `Calls` of a watched run its caller made (fs_input's spinning passes: the ROM's run watched to
+  the refused pass, the child saying each call as it goes), or a `HeldElsewhere` with who holds them and why
+  (`interrupted` holds them itself, after how the run ended; `run_guarded`'s guard, held by the differential
+  that follows; a RED of the child's own binding). An image is taken on BOTH shores or on neither. NOT ON THESE
+  ROADS, each said where it is: a case run THROUGH ITS CALLER'S LINE-F WORD takes no image (its two shores are
+  staged apart: its direct sibling takes them); a child made by `aes_event.refusal` directly is a RED of the
+  door's own machinery; a LEAF's modelled run (no door child) is asked no dispatch image — its dispatcher's hook
+  is the C scheduler itself.
+  STILL GIVEN UP AGAINST THE SHADOW: the BYTE a red is named by at a stop in the middle (a page is named; the
+  end's compares still name bytes) — nothing else that was measured.
+  (2) THE HOP CHECKS — the wrapper used to halt where vector `$2c` or the Line-F handler copy's table operand was
+  moved. A wrapper is a C call of a C twin, as every other Alcyon call of the AES's C is (none of which ever
+  checked the hop); a machine with the hop moved is refused where it shows — the ROM's own run never returns
+  (`test_a_machine_whose_line_f_hop_is_moved_is_refused_on_the_rom_s_shore`). (3) `refused_where_the_rom_blocks` —
+  a name no battery called any more; the at-dsptch compare it spelt is `interrupted` ending blocked, kept as
+  `blocked_then_woken`'s first half. KEPT, each with its reason: `aes_switch.modelled` (Tier 1 of every row that
+  switches), `switches_where_the_rom_does` (it bisects a blocking call), `scheduled` (the derivation), the
+  dispatcher hook's default refusal, and `Blocked` as an outcome (a transient store made before the block and undone
+  after the wake shows at dsptch and nowhere later). One `ENTRY_FRAMES` row per entry decides its frame, its inputs'
+  reader and what it parks.
 - A REBOUND TWIN IS HELD BY ITS LEAF BATTERY; THE DOOR CASES HOLD THE COMPOSITION. A door case reaches an entry only
-  in the states its caller makes, and the shadow sees the same states — it changes where a red is NAMED, never what
-  is covered (measured at the pilot: five real mutants of the twin that are not equivalent pass every door battery,
-  shadow on or off, and the twin's own battery kills all five). So a flip needs the twin's own battery first: its own
+  in the states its caller makes, and the shadow (retired, above) saw the same states — it changed where a red was
+  NAMED, never what was covered (measured at the pilot: five real mutants of the twin that are not equivalent pass
+  every door battery, shadow on or off, and the twin's own battery kills all five). So a flip needs the twin's own battery first: its own
   priced rows, entered at the entry itself, reaching every arm, over machines the ROM's scheduler makes —
   `test_tier3.py::test_every_twin_has_a_leaf_battery_s_rows` refuses a twin LINKED without them — rebound or pending:
-  the battery is owed the day the twin lands, not at its flip — and "the shadow covers it" is no coverage argument.
+  the battery is owed the day the twin lands, not at its flip — and "the door cases cover it" is no coverage argument.
   A leaf battery is COMPLETE when every arm, every list shape the scheduler can make (first / middle / last / only)
   and every piece of 68000 integer semantics (a width, a sign extension, a signed against an unsigned branch, a
   re-read after a call) is killed by a mutant in the battery's own sweep, run against the battery ALONE. What the
@@ -683,7 +733,7 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     voice) and give it the same outcome as their binding closes. A hook written outside it owes the same — THE DOOR
     CHILD'S DISPATCHER HOOK UNDER THE MODEL DID NOT (the read of the host slots raising at a dispatch was printed
     by ctypes and dropped: the twin ran on and the child exited 0): what that child's own Python raises at the
-    dispatcher — the hook, or a shadow's vet that could not be MADE — now ends it by name with the harness's own
+    dispatcher now ends it by name with the harness's own
     status (`FORK_RAISED`), and a door user's modelled run says how many times its process was parked
     (`Modelled.parked`): an audit that read nothing is no audit passed.
   - ITS LEAF HOOKS (`aes_switch.IDLE_HOOKS`) ARE THE WORKER'S FORKS, not the zygote's: a named hook must live in a
@@ -775,8 +825,8 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   the same by-nature longword in a FREE EVB, found by the ROM run's ledger (`qpb_addresses_kept`: an EVB_PARM the run
   STORED whose value is a stack-band address), dropped and vetted the same way. A wait the MACHINE came with holds one
   address on both shores and is COMPARED (its bytes are not vetted there: a staged machine carries no stack band).
-  Used by the leaf batteries, the shadow at dsptch, a door user blocked inside a rebound entry (held too to what the
-  entry's row says it parks, `Entry.parks`), and `register_row`. Never a window.
+  Used by the leaf batteries, a door user blocked inside a rebound entry (held too to what the entry's row says it
+  parks, `Entry.parks`), and `register_row`. Never a window.
 - A HOST SLOT PER PROCESS. A frame local that stays live while its process is BLOCKED — its routine reached the
   dispatcher with the local's address parked in a record another process reads — is live in two processes at once:
   ap_rdwr's QPB, which a parked pipe wait's EVB points into until the other end serves it through that address. In
@@ -794,8 +844,8 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   frame — but it opens NO window: the ROM routine's cycles stay the ROM's own, the twin's are ours, and the table's
   sub-line counts "N call(s) of a rebound entry in the own cycles". A twin that runs an AES ROM cycle is refused by
   name (rebind the entry it called first). So a flip MOVES every row that reaches the entry: save the table before
-  and after, list every moved row, and hold that no other moved. A row stops being (EV) by derivation when its
-  function's last `jsr` into the AES text is gone. NO WINDOW OPENS AT A REBOUND ENTRY ON EITHER SHORE, however it
+  and after, list every moved row, and hold that no other moved. A row stops opening a window by derivation when
+  its function's last `jsr` into the AES text is gone (none is left: every entry is rebound). NO WINDOW OPENS AT A REBOUND ENTRY ON EITHER SHORE, however it
   is reached: the ROM's watch reads the rebound set off the build, not off the static call graph (which holds no
   edge through a queued fork function's code — the ROM's bchange reaching post_button under the ROM's forker).
 - TIER 3: A ROW THAT CALLS A REBOUND ENTRY IS HELD ON TWO COUNTS. With no window, the row is a differential of the
@@ -826,7 +876,7 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   (`tier3.vet_our_run_kept_out_of_the_aes`, in `measure`: `RomBench._call` profiles every row's own run). It is what
   (V) held for `net` rows alone: a plain C row could run the AES's ROM through a CODE POINTER IN DATA — forker over a
   ROM-made queue with the relocation off spent 61,120 cycles there and was "equal" at 1.00 — and be priced. Sliced
-  rows are not asked (a slice is cut from a whole run that (EV) holds call by call); a case that hands `measure` the
+  rows are not asked (a slice is cut from a whole run that the ARRIVALS rule holds call by call); a case that hands `measure` the
   KIT's own bench is not this guard's. TO DECLARE AN ENTERED-BY-THE-MACHINE'S-POINTER EXCEPTION — a row whose run must
   enter ROM text because the MACHINE holds the ROM's address and the row cannot relocate it (a transcription row is
   held to the whole register file) — add it to `tier3.ENTERED_BY_THE_MACHINE_S_POINTER` with the EXACT cycles it
@@ -941,7 +991,7 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     at the entry of a door call (what a loop's earlier waits take) and at an idle (what wakes a wait that
     blocked); one named at a door call the run never makes is refused. ITS TIER 1 IS A DOOR CHILD UNDER THE MODEL
     (`aes_switch.modelled(..., door=DoorUser(objects, child doors))`): the door's binding and the scheduler in one
-    fork, the twin held to its shadow AT DSPTCH and then run on, the frames the door was handed held to the ROM's.
+    fork, the twin run on through the dispatcher's hook, the frames the door was handed held to the ROM's.
   - THE HOST SLOTS HELD ACROSS A WAIT ARE AUDITED (`test_aes_event.SLOTS_HELD_WHERE_PARKED`, `include/host_slot.h`):
     each frame a door user holds while its process is parked is ONE frame for every process — sound while one C
     process can be inside the routine (another process is the ROM's own code, which claims nothing) — and a call
@@ -1048,7 +1098,7 @@ INTERRUPTS AT A DOOR ENTRY. A loop like mn_do or gr_dragbox only leaves its late
 WHILE it runs. `aes_event.interrupted(name, arguments, machine, {k: effect})` delivers that change on both sides. The ROM's
 watched run is stopped at the k-th door entry. The ROM's OWN interrupt code (the VDI mouse ISR and the tick glue: `press`,
 `release`, `move_to`) then runs over a copy of the memory at that point, with its stack frames left out. The bytes it wrote
-are laid in at that same entry. The C, in a child, gets the identical bytes at the same ordinal before its nested run.
+are laid in at that same entry. The C, in a child, gets the identical bytes at the same ordinal before its twin runs.
 
 The case compares whether the call returned or blocked, the answer, every frame handed over and the whole image. RED tests
 show that dropping the delivery on either side, or shifting it by one ordinal, reds. This obeys THE PRINCIPLE because nothing
@@ -1078,7 +1128,7 @@ A CASE'S OWN BUDGET, AND ITS CAP. Two runs of a door case have a default limit: 
 DIFFERENTIAL (`emu.run`'s own cap, `DIFFERENTIAL_INSNS`, 200,000). Neither default is raised for a long case — a short
 derivation that began to spin would then run that much longer before it was refused. The case that needs more declares
 it, from its measured run of N instructions, and the declaration is held both ways by name:
-- `budget=B` (on `interrupted`, `refused_where_the_rom_blocks`, `register_interrupted`, `register_slices`, `run_event`,
+- `budget=B` (on `interrupted`, `register_interrupted`, `register_slices`, `run_event`,
   `stopped_at` …) is the derivation's budget AND that run's cap. It must be NEEDED (`5 N > DERIVATION_INSNS`: a run the
   default admits declares for nothing, whatever the declaration's size), FITTED (`5 N <= B`) and NOT STALE (`B <= 10 N`,
   `DERIVATION_STALE` = 2: a declaration written for a longer run than the case now makes, or by guess). A prefix a
@@ -1108,8 +1158,8 @@ stop)}, budget=)` registers one priced row per SLICE: the run between two ARRIVA
   Trap ends exist because a stretch may make no door call at all: fs_input's first comes after ~350,000 instructions.
 - BOTH SHORES RUN THE WHOLE SESSION — the C cannot be entered in the middle of its routine — watched and MARKED at the
   two arrivals. The row's cost is the difference between its two marks, shore by shore (instructions, cycles, door
-  calls, glue); the reset overhead comes off a slice that starts at `ENTRY` only. Every (EV) vet and the bench's
-  second differential still run over the whole session.
+  calls, glue); the reset overhead comes off a slice that starts at `ENTRY` only. Every vet of a door row and the
+  bench's second differential still run over the whole session.
 - MEMORY IS COMPARED AT THE MARKS: our run must reach the slice's start after the same door calls as the ROM's and with
   the same memory (outside the stack band, the blob and the row's drops), and the same again at its stop — else the
   ratio would be of two different computations. Refused by name: a slice started one call late, "diverged before the
@@ -1158,7 +1208,8 @@ is what sees a word set and put back between two waits.
 The dispatcher refuses in two ways, matched by `aes_event.BLOCKS` and `YIELDS` (the dispatcher's own words). A call that
 WOULD BLOCK leaves its process waiting. A call that WOULD YIELD keeps the caller ready but switches: unsync handing the lock to
 a queued waiter does this. The core's generic halt line names both, so a bare "would block" substring passed a yield as a
-block. `refused_where_the_rom_blocks(..., switches=)` compares the child's whole image with the ROM's at the refusing entry.
+block. `interrupted(..., {}, switches=)` — a case that ends blocked, `blocked_then_woken`'s first half — compares the child's
+whole image with the ROM's where the call reaches the dispatcher.
 
 THE C RUNS FIRST IN A CHILD. A core of the event layer that goes wrong does not fail an assertion: a door user loops
 where the ROM's run ends, a list routine walks a list that no longer ends or stores through a link that is no address
@@ -1334,8 +1385,8 @@ after it one late). The procedure for a routine that reads or counts a word an I
   its to hold — the bracket is Tier 3's symmetric SR rule's; and it takes no boundary inside a callee.
 - A MUTANT OF TARGET TEXT (an instruction's shape) is swept on a private BLOB: no host `.so` can kill it.
 
-The door also never lays back the nested run's write to the Line-F mask word `$cc44`. A caller's own non-empty masked return
-rewrites that word after its last door call, so the C's image keeps the word as the C found it.
+The door never lays the Line-F mask word `$cc44` into the C's image (a delivery's write of it is left out). A ROM caller's
+own non-empty masked return rewrites that word after its last door call; the C makes none and keeps the word as it found it.
 
 Of the three mechanisms the foundation designed, ONE is still not built (the first); the other two were built by band 4 wave 2:
 
