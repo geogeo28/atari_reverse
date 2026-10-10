@@ -629,6 +629,9 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_gr_clamp", "aes_gsx_mxmy"), ("aes_gr_rubwind", "aes_gsx_mxmy"), ("aes_gr_dragbox", "aes_gsx_mxmy"),
     ("aes_gr_dragbox", "aes_rc_constrain"), ("aes_gr_wait", "aes_rc_equal"), ("aes_gr_slidebox", "aes_mul_div"),
     ("gr_xdraw", "aes_gsx_mon"),
+    # the screen manager's handlers (`src/aes/gemctrl.c`, hctl_window's helpers inlined into it): a window's
+    # rectangle unpacked, a drag's bound set
+    ("aes_hctl_window", "aes_r_get"), ("aes_hctl_window", "aes_r_set"),
     # the menu library (`src/aes/mnlib.c`, pd_nameit inlined into mn_register): the screen manager's rectangle, the
     # button read on an item, a name copied, blank-filled and scanned
     ("aes_mn_bar", "aes_rc_copy"), ("aes_mn_do", "aes_gsx_button"), ("aes_mn_register", "aes_lstcpy"),

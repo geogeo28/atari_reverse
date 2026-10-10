@@ -39,11 +39,12 @@ import st_build
 import accessory_disk
 import aes
 import aes_boot
+import aes_gemctrl
 import aes_pdpipe as pp
 import case
 import fs_pexec
 import vdi
-from aes_boot import FIND, MULTI, QUIET, WRITE
+from aes_boot import FIND, HIDE, MULTI, QUIET, REGISTER, WRITE
 
 RAM_BYTES = aes_boot.RAM_BYTES
 LONG_BYTES, WORD_BYTES = aes.LONG_BYTES, aes.WORD_BYTES
@@ -425,14 +426,19 @@ def test_each_accessory_is_the_file_on_the_disk_loaded_and_relocated_by_the_rom(
             assert not any(booted.ram[text + built.symbols["received"]:stack_bottom])
 
 
-MODES = (QUIET, FIND, WRITE, MULTI, BUSY)
+# EVERY MODE ANY BATTERY BOOTS AN ACCESSORY IN — this battery's, and the screen manager's handlers' machines
+# (`aes_gemctrl.ACCESSORY_MODES`: a window of each kind they need, a menu entry, the bar hidden), READ OFF THEM so a
+# machine added there is held here the day it is.
+MODES = tuple(sorted({QUIET, FIND, WRITE, MULTI, BUSY, REGISTER | HIDE,
+                      *(mode for pair in aes_gemctrl.ACCESSORY_MODES.values() for mode in pair)}))
 
 
 def test_the_disk_is_one_disk_to_the_machine_whatever_the_modes():
     """EVERYTHING THE MACHINE READS BEFORE `gem_entry` IS THE SAME BYTES FOR EVERY MODE PAIR: the boot sector (its
-    serial), both FATs, the root directory — in fact every byte of the image outside the one word of each
-    accessory's own cluster that says its mode. So one capture, made with the quiet pair's disk in the drive, is the
+    serial), both FATs, the root directory — in fact every byte of the image outside the one longword of each
+    accessory's own cluster that says its mode (a window's kind, then the flags). So one capture, made with the quiet pair's disk in the drive, is the
     pre-init machine of all of them: GEMDOS's cache and the driver's record are every pair's."""
+    assert set(MODES) >= {mode for pair in aes_gemctrl.ACCESSORY_MODES.values() for mode in pair} and len(MODES) >= 12
     quiet = aes_boot.accessory_disk_of(QUIET, QUIET)
     mode_words = [accessory_disk.file_at(index) + accessory_disk.mode_word_at(aes_boot.accessory())
                   for index in range(len(aes_boot.ACCESSORY_NAMES))]
@@ -441,9 +447,9 @@ def test_the_disk_is_one_disk_to_the_machine_whatever_the_modes():
     for first in MODES:
         for second in MODES:
             image = bytearray(aes_boot.accessory_disk_of(first, second))
-            assert [case.word_in(image, at) for at in mode_words] == [first, second]
+            assert [case.long_in(image, at) for at in mode_words] == [first, second]
             for at in mode_words:
-                image[at:at + WORD_BYTES] = bytes(WORD_BYTES)
+                image[at:at + LONG_BYTES] = bytes(LONG_BYTES)
             assert bytes(image) == quiet
 
 
@@ -769,12 +775,69 @@ def test_a_boot_is_kept_by_the_pre_init_machine_s_content():
     assert key() == key() and len({key(), *others}) == 1 + len(others)
 
 
+AUTO_RUNNER_ABANDONS_ITS_STACK = 0xfc0d42          # the BIOS's AUTO runner, no program found: `lea $755a,sp`
+LEA_ABSOLUTE_LONG_SP = 0x4ff9
+
+
+def abandoned_stack(capture):
+    """THE AUTO RUNNER'S STACK, `(lo, hi)`, off a pre-init machine's own pointers — and that it is DEAD there.
+
+    The AES's parent process is the BIOS's AUTO runner, whose stack is the top of its own basepage: the command
+    tail's 128 bytes. It ran `\\AUTO`'s search on it in supervisor mode, interrupts open, and then ABANDONED it — the
+    one instruction that loads SP with the BIOS's own stack, which is the ISP the capture stopped with. Nothing
+    points into it any more: neither stack pointer, nor the frame GEMDOS saved for either process. What an interrupt
+    pushed below the runner's SP while it ran is still there, and which interrupt — if any — is each boot's phase."""
+    ram, registers = capture.ram, capture.registers
+    basepage = case.long_in(ram, registers["usp"] + LONG_BYTES)
+    runner = case.long_in(ram, basepage + addrs.BASEPAGE_PARENT)
+    lo, hi = runner + addrs.BASEPAGE_COMMAND_TAIL, runner + aes_boot.BASEPAGE_BYTES
+    opcode, reloaded = struct.unpack_from(">HI", BASE_IMAGE, AUTO_RUNNER_ABANDONS_ITS_STACK)
+    assert opcode == LEA_ABSOLUTE_LONG_SP and reloaded == registers["isp"]
+    saved = [case.long_in(ram, process + addrs.BASEPAGE_SAVED_FRAME) for process in (basepage, runner)]
+    assert not any(lo <= pointer < hi for pointer in (registers["usp"], registers["isp"], *saved))
+    return lo, hi
+
+
+@every_capture
+def test_the_auto_runner_s_abandoned_stack_is_the_mask_s_last_region(capture):
+    """The span the family test leaves out IS a region of the pre-init mask — so the noise test above proves it dead
+    the way it proves every clock dead: a boot from a machine with NOISE all over that stack takes the same
+    instructions to the same machine. Above it lies the environment the runner made, which is live."""
+    lo, hi = abandoned_stack(CAPTURES[capture]())
+    assert (lo, hi - lo) in [(at, size) for at, size, _why in preinit_snapshot.MASK]
+    assert CAPTURES[capture]().ram[hi:hi + len(b"PATH=")] == b"PATH="
+
+
+def family_differences(booted_ram, snapshot_ram, capture):
+    """Where a desk machine and the snapshot differ in what THE FAMILY holds byte for byte: the exception vectors,
+    and the TPA below the AES's first stack but for the Line-F handler's mask word and the AUTO runner's abandoned
+    stack (`abandoned_stack`: dead on both shores, each with its own boot's interrupts). `(address, length)` runs."""
+    ours, theirs = bytearray(booted_ram), bytearray(snapshot_ram)
+    bottom, screen = case.long_in(ours, addrs.SYSVAR_MEMBOT), case.long_in(ours, addrs.SYSVAR_V_BAS_AD)
+    first_stack = capture.registers["usp"] - TOP_OF_TPA_STACK_BYTES
+    left_out = [(lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW] + [abandoned_stack(capture)]
+    assert bottom < first_stack < screen and all(bottom <= lo < hi <= first_stack for lo, hi in left_out)
+    for lo, hi in left_out:
+        ours[lo:hi] = theirs[lo:hi] = bytes(hi - lo)
+    held = [(0, VECTOR_TABLE_BYTES), (bottom, first_stack)]
+    return [(lo + at, size) for lo, hi in held
+            for at, size in boot_snapshot.differing_fields(bytes(ours[lo:hi]), bytes(theirs[lo:hi]))]
+
+
+def saved_contexts(booted):
+    """Each static process's UDA state block: the registers and both stack pointers it was parked with."""
+    return [booted.ram[process.uda:process.uda + aes.UDA_STATE_BYTES] for process in booted.static_processes()]
+
+
 def test_the_desk_s_machine_is_the_snapshot_s_own_boot_met_at_its_first_idle():
     """THE FAMILY. The ROM booted in the oracle from the pre-init machine, over the capture's blank disk, is the
     machine Hatari booted, met nine hundred vertical blanks earlier — held where no capture's phase reaches:
       * the exception vectors, every one;
-      * THE WHOLE TPA below the screen, byte for byte but the Line-F handler's self-patched mask word: the handler's
-        copy, everything the AES and the desktop Malloc'd and filled (the resource, the desktop's own records);
+      * THE TPA below the screen, byte for byte, but two spans derived from the machine: the Line-F handler's
+        self-patched mask word, and the AUTO runner's ABANDONED STACK (`abandoned_stack`: 128 bytes no stack pointer
+        or saved frame names, in which each boot keeps the frames of the interrupts that runner took — the two shores
+        are two boots). Everything else there is held: the runner's and the AES's basepages, the environment, the
+        Line-F handler's copy, everything the AES and the desktop Malloc'd and filled;
       * both processes as their PDs and their saved contexts say them (the UDA's state block: every register, both
         stack pointers), each waiting on as many EVBs; the not-ready list; the free EVBs, as many;
       * the screen (`test_the_desk_s_screen_is_the_snapshot_s`).
@@ -784,20 +847,39 @@ def test_the_desk_s_machine_is_the_snapshot_s_own_boot_met_at_its_first_idle():
     state; the AES's tick-driven words; `savptr`'s last frame; the frames interrupts left on the stacks, dead and
     in the holes of live ones."""
     booted, snapshot = machine("the desk alone"), aes_boot.Machine(snapshot_as_a_boot())
-    assert booted.ram[:VECTOR_TABLE_BYTES] == snapshot.ram[:VECTOR_TABLE_BYTES]
-    ours, theirs = bytearray(booted.ram), bytearray(snapshot.ram)
-    for lo, hi, _why in aes.LINE_F_MASK_WINDOW:
-        ours[lo:hi] = theirs[lo:hi] = bytes(hi - lo)
-    bottom, screen = booted.long(addrs.SYSVAR_MEMBOT), booted.long(addrs.SYSVAR_V_BAS_AD)
-    assert bottom == snapshot.long(addrs.SYSVAR_MEMBOT) and all(bottom <= lo < screen for lo, _hi, _why in aes.LINE_F_MASK_WINDOW)
-    first_stack = pre().registers["usp"] - TOP_OF_TPA_STACK_BYTES
-    assert bottom < first_stack < screen and ours[bottom:first_stack] == theirs[bottom:first_stack]
+    assert booted.long(addrs.SYSVAR_MEMBOT) == snapshot.long(addrs.SYSVAR_MEMBOT)
+    differing = family_differences(booted.ram, snapshot.ram, pre())
+    assert not differing, f"the desk's machine and the snapshot differ at {[(hex(at), size) for at, size in differing]}"
     for process, snapshot_s in zip(booted.static_processes(), snapshot.static_processes()):
         assert process._replace(events=()) == snapshot_s._replace(events=())
         assert len(process.events) == len(snapshot_s.events)
-        assert booted.ram[process.uda:process.uda + aes.UDA_STATE_BYTES] == snapshot.ram[process.uda:process.uda + aes.UDA_STATE_BYTES]
+    assert saved_contexts(booted) == saved_contexts(snapshot)
     assert [process.pd for process in booted.waiting()] == [process.pd for process in snapshot.waiting()]
     assert len(booted.free_events()) == len(snapshot.free_events())
+
+
+def test_the_family_still_sees_a_byte_beside_the_span_it_leaves_out():
+    """THE EXCLUSION IS EXACTLY THE DEAD STACK: one byte flipped just under it (the runner's basepage: the last byte
+    of GEMDOS's saved frame pointer), just over it (the environment's first byte), in the AES's own basepage, or in
+    a vector, is a difference the family names at that address — and one flipped INSIDE the span is none. And the
+    desk's parked stack pointer one frame off is another saved context than the snapshot's."""
+    booted, snapshot = machine("the desk alone").ram, bytes(BASE_IMAGE[:RAM_BYTES])
+    lo, hi = abandoned_stack(pre())
+    aes_basepage = case.long_in(pre().ram, pre().registers["usp"] + LONG_BYTES)
+    assert not family_differences(booted, snapshot, pre())
+    for at in (lo - 1, hi, aes_basepage + addrs.BASEPAGE_TBASE, addrs.VECTOR_HBL):
+        flipped = bytearray(booted)
+        flipped[at] ^= 0x24
+        assert family_differences(bytes(flipped), snapshot, pre()) == [(at, 1)]
+    for at in (lo, (lo + hi) // 2, hi - 1):
+        flipped = bytearray(booted)
+        flipped[at] ^= 0x24
+        assert not family_differences(bytes(flipped), snapshot, pre())
+    desk = machine("the desk alone")
+    parked = bytearray(booted)
+    parked[desk.static_processes()[DESK_PID].uda + aes.UDA_SUPER_SP + LONG_BYTES - 1] ^= 2      # a LIVE frame's pointer
+    moved = aes_boot.Machine(desk.boot._replace(ram=bytes(parked)))
+    assert saved_contexts(moved) != saved_contexts(aes_boot.Machine(snapshot_as_a_boot())) == saved_contexts(desk)
 
 
 VECTOR_TABLE_BYTES = 0x400              # the 68000's 256 vectors

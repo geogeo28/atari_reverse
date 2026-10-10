@@ -257,6 +257,22 @@
 #define HOST_SLOT_AES_MARSHAL_FRAME_BYTES 78     /* MARSHAL_FRAME_BYTES + MARSHAL_HOST_CALLER_BYTES              */
 #define HOST_SLOT_AES_DISPATCH_MOUSE_FORM 0x7f25c /* $fe5d9c's -12(a6): graf_mouse's form ($fe62b2 pea)          */
 #define HOST_SLOT_AES_DISPATCH_MOUSE_FORM_BYTES 4
+/* ...and the screen manager's handlers' (`aes/gemctrl.h`). hctl_window's: the window's rectangle with the four words
+ * r_get unpacks it into, and the elevator's corner ob_offset answers into — each read out and given back before any
+ * wait; THE RECTANGLE A DRAG IS HELD BY (gr_dragbox's bound, gr_rubwind's twin offsets) and THE TWO WORDS IT ANSWERS
+ * INTO, live in the screen manager's frame across every wait of the drag — A SLOT PER PROCESS each (below; COMPACTED,
+ * not the frame's layout: no gap of the band holds nine frames of the ROM's 36 bytes). hctl_rect's: mn_do's two
+ * answers, live across every wait of the menu — a slot per process too. */
+#define HOST_SLOT_AES_HCTL_WINDOW_SIZE  0x7f260  /* $fe45a2's -8(a6) rectangle, then its -18..-24(a6) x, y, w, h   */
+#define HOST_SLOT_AES_HCTL_WINDOW_SIZE_BYTES 16  /* HCTL_SIZE_BYTES                                              */
+#define HOST_SLOT_AES_HCTL_WINDOW_CORNER 0x7f270 /* $fe45a2's -30(a6) x, -32(a6) y: ob_offset's answers          */
+#define HOST_SLOT_AES_HCTL_WINDOW_CORNER_BYTES 4 /* HCTL_CORNER_BYTES                                            */
+#define HOST_SLOT_AES_HCTL_WINDOW_DRAG_RECT 0x7f2b0 /* $fe45a2's -16(a6) bound, or its -8(a6) offsets             */
+#define HOST_SLOT_AES_HCTL_WINDOW_DRAG_RECT_BYTES 72 /* HOST_PROCESSES (9) frames of a GRECT's eight bytes        */
+#define HOST_SLOT_AES_HCTL_WINDOW_DRAG_ANSWERS 0x7f204 /* $fe45a2's -18/-20(a6) corner, or its -22/-24(a6) size    */
+#define HOST_SLOT_AES_HCTL_WINDOW_DRAG_ANSWERS_BYTES 36 /* HOST_PROCESSES (9) frames of two words                  */
+#define HOST_SLOT_AES_HCTL_RECT_CHOICE  0x7f5b8  /* $fe4908's -4(a6) item, -2(a6) title                          */
+#define HOST_SLOT_AES_HCTL_RECT_CHOICE_BYTES 36  /* HOST_PROCESSES (9) frames of HCTL_CHOICE_BYTES (4)           */
 /* ...and the waits' (`aes/evwait.h`, `aes/evlib.h`): amouse's copy of the MOBLK it is handed (to lbcopy and inside),
  * and the QPB that ap_rdwr's own arguments are — the process, the length, the buffer — whose address it hands
  * ev_block (a wait that parks keeps that address in its EVB: a place in its caller's stack, by nature). The QPB is A
@@ -372,6 +388,14 @@ enum host_slot {
     HOST_SLOT_ID_AES_MARSHAL_FRAME,
     HOST_SLOT_ID_AES_DISPATCH_MOUSE_FORM,
     HOST_SLOT_ID_AES_PGMLD_WORDS,
+    HOST_SLOT_ID_AES_HCTL_WINDOW_SIZE,
+    HOST_SLOT_ID_AES_HCTL_WINDOW_CORNER,
+    HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT,     /* a slot per process: the screen manager's frame across a drag's waits */
+    HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT_LAST = HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT + HOST_PROCESSES - 1,
+    HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_ANSWERS,  /* a slot per process: ...and the two words the drag answers into */
+    HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_ANSWERS_LAST = HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_ANSWERS + HOST_PROCESSES - 1,
+    HOST_SLOT_ID_AES_HCTL_RECT_CHOICE,          /* a slot per process: mn_do's answers across the menu's waits */
+    HOST_SLOT_ID_AES_HCTL_RECT_CHOICE_LAST = HOST_SLOT_ID_AES_HCTL_RECT_CHOICE + HOST_PROCESSES - 1,
     HOST_SLOT_ID_AES_AMOUSE_MOBLK,
     HOST_SLOT_ID_AES_AP_RDWR_QPB,     /* a slot per process: HOST_PROCESSES flags, this one process 0's */
     HOST_SLOT_ID_AES_AP_RDWR_QPB_LAST = HOST_SLOT_ID_AES_AP_RDWR_QPB + HOST_PROCESSES - 1,

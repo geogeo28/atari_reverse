@@ -118,6 +118,10 @@ ROM_ADDRESSES_AS_DATA = {
     # share (rows $fe6216 / $fe621e of (b)): off target the ROM's addresses, which the C's call resolves to the two
     # cores; on target the routines' own entries, called through the value (ALCYON_ROUTINE).
     "gemsuper.c": {"AES_ROM_GR_GROWBOX": CODE, "AES_ROM_GR_SHRINKBOX": CODE},
+    # hctl_window's table of WM_ARROWED's actions by gadget — nine words past the text, read in place by the gadget's
+    # index as the ROM's own `adda.l #$fef7d0` reads them (its other table, the seventeen gadget arms' addresses at
+    # $fef7e2, is the C's `switch`: no value of it is named).
+    "gemctrl.c": {"AES_ARROW_ACTIONS": TABLE},
 }
 
 

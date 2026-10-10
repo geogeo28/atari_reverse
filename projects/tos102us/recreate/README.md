@@ -202,15 +202,26 @@ buffers, its directory records, each basepage's current-directory byte. With the
 from power-on, GEMDOS's cache and the driver's record are the real ones. One capture serves every mode pair because a
 mode is one word inside an accessory's own cluster: `accessory_disk.disk_of` builds the image from the UNPATCHED file
 (so `st_build`'s content-derived serial is one serial) and patches the word in the image — every byte outside the two
-mode words is equal for all 25 pairs (a test).
+mode longwords is equal for every pair of the modes any battery boots (a test, which reads the modes off the batteries' own machines).
 
 **The test accessory** (`test/acc/testacc.S`, linked by `test/acc/acc.ld`, wrapped by `atari/mkprg.py`): `appl_init`,
 then a wait for ever. `QUIET` waits in `evnt_mesag`; `FIND` does `appl_find("TESTACC2")`; `WRITE` an `appl_write` of
 16 bytes to what was found (or to pid 0, the desk); `MULTI` waits in a six-way `evnt_multi`. It keeps every answer of
-the AES in its own DATA, which a test reads through the basepage the PD names.
+the AES in its own DATA, which a test reads through the basepage the PD names. SINCE BAND 5 WAVE 1 (the screen
+manager's handlers need a window with gadgets and an entry of the desk menu, and both must be a real process's own
+calls): `REGISTER` does `menu_register` (an entry of the desk menu, which the screen manager answers with AC_OPEN);
+`HIDE` answers that AC_OPEN with `menu_bar(0, 0)` (the one way a machine comes to have no menu while its screen
+manager runs); and `with_a_window(kind, mode)` makes it `wind_create` a window of GEM's gadget bits `kind`, name it,
+give its sliders a size and a place, and `wind_open` it before the wait — at a rectangle of its own by its id, so two
+accessories' windows overlap and each keeps its gadgets in view. It answers no message: what the screen manager sends
+it is read and dropped. A MODE IS A LONGWORD of the accessory's text (`acc_kind`, then `acc_mode`), patched in the
+image as the word was: the disk is still one disk to the machine whatever the pair (the test, over every mode a
+battery's machine uses). THE FILE IS 993 OF THE 1,024 BYTES OF ONE CLUSTER — `accessory_disk.disk_of` asserts it fits,
+and `file_at` assumes one: 31 bytes of room before a mode more needs that generalised.
 
 **How the machines relate to the boot snapshot.** `desk_machine()` is the snapshot's own boot met at its FIRST idle
-instead of nine hundred vertical blanks on: the vectors, the whole TPA (but the Line-F mask word), both processes'
+instead of nine hundred vertical blanks on: the vectors, the whole TPA (but the Line-F mask word and the AUTO
+runner's ABANDONED STACK — 128 bytes derived from the machine's own pointers, dead on both shores), both processes'
 PDs and saved contexts, the lists and the screen are equal, and that is a test. Byte for byte they differ in 369–425
 bytes, 56–62 outside `boot_snapshot.MASK` — clocks, `colorptr`, the floppy's VBL words, `savptr`'s last frame,
 interrupt frames left on stacks, a few tick-driven AES words — which is NOT pinned: a capture's phase decides it.
@@ -235,7 +246,10 @@ snapshot's own procedure and prints what the accessory machine differs from it i
 instruction, and when the boot reaches it depends on the emulated disk's rotation (`_hz_200` 396..450 over eighteen
 captures). `preinit_snapshot.MASK`: `_vbclock`/`_frclock`, `_hz_200`, the floppy VBL service's words (`$9f8`), the
 timer-C divider, dead frames of the OS stack (`$1455`..`$1676`), GEMDOS's 20 ms accumulator, the floppy driver's
-scratch (`$74b8`), `GEMDOS_TIME`, the 50 Hz millisecond count. Registers, palette and every byte outside it agreed
+scratch (`$74b8`), `GEMDOS_TIME`, the 50 Hz millisecond count, and THE AUTO RUNNER'S ABANDONED STACK (`$ca82` +128:
+the BIOS's AUTO runner searches `\AUTO` in supervisor mode on a stack at the top of its own basepage, then abandons
+it — `$fc0d42 lea $755a,sp` — so whatever an interrupt pushed there stays; one capture set in six of a gate had a
+level-6 frame in it, which made the family test red until the span was left out and noise-proven). Registers, palette and every byte outside it agreed
 in all eighteen — but two regions were first seen at the tenth and twelfth capture, so it may be incomplete, and no
 test depends on its completeness. What IS a test: booted from a pre-init machine whose every masked byte is NOISE,
 the ROM takes the same instructions to the same registers and the same machine outside the mask.
@@ -249,7 +263,8 @@ the snapshot went red on a fresh capture — hold a relation to the snapshot by 
 aes_boot.preinit(); aes_boot.accessory_preinit()          # the two PreInit(ram, registers, io)
 aes_boot.desk_machine(machine=None)                        # Machine
 aes_boot.accessory_machine(first=QUIET, second=QUIET, machine=None)
-aes_boot.booted(preinit, disk)                             # the kept derivation -> Boot (ram, registers, ledgers)
+aes_boot.booted(preinit, disk, until=None)                 # the kept derivation -> Boot (ram, registers, ledgers);
+                                                           # `until`: stopped at the boot's first arrival at a ROM address
 aes_boot.accessory(); aes_boot.accessory_disk_of(*modes); aes_boot.blank_disk()
 # a Machine: .ram .registers .boot .pokes ({0: ram}) .image() .waiting() .named(name) .static_processes()
 #            .static_uda_bytes() .allocated_accessories() .free_events() .results(process) .accessory_word(...)
@@ -265,9 +280,92 @@ staged = case.merge_pokes(aes.leaf_machine(booted.pokes), pp.name_pokes(b"TESTAC
 assert pp.run(pp.FPDNM, (pp.NAME_AT, 0), staged).long_answer() == booted.named("TESTACC2").pd
 ```
 
-Not built: continuing a booted machine from its idle with interrupts (use `aes_switch.scheduled` over
-`machine.pokes`). The register entry, the bus error and the IRQ reach Musashi's `m68k_set_reg` / `m68k_get_reg` /
+CONTINUING A BOOTED MACHINE FROM ITS IDLE WITH INTERRUPTS is built since band 5 wave 1 (`test/aes_gemctrl.py`, next
+section: the ROM's dispatcher run from the machine's idle, real mouse packets at its idles and polls, to an arrival).
+A MACHINE'S POKES THERE ARE NOT `{0: ram}`: a megabyte in one run covers the harness's own window of free RAM — Tier
+3's blob, the staging band, the run's stack and its argument frame (`abi.FIRST_ARG`, which Tier 3 reads BY KEY) — so a
+row's machine is the megabyte WITHOUT that window (`aes_gemctrl._as_pokes`: `[0, bench_base)` and from the stack
+band's top up, the window held empty below the band where the machine is made, and empty in the snapshot too).
+The register entry, the bus error and the IRQ reach Musashi's `m68k_set_reg` / `m68k_get_reg` /
 `m68k_set_irq` through `emu._LIB` — accepted for now; a kit accessor is owed.
+
+### AN ARRIVAL — a routine of another process met where the ROM's own caller calls it (`test/aes_gemctrl.py`)
+
+The screen manager's handlers (`src/aes/gemctrl.c`: ct_msgup, hctl_window, hctl_button, hctl_rect) run in the screen
+manager's process, called by its main loop — the ROM's ctlmgr until wave 2. A case of one is never a frame somebody
+wrote. It is AN ARRIVAL:
+
+- A MACHINE THE ROM BOOTED (above), its accessories having opened windows and registered a menu entry by their own
+  AES calls;
+- THE ROM'S OWN DISPATCHER RUN FROM THAT MACHINE'S IDLE (`AES_ROM_DISP_LOOP`, as `aes_event.dispatched` enters it),
+  interrupts taken at its idles and at its polls that are no idle exactly as `aes_switch.scheduled` takes them
+  (`aes_event.interrupting`: a `chain` `{idle: (interrupt, ...)}`, `at_polls`) — the mouse onto a gadget, a click or a
+  press held, a drag, the menu — STOPPED AT THE HANDLER'S FIRST INSTRUCTION, at its n-th arrival there
+  (`Arrival(machine, chain, routine, which, at_polls)`, `aes_gemctrl.at`: a kept derivation, keyed by the machine's
+  content). A chain that idles with nothing left before the arrival, or that arrives with a delivery still due, is
+  refused by name;
+- the arguments are the frame the ROM's caller pushed, the machine every byte of RAM there. One arrival is the
+  BOOT's own, not a dispatcher's: the desk's menu_bar posts the screen manager a click and the ROM's boot calls
+  hctl_button with it before its first idle (`aes_boot.booted(until=)`).
+
+THE DIFFERENTIAL STARTS THERE — the ROM's routine and its twin from that entry, on the harness's stack (the screen
+manager's own frames above the entry are untouched by either). A HANDLER THAT RETURNS without a switch (a click: the
+button is up again where the screen manager runs) is a door user's differential and a priced row
+(`aes_event.run_guarded`, `register`). ONE THAT LEAVES BY THE DISPATCHER is a row that switches, THE SCREEN MANAGER
+ITS PROCESS (`aes_event.woken_row`): its own deliveries are numbered from ITS entry — at an idle (a wait that
+blocked: a gadget watched, a drag), at a poll that is no idle (the button's rise while the handler YIELDS: it stays
+ready, so the machine never idles), or at a door call (below) — and an accessory's or the desk's turn inside it is a
+foreign window, the ROM's own code on both shores. What that taught, each held by a test:
+
+- THE DISPATCHER'S OWN DOOR CALLS ARE NOT THE CALLER'S (`aes_switch._Idling.KEEPS_THE_DISPATCHER_S_CALLS_OUT`). A
+  button change delivered at a poll while the caller yields BY A DSPTCH OF ITS OWN is posted by the dispatcher's
+  forker — bchange's post_button, a door entry. Inside a door call that blocked it was never counted (an entry
+  reached inside an open call is no call); outside one the ROM's watched run counted it as the caller's next door
+  call, which the C's forker (it calls the entry's core) hands to no door. From the caller's dsptch until disp enters
+  a process, no door entry is a stop of a scheduled run. (The rule also took that post_button out of EIGHTEEN
+  earlier rows' `Scheduled.calls` — rows that are themselves a door entry, asleep with no call open: none a door
+  user's, so nothing compared it; `test_aes_switching.py` holds, row by row, that what the rule leaves out is the
+  forker's post_button and nothing else.)
+- A HANDLER WHOSE FIRST SWITCH IS ITS OWN DSPTCH, AFTER DOOR CALLS OF ITS OWN (an arrow: the lock let go, the message
+  written, then a yield; ct_msgup after its ap_sendmsg) has no byte-for-byte compare AT THE DISPATCHER: no road stops
+  a door user's child at a dispatcher it reaches outside a door call (`interrupted` ends at a door call that blocks;
+  `switches_where_the_rom_does` forks a core that reaches no door). It is held by the companion's compare of the
+  image AT EVERY DISPATCH — a page named, not a byte — and the premise, on the ROM, that the run yields there.
+- A SPIN IS TAKEN OUT OF AT A DOOR CALL. A sizer held below the smallest size makes every wait of gr_rubwind return
+  at once (the ROM waits for the mouse to leave the CLAMPED corner's pixel): the run never idles and never yields,
+  so the button's rise can be delivered nowhere but at a door call's entry (`at_calls`) — a row that takes one
+  delivery at an idle and one at a door call, in one derivation.
+- A ROW'S OWN BY-NATURE BYTES (`aes_switching.SwitchingRow.also_dropped`): bytes BOTH builds store, each its own.
+  At a real arrival the mouse is shown, so the menu's ct_mouse(0) re-shows it and contrl[3] is the ROM's stack word
+  (`ctrl.c`'s MISSING ARGUMENT) — the last VDI call of four of hctl_rect's cases (three priced rows, one at Tier 1
+  only); each is held to NEED its drop (its companion red in that word without it). Dropped at Tier 3 by name (and held
+  to our run's ledger, as every drop is); left out of the companion's end compare AND of its images at every stop
+  (`aes_switch.scheduled` / `modelled`, `left_out_beside`), each byte required to be one the ROM's run changed; the
+  battery that declares it holds the C's value there, and both censuses count it (`test_aes_event.A_ROW_S_OWN`,
+  `test_tier3`'s companion test). Reach for it only where nothing can be staged: the word is written DURING the run.
+  `companion(at_stops_only=)` is its narrower sibling for a word a later call of both builds overwrites before the
+  run ends (left out of the images at the stops, compared at the end) — REFUSED where the row passes without it.
+- A ROW REGISTERED FROM A CAPTURED MACHINE MAKES THAT CAPTURE AN INPUT OF THE REGISTRY'S IMPORT — and so of every
+  make target whose recipe imports it (`shipped-glue`, `derived`, the table), not of the suites alone. A tree that
+  was ever built hides a missing prerequisite for ever; an empty one dies at the first importer. The Makefile names
+  them once (`REGISTRY_READS`) and `test/test_makefile.py` holds that every Python recipe has them. PROVE A SLICE
+  THAT ADDS A BUILD INPUT FROM A COPY WITH NO `build/` AT ALL (`make gates`), not from fresh captures dropped into a
+  built tree. And keep a machine only UNREGISTERED cases use out of the import (`gadget_arrival_later`).
+- A LOCAL THE ROM NEVER SET IS GREEN ON THE HARNESS'S STACK AND NOT ON THE MACHINE'S. The differential enters both
+  shores on the run's own zeroed stack band, so a frame word the ROM reads without writing it (hctl_window's x, y,
+  w, h for a window that is not the top one) is zero on both — while at the real arrival it is the residue of the
+  caller's earlier calls, the same words every time (halves of a ROM and of a RAM address). An arrival is where that
+  shows: read what the ROM's NEXT callee is handed there, across several arrivals, before calling a never-set word
+  "any value". It is then a DECLARED DIVERGENCE (STATUS), not a fidelity claim.
+- ON A BLOB, WHAT A ROW HOLDS WHILE ITS PROCESS IS PARKED IS ITS CYCLE PIN'S ALONE: the image is compared where the
+  run ends. A store made before a yield and undone after it is killed on the host at the dispatcher (the
+  companion's image at every dispatch) and on the m68k builds only by the exact whole-run cycle count.
+- A MACHINE THE ROM BOOTED WITH ITS ACCESSORIES HAS A THIRD PROCESS AND IS NO STAGED APPLICATION: the probe that keeps
+  staged applications out of every registry tells them apart by what a loader leaves (`test_aes_pdpipe.py`,
+  `an_accessory_the_rom_loaded`: the basepage sndcli parked, the PD's load address).
+- THE PRICES' PINS HOLD OVER FRESH CAPTURES — a pre-init capture's clocks move, the cycles of a row over a machine
+  booted from it do not (measured over two fresh sets) — but a PD's address is the layout's (an allocated accessory's
+  lies where GEMDOS put its block: it moves when testacc.S grows): a premise names processes, never PDs.
 
 ## Writing a case
 
@@ -992,7 +1090,12 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   free slot" would collide across runs — a parked frame is laid in one run and read in another). On target the
   macro is the local's own address and `process` is not evaluated. ev_multi's QPB is a second such role
   (`HOST_SLOT_AES_EV_MULTI_QPB`), claimed on its blocking arm only and given back at the return (held by a test
-  that makes two calls in one fork). Every OTHER slot a routine holds across a wait owes this shape the moment two C
+  that makes two calls in one fork). THE SCREEN MANAGER'S HANDLERS' OWN FRAMES ARE THREE MORE, per process from the
+  day they landed (band 5 wave 1): the rectangle a window's drag is held by and the two words it answers into
+  (`HOST_SLOT_AES_HCTL_WINDOW_DRAG_RECT` / `_DRAG_ANSWERS`), and mn_do's two answers under hctl_rect
+  (`HOST_SLOT_AES_HCTL_RECT_CHOICE`) — COMPACTED, not the ROM's frame: no gap of the band holds nine frames of
+  hctl_window's 36 bytes, so what is read before any wait (the window's rectangle, the elevator's corner) has plain
+  slots given back at once. Every OTHER slot a routine holds across a wait owes this shape the moment two C
   processes can be inside one routine — band 5. Wave 3's AUDIT names them
   (`test_aes_event.SLOTS_HELD_WHERE_PARKED`): one frame for every process today, and sound, since a process other
   than the caller is the ROM's own code on the host.

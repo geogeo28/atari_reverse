@@ -105,6 +105,12 @@ preinit: $(PREINIT)
 preinit-acc: $(PREINIT_ACC)
 
 test guarded gates: $(PREINIT) $(PREINIT_ACC)
+# ...AND SO DOES EVERY TARGET WHOSE RECIPE IMPORTS THE REGISTRY (`test_boot_snapshot`: bench/shipped_glue.py,
+# test/derived.py, bench/tier3.py): the screen manager's rows are registered FROM those machines (an arrival is the
+# ROM's own run over one), so the import reads both files — and `gates`' own prerequisites above come AFTER its
+# recipe rule's, whose first leaf is `shipped-glue`. Named once, used by the three rules below
+# (`test/test_makefile.py` holds that no importer of the registry is without them).
+REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC)
 
 # TIER 3's table: every verified function's `recreate / original` cycle ratio. It runs the ORIGINAL
 # too, so it needs the snapshot exactly as the suites do; `bench/tier3.py` exits non-zero on a row
@@ -141,7 +147,7 @@ SHIPPED_CFLAGS := $(BENCH_CFLAGS) -ffunction-sections -DTRANSCRIBED_CORES_WEAK
 SHIPPED_JOBS   := 8
 
 .PHONY: shipped-glue
-shipped-glue: $(CAND) $(SNAPSHOT)
+shipped-glue: $(CAND) $(ORACLE) $(REGISTRY_READS)
 	@$(PY) bench/shipped_glue.py $(SHIPPED_GLUE)
 
 $(SHIPPED_GLUE): shipped-glue ;
@@ -164,12 +170,12 @@ $(SHIPPED_BIN): $(SHIPPED_ELF)
 # build/derived/, by content (a tree it was run for already costs it a tenth of a second); the table and both suites
 # ask after it and are served. ORDER-ONLY for the table: it must come first, and must never be what rebuilds it.
 .PHONY: derived
-derived: $(CAND) $(ORACLE) $(SNAPSHOT) $(BENCH_BIN) $(SHIPPED_BIN)
+derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN) $(SHIPPED_BIN)
 	@$(PY) test/derived.py
 
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
 # process writes, line for line.
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(CAND) $(ORACLE) $(SNAPSHOT) | derived
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
 	$(PY) bench/tier3.py --out $@
 
 .PHONY: bench

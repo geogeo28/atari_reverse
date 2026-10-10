@@ -375,14 +375,15 @@ def _the_frame_the_handler_is_entered_over(memory):
     return {sp: bytes(memory[sp:sp + BUS_ERROR_FRAME_BYTES])}
 
 
-def _run_to_the_first_idle(memory, machine, floppy, budget):
+def _run_to_the_first_idle(memory, machine, floppy, budget, until=None):
     """The run itself: the door at the pre-init PC (so it stops before one instruction), the capture's register file
     laid and a horizontal blank made pending, then each stop served — a driver entry, the probe's touch, the blank's
-    handler entered, idle's poll — to the idle. Answers the last segment's result, what the harness stored into the
+    handler entered, idle's poll — to the idle; or to its FIRST ARRIVAL AT `until` (a ROM address) where one is
+    named, the idle refused if it comes first. Answers the last segment's result, what the harness stored into the
     machine on the way (`{address: bytes}`), the bus error's frame as the machine holds it where the probe's tail is
     entered, the polls made and the blanks taken."""
     hbl = case.long_in(memory, addrs.VECTOR_HBL) & BUS
-    stops = frozenset(floppy.entries) | {BLITTER_PROBE_TOUCH, IDLE_LOOP, IDLE_POLLED, hbl}
+    stops = frozenset(floppy.entries) | {BLITTER_PROBE_TOUCH, IDLE_LOOP, IDLE_POLLED, hbl} | ({until} if until else frozenset())
     laid, pushed, frame, polls, blanks = {}, {}, {}, 0, 0
     emu.install_chip_seeds()
     result = emu.run_bench(memory, machine.registers["pc"], 0, OFF_THE_MACHINE, emu.SENTINEL, max_insns=budget,
@@ -415,21 +416,27 @@ def _run_to_the_first_idle(memory, machine, floppy, budget):
             _vet_the_probe(memory)
             pushed = _bus_error(memory, BLITTER_REGISTERS)
             frame = _the_frame_the_handler_is_entered_over(memory)
+        elif pc == until:
+            return result, {**laid, **pushed}, frame, polls, blanks
         elif pc == IDLE_LOOP:
             polls += 1
             if aes_switch.waits_for_an_interrupt(memory):
+                if until:
+                    raise Refused(f"the boot reached its first idle and never arrived at {until:#x}")
                 return result, {**laid, **pushed}, frame, polls, blanks
 
 
 @derived.kept
-def booted(machine, disk, budget=BOOT_INSNS):
+def booted(machine, disk, budget=BOOT_INSNS, until=None):
     """THE ROM'S OWN BOOT (the module's docstring) from the pre-init `machine` (`preinit_snapshot.PreInit`) with
-    `disk` — the one it booted with — in drive A:, to the first idle: a `Boot`."""
+    `disk` — the one it booted with — in drive A:, to the first idle: a `Boot`. `until`: STOPPED EARLIER, at the
+    boot's first arrival at that ROM address — a routine's entry, the machine and the registers as its caller left
+    them (the `Boot`'s PC is then `until`, its A7 the caller's stack pointer over the return address and the frame)."""
     memory = bytearray(BASE_IMAGE)                  # ...for the ROM in it: the megabyte below is the pre-init machine's
     memory[:RAM_BYTES] = machine.ram
     floppy = Floppy(memory, disk)
     try:
-        result, laid, frame, polls, blanks = _run_to_the_first_idle(memory, machine, floppy, budget)
+        result, laid, frame, polls, blanks = _run_to_the_first_idle(memory, machine, floppy, budget, until)
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
@@ -449,8 +456,9 @@ PRG_HEADER_BYTES = fs_pexec.PRG_HEADER_BYTES
 PRG_TEXT_BYTES_AT = 2                   # the header's four lengths: TEXT, DATA, BSS, symbols
 NOT_CALLED = 0xfffe                     # what testacc.S's `res_find` and `res_write` hold until the call is made
 QUIET, FIND, WRITE, MULTI = accessory_disk.QUIET, accessory_disk.FIND, accessory_disk.WRITE, accessory_disk.MULTI
+REGISTER, HIDE, with_a_window = accessory_disk.REGISTER, accessory_disk.HIDE, accessory_disk.with_a_window
 ACCESSORY_NAMES = accessory_disk.NAMES
-RESULT_WORDS = ("res_id", "res_find", "res_write", "res_events", "res_wakes")
+RESULT_WORDS = ("res_id", "res_find", "res_write", "res_events", "res_wakes", "res_menu", "res_window", "res_opened")
 _built = derived.kept(accessory_disk.build)         # the three texts are the question: none is a file of the tree's key
 
 

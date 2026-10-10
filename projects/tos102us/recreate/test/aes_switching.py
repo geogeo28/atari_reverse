@@ -328,8 +328,15 @@ def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None
 # `x_flag_differs`: the row DECLARES that the X flag its yield parks in the dispatcher's save word differs between
 # the two builds by nature (`THE_X_FLAG_ALONE`, below: what that excuses, and how a declaration no row needs is
 # refused).
+# `also_dropped`: `((lo, hi, why), ...)` THE ROW'S OWN by-nature bytes beside the windows every switching row has —
+# bytes BOTH builds store, each its own by nature (ct_mouse's re-show under a menu worked with the mouse shown:
+# contrl[3] is the ROM's stack word and the C's named one). Dropped at Tier 3 by name, held to OUR run's ledger as
+# every drop is; LEFT OUT OF THE COMPANION'S COMPARE TOO — the one place a companion leaves a stored byte out beside
+# a QPB's address — each byte required to be one the ROM's run changed (`_its_own_by_nature`), and the battery that
+# declares it holds what the C stores there.
 SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls budget "
-                                          "child_doors x_flag_differs", defaults=(True, None, None, None, None, "", False))
+                                          "child_doors x_flag_differs also_dropped",
+                          defaults=(True, None, None, None, None, "", False, ()))
 NO_FRAME = b""                          # a routine of no argument: nothing at the first argument's place
 # What a registered row keeps (`aes_event.SWITCHING_ROWS`): the row, its settled machine, its Tier 3 drops, what its
 # run is taken through, the processes the ROM's dispatcher enters, its deliveries derived again, and the QPB
@@ -360,10 +367,12 @@ def _staged(row):
     return aes.staged(row.name, row.arguments, merge_pokes(row.machine(), aes_event.savptr_in_the_band()))
 
 
-def scheduled(row, pokes):
-    """The ROM's own run of `row` through its dispatcher over `pokes` (its machine, staged): `aes_switch.scheduled`."""
+def scheduled(row, pokes, at_stops_only=()):
+    """The ROM's own run of `row` through its dispatcher over `pokes` (its machine, staged): `aes_switch.scheduled`.
+    `at_stops_only`: windows left out of the images taken at its stops beside the row's own (`companion`'s)."""
     return aes_switch.scheduled(_entry(row), pokes.get(abi.FIRST_ARG, NO_FRAME), pokes, row.at_idle,
-                                at_calls=row.at_calls, at_polls=row.at_polls, budget=row.budget)
+                                at_calls=row.at_calls, at_polls=row.at_polls, budget=row.budget,
+                                left_out_beside=(*row.also_dropped, *at_stops_only))
 
 
 def switches_of(reference):
@@ -509,7 +518,8 @@ def settled(row):
     """`row`'s `Settled`: its machine, its Tier 3 drops, what its run is taken through, who the dispatcher enters."""
     made = _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
                     *((row.budget,) if row.budget else ()))
-    return made._replace(drops=tuple(made.drops) + THE_X_FLAG_ALONE) if row.x_flag_differs else made
+    own = (THE_X_FLAG_ALONE if row.x_flag_differs else ()) + tuple(row.also_dropped)
+    return made._replace(drops=tuple(made.drops) + own) if own else made
 
 
 def rederived(row):
@@ -531,7 +541,7 @@ def _door_of(row):
     return row.door or (aes_switch.DoorUser(doors=row.child_doors) if row.child_doors else None)
 
 
-def companion(row):
+def companion(row, at_stops_only=()):
     """A SWITCHING ROW'S COMPANION — its Tier 1 differential with NOTHING dropped: the C through its own scheduler
     (`aes_switch.modelled`: self-resume a return, a foreign process the ROM's own code) held to the ROM's scheduled
     run over the row's settled machine — the same idles, the same answer, and every byte outside the run's own stack
@@ -542,13 +552,26 @@ def companion(row):
     that code stores where no C ever does — the dispatcher's stack and the Line-F mask word — is NOT laid back
     over the C's image (`aes_switch.STORED_BY_NO_C`): the image keeps there what the machine stages,
     which is what the ROM's whole run leaves, however often the row's process is dispatched again afterwards.
-    A DOOR USER's row (`row.door`) binds the door in the same fork, and is held to the frames the ROM's run hands."""
+    A DOOR USER's row (`row.door`) binds the door in the same fork, and is held to the frames the ROM's run hands.
+    `at_stops_only` (`(lo, hi, why)` each): bytes that differ by nature IN THE MIDDLE of the run and are equal again
+    where it ends — left out of the images taken at a door call's return and at a dispatch, and COMPARED at the end
+    like every other byte (a by-nature word a later call of both builds overwrites: ct_mouse's stale count, where a
+    VDI call follows the menu before the run returns). No registered row's companion is asked with one."""
+    if at_stops_only:                   # ...NEEDED, or refused: a leave-out the row passes without hides a page for nothing
+        try:
+            companion(row)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"{row_name(row)}: `at_stops_only` names bytes to leave out of the images at its stops, "
+                                 f"and its companion passes without leaving any out")
     made = settled(row)
-    reference = scheduled(row, made.pokes)
+    reference = scheduled(row, made.pokes, at_stops_only)
     signature = vdi.ALCYON[row.name]
     foreign = any(pd != made.switches.process for pd in reference.entered)
     ran = aes_switch.modelled(_core(row), vdi.as_signed(row.name, row.arguments), made.pokes, reference,
-                              answered=row.answered and signature.restype is not None, foreign=foreign, door=_door_of(row))
+                              answered=row.answered and signature.restype is not None, foreign=foreign, door=_door_of(row),
+                              left_out_beside=(*row.also_dropped, *at_stops_only))
     who = row_name(row)
     assert reference.ended == aes_switch.RETURNED and ran.returncode == 0, (
         f"{who}: the ROM's run returned; the C's fork ended {ran.returncode}:\n{ran.stderr}")
@@ -561,13 +584,24 @@ def companion(row):
         mask = (1 << answer_bits) - 1
         assert ran.answer & mask == reference.d0 & mask, f"{who}: answers {ran.answer & mask:#x}, the ROM's run {reference.d0 & mask:#x}"
     expected = reference.memory
-    differ = aes_event.differing(ran.image, expected, frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image))
+    left_out = frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image) | _its_own_by_nature(row, reference)
+    differ = aes_event.differing(ran.image, expected, left_out)
     assert not differ, f"{who}: " + aes_event.describe_differences(who, ran.image, expected, differ)
     if _door_of(row):                   # ...and, the END the ROM's: what each call answered and left, and every dispatch
         aes_event.vet_the_answers_handed_back(who, ran.answered, reference.answers)
         aes_event.vet_the_images_at_the_dispatcher(who, ran.dispatched, reference.dispatches)
     return CompanionRun(made.pokes, switches_of(reference), ran.answer, tuple(reference.calls), ran.image,
                         tuple(reference.entered))
+
+
+def _its_own_by_nature(row, reference):
+    """The bytes a row names as its own by nature (`SwitchingRow.also_dropped`) — each REQUIRED to be one the ROM's
+    run left changed: a drop over a byte the run never touched excuses a store of the C's alone."""
+    named = frozenset(at for lo, hi, _why in row.also_dropped for at in range(lo, hi))
+    untouched = sorted(at for at in named if reference.memory[at] == reference.started[at])
+    assert not untouched, (
+        f"{row_name(row)}: named by nature, and left as it was by the ROM's run: {[f'{at:#x}' for at in untouched]}")
+    return named
 
 
 def _vetted_qpbs(row, made, image):

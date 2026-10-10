@@ -83,6 +83,14 @@ PreInit.__doc__ = """The pre-init machine: `ram` (the megabyte), `registers` (`{
 # Two of the driver's regions are `boot_snapshot.MASK`'s own, met a boot earlier ($1464 and $74c0 there; a few bytes
 # wider here).
 #
+# THE LAST REGION IS A STACK NOBODY RETURNS TO, and was met at one capture in six of a later gate. The BIOS's AUTO
+# runner ($fc0cae) is a process whose stack is the top of its own basepage (`lea 256(a5),sp`), on which it searches
+# \AUTO in supervisor mode — through the floppy, interrupts open; finding nothing it ABANDONS that stack (`$fc0d42
+# lea $755a,sp`) and the BIOS launches the AES from its own. Whatever an interrupt pushed below the runner's SP while
+# it ran stays there: six bytes of one capture were a level-6 frame (`$2400 $00fc1c2e`: taken inside the vertical
+# blank's floppy service). The span is derived from the machine's own pointers and held to this entry by
+# `test_aes_boot.py`; the snapshot's own boot has the same stack and its own phase.
+#
 # THE RULE THIS BUYS is `boot_snapshot.MASK`'s: nothing derived from this machine may depend on a byte in here. And
 # that is a surface: `test/test_aes_boot.py` boots the ROM from a pre-init machine whose masked bytes are NOISE and
 # holds the machine it reaches equal, outside these regions, to the one the capture's own bytes reach — the same
@@ -98,6 +106,7 @@ MASK = (
     (0x0074b8, 0x05e, "the floppy driver's scratch (boot_snapshot's $74c0 region, wider at both ends)"),
     (0x0075b0, 0x002, "GEMDOS's time of day, in two-second steps"),
     (0x00879c, 0x004, "the milliseconds the 50 Hz tick has counted"),
+    (0x00ca82, 0x080, "the AUTO runner's ABANDONED stack (its basepage's command tail): frames of the interrupts it took"),
 )
 
 

@@ -18,6 +18,7 @@ DELIVERED AT A POLL THAT IS NO IDLE, while that process stands woken. Here:
     the wave's own work (its companion), and the same call is held on the host at dsptch (`test_aes_wm_update`).
 """
 import itertools
+import os
 import re
 import types
 
@@ -28,6 +29,7 @@ from recreate_kit import rom_bench
 
 import aes
 import aes_event
+import aes_gemctrl
 import aes_evinput as evinput
 import aes_evlib as evlib
 import aes_switch
@@ -660,3 +662,77 @@ def test_a_blob_s_parked_wait_is_held_to_name_the_rom_s_qpb(blob, monkeypatch):
         switching.measured_on(blob, A_MESSAGE_WAITED_FOR)
     with pytest.raises(AssertionError, match="OUR run was never seen to hold one there"):
         switching.vet_our_qpbs("a row", made.qpbs, types.SimpleNamespace(qpbs_seen={}))
+
+
+# ---- the eighteen rows of other batteries the dispatcher's-own-calls rule moved ----------------------------------------------
+# Each a row that IS a door entry (or the tape's playback, or the opcode switch's arm of one), with a button taken at
+# an idle or a poll of its own: no door call is open while it sleeps, so the forker's post_button was its run's
+# "next door call" until the rule (`aes_switch._Idling`). None is a door user: no compare ever read those lists.
+THE_EIGHTEEN = (
+    'aes_ap_tplay, a wait and a press played: no mouse record',
+    'aes_ap_tplay, four records played slowly: the wait is twenty-five ticks',
+    "aes_ap_tplay, four records played, the cursor shown: the VDI's cursor routine queues each point",
+    'aes_ap_tplay, four records played: two moves, a wait, a press',
+    'aes_dispatch, appl_tplay: at half speed, a top byte on its records',
+    'aes_dispatch, opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record',
+    'aes_ev_block, a wait for a double click, blocked; woken by the two presses',
+    'aes_ev_multi, blocked and woken — a double click wakes: a double click',
+    'aes_ev_multi, blocked and woken — a double click wakes: every event',
+    'aes_ev_multi, blocked and woken — a key and a press in one idle: a key and the buttons',
+    'aes_ev_multi, blocked and woken — a key, a double click, leaving and the ticks in one idle: every event',
+    'aes_ev_multi, blocked and woken — a press wakes: a key and the buttons',
+    'aes_ev_multi, blocked and woken — a press wakes: the button down, which is up',
+    'aes_ev_multi, blocked and woken — a press wakes: the buttons and a rectangle',
+    'aes_ev_multi, blocked and woken — a press, then entering, in one idle: the buttons and a rectangle',
+    'aes_ev_multi, blocked and woken — a release wakes: every event, the button held',
+    'aes_ev_multi, blocked and woken — a release wakes: the button up, which is down',
+    'aes_ev_multi, blocked and woken — a single click wakes: a double click',
+)
+THE_DISPATCHER_S_OWN_POST_BUTTON = {"aes_ev_multi": 11, "aes_ap_tplay": 4, "aes_dispatch": 2, "aes_ev_block": 1}
+assert len(THE_EIGHTEEN) == sum(THE_DISPATCHER_S_OWN_POST_BUTTON.values()) and all(
+    sum(name.startswith(core + ",") for name in THE_EIGHTEEN) == count for core, count in THE_DISPATCHER_S_OWN_POST_BUTTON.items())
+RULE_CHUNKS = 6
+
+
+def _left_out_by_the_rule(name, monkeypatch):
+    """The door calls the ROM's run of the registered row `name` makes with the rule OFF and not with it ON —
+    the same calls in the same order otherwise (held here)."""
+    held = aes_event.SWITCHING_ROWS[name]
+    staged = switching.settled(held.row).pokes
+    kept = [call.routine for call in switching.scheduled(held.row, staged).calls]
+    with monkeypatch.context() as off:
+        off.setattr(aes_switch._Idling, "KEEPS_THE_DISPATCHER_S_CALLS_OUT", False)
+        every = [call.routine for call in switching.scheduled(held.row, staged).calls]
+    extra = list(every)
+    for routine in kept:
+        extra.remove(routine)
+    but_them = list(every)
+    for routine in extra:
+        but_them.reverse(), but_them.remove(routine), but_them.reverse()
+    assert sorted(but_them) == sorted(kept), f"{name}: the rule changed more than it left out"
+    return held, extra
+
+
+@pytest.mark.parametrize("name", THE_EIGHTEEN)
+def test_what_the_rule_leaves_out_of_a_pre_existing_row_is_the_forker_s_post_button_and_nothing_else(name, monkeypatch):
+    """THE RULE'S FOOTPRINT ON THE REGISTRY AS IT STOOD, held row by row (`aes_switch._Idling`): with the rule OFF
+    the ROM's run of each of the eighteen makes its rule-on door calls and, more, ONLY calls of post_button — the
+    dispatcher's forker's, for the button its delivery brought. A caller's own call reclassified by the rule would
+    show here as another routine; and none of the eighteen is a door user's row (no compare read their lists)."""
+    held, extra = _left_out_by_the_rule(name, monkeypatch)
+    assert extra and set(extra) == {addrs.AES_ROM_POST_BUTTON}, f"{name}: the rule leaves out {[f'{each:#x}' for each in extra]}"
+    assert not held.row.door
+
+
+SLOW = pytest.mark.skipif(not os.environ.get("RUN_SLOW"), reason="every registered row's ROM run twice over; RUN_SLOW=1 runs it")
+
+
+@SLOW
+@pytest.mark.parametrize("chunk", range(RULE_CHUNKS))
+def test_the_rule_leaves_nothing_out_of_any_other_pre_existing_row(chunk, monkeypatch):
+    """...AND THEY ARE THE ONLY ONES: every other registered row that switches (the screen manager's handlers' and the sliced
+    sessions' aside) makes the same door calls with the rule off. On request (some three hundred ROM runs)."""
+    others = sorted(name for name, held in aes_event.SWITCHING_ROWS.items()
+                    if name not in THE_EIGHTEEN and held.row.name not in aes_gemctrl.ROUTINES and name not in aes_event.SLICED_ROWS)
+    for name in others[chunk::RULE_CHUNKS]:
+        assert _left_out_by_the_rule(name, monkeypatch)[1] == [], name

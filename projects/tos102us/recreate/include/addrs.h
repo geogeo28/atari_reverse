@@ -2093,6 +2093,11 @@
 #define AES_ROM_UNSYNC            0xfe4eb8   /* (spb): given up; at count 0 handed to its first wait, dsptch */
 #define AES_ROM_EV_BLOCK          0xfe6874   /* (code, parameter): one EVB queued by iasync, ev_mwait, its event */
 #define AES_ROM_CT_CHGOWN         0xfe49ba   /* (pd, rect): set_ctrl(rect), the mouse and keyboard to pd */
+/* The SCREEN MANAGER's four handlers (Alcyon, `aes/gemctrl.h`; band 5 wave 1), each read from its body. */
+#define AES_ROM_CT_MSGUP          0xfe456a   /* (message, owner, five words): ap_sendmsg unless 0, then the button waited up */
+#define AES_ROM_HCTL_WINDOW       0xfe45a2   /* (window, x, y): WM_TOPPED, or the top window's gadget under the mouse worked */
+#define AES_ROM_HCTL_BUTTON       0xfe48ce   /* (x, y): a menu-bar click swallowed, else hctl_window of the window found */
+#define AES_ROM_HCTL_RECT         0xfe4908   /* (x, y): mn_do on the bar's titles; MN_SELECTED or AC_OPEN, ct_msgup */
 /* The CONTROL MANAGER's leaves (Alcyon, `aes/wmupdate.h`), each read from its body. */
 #define AES_ROM_SET_CTRL          0xfe5008   /* (rect): the control rectangle copied in */
 #define AES_ROM_GET_CTRL          0xfe501c   /* (rect): ...and out */

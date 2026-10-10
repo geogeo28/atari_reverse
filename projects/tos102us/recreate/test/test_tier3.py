@@ -70,6 +70,7 @@ import staging                                             # noqa: E402
 import test_aes_fmdo                                       # noqa: E402
 import test_aes_gemsuper                                   # noqa: E402  (its door users that switch, pinned there)
 import test_aes_all_run                                    # noqa: E402  (all_run's rows: door users that switch, pinned there)
+import test_aes_gemctrl                                    # noqa: E402  (the screen manager's handlers' rows, pinned there)
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -3223,7 +3224,10 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
     ROM's own run through its dispatcher (`aes_switching.companion`) — ONE compare, leaving out the run's own stack
     alone, over the row's own machine, the run it is held to taking the row's own deliveries at the row's idles.
     BESIDE THE STACK, as a direct row's: exactly the QPB addresses the vet answered in this run, each dropped by the
-    row by name (a wait on a pipe that blocked and was woken, or was cancelled: `_the_qpb_vets_answered`)."""
+    row by name (a wait on a pipe that blocked and was woken, or was cancelled: `_the_qpb_vets_answered`) — AND THE
+    BYTES THE ROW DECLARES ITS OWN BY NATURE (`aes_switching.SwitchingRow.also_dropped`: bytes both builds store,
+    each its own — ct_mouse's missing argument under a menu, in three priced rows and one case at Tier 1 only; each required changed by the ROM's run,
+    `aes_switching._its_own_by_nature`, and held where it is declared, `test_aes_gemctrl.py`), exactly those."""
     left_out, differing = [], aes_event.differing
 
     def recorded(image, rom_memory, not_compared=None):
@@ -3233,7 +3237,8 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
     vetted = _the_qpb_vets_answered(monkeypatch)
     ran = case.tier3_undropped()[name]()
     by_nature = _vetted_by_nature(name, vetted)
-    assert left_out == [frozenset(case.STACK_BAND) | {at for lo, hi, _why in by_nature for at in range(lo, hi)}], left_out
+    declared = aes_event.SWITCHING_ROWS[name].row.also_dropped
+    assert left_out == [frozenset(case.STACK_BAND) | {at for lo, hi, _why in (*by_nature, *declared) for at in range(lo, hi)}], left_out
     assert vdi.make_image(registered[3]) == vdi.make_image(ran.staged), f"{name}: the companion ran another machine"
     assert ran.delivered == test_boot_snapshot.delivered_of(registered), f"{name}: the companion took other deliveries"
 
@@ -3331,6 +3336,11 @@ DOOR_USERS_WHOLE_RUN.update(test_aes_gemsuper.DOOR_USERS_WHOLE_RUN)
 # ...and all_run's (`test_aes_all_run.py`): a yield, then the lock asked for — waited for behind the screen manager's menu.
 DOOR_USERS_PRICED.update(test_aes_all_run.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_aes_all_run.DOOR_USERS_WHOLE_RUN)
+# ...and the screen manager's handlers' (`test_aes_gemctrl.py`): each at an arrival of the ROM's own ctlmgr, the
+# screen manager the row's process — a gadget watched or dragged, an arrow repeated, the menu worked, the button
+# waited up. Held HERE and not a second time in their battery.
+DOOR_USERS_PRICED.update(test_aes_gemctrl.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_aes_gemctrl.DOOR_USERS_WHOLE_RUN)
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():

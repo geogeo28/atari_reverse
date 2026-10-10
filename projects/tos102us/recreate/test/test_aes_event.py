@@ -4682,7 +4682,15 @@ ROWS_THAT_SWITCH = {
     # band 5's leaves that leave by the dispatcher: all_run's three (a yield, then the lock), and the two rows each of
     # the desk's rsrc_free binding and desk_free (GEMDOS frees the block, or refuses it)
     "aes_all_run": 3, "aes_desk_rsrc_free": 2, "aes_desk_free": 2,
+    # ...and the screen manager's handlers at the ROM's own arrivals (`test_aes_gemctrl.py`): a gadget watched or
+    # dragged, an arrow repeated, the menu worked, the button waited up — the screen manager the row's process
+    "aes_hctl_button": 1, "aes_hctl_window": 14, "aes_ct_msgup": 2, "aes_hctl_rect": 4,
 }
+# ...and A ROW'S OWN by-nature bytes (`aes_switching.SwitchingRow.also_dropped`): ct_mouse's re-show under a menu
+# worked with the mouse shown — contrl[3] the ROM's stack word, the C's named one (`ctrl.c`'s MISSING ARGUMENT) — in
+# the three rows of hctl_rect whose run makes no VDI call after the menu.
+A_ROW_S_OWN = "a row's own by nature: "
+THE_STALE_COUNT_KIND = A_ROW_S_OWN + "ct_mouse's re-show hands gsx_ncode two words where it takes three"
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
     "the waits": {},
@@ -4715,7 +4723,8 @@ BY_NATURE_CENSUS = {
                            THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 6, "aes_ev_block": 1, "aes_ev_multi": 19,
                                                      "aes_ev_timer": 4, "aes_dispatch": 7},
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
-                                             "aes_dispatch": 4, "aes_marshal": 1}},
+                                             "aes_dispatch": 4, "aes_marshal": 1},
+                           THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3}},
 }
 
 
@@ -4808,8 +4817,16 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
                  THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP,
                  THE_DECLARED_X_FLAG: aes_switching.THE_X_FLAG_ALONE}
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
+        # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
+        # kind, dropped only where the ROM's run changes it.
+        for lo, hi, why in row.also_dropped:
+            assert (lo, hi, why) in registered[name], f"{name}: its own by-nature bytes are not among its drops"
+            assert any(the_rom_s.memory[at] != the_rom_s.started[at] for at in range(lo, hi)), (
+                f"{name}: its own by-nature drop, of which the ROM's run changes nothing")
+            census.setdefault(A_ROW_S_OWN + why.split(":")[0], collections.Counter())[routines.core_symbol(row.name)] += 1
         drops = [(lo, hi) for lo, hi, why in registered[name]
-                 if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses]
+                 if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses
+                 and (lo, hi, why) not in row.also_dropped]
         if qpb_addresses:
             census.setdefault(A_QPB_S_ADDRESS, collections.Counter())[routines.core_symbol(row.name)] += 1
         of_a_kind = []
@@ -5215,6 +5232,16 @@ SLOTS_HELD_WHERE_PARKED = {
                      *STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME", "AES_GR_RUBWIND_RECT", "AES_GR_DRAGBOX_FRAME",
                      "AES_GR_SLIDEBOX_RECTS"),
     "aes_marshal": ("AES_MARSHAL_FRAME", "AES_EV_MULTI_QPB, process 0"),
+    # THE SCREEN MANAGER'S HANDLERS (`test_aes_gemctrl.py`, band 5 wave 1: the first rows whose process is the screen
+    # manager AND whose C is a door user's) — what the gadget loops and the menu hold under them, ONE FRAME FOR EVERY
+    # PROCESS still (the screen manager is the one C process inside them: the desk is the ROM's), and the handlers'
+    # OWN frames, new with them and A SLOT PER PROCESS from the start: the rectangle a drag is held by with the two
+    # words it answers into, and mn_do's two answers. ct_msgup and hctl_button hold nothing of their own.
+    "aes_hctl_button": (),
+    "aes_hctl_window": (*STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_GR_DRAGBOX_FRAME", "AES_HCTL_WINDOW_DRAG_RECT, process 1",
+                        "AES_HCTL_WINDOW_DRAG_ANSWERS, process 1", "AES_GR_RUBWIND_RECT", "AES_GR_SLIDEBOX_RECTS"),
+    "aes_ct_msgup": (),
+    "aes_hctl_rect": ("AES_MN_DO_FRAME", "AES_HCTL_RECT_CHOICE, process 1"),
 }
 A_SLOT_PER_PROCESS = ", process "
 
@@ -5253,9 +5280,12 @@ def test_the_host_slots_held_across_a_wait_are_the_audit_s_and_every_one_is_give
         slots.extend(slot for slot in ran.slots_held if slot not in slots)
     assert {core: tuple(slots) for core, slots in held_by.items()} == SLOTS_HELD_WHERE_PARKED
     per_process = {slot for slots in SLOTS_HELD_WHERE_PARKED.values() for slot in slots if A_SLOT_PER_PROCESS in slot}
-    assert per_process == {"AES_AP_RDWR_QPB, process 1", "AES_AP_RDWR_QPB, process 0", "AES_EV_MULTI_QPB, process 0"}, (
+    assert per_process == {"AES_AP_RDWR_QPB, process 1", "AES_AP_RDWR_QPB, process 0", "AES_EV_MULTI_QPB, process 0",
+                           "AES_HCTL_WINDOW_DRAG_RECT, process 1", "AES_HCTL_WINDOW_DRAG_ANSWERS, process 1",
+                           "AES_HCTL_RECT_CHOICE, process 1"}, (
         "the slots per process a door user parks under, today: the screen manager's write and — under the opcode "
-        "switch's arms — the desk's own read and its evnt_multi's message wait")
+        "switch's arms — the desk's own read and its evnt_multi's message wait; and the screen manager's own frames "
+        "under its handlers (a drag's rectangle and answers, the menu's choice)")
 
 
 def test_a_call_that_returns_holding_a_host_slot_is_refused_by_name(monkeypatch):
@@ -5295,13 +5325,15 @@ def test_the_host_slots_roles_are_read_off_the_header_s_own_enum():
     roles = aes_switch.host_slot_ids()
     per_process = aes.HOST_SLOTS["HOST_PROCESSES"]
     assert len(set(roles)) == len(roles) and roles[0] == "SEARCH_PATTERN" and roles[-1] == "AES_INOROUT_RECT"
-    for role in ("AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB"):
+    kept_per_process = ("AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB", "AES_HCTL_WINDOW_DRAG_RECT", "AES_HCTL_WINDOW_DRAG_ANSWERS",
+                        "AES_HCTL_RECT_CHOICE")
+    for role in kept_per_process:
         frames = [each for each in roles if each.startswith(role + A_SLOT_PER_PROCESS)]
         assert len(frames) == per_process and roles.index(frames[-1]) - roles.index(frames[0]) == per_process - 1
     plain = {role for role in roles if A_SLOT_PER_PROCESS not in role}
     declared = {name.removeprefix("HOST_SLOT_") for name in aes.HOST_SLOTS
                 if name.startswith("HOST_SLOT_") and not name.endswith("_BYTES")}
-    assert plain == declared - {"AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB"}
+    assert plain == declared - set(kept_per_process)
     assert aes_switch.host_slots_held() == [], "no slot is held between two runs of this process"
 
 

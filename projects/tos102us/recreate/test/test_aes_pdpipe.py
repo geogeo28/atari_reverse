@@ -41,6 +41,7 @@ from harness import BASE_IMAGE, addrs, emu, make_image
 from recreate_kit import rom_bench
 
 import aes
+import aes_boot
 import aes_evasync
 import aes_event
 import aes_gsx as gsx
@@ -1585,20 +1586,42 @@ def test_every_case_over_the_staged_application_names_the_class():
     assert not unlabelled, unlabelled
 
 
+def _staged_at(pokes, at, size):
+    """The `size` bytes at `at` in the machine `pokes` stage: the snapshot's under whatever pokes cover them — read
+    off the pokes, a row's whole image not built for a word."""
+    held = bytearray(BASE_IMAGE[at:at + size])
+    for poked_at, data in pokes.items():
+        for offset in range(size):
+            if poked_at <= at + offset < poked_at + len(data):
+                held[offset] = data[at + offset - poked_at]
+    return int.from_bytes(held, "big")
+
+
 def static_pds_in(pokes):
-    """The count of static PDs handed out (AES_STATIC_PIDS) in the machine `pokes` stage: the snapshot's word under
-    whatever pokes cover it — read off the pokes, a row's whole image not built for one word."""
-    word = bytearray(BASE_IMAGE[aes.AES_STATIC_PIDS:aes.AES_STATIC_PIDS + aes.WORD_BYTES])
-    for at, data in pokes.items():
-        for offset in range(aes.WORD_BYTES):
-            if at <= aes.AES_STATIC_PIDS + offset < at + len(data):
-                word[offset] = data[aes.AES_STATIC_PIDS + offset - at]
-    return int.from_bytes(word, "big")
+    """The count of static PDs handed out (AES_STATIC_PIDS) in the machine `pokes` stage."""
+    return _staged_at(pokes, aes.AES_STATIC_PIDS, aes.WORD_BYTES)
+
+
+SPARE_STATIC_PD = aes.AES_PD_TABLE + pp.SNAPSHOT_STATIC_PIDS * aes.PD_BYTES
+
+
+def an_accessory_the_rom_loaded(pokes):
+    """IS THE THIRD STATIC PD OF `pokes` A REAL ACCESSORY'S — one the ROM's own loader loaded (band 5's machines,
+    `aes_boot.accessory_machine`: no staged application at all)? Then sndcli parked its basepage (`$9724`) and the
+    PD's load address is that basepage. A staged application has neither: no loader ran, and the snapshot holds 0.
+    WHAT IT PROVES AND WHAT IT DOES NOT: it reads TWO FIELDS — enough to tell this suite's two kinds of third process
+    apart (`aes_pdpipe.staged_application` leaves `$9724` 0), and nothing more: a booted machine with something POKED
+    into its accessory's PD or text still answers True. That a row's machine is the ROM's boot and its own runs, with
+    nothing poked, is held where the machines are made (`test_aes_gemctrl.py`: every machine's pokes ARE its boot's
+    RAM, the same object; an arrival is a kept derivation of the ROM's dispatcher over them)."""
+    parked = _staged_at(pokes, aes_boot.FIRST_ACCESSORY_BASEPAGE, aes.LONG_BYTES) & aes.OS_BUS_ADDR_MASK
+    return bool(parked) and _staged_at(pokes, SPARE_STATIC_PD + aes.PD_LDADDR, aes.LONG_BYTES) & aes.OS_BUS_ADDR_MASK == parked
 
 
 def rows_over_a_third_process():
-    """EVERY REGISTERED ROW of this process whose machine has a third static PD handed out — which only a staged
-    application's has: the priced and the unpriced rows of every component's registry (`case.ROW_REGISTRIES`) and
+    """EVERY REGISTERED ROW of this process whose machine has a third static PD handed out THAT NO LOADER LOADED —
+    a staged application's (a machine the ROM booted with its accessories has the spare PD handed out too, to a real
+    process: `an_accessory_the_rom_loaded`): the priced and the unpriced rows of every component's registry (`case.ROW_REGISTRIES`) and
     the `.S` rows (`transcription.TRANSCRIPTIONS`, a list of its own that no `case.Rows` holds). "This process": in
     the suite every worker has imported every battery; a case run alone has this battery's rows and its `.S`
     battery's, imported here."""
@@ -1610,7 +1633,8 @@ def rows_over_a_third_process():
               for label, symbol, _caller, _regs, pokes, _cost, _io_seed in transcription.TRANSCRIPTIONS]
     own = [name for name, _pokes in c_rows if name.split(",")[0] in OWN_ROWS]
     assert len(own) >= len(OWN_ROWS) and any(name.startswith(S_ROW_OF_PSETUP) for name, _pokes in s_rows)
-    return [name for name, pokes in (*c_rows, *s_rows) if static_pds_in(pokes) != pp.SNAPSHOT_STATIC_PIDS]
+    return [name for name, pokes in (*c_rows, *s_rows)
+            if static_pds_in(pokes) != pp.SNAPSHOT_STATIC_PIDS and not an_accessory_the_rom_loaded(pokes)]
 
 
 S_ROW_OF_PSETUP = "aes_rom_psetup"
@@ -1618,8 +1642,13 @@ S_ROW_OF_PSETUP = "aes_rom_psetup"
 
 def test_no_registered_row_runs_over_a_staged_application():
     """TIER 1 ONLY: no row any battery registers — priced, through a call word, or a `.S` transcription's — starts
-    from a machine with a third process: each has the snapshot's two, the spare PD not handed out."""
+    from a machine with a STAGED third process: each has the snapshot's two, the spare PD not handed out — or is a
+    machine the ROM booted with its accessories, whose third process the ROM's own loader loaded (and the probe
+    tells the two apart: an accessory machine is one, the staged application is not)."""
     assert static_pds_in(with_the_application()) == pp.SNAPSHOT_STATIC_PIDS + 1, "the probe does not see a staged application"
+    assert not an_accessory_the_rom_loaded(with_the_application())
+    booted = aes_boot.accessory_machine().pokes
+    assert static_pds_in(booted) == pp.SNAPSHOT_STATIC_PIDS + 1 and an_accessory_the_rom_loaded(booted)
     assert rows_over_a_third_process() == []
 
 

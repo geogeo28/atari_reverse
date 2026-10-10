@@ -35,6 +35,12 @@ SOURCE, LINK, WRAPPER = ACC_DIR / "testacc.S", ACC_DIR / "acc.ld", RECREATE / "a
 PRG_HEADER_BYTES = addrs.parse(RECREATE / "include" / "gemdos" / "pexec_load.h")["PRG_HEADER_BYTES"]
 TARGET_CPU = "-m68000"
 QUIET, FIND, WRITE, MULTI = 0, 1, 2, 4  # `acc_mode`'s bits, as testacc.S names them (ACC_FIND, ACC_WRITE, ACC_MULTI)
+REGISTER, HIDE = 8, 16                  # ...ACC_REGISTER: an entry of the desk's menu; ACC_HIDE: the bar hidden on AC_OPEN
+# A MODE IS A LONGWORD OF THE ACCESSORY'S TEXT: `acc_kind` — a window's kind, GEM's gadget bits, 0 for no window — and
+# then `acc_mode`, the flags above (testacc.S lays the two words side by side).
+WINDOW_SHIFT = 16
+WINDOW_KINDS = 0x0fff                   # GEM's twelve gadget bits
+MODE = struct.Struct(">I")
 NAMES = ("TESTACC1", "TESTACC2")
 EXTENSION = "ACC"
 _LINKED_SYMBOL_KINDS = "TtDdBb"         # `nm`'s text, data and BSS symbols: the ones at an offset of the program
@@ -69,9 +75,16 @@ def built():
     return build(SOURCE.read_text(), LINK.read_text(), WRAPPER.read_text())
 
 
+def with_a_window(kind, mode=QUIET):
+    """`mode` with a window of `kind` (GEM's gadget bits) opened before the wait."""
+    assert kind and not kind & ~WINDOW_KINDS, f"{kind:#x} is no window kind"
+    return mode | kind << WINDOW_SHIFT
+
+
 def mode_word_at(accessory):
-    """Where `acc_mode` lies in the accessory's FILE."""
-    return PRG_HEADER_BYTES + accessory.symbols["acc_mode"]
+    """Where the mode longword lies in the accessory's FILE: at `acc_kind`, `acc_mode` the word after it."""
+    assert accessory.symbols["acc_mode"] == accessory.symbols["acc_kind"] + MODE.size // 2, "the mode's two words lie apart"
+    return PRG_HEADER_BYTES + accessory.symbols["acc_kind"]
 
 
 def disk_with(files=()):
@@ -101,7 +114,7 @@ def disk_of(accessory, modes):
     for index, mode in enumerate(modes):
         at = file_at(index)
         assert image[at:at + len(accessory.file)] == accessory.file, "the accessory is not where st_build lays a file"
-        struct.pack_into(">H", image, at + mode_word_at(accessory), mode)
+        MODE.pack_into(image, at + mode_word_at(accessory), mode)
     return bytes(image)
 
 

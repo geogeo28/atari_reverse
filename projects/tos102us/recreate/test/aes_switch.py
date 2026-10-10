@@ -1157,6 +1157,19 @@ DISPATCHER_STACK_DROP = ((*DISPATCHER_STACK, DISPATCHER_STACK_WHY),)
 # moment the ROM's disp enters ANOTHER process until it enters the caller again no door entry is a stop — the screen
 # manager makes door calls of its own, from the very return addresses the caller's calls come from, and they are no
 # call of the row's (`aes_switching.Switching` follows a row's replay the same way, on both shores).
+# ...AND IT IS THE CALLER'S OWN CODE'S: from the caller's dsptch until disp enters a process again no door entry is a
+# stop either. What the DISPATCHER's forker calls there is the dispatcher's — bchange's post_button, for a button
+# change delivered while the caller is inside the dispatcher. Under a DOOR USER blocked inside a door call it was
+# never counted (an entry reached inside an open call is no call). Where NO door call is open it was the run's "next
+# door call": for a caller that YIELDS by a dsptch of its own (the screen manager's handlers waiting a button up:
+# band 5 wave 1) — which the C's own forker, calling the entry's core, hands to no door, so the host's model and the
+# ROM's run disagreed on a call neither's caller made — AND FOR A ROW THAT IS ITSELF A DOOR ENTRY (entered at the
+# entry, no call open while it sleeps): EIGHTEEN PRE-EXISTING ROWS' `Scheduled.calls` AND `.answers` LOST THAT
+# post_button BY THIS RULE (aes_ev_multi 11, aes_ap_tplay 4, aes_dispatch 2, aes_ev_block 1 — a button taken at an
+# idle or a poll of theirs). Harmless, and held: none of the eighteen is a door user (no compare ever read those
+# lists for them), and what the rule leaves out of each is the forker's post_button and nothing else
+# (`test_aes_switching.py`, `THE_EIGHTEEN`: the run with the rule off holds exactly those calls
+# more) — a caller's own call cannot be reclassified silently.
 RETURNED, IDLES = "the call returned", "the machine idles: every process waits, nothing more is delivered"
 Scheduled = namedtuple("Scheduled",
                        "memory d0 delivered idles entered ended started calls at_calls polls at_polls answers dispatches",
@@ -1257,10 +1270,14 @@ class _Idling:
     call). It counts the POLLS and, among them, the IDLES, says what is due at each and at each door call (`due`:
     keyed `(AT_AN_IDLE, n)`, `(AT_A_POLL, n)` or `(AT_A_DOOR_CALL, n)`), keeps the processes the dispatcher enters,
     and ENDS the run (`aes_event.Ended`) where the machine idles for ever."""
+    # From the caller's own dsptch until disp enters a process, a door entry is the DISPATCHER's call and no stop
+    # (above). False only in the RED that shows what the rule keeps out.
+    KEEPS_THE_DISPATCHER_S_CALLS_OUT = True
 
     def __init__(self, memory, at_idle, door, caller, at_calls=None, at_polls=None):
         self._memory, self.at_idle, self._at_calls, self.at_polls = memory, dict(at_idle), at_calls or {}, dict(at_polls or {})
         self._door, self._caller, self._door_armed, self._elsewhere = door, caller, frozenset(door.first), False
+        self._in_the_dispatcher = False     # ...from the caller's own dsptch until disp enters a process (above)
         self.first = EVERY_STOP | self._door_armed | THE_CALLER_S_DISPATCH
         self.dispatches = []            # the memory at each dsptch of the CALLER's own process, as its pages
         self.polls, self.idles, self.entered, self._quiet, self._due = 0, 0, [], False, False
@@ -1296,14 +1313,17 @@ class _Idling:
     def stopped(self, pc, sp, memory):
         if pc in THE_CALLER_S_DISPATCH:
             self.dispatches.append(aes_event.image_pages(memory, self._door.images or ()))
+            self._in_the_dispatcher = self.KEEPS_THE_DISPATCHER_S_CALLS_OUT
         elif pc in EVERY_STOP:
+            if pc == addrs.AES_ROM_DISP_SWITCHTO:
+                self._in_the_dispatcher = False             # a process is entered: the caller, or another (`_entered`)
             dispatcher_stop(pc, memory, self._entered, self._an_idle, delivered=self._due, polls=self._a_poll)
         else:
             self._door_armed = frozenset(self._door.stopped(pc, sp, memory))
         # (No door entry is a dispatcher's stop, so a stop at one may arm all three of those again. dsptch itself is
         # watched WHILE THE CALLER'S OWN PROCESS RUNS — another process's dispatch is that process's — and, like any
         # stop, never armed where the run stands.)
-        if self._elsewhere:
+        if self._elsewhere or self._in_the_dispatcher:
             return EVERY_STOP - {pc}
         return ((EVERY_STOP | THE_CALLER_S_DISPATCH) - {pc}) | self._door_armed
 
@@ -1325,7 +1345,7 @@ def _taken_where(delivered, where):
     return {ordinal: taken for (kind, ordinal), taken in delivered.items() if kind == where}
 
 
-def scheduled(entry, frame, machine, at_idle=None, budget=None, at_calls=None, at_polls=None):
+def scheduled(entry, frame, machine, at_idle=None, budget=None, at_calls=None, at_polls=None, left_out_beside=()):
     """THE ROM'S OWN RUN of `entry` (its Alcyon `frame` where a `jsr` leaves it) over `machine`, a running process's
     call, THROUGH THE DISPATCHER, each interrupt of `at_idle` delivered at the idle of its ordinal — and each of
     `at_calls` (`{door call: interrupt}`, or a schedule: `aes_event.Waits`) at the entry of the caller's door call of
@@ -1338,14 +1358,16 @@ def scheduled(entry, frame, machine, at_idle=None, budget=None, at_calls=None, a
     made (what each was handed, read after its interrupt), `at_calls`, the deliveries taken at them (`{door call:
     (found, wrote)}`), how many `polls` its dispatcher's idle made (idles among them) and `at_polls`, the deliveries
     taken at those that were no idle — each one's `found` WITH the three words idle tests (`what_idle_tests`).
-    `budget`: a derivation's (`aes_event`'s rules), for a run past the default.
+    `budget`: a derivation's (`aes_event`'s rules), for a run past the default. `left_out_beside`: `(lo, hi, why)`
+    windows a ROW names as its own by nature (`aes_switching.SwitchingRow.also_dropped`), left out of every image
+    taken at a stop beside the model's two (`left_out_under_the_model`) — the model's child is told the same.
     REFUSED BY NAME: a delivery named at an idle, a poll or a door call the run never makes."""
     memory = make_image(merge_pokes(machine, {abi.FIRST_ARG: frame} if frame else None))
     started, calls = bytes(memory[:RAM_BYTES]), []
     caller = case.long_in(started, aes.AES_RLR)
     door = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS,
                                lambda pc, sp, over: calls.append(aes_event.handed_at(pc, sp, over)), entered_at=entry)
-    door.images = left_out_under_the_model(caller & aes_event.OS_BUS_ADDR_MASK)
+    door.images = left_out_under_the_model(caller & aes_event.OS_BUS_ADDR_MASK) + tuple(left_out_beside)
     watch = _Idling(memory, at_idle or {}, door, caller & aes_event.OS_BUS_ADDR_MASK, at_calls, at_polls)
     aes_event.begin_a_schedule(at_calls)
     try:
@@ -1722,7 +1744,7 @@ def _a_door_user_s_run(run, buf, binding, door, at_calls, left_out_beside):
     return aes_event.exit_as_an_interpreter_does(call)
 
 
-def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, door=None):
+def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, door=None, left_out_beside=()):
     """THE C `symbol` of the candidate (a core over the image, `typed` its values after it) run over `pokes` IN A
     FORK with the model switched on and held to `reference` (`hooks`): its exit code and stderr, the image it left —
     the fork runs over a mapping it shares with this process — its answer and how many idles and polls its run made (None
@@ -1735,7 +1757,8 @@ def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, d
     (`aes_event.image_pages`); `slots_held`, the host slots its
     routines held where its process was parked, and `parked`, how many times it was — each a reading of them: a run
     that says none was never audited (None where the fork ended before saying) — and a call that returns holding a
-    slot is refused by name."""
+    slot is refused by name. `left_out_beside`: the row's own by-nature windows (`scheduled`'s), left out of the
+    images a door user's child takes at its stops as they are out of the ROM's."""
     core = getattr(_lib, symbol)
     over = mmap.mmap(-1, IMAGE_BYTES)
     over[:] = make_image(pokes)
@@ -1746,7 +1769,8 @@ def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, d
         at_calls = dict(reference.at_calls) if reference else {}
         caller = case.long_in(over, aes.AES_RLR) & aes_event.OS_BUS_ADDR_MASK
         returncode, stderr = aes_event.in_a_fork(
-            _a_door_user_s_run(run, buf, binding, door, at_calls, left_out_under_the_model(caller)), MODEL_SECONDS)
+            _a_door_user_s_run(run, buf, binding, door, at_calls,
+                               left_out_under_the_model(caller) + tuple(left_out_beside)), MODEL_SECONDS)
         dispatched = _dispatched_in(stderr)
         handed = aes_event.handed_in(stderr) if aes_event.HANDED_LINE in stderr else None
         answers_back = aes_event.answered_in(stderr)

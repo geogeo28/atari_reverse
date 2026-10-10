@@ -303,6 +303,7 @@ import test_aes_cart                                        # noqa: E402,F401  (
 import test_aes_deskleaf                                    # noqa: E402,F401  (three leaves of the desk's range)
 import test_aes_deskmem                                     # noqa: E402,F401  (the desk's memory)
 import test_aes_shlib                                       # noqa: E402,F401  (the screen switches, the shell's band)
+import test_aes_gemctrl                                     # noqa: E402,F401  (the screen manager's handlers, at the ROM's arrivals)
 import test_aes_gemsuper                                    # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 
