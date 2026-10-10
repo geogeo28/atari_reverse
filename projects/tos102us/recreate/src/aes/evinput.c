@@ -13,6 +13,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "transcribed.h"
 #include "aes/aes.h"
@@ -76,6 +77,7 @@ void aes_post_keybd(uint8_t *image, uint32_t process, int16_t key)
 /* $fe52e2 — post_button: the buttons' state `button`, come after `clicks` clicks, to every button wait of `process`
  * it satisfies (downorup): the state its answer's high word, and the clicks — no more than the wait asked for,
  * compared as UNSIGNED words — ORed into the low by evremove. Each wait's link is read before the wait is posted. */
+FRAME_DIET("no-move-loop-invariants")
 EVDOOR_TWIN
 void aes_post_button(uint8_t *image, uint32_t process, int16_t button, int16_t clicks)
 {
@@ -115,6 +117,7 @@ int16_t aes_inorout(uint8_t *image, uint32_t evb, int16_t x, int16_t y)
 
 /* $fe5480 — post_mouse: the mouse at (x, y), to every mouse wait of `process` it satisfies (inorout), each answered
  * 0. Each wait's link is read before the wait is tested. */
+FRAME_DIET("no-function-cse")
 void aes_post_mouse(uint8_t *image, uint32_t process, int16_t x, int16_t y)
 {
     uint32_t cda = bus_long(image, process + PD_CDA);
@@ -131,6 +134,7 @@ void aes_post_mouse(uint8_t *image, uint32_t process, int16_t x, int16_t y)
 
 /* $fe4ef0 — mowner: whose a point is — the control rectangle's owner's, the screen manager's (the menu bar, or any
  * window wm_find answers but the desktop's 0), or the desktop's. */
+FRAME_DIET("no-function-cse")
 int16_t aes_mowner(uint8_t *image, int16_t x, int16_t y)
 {
     if (aes_inside(image, x, y, AES_CTRL_RECT))
@@ -189,6 +193,7 @@ void aes_b_click(uint8_t *image, int16_t buttons)
  * have changed since, that change after it as one click. Called by the tick AND, under mchange, by a process the
  * button interrupt can land in: the count is counted off in memory (`sub.w d0,$c6ca`), and the buttons queued second
  * are read AGAIN after the compare ($fe4ff6), as b_click may have stored them between. */
+FRAME_DIET("no-caller-saves")
 void aes_b_delay(uint8_t *image, int16_t ticks)
 {
     if (!be16(image + AES_GL_CLICK_TICKS))

@@ -443,11 +443,12 @@ AT_THE_FIRST_ENTRY, FROM_THE_START = "at the screen manager's first entry", "bef
 HANDLER_NAMES = ("AES_ROM_HCTL_BUTTON", "AES_ROM_HCTL_RECT")
 HANDLER_WORDS = 2                       # (mx, my)
 
-Ours = namedtuple("Ours", "base end image entry poll idle handlers")
+Ours = namedtuple("Ours", "base end image entry poll idle handlers rom", defaults=((),))
 Ours.__doc__ = """A blob AS A TAKEOVER READS IT (`ours_of`), by content — what a kept boot is keyed by: where it is
 linked (`base`) and ends (`end`: its allocated span), its bytes (`image`), its `entry` (ENTRY_SYMBOL), its
-dispatcher's `poll` and the `(start, end)` of the `idle` that calls it, and `handlers`: `((the ROM's handler, its C
-core's entry), ...)`."""
+dispatcher's `poll` and the `(start, end)` of the `idle` that calls it, `handlers`: `((the ROM's handler, its C
+core's entry), ...)` — and `rom`: `((address, bytes), ...)`, THE ROM DATA A LABELLED STAGING MAPS FOR THIS BLOB
+(`restaged`: the VDI's opcode tables naming the blob's own handlers), laid over the ROM in every continuation."""
 Takeover = namedtuple("Takeover", "ours process stack instructions slots cleared stored_after found laid")
 Takeover.__doc__ = """What one boot's takeover did and found: `ours`; the PD entered (`process`); its `stack` span
 `(lo, top)` as the stop found it — from the end of the UDA's state block to the end of psetup's frame; how many
@@ -1156,6 +1157,8 @@ def continued(boot, received, budget=CONTINUED_INSNS):
     ours = boot.takeover.ours if boot.takeover else None
     memory = bytearray(BASE_IMAGE)
     memory[:RAM_BYTES] = boot.ram
+    for at, data in (ours.rom if ours is not None else ()):      # the ROM data a staging mapped for the blob (`restaged`)
+        memory[at:at + len(data)] = data
     receiving = _Receiving(memory, boot.registers["sr"]).all_of(received)
     floppy = Floppy(memory, boot.disk)
     run = _Run(memory, floppy, budget, ours=ours, observing=handler_stops(ours))
@@ -1300,16 +1303,21 @@ def noised(machine, spans, seed):
     return Machine(machine.boot._replace(ram=bytes(ram)))
 
 
-def restaged(machine, memory):
+def restaged(machine, memory, rom=()):
     """`machine` WITH THE MEGABYTE OF `memory` — A LABELLED STAGING, its author's to justify (a routine laid under a
     trap, a tree's object changed) — and, on a machine whose screen manager is ours, ITS BLOB AS `memory` HOLDS IT: the
     `Ours` it carries is given those bytes, so a staging that patches the blob's own text (the build's VDI linked
     under `trap #2`) is the blob a continuation then holds untouched (`_vet_the_blob_was_not_reached`). The entry,
-    the poll, the idle and the handlers stay where the ELF placed them: a staging that moves code is not this."""
+    the poll, the idle and the handlers stay where the ELF placed them: a staging that moves code is not this.
+    `rom`: the ROM DATA the staging mapped, DECLARED by its author as `(address, length)` each — a machine keeps its
+    megabyte, not its ROM: what `memory` holds there is carried with the blob and laid again in every continuation.
+    Refused on a machine whose screen manager is the ROM's: its ROM is the ROM."""
+    assert not rom or machine.ours is not None, "ROM data is mapped for a blob: this machine's screen manager is the ROM's"
     boot = machine.boot._replace(ram=bytes(memory[:RAM_BYTES]))
     if machine.ours is not None:
         ours = machine.ours
-        staged = ours._replace(image=bytes(memory[ours.base:ours.base + len(ours.image)]))
+        mapped = tuple((at, bytes(memory[at:at + length])) for at, length in rom)
+        staged = ours._replace(image=bytes(memory[ours.base:ours.base + len(ours.image)]), rom=mapped)
         boot = boot._replace(takeover=boot.takeover._replace(ours=staged))
     return Machine(boot)
 

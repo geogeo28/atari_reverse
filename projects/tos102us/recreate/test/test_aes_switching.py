@@ -59,22 +59,22 @@ PREMISES = {
 # THE WHOLE RUN'S CYCLES, the ROM's and ours net of the entry both share, by blob — the second differential's own
 # measurement (`aes_switching.measured_on`). A row that moves says why: a frame, a path, the dispatcher itself.
 WHOLE_RUN = {
-    model.A_KEY_TYPED_AHEAD_LABEL: {BENCH: (31690, 26556), SHIPPED: (31690, 26242)},
-    model.WOKEN_BY_A_KEY: {BENCH: (31690, 26556), SHIPPED: (31690, 26242)},
-    model.A_DELAY_RUN_OUT: {BENCH: (30166, 25576), SHIPPED: (30166, 25264)},
-    FOREIGN: {BENCH: (831626, 826684), SHIPPED: (831626, 826416)},
-    AT_A_POLL: {BENCH: (831668, 823942), SHIPPED: (831668, 823798)},
+    model.A_KEY_TYPED_AHEAD_LABEL: {BENCH: (31690, 26416), SHIPPED: (31690, 26102)},
+    model.WOKEN_BY_A_KEY: {BENCH: (31690, 26416), SHIPPED: (31690, 26102)},
+    model.A_DELAY_RUN_OUT: {BENCH: (30166, 25436), SHIPPED: (30166, 25124)},
+    FOREIGN: {BENCH: (831626, 826498), SHIPPED: (831626, 826228)},
+    AT_A_POLL: {BENCH: (831668, 823680), SHIPPED: (831668, 823534)},
 }
 # ...and WHAT THE TABLE PRICES (`aes_switching.Priced`; `tier3.measure`, the shipped blob: ev_block's C reaches a
 # transcribed core): each shore's OWN cycles, no second count (ev_block's own rows call no rebound entry), and the
 # row's foreign windows — how many, their whole cycles, their cycles in the AES's text.
 NO_WINDOW, ONE_COUNT = switching.NO_WINDOW, (None, None)
 PRICED = {
-    model.A_KEY_TYPED_AHEAD_LABEL: Priced((11046, 17146), *ONE_COUNT, NO_WINDOW),
-    model.WOKEN_BY_A_KEY: Priced((11046, 17146), *ONE_COUNT, NO_WINDOW),
-    model.A_DELAY_RUN_OUT: Priced((11088, 16642), *ONE_COUNT, NO_WINDOW),
-    FOREIGN: Priced((13018, 18972), *ONE_COUNT, (1, 797112, 155862)),
-    AT_A_POLL: Priced((17368, 26258), *ONE_COUNT, (1, 782086, 148618)),
+    model.A_KEY_TYPED_AHEAD_LABEL: Priced((10906, 17146), *ONE_COUNT, NO_WINDOW),
+    model.WOKEN_BY_A_KEY: Priced((10906, 17146), *ONE_COUNT, NO_WINDOW),
+    model.A_DELAY_RUN_OUT: Priced((10948, 16642), *ONE_COUNT, NO_WINDOW),
+    FOREIGN: Priced((12830, 18972), *ONE_COUNT, (1, 797112, 155862)),
+    AT_A_POLL: Priced((17104, 26258), *ONE_COUNT, (1, 782086, 148618)),
 }
 # THE ONE CODE SLOT THE SCREEN MANAGER'S RUN STORES: the ROM's own keyboard poll, inside the foreign window, queues
 # the ROM's kchange for the Return it finds — in the fork queue's third entry (the two before it held the mouse's).
@@ -492,7 +492,7 @@ def test_two_shores_that_entered_other_processes_or_ran_other_windows_are_refuse
 THE_LOCK_HANDED_OVER = "the lock handed to the screen manager, which waits for it: a yield inside unsync's call"
 # wind_update(END_UPDATE) over a lock the screen manager waits for: 474 cycles of the ROM's own round its call of
 # unsync, 150 of ours — and the call itself, a yield through the whole dispatcher, in both own columns.
-THE_CALLER_S_OWN, ITS_OWN = (150, 474), (4974, 7826)
+THE_CALLER_S_OWN, ITS_OWN = (150, 474), (4910, 7826)
 THE_LOCK_S_RELEASE = switching.SwitchingRow(THE_LOCK_HANDED_OVER, wm_update.WM_UPDATE, (wm_update.END_UPDATE,),
                                             wm_update.waited_on, {}, answered=False)
 
@@ -536,7 +536,7 @@ A_KEY_S_WAIT_ACROSS_A_TURN = switching.SwitchingRow(
     {0: model.ONTO_THE_BAR, 1: model.RETURN})
 # What the table prices of each (ours, the ROM's): the row's own cycles — and evnt_keybd's own, net of its one call of
 # ev_block's twin: the same with the screen manager's turn inside that call as without it.
-A_KEY_S_WAIT_ITS_OWN, A_KEY_S_WAIT_ACROSS_A_TURN_ITS_OWN, EVNT_KEYBD_S_OWN = (11152, 17492), (13124, 19318), (106, 346)
+A_KEY_S_WAIT_ITS_OWN, A_KEY_S_WAIT_ACROSS_A_TURN_ITS_OWN, EVNT_KEYBD_S_OWN = (11012, 17492), (12936, 19318), (106, 346)
 
 
 def test_a_routine_of_no_argument_is_settled_measured_and_held_like_any_other(blob):

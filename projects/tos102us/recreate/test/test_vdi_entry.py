@@ -14,13 +14,17 @@ mode and clip of its own, as vswr_mode and vs_clip would, so a copy from the wro
 """
 import os
 
+import re
+
 import pytest
 
 from harness import addrs, emu, make_image
 
+import aes_switch as switch
 import case
 import gemdos
 import test_vdi_workstation_virtual as virtual
+import transcription
 import vdi
 import vdi_entry as entry
 import vdi_helpers
@@ -342,6 +346,76 @@ def test_v_opnvwk_is_called_whatever_the_handle():
     assert calls == [addrs.VDI_ROM_V_OPNVWK]
     assert result.contrl(vdi.CONTRL_HANDLE) == ws.FIRST_VIRTUAL_HANDLE
     assert vdi_helpers.trapped_calls(result.final) == [(addrs.GEMDOS_MALLOC_FN, vdi.WS_BYTES)]
+
+
+# ==== vdi_dispatch: its call of the function is its LAST ACT, and keeps no register ================================
+# `call_vector_as_the_last_act` (`staged_call.h`): GCC is told the `jsr` changes D0, D1, A0, A1 — and a VDI function
+# may change any register. That is sound only while NOTHING of the dispatcher's is live across the call in a register
+# GCC believes kept, and only towards callers that need none kept: read off both blobs' own instructions.
+_THE_CALL = "jsr %a0@"
+_POPS_OR_RETURNS = re.compile(r"^(?:rts|movel %sp@\+,%[ad]\d|moveal %sp@\+,%a\d|moveml %sp@\+,\S+|addq[lw] #\d,%sp|lea %sp@\(\d+\),%sp)$")
+_A_BRANCH_ALWAYS = re.compile(r"^(?:bra[swl]?|jra) ([0-9a-f]+) ")
+
+
+def _after_each_call_of_the_function(blob):
+    """For each `jsr (a0)` of `blob`'s vdi_dispatch: the instructions executed after it, to the `rts`, an
+    unconditional branch followed."""
+    body = switch.listed_functions(blob.elf)["vdi_dispatch"]
+    at_index = {at: index for index, (at, _text) in enumerate(body)}
+    runs = []
+    for index, (_at, text) in enumerate(body):
+        if text != _THE_CALL:
+            continue
+        after, here = [], index + 1
+        while body[here][1] != "rts":
+            jumped = _A_BRANCH_ALWAYS.match(body[here][1])
+            here = at_index[int(jumped.group(1), 16)] if jumped else here + 1
+            after += [] if jumped else [body[here - 1][1]]
+        runs.append(after + ["rts"])
+    return runs
+
+
+def test_the_dispatcher_s_call_of_the_function_is_its_last_act_on_both_blobs(blob):
+    """After each of the dispatcher's two `jsr (a0)` — one per table — the build does nothing but pop what its own
+    prologue pushed and return: no register read, none moved, nothing stored. A value GCC kept in a call-saved
+    register across the call (which a VDI function may have changed) would show here as an instruction of another kind."""
+    runs = _after_each_call_of_the_function(blob)
+    assert len(runs) == 2, f"vdi_dispatch calls a function at {len(runs)} places: one per opcode table was expected"
+    for after in runs:
+        assert all(_POPS_OR_RETURNS.match(text) for text in after), after
+    # ...and the call is the bare `jsr`: no register saved round it (44 bytes under every VDI function when it was).
+    body = [text for _at, text in switch.listed_functions(blob.elf)["vdi_dispatch"]]
+    assert not [text for text in body if text.startswith("moveml ")], "the dispatcher saves a register file again"
+
+
+def _names_the_dispatcher(text, blob):
+    """`text` calls, jumps to or takes the address of `blob`'s vdi_dispatch — by its symbol, or by THE ROM'S address,
+    which the transcribed entry spells and the staging (as a linked ROM would) lands in the blob's C."""
+    return "<vdi_dispatch>" in text or f"{addrs.VDI_ROM_DISPATCH:x} <" in text
+
+
+def test_the_entry_s_c_twin_keeps_every_register_round_the_dispatcher_as_the_rom_s_entry_does(blob):
+    """The dispatcher gives the callee-saved registers back as a VDI function left them, so its C caller — the
+    entry's twin — saves them all round its call (the ROM entry's own `movem.l d1-a6`): `movem` / the image pushed /
+    `jsr vdi_dispatch` / the pop / `movem`, read off BOTH blobs (the shipped one links the twin weak, beside the
+    entry's own instructions: were it ever the one entered, it keeps them there too)."""
+    body = [text for _at, text in switch.listed_functions(blob.elf)["vdi_entry"]]
+    call = next(index for index, text in enumerate(body) if text.startswith("jsr ") and _names_the_dispatcher(text, blob))
+    assert body[call - 2] == "moveml %d2-%d7/%a2-%fp,%sp@-" and body[call + 2] == "moveml %sp@+,%d2-%d7/%a2-%fp", body[call - 2:call + 3]
+
+
+def test_the_dispatcher_has_its_two_entries_for_callers_and_no_other_on_either_blob(blob):
+    """THE CONTRACT'S OTHER HALF, HELD: a caller of `vdi_dispatch` gets D2-D7 / A2-A6 back as a VDI function left
+    them, so every caller must need none kept. Each blob's listing names the dispatcher at exactly two places — the
+    entry's C twin (inside its `movem` pair, above) and the transcribed entry, which has saved D1-A6 — and nowhere
+    else, as a call, a jump or an address taken. A third caller in C would be handed registers GCC believes kept."""
+    named = [(function, text) for function, body in switch.listed_functions(blob.elf).items() for _at, text in body
+             if _names_the_dispatcher(text, blob)]
+    assert sorted(function for function, _text in named) == ["vdi_entry", "vdi_rom_entry"], named
+    assert all(text.startswith("jsr ") for _function, text in named), named
+    rom_entry = [text for _at, text in switch.listed_functions(blob.elf)["vdi_rom_entry"]]
+    call = next(index for index, text in enumerate(rom_entry) if _names_the_dispatcher(text, blob))
+    assert "moveml %d1-%fp,%sp@-" in rom_entry[:call] and "moveml %sp@+,%d1-%fp" in rom_entry[call:]
 
 
 # ==== vdi_entry ==================================================================================================

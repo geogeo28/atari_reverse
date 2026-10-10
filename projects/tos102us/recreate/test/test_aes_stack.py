@@ -8,20 +8,26 @@ WHAT IS HELD, on both blobs:
     tail, a declared exception word — and, beside each, THE LISTING IN WHICH THE RULE FAILS, refused by name.
   * THE DECLARATIONS, held to the build: who hands everyobj which routine; that ob_user's pointer is the machine's;
     dsptch's cost and the Line-A trap's, each read or measured, never typed in.
-  * THE FINDINGS, PINNED (W2-R3): our own frames by chain, the OS's need under a trap by VDI call (OUR VDI on our
-    shore), the interrupts' nest, what an application's routine is left — and THE VERDICT AS A NUMBER, "over by N",
-    for the bound and for each measured run. A FINDING IS ASSERTED, not expected to fail: any change either way —
+  * THE FINDINGS, PINNED (W2-R3): our own frames by chain, the OS's need under a trap by VDI call (EACH BLOB'S OWN
+    VDI on our shore, handlers and all — who ran is held), the interrupts' nest, what an application's routine is
+    left — and THE VERDICT AS A NUMBER ("N spare" for the shipped blob, the gate; "over by N" for the bench blob,
+    reported), for the bound — AT A TRAP CALL BY CALL: each trap site charged
+    its own VDI call's measured need — and for each measured run. A FINDING IS ASSERTED, not expected to fail: any change either way —
     a frame flattened, a frame grown — reddens the pin that names it.
 THE PINS ARE LAYOUT NUMBERS OF OUR BUILD (as band 4 pins its dispatcher's): a pin that moves is re-pinned WITH THE
 REASON — which frame, which call — never to make a run green.
 """
+import re
+
 import pytest
 
+from harness import addrs
 from recreate_kit import rom_bench
 
 import aes
 import aes_stack as stack
 import aes_switch as switch
+import derived
 
 LONG_BYTES = aes.LONG_BYTES
 BLOBS = stack.BLOBS
@@ -417,40 +423,93 @@ def test_a_chain_s_frames_sum_to_its_depth_and_every_handler_is_read(blob):
 # beside it; none is a capture's (the runs start at a booted machine's first idle, which the oracle's boot reaches
 # the same way every time: `aes_boot`). A PIN THAT MOVES SAYS WHICH FRAME OR WHICH CALL, AND IS RE-PINNED WITH THAT
 # REASON. Nothing here is "expected to fail": the verdict is a number, asserted.
+#
+# RE-PINNED WHOLE BY THE FRAME DIET, 2026-10-10 (`include/stack_diet.h`: 33 routines of these paths, and v_gtext's deep frame since, compiled with the
+# -O2 passes that spend stack turned off, just_draw's four parts routines of their own, three bodies taken by their
+# one deep caller). WHAT IT WAS, kept as history: own frames 908 (36 spare under the nest); the deepest trap an
+# icon's blit at 886 / 896 — with the worst call's need and the nest 1,480 / 1,490, OVER BY 284 / 294; a menu
+# dropped measured 952 / 956 (over by 8 / 12 with the nest), an icon in it 1,174 / 1,184 (over by 230 / 240); a
+# USERDEF's routine entered 682 down (210 bytes less than under the ROM); untouched at most 88.
+#
+# AND AGAIN BY ITS THIRD PASS, THE SAME DAY — THE REVIEW'S FINDING: the "need of our VDI" pinned here for a pass was
+# the ROM's handlers' behind our dispatcher (a uniform + 32), because the staging mapped no table slot to the blob's
+# own handlers. With them bound (`aes_switch.vdi_table_mapping`) the shipped blob's worst chain was OVER BY 16 and
+# the bench blob's by 190 — where the pass before had pinned "44 / 40 spare". What the third pass changed in the
+# build: the VDI dispatcher's call keeps no register round itself, as the ROM's does not (44 bytes under every VDI
+# function), and v_gtext's deep frame carries a mark (12). THE GATE IS THE SHIPPED BLOB — the program; the bench blob
+# links the C twins of the raster cores a ROM ships as the ROM's instructions, and its figure is REPORTED, not gated.
 SPAN = 1196                             # [uda + 74, $a898): PD1's stack
 BENCH, SHIPPED = BLOBS
 # OUR OWN FRAMES, deepest: a slider dragged, a press waited for, bchange looking the window up (both blobs).
-OWN_CHAIN = (("aes_rom_ctlmgr", 44), ("aes_hctl_button", 32), ("aes_hctl_window", 112), ("aes_gr_slidebox", 68),
-             ("aes_gr_dragbox", 112), ("aes_gr_wait", 72), ("aes_gr_stilldn", 64), ("aes_ev_multi", 60), ("aes_forker", 60),
-             ("aes_bchange_fork", 16), ("aes_bchange", 52), ("aes_mowner", 28), ("aes_wm_find", 28), ("aes_ob_find", 100),
+OWN_CHAIN = (("aes_rom_ctlmgr", 36), ("aes_hctl_button", 28), ("aes_hctl_window", 88), ("aes_gr_slidebox", 68),
+             ("aes_gr_dragbox", 88), ("aes_gr_wait", 40), ("aes_gr_stilldn", 64), ("aes_ev_multi", 52), ("aes_forker", 40),
+             ("aes_bchange_fork", 16), ("aes_bchange", 32), ("aes_mowner", 24), ("aes_wm_find", 28), ("aes_ob_find", 80),
              ("aes_ob_actxywh", 36), ("aes_ob_offset", 24))
-# ...and to the deepest `trap #2`: an ICON drawn in a menu — its blit, vrt_cpyfm. The shipped blob's VDI bindings
-# go through its generated glue (`aes_gsx_ncode`'s 10 bytes).
-TO_THE_BLIT = (("aes_rom_ctlmgr", 44), ("aes_hctl_rect", 40), ("aes_mn_do", 144), ("aes_menu_down", 40), ("aes_ob_draw", 64),
-               ("aes_everyobj<-aes_just_draw_alcyon", 94), ("aes_just_draw_alcyon", 24), ("aes_just_draw", 180),
-               ("aes_gr_gicon", 68), ("gicon_blit", 76), ("aes_gsx_blt", 84), ("aes_vrt_cpyfm", 28))
-TRAP_CHAIN = {BENCH: TO_THE_BLIT + (("aes_gsx_ncode", 0), ("aes_gsx2", 0)),
-              SHIPPED: TO_THE_BLIT + (("aes_gsx_ncode", 10), ("aes_rom_gsx_ncode", 0), ("aes_rom_gsx2", 0))}
-OWN_FRAMES, AT_THE_DEEPEST_TRAP = 908, {BENCH: 886, SHIPPED: 896}
-# THE OS UNDER A `trap #2`, BY THE VDI'S OPCODE, through the ROM's VDI: the most is v_gtext's (8), not a blit's
-# (109 vro_cpyfm, 121 vrt_cpyfm: 256) — and the keyboard poll's 130 that band 4 measures is vsm_string's (31).
-THE_ROM_S_VDI_NEEDS = {6: 184, 8: 310, 12: 132, 22: 112, 23: 140, 24: 144, 25: 112, 31: 130, 32: 112, 33: 116, 109: 256,
-                       111: 100, 113: 104, 114: 152, 121: 256, 122: 138, 123: 120, 128: 112, 129: 156}
-OUR_VDI_GOES_DEEPER_BY = 32             # every call: our C dispatcher's frame under `vdi_rom_entry` (band 4 measured the same)
+# ...and to the deepest `trap #2`: an ICON drawn in a menu — no longer its blit (gsx_blt's body is gr_gicon's own
+# now, and stands 36 bytes higher) but the fill under its label, vr_recfl. mn_do holds menu_down's body, gr_rect
+# bb_fill's. The shipped blob's VDI bindings go through its generated glue (`aes_gsx_ncode`'s 10 bytes).
+TO_THE_FILL = (("aes_rom_ctlmgr", 36), ("aes_hctl_rect", 36), ("aes_mn_do", 104), ("aes_ob_draw", 60),
+               ("aes_everyobj<-aes_just_draw_alcyon", 86), ("aes_just_draw_alcyon", 24), ("aes_just_draw", 124),
+               ("aes_gr_gicon", 68), ("aes_gr_rect", 48), ("aes_vr_recfl", 28))
+TRAP_CHAIN = {BENCH: TO_THE_FILL + (("aes_gsx_ncode", 0), ("aes_gsx2", 0)),
+              SHIPPED: TO_THE_FILL + (("aes_gsx_ncode", 10), ("aes_rom_gsx_ncode", 0), ("aes_rom_gsx2", 0))}
+OWN_FRAMES, AT_THE_DEEPEST_TRAP = 744, {BENCH: 614, SHIPPED: 624}
+# THE OS UNDER A `trap #2`, BY THE VDI'S OPCODE — the lowest STORE under the trap's frame. Through THE ROM'S VDI the
+# most is v_gtext's (8), not a blit's (109 vro_cpyfm, 121 vrt_cpyfm: 256) — and the keyboard poll's 130 that band 4
+# measures is vsm_string's (31). EVERY CALL THE SCREEN MANAGER'S PATHS CAN MAKE IS HERE (held below): vsl_color (17),
+# vsm_locator (28) and vq_mouse (124) are no scenario's and are measured by the ROM's own routines beside them.
+THE_ROM_S_VDI_NEEDS = {6: 184, 8: 310, 12: 132, 17: 112, 22: 112, 23: 140, 24: 144, 25: 112, 28: 128, 31: 130, 32: 112,
+                       33: 116, 109: 256, 111: 100, 113: 104, 114: 152, 121: 256, 122: 138, 123: 120, 124: 112, 128: 112,
+                       129: 156}
+# ...and through EACH BLOB'S OWN VDI — its entry, its dispatcher AND ITS OWN HANDLERS (`who_ran` holds that they ran).
+# The shipped blob's raster cores are the ROM's instructions, so its text, lines, fills and blits are within 32 of
+# the ROM's (the two image-only thunks, the C handler's frames) and its setters SHALLOWER (no Alcyon `link`); the
+# bench blob's are the C twins of those cores, which no ROM ships: 520 under a text, 460 under an icon's blit.
+OUR_VDI_NEEDS = {
+    BENCH: {6: 304, 8: 520, 12: 124, 17: 96, 22: 96, 23: 108, 24: 108, 25: 96, 28: 142, 31: 138, 32: 96, 33: 96, 109: 320,
+            111: 104, 113: 96, 114: 260, 121: 460, 122: 228, 123: 168, 124: 96, 128: 112, 129: 136},
+    SHIPPED: {6: 208, 8: 342, 12: 124, 17: 96, 22: 96, 23: 108, 24: 108, 25: 96, 28: 130, 31: 138, 32: 96, 33: 96, 109: 244,
+              111: 88, 113: 96, 114: 172, 121: 244, 122: 166, 123: 140, 124: 96, 128: 116, 129: 136}}
+# ...and HOW FAR SP CAN HAVE STOOD BELOW THAT STORE: the largest allocation nothing stored under that a run reached
+# under the opcode (the rest 0). The shipped blob's blits run the ROM's copy-raster, whose 76-byte frame of locals is
+# allocated before anything is stored in it: charged whole. AND ITS LINES AND FILLS RUN ITS OWN ENGINES' 20 — the
+# vertical line's `lea -20(sp),sp` and the filled rectangle's `link a6,#-20` (RE-PINNED BY THE FOURTH PASS,
+# 2026-10-10: the third had 0 for both, because the Line-A vectors were left naming THE ROM'S engines and a stop at
+# the blob's own was never reached; the sites they feed are 84 and 92 bytes from the gate).
+UNSTORED_UNDER = {BENCH: {122: 4, 123: 4, 129: 4}, SHIPPED: {6: 20, 109: 76, 114: 20, 121: 76, 129: 4}}
+# WHICH RASTER ENGINES RAN under each opcode, the blob's own (the ROM's: never, under any). The shipped blob's are
+# the ROM's instructions behind the Line-A vectors; the bench blob's C calls a twin by name where it does not hold
+# the engine's body itself (its blits and fills do: no symbol of the twins' is entered under 109, 114 and 121).
+V_PLINE, VRO_CPYFM, VR_RECFL = 6, 109, 114
+ENGINES_RAN = {
+    BENCH: {V_PLINE: ("linea_cpu_vline",), 8: ("linea_cpu_fast_text", "linea_cpu_textblt")},
+    SHIPPED: {V_PLINE: ("linea_rom_cpu_hline", "linea_rom_cpu_vline"), 8: ("linea_rom_cpu_fast_text", "linea_rom_cpu_textblt"),
+              VRO_CPYFM: ("linea_rom_cpu_blit",), VR_RECFL: ("linea_rom_cpu_rect_fill",), 121: ("linea_rom_cpu_blit",)}}
 V_GTEXT, VRT_CPYFM = 8, 121
 THE_NEST, THE_HORIZONTAL_BLANK = 252, 8           # hbl 8 + vbl 100 + the deeper MFP handler 144: the ROM's handlers' and ours
 THE_LINE_A_TRAP_TAKES = 42
 # WHAT AN APPLICATION'S ROUTINE STANDS UNDER (ob_user's `jsr (a0)`, a USERDEF in a menu): ours, both blobs — read off
 # the listing and MEASURED the same to the byte — and the ROM's, measured.
-AT_THE_USERDEF_CALL, UNDER_THE_ROM_S = 682, 472
+AT_THE_USERDEF_CALL, UNDER_THE_ROM_S = 538, 472
 # THE MEASURED RUNS from the real entry, the lowest store on PD1's stack: (the ROM's machine, ours on the bench
-# blob, ours on the shipped blob) — our VDI under our traps.
-MEASURED = {stack.THE_ELEVATOR: (628, 804, 814), stack.THE_TITLE: (548, 772, 782), stack.THE_CLOSER: (474, 616, 616),
-            stack.THE_MENU: (722, 952, 956), stack.THE_ICON: (814, 1174, 1184), stack.THE_USERDEF: (722, 952, 956)}
-UNTOUCHED_AT_MOST = 88                  # what a run's lowest SP can be below its lowest store, by the listing
-# THE VERDICT, bytes OVER the 1,196 (negative: spare).
-OVER_AT_THE_DEEPEST_TRAP = {BENCH: 284, SHIPPED: 294}       # the bound: 886 / 896 + our VDI's most (342) + the nest
-OWN_FRAMES_SPARE = 36                                       # 1,196 - (908 + 252)
+# blob, ours on the shipped blob) — each blob's own VDI, handlers and all, under its traps.
+MEASURED = {stack.THE_ELEVATOR: (628, 816, 714), stack.THE_TITLE: (548, 760, 658), stack.THE_CLOSER: (474, 640, 558),
+            stack.THE_MENU: (722, 1038, 864), stack.THE_ICON: (814, 1078, 904), stack.THE_USERDEF: (722, 1038, 864)}
+UNTOUCHED_AT_MOST = 56                  # what a run's lowest SP can be below its lowest store, by the listing (the AES's frames)
+# THE VERDICT, bytes SPARE of the 1,196 (negative: OVER). THE SHIPPED BLOB FITS, 36 SPARE; THE BENCH BLOB IS OVER BY 134.
+# AT ITS TRAPS, CALL BY CALL, each site charged its own call's need and the unstored allocation under it:
+#   shipped — the worst is an icon's BLIT in a menu (vrt_cpyfm, 588 down: 244 stored + the copy-raster's 76) = 908;
+#             its label's text is next (gsx_tblt, 562 down + v_gtext's 342 = 904: 40 spare);
+#   bench   — the icon's label's text, 558 + 520 = 1,078.
+THE_WORST_SITE = {BENCH: ("aes_gsx_tblt", 558, (V_GTEXT,)), SHIPPED: ("aes_vrt_cpyfm", 588, (VRT_CPYFM,))}
+SPARE_AT_ITS_TRAPS = {BENCH: -134, SHIPPED: 36}
+THE_TEXT_S_SITE_ON_THE_SHIPPED_BLOB, ITS_SPARE = ("aes_gsx_tblt", 562), 40
+OWN_FRAMES_SPARE = 200                                      # 1,196 - (744 + 252)
+# ...and THE COARSE SUM beside it, a call no path makes — the deepest trap charged the worst call's need: over on both.
+CHARGED_THE_WORST_IT_IS_OVER_BY = {BENCH: 190, SHIPPED: 22}  # 614 + 520 + 252; 624 + 342 + 252
+# The one site whose opcode neither the listing nor a declaration says (gsx_xline's sibling call of gsx_1code, its
+# arguments stored into its own argument slots): charged the worst need of all.
+SITES_CHARGED_THE_WORST = {"aes_gsx_xline"}
 
 
 def _moved(read, pinned):
@@ -470,15 +529,345 @@ def test_finding_our_own_frames_by_chain(blob):
 
 
 def test_finding_the_os_under_a_trap_by_its_call_ours_and_the_rom_s():
-    """THE OS TERM, PINNED BY VDI CALL: through the ROM's VDI, and through OURS — the one our build runs under its
-    own traps — which goes 32 bytes deeper under every call. The icon's blit (vrt_cpyfm) is among them: it is the
-    call the bound's deepest chain ends on, and only the staged icon makes it."""
-    assert stack.os_needs() == THE_ROM_S_VDI_NEEDS
+    """THE OS TERM, PINNED BY VDI CALL: through the ROM's VDI, and through EACH BLOB'S OWN — its dispatcher and its
+    handlers — with, beside each store, the unstored allocation a run reached under it. The icon's blit (vrt_cpyfm)
+    is among them: only the staged icon makes it."""
+    assert stack.os_needs() == THE_ROM_S_VDI_NEEDS == stack.needs_bounded()
     for shore in BLOBS:
-        assert stack.os_needs(shore) == {opcode: need + OUR_VDI_GOES_DEEPER_BY for opcode, need in THE_ROM_S_VDI_NEEDS.items()}
-        assert stack.under_a_trap(shore) == THE_ROM_S_VDI_NEEDS[V_GTEXT] + OUR_VDI_GOES_DEEPER_BY
+        assert stack.os_needs(shore) == OUR_VDI_NEEDS[shore], f"{shore}: say which handler's frame moved"
+        assert {opcode: under for opcode, under in stack.unstored_under(shore).items() if under} == UNSTORED_UNDER[shore]
+        assert stack.needs_bounded(shore) == {opcode: need + UNSTORED_UNDER[shore].get(opcode, 0)
+                                              for opcode, need in OUR_VDI_NEEDS[shore].items()}
+        assert stack.under_a_trap(shore) == OUR_VDI_NEEDS[shore][V_GTEXT]
     only_the_icon_s = {trap.opcode for trap in stack.traps_of(stack.THE_ICON)} - {trap.opcode for trap in stack.traps_of(stack.THE_MENU)}
     assert VRT_CPYFM in only_the_icon_s
+    beside = {trap.opcode for name in stack.THE_ROUTINES_BESIDE for trap in stack.traps_beside(name)}
+    in_the_scenarios = {trap.opcode for name in stack.SCENARIOS for trap in stack.traps_of(name)}
+    assert beside - in_the_scenarios == {addrs.VDI_ROM_VSL_COLOR_OPCODE, addrs.VDI_ROM_LOCATOR_OPCODE, addrs.VDI_ROM_VQ_MOUSE_OPCODE}, (
+        "the routines beside the scenarios are run for the three calls no scenario's handler takes")
+
+
+def test_under_our_traps_our_own_handlers_ran_and_the_rom_s_did_not():
+    """WHO RAN (the review's blocker, 2026-10-10): for every opcode a need is priced for, the blob's OWN handler was
+    entered under that opcode's trap and the ROM table's own entry NEVER — on both blobs; and on the ROM's shore the
+    reverse. A staging that stops at the dispatcher (the ROM's handlers behind it) reds here by the opcode's number."""
+    for shore in BLOBS:
+        ran = stack.who_ran(shore)
+        assert set(ran) == set(OUR_VDI_NEEDS[shore])
+        assert all(ours >= 1 and the_rom_s == 0 for ours, the_rom_s in ran.values()), (
+            f"{shore}: (ours entered, the ROM's entered) by opcode {ran}")
+    the_rom_s_own = stack.who_ran(stack.THE_ROM_S)
+    assert all(ours == 0 and the_rom_s >= 1 for ours, the_rom_s in the_rom_s_own.values()), the_rom_s_own
+
+
+def test_the_handler_who_ran_looks_for_is_the_one_of_the_opcode_s_own_name(blob):
+    """`who_ran`'s places are NOT the mapping's: each is the symbol `include/addrs.h` names the opcode by
+    (`VDI_ROM_VRT_CPYFM_OPCODE` -> `vdi_vrt_cpyfm`), read off the blob's symbol table — so a mapping that answered
+    one opcode with another's handler (two of equal need) is entered where this does not look. Held: the names, for
+    the two blits; that an opcode `addrs.h` does not name is refused; and that today the two derivations agree."""
+    named = {opcode: stack.the_handlers_named_for(opcode, blob.elf) for opcode in (VRO_CPYFM, VRT_CPYFM)}
+    assert set(named[VRO_CPYFM]) == {"vdi_vro_cpyfm"} and set(named[VRT_CPYFM]) == {"vdi_vrt_cpyfm"}
+    assert named[VRO_CPYFM] != named[VRT_CPYFM]
+    with pytest.raises(AssertionError, match="names no VDI_ROM_<NAME>_OPCODE"):
+        stack.the_handlers_named_for(0x7FFF, blob.elf)
+    for opcode, handler in switch.our_vdi_handlers(blob).items():
+        if opcode in OUR_VDI_NEEDS[stack.shore_of(blob)]:
+            assert handler.entry in stack.the_handlers_named_for(opcode, blob.elf).values(), f"opcode {opcode}: {handler}"
+
+
+def test_under_our_traps_our_own_raster_engines_ran_and_the_rom_s_never():
+    """WHO RAN, ONE LEVEL DOWN (the third pass's review): under every opcode priced, on both blobs, NO ENGINE OF THE
+    ROM'S was entered — none of the ten the booted machine's Line-A vectors hold — and the blob's own were, under the
+    opcodes pinned: on the shipped blob through the mapped vectors, on the bench blob by name. On the ROM's shore the
+    ROM's run, under the same five opcodes. A staging that leaves the vectors reds here by the opcode's number."""
+    for shore in BLOBS:
+        ran = stack.engines_ran(shore)
+        assert all(the_rom_s == 0 for _ours, the_rom_s in ran.values()), f"{shore}: an engine of the ROM's ran: {ran}"
+        assert {opcode: ours for opcode, (ours, _the_rom_s) in ran.items() if ours} == ENGINES_RAN[shore]
+    the_rom_s_own = stack.engines_ran(stack.THE_ROM_S)
+    assert {opcode for opcode, (_ours, the_rom_s) in the_rom_s_own.items() if the_rom_s} == set(ENGINES_RAN[SHIPPED])
+    assert all(ours == () for ours, _the_rom_s in the_rom_s_own.values())
+
+
+THE_DRAWING_VECTORS = 6                 # bit-blit, fast text, the filled rectangle, the two lines, TextBlt
+
+
+def test_every_line_a_vector_is_mapped_to_an_engine_of_the_blob_or_declared_left(blob, monkeypatch):
+    """THE DECLARED MAPPING OF THE VECTORS, HELD: all ten of the boot's table are answered — on the shipped blob the
+    six drawing vectors by the blob's own engine of the ROM routine's name, the console's four declared left; on the
+    bench blob, whose C calls its engines by name, every one left. A memory mapped already is refused; and a blob
+    that reaches its engines through the vectors and LACKS one is refused by the vector and the ROM routine's name."""
+    engines, mapping = switch.our_linea_engines(blob), switch.linea_vector_mapping(blob)
+    ships_them = blob.elf == stack.transcription.SHIPPED_ELF
+    assert len(engines) == len(switch.linea_vectors()) == switch.vdi.LINEA_VECTOR_COUNT == 10
+    assert len(mapping) == (THE_DRAWING_VECTORS if ships_them else 0)
+    for vector, held in mapping.items():
+        engine = engines[vector]
+        assert int.from_bytes(held, "big") == engine.entry != engine.the_rom_s and engine.symbol.startswith("linea_rom_cpu_")
+    left = [engine for engine in engines.values() if engine.entry is None]
+    assert len(left) == (4 if ships_them else 10)
+    mapped = stack.with_our_vdi(stack.make_image(stack.aes_gsx.machine()), stack.shore_of(blob))
+    for vector in switch.linea_vectors():
+        expected = mapping.get(vector, engines[vector].the_rom_s.to_bytes(4, "big"))
+        assert bytes(mapped[vector:vector + 4])[1:] == expected[1:]
+    repointed = stack.make_image(stack.aes_gsx.machine())
+    repointed[switch.vdi.LINEA_VECTOR_TEXTBLT:switch.vdi.LINEA_VECTOR_TEXTBLT + 4] = (0x12345678).to_bytes(4, "big")
+    repointed[blob.base:blob.base + len(blob.blob)] = blob.blob
+    with pytest.raises(AssertionError, match="0x2a38 does not hold the ROM's engine"):
+        switch._our_vdi_under_the_trap(repointed, blob)
+    table = [symbol for symbol in stack.transcription.symbol_table(blob.elf) if symbol.name != "linea_rom_cpu_textblt"]
+    monkeypatch.setattr(stack.transcription, "symbol_table", lambda elf: table)
+    with pytest.raises(AssertionError, match=r"HAS NO ENGINE FOR THE LINE-A VECTOR AT 0x2a38.*LINEA_ROM_CPU_TEXTBLT"):
+        switch._our_engines_of.__wrapped__(blob.elf, True)
+
+
+def test_the_vectors_the_shipped_blob_s_code_loads_are_mapped_ones():
+    """READ OFF THE HANDLERS: every instruction of the shipped blob that loads an address register from a longword
+    of the Line-A vector table (`movea.l $2a24,a5 / jsr (a5)`: copy-raster's, the fill's, TextBlt's) names a vector
+    the staging maps — none of the console's four, none left to the ROM."""
+    blob = stack.blob_of(SHIPPED)
+    mapped, vectors = set(switch.linea_vector_mapping(blob)), set(switch.linea_vectors())
+    loaded = {int(found.group(1), 16) for run in stack.listed_runs(stack.transcription.listing(blob.elf)) for _at, text in run
+              if (found := re.match(r"^moveal ([0-9a-f]+) <[^>]+>,%a\d$", text)) and int(found.group(1), 16) in vectors}
+    assert len(loaded) >= 3 and loaded <= mapped, f"loaded as a routine's address: {sorted(map(hex, loaded))}"
+
+
+def test_every_slot_of_the_vdi_s_tables_is_mapped_to_a_handler_of_the_blob(blob):
+    """THE DECLARED MAPPING, HELD: all 71 slots of the two opcode tables have a handler in the blob, by the ROM
+    routine's own name; a C handler is reached through an image-only thunk (the build's own shape, to the byte), a
+    handler that ships as its `.S` is the slot's value itself — on the shipped blob alone; a memory the mapping was
+    not made in is refused."""
+    handlers, (slots, thunks) = switch.our_vdi_handlers(blob), switch.vdi_table_mapping(blob)
+    assert len(handlers) == len(slots) == len(switch.vdi_table_slots()) == 71
+    direct = {handler.symbol for handler in handlers.values() if not handler.through_a_thunk}
+    ships_them = blob.elf == stack.transcription.SHIPPED_ELF
+    assert direct == ({"vdi_rom_escape", "vdi_rom_vs_color", "vdi_rom_vq_color", "vdi_rom_vr_trnfm", "vdi_rom_vsc_form"}
+                      if ships_them else set())
+    (at, laid), = thunks.items()
+    for handler in handlers.values():
+        held = int.from_bytes(slots[handler.slot], "big")
+        if handler.through_a_thunk:
+            thunk = laid[held - at:held - at + len(switch._an_image_only_thunk_into(handler.entry))]
+            assert thunk == switch._an_image_only_thunk_into(handler.entry) and held != handler.entry
+        else:
+            assert held == handler.entry
+    unmapped = stack.make_image(stack.aes_gsx.machine())
+    with pytest.raises(AssertionError, match="not this blob's handler"):
+        switch.entered_under_the_trap(blob, V_GTEXT, unmapped)
+    mapped = stack.with_our_vdi(stack.make_image(stack.aes_gsx.machine()), stack.shore_of(blob))
+    assert switch.entered_under_the_trap(blob, V_GTEXT, mapped) == int.from_bytes(slots[handlers[V_GTEXT].slot], "big")
+    with pytest.raises(AssertionError, match="mapped already"):
+        switch._our_vdi_under_the_trap(mapped, blob)
+
+
+ALLOCATED_AND_LOADED = [(0x100, "lea %sp@(-76),%sp"), (0x104, "moveal 29a2 <x>,%a2"), (0x10a, "rts")]
+ALLOCATED_AND_PUSHED = [(0x100, "lea %sp@(-24),%sp"), (0x104, "moveml %d2-%d7,%sp@-"), (0x108, "rts")]
+LINKED_AND_CALLED = [(0x100, "linkw %fp,#-84"), (0x104, "jsr 300 <deep>"), (0x10a, "rts")]
+# TextBlt's own entry: a `link` on A5, a store ABOVE the SP it leaves, then the push down the straight line.
+LINKED_ON_A5_AND_PUSHED = [(0x100, "linkw %a5,#-84"), (0x104, "clrw %a5@(-82)"), (0x108, "moveml %d3-%d7/%a3-%a4,%sp@-"), (0x10c, "rts")]
+LINKED_ON_A5_AND_LEFT = [(0x100, "linkw %a5,#-84"), (0x104, "clrw %a5@(-82)"), (0x108, "beqs 110 <x+0x10>"),
+                         (0x10a, "moveml %d3-%d7/%a3-%a4,%sp@-"), (0x10e, "rts")]
+TWO_RUNS = [(0x100, "subql #4,%sp"), (0x102, "lea %sp@(-16),%sp"), (0x106, "movew %d0,%sp@(2)"), (0x10a, "tstw %d0"),
+            (0x10c, "bnes 120 <x+0x20>"), (0x10e, "subql #8,%sp"), (0x110, "pea 1 <x>"), (0x114, "rts")]
+STORED_AT_ITS_OWN_SP = [(0x100, "subql #4,%sp"), (0x102, "movel %d0,%sp@"), (0x104, "rts")]
+POPPED_BEFORE_ANY_STORE = [(0x100, "subql #8,%sp"), (0x102, "movel %sp@+,%d0"), (0x104, "movel %d0,%sp@-"), (0x106, "rts")]
+AN_UNKNOWN_INSTRUCTION_DOWN_THE_LINE = [(0x100, "subql #8,%sp"), (0x102, "frobl %d0,%d1"), (0x104, "movel %d0,%sp@-"), (0x106, "rts")]
+
+
+def test_an_allocation_nothing_is_stored_under_is_read_off_the_listing():
+    """`unstored_runs`: a run of allocations is one (its last instruction, its bytes whole) when the straight line
+    after it is LEFT — a branch, a return, SP raised — before anything is stored at or below the SP it left; a push,
+    a `pea`, a call or a store to `(sp)` down that line makes it none. A `link` allocates ON ANY ADDRESS REGISTER;
+    and an instruction the stack reading does not know, on that line, is REFUSED by name, not passed over."""
+    assert stack.unstored_runs(ALLOCATED_AND_LOADED) == {0x100: 76}
+    assert stack.unstored_runs(ALLOCATED_AND_PUSHED) == {} == stack.unstored_runs(LINKED_AND_CALLED)
+    assert stack.unstored_runs(LINKED_ON_A5_AND_PUSHED) == {} and stack.unstored_runs(LINKED_ON_A5_AND_LEFT) == {0x100: 84}
+    assert stack.unstored_runs(TWO_RUNS) == {0x102: 20}
+    assert stack.unstored_runs(STORED_AT_ITS_OWN_SP) == {} and stack.unstored_runs(POPPED_BEFORE_ANY_STORE) == {0x100: 8}
+    with pytest.raises(AssertionError, match="does not know the instruction `frobl %d0,%d1`"):
+        stack.unstored_runs(AN_UNKNOWN_INSTRUCTION_DOWN_THE_LINE)
+
+
+A_LISTING = """
+00030000 <labelled>:
+   30000:\t4e71           \tnop
+   30002:\t4e75           \trts
+\t...
+   30010:\t4fef ffec      \tlea %sp@(-20),%sp
+   30014:\t4e75           \trts
+
+00030016 <twice>:
+   30016:\t598f           \tsubql #4,%sp
+   30018:\t4e75           \trts
+00030020 <twice>:
+   30020:\t518f           \tsubql #8,%sp
+   30022:\t4e75           \trts
+"""
+
+
+def test_every_instruction_of_a_listing_is_scanned_whatever_labels_it(blob):
+    """NOTHING IS PASSED OVER: an allocation under no label (the shipped blob's displaced C cores), and under a
+    name the listing labels twice, is found — and on each blob the runs hold every instruction the listing has."""
+    runs = stack.listed_runs(A_LISTING)
+    assert [run[0][0] for run in runs] == [0x30000, 0x30010, 0x30016, 0x30020]
+    assert {at: size for run in runs for at, size in stack.unstored_runs(run).items()} == {0x30010: 20, 0x30016: 4, 0x30020: 8}
+    listing = stack.transcription.listing(blob.elf)
+    listed = sum(bool(switch.LISTED_LINE.match(line)) for line in listing.splitlines())
+    assert sum(len(run) for run in stack.listed_runs(listing)) == listed > 50_000
+    # ...and ON THE SHIPPED BLOB SOME ALLOCATIONS LIE UNDER NO LABEL the symbol table sizes (a displaced C core's
+    # entry, past its symbol's end): found all the same — a scan of the labelled functions alone has fewer.
+    labelled = {at for body in switch.listed_functions(blob.elf).values() for at, _text in body}
+    under_no_label = set(stack.unstored_allocations(blob.elf)) - labelled
+    assert bool(under_no_label) == (blob.elf == stack.transcription.SHIPPED_ELF), sorted(map(hex, under_no_label))
+    # ...TextBlt's `link a5,#-84` among them, stored under down its line: not charged, and by the reader's own word.
+    textblt = switch.listed_functions(blob.elf)["linea_rom_cpu_textblt"]
+    assert textblt[0][1] == "linkw %a5,#-84" and textblt[0][0] not in stack.unstored_allocations(blob.elf)
+    assert stack._allocated_by(textblt[0][1]) == 84
+
+
+def test_the_unstored_charge_is_the_largest_reached_under_the_opcode():
+    """Two allocations reached under one call: the LARGER is charged (the smallest, or the first, would be the
+    same number on today's blobs, where each opcode reaches one size); one reached under another call is that
+    call's; an opcode that reaches none is charged 0."""
+    allocations = {0x100: 4, 0x200: 76, 0x300: 20}
+    reached = {(VRT_CPYFM, 0x100): 3, (VRT_CPYFM, 0x200): 1, (V_PLINE, 0x300): 2, (V_PLINE, 0x100): 1}
+    assert stack.the_largest_reached(reached, allocations, (V_PLINE, V_GTEXT, VRT_CPYFM)) == {V_PLINE: 20, V_GTEXT: 0, VRT_CPYFM: 76}
+
+
+class _CountsItsStops:
+    first = frozenset()
+
+    def stopped(self, pc, sp, memory):
+        raise AssertionError("no stop of the inner watch's was armed")
+
+
+def test_a_place_is_armed_again_at_every_trap():
+    """`_ArrivalsAt`: the trap's handler is a stop of the watch's own, so a place reached under one call and next
+    under another — nothing else stopping between — is counted for both; and it is no place to count."""
+    watch = stack._ArrivalsAt({0x500}, trap=0x900)
+    memory = bytearray(0x10000)
+    assert watch.first == {0x500, 0x900}
+    memory[stack.VDI_OPCODE_AT:stack.VDI_OPCODE_AT + 2] = V_PLINE.to_bytes(2, "big")
+    assert watch.stopped(0x500, 0, memory) == {0x900}
+    assert watch.stopped(0x900, 0, memory) == {0x500}
+    memory[stack.VDI_OPCODE_AT:stack.VDI_OPCODE_AT + 2] = VR_RECFL.to_bytes(2, "big")
+    assert watch.stopped(0x500, 0, memory) == {0x900}
+    assert watch.arrived == {(V_PLINE, 0x500): 1, (VR_RECFL, 0x500): 1}
+    with pytest.raises(AssertionError, match="no place to count"):
+        stack._ArrivalsAt({0x900}, trap=0x900)
+
+
+# ---- THE TRAP SITES: every trap under a call that names its opcode, and every opcode measured ---------------------------------
+def test_every_trap_of_the_screen_manager_s_paths_is_under_a_site_and_the_deepest_site_is_the_deepest_trap(blob):
+    """THE SITES ARE ALL THE TRAPS: the one routine that takes `trap #2` is reached only through the routines that
+    hand an opcode on or by a call that is itself a site — so the deepest site's trap is the reading's deepest trap,
+    to the byte — and no other function read takes the trap itself."""
+    read, sites = stack.reading(blob.elf), stack.trap_sites(blob.elf)
+    assert max(site.depth for site in sites) == stack.bound(blob).at_a_trap
+    takers = {name for name in read.functions_read() & set(read.functions())
+              if any(text == switch.TRAP_2 for _at, text in read.functions()[name])}
+    assert takers and takers <= set(stack.TAKES_THE_TRAP), f"`trap #2` is taken in {sorted(takers)}"
+    # ...and the routine that takes it is CALLED only by a site or by a routine that hands its opcode on.
+    callers = {function.partition(switch.HANDED)[0].partition(switch.INTO)[0] for function in read.read_as()
+               for callee, _under, _at in read.sites(function) if callee.partition(switch.INTO)[0] in stack.TAKES_THE_TRAP}
+    # (the shipped blob's `aes_gsx2` is its glue into the `.S`: the trap's own routine, called by its name)
+    assert callers <= {site.function for site in sites} | set(stack.HANDS_ITS_OPCODE_ON + stack.TAKES_THE_TRAP)
+
+
+def test_every_call_a_site_can_make_is_measured_on_every_shore(blob):
+    """NO NEED IS ASSUMED: every VDI opcode a site of this blob can ask — read off its call or declared for its
+    function — has a measured need through the ROM's VDI and through this blob's own."""
+    asked = {opcode for site in stack.trap_sites(blob.elf) if site.opcodes for opcode in site.opcodes}
+    assert len(asked) > 15 and asked <= set(stack.os_needs()) and asked <= set(stack.os_needs(stack.shore_of(blob)))
+    assert set(stack.os_needs()) == set(THE_ROM_S_VDI_NEEDS)
+
+
+def test_a_site_whose_opcode_is_not_read_is_charged_what_its_function_is_declared_to_ask_or_the_worst(blob):
+    """THE THREE WAYS A SITE IS CHARGED: the opcode its call names; its function's declared ones, the deepest need
+    among them; neither — the worst need of any call (pinned: which sites those are)."""
+    shore, sites = stack.shore_of(blob), stack.trap_sites(blob.elf)
+    assert {site.function for site in sites if site.opcodes is None} == SITES_CHARGED_THE_WORST
+    for site in sites:
+        if site.opcodes is None:
+            assert stack.need_under(site, shore) == stack.under_a_trap(shore)
+        elif site.function in stack.OPCODES_DECLARED and len(site.opcodes) > 1:
+            assert site.opcodes == stack.opcodes_declared(site.function)
+            assert stack.need_under(site, shore) == max(stack.needs_bounded(shore)[opcode] for opcode in site.opcodes)
+    # ...THE DEEPEST of a declared function's calls, not the first nor the least (gsx_attr's own three need the same):
+    a_text_or_a_setter = stack.TrapSite("a_function", 0x100, 500, (addrs.VDI_ROM_VSWR_MODE_OPCODE, V_GTEXT, addrs.VDI_ROM_VST_COLOR_OPCODE))
+    assert stack.need_under(a_text_or_a_setter, shore) == stack.needs_bounded(shore)[V_GTEXT] > stack.needs_bounded(shore)[addrs.VDI_ROM_VSWR_MODE_OPCODE]
+    a_blit = stack.TrapSite("a_function", 0x100, 500, (VRT_CPYFM,))
+    assert stack.need_under(a_blit, shore) == OUR_VDI_NEEDS[shore][VRT_CPYFM] + UNSTORED_UNDER[shore].get(VRT_CPYFM, 0)
+    unmeasured = stack.TrapSite("a_function", 0x100, 500, (0x7F,))
+    with pytest.raises(AssertionError, match="no run.*measured"):
+        stack.need_under(unmeasured, shore)
+
+
+C_CALL = [(0x100, "pea 1 <a-0x2ffff>"), (0x104, "pea 2 <a-0x2fffe>"), (0x108, "pea 72 <a-0x2ff8e>"), (0x10c, "movel %a2,%sp@-"),
+          (0x10e, "lea 38e18 <aes_gsx_ncode>,%a3"), (0x114, "jsr %a3@")]
+ALCYON_CALL = [(0x200, "movew %d0,%sp@-"), (0x202, "movew #122,%sp@-"), (0x206, "bsrw 300 <aes_rom_gsx_1code>")]
+
+
+@pytest.mark.parametrize("body, alcyon, opcode", (
+    (C_CALL, False, 0x72), (ALCYON_CALL, True, 122),
+    ([(0x100, "moveq #113,%d1"), (0x102, "movel %d1,%sp@(44)"), (0x106, "movel %d4,%sp@(40)"), (0x10a, "jmp 300 <aes_gsx_1code>")], False, None),
+    ([(0x100, "movel %d3,%sp@-"), (0x102, "movel %a2,%sp@-"), (0x104, "jsr 300 <aes_gsx_ncode>")], False, None),
+    ([(0x100, "pea 72 <a-0x2ff8e>"), (0x104, "jsr 300 <aes_gsx_ncode>")], False, None),
+    ([(0x0fc, "pea 1 <a-0x2ffff>"), (0x100, "pea 72 <a-0x2ff8e>"), (0x104, "jsr 300 <aes_gsx_ncode>")], False, None),
+    ([(0x200, "movew #122,%sp@-"), (0x204, "movew %d0,%sp@-"), (0x206, "bsrw 300 <aes_rom_gsx_1code>")], True, None),
+    ([(0x100, "pea ffffffff <b+0xfffa1577>"), (0x104, "movel %a2,%sp@-"), (0x106, "jsr 300 <aes_gsx_1code>")], False, None),
+), ids=("a C call: the opcode pushed before the image", "an Alcyon call: the opcode pushed last", "stored, not pushed",
+        "a register's value", "no image pushed after it", "two immediates and no image after them",
+        "another word pushed after it", "no opcode's value"))
+def test_an_opcode_is_read_off_the_call_that_names_it_and_off_nothing_else(body, alcyon, opcode):
+    assert stack._opcode_read_at(body, len(body) - 1, alcyon) == opcode
+
+
+TWO_PATHS_JOINED_AT_THE_IMAGE_S_PUSH = [
+    (0x100, "beqs 10a <a_function+0xa>"), (0x102, "pea 8 <a-0x2fff8>"), (0x106, "bras 10e <a_function+0xe>"),
+    (0x10a, "pea 20 <a-0x2ffe0>"), (0x10e, "movel %a2,%sp@-"), (0x110, "jsr 300 <aes_gsx_ncode>")]
+THE_OPCODE_S_SLOT_STORED_OVER = [(0x100, "pea 20 <a-0x2ffe0>"), (0x104, "movel %a2,%sp@-"), (0x106, "movel %d3,%sp@(4)"),
+                                 (0x10a, "jsr 300 <aes_gsx_ncode>")]
+ANOTHER_SLOT_STORED = [(0x100, "pea 20 <a-0x2ffe0>"), (0x104, "movel %a2,%sp@-"), (0x106, "movel %d3,%sp@(8)"),
+                       (0x10a, "jsr 300 <aes_gsx_ncode>")]
+AN_ALCYON_PUSH_A_BRANCH_LANDS_AFTER = [(0x200, "movew #122,%sp@-"), (0x204, "lea 38e18 <aes_rom_gsx_1code>,%a0"),
+                                       (0x20a, "jsr %a0@"), (0x20c, "bras 204 <a_function+0x4>")]
+
+
+@pytest.mark.parametrize("body, alcyon, by", (
+    (TWO_PATHS_JOINED_AT_THE_IMAGE_S_PUSH, False, "a branch lands at 0x10e"),
+    (THE_OPCODE_S_SLOT_STORED_OVER, False, "stores into the slot of the VDI opcode"),
+    (AN_ALCYON_PUSH_A_BRANCH_LANDS_AFTER, True, "a branch lands at 0x204"),
+), ids=("two paths joined at the image's push", "the opcode's slot stored over", "a branch landing after an Alcyon push"))
+def test_an_opcode_the_text_s_order_cannot_say_is_refused_by_name(body, alcyon, by):
+    """THE REVIEW'S TWO SHAPES (neither in today's listings: all 38 sites of both blobs read or declared): read in
+    text order the first was the cheaper of two opcodes and the second a stale immediate. Refused, by the address."""
+    with pytest.raises(AssertionError, match=by):
+        stack._opcode_read_at(body, len(body) - 1 if not alcyon else 2, alcyon, "a_function")
+
+
+def test_a_store_into_another_argument_s_slot_is_passed_over():
+    assert stack._opcode_read_at(ANOTHER_SLOT_STORED, len(ANOTHER_SLOT_STORED) - 1, False) == 0x20
+
+
+_A_VDI_OPCODE_NAMED = re.compile(r"\bVDI_ROM_\w+_OPCODE\b")
+
+
+def _c_body_of(function):
+    source = (derived.RECREATE / "src" / "aes" / stack.THE_SOURCE_OF[function]).read_text()
+    return re.search(rf"^[\w \*]+\b{function}\(.*?^}}", source, re.MULTILINE | re.DOTALL).group(0)
+
+
+@pytest.mark.parametrize("function", stack.OPCODES_DECLARED)
+def test_a_declared_function_s_opcodes_are_its_source_s_and_its_listing_s(function, blob):
+    """A DECLARATION HELD TWICE: the opcodes a function is declared to ask are exactly the ones its C body names —
+    and each is an immediate of its listing on this blob (a function rewritten to ask another reddens here)."""
+    assert set(_A_VDI_OPCODE_NAMED.findall(_c_body_of(function))) == set(stack.OPCODES_DECLARED[function])
+    immediates = {int(value) for _at, text in stack.reading(blob.elf).functions()[function] for value in re.findall(r"#(\d+)\b", text)}
+    # ...a word of its own, or the high word of the longword contrl[0] and [1] are stored as (gsx_tblt's).
+    as_a_high_word = {value >> aes.WORD_BYTES * 8 for value in immediates}
+    for opcode in stack.opcodes_declared(function):
+        assert opcode in immediates | as_a_high_word, f"{function}'s listing has no immediate {opcode}"
 
 
 def test_finding_the_nest_a_horizontal_blank_a_vertical_blank_inside_it_an_mfp_interrupt_inside_that():
@@ -491,39 +880,67 @@ def test_finding_the_nest_a_horizontal_blank_a_vertical_blank_inside_it_an_mfp_i
         assert stack.nest(shore) == THE_HORIZONTAL_BLANK + switch.worst_interrupt_need(switch.our_interrupt_needs(stack.blob_of(shore)))
 
 
-def test_finding_the_dispatcher_s_slack_with_the_horizontal_blank_charged():
-    """WHAT THE SAME EIGHT BYTES DO TO BAND 4'S FIGURE (reported, not edited there: `test_aes_evdisp_model.py` pins
-    the dispatcher's 640-byte stack with a vertical blank and an MFP interrupt, 600 of 640): with a horizontal
-    blank under them it is 608 of 640 — 32 spare, not 40. It still fits."""
+def test_the_dispatcher_s_stack_is_charged_the_same_nest():
+    """BAND 4'S FIGURE TAKES THE HORIZONTAL BLANK TOO (the frame diet's pass, 2026-10-10: `test_aes_evdisp_model.py`
+    charged a vertical blank and an MFP interrupt, 244, and reported 40 spare of 640): what it pins as left of the
+    dispatcher's 640 bytes is under this module's nest — and is more than it was, the same marks having flattened
+    forker's paths."""
     import test_aes_evdisp_model as dispatcher
-    for directory in BLOBS.values():
-        slack = dispatcher.THE_SLACK[rom_bench.RomBench(directory).elf.parent.name]
-        assert slack - THE_HORIZONTAL_BLANK == 32 and slack - THE_HORIZONTAL_BLANK > 0
+    for shore, directory in BLOBS.items():
+        blob = rom_bench.RomBench(directory)
+        slack = dispatcher.THE_SLACK[blob.elf.parent.name]
+        assert slack == dispatcher.DISPATCHER_STACK_BYTES - dispatcher._bound(blob) - stack.nest(shore) and slack > 0
 
 
-def test_finding_the_verdict_our_own_frames_fit_and_the_bound_at_its_deepest_trap_is_over(blob):
-    """THE VERDICT AGAINST W2-R3, AS NUMBERS. Our own frames with the nest on top: inside the stack, 36 spare. At
-    the deepest trap, with OUR VDI's most under it and the nest: OVER — by 284 bytes on the bench blob, 294 on the
-    shipped one. The flip does not land over this; a frame-diet that changes it changes THIS PIN, by name."""
+def test_finding_the_verdict_the_shipped_blob_fits_its_stack_and_the_bench_blob_s_figure_is_reported(blob):
+    """THE VERDICT AGAINST W2-R3, AS NUMBERS, each blob's own VDI under its traps. Our own frames with the nest on
+    top: 200 spare on both. At its traps, each site charged ITS OWN call's need, the unstored allocation under it
+    and the nest: THE SHIPPED BLOB — THE PROGRAM, AND THE GATE — FITS WITH 36 TO SPARE, its worst an icon's blit in
+    a menu; THE BENCH BLOB IS OVER BY 134 at the icon's label, under the C twin of a text blit no ROM ships
+    (reported, not gated: a measuring build). A frame that grows on either changes THIS PIN, by name."""
     shore, read = stack.shore_of(blob), stack.bound(blob)
     assert SPAN - (read.deepest + stack.nest(shore)) == OWN_FRAMES_SPARE
     needed, at_a_trap = stack.need(blob)
-    assert at_a_trap and needed - SPAN == OVER_AT_THE_DEEPEST_TRAP[shore], (
-        f"{shore}: the bound needs {needed} of {SPAN} — over by {needed - SPAN}, where the finding holds "
-        f"{OVER_AT_THE_DEEPEST_TRAP[shore]}: say which frame or call moved, and re-pin")
-    assert needed == read.at_a_trap + THE_ROM_S_VDI_NEEDS[V_GTEXT] + OUR_VDI_GOES_DEEPER_BY + THE_NEST
+    deepest, site = stack.at_its_traps(blob)
+    assert at_a_trap and SPAN - needed == SPARE_AT_ITS_TRAPS[shore], (
+        f"{shore}: the bound needs {needed} of {SPAN} — {SPAN - needed} spare, where the finding holds "
+        f"{SPARE_AT_ITS_TRAPS[shore]}: say which frame or call moved, and re-pin")
+    assert (site.function, site.depth, site.opcodes) == THE_WORST_SITE[shore]
+    assert needed == deepest + THE_NEST == site.depth + stack.needs_bounded(shore)[site.opcodes[0]] + THE_NEST
+
+
+def test_the_gate_is_the_shipped_blob_and_it_fits_with_room():
+    """THE GATE ON THE FLIP (ruling W2-R3; the third pass's rulings): the SHIPPED blob's bound, its own handlers
+    bound, is inside the 1,196 bytes with at least 32 to spare — and its text's site, the icon's label, with 40."""
+    shipped = stack.blob_of(SHIPPED)
+    needed, _at_a_trap = stack.need(shipped)
+    assert SPAN - needed >= 32
+    function, depth = THE_TEXT_S_SITE_ON_THE_SHIPPED_BLOB
+    text = max((site for site in stack.trap_sites(shipped.elf) if site.function == function), key=lambda site: site.depth)
+    assert (text.depth, SPAN - text.depth - stack.need_under(text, SHIPPED) - THE_NEST) == (depth, ITS_SPARE)
+
+
+def test_finding_charged_the_worst_call_at_its_deepest_trap_the_bound_would_be_over(blob):
+    """THE COARSE SUM, KEPT AS A FINDING: the deepest trap (a fill's) with the worst need of any call (a text's)
+    under it and the nest is OVER on both blobs — 22 bytes on the shipped one, 190 on the bench one — a call no path
+    makes. The call-by-call bound is never above it."""
+    shore = stack.shore_of(blob)
+    assert stack.need_charged_the_worst(blob) - SPAN == CHARGED_THE_WORST_IT_IS_OVER_BY[shore]
+    assert stack.need(blob)[0] <= stack.need_charged_the_worst(blob)
+    assert stack.need_charged_the_worst(blob) == stack.bound(blob).at_a_trap + stack.under_a_trap(shore) + stack.nest(shore)
 
 
 def test_finding_what_an_application_s_routine_is_left(blob):
     """A USERDEF'S DRAW ROUTINE RUNS ON THIS STACK, and no reading bounds it: so what is said of it is what it HAS.
-    It is entered 682 bytes down (the listing's figure, and the measured one, to the byte); under the ROM, 472. An
-    application's routine has 210 bytes less than under the ROM: 514 left, 262 with the interrupts' nest."""
+    It is entered 538 bytes down (the listing's figure, and the measured one, to the byte); under the ROM, 472. An
+    application's routine has 66 bytes less than under the ROM: 658 left, 406 with the interrupts' nest. (Before the
+    frame diet, 2026-10-10: 682 down, 210 less than under the ROM.)"""
     shore = stack.shore_of(blob)
     depth, path = stack.at_the_userdef_call(blob)
     assert depth == AT_THE_USERDEF_CALL and path[-2:] == ("aes_ob_user", stack.AN_APPLICATION_S_ROUTINE)
     assert stack.measured(stack.THE_USERDEF, shore).userdef_at == depth, "the listing's depth at the call is the run's"
     assert stack.measured(stack.THE_USERDEF).userdef_at == UNDER_THE_ROM_S
-    assert (SPAN - depth, SPAN - depth - stack.nest(shore), depth - UNDER_THE_ROM_S) == (514, 262, 210)
+    assert (SPAN - depth, SPAN - depth - stack.nest(shore), depth - UNDER_THE_ROM_S) == (658, 406, 66)
 
 
 @pytest.mark.parametrize("scenario", stack.SCENARIOS)
@@ -535,30 +952,43 @@ def test_finding_the_measured_runs_from_the_real_entry(scenario):
     assert runs[0].observed == runs[1].observed == runs[2].observed
 
 
-# THE MEASURED VERDICT: a run's lowest store + the nest, bytes over the stack (negative: spare) — bench, shipped.
-# WITH NO INTERRUPT AT ALL the icon's run leaves 22 / 12 bytes of the 1,196.
-MEASURED_OVER = {stack.THE_ELEVATOR: (-140, -130), stack.THE_TITLE: (-172, -162), stack.THE_CLOSER: (-328, -328),
-                 stack.THE_MENU: (8, 12), stack.THE_ICON: (230, 240), stack.THE_USERDEF: (8, 12)}
+# THE MEASURED VERDICT: a run's lowest store + the nest, bytes SPARE of the stack (negative: OVER) — bench, shipped.
+# ON THE SHIPPED BLOB EVERY RUN FITS: a menu dropped with 80 to spare, an icon in it with 40. On the bench blob the
+# menu's two are over (its C text blit). (Before the frame diet a menu dropped was over by 8 / 12 with THE ROM'S
+# handlers behind our dispatcher — which was all that was measured.)
+MEASURED_SPARE = {stack.THE_ELEVATOR: (128, 230), stack.THE_TITLE: (184, 286), stack.THE_CLOSER: (304, 386),
+                  stack.THE_MENU: (-94, 80), stack.THE_ICON: (-134, 40), stack.THE_USERDEF: (-94, 80)}
+# ...and how far each still is from the ROM's own run (bench, shipped): the ABI's longword slots and image pointer on
+# every call of the path, the Alcyon entry under everyobj, the two thunks under the trap — and, on the bench blob,
+# the raster cores' C twins.
+DEEPER_THAN_THE_ROM_S_BY = {stack.THE_ELEVATOR: (188, 86), stack.THE_TITLE: (212, 110), stack.THE_CLOSER: (166, 84),
+                            stack.THE_MENU: (316, 142), stack.THE_ICON: (264, 90), stack.THE_USERDEF: (316, 142)}
 
 
 @pytest.mark.parametrize("scenario", stack.SCENARIOS)
 def test_finding_the_verdict_of_a_measured_run_with_the_nest_on_top(scenario):
-    """...AND WHAT EACH IS BESIDE THE STACK with the nest on top. A FINDING: A MENU DROPPED — a routine action — IS
-    OVER BY 8 / 12 BYTES, and the icon's by 230 / 240; the gadgets' runs fit. The ROM's own run fits every time.
-    (A run's depth is its lowest STORE: SP itself may have stood up to `untouched_at_most` lower.)"""
-    over = tuple(stack.measured(scenario, shore).deepest + stack.nest(shore) - SPAN for shore in BLOBS)
-    assert over == MEASURED_OVER[scenario], f"{scenario}: over by {over} (bench, shipped) where the finding holds {MEASURED_OVER[scenario]}"
+    """...AND WHAT EACH IS BESIDE THE STACK with the nest on top: ON THE SHIPPED BLOB EVERY RUN FITS — and how much
+    deeper than the ROM's own run each still goes. The ROM's own run fits every time. (A run's depth is its lowest
+    STORE: SP itself may have stood lower — by the AES's `untouched_at_most`, or an unstored allocation of the VDI's.)"""
+    spare = tuple(SPAN - stack.measured(scenario, shore).deepest - stack.nest(shore) for shore in BLOBS)
+    assert spare == MEASURED_SPARE[scenario] and spare[1] > 0, (
+        f"{scenario}: {spare} spare (bench, shipped) where the finding holds {MEASURED_SPARE[scenario]}")
+    deeper = tuple(stack.measured(scenario, shore).deepest - stack.measured(scenario).deepest for shore in BLOBS)
+    assert deeper == DEEPER_THAN_THE_ROM_S_BY[scenario]
     assert stack.measured(scenario).deepest + stack.nest() <= SPAN, "the ROM's own run, its own handlers on top"
 
 
-def test_a_measured_run_is_never_deeper_than_the_bound_and_the_icon_s_run_is_the_deepest_trap_s_chain(blob):
-    """WHAT HOLDS THE READING TO THE TRUTH: no run is deeper than the listing's bound with our VDI's need under its
-    trap — and the staged icon's run IS the bound's deepest trap chain, realised: its lowest store is that trap's
-    depth and vrt_cpyfm's own need under it, to the byte."""
+def test_a_measured_run_is_never_deeper_than_the_bound_and_the_icon_s_run_is_its_text_s_site(blob):
+    """WHAT HOLDS THE READING TO THE TRUTH: no run is deeper than the listing's bound with each trap's own need under
+    it — and the staged icon's run IS a site of the bound, realised: its lowest store is the depth of gsx_tblt's
+    trap under the icon's label and this blob's own v_gtext's need under it, to the byte. (The shipped blob's WORST
+    site is the icon's blit, by the unstored 76 no store shows: its stored depth, 588 + 244, lies above the text's.)"""
     shore, read = stack.shore_of(blob), stack.bound(blob)
+    at_its_traps, _site = stack.at_its_traps(blob)
     for scenario in stack.SCENARIOS:
-        assert stack.measured(scenario, shore).deepest <= max(read.deepest, read.at_a_trap + stack.under_a_trap(shore))
-    assert stack.measured(stack.THE_ICON, shore).deepest == read.at_a_trap + stack.os_needs(shore)[VRT_CPYFM]
+        assert stack.measured(scenario, shore).deepest <= max(read.deepest, at_its_traps)
+    text = max((site for site in stack.trap_sites(blob.elf) if site.opcodes == (V_GTEXT,)), key=lambda site: site.depth)
+    assert stack.measured(stack.THE_ICON, shore).deepest == text.depth + stack.os_needs(shore)[V_GTEXT]
 
 
 def test_the_two_limits_of_a_measured_depth_are_said_and_the_first_is_bounded(blob):

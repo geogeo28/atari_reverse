@@ -322,11 +322,7 @@ NO_STRICT_ALIASING = "-fno-strict-aliasing"
 TARGET_FLAG_EXPANSIONS = ((RECREATE, "BENCH_CFLAGS"), (RECREATE, "SHIPPED_CFLAGS"), (RECREATE / "atari", "CFLAGS"))
 
 
-def _expanded(directory, variable):
-    """`variable` as the makefile in `directory` expands it — make's answer, not a reading of the text."""
-    probe = f"include Makefile\nprint-flags:\n\t@echo $({variable})\n"
-    return subprocess.run(["make", "-s", "-f", "-", "print-flags"], input=probe, cwd=directory, capture_output=True,
-                          text=True, check=True).stdout.split()
+_expanded = transcription.make_variable     # `variable` as the makefile in `directory` expands it: make's answer
 
 
 @pytest.mark.parametrize("directory, variable", TARGET_FLAG_EXPANSIONS, ids=lambda each: str(each))
@@ -3274,58 +3270,58 @@ FM_ALERT_NO_DEFAULT = "aes_fm_alert, no button the default: Return taken, the ne
 FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS = ("aes_fm_alert, a default past the three buttons: Return taken, the next wait blocked; "
                                        "the third clicked while it waits")
 DOOR_USERS_PRICED = {
-    "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": ((20598, 30594), (354, 340), 1, NO_WINDOW),
+    "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": ((20282, 30594), (354, 340), 1, NO_WINDOW),
     "aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0": (
-        (90272, 134604), (23464, 36210), 4, NO_WINDOW),
+        (88948, 134604), (23088, 36210), 4, NO_WINDOW),
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": (
-        (47436, 70994), (18348, 28420), 3, NO_WINDOW),
-    SENDMSG_TO_A_FULL_PIPE: ((8034, 13066), (360, 678), 1, THE_DESK_READS_ITS_PIPE),
+        (46700, 70994), (18060, 28420), 3, NO_WINDOW),
+    SENDMSG_TO_A_FULL_PIPE: ((7904, 13066), (360, 678), 1, THE_DESK_READS_ITS_PIPE),
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": (
-        (4974, 7826), (150, 474), 1, NO_WINDOW),
+        (4910, 7826), (150, 474), 1, NO_WINDOW),
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": (
-        (159216, 252386), (111288, 182290), 3, NO_WINDOW),
-    MN_DO_ACROSS_THE_DESK_S_TURN: ((174546, 273210), (101158, 165168), 3, THE_DESK_TAKES_A_KEY),
-    MN_DO_ACROSS_TWO_TURNS: ((170926, 269486), (101158, 165168), 3, THE_DESK_TAKES_TWO_KEYS),
-    "aes_gr_wait, the pixel the mouse is on, left by the mouse": ((45382, 60676), (24462, 29856), 1, NO_WINDOW),
-    "aes_gr_rubbox, the corner at the mouse; stretched, then released": ((71428, 99632), (29830, 37808), 4, NO_WINDOW),
-    "aes_gr_dragbox, held at the mouse; moved, then released": ((71822, 100176), (30224, 38352), 4, NO_WINDOW),
-    "aes_gr_slidebox, the elevator held; dragged down, then released": ((74828, 106530), (33230, 44706), 4, NO_WINDOW),
-    "aes_fm_do, nothing typed: the first wait blocked; woken by Return": ((76428, 115722), (55594, 82548), 5, NO_WINDOW),
+        (159258, 252386), (112070, 182290), 3, NO_WINDOW),
+    MN_DO_ACROSS_THE_DESK_S_TURN: ((174350, 273210), (101982, 165168), 3, THE_DESK_TAKES_A_KEY),
+    MN_DO_ACROSS_TWO_TURNS: ((170774, 269486), (101982, 165168), 3, THE_DESK_TAKES_TWO_KEYS),
+    "aes_gr_wait, the pixel the mouse is on, left by the mouse": ((45078, 60676), (24454, 29856), 1, NO_WINDOW),
+    "aes_gr_rubbox, the corner at the mouse; stretched, then released": ((70800, 99632), (29814, 37808), 4, NO_WINDOW),
+    "aes_gr_dragbox, held at the mouse; moved, then released": ((71242, 100176), (30256, 38352), 4, NO_WINDOW),
+    "aes_gr_slidebox, the elevator held; dragged down, then released": ((74248, 106530), (33262, 44706), 4, NO_WINDOW),
+    "aes_fm_do, nothing typed: the first wait blocked; woken by Return": ((75972, 115722), (55514, 82548), 5, NO_WINDOW),
     "aes_fm_do, a radio button pressed and held; the rise waited for, blocked; released, then Return": (
-        (78386, 127124), (38182, 65736), 7, NO_WINDOW),
+        (77294, 127124), (37902, 65736), 7, NO_WINDOW),
     "aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise": (
-        (42026, 65008), (14256, 22318), 3, NO_WINDOW),
-    FM_ALERT_NO_DEFAULT: ((189524, 294660), (136410, 212420), 10, NO_WINDOW),
-    FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: ((188194, 292106), (135080, 209866), 10, NO_WINDOW),
+        (41466, 65008), (14056, 22318), 3, NO_WINDOW),
+    FM_ALERT_NO_DEFAULT: ((189850, 294660), (137664, 212420), 10, NO_WINDOW),
+    FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: ((188520, 292106), (136334, 209866), 10, NO_WINDOW),
 }
 # ...and THE WHOLE RUN'S CYCLES on each blob, the ROM's and ours net of the entry both share — the second
 # differential's own measurement (`aes_switching.measured_on`: the table prices a row on one blob, a build is held
 # on both).
 BENCH_BLOB, SHIPPED_BLOB = "bench", "bench_shipped"
 DOOR_USERS_WHOLE_RUN = {
-    "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": {BENCH_BLOB: (50880, 43098), SHIPPED_BLOB: (50880, 42020)},
+    "aes_gr_stilldn, the button down, inside, waiting to leave; woken by the rise": {BENCH_BLOB: (50880, 42782), SHIPPED_BLOB: (50880, 41704)},
     "aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0": {
-        BENCH_BLOB: (257418, 221330), SHIPPED_BLOB: (257418, 218346)},
+        BENCH_BLOB: (257418, 220010), SHIPPED_BLOB: (257418, 217022)},
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
-        BENCH_BLOB: (144852, 124862), SHIPPED_BLOB: (144852, 124082)},
-    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 635204), SHIPPED_BLOB: (639424, 634768)},
+        BENCH_BLOB: (144852, 124126), SHIPPED_BLOB: (144852, 123346)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 635074), SHIPPED_BLOB: (639424, 634638)},
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
-        BENCH_BLOB: (14588, 11890), SHIPPED_BLOB: (14588, 12012)},
+        BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
-        BENCH_BLOB: (1102608, 1031826), SHIPPED_BLOB: (1102608, 1020918)},
-    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1163750), SHIPPED_BLOB: (1237428, 1150816)},
-    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1257824), SHIPPED_BLOB: (1331494, 1244802)},
-    "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203598), SHIPPED_BLOB: (212120, 201938)},
-    "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 278238), SHIPPED_BLOB: (297138, 275710)},
-    "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256966), SHIPPED_BLOB: (275878, 254576)},
-    "aes_gr_slidebox, the elevator held; dragged down, then released": {BENCH_BLOB: (274928, 253022), SHIPPED_BLOB: (274928, 250478)},
-    "aes_fm_do, nothing typed: the first wait blocked; woken by Return": {BENCH_BLOB: (176434, 150854), SHIPPED_BLOB: (176434, 140968)},
+        BENCH_BLOB: (1102608, 1031840), SHIPPED_BLOB: (1102608, 1020960)},
+    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1163526), SHIPPED_BLOB: (1237428, 1150620)},
+    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1257642), SHIPPED_BLOB: (1331494, 1244650)},
+    "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203296), SHIPPED_BLOB: (212120, 201634)},
+    "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 277612), SHIPPED_BLOB: (297138, 275082)},
+    "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256388), SHIPPED_BLOB: (275878, 253996)},
+    "aes_gr_slidebox, the elevator held; dragged down, then released": {BENCH_BLOB: (274928, 252444), SHIPPED_BLOB: (274928, 249898)},
+    "aes_fm_do, nothing typed: the first wait blocked; woken by Return": {BENCH_BLOB: (176434, 150398), SHIPPED_BLOB: (176434, 140512)},
     "aes_fm_do, a radio button pressed and held; the rise waited for, blocked; released, then Return": {
-        BENCH_BLOB: (203964, 161472), SHIPPED_BLOB: (203964, 159698)},
+        BENCH_BLOB: (203964, 160380), SHIPPED_BLOB: (203964, 158606)},
     "aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise": {
-        BENCH_BLOB: (118976, 99702), SHIPPED_BLOB: (118976, 98222)},
-    FM_ALERT_NO_DEFAULT: {BENCH_BLOB: (1492972, 1413772), SHIPPED_BLOB: (1492972, 1406324)},
-    FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: {BENCH_BLOB: (1490418, 1412202), SHIPPED_BLOB: (1490418, 1404886)},
+        BENCH_BLOB: (118976, 99142), SHIPPED_BLOB: (118976, 97662)},
+    FM_ALERT_NO_DEFAULT: {BENCH_BLOB: (1492972, 1414092), SHIPPED_BLOB: (1492972, 1406650)},
+    FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: {BENCH_BLOB: (1490418, 1412522), SHIPPED_BLOB: (1490418, 1405212)},
 }
 
 

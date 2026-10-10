@@ -676,10 +676,15 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_gsx_blt", "aes_gsx_mon"), ("aes_gsx_cline", "aes_gsx_mon"), ("aes_gr_box", "aes_gsx_mon"),
     ("aes_gr_movebox", "aes_gsx_mon"), ("aes_gr_growbox", "aes_gsx_mon"), ("aes_gr_shrinkbox", "aes_gsx_mon"),
     ("aes_gsx_tcalc", "aes_xstrpix"),
-    # the object draw path (`src/aes/objdraw.c`): just_draw's copies, the clip test, the colours and its marks
-    ("aes_just_draw", "aes_gr_crack"), ("aes_just_draw", "aes_gr_inside"), ("aes_just_draw", "aes_gsx_1code"),
-    ("aes_just_draw", "aes_gsx_chkclip"), ("aes_just_draw", "aes_lbcopy"), ("aes_just_draw", "aes_lstcpy"),
-    ("aes_just_draw", "aes_rc_copy"), ("aes_just_draw", "aes_xstrpix"),
+    # ...and the bodies two of its callers hold as their own (`stack_diet.h`): gr_rect's fill, gr_gicon's two blits
+    ("aes_gr_rect", "aes_gsx_fix"), ("aes_gr_gicon", "aes_gsx_fix"), ("aes_gr_gicon", "aes_gsx_mon"),
+    # the object draw path (`src/aes/objdraw.c`): just_draw's copies and its text — and, each a routine of its own
+    # (`stack_diet.h`), the clip test, the border and fill's colours, the label and the marks
+    ("aes_just_draw", "aes_gr_inside"), ("aes_just_draw", "aes_lbcopy"), ("aes_just_draw", "aes_lstcpy"),
+    ("outside_the_clip", "aes_rc_copy"), ("outside_the_clip", "aes_gr_inside"), ("outside_the_clip", "aes_gsx_chkclip"),
+    ("draw_border_and_fill", "aes_lbcopy"), ("draw_border_and_fill", "aes_gr_crack"),
+    ("draw_border_and_fill", "aes_gr_inside"), ("draw_label", "aes_xstrpix"),
+    ("draw_state_marks", "aes_gr_inside"), ("draw_state_marks", "aes_gsx_1code"),
     # the object draw path's leaves (`src/aes/obuser.c`): ob_format's two lengths, ob_user's PARMBLK rectangles
     ("aes_ob_format", "aes_strlen"), ("aes_ob_user", "aes_rc_copy"), ("aes_ob_user", "aes_gsx_gclip"),
     # ...and just_draw's two callers (`src/aes/obdraw.c`): the cursor shown again after the walk and after a change
@@ -804,6 +809,17 @@ def _symbol_table_at(path):
         elif len(fields) == 3:
             symbols.append(Symbol(int(fields[0], 16), None, fields[1], fields[2]))
     return tuple(symbols)
+
+
+def make_variable(directory, variable):
+    """A MAKEFILE'S VARIABLE AS MAKE EXPANDS IT — the flags a blob is compiled with, its sources, its link address:
+    the words of `variable` in the makefile of `directory`. Make's own answer, not a reading of the makefile's text;
+    for the tests that compile a source the way a build does (`test_tier3.py`: a twin's call kept a call;
+    `test_stack_diet.py`: a mark against its flags). HERE, beside the other readings of what a build made, so that
+    neither test module imports the other for it."""
+    probe = f"include Makefile\nprint-it:\n\t@echo $({variable})\n"
+    return subprocess.run(["make", "-s", "-f", "-", "print-it"], input=probe, cwd=directory, capture_output=True,
+                          text=True, check=True).stdout.split()
 
 
 def symbol_table(elf):

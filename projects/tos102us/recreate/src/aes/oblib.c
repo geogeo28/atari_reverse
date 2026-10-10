@@ -8,6 +8,7 @@
 
 #include "recreate.h"
 #include "machine.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "aes/objects.h"
 #include "aes/oblib.h"
@@ -142,6 +143,7 @@ static inline RECREATE_NORETURN void everyobj_outside_the_frame(void)
  * the recreate stops; `test_aes_oblib_walk.py` pins both halts. Each bound is tested where the level MOVES that way
  * and only when a store at it follows — a descent onto `last` ends the walk, and a climb to level 0 may end it too
  * (from a `first` below the root, the last sibling's climb reaches the root's level and stops), neither storing. */
+FRAME_DIET("no-tree-dominator-opts")
 void aes_everyobj(uint8_t *image, uint32_t tree, int16_t first, int16_t last, uint32_t routine, int16_t start_x,
                   int16_t start_y, int16_t max_depth)
 {

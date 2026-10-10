@@ -13,6 +13,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/evasync.h"
@@ -179,6 +180,7 @@ static inline uint32_t high_and_signed_low(uint16_t high, int16_t low)
  * from the MOBLK's leave flag — completes the EVB. Else the EVB is flagged LEAVE or not, keeps the rectangle (x and
  * y in its parameter, w and h in its ANSWER: what post_mouse's inorout tests it by) and goes on the CDA's mouse
  * list. */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls")
 void aes_amouse(uint8_t *image, uint32_t evb, uint32_t moblk)
 {
     uint16_t frame_local[FRAME_LOCAL_WORDS(AMOUSE_MOBLK_BYTES)];

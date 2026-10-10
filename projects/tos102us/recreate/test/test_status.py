@@ -415,6 +415,85 @@ _TABLE_NAMED_ROW_RE = re.compile(r"^\S.*?\s\$(?P<addr>f[c-e][0-9a-f]+)\s+(?P<cas
 _TWO_QUOTED = " / "
 
 
+# ---- ...AND EACH QUOTED ROW'S VERDICT WORD IS THE TABLE'S ---------------------------------------------------------------------
+# `**1.01** an image (V, `net`)` names the mechanism the table admitted the row by — `net`, `glue`, `through`, … — and a
+# row whose word CHANGES has changed class: `glue` is over the bar as shipped and admitted net of its thunks. A ledger
+# that goes on saying `net` under the new ratio hides that (the frame diet moved three, 2026-10-10, and every pin
+# above stayed green: any of the words was accepted). Held, FOR EVERY QUOTE THAT CARRIES A WORD — none is skipped:
+#   * where the cell quotes the row BY THE TABLE'S OWN NAME, the word is one the table prints on a row of that name
+#     at that address;
+#   * where it does not (a cell that abbreviates, or tags several rows at once: "…, all three clipped away (`glue`)"),
+#     the word is one the table prints at that address ON A ROW OF THE RATIO THE WORD STANDS BESIDE — the last one
+#     quoted before it. (The first form alone skipped 65 of 724 quotes in silence, and a word changed in one of them
+#     stayed green: the fourth pass's review.) A quote that fits neither is a failure, by its address and its words.
+_A_ROW_WITH_ITS_WORD_RE = re.compile(r"\*\*\d+\.\d\d(?: / \d+\.\d\d)?\*\* (?P<case>.+?) "
+                                     r"\((?P<tags>[^)]*?`(?P<word>net|glue|through|pinned|over|rule|own|transcribed|accepted)`[^)]*)\)")
+_A_QUOTED_RATIO_RE = re.compile(r"\*\*(\d+\.\d\d)(?: / \d+\.\d\d)?\*\*")
+_TABLE_ROW_WITH_ITS_WORD_RE = re.compile(r"^\S.*?\s\$(?P<addr>f[c-e][0-9a-f]+)\s+(?P<case>.+?)\s+\d+/\d+\s+\d+/\d+\s+(?P<ratio>\d+\.\d\d)"
+                                         r"[ \t]*(?P<word>\S*)[ \t]*$", re.M)
+QUOTES_HELD_BY_THE_ROW_S_NAME_AT_LEAST, QUOTES_HELD_BY_THE_RATIO_AT_MOST = 600, 80
+
+
+def _verdict_words_of_the_table():
+    """`({(ROM address, a row's name): words}, {(ROM address, a ratio as printed): words})` — the verdict words the
+    table prints on the rows of that name there (a `.S` row and its C twin's may share one), and on the rows of
+    that ratio there."""
+    by_name, by_ratio = {}, {}
+    for row in _TABLE_ROW_WITH_ITS_WORD_RE.finditer(BENCH_TABLE.read_text()):
+        by_name.setdefault((int(row["addr"], 16), row["case"].strip()), set()).add(row["word"])
+        by_ratio.setdefault((int(row["addr"], 16), row["ratio"]), set()).add(row["word"])
+    return by_name, by_ratio
+
+
+def test_every_quoted_row_s_verdict_word_is_the_one_the_table_prints_for_it():
+    by_name, by_ratio = _verdict_words_of_the_table()
+    by_the_name, by_the_ratio, wrong = 0, 0, []
+    for row in _VERIFIED_LINE_RE.finditer(_status()):
+        address = int(row["addr"], 16)
+        for quote in _A_ROW_WITH_ITS_WORD_RE.finditer(row[0]):
+            beside = _A_QUOTED_RATIO_RE.findall(quote[0])[-1]
+            if (address, quote["case"]) in by_name:
+                by_the_name += 1
+                printed = by_name[address, quote["case"]]
+            else:
+                by_the_ratio += 1
+                printed = by_ratio.get((address, beside), set())
+            if quote["word"] not in printed:
+                wrong.append(f"{address:#x}: `{quote['word']}` beside {beside} for {quote['case'][-60:]!r}; the table prints {sorted(printed)}")
+    assert by_the_name >= QUOTES_HELD_BY_THE_ROW_S_NAME_AT_LEAST and by_the_ratio <= QUOTES_HELD_BY_THE_RATIO_AT_MOST, (
+        f"{by_the_name} quotes name their row as the table does, {by_the_ratio} do not: the cells' shape moved")
+    assert not wrong, f"{len(wrong)} verdict word(s) STATUS.md quotes are not the table's:" + "".join(f"\n  {line}" for line in wrong)
+
+
+# ---- ...AND THE CYCLES A ROW'S NOTES QUOTE IN WORDS ARE THE PINS' ------------------------------------------------------------
+# "own 20598 against 30594" in a row's notes is a pinned price spelt in prose — `Priced((ours, the ROM's), …)` in the
+# row's battery — and nothing re-derived it: a build change re-pins the battery (by tool) and leaves the sentence
+# (the frame diet left 41 stale, 2026-10-10: its review found them). Held: EVERY `own N against M` of a current row
+# is a pinned pair — N our count pinned beside the ROM's M. One whose M is no pinned ROM count at all is a failure
+# too, not a quote passed over (it was: a mistyped M stayed green).
+_OWN_AGAINST_RE = re.compile(r"own (?P<ours>\d+) against (?P<the_rom_s>\d+)")
+_A_PINNED_PAIR_RE = re.compile(r"\((\d{3,}), (\d{3,})\)")
+
+
+def _pinned_own_counts_by_the_rom_s():
+    """{the ROM's count: our counts pinned beside it} over every `(ours, the ROM's)` pair the batteries spell."""
+    pinned = {}
+    for battery in sorted((REC / "test").glob("test_*.py")):
+        for ours, the_rom_s in _A_PINNED_PAIR_RE.findall(battery.read_text()):
+            pinned.setdefault(int(the_rom_s), set()).add(int(ours))
+    return pinned
+
+
+def test_every_own_against_a_row_s_notes_quote_is_a_pinned_pair():
+    pinned = _pinned_own_counts_by_the_rom_s()
+    quoted = [(int(row["addr"], 16), int(each["ours"]), int(each["the_rom_s"])) for row in _VERIFIED_LINE_RE.finditer(_status())
+              for each in _OWN_AGAINST_RE.finditer(row[0])]
+    assert len(quoted) > 20, f"only {len(quoted)} `own N against M` quotes are found: the notes' shape moved"
+    stale = [f"{address:#x}: own {ours} against {the_rom_s}; the pin beside {the_rom_s} is {sorted(pinned.get(the_rom_s, ())) or 'NONE'}"
+             for address, ours, the_rom_s in quoted if ours not in pinned.get(the_rom_s, ())]
+    assert not stale, f"{len(stale)} cycle quote(s) in STATUS.md's rows are not the pins':" + "".join(f"\n  {line}" for line in stale)
+
+
 def _names_of_the_registered_rows_that_switch():
     """{ROM address: the names of the registered rows that switch of the routine there}, each as the table and the
     ledger print it — the row's own label, without its routine."""

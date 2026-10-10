@@ -14,6 +14,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "aes/gemgraf.h"
 #include "aes/gsx.h"
@@ -43,6 +44,7 @@
  * walk, ending at `object`'s next — its sibling, or its parent — or, from the root, nowhere: -1). The walk starts at
  * the screen position of `object`'s parent (ob_offset), the root's at (0, 0) — one `clr.l` of both words. The cursor
  * is hidden round the walk. */
+FRAME_DIET("no-defer-pop")
 void aes_ob_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth)
 {
     uint16_t position_local[POSITION_WORDS];
@@ -114,6 +116,7 @@ static void change_object(uint8_t *image, uint32_t tree, int16_t object, int16_t
 }
 
 /* $fea38e — ob_change: `object`'s state made `new_state`, shown when `redraw` (a word) is non-zero. */
+FRAME_DIET("no-caller-saves")
 void aes_ob_change(uint8_t *image, uint32_t tree, int16_t object, int16_t new_state, int16_t redraw)
 {
     uint16_t frame_local[CHANGE_FRAME_WORDS];

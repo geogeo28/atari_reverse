@@ -45,6 +45,7 @@ import aes
 import aes_event
 import aes_evinput as evinput
 import aes_evlib
+import aes_stack
 import aes_switch as switch
 import aes_switching
 import case
@@ -440,9 +441,9 @@ THE_ROM_S_DEPTH = 188                   # the dispatcher's stack as the ROM's ow
 # ...and what the yield costs, the ROM's cycles and ours net of the entry both shores share, by blob (the shipped
 # configuration's reaches the VDI binding's `.S` through its thunks): 0.91 and 0.92 of the ROM's on the whole run —
 # the keyboard poll's VDI calls, which both shores run from the same ROM bytes, are four fifths of it.
-YIELD_CYCLES = {"bench": (11582, 10532), "bench_shipped": (11582, 10652)}
+YIELD_CYCLES = {"bench": (11582, 10468), "bench_shipped": (11582, 10588)}
 # ...and the wait that blocks and is woken (a key typed ahead): 0.84 and 0.83 on the whole run.
-WAIT_CYCLES = {"bench": (31690, 26556), "bench_shipped": (31690, 26242)}
+WAIT_CYCLES = {"bench": (31690, 26416), "bench_shipped": (31690, 26102)}
 BLOBS = switch.BLOBS
 
 
@@ -649,7 +650,7 @@ def test_the_yield_s_drops_are_what_they_say():
 # four `jsr`s into C, down EVERY path of the blob's listing — and the deepest SP it can take a `trap #2` at, under
 # which the OS goes on by as much as the deepest trap of the measured runs: the ROM's VDI (what the machine has), and
 # THE BUILD'S OWN VDI linked under the trap as a ROM that ships links it (`aes_switch.our_loop_run(our_vdi=True)`),
-# whose C goes 32 bytes deeper. So a recompile that deepens ANY frame under disp moves it, on a path no case runs
+# whose handlers are its own (`aes_switch.vdi_table_mapping`). So a recompile that deepens ANY frame under disp moves it, on a path no case runs
 # as on the others.
 # WHAT AN INTERRUPT NEEDS ON TOP is measured twice (`aes_switch`): the ROM's own handlers from their vectors, and
 # OUR OWN ENTRIES (`src/bios/isr.S`) — which are the ROM's instructions and need exactly what the ROM's do; while
@@ -670,14 +671,21 @@ LOOP_MACHINES = {
         lambda: evinput.at("a press on a window's title", FORKER, 1).machine,
     "a recording played back: mchange samples the locator": lambda: evinput.at("the desk plays a move back", FORKER, 1).machine,
 }
-THE_DEEPEST, THE_DEEPEST_TRAP = "a press on a window's title: bchange looks for the window under it", (
-    "a recording played back: mchange samples the locator")
+# (The frame diet, 2026-10-10: bchange's frames under forker are 20 bytes flatter than they were, and the deepest run
+# is now the one that takes the deepest trap — mchange's locator, with the VDI under it.)
+THE_DEEPEST = THE_DEEPEST_TRAP = "a recording played back: mchange samples the locator"
 DISPATCHER_STACK_BYTES = switch.DISPATCHER_STACK[1] - switch.DISPATCHER_STACK[0]
 # MEASURED, by blob — the ROM's own beside them, which never moves off its keyboard poll: (the bound read off the
 # build, the deepest a run of LOOP_MACHINES goes over the ROM's VDI, the deepest it takes a trap at, the deepest a
 # run goes over OUR VDI). An entry that moves says a frame under disp changed: re-read the numbers, and the 640
 # bytes less the interrupt's need.
-OUR_STACK = {"bench": (356, 300, 168, 328), "bench_shipped": (356, 312, 178, 338)}
+# THE FRAME DIET, 2026-10-10 (`include/stack_diet.h`: forker, bchange, mchange, mowner, ob_find, post_button and
+# post_mouse are marked for the screen manager's stack, and the dispatcher's loop runs the same routines): the bound
+# was 356 on both blobs, the runs (300, 168, 328) and (312, 178, 338). ITS THIRD PASS, the same day: "over our VDI"
+# had been the ROM's handlers behind our dispatcher; with the blob's OWN handlers bound (`aes_switch.vdi_table_mapping`)
+# and the dispatcher's call keeping no register (44 bytes under every VDI function) the bound is the build's own
+# frames under forker, 292 on both blobs — its deepest trap and our VDI under it are 274 / 284.
+OUR_STACK = {"bench": (292, 260, 132, 274), "bench_shipped": (292, 270, 142, 272)}
 # ...each the worst of every arm measured (`aes_switch._needs_measured`): timer C's 144 is the tick whose auto-repeat
 # injects Alternate + an arrow — a mouse packet built by the keyboard, under the tick; every other tick needs 140.
 THE_ROM_S_INTERRUPTS_NEEDS = switch.InterruptNeeds(acia=140, timer_c=144, vbl=100)
@@ -686,11 +694,24 @@ THE_ROM_S_INTERRUPTS_NEEDS = switch.InterruptNeeds(acia=140, timer_c=144, vbl=10
 # `jsr`, and the 40 to 52 bytes of callee-saved registers GCC saves under a call that keeps to nothing.)
 OUR_INTERRUPTS_NEEDS = THE_ROM_S_INTERRUPTS_NEEDS
 # The most the OS uses below a `trap #2` taken under disp — the AES's trap handler, the BIOS's door, the VDI's entry
-# and the function called (the poll's vsm_string is the deepest): through the ROM's VDI, and through OUR C VDI.
-THE_ROM_S_OS_UNDER_A_TRAP, OUR_VDI_UNDER_A_TRAP = 130, 162
-# WHAT IS LEFT of the dispatcher's 640 bytes under the build's deepest path with the worst nesting on top, by blob:
-# 640 - (356 + 100 + 144). STATUS.md quotes it.
-THE_SLACK = {"bench": 40, "bench_shipped": 40}
+# and the function called: through the ROM's VDI (the poll's vsm_string is the deepest), and through OUR OWN — the
+# blob's entry, dispatcher AND handlers (the bench blob's vsm_locator under mchange is the deepest, 142; the shipped
+# blob's vsm_string, 138). Lowest STORES, as `aes_stack.os_needs` are; the BIOS under their `trap #13` is the ROM's.
+THE_ROM_S_OS_UNDER_A_TRAP, OUR_VDI_UNDER_A_TRAP = 130, 142
+# ...AND THE UNSTORED TERM (the third pass's review asked whether this stack's bound carries one: it does now). A need
+# is a lowest store; SP can have stood below it by the largest allocation nothing was stored under that a run reaches
+# under the call (`aes_stack.unstored_under`, by opcode, on the blob's own VDI). THE CALLS THE DISPATCHER'S RUNS MAKE
+# are the keyboard poll's and the locator's — five opcodes, none a raster call — and under those the blob's code
+# reaches NO such allocation: the term is 0 on both blobs, charged in `_bound` and pinned, so that a call added under
+# disp, or a frame of locals in one of these five handlers, moves a number here.
+THE_DISPATCHER_S_VDI_CALLS = (addrs.VDI_ROM_LOCATOR_OPCODE, addrs.VDI_ROM_STRING_OPCODE, addrs.VDI_ROM_VSIN_MODE_OPCODE,
+                              addrs.VDI_ROM_VQ_MOUSE_OPCODE, addrs.VDI_ROM_VQ_KEY_S_OPCODE)
+UNSTORED_UNDER_ITS_TRAPS = 0
+# WHAT IS LEFT of the dispatcher's 640 bytes under the build's deepest path with the worst nest on top, by blob —
+# THE NEST AS THE SCREEN MANAGER'S STACK IS CHARGED IT (`aes_stack.nest`: a horizontal blank's 8 bytes under the
+# vertical blank and the MFP interrupt inside it; band 4 charged the two alone, 244): 640 - (292 + 252). Before the
+# frame diet (2026-10-10) it was 640 - (356 + 244) = 40, 32 with the horizontal blank. STATUS.md quotes it.
+THE_SLACK = {"bench": 96, "bench_shipped": 96}
 
 
 @functools.cache
@@ -717,11 +738,24 @@ def _under_a_trap(our_vdi=False):
     return max(under for run in runs for _taken_at, under in run.traps)
 
 
+def _calls_under_disp(blob):
+    """The VDI opcodes the runs from disp's loop on `blob` ask for, its own VDI under the trap."""
+    return {opcode for run in _runs_on(blob, our_vdi=True).values() for opcode in run.opcodes}
+
+
+def _unstored_under_its_traps(blob):
+    """How far SP can have stood below the lowest store under a trap taken on the dispatcher's stack: the largest
+    unstored allocation `aes_stack` finds reached under any call these runs make, on the blob's own VDI."""
+    under, asked = aes_stack.unstored_under(aes_stack.shore_of(blob)), _calls_under_disp(blob)
+    assert asked <= set(under), f"disp's runs ask the VDI for {sorted(asked - set(under))}, which `aes_stack` measures no need for"
+    return max(under[opcode] for opcode in asked)
+
+
 def _bound(blob):
     """The deepest `blob`'s build can take the dispatcher's stack: its own code's deepest, or its deepest trap and
-    the OS under it — the ROM's VDI or the build's own, whichever goes deeper."""
+    the OS under it — the ROM's VDI or the build's own with its unstored term, whichever goes deeper."""
     deepest, trapped, _use, _trap_use = switch.dispatcher_stack_reading(blob)
-    return max(deepest, trapped + max(_under_a_trap(), _under_a_trap(our_vdi=True)))
+    return max(deepest, trapped + max(_under_a_trap(), _under_a_trap(our_vdi=True) + _unstored_under_its_traps(blob)))
 
 
 def _refusal(blob, need, whose):
@@ -735,14 +769,14 @@ def test_our_frames_fit_the_dispatcher_s_stack_under_the_rom_s_own_handlers(blob
     """THE DERIVED CHECK, the BIOS under our AES the ROM's: the deepest any path of this build's listing takes the
     dispatcher's stack, with the worst the ROM's own handlers need on top, is inside its 640 bytes — a store below
     $899a would land on the three SR save words."""
-    need = switch.worst_interrupt_need()
+    need = aes_stack.nest()
     assert _bound(blob) + need <= DISPATCHER_STACK_BYTES, _refusal(blob, need, "the ROM's interrupt handlers'")
 
 
 def test_our_frames_fit_the_dispatcher_s_stack_under_our_own_handlers(blob):
     """THE DERIVED CHECK ON A BUILD THAT SHIPS ITS OWN BIOS: the same bound with OUR entries' worst nesting on top.
     (A strict xfail while each entry was a bracket round a C body: 700 of 640.)"""
-    need = switch.worst_interrupt_need(switch.our_interrupt_needs(blob))
+    need = aes_stack.nest(aes_stack.shore_of(blob))
     assert _bound(blob) + need <= DISPATCHER_STACK_BYTES, _refusal(blob, need, "our own interrupt entries'")
 
 
@@ -751,7 +785,8 @@ def test_our_own_handlers_need_what_the_rom_s_do_and_leave_what_status_says(blob
     nesting leaves of the stack."""
     needs = switch.our_interrupt_needs(blob)
     assert needs == OUR_INTERRUPTS_NEEDS == switch.interrupt_needs(), f"our interrupt entries need {needs}: say which frame moved"
-    slack = DISPATCHER_STACK_BYTES - _bound(blob) - switch.worst_interrupt_need(needs)
+    assert aes_stack.nest(aes_stack.shore_of(blob)) == aes_stack.hbl_need() + switch.worst_interrupt_need(needs)
+    slack = DISPATCHER_STACK_BYTES - _bound(blob) - aes_stack.nest(aes_stack.shore_of(blob))
     assert slack == THE_SLACK[blob.elf.parent.name], f"{slack} bytes are left: re-quote STATUS.md"
 
 
@@ -792,6 +827,8 @@ def test_the_stack_reading_is_what_was_measured(blob):
     assert max(measured, deepest_on_ours) <= _bound(blob), f"a run goes deeper than the listing's bound, {_bound(blob)}"
     assert (_under_a_trap(), _under_a_trap(our_vdi=True)) == (THE_ROM_S_OS_UNDER_A_TRAP, OUR_VDI_UNDER_A_TRAP), (
         f"the OS uses {_under_a_trap()} bytes under a trap, our VDI {_under_a_trap(our_vdi=True)}: say which call moved")
+    assert (_calls_under_disp(blob), _unstored_under_its_traps(blob)) == (set(THE_DISPATCHER_S_VDI_CALLS), UNSTORED_UNDER_ITS_TRAPS), (
+        f"disp's runs ask the VDI for {sorted(_calls_under_disp(blob))}, {_unstored_under_its_traps(blob)} bytes unstored under them")
     assert (_bound(blob), measured, trapped, deepest_on_ours) == OUR_STACK[blob.elf.parent.name], (
         f"the dispatcher's stack measures {(_bound(blob), measured, trapped, deepest_on_ours)}: say which frame moved")
 

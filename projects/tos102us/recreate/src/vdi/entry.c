@@ -108,8 +108,8 @@ static void make_current(uint8_t *image, uint32_t work)
 }
 
 /* The function the opcode tables name, `jsr`ed: 1..39 and 100..131, compared SIGNED; any other opcode calls
- * nothing. The tables are ROM data, read where they lie. The call saves what it must round itself
- * (`call_vector_keeping`), so the lookups that call nothing do not pay for it. */
+ * nothing. The tables are ROM data, read where they lie. The call is the dispatcher's last act and keeps no
+ * register round itself, as the ROM's does not (`call_vector_as_the_last_act`: the entry has saved them all). */
 static void call_function(uint8_t *image, int16_t opcode)
 {
     uint32_t table;
@@ -124,7 +124,7 @@ static void call_function(uint8_t *image, int16_t opcode)
     } else {
         return;
     }
-    call_vector_keeping(image, be32(image + table_entry(table, opcode - first, VDI_LONG_BYTES)));
+    call_vector_as_the_last_act(image, be32(image + table_entry(table, opcode - first, VDI_LONG_BYTES)));
 }
 
 /* $fca9f6 — the dispatcher. CONTRL is loaded once (`movea.l $299e,a5`); the handle and the opcode are read BEFORE
@@ -151,6 +151,26 @@ void vdi_dispatch(uint8_t *image)
         make_current(image, work);
     }
     call_function(image, opcode);
+}
+
+/* The dispatcher called AS THE ENTRY CALLS IT: with every register the entry holds kept round the call — the ROM's
+ * `movem.l d1-a6,-(sp)` at $fc9f9e, which is what lets the dispatcher keep none (`call_vector_as_the_last_act`). The
+ * entry ships as the ROM's own instructions, which make that save themselves; THIS IS ITS C TWIN'S, a C caller of a
+ * routine that gives the callee-saved registers back as a VDI function left them. Off target a plain call. */
+static inline void dispatched_keeping(uint8_t *image)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    vdi_dispatch(image);
+#else
+    __asm__ volatile ("movem.l %%d2-%%d7/%%a2-%%a6,-(%%sp)\n\t"
+                      "move.l %0,-(%%sp)\n\t"
+                      "jsr vdi_dispatch\n\t"
+                      "addq.l #4,%%sp\n\t"
+                      "movem.l (%%sp)+,%%d2-%%d7/%%a2-%%a6"
+                      :
+                      : "r"(image)
+                      : "d0", "d1", "a0", "a1", "memory", "cc");
+#endif
 }
 
 /* $fc9f9e — the VDI's `trap #2` entry. The five pointers are read and stored in the block's order, contrl held
@@ -188,7 +208,7 @@ uint16_t vdi_entry(uint8_t *image, uint32_t parameter_block)
         }
         copy_words(image + VDI_PTSIN_COPY, image + bus_dereference(ptsin), words);
     }
-    vdi_dispatch(image);
+    dispatched_keeping(image);
     set_contrl_word(image, CONTRL_N_PTSIN, caller_points);
     return be16(image + VDI_RESULT);
 }

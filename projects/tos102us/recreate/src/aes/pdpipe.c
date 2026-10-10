@@ -19,6 +19,7 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "recreate.h"
+#include "stack_diet.h"
 #include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/apmsg.h"
@@ -60,6 +61,7 @@ int16_t aes_pd_match(uint8_t *image, uint32_t name, int16_t pid, uint32_t pd)
 
 /* $fe5750 — fpdnm: the PD pd_match finds, or FPDNM_NONE: the three static ones in turn, then each accessory's — its
  * address out of AES_ACCESSORY_PDS — up to AES_ACCESSORY_COUNT (a signed compare: none for a count of 0 or less). */
+FRAME_DIET("no-defer-pop", "no-function-cse", "no-move-loop-invariants")
 uint32_t aes_fpdnm(uint8_t *image, uint32_t name, int16_t pid)
 {
     int16_t index;
@@ -192,6 +194,7 @@ static int16_t redraw_merged(uint8_t *image, uint32_t pd, uint32_t message, int1
  * pipe (PD_QUEUE): a WM_REDRAW is merged into one queued for the same window (`redraw_merged`), any other message —
  * or a redraw with none to merge into — stays, the index past it.
  * READING: copied out from the pipe's head, the index that much less, what is left moved down to the head. */
+FRAME_DIET("no-caller-saves")
 void aes_doq(uint8_t *image, int16_t writing, uint32_t pd, uint32_t qpb)
 {
     int16_t count = signed_field(image, qpb, QPB_COUNT);
@@ -230,6 +233,7 @@ static inline int16_t pipe_ready(const uint8_t *image, int16_t writing, uint32_t
  * FIRST EVB WAITING AT THE OTHER END, if any, served at once: marked NOCANCEL, taken off its list, ITS QPB (its
  * EVB_PARM) moved the other way with no test that the pipe can serve it, and completed. If it cannot: the QPB's
  * address kept in the EVB, the EVB put on this end's wait list. The list is chosen by `writing` XOR ready, as words. */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls", "no-caller-saves")
 void aes_aqueue(uint8_t *image, int16_t writing, uint32_t evb, uint32_t qpb)
 {
     uint32_t pd = aes_fpdnm(image, FPDNM_BY_PID, signed_field(image, qpb, QPB_PID));

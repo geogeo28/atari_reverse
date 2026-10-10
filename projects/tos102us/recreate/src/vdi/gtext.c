@@ -33,6 +33,7 @@
 #include "addrs.h"
 #include "host_slot.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "vdi/vdi.h"
 #include "vdi/font.h"
 #include "vdi/helpers.h"
@@ -403,7 +404,11 @@ static void underline(uint8_t *image, const struct placement *place)
  * ============================================================================================= */
 
 /* Everything past the count test. Out of line so an empty string returns before any of its registers are saved:
- * with it inlined, the prologue alone put the empty string's row at 1.71 (measured, Tier 3). */
+ * with it inlined, the prologue alone put the empty string's row at 1.71 (measured, Tier 3).
+ * ON A DIET (`stack_diet.h`): this frame stands under the text blit on whichever stack the `trap #2` was taken — the
+ * screen manager's 1,196 bytes, where a text drawn for an icon in a menu is the deepest any call goes
+ * (`test/aes_stack.py`): 76 bytes held over the blit without the mark, 64 with it. */
+FRAME_DIET("no-function-cse", "no-gcse", "no-caller-saves")
 static __attribute__((noinline)) void place_and_draw(uint8_t *image, int16_t count)
 {
     struct placement place = { 0 };

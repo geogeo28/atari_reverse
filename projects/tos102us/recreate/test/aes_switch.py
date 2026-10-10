@@ -313,6 +313,7 @@ def deepest_on(run, stack):
 #     ends it (the interrupted stack back: what follows is not on the private one).
 _LISTED_LABEL = transcription.LISTED_FUNCTION
 _LISTED_LINE = re.compile(r"^\s*([0-9a-f]+):\t[0-9a-f ]+\t(.+)$")
+LISTED_LINE = _LISTED_LINE
 NAMED_TARGET = _NAMED_TARGET = re.compile(r"\b([0-9a-f]+) <([\w.]+)(?:\+0x([0-9a-f]+))?>\)?$")
 INTO = "+"                              # `<routine>+<offset>`: a routine entered PAST ITS ENTRY, as the reading names it
 HANDED = "<-"                           # `<routine><-<the routine it is handed>`: one read FOR ONE CALLER'S ARGUMENT
@@ -751,6 +752,7 @@ class StackReading:
         self._declared, self._leaves = dict(through_a_pointer or {}), tuple(leaves_the_stack)
         self._handed_one, self._excepted = tuple(calls_what_it_is_handed), dict(takes_an_exception or {})
         self._use, self._reading, self._loads, self._home, self._calls, self._to = {}, [], {}, None, {}, {}
+        self._sites = {}                        # {function: [(callee, the depth under the call, the call's address)]}
 
     def functions(self):
         """`{name: [(address, text)]}`: every function of the listing read."""
@@ -897,7 +899,7 @@ class StackReading:
         return reached
 
     def _read(self, function):
-        self._calls[function] = []
+        self._calls[function], self._sites[function] = [], []
         if function in self._leaves:
             return StackUse(bytes_before_it_leaves(self._functions, function), (function,), None, (function,))
         entered, _, handed = function.partition(HANDED)
@@ -924,6 +926,7 @@ class StackReading:
             for callee in callees:
                 use = self.of(callee)
                 self._calls[function].append((callee, under))
+                self._sites[function].append((callee, under, at))
                 deepest = max(deepest, (under + use.deepest, use.path))
                 if use.at_a_trap is not None:
                     trapped = max(trapped, (under + use.at_a_trap, use.trap_path), key=depth_of)
@@ -943,6 +946,16 @@ class StackReading:
                     found = (under + below[0], (callee, *below[1]))
             self._to[function, target] = found
         return self._to[function, target]
+
+    def read_as(self):
+        """Every function read so far BY THE NAME IT WAS READ UNDER (`functions_read` gives the routines' own)."""
+        return set(self._use)
+
+    def sites(self, function):
+        """Every call `function` makes, as read: `[(callee, the bytes below function's entry SP at the callee's first
+        instruction, the call's address)]` — one per callee a call can reach."""
+        self.of(function)
+        return list(self._sites.get(function, ()))      # (an application's routine is read as nothing)
 
     def chain(self, function, to_the_trap=False):
         """`[(function, the bytes it holds on the chain)]` down `function`'s deepest path (`to_the_trap`: down to its
@@ -1020,7 +1033,9 @@ THROUGH_A_POINTER = {"aes_forker": sorted(FORK_ENTRY_SYMBOLS.values()), "aes_mch
 DISP_S_C = ("disp_to_aes_disp_act", "disp_to_aes_mwait_act", "disp_to_aes_forker", "disp_to_aes_idle")
 BENCH_ENTRY_BYTES = 2 * LONG_BYTES      # the bench lays its sentinel and one argument at the SP it is handed
 EXCEPTION_FRAME_BYTES = WORD_BYTES + LONG_BYTES
-LoopRun = namedtuple("LoopRun", "deepest traps")      # bytes below disp's SP; `(depth at the trap, bytes under it)` each
+# bytes below disp's SP; `(depth at the trap, bytes under it)` each; and each trap's VDI opcode (the AES's contrl[0])
+LoopRun = namedtuple("LoopRun", "deepest traps opcodes")
+THE_AES_S_VDI_OPCODE_AT = aes.header_constants("gsx.h")["AES_GSX_OPCODE"]
 THE_SECOND_WAIT = 2
 
 
@@ -1037,12 +1052,13 @@ class _LoopStops:
     """THE WATCH OF A RUN FROM DISP'S LOOP (`rom_bench.watched`): stopped at `switchto` and at idle's `poll` — where it
     ENDS the run (`aes_event.Ended`): at disp's call of switchto, or at the second poll at which the machine waits
     for an interrupt — and at the VDI's trap handler and where each trap returns: `traps`, `(how deep SP was at the
-    trap, how far the OS wrote under it)` each, the stack below the trap's frame laid with a pattern first."""
+    trap, how far the OS wrote under it)` each, the stack below the trap's frame laid with a pattern first; and
+    `opcodes`, the VDI call each trap asks for."""
 
     def __init__(self, switchto, poll, lo, sp):
         self.first = frozenset({switchto, poll, aes_event.VDI_TRAP})
         self._switchto, self._poll, self._lo, self._sp = switchto, poll, lo, sp
-        self._taken_at, self._waits, self.traps = None, 0, []
+        self._taken_at, self._waits, self.traps, self.opcodes = None, 0, [], []
 
     def stopped(self, pc, frame, memory):
         back = None
@@ -1054,6 +1070,7 @@ class _LoopStops:
                 raise aes_event.Ended
         elif pc == aes_event.VDI_TRAP:
             self._taken_at, back = frame + EXCEPTION_FRAME_BYTES, case.long_in(memory, frame + aes_event.EXCEPTION_FRAME_PC)
+            self.opcodes.append(case.word_in(memory, THE_AES_S_VDI_OPCODE_AT))
             for at in range(self._lo, frame):
                 memory[at] = _untouched(at)
         else:                           # ...back from the trap: what its handler stored under the frame
@@ -1082,7 +1099,7 @@ def _loop_run(memory, loop, switchto, poll):
     wrote, truncated = emu.bench_writes(memory)
     assert not truncated, f"the loop at {loop:#x} overflowed the write ledger"
     on_the_stack = [at for at in wrote if lo <= at < sp]
-    return LoopRun(sp - min(on_the_stack) if on_the_stack else 0, tuple(watch.traps))
+    return LoopRun(sp - min(on_the_stack) if on_the_stack else 0, tuple(watch.traps), tuple(watch.opcodes))
 
 
 @functools.cache
@@ -1091,11 +1108,192 @@ def _calls_before_disp_s_loop():
     return sum(text is None for _at, text in rom_data.instructions(addrs.AES_ROM_DISP, addrs.AES_ROM_DISP_LOOP))
 
 
+# ---- THE BUILD'S OWN VDI HANDLERS UNDER ITS OWN DISPATCHER ---------------------------------------------------------------
+# The C dispatcher calls the function its opcode's slot of THE OPCODE TABLES names (`src/vdi/entry.c`, call_function:
+# "the tables are ROM data, read where they lie", `$fd372c` / `$fd37c8`). On a ROM-booted machine those slots name
+# THE ROM'S handlers — so a staging that links the blob's entry and dispatcher under the trap and stops there runs the
+# ROM's v_gtext behind our dispatcher: for a wave the "need of our VDI" was the ROM's handlers' and 32 bytes (the frame
+# diet's review, 2026-10-10: with the blob's own v_gtext it is 56 more on the shipped blob, 234 on the bench one).
+# A ROM THAT SHIPS HOLDS ITS OWN HANDLERS' ADDRESSES IN THOSE SLOTS, so the staging MAPS EVERY SLOT of both tables to
+# the blob's handler for it — A DECLARED MAPPING, as the relocation registry maps a code address the ROM holds by
+# value (`aes_event.CODE_RELOCATIONS`), made here because the slots are ROM data no run of ours stores:
+#   * the handler is found BY THE ROM ROUTINE'S OWN NAME: the slot's ROM address is `addrs.VDI_ROM_<NAME>`, the blob's
+#     handler `vdi_<name>`; a slot whose routine the blob has no handler for is REFUSED BY NAME (none today: 71 of 71);
+#   * a handler that SHIPS AS ITS `.S` (`include/transcribed.h`: vdi_rom_escape, vs_color, vq_color, vr_trnfm,
+#     vsc_form) is the slot's value itself on the shipped blob — the ROM's own instructions, entered as the ROM's
+#     dispatcher enters them;
+#   * any other is C, which takes the image: its slot names AN IMAGE-ONLY THUNK (`IMAGE_ONLY_THUNK`, the shape every
+#     C core is entered by from the ROM's side: `pea 0 / jsr / addq / rts`), staged in this battery's band. Its eight
+#     bytes on the stack are a fact of the build: a linked ROM's table cannot name a C function that takes an argument.
+# ...AND ITS OWN RASTER ENGINES BEHIND THE LINE-A VECTORS (the third pass's review, 2026-10-10). A handler that ships
+# as the ROM's instructions reaches its engine AS THE ROM DOES, through a longword of RAM: the ten vectors the boot
+# fills from the ROM's CPU set (`vdi/linea.h`: LINEA_VECTORS — the console's four, then bit-blit, fast text, the
+# filled rectangle, the vertical and the horizontal line, TextBlt). On a ROM-booted machine they name THE ROM'S
+# engines — so with the 71 slots mapped and these left, every text, line, fill and blit under "our VDI" still ran
+# the ROM's raster code (the same instructions, so no stored need moved; but the blob's own were never entered, and
+# an allocation inside one was never "reached"). A ROM THAT SHIPS HOLDS ITS OWN ENGINES THERE (`src/vdi/raster.S`),
+# so the staging maps them too, by the same rules — `linea_vector_mapping`:
+#   * the vectors are THE TABLE'S, all ten read off the booted machine, not a list: each one's ROM routine is named
+#     by `include/addrs.h`, and the blob's engine is that name's own symbol (`LINEA_ROM_CPU_BLIT` -> `linea_rom_cpu_blit`);
+#   * WHICH BLOB: the one that ships its transcriptions. The bench blob's C calls each engine's C twin BY NAME after
+#     `require_cpu_routine` has checked the vector still holds the ROM's (`include/ram_vector.h`: anything else
+#     HALTS) — its vectors stay the ROM's, are never called through, and `aes_stack.engines_ran` holds both;
+#   * a vector whose routine the blob has no engine for is REFUSED BY NAME — but for THE CONSOLE'S FOUR
+#     (`CONOUT_*_CPU`), declared: the BIOS console's cores call their bodies by name on both blobs, no blob code
+#     jumps through those vectors, and no VDI call priced reaches one (held: the ROM's are never entered).
+# WHAT IS STILL THE MACHINE'S UNDER OUR HANDLERS, and said wherever a number rests on it: the BIOS under a `trap #13`
+# (vq_key_s, vsm_string, vsm_locator) and the vectors AN APPLICATION OR THE MACHINE owns (USER_TIM / BUT / MOT / CUR:
+# in the snapshot they point into the ROM's AES; no call priced here goes through one on the screen manager's stack).
+VDI_HANDLER_THUNKS_OFFSET, VDI_HANDLER_THUNKS_BYTES = 0x5A00, 0x400      # past test/aes_fslib.py's script (+$4000..+$5900)
+VDI_HANDLER_THUNKS_AT = aes.SPAN.claim(aes.WINDOW_AT + VDI_HANDLER_THUNKS_OFFSET, VDI_HANDLER_THUNKS_BYTES,
+                                       "test/aes_switch.py: the image-only thunks into a blob's own VDI handlers")
+A_ROM_ROUTINE_S_NAME, AN_OPCODE_S_NAME, OUR_HANDLER_S_PREFIX, A_TRANSCRIBED_ENTRY_S_PREFIX = "VDI_ROM_", "_OPCODE", "vdi_", "vdi_rom_"
+Handler = namedtuple("Handler", "opcode slot the_rom_s symbol entry through_a_thunk")
+Handler.__doc__ = """One slot of the VDI's opcode tables as a blob answers it: the `opcode`, the `slot`'s address, THE
+ROM'S handler it names, the blob's `symbol` for that routine and its `entry`, and whether the slot reaches it
+`through_a_thunk` (a C handler) or names it itself (a handler that ships as the ROM's instructions)."""
+
+
+def vdi_table_slots():
+    """`{opcode: the address of its slot}` over both of the VDI's opcode tables."""
+    first = {opcode: vdi.VDI_OPCODE_TABLE + (opcode - vdi.VDI_OPCODE_FIRST) * LONG_BYTES
+             for opcode in range(vdi.VDI_OPCODE_FIRST, vdi.VDI_OPCODE_LAST + 1)}
+    extended = {opcode: vdi.VDI_OPCODE_TABLE_EXT + (opcode - vdi.VDI_OPCODE_EXT_FIRST) * LONG_BYTES
+                for opcode in range(vdi.VDI_OPCODE_EXT_FIRST, vdi.VDI_OPCODE_EXT_LAST + 1)}
+    return {**first, **extended}
+
+
+@functools.cache
+def _rom_routines_by_address():
+    named = {}
+    for name in dir(addrs):
+        if name.startswith(A_ROM_ROUTINE_S_NAME) and not name.endswith(AN_OPCODE_S_NAME):
+            named.setdefault(getattr(addrs, name), []).append(name[len(A_ROM_ROUTINE_S_NAME):].lower())
+    return named
+
+
+@functools.cache
+def _our_vdi_handlers_of(elf, ships_its_transcriptions):
+    # (a transcribed core's C twin is WEAK on the shipped blob, its name the glue's: `W`)
+    placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(elf) if symbol.kind in "TtW"}
+    handlers = {}
+    for opcode, slot in vdi_table_slots().items():
+        the_rom_s = case.long_in(BASE_IMAGE, slot) & aes_event.OS_BUS_ADDR_MASK
+        routines = _rom_routines_by_address().get(the_rom_s, [])
+        ours = next((OUR_HANDLER_S_PREFIX + routine for routine in routines if OUR_HANDLER_S_PREFIX + routine in placed), None)
+        assert ours is not None, (
+            f"THE BLOB {elf} HAS NO HANDLER FOR VDI OPCODE {opcode}: its table slot names the ROM's {the_rom_s:#x} "
+            f"({routines or 'a routine `include/addrs.h` does not name'}) and no `vdi_<that name>` is linked — a build's own "
+            f"VDI cannot be staged under the trap with a ROM handler left in it")
+        transcribed = A_TRANSCRIBED_ENTRY_S_PREFIX + ours[len(OUR_HANDLER_S_PREFIX):]
+        direct = ships_its_transcriptions and transcribed in transcription.TRANSCRIBED
+        symbol = transcribed if direct else ours
+        handlers[opcode] = Handler(opcode, slot, the_rom_s, symbol, placed[symbol], not direct)
+    return handlers
+
+
+def our_vdi_handlers(blob):
+    """`{opcode: Handler}` — how `blob` answers every slot of the VDI's opcode tables (above). The shipped blob
+    enters a handler that ships as its `.S` directly; the bench blob, which links the C twins, enters the C."""
+    return _our_vdi_handlers_of(blob.elf, blob.elf == transcription.SHIPPED_ELF)
+
+
+def _an_image_only_thunk_into(entry):
+    return (PUSH_ADDRESS_SHORT + bytes(WORD_BYTES) + JSR_ABSOLUTE_LONG + struct.pack(">I", entry) + DROP_STACK_LONG + RTS)
+
+
+def vdi_table_mapping(blob):
+    """THE DECLARED MAPPING for `blob`: `({the slot: the longword it holds for this blob}, {the thunks' address: bytes})`
+    — each C handler's thunk laid end to end in this battery's band, each slot naming its thunk or its `.S` entry."""
+    slots, thunks, at = {}, b"", VDI_HANDLER_THUNKS_AT
+    for handler in our_vdi_handlers(blob).values():
+        if handler.through_a_thunk:
+            slots[handler.slot] = struct.pack(">I", at + len(thunks))
+            thunks += _an_image_only_thunk_into(handler.entry)
+        else:
+            slots[handler.slot] = struct.pack(">I", handler.entry)
+    assert len(thunks) <= VDI_HANDLER_THUNKS_BYTES, f"the handlers' thunks take {len(thunks)} bytes of a {VDI_HANDLER_THUNKS_BYTES}-byte band"
+    return slots, {at: thunks}
+
+
+AN_ENGINE_S_ROM_NAME, THE_CONSOLE_S_BODIES = "LINEA_ROM_", re.compile(r"^CONOUT_\w+_CPU$")
+Engine = namedtuple("Engine", "vector the_rom_s symbol entry")
+Engine.__doc__ = """One Line-A vector as a blob answers it: the `vector`'s address, THE ROM'S engine the booted machine
+holds there, the blob's `symbol` for that engine and its `entry` — None, both, for a vector the blob is declared to
+leave (the console's four; every one, on a blob whose C calls its engines by name)."""
+
+
+def linea_vectors():
+    """The addresses of the ten vectors the boot fills from the ROM's CPU set."""
+    return tuple(vdi.LINEA_VECTORS + slot * LONG_BYTES for slot in range(vdi.LINEA_VECTOR_COUNT))
+
+
+@functools.cache
+def _names_by_address():
+    named = {}
+    for name in dir(addrs):
+        if isinstance(getattr(addrs, name), int):
+            named.setdefault(getattr(addrs, name), []).append(name)
+    return named
+
+
+@functools.cache
+def _our_engines_of(elf, reaches_them_through_the_vectors):
+    placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(elf) if symbol.kind == "T"}
+    engines = {}
+    for vector in linea_vectors():
+        the_rom_s = case.long_in(BASE_IMAGE, vector) & aes_event.OS_BUS_ADDR_MASK
+        names = _names_by_address().get(the_rom_s, [])
+        ours = next((name.lower() for name in names if name.startswith(AN_ENGINE_S_ROM_NAME) and name.lower() in placed), None)
+        left = not reaches_them_through_the_vectors or any(THE_CONSOLE_S_BODIES.match(name) for name in names)
+        assert ours is not None or left, (
+            f"THE BLOB {elf} HAS NO ENGINE FOR THE LINE-A VECTOR AT {vector:#x}: the booted machine holds the ROM's "
+            f"{the_rom_s:#x} there ({names or 'a routine `include/addrs.h` does not name'}) and no symbol of that name is "
+            f"linked — a build's own VDI cannot be staged under the trap with a ROM engine left behind a vector it calls through")
+        engines[vector] = Engine(vector, the_rom_s, None if left else ours, None if left else placed[ours])
+    return engines
+
+
+def our_linea_engines(blob):
+    """`{vector: Engine}` — how `blob` answers each of the ten Line-A vectors (above)."""
+    return _our_engines_of(blob.elf, blob.elf == transcription.SHIPPED_ELF)
+
+
+def linea_vector_mapping(blob):
+    """THE DECLARED MAPPING of the Line-A vectors for `blob`: `{the vector: the longword it holds for this blob}` —
+    the blob's own engine, entered as the ROM's is (no thunk: an engine is the ROM's instructions and takes no image)."""
+    return {engine.vector: struct.pack(">I", engine.entry) for engine in our_linea_engines(blob).values() if engine.entry is not None}
+
+
+def entered_under_the_trap(blob, opcode, memory):
+    """Where `blob`'s own dispatcher goes for `opcode` over `memory` AS STAGED: the address its slot holds — and it is
+    the mapping's, or the staging is refused (a memory whose table is the ROM's, or another blob's)."""
+    held = case.long_in(memory, vdi_table_slots()[opcode])
+    slots, _thunks = vdi_table_mapping(blob)
+    assert struct.pack(">I", held) == slots[vdi_table_slots()[opcode]], (
+        f"VDI opcode {opcode}'s slot holds {held:#x}: not this blob's handler — its own VDI is not what runs under the trap")
+    return held
+
+
 def _our_vdi_under_the_trap(memory, blob):
     """`memory` (the blob laid in) with the build's OWN VDI under `trap #2`, as a ROM that ships links it: the BIOS's
     door ($fc4ebc: `jsr <the VDI's entry>` / `rte` — not reconstructed, so STAGED, the same two instructions) calls
     the blob's `vdi_rom_entry`, and that entry's `jsr` of the dispatcher — which the blob spells with the ROM's
-    address (`src/vdi/entry.S`) — lands in the blob's C through the image-only thunk every C core is entered by."""
+    address (`src/vdi/entry.S`) — lands in the blob's C through the image-only thunk every C core is entered by;
+    AND THE DISPATCHER'S TABLES NAME THE BLOB'S OWN HANDLERS (`vdi_table_mapping`, above): every slot, vetted to hold
+    the ROM's handler before it is mapped and band's bytes to be free; AND THE LINE-A VECTORS ITS OWN ENGINES
+    (`linea_vector_mapping`), each vetted to hold the ROM's first."""
+    slots, thunks = vdi_table_mapping(blob)
+    for handler in our_vdi_handlers(blob).values():
+        assert case.long_in(memory, handler.slot) & aes_event.OS_BUS_ADDR_MASK == handler.the_rom_s, (
+            f"VDI opcode {handler.opcode}'s slot does not hold the ROM's handler: mapped already, or not this ROM's table")
+    assert not any(memory[VDI_HANDLER_THUNKS_AT:VDI_HANDLER_THUNKS_AT + VDI_HANDLER_THUNKS_BYTES]), (
+        "the band the handlers' thunks are staged in is not free on this machine")
+    for engine in our_linea_engines(blob).values():
+        assert case.long_in(memory, engine.vector) & aes_event.OS_BUS_ADDR_MASK == engine.the_rom_s, (
+            f"the Line-A vector at {engine.vector:#x} does not hold the ROM's engine: mapped already, or repointed (a blitter set)")
+    for at, data in {**slots, **thunks, **linea_vector_mapping(blob)}.items():
+        memory[at:at + len(data)] = data
     assert case.long_in(memory, addrs.SYSVAR_VDI_ENTRY) == addrs.GEM_TRAP2_VDI_DOOR, "the premise: the BIOS's VDI door"
     entry, into_c = blob.entry("vdi_rom_entry"), VDI_STUBS_AT + len(JSR_ABSOLUTE_LONG) + LONG_BYTES + len(RTE)
     door = JSR_ABSOLUTE_LONG + struct.pack(">I", entry) + RTE

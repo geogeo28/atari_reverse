@@ -103,71 +103,71 @@ THE_MANAGER_S_TURN = (1, 65624, 52100)  # the screen manager's own run with the 
 # @PINS-BEGIN (measured: scratch `pins.py`)
 WHOLE_RUN = {
     'two moves, the ticks and a press recorded: the buffer full':
-        {BENCH: (47218, 40622), SHIPPED: (47218, 39882)},
+        {BENCH: (47218, 40418), SHIPPED: (47218, 39678)},
     'ticks recorded over three sleeps, merged into one record; then a press':
-        {BENCH: (100142, 83614), SHIPPED: (100142, 82958)},
+        {BENCH: (100142, 83114), SHIPPED: (100142, 82458)},
     "one record, a key's":
-        {BENCH: (46782, 39254), SHIPPED: (46782, 39096)},
+        {BENCH: (46782, 39054), SHIPPED: (46782, 38896)},
     'ended by Control-backslash before the buffer is full':
-        {BENCH: (67926, 59060), SHIPPED: (67926, 58742)},
+        {BENCH: (67926, 58824), SHIPPED: (67926, 58506)},
     'a count of 0, ended at once: nothing recorded':
-        {BENCH: (45914, 38270), SHIPPED: (45914, 38294)},
+        {BENCH: (45914, 38054), SHIPPED: (45914, 38078)},
     'a count of 0, events before it is ended: all recorded':
-        {BENCH: (91628, 78324), SHIPPED: (91628, 77608)},
+        {BENCH: (91628, 77904), SHIPPED: (91628, 77188)},
     'four records played: two moves, a wait, a press':
-        {BENCH: (127008, 112764), SHIPPED: (127008, 114324)},
+        {BENCH: (127008, 112164), SHIPPED: (127008, 113724)},
     'four records played slowly: the wait is twenty-five ticks':
-        {BENCH: (127198, 112968), SHIPPED: (127198, 114514)},
+        {BENCH: (127198, 112368), SHIPPED: (127198, 113914)},
     'none of four records played: a count of 0':
-        {BENCH: (12180, 10908), SHIPPED: (12180, 11028)},
+        {BENCH: (12180, 10844), SHIPPED: (12180, 10964)},
     'a wait and a press played: no mouse record':
-        {BENCH: (71054, 61500), SHIPPED: (71054, 62180)},
+        {BENCH: (71054, 61100), SHIPPED: (71054, 61780)},
     'a key played':
-        {BENCH: (26936, 23318), SHIPPED: (26936, 23560)},
+        {BENCH: (26936, 23178), SHIPPED: (26936, 23420)},
     'two moves and the shift keys played':
-        {BENCH: (83320, 75618), SHIPPED: (83320, 76742)},
+        {BENCH: (83320, 75278), SHIPPED: (83320, 76402)},
     "four records played, the cursor shown: the VDI's cursor routine queues each point":
-        {BENCH: (127192, 112948), SHIPPED: (127192, 114508)},
+        {BENCH: (127192, 112348), SHIPPED: (127192, 113908)},
     'the mouse played onto the menu bar and off it: the screen manager entered from a yield':
-        {BENCH: (167922, 155802), SHIPPED: (167922, 157064)},
+        {BENCH: (167922, 155392), SHIPPED: (167922, 156652)},
     'none played: a count below 0':
-        {BENCH: (12180, 10908), SHIPPED: (12180, 11028)},
+        {BENCH: (12180, 10844), SHIPPED: (12180, 10964)},
     'four records played at a negative scale: the wait is no tick':
-        {BENCH: (127064, 112792), SHIPPED: (127064, 114380)},
+        {BENCH: (127064, 112192), SHIPPED: (127064, 113780)},
     'ARGUMENT CLASS (records no recording holds): four numbers with a high word, played as their low words':
-        {BENCH: (118520, 103800), SHIPPED: (118520, 105250)},
+        {BENCH: (118520, 103224), SHIPPED: (118520, 104674)},
     'ARGUMENT CLASS (records no recording holds): two records at an odd address':
-        {BENCH: (68138, 62342), SHIPPED: (68138, 63346)},
+        {BENCH: (68138, 62078), SHIPPED: (68138, 63082)},
 }
 PRICED = {
     'two moves, the ticks and a press recorded: the buffer full':
-        Priced((20962, 29658), (1778, 3566), 1, (0, 0, 0)),   # 0.71 / 0.50
+        Priced((20758, 29658), (1778, 3566), 1, (0, 0, 0)),   # 0.70 / 0.50
     'ticks recorded over three sleeps, merged into one record; then a press':
-        Priced((39938, 59570), (3158, 5306), 3, (0, 0, 0)),   # 0.67 / 0.60
+        Priced((39438, 59570), (3158, 5306), 3, (0, 0, 0)),   # 0.66 / 0.60
     "one record, a key's":
-        Priced((16662, 25476), (1506, 2850), 1, (0, 0, 0)),   # 0.65 / 0.53
+        Priced((16462, 25476), (1506, 2850), 1, (0, 0, 0)),   # 0.65 / 0.53
     'ended by Control-backslash before the buffer is full':
-        Priced((24834, 35822), (1690, 3326), 1, (0, 0, 0)),   # 0.69 / 0.51
+        Priced((24598, 35822), (1690, 3326), 1, (0, 0, 0)),   # 0.69 / 0.51
     'a count of 0, ended at once: nothing recorded':
-        Priced((15968, 24608), (1350, 2612), 1, (0, 0, 0)),   # 0.65 / 0.52
+        Priced((15752, 24608), (1350, 2612), 1, (0, 0, 0)),   # 0.64 / 0.52
     'a count of 0, events before it is ended: all recorded':
-        Priced((36362, 52762), (2560, 4674), 2, (0, 0, 0)),   # 0.69 / 0.55
+        Priced((35942, 52762), (2560, 4674), 2, (0, 0, 0)),   # 0.68 / 0.55
     'four records played: two moves, a wait, a press':
-        Priced((42256, 58612), (30900, 41570), 2, (0, 0, 0)),   # 0.72 / 0.74
+        Priced((41656, 58612), (30468, 41570), 2, (0, 0, 0)),   # 0.71 / 0.73
     'four records played slowly: the wait is twenty-five ticks':
-        Priced((42446, 58802), (31092, 41762), 2, (0, 0, 0)),   # 0.72 / 0.74
+        Priced((41846, 58802), (30660, 41762), 2, (0, 0, 0)),   # 0.71 / 0.73
     'none of four records played: a count of 0':
-        Priced((3990, 5418), None, None, (0, 0, 0)),   # 0.74
+        Priced((3926, 5418), None, None, (0, 0, 0)),   # 0.72
     'a wait and a press played: no mouse record':
-        Priced((26578, 37244), (15222, 20202), 2, (0, 0, 0)),   # 0.71 / 0.75
+        Priced((26178, 37244), (14990, 20202), 2, (0, 0, 0)),   # 0.70 / 0.74
     'a key played':
-        Priced((9484, 13412), None, None, (0, 0, 0)),   # 0.71
+        Priced((9344, 13412), None, None, (0, 0, 0)),   # 0.70
     'two moves and the shift keys played':
-        Priced((25500, 34510), None, None, (0, 0, 0)),   # 0.74
+        Priced((25160, 34510), None, None, (0, 0, 0)),   # 0.73
     "four records played, the cursor shown: the VDI's cursor routine queues each point":
-        Priced((42256, 58612), (30900, 41570), 2, (0, 0, 0)),   # 0.72 / 0.74
+        Priced((41656, 58612), (30468, 41570), 2, (0, 0, 0)),   # 0.71 / 0.73
     'the mouse played onto the menu bar and off it: the screen manager entered from a yield':
-        Priced((32570, 46136), None, None, (1, 65624, 52100)),   # 0.71
+        Priced((32158, 46136), None, None, (1, 65624, 52100)),   # 0.70
 }
 # @PINS-END
 WINDOWS = {label: priced.windows for label, priced in PRICED.items() if priced.windows != NO_WINDOW}

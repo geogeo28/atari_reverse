@@ -36,6 +36,7 @@ import pytest
 from harness import BASE_IMAGE
 
 import aes
+import boot_snapshot
 import aes_objdraw as od
 import aes_obuser as obuser
 import case
@@ -271,10 +272,48 @@ def test_a_refused_character_past_the_last_place_steps_forward_again():
 # alert saved, any value — inside the 64 KB find_pos's word-wide place reaches around AES_TMPLT.
 SAVE_UNDER_AT = int.from_bytes(bytes(aes.read_field(BASE_IMAGE, "AES", "GL_TMP")[:aes.LONG_BYTES]), "big")
 WIDEST_INDEX = 0x7FFF
-# The ROM's run below, measured (the test re-measures it); over the snapshot's own bytes — 447 placeholders in those
-# 64 KB, so 73 times round — it is 35,836,288 instructions and the case 33 s.
+# The ROM's run below, measured; over the snapshot's own bytes — 447 placeholders in those 64 KB, so 73 times round —
+# it is 35,836,288 instructions and the case 33 s.
+# THE WALK CROSSES BYTES NO TWO CAPTURES AGREE ON, AND THE CASE STAGES THEM. find_pos's word-wide place reaches the
+# 64 KB round AES_TMPLT, low RAM among them — and so eight of the regions `tools/boot_snapshot.py`'s MASK names as
+# capture-variant (OS scratch, dead stack frames). A byte there that happens to be a placeholder ($5f) costs the walk
+# nine instructions (twelve in one region; `A_PLACEHOLDER_COSTS_THE_WALK`, held on any capture):
+# one capture had one at `$74df` (1,944,402), most have none (1,944,393), one kept set has two.
+# (It is not the snapshot's phase: both counts were seen at `savptr` `$93a`.) So the masked bytes the walk crosses
+# are DECLARED AND STAGED — zeroed, no placeholder among them — and the count is exact over any capture.
+# WHY THE MASK'S OWN TEST DID NOT SAY SO: `test_boot_snapshot`'s noise sweep runs the REGISTERED rows and compares
+# what each LEAVES; this case is no registered row (two million instructions: a test of its own), and a placeholder
+# more in the walk moves the count and nothing the run stores.
+FIND_POS_REACHES = 0x8000               # a signed word either side of AES_TMPLT
 UNSTEP_MEASURED_INSNS = 1_944_393
 UNSTEP_INSNS = 2 * UNSTEP_MEASURED_INSNS
+
+
+def the_masked_bytes_the_walk_crosses():
+    """`{address: zeros}` for every byte of the snapshot's MASK inside find_pos's reach round AES_TMPLT."""
+    lo, hi = aes.AES_TMPLT - FIND_POS_REACHES, aes.AES_TMPLT + FIND_POS_REACHES
+    crossed = {}
+    for address, length, _why in boot_snapshot.MASK:
+        start, end = max(address, lo), min(address + length, hi)
+        if start < end:
+            crossed[start] = bytes(end - start)
+    return crossed
+
+
+THE_MASKED_REGIONS_CROSSED = 8          # of the snapshot's MASK, inside find_pos's reach on this machine
+# WHAT ONE PLACEHOLDER COSTS THE WALK, instructions, by the masked region it lies in (in address order) — MEASURED:
+# nine in seven of them (one more turn of the loop that counts it), twelve in the last, `$c7e1`.
+A_PLACEHOLDER_COSTS_THE_WALK = (9, 9, 9, 9, 9, 9, 9, 12)
+
+
+def the_unstepped_walk(under=None, over=None):
+    """THE CASE'S RUN: the '|' refused at the widest index over the field seeded "AB", the save-under buffer all
+    placeholders and THE MASKED BYTES THE WALK CROSSES STAGED. `under`: pokes laid on the machine BENEATH that
+    staging (a capture's own noise); `over`: pokes laid above it (what the staging would otherwise hide)."""
+    onto = merge_pokes(initialised(*SELECTION, seeded(*SELECTION, b"AB")), under)
+    placeholders = bytes([aes.OB_FORMAT_PLACEHOLDER]) * aes.GSX_SAVE_BUFFER_BYTES
+    staged = merge_pokes(the_masked_bytes_the_walk_crosses(), {SAVE_UNDER_AT: placeholders}, over)
+    return edit(*SELECTION, key("|"), EDCHAR, start_index=WIDEST_INDEX, onto=onto, pokes=staged, max_insns=UNSTEP_INSNS)
 
 
 def test_a_refused_character_at_the_widest_index_fills_from_the_unstepped_start():
@@ -283,11 +322,30 @@ def test_a_refused_character_at_the_widest_index_fills_from_the_unstepped_start(
     place lies BELOW the last place and the fill runs (13 KB of blanks, as the ROM writes them), from where the start
     says. find_pos first walks 32,767 placeholders through the RAM round AES_TMPLT; the save-under buffer staged all
     placeholders (a saved screen of $5f bytes) brings that to three times round."""
-    onto = initialised(*SELECTION, seeded(*SELECTION, b"AB"))
-    placeholders = bytes([aes.OB_FORMAT_PLACEHOLDER]) * aes.GSX_SAVE_BUFFER_BYTES
-    result = edit(*SELECTION, key("|"), EDCHAR, start_index=WIDEST_INDEX, onto=onto, pokes={SAVE_UNDER_AT: placeholders},
-                  max_insns=UNSTEP_INSNS)
+    result = the_unstepped_walk()
     assert answer_index(result) < 0 and result.info["regs"]["ninsns"] == UNSTEP_MEASURED_INSNS
+
+
+def test_the_walk_crosses_masked_bytes_and_every_one_is_staged():
+    """THE DECLARATION, HELD: the reach round AES_TMPLT takes in eight regions of the MASK (so the premise of the
+    staging is true), each staged byte is a masked one and none is a placeholder."""
+    crossed = the_masked_bytes_the_walk_crosses()
+    masked = {at for address, length, _why in boot_snapshot.MASK for at in range(address, address + length)}
+    staged = {at for start, zeros in crossed.items() for at in range(start, start + len(zeros))}
+    assert len(crossed) == THE_MASKED_REGIONS_CROSSED and staged <= masked and not any(any(zeros) for zeros in crossed.values())
+    assert aes.OB_FORMAT_PLACEHOLDER != 0
+
+
+@pytest.mark.parametrize("region", range(THE_MASKED_REGIONS_CROSSED))
+def test_the_case_s_count_does_not_see_a_placeholder_a_capture_leaves_in_a_masked_byte(region):
+    """THE STAGING IS USED, AND ITS PREMISE IS TRUE — on ANY capture, whether or not it holds such a byte itself
+    (one did, at `$74df`; most do not, and on those a case that staged nothing counted the same): a placeholder
+    planted in a masked byte BENEATH the case's staging leaves the count exact; the same byte planted OVER the
+    staging costs the walk nine instructions (twelve in the last region). One byte of each masked region crossed."""
+    start, zeros = sorted(the_masked_bytes_the_walk_crosses().items())[region]
+    planted = {start + len(zeros) // 2: bytes([aes.OB_FORMAT_PLACEHOLDER])}
+    assert the_unstepped_walk(under=planted).info["regs"]["ninsns"] == UNSTEP_MEASURED_INSNS
+    assert the_unstepped_walk(over=planted).info["regs"]["ninsns"] == UNSTEP_MEASURED_INSNS + A_PLACEHOLDER_COSTS_THE_WALK[region]
 
 
 @pytest.mark.parametrize("field, text, keys, character, expected, place", (

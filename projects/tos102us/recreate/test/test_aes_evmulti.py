@@ -1318,187 +1318,187 @@ Premise, Priced, NO_WINDOW, ONE_COUNT = switching.Premise, switching.Priced, swi
 BENCH, SHIPPED = "bench", "bench_shipped"
 PRICED = {
     "a key wakes: a key, none queued":
-        Priced((14670, 21704), *ONE_COUNT, NO_WINDOW),
+        Priced((14442, 21704), *ONE_COUNT, NO_WINDOW),
     "a press wakes: the button down, which is up":
-        Priced((16786, 24928), (15256, 21578), 1, NO_WINDOW),
+        Priced((16378, 24928), (14884, 21578), 1, NO_WINDOW),
     "a release wakes: the button up, which is down":
-        Priced((16080, 23920), (14550, 20570), 1, NO_WINDOW),
+        Priced((15788, 23920), (14294, 20570), 1, NO_WINDOW),
     "a double click wakes: a double click":
-        Priced((16876, 24992), (15284, 21596), 1, NO_WINDOW),
+        Priced((16468, 24992), (14912, 21596), 1, NO_WINDOW),
     "a single click wakes: a double click":
-        Priced((18134, 26274), (16274, 22480), 2, NO_WINDOW),
+        Priced((17702, 26274), (15906, 22480), 2, NO_WINDOW),
     "entering wakes: a rectangle the mouse is not in":
-        Priced((19754, 27396), *ONE_COUNT, NO_WINDOW),
+        Priced((19490, 27396), *ONE_COUNT, NO_WINDOW),
     "leaving wakes: a rectangle the mouse is to leave":
-        Priced((19886, 27562), *ONE_COUNT, NO_WINDOW),
+        Priced((19622, 27562), *ONE_COUNT, NO_WINDOW),
     "entering wakes: the second rectangle alone":
-        Priced((19786, 27420), *ONE_COUNT, NO_WINDOW),
+        Priced((19490, 27420), *ONE_COUNT, NO_WINDOW),
     "leaving wakes: two rectangles":
-        Priced((26108, 37524), *ONE_COUNT, NO_WINDOW),
+        Priced((25796, 37524), *ONE_COUNT, NO_WINDOW),
     "the ticks wake: a timer":
-        Priced((15196, 21698), *ONE_COUNT, NO_WINDOW),
+        Priced((15008, 21698), *ONE_COUNT, NO_WINDOW),
     "a tick wakes: a timer of less than a tick":
-        Priced((15006, 21508), *ONE_COUNT, NO_WINDOW),
+        Priced((14818, 21508), *ONE_COUNT, NO_WINDOW),
     "a key wakes: a key and a message":
-        Priced((17972, 27466), *ONE_COUNT, NO_WINDOW),
+        Priced((17656, 27466), *ONE_COUNT, NO_WINDOW),
     "the ticks wake: a message and a timer":
-        Priced((18522, 27460), *ONE_COUNT, NO_WINDOW),
+        Priced((18246, 27460), *ONE_COUNT, NO_WINDOW),
     "a key wakes: a key and the buttons":
-        Priced((17976, 27562), *ONE_COUNT, NO_WINDOW),
+        Priced((17720, 27562), *ONE_COUNT, NO_WINDOW),
     "a press wakes: a key and the buttons":
-        Priced((19422, 29170), (17892, 25820), 1, NO_WINDOW),
+        Priced((18982, 29170), (17488, 25820), 1, NO_WINDOW),
     "a key and a press in one idle: a key and the buttons":
-        Priced((21606, 33358), (20076, 30008), 1, NO_WINDOW),
+        Priced((21202, 33358), (19708, 30008), 1, NO_WINDOW),
     "a press wakes: the buttons and a rectangle":
-        Priced((20824, 31080), (19294, 27730), 1, NO_WINDOW),
+        Priced((20392, 31080), (18898, 27730), 1, NO_WINDOW),
     "a press, then entering, in one idle: the buttons and a rectangle":
-        Priced((25948, 38168), (24418, 34818), 1, NO_WINDOW),
+        Priced((25508, 38168), (24014, 34818), 1, NO_WINDOW),
     "a key wakes: every event":
-        Priced((33810, 51490), *ONE_COUNT, NO_WINDOW),
+        Priced((33404, 51490), *ONE_COUNT, NO_WINDOW),
     "a double click wakes: every event":
-        Priced((37378, 56750), (35822, 53348), 1, NO_WINDOW),
+        Priced((36824, 56750), (35304, 53348), 1, NO_WINDOW),
     "leaving wakes: every event":
-        Priced((39578, 58940), *ONE_COUNT, NO_WINDOW),
+        Priced((39136, 58940), *ONE_COUNT, NO_WINDOW),
     "entering wakes: every event":
-        Priced((39578, 58940), *ONE_COUNT, NO_WINDOW),
+        Priced((39136, 58940), *ONE_COUNT, NO_WINDOW),
     "the ticks wake: every event":
-        Priced((33686, 50908), *ONE_COUNT, NO_WINDOW),
+        Priced((33280, 50908), *ONE_COUNT, NO_WINDOW),
     "a key, a double click, leaving and the ticks in one idle: every event":
-        Priced((47180, 72062), (45624, 68660), 1, NO_WINDOW),
+        Priced((46662, 72062), (45142, 68660), 1, NO_WINDOW),
     "a key wakes: eight bits held, a key, the buttons, two rectangles":
-        Priced((29900, 43172), *ONE_COUNT, NO_WINDOW),
+        Priced((29564, 43172), *ONE_COUNT, NO_WINDOW),
     "the ticks wake: eight bits held, a message and a timer":
-        Priced((20472, 29092), *ONE_COUNT, NO_WINDOW),
+        Priced((20196, 29092), *ONE_COUNT, NO_WINDOW),
     "a release wakes: every event, the button held":
-        Priced((34522, 52072), (32992, 48722), 1, NO_WINDOW),
+        Priced((34048, 52072), (32554, 48722), 1, NO_WINDOW),
     "a key wakes, the sent mark set: a key and a message":
-        Priced((17972, 27466), *ONE_COUNT, NO_WINDOW),
+        Priced((17656, 27466), *ONE_COUNT, NO_WINDOW),
     "a writer wakes: a message, none in the pipe":
-        Priced((17324, 25028), *ONE_COUNT, (1, 1139762, 278034)),
+        Priced((16984, 25028), *ONE_COUNT, (1, 1139762, 278034)),
     "a writer wakes: a message and a timer not run out":
-        Priced((20634, 29846), *ONE_COUNT, (1, 1139762, 278034)),
+        Priced((20302, 29846), *ONE_COUNT, (1, 1139762, 278034)),
     "a writer and the press's ticks in one wake: a message and a timer":
-        Priced((20996, 30306), *ONE_COUNT, (1, 1131220, 276254)),
+        Priced((20664, 30306), *ONE_COUNT, (1, 1131220, 276254)),
     "a writer wakes: a key and a message":
-        Priced((19970, 29270), *ONE_COUNT, (1, 1139762, 278034)),
+        Priced((19598, 29270), *ONE_COUNT, (1, 1139762, 278034)),
     "a writer wakes: every event, the timer not run out":
-        Priced((35828, 53312), *ONE_COUNT, (1, 1139762, 278034)),
+        Priced((35366, 53312), *ONE_COUNT, (1, 1139762, 278034)),
     "a writer and the press's ticks in one wake: every event":
-        Priced((36190, 53772), *ONE_COUNT, (1, 1131220, 276254)),
+        Priced((35728, 53772), *ONE_COUNT, (1, 1131220, 276254)),
     "a writer and the press's ticks: eight bits held, a message and a timer":
-        Priced((22956, 31938), *ONE_COUNT, (1, 1131220, 276254)),
+        Priced((22624, 31938), *ONE_COUNT, (1, 1131220, 276254)),
     "a writer, a key and the press's ticks in one wake: a key, a message and a timer":
-        Priced((24224, 35212), *ONE_COUNT, (1, 1135928, 279942)),
+        Priced((23860, 35212), *ONE_COUNT, (1, 1135928, 279942)),
     "a writer, a key and the press's ticks in one wake: every event":
-        Priced((36688, 54366), *ONE_COUNT, (1, 1135928, 279942)),
+        Priced((36226, 54366), *ONE_COUNT, (1, 1135928, 279942)),
     "a writer and the mouse into the rectangle: a rectangle and a message":
-        Priced((21368, 31180), *ONE_COUNT, (1, 1146706, 285068)),
+        Priced((21004, 31180), *ONE_COUNT, (1, 1146706, 285068)),
     "a writer, a key, the mouse, the press's ticks: every event":
-        Priced((36688, 54366), *ONE_COUNT, (1, 1142914, 287018)),
+        Priced((36226, 54366), *ONE_COUNT, (1, 1142914, 287018)),
     "a writer, the desk waiting for the bar's rectangle too":
-        Priced((21540, 31380), *ONE_COUNT, (1, 1139762, 278034)),
+        Priced((21176, 31380), *ONE_COUNT, (1, 1139762, 278034)),
     "a writer, then the mouse away: both rectangles and a message":
-        Priced((25758, 37728), *ONE_COUNT, (1, 1150402, 286746)),
+        Priced((25348, 37728), *ONE_COUNT, (1, 1150402, 286746)),
     evm.A_KEY_BEFORE_THE_WRITER_WRITES:
-        Priced((19966, 29342), *ONE_COUNT, (1, 954308, 240372)),
+        Priced((19602, 29342), *ONE_COUNT, (1, 954308, 240372)),
     evm.A_WRITER_AND_A_KEY:
-        Priced((20382, 29772), *ONE_COUNT, (1, 1142416, 279668)),
+        Priced((20010, 29772), *ONE_COUNT, (1, 1142416, 279668)),
     evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN:
-        Priced((24294, 36578), *ONE_COUNT, (1, 789254, 148618)),
+        Priced((23854, 36578), *ONE_COUNT, (1, 789254, 148618)),
     evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR:
-        Priced((18694, 27944), *ONE_COUNT, NO_WINDOW),
+        Priced((18454, 27944), *ONE_COUNT, NO_WINDOW),
 }
 WHOLE_RUN = {
     "a key wakes: a key, none queued":
-        {BENCH: (43010, 37094), SHIPPED: (43010, 36904)},
+        {BENCH: (43010, 36866), SHIPPED: (43010, 36676)},
     "a press wakes: the button down, which is up":
-        {BENCH: (45214, 38188), SHIPPED: (45214, 38000)},
+        {BENCH: (45214, 37780), SHIPPED: (45214, 37592)},
     "a release wakes: the button up, which is down":
-        {BENCH: (44206, 37482), SHIPPED: (44206, 37294)},
+        {BENCH: (44206, 37190), SHIPPED: (44206, 37002)},
     "a double click wakes: a double click":
-        {BENCH: (45278, 38278), SHIPPED: (45278, 38090)},
+        {BENCH: (45278, 37870), SHIPPED: (45278, 37682)},
     "a single click wakes: a double click":
-        {BENCH: (46560, 39534), SHIPPED: (46560, 39348)},
+        {BENCH: (46560, 39102), SHIPPED: (46560, 38916)},
     "entering wakes: a rectangle the mouse is not in":
-        {BENCH: (51718, 45632), SHIPPED: (51718, 45296)},
+        {BENCH: (51718, 45370), SHIPPED: (51718, 45032)},
     "leaving wakes: a rectangle the mouse is to leave":
-        {BENCH: (51884, 45764), SHIPPED: (51884, 45428)},
+        {BENCH: (51884, 45502), SHIPPED: (51884, 45164)},
     "entering wakes: the second rectangle alone":
-        {BENCH: (51742, 45664), SHIPPED: (51742, 45328)},
+        {BENCH: (51742, 45370), SHIPPED: (51742, 45032)},
     "leaving wakes: two rectangles":
-        {BENCH: (61846, 52982), SHIPPED: (61846, 51858)},
+        {BENCH: (61846, 52670), SHIPPED: (61846, 51546)},
     "the ticks wake: a timer":
-        {BENCH: (41984, 36478), SHIPPED: (41984, 36502)},
+        {BENCH: (41984, 36290), SHIPPED: (41984, 36314)},
     "a tick wakes: a timer of less than a tick":
-        {BENCH: (41794, 36274), SHIPPED: (41794, 36312)},
+        {BENCH: (41794, 36086), SHIPPED: (41794, 36124)},
     "a key wakes: a key and a message":
-        {BENCH: (48772, 41054), SHIPPED: (48772, 40306)},
+        {BENCH: (48772, 40738), SHIPPED: (48772, 39990)},
     "the ticks wake: a message and a timer":
-        {BENCH: (47746, 40462), SHIPPED: (47746, 39928)},
+        {BENCH: (47746, 40186), SHIPPED: (47746, 39652)},
     "a key wakes: a key and the buttons":
-        {BENCH: (48868, 41058), SHIPPED: (48868, 40310)},
+        {BENCH: (48868, 40802), SHIPPED: (48868, 40054)},
     "a press wakes: a key and the buttons":
-        {BENCH: (49456, 41482), SHIPPED: (49456, 40736)},
+        {BENCH: (49456, 41042), SHIPPED: (49456, 40296)},
     "a key and a press in one idle: a key and the buttons":
-        {BENCH: (54664, 44682), SHIPPED: (54664, 43940)},
+        {BENCH: (54664, 44278), SHIPPED: (54664, 43536)},
     "a press wakes: the buttons and a rectangle":
-        {BENCH: (51366, 43226), SHIPPED: (51366, 42246)},
+        {BENCH: (51366, 42794), SHIPPED: (51366, 41814)},
     "a press, then entering, in one idle: the buttons and a rectangle":
-        {BENCH: (62490, 52478), SHIPPED: (62490, 51590)},
+        {BENCH: (62490, 52040), SHIPPED: (62490, 51150)},
     "a key wakes: every event":
-        {BENCH: (72796, 60088), SHIPPED: (72796, 56852)},
+        {BENCH: (72796, 59682), SHIPPED: (72796, 56446)},
     "a double click wakes: every event":
-        {BENCH: (77036, 62628), SHIPPED: (77036, 59400)},
+        {BENCH: (77036, 62074), SHIPPED: (77036, 58846)},
     "leaving wakes: every event":
-        {BENCH: (83262, 68964), SHIPPED: (83262, 65820)},
+        {BENCH: (83262, 68522), SHIPPED: (83262, 65378)},
     "entering wakes: every event":
-        {BENCH: (83262, 68964), SHIPPED: (83262, 65820)},
+        {BENCH: (83262, 68522), SHIPPED: (83262, 65378)},
     "the ticks wake: every event":
-        {BENCH: (71194, 58942), SHIPPED: (71194, 55708)},
+        {BENCH: (71194, 58536), SHIPPED: (71194, 55302)},
     "a key, a double click, leaving and the ticks in one idle: every event":
-        {BENCH: (97404, 77570), SHIPPED: (97404, 74442)},
+        {BENCH: (97404, 77052), SHIPPED: (97404, 73924)},
     "a key wakes: eight bits held, a key, the buttons, two rectangles":
-        {BENCH: (64478, 54982), SHIPPED: (64478, 52650)},
+        {BENCH: (64478, 54646), SHIPPED: (64478, 52314)},
     "the ticks wake: eight bits held, a message and a timer":
-        {BENCH: (49378, 42412), SHIPPED: (49378, 41878)},
+        {BENCH: (49378, 42136), SHIPPED: (49378, 41602)},
     "a release wakes: every event, the button held":
-        {BENCH: (72358, 59778), SHIPPED: (72358, 56544)},
+        {BENCH: (72358, 59304), SHIPPED: (72358, 56070)},
     "a key wakes, the sent mark set: a key and a message":
-        {BENCH: (48772, 41054), SHIPPED: (48772, 40306)},
+        {BENCH: (48772, 40738), SHIPPED: (48772, 39990)},
     "a writer wakes: a message, none in the pipe":
-        {BENCH: (1187094, 1180554), SHIPPED: (1187094, 1180410)},
+        {BENCH: (1187094, 1180216), SHIPPED: (1187094, 1180070)},
     "a writer wakes: a message and a timer not run out":
-        {BENCH: (1191912, 1184402), SHIPPED: (1191912, 1183912)},
+        {BENCH: (1191912, 1184072), SHIPPED: (1191912, 1183580)},
     "a writer and the press's ticks in one wake: a message and a timer":
-        {BENCH: (1183830, 1176222), SHIPPED: (1183830, 1175732)},
+        {BENCH: (1183830, 1175892), SHIPPED: (1183830, 1175400)},
     "a writer wakes: a key and a message":
-        {BENCH: (1191336, 1183858), SHIPPED: (1191336, 1183156)},
+        {BENCH: (1191336, 1183488), SHIPPED: (1191336, 1182784)},
     "a writer wakes: every event, the timer not run out":
-        {BENCH: (1215378, 1202912), SHIPPED: (1215378, 1199722)},
+        {BENCH: (1215378, 1202452), SHIPPED: (1215378, 1199260)},
     "a writer and the press's ticks in one wake: every event":
-        {BENCH: (1207296, 1194732), SHIPPED: (1207296, 1191542)},
+        {BENCH: (1207296, 1194272), SHIPPED: (1207296, 1191080)},
     "a writer and the press's ticks: eight bits held, a message and a timer":
-        {BENCH: (1185462, 1178182), SHIPPED: (1185462, 1177692)},
+        {BENCH: (1185462, 1177852), SHIPPED: (1185462, 1177360)},
     "a writer, a key and the press's ticks in one wake: a key, a message and a timer":
-        {BENCH: (1193444, 1184816), SHIPPED: (1193444, 1183768)},
+        {BENCH: (1193444, 1184454), SHIPPED: (1193444, 1183404)},
     "a writer, a key and the press's ticks in one wake: every event":
-        {BENCH: (1212598, 1199938), SHIPPED: (1212598, 1196748)},
+        {BENCH: (1212598, 1199478), SHIPPED: (1212598, 1196286)},
     "a writer and the mouse into the rectangle: a rectangle and a message":
-        {BENCH: (1200190, 1192542), SHIPPED: (1200190, 1191606)},
+        {BENCH: (1200190, 1192180), SHIPPED: (1200190, 1191242)},
     "a writer, a key, the mouse, the press's ticks: every event":
-        {BENCH: (1219584, 1206924), SHIPPED: (1219584, 1203734)},
+        {BENCH: (1219584, 1206464), SHIPPED: (1219584, 1203272)},
     "a writer, the desk waiting for the bar's rectangle too":
-        {BENCH: (1193446, 1185770), SHIPPED: (1193446, 1184834)},
+        {BENCH: (1193446, 1185408), SHIPPED: (1193446, 1184470)},
     "a writer, then the mouse away: both rectangles and a message":
-        {BENCH: (1210434, 1201628), SHIPPED: (1210434, 1199900)},
+        {BENCH: (1210434, 1201220), SHIPPED: (1210434, 1199490)},
     evm.A_KEY_BEFORE_THE_WRITER_WRITES:
-        {BENCH: (1005954, 998400), SHIPPED: (1005954, 997698)},
+        {BENCH: (1005954, 998038), SHIPPED: (1005954, 997334)},
     evm.A_WRITER_AND_A_KEY:
-        {BENCH: (1194492, 1186924), SHIPPED: (1194492, 1186222)},
+        {BENCH: (1194492, 1186554), SHIPPED: (1194492, 1185850)},
     evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN:
-        {BENCH: (855918, 845608), SHIPPED: (855918, 845030)},
+        {BENCH: (855918, 845170), SHIPPED: (855918, 844590)},
     evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR:
-        {BENCH: (51268, 43178), SHIPPED: (51268, 43038)},
+        {BENCH: (51268, 42940), SHIPPED: (51268, 42798)},
 }
 
 

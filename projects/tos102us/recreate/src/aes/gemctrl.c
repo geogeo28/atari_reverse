@@ -24,6 +24,7 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "host_slot.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/apmsg.h"
 #include "aes/evlib.h"
@@ -204,6 +205,7 @@ static void arrow_repeated(uint8_t *image, int16_t window, int16_t gadget, const
 }
 
 /* $fe45a2 — hctl_window: a press at (`mouse_x`, `mouse_y`) on `window`. */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls", "no-move-loop-invariants", "no-caller-saves")
 void aes_hctl_window(uint8_t *image, int16_t window, int16_t mouse_x, int16_t mouse_y)
 {
     struct window_size at = { HCTL_STALE_WORD, HCTL_STALE_WORD, HCTL_STALE_WORD, HCTL_STALE_WORD };
@@ -257,6 +259,7 @@ void aes_hctl_window(uint8_t *image, int16_t window, int16_t mouse_x, int16_t mo
 
 /* $fe48ce — hctl_button: a button the menu bar posted for itself (mn_bar counts each in gl_mnclicks) is counted off
  * and swallowed; any other goes to the window under the mouse, unless that is the desktop or nothing. */
+FRAME_DIET("no-caller-saves")
 void aes_hctl_button(uint8_t *image, int16_t mouse_x, int16_t mouse_y)
 {
     int16_t window;
@@ -281,6 +284,7 @@ static int is_an_accessory_s(const uint8_t *image, int16_t title, int16_t item)
  * its titles the menu is worked; a choice is sent on — an accessory's entry as AC_OPEN to that accessory, its index
  * among the accessories in place of the item and the title drawn normal again; any other as MN_SELECTED to the
  * process word gl_mnppd's longword BEGINS with (its high word: 0 for every process id) — and the button waited up. */
+FRAME_DIET("no-caller-saves")
 void aes_hctl_rect(uint8_t *image, int16_t mouse_x, int16_t mouse_y)
 {
     uint16_t choice_local[FRAME_LOCAL_WORDS(HCTL_CHOICE_BYTES)];

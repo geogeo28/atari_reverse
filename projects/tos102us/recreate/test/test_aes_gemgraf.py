@@ -476,7 +476,9 @@ def test_gsx_blt_through_its_callers_word():
 
 
 def test_gsx_blt_hides_the_snapshot_s_cursor_between_its_two_mfdbs():
-    """The snapshot's drawn arrow: v_hide_c after gl_src is set up and before gl_dst, v_show_c last."""
+    """The snapshot's drawn arrow hidden and shown again round the blit: the nest is back where it was and the screen
+    changed. (WHERE the hide falls — after gl_src is set up, before gl_dst — no assert here sees: the order of an AES
+    store against a VDI trap leaves the same image; `recreate/STATUS.md`, "Not reconstructed", says what holds it.)"""
     result = gsx.run_gsx("AES_ROM_GSX_BLT", BLT["a form onto the screen in two colours"], ICON_FORM,
                          onto=gsx.shown_machine())
     assert result.field("AES", "GL_MOFF") == gsx.NEST_SHOWN and screen_changed(result)

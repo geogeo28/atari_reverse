@@ -15,6 +15,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/gemgraf.h"
@@ -275,27 +276,53 @@ uint16_t aes_gsx_xcbox(uint8_t *image, uint32_t rect)
 
 /* ---- blits and fills --------------------------------------------------------------------------------------------- */
 
-/* $fda9ce — gsx_blt: gl_src set up for the source (0 the screen, else a form `source_bytes` across), the cursor
- * hidden, gl_dst for the destination; the two rectangles' corners into ptsin; then vrt_cpyfm in the two colours —
- * or vro_cpyfm when the foreground is -1 — and the cursor shown. */
-void aes_gsx_blt(uint8_t *image, uint32_t source, int16_t source_x, int16_t source_y, int16_t source_bytes,
-                 uint32_t destination, int16_t destination_x, int16_t destination_y, int16_t destination_bytes,
-                 int16_t width, int16_t height, int16_t rule, int16_t foreground, int16_t background)
+/* $fdaa00..$fdaa22 — gsx_blt's two rectangles into ptsin: each one's corner, then its far corner, `width` x `height`.
+ * A ROUTINE OF ITS OWN (`stack_diet.h`): inlined, its seven words are seven registers gsx_blt saves and holds under
+ * the VDI's blit, the deepest trap of the screen manager's stack; called, they are read off gsx_blt's own arguments
+ * and this frame is gone before the blit. */
+static __attribute__((noinline)) void blt_corners(uint8_t *image, int16_t source_x, int16_t source_y, int16_t destination_x,
+                                                  int16_t destination_y, int16_t width, int16_t height)
 {
     uint16_t right = (uint16_t)(width - 1), bottom = (uint16_t)(height - 1);
 
-    aes_gsx_fix(image, AES_GL_SRC, source, source_bytes, height);
-    aes_gsx_moff(image);
-    aes_gsx_fix(image, AES_GL_DST, destination, destination_bytes, height);
     wr32(image + PTSIN_POINT(0), words_long(source_x, source_y));
     wr32(image + PTSIN_POINT(1), words_long((int16_t)(source_x + right), (int16_t)(source_y + bottom)));
     wr32(image + PTSIN_POINT(2), words_long(destination_x, destination_y));
     wr32(image + PTSIN_POINT(3), words_long((int16_t)(destination_x + right), (int16_t)(destination_y + bottom)));
+}
+
+/* $fda9ce — gsx_blt: gl_src set up for the source (0 the screen, else a form `source_bytes` across), the cursor
+ * hidden, gl_dst for the destination; the two rectangles' corners into ptsin; then vrt_cpyfm in the two colours —
+ * or vro_cpyfm when the foreground is -1 — and the cursor shown.
+ * THE BODY, held by `aes_gsx_blt` below for every caller but one: gr_gicon's two blits take it as their own
+ * (`stack_diet.h`) WHERE THE ROM'S FRAGMENT CALLS gsx_blt ($fda79c) — called, its thirteen arguments are 56 bytes of
+ * longword slots and a return address standing under the VDI's blit, on a deep path of the screen manager's stack;
+ * the ROM's call pushes 30. */
+static inline __attribute__((always_inline)) void gsx_blt(uint8_t *image, uint32_t source, int16_t source_x, int16_t source_y,
+                                                          int16_t source_bytes, uint32_t destination, int16_t destination_x,
+                                                          int16_t destination_y, int16_t destination_bytes, int16_t width,
+                                                          int16_t height, int16_t rule, int16_t foreground,
+                                                          int16_t background)
+{
+    aes_gsx_fix(image, AES_GL_SRC, source, source_bytes, height);
+    aes_gsx_moff(image);
+    aes_gsx_fix(image, AES_GL_DST, destination, destination_bytes, height);
+    blt_corners(image, source_x, source_y, destination_x, destination_y, width, height);
     if (foreground != GSX_NO_COLOUR)
         aes_vrt_cpyfm(image, rule, AES_GSX_PTSIN, AES_GL_SRC, AES_GL_DST, foreground, background);
     else
         aes_vro_cpyfm(image, rule, AES_GSX_PTSIN, AES_GL_SRC, AES_GL_DST);
     aes_gsx_mon(image);
+}
+
+/* ...and the routine every other caller calls ($fda9ce). */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls", "no-function-cse")
+void aes_gsx_blt(uint8_t *image, uint32_t source, int16_t source_x, int16_t source_y, int16_t source_bytes,
+                 uint32_t destination, int16_t destination_x, int16_t destination_y, int16_t destination_bytes,
+                 int16_t width, int16_t height, int16_t rule, int16_t foreground, int16_t background)
+{
+    gsx_blt(image, source, source_x, source_y, source_bytes, destination, destination_x, destination_y, destination_bytes,
+            width, height, rule, foreground, background);
 }
 
 /* $fdaa48 — bb_screen: gsx_blt from the screen to the screen, no colours (vro_cpyfm). */
@@ -319,9 +346,12 @@ uint16_t aes_gsx_trans(uint8_t *image, uint32_t source, int16_t source_bytes, ui
 
 /* $fdac28 — bb_fill: gsx_attr(text, mode, the text colour's own cache — so only the mode can change), the interior
  * and style each through its cache (stored before the call), the rectangle's corners into ptsin, gl_dst the
- * screen, vr_recfl. */
-uint16_t aes_bb_fill(uint8_t *image, int16_t mode, int16_t interior, int16_t pattern, int16_t x, int16_t y,
-                     int16_t width, int16_t height)
+ * screen, vr_recfl.
+ * THE BODY, held by `aes_bb_fill` below; gr_rect takes it as its own (`stack_diet.h`) WHERE THE ROM'S gr_rect CALLS
+ * bb_fill ($fda5b6): the eight argument slots and the return address of our call are 36 bytes under the fill's trap,
+ * where the ROM's call pushes 14. */
+static inline __attribute__((always_inline)) uint16_t bb_fill(uint8_t *image, int16_t mode, int16_t interior, int16_t pattern,
+                                                              int16_t x, int16_t y, int16_t width, int16_t height)
 {
     aes_gsx_attr(image, GSX_TEXT_TEXT, mode, (int16_t)be16(image + AES_GL_TCOLOR));
     if (interior != (int16_t)be16(image + AES_GL_FIS)) {
@@ -336,6 +366,14 @@ uint16_t aes_bb_fill(uint8_t *image, int16_t mode, int16_t interior, int16_t pat
     wr32(image + PTSIN_POINT(1), words_long((int16_t)(x + width - 1), (int16_t)(y + height - 1)));
     aes_gsx_fix(image, AES_GL_DST, 0, 0, 0);
     return aes_vr_recfl(image, AES_GSX_PTSIN, AES_GL_DST);
+}
+
+/* ...and the routine every other caller calls ($fdac28). */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls")
+uint16_t aes_bb_fill(uint8_t *image, int16_t mode, int16_t interior, int16_t pattern, int16_t x, int16_t y,
+                     int16_t width, int16_t height)
+{
+    return bb_fill(image, mode, interior, pattern, x, y, width, height);
 }
 
 /* ---- text -------------------------------------------------------------------------------------------------------- */
@@ -399,6 +437,7 @@ static const struct tblt_font TBLT_SMALL = {
  * y moved down to the baseline by the font's character height, read after it; any other font draws as the VDI
  * stands. contrl[0..1] are stored as one longword, then contrl[3] and [6], and ptsin[0..1]: PTSIN is NOT pointed
  * anywhere, so the call reads the block's PTSIN as the last call left it. */
+FRAME_DIET("no-optimize-sibling-calls", "no-caller-saves")
 uint16_t aes_gsx_tblt(uint8_t *image, int16_t font, int16_t x, int16_t y, int16_t characters)
 {
     const struct tblt_font *row = font == GSX_FONT_IBM ? &TBLT_IBM : font == GSX_FONT_SMALL ? &TBLT_SMALL : 0;
@@ -436,6 +475,7 @@ void aes_gr_inside(uint8_t *image, uint32_t rect, int16_t thickness)
 
 /* $fda582 — gr_rect: the fill colour set (vsf_color), then bb_fill in replace mode — hollow for pattern 0, solid for
  * 7, any other a pattern — over the GRECT, read after the colour's call. */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls", "no-function-cse")
 uint16_t aes_gr_rect(uint8_t *image, int16_t colour, int16_t pattern, uint32_t rect)
 {
     int16_t interior = GSX_FIS_PATTERN;
@@ -445,9 +485,9 @@ uint16_t aes_gr_rect(uint8_t *image, int16_t colour, int16_t pattern, uint32_t r
     if (pattern == GSX_PATTERN_SOLID)
         interior = GSX_FIS_SOLID;
     aes_gsx_1code(image, VDI_ROM_VSF_COLOR_OPCODE, colour);
-    return aes_bb_fill(image, GSX_MODE_REPLACE, interior, pattern, (int16_t)bus_word(image, rect + GRECT_X),
-                       (int16_t)bus_word(image, rect + GRECT_Y), (int16_t)bus_word(image, rect + GRECT_W),
-                       (int16_t)bus_word(image, rect + GRECT_H));
+    return bb_fill(image, GSX_MODE_REPLACE, interior, pattern, (int16_t)bus_word(image, rect + GRECT_X),
+                   (int16_t)bus_word(image, rect + GRECT_Y), (int16_t)bus_word(image, rect + GRECT_W),
+                   (int16_t)bus_word(image, rect + GRECT_H));
 }
 
 /* Half of what is left over, rounded up: `addq.w #1; asr.w #1` — a WORD, so a spare of $7fff rounds to -$4000. */
@@ -529,15 +569,17 @@ void aes_gr_crack(uint8_t *image, int16_t colour, uint32_t border, uint32_t text
 
 /* $fda76e, folded: one of an icon's two forms blitted onto the screen at the icon's GRECT — a form as wide in bytes
  * as the icon is in pixels / 8, the screen's row gl_width / 8 (each `divs.w`: toward zero), transparent, in the
- * two colours. The ROM's fragment takes the form in D0, the colours in D1/D2 and the GRECT in its caller's A3. */
-static void gicon_blit(uint8_t *image, uint32_t form, uint32_t icon, int16_t foreground, int16_t background)
+ * two colours. The ROM's fragment takes the form in D0, the colours in D1/D2 and the GRECT in its caller's A3 — no
+ * frame of its own, and none here: inlined, with gsx_blt's body (above). */
+static inline __attribute__((always_inline)) void gicon_blit(uint8_t *image, uint32_t form, uint32_t icon, int16_t foreground,
+                                                             int16_t background)
 {
     int16_t width = (int16_t)bus_word(image, icon + GRECT_W);
 
-    aes_gsx_blt(image, form, 0, 0, quotient_word(m68k_divs_w((uint32_t)(int32_t)width, BITS_PER_BYTE)), 0,
-                (int16_t)bus_word(image, icon + GRECT_X), (int16_t)bus_word(image, icon + GRECT_Y),
-                gsx_screen_row_bytes(image),
-                width, (int16_t)bus_word(image, icon + GRECT_H), GSX_MODE_TRANSPARENT, foreground, background);
+    gsx_blt(image, form, 0, 0, quotient_word(m68k_divs_w((uint32_t)(int32_t)width, BITS_PER_BYTE)), 0,
+            (int16_t)bus_word(image, icon + GRECT_X), (int16_t)bus_word(image, icon + GRECT_Y),
+            gsx_screen_row_bytes(image),
+            width, (int16_t)bus_word(image, icon + GRECT_H), GSX_MODE_TRANSPARENT, foreground, background);
 }
 
 /* $fda6c4 — gr_gicon: an icon. Its character word holds the foreground colour (bits 12-15), the background (8-11)
@@ -545,6 +587,7 @@ static void gicon_blit(uint8_t *image, uint32_t form, uint32_t icon, int16_t for
  * is blitted in the background colour and the text's GRECT filled solid in it; then the DATA in the foreground, the
  * text colour set (transparent), the character — when there is one — drawn in the small font at the icon's corner
  * plus its offset, and the text centred in its GRECT. */
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls", "no-gcse", "no-caller-saves")
 void aes_gr_gicon(uint8_t *image, int16_t state, uint32_t mask, uint32_t data, uint32_t text, int16_t character,
                   int16_t char_x, int16_t char_y, uint32_t icon, uint32_t text_rect)
 {
@@ -574,6 +617,7 @@ void aes_gr_gicon(uint8_t *image, int16_t state, uint32_t mask, uint32_t data, u
 /* $fda7a4 — gr_box: a box `thickness` lines thick, the cursor hidden round it — each line gr_inside of a copy of the
  * GRECT (a local of the ROM's frame) and gsx_box, from thickness - 1 in to 0; a NEGATIVE thickness draws from
  * thickness out to 0 (one line more: the ROM's `subq.w #1` first). A thickness of 0 draws nothing. */
+FRAME_DIET("no-defer-pop", "no-function-cse")
 void aes_gr_box(uint8_t *image, int16_t x, int16_t y, int16_t width, int16_t height, int16_t thickness)
 {
     uint16_t inner_local[GRECT_WORDS];

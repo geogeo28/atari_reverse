@@ -11,6 +11,7 @@
 #include "machine.h"
 #include "host_slot.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/objects.h"
 #include "aes/oblib.h"
@@ -84,6 +85,7 @@ int16_t aes_get_prev(uint8_t *image, uint32_t tree, int16_t parent, int16_t obje
  * test ($fea17c `tst.w`, $fea182 `cmpi.w #-1`): a descent, and a found object that is not -1 — a start at object -1
  * (objc_find's `startob` is the caller's word, and object -1 of a resource's later tree is a real object) hits,
  * descends, and a miss then ENDS the search with -1 rather than stepping among -1's children. */
+FRAME_DIET("no-defer-pop", "no-gcse", "no-move-loop-invariants")
 int16_t aes_ob_find(uint8_t *image, uint32_t tree, int16_t object, int16_t depth, int16_t x, int16_t y)
 {
     uint8_t rects_local[2 * GRECT_BYTES];

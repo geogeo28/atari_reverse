@@ -16,6 +16,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/gemgraf.h"
 #include "aes/grdrag.h"
 #include "aes/grwait.h"
@@ -57,6 +58,7 @@ static void gr_xdraw(uint8_t *image, uint16_t two_boxes, uint32_t box, uint32_t 
 /* $fe8576 — one step of a drag: `box` drawn (and its offset twin, unless `offset` holds gl_rzero's words), gr_stilldn's
  * wait for the mouse to leave the pixel at (`mouse_x`, `mouse_y`) or the button to rise, the box drawn away.
  * gr_stilldn's answer: 1 the button still down. */
+FRAME_DIET("no-defer-pop", "no-function-cse")
 uint16_t aes_gr_wait(uint8_t *image, uint32_t box, uint32_t offset, int16_t mouse_x, int16_t mouse_y)
 {
     uint16_t two_boxes = (uint16_t)aes_rc_equal(image, AES_GL_RZERO, offset) ^ SECOND_BOX_FLIP;
@@ -132,6 +134,7 @@ void aes_gr_rubbox(uint8_t *image, int16_t x, int16_t y, int16_t min_width, int1
  * screen locked round it and XOR drawing set up; the mouse's offset into the box taken once (gr_clamp from the corner
  * one further on, no minimum); each step the box put where the mouse less that offset is, kept inside `bound`
  * (rc_constrain), and gr_wait at the mouse; the box's corner out through `x_out` / `y_out`. */
+FRAME_DIET("no-defer-pop")
 void aes_gr_dragbox(uint8_t *image, int16_t width, int16_t height, int16_t x, int16_t y, uint32_t bound,
                     uint32_t x_out, uint32_t y_out)
 {

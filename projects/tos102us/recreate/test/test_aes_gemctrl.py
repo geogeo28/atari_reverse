@@ -489,91 +489,91 @@ PREMISES = {
 }
 WHOLE_RUN = {
     "the top window's up arrow clicked: found, the arrow sent, one yield":
-        {BENCH: (106462, 59086), SHIPPED: (106462, 57356)},
+        {BENCH: (106462, 58314), SHIPPED: (106462, 56580)},
     'the closer held; released inside it: WM_CLOSED':
-        {BENCH: (226780, 167674), SHIPPED: (226780, 164708)},
+        {BENCH: (226780, 166686), SHIPPED: (226780, 163716)},
     'the fuller held; the mouse taken off it, then released: nothing sent':
-        {BENCH: (261404, 200470), SHIPPED: (261404, 197926)},
+        {BENCH: (261404, 199482), SHIPPED: (261404, 196936)},
     'the title held; dragged, then released: WM_MOVED':
-        {BENCH: (481298, 421920), SHIPPED: (481298, 417754)},
+        {BENCH: (481298, 420828), SHIPPED: (481298, 416656)},
     'the sizer held; stretched, then released: WM_SIZED':
-        {BENCH: (666140, 606948), SHIPPED: (666140, 602204)},
+        {BENCH: (666140, 605690), SHIPPED: (666140, 600940)},
     'the sizer held; shrunk past the smallest size, both bars: seven boxes each way':
-        {BENCH: (1072748, 1014592), SHIPPED: (1072748, 1009602)},
+        {BENCH: (1072748, 1013434), SHIPPED: (1072748, 1008438)},
     'the sizer held; shrunk, a vertical bar alone: a cell wide, seven boxes high':
-        {BENCH: (1051350, 1002914), SHIPPED: (1051350, 997778)},
+        {BENCH: (1051350, 1001820), SHIPPED: (1051350, 996678)},
     'the sizer held; shrunk, a horizontal bar alone: seven boxes wide, a cell high':
-        {BENCH: (983866, 935512), SHIPPED: (983866, 930376)},
+        {BENCH: (983866, 934410), SHIPPED: (983866, 929268)},
     'the vertical elevator held; dragged up, then released: WM_VSLID':
-        {BENCH: (441652, 377750), SHIPPED: (441652, 373048)},
+        {BENCH: (441652, 376622), SHIPPED: (441652, 371914)},
     'the horizontal elevator held; dragged right, then released: WM_HSLID':
-        {BENCH: (442638, 379628), SHIPPED: (442638, 375058)},
+        {BENCH: (442638, 378500), SHIPPED: (442638, 373924)},
     'the up arrow clicked: the lock let go, the arrow sent, one yield, the lock taken again':
-        {BENCH: (101422, 55756), SHIPPED: (101422, 54186)},
+        {BENCH: (101422, 55044), SHIPPED: (101422, 53470)},
     'the track right of the horizontal elevator clicked: the page after':
-        {BENCH: (102158, 54780), SHIPPED: (102158, 53474)},
+        {BENCH: (102158, 54020), SHIPPED: (102158, 52710)},
     'the up arrow held: sent, read by its owner, sent again; released':
-        {BENCH: (138364, 91102), SHIPPED: (138364, 89774)},
+        {BENCH: (138364, 90182), SHIPPED: (138364, 88850)},
     'the information line held: nothing sent, a yield until the button rises':
-        {BENCH: (85152, 48748), SHIPPED: (85152, 49288)},
+        {BENCH: (85152, 48384), SHIPPED: (85152, 48924)},
     'a window that is not the top one, held: WM_TOPPED, then the button waited up':
-        {BENCH: (38612, 31388), SHIPPED: (38612, 30306)},
+        {BENCH: (38612, 30860), SHIPPED: (38612, 29774)},
     'no message, the button down: two yields until it rises':
-        {BENCH: (34674, 31840), SHIPPED: (34674, 32202)},
+        {BENCH: (34674, 31568), SHIPPED: (34674, 31930)},
     "AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise":
-        {BENCH: (63868, 56032), SHIPPED: (63868, 55070)},
+        {BENCH: (63868, 55468), SHIPPED: (63868, 54502)},
     'on View; an item reached, then clicked: MN_SELECTED to process 0':
-        {BENCH: (1132286, 1058738), SHIPPED: (1132286, 1046392)},
+        {BENCH: (1132286, 1058588), SHIPPED: (1132286, 1046266)},
     "on Desk; the accessory's entry reached, then clicked: AC_OPEN to the accessory":
-        {BENCH: (861836, 787282), SHIPPED: (861836, 776372)},
+        {BENCH: (861836, 785994), SHIPPED: (861836, 775088)},
     'on View; the menu left, a click off it: nothing chosen, nothing sent':
-        {BENCH: (1107912, 1040730), SHIPPED: (1107912, 1029640)},
+        {BENCH: (1107912, 1040826), SHIPPED: (1107912, 1029764)},
     "on Desk, the desk alone; its own item clicked: MN_SELECTED, no accessory's whatever gl_dafirst holds":
-        {BENCH: (600452, 531308), SHIPPED: (600452, 521696)},
+        {BENCH: (600452, 529594), SHIPPED: (600452, 519976)},
 }
 PRICED = {
     "the top window's up arrow clicked: found, the arrow sent, one yield":
-        Priced((47346, 99700), (39232, 84954), 3, (0, 0, 0)),   # 0.47 / 0.46
+        Priced((46570, 99700), (38784, 84954), 3, (0, 0, 0)),   # 0.47 / 0.46
     'the closer held; released inside it: WM_CLOSED':
-        Priced((75072, 141812), (47166, 97586), 2, (0, 0, 0)),   # 0.53 / 0.48
+        Priced((74080, 141812), (46826, 97586), 2, (0, 0, 0)),   # 0.52 / 0.48
     'the fuller held; the mouse taken off it, then released: nothing sent':
-        Priced((86522, 155472), (45428, 94522), 2, (0, 0, 0)),   # 0.56 / 0.48
+        Priced((85532, 155472), (45058, 94522), 2, (0, 0, 0)),   # 0.55 / 0.48
     'the title held; dragged, then released: WM_MOVED':
-        Priced((111718, 185074), (62592, 109410), 5, (0, 0, 0)),   # 0.60 / 0.57
+        Priced((110620, 185074), (62442, 109410), 5, (0, 0, 0)),   # 0.60 / 0.57
     'the sizer held; stretched, then released: WM_SIZED':
-        Priced((132602, 209494), (83420, 133770), 5, (0, 0, 0)),   # 0.63 / 0.62
+        Priced((131338, 209494), (83104, 133770), 5, (0, 0, 0)),   # 0.63 / 0.62
     'the sizer held; shrunk past the smallest size, both bars: seven boxes each way':
-        Priced((178998, 263204), (136376, 198962), 7, (0, 0, 0)),   # 0.68 / 0.69
+        Priced((177834, 263204), (136044, 198962), 7, (0, 0, 0)),   # 0.68 / 0.68
     'the sizer held; shrunk, a vertical bar alone: a cell wide, seven boxes high':
-        Priced((171746, 245950), (129312, 182380), 7, (0, 0, 0)),   # 0.70 / 0.71
+        Priced((170646, 245950), (129012, 182380), 7, (0, 0, 0)),   # 0.69 / 0.71
     'the sizer held; shrunk, a horizontal bar alone: seven boxes wide, a cell high':
-        Priced((171784, 245906), (129350, 182336), 7, (0, 0, 0)),   # 0.70 / 0.71
+        Priced((170676, 245906), (129042, 182336), 7, (0, 0, 0)),   # 0.69 / 0.71
     'the vertical elevator held; dragged up, then released: WM_VSLID':
-        Priced((116210, 194874), (67052, 119186), 5, (0, 0, 0)),   # 0.60 / 0.56
+        Priced((115076, 194874), (66866, 119186), 5, (0, 0, 0)),   # 0.59 / 0.56
     'the horizontal elevator held; dragged right, then released: WM_HSLID':
-        Priced((115010, 192542), (65828, 116818), 5, (0, 0, 0)),   # 0.60 / 0.56
+        Priced((113876, 192542), (65642, 116818), 5, (0, 0, 0)),   # 0.59 / 0.56
     'the up arrow clicked: the lock let go, the arrow sent, one yield, the lock taken again':
-        Priced((44560, 94660), (36446, 79914), 3, (0, 0, 0)),   # 0.47 / 0.46
+        Priced((43844, 94660), (36058, 79914), 3, (0, 0, 0)),   # 0.46 / 0.45
     'the track right of the horizontal elevator clicked: the page after':
-        Priced((44064, 95396), (35950, 80650), 3, (0, 0, 0)),   # 0.46 / 0.45
+        Priced((43300, 95396), (35514, 80650), 3, (0, 0, 0)),   # 0.45 / 0.44
     'the up arrow held: sent, read by its owner, sent again; released':
-        Priced((51882, 103888), (43502, 88744), 4, (1, 14190, 7428)),   # 0.50 / 0.49
+        Priced((50958, 103888), (42934, 88744), 4, (1, 14190, 7428)),   # 0.49 / 0.48
     'the information line held: nothing sent, a yield until the button rises':
-        Priced((33480, 71628), (33214, 71230), 1, (0, 0, 0)),   # 0.47 / 0.47
+        Priced((33116, 71628), (32878, 71230), 1, (0, 0, 0)),   # 0.46 / 0.46
     'a window that is not the top one, held: WM_TOPPED, then the button waited up':
-        Priced((15914, 25088), (8094, 11322), 2, (0, 0, 0)),   # 0.63 / 0.71
+        Priced((15382, 25088), (7886, 11322), 2, (0, 0, 0)),   # 0.61 / 0.70
     'no message, the button down: two yields until it rises':
-        Priced((11088, 14388), (10822, 13990), 1, (0, 0, 0)),   # 0.77 / 0.77
+        Priced((10816, 14388), (10578, 13990), 1, (0, 0, 0)),   # 0.75 / 0.76
     "AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise":
-        Priced((19450, 29392), (11630, 15626), 2, (1, 14190, 7428)),   # 0.66 / 0.74
+        Priced((18882, 29392), (11386, 15626), 2, (1, 14190, 7428)),   # 0.64 / 0.73
     'on View; an item reached, then clicked: MN_SELECTED to process 0':
-        Priced((166286, 263904), (111606, 182790), 4, (0, 0, 0)),   # 0.63 / 0.61
+        Priced((166160, 263904), (112504, 182790), 4, (0, 0, 0)),   # 0.63 / 0.62
     "on Desk; the accessory's entry reached, then clicked: AC_OPEN to the accessory":
-        Priced((152086, 248130), (97364, 165608), 4, (0, 0, 0)),   # 0.61 / 0.59
+        Priced((150802, 248130), (97104, 165608), 4, (0, 0, 0)),   # 0.61 / 0.59
     'on View; the menu left, a click off it: nothing chosen, nothing sent':
-        Priced((155292, 244584), (102076, 167080), 3, (0, 0, 0)),   # 0.63 / 0.61
+        Priced((155416, 244584), (102980, 167080), 3, (0, 0, 0)),   # 0.64 / 0.62
     "on Desk, the desk alone; its own item clicked: MN_SELECTED, no accessory's whatever gl_dafirst holds":
-        Priced((133436, 221188), (78968, 140250), 4, (0, 0, 0)),   # 0.60 / 0.56
+        Priced((131716, 221188), (78272, 140250), 4, (0, 0, 0)),   # 0.60 / 0.56
 }
 # @PINS-END
 WINDOWS = {label: priced.windows for label, priced in PRICED.items() if priced.windows != NO_WINDOW}
@@ -1355,7 +1355,9 @@ def test_the_entry_s_own_frame_is_no_more_than_the_rom_s(elf):
 
 
 _A_WORD_OF_THE_FRAME = re.compile(r"^moveaw %sp@\(\d+\),%a\d$")
-_PUSHED_WHOLE = re.compile(r"^movel %a\d,%sp@-$")
+# ...pushed, or stored into the slot the call before it left on the stack (the frame diet, 2026-10-10: the entry pops at
+# each call, `stack_diet.h`, and GCC then folds the pop of the last four bytes into the next argument's store).
+_PUSHED_WHOLE = re.compile(r"^movel %a\d,%sp@-?$")
 _ALWAYS = re.compile(r"^(?:bra[swl]?|jra) ([0-9a-f]+) ")
 _A_TEST_OR_A_CALL = re.compile(r"^(?:btst #(\d+),|jsr .*<(\w+)>)")
 

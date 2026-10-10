@@ -301,17 +301,26 @@ static inline void call_vector_registers(uint8_t *image, uint32_t routine, uint3
 #endif
 }
 
-/* ---- the bare `jsr` for a caller with NOTHING live across it ---------------------------------------------
+/* ---- the bare `jsr` that is its caller's LAST ACT, in a caller that keeps no register for its own ------------
  *
  * The VDI dispatcher's call into the function its opcode table names is its last act (`src/vdi/entry.c`), and
- * a VDI function may change any register (vs_color D3/D4, vr_trnfm D7 — `transcribed.h`). `call_vector`'s
- * clobber list would make GCC save its ten callee-saved registers in the caller's PROLOGUE, paid on every path
- * — the dispatcher's lookups that call nothing included. This shape saves them ITSELF, round the `jsr` alone:
- * the same `movem` pair, spent only where the call is made. A6 goes in the list too, which the clobber lists
- * above cannot name (GCC's bound). The routine is in A0, as the ROM's own `movea.l (a0,a1.l),a0 / jsr (a0)`
- * has it; nothing is pinned in A5 — the ROM's is its CONTRL pointer, which no VDI function reads on entry. Off
- * target it is `call_vector`'s hook. */
-static inline void call_vector_keeping(uint8_t *image, uint32_t routine)
+ * a VDI function may change any register (vs_color D3/D4, vr_trnfm D7 — `transcribed.h`). THE ROM'S DISPATCHER
+ * KEEPS NONE OF THEM: its `jsr (a0)` is bare and it returns by popping the four registers of its own prologue off
+ * its frame ($fcab5e) — because its one caller, the VDI's `trap #2` entry, has saved D1-A6 round the lot
+ * (`movem.l d1-a6,-(sp)`, $fc9f9e). So is this: the `jsr` alone, and GCC TOLD ONLY OF D0, D1, A0, A1. What that
+ * leaves true, and what holds it:
+ *   * the registers the caller's own prologue saved come back off the stack, whatever the function did to them;
+ *   * the registers the caller never touched go back to ITS caller as the function left them — a contract no C
+ *     caller may rely on: the dispatcher's two callers are the ROM's entry, which needs none, and its C twin,
+ *     which saves the lot round its call as the entry does (`src/vdi/entry.c`, dispatched_keeping);
+ *   * NOTHING OF THE CALLER'S MAY BE LIVE ACROSS THE CALL in a register GCC believes kept — held on both blobs'
+ *     own instructions (`test_vdi_entry.py`: after each `jsr (a0)` of the dispatcher, pops and the return alone).
+ * WHY IT IS WORTH A CONTRACT: saved round the `jsr` (the shape this replaced, 2026-10-10) the eleven registers were
+ * 44 BYTES UNDER EVERY VDI FUNCTION, on whichever stack the `trap #2` was taken — the screen manager's 1,196 bytes
+ * (`test/aes_stack.py`), the dispatcher's 640 — and 196 cycles a call the ROM does not spend.
+ * The routine is in A0, as the ROM's own `movea.l (a0,a1.l),a0 / jsr (a0)` has it; nothing is pinned in A5 — the
+ * ROM's is its CONTRL pointer, which no VDI function reads on entry. Off target it is `call_vector`'s hook. */
+static inline void call_vector_as_the_last_act(uint8_t *image, uint32_t routine)
 {
 #ifdef RECREATE_HOST_DIFFERENTIAL
     recreate_call_vector(image, routine, STAGED_CALL_NO_ARGUMENT);
@@ -319,9 +328,7 @@ static inline void call_vector_keeping(uint8_t *image, uint32_t routine)
     register uint32_t target __asm__("a0") = routine;
 
     (void)image;
-    __asm__ volatile ("movem.l %%d2-%%d7/%%a2-%%a6,-(%%sp)\n\t"
-                      "jsr (%0)\n\t"
-                      "movem.l (%%sp)+,%%d2-%%d7/%%a2-%%a6"
+    __asm__ volatile ("jsr (%0)"
                       : "+a"(target)
                       :
                       : "d0", "d1", "a1", "memory", "cc");

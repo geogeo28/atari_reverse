@@ -16,6 +16,7 @@
 
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "aes/aes.h"
 #include "aes/evasync.h"
@@ -97,6 +98,7 @@ static inline void sampled(uint8_t *image, uint16_t device)
 /* $fe4bc6 — forker: the queue run dry — each entry counted out, its index moved on, recorded while a recording
  * runs, and its fork function CALLED over its data (`staged_call.h`, THE FORK HOOK) — with no process running
  * (`rlr` -1, put back after) and AES_FORKER_BUSY set. A fork function that queues more is served in the same run. */
+FRAME_DIET("no-move-loop-invariants")
 void aes_forker(uint8_t *image)
 {
     uint32_t interrupted = be32(image + AES_RLR);
@@ -150,6 +152,7 @@ void aes_kchange(uint8_t *image, int16_t key, int16_t shift_keys)
  * none down before) while the mouse is not the screen manager's re-decides whose the mouse is by where it is
  * (mowner): the control rectangle's owner's, the screen manager's, or the desktop window's owner's. Then the click
  * record — what the buttons, the clicks and the mouse WERE — and the event posted to the mouse's owner. */
+FRAME_DIET("no-caller-saves")
 void aes_bchange(uint8_t *image, int16_t buttons, int16_t clicks)
 {
     if (be32(image + AES_GL_MOWNER) != be32(image + AES_CTL_PD) && buttons == BCHANGE_FIRST_PRESS
@@ -197,6 +200,7 @@ static inline int beyond_the_slop(uint16_t was, uint16_t is)
  * back the mouse is PUT at the event's point instead (vsin_mode: the locator, sample; the cursor routine; vsm_locator).
  * With no button down and a menu bar, the mouse crossing the screen manager's own rectangle hands it the mouse. Then
  * the mouse's owner is told (post_mouse). */
+FRAME_DIET("no-defer-pop")
 void aes_mchange(uint8_t *image, int16_t x, int16_t y)
 {
     uint16_t now_x, now_y;

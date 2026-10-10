@@ -554,143 +554,143 @@ Priced, NO_WINDOW = switching.Priced, switching.NO_WINDOW
 # @PINS-BEGIN (measured: scratch `pins.py`, then `pins_emit.py`)
 WHOLE_RUN = {
     "opcode 11, as aes_ap_rdwr, a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)":
-        {BENCH: (1176770, 1170538), SHIPPED: (1176770, 1170272)},
+        {BENCH: (1176770, 1170288), SHIPPED: (1176770, 1170020)},
     'opcode 24, as aes_ev_timer, a time of five ticks, blocked; run out by them':
-        {BENCH: (31684, 26510), SHIPPED: (31684, 26412)},
+        {BENCH: (31684, 26370), SHIPPED: (31684, 26272)},
     'opcode 71, as aes_gr_dragbox, held at the mouse; moved, then released':
-        {BENCH: (276684, 257452), SHIPPED: (276684, 255062)},
+        {BENCH: (276684, 256874), SHIPPED: (276684, 254482)},
     'opcode 25, as aes_ev_multi, blocked and woken — a release wakes: the button up, which is down':
-        {BENCH: (45202, 38104), SHIPPED: (45202, 37916)},
+        {BENCH: (45202, 37812), SHIPPED: (45202, 37624)},
     'marshalled: appl_exit: no accessory, the pipe empty':
-        {BENCH: (16326, 13504), SHIPPED: (16326, 13450)},
+        {BENCH: (16326, 13440), SHIPPED: (16326, 13386)},
     'opcode 14, as aes_ap_tplay, none of four records played: a count of 0':
-        {BENCH: (12834, 11320), SHIPPED: (12834, 11440)},
+        {BENCH: (12834, 11256), SHIPPED: (12834, 11376)},
     'opcode 25, as aes_ev_multi, blocked and woken — a key wakes: a key, none queued':
-        {BENCH: (44006, 37716), SHIPPED: (44006, 37526)},
+        {BENCH: (44006, 37488), SHIPPED: (44006, 37298)},
     'opcode 75, as aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0':
-        {BENCH: (258096, 221742), SHIPPED: (258096, 218758)},
+        {BENCH: (258096, 220422), SHIPPED: (258096, 217434)},
     'opcode 25, as aes_ev_multi, blocked and woken — leaving wakes: two rectangles':
-        {BENCH: (62842, 53604), SHIPPED: (62842, 52480)},
+        {BENCH: (62842, 53292), SHIPPED: (62842, 52168)},
     'opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record':
-        {BENCH: (71708, 61912), SHIPPED: (71708, 62592)},
+        {BENCH: (71708, 61512), SHIPPED: (71708, 62192)},
     'opcode 25, as aes_ev_multi, blocked and woken — the ticks wake: a message and a timer':
-        {BENCH: (48806, 41108), SHIPPED: (48806, 40574)},
+        {BENCH: (48806, 40832), SHIPPED: (48806, 40298)},
     'opcode 76, as aes_gr_slidebox, the elevator held; dragged down, then released':
-        {BENCH: (275602, 253434), SHIPPED: (275602, 250890)},
+        {BENCH: (275602, 252856), SHIPPED: (275602, 250310)},
     'opcode 25, as aes_ev_multi, blocked and woken — entering wakes: the second rectangle alone':
-        {BENCH: (52738, 46286), SHIPPED: (52738, 45950)},
+        {BENCH: (52738, 45992), SHIPPED: (52738, 45654)},
     "opcode 15, as aes_ap_trecd, one record, a key's":
-        {BENCH: (47416, 39606), SHIPPED: (47416, 39448)},
+        {BENCH: (47416, 39406), SHIPPED: (47416, 39248)},
     'opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        {BENCH: (1188090, 1181176), SHIPPED: (1188090, 1181032)},
+        {BENCH: (1188090, 1180838), SHIPPED: (1188090, 1180692)},
     "opcode 107, as aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call":
-        {BENCH: (15166, 12250), SHIPPED: (15166, 12372)},
+        {BENCH: (15166, 12186), SHIPPED: (15166, 12308)},
     'appl_exit: no accessory, the pipe empty':
-        {BENCH: (15056, 12108), SHIPPED: (15056, 12228)},
+        {BENCH: (15056, 12044), SHIPPED: (15056, 12164)},
     'opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
-        {BENCH: (32590, 26952), SHIPPED: (32590, 26640)},
+        {BENCH: (32590, 26812), SHIPPED: (32590, 26500)},
     'opcode 50, as aes_fm_do, nothing typed: the first wait blocked; woken by Return':
-        {BENCH: (177068, 151206), SHIPPED: (177068, 141320)},
+        {BENCH: (177068, 150750), SHIPPED: (177068, 140864)},
     'opcode 15, as aes_ap_trecd, a count of 0, ended at once: nothing recorded':
-        {BENCH: (46548, 38622), SHIPPED: (46548, 38646)},
+        {BENCH: (46548, 38406), SHIPPED: (46548, 38430)},
     'appl_exit: a message left in the pipe, read away':
-        {BENCH: (24076, 18654), SHIPPED: (24076, 17834)},
+        {BENCH: (24076, 18348), SHIPPED: (24076, 17526)},
     'opcode 21, as aes_ev_button, a press waited for, blocked; woken by it':
-        {BENCH: (34840, 28168), SHIPPED: (34840, 27858)},
+        {BENCH: (34840, 27844), SHIPPED: (34840, 27534)},
     'opcode 52, as aes_fm_alert, no button the default: Return taken, the next wait blocked; the second button clicked while it waits':
-        {BENCH: (1493598, 1414124), SHIPPED: (1493598, 1406676)},
+        {BENCH: (1493598, 1414444), SHIPPED: (1493598, 1407002)},
     'opcode 21, as aes_ev_button, a double click waited for, blocked; woken by the two presses':
-        {BENCH: (34904, 28258), SHIPPED: (34904, 27948)},
+        {BENCH: (34904, 27934), SHIPPED: (34904, 27624)},
     "appl_exit: two accessories told to close, the caller's own message read away":
-        {BENCH: (44546, 32860), SHIPPED: (44546, 30160)},
+        {BENCH: (44546, 32118), SHIPPED: (44546, 29412)},
     'opcode 22, as aes_ev_mouse, the mouse in the rectangle it is to leave, blocked; woken by its leaving':
-        {BENCH: (41330, 35488), SHIPPED: (41330, 35030)},
+        {BENCH: (41330, 35314), SHIPPED: (41330, 34854)},
     'opcode 56, as aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise':
-        {BENCH: (123504, 104008), SHIPPED: (123504, 102570)},
+        {BENCH: (123504, 103448), SHIPPED: (123504, 102010)},
     'opcode 25, as aes_ev_multi, blocked and woken — the ticks wake: a timer':
-        {BENCH: (43044, 37124), SHIPPED: (43044, 37148)},
+        {BENCH: (43044, 36936), SHIPPED: (43044, 36960)},
     'marshalled: opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
-        {BENCH: (33860, 28348), SHIPPED: (33860, 27862)},
+        {BENCH: (33860, 28208), SHIPPED: (33860, 27722)},
     "opcode 23, as aes_ev_mesag, no message, blocked; woken by the screen manager's own write (the menu chain)":
-        {BENCH: (1177110, 1170644), SHIPPED: (1177110, 1170380)},
+        {BENCH: (1177110, 1170394), SHIPPED: (1177110, 1170128)},
     'opcode 70, as aes_gr_rubbox, the corner at the mouse; stretched, then released':
-        {BENCH: (297884, 278708), SHIPPED: (297884, 276180)},
+        {BENCH: (297884, 278082), SHIPPED: (297884, 275552)},
     'opcode 25, as aes_ev_multi, blocked and woken — a double click wakes: a double click':
-        {BENCH: (46274, 38900), SHIPPED: (46274, 38712)},
+        {BENCH: (46274, 38492), SHIPPED: (46274, 38304)},
     'marshalled: opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        {BENCH: (1190616, 1184576), SHIPPED: (1190616, 1183482)},
+        {BENCH: (1190616, 1184238), SHIPPED: (1190616, 1183142)},
     'appl_tplay: at half speed, a top byte on its records':
-        {BENCH: (71830, 62116), SHIPPED: (71830, 62782)},
+        {BENCH: (71830, 61716), SHIPPED: (71830, 62382)},
 }
 PRICED = {
     "opcode 11, as aes_ap_rdwr, a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)":
-        Priced((14224, 21466), (428, 668), 1, (1, 1139762, 278034)),   # 0.66 / 0.64
+        Priced((13972, 21466), (428, 668), 1, (1, 1139762, 278034)),   # 0.65 / 0.64
     'opcode 24, as aes_ev_timer, a time of five ticks, blocked; run out by them':
-        Priced((12144, 18160), (1056, 1518), 1, (0, 0, 0)),   # 0.67 / 0.70
+        Priced((12004, 18160), (1056, 1518), 1, (0, 0, 0)),   # 0.66 / 0.70
     'opcode 71, as aes_gr_dragbox, held at the mouse; moved, then released':
-        Priced((72308, 100982), (30710, 39158), 4, (0, 0, 0)),   # 0.72 / 0.78
+        Priced((71728, 100982), (30742, 39158), 4, (0, 0, 0)),   # 0.71 / 0.79
     'opcode 25, as aes_ev_multi, blocked and woken — a release wakes: the button up, which is down':
-        Priced((16702, 24916), (622, 996), 1, (0, 0, 0)),   # 0.67 / 0.62
+        Priced((16410, 24916), (622, 996), 1, (0, 0, 0)),   # 0.66 / 0.62
     'marshalled: appl_exit: no accessory, the pipe empty':
-        Priced((6196, 9564), (5762, 8814), 2, (0, 0, 0)),   # 0.65 / 0.65
+        Priced((6132, 9564), (5698, 8814), 2, (0, 0, 0)),   # 0.64 / 0.65
     'opcode 14, as aes_ap_tplay, none of four records played: a count of 0':
-        Priced((4402, 6072), None, None, (0, 0, 0)),   # 0.72
+        Priced((4338, 6072), None, None, (0, 0, 0)),   # 0.71
     'opcode 25, as aes_ev_multi, blocked and woken — a key wakes: a key, none queued':
-        Priced((15292, 22700), (622, 996), 1, (0, 0, 0)),   # 0.67 / 0.62
+        Priced((15064, 22700), (622, 996), 1, (0, 0, 0)),   # 0.66 / 0.62
     'opcode 75, as aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0':
-        Priced((90684, 135282), (23876, 36888), 4, (0, 0, 0)),   # 0.67 / 0.65
+        Priced((89360, 135282), (23500, 36888), 4, (0, 0, 0)),   # 0.66 / 0.64
     'opcode 25, as aes_ev_multi, blocked and woken — leaving wakes: two rectangles':
-        Priced((26730, 38520), (622, 996), 1, (0, 0, 0)),   # 0.69 / 0.62
+        Priced((26418, 38520), (622, 996), 1, (0, 0, 0)),   # 0.69 / 0.62
     'opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record':
-        Priced((26990, 37898), (15634, 20856), 2, (0, 0, 0)),   # 0.71 / 0.75
+        Priced((26590, 37898), (15402, 20856), 2, (0, 0, 0)),   # 0.70 / 0.74
     'opcode 25, as aes_ev_multi, blocked and woken — the ticks wake: a message and a timer':
-        Priced((19168, 28520), (646, 1060), 1, (0, 0, 0)),   # 0.67 / 0.61
+        Priced((18892, 28520), (646, 1060), 1, (0, 0, 0)),   # 0.66 / 0.61
     'opcode 76, as aes_gr_slidebox, the elevator held; dragged down, then released':
-        Priced((75240, 107204), (33642, 45380), 4, (0, 0, 0)),   # 0.70 / 0.74
+        Priced((74660, 107204), (33674, 45380), 4, (0, 0, 0)),   # 0.70 / 0.74
     'opcode 25, as aes_ev_multi, blocked and woken — entering wakes: the second rectangle alone':
-        Priced((20408, 28416), (622, 996), 1, (0, 0, 0)),   # 0.72 / 0.62
+        Priced((20112, 28416), (622, 996), 1, (0, 0, 0)),   # 0.71 / 0.62
     "opcode 15, as aes_ap_trecd, one record, a key's":
-        Priced((17014, 26110), (1858, 3484), 1, (0, 0, 0)),   # 0.65 / 0.53
+        Priced((16814, 26110), (1858, 3484), 1, (0, 0, 0)),   # 0.64 / 0.53
     'opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        Priced((17946, 26024), (622, 996), 1, (1, 1139762, 278034)),   # 0.69 / 0.62
+        Priced((17606, 26024), (622, 996), 1, (1, 1139762, 278034)),   # 0.68 / 0.62
     "opcode 107, as aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call":
-        Priced((5334, 8404), (510, 1052), 1, (0, 0, 0)),   # 0.63 / 0.48
+        Priced((5270, 8404), (510, 1052), 1, (0, 0, 0)),   # 0.63 / 0.48
     'appl_exit: no accessory, the pipe empty':
-        Priced((5190, 8294), (4756, 7544), 2, (0, 0, 0)),   # 0.63 / 0.63
+        Priced((5126, 8294), (4692, 7544), 2, (0, 0, 0)),   # 0.62 / 0.62
     'opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
-        Priced((11444, 18046), (398, 900), 1, (0, 0, 0)),   # 0.63 / 0.44
+        Priced((11304, 18046), (398, 900), 1, (0, 0, 0)),   # 0.63 / 0.44
     'opcode 50, as aes_fm_do, nothing typed: the first wait blocked; woken by Return':
-        Priced((76780, 116356), (55946, 83182), 5, (0, 0, 0)),   # 0.66 / 0.67
+        Priced((76324, 116356), (55866, 83182), 5, (0, 0, 0)),   # 0.66 / 0.67
     'opcode 15, as aes_ap_trecd, a count of 0, ended at once: nothing recorded':
-        Priced((16320, 25242), (1702, 3246), 1, (0, 0, 0)),   # 0.65 / 0.52
+        Priced((16104, 25242), (1702, 3246), 1, (0, 0, 0)),   # 0.64 / 0.52
     'appl_exit: a message left in the pipe, read away':
-        Priced((10588, 17314), (4882, 7784), 3, (0, 0, 0)),   # 0.61 / 0.63
+        Priced((10280, 17314), (4818, 7784), 3, (0, 0, 0)),   # 0.59 / 0.62
     'opcode 21, as aes_ev_button, a press waited for, blocked; woken by it':
-        Priced((13682, 21316), (414, 674), 1, (0, 0, 0)),   # 0.64 / 0.61
+        Priced((13358, 21316), (414, 674), 1, (0, 0, 0)),   # 0.63 / 0.61
     'opcode 52, as aes_fm_alert, no button the default: Return taken, the next wait blocked; the second button clicked while it waits':
-        Priced((189876, 295286), (136762, 213046), 10, (0, 0, 0)),   # 0.64 / 0.64
+        Priced((190202, 295286), (138016, 213046), 10, (0, 0, 0)),   # 0.64 / 0.65
     'opcode 21, as aes_ev_button, a double click waited for, blocked; woken by the two presses':
-        Priced((13772, 21380), (414, 674), 1, (0, 0, 0)),   # 0.64 / 0.61
+        Priced((13448, 21380), (414, 674), 1, (0, 0, 0)),   # 0.63 / 0.61
     "appl_exit: two accessories told to close, the caller's own message read away":
-        Priced((22498, 37784), (6130, 9780), 5, (0, 0, 0)),   # 0.60 / 0.63
+        Priced((21750, 37784), (6066, 9780), 5, (0, 0, 0)),   # 0.58 / 0.62
     'opcode 22, as aes_ev_mouse, the mouse in the rectangle it is to leave, blocked; woken by its leaving':
-        Priced((16526, 23770), (758, 1584), 1, (0, 0, 0)),   # 0.70 / 0.48
+        Priced((16350, 23770), (758, 1584), 1, (0, 0, 0)),   # 0.69 / 0.48
     'opcode 56, as aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise':
-        Priced((43624, 66878), (15854, 24188), 3, (0, 0, 0)),   # 0.65 / 0.66
+        Priced((43064, 66878), (15654, 24188), 3, (0, 0, 0)),   # 0.64 / 0.65
     'opcode 25, as aes_ev_multi, blocked and woken — the ticks wake: a timer':
-        Priced((15842, 22758), (646, 1060), 1, (0, 0, 0)),   # 0.70 / 0.61
+        Priced((15654, 22758), (646, 1060), 1, (0, 0, 0)),   # 0.69 / 0.61
     'marshalled: opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
-        Priced((12450, 19316), (1404, 2170), 1, (0, 0, 0)),   # 0.64 / 0.65
+        Priced((12310, 19316), (1404, 2170), 1, (0, 0, 0)),   # 0.64 / 0.65
     "opcode 23, as aes_ev_mesag, no message, blocked; woken by the screen manager's own write (the menu chain)":
-        Priced((14332, 21806), (536, 1008), 1, (1, 1139762, 278034)),   # 0.66 / 0.53
+        Priced((14080, 21806), (536, 1008), 1, (1, 1139762, 278034)),   # 0.65 / 0.53
     'opcode 70, as aes_gr_rubbox, the corner at the mouse; stretched, then released':
-        Priced((71898, 100378), (30300, 38554), 4, (0, 0, 0)),   # 0.72 / 0.79
+        Priced((71270, 100378), (30284, 38554), 4, (0, 0, 0)),   # 0.71 / 0.79
     'opcode 25, as aes_ev_multi, blocked and woken — a double click wakes: a double click':
-        Priced((17498, 25988), (622, 996), 1, (0, 0, 0)),   # 0.67 / 0.62
+        Priced((17090, 25988), (622, 996), 1, (0, 0, 0)),   # 0.66 / 0.62
     'marshalled: opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        Priced((19964, 28550), (2640, 3522), 1, (1, 1139762, 278034)),   # 0.70 / 0.75
+        Priced((19624, 28550), (2640, 3522), 1, (1, 1139762, 278034)),   # 0.69 / 0.75
     'appl_tplay: at half speed, a top byte on its records':
-        Priced((27180, 38020), (15826, 20980), 2, (0, 0, 0)),   # 0.71 / 0.75
+        Priced((26780, 38020), (15594, 20980), 2, (0, 0, 0)),   # 0.70 / 0.74
 }
 # @PINS-END
 

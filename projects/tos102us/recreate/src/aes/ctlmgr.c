@@ -18,6 +18,9 @@
  *     - the multi-click count is stepped by a routine of its own (not inlined: the word's address would be a third);
  *     - `no-function-cse`: at -O2 GCC keeps every callee's address in a call-saved register across the loop — six
  *       saved registers and 36 bytes with it, three and 24 without (measured, GCC 16.1).
+ *     - `no-defer-pop` (`stack_diet.h`, where both marks are spelt and guarded): at -O2 a call's arguments stay on
+ *       the stack under the next call — eight dead bytes under hctl_button and hctl_rect, so under every chain of
+ *       the process: 44 held over a handler with them, 36 without (the frame diet, 2026-10-10).
  *   OFF TARGET there is no stack to enter and nothing to come back from a loop: the same two parts are two calls that
  *   return — `aes_ctlmgr_begins`, and `aes_ctlmgr_turn`, one turn from the loop's top to the next arrival there.
  *
@@ -31,6 +34,7 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "host_slot.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "aes/aes.h"
 #include "aes/evasync.h"
@@ -120,11 +124,13 @@ void aes_ctlmgr_turn(uint8_t *image)
 }
 #else
 /* $fe49d2 — ctlmgr, over the target's image base (`staged_call.h`'s `target_image`). `no-function-cse`: the frame (this
- * file's head). GCC documents `optimize` as a debugging aid, not for production code — it is taken here for ONE flag
- * that changes no semantics, only which registers the loop keeps, and what it buys is HELD, not trusted:
- * `test_aes_gemctrl.py`'s `test_the_entry_s_own_frame_is_no_more_than_the_rom_s` reads the frame off both blobs and
- * reds at 25 bytes (a GCC that stops honouring the attribute builds 36). */
-__attribute__((noreturn, optimize("no-function-cse"))) void aes_rom_ctlmgr(void)
+ * file's head); `no-defer-pop`: what it holds over a handler. GCC documents `optimize` as a debugging aid, not for
+ * production code — it is taken here for two flags that change no semantics, only which registers the loop keeps and
+ * when a call's arguments are popped, and what they buy is HELD, not trusted: `test_aes_gemctrl.py`'s
+ * `test_the_entry_s_own_frame_is_no_more_than_the_rom_s` reads the frame off both blobs and reds at 25 bytes (a GCC
+ * that stops honouring the attribute builds 36), and `test_stack_diet.py` holds every mark of `stack_diet.h`. */
+FRAME_DIET("no-function-cse", "no-defer-pop")
+__attribute__((noreturn)) void aes_rom_ctlmgr(void)
 {
     uint8_t *const image = target_image();
     uint16_t answers_local[EV_MULTI_ANSWER_WORDS];

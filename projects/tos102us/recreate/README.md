@@ -2138,10 +2138,56 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   decode (a Line-A trap, a Line-F call word) undeclared, SP set from anything but a constant, an `rts` off anything
   but the return address, a jump out under the function's own pushes, a call through a register one path never
   loads, a label listed twice. A PROCESS'S BOUND has four terms, each OF THE BUILD THAT SHIPS — our frames by chain,
-  the OS under a trap BY VDI CALL with OUR VDI on our shore (`os_needs`), the nest with the horizontal blank
+  the OS under a trap BY VDI CALL with THE BLOB'S OWN VDI on our shore — handlers and raster engines (`os_needs`;
+  below) —, the nest with the horizontal blank
   (`nest`: 252), and what an application's routine is left — and its findings are PINNED AS NUMBERS, the verdict
-  "over by N" among them: a finding is asserted, never an expected failure (a strict xfail hid a 120-byte growth).
-  `python test/aes_stack.py` prints the table; a pin that moves is re-pinned with the frame's or the call's name.
+  among them ("N spare"; "over by N" while it was): a finding is asserted, never an expected failure (a strict xfail
+  hid a 120-byte growth). `python test/aes_stack.py` prints the table; a pin that moves is re-pinned with the
+  frame's or the call's name.
+  AT A TRAP THE BOUND IS CALL BY CALL (`aes_stack.trap_sites`, `at_its_traps`; the frame diet, 2026-10-10). The
+  deepest trap of a listing and the deepest need under a trap are different calls — a fill's and a text's — and
+  charged together they are a call no path makes. So every TRAP SITE (a call, by a routine that does not hand an
+  opcode on, of gsx_ncode / gsx_1code or of the trap's own routine) is charged ITS call's need: the opcode READ OFF
+  THE LISTING at the call (`pea (N).w` before the image's push; an Alcyon caller's `move.w #N,-(sp)`), else what its
+  function is DECLARED to ask (`OPCODES_DECLARED`: gsx_attr, gsx_tblt — held to the C body's own `VDI_ROM_*_OPCODE`
+  names and to the listing's immediates), else THE WORST NEED OF ALL (pinned: gsx_xline's one sibling call). Every
+  opcode a site can ask must be MEASURED on every shore (`THE_ROUTINES_BESIDE` runs the three calls no scenario
+  takes on its own stack); an unmeasured one is refused by name. The coarse sum is kept beside it as a finding.
+  The opcode is read ONLY where the listing says one: two pushes a branch chooses between, or a store into the
+  opcode's slot after the push, is refused by the function's name (`_opcode_read_at`).
+  WHOSE VDI RUNS UNDER THE TRAP IS A DECLARED MAPPING, AND HELD (`aes_switch.vdi_table_mapping`,
+  `aes_stack.who_ran`). The C dispatcher calls the function its opcode's slot of the ROM's two tables names
+  (`$fd372c`, `$fd37c8`: ROM data, so on a ROM-booted machine THE ROM'S handlers — for a pass every "need of our
+  VDI" was theirs + the dispatcher's 32, and a v_gtext frame 100 bytes deeper moved no pin). The staging maps ALL
+  71 slots to the blob's own handlers: a C handler through an image-only thunk laid in the staging's own band
+  (`pea image / jsr / addq / rts`: the build's shape for a routine a table calls without an argument), a handler
+  that ships as its `.S` directly on the shipped blob. A slot whose handler the blob does not link is REFUSED BY
+  NAME; a test holds, per opcode priced, that the blob's handler is entered and the ROM table's entry never — the
+  handler looked for being the one of THE OPCODE'S NAME (`the_handlers_named_for`: `VDI_ROM_<NAME>_OPCODE` ->
+  `vdi_<name>`, off the symbol table), not the one the mapping's builder chose.
+  THE LINE-A VECTORS ARE MAPPED THE SAME WAY (`aes_switch.linea_vector_mapping`, `aes_stack.engines_ran`). A
+  handler that ships as the ROM's instructions reaches its raster engine through a longword of RAM — the ten the
+  boot fills from the ROM's CPU set (`vdi/linea.h`, LINEA_VECTORS) — and on a ROM-booted machine those name the
+  ROM's engines: with only the 71 slots mapped, the blob's handlers ran THE ROM'S raster code. So on the blob that
+  ships its transcriptions each vector is mapped to the blob's engine of the ROM routine's own name
+  (`LINEA_ROM_CPU_BLIT` -> `linea_rom_cpu_blit`), vetted to hold the ROM's first, REFUSED BY NAME where the blob
+  has none — the console's four declared left. THE BENCH BLOB'S VECTORS STAY: its C calls each engine's twin by
+  name after `require_cpu_routine` has checked the vector holds the ROM's, and a vector repointed there halts.
+  `engines_ran` holds both: under no opcode priced is an engine of the ROM's entered, and the blob's own are.
+  A NEED IS A LOWEST STORE; THE VERDICT CHARGES THE BOUND ON SP (`unstored_runs`, `unstored_under`,
+  `needs_bounded`): every allocation of the listing nothing is stored under is found — `lea -N(sp),sp`, `subq`, a
+  `link` ON ANY ADDRESS REGISTER — over EVERY instruction the listing holds, whatever labels it (`listed_runs`: a
+  body the symbol table does not size is scanned like any other). "Stored under" is read DOWN THE STRAIGHT LINE: a
+  push, a `pea`, a call or a store to `(sp)` before a branch, a return or SP raised; each instruction on that line
+  goes through the reading's own `stack_effect`, which refuses one it does not know. The ones a run of each opcode
+  REACHES are found by stops (chunked: the oracle's door holds 64; every `trap #2` is a stop too, so a place is
+  armed again for the next call), and THE LARGEST is added to that opcode's need — the copy-raster's 76 bytes of
+  locals under the two blits, the line's and the fill's 20. The dispatcher's stack carries the same term
+  (`test_aes_evdisp_model.py`: 0 under its five calls). NOT bounded, and said in the report: the BIOS under
+  `trap #13`, and the vectors an application or the machine owns (USER_TIM / BUT / MOT / CUR).
+  THE PRECONDITION of every need: the workstation's attributes as the AES leaves them (an application's text
+  effect or line width on the physical workstation deepens the AES's own calls there, on the ROM as on ours).
+  THE GATE IS THE SHIPPED BLOB; the bench blob's bound is pinned and printed beside it, and gates nothing.
   WHAT AN INTERRUPT NEEDS ON TOP IS MEASURED TWICE: the ROM's own handlers from their vectors (`interrupt_needs`,
   kept by content — cold-sweep a mutant of it) and THE BUILD'S OWN ENTRIES (`our_interrupt_needs`: what a ROM that
   ships installs); and the OS under a trap twice too — the ROM's VDI and OUR C VDI linked under the trap
@@ -2152,8 +2198,10 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   measurements are equal — ONCE EVERY ARM IS MEASURED: the first equality counted eight ticks none of which injected
   a key repeat, and the tick that injects Alternate + an arrow (a mouse packet, under timer C) was 196 through a
   thunk into C for the ROM's 144. `_needs_measured` takes the worst of a handler's arms now, the injecting ticks
-  among them, each state made by the handlers' own runs: 140 / 144 / 100 on both shores, 356 + 244 = 600 of 640,
-  held on both blobs; 78 / 60 / 58 of 92 / 92 / 96. A recompile that deepens any frame on a path — one no
+  among them, each state made by the handlers' own runs: 140 / 144 / 100 on both shores — with the horizontal
+  blank's 8 under them (`aes_stack.nest`: 252) the dispatcher's bound of 292 is 544 of 640,
+  held on both blobs with the build's own VDI handlers under its trap
+  (before the frame diet, 2026-10-10: 356 + 244 = 600); 78 / 60 / 46 of 92 / 92 / 96. A recompile that deepens any frame on a path — one no
   case runs as on the others — reds by name.
 
 **An ALCYON ENTRY `.S` is glue, not a transcription.** When AES C hands a routine BY VALUE to ROM-shaped code that calls it
@@ -2355,6 +2403,78 @@ HOW IT IS RUN:
   `AES_DERIVED_OFF=1`, and remember that ANY edit under the keyed tree makes the next run cold.
 - WHAT MUST STAY EQUAL cold, warm and off (the content-neutrality check of any change here): the collected case ids
   and outcomes, the row hashes and scenario hashes over one pinned `boot_ram.bin`, the table's lines.
+
+## The frame diet — `include/stack_diet.h`, and re-pinning the rows that switch
+
+**WHY.** A process of the AES runs on a stack THE ROM SIZED for Alcyon's frames (the screen manager's 1,196 bytes,
+the dispatcher's 640). GCC's frames at -O2 were half as deep again: read off the build (`test/aes_stack.py`) the
+screen manager's deepest trap, with the worst VDI call under it and the interrupts' nest, was 284 / 294 bytes OVER. Most of
+the difference is not the C but what -O2 spends STACK on to save cycles, in a build whose every address is
+`image + constant` and whose every argument is a longword slot.
+
+**A MARK** is `FRAME_DIET("no-<pass>", ...)` on one function's definition (directly above it, above `EVDOOR_TWIN` /
+`TRANSCRIBED_CORE` where there is one): GCC's per-function `optimize` attribute, turning off for that function the
+passes MEASURED to deepen its frame — `no-defer-pop` (a call's arguments left under the next call),
+`no-optimize-sibling-calls` (a tail call's caller copies its own arguments into its frame),
+`no-move-loop-invariants` and `no-function-cse` (an address, or a callee's, kept in a saved register for a loop),
+`no-caller-saves`, `no-gcse`, `no-tree-dominator-opts`. 34 routines carry one — 33 of the screen manager's paths
+and the VDI's `place_and_draw`, v_gtext's deep frame (the header says what each flag costs the stack).
+Beside the marks, three STRUCTURAL cuts, each said where it is made: just_draw's four parts are
+routines of their own (`noinline`: a part's registers lie only under that part's calls); `blt_corners` is one;
+and three bodies are held by their one deep caller as its own — menu_down's by mn_do's pass, gsx_blt's by
+gr_gicon's blits, bb_fill's by gr_rect — where the ROM calls (the extern routine stays, for every other caller and
+for its own rows).
+
+**UNDER THE TRAP, ONE CONTRACT** (`include/staged_call.h`, `call_vector_as_the_last_act`; the third pass). The VDI
+dispatcher's call of its opcode's function keeps NO register round itself — a bare `jsr (a0)`, GCC told only what a
+C call changes — as the ROM's dispatcher does not: the trap's entry has saved them all. Saved round the call they
+were 44 bytes under every VDI function, on whichever process's stack the trap was taken. It is sound only while
+NOTHING of the dispatcher's is live across the call, which no compiler checks: `test_vdi_entry.py` reads both
+blobs' listings (after each `jsr (a0)` of the dispatcher, pops and the return alone), and the entry's C twin, the
+one C caller, saves the lot round its own call (`dispatched_keeping`) and is held to that.
+
+**THE GUARD** (`test/test_stack_diet.py`; GCC documents `optimize` as a debugging aid, so nothing is trusted):
+every marked function is compiled twice under each blob's own flags — as marked, and with the marks off
+(`-DSTACK_DIET_MARKS_OFF`) and the mark's flags on the command line — and the two must be the same instructions
+(so a mark changes nothing but its flags FOR THAT FUNCTION), and other instructions than no mark and no flag at
+all. AN `optimize` ATTRIBUTE DOES RESET ONE SETTING, which that comparison cannot see in a function without such a
+loop: `-ffreestanding`'s implied `-fno-tree-loop-distribute-patterns` — a fill, copy or length loop under a bare
+attribute compiles to `jsr memset` / `memcpy` / `strlen`, which a `-nostdlib` ROM has not. So the setting is spelt
+INSIDE every macro that makes an attribute (`OPTIMIZE_KEEPS_FREESTANDING_S_LOOPS`: the diet's and gemsuper's jump
+table's), no source spells a bare `optimize(`, and a fill loop is compiled under each macro and held a loop. And the
+bench blob is linked a second time with every mark off, which pins what the marks buy: the two bounds, and each
+function's own frame without and with (never more with, less on one). The cycles a mark costs are Tier 3's.
+
+**SEARCHING THE FLAGS FOR A FUNCTION** (how the 34 sets were found; nothing of it is in the tree):
+1. build the bench blob with `-DSTACK_DIET_MARKS_OFF` and each combination of the candidate flags ON THE COMMAND
+   LINE (seven flags: 128 links of ~6 s, side by side) — the guard is what makes a command-line flag and a mark
+   the same thing;
+2. read each blob with `aes_stack.reading(elf)` and keep, per function of the paths, what it holds on its deepest
+   path and at its deepest trap (`reading.chain(function)[0]`);
+3. per function take the FEWEST flags that give its smallest frame, and mark it;
+4. take each flag off again, one link each, and drop the ones without which no frame is deeper;
+5. `make bench`: a row that goes over the bar by a mark loses that mark, not the bar.
+
+**RE-PINNING THE ROWS THAT SWITCH** (`tools/pin_recorder.py`, `tools/repin.py`). A change of the build's code
+generation moves the pinned cycles of hundreds of rows at once (the frame diet: 555 pairs in 11 files). They are
+re-derived FROM A RUN, never typed and never loosened:
+
+    PINREC_OUT=$PWD/build/pins.jsonl PYTHONPATH=../../../tools:tools .venv/bin/python -m pytest -q \
+        -p recreate_kit.watchdog -p pin_recorder -n auto test        # every moved pin still FAILS; each is recorded
+    python3 tools/repin.py build/pins.jsonl .                         # what it would re-pin, and what it refuses
+    python3 tools/repin.py build/pins.jsonl . --apply                 # then run the suite again
+
+The recorder wraps `aes_switching.vet_on_a_blob` and `vet_the_table_s_price` and writes `(what the test holds, what
+the run measured)` with the file of the test that asked; the rewriter replaces a pair IN THAT FILE — or, where it
+does not spell it, in a test module it imports — and re-makes the ratio a `Priced(...)` line quotes. It REFUSES by
+name: a record whose ROM-SIDE count moved (our build's change moves our count; the ROM's moving is a regression of
+the machine or the deliveries, and the tool ends non-zero), a pair two rows share and move apart, and a pair neither
+the recording file nor its imports spell, and A PAIR SPELT MORE TIMES THAN ROWS RECORDED ITS MOVE (two rows that
+share a pair, one of which moved: nothing says which line is which, so neither is written). A file that spells the
+same pair for a row nobody recorded is never touched (`test/test_repin.py`).
+What it does not reach is red in the second run and is re-pinned by hand with its reason (the dispatcher's yield
+and wait and its stack's four numbers, fs_input's slices, the glue stacks). The plugin is a module outside the
+derivation key, so `test_derived`'s census of imported modules is red in a RECORDED run alone.
 
 ## `make gates` — the pre-commit gates as one command
 

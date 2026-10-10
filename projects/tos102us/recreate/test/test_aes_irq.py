@@ -228,8 +228,8 @@ def test_both_shores_run_on_the_glue_s_private_stack(name, blob):
 
 # What each glue's deepest path takes of its private stack, read off the build (`aes_switch.StackReading`): the
 # button's 78 of 92 bytes (its register save, the pushed word, the Alcyon entry, b_click, forkq), the motion's 60,
-# the tick's 58 of 96.
-GLUE_STACK_USE = {"aes_rom_button_glue": 78, "aes_rom_motion_glue": 60, "aes_rom_tick_glue": 58}
+# the tick's 46 of 96 (58 before the frame diet, 2026-10-10: b_delay's and post_button's frames).
+GLUE_STACK_USE = {"aes_rom_button_glue": 78, "aes_rom_motion_glue": 60, "aes_rom_tick_glue": 46}
 
 
 @pytest.mark.parametrize("glue", (switch.BUTTON_GLUE, switch.MOTION_GLUE, switch.TICK_GLUE), ids=lambda glue: glue.symbol)

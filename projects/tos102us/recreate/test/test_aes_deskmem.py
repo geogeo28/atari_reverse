@@ -214,15 +214,15 @@ REGISTERED = {switching.row_name(row): row for row in map(switching.register_row
 # @PINS-BEGIN (measured: scratch `b5/H/pins.py`)
 WHOLE_RUN = {
     "the running desk's eight blocks freed in order, a yield after the resource's":
-        {BENCH: (19440, 17296), SHIPPED: (19440, 17416)},
+        {BENCH: (19440, 17232), SHIPPED: (19440, 17352)},
     'GEMDOS refuses every block (EIMBA): the same eight calls, the same yield':
-        {BENCH: (19464, 17294), SHIPPED: (19464, 17414)},
+        {BENCH: (19464, 17230), SHIPPED: (19464, 17350)},
 }
 PRICED = {
     "the running desk's eight blocks freed in order, a yield after the resource's":
-        Priced((7002, 9302), None, None, (0, 0, 0)),   # 0.75
+        Priced((6938, 9302), None, None, (0, 0, 0)),   # 0.75
     'GEMDOS refuses every block (EIMBA): the same eight calls, the same yield':
-        Priced((7000, 9326), None, None, (0, 0, 0)),   # 0.75
+        Priced((6936, 9326), None, None, (0, 0, 0)),   # 0.74
 }
 # @PINS-END
 

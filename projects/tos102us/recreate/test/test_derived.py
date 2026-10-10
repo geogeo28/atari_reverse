@@ -1448,7 +1448,24 @@ def test_the_test_modules_are_handed_out_fewest_imports_first():
             if "test_boot_snapshot" in derived._IMPORTS_A_MODULE.findall((derived.RECREATE / "test" / f"{name}.py").read_text())]
     assert len(back) < 5, "the premise: few batteries import the registry back (those are its equals, ordered by size)"
     assert all(order.index(name) < order.index("test_boot_snapshot") for name in imported if name not in back)
-    assert order.index("test_boot_snapshot") > len(order) - 10, "the registry is among the last handed out"
+    # "AMONG THE LAST", AS WHAT IT MEANS and not as a count (it was `> len(order) - 10` with exactly 8 modules behind the
+    # registry: any module added behind it, or one more module imported by `test_tier3`, reddened this for no reason):
+    # every module handed out AFTER the registry is one that IMPORTS it, through whatever it imports — so nothing the
+    # registry derives is still to come when a process takes it.
+    sources = {path.stem: path for path in (derived.RECREATE / "test").glob("*.py")}
+    imports = {name: {each for each in derived._IMPORTS_A_MODULE.findall(path.read_text()) if each in sources}
+               for name, path in sources.items()}
+
+    def reaches_the_registry(name):
+        seen, todo = set(), [name]
+        while todo:
+            for each in imports[todo.pop()] - seen:
+                seen.add(each)
+                todo.append(each)
+        return "test_boot_snapshot" in seen
+    behind = order[order.index("test_boot_snapshot") + 1:]
+    assert behind and all(reaches_the_registry(name) for name in behind), (
+        f"handed out after the registry without importing it: {[name for name in behind if not reaches_the_registry(name)]}")
 
 
 @pytest.fixture

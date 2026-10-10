@@ -27,6 +27,7 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "recreate.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "aes/aes.h"
 #include "aes/aptape.h"
@@ -248,9 +249,10 @@ static inline uint16_t no_such_call(uint8_t *image)
  * reads 608 to 632 (0.96).
  * GCC DOCUMENTS `optimize` AS A DEBUGGING AID, "not suitable for production code": what holds it here is not the
  * manual but the build's own output, read on every run — the head's one compare and indexed jump on both blobs, and
- * no relocation of this function against its own text (`test_aes_gemsuper.py`, the two guards). */
+ * no relocation of this function against its own text (`test_aes_gemsuper.py`, the two guards). It carries the one
+ * setting the attribute would otherwise reset (`stack_diet.h`, OPTIMIZE_KEEPS_FREESTANDING_S_LOOPS). */
 #if defined(__GNUC__) && !defined(__clang__)
-#define COMPILED_AS_A_JUMP_TABLE __attribute__((optimize("jump-tables")))
+#define COMPILED_AS_A_JUMP_TABLE __attribute__((optimize(OPTIMIZE_KEEPS_FREESTANDING_S_LOOPS, "jump-tables")))
 #else
 #define COMPILED_AS_A_JUMP_TABLE
 #endif

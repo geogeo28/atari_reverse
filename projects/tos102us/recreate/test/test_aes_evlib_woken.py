@@ -351,49 +351,49 @@ THE_DESK_S_WINDOW = (1, 618792, 341550)
 ONE_COUNT = pilots.ONE_COUNT
 MEASURED = {
     "aes_ev_block, a wait for a double click, blocked; woken by the two presses":
-        ({BENCH: (33174, 27400), SHIPPED: (33174, 27088)}, Priced((12912, 19650), (11320, 16254), 1, NO_WINDOW)),
+        ({BENCH: (33174, 27076), SHIPPED: (33174, 26764)}, Priced((12588, 19650), (11032, 16254), 1, NO_WINDOW)),
     "aes_ev_block, a wait to leave a rectangle, blocked; woken by the mouse leaving it":
-        ({BENCH: (39746, 34732), SHIPPED: (39746, 34272)}, Priced((15768, 22186), *ONE_COUNT, NO_WINDOW)),
+        ({BENCH: (39746, 34558), SHIPPED: (39746, 34096)}, Priced((15592, 22186), *ONE_COUNT, NO_WINDOW)),
     f"aes_ev_block, {waits.THE_READ_WOKEN}":
-        ({BENCH: (1175732, 1169922), SHIPPED: (1175732, 1169654)}, Priced((13606, 20428), *ONE_COUNT, THE_MENU_S_WINDOW)),
+        ({BENCH: (1175732, 1169672), SHIPPED: (1175732, 1169402)}, Priced((13354, 20428), *ONE_COUNT, THE_MENU_S_WINDOW)),
     f"aes_ev_block, {waits.THE_WRITE_FREED}":
-        ({BENCH: (637572, 633852), SHIPPED: (637572, 633414)}, Priced((7484, 12018), *ONE_COUNT, THE_DESK_S_WINDOW)),
+        ({BENCH: (637572, 633722), SHIPPED: (637572, 633284)}, Priced((7354, 12018), *ONE_COUNT, THE_DESK_S_WINDOW)),
     f"aes_ev_block, {waits.THE_LOCK_WAITED_FOR}":
-        ({BENCH: (377140, 371552), SHIPPED: (377140, 371324)}, Priced((14848, 21500), (14628, 21128), 1, (1, 338080, 124096))),
+        ({BENCH: (377140, 371370), SHIPPED: (377140, 371140)}, Priced((14664, 21500), (14444, 21128), 1, (1, 338080, 124096))),
     f"aes_ev_block, {waits.THE_MANAGER_QUEUES_ITSELF}":
-        ({BENCH: (70928, 65986), SHIPPED: (70928, 65718)}, Priced((13018, 18972), *ONE_COUNT, (1, 36414, 21870))),
+        ({BENCH: (70928, 65800), SHIPPED: (70928, 65530)}, Priced((12830, 18972), *ONE_COUNT, (1, 36414, 21870))),
     f"aes_ev_block, {waits.THE_MANAGER_RUNS_WITH_THE_LOCK}":
-        ({BENCH: (809802, 807440), SHIPPED: (809802, 807002)}, Priced((6726, 9902), *ONE_COUNT, (1, 793138, 151888))),
+        ({BENCH: (809802, 807376), SHIPPED: (809802, 806938)}, Priced((6662, 9902), *ONE_COUNT, (1, 793138, 151888))),
     "aes_ev_keybd, no key queued, blocked; woken by Return":
-        ({BENCH: (32036, 26660), SHIPPED: (32036, 26348)}, Priced((11152, 17492), (106, 346), 1, NO_WINDOW)),
+        ({BENCH: (32036, 26520), SHIPPED: (32036, 26208)}, Priced((11012, 17492), (106, 346), 1, NO_WINDOW)),
     "aes_ev_button, a double click waited for, blocked; woken by the two presses":
-        ({BENCH: (34230, 27844), SHIPPED: (34230, 27534)}, Priced((13358, 20706), (446, 1056), 1, NO_WINDOW)),
+        ({BENCH: (34230, 27520), SHIPPED: (34230, 27210)}, Priced((13034, 20706), (446, 1056), 1, NO_WINDOW)),
     "aes_ev_button, a press waited for, blocked; woken by it":
-        ({BENCH: (34166, 27754), SHIPPED: (34166, 27444)}, Priced((13268, 20642), (446, 1056), 1, NO_WINDOW)),
+        ({BENCH: (34166, 27430), SHIPPED: (34166, 27120)}, Priced((12944, 20642), (446, 1056), 1, NO_WINDOW)),
     "aes_ev_mouse, the mouse in the rectangle it is to leave, blocked; woken by its leaving":
-        ({BENCH: (40692, 35156), SHIPPED: (40692, 34698)}, Priced((16194, 23132), (426, 946), 1, NO_WINDOW)),
+        ({BENCH: (40692, 34982), SHIPPED: (40692, 34522)}, Priced((16018, 23132), (426, 946), 1, NO_WINDOW)),
     "aes_ev_timer, behind three delays pending, blocked; run out a delay at a time":
-        ({BENCH: (70454, 59770), SHIPPED: (70454, 60050)}, Priced((24668, 36644), (708, 912), 1, NO_WINDOW)),
+        ({BENCH: (70454, 59402), SHIPPED: (70454, 59682)}, Priced((24300, 36644), (708, 912), 1, NO_WINDOW)),
     "aes_ev_timer, a time of five ticks, blocked; run out by them":
-        ({BENCH: (31078, 26162), SHIPPED: (31078, 26064)}, Priced((11796, 17554), (708, 912), 1, NO_WINDOW)),
+        ({BENCH: (31078, 26022), SHIPPED: (31078, 25924)}, Priced((11656, 17554), (708, 912), 1, NO_WINDOW)),
     "aes_ev_timer, no time, blocked; run out by the next tick":
-        ({BENCH: (30888, 25958), SHIPPED: (30888, 25874)}, Priced((11606, 17364), (516, 720), 1, NO_WINDOW)),
+        ({BENCH: (30888, 25818), SHIPPED: (30888, 25734)}, Priced((11466, 17364), (516, 720), 1, NO_WINDOW)),
     f"aes_ev_timer, {waits.THE_REMAINDER_DROPPED}":
-        ({BENCH: (31078, 26162), SHIPPED: (31078, 26064)}, Priced((11796, 17554), (708, 912), 1, NO_WINDOW)),
+        ({BENCH: (31078, 26022), SHIPPED: (31078, 25924)}, Priced((11656, 17554), (708, 912), 1, NO_WINDOW)),
     f"aes_ev_mesag, {waits.THE_MESSAGE_WOKEN}":
-        ({BENCH: (1176520, 1170322), SHIPPED: (1176520, 1170058)}, Priced((14010, 21216), (214, 418), 1, THE_MENU_S_WINDOW)),
+        ({BENCH: (1176520, 1170072), SHIPPED: (1176520, 1169806)}, Priced((13758, 21216), (214, 418), 1, THE_MENU_S_WINDOW)),
     f"aes_ap_rdwr, {waits.THE_READ_WOKEN}":
-        ({BENCH: (1176102, 1170110), SHIPPED: (1176102, 1169844)}, Priced((13796, 20798), (190, 370), 1, THE_MENU_S_WINDOW)),
+        ({BENCH: (1176102, 1169860), SHIPPED: (1176102, 1169592)}, Priced((13544, 20798), (190, 370), 1, THE_MENU_S_WINDOW)),
     f"aes_ap_rdwr, {waits.THE_WRITE_FREED}":
-        ({BENCH: (637942, 634040), SHIPPED: (637942, 633604)}, Priced((7674, 12388), (190, 370), 1, THE_DESK_S_WINDOW)),
+        ({BENCH: (637942, 633910), SHIPPED: (637942, 633474)}, Priced((7544, 12388), (190, 370), 1, THE_DESK_S_WINDOW)),
     "aes_ev_mwait, two rectangles' waits, blocked; both come in one move":
-        ({BENCH: (37150, 31694), SHIPPED: (37150, 32030)}, Priced((13734, 19590), *ONE_COUNT, NO_WINDOW)),
+        ({BENCH: (37150, 31518), SHIPPED: (37150, 31854)}, Priced((13558, 19590), *ONE_COUNT, NO_WINDOW)),
     "aes_ev_mwait, six waits, blocked; the key's alone comes":
-        ({BENCH: (27054, 23158), SHIPPED: (27054, 23402)}, Priced((8306, 12510), *ONE_COUNT, NO_WINDOW)),
+        ({BENCH: (27054, 23018), SHIPPED: (27054, 23262)}, Priced((8166, 12510), *ONE_COUNT, NO_WINDOW)),
     f"aes_ev_mwait, {queued.THE_MANAGER_S_WAIT_WOKEN}":
-        ({BENCH: (29794, 26082), SHIPPED: (29794, 26372)}, Priced((10186, 14252), *ONE_COUNT, NO_WINDOW)),
+        ({BENCH: (29794, 25896), SHIPPED: (29794, 26184)}, Priced((9998, 14252), *ONE_COUNT, NO_WINDOW)),
     f"aes_unsync, {queued.QUEUED_ITSELF}":
-        ({BENCH: (14114, 11740), SHIPPED: (14114, 11862)}, Priced((4824, 7352), *ONE_COUNT, NO_WINDOW)),
+        ({BENCH: (14114, 11676), SHIPPED: (14114, 11798)}, Priced((4760, 7352), *ONE_COUNT, NO_WINDOW)),
 }
 
 

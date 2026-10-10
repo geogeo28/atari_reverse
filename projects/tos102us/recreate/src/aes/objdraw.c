@@ -13,12 +13,19 @@
  * one merged into its template first, a BOXCHAR's character as a one-byte string; an IMAGE its BITBLK; an ICON its
  * ICONBLK; a USERDEF its USERBLK's routine, whose answer becomes the state drawn; a STRING, TITLE or BUTTON its label.
  * Then each state bit's mark: OUTLINED, SHADOWED, CHECKED, CROSSED, DISABLED, SELECTED, in that order.
+ *
+ * FOUR OF ITS PARTS ARE ROUTINES OF THEIR OWN (`noinline`: the clip test, the border and fill, the label, the marks),
+ * FOR THE STACK (`stack_diet.h`). The ROM's just_draw is one function of 76 bytes of frame; inlined whole, GCC's is 120
+ * — every `image + frame + offset` any part uses kept in a register or spilt for all of them — and that frame stands
+ * under an icon's blit, a USERDEF's routine and every object a menu draws, on the screen manager's 1,196 bytes. Apart,
+ * just_draw holds the frame and five registers (80), and a part's own registers lie only under that part's calls.
  */
 #include <stdint.h>
 
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/gemgraf.h"
 #include "aes/gsx.h"
@@ -90,7 +97,7 @@ static inline int is_text_object(int16_t type)
 
 /* $fe9ae6 — the clip test, when the clip is on (its width and height both non-zero): a copy of the GRECT grown by 3
  * for an outlined object, else by 3 x the border's magnitude (`muls.w`, its low word), must touch the clip. */
-static int outside_the_clip(uint8_t *image, uint32_t frame)
+static __attribute__((noinline)) int outside_the_clip(uint8_t *image, uint32_t frame)
 {
     uint32_t clip = frame + FRAME_CLIP;
     int16_t growth = -OUTLINE_CLIP_GROWTH, thickness;
@@ -138,7 +145,8 @@ static void draw_box(uint8_t *image, uint32_t frame, int16_t inward)
 /* $fe9b2a..$fe9c3e — the BORDER AND FILL: the text colour black, replace; a text object's TEDINFO copied and its
  * colour word cracked; then table $fefba0 — a box cracks the spec's colour word, a BUTTON (the ROM's re-test of the
  * type, $fe9bc8) a black border round a white hollow fill, and each of those and the two boxed texts its box. */
-static void draw_border_and_fill(uint8_t *image, uint32_t frame, int16_t type, int16_t inward)
+FRAME_DIET("no-defer-pop", "no-optimize-sibling-calls")
+static __attribute__((noinline)) void draw_border_and_fill(uint8_t *image, uint32_t frame, int16_t type, int16_t inward)
 {
     set_local_word(image, frame, FRAME_MODE, GSX_MODE_REPLACE);
     set_local_word(image, frame, FRAME_TEXT_COLOUR, COLOUR_BLACK);
@@ -270,7 +278,7 @@ static void draw_contents(uint8_t *image, uint32_t tree, int16_t object, uint32_
 /* $fe9dea — a STRING's, TITLE's or BUTTON's LABEL: the spec's string into the AES's intin (xstrpix); if it has any
  * characters, black and transparent, drawn in the IBM font centred down the GRECT — and, a BUTTON's, across it — each
  * a WORD difference halved toward zero. */
-static void draw_label(uint8_t *image, uint32_t frame)
+static __attribute__((noinline)) void draw_label(uint8_t *image, uint32_t frame)
 {
     uint32_t rect = frame + FRAME_RECT;
     int16_t characters = aes_xstrpix(image, be32(image + AES_AD_INTIN), be32(image + frame + FRAME_SPEC));
@@ -361,7 +369,8 @@ static void fill_rect(uint8_t *image, int16_t mode, int16_t interior, int16_t st
 
 /* $fe9e80 — the STATE's marks, when there is any state at all (the whole word): each bit in turn. A positive border
  * shrinks the GRECT first (the marks drawn inside it), a negative one is made its magnitude (`neg.w` in the frame). */
-static void draw_state_marks(uint8_t *image, uint32_t frame)
+FRAME_DIET("no-defer-pop", "no-caller-saves")
+static __attribute__((noinline)) void draw_state_marks(uint8_t *image, uint32_t frame)
 {
     uint32_t rect = frame + FRAME_RECT, corner;
     int16_t border;
@@ -424,6 +433,7 @@ static void draw_object(uint8_t *image, uint32_t tree, int16_t object, int16_t x
  * SHADOWED reaches the shadow's `vsf_color` with FRAME_BORDER never written — no crack, no BUTTON — so it draws in
  * whatever the stack held there (in the ROM, a dead caller's frame word); the C reads its own frame's word the same
  * way. The AES's own trees carry no SHADOWED state (`test_aes_just_draw*.py` pins the read by staging both). */
+FRAME_DIET("no-defer-pop", "no-gcse", "no-caller-saves")
 void aes_just_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t x, int16_t y)
 {
     uint16_t frame_local[FRAME_WORDS];

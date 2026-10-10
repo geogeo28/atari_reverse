@@ -70,19 +70,19 @@ REGISTERED = {switching.row_name(row): row for row in map(aes_event.register_wok
 # @PINS-BEGIN (measured: scratch `b5/H/pins.py`)
 WHOLE_RUN = {
     'the desk alone ready: a yield back to it, the lock taken and given back':
-        {BENCH: (14024, 11526), SHIPPED: (14024, 11646)},
+        {BENCH: (14024, 11462), SHIPPED: (14024, 11582)},
     "the lock the caller's own already: taken a second time, one level given back":
-        {BENCH: (13952, 11448), SHIPPED: (13952, 11568)},
+        {BENCH: (13952, 11384), SHIPPED: (13952, 11504)},
     "the screen manager's menu holds the lock: the caller waits until the menu is let go":
-        {BENCH: (391348, 383168), SHIPPED: (391348, 383060)},
+        {BENCH: (391348, 382922), SHIPPED: (391348, 382812)},
 }
 PRICED = {
     'the desk alone ready: a yield back to it, the lock taken and given back':
-        Priced((4608, 7262), (4174, 6512), 2, (0, 0, 0)),   # 0.63 / 0.64
+        Priced((4544, 7262), (4110, 6512), 2, (0, 0, 0)),   # 0.63 / 0.63
     "the lock the caller's own already: taken a second time, one level given back":
-        Priced((4530, 7190), (4174, 6512), 2, (0, 0, 0)),   # 0.63 / 0.64
+        Priced((4466, 7190), (4110, 6512), 2, (0, 0, 0)),   # 0.62 / 0.63
     "the screen manager's menu holds the lock: the caller waits until the menu is let go":
-        Priced((19546, 28946), (4270, 6708), 3, (1, 338080, 124096)),   # 0.68 / 0.64
+        Priced((19298, 28946), (4206, 6708), 3, (1, 338080, 124096)),   # 0.67 / 0.63
 }
 # @PINS-END
 WINDOWS = {label: priced.windows for label, priced in PRICED.items() if priced.windows != NO_WINDOW}

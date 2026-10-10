@@ -16,6 +16,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/evdoor.h"
 #include "aes/gemgraf.h"
 #include "aes/grwait.h"
@@ -52,6 +53,7 @@ uint16_t aes_gr_stilldn(uint8_t *image, int16_t leave, int16_t x, int16_t y, int
 
 /* The object drawn `in_state` and `out_state` in turn — `in` first — until the button rises: the answer is 1 if it rose
  * on an `in` (the mouse inside, waiting for it to leave), 0 on an `out`. */
+FRAME_DIET("no-defer-pop", "no-function-cse")
 uint16_t aes_gr_watchbox(uint8_t *image, uint32_t tree, int16_t object, int16_t in_state, int16_t out_state)
 {
     uint16_t rect_local[GRECT_WORDS];

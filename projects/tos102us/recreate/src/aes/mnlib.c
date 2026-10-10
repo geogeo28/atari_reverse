@@ -13,6 +13,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/apmsg.h"
 #include "aes/ctrl.h"
@@ -92,8 +93,11 @@ void aes_menu_sr(uint8_t *image, int16_t save, uint32_t tree, int16_t menu)
 }
 
 /* $fe8cf4 — title `title` dropped: its drop-down found (the first one's `title - 3`-th sibling), the title selected
- * and, if it was not DISABLED, the screen under the drop-down saved and the drop-down drawn. The drop-down's index. */
-int16_t aes_menu_down(uint8_t *image, uint32_t tree, int16_t title)
+ * and, if it was not DISABLED, the screen under the drop-down saved and the drop-down drawn. The drop-down's index.
+ * THE BODY, held by `aes_menu_down` below; mn_do's own pass takes it as its own (`stack_diet.h`) WHERE THE ROM'S
+ * mn_do CALLS menu_down ($fe8f9c): mn_do holds eleven registers and its frame over every object a drop-down draws,
+ * and our call would stand 40 bytes more under them. */
+static inline __attribute__((always_inline)) int16_t menu_down(uint8_t *image, uint32_t tree, int16_t title)
 {
     int16_t menu = object_word(image, tree, object_word(image, tree, OB_ROOT, OB_TAIL), OB_HEAD);
     int16_t step;
@@ -105,6 +109,12 @@ int16_t aes_menu_down(uint8_t *image, uint32_t tree, int16_t title)
         aes_ob_draw(image, tree, menu, MN_DRAW_DEPTH);
     }
     return menu;
+}
+
+/* ...and the routine itself ($fe8cf4). */
+int16_t aes_menu_down(uint8_t *image, uint32_t tree, int16_t title)
+{
+    return menu_down(image, tree, title);
 }
 
 /* mn_do's tracking across its passes: the tree and the frame slot's three addresses, where the mouse was last seen
@@ -173,13 +183,14 @@ static void menu_move(uint8_t *image, struct menu_track *track)
     if (aes_menu_set(image, track->tree, last_title, track->title, MN_CLEAR))
         aes_menu_sr(image, 0, track->tree, last_menu);
     if (aes_menu_set(image, track->tree, track->title, last_title, MN_SET))
-        track->menu = aes_menu_down(image, track->tree, track->title);
+        track->menu = menu_down(image, track->tree, track->title);
     aes_menu_set(image, track->tree, track->item, last_item, MN_SET);
 }
 
 /* $fe8d6e — the mouse tracked through gl_mntree's bar and drop-downs until a click: 1, the title and item through
  * `title_out` / `item_out`, for an enabled item clicked (the title left selected); 0 for none. The mouse is the
  * AES's round it (ct_mouse). */
+FRAME_DIET("no-defer-pop", "no-gcse", "no-move-loop-invariants", "no-caller-saves")
 int16_t aes_mn_do(uint8_t *image, uint32_t title_out, uint32_t item_out)
 {
     uint16_t frame_local[MN_DO_FRAME_WORDS];

@@ -15,6 +15,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/apmsg.h"
@@ -180,6 +181,7 @@ static inline uint16_t answer_the_waits(uint8_t *image, const struct queued_wait
 
 /* $fe6998 — ev_multi (`aes/evmulti.h` has the five steps). The events that came, a bit each; a message that came
  * clears the control manager's "sent" mark (on the fast path ev_mesag cleared it already). */
+FRAME_DIET("no-defer-pop", "no-caller-saves")
 EVDOOR_TWIN
 uint16_t aes_ev_multi(uint8_t *image, int16_t flags, uint32_t mouse1, uint32_t mouse2, uint32_t timer, uint32_t button,
                       uint32_t message, uint32_t answers)
