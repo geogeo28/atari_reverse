@@ -2098,6 +2098,11 @@
 #define AES_ROM_HCTL_WINDOW       0xfe45a2   /* (window, x, y): WM_TOPPED, or the top window's gadget under the mouse worked */
 #define AES_ROM_HCTL_BUTTON       0xfe48ce   /* (x, y): a menu-bar click swallowed, else hctl_window of the window found */
 #define AES_ROM_HCTL_RECT         0xfe4908   /* (x, y): mn_do on the bar's titles; MN_SELECTED or AC_OPEN, ct_msgup */
+/* ...their caller, the screen manager's MAIN LOOP, and the routine that makes its process (Alcyon, `aes/gemctrl.h`;
+ * band 5 wave 2), each read from its body. ctlmgr is entered by switchto's `rte` and never returns. */
+#define AES_ROM_CTLMGR            0xfe49d2   /* (): gl_rmenu copied, the leave word cleared; then the loop, for ever */
+#define AES_ROM_CTLMGR_LOOP       0xfe49f2   /* ...the loop's top: w_setactive's call word, where every turn begins */
+#define AES_ROM_ICTLMGR           0xfe4a6a   /* (pid, unread): no accessory entries; pstart(ctlmgr, its name, ctlmgr) */
 /* The CONTROL MANAGER's leaves (Alcyon, `aes/wmupdate.h`), each read from its body. */
 #define AES_ROM_SET_CTRL          0xfe5008   /* (rect): the control rectangle copied in */
 #define AES_ROM_GET_CTRL          0xfe501c   /* (rect): ...and out */

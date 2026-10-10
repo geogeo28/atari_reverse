@@ -291,196 +291,519 @@ def deepest_on(run, stack):
 #     holds;
 #   * a call through a register NOTHING is known to load (no candidate at all);
 #   * A TRAP OTHER THAN `trap #2` (GEMDOS, the BIOS, the XBIOS): the OS's own frames under it are counted nowhere;
-#   * A PATH THAT RUNS OFF A LISTED BODY'S LAST INSTRUCTION where an `rts` or a jump was expected.
+#   * A PATH THAT RUNS OFF A LISTED BODY'S LAST INSTRUCTION where an `rts` or a jump was expected;
+#   * AN `unlk` NO `link` OF THE FUNCTION'S OWN REACHES, an `rts` reached anywhere but on the function's own return
+#     address, a jump out of a function under its own pushes (a routine that LEAVES ITS STACK is a declared leaf:
+#     `bytes_before_it_leaves`); A JUMP THROUGH A TABLE (wave 3's); a name the listing labels twice;
+#   * AN INSTRUCTION OF NO KIND IT KNOWS, and A WORD OBJDUMP DOES NOT DECODE — a Line-A trap, a Line-F call word: an
+#     exception's frame and its handler's, counted only where the word is DECLARED with the bytes it takes;
+#   * SP SET FROM ANYTHING BUT A CONSTANT — `movea.l an,sp` outside a glue's return to the stack it interrupted,
+#     `exg`, an alloca — and `lea d(a6),sp` where no `link` of the function's own set A6.
 # What it reads is how far SP GOES — an allocation counts whether or not a store reaches its last byte, as an
 # interrupt taken there would land below it.
-#   * a `jsr`/`bsr` by name is that callee, four bytes deeper (the return address); a `jmp` by name its tail;
+#   * a `jsr`/`bsr` by name is that callee, four bytes deeper (the return address); a `jmp` by name its tail; a
+#     branch INTO another routine (a transcription's shared tail) is read from the instruction it lands on;
 #   * a call THROUGH A REGISTER GCC LOADED BY VALUE (it keeps a function it calls twice in a register, or spills its
-#     address to a frame slot) is the functions that register can hold: read off the loads themselves;
+#     address to a frame slot) is the functions that register can hold AT THAT CALL: read down the function's own
+#     paths (`_Loads`), each slot of the frame its own place;
+#   * a frame pointer's `link` / `unlk` (`_sp_after`), and the build's halt, `trap #7`, which ends a path;
 #   * `trap #2` is the OS's, not the blob's: the deepest SP a trap is taken at is answered beside the bound, for
 #     whoever knows what the trap handler needs under it (`trap_need_under`, measured);
 #   * a glue's `lea <its stack top>,sp` starts the count again (the private stack), and its `movea.l <saved>,sp`
 #     ends it (the interrupted stack back: what follows is not on the private one).
 _LISTED_LABEL = transcription.LISTED_FUNCTION
 _LISTED_LINE = re.compile(r"^\s*([0-9a-f]+):\t[0-9a-f ]+\t(.+)$")
-_NAMED_TARGET = re.compile(r"\b([0-9a-f]+) <([\w.]+)(?:\+0x[0-9a-f]+)?>\)?$")
+NAMED_TARGET = _NAMED_TARGET = re.compile(r"\b([0-9a-f]+) <([\w.]+)(?:\+0x([0-9a-f]+))?>\)?$")
+INTO = "+"                              # `<routine>+<offset>`: a routine entered PAST ITS ENTRY, as the reading names it
+HANDED = "<-"                           # `<routine><-<the routine it is handed>`: one read FOR ONE CALLER'S ARGUMENT
+_ROUTINE_PUSHED = re.compile(r"^(?:pea ([0-9a-f]+) <[\w.]+>|movel #(\d+),%sp@-)$")
 _TRANSFER = re.compile(r"^(jmp|jsr|bsr[swl]?|bra[swl]?|b(?:hi|ls|cc|cs|ne|eq|vc|vs|pl|mi|ge|lt|gt|le)[swl]?|db\w+)$")
 _ENDS_A_PATH = ("rts", "rte", "rtr")
-_SP_BY_A_CONSTANT = re.compile(r"^(lea %sp@\((-?\d+)\)|(addq[lw]|adda[lw]|subq[lw]|suba[lw]) #(-?\d+)),%sp$")
+# ...`lea (sp),sp` among them: what the shipped blob's generated glue drops after a call that took no argument.
+_SP_BY_A_CONSTANT = re.compile(r"^(lea %sp@(?:\((-?\d+)\))?|(addq[lw]|adda[lw]|subq[lw]|suba[lw]) #(-?\d+)),%sp$")
 _REGISTERS = [f"%d{n}" for n in range(8)] + [f"%a{n}" for n in range(6)] + ["%fp", "%sp"]
 OPERAND_BYTES = {"l": LONG_BYTES, "w": WORD_BYTES, "b": WORD_BYTES}      # a byte pushed keeps SP even
 TRAP_2 = "trap #2"
 _A_TRAP = re.compile(r"^trap #\d+$")
+# `recreate_not_reconstructed` on the 68000 (`include/m68k_encodings.h`): the build's own HALT. No instruction runs
+# after it, so no stack is used after it — a path ENDS there, as at a return.
+THE_HALT = "trap #7"
+# A FRAME POINTER'S FRAME (the Alcyon-framed transcriptions, and the C functions GCC gives one): `link` pushes A6 and
+# points it at the push, `unlk` puts SP back there and pops it. What `unlk` does to SP is therefore not in its text:
+# it is where THIS path's `link` left A6 — followed, and refused where no `link` of the function's own reaches it.
+_LINK = re.compile(r"^linkw? %fp,#(-?\d+)$")
+UNLINK, FRAME_POINTER_AT_SP, FRAME_POINTER = "unlk %fp", "moveal %sp,%fp", "%fp"
 # WHAT A REGISTER (or the frame's slots, as one place) IS LOADED WITH, instruction by instruction — the reading's
 # whole knowledge of a call through a pointer:
 _CALL_THROUGH = re.compile(r"^(?:jsr|jmp) (%(?:a\d|fp))@$")
 _LOAD_OF_AN_ADDRESS = re.compile(r"^lea (?:%pc@\()?([0-9a-f]+) <([\w.]+)(?:\+0x[0-9a-f]+)?>\)?,(%(?:a\d|fp))$")
-_LOAD_OF_AN_IMMEDIATE = re.compile(r"^movea?l #(\d+),(%(?:[ad]\d|fp)|%sp@\(-?\d+\)|%sp@)$")
-_COPY = re.compile(r"^movea?l (%(?:[ad]\d|fp)|%sp@\(-?\d+\)|%sp@),(%(?:[ad]\d|fp)|%sp@\(-?\d+\)|%sp@)$")
-_REGISTER_RESTORED = re.compile(r"^movem?a?l %sp@\+,")
+_LOAD_OF_AN_IMMEDIATE = re.compile(r"^movea?l #(\d+),(%(?:[ad]\d|fp)|%(?:sp|fp)@\(-?\d+\)|%sp@)$")
+_COPY = re.compile(r"^movea?l (%(?:[ad]\d|fp)|%(?:sp|fp)@\(-?\d+\)|%sp@),(%(?:[ad]\d|fp)|%(?:sp|fp)@\(-?\d+\)|%sp@)$")
+# ...a register given its caller's value back: popped, or — where GCC keeps a frame pointer — `movem`ed out of the frame.
+_REGISTERS_RESTORED = re.compile(r"^(?:movem?a?l %sp@\+|moveml %fp@\(-\d+\)),((?:%(?:[ad]\d|fp)[-/]?)+)$")
 _STORES_TO = re.compile(r",(%(?:[ad]\d|fp))$")
-A_FRAME_SLOT = "a frame slot"           # every `d(sp)` of a function, as ONE place: what it spills an address to
+# A `d(sp)` of a function — and, where A6 is its frame pointer, a `d(a6)`: a place it can spill an address to.
+A_FRAME_SLOT = "a frame slot"
 FROM_THE_MACHINE = "a pointer read out of memory, or computed"
 A_NUMBER = "a number"
+THE_CALLER_S = "what the function's caller left there"   # a register nothing has loaded yet, or popped back
+NOT_KEPT_BY_A_CALLEE = ("%d0", "%d1", "%a0", "%a1")      # what a call may leave anything in: the C ABI's scratch four
+# A DECLARED CALLEE THAT IS NO CODE OF THE BUILD (`through_a_pointer`): the routine an application hands the AES —
+# its frames are the application's, as deep under our `jsr` as under the ROM's, and the reading counts the `jsr`
+# and nothing under it. A path that ends on it SAYS SO in its chain.
+AN_APPLICATION_S_ROUTINE = "an application's own routine"
 # `deepest`, bytes below the entry's SP, down the calls `path` names; `at_a_trap` the deepest SP a trap is taken at
 # (None: none is reached), down `trap_path`.
 StackUse = namedtuple("StackUse", "deepest path at_a_trap trap_path")
 
 
-def _registers_in(listed):
-    """How many registers a `movem` list names (`%d2-%d7/%a2-%fp`)."""
-    count = 0
+def _registers_listed(listed):
+    """The registers a `movem` list names (`%d2-%d7/%a2-%fp`), in order."""
+    names = []
     for span in listed.split("/"):
         first, _, last = span.partition("-")
-        count += _REGISTERS.index(last or first) - _REGISTERS.index(first) + 1
-    return count
+        names += _REGISTERS[_REGISTERS.index(first):_REGISTERS.index(last or first) + 1]
+    return names
+
+
+def _registers_in(listed):
+    """How many registers a `movem` list names."""
+    return len(_registers_listed(listed))
+
+
+# EVERY MNEMONIC THE READING KNOWS TO LEAVE SP ALONE BUT THROUGH AN OPERAND IT READS (`(sp)+`, `-(sp)`, `...,sp`) — the
+# ones the two blobs are built of. Anything else is REFUSED BY NAME where a path reaches it: a mnemonic of another
+# kind (`trapv`, `chk`, `stop`: an exception the listing does not show), and A WORD OBJDUMP DOES NOT DECODE AS CODE —
+# `.short 0xa000` is a Line-A trap, a Line-F call word prints as `psave` / `prestore` — each the 68000's exception
+# frame and a handler's own frames ON THIS STACK. Such a word is followed only where it is DECLARED
+# (`StackReading`'s `takes_an_exception`: the bytes it takes, measured).
+KNOWN_MNEMONICS = frozenset("""
+    addal addaw addb addib addil addiw addl addqb addql addqw addw addxl addxw andb andib andil andiw andl andw aslb asll aslw asrb
+    asrl asrw bchg bclr bset btst clrb clrl clrw cmpal cmpaw cmpb cmpib cmpil cmpiw cmpl cmpmb cmpml cmpmw cmpw divsw divuw eorb
+    eorib eoril eoriw eorl eorw exg extl extw lea linkw lslb lsll lslw lsrb lsrl lsrw moveal moveaw moveb movel movemw moveml
+    movepl movepw moveq movew mulsw muluw negb negl negw nop notb notl notw orb orib oril oriw orl orw pea rolb roll rolw rorb rorl
+    rorw roxlb roxll roxlw roxrb roxrl roxrw subal subaw subb subib subil subiw subl subqb subql subqw subw subxl subxw swap tas
+    tstb tstl tstw unlk""".split())
+SETS_A_BYTE = frozenset(f"s{condition}" for condition in "t f hi ls cc cs ne eq vc vs pl mi ge lt gt le".split())
+_A_WORD = re.compile(r"^\.(?:short|word) 0x([0-9a-f]{4})$")
+_LINE_F_AS_DECODED = ("psave", "prestore")
+_SP_INTO_THE_FRAME = re.compile(r"^lea %fp@(?:\((-?\d+)\))?,%sp$")
+_AN_ADDRESS_TO_SP = re.compile(r"^lea (?:0x)?[0-9a-f]+(?: <[^>]*>)?,%sp$")
+_SP_EXCHANGED = re.compile(r"^exg (?:%sp,.*|.*,%sp)$")
+
+
+def what_an_unknown_word_is(text):
+    """What the listing's `text` is when it is no instruction the reading knows — for a refusal's words."""
+    word = _A_WORD.match(text)
+    if word and word.group(1)[0] == "a":
+        return "a Line-A trap"
+    if (word and word.group(1)[0] == "f") or text.split(" ")[0] in _LINE_F_AS_DECODED:
+        return "a Line-F word (objdump decodes one as a coprocessor's instruction)"
+    return "a word objdump does not decode" if word else "an instruction of a kind the stack reading does not know"
 
 
 def _stack_effect(text):
-    """How many bytes one listed instruction moves SP DOWN by (negative: up), calls and returns apart."""
+    """How many bytes one listed instruction moves SP DOWN by (negative: up), calls and returns apart — for an
+    instruction whose effect IS in its text: an `unlk`'s is not (`_sp_after`). REFUSED: a mnemonic the reading does
+    not know, and SP as a destination it cannot read a constant for."""
     mnemonic, _, operands = text.partition(" ")
+    assert mnemonic in KNOWN_MNEMONICS or mnemonic in SETS_A_BYTE, (
+        f"the stack reading does not know the instruction `{text}` — {what_an_unknown_word_is(text)}: what it takes of "
+        f"the stack is not in the listing")
     constant = _SP_BY_A_CONSTANT.match(text)
     if constant:
-        if constant.group(2) is not None:
-            return -int(constant.group(2))
+        if constant.group(3) is None:
+            return -int(constant.group(2) or 0)
         return int(constant.group(4)) * (1 if constant.group(3).startswith("sub") else -1)
     if mnemonic == "pea":
         return LONG_BYTES
     if mnemonic.startswith("link"):
         return LONG_BYTES - int(operands.rsplit("#", 1)[1])
-    pushes, pops = operands.endswith("%sp@-"), "%sp@+" in operands.split(",")[0] and "," in operands
-    assert mnemonic != "unlk" and not operands.endswith(",%sp"), f"the stack reading does not follow `{text}`"
-    if not (pushes or pops):
+    assert mnemonic != "unlk" and not operands.endswith(",%sp") and not _SP_EXCHANGED.match(text), (
+        f"the stack reading does not follow `{text}`")
+    # ...`-(sp)` as either operand lowers SP, `(sp)+` as either raises it (`tst.l (sp)+` pops with one operand).
+    down = operands.endswith("%sp@-") + operands.startswith("%sp@-,")
+    up = (operands == "%sp@+") + operands.startswith("%sp@+,") + operands.endswith(",%sp@+")
+    if not (down or up):
         return 0
-    size = OPERAND_BYTES[mnemonic[-1]]
+    assert mnemonic[-1] in OPERAND_BYTES or mnemonic in SETS_A_BYTE, f"the stack reading does not follow `{text}`: an operand of no size it reads"
+    size = WORD_BYTES if mnemonic in SETS_A_BYTE else OPERAND_BYTES[mnemonic[-1]]
     if mnemonic.startswith("movem"):
-        size *= _registers_in(operands.split(",")[1 if pops else 0])
-    return size if pushes else -size
+        size *= _registers_in(operands.split(",", 1)[1] if up else operands.split(",")[0])
+    return size * (down - up)
+
+
+stack_effect = _stack_effect
+
+
+def _writes_the_frame_pointer(text):
+    """`text` stores to A6 — as a `move`'s or a `lea`'s destination, or among the registers a `movem` restores."""
+    _, comma, destination = text.rpartition(",")
+    restored = _REGISTERS_RESTORED.match(text)
+    return bool(comma) and (destination == FRAME_POINTER or bool(restored and FRAME_POINTER in _registers_listed(restored.group(1))))
+
+
+def _sp_after(function, at, text, depth, frame):
+    """`(SP's depth, the depth A6 points at)` after one instruction — calls, returns and transfers apart — from
+    `depth` and `frame` before it. `frame` is None where A6 is no frame pointer this path set: before a `link`,
+    after the `unlk`, and once anything else is stored in A6."""
+    link, into_the_frame = _LINK.match(text), _SP_INTO_THE_FRAME.match(text)
+    if link:
+        pushed = depth + LONG_BYTES
+        return pushed - int(link.group(1)), pushed
+    if text == FRAME_POINTER_AT_SP:
+        return depth, depth
+    if text == UNLINK or into_the_frame:
+        assert frame is not None, (
+            f"{function}: `{text}` at {at:#x} with no `link` of the function's own reaching it (or A6 stored to "
+            f"since): the stack reading does not follow a frame pointer it did not see set")
+        # `lea d(a6),sp` — GCC's way back to its saved registers — puts SP at the frame's own byte `d`.
+        return (frame - int(into_the_frame.group(1) or 0), frame) if into_the_frame else (frame - LONG_BYTES, None)
+    return depth + _stack_effect(text), None if _writes_the_frame_pointer(text) else frame
+
+
+LINK = _LINK
+
+
+def allocated_by(text):
+    """The bytes one instruction lowers SP by WITHOUT storing where it leaves it (`lea -n(sp),sp`, `subq #n,sp`): 0
+    for any other — a push stores at the SP it makes."""
+    return max(_stack_effect(text), 0) if _SP_BY_A_CONSTANT.match(text) else 0
+
+
+def _sets_sp_to_an_address(text):
+    """`lea <an address>,sp`: the stack LEFT for another — a glue's private one, the dispatcher's. (`lea d(a6),sp`
+    is no such thing: the same stack, `_sp_after`'s.)"""
+    return bool(_AN_ADDRESS_TO_SP.match(text))
+
+
+class ListedMoreThanOnce(list):
+    """The instructions under a name the listing labels MORE THAN ONCE, one routine after the other: a transfer
+    that names it names no one of them, and the reading refuses to read it (`StackReading.of`)."""
 
 
 def listed_functions_of(listing, ends):
     """`{name: [(address, text)]}` of every function `listing` labels: one `ends` (`{start: end}`) sizes read to its
-    end and no further (in the shipped blob a displaced C core keeps its body and loses its name), one it does not
-    size — a transcription's entry — to the next label."""
+    end and no further (in the shipped blob a displaced C core keeps its body and loses its name) — A LABEL INSIDE
+    IT IS ITS OWN, no function — and one it does not size — a transcription's entry — to the next label. A name
+    labelled twice is a `ListedMoreThanOnce`."""
     functions, body, end = {}, None, None
     for line in listing.splitlines():
         label, listed = _LISTED_LABEL.match(line), _LISTED_LINE.match(line)
         if label:
-            body, end = functions.setdefault(label.group(2), []), ends.get(int(label.group(1), 16))
+            name, start = label.group(2), int(label.group(1), 16)
+            if end is not None and start < end:
+                continue
+            if name in functions:
+                functions[name] = ListedMoreThanOnce(functions[name])
+            body, end = functions.setdefault(name, []), ends.get(start)
         elif listed and body is not None and (end is None or int(listed.group(1), 16) < end):
             body.append((int(listed.group(1), 16), listed.group(2).strip()))
     return functions
 
 
+# THE COMPILER'S OWN LONG ARITHMETIC (libgcc's `lb1sf68.S`, linked into a blob whose C divides or multiplies longs):
+# hand assembly the symbol table does not size, whose labels `L1`..`L6` are each routine's own AND ARE REUSED from
+# one routine to the next — so each is read from its symbol to the next GLOBAL one, its labels inside it.
+THE_COMPILER_S_ARITHMETIC = ("__mulsi3", "__udivsi3", "__divsi3", "__umodsi3", "__modsi3")
+
+
 @functools.cache
-def _listed_functions(elf):
-    ends = {symbol.start: symbol.start + symbol.size for symbol in transcription.symbol_table(elf) if symbol.size}
+def listed_functions(elf):
+    table = transcription.symbol_table(elf)
+    ends = {symbol.start: symbol.start + symbol.size for symbol in table if symbol.size}
+    entries = sorted(symbol.start for symbol in table if symbol.kind == "T")
+    for symbol in table:
+        following = [start for start in entries if start > symbol.start]
+        if symbol.name in THE_COMPILER_S_ARITHMETIC and following:
+            ends[symbol.start] = following[0]
     return listed_functions_of(transcription.listing(elf), ends)
 
 
-def _depth_of(reached):
+_listed_functions = listed_functions    # the name this module's other sections know it by
+
+
+def depth_of(reached):
+    """A `(depth or None, ...)`'s depth for a `max`: None — nothing reached — below every depth."""
     return -1 if reached[0] is None else reached[0]
 
 
-def _place(operand):
-    return A_FRAME_SLOT if operand.startswith("%sp@") else operand
+_depth_of = depth_of
+
+
+_UNLOADED, _UNKNOWN = frozenset({THE_CALLER_S}), frozenset({FROM_THE_MACHINE})
+_A_SLOT = re.compile(r"^%(sp|fp)@(?:\((-?\d+)\))?$")
+_REGISTERS_LOADED_FROM_MEMORY = re.compile(r"^movem[lw] .+,((?:%(?:[ad]\d|fp)[-/]?)+)$")
+_EXCHANGED = re.compile(r"^exg (%(?:[ad]\d|fp)),(%(?:[ad]\d|fp))$")
+_STEPPED = re.compile(r"(%a\d|%fp)@[+-]")                # `(an)+` / `-(an)`: the register itself is changed
+_ONE_REGISTER = re.compile(r"^(?!tst)\w+ (%(?:[ad]\d|fp))$")   # `swap d0`, `ext.l d0`, `clr.l d0`: its one operand, changed
+_COUNTED_DOWN = re.compile(r"^db\w+ (%d\d),")
+
+
+def _local_target(text, local):
+    """The address a branch or a jump of `text` names INSIDE its own function (`local`: its addresses), or None."""
+    target = _NAMED_TARGET.search(text)
+    if not target or not _TRANSFER.match(text.split(" ")[0]):
+        return None
+    named = int(target.group(1), 16)
+    return named if named in local else None
+
+
+def _goes_on_to(body):
+    """`[the indices an instruction can be followed by]` for each instruction of `body`: the next one — unless it
+    ends a path or jumps — and the one a branch inside the function names."""
+    index_of = {at: index for index, (at, _text) in enumerate(body)}
+    goes_on_to = []
+    for index, (_at, text) in enumerate(body):
+        mnemonic, target = text.split(" ")[0], _local_target(text, index_of)
+        leaves = mnemonic in _ENDS_A_PATH or text == THE_HALT or mnemonic.startswith(("jmp", "bra"))
+        after = [] if leaves or index + 1 == len(body) else [index + 1]
+        goes_on_to.append(after + ([index_of[target]] if target is not None and not mnemonic.startswith(("jsr", "bsr")) else []))
+    return goes_on_to
 
 
 class _Loads:
-    """What a place of ONE function — a register, or its frame's slots as one place — holds where a call goes
-    through it: functions BY VALUE (`lea <f>,a2`; `move.l #<f's address>,d2`, or spilt to a frame slot), another
-    place's content (a copy), or FROM_THE_MACHINE — anything else stored there. Read AT THE CALL, back through its
-    own block to the load that reaches it (a scratch register is loaded and called a line apart, and holds a dozen
-    other things elsewhere); where the block holds no load, every load of the function (a register GCC keeps a
-    function in across its body). A register popped back off the stack is its caller's value again: no load."""
+    """What a place of ONE function — a register, or A SLOT OF ITS FRAME — holds where a call goes through it:
+    functions BY VALUE (`lea <f>,a2`; `move.l #<f's address>,d2`, or spilt to a slot), another place's content (a
+    copy), or FROM_THE_MACHINE — anything else stored there.
 
-    def __init__(self, body, starts):
-        self._body, self._starts = body, starts
-        local = {at for at, _text in body}
-        self._targets = {int(target.group(1), 16) for _at, text in body for target in [_NAMED_TARGET.search(text)]
-                         if target and int(target.group(1), 16) in local and _TRANSFER.match(text.split(" ")[0])}
+    READ DOWN THE FUNCTION'S OWN PATHS, ONCE (`_held`): what each place holds BEFORE each instruction is what the
+    instructions that can run before it left there — the last store on a path, and where paths join, each path's.
+    So a register GCC keeps a function in, then uses for data on the way OUT, holds the function at every call the
+    data never reaches (`aes_mn_do`'s A2), and a scratch register holds what the line above loaded and not the
+    dozen other things it holds elsewhere. A register nothing has stored to, or popped back off the stack, holds
+    THE_CALLER_S — no function, on that path; what a call returns in D0/D1/A0/A1 is FROM_THE_MACHINE, and so is a
+    register an instruction changes by any other means the reading sees (`exg`, a `movem` from memory, `(an)+`,
+    `swap`, a `dbf`'s counter).
+    A SLOT IS ONE PLACE OF THE FRAME, by where it lies from the SP the function was entered at — `d(sp)` read with
+    the depth SP stands at THERE (`reached`: the stack walk's own states), `d(a6)` with the frame pointer's — so a
+    function spilt to one slot is not what a call through ANOTHER holds: a slot nothing spilt a function to holds
+    FROM_THE_MACHINE (an argument: the caller's pointer; a local: data)."""
+
+    def __init__(self, body, starts, reached):
+        self._body, self._starts, self._reached = body, starts, reached
         self._index = {at: index for index, (at, _text) in enumerate(body)}
+        self._held = None
 
-    def _load(self, text):
-        """`(the place stored to, what is stored)` by one instruction, or None: a function's name, `("copy", place)`,
-        or FROM_THE_MACHINE."""
+    def _place(self, at, operand):
+        """The place an operand of the instruction at `at` names: a register, `(A_FRAME_SLOT, its offset from the
+        entry SP)` — or None for memory: `d(a6)` where A6 is no frame pointer, anything on a path the walk did not
+        reach."""
+        slot = _A_SLOT.match(operand)
+        if not slot:
+            return operand
+        depth, frame = self._reached.get(at, (None, None))[:2]
+        base = depth if slot.group(1) == "sp" else frame
+        return None if base is None else (A_FRAME_SLOT, int(slot.group(2) or 0) - base)
+
+    @staticmethod
+    def _of(held, place):
+        return held.get(place, _UNLOADED if isinstance(place, str) else _UNKNOWN)
+
+    def _load(self, at, text, held):
+        """`(the place stored to, what it then holds)` by one instruction, or None."""
         address, immediate, copy = _LOAD_OF_AN_ADDRESS.match(text), _LOAD_OF_AN_IMMEDIATE.match(text), _COPY.match(text)
         if address:
-            function = self._starts.get(int(address.group(1), 16))
-            return address.group(3), function or FROM_THE_MACHINE
+            return address.group(3), frozenset({self._starts.get(int(address.group(1), 16), FROM_THE_MACHINE)})
         if immediate:
             # ...an immediate that is no function's address is a number (an offset into the image): not code.
-            return _place(immediate.group(2)), self._starts.get(int(immediate.group(1)), A_NUMBER)
+            place = self._place(at, immediate.group(2))
+            return place and (place, frozenset({self._starts.get(int(immediate.group(1)), A_NUMBER)}))
         if copy:
-            return _place(copy.group(2)), ("copy", _place(copy.group(1)))
+            place, source = self._place(at, copy.group(2)), self._place(at, copy.group(1))
+            return place and (place, _UNKNOWN if source is None else self._of(held, source))
         stored = _STORES_TO.search(text)
-        if stored and not _REGISTER_RESTORED.match(text):
-            return stored.group(1), FROM_THE_MACHINE
-        return None
+        return (stored.group(1), _UNKNOWN) if stored else None
 
-    def _everywhere(self, place, seen):
-        """Every load of `place` in the function, copies followed where each is made."""
-        held = set()
-        for index, (_at, text) in enumerate(self._body):
-            load = self._load(text)
-            if load and load[0] == place:
-                held |= self._resolved(load[1], index, seen)
-        if place == A_FRAME_SLOT:
-            # The slots are one place and hold the function's data too: of what is spilt there only the functions
-            # named by value count — and where none is, the slot called through is an ARGUMENT, the caller's pointer.
-            return {function for function in held if function not in (FROM_THE_MACHINE, A_NUMBER)} or {FROM_THE_MACHINE}
-        return held
+    def _changed_otherwise(self, text):
+        """The registers `text` changes by a means that is no load the reading follows."""
+        from_memory, exchanged = _REGISTERS_LOADED_FROM_MEMORY.match(text), _EXCHANGED.match(text)
+        one, counted = _ONE_REGISTER.match(text), _COUNTED_DOWN.match(text)
+        changed = _registers_listed(from_memory.group(1)) if from_memory else list(exchanged.groups()) if exchanged else []
+        changed += _STEPPED.findall(text) + [found.group(1) for found in (one, counted) if found]
+        if text.split(" ")[0].startswith(("jsr", "bsr")):
+            changed += NOT_KEPT_BY_A_CALLEE
+        return changed
 
-    def _resolved(self, loaded, index, seen):
-        if isinstance(loaded, tuple):
-            return self.held_at(index, loaded[1], seen)
-        return {loaded}
+    def _after(self, at, text, held):
+        """`held` (`{place: what it can hold}`) after the instruction `text` at `at`."""
+        restored = _REGISTERS_RESTORED.match(text)
+        after = dict(held)
+        if restored:
+            for register in _registers_listed(restored.group(1)):
+                after.pop(register, None)
+            return after
+        load = self._load(at, text, held)
+        if load:
+            after[load[0]] = load[1]
+        after.update(dict.fromkeys(self._changed_otherwise(text), _UNKNOWN))
+        return after
 
-    def held_at(self, index, place, seen=frozenset()):
-        """What `place` holds where the instruction of `index` reads it: function names, FROM_THE_MACHINE, A_NUMBER."""
-        if (index, place) in seen:
-            return set()
-        seen = seen | {(index, place)}
-        if place != A_FRAME_SLOT:
-            for before in range(index - 1, -1, -1):
-                if self._body[before + 1][0] in self._targets:
-                    break                               # a block's head: another path joins here, with its own loads
-                load = self._load(self._body[before][1])
-                if load and load[0] == place:
-                    return self._resolved(load[1], before, seen)
-        return self._everywhere(place, seen)
+    def _flowed(self):
+        """`[held before each instruction]` (None: no path reaches it)."""
+        goes_on_to, before = _goes_on_to(self._body), [None] * len(self._body)
+        before[0], todo = {}, [0]
+        while todo:
+            index = todo.pop()
+            after = self._after(*self._body[index], before[index])
+            for following in goes_on_to[index]:
+                met = before[following]
+                joined = after if met is None else {place: self._of(met, place) | self._of(after, place)
+                                                    for place in met.keys() | after.keys()}
+                if joined != met:
+                    before[following] = joined
+                    todo.append(following)
+        return before
 
-    def held_by_the_call_at(self, at, place):
-        return self.held_at(self._index[at], place)
+    def held_by_the_call_at(self, at, register):
+        """What `register` holds where the call at `at` goes through it: function names, FROM_THE_MACHINE, A_NUMBER,
+        THE_CALLER_S."""
+        if self._held is None:
+            self._held = self._flowed()
+        return set(self._of(self._held[self._index[at]] or {}, register))
+
+
+def bytes_before_it_leaves(functions, routine):
+    """HOW FAR A ROUTINE THAT LEAVES ITS CALLER'S STACK TAKES THAT STACK FIRST, in bytes below the SP it is entered
+    at — read off `functions` (`{name: [(address, text)]}`) down every path from `routine`, THROUGH the jumps and
+    calls it makes by name (one path: nothing returns to it on this stack), to the `lea <an address>,sp` that
+    leaves. dsptch is the one: `move.w sr,-(sp)`, `move.l a0,-(sp)`, disp's `link` and `movem`, its `jsr` of
+    savestate and savestate's own `link`, then the dispatcher's stack — the process is resumed, later, by
+    switchto's `rte` off the frame dsptch pushed. Refused, by name: a callee that RETURNS (`rts` under a call: no
+    routine that leaves); an `rte` that does not take the routine's own pushes and its caller's return address
+    (the arm on which it does not leave at all); a transfer through a register; a routine that never leaves."""
+    texts, following, reached = {}, {}, {}
+
+    def laid(name):
+        body = functions[name]
+        texts.update(body)
+        following.update((at, after) for (at, _text), (after, _next) in zip(body, body[1:]))
+        return body[0][0]
+
+    deepest, left, todo = 0, False, [(laid(routine), (0, None, 0))]
+    while todo:
+        at, state = todo.pop()
+        if at in reached:
+            assert reached[at] == state, f"{routine}: two paths reach {at:#x} as {reached[at]} and {state}"
+            continue
+        reached[at], text, (depth, frame, calls) = state, texts[at], state
+        mnemonic, target = text.split(" ")[0], _NAMED_TARGET.search(text)
+        if _sets_sp_to_an_address(text):
+            left = True
+            continue
+        if mnemonic == "rts":
+            assert (depth, calls) == (0, 0), f"{routine}: `rts` at {at:#x}, {depth} bytes down under {calls} call(s) — it returns"
+            continue
+        if mnemonic == "rte":
+            assert depth - EXCEPTION_FRAME_BYTES == -LONG_BYTES, (
+                f"{routine}: the `rte` at {at:#x}, {depth} bytes down, is not a return to the routine's own caller")
+            continue
+        if _TRANSFER.match(mnemonic):
+            assert target, f"{routine}: the stack reading does not follow the transfer `{text}` at {at:#x}"
+            to = int(target.group(1), 16)
+            if to not in texts:
+                assert laid(target.group(2)) == to, f"{routine}: `{text}` at {at:#x} lands inside {target.group(2)}"
+            if mnemonic.startswith(("jsr", "bsr")):
+                deepest = max(deepest, depth + LONG_BYTES)
+                todo.append((to, (depth + LONG_BYTES, frame, calls + 1)))
+                continue                    # what follows the call runs on the stack the callee left for
+            todo.append((to, state))
+            if mnemonic.startswith(("jmp", "bra")):
+                continue
+        else:
+            depth, frame = _sp_after(routine, at, text, depth, frame)
+            deepest = max(deepest, depth)
+        todo.append((following[at], (depth, frame, calls)))
+    assert left, f"{routine} never leaves the stack it is called on: no leaf of that kind"
+    return deepest
 
 
 class StackReading:
-    """The stack use of one blob's functions (above), each read once. `through_a_pointer`: `{caller: callees}` for
-    a caller whose call through a pointer OF THE MACHINE is declared (forker: the four fork entries a queue entry
-    can hold)."""
+    """The stack use of one blob's functions (above), each read once.
+    `through_a_pointer`: `{caller: callees}` for a caller whose call through a pointer OF THE MACHINE is declared
+    (forker: the four fork entries a queue entry can hold).
+    `leaves_the_stack`: the routines that leave the stack they are called on, each a LEAF that takes what
+    `bytes_before_it_leaves` reads — dsptch, under which a process is parked.
+    `calls_what_it_is_handed`: the routines whose call through a pointer is of THE ROUTINE THEIR CALLER HANDS THEM
+    (everyobj's walk): each is read once FOR EACH ROUTINE a call site hands it — named there by value, among the
+    pushes of that call, or the site is refused — so a walk handed one routine is not charged another's frames, and
+    a routine that walks again under a walk (newrect, with mkrect) is no recursion.
+    `takes_an_exception`: `{a listed word: the bytes it takes of the stack it is met on}` — a Line-A trap, a Line-F
+    call word: the 68000's exception frame and the handler's own frames, MEASURED by whoever declares it. Charged
+    where the word stands; undeclared, the word is refused."""
 
-    def __init__(self, elf, through_a_pointer=None):
-        self._functions = _listed_functions(elf)
+    def __init__(self, elf, through_a_pointer=None, leaves_the_stack=(), calls_what_it_is_handed=(), takes_an_exception=None):
+        self._functions = listed_functions(elf)
         self._starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(elf) if symbol.kind in "Tt"}
-        self._declared = dict(through_a_pointer or {})
-        self._use, self._reading, self._loads = {}, [], {}
+        self._declare(through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception)
 
     @classmethod
-    def of_listing(cls, functions, starts=None, through_a_pointer=None):
+    def of_listing(cls, functions, starts=None, through_a_pointer=None, leaves_the_stack=(), calls_what_it_is_handed=(),
+                   takes_an_exception=None):
         """...the same reading over `functions` (`{name: [(address, text)]}`) handed as they are: the reading's
         own tests."""
         reading = cls.__new__(cls)
         reading._functions, reading._starts = functions, dict(starts or {})
-        reading._declared, reading._use, reading._reading, reading._loads = dict(through_a_pointer or {}), {}, [], {}
+        reading._declare(through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception)
         return reading
 
-    def _through_a_pointer(self, function, register, at):
-        """The functions `function`'s call through `register` at `at` can reach — or the refusal."""
-        if function not in self._loads:
-            self._loads[function] = _Loads(self._functions[function], self._starts)
-        held = self._loads[function].held_by_the_call_at(at, register)
-        callees = held - {FROM_THE_MACHINE, A_NUMBER}
-        if FROM_THE_MACHINE in held:
+    def _declare(self, through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception):
+        self._declared, self._leaves = dict(through_a_pointer or {}), tuple(leaves_the_stack)
+        self._handed_one, self._excepted = tuple(calls_what_it_is_handed), dict(takes_an_exception or {})
+        self._use, self._reading, self._loads, self._home, self._calls, self._to = {}, [], {}, None, {}, {}
+
+    def functions(self):
+        """`{name: [(address, text)]}`: every function of the listing read."""
+        return self._functions
+
+    def named_by_value(self, text):
+        """The function one instruction loads or pushes BY VALUE (`lea <f>,an`, `pea <f>`, `move.l #<f>,...`), or None."""
+        loaded, pushed, immediate = _LOAD_OF_AN_ADDRESS.match(text), _ROUTINE_PUSHED.match(text), _LOAD_OF_AN_IMMEDIATE.match(text)
+        if loaded or (pushed and pushed.group(1)):
+            return self._starts.get(int((loaded or pushed).group(1), 16))
+        return self._starts.get(int(pushed.group(2)) if pushed else int(immediate.group(1))) if pushed or immediate else None
+
+    def handed_at(self, caller, at):
+        """THE ROUTINE `caller`'s call at `at` HANDS ITS CALLEE: the one function it pushes BY VALUE among that
+        call's arguments — the pushes since the call before it. Refused where there is none, or more than one."""
+        body = self._functions[caller]
+        index = next(index for index, (address, _text) in enumerate(body) if address == at)
+        pushed = []
+        for _address, text in reversed(body[:index]):
+            if text.split(" ")[0].startswith(("jsr", "bsr")):
+                break
+            named = _ROUTINE_PUSHED.match(text) and self.named_by_value(text)
+            if named:
+                pushed.append(named)
+        assert len(pushed) == 1, (
+            f"{caller} hands its callee at {at:#x} {pushed or 'no routine'} by value: the stack reading reads a routine "
+            f"that calls what it is handed for ONE routine named at the call")
+        return pushed[0]
+
+    def _entered_at(self, address):
+        """The name the reading gives the code at `address`: the routine listed there — or, for an address INSIDE
+        one (a transcription's branch to another routine's shared tail), `<that routine>+<offset>`: read from
+        there, and not from the entry of a routine the branch never enters."""
+        if self._home is None:
+            self._home = {at: name for name, body in self._functions.items() for at, _text in body}
+        assert address in self._home, f"the stack reading has no listing of the instruction at {address:#x}"
+        home = self._home[address]
+        offset = address - self._functions[home][0][0]
+        return f"{home}{INTO}{offset:#x}" if offset else home
+
+    def _through_a_pointer(self, function, register, at, handed, reached):
+        """The functions `function`'s call through `register` at `at` can reach — or the refusal. `handed`: the
+        routine this reading of `function` is handed (None: it is declared none); `reached`: this reading's walk."""
+        if id(reached) not in self._loads:
+            self._loads[id(reached)] = (_Loads(self._functions[function], self._starts, reached), reached)
+        held = self._loads[id(reached)][0].held_by_the_call_at(at, register)
+        callees = held - {FROM_THE_MACHINE, A_NUMBER, THE_CALLER_S}
+        assert not callees or THE_CALLER_S not in held, (
+            f"{function} calls through {register} at {at:#x}, which a path reaches holding {THE_CALLER_S} and "
+            f"another holding {sorted(callees)}: the stack reading follows no call through a register one path never loads")
+        if FROM_THE_MACHINE in held and handed:
+            callees.add(handed)
+        elif FROM_THE_MACHINE in held:
             assert function in self._declared, (
                 f"{function} calls through {register} at {at:#x}, which holds {FROM_THE_MACHINE} — not a function "
                 f"it names by value: the stack reading follows such a call only where its caller DECLARES what the "
@@ -494,7 +817,13 @@ class StackReading:
         """The `StackUse` of `function` entered with its return address already on the stack."""
         if function not in self._use:
             assert function not in self._reading, f"the stack reading does not follow recursion: {self._reading + [function]}"
-            assert function in self._functions, f"the stack reading has no listing of {function}"
+            if function == AN_APPLICATION_S_ROUTINE:
+                self._use[function], self._calls[function] = StackUse(0, (function,), None, (function,)), []
+                return self._use[function]
+            home = function.partition(HANDED)[0].partition(INTO)[0]
+            assert home in self._functions, f"the stack reading has no listing of {function}"
+            assert not isinstance(self._functions[home], ListedMoreThanOnce), (
+                f"the listing labels more than one routine `{home}`: the stack reading cannot tell which a transfer names")
             self._reading.append(function)
             try:
                 self._use[function] = self._read(function)
@@ -502,62 +831,127 @@ class StackReading:
                 self._reading.pop()
         return self._use[function]
 
-    def _callees_at(self, function, at, text, target):
-        if target:
-            return [target.group(2)]
-        through = _CALL_THROUGH.match(text)
-        # OWED, AES band 5 wave 2: A JUMP THROUGH A TABLE IN THE FUNCTION'S OWN TEXT (`jmp %pc@(2,%d0:w)` — the opcode
-        # switch, `src/aes/gemsuper.c`'s COMPILED_AS_A_JUMP_TABLE, the one function built with one) is refused here
-        # with every other transfer the reading does not follow: the reading learns the table — its sixteen-bit
-        # distances, each an arm of the same body — when a path it is asked for first goes through the switch.
-        assert through, f"{function}: the stack reading does not follow the transfer `{text}` at {at:#x}"
-        return self._through_a_pointer(function, through.group(1), at)
+    def functions_read(self):
+        """Every function read so far, by name (a routine read past its entry or for one caller's argument by the
+        routine's own): what a path asked for went through."""
+        return {name.partition(HANDED)[0].partition(INTO)[0] for name in self._use}
 
-    def _read(self, function):
-        body = self._functions[function]
+    def _callees_at(self, function, at, text, target, handed, reached):
+        if target:
+            callee = self._entered_at(int(target.group(1), 16)) if target.group(3) else target.group(2)
+            return [f"{callee}{HANDED}{self.handed_at(function, at)}" if callee in self._handed_one else callee]
+        through = _CALL_THROUGH.match(text)
+        # OWED, AES band 5 wave 3 (ruling W2-R5): A JUMP THROUGH A TABLE IN THE FUNCTION'S OWN TEXT (`jmp %pc@(2,%d0:w)`
+        # — the opcode switch, `src/aes/gemsuper.c`'s COMPILED_AS_A_JUMP_TABLE, the one function built with one) is
+        # refused here with every other transfer the reading does not follow: the reading learns the table — its
+        # sixteen-bit distances, each an arm of the same body — when a path it is asked for first goes through the
+        # switch. No process's path read in wave 2 does (`test_aes_stack.py` holds that).
+        assert through, f"{function}: the stack reading does not follow the transfer `{text}` at {at:#x}"
+        return self._through_a_pointer(function, through.group(1), at, handed, reached)
+
+    def _walked(self, function, body, start):
+        """THE STACK WALK of one function: `{address: (SP's depth, the depth A6 points at, on a private stack)}` before
+        every instruction a path from `start` reaches — its own pushes and pops alone, no callee's — with every
+        refusal the walk itself makes."""
         following = {at: after for (at, _text), (after, _next) in zip(body, body[1:])}
-        texts, depth_at, todo = dict(body), {}, [(body[0][0], 0)]
-        deepest, trapped = (0, ()), (None, ())          # each `(depth, the calls under this function that lead there)`
+        texts, reached, todo = dict(body), {}, [(start, (0, None, False))]
         while todo:
-            at, depth = todo.pop()
-            if at in depth_at:
-                assert depth_at[at] == depth, f"{function}: two paths reach {at:#x} at depths {depth_at[at]} and {depth}"
+            at, state = todo.pop()
+            if at in reached:
+                assert reached[at][0] == state[0], f"{function}: two paths reach {at:#x} at depths {reached[at][0]} and {state[0]}"
+                assert reached[at] == state, f"{function}: two paths reach {at:#x} with A6 at {reached[at][1]} and {state[1]}"
                 continue
-            depth_at[at], text = depth, texts[at]
-            mnemonic, target = text.split(" ")[0], _NAMED_TARGET.search(text)
+            reached[at], text, (depth, frame, private) = state, texts[at], state
+            mnemonic = text.split(" ")[0]
+            if text == THE_HALT:
+                continue
             assert not _A_TRAP.match(text) or text == TRAP_2, (
                 f"{function} takes `{text}` at {at:#x}: the stack reading counts no frame of the OS under a trap "
                 f"other than `{TRAP_2}`")
-            if text == TRAP_2:
-                trapped = max(trapped, (depth, ()), key=_depth_of)
             if mnemonic in _ENDS_A_PATH:
+                assert mnemonic != "rts" or depth == 0, (
+                    f"{function}: the `rts` at {at:#x} is reached {depth} bytes below the SP the function was entered "
+                    f"at — the stack reading does not follow a return off anything but its own return address")
                 continue
             if _TRANSFER.match(mnemonic):
-                local = target and int(target.group(1), 16) in texts
-                calls = mnemonic.startswith(("jsr", "bsr"))
-                if local and not calls:
-                    todo.append((int(target.group(1), 16), depth))
-                else:
-                    under = depth + (LONG_BYTES if calls else 0)
-                    deepest = max(deepest, (under, ()))
-                    for callee in self._callees_at(function, at, text, target):
-                        use = self.of(callee)
-                        deepest = max(deepest, (under + use.deepest, use.path))
-                        if use.at_a_trap is not None:
-                            trapped = max(trapped, (under + use.at_a_trap, use.trap_path), key=_depth_of)
+                local = _local_target(text, texts)
+                if local is not None and not mnemonic.startswith(("jsr", "bsr")):
+                    todo.append((local, state))
                 if mnemonic.startswith(("jmp", "bra")):
                     continue
-            elif text.startswith("lea ") and text.endswith(",%sp") and "%sp@" not in text:
-                depth = 0                               # a glue's own stack: counted from its top
-            elif text.startswith("moveal ") and text.endswith(",%sp"):
+            elif _sets_sp_to_an_address(text):
+                depth, private = 0, True                # a glue's own stack: counted from its top
+            elif private and text.startswith("moveal ") and text.endswith(",%sp"):
                 continue                                # ...and left: the interrupted stack again
+            elif text == TRAP_2 or text in self._excepted:
+                pass                                    # the OS's, or a declared exception's: SP is back where it was
             else:
-                depth += _stack_effect(text)
-            deepest = max(deepest, (depth, ()))
+                assert not _A_WORD.match(text) and mnemonic not in _LINE_F_AS_DECODED, (
+                    f"{function}: `{text}` at {at:#x} is {what_an_unknown_word_is(text)}: the 68000's exception frame and "
+                    f"its handler's own frames land on this stack, and the stack reading counts them only where the "
+                    f"word is DECLARED (`takes_an_exception`)")
+                depth, frame = _sp_after(function, at, text, depth, frame)
             assert at in following, (f"{function}: a path runs off the listed body's last instruction (`{text}` at "
                                      f"{at:#x}) — neither a return nor a jump ends it")
-            todo.append((following[at], depth))
+            todo.append((following[at], (depth, frame, private)))
+        return reached
+
+    def _read(self, function):
+        self._calls[function] = []
+        if function in self._leaves:
+            return StackUse(bytes_before_it_leaves(self._functions, function), (function,), None, (function,))
+        entered, _, handed = function.partition(HANDED)
+        home, _, offset = entered.partition(INTO)
+        body = self._functions[home]
+        texts = dict(body)
+        reached = self._walked(function, body, body[0][0] + int(offset or "0", 16))
+        deepest, trapped = (0, ()), (None, ())          # each `(depth, the calls under this function that lead there)`
+        for at, (depth, _frame, _private) in reached.items():
+            text = texts[at]
+            mnemonic, target = text.split(" ")[0], NAMED_TARGET.search(text)
+            deepest = max(deepest, (depth + self._excepted.get(text, 0), ()))
+            if text == TRAP_2:
+                trapped = max(trapped, (depth, ()), key=depth_of)
+            if not _TRANSFER.match(mnemonic) or _local_target(text, texts) is not None and not mnemonic.startswith(("jsr", "bsr")):
+                continue
+            calls = mnemonic.startswith(("jsr", "bsr"))
+            callees = self._callees_at(home, at, text, target, handed, reached)
+            assert calls or depth == 0, (
+                f"{function}: `{text}` at {at:#x} leaves the function {depth} bytes below the SP it was "
+                f"entered at — where it lands would not return to this function's caller")
+            under = depth + (LONG_BYTES if calls else 0)
+            deepest = max(deepest, (under, ()))
+            for callee in callees:
+                use = self.of(callee)
+                self._calls[function].append((callee, under))
+                deepest = max(deepest, (under + use.deepest, use.path))
+                if use.at_a_trap is not None:
+                    trapped = max(trapped, (under + use.at_a_trap, use.trap_path), key=depth_of)
         return StackUse(deepest[0], (function, *deepest[1]), trapped[0], (function, *trapped[1]))
+
+    def deepest_to(self, function, target):
+        """THE DEEPEST `target` IS ENTERED AT under `function`: `(the bytes below the SP function is entered at — the
+        return address of the call that enters target among them — the calls that lead there)`, or None where no
+        path of `function` reaches it. What stands ABOVE a callee the reading cannot read (an application's
+        routine), and so what is left under it."""
+        self.of(function)
+        if (function, target) not in self._to:
+            found = None
+            for callee, under in self._calls[function]:
+                below = (0, ()) if callee == target else self.deepest_to(callee, target)
+                if below is not None and (found is None or under + below[0] > found[0]):
+                    found = (under + below[0], (callee, *below[1]))
+            self._to[function, target] = found
+        return self._to[function, target]
+
+    def chain(self, function, to_the_trap=False):
+        """`[(function, the bytes it holds on the chain)]` down `function`'s deepest path (`to_the_trap`: down to its
+        deepest trap): each function's own pushes there and the return address of the call it makes, the last
+        one's what it takes itself. They sum to the `StackUse`'s depth."""
+        use = self.of(function)
+        path = use.trap_path if to_the_trap else use.path
+        depths = [self.of(name).at_a_trap if to_the_trap else self.of(name).deepest for name in path] + [0]
+        return [(name, depth - under) for name, depth, under in zip(path, depths, depths[1:])]
 
 
 # ---- WHAT A SOURCE OF THE SWITCH'S KIND HOLDS BESIDE THE ROM'S BYTES: its thunks, and nothing else ----------------------------

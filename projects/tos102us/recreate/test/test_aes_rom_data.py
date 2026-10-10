@@ -122,6 +122,10 @@ ROM_ADDRESSES_AS_DATA = {
     # index as the ROM's own `adda.l #$fef7d0` reads them (its other table, the seventeen gadget arms' addresses at
     # $fef7e2, is the C's `switch`: no value of it is named).
     "gemctrl.c": {"AES_ARROW_ACTIONS": TABLE},
+    # ictlmgr hands pstart ctlmgr TWICE BY VALUE — where the process begins, and its load address (rows $fe4a7e /
+    # $fe4a8c of (b)): off target the ROM's address, on target the build's entry `aes_rom_ctlmgr` (ALCYON_ROUTINE) —
+    # and the process's name, the ROM's own string past the text, read in place by pd_nameit.
+    "ctlmgr.c": {"AES_ROM_CTLMGR": CODE, "AES_SCRENMGR_NAME": TABLE},
 }
 
 
@@ -168,8 +172,8 @@ CODE_IMMEDIATES = {
     0xFE3CB6: Immediate(0xFE3CBE, "takeerr: the critical-error handler installed", "gemdosif.S"),
     0xFE3F00: Immediate(0xFE65AA, "gem_trap2_aes: aes_entry, into A0"),
     0xFE437C: Immediate(0xFE38B0, "$fe42e8 (ctx, the accessory loader): gotopgm pushed"),
-    0xFE4A7E: Immediate(0xFE49D2, "$fe4a6a (ctx, ctlmgr)"),
-    0xFE4A8C: Immediate(0xFE49D2, "$fe4a6a (ctx, ctlmgr), pushed"),
+    0xFE4A7E: Immediate(0xFE49D2, "ictlmgr: ctlmgr as the screen manager's load address (pstart's third)", "ctlmgr.c"),
+    0xFE4A8C: Immediate(0xFE49D2, "ictlmgr: ...and as where its process begins (pstart's first, psetup's PC)", "ctlmgr.c"),
     0xFE5D68: Immediate(addrs.AES_ROM_MKRECT, "newrect: mkrect, everyobj's routine", "wrect.c"),
     0xFE6216: Immediate(0xFE8340, "aes_dispatch, its graf_growbox arm: gr_growbox, into A0 for `jsr (a0)`", "gemsuper.c"),
     0xFE621E: Immediate(0xFE837A, "aes_dispatch, its graf_shrinkbox arm: gr_shrinkbox, the same", "gemsuper.c"),
@@ -370,12 +374,19 @@ def test_a_row_is_owed_by_a_file_exactly_when_its_routine_is_c():
 def test_the_routine_holding_a_site_is_read_off_the_rom_s_own_text():
     """...AND THAT RULE'S OWN RED: ap_tplay's first immediate lies in ap_tplay, which is C; the instruction after
     ap_tplay's exit lies in no C routine's body though an entry with a core stands below it (ap_tplay's own); and
-    gem_entry's lie below every C core, and ictlmgr's in a routine that has none; the opcode switch's two lie in two
-    of its ARMS — labels inside the one routine, 1,866 bytes to its one exit."""
+    gem_entry's lie below every C core; ictlmgr's two lie in ictlmgr, C since band 5 wave 2, and NOT in ctlmgr, the
+    entry below it, which never exits; the opcode switch's two lie in two of its ARMS — labels inside the one
+    routine, 1,866 bytes to its one exit."""
     assert _the_c_routine_holding(0xFE6698) == "AES_ROM_AP_TPLAY" == _the_c_routine_holding(addrs.AES_ROM_AP_TPLAY)
     assert addrs.AES_ROM_AP_TPLAY < addrs.AES_ROM_AP_TRECD - aes.WORD_BYTES
     assert _the_c_routine_holding(addrs.AES_ROM_AP_TRECD - aes.WORD_BYTES) == "AES_ROM_AP_TPLAY"    # its exit, the last word
-    assert _the_c_routine_holding(0xFE4A7E) is None and _the_c_routine_holding(0xFD9F86) is None
+    assert _the_c_routine_holding(0xFD9F86) is None
+    assert _the_c_routine_holding(0xFE4A7E) == "AES_ROM_ICTLMGR" == _the_c_routine_holding(0xFE4A8C)
+    # ...and PAST THE NEAREST CORE'S EXIT IS NOBODY'S (the pin ictlmgr's rows held until it was C): ctlmgr's own entry
+    # and its loop's top have a core below them — ct_chgown, the nearest — whose body ended before either.
+    assert _the_c_routine_holding(addrs.AES_ROM_CTLMGR) is None and _the_c_routine_holding(addrs.AES_ROM_CTLMGR_LOOP) is None
+    assert max(entry for entry in (getattr(addrs, name) for name in dir(addrs) if routines.is_routine(name, (routines.AES_PREFIX,))
+                                   and hasattr(_lib, routines.core_symbol(name))) if entry <= addrs.AES_ROM_CTLMGR) == addrs.AES_ROM_CT_CHGOWN
     assert _the_c_routine_holding(0xFE6216) == "AES_ROM_DISPATCH" == _the_c_routine_holding(0xFE621E)    # two of its arms
 
 

@@ -632,6 +632,8 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # the screen manager's handlers (`src/aes/gemctrl.c`, hctl_window's helpers inlined into it): a window's
     # rectangle unpacked, a drag's bound set
     ("aes_hctl_window", "aes_r_get"), ("aes_hctl_window", "aes_r_set"),
+    # ...and its main loop (`src/aes/ctlmgr.c`): the menu bar's rectangle copied, once
+    ("aes_rom_ctlmgr", "aes_rc_copy"),
     # the menu library (`src/aes/mnlib.c`, pd_nameit inlined into mn_register): the screen manager's rectangle, the
     # button read on an item, a name copied, blank-filled and scanned
     ("aes_mn_bar", "aes_rc_copy"), ("aes_mn_do", "aes_gsx_button"), ("aes_mn_register", "aes_lstcpy"),

@@ -5337,6 +5337,83 @@ def test_the_host_slots_roles_are_read_off_the_header_s_own_enum():
     assert aes_switch.host_slots_held() == [], "no slot is held between two runs of this process"
 
 
+# ---- THE INVARIANT THE SLOTS' AUDIT STANDS ON: THE HOST RUNS ONE PROCESS'S C (ruling W2-R4; `host_slot.h`, THE AUDIT) -----------
+# Every role of the audit that is ONE FRAME FOR EVERY PROCESS is sound because a host run holds one process's C: its
+# caller's. That the screen manager is C on target (band 5 wave 2) changes nothing of it — HELD, not assumed:
+#   (a) the model's process hook IS the ROM's nested run (switchto, in the oracle) — and a second process's C forced
+#       in through it is refused by name where it begins;
+#   (b) were one to reach a shared role all the same, the second claim of the frame is refused by name.
+THE_LOCK_THE_MENU_HOLDS_ROW = "aes_all_run, the screen manager's menu holds the lock: the caller waits until the menu is let go"
+THE_ROM_ENTERS = "the model's process hook entered the ROM's own code at "
+A_SECOND_PROCESS_S_C = "ctlmgr entered inside the dispatcher"
+A_SLOT_CLAIMED_TWICE = "a host slot claimed while it is held"
+
+
+def _the_desk_s_row_the_screen_manager_runs_inside():
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    held = aes_event.SWITCHING_ROWS[THE_LOCK_THE_MENU_HOLDS_ROW]
+    assert held.switches.process == aes.SHELL_PD and aes.SCREEN_MANAGER_PD in held.entered and held.row.door
+    return held
+
+
+def test_the_host_s_model_runs_no_second_process_in_c(monkeypatch):
+    """(a) OVER A ROW OF THE DESK'S WHOSE RUN THE SCREEN MANAGER RUNS INSIDE (all_run, the menu holding the lock).
+    THE PROCESS HOOK IS THE ROM'S NESTED RUN: every time the C scheduler enters another process than its caller, the
+    oracle is entered at the ROM's own switchto — as many times as the ROM's run enters the screen manager from the
+    desk — and no C of ours runs for it. AND A C RESUME BOUND IN ITS PLACE IS REFUSED BY NAME: the hook made to
+    "resume" the screen manager in C (its turn, the one entry the host has of it) halts where that C begins — the
+    desk's C is parked under it, inside the dispatcher."""
+    aes_switch, _switching = _switch()
+    held = _the_desk_s_row_the_screen_manager_runs_inside()
+    run_bench = emu.run_bench
+
+    def said(memory, entry, *arguments, **named):
+        print(f"{THE_ROM_ENTERS}{entry:#x}", file=sys.stderr, flush=True)
+        return run_bench(memory, entry, *arguments, **named)
+    with monkeypatch.context() as patched:
+        patched.setattr(emu, "run_bench", said)
+        ran = _modelled_again(held)
+    assert ran.returncode == 0, ran.stderr
+    entered_from_the_caller = sum(1 for before, pd in zip((held.switches.process, *held.entered), held.entered)
+                                  if before == held.switches.process and pd != held.switches.process)
+    assert entered_from_the_caller and ran.stderr.count(THE_ROM_ENTERS) == entered_from_the_caller
+    assert ran.stderr.count(f"{THE_ROM_ENTERS}{addrs.AES_ROM_SWITCHTO:#x}") == entered_from_the_caller
+
+    def resumed_in_c(_self, buf, uda, _caller_s_uda):
+        assert uda == aes_event.uda_of(aes.SCREEN_MANAGER_PD, BASE_IMAGE)
+        turn = aes_event._lib.aes_ctlmgr_turn
+        turn.restype, turn.argtypes = None, [ctypes.POINTER(ctypes.c_uint8)]
+        turn(buf)
+        return aes_switch.SERVED
+    monkeypatch.setattr(aes_switch.Scheduling, "_process_run", resumed_in_c)
+    refused = _modelled_again(held)
+    assert refused.returncode == -signal.SIGABRT and A_SECOND_PROCESS_S_C in refused.stderr, refused.stderr
+    assert THE_ROM_ENTERS not in refused.stderr and refused.answer is None
+
+
+def test_a_single_frame_slot_claimed_for_a_second_process_before_its_release_is_refused_by_name(monkeypatch):
+    """(b) THE PINNED REFUSAL. The desk's C parked in gr_stilldn holds the wait's rectangle and answers — one frame
+    each, for every process. FORCED (no host run reaches it: (a)): at the idle it sleeps in, the screen manager is
+    made the running process and gr_stilldn entered again in C, as its hctl_window would enter it on a machine
+    whose two processes were both C on the host. The second claim halts BY NAME; nothing is handed the first's
+    frame."""
+    aes_switch, _switching = _switch()
+    the_rom_s, staged = _scheduled(THE_WAIT_TO_LEAVE, {0: aes_event.release})
+    assert _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged).slots_held == STILLDN_S, "the premise: parked holding both"
+    name, arguments = THE_WAIT_TO_LEAVE
+    idle_over = aes_switch.Scheduling._idle_over
+
+    def entered_again_for_process_1(self, memory, where):
+        assert set(STILLDN_S) <= set(aes_switch.host_slots_held())
+        memory[aes.AES_RLR:aes.AES_RLR + aes.LONG_BYTES] = aes.SCREEN_MANAGER_PD.to_bytes(aes.LONG_BYTES, "big")
+        image = (ctypes.c_uint8 * aes_event.IMAGE_BYTES).from_address(ctypes.addressof(memory))
+        aes_event.one_run_of(getattr(aes_event._lib, routines.core_symbol(name)), vdi.as_signed(name, arguments), image, False)()
+        return idle_over(self, memory, where)
+    monkeypatch.setattr(aes_switch.Scheduling, "_idle_over", entered_again_for_process_1)
+    ran = _modelled(THE_WAIT_TO_LEAVE, the_rom_s, staged)
+    assert ran.returncode == -signal.SIGABRT and A_SLOT_CLAIMED_TWICE in ran.stderr, ran.stderr
+
+
 # ---- WHAT THE DOOR'S OWN BINDINGS SERVE OF THE ROUTINES THE EVENT LAYER IS HANDED ---------------------------------------------
 A_CURSOR_POINT = (200, 120)
 

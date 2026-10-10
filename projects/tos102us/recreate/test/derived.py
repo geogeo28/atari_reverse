@@ -52,10 +52,13 @@ WHAT A DERIVATION MUST BE to be decorated: a function of its arguments, the ROM,
 no candidate code, nothing read from a module's state that a test changes, no effect a caller relies on but its
 answer (a hit runs nothing). Its answer must pickle. The kit seeds every register a run begins with (the user stack
 pointer too), so a derivation answers one machine whatever ran before it.
-ONE KEPT ANSWER DOES RUN THE CANDIDATE, and is sound by the tree's key alone: which steering reasons a case's
-attribution pass needs (`aes_event._reasons_needed`: its trials are differentials of the C). The key holds the
+THREE KEPT ANSWERS DO RUN THE CANDIDATE, each sound by its key. ONE by the tree's key alone: which steering reasons a
+case's attribution pass needs (`aes_event._reasons_needed`: its trials are differentials of the C). The key holds the
 candidate's library AS THIS PROCESS LOADED IT, so another build of the C is another tree and asks again; and the
 answer decides no verdict — the run that returns the case's result is made every time, with those reasons.
+TWO by an argument (band 5 wave 2, a named exception): a takeover boot and a takeover machine's continuation
+(`aes_boot.booted(..., ours=)`, `aes_boot.continued`) run THE BLOB — never the host library — and the key holds the
+blob's bytes and every address read off its ELF (`aes_boot.Ours`), so a rebuilt blob is another question.
 
 HELD TO IT ON EVERY RUN (`_made_again_and_equal`). A kept answer is made once per tree, so what every process once
 did by itself — make each derivation again, in its own import order, which is how a run-order dependence of the

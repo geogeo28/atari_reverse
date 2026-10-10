@@ -379,6 +379,19 @@ static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t
 #define ALCYON_ROUTINE(rom_address, alcyon_entry) ((uint32_t)(rom_address))
 #else
 #define ALCYON_ROUTINE(rom_address, alcyon_entry) ((uint32_t)(uintptr_t)(alcyon_entry))
+
+/* ...and THE IMAGE BASE OF AN ENTRY THAT IS HANDED NONE, in C (the fork functions' entries, `src/aes/evfork.c`; the
+ * screen manager's, `src/aes/ctlmgr.c`): the target's base, 0, THROUGH A REGISTER GCC CANNOT SEE INTO. With a constant
+ * null pointer inlined into a core, every store of the core is a dereference of "null" to the compiler, which ends the
+ * function at the first one with a `trap #7` (measured: aes_kchange_fork was `move.w #0,$c72a / trap #7`). A `.S`
+ * entry pushes the same 0 at run time (`c_call_glue.h`); this is that, in C. */
+static inline uint8_t *target_image(void)
+{
+    uint8_t *image = 0;
+
+    __asm__ ("" : "+r"(image));
+    return image;
+}
 #endif
 
 /* ---- the ALCYON CALL OF ONE LONGWORD: a routine a caller hands in, over a frame of one pointer -----------------------

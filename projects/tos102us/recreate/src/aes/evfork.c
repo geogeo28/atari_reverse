@@ -252,20 +252,8 @@ void aes_tchange(uint8_t *image, uint32_t elapsed)
 
 #ifndef RECREATE_HOST_DIFFERENTIAL
 /* THE FORK FUNCTIONS' ENTRIES (`aes/evfork.h`): forker's pushed longword taken apart as the ROM's function reads its
- * frame — two words, the first the high — over the target's image base, 0.
- *
- * THE BASE IS HANDED THROUGH A REGISTER GCC CANNOT SEE INTO: with a constant null pointer inlined into a core, every
- * store of the core is a dereference of "null" to the compiler, which ends the function at the first one with a
- * `trap #7` (measured: aes_kchange_fork was `move.w #0,$c72a / trap #7`). A `.S` entry pushes the same 0 at run time
- * (`c_call_glue.h`); this is that, in C. */
-static inline uint8_t *target_image(void)
-{
-    uint8_t *image = 0;
-
-    __asm__ ("" : "+r"(image));
-    return image;
-}
-
+ * frame — two words, the first the high — over the target's image base, 0, handed through a register GCC cannot see
+ * into (`staged_call.h`'s `target_image`). */
 void aes_kchange_fork(uint32_t data)
 {
     aes_kchange(target_image(), pair_high(data), pair_low(data));

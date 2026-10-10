@@ -38,7 +38,7 @@
  * reads it and pins every span inside that band and apart from every other.
  *
  * A SLOT IS CLAIMED FOR ITS LIVE RANGE AND RELEASED AFTER IT, and the host build makes "never two
- * users at once" a fact rather than a comment: a claim of a slot that is held is an assert. So the
+ * users at once" a fact rather than a comment: a claim of a slot that is held halts by name. So the
  * nestings that do happen (a walk holding its name and cursor while it searches, a search holding its
  * pattern while the FAT routines take the frame word underneath it) are checked on every run, and the
  * one that must not (a routine re-entering itself) cannot pass silently. */
@@ -263,6 +263,10 @@
  * INTO, live in the screen manager's frame across every wait of the drag — A SLOT PER PROCESS each (below; COMPACTED,
  * not the frame's layout: no gap of the band holds nine frames of the ROM's 36 bytes). hctl_rect's: mn_do's two
  * answers, live across every wait of the menu — a slot per process too. */
+/* ...and THEIR CALLER's, ctlmgr's (`aes/gemctrl.h`): the six answer words it hands its main wait, live for as long as
+ * the screen manager sleeps in it. ONE FRAME: the screen manager alone runs ctlmgr, and is in it once. */
+#define HOST_SLOT_AES_CTLMGR_ANSWERS   0x7f4b0  /* $fe49d2's -12(a6) up: `link a6,#-12`                          */
+#define HOST_SLOT_AES_CTLMGR_ANSWERS_BYTES 12   /* EV_MULTI_ANSWER_WORDS words                                   */
 #define HOST_SLOT_AES_HCTL_WINDOW_SIZE  0x7f260  /* $fe45a2's -8(a6) rectangle, then its -18..-24(a6) x, y, w, h   */
 #define HOST_SLOT_AES_HCTL_WINDOW_SIZE_BYTES 16  /* HCTL_SIZE_BYTES                                              */
 #define HOST_SLOT_AES_HCTL_WINDOW_CORNER 0x7f270 /* $fe45a2's -30(a6) x, -32(a6) y: ob_offset's answers          */
@@ -295,17 +299,23 @@
  * desk parked in its read, the screen manager's write serving it through that address). In the ROM each is on its own
  * process's stack; off target the role's span is HOST_PROCESSES frames, the running process's id choosing one — an
  * address the image alone decides, the same in whichever host run the frame was laid — each with its own held flag:
- * a process is never in the routine twice, which is asserted as every claim is.
+ * a process is never in the routine twice, which is refused as every claim of a held slot is.
  *
  * THE AUDIT OF EVERY OTHER SLOT HELD ACROSS A WAIT (band 4 wave 3; read off the runs, and pinned:
  * `test_aes_event.SLOTS_HELD_WHERE_PARKED`). A door user holds frames of its own while its process is PARKED inside
  * the event layer: gr_stilldn's rectangle and answers (under gr_wait, gr_watchbox, the drag loops and fm_button too),
  * gr_watchbox's rectangle, gr_rubwind's, gr_dragbox's frame, gr_slidebox's rectangles, mn_do's frame, fm_do's and
  * fm_button's. EACH IS ONE FRAME FOR EVERY PROCESS, and that is sound only while ONE C process can be inside the
- * routine: on the host a process other than the caller is the ROM's own code (the model's nested run), which claims
- * nothing. The day a second process is C (band 5: the screen manager's ctlmgr calls mn_do while the desk sits in
- * fm_do or a drag) each of them owes HOST_PROCESSES frames, claimed with `host_slot_claim_for` as the two QPBs are —
- * the assert in `host_slot_take` is what will say so, and a slot NEWLY held across a wait reds that table first.
+ * routine ON THE HOST — which is every host run there is: the host does not switch stacks, so the one process whose
+ * C a run holds is its CALLER's, and any other process the scheduler enters is the ROM's own code (the model's
+ * nested run, `aes_switch.Scheduling`), which claims nothing. THAT THE SCREEN MANAGER IS C ON TARGET (band 5 wave 2:
+ * ctlmgr in mn_do while the desk sits in fm_do or a drag) CHANGES NOTHING HERE: a slot is a host thing, and on the
+ * machine each frame is on its own process's stack. What these roles owe is owed THE DAY THE HOST RUNS A SECOND
+ * PROCESS'S C — a model that resumes a parked process in C, which is not built: HOST_PROCESSES frames each, claimed
+ * with `host_slot_claim_for` as the two QPBs are. Until then the invariant is HELD, not assumed
+ * (`test_aes_event.py`): the model's process hook is the ROM's nested run and nothing else; a second process's C
+ * forced in through that hook is refused where it begins (ctlmgr's host entries, `src/aes/ctlmgr.c`) and, were it to
+ * reach a shared role, where it claims (`host_slot_take`, by name). A slot NEWLY held across a wait reds the table.
  * WHAT IS HELD TODAY, on every door user's run through the host's model: the call RETURNS with no slot held (the
  * give-back after a wait, which no host run reached before a call could come back from one). */
 #define HOST_PROCESSES                  9        /* the AES's: three static PDs and six accessories ($fe445a cmp.w #6) */
@@ -396,6 +406,7 @@ enum host_slot {
     HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_ANSWERS_LAST = HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_ANSWERS + HOST_PROCESSES - 1,
     HOST_SLOT_ID_AES_HCTL_RECT_CHOICE,          /* a slot per process: mn_do's answers across the menu's waits */
     HOST_SLOT_ID_AES_HCTL_RECT_CHOICE_LAST = HOST_SLOT_ID_AES_HCTL_RECT_CHOICE + HOST_PROCESSES - 1,
+    HOST_SLOT_ID_AES_CTLMGR_ANSWERS,
     HOST_SLOT_ID_AES_AMOUSE_MOBLK,
     HOST_SLOT_ID_AES_AP_RDWR_QPB,     /* a slot per process: HOST_PROCESSES flags, this one process 0's */
     HOST_SLOT_ID_AES_AP_RDWR_QPB_LAST = HOST_SLOT_ID_AES_AP_RDWR_QPB + HOST_PROCESSES - 1,
@@ -418,7 +429,10 @@ extern unsigned char host_slots_held[HOST_SLOT_ID_COUNT];
 
 static inline uint32_t host_slot_take(enum host_slot slot, uint32_t host_at)
 {
-    assert(!host_slots_held[slot]);
+    if (host_slots_held[slot])
+        recreate_not_reconstructed("a host slot claimed while it is held: a routine entered again before it gave its "
+                                   "frame back — by itself, or by A SECOND PROCESS'S C, which the host does not run: "
+                                   "the role is one frame for every process (host_slot.h, THE AUDIT)");
     host_slots_held[slot] = 1;
     return host_at;
 }
@@ -485,6 +499,19 @@ static inline void host_slot_store_words(uint8_t *image, uint32_t slot_at, const
 #ifdef RECREATE_HOST_DIFFERENTIAL
     for (uint32_t word = 0; word < words; word++)
         wr16(image + slot_at + word * sizeof *local, local[word]);
+#else
+    (void)image, (void)slot_at, (void)local, (void)words;
+#endif
+}
+
+/* ...and a slot whose WORDS a callee ANSWERS INTO, read back as the C local they are (ctlmgr's answers: read through
+ * the image on target they would cost its frame two address registers, `src/aes/ctlmgr.c`): copied out of the slot
+ * off target, the local itself on target. */
+static inline void host_slot_load_words(const uint8_t *image, uint32_t slot_at, uint16_t *local, uint32_t words)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    for (uint32_t word = 0; word < words; word++)
+        local[word] = be16(image + slot_at + word * sizeof *local);
 #else
     (void)image, (void)slot_at, (void)local, (void)words;
 #endif

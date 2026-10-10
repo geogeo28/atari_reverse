@@ -36,6 +36,7 @@ PRG_HEADER_BYTES = addrs.parse(RECREATE / "include" / "gemdos" / "pexec_load.h")
 TARGET_CPU = "-m68000"
 QUIET, FIND, WRITE, MULTI = 0, 1, 2, 4  # `acc_mode`'s bits, as testacc.S names them (ACC_FIND, ACC_WRITE, ACC_MULTI)
 REGISTER, HIDE = 8, 16                  # ...ACC_REGISTER: an entry of the desk's menu; ACC_HIDE: the bar hidden on AC_OPEN
+DOUBLE = 32                             # ...ACC_DOUBLE: MULTI's wait asks for two clicks (a second multi-click waiter)
 # A MODE IS A LONGWORD OF THE ACCESSORY'S TEXT: `acc_kind` — a window's kind, GEM's gadget bits, 0 for no window — and
 # then `acc_mode`, the flags above (testacc.S lays the two words side by side).
 WINDOW_SHIFT = 16

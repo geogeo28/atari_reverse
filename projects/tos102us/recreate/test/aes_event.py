@@ -2829,6 +2829,45 @@ def declare_text_site_slots(*slots):
 
 
 CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES)
+# ...and THE SCREEN MANAGER'S ENTRY (band 5 wave 2: ctlmgr in C). ictlmgr hands pstart ctlmgr's own address TWICE, by
+# value — `$fe4a7e` the load address pstart keeps in the PD (p_ldaddr), `$fe4a8c` the code psetup pushes, under a status
+# word, on the new process's own stack: the frame switchto's `rte` pops at its first entry — the ROM's ctlmgr in the
+# ROM, the build's own entry (`aes_rom_ctlmgr`) in a build linked elsewhere. THE SLOTS are those two longwords of the
+# machine: PD1's p_ldaddr, and the PC of psetup's frame at the top of PD1's stack (dead from its first entry on, and
+# inside the stack span its frames then cover). Each is spelt here by the ROM's own constants (gem_main's table of PDs,
+# the stack top it gives UDA1) and HELD to what every booted machine's own pointers say (`aes_boot.entry_slots`,
+# `test_aes_boot.py`). Mapped at entry too: a machine whose screen manager is ours holds our entry there from its
+# first entry on (`aes_boot.booted(..., ours=)`: THE TAKEOVER IS THIS MAPPING, applied where the ROM's boot stands at
+# that `rte`, and nothing else is written but the blob).
+# NOT YET AMONG `CODE_RELOCATIONS`: Tier 3 reads that tuple whole (`tier3.code_relocations` refuses a relocation no
+# site maps), and no row runs on a machine that holds this one until the flip (slice D) — which adds it there with
+# the site that maps it. Until then its one reader is the takeover.
+ICTLMGR_LDADDR_AT, ICTLMGR_CODE_AT = 0xfe4a7e, 0xfe4a8c
+MOVE_L_IMMEDIATE_TO_D7, PUSH_L_IMMEDIATE = 0x2e3c, 0x2f3c
+
+
+def _immediate_at(at, opcode, what):
+    """The longword the ROM's instruction at `at` — which must be `opcode` — carries by value."""
+    found, immediate = struct.unpack_from(">HI", BASE_IMAGE, at)
+    assert found == opcode, f"the ROM's instruction at {at:#x} is not {what}"
+    return immediate
+
+
+SCREEN_MANAGER_ROM_ENTRY = _immediate_at(ICTLMGR_CODE_AT, PUSH_L_IMMEDIATE, "ictlmgr's push of ctlmgr's address")
+assert SCREEN_MANAGER_ROM_ENTRY == _immediate_at(ICTLMGR_LDADDR_AT, MOVE_L_IMMEDIATE_TO_D7, "ictlmgr's load of it"), (
+    "ictlmgr hands pstart two addresses: the entry and the load address are no longer one routine")
+SCREEN_MANAGER_ENTRY_SYMBOL = "aes_rom_ctlmgr"
+SCREEN_MANAGER_ENTRY_SLOTS = (aes.SCREEN_MANAGER_PD + aes.PD_LDADDR, aes.AES_UDA1_STACK_TOP - LONG_BYTES)
+SCREEN_MANAGER_ENTRY = RelocatedCode("the screen manager's entry", SCREEN_MANAGER_ENTRY_SLOTS,
+                                     {SCREEN_MANAGER_ROM_ENTRY: SCREEN_MANAGER_ENTRY_SYMBOL}, True)
+# EVERY RELOCATION DECLARED BESIDE THE TUPLE AND NOT IN IT, BY NAME: `{what: (why it is not mapped at Tier 3 yet, the
+# slice that owes its site)}`. `test_aes_boot.py` holds that each `RelocatedCode` of this module is in the tuple or
+# here — never neither — and that THIS IS EMPTY once any Tier 3 row runs on a takeover machine.
+DECLARED_NOT_YET_MAPPED_AT_TIER3 = {
+    SCREEN_MANAGER_ENTRY.what: ("no Tier 3 row runs on a machine whose screen manager is ours before the flip; "
+                                "`tier3.code_relocations` refuses a relocation no site of its own maps",
+                                "band 5 wave 2, slice D (the flip): bench/tier3.py"),
+}
 # THE DISPATCHER'S OWN STACK ($899a..$8c1a), which savestate moves to: what a Tier 3 row that drops it has put back
 # on our shore (`bench/tier3.py`, `spans_put_back`), and the dispatcher's battery names its drop by.
 DISPATCHER_STACK = (aes.header_constants("evdisp.h")["AES_DISPATCHER_STACK_BOTTOM"], aes.AES_DISPATCHER_STACK_TOP)

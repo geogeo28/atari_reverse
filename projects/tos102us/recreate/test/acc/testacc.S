@@ -8,6 +8,8 @@
 |   ACC_WRITE  appl_write(to, 16, message) before the wait — `to` is what appl_find answered where ACC_FIND is set,
 |              else `acc_write_to`; the answer kept in `res_write`
 |   ACC_MULTI  the wait is a SIX-WAY evnt_multi (keyboard, button, two rectangles, message, timer) and not evnt_mesag
+|   ACC_DOUBLE that six-way wait asks for TWO clicks: a second process in a multi-click button wait beside the desk,
+|              which is what brings the AES's count of them (gl_bpend) above 1 — the screen manager steps it
 |   ACC_REGISTER  menu_register(our id, acc_title) before the wait: an entry of the desk's own menu, which the screen
 |              manager answers with AC_OPEN; the answer kept in `res_menu`
 |   ACC_HIDE   after a wait that came back with AC_OPEN (its menu entry chosen) the accessory hides the menu bar,
@@ -41,6 +43,7 @@
     ACC_MULTI = 4
     ACC_REGISTER = 8
     ACC_HIDE  = 16
+    ACC_DOUBLE = 32
     AC_OPEN   = 40                      | the message an accessory's menu entry sends it
     MENU_BAR  = 30
 
@@ -171,6 +174,10 @@ wait_six_ways:
     move.w  #1, (%a0)+                  | one click
     move.w  #1, (%a0)+                  | of the left button
     move.w  #1, (%a0)+                  | going down
+    btst    #5, acc_mode+1              | ACC_DOUBLE
+    beq.s   clicks_asked
+    addq.w  #1, intin+2                 | ...two clicks
+clicks_asked:
     moveq   #1, %d0                     | the two rectangles: LEAVING one pixel the pointer is not on never happens
     bsr     far_pixel
     moveq   #1, %d0

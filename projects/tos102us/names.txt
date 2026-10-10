@@ -2239,3 +2239,8 @@ fn 0xfe48ce hctl_button
 cmt 0xfe48ce hctl_button(mx.w, my.w): gl_mnclicks ($c6cc) not 0: counted down and nothing else (a click mn_bar posted for itself); else w = wm_find(mx, my), and w > 0: hctl_window(w, mx, my). Caller: ctlmgr $fe4a40
 fn 0xfe4908 hctl_rect
 cmt 0xfe4908 hctl_rect(mx.w, my.w): gl_mntree ($9b26) and inside(mx, my, $c928), or nothing. mn_do(&title, &item): gl_dacnt and title == 3 and item >= gl_dafirst: AC_OPEN (40) to desk_pid[item - gl_dafirst], that index for the item, do_chg(tree, title, SELECTED, 0, 1, 1); else MN_SELECTED (10) to the WORD at $9730 — gl_mnppd's HIGH word, 0 for every process id. Then ct_msgup(message, owner, title, item, 0, 0, 0) (nothing chosen: message 0, D7 and the two words unset and unread). Caller: ctlmgr $fe4a5e
+fn 0xfe49d2 ctlmgr
+cmt 0xfe49d2 ctlmgr(): the screen manager's process, entered by switchto's rte (psetup's frame), never returns; frame 24 bytes (link a6,#-12; movem d6-d7). once: rc_copy(gl_rmenu $971c -> gl_rmnactv $96da), then clr gl_ctwait_leave $96d8. loop $fe49f2: w_setactive; ev_multi(7, $96d8, $96d8, 0L, $0001ff01L, 0L, &answers -12(a6)); wm_update(1); bit 1: gl_bpend $c84e -- while > 1 (signed), hctl_button(answers[0], answers[1]); bit 2: the same step, hctl_rect(the same two words); wm_update(0). a key (bit 0) is eaten. $fe4a68 is dead
+fn 0xfe4a6a ictlmgr
+cmt 0xfe4a6a ictlmgr(pid.w, unread): clr gl_dacnt $c684, clr gl_dafirst $9bc0; pstart(code=#$fe49d2 ($fe4a8c), name=#$fef826 "SCRENMGR.LOC", ldaddr=#$fe49d2 ($fe4a7e)); answers the PD (gem_main $fda1de: ctl_pd, gl_kowner, gl_mowner)
+var 0xfef826 screnmgr_name

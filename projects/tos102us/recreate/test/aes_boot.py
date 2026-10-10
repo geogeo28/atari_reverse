@@ -76,12 +76,33 @@ programs are built with) is a real GEM accessory: `appl_init`, then an event wai
 WORD OF ITS TEXT, patched in the disk image (`QUIET`, or any of `FIND | WRITE | MULTI`): no rebuild, and the same
 disk to the machine.
 
-EVERYTHING HERE IS A KEPT DERIVATION (`derived.kept`): no line of the reconstruction runs. A derivation is keyed by
-the pre-init machine's CONTENT (an argument, not a file of the tree: neither capture is in any tree key), so a
-fresh capture is another question and the old answer is never served for it.
+A MACHINE WHOSE SCREEN MANAGER IS OURS (band 5 wave 2: `booted(..., ours=)`, `desk_machine(ours=blob)`,
+`accessory_machine(..., ours=blob)`) is the same boot WITH ONE TAKEOVER: at the screen manager's first entry — the
+ROM's switchto about to `rte` into the ROM's ctlmgr — the blob is laid and the two longwords the machine keeps that
+entry in are mapped to the blob's own (`aes_event.SCREEN_MANAGER_ENTRY`: the relocation registry's entry; the
+section "THE TAKEOVER" below says what is vetted there and where the boot ends). The ROM's boot runs on: its desk,
+its loader and its accessories, with OUR ctlmgr the process they wake and are woken by. What such a machine differs
+from the ROM-booted one in is FOUR CLASSES of bytes, each found through the machine's own pointers (`by_nature`,
+`compared`).
+A BOOTED MACHINE IS CONTINUED (`Machine.continued`) by what it receives at its idle — IKBD bytes through the ROM's
+ACIA handler, the system timer's ticks through Timer C's — and its own run to the next idle, of whichever
+dispatcher: how both shores' screen managers are held to DO the same when woken.
+
+EVERYTHING HERE IS A KEPT DERIVATION (`derived.kept`). A ROM boot runs no line of the reconstruction. TWO KEPT
+ANSWERS HERE DO RUN THE CANDIDATE — A NAMED EXCEPTION to `derived.py`'s rule that a derivation runs none (the
+orchestrator's ruling, band 5 wave 2): `booted(..., ours=)`, a takeover boot, and `continued` of a takeover machine
+both run THE BLOB. Each is sound BY ITS KEY: a derivation is keyed by the pre-init machine's CONTENT (an argument,
+not a file of the tree: neither capture is in any tree key) AND BY THE BLOB'S — `Ours`, an argument too: the blob's
+bytes and every address read off its ELF (for `continued`, inside the `Boot` it is handed) — so a fresh capture or
+a rebuilt blob is another question and the old answer is never served for it; and an edited source is another TREE
+besides (`derived.tree_key`). Neither answer runs the host library, so a process whose candidate library is not the
+project's own (where `derived` keeps nothing) loses nothing by it.
 """
 import ctypes
 import functools
+import hashlib
+import operator
+import random
 import struct
 from collections import namedtuple
 
@@ -94,9 +115,12 @@ import preinit_snapshot
 import st_build
 
 import aes
+import aes_event
 import aes_switch
 import case
 import fs_pexec
+import routines
+import transcription
 
 RAM_BYTES = addrs.ST_RAM_BYTES
 LONG_BYTES, WORD_BYTES = aes.LONG_BYTES, aes.WORD_BYTES
@@ -329,8 +353,10 @@ def _return_from_the_driver(answer, to, sp):
 # I/O page and the ROM, where the oracle drops a store as the bus does. The run's stacks are the capture's.
 OFF_THE_MACHINE = 0x200000
 BOOT_INSNS = 4_000_000                  # measured: 718,522 with two quiet accessories, 592,893 with none
+THE_ROM_S, OURS = "the ROM's", "ours"     # whose code a PC is, and whose dispatcher an idle is (`whose`)
 Boot = namedtuple("Boot", "ram registers disk instructions cycles polls blanks floppy io_reads hardware_reads "
-                          "hardware_writes stored bus_error_frame writes_truncated")
+                          "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed",
+                  defaults=(None, THE_ROM_S, None, ()))
 Boot.__doc__ = """One boot of the ROM from a pre-init machine to the first idle: the megabyte of `ram` it left and the
 CPU's `registers` there (REGISTER_NAMES; the PC is idle's poll), the `disk` as it left it, its cost, how many times
 idle polled on the way (`polls`, the last the idle), how many horizontal blanks it took (`blanks`), every `floppy`
@@ -338,12 +364,15 @@ call (`Call`), the declared I/O reads `(address, width, value)`, the kit's model
 off-image stores `(address, width, value)`, the RAM it
 `stored` to as `(start, length)` runs (the kit's write ledger and the harness's own stores: the sectors read, the bus
 error's frame), `bus_error_frame` (`{address: bytes}`: the fourteen bytes at the supervisor stack pointer, READ OUT
-OF THE MACHINE as the probe's tail is entered) and whether the ledger saturated."""
+OF THE MACHINE as the probe's tail is entered) and whether the ledger saturated. `io`: the shifter bytes the pre-init
+machine carried (what a run continued from this one is served). `idle`: WHOSE DISPATCHER the idle it ended at is
+(THE_ROM_S, OURS — None for a boot stopped earlier, at `until`); `takeover`: the `Takeover` of a boot whose screen
+manager is ours, or None; `observed`: of a CONTINUED run (`continued`), the calls it was watched to make."""
 
 
 def io_seed_of(machine):
     """The declared I/O map of a pre-init machine: each byte of the shifter the capture read out of Hatari."""
-    return {preinit_snapshot.IO_AT + offset: byte for offset, byte in enumerate(machine.io)}
+    return _io_seed(machine.io)
 
 
 def _runs(addresses):
@@ -375,80 +404,431 @@ def _the_frame_the_handler_is_entered_over(memory):
     return {sp: bytes(memory[sp:sp + BUS_ERROR_FRAME_BYTES])}
 
 
-def _run_to_the_first_idle(memory, machine, floppy, budget, until=None):
-    """The run itself: the door at the pre-init PC (so it stops before one instruction), the capture's register file
-    laid and a horizontal blank made pending, then each stop served — a driver entry, the probe's touch, the blank's
-    handler entered, idle's poll — to the idle; or to its FIRST ARRIVAL AT `until` (a ROM address) where one is
-    named, the idle refused if it comes first. Answers the last segment's result, what the harness stored into the
-    machine on the way (`{address: bytes}`), the bus error's frame as the machine holds it where the probe's tail is
-    entered, the polls made and the blanks taken."""
-    hbl = case.long_in(memory, addrs.VECTOR_HBL) & BUS
-    stops = frozenset(floppy.entries) | {BLITTER_PROBE_TOUCH, IDLE_LOOP, IDLE_POLLED, hbl} | ({until} if until else frozenset())
-    laid, pushed, frame, polls, blanks = {}, {}, {}, 0, 0
-    emu.install_chip_seeds()
-    result = emu.run_bench(memory, machine.registers["pc"], 0, OFF_THE_MACHINE, emu.SENTINEL, max_insns=budget,
-                           door={machine.registers["pc"]}, seed_regs=None, io_seed=io_seed_of(machine))
-    assert result["status"] == emu.BENCH_DOOR and not result["ninsns"], "the boot ran before its registers were laid"
-    _enter(machine.registers)
-    _CPU.m68k_set_irq(HBL_LEVEL)
-    while True:
-        emu.bench_door_arm(stops - {_register("pc")})
-        left = budget - result["ninsns"]
-        if left <= 0:
-            raise Refused(f"the boot did not reach an idle within {budget} instructions")
-        result = emu.bench_resume(GEM_ENTRY, max_insns=left)
-        if result["status"] != emu.BENCH_DOOR:
-            raise Refused(f"the boot left the machine: it ended with status {result['status']} at "
-                          f"{emu.bench_resume_pc():#x}")
-        pc, sp = emu.bench_door_pc(), emu.bench_door_sp()
-        if pc in floppy.entries:
-            before = len(floppy.calls)
-            answer, to = floppy.served(pc, sp)
-            _return_from_the_driver(answer, to, sp)
-            call, = floppy.calls[before:]
-            if call.function == RWABS and not call.arguments[0] & RWABS_WRITE:
-                _flag, buffer, count, _record, _device = call.arguments
-                laid[buffer] = bytes(memory[buffer:buffer + count * st_build.SECTOR_BYTES])
-        elif pc == hbl:
-            blanks += 1                 # ...taken: the CPU let the line go, and the next one is pending from here
+# ---- THE TAKEOVER: A BOOT WHOSE SCREEN MANAGER IS OURS (band 5 wave 2: ctlmgr in C) -------------------------------------------
+# THE ROM BOOTS, AND AT THE SCREEN MANAGER'S FIRST ENTRY OUR ctlmgr IS ENTERED IN THE ROM'S PLACE. ictlmgr hands pstart
+# ctlmgr's address twice, and the machine keeps it in two longwords (`entry_slots`): the PD's p_ldaddr, and the PC of
+# the frame psetup pushed on the new process's own stack — the frame switchto's `rte` pops when the dispatcher first
+# enters it. THE TAKEOVER IS MADE AT THAT `rte`, the frame still under SP — a stop BY ADDRESS, never by a count —
+# and is two things, neither a poke of the CPU:
+#   * THE BLOB IS LAID where every Tier 3 row lays it (`Ours`: its link address, in the harness's free window);
+#   * THE REGISTRY'S MAPPING IS APPLIED (`aes_event.SCREEN_MANAGER_ENTRY`): each of the two slots, which holds the
+#     ROM's ctlmgr, is given the blob's own entry — found BY SYMBOL in the blob's ELF. The ROM's `rte` then pops OUR
+#     entry: no register is set, and the PC is the one the machine's own instruction loads.
+# That the mapping is what OUR ictlmgr + pstart store is ictlmgr's own returning row (the flip's, at the arrival
+# `booted(until=<ictlmgr>)`): so the takeover is a build's ictlmgr having run, and no stage of ours.
+# WHY THERE AND NOT EARLIER: on the accessory boot `Pexec(3)` hands the loader the largest free block — the free
+# window — and CLEARS it before the screen manager first runs (measured: every byte of the blob's span stored
+# before the stop, none after). `laid=FROM_THE_START` is that boot, kept as the RED it is.
+# VETTED AT THE STOP, each refused by name (`_vet_the_first_entry`, `_vetted_slots`, `_vet_clear_where_the_blob_goes`):
+# the process being entered is SCRENMGR, on the stack its own UDA names, the frame the only thing on it (every byte
+# of its stack below is zero, as gem_main's BSS left it) and every register switchto loaded out of its never-saved
+# UDA zero; the two slots are the registry's and hold the ROM's ctlmgr; nothing lies where the blob goes.
+# VETTED WHERE THE BOOT ENDS (`_TakingOver.made`): the `rte` entered our entry on the stack's top; NOT ONE STORE of
+# the rest of the boot landed in the blob's span (the write ledger from the lay on, and the sectors the harness laid),
+# and its bytes are the blob's; p_ldaddr holds our entry; and the screen manager stands PARKED IN OUR TEXT (`whose`).
+# WHERE A BOOT ENDS: at the first idle of WHICHEVER dispatcher — the ROM's (`IDLE_LOOP`) or the blob's own (its
+# keyboard poll called from its idle: `Ours.poll`, `Ours.idle`). A process parks through the dispatcher of the build
+# it runs: the desk and the accessories through the ROM's, the screen manager through ours — so the boot's last
+# park decides, and `Boot.idle` says which (measured: the desk parks last in every boot here — the ROM's idle).
+ENTRY_SYMBOL = aes_event.SCREEN_MANAGER_ENTRY_SYMBOL
+ROM_ENTRY = aes_event.SCREEN_MANAGER_ROM_ENTRY
+OUR_POLL, OUR_IDLE = "aes_chkkbd", "aes_idle"       # the blob's dispatcher: its poll, and the idle that calls it
+SCREEN_MANAGER_NAME = b"SCRENMGR"
+FRAME_PC = aes_event.EXCEPTION_FRAME_PC              # an exception frame: the status word, then the PC
+FRAME_BYTES = WORD_BYTES + LONG_BYTES
+AT_THE_FIRST_ENTRY, FROM_THE_START = "at the screen manager's first entry", "before the boot's first instruction"
+# The handlers ctlmgr calls, each by its ROM entry and its frame there (two words): what a continued run is watched
+# to call (`continued`) — on the blob at the entry of each one's C core (`routines.core_symbol`), a longword an
+# argument, after the image pointer.
+HANDLER_NAMES = ("AES_ROM_HCTL_BUTTON", "AES_ROM_HCTL_RECT")
+HANDLER_WORDS = 2                       # (mx, my)
+
+Ours = namedtuple("Ours", "base end image entry poll idle handlers")
+Ours.__doc__ = """A blob AS A TAKEOVER READS IT (`ours_of`), by content — what a kept boot is keyed by: where it is
+linked (`base`) and ends (`end`: its allocated span), its bytes (`image`), its `entry` (ENTRY_SYMBOL), its
+dispatcher's `poll` and the `(start, end)` of the `idle` that calls it, and `handlers`: `((the ROM's handler, its C
+core's entry), ...)`."""
+Takeover = namedtuple("Takeover", "ours process stack instructions slots cleared stored_after found laid")
+Takeover.__doc__ = """What one boot's takeover did and found: `ours`; the PD entered (`process`); its `stack` span
+`(lo, top)` as the stop found it — from the end of the UDA's state block to the end of psetup's frame; how many
+`instructions` the boot had run there (a capture's own number: for a reader, never a stop); `slots` — `{slot: (the
+ROM's entry found, ours laid)}`; `cleared`: how many stores the boot had made into the blob's span BEFORE the blob was
+laid; `stored_after`: the addresses of the span stored at AFTER (none, or the boot is refused); `found`: `(the
+digest of the megabyte as the stop found it, the registers there)`; and `laid`: when the blob was."""
+
+
+def _function_of(placed, symbol, blob, why):
+    found = placed.get(symbol)
+    if found is None or found.kind not in "Tt" or not blob.base <= found.start < blob.base + len(blob.blob):
+        raise Refused(f"the blob {blob.elf} has no entry `{symbol}`: {why}")
+    return found
+
+
+@functools.cache
+def _ours_at(elf, base, end, image):
+    blob = namedtuple("Blob", "elf base blob")(elf, base, image)
+    placed = {symbol.name: symbol for symbol in transcription.symbol_table(elf)}
+    entry = _function_of(placed, ENTRY_SYMBOL, blob, "nothing of this build can be entered in the ROM's ctlmgr's place")
+    poll = _function_of(placed, OUR_POLL, blob, "its dispatcher's idle has no poll to stop a boot at")
+    idle = _function_of(placed, OUR_IDLE, blob, "its dispatcher has no idle to end a boot in")
+    if idle.size is None:
+        raise Refused(f"the blob {elf} does not size `{OUR_IDLE}`: a poll made from it cannot be told from ev_multi's")
+    handlers = tuple((getattr(addrs, name), placed[routines.core_symbol(name)].start) for name in HANDLER_NAMES
+                     if routines.core_symbol(name) in placed)
+    return Ours(base, max(end, base + len(image)), image, entry.start, poll.start, (idle.start, idle.start + idle.size),
+                handlers)
+
+
+def ours_of(blob):
+    """`blob` (a `RomBench`: the bench blob's or the shipped one's) AS A TAKEOVER READS IT: an `Ours` — its entry
+    FOUND BY SYMBOL in its ELF, and REFUSED BY NAME where the blob has none."""
+    return _ours_at(str(blob.elf), blob.base, blob.end, bytes(blob.blob))
+
+
+def whose(pc, ours=None):
+    """WHOSE CODE A PROCESS IS RESUMED IN — the PC switchto's `rte` pops — on a machine whose blob is `ours` (None:
+    a machine the ROM booted): OURS inside the blob, THE_ROM_S inside the AES's own ROM text; anything else is
+    refused by name (a PC in RAM that is no blob's, in the BIOS, in the desktop's text)."""
+    pc &= BUS
+    if ours is not None and ours.base <= pc < ours.base + len(ours.image):
+        return OURS
+    if aes.AES_TEXT[0] <= pc < aes.AES_TEXT[1]:
+        return THE_ROM_S
+    blob = f"the blob [{ours.base:#x}, {ours.base + len(ours.image):#x})" if ours is not None else "no blob (the ROM's boot)"
+    raise Refused(f"a process resumed at {pc:#x}: neither in {blob} nor in the AES's ROM text "
+                  f"[{aes.AES_TEXT[0]:#x}, {aes.AES_TEXT[1]:#x})")
+
+
+def entry_slots(memory, pd):
+    """THE TWO LONGWORDS THE MACHINE KEEPS A PROCESS'S ENTRY IN, for a process pstart has set up and nothing has
+    entered yet — read through the machine's own pointers: its PD's p_ldaddr (pstart `$fe5892`), and the PC of the
+    frame psetup pushed on the stack its UDA names (`$fe3994`: the status word, then the PC — the stack's top - 4)."""
+    uda = case.long_in(memory, pd + aes.PD_UDA) & BUS
+    return pd + aes.PD_LDADDR, (case.long_in(memory, uda + aes.UDA_SUPER_SP) & BUS) + FRAME_PC
+
+
+def parked_pc(memory, pd):
+    """Where the process `pd`, parked, is RESUMED: the PC of the frame at the stack pointer its UDA keeps."""
+    uda = case.long_in(memory, pd + aes.PD_UDA) & BUS
+    return case.long_in(memory, (case.long_in(memory, uda + aes.UDA_SUPER_SP) & BUS) + FRAME_PC) & BUS
+
+
+def _name_of(memory, pd):
+    return bytes(memory[pd + aes.PD_NAME:pd + aes.PD_NAME + aes.PD_NAME_BYTES])
+
+
+def _vetted_slots(memory, pd):
+    """`entry_slots` of the process switchto is about to enter — HELD to be the registry's two, each holding the
+    ROM's ctlmgr: a mapping applied anywhere else is another process's, and is refused."""
+    slots, registry = entry_slots(memory, pd), aes_event.SCREEN_MANAGER_ENTRY.slots
+    if sorted(slots) != sorted(registry):
+        raise Refused(f"the entry of the process at {pd:#x} lies at {[f'{slot:#x}' for slot in slots]}, and the "
+                      f"registry's slots of {aes_event.SCREEN_MANAGER_ENTRY.what} are "
+                      f"{[f'{slot:#x}' for slot in registry]}: the mapping would be applied to ANOTHER PROCESS")
+    for slot in slots:
+        held = case.long_in(memory, slot)
+        if held != ROM_ENTRY:
+            raise Refused(f"the slot at {slot:#x} of the process at {pd:#x} holds {held:#x}, not the ROM's ctlmgr "
+                          f"({ROM_ENTRY:#x}): nothing of the registry's to map there — not the screen manager's entry")
+    return slots
+
+
+def _vet_the_first_entry(memory, pd, sp, registers):
+    """THE STOP IS THE SCREEN MANAGER'S FIRST ENTRY (above) — `memory` and the CPU's `registers` at switchto's `rte`,
+    `pd` the process it enters, `sp` its stack pointer — or the boot is refused by name: answers the process's
+    stack span `(lo, top)`."""
+    name, uda = _name_of(memory, pd), case.long_in(memory, pd + aes.PD_UDA) & BUS
+    if name != SCREEN_MANAGER_NAME:
+        raise Refused(f"switchto's `rte` pops the ROM's ctlmgr for the process {name!r} at {pd:#x}: not SCRENMGR")
+    if sp != case.long_in(memory, uda + aes.UDA_SUPER_SP) & BUS:
+        raise Refused(f"the screen manager is entered at SP {sp:#x}, not on the stack its UDA names")
+    lo, status = uda + aes.UDA_STATE_BYTES, case.word_in(memory, sp)
+    used = len(bytes(memory[lo:sp]).rstrip(b"\0"))
+    if used:
+        raise Refused(f"NOT THE SCREEN MANAGER'S FIRST ENTRY: its stack holds something below the frame popped, "
+                      f"up to {lo + used - 1:#x} — the ROM's ctlmgr has run on it")
+    if not status & SR_SUPERVISOR or status & SR_TRACE:
+        raise Refused(f"the frame switchto pops for the screen manager holds the status word {status:#x}")
+    loaded = {name: registers[name] for name in (*preinit_snapshot.DATA_REGISTERS, *preinit_snapshot.ADDRESS_REGISTERS)
+              if registers[name]}
+    if loaded:
+        raise Refused(f"NOT THE SCREEN MANAGER'S FIRST ENTRY: switchto loaded {loaded} out of its UDA, which nothing "
+                      f"has saved a context in yet")
+    return lo, sp + FRAME_BYTES
+
+
+def _vet_clear_where_the_blob_goes(memory, ours):
+    held = bytes(memory[ours.base:ours.end]).lstrip(b"\0")
+    if held:
+        raise Refused(f"the machine holds something where the blob goes, from {ours.end - len(held):#x}: the harness's "
+                      f"free window is not free at the screen manager's first entry")
+
+
+def _mapped(memory, slots, mapping):
+    """The longwords `slots` of `memory` mapped IN PLACE by `mapping`, as Tier 3 maps a registry's
+    (`tier3.map_code_slots`): `{slot: (what it held, what it holds)}` for each one mapped."""
+    done = {}
+    for slot in slots:
+        held = case.long_in(memory, slot)
+        if held in mapping:
+            memory[slot:slot + LONG_BYTES] = struct.pack(">I", mapping[held])
+            done[slot] = (held, mapping[held])
+    return done
+
+
+class _TakingOver:
+    """ONE BOOT'S TAKEOVER (above), made where the run stops for it: `armed` the stops it asks for as it stands —
+    switchto's `rte` until the screen manager's first entry is found there, then our entry (the next instruction:
+    held to be where the `rte` lands), then nothing."""
+
+    def __init__(self, memory, ours, laid):
+        self._memory, self.ours, self._laid = memory, ours, laid
+        self.armed, self.taken, self.entered = frozenset({addrs.AES_ROM_SWITCHTO_RTE}), None, False
+        self._mark, self._laid_by_the_harness = None, []
+        if laid == FROM_THE_START:      # the RED's (above): before the run's ledger begins
+            memory[ours.base:ours.base + len(ours.image)] = ours.image
+            self._mark = 0
+
+    def stopped(self, pc, sp, instructions):
+        if pc == self.ours.entry:
+            self._entered(sp)
+        elif case.long_in(self._memory, sp + FRAME_PC) & BUS == ROM_ENTRY:
+            self._take_over(sp, instructions)
+
+    def _stored_in_the_span(self, since, until=None):
+        """The addresses of the blob's span the run's write ledger names from its entry `since` on."""
+        ledger, count = _CPU.osh_write_addrs(), _CPU.osh_num_writes() if until is None else until
+        base, end = self.ours.base, self.ours.end
+        return sorted({at for at in ledger[since:count] if base <= at < end})
+
+    def harness_laid(self, at, size):
+        """The harness itself stored `size` bytes at `at` (a sector read): the ledger does not name them."""
+        if self._mark is not None:
+            self._laid_by_the_harness += [each for each in range(at, at + size) if self.ours.base <= each < self.ours.end]
+
+    def _take_over(self, sp, instructions):
+        memory, ours = self._memory, self.ours
+        pd = case.long_in(memory, aes.AES_RLR) & BUS
+        slots = _vetted_slots(memory, pd)
+        registers = _registers_now()
+        stack = _vet_the_first_entry(memory, pd, sp, registers)
+        found = (hashlib.sha256(memory[:RAM_BYTES]).digest(), registers)
+        if self._laid == AT_THE_FIRST_ENTRY:
+            cleared = len(self._stored_in_the_span(0))
+            _vet_clear_where_the_blob_goes(memory, ours)
+            memory[ours.base:ours.base + len(ours.image)] = ours.image
+            self._mark = _CPU.osh_num_writes()
+        else:
+            cleared = 0
+            self._vet_not_stored_over()
+        mapped = _mapped(memory, slots, {ROM_ENTRY: ours.entry})
+        self.taken = Takeover(ours, pd, stack, instructions, mapped, cleared, (), found, self._laid)
+        self.armed = frozenset({ours.entry})
+
+    def _entered(self, sp):
+        if sp != self.taken.stack[1]:
+            raise Refused(f"our entry is entered at SP {sp:#x}, not on the top of the screen manager's stack")
+        self.entered, self.armed = True, frozenset()
+
+    def _stored_over(self):
+        """The addresses of the blob's span stored at since the blob was laid: by the run (its ledger) and by the
+        harness (the sectors it laid)."""
+        return sorted({*self._stored_in_the_span(self._mark), *self._laid_by_the_harness})
+
+    def _vet_not_stored_over(self):
+        ours, stored = self.ours, self._stored_over()
+        if stored:
+            raise Refused(f"THE BOOT STORED OVER THE BLOB, laid {self._laid}: {len(stored)} byte(s) of its span "
+                          f"[{ours.base:#x}, {ours.end:#x}) from {stored[0]:#x} on — `Pexec` hands a program the largest "
+                          f"free block and clears it, and the accessory loader's is the harness's free window")
+        if bytes(self._memory[ours.base:ours.base + len(ours.image)]) != ours.image:
+            raise Refused(f"the blob laid {self._laid} is no longer the blob's bytes, and the ledger names no store there")
+
+    def made(self, memory, at_an_idle):
+        """THE TAKEOVER, VETTED WHERE THE RUN ENDED (above): its `Takeover`."""
+        if self.taken is None:
+            raise Refused(f"the boot ended and switchto's `rte` never popped the ROM's ctlmgr ({ROM_ENTRY:#x}): the "
+                          f"screen manager's first entry was not met — nothing was taken over")
+        if not self.entered:
+            raise Refused(f"the `rte` at the screen manager's first entry did not enter `{ENTRY_SYMBOL}` "
+                          f"({self.ours.entry:#x}): the frame's PC was not mapped")
+        self._vet_not_stored_over()
+        taken = self.taken._replace(stored_after=tuple(self._stored_over()))
+        pd = taken.process
+        held = case.long_in(memory, pd + aes.PD_LDADDR)
+        if held != self.ours.entry:
+            raise Refused(f"the screen manager's p_ldaddr holds {held:#x}"
+                          + (" — the ROM's ctlmgr: LEFT UNMAPPED" if held == ROM_ENTRY else "")
+                          + f", not `{ENTRY_SYMBOL}` ({self.ours.entry:#x}) as our ictlmgr + pstart store it")
+        if at_an_idle and whose(parked_pc(memory, pd), self.ours) != OURS:
+            raise Refused(f"the screen manager stands parked at {parked_pc(memory, pd):#x}, in the ROM's text: this "
+                          f"machine's screen manager is not ours")
+        return taken
+
+
+# ---- ONE RUN OF A MACHINE TO AN IDLE: a boot's, or a booted machine's continued -------------------------------------------------
+class _Run:
+    """The run itself, from a whole register file to AN IDLE — the first arrival at a dispatcher's idle poll with
+    nothing ready, nothing woken and no fork queued: the ROM's dispatcher's, or the blob's own (`ours`: after a
+    takeover, or of a machine continued) — or to its FIRST ARRIVAL AT `until` where one is named, an idle refused
+    if it comes first. Each stop is served: a driver entry, the probe's touch, the blank's handler entered, a poll,
+    the takeover's (`taking`), a call watched (`observing`: `{PC: (name, a reader of the frame at that stop)}`).
+    AFTER IT: `result` (the last segment's), what the harness stored into the machine (`laid`, `pushed`), the bus
+    error's `frame`, the `polls` made, the `blanks` taken, whose `idle` it ended at, and what it `observed`."""
+
+    def __init__(self, memory, floppy, budget, *, until=None, taking=None, ours=None, observing=None):
+        self._memory, self._floppy, self._budget, self._until = memory, floppy, budget, until
+        self._taking, self._ours, self._observing = taking, ours, dict(observing or {})
+        self._hbl = case.long_in(memory, addrs.VECTOR_HBL) & BUS
+        self._back = None               # where a poll of ours returns: the poll's entry is a stop again from there
+        self.laid, self.pushed, self.frame, self.polls, self.blanks = {}, {}, {}, 0, 0
+        self.idle, self.observed, self.result = None, [], None
+
+    def _our_dispatcher(self):
+        """The blob whose idle is a stop as the run stands: a continued machine's, or a takeover's once made."""
+        if self._taking is not None:
+            return self._taking.ours if self._taking.entered else None
+        return self._ours
+
+    def _stops(self):
+        stops = {*self._floppy.entries, BLITTER_PROBE_TOUCH, IDLE_LOOP, IDLE_POLLED, self._hbl, *self._observing}
+        stops |= {self._until} if self._until else set()
+        stops |= self._taking.armed if self._taking is not None else set()
+        ours = self._our_dispatcher()
+        stops |= {ours.poll} if ours is not None else set()
+        stops |= {self._back} if self._back is not None else set()
+        return stops
+
+    def to_an_idle(self, entered, io_seed):
+        """Entered with the register file `entered` — the door at its PC, so the run stops before one instruction —
+        and a horizontal blank pending; then each stop, to the idle."""
+        budget, memory = self._budget, self._memory
+        emu.install_chip_seeds()
+        result = emu.run_bench(memory, entered["pc"], 0, OFF_THE_MACHINE, emu.SENTINEL, max_insns=budget,
+                               door={entered["pc"]}, seed_regs=None, io_seed=io_seed)
+        assert result["status"] == emu.BENCH_DOOR and not result["ninsns"], "the run began before its registers were laid"
+        _enter(entered)
+        _CPU.m68k_set_irq(HBL_LEVEL)
+        ours = self._our_dispatcher()
+        if ours is not None and entered["pc"] == ours.poll:
+            self._back = case.long_in(memory, _register("a7")) & BUS      # entered AT a poll of ours (a machine continued)
+        while True:
+            emu.bench_door_arm(self._stops() - {_register("pc")})
+            left = budget - result["ninsns"]
+            if left <= 0:
+                raise Refused(f"the run did not reach an idle within {budget} instructions")
+            result = self._resumed(left)
+            if result["status"] != emu.BENCH_DOOR:
+                raise Refused(f"the run left the machine: it ended with status {result['status']} at "
+                              f"{emu.bench_resume_pc():#x}")
+            self.result = result
+            if self._stopped(emu.bench_door_pc(), emu.bench_door_sp()):
+                return result
+
+    def _resumed(self, left):
+        """The run continued to its next stop — or REFUSED BY NAME where `left` instructions do not reach one: a
+        machine that never idles (a process that yields with nothing to wait for spins the dispatcher for ever — the
+        screen manager with the button held down)."""
+        try:
+            return emu.bench_resume(GEM_ENTRY, max_insns=left)
+        except RuntimeError as spun:
+            if "did not return to the sentinel" not in str(spun):
+                raise
+            raise Refused(f"the run did not reach an idle within {self._budget} instructions: it stands at "
+                          f"{emu.bench_resume_pc():#x} and the machine never waits for an interrupt") from spun
+
+    def _stopped(self, pc, sp):
+        """One stop served: True where the run ends there."""
+        memory, ours = self._memory, self._our_dispatcher()
+        if pc in self._floppy.entries:
+            self._serve_the_driver(pc, sp)
+        elif pc == self._hbl:
+            self.blanks += 1            # ...taken: the CPU let the line go, and the next one is pending from here
             _CPU.m68k_set_irq(HBL_LEVEL)
         elif pc == BLITTER_PROBE_TOUCH:
             _vet_the_probe(memory)
-            pushed = _bus_error(memory, BLITTER_REGISTERS)
-            frame = _the_frame_the_handler_is_entered_over(memory)
-        elif pc == until:
-            return result, {**laid, **pushed}, frame, polls, blanks
+            self.pushed = _bus_error(memory, BLITTER_REGISTERS)
+            self.frame = _the_frame_the_handler_is_entered_over(memory)
+        elif pc == self._until:
+            return True
         elif pc == IDLE_LOOP:
-            polls += 1
-            if aes_switch.waits_for_an_interrupt(memory):
-                if until:
-                    raise Refused(f"the boot reached its first idle and never arrived at {until:#x}")
-                return result, {**laid, **pushed}, frame, polls, blanks
+            return self._polled(THE_ROM_S)
+        elif self._taking is not None and pc in self._taking.armed:
+            self._taking.stopped(pc, sp, self.result["ninsns"])
+        elif ours is not None and pc == ours.poll:
+            self._back = case.long_in(memory, sp) & BUS
+            if ours.idle[0] <= self._back < ours.idle[1]:      # ...or a poll of the event layer's own (ev_multi's)
+                return self._polled(OURS)
+        elif pc == self._back:
+            self._back = None
+        elif pc in self._observing:
+            name, read = self._observing[pc]
+            self.observed.append((name, read(memory, sp)))
+        return False
+
+    def _serve_the_driver(self, pc, sp):
+        floppy, memory = self._floppy, self._memory
+        before = len(floppy.calls)
+        answer, to = floppy.served(pc, sp)
+        _return_from_the_driver(answer, to, sp)
+        call, = floppy.calls[before:]
+        if call.function == RWABS and not call.arguments[0] & RWABS_WRITE:
+            _flag, buffer, count, _record, _device = call.arguments
+            self.laid[buffer] = bytes(memory[buffer:buffer + count * st_build.SECTOR_BYTES])
+            if self._taking is not None:
+                self._taking.harness_laid(buffer, count * st_build.SECTOR_BYTES)
+
+    def _polled(self, whose_idle):
+        self.polls += 1
+        if not aes_switch.waits_for_an_interrupt(self._memory):
+            return False
+        if self._until:
+            raise Refused(f"the boot reached its first idle and never arrived at {self._until:#x}")
+        self.idle = whose_idle
+        return True
+
+    def stored(self, writes):
+        """The RAM the run stored to, as runs: its ledger's addresses and the harness's own stores."""
+        stored = set(at for at in writes if at < RAM_BYTES)
+        for at, data in {**self.laid, **self.pushed}.items():
+            stored.update(range(at, at + len(data)))
+        return _runs(sorted(stored))
+
+
+def _io_seed(io):
+    """The declared I/O map of a pre-init machine's shifter bytes."""
+    return {preinit_snapshot.IO_AT + offset: byte for offset, byte in enumerate(io)}
 
 
 @derived.kept
-def booted(machine, disk, budget=BOOT_INSNS, until=None):
+def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_FIRST_ENTRY):
     """THE ROM'S OWN BOOT (the module's docstring) from the pre-init `machine` (`preinit_snapshot.PreInit`) with
     `disk` — the one it booted with — in drive A:, to the first idle: a `Boot`. `until`: STOPPED EARLIER, at the
-    boot's first arrival at that ROM address — a routine's entry, the machine and the registers as its caller left
-    them (the `Boot`'s PC is then `until`, its A7 the caller's stack pointer over the return address and the frame)."""
+    boot's first arrival at that address — a routine's entry, the machine and the registers as its caller left
+    them (the `Boot`'s PC is then `until`, its A7 the caller's stack pointer over the return address and the frame).
+    `ours` (an `Ours`: `ours_of(blob)`): THE SCREEN MANAGER IS OURS — the takeover (above) made at its first entry,
+    the `Boot`'s `takeover` what it did; `until` may then name an address of the blob. KEPT BY CONTENT: the pre-init
+    machine's, the disk's and the blob's — a rebuilt blob is another question. `laid`: when the blob is (the RED's)."""
     memory = bytearray(BASE_IMAGE)                  # ...for the ROM in it: the megabyte below is the pre-init machine's
     memory[:RAM_BYTES] = machine.ram
     floppy = Floppy(memory, disk)
+    taking = _TakingOver(memory, ours, laid) if ours is not None else None
+    run = _Run(memory, floppy, budget, until=until, taking=taking)
     try:
-        result, laid, frame, polls, blanks = _run_to_the_first_idle(memory, machine, floppy, budget, until)
+        result = run.to_an_idle(machine.registers, io_seed_of(machine))
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
+        if taking is not None and truncated:
+            raise Refused("the boot's write ledger saturated: what it stored over the blob's span is not known")
+        takeover = taking.made(memory, run.idle is not None) if taking is not None else None
     finally:
         _CPU.m68k_set_irq(NO_INTERRUPT)
         emu.bench_abort()
     rom_bench.vet_the_run_just_made("the ROM's boot from the pre-init machine")
-    stored = set(at for at in writes if at < RAM_BYTES)
-    for at, data in laid.items():
-        stored.update(range(at, at + len(data)))
-    return Boot(bytes(memory[:RAM_BYTES]), registers, bytes(floppy.disk), result["ninsns"], result["cycles"], polls, blanks,
-                tuple(floppy.calls), *streams, _runs(sorted(stored)), frame, truncated)
+    return Boot(bytes(memory[:RAM_BYTES]), registers, bytes(floppy.disk), result["ninsns"], result["cycles"], run.polls,
+                run.blanks, tuple(floppy.calls), *streams, run.stored(writes), run.frame, truncated, machine.io, run.idle,
+                takeover)
 
 
 # ---- THE TEST ACCESSORY (`tools/accessory_disk.py` builds it and its disk) ---------------------------------------------------
@@ -516,6 +896,8 @@ class Machine:
     def __init__(self, boot):
         self.boot, self.ram, self.registers = boot, boot.ram, boot.registers
         self.pokes = {0: boot.ram}
+        self.takeover, self.idle, self.observed = boot.takeover, boot.idle, boot.observed
+        self.ours = boot.takeover.ours if boot.takeover else None      # the blob of a machine whose screen manager is ours
 
     def image(self):
         memory = bytearray(BASE_IMAGE)
@@ -561,6 +943,25 @@ class Machine:
         found, = [process for process in self.waiting() if process.name == padded]
         return found
 
+    def screen_manager(self):
+        """The screen manager's process, BY ITS NAME."""
+        return self.named(SCREEN_MANAGER_NAME.decode())
+
+    def whose(self, pc):
+        """Whose code `pc` — a PC a switchto's `rte` resumes a process of this machine at — is (`whose`)."""
+        return whose(pc, self.ours)
+
+    def resumed_in(self, process):
+        """...and whose the waiting `process` (a `Process`) will be resumed in: OURS, or THE_ROM_S."""
+        return self.whose(parked_pc(self.ram, process.pd))
+
+    def continued(self, *received, budget=None):
+        """THIS MACHINE, AT ITS IDLE, RECEIVES — each of `received` through the ROM's own interrupt handlers
+        (`mouse_to`, `ikbd`, `CLICK_TICKS`) — AND RUNS ON TO ITS NEXT IDLE (`continued`): the `Machine`
+        there, `observed` the handlers its screen manager was watched to call. A TAKEOVER MACHINE CANNOT BE
+        CONTINUED THROUGH AN ALLOCATION THAT REACHES THE BLOB (refused by name: `_vet_the_blob_was_not_reached`)."""
+        return Machine(continued(self.boot, received, *((budget,) if budget else ())))
+
     def free_events(self):
         """The free EVBs, in the list's order."""
         return tuple(aes.list_of(self.ram, aes.AES_EUL, link=aes.EVB_NEXT, limit=EVB_CAP))
@@ -592,15 +993,333 @@ def blank_disk():
     return accessory_disk.disk_with()
 
 
-def desk_machine(machine=None):
+def _taken_over_by(blob):
+    """`booted`'s arguments that make the screen manager `blob`'s (None: the ROM's own)."""
+    return {} if blob is None else {"ours": ours_of(blob)}
+
+
+def desk_machine(machine=None, ours=None):
     """THE DESK'S MACHINE: the ROM booted from the pre-init `machine` (this tree's by default) over the blank disk it
     was captured with — the post-boot snapshot's own boot, stopped at its FIRST idle instead of nine hundred
-    vertical blanks on. The snapshot's family, without the time."""
-    return Machine(booted(machine or preinit(), blank_disk()))
+    vertical blanks on. The snapshot's family, without the time. `ours` (a `RomBench`: `isr.blob_named`): THE SCREEN
+    MANAGER IS THAT BLOB'S (the takeover)."""
+    return Machine(booted(machine or preinit(), blank_disk(), **_taken_over_by(ours)))
 
 
-def accessory_machine(first=QUIET, second=QUIET, machine=None):
+def accessory_machine(first=QUIET, second=QUIET, machine=None, ours=None):
     """THE ACCESSORY MACHINE: the ROM booted from the ACCESSORY pre-init `machine` (this tree's by default) over the
     disk it was captured with, each accessory in its mode (`first`, `second`) — both loaded by the ROM's own loader,
-    started, and waiting with the desk and the screen manager at the first idle."""
-    return Machine(booted(machine or accessory_preinit(), accessory_disk_of(first, second)))
+    started, and waiting with the desk and the screen manager at the first idle. `ours`: as `desk_machine`'s."""
+    return Machine(booted(machine or accessory_preinit(), accessory_disk_of(first, second), **_taken_over_by(ours)))
+
+
+# ---- A BOOTED MACHINE, CONTINUED: what it receives at its idle, and the run to its next -------------------------------------
+# WHAT A MACHINE RECEIVES is what a user's hand sends it, AS THE HARDWARE DELIVERS IT: bytes of the IKBD, each taken
+# through the ROM's own ACIA handler entered from the machine's own vector (`_Receiving`, as `aes_switch` enters one: the
+# handler's run over the machine as it stands, an exception frame under it; its three bytes make a packet the BIOS
+# hands the VDI's mouse interrupt, which calls the AES's two glues) — and the system timer's ticks, through the ROM's
+# Timer C handler from ITS vector, as many as run an open click count out. Each run's stores are laid into the
+# machine; its own stack is the harness's (on iron its frames land below the interrupted SP: dead bytes of the
+# dispatcher's stack, which no machine here is compared in).
+# THEN THE MACHINE RUNS ON FROM ITS IDLE — the CPU entered with the whole register file the idle was met with, at the
+# poll it stood at (the ROM's dispatcher's or the blob's) — to the next idle of either. Nothing is staged: what woke
+# is what the interrupts' own code queued.
+CONTINUED_INSNS = 1_500_000             # one wake's run to the next idle (measured: a menu dropped is some 80,000)
+MOUSE_TO, IKBD_BYTES, CLICK_TICKS = "the mouse moved to", "the IKBD sends", ("ticks until the click's count has run out",)
+MOST_CLICK_TICKS = 256                  # a click's count is a few serviced ticks: a wait past this resolves nothing
+LEFT_DOWN, NO_BUTTON = aes_event.LEFT_DOWN_PACKET, aes_event.NO_BUTTON_PACKET
+
+
+def mouse_to(x, y):
+    """RECEIVED: relative mouse packets toward (`x`, `y`), the buttons as they are held, until the cursor is there."""
+    return MOUSE_TO, x, y
+
+
+def ikbd(*packet):
+    """RECEIVED: these bytes from the IKBD — a relative mouse packet is its header, dx and dy."""
+    return IKBD_BYTES, bytes(byte & aes.BYTE_MASK for byte in packet)
+
+
+MFP_LEVEL = 6                           # the 68901's interrupt priority: the ACIAs' line and Timer C both
+SR_IPL_SHIFT = 8                        # the status register's interrupt mask, bits 8-10 (`addrs.SR_IPL_MASK`)
+OPEN_TO_INTERRUPTS = addrs.SR_IPL_MASK | SR_SUPERVISOR      # of a status word: what says who may interrupt it
+
+
+class _Receiving:
+    """WHAT A MACHINE AT ITS IDLE RECEIVES, taken over `memory` IN PLACE (above), each interrupt the ROM's own
+    handler entered from the machine's own vector (`aes_switch`'s staged entry: the exception frame, then the
+    handler) and its stores laid in. `status`: the status register the idle stands at — AN INTERRUPT IS REFUSED BY
+    NAME where its mask does not let that level in: a machine whose dispatcher left the mask at 6 or 7 hears no
+    keyboard and no timer, and a model that ran the handler all the same would hide a dead machine. `stored`: every
+    address the handlers stored at (the harness's own stack band apart)."""
+
+    def __init__(self, memory, status):
+        self._memory, self._status, self.stored = memory, status, set()
+
+    def _interrupted(self, vector, what, **seeds):
+        masked = (self._status & addrs.SR_IPL_MASK) >> SR_IPL_SHIFT
+        if masked >= MFP_LEVEL:
+            raise Refused(f"the machine stands at its idle with the interrupt mask at {masked}: {what} — an MFP "
+                          f"interrupt, level {MFP_LEVEL} — is never taken. On iron this machine is dead")
+        entry = case.long_in(self._memory, vector) & BUS
+        stub = aes_switch.PUSH_RETURN_AND_SR + aes_switch.JMP_ABSOLUTE_LONG + struct.pack(">I", entry) + aes_switch.RTS
+        staged = bytearray(self._memory)
+        staged[aes_switch.INTERRUPT_STUB_AT:aes_switch.INTERRUPT_STUB_AT + len(stub)] = stub
+        _final, writes, _regs = emu.run(staged, aes_switch.INTERRUPT_STUB_AT, {}, **seeds)
+        for at, data in case.written_by(writes).items():
+            self._memory[at:at + len(data)] = data
+            self.stored.update(range(at, at + len(data)))
+
+    def _through_the_acia(self, data):
+        for byte in data:
+            self._interrupted(addrs.VECTOR_ACIA, f"the IKBD's byte {byte:#04x}",
+                              io_seed={**aes_switch.ACIA_SEEDS, addrs.IKBD_ACIA_DATA: byte})
+
+    def _moved_to(self, x, y):
+        memory = self._memory
+        while aes_event._cursor(memory) != (x, y):
+            cursor = aes_event._cursor(memory)
+            dx, dy = (max(-aes_event.MOUSE_STEP, min(aes_event.MOUSE_STEP, to - at)) for to, at in zip((x, y), cursor))
+            header = aes_event.MOUSE_PACKET_HEADER | aes_event._packet_buttons(memory)
+            self._through_the_acia(bytes((header, dx & aes.BYTE_MASK, dy & aes.BYTE_MASK)))
+            if aes_event._cursor(memory) == cursor:
+                raise Refused(f"the mouse cannot be moved to ({x}, {y}): a packet of ({dx}, {dy}) left the cursor at {cursor}")
+
+    def _ticked_until_the_click_resolves(self):
+        for _tick in range(MOST_CLICK_TICKS):
+            if not case.word_in(self._memory, aes.AES_GL_CLICK_TICKS):
+                return
+            self._interrupted(addrs.VECTOR_TIMER_C, "the system timer's tick", psg_seed=aes_switch.QUIET_PSG)
+        raise Refused(f"{MOST_CLICK_TICKS} ticks of the system timer did not run the click's count out")
+
+    def all_of(self, received):
+        """Each of `received`, in turn."""
+        for kind, *what in received:
+            if kind == MOUSE_TO:
+                self._moved_to(*what)
+            elif kind == IKBD_BYTES:
+                self._through_the_acia(*what)
+            elif (kind, *what) == CLICK_TICKS:
+                self._ticked_until_the_click_resolves()
+            else:
+                raise Refused(f"a machine cannot receive {(kind, *what)}")
+        return self
+
+
+def _vet_the_blob_was_not_reached(memory, ours, stored):
+    """A CONTINUED TAKEOVER MACHINE STILL HOLDS ITS BLOB, UNTOUCHED — or the continuation is refused by name.
+    THE STANDING LIMIT of every machine here whose screen manager is ours: the blob lies where the harness lays it,
+    in memory GEMDOS BELIEVES FREE (its free list was cut before the blob existed, and nothing tells it). A chain in
+    which the desk or an accessory Mallocs or Pexecs far enough is HANDED THOSE BYTES — and would run on over our
+    code. So `stored` — every address the run's ledger, the interrupt handlers and the harness's own sector reads
+    name — must miss the blob's span, and its bytes must be the blob's."""
+    reached = sorted(at for at in stored if ours.base <= at < ours.end)
+    if reached or bytes(memory[ours.base:ours.base + len(ours.image)]) != ours.image:
+        raise Refused(
+            f"A TAKEOVER MACHINE CANNOT BE CONTINUED THROUGH AN ALLOCATION THAT REACHES THE BLOB: the continuation "
+            + (f"stored {len(reached)} byte(s) of its span [{ours.base:#x}, {ours.end:#x}) from {reached[0]:#x} on"
+               if reached else "left its span holding other bytes than the blob's, by no store the ledgers name")
+            + " — the blob lies in memory GEMDOS believes free, and a Malloc or a Pexec of the desk's or an accessory's "
+              "is handed it")
+
+
+def _handler_frame_of_the_rom(memory, sp):
+    """The two words the ROM's ctlmgr pushed for a handler: above the return address."""
+    return struct.unpack_from(f">{HANDLER_WORDS}h", memory, sp + LONG_BYTES)
+
+
+def _handler_frame_of_ours(memory, sp):
+    """...and the two GCC's caller left its C core: a longword each, after the return address and the image."""
+    return tuple(aes.signed(case.long_in(memory, sp + (2 + nth) * LONG_BYTES) & aes.WORD_MASK) for nth in range(HANDLER_WORDS))
+
+
+def handler_stops(ours=None):
+    """`{PC: (the handler's name, the reader of its frame there)}`: the ROM's handlers' entries and, on a machine
+    whose screen manager is `ours`, their C cores' in the blob."""
+    stops = {getattr(addrs, name): (aes_event.short_name(name), _handler_frame_of_the_rom) for name in HANDLER_NAMES}
+    for rom, core in (ours.handlers if ours is not None else ()):
+        stops[core] = (stops[rom][0], _handler_frame_of_ours)
+    return stops
+
+
+@derived.kept
+def continued(boot, received, budget=CONTINUED_INSNS):
+    """`boot` — a machine at its idle — CONTINUED (above): what it `received` taken through the ROM's interrupt
+    handlers, then the run to its next idle. A `Boot` again: the megabyte and the registers THERE, that run's own
+    cost, polls, stores and streams, whose `idle` it ended at, and `observed` — `(the handler, (mx, my))` for each
+    call of a screen manager's handler (`handler_stops`), in order, whichever shore's ctlmgr made it.
+    REFUSED BY NAME: a reception the idle's interrupt mask would never let in (`_Receiving`); and, on a machine whose
+    screen manager is ours, A CONTINUATION THAT REACHES THE BLOB (`_vet_the_blob_was_not_reached`: the blob lies in
+    memory GEMDOS believes free — a row's chain may not Malloc or Pexec its way into it)."""
+    if boot.idle is None:
+        raise Refused("a boot stopped before its first idle is continued by nothing: it stands at no idle")
+    ours = boot.takeover.ours if boot.takeover else None
+    memory = bytearray(BASE_IMAGE)
+    memory[:RAM_BYTES] = boot.ram
+    receiving = _Receiving(memory, boot.registers["sr"]).all_of(received)
+    floppy = Floppy(memory, boot.disk)
+    run = _Run(memory, floppy, budget, ours=ours, observing=handler_stops(ours))
+    try:
+        result = run.to_an_idle(boot.registers, _io_seed(boot.io))
+        registers = _registers_now()
+        writes, truncated = emu.bench_writes(memory)
+        streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
+    finally:
+        _CPU.m68k_set_irq(NO_INTERRUPT)
+        emu.bench_abort()
+    rom_bench.vet_the_run_just_made("a booted machine's run from its idle to the next")
+    if truncated:
+        raise Refused("the continued run's write ledger saturated: what it stored is not known")
+    if ours is not None:
+        harness_s = {at for start, data in run.laid.items() for at in range(start, start + len(data))}
+        _vet_the_blob_was_not_reached(memory, ours, {*writes, *receiving.stored, *harness_s})
+    return boot._replace(ram=bytes(memory[:RAM_BYTES]), registers=registers, disk=bytes(floppy.disk),
+                         instructions=result["ninsns"], cycles=result["cycles"], polls=run.polls, blanks=run.blanks,
+                         floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
+                         hardware_writes=streams[2], stored=run.stored(writes), bus_error_frame=run.frame,
+                         writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed))
+
+
+# ---- A MACHINE WHOSE SCREEN MANAGER IS OURS, BESIDE THE ONE THE ROM BOOTED: what the two differ in, BY NATURE ---------------
+# FOUR CLASSES, and nothing else in the megabyte (`compared`; `test_aes_boot.py` holds it on every machine, both
+# blobs) — each LOCATED FROM THE MACHINES' OWN POINTERS, never by an address:
+#   * THE DISPATCHER'S DEAD FRAMES: its stack below the stack pointer the idle stands at. A switch runs on that
+#     stack and leaves it dead; the frames there are those of the build whose dispatcher last ran — ours, when the
+#     screen manager parks. DROPPED, and proved dead by noise (`noised`: the machine's continuation is unchanged).
+#   * THE SCREEN MANAGER'S SAVED CONTEXT in its UDA (`aes_switch.uda_context_drop`: savestate's registers and the
+#     two stack pointers): the CPU state of the code that called dsptch — ours. DROPPED; vetted by RESUMING it.
+#   * THE SCREEN MANAGER'S STACK, `[the end of its UDA's state block, the top psetup's frame ended at)`: below the
+#     parked stack pointer DEAD (noise-proved), from it up the LIVE frames of whichever ctlmgr runs there. DROPPED;
+#     the live frames vetted by what the screen manager DOES when woken (`continued`, on both shores).
+#   * ITS p_ldaddr: a code address — MAPPED through the registry (`aes_event.SCREEN_MANAGER_ENTRY`), and equal
+#     after it. Never dropped.
+# and the blob's own span, which the ROM's machine holds empty.
+# TWO MORE WHERE THE TWO IDLES ARE NOT ONE DISPATCHER'S — a machine continued until its screen manager parks LAST
+# stands in OUR idle where the ROM's stands in the ROM's — each `by_nature`'s to name, PER COMPARISON, and REFUSED
+# where the two machines do not differ in it (`compared`):
+#   * the WHOLE dispatcher's stack (the live frames of two builds' idles) — in place of its dead frames;
+#   * THE LINE-F MASK WORD (`aes.LINE_F_MASK_WINDOW`: rewritten by every masked return of the ROM's code, by no C);
+#   * THE BIOS'S LAST REGISTER-SAVE FRAME (`trap_save_frame`: the frame under `savptr` — dead once the trap has
+#     returned — in which the idle's own keyboard poll, a BIOS trap, saved the registers and the return of the
+#     build that polled).
+DEAD_DISPATCHER_FRAMES = "the dispatcher's dead frames: its stack below the stack pointer the idle stands at"
+DISPATCHER_STACK = "the dispatcher's whole stack: the two machines idle in two builds' dispatchers"
+SAVED_CONTEXT = "the screen manager's saved context in its UDA"
+MANAGER_STACK = "the screen manager's stack: dead below its parked stack pointer, its ctlmgr's live frames above"
+THE_BLOB = "the blob's own span"
+LINE_F_MASK, TRAP_SAVE_FRAME = "the Line-F mask word", "the BIOS's last register-save frame, dead under savptr"
+Compared = namedtuple("Compared", "differing within")
+Compared.__doc__ = """Two machines compared: `differing` — the `(address, length)` runs they differ at OUTSIDE every
+class (none, for a takeover machine beside its ROM-booted one) — and `within`: `{class: how many bytes differ in
+it}`, the measured table."""
+COMPARED_BLOCK_BYTES = 0x1000
+
+
+def trap_save_frame(machine):
+    """`(lo, hi)` of the BIOS's register-save frame last used on `machine`: the one under `savptr`."""
+    top = machine.long(addrs.SYSVAR_SAVPTR) & BUS
+    return top - addrs.TRAP_SAVE_FRAME_BYTES, top
+
+
+def by_nature(rom, ours):
+    """THE CLASSES (above) the takeover machine `ours` differs from the ROM-booted `rom` in, `{class: (lo, hi)}` —
+    the two machines at the idle the same receptions brought each to — and the classes a comparison of them may
+    name beside (`{class: (lo, hi)}`: needed only where the two idles are two dispatchers')."""
+    if ours.takeover is None or rom.takeover is not None:
+        raise Refused("a comparison is of the machine THE ROM BOOTED and, second, of one whose screen manager is ours: "
+                      f"the first {'is' if rom.takeover else 'is not'} a takeover machine, the second "
+                      f"{'is' if ours.takeover else 'is not'}")
+    manager, taken = ours.screen_manager(), ours.takeover
+    if rom.screen_manager()._replace(events=(), basepage=0) != manager._replace(events=(), basepage=0):
+        raise Refused(f"the two machines' screen managers are not one process: {rom.screen_manager()} and {manager}")
+    (context_lo, context_hi, _why), = aes_switch.uda_context_drop(manager.uda)
+    bottom, top = aes_event.DISPATCHER_STACK
+    one_dispatcher = rom.idle == ours.idle
+    dead_below = max(rom.registers["isp"], ours.registers["isp"])
+    classes = {DEAD_DISPATCHER_FRAMES if one_dispatcher else DISPATCHER_STACK: (bottom, dead_below if one_dispatcher else top),
+               SAVED_CONTEXT: (context_lo, context_hi), MANAGER_STACK: taken.stack,
+               THE_BLOB: (taken.ours.base, taken.ours.end)}
+    (mask_lo, mask_hi, _mask_why), = aes.LINE_F_MASK_WINDOW
+    return classes, {LINE_F_MASK: (mask_lo, mask_hi), TRAP_SAVE_FRAME: trap_save_frame(ours)}
+
+
+def _differing_runs(one, other):
+    """Every maximal `(address, length)` run two megabytes differ at."""
+    runs = []
+    for block in range(0, len(one), COMPARED_BLOCK_BYTES):
+        if one[block:block + COMPARED_BLOCK_BYTES] == other[block:block + COMPARED_BLOCK_BYTES]:
+            continue
+        for at in range(block, min(block + COMPARED_BLOCK_BYTES, len(one))):
+            if one[at] != other[at]:
+                if runs and runs[-1][0] + runs[-1][1] == at:
+                    runs[-1][1] += 1
+                else:
+                    runs.append([at, 1])
+    return [tuple(run) for run in runs]
+
+
+def mapped_back(machine):
+    """`machine`'s megabyte with every code address of the registry's slots given THE ROM'S NAME (ours -> the ROM's:
+    the screen manager's entry, where a slot holds it) — what a takeover machine is compared as."""
+    ram = bytearray(machine.ram)
+    if machine.ours is not None:
+        _mapped(ram, aes_event.SCREEN_MANAGER_ENTRY.slots, {machine.ours.entry: ROM_ENTRY})
+    return bytes(ram)
+
+
+def compared(rom, ours, also=()):
+    """THE STRUCTURAL COMPARISON: the takeover machine `ours` beside the ROM-booted `rom` (each at the idle the same
+    receptions brought it to), its code addresses mapped back (`mapped_back`), every class of `by_nature` left out —
+    and each class `also` names beside (LINE_F_MASK, TRAP_SAVE_FRAME), REFUSED BY NAME where the two machines do not
+    differ in it: a `Compared`."""
+    classes, nameable = by_nature(rom, ours)
+    unknown = [name for name in also if name not in nameable]
+    if unknown:
+        raise Refused(f"no class a comparison may name beside: {unknown}")
+    classes.update({name: nameable[name] for name in also})
+    spans = sorted(classes.values())
+    if any(hi > lo_after for (_lo, hi), (lo_after, _hi) in zip(spans, spans[1:])):
+        raise Refused(f"two classes of one comparison overlap: {[(hex(lo), hex(hi)) for lo, hi in spans]}")
+    theirs, mine, within = rom.ram, bytearray(mapped_back(ours)), {}
+    for name, (lo, hi) in classes.items():      # ...each class counted, then left out: given the ROM's bytes
+        within[name] = sum(map(operator.ne, theirs[lo:hi], mine[lo:hi]))
+        mine[lo:hi] = theirs[lo:hi]
+    unneeded = [name for name in also if not within[name]]
+    if unneeded:
+        raise Refused(f"the two machines do not differ in {unneeded}: a class named beside and not needed")
+    return Compared(_differing_runs(theirs, bytes(mine)), within)
+
+
+def noised(machine, spans, seed):
+    """`machine` with every byte of `spans` (`(lo, hi)` each) replaced by NOISE that differs from it: the machine a
+    dead span is proved dead on — its continuation is the plain machine's."""
+    generator, ram = random.Random(seed), bytearray(machine.ram)
+    for lo, hi in spans:
+        for at in range(lo, hi):
+            ram[at] ^= generator.randrange(1, 256)
+    return Machine(machine.boot._replace(ram=bytes(ram)))
+
+
+def restaged(machine, memory):
+    """`machine` WITH THE MEGABYTE OF `memory` — A LABELLED STAGING, its author's to justify (a routine laid under a
+    trap, a tree's object changed) — and, on a machine whose screen manager is ours, ITS BLOB AS `memory` HOLDS IT: the
+    `Ours` it carries is given those bytes, so a staging that patches the blob's own text (the build's VDI linked
+    under `trap #2`) is the blob a continuation then holds untouched (`_vet_the_blob_was_not_reached`). The entry,
+    the poll, the idle and the handlers stay where the ELF placed them: a staging that moves code is not this."""
+    boot = machine.boot._replace(ram=bytes(memory[:RAM_BYTES]))
+    if machine.ours is not None:
+        ours = machine.ours
+        staged = ours._replace(image=bytes(memory[ours.base:ours.base + len(ours.image)]))
+        boot = boot._replace(takeover=boot.takeover._replace(ours=staged))
+    return Machine(boot)
+
+
+def dead_spans(machine):
+    """THE SPANS OF `machine`, AT ITS IDLE, NO CODE WILL READ BEFORE IT WRITES — `{what: (lo, hi)}`: the dispatcher's
+    stack below the idle's stack pointer, the screen manager's stack below its parked stack pointer, and the BIOS's
+    register-save frame under `savptr`."""
+    manager = machine.screen_manager()
+    parked = machine.long(manager.uda + aes.UDA_SUPER_SP) & BUS
+    return {DEAD_DISPATCHER_FRAMES: (aes_event.DISPATCHER_STACK[0], machine.registers["isp"]),
+            MANAGER_STACK: (manager.uda + aes.UDA_STATE_BYTES, parked),
+            TRAP_SAVE_FRAME: trap_save_frame(machine)}

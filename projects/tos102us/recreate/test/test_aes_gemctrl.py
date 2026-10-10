@@ -33,11 +33,13 @@ ROM BEHAVIOURS PINNED HERE, none mended (each has its test below):
     call returns at once (no menu) and the manager's wait is satisfied again as it is made.
 """
 import functools
+import re
 import struct
+from collections import namedtuple
 
 import pytest
 
-from harness import BASE_IMAGE, addrs, emu, make_image
+from harness import BASE_IMAGE, addrs, bench_tier3, emu, make_image
 
 import abi
 import aes
@@ -360,7 +362,22 @@ def run(key, **kwargs):
     routine, _label = key
     arrived = gc.at(RETURNING[key].arrival)
     assert arrived.name == routine
-    return aes_event.run_guarded(arrived.name, arrived.arguments, arrived.pokes, drawing=True, objects=gc.JUST_DRAW, **kwargs)
+    # (...the keyboard poll's trap save moved into the run's stack band, as the case's registered row stages it and
+    # for `at_its_first_switch`'s reason: the door's images at its calls' returns leave out the SNAPSHOT's frame.)
+    staged = case.merge_pokes(arrived.pokes, aes_event.savptr_in_the_band())
+    return aes_event.run_guarded(arrived.name, arrived.arguments, staged, drawing=True, objects=gc.JUST_DRAW, **kwargs)
+
+
+def at_its_first_switch(made):
+    """A HANDLER THAT SWITCHES, taken to its first switch on both shores with nothing delivered (`aes_event.interrupted`:
+    the C refused at the dispatcher's hook, its whole image the ROM's at dsptch, and at every door call's return on
+    the way) — OVER THE ROW'S OWN STAGED MACHINE (`aes_switching._staged`: the one its companion and its Tier 3 row
+    run over), the keyboard poll's trap save moved into the run's stack band. NOT the arrival's machine as it
+    stands: `interrupted` takes its images at the door calls' returns with the tree's own exclusions and names no
+    window beside, and the tree's trap-save exclusion is the SNAPSHOT's frame, which is this booted machine's only
+    over a snapshot captured between two polls (`aes_gemctrl.its_trap_save`) — over one captured inside a BIOS
+    trap these cases were red in the frame under the machine's own savptr, at HEAD too."""
+    return aes_event.interrupted(made.name, made.arguments, switching._staged(made), {}, objects=True, switches=BLOCKS)
 
 
 @functools.cache
@@ -701,7 +718,7 @@ def test_a_sizer_held_below_the_smallest_size_never_sleeps():
     the only idle there is (the move's) leaves the run where it was: it does not return."""
     each = SWITCHING[HCTL_WINDOW, "the sizer held; shrunk past the smallest size, both bars: seven boxes each way"]
     spinning = row((HCTL_WINDOW, "the sizer held; shrunk past the smallest size, both bars: seven boxes each way"))
-    held = aes_event.interrupted(spinning.name, spinning.arguments, spinning.machine(), {}, objects=True, switches=BLOCKS)
+    held = at_its_first_switch(spinning)
     assert not held.returned
     the_rom_s = switching.scheduled(spinning, switching._staged(spinning))
     waits = [call for call in the_rom_s.calls if call.routine == addrs.AES_ROM_EV_MULTI]
@@ -739,7 +756,7 @@ def test_a_handler_that_switches_is_the_rom_s_at_the_dispatcher_and_through_the_
     made = row(key)
     if each.switches == BLOCKS:
         # (The first half takes NO delivery: a rise named at a later door call belongs to the run past the block.)
-        held = aes_event.interrupted(made.name, made.arguments, made.machine(), {}, objects=True, switches=BLOCKS)
+        held = at_its_first_switch(made)
         assert not held.returned
         ran = switching.companion(made, THE_STALE_COUNT if key in THE_STALE_COUNT_IS_OVERWRITTEN else ())
     else:
@@ -831,3 +848,674 @@ def test_every_machine_s_pokes_are_its_boot_s_own_ram_and_nothing_else():
     for key in gc.MACHINES:
         booted = gc.machine(key)
         assert list(booted.pokes) == [0] and booted.pokes[0] is booted.boot.ram and len(booted.boot.ram) == gc.RAM_BYTES
+
+
+# ==== THE SCREEN MANAGER'S PROCESS ITSELF: ictlmgr AND ctlmgr (`src/aes/ctlmgr.c`; band 5 wave 2, PENDING) =================
+# PENDING: the twins are built and held here, and BOUND NOWHERE — every machine's screen manager is still the ROM's
+# ctlmgr (psetup's frame names $fe49d2), every row above is the ROM's ctlmgr calling a handler. What is held:
+#   ictlmgr   at its own arrival in the ROM's boot, Tier 1 (the two code longwords the ROM's own address: the host's);
+#   ctlmgr    ONCE: its first entry in the ROM's boot, run to the loop's top; A TURN: `aes_gemctrl`'s (both shores from
+#             one arrival at the loop's top to the next), a case per kind of wake;
+#   the entry on both blobs: its frame, and the order of the once-only part's two stores.
+# The turns on a blob need a machine whose screen manager is OURS (the takeover, `aes_boot`): the flip's (slice D).
+import aes_boot                                                             # noqa: E402
+import aes_pdpipe as pp                                                     # noqa: E402
+import isr                                                                  # noqa: E402
+import transcription                                                        # noqa: E402
+from aes_gemctrl import Turn                                                # noqa: E402
+
+CAPTURES = {"the desk's boot": False, "the accessories' boot": True}
+BUS = aes_boot.BUS
+PSETUP_FRAME_BYTES = pp.PDPIPE["PSETUP_FRAME_BYTES"]
+EVINPUT = aes.header_constants("evinput.h")
+CTWAIT_LEAVE = EVINPUT["AES_GL_CTWAIT_LEAVE"]
+USABLE_STACK_BYTES = 1196               # the screen manager's: its UDA less the saved state (ruling W2-R3's number)
+SUPERVISOR_AT_MASK_3 = 0x2300           # the SR psetup's frame holds, as the boot's one HBL left the mask
+
+
+def _capture(accessories):
+    return ((aes_boot.accessory_preinit(), aes_boot.accessory_disk_of(gc.QUIET, gc.QUIET)) if accessories
+            else (aes_boot.preinit(), aes_boot.blank_disk()))
+
+
+# ---- ictlmgr -----------------------------------------------------------------------------------------------------------------
+STALE_ENTRIES = {aes.AES_GL_DACNT: struct.pack(">h", 2), aes.AES_GL_DAFIRST: struct.pack(">h", 9)}
+GSX = aes.header_constants("gsx.h")
+# ...and WHAT ictlmgr MUST NOT WRITE, staged NONZERO (an argument class: the boot holds each zero at the arrival, where
+# a clear too many shows nowhere) — the words its neighbour in the source writes or steps (ctlmgr's: the leave word,
+# the active rectangle, the multi-click count) and the menu's own beside the two it clears.
+NOT_ICTLMGR_S = {EVINPUT_LEAVE: struct.pack(">h", 1) for EVINPUT_LEAVE in (aes.header_constants("evinput.h")["AES_GL_CTWAIT_LEAVE"],)}
+NOT_ICTLMGR_S.update({aes.AES_GL_RMNACTV: bytes([0x5a]) * aes.GRECT_BYTES, aes.header_constants("evasync.h")["AES_GL_BPEND"]: struct.pack(">h", 3),
+                      aes.AES_GL_MNCLICKS: struct.pack(">h", 2), aes.AES_GL_DABOX: struct.pack(">h", 7)})
+ICTLMGR_STAGINGS = {
+    "as the boot holds them": {},
+    "ARGUMENT CLASS: the two counts staged stale": STALE_ENTRIES,
+    "ARGUMENT CLASS: the words it must not write staged nonzero": NOT_ICTLMGR_S,
+}
+ICTLMGR_STEERS = (pp.STEERS_THE_PD_COUNT, pp.STEERS_THE_STACK)      # pstart's own (getpd counts a PD out; psetup's push)
+
+
+@functools.cache
+def _ictlmgr_arrived(accessories):
+    """THE BOOT STOPPED AT ITS CALL OF ictlmgr (gem_main's, $fda1dc): the word it pushed — the running process's id,
+    which ictlmgr never reads — and the machine there."""
+    boot = aes_boot.booted(*_capture(accessories), until=addrs.AES_ROM_ICTLMGR)
+    assert boot.registers["pc"] == addrs.AES_ROM_ICTLMGR and boot.registers["sr"] & aes_boot.SR_SUPERVISOR
+    at = boot.registers["isp"] + aes.LONG_BYTES
+    return struct.unpack(">h", boot.ram[at:at + aes.WORD_BYTES]), gc._as_pokes(boot.ram, "ictlmgr's arrival")
+
+
+@pytest.mark.parametrize("accessories", CAPTURES.values(), ids=CAPTURES)
+@pytest.mark.parametrize("staging", ICTLMGR_STAGINGS)
+def test_ictlmgr_at_its_own_arrival_in_the_boot_is_the_rom_s(accessories, staging):
+    """THE ROM'S BOOT'S OWN CALL: no accessory entry counted, and the screen manager's process made — PD1, named
+    SCRENMGR, ready and woken, its first frame (psetup's) and its load address BOTH ctlmgr's own address, which is
+    the ROM's on the host; the PD answered. The two counts are zero where the boot calls it (cleared RAM), so the
+    stores are held over them STAGED STALE too (an argument class: no machine reaches ictlmgr twice) — and WHAT IT
+    DOES NOT WRITE over words staged nonzero where a clear too many would otherwise leave the zero it found."""
+    arguments, pokes = _ictlmgr_arrived(accessories)
+    staged = case.merge_pokes(pokes, ICTLMGR_STAGINGS[staging])
+    result = pp.run(gc.ICTLMGR, arguments, staged, steered=ICTLMGR_STEERS)
+    final = result.final
+    assert result.long_answer() == gc.SCREEN_MANAGER
+    assert (case.word_in(final, aes.AES_GL_DACNT), case.word_in(final, aes.AES_GL_DAFIRST)) == (0, 0)
+    assert [case.long_in(final, slot) for slot in aes_event.SCREEN_MANAGER_ENTRY_SLOTS] == [addrs.AES_ROM_CTLMGR] * 2
+    assert bytes(final[gc.SCREEN_MANAGER + aes.PD_NAME:][:8]) == b"SCRENMGR"
+    assert aes.list_of(final, aes.AES_DRL)[0] == gc.SCREEN_MANAGER
+
+
+def test_the_name_ictlmgr_hands_is_the_rom_s_own_string():
+    name_at = gc.GEMCTRL["AES_SCRENMGR_NAME"]
+    assert bytes(BASE_IMAGE[name_at:name_at + 13]) == b"SCRENMGR.LOC\0"
+
+
+# ---- ctlmgr, ONCE -----------------------------------------------------------------------------------------------------------
+LEAVE_WORD_STALE = {CTWAIT_LEAVE: struct.pack(">h", 1)}
+RMNACTV = slice(aes.AES_GL_RMNACTV, aes.AES_GL_RMNACTV + aes.GRECT_BYTES)
+RMENU = slice(aes.AES_GL_RMENU, aes.AES_GL_RMENU + aes.GRECT_BYTES)
+
+
+@pytest.mark.parametrize("accessories", CAPTURES.values(), ids=CAPTURES)
+def test_the_screen_manager_s_first_entry_is_what_the_entry_s_contract_says(accessories):
+    """WHERE switchto's `rte` ENTERS ctlmgr, in the ROM's own boot: supervisor state, the mask at 3, the stack EMPTY —
+    A7 the top psetup's frame was laid under, that frame just below it (its SR word, ctlmgr's address) — every
+    usable byte of the stack zero, A6 zero, the screen manager running. What `aes_rom_ctlmgr` is entered with."""
+    boot = gc.the_first_entry(accessories)
+    registers, ram = boot.registers, boot.ram
+    lo, top, _why = gc.its_stack(ram)
+    assert (registers["sr"] & ~aes.BYTE_MASK, registers["isp"], registers["a6"]) == (SUPERVISOR_AT_MASK_3, top, 0)
+    assert struct.unpack(">HI", ram[top - PSETUP_FRAME_BYTES:top]) == (registers["sr"], addrs.AES_ROM_CTLMGR)
+    assert not any(ram[lo:top - PSETUP_FRAME_BYTES]) and top - lo == USABLE_STACK_BYTES
+    assert case.long_in(ram, aes.AES_RLR) & BUS == gc.SCREEN_MANAGER
+
+
+@pytest.mark.parametrize("accessories", CAPTURES.values(), ids=CAPTURES)
+def test_ctlmgr_s_once_only_part_is_the_rom_s_at_the_screen_manager_s_first_entry(accessories):
+    """FROM THE FIRST ENTRY TO THE LOOP'S TOP: the menu bar's rectangle copied into the active one — which the boot
+    holds EMPTY there — and the leave word cleared; held over that word STAGED STALE (an argument class: nothing
+    else ever writes it), and not a byte beside them, the Line-F mask word aside where the ROM's run stored it."""
+    pokes = case.merge_pokes(gc._as_pokes(gc.the_first_entry(accessories).ram, "the first entry"), LEAVE_WORD_STALE)
+    started = make_image(pokes)
+    assert any(started[RMENU]) and bytes(started[RMNACTV]) != bytes(started[RMENU])
+    the_rom_s, writes = gc.the_rom_begins(pokes)
+    returncode, stderr, ours = gc.the_c_begins(pokes)
+    assert returncode == 0, stderr
+    left_out = frozenset(case.STACK_BAND) | (aes_event.LINE_F_MASK_BYTES & frozenset(writes))
+    assert not aes_event.differing(ours, the_rom_s, left_out)
+    assert bytes(ours[RMNACTV]) == bytes(started[RMENU]) and case.word_in(ours, CTWAIT_LEAVE) == 0
+
+
+# ---- ctlmgr, A TURN ---------------------------------------------------------------------------------------------------------
+# WHERE EVERY TURN STARTS: the screen manager back at its loop's top after a first turn of the ROM's own — a click on
+# the bar past the titles (its own place: nobody's window, no menu title), which its hctl_button drops.
+A_FIRST_TURN = {0: (onto(gc.ON_THE_BAR_PAST_THE_TITLES),), 1: (click,)}
+VIEW = aes_event.THE_VIEW_TITLE_S_POINT
+THE_MENU_WORKED = {1: aes_event.ONTO_ITS_PLAIN_ITEM, 2: click}        # ...from the title: an item reached, clicked
+SELECTED = lambda: (MESSAGES["MN_SELECTED_MESSAGE"], 0, gc.THE_VIEW_TITLE, gc.VIEW_S_PLAIN_ITEM, 0, 0, 0)   # noqa: E731
+A_KEY = 0x1e61                          # 'a': the scan code over the character, as nq is handed a key
+# A turn's case: the turn, the message it sends last (`Case.message`'s shapes), the multi-click count (before, after).
+TurnCase = namedtuple("TurnCase", "turn message bpend", defaults=(None, None))
+
+
+def _on_a_gadget(name, *does, key=A):
+    """A turn of `key`'s machine from the first turn's end: the mouse onto the top window's gadget `name`, then each
+    of `does` at the idle after."""
+    return Turn(key, A_FIRST_TURN, at_idle={0: onto(gc.gadget(key, name)), **{1 + nth: each for nth, each in enumerate(does)}})
+
+
+def _staged_at(turn, count):
+    return turn._replace(staged=gc.the_click_count_staged_at(count))
+
+
+THE_CLOSER_CLICKED = _on_a_gadget("the closer", click)
+# THE BUTTON AND THE BAR IN ONE WAKE: the mouse onto a title and a click there, in one idle — the wait comes back with
+# both, and the button's handler (which finds the desktop under the mouse: nothing) runs before the bar's.
+BOTH_IN_ONE_WAKE = Turn(A, A_FIRST_TURN, at_idle={0: (onto(VIEW), click), **THE_MENU_WORKED})
+ON_THE_BAR = Turn(A, A_FIRST_TURN, at_idle={0: onto(VIEW), **THE_MENU_WORKED})
+# (...with no menu: `ALONG_THE_HIDDEN_BAR`'s last two idles, taken by the turn itself — the mouse onto the bar's place,
+# which wakes nobody, then a click there and a move along it.)
+ONTO_THE_BAR_S_PLACE, CLICKED_AND_MOVED_ALONG = (ALONG_THE_HIDDEN_BAR[idle] for idle in sorted(ALONG_THE_HIDDEN_BAR)[-2:])
+BOTH_WITH_NO_MENU = Turn(HIDING, THE_BAR_HIDDEN, 1, at_idle={0: ONTO_THE_BAR_S_PLACE, 1: CLICKED_AND_MOVED_ALONG})
+THE_OTHER_WINDOW_CLICKED = Turn(A, A_FIRST_TURN, at_idle={0: onto(THE_OTHER_WINDOW_S_TITLE), 1: click})
+# THE BAR HIDDEN AND THE MOUSE ON ITS PLACE (the HIDING machine, `ALONG_THE_HIDDEN_BAR`): the ROM's ctlmgr spins — its
+# third and its sixth arrival at the loop's top start the same turn, which no idle interrupts.
+SPINS = {which: Turn(HIDING, ALONG_THE_HIDDEN_BAR, which) for which in (2, 5)}
+# THE COUNT THE ROM'S OWN (the TWO_WAITERS machine: two accessories in a two-click wait beside the desk's — 3 at its
+# idle, 2 where the turn after its first starts): nothing staged.
+W = gc.TWO_WAITERS
+THE_CLOSER_CLICKED_AT_2 = _on_a_gadget("the closer", click, key=W)
+TURNS = {
+    "the top window's closer clicked: WM_CLOSED": TurnCase(THE_CLOSER_CLICKED, lambda: _about_the_top("WM_CLOSED"), (1, 1)),
+    "two more processes in a two-click wait (the count the ROM's own, 2); the closer clicked: 1":
+        TurnCase(THE_CLOSER_CLICKED_AT_2, lambda: _about_the_top("WM_CLOSED", key=W), (2, 1)),
+    "two more processes in a two-click wait (the count 2); a button and the bar in one wake: 1, and no lower":
+        TurnCase(BOTH_IN_ONE_WAKE._replace(machine=W), SELECTED, (2, 1)),
+    "the closer held, then released inside it (a box watched): WM_CLOSED":
+        TurnCase(_on_a_gadget("the closer", PRESS, RELEASE), lambda: _about_the_top("WM_CLOSED")),
+    "the title held, dragged, released (a drag): WM_MOVED":
+        TurnCase(_on_a_gadget("the title", PRESS, onto(A_DRAG_TO), RELEASE), lambda: _moved_to(A_DRAG_TO)),
+    "the sizer held, stretched, released (a rubber band): WM_SIZED":
+        TurnCase(_on_a_gadget("the sizer", PRESS, onto(A_SIZE_TO), RELEASE), lambda: _to_the_mouse(A_SIZE_TO)),
+    "the vertical elevator held, dragged, released (a slider): WM_VSLID":
+        TurnCase(_on_a_gadget("the vertical elevator", PRESS, onto(ELEVATOR_TO["the vertical elevator"]), RELEASE), "WM_VSLID"),
+    "the up arrow clicked (an arrow: the lock let go for a yield and taken again): WM_ARROWED":
+        TurnCase(_on_a_gadget("the up arrow", click), lambda: _arrowed("the up arrow")),
+    "the mouse onto a title, an item chosen (the bar): MN_SELECTED": TurnCase(ON_THE_BAR, SELECTED, (1, 1)),
+    "the desk alone; the mouse onto a title, an item chosen: MN_SELECTED":
+        TurnCase(ON_THE_BAR._replace(machine=THE_DESK), SELECTED),
+    "a button and the bar in one wake: the button's handler, then the menu": TurnCase(BOTH_IN_ONE_WAKE, SELECTED, (1, 1)),
+    # THE MULTI-CLICK COUNT, stepped once a handler: never below one, and read as a SIGNED word.
+    "ARGUMENT CLASS, the count at 0; a button: left at 0": TurnCase(_staged_at(THE_CLOSER_CLICKED, 0), None, (0, 0)),
+    "ARGUMENT CLASS, the count at 2; a button: 1": TurnCase(_staged_at(THE_CLOSER_CLICKED, 2), None, (2, 1)),
+    "ARGUMENT CLASS, the count at 3; a button: 2": TurnCase(_staged_at(THE_CLOSER_CLICKED, 3), None, (3, 2)),
+    "ARGUMENT CLASS, the count at -1; a button: left (a signed compare)": TurnCase(_staged_at(THE_CLOSER_CLICKED, -1), None, (-1, -1)),
+    "ARGUMENT CLASS, the count at 2; the bar alone: 1": TurnCase(_staged_at(ON_THE_BAR, 2), None, (2, 1)),
+    "ARGUMENT CLASS, the count at 2; a button and the bar: 1, and no lower": TurnCase(_staged_at(BOTH_IN_ONE_WAKE, 2), None, (2, 1)),
+    # ...and BOTH STEPS WHERE NOTHING ELSE COUNTS: the bar hidden, a click on its place and a move along it in one idle
+    # (`ALONG_THE_HIDDEN_BAR`'s last idle, taken by the turn itself) — the button's handler counts the bar's own click
+    # off, the bar's finds no menu, and the count goes down by two.
+    **{f"ARGUMENT CLASS, the count at {before}; no menu bar, a button and the bar: {after}":
+       TurnCase(_staged_at(BOTH_WITH_NO_MENU, before), None, (before, after)) for before, after in ((4, 2), (3, 1), (2, 1), (1, 1))},
+    # (Under the menu the count is no witness: the menu's own waits count it down to 1 as they are removed —
+    # evremove's step, $fe5150 — whatever ctlmgr's steps left. The image holds it all the same.)
+    "ARGUMENT CLASS, the count at 4; a button and the bar: counted down by the menu's waits too": TurnCase(_staged_at(BOTH_IN_ONE_WAKE, 4), None, (4, 1)),
+    **{f"no menu bar, the mouse on its place (arrival {which + 1}): hctl_rect called, nothing done, no sleep": TurnCase(turn)
+       for which, turn in SPINS.items()},
+}
+# ...whose last VDI call is the menu's re-show of the mouse (THE_STALE_COUNT, above: contrl[3] the ROM's stack word) —
+# named on each, and each held to NEED it (`held_to_the_rom_s_turn` refuses a window a turn passes without).
+ENDS_ON_THE_RE_SHOW = frozenset(label for label, each in TURNS.items()
+                                if each.turn._replace(machine=A, staged=None) in (ON_THE_BAR, BOTH_IN_ONE_WAKE))
+# WHAT NO MACHINE HERE REACHES, AND NO TURN PINS (UNPINNED, by name): A MOUSE AT y >= 256. Every machine is the 320 x
+# 200 screen the captures boot (`test_every_machine_is_the_low_resolution_screen`), so no turn tells a handler handed
+# the answer's y whole from one handed its low byte (the reviewer's R22 / R23: `(uint8_t)` on hctl_button's or
+# hctl_rect's y survive every test). It takes a 400-row machine — a monochrome pre-init capture, the captures' tool's
+# to make — and one press on a gadget in its lower half. What holds the word meanwhile is each build's own text, read
+# (`test_on_the_blobs_the_button_s_handler_runs_before_the_bar_s...`): the answer's two words moved whole, a word each.
+
+
+def _turn(label):
+    each = TURNS[label].turn
+    return each._replace(also_dropped=THE_STALE_COUNT) if label in ENDS_ON_THE_RE_SHOW else each
+
+
+class _Sent(namedtuple("_Sent", "message arrival")):
+    """A turn's case as `vet_the_message` reads one."""
+
+
+@pytest.mark.parametrize("label", TURNS)
+def test_a_turn_of_ctlmgr_s_loop_is_the_rom_s_from_one_arrival_at_its_top_to_the_next(label):
+    """ONE TURN, BOTH SHORES (`aes_gemctrl.held_to_the_rom_s_turn`): w_setactive, the main wait — the screen manager
+    parked in it, its answer words the one frame it holds there — the lock, the handlers the wake asks for, the
+    lock let go; every door call handed what the ROM's is, the whole image the ROM's where the turn ends. And what
+    the case says of it: the message sent last, the multi-click count before and after."""
+    each = TURNS[label]
+    held = gc.held_to_the_rom_s_turn(label, _turn(label))
+    started, ended = held.made.started, held.ran.image
+    if each.message:
+        vet_the_message((gc.CTLMGR_TURN, label), _Sent(each.message, Arrival(each.turn.machine, None, None)), started, ended,
+                        last_written_to(held.made.reference.calls))
+    if each.bpend:
+        assert (aes.signed(case.word_in(started, gc.AES_GL_BPEND)), aes.signed(case.word_in(ended, gc.AES_GL_BPEND))) == each.bpend
+    if held.made.reference.idles:
+        assert held.ran.parked and "AES_CTLMGR_ANSWERS" in held.ran.slots_held, (
+            f"the turn slept in its main wait holding {held.ran.slots_held}: the answers' slot is live across it")
+
+
+def _routines_called(turn):
+    return [call.routine for call in gc.turned(turn).reference.calls]
+
+
+TAK_FLAG, UNSYNC, EV_MULTI, CT_CHGOWN = (addrs.AES_ROM_TAK_FLAG, addrs.AES_ROM_UNSYNC, addrs.AES_ROM_EV_MULTI,
+                                         addrs.AES_ROM_CT_CHGOWN)
+
+
+def test_the_lock_is_taken_after_the_wait_and_let_go_after_the_handlers():
+    """THE ORDER, on the ROM's own turn (and the C's is held to hand the door the same calls in the same order):
+    w_setactive's ct_chgown, THE WAIT, the lock — then whatever the handlers call — and the lock let go LAST. An
+    arrow's handler lets it go and takes it again in between."""
+    for turn in (_turn("the top window's closer clicked: WM_CLOSED"), _turn("the mouse onto a title, an item chosen (the bar): MN_SELECTED")):
+        called = _routines_called(turn)
+        assert called[:3] == [CT_CHGOWN, EV_MULTI, TAK_FLAG] and called[-1] == UNSYNC
+        assert TAK_FLAG not in called[3:] and UNSYNC not in called[:-1]
+    arrowed = _routines_called(_turn("the up arrow clicked (an arrow: the lock let go for a yield and taken again): WM_ARROWED"))
+    assert [each for each in arrowed if each in (TAK_FLAG, UNSYNC)] == [TAK_FLAG, UNSYNC, TAK_FLAG, UNSYNC]
+
+
+BUTTON_THEN_RECT = (HCTL_BUTTON, HCTL_RECT)
+
+
+@pytest.mark.parametrize("label, called", {
+    "the top window's closer clicked: WM_CLOSED": (HCTL_BUTTON,),
+    "the mouse onto a title, an item chosen (the bar): MN_SELECTED": (HCTL_RECT,),
+    "a button and the bar in one wake: the button's handler, then the menu": BUTTON_THEN_RECT,
+    "ARGUMENT CLASS, the count at 4; no menu bar, a button and the bar: 2": BUTTON_THEN_RECT,
+}.items())
+def test_the_handlers_the_rom_s_ctlmgr_calls_in_a_turn_are_what_the_case_says(label, called):
+    """THE PREMISE OF EACH KIND OF WAKE, read off the ROM's own turn at the handlers' entries: a button calls
+    hctl_button, the bar hctl_rect — and ONE WAKE THAT BRINGS BOTH calls both IN ONE TURN, the button's first."""
+    assert gc.turned(_turn(label)).handlers == called
+
+
+def test_a_key_calls_no_handler_and_a_spin_calls_hctl_rect_every_turn():
+    assert {gc.turned(_a_key_eaten(start)).handlers for start in KEY_STARTS} == {()}
+    assert [gc.turned(turn).handlers for turn in SPINS.values()] == [(HCTL_RECT,)] * len(SPINS)
+
+
+def test_with_no_menu_bar_a_turn_ends_at_once_and_the_next_is_the_same_turn_again():
+    """THE SPIN, as the ROM does it and as the C's turn is held to it (above, both arrivals): no idle, no poll,
+    nobody entered — the wait answers as it is made (the mouse is inside the rectangle it waits for it to enter),
+    hctl_rect finds no menu, the lock is taken and let go — and the screen manager is at its loop's top again, to
+    make the same four door calls: the sixth turn as the third."""
+    for made in map(gc.turned, SPINS.values()):
+        assert (made.reference.idles, made.reference.polls, made.reference.entered) == (0, 0, ())
+        assert [call.routine for call in made.reference.calls] == [CT_CHGOWN, EV_MULTI, TAK_FLAG, UNSYNC]
+        assert case.long_in(made.started, aes.AES_GL_MNTREE) == 0
+
+
+# ---- a key is eaten ----------------------------------------------------------------------------------------------------------
+# TWO STARTS. ON THE BAR PAST THE TITLES, the count at 1: where a handler or a step run on a key would do NOTHING (no
+# window, no title under the mouse; a count of 1 is never stepped) — so that turn alone holds only the wait and the
+# lock. ON THE TOP WINDOW'S CLOSER, THE COUNT AT 2 (the TWO_WAITERS machine after a first turn of the ROM's that
+# clicked that closer — the count the ROM's own): there the button's handler would watch the box and send WM_CLOSED
+# again, and a step on either bit would take the count to 1.
+A_CLOSER_CLICKED_FIRST = {0: (onto(gc.gadget(W, "the closer")),), 1: (click,)}
+KEY_STARTS = {
+    "on the bar past the titles, the count at 1": THE_CLOSER_CLICKED._replace(at_idle=None),
+    "on the top window's closer, the count at 2 (the ROM's own)": Turn(W, A_CLOSER_CLICKED_FIRST),
+}
+
+
+def _a_key_eaten(start="on the bar past the titles, the count at 1"):
+    turn = KEY_STARTS[start]
+    return turn._replace(staged=gc.a_key_in_its_own_queue(turn, A_KEY))
+
+
+@pytest.mark.parametrize("start", KEY_STARTS)
+def test_a_key_is_eaten_the_lock_taken_and_let_go_round_nothing(start):
+    """THE MAIN WAIT ASKS FOR KEYS AND ctlmgr READS NONE: with a key in the screen manager's own queue (an ARGUMENT
+    CLASS — the ROM's nq run over the turn's start, `aes_gemctrl.a_key_in_its_own_queue`) the wait answers at once,
+    NO HANDLER RUNS AND THE COUNT IS NOT STEPPED — held where each would show (the mouse on a gadget, the count at
+    2: on the ROM no handler is called, and the C's image is the ROM's: no box watched, no message, the count
+    left) — the lock is taken and let go, and THE KEY IS GONE, on both shores."""
+    turn = _a_key_eaten(start)
+    held = gc.held_to_the_rom_s_turn(f"a key eaten, {start}", turn)
+    made, reference = held.made, held.made.reference
+    assert (reference.idles, [call.routine for call in reference.calls]) == (0, [CT_CHGOWN, EV_MULTI, TAK_FLAG, UNSYNC])
+    assert made.handlers == ()
+    queue = case.long_in(made.started, gc.SCREEN_MANAGER + aes.PD_CDA) + gc.FM["CDA_KEY_QUEUE"]
+    count_at = queue + gc.FM["CQUEUE_COUNT"]
+    assert (case.word_in(made.started, count_at), case.word_in(held.ran.image, count_at)) == (1, 0)
+    assert message_of(held.ran.image) == message_of(made.started), "a key eaten sends nothing"
+    assert case.word_in(held.ran.image, gc.AES_GL_BPEND) == case.word_in(made.started, gc.AES_GL_BPEND)
+
+
+def test_the_key_turn_on_a_gadget_starts_where_a_handler_and_a_step_would_show():
+    """THE PREMISE of the second start, on the ROM's own machine: the mouse is on the top window's closer (the first
+    turn's own click was there: its WM_CLOSED is in the buffer), the count stands at 2 with nothing staged but the
+    key — and with NO key the same start's next button there is handed to hctl_button."""
+    turn = KEY_STARTS["on the top window's closer, the count at 2 (the ROM's own)"]
+    started = gc.start_of(turn)
+    assert case.word_in(started, gc.AES_GL_BPEND) == 2 and message_of(started)[0] == MESSAGES["WM_CLOSED"]
+    assert (aes.signed(case.word_in(started, GSX["AES_XRAT"])), aes.signed(case.word_in(started, GSX["AES_YRAT"]))) == gc.gadget(W, "the closer")
+    clicked = gc.turned(turn._replace(at_idle={0: click}))
+    assert clicked.handlers == (HCTL_BUTTON,)
+
+
+def test_every_machine_is_the_low_resolution_screen():
+    """(What UNPINS a mouse at y >= 256, above: 200 rows on every machine a turn or an arrival is made over.)"""
+    screens = {struct.unpack(">4h", gc.machine(key).ram[aes.AES_GL_RSCREEN:aes.AES_GL_RSCREEN + aes.GRECT_BYTES]) for key in gc.MACHINES}
+    assert screens == {(0, 0, 320, 200)}
+
+
+# ---- WM_TOPPED on the screen manager's own stack: the declared divergence, by name ----------------------------------------------
+STALE_WORDS_AT = slice(aes.AES_CT_MESSAGE + aes.AP_MSG_WORDS + aes.WORD_BYTES, aes.AES_CT_MESSAGE + aes.AP_MSG_BYTES)
+THE_STALE_WORDS_WHY = ("WM_TOPPED's words 4..7 (`aes/gemctrl.h`'s HCTL_STALE_WORD, ruling W2-R2): locals hctl_window never "
+                       "set — on the screen manager's own stack the residue of ctlmgr's last wait, in the C four zeroes")
+
+
+def _the_residue_s_places(made):
+    """WHERE THE FOUR WORDS LIE after the ROM's turn: in the screen manager's message buffer, and wherever its write
+    carried them — every run of the eight bytes the turn STORED, outside its own stack: `(lo, hi, why)` each."""
+    started, left = made.started, made.reference.memory
+    residue = bytes(left[STALE_WORDS_AT])
+    lo, hi, _why = gc.its_stack(started)
+    places, at = [], left.find(residue)
+    while at >= 0:
+        if not lo <= at < hi and started[at:at + len(residue)] != residue:
+            places.append((at, at + len(residue), THE_STALE_WORDS_WHY))
+        at = left.find(residue, at + 1)
+    return residue, tuple(places)
+
+
+def _with_zeroes_for_the_residue(residue):
+    """The ROM's door calls as the C is expected to make them: the message ap_rdwr is handed with the four stale
+    words the C's own (`HCTL_STALE_WORD`)."""
+    ours = struct.pack(">4h", *[gc.GEMCTRL["HCTL_STALE_WORD"]] * 4)
+
+    def handed_as(calls):
+        return [call._replace(arguments=tuple(each[:-len(residue)] + ours if isinstance(each, bytes) and each.endswith(residue)
+                                              else each for each in call.arguments))
+                if call.routine == addrs.AES_ROM_AP_RDWR else call for call in calls]
+    return handed_as
+
+
+def test_wm_topped_on_the_screen_manager_s_own_stack_differs_in_its_four_stale_words_and_nowhere_else():
+    """THE DECLARED DIVERGENCE WHERE IT IS REAL (ruling W2-R2). On the screen manager's OWN stack the ROM's
+    hctl_window sends, as WM_TOPPED's words 4..7, what its frame holds there — VETTED AS WHAT THEY ARE: the high
+    half of an address of the AES's own text, then the low half of an address inside the screen manager's stack —
+    and the C sends four zeroes. The turn is held with exactly those eight bytes left out BY NAME, wherever the
+    write carried them (the manager's buffer; the owner's pipe or the buffer it reads into), the message handed
+    to ap_rdwr compared with the C's four words in their place — and IS RED WITHOUT (the compare below refuses a
+    window the turn passes without)."""
+    residue, places = _the_residue_s_places(gc.turned(THE_OTHER_WINDOW_CLICKED))
+    text_half, stack_half, *_rest = struct.unpack(">4H", residue)
+    lo, hi, _why = gc.its_stack(gc.turned(THE_OTHER_WINDOW_CLICKED).started)
+    text_lo, text_hi = aes.AES_TEXT
+    assert text_lo >> 16 <= text_half <= (text_hi - 1) >> 16 and lo <= stack_half < hi, f"the residue is {residue.hex()}"
+    assert places and places[0][:2] == (STALE_WORDS_AT.start, STALE_WORDS_AT.stop) and len(places) <= 3
+    held = gc.held_to_the_rom_s_turn("the other window clicked: WM_TOPPED", THE_OTHER_WINDOW_CLICKED._replace(also_dropped=places),
+                                     _with_zeroes_for_the_residue(residue))
+    assert all(not any(held.ran.image[at:end]) for at, end, _why in places), "the C's four words are HCTL_STALE_WORD"
+    other = gc.other_window(A)
+    assert message_of(held.ran.image)[:4] == (MESSAGES["WM_TOPPED"], gc.pid_of(A, SM), 0, other.handle)
+    assert last_written_to(held.made.reference.calls) == other.owner
+
+
+def test_the_stale_words_are_left_out_of_no_turn_that_passes_without_them():
+    """...AND ONLY THERE: a turn that sends another message — the closer's WM_CLOSED, whose four words are the
+    window's rectangle on both shores — is refused the same windows by name."""
+    places = ((STALE_WORDS_AT.start, STALE_WORDS_AT.stop, THE_STALE_WORDS_WHY),)
+    with pytest.raises(AssertionError, match="is held without leaving any out"):
+        gc.held_to_the_rom_s_turn("the closer clicked", THE_CLOSER_CLICKED._replace(also_dropped=places))
+
+
+# ---- the booted machine's own trap save: named where it is not the snapshot's, and DEAD -------------------------------------------
+A_NOISE = bytes(range(0x61, 0x61 + addrs.TRAP_SAVE_FRAME_BYTES))
+
+
+def test_a_booted_machine_s_savptr_is_the_save_area_s_top_whatever_phase_the_snapshot_was_captured_in():
+    """THE FACT THE NAMING STANDS ON: every booted machine first idles with `savptr` at the save area's top (the
+    ROM's boot sets it there and no trap is open at an idle), so its trap-save frame is the area's last — while the
+    SNAPSHOT's lies there or one frame lower, by where its capture landed. `its_trap_save_beside_the_snapshot_s`
+    names the machine's frame exactly where the two are not one, and nothing where they are."""
+    for key in gc.MACHINES:
+        ram = gc.machine(key).ram
+        lo, hi, _why = gc.its_trap_save(ram)
+        assert hi == aes_event.SAVE_AREA_TOP and hi - lo == addrs.TRAP_SAVE_FRAME_BYTES
+        beside = gc.its_trap_save_beside_the_snapshot_s(ram)
+        assert beside == (() if aes_event.SNAPSHOT_SAVPTR == aes_event.SAVE_AREA_TOP else ((lo, hi, gc.TRAP_SAVE_WHY),))
+
+
+@pytest.mark.parametrize("label", ("the top window's closer clicked: WM_CLOSED",
+                                   "the mouse onto a title, an item chosen (the bar): MN_SELECTED"))
+def test_the_trap_save_frame_a_turn_leaves_out_is_dead_noise_in_it_changes_nothing(label):
+    """THE FRAME IS DEAD WHERE A TURN STARTS (no trap is open at the loop's top): with every byte of it NOISE the
+    ROM's own turn makes the same door calls, the same idles, calls the same handlers, STORES THE SAME BYTES THERE
+    (the polls' traps overwrite what they use) and leaves the same machine everywhere else — and the C's turn is
+    still the ROM's from that start."""
+    turn = _turn(label)
+    lo, hi, _why = gc.its_trap_save(gc.start_of(turn))
+    noisy = turn._replace(staged=("NOISE in the dead trap-save frame", {lo: A_NOISE}))
+    quiet, made = gc.turned(turn), gc.turned(noisy)
+    assert made.started[lo:hi] == A_NOISE and quiet.started[lo:hi] != A_NOISE
+    assert (made.reference.calls, made.reference.idles, made.handlers) == (quiet.reference.calls, quiet.reference.idles, quiet.handlers)
+    assert made.reference.memory[:lo] + made.reference.memory[hi:] == quiet.reference.memory[:lo] + quiet.reference.memory[hi:]
+    stored = [at for at in range(lo, hi) if made.reference.memory[at] != A_NOISE[at - lo]]
+    assert stored and all(made.reference.memory[at] == quiet.reference.memory[at] for at in stored)
+    gc.held_to_the_rom_s_turn(f"{label}, noise in the trap save", noisy)
+
+
+# ---- the machinery's own refusals ---------------------------------------------------------------------------------------------
+def test_a_turn_that_never_comes_back_to_the_loop_s_top_is_refused():
+    """A key typed where the keyboard is the top window's owner's wakes no screen manager: the machine idles."""
+    with pytest.raises(AssertionError, match="the turn does not end"):
+        gc.turned(THE_CLOSER_CLICKED._replace(at_idle={0: aes_event.key(A_KEY >> 8)}))
+
+
+def test_a_delivery_the_turn_never_takes_is_refused():
+    with pytest.raises(AssertionError, match="nothing was delivered at the idles"):
+        gc.turned(THE_CLOSER_CLICKED._replace(at_idle={**THE_CLOSER_CLICKED.at_idle, 5: RELEASE}))
+
+
+def test_a_turn_starts_with_the_screen_manager_running_at_its_loop_s_top_its_lock_free():
+    made = gc.turned(THE_CLOSER_CLICKED)
+    import test_aes_wm_update as wm_update
+    assert case.long_in(made.started, aes.AES_RLR) & BUS == gc.SCREEN_MANAGER and made.started[aes.AES_INDISP] == 0
+    assert wm_update.spb_of(make_image({0: made.started}))[1] != gc.SCREEN_MANAGER, "ctlmgr holds no lock at its loop's top"
+    assert bytes(made.started) == bytes(gc.start_of(THE_CLOSER_CLICKED)), "the turn's start is its arrival's machine"
+
+
+# ---- THE ENTRY ON BOTH BLOBS: what the process pays for ever --------------------------------------------------------------------
+THE_ROM_S_FRAME = 24                    # `link a6,#-12` (4 + 12) and `movem.l d6-d7,-(sp)` (8): $fe49d2, $fe49d6
+ENTRY = "aes_rom_ctlmgr"
+# How much deeper than the ROM's ctlmgr ours may stand where its main wait reaches the dispatcher: 14 bytes the
+# call's ABI (36 argument bytes against the ROM's 22, whose last lies in the frame's scratch longword) and 14 below
+# ev_multi's entry (GCC's frames of the event layer: not ctlmgr's). Measured 28 on both blobs; the prototype's was 76.
+THE_ABI_S_AND_EV_MULTI_S_OWN = 28
+ELFS = {"the bench blob": lambda: isr.blob().elf, "the shipped blob": lambda: transcription.SHIPPED_ELF}
+_LEA_SP = re.compile(r"^lea %sp@\((-\d+)\),%sp$")
+_MOVEM_PUSH = re.compile(r"^moveml ([%\w/-]+),%sp@-$")
+_PUSH_ONE = re.compile(r"^movel %(?:[ad]\d|fp),%sp@-$")
+
+
+def _registers_in(listed):
+    """How many registers a `movem` list names (`%d2/%a2/%fp`, `%d3-%d5`)."""
+    order = [f"%d{n}" for n in range(8)] + [f"%a{n}" for n in range(6)] + ["%fp"]
+    count = 0
+    for part in listed.split("/"):
+        first, _dash, last = part.partition("-")
+        count += order.index(last or first) - order.index(first) + 1
+    return count
+
+
+def frame_of_the_entry(elf):
+    """THE BYTES `aes_rom_ctlmgr`'s OWN PROLOGUE TAKES below the stack it is entered on, read off its listing: the
+    locals' `lea` and the saved registers, up to its first instruction that is neither."""
+    frame = 0
+    for _at, text in aes_switch._listed_functions(elf)[ENTRY]:
+        lea, movem = _LEA_SP.match(text), _MOVEM_PUSH.match(text)
+        if lea:
+            frame -= int(lea.group(1))
+        elif movem:
+            frame += aes.LONG_BYTES * _registers_in(movem.group(1))
+        elif _PUSH_ONE.match(text):
+            frame += aes.LONG_BYTES
+        else:
+            return frame
+    raise AssertionError(f"{ENTRY} is all prologue")
+
+
+@pytest.mark.parametrize("elf", ELFS.values(), ids=ELFS)
+def test_the_entry_s_own_frame_is_no_more_than_the_rom_s(elf):
+    """RULING W2-R3's FIRST LEVER, HELD: the screen manager's every frame is stacked under ctlmgr's, on 1,196 bytes,
+    so the entry and its loop cost the stack no more than the ROM's 24 — the six answer words and the registers
+    GCC saves (a function that never returns saves what it uses all the same). The design pass's prototype was 72."""
+    assert gc.GEMCTRL["CTL_WAIT_EVENTS"] and frame_of_the_entry(elf()) <= THE_ROM_S_FRAME
+
+
+_A_WORD_OF_THE_FRAME = re.compile(r"^moveaw %sp@\(\d+\),%a\d$")
+_PUSHED_WHOLE = re.compile(r"^movel %a\d,%sp@-$")
+_ALWAYS = re.compile(r"^(?:bra[swl]?|jra) ([0-9a-f]+) ")
+_A_TEST_OR_A_CALL = re.compile(r"^(?:btst #(\d+),|jsr .*<(\w+)>)")
+
+
+def _next_test_or_call(body, index):
+    """What `aes_rom_ctlmgr` does next after `body[index]`, an unconditional branch followed: the bit its next
+    `btst` reads, or the routine its next `jsr` calls."""
+    at_index = {at: nth for nth, (at, _text) in enumerate(body)}
+    while True:
+        index += 1
+        text = body[index][1]
+        always, found = _ALWAYS.match(text), _A_TEST_OR_A_CALL.match(text)
+        if always:
+            index = at_index[int(always.group(1), 16)] - 1
+        elif found:
+            return int(found.group(1)) if found.group(1) else found.group(2)
+
+
+@pytest.mark.parametrize("elf", ELFS.values(), ids=ELFS)
+def test_on_the_blobs_the_button_s_handler_runs_before_the_bar_s_and_the_lock_is_let_go_after_both(elf):
+    """THE LOOP'S OWN ORDER, READ OFF EACH BUILD (the host's turns hold it by what it does — a button and the bar in
+    one wake, the menu worked: the images at the menu's door calls differ with the handlers swapped; this holds it
+    where the blobs' text is, which no turn runs on yet): after the wait the lock; after the lock's taking the test
+    of bit 1; after hctl_button the test of bit 2, never the lock's release; after hctl_rect the lock's release,
+    never a test; the count's step before each handler."""
+    body = aes_switch._listed_functions(elf())[ENTRY]
+    after = {}
+    for index, (_at, text) in enumerate(body):
+        called = re.match(r"^jsr .*<(\w+)>", text)
+        if called:
+            after.setdefault(called.group(1), set()).add(_next_test_or_call(body, index))
+    button_bit, bar_bit = 1, 2                               # EV_MU_BUTTON, EV_MU_M1: `btst #1`, `btst #2`
+    assert after["aes_hctl_button"] == {bar_bit} and after["aes_hctl_rect"] == {"aes_wm_update"}
+    assert after["aes_ev_multi"] == {"aes_wm_update"} and after["aes_wm_update"] == {button_bit, "aes_w_setactive"}
+    assert after["a_pending_click_wait_counted_off"] == {"aes_hctl_button", "aes_hctl_rect"}
+    # ...and EACH HANDLER IS HANDED THE ANSWER'S TWO WORDS WHOLE (a word each, sign-extended into its slot by the move
+    # into an address register) under the image: what no turn can hold of y, on a 200-row screen (UNPINNED, above).
+    for index, (_at, text) in enumerate(body):
+        if re.match(r"^jsr .*<aes_hctl_(?:button|rect)>", text):
+            pushed = [each for _at, each in body[index - 5:index]]
+            assert [bool(_A_WORD_OF_THE_FRAME.match(each)) for each in pushed] == [True, False, True, False, False], pushed
+            assert all(_PUSHED_WHOLE.match(each) for each in (pushed[1], pushed[3])), pushed
+
+
+def test_the_reading_of_a_prologue_counts_a_lea_and_every_saved_register():
+    assert (_registers_in("%d2/%a2/%fp"), _registers_in("%d3-%d5/%a2-%a3"), _registers_in("%d2")) == (3, 5, 1)
+
+
+@pytest.mark.parametrize("elf", ELFS.values(), ids=ELFS)
+def test_the_entry_is_entered_by_no_call_reads_nothing_above_its_stack_and_never_returns(elf):
+    """THE CONTRACT, read off the build: no `rts` / `rte` / `unlk` in it (it never returns, and has no frame pointer
+    to unlink — A6 is its image base); no operand reaches above the stack it was entered on (no return address, no
+    argument: `%sp@(d)` stays inside its own frame and the arguments it pushed); every callee by name (no `jsr` through
+    a register: `no-function-cse`), and of the once-only part THE COPY BEFORE THE CLEAR — the first call is
+    rc_copy's, and the leave word's `clrw` comes after it."""
+    body = [text for _at, text in aes_switch._listed_functions(elf())[ENTRY]]
+    assert not [text for text in body if text.split()[0] in ("rts", "rte", "rtr", "unlk")]
+    assert not [text for text in body if re.match(r"^jsr %(?:a\d|fp)@", text)]
+    calls = [index for index, text in enumerate(body) if text.startswith("jsr ")]
+    clears = [index for index, text in enumerate(body) if text.startswith("clrw ") and "%sp" not in text]
+    assert "aes_rc_copy" in body[calls[0]] and len(clears) == 1 and calls[0] < clears[0] < calls[1]
+    assert "aes_w_setactive" in body[calls[1]]
+    deepest_argument_bytes = 36                         # ev_multi's: the image and seven longword slots
+    reach = [int(found) for text in body for found in re.findall(r"%sp@\((\d+)", text)]
+    assert max(reach) < frame_of_the_entry(elf()) + deepest_argument_bytes
+
+
+# ---- THE TWINS ON BOTH BLOBS, as far as a pending build can be run there --------------------------------------------------------
+# No machine's screen manager is ours yet (the takeover is the flip's), so no TURN runs on a blob here. What does:
+#   ictlmgr     whole, over the boot's own arrival — the two code longwords it stores OUR ENTRY's address, mapped back
+#               to the ROM's through the registry's entry (`aes_event.SCREEN_MANAGER_ENTRY`: the mapping the takeover
+#               applies) and nothing dropped there;
+#   the entry   from the screen manager's first entry in the ROM's boot — the stack empty, the bytes above it POISONED —
+#               through the once-only part and into its main wait, as far as its first dispatch: where the ROM's own
+#               ctlmgr, run from the same machine, stands with the same machine outside the two stacks.
+BENCHES = {"the bench blob": isr.blob, "the shipped blob": isr.shipped_blob}
+OUR_ENTRY_S_MAPPING = aes_event.SCREEN_MANAGER_ENTRY
+PSETUP_S_SR_WORD = range(aes.AES_SR_PSETUP, aes.AES_SR_PSETUP + aes.WORD_BYTES)
+BLOB_RUN_INSNS = 2_000_000              # a boot's stretch from the screen manager's first entry to its first wait: 6,500
+
+
+def _in_ram(blob):
+    return frozenset(range(blob.base, blob.end)) | frozenset(case.STACK_BAND) | aes_event.LINE_F_MASK_BYTES
+
+
+@pytest.mark.parametrize("bench", BENCHES.values(), ids=BENCHES)
+@pytest.mark.parametrize("accessories", CAPTURES.values(), ids=CAPTURES)
+def test_ictlmgr_on_a_blob_stores_our_entry_where_the_rom_stores_its_ctlmgr_and_is_the_rom_s_beside(bench, accessories):
+    """THE SECOND DIFFERENTIAL OF ictlmgr, on each blob, at the boot's own arrival: our build's run leaves the ROM's
+    machine — outside the blob, the run's stack, the Line-F mask word and psetup's SR save word (each build's own
+    condition codes) — ONCE THE TWO CODE LONGWORDS ARE MAPPED: each holds `aes_rom_ctlmgr`'s address in THIS blob,
+    where the ROM's run stores $fe49d2, and they are the registry's two slots and no other longword. (Measured:
+    2,598 cycles on the bench blob and 2,560 on the shipped one against the ROM's 3,614 — 0.71 / 0.70.)"""
+    blob, (arguments, pokes) = bench(), _ictlmgr_arrived(accessories)
+    the_rom_s, the_rom_s_writes, registers = aes_event._rom_run(make_image(aes.staged(gc.ICTLMGR, arguments, pokes)), addrs.AES_ROM_ICTLMGR)
+    ours = blob._call(make_image(pokes), "aes_ictlmgr", (0, *arguments))
+    entry = blob.entry(OUR_ENTRY_S_MAPPING.symbols[addrs.AES_ROM_CTLMGR])
+    assert [case.long_in(ours.image, slot) for slot in OUR_ENTRY_S_MAPPING.slots] == [entry] * 2, "our entry, at both sites"
+    mapped = bytearray(ours.image)
+    for slot in OUR_ENTRY_S_MAPPING.slots:
+        mapped[slot:slot + aes.LONG_BYTES] = addrs.AES_ROM_CTLMGR.to_bytes(aes.LONG_BYTES, "big")
+    left_out = _in_ram(blob) | frozenset(PSETUP_S_SR_WORD)
+    assert not aes_event.differing(mapped, the_rom_s, left_out)
+    assert ours.d0 == registers["d0"] == gc.SCREEN_MANAGER
+    # ...AND IT WRITES WHAT THE ROM'S WRITES, NO BYTE MORE (the two ledgers: a store of the value a byte already held
+    # is in no image) — outside each build's own stack, the blob, the mask word and psetup's save word.
+    our_writes, truncated = emu.bench_writes(ours.image)
+    assert not truncated
+    stored_by = [frozenset(at for at in writes if at < gc.RAM_BYTES and at not in left_out) for writes in (our_writes, the_rom_s_writes)]
+    assert stored_by[0] == stored_by[1], f"ours alone stores at {sorted(map(hex, stored_by[0] - stored_by[1]))}, the ROM's alone at {sorted(map(hex, stored_by[1] - stored_by[0]))}"
+    # ...AND ITS PRICE, held here while no table line can be (the registry maps no row's slots through that entry
+    # until the flip): our cycles, net of the bench's entry, against the ROM routine's own — under Tier 3's bar.
+    _entry_insns, entry_cycles = blob.overhead
+    assert (ours.cycles - entry_cycles) / registers["cycles"] <= bench_tier3().TIER3_FUNCTION_BAR
+
+
+def _run_to_its_first_dispatch(memory, entry, dsptch, registers, top):
+    """A run ENTERED AS switchto's `rte` ENTERS THE SCREEN MANAGER — at `entry`, A7 the stack's top `top`, the register
+    file `registers`, nothing staged at or above the top (the two longwords the oracle's entry lays there put back
+    as they were) — and stopped at its first arrival at `dsptch`: the stack pointer there."""
+    held = bytes(memory[top:top + 2 * aes.LONG_BYTES])
+    emu.run_bench(memory, entry, case.long_in(memory, top + aes.LONG_BYTES), top, emu.SENTINEL, max_insns=BLOB_RUN_INSNS,
+                  door=frozenset({entry}), seed_regs=[registers[name] for name in emu.REPORTED_REGS])
+    memory[top:top + len(held)] = held
+    try:
+        emu.bench_door_arm(frozenset({dsptch}))
+        result = emu.bench_resume(entry, max_insns=BLOB_RUN_INSNS)
+        assert (result["status"], emu.bench_door_pc()) == (emu.BENCH_DOOR, dsptch), "the run never reached its dispatcher"
+        return emu.bench_door_sp()
+    finally:
+        emu.bench_abort()
+
+
+A_POISON = 0xa5                         # no address, no word of any frame
+
+
+@pytest.mark.parametrize("bench", BENCHES.values(), ids=BENCHES)
+@pytest.mark.parametrize("accessories", CAPTURES.values(), ids=CAPTURES)
+def test_on_a_blob_the_entry_runs_from_the_first_entry_into_its_main_wait_as_the_rom_s_ctlmgr_does(bench, accessories):
+    """THE ENTRY'S CONTRACT, RUN (and the loop's head with it): entered where the ROM's boot enters ctlmgr, with the
+    eight bytes at and above its stack's top POISONED on our shore — it has no return address and no argument, and
+    reads none — our build reaches its dispatcher (the main wait blocks: nothing is ready) with THE ROM'S MACHINE
+    outside the screen manager's stack and the blob: the once-only part, w_setactive and the wait queued, its three
+    events and its button among them. And it stands no deeper there than the ROM's ctlmgr by more than the 28 bytes
+    measured (14 the call's ABI, 14 below ev_multi's entry): a bound, read off nothing a layout decides."""
+    blob, boot = bench(), gc.the_first_entry(accessories)
+    lo, top, _why = gc.its_stack(boot.ram)
+    the_rom_s = make_image({0: boot.ram})
+    its_depth = top - _run_to_its_first_dispatch(the_rom_s, addrs.AES_ROM_CTLMGR, addrs.AES_ROM_DSPTCH, boot.registers, top)
+    ours = make_image({0: boot.ram})
+    ours[blob.base:blob.base + len(blob.blob)] = blob.blob
+    poisoned = slice(top, top + 2 * aes.LONG_BYTES)
+    kept, ours[poisoned] = bytes(ours[poisoned]), bytes([A_POISON]) * (poisoned.stop - poisoned.start)
+    registers = {**boot.registers, "pc": blob.entry(ENTRY)}
+    our_depth = top - _run_to_its_first_dispatch(ours, blob.entry(ENTRY), blob.entry("aes_dsptch"), registers, top)
+    assert set(ours[poisoned]) == {A_POISON}, "our run stored at or above the top of the stack it was entered on"
+    ours[poisoned] = kept
+    # ...and the frame the keyboard poll's BIOS trap saves under this machine's own `savptr` (w_setactive's wait
+    # polls the keyboard): the caller's registers and return address, each build's own — as every page leaves it out.
+    savptr = case.long_in(boot.ram, addrs.SYSVAR_SAVPTR)
+    left_out = _in_ram(blob) | frozenset(range(lo, top)) | frozenset(range(savptr - addrs.TRAP_SAVE_FRAME_BYTES, savptr))
+    assert not aes_event.differing(ours, the_rom_s, left_out)
+    assert 0 < our_depth - its_depth <= THE_ABI_S_AND_EV_MULTI_S_OWN, f"ours stands {our_depth} deep at its dispatch, the ROM's {its_depth}"

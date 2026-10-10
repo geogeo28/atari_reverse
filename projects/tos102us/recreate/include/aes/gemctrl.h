@@ -1,6 +1,7 @@
-/* aes/gemctrl.h — the SCREEN MANAGER's four HANDLERS (`src/aes/gemctrl.c`): what its main loop (ctlmgr `$fe49d2`, the
- * ROM's own until band 5's wave 2) calls when the wait it sleeps in comes back with a button or with the mouse on the
- * menu bar. They run in the screen manager's process (PD1), on its stack, the screen's lock taken by ctlmgr.
+/* aes/gemctrl.h — the SCREEN MANAGER: its four HANDLERS (`src/aes/gemctrl.c`), what its main loop calls when the wait
+ * it sleeps in comes back with a button or with the mouse on the menu bar — they run in the screen manager's process
+ * (PD1), on its stack, the screen's lock taken by ctlmgr — and THE LOOP ITSELF with the routine that makes the process
+ * (`src/aes/ctlmgr.c`: ctlmgr `$fe49d2`, ictlmgr `$fe4a6a`; below).
  *
  *   $fe456a ct_msgup(message, owner, five words)   the message sent to `owner` (ap_sendmsg, in the manager's own
  *                                                  buffer) unless it is 0 — then the button waited UP, a yield a turn
@@ -114,7 +115,54 @@
 /* desk_pid[] (`aes/mnlib.h`'s AES_DESK_PID): a process id a registered accessory, a word each ($fe496a adda.l a0,a0). */
 #define HCTL_DESK_PID_BYTES   2
 
+/* ---- ctlmgr `$fe49d2` and ictlmgr `$fe4a6a` (`src/aes/ctlmgr.c`) ----------------------------------------------------
+ *   $fe49d2 ctlmgr()        THE SCREEN MANAGER'S PROCESS, entered once by switchto's `rte` (psetup's frame) and never
+ *                           left. ONCE: the menu bar's rectangle copied into the active one, the leave word of its
+ *                           own mouse wait cleared. THEN, A TURN AFTER A TURN: the top window's owner given the mouse
+ *                           and the keys (w_setactive); THE MAIN WAIT — a key, a button, the mouse onto the bar;
+ *                           the screen's lock taken; a button handed to hctl_button, the mouse on the bar to
+ *                           hctl_rect (both, in that order, where one wake brought both); the lock let go.
+ *   $fe4a6a ictlmgr(pid)    no accessory has an entry in the desk menu yet; the process made (pstart) to begin at
+ *                           ctlmgr, named SCRENMGR, ctlmgr its load address too. `pid` is read by nobody.
+ * ALCYON C both. ctlmgr's frame is its six answer words (`link a6,#-12`) and two saved registers. */
+/* The main wait's events ($fe4a12 move.w #7,-(sp)): `aes/evdoor.h`'s EV_MU_KEYBD | EV_MU_BUTTON | EV_MU_M1. A KEY IS
+ * WAITED FOR AND THEN IGNORED — bit 0 of the answer is tested by nothing ($fe4a26, $fe4a44: bits 1 and 2): it is
+ * eaten, the lock taken and let go round nothing. */
+#define CTL_WAIT_EVENTS       7
+/* ...its button: ONE click, any button's change counted, the state wanted the left one down alone ($fe49fe move.l
+ * #$0001ff01,-(sp): `aes/aes.h`'s BUTTON_PARM_* — clicks 1, mask $ff, state $01). */
+#define CTL_WAIT_CLICKS       1
+#define CTL_WAIT_BUTTON_MASK  0xff
+#define CTL_WAIT_BUTTON_STATE 0x01
+/* ...and what it does not wait for: a timer, a message ($fe49fc, $fe4a04 clr.l -(sp)). BOTH mouse rectangles are the
+ * screen manager's own MOBLK, gl_ctwait (`aes/evinput.h`'s AES_GL_CTWAIT_LEAVE), though only the first is asked. */
+#define CTL_WAIT_NONE         0
+/* The answers a handler is handed: the mouse where the event found it, the first two words ($fe4a3c, $fe4a5a move.l
+ * -12(a6),-(sp): x the high word, y the low). */
+#define CTL_ANSWER_MOUSE_X    0
+#define CTL_ANSWER_MOUSE_Y    1
+/* A wake by a button or by the bar counts one multi-click wait off — never the last one (`aes/evasync.h`'s
+ * AES_GL_BPEND; $fe4a2c, $fe4a4a cmpi.w #1 / ble: a SIGNED compare). */
+#define CTL_BPEND_KEPT        1
+/* The process's name, the ROM's own string ($fe4a86 move.l #$fef826,-(sp)): "SCRENMGR.LOC", of which pd_nameit keeps
+ * the eight characters before the dot. */
+#define AES_SCRENMGR_NAME     0xfef826   /* bytes: "SCRENMGR.LOC\0"                                              */
+
 #ifndef __ASSEMBLER__
+#ifdef RECREATE_HOST_DIFFERENTIAL
+/* OFF TARGET ctlmgr is its two parts, each a call that returns: the once-only part, and ONE TURN of the loop — from
+ * the loop's top (`addrs.h`'s AES_ROM_CTLMGR_LOOP) to the next arrival there. The host runs ONE process's C, its
+ * caller's (`host_slot.h`, THE AUDIT): each refuses by name an entry made inside the dispatcher — a parked process
+ * "resumed" in C from the model's process hook. */
+void aes_ctlmgr_begins(uint8_t *image);                                                              /* $fe49d2 */
+void aes_ctlmgr_turn(uint8_t *image);                                                                /* $fe49f2 */
+#else
+/* ON TARGET it is THE ENTRY the screen manager's first frame names: entered by switchto's `rte` on the process's empty
+ * stack — no return address, no argument, nothing expected in any register — and never left. */
+__attribute__((noreturn)) void aes_rom_ctlmgr(void);                                                 /* $fe49d2 */
+#endif
+uint32_t aes_ictlmgr(uint8_t *image, int16_t pid);                                                   /* $fe4a6a */
+
 void aes_ct_msgup(uint8_t *image, int16_t message, int16_t owner, int16_t word3, int16_t word4, int16_t word5,
                   int16_t word6, int16_t word7);                                                      /* $fe456a */
 void aes_hctl_window(uint8_t *image, int16_t window, int16_t mouse_x, int16_t mouse_y);              /* $fe45a2 */
