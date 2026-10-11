@@ -39,20 +39,26 @@ from the listing), and no interrupt is taken at a run's deepest point — the ne
 THE GATE IS THE SHIPPED BLOB'S BOUND (the program); the bench blob links the C twins of raster cores the ROM ships
 as its own instructions, and its figure is printed and pinned beside it, gating nothing.
 
-WHAT IS NOT READ HERE (wave 3, ruling W2-R5): a process that enters the AES by `trap #2` runs the opcode switch,
-whose jump table the reading refuses by name — no path read here goes through it (held by a test).
+A PROCESS THAT ENTERS BY `trap #2` — THE TRAP PATH (band 5 wave 3, rulings W2-R5 and W3-R8; the section of that
+name below). An accessory's AES call runs on ITS OWN stack: the trap's handler, aes_entry, the marshal, THE OPCODE
+SWITCH — whose jump table the reading now reads (`aes_switch.jump_tables`) — and the arm of the call. The same four
+terms, the same verdict, beside the two stacks an accessory can have: PD2's 1,396 bytes (the first one, in the
+AES's static PD) and an allocated PD's 1,788. And the two PRIVATE stacks of the door's neighbours: crit_err's
+2,048 bytes and the 1,024 the desk allocates for ub_trampoline.
 """
 import collections
 import functools
+import hashlib
 import re
 import struct
 from collections import namedtuple
 
 import derived
-from harness import addrs, emu, make_image
+from harness import BASE_IMAGE, addrs, emu, make_image
 from recreate_kit import rom_bench
 
 import aes
+import aes_aptape
 import aes_boot
 import aes_event
 import aes_evinput
@@ -62,6 +68,7 @@ import aes_switch
 import aes_switching
 import case
 import isr
+import rom_data
 import transcription
 
 LONG_BYTES, WORD_BYTES = aes.LONG_BYTES, aes.WORD_BYTES
@@ -128,12 +135,8 @@ def entered_at(elf):
 
 def bound(blob):
     """The screen manager's `Bound` on `blob`."""
-    read, (entries, allowed) = reading(blob.elf), entered_at(blob.elf)
-    above = [(ALLOWED, allowed)] if allowed else []
-    deepest = max(entries, key=lambda entry: read.of(entry).deepest)
-    trapped = max(entries, key=lambda entry: aes_switch.depth_of((read.of(entry).at_a_trap,)))
-    return Bound(entries, allowed, allowed + read.of(deepest).deepest, above + read.chain(deepest),
-                 allowed + read.of(trapped).at_a_trap, above + read.chain(trapped, to_the_trap=True))
+    entries, allowed = entered_at(blob.elf)
+    return _bound_from(reading(blob.elf), entries, allowed, ALLOWED)
 
 
 def at_the_userdef_call(blob):
@@ -171,8 +174,7 @@ def untouched_at_most(blob):
     unbroken run of such instructions (the next push stores at the SP they left). What a measured depth — a run's
     lowest STORE — can be short of the truth by."""
     read = reading(blob.elf)
-    bound(blob)
-    return max(longest_allocation(read.functions()[name]) for name in read.functions_read() & set(read.functions()))
+    return max(longest_allocation(read.functions()[name]) for name in read.functions_read(*entered_at(blob.elf)[0]) & set(read.functions()))
 
 
 def longest_allocation(body):
@@ -214,6 +216,7 @@ class _ExceptionsOn:
     process's AES call) is not its business, and every stop of the inner watch's is handed on."""
 
     def __init__(self, stack, inner=None, handler=aes_event.VDI_TRAP, past_its_word=0):
+        # (`handler`: its callers hand the one THEIR machine holds — `gem_trap_on`, band 5 wave 3 slice M — the ROM's by default)
         self._lo, self._top = stack
         assert self._top - self._lo <= WATCHED_UNDER_AN_EXCEPTION, "the pattern would be laid over more than a stack"
         self._inner, self._armed, self._handler = inner, frozenset(inner.first) if inner else frozenset(), handler
@@ -413,10 +416,14 @@ def measured(name, shore=THE_ROM_S):
 
 
 # ---- WHAT THE OS NEEDS UNDER A TRAP, BY THE VDI CALL — AND UNDER A LINE-A TRAP ----------------------------------------------
-def _watched_from_its_frame(pokes, entry, inner, shore, handler=aes_event.VDI_TRAP, past_its_word=0):
+def _watched_from_its_frame(pokes, entry, inner, shore, handler=None, past_its_word=0):
     """The ROM's routine at `entry` over `pokes` (its frame staged) on the run's own stack, watched at the
-    exceptions it takes through `handler` — the VDI of `shore` under its traps: the `Trap`s."""
+    exceptions it takes through `handler` — the VDI of `shore` under its traps: the `Trap`s. `handler` None: THE GEM
+    TRAP'S, AS THIS RUN'S OWN MACHINE HOLDS IT in `$88` (band 5 wave 3, slice M: the ROM's on every machine but one
+    whose trap door is ours — a watch keyed on the ROM's would see no trap there)."""
     memory = with_our_vdi(make_image(pokes), shore)
+    handler = aes_event.gem_trap_on(memory) if handler is None else handler
+    aes_event.vet_a_handler_of_the_machine(memory, handler, f"the watch of {entry:#x}'s exceptions")
     watch = _ExceptionsOn((emu.STACK_TOP - WATCHED_UNDER_AN_EXCEPTION, emu.STACK_TOP), inner, handler, past_its_word)
     rom_bench.watched_original(memory, entry, watch)
     rom_bench.vet_the_run_just_made(f"the ROM's run of {entry:#x}, watched at its exceptions")
@@ -424,7 +431,10 @@ def _watched_from_its_frame(pokes, entry, inner, shore, handler=aes_event.VDI_TR
 
 
 def _row_of(routine, arguments, pokes, at_idle):
-    """A handler's call as the row that switches it is (`aes_event.woken_row`): what settles it from the ROM's runs."""
+    """A handler's call as the row that switches it is (`aes_event.woken_row`): what settles it from the ROM's runs —
+    or, for a routine of THE_ROWS_BESIDE, the row its own battery registers (no handler: no objects to settle)."""
+    if routine in A_ROW_OF_ITS_OWN:
+        return aes_switching.SwitchingRow("", routine, arguments, lambda: pokes, at_idle, answered=False)
     return aes_event.woken_row("", routine, arguments, lambda: pokes, at_idle, objects=True, answered=False)
 
 
@@ -469,6 +479,21 @@ THE_ROUTINES_BESIDE = {
 }
 
 
+# ...AND THE ROWS THAT SWITCH BESIDE THEM (band 5 wave 3: the trap path's calls no scenario of the screen manager's
+# makes), each the row its own battery registers, taken through its own deliveries:
+#   ap_tplay, four records played .............. the motion and cursor routines exchanged round the playback
+#                                                (vex_motv, vex_curv) — appl_tplay's arm of the opcode switch
+A_ROW_OF_ITS_OWN = (aes_aptape.AP_TPLAY,)
+THE_ROWS_BESIDE = {"ap_tplay, four records played": lambda: aes_aptape.playback_row(aes_aptape.PLAYED)}
+
+
+@functools.cache
+def traps_of_a_row(name, shore=THE_ROM_S):
+    """Every `trap #2` the row `name` of THE_ROWS_BESIDE takes, the VDI of `shore` under it: `Trap`s."""
+    row = THE_ROWS_BESIDE[name]()
+    return _traps_taken(row.name, row.arguments, row.machine(), row.at_idle, shore, _content_of(shore))
+
+
 @derived.kept
 def _traps_of_a_routine(routine, arguments, pokes, shore, blob_s_bytes):
     """THE DERIVATION: the ROM's routine `addrs.<routine>` over `pokes`, its frame of `arguments` staged, on the
@@ -493,6 +518,7 @@ def os_needs(shore=THE_ROM_S):
     the VDI of `shore` under the trap: `{opcode: bytes}`."""
     needs = {}
     taken = [trap for name in SCENARIOS for trap in traps_of(name, shore)]
+    taken += [trap for name in THE_ROWS_BESIDE for trap in traps_of_a_row(name, shore)]
     for trap in taken + [trap for name in THE_ROUTINES_BESIDE for trap in traps_beside(name, shore)]:
         needs[trap.opcode] = max(needs.get(trap.opcode, 0), trap.under)
     return needs
@@ -599,9 +625,13 @@ def unstored_allocations(elf):
     return {at: allocated for run in listed_runs(transcription.listing(elf)) for at, allocated in unstored_runs(run).items()}
 
 
-def _arrivals_from_its_frame(pokes, entry, inner, shore, places):
+def _arrivals_from_its_frame(pokes, entry, inner, shore, places, trap=None):
+    """...`trap` None: the GEM trap's handler AS THIS RUN'S OWN MACHINE HOLDS IT (slice M); one handed in is held to be
+    a handler of that machine where the watch is armed, or the run is refused blind."""
     memory = with_our_vdi(make_image(pokes), shore)
-    counting = _ArrivalsAt(places, inner)
+    trap = aes_event.gem_trap_on(memory) if trap is None else trap
+    aes_event.vet_a_handler_of_the_machine(memory, trap, f"the count of {entry:#x}'s arrivals")
+    counting = _ArrivalsAt(places, inner, trap)
     rom_bench.watched_original(memory, entry, counting)
     rom_bench.vet_the_run_just_made(f"the ROM's run of {entry:#x}, counted at {len(places)} places")
     return tuple(sorted((opcode, place, times) for (opcode, place), times in counting.arrived.items()))
@@ -641,6 +671,10 @@ def arrivals(places, shore):
         for name, made in THE_ROUTINES_BESIDE.items():
             routine, arguments, pokes = made()
             counted = _arrivals_in_a_routine(routine, arguments, pokes, shore, _content_of(shore), some)
+            arrived.update({(opcode, place): times for opcode, place, times in counted})
+        for name, made in THE_ROWS_BESIDE.items():
+            row = made()
+            counted = _arrivals_in_a_scenario(row.name, row.arguments, row.machine(), row.at_idle, shore, _content_of(shore), some)
             arrived.update({(opcode, place): times for opcode, place, times in counted})
     return arrived
 
@@ -852,33 +886,38 @@ def opcodes_declared(function):
     return None if declared is None else tuple(getattr(addrs, name) for name in declared)
 
 
-@functools.cache
-def trap_sites(elf):
-    """EVERY TRAP SITE of the screen manager's paths on the blob at `elf`: each call, by a routine that does not
-    itself hand an opcode on, of one that does or of the trap's own routine — a `TrapSite` each."""
-    read, (entries, allowed) = reading(elf), entered_at(elf)
-    assert allowed == 0 and len(entries) == 1, "the trap sites are read from the screen manager's own entry"
-    (entry,) = entries
-    read.of(entry)
+def trap_sites_under(read, entry, above_it=0):
+    """EVERY TRAP SITE of the paths `read` (a `StackReading`) reads from `entry`, itself entered `above_it` bytes
+    below its stack's top: each call, by a routine that does not itself hand an opcode on, of one that does or of the
+    trap's own routine — a `TrapSite` each."""
     sites = []
-    for function in sorted(read.read_as()):
+    for function in sorted(read.read_as(entry)):
         home = function.partition(aes_switch.HANDED)[0].partition(aes_switch.INTO)[0]
         if home in TAKES_THE_TRAP + HANDS_ITS_OPCODE_ON or home not in read.functions():
             continue
-        reached = (0, ()) if function == entry else read.deepest_to(entry, function)
-        if reached is None:                     # read for another entry's paths (the reading is one, kept): not this one's
-            continue
-        above = reached[0]
+        above = above_it + ((0, ()) if function == entry else read.deepest_to(entry, function))[0]
         body = read.functions()[home]
         for callee, under, at in read.sites(function):
-            door = callee.partition(aes_switch.INTO)[0]
-            if door not in TAKES_THE_TRAP + HANDS_ITS_OPCODE_ON:
-                continue
-            index = next(index for index, (address, _text) in enumerate(body) if address == at)
-            read_off = None if door in TAKES_THE_TRAP else _opcode_read_at(body, index, door.startswith(ALCYON_S_FRAME), home)
-            sites.append(TrapSite(home, at, above + under + read.of(callee).at_a_trap,
-                                  (read_off,) if read_off is not None else opcodes_declared(home)))
+            if callee.partition(aes_switch.INTO)[0] in TAKES_THE_TRAP + HANDS_ITS_OPCODE_ON:
+                sites.append(_site_at(read, home, body, at, callee, above + under))
     return tuple(sites)
+
+
+def _site_at(read, home, body, at, callee, entered):
+    """The `TrapSite` of `home`'s call at `at` (in `body`) of `callee` — the trap's own routine or one that hands
+    its opcode on — entered `entered` bytes below the stack's top."""
+    door = callee.partition(aes_switch.INTO)[0]
+    index = next(index for index, (address, _text) in enumerate(body) if address == at)
+    read_off = None if door in TAKES_THE_TRAP else _opcode_read_at(body, index, door.startswith(ALCYON_S_FRAME), home)
+    return TrapSite(home, at, entered + read.of(callee).at_a_trap, (read_off,) if read_off is not None else opcodes_declared(home))
+
+
+@functools.cache
+def trap_sites(elf):
+    """...of the screen manager's paths on the blob at `elf`."""
+    entries, allowed = entered_at(elf)
+    assert allowed == 0 and len(entries) == 1, "the trap sites are read from the screen manager's own entry"
+    return trap_sites_under(reading(elf), entries[0])
 
 
 def need_under(site, shore):
@@ -913,6 +952,517 @@ def need_charged_the_worst(blob):
     """...and THE COARSE SUM beside it — the deepest trap of the listing with the worst need of any call under it:
     a call no path makes, kept as what the call-by-call bound is never above."""
     return bound(blob).at_a_trap + under_a_trap(shore_of(blob)) + nest(shore_of(blob))
+
+
+# ---- A PROCESS THAT ENTERS BY `trap #2`: THE TRAP PATH (band 5 wave 3; rulings W2-R5, W3-R8) ----------------------------------
+# An accessory's (or an application's) AES call is a `trap #2`: the handler's AES arm leaves the stack the trap came
+# in on for THE RUNNING PROCESS'S OWN — `movea.l 62(a6),sp`, what its UDA keeps: the stack's top less the trap's own
+# frame — and there run aes_entry, the marshal, THE OPCODE SWITCH and the arm of the call, down to the VDI's traps.
+# The same four terms as the screen manager's, read the same way, beside the two stacks an accessory can have: PD2's
+# (the first accessory runs in the AES's third static PD) and an ALLOCATED PD's (every later one).
+#   * THE DOOR'S OWN BYTES above the marshal are the ROM's, and are READ OFF THE ROM (`the_door_listed`): the
+#     handler's arm, aes_entry and the way out as `rom_data` decodes them, the three Line-F call words made `jsr`s,
+#     the marshal reached through the build's one-longword thunk shape — read by the same `StackReading`, its door
+#     shapes declared (`THE_PROCESS_S_STACK_BEGINS`, `THE_WAY_OUT_LEAVES`). UNTIL A BLOB LINKS THE HANDLER the trap
+#     path is read from the marshal under that many bytes — an ALLOWANCE, as the screen manager's was before its
+#     entry linked — and from the handler's own AES arm the moment the symbol exists (`trap_entered_at`; a test
+#     reddens if it then is not, and holds the linked door to the ROM-read depth).
+#   * WHAT THE TRAP PATH'S READING IS TOLD beside the screen manager's: sh_find's `routine` is a pointer NO CALLER OF
+#     THE BUILD HANDS A ROUTINE IN (held to the sources); `trap #1` and the bell's `trap #13` take what THE
+#     MACHINE'S OWN handlers are MEASURED to take of the caller's stack (`gemdos_need`, `bell_need` — the ROM's
+#     GEMDOS and BIOS on every shore: said beside the numbers).
+#   * BY THE CALL (`calls_of_the_switch`): each arm of the switch — an AES opcode — with the deepest its own frames
+#     go and the deepest of ITS trap sites, each charged its own VDI call's need: which calls fit which stack.
+THE_TRAP_HANDLER, AES_ENTRY, THE_WAY_OUT = "aes_rom_trap2", "aes_rom_entry", "aes_rom_trap2_exit"
+THE_MARSHAL, THE_MARSHAL_S_THUNK, DSPTCH = "aes_marshal", "aes_entry_to_aes_marshal", "aes_dsptch"
+THE_AES_ARM = f"{THE_TRAP_HANDLER}{aes_switch.INTO}{addrs.GEM_TRAP2_AES_ARM - addrs.GEM_TRAP2:#x}"
+THE_PROCESS_S_STACK_BEGINS = f"moveal %fp@({aes.UDA_SUPER_SP}),%sp"     # the handler's `movea.l UDA_SUPER_SP(a6),sp` ($fe3eee)
+THE_WAY_OUT_LEAVES = f"moveal %a0@({aes.UDA_TRAP_SSP}),%sp"             # the way out's `movea.l UDA_TRAP_SSP(a0),sp` ($fe3f28)
+# WHAT A PROCESS'S UDA KEEPS AS ITS STACK when it traps from its own code: the top less the trap's frame — psetup's
+# first-entry frame once, then what the way out stored (`move.l sp,62(a0)` after its `adda.l #24,sp`: the same SP the
+# handler loaded). Held to the machine at an accessory's first trap (`test_aes_stack.py`).
+KEPT_UNDER_THE_TOP = EXCEPTION_FRAME_BYTES
+THE_DOOR_BEGINS = {THE_PROCESS_S_STACK_BEGINS: KEPT_UNDER_THE_TOP}
+GEMDOS_TRAP, THE_BELL_S_TRAP = "trap #1", "trap #13"
+NO_ROUTINE_IS_HANDED = aes_switch.NO_ROUTINE_IS_HANDED
+SH_FIND = "aes_sh_find"
+TRAP_PATH_POINTERS = {**THROUGH_A_POINTER, SH_FIND: (NO_ROUTINE_IS_HANDED,)}
+THE_DOOR = "the trap door's own bytes above the marshal (the ROM's, read off the ROM: for a blob that links no handler)"
+# ...and the two private stacks beside the door (their section, below): each begun by one instruction, at its top.
+CRIT_ERR_SP_SAVE, CRIT_ERR_STACK_TOP = 0x8C42, 0x9446       # `move.l sp,$8c42` ($fe3ccc); `movea.l #$9446,sp` ($fe3cd2)
+CRIT_ERR_S_STACK_BEGINS = f"moveal #{CRIT_ERR_STACK_TOP},%sp"
+UB_S_STACK_BEGINS = f"moveal {aes.AES_USERDEF_STACK:x},%sp"
+THE_PRIVATE_STACKS_BEGIN = {CRIT_ERR_S_STACK_BEGINS: 0, UB_S_STACK_BEGINS: 0}
+WAY_OUT_ROM_END = addrs.GEM_TRAP2_AES_BACK + 0x36         # the way out, to its `rte` ($fe3f08..$fe3f3d)
+AES_ENTRY_ROM_END = addrs.AES_ROM_ENTRY + 0x18             # aes_entry, to its last call word ($fe65aa..$fe65c1; $fe65c2 is dead)
+SPL7_SAVE_ROM, SPL_RESTORE_ROM = addrs.AES_ROM_SPL7_SAVE, addrs.AES_ROM_SPL_RESTORE
+_A_ROM_ADDRESS_NAMED = re.compile(r"^((?:jsr|bsr\w*|bra\w*|b(?:hi|ls|cc|cs|ne|eq|vc|vs|pl|mi|ge|lt|gt|le)\w*) )0x([0-9a-f]+)$")
+# The routines a listing made here calls and does not read: a bare return each, at places of no ROM routine's.
+A_BARE_RETURN, ANOTHER_BARE_RETURN, A_THUNK_S_PLACE = [(0, "rts")], [(2, "rts")], 0x100
+THE_MASK_S_BRACKETS = {SPL7_SAVE_ROM: "aes_rom_spl7_save", SPL_RESTORE_ROM: "aes_rom_spl_restore"}
+
+
+def rom_listed(lo, hi, names, calls=()):
+    """THE ROM's `[lo, hi)` AS THE STACK READING READS A BLOB'S LISTING: `[(address, text)]`, each transfer's target
+    spelled as objdump spells a blob's (`fe3890 <name>`; `names`: `{a routine's ROM address: its name}`, anything
+    else a place inside this body) and each Line-F call word, in order, a `jsr` of the next of `calls`."""
+    calls, listed = list(calls), []
+    for at, text in rom_data.instructions(lo, hi):
+        if text is None:
+            text = f"jsr {at:x} <{calls.pop(0)}>"
+        named = _A_ROM_ADDRESS_NAMED.match(text)
+        if named:
+            target = int(named.group(2), 16)
+            text = f"{named.group(1)}{target:x} <{names.get(target, f'inside+{target - lo:#x}')}>"
+        listed.append((at, text))
+    assert not calls, f"the ROM's [{lo:#x}, {hi:#x}) holds fewer Line-F call words than the {len(calls)} more named for it"
+    return listed
+
+
+def _thunk_listed(at, shape, body):
+    """A thunk of `shape` (`aes_switch`'s) into `body`, listed at `at`: two bytes an instruction, for the reading's eyes."""
+    return [(at + WORD_BYTES * index, line.format(body=f"0 <{body}>")) for index, line in enumerate(shape)]
+
+
+def _the_mask_s_brackets_listed(names):
+    """`{name: [(address, text)]}` of spl7_save and spl_restore (`$fe3890`, `$fe389c`), which every routine here calls."""
+    return {"aes_rom_spl7_save": rom_listed(SPL7_SAVE_ROM, SPL_RESTORE_ROM, names),
+            "aes_rom_spl_restore": rom_listed(SPL_RESTORE_ROM, addrs.AES_ROM_CLI, names)}
+
+
+@functools.cache
+def the_door_listed():
+    """THE TRAP DOOR AS THE ROM SPELLS IT, for the stack reading: `(functions, starts)` — the handler to its
+    `jsr (a0)`, the way out, aes_entry with its three Line-F calls made `jsr`s (the marshal's through the build's
+    one-longword thunk, as `src/aes/trapdoor.S` enters it), the two mask brackets; the marshal and dsptch a bare
+    return each (what is asked of this listing is what stands ABOVE them)."""
+    names = THE_MASK_S_BRACKETS
+    functions = {
+        THE_TRAP_HANDLER: rom_listed(addrs.GEM_TRAP2_AES_ARM, addrs.GEM_TRAP2_AES_BACK, names),
+        THE_WAY_OUT: rom_listed(addrs.GEM_TRAP2_AES_BACK, WAY_OUT_ROM_END, names),
+        AES_ENTRY: rom_listed(addrs.AES_ROM_ENTRY, AES_ENTRY_ROM_END, names, (THE_MARSHAL_S_THUNK, DSPTCH, THE_WAY_OUT)),
+        **_the_mask_s_brackets_listed(names),
+        THE_MARSHAL_S_THUNK: _thunk_listed(A_THUNK_S_PLACE, aes_switch.ONE_LONG_THUNK, THE_MARSHAL),
+        THE_MARSHAL: A_BARE_RETURN, DSPTCH: ANOTHER_BARE_RETURN,
+    }
+    return functions, {addrs.AES_ROM_ENTRY: AES_ENTRY}
+
+
+@functools.cache
+def the_door_s_bytes():
+    """`(the bytes that stand above the marshal's first instruction, from the top of the stack of the process that
+    trapped — its return address among them —, the calls that lead there)`: READ OFF THE ROM'S OWN DOOR."""
+    functions, starts = the_door_listed()
+    door = aes_switch.StackReading.of_listing(functions, starts, begins_a_stack=THE_DOOR_BEGINS,
+                                              leaves_its_stack_at=(THE_WAY_OUT_LEAVES,))
+    depth, path = door.deepest_to(THE_TRAP_HANDLER, THE_MARSHAL)
+    assert not door.returns(THE_TRAP_HANDLER), "the handler's AES arm returns: its way out was not read as leaving"
+    return depth, (THE_TRAP_HANDLER, *path)
+
+
+def _a_staged_trap(*words):
+    """A few instructions staged in this battery's band — a trap of the OS taken as our code takes it, then `rts`."""
+    return {BAND_AT: struct.pack(f">{len(words)}H", *words) + aes_switch.RTS}
+
+
+# THE STAGED CALLS, each the instruction words of one call of the OS's and the stack put back (a LABELLED staging:
+# what is measured is the machine's own handler under the trap, entered from its vector):
+PUSH_WORD, PUSH_LONG, TRAP_1, TRAP_13 = 0x3F3C, 0x2F3C, 0x4E41, 0x4E4D
+DROP_2, DROP_6 = 0x548F, 0x5C8F
+FGETDTA, MALLOC, THE_LARGEST_FREE = 0x2F, 0x48, 0xFFFF
+BCONOUT_TO_THE_CONSOLE, BEL = (0x0003, 0x0002), 0x0007      # `move.l #$00030002,-(sp)`: Bconout, device 2
+THE_GEMDOS_CALLS = {"Fgetdta": (PUSH_WORD, FGETDTA, TRAP_1, DROP_2),
+                    "Malloc(-1)": (PUSH_LONG, THE_LARGEST_FREE, THE_LARGEST_FREE, PUSH_WORD, MALLOC, TRAP_1, DROP_6)}
+THE_BELL = (PUSH_WORD, BEL, PUSH_LONG, *BCONOUT_TO_THE_CONSOLE, TRAP_13, DROP_6)
+THE_BELL_AS_LISTED = ("movew #7,%sp@-", "movel #196610,%sp@-", THE_BELL_S_TRAP)
+
+
+def _need_under_a_staged_trap(words, vector):
+    taken = _watched_from_its_frame(case.merge_pokes(aes_event.machine(), _a_staged_trap(*words)), BAND_AT, None, THE_ROM_S,
+                                    case.long_in(BASE_IMAGE, vector) & BUS)
+    assert len(taken) == 1, f"the staged call took {len(taken)} traps: one was expected"
+    return taken[0].under
+
+
+@derived.kept
+def gemdos_need():
+    """THE DERIVATION (ROM-only): what the machine's GEMDOS takes of ITS CALLER'S stack under a `trap #1` — the
+    68000's frame, then the caller's registers, PC, SR and USP pushed where the trap was taken before GEMDOS leaves
+    for its own stack (`$fc4fc4..$fc4fd8`: BY THE ENTRY, whatever the function — measured under two that touch no
+    disk, and held equal). THE ROM'S GEMDOS on every shore: the booted machines' `$84` is the ROM's."""
+    needs = {name: _need_under_a_staged_trap(words, addrs.VECTOR_TRAP_GEMDOS) for name, words in THE_GEMDOS_CALLS.items()}
+    assert len(set(needs.values())) == 1, f"GEMDOS's need of its caller's stack moves with the function: {needs}"
+    return next(iter(needs.values()))
+
+
+@derived.kept
+def bell_need():
+    """THE DERIVATION (ROM-only): what the machine's BIOS takes of its caller's stack under THE BELL's `trap #13`
+    (Bconout of a BEL to the console: the one BIOS call on the trap path, `aes_bell`'s and fm_do's own — held)."""
+    return _need_under_a_staged_trap(THE_BELL, addrs.VECTOR_TRAP_BIOS)
+
+
+@functools.cache
+def trap_reading(elf):
+    """THE READING of the blob at `elf` as THE TRAP PATH is read (above): one, every function read once."""
+    excepted = {THE_LINE_A_INIT: line_a_need(), GEMDOS_TRAP: gemdos_need(), THE_BELL_S_TRAP: bell_need()}
+    return aes_switch.StackReading(elf, TRAP_PATH_POINTERS, leaves_the_stack=LEAVES_THE_STACK,
+                                   calls_what_it_is_handed=CALLS_WHAT_IT_IS_HANDED, takes_an_exception=excepted,
+                                   begins_a_stack={**THE_DOOR_BEGINS, **THE_PRIVATE_STACKS_BEGIN},
+                                   leaves_its_stack_at=(THE_WAY_OUT_LEAVES,))
+
+
+def trap_entered_at(elf):
+    """`(the function the trap path's reading starts at, the bytes allowed above it)`: the handler's own AES arm
+    where the blob links the handler — entered by the exception, the count begun where the process's stack is —
+    or the marshal under the door's bytes as the ROM's own door has them."""
+    if links(elf, THE_TRAP_HANDLER):
+        return THE_AES_ARM, 0
+    return THE_MARSHAL, the_door_s_bytes()[0]
+
+
+def _bound_from(read, entries, allowed, allowance):
+    above = [(allowance, allowed)] if allowed else []
+    deepest = max(entries, key=lambda entry: read.of(entry).deepest)
+    trapped = max(entries, key=lambda entry: aes_switch.depth_of((read.of(entry).at_a_trap,)))
+    return Bound(entries, allowed, allowed + read.of(deepest).deepest, above + read.chain(deepest),
+                 allowed + read.of(trapped).at_a_trap, above + read.chain(trapped, to_the_trap=True))
+
+
+def trap_bound(blob):
+    """THE TRAP PATH's `Bound` on `blob`, in bytes below the top of the stack of the process that trapped."""
+    entry, allowed = trap_entered_at(blob.elf)
+    return _bound_from(trap_reading(blob.elf), (entry,), allowed, THE_DOOR)
+
+
+def trap_path_sites(elf):
+    """EVERY TRAP SITE of the trap path on the blob at `elf` (`trap_sites_under`)."""
+    entry, allowed = trap_entered_at(elf)
+    return trap_sites_under(trap_reading(elf), entry, allowed)
+
+
+def worst_site(sites, shore):
+    """`(the deepest a stack goes at a trap of `sites` WITH the OS's need under it, the site)` — `(0, None)` of none."""
+    if not sites:
+        return 0, None
+    site = max(sites, key=lambda each: each.depth + need_under(each, shore))
+    return site.depth + need_under(site, shore), site
+
+
+def trap_need(blob):
+    """`(the bytes of its own stack a process that enters by trap #2 can need on blob, at a trap — else in the
+    build's own code —, the trap site)`: the deeper of the path's own frames and of its trap sites, each with its
+    own call's need of OUR VDI under it, and the worst nest of the build's own interrupt entries on top."""
+    read, shore = trap_bound(blob), shore_of(blob)
+    at_a_trap, site = worst_site(trap_path_sites(blob.elf), shore)
+    return max(read.deepest, at_a_trap) + nest(shore), at_a_trap > read.deepest, site
+
+
+# ---- ...BY THE CALL: each arm of the opcode switch ----------------------------------------------------------------------------
+Call = namedtuple("Call", "opcodes own at_a_trap site")
+Call.__doc__ = """One arm of the opcode switch: the AES `opcodes` whose table words lead to it; `own`, the deepest the
+build's own frames go under it, in bytes below the stack's top; `at_a_trap`, the deepest of its trap sites with the
+OS's need under it (0: it takes none); `site`, that trap site."""
+_THE_OPCODE_S_BIAS = re.compile(r"^addiw #-(\d+),%d\d$")
+
+
+def the_switch_s_table(elf):
+    """`(the JumpTable of the opcode switch on the blob at elf, the AES opcode of its first word)` — the bias READ OFF
+    the `addi.w #-N` before the guard (`src/aes/gemsuper.c`: the opcode is a word less 10, compared unsigned)."""
+    read = trap_reading(elf)
+    (jump, table), = read.tables(THE_OPCODE_SWITCH).items()
+    body = read.functions()[THE_OPCODE_SWITCH]
+    index = next(index for index, (at, _text) in enumerate(body) if at == jump)
+    bias = _THE_OPCODE_S_BIAS.match(body[index - len(aes_switch.TABLE_SHAPE) - 1][1])
+    assert bias, f"the opcode switch's guard is not preceded by `addi.w #-N`: {body[index - len(aes_switch.TABLE_SHAPE) - 1][1]}"
+    return table, int(bias.group(1))
+
+
+def _sites_of_an_arm(read, above, calls):
+    """The trap sites under ONE arm's `calls` (`[(callee, bytes under the switch's entry, the call's address)]`),
+    the switch itself entered `above` bytes below the stack's top."""
+    sites, body = [], read.functions()[THE_OPCODE_SWITCH]
+    for callee, under, at in calls:
+        door = callee.partition(aes_switch.INTO)[0]
+        if door in TAKES_THE_TRAP + HANDS_ITS_OPCODE_ON:        # a VDI call made by the switch's own arm
+            sites.append(_site_at(read, THE_OPCODE_SWITCH, body, at, callee, above + under))
+        else:
+            sites += trap_sites_under(read, callee, above + under)
+    return sites
+
+
+@functools.cache
+def calls_of_the_switch(elf, shore):
+    """EVERY ARM OF THE OPCODE SWITCH on the blob at `elf` — `[Call]`, the deepest first — its trap sites charged
+    the needs of the VDI of `shore`. The default arm is one of them: the opcodes the ROM answers with its alert."""
+    read, (table, first) = trap_reading(elf), the_switch_s_table(elf)
+    entry, allowed = trap_entered_at(elf)
+    above = allowed + (0 if entry == THE_OPCODE_SWITCH else read.deepest_to(entry, THE_OPCODE_SWITCH)[0])
+    arms = collections.defaultdict(list)
+    for word, target in enumerate(table.targets):
+        arms[target].append(first + word)
+    calls = []
+    for target, opcodes in arms.items():
+        reached = read.reached_from(THE_OPCODE_SWITCH, target)
+        made = [(callee, under, at) for callee, under, at in read.sites(THE_OPCODE_SWITCH) if at in reached]
+        own = above + max([read.depth_at(THE_OPCODE_SWITCH, at) for at in reached]
+                          + [under + read.of(callee).deepest for callee, under, _at in made])
+        calls.append(Call(tuple(opcodes), own, *worst_site(_sites_of_an_arm(read, above, made), shore)))
+    return sorted(calls, key=lambda call: max(call.own, call.at_a_trap), reverse=True)
+
+
+# ---- THE STACKS A PROCESS THAT TRAPS RUNS ON, read off the machine -----------------------------------------------------------
+PD2, AN_ALLOCATED_PD = "PD2 (the first accessory, in the AES's own third PD)", "an allocated PD (every later accessory)"
+THE_FIRST_ACCESSORY_S_PD = aes.AES_PD_TABLE + 2 * aes.PD_BYTES
+ALLOCATED_STACK_TOP = aes_boot.ACCESSORY_UDA_BYTES - LONG_BYTES     # from its UDA: pinit's SP, the UDA's end less a longword
+
+
+def _trap_callers_stacks_in(ram):
+    """`{which: (pd, bottom, top)}` of the two accessories' stacks over the megabyte `ram`, off its own pointers: from
+    the end of each UDA's state block to the top its first-entry frame was laid under."""
+    first, later = THE_FIRST_ACCESSORY_S_PD, case.long_in(ram, aes.AES_ACCESSORY_PDS) & BUS
+    udas = {pd: case.long_in(ram, pd + aes.PD_UDA) & BUS for pd in (first, later)}
+    return {PD2: (first, udas[first] + aes.UDA_STATE_BYTES, aes.AES_UDA2_STACK_TOP),
+            AN_ALLOCATED_PD: (later, udas[later] + aes.UDA_STATE_BYTES, udas[later] + ALLOCATED_STACK_TOP)}
+
+
+@functools.cache
+def trap_callers_stacks():
+    """`{which: (bottom, top)}` of the two stacks an accessory's AES calls run on, OFF THE ROM-BOOTED ACCESSORY
+    MACHINE's own pointers."""
+    return {which: (bottom, top) for which, (_pd, bottom, top) in _trap_callers_stacks_in(aes_boot.accessory_machine().ram).items()}
+
+
+def trap_callers_spans():
+    return {which: top - bottom for which, (bottom, top) in trap_callers_stacks().items()}
+
+
+# ---- THE TWO PRIVATE STACKS BESIDE THE DOOR: crit_err's and ub_trampoline's --------------------------------------------------
+# crit_err ($fe3cbe: GEM's critical-error handler, entered by GEMDOS through `$404`) parks the stack it is called on
+# and moves to ONE OF ITS OWN — `movea.l #$9446,sp`, the 2,048 bytes above its SP's save longword — for the alert:
+# eralert and the whole form layer under it, a wait included, whichever process the error struck. ub_trampoline
+# ($fe3f3e: the desk's G_USERDEF door) moves to the 1,024 bytes desk_alloc gave it for the desk's draw code.
+# Both are the ROM's bytes (`.S`: slices G and T); their shapes are READ OFF THE ROM, as the door's are — what each
+# holds of its private stack above the call it makes — and OUR code under crit_err's is the C eralert, entered
+# through a two-word thunk: READ OFF THE BLOB'S OWN crit_err the moment it links one (`crit_err_entered`), allowed
+# until then (three longwords and a `jsr`).
+#   * crit_err's bound: its own bytes + the thunk + eralert's paths (own frames, each trap site its call's need of
+#     OUR VDI) + the nest, beside the 2,048.
+#   * ub_trampoline's: its own 8 bytes; what the desk's draw code takes of the 1,024 is THE ROM'S until band 6.
+CRIT_ERR, ERALERT = "aes_rom_crit_err", "aes_eralert"
+THE_DESK_S_DRAW_CODE = "the_desk_s_userdef_draw_code"       # $fde844: band 6's, the ROM's until then
+CRIT_ERR_ROM_END = addrs.AES_ROM_CRIT_ERR + 0x70            # crit_err, to its `rts` ($fe3cbe..$fe3d2d)
+CRIT_ERR_STACK = (CRIT_ERR_SP_SAVE + LONG_BYTES, CRIT_ERR_STACK_TOP)
+A_TWO_WORD_THUNK_ADDS = 3 * LONG_BYTES + LONG_BYTES         # the image and two widened words pushed, then its `jsr` of the C
+UB_TRAMPOLINE = "aes_rom_ub_trampoline"
+UB_TRAMPOLINE_ROM, UB_TRAMPOLINE_ROM_END = WAY_OUT_ROM_END, WAY_OUT_ROM_END + 0x20      # $fe3f3e..$fe3f5d
+THE_DESK_S_DRAW_CODE_ROM = addrs.AES_ROM_DESK_USERDEF
+USERDEF_STACK_BYTES = aes.header_constants("deskmem.h")["USERDEF_STACK_BYTES"]
+PrivateStack = namedtuple("PrivateStack", "begun_at above path returns")
+PrivateStack.__doc__ = """A routine's private stack as the ROM's bytes read: `begun_at`, the bytes it had pushed on ITS
+CALLER'S stack when it moved; `above`, the bytes of the private stack above the first instruction of the routine it
+calls there (that call's return address among them); `path`; and whether it `returns` to its caller."""
+
+
+def _private_stack_read(routine, lo, hi, begins, callee, callee_rom):
+    names = {**THE_MASK_S_BRACKETS, callee_rom: callee}
+    functions = {routine: rom_listed(lo, hi, names), callee: A_BARE_RETURN, **_the_mask_s_brackets_listed(names)}
+    read = aes_switch.StackReading.of_listing(functions, begins_a_stack={begins: 0})
+    above, path = read.deepest_to(routine, callee)
+    begun_at, = [read.depth_at(routine, at) for at, text in functions[routine] if aes_switch.as_declared(text) == begins]
+    return PrivateStack(begun_at, above, (routine, *path), read.returns(routine))
+
+
+@functools.cache
+def crit_err_read():
+    """crit_err's private stack, READ OFF THE ROM (`PrivateStack`): what it holds above eralert."""
+    return _private_stack_read(CRIT_ERR, addrs.AES_ROM_CRIT_ERR, CRIT_ERR_ROM_END, CRIT_ERR_S_STACK_BEGINS, ERALERT,
+                               addrs.AES_ROM_ERALERT)
+
+
+@functools.cache
+def ub_trampoline_read():
+    """ub_trampoline's, READ OFF THE ROM: what it holds above the desk's draw code."""
+    return _private_stack_read(UB_TRAMPOLINE, UB_TRAMPOLINE_ROM, UB_TRAMPOLINE_ROM_END, UB_S_STACK_BEGINS,
+                               THE_DESK_S_DRAW_CODE, THE_DESK_S_DRAW_CODE_ROM)
+
+
+def crit_err_entered(elf):
+    """The bytes of crit_err's own stack above the C eralert's first instruction on the blob at `elf`: READ OFF ITS OWN
+    crit_err and thunk where it links them — else the ROM-read bytes and the thunk's allowance."""
+    if links(elf, CRIT_ERR):
+        return trap_reading(elf).deepest_to(CRIT_ERR, ERALERT)[0]
+    return crit_err_read().above + A_TWO_WORD_THUNK_ADDS
+
+
+def crit_err_need(blob):
+    """`(the bytes of crit_err's own stack the build can need, at a trap — else in its own code —, the trap site)`:
+    crit_err's bytes above its call, the thunk's, the C eralert's paths as the trap path's reading reads them, each
+    trap site its own call's need of OUR VDI, and the nest on top."""
+    read, shore = trap_reading(blob.elf), shore_of(blob)
+    entered = crit_err_entered(blob.elf)
+    at_a_trap, site = worst_site(trap_sites_under(read, ERALERT, entered), shore)
+    return max(entered + read.of(ERALERT).deepest, at_a_trap) + nest(shore), at_a_trap > entered + read.of(ERALERT).deepest, site
+
+
+def userdef_stack():
+    """`(bottom, top)` of the stack ub_trampoline moves to, OFF THE BOOTED DESK MACHINE's own pointer (the block's
+    end is what desk_alloc keeps)."""
+    top = aes_boot.desk_machine().long(aes.AES_USERDEF_STACK) & BUS
+    return top - USERDEF_STACK_BYTES, top
+
+
+def trap_userdef_call(blob):
+    """`(the bytes below its stack's top at which AN APPLICATION'S ROUTINE is entered at its deepest on the trap
+    path — objc_draw of a G_USERDEF from an accessory —, the calls that lead there)`."""
+    entry, allowed = trap_entered_at(blob.elf)
+    depth, path = trap_reading(blob.elf).deepest_to(entry, AN_APPLICATION_S_ROUTINE)
+    return allowed + depth, (entry, *path)
+
+
+# ---- THE TRAP PATH, MEASURED: accessories' own calls on a machine whose trap door is ours ------------------------------------
+# BESIDE THE BOUND, A RUN (ruling W3-R8: bound AND measured): the ROM's own accessory boot with THE DOOR TAKEOVER
+# (`aes_boot._TakingOver`, slice M's: the blob laid at the boot's first switchto `rte`, the GEM trap's vector and every
+# never-entered program's first-entry frame mapped — here to the takeover's PROTOTYPE door, the ROM's own door bytes
+# linked against the blob: `aes_boot.with_the_prototype_door`) AND, AT THE SAME STOP, THE BLOB'S OWN VDI UNDER THE
+# TRAP (`aes_switch._our_vdi_under_the_trap`: the table's 71 slots, the Line-A vectors — the staging truth). From
+# that stop to the idle: the lowest STORE on each accessory's own stack, by the AES call it was made under; and WHO
+# RAN the VDI, by cycle profile (ruling W3-R11) — the ROM's VDI text against the blob's dispatcher.
+# THE SAME TWO LIMITS as every measured depth here (a lowest store; no interrupt at the deepest point) AND A THIRD:
+# what is run is what THE TEST ACCESSORY does (its widest: a window of every gadget created, named, sized, opened;
+# a menu entry registered) — no file selector, no alert, no form_do: the bound's deepest calls are not run.
+EVERY_GADGET = 0xFFF
+QUIETLY, WITH_WINDOWS = "two quiet accessories", "two accessories that each open a window (the first registers a menu entry)"
+DOOR_MODES = {QUIETLY: (aes_boot.QUIET, aes_boot.QUIET),
+              WITH_WINDOWS: (aes_boot.with_a_window(EVERY_GADGET, aes_boot.REGISTER), aes_boot.with_a_window(EVERY_GADGET))}
+DoorRun = namedtuple("DoorRun", "idle deepest by_call ours_vdi the_rom_s_vdi screen refused door_ran")
+DoorRun.__doc__ = """One shore's boot of an accessory pair behind a door of that shore: `idle` — whose dispatcher's it
+reached (None: it reached none: the run was refused, and what follows is what it stored until then); `deepest`,
+`{which stack: the bytes of it used from the door's takeover on}` (the top less the lowest store — the whole span
+where the stores reached its bottom: an OVERFLOW); `by_call`, `{(which stack, AES opcode): bytes}` — the deepest
+under each call the accessory made by `trap #2`; `ours_vdi` / `the_rom_s_vdi`: the cycles from the takeover on in
+the blob's own VDI dispatcher and in the ROM's VDI text; `screen`: the digest of the screen the run left; `refused`:
+WHY a run that reached no idle did not, in the run's own words (None where it reached one); `door_ran`: WHO RAN THE
+DOOR, as the takeover's own vet read it where the boot ended — `{what: (cycles at our entries, cycles in the ROM's
+text of it)}` (`aes_boot._TakingOver.made`; None on the ROM's shore and for a run that reached no idle to be vetted at)."""
+SCREEN_BYTES = 32000
+# THE ROM'S VDI TEXT, as spans: its entry to its tables — the dispatcher, the handlers, the Line-A engines — AND THE
+# ESCAPE'S SUB-DISPATCHER, opcode 5's handler, which lies in the BIOS's range (`src/vdi/escape.S`'s first region: the
+# console's bodies past it are the BIOS console's own too, and are no witness). Until wave 3's pass 2 the first span
+# alone was watched: a slot 5 left the ROM's would have run unseen (`test_aes_stack.py` holds the extent).
+THE_ROM_S_VDI_TEXT = ((addrs.VDI_ROM_ENTRY, aes_switch.vdi.VDI_OPCODE_TABLE), (addrs.VDI_ROM_ESCAPE, addrs.XCONOUT_RAW))
+OUR_VDI_DISPATCHER = "vdi_dispatch"
+
+
+class _TheDoorTakenWithOurVdi(aes_boot._TakingOver):
+    """THE DOOR TAKEOVER (`aes_boot._TakingOver`) with, at the same stop, the labelled staging of `blob`'s own VDI
+    under the trap (`our_vdi`; else the machine's VDI is left) — the blob the takeover then vets untouched is THE
+    BLOB AS STAGED (the staging patches one `jsr` of its text) — and `since`: the write ledger's count and the
+    profile's two VDI tallies as the stop left them."""
+
+    def __init__(self, memory, ours, blob, our_vdi):
+        super().__init__(memory, ours, aes_boot.AT_THE_FIRST_ENTRY)
+        self._blob, self._our_vdi, self.since = blob, our_vdi, None
+
+    def _take_over(self, sp, instructions):
+        super()._take_over(sp, instructions)
+        if self._our_vdi:
+            aes_switch._our_vdi_under_the_trap(self._memory, self._blob)
+            self.ours = self.ours._replace(image=bytes(self._memory[self.ours.base:self.ours.base + len(self.ours.image)]))
+        self.since = _the_run_so_far(self._blob)
+
+
+def _the_run_so_far(blob):
+    """`(the write ledger's count, the cycles in blob's own VDI dispatcher, the cycles in the ROM's VDI text)`."""
+    ours = emu.prof_cycles(*_span_of(blob.elf, OUR_VDI_DISPATCHER)) if blob is not None else 0
+    return aes_boot._CPU.osh_num_writes(), ours, sum(emu.prof_cycles(lo, hi) for lo, hi in THE_ROM_S_VDI_TEXT)
+
+
+def _span_of(elf, symbol):
+    found, = [each for each in transcription.symbol_table(elf) if each.name == symbol and each.kind in "Tt"]
+    return found.start, found.start + found.size
+
+
+class _Marks:
+    """What a door run notes where it is stopped for it: the run so far at THE BOOT'S FIRST SWITCHTO `rte` (the
+    ROM's shore: where a takeover would stand) and every AES call's `(the ledger's count, the PD, the AES opcode)`."""
+
+    def __init__(self, blob):
+        self._blob, self.since, self.calls = blob, None, []
+
+    def at_the_first_switch(self, _memory, _sp):
+        self.since = self.since or _the_run_so_far(self._blob)
+
+    def at_an_aes_call(self, memory, _sp):
+        block = aes_boot.registers_at_the_stop(("d1",))["d1"] & BUS
+        opcode = case.word_in(memory, case.long_in(memory, block) & BUS)
+        self.calls.append((aes_boot._CPU.osh_num_writes(), case.long_in(memory, aes.AES_RLR) & BUS, opcode))
+
+
+def _deepest_by_call(stacks, ledger, since, calls):
+    """`(deepest, by_call)` of a `DoorRun`: `ledger` (the run's stored addresses, in order) cut at each accessory's
+    own AES calls; `stacks`: `_trap_callers_stacks_in`'s."""
+    deepest, by_call = {}, {}
+    for which, (pd, bottom, top) in stacks.items():
+        on_it = [at for at in ledger[since:] if bottom <= at < top]
+        deepest[which] = top - min(on_it) if on_it else 0
+        its_calls = [(mark, opcode) for mark, caller, opcode in calls if caller == pd] + [(len(ledger), None)]
+        for (mark, opcode), (until, _next) in zip(its_calls, its_calls[1:]):
+            under = [at for at in ledger[mark:until] if bottom <= at < top]
+            by_call[which, opcode] = max(by_call.get((which, opcode), 0), top - min(under) if under else 0)
+    return deepest, by_call
+
+
+@derived.kept
+def _door_run(first, second, shore, blob_s_bytes, our_vdi):
+    """THE DERIVATION: the ROM's boot of the accessory pair (`first`, `second`: their modes) behind the door of
+    `shore` (above; THE_ROM_S: the ROM's own boot, marked where a takeover would stand), `our_vdi`: the blob's own
+    VDI staged under the trap. A `DoorRun` (`blob_s_bytes` keys the answer: the build this run executes)."""
+    del blob_s_bytes
+    blob = None if shore == THE_ROM_S else blob_of(shore)
+    machine, disk = aes_boot.accessory_preinit(), aes_boot.accessory_disk_of(first, second)
+    memory = bytearray(BASE_IMAGE)
+    memory[:aes_boot.RAM_BYTES] = machine.ram
+    marks = _Marks(blob)
+    ours = aes_boot.with_the_prototype_door(blob) if blob is not None else None
+    taking = _TheDoorTakenWithOurVdi(memory, ours, blob, our_vdi) if blob is not None else None
+    handler = dict(ours.door[0].mapping)[addrs.GEM_TRAP2] if blob is not None else addrs.GEM_TRAP2
+    observing = {handler + addrs.GEM_TRAP2_AES_ARM - addrs.GEM_TRAP2: ("an AES call", marks.at_an_aes_call)}
+    if blob is None:
+        observing[addrs.AES_ROM_SWITCHTO_RTE] = ("a process entered or resumed", marks.at_the_first_switch)
+    run = aes_boot._Run(memory, aes_boot.Floppy(memory, disk), aes_boot.BOOT_INSNS, taking=taking, observing=observing)
+    emu.prof_enable(True)
+    refused = door_ran = None
+    try:
+        try:
+            run.to_an_idle(machine.registers, aes_boot.io_seed_of(machine))
+        except aes_boot.Refused as said:    # ...no idle: KEPT WITH ITS REASON (a test holds which), the depths below what it stored first
+            refused = str(said)
+        since, ours_then, the_rom_s_then = taking.since if taking is not None else marks.since
+        _count, ours_now, the_rom_s_now = _the_run_so_far(blob)
+        ledger = aes_boot._CPU.osh_write_addrs()[:aes_boot._CPU.osh_num_writes()]
+        _writes, truncated = emu.bench_writes(memory)
+        assert not truncated, "the door run's write ledger saturated: its lowest stores are not known"
+        if taking is not None and run.idle is not None:
+            # the takeover's own vets: the door stands, the ROM's door ran no cycle behind it — AND WHAT THEY READ, kept
+            door_ran = dict(taking.made(memory, True).door.ran)
+    finally:
+        emu.prof_enable(False)
+        aes_boot._CPU.m68k_set_irq(aes_boot.NO_INTERRUPT)
+        emu.bench_abort()
+    # THE STACKS ARE THE LOADER'S LAYOUT, read off the ROM's own boot of the same pair: a run that reached no idle has
+    # left no pointer to read them by (the machine it overflowed into went through the ROM's reset).
+    stacks = _trap_callers_stacks_in(aes_boot.accessory_machine(first, second).ram)
+    deepest, by_call = _deepest_by_call(stacks, ledger, since, marks.calls)
+    screen_at = case.long_in(memory, addrs.SYSVAR_V_BAS_AD) & BUS
+    return DoorRun(run.idle, deepest, by_call, ours_now - ours_then, the_rom_s_now - the_rom_s_then,
+                   hashlib.sha256(memory[screen_at:screen_at + SCREEN_BYTES]).hexdigest(), refused, door_ran)
+
+
+def measured_at_the_door(modes, shore=THE_ROM_S, our_vdi=True):
+    """THE ACCESSORY PAIR `modes` (of DOOR_MODES) BOOTED BEHIND THE DOOR OF `shore`, its own VDI under its traps
+    unless `our_vdi` is False: a `DoorRun`."""
+    return _door_run(*DOOR_MODES[modes], shore, _content_of(shore), our_vdi and shore != THE_ROM_S)
 
 
 # ---- dsptch's COST, MEASURED: the leaf's declaration held to a run -----------------------------------------------------------
@@ -961,6 +1511,59 @@ def _worst_sites(blob):
             for total, depth, function, opcodes in charged[:SITES_SHOWN]]
 
 
+CALLS_SHOWN = 12
+
+
+def _verdicts(needed, spans):
+    return "; ".join(f"{which.split(' (')[0]} {span}: " + (f"OVER by {needed - span}" if needed > span else f"{span - needed} spare")
+                     for which, span in spans.items())
+
+
+def _the_trap_path_s_lines():
+    """The report's lines for a process that enters by `trap #2`, and for the two private stacks beside the door."""
+    spans, (door, door_path) = trap_callers_spans(), the_door_s_bytes()
+    crit, ub = crit_err_read(), ub_trampoline_read()
+    lines = [f"THE TRAP PATH — a process that enters by trap #2, on its own stack: {spans}. The door's own bytes above the "
+             f"marshal, read off the ROM: {door} ({' > '.join(door_path)}); the machine's GEMDOS takes {gemdos_need()} of its "
+             f"caller's stack under a trap #1, its BIOS {bell_need()} under the bell's trap #13"]
+    for shore in BLOBS:
+        blob = blob_of(shore)
+        read, (needed, at_a_trap, site) = trap_bound(blob), trap_need(blob)
+        own = read.deepest + nest(shore)
+        userdef, _path = trap_userdef_call(blob)
+        lines += [f"{shore}: entered at {', '.join(read.entered_at)} (+{read.allowed} allowed)",
+                  f"  OWN FRAMES {read.deepest}: {_chain(read.chain)}",
+                  f"    + nest {nest(shore)} = {own}: {_verdicts(own, spans)}",
+                  f"  AT ITS TRAPS, the worst {site.function} at {site.depth}, opcode(s) {site.opcodes or 'unread: the worst'}: "
+                  f"{needed - nest(shore)} + nest {nest(shore)} = {needed}: {_verdicts(needed, spans)}",
+                  f"  BY THE CALL (AES opcodes: own frames / at its traps, + nest), the deepest {CALLS_SHOWN}:"]
+        for call in calls_of_the_switch(blob.elf, shore)[:CALLS_SHOWN]:
+            most = max(call.own, call.at_a_trap) + nest(shore)
+            named = call.opcodes if len(call.opcodes) < 4 else f"the default arm ({len(call.opcodes)} opcodes)"
+            lines.append(f"    {named}: {call.own} / {call.at_a_trap} -> {most}: {_verdicts(most, spans)}")
+        crit_needed, _at_a_trap, crit_site = crit_err_need(blob)
+        crit_span = CRIT_ERR_STACK[1] - CRIT_ERR_STACK[0]
+        lines += [f"  AN APPLICATION'S ROUTINE (objc_draw of a USERDEF) is entered {userdef} down: "
+                  + "; ".join(f"{which.split(' (')[0]} leaves it {span - userdef} ({span - userdef - nest(shore)} with the nest)"
+                              for which, span in spans.items()),
+                  f"  crit_err's own stack [{CRIT_ERR_STACK[0]:#x}, {CRIT_ERR_STACK[1]:#x}) = {crit_span}: {crit.above} of its own "
+                  f"above eralert (read off the ROM) + the thunk's {A_TWO_WORD_THUNK_ADDS}; with eralert's paths and the nest "
+                  f"{crit_needed} ({crit_site.function}, opcode(s) {crit_site.opcodes}): {crit_span - crit_needed} spare"]
+    lo, top = userdef_stack()
+    lines.append(f"ub_trampoline's stack [{lo:#x}, {top:#x}) = {top - lo}: {ub.above} bytes are the trampoline's; what the desk's "
+                 f"draw code takes is the ROM's until band 6")
+    lines.append("MEASURED BEHIND THE DOOR (the prototype door; each blob's own VDI under its traps), the lowest store on each "
+                 "accessory's own stack from the takeover on — PD2 / an allocated PD:")
+    for modes in DOOR_MODES:
+        runs = {shore: measured_at_the_door(modes, shore) for shore in (THE_ROM_S, *BLOBS)}
+        lines.append(f"  {modes}: " + "; ".join(
+            f"{shore} {' / '.join(str(used) for used in run.deepest.values())}"
+            + (f" (+ nest {nest(shore)}: {_verdicts(max(run.deepest.values()) + nest(shore), spans)})" if run.idle else
+               " — NO IDLE REACHED: the stores went to the bottom of PD2's stack, and the machine through the ROM's reset")
+            for shore, run in runs.items()))
+    return lines
+
+
 def report():
     lo, top = stack_of(_booted(THE_ROM_S).image())
     span = top - lo
@@ -989,6 +1592,7 @@ def report():
                   f"{the_rom_s_at}: {ours_at - the_rom_s_at} bytes less than under the ROM",
                   f"  dsptch takes {reading(blob.elf).of('aes_dsptch').deepest} (measured {dsptch_measured(shore)}); "
                   f"untouched at most {untouched_at_most(blob)}"]
+    lines += _the_trap_path_s_lines()
     lines.append("MEASURED from the real entry, the lowest store on PD1's stack (the ROM's machine / ours, our VDI under the traps):")
     for scenario in SCENARIOS:
         ours = ", ".join(f"{shore} {measured(scenario, shore).deepest} (+ nest {nest(shore)} = "

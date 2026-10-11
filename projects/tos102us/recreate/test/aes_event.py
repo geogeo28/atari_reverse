@@ -2265,7 +2265,15 @@ class DoorStops:
         return (not self._in_call and self._enters_at is None and self._trap_returns_to is None
                 and pc in self.entries)
 
+    def armed_over(self, memory):
+        """THIS WATCH IS ABOUT TO BE RUN OVER `memory` (`run_watched`): marked at the GEM trap, its marks are keyed on
+        the handler this machine holds — or it is refused by name before the run's first instruction."""
+        if self.marks:
+            self.marks.vet_not_blind(memory)
+
     def stopped(self, pc, sp, memory):
+        if self.marks:
+            self.marks.vet_not_blind(memory)        # (slice M) ...and at every stop: the run may have moved the vector
         if self._enters_at is not None:
             entered, self._enters_at = self._enters_at, None
             assert pc == entered, (
@@ -2351,6 +2359,13 @@ class EntryStops:
         self._watched = self._entries | (self._ends if once_past is None else {once_past})
         self.first = self._watched
 
+    def armed_over(self, memory):
+        """THIS WATCH IS ABOUT TO BE RUN OVER `memory` (`run_watched`). Its stops are routines' entries, and a routine
+        is where it is on every machine — but for one: THE ROM'S `trap #2` HANDLER watched as an entry is where a GEM
+        call arrives only while `$88` holds it (`vet_a_handler_of_the_machine`: refused blind over a door machine)."""
+        if VDI_TRAP in self._entries | self._ends:
+            vet_a_handler_of_the_machine(memory, VDI_TRAP, "a watch at the ROM's entries")
+
     def _next_stops(self, pc, stops):
         """`stops`, the stops a stop at `pc` answers — never `pc` itself: the kit's watch loop would stop there again
         at once, for ever (no instruction run, so no budget spent)."""
@@ -2413,6 +2428,7 @@ def run_watched(memory, entry, watch, io_seed=None, budget=None):
     refusals and margin; a run that ENDED — returned, or blocked — is held to its declared budget from above too
     (`_vet_not_stale`)."""
     insns = _budget_of(entry, budget)
+    watch.armed_over(memory)
     try:
         result = rom_bench.original_entered(memory, entry, watch.first, io_seed=io_seed, max_insns=insns)
         result = rom_bench.watched(result, entry, watch, memory, max_insns=insns)
@@ -2811,12 +2827,12 @@ GLUE_CODES = RelocatedCode("a glue's address handed to the VDI", GLUE_CODE_SLOTS
 # build; the command tail it hands Pexec is the address of a zero word of its own text (`$fe39b4`); and `__DOS`
 # leaves by `jmp (a0)`, the site in A0. Mapped at a run's EXIT alone (a machine holds none of them before pgmld runs).
 # WHICH RUNS ARE MAPPED: those that can PARK a text site — a `.S` entry's own (`TEXT_SITE_ENTRIES`) and a C CALLER's
-# that reaches the `.S` through its thunk on the shipped blob (`TEXT_SITE_CALLERS`). NONE OF THE SECOND KIND EXISTS
-# YET: pgmld has no C caller, so no thunk is generated for it and `aes_pgmld` on the shipped blob is still the weak C
-# twin (which parks the ROM's sites, as the data they are). ITS FIRST C CALLER IS THE ACCESSORY LOADER (sndcli,
-# wave 3): its pair goes into `transcription.C_CALLERS_OF_TRANSCRIBED_CORES` — which `test_transcribed.py` holds to
-# the build's own call graph, and from which `bench/shipped_glue.py` generates the thunk — and its name HERE
-# (`test_aes_pgmld.py` reds while the two disagree).
+# that reaches the `.S` through its thunk on the shipped blob (`TEXT_SITE_CALLERS`). THE SECOND KIND IS THE ACCESSORY
+# LOADER'S sndcli (band 5 wave 3, slice L: pgmld's first C caller): its pair is in
+# `transcription.C_CALLERS_OF_TRANSCRIBED_CORES` — which `test_transcribed.py` holds to the build's own call graph, and
+# from which `bench/shipped_glue.py` generates the thunk, so `aes_pgmld` on the shipped blob IS that thunk into the
+# `.S` — and its name is HERE (`test_aes_pgmld.py` reds while the two disagree). No row of sndcli is priced yet (its
+# blob rows are the door flip's): the mapping is declared, and first applied there.
 # THE SLOTS: the one longword of the machine, and the longwords of a recording trap's ledger that can hold one — its
 # recorder's module declares those where it lays the ledger out (`declare_text_site_slots`: `test/aes_gemdosif.py`,
 # a module this one cannot import — it is built on this one — so the list is completed at ITS import, never a test
@@ -2826,7 +2842,7 @@ TEXT_SITE_SYMBOLS = {addrs.AES_PGMLD_PEXEC_RETURN: "aes_rom_pgmld_pexec_return",
                      addrs.AES_PGMLD_EMPTY_TAIL: "aes_rom_pgmld_empty_tail"}
 TEXT_SITE_ENTRIES = ("aes_rom_pgmld",)  # the `.S` entries whose own run parks them
 TEXT_SITE_CORE = "aes_pgmld"            # ...the C core a caller names to reach that `.S` (through its thunk)
-TEXT_SITE_CALLERS = ()                  # ...and the C callers that do: none yet (above)
+TEXT_SITE_CALLERS = ("aes_sndcli",)      # ...and the C callers that do (above)
 TEXT_SITE_SLOTS = [aes.AES_TRAP1_RETURN]
 TEXT_SITES = RelocatedCode("a site of the GEMDOS glue's own text named in RAM", TEXT_SITE_SLOTS, TEXT_SITE_SYMBOLS, False)
 
@@ -2867,11 +2883,113 @@ SCREEN_MANAGER_ENTRY_SYMBOL = "aes_rom_ctlmgr"
 SCREEN_MANAGER_ENTRY_SLOTS = (aes.SCREEN_MANAGER_PD + aes.PD_LDADDR, aes.AES_UDA1_STACK_TOP - LONG_BYTES)
 SCREEN_MANAGER_ENTRY = RelocatedCode("the screen manager's entry", SCREEN_MANAGER_ENTRY_SLOTS,
                                      {SCREEN_MANAGER_ROM_ENTRY: SCREEN_MANAGER_ENTRY_SYMBOL}, True)
-CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES, SCREEN_MANAGER_ENTRY)
+# ---- slice G (band 5 wave 3): THE CRITICAL-ERROR HANDLER GEM INSTALLS ------------------------------------------------------
+# retake and takeerr hand Setexc crit_err's address BY VALUE (`$fe3c8e`, `$fe3cb6`): the ROM's in the ROM and on the
+# host, the build's own entry (`aes_rom_crit_err`, `src/aes/gemdosif.S`) in a build linked elsewhere — the `.S`'s
+# operand, and the C twins' (`gemdosif.c`: `ALCYON_ROUTINE`). THE SLOTS: etv_critic itself, and the longwords of a
+# recording `trap #13`'s ledger that hold the handler a Setexc was handed (declared where the ledger is laid out, as
+# the text sites' are). MAPPED WHERE A RUN ENDS ALONE: a ROM-made machine holds the ROM's crit_err in etv_critic, and
+# giveerr / takeerr MOVE what a slot held (a value that travels), so our image at entry is the machine as it is — the
+# glue's rule. This maps what a build's own vector takes STORE; it puts no handler of ours into any machine (the
+# door takeover's `$404` is the flip's).
+# NOT A SLOT YET, because no run stores ours there: AES_OLD_CRITIC (`$8c26`), which holds a build's crit_err only
+# after a takeerr that FOLLOWS one of the build's own installs in the same history (every takeerr run today saves
+# what a ROM-made machine holds). The day a row does that it differs there by name, and the slot is declared then.
+ETV_CRITIC = 0x404                      # the critical-error handler's vector (Setexc's $101)
+CRITICAL_ERROR_HANDLER_SYMBOLS = {addrs.AES_ROM_CRIT_ERR: "aes_rom_crit_err"}
+CRITICAL_ERROR_HANDLER_SLOTS = [ETV_CRITIC]
+# ...and the `.S` entries whose own run leaves it in A REGISTER (the BIOS's Setexc comes back with the handler it was
+# handed in D1): a transcription row is held to the whole register file, so Tier 3 maps theirs too.
+CRITICAL_ERROR_HANDLER_ENTRIES = ("aes_rom_retake", "aes_rom_takeerr")
+CRITICAL_ERROR_HANDLER = RelocatedCode("the critical-error handler GEM installs", CRITICAL_ERROR_HANDLER_SLOTS,
+                                       CRITICAL_ERROR_HANDLER_SYMBOLS, False)
+
+
+def declare_critical_error_handler_slots(*slots):
+    """Longwords of a recording trap's ledger that can hold the handler a Setexc was handed (its recorder's module's)."""
+    CRITICAL_ERROR_HANDLER_SLOTS.extend(slot for slot in slots if slot not in CRITICAL_ERROR_HANDLER_SLOTS)
+
+
+# ---- (end of slice G's block) -----------------------------------------------------------------------------------------------
+CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES, SCREEN_MANAGER_ENTRY, CRITICAL_ERROR_HANDLER)
 # EVERY RELOCATION DECLARED BESIDE THE TUPLE AND NOT IN IT, BY NAME: `{what: (why it is not mapped at Tier 3 yet, the
 # slice that owes its site)}`. `test_aes_boot.py` holds that each `RelocatedCode` of this module is in the tuple or
-# here — never neither — and that THIS IS EMPTY once any Tier 3 row runs on a takeover machine. EMPTY SINCE FLIP 4.
+# here — never neither — and that NO TIER 3 ROW RUNS BEHIND A DOOR while a door declaration is in it. IT WAS EMPTY FROM
+# FLIP 4 TO WAVE 3; the four below (the trap door's, slice M) are in it until the door flip maps them.
 DECLARED_NOT_YET_MAPPED_AT_TIER3 = {}
+# ---- (band 5 wave 3, slice M) THE TRAP DOOR'S RELOCATIONS: DECLARED, NOT MAPPED ----------------------------------------
+# What a machine whose TRAP DOOR is ours holds of the build, beside the screen manager's entry — each a code address a
+# ROM routine stores BY VALUE and a build's own stores as its own. DECLARED HERE AND PENDING: none is in the tuple Tier 3
+# reads until the door flip (slice F) gives each its mapping site; until then each is named in
+# `DECLARED_NOT_YET_MAPPED_AT_TIER3`, and the one consumer is the door TAKEOVER (`aes_boot.booted(..., ours=)` of an
+# `Ours` handed a `door`: the mapping applied where the ROM's boot stands at its first switchto `rte`).
+#   * THE GEM TRAP'S VECTOR (`$88`): install_trap2 and retake store the AES's `trap #2` handler there (`$fe3c7a`,
+#     `$fe3c86`: `move.l #$fe3ea6`) — the build's `aes_rom_trap2` (slice T's `.S`).
+#   * A LOADED PROGRAM'S FIRST-ENTRY FRAME: sndcli hands pstart gotopgm's address (`$fe437c`) and psetup pushes it,
+#     under a status word, on the new process's own stack — the frame switchto's `rte` pops at its first entry. ONE
+#     PER LOADED PROGRAM, on a stack whose address the layout decides (an allocated accessory's is a Malloc's): so
+#     THE SLOTS ARE WALKED FROM THE MACHINE (`first_entry_frames`: every process's `UDA_SUPER_SP`'s frame), never a
+#     static tuple — a slot not walked would be silently unmapped and the ROM's gotopgm run for that program.
+#   * THE CRITICAL-ERROR VECTOR (`$404`): takeerr and retake store crit_err there (through Setexc; `$fe3c90`,
+#     `$fe3cb8`) — the build's (slice G's `.S`).
+#   * THE DESK'S USER-BLOCK TRAMPOLINE (`$8c32`): gem_entry stores `$fe3f3e` there (`$fd9f9e`); no routine of ours
+#     stores it before wave 4's gem_entry, so it stays named here past the door flip.
+# `ROM_TEXT_OF`: THE ROM TEXT EACH ONE STANDS FOR, `{what: ((lo, hi), ...)}` — what must run ZERO CYCLES on a machine
+# whose door is ours (a who-ran is a cycle profile of these, never a count of stops: `aes_boot._TakingOver.made`).
+# (each end is THE NEXT ROUTINE'S ENTRY, as `addrs.h` names it)
+GEM_TRAP_EXIT_END = addrs.AES_ROM_UB_TRAMPOLINE     # the handler and its exit, `$fe3ea6..$fe3f3d`; the trampoline follows
+AES_ENTRY_END = addrs.AES_ROM_AP_RDWR               # aes_entry, `$fe65aa..$fe65c3` (its dead `LF_RET` word the last)
+GOTOPGM_END = addrs.AES_ROM_SAVESTATE               # gotopgm, `$fe38b0..$fe38d3`
+CRIT_ERR_END = addrs.AES_ROM_DOS_EXEC               # crit_err, `$fe3cbe..$fe3d2d`; dos_exec follows
+USERBLK_TRAMPOLINE, USERBLK_TRAMPOLINE_END = addrs.AES_ROM_UB_TRAMPOLINE, addrs.AES_ROM_SIGNAL
+GEM_TRAP_VECTOR = RelocatedCode("the GEM trap's vector ($88)", (addrs.VECTOR_TRAP_GEM,), {addrs.GEM_TRAP2: "aes_rom_trap2"}, True)
+PROGRAM_ENTRY = RelocatedCode("a loaded program's first-entry frame", (), {addrs.AES_ROM_GOTOPGM: "aes_rom_gotopgm"}, True)
+# (...the vector AT A RUN'S ENTRY, on a machine whose door is ours: slice G's `CRITICAL_ERROR_HANDLER`, above, is the
+# same routine in the same longword mapped where a run of OUR vector takes ENDS — what they store — and puts no
+# handler of ours into a machine; the flip makes the two one.)
+CRITICAL_ERROR_VECTOR = RelocatedCode("the critical-error vector ($404)", (ETV_CRITIC,), CRITICAL_ERROR_HANDLER_SYMBOLS, True)
+USERBLK_TRAMPOLINE_SLOT = RelocatedCode("the desk's user-block trampoline ($8c32)", (aes.AES_USERDEF_TRAMPOLINE,),
+                                        {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, True)
+ROM_TEXT_OF = {GEM_TRAP_VECTOR.what: ((addrs.GEM_TRAP2, GEM_TRAP_EXIT_END), (addrs.AES_ROM_ENTRY, AES_ENTRY_END)),
+               PROGRAM_ENTRY.what: ((addrs.AES_ROM_GOTOPGM, GOTOPGM_END),),
+               CRITICAL_ERROR_VECTOR.what: ((addrs.AES_ROM_CRIT_ERR, CRIT_ERR_END),),
+               USERBLK_TRAMPOLINE_SLOT.what: ((USERBLK_TRAMPOLINE, USERBLK_TRAMPOLINE_END),)}
+# WHAT THE NARROW DOOR FLIP TAKES (ruling W3-R1): the door a takeover is handed once the build links all three.
+THE_NARROW_DOOR = (GEM_TRAP_VECTOR, PROGRAM_ENTRY, CRITICAL_ERROR_VECTOR)
+THE_DOOR_FLIP, WAVE_4 = "slice F (band 5 wave 3: the narrow door flip)", "band 5 wave 4 (gem_entry in C)"
+DECLARED_NOT_YET_MAPPED_AT_TIER3.update({
+    GEM_TRAP_VECTOR.what: ("no Tier 3 row runs on a machine whose `$88` holds a build's handler before the flip", THE_DOOR_FLIP),
+    PROGRAM_ENTRY.what: ("its slots are walked from a machine (`first_entry_frames`): Tier 3 has no such site yet", THE_DOOR_FLIP),
+    CRITICAL_ERROR_VECTOR.what: ("no Tier 3 row runs on a machine whose `$404` holds a build's handler before the flip", THE_DOOR_FLIP),
+    USERBLK_TRAMPOLINE_SLOT.what: ("no routine of ours stores it before gem_entry is ours", WAVE_4)})
+
+
+def processes_of(memory):
+    """Every PD the machine `memory` has, THROUGH ITS OWN POINTERS: the AES's three static ones, then the
+    accessories' the loader allocated (`$c6b2[]`, `$c682` of them)."""
+    static = [aes.AES_PD_TABLE + index * aes.PD_BYTES for index in range(aes.AES_PD_COUNT)]
+    allocated = case.word_in(memory, aes.AES_ACCESSORY_COUNT)
+    return (*static, *(case.long_in(memory, aes.AES_ACCESSORY_PDS + index * LONG_BYTES) & OS_BUS_ADDR_MASK
+                       for index in range(allocated)))
+
+
+def first_entry_frames(memory):
+    """WHERE THE MACHINE `memory` KEEPS EACH PROCESS'S NEXT ENTRY: `((pd, slot), ...)` — the PC of the frame at the
+    stack pointer each process's UDA names (`UDA_SUPER_SP`: psetup's frame for a process never entered, the frame it
+    is resumed by for one that is parked), for every process whose UDA names a stack pointer INSIDE THE MACHINE'S RAM
+    above the UDA itself (a static PD nothing was started in names none). What `PROGRAM_ENTRY` is mapped at: a slot
+    holding the ROM's gotopgm is a program's first entry, and no parked process's resume address is that routine."""
+    frames = []
+    for pd in processes_of(memory):
+        uda = case.long_in(memory, pd + aes.PD_UDA) & OS_BUS_ADDR_MASK
+        parked_at = case.long_in(memory, uda + aes.UDA_SUPER_SP) & OS_BUS_ADDR_MASK if uda else 0
+        if uda and uda + aes.UDA_STATE_BYTES <= parked_at <= addrs.ST_RAM_BYTES - EXCEPTION_FRAME_PC - LONG_BYTES:
+            frames.append((pd, parked_at + EXCEPTION_FRAME_PC))
+    return tuple(frames)
+
+
+SLOTS_WALKED_FROM_THE_MACHINE = {PROGRAM_ENTRY.what: first_entry_frames}
+# ---- (end of slice M's declarations) ---------------------------------------------------------------------------------
 # THE DISPATCHER'S OWN STACK ($899a..$8c1a), which savestate moves to: what a Tier 3 row that drops it has put back
 # on our shore (`bench/tier3.py`, `spans_put_back`), and the dispatcher's battery names its drop by.
 DISPATCHER_STACK = (aes.header_constants("evdisp.h")["AES_DISPATCHER_STACK_BOTTOM"], aes.AES_DISPATCHER_STACK_TOP)
@@ -4694,6 +4812,64 @@ def trap_handler(vector, pokes=None):
 
 VDI_TRAP = trap_handler(addrs.VECTOR_TRAP_GEM)        # the ROM's own `trap #2` handler: where a VDI call arrives
 GEMDOS_TRAP = trap_handler(addrs.VECTOR_TRAP_GEMDOS)  # ...and its `trap #1` handler's: a GEMDOS call
+
+
+# ---- (band 5 wave 3, slice M) THE GEM TRAP'S HANDLER IS PER SHORE --------------------------------------------------------
+# `VDI_TRAP` is the handler THE SNAPSHOT'S `$88` holds — the ROM's — and until the trap door was ours that was the PC
+# both shores' `trap #2` reached, on every machine. A MACHINE WHOSE DOOR IS OURS holds the build's own handler there
+# (`GEM_TRAP_VECTOR`): a watch keyed on the ROM's would see no trap such a run takes — BLIND: a slice cut at
+# `trap_taken(VDI_TRAP, n)` never ends, a ledger of VDI calls is empty. So in a slice's end `VDI_TRAP` is A NAME
+# ("the GEM trap's handler"), and a run's marks are KEYED ON THE HANDLER ITS OWN MACHINE HOLDS (`on`, from
+# `gem_trap_on` of the image the run starts over; the ROM's until told) — and a marked run whose machine holds
+# another handler than its marks are keyed on is REFUSED BY NAME (`vet_not_blind`), never left blind — WHERE THE WATCH
+# IS ARMED OVER ITS MACHINE (`DoorStops.armed_over`, from `run_watched`: before the run's first instruction), and again
+# at every stop. At the arming, because a watch whose ONLY stop is the trap never stops when it is blind: a vet made
+# at a stop alone let such a run go to its end with no arrival (wave 3's review, C-F2). The watchers that are no
+# `DoorStops` and take an exception handler's PC of their own (`aes_stack._ExceptionsOn`, `_ArrivalsAt`,
+# `aes_switch._LoopStops`) are held the same way where each is armed (`vet_a_handler_of_the_machine`).
+def gem_trap_on(memory):
+    """The `trap #2` handler the machine `memory` holds in `$88`: where a GEM call of a run over it arrives."""
+    return case.long_in(memory, addrs.VECTOR_TRAP_GEM) & OS_BUS_ADDR_MASK
+
+
+EXCEPTION_VECTORS = range(2 * LONG_BYTES, 256 * LONG_BYTES, LONG_BYTES)     # the 68000's table, past the reset's two longwords
+
+
+def vet_a_handler_of_the_machine(memory, handler, watch):
+    """A WATCH THAT STOPS AT AN EXCEPTION'S HANDLER, ARMED OVER `memory`: `handler` is what one of this machine's own
+    exception vectors holds — or the watch is refused by name before its run starts. (The ROM's `trap #2` handler over
+    a machine whose trap door is ours is in no vector: no exception the run takes would arrive there.)"""
+    held = {case.long_in(memory, vector) & OS_BUS_ADDR_MASK for vector in EXCEPTION_VECTORS}
+    assert handler in held, (
+        f"A WATCH GONE BLIND: {watch} is armed at the exception handler {handler:#x}, and no exception vector of its "
+        f"machine holds it (`$88` holds {gem_trap_on(memory):#x}) — no exception the run takes arrives where the watch "
+        f"stops. Arm it at the handler the run's own machine holds (`aes_event.gem_trap_on(memory)`)")
+
+
+class KeyedOnTheGemTrap:
+    """What `Marks` and `Timeline` share (above): the handler this run's machine holds (`gem_trap`), the PC a named
+    end is taken at there (`here`) and the name an arrival's PC has (`named`)."""
+    gem_trap = VDI_TRAP
+
+    def on(self, gem_trap):
+        """These marks, of a run over a machine whose `$88` holds `gem_trap` — BEFORE a watch is marked with them."""
+        self.gem_trap = gem_trap
+        return self
+
+    def here(self, named):
+        return self.gem_trap if named == VDI_TRAP else named
+
+    def named(self, pc):
+        return VDI_TRAP if pc == self.gem_trap else pc
+
+    def vet_not_blind(self, memory):
+        """The run stands stopped over `memory`: where it is marked at the GEM trap, its machine holds the handler
+        the marks are keyed on — or the run is refused by name."""
+        held = gem_trap_on(memory)
+        assert not self.marked_at_the_gem_trap() or held == self.gem_trap, (
+            f"A WATCH GONE BLIND: this run is marked at the GEM trap's handler, keyed on {self.gem_trap:#x}, and its "
+            f"machine holds {held:#x} in `$88` — no `trap #2` it takes arrives where the watch stops. Key the marks on "
+            f"the run's own machine (`.on(aes_event.gem_trap_on(memory))`)")
 Slice = namedtuple("Slice", "start stop")
 # `windows`: the foreign windows closed before the mark; `foreign`: what they spent, total by total (`Marks`).
 Mark = namedtuple("Mark", "calls spent memory windows foreign", defaults=(0, None))
@@ -4702,7 +4878,7 @@ A_MARK_OF_ANOTHER_PROCESS = ("a mark is an arrival of the ROW's process, and thi
 Arrival = namedtuple("Arrival", "at calls spent")
 
 
-class Marks:
+class Marks(KeyedOnTheGemTrap):
     """The MARKS of one run of a session at the two ends of `slice_` (a `Slice`): at each, the door calls entered so
     far, what the run has spent (`cost()`: a dict of running totals — instructions, cycles, whatever its shore is
     priced on) and its memory there. Taken by the run's watch at each arrival (`DoorStops.marked_with`) and, for an
@@ -4757,11 +4933,16 @@ class Marks:
 
     @property
     def traps(self):
-        """The PCs this run is stopped at beyond the door's entries: its ends' that are trap handlers."""
-        return frozenset(self._arrivals) - frozenset(ENTRIES)
+        """The PCs this run is stopped at beyond the door's entries: its ends' that are trap handlers — the GEM
+        trap's as this run's machine holds it (`KeyedOnTheGemTrap`)."""
+        return frozenset(self.here(pc) for pc in frozenset(self._arrivals) - frozenset(ENTRIES))
+
+    def marked_at_the_gem_trap(self):
+        return VDI_TRAP in self._arrivals
 
     def arrived(self, pc, calls, memory):
         """The run arrived at `pc` (a door entry, a marked trap's handler) with `calls` door calls entered."""
+        pc = self.named(pc)
         if pc not in self._arrivals:
             return
         assert self._window_at is None, f"arrival {self._arrivals[pc]} at {pc:#x}: {A_MARK_OF_ANOTHER_PROCESS}"
@@ -4869,6 +5050,7 @@ def _marked_run(entry, memory, delivered, marks, budget):
     """The ROM's own `entry` over `memory` (its frame staged, written in place), `delivered` laid at its door calls,
     WATCHED and marked by `marks` (`Marks`, `Timeline`): the door calls it made. The run must return — a session priced
     by its slices ends — under the `budget` it declares (`_budget_of`)."""
+    marks.on(gem_trap_on(memory))       # (slice M) keyed on the handler THIS run's machine holds
     watch = DoorStops(ENTRIES, ROM_RETURNS, blocks=True, delivered=delivered, entered_at=entry).marked_with(marks)
     result = run_watched(memory, entry, watch, budget=budget)
     assert result, f"{entry:#x}: a session priced by its slices returns — this one switches processes at a door call"
@@ -4885,16 +5067,25 @@ def rom_sliced(name, arguments, pokes, delivered, slice_, *, budget=None, **mark
     return marks, memory
 
 
-class Timeline:
+class Timeline(KeyedOnTheGemTrap):
     """Every arrival of one run at the door's entries and at the trap handlers `traps`, in order (`arrivals`: an
     `Arrival` each — the `At` it is, the door calls entered so far, what the run had spent): a watch's marks
-    (`DoorStops.marked_with`), for choosing where a session is cut."""
+    (`DoorStops.marked_with`), for choosing where a session is cut. `traps` NAMES them: the GEM trap's handler is
+    stopped at where this run's machine holds it (`KeyedOnTheGemTrap`), its arrivals `At(VDI_TRAP, n)` all the same."""
 
     def __init__(self, traps=()):
-        self.traps = frozenset(traps)
+        self._named_traps = frozenset(traps)
         self._counted, self.arrivals = {}, []
 
+    @property
+    def traps(self):
+        return frozenset(self.here(pc) for pc in self._named_traps)
+
+    def marked_at_the_gem_trap(self):
+        return VDI_TRAP in self._named_traps
+
     def arrived(self, pc, calls, _memory):
+        pc = self.named(pc)
         nth = self._counted.get(pc, 0)
         self._counted[pc] = nth + 1
         self.arrivals.append(Arrival(At(pc, nth), calls, run_cost()))

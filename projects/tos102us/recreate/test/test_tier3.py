@@ -361,8 +361,31 @@ def test_every_transcribed_routine_ships_a_priced_s_row():
     """(T) is only as good as the `.S` rows it reads: a TRANSCRIBED routine with none has nothing to be
     carried by, and its C rows would red — this names the routine instead of each of its rows."""
     unpriced = sorted(tier3.TRANSCRIBED_AT[address] for address, rows in tier3.SHIPPED_ROWS.items() if not rows)
+    unpriced = [entry for entry in unpriced if entry not in HELD_TO_THE_CYCLE_BY_ITS_OWN_BATTERY]      # slice G, wave 3
     assert not unpriced, (f"{unpriced} are in include/transcribed.h with no `.S` row in Tier 3 — register "
                           f"their transcription cases (`transcription.register_transcription`)")
+
+
+# ---- slice G (band 5 wave 3): A `.S` THE TRANSCRIPTION RELATION CANNOT HOLD, by name and with its reason ------------------
+# The relation compares the whole image and the whole register file and drops nothing; crit_err's ROM routine calls
+# eralert — Alcyon code in the ROM, C in a build — so a run of it differs by nature (two compilers' frames on its own
+# stack, the Line-F mask word, a callee's registers). ITS OWN INSTRUCTIONS ARE HELD TO THE ROM'S TO THE CYCLE BY ITS
+# BATTERY, the alert served at its entry on both shores (`test_aes_crit_err.py`); it has no C row for (T) to carry.
+HELD_TO_THE_CYCLE_BY_ITS_OWN_BATTERY = {
+    "aes_rom_crit_err": "its ROM routine calls eralert (Alcyon): no run of it is equal with nothing dropped; "
+                        "`test_aes_crit_err.py` holds its instructions and their cycles with the alert served",
+}
+
+
+def test_a_transcribed_routine_excused_a_priced_row_has_none_and_no_c_row_for_the_rule_to_carry():
+    """THE EXCUSE IS REFUSED WHERE IT IS NOT NEEDED, and cannot hide a C row: each entry named has NO `.S` row (one
+    registered makes the entry stale) and no C row in the table ((T) would have nothing to carry it by)."""
+    rows_of = {tier3.TRANSCRIBED_AT[address]: rows for address, rows in tier3.SHIPPED_ROWS.items()}
+    assert set(HELD_TO_THE_CYCLE_BY_ITS_OWN_BATTERY) <= set(rows_of)
+    for entry in HELD_TO_THE_CYCLE_BY_ITS_OWN_BATTERY:
+        assert not rows_of[entry], f"{entry} has a priced `.S` row now: drop its excuse"
+        core = transcription.transcribed_core(entry)
+        assert not [row for row in tier3.ROWS if row.symbol == core], f"{core} has a C row in the table and no `.S` row to carry it"
 
 
 def test_no_transcribed_c_row_carries_a_written_acceptance():
@@ -1184,6 +1207,26 @@ def test_no_jsr_of_the_build_enters_the_aes_s_text_and_the_door_s_users_arrive_a
         "every row whose run arrives at a door entry is a routine of the AES's text")
 
 
+# ---- slice T (band 5 wave 3) --------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("elf", (lambda: tier3.BUILT_ELF, lambda: transcription.SHIPPED_ELF),
+                         ids=("the bench blob", "the shipped blob"))
+def test_a_call_into_the_rom_s_aes_text_owed_to_a_later_band_is_one_site_in_the_function_named(elf):
+    """THE ONE KIND OF `jsr` INTO THE AES'S TEXT THE RULE ABOVE LETS BE (`tier3.ROM_CALLS_OWED_TO_A_LATER_BAND`: a
+    transcription's own call of a routine not reconstructed yet), held to what it declares: each routine named is
+    called from EXACTLY ONE site of the blob, inside the function named — so an entry nothing needs any more, a
+    second caller and a call from C are each red — and no routine named is a door entry or has a body of ours."""
+    owed = tier3.rom_calls_owed(elf())
+    assert sorted(owed.values()) == sorted(tier3.ROM_CALLS_OWED_TO_A_LATER_BAND), "one site for each routine declared"
+    ranges = tier3._function_ranges(elf())
+    for site, routine in owed.items():
+        holder, why = tier3.ROM_CALLS_OWED_TO_A_LATER_BAND[routine]
+        assert why and any(lo <= site < hi for lo, hi in ranges[holder]), f"the call of {routine:#x} at {site:#x} is not in {holder}"
+        assert routine not in aes_event.ENTRIES
+        assert not [name for name in dir(addrs) if getattr(addrs, name) == routine and routines.is_routine(name)
+                    and (name.lower() in ranges or routines.core_symbol(name) in ranges)], "the routine has a body of ours: relocate the call"
+# ---- end of slice T's block ---------------------------------------------------------------------------------------------
+
+
 # THE CENSUS OF WHAT A DOOR USER'S ROW SETTLES BEYOND THE LINE-F MASK WORD: `{the kind: {the routine's core: its rows}}`
 # over every row `aes_event.register` made. The one settling stages and drops whatever word a row's ROM run stores,
 # with no ruling — so a door row that NEWLY reaches a mask bracket through a twin is settled in silence unless
@@ -1910,9 +1953,10 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False, False, True], (
+    assert [each.at_entry for each in read] == [True, False, False, True, False], (
         "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone; the screen "
-        "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr)")
+        "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr); "
+        "the critical-error handler's at exit alone (wave 3, slice G: a machine's etv_critic is the ROM's own)")
     # ...each mapped whole for this run — but the GEMDOS glue's text sites, mapped only for a run that reaches the
     # `.S` that parks them (`tier3.text_site_relocation`: forker's, on the bench's blob, reaches the C twin).
     assert [set(each.mapping) for each in read] == [
@@ -2140,8 +2184,11 @@ def test_the_switch_is_its_own_kind_of_the_build_contract(make_lists):
     assert not entries & {transcription.transcribed_core(entry) for entry in transcription.TRANSCRIBED}
     assert not set(transcription.SWITCH_ENTRIES) & set(shipped_glue.thunked_cores())
     every_s = set(map(str, (RECREATE / "src" / "aes").glob("*.S"))) | set(map(str, (RECREATE / "src" / "vdi").glob("*.S")))
-    assert every_s == set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch), (
-        "a `.S` of the table's components that is of none of the three kinds")
+    # (slice T, band 5 wave 3: the trap door is a fourth kind while it is linked and not installed — TRAPDOOR_SOURCES,
+    # held to make's own expansion by `test_aes_trapdoor.py`.)
+    assert every_s == (set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch)
+                       | set(transcription.trapdoor_sources())), (
+        "a `.S` of the table's components that is of none of the four kinds")
 
 
 JMP_OPERAND_BYTES = aes.LONG_BYTES      # dsptch's last instruction is `jmp <disp>.l`: its operand, the last four bytes

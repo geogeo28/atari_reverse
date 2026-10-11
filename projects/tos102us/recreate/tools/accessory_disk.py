@@ -43,6 +43,10 @@ WINDOW_SHIFT = 16
 WINDOW_KINDS = 0x0fff                   # GEM's twelve gadget bits
 MODE = struct.Struct(">I")
 NAMES = ("TESTACC1", "TESTACC2")
+# THE SEVEN-ACCESSORY DISK (band 5 wave 3): one more file than the loader takes (`$fe4394`: at most six started), so
+# its boot runs the loader's refusal of the seventh, FIVE allocated PDs (`$c682` = 5) and fpdnm's and getpd's walks
+# over more than one entry — a disk of its own, and a capture of its own (`make preinit-acc7`).
+SEVEN_NAMES = tuple(f"TESTACC{nth}" for nth in range(1, 8))
 EXTENSION = "ACC"
 _LINKED_SYMBOL_KINDS = "TtDdBb"         # `nm`'s text, data and BSS symbols: the ones at an offset of the program
 
@@ -101,19 +105,28 @@ def disk_with(files=()):
         return image.read_bytes()
 
 
-def file_at(index):
-    """Where the `index`-th file of a `disk_with` image begins: `st_build` lays files in consecutive clusters, and
-    the accessory is shorter than one."""
-    return (st_build.FIRST_DATA_SECTOR + index * st_build.SECTORS_PER_CLUSTER) * st_build.SECTOR_BYTES
+def clusters_of(file_bytes):
+    """How many clusters a file of `file_bytes` takes on the disk: at least its bytes, in whole clusters."""
+    return -(-file_bytes // st_build.CLUSTER_BYTES)
 
 
-def disk_of(accessory, modes):
-    """The disk with one test accessory per mode, named NAMES in turn (the module's docstring: built unpatched,
-    each mode word then laid in the image)."""
-    assert len(modes) <= len(NAMES) and len(accessory.file) <= st_build.CLUSTER_BYTES
-    image = bytearray(disk_with(tuple((f"{name}.{EXTENSION}", accessory.file) for name, _mode in zip(NAMES, modes))))
+def file_at(index, file_bytes=st_build.CLUSTER_BYTES):
+    """Where the `index`-th file of a `disk_with` image of EQUAL files (`file_bytes` each: the test accessory's)
+    begins: `st_build` lays files in consecutive clusters, each file's own in a row — so a file of several clusters
+    is ONE RUN of the image, and the next begins where its last cluster ends. (The default is a file of one
+    cluster: the test accessory as it stands.)"""
+    return (st_build.FIRST_DATA_SECTOR + index * clusters_of(file_bytes) * st_build.SECTORS_PER_CLUSTER) * st_build.SECTOR_BYTES
+
+
+def disk_of(accessory, modes, names=NAMES):
+    """The disk with one test accessory per mode, named `names` in turn (the module's docstring: built unpatched,
+    each mode word then laid in the image) — THE ACCESSORY OF ANY LENGTH: a file past one cluster lies in consecutive
+    ones, and its mode word is patched where the file's own offset puts it in that run (held: the image holds the
+    file's bytes, whole, at `file_at`)."""
+    assert len(modes) <= len(names), f"{len(modes)} modes for {len(names)} accessories"
+    image = bytearray(disk_with(tuple((f"{name}.{EXTENSION}", accessory.file) for name, _mode in zip(names, modes))))
     for index, mode in enumerate(modes):
-        at = file_at(index)
+        at = file_at(index, len(accessory.file))
         assert image[at:at + len(accessory.file)] == accessory.file, "the accessory is not where st_build lays a file"
         MODE.pack_into(image, at + mode_word_at(accessory), mode)
     return bytes(image)
@@ -124,6 +137,11 @@ def disk_path(recreate=RECREATE):
     return recreate / "build" / "acc" / "ACCDISK.ST"
 
 
+def seven_disk_path(recreate=RECREATE):
+    """...and the quiet seven's (the Makefile's ACC7_DISK)."""
+    return recreate / "build" / "acc" / "ACC7DISK.ST"
+
+
 def serial_of(image):
     """A floppy image's three serial bytes, off its boot sector."""
     return bytes(image[st_build.BOOT_SERIAL_AT:st_build.BOOT_SERIAL_AT + st_build.BOOT_SERIAL_BYTES])
@@ -132,10 +150,12 @@ def serial_of(image):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True, help="where the image is written")
+    parser.add_argument("--seven", action="store_true", help="the seven-accessory disk (SEVEN_NAMES) instead of the pair's")
     args = parser.parse_args(argv)
+    names = SEVEN_NAMES if args.seven else NAMES
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_bytes(disk_of(built(), (QUIET,) * len(NAMES)))
-    print(f"the accessory disk -> {args.out}")
+    args.out.write_bytes(disk_of(built(), (QUIET,) * len(names), names))
+    print(f"the accessory disk ({len(names)} accessories) -> {args.out}")
     return 0
 
 

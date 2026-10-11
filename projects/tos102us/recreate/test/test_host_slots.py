@@ -69,7 +69,8 @@ def test_every_host_slot_is_inside_the_dropped_band_and_apart():
                           "AES_PGMLD_WORDS", "AES_HCTL_WINDOW_SIZE", "AES_HCTL_WINDOW_CORNER",
                           "AES_HCTL_WINDOW_DRAG_RECT", "AES_HCTL_WINDOW_DRAG_ANSWERS", "AES_HCTL_RECT_CHOICE",
                           "AES_CTLMGR_ANSWERS",
-                          "AES_AMOUSE_MOBLK", "AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB", "AES_INOROUT_RECT"}
+                          "AES_AMOUSE_MOBLK", "AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB", "AES_INOROUT_RECT",
+                          "AES_SNDCLI_BASEPAGE"}                  # band 5 wave 3, slice L
     assert not misplaced(slots)
 
 

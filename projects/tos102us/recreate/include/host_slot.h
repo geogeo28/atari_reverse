@@ -257,6 +257,11 @@
 #define HOST_SLOT_AES_MARSHAL_FRAME_BYTES 78     /* MARSHAL_FRAME_BYTES + MARSHAL_HOST_CALLER_BYTES              */
 #define HOST_SLOT_AES_DISPATCH_MOUSE_FORM 0x7f25c /* $fe5d9c's -12(a6): graf_mouse's form ($fe62b2 pea)          */
 #define HOST_SLOT_AES_DISPATCH_MOUSE_FORM_BYTES 4
+/* ---- band 5 wave 3, slice L (`aes/loader.h`) ---- sndcli's local: the basepage pgmld answers through the address it
+ * is handed, read back once the load has succeeded. */
+#define HOST_SLOT_AES_SNDCLI_BASEPAGE   0x7f3e0  /* $fe42e8's -6(a6)                                             */
+#define HOST_SLOT_AES_SNDCLI_BASEPAGE_BYTES 4
+/* ---- end of slice L's ---- */
 /* ...and the screen manager's handlers' (`aes/gemctrl.h`). hctl_window's: the window's rectangle with the four words
  * r_get unpacks it into, and the elevator's corner ob_offset answers into — each read out and given back before any
  * wait; THE RECTANGLE A DRAG IS HELD BY (gr_dragbox's bound, gr_rubwind's twin offsets) and THE TWO WORDS IT ANSWERS
@@ -398,6 +403,7 @@ enum host_slot {
     HOST_SLOT_ID_AES_MARSHAL_FRAME,
     HOST_SLOT_ID_AES_DISPATCH_MOUSE_FORM,
     HOST_SLOT_ID_AES_PGMLD_WORDS,
+    HOST_SLOT_ID_AES_SNDCLI_BASEPAGE, /* band 5 wave 3, slice L */
     HOST_SLOT_ID_AES_HCTL_WINDOW_SIZE,
     HOST_SLOT_ID_AES_HCTL_WINDOW_CORNER,
     HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT,     /* a slot per process: the screen manager's frame across a drag's waits */

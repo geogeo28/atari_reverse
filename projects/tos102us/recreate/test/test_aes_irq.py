@@ -334,7 +334,13 @@ _NAMING_AN_ENTRY = {site: (_entry_named(immediate.value), immediate.owed_by)
 OWED_BY_ROUTINES_NOT_RECONSTRUCTED = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by is None}
 INSTALLED_BY = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by == INSTALLER_S_FILE}
 HANDED_BY_A_PLAYBACK = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by == PLAYBACK_S_FILE}
-INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED = 2, 2, 4
+# ---- band 5 wave 3, slice L ---- ...AND HANDED pstart BY THE ACCESSORY LOADER: sndcli's `pea gotopgm` ($fe437c), C since
+# then — `an_accessory_s_entry()` (`src/aes/loader.c`: this build's gotopgm on target). The shell's launch's is still owed.
+LOADER_S_FILE = "loader.c"
+HANDED_BY_THE_LOADER = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by == LOADER_S_FILE}
+assert HANDED_BY_THE_LOADER == {0xFE437C: "aes_rom_gotopgm"}
+# ---- end of slice L's ----
+INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED = 2, 2, 3
 assert (len(INSTALLED_BY), len(HANDED_BY_A_PLAYBACK), len(OWED_BY_ROUTINES_NOT_RECONSTRUCTED)) == (
     INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED)
 assert set(INSTALLED_BY.values()) == set(switch.GLUE_ENTRY_SYMBOLS.values())
@@ -375,7 +381,9 @@ def test_every_rom_site_that_names_the_glue_by_value_is_installed_or_owed():
     or one of a routine not reconstructed yet, by address — a new site, or one ported and not re-pointed, is none."""
     import test_aes_rom_data as census
     named = {site: _entry_named(row.value) for site, row in census.CODE_IMMEDIATES.items() if _entry_named(row.value)}
-    assert named == {**OWED_BY_ROUTINES_NOT_RECONSTRUCTED, **INSTALLED_BY, **HANDED_BY_A_PLAYBACK}
+    assert named == {**OWED_BY_ROUTINES_NOT_RECONSTRUCTED, **INSTALLED_BY, **HANDED_BY_A_PLAYBACK, **HANDED_BY_THE_LOADER}
+    for site in HANDED_BY_THE_LOADER:           # band 5 wave 3, slice L
+        assert census.CODE_IMMEDIATES[site].owed_by == LOADER_S_FILE
     for site in INSTALLED_BY:
         assert census.CODE_IMMEDIATES[site].owed_by == INSTALLER_S_FILE
     for site in HANDED_BY_A_PLAYBACK:

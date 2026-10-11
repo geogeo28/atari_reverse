@@ -50,16 +50,20 @@ ROM_ADDRESSES_AS_DATA = {
     # ...isdrive's two (its `bsr`s of dos_gdrv and dos_sdrv, parked through $fe3c28), pgmld's two and the empty command
     # tail it hands Pexec (a zero word of the text, inside pgmld's pinned region: a TEXT_TABLE of (b), row $fe39be;
     # the HOST's twin alone names it — the `.S` hands its own, the target's C a zero word of its own) — and the two handlers the vector
-    # takes install BY VALUE: the AES's trap #2 handler and crit_err, the ROM's addresses on the host and, until band
-    # 5's wave 3 links ours, on target too (rows $fe3c78, $fe3c84, $fe3c8e, $fe3cb6 of (b)).
+    # takes install BY VALUE: the AES's trap #2 handler and crit_err, the ROM's addresses on the host. On target
+    # crit_err's is the build's own entry (`ALCYON_ROUTINE`; rows $fe3c8e, $fe3cb6 of (b)); the trap door's is the
+    # ROM's until the door's flip moves its two operands (rows $fe3c78, $fe3c84). And crit_err's table, which the
+    # twin reads in place — a row below it included, as the ROM's index reads it.
     "gemdosif.c": {"AES_DOS_TRAP_RETURN": RETURN_SITE, "AES_DOS_SFIRST_TRAP_RETURN": RETURN_SITE,
                    "AES_DOS_OPEN_TRAP_RETURN": RETURN_SITE, "AES_DOS_READ_TRAP_RETURN": RETURN_SITE,
                    "AES_DOS_LSEEK_TRAP_RETURN": RETURN_SITE, "AES_DOS_SNEXT_TRAP_RETURN": RETURN_SITE,
                    "AES_ISDRIVE_GDRV_RETURN": RETURN_SITE, "AES_ISDRIVE_SDRV_RETURN": RETURN_SITE,
                    "AES_PGMLD_PEXEC_RETURN": RETURN_SITE, "AES_PGMLD_MSHRINK_RETURN": RETURN_SITE,
-                   "AES_PGMLD_EMPTY_TAIL": REGION_TABLE, "GEM_TRAP2": CODE, "AES_ROM_CRIT_ERR": CODE},
-    # ...and the same two in the transcription of those takes (`gemdosif.S`: the ROM's own immediates).
-    "gemdosif.S": {"GEM_TRAP2": CODE, "AES_ROM_CRIT_ERR": CODE},
+                   "AES_PGMLD_EMPTY_TAIL": REGION_TABLE, "GEM_TRAP2": CODE, "AES_ROM_CRIT_ERR": CODE,
+                   "AES_ROM_CRIT_ERR_ALERTS": REGION_TABLE},
+    # ...and the trap door's in the transcription of those takes (`gemdosif.S`: the ROM's own immediate, until the
+    # door's flip; crit_err's operand is the file's own label, a `Relocated` of its pin).
+    "gemdosif.S": {"GEM_TRAP2": CODE},
     # set_defdrv's two return sites from dos_sdrv, and desk_free's seven from dos_free (host arguments, as rsrc_free's).
     "deskleaf.c": {"AES_SET_DEFDRV_C_RETURN": RETURN_SITE, "AES_SET_DEFDRV_A_RETURN": RETURN_SITE},
     "deskmem.c": {"AES_DESK_FREE_FIRST_RETURN": RETURN_SITE, "AES_DESK_FREE_SECOND_RETURN": RETURN_SITE,
@@ -126,6 +130,23 @@ ROM_ADDRESSES_AS_DATA = {
     # $fe4a8c of (b)): off target the ROM's address, on target the build's entry `aes_rom_ctlmgr` (ALCYON_ROUTINE) —
     # and the process's name, the ROM's own string past the text, read in place by pd_nameit.
     "ctlmgr.c": {"AES_ROM_CTLMGR": CODE, "AES_SCRENMGR_NAME": TABLE},
+    # ---- band 5 wave 3, slice L: the accessory loader ---- the thirteen return sites its Line-F calls of the glue park,
+    # gotopgm handed pstart by value (row $fe437c of (b): the build's own entry on target), and the ROM's four strings —
+    # C:'s root and pattern, then the kept search's (data outside every pinned region).
+    "loader.c": {"AES_SNDCLI_CLOSE_RETURN": RETURN_SITE, "AES_LDACCS_GDRV_RETURN": RETURN_SITE,
+                 "AES_LDACCS_SDTA_RETURN": RETURN_SITE, "AES_LDACCS_SDRV_C_RETURN": RETURN_SITE,
+                 "AES_LDACCS_CHDIR_OF_C_RETURN": RETURN_SITE, "AES_LDACCS_SDRV_BACK_RETURN": RETURN_SITE,
+                 "AES_LDACCS_CHDIR_RETURN": RETURN_SITE, "AES_LDACCS_FREE_RETURN": RETURN_SITE,
+                 "AES_FREE_ACCS_FIRST_ENV_RETURN": RETURN_SITE, "AES_FREE_ACCS_FIRST_RETURN": RETURN_SITE,
+                 "AES_FREE_ACCS_ENV_RETURN": RETURN_SITE, "AES_FREE_ACCS_BASEPAGE_RETURN": RETURN_SITE,
+                 "AES_FREE_ACCS_PD_RETURN": RETURN_SITE, "AES_ROM_GOTOPGM": CODE,
+                 "AES_ACC_ROOT_OF_C": TABLE, "AES_ACC_PATTERN_OF_C": TABLE, "AES_ACC_ROOT": TABLE, "AES_ACC_PATTERN": TABLE},
+    # ---- end of slice L's ----
+    # ---- band 5 wave 3, slice T: the trap door (`trapdoor.S`) --------------------------------------------------------
+    # ub_trampoline's `jsr` of the desk's G_USERDEF draw code ($fe3f50), the ROM's own operand: band 6's routine, and
+    # the one word of the door's region that still names the ROM (`test_aes_trapdoor.py`).
+    "trapdoor.S": {"AES_ROM_DESK_USERDEF": CODE},
+    # ---- end of slice T's block --------------------------------------------------------------------------------------
 }
 
 
@@ -165,13 +186,15 @@ CODE_IMMEDIATES = {
     0xFD9F86: Immediate(0xFED424, "gem_entry: a bare `rts`, into $947a"),
     0xFD9F92: Immediate(addrs.AES_ROM_TICK_GLUE, "gem_entry: interrupt glue, into $947e"),
     0xFD9F9E: Immediate(0xFE3F3E, "gem_entry: into $8c32"),
-    # (owed by the file that SHIPS: the transcription, whose four operands are still the ROM's — the rule below)
+    # (owed by the file that SHIPS: the transcription, whose two trap-door operands are still the ROM's — the rule
+    # below. crit_err's two are the build's own since wave 3: the `.S`'s operand a `Relocated` of its pin, the
+    # twins' an ALCYON_ROUTINE of `gemdosif.c`, which the rows now name.)
     0xFE3C78: Immediate(0xFE3EA6, "install_trap2: the AES's `trap #2` handler into vector $88", "gemdosif.S"),
     0xFE3C84: Immediate(0xFE3EA6, "retake: the same handler into $88 again, then the critic's install", "gemdosif.S"),
-    0xFE3C8E: Immediate(0xFE3CBE, "retake: the critical-error handler, Setexc($101)", "gemdosif.S"),
-    0xFE3CB6: Immediate(0xFE3CBE, "takeerr: the critical-error handler installed", "gemdosif.S"),
+    0xFE3C8E: Immediate(0xFE3CBE, "retake: the critical-error handler, Setexc($101)", "gemdosif.c"),
+    0xFE3CB6: Immediate(0xFE3CBE, "takeerr: the critical-error handler installed", "gemdosif.c"),
     0xFE3F00: Immediate(0xFE65AA, "gem_trap2_aes: aes_entry, into A0"),
-    0xFE437C: Immediate(0xFE38B0, "$fe42e8 (ctx, the accessory loader): gotopgm pushed"),
+    0xFE437C: Immediate(0xFE38B0, "sndcli: gotopgm, where an accessory's process begins (pstart's first, psetup's PC)", "loader.c"),
     0xFE4A7E: Immediate(0xFE49D2, "ictlmgr: ctlmgr as the screen manager's load address (pstart's third)", "ctlmgr.c"),
     0xFE4A8C: Immediate(0xFE49D2, "ictlmgr: ...and as where its process begins (pstart's first, psetup's PC)", "ctlmgr.c"),
     0xFE5D68: Immediate(addrs.AES_ROM_MKRECT, "newrect: mkrect, everyobj's routine", "wrect.c"),
@@ -279,21 +302,47 @@ def entries_of_ours_for(target, symbols=None, cores=None):
                   | {routines.core_symbol(name) for name in names if hasattr(cores, routines.core_symbol(name))})
 
 
+# ---- band 5 wave 3, slice T ------------------------------------------------------------------------------------------
+# THE ONE DECLARED EXCEPTION TO THE RULE BELOW, by site: the trap door is LINKED since slice T (`trapdoor.S`:
+# `aes_rom_trap2`) and NOT INSTALLED until slice F binds it — the wave's order: nothing is bound before the flip. Until
+# then install_trap2's and retake's operands are still the ROM's handler, which is what the vector must hold while
+# no machine maps it. SLICE F EMPTIES THIS (the two operands relocated, the `.S` out of census (a) for GEM_TRAP2):
+# `test_the_sites_installed_at_the_flip_are_needed` reds on an entry the rule no longer needs.
+LINKED_AND_INSTALLED_AT_THE_FLIP = {0xFE3C78: "aes_rom_trap2", 0xFE3C84: "aes_rom_trap2"}
+
+
+def test_the_sites_installed_at_the_flip_are_needed():
+    """Each declared site is a row a `.S` owes whose target the build NOW has under exactly that entry: a site whose
+    operand was relocated (the row no longer the `.S`'s), or whose routine is not linked, is no exception."""
+    for site, entry in LINKED_AND_INSTALLED_AT_THE_FLIP.items():
+        row = CODE_IMMEDIATES[site]
+        assert row.owed_by and row.owed_by.endswith(".S"), f"${site:x} is no longer a `.S`'s to re-point: drop it from the list"
+        assert entries_of_ours_for(row.value) == [entry], f"${site:x}: the build's entries for ${row.value:x}"
+# ---- end of slice T's block ------------------------------------------------------------------------------------------
+
+
 def test_a_site_a_transcription_owes_names_a_routine_the_build_has_no_body_of():
     """...so every row of (b) owed by a `.S` is held to it: its target has no entry of ours. THE DAY ONE LANDS (band
     5's wave 3: the trap door, crit_err) this reds by site — relocate the operand in the `.S`, declare the
     `Relocated` in its pin, and take the row's `.S` out of the ROM-address census (a)."""
     owed = {site: row for site, row in CODE_IMMEDIATES.items() if row.owed_by and row.owed_by.endswith(".S")}
-    assert set(owed) == {0xFE3C78, 0xFE3C84, 0xFE3C8E, 0xFE3CB6}
-    linked = {f"${site:x}": entries_of_ours_for(row.value) for site, row in owed.items() if entries_of_ours_for(row.value)}
+    assert set(owed) == {0xFE3C78, 0xFE3C84}, "the trap door's two; crit_err's two were relocated in wave 3 (slice G)"
+    linked = {f"${site:x}": entries_of_ours_for(row.value) for site, row in owed.items()
+              if entries_of_ours_for(row.value) and site not in LINKED_AND_INSTALLED_AT_THE_FLIP}
     assert not linked, f"the `.S` still installs the ROM's address of a routine the build now has: {linked}"
 
 
 def test_that_rule_sees_an_entry_of_either_kind():
-    """ITS RED: retake has both a `.S` entry and a C core, the trap door and crit_err neither."""
+    """ITS RED: retake has both a `.S` entry and a C core — and so, since wave 3, has crit_err (which is why its two
+    sites are relocated); the trap door has its `.S` entry alone (slice T: linked, declared above until the flip
+    installs it). Each kind is seen alone."""
     assert entries_of_ours_for(addrs.AES_ROM_RETAKE) == ["aes_retake", "aes_rom_retake"]
-    assert entries_of_ours_for(addrs.AES_ROM_CRIT_ERR) == entries_of_ours_for(addrs.GEM_TRAP2) == []
-    assert entries_of_ours_for(addrs.AES_ROM_CRIT_ERR, symbols={"aes_rom_crit_err": 0}) == ["aes_rom_crit_err"]
+    assert entries_of_ours_for(addrs.AES_ROM_CRIT_ERR) == ["aes_crit_err", "aes_rom_crit_err"]
+    assert entries_of_ours_for(addrs.GEM_TRAP2) == ["aes_rom_trap2"]
+    no_core = object()
+    assert entries_of_ours_for(addrs.AES_ROM_CRIT_ERR, symbols={}, cores=no_core) == []
+    assert entries_of_ours_for(addrs.AES_ROM_CRIT_ERR, symbols={"aes_rom_crit_err": 0}, cores=no_core) == ["aes_rom_crit_err"]
+    assert entries_of_ours_for(addrs.AES_ROM_CRIT_ERR, symbols={}) == ["aes_crit_err"]
 
 
 # ---- AN ENTRY'S KIND IS WHAT THE ROM'S TEXT SAYS IT IS (T8) -----------------------------------------------------------

@@ -32,7 +32,7 @@ import case
 GEMDOS, GEM, BIOS, XBIOS = 1, 2, 13, 14
 VECTORS = {GEMDOS: addrs.VECTOR_TRAP_GEMDOS, GEM: addrs.VECTOR_TRAP_GEM, BIOS: addrs.VECTOR_TRAP_BIOS,
            XBIOS: addrs.VECTOR_TRAP_XBIOS}
-ETV_CRITIC = 0x404                      # the critical-error handler's vector (Setexc's $101)
+ETV_CRITIC = aes_event.ETV_CRITIC       # the critical-error handler's vector (Setexc's $101)
 # What is read at each call: the two vectors GEM takes and what it saved of each, and the mouse's hide count.
 WITNESSES = (addrs.VECTOR_TRAP_GEM, addrs.SYSVAR_VDI_ENTRY, ETV_CRITIC, aes.AES_OLD_CRITIC, aes.AES_GL_MOFF)
 SUPERVISOR = 0x2000                     # of a stacked status register
@@ -97,4 +97,16 @@ def on_both_shores(tier3, bench, row, witnesses=WITNESSES):
     machine = make_image(row.pokes)
     the_rom_s, ours = TrapOrder(machine, witnesses), TrapOrder(machine, witnesses)
     tier3._measure_call(bench, row, watch=ours, original_watch=the_rom_s)
+    ours.made = _given_the_rom_s_names(ours.made, witnesses, tier3.code_relocations(bench.elf, row.symbol))
     return the_rom_s, ours
+
+
+def _given_the_rom_s_names(made, witnesses, relocations):
+    """OUR shore's calls with every witness that is A SLOT OF THE RELOCATION REGISTRY given the ROM's name for the code
+    it held (band 5 wave 3: etv_critic holds the build's own crit_err once a build's retake or takeerr has run) — as
+    Tier 3 maps the image our run leaves before it compares it, and by the same tables. A witness that is no slot, and
+    a value that is no entry of the build's, stands as it was read."""
+    names = {at: {entry: rom for rom, entry in relocation.mapping.items()}
+             for relocation in relocations for at in witnesses if at in relocation.slots}
+    return [call._replace(held=tuple(names.get(at, {}).get(value, value) for at, value in zip(witnesses, call.held)))
+            for call in made]

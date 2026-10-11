@@ -14,10 +14,19 @@ WHAT IS HELD, on both blobs:
     reported), for the bound — AT A TRAP CALL BY CALL: each trap site charged
     its own VDI call's measured need — and for each measured run. A FINDING IS ASSERTED, not expected to fail: any change either way —
     a frame flattened, a frame grown — reddens the pin that names it.
+  * THE TRAP PATH (band 5 wave 3, rulings W2-R5 and W3-R8) — a process that enters by `trap #2`: THE JUMP TABLE of
+    the opcode switch read from the blob's bytes and its refusals; THE DOOR'S SHAPES, each over a listing of its own
+    and over THE ROM'S OWN BYTES (a stack begun, a stack left for good, a routine that never returns, a private
+    stack left for the one it came on, a declared trap); the bound through the switch on both blobs BESIDE PD2'S
+    1,396 BYTES AND AN ALLOCATED PD'S 1,788, by the call; crit_err's and ub_trampoline's private stacks.
+    THE VERDICT THERE IS A FINDING TOO, and it is "OVER": pinned as the number it is, not waved through.
 THE PINS ARE LAYOUT NUMBERS OF OUR BUILD (as band 4 pins its dispatcher's): a pin that moves is re-pinned WITH THE
 REASON — which frame, which call — never to make a run green.
 """
+import collections
 import re
+import struct
+from pathlib import Path
 
 import pytest
 
@@ -25,8 +34,10 @@ from harness import addrs
 from recreate_kit import rom_bench
 
 import aes
+import aes_boot
 import aes_stack as stack
 import aes_switch as switch
+import case
 import derived
 
 LONG_BYTES = aes.LONG_BYTES
@@ -314,14 +325,11 @@ def test_ob_user_s_pointer_is_the_machine_s_and_mn_do_s_register_needs_no_declar
     assert "aes_mn_do" not in stack.THROUGH_A_POINTER and stack.reading(blob.elf).of("aes_mn_do").deepest > 0
 
 
-def test_the_opcode_switch_is_refused_by_name_and_is_on_no_path_read(blob):
-    """WAVE 3'S (ruling W2-R5): `aes_dispatch` is compiled as a jump table, which the reading REFUSES by name — and
-    no path of the screen manager goes through it (a process that enters the AES by `trap #2` does)."""
-    with pytest.raises(AssertionError, match="aes_dispatch: the stack reading does not follow the transfer `jmp %pc@"):
-        StackReading(blob.elf, stack.THROUGH_A_POINTER).of(stack.THE_OPCODE_SWITCH)
-    read = stack.reading(blob.elf)
-    stack.bound(blob)
-    assert stack.THE_OPCODE_SWITCH not in read.functions_read() and "aes_ev_multi" in read.functions_read()
+def test_the_opcode_switch_is_on_no_path_of_the_screen_manager_s(blob):
+    """`aes_dispatch` is compiled as a jump table (ruling W2-R5): no path of the screen manager goes through it — a
+    process that enters the AES by `trap #2` does, and THE TRAP PATH below reads it."""
+    on_its_paths = stack.reading(blob.elf).functions_read(*stack.entered_at(blob.elf)[0])
+    assert stack.THE_OPCODE_SWITCH not in on_its_paths and "aes_ev_multi" in on_its_paths
 
 
 # (7) WHAT THE LISTING DOES NOT SHOW, AND WHAT THE READING MUST NOT GUESS (the review's shapes: each read LOW before).
@@ -396,7 +404,9 @@ def test_the_reading_starts_at_the_screen_manager_s_entry_the_moment_a_blob_link
     if stack.links(blob.elf, stack.SCREEN_MANAGER_ENTRY):
         assert (read.entered_at, read.allowed) == ((stack.SCREEN_MANAGER_ENTRY,), 0)
         assert read.chain[0][0] == read.trap_chain[0][0] == stack.SCREEN_MANAGER_ENTRY
-        assert entries <= {stack.SCREEN_MANAGER_ENTRY}, f"the build hands pstart {entries}: a process entry nothing reads"
+        # ---- band 5 wave 3, slice L ---- ...beside gotopgm, which the accessory loader's sndcli hands it: AN APPLICATION'S
+        # entry — its `rte` leaves for the program (`stack.process_entries`), no code of the build to read a depth from
+        assert entries <= {stack.SCREEN_MANAGER_ENTRY, "aes_rom_gotopgm"}, f"the build hands pstart {entries}: a process entry nothing reads"
     else:
         assert (read.entered_at, read.allowed) == (stack.HANDLERS, stack.CTLMGR_S_OWN_BYTES_ALLOWED) and not entries
         assert read.chain[0] == read.trap_chain[0] == (stack.ALLOWED, stack.CTLMGR_S_OWN_BYTES_ALLOWED)
@@ -458,18 +468,20 @@ OWN_FRAMES, AT_THE_DEEPEST_TRAP = 744, {BENCH: 614, SHIPPED: 624}
 # most is v_gtext's (8), not a blit's (109 vro_cpyfm, 121 vrt_cpyfm: 256) — and the keyboard poll's 130 that band 4
 # measures is vsm_string's (31). EVERY CALL THE SCREEN MANAGER'S PATHS CAN MAKE IS HERE (held below): vsl_color (17),
 # vsm_locator (28) and vq_mouse (124) are no scenario's and are measured by the ROM's own routines beside them.
+# TWO MORE SINCE WAVE 3 (the trap path's: appl_tplay's arm exchanges the motion and the cursor routines — vex_motv 126,
+# vex_curv 127 — and no path of the screen manager's asks either; measured by ap_tplay's own row, `THE_ROWS_BESIDE`).
 THE_ROM_S_VDI_NEEDS = {6: 184, 8: 310, 12: 132, 17: 112, 22: 112, 23: 140, 24: 144, 25: 112, 28: 128, 31: 130, 32: 112,
-                       33: 116, 109: 256, 111: 100, 113: 104, 114: 152, 121: 256, 122: 138, 123: 120, 124: 112, 128: 112,
-                       129: 156}
+                       33: 116, 109: 256, 111: 100, 113: 104, 114: 152, 121: 256, 122: 138, 123: 120, 124: 112, 126: 100,
+                       127: 100, 128: 112, 129: 156}
 # ...and through EACH BLOB'S OWN VDI — its entry, its dispatcher AND ITS OWN HANDLERS (`who_ran` holds that they ran).
 # The shipped blob's raster cores are the ROM's instructions, so its text, lines, fills and blits are within 32 of
 # the ROM's (the two image-only thunks, the C handler's frames) and its setters SHALLOWER (no Alcyon `link`); the
 # bench blob's are the C twins of those cores, which no ROM ships: 520 under a text, 460 under an icon's blit.
 OUR_VDI_NEEDS = {
     BENCH: {6: 304, 8: 520, 12: 124, 17: 96, 22: 96, 23: 108, 24: 108, 25: 96, 28: 142, 31: 138, 32: 96, 33: 96, 109: 320,
-            111: 104, 113: 96, 114: 260, 121: 460, 122: 228, 123: 168, 124: 96, 128: 112, 129: 136},
+            111: 104, 113: 96, 114: 260, 121: 460, 122: 228, 123: 168, 124: 96, 126: 96, 127: 96, 128: 112, 129: 136},
     SHIPPED: {6: 208, 8: 342, 12: 124, 17: 96, 22: 96, 23: 108, 24: 108, 25: 96, 28: 130, 31: 138, 32: 96, 33: 96, 109: 244,
-              111: 88, 113: 96, 114: 172, 121: 244, 122: 166, 123: 140, 124: 96, 128: 116, 129: 136}}
+              111: 88, 113: 96, 114: 172, 121: 244, 122: 166, 123: 140, 124: 96, 126: 96, 127: 96, 128: 116, 129: 136}}
 # ...and HOW FAR SP CAN HAVE STOOD BELOW THAT STORE: the largest allocation nothing stored under that a run reached
 # under the opcode (the rest 0). The shipped blob's blits run the ROM's copy-raster, whose 76-byte frame of locals is
 # allocated before anything is stored in it: charged whole. AND ITS LINES AND FILLS RUN ITS OWN ENGINES' 20 — the
@@ -510,6 +522,7 @@ CHARGED_THE_WORST_IT_IS_OVER_BY = {BENCH: 190, SHIPPED: 22}  # 614 + 520 + 252; 
 # The one site whose opcode neither the listing nor a declaration says (gsx_xline's sibling call of gsx_1code, its
 # arguments stored into its own argument slots): charged the worst need of all.
 SITES_CHARGED_THE_WORST = {"aes_gsx_xline"}
+A_VDI_OPCODE_NO_RUN_TAKES = addrs.VDI_ROM_V_OPNWK_OPCODE     # the AES opens its workstation once, in no run measured here
 
 
 def _moved(read, pinned):
@@ -545,6 +558,9 @@ def test_finding_the_os_under_a_trap_by_its_call_ours_and_the_rom_s():
     in_the_scenarios = {trap.opcode for name in stack.SCENARIOS for trap in stack.traps_of(name)}
     assert beside - in_the_scenarios == {addrs.VDI_ROM_VSL_COLOR_OPCODE, addrs.VDI_ROM_LOCATOR_OPCODE, addrs.VDI_ROM_VQ_MOUSE_OPCODE}, (
         "the routines beside the scenarios are run for the three calls no scenario's handler takes")
+    rows_beside = {trap.opcode for name in stack.THE_ROWS_BESIDE for trap in stack.traps_of_a_row(name)}
+    assert rows_beside - in_the_scenarios - beside == {addrs.VDI_ROM_VEX_MOTV_OPCODE, addrs.VDI_ROM_VEX_CURV_OPCODE}, (
+        "ap_tplay's row is run for the two calls of the trap path no run before it takes")
 
 
 def test_under_our_traps_our_own_handlers_ran_and_the_rom_s_did_not():
@@ -764,11 +780,12 @@ def test_every_trap_of_the_screen_manager_s_paths_is_under_a_site_and_the_deepes
     to the byte — and no other function read takes the trap itself."""
     read, sites = stack.reading(blob.elf), stack.trap_sites(blob.elf)
     assert max(site.depth for site in sites) == stack.bound(blob).at_a_trap
-    takers = {name for name in read.functions_read() & set(read.functions())
+    entries = stack.entered_at(blob.elf)[0]
+    takers = {name for name in read.functions_read(*entries) & set(read.functions())
               if any(text == switch.TRAP_2 for _at, text in read.functions()[name])}
     assert takers and takers <= set(stack.TAKES_THE_TRAP), f"`trap #2` is taken in {sorted(takers)}"
     # ...and the routine that takes it is CALLED only by a site or by a routine that hands its opcode on.
-    callers = {function.partition(switch.HANDED)[0].partition(switch.INTO)[0] for function in read.read_as()
+    callers = {function.partition(switch.HANDED)[0].partition(switch.INTO)[0] for function in read.read_as(*entries)
                for callee, _under, _at in read.sites(function) if callee.partition(switch.INTO)[0] in stack.TAKES_THE_TRAP}
     # (the shipped blob's `aes_gsx2` is its glue into the `.S`: the trap's own routine, called by its name)
     assert callers <= {site.function for site in sites} | set(stack.HANDS_ITS_OPCODE_ON + stack.TAKES_THE_TRAP)
@@ -798,7 +815,7 @@ def test_a_site_whose_opcode_is_not_read_is_charged_what_its_function_is_declare
     assert stack.need_under(a_text_or_a_setter, shore) == stack.needs_bounded(shore)[V_GTEXT] > stack.needs_bounded(shore)[addrs.VDI_ROM_VSWR_MODE_OPCODE]
     a_blit = stack.TrapSite("a_function", 0x100, 500, (VRT_CPYFM,))
     assert stack.need_under(a_blit, shore) == OUR_VDI_NEEDS[shore][VRT_CPYFM] + UNSTORED_UNDER[shore].get(VRT_CPYFM, 0)
-    unmeasured = stack.TrapSite("a_function", 0x100, 500, (0x7F,))
+    unmeasured = stack.TrapSite("a_function", 0x100, 500, (A_VDI_OPCODE_NO_RUN_TAKES,))
     with pytest.raises(AssertionError, match="no run.*measured"):
         stack.need_under(unmeasured, shore)
 
@@ -1006,3 +1023,540 @@ def test_the_two_limits_of_a_measured_depth_are_said_and_the_first_is_bounded(bl
 def test_the_stack_is_read_off_the_machine():
     lo, top = stack.stack_of(stack._booted(stack.THE_ROM_S).image())
     assert top - lo == SPAN and lo == stack.aes_event.uda_of(stack.SCREEN_MANAGER, stack._booted(stack.THE_ROM_S).image()) + aes.UDA_STATE_BYTES
+
+
+# ================================================================================================================================
+# THE TRAP PATH (band 5 wave 3; rulings W2-R5, W3-R8): a process that enters the AES by `trap #2`
+# ================================================================================================================================
+# ---- (8) THE JUMP TABLE, over a listing of its own ---------------------------------------------------------------------------
+TABLE_AT = 0x11c
+DEFAULT_ARM, THE_DEEP_ARM, THE_LEAF_ARM = 0x122, 0x128, 0x130
+# A switch of three words as GCC lays one: the frame, the guard, the index widened and doubled, the word loaded, the
+# jump — THE TABLE'S WORDS AS OBJDUMP DECODES THEM (one "instruction" that would take 4,000 bytes if it were walked)
+# — the default arm, and two arms that branch back to it.
+A_SWITCH = [(0x100, "lea %sp@(-24),%sp"), (0x104, "cmpiw #2,%d0"), (0x108, "bhiw 122 <caller+0x22>"),
+            (0x10c, "andil #65535,%d0"), (0x112, "addl %d0,%d0"), (0x114, "movew %pc@(11c <caller+0x1c>,%d0:l),%d0"),
+            (0x118, "jmp %pc@(11c <caller+0x1c>,%d0:w)"),
+            (TABLE_AT, "lea %sp@(-4000),%sp"), (0x120, ".short 0x0006"),
+            (DEFAULT_ARM, "lea %sp@(24),%sp"), (0x126, "rts"),
+            (THE_DEEP_ARM, "jsr 300 <deep>"), (0x12e, "bras 122 <caller+0x22>"),
+            (THE_LEAF_ARM, "subql #8,%sp"), (0x132, "jsr 200 <leaf>"), (0x138, "addql #8,%sp"), (0x13a, "bras 122 <caller+0x22>")]
+ITS_WORDS = (THE_DEEP_ARM - TABLE_AT, THE_LEAF_ARM - TABLE_AT, DEFAULT_ARM - TABLE_AT)
+THE_SWITCH_S_FRAME = 24
+
+
+def _bytes_of(words, at=TABLE_AT):
+    """`{address: byte}` of a table's `words` laid at `at`: what `StackReading.of_listing` reads a table from."""
+    return dict(enumerate(struct.pack(f">{len(words)}H", *(word & aes.WORD_MASK for word in words)), at))
+
+
+def _with(body, **replaced):
+    """`body` with the instruction at each `at_<hex address>` replaced."""
+    by_address = {int(name[len("at_"):], 16): text for name, text in replaced.items()}
+    assert set(by_address) <= {at for at, _text in body}
+    return [(at, by_address.get(at, text)) for at, text in body]
+
+
+def test_a_jump_table_is_read_from_the_bytes_and_every_arm_is_walked_at_the_depth_of_the_jump():
+    """THE SHAPE (ruling W2-R5): the count is the guard's (`cmpi.w #2`: three words), the words are the BYTES', each
+    a distance from the table; every arm is walked at the depth of the `jmp` — the deep one's callee under the
+    frame — and the table's own words, which the listing prints as an instruction of 4,000 bytes, never are."""
+    read = StackReading.of_listing({"caller": A_SWITCH, "leaf": A_LEAF, "deep": DEEP}, STARTS, text_bytes=_bytes_of(ITS_WORDS))
+    assert read.tables("caller") == {0x118: switch.JumpTable(TABLE_AT, 3, (THE_DEEP_ARM, THE_LEAF_ARM, DEFAULT_ARM))}
+    assert read.of("caller").deepest == THE_SWITCH_S_FRAME + LONG_BYTES + 40
+    assert {read.depth_at("caller", arm) for arm in (DEFAULT_ARM, THE_DEEP_ARM, THE_LEAF_ARM)} == {THE_SWITCH_S_FRAME}
+    assert read.returns("caller")
+    # ...and WHICH CALLS ONE ARM MAKES (`reached_from`): the deep arm's and the default's instructions, not the leaf arm's.
+    assert read.reached_from("caller", THE_DEEP_ARM) == {THE_DEEP_ARM, 0x12e, DEFAULT_ARM, 0x126}
+    # A WORD IS SIGNED: an arm BEFORE the table (here the guard again) is reached by a negative distance.
+    backwards = [(0x100, "tstw %d0"), *_with(A_SWITCH[1:7], at_104="cmpiw #1,%d0", at_108="bhiw 120 <caller+0x20>"),
+                 (TABLE_AT, "orib #0,%d0"), (0x120, "rts"), (0x122, "jsr 300 <deep>"), (0x128, "rts")]
+    read = StackReading.of_listing({"caller": backwards, "deep": DEEP}, STARTS, text_bytes=_bytes_of((0x122 - TABLE_AT, 0x104 - TABLE_AT)))
+    assert read.tables("caller")[0x118].targets == (0x122, 0x104) and read.of("caller").deepest == LONG_BYTES + 40
+
+
+@pytest.mark.parametrize("body, words, by", [
+    (_with(A_SWITCH, at_104="moveq #2,%d1"), ITS_WORDS, "has no guard the stack reading knows"),
+    (_with(A_SWITCH, at_10c="tstw %d0"), ITS_WORDS, "has no guard the stack reading knows"),
+    (_with(A_SWITCH, at_114="movew %pc@(11c <caller+0x1c>,%d1:l),%d0"), ITS_WORDS, r"name the registers \['%d0', '%d1'\]"),
+    (_with(A_SWITCH, at_114="movew %pc@(120 <caller+0x20>,%d0:l),%d0"), ITS_WORDS, "and the tables 120 / 11c"),
+    (A_SWITCH, ITS_WORDS[:2], "word 2 of the jump table at 0x11c is not among the bytes"),
+    (A_SWITCH, (ITS_WORDS[0], 2, ITS_WORDS[2]), "word 1 of the jump table at 0x11c leads to 0x11e — no listed instruction"),
+    (A_SWITCH, (ITS_WORDS[0], 0x13, ITS_WORDS[2]), "word 1 of the jump table at 0x11c leads to 0x12f — no listed instruction"),
+    (_with(A_SWITCH, at_13a="bras 112 <caller+0x12>"), ITS_WORDS, "a branch lands at 0x112, between the guard"),
+    (_with(A_SWITCH, at_13a="bras 11c <caller+0x1c>"), ITS_WORDS, "a path reaches 0x11c, inside a jump table's words"),
+], ids=["no compare", "the index not widened", "two registers", "two tables", "a word the bytes do not hold",
+        "a word into the table itself", "a word to no instruction", "a branch past the guard", "a path into the table's words"])
+def test_a_jump_table_the_reading_cannot_read_is_refused_by_name(body, words, by):
+    """EACH SHAPE THE RULE FAILS IN: a count that would be a guess, a table read from the listing's noise, an arm
+    that is none, a path that skips the guard — refused, never read short."""
+    _refused(body, by, text_bytes=_bytes_of(words))
+
+
+def test_a_register_loaded_before_the_switch_holds_its_function_in_every_arm():
+    """THE FLOW GOES THROUGH THE TABLE (`_Loads`): a function GCC keeps in a register across the switch is what an
+    arm's `jsr (a2)` calls — read without the table, no path reached the arm and the call had no callee."""
+    kept = [(0x100, "lea 300 <deep>,%a2"), *A_SWITCH[1:7], (TABLE_AT, "orib #0,%d0"), (0x120, ".short 0x0006"),
+            (DEFAULT_ARM, "rts"), (THE_DEEP_ARM, "jsr %a2@"), (0x12a, "rts"), (THE_LEAF_ARM, "rts")]
+    assert _read(kept, text_bytes=_bytes_of(ITS_WORDS)).deepest == LONG_BYTES + 40
+
+
+# THE OPCODE SWITCH'S OWN TABLE, as `src/aes/gemsuper.c`'s switch is: the ROM's 116 words (opcodes 10..125), 68 arms
+# that are a call and the default the 48 others share. Numbers of the SOURCE's switch, not of a layout.
+THE_SWITCH_S_WORDS, ITS_ARMS, OPCODES_OF_THE_DEFAULT_ARM = 116, 69, 48
+GEMSUPER = aes.header_constants("gemsuper.h")
+
+
+def test_the_opcode_switch_s_table_is_the_blob_s_own_bytes_and_every_arm_is_reached(blob):
+    """ON THE BUILD: one table, as long as its guard says, EACH WORD THE BLOB'S OWN (read out of the binary here, off
+    the listing's hexadecimal column there: equal), its first word appl_init's; every arm stands at the depth of the
+    jump, the guard's branch goes to the arm the 48 unassigned opcodes share — and with the bytes withheld the
+    build's switch is REFUSED."""
+    read = stack.trap_reading(blob.elf)
+    table, first = stack.the_switch_s_table(blob.elf)
+    held = struct.unpack_from(f">{table.words}h", blob.blob, table.at - blob.base)
+    assert table.targets == tuple(table.at + distance for distance in held)
+    assert (table.words, len(set(table.targets)), first) == (THE_SWITCH_S_WORDS, ITS_ARMS, GEMSUPER["AES_APPL_INIT_OPCODE"])
+    (jump,) = read.tables(stack.THE_OPCODE_SWITCH)
+    body = read.functions()[stack.THE_OPCODE_SWITCH]
+    read.of(stack.THE_OPCODE_SWITCH)
+    assert {read.depth_at(stack.THE_OPCODE_SWITCH, arm) for arm in table.targets} == {read.depth_at(stack.THE_OPCODE_SWITCH, jump)}
+    default = int(next(text for _at, text in body if text.startswith("bhi")).split(" ")[1], 16)
+    assert table.targets.count(default) == OPCODES_OF_THE_DEFAULT_ARM == max(map(table.targets.count, table.targets))
+    with pytest.raises(AssertionError, match="word 0 of the jump table at 0x[0-9a-f]+ is not among the bytes"):
+        StackReading.of_listing({stack.THE_OPCODE_SWITCH: body}).tables(stack.THE_OPCODE_SWITCH)
+
+
+# ---- (9) THE DOOR'S SHAPES, each over a listing of its own -------------------------------------------------------------------
+A_STACK_BEGINS, A_STACK_IS_LEFT, A_PRIVATE_TOP = "moveal %fp@(62),%sp", "moveal %a0@(70),%sp", "moveal #37958,%sp"
+ENDS_ON_A_CALL = [(0x100, "moveal #1280,%a0"), (0x106, "jsr %a0@")]
+NEVER_BACK = [(0x500, "linkw %fp,#-4"), (0x504, "jsr 600 <way_out>")]
+WAY_OUT = [(0x600, "addal #12,%sp"), (0x606, A_STACK_IS_LEFT), (0x60a, "rte")]
+DOOR_STARTS = {**STARTS, 0x500: "entry", 0x600: "way_out"}
+
+
+def _door(entry=NEVER_BACK, **declared):
+    return StackReading.of_listing({"caller": ENDS_ON_A_CALL, "entry": entry, "way_out": WAY_OUT, "leaf": A_LEAF}, DOOR_STARTS,
+                                   **declared)
+
+
+def test_a_body_may_end_on_a_call_of_a_routine_that_never_returns_and_of_no_other():
+    """THE HANDLER'S `jsr (a0)` AND aes_entry's LAST CALL: A0 is loaded BY VALUE (`movea.l #<entry>,a0`), the callee
+    links and never unlinks, its own last call is of a routine that LEAVES THE STACK FOR GOOD (declared) — none of
+    the three returns (`returns`: READ, not declared), so nothing is walked past either call. A callee that can
+    return is the old refusal: the path runs off the body."""
+    read = _door(leaves_its_stack_at=(A_STACK_IS_LEFT,))
+    assert read.of("caller").deepest == LONG_BYTES + 2 * LONG_BYTES + LONG_BYTES
+    assert not (read.returns("caller") or read.returns("entry") or read.returns("way_out")) and read.returns("leaf")
+    with pytest.raises(AssertionError, match="does not follow `moveal %a0@\\(70\\),%sp`"):
+        _door().of("caller")
+    with pytest.raises(AssertionError, match=r"caller: a path runs off the listed body's last instruction .* its callee \['entry'\] returns"):
+        _door(entry=[(0x500, "rts")], leaves_its_stack_at=(A_STACK_IS_LEFT,)).of("caller")
+
+
+def test_whether_a_routine_returns_is_read_off_its_paths():
+    """`returns`: a return of its own; a jump to a routine that returns; a private stack left for the one it came on
+    — and NOT the halt, a declared leaving, or a last call of a routine that does not."""
+    halts = [(0x100, "tstw %d0"), (0x102, "trap #7")]
+    jumps = [(0x100, "jmp 200 <leaf>")]
+    assert not StackReading.of_listing({"caller": halts}).returns("caller")
+    assert StackReading.of_listing({"caller": jumps, "leaf": A_LEAF}, STARTS).returns("caller")
+    assert not StackReading.of_listing({"caller": [(0x100, "jmp 500 <halts>")], "halts": [(0x500, "trap #7")]}, {0x500: "halts"}).returns("caller")
+
+
+def test_a_stack_that_begins_is_counted_from_what_is_declared_kept_there():
+    """`movea.l 62(a6),sp` — THE PROCESS'S OWN STACK from here on: declared with the bytes below its top the machine
+    keeps there, the count goes on from them (what was pushed before stood on another stack); undeclared, SP from
+    the machine is refused as it always was."""
+    body = [(0x100, "movel %d0,%sp@-"), (0x102, A_STACK_BEGINS), (0x106, "movel %d1,%sp@-"), (0x108, "jsr 300 <deep>"), (0x10e, "trap #7")]
+    assert _read(body, begins_a_stack={A_STACK_BEGINS: 6}).deepest == 6 + LONG_BYTES + LONG_BYTES + 40
+    _refused(body, "does not follow `moveal %fp@\\(62\\),%sp`")
+
+
+def test_a_private_stack_is_begun_where_declared_and_left_for_the_one_it_came_on():
+    """crit_err's shape: its caller's SP parked, A STACK OF ITS OWN begun by a declared instruction (the count from
+    its top), its registers and a call there, then `movea.l <saved>,sp` — and the routine RETURNS (a glue's does
+    too, by `rte`). The declaration is matched whoever listed the instruction: a blob's objdump (`8c42 <name>`) or
+    the ROM's own decoding (`0x8c42`)."""
+    for saved in ("8c42 <saved>", "0x8c42"):
+        body = [(0x100, f"movel %sp,{saved}"), (0x106, A_PRIVATE_TOP), (0x10c, "moveml %d3-%d7/%a3-%fp,%sp@-"),
+                (0x110, "jsr 300 <deep>"), (0x116, "moveml %sp@+,%d3-%d7/%a3-%fp"), (0x11a, f"moveal {saved},%sp"), (0x120, "rts")]
+        read = StackReading.of_listing({"caller": body, "deep": DEEP}, STARTS, begins_a_stack={A_PRIVATE_TOP: 0})
+        assert read.of("caller").deepest == 9 * LONG_BYTES + LONG_BYTES + 40 and read.returns("caller")
+        assert read.depth_at("caller", 0x106) == 0
+    _refused(body, "does not follow `moveal #37958,%sp`")
+    by_address = StackReading.of_listing({"caller": _with(body, at_106="moveal 0x8c3a,%sp"), "deep": DEEP}, STARTS,
+                                         begins_a_stack={"moveal 8c3a <aes_userdef_stack>,%sp": 0})
+    assert by_address.of("caller").deepest == 9 * LONG_BYTES + LONG_BYTES + 40
+
+
+def test_a_trap_of_the_os_is_charged_what_it_is_declared_to_take_and_refused_undeclared():
+    """`trap #1` (GEMDOS) on a path: the OS's frames land under it. DECLARED with the bytes its handler takes, it is
+    charged where it stands; undeclared it is the refusal it always was. (`trap #2` stays the VDI's, answered apart.)"""
+    body = [(0x100, "subql #8,%sp"), (0x102, "trap #1"), (0x104, "addql #8,%sp"), (0x106, "rts")]
+    assert _read(body, takes_an_exception={"trap #1": 50}).deepest == 8 + 50
+    _refused(body, "caller takes `trap #1` at 0x102: the stack reading counts no frame of the OS under a trap other than `trap #2`")
+
+
+# ---- THE DOOR AS THE ROM SPELLS IT, and what the reading is told about the trap path ------------------------------------------
+THE_HANDLER_S_PUSHES = LONG_BYTES + 2 * aes.WORD_BYTES + LONG_BYTES     # the block, a zero word, the selector; its `jsr (a0)`
+AES_ENTRY_S_FRAME = LONG_BYTES + LONG_BYTES                             # `link a6,#-4`
+THE_THUNK_ADDS = LONG_BYTES + 2 * LONG_BYTES + LONG_BYTES               # aes_entry's `jsr`; the block and the image; its `jsr`
+THE_DOOR_S_BYTES = stack.KEPT_UNDER_THE_TOP + THE_HANDLER_S_PUSHES + AES_ENTRY_S_FRAME + THE_THUNK_ADDS     # 6 + 12 + 8 + 16
+THE_DOOR_S_PATH = (stack.THE_TRAP_HANDLER, stack.AES_ENTRY, stack.THE_MARSHAL_S_THUNK, stack.THE_MARSHAL)
+
+
+def test_the_door_s_own_bytes_are_read_off_the_rom():
+    """THE ROM'S OWN DOOR THROUGH THE READING'S DOOR SHAPES (`the_door_listed`: `$fe3eca..$fe3f3d` and aes_entry as
+    `rom_data` decodes them): 42 bytes stand above the marshal — what the UDA keeps under the top, the handler's
+    three pushes and its `jsr (a0)`, aes_entry's `link`, the thunk — and none of the three routines returns. THE
+    REDS: without either declaration the ROM's door is refused by name."""
+    assert stack.the_door_s_bytes() == (THE_DOOR_S_BYTES, THE_DOOR_S_PATH) and THE_DOOR_S_BYTES == 42
+    functions, starts = stack.the_door_listed()
+    assert f"moveal #{addrs.AES_ROM_ENTRY},%a0" in dict(functions[stack.THE_TRAP_HANDLER]).values(), "the by-value operand"
+    door = StackReading.of_listing(functions, starts, begins_a_stack=stack.THE_DOOR_BEGINS, leaves_its_stack_at=(stack.THE_WAY_OUT_LEAVES,))
+    assert not any(door.returns(routine) for routine in (stack.THE_TRAP_HANDLER, stack.AES_ENTRY, stack.THE_WAY_OUT))
+    with pytest.raises(AssertionError, match="the stack reading does not follow `moveal %fp@\\(62\\),%sp`"):
+        StackReading.of_listing(functions, starts, leaves_its_stack_at=(stack.THE_WAY_OUT_LEAVES,)).of(stack.THE_TRAP_HANDLER)
+    with pytest.raises(AssertionError, match="does not follow `moveal %a0@\\(70\\),%sp`"):
+        StackReading.of_listing(functions, starts, begins_a_stack=stack.THE_DOOR_BEGINS).of(stack.THE_TRAP_HANDLER)
+
+
+def test_what_the_uda_keeps_at_a_trap_is_the_top_less_the_trap_s_frame_on_the_machine():
+    """THE DECLARATION HELD TO THE MACHINE (`KEPT_UNDER_THE_TOP`): the ROM's accessory boot stopped at ITS FIRST
+    ARRIVAL at the handler's AES arm — an accessory's first trap, the 68000's frame just pushed: the UDA of the
+    process that runs keeps exactly the SP the trap came in on, and that is its stack's top less the frame."""
+    boot = aes_boot.booted(aes_boot.accessory_preinit(), aes_boot.accessory_disk_of(aes_boot.QUIET, aes_boot.QUIET),
+                           until=addrs.GEM_TRAP2_AES_ARM)
+    running = case.long_in(boot.ram, aes.AES_RLR) & stack.BUS
+    uda, taken_on = case.long_in(boot.ram, running + aes.PD_UDA) & stack.BUS, boot.registers["isp"]
+    tops = {stack.THE_FIRST_ACCESSORY_S_PD: aes.AES_UDA2_STACK_TOP}
+    assert case.long_in(boot.ram, uda + aes.UDA_SUPER_SP) & stack.BUS == taken_on
+    assert taken_on + stack.KEPT_UNDER_THE_TOP == tops.get(running, uda + stack.ALLOCATED_STACK_TOP)
+
+
+def test_the_two_stacks_a_trap_caller_runs_on_are_read_off_the_machine():
+    assert stack.trap_callers_spans() == {stack.PD2: PD2_S_SPAN, stack.AN_ALLOCATED_PD: AN_ALLOCATED_SPAN}
+
+
+def test_the_trap_path_s_reading_starts_at_the_handler_s_arm_the_moment_a_blob_links_it(blob, monkeypatch):
+    """BY SYMBOL, as the screen manager's entry was: a blob that links `aes_rom_trap2` is read FROM ITS AES ARM —
+    nothing allowed above, and THE LINKED DOOR STANDS WHERE THE ROM'S DOES above the marshal; until then, from the
+    marshal under the ROM-read bytes."""
+    read = stack.trap_bound(blob)
+    if stack.links(blob.elf, stack.THE_TRAP_HANDLER):
+        assert (read.entered_at, read.allowed) == ((stack.THE_AES_ARM,), 0)
+        assert stack.trap_reading(blob.elf).deepest_to(stack.THE_AES_ARM, stack.THE_MARSHAL)[0] == THE_DOOR_S_BYTES
+        assert not stack.trap_reading(blob.elf).returns(stack.THE_AES_ARM)
+    else:
+        assert (read.entered_at, read.allowed) == ((stack.THE_MARSHAL,), THE_DOOR_S_BYTES)
+        assert read.chain[0] == read.trap_chain[0] == (stack.THE_DOOR, THE_DOOR_S_BYTES)
+    monkeypatch.setattr(stack, "links", lambda elf, symbol: symbol == stack.THE_TRAP_HANDLER)
+    assert stack.trap_entered_at("any blob") == (stack.THE_AES_ARM, 0)
+    monkeypatch.setattr(stack, "links", lambda elf, symbol: False)
+    assert stack.trap_entered_at("any blob") == (stack.THE_MARSHAL, THE_DOOR_S_BYTES)
+
+
+_A_USE_OF_SH_FIND = re.compile(r"\baes_sh_find\(([^;{]*)")       # to the statement's end: a call's arguments, or the definition's
+THE_DEFINITION_S = "uint32_t routine"
+THE_SOURCES = Path(__file__).resolve().parents[1] / "src" / "aes"
+
+
+def test_no_caller_of_the_build_hands_sh_find_a_routine(blob):
+    """THE DECLARATION (`NO_ROUTINE_IS_HANDED`): sh_find calls through its `routine` argument where it is not 0, and
+    every call of the build's hands SH_FIND_NO_ROUTINE — held to the sources; undeclared, the build's sh_find is
+    refused by name."""
+    uses = [use.group(1) for source in sorted(THE_SOURCES.glob("*.c")) for use in _A_USE_OF_SH_FIND.finditer(source.read_text())]
+    calls = [use for use in uses if THE_DEFINITION_S not in use]
+    assert len(calls) >= 2 and len(uses) == len(calls) + 1 and all("SH_FIND_NO_ROUTINE)" in call for call in calls), calls
+    assert aes.header_constants("shell.h")["SH_FIND_NO_ROUTINE"] == 0
+    undeclared = StackReading(blob.elf, stack.THROUGH_A_POINTER, leaves_the_stack=stack.LEAVES_THE_STACK,
+                              calls_what_it_is_handed=stack.CALLS_WHAT_IT_IS_HANDED,
+                              takes_an_exception={stack.GEMDOS_TRAP: stack.gemdos_need()})
+    with pytest.raises(AssertionError, match="aes_sh_find calls through %a0 .* a pointer read out of memory"):
+        undeclared.of(stack.SH_FIND)
+
+
+THE_GEMDOS_ENTRY_PUSHES = 10 * LONG_BYTES + LONG_BYTES + aes.WORD_BYTES + LONG_BYTES     # D1-A2, the PC, the SR, the USP ($fc4fc4..)
+THE_BELL_TAKES = stack.EXCEPTION_FRAME_BYTES
+THE_BELL_S_ROUTINE = "aes_bell"
+
+
+def test_the_os_s_traps_on_the_trap_path_are_gemdos_s_and_the_bell_s_each_measured(blob):
+    """WHAT THE MACHINE'S OWN HANDLERS TAKE OF THEIR CALLER'S STACK, MEASURED: GEMDOS the fifty bytes its entry pushes
+    before it leaves for its own stack — the same under two functions — and the BIOS, under the bell, no more than
+    the 68000's frame. Undeclared, the build's first GEMDOS binding is refused by name; and THE ONLY `trap #13` on
+    the trap path is the bell's own call (Bconout of a BEL), as the need measured is."""
+    assert stack.gemdos_need() == THE_GEMDOS_ENTRY_PUSHES == 50 and stack.bell_need() == THE_BELL_TAKES
+    undeclared = StackReading(blob.elf, stack.TRAP_PATH_POINTERS, leaves_the_stack=stack.LEAVES_THE_STACK,
+                              calls_what_it_is_handed=stack.CALLS_WHAT_IT_IS_HANDED)
+    with pytest.raises(AssertionError, match="aes_dos_sdta takes `trap #1` at 0x[0-9a-f]+: the stack reading counts no frame"):
+        undeclared.of("aes_dos_sdta")
+    read = stack.trap_reading(blob.elf)
+    taken = collections.Counter()
+    for name in read.functions_read(stack.trap_entered_at(blob.elf)[0]) & set(read.functions()):
+        texts = [text for _at, text in read.functions()[name]]
+        for index, text in enumerate(texts):
+            if switch._A_TRAP.match(text) and text not in (switch.TRAP_2, switch.THE_HALT):
+                taken[text] += 1
+                assert text != stack.THE_BELL_S_TRAP or tuple(texts[index - 2:index + 1]) == stack.THE_BELL_AS_LISTED, name
+    assert set(taken) == {stack.GEMDOS_TRAP, stack.THE_BELL_S_TRAP}, f"the OS's traps on the trap path: {dict(taken)}"
+    # ...AND EACH IS CHARGED ITS OWN NEED WHERE IT STANDS: the bell's routine goes as deep as its pushes and the BIOS's
+    # six bytes — not GEMDOS's fifty (no pin above would move: no bell stands at a deepest point).
+    uncharged = StackReading(blob.elf, takes_an_exception={stack.THE_BELL_S_TRAP: 0}).of(THE_BELL_S_ROUTINE).deepest
+    assert read.of(THE_BELL_S_ROUTINE).deepest == uncharged + THE_BELL_TAKES
+
+
+# ---- THE FINDINGS OF THE TRAP PATH, PINNED (ruling W3-R8) ---------------------------------------------------------------------
+# Numbers of OUR BUILD, as the screen manager's are: a pin that moves says which frame or which call, and is re-pinned
+# with that reason. THE VERDICT IS "OVER" FOR PD2 ON BOTH BLOBS, and it is pinned as that.
+PD2_S_SPAN, AN_ALLOCATED_SPAN = 1396, 1788      # [uda + 74, $ae5a) and [uda + 74, uda + 1862): off the machine
+# OUR OWN FRAMES, deepest, FROM THE MARSHAL DOWN (the door's 42 above them): the file selector's edit field redrawn
+# under its form_do — an icon's label measured for its justification.
+FROM_THE_MARSHAL = (("aes_marshal", 116), ("aes_dispatch", 56), ("aes_fs_input", 116), ("aes_fm_do", 92), ("aes_ob_edit", 96),
+                    ("aes_curfld", 72))
+TRAP_PATH_OWN_CHAIN = {
+    BENCH: FROM_THE_MARSHAL + (("aes_ob_draw", 60), ("aes_everyobj<-aes_just_draw_alcyon", 86), ("aes_just_draw_alcyon", 24),
+                               ("aes_just_draw", 124), ("aes_gr_gicon", 72), ("aes_gr_gtext", 52), ("aes_gr_just", 48),
+                               ("aes_gsx_tcalc", 28), ("aes_xstrpix", 8)),
+    SHIPPED: FROM_THE_MARSHAL + (("aes_ob_draw", 60), ("aes_everyobj<-aes_just_draw_alcyon", 86), ("aes_just_draw_alcyon", 24),
+                                 ("aes_just_draw", 124), ("aes_gr_gicon", 72), ("aes_gr_gtext", 52), ("aes_gr_just", 48),
+                                 ("aes_gsx_tcalc", 28), ("aes_xstrpix", 12), ("aes_rom_xstrpix", 0))}
+# ...and to the deepest trap: the same icon's fill, as under the screen manager's menu (`TRAP_CHAIN`, from ob_draw down).
+TRAP_PATH_TRAP_CHAIN = {shore: FROM_THE_MARSHAL + TRAP_CHAIN[shore][3:] for shore in BLOBS}
+TRAP_PATH_OWN_FRAMES = {BENCH: 1092, SHIPPED: 1096}             # 42 + 1,050 / 1,054
+TRAP_PATH_DEEPEST_TRAP = {BENCH: 1028, SHIPPED: 1038}
+# THE VERDICT, bytes SPARE (negative: OVER), the nest's 252 on top:
+#   our own frames alone fit PD2 — 52 / 48 spare;
+#   AT ITS TRAPS, call by call, the worst is fsel_input's: shipped — the icon's blit under the selector's form
+#   (vrt_cpyfm at 1,002: 244 stored + the copy-raster's 76) = 1,574: OVER PD2 BY 178, 214 spare of an allocated PD;
+#   bench — its label's text (gsx_tblt at 972 + the C twin's 520) = 1,744: over by 348, 44 spare of an allocated PD.
+TRAP_PATH_OWN_SPARE_OF_PD2 = {BENCH: 52, SHIPPED: 48}
+TRAP_PATH_WORST_SITE = {BENCH: ("aes_gsx_tblt", 972, (V_GTEXT,)), SHIPPED: ("aes_vrt_cpyfm", 1002, (VRT_CPYFM,))}
+TRAP_PATH_SPARE = {BENCH: {stack.PD2: -348, stack.AN_ALLOCATED_PD: 44}, SHIPPED: {stack.PD2: -178, stack.AN_ALLOCATED_PD: 214}}
+# BY THE CALL: the arms of the switch that do NOT fit PD2 with the nest, the deepest first — `(AES opcode, bytes)`,
+# THE_DEFAULT_ARM for the 48 opcodes the ROM answers with its alert. fsel_input 90, wind_open 101, the default's
+# alert, wind_set 105, wind_close 102, form_error 53, form_alert 52, form_do 50 — and on the bench blob four more:
+# form_dial 51, objc_edit 46, menu_bar 30, form_center.. 56. EVERY CALL FITS AN ALLOCATED PD, on both.
+THE_DEFAULT_ARM = "the default arm"
+CALLS_OVER_PD2 = {
+    BENCH: ((90, 1744), (101, 1740), (THE_DEFAULT_ARM, 1720), (105, 1712), (102, 1708), (53, 1688), (52, 1664), (50, 1572),
+            (51, 1528), (46, 1480), (30, 1432), (56, 1410)),
+    SHIPPED: ((90, 1574), (101, 1570), (THE_DEFAULT_ARM, 1550), (105, 1542), (102, 1538), (53, 1518), (52, 1494), (50, 1402))}
+TRAP_PATH_SITES_CHARGED_THE_WORST = {"aes_gsx_xline", "aes_ap_tplay"}
+TRAP_PATH_USERDEF_CALL = 952            # objc_draw of a G_USERDEF from an accessory: PD2 leaves its routine 444, 192 with the nest
+# crit_err's own 2,048 bytes: 46 of the handler's above eralert (read off the ROM), the thunk's 16, eralert's paths, the nest.
+CRIT_ERR_S_SPAN, CRIT_ERR_READ = 2048, stack.PrivateStack(0, 46, (stack.CRIT_ERR, stack.ERALERT), True)
+CRIT_ERR_SPARE = {BENCH: 440, SHIPPED: 610}
+UB_TRAMPOLINE_READ = stack.PrivateStack(0, 8, (stack.UB_TRAMPOLINE, stack.THE_DESK_S_DRAW_CODE), True)
+
+
+def test_finding_the_trap_path_s_own_frames_by_chain(blob):
+    """THE BOUND THROUGH THE SWITCH, PINNED BY CHAIN from the marshal down — the door's bytes above it are the ROM's
+    (42, held apart) — on each blob: a frame that grows or is flattened reddens here by its name."""
+    read, shore = stack.trap_bound(blob), stack.shore_of(blob)
+    own, trapped = tuple(read.chain)[-len(TRAP_PATH_OWN_CHAIN[shore]):], tuple(read.trap_chain)[-len(TRAP_PATH_TRAP_CHAIN[shore]):]
+    moved = [f"the chain to the deepest trap: {_moved(trapped, TRAP_PATH_TRAP_CHAIN[shore])}"] * (trapped != TRAP_PATH_TRAP_CHAIN[shore])
+    moved += [f"the deepest chain of our own frames: {_moved(own, TRAP_PATH_OWN_CHAIN[shore])}"] * (own != TRAP_PATH_OWN_CHAIN[shore])
+    assert not moved, f"{shore}: " + "; ".join(moved)
+    assert (read.deepest, read.at_a_trap) == (TRAP_PATH_OWN_FRAMES[shore], TRAP_PATH_DEEPEST_TRAP[shore])
+    assert sum(held for _function, held in read.chain) == read.deepest
+    assert sum(held for _function, held in read.trap_chain) == read.at_a_trap
+    assert sum(held for _function, held in tuple(read.chain)[:-len(TRAP_PATH_OWN_CHAIN[shore])]) == THE_DOOR_S_BYTES
+
+
+def test_every_call_a_site_of_the_trap_path_can_make_is_measured_on_every_shore(blob):
+    """NO NEED IS ASSUMED on the trap path either: every VDI opcode one of its sites can ask has a measured need
+    through the ROM's VDI and through this blob's own (the two the screen manager's paths never ask among them);
+    the sites that name none are charged the worst — pinned: which."""
+    shore, sites = stack.shore_of(blob), stack.trap_path_sites(blob.elf)
+    asked = {opcode for site in sites if site.opcodes for opcode in site.opcodes}
+    assert {addrs.VDI_ROM_VEX_MOTV_OPCODE, addrs.VDI_ROM_VEX_CURV_OPCODE} <= asked <= set(stack.os_needs()) & set(stack.os_needs(shore))
+    assert {site.function for site in sites if site.opcodes is None} == TRAP_PATH_SITES_CHARGED_THE_WORST
+    assert max(site.depth for site in sites) == stack.trap_bound(blob).at_a_trap
+    assert {(site.function, site.at) for site in stack.trap_sites(blob.elf)} <= {(site.function, site.at) for site in sites}, (
+        "a trap site of the screen manager's is none of the trap path's: evnt_multi's arm reaches them all")
+
+
+def test_finding_the_verdict_of_the_trap_path_it_does_not_fit_pd2_and_fits_an_allocated_pd(blob):
+    """THE VERDICT AGAINST W3-R8, AS NUMBERS, each blob's own VDI under its traps and the nest on top. OUR OWN FRAMES
+    FIT PD2 (48 spare on the shipped blob). AT ITS TRAPS, each site charged its own call's need, THE TRAP PATH DOES
+    NOT: the shipped blob — the program — is OVER PD2's 1,396 BY 178 at an icon's blit under the file selector, and
+    fits an allocated PD's 1,788 with 214 to spare. A frame that grows or is flattened changes THIS PIN, by name."""
+    shore, read = stack.shore_of(blob), stack.trap_bound(blob)
+    assert PD2_S_SPAN - (read.deepest + stack.nest(shore)) == TRAP_PATH_OWN_SPARE_OF_PD2[shore]
+    needed, at_a_trap, site = stack.trap_need(blob)
+    spare = {which: span - needed for which, span in stack.trap_callers_spans().items()}
+    assert at_a_trap and spare == TRAP_PATH_SPARE[shore], (
+        f"{shore}: the trap path needs {needed} — {spare} spare, where the finding holds {TRAP_PATH_SPARE[shore]}: say "
+        f"which frame or call moved, and re-pin")
+    assert (site.function, site.depth, site.opcodes) == TRAP_PATH_WORST_SITE[shore]
+    assert needed == site.depth + stack.needs_bounded(shore)[site.opcodes[0]] + THE_NEST
+
+
+def test_the_gate_of_the_door_flip_is_the_shipped_blob_and_it_is_over_pd2():
+    """THE GATE ON THE DOOR FLIP (ruling W3-R8): the SHIPPED blob's trap path, its own handlers and engines under
+    its traps, DOES NOT FIT an accessory's stack in PD2 with the nest — over by 178 by the bound (and by 70 on the
+    one run measured: `scratchpad/b5/W3/S/gate.md`). Pinned as the finding it is: the day a frame diet brings the
+    bound under 1,396 this test reddens, and the pin becomes "fits, N spare" WITH THE REASON."""
+    needed, _at_a_trap, _site = stack.trap_need(stack.blob_of(SHIPPED))
+    assert needed - PD2_S_SPAN == -TRAP_PATH_SPARE[SHIPPED][stack.PD2] == 178
+    assert needed <= AN_ALLOCATED_SPAN
+
+
+def _over(calls, shore, span):
+    return tuple((call.opcodes[0] if len(call.opcodes) == 1 else THE_DEFAULT_ARM, max(call.own, call.at_a_trap) + stack.nest(shore))
+                 for call in calls if max(call.own, call.at_a_trap) + stack.nest(shore) > span)
+
+
+def test_finding_the_trap_path_by_the_call_which_arms_fit_which_stack(blob):
+    """BY THE CALL: every opcode of the table is in one arm; the deepest arm IS the bound; the arms OVER PD2 are
+    pinned by opcode and bytes (eight on the shipped blob — the file selector, the window calls that redraw, the
+    alerts, form_do — every other call fits PD2); and every arm fits an allocated PD."""
+    shore, calls = stack.shore_of(blob), stack.calls_of_the_switch(blob.elf, stack.shore_of(blob))
+    table, first = stack.the_switch_s_table(blob.elf)
+    assert sorted(opcode for call in calls for opcode in call.opcodes) == list(range(first, first + table.words))
+    assert len(calls) == ITS_ARMS and max(map(len, (call.opcodes for call in calls))) == OPCODES_OF_THE_DEFAULT_ARM
+    assert max(call.own for call in calls) == stack.trap_bound(blob).deepest
+    assert max(call.at_a_trap for call in calls) + stack.nest(shore) == stack.trap_need(blob)[0]
+    assert _over(calls, shore, PD2_S_SPAN) == CALLS_OVER_PD2[shore], f"{shore}: the calls over PD2 moved — say which arm's frames"
+    assert not _over(calls, shore, AN_ALLOCATED_SPAN)
+    assert any(call.at_a_trap == 0 and call.site is None for call in calls), "an arm that takes no trap (appl_init)"
+
+
+def test_finding_what_an_application_s_routine_is_left_on_the_trap_path(blob):
+    """objc_draw of a G_USERDEF FROM AN ACCESSORY: its routine is entered 952 bytes down on both blobs — PD2 leaves
+    it 444, 192 with the nest. No reader bounds what it then takes: the finding is what it is left."""
+    depth, path = stack.trap_userdef_call(blob)
+    assert depth == TRAP_PATH_USERDEF_CALL and path[-2:] == ("aes_ob_user", stack.AN_APPLICATION_S_ROUTINE)
+    assert PD2_S_SPAN - depth - stack.nest(stack.shore_of(blob)) == 192
+
+
+def test_finding_crit_err_s_and_ub_trampoline_s_private_stacks(blob):
+    """THE TWO PRIVATE STACKS, their shapes READ OFF THE ROM: crit_err moves with nothing pushed on its caller's
+    stack, holds 46 bytes of its own above eralert and RETURNS; with the thunk, the C eralert's paths — each trap
+    its call's need of OUR VDI — and the nest it fits its 2,048 bytes, 610 spare on the shipped blob. ub_trampoline
+    holds 8 above the desk's draw code, on the 1,024 bytes the booted desk's own pointer names the end of — and what
+    that code takes of them is the ROM's until band 6."""
+    assert stack.crit_err_read() == CRIT_ERR_READ and stack.ub_trampoline_read() == UB_TRAMPOLINE_READ
+    assert stack.CRIT_ERR_STACK[1] - stack.CRIT_ERR_STACK[0] == CRIT_ERR_S_SPAN
+    crit_err = dict(stack.rom_listed(addrs.AES_ROM_CRIT_ERR, stack.CRIT_ERR_ROM_END, {})).values()
+    assert stack.CRIT_ERR_S_STACK_BEGINS in crit_err and f"movel %sp,{stack.CRIT_ERR_SP_SAVE:#x}" in crit_err
+    # ...AND THE BLOB'S OWN crit_err, the moment it links one, stands where the ROM's does: its bytes and its thunk's.
+    assert stack.crit_err_entered(blob.elf) == CRIT_ERR_READ.above + stack.A_TWO_WORD_THUNK_ADDS
+    if stack.links(blob.elf, stack.CRIT_ERR):
+        assert stack.trap_reading(blob.elf).returns(stack.CRIT_ERR)
+    needed, at_a_trap, _site = stack.crit_err_need(blob)
+    assert at_a_trap and CRIT_ERR_S_SPAN - needed == CRIT_ERR_SPARE[stack.shore_of(blob)]
+    lo, top = stack.userdef_stack()
+    assert top - lo == stack.USERDEF_STACK_BYTES == 1024 and lo % 2 == 0
+
+
+# ---- THE TRAP PATH, MEASURED BEHIND THE DOOR (ruling W3-R8: bound AND measured) ------------------------------------------------
+# `(PD2, an allocated PD)`: the bytes of each accessory's own stack used from the door's takeover on — the ROM's own
+# boot beside each blob's, ITS OWN VDI under its traps. The deepest call is wind_open: 962 under the ROM, 1,214 on the
+# shipped blob. ON THE BENCH BLOB THE SAME CALL OVERFLOWS PD2 IN THE RUN ITSELF, no interrupt needed: under the C twin
+# of the text blit it takes 1,408 bytes (read on the allocated accessory's stack, which has them), 12 more than PD2
+# has — the stores reach PD2's stack's bottom, the saved context under it is written over, and the machine reaches
+# no idle (it goes through the ROM's reset). The bench blob gates nothing; the finding is what an overflow there does.
+THE_ROM_S, WIND_OPEN, EVNT_MESAG = stack.THE_ROM_S, 101, 23
+DOOR_MEASURED = {stack.QUIETLY: {THE_ROM_S: (328, 328), BENCH: (334, 334), SHIPPED: (334, 334)},
+                 stack.WITH_WINDOWS: {THE_ROM_S: (962, 962), BENCH: (PD2_S_SPAN, 1408), SHIPPED: (1214, 1214)}}
+NO_IDLE_REACHED = {(stack.WITH_WINDOWS, BENCH)}
+THE_DEEPEST_CALL = {stack.QUIETLY: EVNT_MESAG, stack.WITH_WINDOWS: WIND_OPEN}
+WITH_THE_ROM_S_VDI_UNDER_OUR_DOOR = {BENCH: 1178, SHIPPED: 1182}        # the windows again, the machine's VDI left: ours is the rest
+MEASURED_OVER_PD2_BY, MEASURED_SPARE_OF_AN_ALLOCATED_PD, THE_ROM_S_RUN_SPARE_OF_PD2 = 70, 322, 182
+
+
+THE_OVERFLOW_S_END = re.compile(r"did not reach an idle within \d+ instructions: it stands at 0x(?P<pc>[0-9a-f]+) and the machine never waits")
+
+
+@pytest.mark.parametrize("blob_name", BLOBS)
+def test_the_rom_s_vdi_text_watched_behind_the_door_holds_every_handler_and_engine_a_blob_replaces(blob_name):
+    """THE SPAN'S EXTENT (wave 3's review, SH: cut to the entry's first bytes, every test passed). "0 cycles in the
+    ROM's VDI text" says our VDI ran only if that text is ALL of it: the entry, the dispatcher, and — what catches a
+    table slot or a Line-A vector left the ROM's — every ROM handler and every ROM engine the blob's own replace."""
+    spans = stack.THE_ROM_S_VDI_TEXT
+    blob = stack.blob_of(blob_name)
+    replaced = [handler.the_rom_s for handler in switch.our_vdi_handlers(blob).values()]
+    replaced += [engine.the_rom_s for engine in switch.our_linea_engines(blob).values() if engine.entry is not None]
+    assert len(replaced) > 70 and spans[0][0] == addrs.VDI_ROM_ENTRY and all(lo < hi for lo, hi in spans)
+    outside = sorted({f"{at:#x}" for at in replaced if not any(lo <= at < hi for lo, hi in spans)})
+    assert all(any(lo <= at < hi for at in replaced) for lo, hi in spans), "a span watched that holds nothing a blob replaces"
+    assert not outside, f"ROM handlers or engines the blob replaces lie outside the span watched: {outside}"
+
+
+@pytest.mark.parametrize("shore", (THE_ROM_S, *BLOBS))
+@pytest.mark.parametrize("modes", stack.DOOR_MODES)
+def test_finding_the_measured_runs_behind_the_door(modes, shore):
+    """THE RUNS, PINNED: each accessory's deepest store, the call it was made under, and whether the machine reached
+    its idle — every run does but the bench blob's windows (above)."""
+    run = stack.measured_at_the_door(modes, shore)
+    assert tuple(run.deepest.values()) == DOOR_MEASURED[modes][shore], f"{modes}, {shore}: say which frame or call moved"
+    assert (run.idle is None) == ((modes, shore) in NO_IDLE_REACHED) == (run.refused is not None)
+    # WHY no idle, in the run's own words (wave 3's review, SI: ANY refusal read as "no idle" — a wrong one too): the
+    # machine stands in the BIOS's text, outside every dispatcher, having gone through the ROM's reset.
+    if run.refused is not None:
+        assert THE_OVERFLOW_S_END.search(run.refused), f"{modes}, {shore} reached no idle for another reason: {run.refused}"
+        stood_at = int(THE_OVERFLOW_S_END.search(run.refused)["pc"], 16)
+        assert addrs.ROM_BASE <= stood_at < addrs.VDI_ROM_ESCAPE, "it stands in the BIOS's own text, below every VDI routine"
+    # WHO RAN THE DOOR, as the takeover's own vet read it (SC: the vet's call was held by nothing): made wherever an
+    # idle was reached behind a door, the ROM's text of each part zero cycles, our handler and our gotopgm entered.
+    assert (run.door_ran is not None) == (shore != THE_ROM_S and run.idle is not None)
+    if run.door_ran is not None:
+        assert set(run.door_ran) == {stack.aes_event.GEM_TRAP_VECTOR.what, stack.aes_event.PROGRAM_ENTRY.what}
+        assert all(ours > 0 and the_rom_s == 0 for ours, the_rom_s in run.door_ran.values())
+    for which, used in run.deepest.items():
+        assert run.by_call[which, THE_DEEPEST_CALL[modes]] == used == max(depth for (stack_, _call), depth in run.by_call.items()
+                                                                           if stack_ == which)
+
+
+@pytest.mark.parametrize("modes", stack.DOOR_MODES)
+def test_behind_the_door_our_own_vdi_ran_and_the_rom_s_did_not(modes):
+    """WHO RAN, BY CYCLE PROFILE (ruling W3-R11) from the takeover on: on a blob's shore NOT ONE CYCLE in the ROM's
+    VDI text — entry, dispatcher, handlers, engines — and the blob's own dispatcher ran; on the ROM's shore the
+    reverse. (The door itself is the takeover's to vet: `aes_boot._TakingOver.made` refuses a cycle in the ROM's.)
+    THE CONTROL: the same run with the machine's VDI left under our door runs the ROM's VDI and not ours — and is
+    as much shallower as our handlers are deeper."""
+    for shore in BLOBS:
+        run, control = stack.measured_at_the_door(modes, shore), stack.measured_at_the_door(modes, shore, our_vdi=False)
+        assert run.the_rom_s_vdi == 0 < run.ours_vdi, f"{shore}: {run.the_rom_s_vdi} cycles in the ROM's VDI under a door called ours"
+        assert control.ours_vdi == 0 < control.the_rom_s_vdi and control.idle is not None
+        if modes == stack.WITH_WINDOWS:
+            assert max(control.deepest.values()) == WITH_THE_ROM_S_VDI_UNDER_OUR_DOOR[shore] < max(run.deepest.values())
+    the_rom_s_own = stack.measured_at_the_door(modes)
+    assert the_rom_s_own.ours_vdi == 0 < the_rom_s_own.the_rom_s_vdi
+
+
+def test_behind_the_door_the_shipped_blob_draws_the_screen_the_rom_draws():
+    """WHAT THE RUN IS WORTH AS A RUN OF OUR CODE: with its own door, switch and VDI the shipped blob's boot leaves
+    THE SAME SCREEN, byte for byte, as the ROM's — both windows drawn. (The bench blob's overflowed run does not.)"""
+    for modes in stack.DOOR_MODES:
+        assert stack.measured_at_the_door(modes, SHIPPED).screen == stack.measured_at_the_door(modes).screen
+    assert stack.measured_at_the_door(stack.WITH_WINDOWS, BENCH).screen != stack.measured_at_the_door(stack.WITH_WINDOWS).screen
+
+
+def test_finding_the_verdict_of_the_measured_run_behind_the_door_it_is_over_pd2_with_the_nest():
+    """THE GATE'S MEASURED HALF (ruling W3-R8): the shipped blob's deepest run, a window opened from PD2, uses 1,214
+    of its 1,396 bytes — 182 spare, LESS THAN THE NEST'S 252: OVER BY 70 with the nest, where the ROM's own run has
+    182 to spare WITH it. An allocated PD holds the same run with 322 spare."""
+    run, spans = stack.measured_at_the_door(stack.WITH_WINDOWS, SHIPPED), stack.trap_callers_spans()
+    needed = {which: used + stack.nest(SHIPPED) for which, used in run.deepest.items()}
+    assert needed[stack.PD2] - spans[stack.PD2] == MEASURED_OVER_PD2_BY
+    assert spans[stack.AN_ALLOCATED_PD] - needed[stack.AN_ALLOCATED_PD] == MEASURED_SPARE_OF_AN_ALLOCATED_PD
+    the_rom_s = stack.measured_at_the_door(stack.WITH_WINDOWS).deepest[stack.PD2] + stack.nest()
+    assert spans[stack.PD2] - the_rom_s == THE_ROM_S_RUN_SPARE_OF_PD2
+
+
+def test_a_run_behind_the_door_is_never_deeper_than_its_call_s_bound(blob):
+    """WHAT HOLDS THE READING TO THE TRUTH on the trap path: under every AES call an accessory made, on either stack
+    and in either pair, the lowest store is no deeper than THAT CALL's arm of the bound (its own frames, or its
+    worst trap site with this blob's own VDI's need under it) — the bench blob's overflowing wind_open included:
+    1,408 measured under a bound of 1,488."""
+    shore = stack.shore_of(blob)
+    bound_of = {opcode: max(call.own, call.at_a_trap) for call in stack.calls_of_the_switch(blob.elf, shore) for opcode in call.opcodes}
+    for modes in stack.DOOR_MODES:
+        for (which, opcode), used in stack.measured_at_the_door(modes, shore).by_call.items():
+            assert used <= bound_of[opcode], f"{shore}, {modes}: AES call {opcode} used {used} of {which}: its bound is {bound_of[opcode]}"
+    overflowed = stack.measured_at_the_door(stack.WITH_WINDOWS, BENCH)
+    assert overflowed.deepest[stack.AN_ALLOCATED_PD] > PD2_S_SPAN == overflowed.deepest[stack.PD2]

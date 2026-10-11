@@ -398,6 +398,16 @@
 /* ...which is the BIOS's own VDI door: D0 0 -> Pterm0's arm, $73 -> `jsr VDI_ROM_ENTRY` then `rte` ($fc4ec0 cmp.w). */
 #define GEM_TRAP2_VDI_DOOR    0xfc4ebc
 #define GEM_SELECTOR_VDI      0x0073    /* the VDI's selector ($fc4ec0 cmp.w #$73; the AES's gsx2 $fecb68 moveq) */
+/* ---- band 5 wave 3, slice T: THE TRAP DOOR AS THE BUILD SHIPS IT (`src/aes/trapdoor.S`) --------------------------
+ * The handler, its way out and the desk's G_USERDEF door under ROUTINE names (`test/routines.py`: an entry
+ * `aes_rom_<x>` transcribes `AES_ROM_<X>`), and where aes_entry's instruction stream ends. */
+#define AES_ROM_TRAP2             GEM_TRAP2            /* `trap #2`'s handler: the selector switch, the three arms */
+#define AES_ROM_TRAP2_EXIT        GEM_TRAP2_AES_BACK   /* the way out of the AES arm: aes_entry's last call (Line-F index 175) */
+#define AES_ROM_TRAP2_RTE         0xfe3f3c   /* ...its last instruction: the program's own frame under SP */
+#define AES_ROM_UB_TRAMPOLINE     0xfe3f3e   /* (parmblk): the desk's G_USERDEF draw code called on its own 1 KB stack; AES_ROM_SIGNAL follows */
+#define AES_ROM_ENTRY_END         0xfe65c2   /* aes_entry's Line-F RETURN, dead: the exit it calls last never returns */
+#define AES_ROM_DESK_USERDEF      0xfde844   /* read: (parmblk) the desk's G_USERDEF draw code — the PARMBLK copied, clipped, drawn (band 6) */
+/* ---- end of slice T's block ---------------------------------------------------------------------------------- */
 
 /* ================================================================================================
  * THE INTERRUPT HANDLERS (BIOS wave 2) — the every-tick code, entered through a LIVE VECTOR
@@ -2468,7 +2478,9 @@
 #define AES_ROM_TAKEERR           0xfe3cac   /* (): the critical-error handler saved (Setexc($101, -1)), then crit_err's set */
 #define AES_ROM_TRP14             0xfee488   /* the XBIOS door: its caller's return parked in AES_XBIOS_RETURN round a trap #14 */
 #define AES_ROM_GEM_DOS_TRAP      0xfe3c3e   /* `__DOS`: its caller's return parked, trap #1, AES_DOS_AX / AES_DOS_ERR */
-#define AES_ROM_CRIT_ERR          0xfe3cbe   /* the critical-error handler GEM installs (band 5, wave 3) */
+#define AES_ROM_CRIT_ERR          0xfe3cbe   /* (error.w, drive.w) -> D0.l: the critical-error handler GEM installs; its own stack */
+#define AES_ROM_DOS_EXEC          0xfe3d2e   /* (name, mode.w, tail) -> D0.l: Pexec with the UDA's SP parked under the caller's frames */
+#define AES_ROM_CRIT_ERR_ALERTS   0xfef790   /* bytes[18]: crit_err's table, ~error -> eralert's alert number */
 #define AES_ISDRIVE_GDRV_RETURN   0xfe39aa   /* isdrive's return site from Dgetdrv: what AES_DOS_RETURN holds after it */
 #define AES_ISDRIVE_SDRV_RETURN   0xfe39b0   /* ...and from Dsetdrv (the snapshot's own AES_DOS_RETURN) */
 #define AES_PGMLD_EMPTY_TAIL      0xfe39b4   /* pgmld's command tail: a zero word in the text ($fe39be pea) */
@@ -2485,5 +2497,26 @@
 #define AES_DESK_FREE_GLOBALS_RETURN 0xfee8b0
 #define AES_DESK_FREE_C85E_RETURN    0xfee8b8
 #define AES_DESK_FREE_C67A_RETURN    0xfee8c0
+
+/* ---- band 5 wave 3, slice L: THE ACCESSORY LOADER (Alcyon, `aes/loader.h`), each read from its body ---- */
+#define AES_ROM_SNDCLI            0xfe42e8   /* (name, count): one accessory opened, loaded, its process made -> 1 / 0 */
+#define AES_ROM_LDACCS            0xfe4394   /* (): every .ACC file of the boot drive's root handed sndcli, six at most */
+#define AES_ROM_FREE_ACCS         0xfe4476   /* (): every accessory's environment, basepage and allocated PD freed */
+#define AES_ROM_CRE_APROC         0xfe44d4   /* (): an accessory's PD, UDA, CDA and five EVBs allocated -> 1 / 0 */
+/* The return sites its Line-F calls of the glue park in AES_DOS_RETURN, in each routine's own order. */
+#define AES_SNDCLI_CLOSE_RETURN        0xfe434a   /* sndcli's, from dos_close */
+#define AES_LDACCS_GDRV_RETURN         0xfe43c6   /* ldaccs's, from dos_gdrv */
+#define AES_LDACCS_SDTA_RETURN         0xfe43e2   /* ...from dos_sdta */
+#define AES_LDACCS_SDRV_C_RETURN       0xfe43f0   /* ...from dos_sdrv(C:) */
+#define AES_LDACCS_CHDIR_OF_C_RETURN   0xfe43f8   /* ...from the first dos_chdir */
+#define AES_LDACCS_SDRV_BACK_RETURN    0xfe4414   /* ...from dos_sdrv of the drive it began on */
+#define AES_LDACCS_CHDIR_RETURN        0xfe441c   /* ...from the second dos_chdir */
+#define AES_LDACCS_FREE_RETURN         0xfe4474   /* ...from dos_free of the DTA */
+#define AES_FREE_ACCS_FIRST_ENV_RETURN 0xfe4492   /* free_accs's, from dos_free: the first accessory's environment */
+#define AES_FREE_ACCS_FIRST_RETURN     0xfe449a   /* ...its basepage */
+#define AES_FREE_ACCS_ENV_RETURN       0xfe44b2   /* ...an allocated accessory's environment */
+#define AES_FREE_ACCS_BASEPAGE_RETURN  0xfe44b6   /* ...its basepage */
+#define AES_FREE_ACCS_PD_RETURN        0xfe44c8   /* ...its descriptor's block */
+/* ---- end of slice L's ---- */
 
 #endif /* TOS102US_ADDRS_H */

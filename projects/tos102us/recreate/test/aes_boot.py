@@ -84,6 +84,17 @@ section "THE TAKEOVER" below says what is vetted there and where the boot ends).
 its loader and its accessories, with OUR ctlmgr the process they wake and are woken by. What such a machine differs
 from the ROM-booted one in is FOUR CLASSES of bytes, each found through the machine's own pointers (`by_nature`,
 `compared`).
+A MACHINE WHOSE TRAP DOOR IS OURS TOO (band 5 wave 3: `ours_of(blob, door=)`, `desk_machine(ours=, door=)`) is that
+boot with the same ONE takeover, made where the dispatcher first passes (the boot's first switchto `rte`), handed A
+DOOR: the registry's pending declarations mapped beside the screen manager's entry — the GEM trap's vector, and the
+first-entry frame of every loaded program, WALKED FROM THE MACHINE. Every accessory is then entered through our
+gotopgm, traps into our handler and parks through our dispatcher; the desk stays the ROM's. WHO RAN is a cycle
+profile (the ROM's door text: zero cycles from the lay on), the classes are per process, and a door the ROM took
+back is refused by name. NOTHING BINDS A DOOR AT TIER 3 BEFORE THE DOOR FLIP: the one door here is the takeover's
+own fixture (`with_the_prototype_door`), a parameter.
+THE THIRD CAPTURE (`seven_accessory_preinit`, `make preinit-acc7`): seven accessories in the drive, one more than
+the loader takes — `seven_accessory_machine`. Its boot saturates the kit's write ledger, so no takeover is made of it
+(refused by name); and a boot that stores at `$0..$7` — the ROM's shadow: a bus error on the machine — is refused.
 A BOOTED MACHINE IS CONTINUED (`Machine.continued`) by what it receives at its idle — IKBD bytes through the ROM's
 ACIA handler, the system timer's ticks through Timer C's — and its own run to the next idle, of whichever
 dispatcher: how both shores' screen managers are held to DO the same when woken.
@@ -104,7 +115,10 @@ import hashlib
 import operator
 import random
 import struct
+import subprocess
+import tempfile
 from collections import namedtuple
+from pathlib import Path
 
 import derived
 from harness import BASE_IMAGE, addrs, emu
@@ -186,7 +200,7 @@ FLOPPY_BPB_RECORD_BYTES = 32            # ($fc0fe4 `asl.w #5`)
 ADDA_L_IMMEDIATE_A5 = 0xdbfc
 VECTOR_BUS_ERROR = 0x008
 DRIVE_A = 0
-FIRST_ACCESSORY_BASEPAGE = 0x9724       # long: where sndcli parks the FIRST accessory's basepage ($fe435a)
+FIRST_ACCESSORY_BASEPAGE = 0x9724       # long: where sndcli parks the FIRST accessory's basepage ($fe4358)
 SNDCLI, SNDCLI_END = 0xfe42e8, 0xfe4394
 GEM_MAIN_EVB_COUNT_AT = 0xfda0ce        # gem_main's `cmp.w #15,d7`: the EVBs it links at start-up
 ACCESSORY_EVB_COUNT_AT = 0xfe455c       # the accessory allocator's `cmp.w #5,d7`: the EVBs each allocated PD brings
@@ -359,6 +373,7 @@ def _return_from_the_driver(answer, to, sp):
 # I/O page and the ROM, where the oracle drops a store as the bus does. The run's stacks are the capture's.
 OFF_THE_MACHINE = 0x200000
 BOOT_INSNS = 4_000_000                  # measured: 718,522 with two quiet accessories, 592,893 with none
+ONE_INSTRUCTION = 1                     # the segment a run leaves a stop by (`_Run._stepped_off`)
 THE_ROM_S, OURS = "the ROM's", "ours"     # whose code a PC is, and whose dispatcher an idle is (`whose`)
 Boot = namedtuple("Boot", "ram registers disk instructions cycles polls blanks floppy io_reads hardware_reads "
                           "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed",
@@ -410,12 +425,15 @@ def _the_frame_the_handler_is_entered_over(memory):
     return {sp: bytes(memory[sp:sp + BUS_ERROR_FRAME_BYTES])}
 
 
-# ---- THE TAKEOVER: A BOOT WHOSE SCREEN MANAGER IS OURS (band 5 wave 2: ctlmgr in C) -------------------------------------------
-# THE ROM BOOTS, AND AT THE SCREEN MANAGER'S FIRST ENTRY OUR ctlmgr IS ENTERED IN THE ROM'S PLACE. ictlmgr hands pstart
+# ---- THE TAKEOVER: A BOOT WHOSE SCREEN MANAGER — AND, HANDED A DOOR, WHOSE TRAP DOOR — IS OURS ------------------------------
+# THE ROM BOOTS, AND FROM THE FIRST PROCESS IT EVER ENTERS ON, OUR CODE STANDS IN THE ROM'S PLACE (band 5 wave 2: ctlmgr
+# in C; wave 3, ruling W3-R2: the stop moved to where a loaded program can still be taken). ictlmgr hands pstart
 # ctlmgr's address twice, and the machine keeps it in two longwords (`entry_slots`): the PD's p_ldaddr, and the PC of
 # the frame psetup pushed on the new process's own stack — the frame switchto's `rte` pops when the dispatcher first
-# enters it. THE TAKEOVER IS MADE AT THAT `rte`, the frame still under SP — a stop BY ADDRESS, never by a count —
-# and is two things, neither a poke of the CPU:
+# enters it. THE TAKEOVER IS MADE AT THE BOOT'S FIRST switchto `rte` — a stop BY ADDRESS, never by a count: the
+# dispatcher's first pass, which RESUMES THE BOOT'S OWN PROCESS (PD0, gem_main's: the one process that is not entered
+# there) or enters the first process it ever runs, the screen manager's frame — and every loaded program's — still
+# unpopped on its stack — and is two things, neither a poke of the CPU:
 #   * THE BLOB IS LAID where every Tier 3 row lays it (`Ours`: its link address, in the harness's free window);
 #   * THE REGISTRY'S MAPPING IS APPLIED (`aes_event.SCREEN_MANAGER_ENTRY`): each of the two slots, which holds the
 #     ROM's ctlmgr, is given the blob's own entry — found BY SYMBOL in the blob's ELF. The ROM's `rte` then pops OUR
@@ -423,45 +441,77 @@ def _the_frame_the_handler_is_entered_over(memory):
 # That the mapping is what OUR ictlmgr + pstart store is ictlmgr's own returning row (the flip's, at the arrival
 # `booted(until=<ictlmgr>)`): so the takeover is a build's ictlmgr having run, and no stage of ours.
 # WHY THERE AND NOT EARLIER: on the accessory boot `Pexec(3)` hands the loader the largest free block — the free
-# window — and CLEARS it before the screen manager first runs (measured: every byte of the blob's span stored
-# before the stop, none after). `laid=FROM_THE_START` is that boot, kept as the RED it is.
-# VETTED AT THE STOP, each refused by name (`_vet_the_first_entry`, `_vetted_slots`, `_vet_clear_where_the_blob_goes`):
-# the process being entered is SCRENMGR, on the stack its own UDA names, the frame the only thing on it (every byte
-# of its stack below is zero, as gem_main's BSS left it) and every register switchto loaded out of its never-saved
-# UDA zero; the two slots are the registry's and hold the ROM's ctlmgr; nothing lies where the blob goes.
+# window — and CLEARS it before any process first runs (measured: every byte of the blob's span stored before the
+# stop, none after). `laid=FROM_THE_START` is that boot, kept as the RED it is.
+# WHY THERE AND NOT LATER (wave 2's stop, the screen manager's own first entry — `AT_THE_SCREEN_MANAGER_S_ENTRY`, kept
+# so that the two are held to make ONE MACHINE): on an accessory boot both accessories are entered, take their first
+# `trap #2` and park INSIDE THE ROM'S aes_entry before the screen manager first runs — a process the ROM's gotopgm
+# entered and the ROM's trap handler parked is the ROM's for as long as it lives.
+# THE DOOR (`Ours.door`, of `ours_of(blob, door=)`; none by default — and none is mapped at Tier 3 before the door
+# flip): the registry's PENDING declarations a takeover applies beside the screen manager's entry, each the same kind
+# of mapping and nothing else —
+#   * a VECTOR (`aes_event.GEM_TRAP_VECTOR`, `CRITICAL_ERROR_VECTOR`): the longword must hold the ROM's handler (a
+#     vector the ROM has not installed yet, or has given back, is refused by name) and is given the blob's;
+#   * A LOADED PROGRAM'S FIRST-ENTRY FRAME (`aes_event.PROGRAM_ENTRY`): WALKED FROM THE MACHINE — every process whose
+#     UDA's stack pointer names a frame holding the ROM's gotopgm, vetted never entered — and given the blob's.
+# VETTED AT THE STOP, each refused by name (`_vet_the_boot_s_first_entry`, `_vet_never_entered`, `_vetted_slots`,
+# `_vet_clear_where_the_blob_goes`): the process the `rte` enters, unless it is the boot's own resumed, is entered on
+# the stack its own UDA names, every register switchto loaded out of its never-saved UDA zero; the screen manager is SCRENMGR, its frame the only thing
+# on its stack (every byte below is zero, as gem_main's BSS left it), and so is each program's mapped; the screen
+# manager's two slots are the registry's and hold the ROM's ctlmgr; nothing lies where the blob goes.
 # VETTED WHERE THE BOOT ENDS (`_TakingOver.made`): the `rte` entered our entry on the stack's top; NOT ONE STORE of
 # the rest of the boot landed in the blob's span (the write ledger from the lay on, and the sectors the harness laid),
-# and its bytes are the blob's; p_ldaddr holds our entry; and the screen manager stands PARKED IN OUR TEXT (`whose`).
+# and its bytes are the blob's; p_ldaddr holds our entry; the screen manager stands PARKED IN OUR TEXT (`whose`) —
+# and, of a door: EVERY PROGRAM MAPPED WAS ENTERED THROUGH OUR gotopgm, on its stack's top, and stands parked in our
+# text; each vector STILL HOLDS OURS (the ROM's retake stores its own back at every sh_tographic: a door the ROM took
+# back is refused by name, never silently lost); and WHO RAN — A CYCLE PROFILE, never a count of stops: from the lay
+# on THE ROM'S TEXT OF EACH PART RAN ZERO CYCLES (`aes_event.ROM_TEXT_OF`), and our entry of each ran.
 # WHERE A BOOT ENDS: at the first idle of WHICHEVER dispatcher — the ROM's (`IDLE_LOOP`) or the blob's own (its
 # keyboard poll called from its idle: `Ours.poll`, `Ours.idle`). A process parks through the dispatcher of the build
-# it runs: the desk and the accessories through the ROM's, the screen manager through ours — so the boot's last
-# park decides, and `Boot.idle` says which (measured: the desk parks last in every boot here — the ROM's idle).
+# it runs: the desk through the ROM's, the screen manager — and, behind a door, every accessory — through ours; so
+# the boot's last park decides, and `Boot.idle` says which.
 ENTRY_SYMBOL = aes_event.SCREEN_MANAGER_ENTRY_SYMBOL
 ROM_ENTRY = aes_event.SCREEN_MANAGER_ROM_ENTRY
 OUR_POLL, OUR_IDLE = "aes_chkkbd", "aes_idle"       # the blob's dispatcher: its poll, and the idle that calls it
 SCREEN_MANAGER_NAME = b"SCRENMGR"
 FRAME_PC = aes_event.EXCEPTION_FRAME_PC              # an exception frame: the status word, then the PC
 FRAME_BYTES = WORD_BYTES + LONG_BYTES
-AT_THE_FIRST_ENTRY, FROM_THE_START = "at the screen manager's first entry", "before the boot's first instruction"
+AT_THE_FIRST_ENTRY, FROM_THE_START = "at the boot's first switchto `rte`", "before the boot's first instruction"
+AT_THE_SCREEN_MANAGER_S_ENTRY = "at the screen manager's first entry"       # wave 2's stop: kept, to be held equal
 # The handlers ctlmgr calls, each by its ROM entry and its frame there (two words): what a continued run is watched
 # to call (`continued`) — on the blob at the entry of each one's C core (`routines.core_symbol`), a longword an
 # argument, after the image pointer.
 HANDLER_NAMES = ("AES_ROM_HCTL_BUTTON", "AES_ROM_HCTL_RECT")
 HANDLER_WORDS = 2                       # (mx, my)
 
-Ours = namedtuple("Ours", "base end image entry poll idle handlers rom", defaults=((),))
+Ours = namedtuple("Ours", "base end image entry poll idle handlers rom door", defaults=((), ()))
 Ours.__doc__ = """A blob AS A TAKEOVER READS IT (`ours_of`), by content — what a kept boot is keyed by: where it is
 linked (`base`) and ends (`end`: its allocated span), its bytes (`image`), its `entry` (ENTRY_SYMBOL), its
 dispatcher's `poll` and the `(start, end)` of the `idle` that calls it, `handlers`: `((the ROM's handler, its C
-core's entry), ...)` — and `rom`: `((address, bytes), ...)`, THE ROM DATA A LABELLED STAGING MAPS FOR THIS BLOB
-(`restaged`: the VDI's opcode tables naming the blob's own handlers), laid over the ROM in every continuation."""
-Takeover = namedtuple("Takeover", "ours process stack instructions slots cleared stored_after found laid")
-Takeover.__doc__ = """What one boot's takeover did and found: `ours`; the PD entered (`process`); its `stack` span
-`(lo, top)` as the stop found it — from the end of the UDA's state block to the end of psetup's frame; how many
-`instructions` the boot had run there (a capture's own number: for a reader, never a stop); `slots` — `{slot: (the
-ROM's entry found, ours laid)}`; `cleared`: how many stores the boot had made into the blob's span BEFORE the blob was
-laid; `stored_after`: the addresses of the span stored at AFTER (none, or the boot is refused); `found`: `(the
-digest of the megabyte as the stop found it, the registers there)`; and `laid`: when the blob was."""
+core's entry), ...)` — `rom`: `((address, bytes), ...)`, THE ROM DATA A LABELLED STAGING MAPS FOR THIS BLOB
+(`restaged`: the VDI's opcode tables naming the blob's own handlers), laid over the ROM in every continuation —
+and `door`: THE TRAP DOOR A TAKEOVER MAPS BESIDE THE SCREEN MANAGER'S ENTRY, a `DoorPart` each (none: the screen
+manager alone is ours)."""
+DoorPart = namedtuple("DoorPart", "what mapping")
+DoorPart.__doc__ = """One declaration of the registry as a blob answers it: `what` (its `RelocatedCode.what`) and
+`mapping` — `((the ROM's routine, the blob's own entry), ...)`, each entry found by symbol."""
+Program = namedtuple("Program", "pd name stack slot")
+Program.__doc__ = """A loaded program a door takeover took: its `pd`, its `name`, its `stack` span `(lo, top)` as the
+stop found it (the end of its UDA's state block; the end of psetup's frame) and the `slot` its first-entry frame's
+PC lay in."""
+DoorTaken = namedtuple("DoorTaken", "vectors programs ran")
+DoorTaken.__doc__ = """What a door takeover did: `vectors` — `{slot: (the ROM's handler found, ours laid)}`;
+`programs` — a `Program` for each first-entry frame mapped; and `ran`, WHO RAN from the lay on, `{what: (cycles at
+our entries' first instructions, cycles in the ROM's text of it)}` — the second zero, or the boot is refused."""
+Takeover = namedtuple("Takeover", "ours process stack instructions slots cleared stored_after found laid door",
+                      defaults=(None,))
+Takeover.__doc__ = """What one boot's takeover did and found: `ours`; THE SCREEN MANAGER'S PD (`process`); its `stack`
+span `(lo, top)` as the stop found it — from the end of the UDA's state block to the end of psetup's frame; how many
+`instructions` the boot had run at the stop (a capture's own number: for a reader, never a stop); `slots` — `{slot:
+(the ROM's entry found, ours laid)}`; `cleared`: how many stores the boot had made into the blob's span BEFORE the blob
+was laid; `stored_after`: the addresses of the span stored at AFTER (none, or the boot is refused); `found`: `(the
+digest of the megabyte as the stop found it, the registers there)`; `laid`: when the blob was; and `door`: the
+`DoorTaken` of a takeover handed a door, else None."""
 
 
 def _function_of(placed, symbol, blob, why):
@@ -471,8 +521,16 @@ def _function_of(placed, symbol, blob, why):
     return found
 
 
+def _door_of(placed, blob, door):
+    """The declarations `door` (`(what, ((the ROM's routine, our symbol), ...))` each) as `blob` answers them: a
+    `DoorPart` each — REFUSED BY NAME where the blob links no entry for a routine one of them names (a build before
+    that routine was ported)."""
+    return tuple(DoorPart(what, tuple((rom, _function_of(placed, symbol, blob, f"{what} cannot be mapped to this build").start)
+                                      for rom, symbol in symbols)) for what, symbols in door)
+
+
 @functools.cache
-def _ours_at(elf, base, end, image):
+def _ours_at(elf, base, end, image, door=()):
     blob = namedtuple("Blob", "elf base blob")(elf, base, image)
     placed = {symbol.name: symbol for symbol in transcription.symbol_table(elf)}
     entry = _function_of(placed, ENTRY_SYMBOL, blob, "nothing of this build can be entered in the ROM's ctlmgr's place")
@@ -483,13 +541,54 @@ def _ours_at(elf, base, end, image):
     handlers = tuple((getattr(addrs, name), placed[routines.core_symbol(name)].start) for name in HANDLER_NAMES
                      if routines.core_symbol(name) in placed)
     return Ours(base, max(end, base + len(image)), image, entry.start, poll.start, (idle.start, idle.start + idle.size),
-                handlers)
+                handlers, door=_door_of(placed, blob, door))
 
 
-def ours_of(blob):
+def ours_of(blob, door=()):
     """`blob` (a `RomBench`: the bench blob's or the shipped one's) AS A TAKEOVER READS IT: an `Ours` — its entry
-    FOUND BY SYMBOL in its ELF, and REFUSED BY NAME where the blob has none."""
-    return _ours_at(str(blob.elf), blob.base, blob.end, bytes(blob.blob))
+    FOUND BY SYMBOL in its ELF, and REFUSED BY NAME where the blob has none. `door`: THE TRAP DOOR IS OURS TOO — the
+    registry's declarations the takeover maps beside the screen manager's entry (`aes_event.GEM_TRAP_VECTOR`,
+    `PROGRAM_ENTRY`, `CRITICAL_ERROR_VECTOR`), each entry found by symbol or the blob refused."""
+    declared = tuple((part.what, tuple(sorted(part.symbols.items()))) for part in door)
+    return _ours_at(str(blob.elf), blob.base, blob.end, bytes(blob.blob), declared)
+
+
+# ---- THE PROTOTYPE DOOR: a trap door for ANY blob, the takeover's own fixture (`test/acc/protodoor.S`) -------------------
+# The door takeover is proved against A DOOR HANDED IT, never against the shipped `.S` of the day: the ROM's handler,
+# exit and aes_entry assembled AFTER THE BLOB'S LAST BYTE and linked against the blob's own ELF, so its five calls are
+# the blob's routines. The bytes are appended to the `Ours` — a labelled extension of a BUILD — and the door names
+# them: the vector the prototype's handler, a program's first entry the blob's own gotopgm (`switch.S`, shipped).
+PROTOTYPE_DOOR_SOURCE = accessory_disk.ACC_DIR / "protodoor.S"
+PROTOTYPE_TRAP2, GOTOPGM_SYMBOL = "proto_trap2", aes_event.PROGRAM_ENTRY.symbols[addrs.AES_ROM_GOTOPGM]
+
+
+@functools.cache
+def _prototype_door_at(elf, at, source):
+    """`source` assembled at `at` against the symbols of `elf`: `(its bytes, {symbol: address})`."""
+    with tempfile.TemporaryDirectory() as work:
+        (Path(work) / "protodoor.S").write_text(source)
+
+        def tool(*command):
+            return subprocess.run(command, cwd=work, check=True, capture_output=True, text=True).stdout
+        tool("m68k-elf-gcc", accessory_disk.TARGET_CPU, "-nostdlib", "-Wl,--build-id=none", "-Wl,-e0", f"-Wl,-Ttext={at:#x}",
+             f"-Wl,--just-symbols={elf}", "protodoor.S", "-o", "protodoor.elf")
+        tool("m68k-elf-objcopy", "-O", "binary", "protodoor.elf", "protodoor.bin")
+        placed = {name: int(value, 16) for value, kind, name in map(str.split, tool("m68k-elf-nm", "protodoor.elf").splitlines())
+                  if kind == "T"}
+        return (Path(work) / "protodoor.bin").read_bytes(), placed
+
+
+def with_the_prototype_door(blob):
+    """`ours_of(blob)` WITH THE PROTOTYPE DOOR (above) appended past its allocated span, and its `door` naming it:
+    the GEM trap's vector -> the prototype's handler, a loaded program's first-entry frame -> the blob's gotopgm."""
+    plain = ours_of(blob)
+    at = plain.end + plain.end % WORD_BYTES
+    code, placed = _prototype_door_at(str(blob.elf), at, PROTOTYPE_DOOR_SOURCE.read_text())
+    gotopgm = {symbol.name: symbol.start for symbol in transcription.symbol_table(str(blob.elf))}[GOTOPGM_SYMBOL]
+    door = (DoorPart(aes_event.GEM_TRAP_VECTOR.what, ((addrs.GEM_TRAP2, placed[PROTOTYPE_TRAP2]),)),
+            DoorPart(aes_event.PROGRAM_ENTRY.what, ((addrs.AES_ROM_GOTOPGM, gotopgm),)))
+    padded = plain.image + bytes(at - plain.base - len(plain.image))
+    return plain._replace(image=padded + code, end=at + len(code), door=door)
 
 
 def whose(pc, ours=None):
@@ -540,28 +639,45 @@ def _vetted_slots(memory, pd):
     return slots
 
 
-def _vet_the_first_entry(memory, pd, sp, registers):
-    """THE STOP IS THE SCREEN MANAGER'S FIRST ENTRY (above) — `memory` and the CPU's `registers` at switchto's `rte`,
-    `pd` the process it enters, `sp` its stack pointer — or the boot is refused by name: answers the process's
-    stack span `(lo, top)`."""
+def _vet_never_entered(memory, pd):
+    """THE PROCESS `pd` HAS NEVER BEEN ENTERED — psetup's frame, at the stack pointer its UDA names, is the only thing
+    on its stack (every byte below it zero), and resumes in supervisor state untraced — or it is refused by name:
+    answers its stack span `(lo, top)`, the top the frame's end."""
     name, uda = _name_of(memory, pd), case.long_in(memory, pd + aes.PD_UDA) & BUS
-    if name != SCREEN_MANAGER_NAME:
-        raise Refused(f"switchto's `rte` pops the ROM's ctlmgr for the process {name!r} at {pd:#x}: not SCRENMGR")
-    if sp != case.long_in(memory, uda + aes.UDA_SUPER_SP) & BUS:
-        raise Refused(f"the screen manager is entered at SP {sp:#x}, not on the stack its UDA names")
+    sp = case.long_in(memory, uda + aes.UDA_SUPER_SP) & BUS
     lo, status = uda + aes.UDA_STATE_BYTES, case.word_in(memory, sp)
     used = len(bytes(memory[lo:sp]).rstrip(b"\0"))
     if used:
-        raise Refused(f"NOT THE SCREEN MANAGER'S FIRST ENTRY: its stack holds something below the frame popped, "
-                      f"up to {lo + used - 1:#x} — the ROM's ctlmgr has run on it")
+        raise Refused(f"NOT THE FIRST ENTRY OF {name!r} (the PD at {pd:#x}): its stack holds something below the "
+                      f"frame popped, up to {lo + used - 1:#x} — code has run on it")
     if not status & SR_SUPERVISOR or status & SR_TRACE:
-        raise Refused(f"the frame switchto pops for the screen manager holds the status word {status:#x}")
+        raise Refused(f"the frame switchto pops for {name!r} (the PD at {pd:#x}) holds the status word {status:#x}")
+    return lo, sp + FRAME_BYTES
+
+
+def _vet_the_boot_s_first_entry(memory, pd, sp, registers):
+    """THE STOP IS A PROCESS'S FIRST ENTRY (above) — `memory` and the CPU's `registers` at switchto's `rte`, `pd` the
+    process it enters, `sp` its stack pointer — or the boot is refused by name: entered on the stack its UDA names,
+    never entered before (`_vet_never_entered`), every register switchto loaded out of its never-saved UDA zero.
+    Answers the process's stack span `(lo, top)`."""
+    name, uda = _name_of(memory, pd), case.long_in(memory, pd + aes.PD_UDA) & BUS
+    if sp != case.long_in(memory, uda + aes.UDA_SUPER_SP) & BUS:
+        raise Refused(f"{name!r} (the PD at {pd:#x}) is entered at SP {sp:#x}, not on the stack its UDA names")
+    stack = _vet_never_entered(memory, pd)
     loaded = {name: registers[name] for name in (*preinit_snapshot.DATA_REGISTERS, *preinit_snapshot.ADDRESS_REGISTERS)
               if registers[name]}
     if loaded:
-        raise Refused(f"NOT THE SCREEN MANAGER'S FIRST ENTRY: switchto loaded {loaded} out of its UDA, which nothing "
-                      f"has saved a context in yet")
-    return lo, sp + FRAME_BYTES
+        raise Refused(f"NOT THE FIRST ENTRY OF {name!r} (the PD at {pd:#x}): switchto loaded {loaded} out of its UDA, "
+                      f"which nothing has saved a context in yet")
+    return stack
+
+
+def _vet_the_screen_manager(memory, pd):
+    """The process whose entry is mapped is SCRENMGR, never entered: its stack span `(lo, top)`."""
+    name = _name_of(memory, pd)
+    if name != SCREEN_MANAGER_NAME:
+        raise Refused(f"the ROM's ctlmgr is the entry of the process {name!r} at {pd:#x}: not SCRENMGR")
+    return _vet_never_entered(memory, pd)
 
 
 def _vet_clear_where_the_blob_goes(memory, ours):
@@ -583,24 +699,75 @@ def _mapped(memory, slots, mapping):
     return done
 
 
+def _declared(what):
+    """The registry's declaration named `what` (`aes_event.RelocatedCode`)."""
+    found, = [each for each in vars(aes_event).values() if isinstance(each, aes_event.RelocatedCode) and each.what == what]
+    return found
+
+
+def door_slots(memory, part):
+    """WHERE THE MACHINE `memory` KEEPS what the door part `part` maps: `((pd or None, slot), ...)` — the
+    declaration's own longwords, or, for one WALKED FROM THE MACHINE (`aes_event.SLOTS_WALKED_FROM_THE_MACHINE`: a
+    loaded program's first-entry frame), each process's."""
+    walked = aes_event.SLOTS_WALKED_FROM_THE_MACHINE.get(part.what)
+    return walked(memory) if walked else tuple((None, slot) for slot in _declared(part.what).slots)
+
+
+def vet_the_door_stands(memory, ours, when):
+    """EVERY VECTOR OF THE DOOR STILL HOLDS OURS over `memory` — or the machine is refused by name. The ROM puts its
+    own handlers back (retake, `$fe3c84`: `move.l #$fe3ea6,$88` and crit_err through Setexc, at every sh_tographic;
+    restore_trap2 and giveerr): a machine continued through one is the ROM's door again while it is called ours."""
+    for part in ours.door:
+        entries = dict(part.mapping)
+        for pd, slot in door_slots(memory, part):
+            held = case.long_in(memory, slot)
+            if pd is None and held not in entries.values():
+                raise Refused(
+                    f"THE DOOR IS NO LONGER OURS {when}: {part.what} holds {held:#x}"
+                    + (" — THE ROM'S OWN HANDLER, PUT BACK (retake, restore_trap2, giveerr)" if held in entries else "")
+                    + f", not the blob's {[f'{entry:#x}' for entry in entries.values()]}")
+
+
+def _cycles_at(entries):
+    """The cycles the profile tallied at the first instruction of each of `entries`: it ran, or it did not."""
+    return sum(emu.prof_cycles(entry, entry + WORD_BYTES) for entry in entries)
+
+
+def _cycles_in(spans):
+    return sum(emu.prof_cycles(lo, hi) for lo, hi in spans)
+
+
 class _TakingOver:
     """ONE BOOT'S TAKEOVER (above), made where the run stops for it: `armed` the stops it asks for as it stands —
-    switchto's `rte` until the screen manager's first entry is found there, then our entry (the next instruction:
-    held to be where the `rte` lands), then nothing."""
+    switchto's `rte` until the takeover is made there, then each entry of ours a mapped frame is to pop (the next
+    instruction of its `rte`: held to be where it lands — the screen manager's, and behind a door our gotopgm, once
+    per program), then nothing."""
 
     def __init__(self, memory, ours, laid):
         self._memory, self.ours, self._laid = memory, ours, laid
         self.armed, self.taken, self.entered = frozenset({addrs.AES_ROM_SWITCHTO_RTE}), None, False
         self._mark, self._laid_by_the_harness = None, []
+        self._programs_to_enter, self._tallied_at_the_lay = {}, {}
+        if ours.door and laid != AT_THE_FIRST_ENTRY:
+            raise Refused(f"a door is taken {AT_THE_FIRST_ENTRY} and nowhere else: laid {laid}, a program the ROM's "
+                          f"gotopgm entered before the stop is the ROM's for as long as it lives")
         if laid == FROM_THE_START:      # the RED's (above): before the run's ledger begins
             memory[ours.base:ours.base + len(ours.image)] = ours.image
             self._mark = 0
 
+    @property
+    def profiled(self):
+        """Is this boot's who-ran read off the cycle profile (a door's)?"""
+        return bool(self.ours.door)
+
     def stopped(self, pc, sp, instructions):
-        if pc == self.ours.entry:
+        if self.taken is None:
+            if self._laid != AT_THE_SCREEN_MANAGER_S_ENTRY or case.long_in(self._memory, sp + FRAME_PC) & BUS == ROM_ENTRY:
+                self._take_over(sp, instructions)
+        elif pc == self.ours.entry:
             self._entered(sp)
-        elif case.long_in(self._memory, sp + FRAME_PC) & BUS == ROM_ENTRY:
-            self._take_over(sp, instructions)
+        else:
+            self._program_entered(pc, sp)
 
     def _stored_in_the_span(self, since, until=None):
         """The addresses of the blob's span the run's write ledger names from its entry `since` on."""
@@ -615,27 +782,90 @@ class _TakingOver:
 
     def _take_over(self, sp, instructions):
         memory, ours = self._memory, self.ours
-        pd = case.long_in(memory, aes.AES_RLR) & BUS
-        slots = _vetted_slots(memory, pd)
-        registers = _registers_now()
-        stack = _vet_the_first_entry(memory, pd, sp, registers)
+        registers, resumed = _registers_now(), case.long_in(memory, aes.AES_RLR) & BUS
+        if resumed != aes.SHELL_PD:     # ...the boot's own process — PD0, gem_main's — is RESUMED there, never entered
+            _vet_the_boot_s_first_entry(memory, resumed, sp, registers)
+        manager = aes.SCREEN_MANAGER_PD
+        slots = _vetted_slots(memory, manager)
+        stack = _vet_the_screen_manager(memory, manager)
         found = (hashlib.sha256(memory[:RAM_BYTES]).digest(), registers)
-        if self._laid == AT_THE_FIRST_ENTRY:
+        if self._laid == FROM_THE_START:
+            cleared = 0
+            self._vet_not_stored_over()
+        else:
             cleared = len(self._stored_in_the_span(0))
             _vet_clear_where_the_blob_goes(memory, ours)
             memory[ours.base:ours.base + len(ours.image)] = ours.image
             self._mark = _CPU.osh_num_writes()
-        else:
-            cleared = 0
-            self._vet_not_stored_over()
         mapped = _mapped(memory, slots, {ROM_ENTRY: ours.entry})
-        self.taken = Takeover(ours, pd, stack, instructions, mapped, cleared, (), found, self._laid)
-        self.armed = frozenset({ours.entry})
+        door = self._door_mapped() if ours.door else None
+        self.taken = Takeover(ours, manager, stack, instructions, mapped, cleared, (), found, self._laid, door)
+        self.armed = frozenset({ours.entry, *self._programs_to_enter})
+
+    def _door_mapped(self):
+        """THE DOOR'S MAPPING APPLIED where the boot stands (above), and the profile's tallies kept as the lay found
+        them: a `DoorTaken`, its `ran` still to be read where the boot ends."""
+        memory, vectors, programs = self._memory, {}, []
+        for part in self.ours.door:
+            mapping = dict(part.mapping)
+            for pd, slot in door_slots(memory, part):
+                held = case.long_in(memory, slot)
+                if pd is None and held not in mapping:
+                    raise Refused(f"{part.what} holds {held:#x} at the stop, not the ROM's "
+                                  f"{[f'{rom:#x}' for rom in mapping]}: nothing of the registry's to map there — the "
+                                  f"ROM has not installed its handler yet, or has given the vector back")
+                if held not in mapping:
+                    continue            # a process parked, or one no program was started in: no first-entry frame
+                if pd is None:
+                    vectors.update(_mapped(memory, (slot,), mapping))
+                else:
+                    programs.append(Program(pd, _name_of(memory, pd), _vet_never_entered(memory, pd), slot))
+                    _mapped(memory, (slot,), mapping)
+                    self._programs_to_enter.setdefault(mapping[held], []).append(pd)
+            self._tallied_at_the_lay[part.what] = self._tallies_of(part)
+        self._vet_no_program_left_the_rom_s(memory)
+        return DoorTaken(vectors, tuple(programs), {})
+
+    def _vet_no_program_left_the_rom_s(self, memory):
+        """A PARTIAL DOOR IS REFUSED BY NAME: the GEM trap's vector mapped while a loaded program's first-entry frame
+        still holds THE ROM'S gotopgm. Such a boot passes every other vet — who-ran is read per DECLARED part, and
+        the ROM's gotopgm is no part of a door of the vector alone — while the ROM enters every accessory: a machine
+        called "behind our door" whose programs the ROM started (wave 3's review, C-F8)."""
+        mapped = {part.what for part in self.ours.door}
+        if aes_event.GEM_TRAP_VECTOR.what not in mapped or aes_event.PROGRAM_ENTRY.what in mapped:
+            # (a door of the programs alone is refused where the boot ends: parked in the ROM's text; and a door that
+            # DECLARES the programs and maps one short — a frame not walked — is the who-ran's to refuse: gotopgm is its part)
+            return
+        left = [pd for pd, slot in aes_event.first_entry_frames(memory) if case.long_in(memory, slot) & BUS == addrs.AES_ROM_GOTOPGM]
+        if left:
+            raise Refused(f"A PARTIAL DOOR: {aes_event.GEM_TRAP_VECTOR.what} is mapped and the first-entry frame of "
+                          f"{sorted(_name_of(memory, pd) for pd in left)} still holds the ROM's gotopgm "
+                          f"({addrs.AES_ROM_GOTOPGM:#x}) — the door maps {sorted(mapped)} and not "
+                          f"{aes_event.PROGRAM_ENTRY.what!r}: every loaded program is entered through ours, or none is")
+
+    @staticmethod
+    def _tallies_of(part):
+        """`(cycles at our entries of `part`, cycles in the ROM's text of it)` as the profile stands."""
+        return _cycles_at(entry for _rom, entry in part.mapping), _cycles_in(aes_event.ROM_TEXT_OF[part.what])
 
     def _entered(self, sp):
         if sp != self.taken.stack[1]:
             raise Refused(f"our entry is entered at SP {sp:#x}, not on the top of the screen manager's stack")
-        self.entered, self.armed = True, frozenset()
+        self.entered, self.armed = True, self.armed - {self.ours.entry}
+
+    def _program_entered(self, pc, sp):
+        """Our gotopgm (`pc`) is entered: by switchto's `rte` popping a frame the door mapped, for the process running."""
+        pd = case.long_in(self._memory, aes.AES_RLR) & BUS
+        tops = {program.pd: program.stack[1] for program in self.taken.door.programs}
+        if pd not in self._programs_to_enter[pc]:
+            raise Refused(f"our entry at {pc:#x} is entered for the process at {pd:#x} ({_name_of(self._memory, pd)!r}), "
+                          f"whose first-entry frame the door did not map — or mapped, and it is entered twice")
+        if sp != tops[pd]:
+            raise Refused(f"our entry at {pc:#x} is entered at SP {sp:#x}, not on the top of the stack of "
+                          f"{_name_of(self._memory, pd)!r} ({tops[pd]:#x})")
+        self._programs_to_enter[pc].remove(pd)
+        if not self._programs_to_enter[pc]:
+            self.armed -= {pc}
 
     def _stored_over(self):
         """The addresses of the blob's span stored at since the blob was laid: by the run (its ledger) and by the
@@ -656,9 +886,11 @@ class _TakingOver:
         if self.taken is None:
             raise Refused(f"the boot ended and switchto's `rte` never popped the ROM's ctlmgr ({ROM_ENTRY:#x}): the "
                           f"screen manager's first entry was not met — nothing was taken over")
-        if not self.entered:
+        if not self.entered and at_an_idle:
             raise Refused(f"the `rte` at the screen manager's first entry did not enter `{ENTRY_SYMBOL}` "
                           f"({self.ours.entry:#x}): the frame's PC was not mapped")
+        if not self.entered:            # ...stopped before its idle — at either stop the takeover can be laid at
+            self._vet_still_to_be_entered(memory)
         self._vet_not_stored_over()
         taken = self.taken._replace(stored_after=tuple(self._stored_over()))
         pd = taken.process
@@ -670,7 +902,49 @@ class _TakingOver:
         if at_an_idle and whose(parked_pc(memory, pd), self.ours) != OURS:
             raise Refused(f"the screen manager stands parked at {parked_pc(memory, pd):#x}, in the ROM's text: this "
                           f"machine's screen manager is not ours")
-        return taken
+        return taken._replace(door=self._door_made(memory, taken.door, at_an_idle)) if taken.door else taken
+
+    def _vet_still_to_be_entered(self, memory):
+        """A BOOT STOPPED BEFORE THE SCREEN MANAGER'S FIRST ENTRY (an `until` between the takeover's stop — the boot's
+        first switchto `rte`, which resumes PD0 — and that entry) is a takeover machine only while the screen manager
+        HAS STILL TO BE ENTERED, AND THROUGH OURS: nobody runs it, and the frame switchto will pop for it holds our
+        entry. Anything else is the ROM's ctlmgr entered by a frame left unmapped — a machine called ours standing in
+        the ROM's text — and is refused by name (wave 2 refused it by the stop; no profile watches a takeover with no
+        door)."""
+        pd, running = self.taken.process, case.long_in(memory, aes.AES_RLR) & BUS
+        resumed_at = parked_pc(memory, pd)
+        if running == pd or resumed_at != self.ours.entry:
+            raise Refused(f"THE SCREEN MANAGER WAS NOT ENTERED THROUGH `{ENTRY_SYMBOL}` ({self.ours.entry:#x}) where the "
+                          f"boot was stopped: " + ("it is the process running, and " if running == pd else "")
+                          + f"its first-entry frame holds {resumed_at:#x}"
+                          + (" — THE ROM'S ctlmgr: the frame's PC was not mapped" if resumed_at == ROM_ENTRY else "")
+                          + ". A takeover machine never stands in the ROM's text of a routine it claims")
+
+    def _door_made(self, memory, door, at_an_idle):
+        """...AND ITS DOOR (above): the vectors still ours, who ran, every program entered through ours and parked
+        in our text — the `DoorTaken`, its `ran` read."""
+        vet_the_door_stands(memory, self.ours, "where the boot ends")
+        ran = {}
+        for part in self.ours.door:
+            (ours_then, rom_s_then), (ours_now, rom_s_now) = self._tallied_at_the_lay[part.what], self._tallies_of(part)
+            ran[part.what] = (ours_now - ours_then, rom_s_now - rom_s_then)
+            if ran[part.what][1]:
+                spans = [f"[{lo:#x}, {hi:#x})" for lo, hi in aes_event.ROM_TEXT_OF[part.what]]
+                raise Refused(f"THE ROM'S OWN CODE RAN BEHIND A DOOR CALLED OURS: {ran[part.what][1]} cycles in "
+                              f"{', '.join(spans)} after the takeover — {part.what} was mapped and the ROM's routine "
+                              f"still reached (a process the ROM entered before the stop, a Line-F call, a vector "
+                              f"left the ROM's)")
+        left = {_name_of(memory, pd) for pds in self._programs_to_enter.values() for pd in pds}
+        if at_an_idle and left:
+            raise Refused(f"the boot reached its idle and {sorted(left)} was never entered through our gotopgm")
+        for program in door.programs if at_an_idle else ():
+            if whose(parked_pc(memory, program.pd), self.ours) != OURS:
+                raise Refused(f"{program.name!r} stands parked at {parked_pc(memory, program.pd):#x}, in the ROM's "
+                              f"text: behind a door that is ours it parks through our dispatcher")
+        if at_an_idle and not ran.get(aes_event.GEM_TRAP_VECTOR.what, (True,))[0]:
+            raise Refused("the boot reached its idle and our `trap #2` handler never ran: the vector mapped, and not "
+                          "one GEM call of the rest of the boot arrived at ours")
+        return door._replace(ran=ran)
 
 
 # ---- ONE RUN OF A MACHINE TO AN IDLE: a boot's, or a booted machine's continued -------------------------------------------------
@@ -681,7 +955,13 @@ class _Run:
     if it comes first. Each stop is served: a driver entry, the probe's touch, the blank's handler entered, a poll,
     the takeover's (`taking`), a call watched (`observing`: `{PC: (name, a reader of the frame at that stop)}`).
     AFTER IT: `result` (the last segment's), what the harness stored into the machine (`laid`, `pushed`), the bus
-    error's `frame`, the `polls` made, the `blanks` taken, whose `idle` it ended at, and what it `observed`."""
+    error's `frame`, the `polls` made, the `blanks` taken, whose `idle` it ended at, and what it `observed`.
+
+    EVERY ARRIVAL AT A STOP IS A STOP. The door stops BEFORE the instruction at a stop's PC, so the run leaves a stop
+    by ONE INSTRUCTION with that PC alone disarmed (`_stepped_off`) and every stop — that one too — is armed again
+    for the rest: two arrivals at one PC with no other stop between are two stops. (Until band 5 wave 3 the PC stayed
+    disarmed to the NEXT stop, and such a pair counted once: 102 arrivals at the trap handler where 366 happened. A
+    zero was honest then; a count was not.)"""
 
     def __init__(self, memory, floppy, budget, *, until=None, taking=None, ours=None, observing=None):
         self._memory, self._floppy, self._budget, self._until = memory, floppy, budget, until
@@ -720,8 +1000,8 @@ class _Run:
         if ours is not None and entered["pc"] == ours.poll:
             self._back = case.long_in(memory, _register("a7")) & BUS      # entered AT a poll of ours (a machine continued)
         while True:
-            emu.bench_door_arm(self._stops() - {_register("pc")})
-            left = budget - result["ninsns"]
+            self._stepped_off(self._stops())
+            left = budget - _CPU.osh_num_insns()
             if left <= 0:
                 raise Refused(f"the run did not reach an idle within {budget} instructions")
             result = self._resumed(left)
@@ -731,6 +1011,23 @@ class _Run:
             self.result = result
             if self._stopped(emu.bench_door_pc(), emu.bench_door_sp()):
                 return result
+
+    @staticmethod
+    def _stepped_off(stops):
+        """The run, standing BEFORE the instruction at one of `stops`, taken ONE INSTRUCTION on with that PC alone
+        disarmed — then every stop armed (the class's note). Where it stands at none of them (a driver's call
+        answered, the bus error taken: the PC moved) nothing is run."""
+        at = _register("pc")
+        if at in stops:
+            emu.bench_door_arm(stops - {at})
+            _CPU.osh_bench_resume(ONE_INSTRUCTION, (ctypes.c_uint32 * len(emu.REPORTED_REGS))())
+            # THE RUN'S FIRST RESUMED SEGMENT RUNS NO INSTRUCTION (measured: the oracle counts one and the PC and A7
+            # stand where the registers were laid). A run ENTERED AT A STOP — a machine continued from its idle's
+            # poll — would stand there still, be stopped at once, and have its entry counted as an arrival: so that
+            # one segment is taken again. (Slice L's finding; `test_a_run_entered_at_a_stop_does_not_count_its_entry`.)
+            if _CPU.osh_num_insns() == ONE_INSTRUCTION and _register("pc") == at:
+                _CPU.osh_bench_resume(ONE_INSTRUCTION, (ctypes.c_uint32 * len(emu.REPORTED_REGS))())
+        emu.bench_door_arm(stops)
 
     def _resumed(self, left):
         """The run continued to its next stop — or REFUSED BY NAME where `left` instructions do not reach one: a
@@ -802,6 +1099,23 @@ class _Run:
         return _runs(sorted(stored))
 
 
+ROM_SHADOW_BYTES = 8                    # `$0..$7`: on an ST the ROM's first two longwords, read there — and no RAM
+
+
+def _vet_nothing_stored_under_the_rom_s_shadow(before, memory, writes, what):
+    """NO STORE AT `$0..$7` — or the run is refused by name. On the machine those eight bytes are the ROM's (the reset
+    vectors, shadowed) and A WRITE THERE IS A BUS ERROR; the oracle's megabyte takes the store and runs on, into a
+    machine no ST reaches. (How the ROM gets there, MEASURED: six accessories each in a six-way wait ask 42 EVBs of
+    the 40 the machine supplies; get_evb, `$fe4002`, answers 0 for an empty free list, and the desk's wait is built
+    at address 0 all the same.) Held two ways: the run's write ledger (`writes`; it saturates on a boot that loads many programs) and the eight bytes
+    themselves, `before` the run and after."""
+    if any(at < ROM_SHADOW_BYTES for at in writes) or bytes(memory[:ROM_SHADOW_BYTES]) != bytes(before[:ROM_SHADOW_BYTES]):
+        raise Refused(f"{what} STORED AT $0..$7 (they held {bytes(before[:ROM_SHADOW_BYTES]).hex()}, they hold "
+                      f"{bytes(memory[:ROM_SHADOW_BYTES]).hex()}): on the machine that is a BUS ERROR — the ROM's "
+                      f"shadow, not RAM — and this model takes none there. (The ROM's get_evb answers 0 where the "
+                      f"free EVB list is empty: more waits asked than the machine supplies EVBs build one at address 0)")
+
+
 def _io_seed(io):
     """The declared I/O map of a pre-init machine's shifter bytes."""
     return {preinit_snapshot.IO_AT + offset: byte for offset, byte in enumerate(io)}
@@ -821,15 +1135,24 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     floppy = Floppy(memory, disk)
     taking = _TakingOver(memory, ours, laid) if ours is not None else None
     run = _Run(memory, floppy, budget, until=until, taking=taking)
+    profiled = taking is not None and taking.profiled
     try:
+        # A DOOR'S WHO-RAN IS READ OFF THE CYCLE PROFILE (`_TakingOver.made`), on for this run alone: its tallies are
+        # read as DIFFERENCES from the lay, nothing reset — but the profile is one switch of the oracle's, so a door
+        # boot is never derived inside another measurement's profiled run (it would be left off for the rest of it).
+        if profiled:
+            emu.prof_enable(True)
         result = run.to_an_idle(machine.registers, io_seed_of(machine))
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
+        _vet_nothing_stored_under_the_rom_s_shadow(machine.ram, memory, writes, "THE BOOT")
         if taking is not None and truncated:
             raise Refused("the boot's write ledger saturated: what it stored over the blob's span is not known")
         takeover = taking.made(memory, run.idle is not None) if taking is not None else None
     finally:
+        if profiled:
+            emu.prof_enable(False)
         _CPU.m68k_set_irq(NO_INTERRUPT)
         emu.bench_abort()
     rom_bench.vet_the_run_just_made("the ROM's boot from the pre-init machine")
@@ -844,7 +1167,7 @@ PRG_TEXT_BYTES_AT = 2                   # the header's four lengths: TEXT, DATA,
 NOT_CALLED = 0xfffe                     # what testacc.S's `res_find` and `res_write` hold until the call is made
 QUIET, FIND, WRITE, MULTI = accessory_disk.QUIET, accessory_disk.FIND, accessory_disk.WRITE, accessory_disk.MULTI
 REGISTER, HIDE, with_a_window = accessory_disk.REGISTER, accessory_disk.HIDE, accessory_disk.with_a_window
-ACCESSORY_NAMES = accessory_disk.NAMES
+ACCESSORY_NAMES, SEVEN_ACCESSORY_NAMES = accessory_disk.NAMES, accessory_disk.SEVEN_NAMES
 RESULT_WORDS = ("res_id", "res_find", "res_write", "res_events", "res_wakes", "res_menu", "res_window", "res_opened")
 _built = derived.kept(accessory_disk.build)         # the three texts are the question: none is a file of the tree's key
 
@@ -885,6 +1208,13 @@ def accessory_disk_of(*modes):
     return accessory_disk.disk_of(accessory(), modes)
 
 
+@functools.cache
+def seven_accessory_disk_of(*modes):
+    """...and THE SEVEN-ACCESSORY DISK, each of its seven in its mode: the disk `seven_accessory_preinit` booted with."""
+    assert len(modes) == len(SEVEN_ACCESSORY_NAMES), f"seven accessories, {len(modes)} modes"
+    return accessory_disk.disk_of(accessory(), modes, SEVEN_ACCESSORY_NAMES)
+
+
 # ---- A MACHINE, AND WHAT IT IS READ BY -------------------------------------------------------------------------------------
 Process = namedtuple("Process", "pd name pid waiting evwait uda cda basepage events")
 Process.__doc__ = """One process of a machine, read off its PD: its address, name, id, whether it waits and for which
@@ -905,6 +1235,7 @@ class Machine:
         self.pokes = {0: boot.ram}
         self.takeover, self.idle, self.observed = boot.takeover, boot.idle, boot.observed
         self.ours = boot.takeover.ours if boot.takeover else None      # the blob of a machine whose screen manager is ours
+        self.door = boot.takeover.door if boot.takeover else None      # ...and what a door takeover did, behind a door
 
     def image(self):
         memory = bytearray(BASE_IMAGE)
@@ -996,28 +1327,43 @@ def accessory_preinit():
 
 
 @functools.cache
+def seven_accessory_preinit():
+    """...and the one booted with SEVEN accessories in the drive (`build/preinit_acc7.bin`; `make preinit-acc7`)."""
+    return preinit_snapshot.load(preinit_snapshot.seven_accessory_path())
+
+
+@functools.cache
 def blank_disk():
     return accessory_disk.disk_with()
 
 
-def _taken_over_by(blob):
-    """`booted`'s arguments that make the screen manager `blob`'s (None: the ROM's own)."""
-    return {} if blob is None else {"ours": ours_of(blob)}
+def _taken_over_by(blob, door=()):
+    """`booted`'s arguments that make the screen manager `blob`'s (None: the ROM's own) — and its trap door, of `door`."""
+    return {} if blob is None else {"ours": ours_of(blob, door)}
 
 
-def desk_machine(machine=None, ours=None):
+def desk_machine(machine=None, ours=None, door=()):
     """THE DESK'S MACHINE: the ROM booted from the pre-init `machine` (this tree's by default) over the blank disk it
     was captured with — the post-boot snapshot's own boot, stopped at its FIRST idle instead of nine hundred
     vertical blanks on. The snapshot's family, without the time. `ours` (a `RomBench`: `isr.blob_named`): THE SCREEN
-    MANAGER IS THAT BLOB'S (the takeover)."""
-    return Machine(booted(machine or preinit(), blank_disk(), **_taken_over_by(ours)))
+    MANAGER IS THAT BLOB'S (the takeover) — and, of a `door` (`ours_of`'s), ITS TRAP DOOR."""
+    return Machine(booted(machine or preinit(), blank_disk(), **_taken_over_by(ours, door)))
 
 
-def accessory_machine(first=QUIET, second=QUIET, machine=None, ours=None):
+def accessory_machine(first=QUIET, second=QUIET, machine=None, ours=None, door=()):
     """THE ACCESSORY MACHINE: the ROM booted from the ACCESSORY pre-init `machine` (this tree's by default) over the
     disk it was captured with, each accessory in its mode (`first`, `second`) — both loaded by the ROM's own loader,
-    started, and waiting with the desk and the screen manager at the first idle. `ours`: as `desk_machine`'s."""
-    return Machine(booted(machine or accessory_preinit(), accessory_disk_of(first, second), **_taken_over_by(ours)))
+    started, and waiting with the desk and the screen manager at the first idle. `ours`, `door`: as `desk_machine`'s."""
+    return Machine(booted(machine or accessory_preinit(), accessory_disk_of(first, second), **_taken_over_by(ours, door)))
+
+
+def seven_accessory_machine(*modes, machine=None, ours=None, door=()):
+    """THE SEVEN-ACCESSORY MACHINE (band 5 wave 3): the ROM booted from the SEVEN-accessory pre-init `machine` over the
+    disk it was captured with, each of the seven in its mode (all quiet by default) — ONE MORE `.ACC` THAN THE LOADER
+    TAKES: six are loaded and started (the spare static PD and five allocated ones), the seventh is never opened.
+    `ours`, `door`: as `desk_machine`'s."""
+    modes = modes or (QUIET,) * len(SEVEN_ACCESSORY_NAMES)
+    return Machine(booted(machine or seven_accessory_preinit(), seven_accessory_disk_of(*modes), **_taken_over_by(ours, door)))
 
 
 # ---- A BOOTED MACHINE, CONTINUED: what it receives at its idle, and the run to its next -------------------------------------
@@ -1179,9 +1525,11 @@ def continued(boot, received, budget=CONTINUED_INSNS):
     rom_bench.vet_the_run_just_made("a booted machine's run from its idle to the next")
     if truncated:
         raise Refused("the continued run's write ledger saturated: what it stored is not known")
+    _vet_nothing_stored_under_the_rom_s_shadow(boot.ram, memory, writes, "THE CONTINUATION")
     if ours is not None:
         harness_s = {at for start, data in run.laid.items() for at in range(start, start + len(data))}
         _vet_the_blob_was_not_reached(memory, ours, {*writes, *receiving.stored, *harness_s})
+        vet_the_door_stands(memory, ours, "where the continuation ends")
     return boot._replace(ram=bytes(memory[:RAM_BYTES]), registers=registers, disk=bytes(floppy.disk),
                          instructions=result["ninsns"], cycles=result["cycles"], polls=run.polls, blanks=run.blanks,
                          floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
@@ -1217,6 +1565,17 @@ SAVED_CONTEXT = "the screen manager's saved context in its UDA"
 MANAGER_STACK = "the screen manager's stack: dead below its parked stack pointer, its ctlmgr's live frames above"
 THE_BLOB = "the blob's own span"
 LINE_F_MASK, TRAP_SAVE_FRAME = "the Line-F mask word", "the BIOS's last register-save frame, dead under savptr"
+# BEHIND A DOOR (band 5 wave 3) THE SAME CLASSES ARE PER PROCESS — every program the door took runs our event layer as
+# the screen manager does, and parks through our dispatcher — and ONE MORE, the parked buffer's address:
+#   * each program's SAVED CONTEXT and its STACK (as the screen manager's: `uda_context_drop`; the span the stop
+#     found, from its UDA's state block to psetup's frame's end);
+#   * A WAIT'S PARAMETER THAT IS AN ADDRESS IN THE WAITER'S OWN STACK: an EVB on a program's list whose parameter
+#     longword names a place INSIDE THAT PROGRAM'S STACK ON BOTH MACHINES (a message wait keeps its buffer's QPB, a
+#     local of the waiting routine — two builds' frames, two addresses). Named only where both machines hold such an
+#     address there: an EVB whose parameter differs otherwise is a difference.
+#   * the VECTORS are code addresses: MAPPED back (`mapped_back`), never dropped.
+PROGRAM_CONTEXT, PROGRAM_STACK = "{}'s saved context in its UDA", "{}'s stack: dead below its parked stack pointer, live frames above"
+PARKED_ADDRESS = "{}'s wait at {:#x}: its parameter, an address in its own stack"
 Compared = namedtuple("Compared", "differing within")
 Compared.__doc__ = """Two machines compared: `differing` — the `(address, length)` runs they differ at OUTSIDE every
 class (none, for a takeover machine beside its ROM-booted one) — and `within`: `{class: how many bytes differ in
@@ -1248,8 +1607,25 @@ def by_nature(rom, ours):
     classes = {DEAD_DISPATCHER_FRAMES if one_dispatcher else DISPATCHER_STACK: (bottom, dead_below if one_dispatcher else top),
                SAVED_CONTEXT: (context_lo, context_hi), MANAGER_STACK: taken.stack,
                THE_BLOB: (taken.ours.base, taken.ours.end)}
+    for program in (taken.door.programs if taken.door else ()):
+        classes.update(_of_a_program(rom, ours, program))
     (mask_lo, mask_hi, _mask_why), = aes.LINE_F_MASK_WINDOW
     return classes, {LINE_F_MASK: (mask_lo, mask_hi), TRAP_SAVE_FRAME: trap_save_frame(ours)}
+
+
+def _of_a_program(rom, ours, program):
+    """The classes of ONE PROGRAM a door took (above), `{class: (lo, hi)}`, through the machines' own pointers."""
+    name, (lo, top) = program.name.decode().strip(), program.stack
+    uda = ours.long(program.pd + aes.PD_UDA) & BUS
+    if rom.process(program.pd)._replace(events=()) != ours.process(program.pd)._replace(events=()):
+        raise Refused(f"the two machines' {name} are not one process: {rom.process(program.pd)} and {ours.process(program.pd)}")
+    (context_lo, context_hi, _why), = aes_switch.uda_context_drop(uda)
+    classes = {PROGRAM_CONTEXT.format(name): (context_lo, context_hi), PROGRAM_STACK.format(name): (lo, top)}
+    for evb in ours.process(program.pd).events:
+        slot = evb + aes.EVB_PARM
+        if all(lo <= each.long(slot) & BUS < top for each in (rom, ours)):
+            classes[PARKED_ADDRESS.format(name, evb)] = (slot, slot + LONG_BYTES)
+    return classes
 
 
 def _differing_runs(one, other):
@@ -1273,6 +1649,8 @@ def mapped_back(machine):
     ram = bytearray(machine.ram)
     if machine.ours is not None:
         _mapped(ram, aes_event.SCREEN_MANAGER_ENTRY.slots, {machine.ours.entry: ROM_ENTRY})
+    for slot, (rom, entry) in (machine.door.vectors.items() if machine.door else ()):     # ...and a door's vectors
+        _mapped(ram, (slot,), {entry: rom})
     return bytes(ram)
 
 

@@ -87,4 +87,53 @@ uint32_t aes_giveerr(uint8_t *image);                                           
 uint32_t aes_takeerr(uint8_t *image);                                                               /* $fe3cac */
 #endif
 
+/* ---- crit_err ($fe3cbe..$fe3d2d): THE CRITICAL-ERROR HANDLER GEM INSTALLS (hand 68000; `gemdosif.S` alone) -----------
+ * The BIOS's disk driver calls etv_critic with `(error.w, drive.w)` over its return address. crit_err parks that SP,
+ * runs ON A STACK OF ITS OWN — one for every process — with D3-D7/A3-A6 saved there, turns `error` into eralert's
+ * alert number through an 18-byte table, shows the alert, and answers the error (sign-extended) where the alert's
+ * first button ended it, CRIT_ERR_RETRY otherwise. It leaves its caller's stack round a call, which no compiled
+ * function does: the C twin (`aes_crit_err`) is the table, the alert and the answer alone. */
+#define CRIT_ERR_ERROR        4          /* word: the BIOS's error number       ($fe3cbe move.w 4(sp),d0)      */
+#define CRIT_ERR_DRIVE        6          /* word: the drive                     ($fe3cc2 move.w 6(sp),d1)      */
+#define AES_CRIT_ERR_SAVED_SP 0x8c42     /* long: the SP it was entered with    ($fe3ccc move.l sp,$8c42)      */
+#define AES_CRIT_ERR_STACK    0x8c46     /* bytes[AES_CRIT_ERR_STACK_BYTES]: its own stack, above that longword */
+#define AES_CRIT_ERR_STACK_TOP 0x9446    /* ...and where it starts              ($fe3cd2 movea.l #$9446,sp)    */
+#define AES_CRIT_ERR_STACK_BYTES (AES_CRIT_ERR_STACK_TOP - AES_CRIT_ERR_STACK)   /* 2,048                      */
+/* The table ($fef790): row `~error` is the alert eralert shows — rows 0..CRIT_ERR_LAST_ROW, the BIOS's errors -1
+ * .. -18. An error of 0, or one past the last row, takes row 0. TWO THINGS THE ROM DOES AND THE `.S` WITH IT: the
+ * row's BYTE replaces the low byte of `~error` alone (an error of -257 or below reaches eralert as `$01xx`), and a
+ * POSITIVE error passes the signed `ble` and indexes BELOW the table. */
+#define CRIT_ERR_ALERT_ROWS   18
+#define CRIT_ERR_LAST_ROW     17         /*                                     ($fe3cf6 cmp.w #17,d0)         */
+#define CRIT_ERR_ROW_OF_NO_ERROR 0       /*                                     ($fe3cec, $fe3cfc movea.w #0,a0) */
+#define CRIT_ERR_RETRY_HIGH_WORD 1       /* its answer: do the access again — 1 in D0's HIGH word...           */
+#define CRIT_ERR_RETRY        (CRIT_ERR_RETRY_HIGH_WORD << 16)   /* ...$10000 ($fe3d1a move.l #$10000,d1)     */
+#define ERALERT_FRAME_WORDS_BYTES 4      /* eralert's two words, dropped        ($fe3d0e addq.l #4,sp)         */
+
+/* ---- dos_exec ($fe3d2e..$fe3db3): Pexec, with the caller's AES stack moved out of the program's way ------------------
+ * dos_exec(name, mode.w, tail) -> D0.l, Pexec's answer. The running process's saved supervisor SP (its UDA's
+ * UDA_SUPER_SP: where its next `trap #2` starts stacking) is parked in AES_DOS_EXEC_SAVED_SSP and replaced by ITS OWN
+ * SP less DOS_EXEC_STACK_KEPT — below the frames of the caller that is waiting for the program — then
+ * `Pexec(mode, name, tail, 0)` by `trap #1` itself (not `__DOS`: nothing is parked), the SP put back, and the glue's
+ * verdict left its own way: AES_DOS_ERR 0, or 1 with AES_DOS_AX the answer's word WHERE THAT WORD IS NOT 0 — so a
+ * mode-5 basepage whose address has a non-zero low word reads as an error (the ROM's; reproduced). Each of the two
+ * stores of the UDA is bracketed by spl7_save / spl_restore. */
+#define DOS_EXEC_NAME         4          /* long                                ($fe3d64 move.l 4(a1),-(sp))   */
+#define DOS_EXEC_MODE         8          /* word                                ($fe3d68 move.w 8(a1),-(sp))   */
+#define DOS_EXEC_TAIL         10         /* long                                ($fe3d60 move.l 10(a1),-(sp))  */
+#define AES_DOS_EXEC_SAVED_SSP 0x8c2e    /* long: the UDA's SP while a program runs ($fe3d3e)                  */
+#define DOS_EXEC_STACK_KEPT   64         /* bytes kept under dos_exec's own SP  ($fe3d48 suba.l #64,a1)        */
+#define DOS_EXEC_NO_ENVIRONMENT 0        /* Pexec's environment: the caller's   ($fe3d5a move.l #0,-(sp))      */
+#define DOS_EXEC_PEXEC_FRAME_BYTES 16    /*                                     ($fe3d72 adda.l #16,sp)        */
+#define DOS_EXEC_OK           0          /* AES_DOS_ERR's two values            ($fe3d96 move.w #0)            */
+#define DOS_EXEC_FAILED       1          /*                                     ($fe3da4 move.w #1)            */
+
+#ifndef __ASSEMBLER__
+/* `caller_sp`: the SP dos_exec is entered with — the machine's, carried by no frame (dos_free's `return_site`
+ * precedent): a host argument. */
+uint32_t aes_dos_exec(uint8_t *image, uint32_t caller_sp, uint32_t name, int16_t mode, uint32_t tail); /* $fe3d2e */
+int32_t aes_crit_err(uint8_t *image, int16_t error, int16_t drive);                                    /* $fe3cbe */
+int16_t aes_crit_err_alert(const uint8_t *image, int16_t error);                        /* its table step, $fe3ce8 */
+#endif
+
 #endif /* TOS102US_AES_GEMDOSIF_H */

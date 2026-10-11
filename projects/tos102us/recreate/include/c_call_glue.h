@@ -32,4 +32,19 @@ thunk:                                                                          
     rts;                                                                                                               \
     .size   thunk,.-thunk
 
+/* ---- band 5 wave 3, slice T ---------------------------------------------------------------------------------------
+ * A thunk named `thunk` into a C body an ALCYON caller hands ONE LONGWORD, at its own stack pointer:
+ * `void body(uint8_t *image, uint32_t argument)` — the longword pushed again under the image base, both dropped.
+ * (`src/aes/switch.S`'s DISP_PD_THUNK is this shape, spelt there before this macro existed.) */
+#define ONE_LONGWORD_THUNK(thunk, body)                                                                                \
+    .type   thunk,@function;                                                                                           \
+thunk:                                                                                                                 \
+    move.l  ALCYON_FIRST_ARGUMENT(%sp),-(%sp);                                                                         \
+    pea     (0).w;                                                                                                     \
+    jsr     body;                                                                                                      \
+    addq.l  #(IMAGE_ARGUMENT_BYTES + SLOT_BYTES),%sp;                                                                  \
+    rts;                                                                                                               \
+    .size   thunk,.-thunk
+/* ---- end of slice T's block --------------------------------------------------------------------------------------- */
+
 #endif

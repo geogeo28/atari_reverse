@@ -2484,6 +2484,12 @@ class _EveryTrap:
         self.first = self._armed = inner.first | {trap}
         self.arrivals, self._back = 0, None
 
+    def armed_over(self, memory):
+        """Armed over its machine (`aes_event.run_watched`): its trap is a handler that machine holds, and its inner
+        watch is held as it would be alone."""
+        aes_event.vet_a_handler_of_the_machine(memory, self._trap, "the count of every trap")
+        self._inner.armed_over(memory)
+
     def stopped(self, pc, sp, memory):
         if pc == self._back:
             self._back = None

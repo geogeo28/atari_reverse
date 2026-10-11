@@ -596,6 +596,34 @@ SWITCH_ENTRIES = {
 assert set(SWITCH_ENTRIES) == SWITCH_GLOBLS, (
     f"the switch's table and its sources' `.globl`s disagree: {sorted(set(SWITCH_ENTRIES) ^ SWITCH_GLOBLS)}")
 
+
+# ---- band 5 wave 3, slice T: THE TRAP DOOR's sources and table ----------------------------------------------------------
+# `atari/target.mk`: TRAPDOOR_SOURCES — `trap #2`'s handler, its way out, ub_trampoline and aes_entry's stream, the
+# switch's sibling (the ROM's bytes, no C twin, no table row) and A KIND APART WHILE IT IS LINKED AND NOT INSTALLED:
+# the switch's rule is that no word of a blob names a ROM address of the kind, and until the door is bound (slice F;
+# the VDI's own check of the vector, wave 4) the build still names the ROM's handler — `test_aes_trapdoor.py` holds
+# exactly who does. Same row type as the switch's, an entry's EXITS the symbols of OUR build its bytes name.
+def trapdoor_sources():
+    """TRAPDOOR_SOURCES, as `atari/target.mk` writes it."""
+    return _listed_sources("TRAPDOOR_SOURCES")
+
+
+TRAPDOOR_GLOBLS = globl_entries(trapdoor_sources())
+_MASK_BRACKETS = {"aes_rom_spl7_save", "aes_rom_spl_restore"}
+TRAPDOOR_ENTRIES = {
+    # the handler, its way out and the desk's G_USERDEF door ($fe3ea6..$fe3f5d): byte-exact but for the four `jsr`s
+    # of the mask brackets and the `movea.l #` of aes_entry
+    **_end_to_end((("aes_rom_trap2", addrs.AES_ROM_TRAP2, _MASK_BRACKETS | {"aes_rom_entry"}),
+                   ("aes_rom_trap2_exit", addrs.AES_ROM_TRAP2_EXIT, _MASK_BRACKETS),
+                   ("aes_rom_ub_trampoline", addrs.AES_ROM_UB_TRAMPOLINE, ())), addrs.AES_ROM_SIGNAL),
+    # gemsuper's aes_entry, the same file: the ROM's stream to its last call (`stream`), its three call words `jsr`s
+    "aes_rom_entry": SwitchEntry(addrs.AES_ROM_ENTRY, addrs.AES_ROM_ENTRY_END - addrs.AES_ROM_ENTRY,
+                                 frozenset({"aes_entry_to_aes_marshal", "aes_dsptch", "aes_rom_trap2_exit"})),
+}
+assert set(TRAPDOOR_ENTRIES) == TRAPDOOR_GLOBLS, (
+    f"the trap door's table and its source's `.globl`s disagree: {sorted(set(TRAPDOOR_ENTRIES) ^ TRAPDOOR_GLOBLS)}")
+# ---- end of slice T's block ---------------------------------------------------------------------------------------------
+
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
 # `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
@@ -774,6 +802,10 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # the workstations (`src/vdi/workstation.c`): the open's realized palette, and the GEMDOS door
     ("vdi_v_opnwk", "vdi_vq_color"), ("vdi_v_opnvwk", "vdi_gemdos_call"), ("vdi_v_clsvwk", "vdi_gemdos_call"),
     ("vdi_v_clswk", "vdi_gemdos_call"),
+    # ---- band 5 wave 3, slice L: the accessory loader (`src/aes/loader.c`) ---- sndcli's name copied to the shell's
+    # line, and pgmld — ITS FIRST C CALLER: the pair `aes_event.TEXT_SITE_CALLERS` names too (`test_aes_pgmld.py`)
+    ("aes_sndcli", "aes_strcpy"), ("aes_sndcli", "aes_pgmld"),
+    # ---- end of slice L's ----
 }
 
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------

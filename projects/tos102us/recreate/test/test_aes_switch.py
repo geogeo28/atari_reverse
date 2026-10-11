@@ -186,7 +186,9 @@ def test_a_stream_no_battery_declares_is_refused():
 
 def test_the_registry_of_streams_holds_what_the_batteries_declared_and_nothing_a_test_did():
     """...and the registry is the batteries' own declarations — disp's — whichever tests ran before this one."""
-    assert transcription.STREAMS == [STREAM]
+    # (slice T, band 5 wave 3: another battery declares a stream of its own — aes_entry's, `test_aes_trapdoor.py`, which
+    # holds its own the same way; this battery's are the declarations of ITS symbol.)
+    assert [declared for declared in transcription.STREAMS if declared.symbol == STREAM.symbol] == [STREAM]
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRIES))

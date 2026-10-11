@@ -808,3 +808,78 @@ def test_the_prose_counts_of_ev_multi_s_rows_are_the_registry_s_and_its_row_s():
     its_rows = [int(found["count"]) for found in _ITS_ROWS_RE.finditer(paragraph)]
     assert its_rows == [int(_ROWS_IN_A_CASES_CELL_RE.match(cases)["count"])], (
         f"the paragraph says `Its {its_rows} rows`; ev_multi's Cases cell opens {cases.strip()[:40]!r}")
+
+
+# ---- band 5 wave 3: THE GATE'S SENTENCE (ruling W3-R8) AND THE WAVE'S OWN COUNTS ------------------------------------------------
+# The wave-3 entry opens with a verdict in numbers — the trap path against PD2's stack — and `* **Next**` orders the
+# work by it. The numbers are `test_aes_stack.py`'s pins (which that battery holds to the reading and to the runs):
+# QUOTED here, so the frame diet that moves a pin reddens the sentence that still says the old verdict. Beside it, two
+# counts the entry would otherwise keep by hand: the registry's pending declarations and the table's length.
+THE_GATE_S_ENTRY = "BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER"
+_COUNT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                "eleven": 11, "twelve": 12}
+_THE_GATE_RE = re.compile(
+    r"DOES NOT FIT PD2's (?P<pd2>[\d,]+) BYTES ON THE\s+SHIPPED BLOB\*\*.*?the (?P<nest>\d+)-byte nest.*?"
+    r"MEASURED over by (?P<measured>\d+).*?BOUND over by (?P<bound>\d+) \(fsel_input: [\d,]+ \+ \d+ = (?P<needed>[\d,]+)\);\s+"
+    r"(?P<arms>\w+) arms of the opcode switch do not fit PD2, all (?P<every>\d+) fit an allocated PD's (?P<allocated>[\d,]+)", re.S)
+_PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations are PENDING")
+_TABLE_LINES_RE = re.compile(r"THE TABLE against `[0-9a-f]+`'s \([\d,]+ lines → (?P<lines>[\d,]+)\)")
+
+
+def _number(text):
+    return _COUNT_WORDS[text] if text in _COUNT_WORDS else int(text.replace(",", ""))
+
+
+def test_the_gate_s_sentence_quotes_the_stack_battery_s_pins_and_the_wave_s_counts_are_derived():
+    import aes_event
+    import aes_stack
+    import test_aes_stack as pinned
+
+    entry = _paragraph_from(_status(), THE_GATE_S_ENTRY)
+    said = _THE_GATE_RE.search(entry)
+    assert said, "the wave-3 entry no longer states the gate's verdict in the sentence this test reads"
+    worst_arm, needed = pinned.CALLS_OVER_PD2[pinned.SHIPPED][0]
+    assert {name: _number(value) for name, value in said.groupdict().items()} == {
+        "pd2": pinned.PD2_S_SPAN, "nest": pinned.THE_NEST, "measured": pinned.MEASURED_OVER_PD2_BY,
+        "bound": -pinned.TRAP_PATH_SPARE[pinned.SHIPPED][aes_stack.PD2], "needed": needed,
+        "arms": len(pinned.CALLS_OVER_PD2[pinned.SHIPPED]), "every": len(aes_stack.calls_of_the_switch(
+            aes_stack.blob_of(pinned.SHIPPED).elf, pinned.SHIPPED)), "allocated": pinned.AN_ALLOCATED_SPAN}
+    assert needed - pinned.PD2_S_SPAN == _number(said["bound"]) and worst_arm == 90, "the worst arm is fsel_input (opcode 90)"
+    pending = _PENDING_RE.search(entry)
+    assert pending and _number(pending["count"]) == len(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3), (
+        f"the entry counts the registry's pending declarations; it holds {sorted(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)}")
+    lines = _TABLE_LINES_RE.search(_status())
+    assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the wave's entry states it"
+
+
+# ...AND THE COUNTS OF TWO BATTERIES THE WAVE'S ENTRIES QUOTE (wave 3's review: "17 arrivals" stood where the battery
+# has 15, "258 cases" where it collects 259) — each re-derived: the tests a file COLLECTS, asked of pytest itself in
+# a process of its own, and the loader's arrivals read off its own table of cases.
+_LOADER_S_COUNTS_RE = re.compile(r"(?P<arrivals>\d+) ARRIVALS \((?P<tests>\d+) tests\) — (?P<made>\d+) a boot makes, (?P<staged>\d+) with one word staged")
+_CRIT_ERR_S_CASES_RE = re.compile(r"^\| `0xfe3cbe` \|[^|]*\| (?P<cases>\d+) cases \(`test_aes_crit_err\.py`\)", re.M)
+_COLLECTED_RE = re.compile(r"^(?P<tests>\d+) tests? collected", re.M)
+A_STAGED_ARRIVAL = "ARGUMENT CLASS"     # how `test_aes_loader.CASES` labels an arrival with a word staged over it
+
+
+def _collected(battery):
+    """How many tests pytest collects from `test/<battery>`: its own count, from a process of its own."""
+    import subprocess
+    import sys
+    said = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-p", "no:xdist",
+                           "-p", "no:randomly", str(REC / "test" / battery)], cwd=REC, capture_output=True, text=True).stdout
+    found = _COLLECTED_RE.search(said)
+    assert found, f"pytest collected nothing it counts from {battery}: {said[-300:]}"
+    return int(found["tests"])
+
+
+def test_the_two_battery_counts_the_wave_3_entries_quote_are_the_batteries_own():
+    import test_aes_loader
+
+    status = _status()
+    loader, crit_err = _LOADER_S_COUNTS_RE.search(status), _CRIT_ERR_S_CASES_RE.search(status)
+    assert loader and crit_err, "STATUS.md no longer counts the loader's arrivals or crit_err's cases where it did"
+    staged = [label for label in test_aes_loader.CASES if label.startswith(A_STAGED_ARRIVAL)]
+    assert {name: int(value) for name, value in loader.groupdict().items()} == {
+        "arrivals": len(test_aes_loader.CASES), "tests": _collected("test_aes_loader.py"),
+        "made": len(test_aes_loader.CASES) - len(staged), "staged": len(staged)}
+    assert int(crit_err["cases"]) == _collected("test_aes_crit_err.py")

@@ -122,6 +122,13 @@ def accessory_path(recreate=RECREATE):
     return recreate / "build" / "preinit_acc.bin"
 
 
+def seven_accessory_path(recreate=RECREATE):
+    """...and THE SEVEN-ACCESSORY PRE-INIT MACHINE's (band 5 wave 3; `make preinit-acc7`): the same stop of a boot
+    with `tools/accessory_disk.py`'s SEVEN-accessory floppy in the drive from power-on — one more `.ACC` than the
+    loader takes."""
+    return recreate / "build" / "preinit_acc7.bin"
+
+
 def packed(machine):
     """`machine` as the file's bytes."""
     assert len(machine.ram) == ST_RAM_BYTES and len(machine.io) == IO_BYTES

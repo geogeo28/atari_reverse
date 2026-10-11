@@ -100,11 +100,25 @@ $(ACC_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/mk
 $(PREINIT_ACC): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC_DISK)
 	$(PY) tools/preinit_snapshot.py --disk $(ACC_DISK) --work build/preinit_acc_snapshot --out $@
 
-.PHONY: preinit preinit-acc
+# THE SEVEN-ACCESSORY PRE-INIT MACHINE (band 5 wave 3): a THIRD capture, with seven test accessories in the drive from
+# power-on — one more than the loader takes — for the loader's at-most-six arm, five allocated PDs and the EVB supply
+# run out. Its own disk, its own scratch directory, four more seconds of Hatari, once. NOT among REGISTRY_READS: no
+# registered row is made from it (the registry's import does not read the file), so only the suites ask for it.
+PREINIT_ACC7 := build/preinit_acc7.bin
+ACC7_DISK := build/acc/ACC7DISK.ST
+
+$(ACC7_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/mkprg.py include/gemdos/pexec_load.h
+	$(PY) tools/accessory_disk.py --seven --out $@
+
+$(PREINIT_ACC7): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)
+	$(PY) tools/preinit_snapshot.py --disk $(ACC7_DISK) --work build/preinit_acc7_snapshot --out $@
+
+.PHONY: preinit preinit-acc preinit-acc7
 preinit: $(PREINIT)
 preinit-acc: $(PREINIT_ACC)
+preinit-acc7: $(PREINIT_ACC7)
 
-test guarded gates: $(PREINIT) $(PREINIT_ACC)
+test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7)
 # ...AND SO DOES EVERY TARGET WHOSE RECIPE IMPORTS THE REGISTRY (`test_boot_snapshot`: bench/shipped_glue.py,
 # test/derived.py, bench/tier3.py): the screen manager's rows are registered FROM those machines (an arrival is the
 # ROM's own run over one), so the import reads both files — and `gates`' own prerequisites above come AFTER its

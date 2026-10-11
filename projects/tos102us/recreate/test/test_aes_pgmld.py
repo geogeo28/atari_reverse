@@ -321,19 +321,20 @@ def test_a_text_site_left_unmapped_is_refused_by_name(blob, monkeypatch):
 
 def test_the_twin_s_run_is_mapped_on_neither_blob():
     """...and the C twin's rows are left as they stand: it parks the ROM's own sites (data, as every C glue's are).
-    ON THE SHIPPED BLOB TOO — `aes_pgmld` there is still the weak C twin: no C calls pgmld yet, so no thunk enters
-    the `.S` under that name."""
+    A RUN ENTERED AS `aes_pgmld` IS MAPPED ON NEITHER BLOB: on the bench's it is the C twin; on the shipped one the
+    name is, since sndcli calls it (band 5 wave 3), the thunk into the `.S` — and no row is priced through that
+    name there (the twin's rows are measured on the bench's blob; the `.S` has its own, mapped, above)."""
     tier3 = bench_tier3()
     assert not tier3.text_site_relocation(tier3.BUILT_ELF, aes_event.TEXT_SITE_CORE)
     assert not tier3.text_site_relocation(transcription.SHIPPED_ELF, aes_event.TEXT_SITE_CORE)
 
 
 def test_a_c_caller_of_pgmld_is_declared_where_its_sites_are_mapped():
-    """THE DAY pgmld HAS A C CALLER (the accessory loader, wave 3): the pair is in the door's table — held to the
-    build's own call graph by `test_transcribed.py`, and what the shipped blob's thunk is generated from — and that
-    caller parks the `.S`'s sites on the shipped blob, so it must be named in `aes_event.TEXT_SITE_CALLERS` too."""
+    """pgmld HAS A C CALLER SINCE BAND 5 WAVE 3 (the accessory loader's sndcli): the pair is in the door's table — held to
+    the build's own call graph by `test_transcribed.py`, and what the shipped blob's thunk is generated from — and that
+    caller parks the `.S`'s sites on the shipped blob, so it is named in `aes_event.TEXT_SITE_CALLERS` too."""
     callers = {caller for caller, core in transcription.C_CALLERS_OF_TRANSCRIBED_CORES if core == aes_event.TEXT_SITE_CORE}
-    assert callers == set(aes_event.TEXT_SITE_CALLERS) == set(), "none yet: say so in both places when one lands"
+    assert callers == set(aes_event.TEXT_SITE_CALLERS) == {"aes_sndcli"}, "the accessory loader's sndcli (band 5 wave 3), in both places"
     tier3 = bench_tier3()
     assert not tier3.text_site_relocation(transcription.SHIPPED_ELF, "aes_sh_tographic"), "a run that parks none is mapped nowhere"
 

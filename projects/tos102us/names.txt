@@ -242,13 +242,13 @@ cmt 0xfc94e4 GEMDOS function dispatcher (compiled C: link a6, args at 8(a6)). Re
 fn 0xfc4ebc gem_trap2_boot
 cmt 0xfc4ebc trap #2 (GEM) entry installed at 0xfc4e72 into $88 before the AES exists: d0 == 0x73 calls the VDI at 0xfc9f9e, d0 == -1 returns that address in d0, d0 == 0 takes the abort path, anything else chains to the previous vector saved at 0x16d6.
 fn 0xfe3ea6 gem_trap2_aes
-cmt 0xfe3ea6 trap #2 (GEM) entry installed at 0xfe3c78 into $88 once the AES is up: d0 == 0xC8/0xC9 enters the AES at 0xfe65aa, d0 == 0 terminates via GEMDOS Pterm(0), anything else chains to the vector saved at 0x8c2a.
+cmt 0xfe3ea6 trap #2 (GEM) handler, installed at 0xfe3c78 into $88 once the AES is up: d0.w == 0xC8/0xC9 enters the AES at 0xfe65aa on the running PD's UDA stack (UDA+0 := 1, UDA+66 := USP, UDA+70 := SSP, SP := UDA+62; D1-A6 parked on the USER stack — A0 already holds the USP by then, so a program gets A0 back as its user stack pointer, not its own); d0.w == 0 is Pterm(0) through trap #1, never back; anything else chains to the vector saved at 0x8c2a. recreate: aes_rom_trap2 (src/aes/trapdoor.S), the ROM's bytes.
 fn 0xfc9f9e vdi_entry
 cmt 0xfc9f9e VDI entry (GEM trap #2, d0 = 0x73). Copies the caller's five-array parameter block from d1 into the VDI's own RAM at 0x299e, copies ptsin to 0x19da (2n in a WORD, capped unsigned at 1024 words: $8000 points copies nothing, $8200 exactly 1024 with no cap; 512 written into the caller's contrl[1] before the copy), calls vdi_dispatch, gives the caller's count back through LINEA_CONTRL re-read, and returns the word at 0x171e in D0.w (D0's high word is the dispatched function's). Ships as src/vdi/entry.S's vdi_rom_entry.
 fn 0xfca9f6 vdi_dispatch
 cmt 0xfca9f6 VDI opcode dispatcher. Clears contrl[2]/[4] and VDI_RESULT, finds the workstation by handle (first match wins: v_opnvwk inserts a duplicate handle AHEAD of the older one; opcodes 1 and 100 skip the lookup; an unknown handle returns having called nothing), loads the attribute state (21 copies + MULTIFILL + MONO_STATUS, in a pinned order), then indexes opcodes 1..39 in the table at 0xfd372c and 100..131 in the table at 0xfd37c8; any other opcode still loads the workstation.
 fn 0xfe65aa aes_entry
-cmt 0xfe65aa AES entry (GEM trap #2, d0 = 0xC8). Reached from gem_trap2_aes; calls the AES dispatcher through the Line-F call table.
+cmt 0xfe65aa aes_entry(selector.w, 0.w, parameter block) — AES entry, reached only by value from the trap #2 handler (movea.l #,a0 at 0xfe3f00; jsr (a0)). link a6,#-4; selector 200: aes_marshal(block); then dsptch for 200 and 201 alike; clr.w (sp) — the program's D0.w — and the way out 0xfe3f08, which never returns: the Line-F return at 0xfe65c2 is dead. recreate: aes_rom_entry (src/aes/trapdoor.S), the ROM's stream with its three call words as jsr.
 fn 0xfe5d9c aes_dispatch
 cmt 0xfe5d9c AES opcode dispatcher (opcode.w, global, int_in, int_out, addr_in), ONE routine to 0xfe64e5: moveq #1,d6, then sub #10 / cmp #115 / bhi bounds the opcode UNSIGNED to 10..125 and jumps through the table at 0xfef834 to one of 68 arms or the default (fm_show 'Bad Function #', -1); every arm leaves by the ladder of tst.w (sp)+ to move.w d6,d0. An arm with no move.w d0,d6 answers 1 whatever its routine did (32 of them); graf_mkstate answers -1. Verified in C: recreate/src/aes/gemsuper.c.
 fn 0xfe64e6 aes_marshal_arrays
@@ -1997,7 +1997,7 @@ cmt 0xfe3f5e signal(evb): evb->pd's PD_EVFLG |= EVB_MASK; nrl walked to that PD 
 fn 0xfe3fba azombie
 cmt 0xfe3fba azombie(evb): onto the head of the completed list $c84a (pred = $c84a - elinkoff), EVB_FLAG := 2 (the whole word), signal
 fn 0xfe4002 get_evb
-cmt 0xfe4002 get_evb(): eul's first taken, bfill(28, 0); D0 0 with none — which iasync ($fe40f8) never tests
+cmt 0xfe4002 get_evb(): eul's first taken, bfill(28, 0); D0 0 with none — which iasync ($fe40f8) never tests: the wait is then built at address 0 (measured, band 5 wave 3: six accessories each in a six-way wait ask 42 EVBs of the 40 supplied; the boot zeroes $0..$7 — a bus error on the machine; recreate/test/aes_boot.py refuses such a store by name)
 fn 0xfe4030 evinsert
 cmt 0xfe4030 evinsert(evb, &list): at the HEAD of the wait list (LIFO); evb's pred = &list - elinkoff, the head's stand-in
 fn 0xfe4062 takeoff
@@ -2159,8 +2159,8 @@ fn 0xfc12b6 flop_rwabs   # ctx
 var 0x7570 flop_bpb_records
 cmt 0x7570 the floppy driver's records, 32 bytes a drive ($fc0fe4 asl.w #5; $fc0fea adda.l #$7570): the nine BPB words Getbpb answers a pointer to, then its geometry words and, at +28, the boot sector's three serial bytes ($fc1130, copied from the boot-sector buffer at $16da)
 var 0x16da flop_boot_sector   # ctx
-var 0x9724 first_acc_basepage   # ctx
-cmt 0x9724 where sndcli ($fe42e8; the store at $fe435a) parks the FIRST accessory's basepage: that one runs in the spare static PD and is not in $c6b2[] — measured on the ROM's own boot (test/aes_boot.py)
+var 0x9724 gl_first_acc_basepage
+cmt 0x9724 where sndcli ($fe42e8; the store at $fe4358) parks the FIRST accessory's basepage: that one runs in the spare static PD and is not in $c6b2[] — measured on the ROM's own boot (test/aes_boot.py)
 # ---- AES band 5 wave 1, slices H and G (2026-10-09): geminit's leaves, gemshlib's screen switches and band, the cartridge chain,
 # ---- the desk's memory and three desk leaves, gemdosif's leftovers, the vectors GEM takes, pgmld and the XBIOS door.
 # Every body read and differential (test/test_aes_{geminit,all_run,shlib,cart,deskmem,deskleaf,gemdosif_drives,vectors,pgmld,trp14}.py).
@@ -2244,3 +2244,32 @@ cmt 0xfe49d2 ctlmgr(): the screen manager's process, entered by switchto's rte (
 fn 0xfe4a6a ictlmgr
 cmt 0xfe4a6a ictlmgr(pid.w, unread): clr gl_dacnt $c684, clr gl_dafirst $9bc0; pstart(code=#$fe49d2 ($fe4a8c), name=#$fef826 "SCRENMGR.LOC", ldaddr=#$fe49d2 ($fe4a7e)); answers the PD (gem_main $fda1de: ctl_pd, gl_kowner, gl_mowner). C: aes_ictlmgr, verified at the boot's own call (flip 4): the two code longwords are the relocation registry's screen-manager entry, mapped and compared exactly
 var 0xfef826 screnmgr_name
+# ---- AES band 5 wave 3 (2026-10-11): the trap door (slice T), gemdosif's last two (G), the accessory loader (L)
+# the trap door (src/aes/trapdoor.S; slice T) — 0xfe3ea6's and 0xfe65aa's fn and cmt are above
+fn 0xfe3f08 gem_trap2_exit
+cmt 0xfe3f08 the AES arm's way out, reached only by aes_entry's Line-F call at 0xfe65c0 (table index 175): D0.w := the word aes_entry cleared (always 0); adda.l #24,sp drops its own return, aes_entry's local and saved A6, the handler's return and the three arguments; UDA+0 := 0, UDA+62 := SP, SP := UDA+70; D1-A6 reloaded off the user stack; USP; rte. D0's HIGH word is set by nobody: the last longword the AES's code left there, or the program's own.
+fn 0xfe3f3e ub_trampoline
+cmt 0xfe3f3e ub_trampoline(parmblk): the caller's SP parked in 0x8c36, SP := 0x8c3a (the desk's 1 KB userdef stack, desk_alloc's), the PARMBLK pushed, jsr 0xfde844 (the desk's G_USERDEF draw code), SP back from 0x8c36, rts. Named by value at 0xfd9f9e (gem_entry stores it in 0x8c32); the desk copies 0x8c32 into each window icon's USERBLK. recreate: aes_rom_ub_trampoline (src/aes/trapdoor.S).
+fn 0xfde844 desk_userdef_draw   # ctx
+cmt 0xfde844 (parmblk): the desk's G_USERDEF draw code, called only through ub_trampoline 0xfe3f3e on the desk's own stack — the 30-byte PARMBLK copied into its frame (lbcopy), the clip read and set, the draw at 0xfde7b4, the clip put back; answers that draw's D0.w. Band 6.
+cmt 0xfe3fa2 signal's second `move.l a4,d0` (the PD it is about to wake): the last longword moved into D0 on the path of a wind_set that sends a message — the high word a program then reads in D0 after its trap (1 where that PD lies above 64 KB). See recreate/test/test_aes_trapdoor_rows.py.
+# gemdosif's last two (src/aes/gemdosif.S; band 5 wave 3, slice G) — crit_err's fn and cmt are above (0xfe3cbe)
+fn 0xfe3d2e dos_exec
+cmt 0xfe3d2e dos_exec(name, mode.w, tail) -> D0.l: Pexec(mode, name, tail, 0) by trap #1 itself (not __DOS), with the running process's saved supervisor SP (its UDA's +62, through rlr $c794) parked in $8c2e and replaced by dos_exec's own SP less 64 while the program runs, then put back — each store of the UDA bracketed by spl7_save / spl_restore; dos_err $98ec := 0, or := 1 with dos_ax $c918 the answer's word where THAT WORD is not 0 (a mode-5 basepage whose address has a non-zero low word reads as an error; a negative long with a zero low word as none — the ROM's). recreate: aes_rom_dos_exec (src/aes/gemdosif.S), the ROM's bytes; no boot reaches it
+var 0x8c2e dos_exec_saved_ssp
+var 0x8c42 crit_err_saved_sp
+cmt 0x8c42 long: the SP crit_err ($fe3cbe) was entered with ($fe3ccc move.l sp,$8c42); its own stack is the 2,048 bytes above it, $8c46..$9446, one for every process
+var 0x8c46 crit_err_stack
+# the accessory loader (src/aes/loader.c; band 5 wave 3, slice L)
+fn 0xfe42e8 sndcli
+cmt 0xfe42e8 sndcli(name, count.w): strcpy(name, $bbae — the shell's line); handle = dos_open(the pointer in $c79e, 0), and $98ec set → 0; count != 0: cre_aproc() → 0 answered WITHOUT dos_close (the handle is never given back: behaviour a); pgmld(handle, #$bbae, &basepage — its own local, -6(a6)); dos_close(handle); pgmld -1 → 0 (the block cre_aproc took stays in $c6b2[$c682], the count not stepped, nothing freed: behaviour b); count == 0 ? $9724 := basepage : $9bc4[$c682] := basepage; pstart(#gotopgm $fe38b0, name, basepage); 1 (moveq) — the zeros are clr.w d0. The count is tested against 0 alone: any nonzero one takes a descriptor
+fn 0xfe4394 ldaccs
+cmt 0xfe4394 ldaccs(): $c682 := 0; cart_init() → the cartridge's accessories ($fed554) add to the count started; isdrive()'s word 0, or $8992 0 → return; drive = dos_gdrv(); dta = dos_alloc(50); dos_sdta(dta); isdrive() & 4 → dos_sdrv(2); dos_chdir("\" $fef7be); dos_sfirst("\*.ACC" $fef7c0, 0) not found → dos_sdrv(drive); dos_chdir("\" $fef7c7); found = dos_sfirst("\*.ACC" $fef7c9, 0); for (pass = 0; pass < 6 && started < 6 && found; pass++) { sndcli(dta + 30, started) → started++; found = dos_snext() }; dos_free(dta). The first search only decides whether the drive is set back; a seventh file is found and never opened
+fn 0xfe4476 free_accs
+cmt 0xfe4476 free_accs(): $9724 != 0 (a long): dos_free($9724's p_env, +$2c), dos_free($9724); for (i = 0; i < $c682 — a signed word, read again every pass; i++) { dos_free($9bc4[i]'s p_env), dos_free($9bc4[i]), dos_free($c6b2[i]) }. Clears neither the count nor a pointer: called twice it frees twice. Called only where gem_main returns ($fda3aa): no boot reaches it
+fn 0xfe44d4 cre_aproc # ctx
+cmt 0xfe44d4 cre_aproc() — the plan's "allocator"; the name is the published GEM sources', from memory: block = dos_alloc(2226) → 0: 0 (clr.w d0); $c6b2[$c682] := block (the count NOT stepped: getpd steps it, from pstart); pinit(block, block + 2050 — its CDA); the PD's UDA := block + 184; that UDA's saved stack pointer (+62) := block + 184 + 1862; five EVBs from block + 2086, 28 bytes each, pushed one by one on the free list $c676 (so the list begins with the last); 1 (moveq). 2226 = PD 184 + UDA 1866 + CDA 36 + 5 x 28
+var 0x9bc4 gl_acc_basepages
+cmt 0x9bc4 longs[6]: the basepages of the accessories whose PD was ALLOCATED, by the count $c682 as it stood when each was loaded (sndcli $fe436c; free_accs $fe44a4) — the first accessory's is in $9724, not here
+var 0x8992 gl_disk_usable # ctx
+cmt 0x8992 word: 1 from gem_entry ($fd9f64); the desk clears it where a GEMDOS call on the current drive fails ($fe2a62) and sets it again where one succeeds ($fe2a6a); ldaccs loads nothing from a disk while it is 0 ($fe43ba), and so does gem_main's own test at $fda432 (what else reads it is band 6's to say)

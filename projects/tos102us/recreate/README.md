@@ -148,6 +148,7 @@ more kinds of machine, both made by ROM runs and neither by a poke (`tools/prein
 ```
 make preinit        # build/preinit.bin      — the snapshot's machine stopped at gem_entry, blank floppy     (~4 s)
 make preinit-acc    # build/preinit_acc.bin  — the same stop, the test accessories' floppy in A: from power-on (~4 s)
+make preinit-acc7   # build/preinit_acc7.bin — the same stop, SEVEN test accessories in the drive (band 5 wave 3)
 python tools/preinit_snapshot.py --twice          # capture twice, report what differs
 python tools/preinit_snapshot.py --cross-check    # OPT-IN: the accessory machine against a real Hatari boot
 ```
@@ -156,8 +157,10 @@ python tools/preinit_snapshot.py --cross-check    # OPT-IN: the accessory machin
 snapshot's own machine (arguments, ROM and blank disk read from `boot_snapshot`, which is untouched). The file is the
 megabyte of RAM, THE REGISTERS (PC `$fd9eca`, SR `$0300`: user mode; both stack pointers; every data and address
 register zero but D0 = A6) and the shifter's palette and resolution byte as the debugger reads them. The capture is
-refused unless the PC is the dump's own `exec_os` and the CPU is in user mode. Both files are prerequisites of
-`make test` / `guarded` / `gates`; their names are outside every pattern of `derived.py`'s tree key, and they have a
+refused unless the PC is the dump's own `exec_os` and the CPU is in user mode. The files are prerequisites of
+`make test` / `guarded` / `gates` (the third, `preinit_acc7.bin` with `build/acc/ACC7DISK.ST` from
+`tools/accessory_disk.py --seven`, since band 5 wave 3: seven test accessories in the drive from power-on, of which
+the ROM loads six — it is not among `REGISTRY_READS`: no registered row is made from it); their names are outside every pattern of `derived.py`'s tree key, and they have a
 content stamp of their own (`build/preinit_inputs.txt`), so neither capturing them nor an edit to their constants
 ever re-captures the snapshot or moves a kept derivation.
 
@@ -301,11 +304,16 @@ w.observed, w.idle                                         # (("hctl_rect", (136
 aes_boot.compared(rom_machine, m).differing                # [] — and .within: the bytes per class
 ```
 
-- **What it is.** The ROM's own boot with one change, made at a stop BY ADDRESS — switchto's `rte` about to pop the
-  frame psetup pushed for ctlmgr (the screen manager's FIRST ENTRY, vetted there by name): the blob is laid, and the
-  two longwords the machine keeps that entry in (PD1's p_ldaddr; the frame's PC) are mapped through the relocation
-  registry's entry `aes_event.SCREEN_MANAGER_ENTRY` to the blob's `aes_rom_ctlmgr`, found by symbol. No register is
-  set. `ours_of(blob)` refuses a blob with no such symbol.
+- **What it is.** The ROM's own boot with one change, made at a stop BY ADDRESS, never by a count — THE BOOT'S FIRST
+  ARRIVAL AT switchto's `rte` (`addrs.AES_ROM_SWITCHTO_RTE`; since band 5 wave 3, ruling W3-R2): the blob is laid, and
+  the two longwords the machine keeps the screen manager's entry in (PD1's p_ldaddr; the PC of the frame psetup pushed
+  for ctlmgr) are mapped through the relocation registry's entry `aes_event.SCREEN_MANAGER_ENTRY` to the blob's
+  `aes_rom_ctlmgr`, found by symbol. No register is set. `ours_of(blob)` refuses a blob with no such symbol. The
+  dispatcher's first pass resumes the boot's own process (PD0) there on every boot; the screen manager's frame and
+  every loaded program's are still unpopped on their stacks. Wave 2's stop — the screen manager's own first entry — is
+  kept as `laid=aes_boot.AT_THE_SCREEN_MANAGER_S_ENTRY` for one purpose: `test_aes_boot.py` holds that the two stops
+  make ONE machine. It is too late for a door: on an accessory boot both accessories have by then been entered by the
+  ROM's gotopgm and stand parked inside the ROM's aes_entry.
 - **Why at that stop.** On the accessory boot `Pexec` clears the largest free block — the harness's free window, the
   blob's span with it — before the screen manager first runs; nothing stores there after (held on every machine: the
   run's write ledger from the lay on).
@@ -332,6 +340,74 @@ aes_boot.compared(rom_machine, m).differing                # [] — and .within:
   HANDLERS' OWN ROWS, each measured where our ctlmgr arrives at our handler on it ("A HANDLER'S ROW AT ITS ARRIVAL",
   below); and every row whose run ENTERS the screen manager, whose machine is made ours from it or from our build's
   own run of its history (`test/aes_takeover.py`; "TIER 3: A ROW THAT SWITCHES", THE SCREEN MANAGER'S TURN).
+
+### A machine whose TRAP DOOR is ours — THE DOOR TAKEOVER (`aes_boot.ours_of(blob, door=)`, band 5 wave 3; PENDING)
+
+A DOOR (`aes_boot.ours_of(blob, door=<declarations>)`, `desk_machine(ours=, door=)`, `accessory_machine(ours=, door=)`)
+is the registry's pending declarations applied at the takeover's stop beside the screen manager's entry, each the same
+kind of mapping: a VECTOR (`aes_event.GEM_TRAP_VECTOR`, `CRITICAL_ERROR_VECTOR`) must hold the ROM's handler there and
+is given the blob's; A LOADED PROGRAM'S FIRST-ENTRY FRAME (`aes_event.PROGRAM_ENTRY`) is found by WALKING THE MACHINE
+(`aes_event.first_entry_frames`: every process's `UDA_SUPER_SP` frame — an allocated accessory's stack is a Malloc's, so
+no static tuple can name it). Vetted where the boot ends, each refused by name: every mapped program entered through our
+gotopgm on its stack's top and parked in our text; each vector still ours (the ROM's retake, restore_trap2 and giveerr
+put the ROM's back); and WHO RAN, read off the cycle profile from the lay on — the ROM text each part stands for
+(`aes_event.ROM_TEXT_OF`) ran zero cycles and our handler ran. A door boot switches the oracle's profile on for its own
+run: never derive one inside another measurement's profiled run.
+
+- **THE PROTOTYPE DOOR.** `aes_boot.with_the_prototype_door(blob)` is a door for ANY blob — `test/acc/protodoor.S`, the
+  ROM's trap handler, exit and aes_entry assembled after the blob's last byte and linked against the blob's ELF
+  (`--just-symbols`). It is the takeover's own fixture and the stack reading's measured run; it is not the shipped door
+  (`src/aes/trapdoor.S`) — and IT CANNOT DRIFT FROM IT:
+  `test_the_prototype_door_is_the_shipped_door_but_for_the_longwords_naming_its_own_parts` holds the two byte for
+  byte on both blobs but for the three longwords by which each names its own parts (aes_entry by value, the thunk,
+  the way out), each required to name the same place of each.
+  EVERY DOOR PROOF BUT ONE IS THE PROTOTYPE'S: `test_the_shipped_door_itself_boots_a_machine…` takes the shipped
+  blob's OWN door (`ours_of(blob, door=aes_event.THE_NARROW_DOOR)`: its `aes_rom_trap2`, `aes_rom_gotopgm` and
+  `aes_rom_crit_err`, by symbol) through the quiet pair's boot to its idle, every vet passing. Nothing is bound by
+  it: no Tier 3 row asks such a machine before the flip.
+- **A PARTIAL DOOR IS REFUSED BY NAME** where it is laid: the vector mapped while a loaded program's first-entry
+  frame still holds the ROM's gotopgm (who-ran is read per DECLARED part, so the ROM's gotopgm would run unseen
+  behind a door of the vector alone). A door of the programs alone is refused where the boot ends. AND A TAKEOVER
+  MACHINE NEVER STANDS IN THE ROM'S TEXT OF A ROUTINE IT CLAIMS: a boot stopped (`until=`) before the screen
+  manager's first entry is one only while the frame switchto will pop for it holds our entry and nobody runs it.
+- **WHAT A DOOR MACHINE DIFFERS IN** (`aes_boot.by_nature`, `compared`): wave 2's classes per process — the screen
+  manager's and each program's saved context and stack — and a wait's parameter where BOTH machines hold an address of
+  the waiter's own stack there (`PARKED_ADDRESS`); the vectors are mapped back (`mapped_back`), never dropped.
+- **REFUSED BY NAME**: a door the ROM took back where a boot or a continuation ends; a boot or a continuation that
+  stores at `$0..$7` (on the machine that is the ROM's shadow and a bus error — what six accessories each in a
+  six-way wait do: get_evb answers 0 for the empty list). The seven-accessory machine
+  (`aes_boot.seven_accessory_machine`, `make preinit-acc7`) has NO takeover: its boot's six `Pexec(3)` clears saturate
+  the kit's write ledger before the lay.
+- **WHO MAY ASK FOR ONE.** While any of the door's declarations is pending no module but the takeover's own (and the
+  stack reading's measured run) may ask for a door machine
+  (`test_no_battery_asks_for_a_door_machine_while_the_door_is_pending`).
+
+### `aes_boot._Run` — EVERY ARRIVAL AT A STOP IS A STOP (band 5 wave 3)
+
+The run leaves a stop by one instruction with that PC alone disarmed, then arms every stop again: two arrivals at one
+PC with no other stop between are two stops (before wave 3 they were counted once — a zero stayed honest, a count did
+not). A run ENTERED at one of its stops (a machine continued from its idle's poll; a boot entered at its `until`)
+does not count the entry: the oracle's first resumed segment runs no instruction, so that segment is taken again
+(`_Run._stepped_off`) — and such a run goes on to the NEXT arrival; it does not return where it stands.
+
+### THE GEM TRAP'S HANDLER IS PER SHORE (band 5 wave 3)
+
+`aes_event.VDI_TRAP` is the handler the SNAPSHOT's `$88` holds: the ROM's. A machine whose trap door is ours holds the
+build's own, and a watch keyed on the ROM's sees no trap there. So: in a slice's end (`trap_taken(VDI_TRAP, n)`)
+`VDI_TRAP` is a NAME; `Marks` and `Timeline` are keyed on the handler their run's own machine holds
+(`.on(aes_event.gem_trap_on(memory))` — `_marked_run` does it; Tier 3 keys the ROM's marks on the row's machine and ours
+on that longword as the registry maps it at a run's entry, `tier3.our_gem_trap`); `aes_fslib.VdiCalls(trap=)`,
+`aes_switch._LoopStops(trap=)`, `aes_stack._watched_from_its_frame` / `_arrivals_from_its_frame` take theirs from the
+image they run over. A watch keyed on another handler than its machine holds is refused "A WATCH GONE BLIND" — WHERE
+IT IS ARMED OVER THE MACHINE, before the run's first instruction (a watch whose only stop is the trap never stops
+when it is blind: a vet at a stop alone let such a run end with no arrival): a marked `DoorStops` in
+`aes_event.run_watched` (`armed_over`: its marks against `$88`) and again at every stop; `_ExceptionsOn`,
+`_ArrivalsAt` and `_LoopStops` in the three functions that arm them (`vet_a_handler_of_the_machine`: the handler is
+what one of the machine's exception vectors holds); an `EntryStops` handed the ROM's handler as an entry likewise.
+NOT VETTED AT ARMING: Tier 3's own two marked runs (`tier3.py`: the ROM's through `watched_original`, ours through
+the bench) — their marks are keyed from the row's machine by construction (`the_rom_s_gem_trap`, `our_gem_trap`) and
+vetted at each stop; a watch class run by another road than these is its author's to arm. A new site that spells `VDI_TRAP` reddens
+`test_every_site_that_names_the_rom_s_trap_handler_is_listed` until it is read.
 
 ### AN ARRIVAL — a routine of another process met where the ROM's own caller calls it (`test/aes_gemctrl.py`)
 
@@ -403,6 +479,70 @@ foreign window, the ROM's own code on both shores. What that taught, each held b
   shows: read what the ROM's NEXT callee is handed there, across several arrivals, before calling a never-set word
   "any value". It is then a DECLARED DIVERGENCE (STATUS), not a fidelity claim. (A handler's Tier 3 row IS on the
   machine's stack since wave 2's close: there the words are a class the rows that send them name — next section.)
+
+### A ROUTINE THAT LOADS A PROGRAM — the ROM's boot continued in place, GEMDOS replayed (`test/aes_loader.py`, band 5 wave 3)
+
+The accessory loader (`src/aes/loader.c`: sndcli, ldaccs, cre_aproc; free_accs beside them) cannot be run as every
+other AES routine is. A case of the kit's differential runs the ROM's routine on the harness's own stack band, in the
+free window of the machine — and sndcli's `Pexec(3)` hands the program THE LARGEST FREE BLOCK AND CLEARS IT: that
+window, the run's stack with it. So the ROM's shore is the ROM's own boot, IN PLACE:
+
+```python
+arrived = ld.boot_arrival(ld.SNDCLI, aes_boot.accessory_preinit(), disk)   # the boot stopped at its first call
+second = ld.next_arrival(ld.SNDCLI, arrived)                               # ...and at its next
+ran = ld.returned(arrived)                                                 # the ROM's own run, to the return: a Ran
+ld.held_twice(arrived, ld.ROM_FRAMES, ld.HOST_FRAMES, ld.LINE_F_MASK, steers=(...))
+```
+
+- **AN ARRIVAL** (`Arrival`) is the boot stopped where ITS OWN CALLER calls the routine (`aes_boot.booted(until=)`,
+  then `run_on` from stop to stop): every byte of RAM, the whole register file, the disk as the boot has left it, the
+  arguments read off the frame the caller pushed. A run is never ENTERED at the address it is to stop at
+  (`next_arrival` runs past the arrival's own return first; `run_on` refuses such a run by name).
+- **THE ROM'S RUN** (`returned`) is that boot continued to the routine's return on the machine's own stack, through
+  `aes_boot`'s device model, and WATCHED AT `trap #1` (`_GemdosWatched`: GEMDOS's entry as the machine's vector holds
+  it, and the two places the AES's glue traps from, read off the ROM's bytes). Each call is kept as a `Call`: its
+  function, its frame's own bytes, D0 where the trap returns, EVERY BYTE OF RAM GEMDOS CHANGED (the program it
+  loaded, its own records, the sectors the model laid), and what the routine itself changed before it. A trap from
+  anywhere else, a function the module does not name, or a stop out of turn is refused by name.
+- **THE C'S RUN** (`the_c_s`) is the host core over the arrival's megabyte with GEMDOS REPLAYED from that run: each
+  `trap #1` of the C must be the ROM's next call (the function, the frame); the megabyte the C has made BY THEN must
+  be the ROM's at that call; it is answered the ROM's D0, the bytes GEMDOS changed laid over the image. Where it
+  returns, its answer and its megabyte are the ROM's, and it holds no host slot.
+- **IN A FORK FIRST.** A refusal cannot be raised through the C that made the call — the hook would answer a
+  fabricated 0 and the C would run on over it — and a C that parted from the ROM may store anywhere. The run is made
+  in a fork (`aes_event.in_a_fork`, every hook as the pass bound it), where a refusal says its words and ends the
+  fork; the run in process is made only once the fork came back clean. A mutant is then a FAILED test, never a dead
+  worker.
+- **THREE CLASSES DIFFER BY NATURE** (`Classes`), each located from the machine's own pointers or the header's
+  table, each NAMED PER CASE and REFUSED where the two megabytes never differ in it: the ROM's own frames (the
+  running process's stack below the stack pointer the routine was called at — its `link` frames, its Line-F calls',
+  GEMDOS's trap frames), the host's frames (the host slots the routine's C claims, by role), the Line-F mask word.
+- **HELD TWICE** (`held_twice`). A store the C skipped that changes nothing — the count cleared where it is already
+  0 — is invisible to an end compare. So the case is held again over the same arrival with EVERY BYTE THE ROM'S
+  ROUTINE STORED WITHOUT CHANGING IT INVERTED (`silently_stored`: the first run's write ledger outside its GEMDOS
+  calls — the kit's attribution pass, made by hand), the ROM's own run made again from that machine. Left as they
+  are: what no C stores by nature (the ROM's frames, the mask word, the words the ROM parks its status register
+  in), and a word that STEERS the run (a count the routine indexes by before it stores it back), by a reason
+  (`aes.steers`) — each HELD NEEDED, asked of the ROM alone (`steers_the_rom`: with that reason's words inverted too
+  its run is refused, or makes other calls, or changes the machine elsewhere). ONE RUN CANNOT BE HELD TWICE: six
+  loads store more bytes than the kit's write ledger holds (`Ran.silent` is None), and the battery holds that too —
+  a case named "once" whose ledger did not saturate fails.
+- **A BROKEN ACCESSORY IS A PATCH OF ITS OWN CLUSTER ON THE DISK** — the program header's magic, or its BSS length —
+  which nothing reads before `gem_entry`: the disk is still the disk the capture booted with (the device model
+  holds its BPB and serial). The BSS that leaves under a descriptor's 2,226 bytes is computed from the ROM's own
+  run over the unpatched disk, never typed.
+- **AN ARGUMENT CLASS** where no boot makes the machine a case needs is an arrival WITH BYTES LAID OVER IT
+  (`staged`), labelled where it is made; the ROM's own run is then made from THAT machine, in place, as from any
+  other (the allocated count at 1; the count its caller pushed at −1; the usable-disk word at 0).
+- **WHAT IS NOT HELD SO**: free_accs (no boot calls it: the booted machines at their idle through the kit's
+  differential, `Mfree` scripted with the ROM's own GEMDOS's answers); sndcli's open-fails arm (the snapshot,
+  `aes_shell`'s scripted trap); the cartridge arm (the C halts by name, in a child). And NOTHING HERE IS A BLOB ROW:
+  the megabyte is a host core's — pricing, who-ran and the code addresses a build stores (gotopgm in the frame
+  psetup lays; pgmld's command tail) are the door flip's.
+- **A KEPT DERIVATION** (`run_on`, `derived.kept`), keyed by the machine's content: the megabyte, the registers, the
+  disk. The whole battery is some nine seconds cold at four workers (its count is STATUS's, derived by `test_status.py`).
+- **IT REACHES `aes_boot`'s RUN** (`_Run`, the CPU's accessors): the one run that serves the device model. A public
+  door there is owed.
 
 ### A HANDLER'S ROW AT ITS ARRIVAL — measured where each shore's own ctlmgr calls it (`tier3.at_its_arrival_on`, wave 2's close)
 
@@ -488,6 +628,43 @@ tier3.at_its_arrival_on(blob, name, handled)                     # both shores, 
   (`aes_gemctrl.its_trap_save`, read off the machine's savptr, named only where it is not the snapshot's and cut
   to what the ROM's run stored: the turns). The frame is dead at a turn's start, noise-proven. Other batteries'
   compares over booted machines are not audited for it (STATUS, owed).
+
+### AN ARRIVAL AT A TRAP, AND A TRIP — the door run from a program's own `trap #2` (`test/aes_trapdoor.py`, band 5 wave 3)
+
+The trap door is entered by an exception and left by an `rte`: nothing of it is a call and its return.
+
+```python
+arrival = door.accessory_trap(door.FINDING_PAIR, door.FIRST_ACCESSORY, 1)   # the accessory's SECOND AES trap of that boot
+landing = door.program_frame(arrival)[1]                                    # the PC the way out's `rte` pops
+the_rom_s = door.trip(arrival, landing, profiled=door.profiled_spans(blob))
+ours = door.trip(arrival, landing, blob, profiled=door.profiled_spans(blob))
+assert not door.differing(the_rom_s, ours, classes, d0_high_differs=False)
+door.vet_who_ran(the_rom_s, ours)
+```
+
+- **AN ARRIVAL** (`at_the_trap`, a kept derivation): the ROM's own boot of a pre-init machine stopped AT THE
+  HANDLER'S FIRST INSTRUCTION where one named process traps for the n-th time with one selector — by address, and
+  counted by who traps and with what, never by an instruction ordinal. The megabyte and the whole register file; the
+  program's frame is under the supervisor stack pointer. A boot that idles first is refused by name.
+- **A TRIP** (`trip`): the machine run on from the arrival, under the boot's own device model, to where the arm
+  leaves the door — the `rte`'s landing in the program (the whole call, every process the dispatcher runs on the
+  way), the handler GEM found in the vector (the VDI arm), GEMDOS's own trap handler (the Pterm arm: a checkpoint).
+  THE ROM'S SHORE runs on in place. OURS is the same machine with a blob laid where the machine holds nothing
+  (refused otherwise, and refused if the trip stores over it) and THE CPU ENTERED AT THE BLOB'S HANDLER — one
+  register of the file, the PC. The vector is not touched, so every OTHER process's trap on the way is the ROM's on
+  both shores: pick an arrival nobody else traps inside for a who-ran of zero (the first accessory's second and
+  third traps of the finding pair), and say so where one does (appl_init's).
+- **WHAT IS HELD** (`differing`): every register by name and the megabyte byte for byte outside the classes the
+  case names — each a function of the two trips answering addresses off the machine's own pointers (the blob's
+  span; the dispatcher's stack; the trapping process's saved D0..A5; its stack below the pointer the way out
+  stored), each REQUIRED TO DIFFER — with a longword that holds a site of the door MAPPED (`mapped_back`), never
+  dropped, and required to need the mapping; and the three off-image streams. `vet_who_ran` reads the cycle profile
+  over the door's parts, the ROM's (`ROM_DOOR`) and the blob's (`our_door`).
+- **LABELLED ARGUMENT CLASSES**: `relabelled(arrival, selector)` — a real arrival with D0's LOW WORD replaced, for
+  the selectors no program of any boot traps with (201, 0); `through_ub_trampoline` — a staged call round a desk
+  routine made to return at its first instruction.
+- **TO ADD A CASE**: an arrival, the opcode its parameter block is held to carry, and — run with no class named —
+  the refusal lists what the two trips differ in.
 
 ### A TURN — the screen manager's loop, both shores from one arrival at its top to the next (`test/aes_gemctrl.py`)
 
@@ -1223,11 +1400,22 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   code address (`tier3.code_relocations`: a run's entry and exit, a delivery, a slice's mark) — no table fetched from
   a battery by its name with a silent default. AN ENTRY DECLARED BESIDE THE TUPLE IS NAMED
   (`aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3`: what, why, the slice that owes its site): every `RelocatedCode` is in
-  the tuple or in that list, and the list must be EMPTY once a Tier 3 row runs on a takeover machine
-  (`test_aes_boot.py`). IT IS EMPTY SINCE FLIP 4: THE SCREEN MANAGER'S ENTRY (`SCREEN_MANAGER_ENTRY`: the PD's p_ldaddr
+  the tuple or in that list, and NO TIER 3 ROW MAY RUN BEHIND A DOOR while a door declaration is in it
+  (`test_no_tier_3_row_runs_on_a_door_machine_while_a_door_declaration_is_not_yet_mapped`, over the rows' machines;
+  `test_no_battery_asks_for_a_door_machine_while_the_door_is_pending`, over the sources — the rule read "EMPTY once a
+  row runs on a takeover machine" until wave 3, and its test saw none of the rows). IT WAS EMPTY FROM FLIP 4 TO WAVE 3 (below): THE SCREEN MANAGER'S ENTRY (`SCREEN_MANAGER_ENTRY`: the PD's p_ldaddr
   and the PC of the frame psetup lays at the top of the process's stack) is the registry's fourth relocation, mapped
   at a run's entry and exit for every run of a build that links `aes_rom_ctlmgr` (`tier3.screen_manager_relocation`)
   — ictlmgr's own row stores it through pstart at both slots and is compared exactly, nothing dropped.
+  SINCE BAND 5 WAVE 3 the tuple has a FIFTH, `CRITICAL_ERROR_HANDLER` (slice G): etv_critic `$404`, mapped WHERE A RUN
+  ENDS ONLY — the build's retake and takeerr hand Setexc the build's own crit_err, so the vector holds it wherever the
+  ROM's run left `$fe3cbe` (and D1 of those two `.S` entries, which Setexc hands back) — and puts no handler of ours
+  into a machine a run starts on. AND FOUR ARE PENDING, declared in `aes_event`, named in
+  `DECLARED_NOT_YET_MAPPED_AT_TIER3`, in no tuple Tier 3 reads: `GEM_TRAP_VECTOR` (`$88` -> `aes_rom_trap2`),
+  `PROGRAM_ENTRY` (gotopgm -> `aes_rom_gotopgm`; its slots are WALKED: `SLOTS_WALKED_FROM_THE_MACHINE`),
+  `CRITICAL_ERROR_VECTOR` (`$404` -> `aes_rom_crit_err`, at a run's entry; `CRITICAL_ERROR_HANDLER` is the same
+  longword where a run ends, and the door flip makes the two one), `USERBLK_TRAMPOLINE_SLOT` (`$8c32`, wave 4).
+  `THE_NARROW_DOOR` is the three the door flip takes; `ROM_TEXT_OF` the ROM text each stands for.
   The queue and the recording are mapped ROM → ours as a machine or an
   interrupt's delivery is laid into our blob and back before the kit compares; THE GLUE IS MAPPED AT EXIT ONLY — a
   row's machine holds the ROM's glue in the vectors, and a vex call hands what it DISPLACED to wherever its caller's
@@ -1993,7 +2181,8 @@ the ROM's calls of it over ROM-made machines. So a case is not written, it is LI
 - THE MARSHAL'S FRAME is one host slot (`HOST_SLOT_AES_MARSHAL_FRAME`: the 62 bytes, then sixteen that MODEL what a
   caller leaves above a frame — the saved A6, the return address, the arguments — which a case stages and the C
   never writes: `a_caller_s_words`). A copy back of int_out past the frame reads the model off target and the real
-  stack on target; past the model the host refuses by name. One slot for every process until wave 3.
+  stack on target; past the model the host refuses by name. One slot for every process: wave 3 landed without
+  changing it (the door is not bound; the flip's rows are the first that marshal for two processes in one run).
 
 ## Verified functions, and what they cost on each side
 
@@ -2320,7 +2509,7 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   meet at different depths, recursion, A CALL THROUGH A POINTER OF THE MACHINE (read out of memory or handed in:
   followed only where its caller DECLARES what the pointer can hold — `THROUGH_A_POINTER`: forker's four fork
   entries, drawrat's two cursor routines; the declarations held to the snapshot), a register nothing loads, a trap
-  other than `trap #2`, a jump through a table, a path that runs off a listed body. Held to the truth by runs (the
+  other than `trap #2`, a jump through a table (READ since band 5 wave 3: below), a path that runs off a listed body. Held to the truth by runs (the
   reading's deepest trap is EXACTLY a run's; the glue's deepest path is its deepest case).
   SINCE BAND 5 WAVE 2 (a process's stack: `test/aes_stack.py`, `test_aes_stack.py`) the reading also FOLLOWS a frame
   pointer's `link` / `unlk` and `lea d(a6),sp`; the build's halt (`trap #7` ends a path); a routine that LEAVES its
@@ -2340,6 +2529,37 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   among them ("N spare"; "over by N" while it was): a finding is asserted, never an expected failure (a strict xfail
   hid a 120-byte growth). `python test/aes_stack.py` prints the table; a pin that moves is re-pinned with the
   frame's or the call's name.
+  SINCE BAND 5 WAVE 3 (slice S; rulings W2-R5, W3-R8) the reading also reads:
+  * THE OPCODE SWITCH'S JUMP TABLE (`jump_tables`): GCC's `cmpi.w #N,dn / bhi <default> / andi.l #$ffff,dn /
+    add.l dn,dn / move.w (T,pc,dn.l),dn / jmp (T,pc,dn.w)` — ONE T in both operands, N + 1 words at T, each a
+    sixteen-bit distance FROM T to an arm of the same body. The count is the guard's, THE WORDS ARE READ FROM THE
+    BLOB'S BYTES (objdump decodes them as instructions: the listing's text there is noise, and that it falls back
+    into step after the table is luck), the walk goes on at every `T + word` at the depth of the `jmp`, and no listed
+    line inside `[T, T + 2(N + 1))` is ever walked. REFUSED BY NAME: a jump with no guard, a table word that names no
+    instruction of the function, a branch that lands between the guard and the jump, a path into the table's words.
+  * THE TRAP DOOR'S SHAPES (`src/aes/trapdoor.S`, the ROM's bytes): a `jsr (a0)` whose A0 a `movea.l #<entry>` loaded
+    by value; a DECLARED instruction at which A STACK BEGINS (`begins_a_stack` — `movea.l 62(a6),sp`: the running
+    process's own, the count restarted at what the machine keeps there) or IS LEFT FOR GOOD (`leaves_its_stack_at` —
+    the way out's `movea.l 70(a0),sp`); a private stack begun by a declared instruction and left by a
+    `movea.l <saved>,sp`, where the path ends as a glue's does (crit_err, ub_trampoline) and the routine is read as
+    one that RETURNS; a routine that NEVER RETURNS — no path of it reaches a return (`StackReading.returns`: read, not
+    declared) — after whose call nothing is walked; and a trap other than `trap #2` where it is DECLARED with the
+    bytes it takes (`takes_an_exception`: GEMDOS's 50 bytes, the bell's 6, measured under the machine's handlers).
+  * A READING IS ONE PER BLOB FOR THE WHOLE PROCESS (`aes_stack.reading`, `trap_reading`), so "what it has read" is the
+    history of whoever asked it anything. ASK IT BY ENTRY: `functions_read(*entries)` / `read_as(*entries)` walk the
+    calls under the entries named and answer the same whatever ran before (a test that asked "every function read so
+    far" read 144 for 56 when another battery had read a VDI handler's frame in the same worker).
+  A PROCESS THAT ENTERS BY `trap #2` — THE TRAP PATH (`aes_stack.trap_bound`, `calls_of_the_switch`,
+  `measured_at_the_door`). An accessory's AES call runs on ITS OWN stack: the trap's handler, aes_entry, the marshal,
+  the opcode switch and the arm of the call. The same four terms and the same verdict, beside the two stacks an
+  accessory can have — PD2's 1,396 bytes (the first one, in the AES's static PD) and an allocated PD's 1,788 — and the
+  two PRIVATE stacks of the door's neighbours: crit_err's 2,048 bytes and the 1,024 the desk allocates for
+  ub_trampoline. The door's own 42 bytes above the marshal are read from the handler's AES arm by symbol where a blob
+  links `aes_rom_trap2` (both do since slice T) and held to the ROM's own bytes read the same way
+  (`the_door_listed`). BY THE CALL: each arm of the switch with the deepest its own frames go and the deepest of ITS
+  trap sites. MEASURED: accessories' own calls behind the prototype door, each blob's own VDI staged at the same
+  stop, who ran by cycle profile. THE FINDING, PINNED (STATUS, wave 3: the gate W3-R8): the shipped blob is OVER
+  PD2 by 178 on the bound and by 70 on the measured run; the bench blob's wind_open overflows PD2 in the run itself.
   AT A TRAP THE BOUND IS CALL BY CALL (`aes_stack.trap_sites`, `at_its_traps`; the frame diet, 2026-10-10). The
   deepest trap of a listing and the deepest need under a trap are different calls — a fill's and a text's — and
   charged together they are a call no path makes. So every TRAP SITE (a call, by a routine that does not hand an
@@ -2400,6 +2620,35 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   (before the frame diet, 2026-10-10: 356 + 244 = 600); 78 / 60 / 46 of 92 / 92 / 96. A recompile that deepens any frame on a path — one no
   case runs as on the others — reds by name.
 
+**THE TRAP DOOR is a fourth kind, the switch's sibling** (`atari/target.mk`: `TRAPDOOR_SOURCES`; `src/aes/trapdoor.S`,
+band 5 wave 3): `trap #2`'s handler, its way out and the desk's G_USERDEF door (`$fe3ea6..$fe3f5d`, byte-exact but
+for five longwords — the mask brackets' four `jsr`s and aes_entry by value) and gemsuper's aes_entry as a `stream`
+(three call words: the marshal's thunk, `aes_dsptch`, the way out). The ROM's bytes, no C twin, no table row, no
+bar: an exception's entry that parks the program's registers on the USER stack and leaves for the process's own,
+and a way out that drops every frame above it BY A CONSTANT — which is why aes_entry cannot be C (Alcyon's
+`link a6,#-4` and one longword of local are what the constant counts). `transcription.TRAPDOOR_ENTRIES` is the
+kind's table, the switch's row type; `test_aes_trapdoor.py` holds its pins, its symbols end to end, its thunk, and
+what is dead.
+- **A KIND APART WHILE IT IS LINKED AND NOT INSTALLED.** The switch's rule is that no word of a blob names a ROM
+  address of the kind. The door is linked by every build and bound by none until the flip: vector `$88` holds the
+  ROM's handler, so the code that installs it must still name the ROM's. WHO DOES IS A LIST, held on both blobs
+  (`test_who_still_names_the_rom_s_door…`: install_trap2's and retake's operand in `gemdosif.S`, and the same two in
+  their C twins — four words a blob) and by site in the census (`test_aes_rom_data.LINKED_AND_INSTALLED_AT_THE_FLIP`,
+  the one declared exception to "a `.S` installs no ROM address of a routine the build has", refused where not
+  needed). The flip empties both; the kind merges into the switch's once nothing names the ROM's door.
+- **A TRANSCRIPTION'S OWN CALL OF A ROUTINE NOT RECONSTRUCTED YET** stays the ROM's word: ub_trampoline's
+  `jsr $fde844`, the desk's draw code (band 6). It is the one `jsr` of a build into the AES's ROM text, so the
+  door rule that derives "no `jsr` enters the AES's text" carries it BY DECLARATION —
+  `tier3.ROM_CALLS_OWED_TO_A_LATER_BAND`: `{the ROM routine: (the one function that calls it, why)}` — held to
+  exactly one site inside the function named, on both blobs, and to a routine that is no door entry and has no body
+  of ours (`test_tier3.py`). It is a census entry too (`test_aes_rom_data.py`: `trapdoor.S`, CODE).
+- **WHAT A PROGRAM GETS BACK FROM A TRAP, as the ROM has it**: D1-D7 and A1-A6, its stack pointer and its frame's
+  status word; D0's low word 0. NOT A0 — the handler takes the user stack pointer into A0 before it parks the
+  registers, so A0 comes back holding that pointer. And D0's HIGH WORD is set by nobody: on the ROM the last
+  longword Alcyon's code moved into D0 on the caller's path (or the program's own where the arm moves none), in a
+  build GCC's — A DECLARED DIVERGENCE (STATUS), measured and explained in `test_aes_trapdoor_rows.py`, declared per
+  case and per blob and refused where not needed.
+
 **An ALCYON ENTRY `.S` is glue, not a transcription.** When AES C hands a routine BY VALUE to ROM-shaped code that calls it
 the Alcyon way — ob_draw passing just_draw to everyobj (`$fea08c`) — the host case binds the ROM address to the C core, but
 on target the value must be our own routine: the ROM's would run the ROM's AES code inside our build, which the (V) bench
@@ -2419,11 +2668,12 @@ other. A transcription row drops nothing, so they are RELOCATED: `aes_event.TEXT
 alone, the register file too (`tier3.map_registers`). A battery whose staged trap RECORDS such an address declares
 the longwords of its ledger that can hold one (`aes_event.declare_text_site_slots`, in the recorder's own module:
 `test/aes_gemdosif.py`). The mapping is in force ONLY FOR A RUN THAT CAN PARK A SITE — the `.S` entry's own, and a
-declared C caller's on the shipped blob (`aes_event.TEXT_SITE_CALLERS`: NONE YET — pgmld has no C caller, so no
-thunk is generated and `aes_pgmld` on the shipped blob is still the weak C twin, which parks the ROM's sites as the
-data they are; its first caller is the accessory loader, wave 3, whose pair in
+declared C caller's on the shipped blob (`aes_event.TEXT_SITE_CALLERS`: `("aes_sndcli",)` SINCE BAND 5 WAVE 3 — the
+accessory loader's sndcli is pgmld's first C caller, so on the shipped blob `aes_pgmld` is now the generated thunk
+into `gemdosif.S`, which parks the build's own sites; its pair is in
 `transcription.C_CALLERS_OF_TRANSCRIBED_CORES` — the table `test_transcribed.py` holds to the build's call graph
-and the thunks are generated from — must be named there too: `test_aes_pgmld.py` reds while they disagree). A
+and the thunks are generated from — and the two must name the same callers: `test_aes_pgmld.py` reds while they
+disagree. The mapping is FIRST APPLIED on a caller's row at the door flip: the loader has no blob row yet). A
 register our run leaves holding the ROM's own site is refused by name before it is mapped, as a slot is.
 To add a site: a local label in the `.S`, a row in `TEXT_SITE_SYMBOLS`, the slot if RAM holds it.
 
@@ -2753,6 +3003,14 @@ and `.S` (the repository's `docs/agent-playbook.md` §10 has the rebuild traps).
   after an ordinary test, and a neighbouring test passed or failed by which tests its worker had run before it. A
   speed lever needs a test that it is ON (`AES_FORKS_REPORT`), not only that the suite is green with it.
 
+* **BAND 5 WAVE 3's SWEEPS**, one log each under `scratchpad/b5/W3/`: `T/sweep.log` (the trap door: 51 of 51),
+  `G/sweep.log` (crit_err, dos_exec, their twins and thunk: 43 of 44, the survivor given its row and killed in the
+  rerun the same log holds), `L/mut/` (the loader: 58 of 62 killed, 3 survived — two equivalent, one the six-started
+  bound alone — 1 the same library), `M/sweep.log` (the machines: 46 of 47, one equivalent; made before the
+  entered-at-a-stop fix), `S/sweep.log` and `S/sweep_S8_again.log` (the stack reading: 24 of 25, then the 25th);
+  the three reviews' own under `scratchpad/RW3/{A,B,C}/`, and pass 2's `I/sweep2.log` (the fix list's guards: the
+  reviewers' surviving mutants made again against the REDs written for them).
+
 * **`pytest --collect-only -q` UNDER AN INVOCATION THAT ALREADY SAYS `-q` PRINTS `file: N`, NO IDS.** A script that
   builds an id list from it (a reversed-order run, a sweep's selection) gets an EMPTY list, and pytest handed no ids
   runs THE WHOLE SUITE — serially, if the script said so. Collect with one `-q`, and stop on an empty list.
@@ -2770,7 +3028,9 @@ recreate/
 ├── include/addrs.h     every ROM and system address this project names — the source of truth
 ├── include/<component>/ a component's own headers (bios/, xbios/, gemdos/); the shared ones stay
 │                       at the top of include/, and every #include is written from include/
-├── src/<component>/    the reconstruction, one directory per ROM component
+├── src/<component>/    the reconstruction, one directory per ROM component (`src/aes/trapdoor.S` with
+│                       `include/aes/trapdoor.h`: the trap door, the fourth `.S` kind; `src/aes/loader.c`: the
+│                       accessory loader)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -2782,12 +3042,16 @@ recreate/
 │                       fork), `derived.py` (ROM-only derivations kept by content) and `fork_pool.py` (a
 │                       pass over forks that ends, whatever a fork does)
 │                       `aes_boot.py` (the ROM's own boot from a pre-init machine: the desk's and the accessory
-│                       machines) and `acc/` (the test accessory's source and link script)
+│                       machines, the takeover and the door takeover) and `acc/` (the test accessory's source and
+│                       link script; `protodoor.S`, the takeover's PROTOTYPE trap door — a fixture, never shipped)
+│                       `aes_trapdoor.py` (arrivals at a trap, trips, the classes, who-ran), `test_aes_trapdoor.py`
+│                       (the shipped door's bytes) and `test_aes_trapdoor_rows.py` (its runs: Tier 1, both blobs);
+│                       `aes_loader.py` / `test_aes_loader.py` (the accessory loader at its arrivals, GEMDOS replayed)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       two pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and its floppy)
 └── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
                         bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
                         the shipped configuration's blob and its generated glue; derived/ (the
-                        derivation cache, by tree) and gates/ (`make gates`' logs); preinit.bin, preinit_acc.bin
-                        and acc/ (the two pre-init machines and the accessory floppy they need)
+                        derivation cache, by tree) and gates/ (`make gates`' logs); preinit.bin, preinit_acc.bin,
+                        preinit_acc7.bin and acc/ (the three pre-init machines and the accessory floppies they need)
 ```

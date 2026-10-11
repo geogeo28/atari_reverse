@@ -173,6 +173,8 @@
     ENTRY(aes_rom_retake,             "")                                   /* hand asm () -> D0.l: Setexc's answer    */ \
     ENTRY(aes_rom_giveerr,            "")                                   /* hand asm () -> D0.l: Setexc's answer    */ \
     ENTRY(aes_rom_takeerr,            "")                                   /* hand asm () -> D0.l: Setexc's answer    */ \
+    ENTRY(aes_rom_crit_err,           "")                                   /* hand asm (error.w, drive.w) -> D0.l, on its own stack; eralert's C under it */ \
+    ENTRY(aes_rom_dos_exec,           "")                                   /* hand asm (name, mode.w, tail) -> D0.l: Pexec's */ \
     ENTRY(aes_rom_pgmld,              "")                                   /* hand asm (handle.w, name, &basepage) -> D0.l */ \
     ENTRY(aes_rom_trp14,              "d2 a2")                              /* hand asm, an XBIOS frame -> D0.l: `trap #14` keeps less */
 

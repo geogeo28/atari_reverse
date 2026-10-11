@@ -7,9 +7,12 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "staged_call.h"
 #include "transcribed.h"
 #include "aes/aes.h"
+#include "aes/fmdo.h"
 #include "aes/gemdosif.h"
+#include "aes/switch.h"
 #include "bios/bcon.h"
 #include "gemdos/fs.h"
 #include "gemdos/gemdos.h"
@@ -148,16 +151,16 @@ static inline uint32_t empty_command_tail(void)
     return AES_PGMLD_EMPTY_TAIL;
 }
 
-/* Pexec(3, name, tail, 0) — the one frame of the glue wider than the GEMDOS words' slot, so it claims its own and
- * takes the host's trap over that (`gemdos_host_trap_over`). */
-static uint32_t pexec_load(uint8_t *image, uint32_t name, uint32_t tail)
+/* Pexec(mode, name, tail, 0) — the one frame of the glue wider than the GEMDOS words' slot, so it claims its own and
+ * takes the host's trap over that (`gemdos_host_trap_over`). pgmld's (mode 3) and dos_exec's (its caller's mode). */
+static uint32_t pexec(uint8_t *image, uint16_t mode, uint32_t name, uint32_t tail)
 {
     uint8_t frame[PGMLD_FRAME_BYTES], words_local[PGMLD_FRAME_BYTES];
     uint32_t words = host_slot_claim(AES_PGMLD_WORDS, words_local);
     uint32_t answer;
 
     wr16(frame, GEMDOS_PEXEC_FN);
-    wr16(frame + GEMDOS_ARGUMENT_WORD, PEXEC_LOAD);
+    wr16(frame + GEMDOS_ARGUMENT_WORD, mode);
     wr32(frame + 2 * GEMDOS_ARGUMENT_WORD, name);
     wr32(frame + 2 * GEMDOS_ARGUMENT_WORD + GEMDOS_FRAME_LONG, tail);
     wr32(frame + 2 * GEMDOS_ARGUMENT_WORD + 2 * GEMDOS_FRAME_LONG, PGMLD_NO_ENVIRONMENT);
@@ -176,9 +179,9 @@ static inline uint32_t empty_command_tail(void)
 /* The ROM's own four pushes ($fe39bc..$fe39c6: the function and the mode ONE longword), the trap, the frame dropped.
  * Each operand is PINNED to a register the trap restores (`gemdos/gemdos.h`'s shapes say why) — and never left to a
  * stack slot, whose displacement the pushes before it would have moved. */
-static inline uint32_t pexec_load(uint8_t *image, uint32_t name, uint32_t tail)
+static inline uint32_t pexec(uint8_t *image, uint16_t mode, uint32_t name, uint32_t tail)
 {
-    register uint32_t answer __asm__("d0") = (uint32_t)GEMDOS_PEXEC_FN << 16 | PEXEC_LOAD;
+    register uint32_t answer __asm__("d0") = (uint32_t)GEMDOS_PEXEC_FN << 16 | mode;
     register uint32_t program __asm__("a0") = name;
     register uint32_t command_tail __asm__("a1") = tail;
 
@@ -214,7 +217,7 @@ int16_t aes_pgmld(uint8_t *image, int16_t handle, uint32_t name, uint32_t basepa
 
     (void)handle;
     wr32(image + AES_TRAP1_RETURN, AES_PGMLD_PEXEC_RETURN);
-    basepage = pexec_load(image, name, empty_command_tail());
+    basepage = pexec(image, PEXEC_LOAD, name, empty_command_tail());
     if (dos_verdict(image, basepage))
         return PGMLD_FAILED;
     set_bus_long(image, basepage_out, basepage);
@@ -297,8 +300,9 @@ uint32_t aes_dos_lseek(uint8_t *image, int16_t handle, int16_t mode, uint32_t of
  * pointer's floor on a routine of two to six instructions). The C is what Tier 1 proves. */
 
 /* The two handlers GEM installs, as a vector holds them: off target the ROM's own addresses (Tier 1 stays exact); on
- * target a rebuilt ROM owes its own — the trap door and crit_err are band 5's wave 3, so until they land the target
- * stores the ROM's too (`test_aes_rom_data.py`: rows $fe3c78, $fe3c84, $fe3c8e, $fe3cb6). */
+ * target a rebuilt ROM owes its own. crit_err's IS the build's (`gemdosif.S`: rows $fe3c8e, $fe3cb6 of
+ * `test_aes_rom_data.py`); the trap door's operand moves with the door's flip, so until then the target stores the
+ * ROM's (rows $fe3c78, $fe3c84). */
 static inline uint32_t gem_trap2_handler(void)
 {
     return GEM_TRAP2;
@@ -306,7 +310,7 @@ static inline uint32_t gem_trap2_handler(void)
 
 static inline uint32_t critical_error_handler(void)
 {
-    return AES_ROM_CRIT_ERR;
+    return ALCYON_ROUTINE(AES_ROM_CRIT_ERR, aes_rom_crit_err);
 }
 
 /* The tail the three share ($fe3c94): Setexc($101, handler) through the BIOS — the handler displaced. */
@@ -353,4 +357,74 @@ uint32_t aes_takeerr(uint8_t *image)
 {
     wr32(image + AES_OLD_CRITIC, setexc_critic(image, SETEXC_INQUIRE));
     return setexc_critic(image, critical_error_handler());
+}
+
+/* ---- dos_exec ($fe3d2e): Pexec with the process's saved supervisor SP out of the program's way ----------------------- */
+
+/* Where the running process's UDA keeps the supervisor SP its next `trap #2` stacks from — read through AES_RLR at
+ * each use, as the ROM does on both sides of the trap ($fe3d34, $fe3d7e). */
+static inline uint32_t running_uda_super_sp(const uint8_t *image)
+{
+    return bus_long(image, running(image, PD_UDA)) + UDA_SUPER_SP;
+}
+
+/* The glue's verdict dos_exec's own way ($fe3d96): AES_DOS_ERR cleared, and set with AES_DOS_AX the answer's word
+ * only where THAT WORD is not 0 — not `__DOS`'s test of the long's sign. */
+static void dos_exec_verdict(uint8_t *image, uint32_t answer)
+{
+    wr16(image + AES_DOS_ERR, DOS_EXEC_OK);
+    if (!(uint16_t)answer)
+        return;
+    wr16(image + AES_DOS_ERR, DOS_EXEC_FAILED);
+    wr16(image + AES_DOS_AX, (uint16_t)answer);
+}
+
+/* $fe3d2e — dos_exec: `Pexec(mode, name, tail, 0)` taken with the UDA's saved supervisor SP parked in
+ * AES_DOS_EXEC_SAVED_SSP and standing DOS_EXEC_STACK_KEPT bytes under `caller_sp` (dos_exec's own SP at entry: the
+ * program's AES calls then stack below its caller's frames), put back when the program ends; Pexec's whole D0.
+ *
+ * THE TARGET SHIPS `gemdosif.S` — the ROM's own instructions: `caller_sp` is the machine's, and a compiled frame's is
+ * not the ROM's. This C is what Tier 1 proves. */
+TRANSCRIBED_CORE
+uint32_t aes_dos_exec(uint8_t *image, uint32_t caller_sp, uint32_t name, int16_t mode, uint32_t tail)
+{
+    uint32_t answer;
+
+    aes_spl7_save(image);
+    wr32(image + AES_DOS_EXEC_SAVED_SSP, bus_long(image, running_uda_super_sp(image)));
+    set_bus_long(image, running_uda_super_sp(image), caller_sp - DOS_EXEC_STACK_KEPT);
+    aes_spl_restore(image);
+    answer = pexec(image, (uint16_t)mode, name, tail);
+    aes_spl7_save(image);
+    set_bus_long(image, running_uda_super_sp(image), be32(image + AES_DOS_EXEC_SAVED_SSP));
+    aes_spl_restore(image);
+    dos_exec_verdict(image, answer);
+    return answer;
+}
+
+/* ---- crit_err ($fe3cbe): the critical-error handler ---------------------------------------------------------------- */
+#define LOW_BYTE              0x00ff
+
+/* The alert eralert is handed for `error` ($fe3ce8..$fe3d00): the table's row `~error` — row 0 for no error and for a
+ * row past the last, by a SIGNED compare, so a positive error's negative row reads BELOW the table — laid over the
+ * LOW BYTE of the word it was indexed by (`~error`; the error itself where it is 0): the high byte stays. A function
+ * of its own so Tier 1 holds the step alone, against the word the ROM's handler hands eralert. */
+int16_t aes_crit_err_alert(const uint8_t *image, int16_t error)
+{
+    int16_t indexed_by = error ? (int16_t)~error : error;
+    int16_t row = indexed_by > CRIT_ERR_LAST_ROW ? CRIT_ERR_ROW_OF_NO_ERROR : indexed_by;
+
+    return (int16_t)((indexed_by & ~LOW_BYTE) | bus_byte(image, (uint32_t)(AES_ROM_CRIT_ERR_ALERTS + row)));
+}
+
+/* $fe3cbe — crit_err: eralert's alert for the BIOS's `error` on `drive`; the error itself where the alert's first
+ * button ended it, CRIT_ERR_RETRY otherwise.
+ *
+ * THE TARGET SHIPS `gemdosif.S` — the ROM's own instructions: the handler parks its caller's SP and runs the alert on
+ * a stack of its own (AES_CRIT_ERR_STACK), which no compiled function does. This C is what Tier 1 proves: the table,
+ * the alert and the answer — not the stack, and not the parked SP. */
+TRANSCRIBED_CORE
+int32_t aes_crit_err(uint8_t *image, int16_t error, int16_t drive)
+{
+    return aes_eralert(image, aes_crit_err_alert(image, error), drive) ? CRIT_ERR_RETRY : (int32_t)error;
 }

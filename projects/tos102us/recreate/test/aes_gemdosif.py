@@ -25,7 +25,7 @@ import os
 import struct
 import sys
 
-from harness import _lib, addrs
+from harness import BASE_IMAGE, _lib, addrs
 
 import aes
 import aes_event
@@ -64,8 +64,8 @@ STALE_DOS = shell.STALE_DOS
 
 # ---- this module's band ----------------------------------------------------------------------------------------------
 BAND_OFFSET = 0x2800                    # into the AES's window: clear of every band claimed (the registry refuses one)
-BAND_BYTES = 0x500
-BAND_AT = aes.SPAN.claim(aes.WINDOW_AT + BAND_OFFSET, BAND_BYTES, "test/aes_gemdosif.py: three recording traps, a path, a basepage")
+BAND_BYTES = 0x600
+BAND_AT = aes.SPAN.claim(aes.WINDOW_AT + BAND_OFFSET, BAND_BYTES, "test/aes_gemdosif.py: four recording traps, a path, a basepage")
 PATH_AT = BAND_AT                       # a path a case hands dos_chdir, a program's name pgmld is handed
 PATH_BYTES = 0x40
 ARGUMENTS_IN_FRAME = FRAME_WORDS_AT + WORD_BYTES
@@ -170,6 +170,11 @@ aes_event.declare_text_site_slots(*TRAP1_SITES_IN_THE_LEDGER, *PEXEC_TAILS_IN_TH
 # ...and the BIOS's, for the vector takes' `.S` (both shores 68000: no host twin is bound): Setexc's vector word and
 # handler.
 BIOS = Recorder(addrs.VECTOR_TRAP_BIOS, GEMDOS.end, 0x40, {addrs.BIOS_SETEXC_FN: WORD_BYTES + LONG_BYTES}, entries=4)
+# WHERE THAT LEDGER CAN HOLD THE CRITICAL-ERROR HANDLER A BUILD INSTALLS (`aes_event.CRITICAL_ERROR_HANDLER`: retake's
+# and takeerr's Setexc is handed crit_err — the ROM's address in the ROM, the build's own entry in a build): the
+# longword of each entry's frame past the function and Setexc's vector number.
+aes_event.declare_critical_error_handler_slots(*(BIOS.ledger.first + nth * BIOS.ledger.stride + 2 * WORD_BYTES
+                                                 for nth in range(BIOS.ledger.entries)))
 # ...and the XBIOS's, for the AES's XBIOS door (`trp14.S`, the same way): the shapes its ROM callers push — the
 # function word alone (Getrez), one more word (Blitmode) — and A MADE-UP ONE, an ARGUMENT CLASS wherever it is run:
 # a function word and ONE longword, the WIDTH of what `$fedaee..$fedaf4` pushes and no ROM caller's own frame (the
@@ -180,7 +185,19 @@ XBIOS = Recorder(addrs.VECTOR_TRAP_XBIOS, BIOS.end, 0x60, {XBIOS_GETREZ: 0, XBIO
 # A basepage pgmld's scripted Pexec answers, past the three.
 BASEPAGE_AT = XBIOS.end + (-XBIOS.end % LONG_BYTES)
 BASEPAGE_BYTES = 0x40
-BAND_END = BASEPAGE_AT + BASEPAGE_BYTES
+# ...and dos_exec's OWN recorder (`test_aes_dos_exec.py`), past the basepage: Pexec alone, each call recorded WITH WHAT
+# THE RUNNING PROCESS'S SAVED SUPERVISOR SP AND dos_exec's SAVE LONGWORD HOLD AT THE TRAP — the park is undone before
+# dos_exec returns, so only the ledger shows it. (A recorder of its own: two more parked longwords in `GEMDOS` would
+# be cycles in both columns of every row recorded through it.) The UDA is the shell's — the process a leaf machine
+# runs — read off the snapshot's own PD.
+UDA_SUPER_SP = aes.header_constants("aes.h")["UDA_SUPER_SP"]
+SHELL_UDA_SUPER_SP = case.long_in(BASE_IMAGE, aes.SHELL_PD + aes.PD_UDA) + UDA_SUPER_SP
+DOS_EXEC_SAVED_SSP = aes.header_constants("gemdosif.h")["AES_DOS_EXEC_SAVED_SSP"]
+PEXEC_FRAME_BYTES = WORD_BYTES + 3 * LONG_BYTES         # the mode, the name, the tail, the environment
+EXEC = Recorder(addrs.VECTOR_TRAP_GEMDOS, BASEPAGE_AT + BASEPAGE_BYTES, 0x70, {PEXEC: PEXEC_FRAME_BYTES}, entries=2,
+                parked=(SHELL_UDA_SUPER_SP, DOS_EXEC_SAVED_SSP))
+EXEC_HANDLERS = {gemdos.rom_handler(PEXEC): EXEC.twin(PEXEC)}
+BAND_END = EXEC.end
 assert BAND_END <= BAND_AT + BAND_BYTES
 HANDLER_AT, LEDGER, SCRIPT, FRAME_BYTES = GEMDOS.at, GEMDOS.ledger, GEMDOS.script, GEMDOS.frame_bytes
 scripted_pokes, calls, call, parked_at = GEMDOS.pokes, GEMDOS.calls, GEMDOS.call, GEMDOS.parked_at

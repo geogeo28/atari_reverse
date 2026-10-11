@@ -25,7 +25,9 @@ from collections import namedtuple
 import functools
 import hashlib
 import random
+import re
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +46,7 @@ import aes_event
 import aes_gemctrl
 import aes_pdpipe as pp
 import aes_switch
+import aes_trapdoor
 import case
 import fs_pexec
 import isr
@@ -1032,59 +1035,106 @@ def test_the_registry_s_rom_address_is_ictlmgr_s_two_immediates():
     assert aes.line_f_target(rom_word(call)) == addrs.AES_ROM_PSTART
 
 
+@functools.cache
+def at_the_first_rte(label):
+    """The ROM's own boot of `label` STOPPED AT ITS FIRST ARRIVAL AT switchto's `rte`: the takeover's stop."""
+    return aes_boot.booted(*capture_and_disk(label), until=addrs.AES_ROM_SWITCHTO_RTE)
+
+
 @every_machine
 @every_blob
-def test_the_takeover_is_made_at_the_screen_manager_s_first_entry(label, blob):
-    """WHERE: switchto's `rte`, about to pop the frame psetup pushed — the machine there IS the ROM's own boot one
-    instruction before its ctlmgr (the megabyte's digest; the stack pointer six bytes lower), every register
-    switchto loaded out of the never-saved UDA zero. WHAT: the process entered is SCRENMGR, its stack from the end
-    of its UDA's state block to the frame's end; the registry's two slots mapped from the ROM's ctlmgr to the blob's
-    entry; the blob laid THERE."""
+def test_the_takeover_is_made_at_the_boot_s_first_switchto_rte(label, blob):
+    """WHERE (ruling W3-R2): the boot's FIRST arrival at switchto's `rte` — the machine there IS the ROM's own boot
+    stopped at that address (the megabyte's digest, every register), EARLIER than the screen manager's own entry on
+    every machine: the dispatcher's first pass resumes the boot's own process, PD0. WHAT: the process whose entry is
+    mapped is SCRENMGR, NEVER ENTERED there — its stack from the end of its UDA's state block to psetup's frame's end,
+    not a byte on it below the frame; the registry's two slots mapped from the ROM's ctlmgr to the blob's entry; the
+    blob laid THERE."""
     taken, ours = booted_as(label, blob).takeover, aes_boot.ours_of(isr.blob_named(blob))
-    stopped, manager = at_the_rom_s_ctlmgr(label), booted_as(label, blob).screen_manager()
+    stopped, manager = at_the_first_rte(label), booted_as(label, blob).screen_manager()
     digest, registers = taken.found
-    assert taken.ours == ours and taken.laid == aes_boot.AT_THE_FIRST_ENTRY
-    assert taken.process == manager.pd and manager.pid == SCREEN_MANAGER_PID
-    assert digest == hashlib.sha256(stopped.ram).digest()
-    assert registers["pc"] == addrs.AES_ROM_SWITCHTO_RTE and registers["isp"] == stopped.registers["isp"] - aes_boot.FRAME_BYTES
-    assert not any(registers[name] for name in (*preinit_snapshot.DATA_REGISTERS, *preinit_snapshot.ADDRESS_REGISTERS))
-    assert {name: registers[name] for name in registers if name not in ("pc", "isp", "sr")} == {
-        name: stopped.registers[name] for name in registers if name not in ("pc", "isp", "sr")}
-    assert taken.stack == (manager.uda + aes.UDA_STATE_BYTES, stopped.registers["isp"])
+    assert taken.ours == ours and taken.laid == aes_boot.AT_THE_FIRST_ENTRY and taken.door is None
+    assert taken.process == manager.pd == aes.SCREEN_MANAGER_PD and manager.pid == SCREEN_MANAGER_PID
+    assert digest == hashlib.sha256(stopped.ram).digest() and registers == stopped.registers
+    assert registers["pc"] == addrs.AES_ROM_SWITCHTO_RTE
+    assert case.long_in(stopped.ram, aes.AES_RLR) & BUS == aes.SHELL_PD, "the first `rte` of a boot resumes PD0"
+    assert taken.stack == (manager.uda + aes.UDA_STATE_BYTES, aes.AES_UDA1_STACK_TOP)
     assert not any(stopped.ram[taken.stack[0]:taken.stack[1] - aes_boot.FRAME_BYTES])
+    assert case.long_in(stopped.ram, taken.stack[1] - LONG_BYTES) == ENTRY, "psetup's frame, unpopped: the ROM's ctlmgr"
     assert taken.slots == {slot: (ENTRY, ours.entry) for slot in aes_event.SCREEN_MANAGER_ENTRY.slots}
-    assert 0 < taken.instructions < booted_as(label, blob).boot.instructions
+    assert 0 < taken.instructions == stopped.instructions < at_the_rom_s_ctlmgr(label).instructions
+
+
+@every_machine
+@every_blob
+def test_the_stop_moved_and_the_machine_did_not(label, blob):
+    """WAVE 2's MACHINES, UNCHANGED BY THE NEW STOP (ruling W3-R2) — every machine a battery boots, both blobs: the
+    takeover made where wave 2 made it (the screen manager's own first entry, `AT_THE_SCREEN_MANAGER_S_ENTRY`: a real
+    boot, made here) leaves THE SAME megabyte, registers, disk, idle and cost, the same slots mapped, the same stack
+    span and the same clear of the window — only later: the stop the takeover is now made at comes first."""
+    capture, disk = capture_and_disk(label)
+    ours, now = aes_boot.ours_of(isr.blob_named(blob)), booted_as(label, blob).boot
+    then = aes_boot.booted.derive(capture, disk, ours=ours, laid=aes_boot.AT_THE_SCREEN_MANAGER_S_ENTRY)
+    same = ("ram", "registers", "disk", "instructions", "cycles", "polls", "blanks", "floppy", "io_reads", "hardware_reads",
+            "hardware_writes", "stored", "bus_error_frame", "idle")
+    assert {name: getattr(then, name) == getattr(now, name) for name in same} == dict.fromkeys(same, True)
+    for name in ("ours", "process", "stack", "slots", "cleared", "stored_after"):
+        assert getattr(then.takeover, name) == getattr(now.takeover, name), name
+    assert then.takeover.laid == aes_boot.AT_THE_SCREEN_MANAGER_S_ENTRY != now.takeover.laid
+    assert now.takeover.instructions < then.takeover.instructions == at_the_rom_s_ctlmgr(label).instructions - 1
 
 
 def stop_of(label):
-    """The takeover's stop on the machine `label`, as `_vet_the_first_entry` is handed it: the megabyte (the ROM's
-    boot one instruction on: the `rte` stores nothing), the process, its stack pointer, the registers switchto loaded."""
+    """A FIRST ENTRY on the machine `label`, as `_vet_the_boot_s_first_entry` is handed it — the screen manager's own:
+    the megabyte (the ROM's boot one instruction on: the `rte` stores nothing), the process, its stack pointer, the
+    registers switchto loaded."""
     stopped = at_the_rom_s_ctlmgr(label)
     registers = {name: 0 for name in (*preinit_snapshot.DATA_REGISTERS, *preinit_snapshot.ADDRESS_REGISTERS)}
     return bytearray(stopped.ram), case.long_in(stopped.ram, aes.AES_RLR) & BUS, stopped.registers["isp"] - aes_boot.FRAME_BYTES, registers
 
 
 @pytest.mark.parametrize("label", (A_DESK, WITH_ACCESSORIES))
-def test_a_stop_that_is_not_the_screen_manager_s_first_entry_is_refused_by_name(label):
-    """THE VETS AT THE STOP, each RED on the machine of the stop itself with ONE thing wrong: another process's name;
-    a stack pointer that is not the one its UDA names; one byte on its stack below the frame (its ctlmgr has run);
-    a register switchto loaded that is not zero (a context was saved); a frame that would resume in user mode."""
+def test_a_stop_that_is_not_a_first_entry_is_refused_by_name(label):
+    """THE VETS AT THE STOP, each RED on the machine of a first entry itself with ONE thing wrong: a stack pointer
+    that is not the one its UDA names; one byte on its stack below the frame (its code has run); a register switchto
+    loaded that is not zero (a context was saved); a frame that would resume in user mode — and, of the process
+    whose entry is mapped, another name than SCRENMGR."""
     memory, pd, sp, registers = stop_of(label)
     uda = case.long_in(memory, pd + aes.PD_UDA) & BUS
-    assert aes_boot._vet_the_first_entry(memory, pd, sp, registers) == (uda + aes.UDA_STATE_BYTES, sp + aes_boot.FRAME_BYTES)
+    span = (uda + aes.UDA_STATE_BYTES, sp + aes_boot.FRAME_BYTES)
+    assert aes_boot._vet_the_boot_s_first_entry(memory, pd, sp, registers) == span == aes_boot._vet_the_screen_manager(memory, pd)
 
-    def wrong(at, data, said, sp=sp, registers=registers):
+    def wrong(at, data, said, sp=sp, registers=registers, vet=aes_boot._vet_the_boot_s_first_entry):
         doctored = bytearray(memory)
         doctored[at:at + len(data)] = data
         with pytest.raises(aes_boot.Refused, match=said):
-            aes_boot._vet_the_first_entry(doctored, pd, sp, registers)
+            vet(doctored, pd, sp, registers) if vet is aes_boot._vet_the_boot_s_first_entry else vet(doctored, pd)
 
-    wrong(pd + aes.PD_NAME, b"DESKTOP ", "not SCRENMGR")
+    wrong(pd + aes.PD_NAME, b"DESKTOP ", "not SCRENMGR", vet=aes_boot._vet_the_screen_manager)
     wrong(0, b"", "not on the stack its UDA names", sp=sp - WORD_BYTES)
     for at in (uda + aes.UDA_STATE_BYTES, sp - 1):
-        wrong(at, b"\x01", "NOT THE SCREEN MANAGER'S FIRST ENTRY: its stack holds something")
-    wrong(0, b"", "NOT THE SCREEN MANAGER'S FIRST ENTRY: switchto loaded {'a6': 4}", registers={**registers, "a6": 4})
+        wrong(at, b"\x01", "NOT THE FIRST ENTRY OF b'SCRENMGR' .*: its stack holds something")
+        wrong(at, b"\x01", "NOT THE FIRST ENTRY OF b'SCRENMGR' .*: its stack holds something", vet=aes_boot._vet_never_entered)
+    wrong(0, b"", "NOT THE FIRST ENTRY OF b'SCRENMGR' .*: switchto loaded {'a6': 4}", registers={**registers, "a6": 4})
     wrong(sp, struct.pack(">H", case.word_in(memory, sp) & ~preinit_snapshot.SR_SUPERVISOR), "holds the status word")
+
+
+@pytest.mark.parametrize("label", (A_DESK, WITH_ACCESSORIES))
+def test_at_the_stop_no_process_but_the_boot_s_own_has_run(label):
+    """...AND AT THE REAL STOP, read off the machine: the process resumed is the boot's own (PD0, whose stack holds
+    gem_main's frames) and EVERY OTHER PROCESS THE MACHINE HAS — the screen manager, each loaded program — has never
+    been entered: `_vet_never_entered` passes each, and refuses the boot's own by name."""
+    stopped = at_the_first_rte(label)
+    frames = aes_event.first_entry_frames(stopped.ram)
+    others = [pd for pd, slot in frames if case.long_in(stopped.ram, slot) in (ENTRY, addrs.AES_ROM_GOTOPGM)]
+    assert len(others) == (1 if EVERY_MACHINE[label] is None else 3) and aes.SCREEN_MANAGER_PD in others
+    # ...every other frame walked is the boot's own or that of a static PD no program was started in
+    assert all(pd == aes.SHELL_PD or not case.long_in(stopped.ram, pd + aes.PD_LDADDR) for pd, _slot in frames if pd not in others)
+    for pd in others:
+        lo, top = aes_boot._vet_never_entered(stopped.ram, pd)
+        assert case.long_in(stopped.ram, top - LONG_BYTES) in (ENTRY, addrs.AES_ROM_GOTOPGM)
+    with pytest.raises(aes_boot.Refused, match="NOT THE FIRST ENTRY OF .*: its stack holds something"):
+        aes_boot._vet_never_entered(stopped.ram, aes.SHELL_PD)
 
 
 @pytest.mark.parametrize("label", (A_DESK, WITH_ACCESSORIES))
@@ -1135,6 +1185,34 @@ def test_a_takeover_that_maps_nothing_or_the_pd_alone_never_enters_our_entry_and
     for skipped in (lambda memory, slots, mapping: {}, the_pd_s_alone):
         with pytest.raises(aes_boot.Refused, match="did not enter `aes_rom_ctlmgr`"):
             taken_over_with(label, blob, monkeypatch, _mapped=skipped)
+
+
+@every_blob
+@pytest.mark.parametrize("label", (A_DESK, WITH_ACCESSORIES))
+def test_a_boot_stopped_in_the_rom_s_ctlmgr_is_no_takeover_machine_and_one_stopped_before_its_entry_is(label, blob, monkeypatch):
+    """...AND THE SAME RED WHERE THE BOOT IS STOPPED BEFORE ITS IDLE (`until=`; wave 3's review, C-F1). The takeover
+    is made at the boot's first switchto `rte`, so a boot stopped between that and the screen manager's entry has
+    rightly entered nothing yet: HELD AS A TAKEOVER MACHINE while the frame switchto will pop holds our entry (the
+    control: stopped where PD0 is resumed by that `rte`). With the PD mapped alone, the boot stopped at THE ROM'S ctlmgr's
+    FIRST INSTRUCTION — the screen manager running, in the ROM's text — is refused by name; wave 2 refused it by the
+    stop, and a takeover with no door has no profile that would."""
+    capture, disk = capture_and_disk(label)
+    ours = aes_boot.ours_of(isr.blob_named(blob))
+    at_the_rte = at_the_first_rte(label)
+    pd0_resumes_at = case.long_in(at_the_rte.ram, at_the_rte.registers["isp"] + aes_boot.FRAME_PC) & BUS
+    assert aes.AES_TEXT[0] <= pd0_resumes_at < aes.AES_TEXT[1] and pd0_resumes_at != aes_boot.ROM_ENTRY
+    before = aes_boot.booted.derive(capture, disk, ours=ours, until=pd0_resumes_at)
+    assert not before.takeover.stored_after and aes_boot.parked_pc(before.ram, before.takeover.process) == ours.entry
+
+    def the_pd_s_alone(memory, slots, mapping):
+        return MAPPED(memory, [aes.SCREEN_MANAGER_PD + aes.PD_LDADDR], mapping)
+    monkeypatch.setattr(aes_boot, "_mapped", the_pd_s_alone)
+    with pytest.raises(aes_boot.Refused, match="THE SCREEN MANAGER WAS NOT ENTERED THROUGH `aes_rom_ctlmgr` .* it is the process "
+                                               "running, and its first-entry frame holds 0xfe49d2 — THE ROM'S ctlmgr"):
+        aes_boot.booted.derive(capture, disk, ours=ours, until=aes_boot.ROM_ENTRY)
+    # ...and stopped before that entry with the frame left the ROM's: nobody runs the screen manager yet, and it is refused all the same
+    with pytest.raises(aes_boot.Refused, match="its first-entry frame holds 0xfe49d2 — THE ROM'S ctlmgr: the frame's PC was not mapped"):
+        aes_boot.booted.derive(capture, disk, ours=ours, until=pd0_resumes_at)
 
 
 @every_blob
@@ -1709,7 +1787,7 @@ def test_our_entry_must_be_entered_on_the_top_of_the_screen_manager_s_stack(blob
     for sp, said in ((top, None), (top - aes_boot.FRAME_BYTES, "not on the top"), (top - LONG_BYTES, "not on the top"),
                      (top + WORD_BYTES, "not on the top")):
         taking = aes_boot._TakingOver(booted.image(), booted.ours, aes_boot.FROM_THE_START)
-        taking.taken = booted.takeover
+        taking.taken, taking.armed = booted.takeover, frozenset({booted.ours.entry})
         if said is None:
             taking.stopped(booted.ours.entry, sp, 0)
             assert taking.entered and taking.armed == frozenset()
@@ -1742,7 +1820,7 @@ def test_a_store_into_the_blob_after_the_lay_is_seen_by_the_run_s_own_ledger_and
     ends, the two bytes counted. (What the mark is for: without it the ledger's entries before the lay — Pexec's
     clear — would be read as stores over the blob, and with it past them all, nothing would.)"""
     forged, word = storing_into_itself(aes_boot.ours_of(isr.blob_named(blob)))
-    with pytest.raises(aes_boot.Refused, match=f"THE BOOT STORED OVER THE BLOB, laid at the screen manager's first entry: "
+    with pytest.raises(aes_boot.Refused, match=f"THE BOOT STORED OVER THE BLOB, laid at the boot's first switchto `rte`: "
                                                f"2 byte\\(s\\) of its span .* from {word:#x} on"):
         aes_boot.booted.derive(*capture_and_disk(label), ours=forged)
 
@@ -1808,6 +1886,767 @@ def test_an_interrupt_the_idle_s_mask_would_never_let_in_is_refused():
         aes_boot._Receiving(pressed, booted.registers["sr"] | addrs.SR_IPL_MASK).all_of((aes_boot.CLICK_TICKS,))
 
 
+# ---- THE TRAP DOOR AS OURS (band 5 wave 3): the takeover handed a door ---------------------------------------------------------
+# EVERY PROOF BELOW IS MADE WITH THE PROTOTYPE DOOR (`aes_boot.with_the_prototype_door`: the ROM's handler, exit and
+# aes_entry assembled after the blob and linked against it — a door handed the takeover as a parameter), on both
+# blobs, whether or not the blob links a door of its own. The registry's declarations stay PENDING: nothing here maps
+# them at Tier 3.
+QUIET_PAIR, SIX_WAY_PAIR = WITH_ACCESSORIES, "both wait six ways"
+DOOR_MACHINES = (A_DESK, QUIET_PAIR, SIX_WAY_PAIR, WITH_WINDOWS)
+every_door_machine = pytest.mark.parametrize("label", DOOR_MACHINES)
+THE_VECTOR, A_PROGRAM = aes_event.GEM_TRAP_VECTOR.what, aes_event.PROGRAM_ENTRY.what
+
+
+@functools.cache
+def the_door_of(blob):
+    return aes_boot.with_the_prototype_door(isr.blob_named(blob))
+
+
+@functools.cache
+def behind_a_door(label, blob):
+    """The machine `label`, its screen manager AND ITS TRAP DOOR `blob`'s (the prototype door appended to it)."""
+    return aes_boot.Machine(aes_boot.booted(*capture_and_disk(label), ours=the_door_of(blob)))
+
+
+def programs_of(booted):
+    """The loaded programs of a booted machine, through its own pointers: the spare static PD's, then the allocated."""
+    return [process for process in (booted.static_processes()[-1], *booted.allocated_accessories()) if process.basepage]
+
+
+@every_blob
+def test_the_prototype_door_is_the_blob_extended_and_its_door_names_it(blob):
+    """The fixture, read: the blob's own bytes first and untouched, the door's code after its allocated span; the
+    vector's entry is that code's first instruction — the ROM's own handler's first word — and a program's entry
+    is the blob's gotopgm, by symbol."""
+    plain, ours = aes_boot.ours_of(isr.blob_named(blob)), the_door_of(blob)
+    assert ours.image[:len(plain.image)] == plain.image and ours._replace(image=b"", end=0, door=()) == plain._replace(image=b"", end=0)
+    (vector, ((rom_trap, our_trap),)), (program, ((rom_gotopgm, our_gotopgm),)) = ours.door
+    assert (vector, rom_trap, program, rom_gotopgm) == (THE_VECTOR, addrs.GEM_TRAP2, A_PROGRAM, addrs.AES_ROM_GOTOPGM)
+    assert plain.end <= our_trap < ours.end == ours.base + len(ours.image) and not our_trap % WORD_BYTES
+    at = our_trap - ours.base
+    assert ours.image[at:at + 2 * WORD_BYTES] == BASE_IMAGE[rom_trap:rom_trap + 2 * WORD_BYTES]
+    assert our_gotopgm == isr.blob_named(blob).entry(aes_boot.GOTOPGM_SYMBOL) and plain.base <= our_gotopgm < plain.end
+    assert plain.door == ()
+
+
+# ---- band 5 wave 3, the integration: THE PROTOTYPE CANNOT DRIFT FROM THE SHIPPED DOOR -----------------------------------------
+# Two spellings of the trap door stand in the tree until the flip: `src/aes/trapdoor.S` — what a build SHIPS, byte-pinned
+# against the ROM by `test_aes_trapdoor.py` — and the prototype every proof below (and `aes_stack`'s measured run) is made
+# behind. Such a proof says something of the shipped door only while the two are the same code: the handler, the way
+# out, and aes_entry with the marshal's thunk, BYTE FOR BYTE, but for the longwords by which each door names ITS OWN
+# parts — and those must name the same place of each.
+# `(the prototype's symbol, the shipped symbols it spans)`, in the prototype's order. The prototype sizes nothing and
+# keeps its thunk local, so its last part runs to its last byte: aes_entry AND the thunk.
+THE_DOOR_S_PARTS = (("proto_trap2", (aes_trapdoor.HANDLER_SYMBOL,)), ("proto_trap2_exit", (aes_trapdoor.WAY_OUT_SYMBOL,)),
+                    ("proto_aes_entry", (aes_trapdoor.ENTRY_SYMBOL, aes_trapdoor.MARSHAL_THUNK)))
+# What a door names of itself by an absolute longword: aes_entry by value (the handler), the thunk and the way out
+# (aes_entry's two calls). Every other longword — the mask brackets, the marshal, dsptch — is the blob's: the same in both.
+OWN_PARTS_NAMED = 3
+
+
+def _the_two_doors(blob):
+    """`[((start, bytes) of the prototype's, (start, bytes) of the shipped door's)]` for each of THE_DOOR_S_PARTS."""
+    built, ours = isr.blob_named(blob), the_door_of(blob)
+    (_vector, ((_rom_trap, at),)), _program = ours.door
+    code, placed = aes_boot._prototype_door_at(str(built.elf), at, aes_boot.PROTOTYPE_DOOR_SOURCE.read_text())
+    assert ours.image.endswith(code) and at + len(code) == ours.end, "the prototype is the bytes the takeover appends"
+    starts = [placed[symbol] for symbol, _shipped in THE_DOOR_S_PARTS] + [at + len(code)]
+    assert starts == sorted(starts) and starts[0] == at, "the prototype's parts lie in the order listed, from its first byte"
+    spans = aes_trapdoor.text_spans(built)
+    doors = []
+    for lo, hi, (_symbol, shipped) in zip(starts, starts[1:], THE_DOOR_S_PARTS):
+        assert all(spans[before][1] == spans[after][0] for before, after in zip(shipped, shipped[1:])), f"{shipped} lie end to end"
+        shipped_lo, shipped_hi = spans[shipped[0]][0] - built.base, spans[shipped[-1]][1] - built.base
+        doors.append(((lo, code[lo - at:hi - at]), (shipped_lo + built.base, bytes(built.blob[shipped_lo:shipped_hi]))))
+    return doors
+
+
+def longwords_naming_the_door_s_own_parts(doors):
+    """`[(the part's index, the offset in it)]` of every longword the two doors differ in — each REQUIRED to be a door
+    naming its own part: the two values lie in the same part, at the same distance from its start. Another length, or
+    a byte that differs outside such a longword, is refused by name."""
+    def place(value, which):
+        return next(((index, value - each[which][0]) for index, each in enumerate(doors)
+                     if each[which][0] <= value < each[which][0] + len(each[which][1])), None)
+    found = []
+    for index, ((_lo, proto), (_shipped_lo, shipped)) in enumerate(doors):
+        assert len(proto) == len(shipped), f"part {index}: the prototype holds {len(proto)} bytes, the shipped door {len(shipped)}"
+        offset = 0
+        while offset < len(proto):
+            if proto[offset] == shipped[offset]:
+                offset += 1
+                continue
+            # the longword that holds this byte begins on a word, at most three bytes before it
+            for start in range(offset - offset % WORD_BYTES, max(offset - LONG_BYTES, -1), -WORD_BYTES):
+                named = place(int.from_bytes(proto[start:start + LONG_BYTES], "big"), 0)
+                if named is not None and named == place(int.from_bytes(shipped[start:start + LONG_BYTES], "big"), 1):
+                    break
+            else:
+                raise AssertionError(f"part {index}: the two doors differ at +{offset:#x} in no longword that names a part of the door")
+            found.append((index, start))
+            offset = start + LONG_BYTES
+    return found
+
+
+@every_blob
+def test_the_prototype_door_is_the_shipped_door_but_for_the_longwords_naming_its_own_parts(blob):
+    doors = _the_two_doors(blob)
+    assert len(longwords_naming_the_door_s_own_parts(doors)) == OWN_PARTS_NAMED
+    # ITS RED: one bit of the prototype's first instruction word is refused by name.
+    (lo, proto), shipped = doors[0]
+    with pytest.raises(AssertionError, match=r"part 0: the two doors differ at \+0x0 in no longword that names a part of the door"):
+        longwords_naming_the_door_s_own_parts([((lo, bytes([proto[0] ^ 1]) + proto[1:]), shipped), *doors[1:]])
+# ---- end of the integration's block -------------------------------------------------------------------------------------------
+
+
+@every_blob
+def test_a_door_s_entries_are_found_by_symbol_or_the_blob_is_refused_by_name(blob):
+    """`ours_of(blob, door=)`: each declaration answered by the blob's OWN symbols — or the blob refused, naming the
+    entry it does not link and the declaration that then cannot be mapped. (Both blobs link all three since slices
+    T and G: each part is found, and THE REFUSAL IS MADE with a declaration naming an entry no blob has.)"""
+    built = isr.blob_named(blob)
+    placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(built.elf) if symbol.kind in "Tt"}
+    assert aes_event.THE_NARROW_DOOR == (aes_event.GEM_TRAP_VECTOR, aes_event.PROGRAM_ENTRY, aes_event.CRITICAL_ERROR_VECTOR)
+    for part in aes_event.THE_NARROW_DOOR:
+        missing = [symbol for symbol in part.symbols.values() if symbol not in placed]
+        if missing:
+            with pytest.raises(aes_boot.Refused, match=f"has no entry `{missing[0]}`: {fnmatch.translate(part.what)[4:-3]} cannot be mapped"):
+                aes_boot.ours_of(built, door=(part,))
+        else:
+            mapping = tuple(sorted((rom, placed[symbol]) for rom, symbol in part.symbols.items()))
+            assert aes_boot.ours_of(built, door=(part,)).door == (aes_boot.DoorPart(part.what, mapping),)
+        unlinked = part._replace(symbols={rom: f"{symbol}_that_no_blob_links" for rom, symbol in part.symbols.items()})
+        with pytest.raises(aes_boot.Refused, match=f"has no entry `[a-z0-9_]+_that_no_blob_links`: {fnmatch.translate(part.what)[4:-3]} cannot be mapped"):
+            aes_boot.ours_of(built, door=(unlinked,))
+
+
+@every_door_machine
+@every_blob
+def test_behind_a_door_every_loaded_program_is_ours_and_the_desk_is_the_rom_s(label, blob):
+    """THE DOOR TAKEOVER, on every kind of machine and both blobs. MAPPED, and nothing else: `$88` from the ROM's
+    handler to the door's, and the first-entry frame of EVERY LOADED PROGRAM — found by walking the machine, the
+    allocated accessory's on a stack the layout decides — from the ROM's gotopgm to the blob's. WHO RAN, by the cycle
+    profile from the lay on: the ROM's handler, exit, aes_entry and gotopgm ZERO cycles; ours ran (the handler on
+    every machine: the desk's own VDI calls arrive at it; gotopgm where a program was loaded). WHOSE: the desk is
+    resumed in the ROM's text, the screen manager and every accessory in OURS."""
+    booted, ours = behind_a_door(label, blob), the_door_of(blob)
+    door, programs = booted.door, programs_of(booted)
+    (_vector, ((rom_trap, our_trap),)), (_program, ((rom_gotopgm, our_gotopgm),)) = ours.door
+    assert door.vectors == {addrs.VECTOR_TRAP_GEM: (rom_trap, our_trap)} and booted.long(addrs.VECTOR_TRAP_GEM) == our_trap
+    assert [(taken.pd, taken.name) for taken in door.programs] == [(process.pd, process.name) for process in programs]
+    assert len(programs) == (0 if EVERY_MACHINE[label] is None else len(aes_boot.ACCESSORY_NAMES))
+    for taken, process in zip(door.programs, programs):
+        lo, top = taken.stack
+        assert lo == process.uda + aes.UDA_STATE_BYTES and taken.slot == top - LONG_BYTES
+        assert lo < booted.long(process.uda + aes.UDA_SUPER_SP) & BUS < top, "parked inside the span the stop found"
+    assert set(door.ran) == {THE_VECTOR, A_PROGRAM} and all(rom_s == 0 for _ours, rom_s in door.ran.values())
+    assert door.ran[THE_VECTOR][0] > 0 and bool(door.ran[A_PROGRAM][0]) == bool(programs)
+    assert {process.name: booted.resumed_in(process) for process in booted.waiting()} == {
+        process.name: aes_boot.THE_ROM_S if process.pid == DESK_PID else aes_boot.OURS for process in booted.waiting()}
+    assert booted.takeover.stored_after == () and booted.ram[ours.base:ours.base + len(ours.image)] == ours.image
+
+
+def test_a_program_that_is_not_one_process_on_both_machines_is_refused_by_name():
+    """RED for `_of_a_program` (wave 3's review, mutant A5): the ROM-booted machine with ONE WORD of an accessory's PD
+    doctored — its pid — is no machine to compare a door machine with: that program's classes would be read through
+    another process's pointers."""
+    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, "the bench blob")
+    program = ours.door.programs[-1]
+    ram = bytearray(rom.ram)
+    pid_at = program.pd + aes.PD_PID
+    ram[pid_at:pid_at + WORD_BYTES] = struct.pack(">H", case.word_in(rom.ram, pid_at) + 4)
+    with pytest.raises(aes_boot.Refused, match=f"the two machines' {program.name.decode().strip()} are not one process"):
+        aes_boot.compared(aes_boot.Machine(rom.boot._replace(ram=bytes(ram))), ours)
+
+
+THE_SHIPPED_BLOB = "the shipped blob"
+CRITICAL_ERRORS = aes_event.CRITICAL_ERROR_VECTOR.what
+
+
+def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s_door_runs_no_cycle():
+    """THE ONE PROOF HERE THAT IS NOT THE PROTOTYPE'S (wave 3's review; the seam test above holds the two doors to the
+    same BYTES, this is a RUN): `ours_of(blob, door=aes_event.THE_NARROW_DOOR)` — the shipped blob's OWN
+    `aes_rom_trap2`, `aes_rom_gotopgm` and `aes_rom_crit_err`, found by symbol, nothing appended — takes the quiet
+    pair's boot to its idle. Every vet of the takeover passes; `$88` and `$404` hold the blob's entries; both
+    accessories were entered through the blob's gotopgm and trapped into the blob's handler; the ROM's handler, way
+    out, aes_entry, gotopgm AND crit_err ran ZERO cycles from the lay on (crit_err's own entry none either: no
+    critical error in a boot); the megabyte is the ROM-booted machine's outside the classes of each process.
+    NOTHING IS BOUND BY THIS: no Tier 3 row asks such a machine (the registry's three declarations stay pending, and
+    `test_no_battery_asks_for_a_door_machine_while_the_door_is_pending` lets this battery alone ask for a door)."""
+    built = isr.blob_named(THE_SHIPPED_BLOB)
+    ours = aes_boot.ours_of(built, door=aes_event.THE_NARROW_DOOR)
+    assert ours.image == aes_boot.ours_of(built).image and [part.what for part in ours.door] == [THE_VECTOR, A_PROGRAM, CRITICAL_ERRORS]
+    entries = {symbol: built.entry(symbol) for part in aes_event.THE_NARROW_DOOR for symbol in part.symbols.values()}
+    rom, booted = booted_as(QUIET_PAIR), aes_boot.Machine(aes_boot.booted(*capture_and_disk(QUIET_PAIR), ours=ours))
+    door = booted.door
+    assert door.vectors == {addrs.VECTOR_TRAP_GEM: (addrs.GEM_TRAP2, entries["aes_rom_trap2"]),
+                            aes_event.ETV_CRITIC: (addrs.AES_ROM_CRIT_ERR, entries["aes_rom_crit_err"])}
+    assert all(booted.long(slot) == laid for slot, (_found, laid) in door.vectors.items())
+    assert [taken.name for taken in door.programs] == [process.name for process in programs_of(booted)] and len(door.programs) == 2
+    assert set(door.ran) == {THE_VECTOR, A_PROGRAM, CRITICAL_ERRORS} and all(rom_s == 0 for _ours, rom_s in door.ran.values())
+    assert door.ran[THE_VECTOR][0] > 0 and door.ran[A_PROGRAM][0] > 0 and door.ran[CRITICAL_ERRORS] == (0, 0)
+    assert {process.name: booted.resumed_in(process) for process in booted.waiting()} == {
+        process.name: aes_boot.THE_ROM_S if process.pid == DESK_PID else aes_boot.OURS for process in booted.waiting()}
+    assert booted.takeover.stored_after == ()
+    two_dispatchers = rom.idle != booted.idle
+    result = aes_boot.compared(rom, booted, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ())
+    assert result.differing == [], f"behind the SHIPPED door the machine differs outside the classes at {result.differing[:4]}"
+    # ...and the prototype's machine is this one, but for where each door's own code lies
+    assert booted.idle == behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).idle
+    assert [(each.name, each.stack) for each in door.programs] == [
+        (each.name, each.stack) for each in behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).door.programs]
+
+
+def test_a_partial_door_is_refused_by_name():
+    """RED (wave 3's review, C-F8): a door of THE VECTOR ALONE over a machine with accessories. Every accessory would
+    be entered by the ROM's gotopgm while its traps arrive at our handler — and every other vet passes (who-ran is
+    per declared part). Refused where the door is laid; over the desk's machine, which loads no program, the same
+    door is whole."""
+    built = isr.blob_named(THE_SHIPPED_BLOB)
+    the_vector_alone = aes_boot.ours_of(built, door=(aes_event.GEM_TRAP_VECTOR,))
+    with pytest.raises(aes_boot.Refused, match=r"A PARTIAL DOOR: the GEM trap's vector \(\$88\) is mapped and the first-entry frame of "
+                                               r"\[b'TESTACC1', b'TESTACC2'\] still holds the ROM's gotopgm"):
+        aes_boot.booted.derive(*capture_and_disk(QUIET_PAIR), ours=the_vector_alone)
+    alone = aes_boot.Machine(aes_boot.booted.derive(*capture_and_disk(A_DESK), ours=the_vector_alone))
+    assert alone.door.programs == () and alone.door.ran[THE_VECTOR][0] > 0
+
+
+@every_door_machine
+@every_blob
+def test_a_door_machine_differs_from_the_rom_s_in_the_classes_of_each_process_alone(label, blob):
+    """THE HEART, BEHIND A DOOR. Beside the machine the ROM booted, the whole megabyte differs ONLY in wave 2's classes
+    — now PER PROCESS: the screen manager's and each program's saved context and stack — in the parameter of a wait
+    that names a buffer on the waiter's own stack, in the dispatcher's stack, and in the blob's span; the vector and
+    p_ldaddr are MAPPED and then equal. Every class is needed (the machines differ in each), and where both boots end
+    in one dispatcher's idle THE CPU STANDS IN THE SAME REGISTERS."""
+    rom, ours = booted_as(label), behind_a_door(label, blob)
+    two_dispatchers = rom.idle != ours.idle
+    result = aes_boot.compared(rom, ours, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ())
+    assert result.differing == [], f"{label} on {blob} differs outside the classes at {[(hex(at), size) for at, size in result.differing]}"
+    assert two_dispatchers or rom.registers == ours.registers
+    names = [process.name.decode().strip() for process in programs_of(ours)]
+    per_program = {each.format(name) for name in names for each in (aes_boot.PROGRAM_CONTEXT, aes_boot.PROGRAM_STACK)}
+    waits = {name for name in result.within if "its parameter, an address in its own stack" in name}
+    assert set(result.within) - waits - {aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME} == per_program | {
+        aes_boot.DISPATCHER_STACK if two_dispatchers else aes_boot.DEAD_DISPATCHER_FRAMES, aes_boot.SAVED_CONTEXT,
+        aes_boot.MANAGER_STACK, aes_boot.THE_BLOB}
+    assert all(result.within.values()), f"a class the two machines do not differ in: {result.within}"
+    assert len(waits) == len(names), "each accessory waits for a message: one buffer on its own stack"
+    assert case.long_in(aes_boot.mapped_back(ours), addrs.VECTOR_TRAP_GEM) == rom.long(addrs.VECTOR_TRAP_GEM) == addrs.GEM_TRAP2
+
+
+@every_blob
+def test_the_comparison_behind_a_door_still_sees_a_byte_beside_every_class(blob):
+    """NO CLASS OF A PROGRAM IS A BYTE WIDER THAN ITS SPAN (the quiet pair): one byte flipped just under and just over
+    each is a difference named at that address — unless the neighbour is another class's own byte — and one flipped
+    at either end inside is none; a flipped byte of the vector is a difference in that longword."""
+    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, blob)
+    classes, _beside = aes_boot.by_nature(rom, ours)
+    inside_some = lambda at: any(lo <= at < hi for lo, hi in classes.values())      # noqa: E731
+    assert sum("TESTACC" in name for name in classes) == 6
+    for name, (lo, hi) in classes.items():
+        for at in (lo - 1, hi):
+            if not inside_some(at):
+                assert aes_boot.compared(rom, flipped(ours, at)).differing == [(at, 1)], f"unseen beside {name} [{lo:#x}, {hi:#x})"
+        for at in (lo, hi - 1):
+            assert aes_boot.compared(rom, flipped(ours, at)).differing == []
+    for at in range(addrs.VECTOR_TRAP_GEM, addrs.VECTOR_TRAP_GEM + LONG_BYTES):
+        seen = aes_boot.compared(rom, flipped(ours, at)).differing
+        assert seen and all(addrs.VECTOR_TRAP_GEM <= start and start + size <= addrs.VECTOR_TRAP_GEM + LONG_BYTES for start, size in seen)
+
+
+def test_a_wait_s_parameter_is_a_class_only_where_both_machines_hold_an_address_of_the_waiter_s_stack():
+    """`_of_a_program`'s third class, at its edge: the EVB's parameter is named where BOTH machines hold an address
+    inside the program's own stack there — with the ROM's machine holding anything else (a timer's count), the same
+    two machines differ in that longword and the comparison says so."""
+    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, "the shipped blob")
+    classes, _beside = aes_boot.by_nature(rom, ours)
+    (slot, end), = [span for name, span in classes.items() if name.startswith("TESTACC1's wait")]
+    assert end - slot == LONG_BYTES and rom.long(slot) != ours.long(slot)
+    counted = bytearray(rom.ram)
+    counted[slot:end] = struct.pack(">I", 0x1234)
+    elsewhere = aes_boot.Machine(rom.boot._replace(ram=bytes(counted)))
+    assert not any(name.startswith("TESTACC1's wait") for name in aes_boot.by_nature(elsewhere, ours)[0])
+    assert [at for at, _size in aes_boot.compared(elsewhere, ours).differing if slot <= at < end]
+
+
+def made_behind_a_door(label, blob, patch, door=None, **patched):
+    """The door boot of `label` on `blob` MADE (never served), `aes_boot`'s `patched` attributes in force."""
+    for name, value in patched.items():
+        patch.setattr(aes_boot, name, value)
+    ours = the_door_of(blob)
+    return aes_boot.booted.derive(*capture_and_disk(label), ours=ours if door is None else ours._replace(door=door))
+
+
+@every_blob
+def test_a_program_whose_frame_is_not_walked_runs_the_rom_s_gotopgm_and_the_boot_is_refused(blob, monkeypatch):
+    """RED, real boots (§7.4: a program's first-entry frame is per process, and an allocated PD's address the
+    layout's). The walk replaced by A STATIC TUPLE — the spare static PD's frame alone, as a registry of fixed slots
+    would hold — leaves the ALLOCATED accessory's frame unmapped: the ROM's gotopgm enters it, and the boot is refused
+    by the cycles the ROM's text ran. And with nothing walked at all, the same."""
+    walked = aes_event.first_entry_frames
+    for fewer in (lambda memory: tuple((pd, slot) for pd, slot in walked(memory) if pd < aes.AES_PD_TABLE + aes.AES_PD_COUNT * aes.PD_BYTES),
+                  lambda memory: ()):
+        monkeypatch.setitem(aes_event.SLOTS_WALKED_FROM_THE_MACHINE, A_PROGRAM, fewer)
+        with pytest.raises(aes_boot.Refused, match=r"THE ROM'S OWN CODE RAN BEHIND A DOOR CALLED OURS: \d+ cycles in "
+                                                   rf"\[{addrs.AES_ROM_GOTOPGM:#x}, .* a loaded program's first-entry frame was mapped"):
+            made_behind_a_door(QUIET_PAIR, blob, monkeypatch)
+
+
+@every_blob
+def test_a_vector_left_the_rom_s_is_refused_where_the_boot_ends(blob, monkeypatch):
+    """RED, a real boot: every mapping applied BUT THE VECTOR'S — the accessories are entered through our gotopgm and
+    trap into the ROM's handler, its aes_entry, its marshal: ROM code end to end behind a door called ours. Refused
+    by name where the boot ends: the vector holds the ROM's own handler."""
+    def all_but_the_vector(memory, slots, mapping):
+        return MAPPED(memory, [slot for slot in slots if slot != addrs.VECTOR_TRAP_GEM], mapping)
+    with pytest.raises(aes_boot.Refused, match=r"THE DOOR IS NO LONGER OURS where the boot ends: the GEM trap's vector \(\$88\) "
+                                               rf"holds {addrs.GEM_TRAP2:#x} — THE ROM'S OWN HANDLER, PUT BACK"):
+        made_behind_a_door(QUIET_PAIR, blob, monkeypatch, _mapped=all_but_the_vector)
+
+
+def test_the_rom_s_trap_text_running_after_the_lay_is_refused_by_its_cycles(monkeypatch):
+    """RED, a real boot, the who-ran itself: the door's vector is ours and still holds ours where the boot ends, but
+    what stands there RELAYS TO THE ROM'S HANDLER (`jmp $fe3ea6` appended and named as the handler: a labelled forgery
+    of a build whose door is a shim) — every vet of a slot passes, and the boot is refused by the cycles the ROM's
+    own text ran. A count of stops at our entry would have called this ours."""
+    ours = the_door_of("the shipped blob")
+    relay = ours.base + len(ours.image)
+    shim = ours._replace(image=ours.image + JUMP_ABSOLUTE + struct.pack(">I", addrs.GEM_TRAP2), end=relay + len(JUMP_ABSOLUTE) + LONG_BYTES,
+                         door=(aes_boot.DoorPart(THE_VECTOR, ((addrs.GEM_TRAP2, relay),)), ours.door[1]))
+    with pytest.raises(aes_boot.Refused, match=rf"THE ROM'S OWN CODE RAN BEHIND A DOOR CALLED OURS: \d+ cycles in \[{addrs.GEM_TRAP2:#x}, "):
+        aes_boot.booted.derive(*capture_and_disk(QUIET_PAIR), ours=shim)
+
+
+def test_a_door_is_taken_at_the_boot_s_first_rte_and_nowhere_else():
+    """RED (§0.3 of the design): at wave 2's stop — the screen manager's own first entry — both accessories have
+    been entered by the ROM's gotopgm and stand parked inside the ROM's aes_entry; a door handed a takeover laid
+    there, or from the start, is refused before the boot runs."""
+    ours = the_door_of("the shipped blob")
+    for laid in (aes_boot.AT_THE_SCREEN_MANAGER_S_ENTRY, aes_boot.FROM_THE_START):
+        with pytest.raises(aes_boot.Refused, match="a door is taken at the boot's first switchto `rte` and nowhere else"):
+            aes_boot.booted.derive(*capture_and_disk(QUIET_PAIR), ours=ours, laid=laid)
+    # ...and what the ROM's own boot holds at that later stop: each accessory's stack names the ROM's exit and aes_entry
+    stopped = at_the_rom_s_ctlmgr(QUIET_PAIR)
+    for process in programs_of(aes_boot.Machine(stopped)):
+        parked = case.long_in(stopped.ram, process.uda + aes.UDA_SUPER_SP) & BUS
+        held = {case.long_in(stopped.ram, at) & BUS for at in range(parked, process.uda + aes_boot.ACCESSORY_UDA_BYTES, WORD_BYTES)}
+        assert addrs.GEM_TRAP2_AES_BACK in held, f"{process.name}: parked inside the ROM's trap before the screen manager first runs"
+
+
+@every_blob
+def test_a_vector_the_rom_has_not_installed_is_refused_at_the_stop(blob):
+    """RED, `_door_mapped` on its inputs: a machine whose `$88` holds something else than the ROM's handler at the
+    stop (a boot stopped before install_trap2, a vector the ROM gave back) has nothing of the registry's to map
+    there, and the takeover is refused by name — it never lays our handler over a value it does not know."""
+    booted = behind_a_door(A_DESK, blob)
+    taking = aes_boot._TakingOver(booted.image(), the_door_of(blob), aes_boot.AT_THE_FIRST_ENTRY)
+    taking._memory[addrs.VECTOR_TRAP_GEM:addrs.VECTOR_TRAP_GEM + LONG_BYTES] = struct.pack(">I", addrs.AES_ROM_HCTL_BUTTON)
+    with pytest.raises(aes_boot.Refused, match=rf"the GEM trap's vector \(\$88\) holds {addrs.AES_ROM_HCTL_BUTTON:#x} at the stop, not the ROM's"):
+        taking._door_mapped()
+
+
+@every_blob
+def test_a_door_the_rom_took_back_is_refused_by_name_and_never_silently_lost(blob):
+    """THE ROM PUTS ITS OWN HANDLERS BACK (retake, `$fe3c84`, at every sh_tographic; restore_trap2; giveerr): a door
+    machine that holds the ROM's handler in `$88` again — here the longword as retake stores it, laid into a real door
+    machine's megabyte: a labelled forgery of that store — is refused where its continuation ends, by name; with any
+    OTHER value there, refused too, without the remark; and the machine as it is, continued by nothing, passes."""
+    booted = behind_a_door(QUIET_PAIR, blob)
+    assert booted.continued().door == booted.door
+    assert struct.unpack_from(">HI", BASE_IMAGE, addrs.AES_ROM_RETAKE) == (MOVE_L_IMMEDIATE_TO_ABSOLUTE, addrs.GEM_TRAP2), (
+        "retake's first instruction stores the ROM's handler by value")
+    for held, said in ((addrs.GEM_TRAP2, " — THE ROM'S OWN HANDLER, PUT BACK"), (addrs.AES_ROM_HCTL_BUTTON, ", not the blob's")):
+        ram = bytearray(booted.ram)
+        ram[addrs.VECTOR_TRAP_GEM:addrs.VECTOR_TRAP_GEM + LONG_BYTES] = struct.pack(">I", held)
+        with pytest.raises(aes_boot.Refused, match=rf"THE DOOR IS NO LONGER OURS .*: the GEM trap's vector \(\$88\) holds {held:#x}{said}"):
+            aes_boot.vet_the_door_stands(ram, booted.ours, "as it stands")
+    # ...and A REAL CONTINUATION of the machine as retake leaves it: it runs — the idle's own poll traps into the ROM's
+    # handler — reaches its idle, and is refused there by name.
+    retaken = bytearray(booted.ram)
+    retaken[addrs.VECTOR_TRAP_GEM:addrs.VECTOR_TRAP_GEM + LONG_BYTES] = struct.pack(">I", addrs.GEM_TRAP2)
+    with pytest.raises(aes_boot.Refused, match=r"THE DOOR IS NO LONGER OURS where the continuation ends: .* THE ROM'S OWN HANDLER, PUT BACK"):
+        aes_boot.Machine(booted.boot._replace(ram=bytes(retaken))).continued()
+
+
+def taking_as_made(booted):
+    """The takeover of the real door machine `booted` STANDING WHERE ITS BOOT ENDED, for a RED on `made`'s inputs: its
+    memory, what it took, and the profile's tallies as that boot read them (`ran`: none of the ROM's)."""
+    memory = booted.image()
+    taking = aes_boot._TakingOver(memory, booted.ours, aes_boot.AT_THE_FIRST_ENTRY)
+    taking.taken, taking.entered, taking._mark = booted.takeover, True, 0
+    taking._stored_in_the_span = lambda since, until=None: []
+    taking._tallied_at_the_lay = {part.what: (0, 0) for part in booted.ours.door}
+    taking._tallies_of = lambda part: booted.door.ran[part.what]
+    return taking, memory
+
+
+@every_blob
+def test_what_a_door_is_held_to_where_the_boot_ends_each_refused_by_name(blob):
+    """`_TakingOver._door_made`, on a real door machine's own megabyte: as it stands it is passed, its `ran` the
+    boot's. RED, one thing wrong each: a program whose first-entry frame was mapped and which our gotopgm never
+    entered; a program parked in the ROM's text; the vector mapped and our handler never run; cycles in the ROM's
+    text of a part. (No boot here makes the first three: held on their inputs.)"""
+    booted = behind_a_door(QUIET_PAIR, blob)
+    taking, memory = taking_as_made(booted)
+    assert taking.made(memory, True) == booted.takeover
+    first = booted.door.programs[0]
+    gotopgm = dict(booted.ours.door[1].mapping)[addrs.AES_ROM_GOTOPGM]
+    taking._programs_to_enter = {gotopgm: [first.pd]}
+    with pytest.raises(aes_boot.Refused, match=r"reached its idle and \[b'TESTACC1'\] was never entered through our gotopgm"):
+        taking.made(memory, True)
+    assert taking.made(memory, False).door == booted.door, "a boot stopped at `until` may stand before a program's entry"
+    taking, memory = taking_as_made(booted)
+    parked = booted.long(booted.process(first.pd).uda + aes.UDA_SUPER_SP) & BUS
+    memory[parked + aes_boot.FRAME_PC:parked + aes_boot.FRAME_BYTES] = struct.pack(">I", addrs.AES_ROM_DSPTCH)
+    with pytest.raises(aes_boot.Refused, match=rf"b'TESTACC1' stands parked at {addrs.AES_ROM_DSPTCH:#x}, in the ROM's text: behind a door"):
+        taking.made(memory, True)
+    ran_behind = "THE ROM'S OWN CODE RAN BEHIND A DOOR CALLED OURS"
+    for what, tallies, said in ((THE_VECTOR, (0, 0), "our `trap #2` handler never ran"),
+                                (THE_VECTOR, (8, 4), rf"{ran_behind}: 4 cycles in \[0xfe3ea6, 0xfe3f3e\), \[0xfe65aa, 0xfe65c4\)"),
+                                (A_PROGRAM, (40, 12), rf"{ran_behind}: 12 cycles in \[0xfe38b0, 0xfe38d4\)")):
+        taking, memory = taking_as_made(booted)
+        taking._tallies_of = lambda part, what=what, tallies=tallies: tallies if part.what == what else booted.door.ran[part.what]
+        with pytest.raises(aes_boot.Refused, match=said):
+            taking.made(memory, True)
+
+
+@every_blob
+def test_our_gotopgm_must_be_entered_for_a_program_the_door_mapped_on_its_stack_s_top(blob):
+    """`_TakingOver._program_entered`, on its inputs: the stop at our gotopgm is the `rte`'s landing for THE PROCESS
+    RUNNING — one whose frame the door mapped, on the top of its own stack, ONCE; for any other process, a second
+    time, or at another stack pointer it is refused by name. When the last is entered the stop is disarmed."""
+    booted = behind_a_door(QUIET_PAIR, blob)
+    gotopgm = dict(booted.ours.door[1].mapping)[addrs.AES_ROM_GOTOPGM]
+    first, second = booted.door.programs
+
+    def standing(running):
+        memory = booted.image()
+        memory[aes.AES_RLR:aes.AES_RLR + LONG_BYTES] = struct.pack(">I", running)
+        taking = aes_boot._TakingOver(memory, booted.ours, aes_boot.AT_THE_FIRST_ENTRY)
+        taking.taken, taking.armed = booted.takeover, frozenset({gotopgm})
+        taking._programs_to_enter = {gotopgm: [first.pd, second.pd]}
+        return taking
+    taking = standing(second.pd)
+    taking.stopped(gotopgm, second.stack[1], 0)
+    assert taking._programs_to_enter == {gotopgm: [first.pd]} and taking.armed == {gotopgm}
+    with pytest.raises(aes_boot.Refused, match="whose first-entry frame the door did not map — or mapped, and it is entered twice"):
+        taking.stopped(gotopgm, second.stack[1], 0)
+    taking._memory[aes.AES_RLR:aes.AES_RLR + LONG_BYTES] = struct.pack(">I", first.pd)
+    taking.stopped(gotopgm, first.stack[1], 0)
+    assert taking.armed == frozenset()
+    for sp in (first.stack[1] - aes_boot.FRAME_BYTES, first.stack[1] + WORD_BYTES, second.stack[1]):
+        with pytest.raises(aes_boot.Refused, match=rf"is entered at SP {sp:#x}, not on the top of the stack of b'TESTACC1'"):
+            standing(first.pd).stopped(gotopgm, sp, 0)
+    with pytest.raises(aes_boot.Refused, match=r"entered for the process at .* \(b'SCRENMGR'\), whose first-entry frame the door did not map"):
+        standing(aes.SCREEN_MANAGER_PD).stopped(gotopgm, first.stack[1], 0)
+
+
+@every_blob
+def test_the_critical_error_vector_is_mapped_at_the_stop_and_held_where_the_boot_ends(blob):
+    """`$404`, THE DOOR'S OTHER VECTOR (`aes_event.CRITICAL_ERROR_VECTOR`), by a real boot: at the takeover's stop the
+    ROM's takeerr HAS RUN — the vector holds the ROM's crit_err there, on the desk's boot and the accessories' — so it
+    is mapped as `$88` is, held where the boot ends, mapped back in a comparison, and refused by name once it holds
+    the ROM's again (giveerr, retake). THE ENTRY IT IS GIVEN HERE IS A LABELLED STAND-IN — the prototype's trap
+    handler: no critical error happens in a boot, so nothing enters it THROUGH `$404` and the ROM's crit_err runs
+    zero cycles; the build's own crit_err is slice G's, and a blob that links none is refused
+    (`test_a_door_s_entries_are_found_by_symbol_...`)."""
+    critical, stand_in = aes_event.CRITICAL_ERROR_VECTOR, the_door_of(blob).door[0].mapping[0][1]
+    ours = the_door_of(blob)._replace(door=(*the_door_of(blob).door, aes_boot.DoorPart(critical.what, ((addrs.AES_ROM_CRIT_ERR, stand_in),))))
+    for label in (A_DESK, QUIET_PAIR):
+        assert at_the_first_rte(label).ram[aes_event.ETV_CRITIC:aes_event.ETV_CRITIC + LONG_BYTES] == struct.pack(
+            ">I", addrs.AES_ROM_CRIT_ERR), "takeerr ran before the dispatcher's first pass"
+        booted = aes_boot.Machine(aes_boot.booted(*capture_and_disk(label), ours=ours))
+        assert booted.door.vectors[aes_event.ETV_CRITIC] == (addrs.AES_ROM_CRIT_ERR, stand_in)
+        assert booted.long(aes_event.ETV_CRITIC) == stand_in and booted.door.ran[critical.what][1] == 0
+        assert aes_boot.compared(booted_as(label), booted).differing == []
+        ram = bytearray(booted.ram)
+        ram[aes_event.ETV_CRITIC:aes_event.ETV_CRITIC + LONG_BYTES] = struct.pack(">I", addrs.AES_ROM_CRIT_ERR)
+        with pytest.raises(aes_boot.Refused, match=rf"THE DOOR IS NO LONGER OURS as it stands: the critical-error vector \(\$404\) "
+                                                   rf"holds {addrs.AES_ROM_CRIT_ERR:#x} — THE ROM'S OWN HANDLER, PUT BACK"):
+            aes_boot.vet_the_door_stands(ram, ours, "as it stands")
+
+
+DOOR_CHAINS = [(A_DESK, MENU), (QUIET_PAIR, MENU), (WITH_WINDOWS, MENU), (WITH_WINDOWS, CLOSER)]
+
+
+@functools.cache
+def continued_behind_a_door(label, blob, chain):
+    machines = [behind_a_door(label, blob)]
+    for received in receptions_of(chain):
+        machines.append(machines[-1].continued(*received))
+    return tuple(machines)
+
+
+@pytest.mark.parametrize("label, chain", DOOR_CHAINS)
+@every_blob
+def test_woken_behind_a_door_every_process_does_as_the_rom_s(label, chain, blob):
+    """A DOOR MACHINE CONTINUED — the desk's menu worked, an accessory's window closed: the accessory woken by the
+    message, which it answers with no call of its own (`test/acc/testacc.S` closes nothing: it waits again — its
+    `evnt_mesag` is what goes THROUGH OUR DOOR; the window is closed by no test). At every idle the screen manager made the
+    same handler calls with the same point as the ROM's, the whole megabyte is the ROM-booted machine's but the
+    classes of each process, the door still stands (`continued` refuses it otherwise), and each accessory's own
+    record of what the AES answered it is the ROM's."""
+    rom_s, taken = continued_through(label, None, chain), continued_behind_a_door(label, blob, chain)
+    for step, (rom, ours) in enumerate(zip(rom_s[1:], taken[1:])):
+        assert rom.observed == ours.observed, f"idle {step}: the ROM's ctlmgr called {rom.observed}, ours {ours.observed}"
+        two_dispatchers = rom.idle != ours.idle
+        result = aes_boot.compared(rom, ours, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ())
+        assert result.differing == [], f"idle {step} of {chain}: differs at {[(hex(at), size) for at, size in result.differing]}"
+        assert two_dispatchers or rom.registers == ours.registers
+        for process in programs_of(ours):
+            assert ours.results(process) == rom.results(rom.process(process.pd)), f"idle {step}: {process.name}"
+        assert ours.long(addrs.VECTOR_TRAP_GEM) == the_door_of(blob).door[0].mapping[0][1]
+
+
+# ---- EVERY ARRIVAL AT A STOP IS A STOP (§7.3: `_Run` counted two arrivals with no stop between as one) ---------------------------
+MOVE_L_IMMEDIATE_TO_ABSOLUTE = 0x23fc   # move.l #<long>,<xxx>.l
+MOVE_L_IMMEDIATE_TO_D0 = 0x203c         # move.l #<long>,d0
+CMPI_W_D0_CYCLES = 8                    # the ROM handler's first instruction, `cmpi.w #0,d0`: what one arrival tallies there
+
+
+def arrivals_at_the_rom_s_handler(stepped_off=None):
+    """The desk's boot (the ROM's own), every arrival at the ROM's `trap #2` handler OBSERVED as a stop of the run —
+    and the same run's cycle profile at that instruction: `(stops, arrivals by the profile)`."""
+    capture, disk = capture_and_disk(A_DESK)
+    memory = bytearray(BASE_IMAGE)
+    memory[:RAM_BYTES] = capture.ram
+    run = aes_boot._Run(memory, aes_boot.Floppy(memory, disk), aes_boot.BOOT_INSNS,
+                        observing={addrs.GEM_TRAP2: ("trap #2", lambda _memory, _sp: None)})
+    if stepped_off is not None:
+        run._stepped_off = stepped_off
+    emu.prof_reset()
+    emu.prof_enable(True)
+    try:
+        run.to_an_idle(capture.registers, aes_boot.io_seed_of(capture))
+        tallied = emu.prof_cycles(addrs.GEM_TRAP2, addrs.GEM_TRAP2 + WORD_BYTES)
+    finally:
+        emu.prof_enable(False)
+        aes_boot._CPU.m68k_set_irq(aes_boot.NO_INTERRUPT)
+        emu.bench_abort()
+    return len(run.observed), tallied // CMPI_W_D0_CYCLES
+
+
+def test_every_arrival_at_a_stop_is_a_stop():
+    """The stops a run counts ARE its arrivals: the desk's boot arrives at the ROM's `trap #2` handler as many times as
+    the cycle profile says that instruction ran — hundreds — and the run stops there each time. RED, the same run
+    leaving a stop as it did until wave 3 (the PC left disarmed to the next stop): far fewer stops than arrivals."""
+    stops, arrivals = arrivals_at_the_rom_s_handler()
+    assert stops == arrivals > 300
+
+    def disarmed_to_the_next_stop(stops_armed):
+        emu.bench_door_arm(stops_armed - {aes_boot._register("pc")})
+    fewer, the_same_arrivals = arrivals_at_the_rom_s_handler(disarmed_to_the_next_stop)
+    assert the_same_arrivals == arrivals and fewer < arrivals // 2
+
+
+def executions_of_the_idle_s_poll(run, registers, io):
+    """`run` taken to its idle under the cycle profile: the cycles tallied at the instruction the ROM's idle poll
+    COMES BACK TO (`IDLE_POLLED`: run once per poll made, and a plain instruction — the poll's own is a Line-F word,
+    whose exception the profile does not tally evenly)."""
+    emu.prof_reset()
+    emu.prof_enable(True)
+    try:
+        run.to_an_idle(registers, io)
+        return emu.prof_cycles(aes_boot.IDLE_POLLED, aes_boot.IDLE_POLLED + WORD_BYTES)
+    finally:
+        emu.prof_enable(False)
+        aes_boot._CPU.m68k_set_irq(aes_boot.NO_INTERRUPT)
+        emu.bench_abort()
+
+
+def test_a_run_entered_at_a_stop_does_not_count_its_entry():
+    """A MACHINE CONTINUED IS ENTERED AT ITS IDLE'S POLL, A STOP — and its `polls` are its ARRIVALS there, the entry
+    not among them. Held to the cycle profile, independent of the run's own counting: what one execution of the
+    poll's instruction tallies is read off the desk's BOOT (entered elsewhere: it executes the poll at every arrival
+    but the last, where the run ends BEFORE it), and the continued run executes it exactly as often as it arrives
+    (the entry's execution for the last arrival's, which is not run). RED until the first resumed segment was
+    understood (it runs no instruction: the entry was stopped at again and counted — every continued machine's
+    `polls` one too many), and what HEAD's run counted is the number held here."""
+    capture, disk = capture_and_disk(A_DESK)
+    memory = bytearray(BASE_IMAGE)
+    memory[:RAM_BYTES] = capture.ram
+    booting = aes_boot._Run(memory, aes_boot.Floppy(memory, disk), aes_boot.BOOT_INSNS)
+    tallied = executions_of_the_idle_s_poll(booting, capture.registers, aes_boot.io_seed_of(capture))
+    per_execution, odd = divmod(tallied, booting.polls - 1)
+    assert per_execution and not odd and booting.polls == booted_as(A_DESK).boot.polls
+    boot = booted_as(A_DESK).boot
+    assert boot.registers["pc"] == aes_boot.IDLE_LOOP, "the premise: a machine at the ROM's idle stands AT the poll"
+    memory = bytearray(BASE_IMAGE)
+    memory[:RAM_BYTES] = boot.ram
+    aes_boot._Receiving(memory, boot.registers["sr"]).all_of(ONTO_THE_VIEW_TITLE)
+    continuing = aes_boot._Run(memory, aes_boot.Floppy(memory, boot.disk), aes_boot.CONTINUED_INSNS)
+    executed, odd = divmod(executions_of_the_idle_s_poll(continuing, boot.registers, aes_boot._io_seed(boot.io)), per_execution)
+    assert not odd and continuing.polls == executed >= 2
+    assert booted_as(A_DESK).continued(*ONTO_THE_VIEW_TITLE).boot.polls == continuing.polls
+
+
+# ---- THE GEM TRAP'S HANDLER IS PER SHORE (§7.1: a watch keyed on the ROM's handler goes blind behind a door) ---------------------
+A_LINE, A_MODE_NOT_CACHED, A_COLOUR_NOT_CACHED = 0, 3, 5      # gsx_attr's frame: a mode and a colour its cache has not
+GSX_ATTR_S_VDI_CALLS = [32, 17]         # ...so it asks the VDI both: vswr_mode, vsl_color
+
+
+def gsx_attr_over(machine):
+    """The ROM's gsx_attr over `machine` (a booted machine's megabyte), a line colour its cache does not hold: pokes."""
+    return aes.staged("AES_ROM_GSX_ATTR", (A_LINE, A_MODE_NOT_CACHED, A_COLOUR_NOT_CACHED), machine.pokes)
+
+
+@every_blob
+def test_a_watch_keyed_on_its_own_machine_s_handler_sees_the_trap_behind_a_door(blob):
+    """A REAL RUN OVER A REAL DOOR MACHINE: the ROM's gsx_attr makes its VDI calls (the writing mode, the line's
+    colour). Over the machine the ROM booted each `trap #2` arrives at the ROM's handler; over the door machine at the
+    door's — and the watch keyed on THE MACHINE'S OWN `$88` (`aes_event.gem_trap_on`) sees the same traps on both: the
+    same opcodes, at the same depth, the same bytes used under each (the door's handler is the ROM's instructions).
+    RED: keyed on the ROM's handler, the watch over the door machine sees NO TRAP AT ALL — the blind watcher of §7.1."""
+    import aes_stack
+    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, blob)
+    assert aes_event.gem_trap_on(rom.image()) == aes_event.VDI_TRAP != aes_event.gem_trap_on(ours.image())
+    seen = [aes_stack._watched_from_its_frame(gsx_attr_over(each), addrs.AES_ROM_GSX_ATTR, None, aes_stack.THE_ROM_S)
+            for each in (rom, ours)]
+    assert seen[0] == seen[1] and [trap.opcode for trap in seen[0]] == GSX_ATTR_S_VDI_CALLS
+    # (until wave 3's review this run was MADE, and answered `()`: no trap seen, nothing refused — C-F2, case 3b)
+    with pytest.raises(AssertionError, match=rf"A WATCH GONE BLIND: the watch of {addrs.AES_ROM_GSX_ATTR:#x}'s exceptions is armed at the "
+                                             rf"exception handler {aes_event.VDI_TRAP:#x}, and no exception vector of its machine holds it"):
+        aes_stack._watched_from_its_frame(gsx_attr_over(ours), addrs.AES_ROM_GSX_ATTR, None, aes_stack.THE_ROM_S,
+                                          handler=aes_event.VDI_TRAP)
+
+
+@every_blob
+def test_every_watch_of_a_run_over_a_door_machine_stops_at_the_door_s_handler(blob):
+    """THE OTHER WATCHERS, each over the same real door machine and each held to what it sees over the ROM's:
+      * `aes_stack._arrivals_from_its_frame` (arrivals counted by the VDI call they are made under: a place is armed
+        again at each `trap #2`) — the BIOS's door reached once under each of gsx_attr's two calls;
+      * `aes_switch.the_rom_s_loop_run` (the dispatcher's loop from the idle: the traps its keyboard polls take) —
+        the same VDI opcodes, the same depths;
+      * `aes_fslib.VdiCalls` (the selector's VDI ledger): keyed on the door's handler it keeps the call the machine
+        stands at; left keyed on the ROM's over that machine it is refused blind at its first stop."""
+    import aes_fslib
+    import aes_stack
+    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, blob)
+    door_s = aes_event.gem_trap_on(ours.image())
+    counted = [aes_stack._arrivals_from_its_frame(gsx_attr_over(each), addrs.AES_ROM_GSX_ATTR, None, aes_stack.THE_ROM_S,
+                                                  frozenset({addrs.GEM_TRAP2_VDI_DOOR})) for each in (rom, ours)]
+    assert counted[0] == counted[1] == tuple((opcode, addrs.GEM_TRAP2_VDI_DOOR, 1) for opcode in sorted(GSX_ATTR_S_VDI_CALLS))
+    loops = [aes_switch.the_rom_s_loop_run(each.pokes) for each in (rom, ours)]
+    assert loops[0].opcodes == loops[1].opcodes and len(loops[0].opcodes) >= 3 and loops[0].traps == loops[1].traps
+    memory, sp = make_image(gsx_attr_over(ours)), emu.STACK_TOP
+    keyed = aes_fslib.VdiCalls(trap=door_s)
+    assert door_s in keyed.first and aes_event.VDI_TRAP not in keyed.first
+    keyed.stopped(door_s, sp, memory)
+    assert len(keyed.made) == 1
+    with pytest.raises(AssertionError, match="A WATCH GONE BLIND"):
+        aes_fslib.VdiCalls().stopped(aes_event.ENTRIES[0], sp, memory)
+    # THE TWO THAT ARE NO DOOR WATCH, handed the ROM's handler over the door machine: each refused where it is armed
+    with pytest.raises(AssertionError, match=r"A WATCH GONE BLIND: the count of 0x[0-9a-f]+'s arrivals is armed at"):
+        aes_stack._arrivals_from_its_frame(gsx_attr_over(ours), addrs.AES_ROM_GSX_ATTR, None, aes_stack.THE_ROM_S,
+                                           frozenset({addrs.GEM_TRAP2_VDI_DOOR}), trap=aes_event.VDI_TRAP)
+    with pytest.raises(AssertionError, match=r"A WATCH GONE BLIND: the watch of the loop at 0x[0-9a-f]+ is armed at"):
+        aes_switch._loop_run(make_image(ours.pokes), addrs.AES_ROM_DISP_LOOP, addrs.AES_ROM_DISP_SWITCHTO, addrs.AES_ROM_CHKKBD,
+                             trap=aes_event.VDI_TRAP)
+    with pytest.raises(AssertionError, match="A WATCH GONE BLIND: a watch at the ROM's entries is armed at"):
+        aes_event.run_watched(make_image(gsx_attr_over(ours)), addrs.AES_ROM_GSX_ATTR,
+                              aes_event.EntryStops({aes_event.VDI_TRAP}, lambda pc, sp, memory: None))
+
+
+def test_tier_3_keys_each_shore_s_marks_on_the_handler_its_own_machine_holds(monkeypatch):
+    """`tier3.the_rom_s_gem_trap` / `our_gem_trap`: the ROM's run of a row reaches the handler the row's machine holds
+    in `$88`; ours reaches that longword AS THE REGISTRY MAPS IT AT A RUN'S ENTRY — the same one today (no relocation
+    names `$88`: the door's are pending), and the blob's own the day one does (a registry handed one, here)."""
+    tier3 = harness.bench_tier3()
+    the_name = aes_event.trap_taken(aes_event.VDI_TRAP, 0).pc
+    row = next(row for row in tier3.ROWS if row.slice and the_name in {getattr(end, "pc", None) for end in row.slice})
+    blob = isr.blob()
+    assert tier3.the_rom_s_gem_trap(row) == tier3.our_gem_trap(row, blob) == aes_event.VDI_TRAP
+    door_s = blob.base + 0x40
+    # (...the one mapped only where a run ENDS comes first: applied at the entry too, it would take the ROM's name away)
+    mapped = (tier3.Relocation("mapped where a run ends only", (addrs.VECTOR_TRAP_GEM,), {aes_event.VDI_TRAP: 0}, False),
+              tier3.Relocation("the GEM trap's vector", (addrs.VECTOR_TRAP_GEM,), {aes_event.VDI_TRAP: door_s}, True))
+    monkeypatch.setattr(tier3, "code_relocations", lambda elf, symbol: mapped)
+    assert tier3.our_gem_trap(row, blob) == door_s and tier3.the_rom_s_gem_trap(row) == aes_event.VDI_TRAP
+    assert tier3._our_marks(row, blob, ()).traps == {door_s} and tier3._the_rom_s_marks(row).traps == {aes_event.VDI_TRAP}
+
+
+@every_blob
+def test_a_marked_run_over_a_door_machine_is_keyed_on_its_handler_or_refused_blind(blob):
+    """...AND A SLICE'S END NAMED BY THE GEM TRAP (`trap_taken(VDI_TRAP, n)`): the ROM's gsx_attr over the door machine,
+    marked at the name — `rom_timeline` keys its marks on the run's own machine, and its arrivals are `At(VDI_TRAP,
+    n)`, as over the ROM's machine. RED: the same watch with its marks left keyed on the ROM's handler is REFUSED BY
+    NAME at its first stop — never run blind to its end."""
+    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, blob)
+    arguments = (A_LINE, A_MODE_NOT_CACHED, A_COLOUR_NOT_CACHED)
+    timelines = [aes_event.rom_timeline("AES_ROM_GSX_ATTR", arguments, each.pokes, {}, (aes_event.VDI_TRAP,)) for each in (rom, ours)]
+    for timeline in timelines:
+        assert [arrival.at for arrival in timeline] == [
+            *(aes_event.trap_taken(aes_event.VDI_TRAP, nth) for nth in range(len(GSX_ATTR_S_VDI_CALLS))), aes_event.RETURN]
+    # A REAL RUN, NOT A HAND-CALLED STOP (wave 3's review, C-F2, case 3a): gsx_attr reaches no door entry, so the GEM
+    # trap is this watch's ONLY stop — blind, it would never stop at all, and a vet made at a stop never ran: the run
+    # returned with no arrival. It is refused WHERE THE WATCH IS ARMED over the machine, before its first instruction.
+    memory = make_image(gsx_attr_over(ours))
+    timeline = aes_event.Timeline((aes_event.VDI_TRAP,))
+    watch = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS).marked_with(timeline)
+    with pytest.raises(AssertionError, match=rf"A WATCH GONE BLIND: .* keyed on {aes_event.VDI_TRAP:#x}, and its machine holds "
+                                             rf"{aes_event.gem_trap_on(memory):#x} in `\$88`"):
+        aes_event.run_watched(memory, addrs.AES_ROM_GSX_ATTR, watch)
+    assert timeline.arrivals == [] and memory == make_image(gsx_attr_over(ours)), "refused before one instruction ran"
+    # ...the same watch keyed on the machine's own handler runs, and stops at each trap
+    keyed = aes_event.Timeline((aes_event.VDI_TRAP,)).on(aes_event.gem_trap_on(memory))
+    assert aes_event.run_watched(memory, addrs.AES_ROM_GSX_ATTR, aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS).marked_with(keyed))
+    assert len(keyed.arrivals) == len(GSX_ATTR_S_VDI_CALLS)
+    # ...and at a stop still (a run that moved the vector under its marks)
+    with pytest.raises(AssertionError, match="A WATCH GONE BLIND"):
+        watch.stopped(aes_event.ENTRIES[0], emu.STACK_TOP, make_image(gsx_attr_over(ours)))
+
+
+def test_marks_keyed_on_a_handler_stop_there_and_keep_the_name():
+    """`KeyedOnTheGemTrap`, on its own inputs: marks named at the GEM trap and keyed on another handler are armed AT
+    THAT HANDLER and at no other PC, an arrival there is counted under THE NAME (`At(VDI_TRAP, n)`: one slice end for
+    both shores), a GEMDOS mark beside it is untouched — and marks named at no GEM trap are never blind."""
+    door_s, name = 0x5d430, aes_event.VDI_TRAP
+    timeline = aes_event.Timeline((name, aes_event.GEMDOS_TRAP)).on(door_s)
+    assert timeline.traps == {door_s, aes_event.GEMDOS_TRAP} and aes_event.Timeline((name,)).traps == {name}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(aes_event, "run_cost", lambda: {"insns": 0, "cycles": 0})
+        timeline.arrived(door_s, 0, None)
+        timeline.arrived(aes_event.GEMDOS_TRAP, 0, None)
+        timeline.arrived(door_s, 0, None)
+    assert [arrival.at for arrival in timeline.arrivals] == [aes_event.At(name, 0), aes_event.At(aes_event.GEMDOS_TRAP, 0), aes_event.At(name, 1)]
+    end = aes_event.trap_taken(name, 1)
+    marks = aes_event.Marks(aes_event.Slice(aes_event.ENTRY, end), lambda: {"insns": 1, "cycles": 4}).on(door_s)
+    assert marks.traps == {door_s}
+    for _arrival in range(2):
+        marks.arrived(door_s, 0, b"")
+    assert marks.at(end, "the run").calls == 0
+    elsewhere = bytearray(make_image({addrs.VECTOR_TRAP_GEM: struct.pack(">I", door_s)}))
+    marks.vet_not_blind(elsewhere)
+    aes_event.Timeline((aes_event.GEMDOS_TRAP,)).vet_not_blind(elsewhere)
+    with pytest.raises(AssertionError, match="A WATCH GONE BLIND"):
+        aes_event.Timeline((name,)).vet_not_blind(elsewhere)
+
+
+# Where a stop is keyed on the ROM's handler BY NAME — `aes_event.VDI_TRAP` spelt in a module — is counted, file by
+# file: a new site is a new watcher that may go blind behind a door, and this reddens until it is read and listed.
+# (`VDI_TRAP` as a slice's NAME, a default a caller overrides with its machine's own, and this file's REDs.)
+SITES_NAMING_THE_ROM_S_HANDLER = {
+    "aes_event.py": 12,                 # its definition; `KeyedOnTheGemTrap` (the name, per shore); `trap_taken`'s note;
+                                        # `EntryStops.armed_over` (the ROM's handler watched as an entry: vetted, twice named)
+    "aes_fslib.py": 4,                  # `VdiCalls`: the default of `trap`, the name its timeline is marked at
+    "aes_stack.py": 2,                  # `_ExceptionsOn` / `_ArrivalsAt`: defaults their callers override (`gem_trap_on`)
+    "aes_switch.py": 1,                 # `_LoopStops`: the default `_loop_run` overrides
+    "test_aes_boot.py": None,           # this file: the REDs above
+    "test_aes_event.py": 4, "test_aes_fmdo.py": 4, "test_aes_fs_input_rows.py": 2}      # slices' NAMES, over snapshot machines
+
+
+def test_every_site_that_names_the_rom_s_trap_handler_is_listed():
+    counted = {}
+    recreate = Path(__file__).resolve().parents[1]
+    for path in sorted((recreate / "test").glob("*.py")) + sorted((recreate / "bench").glob("*.py")):
+        count = len(re.findall(r"\bVDI_TRAP\b", path.read_text()))
+        if count and SITES_NAMING_THE_ROM_S_HANDLER.get(path.name, 0) is not None:
+            counted[path.name] = count
+    listed = {name: count for name, count in SITES_NAMING_THE_ROM_S_HANDLER.items() if count}
+    assert counted == listed, "a site naming the ROM's `trap #2` handler moved: read it (does its watch key on ITS machine's `$88`?)"
+
+
 # ---- THE REGISTRY: an entry declared beside the tuple Tier 3 reads is NAMED, with its owner, until it is mapped -------------
 def _relocations_declared():
     return {name: value for name, value in vars(aes_event).items() if isinstance(value, aes_event.RelocatedCode)}
@@ -1822,12 +2661,19 @@ def _held_at(pokes, at):
     return case.long_in(held, 0)
 
 
-def rows_on_a_takeover_machine(rows):
-    """The Tier 3 rows whose machine is A TAKEOVER'S: the screen manager's p_ldaddr holds A BLOB'S ENTRY — the bench
-    blob's or the shipped one's, by symbol (the ROM's ctlmgr, nothing, or a value a case staged there is none)."""
-    slot = aes_event.SCREEN_MANAGER_ENTRY_SLOTS[0]
-    entries = {aes_boot.ours_of(isr.blob_named(name)).entry for name in isr.BLOBS}
-    return [row for row in rows if isinstance(row.pokes, dict) and _held_at(row.pokes, slot) in entries]
+def rows_on_a_door_machine(rows):
+    """The Tier 3 rows whose machine is BEHIND A DOOR OF OURS: one of the door's vectors or slots (`$88`, `$404`, the
+    desk's trampoline slot) holds an address INSIDE A BLOB'S SPAN — the bench blob's or the shipped one's, the
+    prototype door after it included (the ROM's handler, the BIOS's, nothing, or a value a case staged elsewhere is none). A door always maps `$88` (a door of
+    the programs alone is refused where its boot ends)."""
+    slots = [slot for declared in THE_DOOR_S for slot in declared.slots]
+    # (a blob's span WITH the prototype door the takeover appends to it: the door of every proof made before the flip)
+    spans = [(ours.base, ours.end) for ours in (aes_boot.with_the_prototype_door(isr.blob_named(name)) for name in isr.BLOBS)]
+
+    def behind_a_door_of_ours(pokes):       # (a row's pokes are read ONCE: a row may make its machine where it is asked)
+        held = [_held_at(pokes, slot) & BUS for slot in slots]
+        return any(lo <= each < hi for each in held for lo, hi in spans)
+    return [row for row in rows if isinstance(row.pokes, dict) and behind_a_door_of_ours(row.pokes)]
 
 
 def test_every_relocation_declared_is_mapped_at_tier_3_or_named_not_yet_with_its_owner():
@@ -1843,32 +2689,241 @@ def test_every_relocation_declared_is_mapped_at_tier_3_or_named_not_yet_with_its
     assert all(reason and owner for reason, owner in not_yet.values())
 
 
-def test_no_tier_3_row_runs_on_a_takeover_machine_while_a_relocation_is_not_yet_mapped():
-    """...AND THE LIST MUST BE EMPTY THE DAY A TIER 3 ROW RUNS ON A TAKEOVER MACHINE — read off the row registry
-    itself (`tier3.ROWS`: a row whose machine holds a blob's entry in the screen manager's p_ldaddr): that row's two
-    shores differ in the slots by nature, and only the registry maps them. So the flip cannot land its rows and forget
-    the entry: this reddens, naming the first such row."""
-    not_yet = aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
+def test_no_tier_3_row_runs_on_a_door_machine_while_a_door_declaration_is_not_yet_mapped():
+    """...AND NO TIER 3 ROW MAY RUN BEHIND A DOOR WHILE ONE OF THE DOOR'S DECLARATIONS IS PENDING — read off the row
+    registry itself (`tier3.ROWS`: a row whose machine holds a blob's address in a door slot): that row's two shores
+    differ in the slot by nature, and only the registry maps it. So the flip cannot land a door row and forget its
+    mapping: this reddens, naming the first such row. (THE RULE AS IT WAS UNTIL WAVE 3 — "the list is empty once a
+    row runs on a TAKEOVER machine" — read the screen manager's p_ldaddr in the rows' pokes and saw none of the 2,365:
+    a row's machine is the ROM's, made ours at run time. It held nothing, and the list has four entries: restated
+    for what is pending, the door. `test_no_battery_asks_for_a_door_machine_while_the_door_is_pending` holds the
+    same rule over the SOURCES — a row made from a door machine at run time is that test's to see.)"""
+    pending = {declared.what for declared in THE_DOOR_S} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
     rows = harness.bench_tier3().ROWS
     assert len(rows) > 1000, "the registry read is Tier 3's whole table"
-    taken_over = rows_on_a_takeover_machine(rows)
-    assert not (taken_over and not_yet), (
-        f"{len(taken_over)} Tier 3 row(s) run on a takeover machine (the first: {taken_over[0].function} / {taken_over[0].case}) "
-        f"while {sorted(not_yet)} is still not mapped at Tier 3: add it to CODE_RELOCATIONS with its site in "
-        f"`tier3.code_relocations`")
+    behind = rows_on_a_door_machine(rows)
+    assert not (behind and pending), (
+        f"{len(behind)} Tier 3 row(s) run behind a door (the first: {behind[0].function} / {behind[0].case}) while "
+        f"{sorted(pending)} is still not mapped at Tier 3: add it to CODE_RELOCATIONS with its site in `tier3.code_relocations`")
 
 
-def test_a_row_on_a_takeover_machine_is_told_from_the_rom_s_by_the_slot_it_holds():
-    """...and the reading has teeth: a row over the snapshot, over a machine before ictlmgr, over the ROM's own boot
-    and over a machine a case staged another address in is none; one over a takeover machine's megabyte is — found
-    by the slot, whatever its name."""
+@every_blob
+def test_a_row_on_a_door_machine_is_told_from_the_rom_s_by_what_its_vectors_hold(blob):
+    """...and the reading has teeth: a row over the snapshot, over the ROM's own boot, over a TAKEOVER machine with
+    no door (its `$88` is the ROM's) and over a machine a case staged another handler in is none; one over a door
+    machine's megabyte is, and so is a bare delta that lays a blob's address in the critical-error vector — found by
+    the slot, whatever its name. A CRAFTED ROW THAT ASKS A DOOR MACHINE REDDENS THE RULE ABOVE (its own assertion,
+    made here over the crafted registry: four declarations are pending)."""
     row = namedtuple("Row", "function case pokes")
-    taken, slot = booted_as(A_DESK, "the bench blob"), aes_event.SCREEN_MANAGER_ENTRY_SLOTS[0]
-    before = {slot: bytes(LONG_BYTES)}
-    rows = [row("a", "the snapshot", {}), row("b", "before ictlmgr", before), row("c", "the ROM's boot", booted_as(A_DESK).pokes),
-            row("d", "a takeover", taken.pokes), row("e", "a delta over one", {slot - 2: taken.ram[slot - 2:slot + 6]}),
-            row("f", "another address staged", {slot: struct.pack(">I", addrs.AES_ROM_HCTL_BUTTON)})]
-    assert [each.case for each in rows_on_a_takeover_machine(rows)] == ["a takeover", "a delta over one"]
+    door, ours = behind_a_door(QUIET_PAIR, blob), aes_boot.ours_of(isr.blob_named(blob))
+    in_the_blob = struct.pack(">I", ours.entry)
+    rows = [row("a", "the snapshot", {}), row("b", "the ROM's boot", booted_as(QUIET_PAIR).pokes),
+            row("c", "a takeover, no door", booted_as(QUIET_PAIR, blob).pokes), row("d", "a door machine", door.pokes),
+            row("e", "the BIOS's handler staged", {addrs.VECTOR_TRAP_GEM: struct.pack(">I", addrs.GEM_TRAP2_VDI_DOOR)}),
+            row("f", "a blob's address in $404", {aes_event.ETV_CRITIC: in_the_blob})]
+    behind = rows_on_a_door_machine(rows)
+    assert [each.case for each in behind] == ["a door machine", "a blob's address in $404"]
+    pending = {declared.what for declared in THE_DOOR_S} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
+    assert pending and behind, "the rule above is red over this registry: rows behind a door, declarations pending"
+
+
+# ---- THE SEVEN-ACCESSORY MACHINE (band 5 wave 3): one more `.ACC` than the loader takes ---------------------------------------------
+SEVEN = aes_boot.SEVEN_ACCESSORY_NAMES
+LOADER_TAKES = aes_boot.ACCESSORY_SLOTS                 # six: `$c6b2[]`'s longwords
+SIX_WAY_FIVE = (MULTI,) * 5 + (QUIET, QUIET)            # five accessories in a six-way wait: 30 + 1 + the desk's 3 + the manager's 3 of 40
+SIX_WAY_ALL = (MULTI,) * len(SEVEN)                     # ...and all six loaded ones: 36 + 3 + 3 = 42 of 40
+
+
+@functools.cache
+def seven(*modes):
+    return aes_boot.seven_accessory_machine(*modes)
+
+
+def test_the_seven_accessory_disk_is_the_one_its_capture_booted_with():
+    """The third capture stands at the shell's entry as the other two, and the driver's record there is the SEVEN
+    disk's: seven `.ACC` files in the root, each the accessory's own bytes where `file_at` puts it — one disk to the
+    machine whatever the seven modes (the boot sector, both FATs, the root)."""
+    capture, quiet = aes_boot.seven_accessory_preinit(), aes_boot.seven_accessory_disk_of(*(QUIET,) * len(SEVEN))
+    assert capture.registers["pc"] == aes_boot.GEM_ENTRY and not capture.registers["sr"] & preinit_snapshot.SR_SUPERVISOR
+    memory = bytearray(BASE_IMAGE)
+    memory[:RAM_BYTES] = capture.ram
+    aes_boot.Floppy(memory, quiet)                      # ...or refused: the record holds this disk's BPB and serial
+    with pytest.raises(aes_boot.Refused, match="is not the one the driver logged in"):
+        aes_boot.Floppy(memory, aes_boot.accessory_disk_of(QUIET, QUIET))
+    busy = aes_boot.seven_accessory_disk_of(*SIX_WAY_ALL)
+    file = aes_boot.accessory().file
+    first_file = accessory_disk.file_at(0)
+    assert quiet[:first_file] == busy[:first_file] and quiet != busy
+    for index in range(len(SEVEN)):
+        at = accessory_disk.file_at(index, len(file))
+        word = at + accessory_disk.mode_word_at(aes_boot.accessory())
+        assert quiet[at:at + len(file)] == file and accessory_disk.MODE.unpack_from(busy, word) == (MULTI,)
+    assert preinit_snapshot.seven_accessory_path().name == "preinit_acc7.bin" != preinit_snapshot.accessory_path().name
+
+
+def test_the_loader_takes_six_accessories_of_seven():
+    """THE ROM'S OWN BOOT OF SEVEN: six are loaded and started — TESTACC1 in the spare static PD, TESTACC2..6 in FIVE
+    ALLOCATED ones (`$c682` = 5, `$c6b2[]`'s five longwords) — each answered its own id, each waiting for a message;
+    the SEVENTH file is never opened (no process bears its name) and no slot of `$c6b2[]` is past the count. The EVB
+    supply is the 15 gem_main links and 5 per allocated accessory: every one free or on a process's list."""
+    booted = seven()
+    allocated, static = booted.allocated_accessories(), booted.static_processes()
+    assert booted.idle == aes_boot.THE_ROM_S and booted.word(aes.AES_ACCESSORY_COUNT) == len(allocated) == LOADER_TAKES - 1
+    loaded = [static[-1], *allocated]
+    assert [process.name.decode().strip() for process in loaded] == list(SEVEN[:LOADER_TAKES])
+    assert [process.pid for process in loaded] == list(range(2, 2 + LOADER_TAKES)), "ids in the loader's order"
+    assert SEVEN[-1].encode().ljust(aes.PD_NAME_BYTES) not in {process.name for process in booted.waiting()}
+    assert len(booted.waiting()) == 2 + LOADER_TAKES and all(process.waiting for process in loaded)
+    for process in loaded:
+        assert booted.results(process)["res_id"] == process.pid and len(process.events) == 1
+    supplied = rom_word(aes_boot.GEM_MAIN_EVB_COUNT_AT + WORD_BYTES) + len(allocated) * rom_word(aes_boot.ACCESSORY_EVB_COUNT_AT + WORD_BYTES)
+    on_lists = sum(len(process.events) for process in (*static[:2], *loaded))
+    assert supplied == 40 and len(booted.free_events()) + on_lists == supplied
+    blocks = [process.pd for process in allocated]
+    assert blocks == sorted(blocks) and len(set(blocks)) == len(blocks)
+
+
+def test_five_six_way_waits_leave_three_evbs_and_six_ask_more_than_the_machine_has():
+    """THE EVB SUPPLY RUN OUT, by the ROM's own boot (a ROM behaviour, reproduced and NAMED — never fixed). Five of the
+    six in a six-way wait: 30 + 1 + the desk's and the screen manager's 3 each = 37 of 40, three left free, every
+    process waiting. ALL SIX: 42 asked of 40 — get_evb answers 0 for the empty list and the wait is built AT ADDRESS
+    0: the boot zeroes `$0..$7`, which on the machine is a write under the ROM's shadow, a BUS ERROR. The model takes
+    none there, so that machine is REFUSED BY NAME: no ST reaches its idle."""
+    five = seven(*SIX_WAY_FIVE)
+    assert len(five.free_events()) == 40 - 5 * SIX_WAYS - 1 - 2 * 3 == 3
+    assert [len(process.events) for process in (five.static_processes()[-1], *five.allocated_accessories())] == [SIX_WAYS] * 5 + [1]
+    assert five.ram[:aes_boot.ROM_SHADOW_BYTES] == aes_boot.seven_accessory_preinit().ram[:aes_boot.ROM_SHADOW_BYTES]
+    with pytest.raises(aes_boot.Refused, match=r"THE BOOT STORED AT \$0\.\.\$7 \(they held 602e010200fc0030, they hold 0{16}\): "
+                                               r"on the machine that is a BUS ERROR"):
+        aes_boot.booted.derive(aes_boot.seven_accessory_preinit(), aes_boot.seven_accessory_disk_of(*SIX_WAY_ALL))
+
+
+def test_a_store_under_the_rom_s_shadow_is_refused_by_the_ledger_and_by_the_bytes():
+    """`_vet_nothing_stored_under_the_rom_s_shadow`, on its inputs: a ledger that names an address below 8 (a store
+    that changed nothing), bytes there that changed (a store the saturated ledger no longer names), and neither."""
+    before = bytes(aes_boot.preinit().ram[:aes_boot.ROM_SHADOW_BYTES])
+    aes_boot._vet_nothing_stored_under_the_rom_s_shadow(before, bytearray(before), {aes_boot.ROM_SHADOW_BYTES: 0}, "THE RUN")
+    for memory, writes in ((bytearray(before), {aes_boot.ROM_SHADOW_BYTES - 1: 0}), (bytearray(before[:-1] + b"\xa5"), {})):
+        with pytest.raises(aes_boot.Refused, match=r"THE RUN STORED AT \$0\.\.\$7"):
+            aes_boot._vet_nothing_stored_under_the_rom_s_shadow(before, memory, writes, "THE RUN")
+
+
+@every_blob
+def test_a_seven_accessory_boot_saturates_the_write_ledger_and_no_takeover_is_made_of_it(blob):
+    """THE STANDING LIMIT OF THE SEVEN-ACCESSORY MACHINE, pinned as the refusal it is: six `Pexec(3)`s each clear the
+    largest free block, and the run's stores pass the kit's write ledger (`emu.MAX_WRITES`) before the first process
+    is entered — so what a takeover boot stores over the blob after the lay cannot be known, and the takeover (and a
+    door) is REFUSED BY NAME. The ROM-booted machine itself is whole (its megabyte is the run's; its `stored` is
+    flagged truncated), and so is any arrival of it (`booted(until=)`). What would lift it is the kit's: a ledger
+    that can be marked or reset where the blob is laid."""
+    assert seven().boot.writes_truncated and not booted_as(QUIET_PAIR).boot.writes_truncated
+    capture, disk = aes_boot.seven_accessory_preinit(), aes_boot.seven_accessory_disk_of(*(QUIET,) * len(SEVEN))
+    for ours in (aes_boot.ours_of(isr.blob_named(blob)), the_door_of(blob)):
+        with pytest.raises(aes_boot.Refused, match="the boot's write ledger saturated: what it stored over the blob's span is not known"):
+            aes_boot.booted.derive(capture, disk, ours=ours)
+
+
+# ---- THE ACCESSORY FILE PAST ONE CLUSTER (ruling W3-R9): the disk's own arithmetic -----------------------------------------------
+@pytest.mark.parametrize("extra", (0, st_build.CLUSTER_BYTES - 1, st_build.CLUSTER_BYTES, 3 * st_build.CLUSTER_BYTES + 5))
+def test_an_accessory_file_of_any_length_lies_in_one_run_and_its_mode_is_patched_there(extra):
+    """`accessory_disk.disk_of` WITH A FILE PAST ONE CLUSTER (a labelled lengthening of the built accessory: bytes
+    appended after its relocation table, which no loader reads — the disk's arithmetic is what is held, no machine is
+    booted from it: that needs a capture of its own). Each file lies WHOLE where `file_at` puts it — consecutive
+    clusters, the next file after the last — its mode longword patched at the file's own offset (THE FAT IS NOT READ
+    HERE: that each chain runs through exactly those clusters is the disk builder's own, held by no test); and the disk
+    is one disk whatever the modes: every byte before the first
+    file's cluster (the boot sector and its serial, both FATs, the root) is the same."""
+    built = aes_boot.accessory()
+    longer = built._replace(file=built.file + bytes(range(256)) * (extra // 256) + bytes(extra % 256))
+    names, modes = accessory_disk.SEVEN_NAMES[:3], (MULTI, QUIET, FIND | WRITE)
+    quiet, patched = (accessory_disk.disk_of(longer, each, names) for each in ((QUIET,) * len(names), modes))
+    clusters = accessory_disk.clusters_of(len(longer.file))
+    assert clusters == -(-len(longer.file) // st_build.CLUSTER_BYTES) >= 1 + extra // st_build.CLUSTER_BYTES
+    first = accessory_disk.file_at(0, len(longer.file))
+    assert first == accessory_disk.file_at(0) and quiet[:first] == patched[:first]
+    assert accessory_disk.serial_of(quiet) == accessory_disk.serial_of(patched)
+    for index, mode in enumerate(modes):
+        at = accessory_disk.file_at(index, len(longer.file))
+        assert at == first + index * clusters * st_build.CLUSTER_BYTES
+        word = at + accessory_disk.mode_word_at(longer)
+        assert quiet[at:at + len(longer.file)] == longer.file
+        assert accessory_disk.MODE.unpack_from(patched, word) == (mode,) and accessory_disk.MODE.unpack_from(quiet, word) == (QUIET,)
+        assert patched[at:word] == quiet[at:word] and patched[word + accessory_disk.MODE.size:at + len(longer.file)] == longer.file[
+            accessory_disk.mode_word_at(longer) + accessory_disk.MODE.size:]
+    assert quiet[first + len(names) * clusters * st_build.CLUSTER_BYTES:] == bytes(len(quiet) - first - len(names) * clusters * st_build.CLUSTER_BYTES)
+
+
+# ---- THE DOOR'S DECLARATIONS (band 5 wave 3): pending, and held to the ROM and to the machines ---------------------------------
+RTE_WORD, RTS_WORD, LINE_F_RETURN_WORD = 0x4e73, 0x4e75, 0xf001
+LEA_ABSOLUTE_LONG_TO_A0 = 0x41f9
+# Where the ROM hands each routine BY VALUE — `(the instruction, its opcode)`: the longword after the opcode word is
+# the declaration's ROM address — and the last word of the text each stands for (`aes_event.ROM_TEXT_OF`).
+THE_DOOR_BY_VALUE = {
+    aes_event.GEM_TRAP_VECTOR.what: ((0xfe3c78, MOVE_L_IMMEDIATE_TO_ABSOLUTE), (addrs.AES_ROM_RETAKE, MOVE_L_IMMEDIATE_TO_ABSOLUTE)),
+    aes_event.PROGRAM_ENTRY.what: ((0xfe437c, aes_event.PUSH_L_IMMEDIATE),),
+    aes_event.CRITICAL_ERROR_VECTOR.what: ((0xfe3c8e, MOVE_L_IMMEDIATE_TO_D0), (0xfe3cb6, MOVE_L_IMMEDIATE_TO_D0)),
+    aes_event.USERBLK_TRAMPOLINE_SLOT.what: ((0xfd9f9e, LEA_ABSOLUTE_LONG_TO_A0),)}
+THE_DOOR_S_LAST_WORDS = {
+    aes_event.GEM_TRAP_VECTOR.what: (RTE_WORD, LINE_F_RETURN_WORD), aes_event.PROGRAM_ENTRY.what: (RTE_WORD,),
+    aes_event.CRITICAL_ERROR_VECTOR.what: (RTS_WORD,), aes_event.USERBLK_TRAMPOLINE_SLOT.what: (RTS_WORD,)}
+THE_DOOR_S = (aes_event.GEM_TRAP_VECTOR, aes_event.PROGRAM_ENTRY, aes_event.CRITICAL_ERROR_VECTOR, aes_event.USERBLK_TRAMPOLINE_SLOT)
+
+
+@pytest.mark.parametrize("declared", THE_DOOR_S, ids=lambda declared: declared.what)
+def test_each_declaration_of_the_door_is_the_rom_s_own_by_value_store(declared):
+    """THE DECLARATIONS, HELD TO THE ROM: each one's ROM routine is the longword the ROM's own instructions carry by
+    value where they store it (install_trap2 and retake; sndcli's push for pstart; takeerr and retake; gem_entry's
+    `lea`), ONE routine each; the text it stands for begins there, is a span of the AES's own ROM text, and ends on
+    the word its last instruction is (`rte`, `rts`, aes_entry's dead Line-F return)."""
+    (rom, symbol), = declared.symbols.items()
+    for at, opcode in THE_DOOR_BY_VALUE[declared.what]:
+        assert struct.unpack_from(">HI", BASE_IMAGE, at) == (opcode, rom), f"{declared.what}: the ROM's instruction at {at:#x}"
+    spans = aes_event.ROM_TEXT_OF[declared.what]
+    assert spans[0][0] == rom and symbol.startswith("aes_rom_") and declared.at_entry
+    for (lo, hi), last in zip(spans, THE_DOOR_S_LAST_WORDS[declared.what], strict=True):
+        assert aes.AES_TEXT[0] <= lo < hi <= aes.AES_TEXT[1] and rom_word(hi - WORD_BYTES) == last
+    assert aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3[declared.what][1] in (aes_event.THE_DOOR_FLIP, aes_event.WAVE_4)
+    assert declared not in aes_event.CODE_RELOCATIONS
+
+
+@every_boot
+def test_the_slots_walked_are_the_machine_s_own_processes(label):
+    """`aes_event.processes_of` / `first_entry_frames`, held to a booted machine read another way (`Machine`'s own
+    walk): the three static PDs then the allocated accessories', and for every process that WAITS the slot walked is
+    the PC it is resumed by (`parked_pc`) — never the ROM's gotopgm on a machine at its idle: every program has run."""
+    booted = machine(label)
+    pds = [process.pd for process in (*booted.static_processes(), *booted.allocated_accessories())]
+    assert list(aes_event.processes_of(booted.ram)) == pds
+    walked = dict(aes_event.first_entry_frames(booted.ram))
+    for process in booted.waiting():
+        assert booted.long(walked[process.pd]) & BUS == aes_boot.parked_pc(booted.ram, process.pd) != addrs.AES_ROM_GOTOPGM
+    assert aes_event.SLOTS_WALKED_FROM_THE_MACHINE == {aes_event.PROGRAM_ENTRY.what: aes_event.first_entry_frames}
+    assert aes_event.PROGRAM_ENTRY.slots == (), "its slots are walked: a static tuple would miss an allocated accessory's"
+
+
+# Who may ask for a machine behind a door while its relocations are PENDING: the takeover's own module and battery —
+# and the stack reading's MEASURED RUN of the trap path (ruling W3-R8's gate, slice S: a measurement beside a bound,
+# both shores booted behind the prototype door — no Tier 3 row, nothing compared through the registry).
+DOOR_ASKED_BY = re.compile(r"with_the_prototype_door|(?:ours_of|desk_machine|accessory_machine)\([^)\n]*\bdoor=")
+ASKS_FOR_A_DOOR_TODAY = {"aes_boot.py", "test_aes_boot.py"}
+MAY_MEASURE_BEHIND_A_DOOR = {"aes_stack.py", "test_aes_stack.py"}
+
+
+def test_no_battery_asks_for_a_door_machine_while_the_door_is_pending():
+    """...AND NOTHING BINDS THE DOOR BEFORE THE FLIP. A Tier 3 row's two shores are told apart by the registry alone:
+    a row whose OUR shore ran over a door machine while `$88` and the programs' frames are named NOT YET MAPPED would
+    differ in them by nature with nothing to map them. So while any of the door's declarations is pending, no module
+    of `test/` or `bench/` but the takeover's own asks for a door — read off the sources; the flip maps the
+    declarations (`CODE_RELOCATIONS`, their sites in `tier3.code_relocations`) and this then lets it."""
+    pending = {declared.what for declared in THE_DOOR_S} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
+    recreate = Path(__file__).resolve().parents[1]
+    asking = {path.name for path in (*(recreate / "test").glob("*.py"), *(recreate / "bench").glob("*.py"))
+              if DOOR_ASKED_BY.search(path.read_text())}
+    assert asking >= ASKS_FOR_A_DOOR_TODAY
+    asking -= MAY_MEASURE_BEHIND_A_DOOR
+    assert not (pending - {aes_event.USERBLK_TRAMPOLINE_SLOT.what}) or asking == ASKS_FOR_A_DOOR_TODAY, (
+        f"{sorted(asking - ASKS_FOR_A_DOOR_TODAY)} ask(s) for a machine behind a door while {sorted(pending)} are declared "
+        f"NOT YET MAPPED at Tier 3: map them first (`aes_event.CODE_RELOCATIONS`, `tier3.code_relocations`)")
 
 
 @every_blob

@@ -294,7 +294,12 @@ def deepest_on(run, stack):
 #   * A PATH THAT RUNS OFF A LISTED BODY'S LAST INSTRUCTION where an `rts` or a jump was expected;
 #   * AN `unlk` NO `link` OF THE FUNCTION'S OWN REACHES, an `rts` reached anywhere but on the function's own return
 #     address, a jump out of a function under its own pushes (a routine that LEAVES ITS STACK is a declared leaf:
-#     `bytes_before_it_leaves`); A JUMP THROUGH A TABLE (wave 3's); a name the listing labels twice;
+#     `bytes_before_it_leaves`); a name the listing labels twice;
+#   * A JUMP THROUGH A TABLE THAT IS NOT THE ONE SHAPE READ (below): a jump with no guard, a table word that names no
+#     instruction of the function, a branch that lands between the guard and the jump, a path into the table's words;
+#   * A CALL THAT IS A BODY'S LAST INSTRUCTION whose callee can return (the path would run off the body), SP LOADED
+#     FROM THE MACHINE where no declaration says which stack begins or is left there (`begins_a_stack`,
+#     `leaves_its_stack_at`);
 #   * AN INSTRUCTION OF NO KIND IT KNOWS, and A WORD OBJDUMP DOES NOT DECODE — a Line-A trap, a Line-F call word: an
 #     exception's frame and its handler's, counted only where the word is DECLARED with the bytes it takes;
 #   * SP SET FROM ANYTHING BUT A CONSTANT — `movea.l an,sp` outside a glue's return to the stack it interrupted,
@@ -311,6 +316,20 @@ def deepest_on(run, stack):
 #     whoever knows what the trap handler needs under it (`trap_need_under`, measured);
 #   * a glue's `lea <its stack top>,sp` starts the count again (the private stack), and its `movea.l <saved>,sp`
 #     ends it (the interrupted stack back: what follows is not on the private one).
+#   * THE OPCODE SWITCH'S JUMP TABLE (band 5 wave 3, ruling W2-R5; `jump_tables`): GCC's `cmpi.w #N,dn / bhi <default> /
+#     andi.l #$ffff,dn / add.l dn,dn / move.w (T,pc,dn.l),dn / jmp (T,pc,dn.w)` — ONE T in both operands, N + 1 words at
+#     T, each a sixteen-bit distance FROM T to an arm of the same body. The count is the guard's, THE WORDS ARE READ
+#     FROM THE BLOB'S BYTES (objdump decodes them as instructions: the listing's text there is noise, and that it falls
+#     back into step after the table is luck), the walk goes on at every `T + word` at the depth of the `jmp`, and no
+#     listed line inside `[T, T + 2(N + 1))` is ever walked;
+#   * THE TRAP DOOR'S SHAPES (wave 3; `src/aes/trapdoor.S`, the ROM's bytes): a `jsr (a0)` whose A0 a `movea.l #<entry>`
+#     loaded by value; a DECLARED instruction at which A STACK BEGINS (`movea.l 62(a6),sp`: the running process's own,
+#     the count restarted at what the machine keeps there) or IS LEFT FOR GOOD (the way out's `movea.l 70(a0),sp`); a
+#     private stack begun by a declared instruction and left by a `movea.l <saved>,sp`, where the path ends as a
+#     glue's does (crit_err, ub_trampoline: what follows stands on the caller's stack again) and the routine is read
+#     as one that RETURNS; a routine that NEVER RETURNS — no path of it reaches a return (`returns`: read, not
+#     declared) — after whose call nothing is walked; and a trap other than `trap #2` where it is DECLARED with the
+#     bytes it takes (`takes_an_exception`).
 _LISTED_LABEL = transcription.LISTED_FUNCTION
 _LISTED_LINE = re.compile(r"^\s*([0-9a-f]+):\t[0-9a-f ]+\t(.+)$")
 LISTED_LINE = _LISTED_LINE
@@ -353,6 +372,10 @@ NOT_KEPT_BY_A_CALLEE = ("%d0", "%d1", "%a0", "%a1")      # what a call may leave
 # its frames are the application's, as deep under our `jsr` as under the ROM's, and the reading counts the `jsr`
 # and nothing under it. A path that ends on it SAYS SO in its chain.
 AN_APPLICATION_S_ROUTINE = "an application's own routine"
+# ...and A POINTER NO CALLER OF THE BUILD HANDS A ROUTINE IN (sh_find's `routine`: every call of ours hands 0, and the
+# `jsr (a0)` behind its test is never made): declared the same way, counted the same way — the `jsr` and nothing under.
+NO_ROUTINE_IS_HANDED = "no routine: every caller of the build hands 0"
+NO_CODE_OF_THE_BUILD = (AN_APPLICATION_S_ROUTINE, NO_ROUTINE_IS_HANDED)
 # `deepest`, bytes below the entry's SP, down the calls `path` names; `at_a_trap` the deepest SP a trap is taken at
 # (None: none is reached), down `trap_path`.
 StackUse = namedtuple("StackUse", "deepest path at_a_trap trap_path")
@@ -389,6 +412,21 @@ SETS_A_BYTE = frozenset(f"s{condition}" for condition in "t f hi ls cc cs ne eq 
 _A_WORD = re.compile(r"^\.(?:short|word) 0x([0-9a-f]{4})$")
 _LINE_F_AS_DECODED = ("psave", "prestore")
 _SP_INTO_THE_FRAME = re.compile(r"^lea %fp@(?:\((-?\d+)\))?,%sp$")
+# THE JUMP TABLE'S SIX INSTRUCTIONS, as objdump spells them (the header above): the guard's compare and branch, the
+# index widened and doubled, the table's word loaded and the jump through it — one index register and ONE table
+# address in the last two.
+_TABLE_GUARD = re.compile(r"^cmpiw #(\d+),(%d\d)$")
+_TABLE_DEFAULT = re.compile(r"^bhi[sw]? ([0-9a-f]+) <")
+_TABLE_INDEX_WIDENED = re.compile(r"^andil #65535,(%d\d)$")
+_TABLE_INDEX_DOUBLED = re.compile(r"^addl (%d\d),(%d\d)$")
+_TABLE_WORD_LOADED = re.compile(r"^movew %pc@\(([0-9a-f]+) <[^>]*>,(%d\d):l\),(%d\d)$")
+_JUMP_THROUGH_A_TABLE = re.compile(r"^jmp %pc@\(([0-9a-f]+) <[^>]*>,(%d\d):w\)$")
+TABLE_SHAPE = _TABLE_SHAPE = (_TABLE_GUARD, _TABLE_DEFAULT, _TABLE_INDEX_WIDENED, _TABLE_INDEX_DOUBLED, _TABLE_WORD_LOADED)
+_A_LISTED_LINE_S_BYTES = re.compile(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{2})+(?: (?:[0-9a-f]{2})+)*)\s*(?:\t|$)")
+SIGN_OF_A_WORD, WORD_SPAN = 0x8000, 0x10000
+JumpTable = namedtuple("JumpTable", "at words targets")
+JumpTable.__doc__ = """One jump table of a function's own text: `at`, its first word's address (the T of both operands);
+`words`, how many it holds (the guard's N + 1); `targets`, where each word leads — `T + word`, in the table's order."""
 _AN_ADDRESS_TO_SP = re.compile(r"^lea (?:0x)?[0-9a-f]+(?: <[^>]*>)?,%sp$")
 _SP_EXCHANGED = re.compile(r"^exg (?:%sp,.*|.*,%sp)$")
 
@@ -472,6 +510,12 @@ def allocated_by(text):
     return max(_stack_effect(text), 0) if _SP_BY_A_CONSTANT.match(text) else 0
 
 
+def as_declared(text):
+    """An instruction as a declaration names it, whoever listed it: no symbol objdump found for an address
+    (`8c3a <aes_userdef_stack>`), no `0x` the ROM's own decoding spells one with — `moveal 8c3a,%sp` both ways."""
+    return _SYMBOL_NOISE.sub("", text).replace("0x", "")
+
+
 def _sets_sp_to_an_address(text):
     """`lea <an address>,sp`: the stack LEFT for another — a glue's private one, the dispatcher's. (`lea d(a6),sp`
     is no such thing: the same stack, `_sp_after`'s.)"""
@@ -524,6 +568,77 @@ def listed_functions(elf):
 _listed_functions = listed_functions    # the name this module's other sections know it by
 
 
+def listed_bytes(listing):
+    """`{address: byte}` of every byte `listing` prints — the hexadecimal column of each line and of each line's
+    continuation: THE BLOB'S OWN BYTES, whatever objdump decodes them as (a jump table's words read as instructions)."""
+    held = {}
+    for line in listing.splitlines():
+        printed = _A_LISTED_LINE_S_BYTES.match(line)
+        if printed:
+            held.update(enumerate(bytes.fromhex(printed.group(2).replace(" ", "")), int(printed.group(1), 16)))
+    return held
+
+
+@functools.cache
+def text_bytes(elf):
+    """...of the blob at `elf`."""
+    return listed_bytes(transcription.listing(elf))
+
+
+def _table_through(function, body, index, byte_at):
+    """THE TABLE the `jmp` at `body[index]` goes through (`JumpTable`) — REFUSED BY NAME where the five instructions
+    before it are not the guard and the load the reading knows (the count would be a guess), where they name two
+    registers or two tables, where a word of the table is not among `byte_at` (`{address: byte}`), and where a word
+    leads anywhere but to a listed instruction of the function outside the table."""
+    at, text = body[index]
+    before = [each for _at, each in body[max(index - len(_TABLE_SHAPE), 0):index]]
+    shaped = [shape.match(each) for shape, each in zip(_TABLE_SHAPE, before)]
+    assert len(before) == len(_TABLE_SHAPE) and all(shaped), (
+        f"{function}: the jump through a table at {at:#x} (`{text}`) has no guard the stack reading knows before it — "
+        f"`cmpi.w #N,dn` / `bhi` / `andi.l #$ffff,dn` / `add.l dn,dn` / `move.w (T,pc,dn.l),dn` — but {before}: how many "
+        f"words the table holds is not known")
+    guard, _default, widened, doubled, loaded = shaped
+    jump = _JUMP_THROUGH_A_TABLE.match(text)
+    registers = {guard.group(2), widened.group(1), *doubled.groups(), *loaded.groups()[1:], jump.group(2)}
+    assert len(registers) == 1 and loaded.group(1) == jump.group(1), (
+        f"{function}: the jump through a table at {at:#x} and the five instructions before it name the registers "
+        f"{sorted(registers)} and the tables {loaded.group(1)} / {jump.group(1)}: one index and ONE table are read")
+    table_at, words = int(jump.group(1), 16), int(guard.group(1)) + 1
+    arms = {address for address, _text in body} - set(range(table_at, table_at + words * WORD_BYTES))
+    targets = []
+    for word in range(words):
+        held = [byte_at.get(table_at + word * WORD_BYTES + byte) for byte in range(WORD_BYTES)]
+        assert None not in held, (f"{function}: word {word} of the jump table at {table_at:#x} is not among the bytes "
+                                  f"the stack reading was given: a table is read from the blob's bytes, never guessed")
+        distance = held[0] << 8 | held[1]
+        target = table_at + distance - (WORD_SPAN if distance & SIGN_OF_A_WORD else 0)
+        assert target in arms, (
+            f"{function}: word {word} of the jump table at {table_at:#x} leads to {target:#x} — no listed instruction "
+            f"of the function outside the table (the listing fell out of step over the table's words, or the word is "
+            f"no distance from the table)")
+        targets.append(target)
+    return JumpTable(table_at, words, tuple(targets))
+
+
+def jump_tables(function, body, byte_at):
+    """`{the address of the jump: its JumpTable}` for every jump through a table of `body`'s own text, in the
+    listing's order — a line INSIDE a table already read is the table's words decoded, never a jump. REFUSED BY NAME
+    beside `_table_through`'s refusals: a branch of the body that lands between a table's guard and its jump (a path
+    that reaches the jump with a count nothing compared)."""
+    tables, inside = {}, set()
+    for index, (at, text) in enumerate(body):
+        if at not in inside and _JUMP_THROUGH_A_TABLE.match(text):
+            tables[at] = _table_through(function, body, index, byte_at)
+            inside.update(range(tables[at].at, tables[at].at + tables[at].words * WORD_BYTES))
+            past_the_guard = {address for address, _text in body[index - len(_TABLE_SHAPE) + 2:index + 1]}
+            local = {address for address, _text in body}
+            landing = sorted(past_the_guard & {_local_target(each, local) for address, each in body if address not in inside})
+            assert not landing, (
+                f"{function}: a branch lands at {landing[0]:#x}, between the guard of the jump table at "
+                f"{tables[at].at:#x} and its jump: a path reaches the jump with an index nothing compared")
+    return tables
+
+
 def depth_of(reached):
     """A `(depth or None, ...)`'s depth for a `max`: None — nothing reached — below every depth."""
     return -1 if reached[0] is None else reached[0]
@@ -550,12 +665,16 @@ def _local_target(text, local):
     return named if named in local else None
 
 
-def _goes_on_to(body):
+def _goes_on_to(body, tables=None):
     """`[the indices an instruction can be followed by]` for each instruction of `body`: the next one — unless it
-    ends a path or jumps — and the one a branch inside the function names."""
+    ends a path or jumps — and the one a branch inside the function names; after a jump through a table (`tables`:
+    `jump_tables`' answer), every arm the table's words lead to."""
     index_of = {at: index for index, (at, _text) in enumerate(body)}
     goes_on_to = []
-    for index, (_at, text) in enumerate(body):
+    for index, (at, text) in enumerate(body):
+        if tables and at in tables:
+            goes_on_to.append(sorted({index_of[target] for target in tables[at].targets}))
+            continue
         mnemonic, target = text.split(" ")[0], _local_target(text, index_of)
         leaves = mnemonic in _ENDS_A_PATH or text == THE_HALT or mnemonic.startswith(("jmp", "bra"))
         after = [] if leaves or index + 1 == len(body) else [index + 1]
@@ -581,8 +700,8 @@ class _Loads:
     function spilt to one slot is not what a call through ANOTHER holds: a slot nothing spilt a function to holds
     FROM_THE_MACHINE (an argument: the caller's pointer; a local: data)."""
 
-    def __init__(self, body, starts, reached):
-        self._body, self._starts, self._reached = body, starts, reached
+    def __init__(self, body, starts, reached, tables=None):
+        self._body, self._starts, self._reached, self._tables = body, starts, reached, tables
         self._index = {at: index for index, (at, _text) in enumerate(body)}
         self._held = None
 
@@ -642,7 +761,7 @@ class _Loads:
 
     def _flowed(self):
         """`[held before each instruction]` (None: no path reaches it)."""
-        goes_on_to, before = _goes_on_to(self._body), [None] * len(self._body)
+        goes_on_to, before = _goes_on_to(self._body, self._tables), [None] * len(self._body)
         before[0], todo = {}, [0]
         while todo:
             index = todo.pop()
@@ -730,29 +849,46 @@ class StackReading:
     pushes of that call, or the site is refused — so a walk handed one routine is not charged another's frames, and
     a routine that walks again under a walk (newrect, with mkrect) is no recursion.
     `takes_an_exception`: `{a listed word: the bytes it takes of the stack it is met on}` — a Line-A trap, a Line-F
-    call word: the 68000's exception frame and the handler's own frames, MEASURED by whoever declares it. Charged
-    where the word stands; undeclared, the word is refused."""
+    call word, A TRAP OTHER THAN `trap #2` (GEMDOS's, the BIOS's, the XBIOS's): the 68000's exception frame and the
+    handler's own frames, MEASURED by whoever declares it. Charged where the word stands; undeclared, the word is
+    refused.
+    `begins_a_stack`: `{an instruction: the bytes below that stack's top SP stands at after it}` — SP loaded from the
+    machine where A STACK BEGINS: the trap door's `movea.l 62(a6),sp` (the running process's own, as its UDA keeps
+    it), a routine's private one (`movea.l #<top>,sp`). The count goes on from the declared depth; a later
+    `movea.l <saved>,sp` on the same path ends it (the stack it came on again, as a glue's).
+    `leaves_its_stack_at`: the instructions at which a routine LEAVES THE STACK IT WAS ENTERED ON AND NEVER COMES
+    BACK TO IT (the trap's way out: `movea.l 70(a0),sp`, then the `rte`): the path ends there, and returns nowhere.
+    `text_bytes` (`of_listing` alone): `{address: byte}`, the bytes a jump table's words are read from."""
 
-    def __init__(self, elf, through_a_pointer=None, leaves_the_stack=(), calls_what_it_is_handed=(), takes_an_exception=None):
+    def __init__(self, elf, through_a_pointer=None, leaves_the_stack=(), calls_what_it_is_handed=(), takes_an_exception=None,
+                 begins_a_stack=None, leaves_its_stack_at=()):
         self._functions = listed_functions(elf)
         self._starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(elf) if symbol.kind in "Tt"}
-        self._declare(through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception)
+        self._text_bytes = functools.partial(text_bytes, elf)
+        self._declare(through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception, begins_a_stack,
+                      leaves_its_stack_at)
 
     @classmethod
     def of_listing(cls, functions, starts=None, through_a_pointer=None, leaves_the_stack=(), calls_what_it_is_handed=(),
-                   takes_an_exception=None):
+                   takes_an_exception=None, begins_a_stack=None, leaves_its_stack_at=(), text_bytes=None):
         """...the same reading over `functions` (`{name: [(address, text)]}`) handed as they are: the reading's
         own tests."""
         reading = cls.__new__(cls)
         reading._functions, reading._starts = functions, dict(starts or {})
-        reading._declare(through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception)
+        reading._text_bytes = lambda: dict(text_bytes or {})
+        reading._declare(through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception, begins_a_stack,
+                         leaves_its_stack_at)
         return reading
 
-    def _declare(self, through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception):
+    def _declare(self, through_a_pointer, leaves_the_stack, calls_what_it_is_handed, takes_an_exception, begins_a_stack,
+                 leaves_its_stack_at):
         self._declared, self._leaves = dict(through_a_pointer or {}), tuple(leaves_the_stack)
         self._handed_one, self._excepted = tuple(calls_what_it_is_handed), dict(takes_an_exception or {})
+        self._begins = {as_declared(text): depth for text, depth in (begins_a_stack or {}).items()}
+        self._left_at = tuple(as_declared(text) for text in leaves_its_stack_at)
         self._use, self._reading, self._loads, self._home, self._calls, self._to = {}, [], {}, None, {}, {}
         self._sites = {}                        # {function: [(callee, the depth under the call, the call's address)]}
+        self._tables, self._returns, self._ends_on_a_call, self._walks = {}, {}, {}, {}
 
     def functions(self):
         """`{name: [(address, text)]}`: every function of the listing read."""
@@ -797,7 +933,7 @@ class StackReading:
         """The functions `function`'s call through `register` at `at` can reach — or the refusal. `handed`: the
         routine this reading of `function` is handed (None: it is declared none); `reached`: this reading's walk."""
         if id(reached) not in self._loads:
-            self._loads[id(reached)] = (_Loads(self._functions[function], self._starts, reached), reached)
+            self._loads[id(reached)] = (_Loads(self._functions[function], self._starts, reached, self.tables(function)), reached)
         held = self._loads[id(reached)][0].held_by_the_call_at(at, register)
         callees = held - {FROM_THE_MACHINE, A_NUMBER, THE_CALLER_S}
         assert not callees or THE_CALLER_S not in held, (
@@ -819,8 +955,9 @@ class StackReading:
         """The `StackUse` of `function` entered with its return address already on the stack."""
         if function not in self._use:
             assert function not in self._reading, f"the stack reading does not follow recursion: {self._reading + [function]}"
-            if function == AN_APPLICATION_S_ROUTINE:
+            if function in NO_CODE_OF_THE_BUILD:
                 self._use[function], self._calls[function] = StackUse(0, (function,), None, (function,)), []
+                self._returns[function] = True
                 return self._use[function]
             home = function.partition(HANDED)[0].partition(INTO)[0]
             assert home in self._functions, f"the stack reading has no listing of {function}"
@@ -833,32 +970,62 @@ class StackReading:
                 self._reading.pop()
         return self._use[function]
 
-    def functions_read(self):
-        """Every function read so far, by name (a routine read past its entry or for one caller's argument by the
-        routine's own): what a path asked for went through."""
-        return {name.partition(HANDED)[0].partition(INTO)[0] for name in self._use}
+    def read_as(self, *entries):
+        """Every function the paths from `entries` go through BY THE NAME IT WAS READ UNDER: the entries and, call by
+        call, everything read under them. THE ENTRIES ARE ASKED, never "what was read so far": a reading is one per
+        blob for every caller in the process (`aes_stack.reading`), so what it has read is the history of whoever
+        asked it anything — another battery's question about a VDI handler's frame — and an answer that depended
+        on it depended on the order the tests ran in."""
+        under, todo = set(), list(entries)
+        while todo:
+            function = todo.pop()
+            if function not in under:
+                self.of(function)
+                under.add(function)
+                todo.extend(callee for callee, _under in self._calls[function])
+        return under
+
+    def functions_read(self, *entries):
+        """...and by the ROUTINE's own name (one read past its entry, or for one caller's argument, by the routine's):
+        what the paths from `entries` went through."""
+        return {name.partition(HANDED)[0].partition(INTO)[0] for name in self.read_as(*entries)}
+
+    def tables(self, home):
+        """`{the jump's address: its JumpTable}` of the function `home` (`jump_tables`), read once."""
+        if home not in self._tables:
+            self._tables[home] = jump_tables(home, self._functions[home], self._text_bytes())
+        return self._tables[home]
+
+    def returns(self, function):
+        """Whether a path of `function` RETURNS to its caller on the stack it was called on: reaches a return of its
+        own (or leaves a private stack it began, for the one it came on), or ends in a jump to a routine that does.
+        One that never does — every path ends in the halt, in a declared leaving of the stack, or in a last call of
+        another that never returns — is what a body may END ON A CALL of (the trap handler's `jsr (a0)` of
+        aes_entry, aes_entry's of the way out)."""
+        self.of(function)
+        return self._returns[function]
 
     def _callees_at(self, function, at, text, target, handed, reached):
         if target:
             callee = self._entered_at(int(target.group(1), 16)) if target.group(3) else target.group(2)
             return [f"{callee}{HANDED}{self.handed_at(function, at)}" if callee in self._handed_one else callee]
         through = _CALL_THROUGH.match(text)
-        # OWED, AES band 5 wave 3 (ruling W2-R5): A JUMP THROUGH A TABLE IN THE FUNCTION'S OWN TEXT (`jmp %pc@(2,%d0:w)`
-        # — the opcode switch, `src/aes/gemsuper.c`'s COMPILED_AS_A_JUMP_TABLE, the one function built with one) is
-        # refused here with every other transfer the reading does not follow: the reading learns the table — its
-        # sixteen-bit distances, each an arm of the same body — when a path it is asked for first goes through the
-        # switch. No process's path read in wave 2 does (`test_aes_stack.py` holds that).
+        # (A jump through a table of the function's own text never comes here: `_walked` goes on at its arms.)
         assert through, f"{function}: the stack reading does not follow the transfer `{text}` at {at:#x}"
         return self._through_a_pointer(function, through.group(1), at, handed, reached)
 
-    def _walked(self, function, body, start):
+    def _walked(self, function, body, start, tables):
         """THE STACK WALK of one function: `{address: (SP's depth, the depth A6 points at, on a private stack)}` before
         every instruction a path from `start` reaches — its own pushes and pops alone, no callee's — with every
-        refusal the walk itself makes."""
+        refusal the walk itself makes. `tables`: the function's jump tables (`tables`)."""
         following = {at: after for (at, _text), (after, _next) in zip(body, body[1:])}
         texts, reached, todo = dict(body), {}, [(start, (0, None, False))]
+        table_words = {word for table in tables.values() for word in range(table.at, table.at + table.words * WORD_BYTES)}
+        self._returns[function], self._ends_on_a_call[function] = False, None
         while todo:
             at, state = todo.pop()
+            assert at not in table_words, (f"{function}: a path reaches {at:#x}, inside a jump table's words: what the "
+                                           f"listing prints there is no instruction")
             if at in reached:
                 assert reached[at][0] == state[0], f"{function}: two paths reach {at:#x} at depths {reached[at][0]} and {state[0]}"
                 assert reached[at] == state, f"{function}: two paths reach {at:#x} with A6 at {reached[at][1]} and {state[1]}"
@@ -867,24 +1034,36 @@ class StackReading:
             mnemonic = text.split(" ")[0]
             if text == THE_HALT:
                 continue
-            assert not _A_TRAP.match(text) or text == TRAP_2, (
+            assert not _A_TRAP.match(text) or text == TRAP_2 or text in self._excepted, (
                 f"{function} takes `{text}` at {at:#x}: the stack reading counts no frame of the OS under a trap "
-                f"other than `{TRAP_2}`")
+                f"other than `{TRAP_2}` (or one DECLARED with the bytes it takes: `takes_an_exception`)")
             if mnemonic in _ENDS_A_PATH:
                 assert mnemonic != "rts" or depth == 0, (
                     f"{function}: the `rts` at {at:#x} is reached {depth} bytes below the SP the function was entered "
                     f"at — the stack reading does not follow a return off anything but its own return address")
+                self._returns[function] = True
                 continue
+            if as_declared(text) in self._left_at:
+                continue                                # the stack left for good (the trap's way out): nothing returns
+            if at in tables:
+                todo += [(arm, state) for arm in tables[at].targets]
+                continue                                # every arm of the table, at the depth of the jump
             if _TRANSFER.match(mnemonic):
                 local = _local_target(text, texts)
                 if local is not None and not mnemonic.startswith(("jsr", "bsr")):
                     todo.append((local, state))
                 if mnemonic.startswith(("jmp", "bra")):
                     continue
+                if mnemonic.startswith(("jsr", "bsr")) and at not in following:
+                    self._ends_on_a_call[function] = at     # ...read only where its callee never returns (`_read`)
+                    continue
+            elif as_declared(text) in self._begins:
+                depth, private = self._begins[as_declared(text)], True     # a stack begins (declared): counted from what is kept there
             elif _sets_sp_to_an_address(text):
                 depth, private = 0, True                # a glue's own stack: counted from its top
             elif private and text.startswith("moveal ") and text.endswith(",%sp"):
-                continue                                # ...and left: the interrupted stack again
+                self._returns[function] = True          # ...and left: the stack it came on again, where it goes on
+                continue
             elif text == TRAP_2 or text in self._excepted:
                 pass                                    # the OS's, or a declared exception's: SP is back where it was
             else:
@@ -901,12 +1080,13 @@ class StackReading:
     def _read(self, function):
         self._calls[function], self._sites[function] = [], []
         if function in self._leaves:
+            self._returns[function] = True              # ...it is resumed, later, and returns to its caller
             return StackUse(bytes_before_it_leaves(self._functions, function), (function,), None, (function,))
         entered, _, handed = function.partition(HANDED)
         home, _, offset = entered.partition(INTO)
-        body = self._functions[home]
+        body, tables = self._functions[home], self.tables(home)
         texts = dict(body)
-        reached = self._walked(function, body, body[0][0] + int(offset or "0", 16))
+        reached = self._walks[function] = self._walked(function, body, body[0][0] + int(offset or "0", 16), tables)
         deepest, trapped = (0, ()), (None, ())          # each `(depth, the calls under this function that lead there)`
         for at, (depth, _frame, _private) in reached.items():
             text = texts[at]
@@ -914,6 +1094,8 @@ class StackReading:
             deepest = max(deepest, (depth + self._excepted.get(text, 0), ()))
             if text == TRAP_2:
                 trapped = max(trapped, (depth, ()), key=depth_of)
+            if at in tables or as_declared(text) in self._left_at:
+                continue
             if not _TRANSFER.match(mnemonic) or _local_target(text, texts) is not None and not mnemonic.startswith(("jsr", "bsr")):
                 continue
             calls = mnemonic.startswith(("jsr", "bsr"))
@@ -923,6 +1105,11 @@ class StackReading:
                 f"entered at — where it lands would not return to this function's caller")
             under = depth + (LONG_BYTES if calls else 0)
             deepest = max(deepest, (under, ()))
+            returning = [callee for callee in callees if self.returns(callee)]
+            assert at != self._ends_on_a_call[function] or not returning, (
+                f"{function}: a path runs off the listed body's last instruction (`{text}` at {at:#x}) — its callee "
+                f"{returning} returns, and neither a return nor a jump ends the body")
+            self._returns[function] |= bool(returning) and not calls      # a jump to a routine that returns: its return is ours
             for callee in callees:
                 use = self.of(callee)
                 self._calls[function].append((callee, under))
@@ -947,9 +1134,24 @@ class StackReading:
             self._to[function, target] = found
         return self._to[function, target]
 
-    def read_as(self):
-        """Every function read so far BY THE NAME IT WAS READ UNDER (`functions_read` gives the routines' own)."""
-        return set(self._use)
+    def depth_at(self, function, at):
+        """How far below the SP `function` was entered at its own pushes stand before its instruction at `at`."""
+        self.of(function)
+        return self._walks[function][at][0]
+
+    def reached_from(self, home, start):
+        """The addresses of `home`'s own instructions a path from the one at `start` can reach, `start` among them
+        (`_goes_on_to`, the function's jump tables known): which of its calls ONE ARM of a switch makes."""
+        body = self._functions[home]
+        goes_on_to = _goes_on_to(body, self.tables(home))
+        index_of = {at: index for index, (at, _text) in enumerate(body)}
+        seen, todo = set(), [index_of[start]]
+        while todo:
+            index = todo.pop()
+            if index not in seen:
+                seen.add(index)
+                todo += goes_on_to[index]
+        return {body[index][0] for index in seen}
 
     def sites(self, function):
         """Every call `function` makes, as read: `[(callee, the bytes below function's entry SP at the callee's first
@@ -1055,8 +1257,10 @@ class _LoopStops:
     trap, how far the OS wrote under it)` each, the stack below the trap's frame laid with a pattern first; and
     `opcodes`, the VDI call each trap asks for."""
 
-    def __init__(self, switchto, poll, lo, sp):
-        self.first = frozenset({switchto, poll, aes_event.VDI_TRAP})
+    def __init__(self, switchto, poll, lo, sp, trap=aes_event.VDI_TRAP):
+        # `trap` (band 5 wave 3, slice M): the handler the run's own machine holds in `$88` (`aes_event.gem_trap_on`)
+        self.first = frozenset({switchto, poll, trap})
+        self._trap = trap
         self._switchto, self._poll, self._lo, self._sp = switchto, poll, lo, sp
         self._taken_at, self._waits, self.traps, self.opcodes = None, 0, [], []
 
@@ -1068,7 +1272,7 @@ class _LoopStops:
             self._waits += waits_for_an_interrupt(memory)
             if self._waits == THE_SECOND_WAIT:
                 raise aes_event.Ended
-        elif pc == aes_event.VDI_TRAP:
+        elif pc == self._trap:
             self._taken_at, back = frame + EXCEPTION_FRAME_BYTES, case.long_in(memory, frame + aes_event.EXCEPTION_FRAME_PC)
             self.opcodes.append(case.word_in(memory, THE_AES_S_VDI_OPCODE_AT))
             for at in range(self._lo, frame):
@@ -1079,11 +1283,14 @@ class _LoopStops:
         return (self.first | ({back} if back else set())) - {pc}
 
 
-def _loop_run(memory, loop, switchto, poll):
+def _loop_run(memory, loop, switchto, poll, trap=None):
     """A `LoopRun` of the dispatcher's loop at `loop` over `memory`, entered on the dispatcher's stack as savestate
-    leaves it and watched to its end (`_LoopStops`): one run, under one budget, vetted."""
+    leaves it and watched to its end (`_LoopStops`): one run, under one budget, vetted. `trap` None: the GEM trap's
+    handler as this machine holds it; one handed in is held to be a handler of the machine, or the run is refused blind."""
     lo, sp = DISPATCHER_STACK[0], DISPATCHER_STACK[1] - BENCH_ENTRY_BYTES
-    watch = _LoopStops(switchto, poll, lo, sp)
+    trap = aes_event.gem_trap_on(memory) if trap is None else trap
+    aes_event.vet_a_handler_of_the_machine(memory, trap, f"the watch of the loop at {loop:#x}")
+    watch = _LoopStops(switchto, poll, lo, sp, trap)
     emu.install_chip_seeds()
     try:
         result = emu.run_bench(memory, loop, 0, sp, emu.SENTINEL, max_insns=SCHEDULED_INSNS, door=watch.first,

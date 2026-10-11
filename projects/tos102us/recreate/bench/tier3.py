@@ -2093,13 +2093,36 @@ _LISTED_JSR_ABSOLUTE = re.compile(r"^\s+([0-9a-f]+):\s+4eb9 ([0-9a-f]{4}) ([0-9a
 JSR_ABSOLUTE_BYTES = 6                 # `jsr <abs.l>`: the opcode word and the address
 
 
+# ---- slice T (band 5 wave 3) --------------------------------------------------------------------------------------------
+# A `jsr` INTO THE AES'S ROM TEXT THAT IS NO DOOR CALL, declared: `{the ROM routine: (the one function of the build
+# that calls it, why it is still the ROM's)}`. A byte-pinned transcription carries the ROM's own call of a routine
+# NOT RECONSTRUCTED YET as the ROM's word; no row reaches it, and no measurement could price it. `test_tier3.py`
+# holds each entry to ONE site, inside the function named — a second caller, a call from C, or an entry nothing
+# needs any more reds there — and the day the routine has a body of ours the operand is relocated and its entry goes.
+ROM_CALLS_OWED_TO_A_LATER_BAND = {
+    addrs.AES_ROM_DESK_USERDEF: ("aes_rom_ub_trampoline", "band 6: the desk's G_USERDEF draw code, which ub_trampoline "
+                                                          "(`src/aes/trapdoor.S`) calls on the desk's own stack"),
+}
+
+
+def _jsrs_into_the_aes_s_text(elf):
+    """`{call site: the address called}`: every `jsr` of `elf` to an absolute address in the AES's text."""
+    return {int(at, 16): int(high + low, 16) for at, high, low in _LISTED_JSR_ABSOLUTE.findall(transcription.listing(elf))
+            if aes.AES_TEXT[0] <= int(high + low, 16) < aes.AES_TEXT[1]}
+
+
+def rom_calls_owed(elf):
+    """`{call site: the ROM routine}`: the `jsr`s of `elf` into the AES's text that ROM_CALLS_OWED_TO_A_LATER_BAND names."""
+    return {site: routine for site, routine in _jsrs_into_the_aes_s_text(elf).items() if routine in ROM_CALLS_OWED_TO_A_LATER_BAND}
+# ---- end of slice T's block ---------------------------------------------------------------------------------------------
+
+
 @functools.cache
 def door_calls(elf):
     """`{call site: door entry}`: every `jsr` of `elf` to an absolute address in the AES's text — none, in a build
     whose every door entry is rebound; one that is left is a call of the ROM's routine no measurement prices
-    (`DoorWindows`: refused by name where a run arrives by it)."""
-    return {int(at, 16): int(high + low, 16) for at, high, low in _LISTED_JSR_ABSOLUTE.findall(transcription.listing(elf))
-            if aes.AES_TEXT[0] <= int(high + low, 16) < aes.AES_TEXT[1]}
+    (`DoorWindows`: refused by name where a run arrives by it). (But the calls declared owed to a later band, above.)"""
+    return {site: routine for site, routine in _jsrs_into_the_aes_s_text(elf).items() if routine not in ROM_CALLS_OWED_TO_A_LATER_BAND}
 
 
 @functools.cache
@@ -2521,6 +2544,17 @@ def screen_manager_relocation(elf):
     return {rom: placed[entry] for rom, entry in aes_event.SCREEN_MANAGER_ENTRY.symbols.items() if entry in placed}
 
 
+# ---- slice G (band 5 wave 3) ---------------------------------------------------------------------------------------------
+@functools.cache
+def critical_error_handler_relocation(elf):
+    """`{the ROM's crit_err: the blob's own entry}` (`aes_event.CRITICAL_ERROR_HANDLER`) — empty for a build that links
+    none. FOR EVERY RUN OF SUCH A BUILD: its retake and takeerr — the `.S` and the C twins alike — hand Setexc that
+    entry, so etv_critic holds it wherever the ROM's run left `$fe3cbe`."""
+    placed = _placed(elf)
+    return {rom: placed[entry] for rom, entry in aes_event.CRITICAL_ERROR_HANDLER.symbols.items() if entry in placed}
+
+
+# ---- (end of slice G's block) ---------------------------------------------------------------------------------------------
 A_RECORD = "a record of appl_trecord's buffer"
 # One relocation of the registry AS ONE RUN READS IT: `what` it is, the longwords it lies in, `{the ROM's routine:
 # its entry in the blob}`, and whether our image is mapped at the run's entry too.
@@ -2535,7 +2569,9 @@ def code_relocations(elf, symbol):
     mapped = {aes_event.FORK_CODES.what: (FORK_CODE_SLOTS, fork_relocation(elf, symbol)),
               aes_event.GLUE_CODES.what: (glue_code_slots(), glue_relocation(elf)),
               aes_event.TEXT_SITES.what: (aes_event.TEXT_SITES.slots, text_site_relocation(elf, symbol)),
-              aes_event.SCREEN_MANAGER_ENTRY.what: (aes_event.SCREEN_MANAGER_ENTRY.slots, screen_manager_relocation(elf))}
+              aes_event.SCREEN_MANAGER_ENTRY.what: (aes_event.SCREEN_MANAGER_ENTRY.slots, screen_manager_relocation(elf)),
+              aes_event.CRITICAL_ERROR_HANDLER.what: (aes_event.CRITICAL_ERROR_HANDLER.slots,     # slice G, wave 3
+                                                      critical_error_handler_relocation(elf))}
     declared = {each.what: each.at_entry for each in aes_event.CODE_RELOCATIONS}
     assert sorted(mapped) == sorted(declared), "a relocation the registry declares is mapped by no site"
     return tuple(Relocation(what, *mapped[what], at_entry) for what, at_entry in declared.items())
@@ -2778,6 +2814,12 @@ class RomBench(rom_bench.RomBench):
         for relocation in relocations:
             if relocation.what == aes_event.TEXT_SITES.what:
                 vet_no_register_names_the_rom(symbol, ours.regs, relocation.mapping)
+                map_registers(ours.regs, _backwards(relocation.mapping))
+            # slice G (wave 3): ...and the critical-error handler, for the `.S` entries that hand it to Setexc — the
+            # BIOS's dispatcher comes back with its argument in D1, and a transcription is held to the whole file.
+            # (No vet of the registers here: the handler a Setexc DISPLACED is the machine's, the ROM's own on a
+            # ROM-made one, and travels in D0 by right; the slots' vet above is what refuses an operand left the ROM's.)
+            if relocation.what == aes_event.CRITICAL_ERROR_HANDLER.what and symbol in aes_event.CRITICAL_ERROR_HANDLER_ENTRIES:
                 map_registers(ours.regs, _backwards(relocation.mapping))
         map_code_slots(ours.image, recorded + written, _backwards(forks))
         if self._x_flag_declared:
@@ -3779,16 +3821,36 @@ def _original_windows(row, images=None, **marked):
 # memory the ROM's outside the stack band, the blob and the row's drops (`aes_event.vet_the_marks_agree`: a slice
 # started a call late, or by a C that diverged before it, is refused by name) — and the row's costs, own cycles and
 # glue are then the differences between the two marks, the slice under `aes_event.SLICE_INSNS`.
+# (band 5 wave 3, slice M) A MARK NAMED BY THE GEM TRAP'S HANDLER IS TAKEN WHERE EACH SHORE'S OWN MACHINE HOLDS IT
+# (`aes_event.KeyedOnTheGemTrap`): the ROM's run over the row's machine as it is, ours over that machine WITH THE
+# REGISTRY MAPPED AT ITS ENTRY — so the day `$88` is among `aes_event.CODE_RELOCATIONS` (the door flip) our marks stop
+# at the blob's own handler with no line changed here, and until then both shores' are the row's own.
+def the_rom_s_gem_trap(row):
+    """The `trap #2` handler the ROM's run of `row` reaches: what the row's machine holds in `$88`."""
+    return aes_event.trap_handler(addrs.VECTOR_TRAP_GEM, row.pokes)
+
+
+def our_gem_trap(row, blob):
+    """...and the one OUR run of it on `blob` reaches: that longword as the registry maps it at a run's entry."""
+    held = the_rom_s_gem_trap(row)
+    for relocation in code_relocations(blob.elf, row.symbol):
+        if relocation.at_entry and addrs.VECTOR_TRAP_GEM in relocation.slots:
+            held = relocation.mapping.get(held, held)
+    return held
+
+
 def _the_rom_s_marks(row, **marked):
     """A sliced row's marks over the ROM's own run: its instructions and cycles, and its cycles in `AES_OWN_SPANS`.
     `marked`: `aes_event.Marks`' options — the session's other slices, every arrival."""
-    return aes_event.Marks(row.slice, lambda: {**aes_event.run_cost(), "aes": _cycles_in(AES_OWN_SPANS)}, **marked)
+    marks = aes_event.Marks(row.slice, lambda: {**aes_event.run_cost(), "aes": _cycles_in(AES_OWN_SPANS)}, **marked)
+    return marks.on(the_rom_s_gem_trap(row))
 
 
 def _our_marks(row, blob, glue, **marked):
     """...and over ours, on `blob`: its instructions and cycles, and its cycles at the blob's PCs and inside `glue`."""
-    return aes_event.Marks(row.slice, lambda: {**aes_event.run_cost(), "blob": emu.prof_cycles(blob.base, blob.end),
+    marks = aes_event.Marks(row.slice, lambda: {**aes_event.run_cost(), "blob": emu.prof_cycles(blob.base, blob.end),
                                                 "glue": _cycles_in(glue)}, **marked)
+    return marks.on(our_gem_trap(row, blob))
 
 
 def _differing_at_a_mark(row, blob):

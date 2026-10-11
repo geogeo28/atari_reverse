@@ -1005,32 +1005,37 @@ class VdiCalls(aes_event.DoorStops):
     call.
 
     A stop is taken BEFORE its instruction, and a stop may not arm the PC it stands at: inside a call the handler is
-    armed again at the trap's own return (the exception frame's PC), as a marked trap is outside one."""
+    armed again at the trap's own return (the exception frame's PC), as a marked trap is outside one.
 
-    def __init__(self, delivered=None, whole=None):
+    `trap` (band 5 wave 3, slice M): THE HANDLER THE RUN'S OWN MACHINE HOLDS IN `$88` (`aes_event.gem_trap_on`) — the
+    ROM's on every machine but one whose trap door is ours; a run over a machine that holds another is refused by name
+    at its first stop (`aes_event.KeyedOnTheGemTrap.vet_not_blind`), never watched blind."""
+
+    def __init__(self, delivered=None, whole=None, trap=VDI_TRAP):
         super().__init__(aes_event.ENTRIES, aes_event.ROM_RETURNS, blocks=True, delivered=delivered)
-        self.marked_with(aes_event.Timeline((VDI_TRAP,)))
+        self._trap = trap
+        self.marked_with(aes_event.Timeline((VDI_TRAP,)).on(trap))
         self.made, self.inside = [], []
         self._whole = aes_event.REBOUND if whole is None else frozenset(whole)
         self._armed_in_the_call, self._polls_back_at = None, None
 
     def stopped(self, pc, sp, memory):
         if self.between_calls:
-            if pc == VDI_TRAP:
+            if pc == self._trap:
                 self.made.append(vdi_call_in(memory))
             armed = super().stopped(pc, sp, memory)
             if self.between_calls or self.entry_at(pc) not in self._whole:
                 return armed
             self._armed_in_the_call = armed         # a call of a rebound entry opened: its traps are the ledger's too
-            return armed | {VDI_TRAP}
-        if self._polls_back_at is None and pc == VDI_TRAP and self._armed_in_the_call is not None:
+            return armed | {self._trap}
+        if self._polls_back_at is None and pc == self._trap and self._armed_in_the_call is not None:
             self.inside.append(len(self.made))
             self.made.append(vdi_call_in(memory))
             self._polls_back_at = case.long_in(memory, sp + aes_event.EXCEPTION_FRAME_PC)
             return self._armed_in_the_call | {self._polls_back_at}
         if pc == self._polls_back_at:
             self._polls_back_at = None
-            return self._armed_in_the_call | {VDI_TRAP}
+            return self._armed_in_the_call | {self._trap}
         self._armed_in_the_call = None
         return super().stopped(pc, sp, memory)
 
@@ -1038,7 +1043,7 @@ class VdiCalls(aes_event.DoorStops):
 def rom_vdi_calls(machine, budget=None, delivered=None):
     """The VDI calls the ROM's fs_input makes over `machine` in a run that returns — `delivered` laid at its door
     calls — in order."""
-    watch = VdiCalls(delivered)
+    watch = VdiCalls(delivered, trap=aes_event.trap_handler(addrs.VECTOR_TRAP_GEM, machine))
     assert _watched(watch, machine, budget)[0], "the run blocks"
     return watch.made
 

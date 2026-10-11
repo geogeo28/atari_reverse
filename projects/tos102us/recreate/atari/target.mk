@@ -88,7 +88,13 @@ ALCYON_ENTRY_SOURCES := $(RECREATE)/src/aes/obdraw.S $(RECREATE)/src/aes/wmupdat
 # (`aes_dsptch`, `include/aes/switch.h`). Listed here, apart; pinned by `test/test_aes_switch.py` (the switch's bytes,
 # disp's stream) and `test/test_aes_irq.py` (the glue's).
 SWITCH_SOURCES := $(RECREATE)/src/aes/switch.S $(RECREATE)/src/aes/irq.S
-TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES) $(SWITCH_SOURCES), \
+# THE TRAP DOOR is the switch's sibling and a fourth kind (band 5 wave 3, slice T): `trap #2`'s handler, its way out,
+# aes_entry's stream and the desk's G_USERDEF door — the ROM's bytes, no C twin, no row. Listed APART from the switch
+# because it is LINKED AND NOT YET INSTALLED: every build links it, and until the door is bound the build's own code
+# still names the ROM's handler by value (`test/test_aes_trapdoor.py` holds who does; the switch's rule is that
+# nobody does). Pinned by `test/test_aes_trapdoor.py`.
+TRAPDOOR_SOURCES := $(RECREATE)/src/aes/trapdoor.S
+TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES) $(SWITCH_SOURCES) $(TRAPDOOR_SOURCES), \
                          $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S))
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
 TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))
