@@ -1,7 +1,7 @@
 /* wmupdate.S — TARGET ONLY: the ALCYON ENTRIES of the two window-tree walkers' routines — newrect, which the target
  * draw_change hands everyobj (`wmupdate.c`), and mkrect, which the target newrect hands it in turn (`wrect.c`), each
  * spelt at the call by `staged_call.h`'s ALCYON_ROUTINE. GLUE, NOT A TRANSCRIPTION: the ROM has no such bytes, so neither has a row of
- * `include/transcribed.h`, and `atari/target.mk` lists the file apart (ALCYON_ENTRY_SOURCES), as `obdraw.S`.
+ * `include/transcribed.h`, and `atari/target.mk` lists the file apart (ALCYON_ENTRY_SOURCES).
  *
  * WHY THEY EXIST. draw_change hands everyobj newrect BY VALUE ($fec146 `move.l #$fe5cee,-(sp)`) and newrect hands it
  * mkrect ($fe5d68 `move.l #$fe5c9a,-(sp)`); everyobj calls each as Alcyon calls anything (`staged_call.h`,

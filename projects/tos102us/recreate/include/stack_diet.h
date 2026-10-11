@@ -1,7 +1,8 @@
 /* stack_diet.h — what a routine ON A STACK THE ROM SIZED is compiled with so that its frame costs what the ROM's does.
  *
- * The screen manager runs ctlmgr and everything under it on the 1,196 bytes of its own UDA (`test/aes_stack.py`), a
- * stack Alcyon's frames fit and GCC's, at -O2, do not. Most of the difference is not the C: it is what -O2 spends
+ * The screen manager runs ctlmgr and everything under it on the 1,196 bytes of its own UDA (`test/aes_stack.py`), and
+ * the first accessory's AES calls run the opcode switch and their arm on PD2's 1,396 (the same file, THE TRAP PATH):
+ * stacks Alcyon's frames fit and GCC's, at -O2, do not. Most of the difference is not the C: it is what -O2 spends
  * STACK on to save cycles, in a build whose every address is `image + constant` and whose every argument is a
  * longword slot. `FRAME_DIET("no-<pass>", ...)` turns those passes off FOR ONE FUNCTION — the ones measured to make
  * that function's frame smaller, and no other:
@@ -39,7 +40,14 @@
  * function under an `optimize` attribute references a library routine. */
 #define OPTIMIZE_KEEPS_FREESTANDING_S_LOOPS "no-tree-loop-distribute-patterns"
 
-#if defined(__GNUC__) && !defined(__clang__) && !defined(RECREATE_HOST_DIFFERENTIAL) && !defined(STACK_DIET_MARKS_OFF)
+/* THE BUILDS WHOSE FRAMES STAND ON A STACK THE ROM SIZED: GCC's for the target. The host differential's library runs on
+ * the host's stack (and clang knows neither attribute's flags): there a mark, and a routine made for its frame alone
+ * (`src/aes/gemsuper.c`, A_DEEP_ARM), is nothing. ONE SPELLING, for every such guard. */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(RECREATE_HOST_DIFFERENTIAL)
+#define STACK_DIET_ON_TARGET 1
+#endif
+
+#if defined(STACK_DIET_ON_TARGET) && !defined(STACK_DIET_MARKS_OFF)
 #define FRAME_DIET(...) __attribute__((optimize(OPTIMIZE_KEEPS_FREESTANDING_S_LOOPS, __VA_ARGS__)))
 #else
 #define FRAME_DIET(...)

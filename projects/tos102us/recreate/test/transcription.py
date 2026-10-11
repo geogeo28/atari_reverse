@@ -754,8 +754,9 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_pinit", "aes_bfill"), ("aes_cart_find", "aes_bfill"), ("aes_cart_find", "aes_lbcopy"),
     ("aes_desk_alloc", "aes_bfill"), ("aes_sh_tographic", "aes_retake"), ("aes_sh_toalpha", "aes_giveerr"),
     ("aes_sh_tographic", "aes_ratinit"),
-    # the opcode switch (`src/aes/gemsuper.c`): the marshal's three copies; menu_text's string and graf_mouse's show
-    ("aes_marshal", "aes_wcopy"), ("aes_dispatch", "aes_lstcpy"), ("aes_dispatch", "aes_gsx_mon"),
+    # the opcode switch (`src/aes/gemsuper.c`): the marshal's copy back and its three copies in (a routine of their
+    # own since the door diet: `copied_in`); menu_text's string and graf_mouse's show
+    ("aes_marshal", "aes_wcopy"), ("copied_in", "aes_wcopy"), ("aes_dispatch", "aes_lstcpy"), ("aes_dispatch", "aes_gsx_mon"),
     # the file selector (`src/aes/fslib.c`): the default path copied, a directory's names copied, matched and compared,
     # a row's name formatted and the elevator's share, the list's clip saved, and the title's text
     ("aes_fs_pspec", "aes_strcpy"), ("aes_fs_active", "aes_lstcpy"), ("aes_fs_active", "aes_strchk"),

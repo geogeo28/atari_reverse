@@ -51,6 +51,19 @@ uint16_t aes_gr_stilldn(uint8_t *image, int16_t leave, int16_t x, int16_t y, int
     return events & EV_MU_BUTTON ? GR_RISEN : GR_STILL_DOWN;      /* ($fe8528 lsr.w #1; not.w; andi.w #1) */
 }
 
+/* gr_watchbox's wait: whether the button is still down, the mouse watched to `leave` (or to enter) the GRECT at
+ * `rect`, whose four words are read at each wait as the ROM's loop reads them.
+ * A ROUTINE OF ITS OWN (`noinline`), FOR THE STACK: read in the loop itself, the four words are four places kept in
+ * four saved registers — with what they crowd out, 40 bytes of gr_watchbox's frame, which lie under ob_change and
+ * the object it redraws: the deepest thing a form does on its caller's stack (`test/aes_stack.py`, THE TRAP PATH).
+ * Here they lie under the wait alone. */
+static __attribute__((noinline)) uint16_t still_down_over(uint8_t *image, uint16_t leave, uint32_t rect)
+{
+    return aes_gr_stilldn(image, (int16_t)leave, (int16_t)bus_word(image, rect + GRECT_X),
+                          (int16_t)bus_word(image, rect + GRECT_Y), (int16_t)bus_word(image, rect + GRECT_W),
+                          (int16_t)bus_word(image, rect + GRECT_H));
+}
+
 /* The object drawn `in_state` and `out_state` in turn — `in` first — until the button rises: the answer is 1 if it rose
  * on an `in` (the mouse inside, waiting for it to leave), 0 on an `out`. */
 FRAME_DIET("no-defer-pop", "no-function-cse")
@@ -66,9 +79,7 @@ uint16_t aes_gr_watchbox(uint8_t *image, uint32_t tree, int16_t object, int16_t 
     do {
         aes_ob_change(image, tree, object, leave ? out_state : in_state, REDRAW);
         leave ^= 1;                                                             /* ($fe84e8 eor.w d4,d7) */
-    } while (aes_gr_stilldn(image, (int16_t)leave, (int16_t)bus_word(image, rect + GRECT_X),
-                            (int16_t)bus_word(image, rect + GRECT_Y), (int16_t)bus_word(image, rect + GRECT_W),
-                            (int16_t)bus_word(image, rect + GRECT_H)));
+    } while (still_down_over(image, leave, rect));
     host_slot_release(AES_GR_WATCHBOX_RECT);
     return leave;
 }

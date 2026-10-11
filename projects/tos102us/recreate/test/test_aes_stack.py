@@ -19,7 +19,9 @@ WHAT IS HELD, on both blobs:
     and over THE ROM'S OWN BYTES (a stack begun, a stack left for good, a routine that never returns, a private
     stack left for the one it came on, a declared trap); the bound through the switch on both blobs BESIDE PD2'S
     1,396 BYTES AND AN ALLOCATED PD'S 1,788, by the call; crit_err's and ub_trampoline's private stacks.
-    THE VERDICT THERE IS A FINDING TOO, and it is "OVER": pinned as the number it is, not waved through.
+    THE VERDICT THERE IS A FINDING TOO, pinned as the number it is: "OVER BY 178" until THE DOOR DIET (wave 3,
+    2026-10-11), and since it "FITS, 20 SPARE" for the shipped blob — every arm of the switch, bound and measured —
+    with what was cut said above the pins and the bench blob's "over by 150" reported beside it.
 THE PINS ARE LAYOUT NUMBERS OF OUR BUILD (as band 4 pins its dispatcher's): a pin that moves is re-pinned WITH THE
 REASON — which frame, which call — never to make a run green.
 """
@@ -296,14 +298,19 @@ def test_the_compiler_s_long_arithmetic_is_read_as_the_routines_it_is(blob):
 
 
 # ---- THE DECLARATIONS, HELD TO THE BUILD -----------------------------------------------------------------------------------
-THE_WALKS = {("aes_ob_draw", "aes_just_draw_alcyon"), ("aes_draw_change", "aes_newrect_alcyon"),
-             ("aes_newrect", "aes_mkrect_alcyon")}
+THE_WALKS = {("aes_draw_change", "aes_newrect_alcyon"), ("aes_newrect", "aes_mkrect_alcyon")}
 
 
 def test_every_walk_is_handed_one_routine_by_value(blob):
-    """everyobj's callers, over the whole blob: ob_draw hands just_draw, draw_change newrect, newrect mkrect — each
-    named at the call, so every walk the build makes is read for the routine it is really handed."""
+    """everyobj's callers, over the whole blob: draw_change hands newrect, newrect mkrect — each named at the call, so
+    every walk the build makes is read for the routine it is really handed. ob_draw IS NONE OF THEM since the door
+    diet (band 5 wave 3): it holds the walk as its own body and calls just_draw as C calls (`src/aes/obdraw.c`) —
+    read as any routine is, with no Alcyon entry under it and no symbol of one in the blob."""
     assert stack.routines_handed_to(blob.elf, "aes_everyobj") == THE_WALKS
+    read = stack.reading(blob.elf)
+    assert "aes_just_draw" in read.of("aes_ob_draw").path
+    assert not any(name.startswith("aes_everyobj") for name in read.read_as("aes_ob_draw"))
+    assert not stack.links(blob.elf, "aes_just_draw_alcyon")
 
 
 def test_ob_user_s_pointer_is_the_machine_s_and_mn_do_s_register_needs_no_declaration(blob):
@@ -317,7 +324,7 @@ def test_ob_user_s_pointer_is_the_machine_s_and_mn_do_s_register_needs_no_declar
         undeclared.of("aes_ob_user")
     unwalked = StackReading(blob.elf, stack.THROUGH_A_POINTER, leaves_the_stack=stack.LEAVES_THE_STACK, takes_an_exception=line_a)
     with pytest.raises(AssertionError, match="aes_everyobj calls through %a0 .* a pointer read out of memory"):
-        unwalked.of("aes_ob_draw")
+        unwalked.of("aes_draw_change")
     unparked = StackReading(blob.elf, stack.THROUGH_A_POINTER, calls_what_it_is_handed=stack.CALLS_WHAT_IT_IS_HANDED,
                             takes_an_exception=line_a)
     with pytest.raises(AssertionError, match="aes_dsptch: .* leaves the function 6 bytes below"):
@@ -441,6 +448,13 @@ def test_a_chain_s_frames_sum_to_its_depth_and_every_handler_is_read(blob):
 # dropped measured 952 / 956 (over by 8 / 12 with the nest), an icon in it 1,174 / 1,184 (over by 230 / 240); a
 # USERDEF's routine entered 682 down (210 bytes less than under the ROM); untouched at most 88.
 #
+# AND AGAIN BY THE DOOR DIET, 2026-10-11 (band 5 wave 3; its own section is THE TRAP PATH's, below): made for an
+# accessory's stack, three of its cuts lie on the screen manager's paths too — ob_draw holds everyobj's walk as its own
+# body and calls just_draw as C calls (170 bytes of three frames became 88), gr_watchbox's wait is a routine of its
+# own (100 -> 60), and the marks on the window layer. WHAT IT WAS BEFORE, kept as history: the deepest trap an icon's
+# fill in a menu at 614 / 624; the shipped blob's bound 36 SPARE and the bench blob's over by 134; a menu dropped
+# measured 1,038 / 864, an icon in it 1,078 / 904; a USERDEF's routine entered 538 down.
+#
 # AND AGAIN BY ITS THIRD PASS, THE SAME DAY — THE REVIEW'S FINDING: the "need of our VDI" pinned here for a pass was
 # the ROM's handlers' behind our dispatcher (a uniform + 32), because the staging mapped no table slot to the blob's
 # own handlers. With them bound (`aes_switch.vdi_table_mapping`) the shipped blob's worst chain was OVER BY 16 and
@@ -455,15 +469,14 @@ OWN_CHAIN = (("aes_rom_ctlmgr", 36), ("aes_hctl_button", 28), ("aes_hctl_window"
              ("aes_gr_dragbox", 88), ("aes_gr_wait", 40), ("aes_gr_stilldn", 64), ("aes_ev_multi", 52), ("aes_forker", 40),
              ("aes_bchange_fork", 16), ("aes_bchange", 32), ("aes_mowner", 24), ("aes_wm_find", 28), ("aes_ob_find", 80),
              ("aes_ob_actxywh", 36), ("aes_ob_offset", 24))
-# ...and to the deepest `trap #2`: an ICON drawn in a menu — no longer its blit (gsx_blt's body is gr_gicon's own
-# now, and stands 36 bytes higher) but the fill under its label, vr_recfl. mn_do holds menu_down's body, gr_rect
-# bb_fill's. The shipped blob's VDI bindings go through its generated glue (`aes_gsx_ncode`'s 10 bytes).
-TO_THE_FILL = (("aes_rom_ctlmgr", 36), ("aes_hctl_rect", 36), ("aes_mn_do", 104), ("aes_ob_draw", 60),
-               ("aes_everyobj<-aes_just_draw_alcyon", 86), ("aes_just_draw_alcyon", 24), ("aes_just_draw", 124),
-               ("aes_gr_gicon", 68), ("aes_gr_rect", 48), ("aes_vr_recfl", 28))
-TRAP_CHAIN = {BENCH: TO_THE_FILL + (("aes_gsx_ncode", 0), ("aes_gsx2", 0)),
-              SHIPPED: TO_THE_FILL + (("aes_gsx_ncode", 10), ("aes_rom_gsx_ncode", 0), ("aes_rom_gsx2", 0))}
-OWN_FRAMES, AT_THE_DEEPEST_TRAP = 744, {BENCH: 614, SHIPPED: 624}
+# ...and to the deepest `trap #2`: NO LONGER A DRAW'S (an icon's fill in a menu, 614 / 624 down, until the door diet
+# took 82 bytes off every object drawn) but THE MOUSE'S — forker, under the same slider's wait, running mchange,
+# which asks the VDI where the mouse is. The shipped blob's VDI bindings go through its generated glue
+# (`aes_gsx_ncode`'s 10 bytes).
+TO_THE_MOUSE = OWN_CHAIN[:9] + (("aes_mchange_fork", 16), ("aes_mchange", 64))
+TRAP_CHAIN = {BENCH: TO_THE_MOUSE + (("aes_gsx_ncode", 0), ("aes_gsx2", 0)),
+              SHIPPED: TO_THE_MOUSE + (("aes_gsx_ncode", 10), ("aes_rom_gsx_ncode", 0), ("aes_rom_gsx2", 0))}
+OWN_FRAMES, AT_THE_DEEPEST_TRAP = 744, {BENCH: 584, SHIPPED: 594}
 # THE OS UNDER A `trap #2`, BY THE VDI'S OPCODE — the lowest STORE under the trap's frame. Through THE ROM'S VDI the
 # most is v_gtext's (8), not a blit's (109 vro_cpyfm, 121 vrt_cpyfm: 256) — and the keyboard poll's 130 that band 4
 # measures is vsm_string's (31). EVERY CALL THE SCREEN MANAGER'S PATHS CAN MAKE IS HERE (held below): vsl_color (17),
@@ -500,25 +513,42 @@ ENGINES_RAN = {
 V_GTEXT, VRT_CPYFM = 8, 121
 THE_NEST, THE_HORIZONTAL_BLANK = 252, 8           # hbl 8 + vbl 100 + the deeper MFP handler 144: the ROM's handlers' and ours
 THE_LINE_A_TRAP_TAKES = 42
-# WHAT AN APPLICATION'S ROUTINE STANDS UNDER (ob_user's `jsr (a0)`, a USERDEF in a menu): ours, both blobs — read off
-# the listing and MEASURED the same to the byte — and the ROM's, measured.
-AT_THE_USERDEF_CALL, UNDER_THE_ROM_S = 538, 472
+# WHAT AN APPLICATION'S ROUTINE STANDS UNDER (ob_user's `jsr (a0)`). THE DEEPEST ANY PATH OF THE LISTING ENTERS IT:
+# 468 down, both blobs — an object WATCHED under a window's button (gr_watchbox > ob_change > just_draw), which the
+# reading cannot tell is never a USERDEF. A USERDEF IN A MENU — the path a run makes — is entered 456 down, read off
+# the listing (`IN_A_MENU`) and MEASURED the same to the byte; under the ROM, measured, 472.
+AT_THE_USERDEF_CALL, IN_A_MENU, UNDER_THE_ROM_S = 468, 456, 472
+# ...what PD1's stack then leaves the application's routine at the listing's deepest (728; 476 with the nest), and
+# THE FINDING OF THE DOOR DIET: in a menu ours is entered ABOVE the ROM's, 16 bytes more left (66 less before it).
+A_USERDEF_S_ROUTINE_IS_LEFT = SPAN - AT_THE_USERDEF_CALL
+MORE_LEFT_IN_A_MENU_THAN_UNDER_THE_ROM = 16
+THE_MENU_S_PASS = "aes_mn_do"
 # THE MEASURED RUNS from the real entry, the lowest store on PD1's stack: (the ROM's machine, ours on the bench
 # blob, ours on the shipped blob) — each blob's own VDI, handlers and all, under its traps.
-MEASURED = {stack.THE_ELEVATOR: (628, 816, 714), stack.THE_TITLE: (548, 760, 658), stack.THE_CLOSER: (474, 640, 558),
-            stack.THE_MENU: (722, 1038, 864), stack.THE_ICON: (814, 1078, 904), stack.THE_USERDEF: (722, 1038, 864)}
+MEASURED = {stack.THE_ELEVATOR: (628, 816, 714), stack.THE_TITLE: (548, 760, 658), stack.THE_CLOSER: (474, 600, 528),
+            stack.THE_MENU: (722, 956, 782), stack.THE_ICON: (814, 996, 822), stack.THE_USERDEF: (722, 956, 782)}
 UNTOUCHED_AT_MOST = 56                  # what a run's lowest SP can be below its lowest store, by the listing (the AES's frames)
-# THE VERDICT, bytes SPARE of the 1,196 (negative: OVER). THE SHIPPED BLOB FITS, 36 SPARE; THE BENCH BLOB IS OVER BY 134.
+# THE VERDICT, bytes SPARE of the 1,196 (negative: OVER). THE SHIPPED BLOB FITS, 106 SPARE (36 before the door diet);
+# THE BENCH BLOB IS OVER BY 64 (134).
 # AT ITS TRAPS, CALL BY CALL, each site charged its own call's need and the unstored allocation under it:
-#   shipped — the worst is an icon's BLIT in a menu (vrt_cpyfm, 588 down: 244 stored + the copy-raster's 76) = 908;
-#             its label's text is next (gsx_tblt, 562 down + v_gtext's 342 = 904: 40 spare);
-#   bench   — the icon's label's text, 558 + 520 = 1,078.
-THE_WORST_SITE = {BENCH: ("aes_gsx_tblt", 558, (V_GTEXT,)), SHIPPED: ("aes_vrt_cpyfm", 588, (VRT_CPYFM,))}
-SPARE_AT_ITS_TRAPS = {BENCH: -134, SHIPPED: 36}
-THE_TEXT_S_SITE_ON_THE_SHIPPED_BLOB, ITS_SPARE = ("aes_gsx_tblt", 562), 40
+#   shipped — the worst is an icon's BLIT (vrt_cpyfm, 518 down: 244 stored + the copy-raster's 76) = 838;
+#             its label's text is next (gsx_tblt, 492 down + v_gtext's 342 = 834: 110 spare);
+#   bench   — the icon's label's text, 488 + 520 = 1,008.
+# THE ICON OF THOSE SITES IS NO LONGER THE MENU'S: the deepest path to gr_gicon is an object watched under a window's
+# button (hctl_window > gr_watchbox > ob_change > just_draw), 12 bytes below the menu's own (mn_do > ob_draw >
+# just_draw) — a path the listing has and no run makes; the menu's icon, which a run does draw, is held to ITS site
+# (`test_a_measured_run_is_never_deeper_than_the_bound_and_the_icon_s_run_is_its_text_s_site`).
+THE_WORST_SITE = {BENCH: ("aes_gsx_tblt", 488, (V_GTEXT,)), SHIPPED: ("aes_vrt_cpyfm", 518, (VRT_CPYFM,))}
+SPARE_AT_ITS_TRAPS = {BENCH: -64, SHIPPED: 106}
+THE_TEXT_S_SITE_ON_THE_SHIPPED_BLOB, ITS_SPARE = ("aes_gsx_tblt", 492), 110
+THE_MENU_S_TEXT_SITE = {BENCH: 476, SHIPPED: 480}           # gsx_tblt under the icon's label, the icon an item of a menu
+# ...which the listing's deepest text site is BELOW since the door diet: an icon watched under a window's button
+# (gr_watchbox > ob_change > just_draw), a path of the listing no run makes, 12 bytes under mn_do > ob_draw > just_draw.
+THE_LISTING_S_DEEPEST_TEXT_IS_BELOW_THE_MENU_S_BY = 12
 OWN_FRAMES_SPARE = 200                                      # 1,196 - (744 + 252)
-# ...and THE COARSE SUM beside it, a call no path makes — the deepest trap charged the worst call's need: over on both.
-CHARGED_THE_WORST_IT_IS_OVER_BY = {BENCH: 190, SHIPPED: 22}  # 614 + 520 + 252; 624 + 342 + 252
+# ...and THE COARSE SUM beside it, a call no path makes — the deepest trap charged the worst call's need. OVER on the
+# bench blob; ON THE SHIPPED BLOB IT FITS TOO since the door diet, by 8 bytes (it was over by 22).
+CHARGED_THE_WORST_IT_IS_OVER_BY = {BENCH: 160, SHIPPED: -8}  # 584 + 520 + 252; 594 + 342 + 252
 # The one site whose opcode neither the listing nor a declaration says (gsx_xline's sibling call of gsx_1code, its
 # arguments stored into its own argument slots): charged the worst need of all.
 SITES_CHARGED_THE_WORST = {"aes_gsx_xline"}
@@ -912,9 +942,9 @@ def test_the_dispatcher_s_stack_is_charged_the_same_nest():
 def test_finding_the_verdict_the_shipped_blob_fits_its_stack_and_the_bench_blob_s_figure_is_reported(blob):
     """THE VERDICT AGAINST W2-R3, AS NUMBERS, each blob's own VDI under its traps. Our own frames with the nest on
     top: 200 spare on both. At its traps, each site charged ITS OWN call's need, the unstored allocation under it
-    and the nest: THE SHIPPED BLOB — THE PROGRAM, AND THE GATE — FITS WITH 36 TO SPARE, its worst an icon's blit in
-    a menu; THE BENCH BLOB IS OVER BY 134 at the icon's label, under the C twin of a text blit no ROM ships
-    (reported, not gated: a measuring build). A frame that grows on either changes THIS PIN, by name."""
+    and the nest: THE SHIPPED BLOB — THE PROGRAM, AND THE GATE — FITS WITH 106 TO SPARE, its worst an icon's blit;
+    THE BENCH BLOB IS OVER BY 64 at the icon's label, under the C twin of a text blit no ROM ships (reported, not
+    gated: a measuring build). A frame that grows on either changes THIS PIN, by name."""
     shore, read = stack.shore_of(blob), stack.bound(blob)
     assert SPAN - (read.deepest + stack.nest(shore)) == OWN_FRAMES_SPARE
     needed, at_a_trap = stack.need(blob)
@@ -926,21 +956,26 @@ def test_finding_the_verdict_the_shipped_blob_fits_its_stack_and_the_bench_blob_
     assert needed == deepest + THE_NEST == site.depth + stack.needs_bounded(shore)[site.opcodes[0]] + THE_NEST
 
 
+SPARE_BEFORE_THE_DOOR_DIET = 36          # the shipped blob's screen manager, at 05bc5d6
+
+
 def test_the_gate_is_the_shipped_blob_and_it_fits_with_room():
     """THE GATE ON THE FLIP (ruling W2-R3; the third pass's rulings): the SHIPPED blob's bound, its own handlers
-    bound, is inside the 1,196 bytes with at least 32 to spare — and its text's site, the icon's label, with 40."""
+    bound, is inside the 1,196 bytes with at least 32 to spare — and its text's site, the icon's label, with 110.
+    THE DOOR DIET MUST NOT MAKE IT WORSE (its brief): it had 36 to spare before, and has no less."""
     shipped = stack.blob_of(SHIPPED)
     needed, _at_a_trap = stack.need(shipped)
-    assert SPAN - needed >= 32
+    assert SPAN - needed >= 32 and SPAN - needed >= SPARE_BEFORE_THE_DOOR_DIET
     function, depth = THE_TEXT_S_SITE_ON_THE_SHIPPED_BLOB
     text = max((site for site in stack.trap_sites(shipped.elf) if site.function == function), key=lambda site: site.depth)
     assert (text.depth, SPAN - text.depth - stack.need_under(text, SHIPPED) - THE_NEST) == (depth, ITS_SPARE)
 
 
 def test_finding_charged_the_worst_call_at_its_deepest_trap_the_bound_would_be_over(blob):
-    """THE COARSE SUM, KEPT AS A FINDING: the deepest trap (a fill's) with the worst need of any call (a text's)
-    under it and the nest is OVER on both blobs — 22 bytes on the shipped one, 190 on the bench one — a call no path
-    makes. The call-by-call bound is never above it."""
+    """THE COARSE SUM, KEPT AS A FINDING: the deepest trap (the mouse asked for under a slider's wait) with the worst
+    need of any call (a text's) under it and the nest — a call no path makes. OVER BY 160 ON THE BENCH BLOB; the
+    shipped blob's is INSIDE the stack by 8 since the door diet (over by 22 before it). The call-by-call bound is
+    never above it."""
     shore = stack.shore_of(blob)
     assert stack.need_charged_the_worst(blob) - SPAN == CHARGED_THE_WORST_IT_IS_OVER_BY[shore]
     assert stack.need(blob)[0] <= stack.need_charged_the_worst(blob)
@@ -949,15 +984,20 @@ def test_finding_charged_the_worst_call_at_its_deepest_trap_the_bound_would_be_o
 
 def test_finding_what_an_application_s_routine_is_left(blob):
     """A USERDEF'S DRAW ROUTINE RUNS ON THIS STACK, and no reading bounds it: so what is said of it is what it HAS.
-    It is entered 538 bytes down (the listing's figure, and the measured one, to the byte); under the ROM, 472. An
-    application's routine has 66 bytes less than under the ROM: 658 left, 406 with the interrupts' nest. (Before the
-    frame diet, 2026-10-10: 682 down, 210 less than under the ROM.)"""
-    shore = stack.shore_of(blob)
+    The deepest any path of the listing enters it is 468 bytes down (an object watched under a window's button): 728
+    left, 476 with the interrupts' nest. IN A MENU — the path a run makes — it is entered 456 down, the listing's
+    figure and the measured one to the byte; under the ROM, 472: 16 bytes MORE left than under the ROM. (Before the
+    door diet, 2026-10-11: 538 down in a menu, 66 less than under the ROM; before the frame diet: 682, 210 less.)"""
+    shore, read = stack.shore_of(blob), stack.reading(blob.elf)
     depth, path = stack.at_the_userdef_call(blob)
     assert depth == AT_THE_USERDEF_CALL and path[-2:] == ("aes_ob_user", stack.AN_APPLICATION_S_ROUTINE)
-    assert stack.measured(stack.THE_USERDEF, shore).userdef_at == depth, "the listing's depth at the call is the run's"
+    assert (SPAN - depth, SPAN - depth - stack.nest(shore)) == (A_USERDEF_S_ROUTINE_IS_LEFT, A_USERDEF_S_ROUTINE_IS_LEFT - THE_NEST)
+    in_a_menu = (read.deepest_to(stack.SCREEN_MANAGER_ENTRY, THE_MENU_S_PASS)[0]
+                 + read.deepest_to(THE_MENU_S_PASS, stack.AN_APPLICATION_S_ROUTINE)[0])
+    assert in_a_menu == IN_A_MENU <= depth
+    assert stack.measured(stack.THE_USERDEF, shore).userdef_at == in_a_menu, "the listing's depth at the menu's call is the run's"
     assert stack.measured(stack.THE_USERDEF).userdef_at == UNDER_THE_ROM_S
-    assert (SPAN - depth, SPAN - depth - stack.nest(shore), depth - UNDER_THE_ROM_S) == (658, 406, 66)
+    assert UNDER_THE_ROM_S - in_a_menu == MORE_LEFT_IN_A_MENU_THAN_UNDER_THE_ROM > 0
 
 
 @pytest.mark.parametrize("scenario", stack.SCENARIOS)
@@ -970,16 +1010,16 @@ def test_finding_the_measured_runs_from_the_real_entry(scenario):
 
 
 # THE MEASURED VERDICT: a run's lowest store + the nest, bytes SPARE of the stack (negative: OVER) — bench, shipped.
-# ON THE SHIPPED BLOB EVERY RUN FITS: a menu dropped with 80 to spare, an icon in it with 40. On the bench blob the
-# menu's two are over (its C text blit). (Before the frame diet a menu dropped was over by 8 / 12 with THE ROM'S
-# handlers behind our dispatcher — which was all that was measured.)
-MEASURED_SPARE = {stack.THE_ELEVATOR: (128, 230), stack.THE_TITLE: (184, 286), stack.THE_CLOSER: (304, 386),
-                  stack.THE_MENU: (-94, 80), stack.THE_ICON: (-134, 40), stack.THE_USERDEF: (-94, 80)}
+# ON THE SHIPPED BLOB EVERY RUN FITS: a menu dropped with 162 to spare, an icon in it with 122 (80 and 40 before the
+# door diet). On the bench blob the menu's two are still over, by 12 and 52 (its C text blit). (Before the frame diet
+# a menu dropped was over by 8 / 12 with THE ROM'S handlers behind our dispatcher — which was all that was measured.)
+MEASURED_SPARE = {stack.THE_ELEVATOR: (128, 230), stack.THE_TITLE: (184, 286), stack.THE_CLOSER: (344, 416),
+                  stack.THE_MENU: (-12, 162), stack.THE_ICON: (-52, 122), stack.THE_USERDEF: (-12, 162)}
 # ...and how far each still is from the ROM's own run (bench, shipped): the ABI's longword slots and image pointer on
-# every call of the path, the Alcyon entry under everyobj, the two thunks under the trap — and, on the bench blob,
-# the raster cores' C twins.
-DEEPER_THAN_THE_ROM_S_BY = {stack.THE_ELEVATOR: (188, 86), stack.THE_TITLE: (212, 110), stack.THE_CLOSER: (166, 84),
-                            stack.THE_MENU: (316, 142), stack.THE_ICON: (264, 90), stack.THE_USERDEF: (316, 142)}
+# every call of the path, the two thunks under the trap — and, on the bench blob, the raster cores' C twins. AN ICON
+# IN A MENU IS 8 BYTES FROM THE ROM'S OWN RUN on the shipped blob (90 before the door diet).
+DEEPER_THAN_THE_ROM_S_BY = {stack.THE_ELEVATOR: (188, 86), stack.THE_TITLE: (212, 110), stack.THE_CLOSER: (126, 54),
+                            stack.THE_MENU: (234, 60), stack.THE_ICON: (182, 8), stack.THE_USERDEF: (234, 60)}
 
 
 @pytest.mark.parametrize("scenario", stack.SCENARIOS)
@@ -997,14 +1037,20 @@ def test_finding_the_verdict_of_a_measured_run_with_the_nest_on_top(scenario):
 
 def test_a_measured_run_is_never_deeper_than_the_bound_and_the_icon_s_run_is_its_text_s_site(blob):
     """WHAT HOLDS THE READING TO THE TRUTH: no run is deeper than the listing's bound with each trap's own need under
-    it — and the staged icon's run IS a site of the bound, realised: its lowest store is the depth of gsx_tblt's
-    trap under the icon's label and this blob's own v_gtext's need under it, to the byte. (The shipped blob's WORST
-    site is the icon's blit, by the unstored 76 no store shows: its stored depth, 588 + 244, lies above the text's.)"""
-    shore, read = stack.shore_of(blob), stack.bound(blob)
+    it — and the staged icon's run IS a site of the reading, realised: its lowest store is the depth of gsx_tblt's
+    trap under the icon's label and this blob's own v_gtext's need under it, to the byte. THE SITE IS THE MENU'S —
+    the deepest gsx_tblt under mn_do, where the run draws its icon — which since the door diet is 12 bytes above the
+    listing's deepest (an icon watched under a window's button: a path no run makes). (The shipped blob's WORST site
+    is the icon's blit, by the unstored 76 no store shows.)"""
+    shore, read, listing = stack.shore_of(blob), stack.bound(blob), stack.reading(blob.elf)
     at_its_traps, _site = stack.at_its_traps(blob)
     for scenario in stack.SCENARIOS:
         assert stack.measured(scenario, shore).deepest <= max(read.deepest, at_its_traps)
-    text = max((site for site in stack.trap_sites(blob.elf) if site.opcodes == (V_GTEXT,)), key=lambda site: site.depth)
+    menu_at = listing.deepest_to(stack.SCREEN_MANAGER_ENTRY, THE_MENU_S_PASS)[0]
+    text = max((site for site in stack.trap_sites_under(listing, THE_MENU_S_PASS, menu_at) if site.opcodes == (V_GTEXT,)),
+               key=lambda site: site.depth)
+    deepest = max((site for site in stack.trap_sites(blob.elf) if site.opcodes == (V_GTEXT,)), key=lambda site: site.depth)
+    assert text.depth == THE_MENU_S_TEXT_SITE[shore] == deepest.depth - THE_LISTING_S_DEEPEST_TEXT_IS_BELOW_THE_MENU_S_BY
     assert stack.measured(stack.THE_ICON, shore).deepest == text.depth + stack.os_needs(shore)[V_GTEXT]
 
 
@@ -1309,45 +1355,74 @@ def test_the_os_s_traps_on_the_trap_path_are_gemdos_s_and_the_bell_s_each_measur
 
 # ---- THE FINDINGS OF THE TRAP PATH, PINNED (ruling W3-R8) ---------------------------------------------------------------------
 # Numbers of OUR BUILD, as the screen manager's are: a pin that moves says which frame or which call, and is re-pinned
-# with that reason. THE VERDICT IS "OVER" FOR PD2 ON BOTH BLOBS, and it is pinned as that.
+# with that reason. THE VERDICT: THE SHIPPED BLOB FITS PD2 — EVERY ARM OF THE SWITCH, BOUND AND MEASURED — SINCE THE
+# DOOR DIET (band 5 wave 3, 2026-10-11), 20 bytes spare by the bound; the bench blob does not, and is reported.
+#
+# WHAT THE DOOR DIET CUT, each said where it is made, and WHAT IT WAS BEFORE (at 05bc5d6: slice S's findings, the
+# gate's "does not fit" — kept as history):
+#   * THE SWITCH'S FIVE DEEP ARMS ARE ROUTINES IT LEAVES TO BY A JUMP (`src/aes/gemsuper.c`, A_DEEP_ARM): fsel_input,
+#     wind_open, wind_close, wind_set and the default's alert stood on the switch's own 36 bytes and their call's
+#     12-16 + 4; they stand on a routine's 12-20. (`aes_dispatch 56` -> `aes_dispatch 0 > fsel_input 20`.)
+#   * THE MARSHAL'S COPIES IN ARE A ROUTINE OF THEIR OWN (`copied_in`): the five registers the marshal saved for
+#     them lay under the switch — 116 -> 100.
+#   * ob_draw HOLDS everyobj's WALK AS ITS OWN BODY and calls just_draw as C calls (`src/aes/obdraw.c`): ob_draw 60 >
+#     everyobj 86 > the Alcyon entry 24 -> ob_draw 88; the entry is gone from the build.
+#   * gr_watchbox's WAIT IS A ROUTINE OF ITS OWN (`src/aes/grwait.c`): 100 -> 60.
+#   * THIRTEEN MARKS (`include/stack_diet.h`; `test_stack_diet.py` pins what each buys): fs_input 116 -> 96, ob_edit
+#     96 -> 64, curfld 72 -> 52, fm_button 104 -> 92, fm_alert 92 -> 88, fm_dial, wm_opcl 56 -> 36, wm_close, wm_set,
+#     draw_change 104 -> 92, w_move 84 -> 72, w_clipdraw 68 -> 40, and the marshal's own.
+# BEFORE: own frames 1,092 / 1,096 (the selector's edit field redrawn: fs_input 116 > fm_do 92 > ob_edit 96 >
+# curfld 72 > ob_draw 60 > everyobj 86 > the entry 24 > just_draw 124 ...); the worst trap site an icon's blit at
+# 1,002 on the shipped blob — with its need and the nest 1,574, OVER PD2 BY 178 — and a text at 972 on the bench
+# blob, 1,744, over by 348; EIGHT arms of the shipped blob over PD2 (fsel_input 1,574, wind_open 1,570, the default
+# 1,550, wind_set 1,542, wind_close 1,538, form_error 1,518, form_alert 1,494, form_do 1,402) and twelve of the
+# bench blob's; a USERDEF's routine entered 952 down; crit_err 610 / 440 spare.
 PD2_S_SPAN, AN_ALLOCATED_SPAN = 1396, 1788      # [uda + 74, $ae5a) and [uda + 74, uda + 1862): off the machine
-# OUR OWN FRAMES, deepest, FROM THE MARSHAL DOWN (the door's 42 above them): the file selector's edit field redrawn
-# under its form_do — an icon's label measured for its justification.
-FROM_THE_MARSHAL = (("aes_marshal", 116), ("aes_dispatch", 56), ("aes_fs_input", 116), ("aes_fm_do", 92), ("aes_ob_edit", 96),
-                    ("aes_curfld", 72))
-TRAP_PATH_OWN_CHAIN = {
-    BENCH: FROM_THE_MARSHAL + (("aes_ob_draw", 60), ("aes_everyobj<-aes_just_draw_alcyon", 86), ("aes_just_draw_alcyon", 24),
-                               ("aes_just_draw", 124), ("aes_gr_gicon", 72), ("aes_gr_gtext", 52), ("aes_gr_just", 48),
-                               ("aes_gsx_tcalc", 28), ("aes_xstrpix", 8)),
-    SHIPPED: FROM_THE_MARSHAL + (("aes_ob_draw", 60), ("aes_everyobj<-aes_just_draw_alcyon", 86), ("aes_just_draw_alcyon", 24),
-                                 ("aes_just_draw", 124), ("aes_gr_gicon", 72), ("aes_gr_gtext", 52), ("aes_gr_just", 48),
-                                 ("aes_gsx_tcalc", 28), ("aes_xstrpix", 12), ("aes_rom_xstrpix", 0))}
-# ...and to the deepest trap: the same icon's fill, as under the screen manager's menu (`TRAP_CHAIN`, from ob_draw down).
-TRAP_PATH_TRAP_CHAIN = {shore: FROM_THE_MARSHAL + TRAP_CHAIN[shore][3:] for shore in BLOBS}
-TRAP_PATH_OWN_FRAMES = {BENCH: 1092, SHIPPED: 1096}             # 42 + 1,050 / 1,054
-TRAP_PATH_DEEPEST_TRAP = {BENCH: 1028, SHIPPED: 1038}
+# OUR OWN FRAMES, deepest, FROM THE MARSHAL DOWN (the door's 42 above them): a button of the file selector watched
+# while it is held — under its form_do, fm_button and gr_watchbox, the object changed and redrawn: an icon's label
+# measured for its justification. (The selector's edit field redrawn, the deepest before the diet, is 4 bytes above
+# it now: fm_do 92 > ob_edit 64 > curfld 52 > ob_draw 88 against fm_do 88 > fm_button 92 > gr_watchbox 60 > ob_change 64.)
+FROM_THE_MARSHAL = (("aes_marshal", 100), ("aes_dispatch", 0), ("fsel_input", 20), ("aes_fs_input", 96), ("aes_fm_do", 88),
+                    ("aes_fm_button", 92), ("aes_gr_watchbox", 60), ("aes_ob_change", 64))
+TO_THE_LABEL = (("aes_just_draw", 124), ("aes_gr_gicon", 72), ("aes_gr_gtext", 52), ("aes_gr_just", 48), ("aes_gsx_tcalc", 28))
+TRAP_PATH_OWN_CHAIN = {BENCH: FROM_THE_MARSHAL + TO_THE_LABEL + (("aes_xstrpix", 8),),
+                       SHIPPED: FROM_THE_MARSHAL + TO_THE_LABEL + (("aes_xstrpix", 12), ("aes_rom_xstrpix", 0))}
+# ...and to the deepest trap: the same icon's fill under its label, vr_recfl (gr_rect holds bb_fill's body).
+TO_THE_FILL = (("aes_just_draw", 124), ("aes_gr_gicon", 68), ("aes_gr_rect", 48), ("aes_vr_recfl", 28))
+TRAP_PATH_TRAP_CHAIN = {BENCH: FROM_THE_MARSHAL + TO_THE_FILL + (("aes_gsx_ncode", 0), ("aes_gsx2", 0)),
+                        SHIPPED: FROM_THE_MARSHAL + TO_THE_FILL + (("aes_gsx_ncode", 10), ("aes_rom_gsx_ncode", 0), ("aes_rom_gsx2", 0))}
+TRAP_PATH_OWN_FRAMES = {BENCH: 894, SHIPPED: 898}               # 42 + 852 / 856
+TRAP_PATH_DEEPEST_TRAP = {BENCH: 830, SHIPPED: 840}
 # THE VERDICT, bytes SPARE (negative: OVER), the nest's 252 on top:
-#   our own frames alone fit PD2 — 52 / 48 spare;
-#   AT ITS TRAPS, call by call, the worst is fsel_input's: shipped — the icon's blit under the selector's form
-#   (vrt_cpyfm at 1,002: 244 stored + the copy-raster's 76) = 1,574: OVER PD2 BY 178, 214 spare of an allocated PD;
-#   bench — its label's text (gsx_tblt at 972 + the C twin's 520) = 1,744: over by 348, 44 spare of an allocated PD.
-TRAP_PATH_OWN_SPARE_OF_PD2 = {BENCH: 52, SHIPPED: 48}
-TRAP_PATH_WORST_SITE = {BENCH: ("aes_gsx_tblt", 972, (V_GTEXT,)), SHIPPED: ("aes_vrt_cpyfm", 1002, (VRT_CPYFM,))}
-TRAP_PATH_SPARE = {BENCH: {stack.PD2: -348, stack.AN_ALLOCATED_PD: 44}, SHIPPED: {stack.PD2: -178, stack.AN_ALLOCATED_PD: 214}}
+#   our own frames alone fit PD2 — 250 / 246 spare;
+#   AT ITS TRAPS, call by call, the worst is fsel_input's: shipped — the icon's blit under the selector's watched
+#   button (vrt_cpyfm at 804: 244 stored + the copy-raster's 76) = 1,376: FITS PD2, 20 SPARE, 412 spare of an
+#   allocated PD; bench — its label's text (gsx_tblt at 774 + the C twin's 520) = 1,546: over by 150, 242 spare of
+#   an allocated PD.
+TRAP_PATH_OWN_SPARE_OF_PD2 = {BENCH: 250, SHIPPED: 246}
+TRAP_PATH_WORST_SITE = {BENCH: ("aes_gsx_tblt", 774, (V_GTEXT,)), SHIPPED: ("aes_vrt_cpyfm", 804, (VRT_CPYFM,))}
+TRAP_PATH_SPARE = {BENCH: {stack.PD2: -150, stack.AN_ALLOCATED_PD: 242}, SHIPPED: {stack.PD2: 20, stack.AN_ALLOCATED_PD: 412}}
+THE_GATE_S_MARGIN = 20                  # W3-R8: the shipped blob's worst arm, its need and the nest, of PD2's 1,396
 # BY THE CALL: the arms of the switch that do NOT fit PD2 with the nest, the deepest first — `(AES opcode, bytes)`,
-# THE_DEFAULT_ARM for the 48 opcodes the ROM answers with its alert. fsel_input 90, wind_open 101, the default's
-# alert, wind_set 105, wind_close 102, form_error 53, form_alert 52, form_do 50 — and on the bench blob four more:
-# form_dial 51, objc_edit 46, menu_bar 30, form_center.. 56. EVERY CALL FITS AN ALLOCATED PD, on both.
+# THE_DEFAULT_ARM for the 48 opcodes the ROM answers with its alert. ON THE SHIPPED BLOB: NONE. On the bench blob,
+# under the C twin of the text blit, eight: fsel_input 90, form_error 53, the default's alert, wind_open 101,
+# wind_set 105, form_alert 52, wind_close 102, form_do 50. EVERY CALL FITS AN ALLOCATED PD, on both.
 THE_DEFAULT_ARM = "the default arm"
 CALLS_OVER_PD2 = {
-    BENCH: ((90, 1744), (101, 1740), (THE_DEFAULT_ARM, 1720), (105, 1712), (102, 1708), (53, 1688), (52, 1664), (50, 1572),
-            (51, 1528), (46, 1480), (30, 1432), (56, 1410)),
-    SHIPPED: ((90, 1574), (101, 1570), (THE_DEFAULT_ARM, 1550), (105, 1542), (102, 1538), (53, 1518), (52, 1494), (50, 1402))}
+    BENCH: ((90, 1546), (53, 1542), (THE_DEFAULT_ARM, 1538), (101, 1534), (105, 1522), (52, 1518), (102, 1506), (50, 1430)),
+    SHIPPED: ()}
+# ...and THE SHIPPED BLOB'S SEVEN DEEPEST ARMS, `(AES opcode, bytes with the nest)`: what each has to spare of PD2 is
+# 1,396 less it — 20, 24, 28, 32, 44, 48, 60; the next arm (form_do) has 136.
+THE_SHIPPED_BLOB_S_DEEPEST_CALLS = ((90, 1376), (53, 1372), (THE_DEFAULT_ARM, 1368), (101, 1364), (105, 1352), (52, 1348), (102, 1336))
+# WHAT EVERY AES CALL TAKES BESIDE ITS ARM (`stack.beside_the_switch`): the marshal's copies in, 174 / 180 down — no
+# arm's own frames are charged less, and the shipped blob's appl_init, an arm of no depth (178), is measured there.
+BESIDE_THE_SWITCH = {BENCH: 174, SHIPPED: 180}
 TRAP_PATH_SITES_CHARGED_THE_WORST = {"aes_gsx_xline", "aes_ap_tplay"}
-TRAP_PATH_USERDEF_CALL = 952            # objc_draw of a G_USERDEF from an accessory: PD2 leaves its routine 444, 192 with the nest
+TRAP_PATH_USERDEF_CALL = 754            # a G_USERDEF watched in a form of an accessory's: PD2 leaves its routine 642, 390 with the nest
+PD2_LEAVES_A_USERDEF_S_ROUTINE = PD2_S_SPAN - TRAP_PATH_USERDEF_CALL
 # crit_err's own 2,048 bytes: 46 of the handler's above eralert (read off the ROM), the thunk's 16, eralert's paths, the nest.
 CRIT_ERR_S_SPAN, CRIT_ERR_READ = 2048, stack.PrivateStack(0, 46, (stack.CRIT_ERR, stack.ERALERT), True)
-CRIT_ERR_SPARE = {BENCH: 440, SHIPPED: 610}
+CRIT_ERR_SPARE = {BENCH: 570, SHIPPED: 740}
 UB_TRAMPOLINE_READ = stack.PrivateStack(0, 8, (stack.UB_TRAMPOLINE, stack.THE_DESK_S_DRAW_CODE), True)
 
 
@@ -1378,11 +1453,13 @@ def test_every_call_a_site_of_the_trap_path_can_make_is_measured_on_every_shore(
         "a trap site of the screen manager's is none of the trap path's: evnt_multi's arm reaches them all")
 
 
-def test_finding_the_verdict_of_the_trap_path_it_does_not_fit_pd2_and_fits_an_allocated_pd(blob):
+def test_finding_the_verdict_of_the_trap_path_the_shipped_blob_fits_pd2_and_the_bench_blob_s_figure_is_reported(blob):
     """THE VERDICT AGAINST W3-R8, AS NUMBERS, each blob's own VDI under its traps and the nest on top. OUR OWN FRAMES
-    FIT PD2 (48 spare on the shipped blob). AT ITS TRAPS, each site charged its own call's need, THE TRAP PATH DOES
-    NOT: the shipped blob — the program — is OVER PD2's 1,396 BY 178 at an icon's blit under the file selector, and
-    fits an allocated PD's 1,788 with 214 to spare. A frame that grows or is flattened changes THIS PIN, by name."""
+    FIT PD2 (246 spare on the shipped blob). AT ITS TRAPS, each site charged its own call's need: THE SHIPPED BLOB —
+    THE PROGRAM, AND THE GATE — FITS PD2's 1,396 WITH 20 TO SPARE, its worst an icon's blit under the file selector's
+    watched button, and an allocated PD's 1,788 with 412; THE BENCH BLOB IS OVER PD2 BY 150 at the icon's label,
+    under the C twin of a text blit no ROM ships (reported, not gated). A frame that grows or is flattened changes
+    THIS PIN, by name."""
     shore, read = stack.shore_of(blob), stack.trap_bound(blob)
     assert PD2_S_SPAN - (read.deepest + stack.nest(shore)) == TRAP_PATH_OWN_SPARE_OF_PD2[shore]
     needed, at_a_trap, site = stack.trap_need(blob)
@@ -1394,14 +1471,21 @@ def test_finding_the_verdict_of_the_trap_path_it_does_not_fit_pd2_and_fits_an_al
     assert needed == site.depth + stack.needs_bounded(shore)[site.opcodes[0]] + THE_NEST
 
 
-def test_the_gate_of_the_door_flip_is_the_shipped_blob_and_it_is_over_pd2():
+def test_the_gate_of_the_door_flip_is_the_shipped_blob_and_every_arm_of_it_fits_pd2():
     """THE GATE ON THE DOOR FLIP (ruling W3-R8): the SHIPPED blob's trap path, its own handlers and engines under
-    its traps, DOES NOT FIT an accessory's stack in PD2 with the nest — over by 178 by the bound (and by 70 on the
-    one run measured: `scratchpad/b5/W3/S/gate.md`). Pinned as the finding it is: the day a frame diet brings the
-    bound under 1,396 this test reddens, and the pin becomes "fits, N spare" WITH THE REASON."""
-    needed, _at_a_trap, _site = stack.trap_need(stack.blob_of(SHIPPED))
-    assert needed - PD2_S_SPAN == -TRAP_PATH_SPARE[SHIPPED][stack.PD2] == 178
-    assert needed <= AN_ALLOCATED_SPAN
+    its traps, FITS an accessory's stack in PD2 with the nest — EVERY ARM of the opcode switch, all 69, the deepest
+    with 20 bytes to spare. IT DID NOT at 05bc5d6 (over by 178; the pin this one replaces said the day a frame diet
+    brought the bound under 1,396 it would redden): THE REASON is the door diet's cuts, listed above the pins. The
+    margin is pinned, and a frame that eats it reddens here before the stack is short."""
+    shipped = stack.blob_of(SHIPPED)
+    needed, _at_a_trap, _site = stack.trap_need(shipped)
+    assert PD2_S_SPAN - needed == TRAP_PATH_SPARE[SHIPPED][stack.PD2] == THE_GATE_S_MARGIN > 0
+    calls = stack.calls_of_the_switch(shipped.elf, SHIPPED)
+    assert len(calls) == ITS_ARMS and all(max(call.own, call.at_a_trap) + stack.nest(SHIPPED) <= PD2_S_SPAN - THE_GATE_S_MARGIN
+                                          for call in calls)
+    deepest = tuple((call.opcodes[0] if len(call.opcodes) == 1 else THE_DEFAULT_ARM, max(call.own, call.at_a_trap) + THE_NEST)
+                    for call in calls[:len(THE_SHIPPED_BLOB_S_DEEPEST_CALLS)])
+    assert deepest == THE_SHIPPED_BLOB_S_DEEPEST_CALLS, f"the shipped blob's deepest arms moved — say which arm's frames: {deepest}"
 
 
 def _over(calls, shore, span):
@@ -1411,8 +1495,9 @@ def _over(calls, shore, span):
 
 def test_finding_the_trap_path_by_the_call_which_arms_fit_which_stack(blob):
     """BY THE CALL: every opcode of the table is in one arm; the deepest arm IS the bound; the arms OVER PD2 are
-    pinned by opcode and bytes (eight on the shipped blob — the file selector, the window calls that redraw, the
-    alerts, form_do — every other call fits PD2); and every arm fits an allocated PD."""
+    pinned by opcode and bytes (NONE on the shipped blob; eight on the bench blob — the file selector, the window
+    calls that redraw, the alerts, form_do); every arm fits an allocated PD; and NO ARM IS CHARGED LESS THAN WHAT
+    EVERY CALL TAKES BESIDE THE SWITCH — the marshal's copies in."""
     shore, calls = stack.shore_of(blob), stack.calls_of_the_switch(blob.elf, stack.shore_of(blob))
     table, first = stack.the_switch_s_table(blob.elf)
     assert sorted(opcode for call in calls for opcode in call.opcodes) == list(range(first, first + table.words))
@@ -1422,20 +1507,24 @@ def test_finding_the_trap_path_by_the_call_which_arms_fit_which_stack(blob):
     assert _over(calls, shore, PD2_S_SPAN) == CALLS_OVER_PD2[shore], f"{shore}: the calls over PD2 moved — say which arm's frames"
     assert not _over(calls, shore, AN_ALLOCATED_SPAN)
     assert any(call.at_a_trap == 0 and call.site is None for call in calls), "an arm that takes no trap (appl_init)"
+    beside = stack.beside_the_switch(stack.trap_reading(blob.elf), *stack.trap_entered_at(blob.elf))
+    assert beside == BESIDE_THE_SWITCH[shore] <= min(call.own for call in calls)
 
 
 def test_finding_what_an_application_s_routine_is_left_on_the_trap_path(blob):
-    """objc_draw of a G_USERDEF FROM AN ACCESSORY: its routine is entered 952 bytes down on both blobs — PD2 leaves
-    it 444, 192 with the nest. No reader bounds what it then takes: the finding is what it is left."""
+    """A G_USERDEF DRAWN FROM AN ACCESSORY: the deepest any path of the listing enters its routine is 754 bytes down
+    on both blobs (the object watched in a form under the file selector's arm) — PD2 leaves it 642, 390 with the
+    nest (444 and 192 before the door diet). No reader bounds what it then takes: the finding is what it is left."""
     depth, path = stack.trap_userdef_call(blob)
     assert depth == TRAP_PATH_USERDEF_CALL and path[-2:] == ("aes_ob_user", stack.AN_APPLICATION_S_ROUTINE)
-    assert PD2_S_SPAN - depth - stack.nest(stack.shore_of(blob)) == 192
+    left = PD2_S_SPAN - depth, PD2_S_SPAN - depth - stack.nest(stack.shore_of(blob))
+    assert left == (PD2_LEAVES_A_USERDEF_S_ROUTINE, PD2_LEAVES_A_USERDEF_S_ROUTINE - THE_NEST)
 
 
 def test_finding_crit_err_s_and_ub_trampoline_s_private_stacks(blob):
     """THE TWO PRIVATE STACKS, their shapes READ OFF THE ROM: crit_err moves with nothing pushed on its caller's
     stack, holds 46 bytes of its own above eralert and RETURNS; with the thunk, the C eralert's paths — each trap
-    its call's need of OUR VDI — and the nest it fits its 2,048 bytes, 610 spare on the shipped blob. ub_trampoline
+    its call's need of OUR VDI — and the nest it fits its 2,048 bytes, 740 spare on the shipped blob. ub_trampoline
     holds 8 above the desk's draw code, on the 1,024 bytes the booted desk's own pointer names the end of — and what
     that code takes of them is the ROM's until band 6."""
     assert stack.crit_err_read() == CRIT_ERR_READ and stack.ub_trampoline_read() == UB_TRAMPOLINE_READ
@@ -1454,21 +1543,35 @@ def test_finding_crit_err_s_and_ub_trampoline_s_private_stacks(blob):
 
 # ---- THE TRAP PATH, MEASURED BEHIND THE DOOR (ruling W3-R8: bound AND measured) ------------------------------------------------
 # `(PD2, an allocated PD)`: the bytes of each accessory's own stack used from the door's takeover on — the ROM's own
-# boot beside each blob's, ITS OWN VDI under its traps. The deepest call is wind_open: 962 under the ROM, 1,214 on the
-# shipped blob. ON THE BENCH BLOB THE SAME CALL OVERFLOWS PD2 IN THE RUN ITSELF, no interrupt needed: under the C twin
-# of the text blit it takes 1,408 bytes (read on the allocated accessory's stack, which has them), 12 more than PD2
-# has — the stores reach PD2's stack's bottom, the saved context under it is written over, and the machine reaches
-# no idle (it goes through the ROM's reset). The bench blob gates nothing; the finding is what an overflow there does.
-THE_ROM_S, WIND_OPEN, EVNT_MESAG = stack.THE_ROM_S, 101, 23
-DOOR_MEASURED = {stack.QUIETLY: {THE_ROM_S: (328, 328), BENCH: (334, 334), SHIPPED: (334, 334)},
-                 stack.WITH_WINDOWS: {THE_ROM_S: (962, 962), BENCH: (PD2_S_SPAN, 1408), SHIPPED: (1214, 1214)}}
-NO_IDLE_REACHED = {(stack.WITH_WINDOWS, BENCH)}
+# boot beside each blob's, ITS OWN VDI under its traps. The deepest call is wind_open: 962 under the ROM, 1,016 ON
+# THE SHIPPED BLOB — 54 bytes from the ROM's own run (1,214, and 252 from it, before the door diet) — and 1,210 on
+# the bench blob. EVERY RUN REACHES ITS IDLE NOW. Before the door diet the bench blob's wind_open OVERFLOWED PD2 IN
+# THE RUN ITSELF, no interrupt needed (1,408 bytes under the C twin of the text blit, 12 more than PD2 has: the saved
+# context under the stack written over, the machine through the ROM's reset): THAT OVERFLOW IS GONE — the same call
+# takes 1,210 — and what is left of the finding is the bench blob's figure with the nest on top, over by 66,
+# reported and not gated. (A run that reaches no idle is still kept with its reason, and held to it below: no run
+# of today's builds makes one.)
+THE_ROM_S, WIND_OPEN, EVNT_MESAG, APPL_INIT = stack.THE_ROM_S, 101, 23, 10
+THE_SWITCH_S_OWN_FRAME_DOWN = 178       # the door's 42, the marshal's 100 and the switch's own 36: an arm that calls nothing
+DOOR_MEASURED = {stack.QUIETLY: {THE_ROM_S: (328, 328), BENCH: (318, 318), SHIPPED: (318, 318)},
+                 stack.WITH_WINDOWS: {THE_ROM_S: (962, 962), BENCH: (1210, 1210), SHIPPED: (1016, 1016)}}
+NO_IDLE_REACHED = frozenset()
 THE_DEEPEST_CALL = {stack.QUIETLY: EVNT_MESAG, stack.WITH_WINDOWS: WIND_OPEN}
-WITH_THE_ROM_S_VDI_UNDER_OUR_DOOR = {BENCH: 1178, SHIPPED: 1182}        # the windows again, the machine's VDI left: ours is the rest
-MEASURED_OVER_PD2_BY, MEASURED_SPARE_OF_AN_ALLOCATED_PD, THE_ROM_S_RUN_SPARE_OF_PD2 = 70, 322, 182
+WITH_THE_ROM_S_VDI_UNDER_OUR_DOOR = {BENCH: 980, SHIPPED: 984}          # the windows again, the machine's VDI left: ours is the rest
+MEASURED_SPARE_OF_PD2, MEASURED_SPARE_OF_AN_ALLOCATED_PD, THE_ROM_S_RUN_SPARE_OF_PD2 = 128, 520, 182
+THE_BENCH_BLOB_S_RUN_IS_OVER_PD2_BY = 66                                # 1,210 + 252: reported, not gated
 
 
 THE_OVERFLOW_S_END = re.compile(r"did not reach an idle within \d+ instructions: it stands at 0x(?P<pc>[0-9a-f]+) and the machine never waits")
+
+
+def held_to_the_overflow_s_end(modes, shore, refused):
+    """A run that reached no idle, HELD TO WHY in its own words (`refused`): the one reason a pin of `NO_IDLE_REACHED`
+    may stand for — its stores went through the bottom of PD2's stack, the machine through the ROM's reset, and it
+    stands in the BIOS's text outside every dispatcher. Any other refusal is named as another."""
+    ended = THE_OVERFLOW_S_END.search(refused)
+    assert ended, f"{modes}, {shore} reached no idle for another reason: {refused}"
+    assert addrs.ROM_BASE <= int(ended["pc"], 16) < addrs.VDI_ROM_ESCAPE, "it stands in the BIOS's own text, below every VDI routine"
 
 
 @pytest.mark.parametrize("blob_name", BLOBS)
@@ -1490,16 +1593,14 @@ def test_the_rom_s_vdi_text_watched_behind_the_door_holds_every_handler_and_engi
 @pytest.mark.parametrize("modes", stack.DOOR_MODES)
 def test_finding_the_measured_runs_behind_the_door(modes, shore):
     """THE RUNS, PINNED: each accessory's deepest store, the call it was made under, and whether the machine reached
-    its idle — every run does but the bench blob's windows (above)."""
+    its idle — every run does, the bench blob's windows too since the door diet (above)."""
     run = stack.measured_at_the_door(modes, shore)
     assert tuple(run.deepest.values()) == DOOR_MEASURED[modes][shore], f"{modes}, {shore}: say which frame or call moved"
     assert (run.idle is None) == ((modes, shore) in NO_IDLE_REACHED) == (run.refused is not None)
     # WHY no idle, in the run's own words (wave 3's review, SI: ANY refusal read as "no idle" — a wrong one too): the
     # machine stands in the BIOS's text, outside every dispatcher, having gone through the ROM's reset.
     if run.refused is not None:
-        assert THE_OVERFLOW_S_END.search(run.refused), f"{modes}, {shore} reached no idle for another reason: {run.refused}"
-        stood_at = int(THE_OVERFLOW_S_END.search(run.refused)["pc"], 16)
-        assert addrs.ROM_BASE <= stood_at < addrs.VDI_ROM_ESCAPE, "it stands in the BIOS's own text, below every VDI routine"
+        held_to_the_overflow_s_end(modes, shore, run.refused)
     # WHO RAN THE DOOR, as the takeover's own vet read it (SC: the vet's call was held by nothing): made wherever an
     # idle was reached behind a door, the ROM's text of each part zero cycles, our handler and our gotopgm entered.
     assert (run.door_ran is not None) == (shore != THE_ROM_S and run.idle is not None)
@@ -1509,6 +1610,55 @@ def test_finding_the_measured_runs_behind_the_door(modes, shore):
     for which, used in run.deepest.items():
         assert run.by_call[which, THE_DEEPEST_CALL[modes]] == used == max(depth for (stack_, _call), depth in run.by_call.items()
                                                                            if stack_ == which)
+
+
+A_STAGED_REFUSAL = "STAGED BY THE TEST: the run is refused after its last stop, as a run that reaches no idle is"
+
+
+def test_a_run_that_reaches_no_idle_is_kept_with_its_reason_and_its_depths(monkeypatch):
+    """THE KEPT-REFUSAL ARM OF `_door_run`, which no run of today's builds reaches (the door diet's review, B-F3:
+    made to raise instead of keeping, every test passed). A REFUSAL OF THE HARNESS, STAGED — NO MACHINE STATE: the
+    quiet pair's whole run behind the shipped blob's door, made uncached, and `aes_boot._Run.to_an_idle` made to
+    raise `aes_boot.Refused` where it would return, its idle forgotten. What a refused run must keep: the reason in
+    its own words, no idle, no vet of a door no idle was reached behind — and the depths of what it stored until
+    then, which here are the whole run's."""
+    made_whole = aes_boot._Run.to_an_idle
+
+    def refused_at_its_end(run, *entered):
+        made_whole(run, *entered)
+        run.idle = None
+        monkeypatch.setattr(aes_boot._Run, "to_an_idle", made_whole)    # the door's run alone: the stacks are read off another boot
+        raise aes_boot.Refused(A_STAGED_REFUSAL)
+
+    monkeypatch.setattr(aes_boot._Run, "to_an_idle", refused_at_its_end)
+    modes, shore = stack.QUIETLY, SHIPPED
+    run = stack._door_run.derive(*stack.DOOR_MODES[modes], shore, stack._content_of(shore), True)
+    assert (run.refused, run.idle, run.door_ran) == (A_STAGED_REFUSAL, None, None)
+    assert tuple(run.deepest.values()) == DOOR_MEASURED[modes][shore]
+    # ...WHAT THE MEASURED RUNS' TEST HOLDS A REFUSAL TO (its branch is reached by no run either): this reason is
+    # named as another; the overflow's own words pass where the machine stands in the BIOS's text, and not elsewhere.
+    with pytest.raises(AssertionError, match="reached no idle for another reason: STAGED BY THE TEST"):
+        held_to_the_overflow_s_end(modes, shore, run.refused)
+    the_overflow_s_words = "the run did not reach an idle within {} instructions: it stands at {:#x} and the machine never waits"
+    held_to_the_overflow_s_end(modes, shore, the_overflow_s_words.format(aes_boot.BOOT_INSNS, addrs.ROM_BASE))
+    with pytest.raises(AssertionError, match="it stands in the BIOS's own text"):
+        held_to_the_overflow_s_end(modes, shore, the_overflow_s_words.format(aes_boot.BOOT_INSNS, addrs.VDI_ROM_ESCAPE))
+    # ...and THE REPORT SAYS A REFUSED RUN IN ITS OWN REASON (it printed one fixed cause for every refusal)
+    used = " / ".join(str(depth) for depth in DOOR_MEASURED[modes][shore])
+    spans = stack.trap_callers_spans()
+    assert stack._the_door_run_s_words(shore, run, spans) == f"{shore} {used} — NO IDLE REACHED: {A_STAGED_REFUSAL}"
+    reached = stack._the_door_run_s_words(shore, stack.measured_at_the_door(modes, shore), spans)
+    assert reached.startswith(f"{shore} {used} (+ nest {THE_NEST}: ") and "NO IDLE" not in reached
+
+
+def test_the_report_says_less_left_than_under_the_rom_where_ours_is_entered_deeper(blob):
+    """THE REPORT'S "less / more left than under the ROM" (B-F5: said the other way round, every test passed): a
+    routine entered DEEPER is left LESS — and each blob's own line says what its measured USERDEF in a menu is."""
+    assert stack._left_against_the_rom_s(UNDER_THE_ROM_S + 2, UNDER_THE_ROM_S) == "2 bytes less left than under the ROM"
+    assert stack._left_against_the_rom_s(UNDER_THE_ROM_S - 2, UNDER_THE_ROM_S) == "2 bytes more left than under the ROM"
+    ours_at = stack.measured(stack.THE_USERDEF, stack.shore_of(blob)).userdef_at
+    assert stack._left_against_the_rom_s(ours_at, stack.measured(stack.THE_USERDEF).userdef_at) == (
+        f"{MORE_LEFT_IN_A_MENU_THAN_UNDER_THE_ROM} bytes more left than under the ROM")
 
 
 @pytest.mark.parametrize("modes", stack.DOOR_MODES)
@@ -1528,35 +1678,40 @@ def test_behind_the_door_our_own_vdi_ran_and_the_rom_s_did_not(modes):
     assert the_rom_s_own.ours_vdi == 0 < the_rom_s_own.the_rom_s_vdi
 
 
-def test_behind_the_door_the_shipped_blob_draws_the_screen_the_rom_draws():
-    """WHAT THE RUN IS WORTH AS A RUN OF OUR CODE: with its own door, switch and VDI the shipped blob's boot leaves
-    THE SAME SCREEN, byte for byte, as the ROM's — both windows drawn. (The bench blob's overflowed run does not.)"""
+def test_behind_the_door_each_blob_draws_the_screen_the_rom_draws():
+    """WHAT THE RUN IS WORTH AS A RUN OF OUR CODE: with its own door, switch and VDI each blob's boot leaves THE
+    SAME SCREEN, byte for byte, as the ROM's — both windows drawn. (The bench blob's did not while its wind_open
+    overflowed PD2: it reaches its idle since the door diet, and draws what the ROM draws.)"""
     for modes in stack.DOOR_MODES:
-        assert stack.measured_at_the_door(modes, SHIPPED).screen == stack.measured_at_the_door(modes).screen
-    assert stack.measured_at_the_door(stack.WITH_WINDOWS, BENCH).screen != stack.measured_at_the_door(stack.WITH_WINDOWS).screen
+        for shore in BLOBS:
+            assert stack.measured_at_the_door(modes, shore).screen == stack.measured_at_the_door(modes).screen, f"{modes}, {shore}"
 
 
-def test_finding_the_verdict_of_the_measured_run_behind_the_door_it_is_over_pd2_with_the_nest():
-    """THE GATE'S MEASURED HALF (ruling W3-R8): the shipped blob's deepest run, a window opened from PD2, uses 1,214
-    of its 1,396 bytes — 182 spare, LESS THAN THE NEST'S 252: OVER BY 70 with the nest, where the ROM's own run has
-    182 to spare WITH it. An allocated PD holds the same run with 322 spare."""
+def test_finding_the_verdict_of_the_measured_run_behind_the_door_it_fits_pd2_with_the_nest():
+    """THE GATE'S MEASURED HALF (ruling W3-R8): the shipped blob's deepest run, a window opened from PD2, uses 1,016
+    of its 1,396 bytes — WITH THE NEST'S 252 ON TOP, 128 SPARE (over by 70 before the door diet), where the ROM's own
+    run has 182. An allocated PD holds the same run with 520 spare. THE BENCH BLOB'S same run, reported: over PD2 by
+    66 with the nest — and inside it without, which it was not."""
     run, spans = stack.measured_at_the_door(stack.WITH_WINDOWS, SHIPPED), stack.trap_callers_spans()
     needed = {which: used + stack.nest(SHIPPED) for which, used in run.deepest.items()}
-    assert needed[stack.PD2] - spans[stack.PD2] == MEASURED_OVER_PD2_BY
+    assert spans[stack.PD2] - needed[stack.PD2] == MEASURED_SPARE_OF_PD2 > 0
     assert spans[stack.AN_ALLOCATED_PD] - needed[stack.AN_ALLOCATED_PD] == MEASURED_SPARE_OF_AN_ALLOCATED_PD
     the_rom_s = stack.measured_at_the_door(stack.WITH_WINDOWS).deepest[stack.PD2] + stack.nest()
     assert spans[stack.PD2] - the_rom_s == THE_ROM_S_RUN_SPARE_OF_PD2
+    bench = stack.measured_at_the_door(stack.WITH_WINDOWS, BENCH)
+    assert bench.deepest[stack.PD2] + stack.nest(BENCH) - spans[stack.PD2] == THE_BENCH_BLOB_S_RUN_IS_OVER_PD2_BY
+    assert bench.idle is not None and bench.deepest[stack.PD2] < spans[stack.PD2]
 
 
 def test_a_run_behind_the_door_is_never_deeper_than_its_call_s_bound(blob):
     """WHAT HOLDS THE READING TO THE TRUTH on the trap path: under every AES call an accessory made, on either stack
-    and in either pair, the lowest store is no deeper than THAT CALL's arm of the bound (its own frames, or its
-    worst trap site with this blob's own VDI's need under it) — the bench blob's overflowing wind_open included:
-    1,408 measured under a bound of 1,488."""
+    and in either pair, the lowest store is no deeper than THAT CALL's arm of the bound (its own frames — the
+    marshal's copies beside the switch among them: the shipped blob's appl_init stores 180 down, 2 below its arm's
+    own 178 — or its worst trap site with this blob's own VDI's need under it)."""
     shore = stack.shore_of(blob)
     bound_of = {opcode: max(call.own, call.at_a_trap) for call in stack.calls_of_the_switch(blob.elf, shore) for opcode in call.opcodes}
     for modes in stack.DOOR_MODES:
         for (which, opcode), used in stack.measured_at_the_door(modes, shore).by_call.items():
             assert used <= bound_of[opcode], f"{shore}, {modes}: AES call {opcode} used {used} of {which}: its bound is {bound_of[opcode]}"
-    overflowed = stack.measured_at_the_door(stack.WITH_WINDOWS, BENCH)
-    assert overflowed.deepest[stack.AN_ALLOCATED_PD] > PD2_S_SPAN == overflowed.deepest[stack.PD2]
+    quiet = stack.measured_at_the_door(stack.QUIETLY, shore)
+    assert quiet.by_call[stack.PD2, APPL_INIT] == max(BESIDE_THE_SWITCH[shore], THE_SWITCH_S_OWN_FRAME_DOWN) == bound_of[APPL_INIT]

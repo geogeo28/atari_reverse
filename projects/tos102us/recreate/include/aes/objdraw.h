@@ -1,6 +1,6 @@
 /* aes/objdraw.h — the OBJECT DRAW PATH's drawer (`src/aes/objdraw.c`): just_draw, which draws ONE object of a tree at
- * a screen position — the routine ob_draw hands everyobj as a VALUE ($fea08c `move.l #$fe9a88`) and ob_change calls
- * by Line-F ($fea4ac) — and the AES globals it draws through.
+ * a screen position — the routine the ROM's ob_draw hands everyobj as a VALUE ($fea08c `move.l #$fe9a88`; ours holds
+ * the walk and calls it, `src/aes/obdraw.c`) and ob_change calls by Line-F ($fea4ac) — and the AES globals it draws through.
  *
  * ALCYON C: entered over its caller's frame — the tree a LONGWORD, the object, x and y WORDS — and answering
  * nothing a caller reads. Every drawing call reaches the VDI through `aes/gsx.h`'s bridge.
@@ -45,11 +45,6 @@ void aes_ob_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth); 
 void aes_ob_change(uint8_t *image, uint32_t tree, int16_t object, int16_t new_state, int16_t redraw); /* $fea38e */
 /* ob_change's `redraw` as its form callers hand it: the object drawn as it changes ($fe7310, $fe7406 move.w #1). */
 #define OB_CHANGE_REDRAW      1
-#ifndef RECREATE_HOST_DIFFERENTIAL
-/* TARGET ONLY (`src/aes/obdraw.S`): just_draw entered as everyobj enters the ROM's — over its ten-byte Alcyon frame —
- * the routine the target ob_draw hands everyobj BY VALUE where the ROM hands $fe9a88. Never called from C. */
-void aes_just_draw_alcyon(void);
-#endif
 
 #include "machine.h"
 

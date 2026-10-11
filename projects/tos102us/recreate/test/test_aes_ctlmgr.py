@@ -119,17 +119,17 @@ PREMISES = {
 # THE WHOLE RUNS' CYCLES, the ROM's and ours net of the entry both share, by blob; the turns themselves are
 # `aes_turns_pinned`'s (by the row's name: `tools/repin.py` writes both from a recorded run).
 WHOLE_RUN = {
-    THE_BAR: {BENCH: (812236, 776976), SHIPPED: (812236, 770550)},
-    THE_MENU: {BENCH: (1975728, 1890968), SHIPPED: (1975728, 1877252)},
+    THE_BAR: {BENCH: (812236, 775300), SHIPPED: (812236, 768874)},
+    THE_MENU: {BENCH: (1975728, 1889292), SHIPPED: (1975728, 1875576)},
     PAST_THE_TITLES: {BENCH: (85630, 73634), SHIPPED: (85630, 71684)},
-    THE_CLOSER: {BENCH: (313410, 247890), SHIPPED: (313410, 244420)},
-    BOTH: {BENCH: (1987850, 1901016), SHIPPED: (1987850, 1886866)},
+    THE_CLOSER: {BENCH: (313410, 247940), SHIPPED: (313410, 244472)},
+    BOTH: {BENCH: (1987850, 1899340), SHIPPED: (1987850, 1885190)},
     AN_ARROW: {BENCH: (225718, 167786), SHIPPED: (225718, 164514)},
     A_DRAG: {BENCH: (605006, 532494), SHIPPED: (605006, 526624)},
     TOPPED: {BENCH: (147904, 129556), SHIPPED: (147904, 126398)},
-    THE_ENTRY: {BENCH: (1051754, 955602), SHIPPED: (1051754, 941620)},
-    THE_COUNT_AT_3_A_BUTTON: {BENCH: (362068, 294810), SHIPPED: (362068, 291344)},
-    THE_COUNT_AT_3_THE_BAR: {BENCH: (811980, 776834), SHIPPED: (811980, 770264)},
+    THE_ENTRY: {BENCH: (1051754, 954558), SHIPPED: (1051754, 940576)},
+    THE_COUNT_AT_3_A_BUTTON: {BENCH: (362068, 294860), SHIPPED: (362068, 291396)},
+    THE_COUNT_AT_3_THE_BAR: {BENCH: (811980, 775158), SHIPPED: (811980, 768588)},
 }
 # ...and how many windows of the ROM's processes each run holds beside the screen manager's turns.
 THE_ROM_S_WINDOWS = {THE_BAR: 0, THE_MENU: 1, PAST_THE_TITLES: 0, THE_CLOSER: 1, BOTH: 1, AN_ARROW: 1, A_DRAG: 1, TOPPED: 1,
@@ -138,11 +138,15 @@ TURNS = {label: 2 if label == THE_ENTRY else 1 for label in WOKEN}
 # HOW DEEP EACH ctlmgr GOES ON THE SCREEN MANAGER'S REAL STACK in the row's run — its top less the lowest byte the run
 # stores there: (the ROM's, ours on the bench blob, ours on the shipped blob), THE MACHINE'S VDI (the ROM's) under
 # the traps. (The build's OWN VDI under its traps — handlers and engines bound — is `test_aes_stack.py`'s staging
-# and the bound's subject: a menu dropped 864 there on the shipped blob, 832 here.) Each fits its 1,196 bytes with
+# and the bound's subject: a menu dropped 782 there on the shipped blob, 750 here.) Each fits its 1,196 bytes with
 # the worst nest of interrupts on top, on both blobs.
-DEEPEST = {THE_BAR: (722, 828, 832), THE_MENU: (722, 828, 832), PAST_THE_TITLES: (272, 298, 308), THE_CLOSER: (474, 528, 538),
-           BOTH: (722, 828, 832), AN_ARROW: (346, 396, 404), A_DRAG: (548, 640, 650), TOPPED: (340, 360, 366),
-           THE_ENTRY: (616, 740, 750), THE_COUNT_AT_3_A_BUTTON: (474, 528, 538), THE_COUNT_AT_3_THE_BAR: (722, 828, 832)}
+# RE-PINNED BY THE DOOR DIET (band 5 wave 3; ours alone, the ROM's unmoved): every run that draws a menu is 82 bytes
+# shallower — ob_draw holds everyobj's walk as its own body and calls just_draw as C calls, where three frames stood
+# under each object drawn — and the closer's by 18: gr_watchbox's wait is a routine of its own (its frame 40 less;
+# the run's lowest store stands 18 higher).
+DEEPEST = {THE_BAR: (722, 746, 750), THE_MENU: (722, 746, 750), PAST_THE_TITLES: (272, 298, 308), THE_CLOSER: (474, 510, 520),
+           BOTH: (722, 746, 750), AN_ARROW: (346, 396, 404), A_DRAG: (548, 640, 650), TOPPED: (340, 360, 366),
+           THE_ENTRY: (616, 658, 668), THE_COUNT_AT_3_A_BUTTON: (474, 510, 520), THE_COUNT_AT_3_THE_BAR: (722, 746, 750)}
 
 
 def _name(label):
@@ -369,11 +373,11 @@ RETURNING_WHOLE_RUN = {
     "aes_hctl_button, a click on the bar past the titles: the desktop's place, nothing":
         {BENCH: (7460, 4660), SHIPPED: (7460, 4368)},
     "aes_hctl_button, the top window's closer clicked: the window found and worked":
-        {BENCH: (193484, 138236), SHIPPED: (193484, 136304)},
+        {BENCH: (193484, 138286), SHIPPED: (193484, 136356)},
     "aes_hctl_window, the closer clicked: WM_CLOSED":
-        {BENCH: (188444, 134966), SHIPPED: (188444, 133194)},
+        {BENCH: (188444, 135016), SHIPPED: (188444, 133246)},
     "aes_hctl_window, the fuller clicked: WM_FULLED":
-        {BENCH: (185108, 132520), SHIPPED: (185108, 130880)},
+        {BENCH: (185108, 132570), SHIPPED: (185108, 130932)},
     "aes_hctl_window, the title clicked: WM_MOVED to where it is":
         {BENCH: (246240, 200796), SHIPPED: (246240, 199346)},
     "aes_hctl_window, the sizer clicked: WM_SIZED to the point clicked":

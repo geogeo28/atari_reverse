@@ -15,6 +15,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/ctrl.h"
 #include "aes/evdoor.h"
@@ -84,6 +85,7 @@ static int16_t select_in_its_group(uint8_t *image, uint32_t tree, int16_t object
  * gr_watchbox, which toggles it while the mouse goes in and out until the button rises — and, the form going on, the
  * rise awaited (ev_button); a SELECTED EXIT object ends the form. The object stored at *next_at — the field clicked
  * when the form goes on, else 0 — and whether the form goes on answered. */
+FRAME_DIET("no-function-cse", "no-caller-saves")
 int16_t aes_fm_button(uint8_t *image, uint32_t tree, int16_t object, int16_t clicks, uint32_t next_at)
 {
     uint16_t frame_local[FM_BUTTON_FRAME_BYTES / sizeof(uint16_t)];
@@ -181,6 +183,7 @@ static uint16_t cursor_shown_answer(const uint8_t *image)
 /* $fe75ec — fm_dial: the whole screen the clip, then FMD_GROW a box grown from `little` out to `big`, FMD_SHRINK one
  * shrunk back, FMD_FINISH the desktop and the windows redrawn under `big`; FMD_START and any other type nothing.
  * Answers the D0 the desk's binding stores (`aes/fmdo.h`). */
+FRAME_DIET("no-defer-pop")
 uint16_t aes_fm_dial(uint8_t *image, int16_t type, uint32_t little, uint32_t big)
 {
     (void)aes_gsx_sclip(image, AES_GL_RSCREEN);
@@ -205,6 +208,7 @@ uint16_t aes_fm_dial(uint8_t *image, int16_t type, uint32_t little, uint32_t big
  * has one, every object fixed to pixels and the icon made 32 x 32 — centred, drawn over the screen it saves under
  * the screen lock, and run by fm_do with the mouse the AES's; then the screen and the clip put back. Answers the
  * button that ended it, 1 for the first. */
+FRAME_DIET("no-gcse")
 int16_t aes_fm_alert(uint8_t *image, int16_t default_button, uint32_t string)
 {
     uint16_t frame_local[FM_ALERT_FRAME_BYTES / sizeof(uint16_t)];

@@ -88,8 +88,8 @@ ROM_ADDRESSES_AS_DATA = {
     "wrect.c": {"AES_ROM_MKRECT": CODE},
     # draw_change hands everyobj newrect the same way ($fec146 `move.l #$fe5cee,-(sp)`, row (b) below).
     "wmupdate.c": {"AES_ROM_NEWRECT": CODE},
-    # ob_draw hands everyobj just_draw by its ROM address on the host ($fea08c `move.l #$fe9a88,-(sp)`, row (b) below);
-    # on target, its Alcyon entry (`obdraw.S`) — the rebuilt ROM's own.
+    # ob_draw's own walk hands its visit just_draw's ROM address on the host, the hook's key ($fea08c `move.l
+    # #$fe9a88,-(sp)`, row (b) below); on target the visit calls the C just_draw and the address names nothing.
     "obdraw.c": {"AES_ROM_JUST_DRAW": CODE},
     # (`aes/evdoor.h` names NO ROM address as a value any more, and has no row: every entry is REBOUND — its wrapper
     # spelt through EVDOOR_REBOUND, which names no ROM routine on target; off it the address is only the hook's key

@@ -1,5 +1,7 @@
-"""THE FRAME DIET'S MARKS (`include/stack_diet.h`) — a routine on the screen manager's stack, or under a `trap #2`
-taken on it, compiled with some of -O2's passes off, by GCC's per-function `optimize` attribute, so that its frame costs what the ROM's does.
+"""THE FRAME DIET'S MARKS (`include/stack_diet.h`) — a routine on the screen manager's stack, on the stack of a process
+that enters the AES by `trap #2` (an accessory's: the door diet, band 5 wave 3), or under a `trap #2` taken on
+either, compiled with some of -O2's passes off, by GCC's per-function `optimize` attribute, so that its frame costs
+what the ROM's does.
 
 GCC documents the attribute as a debugging aid. What holds it is read off the compiler's own output, on every run:
 
@@ -14,9 +16,9 @@ GCC documents the attribute as a debugging aid. What holds it is read off the co
     either stays a loop (and under a bare attribute does not: the premise), no marked function names a library
     routine, and no source spells `optimize(` outside the two macros.
   * WHAT THE MARKS BUY, PINNED: the bench blob's sources linked a second time with every mark off, the screen
-    manager's two bounds read off both (`aes_stack`'s reading) — the bytes each bound is deeper without them, and
-    for each marked function what it holds on its own deepest path and at its deepest trap, never more with its mark
-    than without and less on one of the two.
+    manager's two bounds and the trap path's two read off both (`aes_stack`'s readings) — the bytes each bound is
+    deeper without them, and for each marked function what it holds on its own deepest path and at its deepest
+    trap, never more with its mark than without and less on one of the two.
 The cycles a mark costs are Tier 3's (`make bench`: the bar, per row).
 """
 import functools
@@ -154,6 +156,11 @@ BENCH = aes_stack.BLOBS["the bench blob"]
 # The screen manager's two bounds on the bench blob, in bytes: `(the deepest SP of our own code, the deepest SP a
 # `trap #2` is taken at)` — how much deeper each is with every mark off.
 BOUGHT = (188, 160)
+# ...and THE TRAP PATH's two (a process that enters by `trap #2`: `aes_stack.trap_reading`), the same way. THE MARKS
+# ALONE: what the door diet's structural cuts took off the same path (the switch's deep arms left by a jump, the
+# marshal's copies in a routine of their own, ob_draw's walk held as its own body, gr_watchbox's wait a routine) is
+# not a mark's and is pinned by chain (`test_aes_stack.py`, THE TRAP PATH).
+TRAP_PATH_BOUGHT = (140, 168)
 # ...and each marked function's own frame, `(on its deepest path, at its deepest trap)` — None where no path of its
 # takes a trap: `function: (without its mark, with it)`.
 BOUGHT_BY_FUNCTION = {
@@ -162,32 +169,50 @@ BOUGHT_BY_FUNCTION = {
     "aes_b_delay": ((32, None), (20, None)),
     "aes_bb_fill": ((52, 48), (24, 24)),
     "aes_bchange": ((52, None), (32, None)),
+    "aes_curfld": ((72, 72), (52, 52)),
     "aes_doq": ((56, None), (40, None)),
+    "aes_draw_change": ((104, 104), (92, 92)),
     "aes_ev_multi": ((60, 60), (52, 52)),
-    "aes_everyobj": ((94, 94), (86, 86)),
+    # everyobj under the one walk left that the deepest paths make — draw_change's, with newrect: ob_draw holds its
+    # own walk since the door diet (`src/aes/obdraw.c`), and no walk of everyobj's takes a trap any more.
+    "aes_everyobj": ((94, None), (86, None)),
+    "aes_fm_alert": ((92, 92), (88, 88)),
+    "aes_fm_button": ((104, 104), (92, 92)),
+    "aes_fm_dial": ((32, 32), (24, 24)),
     "aes_forker": ((60, 60), (40, 40)),
     "aes_fpdnm": ((80, None), (56, None)),
+    "aes_fs_input": ((116, 116), (96, 96)),
     "aes_gr_box": ((84, 84), (44, 44)),
     "aes_gr_dragbox": ((112, 112), (88, 88)),
     "aes_gr_gicon": ((116, 116), (72, 68)),
     "aes_gr_rect": ((68, 68), (48, 48)),
     "aes_gr_wait": ((72, 72), (40, 40)),
-    "aes_gr_watchbox": ((140, 108), (100, 100)),
+    # (its wait is a routine of its own since the door diet: 140 / 108 before that cut, and 100 with the mark)
+    "aes_gr_watchbox": ((84, 72), (60, 60)),
     "aes_gsx_blt": ((84, 68), (40, 40)),
     "aes_gsx_tblt": ((60, 60), (36, 36)),
     "aes_hctl_button": ((32, 32), (28, 28)),
     "aes_hctl_rect": ((40, 40), (36, 36)),
     "aes_hctl_window": ((112, 112), (88, 88)),
     "aes_just_draw": ((148, 148), (124, 124)),
+    # the marshal, its copies in a routine of their own: that routine's three arguments popped before the switch's six
+    "aes_marshal": ((112, 112), (100, 100)),
     "aes_mchange": ((64, 80), (64, 64)),
     "aes_mn_do": ((132, 132), (104, 104)),
     "aes_mowner": ((28, None), (24, None)),
     "aes_ob_change": ((68, 68), (64, 64)),
-    "aes_ob_draw": ((64, 64), (60, 60)),
+    # ob_draw WITH ITS WALK (everyobj's body, held): 60 + everyobj's 86 + the Alcyon entry's 24 before the door diet
+    "aes_ob_draw": ((96, 96), (88, 88)),
+    "aes_ob_edit": ((96, 96), (64, 64)),
     "aes_ob_find": ((100, None), (80, None)),
     "aes_post_button": ((48, None), (40, None)),
     "aes_post_mouse": ((48, None), (40, None)),
     "aes_rom_ctlmgr": ((68, 68), (36, 36)),
+    "aes_w_clipdraw": ((68, 68), (40, 40)),
+    "aes_w_move": ((84, 84), (72, 72)),
+    "aes_wm_close": ((48, 48), (32, 32)),
+    "aes_wm_opcl": ((56, 56), (36, 36)),
+    "aes_wm_set": ((44, 44), (36, 36)),
     "draw_border_and_fill": ((72, 72), (48, 48)),
     "draw_state_marks": ((88, 88), (68, 68)),
     # the VDI's text handler's deep frame, under the trap (no path of the AES's reading: read for itself)
@@ -206,8 +231,8 @@ def unmarked_elf(tmp_path_factory):
 
 
 # A routine that calls what it is handed is read once for each routine a caller hands it (`aes_switch.HANDED`):
-# everyobj's frame is read under the walk the deepest paths make, ob_draw's.
-THE_WALK_S_ROUTINE = "aes_just_draw_alcyon"
+# everyobj's frame is read under the walk the deepest paths make — draw_change's, which hands it newrect.
+THE_WALK_S_ROUTINE = "aes_newrect_alcyon"
 
 
 def _frames(read, function):
@@ -218,11 +243,16 @@ def _frames(read, function):
 
 
 def test_the_marks_buy_what_is_pinned_and_each_its_own_function_a_smaller_frame(unmarked_elf):
-    """ONE TEST for the two holds: the second link is the cost, made once."""
-    without, marked = aes_stack.reading(unmarked_elf), aes_stack.reading(rom_bench.RomBench(BENCH).elf)
-    entry = aes_stack.SCREEN_MANAGER_ENTRY
-    bought = (without.of(entry).deepest - marked.of(entry).deepest, without.of(entry).at_a_trap - marked.of(entry).at_a_trap)
-    assert bought == BOUGHT, f"the marks buy {bought} bytes of the two bounds: say why it moved"
+    """ONE TEST for the two holds: the second link is the cost, made once. EACH FUNCTION'S FRAME IS READ BY THE TRAP
+    PATH'S READING — the screen manager's with the OS's two other traps declared: the one that reads fm_do (its
+    bell) and the selector (GEMDOS) at all."""
+    bench = rom_bench.RomBench(BENCH).elf
+    for reading, entry, pinned, whose in ((aes_stack.reading, aes_stack.SCREEN_MANAGER_ENTRY, BOUGHT, "the screen manager's"),
+                                          (aes_stack.trap_reading, aes_stack.trap_entered_at(bench)[0], TRAP_PATH_BOUGHT, "the trap path's")):
+        off, on = reading(unmarked_elf).of(entry), reading(bench).of(entry)
+        bought = (off.deepest - on.deepest, off.at_a_trap - on.at_a_trap)
+        assert bought == pinned, f"the marks buy {bought} bytes of {whose} two bounds: say why it moved"
+    without, marked = aes_stack.trap_reading(unmarked_elf), aes_stack.trap_reading(bench)
     read = {function: (_frames(without, function), _frames(marked, function)) for function in sorted(MARKS)}
     assert read == BOUGHT_BY_FUNCTION, f"the marked functions' frames, without and with: {read}"
     for function, (off, on) in read.items():

@@ -11,9 +11,10 @@ TREES (`test/aes_objdraw.py`), the whole image compared, the screen included.
       else not ICON and (state ^ new) & SELECTED: bb_fill(XOR, solid, t inset by th — x,y as ONE packed longword), redraw := 0
       redraw: just_draw(tree, obj, t.x, t.y);  gsx_mon
 
-ob_draw's DOOR. ob_draw hands everyobj just_draw BY VALUE; on the host that value is the ROM address and the case's hook
-serves it with the C core (`just_draw_door`, the rectangle lists' MKRECT_HOOK shape) — on target, `src/aes/obdraw.S`'s
-Alcyon entry, which only Tier 3 runs (and which its (V) rule needs: the ROM's just_draw inside our build is refused).
+ob_draw's DOOR. The ROM's ob_draw hands everyobj just_draw BY VALUE; ours HOLDS THE WALK AS ITS OWN BODY
+(`aes/oblib.h`, everyobj_walk). On the host each object still goes through the hook, by just_draw's ROM address, and
+the case's hook serves it with the C core (`just_draw_door`, the rectangle lists' MKRECT_HOOK shape) — on target the
+walk calls the C just_draw as C calls, which only Tier 3 runs.
 
 THE MACHINE IS THE SNAPSHOT's OWN FONT (`aes_objdraw.SNAPSHOT_FONT`): a tree's first label finds the small font the desk
 last drew in, and sets the IBM font itself. That first label READS the parameter block's PTSIN before any call points

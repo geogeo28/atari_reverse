@@ -2111,6 +2111,34 @@ def test_a_partial_door_is_refused_by_name():
     assert alone.door.programs == () and alone.door.ran[THE_VECTOR][0] > 0
 
 
+A_WAIT_S_CLASS = "its parameter, an address in its own stack"       # what every such class's name says (`aes_boot.PARKED_ADDRESS`)
+
+
+def waits_on_their_own_stack(rom, ours):
+    """THE TWO MACHINES' OWN WORD ON EACH PROGRAM'S WAITS, read here and not through `aes_boot._of_a_program`: for
+    every wait (EVB) of a program the door took whose parameter names a place of that program's own stack ON BOTH
+    MACHINES — a message wait's QPB, a local of the waiting routine — `{(the program's name, the EVB): (the ROM
+    machine's longword there, ours)}`. WHETHER THE TWO ARE ONE ADDRESS IS A BLOB'S LAYOUT and nothing a test may pin
+    (the door diet's review, B-F2: since that diet the build's frames above evnt_mesag's QPB happen to sum to the
+    ROM's, and two bytes of frame anywhere above ap_rdwr undo it): what is held is that the comparison names a class
+    for exactly the waits this reads at two addresses."""
+    found = {}
+    for program in ours.takeover.door.programs:
+        lo, top = program.stack
+        for evb in ours.process(program.pd).events:
+            parameters = tuple(each.long(evb + aes.EVB_PARM) for each in (rom, ours))
+            if all(lo <= parameter & aes.OS_BUS_ADDR_MASK < top for parameter in parameters):
+                found[program.name.decode().strip(), evb] = parameters
+    return found
+
+
+def classes_of_the_waits(rom, ours):
+    """The names of the classes `waits_on_their_own_stack`'s reading asks for: one for each wait whose buffer the two
+    machines hold at TWO addresses, none where they hold it at one."""
+    return {aes_boot.PARKED_ADDRESS.format(name, evb)
+            for (name, evb), (rom_s, our) in waits_on_their_own_stack(rom, ours).items() if rom_s != our}
+
+
 @every_door_machine
 @every_blob
 def test_a_door_machine_differs_from_the_rom_s_in_the_classes_of_each_process_alone(label, blob):
@@ -2126,12 +2154,16 @@ def test_a_door_machine_differs_from_the_rom_s_in_the_classes_of_each_process_al
     assert two_dispatchers or rom.registers == ours.registers
     names = [process.name.decode().strip() for process in programs_of(ours)]
     per_program = {each.format(name) for name in names for each in (aes_boot.PROGRAM_CONTEXT, aes_boot.PROGRAM_STACK)}
-    waits = {name for name in result.within if "its parameter, an address in its own stack" in name}
+    waits = {name for name in result.within if A_WAIT_S_CLASS in name}
     assert set(result.within) - waits - {aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME} == per_program | {
         aes_boot.DISPATCHER_STACK if two_dispatchers else aes_boot.DEAD_DISPATCHER_FRAMES, aes_boot.SAVED_CONTEXT,
         aes_boot.MANAGER_STACK, aes_boot.THE_BLOB}
     assert all(result.within.values()), f"a class the two machines do not differ in: {result.within}"
-    assert len(waits) == len(names), "each accessory waits for a message: one buffer on its own stack"
+    # EACH ACCESSORY WAITS FOR A MESSAGE: ONE BUFFER ON ITS OWN STACK, on both machines (the premise, on every pair
+    # and blob) — and a class exactly where the two builds' frames put that buffer at two addresses, read off the
+    # two machines here (`waits_on_their_own_stack`): which pairs those are is a layout's and is pinned nowhere.
+    assert sorted(name for name, _evb in waits_on_their_own_stack(rom, ours)) == sorted(names), f"{label} on {blob}"
+    assert waits == classes_of_the_waits(rom, ours), f"{label} on {blob}: {sorted(waits)}"
     assert case.long_in(aes_boot.mapped_back(ours), addrs.VECTOR_TRAP_GEM) == rom.long(addrs.VECTOR_TRAP_GEM) == addrs.GEM_TRAP2
 
 
@@ -2143,7 +2175,8 @@ def test_the_comparison_behind_a_door_still_sees_a_byte_beside_every_class(blob)
     rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, blob)
     classes, _beside = aes_boot.by_nature(rom, ours)
     inside_some = lambda at: any(lo <= at < hi for lo, hi in classes.values())      # noqa: E731
-    assert sum("TESTACC" in name for name in classes) == 6
+    # a saved context and a stack each, and a wait's class where the two machines' buffers are at two addresses (above)
+    assert sum("TESTACC" in name for name in classes) == 2 * len(programs_of(ours)) + len(classes_of_the_waits(rom, ours))
     for name, (lo, hi) in classes.items():
         for at in (lo - 1, hi):
             if not inside_some(at):
@@ -2155,19 +2188,39 @@ def test_the_comparison_behind_a_door_still_sees_a_byte_beside_every_class(blob)
         assert seen and all(addrs.VECTOR_TRAP_GEM <= start and start + size <= addrs.VECTOR_TRAP_GEM + LONG_BYTES for start, size in seen)
 
 
-def test_a_wait_s_parameter_is_a_class_only_where_both_machines_hold_an_address_of_the_waiter_s_stack():
-    """`_of_a_program`'s third class, at its edge: the EVB's parameter is named where BOTH machines hold an address
-    inside the program's own stack there — with the ROM's machine holding anything else (a timer's count), the same
-    two machines differ in that longword and the comparison says so."""
-    rom, ours = booted_as(QUIET_PAIR), behind_a_door(QUIET_PAIR, "the shipped blob")
-    classes, _beside = aes_boot.by_nature(rom, ours)
-    (slot, end), = [span for name, span in classes.items() if name.startswith("TESTACC1's wait")]
-    assert end - slot == LONG_BYTES and rom.long(slot) != ours.long(slot)
-    counted = bytearray(rom.ram)
-    counted[slot:end] = struct.pack(">I", 0x1234)
-    elsewhere = aes_boot.Machine(rom.boot._replace(ram=bytes(counted)))
-    assert not any(name.startswith("TESTACC1's wait") for name in aes_boot.by_nature(elsewhere, ours)[0])
-    assert [at for at, _size in aes_boot.compared(elsewhere, ours).differing if slot <= at < end]
+NO_ADDRESS_OF_A_STACK = 0x1234      # what a wait holds that is no buffer's address (a timer's count): in no program's stack
+
+
+@pytest.mark.parametrize("label", [QUIET_PAIR, SIX_WAY_PAIR])
+def test_a_wait_s_parameter_is_a_class_only_where_both_machines_hold_an_address_of_the_waiter_s_stack(label):
+    """`_of_a_program`'s third class, AT ITS THREE EDGES, on whichever of the two the pair's own machines stand and
+    the other two STAGED IN THE ROM MACHINE'S COPY (a longword of the comparison's input rewritten by this test — the
+    harness's edge, labelled: no machine state): the EVB's parameter is a class where BOTH machines hold an address
+    inside the program's own stack there AND THE TWO DIFFER; where the ROM's machine holds anything else (a timer's
+    count) the two differ in that longword and the comparison says so; and where both hold THE SAME address there is
+    no class — the longword is compared as every other byte is. Which edge a pair's machines stand on by
+    themselves is a blob's layout (the door diet's review, B-F2) and is asked of nothing here."""
+    rom, ours = booted_as(label), behind_a_door(label, THE_SHIPPED_BLOB)
+    first = ours.takeover.door.programs[0]
+    name, (lo, top) = first.name.decode().strip(), first.stack
+    (evb, (_rom_s, our)), = [(evb, pair) for (whose, evb), pair in waits_on_their_own_stack(rom, ours).items() if whose == name]
+    slot, end = evb + aes.EVB_PARM, evb + aes.EVB_PARM + LONG_BYTES
+    its_class = aes_boot.PARKED_ADDRESS.format(name, evb)
+
+    def with_the_rom_s_holding(parameter):
+        staged = bytearray(rom.ram)
+        staged[slot:end] = struct.pack(">I", parameter)
+        return aes_boot.Machine(rom.boot._replace(ram=bytes(staged)))
+
+    def differing_there(staged):
+        return [at for at, _size in aes_boot.compared(staged, ours).differing if slot <= at < end]
+
+    another = our - WORD_BYTES          # the nearest other place a 68000's stack can hold a buffer at
+    assert lo <= another & aes.OS_BUS_ADDR_MASK < top and not lo <= NO_ADDRESS_OF_A_STACK < top, "the premise of the three edges"
+    at_another, at_the_same, elsewhere = (with_the_rom_s_holding(each) for each in (another, our, NO_ADDRESS_OF_A_STACK))
+    assert aes_boot.by_nature(at_another, ours)[0][its_class] == (slot, end) and not differing_there(at_another)
+    assert its_class not in aes_boot.by_nature(at_the_same, ours)[0] and not differing_there(at_the_same)
+    assert its_class not in aes_boot.by_nature(elsewhere, ours)[0] and differing_there(elsewhere)
 
 
 def made_behind_a_door(label, blob, patch, door=None, **patched):

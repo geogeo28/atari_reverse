@@ -134,7 +134,7 @@ WHOLE_RUN = {
     'the mouse played onto the menu bar and off it: the screen manager entered from a yield':
         {BENCH: (167922, 134432), SHIPPED: (167922, 133334)},
     "the mouse onto the menu bar and off it: the screen manager's turns inside the recording":
-        {BENCH: (922214, 854046), SHIPPED: (922214, 845218)},
+        {BENCH: (922214, 852370), SHIPPED: (922214, 843542)},
     'none played: a count below 0':
         {BENCH: (12180, 10844), SHIPPED: (12180, 10964)},
     'four records played at a negative scale: the wait is no tick':

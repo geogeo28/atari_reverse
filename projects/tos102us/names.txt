@@ -1728,7 +1728,7 @@ var 0x9b26 gl_mntree
 var 0xc942 gl_newdesk
 cmt 0xb7a7 ODD address: byte access only (81 bytes, GEM's MAX_LEN)
 cmt 0x980c a cache of the VDI's face: two writers only, gsx_start $fdaace (-1) and gsx_tblt $fdad4a (after its own vst_height)
-# --- ob_draw / ob_change (src/aes/obdraw.c; target hands everyobj src/aes/obdraw.S's Alcyon entry) ---
+# --- ob_draw / ob_change (src/aes/obdraw.c; since the door diet ob_draw holds everyobj's walk and calls just_draw as C: no Alcyon entry) ---
 fn 0xfea028 ob_draw
 cmt 0xfea028 Alcyon: (tree, obj, depth) everyobj from obj to its ob_next (-1 from the root) at its parent's offset, just_draw by value ($fea08c), the cursor hidden round the walk; D0 left = gsx_mon's (read back by the binding $fde2fe)
 fn 0xfea38e ob_change

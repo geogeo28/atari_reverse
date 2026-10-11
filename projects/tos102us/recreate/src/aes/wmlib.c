@@ -13,6 +13,7 @@
 #include "machine.h"
 #include "host_slot.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/gemgraf.h"
 #include "aes/gsxif.h"
@@ -132,6 +133,7 @@ void aes_w_hvassign(uint8_t *image, int16_t vertical, int16_t parent, int16_t ob
  * (gl_rfull when 0; a clip handed in is cut to gl_rfull IN PLACE first). Nothing is drawn, and 1 answered, while
  * window drawing is held or for window -1; else 0, the list's end, which the ROM's loop test leaves in D0. Each link
  * is read after the rectangle's draw, the list's head after the clip's cut, as the ROM reads them. */
+FRAME_DIET("no-defer-pop", "no-function-cse", "no-move-loop-invariants")
 int16_t aes_w_clipdraw(uint8_t *image, int16_t window, uint32_t tree, int16_t object, int16_t depth, uint32_t clip)
 {
     uint16_t piece_local[GRECT_WORDS];
@@ -418,6 +420,7 @@ static int moved_off_an_edge(const uint8_t *image, uint32_t now, uint32_t before
  * (the old one after a blit, else the union). Answers whether the word at `stop`, READ BACK after that copy, is the
  * window. While window drawing is held it does nothing and the ROM leaves its caller's D0, which the C cannot see:
  * it answers 0 (its one caller, draw_change, returns before calling while drawing is held). */
+FRAME_DIET("no-defer-pop", "no-caller-saves")
 int16_t aes_w_move(uint8_t *image, int16_t window, uint32_t stop, uint32_t rect)
 {
     uint16_t rects_local[2 * GRECT_WORDS];

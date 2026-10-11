@@ -230,8 +230,53 @@ static inline uint16_t graf_mouse(uint8_t *image, uint32_t int_in, uint32_t addr
     return AES_ANSWER_DONE;
 }
 
+/* ================================================================================================
+ * THE ARMS THAT GO DEEP, each a routine of its own that the switch LEAVES TO BY A JUMP.
+ * ============================================================================================= */
+
+/* An arm the switch calls stands on the switch's whole frame — its saved registers, its copies of the arguments a
+ * tail call elsewhere overwrites — for as long as its routine runs, and these five run the deepest paths of the AES
+ * (the file selector, a window opened, closed or set, the alert) ON THE CALLER'S OWN STACK: an accessory's, which the
+ * ROM sized for Alcyon's frames (`test/aes_stack.py`, THE TRAP PATH). The ROM's switch keeps its 1 across such an
+ * arm's call; here the arm is a routine that answers it, and the switch's last act is a jump to it, its frame gone:
+ * 36 bytes less under each (`stack_diet.h` says why a frame is worth a routine). `noipa` is what keeps it one THAT
+ * ANSWERS: merely `noinline`, GCC sees the answer is a constant, makes the routine answer nothing and the switch
+ * load the constant after a CALL of it — the frame back under it (measured: 16 bytes deeper than no routine at all). */
+#ifdef STACK_DIET_ON_TARGET
+#define A_DEEP_ARM static __attribute__((noipa)) uint16_t
+#else
+#define A_DEEP_ARM static inline uint16_t
+#endif
+
+/* fsel_input: the selector run over the caller's two strings, the button answered through int_out[1]. */
+A_DEEP_ARM fsel_input(uint8_t *image, uint32_t int_out, uint32_t addr_in)
+{
+    (void)aes_fs_input(image, address(0), address(1), out_at(AES_FIRST_ANSWER));
+    return AES_ANSWER_DONE;
+}
+
+/* wind_open: the window added at the rectangle in int_in[1..4]. */
+A_DEEP_ARM wind_open(uint8_t *image, uint32_t int_in)
+{
+    (void)aes_wm_open(image, in(0), in_at(WIND_RECT));
+    return AES_ANSWER_DONE;
+}
+
+A_DEEP_ARM wind_close(uint8_t *image, uint32_t int_in)
+{
+    (void)aes_wm_close(image, in(0));
+    return AES_ANSWER_DONE;
+}
+
+/* wind_set: the field in int_in[1], its values handed in place. */
+A_DEEP_ARM wind_set(uint8_t *image, uint32_t int_in)
+{
+    (void)aes_wm_set(image, in(0), in(1), in_at(WIND_SET_VALUES));
+    return AES_ANSWER_DONE;
+}
+
 /* $fe64a6 — the default arm: the alert, and the answer that says no such call. */
-static inline uint16_t no_such_call(uint8_t *image)
+A_DEEP_ARM no_such_call(uint8_t *image)
 {
     (void)aes_fm_show(image, AES_BAD_FUNCTION_STRING, AES_BAD_FUNCTION_VALUES, AES_BAD_FUNCTION_BUTTON);
     return (uint16_t)AES_ANSWER_NO_SUCH_CALL;
@@ -387,26 +432,22 @@ uint16_t aes_dispatch(uint8_t *image, int16_t opcode, uint32_t global, uint32_t 
     case AES_ROM_SC_WRITE_OPCODE:  /* scrp_write */
         (void)aes_sc_write(image, address(0));
         return AES_ANSWER_DONE;
-    case AES_ROM_FS_INPUT_OPCODE:  /* fsel_input */
-        (void)aes_fs_input(image, address(0), address(1), out_at(AES_FIRST_ANSWER));
-        return AES_ANSWER_DONE;
+    case AES_ROM_FS_INPUT_OPCODE:
+        return fsel_input(image, int_out, addr_in);
     case AES_ROM_WM_CREATE_OPCODE:  /* wind_create */
         return (uint16_t)aes_wm_create(image, in(0), in_at(WIND_RECT));
-    case AES_ROM_WM_OPEN_OPCODE:  /* wind_open */
-        (void)aes_wm_open(image, in(0), in_at(WIND_RECT));
-        return AES_ANSWER_DONE;
-    case AES_ROM_WM_CLOSE_OPCODE:  /* wind_close */
-        (void)aes_wm_close(image, in(0));
-        return AES_ANSWER_DONE;
+    case AES_ROM_WM_OPEN_OPCODE:
+        return wind_open(image, int_in);
+    case AES_ROM_WM_CLOSE_OPCODE:
+        return wind_close(image, int_in);
     case AES_ROM_WM_DELETE_OPCODE:  /* wind_delete */
         (void)aes_wm_delete(image, in(0));
         return AES_ANSWER_DONE;
     case AES_ROM_WM_GET_OPCODE:  /* wind_get */
         (void)aes_wm_get(image, in(0), in(1), out_at(AES_FIRST_ANSWER));
         return AES_ANSWER_DONE;
-    case AES_ROM_WM_SET_OPCODE:  /* wind_set */
-        (void)aes_wm_set(image, in(0), in(1), in_at(WIND_SET_VALUES));
-        return AES_ANSWER_DONE;
+    case AES_ROM_WM_SET_OPCODE:
+        return wind_set(image, int_in);
     case AES_ROM_WM_FIND_OPCODE:  /* wind_find */
         return (uint16_t)aes_wm_find(image, in(0), in(1));
     case AES_ROM_WM_UPDATE_OPCODE:  /* wind_update */
@@ -480,12 +521,15 @@ static inline void stay_in_the_model_off_target(uint16_t words)
 #endif
 }
 
-/* The marshal over its frame at `frame`: the three copies in, each count read from the copied control WHERE THE ROM
- * READS IT (addr_in's after int_in's copy, the opcode after both — a count past its array has changed them by
- * then), each REFUSED BEFORE IT IS MADE where it would store past the frame; the switch; its answer; int_out copied
- * back, past the frame where the count says so; and, where the opcode is rsrc_gaddr's, the address it parked stored
- * through addr_out. The program's six pointers are each read where it is used. */
-static inline void marshal_over(uint8_t *image, uint32_t block, uint32_t frame)
+/* THE COPIES IN, over the frame at `frame`: control, then int_in and addr_in, each count read from the copied control
+ * WHERE THE ROM READS IT (addr_in's after int_in's copy — a count past its array has changed it by then), each
+ * REFUSED BEFORE IT IS MADE where it would store past the frame. The program's pointers are each read where it is
+ * used. Answers THE OPCODE as the copies left it: the switch is called with that.
+ * A ROUTINE OF ITS OWN, AND NOT FOR ITS READER: inlined, the marshal keeps the block, the frame, the copy's address
+ * and two places of the frame in five saved registers for its three copies — twenty bytes that then lie under the
+ * switch and everything an AES call does, on the caller's own stack (`test/aes_stack.py`, THE TRAP PATH). Called,
+ * its registers are back before the switch is entered. */
+static __attribute__((noinline)) uint16_t copied_in(uint8_t *image, uint32_t block, uint32_t frame)
 {
     uint16_t words;
 
@@ -505,9 +549,20 @@ static inline void marshal_over(uint8_t *image, uint32_t block, uint32_t frame)
                           "saved A6 and the return address the ROM then returns through");
         aes_wcopy(image, frame + MARSHAL_ADDR_IN, bus_long(image, block + AESPB_ADDR_IN), (int16_t)words);
     }
+    return frame_count(image, frame, MARSHAL_OPCODE);
+}
+
+/* The marshal over its frame at `frame`: the copies in; the switch; its answer; int_out copied back, past the frame
+ * where the count says so; and, where the opcode is rsrc_gaddr's — read again, after the switch — the address it
+ * parked stored through addr_out. */
+static inline void marshal_over(uint8_t *image, uint32_t block, uint32_t frame)
+{
+    uint16_t words;
+    uint16_t opcode = copied_in(image, block, frame);
+
     wr16(image + frame + MARSHAL_INT_OUT,
-         aes_dispatch(image, (int16_t)frame_count(image, frame, MARSHAL_OPCODE), bus_long(image, block + AESPB_GLOBAL),
-                      frame + MARSHAL_INT_IN, frame + MARSHAL_INT_OUT, frame + MARSHAL_ADDR_IN));
+         aes_dispatch(image, (int16_t)opcode, bus_long(image, block + AESPB_GLOBAL), frame + MARSHAL_INT_IN,
+                      frame + MARSHAL_INT_OUT, frame + MARSHAL_ADDR_IN));
     words = frame_count(image, frame, MARSHAL_N_INT_OUT);
     if (words) {
         stay_in_the_model_off_target(words);
@@ -520,6 +575,7 @@ static inline void marshal_over(uint8_t *image, uint32_t block, uint32_t frame)
 /* aes_marshal(parameter block): the frame is the call's own — live for as long as the call is, across every wait
  * an arm makes (off target ONE host slot, as every frame a door user holds across a wait is: `host_slot.h`, THE
  * AUDIT — and the slot's own note of what wave 3 owes). Answers nothing: its caller reads no D0. */
+FRAME_DIET("no-defer-pop")
 void aes_marshal(uint8_t *image, uint32_t parameter_block)
 {
     uint16_t frame_local[FRAME_LOCAL_WORDS(MARSHAL_FRAME_BYTES)];

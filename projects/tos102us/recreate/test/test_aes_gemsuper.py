@@ -265,7 +265,9 @@ def test_the_switch_is_a_bounds_check_and_one_indexed_jump_on_both_blobs(blob):
 
 RELOCATIONS_OF = re.compile(r"RELOCATION RECORDS FOR \[([^\]]+)\]:\n(.*?)(?:\n\n|\Z)", re.S)
 A_RELOCATION = re.compile(r"^[0-9a-f]{8}\s+(R_68K_\w+)\s+(\S+)", re.M)
+A_RELOCATION_S_PLACE = re.compile(r"^([0-9a-f]{8})\s+R_68K_32\s+(\S+)", re.M)
 THE_SWITCH_S_TEXT = ".text.aes_dispatch"
+THE_DEEP_ARMS = ("fsel_input", "wind_open", "wind_close", "wind_set", "no_such_call")
 
 
 def test_the_switch_s_table_names_no_absolute_address():
@@ -283,10 +285,38 @@ def test_the_switch_s_table_names_no_absolute_address():
     in_the_switch = by_section[THE_SWITCH_S_TEXT]
     # ...at least one call an arm with a routine (most arms call one; the inline ones none, the multi-call ones more)
     assert len(in_the_switch) >= ARMS_WITH_A_ROUTINE - len(g.ARMS_OF_NO_ONE_ROUTINE), len(in_the_switch)
-    assert all(kind == "R_68K_32" and not target.startswith(".") for kind, target in in_the_switch), (
-        sorted({(kind, target) for kind, target in in_the_switch if kind != "R_68K_32" or target.startswith(".")}))
+    # A SECTION NAMED is another routine's whole text — one of THE DEEP ARMS, each a `static` routine of this file the
+    # switch leaves to by a jump (`src/aes/gemsuper.c`, A_DEEP_ARM), which the object names by its section — and
+    # never the switch's own, nor any data's, nor a place INSIDE a section (`.text.x+0x10`: as a table of addresses would).
+    sections_named = {target for _kind, target in in_the_switch if target.startswith(".")}
+    assert all(kind == "R_68K_32" for kind, _target in in_the_switch), sorted({kind for kind, _target in in_the_switch})
+    assert sections_named == {f".text.{arm}" for arm in THE_DEEP_ARMS}, sorted(sections_named)
     assert (THE_SWITCH_S_TEXT in {target.split("+")[0] for _kind, target in by_section[".text.aes_marshal"]}
             and ".rodata" not in listed), "the premise: a reference to the switch's text WOULD be listed against its section"
+
+
+JMP_ABSOLUTE_LONG = 0x4ef9              # `jmp (xxx).l`: the word before its operand (a `jsr` there is $4eb9)
+A_JUMP_THAT_PUSHES_NOTHING = re.compile(r"(?:jmp|bra[swl]?) ")
+
+
+def test_the_switch_leaves_to_each_deep_arm_by_a_jump_never_a_call(blob, tmp_path):
+    """WHAT THE DEEP ARMS ARE WORTH IS THAT THE SWITCH'S FRAME IS GONE BEFORE THEM (`src/aes/gemsuper.c`, A_DEEP_ARM:
+    36 bytes under each) — a `jmp`. A `jsr` to the same routine names the same section and passed the guard above
+    (the door diet's review, A-F3: only the depth pins saw it). HELD ON THE INSTRUCTIONS: in each blob's linked
+    switch every deep arm is named by exactly ONE instruction and it is a jump — and in the shipped blob's object
+    each of the five relocations against an arm's section is the operand of a `jmp (xxx).l`."""
+    naming = {arm: [text for _pc, _length, text in between_instructions.blob_body(blob, "aes_dispatch") if f"<{arm}>" in text]
+              for arm in THE_DEEP_ARMS}
+    assert all(len(texts) == 1 and A_JUMP_THAT_PUSHES_NOTHING.match(texts[0]) for texts in naming.values()), naming
+    built = transcription.SHIPPED_ELF.parent / "obj" / "src_aes_gemsuper_c.o"
+    text_bytes = tmp_path / "the_switch.bin"
+    subprocess.run(["m68k-elf-objcopy", "-O", "binary", f"--only-section={THE_SWITCH_S_TEXT}", str(built), str(text_bytes)], check=True)
+    listed = subprocess.run(["m68k-elf-objdump", "-r", "-j", THE_SWITCH_S_TEXT, str(built)], capture_output=True, text=True, check=True).stdout
+    to_an_arm = {target: int(place, 16) for place, target in A_RELOCATION_S_PLACE.findall(listed) if target.startswith(".text.")}
+    assert set(to_an_arm) == {f".text.{arm}" for arm in THE_DEEP_ARMS}
+    body = text_bytes.read_bytes()
+    before = {target: struct.unpack_from(">H", body, place - aes.WORD_BYTES)[0] for target, place in to_an_arm.items()}
+    assert all(word == JMP_ABSOLUTE_LONG for word in before.values()), {target: f"{word:#06x}" for target, word in before.items()}
 
 
 # ---- EVERY ARM, AT THE SWITCH AND AT THE MARSHAL ----------------------------------------------------------------------------------
@@ -554,7 +584,7 @@ Priced, NO_WINDOW = switching.Priced, switching.NO_WINDOW
 # @PINS-BEGIN (measured: scratch `pins.py`, then `pins_emit.py`)
 WHOLE_RUN = {
     "opcode 11, as aes_ap_rdwr, a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)":
-        {BENCH: (1176770, 1091674), SHIPPED: (1176770, 1079534)},
+        {BENCH: (1176770, 1089998), SHIPPED: (1176770, 1077858)},
     'opcode 24, as aes_ev_timer, a time of five ticks, blocked; run out by them':
         {BENCH: (31684, 26370), SHIPPED: (31684, 26272)},
     'opcode 71, as aes_gr_dragbox, held at the mouse; moved, then released':
@@ -562,13 +592,13 @@ WHOLE_RUN = {
     'opcode 25, as aes_ev_multi, blocked and woken — a release wakes: the button up, which is down':
         {BENCH: (45202, 37812), SHIPPED: (45202, 37624)},
     'marshalled: appl_exit: no accessory, the pipe empty':
-        {BENCH: (16326, 13440), SHIPPED: (16326, 13386)},
+        {BENCH: (16326, 13580), SHIPPED: (16326, 13528)},
     'opcode 14, as aes_ap_tplay, none of four records played: a count of 0':
         {BENCH: (12834, 11256), SHIPPED: (12834, 11376)},
     'opcode 25, as aes_ev_multi, blocked and woken — a key wakes: a key, none queued':
         {BENCH: (44006, 37488), SHIPPED: (44006, 37298)},
     'opcode 75, as aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0':
-        {BENCH: (258096, 220422), SHIPPED: (258096, 217434)},
+        {BENCH: (258096, 221006), SHIPPED: (258096, 218026)},
     'opcode 25, as aes_ev_multi, blocked and woken — leaving wakes: two rectangles':
         {BENCH: (62842, 53292), SHIPPED: (62842, 52168)},
     'opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record':
@@ -582,7 +612,7 @@ WHOLE_RUN = {
     "opcode 15, as aes_ap_trecd, one record, a key's":
         {BENCH: (47416, 39406), SHIPPED: (47416, 39248)},
     'opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        {BENCH: (1188090, 1102224), SHIPPED: (1188090, 1090206)},
+        {BENCH: (1188090, 1100548), SHIPPED: (1188090, 1088530)},
     "opcode 107, as aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call":
         {BENCH: (15166, 12186), SHIPPED: (15166, 12308)},
     'appl_exit: no accessory, the pipe empty':
@@ -590,7 +620,7 @@ WHOLE_RUN = {
     'opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
         {BENCH: (32590, 26812), SHIPPED: (32590, 26500)},
     'opcode 50, as aes_fm_do, nothing typed: the first wait blocked; woken by Return':
-        {BENCH: (177068, 150750), SHIPPED: (177068, 140864)},
+        {BENCH: (177068, 150438), SHIPPED: (177068, 140556)},
     'opcode 15, as aes_ap_trecd, a count of 0, ended at once: nothing recorded':
         {BENCH: (46548, 38406), SHIPPED: (46548, 38430)},
     'appl_exit: a message left in the pipe, read away':
@@ -598,7 +628,7 @@ WHOLE_RUN = {
     'opcode 21, as aes_ev_button, a press waited for, blocked; woken by it':
         {BENCH: (34840, 27844), SHIPPED: (34840, 27534)},
     'opcode 52, as aes_fm_alert, no button the default: Return taken, the next wait blocked; the second button clicked while it waits':
-        {BENCH: (1493598, 1414444), SHIPPED: (1493598, 1407002)},
+        {BENCH: (1493598, 1413086), SHIPPED: (1493598, 1405646)},
     'opcode 21, as aes_ev_button, a double click waited for, blocked; woken by the two presses':
         {BENCH: (34904, 27934), SHIPPED: (34904, 27624)},
     "appl_exit: two accessories told to close, the caller's own message read away":
@@ -606,19 +636,19 @@ WHOLE_RUN = {
     'opcode 22, as aes_ev_mouse, the mouse in the rectangle it is to leave, blocked; woken by its leaving':
         {BENCH: (41330, 35314), SHIPPED: (41330, 34854)},
     'opcode 56, as aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise':
-        {BENCH: (123504, 103448), SHIPPED: (123504, 102010)},
+        {BENCH: (123504, 103628), SHIPPED: (123504, 102194)},
     'opcode 25, as aes_ev_multi, blocked and woken — the ticks wake: a timer':
         {BENCH: (43044, 36936), SHIPPED: (43044, 36960)},
     'marshalled: opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
-        {BENCH: (33860, 28208), SHIPPED: (33860, 27722)},
+        {BENCH: (33860, 28348), SHIPPED: (33860, 27864)},
     "opcode 23, as aes_ev_mesag, no message, blocked; woken by the screen manager's own write (the menu chain)":
-        {BENCH: (1177110, 1091780), SHIPPED: (1177110, 1079642)},
+        {BENCH: (1177110, 1090104), SHIPPED: (1177110, 1077966)},
     'opcode 70, as aes_gr_rubbox, the corner at the mouse; stretched, then released':
         {BENCH: (297884, 278082), SHIPPED: (297884, 275552)},
     'opcode 25, as aes_ev_multi, blocked and woken — a double click wakes: a double click':
         {BENCH: (46274, 38492), SHIPPED: (46274, 38304)},
     'marshalled: opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        {BENCH: (1190616, 1105624), SHIPPED: (1190616, 1092656)},
+        {BENCH: (1190616, 1104080), SHIPPED: (1190616, 1091114)},
     'appl_tplay: at half speed, a top byte on its records':
         {BENCH: (71830, 61716), SHIPPED: (71830, 62382)},
 }
@@ -632,13 +662,13 @@ PRICED = {
     'opcode 25, as aes_ev_multi, blocked and woken — a release wakes: the button up, which is down':
         Priced((16410, 24916), (622, 996), 1, (0, 0, 0)),   # 0.66 / 0.62
     'marshalled: appl_exit: no accessory, the pipe empty':
-        Priced((6132, 9564), (5698, 8814), 2, (0, 0, 0)),   # 0.64 / 0.65
+        Priced((6274, 9564), (5840, 8814), 2, (0, 0, 0)),   # 0.66 / 0.66
     'opcode 14, as aes_ap_tplay, none of four records played: a count of 0':
         Priced((4338, 6072), None, None, (0, 0, 0)),   # 0.71
     'opcode 25, as aes_ev_multi, blocked and woken — a key wakes: a key, none queued':
         Priced((15064, 22700), (622, 996), 1, (0, 0, 0)),   # 0.66 / 0.62
     'opcode 75, as aes_gr_watchbox, blocked three times: the mouse in, out again, then the rise: 0':
-        Priced((89360, 135282), (23500, 36888), 4, (0, 0, 0)),   # 0.66 / 0.64
+        Priced((89952, 135282), (24092, 36888), 4, (0, 0, 0)),   # 0.66 / 0.65
     'opcode 25, as aes_ev_multi, blocked and woken — leaving wakes: two rectangles':
         Priced((26418, 38520), (622, 996), 1, (0, 0, 0)),   # 0.69 / 0.62
     'opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record':
@@ -660,7 +690,7 @@ PRICED = {
     'opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
         Priced((11304, 18046), (398, 900), 1, (0, 0, 0)),   # 0.63 / 0.44
     'opcode 50, as aes_fm_do, nothing typed: the first wait blocked; woken by Return':
-        Priced((76324, 116356), (55866, 83182), 5, (0, 0, 0)),   # 0.66 / 0.67
+        Priced((76016, 116356), (55558, 83182), 5, (0, 0, 0)),   # 0.65 / 0.67
     'opcode 15, as aes_ap_trecd, a count of 0, ended at once: nothing recorded':
         Priced((16104, 25242), (1702, 3246), 1, (0, 0, 0)),   # 0.64 / 0.52
     'appl_exit: a message left in the pipe, read away':
@@ -668,7 +698,7 @@ PRICED = {
     'opcode 21, as aes_ev_button, a press waited for, blocked; woken by it':
         Priced((13358, 21316), (414, 674), 1, (0, 0, 0)),   # 0.63 / 0.61
     'opcode 52, as aes_fm_alert, no button the default: Return taken, the next wait blocked; the second button clicked while it waits':
-        Priced((190202, 295286), (138016, 213046), 10, (0, 0, 0)),   # 0.64 / 0.65
+        Priced((189878, 295286), (137692, 213046), 10, (0, 0, 0)),   # 0.64 / 0.65
     'opcode 21, as aes_ev_button, a double click waited for, blocked; woken by the two presses':
         Priced((13448, 21380), (414, 674), 1, (0, 0, 0)),   # 0.63 / 0.61
     "appl_exit: two accessories told to close, the caller's own message read away":
@@ -676,11 +706,11 @@ PRICED = {
     'opcode 22, as aes_ev_mouse, the mouse in the rectangle it is to leave, blocked; woken by its leaving':
         Priced((16350, 23770), (758, 1584), 1, (0, 0, 0)),   # 0.69 / 0.48
     'opcode 56, as aes_fm_button, the button held down, OK not under the mouse: the watch blocked; woken by the rise':
-        Priced((43064, 66878), (15654, 24188), 3, (0, 0, 0)),   # 0.64 / 0.65
+        Priced((43248, 66878), (15838, 24188), 3, (0, 0, 0)),   # 0.65 / 0.65
     'opcode 25, as aes_ev_multi, blocked and woken — the ticks wake: a timer':
         Priced((15654, 22758), (646, 1060), 1, (0, 0, 0)),   # 0.69 / 0.61
     'marshalled: opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
-        Priced((12310, 19316), (1404, 2170), 1, (0, 0, 0)),   # 0.64 / 0.65
+        Priced((12452, 19316), (1546, 2170), 1, (0, 0, 0)),   # 0.64 / 0.71
     "opcode 23, as aes_ev_mesag, no message, blocked; woken by the screen manager's own write (the menu chain)":
         Priced((14080, 21806), (536, 1008), 1, (1, 1139762, 278034)),   # 0.65 / 0.53
     'opcode 70, as aes_gr_rubbox, the corner at the mouse; stretched, then released':
@@ -688,7 +718,7 @@ PRICED = {
     'opcode 25, as aes_ev_multi, blocked and woken — a double click wakes: a double click':
         Priced((17090, 25988), (622, 996), 1, (0, 0, 0)),   # 0.66 / 0.62
     'marshalled: opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        Priced((19624, 28550), (2640, 3522), 1, (1, 1139762, 278034)),   # 0.69 / 0.75
+        Priced((19758, 28550), (2774, 3522), 1, (1, 1139762, 278034)),   # 0.69 / 0.79
     'appl_tplay: at half speed, a top byte on its records':
         Priced((26780, 38020), (15594, 20980), 2, (0, 0, 0)),   # 0.70 / 0.74
 }

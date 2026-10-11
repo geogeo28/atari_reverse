@@ -1,12 +1,12 @@
-/* obdraw.c — just_draw's two callers (`aes/objdraw.h`): ob_draw, which draws a subtree by walking it with everyobj, just_draw
- * the routine, and ob_change, which sets one object's state and shows the change — inverted in place where only SELECTED
+/* obdraw.c — just_draw's two callers (`aes/objdraw.h`): ob_draw, which draws a subtree by everyobj's walk — held as its own
+ * body, just_draw called at each object — and ob_change, which sets one object's state and shows the change — inverted in place where only SELECTED
  * moved, else redrawn whole. Alcyon C in the ROM, ported over its own order.
  *
  * THE FRAMES ARE THE ROM's. ob_draw hands ob_offset the addresses of its two position words, ob_change hands ob_sst six of
  * its locals and ob_offset / ob_user its GRECT, so each set of locals lives in one slot laid out as the ROM's `link` lays
  * it, standing in through `host_slot.h` off target.
  *
- * WHAT EVERYOBJ IS HANDED is the one place host and target differ (`staged_call.h`'s ALCYON_ROUTINE).
+ * HOW ob_draw's WALK REACHES just_draw is the one place host and target differ (`draw_the_walk_s_object`).
  */
 #include <stdint.h>
 
@@ -40,11 +40,30 @@
 #define CHANGE_FLAGS          CHANGE_LOCAL(-2)   /* word                                                            */
 #define BORDER_SIDES          2          /* the inverted rectangle loses the border on both sides ($fea46c asl.w #1) */
 
+/* WHAT ob_draw's WALK DOES WITH EACH OBJECT: just_draw. THE WALK IS HELD BY ob_draw AS ITS OWN BODY (`aes/oblib.h`,
+ * everyobj_walk) where the ROM calls everyobj and everyobj calls just_draw back through the pointer it was handed —
+ * on target three frames under every object drawn (everyobj's, the Alcyon call's ten bytes, and an entry that
+ * repacked them for the C just_draw), on whichever process's stack the draw was asked: an accessory's is 1,396
+ * bytes (`test/aes_stack.py`, THE TRAP PATH). Held, the walk's levels and registers are ob_draw's and just_draw is
+ * called as C calls. everyobj itself stays, for every other walk and for its own rows.
+ * OFF TARGET the visit goes where everyobj's does — through the hook, by just_draw's ROM address — so a case that
+ * binds the routine sees every object the walk hands it, as before. */
+static inline void draw_the_walk_s_object(uint8_t *image, uint32_t routine, uint32_t tree, int16_t object, int16_t x,
+                                          int16_t y)
+{
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    call_alcyon_object(image, routine, tree, object, x, y);
+#else
+    (void)routine;
+    aes_just_draw(image, tree, object, x, y);
+#endif
+}
+
 /* $fea028 — ob_draw: `object` and everything below it, `depth` levels at most, each object by just_draw (everyobj's
  * walk, ending at `object`'s next — its sibling, or its parent — or, from the root, nowhere: -1). The walk starts at
  * the screen position of `object`'s parent (ob_offset), the root's at (0, 0) — one `clr.l` of both words. The cursor
  * is hidden round the walk. */
-FRAME_DIET("no-defer-pop")
+FRAME_DIET("no-defer-pop", "no-function-cse", "no-gcse")
 void aes_ob_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth)
 {
     uint16_t position_local[POSITION_WORDS];
@@ -58,10 +77,10 @@ void aes_ob_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth)
     else
         wr32(image + position, 0);
     aes_gsx_moff(image);
-    /* just_draw handed BY VALUE ($fea08c `move.l #$fe9a88,-(sp)`): its ROM address on the host, its Alcyon entry beside
-     * this file (`obdraw.S`) on target — spelt at the call, where the ROM-address census sees the use. */
-    aes_everyobj(image, tree, object, last, ALCYON_ROUTINE(AES_ROM_JUST_DRAW, aes_just_draw_alcyon),
-                 (int16_t)be16(image + position + POSITION_X), (int16_t)be16(image + position + POSITION_Y), depth);
+    /* The ROM hands everyobj just_draw BY VALUE ($fea08c `move.l #$fe9a88,-(sp)`); here the walk is ob_draw's own
+     * (`draw_the_walk_s_object`, above) — the ROM address spelt at the call, where the ROM-address census sees the use. */
+    everyobj_walk(image, tree, object, last, AES_ROM_JUST_DRAW, (int16_t)be16(image + position + POSITION_X),
+                  (int16_t)be16(image + position + POSITION_Y), depth, draw_the_walk_s_object);
     aes_gsx_mon(image);
     host_slot_release(AES_OB_DRAW_POSITION);
 }

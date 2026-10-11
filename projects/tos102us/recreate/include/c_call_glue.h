@@ -14,7 +14,7 @@
 
 /* THE ALCYON FRAME everyobj pushes for the routine a tree walk is handed by value (`staged_call.h`'s
  * call_alcyon_object), from its first argument: the tree a longword, then the object, x and y words — what each ALCYON
- * ENTRY (`src/aes/obdraw.S`, `src/aes/wmupdate.S`) repacks into a C call. */
+ * ENTRY (`src/aes/wmupdate.S`'s two) repacks into a C call. */
 #define ALCYON_FIRST_ARGUMENT 4          /* past the return address */
 #define ALCYON_TREE           0
 #define ALCYON_OBJECT         4

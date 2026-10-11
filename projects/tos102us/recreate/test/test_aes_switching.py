@@ -64,8 +64,8 @@ WHOLE_RUN = {
     model.A_KEY_TYPED_AHEAD_LABEL: {BENCH: (31690, 26416), SHIPPED: (31690, 26102)},
     model.WOKEN_BY_A_KEY: {BENCH: (31690, 26416), SHIPPED: (31690, 26102)},
     model.A_DELAY_RUN_OUT: {BENCH: (30166, 25436), SHIPPED: (30166, 25124)},
-    FOREIGN: {BENCH: (831626, 787702), SHIPPED: (831626, 781352)},
-    AT_A_POLL: {BENCH: (831668, 787712), SHIPPED: (831668, 781362)},
+    FOREIGN: {BENCH: (831626, 786026), SHIPPED: (831626, 779676)},
+    AT_A_POLL: {BENCH: (831668, 786036), SHIPPED: (831668, 779686)},
 }
 # ...and WHAT THE TABLE PRICES (`aes_switching.Priced`; `tier3.measure`, the shipped blob: ev_block's C reaches a
 # transcribed core): each shore's OWN cycles, no second count (ev_block's own rows call no rebound entry), and the

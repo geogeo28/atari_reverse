@@ -79,9 +79,10 @@ TARGET_LDLIBS := -lgcc
 TRANSCRIBED_TABLE   := $(RECREATE)/include/transcribed.h
 # THE ALCYON ENTRIES are the one other kind of `.S` in those directories: target-only GLUE that lets a ROM walker's
 # Alcyon call (`jsr (a0)` over a pushed frame) enter a C core — the routine a C caller hands by value where the ROM
-# hands its own ROM address (`src/aes/obdraw.S`: just_draw; `src/aes/wmupdate.S`: newrect, mkrect). No ROM bytes, so
-# no table row: listed here, apart, and linked as the C is.
-ALCYON_ENTRY_SOURCES := $(RECREATE)/src/aes/obdraw.S $(RECREATE)/src/aes/wmupdate.S
+# hands its own ROM address (`src/aes/wmupdate.S`: newrect, mkrect; just_draw has none since ob_draw holds its walk as
+# its own body and calls it as C calls, `src/aes/obdraw.c`). No ROM bytes, so no table row: listed here, apart, and
+# linked as the C is.
+ALCYON_ENTRY_SOURCES := $(RECREATE)/src/aes/wmupdate.S
 # THE SWITCH is the third kind: the hand 68000 of the process switch, which has NO C SPELLING at all (a second stack,
 # an rte frame built from the caller's return address) — the ROM's own bytes, like a transcription, but with no C twin
 # to exclude, no row and no bar: every build links it, and its entries carry the names the event layer's C calls

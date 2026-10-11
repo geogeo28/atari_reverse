@@ -355,7 +355,7 @@ MEASURED = {
     "aes_ev_block, a wait to leave a rectangle, blocked; woken by the mouse leaving it":
         ({BENCH: (39746, 34558), SHIPPED: (39746, 34096)}, Priced((15592, 22186), *ONE_COUNT, NO_WINDOW)),
     f"aes_ev_block, {waits.THE_READ_WOKEN}":
-        ({BENCH: (1175732, 1091058), SHIPPED: (1175732, 1078916)}, Priced((13354, 20428), *ONE_COUNT, THE_MENU_S_WINDOW)),
+        ({BENCH: (1175732, 1089382), SHIPPED: (1175732, 1077240)}, Priced((13354, 20428), *ONE_COUNT, THE_MENU_S_WINDOW)),
     f"aes_ev_block, {waits.THE_WRITE_FREED}":
         ({BENCH: (637572, 633722), SHIPPED: (637572, 633284)}, Priced((7354, 12018), *ONE_COUNT, THE_DESK_S_WINDOW)),
     f"aes_ev_block, {waits.THE_LOCK_WAITED_FOR}":
@@ -363,7 +363,7 @@ MEASURED = {
     f"aes_ev_block, {waits.THE_MANAGER_QUEUES_ITSELF}":
         ({BENCH: (70928, 58632), SHIPPED: (70928, 58050)}, Priced((12830, 18972), *ONE_COUNT, (1, 36414, 21870))),
     f"aes_ev_block, {waits.THE_MANAGER_RUNS_WITH_THE_LOCK}":
-        ({BENCH: (809802, 769932), SHIPPED: (809802, 763410)}, Priced((6662, 9902), *ONE_COUNT, (1, 793138, 151888))),
+        ({BENCH: (809802, 768256), SHIPPED: (809802, 761734)}, Priced((6662, 9902), *ONE_COUNT, (1, 793138, 151888))),
     "aes_ev_keybd, no key queued, blocked; woken by Return":
         ({BENCH: (32036, 26520), SHIPPED: (32036, 26208)}, Priced((11012, 17492), (106, 346), 1, NO_WINDOW)),
     "aes_ev_button, a double click waited for, blocked; woken by the two presses":
@@ -381,9 +381,9 @@ MEASURED = {
     f"aes_ev_timer, {waits.THE_REMAINDER_DROPPED}":
         ({BENCH: (31078, 26022), SHIPPED: (31078, 25924)}, Priced((11656, 17554), (708, 912), 1, NO_WINDOW)),
     f"aes_ev_mesag, {waits.THE_MESSAGE_WOKEN}":
-        ({BENCH: (1176520, 1091458), SHIPPED: (1176520, 1079320)}, Priced((13758, 21216), (214, 418), 1, THE_MENU_S_WINDOW)),
+        ({BENCH: (1176520, 1089782), SHIPPED: (1176520, 1077644)}, Priced((13758, 21216), (214, 418), 1, THE_MENU_S_WINDOW)),
     f"aes_ap_rdwr, {waits.THE_READ_WOKEN}":
-        ({BENCH: (1176102, 1091246), SHIPPED: (1176102, 1079106)}, Priced((13544, 20798), (190, 370), 1, THE_MENU_S_WINDOW)),
+        ({BENCH: (1176102, 1089570), SHIPPED: (1176102, 1077430)}, Priced((13544, 20798), (190, 370), 1, THE_MENU_S_WINDOW)),
     f"aes_ap_rdwr, {waits.THE_WRITE_FREED}":
         ({BENCH: (637942, 633910), SHIPPED: (637942, 633474)}, Priced((7544, 12388), (190, 370), 1, THE_DESK_S_WINDOW)),
     "aes_ev_mwait, two rectangles' waits, blocked; both come in one move":

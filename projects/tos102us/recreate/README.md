@@ -2557,9 +2557,17 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   ub_trampoline. The door's own 42 bytes above the marshal are read from the handler's AES arm by symbol where a blob
   links `aes_rom_trap2` (both do since slice T) and held to the ROM's own bytes read the same way
   (`the_door_listed`). BY THE CALL: each arm of the switch with the deepest its own frames go and the deepest of ITS
-  trap sites. MEASURED: accessories' own calls behind the prototype door, each blob's own VDI staged at the same
-  stop, who ran by cycle profile. THE FINDING, PINNED (STATUS, wave 3: the gate W3-R8): the shipped blob is OVER
-  PD2 by 178 on the bound and by 70 on the measured run; the bench blob's wind_open overflows PD2 in the run itself.
+  trap sites — and no arm charged less than what EVERY call takes BESIDE the switch (`beside_the_switch`: the
+  door's own calls, the marshal's copies in and back; a run of appl_init stores where the copies do, 2 bytes below
+  its arm's own frames, which is how the term was found missing). MEASURED: accessories' own calls behind the
+  prototype door, each blob's own VDI staged at the same stop, who ran by cycle profile, and every call's lowest
+  store held to its arm's bound. THE FINDING, PINNED (STATUS, wave 3: the gate W3-R8): SINCE THE DOOR DIET THE
+  SHIPPED BLOB FITS PD2 — every arm of the switch by the bound, 20 bytes spare at the worst (fsel_input: an icon's
+  blit under the selector's watched button, 1,124 + the 252 nest = 1,376 of 1,396), and 128 spare on the deepest
+  run measured (a window opened from an accessory: 1,016 + 252). It did not before it (over by 178 and by 70), and
+  the bench blob's wind_open, which overflowed PD2 in the run itself, no longer does (1,210; over by 66 with the
+  nest, 150 by the bound: reported, not gated). `test_aes_stack.THE_GATE_S_MARGIN` pins the 20: a frame added to
+  the trap path is added against it. WHAT THE DIET CUT is in "The frame diet", below.
   AT A TRAP THE BOUND IS CALL BY CALL (`aes_stack.trap_sites`, `at_its_traps`; the frame diet, 2026-10-10). The
   deepest trap of a listing and the deepest need under a trap are different calls — a fill's and a text's — and
   charged together they are a call no path makes. So every TRAP SITE (a call, by a routine that does not hand an
@@ -2650,10 +2658,12 @@ what is dead.
   case and per blob and refused where not needed.
 
 **An ALCYON ENTRY `.S` is glue, not a transcription.** When AES C hands a routine BY VALUE to ROM-shaped code that calls it
-the Alcyon way — ob_draw passing just_draw to everyobj (`$fea08c`) — the host case binds the ROM address to the C core, but
-on target the value must be our own routine: the ROM's would run the ROM's AES code inside our build, which the (V) bench
-refuses by name, and a rebuilt ROM would not hold. `src/aes/obdraw.S`'s `aes_just_draw_alcyon` repacks everyobj's 10-byte Alcyon
-frame into the GCC call (the image base, then each word sign-extended into its slot) and enters the C core. It has no ROM
+the Alcyon way — draw_change passing newrect to everyobj (`$fec146`), newrect passing mkrect — the host case binds the ROM
+address to the C core, but on target the value must be our own routine: the ROM's would run the ROM's AES code inside our
+build, which the (V) bench refuses by name, and a rebuilt ROM would not hold. `src/aes/wmupdate.S`'s `aes_newrect_alcyon`
+repacks everyobj's 10-byte Alcyon frame into the GCC call (the image base, then each word sign-extended into its slot) and
+enters the C core. (ob_draw's walk with just_draw, the first of the kind, has no entry since the door diet: ob_draw holds
+the walk as its own body and calls just_draw as C calls — `src/aes/obdraw.S` is gone.) It has no ROM
 bytes and no row of `include/transcribed.h`: `atari/target.mk` lists it as ALCYON_ENTRY_SOURCES, filtered out of
 TRANSCRIBED_SOURCES so the transcription `.globl` pin stays exact; Tier 3 counts its cycles as glue (`bench/tier3.py`'s
 ALCYON_ENTRIES, T→G, like a generated thunk); and `test_transcribed.py` pins its `.globl`s to exactly that list, outside the
@@ -2863,13 +2873,35 @@ the difference is not the C but what -O2 spends STACK on to save cycles, in a bu
 passes MEASURED to deepen its frame — `no-defer-pop` (a call's arguments left under the next call),
 `no-optimize-sibling-calls` (a tail call's caller copies its own arguments into its frame),
 `no-move-loop-invariants` and `no-function-cse` (an address, or a callee's, kept in a saved register for a loop),
-`no-caller-saves`, `no-gcse`, `no-tree-dominator-opts`. 34 routines carry one — 33 of the screen manager's paths
-and the VDI's `place_and_draw`, v_gtext's deep frame (the header says what each flag costs the stack).
-Beside the marks, three STRUCTURAL cuts, each said where it is made: just_draw's four parts are
+`no-caller-saves`, `no-gcse`, `no-tree-dominator-opts`. 47 routines carry one — 33 of the screen manager's paths,
+the VDI's `place_and_draw` (v_gtext's deep frame), and since THE DOOR DIET (band 5 wave 3) thirteen of the trap
+path's: the marshal, the forms (fs_input, fm_button, fm_alert, fm_dial, ob_edit, curfld) and the window layer
+(wm_opcl, wm_close, wm_set, draw_change, w_move, w_clipdraw) — the header says what each flag costs the stack.
+Beside the marks, the STRUCTURAL cuts, each said where it is made. THE FIRST DIET'S: just_draw's four parts are
 routines of their own (`noinline`: a part's registers lie only under that part's calls); `blt_corners` is one;
 and three bodies are held by their one deep caller as its own — menu_down's by mn_do's pass, gsx_blt's by
 gr_gicon's blits, bb_fill's by gr_rect — where the ROM calls (the extern routine stays, for every other caller and
-for its own rows).
+for its own rows). THE DOOR DIET'S, four more of the same two kinds:
+- A BODY HELD BY ITS DEEP CALLER: ob_draw holds everyobj's walk (`aes/oblib.h`, `everyobj_walk`: the walk as an
+  inline body parameterised by what it does with each object) and calls just_draw as C calls — where the ROM calls
+  everyobj, which calls just_draw back through the pointer it was handed: on target three frames under every
+  object drawn (everyobj's, the Alcyon call's ten bytes, an entry that repacked them), 170 bytes that are 88 now.
+  everyobj stays for the walks left and its own rows; just_draw's Alcyon entry (`obdraw.S`) is gone.
+- A PART MADE A ROUTINE, so that what it needs lies under it alone: gr_watchbox's wait (`still_down_over`: four
+  places of a rectangle, four saved registers, 40 bytes that lay under ob_change), and the marshal's three copies
+  in (`copied_in`: five saved registers that lay under the opcode switch and every AES call).
+- AN ARM LEFT TO BY A JUMP (`src/aes/gemsuper.c`, `A_DEEP_ARM`): the opcode switch's five deepest arms that end on
+  the switch's own answer — the file selector, a window opened, closed or set, the default's alert — are routines
+  the switch TAIL-CALLS, its 36-byte frame gone before them. The routine must ANSWER for the call to be a jump:
+  `noipa` keeps GCC from seeing the answer is a constant, dropping it and calling the routine instead (which is 16
+  bytes deeper than no routine at all — the first attempt, measured). THAT IT IS A JUMP is held on the build's own
+  instructions (`test_aes_gemsuper.py`: each arm named by one `jmp` / `bra` of each blob's switch, each of the
+  object's five relocations a `jmp`'s operand — a `jsr` names the same section). Such a routine exists on target
+  alone, as a mark does: `include/stack_diet.h`'s `STACK_DIET_ON_TARGET` is the one spelling of that guard.
+A MARK THAT WAS TAKEN OFF AGAIN, and why the guard exists: `aes_w_update`'s. The attribute stops GCC splitting a
+function's cheap early return off (`aes_w_update.part.0`: "drawing held" in 118 cycles; 274 as marked) — in the
+marked function AND IN ITS CALLERS, which then compile to other instructions than their own flags on the command
+line give. The guard refused all three.
 
 **UNDER THE TRAP, ONE CONTRACT** (`include/staged_call.h`, `call_vector_as_the_last_act`; the third pass). The VDI
 dispatcher's call of its opcode's function keeps NO register round itself — a bare `jsr (a0)`, GCC told only what a
@@ -2891,7 +2923,9 @@ table's), no source spells a bare `optimize(`, and a fill loop is compiled under
 bench blob is linked a second time with every mark off, which pins what the marks buy: the two bounds, and each
 function's own frame without and with (never more with, less on one). The cycles a mark costs are Tier 3's.
 
-**SEARCHING THE FLAGS FOR A FUNCTION** (how the 34 sets were found; nothing of it is in the tree):
+**SEARCHING THE FLAGS FOR A FUNCTION** (how the 47 sets were found — the first diet's 34 over the bench configuration and
+the screen manager's reading, the door diet's 13 over the shipped configuration and the trap path's; nothing of it is in
+the tree):
 1. build the bench blob with `-DSTACK_DIET_MARKS_OFF` and each combination of the candidate flags ON THE COMMAND
    LINE (seven flags: 128 links of ~6 s, side by side) — the guard is what makes a command-line flag and a mark
    the same thing;

@@ -1161,8 +1161,9 @@ def trap_need(blob):
 # ---- ...BY THE CALL: each arm of the opcode switch ----------------------------------------------------------------------------
 Call = namedtuple("Call", "opcodes own at_a_trap site")
 Call.__doc__ = """One arm of the opcode switch: the AES `opcodes` whose table words lead to it; `own`, the deepest the
-build's own frames go under it, in bytes below the stack's top; `at_a_trap`, the deepest of its trap sites with the
-OS's need under it (0: it takes none); `site`, that trap site."""
+build's own frames go under A CALL OF IT, in bytes below the stack's top — under its arm, or BESIDE THE SWITCH (the
+door's own calls, the marshal's copies in and back: `beside_the_switch`), whichever is deeper; `at_a_trap`, the
+deepest of its trap sites with the OS's need under it (0: it takes none); `site`, that trap site."""
 _THE_OPCODE_S_BIAS = re.compile(r"^addiw #-(\d+),%d\d$")
 
 
@@ -1191,6 +1192,22 @@ def _sites_of_an_arm(read, above, calls):
     return sites
 
 
+def beside_the_switch(read, entry, allowed):
+    """THE DEEPEST THE TRAP PATH GOES WITHOUT ENTERING THE SWITCH, in bytes below the stack's top: every call the
+    routines between the door and the switch make BESIDE the one that leads to it — the handler's and aes_entry's
+    own, the marshal's copies in (a routine of their own since the door diet) and its copy back. EVERY AES CALL
+    MAKES THEM, whatever its arm: an arm of no depth (appl_init: the switch's own frame) is not as deep as the
+    copies in, and a run of it stores where they do (`test_aes_stack.py` holds each measured call to its arm's
+    bound, which is how this term was found missing)."""
+    _depth, path = read.deepest_to(entry, THE_OPCODE_SWITCH)
+    deepest, entered = 0, allowed
+    for function, towards_the_switch in zip((entry, *path), path):
+        beside = [under + read.of(callee).deepest for callee, under, _at in read.sites(function) if callee != towards_the_switch]
+        deepest = max([deepest] + [entered + each for each in beside])
+        entered += read.deepest_to(function, towards_the_switch)[0]
+    return deepest
+
+
 @functools.cache
 def calls_of_the_switch(elf, shore):
     """EVERY ARM OF THE OPCODE SWITCH on the blob at `elf` — `[Call]`, the deepest first — its trap sites charged
@@ -1198,6 +1215,7 @@ def calls_of_the_switch(elf, shore):
     read, (table, first) = trap_reading(elf), the_switch_s_table(elf)
     entry, allowed = trap_entered_at(elf)
     above = allowed + (0 if entry == THE_OPCODE_SWITCH else read.deepest_to(entry, THE_OPCODE_SWITCH)[0])
+    beside = 0 if entry == THE_OPCODE_SWITCH else beside_the_switch(read, entry, allowed)
     arms = collections.defaultdict(list)
     for word, target in enumerate(table.targets):
         arms[target].append(first + word)
@@ -1205,8 +1223,8 @@ def calls_of_the_switch(elf, shore):
     for target, opcodes in arms.items():
         reached = read.reached_from(THE_OPCODE_SWITCH, target)
         made = [(callee, under, at) for callee, under, at in read.sites(THE_OPCODE_SWITCH) if at in reached]
-        own = above + max([read.depth_at(THE_OPCODE_SWITCH, at) for at in reached]
-                          + [under + read.of(callee).deepest for callee, under, _at in made])
+        own = max(beside, above + max([read.depth_at(THE_OPCODE_SWITCH, at) for at in reached]
+                                      + [under + read.of(callee).deepest for callee, under, _at in made]))
         calls.append(Call(tuple(opcodes), own, *worst_site(_sites_of_an_arm(read, above, made), shore)))
     return sorted(calls, key=lambda call: max(call.own, call.at_a_trap), reverse=True)
 
@@ -1519,6 +1537,22 @@ def _verdicts(needed, spans):
                      for which, span in spans.items())
 
 
+def _the_door_run_s_words(shore, run, spans):
+    """One shore's run behind the door as the report says it: its deepest stores and, the nest on top, their
+    verdicts — and a run that reached no idle IN ITS OWN REFUSAL'S WORDS (the reason kept with the run: stores gone
+    through the bottom of PD2's stack and the machine through the ROM's reset is one way there, and not the only)."""
+    used = f"{shore} {' / '.join(str(used) for used in run.deepest.values())}"
+    if run.idle:
+        return f"{used} (+ nest {nest(shore)}: {_verdicts(max(run.deepest.values()) + nest(shore), spans)})"
+    return f"{used} — NO IDLE REACHED: {run.refused}"
+
+
+def _left_against_the_rom_s(ours_at, the_rom_s_at):
+    """What a routine entered `ours_at` bytes down is left of its stack beside one the ROM enters `the_rom_s_at`
+    down, in the report's words: LESS where ours is entered deeper."""
+    return f"{abs(ours_at - the_rom_s_at)} bytes {'less' if ours_at > the_rom_s_at else 'more'} left than under the ROM"
+
+
 def _the_trap_path_s_lines():
     """The report's lines for a process that enters by `trap #2`, and for the two private stacks beside the door."""
     spans, (door, door_path) = trap_callers_spans(), the_door_s_bytes()
@@ -1556,11 +1590,7 @@ def _the_trap_path_s_lines():
                  "accessory's own stack from the takeover on — PD2 / an allocated PD:")
     for modes in DOOR_MODES:
         runs = {shore: measured_at_the_door(modes, shore) for shore in (THE_ROM_S, *BLOBS)}
-        lines.append(f"  {modes}: " + "; ".join(
-            f"{shore} {' / '.join(str(used) for used in run.deepest.values())}"
-            + (f" (+ nest {nest(shore)}: {_verdicts(max(run.deepest.values()) + nest(shore), spans)})" if run.idle else
-               " — NO IDLE REACHED: the stores went to the bottom of PD2's stack, and the machine through the ROM's reset")
-            for shore, run in runs.items()))
+        lines.append(f"  {modes}: " + "; ".join(_the_door_run_s_words(shore, run, spans) for shore, run in runs.items()))
     return lines
 
 
@@ -1588,8 +1618,8 @@ def report():
                                                                              f"{span - needed} spare")
                   + f" (the deepest trap charged the worst call's {under_a_trap(shore)}: {need_charged_the_worst(blob)})",
                   f"  AN APPLICATION'S ROUTINE (a USERDEF's) is entered {userdef} down ({' > '.join(path)}): {span - userdef} "
-                  f"bytes left, {span - userdef - nest(shore)} with the nest; measured {ours_at} against the ROM's "
-                  f"{the_rom_s_at}: {ours_at - the_rom_s_at} bytes less than under the ROM",
+                  f"bytes left, {span - userdef - nest(shore)} with the nest; measured in a menu {ours_at} down against the "
+                  f"ROM's {the_rom_s_at}: {_left_against_the_rom_s(ours_at, the_rom_s_at)}",
                   f"  dsptch takes {reading(blob.elf).of('aes_dsptch').deepest} (measured {dsptch_measured(shore)}); "
                   f"untouched at most {untouched_at_most(blob)}"]
     lines += _the_trap_path_s_lines()

@@ -18,6 +18,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/ctrl.h"
 #include "aes/fmdo.h"
@@ -638,6 +639,7 @@ static void finish_the_pass(uint8_t *image, struct selector_run *run)
  * field taken, its directory read and shown when it is not the path last read; then the object fm_do ended on, and
  * what it leaves to do. At the end both strings handed back, the button stored through `button_at`. Answers 1 — or
  * 0, nothing shown, when GEMDOS has no memory for its three blocks. */
+FRAME_DIET("no-function-cse", "no-move-loop-invariants", "no-caller-saves")
 int16_t aes_fs_input(uint8_t *image, uint32_t path, uint32_t selection, uint32_t button_at)
 {
     uint16_t frame_local[FS_INPUT_FRAME_BYTES / sizeof(uint16_t)];

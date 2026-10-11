@@ -15,6 +15,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/gemgraf.h"
 #include "aes/objdraw.h"
@@ -130,6 +131,7 @@ void aes_pxl_rect(uint8_t *image, uint32_t tree, int16_t object, int16_t positio
 /* $fe948a — curfld: under a clip of its own, either the CURSOR at template `position` — a line down the cell from 3
  * pixels above to 3 below, black in XOR — or, for `characters` > 0, the field's object redrawn under a clip from that
  * cell `characters` cells wide. The clip it found is put back. */
+FRAME_DIET("no-defer-pop", "no-function-cse")
 void aes_curfld(uint8_t *image, uint32_t tree, int16_t object, int16_t position, int16_t characters)
 {
     uint16_t local[2 * GRECT_WORDS];
@@ -393,6 +395,7 @@ static void edit_a_key(uint8_t *image, uint32_t frame, uint32_t tree, int16_t ob
  * string into the editor's buffers — the validation stretched — and the two merged into AES_FMTSTR; then EDINIT puts
  * the index at the raw text's end and EDCHAR edits `key` in (`edit_a_key`); and every kind ends with the cursor drawn
  * at the index's place in the template (curfld, XOR). Answers 1. */
+FRAME_DIET("no-defer-pop", "no-gcse", "no-move-loop-invariants", "no-caller-saves")
 int16_t aes_ob_edit(uint8_t *image, uint32_t tree, int16_t object, int16_t key, uint32_t index, int16_t kind)
 {
     uint16_t local[EDIT_FRAME_BYTES / M68K_WORD_BYTES];

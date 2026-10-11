@@ -1475,37 +1475,37 @@ WHOLE_RUN = {
     "a key wakes, the sent mark set: a key and a message":
         {BENCH: (48772, 40738), SHIPPED: (48772, 39990)},
     "a writer wakes: a message, none in the pipe":
-        {BENCH: (1187094, 1101602), SHIPPED: (1187094, 1089584)},
+        {BENCH: (1187094, 1099926), SHIPPED: (1187094, 1087908)},
     "a writer wakes: a message and a timer not run out":
-        {BENCH: (1191912, 1105458), SHIPPED: (1191912, 1093094)},
+        {BENCH: (1191912, 1103782), SHIPPED: (1191912, 1091418)},
     "a writer and the press's ticks in one wake: a message and a timer":
-        {BENCH: (1183830, 1097040), SHIPPED: (1183830, 1084562)},
+        {BENCH: (1183830, 1095364), SHIPPED: (1183830, 1082886)},
     "a writer wakes: a key and a message":
-        {BENCH: (1191336, 1104874), SHIPPED: (1191336, 1092298)},
+        {BENCH: (1191336, 1103198), SHIPPED: (1191336, 1090622)},
     "a writer wakes: every event, the timer not run out":
-        {BENCH: (1215378, 1123838), SHIPPED: (1215378, 1108774)},
+        {BENCH: (1215378, 1122162), SHIPPED: (1215378, 1107098)},
     "a writer and the press's ticks in one wake: every event":
-        {BENCH: (1207296, 1115420), SHIPPED: (1207296, 1100242)},
+        {BENCH: (1207296, 1113744), SHIPPED: (1207296, 1098566)},
     "a writer and the press's ticks: eight bits held, a message and a timer":
-        {BENCH: (1185462, 1099000), SHIPPED: (1185462, 1086522)},
+        {BENCH: (1185462, 1097324), SHIPPED: (1185462, 1084846)},
     "a writer, a key and the press's ticks in one wake: a key, a message and a timer":
-        {BENCH: (1193444, 1103732), SHIPPED: (1193444, 1090700)},
+        {BENCH: (1193444, 1102056), SHIPPED: (1193444, 1089024)},
     "a writer, a key and the press's ticks in one wake: every event":
-        {BENCH: (1212598, 1118756), SHIPPED: (1212598, 1103582)},
+        {BENCH: (1212598, 1117080), SHIPPED: (1212598, 1101906)},
     "a writer and the mouse into the rectangle: a rectangle and a message":
-        {BENCH: (1200190, 1111710), SHIPPED: (1200190, 1098990)},
+        {BENCH: (1200190, 1110034), SHIPPED: (1200190, 1097314)},
     "a writer, a key, the mouse, the press's ticks: every event":
-        {BENCH: (1219584, 1123868), SHIPPED: (1219584, 1108784)},
+        {BENCH: (1219584, 1122192), SHIPPED: (1219584, 1107108)},
     "a writer, the desk waiting for the bar's rectangle too":
-        {BENCH: (1193446, 1106794), SHIPPED: (1193446, 1093984)},
+        {BENCH: (1193446, 1105118), SHIPPED: (1193446, 1092308)},
     "a writer, then the mouse away: both rectangles and a message":
-        {BENCH: (1210434, 1120596), SHIPPED: (1210434, 1107126)},
+        {BENCH: (1210434, 1118920), SHIPPED: (1210434, 1105450)},
     evm.A_KEY_BEFORE_THE_WRITER_WRITES:
-        {BENCH: (1005954, 926788), SHIPPED: (1005954, 917756)},
+        {BENCH: (1005954, 925112), SHIPPED: (1005954, 916080)},
     evm.A_WRITER_AND_A_KEY:
-        {BENCH: (1194492, 1106716), SHIPPED: (1194492, 1094144)},
+        {BENCH: (1194492, 1105040), SHIPPED: (1194492, 1092468)},
     evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN:
-        {BENCH: (855918, 809202), SHIPPED: (855918, 802418)},
+        {BENCH: (855918, 807526), SHIPPED: (855918, 800742)},
     evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR:
         {BENCH: (51268, 42940), SHIPPED: (51268, 42798)},
 }

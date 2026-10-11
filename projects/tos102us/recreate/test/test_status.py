@@ -811,17 +811,20 @@ def test_the_prose_counts_of_ev_multi_s_rows_are_the_registry_s_and_its_row_s():
 
 
 # ---- band 5 wave 3: THE GATE'S SENTENCE (ruling W3-R8) AND THE WAVE'S OWN COUNTS ------------------------------------------------
-# The wave-3 entry opens with a verdict in numbers — the trap path against PD2's stack — and `* **Next**` orders the
-# work by it. The numbers are `test_aes_stack.py`'s pins (which that battery holds to the reading and to the runs):
-# QUOTED here, so the frame diet that moves a pin reddens the sentence that still says the old verdict. Beside it, two
-# counts the entry would otherwise keep by hand: the registry's pending declarations and the table's length.
-THE_GATE_S_ENTRY = "BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER"
+# The wave-3 entry opened with a verdict in numbers — the trap path against PD2's stack: "DOES NOT FIT" — and
+# `* **Next**` ordered the work by it. THE DOOR DIET's entry states the verdict that replaced it ("FITS"), in the
+# same numbers: `test_aes_stack.py`'s pins (which that battery holds to the reading and to the runs), QUOTED here,
+# so a frame that moves a pin reddens the sentence that still says the old margin. Beside it, two counts the wave's
+# first entry would otherwise keep by hand: the registry's pending declarations and the table's length.
+THE_WAVE_S_ENTRY = "BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER"
+THE_GATE_S_ENTRY = "WAVE 3 — THE DOOR DIET"
 _COUNT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
                 "eleven": 11, "twelve": 12}
 _THE_GATE_RE = re.compile(
-    r"DOES NOT FIT PD2's (?P<pd2>[\d,]+) BYTES ON THE\s+SHIPPED BLOB\*\*.*?the (?P<nest>\d+)-byte nest.*?"
-    r"MEASURED over by (?P<measured>\d+).*?BOUND over by (?P<bound>\d+) \(fsel_input: [\d,]+ \+ \d+ = (?P<needed>[\d,]+)\);\s+"
-    r"(?P<arms>\w+) arms of the opcode switch do not fit PD2, all (?P<every>\d+) fit an allocated PD's (?P<allocated>[\d,]+)", re.S)
+    r"THE TRAP PATH FITS PD2's (?P<pd2>[\d,]+) BYTES ON THE\s+SHIPPED BLOB\*\*.*?the (?P<nest>\d+)-byte nest.*?"
+    r"MEASURED (?P<measured>\d+) spare.*?BOUND (?P<bound>\d+) spare \(fsel_input: [\d,]+ \+ \d+ = (?P<needed>[\d,]+)\);\s+"
+    r"all (?P<every>\d+) arms of the opcode switch fit PD2 \((?P<arms>\w+) did not\), and an allocated PD's (?P<allocated>[\d,]+)", re.S)
+ARMS_OVER_PD2_BEFORE_THE_DOOR_DIET = 8      # the wave's first entry's count, history: quoted beside the new verdict
 _PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations are PENDING")
 _TABLE_LINES_RE = re.compile(r"THE TABLE against `[0-9a-f]+`'s \([\d,]+ lines → (?P<lines>[\d,]+)\)")
 
@@ -835,21 +838,57 @@ def test_the_gate_s_sentence_quotes_the_stack_battery_s_pins_and_the_wave_s_coun
     import aes_stack
     import test_aes_stack as pinned
 
-    entry = _paragraph_from(_status(), THE_GATE_S_ENTRY)
-    said = _THE_GATE_RE.search(entry)
-    assert said, "the wave-3 entry no longer states the gate's verdict in the sentence this test reads"
-    worst_arm, needed = pinned.CALLS_OVER_PD2[pinned.SHIPPED][0]
+    said = _THE_GATE_RE.search(_paragraph_from(_status(), THE_GATE_S_ENTRY))
+    assert said, "the door diet's entry no longer states the gate's verdict in the sentence this test reads"
+    worst_arm, needed = pinned.THE_SHIPPED_BLOB_S_DEEPEST_CALLS[0]
     assert {name: _number(value) for name, value in said.groupdict().items()} == {
-        "pd2": pinned.PD2_S_SPAN, "nest": pinned.THE_NEST, "measured": pinned.MEASURED_OVER_PD2_BY,
-        "bound": -pinned.TRAP_PATH_SPARE[pinned.SHIPPED][aes_stack.PD2], "needed": needed,
-        "arms": len(pinned.CALLS_OVER_PD2[pinned.SHIPPED]), "every": len(aes_stack.calls_of_the_switch(
+        "pd2": pinned.PD2_S_SPAN, "nest": pinned.THE_NEST, "measured": pinned.MEASURED_SPARE_OF_PD2,
+        "bound": pinned.TRAP_PATH_SPARE[pinned.SHIPPED][aes_stack.PD2], "needed": needed,
+        "arms": ARMS_OVER_PD2_BEFORE_THE_DOOR_DIET, "every": len(aes_stack.calls_of_the_switch(
             aes_stack.blob_of(pinned.SHIPPED).elf, pinned.SHIPPED)), "allocated": pinned.AN_ALLOCATED_SPAN}
-    assert needed - pinned.PD2_S_SPAN == _number(said["bound"]) and worst_arm == 90, "the worst arm is fsel_input (opcode 90)"
+    assert pinned.PD2_S_SPAN - needed == _number(said["bound"]) and worst_arm == 90, "the worst arm is fsel_input (opcode 90)"
+    assert pinned.CALLS_OVER_PD2[pinned.SHIPPED] == (), "the sentence says every arm fits: the pin of the arms over PD2 is empty"
+    entry = _paragraph_from(_status(), THE_WAVE_S_ENTRY)
     pending = _PENDING_RE.search(entry)
     assert pending and _number(pending["count"]) == len(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3), (
         f"the entry counts the registry's pending declarations; it holds {sorted(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)}")
     lines = _TABLE_LINES_RE.search(_status())
     assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the wave's entry states it"
+
+
+# ...AND THE DOOR DIET'S OTHER NUMBERS, which the sentence above does not hold (its review, B-F4: the per-arm table
+# altered, "36 spare → 116" and "crit_err … 840" each passed every test). RE-DERIVED BY THE STACK BATTERY'S OWN
+# READERS on the shipped blob — `calls_of_the_switch` (the same reading the sentence's count of arms asks), `need`
+# and `crit_err_need` — never by quoting a pin. The table's "at `05bc5d6`" column is history no tree re-derives:
+# held only to its own arithmetic (an "over by" is that figure less PD2's span).
+_AN_ARM_S_ROW_RE = re.compile(r"^\s*\| (?P<arm>\d+ \w+|the default arm \((?P<opcodes>\d+) opcodes[^|]*) \| (?P<before>[\d,]+)"
+                             r"(?: \(over by (?P<over>\d+)\))? \| (?P<now>[\d,]+) \| (?P<spare>\d+) \|$", re.M)
+_THE_SCREEN_MANAGER_S_FIT_RE = re.compile(r"THE SCREEN MANAGER'S OWN FIT DID NOT GET WORSE: (?P<before>\d+) spare → \*\*(?P<now>\d+)\*\*")
+_CRIT_ERR_S_FIT_RE = re.compile(r"crit_err's private stack: \d+ → (?P<now>\d+) spare of its (?P<span>[\d,]+)")
+THE_ARMS_THE_TABLE_SHOWS = 12           # the deepest, as `aes_stack.report()` prints them (`CALLS_SHOWN`)
+
+
+def test_the_door_diet_s_table_and_its_two_other_fits_are_the_stack_reading_s():
+    import aes_stack
+    import test_aes_stack as pinned
+
+    entry, shipped = _paragraph_from(_status(), THE_GATE_S_ENTRY), aes_stack.blob_of(pinned.SHIPPED)
+    rows = list(_AN_ARM_S_ROW_RE.finditer(entry))
+    assert len(rows) == THE_ARMS_THE_TABLE_SHOWS == aes_stack.CALLS_SHOWN, "the door diet's per-arm table: one arm a row"
+    for row, call in zip(rows, aes_stack.calls_of_the_switch(shipped.elf, pinned.SHIPPED)):
+        needed = max(call.own, call.at_a_trap) + aes_stack.nest(pinned.SHIPPED)
+        its_opcodes = len(call.opcodes) if row["opcodes"] else tuple(call.opcodes)
+        assert its_opcodes == (_number(row["opcodes"]) if row["opcodes"] else (int(row["arm"].split()[0]),)), (
+            f"{row['arm']}: the reading's next arm is {call.opcodes}")
+        assert (_number(row["now"]), _number(row["spare"])) == (needed, pinned.PD2_S_SPAN - needed), f"{row['arm']}: {row[0].strip()}"
+        assert row["over"] is None or _number(row["before"]) - pinned.PD2_S_SPAN == _number(row["over"]), row[0].strip()
+    manager = _THE_SCREEN_MANAGER_S_FIT_RE.search(entry)
+    assert manager and _number(manager["before"]) == pinned.SPARE_BEFORE_THE_DOOR_DIET
+    assert _number(manager["now"]) == pinned.SPAN - aes_stack.need(shipped)[0], "the screen manager's spare, by the reading"
+    crit_err = _CRIT_ERR_S_FIT_RE.search(entry)
+    lo, top = aes_stack.CRIT_ERR_STACK
+    assert crit_err and _number(crit_err["span"]) == top - lo
+    assert _number(crit_err["now"]) == top - lo - aes_stack.crit_err_need(shipped)[0], "crit_err's spare, by the reading"
 
 
 # ...AND THE COUNTS OF TWO BATTERIES THE WAVE'S ENTRIES QUOTE (wave 3's review: "17 arrivals" stood where the battery

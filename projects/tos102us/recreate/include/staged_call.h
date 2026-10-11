@@ -339,8 +339,8 @@ static inline void call_vector_as_the_last_act(uint8_t *image, uint32_t routine)
  *
  * The AES's everyobj (`$fed27c`) calls the routine its caller hands it once per object, as Alcyon calls anything:
  * `move.w y,-(sp) / move.w x,-(sp) / move.w object,-(sp) / move.l tree,-(sp) / movea.l <routine>,a0 / jsr (a0) /
- * adda.l #10,sp` — a TEN-byte frame of a longword and three words, which the routine (ob_draw's just_draw, the
- * rectangle lists' mkrect) reads as its own arguments. What it owes the caller is ALCYON's contract, not a vector's:
+ * adda.l #10,sp` — a TEN-byte frame of a longword and three words, which the routine (the ROM's ob_draw's just_draw,
+ * the rectangle lists' mkrect) reads as its own arguments. What it owes the caller is ALCYON's contract, not a vector's:
  * it keeps D3-D7/A3-A6 and may change D0-D2/A0-A2 (everyobj keeps nothing live in those across the call), so those are
  * the clobbers — GCC's D2 and A2 among them.
  *
@@ -376,12 +376,13 @@ static inline void call_alcyon_object(uint8_t *image, uint32_t routine, uint32_t
 #endif
 }
 
-/* ...and THE ROUTINE A CALLER HANDS THE WALKER, BY VALUE (`move.l #<routine>,-(sp)`: ob_draw's just_draw, newrect's
- * mkrect, draw_change's newrect). OFF TARGET it is the ROM routine's own address, as the ROM's: everyobj's call reaches
- * the register-carrying hook, which a case binds to the C core by that address. ON TARGET it is the routine's Alcyon
- * entry linked beside its caller (`obdraw.S`, `wmupdate.S`), which takes everyobj's ten-byte frame into the C core: the
- * ROM's routine run inside our build is what Tier 3's (V) rule refuses (`bench/tier3.py`, AES_OWN_SPANS). The entry is
- * named on target alone — off target it is not linked at all. */
+/* ...and THE ROUTINE A CALLER HANDS THE WALKER, BY VALUE (`move.l #<routine>,-(sp)`: newrect's mkrect, draw_change's
+ * newrect — and, in the ROM, ob_draw's just_draw: our ob_draw holds the walk as its own body since band 5 wave 3's
+ * door diet and hands a walker nothing on target, `src/aes/obdraw.c`). OFF TARGET it is the ROM routine's own address,
+ * as the ROM's: everyobj's call reaches the register-carrying hook, which a case binds to the C core by that address.
+ * ON TARGET it is the routine's Alcyon entry linked beside its caller (`wmupdate.S`), which takes everyobj's ten-byte
+ * frame into the C core: the ROM's routine run inside our build is what Tier 3's (V) rule refuses (`bench/tier3.py`,
+ * AES_OWN_SPANS). The entry is named on target alone — off target it is not linked at all. */
 #ifdef RECREATE_HOST_DIFFERENTIAL
 #define ALCYON_ROUTINE(rom_address, alcyon_entry) ((uint32_t)(rom_address))
 #else

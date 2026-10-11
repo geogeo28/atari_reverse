@@ -1572,7 +1572,9 @@ LINE_F_MASK, TRAP_SAVE_FRAME = "the Line-F mask word", "the BIOS's last register
 #   * A WAIT'S PARAMETER THAT IS AN ADDRESS IN THE WAITER'S OWN STACK: an EVB on a program's list whose parameter
 #     longword names a place INSIDE THAT PROGRAM'S STACK ON BOTH MACHINES (a message wait keeps its buffer's QPB, a
 #     local of the waiting routine — two builds' frames, two addresses). Named only where both machines hold such an
-#     address there: an EVB whose parameter differs otherwise is a difference.
+#     address there: an EVB whose parameter differs otherwise is a difference. AND ONLY WHERE THE TWO ADDRESSES
+#     DIFFER (the door diet, wave 3: the build's frames above a message wait's QPB now sum to what the ROM's do, and
+#     the two machines hold THE SAME address there — a class that excused nothing would be one nobody needs).
 #   * the VECTORS are code addresses: MAPPED back (`mapped_back`), never dropped.
 PROGRAM_CONTEXT, PROGRAM_STACK = "{}'s saved context in its UDA", "{}'s stack: dead below its parked stack pointer, live frames above"
 PARKED_ADDRESS = "{}'s wait at {:#x}: its parameter, an address in its own stack"
@@ -1623,7 +1625,7 @@ def _of_a_program(rom, ours, program):
     classes = {PROGRAM_CONTEXT.format(name): (context_lo, context_hi), PROGRAM_STACK.format(name): (lo, top)}
     for evb in ours.process(program.pd).events:
         slot = evb + aes.EVB_PARM
-        if all(lo <= each.long(slot) & BUS < top for each in (rom, ours)):
+        if all(lo <= each.long(slot) & BUS < top for each in (rom, ours)) and rom.long(slot) != ours.long(slot):
             classes[PARKED_ADDRESS.format(name, evb)] = (slot, slot + LONG_BYTES)
     return classes
 

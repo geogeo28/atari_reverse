@@ -51,19 +51,19 @@ WOKEN_PREMISES = {
 }
 # THE WHOLE RUN on each blob (the ROM's cycles, ours, net of the entry both share) and its foreign windows.
 WOKEN_WHOLE_RUN = {
-    WAITED: ({BENCH_BLOB: (5097098, 5050632), SHIPPED_BLOB: (5097098, 4958410)}, NO_WINDOW),
-    HELD_UP: ({BENCH_BLOB: (4989256, 4934072), SHIPPED_BLOB: (4989256, 4846938)}, THE_MANAGER_LETS_ITS_MENU_GO),
+    WAITED: ({BENCH_BLOB: (5097098, 5041940), SHIPPED_BLOB: (5097098, 4949730)}, NO_WINDOW),
+    HELD_UP: ({BENCH_BLOB: (4989256, 4925990), SHIPPED_BLOB: (4989256, 4838864)}, THE_MANAGER_LETS_ITS_MENU_GO),
 }
 # WHAT THE TABLE PRICES of each slice (`aes_switching.Priced`): each shore's OWN cycles (ours, the ROM's), THE
 # CALLER'S OWN (net of the rebound entries' calls), the calls inside it, and the foreign windows INSIDE THE SLICE —
 # in neither column. A row that moves says why: the selector's body, a twin, the dispatcher.
 WOKEN_PRICED = {
     (WAITED, "the first wait blocked; a file's row clicked while it waits: selected, its name the selection"):
-        ((106094, 164226), (82796, 127668), 5, NO_WINDOW),
-    (WAITED, "the next wait blocked; Return typed while it waits: to the form's end"): ((45810, 69306), (25668, 38014), 2, NO_WINDOW),
-    (WAITED, PUT_AWAY): ((74586, 89024), (74378, 88658), 1, NO_WINDOW),
-    (HELD_UP, THE_LOCK_WAITED_FOR): ((32616, 50126), (16594, 25832), 3, THE_MANAGER_LETS_ITS_MENU_GO),
-    (HELD_UP, "the first wait blocked; Return typed while it waits: to the form's end"): ((40874, 64160), (21988, 34158), 2, NO_WINDOW),
+        ((105596, 164226), (82298, 127668), 5, NO_WINDOW),
+    (WAITED, "the next wait blocked; Return typed while it waits: to the form's end"): ((45814, 69306), (25672, 38014), 2, NO_WINDOW),
+    (WAITED, PUT_AWAY): ((74098, 89024), (73890, 88658), 1, NO_WINDOW),
+    (HELD_UP, THE_LOCK_WAITED_FOR): ((32524, 50126), (16502, 25832), 3, THE_MANAGER_LETS_ITS_MENU_GO),
+    (HELD_UP, "the first wait blocked; Return typed while it waits: to the form's end"): ((40814, 64160), (21928, 34158), 2, NO_WINDOW),
 }
 # The door calls each whole session makes — and, of them, the one a foreign window lies inside.
 WOKEN_DOOR_CALLS = {WAITED: 10, HELD_UP: 6}

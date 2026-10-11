@@ -16,6 +16,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "staged_call.h"
 #include "aes/aes.h"
 #include "aes/apmsg.h"
@@ -348,6 +349,7 @@ static int goes_on_to_redraw(uint8_t *image, int16_t window, uint32_t rect, uint
  * every window's list rebuilt (everyobj with newrect), the top window made the tree's last and the mouse its owner's
  * (w_setactive) — then, unless drawing is held, the change drawn: `goes_on_to_redraw` decides, `redraw_the_change`
  * redraws. */
+FRAME_DIET("no-gcse", "no-caller-saves")
 void aes_draw_change(uint8_t *image, int16_t window, uint32_t rect)
 {
     uint16_t frame_local[CHANGE_FRAME_BYTES / M68K_WORD_BYTES];
@@ -384,6 +386,7 @@ void aes_draw_change(uint8_t *image, int16_t window, uint32_t rect)
  * out of it (ob_delete over gl_wtree), with the screen locked round it: the change drawn over a COPY of the GRECT at
  * `rect` (the frame's: draw_change can overwrite what it is handed), the window's previous rectangle the caller's
  * when added. D0 the lock's release. */
+FRAME_DIET("no-defer-pop")
 uint16_t aes_wm_opcl(uint8_t *image, int16_t window, uint32_t rect, int16_t add)
 {
     uint16_t copy_local[GRECT_WORDS];
@@ -410,6 +413,7 @@ uint16_t aes_wm_open(uint8_t *image, int16_t window, uint32_t rect)
 }
 
 /* $fec6f0 — wind_close: no rectangle left (gl_rzero). */
+FRAME_DIET("no-defer-pop")
 uint16_t aes_wm_close(uint8_t *image, int16_t window)
 {
     return aes_wm_opcl(image, window, AES_GL_RZERO, WM_OPCL_REMOVE);
@@ -466,6 +470,7 @@ static void set_top(uint8_t *image, int16_t window)
  * title or information line (a string's address, redrawn by w_strchg), its rectangle (draw_change), the top window,
  * drawing held for a non-zero handle or released (the desktop and every window redrawn under `words`), a new desk
  * tree and root, a slider. A field with no arm sets nothing. D0 the lock's release. */
+FRAME_DIET("no-gcse", "no-tree-dominator-opts")
 uint16_t aes_wm_set(uint8_t *image, int16_t window, int16_t field, uint32_t words)
 {
     int16_t gadget = NO_STRING_GADGET;

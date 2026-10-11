@@ -573,9 +573,9 @@ WHOLE_RUN = {
     "the top window's up arrow clicked: found, the arrow sent, one yield":
         {BENCH: (106462, 58314), SHIPPED: (106462, 56580)},
     'the closer held; released inside it: WM_CLOSED':
-        {BENCH: (226780, 166686), SHIPPED: (226780, 163716)},
+        {BENCH: (226780, 166736), SHIPPED: (226780, 163768)},
     'the fuller held; the mouse taken off it, then released: nothing sent':
-        {BENCH: (261404, 199482), SHIPPED: (261404, 196936)},
+        {BENCH: (261404, 199710), SHIPPED: (261404, 197168)},
     'the title held; dragged, then released: WM_MOVED':
         {BENCH: (481298, 420828), SHIPPED: (481298, 416656)},
     'the sizer held; stretched, then released: WM_SIZED':
@@ -605,21 +605,21 @@ WHOLE_RUN = {
     "AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise":
         {BENCH: (63868, 55468), SHIPPED: (63868, 54502)},
     'on View; an item reached, then clicked: MN_SELECTED to process 0':
-        {BENCH: (1132286, 1058588), SHIPPED: (1132286, 1046266)},
+        {BENCH: (1132286, 1056912), SHIPPED: (1132286, 1044590)},
     "on Desk; the accessory's entry reached, then clicked: AC_OPEN to the accessory":
-        {BENCH: (861836, 785994), SHIPPED: (861836, 775088)},
+        {BENCH: (861836, 784950), SHIPPED: (861836, 774044)},
     'on View; the menu left, a click off it: nothing chosen, nothing sent':
-        {BENCH: (1107912, 1040826), SHIPPED: (1107912, 1029764)},
+        {BENCH: (1107912, 1039150), SHIPPED: (1107912, 1028088)},
     "on Desk, the desk alone; its own item clicked: MN_SELECTED, no accessory's whatever gl_dafirst holds":
-        {BENCH: (600452, 529594), SHIPPED: (600452, 519976)},
+        {BENCH: (600452, 528866), SHIPPED: (600452, 519248)},
 }
 PRICED = {
     "the top window's up arrow clicked: found, the arrow sent, one yield":
         Priced((46570, 99700), (38784, 84954), 3, (0, 0, 0)),   # 0.47 / 0.46
     'the closer held; released inside it: WM_CLOSED':
-        Priced((74080, 141812), (46826, 97586), 2, (0, 0, 0)),   # 0.52 / 0.48
+        Priced((74132, 141812), (46878, 97586), 2, (0, 0, 0)),   # 0.52 / 0.48
     'the fuller held; the mouse taken off it, then released: nothing sent':
-        Priced((85532, 155472), (45058, 94522), 2, (0, 0, 0)),   # 0.55 / 0.48
+        Priced((85764, 155472), (45290, 94522), 2, (0, 0, 0)),   # 0.55 / 0.48
     'the title held; dragged, then released: WM_MOVED':
         Priced((110620, 185074), (62442, 109410), 5, (0, 0, 0)),   # 0.60 / 0.57
     'the sizer held; stretched, then released: WM_SIZED':
@@ -649,13 +649,13 @@ PRICED = {
     "AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise":
         Priced((18882, 29392), (11386, 15626), 2, (1, 14190, 7428)),   # 0.64 / 0.73
     'on View; an item reached, then clicked: MN_SELECTED to process 0':
-        Priced((166160, 263904), (112504, 182790), 4, (0, 0, 0)),   # 0.63 / 0.62
+        Priced((165860, 263904), (112204, 182790), 4, (0, 0, 0)),   # 0.63 / 0.61
     "on Desk; the accessory's entry reached, then clicked: AC_OPEN to the accessory":
-        Priced((150802, 248130), (97104, 165608), 4, (0, 0, 0)),   # 0.61 / 0.59
+        Priced((150446, 248130), (96748, 165608), 4, (0, 0, 0)),   # 0.61 / 0.58
     'on View; the menu left, a click off it: nothing chosen, nothing sent':
-        Priced((155416, 244584), (102980, 167080), 3, (0, 0, 0)),   # 0.64 / 0.62
+        Priced((155116, 244584), (102680, 167080), 3, (0, 0, 0)),   # 0.63 / 0.61
     "on Desk, the desk alone; its own item clicked: MN_SELECTED, no accessory's whatever gl_dafirst holds":
-        Priced((131716, 221188), (78272, 140250), 4, (0, 0, 0)),   # 0.60 / 0.56
+        Priced((131332, 221188), (77888, 140250), 4, (0, 0, 0)),   # 0.59 / 0.56
 }
 # @PINS-END
 WINDOWS = {label: priced.windows for label, priced in PRICED.items() if priced.windows != NO_WINDOW}
