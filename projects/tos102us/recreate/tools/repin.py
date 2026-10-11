@@ -16,9 +16,15 @@ REFUSED, each by name, and nothing of that pair is written:
     hand's. A file that happens to spell the same pair for a row no test of it recorded is never touched;
   * A PAIR SPELT MORE TIMES THAN ROWS RECORDED ITS MOVE. Two rows that share a pair are two spellings; when only one
     of them moved, the other line is a row nobody recorded, and no text says which is which: a hand's, both.
+THE SCREEN MANAGER'S TURNS (a record of kind "turn": the turns of our ctlmgr inside a row's run on a blob) are not
+pairs in a test's file but lines of ONE DATA FILE, `test/aes_turns_pinned.py`, keyed by the row and the blob: the
+row's line for the blob is written (or added, for a row the file did not hold) from the record — REFUSED where the
+ROM's own member of a turn moved, or where the run makes another number of turns than the line holds (a window
+appeared or went: the row's machine changed).
 A price whose CALLS or WINDOWS moved is not a pair move and is printed for a hand. Prints what it did; writes
 nothing without --apply. Run the suite again afterwards: what it could not reach is what is still red.
 """
+import ast
 import collections
 import json
 import pathlib
@@ -26,6 +32,12 @@ import re
 import sys
 
 WHOLE, PRICED = "whole", "priced"       # the recorder's two kinds: a whole run's cycles on a blob; the table's price
+TURN = "turn"                           # ...and a third: the screen manager's turns inside a run on a blob (one data file)
+TURNS_FILE = "aes_turns_pinned.py"
+A_TURNS_ROW = re.compile(r'^    (?P<row>".*"): \{$')       # the data file's lines: a row opens its blobs' ...
+A_TURNS_BLOB = re.compile(r'^        "(?P<blob>\w+)": (?P<turns>\(.*\)),$')         # ...one line a blob...
+A_TURNS_ROW_ENDS = "    },"             # ...and closes
+THE_ROM_S_MEMBER_OF_A_TURN = 1          # a turn is (ours, the ROM's, our thunks')
 THE_ROM_S_MEMBER = {WHOLE: 0, PRICED: 1}                 # which of a pair is the ROM's own count
 A_RATIO_COMMENT = re.compile(r"(#\s*)(\d\.\d\d)( / (\d\.\d\d))?(\s*)$")
 A_PAIR = re.compile(r"\((\d+), (\d+)\)")
@@ -72,9 +84,67 @@ def moves_of(records):
             moves += [Move(PRICED, record["who"], tuple(old), tuple(new), record.get("file", ""), "")
                       for old, new in zip(held[:A_PRICE_S_PAIRS], measured[:A_PRICE_S_PAIRS])
                       if old is not None and new is not None and tuple(old) != tuple(new)]
-        else:
+        elif record["kind"] != TURN:    # (a turn's record is the data file's: `turns_repinned`)
             by_hand.append(record)
     return moves, by_hand
+
+
+def _turns_spelt(turns):
+    return "(" + "".join(f"({', '.join(str(count) for count in turn)}), " for turn in turns).rstrip(" ") + ")"
+
+
+def _turns_held(lines):
+    """`{(row, blob): the turns as the data file spells them}` of the file's `lines`."""
+    held, row = {}, None
+    for line in lines:
+        opens, blob = A_TURNS_ROW.match(line), A_TURNS_BLOB.match(line)
+        if opens:
+            row = json.loads(opens["row"])
+        elif blob and row is not None:
+            held[row, blob["blob"]] = blob["turns"]
+        elif line == A_TURNS_ROW_ENDS:
+            row = None
+    return held
+
+
+def _turns_read(spelt):
+    """A line's turns (`_turns_spelt`'s spelling) as lists: what a record's `old` and `new` are."""
+    return [list(turn) for turn in ast.literal_eval(spelt)]
+
+
+def turns_repinned(records, text):
+    """THE DATA FILE'S RE-PIN (`TURNS_FILE`: its `text`) by the records of kind "turn": `(the new text, how many
+    lines were written, [why each refused record was])`. A line is its row's and its blob's: written from the record,
+    or added for a row the file did not hold. A RECORD IS HELD TO WHAT THE FILE HOLDS, not to its own `old` (a record
+    made in another copy of the tree, or before a hand edit, is not this file's): REFUSED, its line left, where its
+    `old` is not the file's line (none, for a row the file holds; a line, for one it does not), and where THE ROM'S
+    MEMBER of any turn — or the number of turns — is not the file's. A record that changes nothing writes nothing."""
+    lines = text.split("\n")
+    held = _turns_held(lines)
+    written, refused = 0, []
+    for record in (each for each in records if each["kind"] == TURN):
+        (row, blob), old, new = record["who"], [list(turn) for turn in record["old"]], [list(turn) for turn in record["new"]]
+        in_the_file = _turns_read(held[row, blob]) if (row, blob) in held else []
+        if old != in_the_file:
+            refused.append(f"{row} on {blob}: THE RECORD WAS NOT MADE AGAINST THIS FILE — it says the line held {old} "
+                           f"and the file holds {in_the_file or 'no line for it'}: record the run again over this tree")
+            continue
+        its_own = [turn[THE_ROM_S_MEMBER_OF_A_TURN] for turn in in_the_file], [turn[THE_ROM_S_MEMBER_OF_A_TURN] for turn in new]
+        if in_the_file and its_own[0] != its_own[1]:
+            refused.append(f"{row} on {blob}: THE ROM'S OWN COUNT MOVED in the screen manager's turns, {its_own[0]} -> "
+                           f"{its_own[1]} — the row's machine or its deliveries changed: no re-pin absorbs that")
+            continue
+        if new and new != in_the_file:
+            held[row, blob] = _turns_spelt(new)
+            written += 1
+    opening = next(index for index, line in enumerate(lines) if line.startswith("PINNED = {"))
+    closing = next(index for index, line in enumerate(lines) if index > opening and line == "}")
+    body = []
+    for row in sorted({row for row, _blob in held}):
+        body.append(f"    {json.dumps(row, ensure_ascii=False)}: {{")
+        body += [f'        "{blob}": {held[row, blob]},' for each, blob in sorted(held) if each == row]
+        body.append(A_TURNS_ROW_ENDS)
+    return "\n".join(lines[:opening + 1] + body + lines[closing:]), written, refused
 
 
 def vet(move):
@@ -148,11 +218,15 @@ def main(arguments):
     records = [json.loads(line) for line in record_path.read_text().splitlines() if line]
     before = {path: path.read_text() for path in sorted((root / "test").glob("*.py"))}
     outcome = repinned(records, before)
+    turns_path = root / "test" / TURNS_FILE
+    turns_text, turns_written, turns_refused = turns_repinned(records, outcome.texts[turns_path])
+    outcome.texts[turns_path] = turns_text
     print(f"{len(records)} records: {sum(outcome.rewritten.values())} pair(s) re-pinned in {len(outcome.rewritten)} file(s), "
-          f"{len(outcome.refused)} refused, {len(outcome.by_hand)} for a hand")
+          f"{turns_written} line(s) of the screen manager's turns written, "
+          f"{len(outcome.refused) + len(turns_refused)} refused, {len(outcome.by_hand)} for a hand")
     for name, count in sorted(outcome.rewritten.items()):
         print(f"  {name}: {count} pair(s)")
-    for why, _move in outcome.refused:
+    for why in [why for why, _move in outcome.refused] + turns_refused:
         print(f"  REFUSED: {why}")
     for record in outcome.by_hand:
         print(f"  BY HAND: {record['who']}: {record['old']} -> {record['new']}")
@@ -160,7 +234,7 @@ def main(arguments):
         for path, text in outcome.texts.items():
             if text != before[path]:
                 path.write_text(text)
-    return 1 if any("THE ROM'S OWN COUNT MOVED" in why for why, _move in outcome.refused) else 0
+    return 1 if any("THE ROM'S OWN COUNT MOVED" in why for why in [why for why, _move in outcome.refused] + turns_refused) else 0
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ WHOLE_RUN = {
     "the lock the caller's own already: taken a second time, one level given back":
         {BENCH: (13952, 11384), SHIPPED: (13952, 11504)},
     "the screen manager's menu holds the lock: the caller waits until the menu is let go":
-        {BENCH: (391348, 382922), SHIPPED: (391348, 382812)},
+        {BENCH: (391348, 342342), SHIPPED: (391348, 335954)},
 }
 PRICED = {
     'the desk alone ready: a yield back to it, the lock taken and given back':

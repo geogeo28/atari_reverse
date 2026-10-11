@@ -52,7 +52,7 @@ WOKEN_PREMISES = {
 # THE WHOLE RUN on each blob (the ROM's cycles, ours, net of the entry both share) and its foreign windows.
 WOKEN_WHOLE_RUN = {
     WAITED: ({BENCH_BLOB: (5097098, 5050632), SHIPPED_BLOB: (5097098, 4958410)}, NO_WINDOW),
-    HELD_UP: ({BENCH_BLOB: (4989256, 4974652), SHIPPED_BLOB: (4989256, 4893796)}, THE_MANAGER_LETS_ITS_MENU_GO),
+    HELD_UP: ({BENCH_BLOB: (4989256, 4934072), SHIPPED_BLOB: (4989256, 4846938)}, THE_MANAGER_LETS_ITS_MENU_GO),
 }
 # WHAT THE TABLE PRICES of each slice (`aes_switching.Priced`): each shore's OWN cycles (ours, the ROM's), THE
 # CALLER'S OWN (net of the rebound entries' calls), the calls inside it, and the foreign windows INSIDE THE SLICE —
@@ -202,8 +202,9 @@ def test_marks_never_told_of_a_foreign_window_price_the_slice_on_another_process
     """THE RED of the telling (`aes_event.Marks.foreign_window_opened` / `_closed`): with the marks deaf to the
     window, the ROM's shore's own cycles between the slice's two marks hold the screen manager's 124,096 in the
     AES's text and ours hold none — the slice would print 0.19 where it is 0.66. Refused by name: the OS both sides
-    run no longer costs the two shores the same."""
-    row = _the_lock_s_slice(tier3)
+    run no longer costs the two shores the same. (The slice LEFT ON THE ROM'S SCREEN MANAGER, as it stood before
+    FLIP 4: with the screen manager ours the window is its turn, priced by itself.)"""
+    row = tier3.left_on_the_rom_s_screen_manager(_the_lock_s_slice(tier3))
     monkeypatch.setattr(aes_event.Marks, "foreign_window_opened", lambda self: None)
     monkeypatch.setattr(aes_event.Marks, "foreign_window_closed", lambda self: None)
     with pytest.raises(AssertionError, match="inside its slice the OS both sides run cost ours"):
@@ -263,11 +264,28 @@ def test_two_shores_marks_that_put_other_turns_inside_a_slice_are_refused_by_nam
         totals["insns"] += 1
         made.returned(0)
         return made
-    assert tier3._foreign_inside_the_slice("a row", marks(blob=0), marks(aes=400)) == tier3.Foreign(1, 900, 400)
-    assert tier3._foreign_inside_the_slice("a row", marks(0, blob=0), marks(0, aes=0)) == tier3.NO_FOREIGN_WINDOW
+    assert tier3._foreign_inside_the_slice("a row", marks(blob=0), marks(aes=400)) == (tier3.Foreign(1, 900, 400), ())
+    assert tier3._foreign_inside_the_slice("a row", marks(0, blob=0), marks(0, aes=0)) == (tier3.NO_FOREIGN_WINDOW, ())
     for ours in (marks(901, blob=0), marks(blob=4), marks(0, blob=0)):
         with pytest.raises(AssertionError, match="do not put the same turns of another process inside the slice"):
             tier3._foreign_inside_the_slice("a row", ours, marks(aes=400))
+    # ...AND ON A SESSION WHOSE SCREEN MANAGER IS OURS (FLIP 4) the window inside the slice is ONE TURN of it: our
+    # build's own cycles in it (the blob's less its thunks') against the ROM's ctlmgr's, the OS both run inside it the
+    # same on both shores — 500 of the ROM's 900 here, so ours is 500 + 300 of its own, 20 of them in thunks.
+    ours = marks(800, blob=300, glue=20)
+    turns_alone = {aes_switching.OURS}
+    assert tier3._foreign_inside_the_slice("a row", ours, marks(aes=400), turns_alone) == (
+        tier3.Foreign(1, 900, 400), (tier3.Turn(280, 400, 20, 500),))
+    with pytest.raises(AssertionError, match="in our screen manager's turn\\(s\\), the OS both run cost ours 501 cycles"):
+        tier3._foreign_inside_the_slice("a row", marks(801, blob=300, glue=20), marks(aes=400), turns_alone)
+    with pytest.raises(AssertionError, match="do not put the same turns of another process inside the slice"):
+        tier3._foreign_inside_the_slice("a row", marks(0, blob=0, glue=0), marks(aes=400), turns_alone)
+    # ...AND A SESSION WHOSE RUN HAS WINDOWS OF BOTH KINDS (none today: the day an accessory's turn joins the screen
+    # manager's inside one) is refused where a window lies inside the slice — and is what it was where none does.
+    both = {aes_switching.OURS, aes_switching.THE_ROM_S}
+    with pytest.raises(AssertionError, match="has windows of BOTH KINDS"):
+        tier3._foreign_inside_the_slice("a row", ours, marks(aes=400), both)
+    assert tier3._foreign_inside_the_slice("a row", marks(0, blob=0), marks(0, aes=0), both) == (tier3.NO_FOREIGN_WINDOW, ())
 
 
 def test_a_sliced_row_whose_run_arrives_at_no_door_entry_is_refused_by_name(tier3, bench):

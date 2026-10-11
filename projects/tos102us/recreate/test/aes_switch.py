@@ -1937,6 +1937,17 @@ def _taken_where(delivered, where):
     return {ordinal: taken for (kind, ordinal), taken in delivered.items() if kind == where}
 
 
+def taken_at_the_idles(delivered):
+    """A run's deliveries taken at its idles, `{idle: (found, wrote)}` (`delivered`: `{(where, ordinal): ...}`)."""
+    return _taken_where(delivered, AT_AN_IDLE)
+
+
+def taken_at_the_polls(delivered, stood):
+    """...and at its polls that are no idle, `{poll: (found, wrote)}` — each `found` with what the idle's own tests
+    read there (`stood`: `{poll: what_idle_tests(memory)}`), which a delivery laid on another shore is checked by."""
+    return {poll: (merge_pokes(stood[poll], found), wrote) for poll, (found, wrote) in _taken_where(delivered, AT_A_POLL).items()}
+
+
 def scheduled(entry, frame, machine, at_idle=None, budget=None, at_calls=None, at_polls=None, left_out_beside=()):
     """THE ROM'S OWN RUN of `entry` (its Alcyon `frame` where a `jsr` leaves it) over `machine`, a running process's
     call, THROUGH THE DISPATCHER, each interrupt of `at_idle` delivered at the idle of its ordinal — and each of
@@ -1983,8 +1994,7 @@ def scheduled(entry, frame, machine, at_idle=None, budget=None, at_calls=None, a
         f"the scheduled run of {entry:#x} reached its return in ANOTHER process than the one that made the call "
         f"({case.long_in(memory, aes.AES_RLR):#x}): a process of the machine whose own call was the harness's — its "
         f"continuation ends at the run's sentinel, which no process of a real machine does")
-    taken_at_polls = {poll: (merge_pokes(watch.stood[poll], found), wrote)
-                      for poll, (found, wrote) in _taken_where(delivered, AT_A_POLL).items()}
+    taken_at_polls = taken_at_the_polls(delivered, watch.stood)
     return Scheduled(memory, d0, _taken_where(delivered, AT_AN_IDLE), watch.idles, tuple(watch.entered), ended, started,
                      tuple(calls), taken_at_calls, watch.polls, taken_at_polls, tuple(door.answers), tuple(watch.dispatches))
 

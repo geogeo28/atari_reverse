@@ -2,16 +2,16 @@
  * Alcyon C in the ROM, ported over its own order; every callee is its C core (the window, object, graphics and menu
  * libraries', `aes_ap_sendmsg`, `aes_wm_update`, `aes_dsptch`) — a wait is reached through those cores' own door.
  *
- * THEY RUN IN THE SCREEN MANAGER'S PROCESS, called by its main loop — the ROM's ctlmgr, until wave 2 ports it.
+ * THEY RUN IN THE SCREEN MANAGER'S PROCESS, called by its main loop — ctlmgr (`src/aes/ctlmgr.c`, bound at FLIP 4).
  *
  * WHAT THE ROM LEAVES UNSET, AND WHAT THE C HANDS IN ITS PLACE.
  *   - A press on a window that is NOT the top one sends WM_TOPPED with four words (x, y, w, h) the ROM's frame was
  *     never given on that path ($fe489c..$fe48aa): the residue of the screen manager's stack — on the machine the
- *     SAME four words at every arrival (halves of a ROM address and of a RAM address ctlmgr's preceding ev_multi
- *     left at that depth). The C hands HCTL_STALE_WORD four times: A DECLARED DIVERGENCE (`aes/gemctrl.h`,
- *     `STATUS.md`), green in the differential only because the ROM's routine is entered there on a zeroed stack;
- *     `test/test_aes_gemctrl.py` holds what the real arrival carries, and that the ROM sends its frame's words.
- *     (Once ctlmgr is our C — wave 2 — the residue is our build's.)
+ *     SAME four words at every arrival (residue of hctl_button's wm_find: ob_find's return address's high half, the
+ *     frame pointer its `link` saved, the word under it). The C hands HCTL_STALE_WORD four times: A DECLARED DIVERGENCE (`aes/gemctrl.h`,
+ *     `STATUS.md`). At an arrival of the ROM's ctlmgr the ROM's routine is entered on a zeroed stack and both send
+ *     zeroes; ON THE REAL STACK (ctlmgr's own row, `test/test_aes_ctlmgr.py`) the ROM sends its residue, the C four
+ *     zeroes, dropped there by name. `test/test_aes_gemctrl.py` holds what the real arrival carries.
  *   - A menu left with nothing chosen calls ct_msgup(0, D7, two frame words never set, 0, 0, 0) ($fe49a0): D7 and
  *     the two words are read by nobody — ct_msgup sends nothing for message 0.
  *

@@ -54,6 +54,7 @@ import trap                                                # noqa: E402
 # ...and the VDI's door and pure helpers, whose declared contracts and C signatures the VDI calls derive from.
 import aes                                                 # noqa: E402
 import aes_event                                           # noqa: E402
+import aes_takeover                                        # noqa: E402
 import case                                                # noqa: E402
 import fork_pool                                           # noqa: E402
 import routines                                            # noqa: E402
@@ -1619,11 +1620,24 @@ def test_every_kind_of_drop_is_held_to_our_run_s_store_of_it(why, bench, monkeyp
 
 
 def test_the_one_drop_our_run_need_not_have_stored_is_the_line_f_mask_word():
-    """...and the exemption is ONE window, named: every other drop of every row is held."""
+    """...and the exemption is ONE window, named: every other drop of every row is held — byte by byte, but ONE
+    KIND held as a whole (`tier3.EACH_BUILD_S_OWN_FRAMES`, FLIP 4): the screen manager's own stack on a row whose
+    screen manager is ours, where two builds' frames are not laid over the same bytes and what is held is that OUR
+    screen manager ran on that stack at all (`vet_our_frames_were_laid`: refused where our run stored nothing there)."""
     assert tier3.ONE_SIDED_BY_NATURE == {(lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW}
+    assert tier3.EACH_BUILD_S_OWN_FRAMES == {aes_takeover.STACK_WHY}
     exempt = {(lo, hi) for row in tier3.ROWS for lo, hi, why in row.dropped
-              if (lo, hi, why) not in tier3.drops_held_to_our_run(row)}
+              if (lo, hi, why) not in tier3.drops_held_to_our_run(row) and why not in tier3.EACH_BUILD_S_OWN_FRAMES}
     assert exempt == tier3.ONE_SIDED_BY_NATURE
+    own_frames = [row for row in tier3.ROWS if any(why in tier3.EACH_BUILD_S_OWN_FRAMES for _lo, _hi, why in row.dropped)]
+    assert own_frames and all(aes_takeover.named_in(row.dropped) for row in own_frames)
+    row = own_frames[0]
+    lo, hi = aes_takeover.spans_of(make_image(row.pokes)).stack
+    tier3.vet_our_frames_were_laid(row, {lo})
+    tier3.vet_our_frames_were_laid(row, {hi - 1})
+    for stored in (set(), {lo - 1}, {hi}):
+        with pytest.raises(AssertionError, match="OUR run stored NOTHING there: no screen manager of ours ran on that stack"):
+            tier3.vet_our_frames_were_laid(row, stored)
     assert len(DROPS_BY_KIND) >= KINDS_OF_DROP_THE_TABLE_NAMES, sorted(DROPS_BY_KIND)
 
 
@@ -1896,13 +1910,19 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False, False], (
-        "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone")
+    assert [each.at_entry for each in read] == [True, False, False, True], (
+        "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone; the screen "
+        "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr)")
     # ...each mapped whole for this run — but the GEMDOS glue's text sites, mapped only for a run that reaches the
     # `.S` that parks them (`tier3.text_site_relocation`: forker's, on the bench's blob, reaches the C twin).
     assert [set(each.mapping) for each in read] == [
         set(each.symbols) if each is not aes_event.TEXT_SITES else set() for each in aes_event.CODE_RELOCATIONS]
-    assert set(tier3.code_relocations(tier3.BUILT_ELF, aes_event.TEXT_SITE_ENTRIES[0])[-1].mapping) == set(aes_event.TEXT_SITE_SYMBOLS)
+    # ...and THE SCREEN MANAGER'S ENTRY is the blob's own `aes_rom_ctlmgr`, for every run of a build that links it.
+    assert tier3.screen_manager_relocation(tier3.BUILT_ELF) == {
+        aes_event.SCREEN_MANAGER_ROM_ENTRY: tier3._placed(tier3.BUILT_ELF)[aes_event.SCREEN_MANAGER_ENTRY_SYMBOL]}
+    text_sites, = (each for each in tier3.code_relocations(tier3.BUILT_ELF, aes_event.TEXT_SITE_ENTRIES[0])
+                   if each.what == aes_event.TEXT_SITES.what)
+    assert set(text_sites.mapping) == set(aes_event.TEXT_SITE_SYMBOLS)
 
 
 # ---- A RELOCATION LEFT UN-APPLIED IN THE BUILD IS REFUSED BY NAME (`tier3.vet_no_slot_names_the_rom`) ---------------------

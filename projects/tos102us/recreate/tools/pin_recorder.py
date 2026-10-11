@@ -4,7 +4,8 @@ of a RE-PIN (`tools/repin.py` is the second; recreate/README.md, "Re-pinning the
     PINREC_OUT=$PWD/build/pins.jsonl PYTHONPATH=../../../tools:tools .venv/bin/python -m pytest -q -p pin_recorder -n auto test
 
 The suite's own assertions are untouched: a moved pin still FAILS, by its name. What the plugin adds is one JSON line
-per moved pin — the whole run's cycles on a blob (`aes_switching.vet_on_a_blob`) and the table's price of a row
+per moved pin — the whole run's cycles on a blob (`aes_switching.vet_on_a_blob`), the screen manager's turns inside it
+on that blob (`aes_turns_pinned`: the same vetter holds them) and the table's price of a row
 (`vet_the_table_s_price`), each with the pair the test holds — so that a build change that moves hundreds of rows
 (a compiler flag, a frame) is re-pinned FROM THE RUN, never by hand and never by loosening. A pin asserted by other
 code than those two helpers (`test_aes_evdisp_model.py`'s yield and wait, `test_aes_fs_input_woken.py`'s slices) is
@@ -17,6 +18,7 @@ import os
 
 OUT = os.environ.get("PINREC_OUT")
 WHOLE, PRICED, REFUSED = "whole", "priced", "refused"
+TURN = "turn"                           # the screen manager's turns inside a row's run on a blob (`aes_turns_pinned`)
 A_REFUSAL_S_WORDS = 200
 
 
@@ -46,6 +48,8 @@ def _recording_whole_runs(switching):
             try:
                 measured, _watch, _foreign = measured_on(blob, row)
                 _record(WHOLE, [row_name(row), directory], list(whole[directory]), [measured.original_net, measured.recreate_net])
+                held = [list(turn) for turn in switching.turns_pinned(row_name(row), directory)]
+                _record(TURN, [row_name(row), directory], held, [list(turn) for turn in switching.turns_measured(measured)])
             except AssertionError as refusal:
                 _record(REFUSED, row_name(row), None, str(refusal)[:A_REFUSAL_S_WORDS])
     return vet_on_a_blob
@@ -67,9 +71,33 @@ def _recording_prices(switching):
     return vet_the_table_s_price
 
 
+def _recording_a_run_s_pins(switching):
+    """`vet_the_whole_run` and `vet_its_turns`, their verdicts untouched, each pin recorded from the measurement it was
+    handed — for a vetter that calls them itself with a measurement of its own making (ctlmgr's rows, from idle to
+    idle: `test_aes_ctlmgr.py`). A row `vet_on_a_blob` holds is recorded by its own wrapper too: the same line twice."""
+    whole_run, its_turns = switching.vet_the_whole_run, switching.vet_its_turns
+
+    def vet_the_whole_run(who, blob, measured, whole):
+        try:
+            return whole_run(who, blob, measured, whole)
+        finally:
+            directory = blob.elf.parent.name
+            _record(WHOLE, [who, directory], list(whole[directory]), [measured.original_net, measured.recreate_net])
+
+    def vet_its_turns(who, blob, measured):
+        try:
+            return its_turns(who, blob, measured)
+        finally:
+            directory = blob.elf.parent.name
+            _record(TURN, [who, directory], [list(turn) for turn in switching.turns_pinned(who, directory)],
+                    [list(turn) for turn in switching.turns_measured(measured)])
+    return vet_the_whole_run, vet_its_turns
+
+
 def pytest_configure(config):
     del config
     import aes_switching
 
+    aes_switching.vet_the_whole_run, aes_switching.vet_its_turns = _recording_a_run_s_pins(aes_switching)
     aes_switching.vet_on_a_blob = _recording_whole_runs(aes_switching)
     aes_switching.vet_the_table_s_price = _recording_prices(aes_switching)

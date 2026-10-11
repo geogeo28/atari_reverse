@@ -129,7 +129,7 @@ WHOLE_RUN = {
     "four records played, the cursor shown: the VDI's cursor routine queues each point":
         {BENCH: (127192, 112348), SHIPPED: (127192, 113908)},
     'the mouse played onto the menu bar and off it: the screen manager entered from a yield':
-        {BENCH: (167922, 155392), SHIPPED: (167922, 156652)},
+        {BENCH: (167922, 134432), SHIPPED: (167922, 133334)},
     'none played: a count below 0':
         {BENCH: (12180, 10844), SHIPPED: (12180, 10964)},
     'four records played at a negative scale: the wait is no tick':
@@ -502,13 +502,20 @@ def test_ap_tplay_exchanges_the_cursor_routine_before_the_motion_routine(blob):
 
 # ---- WHAT NO BLOB RUNS, AND WHAT NO HOST FORK RUNS — each refused by name -----------------------------------------------------------
 def test_a_recording_across_another_process_s_turn_is_refused_on_a_blob(blob):
-    """THE MIXTURE'S OWN LIMIT, held so that it is not met by surprise: a recording with the screen manager's turn
+    """THE MIXTURE'S OWN LIMIT, held so that it is not met by surprise: a recording with A TURN OF THE ROM'S PROCESS
     INSIDE it is the ROM's on the host (Tier 1 above) and RED on a blob in exactly the records made inside the
     foreign window — the ROM's forker ran those events and its recorder copied the ROM's fork-function addresses,
     which our ap_trecd, comparing with our own entries, numbers 0 (a timer's) where the ROM's numbers them 2 (a
-    mouse's). No relocation maps a recording where a window closes; the row is registered nowhere."""
+    mouse's). No relocation maps a recording where a window closes; the row is registered nowhere.
+    SINCE FLIP 4 THE SCREEN MANAGER'S TURN IS NO SUCH WINDOW: with the screen manager OURS (`aes_takeover`) the events
+    inside its turn are run by OUR forker, whose recorder copies our own entries — the recording is the ROM's on
+    each blob, its turn priced by itself. (It is the run a playback's machine is made ours from: `aes_takeover`'s
+    provenance.) The limit is held on the same row LEFT ON THE ROM'S SCREEN MANAGER."""
     row = ROWS[ACROSS_A_WINDOW]
     assert SCREEN_MANAGER in PREMISES[ACROSS_A_WINDOW].entered and ACROSS_A_WINDOW not in tape.PRICED
+    measured, watch, _foreign = switching.measured_on(blob, row)
+    assert set(watch.window_classes) == {switching.OURS} and measured.turns
+    row = row._replace(the_rom_s_screen_manager="the mixture's own limit: the recording's row as it stood before FLIP 4")
     with pytest.raises(AssertionError, match="left different memory than the original") as refused:
         switching.measured_on(blob, row)
     low_bytes = [tape.RECORD_AT + nth * tape.RECORD.size + aes.LONG_BYTES - 1 for nth in (1, 2)]

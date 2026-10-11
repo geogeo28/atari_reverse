@@ -29,6 +29,7 @@ import os
 import re
 import struct
 import sys
+import types
 from collections import namedtuple
 from pathlib import Path
 
@@ -102,6 +103,12 @@ import aes                                                 # noqa: E402
 # ...and the event door, whose watch over a run (`DoorStops`) is what (V) AT THE DOOR watches BOTH sides' runs with.
 import aes_event                                           # noqa: E402
 import aes_switching                                       # noqa: E402
+# ...and the screen manager made ours on a row's machine (FLIP 4): the two spans a row whose run enters it names.
+import aes_takeover                                        # noqa: E402
+# ...and ctlmgr's own rows: the screen manager woken, both shores from a booted machine's idle to its next.
+import aes_ctlmgr                                          # noqa: E402
+import aes_boot                                            # noqa: E402
+import aes_gemctrl                                         # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1609,8 +1616,25 @@ ISR_TRANSCRIPTION_CASES = (test_bios_hbl.TRANSCRIPTION_CASES + test_bios_vbl.TRA
                            + test_bios_timerc.TRANSCRIPTION_CASES
                            + test_bios_ikbd.TRANSCRIPTION_CASES)
 
+def _woken_row(name, woken):
+    """One of ctlmgr's own rows (`aes_ctlmgr.ROWS`) as a bench row: THE SCREEN MANAGER WOKEN, both shores run from a
+    booted machine's idle to its next (`idle_to_idle_on`) — entered at the ROM's dispatcher's loop, where the machine
+    stands; no call, no frame, no return. `pokes` the ROM's shore's machine; `delivered` what the run is taken
+    through; its symbol the entry our ictlmgr hands pstart."""
+    made = aes_ctlmgr.made(woken)
+    return Row(aes_ctlmgr.FUNCTION, woken.label, addrs.AES_ROM_DISP_LOOP, aes_ctlmgr.SYMBOL, (), None,
+               {0: aes_ctlmgr.the_rom_s_machine(woken)}, None, None, RETURNS_NOTHING, False, aes_ctlmgr.ENTRY,
+               delivered=made.switches, registered=name)
+
+
+def is_a_woken_row(row):
+    """Is `row` one of ctlmgr's own — the screen manager woken, measured from idle to idle?"""
+    return row.registered in aes_ctlmgr.ROWS and row.address == aes_ctlmgr.ENTRY
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
+        + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
         + tuple(_transcription_row(case) for case in trap.CASES + tuple(gemdos.TRANSCRIPTIONS))
         + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES)
         + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS))
@@ -1775,8 +1799,31 @@ COMPARED_ADDRESSES_SHOWN = aes_event.COMPARED_DIFFERENCES_SHOWN
 
 
 def drops_held_to_our_run(row):
-    """The drops of `row` OUR run must have stored too, `(lo, hi, why)` each: every one but the one-sided kind."""
-    return [(lo, hi, why) for lo, hi, why in row.dropped if (lo, hi) not in ONE_SIDED_BY_NATURE]
+    """The drops of `row` OUR run must have stored too, `(lo, hi, why)` each: every one but the one-sided kind — and
+    but EACH BUILD'S OWN FRAMES (below), held to our ledger in their own form."""
+    return [(lo, hi, why) for lo, hi, why in row.dropped
+            if (lo, hi) not in ONE_SIDED_BY_NATURE and why not in EACH_BUILD_S_OWN_FRAMES]
+
+
+# ...AND ONE KIND IS HELD TO OUR LEDGER AS A WHOLE, NOT BYTE BY BYTE: THE SCREEN MANAGER'S STACK on a row whose
+# screen manager is ours (`aes_takeover.STACK_WHY`). The two builds' frames there are two programs' — the ROM's
+# ctlmgr's and ours, other depths, other slots a compiler allocates and never stores — so "every byte the ROM stored,
+# ours stored too" is false by nature. What a drop of it may not hide is a build whose screen manager NEVER RAN ON
+# THAT STACK: so our run must have stored there (`vet_our_frames_were_laid`), from its own code and not from a
+# window of the ROM's.
+EACH_BUILD_S_OWN_FRAMES = frozenset({aes_takeover.STACK_WHY})
+
+
+def vet_our_frames_were_laid(row, stored):
+    """Our run stored in the stack `row` drops spans of as each build's own frames (`stored`: its own code's ledger)
+    — in the WHOLE stack the spans lie in (`aes_takeover.spans_of`), not span by span: the drops are cut to what the
+    ROM's run stored, and two builds' frames are not laid over the same bytes."""
+    kinds = {why for _lo, _hi, why in row.dropped if why in EACH_BUILD_S_OWN_FRAMES}
+    if kinds:
+        lo, hi = aes_takeover.spans_of(BASE_IMAGE).stack     # (the screen manager's UDA is the AES's own BSS: one place)
+        assert any(lo <= at < hi for at in stored), (
+            f"{row.symbol} / {row.case}: the row drops bytes of [{lo:#x}, {hi:#x}) — {sorted(kinds)[0]} — and OUR run "
+            f"stored NOTHING there: no screen manager of ours ran on that stack, which the drop would otherwise hide")
 
 
 def sr_save_words_dropped(row):
@@ -1850,7 +1897,9 @@ def vet_what_our_run_stored(row, watch=None):
     such bytes. `watch`: the run's, where it was watched."""
     if not drops_held_to_our_run(row):
         return
-    vet_our_run_stored_its_drops(row, *_stored_by_our_own_code(watch))
+    stored, outside_the_windows = _stored_by_our_own_code(watch)
+    vet_our_run_stored_its_drops(row, stored, outside_the_windows)
+    vet_our_frames_were_laid(row, stored)
     _VETTED.append((row.symbol, row.case))
 
 
@@ -2020,7 +2069,8 @@ def _reaching_the_trap():
 def goes_through_the_os(row):
     """(V), and (V) at the door: is `row` the C of a routine that reaches the VDI by `trap #2`, or the event layer through one of
     the event door's entries — priced on its own cycles? And A ROW THAT SWITCHES is, whatever its routine reaches: its
-    run is watched at the dispatcher on both shores, which only that path does."""
+    run is watched at the dispatcher on both shores, which only that path does. (ctlmgr's own rows among them: the
+    screen manager woken, from idle to idle.)"""
     return not row.transcription and (row.symbol in _reaching_the_trap() or arrives_at_an_entry(row)
                                       or bool(aes_event.switching(row.delivered)))
 
@@ -2192,6 +2242,12 @@ def arrived_at_by_a_twin(symbol):
 
 
 def arrives_at_an_entry(row):
+    if is_a_woken_row(row):             # ...entered at the dispatcher: its screen manager's door calls are a turn's own
+        return False
+    return _arrives_at_an_entry(row)
+
+
+def _arrives_at_an_entry(row):
     """Is `row` the C of a routine whose run arrives at a door entry — the ROM's routine through the door, or its twin?
     Its runs are then WATCHED at the entries (`DoorWindows`): what deliveries, slices' marks and frames hang on."""
     return not row.transcription and row.symbol in _arriving_at_an_entry()
@@ -2280,7 +2336,9 @@ class DoorWindows(aes_event.DoorStops):
         if self.between_calls:
             self.foreign_between = _windows_together(self.foreign_between, window)
             return
-        assert self._open not in self.twins or not (window.own or window.glue), (
+        # (A TURN OF OUR OWN SCREEN MANAGER — `aes_switching.OURS`, the class the dispatcher's watch read off the
+        # run — is our build's cycles by nature: they come off the call as the ROM's shore's do, three counts at once.)
+        assert self.window_class == aes_switching.OURS or self._open not in self.twins or not (window.own or window.glue), (
             f"door call {self.calls - 1}: {window.own} own cycle(s) of OUR build and {window.glue} of its thunks ran "
             f"inside a foreign window the call was open across — another process's turn is the ROM's own code on both "
             f"shores, and the call's cost on ours would hold what the ROM's shore's does not")
@@ -2449,6 +2507,16 @@ def vet_no_register_names_the_rom(symbol, regs, mapping):
         f"links has its own (`aes_event.TEXT_SITES`): a relocation left un-applied in the build")
 
 
+@functools.cache
+def screen_manager_relocation(elf):
+    """`{the ROM's ctlmgr: the blob's own entry}` (`aes_event.SCREEN_MANAGER_ENTRY`) — empty for a build that links
+    no screen manager. FOR EVERY RUN OF SUCH A BUILD: its ictlmgr hands pstart that entry (the PD's p_ldaddr, and the
+    frame psetup lays at the top of the process's stack), so a machine of the build's holds it wherever the ROM's
+    holds `$fe49d2` — at a run's entry as where it ends."""
+    placed = _placed(elf)
+    return {rom: placed[entry] for rom, entry in aes_event.SCREEN_MANAGER_ENTRY.symbols.items() if entry in placed}
+
+
 A_RECORD = "a record of appl_trecord's buffer"
 # One relocation of the registry AS ONE RUN READS IT: `what` it is, the longwords it lies in, `{the ROM's routine:
 # its entry in the blob}`, and whether our image is mapped at the run's entry too.
@@ -2457,11 +2525,13 @@ Relocation = namedtuple("Relocation", "what slots mapping at_entry", defaults=(T
 
 def code_relocations(elf, symbol):
     """THE REGISTRY (`aes_event.CODE_RELOCATIONS`) for a run of `symbol` on the blob `elf`: a `Relocation` each —
-    the fork queue's (`fork_relocation`) and the glue's. The
-    one reading every site that maps a code address makes: a run's entry and exit, a delivery, a mark."""
+    the fork queue's (`fork_relocation`), the glue's, the GEMDOS glue's text sites and the screen manager's entry
+    (`screen_manager_relocation`). The one reading every site that maps a code address makes: a run's entry and
+    exit, a delivery, a mark."""
     mapped = {aes_event.FORK_CODES.what: (FORK_CODE_SLOTS, fork_relocation(elf, symbol)),
               aes_event.GLUE_CODES.what: (glue_code_slots(), glue_relocation(elf)),
-              aes_event.TEXT_SITES.what: (aes_event.TEXT_SITES.slots, text_site_relocation(elf, symbol))}
+              aes_event.TEXT_SITES.what: (aes_event.TEXT_SITES.slots, text_site_relocation(elf, symbol)),
+              aes_event.SCREEN_MANAGER_ENTRY.what: (aes_event.SCREEN_MANAGER_ENTRY.slots, screen_manager_relocation(elf))}
     declared = {each.what: each.at_entry for each in aes_event.CODE_RELOCATIONS}
     assert sorted(mapped) == sorted(declared), "a relocation the registry declares is mapped by no site"
     return tuple(Relocation(what, *mapped[what], at_entry) for what, at_entry in declared.items())
@@ -2604,6 +2674,8 @@ class RomBench(rom_bench.RomBench):
 
     _put_back = ()                      # the spans of the row being measured that our run's image is given back
     _x_flag_declared = False            # the row being measured declares its X flag differs (`measure`)
+    _screen_manager_ours = False        # the row being measured names the screen manager's spans (`aes_takeover`)
+    screen_manager_left = None          # ...and what our last such run left in them: `{span's lo: bytes}`
 
     def measure(self, entry, symbol, *args, dropped=(), **kwargs):
         """...and THE DISPATCHER'S OWN STACK put back as our run found it, for a row that drops it by name
@@ -2620,19 +2692,20 @@ class RomBench(rom_bench.RomBench):
         # run leaves, and the byte is compared whole.
         self._x_flag_declared = any(drop in aes_switching.THE_X_FLAG_ALONE for drop in dropped)
         compared = tuple(drop for drop in dropped if drop not in aes_switching.THE_X_FLAG_ALONE)
+        # ...AND THE SCREEN MANAGER MADE OURS, for a row that names its two spans (`aes_takeover`): `_call` lays our
+        # build's own context and frames there as our run is entered, and puts the machine's back before the compare.
+        self._screen_manager_ours = aes_takeover.named_in(dropped)
         try:
             return super().measure(entry, symbol, *args, dropped=compared, **kwargs)
         finally:
-            self._put_back, self._x_flag_declared = (), False
+            self._put_back, self._x_flag_declared, self._screen_manager_ours = (), False, False
 
     def _call(self, image, symbol, *args, **kwargs):
         relocations = [relocation for relocation in code_relocations(self.elf, symbol) if relocation.mapping]
         forks = fork_relocation(self.elf, symbol)
         cursor_found = _recording_cursor(image) if forks else None
         recorded = recorded_code_slots(image, forks) if forks else ()
-        for relocation in relocations:
-            if relocation.at_entry:
-                map_code_slots(image, relocation.slots, relocation.mapping)
+        _mapped_at_entry(image, relocations)
         map_code_slots(image, recorded, forks)
         # WHAT MAY TRAVEL: a ROM address the CALL was handed as an argument (forkq queues the code it is handed,
         # gsx_setmb installs the routines it is handed: the case's own values, on both shores) — and, for a relocation
@@ -2642,6 +2715,16 @@ class RomBench(rom_bench.RomBench):
                      | (frozenset() if relocation.at_entry else rom_addresses_in(image, relocation))
                      for relocation in relocations}
         found = {(lo, hi): bytes(image[lo:hi]) for lo, hi in self._put_back}
+        # THE SCREEN MANAGER MADE OURS (`aes_takeover`: what our build's own run through the machine's history left
+        # of its context and its frames, made before this measurement began) — laid over the two spans, which the
+        # machine came with holding the ROM's ctlmgr's.
+        came_with_the_rom_s = {}
+        if self._screen_manager_ours:
+            for lo, as_ours in aes_takeover.ours_over(self, image).items():
+                came_with_the_rom_s[lo] = bytes(image[lo:lo + len(as_ours)])
+                image[lo:lo + len(as_ours)] = as_ours
+            if kwargs.get("watch") is not None:            # ...and held from here, not from the watch's first stop
+                kwargs["watch"].hold_the_manager_s_spans(image)
         # OUR RUN ALONE, PROFILED (`OUR_RUN`): inside a measurement that profiles both runs (a (V) row's) the tally
         # so far is the original's, taken off; for any other row the profile is this run's own.
         within = bool(_PROFILING)
@@ -2661,6 +2744,19 @@ class RomBench(rom_bench.RomBench):
             for (lo, hi), as_found in found.items():
                 pushed_from = _pushed_from_the_top(stored, lo, hi)
                 ours.image[pushed_from:hi] = as_found[pushed_from - lo:]
+        # ...and THE SCREEN MANAGER'S STACK PUT BACK AS THE MACHINE CAME WITH IT, what our run left in the two spans
+        # kept (`screen_manager_left`: what a later machine of this history is made ours from). What then differs
+        # from the ROM's image in the stack is exactly what the ROM's run stored: the row's named drop. ITS SAVED
+        # CONTEXT IS NOT PUT BACK: the ROM's savestate stores every byte of it whenever its screen manager parks,
+        # so the row drops it WHOLE (held by name where the measurement begins: `screen_manager_made_ours`) and a
+        # put-back there would be seen by nothing (it was made, and the mutant that dropped it survived: FLIP 4's
+        # review).
+        if came_with_the_rom_s:
+            if kwargs.get("watch") is not None:            # ...the screen manager's last turn to where the run ends
+                kwargs["watch"].vet_the_manager_s_spans_stood(ours.image, "where the run ends")
+            self.screen_manager_left = {lo: bytes(ours.image[lo:lo + len(held)]) for lo, held in came_with_the_rom_s.items()}
+            stack_lo = aes_takeover.spans_of(ours.image).stack[0]
+            ours.image[stack_lo:stack_lo + len(came_with_the_rom_s[stack_lo])] = came_with_the_rom_s[stack_lo]
         written = _records_written(ours.image, cursor_found)
         vet_no_slot_names_the_rom(symbol, ours.image, relocations, came_with,
                                   getattr(kwargs.get("watch"), "foreign_codes", None))
@@ -2774,11 +2870,14 @@ def vet_the_same_door_calls(who, windows, original):
         f"{original.handed} — a frame the image does not show")
 
 
-def vet_the_windows_came_off_the_calls(who, windows, original, foreign):
-    """...and WHERE ANOTHER PROCESS RAN, each shore's calls are net of the same windows (`DoorWindows`): all of
-    them in the ROM's shore's own count, none of them in ours."""
+def vet_the_windows_came_off_the_calls(who, windows, original, measured):
+    """...and WHERE ANOTHER PROCESS RAN, each shore's calls are net of the same windows (`DoorWindows`; `measured`:
+    the run's, its `Foreign` and its turns). On the ROM's shore every window is the AES's own text, in its own
+    count; on ours a window of the ROM's process holds none of our own count and A TURN OF OUR SCREEN MANAGER none
+    of the AES's ROM — its own cycles, less its thunks', are what comes off."""
+    foreign, turns = foreign_of(measured), turns_of(measured)
     original.vet_its_windows_came_off(f"{who}: the ROM's run", foreign, own_in_them=foreign.in_the_aes)
-    windows.vet_its_windows_came_off(f"{who}: our run", foreign, own_in_them=0)
+    windows.vet_its_windows_came_off(f"{who}: our run", the_rom_s_windows(measured), own_in_them=sum(turn.ours for turn in turns))
 
 
 # A ROW THAT SWITCHES (`aes_event.Switches`, `test/aes_switching.py`): its call leaves by the dispatcher and comes
@@ -2791,18 +2890,70 @@ def vet_the_windows_came_off_the_calls(who, windows, original, foreign):
 # holds no cycle of our build; they are then in NEITHER own column (a row is priced on what its own process runs:
 # the wait, the dispatch that parks it and — where no other process ran — the dispatch that wakes it), and they are
 # the one place our run may execute the AES's ROM (`vet_our_run_kept_out_of_the_aes`).
-TALLY_WHOLE, TALLY_AES, TALLY_BLOB = range(3)       # a window's tally: the run's cycles, the AES's own spans', our blob's
-# What a measurement keeps of its foreign windows: how many, their whole cycles, their cycles in the AES's own spans.
+#
+# SINCE FLIP 4 (ctlmgr bound in C) A WINDOW IS OF ONE OF TWO KINDS, READ OFF THE RUN (`aes_switching.Switching`: whose
+# code the process switchto's `rte` enters is resumed in):
+#   * THE ROM'S PROCESS — the rule above, unchanged: the desk or an accessory inside a row of the screen manager's,
+#     and the screen manager itself on a row left on the ROM's (`SwitchingRow.the_rom_s_screen_manager`);
+#   * A TURN OF OUR SCREEN MANAGER — on a row whose machine's screen manager is OURS (`aes_takeover`). It is OUR
+#     CODE: priced BY ITSELF (`Turn`: our build's own cycles inside it against the ROM's AES subtree's in the same
+#     window of the ROM's run, the dispatch that hands the machine back in both), printed as a line of its own under
+#     the row, held to the bar alone, and OFF BOTH OF THE CALLER'S COLUMNS as every window is. HELD: no cycle of the
+#     AES's ROM inside it on our shore, and the OS both run inside it equal to the cycle (`_vet_switched_alike`).
+# THE IDENTITY, per row and per shore (`vet_the_identity`): the row's own + its turns + the ROM's windows + the OS
+# both run outside every window = the whole run — each term from a tally of its own.
+TALLY_WHOLE, TALLY_AES, TALLY_BLOB, TALLY_GLUE = range(4)   # a window's tally: the run's cycles, the AES's own spans',
+#                                                             our blob's, and our thunks' among those
+# What a measurement keeps of its windows AS THE ROM'S RUN MADE THEM: how many, their whole cycles, their cycles in
+# the AES's own spans — of BOTH kinds (a turn of our screen manager is the ROM's ctlmgr's turn on that shore).
 Foreign = namedtuple("Foreign", "windows whole in_the_aes")
 NO_FOREIGN_WINDOW = Foreign(0, 0, 0)
+# ONE TURN OF OUR SCREEN MANAGER inside a row (a window of ours): `ours` our build's own cycles in it (the blob's,
+# less its thunks'), `the_rom_s` the ROM's own in the same window of its run (the AES's text and Line-F handler),
+# `glue` our thunks' cycles in it, and `shared` what the OS both run costs inside it — the same on both shores.
+Turn = namedtuple("Turn", "ours the_rom_s glue shared line_f", defaults=(0,))
+THE_ROM_S_TALLY_LINE_F = 2              # the ROM shore's tally alone: after its whole and its AES spans' cycles
+SCREEN_MANAGER_S_TURN = "the screen manager's turn"
+
+
+def turns_of(measured):
+    """The turns of OUR screen manager inside `measured` (`Turn` each, in order) — none, for a row whose windows are
+    all the ROM's code."""
+    return getattr(measured, "turns", ())
+
+
+def turn_ratio(turn):
+    """A turn's price: ours against the ROM's, own cycles."""
+    return _ratio_of(turn.ours, turn.the_rom_s)
+
+
+def turn_ratio_with_glue(turn):
+    """...and with our thunks' cycles inside it counted back: the number that ships."""
+    return _ratio_of(turn.ours + turn.glue, turn.the_rom_s)
+
+
+def turns_within_bar(measured):
+    """Is every turn of our screen manager inside `measured` at or under the bar BY ITSELF, its thunks counted?"""
+    return all(turn_ratio_with_glue(turn) <= TIER3_FUNCTION_BAR for turn in turns_of(measured))
+
+
+def the_rom_s_windows(measured):
+    """The `Foreign` of `measured`'s windows of THE ROM'S CODE alone: its windows less its turns of ours, as the
+    ROM's run made them."""
+    foreign, turns = foreign_of(measured), turns_of(measured)
+    return Foreign(foreign.windows - len(turns), foreign.whole - sum(turn.the_rom_s + turn.shared for turn in turns),
+                   foreign.in_the_aes - sum(turn.the_rom_s for turn in turns))
 
 
 def _the_rom_s_foreign_tally():
-    return aes_event.run_cost()["cycles"], _cycles_in(AES_OWN_SPANS)
+    """The ROM shore's running totals: the run's cycles, those in the AES's own spans — and, OF THOSE, the ones in
+    the Line-F handler's RAM copy (`THE_ROM_S_TALLY_LINE_F`: printed beside a turn, part of no rule)."""
+    return aes_event.run_cost()["cycles"], _cycles_in(AES_OWN_SPANS), _cycles_in((LINE_F_HANDLER_COPY,))
 
 
-def _our_foreign_tally(blob):
-    return lambda: (aes_event.run_cost()["cycles"], _cycles_in(AES_OWN_SPANS), emu.prof_cycles(blob.base, blob.end))
+def _our_foreign_tally(blob, glue):
+    return lambda: (aes_event.run_cost()["cycles"], _cycles_in(AES_OWN_SPANS), emu.prof_cycles(blob.base, blob.end),
+                    _cycles_in(glue))
 
 
 def _our_ledger():
@@ -2815,25 +2966,181 @@ def foreign_of(measured):
     return getattr(measured, "foreign", NO_FOREIGN_WINDOW)
 
 
-def _vet_switched_alike(who, ours, the_rom_s):
+def _vet_switched_alike(who, ours, the_rom_s, blob=None):
     """A SWITCHING ROW'S TWO RUNS ARE ONE SCHEDULE (above): each ended as the row says (`Switching.vet_ended`), the
-    same processes entered in the same order, the same foreign windows to the cycle — and none of our build's cycles
-    inside one. Answers their `Foreign`."""
+    same processes entered in the same order, as many windows — and WINDOW BY WINDOW, by the kind our run's watch
+    read off the run (`Switching.window_classes`):
+      * THE ROM'S CODE: the same window to the cycle, whole and in the AES's text, and none of our build's cycles
+        inside it;
+      * A TURN OF OUR SCREEN MANAGER: no cycle of the AES's ROM inside it on our shore, and the OS both run inside
+        it equal to the cycle (ours: the window's whole less the blob's; the ROM's: its whole less the AES's own).
+    Answers their `Foreign`, as the ROM's run made them (`turns_made`: the turns of ours among them)."""
     ours.vet_ended(f"{who}: our run")
     the_rom_s.vet_ended(f"{who}: the ROM's run")
+    if getattr(ours, "manager_s_states", None) and getattr(the_rom_s, "manager_s_states", None):
+        # (...held to our build's own park of that kind ONLY WHERE THE SCREEN MANAGER IS OURS in this run: a row left
+        # on the ROM's parks the ROM's frames on both shores, compared like any byte)
+        its_manager_is_ours = aes_switching.OURS in _window_classes(ours)
+        ours.manager_left = how_the_screen_manager_is_left(who, ours, the_rom_s, blob if its_manager_is_ours else None)
     assert ours.entered == the_rom_s.entered, (
         f"{who}: our dispatcher entered the processes {[f'{pd:#x}' for pd in ours.entered]} where the ROM's enters "
         f"{[f'{pd:#x}' for pd in the_rom_s.entered]}")
-    in_ours = [window[TALLY_BLOB] for window in ours.foreign]
-    assert not any(in_ours), (
-        f"{who}: {in_ours} cycles of OUR build ran inside the foreign windows — another process's run is the ROM's own "
-        f"code on both shores (a fork code relocated for the ROM's forker, a vector of the machine holding our entry)")
-    assert [window[:TALLY_BLOB] for window in ours.foreign] == the_rom_s.foreign, (
-        f"{who}: the foreign windows cost ours {[window[:TALLY_BLOB] for window in ours.foreign]} (whole, in the "
-        f"AES's text) and the ROM's {the_rom_s.foreign} — another process ran another run on the two shores, and the "
-        f"row would be priced net of two different things")
+    classes = _window_classes(ours)
+    assert len(ours.foreign) == len(the_rom_s.foreign) == len(classes), (
+        f"{who}: our run made {len(ours.foreign)} window(s) of another process and the ROM's {len(the_rom_s.foreign)}")
+    for nth, (mine, its, whose) in enumerate(zip(ours.foreign, the_rom_s.foreign, classes)):
+        if whose != aes_switching.OURS:
+            assert not mine[TALLY_BLOB], (
+                f"{who}: {mine[TALLY_BLOB]} cycles of OUR build ran inside window {nth}, a window of the ROM's "
+                f"process — another process's run is the ROM's own code on both shores (a fork code relocated for the "
+                f"ROM's forker, a vector of the machine holding our entry)")
+            assert mine[:TALLY_BLOB] == its[:TALLY_BLOB], (
+                f"{who}: window {nth}, the ROM's process, cost ours {mine[:TALLY_BLOB]} (whole, in the AES's text) and "
+                f"the ROM's {its[:TALLY_BLOB]} — another process ran another run on the two shores, and the row would be priced "
+                f"net of two different things")
+            continue
+        assert not mine[TALLY_AES], (
+            f"{who}: window {nth}, A TURN OF OUR SCREEN MANAGER, spent {mine[TALLY_AES]} cycles of ours in the AES's "
+            f"own ROM — our ctlmgr reaches no routine of the ROM's: the turn would be priced on the ROM's instructions")
+        shared, its_shared = mine[TALLY_WHOLE] - mine[TALLY_BLOB], its[TALLY_WHOLE] - its[TALLY_AES]
+        assert shared == its_shared, (
+            f"{who}: inside window {nth}, a turn of our screen manager, the OS both run cost ours {shared} cycles and "
+            f"the ROM's {its_shared} — the two screen managers did not make the same calls of the OS")
     return Foreign(len(the_rom_s.foreign), sum(window[TALLY_WHOLE] for window in the_rom_s.foreign),
                    sum(window[TALLY_AES] for window in the_rom_s.foreign))
+
+
+AS_IT_BEGAN, ELSEWHERE = "parked as it began", "parked elsewhere"
+WHERE_A_ROW_BEGINS = "parked elsewhere, as our build's own run to that state leaves it"
+
+
+def how_the_screen_manager_is_left(who, ours, the_rom_s, blob=None):
+    """HOW A RUN LEAVES THE SCREEN MANAGER PARKED, both shores (`Switching.manager_s_states`: its saved context and
+    live frames at the run's entry and where each of its turns ended). OUR SCREEN MANAGER'S FINAL CONTEXT AND FRAMES
+    ARE OUT OF EVERY COMPARE OF THE TWO SHORES; what holds them where the run ends:
+      * AS_IT_BEGAN — where the ROM's ends the run parked byte for byte as it began, OURS MUST TOO, and where the
+        ROM's moved, ours moved: refused by name otherwise;
+      * WHERE_A_ROW_BEGINS — where the ROM's ends in a state OUR BUILD'S OWN RUN is known to reach on `blob`
+        (`aes_takeover.left_as_ours`: the takeover boot's park, or a noted run's — made already, for a row that
+        begins there), ours ends EXACTLY as that run left it: refused by name otherwise;
+      * ELSEWHERE — held by NOTHING where the run ends: such a park is vetted only by a run that wakes the screen
+        manager again from a park of the same kind (the second turn of a row of ctlmgr's own; a row that begins
+        where a noted run left it). `test_aes_takeover.py` holds which rows end so, and STATUS says it."""
+    (its_first, its_last), (our_first, our_last) = ((watch.manager_s_states[0], watch.manager_s_states[-1])
+                                                    for watch in (the_rom_s, ours))
+    how, ours_how = (AS_IT_BEGAN if first == last else ELSEWHERE for first, last in ((its_first, its_last), (our_first, our_last)))
+    if how != ours_how:
+        raise aes_switching.Refused(
+            f"{who}: THE ROM'S RUN LEAVES ITS SCREEN MANAGER {how.upper()} AND OURS LEAVES OURS {ours_how.upper()} — its "
+            f"saved context and live frames where the run ends are not what its own last park of that kind left "
+            f"(context {'equal' if our_first.context == our_last.context else 'other'}, live frames "
+            f"{len(our_first.live)} -> {len(our_last.live)} bytes)")
+    made = aes_takeover.left_as_ours(blob, its_last) if blob is not None and how == ELSEWHERE else None
+    if made is None:
+        return how
+    if our_last != made:
+        raise aes_switching.Refused(
+            f"{who}: THE ROM'S RUN LEAVES ITS SCREEN MANAGER WHERE OUR BUILD'S OWN RUN TO THAT STATE IS KNOWN, AND OURS IS "
+            f"NOT LEFT AS THAT RUN LEFT IT (context {'equal' if our_last.context == made.context else 'other'}, live "
+            f"frames {len(our_last.live)} bytes against {len(made.live)}) — two runs of our build through one history park "
+            f"its screen manager two ways")
+    return WHERE_A_ROW_BEGINS
+
+
+def _window_classes(ours):
+    """Whose each window of our run's watch is (`Switching.window_classes`) — the ROM's process's, for a watch that
+    read none (a stand-in's)."""
+    return list(getattr(ours, "window_classes", None) or [aes_switching.THE_ROM_S] * len(ours.foreign))
+
+
+def turns_made(ours, the_rom_s):
+    """THE TURNS OF OUR SCREEN MANAGER in a run the two watches `ours` and `the_rom_s` followed (held alike first:
+    `_vet_switched_alike`): a `Turn` for each window of ours, in order."""
+    return tuple(Turn(mine[TALLY_BLOB] - mine[TALLY_GLUE], its[TALLY_AES], mine[TALLY_GLUE], mine[TALLY_WHOLE] - mine[TALLY_BLOB],
+                      its[THE_ROM_S_TALLY_LINE_F] if len(its) > THE_ROM_S_TALLY_LINE_F else 0)
+                 for mine, its, whose in zip(ours.foreign, the_rom_s.foreign, _window_classes(ours))
+                 if whose == aes_switching.OURS)
+
+
+# ---- THE IMAGE AT EVERY STOP OF THE DISPATCHER'S WATCH, BOTH SHORES (the blob-side hold; FLIP 4) ----------------------------
+# The host's model holds the C's image to the ROM's at every dispatch (`aes_event.vet_the_images_at_the_dispatcher`);
+# on a blob a run was compared where it ENDS alone — a store made before a yield and undone after it lived on the
+# exact cycle pin. Both shores' watches of a run that switches stop at the same places in the same order — every poll
+# of the dispatcher's idle, every process resumed — so at each the image is taken (`aes_event.image_pages`: a digest
+# a page) and OUR IMAGE IS THE ROM'S AT THE SAME ORDINAL STOP, byte for byte, outside:
+#   * what every page leaves out (the stack band, the Line-F mask word, the SR save words, the poll's trap save);
+#   * THE DISPATCHER'S STACK, WHOLE — two builds' live frames at a poll, their dead ones at a resume (it is put back
+#     only where our run ends);
+#   * THE ROW'S PROCESS'S SAVED CONTEXT, WHOLE (each build's caller's registers, from the first dispatch on);
+#   * on a row whose screen manager is ours, ITS TWO SPANS, WHOLE (`aes_takeover.windows_of`);
+#   * the blob's own span, and the row's own named drops (a QPB's address in an EVB, its `also_dropped`);
+# and with every code address of the registry our shore holds GIVEN THE ROM'S NAME first — mapped, never left out: a
+# queue entry our forker is yet to run; THE RECORDS OF A RECORDING, in flight or just ended (back from the recorder's
+# cursor while each holds a fork function's entry of ours — ap_trecd turns them into numbers only as it returns, and
+# the cursor stays where the recorder left it); and THE VDI'S CURSOR VECTOR while a playback holds the routine that
+# draws nothing in it (`aes_event.HANDED_WHILE_A_PLAYBACK_RUNS`: restored before any run ends).
+class _StopImages:
+    """The two shores' readers of one run's image at a stop (above): `the_rom_s(memory)` and `ours(memory)`."""
+
+    def __init__(self, blob, symbol, switches, dropped):
+        self._blob, self._process, self._dropped = blob, switches.process, tuple(dropped)
+        self._relocations = [relocation for relocation in code_relocations(blob.elf, symbol) if relocation.mapping]
+        self._relocations.append(Relocation("a routine handed to the VDI while a playback runs",
+                                            aes_event.HANDED_WHILE_A_PLAYBACK_RUNS, glue_relocation(blob.elf)))
+        self._forks = fork_relocation(blob.elf, symbol)
+        self._left_out = None
+
+    def _spans(self, memory):
+        if self._left_out is None:
+            switch = aes_switching.aes_switch
+            its_context = switch.uda_context_drop(aes_event.uda_of(self._process, memory))
+            the_manager_s = aes_takeover.windows_of(memory) if aes_takeover.named_in(self._dropped) else ()
+            self._left_out = (*its_context, *switch.DISPATCHER_STACK_DROP, *the_manager_s, *self._dropped,
+                              (self._blob.base, self._blob.end, "the blob's own span"))
+        return self._left_out
+
+    def the_rom_s(self, memory):
+        return aes_event.image_pages(memory, self._spans(memory))
+
+    def ours(self, memory):
+        ram = bytearray(memory[:addrs.ST_RAM_BYTES])
+        for relocation in self._relocations:
+            map_code_slots(ram, relocation.slots, _backwards(relocation.mapping))
+        map_code_slots(ram, self._records_holding_our_entries(ram), _backwards(self._forks))
+        return aes_event.image_pages(ram, self._spans(memory))
+
+    def _records_holding_our_entries(self, ram):
+        """The code longwords of the records back from the recorder's cursor — recording still or not — while each
+        holds a fork function's entry of ours."""
+        ours, slots = _backwards(self._forks), []
+        record = (case.long_in(ram, aes.AES_RECORD_CURSOR) & aes.OS_BUS_ADDR_MASK) - aes.FORK_ENTRY_BYTES
+        while 0 <= record < len(ram) - aes.FORK_ENTRY_BYTES and len(slots) < MOST_RECORDS_WALKED \
+                and _long_at(ram, record + aes.FORK_CODE) in ours:
+            slots.append(record + aes.FORK_CODE)
+            record -= aes.FORK_ENTRY_BYTES
+        return tuple(slots)
+
+
+def images_at_our_stops(blob, symbol, switches, dropped):
+    return _StopImages(blob, symbol, switches, dropped).ours
+
+
+def images_at_the_rom_s_stops(blob, symbol, switches, dropped):
+    return _StopImages(blob, symbol, switches, dropped).the_rom_s
+
+
+def vet_the_images_at_the_stops(who, ours, the_rom_s):
+    """OUR IMAGE AT EVERY STOP OF THE DISPATCHER'S WATCH IS THE ROM'S AT THE SAME ORDINAL STOP (above; `ours`, `the_rom_s`:
+    the two watches' `taken`) — as many stops, the same ones in the same order, every page equal. Refused by the
+    stop and the pages."""
+    assert [(stop, ordinal) for stop, ordinal, _pages in ours] == [(stop, ordinal) for stop, ordinal, _pages in the_rom_s], (
+        f"{who}: our run's watch stopped at {len(ours)} polls and resumes, the ROM's at {len(the_rom_s)} — not the same "
+        f"stops in the same order")
+    for (stop, ordinal, mine), (_stop, _ordinal, its) in zip(ours, the_rom_s):
+        differ = aes_event.pages_that_differ(mine, its)
+        assert not differ, (
+            f"{who}: at {stop} {ordinal} of the dispatcher's watch OUR IMAGE IS NOT THE ROM'S — in the page(s) "
+            f"{differ}: a store our build made, or did not make, before that stop (equal again or not where the run ends)")
 
 
 OUR_DSPTCH = "aes_dsptch"               # `aes/switch.h`: the entry a C twin that waits calls, `src/aes/switch.S`'s on target
@@ -2864,13 +3171,15 @@ def glue_of(blob):
     return glue_ranges() if blob.elf == transcription.SHIPPED_ELF else alcyon_entry_ranges(blob.elf)
 
 
-def our_switching_watch(blob, switches, symbol, windows):
+def our_switching_watch(blob, switches, symbol, windows, dropped=()):
     """OUR SHORE'S WATCH of a run of `symbol` on `blob` that switches (`aes_switching.ours`): what `switches` delivers
     at the dispatcher's idles, and at its polls that are no idle, AS OUR OWN DISPATCHER TAKES THEM
-    (`deliveries_for_our_shore`); `windows` the run's door watch, or None."""
+    (`deliveries_for_our_shore`); `windows` the run's door watch, or None; `dropped`: the row's drops — one that
+    names the screen manager's spans runs with the screen manager OURS (`aes_takeover.named_in`)."""
     at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, symbol) for taken in (switches.at_idles, switches.at_polls))
-    return aes_switching.ours(blob, switches, at_idles, _our_foreign_tally(blob), windows, ledger=_our_ledger,
-                              relocated_polls=at_polls)
+    return aes_switching.ours(blob, switches, at_idles, _our_foreign_tally(blob, glue_of(blob)), windows, ledger=_our_ledger,
+                              relocated_polls=at_polls, takeover=aes_takeover.named_in(dropped),
+                              images=images_at_our_stops(blob, symbol, switches, dropped))
 
 
 def switching_run_on(blob, who, entry, symbol, args, pokes, switches, *, returns, dropped):
@@ -2881,27 +3190,310 @@ def switching_run_on(blob, who, entry, symbol, args, pokes, switches, *, returns
     both runs watched at the door inside (the row's door-call deliveries laid on both shores), the same calls
     handed the same frames, net of the same windows. `blob`: a `RomBench` of this module."""
     through_the_door = symbol in _arriving_at_an_entry()
+    screen_manager_made_ours(blob, pokes, dropped)
     original = the_rom_s_door_watch(symbol, entry, switches.at_calls, blocks=False) if through_the_door else None
     windows = our_door_watch(blob, symbol, switches.at_calls, glue_of(blob), blocks=False) if through_the_door else None
-    the_rom_s = aes_switching.the_rom_s(switches, entry, _the_rom_s_foreign_tally, original)
-    ours = our_switching_watch(blob, switches, symbol, windows)
+    the_rom_s = aes_switching.the_rom_s(switches, entry, _the_rom_s_foreign_tally, original,
+                                        images=images_at_the_rom_s_stops(blob, symbol, switches, dropped))
+    ours = our_switching_watch(blob, switches, symbol, windows, dropped)
     OUR_RUN.clear()
     measured = _profiled(lambda: blob.measure(entry, symbol, args, {}, pokes, returns=returns, dropped=dropped,
                                               watch=ours, original_watch=the_rom_s))
-    vet_our_run_stored_its_drops(Dropping(symbol, who, dropped), *_stored_by_our_own_code(ours))
-    foreign = _vet_switched_alike(who, ours, the_rom_s)
+    held = Dropping(symbol, who, dropped)
+    stored, outside_the_windows = _stored_by_our_own_code(ours)
+    vet_our_run_stored_its_drops(held, stored, outside_the_windows)
+    vet_our_frames_were_laid(held, stored)
+    foreign = _vet_switched_alike(who, ours, the_rom_s, blob)
+    measured.foreign, measured.turns = foreign, turns_made(ours, the_rom_s)
+    vet_the_images_at_the_stops(who, ours.taken, the_rom_s.taken)
     if through_the_door:
         vet_the_same_door_calls(who, windows, original)
-    in_the_aes = sum(run.in_the_aes for run in OUR_RUN)
-    assert in_the_aes == foreign.in_the_aes, (
-        f"{who}: OUR run spent {in_the_aes} cycles at the PCs of the AES's own ROM where its foreign windows hold "
-        f"{foreign.in_the_aes} — our build executed the ROM's AES code outside another process's turn")
+    in_the_aes, in_its_windows = sum(run.in_the_aes for run in OUR_RUN), the_rom_s_windows(measured).in_the_aes
+    assert in_the_aes == in_its_windows, (
+        f"{who}: OUR run spent {in_the_aes} cycles at the PCs of the AES's own ROM where its windows of the ROM's "
+        f"process hold {in_its_windows} — our build executed the ROM's AES code outside another process's turn")
     if through_the_door:
-        vet_the_windows_came_off_the_calls(who, windows, original, foreign)
+        vet_the_windows_came_off_the_calls(who, windows, original, measured)
     return measured, ours, foreign
 
 
-def _original_windows(row, **marked):
+# ---- ctlmgr's OWN ROWS: THE SCREEN MANAGER WOKEN, BOTH SHORES FROM A MACHINE'S IDLE TO ITS NEXT (`test/aes_ctlmgr.py`) --------
+# No call, no frame, no return: the ROM's dispatcher's loop entered where a booted machine stands idle — the ROM-booted
+# one on the ROM's shore, THE SAME BOOT WITH THE SCREEN MANAGER OURS on ours (the takeover machine: our ctlmgr on the
+# screen manager's real stack, entered by the ROM's own switchto) — the row's deliveries laid at the same idles, to the
+# idle each machine reaches with nothing left to deliver. Both runs are bench runs of code in place, watched by
+# `aes_switching.IdleToIdle`; the kit's `measure` is not this run's door (it enters a C function and compares a return).
+# WHAT IS HELD, by name:
+#   * ONE SCHEDULE: the same processes entered in the same order, as many windows, each of the same kind on our shore
+#     as the machine says (the screen manager's: OURS; the desk's, an accessory's: the ROM's process's);
+#   * the windows of the ROM's processes equal to the cycle, none of our build's cycles inside; our screen manager's
+#     turns with no cycle of the AES's ROM inside, the OS both run inside them equal (`_vet_switched_alike`);
+#   * WHAT RUNS OUTSIDE EVERY WINDOW — the ROM's dispatcher bringing the first process in — the same cycles on both;
+#   * WHO RAN: not one cycle of our run in the ROM's ctlmgr (`$fe49d2..$fe4a6a`), every cycle of the ROM's run's
+#     turns there or under it; our run's cycles in the AES's ROM exactly the ROM's processes' windows and that first
+#     dispatch; and our own entry's body run;
+#   * THE IMAGE AT EVERY STOP of the dispatcher's watch, and THE MEGABYTE WHERE THE RUNS END: equal outside the
+#     harness's own band and the blob, with every code address of the registry given the ROM's name — and outside THE
+#     CLASSES THE ROW NAMES (`aes_ctlmgr.CLASSES`), each of which MUST differ: a class named and not needed is refused;
+#   * the four off-image streams and the odd accesses, equal.
+# ITS PRICE: the screen manager's turns — our build's own cycles in them (less its thunks') against the ROM's
+# ctlmgr's own in the same windows; the row's two costs are the whole runs'.
+IDLE_TO_IDLE_INSNS = 4_000_000          # a wake's whole run: a menu dropped and worked is some 300,000 instructions
+STREAMS = ("psg_events", "hw_events", "io_events", "hw_writes")
+Ran = namedtuple("Ran", "memory watch cost stored streams odd in_the_rom_s_ctlmgr in_our_entry in_the_aes blob glue")
+
+
+def _run_to_its_next_idle(image, watch, blob):
+    """One shore's run (`watched_original`: a bench run of code in place) from the dispatcher's loop over `image` to
+    the idle `watch` ends it at, PROFILED: a `Ran`."""
+    def run():
+        try:
+            watched_original(image, addrs.AES_ROM_DISP_LOOP, watch, max_insns=IDLE_TO_IDLE_INSNS)
+        except aes_event.Ended:
+            return
+        raise AssertionError("the dispatcher's loop returned: the machine never idled")
+    emu.prof_reset()
+    emu.prof_enable(True)
+    try:
+        run()
+    finally:
+        emu.prof_enable(False)
+    cost = aes_event.run_cost()
+    stored, truncated = emu.bench_writes(image)
+    assert not truncated, "the run's write ledger saturated"
+    vet_the_run_just_made("a run from a machine's idle to its next")
+    entry = next(span for symbol, spans in _function_ranges(blob.elf).items() if symbol == aes_ctlmgr.SYMBOL for span in spans)
+    return Ran(image, watch, (cost["insns"], cost["cycles"]), frozenset(stored), {key: getattr(emu, key)() for key in STREAMS},
+               emu.odd_accesses(), emu.prof_cycles(*aes_ctlmgr.THE_ROM_S_BODY), emu.prof_cycles(*entry),
+               _cycles_in(AES_OWN_SPANS), emu.prof_cycles(blob.base, blob.end), _cycles_in(glue_of(blob)))
+
+
+class _IdleStopImages(_StopImages):
+    """`_StopImages` for a run that is no process's own (idle to idle): nothing of a caller's is left out — the two
+    machines differ, by nature, in the screen manager's two spans, the dispatcher's stack and THE BOOTED MACHINE'S
+    OWN TRAP SAVE (`aes_gemctrl.its_trap_save_beside_the_snapshot_s`: the frame under the booted machine's savptr,
+    `$93a` — named only where it is not the one every page leaves out already, the snapshot's own: needed on a
+    capture set whose snapshot was taken at the other phase, savptr `$90c`, and no window at all on one taken at
+    `$93a`. `test_aes_ctlmgr.py` holds which)."""
+
+    def _spans(self, memory):
+        if self._left_out is None:
+            switch = aes_switching.aes_switch
+            self._left_out = (*switch.DISPATCHER_STACK_DROP, *aes_takeover.windows_of(memory),
+                              *aes_gemctrl.its_trap_save_beside_the_snapshot_s(memory),
+                              (self._blob.base, self._blob.end, "the blob's own span"))
+        return self._left_out
+
+    topped = False                      # the row names WM_TOPPED's four stale words (`aes_ctlmgr.THE_TOPPED_WORDS`)
+
+    def the_rom_s(self, memory):
+        ram = bytearray(memory[:addrs.ST_RAM_BYTES])
+        if self.topped:                 # ...given, on the ROM's shore, the four zeroes the C sends in their place
+            for lo, hi in aes_ctlmgr.the_topped_words_places(memory):
+                ram[lo:hi] = bytes(hi - lo)
+        return aes_event.image_pages(ram, self._spans(memory))
+
+
+# THE BIOS'S SAVE FRAME, as its trap entry lays it under savptr (`$fc9cb6`: `movem.l d3-d7/a3-a7,-(a1)` under the
+# saved PC and SR): ten registers, then the PC, then the SR. What two builds differ in BY NATURE there is the
+# registers; the PC and the SR say WHICH trap was taken last and from what mask, and are compared.
+TRAP_SAVE_REGISTERS_BYTES = 10 * aes.LONG_BYTES
+
+
+def the_trap_save_s_registers(memory):
+    """`(lo, hi)`: the ten saved registers of the BIOS's save frame under the machine's savptr (above)."""
+    lo, hi, _why = aes_gemctrl.its_trap_save(memory)
+    assert hi - lo == TRAP_SAVE_REGISTERS_BYTES + aes.LONG_BYTES + aes.WORD_BYTES, "the BIOS's save frame is ten registers, a PC and an SR"
+    return lo, lo + TRAP_SAVE_REGISTERS_BYTES
+
+
+def _classes_over(rom, ours):
+    """THE CLASSES OF `aes_ctlmgr.CLASSES`, located over the two machines where the runs ended: `{class: spans}`."""
+    switch = aes_switching.aes_switch
+    context, stack = aes_takeover.windows_of(rom)
+    return {aes_ctlmgr.THE_DISPATCHER_S_STACK: [drop[:2] for drop in switch.DISPATCHER_STACK_DROP],
+            aes_ctlmgr.ITS_SAVED_CONTEXT: [context[:2]], aes_ctlmgr.ITS_STACK: [stack[:2]],
+            aes_ctlmgr.THE_MASK_WORD: [window[:2] for window in aes.LINE_F_MASK_WINDOW],
+            aes_ctlmgr.THE_TRAP_SAVE: [the_trap_save_s_registers(rom)],
+            # ...WM_TOPPED's four stale words, where the ROM's machine holds them and ours holds the C's four zeroes
+            aes_ctlmgr.THE_TOPPED_WORDS: [(lo, hi) for lo, hi in aes_ctlmgr.the_topped_words_places(rom) if not any(ours[lo:hi])]}
+
+
+def vet_the_machines_where_the_runs_end(who, blob, rom, ours, named):
+    """THE MEGABYTE OUR RUN LEAVES IS THE ROM'S (`rom`, `ours`: the two `Ran`) outside the harness's band, the blob
+    and THE CLASSES THE ROW NAMES (`named`) — every code address of the registry our shore holds given the ROM's name
+    first — AND EVERY CLASS NAMED DIFFERS: refused by name, each way."""
+    mapped = bytearray(ours.memory[:addrs.ST_RAM_BYTES])
+    for relocation in code_relocations(blob.elf, aes_ctlmgr.SYMBOL):
+        map_code_slots(mapped, relocation.slots, _backwards(relocation.mapping))
+    its = rom.memory[:addrs.ST_RAM_BYTES]
+    classes = _classes_over(its, mapped)
+    needed = [name for name, spans in classes.items() if any(its[lo:hi] != mapped[lo:hi] for lo, hi in spans)]
+    left_out = [span for name in named for span in classes[name]] + [(blob.base, blob.end)]
+    differing = [at for at in differing_addresses(memoryview(bytes(its)), memoryview(bytes(mapped)), diff_spans(),
+                                                  lambda at: any(lo <= at < hi for lo, hi in left_out))
+                 if at < addrs.ST_RAM_BYTES]
+    assert not differing, (
+        f"{who}: where the two runs end OUR MACHINE IS NOT THE ROM'S outside the classes the row names — "
+        f"{len(differing)} byte(s), the first {[(hex(at), hex(its[at]), hex(mapped[at])) for at in differing[:COMPARED_ADDRESSES_SHOWN]]}"
+        f" (the ROM's, ours); the classes that differ: {needed}")
+    assert sorted(needed) == sorted(named), (
+        f"{who}: the row names {sorted(named)} as differing by nature where its runs end, and the two machines differ "
+        f"in {sorted(needed)}: a class named and not needed excuses a store for nothing")
+
+
+def vet_who_ran(who, rom, ours, in_the_rom_s_code, in_our_turns):
+    """WHO RAN, COUNTED AT THE PCs of the two runs of a row of ctlmgr's own (`rom`, `ours`: the two `Ran`): the ROM's
+    run spent its screen manager's turns in the ROM's ctlmgr and not a cycle in the blob; OURS NOT ONE CYCLE in the
+    ROM's ctlmgr (`$fe49d2..$fe4a6a`) and some in our own entry's body; our cycles in the AES's ROM are exactly
+    `in_the_rom_s_code` (the windows of the ROM's processes, and the ROM's dispatch that brings the first process in);
+    and every cycle of our build is one of its screen manager's turns (`in_our_turns`). Refused by name, each."""
+    assert ours.in_the_rom_s_ctlmgr == 0 and rom.in_the_rom_s_ctlmgr > 0 and ours.in_our_entry > 0 and rom.blob == 0, (
+        f"{who}: WHO RAN — our run spent {ours.in_the_rom_s_ctlmgr} cycles in the ROM's ctlmgr and {ours.in_our_entry} in "
+        f"`{aes_ctlmgr.SYMBOL}`; the ROM's {rom.in_the_rom_s_ctlmgr} in its ctlmgr and {rom.blob} in the blob")
+    assert ours.in_the_aes == in_the_rom_s_code, (
+        f"{who}: OUR run spent {ours.in_the_aes} cycles at the PCs of the AES's own ROM where the windows of the ROM's "
+        f"processes and the first dispatch hold {in_the_rom_s_code}")
+    assert ours.blob == in_our_turns, f"{who}: our build ran {ours.blob} cycles and its screen manager's turns hold {in_our_turns}"
+
+
+TwoShores = namedtuple("TwoShores", "relocations images rom_image our_image ours_watching")
+TwoShores.__doc__ = """What a run from a booted machine's idle is set up with on both shores (`_two_shores`): the
+registry's mapped relocations, the stop images' readers, the ROM-booted machine and the takeover machine of the same
+boot — every code slot mapped at entry already our build's — and what OUR shore's watch is made with beside its own
+ends (our dispatcher, the deliveries as our idle takes them, the tally, the takeover, the images)."""
+
+
+def _two_shores(blob, who, machine, switches):
+    """THE TWO MACHINES OF A RUN FROM A BOOTED MACHINE'S IDLE (`machine`: anything that names one, a `Woken` or an
+    arrival's key in a namespace) and the two watches' common parts: a `TwoShores`."""
+    relocations = [each for each in code_relocations(blob.elf, aes_ctlmgr.SYMBOL) if each.mapping]
+    images = _IdleStopImages(blob, aes_ctlmgr.SYMBOL, switches, ())
+    rom_image, our_image = (make_image({0: ram}) for ram in (aes_ctlmgr.the_rom_s_machine(machine), aes_ctlmgr.our_machine(machine, blob)))
+    assert bytes(our_image[blob.base:blob.base + len(blob.blob)]) == blob.blob, f"{who}: the takeover machine does not hold this blob"
+    at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, aes_ctlmgr.SYMBOL) for taken in (switches.at_idles, switches.at_polls))
+    ours_watching = dict(ours=aes_switching.our_dispatcher(blob), relocated=at_idles, relocated_polls=at_polls,
+                         tally=_our_foreign_tally(blob, glue_of(blob)), ledger=_our_ledger, takeover=True, images=images.ours)
+    return TwoShores(relocations, images, rom_image, our_image, ours_watching)
+
+
+def _mapped_at_entry(image, relocations):
+    """`image` with every code slot a relocation maps AT ENTRY given our build's address (as `RomBench._call` does)."""
+    for relocation in relocations:
+        if relocation.at_entry:
+            map_code_slots(image, relocation.slots, relocation.mapping)
+
+
+def idle_to_idle_on(blob, who, woken):
+    """ONE OF ctlmgr's ROWS ON `blob` (above): its `Measurement` — the whole runs' costs, `own_cycles` the screen
+    manager's turns' (ours, the ROM's), its thunks' cycles, the windows of the ROM's processes, and `its_turns`: each
+    turn as a pin spells it."""
+    made = aes_ctlmgr.made(woken)
+    switches = made.switches
+    relocations, images, rom_image, our_image, ours_watching = _two_shores(blob, who, woken, switches)
+    images.topped = aes_ctlmgr.THE_TOPPED_WORDS in woken.differs
+    the_rom_s = aes_switching.IdleToIdle(switches, tally=_the_rom_s_foreign_tally, images=images.the_rom_s)
+    rom = _run_to_its_next_idle(rom_image, the_rom_s, blob)
+    _mapped_at_entry(our_image, relocations)
+    # (what may travel, as in `RomBench._call`: for a relocation mapped at exit alone, what its slots held at entry —
+    # the machine's VDI vectors hold the ROM's glue, which the ROM's own gem_main installed)
+    came_with = {relocation.what: frozenset() if relocation.at_entry else rom_addresses_in(our_image, relocation)
+                 for relocation in relocations}
+    watch = aes_switching.IdleToIdle(switches, **ours_watching)
+    ours = _run_to_its_next_idle(our_image, watch, blob)
+    rom_bench.vet_blob_intact(aes_ctlmgr.SYMBOL, our_image, (blob.base, blob.base + len(blob.blob)), blob.blob)
+    vet_no_slot_names_the_rom(aes_ctlmgr.SYMBOL, our_image, relocations, came_with, watch.foreign_codes)
+    foreign = _vet_switched_alike(who, watch, the_rom_s, blob)
+    turns = turns_made(watch, the_rom_s)
+    assert turns and (the_rom_s.entered, tuple(the_rom_s.entered)) == (watch.entered, tuple(made.entered)), (
+        f"{who}: the screen manager has no turn in the run, or the runs enter other processes than the derivation's")
+    vet_the_images_at_the_stops(who, watch.taken, the_rom_s.taken)
+    # WHAT RUNS OUTSIDE EVERY WINDOW (the ROM's dispatcher, from the idle to the first process entered): the same on both.
+    outside = [ran.watch.ended[TALLY_WHOLE] - sum(window[TALLY_WHOLE] for window in ran.watch.foreign) for ran in (rom, ours)]
+    in_the_aes_outside = [ran.watch.ended[TALLY_AES] - sum(window[TALLY_AES] for window in ran.watch.foreign) for ran in (rom, ours)]
+    assert outside[0] == outside[1] and in_the_aes_outside[0] == in_the_aes_outside[1], (
+        f"{who}: outside every window the ROM's run spends {outside[0]} cycles ({in_the_aes_outside[0]} in the AES's text) "
+        f"and ours {outside[1]} ({in_the_aes_outside[1]})")
+    # WHO RAN.
+    windows = Foreign(foreign.windows - len(turns), foreign.whole - sum(turn.the_rom_s + turn.shared for turn in turns),
+                      foreign.in_the_aes - sum(turn.the_rom_s for turn in turns))
+    vet_who_ran(who, rom, ours, windows.in_the_aes + in_the_aes_outside[1], sum(turn.ours + turn.glue for turn in turns))
+    vet_the_machines_where_the_runs_end(who, blob, rom, ours, woken.differs)
+    assert rom.streams == ours.streams and rom.odd == ours.odd, f"{who}: the two runs' off-image streams or odd accesses differ"
+    OUR_RUN.append(OurRun(aes_ctlmgr.SYMBOL, ours.in_the_aes, False, 0))
+    measured = Measurement(rom.cost, ours.cost, blob.overhead)
+    measured.own_cycles = (sum(turn.ours for turn in turns), sum(turn.the_rom_s for turn in turns))
+    measured.glue_cycles = sum(turn.glue for turn in turns)
+    measured.foreign, measured.turns, measured.its_turns = windows, (), turns
+    measured.rebound_calls, measured.rebound_own, measured.rebound_glue = 0, (0, 0), 0
+    measured.outside_the_windows = in_the_aes_outside[1]
+    # ...and HOW DEEP EACH ctlmgr WENT ON THE SCREEN MANAGER'S REAL STACK: its top less the lowest byte each run
+    # stored there (the ROM's, ours) — a lowest STORE, with the machine's VDI (the ROM's) under the traps.
+    lo, top = aes_takeover.spans_of(rom.memory).stack
+    measured.deepest = tuple(top - min(at for at in ran.stored if lo <= at < top) for ran in (rom, ours))
+    return measured
+
+
+def _frame_the_rom_s_caller_pushed(words):
+    return lambda memory, sp: struct.unpack_from(f">{words}h", memory, sp + aes.LONG_BYTES)
+
+
+def _frame_our_caller_pushed(words):
+    """...and the one GCC's caller left its C core: a longword an argument, after the return address and the image."""
+    return lambda memory, sp: tuple(aes.signed(_long_at(memory, sp + (2 + nth) * aes.LONG_BYTES) & aes.WORD_MASK) for nth in range(words))
+
+
+def arrives_alike_on(blob, who, machine, arriving):
+    """OUR ctlmgr ARRIVES WHERE THE ROM'S DOES (`aes_ctlmgr.arriving`: one of the handlers' own cases, its ROM run
+    derived with its deliveries; `machine`: its key). Both shores run from the booted machine's idle — ours the same
+    boot with the screen manager `blob`'s — through the same deliveries, EACH ENDED AT ITS HANDLER'S FIRST
+    INSTRUCTION (the ROM's routine; our C core's): the same processes entered on the way, THE SAME FRAME handed the
+    handler, the image at every stop of the dispatcher's watch and AT THE ARRIVAL the ROM's (`_IdleStopImages`), and
+    not one cycle of our run in the ROM's ctlmgr. The frame."""
+    switches, routine = arriving.switches, arriving.routine
+    words = aes_gemctrl.FRAMES[routine].size // aes.WORD_BYTES
+    relocations, images, rom_image, our_image, ours_watching = _two_shores(blob, who, types.SimpleNamespace(machine=machine), switches)
+    the_rom_s = aes_switching.ToAnArrival(switches, getattr(addrs, routine), arriving.which, _frame_the_rom_s_caller_pushed(words),
+                                          tally=_the_rom_s_foreign_tally, images=images.the_rom_s)
+    rom = _run_to_its_next_idle(rom_image, the_rom_s, blob)
+    _mapped_at_entry(our_image, relocations)
+    watch = aes_switching.ToAnArrival(switches, blob.entry(routines.core_symbol(routine)), arriving.which, _frame_our_caller_pushed(words),
+                                      **ours_watching)
+    ours = _run_to_its_next_idle(our_image, watch, blob)
+    the_rom_s.vet_ended(f"{who}: the ROM's run")
+    watch.vet_ended(f"{who}: our run")
+    assert the_rom_s.arrived == watch.arrived == arriving.words, (
+        f"{who}: our ctlmgr hands {routine} {watch.arrived} where the ROM's hands it {the_rom_s.arrived}")
+    assert the_rom_s.entered == watch.entered == list(arriving.entered), (
+        f"{who}: our run entered {[hex(pd) for pd in watch.entered]} on the way, the ROM's {[hex(pd) for pd in the_rom_s.entered]}")
+    vet_the_images_at_the_stops(who, watch.taken, the_rom_s.taken)
+    assert ours.in_the_rom_s_ctlmgr == 0 < rom.in_the_rom_s_ctlmgr and ours.blob > 0 == rom.blob, (
+        f"{who}: WHO RAN — our run spent {ours.in_the_rom_s_ctlmgr} cycles in the ROM's ctlmgr and {ours.blob} in the blob")
+    return watch.arrived
+
+
+def left_on_the_rom_s_screen_manager(row):
+    """`row` (a table row) AS IT STOOD BEFORE FLIP 4: naming neither of the screen manager's spans, so run over its
+    machine as the ROM made it — the screen manager's turn the ROM's own code on both shores, a foreign window. For a
+    case of the foreign-window rule that keeps its subject; no table row is measured so."""
+    return row._replace(dropped=tuple(drop for drop in row.dropped if drop[2] not in aes_takeover.WHYS))
+
+
+def screen_manager_made_ours(blob, pokes, dropped):
+    """BEFORE A MEASUREMENT'S OWN RUNS: where the row names the screen manager's spans (`aes_takeover.named_in`), OUR
+    screen manager's context and frames over its machine are MADE (`aes_takeover.prepared`: the takeover boot's, or
+    a run of our build's — oracle runs of their own, which may not fall inside another measurement's profile)."""
+    if aes_takeover.named_in(dropped):
+        aes_takeover.prepared(blob, pokes)
+        lo, hi = aes_takeover.spans_of(make_image(pokes)).context
+        whole = sorted((at, end) for at, end, why in dropped if why == aes_takeover.CONTEXT_WHY)
+        assert whole == [(lo, hi)], (
+            f"a row whose screen manager is ours drops {[(hex(at), hex(end)) for at, end in whole]} of its saved "
+            f"context [{lo:#x}, {hi:#x}): the ROM's savestate stores it whole wherever its screen manager parks, and "
+            f"our shore puts none of it back — a part the ROM's run left unstored would differ by two builds' frames")
+
+
+def _original_windows(row, images=None, **marked):
     """(V) at the door: the ROM's own run of `row`, WATCHED at the door's entries and the addresses their Line-F words return to
     (`aes_event.ROM_RETURNS`), its deliveries laid at its calls, and PROFILED (`watched_original`, over the case's
     image): its `DoorWindows`, the whole run's cycles, and its cycles in `AES_OWN_SPANS` — the ROM's own
@@ -2920,7 +3512,7 @@ def _original_windows(row, **marked):
         watch = the_rom_s_door_watch(row.symbol, row.entry, aes_event.at_door_calls(row.delivered), blocks=not switches)
     if row.slice:
         watch.marked_with(_the_rom_s_marks(row, **marked))
-    switched = aes_switching.the_rom_s(switches, row.entry, _the_rom_s_foreign_tally, watch) if switches else None
+    switched = aes_switching.the_rom_s(switches, row.entry, _the_rom_s_foreign_tally, watch, images=images) if switches else None
 
     def run_and_mark():
         ran = watched_original(make_image(row.pokes), row.entry, switched or watch, io_seed=row.io_seed)
@@ -2959,7 +3551,9 @@ def _differing_at_a_mark(row, blob):
     THE DISPATCHER'S STACK WHOLE: our image is given back over it only as the run ENDS (`put_back_for`: the frames
     our build pushed there, deeper than the ROM's) — until then it holds them, where the ROM's run stored nothing."""
     relocations = code_relocations(blob.elf, row.symbol)
-    not_yet_put_back = put_back_for(row.dropped)
+    not_yet_put_back = list(put_back_for(row.dropped))
+    if aes_takeover.named_in(row.dropped):      # ...and the screen manager's two spans, WHOLE: ours until the run ends
+        not_yet_put_back += [(lo, hi) for lo, hi, _why in aes_takeover.windows_of(make_image(row.pokes))]
 
     def excluded(address):
         return (blob.base <= address < blob.end or any(lo <= address < hi for lo, hi, _why in row.dropped)
@@ -2993,28 +3587,48 @@ def _priced_on_its_slice(row, blob, original, windows, original_marks=None, our_
     sliced.rebound_own = (sum(windows.own_inside[first:last]), sum(original.own_inside[first:last]))
     sliced.rebound_glue = sum(windows.glue_inside[first:last])
     sliced.own_cycles = (ours["blob"] - ours["glue"] - overhead[1], the_rom_s["aes"] - overhead[1])
-    sliced.foreign = _foreign_inside_the_slice(who, our_marks, original_marks)
+    sliced.foreign, sliced.turns = _foreign_inside_the_slice(who, our_marks, original_marks, getattr(windows, "window_kinds", frozenset()))
     shared, original_shared = shared_cycles(sliced)
     assert shared == original_shared, (
         f"{who}: inside its slice the OS both sides run cost ours {shared} cycles and the ROM's {original_shared}")
     return sliced
 
 
-def _foreign_inside_the_slice(who, our_marks, original_marks):
-    """THE FOREIGN WINDOWS INSIDE A SLICE (a session that switches: another process's turns between the slice's two
-    marks), as the slice's `Foreign` — in NEITHER shore's figures for it: a mark's totals are the row's own process's
-    (`aes_event.Marks`), so the slice's costs, its own cycles and its cap are net of them already, and nothing more
-    comes off here. HELD THE SAME ON BOTH SHORES, by name: as many windows, the same whole cycles, and no cycle of
-    our build inside one (the whole run was held to that window by window, `_vet_switched_alike`; this holds that
-    the two shores' marks put the same ones INSIDE this slice)."""
+def _foreign_inside_the_slice(who, our_marks, original_marks, kinds=frozenset()):
+    """THE WINDOWS INSIDE A SLICE (a session that switches: another process's turns between the slice's two marks),
+    as `(the slice's Foreign, its turns of our screen manager)` — in NEITHER shore's figures for it: a mark's totals
+    are the row's own process's (`aes_event.Marks`), so the slice's costs, its own cycles and its cap are net of
+    them already, and nothing more comes off here. HELD ON BOTH SHORES, by name: as many windows — and, the windows
+    the ROM's process's, the same whole cycles with no cycle of our build inside one (the whole run was held to that
+    window by window, `_vet_switched_alike`; this holds that the two shores' marks put the same ones INSIDE this
+    slice). `kinds`: whose the windows of THE WHOLE RUN are, as its watch read them off the run (`_window_classes`).
+    ON A SESSION WHOSE EVERY WINDOW IS A TURN OF OUR SCREEN MANAGER (`kinds == {OURS}`) the windows inside the slice
+    are ONE `Turn` together: our build's own cycles in them against the ROM's AES subtree's, the OS both run inside
+    them equal. A SESSION WITH WINDOWS OF BOTH KINDS IS REFUSED BY NAME where a window lies inside the slice: a
+    mark's totals do not say which kind's it is, and the ROM's process's cycles in the AES's text would be priced
+    as the ROM's side of a turn with nothing of ours against them."""
     (windows, the_rom_s), (in_our_slice, ours) = (marks.foreign_inside(f"{who}: {whose}") for marks, whose in (
         (original_marks, "the ROM's run"), (our_marks, "our run")))
-    in_ours = (in_our_slice, ours.get("cycles", 0), ours.get("blob", 0))
-    assert in_ours == (windows, the_rom_s.get("cycles", 0), 0), (
-        f"{who}: inside its slice our run holds {in_ours[0]} foreign window(s) of {in_ours[1]} cycles, {in_ours[2]} of "
-        f"them our build's, where the ROM's holds {windows} of {the_rom_s.get('cycles', 0)} — the two shores' marks do "
+    its_whole, its_own = the_rom_s.get("cycles", 0), the_rom_s.get("aes", 0)
+    whole, blob, glue = ours.get("cycles", 0), ours.get("blob", 0), ours.get("glue", 0)
+    assert in_our_slice == windows, (
+        f"{who}: inside its slice our run holds {in_our_slice} window(s) of another process where the ROM's holds "
+        f"{windows} — the two shores' marks do not put the same turns of another process inside the slice")
+    the_manager_is_ours = aes_switching.OURS in kinds
+    assert not (windows and the_manager_is_ours and set(kinds) != {aes_switching.OURS}), (
+        f"{who}: its session's run has windows of BOTH KINDS (turns of our screen manager and windows of the ROM's "
+        f"process) and {windows} lie(s) inside this slice — the marks do not say whose: priced as one turn, the ROM's "
+        f"process's AES cycles would stand against nothing of ours")
+    if the_manager_is_ours and windows:
+        assert whole - blob == its_whole - its_own, (
+            f"{who}: inside its slice, in our screen manager's turn(s), the OS both run cost ours {whole - blob} cycles "
+            f"and the ROM's {its_whole - its_own}")
+        return Foreign(windows, its_whole, its_own), (Turn(blob - glue, its_own, glue, whole - blob),)
+    assert (whole, blob) == (its_whole, 0), (
+        f"{who}: inside its slice our run holds {in_our_slice} foreign window(s) of {whole} cycles, {blob} of "
+        f"them our build's, where the ROM's holds {windows} of {its_whole} — the two shores' marks do "
         f"not put the same turns of another process inside the slice")
-    return Foreign(windows, the_rom_s.get("cycles", 0), the_rom_s.get("aes", 0))
+    return Foreign(windows, its_whole, its_own), ()
 
 
 def _original_own_cycles(row):
@@ -3047,35 +3661,48 @@ def _held_through_the_os(row, bench, **marked):
     assert through_the_door or not row.slice, (
         f"{who}: a sliced row whose run arrives at no door entry — its marks are taken by the door's watch, and this "
         f"run has none")
+    shipped = ships_through_a_call(row)
+    blob = shipped_bench() if shipped else bench
+    if switches:                        # ...BEFORE THE ROW'S OWN RUNS: runs of the oracle's own, and none of this row's
+        screen_manager_made_ours(blob, row.pokes, row.dropped)
+        OUR_RUN.clear()
     original = switched_original = None
     if through_the_door or switches:
-        original, original_watched, original_own = _original_windows(row, **marked)
+        # (...a run that switches: its image taken at every stop of the dispatcher's watch — `_StopImages`)
+        imaged = {"images": images_at_the_rom_s_stops(blob, row.symbol, switches, row.dropped)} if switches else {}
+        original, original_watched, original_own = _original_windows(row, **imaged, **marked)
         if switches:
             switched_original, original = original, original.inner
     else:
         original_own = _original_own_cycles(row)
-    shipped = ships_through_a_call(row)
-    blob = shipped_bench() if shipped else bench
     # A twin's own row ENTERS the twin: no arrival at its first instruction (`DoorStops.entered_at`).
     glue = glue_ranges() if shipped else alcyon_entry_ranges(bench.elf)
     windows = (our_door_watch(blob, row.symbol, aes_event.at_door_calls(row.delivered), glue, blocks=not switches)
                if through_the_door else None)
     if row.slice:
         windows.marked_with(_our_marks(row, blob, glue, **marked))
-    switched = our_switching_watch(blob, switches, row.symbol, windows) if switches else None
+    switched = our_switching_watch(blob, switches, row.symbol, windows, row.dropped) if switches else None
     original_watch = aes_event.delivering(row.delivered, row.entry) if row.delivered else None
     if shipped:
         measured = _measure_as_shipped(row, switched or windows, original_watch)
     else:
         measured = _profiled(lambda: _measure_call(bench, row, switched or windows, original_watch))
         measured.glue_cycles = _cycles_in(alcyon_entry_ranges(bench.elf))
-    measured.foreign = _vet_switched_alike(who, switched, switched_original) if switches else NO_FOREIGN_WINDOW
+    measured.foreign = _vet_switched_alike(who, switched, switched_original, blob) if switches else NO_FOREIGN_WINDOW
+    measured.turns = turns_made(switched, switched_original) if switches else ()
+    if windows is not None:             # ...whose the whole run's windows are: what a slice of it is priced by
+        windows.window_kinds = frozenset(_window_classes(switched)) if switches else frozenset()
+    if switches:
+        vet_the_images_at_the_stops(who, switched.taken, switched_original.taken)
     if switches and row.registered in aes_event.SWITCHING_ROWS:
         # ...and A QPB'S ADDRESS THE ROW DROPS (a wait on a pipe, woken or cancelled: one longword of a freed EVB)
         # names, on our blob, the same QPB the ROM's run parked — held to what our run's watch saw while the wait's
         # frame was live (`aes_switching.vet_our_qpbs`; an unregistered row's measurement carries no such record).
         aes_switching.vet_our_qpbs(who, aes_event.SWITCHING_ROWS[row.registered].qpbs, switched)
-    foreign_in_the_aes = measured.foreign.in_the_aes
+    # WHAT THE WINDOWS HOLD OF THE AES'S ROM: on the ROM's shore all of them (a turn of our screen manager is the
+    # ROM's ctlmgr's turn there); on ours the ROM's process's alone — a turn of ours holds none (held above).
+    foreign_in_the_aes, in_the_rom_s_windows = measured.foreign.in_the_aes, the_rom_s_windows(measured).in_the_aes
+    in_our_turns = sum(turn.ours + turn.glue for turn in measured.turns)
     if row.slice:
         windows.marks.returned(windows.calls)
     measured.rebound_calls = windows.closed if windows else 0
@@ -3087,23 +3714,28 @@ def _held_through_the_os(row, bench, **marked):
             f"{measured.original_cycles} — the windows were read off another run")
     if through_the_door:
         vet_the_same_door_calls(who, windows, original)
-    ours_in_the_aes = _cycles_in(AES_OWN_SPANS) - original_own - foreign_in_the_aes
+    ours_in_the_aes = _cycles_in(AES_OWN_SPANS) - original_own - in_the_rom_s_windows
     assert not ours_in_the_aes, (
         f"{row.symbol} / {row.case}: our build spent {ours_in_the_aes} cycles inside the AES's own ROM spans — a (V) "
         f"row's C reaches the ROM only through the trap, never the AES's code itself (a `jsr` past a twin, a "
         f"code address in data nobody relocated)"
-        + (f" — beyond the {foreign_in_the_aes} of its foreign windows, which both shores run" if foreign_in_the_aes else ""))
+        + (f" — beyond the {in_the_rom_s_windows} of its windows of the ROM's process, which both shores run"
+           if in_the_rom_s_windows else ""))
     if through_the_door:
-        vet_the_windows_came_off_the_calls(who, windows, original, measured.foreign)
+        vet_the_windows_came_off_the_calls(who, windows, original, measured)
     # Net of the reset both entries are charged (`Measurement`), which each tally places at its entry: own spans both
-    # — and of the foreign windows, which are the ROM's code on both shores and in neither own column.
+    # — and of EVERY WINDOW: the ROM's process's, the ROM's code on both shores, and our screen manager's turns, our
+    # build's own cycles (and their thunks') on ours and the ROM's ctlmgr's on its shore, priced by themselves.
     reset = measured.overhead_cycles
-    measured.own_cycles = (emu.prof_cycles(blob.base, blob.end) - glue_cycles_of(measured) - reset,
+    measured.glue_cycles = glue_cycles_of(measured) - sum(turn.glue for turn in measured.turns)
+    measured.own_cycles = (emu.prof_cycles(blob.base, blob.end) - in_our_turns - glue_cycles_of(measured) - reset,
                            original_own - foreign_in_the_aes - reset)
+    measured.turns_in_the_costs = (in_our_turns, sum(turn.the_rom_s for turn in measured.turns))
     shared, original_shared = shared_cycles(measured)
     assert shared == original_shared, (
         f"{row.symbol} / {row.case}: the OS both sides run cost ours {shared} cycles and the ROM's {original_shared} — "
         f"cost moved into code counted as shared (a jump into ROM code past the trap, other VDI arguments)")
+    vet_the_identity(who, measured, switched, switched_original)
     return measured, blob, original, windows
 
 
@@ -3270,9 +3902,58 @@ def _stretch(ours, the_rom_s, reset, rebound_own=((), ())):
 
 
 def shared_cycles(measured):
-    """(V): `(ours, the ROM's)` cycles in the OS both sides run — each side's whole, less its own and our thunks'."""
+    """(V): `(ours, the ROM's)` cycles in the OS both sides run — each side's whole, less its own and our thunks', and
+    less what the turns of OUR SCREEN MANAGER inside the run spent of each shore's own (`turns_in_the_costs`: a row
+    priced whole holds them in its costs; a slice's are net of every window already). What is left holds the windows
+    of the ROM's process, equal on both shores, and the OS inside our screen manager's turns, equal too."""
     ours, original = measured.own_cycles
-    return measured.recreate_net - ours - glue_cycles_of(measured), measured.original_net - original
+    our_turns, the_rom_s_turns = getattr(measured, "turns_in_the_costs", (0, 0))
+    if hasattr(measured, "its_turns"):  # ...a row of ctlmgr's own: its own cycles ARE its turns' (the windows of the
+        # ROM's processes, and the ROM's dispatch that brings the first process in, are what both run)
+        return measured.recreate_net - ours - glue_cycles_of(measured), measured.original_net - original
+    return (measured.recreate_net - ours - glue_cycles_of(measured) - our_turns,
+            measured.original_net - original - the_rom_s_turns)
+
+
+def vet_the_identity(who, measured, ours=None, the_rom_s=None):
+    """THE IDENTITY OF A ROW'S PRICE, ON BOTH SHORES — refused by name where a term is off by a window:
+
+        the whole run = its own cycles (the caller's own + its calls of rebound entries) + our thunks'
+                        + the turns of our screen manager + the windows of the ROM's process
+                        + the OS both run outside every window
+
+    with the last term THE SAME NUMBER on both shores, and each term from a tally of its own: the costs from the
+    kit's two runs, the own columns from the cycle profile's totals, the windows from the dispatcher's watches
+    (`ours`, `the_rom_s`: their `foreign`, taken where each window opens and closes). A window priced as the wrong
+    kind, taken off one column and not the other, or counted twice breaks it.
+
+    WHAT IT IS, AND IS NOT (FLIP 4's review). It is BOOK-KEEPING held with `==`: a guard that the terms the table
+    prints for a row re-add to the two wholes — it catches a term dropped, a window's kind mistaken in the price, a
+    turn taken off one column alone. It is NOT an independent measurement: the equality of the last term follows
+    from `shared_cycles`' equality and `_vet_switched_alike`'s per-window ones (which are the measurements), and THE
+    ROM'S HALF OF THE SECOND CHECK IS AN ALGEBRAIC TAUTOLOGY (`the_rom_s_windows` is defined as the windows' whole
+    less the turns': the two re-add whatever the run did) — only our half of it says anything. ASKED ON THE TABLE'S
+    PATH ALONE (`_held_through_the_os`, its one caller): the batteries' path (`switching_run_on`) and ctlmgr's own
+    rows (`idle_to_idle_on`) carry no own columns to re-add — they pin the whole run and every turn exactly, and
+    hold what runs outside every window equal on both shores, instead."""
+    own, the_rom_s_own = measured.own_cycles
+    turns, windows = turns_of(measured), the_rom_s_windows(measured)
+    in_our_turns = sum(turn.ours + turn.glue + turn.shared for turn in turns)
+    in_its_turns = sum(turn.the_rom_s + turn.shared for turn in turns)
+    outside = measured.recreate_net - own - glue_cycles_of(measured) - in_our_turns - windows.whole
+    its_outside = measured.original_net - the_rom_s_own - in_its_turns - windows.whole
+    assert outside == its_outside and outside >= 0, (
+        f"{who}: THE IDENTITY DOES NOT HOLD — whole = own + thunks + our screen manager's turns + the ROM's windows + "
+        f"the OS outside them: ours {measured.recreate_net} = {own} + {glue_cycles_of(measured)} + {in_our_turns} + "
+        f"{windows.whole} + {outside}; the ROM's {measured.original_net} = {the_rom_s_own} + {in_its_turns} + "
+        f"{windows.whole} + {its_outside} — the OS both run outside every window must be one number")
+    if ours is not None:                # ...and the windows are the watches' own, window by window
+        whole_in_ours = sum(window[TALLY_WHOLE] for window in ours.foreign)
+        whole_in_its = sum(window[TALLY_WHOLE] for window in the_rom_s.foreign)
+        assert (whole_in_ours, whole_in_its) == (in_our_turns + windows.whole, in_its_turns + windows.whole), (
+            f"{who}: the windows the dispatcher's watches tallied hold {whole_in_ours} cycles of our run and "
+            f"{whole_in_its} of the ROM's, and the row is priced net of {in_our_turns + windows.whole} and "
+            f"{in_its_turns + windows.whole}: a window is missing from the price, or counted twice")
 
 
 # THE SECOND COUNT A DOOR ROW IS HELD BY: ITS CALLER'S OWN CYCLES, NET OF THE REBOUND ENTRIES. Nothing is taken off
@@ -3459,7 +4140,8 @@ def vet_our_run_kept_out_of_the_aes(row, bench, measured=None):
     assert OUR_RUN, f"{row.symbol} / {row.case}: measured on a path that made no profiled run of ours — the guard read nothing"
     # ...and A ROW THAT SWITCHES declares its FOREIGN WINDOWS: another process's run, the ROM's own code on both
     # shores, which `_held_through_the_os` held equal to the ROM's own windows to the cycle (`measured`'s `Foreign`).
-    spent, declared = sum(run.in_the_aes for run in OUR_RUN), declared_in_the_aes(row) + foreign_of(measured).in_the_aes
+    spent, declared = sum(run.in_the_aes for run in OUR_RUN), declared_in_the_aes(row) + the_rom_s_windows(measured).in_the_aes
+    declared += getattr(measured, "outside_the_windows", 0)     # ...and, for a row from idle to idle, the ROM's first dispatch
     by_a_pointer, in_declared_spans = declared_by_a_pointer(row), sum(run.in_declared_spans for run in OUR_RUN)
     # ...and the pointer's cycles are spent IN ITS SPAN: sixteen cycles elsewhere in the AES's text are no `rts`.
     assert in_declared_spans == (by_a_pointer.cycles if by_a_pointer else 0), (
@@ -3477,10 +4159,12 @@ def _measured_on_its_path(row, bench):
     # WHAT A ROW IS TAKEN THROUGH IS NEVER IGNORED: its deliveries and its `Switches` are laid and held by ONE path
     # (`_held_through_the_os`); a row that carries either and would be measured on another is refused by name — it
     # would be priced over a run that took none of them (a row said to idle three times, priced over none).
-    assert not row.delivered or (goes_through_the_os(row) and not calls_into_c(row)), (
+    assert not row.delivered or is_a_woken_row(row) or (goes_through_the_os(row) and not calls_into_c(row)), (
         f"{row.symbol} / {row.case}: the row is taken through interrupts ({'a run that switches' if aes_event.switching(row.delivered) else 'door calls'}) "
         f"and is a row of a kind whose measurement lays none (C that arrives at no door entry and reaches no trap, a "
         f"transcription, a `.S` that calls C)")
+    if is_a_woken_row(row):
+        return idle_to_idle_on(shipped_bench(), row.registered, aes_ctlmgr.ROWS[row.registered])
     if calls_into_c(row):
         return _measure_into_c(row, bench)
     if row.transcription:
@@ -3573,9 +4257,13 @@ def verdict(row, measured, dispatch, measurement_of):
     the bar on either, it is over the bar; under it on both only net of thunks — all of them on the first count, the
     caller's own on the second (`caller_glue_cycles`) — it is `glue`. "DRIFTED" — pinned, and no longer that number,
     which is `pinned_ratio`'s: what ships — or, for a pinned row that calls a rebound entry, its second count no
-    longer the one `CALLER_PINS` holds. "OVER" — over the bar with nothing carrying it.
+    longer the one `CALLER_PINS` holds. "OVER" — over the bar with nothing carrying it; AND A ROW WITH A TURN OF OUR
+    SCREEN MANAGER INSIDE IT that is over the bar BY ITSELF (`turns_within_bar`), whatever its own two counts: no pin,
+    acceptance or mechanism carries a turn.
     """
     pin = pin_of(row)
+    if not turns_within_bar(measured):  # ...a turn of our screen manager inside the row, over the bar BY ITSELF
+        return "OVER"
     if pin and abs(pinned_ratio(row, measured) - pin[0]) > RATIO_TOLERANCE:
         return "DRIFTED"
     if pin and goes_through_the_os(row) and has_a_second_count(measured) and caller_pin_drifted(row, measured):
@@ -3636,13 +4324,46 @@ def _through_the_os_line(measured, indent):
             + (f", and {glue} in thunks: {own_ratio_with_glue(measured):.2f} with them" if glue else ""))
 
 
-# A ROW THAT SWITCHES INTO ANOTHER PROCESS says so under itself: how much of "the OS both run" is that process's run.
+# A ROW THAT SWITCHES INTO ANOTHER PROCESS says so under itself: how much of "the OS both run" is that process's run
+# — THE ROM'S PROCESS's (the desk, an accessory; the screen manager on a row left on the ROM's).
 FOREIGN_LINE = ("{indent}  {windows} foreign window(s): another process ran {whole} cycles of the ROM's own code on "
                 "both shores ({in_the_aes} in the AES's text) — in neither own column, held equal to the cycle")
 
 
 def _foreign_line(measured, indent):
-    return FOREIGN_LINE.format(indent=" " * indent, **foreign_of(measured)._asdict())
+    return FOREIGN_LINE.format(indent=" " * indent, **the_rom_s_windows(measured)._asdict())
+
+
+# ...and A TURN OF OUR SCREEN MANAGER inside the row, each on a line of its own, in the form STATUS.md quotes and
+# `test/test_status.py` pins: our build's own cycles in the turn against the ROM's AES subtree's in the same window of
+# its run — held to the bar BY ITSELF, off both of the caller's columns.
+# WHAT A TURN'S RATIO IS MADE OF (FLIP 4's review): both sides are THE TURN'S WHOLE AES SUBTREE — ctlmgr, its handlers,
+# the event layer and the dispatch that hands the machine back — ours our build's own cycles in the window, the
+# ROM's its cycles in the AES's own spans (`AES_OWN_SPANS`, the table's standing convention for every row through the
+# OS: the AES's text AND the Line-F handler's RAM copy, which is how Alcyon's AES calls itself). A deep, call-heavy
+# subtree is where that call machinery weighs most, so the handler's share is PRINTED beside the turn, and the ratio
+# net of it — a figure, part of no rule: the bar is the table's convention's.
+TURN_LINE = ("{indent}  screen manager's turn: ours {ours} / ROM {the_rom_s} = {ratio:.2f} — the turn's whole AES subtree on "
+             "each shore (the table's convention: the ROM's in the AES's text and its Line-F handler), the dispatch that "
+             "hands the machine back in both; the OS both run inside it {shared}; in neither of the caller's "
+             "columns{with_glue}{line_f}{over}")
+
+
+def _line_f_of(turn):
+    """The ROM's Line-F handler's part of a turn, as the line says it — nothing where it was not tallied (a slice's)."""
+    if not turn.line_f:
+        return ""
+    return (f"; the ROM's Line-F handler alone is {turn.line_f} of its {turn.the_rom_s} ({turn.line_f / turn.the_rom_s:.0%}): "
+            f"net of it {(turn.ours + turn.glue) / (turn.the_rom_s - turn.line_f):.2f}")
+
+
+def _turn_lines(measured, indent):
+    return [TURN_LINE.format(indent=" " * indent, ours=turn.ours, the_rom_s=turn.the_rom_s, ratio=turn_ratio(turn),
+                             shared=turn.shared,
+                             with_glue=f", and {turn.glue} in thunks: {turn_ratio_with_glue(turn):.2f} with them" if turn.glue else "",
+                             line_f=_line_f_of(turn),
+                             over="  OVER THE BAR BY ITSELF" if turn_ratio_with_glue(turn) > TIER3_FUNCTION_BAR else "")
+            for turn in turns_of(measured)]
 
 
 # THE SECOND COUNT'S OWN LINE, in the form STATUS.md quotes and `test/test_status.py` pins: the row's own ratio, the
@@ -3796,8 +4517,11 @@ def table(bench, jobs=SERIAL):
         f"printed below the row on a line of its own (`TWO COUNTS: own / the caller's own (ours against the ROM's)`), "
         f"with the thunks that ran OUTSIDE those calls (the caller's own, measured call by call) counted back: a row "
         f"<= {TIER3_FUNCTION_BAR:.2f} on the second count only net of them is `glue` too. FOREIGN WINDOWS: where a "
-        f"run switches processes, another process's turn is the ROM's own code on both sides — held equal to the "
-        f"cycle, in neither own column, and printed below the row.",
+        f"run switches processes, a turn of the ROM's process (the desk, an accessory) is the ROM's own code on both "
+        f"sides — held equal to the cycle, in neither own column, and printed below the row. THE SCREEN MANAGER'S "
+        f"TURN: on a row whose screen manager is ours, its turn is OUR ctlmgr's — printed below the row on a line of "
+        f"its own (`screen manager's turn: ours N / ROM M = r`), held <= {TIER3_FUNCTION_BAR:.2f} BY ITSELF with its "
+        f"thunks, in neither of the caller's columns; a row with a turn over the bar is OVER.",
         "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "
         "by nature (a return address each build parks), which the ROM must write and the case's own differential "
         "still compares.",
@@ -3831,7 +4555,8 @@ def table(bench, jobs=SERIAL):
             lines.append(_through_the_os_line(m, name_width + ADDRESS_WIDTH))
             if has_a_second_count(m):
                 lines.append(_two_counts_line(m, name_width + ADDRESS_WIDTH))
-            if foreign_of(m).windows:
+            lines += _turn_lines(m, name_width + ADDRESS_WIDTH)
+            if the_rom_s_windows(m).windows:
                 lines.append(_foreign_line(m, name_width + ADDRESS_WIDTH))
         if glue_cycles_of(m) and m.ratio > TIER3_FUNCTION_BAR:
             lines.append(f"{'':<{name_width + ADDRESS_WIDTH}}  net of the glue: {ratio_net_of_glue(m):.2f} "
@@ -3842,6 +4567,11 @@ def table(bench, jobs=SERIAL):
         lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  "
                   f"{'ONE BIT excused in' if (lo, hi, why) in aes_switching.THE_X_FLAG_ALONE else 'dropped from'} "
                   f"the image compare: [${lo:x}, ${hi:x}) — {why}" for lo, hi, why in row.dropped]
+        # ...and a row of ctlmgr's own says what its two machines differ in, by nature, where its runs end: the
+        # classes it NAMES (each held to differ; `vet_the_machines_where_the_runs_end`).
+        if is_a_woken_row(row):
+            lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  left out of the compare of the two machines where the runs end: {named}"
+                      for named in aes_ctlmgr.ROWS[row.registered].differs]
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

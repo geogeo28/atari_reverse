@@ -50,6 +50,8 @@ import abi
 import aes
 import aes_event
 import aes_switch
+import aes_takeover
+import aes_turns_pinned
 import case
 import derived
 import routines
@@ -63,6 +65,10 @@ ROM_RTE = addrs.AES_ROM_SWITCHTO_RTE
 RTE_OFFSET = addrs.AES_ROM_SWITCHTO_RTE - addrs.AES_ROM_SWITCHTO    # switchto is the ROM's bytes in our build: the same offset
 OUR_POLL, OUR_IDLE, OUR_SWITCHTO = "aes_chkkbd", "aes_idle", "aes_rom_switchto"
 OUR_OWN, THE_ROM_S = "our own", "the ROM's"         # whose dispatcher an idle is, in a refusal's words
+# WHOSE CODE A PROCESS IS RESUMED IN, read off the run (`Switching._whose`): the PC switchto's `rte` pops lies in the
+# blob — OUR process, our build's own frames under it — or in the AES's ROM text: the ROM's.
+OURS = "ours"
+SCREEN_MANAGER = aes.SCREEN_MANAGER_PD
 # Every longword of the machine that can hold a relocated code address (`aes_event.CODE_RELOCATIONS`): what a
 # foreign window is watched to have stored.
 CODE_SLOTS = tuple(slot for relocation in aes_event.CODE_RELOCATIONS for slot in relocation.slots)
@@ -75,14 +81,16 @@ QPB_BYTES = aes_event.QPB.size
 
 # OUR BUILD'S DISPATCHER, as a blob places it: `poll`, the keyboard poll's first instruction (`aes_chkkbd`) — an idle's
 # where it is called from `idle` (`aes_idle`'s text: ev_multi polls too) — and `rte`, switchto's last instruction.
-OurDispatcher = namedtuple("OurDispatcher", "poll idle rte")
+# ...and `text`, the blob's whole span: where a process of OUR build is resumed.
+OurDispatcher = namedtuple("OurDispatcher", "poll idle rte text")
 
 
 def our_dispatcher(blob):
     """`blob`'s own dispatcher (a `RomBench`'s): where its idle polls, and where its switchto enters a process."""
     sized = {symbol.name: symbol for symbol in transcription.symbol_table(blob.elf)}
     idle = sized[OUR_IDLE]
-    return OurDispatcher(blob.entry(OUR_POLL), (idle.start, idle.start + idle.size), blob.entry(OUR_SWITCHTO) + RTE_OFFSET)
+    return OurDispatcher(blob.entry(OUR_POLL), (idle.start, idle.start + idle.size), blob.entry(OUR_SWITCHTO) + RTE_OFFSET,
+                         (blob.base, blob.end))
 
 
 def _whole_cycles():
@@ -107,13 +115,25 @@ class Switching:
     in whichever process they are reached. `ledger()`: the addresses the run has stored so far (its write ledger),
     for a holder that must know WHO stored a byte (`stored_outside_the_windows`).
 
+    `takeover`: OUR run is over a machine WHOSE SCREEN MANAGER IS OURS (`aes_takeover`: a row that names its two
+    spans). WHOSE EVERY PROCESS ENTERED IS, IS READ OFF THE RUN (`resumed_in`, `window_classes`): the PC switchto's
+    `rte` resumes it at lies in the blob (OURS) or in the AES's ROM text (THE_ROM_S) — and a window is OURS (a turn
+    of our screen manager: our code, priced by itself) or the ROM's (another process's run, the ROM's own code on
+    both shores). REFUSED BY NAME: a PC that is neither's; on a takeover machine, a screen manager resumed in the
+    ROM's text (the machine's screen manager is not ours after all); on any other, a foreign process resumed in the
+    blob. A window is ONE KIND'S: where the turn passes between the screen manager and another process it closes and
+    another opens. `images`: `pages(memory)` — the image's digest, what differs
+    by nature left out — taken at every poll and at every resume (`taken`: `(the stop, its ordinal, the pages)`), for
+    the holder to compare the two shores stop by stop.
+
     A DELIVERY NAMED AT AN IDLE OR A POLL THE ROW'S RUN DOES NOT MAKE is refused where the watch is made: it would
     never be laid, and nothing else would say so. One named at a poll that turns out an IDLE is refused there.
     A DOOR CALL OPEN ACROSS A FOREIGN WINDOW is told where the window opens and closes
     (`inner.foreign_window_opened()` / `foreign_window_closed()`): its holder takes the window off the call's own
     cost on each shore (`tier3.DoorWindows`). A call open across a SELF-RESUME needs nothing: the switch is its cost.
 
-    AFTER THE RUN: `idles`, `polls`, `entered` (the PD at each switchto, in order), `foreign`, `foreign_codes` (`{slot: the
+    AFTER THE RUN: `idles`, `polls`, `entered` (the PD at each switchto, in order), `resumed_in` (whose code each
+    resumed in), `foreign` and `window_classes` (each window's tally, and whose it is), `foreign_codes` (`{slot: the
     ROM routine's address a window stored there}`), `qpbs_seen` (`{an EVB_PARM's address: the QPB it named}`: every
     pipe wait's QPB in the run's own stack, read where the row's process stands parked or is resumed — at an idle,
     whoever's, and at its resume: its frames are live there, which they are not once the call has returned; what
@@ -121,8 +141,9 @@ class Switching:
     stack pointer there)}`: a QPB is a local of a LIVE frame — at or above that pointer), and `vet_ended(who)`."""
 
     def __init__(self, switches, *, inner=None, ours=None, relocated=None, relocated_polls=None, tally=_whole_cycles,
-                 observing=None, ledger=None):
+                 observing=None, ledger=None, takeover=False, images=None):
         assert not (ours is None and (relocated or relocated_polls)), "the ROM's shore takes its deliveries as they are"
+        assert ours is not None or not takeover, "a machine whose screen manager is ours is OUR shore's"
         _refuse_what_is_never_made("idle", switches.at_idles, switches.idles)
         if switches.at_polls:
             assert switches.polls is not None, "a delivery at a poll, and no count of the polls the ROM's run makes"
@@ -136,8 +157,12 @@ class Switching:
         self._rtes = frozenset({ROM_RTE} | ({ours.rte} if ours else set()))
         self._inner_armed = frozenset(inner.first) if inner else frozenset()
         self._polled, self._resumes_at, self._entering = set(), None, None
-        self._window, self._slots_found = None, None
+        self._window, self._slots_found, self._window_class, self._window_is_the_manager_s = None, None, None, False
+        self._takeover, self._images, self.taken = takeover, images, []
         self.idles, self.polls, self.entered, self.foreign, self.foreign_codes = 0, 0, [], [], {}
+        self.resumed_in, self.window_classes = [], []
+        self._manager_stood, self._holding_the_manager_s = None, switches.process != SCREEN_MANAGER
+        self.manager_s_states, self._manager_s_stores_seen = [], frozenset()
         self.qpbs_seen, self.qpbs_parked, self._qpbs_at = {}, {}, {}
         self.first = self._armed()
 
@@ -148,8 +173,10 @@ class Switching:
         return self._polls | self._rtes | frozenset(self._polled) | frozenset(self._observing) | inner
 
     def stopped(self, pc, sp, memory):
+        if self._manager_stood is None and self._window is None and not self.entered:
+            self.hold_the_manager_s_spans(memory)       # (a watch nobody handed its run's entry image: from its first stop)
         if pc == self._resumes_at:
-            self._resumed(sp, memory)
+            self._resumed(pc, sp, memory)
         elif pc in self._rtes:
             return self._entered(sp, memory)
         elif pc in self._polls:
@@ -172,6 +199,7 @@ class Switching:
         if ours and not self._ours.idle[0] <= back < self._ours.idle[1]:
             return                      # a poll of the event layer's own (ev_multi's), not the dispatcher's idle
         poll, self.polls = self.polls, self.polls + 1
+        self._image_taken(A_POLL, poll, memory)
         whose = f"{OUR_OWN if ours else THE_ROM_S} dispatcher, {pc:#x}"
         if not aes_switch.waits_for_an_interrupt(memory):
             self._lay((self._at_our_poll if ours else self.switches.at_polls).get(poll), memory, f"poll {poll} ({whose})")
@@ -183,10 +211,23 @@ class Switching:
             raise Refused(f"{where}: a delivery is named at poll {poll}, which is this idle — an idle's delivery is "
                           f"named at the idle")
         if ordinal >= self.switches.idles:
-            raise Refused(
-                f"{where}: the dispatcher idles once more than the ROM's own run did ({self.switches.idles}) — the "
-                f"call would block, the machine waiting for an interrupt no case delivers")
-        self._lay((self._at_our_idle if ours else self.switches.at_idles).get(ordinal), memory, where)
+            self._past_its_last_idle(where, memory)
+        if ours or self._ours is None or self._window is not None:
+            self._lay((self._at_our_idle if ours else self.switches.at_idles).get(ordinal), memory, where)
+        else:
+            # ON OUR SHORE, AT THE ROM'S IDLE, OUTSIDE EVERY WINDOW (a run from a machine's idle: the first delivery
+            # is taken where the machine stands — in the ROM's dispatcher): the fork codes it queues are the ROM's,
+            # for the ROM's forker, and no relocation of ours wrote them — kept as a window's are (`foreign_codes`).
+            found = self._code_slots(memory)
+            self._lay(self.switches.at_idles.get(ordinal), memory, where)
+            self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
+                                       if code != found[slot] and code in ROM_CODES})
+
+    def _past_its_last_idle(self, where, memory):
+        """The machine idles with every idle of the ROM's run made: a CALL's run would block for ever — refused."""
+        raise Refused(
+            f"{where}: the dispatcher idles once more than the ROM's own run did ({self.switches.idles}) — the "
+            f"call would block, the machine waiting for an interrupt no case delivers")
 
     @staticmethod
     def _lay(delivery, memory, where):
@@ -203,26 +244,144 @@ class Switching:
         self._resumes_at = case.long_in(memory, sp + aes_event.EXCEPTION_FRAME_PC) & BUS
         return frozenset({self._resumes_at})    # the `rte` alone runs before it
 
-    def _resumed(self, sp, memory):
+    def _whose(self, pc):
+        """WHOSE CODE the process just entered resumes in, READ OFF THE RUN: OURS inside the blob, THE_ROM_S inside
+        the AES's ROM text — None anywhere else."""
+        text = self._ours.text if self._ours is not None else None
+        if text is not None and text[0] <= pc < text[1]:
+            return OURS
+        return THE_ROM_S if aes.AES_TEXT[0] <= pc < aes.AES_TEXT[1] else None
+
+    def _vet_whose(self, whose, pc):
+        """A FOREIGN PROCESS RESUMED IN CODE THE MACHINE DOES NOT SAY IT RUNS IS REFUSED BY NAME (the class's
+        docstring): the classification is read off the run, and held to what the machine is."""
+        entered = f"the process at {self._entering:#x}"
+        if whose is None:
+            raise Refused(f"{entered} is resumed at {pc:#x}: neither in the blob nor in the AES's ROM text "
+                          f"[{aes.AES_TEXT[0]:#x}, {aes.AES_TEXT[1]:#x}) — nobody's code that a window is priced as")
+        if self._takeover and self._entering == SCREEN_MANAGER and whose != OURS:
+            raise Refused(f"A ROW ON A TAKEOVER MACHINE WHOSE SCREEN MANAGER RESUMES IN THE ROM'S TEXT ({pc:#x}): the "
+                          f"machine's screen manager was to be ours (`aes_takeover`), and it stands parked in the "
+                          f"ROM's frames — its turn would be the ROM's code, priced as a window of ours")
+        if not self._takeover and whose == OURS:
+            raise Refused(f"{entered}, ANOTHER PROCESS than the row's, is resumed IN OUR BUILD'S TEXT ({pc:#x}) on a "
+                          f"machine whose screen manager is not ours: a foreign window is the ROM's own code")
+        if whose == OURS and self._entering != SCREEN_MANAGER:
+            raise Refused(f"{entered}, A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT ({pc:#x}): "
+                          f"the one process of a machine that is ours is its screen manager — this window would be "
+                          f"priced as the screen manager's turn")
+
+    def _resumed(self, pc, sp, memory):
         self._resumes_at = None
         foreign = self._entering != self.switches.process
+        whose = self._whose(pc)
+        self.resumed_in.append(whose)
+        self._image_taken(A_RESUME, len(self.resumed_in) - 1, memory)
+        if foreign:
+            self._vet_whose(whose, pc)
+        # A WINDOW IS ONE KIND'S: it closes where the row's own process is resumed — and where the turn passes
+        # BETWEEN THE SCREEN MANAGER AND ANOTHER PROCESS (its turn, then the desk's or an accessory's: two windows,
+        # each priced as what it is). Split by WHO is entered, on both shores alike — the ROM's shore reads no kind
+        # off its PCs — and so by kind on ours (`_vet_whose` holds the two to agree).
+        the_manager_s = self._entering == SCREEN_MANAGER
+        if the_manager_s:               # ...its own turn begins: what it stood parked in must be as it left it
+            self.vet_the_manager_s_spans_stood(memory, f"where the screen manager is resumed at {pc:#x}", handed_back=True)
+            self._manager_stood = None
+        if self._window is not None and (not foreign or whose != self._window_class
+                                         or the_manager_s != self._window_is_the_manager_s):
+            self._close_the_window(memory)
         if foreign and self._window is None:
-            self._vet_no_fork_is_queued(memory, "entered")
+            if whose != OURS:           # ...the dispatcher changes hands at a window of the ROM's code alone
+                self._vet_no_fork_is_queued(memory, "entered")
             self._stores_outside_so_far()
-            self._window, self._slots_found = self._tally(), self._code_slots(memory)
+            self._window, self._slots_found, self._window_class = self._tally(), self._code_slots(memory), whose
+            self._window_is_the_manager_s = the_manager_s
             if self.inner is not None:
+                self.inner.window_class = whose
                 self.inner.foreign_window_opened()
-        elif not foreign and self._window is not None:
-            self._vet_no_fork_is_queued(memory, "left")
-            self._stores_seen = self._stores_now()      # ...the window's own stores: seen, and nobody's of ours
-            self.foreign.append(tuple(now - then for now, then in zip(self._tally(), self._window)))
-            self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
-                                       if code != self._slots_found[slot] and code in ROM_CODES})
-            self._window = self._slots_found = None
-            if self.inner is not None:
-                self.inner.foreign_window_closed()
         if not foreign:
             self._see_the_qpbs(memory, sp)
+
+    def _close_the_window(self, memory):
+        """The open window closed where the machine stands: its tally kept under its kind."""
+        if self._window_is_the_manager_s:
+            self.hold_the_manager_s_spans(memory, its_turn_ended=True)
+        if self._window_class == OURS:  # ...a turn of OUR screen manager: its stores are our build's own
+            self._stores_outside_so_far()
+        else:
+            self._vet_no_fork_is_queued(memory, "left")
+            self._stores_seen = self._stores_now()          # ...the window's own stores: seen, and nobody's of ours
+            self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
+                                       if code != self._slots_found[slot] and code in ROM_CODES})
+        self.foreign.append(tuple(now - then for now, then in zip(self._tally(), self._window)))
+        self.window_classes.append(self._window_class)
+        self._window = self._slots_found = self._window_class = None
+        if self.inner is not None:
+            self.inner.foreign_window_closed()
+
+    # ---- THE SCREEN MANAGER'S SAVED CONTEXT AND ITS STACK ARE ITS OWN: nobody else stores there ----
+    # Its two spans (`aes_takeover.spans_of`) are, on a row whose screen manager is ours, left out of every compare of
+    # the two shores — two builds' frames. What that may not hide is A STORE THERE BY ANYBODY BUT THE SCREEN MANAGER:
+    # the row's own process, another process, the dispatcher outside its turn. So the spans are HELD BY CONTENT from
+    # where its turn ends (the next process resumed: its savestate is done) to where its next begins (it is resumed:
+    # switchto has read them), from the run's entry to its first turn, and from its last to where the run ends — on
+    # BOTH shores, whoever's the screen manager is: not one byte may change (REFUSED BY NAME where one has, with the
+    # bytes, at the stop that finds it: the run goes no further on a screen manager somebody else wrote into) — BUT THE ONE WORD THE DISPATCHER STORES AS IT HANDS THE MACHINE BACK: the SR
+    # of the exception frame switchto's `rte` pops, AT THE STACK POINTER THE SCREEN MANAGER STOOD PARKED AT (measured
+    # on every row that switches, both shores, both blobs: `$2304 -> $2700` there and nothing else, ever). Excepted
+    # where it is resumed alone, by its address; it is dead by nature — rewritten at every resume. (A row whose own
+    # process IS the screen manager — a handler at an arrival of ctlmgr's — holds nothing here: its own dispatches
+    # store its context.)
+    # BY CONTENT — AND, WHERE THE RUN HAS A LEDGER (our shore's), BY THE LEDGER TOO: a store that leaves the byte it
+    # found (the same constant, twice) changes no content, so the addresses of the two spans FIRST STORED OUTSIDE THE
+    # SCREEN MANAGER'S TURNS must be none either, the dispatcher's word aside. (The C mutant that showed it: a stray
+    # store our screen manager's own boot had already made — the overlay carried the byte, and the row's process
+    # storing it again changed nothing.) WHAT NEITHER SEES: an address the screen manager itself stored IN THIS RUN,
+    # stored again by another process with the value it holds.
+    def hold_the_manager_s_spans(self, memory, its_turn_ended=False):
+        """The screen manager stands parked over `memory` — `its_turn_ended`: its own turn has just ended, and what the
+        run has stored in the two spans so far is its turns' — or the run begins (nothing stored there is anybody's
+        yet): its two spans kept as they are."""
+        if self._holding_the_manager_s:
+            at = aes_takeover.spans_of(memory)
+            self._manager_stood = tuple((lo, bytes(memory[lo:hi])) for lo, hi in (at.context, at.stack))
+            self._manager_parked_at = at.parked
+            self.manager_s_states.append(aes_takeover.state_of(memory))
+            self._manager_s_stores_seen = self._stores_in_the_manager_s_spans() if its_turn_ended else frozenset()
+
+    def _stores_in_the_manager_s_spans(self):
+        """The addresses of the two spans the run has stored so far (its ledger) — none, for a run with no ledger."""
+        if not self._ledger or self._manager_stood is None:
+            return frozenset()
+        spans = [(lo, lo + len(held)) for lo, held in self._manager_stood]
+        return frozenset(at for at in self._ledger() if any(lo <= at < hi for lo, hi in spans))
+
+    def vet_the_manager_s_spans_stood(self, memory, where, handed_back=False):
+        """...and are they as they were kept, `where` the run now stands? REFUSED BY NAME where they are not, with the
+        bytes. `handed_back`: the dispatcher has just resumed the screen manager — the SR word of its `rte`'s frame
+        is the dispatcher's."""
+        if self._manager_stood is None:
+            return
+        its_rte_s_sr = range(self._manager_parked_at, self._manager_parked_at + aes.WORD_BYTES) if handed_back else ()
+        moved = {lo + offset: (kept, memory[lo + offset]) for lo, held in self._manager_stood
+                 for offset, kept in enumerate(held) if memory[lo + offset] != kept and lo + offset not in its_rte_s_sr}
+        # ...and what the ledger says was stored there since, whatever value it left (the same byte, stored again)
+        moved.update({at: (memory[at], memory[at]) for at in self._stores_in_the_manager_s_spans() - self._manager_s_stores_seen
+                      if at not in its_rte_s_sr and at not in moved})
+        if moved:
+            whose = "OUR" if self._ours is not None else "THE ROM'S"
+            raise Refused(
+                f"IN {whose} RUN, {where}, THE SCREEN MANAGER'S SAVED CONTEXT OR ITS "
+                f"STACK HOLDS OTHER BYTES THAN ITS OWN LAST TURN LEFT — stored by another process's code, or by the "
+                f"dispatcher outside its turn (on a row whose screen manager is ours these bytes are out of every "
+                f"compare of the two shores: a stray store there crashes it at its next wake): "
+                + ", ".join(f"{at:#x} ({kept:#04x} -> {found:#04x})" for at, (kept, found) in sorted(moved.items())[:8])
+                + (f" and {len(moved) - 8} more" if len(moved) > 8 else "")
+                + " (a byte shown unchanged was STORED, by the run's ledger, with the value it held)")
+
+    def _image_taken(self, stop, ordinal, memory):
+        if self._images is not None:
+            self.taken.append((stop, ordinal, self._images(memory)))
 
     def _parked_at(self, memory):
         """The stack pointer the row's process stands PARKED at over `memory`: what savestate kept in its UDA."""
@@ -266,10 +425,10 @@ class Switching:
         self._stores_seen = now
 
     def stored_outside_the_windows(self):
-        """The addresses this run stored OUTSIDE every foreign window — first stored there, or before one (asked
-        once the run has ended; `ledger` given). CONSERVATIVE: an address a window stored and the row's process
-        stored only AFTER it is not among them (the ledger keeps no order) — a drop that stands on such a store is
-        refused, never passed."""
+        """The addresses this run stored OUTSIDE every window OF THE ROM'S CODE — first stored there, or before one
+        (asked once the run has ended; `ledger` given): OUR BUILD'S OWN STORES, a turn of our own screen manager's
+        among them. CONSERVATIVE: an address a ROM window stored and our code stored only AFTER it is not among
+        them (the ledger keeps no order) — a drop that stands on such a store is refused, never passed."""
         assert self._ledger, "a watch asked who stored a byte was given the run's ledger"
         self._stores_outside_so_far()
         return frozenset(self._stored_outside)
@@ -290,6 +449,86 @@ class Switching:
                           f"{self.switches.polls}")
 
 
+A_POLL, A_RESUME = "poll", "resume"     # the stops an image is taken at (`Switching.taken`)
+AN_ARRIVAL = "arrival"                  # ...and, of a run ended at one, the arrival itself (`ToAnArrival`)
+
+
+class IdleToIdle(Switching):
+    """A WATCH OVER A RUN FROM A MACHINE'S IDLE TO ITS NEXT (ctlmgr's own rows: `aes_ctlmgr`), for either shore: the
+    dispatcher's loop entered where the booted machine stands idle, the row's deliveries laid at its idles (and its
+    polls) as `Switching` lays them, EVERY process entered followed — and THE RUN HAS NO PROCESS OF ITS OWN
+    (`switches.process` is None): every turn is a window, of the kind read off the run — our screen manager's (on a
+    machine whose screen manager is ours) or the ROM's process's. IT ENDS (`aes_event.Ended`) where the machine idles
+    with every delivery taken: the window open there is closed (the dispatch that brings the machine to its idle is
+    the last turn's), and `ended` is the holder's tally at that instant — the whole run's totals."""
+
+    def __init__(self, switches, **watching):
+        assert switches.process is None, "a run from idle to idle is no process's own: every turn is a window"
+        super().__init__(switches, **watching)
+        self.ended = None
+
+    def _past_its_last_idle(self, where, memory):
+        if self._window is not None:
+            self._close_the_window(memory)
+        self.ended = self._tally()
+        raise aes_event.Ended
+
+    def _parked_at(self, memory):
+        return 0
+
+    def _see_the_qpbs(self, memory, sp):
+        """(No process of the run's own: no QPB of its own stack to follow.)"""
+
+    def vet_ended(self, who):
+        """THE RUN ENDED AT THE IDLE AFTER ITS LAST DELIVERY, every idle and every poll of the ROM's run made."""
+        if self.ended is None or self._resumes_at is not None or self._window is not None:
+            raise Refused(f"{who}: the run did not end at the machine's idle")
+        if (self.idles, self.polls) != (self.switches.idles + 1, self.switches.polls):
+            raise Refused(f"{who}: the run made {self.idles - 1} idle(s) with a delivery and {self.polls} poll(s) where "
+                          f"the ROM's own makes {self.switches.idles} and {self.switches.polls}")
+
+
+class ToAnArrival(IdleToIdle):
+    """`IdleToIdle`, ENDED AT THE `which`-TH ARRIVAL AT `entry` — a handler of the screen manager's met where its
+    caller calls it: the ROM's routine on the ROM's shore, its C core's first instruction on ours — `arrived` what
+    `read(memory, sp)` reads of the frame there, the image taken at that stop too. An earlier arrival is passed (the
+    entry is a stop again from where that call comes back to). A machine that idles with every delivery taken and
+    no such arrival made is refused by name."""
+
+    def __init__(self, switches, entry, which, read, **watching):
+        super().__init__(switches, **watching)
+        self._entry, self._left, self._read, self._back, self.arrived = entry, which, read, None, None
+        self._observing[entry] = None
+        self.first = self._armed()
+
+    def stopped(self, pc, sp, memory):
+        if pc == self._entry:
+            if not self._left:
+                self._image_taken(AN_ARRIVAL, 0, memory)
+                self.arrived, self.ended = self._read(memory, sp), self._tally()
+                raise aes_event.Ended
+            self._left, self._back = self._left - 1, case.long_in(memory, sp) & BUS
+            del self._observing[pc]
+            self._observing[self._back] = None
+            return self._armed() - {pc}
+        if pc == self._back:
+            del self._observing[pc]
+            self._observing[self._entry], self._back = None, None
+            return self._armed() - {pc}
+        return super().stopped(pc, sp, memory)
+
+    def _past_its_last_idle(self, where, memory):
+        raise Refused(f"{where}: the machine idles with every delivery taken and the handler at {self._entry:#x} was "
+                      f"never called: the screen manager did not arrive there")
+
+    def vet_ended(self, who):
+        """THE RUN ENDED AT THE ARRIVAL, every idle and every poll of the ROM's run up to it made."""
+        if self.arrived is None or (self.idles, self.polls) != (self.switches.idles, self.switches.polls):
+            raise Refused(f"{who}: the run made {self.idles} idle(s) and {self.polls} poll(s) and "
+                          f"{'arrived' if self.arrived is not None else 'never arrived'}, where the ROM's own arrives after "
+                          f"{self.switches.idles} and {self.switches.polls}")
+
+
 def _refuse_what_is_never_made(kind, named, made):
     """A delivery named at an idle / a poll (`kind`) outside the `made` ones the ROM's own run counts: `Refused`."""
     never_made = sorted(ordinal for ordinal in named if not 0 <= ordinal < made)
@@ -298,20 +537,22 @@ def _refuse_what_is_never_made(kind, named, made):
                       f"be laid")
 
 
-def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observing=None):
+def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observing=None, images=None):
     """THE ROM'S SHORE: the watch of the ROM's own run of a row that switches. `entered_at` and `inner`: its door
     watch — given, or made here where the row has door-call deliveries too (one that does not `block`)."""
     if inner is None and switches.at_calls:
         inner = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS, delivered=switches.at_calls,
                                     entered_at=entered_at)
-    return Switching(switches, inner=inner, tally=tally, observing=observing)
+    return Switching(switches, inner=inner, tally=tally, observing=observing, images=images)
 
 
-def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None, relocated_polls=None):
+def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None, relocated_polls=None, takeover=False,
+         images=None):
     """OUR SHORE, on `blob`: `relocated` the row's idle deliveries as our own dispatcher takes them,
-    `relocated_polls` those it takes at a poll that is no idle."""
+    `relocated_polls` those it takes at a poll that is no idle; `takeover`: over a machine whose screen manager is
+    ours (`aes_takeover`)."""
     return Switching(switches, inner=inner, ours=our_dispatcher(blob), relocated=relocated,
-                     relocated_polls=relocated_polls, tally=tally, ledger=ledger)
+                     relocated_polls=relocated_polls, tally=tally, ledger=ledger, takeover=takeover, images=images)
 
 
 # ---- THE REGISTRAR: a row that blocks and is woken ------------------------------------------------------------------------
@@ -334,9 +575,12 @@ def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None
 # every drop is; LEFT OUT OF THE COMPANION'S COMPARE TOO — the one place a companion leaves a stored byte out beside
 # a QPB's address — each byte required to be one the ROM's run changed (`_its_own_by_nature`), and the battery that
 # declares it holds what the C stores there.
+# `the_rom_s_screen_manager`: WHY A ROW WHOSE RUN ENTERS THE SCREEN MANAGER STAYS ON THE ROM'S (`settled`: every other
+# such row is run, on our shore, with the screen manager OURS — `aes_takeover`): a reason, said in the row's battery
+# and counted by `test_aes_takeover.py`; "" for every other row.
 SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls budget "
-                                          "child_doors x_flag_differs also_dropped",
-                          defaults=(True, None, None, None, None, "", False, ()))
+                                          "child_doors x_flag_differs also_dropped the_rom_s_screen_manager",
+                          defaults=(True, None, None, None, None, "", False, (), ""))
 NO_FRAME = b""                          # a routine of no argument: nothing at the first argument's place
 # What a registered row keeps (`aes_event.SWITCHING_ROWS`): the row, its settled machine, its Tier 3 drops, what its
 # run is taken through, the processes the ROM's dispatcher enters, its deliveries derived again, and the QPB
@@ -457,8 +701,10 @@ def left_by(name, arguments, machine, at_idle):
     run stored with the value the snapshot happened to hold is the run's all the same, and over another capture of
     the boot it must not turn back into that capture's (the lock's row over such a machine never returned over a
     snapshot whose masked bytes held noise). A derivation, kept by content."""
-    return {at: data for at, data in _left(name, tuple(arguments), machine, dict(at_idle)).items()
+    left = {at: data for at, data in _left(name, tuple(arguments), machine, dict(at_idle)).items()
             if at not in case.STACK_BAND}
+    aes_takeover.note(name, arguments, machine, at_idle, left)     # ...where it left the screen manager another state
+    return left
 
 
 @derived.kept
@@ -476,7 +722,12 @@ def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, bu
     uda = aes_event.uda_of(switches.process, final)
     pokes, drops = aes_event.settled_in_windows(staged, stored, by_nature(uda), dropped=dropped_at_tier3(uda))
     qpbs = _qpbs_left(name, final, writes, watch)
-    return Settled(pokes, drops + qpb_address_drops(qpbs), switches, tuple(reference.entered), qpbs)
+    # ...AND, FOR A RUN THAT ENTERS THE SCREEN MANAGER AS ANOTHER PROCESS THAN ITS OWN: the screen manager's two
+    # by-nature spans (`aes_takeover`), DROPPED where this run stored them and NEVER STAGED — they are LIVE at the
+    # run's entry (its parked context, its frames), where the caller's own saved context is dead.
+    enters_the_manager = switches.process != SCREEN_MANAGER and SCREEN_MANAGER in reference.entered
+    its_spans = aes_takeover.drops(final, stored) if enters_the_manager else ()
+    return Settled(pokes, drops + qpb_address_drops(qpbs) + its_spans, switches, tuple(reference.entered), qpbs)
 
 
 def _qpbs_left(name, final, writes, watch):
@@ -519,7 +770,10 @@ def settled(row):
     made = _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
                     *((row.budget,) if row.budget else ()))
     own = (THE_X_FLAG_ALONE if row.x_flag_differs else ()) + tuple(row.also_dropped)
-    return made._replace(drops=tuple(made.drops) + own) if own else made
+    drops = tuple(made.drops) + own
+    if row.the_rom_s_screen_manager:    # ...a row left on the ROM's screen manager names neither of its spans
+        drops = tuple(drop for drop in drops if drop[2] not in aes_takeover.WHYS)
+    return made._replace(drops=drops) if drops != tuple(made.drops) else made
 
 
 def rederived(row):
@@ -730,9 +984,44 @@ def vet_on_a_blob(blob, row, premise, windows, whole):
     assert (watch.idles, watch.polls, tuple(watch.entered)) == (premise.idles, settled(row).switches.polls, tuple(premise.entered)), who
     assert tuple(foreign) == tuple(windows), f"{who}: foreign {tuple(foreign)}: the windows are the ROM's own run of the other process"
     assert watch.inner is None or watch.inner.closed == watch.inner.calls, f"{who}: every door call opened is closed"
-    assert (measured.original_net, measured.recreate_net) == whole[blob.elf.parent.name], (
-        f"{who} measures {measured.original_net} / {measured.recreate_net} cycles on {blob.elf.parent.name}: say why it moved")
+    vet_the_whole_run(who, blob, measured, whole)
+    vet_its_turns(who, blob, measured)
     return measured, watch, foreign
+
+
+def vet_the_whole_run(who, blob, measured, whole):
+    """THE WHOLE RUN'S CYCLES on `blob` — the ROM's, ours, each net of the entry both share — ARE THE PINNED PAIR
+    (`whole`: `{the blob's directory: (the ROM's, ours)}`). A run that moves says why."""
+    directory = blob.elf.parent.name
+    assert (measured.original_net, measured.recreate_net) == whole[directory], (
+        f"{who} measures {measured.original_net} / {measured.recreate_net} cycles on {directory}: say why it moved")
+
+
+def turns_measured(measured):
+    """The turns of our screen manager inside a measured run, as a pin spells them: `(ours, the ROM's, our thunks')`
+    cycles each, in order (`tier3.Turn`) — of a row of ctlmgr's own (`its_turns`: the run IS its turns) as of a row
+    with a turn inside it."""
+    turns = getattr(measured, "its_turns", None) or getattr(measured, "turns", ())
+    return tuple((turn.ours, turn.the_rom_s, turn.glue) for turn in turns)
+
+
+def turns_pinned(who, directory):
+    """...and the ones PINNED for the row `who` on the blob of `directory` — none, for a row with no line."""
+    return tuple(tuple(turn) for turn in aes_turns_pinned.PINNED.get(who, {}).get(directory, ()))
+
+
+def vet_its_turns(who, blob, measured):
+    """THE SCREEN MANAGER'S TURNS INSIDE THE RUN ARE THE PINNED ONES (`aes_turns_pinned`: by the row's name and the
+    blob's directory; none for a row with no line there) — each the turn's whole AES subtree, ours against the ROM's (the table's convention), in the same
+    window — AND EACH IS AT OR UNDER THE BAR BY ITSELF, its thunks counted. A turn that moves says why."""
+    directory = blob.elf.parent.name
+    held = turns_pinned(who, directory)
+    assert turns_measured(measured) == held, (
+        f"{who}: on {directory} the screen manager's turns inside the run measure {turns_measured(measured)} (ours, the "
+        f"ROM's, thunks) where {held} is pinned: say why they moved")
+    tier3 = bench_tier3()
+    assert all(tier3.turn_ratio_with_glue(tier3.Turn(*turn, 0)) <= tier3.TIER3_FUNCTION_BAR for turn in held), (
+        f"{who}: a turn of our screen manager is over the bar by itself on {directory}")
 
 
 def priced_by_the_table(row):

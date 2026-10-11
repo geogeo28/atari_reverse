@@ -1633,8 +1633,10 @@ def rows_over_a_third_process():
               for label, symbol, _caller, _regs, pokes, _cost, _io_seed in transcription.TRANSCRIPTIONS]
     own = [name for name, _pokes in c_rows if name.split(",")[0] in OWN_ROWS]
     assert len(own) >= len(OWN_ROWS) and any(name.startswith(S_ROW_OF_PSETUP) for name, _pokes in s_rows)
+    # (MORE than the snapshot's two: a machine with FEWER has no third process — the boot's own, stopped where
+    # ictlmgr is about to make the second: ictlmgr's row, FLIP 4.)
     return [name for name, pokes in (*c_rows, *s_rows)
-            if static_pds_in(pokes) != pp.SNAPSHOT_STATIC_PIDS and not an_accessory_the_rom_loaded(pokes)]
+            if static_pds_in(pokes) > pp.SNAPSHOT_STATIC_PIDS and not an_accessory_the_rom_loaded(pokes)]
 
 
 S_ROW_OF_PSETUP = "aes_rom_psetup"
@@ -1650,6 +1652,11 @@ def test_no_registered_row_runs_over_a_staged_application():
     booted = aes_boot.accessory_machine().pokes
     assert static_pds_in(booted) == pp.SNAPSHOT_STATIC_PIDS + 1 and an_accessory_the_rom_loaded(booted)
     assert rows_over_a_third_process() == []
+    # ...and ONE registered row's machine has FEWER than the snapshot's two — the boot stopped at its call of ictlmgr,
+    # which makes the second: no third process, and no staged one.
+    before_the_manager = [name for rows in case.ROW_REGISTRIES for name, _entry, _regs, pokes, *_seeds in rows.cases
+                          if static_pds_in(pokes) < pp.SNAPSHOT_STATIC_PIDS]
+    assert before_the_manager == ["aes_ictlmgr, the boot's own call: the screen manager's process made, to begin at ctlmgr"]
 
 
 def test_a_row_registered_over_a_staged_application_is_seen_whichever_list_it_is_in(monkeypatch):

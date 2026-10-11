@@ -18,6 +18,7 @@ import aes_event
 import aes_evlib
 import aes_switch
 import aes_switching as switching
+import aes_takeover
 import case
 
 SHELL, SCREEN_MANAGER = aes_switch.SHELL, aes_switch.SCREEN_MANAGER
@@ -46,8 +47,17 @@ def test_a_row_is_settled_from_the_rom_s_own_runs(label):
     assert (made.switches.idles, made.switches.process, made.entered) == (idles, SHELL, entered)
     assert sorted(made.switches.at_idles) == sorted(row.at_idle) and not made.switches.at_calls
     staged = switching.scheduled(row, made.pokes)
-    assert all(bytes(staged.started[lo:hi]) == bytes(staged.memory[lo:hi]) for lo, hi, _why in made.drops), (
+    assert all(bytes(staged.started[lo:hi]) == bytes(staged.memory[lo:hi]) for lo, hi, why in made.drops
+               if why not in aes_takeover.WHYS), (
         "the settled machine holds, in every dropped window, what the ROM's run leaves there")
+    # ...BUT THE SCREEN MANAGER'S TWO SPANS, on a row whose run enters it (`aes_takeover`: run with the screen manager
+    # ours): DROPPED where the run stored them and NEVER STAGED — its parked context and its frames are LIVE at the
+    # run's entry, so the settled machine holds there what the row's own machine came with, byte for byte.
+    its_spans = [(lo, hi) for lo, hi, why in made.drops if why in aes_takeover.WHYS]
+    assert bool(its_spans) == (SCREEN_MANAGER in entered)
+    came_with = make_image(row.machine())
+    assert all(bytes(staged.started[lo:hi]) == bytes(came_with[lo:hi]) for lo, hi in its_spans)
+    assert not its_spans or any(bytes(staged.started[lo:hi]) != bytes(staged.memory[lo:hi]) for lo, hi in its_spans)
 
 
 def test_a_replay_that_is_not_the_run_that_took_the_deliveries_is_refused(monkeypatch):

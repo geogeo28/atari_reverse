@@ -554,7 +554,7 @@ Priced, NO_WINDOW = switching.Priced, switching.NO_WINDOW
 # @PINS-BEGIN (measured: scratch `pins.py`, then `pins_emit.py`)
 WHOLE_RUN = {
     "opcode 11, as aes_ap_rdwr, a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)":
-        {BENCH: (1176770, 1170288), SHIPPED: (1176770, 1170020)},
+        {BENCH: (1176770, 1091674), SHIPPED: (1176770, 1079534)},
     'opcode 24, as aes_ev_timer, a time of five ticks, blocked; run out by them':
         {BENCH: (31684, 26370), SHIPPED: (31684, 26272)},
     'opcode 71, as aes_gr_dragbox, held at the mouse; moved, then released':
@@ -582,7 +582,7 @@ WHOLE_RUN = {
     "opcode 15, as aes_ap_trecd, one record, a key's":
         {BENCH: (47416, 39406), SHIPPED: (47416, 39248)},
     'opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        {BENCH: (1188090, 1180838), SHIPPED: (1188090, 1180692)},
+        {BENCH: (1188090, 1102224), SHIPPED: (1188090, 1090206)},
     "opcode 107, as aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call":
         {BENCH: (15166, 12186), SHIPPED: (15166, 12308)},
     'appl_exit: no accessory, the pipe empty':
@@ -612,13 +612,13 @@ WHOLE_RUN = {
     'marshalled: opcode 20, as aes_ev_keybd, no key queued, blocked; woken by Return':
         {BENCH: (33860, 28208), SHIPPED: (33860, 27722)},
     "opcode 23, as aes_ev_mesag, no message, blocked; woken by the screen manager's own write (the menu chain)":
-        {BENCH: (1177110, 1170394), SHIPPED: (1177110, 1170128)},
+        {BENCH: (1177110, 1091780), SHIPPED: (1177110, 1079642)},
     'opcode 70, as aes_gr_rubbox, the corner at the mouse; stretched, then released':
         {BENCH: (297884, 278082), SHIPPED: (297884, 275552)},
     'opcode 25, as aes_ev_multi, blocked and woken — a double click wakes: a double click':
         {BENCH: (46274, 38492), SHIPPED: (46274, 38304)},
     'marshalled: opcode 25, as aes_ev_multi, blocked and woken — a writer wakes: a message, none in the pipe':
-        {BENCH: (1190616, 1184238), SHIPPED: (1190616, 1183142)},
+        {BENCH: (1190616, 1105624), SHIPPED: (1190616, 1092656)},
     'appl_tplay: at half speed, a top byte on its records':
         {BENCH: (71830, 61716), SHIPPED: (71830, 62382)},
 }

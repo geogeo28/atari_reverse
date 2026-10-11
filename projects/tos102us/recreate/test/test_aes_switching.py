@@ -34,6 +34,8 @@ import aes_evinput as evinput
 import aes_evlib as evlib
 import aes_switch
 import aes_switching as switching
+import aes_takeover
+import aes_turns_pinned
 import case
 import test_aes_evdisp_model as model
 import test_aes_wm_update as wm_update
@@ -62,8 +64,8 @@ WHOLE_RUN = {
     model.A_KEY_TYPED_AHEAD_LABEL: {BENCH: (31690, 26416), SHIPPED: (31690, 26102)},
     model.WOKEN_BY_A_KEY: {BENCH: (31690, 26416), SHIPPED: (31690, 26102)},
     model.A_DELAY_RUN_OUT: {BENCH: (30166, 25436), SHIPPED: (30166, 25124)},
-    FOREIGN: {BENCH: (831626, 826498), SHIPPED: (831626, 826228)},
-    AT_A_POLL: {BENCH: (831668, 823680), SHIPPED: (831668, 823534)},
+    FOREIGN: {BENCH: (831626, 787702), SHIPPED: (831626, 781352)},
+    AT_A_POLL: {BENCH: (831668, 787712), SHIPPED: (831668, 781362)},
 }
 # ...and WHAT THE TABLE PRICES (`aes_switching.Priced`; `tier3.measure`, the shipped blob: ev_block's C reaches a
 # transcribed core): each shore's OWN cycles, no second count (ev_block's own rows call no rebound entry), and the
@@ -82,6 +84,18 @@ THE_SLOT_THE_ROM_S_POLL_QUEUED = aes_event.FORK_CODE_SLOTS[2]
 
 
 tier3, table_row = bench_tier3, switching.table_row
+# SINCE FLIP 4 the two pilots whose run enters the screen manager run with the screen manager OURS (`aes_takeover`):
+# its turn is our ctlmgr's, priced by itself — the window's own figures above are THE ROM'S RUN's, unmoved. THE
+# FOREIGN-WINDOW RULE still stands for every window of the ROM's process (the desk inside a row of the screen
+# manager's, an accessory), and its own cases here keep their subject: THE SAME PILOT LEFT ON THE ROM'S SCREEN
+# MANAGER (`SwitchingRow.the_rom_s_screen_manager`), unregistered — the row as it stood before the flip.
+THE_RULE_S_OWN_SUBJECT = ("the foreign-window rule's own subject: this pilot as it stood before FLIP 4, the screen "
+                          "manager the ROM's and its turn the ROM's own code on both shores")
+
+
+def left_on_the_rom_s(row):
+    """`row`, LEFT ON THE ROM'S SCREEN MANAGER (above): unregistered, for a case of the foreign-window rule."""
+    return row._replace(the_rom_s_screen_manager=THE_RULE_S_OWN_SUBJECT)
 
 
 def unregistered(row, **replaced):
@@ -121,8 +135,8 @@ def test_a_pilot_is_parked_by_our_own_dispatcher_and_woken_on_both_blobs(label, 
     switching.vet_on_a_blob(blob, ROWS[label], PREMISES[label], PRICED[label].windows, WHOLE_RUN[label])
 
 
-def _the_window_line_under(table, row):
-    """The foreign-window line `table` (the text of the bench's file) prints UNDER THE ROW `row`, or None — the
+def _the_window_line_under(table, row, said="foreign window(s)"):
+    """The foreign-window line (or the line that says `said`) `table` (the text of the bench's file) prints UNDER THE ROW `row`, or None — the
     indented lines that follow that row's own line, up to the next row's. Refused by name where the file has no
     line for the row: it predates the tree."""
     its_line = re.compile(rf"^\S.*\${switching._entry(row):x}\s+{re.escape(row.label)}\s+\d+/\d+\s")
@@ -131,7 +145,7 @@ def _the_window_line_under(table, row):
     assert at is not None, (f"{test_status.BENCH_TABLE} has no line for `{switching.row_name(row)}`: the file predates "
                             f"the tree — run `make bench`")
     under = itertools.takewhile(lambda line: line[:1].isspace(), lines[at + 1:])
-    return next((line for line in under if "foreign window(s)" in line), None)
+    return next((line for line in under if said in line), None)
 
 
 @pytest.mark.parametrize("label", ROWS)
@@ -141,13 +155,19 @@ def test_the_table_prices_a_pilot_on_its_own_process_s_cycles(label):
     equal on the two shores to the cycle (the measurement refuses otherwise), in neither own column."""
     measured = switching.vet_the_table_s_price(ROWS[label], PRICED[label])
     windows, whole, in_the_aes = PRICED[label].windows
-    said = (f"{windows} foreign window(s): another process ran {whole} cycles of the ROM's own code on both shores "
-            f"({in_the_aes} in the AES's text)")
-    assert not windows or said in tier3()._foreign_line(measured, 0)
-    # ...which the table SAYS under THIS row (`make bench`'s own file: the suite's prerequisite) — and says nothing
-    # of the kind under a row with no window.
-    line = _the_window_line_under(test_status.BENCH_TABLE.read_text(), ROWS[label])
-    assert (line is not None and said in line) if windows else line is None, (
+    table = test_status.BENCH_TABLE.read_text()
+    # ...AND SINCE FLIP 4 THE WINDOW IS A TURN OF OUR SCREEN MANAGER: the figures above are the ROM's run's window,
+    # unmoved; on our shore it is our ctlmgr's own cycles, priced BY ITSELF on a line of its own under the row — the
+    # pinned turn of the blob the table prices the row on (ev_block ships through a transcribed core: the shipped
+    # one) — and the row says NO foreign window: none of its windows is the ROM's process's.
+    turns = tier3().turns_of(measured)
+    assert len(turns) == windows and tier3().the_rom_s_windows(measured) == tier3().NO_FOREIGN_WINDOW
+    assert switching.turns_measured(measured) == switching.turns_pinned(switching.row_name(ROWS[label]), SHIPPED)
+    assert [turn.the_rom_s for turn in turns] == [in_the_aes] * windows and [turn.the_rom_s + turn.shared for turn in turns] == [whole] * windows
+    assert _the_window_line_under(table, ROWS[label]) is None, f"{label}: a foreign window said under a row that has none"
+    said = [f"screen manager's turn: ours {turn.ours} / ROM {turn.the_rom_s} = {turn.ours / turn.the_rom_s:.2f}" for turn in turns]
+    line = _the_window_line_under(table, ROWS[label], "screen manager's turn:")
+    assert (line is not None and said[0] in line) if windows else line is None, (
         f"{label}: the bench's file says {line!r} under the row — if it predates the tree, run `make bench`")
 
 
@@ -157,13 +177,27 @@ def test_the_table_says_a_foreign_window_under_every_row_that_has_one_and_under_
     between its own two marks, and says so under itself alone: its battery's pins, `test_aes_fs_input_woken`)."""
     import test_aes_fs_input_woken as sliced_sessions
     table = test_status.BENCH_TABLE.read_text()
-    with_a_window = [name for name, held in aes_event.SWITCHING_ROWS.items()
-                     if name not in aes_event.SLICED_ROWS and set(held.entered) != {held.switches.process}]
-    with_a_window += [key for key, priced in sliced_sessions.WOKEN_PRICED.items() if priced[-1] != switching.NO_WINDOW]
-    said = table.count("foreign window(s)")
-    assert said == len(with_a_window), (
+    enters_another = [name for name, held in aes_event.SWITCHING_ROWS.items()
+                      if name not in aes_event.SLICED_ROWS and set(held.entered) != {held.switches.process}]
+    enters_another += [f"aes_fs_input, {session}: {label}" for (session, label), priced in sliced_sessions.WOKEN_PRICED.items()
+                       if priced[-1] != switching.NO_WINDOW]
+    assert set(enters_another) <= set(aes_event.SWITCHING_ROWS)
+    # ...OF TWO KINDS SINCE FLIP 4, by what the row names (`aes_takeover.named_in`: its screen manager ours): a turn of
+    # OUR screen manager, said on a line of its own — one a turn — or a window of the ROM's process.
+    ours = [name for name in enters_another if aes_takeover.named_in(aes_event.SWITCHING_ROWS[name].drops)]
+    with_a_window = [name for name in enters_another if name not in ours]
+    said, turns_said = table.count("foreign window(s)"), len(re.findall(r"^\s+screen manager's turn: ours \d+", table, re.MULTILINE))
+    # ...and ctlmgr's OWN rows (the screen manager woken, from idle to idle: `test_aes_ctlmgr.py`) — the row IS its
+    # turns, so no turn's line; a window of the ROM's process where its message woke the desk or an accessory.
+    import test_aes_ctlmgr as its_own
+    woken_with_a_window = [label for label, windows in its_own.THE_ROM_S_WINDOWS.items() if windows]
+    assert said == len(with_a_window) + len(woken_with_a_window), (
         f"{test_status.BENCH_TABLE} says a foreign window under {said} row(s) where the registry holds "
-        f"{len(with_a_window)} whose run enters another process — if the file predates the tree, run `make bench`")
+        f"{len(with_a_window)} whose run enters a process of the ROM's and {len(woken_with_a_window)} rows of ctlmgr's "
+        f"own that wake one — if the file predates the tree, run `make bench`")
+    assert turns_said == len(ours) == len(aes_turns_pinned.PINNED) - len(its_own.WOKEN), (
+        f"{test_status.BENCH_TABLE} says a turn of the screen manager {turns_said} time(s) where the registry holds "
+        f"{len(ours)} rows whose run enters OUR screen manager, {len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)} of them pinned")
 
 
 A_HIGH_WORD_NO_CALLER_READS = 0x10000
@@ -238,7 +272,8 @@ def _our_run(blob, row, switches, relocated=None):
     made = switching.settled(row)
     if relocated is None:
         relocated = tier3().deliveries_for_our_shore(switches.at_idles, blob.elf, switching._core(row))
-    watch = switching.ours(blob, switches, relocated,
+    tier3().screen_manager_made_ours(blob, made.pokes, made.drops)
+    watch = switching.ours(blob, switches, relocated, takeover=aes_takeover.named_in(made.drops),
                            relocated_polls=tier3().deliveries_for_our_shore(switches.at_polls, blob.elf, switching._core(row)))
     measured = blob.measure(switching._entry(row), switching._core(row), (0, *row.arguments), {}, made.pokes,
                             returns=tier3().CALL[row.name].returns, dropped=made.drops, watch=watch,
@@ -399,15 +434,21 @@ def test_a_delivery_is_relocated_by_who_takes_it_and_a_foreign_window_holds_no_c
     window (the ROM's dispatcher re-enters it without leaving), cycle for cycle. Then every delivery relocated for
     OUR forker, the one the ROM's idle takes too: the ROM's forker `jsr`s our mchange inside the window — the image
     compare still passes (our mchange is verified) and the row would be priced on a mixture; refused by name."""
-    row = unregistered(_entered_twice())
+    row = unregistered(left_on_the_rom_s(_entered_twice()))
     measured = tier3().measure(row, tier3().RomBench())
     assert tuple(tier3().foreign_of(measured))[0] == 1 and measured.own_cycles == PRICED[FOREIGN].own
+    assert tier3().the_rom_s_windows(measured) == tier3().foreign_of(measured) and not tier3().turns_of(measured)
+    # (WITH THE SCREEN MANAGER OURS the same run has ONE TURN of it, entered twice — and every delivery inside the
+    # turn is taken at OUR idle: there is no idle of the ROM's in it to take one.)
+    with_ours = tier3().measure(unregistered(_entered_twice()), tier3().RomBench())
+    assert len(tier3().turns_of(with_ours)) == 1 and not tier3().the_rom_s_windows(with_ours).windows
+    assert with_ours.own_cycles == measured.own_cycles and tier3().foreign_of(with_ours) == tier3().foreign_of(measured)
     ours = switching.ours
 
     def relocated_everywhere(blob, switches, relocated, *watching, **named):
         return ours(blob, switches._replace(at_idles=relocated), relocated, *watching, **named)
     monkeypatch.setattr(switching, "ours", relocated_everywhere)
-    with pytest.raises(AssertionError, match=r"cycles of OUR build ran inside the foreign windows"):
+    with pytest.raises(AssertionError, match=r"cycles of OUR build ran inside window 0, a window of the ROM's process"):
         tier3().measure(row, tier3().RomBench())
 
 
@@ -415,13 +456,20 @@ def test_without_its_foreign_window_declared_the_general_guard_refuses_the_row()
     """THE ONE PLACE OUR RUN MAY EXECUTE THE AES'S ROM: the guard holds our run's cycles there to exactly the row's
     foreign windows (which the measurement held equal to the ROM's own). Asked of the same runs with no window
     declared, it refuses the row by name — as it refuses any C that `jsr`s the ROM's AES."""
-    row, bench = table_row(ROWS[FOREIGN]), tier3().RomBench()
+    row, bench = unregistered(left_on_the_rom_s(ROWS[FOREIGN])), tier3().RomBench()
     measured = tier3().measure(row, bench)
     in_the_aes = PRICED[FOREIGN].windows[2]
     assert tier3().foreign_of(measured).in_the_aes == in_the_aes
     tier3().vet_our_run_kept_out_of_the_aes(row, bench, measured)
     with pytest.raises(AssertionError, match=f"OUR run spent {in_the_aes} cycles at the PCs of the AES's own ROM where the row\\s+declares 0"):
         tier3().vet_our_run_kept_out_of_the_aes(row, bench)
+    # ...AND THE REGISTERED PILOT, ITS SCREEN MANAGER OURS, DECLARES NOTHING AND SPENDS NOTHING THERE: the same
+    # window is our ctlmgr's turn, and the guard passes with no window handed to it at all — WHO RAN, held: not one
+    # cycle of our run at a PC of the AES's ROM, the ROM's ctlmgr's among them.
+    registered = table_row(ROWS[FOREIGN])
+    with_ours = tier3().measure(registered, bench)
+    assert tier3().the_rom_s_windows(with_ours).in_the_aes == 0 and tier3().foreign_of(with_ours).in_the_aes == in_the_aes
+    tier3().vet_our_run_kept_out_of_the_aes(registered, bench)
 
 
 def test_a_window_one_cycle_short_leaves_a_cycle_of_ours_in_the_aes_and_is_refused(monkeypatch):
@@ -441,9 +489,11 @@ def test_the_code_a_foreign_process_queued_is_no_relocation_our_build_left_unapp
     """A FORK CODE THE ROM'S OWN POLL QUEUED inside the foreign window is the ROM's — no code of ours stored it — and
     the rule "no slot names the ROM after our run" excepts exactly that slot while it holds exactly that code
     (`Switching.foreign_codes`). With the window's stores unread, the rule refuses the run as it must."""
-    row = ROWS[FOREIGN]
+    row = left_on_the_rom_s(ROWS[FOREIGN])
     _measured, watch, _foreign = switching.measured_on(blob, row)
     assert watch.foreign_codes == {THE_SLOT_THE_ROM_S_POLL_QUEUED: addrs.AES_ROM_KCHANGE}
+    # (...and in a turn of OUR screen manager no code of the ROM's is queued at all: our own poll queues our kchange.)
+    assert switching.measured_on(blob, ROWS[FOREIGN])[1].foreign_codes == {}
     monkeypatch.setattr(switching.Switching, "_code_slots", staticmethod(lambda memory: dict.fromkeys(switching.CODE_SLOTS, 0)))
     with pytest.raises(AssertionError, match="OUR run left THE ROM'S OWN address 0xfe5180 in a fork function's code"):
         switching.measured_on(blob, row)
@@ -484,8 +534,41 @@ def test_two_shores_that_entered_other_processes_or_ran_other_windows_are_refuse
         alike("a row", _a_run([SCREEN_MANAGER, SHELL], [(797112, 155860, 0)]), the_rom_s)
     with pytest.raises(AssertionError, match="another process ran another run on the two shores"):
         alike("a row", _a_run([SCREEN_MANAGER, SHELL], [(797110, 155862, 0)]), the_rom_s)
-    with pytest.raises(AssertionError, match=r"\[20\] cycles of OUR build ran inside the foreign windows"):
+    with pytest.raises(AssertionError, match=r"20 cycles of OUR build ran inside window 0, a window of the ROM's process"):
         alike("a row", _a_run([SCREEN_MANAGER, SHELL], [(797112, 155862, 20)]), the_rom_s)
+    with pytest.raises(AssertionError, match=r"our run made 2 window\(s\) of another process and the ROM's 1"):
+        alike("a row", _a_run([SCREEN_MANAGER, SHELL], [(797112, 155862, 0)] * 2), the_rom_s)
+
+
+def _a_turn(entered, foreign):
+    """...a stand-in of OUR run's watch whose every window was read off the run as A TURN OF OUR SCREEN MANAGER."""
+    return types.SimpleNamespace(entered=list(entered), foreign=list(foreign), vet_ended=lambda who: None,
+                                 window_classes=[switching.OURS] * len(foreign))
+
+
+def test_a_turn_of_our_screen_manager_is_held_to_no_cycle_of_the_rom_s_aes_and_to_the_os_both_run():
+    """...AND A WINDOW READ OFF THE RUN AS A TURN OF OUR SCREEN MANAGER (`Switching.window_classes`) is held the other
+    way round, over stand-in watches: our build's cycles ARE the turn (103,182 of its own and 7,804 in thunks against
+    the ROM's ctlmgr's 155,862), NOT ONE CYCLE of it at a PC of the AES's ROM, and the OS both run inside it — each
+    shore's window less its own — the same to the cycle. `turns_made` then prices it; a window MISCLASSIFIED either
+    way is refused by the other kind's rule."""
+    alike, whole, the_rom_s_own, ours, glue = tier3()._vet_switched_alike, 797112, 155862, 103182, 7804
+    shared = whole - the_rom_s_own
+    the_rom_s = _a_run([SCREEN_MANAGER, SHELL], [(whole, the_rom_s_own)])
+    mine = (shared + ours + glue, 0, ours + glue, glue)
+    assert alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [mine]), the_rom_s) == (1, whole, the_rom_s_own)
+    assert tier3().turns_made(_a_turn([SCREEN_MANAGER, SHELL], [mine]), the_rom_s) == (tier3().Turn(ours, the_rom_s_own, glue, shared),)
+    assert tier3().turns_made(_a_run([SCREEN_MANAGER, SHELL], [(whole, the_rom_s_own, 0)]), the_rom_s) == ()
+    with pytest.raises(AssertionError, match="A TURN OF OUR SCREEN MANAGER, spent 16 cycles of ours in the AES's\\s+own ROM"):
+        alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [(mine[0] + 16, 16, *mine[2:])]), the_rom_s)
+    with pytest.raises(AssertionError, match="the OS both run cost ours .* the two screen managers did not make the same calls"):
+        alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [(mine[0] + 2, *mine[1:])]), the_rom_s)
+    # MISCLASSIFIED: the turn of ours read as the ROM's process's is our build's cycles inside a window of the ROM's;
+    # a window of the ROM's process read as a turn of ours is the AES's ROM run inside a turn.
+    with pytest.raises(AssertionError, match="cycles of OUR build ran inside window 0, a window of the ROM's process"):
+        alike("a row", _a_run([SCREEN_MANAGER, SHELL], [mine]), the_rom_s)
+    with pytest.raises(AssertionError, match="A TURN OF OUR SCREEN MANAGER, spent 155862 cycles of ours in the AES's"):
+        alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [(whole, the_rom_s_own, 0, 0)]), the_rom_s)
 
 
 # ---- A DOOR USER'S CALL, OPEN ACROSS THE SWITCH -------------------------------------------------------------------------------
@@ -577,8 +660,8 @@ def test_a_named_blob_s_measurement_holds_the_foreign_window_rule_too(blob, monk
     def relocated_everywhere(on, switches, relocated, *watching, **named):
         return ours(on, switches._replace(at_idles=relocated), relocated, *watching, **named)
     monkeypatch.setattr(switching, "ours", relocated_everywhere)
-    with pytest.raises(AssertionError, match=r"cycles of OUR build ran inside the foreign windows"):
-        switching.measured_on(blob, _entered_twice())
+    with pytest.raises(AssertionError, match=r"cycles of OUR build ran inside window 0, a window of the ROM's process"):
+        switching.measured_on(blob, left_on_the_rom_s(_entered_twice()))
 
 
 def test_a_named_blob_s_measurement_holds_our_run_out_of_the_aes_but_for_its_windows(blob, monkeypatch):
@@ -591,7 +674,7 @@ def test_a_named_blob_s_measurement_holds_our_run_out_of_the_aes_but_for_its_win
         return foreign._replace(in_the_aes=foreign.in_the_aes - 1)
     monkeypatch.setattr(tier3(), "_vet_switched_alike", one_short)
     with pytest.raises(AssertionError, match=f"OUR run spent {PRICED[FOREIGN].windows[2]} cycles at the PCs of the AES's own ROM"):
-        switching.measured_on(blob, ROWS[FOREIGN])
+        switching.measured_on(blob, left_on_the_rom_s(ROWS[FOREIGN]))
 
 
 def test_a_row_that_says_it_switches_is_never_measured_on_a_path_that_reads_no_schedule():
@@ -636,7 +719,7 @@ def test_a_drop_is_held_to_what_our_run_stored_outside_its_foreign_windows():
     too — by THE ROM'S savestate, inside the foreign window — so a row that dropped it would pass a ledger read over
     the whole run. Held to the stores made outside the windows, that drop is refused by name; the row's own drops
     (the desk's context, the dispatcher's stack: our savestate's, before the window) stand."""
-    row, bench = table_row(ROWS[FOREIGN]), tier3().RomBench()
+    row, bench = unregistered(left_on_the_rom_s(ROWS[FOREIGN])), tier3().RomBench()
     tier3().measure(row, bench)
     stored_by_the_other_process = aes_switch.uda_context_drop(aes_event.uda_of(SCREEN_MANAGER, aes_switch.BASE_IMAGE))
     with pytest.raises(AssertionError, match="OUR run never stored .* OUTSIDE ITS FOREIGN WINDOWS"):

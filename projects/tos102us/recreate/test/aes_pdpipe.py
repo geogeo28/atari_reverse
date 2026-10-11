@@ -275,12 +275,13 @@ def answered(name, arguments, machine):
     return said.returncode, said.stderr, None if said.answer is None else aes.signed(said.answer)
 
 
-def register(label, name, arguments, machine, *, through_line_f=False):
+def register(label, name, arguments, machine, *, through_line_f=False, staged_alone=False):
     """One row of `name` (`aes_event.register_row`): priced direct, verified through its call word. A row whose ROM
     run stores psetup's SR save word — WHICH ROWS REACH THE BRACKET IS EACH ROW'S OWN RUN'S TO SAY, never a routine's
     first row's for the rest — stages it at the value the run leaves, drops it at Tier 3 beside the mask word where
-    the run stores that too, and takes the companion that drops neither."""
-    return aes_event.register_row(label, name, arguments, dict(machine), through_line_f=through_line_f)
+    the run stores that too, and takes the companion that drops neither. `staged_alone`: staged, and NOT dropped
+    (`aes_event.register_row`: the row compared whole on every shore)."""
+    return aes_event.register_row(label, name, arguments, dict(machine), through_line_f=through_line_f, staged_alone=staged_alone)
 
 
 # ---- pipes, as the ROM's own ap_rdwr leaves them ----------------------------------------------------------------------

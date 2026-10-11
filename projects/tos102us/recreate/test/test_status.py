@@ -644,15 +644,19 @@ def test_a_wrong_list_of_the_rows_that_switch_is_refused_each_way():
 #   * the two counts' paragraph, beside the summary held above: `(N on the unrounded cycles)`, `the HIGHER in N`,
 #     `N are over 1.00`;
 #   * `THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word `$8996` dropped by name in M of the rows
-#     that switch` — the table's rows with a window printed under them, the registry's rows whose drops name the word.
+#     that switch; A TURN OF OUR SCREEN MANAGER priced under K of its rows` — the table's rows with a window of the
+#     ROM's process printed under them, the registry's rows whose drops name the word, and (FLIP 4) the table's rows
+#     with a turn of our ctlmgr priced on a line of its own under them.
 _THROUGH_INTERRUPTS_RE = re.compile(r"THROUGH INTERRUPTS \((?P<rows>\d+), (?P<lo>\d\.\d\d)–(?P<hi>\d\.\d\d) — "
                                     r"(?P<slices>\d+) of them SLICES of (?P<sessions>\d+) sessions")
 _SLICES_IN_A_CASES_CELL_RE = re.compile(r"^\s*(?P<rows>\d+) rows \(.*?(?P<slices>\d+)(?: of them)? SLICES of (?P<sessions>\d+) session")
 _UNROUNDED_RE = re.compile(r"\((?P<apart>\d+) on the unrounded cycles\), the caller's own is the HIGHER in (?P<higher>\d+), "
                            r"and (?P<over>\d+) are over 1\.00")
 _THE_TABLE_TODAY_RE = re.compile(r"THE TABLE TODAY: a FOREIGN WINDOW in (?P<windows>\d+) of its rows; the save word `\$8996` "
-                                 r"dropped by name in (?P<saved>\d+) of the rows that switch")
+                                 r"dropped by name in (?P<saved>\d+) of the rows that switch; A TURN OF OUR SCREEN MANAGER "
+                                 r"priced under (?P<turns>\d+) of its rows")
 _A_WINDOW_UNDER_A_ROW_RE = re.compile(r"^\s+\d+ foreign window\(s\):", re.M)
+_A_TURN_UNDER_A_ROW_RE = re.compile(r"^\s+screen manager's turn: ours \d+ / ROM \d+ = \d\.\d\d", re.M)
 _OWN_CYCLES_RE = re.compile(r"own (?P<ours>\d+) cycles against the ROM's (?P<the_rom_s>\d+)")
 
 
@@ -746,18 +750,22 @@ def test_the_two_counts_paragraph_counts_what_the_table_holds():
 
 def test_the_table_today_sentence_counts_the_windows_and_the_save_word_s_drops():
     """`THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word `$8996` dropped by name in M of the rows
-    that switch`: the table's rows with a window printed under them, and the registered rows that switch whose
-    Tier 3 drops name the mask bracket's save word."""
+    that switch; A TURN OF OUR SCREEN MANAGER priced under K of its rows`: the table's rows with a window of the
+    ROM's process printed under them, the registered rows that switch whose Tier 3 drops name the mask bracket's save
+    word, and the table's rows with a turn of our ctlmgr priced under them (one line a turn, one turn a row today)."""
     import aes
     import aes_event
     import test_boot_snapshot  # noqa: F401  (every battery registered)
 
     said = _THE_TABLE_TODAY_RE.search(" ".join(_status().split()))       # the sentence, whatever line it wraps at
-    assert said, "STATUS.md no longer has its `THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word …` sentence"
-    windows = len(_A_WINDOW_UNDER_A_ROW_RE.findall(BENCH_TABLE.read_text()))
+    assert said, ("STATUS.md no longer has its `THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word …; A TURN OF "
+                  "OUR SCREEN MANAGER priced under K of its rows` sentence")
+    table = BENCH_TABLE.read_text()
+    windows, turns = len(_A_WINDOW_UNDER_A_ROW_RE.findall(table)), len(_A_TURN_UNDER_A_ROW_RE.findall(table))
     saved = sum(any(lo <= aes.AES_SR_SPL < hi for lo, hi, _why in held.drops) for held in aes_event.SWITCHING_ROWS.values())
-    assert (int(said["windows"]), int(said["saved"])) == (windows, saved), (
-        f"STATUS.md says {said[0]!r}; the table has a window under {windows} rows and {saved} rows that switch drop the word")
+    assert (int(said["windows"]), int(said["saved"]), int(said["turns"])) == (windows, saved, turns), (
+        f"STATUS.md says {said[0]!r}; the table has a window under {windows} rows, {saved} rows that switch drop the word "
+        f"and a turn of our screen manager is priced under {turns} rows")
 
 
 # ---- ...AND THE SECTION'S PROSE COUNTS OF ev_multi's ROWS -----------------------------------------------------------------

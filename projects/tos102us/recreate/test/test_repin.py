@@ -90,3 +90,59 @@ def test_a_price_whose_calls_or_windows_moved_is_for_a_hand():
     record = _priced(A_ROW, [[4608, 7262], [4174, 6512], 2, [0, 0, 0]], [[4608, 7262], [4174, 6512], 3, [0, 0, 0]])
     outcome = repin.repinned([record], {A_FILE: THE_FILE_S_TEXT})
     assert outcome.by_hand == [record] and not outcome.rewritten and not outcome.refused
+
+
+# ---- THE SCREEN MANAGER'S TURNS: one data file, a line a row's blob (`test/aes_turns_pinned.py`; FLIP 4) ---------------------
+THE_TURNS_TEXT = '''"""A docstring the tool leaves alone."""
+PINNED = {
+    "aes_a_routine, a wait, blocked and woken": {
+        "bench": ((198044, 278034, 1376),),
+        "bench_shipped": ((175400, 278034, 12148),),
+    },
+}
+'''
+
+
+def _turn(row, blob, held, measured):
+    return {"kind": repin.TURN, "who": [row, blob], "old": held, "new": measured, "file": A_FILE.name}
+
+
+def test_a_turn_s_record_rewrites_its_row_s_line_for_its_blob_and_adds_a_row_s():
+    """A TURN'S RECORD IS ITS ROW'S LINE FOR ITS BLOB — written from the run: OUR member and our thunks' moved, a row
+    the file did not hold added (a quote in its name spelt) — and every other line, and everything outside the
+    table, as it was; no record of that kind is a pair's move or a hand's."""
+    quoted = 'aes_a_routine, the screen manager\'s "menu"'
+    records = [_turn(A_ROW, "bench_shipped", [[175400, 278034, 12148]], [[175000, 278034, 12000]]),
+               _turn(quoted, "bench", [], [[10, 20, 0], [30, 40, 2]])]
+    text, written, refused = repin.turns_repinned(records, THE_TURNS_TEXT)
+    assert (written, refused) == (2, []) and text.startswith('"""A docstring the tool leaves alone."""\nPINNED = {\n') and text.endswith("}\n")
+    held = {}
+    exec(text, held)                                    # the file is Python: a table
+    assert held["PINNED"] == {A_ROW: {"bench": ((198044, 278034, 1376),), "bench_shipped": ((175000, 278034, 12000),)},
+                              quoted: {"bench": ((10, 20, 0), (30, 40, 2))}}
+    assert repin.turns_repinned([], text) == (text, 0, []), "written twice, the file is the file"
+    assert repin.moves_of(records) == ([], [])
+
+
+def test_a_turn_whose_rom_side_count_moved_is_refused_and_its_line_left():
+    """...AND THE ROM'S MEMBER OF A TURN IS THE ROM'S RUN'S: a record in which it moved — or in which the run makes
+    another number of turns than the line holds — is refused by the row's name, its line left as it was."""
+    for measured in ([[175400, 278040, 12148]], [[175400, 278034, 12148], [1, 2, 0]], []):
+        text, written, refused = repin.turns_repinned([_turn(A_ROW, "bench_shipped", [[175400, 278034, 12148]], measured)], THE_TURNS_TEXT)
+        assert (text, written) == (THE_TURNS_TEXT, 0) and "THE ROM'S OWN COUNT MOVED" in refused[0] and A_ROW in refused[0]
+
+
+def test_a_turn_s_record_is_held_to_what_the_file_holds_not_to_what_it_says_was_held():
+    """A RECORD MADE AGAINST ANOTHER FILE WRITES NOTHING (the review's three crafted cases, FLIP 4 pass 2): one whose
+    `old` is not the file's line — its ROM member "unmoved" between its own two halves, and another number than the
+    file's — is refused, the file's ROM member kept; one with no `old` over a row the file holds is refused whatever
+    it brings; one with an `old` for a row the file does not hold is refused too. And a record that changes nothing
+    is no line written."""
+    held = [[175400, 278034, 12148]]
+    for record, why in ((_turn(A_ROW, "bench_shipped", [[170000, 278036, 12148]], [[170001, 278036, 12148]]), "NOT MADE AGAINST THIS FILE"),
+                        (_turn(A_ROW, "bench_shipped", [], [[175400, 999999, 12148]]), "NOT MADE AGAINST THIS FILE"),
+                        (_turn("aes_a_routine, another row", "bench", [[1, 2, 3]], [[1, 2, 4]]), "the file holds no line for it"),
+                        (_turn(A_ROW, "bench_shipped", held, [[175400, 278036, 12148]]), "THE ROM'S OWN COUNT MOVED")):
+        text, written, refused = repin.turns_repinned([record], THE_TURNS_TEXT)
+        assert (text, written) == (THE_TURNS_TEXT, 0) and len(refused) == 1 and why in refused[0], refused
+    assert repin.turns_repinned([_turn(A_ROW, "bench_shipped", held, held)], THE_TURNS_TEXT) == (THE_TURNS_TEXT, 0, [])

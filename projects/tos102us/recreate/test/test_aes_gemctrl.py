@@ -39,7 +39,7 @@ from collections import namedtuple
 
 import pytest
 
-from harness import BASE_IMAGE, addrs, bench_tier3, emu, make_image
+from harness import BASE_IMAGE, addrs, emu, make_image
 
 import abi
 import aes
@@ -850,14 +850,16 @@ def test_every_machine_s_pokes_are_its_boot_s_own_ram_and_nothing_else():
         assert list(booted.pokes) == [0] and booted.pokes[0] is booted.boot.ram and len(booted.boot.ram) == gc.RAM_BYTES
 
 
-# ==== THE SCREEN MANAGER'S PROCESS ITSELF: ictlmgr AND ctlmgr (`src/aes/ctlmgr.c`; band 5 wave 2, PENDING) =================
-# PENDING: the twins are built and held here, and BOUND NOWHERE — every machine's screen manager is still the ROM's
-# ctlmgr (psetup's frame names $fe49d2), every row above is the ROM's ctlmgr calling a handler. What is held:
+# ==== THE SCREEN MANAGER'S PROCESS ITSELF: ictlmgr AND ctlmgr (`src/aes/ctlmgr.c`; band 5 wave 2, BOUND AT FLIP 4) ========
+# Both are verified rows since FLIP 4 (ictlmgr's below; ctlmgr's own rows — the loop whole, on a machine whose screen
+# manager is ours — are `test_aes_ctlmgr.py`). THE MACHINES OF THIS BATTERY ARE THE ROM-BOOTED ONES: their screen
+# manager is the ROM's ctlmgr (psetup's frame names $fe49d2) and every row above is the ROM's ctlmgr calling a
+# handler. What is held HERE, at Tier 1 and on the blobs' listings:
 #   ictlmgr   at its own arrival in the ROM's boot, Tier 1 (the two code longwords the ROM's own address: the host's);
 #   ctlmgr    ONCE: its first entry in the ROM's boot, run to the loop's top; A TURN: `aes_gemctrl`'s (both shores from
 #             one arrival at the loop's top to the next), a case per kind of wake;
 #   the entry on both blobs: its frame, and the order of the once-only part's two stores.
-# The turns on a blob need a machine whose screen manager is OURS (the takeover, `aes_boot`): the flip's (slice D).
+# The turns on a blob run on a machine whose screen manager is OURS (the takeover, `aes_boot`): `test_aes_ctlmgr.py`.
 import aes_boot                                                             # noqa: E402
 import aes_pdpipe as pp                                                     # noqa: E402
 import isr                                                                  # noqa: E402
@@ -903,6 +905,34 @@ def _ictlmgr_arrived(accessories):
     assert boot.registers["pc"] == addrs.AES_ROM_ICTLMGR and boot.registers["sr"] & aes_boot.SR_SUPERVISOR
     at = boot.registers["isp"] + aes.LONG_BYTES
     return struct.unpack(">h", boot.ram[at:at + aes.WORD_BYTES]), gc._as_pokes(boot.ram, "ictlmgr's arrival")
+
+
+# ...AND ITS ROW (FLIP 4): the boot's arrival at ictlmgr WITH TWO WORDS STAGED OVER IT, priced. THE MACHINE IS NOT THE
+# BOOT'S UNPOKED: the registrar stages the two words by nature the ROM's run stores AT THE VALUE IT LEAVES — psetup's
+# SR save word (`$8998`: `0000 -> 2700`) and the Line-F mask word (`$cc44`: `2000 -> 0080`) — and, so staged,
+# NOTHING IS DROPPED (`staged_alone`: both builds leave both words as staged; the row is compared whole). WHAT THE
+# ROW CANNOT SEE: either clear — gl_dacnt and gl_dafirst are already zero where the boot calls it; they are held by
+# the stagings below at Tier 1 (`test_ictlmgr_at_its_own_arrival_in_the_boot_is_the_rom_s`, the counts staged stale)
+# and by the write ledger on both blobs (`test_ictlmgr_on_a_blob_...`). Its two code longwords — the PD's p_ldaddr and the PC of the
+# frame psetup lays at the top of the new process's stack — hold `aes_rom_ctlmgr`'s address on a blob where the ROM's
+# run stores its ctlmgr's, and are MAPPED through the registry's entry (`aes_event.SCREEN_MANAGER_ENTRY`, among
+# `CODE_RELOCATIONS` since the flip) and compared exactly: nothing is dropped for them. THAT IS WHAT MAKES THE TAKEOVER
+# NO POKE (ruling W2-R6): the mapping `aes_boot` applies at the screen manager's first entry is what our own ictlmgr +
+# pstart store, held by this row on both blobs (`test_ictlmgr_on_a_blob_...`, below).
+ICTLMGR_ROW = "the boot's own call: the screen manager's process made, to begin at ctlmgr"
+pp.register(ICTLMGR_ROW, gc.ICTLMGR, *_ictlmgr_arrived(False), staged_alone=True)
+
+
+def test_ictlmgr_s_row_is_the_boot_s_arrival_with_two_words_staged_and_nothing_dropped():
+    """WHAT THE ROW'S MACHINE IS, HELD (FLIP 4's review): the boot stopped at its call of ictlmgr, AND THREE BYTES
+    MORE — psetup's SR save word and the Line-F mask word, staged at the value the ROM's run leaves — and the row
+    drops NOTHING: both builds leave both words as staged, so it is compared whole on every shore."""
+    name = f"aes_ictlmgr, {ICTLMGR_ROW}"
+    _name, _entry, _regs, pokes, *_seeds = case.registered_case(name)
+    staged, arrived = make_image(pokes), make_image(aes.staged(gc.ICTLMGR, *_ictlmgr_arrived(False)))
+    differing = sorted(at for at in range(gc.RAM_BYTES) if staged[at] != arrived[at])
+    assert {at & ~1 for at in differing} == {PSETUP_S_SR_WORD[0], aes.AES_LINEF_MASK_WORD} and len(differing) == 3
+    assert name not in case.tier3_dropped() and name not in case.tier3_undropped()
 
 
 @pytest.mark.parametrize("accessories", CAPTURES.values(), ids=CAPTURES)
@@ -1036,6 +1066,11 @@ TURNS = {
     # off, the bar's finds no menu, and the count goes down by two.
     **{f"ARGUMENT CLASS, the count at {before}; no menu bar, a button and the bar: {after}":
        TurnCase(_staged_at(BOTH_WITH_NO_MENU, before), None, (before, after)) for before, after in ((4, 2), (3, 1), (2, 1), (1, 1))},
+    # ...and THE BAR'S ARM ALONE where nothing else counts (the bar hidden, the mouse on its place: hctl_rect finds no
+    # menu) — its step at 2 and 3, and NONE at 0 and at -1 (the same signed `> 1` as the button's arm: FLIP 4's review
+    # found the rect arm held at 2 alone).
+    **{f"ARGUMENT CLASS, the count at {before}; no menu bar, the bar's arm alone: {after}":
+       TurnCase(_staged_at(SPINS[2], before), None, (before, after)) for before, after in ((0, 0), (-1, -1), (2, 1), (3, 2))},
     # (Under the menu the count is no witness: the menu's own waits count it down to 1 as they are removed —
     # evremove's step, $fe5150 — whatever ctlmgr's steps left. The image holds it all the same.)
     "ARGUMENT CLASS, the count at 4; a button and the bar: counted down by the menu's waits too": TurnCase(_staged_at(BOTH_IN_ONE_WAKE, 4), None, (4, 1)),
@@ -1425,8 +1460,9 @@ def test_the_entry_is_entered_by_no_call_reads_nothing_above_its_stack_and_never
     assert max(reach) < frame_of_the_entry(elf()) + deepest_argument_bytes
 
 
-# ---- THE TWINS ON BOTH BLOBS, as far as a pending build can be run there --------------------------------------------------------
-# No machine's screen manager is ours yet (the takeover is the flip's), so no TURN runs on a blob here. What does:
+# ---- THE TWINS ON BOTH BLOBS, what this battery runs of them there ---------------------------------------------------------------
+# What of the twins runs on a blob IN THIS BATTERY (the loop itself, whole, from the real entry on the real stack of a
+# machine whose screen manager is ours, is ctlmgr's own rows: `test_aes_ctlmgr.py`, FLIP 4):
 #   ictlmgr     whole, over the boot's own arrival — the two code longwords it stores OUR ENTRY's address, mapped back
 #               to the ROM's through the registry's entry (`aes_event.SCREEN_MANAGER_ENTRY`: the mapping the takeover
 #               applies) and nothing dropped there;
@@ -1449,8 +1485,9 @@ def test_ictlmgr_on_a_blob_stores_our_entry_where_the_rom_stores_its_ctlmgr_and_
     """THE SECOND DIFFERENTIAL OF ictlmgr, on each blob, at the boot's own arrival: our build's run leaves the ROM's
     machine — outside the blob, the run's stack, the Line-F mask word and psetup's SR save word (each build's own
     condition codes) — ONCE THE TWO CODE LONGWORDS ARE MAPPED: each holds `aes_rom_ctlmgr`'s address in THIS blob,
-    where the ROM's run stores $fe49d2, and they are the registry's two slots and no other longword. (Measured:
-    2,598 cycles on the bench blob and 2,560 on the shipped one against the ROM's 3,614 — 0.71 / 0.70.)"""
+    where the ROM's run stores $fe49d2, and they are the registry's two slots and no other longword. (ITS PRICE is
+    its row's since FLIP 4 — `ICTLMGR_ROW`, above: the registry maps the two slots for every run, and the table
+    compares them exactly.)"""
     blob, (arguments, pokes) = bench(), _ictlmgr_arrived(accessories)
     the_rom_s, the_rom_s_writes, registers = aes_event._rom_run(make_image(aes.staged(gc.ICTLMGR, arguments, pokes)), addrs.AES_ROM_ICTLMGR)
     ours = blob._call(make_image(pokes), "aes_ictlmgr", (0, *arguments))
@@ -1468,10 +1505,6 @@ def test_ictlmgr_on_a_blob_stores_our_entry_where_the_rom_stores_its_ctlmgr_and_
     assert not truncated
     stored_by = [frozenset(at for at in writes if at < gc.RAM_BYTES and at not in left_out) for writes in (our_writes, the_rom_s_writes)]
     assert stored_by[0] == stored_by[1], f"ours alone stores at {sorted(map(hex, stored_by[0] - stored_by[1]))}, the ROM's alone at {sorted(map(hex, stored_by[1] - stored_by[0]))}"
-    # ...AND ITS PRICE, held here while no table line can be (the registry maps no row's slots through that entry
-    # until the flip): our cycles, net of the bench's entry, against the ROM routine's own — under Tier 3's bar.
-    _entry_insns, entry_cycles = blob.overhead
-    assert (ours.cycles - entry_cycles) / registers["cycles"] <= bench_tier3().TIER3_FUNCTION_BAR
 
 
 def _run_to_its_first_dispatch(memory, entry, dsptch, registers, top):

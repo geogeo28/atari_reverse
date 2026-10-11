@@ -52,6 +52,7 @@ import aes_evmulti as evm
 import aes_pdpipe
 import aes_switch
 import aes_switching as switching
+import aes_takeover
 import case
 import opcodes
 from aes_evmulti import BUTTON, BUTTONS, CLICKS, EV_MULTI, EVERY_EVENT, KEY, KEYBD, M1, M2, MESAG, STALE, TIMER, Y, call
@@ -1005,6 +1006,10 @@ KINDS_OF_DROP = {       # what a woken row drops at Tier 3, by the events its ca
     # the message wait's EVB, freed as it is — served or cancelled
     "a QPB's address left in a freed EVB": lambda flags: bool(flags & MESAG),
 }
+# ...and, on a wake whose run ENTERS THE SCREEN MANAGER (the menu chain's writer, a key at a poll while it stands
+# woken: `ITS_TURNS`), the screen manager's two spans — the row runs with the screen manager OURS (`aes_takeover`).
+THE_SCREEN_MANAGER_S = {aes_takeover.CONTEXT_WHY: "the screen manager's saved context (ours)",
+                        aes_takeover.STACK_WHY: "the screen manager's stack (ours)"}
 
 
 def _kind_of(drop, uda):
@@ -1014,6 +1019,8 @@ def _kind_of(drop, uda):
                "spl7_save's SR save word": aes_event.sr_drops(aes.AES_SR_SPL)}
     if why == aes_event.QPB_ADDRESS_WHY:
         return "a QPB's address left in a freed EVB"
+    if why in THE_SCREEN_MANAGER_S:
+        return THE_SCREEN_MANAGER_S[why]
     kind, = (kind for kind, ((low, high, _why),) in windows.items() if low <= lo and hi <= high)
     return kind
 
@@ -1028,7 +1035,9 @@ def test_what_a_woken_row_drops_is_what_differs_by_nature_and_nothing_else(name)
     row = WOKEN_ROWS[name]
     made, flags = switching.settled(row), row.arguments[0]
     uda = aes_event.uda_of(SHELL, make_image(made.pokes))
-    assert sorted({_kind_of(drop, uda) for drop in made.drops}) == sorted(kind for kind, asked in KINDS_OF_DROP.items() if asked(flags))
+    its_own = [kind for kind in THE_SCREEN_MANAGER_S.values() if ITS_TURNS.get(name, 0)]
+    assert sorted({_kind_of(drop, uda) for drop in made.drops}) == sorted(
+        [kind for kind, asked in KINDS_OF_DROP.items() if asked(flags)] + its_own)
     assert list(made.qpbs.values()) == [(evm.SHELL_PID, evm.MESSAGE_BYTES, MESSAGE_AT)] * bool(flags & MESAG)
     assert all(hi - lo == LONG_BYTES for lo, hi, why in made.drops if why == aes_event.QPB_ADDRESS_WHY)
 
@@ -1466,37 +1475,37 @@ WHOLE_RUN = {
     "a key wakes, the sent mark set: a key and a message":
         {BENCH: (48772, 40738), SHIPPED: (48772, 39990)},
     "a writer wakes: a message, none in the pipe":
-        {BENCH: (1187094, 1180216), SHIPPED: (1187094, 1180070)},
+        {BENCH: (1187094, 1101602), SHIPPED: (1187094, 1089584)},
     "a writer wakes: a message and a timer not run out":
-        {BENCH: (1191912, 1184072), SHIPPED: (1191912, 1183580)},
+        {BENCH: (1191912, 1105458), SHIPPED: (1191912, 1093094)},
     "a writer and the press's ticks in one wake: a message and a timer":
-        {BENCH: (1183830, 1175892), SHIPPED: (1183830, 1175400)},
+        {BENCH: (1183830, 1097040), SHIPPED: (1183830, 1084562)},
     "a writer wakes: a key and a message":
-        {BENCH: (1191336, 1183488), SHIPPED: (1191336, 1182784)},
+        {BENCH: (1191336, 1104874), SHIPPED: (1191336, 1092298)},
     "a writer wakes: every event, the timer not run out":
-        {BENCH: (1215378, 1202452), SHIPPED: (1215378, 1199260)},
+        {BENCH: (1215378, 1123838), SHIPPED: (1215378, 1108774)},
     "a writer and the press's ticks in one wake: every event":
-        {BENCH: (1207296, 1194272), SHIPPED: (1207296, 1191080)},
+        {BENCH: (1207296, 1115420), SHIPPED: (1207296, 1100242)},
     "a writer and the press's ticks: eight bits held, a message and a timer":
-        {BENCH: (1185462, 1177852), SHIPPED: (1185462, 1177360)},
+        {BENCH: (1185462, 1099000), SHIPPED: (1185462, 1086522)},
     "a writer, a key and the press's ticks in one wake: a key, a message and a timer":
-        {BENCH: (1193444, 1184454), SHIPPED: (1193444, 1183404)},
+        {BENCH: (1193444, 1103732), SHIPPED: (1193444, 1090700)},
     "a writer, a key and the press's ticks in one wake: every event":
-        {BENCH: (1212598, 1199478), SHIPPED: (1212598, 1196286)},
+        {BENCH: (1212598, 1118756), SHIPPED: (1212598, 1103582)},
     "a writer and the mouse into the rectangle: a rectangle and a message":
-        {BENCH: (1200190, 1192180), SHIPPED: (1200190, 1191242)},
+        {BENCH: (1200190, 1111710), SHIPPED: (1200190, 1098990)},
     "a writer, a key, the mouse, the press's ticks: every event":
-        {BENCH: (1219584, 1206464), SHIPPED: (1219584, 1203272)},
+        {BENCH: (1219584, 1123868), SHIPPED: (1219584, 1108784)},
     "a writer, the desk waiting for the bar's rectangle too":
-        {BENCH: (1193446, 1185408), SHIPPED: (1193446, 1184470)},
+        {BENCH: (1193446, 1106794), SHIPPED: (1193446, 1093984)},
     "a writer, then the mouse away: both rectangles and a message":
-        {BENCH: (1210434, 1201220), SHIPPED: (1210434, 1199490)},
+        {BENCH: (1210434, 1120596), SHIPPED: (1210434, 1107126)},
     evm.A_KEY_BEFORE_THE_WRITER_WRITES:
-        {BENCH: (1005954, 998038), SHIPPED: (1005954, 997334)},
+        {BENCH: (1005954, 926788), SHIPPED: (1005954, 917756)},
     evm.A_WRITER_AND_A_KEY:
-        {BENCH: (1194492, 1186554), SHIPPED: (1194492, 1185850)},
+        {BENCH: (1194492, 1106716), SHIPPED: (1194492, 1094144)},
     evm.A_KEY_WHILE_THE_MANAGER_STANDS_WOKEN:
-        {BENCH: (855918, 845170), SHIPPED: (855918, 844590)},
+        {BENCH: (855918, 809202), SHIPPED: (855918, 802418)},
     evm.A_KEY_AND_THE_MOUSE_ONTO_THE_BAR:
         {BENCH: (51268, 42940), SHIPPED: (51268, 42798)},
 }

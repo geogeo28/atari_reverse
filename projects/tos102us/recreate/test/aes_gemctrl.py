@@ -205,7 +205,7 @@ FREE_UNTIL = case.STACK_BAND[-1] + 1        # ...up to the top of the run's stac
 BOOT_ARRIVAL = Arrival(THE_DESK, None, HCTL_BUTTON)     # the boot's own (the module's docstring): no chain at all
 
 
-class _ToAnArrival:
+class ToAnArrival:
     """The watch of one run of the ROM's dispatcher from an idle machine (`aes_event.interrupting`'s): stopped at
     idle's poll, the instruction after it and disp's call of switchto — the polls and the idles counted as
     `aes_switch.scheduled` counts them, each delivery due at its own — and at the handlers' entries: the run ENDS
@@ -215,17 +215,22 @@ class _ToAnArrival:
         self._memory, self.at_idle, self.at_polls = memory, dict(at_idle), dict(at_polls or {})
         self._entry, self._left, self._due, self._back = entry, which, False, None
         self.first = aes_switch.EVERY_STOP | {entry}
-        self.polls, self.idles, self.arrived = 0, 0, None
+        self.polls, self.idles, self.arrived, self.entered = 0, 0, None, []
+
+    def _taking(self, key, interrupt):
+        """What the run is handed for the delivery due at `key` (a holder that keeps what each delivery found and
+        wrote hands a keeping one: `aes_ctlmgr`)."""
+        return key, interrupt
 
     def due(self, _watch, pc):
         if pc != addrs.AES_ROM_IDLE_LOOP:
             return None
         if not aes_switch.waits_for_an_interrupt(self._memory):
             interrupt = self.at_polls.pop(self.polls, None)
-            return ((aes_switch.AT_A_POLL, self.polls), interrupt) if interrupt is not None else None
+            return self._taking((aes_switch.AT_A_POLL, self.polls), interrupt) if interrupt is not None else None
         interrupt = self.at_idle.pop(self.idles, None)
         self._due = interrupt is not None
-        return ((aes_switch.AT_AN_IDLE, self.idles), interrupt) if self._due else None
+        return self._taking((aes_switch.AT_AN_IDLE, self.idles), interrupt) if self._due else None
 
     def stopped(self, pc, sp, memory):
         if pc == self._entry:
@@ -244,7 +249,7 @@ class _ToAnArrival:
         if pc == self._back:
             self._back = None
         else:
-            aes_switch.dispatcher_stop(pc, memory, lambda _pd: None, self._an_idle, delivered=self._due, polls=self._a_poll)
+            aes_switch.dispatcher_stop(pc, memory, self.entered.append, self._an_idle, delivered=self._due, polls=self._a_poll)
         return (self.first - {pc}) | ({self._back} if self._back else frozenset())
 
     def _a_poll(self):
@@ -264,7 +269,7 @@ def _arrived_through(pokes, chain, at_polls, routine, which, budget=None):
     `addrs.<routine>`: `(the arguments, the megabyte of RAM there)`. REFUSED BY NAME: a chain that idles with
     nothing left before the arrival, and one that arrives with a delivery still undelivered."""
     memory = make_image(pokes)
-    watch = _ToAnArrival(memory, chain, at_polls, getattr(addrs, routine), which)
+    watch = ToAnArrival(memory, chain, at_polls, getattr(addrs, routine), which)
     try:
         aes_event.interrupting(memory, addrs.AES_ROM_DISP_LOOP, watch, watch.due, budget)
     except aes_event.Ended:
@@ -292,6 +297,11 @@ def _as_pokes(ram, where):
         f"{where}: the machine holds something in the harness's free window, from {in_the_window[0]:#x} — the "
         f"blob, the staging band and the staged disk would lie over it")
     return {0: bytes(ram[:FREE_FROM]), FREE_UNTIL: bytes(ram[FREE_UNTIL:])}
+
+
+def at_its_idle(machine_key):
+    """The booted machine `machine_key`, standing at its idle, as pokes (`_as_pokes`)."""
+    return _as_pokes(machine(machine_key).ram, f"the machine {machine_key!r}, at its idle")
 
 
 @functools.cache
@@ -395,14 +405,14 @@ class TurnEnded(aes_event.Ended):
 
 
 class _ThroughATurn:
-    """The watch of one run that ARRIVES at the loop's top and then MAKES A TURN (above): `_ToAnArrival` until the
+    """The watch of one run that ARRIVES at the loop's top and then MAKES A TURN (above): `ToAnArrival` until the
     arrival, where the machine is kept and the reading handed to `aes_switch._Idling` over a door watch — the
     loop's top a stop beside theirs, where the run ENDS (`TurnEnded`). What the turn takes is kept as the run takes
     it (`delivered`): a run a watch ends hands back no ledger of its own."""
 
     def __init__(self, memory, turn_of, chain, chain_polls, which, staged=None):
         self._memory, self._turn_of, self._staged = memory, turn_of, staged or {}
-        self._arriving, self._turning = _ToAnArrival(memory, chain, chain_polls, THE_LOOP_S_TOP, which), None
+        self._arriving, self._turning = ToAnArrival(memory, chain, chain_polls, THE_LOOP_S_TOP, which), None
         self.first = self._arriving.first
         self.started, self.delivered, self.calls, self.handlers, self._armed = None, {}, [], [], frozenset()
 

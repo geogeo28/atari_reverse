@@ -76,11 +76,11 @@
 /* The four words of a message about a window that is NOT the top one: x, y, w and h are locals the ROM never set on
  * that path ($fe489e..$fe48aa push -24..-18(a6)) — what the screen manager's stack holds there. A DECLARED DIVERGENCE
  * (`STATUS.md`): on the machine those four words are NOT arbitrary — at every real arrival measured they are the same
- * residue of ctlmgr's preceding ev_multi at that depth, the halves of a ROM text address and of a RAM address (`$00fe
- * $a85a $0000 $0002` on the low-resolution machine with two accessories) — and an application that reads words 4..7
+ * residue of hctl_button's wm_find (traced: ob_find's return address's high half, the frame pointer its `link` saved,
+ * the word under it — `$00fe $a85a $0000 $0002` on the low-resolution machine with two accessories) — and an application that reads words 4..7
  * of WM_TOPPED sees them. A C frame cannot hold another build's code addresses by nature, and none is faked: the C
- * hands this word four times. The differential is green there because the ROM's routine is entered on the harness's
- * zeroed stack; `test_aes_gemctrl.py` holds what the real arrival carries. */
+ * hands this word four times. At an arrival of the ROM's ctlmgr the ROM's routine is entered on the harness's zeroed
+ * stack and both send zeroes; on the real stack (`test_aes_ctlmgr.py`) the four words are dropped by name. */
 #define HCTL_STALE_WORD       0
 
 /* hctl_window's frame locals whose ADDRESS it hands on, as two host slots that are never live together with a wait

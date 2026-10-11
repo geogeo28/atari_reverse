@@ -4662,6 +4662,11 @@ A_QPB_S_ADDRESS, SAVPTR_MOVED_BY_THE_RUN = "a QPB's address left in a freed EVB"
 THE_ROWS_THAT_SWITCH = "the rows that switch"
 THE_CALLER_S_CONTEXT, THE_DISPATCHER_S_STACK = "the caller's saved context", "the dispatcher's stack"
 THE_BRACKET_S_SAVE_WORD = "spl7_save's SR save word"
+# ...and, SINCE FLIP 4 (ctlmgr bound in C), THE SCREEN MANAGER'S TWO SPANS on every row whose run ENTERS IT as another
+# process than its own — run, on our shore, with the screen manager OURS (`aes_takeover`): its saved context and its
+# stack, each build's own (the ROM's ctlmgr's frames on its shore, our ctlmgr's on ours), dropped where the ROM's run
+# changes them.
+THE_SCREEN_MANAGER_S_CONTEXT, THE_SCREEN_MANAGER_S_STACK = "the screen manager's saved context (ours)", "the screen manager's stack (ours)"
 # ...and THE X FLAG of the dispatcher's own save word, on the rows that DECLARE it (`aes_switching.THE_X_FLAG_ALONE`:
 # the caller's last arithmetic's — each build's own; one bit excused, the byte compared): the two rows whose yield
 # follows GCC's `seq` / `neg`, and no other.
@@ -4686,6 +4691,12 @@ ROWS_THAT_SWITCH = {
     # dragged, an arrow repeated, the menu worked, the button waited up — the screen manager the row's process
     "aes_hctl_button": 1, "aes_hctl_window": 14, "aes_ct_msgup": 2, "aes_hctl_rect": 4,
 }
+# ...and those of them WHOSE RUN ENTERS THE SCREEN MANAGER as another process (the menu chain's writer, the menu that
+# holds the lock, the bar's wake between two of the desk's waits): 32 names — 31 rows with a turn of our screen
+# manager inside and the second slice of the file selector's session behind the menu, which shares its session's
+# machine and drops.
+WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tplay": 1, "aes_dispatch": 3, "aes_ev_block": 6,
+                                "aes_ev_mesag": 1, "aes_ev_multi": 16, "aes_fs_input": 2, "aes_marshal": 1}
 # ...and A ROW'S OWN by-nature bytes (`aes_switching.SwitchingRow.also_dropped`): ct_mouse's re-show under a menu
 # worked with the mouse shown — contrl[3] the ROM's stack word, the C's named one (`ctrl.c`'s MISSING ARGUMENT) — in
 # the three rows of hctl_rect whose run makes no VDI call after the menu.
@@ -4724,7 +4735,10 @@ BY_NATURE_CENSUS = {
                                                      "aes_ev_timer": 4, "aes_dispatch": 7},
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
                                              "aes_dispatch": 4, "aes_marshal": 1},
-                           THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3}},
+                           THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
+                           # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
+                           THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
+                           THE_SCREEN_MANAGER_S_STACK: WITH_THE_SCREEN_MANAGER_OURS},
 }
 
 
@@ -4790,6 +4804,11 @@ STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = {
     # ...and the same playback through the opcode switch's arm (`test_aes_gemsuper.py`)
     ("aes_dispatch, opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record", THE_BRACKET_S_SAVE_WORD),
     ("aes_dispatch, appl_tplay: at half speed, a top byte on its records", THE_BRACKET_S_SAVE_WORD),
+    # ...AND THE SCREEN MANAGER'S OWN SAVED CONTEXT (FLIP 4) under the playback onto the bar and off it: its machine's
+    # screen manager stands in mn_do's wait, is entered once and parks AGAIN IN THAT VERY WAIT — savestate stores the
+    # context it was entered with, register for register. Stored (so dropped: ours holds our frames' addresses there).
+    ("aes_ap_tplay, the mouse played onto the menu bar and off it: the screen manager entered from a yield",
+     THE_SCREEN_MANAGER_S_CONTEXT),
 }
 
 
@@ -4805,6 +4824,7 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
     stack-band address when that run ends — and every such longword the run CHANGED is dropped."""
     import aes_switch
     import aes_switching
+    import aes_takeover
     import test_boot_snapshot  # noqa: F401  (every battery registered)
     registered, census = case.tier3_dropped(), {}
     assert aes_event.SWITCHING_ROWS, "the premise: the batteries register rows that switch"
@@ -4816,6 +4836,14 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
         kinds = {THE_CALLER_S_CONTEXT: aes_switch.uda_context_drop(uda), THE_DISPATCHER_S_STACK: aes_switch.DISPATCHER_STACK_DROP,
                  THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP,
                  THE_DECLARED_X_FLAG: aes_switching.THE_X_FLAG_ALONE}
+        # THE SCREEN MANAGER'S TWO SPANS (FLIP 4), named by exactly the rows whose ROM run ENTERS IT as another
+        # process than the row's own — read off that run, and but for a row that says why it stays on the ROM's.
+        enters_it = (held.switches.process != aes.SCREEN_MANAGER_PD and aes.SCREEN_MANAGER_PD in the_rom_s.entered
+                     and not row.the_rom_s_screen_manager)
+        assert aes_takeover.named_in(registered[name]) == enters_it, f"{name}: the screen manager's spans named, and its run {the_rom_s.entered}"
+        if enters_it:
+            context, stack = aes_takeover.windows_of(the_rom_s.memory)
+            kinds.update({THE_SCREEN_MANAGER_S_CONTEXT: (context,), THE_SCREEN_MANAGER_S_STACK: (stack,)})
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
         # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
         # kind, dropped only where the ROM's run changes it.
