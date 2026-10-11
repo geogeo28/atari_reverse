@@ -166,6 +166,12 @@ def _registers_now():
     return {name: _register(name) for name in REGISTER_NAMES}
 
 
+def registers_at_the_stop(names):
+    """The registers `names` of the CPU where a bench run stands stopped (a watch's `stopped`: the kit's loop hands a
+    watch the PC, A7 and the memory, and the oracle's CPU holds the rest): `{name: value}`."""
+    return {name: _register(name) for name in names}
+
+
 # ---- THE ROM ADDRESSES OF THE DEVICE MODEL ------------------------------------------------------------------------------
 # Held to the ROM's own bytes by `test_aes_boot.py` (the instruction at each, the constant it carries).
 GEM_ENTRY = addrs.AES_ROM_GEM_ENTRY

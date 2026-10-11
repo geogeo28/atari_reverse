@@ -4682,21 +4682,23 @@ ROWS_THAT_SWITCH = {
     "aes_ap_sendmsg": 1, "aes_fm_button": 1, "aes_fm_do": 2, "aes_gr_dragbox": 1, "aes_gr_rubbox": 1, "aes_gr_slidebox": 1,
     "aes_gr_stilldn": 1, "aes_gr_wait": 1, "aes_gr_watchbox": 2, "aes_mn_do": 3, "aes_wm_update": 1,
     "aes_fm_alert": 2, "aes_fs_input": 5,
-    "aes_ap_tplay": 8, "aes_ap_trecd": 6,
+    "aes_ap_tplay": 8, "aes_ap_trecd": 7,   # ...the seventh a recording across the screen manager's turn (wave 2's close)
     "aes_dispatch": 31, "aes_marshal": 3,   # the opcode switch's arms whose routine waits, each a wake above LIFTED
     # band 5's leaves that leave by the dispatcher: all_run's three (a yield, then the lock), and the two rows each of
     # the desk's rsrc_free binding and desk_free (GEMDOS frees the block, or refuses it)
     "aes_all_run": 3, "aes_desk_rsrc_free": 2, "aes_desk_free": 2,
-    # ...and the screen manager's handlers at the ROM's own arrivals (`test_aes_gemctrl.py`): a gadget watched or
-    # dragged, an arrow repeated, the menu worked, the button waited up — the screen manager the row's process
+    # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
+    # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
+    # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
+    # their Tier 3 rows are measured at each shore's own arrival and name classes there: `aes_ctlmgr.HANDLED`.)
     "aes_hctl_button": 1, "aes_hctl_window": 14, "aes_ct_msgup": 2, "aes_hctl_rect": 4,
 }
 # ...and those of them WHOSE RUN ENTERS THE SCREEN MANAGER as another process (the menu chain's writer, the menu that
-# holds the lock, the bar's wake between two of the desk's waits): 32 names — 31 rows with a turn of our screen
-# manager inside and the second slice of the file selector's session behind the menu, which shares its session's
-# machine and drops.
-WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tplay": 1, "aes_dispatch": 3, "aes_ev_block": 6,
-                                "aes_ev_mesag": 1, "aes_ev_multi": 16, "aes_fs_input": 2, "aes_marshal": 1}
+# holds the lock, the bar's wake between two of the desk's waits, a recording across its turn): 33 names — 32 rows
+# with a turn of our screen manager inside and the second slice of the file selector's session behind the menu, which
+# shares its session's machine and drops.
+WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tplay": 1, "aes_ap_trecd": 1, "aes_dispatch": 3,
+                                "aes_ev_block": 6, "aes_ev_mesag": 1, "aes_ev_multi": 16, "aes_fs_input": 2, "aes_marshal": 1}
 # ...and A ROW'S OWN by-nature bytes (`aes_switching.SwitchingRow.also_dropped`): ct_mouse's re-show under a menu
 # worked with the mouse shown — contrl[3] the ROM's stack word, the C's named one (`ctrl.c`'s MISSING ARGUMENT) — in
 # the three rows of hctl_rect whose run makes no VDI call after the menu.
@@ -4731,7 +4733,7 @@ BY_NATURE_CENSUS = {
                            # at two speeds, two recordings' sleep, evnt_timer and two evnt_multi with a timer;
                            # appl_read's read, evnt_mesag's and two evnt_multi that ask a message — one of them at the
                            # marshal too.)
-                           THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 6, "aes_ev_block": 1, "aes_ev_multi": 19,
+                           THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 7, "aes_ev_block": 1, "aes_ev_multi": 19,
                                                      "aes_ev_timer": 4, "aes_dispatch": 7},
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
                                              "aes_dispatch": 4, "aes_marshal": 1},

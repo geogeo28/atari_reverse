@@ -16,6 +16,8 @@ WHAT IS NOT A ROW HERE, each said: A KEY EATEN (no machine routes a key to the s
 Tier 1 — `test_aes_gemctrl.py`'s two key turns); THE SPIN WITH NO MENU BAR (the machine never idles again: no end to
 run to — Tier 1, its two turns); the multi-click count's argument classes (Tier 1, the same battery).
 """
+import pathlib
+import re
 import struct
 import types
 from collections import namedtuple
@@ -38,6 +40,7 @@ import transcription
 import test_aes_gemctrl as handlers
 
 tier3 = bench_tier3
+RECREATE = pathlib.Path(__file__).resolve().parents[1]
 onto, click, PRESS, RELEASE = gc.onto, gc.click, gc.PRESS, gc.RELEASE
 A, W, VIEW = gc.TWO_WINDOWS, gc.TWO_WAITERS, aes_event.THE_VIEW_TITLE_S_POINT
 SM, DESK, FIRST, SECOND = gc.THE_SCREEN_MANAGER, gc.THE_DESK_S_PROCESS, gc.FIRST_ACCESSORY, gc.SECOND_ACCESSORY
@@ -337,61 +340,198 @@ def test_the_image_at_a_stop_is_held_on_every_path_that_measures_a_run_that_swit
         measure()
 
 
-# ---- OUR ctlmgr ARRIVES: the handlers' own cases, met by our screen manager where the ROM's meets them ------------------------
-# Every case of the handlers' battery is AN ARRIVAL OF THE ROM'S OWN ctlmgr (`test_aes_gemctrl.py`: the returning
-# ones priced, the switching ones rows that switch, the rest Tier 1) and stays one: the differential starts at the
-# handler, on the harness's stack. WHAT THE FLIP OWES THEM is that OUR ctlmgr — and our handlers above the one
-# arrived at — bring the screen manager to that same call: the same chain, over the same boot with the screen
-# manager ours, ends at OUR core of the handler with THE SAME FRAME over THE SAME MACHINE.
+# ---- THE HANDLERS' OWN CASES, MEASURED WHERE EACH SHORE'S OWN ctlmgr ARRIVES AT ITS OWN HANDLER (slice E) ----------------------
+# Every case of the handlers' battery is AN ARRIVAL (`test_aes_gemctrl.py`). Its TIER 1 starts at the ROM's arrival, on
+# the host. Its TIER 3 is measured where a build really runs the handler (`tier3.at_its_arrival_on`): both shores from
+# the booted machine's idle — ours the same boot with the screen manager ours — through the case's own chain to the
+# handler's first instruction (the ROM's ctlmgr at the ROM's routine; OUR ctlmgr, and our handlers above the one
+# arrived at, at OUR core) and ON THROUGH THE HANDLER TO ITS RETURN, on the screen manager's real stack. The priced
+# cases are the table's rows so (`handlers.MEASURED_AT_ITS_ARRIVAL`), pinned on both blobs; the Tier 1-only cases are
+# held the same way, to the same rules, and pinned nowhere.
 # ...BUT ct_msgup's: IN OUR BUILD IT HAS NO ARRIVAL OF ITS OWN. GCC inlines it into its two callers (hctl_window, hctl_rect:
 # one translation unit) on both blobs — no instruction of either names its entry, which exists for its own rows — so
 # our screen manager never stands at "ct_msgup's first instruction" (held below: the day a blob calls it, its cases
-# join). What our ct_msgup does under our callers is in the arrivals of hctl_window and hctl_rect whose run goes on
-# through it, in ctlmgr's own rows, and in its own rows from the ROM's arrivals.
+# join). What our ct_msgup does under our callers is in the rows of hctl_window and hctl_rect whose run goes on
+# through it — measured here, at our arrivals — in ctlmgr's own rows, and in its own rows from the ROM's arrivals.
 INLINED_INTO_ITS_CALLERS = gc.CT_MSGUP
-EVERY_ARRIVAL = {f"{gc.name_of(routine)}, {label}": each.arrival
-                 for table in (handlers.RETURNING, handlers.SWITCHING, handlers.UNPRICED)
-                 for (routine, label), each in table.items() if each.arrival.chain is not None}
-ARRIVALS = {name: arrival for name, arrival in EVERY_ARRIVAL.items() if arrival.routine != INLINED_INTO_ITS_CALLERS}
+EVERY_CASE = {**handlers.RETURNING, **handlers.SWITCHING, **handlers.UNPRICED}
+EVERY_ARRIVAL = {handlers.registered_name(key): key for key, each in EVERY_CASE.items() if each.arrival.chain is not None}
+ARRIVALS = {name: key for name, key in EVERY_ARRIVAL.items() if key[0] != INLINED_INTO_ITS_CALLERS}
 THE_BOOT_S_OWN = [each.arrival for each in handlers.RETURNING.values() if each.arrival.chain is None]
+# THE WHOLE RUNS' CYCLES OF THE HANDLERS THAT RETURN WITHOUT A SWITCH, the ROM's and ours net of the entry both share,
+# by blob (a handler that switches is pinned in its own battery, `handlers.WHOLE_RUN`: the same pairs it held as a call
+# over the ROM's arrival's machine — the move changed no number of either shore's).
+RETURNING_WHOLE_RUN = {
+    "aes_hctl_button, the hidden bar's two clicks, counted twice and posted once: counted down to one":
+        {BENCH: (362, 100), SHIPPED: (362, 100)},
+    "aes_hctl_button, a real click on a window's closer after them: the count still one, the click swallowed":
+        {BENCH: (362, 100), SHIPPED: (362, 100)},
+    "aes_hctl_button, a click on the bar past the titles: the desktop's place, nothing":
+        {BENCH: (7460, 4660), SHIPPED: (7460, 4368)},
+    "aes_hctl_button, the top window's closer clicked: the window found and worked":
+        {BENCH: (193484, 138236), SHIPPED: (193484, 136304)},
+    "aes_hctl_window, the closer clicked: WM_CLOSED":
+        {BENCH: (188444, 134966), SHIPPED: (188444, 133194)},
+    "aes_hctl_window, the fuller clicked: WM_FULLED":
+        {BENCH: (185108, 132520), SHIPPED: (185108, 130880)},
+    "aes_hctl_window, the title clicked: WM_MOVED to where it is":
+        {BENCH: (246240, 200796), SHIPPED: (246240, 199346)},
+    "aes_hctl_window, the sizer clicked: WM_SIZED to the point clicked":
+        {BENCH: (329794, 284994), SHIPPED: (329794, 283342)},
+    "aes_hctl_window, the information line clicked: no gadget's, nothing sent":
+        {BENCH: (62456, 27502), SHIPPED: (62456, 27800)},
+    "aes_hctl_window, a window that is not the top one: WM_TOPPED":
+        {BENCH: (15260, 9790), SHIPPED: (15260, 8462)},
+    "aes_hctl_window, the title of a window with a SIZER and no MOVER clicked: nothing sent":
+        {BENCH: (66294, 29940), SHIPPED: (66294, 29972)},
+    "aes_hctl_window, the corner of a window with a MOVER and no SIZER clicked: nothing sent":
+        {BENCH: (61882, 27254), SHIPPED: (61882, 27550)},
+    "aes_hctl_rect, the mouse off the titles again, along the bar, before the manager ran: nothing":
+        {BENCH: (664, 422), SHIPPED: (664, 422)},
+    "aes_hctl_rect, no menu bar: nothing":
+        {BENCH: (298, 154), SHIPPED: (298, 154)},
+}
 
 
-def test_every_case_of_the_handlers_is_an_arrival_this_battery_meets():
-    assert len(EVERY_ARRIVAL) == len(handlers.RETURNING) + len(handlers.SWITCHING) + len(handlers.UNPRICED) - 1 and THE_BOOT_S_OWN == [gc.BOOT_ARRIVAL]
-    assert {arrival.routine for arrival in ARRIVALS.values()} == set(gc.ROUTINES) - {INLINED_INTO_ITS_CALLERS}
-    assert len(ARRIVALS) == len(EVERY_ARRIVAL) - sum(arrival.routine == INLINED_INTO_ITS_CALLERS for arrival in EVERY_ARRIVAL.values())
+def _handled(name):
+    return handlers.handled(ARRIVALS[name])
+
+
+def _pinned(name):
+    """The whole run's pinned pairs of the case `name`, by blob — None for a Tier 1-only case."""
+    key = ARRIVALS[name]
+    return handlers.WHOLE_RUN.get(key[1]) if key in handlers.SWITCHING else RETURNING_WHOLE_RUN.get(name)
+
+
+def test_every_case_of_the_handlers_is_an_arrival_this_battery_measures_at_or_says_why_not():
+    assert len(EVERY_ARRIVAL) == len(EVERY_CASE) - 1 and THE_BOOT_S_OWN == [gc.BOOT_ARRIVAL]
+    assert {key[0] for key in ARRIVALS.values()} == set(gc.ROUTINES) - {INLINED_INTO_ITS_CALLERS}
+    assert len(ARRIVALS) == len(EVERY_ARRIVAL) - sum(key[0] == INLINED_INTO_ITS_CALLERS for key in EVERY_ARRIVAL.values())
+    # THE TABLE'S ROWS: every priced case is measured at its arrival, or is one of the two kinds its battery names.
+    priced = {handlers.registered_name(key) for key in (*handlers.RETURNING, *handlers.SWITCHING)}
+    assert set(cm.HANDLED) == set(handlers.MEASURED_AT_ITS_ARRIVAL) == priced & set(ARRIVALS)
+    assert priced - set(cm.HANDLED) == {handlers.registered_name(key) for key in handlers.NOT_MEASURED_AT_AN_ARRIVAL_OF_OURS}
+    assert sorted(key[0] for key in handlers.NOT_MEASURED_AT_AN_ARRIVAL_OF_OURS) == sorted([gc.HCTL_BUTTON] + [gc.CT_MSGUP] * 4)
+    rows = {row.registered: row for row in tier3().ROWS if tier3().is_measured_at_its_arrival(row)}
+    assert set(rows) == set(cm.HANDLED) and not any(row.dropped for row in rows.values())
+    assert {name for name in ARRIVALS if _pinned(name)} == set(cm.HANDLED), "every row measured at its arrival is pinned on both blobs"
+    assert all(pairs.keys() == {BENCH, SHIPPED} for pairs in RETURNING_WHOLE_RUN.values())
 
 
 def test_ct_msgup_is_called_by_no_instruction_of_a_blob_and_its_arrival_is_refused_by_name(blob):
     """THE ONE HANDLER WITH NO ARRIVAL OF ITS OWN ON A BLOB (above): no instruction of the blob calls or branches to
-    `aes_ct_msgup` — it is inlined into its callers — and a run asked to end at its entry is refused BY NAME where the
-    machine idles with the handler never called, not run to a budget."""
+    `aes_ct_msgup` — it is inlined into its callers — and a run asked to arrive at its entry is refused BY NAME where
+    the machine idles with the handler never called, not run to a budget."""
     core = routines.core_symbol(INLINED_INTO_ITS_CALLERS)
     naming = [line for line in transcription.listing(blob.elf).splitlines() if f"<{core}>" in line and "\t" in line]
     assert not naming, f"a blob names ct_msgup's entry: its cases have an arrival now — {naming[:2]}"
-    name, arrival = next((name, arrival) for name, arrival in EVERY_ARRIVAL.items()
-                         if arrival.routine == INLINED_INTO_ITS_CALLERS and "WM_CLOSED, the button up" in name)
+    name, key = next((name, key) for name, key in EVERY_ARRIVAL.items()
+                     if key[0] == INLINED_INTO_ITS_CALLERS and "WM_CLOSED, the button up" in name)
     with pytest.raises(switching.Refused, match="was\\s+never called: the screen manager did not arrive there"):
-        tier3().arrives_alike_on(blob, name, arrival.machine, cm.arriving(arrival))
+        tier3().at_its_arrival_on(blob, name, handlers.handled(key))
 
 
 @pytest.mark.parametrize("case_name", ARRIVALS)
-def test_our_ctlmgr_arrives_at_the_handler_with_the_rom_s_frame_over_the_rom_s_machine(case_name, blob):
-    """THE HANDLERS' CASES CARRY OVER (`tier3.arrives_alike_on`): from the booted machine's idle, through the case's own
-    chain, our screen manager — `aes_rom_ctlmgr` on its real stack, and for a handler called by another (hctl_window
-    under hctl_button, ct_msgup under either) our handlers above it — arrives at OUR core of the case's handler, at
-    the arrival the case names, with the frame the ROM's caller pushed; the image at every stop of the dispatcher's
-    watch and AT THE ARRIVAL is the ROM's outside the screen manager's own spans; and none of it ran the ROM's ctlmgr."""
-    arrival = ARRIVALS[case_name]
-    arriving = cm.arriving(arrival)
-    assert tier3().arrives_alike_on(blob, case_name, arrival.machine, arriving) == gc.at(arrival).arguments
+def test_a_handler_is_measured_where_our_ctlmgr_arrives_at_it_on_the_real_stack_on_both_blobs(case_name, blob):
+    """THE ROW (`tier3.at_its_arrival_on`: every rule it holds is said there), ON EACH BLOB: from the booted machine's
+    idle, through the case's own chain, our screen manager — `aes_rom_ctlmgr` on its real stack, and for a handler
+    called by another (hctl_window under hctl_button) our handlers above it — arrives at OUR core of the case's
+    handler with the frame the ROM's caller pushed, AND THE HANDLER RUNS ON TO ITS RETURN THERE: the image at every
+    stop the ROM's, the megabyte where it returns the ROM's outside the classes the case names (each needed), the
+    same door calls, the same windows, and not one cycle of it in the ROM's own text of the handler. THE PINS, for a
+    priced case: the slice's cycles on each shore — the very pairs the row held as a call over the ROM's arrival's
+    machine. AND THE STACK: our deepest store on the screen manager's 1,196 bytes, from the machine's idle to the
+    handler's return, fits with the worst nest of this build's interrupts on top."""
+    handled = _handled(case_name)
+    measured = tier3().at_its_arrival_on(blob, case_name, handled)
+    if _pinned(case_name):
+        switching.vet_the_whole_run(case_name, blob, measured, _pinned(case_name))
+    assert tier3().counts_within_bar_with_glue(measured), f"{case_name}: over the bar on one of its counts"
+    lo, top, _why = gc.its_stack(gc.machine(handled.arrival.machine).ram)
+    assert top - lo == handlers.USABLE_STACK_BYTES and measured.deepest[1] + stack.nest(stack.shore_of(blob)) <= handlers.USABLE_STACK_BYTES
+
+
+def test_the_table_measures_a_handler_s_row_at_its_arrival_and_says_what_it_leaves_out(monkeypatch):
+    """THE TABLE'S OWN ROAD (`tier3.measure` → `at_its_arrival_on`, on the blob that prices the row as shipped): a
+    priced case's measurement IS the one at its arrival — the same costs to the instruction — with the general guard
+    asked and passed; and the lines under the row name its classes, not a kit call's drops."""
+    name = next(name for name, key in handlers.MEASURED_AT_ITS_ARRIVAL.items() if key in handlers.RETURNING and key[0] == gc.HCTL_WINDOW)
+    row, = (row for row in tier3().ROWS if row.registered == name)
+    asked, made, at_its_arrival_on = [], [], tier3().at_its_arrival_on
+
+    def at_its_arrival(blob, who, handled):
+        asked.append((who, handled))
+        made.append(at_its_arrival_on(blob, who, handled))
+        return made[-1]
+    monkeypatch.setattr(tier3(), "at_its_arrival_on", at_its_arrival)
+    measured = tier3().measure(row, tier3().RomBench())
+    assert asked == [(name, cm.HANDLED[name])], "the table's road measures the row at its arrival, once (the kit's call costs the same: asked by itself)"
+    assert measured is made[0], "...and what the table prices IS that measurement, not another road's answer beside it"
+    at_its_arrival = at_its_arrival_on(_shipped(), name, cm.HANDLED[name])
+    assert tier3()._costs(measured) == tier3()._costs(at_its_arrival) and measured.own_cycles == at_its_arrival.own_cycles
+    assert measured.deepest == at_its_arrival.deepest and measured.deepest[1] > measured.deepest[0] > 0, "...on the screen manager's real stack"
+    lines = tier3()._where_the_handler_returns_lines(cm.HANDLED[name], 0)
+    assert len(lines) == len(cm.HANDLED[name].differs) and all(tier3().WHERE_THE_HANDLER_RETURNS in line for line in lines)
+
+
+def test_a_named_blob_s_battery_measures_a_handler_s_row_at_its_arrival_too(monkeypatch):
+    """...AND SO DOES A NAMED BLOB'S (`aes_switching.measured_on`, what `vet_on_a_blob` and the recorder go through): a
+    handler's row that switches is measured through its handler at its arrival, once, and the watch answered is the
+    handler's own run's — its idles, polls and door calls numbered from the handler's entry. (HELD BY ITSELF: the
+    kit's call over the ROM's arrival's machine measures the same pairs, so a road that fell back to it would pass
+    every pin.)"""
+    row = handlers.ROWS[ARRIVALS[THE_CLOSER_HELD][1]]
+    asked, made, through = [], [], tier3().through_its_handler_on
+
+    def through_its_handler(blob, who, handled):
+        asked.append((who, handled))
+        made.append(through(blob, who, handled))
+        return made[-1]
+    monkeypatch.setattr(tier3(), "through_its_handler_on", through_its_handler)
+    measured, watch, foreign = switching.measured_on(_shipped(), row)
+    assert asked == [(THE_CLOSER_HELD, cm.HANDLED[THE_CLOSER_HELD])] and foreign == measured.foreign
+    assert (measured, watch) == made[0] and measured is made[0][0], "...and what is answered IS that run's measurement and its watch"
+    premise = handlers.premise(row.label)
+    assert (watch.idles, tuple(watch.entered)) == (premise.idles, tuple(premise.entered)) and watch.inner.closed == watch.inner.calls > 0
+    assert watch.switches.process == gc.SCREEN_MANAGER and measured.deepest[1] > 0
+
+
+def test_a_return_address_reached_with_the_frame_still_pushed_is_no_return():
+    """THE SLICE'S END IS THE HANDLER'S RETURN (`aes_switching.ThroughAHandler`), on stand-in watches: the address its
+    caller left at the arrival, reached with the stack pointer anywhere but one longword above the arrival's, is a
+    stop like any other and handed to the handler's own watch; reached with the frame popped it ends the run, the
+    second mark taken there."""
+    returns_to, arrival_sp, memory = 0xfe4a40, 0xa800, bytearray(0x10000)
+    memory[arrival_sp:arrival_sp + aes.LONG_BYTES] = returns_to.to_bytes(aes.LONG_BYTES, "big")
+    seen, marks = [], iter(("at the arrival", "at the return"))
+
+    class Arriving:
+        first = frozenset({0x100})
+
+        def stopped(self, pc, sp, memory):
+            raise aes_event.Ended
+
+    class Handling:
+        first = frozenset({0x200})
+
+        def stopped(self, pc, sp, memory):
+            seen.append((pc, sp))
+            return self.first
+    through = switching.ThroughAHandler(Arriving(), lambda _memory, _sp: Handling(), lambda: next(marks))
+    assert through.stopped(0x100, arrival_sp, memory) == {0x200, returns_to} and through.arrived_at == "at the arrival"
+    assert through.stopped(returns_to, arrival_sp - 8, memory) == {0x200} and seen == [(returns_to, arrival_sp - 8)]
+    assert through.stopped(0x200, arrival_sp - 8, memory) == {returns_to} and through.returned_at is None
+    with pytest.raises(aes_event.Ended):
+        through.stopped(returns_to, arrival_sp + aes.LONG_BYTES, memory)
+    assert through.returned_at == "at the return" and len(seen) == 2
 
 
 def test_the_boot_s_own_arrival_is_our_ctlmgr_s_too(blob):
     """...AND THE ONE ARRIVAL THAT IS NO DISPATCHER'S: the desk's menu_bar posts the screen manager a click and the
     boot calls hctl_button with it before its first idle. The same boot with the screen manager ours, stopped at OUR
     hctl_button's first instruction (`aes_boot.booted(until=)`: an address of the blob), is there with the ROM's
-    frame — the click's point — on the screen manager's own stack, in our ctlmgr's first turn."""
+    frame — the click's point — on the screen manager's own stack, in our ctlmgr's first turn. (MET, NOT MEASURED:
+    no run from a machine's idle reaches it; its row is a call over the ROM's arrival's machine.)"""
     name, arguments, _pokes = gc.at(gc.BOOT_ARRIVAL)
     ours = aes_boot.ours_of(blob)
     core = dict(ours.handlers)[getattr(addrs, name)]
@@ -402,34 +542,222 @@ def test_the_boot_s_own_arrival_is_our_ctlmgr_s_too(blob):
     assert tier3()._frame_our_caller_pushed(len(arguments))(boot.ram, sp) == arguments
 
 
-def test_the_image_at_an_arrival_is_held_too(monkeypatch):
-    """...AND "OVER THE ROM'S MACHINE" HAS TEETH: our image read with one byte other AT THE ARRIVAL ITSELF — the last
-    stop of our run — is refused by that stop and its page; the frame alone would not have seen it."""
-    name, arrival = next((name, arrival) for name, arrival in ARRIVALS.items() if arrival.routine == gc.HCTL_WINDOW)
-    arriving, pages = cm.arriving(arrival), aes_event.image_pages
-    stops = 2 * (arriving.switches.polls + len(arriving.entered) + 1)       # each shore's polls, resumes and its arrival
+# ---- THE REDS OF A ROW MEASURED AT ITS ARRIVAL ---------------------------------------------------------------------------------
+A_CLICK_ON_THE_CLOSER = handlers.registered_name((gc.HCTL_WINDOW, "the closer clicked: WM_CLOSED"))
+THE_CLOSER_HELD = handlers.registered_name((gc.HCTL_WINDOW, "the closer held; released inside it: WM_CLOSED"))
+NOTHING_SENT = handlers.registered_name((gc.HCTL_WINDOW, "the information line clicked: no gadget's, nothing sent"))
+TOPPED_AT_ONCE = handlers.registered_name((gc.HCTL_WINDOW, "a window that is not the top one: WM_TOPPED"))
 
-    def one_byte_other_at_our_arrival(memory, also=()):
-        asked.append(None)
-        if len(asked) == stops:
+
+def _our_image_read_one_byte_other(monkeypatch, at=None):
+    """OUR SHORE'S READER OF THE IMAGE AT A STOP (`tier3._HandlerStopImages.ours`), reading ONE BYTE OTHER (the mouse's
+    column's metric) at the asking `reading.at` (None: at none) of each run begun with `reading.asked` emptied: the
+    `reading`. (The reader itself, not `aes_event.image_pages`: a derivation made on the way reads pages too, and its
+    askings are not the watch's.)"""
+    reader, reading = tier3()._HandlerStopImages.ours, types.SimpleNamespace(at=at, asked=[])
+
+    def ours(self, memory):
+        reading.asked.append(None)
+        if len(reading.asked) == reading.at:
             memory = bytearray(memory[:addrs.ST_RAM_BYTES])
             memory[aes.AES_GL_WCHAR] ^= 1
-        return pages(memory, also)
-    asked = []
-    monkeypatch.setattr(aes_event, "image_pages", one_byte_other_at_our_arrival)
-    with pytest.raises(AssertionError, match="at arrival 0 of the dispatcher's watch OUR IMAGE IS NOT THE ROM'S"):
-        tier3().arrives_alike_on(_shipped(), name, arrival.machine, arriving)
-    assert len(asked) == stops
+        return reader(self, memory)
+    monkeypatch.setattr(tier3()._HandlerStopImages, "ours", ours)
+    return reading
 
 
-def test_an_arrival_with_another_frame_than_the_rom_s_case_is_refused():
-    """...AND THE FRAME IS COMPARED WHERE THE RUNS END, not by this battery's reading of the answer alone: the same
-    case asked for with one word of its frame other than the ROM's run derived is refused by name."""
-    name, arrival = next((name, arrival) for name, arrival in ARRIVALS.items() if arrival.routine == gc.HCTL_BUTTON)
-    arriving = cm.arriving(arrival)
-    other = arriving._replace(words=(arriving.words[0] + 1, *arriving.words[1:]))
+def test_the_image_at_an_arrival_is_held_too(monkeypatch):
+    """..."OVER THE ROM'S MACHINE" HAS TEETH: our image read with one byte other AT THE ARRIVAL ITSELF — the last stop
+    of our run before the handler's own — is refused by that stop and its page; the frame alone would not have seen
+    it. (A handler that returns without a switch: its own run makes no stop of the dispatcher's.)"""
+    arriving = cm.arriving(_handled(A_CLICK_ON_THE_CLOSER).arrival)
+    stops = arriving.switches.polls + len(arriving.entered) + 1             # our run's polls, resumes and its arrival
+    reading = _our_image_read_one_byte_other(monkeypatch, at=stops)
+    with pytest.raises(AssertionError, match="to its arrival: at arrival 0 of the dispatcher's watch OUR IMAGE IS NOT THE ROM'S"):
+        tier3().at_its_arrival_on(_shipped(), A_CLICK_ON_THE_CLOSER, _handled(A_CLICK_ON_THE_CLOSER))
+    assert len(reading.asked) == stops
+
+
+def test_the_image_at_a_stop_inside_the_handler_is_held_too(monkeypatch):
+    """...AND SO HAS THE HANDLER'S OWN RUN: our image read with one byte other at THE LAST STOP OF THE DISPATCHER'S
+    WATCH INSIDE THE HANDLER (a press held on the closer: the handler blocks and is woken) is refused by that stop —
+    a store made before a switch and undone after it, which where the handler returns nothing would see."""
+    handled = _handled(THE_CLOSER_HELD)
+    arriving, reading = cm.arriving(handled.arrival), _our_image_read_one_byte_other(monkeypatch)
+    tier3().at_its_arrival_on(_shipped(), THE_CLOSER_HELD, handled)        # ...counted first: every stop of our run
+    stops = len(reading.asked)
+    inside = stops - (arriving.switches.polls + len(arriving.entered) + 1)
+    assert inside >= cm.taken_through(handled).polls > 0, "the handler's own run stops at the dispatcher"
+    reading.at, reading.asked[:] = stops, []
+    with pytest.raises(AssertionError, match=f"{re.escape(THE_CLOSER_HELD)}: at (poll|resume) \\d+ of the dispatcher's watch OUR IMAGE IS NOT THE ROM'S"):
+        tier3().at_its_arrival_on(_shipped(), THE_CLOSER_HELD, handled)
+    assert len(reading.asked) == stops
+
+
+def test_an_arrival_with_another_frame_than_the_rom_s_case_is_refused(monkeypatch):
+    """...AND THE FRAME IS COMPARED WHERE THE RUNS ARRIVE: the same case held to a frame one word other than the ROM's
+    run derived is refused by name."""
+    name = next(name for name, key in ARRIVALS.items() if key[0] == gc.HCTL_BUTTON)
+    arriving = cm.arriving(_handled(name).arrival)
+    monkeypatch.setattr(cm, "arriving", lambda _arrival: arriving._replace(words=(arriving.words[0] + 1, *arriving.words[1:])))
     with pytest.raises(AssertionError, match="our ctlmgr hands AES_ROM_HCTL_BUTTON"):
-        tier3().arrives_alike_on(_shipped(), name, arrival.machine, other)
+        tier3().at_its_arrival_on(_shipped(), name, _handled(name))
+
+
+def test_a_class_a_handler_s_row_names_and_does_not_need_or_needs_and_does_not_name_is_refused():
+    """EACH CLASS A ROW NAMES WHERE ITS HANDLER RETURNS MUST DIFFER, AND NOTHING DIFFERS OUTSIDE THEM: the information
+    line's row (no wait: the save frame is the one the last poll before the arrival left, equal on both shores) with
+    the save frame named is refused as naming a class it does not need; the closer's row — a wait of its own — with
+    the save frame taken away is refused by the bytes; and so is any row without its stack's class."""
+    nothing_sent, closer = _handled(NOTHING_SENT), _handled(A_CLICK_ON_THE_CLOSER)
+    assert cm.THE_TRAP_SAVE not in nothing_sent.differs and cm.THE_TRAP_SAVE in closer.differs
+    with pytest.raises(AssertionError, match="a class named and not needed excuses a store for nothing"):
+        tier3().at_its_arrival_on(_shipped(), "a row", nothing_sent._replace(differs=(*nothing_sent.differs, cm.THE_TRAP_SAVE)))
+    for without in (cm.THE_TRAP_SAVE, cm.ITS_STACK, cm.THE_MASK_WORD):
+        with pytest.raises(AssertionError, match="OUR MACHINE IS NOT THE ROM'S outside the classes the row names"):
+            tier3().at_its_arrival_on(_shipped(), "a row", closer._replace(differs=tuple(each for each in closer.differs if each != without)))
+
+
+def test_wm_topped_s_four_words_are_named_by_the_handler_s_row_that_sends_them_and_show_in_the_frame_it_hands():
+    """THE DECLARED DIVERGENCE ON THE REAL STACK, IN A HANDLER'S OWN ROW (ruling W2-R2): where the handler returns the
+    ROM's message carries its stack's residue in two places — the manager's buffer and the owner's pipe (the owner
+    has not run yet) — and ours four zeroes; AND THE WRITE'S OWN FRAME carries them, so the row that names the class
+    holds our door calls to the ROM's read with the C's four zeroes (`the_topped_words_as_the_c_sends_them`) and to
+    nothing else. Without the class the row is refused BY THE FRAME our build hands the door; a row that sends
+    another message is refused the class."""
+    handled = _handled(TOPPED_AT_ONCE)
+    assert cm.THE_TOPPED_WORDS in handled.differs
+    tier3().at_its_arrival_on(_shipped(), TOPPED_AT_ONCE, handled)
+    with pytest.raises(AssertionError, match="our build handed the door"):
+        tier3().at_its_arrival_on(_shipped(), "a row", handled._replace(differs=tuple(each for each in handled.differs if each != cm.THE_TOPPED_WORDS)))
+    closer = _handled(A_CLICK_ON_THE_CLOSER)
+    with pytest.raises(AssertionError, match="a class named and not needed"):
+        tier3().at_its_arrival_on(_shipped(), "a row", closer._replace(differs=(*closer.differs, cm.THE_TOPPED_WORDS)))
+    write = aes_event.Handed(addrs.AES_ROM_AP_RDWR, (2, 2, aes.AP_MSG_BYTES, struct.pack(">8H", cm.WM_TOPPED, 1, 0, 2, 0xfe, 0xa85a, 0, 2)))
+    other = write._replace(arguments=(*write.arguments[:-1], struct.pack(">8H", cm.WM_TOPPED + 1, 1, 0, 2, 0xfe, 0xa85a, 0, 2)))
+    as_sent, untouched = tier3().the_topped_words_as_the_c_sends_them([write, other])
+    assert as_sent.arguments[-1] == struct.pack(">8H", cm.WM_TOPPED, 1, 0, 2, 0, 0, 0, 0) and untouched == other
+
+
+def test_a_handler_s_row_s_own_window_it_does_not_need_is_refused():
+    """...AND A ROW'S OWN NAMED WINDOW (`also_dropped`: the stale count under a menu worked with the mouse shown) IS
+    HELD AS A CLASS IS: on the row that names it the two machines differ there where the handler returns; named by
+    a row whose run leaves the same word on both shores it is refused."""
+    key = sorted(handlers.THE_MOUSE_SHOWN_AGAIN_LAST & set(handlers.SWITCHING))[0]
+    assert handlers.handled(key).row.also_dropped == handlers.THE_STALE_COUNT
+    held = _handled(THE_CLOSER_HELD)
+    with pytest.raises(AssertionError, match="a window named and not needed excuses a store for nothing"):
+        tier3().at_its_arrival_on(_shipped(), "a row", held._replace(row=held.row._replace(also_dropped=handlers.THE_STALE_COUNT)))
+
+
+def test_who_ran_a_handler_is_asked_and_refuses_a_run_of_the_rom_s_own(monkeypatch):
+    """WHO RAN'S CALL, AND ITS ARITHMETIC (`tier3.vet_who_ran_the_handler`): a row measured at its arrival asks it
+    once, with our run's cycles in the ROM's own text of the handler — NONE, from the machine's idle on — and in our
+    core of it; and the guard, handed a run of ours with one cycle in the ROM's handler, or none in our core, or a
+    ROM run with a cycle in the blob, refuses each by name."""
+    asked, the_guard = [], tier3().vet_who_ran_the_handler
+    monkeypatch.setattr(tier3(), "vet_who_ran_the_handler", lambda who, *held: (asked.append((who, held)), the_guard(who, *held))[1])
+    tier3().at_its_arrival_on(_shipped(), A_CLICK_ON_THE_CLOSER, _handled(A_CLICK_ON_THE_CLOSER))
+    ((who, (routine, symbol, the_rom_s, ours, in_the_rom_s_windows)),) = asked
+    assert (who, routine, symbol) == (A_CLICK_ON_THE_CLOSER, gc.HCTL_WINDOW, routines.core_symbol(gc.HCTL_WINDOW))
+    assert ours.so_far.the_rom_s_body == 0 < the_rom_s.spent.the_rom_s_body and ours.spent.our_core > 0 == the_rom_s.so_far.blob
+    assert ours.spent.aes == in_the_rom_s_windows == 0
+    the_guard(who, routine, symbol, the_rom_s, ours, in_the_rom_s_windows)
+    for astray in (dict(ours=ours._replace(so_far=ours.so_far._replace(the_rom_s_body=4))),
+                   dict(ours=ours._replace(spent=ours.spent._replace(our_core=0))),
+                   dict(the_rom_s=the_rom_s._replace(so_far=the_rom_s.so_far._replace(blob=4))),
+                   dict(the_rom_s=the_rom_s._replace(spent=the_rom_s.spent._replace(the_rom_s_body=0))),
+                   dict(ours=ours._replace(in_the_rom_s_ctlmgr=4)),
+                   dict(in_the_rom_s_windows=8)):
+        with pytest.raises(AssertionError, match="WHO RAN"):
+            the_guard(who, routine, symbol, **{**dict(the_rom_s=the_rom_s, ours=ours, in_the_rom_s_windows=in_the_rom_s_windows), **astray})
+
+
+def test_the_callee_saved_registers_are_held_where_our_handler_returns_as_a_kit_call_holds_them(monkeypatch):
+    """THE CALLEE-SAVED FILE, ON THE REAL CALLER'S OWN VALUES (`tier3.vet_the_handler_kept_its_caller_s_registers`): a
+    row at its arrival asks the guard once, with D2-D7 and A2-A6 as the CPU held them where our ctlmgr called our
+    handler and where the handler returned — the kit's eleven, each read at both stops: the caller's own values (our
+    hctl_button's, here), not the kit's seeds — and the guard, handed one register
+    other at the return, refuses it BY THAT REGISTER'S NAME."""
+    asked, the_guard = [], tier3().vet_the_handler_kept_its_caller_s_registers
+    monkeypatch.setattr(tier3(), "vet_the_handler_kept_its_caller_s_registers", lambda *held: (asked.append(held), the_guard(*held))[1])
+    tier3().at_its_arrival_on(_shipped(), THE_CLOSER_HELD, _handled(THE_CLOSER_HELD))
+    ((who, symbol, at_the_arrival, at_the_return),) = asked
+    assert (who, symbol) == (THE_CLOSER_HELD, routines.core_symbol(gc.HCTL_WINDOW))
+    assert tuple(at_the_arrival) == tuple(at_the_return) == tier3().CALLEE_SAVED == ("d2", "d3", "d4", "d5", "d6", "d7", "a2", "a3", "a4", "a5", "a6")
+    assert at_the_arrival == at_the_return and any(at_the_arrival.values())
+    for name in tier3().CALLEE_SAVED:
+        with pytest.raises(AssertionError, match=f"RETURNED TO ITS CALLER WITH {name} = 0xffffffff, entered with"):
+            the_guard(who, symbol, at_the_arrival, {**at_the_return, name: 0xffffffff})
+
+
+def test_the_rom_s_own_text_of_each_handler_is_the_routine_names_txt_bounds():
+    """WHO RAN'S RANGE IS THE ROUTINE (`aes_ctlmgr.the_rom_s_body_of`): from the handler's entry to THE NEXT ROUTINE
+    `names.txt` names — ct_msgup to hctl_window, on to hctl_button, hctl_rect, and hctl_rect to ct_chgown (which lies
+    before ctlmgr) — the four contiguous, none a word short of its own `rts`."""
+    names = (RECREATE.parent / "names.txt").read_text()
+    routines_named = sorted(int(address, 16) for address in re.findall(r"^fn (0x[0-9a-f]+) ", names, re.M))
+    bodies = [cm.the_rom_s_body_of(routine) for routine in cm.THE_HANDLERS]
+    for routine, (lo, hi) in zip(cm.THE_HANDLERS, bodies):
+        assert lo == getattr(addrs, routine) and hi == routines_named[routines_named.index(lo) + 1], f"{routine}: [{lo:#x}, {hi:#x})"
+    assert all(body[1] == after[0] for body, after in zip(bodies, bodies[1:])) and bodies[-1][1] == addrs.AES_ROM_CT_CHGOWN < addrs.AES_ROM_CTLMGR
+
+
+def test_two_runs_whose_streams_or_shared_os_differ_are_refused(monkeypatch):
+    """TWO HOLDS OF A ROW AT ITS ARRIVAL THAT NO HONEST RUN TRIPS, each made to: THE OFF-IMAGE STREAMS — our run handed
+    back with one hardware write more than the ROM's — and THE OS BOTH RUN — its cycles between the arrival and the
+    return read one apart — are each refused by name."""
+    handled, run = _handled(A_CLICK_ON_THE_CLOSER), tier3()._run_to_its_next_idle
+    runs = []
+
+    def one_write_more_on_ours(image, watch, blob):
+        ran = run(image, watch, blob)
+        runs.append(ran)
+        return ran if len(runs) == 1 else ran._replace(streams={**ran.streams, "hw_writes": [*ran.streams["hw_writes"], (0xff8240, 0)]})
+    monkeypatch.setattr(tier3(), "_run_to_its_next_idle", one_write_more_on_ours)
+    with pytest.raises(AssertionError, match="the two runs' off-image streams or odd accesses differ"):
+        tier3().at_its_arrival_on(_shipped(), "a row", handled)
+    monkeypatch.setattr(tier3(), "_run_to_its_next_idle", run)
+    shared = tier3().shared_cycles
+    monkeypatch.setattr(tier3(), "shared_cycles", lambda measured: (shared(measured)[0] + 1, shared(measured)[1]))
+    with pytest.raises(AssertionError, match="the OS both sides run cost ours \\d+ cycles and the ROM's \\d+ between the arrival and the return"):
+        tier3().at_its_arrival_on(_shipped(), "a row", handled)
+
+
+def test_a_window_left_out_at_the_stops_alone_that_no_stop_needs_is_refused():
+    """`Handled.at_stops_only` IS NEEDED AT A STOP, OR REFUSED: the stale count named so on the closer held — whose run
+    works no menu, so both shores hold one word there at every stop — is refused by name; on the one case that names
+    it (the menu left by a press HELD: the word differs between the menu's re-show and the rise's own VDI call) the
+    two shores do differ there at a stop (that case's own run, above, passes with it and is red without)."""
+    held = _handled(THE_CLOSER_HELD)
+    with pytest.raises(AssertionError, match="a window named and not needed hides a page for nothing"):
+        tier3().at_its_arrival_on(_shipped(), "a row", held._replace(at_stops_only=handlers.THE_STALE_COUNT))
+    needs, = handlers.THE_STALE_COUNT_IS_OVERWRITTEN
+    overwritten = handlers.handled(needs)
+    assert overwritten.at_stops_only == handlers.THE_STALE_COUNT
+    with pytest.raises(AssertionError, match="of the dispatcher's watch OUR IMAGE IS NOT THE ROM'S"):
+        tier3().at_its_arrival_on(_shipped(), "a row", overwritten._replace(at_stops_only=()))
+
+
+def test_the_cases_held_at_their_arrival_and_pinned_nowhere_are_the_ones_status_counts():
+    """THE TIER 1-ONLY CASES RUN THROUGH THEIR HANDLER AT OUR ARRIVALS, counted off the registries and held to what the
+    ledger says: every arrival this battery measures at that is no row of the table."""
+    unpinned = [key for name, key in ARRIVALS.items() if name not in cm.HANDLED]
+    assert sorted(unpinned) == sorted(key for key in handlers.UNPRICED if key[0] != INLINED_INTO_ITS_CALLERS)
+    by_handler = {routine: sum(key[0] == routine for key in unpinned) for routine in {key[0] for key in unpinned}}
+    status = (RECREATE / "STATUS.md").read_text()
+    said = re.findall(r"THE (\d+) TIER 1-ONLY CASES of those handlers \(hctl_window's (\d+), hctl_rect's (\d+)\)", status)
+    assert said == [(str(len(unpinned)), str(by_handler[gc.HCTL_WINDOW]), str(by_handler[gc.HCTL_RECT]))], (said, by_handler)
+    assert len(ARRIVALS) == len(cm.HANDLED) + len(unpinned) and set(by_handler) == {gc.HCTL_WINDOW, gc.HCTL_RECT}
+
+
+def test_a_handler_whose_run_does_not_return_to_its_caller_is_refused_by_name():
+    """THE SLICE ENDS WHERE THE HANDLER RETURNS, or the row is refused: a handler that switches, asked for as one that
+    takes no delivery (the release never comes), idles where no delivery is named — refused there by the handler's
+    own watch, not run to a budget."""
+    held = _handled(THE_CLOSER_HELD)
+    with pytest.raises(switching.Refused, match="the dispatcher idles once more than the ROM's own run did"):
+        tier3().at_its_arrival_on(_shipped(), "a row", held._replace(row=None))
 
 
 def test_who_ran_is_asked_of_a_row_of_ctlmgr_s_own(monkeypatch):

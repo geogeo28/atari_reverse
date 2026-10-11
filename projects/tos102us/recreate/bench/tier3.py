@@ -29,7 +29,6 @@ import os
 import re
 import struct
 import sys
-import types
 from collections import namedtuple
 from pathlib import Path
 
@@ -46,6 +45,7 @@ from recreate_kit import project                           # noqa: E402
 project.load(RECREATE)
 
 from recreate_kit import rom_bench                         # noqa: E402
+from recreate_kit.asm_twin import CALLEE_SAVED             # noqa: E402  (the registers a C core owes its caller back)
 from recreate_kit.rom_bench import (BENCH_DIR, BENCH_ELF, Measurement, vet_the_run_just_made,   # noqa: E402
                                     watched_original)
 from harness import BASE_IMAGE, addrs, diff_spans, differing_addresses, emu, make_image   # noqa: E402  (binds the kit)
@@ -1568,10 +1568,14 @@ def _row(case):
         address, staged_entry = slice_of, SLICE_ENTRY_COST[entry]
     else:
         address, staged_entry = None, (0, 0)
+    # (A ROW MEASURED AT ITS ARRIVAL — `aes_ctlmgr.HANDLED`, a handler of the screen manager's — is no kit call over
+    # its registry's machine: the windows the registry drops for it are what its Tier 1 companion stages and compares;
+    # its measurement names CLASSES where its handler returns instead, and the row carries no drop.)
+    dropped = () if name in aes_ctlmgr.HANDLED else DROPPED.get(name, ())
     return Row(_function_label(entry), _case_label(name, symbol), entry, symbol,
                _resolve(call.args, pokes, regs), regs, _pokes_for(call, pokes), psg_seed, io_seed,
                RETURNS_NOTHING if name in UNANSWERED else call.returns, False, address, staged_entry, (0, 0), schedule,
-               DROPPED.get(name, ()), test_boot_snapshot.delivered_of(case), aes_event.SLICED_ROWS.get(name), name)
+               dropped, test_boot_snapshot.delivered_of(case), aes_event.SLICED_ROWS.get(name), name)
 
 
 def _transcription_row(case):
@@ -2541,6 +2545,15 @@ def _backwards(mapping):
     return {entry: rom for rom, entry in mapping.items()}
 
 
+def _mapped_back(memory, relocations):
+    """`memory` — an image OUR shore left, or holds at a stop — with every code slot of `relocations` GIVEN THE ROM'S
+    NAME, in place: what our shore's memory is compared with the ROM's as (the one spelling: where a run ends on the
+    kit's path, at a stop of the dispatcher's watch, where two machines' runs end). The memory."""
+    for relocation in relocations:
+        map_code_slots(memory, relocation.slots, _backwards(relocation.mapping))
+    return memory
+
+
 BUS_LONG_MASK = 0xFFFFFFFF
 
 
@@ -2761,8 +2774,8 @@ class RomBench(rom_bench.RomBench):
         vet_no_slot_names_the_rom(symbol, ours.image, relocations, came_with,
                                   getattr(kwargs.get("watch"), "foreign_codes", None))
         vet_no_slot_names_the_rom(symbol, ours.image, [Relocation(A_RECORD, recorded + written, forks)], {A_RECORD: handed})
+        _mapped_back(ours.image, relocations)
         for relocation in relocations:
-            map_code_slots(ours.image, relocation.slots, _backwards(relocation.mapping))
             if relocation.what == aes_event.TEXT_SITES.what:
                 vet_no_register_names_the_rom(symbol, ours.regs, relocation.mapping)
                 map_registers(ours.regs, _backwards(relocation.mapping))
@@ -2854,18 +2867,20 @@ def our_door_watch(blob, symbol, at_calls, glue, blocks=True):
             .counting(_our_own_cycles_so_far(blob, glue), _our_glue_cycles_so_far(glue)))
 
 
-def vet_the_same_door_calls(who, windows, original):
+def vet_the_same_door_calls(who, windows, original, handed_as=lambda handed: handed):
     """THE SAME DOOR CALLS ON BOTH SHORES — every one closed, the same entries in the same order, each handed the
     same frame: refused by name otherwise. Held on its own, before anything is priced off the calls: the second
     count takes each shore's `own_inside` off its own column, so a watch that missed a call (or counted one more)
-    would price the caller's own net of other calls on each shore."""
+    would price the caller's own net of other calls on each shore. `handed_as`: what our build is expected to hand,
+    as a reading of the ROM's frames — the identity, but for a row that names a declared divergence a frame carries
+    (`the_topped_words_as_the_c_sends_them`)."""
     windows.vet_every_call_closed(f"{who}: our run")
     original.vet_every_call_closed(f"{who}: the ROM's run")
     assert original.closed_at == windows.closed_at, (
         f"{who}: the door calls closed are {[f'{at:#x}' for at in windows.closed_at]} on our "
         f"run and {[f'{at:#x}' for at in original.closed_at]} on the ROM's, by entry and in order — the two "
         f"shores do not make the same calls, and the caller's own cycles would be net of other calls on each")
-    assert original.handed == windows.handed, (
+    assert handed_as(original.handed) == windows.handed, (
         f"{who}: our build handed the door {windows.handed} where the ROM's run hands "
         f"{original.handed} — a frame the image does not show")
 
@@ -3103,9 +3118,7 @@ class _StopImages:
         return aes_event.image_pages(memory, self._spans(memory))
 
     def ours(self, memory):
-        ram = bytearray(memory[:addrs.ST_RAM_BYTES])
-        for relocation in self._relocations:
-            map_code_slots(ram, relocation.slots, _backwards(relocation.mapping))
+        ram = _mapped_back(bytearray(memory[:addrs.ST_RAM_BYTES]), self._relocations)
         map_code_slots(ram, self._records_holding_our_entries(ram), _backwards(self._forks))
         return aes_event.image_pages(ram, self._spans(memory))
 
@@ -3319,17 +3332,22 @@ def _classes_over(rom, ours):
             aes_ctlmgr.THE_TOPPED_WORDS: [(lo, hi) for lo, hi in aes_ctlmgr.the_topped_words_places(rom) if not any(ours[lo:hi])]}
 
 
-def vet_the_machines_where_the_runs_end(who, blob, rom, ours, named):
+def vet_the_machines_where_the_runs_end(who, blob, rom, ours, named, its_own=()):
     """THE MEGABYTE OUR RUN LEAVES IS THE ROM'S (`rom`, `ours`: the two `Ran`) outside the harness's band, the blob
     and THE CLASSES THE ROW NAMES (`named`) — every code address of the registry our shore holds given the ROM's name
-    first — AND EVERY CLASS NAMED DIFFERS: refused by name, each way."""
-    mapped = bytearray(ours.memory[:addrs.ST_RAM_BYTES])
-    for relocation in code_relocations(blob.elf, aes_ctlmgr.SYMBOL):
-        map_code_slots(mapped, relocation.slots, _backwards(relocation.mapping))
+    first — AND EVERY CLASS NAMED DIFFERS: refused by name, each way. `its_own`: `(lo, hi, why)` windows THE ROW
+    names beside the classes as its own by nature (a handler's row's `also_dropped`: bytes both builds store, each
+    its own) — left out too, and EACH REQUIRED TO DIFFER as a class is."""
+    mapped = _mapped_back(bytearray(ours.memory[:addrs.ST_RAM_BYTES]), code_relocations(blob.elf, aes_ctlmgr.SYMBOL))
     its = rom.memory[:addrs.ST_RAM_BYTES]
     classes = _classes_over(its, mapped)
     needed = [name for name, spans in classes.items() if any(its[lo:hi] != mapped[lo:hi] for lo, hi in spans)]
-    left_out = [span for name in named for span in classes[name]] + [(blob.base, blob.end)]
+    not_needed = [(f"{lo:#x}", f"{hi:#x}") for lo, hi, _why in its_own if its[lo:hi] == mapped[lo:hi]]
+    assert not not_needed, (
+        f"{who}: the row names the windows {not_needed} as its own by nature where its runs end, and the two machines "
+        f"hold the same bytes there: a window named and not needed excuses a store for nothing")
+    left_out = ([span for name in named for span in classes[name]] + [(blob.base, blob.end)]
+                + [(lo, hi) for lo, hi, _why in its_own])
     differing = [at for at in differing_addresses(memoryview(bytes(its)), memoryview(bytes(mapped)), diff_spans(),
                                                   lambda at: any(lo <= at < hi for lo, hi in left_out))
                  if at < addrs.ST_RAM_BYTES]
@@ -3364,11 +3382,12 @@ boot — every code slot mapped at entry already our build's — and what OUR sh
 ends (our dispatcher, the deliveries as our idle takes them, the tally, the takeover, the images)."""
 
 
-def _two_shores(blob, who, machine, switches):
+def _two_shores(blob, who, machine, switches, images_of=None):
     """THE TWO MACHINES OF A RUN FROM A BOOTED MACHINE'S IDLE (`machine`: anything that names one, a `Woken` or an
-    arrival's key in a namespace) and the two watches' common parts: a `TwoShores`."""
+    `aes_gemctrl.Arrival`) and the two watches' common parts: a `TwoShores`. `images_of`: the stop images' reader's
+    kind (`_IdleStopImages`, or one of its own)."""
     relocations = [each for each in code_relocations(blob.elf, aes_ctlmgr.SYMBOL) if each.mapping]
-    images = _IdleStopImages(blob, aes_ctlmgr.SYMBOL, switches, ())
+    images = (images_of or _IdleStopImages)(blob, aes_ctlmgr.SYMBOL, switches, ())
     rom_image, our_image = (make_image({0: ram}) for ram in (aes_ctlmgr.the_rom_s_machine(machine), aes_ctlmgr.our_machine(machine, blob)))
     assert bytes(our_image[blob.base:blob.base + len(blob.blob)]) == blob.blob, f"{who}: the takeover machine does not hold this blob"
     at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, aes_ctlmgr.SYMBOL) for taken in (switches.at_idles, switches.at_polls))
@@ -3419,7 +3438,7 @@ def idle_to_idle_on(blob, who, woken):
                       foreign.in_the_aes - sum(turn.the_rom_s for turn in turns))
     vet_who_ran(who, rom, ours, windows.in_the_aes + in_the_aes_outside[1], sum(turn.ours + turn.glue for turn in turns))
     vet_the_machines_where_the_runs_end(who, blob, rom, ours, woken.differs)
-    assert rom.streams == ours.streams and rom.odd == ours.odd, f"{who}: the two runs' off-image streams or odd accesses differ"
+    vet_the_streams_alike(who, rom, ours)
     OUR_RUN.append(OurRun(aes_ctlmgr.SYMBOL, ours.in_the_aes, False, 0))
     measured = Measurement(rom.cost, ours.cost, blob.overhead)
     measured.own_cycles = (sum(turn.ours for turn in turns), sum(turn.the_rom_s for turn in turns))
@@ -3443,33 +3462,261 @@ def _frame_our_caller_pushed(words):
     return lambda memory, sp: tuple(aes.signed(_long_at(memory, sp + (2 + nth) * aes.LONG_BYTES) & aes.WORD_MASK) for nth in range(words))
 
 
-def arrives_alike_on(blob, who, machine, arriving):
-    """OUR ctlmgr ARRIVES WHERE THE ROM'S DOES (`aes_ctlmgr.arriving`: one of the handlers' own cases, its ROM run
-    derived with its deliveries; `machine`: its key). Both shores run from the booted machine's idle — ours the same
-    boot with the screen manager `blob`'s — through the same deliveries, EACH ENDED AT ITS HANDLER'S FIRST
-    INSTRUCTION (the ROM's routine; our C core's): the same processes entered on the way, THE SAME FRAME handed the
-    handler, the image at every stop of the dispatcher's watch and AT THE ARRIVAL the ROM's (`_IdleStopImages`), and
-    not one cycle of our run in the ROM's ctlmgr. The frame."""
-    switches, routine = arriving.switches, arriving.routine
+# ---- THE SCREEN MANAGER'S HANDLERS' ROWS: EACH SHORE'S OWN ctlmgr ARRIVING AT ITS OWN HANDLER (slice E, wave 2's close) ----
+# Since FLIP 4 the screen manager's loop is our C wherever a build runs it, and a handler is run by NOTHING ELSE: so a
+# handler's row is measured THERE. One run a shore (`aes_switching.ThroughAHandler`), each a bench run of code in place
+# from a booted machine's idle — the ROM-booted machine on the ROM's shore, THE TAKEOVER MACHINE of the same boot on
+# ours — through the case's chain to the handler's first instruction (the ROM's ctlmgr calling the ROM's routine; OUR
+# ctlmgr, and our handlers above the one arrived at, calling OUR core) AND ON THROUGH THE HANDLER TO ITS RETURN, on
+# the screen manager's real stack. THE ROW IS THAT SLICE: what each run spent between its arrival and its return.
+# WHAT IS HELD, by name:
+#   * TO THE ARRIVAL: the same processes entered, THE SAME FRAME handed the handler, the image at every stop of the
+#     dispatcher's watch and at the arrival the ROM's (`_IdleStopImages`);
+#   * THROUGH THE HANDLER, everything a row that switches is held to on the kit's path — by the same watches, made
+#     at the arrival (`aes_switching.Switching` round `DoorWindows`): the row's own deliveries laid at ITS idles,
+#     polls and door calls on both shores; one schedule; the windows of the ROM's processes equal to the cycle, none
+#     of our build's cycles inside (`_vet_switched_alike`); the same door calls handed the same frames, net of the
+#     same windows; the image at every stop; the OS both run equal; THE IDENTITY;
+#   * WHO RAN: from the machine's idle to the handler's return NOT ONE CYCLE of our run in the ROM's own text of the
+#     handler (nor in the ROM's ctlmgr), some in our core of it; the ROM's run some in its handler and none in the
+#     blob; and our slice's cycles in the AES's ROM exactly its windows of the ROM's processes;
+#   * WHERE THE HANDLER RETURNS: the megabyte the ROM's outside THE CLASSES THE ROW NAMES (`aes_ctlmgr.Handled.differs`,
+#     as a woken row's: each must differ) and the row's own named windows (each must differ too) — every code
+#     address of the registry mapped; the four streams and the odd accesses of the whole runs, equal.
+# ITS COSTS ARE THE SLICE'S, IN THE TABLE'S UNIT: the kit's entry constant (the oracle's reset: `blob.overhead`) is
+# added to both, as every row's two costs carry it — so a row keeps the costs it had as a kit call wherever its two
+# builds do there what they did under one (measured, slice E: every row, both blobs, to the cycle on both shores).
+# THE CALLEE-SAVED FILE IS HELD AS A KIT CALL HOLDS IT (`vet_the_handler_kept_its_caller_s_registers`): the kit's loop
+# hands a watch the PC, A7 and the memory only, but the oracle's CPU stands stopped with its whole register file, and
+# the two marks read it (`aes_boot.registers_at_the_stop`): where our handler returns, D2-D7 and A2-A6 hold what its
+# caller — our ctlmgr, or our handler above it — held where it called. A clobber of a register that is DEAD in ctlmgr
+# shows nowhere else (the image, the schedule and the cost are a correct routine's).
+HandlerMark = namedtuple("HandlerMark", "insns cycles aes blob glue the_rom_s_body our_core")
+HandlerMark.__doc__ = """A run's running totals where it stands (`ThroughAHandler`'s `mark`): its instructions and
+cycles, its cycles in the AES's own spans, at the blob's PCs and in its thunks, in the ROM's own text of the handler
+and in our core of it."""
+
+
+class _HandlerMarks:
+    """`mark()` for ONE SHORE's run through the handler `routine` (its `addrs` name; `symbol` our core of it) on
+    `blob` — and, beside each mark's totals, THE CALLEE-SAVED REGISTERS as the CPU holds them at that stop
+    (`callee_saved`: at the arrival, then at the return)."""
+
+    def __init__(self, blob, glue, routine, symbol):
+        self._blob, self._glue = blob, glue
+        self._the_rom_s_body, self._our_core = aes_ctlmgr.the_rom_s_body_of(routine), _function_ranges(blob.elf)[symbol]
+        self.callee_saved = []
+
+    def __call__(self):
+        self.callee_saved.append(aes_boot.registers_at_the_stop(CALLEE_SAVED))
+        cost, blob = aes_event.run_cost(), self._blob
+        return HandlerMark(cost["insns"], cost["cycles"], _cycles_in(AES_OWN_SPANS), emu.prof_cycles(blob.base, blob.end),
+                           _cycles_in(self._glue), emu.prof_cycles(*self._the_rom_s_body), _cycles_in(self._our_core))
+
+
+def vet_the_handler_kept_its_caller_s_registers(who, symbol, at_the_arrival, at_the_return):
+    """EVERY CALLEE-SAVED REGISTER BACK AS OUR HANDLER WAS ENTERED WITH IT (`asm_twin.CALLEE_SAVED`; the two `{name:
+    value}` read where our run stood at the arrival and at the return) — what the kit's call holds a C core to
+    (`vet_callee_saved`), on the real caller's own values. Refused by the register's name."""
+    lost = [f"{name} = {at_the_return[name]:#x}, entered with {at_the_arrival[name]:#x}"
+            for name in CALLEE_SAVED if at_the_return[name] != at_the_arrival[name]]
+    assert not lost, (
+        f"{who}: `{symbol}` RETURNED TO ITS CALLER WITH {'; '.join(lost)} — a callee-saved register that was not "
+        f"restored. Nothing else here can see that where the register is dead in the caller: the image, the schedule "
+        f"and the cost are all a correct routine's")
+
+
+def vet_the_streams_alike(who, rom, ours):
+    """THE FOUR OFF-IMAGE STREAMS AND THE ODD ACCESSES of the two whole runs (`rom`, `ours`: the two `Ran`) are equal —
+    the only surface a store to the hardware has. Refused by name."""
+    assert rom.streams == ours.streams and rom.odd == ours.odd, f"{who}: the two runs' off-image streams or odd accesses differ"
+
+
+def _in_the_handler(through):
+    """What a run spent between its arrival at the handler and the handler's return: a `HandlerMark` of differences."""
+    return HandlerMark(*(after - before for before, after in zip(through.arrived_at, through.returned_at)))
+
+
+HandlerRun = namedtuple("HandlerRun", "so_far spent in_the_rom_s_ctlmgr")
+HandlerRun.__doc__ = """One shore's run through a handler, as WHO RAN reads it: its totals `so_far` where the handler
+returns (from the machine's idle on), what it `spent` between the arrival and the return (`HandlerMark` each), and
+the whole run's cycles in the ROM's ctlmgr."""
+
+
+def vet_who_ran_the_handler(who, routine, symbol, the_rom_s, ours, in_the_rom_s_windows):
+    """WHO RAN, COUNTED AT THE PCs of the two runs of a handler's row measured at its arrival (`the_rom_s`, `ours`: a
+    `HandlerRun` each): FROM THE MACHINE'S IDLE TO THE HANDLER'S RETURN our run spent NOT ONE CYCLE in the ROM's own
+    text of the handler `routine`, nor in the ROM's ctlmgr on its way there, and some in our core `symbol` between
+    the arrival and the return; the ROM's run some in its handler and in its ctlmgr, and none in the blob; and
+    between its arrival and its return our cycles in the AES's ROM are exactly its windows of the ROM's processes
+    (`in_the_rom_s_windows`). Refused by name, each."""
+    assert ours.so_far.the_rom_s_body == 0 < the_rom_s.spent.the_rom_s_body and ours.spent.our_core > 0 == the_rom_s.so_far.blob, (
+        f"{who}: WHO RAN — from the machine's idle to the handler's return our run spent {ours.so_far.the_rom_s_body} "
+        f"cycles in the ROM's own text of {routine} and {ours.spent.our_core} in `{symbol}`; the ROM's "
+        f"{the_rom_s.spent.the_rom_s_body} in its handler and {the_rom_s.so_far.blob} in the blob")
+    assert ours.in_the_rom_s_ctlmgr == 0 < the_rom_s.in_the_rom_s_ctlmgr, (
+        f"{who}: WHO RAN — our run spent {ours.in_the_rom_s_ctlmgr} cycles in the ROM's ctlmgr on its way to the handler, "
+        f"the ROM's {the_rom_s.in_the_rom_s_ctlmgr}")
+    assert ours.spent.aes == in_the_rom_s_windows, (
+        f"{who}: WHO RAN — between its arrival and its return OUR run spent {ours.spent.aes} cycles at the PCs of the "
+        f"AES's own ROM where its windows of the ROM's processes hold {in_the_rom_s_windows}")
+
+
+class _HandlerStopImages(_IdleStopImages):
+    """`_IdleStopImages` for a run that goes on THROUGH A HANDLER: from the arrival on, THE ROW'S OWN NAMED WINDOWS
+    (`its_own`: set where the handler's own watch is made, cleared before a shore's run) are left out too — its
+    `also_dropped`, and what it names at its stops alone (`stops_only`: WHAT EACH SHORE HOLDS THERE at every stop of
+    the handler's own run is kept, `held_at_the_stops`, so that a window nobody needs there can be refused)."""
+
+    its_own, stops_only = (), ()
+
+    def __init__(self, *made_with):
+        super().__init__(*made_with)
+        self.held_at_the_stops = {aes_switching.THE_ROM_S: [], aes_switching.OURS: []}
+
+    def _spans(self, memory):
+        return (*super()._spans(memory), *self.its_own)
+
+    def _held(self, shore, memory):
+        if self.its_own and self.stops_only:
+            self.held_at_the_stops[shore].append(tuple(bytes(memory[lo:hi]) for lo, hi, _why in self.stops_only))
+
+    def the_rom_s(self, memory):
+        self._held(aes_switching.THE_ROM_S, memory)
+        return super().the_rom_s(memory)
+
+    def ours(self, memory):
+        self._held(aes_switching.OURS, memory)
+        return super().ours(memory)
+
+    def vet_what_is_left_out_at_the_stops_alone_is_needed(self, who):
+        """A WINDOW LEFT OUT AT THE HANDLER'S STOPS ALONE IS NEEDED THERE, OR REFUSED: at one stop at least of the
+        handler's own run the two shores hold other bytes in it."""
+        its, ours = self.held_at_the_stops[aes_switching.THE_ROM_S], self.held_at_the_stops[aes_switching.OURS]
+        assert not self.stops_only or its != ours, (
+            f"{who}: names {[(f'{lo:#x}', f'{hi:#x}') for lo, hi, _why in self.stops_only]} to leave out of the images at "
+            f"its handler's stops, and the two shores hold the same bytes there at every one of the {len(its)}: a "
+            f"window named and not needed hides a page for nothing")
+
+
+def the_topped_words_as_the_c_sends_them(handed):
+    """THE ROM'S DOOR FRAMES AS OUR C HANDS THEM on a row that names WM_TOPPED's four stale words
+    (`aes_ctlmgr.THE_TOPPED_WORDS`; ruling W2-R2): every write of a WM_TOPPED message with its words 4..7 the C's
+    four zeroes — and nothing else of any frame."""
+    stale = aes_ctlmgr.STALE_WORDS_AT[1] - aes_ctlmgr.STALE_WORDS_AT[0]
+
+    def as_sent(call):
+        *before, message = call.arguments
+        if (call.routine != addrs.AES_ROM_AP_RDWR or not isinstance(message, bytes) or len(message) != aes.AP_MSG_BYTES
+                or int.from_bytes(message[:aes.WORD_BYTES], "big") != aes_ctlmgr.WM_TOPPED):
+            return call
+        return call._replace(arguments=(*before, message[:-stale] + bytes(stale)))
+    return [as_sent(call) for call in handed]
+
+
+def at_its_arrival_on(blob, who, handled):
+    """A HANDLER'S ROW ON `blob`, MEASURED WHERE EACH SHORE'S OWN ctlmgr ARRIVES AT ITS OWN HANDLER (above; `handled`:
+    an `aes_ctlmgr.Handled`): its `Measurement` — the slice's costs, own cycles, thunks, door calls and windows, as
+    the kit's path spells a row through the OS — with `deepest`: how deep each run went on the screen manager's real
+    stack from the machine's idle to the handler's return (the ROM's, ours: a lowest STORE, the machine's VDI under
+    the traps)."""
+    measured, _our_watch = through_its_handler_on(blob, who, handled)
+    return measured
+
+
+def through_its_handler_on(blob, who, handled):
+    """...and `(that Measurement, our run's watch of the handler's own run)` — the `aes_switching.Switching` a named
+    blob's battery reads its idles, polls, processes entered and door calls off (`aes_switching.measured_on`)."""
+    arrival = handled.arrival
+    routine, symbol, entry = arrival.routine, routines.core_symbol(arrival.routine), getattr(addrs, arrival.routine)
+    arriving, switches = aes_ctlmgr.arriving(arrival), aes_ctlmgr.taken_through(handled)
+    its_own = tuple(handled.row.also_dropped) if handled.row else ()
+    assert not (handled.row and aes_switching.settled(handled.row).qpbs), (
+        f"{who}: the handler's run leaves A QPB'S ADDRESS in an EVB — on the screen manager's real stack that is an "
+        f"address in each build's own frames, a class no row names yet (`aes_ctlmgr.CLASSES`): declare it")
     words = aes_gemctrl.FRAMES[routine].size // aes.WORD_BYTES
-    relocations, images, rom_image, our_image, ours_watching = _two_shores(blob, who, types.SimpleNamespace(machine=machine), switches)
-    the_rom_s = aes_switching.ToAnArrival(switches, getattr(addrs, routine), arriving.which, _frame_the_rom_s_caller_pushed(words),
-                                          tally=_the_rom_s_foreign_tally, images=images.the_rom_s)
+    relocations, images, rom_image, our_image, ours_watching = _two_shores(blob, who, arrival, arriving.switches, _HandlerStopImages)
+    images.topped = topped = aes_ctlmgr.THE_TOPPED_WORDS in handled.differs
+    images.stops_only = tuple(handled.at_stops_only)
+    glue, doors = glue_of(blob), {}
+    its_marks, our_marks = (_HandlerMarks(blob, glue, routine, symbol) for _shore in range(2))
+
+    def the_rom_s_handling(_memory, _sp):
+        images.its_own = (*its_own, *handled.at_stops_only)
+        doors[aes_switching.THE_ROM_S] = the_rom_s_door_watch(symbol, entry, switches.at_calls, blocks=False)
+        return aes_switching.the_rom_s(switches, entry, _the_rom_s_foreign_tally, doors[aes_switching.THE_ROM_S],
+                                       images=images.the_rom_s)
+
+    def our_handling(_memory, _sp):
+        images.its_own = (*its_own, *handled.at_stops_only)
+        doors[aes_switching.OURS] = our_door_watch(blob, symbol, switches.at_calls, glue, blocks=False)
+        at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, symbol) for taken in (switches.at_idles, switches.at_polls))
+        return aes_switching.ours(blob, switches, at_idles, _our_foreign_tally(blob, glue), doors[aes_switching.OURS],
+                                  ledger=_our_ledger, relocated_polls=at_polls, takeover=True, images=images.ours)
+
+    the_rom_s = aes_switching.ThroughAHandler(
+        aes_switching.ToAnArrival(arriving.switches, entry, arriving.which, _frame_the_rom_s_caller_pushed(words),
+                                  tally=_the_rom_s_foreign_tally, images=images.the_rom_s), the_rom_s_handling, its_marks)
     rom = _run_to_its_next_idle(rom_image, the_rom_s, blob)
+    images.its_own = ()
     _mapped_at_entry(our_image, relocations)
-    watch = aes_switching.ToAnArrival(switches, blob.entry(routines.core_symbol(routine)), arriving.which, _frame_our_caller_pushed(words),
-                                      **ours_watching)
+    came_with = {relocation.what: frozenset() if relocation.at_entry else rom_addresses_in(our_image, relocation)
+                 for relocation in relocations}
+    watch = aes_switching.ThroughAHandler(
+        aes_switching.ToAnArrival(arriving.switches, blob.entry(symbol), arriving.which, _frame_our_caller_pushed(words),
+                                  **ours_watching), our_handling, our_marks)
     ours = _run_to_its_next_idle(our_image, watch, blob)
-    the_rom_s.vet_ended(f"{who}: the ROM's run")
-    watch.vet_ended(f"{who}: our run")
-    assert the_rom_s.arrived == watch.arrived == arriving.words, (
-        f"{who}: our ctlmgr hands {routine} {watch.arrived} where the ROM's hands it {the_rom_s.arrived}")
-    assert the_rom_s.entered == watch.entered == list(arriving.entered), (
-        f"{who}: our run entered {[hex(pd) for pd in watch.entered]} on the way, the ROM's {[hex(pd) for pd in the_rom_s.entered]}")
-    vet_the_images_at_the_stops(who, watch.taken, the_rom_s.taken)
-    assert ours.in_the_rom_s_ctlmgr == 0 < rom.in_the_rom_s_ctlmgr and ours.blob > 0 == rom.blob, (
-        f"{who}: WHO RAN — our run spent {ours.in_the_rom_s_ctlmgr} cycles in the ROM's ctlmgr and {ours.blob} in the blob")
-    return watch.arrived
+    # TO THE ARRIVAL: what `arriving` derived, on both shores.
+    the_rom_s.arriving.vet_ended(f"{who}: the ROM's run")
+    watch.arriving.vet_ended(f"{who}: our run")
+    assert the_rom_s.arriving.arrived == watch.arriving.arrived == arriving.words, (
+        f"{who}: our ctlmgr hands {routine} {watch.arriving.arrived} where the ROM's hands it {the_rom_s.arriving.arrived}")
+    assert the_rom_s.arriving.entered == watch.arriving.entered == list(arriving.entered), (
+        f"{who}: our run entered {[hex(pd) for pd in watch.arriving.entered]} on the way, the ROM's "
+        f"{[hex(pd) for pd in the_rom_s.arriving.entered]}")
+    vet_the_images_at_the_stops(f"{who}, to its arrival", watch.arriving.taken, the_rom_s.arriving.taken)
+    # THROUGH THE HANDLER: a row that switches, held as one (the kit's path's own rules, by the same watches).
+    its, mine = the_rom_s.handling, watch.handling
+    our_door, its_door = doors[aes_switching.OURS], doors[aes_switching.THE_ROM_S]
+    foreign = _vet_switched_alike(who, mine, its, blob)
+    assert not turns_made(mine, its), f"{who}: a window of the handler's own run is a turn of the screen manager's — its own process"
+    vet_the_images_at_the_stops(who, mine.taken, its.taken)
+    images.vet_what_is_left_out_at_the_stops_alone_is_needed(who)
+    vet_the_same_door_calls(who, our_door, its_door, the_topped_words_as_the_c_sends_them if topped else lambda handed: handed)
+    rom_bench.vet_blob_intact(symbol, our_image, (blob.base, blob.base + len(blob.blob)), blob.blob)
+    vet_no_slot_names_the_rom(symbol, our_image, relocations, came_with, {**watch.arriving.foreign_codes, **mine.foreign_codes})
+    # WHO RAN.
+    its_slice, our_slice = _in_the_handler(the_rom_s), _in_the_handler(watch)
+    vet_who_ran_the_handler(who, routine, symbol, HandlerRun(the_rom_s.returned_at, its_slice, rom.in_the_rom_s_ctlmgr),
+                            HandlerRun(watch.returned_at, our_slice, ours.in_the_rom_s_ctlmgr), foreign.in_the_aes)
+    vet_the_handler_kept_its_caller_s_registers(who, symbol, *our_marks.callee_saved)
+    # THE ROW: the slice, priced as a row through the OS is.
+    reset_insns, reset_cycles = blob.overhead
+    measured = Measurement((its_slice.insns + reset_insns, its_slice.cycles + reset_cycles),
+                           (our_slice.insns + reset_insns, our_slice.cycles + reset_cycles), blob.overhead)
+    measured.foreign, measured.turns, measured.turns_in_the_costs = foreign, (), (0, 0)
+    measured.rebound_calls = our_door.closed
+    measured.rebound_own, measured.rebound_glue = (sum(our_door.own_inside), sum(its_door.own_inside)), sum(our_door.glue_inside)
+    measured.glue_cycles = our_slice.glue
+    measured.own_cycles = (our_slice.blob - our_slice.glue, its_slice.aes - foreign.in_the_aes)
+    vet_the_windows_came_off_the_calls(who, our_door, its_door, measured)
+    shared, its_shared = shared_cycles(measured)
+    assert shared == its_shared, (
+        f"{who}: the OS both sides run cost ours {shared} cycles and the ROM's {its_shared} between the arrival and the "
+        f"return — cost moved into code counted as shared")
+    vet_the_identity(who, measured, mine, its)
+    vet_the_machines_where_the_runs_end(who, blob, rom, ours, handled.differs, its_own)
+    vet_the_streams_alike(who, rom, ours)
+    OUR_RUN.append(OurRun(symbol, our_slice.aes, False, 0))
+    lo, top = aes_takeover.spans_of(rom.memory).stack
+    measured.deepest = tuple(top - min(at for at in ran.stored if lo <= at < top) for ran in (rom, ours))
+    return measured, mine
+
+
+def is_measured_at_its_arrival(row):
+    """Is `row` a handler's of the screen manager's, measured where each shore's own ctlmgr arrives at it
+    (`aes_ctlmgr.HANDLED`: declared by its battery)?"""
+    return row.registered in aes_ctlmgr.HANDLED
 
 
 def left_on_the_rom_s_screen_manager(row):
@@ -4165,6 +4412,9 @@ def _measured_on_its_path(row, bench):
         f"transcription, a `.S` that calls C)")
     if is_a_woken_row(row):
         return idle_to_idle_on(shipped_bench(), row.registered, aes_ctlmgr.ROWS[row.registered])
+    if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
+        return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
+                                 aes_ctlmgr.HANDLED[row.registered])
     if calls_into_c(row):
         return _measure_into_c(row, bench)
     if row.transcription:
@@ -4380,6 +4630,16 @@ def _two_counts_line(measured, indent):
                               glue=glue_cycles_of(measured), with_glue=caller_own_ratio_with_glue(measured))
 
 
+WHERE_THE_HANDLER_RETURNS = "left out of the compare of the two machines where the handler returns"
+
+
+def _where_the_handler_returns_lines(handled, indent):
+    """What a handler's row measured at its arrival says under itself: the classes it names, and its own windows."""
+    its_own = handled.row.also_dropped if handled.row else ()
+    return ([f"{'':<{indent}}  {WHERE_THE_HANDLER_RETURNS}: {named}" for named in handled.differs]
+            + [f"{'':<{indent}}  {WHERE_THE_HANDLER_RETURNS}: [${lo:x}, ${hi:x}) — {why}" for lo, hi, why in its_own])
+
+
 def _own_split_line(measured, indent):
     """The (T←) split under a `.S` row over the bar: the own ratio, and where the rest of each side went."""
     (ours, original), (thunks, c_body) = measured.own_cycles, measured.into_c_cycles
@@ -4572,6 +4832,10 @@ def table(bench, jobs=SERIAL):
         if is_a_woken_row(row):
             lines += [f"{'':<{name_width + ADDRESS_WIDTH}}  left out of the compare of the two machines where the runs end: {named}"
                       for named in aes_ctlmgr.ROWS[row.registered].differs]
+        # ...and a handler's row measured at its arrival, the same where its handler returns — and its own named
+        # windows, each with its reason (`vet_the_machines_where_the_runs_end`: each held to differ).
+        if is_measured_at_its_arrival(row):
+            lines += _where_the_handler_returns_lines(aes_ctlmgr.HANDLED[row.registered], name_width + ADDRESS_WIDTH)
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

@@ -99,7 +99,10 @@ ON_BOTH_BLOBS = (*tape.PRICED, tape.NONE_PLAYED_BELOW_ZERO, tape.PLAYED_BACKWARD
 # CALLER'S OWN, net of the calls of rebound entries, and how many it closes — ev_timer's ev_block, once a sleep and
 # once a timer record (a playback of no timer record calls none: one count); and the row's foreign windows.
 NO_WINDOW = switching.NO_WINDOW
-THE_MANAGER_S_TURN = (1, 65624, 52100)  # the screen manager's own run with the mouse on its bar: the ROM's, on both shores
+THE_MANAGER_S_TURN = (1, 65624, 52100)  # the screen manager's own run with the mouse on its bar, as the ROM's run made it
+# ...and its two entries inside the recording — woken onto the bar, where its menu drops and waits, and off it again —
+# ONE window (no other process runs between them), as the ROM's run made it
+THE_MANAGER_S_TURNS_RECORDED = (1, 883624, 219072)
 # @PINS-BEGIN (measured: scratch `pins.py`)
 WHOLE_RUN = {
     'two moves, the ticks and a press recorded: the buffer full':
@@ -130,6 +133,8 @@ WHOLE_RUN = {
         {BENCH: (127192, 112348), SHIPPED: (127192, 113908)},
     'the mouse played onto the menu bar and off it: the screen manager entered from a yield':
         {BENCH: (167922, 134432), SHIPPED: (167922, 133334)},
+    "the mouse onto the menu bar and off it: the screen manager's turns inside the recording":
+        {BENCH: (922214, 854046), SHIPPED: (922214, 845218)},
     'none played: a count below 0':
         {BENCH: (12180, 10844), SHIPPED: (12180, 10964)},
     'four records played at a negative scale: the wait is no tick':
@@ -168,6 +173,8 @@ PRICED = {
         Priced((41656, 58612), (30468, 41570), 2, (0, 0, 0)),   # 0.71 / 0.73
     'the mouse played onto the menu bar and off it: the screen manager entered from a yield':
         Priced((32158, 46136), None, None, (1, 65624, 52100)),   # 0.70
+    "the mouse onto the menu bar and off it: the screen manager's turns inside the recording":
+        Priced((15264, 23048), (1668, 3326), 1, (1, 883624, 219072)),   # 0.66 / 0.50
 }
 # @PINS-END
 WINDOWS = {label: priced.windows for label, priced in PRICED.items() if priced.windows != NO_WINDOW}
@@ -180,7 +187,8 @@ def test_every_priced_row_is_registered_and_pinned():
     assert {row.label for row in tape.REGISTERED.values()} == tape.PRICED.keys() == PRICED.keys()
     assert PREMISES.keys() == ROWS.keys() and WHOLE_RUN.keys() == set(ON_BOTH_BLOBS)
     assert not ARGUMENT_CLASS_ROWS.keys() & tape.PRICED.keys(), "the labelled class is in no registry"
-    assert WINDOWS == {ONTO_THE_BAR: THE_MANAGER_S_TURN}, "one priced row has another process's turn in it"
+    assert WINDOWS == {ONTO_THE_BAR: THE_MANAGER_S_TURN, ACROSS_A_WINDOW: THE_MANAGER_S_TURNS_RECORDED}, (
+        "two priced rows have another process's turn in them: the screen manager's, a playback's and a recording's")
 
 
 # ---- THE MACHINES: a recording is the ROM's own, and holds what its name says --------------------------------------------------
@@ -501,26 +509,35 @@ def test_ap_tplay_exchanges_the_cursor_routine_before_the_motion_routine(blob):
 
 
 # ---- WHAT NO BLOB RUNS, AND WHAT NO HOST FORK RUNS — each refused by name -----------------------------------------------------------
-def test_a_recording_across_another_process_s_turn_is_refused_on_a_blob(blob):
+def test_a_recording_across_a_turn_of_the_rom_s_process_is_refused_on_a_blob(blob):
     """THE MIXTURE'S OWN LIMIT, held so that it is not met by surprise: a recording with A TURN OF THE ROM'S PROCESS
     INSIDE it is the ROM's on the host (Tier 1 above) and RED on a blob in exactly the records made inside the
     foreign window — the ROM's forker ran those events and its recorder copied the ROM's fork-function addresses,
     which our ap_trecd, comparing with our own entries, numbers 0 (a timer's) where the ROM's numbers them 2 (a
-    mouse's). No relocation maps a recording where a window closes; the row is registered nowhere.
+    mouse's). No relocation maps a recording where a window closes.
     SINCE FLIP 4 THE SCREEN MANAGER'S TURN IS NO SUCH WINDOW: with the screen manager OURS (`aes_takeover`) the events
     inside its turn are run by OUR forker, whose recorder copies our own entries — the recording is the ROM's on
-    each blob, its turn priced by itself. (It is the run a playback's machine is made ours from: `aes_takeover`'s
-    provenance.) The limit is held on the same row LEFT ON THE ROM'S SCREEN MANAGER."""
+    each blob, its turn priced by itself: THE ROW IS REGISTERED AND PRICED (wave 2's close; pinned above, on both
+    blobs and in the table like every priced row). (It is also the run a playback's machine is made ours from:
+    `aes_takeover`'s provenance.) The limit is held on the same row LEFT ON THE ROM'S SCREEN MANAGER — the one
+    machine at hand that records across another process's turn at all."""
     row = ROWS[ACROSS_A_WINDOW]
-    assert SCREEN_MANAGER in PREMISES[ACROSS_A_WINDOW].entered and ACROSS_A_WINDOW not in tape.PRICED
-    measured, watch, _foreign = switching.measured_on(blob, row)
-    assert set(watch.window_classes) == {switching.OURS} and measured.turns
+    assert SCREEN_MANAGER in PREMISES[ACROSS_A_WINDOW].entered and ACROSS_A_WINDOW in tape.PRICED
     row = row._replace(the_rom_s_screen_manager="the mixture's own limit: the recording's row as it stood before FLIP 4")
     with pytest.raises(AssertionError, match="left different memory than the original") as refused:
         switching.measured_on(blob, row)
     low_bytes = [tape.RECORD_AT + nth * tape.RECORD.size + aes.LONG_BYTES - 1 for nth in (1, 2)]
     assert all(f"{at:#x} (0x{tape.MOUSE:02x} -> 0x{tape.TIMER:02x})" in str(refused.value) for at in low_bytes), refused.value
     assert "2 byte(s)" in str(refused.value)
+
+
+def test_the_recording_across_the_screen_manager_s_turn_is_our_forker_s_on_a_blob(blob):
+    """...AND WHY THE PRICED ROW HOLDS: on a blob the recording's one window is A TURN OF OUR SCREEN MANAGER (read off
+    the run), and the two records made inside it are numbered as mouse records — our forker ran those events and
+    its recorder copied OUR entries, which our ap_trecd knows."""
+    measured, watch, _foreign = switching.measured_on(blob, ROWS[ACROSS_A_WINDOW])
+    assert set(watch.window_classes) == {switching.OURS} and len(measured.turns) == 1
+    assert [record[0] for record in tape.RECORDINGS[tape.ONTO_AND_OFF_THE_BAR].records[1:3]] == [tape.MOUSE] * 2
 
 
 def test_a_routine_s_address_played_for_a_number_is_the_rom_s_code_on_a_blob(blob):

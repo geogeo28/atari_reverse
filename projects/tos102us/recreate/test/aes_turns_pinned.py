@@ -24,6 +24,10 @@ PINNED = {
         "bench": ((31140, 52100, 0),),
         "bench_shipped": ((27498, 52100, 1284),),
     },
+    "aes_ap_trecd, the mouse onto the menu bar and off it: the screen manager's turns inside the recording": {
+        "bench": ((156130, 219072, 1376),),
+        "bench_shipped": ((139152, 219072, 9764),),
+    },
     "aes_dispatch, opcode 11, as aes_ap_rdwr, a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)": {
         "bench": ((198044, 278034, 1376),),
         "bench_shipped": ((175400, 278034, 12148),),

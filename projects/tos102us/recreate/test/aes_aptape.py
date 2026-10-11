@@ -258,13 +258,16 @@ def playback_row(label, play=None):
 # PRICED: registered rows that switch (`aes_switching.register_row`: Tier 1 their companion, both blobs, the table).
 # The rest are Tier 1's alone, each for its reason:
 #   * another count or scale of a priced row, a recording that is only a playback's machine — nothing new to price;
-#   * A RECORDING WITH ANOTHER PROCESS'S TURN INSIDE IT (ONTO_AND_OFF_THE_BAR): the events delivered inside the foreign
-#     window are run — and RECORDED — by the ROM's forker on both shores (the window is the ROM's code), so on a blob
-#     the buffer holds the ROM's fork-function addresses where our ap_trecd looks for our own, and numbers them 0.
-#     The registry relocates a recording where a run begins and ends and where a delivery is laid, not where a
-#     window closes (`test_aes_aptape.py` holds the refusal);
 #   * the labelled class.
-PRICED_RECORDINGS = (FULL, MERGED, A_KEY, ENDED_EARLY, NOTHING, UNASKED)
+# A RECORDING WITH THE SCREEN MANAGER'S TURN INSIDE IT (ONTO_AND_OFF_THE_BAR) IS PRICED SINCE WAVE 2's CLOSE: with the
+# screen manager OURS (`aes_takeover`: FLIP 4) the events delivered inside its turn are run — and RECORDED — by OUR
+# forker, whose recorder copies our own entries, which our ap_trecd then numbers as the ROM's numbers its own; the
+# turn is our ctlmgr's, priced by itself. THE LIMIT THAT STANDS is a turn of THE ROM'S PROCESS inside a recording: there
+# the ROM's forker records the ROM's fork-function addresses on both shores, our ap_trecd looks for our own and
+# numbers them 0, and the registry relocates a recording where a run begins and ends and where a delivery is laid,
+# not where a window closes — no machine at hand records across the desk's or an accessory's turn, and the refusal
+# is held on this row LEFT ON THE ROM'S SCREEN MANAGER (`test_aes_aptape.py`).
+PRICED_RECORDINGS = (FULL, MERGED, A_KEY, ENDED_EARLY, NOTHING, UNASKED, ONTO_AND_OFF_THE_BAR)
 RECORDING_ROWS = {name: recording_row(name) for name in RECORDINGS}
 PLAYBACK_ROWS = {label: playback_row(label) for label in PLAYBACKS}
 ARGUMENT_ROWS = {label: playback_row(label) for label in ARGUMENT_PLAYBACKS}

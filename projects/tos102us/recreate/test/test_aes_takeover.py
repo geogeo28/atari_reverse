@@ -137,11 +137,12 @@ def test_the_rows_with_the_screen_manager_ours_are_those_whose_run_enters_it_and
     """READ OFF THE ROM'S RUN, NOT DECLARED: a registered row names the screen manager's two spans exactly when its
     dispatcher enters the screen manager as ANOTHER process than the row's own — no row is left on the ROM's — and
     each has its turns pinned on both blobs (`aes_turns_pinned`), but the one slice of a session whose window lies in
-    the session's other slice. The screen manager's own rows (its handlers at the ROM's arrivals) name neither span:
-    their process IS the screen manager, on the harness's stack."""
+    the session's other slice. The screen manager's own rows (its handlers') name neither span in the registry:
+    their process IS the screen manager — and at Tier 3 they are measured where each shore's own ctlmgr arrives at
+    its handler (`aes_ctlmgr.HANDLED`), where the two spans are classes each such row names."""
     ours = _rows_with_the_screen_manager_ours()
     enters = {name for name, held in aes_event.SWITCHING_ROWS.items() if held.switches.process != SM and SM in held.entered}
-    assert set(ours) == enters and len(ours) == 32
+    assert set(ours) == enters and len(ours) == 33
     assert not [name for name, held in aes_event.SWITCHING_ROWS.items() if held.row.the_rom_s_screen_manager]
     assert not [name for name, held in aes_event.SWITCHING_ROWS.items() if held.switches.process == SM and name in ours]
     pinned = {name for name in aes_turns_pinned.PINNED if not name.startswith(its_own.cm.SYMBOL)}
@@ -451,6 +452,9 @@ LEFT_WHERE_A_ROW_BEGINS = {
     "aes_ev_block, a wait for a key, the lock the desk's; the screen manager queues itself on the lock; then Return",
     "aes_ev_block, a wait for a key; the mouse onto the bar wakes the screen manager, which runs and waits; then Return",
     "aes_ev_block, a wait for a key; the mouse onto the bar wakes the screen manager; Return polled while it stands woken, before its turn",
+    # ...and the recording across its turn (registered at wave 2's close): the very run a playback's machine is made
+    # ours from — its own provenance — so our park where it ends is that run's, made again and found the same.
+    "aes_ap_trecd, the mouse onto the menu bar and off it: the screen manager's turns inside the recording",
 }
 
 
@@ -458,7 +462,7 @@ LEFT_WHERE_A_ROW_BEGINS = {
 def test_how_each_row_leaves_our_screen_manager_parked_is_what_status_says(name):
     """THE CENSUS BEHIND STATUS'S STATEMENT (FLIP 4, "what remains unseen"), on the shipped blob, every row whose
     screen manager is ours: NONE ends with it parked as it began (every one of these runs moves it: a menu dropped, a
-    message written, the lock queued on); THREE end where a noted run left it and are held to our build's own run to
+    message written, the lock queued on); FOUR end where a noted run left it and are held to our build's own run to
     that state; EVERY OTHER ends ELSEWHERE — our screen manager's final saved context and live frames on those rows
     are compared with nothing, and vetted only by the runs that wake it again from a park of that kind."""
     held = aes_event.SWITCHING_ROWS[name]
@@ -471,7 +475,7 @@ def test_how_each_row_leaves_our_screen_manager_parked_is_what_status_says(name)
 
 
 def test_the_rows_held_to_a_known_park_are_rows_with_the_screen_manager_ours():
-    assert LEFT_WHERE_A_ROW_BEGINS <= set(_rows_with_the_screen_manager_ours()) and len(LEFT_WHERE_A_ROW_BEGINS) == 3
+    assert LEFT_WHERE_A_ROW_BEGINS <= set(_rows_with_the_screen_manager_ours()) and len(LEFT_WHERE_A_ROW_BEGINS) == 4
 
 
 def test_a_turn_s_line_says_what_the_rom_s_line_f_handler_is_of_it():

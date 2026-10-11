@@ -17,6 +17,9 @@ The differential starts there: the ROM's routine and its C twin, each from that 
 THE DISPATCHER — a gadget watched or dragged while the button is down, an arrow repeated, the menu worked, the button
 waited up — is a row that switches (`aes_switching`), its own deliveries taken at the idles and polls of ITS run;
 the screen manager is the row's process, and the accessory's and the desk's turns inside it are foreign windows.
+(THAT IS A CASE'S TIER 1, and what its registry row holds. ITS TIER 3 is measured where each build runs the handler —
+the same chain run on each shore's own machine to ITS OWN ctlmgr's call of the handler and on to its return, on the
+screen manager's real stack: `aes_ctlmgr.Handled`, `bench/tier3.py`'s `at_its_arrival_on`.)
 
 ONE ARRIVAL IS NOT A DISPATCHER'S: the boot's own. The desk's menu_bar posts the screen manager a click of its own
 (mn_bar counts it in gl_mnclicks), and the ROM's boot arrives at hctl_button with it before its first idle —

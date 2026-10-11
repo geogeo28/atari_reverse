@@ -202,7 +202,10 @@ class Switching:
         self._image_taken(A_POLL, poll, memory)
         whose = f"{OUR_OWN if ours else THE_ROM_S} dispatcher, {pc:#x}"
         if not aes_switch.waits_for_an_interrupt(memory):
-            self._lay((self._at_our_poll if ours else self.switches.at_polls).get(poll), memory, f"poll {poll} ({whose})")
+            if ours or self._ours is None or self._window is not None:
+                self._lay((self._at_our_poll if ours else self.switches.at_polls).get(poll), memory, f"poll {poll} ({whose})")
+            else:                       # (...as an idle's, below: the ROM's dispatcher's own poll, outside every window)
+                self._lay_for_the_rom_s_forker(self.switches.at_polls.get(poll), memory, f"poll {poll} ({whose})")
             return
         self._see_the_qpbs(memory, self._parked_at(memory))
         ordinal, self.idles = self.idles, self.idles + 1
@@ -215,13 +218,17 @@ class Switching:
         if ours or self._ours is None or self._window is not None:
             self._lay((self._at_our_idle if ours else self.switches.at_idles).get(ordinal), memory, where)
         else:
-            # ON OUR SHORE, AT THE ROM'S IDLE, OUTSIDE EVERY WINDOW (a run from a machine's idle: the first delivery
-            # is taken where the machine stands — in the ROM's dispatcher): the fork codes it queues are the ROM's,
-            # for the ROM's forker, and no relocation of ours wrote them — kept as a window's are (`foreign_codes`).
-            found = self._code_slots(memory)
-            self._lay(self.switches.at_idles.get(ordinal), memory, where)
-            self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
-                                       if code != found[slot] and code in ROM_CODES})
+            self._lay_for_the_rom_s_forker(self.switches.at_idles.get(ordinal), memory, where)
+
+    def _lay_for_the_rom_s_forker(self, delivery, memory, where):
+        """ON OUR SHORE, AT THE ROM'S DISPATCHER'S OWN POLL, OUTSIDE EVERY WINDOW (a run from a machine's idle: what
+        comes before the first process is entered is taken where the machine stands — in the ROM's dispatcher, at
+        its idle or at a poll of that same dispatch): the fork codes `delivery` queues are the ROM's, for the ROM's
+        forker, and no relocation of ours wrote them — kept as a window's are (`foreign_codes`)."""
+        found = self._code_slots(memory)
+        self._lay(delivery, memory, where)
+        self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
+                                   if code != found[slot] and code in ROM_CODES})
 
     def _past_its_last_idle(self, where, memory):
         """The machine idles with every idle of the ROM's run made: a CALL's run would block for ever — refused."""
@@ -527,6 +534,46 @@ class ToAnArrival(IdleToIdle):
             raise Refused(f"{who}: the run made {self.idles} idle(s) and {self.polls} poll(s) and "
                           f"{'arrived' if self.arrived is not None else 'never arrived'}, where the ROM's own arrives after "
                           f"{self.switches.idles} and {self.switches.polls}")
+
+
+class ThroughAHandler:
+    """A WATCH OVER A RUN FROM A MACHINE'S IDLE THAT ARRIVES AT A HANDLER OF THE SCREEN MANAGER'S AND GOES ON THROUGH
+    IT, TO ITS RETURN — for either shore: the row of a handler MEASURED WHERE ITS OWN ctlmgr CALLS IT, on the screen
+    manager's real stack (`bench/tier3.py`'s `at_its_arrival_on`). Two watches of this module in turn, neither changed:
+
+      * `arriving` (a `ToAnArrival`) until the arrival: the chain's deliveries, every process followed, the frame read;
+      * `handling(memory, sp)` — made AT the arrival, the machine as it stands there — from the arrival on: the
+        `Switching` of the handler's own run (the screen manager its process; its door watch inside), exactly the
+        watch a kit call of the handler is followed by, so its idles, polls and door calls are numbered from the
+        handler's entry and the row's own deliveries are laid where a call's are.
+
+    THE RETURN is the address the handler's caller left at the stack pointer of the arrival, REACHED WITH THAT FRAME
+    POPPED (the stack pointer one longword above the arrival's: the same address reached deeper is no return of this
+    call): the run ENDS there (`aes_event.Ended`). `mark()`: the holder's running totals — taken at the arrival
+    (`arrived_at`) and at the return (`returned_at`): the row is the difference. NOTHING ELSE ENDS THE RUN: one whose
+    handler never comes back is refused by its handling watch (an idle the row's own run does not make) or by the
+    run's budget, one that idles before the arrival by `arriving`; and what each watch saw is its own to vet
+    (`arriving.vet_ended`, `handling.vet_ended`)."""
+
+    def __init__(self, arriving, handling, mark):
+        self.arriving, self._handling_of, self._mark = arriving, handling, mark
+        self.handling, self.arrived_at, self.returned_at = None, None, None
+        self._returns_to, self._returned_sp = None, None
+        self.first = arriving.first
+
+    def stopped(self, pc, sp, memory):
+        if self.handling is None:
+            try:
+                return self.arriving.stopped(pc, sp, memory)
+            except aes_event.Ended:     # ...the arrival: the handler's own run begins where the chain's ends
+                self._returns_to, self._returned_sp = case.long_in(memory, sp) & BUS, sp + aes.LONG_BYTES
+                self.arrived_at = self._mark()
+                self.handling = self._handling_of(memory, sp)
+                return (frozenset(self.handling.first) | {self._returns_to}) - {pc}
+        if pc == self._returns_to and sp == self._returned_sp:
+            self.returned_at = self._mark()
+            raise aes_event.Ended
+        return (frozenset(self.handling.stopped(pc, sp, memory)) | {self._returns_to}) - {pc}
 
 
 def _refuse_what_is_never_made(kind, named, made):
@@ -900,8 +947,14 @@ def measured_on(blob, row):
     its Tier 3 drops — HELD TO EVERYTHING THE TABLE'S OWN MEASUREMENT HOLDS A SWITCHING ROW TO
     (`tier3.switching_run_on`: the two runs one schedule, the foreign windows equal to the cycle with no cycle of
     our build inside, our run in the AES's ROM nowhere else). The kit's `Measurement` of the WHOLE run, our run's
-    watch, and the windows' `tier3.Foreign`."""
+    watch, and the windows' `tier3.Foreign`.
+    A HANDLER OF THE SCREEN MANAGER'S (`aes_ctlmgr.HANDLED`) IS MEASURED WHERE ITS OWN ctlmgr ARRIVES AT IT — on a
+    named blob as in the table (`tier3.at_its_arrival_on`): the same three, of the handler's own run."""
+    import aes_ctlmgr                   # (its registry is read where a row is measured: it imports the handlers' machines)
     tier3, made = bench_tier3(), settled(row)
+    if row_name(row) in aes_ctlmgr.HANDLED:
+        measured, watch = tier3.through_its_handler_on(blob, row_name(row), aes_ctlmgr.HANDLED[row_name(row)])
+        return measured, watch, measured.foreign
     returns = tier3.CALL[row.name].returns if row.answered else tier3.RETURNS_NOTHING
     measured, watch, foreign = tier3.switching_run_on(blob, row_name(row), _entry(row), _core(row), (0, *row.arguments),
                                                       made.pokes, made.switches, returns=returns, dropped=made.drops)

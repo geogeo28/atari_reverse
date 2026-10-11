@@ -3352,9 +3352,12 @@ DOOR_USERS_WHOLE_RUN.update(test_aes_gemsuper.DOOR_USERS_WHOLE_RUN)
 # ...and all_run's (`test_aes_all_run.py`): a yield, then the lock asked for — waited for behind the screen manager's menu.
 DOOR_USERS_PRICED.update(test_aes_all_run.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_aes_all_run.DOOR_USERS_WHOLE_RUN)
-# ...and the screen manager's handlers' (`test_aes_gemctrl.py`): each at an arrival of the ROM's own ctlmgr, the
-# screen manager the row's process — a gadget watched or dragged, an arrow repeated, the menu worked, the button
-# waited up. Held HERE and not a second time in their battery.
+# ...and the screen manager's handlers' (`test_aes_gemctrl.py`): the screen manager the row's process — a gadget
+# watched or dragged, an arrow repeated, the menu worked, the button waited up. hctl_button's, hctl_window's and
+# hctl_rect's are MEASURED WHERE EACH SHORE'S OWN ctlmgr ARRIVES AT ITS OWN HANDLER, on the screen manager's real stack
+# (`aes_ctlmgr.HANDLED`: `aes_switching.measured_on` and the table both go there — `tier3.at_its_arrival_on`), with
+# the pairs they held as calls over the ROM's arrival's machine; ct_msgup's two are calls there still (inlined into
+# its callers on both blobs: no arrival of its own).
 DOOR_USERS_PRICED.update(test_aes_gemctrl.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_aes_gemctrl.DOOR_USERS_WHOLE_RUN)
 

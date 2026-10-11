@@ -9,9 +9,9 @@
  *     never given on that path ($fe489c..$fe48aa): the residue of the screen manager's stack — on the machine the
  *     SAME four words at every arrival (residue of hctl_button's wm_find: ob_find's return address's high half, the
  *     frame pointer its `link` saved, the word under it). The C hands HCTL_STALE_WORD four times: A DECLARED DIVERGENCE (`aes/gemctrl.h`,
- *     `STATUS.md`). At an arrival of the ROM's ctlmgr the ROM's routine is entered on a zeroed stack and both send
- *     zeroes; ON THE REAL STACK (ctlmgr's own row, `test/test_aes_ctlmgr.py`) the ROM sends its residue, the C four
- *     zeroes, dropped there by name. `test/test_aes_gemctrl.py` holds what the real arrival carries.
+ *     `STATUS.md`). At Tier 1 (the ROM's routine entered at the ROM's arrival, on the harness's zeroed stack) both
+ *     send zeroes; ON THE REAL STACK (Tier 3: hctl_window's own rows and ctlmgr's, `test/test_aes_ctlmgr.py`) the ROM
+ *     sends its residue, the C four zeroes, named there as a class. `test/test_aes_gemctrl.py` holds what it carries.
  *   - A menu left with nothing chosen calls ct_msgup(0, D7, two frame words never set, 0, 0, 0) ($fe49a0): D7 and
  *     the two words are read by nobody — ct_msgup sends nothing for message 0.
  *

@@ -181,14 +181,16 @@ def _woken(pokes, chain, at_polls, budget=None):
     return at_idles, watch.idles, watch.polls, at_the_polls, tuple(watch.entered), tuple(watch.handlers)
 
 
-# ---- OUR ctlmgr ARRIVES: the handlers' own cases, met by our screen manager where the ROM's meets them ---------------------------
-# The screen manager's handlers are proved AT AN ARRIVAL OF THE ROM'S OWN ctlmgr (`aes_gemctrl.Arrival`): the ROM's
-# dispatcher run from a booted machine's idle through a chain to the handler's first instruction, the frame there and
-# the machine. With ctlmgr ours the same chain, over the same boot with the screen manager ours, must bring OUR
-# ctlmgr (and the handlers above the one arrived at) to OUR core of that handler WITH THE SAME FRAME OVER THE SAME
-# MACHINE — outside what the two machines differ in by nature. `arriving` derives the ROM's run with what each
-# delivery found and wrote (`aes_gemctrl.at` keeps the frame and the machine alone); `tier3.arrives_alike_on` runs
-# both shores and holds them.
+# ---- THE HANDLERS' OWN CASES, EACH SHORE'S OWN ctlmgr ARRIVING AT ITS OWN HANDLER (slice E, wave 2's close) -------------------
+# A case of the screen manager's handlers is AN ARRIVAL (`aes_gemctrl.Arrival`): a dispatcher's run from a booted
+# machine's idle through a chain to the handler's first instruction. ITS TIER 1 starts there on the ROM's run's
+# machine (`test_aes_gemctrl.py`: the host's C against the ROM's routine). ITS TIER 3 — the row the table prices and
+# both blobs are pinned at — IS MEASURED WHERE EACH BUILD REALLY RUNS THE HANDLER: the ROM's ctlmgr arriving at the
+# ROM's handler on the ROM-booted machine, OUR ctlmgr (and our handlers above the one arrived at) arriving at OUR
+# core of it on the takeover machine of the same boot — each ON THE SCREEN MANAGER'S REAL STACK — and each run taken
+# ON THROUGH THE HANDLER TO ITS RETURN: the row is that slice (`tier3.at_its_arrival_on`, which holds the frame, the
+# image at every stop and where the handler returns, and who ran). `arriving` derives the ROM's run to the arrival
+# with what each delivery found and wrote (`aes_gemctrl.at` keeps the frame and the machine alone).
 Arriving = namedtuple("Arriving", "routine which switches entered words")
 Arriving.__doc__ = """An arrival's ROM run, derived: the handler (its `addrs` name) and which of its arrivals, what the
 run is taken through up to there (`aes_event.Switches`, no process its own), the processes entered, and the words of
@@ -231,6 +233,44 @@ def arriving(arrival):
         pokes, dict(chain), dict(arrival.at_polls or {}), arrival.routine, arrival.which, *((arrival.budget,) if arrival.budget else ()))
     assert words == gc.at(arrival).arguments, f"{arrival.routine}: the frame at the arrival is not the one its case is run over"
     return Arriving(arrival.routine, arrival.which, aes_event.Switches(at_idles, idles, None, {}, at_the_polls, polls), entered, words)
+
+
+# A HANDLER'S CASE AS IT IS MEASURED AT ITS ARRIVAL (`tier3.at_its_arrival_on`). `arrival`: the case's own (its
+# `routine` the handler); `row`: the handler's own run as the row that switches it is (`aes_switching.SwitchingRow`:
+# what is delivered at ITS idles, polls and door calls, numbered from the handler's entry) — None for a handler that
+# returns without a switch; `differs`: THE CLASSES the two machines differ in where the handler returns (`CLASSES`,
+# as a woken row's: each must differ, and nothing differs outside them and the row's own named windows — its
+# `also_dropped`); `at_stops_only`: `(lo, hi, why)` windows that differ at a stop on the way and are equal again
+# where the handler returns (`aes_switching.companion`'s kind).
+Handled = namedtuple("Handled", "arrival differs row at_stops_only", defaults=(None, ()))
+# ...AND WHAT A HANDLER THAT RETURNS WITHOUT A SWITCH IS TAKEN THROUGH from its entry on: nothing, in its own process.
+NO_SWITCH = aes_event.Switches({}, 0, gc.SCREEN_MANAGER, {}, {}, 0)
+THE_HANDLERS = (gc.CT_MSGUP, gc.HCTL_WINDOW, gc.HCTL_BUTTON, gc.HCTL_RECT)      # in the ROM's order: each body ends at the next
+THE_HANDLERS_END = addrs.AES_ROM_CT_CHGOWN      # ...and the last at the routine after it (ct_chgown, before ctlmgr): `names.txt`
+HANDLED = {}                            # `{a registered row's name: its Handled}` — the rows `bench/tier3.py` measures so
+
+
+def the_rom_s_body_of(routine):
+    """`(lo, hi)`: the ROM's own text of the handler `routine` (its `addrs` name) — from its entry to the next's."""
+    entries = sorted(getattr(addrs, name) for name in THE_HANDLERS) + [THE_HANDLERS_END]
+    lo = getattr(addrs, routine)
+    return lo, entries[entries.index(lo) + 1]
+
+
+def taken_through(handled):
+    """What the handler's own run is taken through from its entry on (`aes_event.Switches`): the row's, or nothing."""
+    import aes_switching                # (the registrar: it imports the batteries' vocabulary, as `aes_event` says)
+    return aes_switching.settled(handled.row).switches if handled.row else NO_SWITCH
+
+
+def register_handled(name, handled):
+    """ONE REGISTERED ROW OF A HANDLER — `name`, as its battery registered it — DECLARED MEASURED AT ITS ARRIVAL:
+    `bench/tier3.py` reads `HANDLED` for the table, `aes_switching.measured_on` for a named blob. Refused by name: an
+    arrival that is no dispatcher's (the boot's own: no chain to run from an idle), a class that is none."""
+    assert handled.arrival.chain is not None, f"{name}: the boot's own arrival is made by no run from a machine's idle"
+    assert set(handled.differs) <= set(CLASSES) and name not in HANDLED, name
+    HANDLED[name] = handled
+    return handled
 
 
 def _frozen(schedule):

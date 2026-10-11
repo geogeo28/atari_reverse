@@ -328,15 +328,17 @@ aes_boot.compared(rom_machine, m).differing                # [] — and .within:
 - **Kept, though it runs the blob**: keyed by the pre-init machine's content AND the blob's (`derived.py` names the
   exception).
 - **Who runs on one since FLIP 4** (ctlmgr bound in C): ctlmgr's OWN rows — the screen manager woken, both shores from
-  a booted machine's idle to its next, ours over the takeover machine itself (`test/aes_ctlmgr.py`, below); and every
-  row whose run ENTERS the screen manager, whose machine is made ours from it or from our build's own run of its
-  history (`test/aes_takeover.py`; "TIER 3: A ROW THAT SWITCHES", THE SCREEN MANAGER'S TURN).
+  a booted machine's idle to its next, ours over the takeover machine itself (`test/aes_ctlmgr.py`, below); THE
+  HANDLERS' OWN ROWS, each measured where our ctlmgr arrives at our handler on it ("A HANDLER'S ROW AT ITS ARRIVAL",
+  below); and every row whose run ENTERS the screen manager, whose machine is made ours from it or from our build's
+  own run of its history (`test/aes_takeover.py`; "TIER 3: A ROW THAT SWITCHES", THE SCREEN MANAGER'S TURN).
 
 ### AN ARRIVAL — a routine of another process met where the ROM's own caller calls it (`test/aes_gemctrl.py`)
 
 The screen manager's handlers (`src/aes/gemctrl.c`: ct_msgup, hctl_window, hctl_button, hctl_rect) run in the screen
-manager's process, called by its main loop — the ROM's ctlmgr until wave 2. A case of one is never a frame somebody
-wrote. It is AN ARRIVAL:
+manager's process, called by its main loop — ctlmgr. A case of one is never a frame somebody wrote. It is AN ARRIVAL
+(what follows is the arrival OF THE ROM'S ctlmgr: the machine a case's TIER 1 runs over, and its registry row's; the
+case's TIER 3 is measured at each shore's own — the next section):
 
 - A MACHINE THE ROM BOOTED (above), its accessories having opened windows and registered a menu entry by their own
   AES calls;
@@ -399,7 +401,70 @@ foreign window, the ROM's own code on both shores. What that taught, each held b
   w, h for a window that is not the top one) is zero on both — while at the real arrival it is the residue of the
   caller's earlier calls, the same words every time (halves of a ROM and of a RAM address). An arrival is where that
   shows: read what the ROM's NEXT callee is handed there, across several arrivals, before calling a never-set word
-  "any value". It is then a DECLARED DIVERGENCE (STATUS), not a fidelity claim.
+  "any value". It is then a DECLARED DIVERGENCE (STATUS), not a fidelity claim. (A handler's Tier 3 row IS on the
+  machine's stack since wave 2's close: there the words are a class the rows that send them name — next section.)
+
+### A HANDLER'S ROW AT ITS ARRIVAL — measured where each shore's own ctlmgr calls it (`tier3.at_its_arrival_on`, wave 2's close)
+
+Since FLIP 4 nothing but our ctlmgr runs our handlers, so a handler's Tier 3 row is measured THERE, not as a kit
+call over the ROM's arrival's machine:
+
+```python
+cm.register_handled(name, cm.Handled(arrival,                    # the case's own `aes_gemctrl.Arrival`
+                                     differs,                    # the classes the two machines differ in where it returns
+                                     row))                       # its own run as the row that switches it is, or None
+tier3.at_its_arrival_on(blob, name, handled)                     # both shores, measured and held
+```
+
+- **ONE RUN A SHORE** (`aes_switching.ThroughAHandler`), a bench run of code in place from a booted machine's idle:
+  the ROM-booted machine on the ROM's shore, THE TAKEOVER MACHINE of the same boot on ours. Through the case's chain
+  to the handler's first instruction — the ROM's ctlmgr calling the ROM's routine; OUR ctlmgr (and our handlers above
+  the one arrived at) calling OUR core — AND ON THROUGH THE HANDLER TO ITS RETURN, on the screen manager's real stack.
+  THE ROW IS THE SLICE between the arrival and the return (the address the caller left at the arrival's stack
+  pointer, reached with that frame popped).
+- **TWO WATCHES IN TURN, NEITHER NEW.** To the arrival, `aes_switching.ToAnArrival` (a run from idle: every turn a
+  window). From the arrival on, the very watch a kit call of the handler is followed by — `aes_switching.Switching`,
+  the screen manager its process, round the door's `DoorWindows` — made AT the arrival, so the row's own deliveries
+  are laid at ITS idles, polls and door calls, numbered from the handler's entry, exactly as its registry row
+  (`aes_switching.settled`) derived them. A row is therefore held to everything a row that switches is held to on
+  the kit's path: one schedule, the windows of the ROM's processes equal to the cycle, the same door calls handed the
+  same frames, the image at every stop, the OS both run equal, the identity, both counts.
+- **WHAT ELSE IS HELD**: the frame our ctlmgr hands the handler is the ROM's; the image at every stop on the way and
+  at the arrival; WHO RAN (`vet_who_ran_the_handler`: from the machine's idle to the return not one cycle of ours in
+  the ROM's own text of the handler nor in the ROM's ctlmgr, some in our core; our slice's cycles in the AES's ROM
+  exactly its windows of the ROM's processes); THE MEGABYTE WHERE THE HANDLER RETURNS, outside the classes the row
+  names — `aes_ctlmgr.CLASSES`, as a woken row's: EACH MUST DIFFER — and the row's own named windows (its
+  `also_dropped`: each must differ too); the streams. To find a new case's classes, run it with none named: the
+  refusal lists what the two machines differ in.
+- **ITS COSTS ARE THE SLICE'S IN THE TABLE'S UNIT**: the kit's entry constant is added to both, as every row's costs
+  carry it. MEASURED WHEN THE ROWS MOVED: every one of the 33, on both blobs, costs each shore TO THE CYCLE what it
+  cost as a kit call over the ROM's arrival's machine — no pin of either shore moved — which is also what makes a
+  fall back to the kit's road invisible to a pin: THE ROAD TAKEN IS HELD BY ITSELF (two tests ask that the table and
+  a named blob go through the arrival).
+- **THE CALLEE-SAVED FILE IS HELD AS A KIT CALL HOLDS IT** (`vet_the_handler_kept_its_caller_s_registers`): the kit's
+  `watched` loop hands a watch the PC, A7 and the memory only, but the oracle's CPU stands stopped with its whole
+  register file, and the two marks read it (`aes_boot.registers_at_the_stop`: Musashi's own accessor, the reach the
+  ledger already lists as an owed kit accessor). Where our handler returns, D2-D7 and A2-A6 hold what its real caller
+  held where it called — refused by the register's name. It is the ONLY thing that sees a clobber of a register dead
+  in ctlmgr (the review's mutant: `moveq #-1,%d7` in hctl_rect moved cycle pins and nothing else before the hold).
+- **WHAT A KIT CALL HELD AND THIS DOES NOT**: nothing of the CPU; of the memory, the screen manager's two spans are
+  classes where the handler returns (two builds' frames). And a row's registry drops (the kit path's) are no longer
+  what its measurement leaves out — they are what its Tier 1 companion stages and compares; the table prints the
+  classes. TWO SOFT EDGES OF "NEEDED, OR REFUSED", said: a row's own window (`also_dropped`) is needed where ANY byte
+  of it differs — one named two bytes too wide still passes (the classes are located centrally, the save frame's
+  width is pinned: this is the three stale-count rows' window alone); and on a handler that does next to nothing the
+  four classes every row names already differ AT THE ARRIVAL — "each must differ" is then a fact of the road to the
+  handler, not of the handler. A window left out AT THE STOPS ALONE (`Handled.at_stops_only`) must differ at a stop of
+  the handler's own run, or the row is refused.
+- **WHAT IS NOT MEASURED SO, each said in the battery**: ct_msgup's rows — GCC inlines it into its two callers on both
+  blobs, so no run arrives at its entry (asked for, the run is refused where the machine idles with the handler
+  never called); its inlined copies are run by hctl_window's and hctl_rect's rows here (the sweep kills a mutant of
+  its body by those rows) — and THE BOOT'S OWN ARRIVAL, which no run from a machine's idle reaches (our ctlmgr is held
+  to arrive there with the ROM's frame; the row stays a kit call).
+- **A DELIVERY AT THE ROM'S DISPATCHER'S OWN POLL** (the first dispatch of a run from idle, before any process is
+  entered) queues the ROM's fork codes for the ROM's forker, at a poll that is no idle as at an idle: both are kept
+  as a window's are (`Switching._lay_for_the_rom_s_forker`) — found by the first row whose chain delivers at such a
+  poll and then asks, where its run ends, that no slot names the ROM.
 - ON A BLOB, WHAT A ROW HOLDS WHILE ITS PROCESS IS PARKED was its cycle pin's alone until FLIP 4: the image was
   compared where the run ends. SINCE THE FLIP THE IMAGE IS HELD AT EVERY STOP OF THE DISPATCHER'S WATCH, on every path
   that measures a run that switches (`tier3._StopImages`, `vet_the_images_at_the_stops`: "TIER 3: A ROW THAT
@@ -495,12 +560,9 @@ tier3.idle_to_idle_on(blob, name, woken)                           # both shores
   its step shows in the image at the dispatcher's stops, not where a run ends.
 - **TO ADD ONE**: a `Woken` in `test_aes_ctlmgr.py` (run it with no class named: the refusal lists the classes the two
   machines differ in), its premise, its pins — the recorder and `tools/repin.py` write both kinds.
-- **THE HANDLERS' OWN CASES CARRY OVER** (`tier3.arrives_alike_on`, `aes_ctlmgr.arriving`): each case of the handlers'
-  battery stays a differential AT AN ARRIVAL OF THE ROM'S ctlmgr; beside it, the same chain over the takeover machine
-  is run to OUR core of the handler's first instruction, and must get there with the ROM's frame, through the same
-  processes, the image at every stop and at the arrival the ROM's. ct_msgup has no arrival on a blob (GCC inlines it
-  into its two callers: held; asked for, the run is refused where the machine idles with the handler never called).
-- **TWO GUARDS WHOSE CALLS ARE HELD BY THEMSELVES** (`vet_the_identity`, `vet_who_ran`): a guard is silent on honest
+- **THE HANDLERS' OWN ROWS ARE MEASURED AT ITS ARRIVALS** ("A HANDLER'S ROW AT ITS ARRIVAL", above): the same two
+  machines, the run ended where the handler our ctlmgr called returns.
+- **THREE GUARDS WHOSE CALLS ARE HELD BY THEMSELVES** (`vet_the_identity`, `vet_who_ran`, `vet_who_ran_the_handler`): a guard is silent on honest
   numbers whether it is asked or not, so a mutant that drops the CALL survives every battery that only measures. Each
   has a test of its arithmetic on numbers made by hand and a test that a real measurement ASKS it. Do the same for
   the next guard: the sweep of FLIP 4 found both this way.
@@ -1345,8 +1407,9 @@ is the whole wrapper. Off target it is an ARRIVAL first:
     stored too" is held to what our run stored OUTSIDE its windows.
   - THE SCREEN MANAGER'S TURN (FLIP 4: ctlmgr bound in C; `test/aes_takeover.py`). A row whose run ENTERS THE
     SCREEN MANAGER as another process than its own — the menu chain's writer, the menu that holds the lock, the bar's
-    wake between two of the desk's waits: 32 registered names, read off each row's ROM run, none excused — runs, ON
-    OUR SHORE, WITH THE SCREEN MANAGER OURS:
+    wake between two of the desk's waits, a recording across its turn (registered at wave 2's close: with the screen
+    manager ours its forker records our own entries): 33 registered names, read off each row's ROM run, none excused
+    — runs, ON OUR SHORE, WITH THE SCREEN MANAGER OURS:
     - THE MACHINE IS THE ROW'S OWN, AND TWO SPANS OF IT ARE OURS: the screen manager's saved context and its stack
       (`aes_takeover.spans_of`: off the machine's own pointers) — the only bytes a machine whose screen manager is
       ours differs in by nature beside its p_ldaddr (mapped), the dispatcher's dead frames and the blob
@@ -1398,8 +1461,8 @@ is the whole wrapper. Off target it is an ARRIVAL first:
       (`tier3.how_the_screen_manager_is_left`): both shores as it began, or neither; and where the ROM's run ends
       in a state our build's own run is known to reach, ours exactly as that run left it. (3) WHAT IS HELD BY
       NOTHING WHERE THE RUN ENDS: our screen manager's final context and frames on a row that parks it ELSEWHERE
-      (29 of the 32 rows) — vetted only by the runs that wake it again from a park of that kind (STATUS, FLIP 4
-      pass 2, lists them); and, inside its own turns, what it stores in its own context and stack is its own.
+      (29 of the 33 rows: the other four end where a noted run left it) — vetted only by the runs that wake it again
+      from a park of that kind (STATUS, FLIP 4 pass 2, lists them); and, inside its own turns, what it stores in its own context and stack is its own.
     - THE PINS: a turn is `(ours, the ROM's, our thunks')` in `test/aes_turns_pinned.py`, by row and blob, held by
       `aes_switching.vet_on_a_blob` (`vet_its_turns`) and written by `tools/repin.py` from a recorded run.
     - A CASE OF THE FOREIGN-WINDOW RULE THAT NEEDS THE SCREEN MANAGER THE ROM'S says so

@@ -1,5 +1,8 @@
 """The SCREEN MANAGER's four handlers (`src/aes/gemctrl.c`, `aes/gemctrl.h`) against the ROM, each AT AN ARRIVAL OF
-THE ROM'S OWN ctlmgr (`test/aes_gemctrl.py`: the machines, the chains, how an arrival is made).
+ITS ctlmgr (`test/aes_gemctrl.py`: the machines, the chains, how an arrival is made) — TIER 1 here, at the arrival
+of the ROM's own ctlmgr on the ROM's run's machine; TIER 3 (the table's rows, both blobs) where EACH SHORE'S OWN
+ctlmgr arrives at its own handler on the screen manager's real stack (`MEASURED_AT_ITS_ARRIVAL`, below;
+`test_aes_ctlmgr.py` holds those rows and their REDs).
 
     ct_msgup(message, owner, w3..w7)   message ? ap_sendmsg(ct_message, message, owner, w3..w7);  while (button & 1) dsptch()
     hctl_window(w, mx, my)             w != gl_wtop: ct_msgup(WM_TOPPED, owner, w, <four words never set>)
@@ -20,7 +23,9 @@ TWO KINDS OF CASE. A handler that RETURNS without a switch (a click: the button 
 runs) is a door user's differential over the arrival's machine and a priced row. A handler that LEAVES BY THE
 DISPATCHER — a press held on a gadget, a drag, an arrow (it yields once even for a click), the menu, the button
 waited up — is A ROW THAT SWITCHES, the screen manager its process: the premise on the ROM's own run, the C at the
-dispatcher, Tier 1 through the host's scheduler with the door bound, both blobs, the table's two counts.
+dispatcher, Tier 1 through the host's scheduler with the door bound — and, at Tier 3, both blobs and the table's two
+counts, measured at each shore's own arrival (ct_msgup's and the boot's own arrival's rows aside: said where the
+rows are declared).
 
 ROM BEHAVIOURS PINNED HERE, none mended (each has its test below):
   * WM_TOPPED CARRIES FOUR WORDS OF THE STACK: x, y, w and h are locals hctl_window never sets on that path.
@@ -43,11 +48,13 @@ from harness import BASE_IMAGE, addrs, emu, make_image
 
 import abi
 import aes
+import aes_ctlmgr as cm
 import aes_event
 import aes_gemctrl as gc
 import aes_switch
 import aes_switching as switching
 import case
+import routines
 import test_aes_ct_mouse as ct_mouse
 from aes_gemctrl import (CT_MSGUP, HCTL_BUTTON, HCTL_RECT, HCTL_WINDOW, HIDING, NO_MOVER, NO_SIZER, TALL, THE_DESK, TWO_WINDOWS, WIDE,
                          Arrival, Case, MESSAGES, PRESS, RELEASE, click, gadget_arrival, onto)
@@ -438,6 +445,81 @@ REGISTERED = {switching.row_name(each): each for each in map(aes_event.register_
 KEY_OF = {label: key for key in SWITCHING for label in (key[1],)}
 assert len(ROWS) == len(SWITCHING) == len(REGISTERED), "two rows of one label"
 
+# ---- WHERE A CASE'S TIER 3 IS MEASURED: AT THE ARRIVAL OF EACH SHORE'S OWN ctlmgr (slice E; `aes_ctlmgr.Handled`) ------------
+# Everything above is the case AT THE ROM'S ARRIVAL — the machine its Tier 1 runs over. Its Tier 3 row, in the table
+# and on both blobs, is measured where a build really runs the handler (`tier3.at_its_arrival_on`): the ROM's ctlmgr
+# arriving at the ROM's handler on the ROM-booted machine, OUR ctlmgr at OUR core of it on the takeover machine, each
+# on the screen manager's real stack, each run on through the handler to its return.
+# THE CLASSES THE TWO MACHINES DIFFER IN WHERE A HANDLER RETURNS, named per case and EACH REQUIRED TO DIFFER
+# (`aes_ctlmgr.CLASSES`; measured, both blobs): on every case the dispatcher's stack, the screen manager's saved
+# context and its stack — two builds' frames — and THE LINE-F MASK WORD (the ROM's handler's own masked return wrote it
+# last; no C does)...
+EVERY_HANDLER_S = (cm.THE_DISPATCHER_S_STACK, cm.ITS_SAVED_CONTEXT, cm.ITS_STACK, cm.THE_MASK_WORD)
+# ...and THE BIOS'S SAVE FRAME (its ten saved registers) WHERE THE HANDLER ITSELF TAKES THE LAST BIOS TRAP before it
+# returns (a wait's keyboard poll, its own dispatcher's: each build's own registers saved). MEASURED, every case: AT
+# THE ARRIVAL the frame is the same on both shores — so it is no class on THESE TEN: nine whose handler takes no BIOS
+# trap at all (a click counted off, a place that is nobody's, a gadget the window has not, WM_TOPPED sent with the
+# button up, no menu: no wait, no dispatch — the frame returns as it arrived), and the arrow held, whose last trap is
+# the ROM's own dispatcher's on both shores, handing the machine back from the accessory that read its message.
+THE_SAVE_FRAME_EQUAL = frozenset({
+    (HCTL_BUTTON, "the hidden bar's two clicks, counted twice and posted once: counted down to one"),
+    (HCTL_BUTTON, "a real click on a window's closer after them: the count still one, the click swallowed"),
+    (HCTL_BUTTON, "a click on the bar past the titles: the desktop's place, nothing"),
+    (HCTL_WINDOW, "the information line clicked: no gadget's, nothing sent"),
+    (HCTL_WINDOW, "a window that is not the top one: WM_TOPPED"),
+    (HCTL_WINDOW, "the title of a window with a SIZER and no MOVER clicked: nothing sent"),
+    (HCTL_WINDOW, "the corner of a window with a MOVER and no SIZER clicked: nothing sent"),
+    (HCTL_RECT, "the mouse off the titles again, along the bar, before the manager ran: nothing"),
+    (HCTL_RECT, "no menu bar: nothing"),
+    (HCTL_WINDOW, "the up arrow held: sent, read by its owner, sent again; released"),
+})
+# ...and WM_TOPPED'S FOUR STALE WORDS on the two cases that send it (ruling W2-R2: the ROM's are its stack's residue
+# on the real stack, ours four zeroes) — where the handler returns in the manager's buffer and the owner's pipe.
+SENDS_WM_TOPPED = frozenset({
+    (HCTL_WINDOW, "a window that is not the top one: WM_TOPPED"),
+    (HCTL_WINDOW, "a window that is not the top one, held: WM_TOPPED, then the button waited up"),
+})
+
+
+def differs_where_it_returns(key):
+    """The classes the case `key` names (above)."""
+    return (*EVERY_HANDLER_S, *(() if key in THE_SAVE_FRAME_EQUAL else (cm.THE_TRAP_SAVE,)),
+            *((cm.THE_TOPPED_WORDS,) if key in SENDS_WM_TOPPED else ()))
+
+
+def handled(key):
+    """The case `key` AS IT IS MEASURED AT ITS ARRIVAL (`aes_ctlmgr.Handled`): its arrival, its classes, and — for a
+    handler that switches — its own run as the row it is (`row`), the stale count left out at its stops where a later
+    VDI call overwrites it before the handler returns."""
+    returns = key in RETURNING
+    arrival = (RETURNING if returns else {**SWITCHING, **UNPRICED})[key].arrival
+    return cm.Handled(arrival, differs_where_it_returns(key), None if returns else row(key),
+                      THE_STALE_COUNT if key in THE_STALE_COUNT_IS_OVERWRITTEN else ())
+
+
+def registered_name(key):
+    """The name the priced case `key` is registered under (`aes_event.register`'s, `aes_switching.row_name`'s: one form)."""
+    routine, label = key
+    return f"{routines.core_symbol(routine)}, {label}"
+
+
+# EVERY PRICED CASE WHOSE HANDLER A BLOB'S ctlmgr ARRIVES AT IS MEASURED THERE — all but two kinds, each said:
+#   * THE BOOT'S OWN ARRIVAL (no chain: the boot calls hctl_button before its first idle) is made by no run from a
+#     machine's idle; our ctlmgr is held to arrive there with the ROM's frame (`test_aes_ctlmgr.py`), and the row
+#     stays a call over the ROM's arrival's machine;
+#   * ct_msgup's FOUR ROWS: on a blob it has NO ARRIVAL OF ITS OWN — GCC inlines it into its two callers (held:
+#     `test_aes_ctlmgr.py`) — so its rows stay calls of the out-of-line body over the ROM's arrivals' machines, and
+#     what our build runs of it is inside hctl_window's and hctl_rect's rows here.
+NOT_MEASURED_AT_AN_ARRIVAL_OF_OURS = {key: ("the boot's own arrival: no dispatcher's run reaches it" if each.arrival.chain is None
+                                            else "ct_msgup: inlined into its callers on both blobs")
+                                      for key, each in {**RETURNING, **SWITCHING}.items()
+                                      if each.arrival.chain is None or key[0] == CT_MSGUP}
+MEASURED_AT_ITS_ARRIVAL = {registered_name(key): key for key in (*RETURNING, *SWITCHING)
+                           if key not in NOT_MEASURED_AT_AN_ARRIVAL_OF_OURS}
+for _name, _key in MEASURED_AT_ITS_ARRIVAL.items():
+    cm.register_handled(_name, handled(_key))
+assert set(MEASURED_AT_ITS_ARRIVAL) & set(REGISTERED) == {name for name, key in MEASURED_AT_ITS_ARRIVAL.items() if key in SWITCHING}
+
 # WHAT THE ROM'S OWN RUN OF EACH REGISTERED ROW IS: the idles it takes a delivery at, the idles it makes, every
 # process its dispatcher enters (by name: an accessory's PD lies where GEMDOS put its block), and the polls that are
 # no idle it takes a delivery at. THE WHOLE RUN'S CYCLES on each blob (the ROM's, ours) and WHAT THE TABLE PRICES
@@ -770,7 +852,10 @@ def test_a_handler_that_switches_is_the_rom_s_at_the_dispatcher_and_through_the_
 # (`aes_switching.vet_on_a_blob`: the handler parked by OUR dispatcher on the screen manager's stack and woken through
 # it, GCC's frames of the handler and of every core under it across savestate and switchto, an accessory's turn
 # inside the run the ROM's own code on both shores, to the cycle) and to the table's price on both counts
-# (`vet_the_table_s_price`). Not run a second time here: sixty bench runs.
+# (`vet_the_table_s_price`) — hctl_button's, hctl_window's and hctl_rect's FROM THE ARRIVAL OF EACH SHORE'S OWN ctlmgr,
+# on the screen manager's REAL stack (`MEASURED_AT_ITS_ARRIVAL`: both helpers go through `tier3.at_its_arrival_on`),
+# ct_msgup's two as calls over the ROM's arrival's machine. Not run a second time here but by `test_aes_ctlmgr.py`,
+# which holds every case's arrival and return on both blobs.
 def test_every_row_is_pinned_for_the_blobs_and_the_table():
     assert DOOR_USERS_PRICED.keys() == DOOR_USERS_WHOLE_RUN.keys() == REGISTERED.keys()
     assert all(blobs.keys() == {BENCH, SHIPPED} for blobs in DOOR_USERS_WHOLE_RUN.values())
