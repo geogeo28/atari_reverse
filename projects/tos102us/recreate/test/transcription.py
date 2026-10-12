@@ -624,6 +624,31 @@ assert set(TRAPDOOR_ENTRIES) == TRAPDOOR_GLOBLS, (
     f"the trap door's table and its source's `.globl`s disagree: {sorted(set(TRAPDOOR_ENTRIES) ^ TRAPDOOR_GLOBLS)}")
 # ---- end of slice T's block ---------------------------------------------------------------------------------------------
 
+# ---- band 5 wave 4, slice I: GEMSTART's source and table -------------------------------------------------------------------
+# `atari/target.mk`: GEMSTART_SOURCES — gem_entry, gem_gemdos_call and the Line-F handler gem_entry copies (DATA to a
+# build), the switch's and the trap door's sibling (the ROM's bytes, no C twin, no table row) and A KIND APART WHILE IT
+# IS LINKED AND NOT ENTERED: the BIOS starts the ROM's gem_entry until the our-boot machine runs ours. Same row type as
+# the switch's, an entry's EXITS the symbols of OUR build its bytes name (`test_aes_gemstart.py` holds each to its pin).
+def gemstart_sources():
+    """GEMSTART_SOURCES, as `atari/target.mk` writes it."""
+    return _listed_sources("GEMSTART_SOURCES")
+
+
+GEMSTART_GLOBLS = globl_entries(gemstart_sources())
+GEMSTART_ENTRIES = {
+    # gemstart's text ($fd9eca..$fd9ffb): byte-exact but for gem_entry's seven operands — the handler it copies, its
+    # three calls of C (rom_rsc_init through a thunk) and the three routines it stores by value
+    **_end_to_end((("aes_rom_gem_entry", addrs.AES_ROM_GEM_ENTRY,
+                    {"aes_rom_linef_handler", "gemstart_to_aes_rom_rsc_init", "aes_size_theglo", "aes_rom_gem_main",
+                     "aes_rom_justretf", "aes_rom_tick_glue", "aes_rom_ub_trampoline"}),
+                   ("aes_rom_gem_gemdos_call", addrs.AES_ROM_GEM_GEMDOS_CALL, ())), addrs.AES_ROM_GEM_ENTRY_END),
+    # ...and what gem_entry copies ($fee8c2..$fee925): the handler and the call table's first 38 bytes, no word relocated
+    "aes_rom_linef_handler": SwitchEntry(addrs.AES_ROM_LINEF_HANDLER, addrs.AES_ROM_LINEF_COPY_END - addrs.AES_ROM_LINEF_HANDLER),
+}
+assert set(GEMSTART_ENTRIES) == GEMSTART_GLOBLS, (
+    f"gemstart's table and its source's `.globl`s disagree: {sorted(set(GEMSTART_ENTRIES) ^ GEMSTART_GLOBLS)}")
+# ---- end of slice I's block ---------------------------------------------------------------------------------------------
+
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
 # `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
@@ -807,6 +832,18 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # line, and pgmld — ITS FIRST C CALLER: the pair `aes_event.TEXT_SITE_CALLERS` names too (`test_aes_pgmld.py`)
     ("aes_sndcli", "aes_strcpy"), ("aes_sndcli", "aes_pgmld"),
     # ---- end of slice L's ----
+    # ---- band 5 wave 4, slice I: gem_main's three stretches (`src/aes/geminit.c`) ---- the vector takes, which ship as
+    # the ROM's own instructions (`gemdosif.S`): `trap #2` taken and the critical-error handler taken on the way up,
+    # both given back on the way down; pinit's blank name (pinit inlined into the first stretch); an icon's BITBLK copied
+    ("lay_the_processes", "aes_install_trap2"), ("lay_the_processes", "aes_bfill"), ("bring_gem_up", "aes_takeerr"),
+    ("bring_gem_up", "aes_lbcopy"), ("take_gem_down", "aes_giveerr"), ("take_gem_down", "aes_restore_trap2"),
+    # ---- end of slice I's ----
+    # ---- band 5 wave 4, slice SH: the shell's loop (`src/aes/shell.c`) ---- a pass's beginning (the screen's set-up
+    # inlined into it: ratinit; the cartridge's tail measured: strlen), the desk's return (Getrez through the XBIOS
+    # door), and sh_cmd's `$fd` (the command line made of the ROM's text and the tail's)
+    ("a_pass_begins", "aes_ratinit"), ("a_pass_begins", "aes_strlen"), ("after_the_desk", "aes_trp14"),
+    ("aes_sh_cmd", "aes_strcpy"), ("aes_sh_cmd", "aes_strcat"),
+    # ---- end of slice SH's ----
 }
 
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------

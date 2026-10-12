@@ -2965,9 +2965,13 @@ def test_each_part_of_the_narrow_door_is_proved_a_mapping_by_registered_rows_who
     for what, symbols in aes_event.MAPPING_PROVED_BY.items():
         for symbol in symbols:
             assert [row for row in rows if row.symbol == symbol], f"{what}: `{symbol}` has no row whose run stores it"
-    walked = [what for what in aes_event.SLOTS_WALKED_FROM_THE_MACHINE]
+    door = {part.what for part in aes_event.THE_NARROW_DOOR}
+    walked = [what for what in aes_event.SLOTS_WALKED_FROM_THE_MACHINE if what in door]
     assert walked == [aes_event.PROGRAM_ENTRY.what] and set(aes_event.THE_MACHINE_S_VECTORS) == {
         aes_event.GEM_TRAP_VECTOR.what, aes_event.CRITICAL_ERROR_VECTOR.what}, "a vector's own longword, or slots walked: each part one"
+    # ...and the one walk that is no part of the narrow door: the desk's USERBLKs, wave 4's and PENDING (`test_aes_boot_w4.py`).
+    assert set(aes_event.SLOTS_WALKED_FROM_THE_MACHINE) - door == {aes_event.USERBLK_TRAMPOLINE_SLOT.what}
+    assert aes_event.USERBLK_TRAMPOLINE_SLOT.what in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
 
 
 @every_boot
@@ -2981,7 +2985,8 @@ def test_the_slots_walked_are_the_machine_s_own_processes(label):
     walked = dict(aes_event.first_entry_frames(booted.ram))
     for process in booted.waiting():
         assert booted.long(walked[process.pd]) & BUS == aes_boot.parked_pc(booted.ram, process.pd) != addrs.AES_ROM_GOTOPGM
-    assert aes_event.SLOTS_WALKED_FROM_THE_MACHINE == {aes_event.PROGRAM_ENTRY.what: aes_event.first_entry_frames}
+    assert aes_event.SLOTS_WALKED_FROM_THE_MACHINE == {aes_event.PROGRAM_ENTRY.what: aes_event.first_entry_frames,
+                                                       aes_event.USERBLK_TRAMPOLINE_SLOT.what: aes_event.userblk_slots}
     assert aes_event.PROGRAM_ENTRY.slots == (), "its slots are walked: a static tuple would miss an allocated accessory's"
 
 
@@ -2989,8 +2994,10 @@ def test_the_slots_walked_are_the_machine_s_own_processes(label):
 # here until it is read): the takeover's own module and battery; `aes_ctlmgr.py`, whose `our_machine` is what every
 # Tier 3 row of an accessory machine runs over on our shore (the narrow door flip); the stack reading's MEASURED RUN
 # of the trap path (ruling W3-R8's gate).
-DOOR_ASKED_BY = re.compile(r"(?:ours_of|desk_machine|accessory_machine)\([^)\n]*\bdoor=")
-WHO_ASKS_FOR_A_DOOR = {"aes_boot.py", "test_aes_boot.py", "aes_ctlmgr.py", "aes_stack.py"}
+DOOR_ASKED_BY = re.compile(r"(?:ours_of|desk_machine|accessory_machine|inf_machine)\([^)\n]*\bdoor=")
+# ...and, since band 5 wave 4, `test_aes_boot_w4.py`: it asks for today's door machines to READ what the narrow door
+# leaves the ROM's (the scan) — no row runs over them.
+WHO_ASKS_FOR_A_DOOR = {"aes_boot.py", "test_aes_boot.py", "aes_ctlmgr.py", "aes_stack.py", "test_aes_boot_w4.py"}
 
 
 def test_who_asks_for_a_door_machine_is_a_list():

@@ -217,7 +217,17 @@ BOUGHT_BY_FUNCTION = {
     "draw_state_marks": ((88, 88), (68, 68)),
     # the VDI's text handler's deep frame, under the trap (no path of the AES's reading: read for itself)
     "place_and_draw": ((76, None), (64, None)),
+    # ...and PD0's START-UP (band 5 wave 4; `ON_THE_START_UP_ALONE` below): gem_main's Alcyon entry under the shell, and
+    # the shell's two routines AT THEIR DESK DOORS — what each holds where the door stands the SP at the ROM's
+    # (`include/aes/deskdoor.h`, ruling W4-R4): the bytes the mark keeps a build from being deeper than the ROM there.
+    "aes_rom_gem_main": ((20, 20), (12, 12)),
+    "aes_sh_cmd": ((56, 56), (32, 32)),
+    "aes_sh_main": ((40, 40), (24, 24)),
 }
+# THE MARKED FUNCTIONS NO `trap #2` OF A PROCESS REACHES: they run once, on PD0's stack, from gem_entry — and two of
+# them go through THE DESK DOOR, whose `movea.l #<the ROM's SP>,sp` the trap path's reading refuses by name (it is
+# told of no door). Read by the start-up's reading (`aes_stack.start_up_reading`), which is told where the door stands.
+ON_THE_START_UP_ALONE = ("aes_rom_gem_main", "aes_sh_cmd", "aes_sh_main")
 
 
 @pytest.fixture(scope="module")
@@ -245,7 +255,8 @@ def _frames(read, function):
 def test_the_marks_buy_what_is_pinned_and_each_its_own_function_a_smaller_frame(unmarked_elf):
     """ONE TEST for the two holds: the second link is the cost, made once. EACH FUNCTION'S FRAME IS READ BY THE TRAP
     PATH'S READING — the screen manager's with the OS's two other traps declared: the one that reads fm_do (its
-    bell) and the selector (GEMDOS) at all."""
+    bell) and the selector (GEMDOS) at all — but for the three of PD0's start-up (`ON_THE_START_UP_ALONE`), read by
+    the start-up's."""
     bench = rom_bench.RomBench(BENCH).elf
     for reading, entry, pinned, whose in ((aes_stack.reading, aes_stack.SCREEN_MANAGER_ENTRY, BOUGHT, "the screen manager's"),
                                           (aes_stack.trap_reading, aes_stack.trap_entered_at(bench)[0], TRAP_PATH_BOUGHT, "the trap path's")):
@@ -253,7 +264,12 @@ def test_the_marks_buy_what_is_pinned_and_each_its_own_function_a_smaller_frame(
         bought = (off.deepest - on.deepest, off.at_a_trap - on.at_a_trap)
         assert bought == pinned, f"the marks buy {bought} bytes of {whose} two bounds: say why it moved"
     without, marked = aes_stack.trap_reading(unmarked_elf), aes_stack.trap_reading(bench)
-    read = {function: (_frames(without, function), _frames(marked, function)) for function in sorted(MARKS)}
+    start_up = {function: (aes_stack.start_up_reading(unmarked_elf), aes_stack.start_up_reading(bench)) for function in ON_THE_START_UP_ALONE}
+    for function, (_off, on) in start_up.items():
+        assert function in MARKS and function in on.read_as(aes_stack.pd0_entry(bench)), f"{function} is not a marked function of PD0's start-up"
+        with pytest.raises(AssertionError, match="the stack reading does not follow"):
+            marked.of(function)             # ...the premise: the trap path's reading cannot read it (else it is read there)
+    read = {function: tuple(_frames(reading, function) for reading in start_up.get(function, (without, marked))) for function in sorted(MARKS)}
     assert read == BOUGHT_BY_FUNCTION, f"the marked functions' frames, without and with: {read}"
     for function, (off, on) in read.items():
         pairs = [(before, after) for before, after in zip(off, on) if before is not None and after is not None]

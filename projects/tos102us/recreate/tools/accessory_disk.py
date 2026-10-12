@@ -147,13 +147,89 @@ def serial_of(image):
     return bytes(image[st_build.BOOT_SERIAL_AT:st_build.BOOT_SERIAL_AT + st_build.BOOT_SERIAL_BYTES])
 
 
+# ---- THE DESKTOP.INF DISK (band 5 wave 4, ruling W4-R7): the blank disk plus the ROM's own default DESKTOP.INF ----------------
+# The fourth capture's floppy (`make preinit-inf`). THE FILE IS THE ROM'S OWN DEFAULT TEXT — what the `#E` reader falls
+# back on where a disk holds none (rom_ram) — cut out of the ROM image from its first line to its NUL, so the disk says
+# nothing the ROM would not say itself; what a boot over it ADDS is the reader's FILE arm: dos_open, the read, the
+# `#E` line's parse and app_reschange in place.
+# ONE DISK FOR EVERY `#E` LINE, as one disk serves every accessory mode (the module's docstring): the image is built
+# from the UNPATCHED text and the line's two hex pairs are patched in the image, inside the file's own data cluster —
+# the boot sector (its serial), both FATs and the root are the same bytes whatever the pairs.
+#   * THE FIRST PAIR is the desk's view word (deskmain's `#E` case): bit 7 is "show as text" — the view whose window
+#     items are G_USERDEF objects, drawn through ub_trampoline (`VIEW_AS_TEXT`).
+#   * THE SECOND PAIR is the resolution the reader hands app_reschange: `(pair & 3) + 1` against the booted device.
+#     `RESOLUTION_AS_BOOTED` is the default text's own; `RESOLUTION_CHANGED` runs app_reschange's "changes" arm and the
+#     boot still reaches the desk (gsx_init re-derives the device from the workstation it opens); EVERY OTHER PAIR IS
+#     REFUSED BY NAME: a boot that asks medium resolution stands at the BIOS's wait for a vertical blank for ever
+#     (`$fc07e2`, measured by the wave's design pass) — it leaves the device model, and no machine is made of it.
+INF_NAME = "DESKTOP.INF"
+ROM_IMAGE = RECREATE.parents[2] / "tools" / "hatari" / "TOS102US.img"
+INF_FIRST_LINE = b"#a000000\r\n"         # the ROM's default text begins with its serial-port line
+INF_E_LINE = b"#E 1B 10 \r\n"            # ...and holds ONE `#E` line: the view pair, the resolution pair
+INF_VIEW_PAIR_AT, INF_RESOLUTION_PAIR_AT = 3, 6     # of that line: `#E `, two hex digits, a space, two hex digits
+HEX_PAIR = b"%02X"
+VIEW_AS_ICONS, VIEW_AS_TEXT = 0x1b, 0x9b            # the default text's own view word; ...with bit 7, "show as text"
+RESOLUTION_AS_BOOTED, RESOLUTION_CHANGED = 0x10, 0x11
+RESOLUTIONS_THAT_BOOT = (RESOLUTION_AS_BOOTED, RESOLUTION_CHANGED)
+
+
+def default_inf(rom=None):
+    """The ROM's own default DESKTOP.INF text: from its first line to its NUL, cut out of the ROM image (`rom`: its
+    bytes; this tree's by default) — REFUSED BY NAME where the ROM does not hold exactly one, with exactly one `#E`
+    line of the default pairs."""
+    rom = ROM_IMAGE.read_bytes() if rom is None else rom
+    if rom.count(INF_FIRST_LINE) != 1:
+        raise ValueError(f"the ROM holds {rom.count(INF_FIRST_LINE)} texts beginning {INF_FIRST_LINE!r}: its default "
+                         f"DESKTOP.INF is not found by its first line")
+    start = rom.index(INF_FIRST_LINE)
+    text = rom[start:rom.index(b"\0", start)]
+    if text.count(b"#E ") != 1 or text.count(INF_E_LINE) != 1:
+        raise ValueError(f"the ROM's default DESKTOP.INF does not hold exactly one `#E` line, {INF_E_LINE!r}")
+    return text
+
+
+def inf_pairs_at(image, text):
+    """Where the `#E` line of `text` — the DESKTOP.INF a `disk_with` image holds as its ONLY file — lies in `image`."""
+    at = file_at(0, len(text))
+    assert image[at:at + len(text)] == text, "the DESKTOP.INF is not where st_build lays a disk's first file"
+    return at + text.index(INF_E_LINE)
+
+
+def inf_disk_of(text, view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED):
+    """THE DESKTOP.INF DISK (above): the blank disk holding `text` as DESKTOP.INF, its `#E` line's two pairs patched
+    in the image to `view` and `resolution` — ONE DISK TO THE MACHINE whatever the pairs. REFUSED BY NAME: a
+    resolution pair no boot of the device model survives."""
+    if resolution not in RESOLUTIONS_THAT_BOOT:
+        raise ValueError(f"a DESKTOP.INF whose `#E` line asks the resolution pair {resolution:02X} is no disk of this "
+                         f"harness: only {[f'{each:02X}' for each in RESOLUTIONS_THAT_BOOT]} boot to the desk — another "
+                         f"resolution leaves the device model (the BIOS waits at $fc07e2 for a vertical blank no boot "
+                         f"delivers)")
+    if not 0 <= view <= 0xff:
+        raise ValueError(f"a `#E` line's view pair is one byte, not {view:#x}")
+    image = bytearray(disk_with(((INF_NAME, text),)))
+    line = inf_pairs_at(image, text)
+    for at, pair in ((INF_VIEW_PAIR_AT, view), (INF_RESOLUTION_PAIR_AT, resolution)):
+        image[line + at:line + at + len(HEX_PAIR % pair)] = HEX_PAIR % pair
+    return bytes(image)
+
+
+def inf_disk_path(recreate=RECREATE):
+    """Where `make` writes the DESKTOP.INF disk — the default text, unpatched — for the capture to boot (INF_DISK)."""
+    return recreate / "build" / "acc" / "INFDISK.ST"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True, help="where the image is written")
     parser.add_argument("--seven", action="store_true", help="the seven-accessory disk (SEVEN_NAMES) instead of the pair's")
+    parser.add_argument("--inf", action="store_true", help="the DESKTOP.INF disk (the ROM's default text; no accessory) instead")
     args = parser.parse_args(argv)
     names = SEVEN_NAMES if args.seven else NAMES
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    if args.inf:
+        args.out.write_bytes(inf_disk_of(default_inf()))
+        print(f"the DESKTOP.INF disk (the ROM's default text) -> {args.out}")
+        return 0
     args.out.write_bytes(disk_of(built(), (QUIET,) * len(names), names))
     print(f"the accessory disk ({len(names)} accessories) -> {args.out}")
     return 0

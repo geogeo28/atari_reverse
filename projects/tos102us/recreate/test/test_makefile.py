@@ -10,7 +10,15 @@ run can see that, since a suite only ever runs in a tree that was built.
 
 So the rule is held from the makefiles' text, and held the CONSERVATIVE way round: every recipe that runs a Python
 script or pytest must have the three, EXCEPT the tools named here that MAKE them — and those are held never to
-import a test module."""
+import a test module.
+
+WHICH THREE IS DERIVED, NOT DECLARED (band 5 wave 4's fix pass): `aes_boot.CAPTURES_READ` as this module's own import
+of the registry ends is what the import READ — so the day a row is registered from the seven-accessory or the
+DESKTOP.INF machine, the registry's import reads a fourth file and this battery says REGISTRY_READS lacks it.
+
+AND THE SUITES' OWN CAPTURES ARE FOUR: `test`, `guarded` and `gates` need every pre-init machine a test boots from
+(the seven-accessory and DESKTOP.INF ones too), each made from ITS OWN disk by the capture tool, and `gates` holds
+the mask to them (`make preinit-twice`)."""
 import re
 from pathlib import Path
 
@@ -18,9 +26,25 @@ import pytest
 
 from harness import project
 
+import aes_boot
+import preinit_snapshot
+import test_boot_snapshot          # noqa: F401  (THE REGISTRY: what its import reads is read off `aes_boot` just below)
+
 RECREATE = Path(__file__).resolve().parent.parent
 MAKEFILES = (RECREATE / "Makefile", project.KIT / "kit.mk")
-CAPTURES = ("build/boot_ram.bin", "build/preinit.bin", "build/preinit_acc.bin")
+SNAPSHOT = "build/boot_ram.bin"
+# Read HERE, at collection: every test module is imported before any test runs, and no module reads a capture at
+# its import but through the registry — so this is what the registry's import read (a module that does would add its
+# file here, and redden the test below: the conservative way round).
+READ_BY_THE_REGISTRY_S_IMPORT = tuple(sorted({str(path.relative_to(RECREATE)) for path in aes_boot.CAPTURES_READ}))
+CAPTURES = (SNAPSHOT, *READ_BY_THE_REGISTRY_S_IMPORT)
+# EVERY PRE-INIT MACHINE A SUITE BOOTS FROM: `{its file: the disk it is captured with, None for the blank one}`.
+PREINIT_CAPTURES = {str(path().relative_to(RECREATE)): disk for path, disk in (
+    (preinit_snapshot.preinit_path, None), (preinit_snapshot.accessory_path, "build/acc/ACCDISK.ST"),
+    (preinit_snapshot.seven_accessory_path, "build/acc/ACC7DISK.ST"), (preinit_snapshot.inf_path, "build/acc/INFDISK.ST"))}
+THE_SUITES = ("test", "guarded", "gates")
+CAPTURE_TOOL, ROM_IMAGE = "tools/preinit_snapshot.py", "../../../tools/hatari/TOS102US.img"
+TWICE = "preinit-twice"
 # The scripts that MAKE the captures (and the stamp of the constants they read): run before any capture exists.
 MAKE_THE_CAPTURES = {"tools/addrs.py", "tools/boot_snapshot.py", "tools/preinit_snapshot.py", "tools/accessory_disk.py"}
 EVERY_PYTHON_TARGET = {"shipped-glue", "derived", "build/bench/tier3.txt", "test", "guarded", "gates"}
@@ -83,6 +107,76 @@ def without_the_captures(texts):
 
 def _texts():
     return [path.read_text() for path in MAKEFILES]
+
+
+def not_among_the_registry_s_reads(read, texts):
+    """The captures of `read` (what an import of the registry read) that the makefiles' REGISTRY_READS does not name."""
+    named = set(_expanded("$(REGISTRY_READS)", {name: value for line in (line for text in texts for line in _joined(text))
+                                                 for name, value in _DEFINITION.findall(line)}).split())
+    return sorted(set(read) - named)
+
+
+def test_what_the_registry_s_import_reads_is_what_registry_reads_names():
+    """DERIVED: the captures this process read while the registry was imported are the Makefile's REGISTRY_READS, with
+    the snapshot — no fewer (the two pre-init machines the screen manager's rows are registered from) and no more.
+    RED, on the list a registered row of the DESKTOP.INF machine would make: the fourth capture is named as lacking."""
+    assert READ_BY_THE_REGISTRY_S_IMPORT == ("build/preinit.bin", "build/preinit_acc.bin")
+    assert not_among_the_registry_s_reads(CAPTURES, _texts()) == []
+    inf = str(preinit_snapshot.inf_path().relative_to(RECREATE))
+    assert not_among_the_registry_s_reads((*CAPTURES, inf), _texts()) == [inf]
+    makefile, kit = _texts()
+    rule = "REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC)"
+    assert makefile.count(rule) == 1
+    assert not_among_the_registry_s_reads(CAPTURES, [makefile.replace(rule, "REGISTRY_READS := $(SNAPSHOT) $(PREINIT)"), kit]) == ["build/preinit_acc.bin"]
+
+
+def suites_without_a_capture(texts):
+    """`{suite target: the pre-init captures it lacks}`, and `{capture: what its own rule lacks}` — its disk, the
+    capture tool, the ROM image — over makefile `texts`."""
+    rules = rules_of(texts)
+    lacking = {suite: sorted(set(PREINIT_CAPTURES) - rules[suite][0]) for suite in THE_SUITES}
+    for capture, disk in PREINIT_CAPTURES.items():
+        needs, recipe = rules.get(capture, (set(), []))
+        wanted = {CAPTURE_TOOL, ROM_IMAGE} | ({disk} if disk else set())
+        asked = [line for line in (line.replace("$@", capture) for line in recipe) if CAPTURE_TOOL in line and f"--out {capture}" in line]
+        said = bool(asked) and all((f"--disk {disk}" in line) if disk else ("--disk" not in line) for line in asked)
+        lacking[capture] = sorted(wanted - needs) + ([] if said else ["a recipe that captures it from its own disk"])
+    return {target: missing for target, missing in lacking.items() if missing}
+
+
+def test_the_suites_have_every_pre_init_capture_and_each_capture_its_own_disk():
+    """THE FOUR PRE-INIT MACHINES: `test`, `guarded` and `gates` have each as a prerequisite, and each is made by the
+    capture tool from ITS OWN disk, the ROM image and the tool among its prerequisites — so a changed disk captures
+    again. And `gates` holds the mask to all four: `preinit-twice` among its prerequisites, its recipe `--twice`
+    over each disk, into a directory that is none of the captures'."""
+    assert suites_without_a_capture(_texts()) == {}
+    needs, recipe = rules_of(_texts())[TWICE]
+    assert TWICE in rules_of(_texts())["gates"][0] and TWICE not in rules_of(_texts())["test"][0]
+    assert {disk for disk in PREINIT_CAPTURES.values() if disk} <= needs
+    twice = [line for line in recipe if CAPTURE_TOOL in line]
+    assert len(twice) == len(PREINIT_CAPTURES) and all("--twice" in line for line in twice)
+    assert sorted(disk for line in twice for disk in re.findall(r"--disk (\S+)", line)) == sorted(filter(None, PREINIT_CAPTURES.values()))
+    assert not any(f"--out {capture}" in line for line in twice for capture in PREINIT_CAPTURES)
+
+
+@pytest.mark.parametrize("named, rule, without", [
+    ("gates", "test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF)",
+     "test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7)"),
+    ("test", "test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF)",
+     "test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF)"),
+    ("build/preinit_inf.bin", "$(PREINIT_INF): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(INF_DISK)",
+     "$(PREINIT_INF): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE)"),
+    ("build/preinit_acc7.bin", "$(PREINIT_ACC7): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)",
+     "$(PREINIT_ACC7): $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)"),
+    ("build/preinit_inf.bin", "--disk $(INF_DISK) --work build/preinit_inf_snapshot --out $@",
+     "--disk $(ACC_DISK) --work build/preinit_inf_snapshot --out $@"),
+])
+def test_a_suite_without_a_capture_or_a_capture_without_its_disk_is_named(named, rule, without):
+    """RED: the fourth capture dropped from the suites' prerequisites (the third likewise), a capture's rule without
+    its disk or without the tool, and a capture taken from another machine's disk — each named."""
+    makefile, kit = _texts()
+    assert makefile.count(rule) == 1
+    assert named in suites_without_a_capture([makefile.replace(rule, without), kit])
 
 
 def test_every_recipe_that_imports_the_registry_has_the_three_captures_as_prerequisites():

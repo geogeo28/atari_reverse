@@ -32,6 +32,7 @@ import aes
 import aes_event
 import aes_evasync
 import aes_evinput
+import aes_geminit
 import aes_switch as switch
 import case
 import test_aes_gsx_transcription as frames
@@ -340,7 +341,18 @@ LOADER_S_FILE = "loader.c"
 HANDED_BY_THE_LOADER = {site: entry for site, (entry, owed_by) in _NAMING_AN_ENTRY.items() if owed_by == LOADER_S_FILE}
 assert HANDED_BY_THE_LOADER == {0xFE437C: "aes_rom_gotopgm"}
 # ---- end of slice L's ----
-INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED = 2, 2, 3
+# ---- band 5 wave 4, slice I ---- ...AND STORED BY gem_entry (`src/aes/gemstart.S`): its two `lea`s — of the bare `rts`
+# ($fd9f86, into AES_DRWADDR) and of the tick glue ($fd9f92, into the longword gem_main hands vex_timv). gem_entry HAS
+# NO C CORE, so the census's `owed_by` stays None (that rule is C's, `test_aes_rom_data.py`); what holds the two is the
+# `.S`'s own byte pin, whose `Relocated` at each site names THIS BUILD'S entry (`test_aes_gemstart.py`, over
+# `aes_geminit.STORED_BY_VALUE`). They leave the owed list; the shell's launch's `pea gotopgm` is what is left on it.
+STORED_BY_GEM_ENTRY = {site: entry for site, entry in OWED_BY_ROUTINES_NOT_RECONSTRUCTED.items()
+                       if site in aes_geminit.STORED_BY_VALUE}
+assert STORED_BY_GEM_ENTRY == {site: symbol for site, symbol in aes_geminit.STORED_BY_VALUE.items() if symbol in ENTRIES}
+OWED_BY_ROUTINES_NOT_RECONSTRUCTED = {site: entry for site, entry in OWED_BY_ROUTINES_NOT_RECONSTRUCTED.items()
+                                      if site not in STORED_BY_GEM_ENTRY}
+# ---- end of slice I's ---- (SITES_OWED was 3 with gem_entry's two)
+INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED = 2, 2, 1
 assert (len(INSTALLED_BY), len(HANDED_BY_A_PLAYBACK), len(OWED_BY_ROUTINES_NOT_RECONSTRUCTED)) == (
     INSTALLER_S_SITES, PLAYBACK_S_SITES, SITES_OWED)
 assert set(INSTALLED_BY.values()) == set(switch.GLUE_ENTRY_SYMBOLS.values())
@@ -381,7 +393,8 @@ def test_every_rom_site_that_names_the_glue_by_value_is_installed_or_owed():
     or one of a routine not reconstructed yet, by address — a new site, or one ported and not re-pointed, is none."""
     import test_aes_rom_data as census
     named = {site: _entry_named(row.value) for site, row in census.CODE_IMMEDIATES.items() if _entry_named(row.value)}
-    assert named == {**OWED_BY_ROUTINES_NOT_RECONSTRUCTED, **INSTALLED_BY, **HANDED_BY_A_PLAYBACK, **HANDED_BY_THE_LOADER}
+    assert named == {**OWED_BY_ROUTINES_NOT_RECONSTRUCTED, **INSTALLED_BY, **HANDED_BY_A_PLAYBACK, **HANDED_BY_THE_LOADER,
+                     **STORED_BY_GEM_ENTRY}                 # band 5 wave 4, slice I
     for site in HANDED_BY_THE_LOADER:           # band 5 wave 3, slice L
         assert census.CODE_IMMEDIATES[site].owed_by == LOADER_S_FILE
     for site in INSTALLED_BY:

@@ -31,7 +31,10 @@
 #ifndef TOS102US_AES_LOADER_H
 #define TOS102US_AES_LOADER_H
 
+/* (band 5 wave 4, slice I: `src/aes/gemstart.S` reads AES_DISK_USABLE from here — the C types are C's alone.) */
+#ifndef __ASSEMBLER__
 #include <stdint.h>
+#endif
 
 #include "aes/aes.h"
 
@@ -39,8 +42,11 @@
 #define AES_FIRST_ACC_BASEPAGE 0x9724    /* long: the FIRST accessory's basepage ($fe4358 move.l -6(a6),$9724)  */
 #define AES_ACC_BASEPAGES     0x9bc4     /* longs[ACC_SLOTS]: the others', by AES_ACCESSORY_COUNT ($fe436c)     */
 #define ACC_SLOTS             6          /* ...as AES_ACCESSORY_PDS has: six passes, six started ($fe445a)      */
-/* gem_entry's 1 ($fd9f64), which the desk clears where a call on the current drive fails ($fe2a62): ldaccs loads
- * nothing from a disk without it. (What else reads it is band 6's to say.) */
+/* "A disk can be read": ldaccs loads nothing from a disk without it, and the desk clears it where a call on the
+ * current drive fails ($fe2a62). NOT THE 1 gem_entry STORES ($fd9f64): the word is the top of gem_entry's first stack,
+ * and what stands in it from the next `jsr` on is the LOW HALF OF A CODE ADDRESS — size_theglo's return ($9f78 in
+ * the ROM), or the PC of an interrupt taken on that stack — non-zero by layout (`aes/gemstart.h`, GEM_DISK_USABLE).
+ * (What else reads it is band 6's to say.) */
 #define AES_DISK_USABLE       0x8992     /* word                                ($fe43ba tst.w $8992)           */
 
 /* ---- sndcli --------------------------------------------------------------------------------------------------------- */

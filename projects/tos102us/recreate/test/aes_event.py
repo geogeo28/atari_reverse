@@ -1230,6 +1230,11 @@ SCHEDULER_HOOKS = tuple(symbol for symbol in ("recreate_poll", "recreate_idle", 
 FORK_UNSERVED_HOOKS = (HOOK_SYMBOL, RETURNED_SYMBOL, isr.CALL_VECTOR_SYMBOL, isr.REGISTERS_HOOK_SYMBOL,
                        "recreate_call_gemdos_handler", "recreate_publish_clock", "recreate_call_routine",
                        "recreate_call_disk_vector", *SCHEDULER_HOOKS)
+# ---- slice SH (band 5 wave 4) -----------------------------------------------------------------------------------------
+# ...and THE DESK DOOR's (`aes/deskdoor.h`: deskmain and the desk's four built-ins, band 6's routines, which sh_main
+# and sh_cmd call) — refused in a fork like the rest; a row of the shell binds it in its own child (`test/aes_shmain.py`).
+FORK_UNSERVED_HOOKS += ("recreate_call_desk_door",)
+# ---- end of slice SH's block --------------------------------------------------------------------------------------------
 _HOOK_REFUSER = ctypes.CFUNCTYPE(None)  # whatever a hook's own arguments: its refuser reads none, and never returns
 
 
@@ -2997,6 +3002,86 @@ def first_entry_frames(memory):
 SLOTS_WALKED_FROM_THE_MACHINE = {PROGRAM_ENTRY.what: first_entry_frames}
 
 
+# ---- BAND 5 WAVE 4, SLICE M: gem_entry's THREE BY-VALUE STORES — DECLARED, PENDING, NOTHING MAPPED (begin) -------------------
+# gem_entry stores three routines of the AES BY VALUE at the top of every pass of its loop (`$fd9f86`, `$fd9f92`,
+# `$fd9f9e`: `lea <routine>,a0` / `move.l a0,<slot>`, the census's three sites owed since band 4) — each a code address
+# a build's own gem_entry stores as its own, and each then TRAVELS:
+#   * justretf (`$fed424`, the routine that draws nothing) into `$947a`, the cursor routine the AES calls while none
+#     is saved (`JUSTRETF_SLOT`; the glue's table knows the routine already — a playback hands it to the VDI);
+#   * THE TICK GLUE (`$fed426`) into `$947e`, which gem_main's gsx_tick hands vex_timv: the VDI's own tick vector
+#     (`USER_TIM`) holds it for the whole session, the AES's contrl[7..8] while it is handed and contrl[9..10] when a
+#     later vex_timv displaces it (the teardown's) — `TICK_GLUE`, exit-only by the glue's rule (a displaced value
+#     travels out of the slots). MEASURED on every machine a door takeover made: `USER_TIM` and `$947e` hold THE
+#     ROM'S, and the ROM's tick glue runs behind a door called ours;
+#   * ub_trampoline (`$fe3f3e`) into `$8c32` (wave 3's `USERBLK_TRAMPOLINE_SLOT`), which THE DESK COPIES into the
+#     USERBLK of every window item it shows as text (`$fe3094`: `move.l $8c32,<the block's USERBLK table>`): slots
+#     WALKED FROM THE MACHINE (`userblk_slots`), as a program's first-entry frame is — the desk's block is a Malloc's.
+# ALL THREE ARE PENDING (`DECLARED_NOT_YET_MAPPED_AT_TIER3`): no routine of ours stores one before gem_entry is ours
+# and bound — wave 4's slice B activates them (gem_entry's own row is what proves each a mapping, not a poke).
+GEM_ENTRY_STORES = struct.Struct(">HIHI")              # `lea <routine>.l,a0` / `move.l a0,<slot>.l`
+LEA_ABSOLUTE_LONG_A0, MOVE_L_A0_TO_ABSOLUTE = 0x41f9, 0x23c8
+JUSTRETF_STORED_AT, TICK_GLUE_STORED_AT, USERBLK_TRAMPOLINE_STORED_AT = 0xfd9f86, 0xfd9f92, 0xfd9f9e
+
+
+def _stored_by_gem_entry(at):
+    """`(the routine, the slot)` of gem_entry's by-value store at `at` — read out of the ROM's two instructions."""
+    lea, routine, move, slot = GEM_ENTRY_STORES.unpack_from(BASE_IMAGE, at)
+    assert (lea, move) == (LEA_ABSOLUTE_LONG_A0, MOVE_L_A0_TO_ABSOLUTE), f"gem_entry stores no routine by value at {at:#x}"
+    return routine, slot
+
+
+JUSTRETF_ROM, JUSTRETF_KEPT_AT = _stored_by_gem_entry(JUSTRETF_STORED_AT)
+TICK_GLUE_ROM, TICK_GLUE_KEPT_AT = _stored_by_gem_entry(TICK_GLUE_STORED_AT)
+assert (JUSTRETF_ROM, TICK_GLUE_ROM) == (addrs.AES_ROM_JUSTRETF, addrs.AES_ROM_TICK_GLUE), "gem_entry's two glue stores"
+assert _stored_by_gem_entry(USERBLK_TRAMPOLINE_STORED_AT) == (USERBLK_TRAMPOLINE, aes.AES_USERDEF_TRAMPOLINE)
+JUSTRETF_SLOT = RelocatedCode(f"the routine that draws nothing, kept by value (${JUSTRETF_KEPT_AT:x})", (JUSTRETF_KEPT_AT,),
+                              {JUSTRETF_ROM: HANDED_ENTRY_SYMBOLS[JUSTRETF_ROM]}, False)
+TICK_GLUE_SYMBOL = "aes_rom_tick_glue"
+TICK_GLUE_SLOTS = (TICK_GLUE_KEPT_AT, vdi.field("LINEA", "USER_TIM").at, aes.AES_GSX_CONTRL_PTR, aes.AES_GSX_CONTRL_PTR2)
+TICK_GLUE = RelocatedCode("the tick glue's address handed to the VDI", TICK_GLUE_SLOTS, {TICK_GLUE_ROM: TICK_GLUE_SYMBOL}, False)
+TICK_GLUE_END = addrs.AES_ROM_CART_INIT                 # the tick glue, `$fed426..$fed477`; cart_init follows
+ROM_TEXT_OF.update({JUSTRETF_SLOT.what: ((JUSTRETF_ROM, TICK_GLUE_ROM),), TICK_GLUE.what: ((TICK_GLUE_ROM, TICK_GLUE_END),)})
+DECLARED_NOT_YET_MAPPED_AT_TIER3.update({
+    JUSTRETF_SLOT.what: ("no routine of ours stores it before gem_entry is ours; then one of the glue's slots", WAVE_4),
+    TICK_GLUE.what: ("no routine of ours stores it before gem_entry is ours and gem_main's gsx_tick hands it on", WAVE_4)})
+
+# THE DESK'S USERBLKS. The desk keeps its window items' objects and their USERBLKs in ITS OWN BLOCK (`$c6a6`: desk_alloc's
+# first Malloc), at two offsets read here out of the instructions that fill them: an item shown as text gets the type
+# G_USERDEF (`$fe3066`: `move.w #24,<objects + OB_TYPE>(a0)`, A0 the block + 24 * its index), its ob_spec the USERBLK
+# of THE SAME INDEX (`$fe3076`), and that USERBLK's code the trampoline's address out of `$8c32` (`$fe3094`).
+DESK_SETS_USERDEF_AT, DESK_COPIES_THE_TRAMPOLINE_AT = 0xfe3066, 0xfe3094
+MOVE_W_IMMEDIATE_TO_D16_A0, MOVE_L_ABSOLUTE_TO_D16_A0 = 0x317c, 0x2179
+_set, _type, _type_at = struct.unpack_from(">3H", BASE_IMAGE, DESK_SETS_USERDEF_AT)
+_copy, _from, DESK_USERBLKS = struct.unpack_from(">HIH", BASE_IMAGE, DESK_COPIES_THE_TRAMPOLINE_AT)
+assert (_set, _type, _copy, _from) == (MOVE_W_IMMEDIATE_TO_D16_A0, aes.G_USERDEF, MOVE_L_ABSOLUTE_TO_D16_A0,
+                                       aes.AES_USERDEF_TRAMPOLINE), "the desk's USERDEF set-up is not read as it is written"
+DESK_OBJECTS = _type_at - aes.OB_TYPE
+DESK_GLOBALS_BYTES = aes.header_constants("deskmem.h")["DESK_GLOBALS_BYTES"]
+DESK_OBJECT_COUNT = (DESK_GLOBALS_BYTES - DESK_OBJECTS) // aes.OB_BYTES     # the objects run to the block's end
+
+
+def userblk_slots(memory):
+    """WHERE THE MACHINE `memory` KEEPS THE TRAMPOLINE'S ADDRESS IN THE DESK'S USERBLKS: `((None, slot), ...)` — the
+    code longword of the USERBLK of every object of the desk's block that is a G_USERDEF whose ob_spec names THE
+    USERBLK OF ITS OWN INDEX (the desk's own arithmetic: nothing else in the block passes for one). None where the
+    desk has no block (before desk_alloc: the pointer is null). A block the desk has FREED is still walked — the
+    pointer is not cleared: such slots are dead memory, and the machine's own to say."""
+    block = case.long_in(memory, aes.AES_DESK_GLOBALS) & OS_BUS_ADDR_MASK
+    if not block:
+        return ()
+    slots = []
+    for index in range(DESK_OBJECT_COUNT):
+        thing, userblk = block + DESK_OBJECTS + index * aes.OB_BYTES, block + DESK_USERBLKS + index * aes.UB_BYTES
+        is_userdef = case.word_in(memory, thing + aes.OB_TYPE) & aes.OB_TYPE_MASK == aes.G_USERDEF
+        if is_userdef and case.long_in(memory, thing + aes.OB_SPEC) & OS_BUS_ADDR_MASK == userblk:
+            slots.append((None, userblk + aes.UB_CODE))
+    return tuple(slots)
+
+
+SLOTS_WALKED_FROM_THE_MACHINE[USERBLK_TRAMPOLINE_SLOT.what] = userblk_slots
+# ---- BAND 5 WAVE 4, SLICE M (end) ---------------------------------------------------------------------------------------------
+
+
 # ---- THE CYCLE PROFILE IS ONE SWITCH OF THE ORACLE'S: who has it on ------------------------------------------------------
 # A measurement that reads who ran off the cycle profile switches it on for its own run and off after. A SECOND
 # profiled run begun INSIDE it — a door boot derived cold in the middle of a row's measurement — would switch it off
@@ -3031,9 +3116,10 @@ def vet_the_profile_is_free(who):
 
 def slots_over(relocation, memory):
     """THE LONGWORDS `relocation` (anything with `what` and `slots`) LIES IN over the machine `memory`: its declared
-    ones — or, for one WALKED FROM THE MACHINE (`SLOTS_WALKED_FROM_THE_MACHINE`), what the walk finds there now."""
+    ones — and, for one WALKED FROM THE MACHINE (`SLOTS_WALKED_FROM_THE_MACHINE`), what the walk finds there now (a
+    program's first-entry frame declares none and is all walk; the desk's trampoline is `$8c32` AND its USERBLKs)."""
     walked = SLOTS_WALKED_FROM_THE_MACHINE.get(relocation.what)
-    return tuple(slot for _pd, slot in walked(memory)) if walked else tuple(relocation.slots)
+    return (*relocation.slots, *(slot for _pd, slot in (walked(memory) if walked else ())))
 
 
 # ---- (end of slice M's declarations) ---------------------------------------------------------------------------------

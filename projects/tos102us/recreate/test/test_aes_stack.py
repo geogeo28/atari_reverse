@@ -22,6 +22,14 @@ WHAT IS HELD, on both blobs:
     THE VERDICT THERE IS A FINDING TOO, pinned as the number it is: "OVER BY 178" until THE DOOR DIET (wave 3,
     2026-10-11), and since it "FITS, 20 SPARE" for the shipped blob — every arm of the switch, bound and measured —
     with what was cut said above the pins and the bench blob's "over by 150" reported beside it.
+  * THE START-UP (band 5 wave 4, rulings W4-R4 and W4-R9) — gem_entry's two stacks: THE START-UP'S SHAPES, each over a
+    listing of its own (a run that ends where it began: Super; a routine that loads its stack twice and loops; a
+    call out of the build; the desk door's pad; `__DOS`'s return through a parked address; a body cut at its own
+    return site's label); THE ROM'S OWN START-UP read through them and HELD TO ITS BOOT (where each routine is
+    entered: deskmain 62 under PD0's top), with the ROM's measured depths; and, for each blob, THE TWO GATES BOUND
+    AND MEASURED — the first stack's 134 bytes (88 taken, 46 spare) and the ROM-depth rule (every call out of the
+    build entered where the ROM enters it; our own boot arriving at deskmain with the ROM's SP) — beside PD0's own
+    frames and what dos_exec leaves an application's trap.
 THE PINS ARE LAYOUT NUMBERS OF OUR BUILD (as band 4 pins its dispatcher's): a pin that moves is re-pinned WITH THE
 REASON — which frame, which call — never to make a run green.
 """
@@ -32,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from harness import addrs
+from harness import BASE_IMAGE, addrs, emu
 from recreate_kit import rom_bench
 
 import aes
@@ -1305,22 +1313,90 @@ def test_the_trap_path_s_reading_starts_at_the_handler_s_arm_the_moment_a_blob_l
 
 _A_USE_OF_SH_FIND = re.compile(r"\baes_sh_find\(([^;{]*)")       # to the statement's end: a call's arguments, or the definition's
 THE_DEFINITION_S = "uint32_t routine"
+THE_SHELL_S_SHOW_ENTRY = "sh_show_entry"                # the Alcyon entry `src/aes/shell.c` hands sh_find
 THE_SOURCES = Path(__file__).resolve().parents[1] / "src" / "aes"
 
 
-def test_no_caller_of_the_build_hands_sh_find_a_routine(blob):
-    """THE DECLARATION (`NO_ROUTINE_IS_HANDED`): sh_find calls through its `routine` argument where it is not 0, and
-    every call of the build's hands SH_FIND_NO_ROUTINE — held to the sources; undeclared, the build's sh_find is
-    refused by name."""
+def test_sh_find_is_read_for_each_caller_s_argument_the_shell_hands_it_a_routine_and_no_other_caller_does(blob):
+    """THE DECLARATION (`NO_ROUTINE_IS_HANDED`, `TRAP_PATH_CALLS_WHAT_IT_IS_HANDED`): sh_find calls through its
+    `routine` argument where it is not 0. UNTIL BAND 5 WAVE 4 every call of the build's handed SH_FIND_NO_ROUTINE;
+    THE SHELL'S OWN CALL NOW HANDS sh_show (`src/aes/shell.c`: the ROM's `sh_find(command, #$feaddc)`) — held to the
+    sources: one call that names a routine, every other the constant. So sh_find is READ ONCE FOR EACH ARGUMENT: on
+    the trap path for "no routine" alone (shel_find's arm lays a ZERO in the slot — its `jsr (a0)` is counted, nothing
+    under it), and on PD0's paths, where a blob links the shell, FOR sh_show's ENTRY, whose drawing is then under it.
+    A call that shows neither a zero nor one routine by value is refused; undeclared, sh_find is refused by name."""
     uses = [use.group(1) for source in sorted(THE_SOURCES.glob("*.c")) for use in _A_USE_OF_SH_FIND.finditer(source.read_text())]
     calls = [use for use in uses if THE_DEFINITION_S not in use]
-    assert len(calls) >= 2 and len(uses) == len(calls) + 1 and all("SH_FIND_NO_ROUTINE)" in call for call in calls), calls
+    hand_none = [call for call in calls if "SH_FIND_NO_ROUTINE)" in call]
+    assert len(hand_none) >= 2 and len(uses) == len(calls) + 1, calls
+    assert [call for call in calls if call not in hand_none] == [call for call in calls if "sh_show_routine())" in call], calls
     assert aes.header_constants("shell.h")["SH_FIND_NO_ROUTINE"] == 0
+    handed_none = f"{stack.SH_FIND}{switch.HANDED}{switch.NO_ROUTINE_IS_HANDED}"
+    trap_path = stack.trap_reading(blob.elf)
+    assert {name for name in trap_path.read_as(stack.trap_entered_at(blob.elf)[0]) if name.startswith(stack.SH_FIND)} == {handed_none}
+    assert trap_path.deepest_to(handed_none, switch.NO_ROUTINE_IS_HANDED) is not None, "its `jsr (a0)`, counted"
+    if stack.links(blob.elf, stack.GEM_ENTRY) and len(calls) > len(hand_none):
+        start_up = stack.start_up_reading(blob.elf)
+        on_pd0 = {name for name in start_up.read_as(stack.pd0_entry(blob.elf)) if name.startswith(stack.SH_FIND)}
+        assert on_pd0 == {f"{stack.SH_FIND}{switch.HANDED}{THE_SHELL_S_SHOW_ENTRY}"}
+        assert start_up.of(*on_pd0).deepest > trap_path.of(handed_none).deepest, "sh_show's drawing is under the shell's call"
     undeclared = StackReading(blob.elf, stack.THROUGH_A_POINTER, leaves_the_stack=stack.LEAVES_THE_STACK,
                               calls_what_it_is_handed=stack.CALLS_WHAT_IT_IS_HANDED,
                               takes_an_exception={stack.GEMDOS_TRAP: stack.gemdos_need()})
     with pytest.raises(AssertionError, match="aes_sh_find calls through %a0 .* a pointer read out of memory"):
         undeclared.of(stack.SH_FIND)
+
+
+HANDS_ONE = [(0x100, "pea %pc@(300 <deep>)"), (0x104, "jsr 600 <walks>"), (0x10a, "addql #4,%sp"), (0x10c, "rts")]
+HANDS_NONE = [(0x100, "clrl %sp@-"), (0x102, "jsr 600 <walks>"), (0x108, "addql #4,%sp"), (0x10a, "rts")]
+TAILS_WITH_NONE = [(0x100, "clrl %sp@(4)"), (0x104, "jmp 600 <walks>")]
+CALLS_ITS_ARGUMENT = [(0x600, "moveal %sp@(4),%a0"), (0x604, "tstl %a0"), (0x606, "beqs 60a <walks+0xa>"), (0x608, "jsr %a0@"), (0x60a, "rts")]
+
+
+@pytest.mark.parametrize("caller, under", ((HANDS_ONE, LONG_BYTES + LONG_BYTES + LONG_BYTES + 40), (HANDS_NONE, LONG_BYTES + LONG_BYTES + LONG_BYTES),
+                                           (TAILS_WITH_NONE, LONG_BYTES)))
+def test_a_routine_handed_none_by_one_caller_and_one_by_another_is_read_for_each(caller, under):
+    """sh_find's shape, over a listing of its own: a routine that calls the argument it is handed where it is not 0,
+    read FOR EACH CALLER — the routine one names by value (pc-relative too), or NO ROUTINE where the call lays a zero
+    longword for it, pushed or stored in a tail call's slot. THE RED: a call that shows neither."""
+    declared = {"through_a_pointer": {"walks": (switch.NO_ROUTINE_IS_HANDED,)}, "calls_what_it_is_handed": ("walks",)}
+    functions = {"caller": caller, "walks": CALLS_ITS_ARGUMENT, "deep": DEEP}
+    assert StackReading.of_listing(functions, {0x600: "walks", 0x300: "deep"}, **declared).of("caller").deepest == under
+    from_a_register = [(0x100, "movel %d3,%sp@-"), *HANDS_NONE[1:]]
+    with pytest.raises(AssertionError, match="caller hands its callee at 0x102 no routine by value"):
+        StackReading.of_listing({**functions, "caller": from_a_register}, {0x600: "walks", 0x300: "deep"}, **declared).of("caller")
+
+
+CALLS_ITS_SECOND_ARGUMENT = [(0x600, "subql #8,%sp"), (0x602, "moveal %sp@(16),%a0"), (0x606, "tstl %a0"), (0x608, "beqs 60c <walks+0xc>"),
+                             (0x60a, "jsr %a0@"), (0x60c, "addql #8,%sp"), (0x60e, "rts")]
+
+
+def test_no_routine_is_read_only_where_the_zero_is_the_argument_the_callee_calls_through():
+    """WHICH ARGUMENT THE ZERO IS, READ ON BOTH SIDES (the second review's crafted listing, F9.1): `walks(routine, 0)`
+    — the routine handed FROM A REGISTER, a zero longword laid for ANOTHER argument on the same straight line — was
+    read as "no routine", and the routine's 44 bytes under the `jsr (a0)` went uncounted. RED: refused by name, a
+    routine handed a way the reading does not read. And for a callee that calls through its SECOND argument (its
+    slot read at the depth its own frame stands at): a zero pushed first — the second argument — is "no routine",
+    pushed last — the first — is not; a tail call's zero is read by the slot it is stored in."""
+    declared = {"through_a_pointer": {"walks": (switch.NO_ROUTINE_IS_HANDED,)}, "calls_what_it_is_handed": ("walks",)}
+    starts = {0x600: "walks", 0x300: "deep"}
+    the_review_s = [(0x100, "lea %pc@(300 <deep>),%a0"), (0x104, "clrl %sp@-"), (0x106, "movel %a0,%sp@-"), (0x108, "jsr 600 <walks>"),
+                    (0x10e, "addql #8,%sp"), (0x110, "rts")]
+    with pytest.raises(AssertionError, match="caller hands its callee at 0x108 no routine by value"):
+        StackReading.of_listing({"caller": the_review_s, "walks": CALLS_ITS_ARGUMENT, "deep": DEEP}, starts, **declared).of("caller")
+    functions = {"walks": CALLS_ITS_SECOND_ARGUMENT, "deep": DEEP}
+    zero_second = [(0x100, "clrl %sp@-"), (0x102, "movel %d3,%sp@-"), (0x104, "jsr 600 <walks>"), (0x10a, "addql #8,%sp"), (0x10c, "rts")]
+    read = StackReading.of_listing({**functions, "caller": zero_second}, starts, **declared)
+    assert read.of("caller").path[1] == f"walks{switch.HANDED}{switch.NO_ROUTINE_IS_HANDED}"
+    assert read.of("caller").deepest == 2 * LONG_BYTES + LONG_BYTES + 8 + LONG_BYTES, "its `jsr (a0)` counted, nothing under it"
+    zero_first = [(0x100, "movel %d3,%sp@-"), (0x102, "clrl %sp@-"), *zero_second[2:]]
+    with pytest.raises(AssertionError, match="caller hands its callee at 0x104 no routine by value"):
+        StackReading.of_listing({**functions, "caller": zero_first}, starts, **declared).of("caller")
+    tails = [(0x100, "subql #8,%sp"), (0x102, "clrl %sp@(16)"), (0x106, "addql #8,%sp"), (0x108, "jmp 600 <walks>")]
+    assert StackReading.of_listing({**functions, "caller": tails}, starts, **declared).of("caller").path[1].endswith(switch.NO_ROUTINE_IS_HANDED)
+    tails_the_first = [(0x100, "subql #8,%sp"), (0x102, "clrl %sp@(12)"), (0x106, "addql #8,%sp"), (0x108, "jmp 600 <walks>")]
+    with pytest.raises(AssertionError, match="caller hands its callee at 0x108 no routine by value"):
+        StackReading.of_listing({**functions, "caller": tails_the_first}, starts, **declared).of("caller")
 
 
 THE_GEMDOS_ENTRY_PUSHES = 10 * LONG_BYTES + LONG_BYTES + aes.WORD_BYTES + LONG_BYTES     # D1-A2, the PC, the SR, the USP ($fc4fc4..)
@@ -1738,3 +1814,609 @@ def test_a_run_behind_the_door_is_never_deeper_than_its_call_s_bound(blob):
             assert used <= bound_of[opcode], f"{shore}, {modes}: AES call {opcode} used {used} of {which}: its bound is {bound_of[opcode]}"
     quiet = stack.measured_at_the_door(stack.QUIETLY, shore)
     assert quiet.by_call[stack.PD2, APPL_INIT] == max(BESIDE_THE_SWITCH[shore], THE_SWITCH_S_OWN_FRAME_DOWN) == bound_of[APPL_INIT]
+
+
+# ---- (10) THE START-UP'S SHAPES, each over a listing of its own (band 5 wave 4) ------------------------------------------------
+A_FIRST_STACK, A_SECOND_STACK = "moveal #35214,%sp", "moveal %fp,%sp"
+A_SUPER_CALL = ("movel %sp,%sp@-", "movew #32,%sp@-", "trap #1")
+A_ROM_S_SP, THE_ROM_S_DEPTH_THERE, A_ROM_ROUTINE, THE_DESK = "moveal #41832,%sp", 58, 0xfe272e, "the desk"
+SUPERS = [(0x100, A_FIRST_STACK), (0x106, "movel %sp,%sp@-"), (0x108, "movew #32,%sp@-"), (0x10c, "trap #1"),
+          (0x10e, "addqw #6,%sp"), (0x110, "jsr 300 <deep>"), (0x116, "trap #7")]
+SUPER_DECLARED = {"begins_a_stack": {A_FIRST_STACK: 6}, "takes_an_exception": {"trap #1": 50}}
+
+
+def test_a_run_declared_to_end_where_it_began_leaves_sp_there_and_takes_what_it_is_declared_to():
+    """`Super(sp)`: THE STACK POINTER GEMDOS LEAVES IS ITS ARGUMENT — the SP before the call's own two pushes — and
+    its frame is built in their six bytes. Declared, the `addq.w #6` that follows it stands SP SIX ABOVE where the
+    pushes began (the stack's top, where the first is declared to begin six under it) and the trap takes nothing;
+    undeclared, it is any GEMDOS trap — 50 bytes under the pushes, and every depth after it six too deep. REFUSED: a
+    branch that lands inside the run."""
+    declared = StackReading.of_listing({"caller": SUPERS, "deep": DEEP}, STARTS, ends_where_it_began={A_SUPER_CALL: 0}, **SUPER_DECLARED)
+    assert declared.depth_at("caller", 0x110) == 0 and declared.of("caller").deepest == max(6 + 6, LONG_BYTES + 40)
+    undeclared = StackReading.of_listing({"caller": SUPERS, "deep": DEEP}, STARTS, **SUPER_DECLARED)
+    assert undeclared.depth_at("caller", 0x110) == 6 and undeclared.of("caller").deepest == 6 + 6 + 50
+    charged = StackReading.of_listing({"caller": SUPERS, "deep": DEEP}, STARTS, ends_where_it_began={A_SUPER_CALL: 70}, **SUPER_DECLARED)
+    assert charged.of("caller").deepest == 6 + 6 + 70, "the bytes the run's last instruction is declared to take are charged there"
+    joined = [(0xfe, "beqs 108 <caller+0xa>"), *SUPERS]
+    with pytest.raises(AssertionError, match="caller: a branch lands at 0x108, inside the run .* declared to end where it began"):
+        StackReading.of_listing({"caller": joined, "deep": DEEP}, STARTS, ends_where_it_began={A_SUPER_CALL: 0}, **SUPER_DECLARED).of("caller")
+
+
+LOOPS = [(0x100, A_FIRST_STACK), (0x106, "subql #8,%sp"), (0x108, "jsr 300 <deep>"), (0x10e, "addql #8,%sp"),
+         (0x110, "jsr 200 <leaf>"), (0x116, A_SECOND_STACK), (0x118, "movel %d0,%sp@-"), (0x11a, "jsr 300 <deep>"),
+         (0x120, "addql #4,%sp"), (0x122, "bras 110 <caller+0x10>")]
+TWO_STACKS = {A_FIRST_STACK: 0, A_SECOND_STACK: 0}
+
+
+def test_a_routine_that_loads_its_own_stack_twice_is_read_on_each_and_never_returns():
+    """gem_entry's shape: no caller, A STACK BEGUN (declared), then ANOTHER (`movea.l a6,sp`, declared), a `jsr` whose
+    callee returns only to a `bra` back to the loop's top — reached at one depth on either stack, and the second
+    stack's own instruction reached again from the stack it began. READ FROM THAT INSTRUCTION the paths are THE
+    SECOND STACK'S ALONE. THE REDS: the second load UNDECLARED is, on a stack the routine began, what a glue's way
+    back is — the stack it came on again: the routine is read as RETURNING and NOTHING AFTER IT IS WALKED (which is
+    why `aes_stack` holds that the start-up's gem_entry never returns and reaches gem_main); with neither declared it
+    is refused; and a loop that comes back deeper than it left is two paths at two depths."""
+    read = StackReading.of_listing({"caller": LOOPS, "leaf": A_LEAF, "deep": DEEP}, STARTS, begins_a_stack=TWO_STACKS)
+    assert read.of("caller").deepest == 8 + LONG_BYTES + 40 and not read.returns("caller")
+    assert [at for _callee, _under, at in read.sites("caller")] == [0x108, 0x110, 0x11a]
+    assert read.of("caller+0x16").deepest == LONG_BYTES + LONG_BYTES + 40, "the second stack: the first one's 8 are not on it"
+    assert read.depth_at("caller+0x16", 0x110) == 0 and read.deepest_to("caller+0x16", "leaf") == (LONG_BYTES, ("leaf",))
+    undeclared = StackReading.of_listing({"caller": LOOPS, "leaf": A_LEAF, "deep": DEEP}, STARTS, begins_a_stack={A_FIRST_STACK: 0})
+    assert undeclared.returns("caller") and [at for _callee, _under, at in undeclared.sites("caller")] == [0x108, 0x110]
+    with pytest.raises(AssertionError, match="does not follow `moveal #35214,%sp`"):
+        StackReading.of_listing({"caller": LOOPS, "leaf": A_LEAF, "deep": DEEP}, STARTS).of("caller")
+    deeper = _with(LOOPS, at_120="addql #2,%sp")
+    with pytest.raises(AssertionError, match="caller: two paths reach 0x110 at depths 0 and 2"):
+        StackReading.of_listing({"caller": deeper, "leaf": A_LEAF, "deep": DEEP}, STARTS, begins_a_stack=TWO_STACKS).of("caller")
+
+
+@pytest.mark.parametrize("spelt", ("jsr 0xfe272e", "jsr fe272e <_end+0xfa1234>", "jsr fe272e"))
+def test_a_call_out_of_the_build_is_declared_named_and_counted_as_its_call(spelt):
+    """THE DESK DOOR's `jsr <an address of the ROM>`: no listing of the build holds it. DECLARED, it is its `jsr` and
+    nothing under it, NAMED in the path — whatever symbol objdump prints near the address; undeclared, refused."""
+    body = [(0x100, "subql #4,%sp"), (0x102, spelt), (0x108, "addql #4,%sp"), (0x10a, "rts")]
+    read = StackReading.of_listing({"caller": body}, out_of_the_build={A_ROM_ROUTINE: THE_DESK})
+    assert read.of("caller") == StackUse(LONG_BYTES + LONG_BYTES, ("caller", THE_DESK), None, ("caller",)) and read.returns("caller")
+    assert read.deepest_to("caller", THE_DESK) == (LONG_BYTES + LONG_BYTES, (THE_DESK,))
+    with pytest.raises(AssertionError, match="does not follow the transfer|has no listing of the instruction at 0xfe272e"):
+        StackReading.of_listing({"caller": body}).of("caller")
+    with pytest.raises(AssertionError, match="does not follow the transfer|has no listing of the instruction at 0xfe272e"):
+        StackReading.of_listing({"caller": body}, out_of_the_build={A_ROM_ROUTINE + 2: THE_DESK}).of("caller")
+
+
+THROUGH_THE_DOOR = [(0x100, "linkw %fp,#-8"), (0x104, "movel %sp,%d3"), (0x106, A_ROM_S_SP), (0x10c, "movel %a0,%sp@"),
+                    (0x10e, "movew %d1,%sp@-"), (0x110, "jsr 0xfe272e"), (0x116, "moveal %d3,%sp"), (0x118, "jsr 300 <deep>"),
+                    (0x11e, "unlk %fp"), (0x120, "rts")]
+THE_CALLER_IS_ENTERED = 20              # bytes below the stack's top, its return address among them
+DOOR_DECLARED = {"stands_sp_at": {A_ROM_S_SP: THE_ROM_S_DEPTH_THERE}, "out_of_the_build": {A_ROM_ROUTINE: THE_DESK},
+                 "entered_at_depth": {"caller": THE_CALLER_IS_ENTERED}}
+
+
+def test_the_desk_door_stands_sp_at_a_declared_place_for_one_call_and_puts_it_back():
+    """THE PAD (ruling W4-R4): `movea.l #<the ROM's SP>,sp` — SP stood where the ROM's stands, ON THE SAME STACK — the
+    ROM's frame laid there, the call, and `movea.l <the register that kept it>,sp`: the callee is entered where the
+    declaration says, WHATEVER OUR OWN FRAMES ARE, and after the door the count goes on from where it stood (the
+    routine returns; what follows is walked). THE PLACE IS THE STACK'S, so the reading is told where the function is
+    entered; `depth_at` the standing instruction is where OUR frames stood, from the function's own entry: the pad
+    is the declared depth less both. REFUSED: undeclared; a function not told of; and SP from a register where
+    nothing stood it anywhere."""
+    read = StackReading.of_listing({"caller": THROUGH_THE_DOOR, "deep": DEEP}, STARTS, **DOOR_DECLARED)
+    the_desk_is_entered = THE_CALLER_IS_ENTERED + read.deepest_to("caller", THE_DESK)[0]
+    assert the_desk_is_entered == THE_ROM_S_DEPTH_THERE + 2 + LONG_BYTES, "where the declaration says, from the stack's top"
+    assert read.depth_at("caller", 0x106) == LONG_BYTES + 8 == read.depth_at("caller", 0x118), "our own frames, before and after"
+    assert THE_ROM_S_DEPTH_THERE - (THE_CALLER_IS_ENTERED + read.depth_at("caller", 0x106)) == 26, "the pad"
+    through_the_door, after_it = THE_ROM_S_DEPTH_THERE - THE_CALLER_IS_ENTERED + 2 + LONG_BYTES, LONG_BYTES + 8 + LONG_BYTES + 40
+    assert read.of("caller").deepest == max(through_the_door, after_it) == after_it and read.returns("caller")
+    assert read.deepest_to("caller", "deep") == (LONG_BYTES + 8 + LONG_BYTES, ("deep",))
+    undeclared = {name: told for name, told in DOOR_DECLARED.items() if name != "stands_sp_at"}
+    with pytest.raises(AssertionError, match="does not follow `moveal #41832,%sp`"):
+        StackReading.of_listing({"caller": THROUGH_THE_DOOR, "deep": DEEP}, STARTS, **undeclared).of("caller")
+    untold = {name: told for name, told in DOOR_DECLARED.items() if name != "entered_at_depth"}
+    with pytest.raises(AssertionError, match="caller: `moveal #41832,%sp` at 0x106 stands SP at a declared place .* not told how far"):
+        StackReading.of_listing({"caller": THROUGH_THE_DOOR, "deep": DEEP}, STARTS, **untold).of("caller")
+    never_stood = [line for line in THROUGH_THE_DOOR if line[1] != A_ROM_S_SP]
+    with pytest.raises(AssertionError, match="does not follow `moveal %d3,%sp`"):
+        StackReading.of_listing({"caller": never_stood, "deep": DEEP}, STARTS, **DOOR_DECLARED).of("caller")
+
+
+def test_the_door_s_way_back_is_read_from_the_register_that_kept_sp_and_from_no_other():
+    """THE PUT-BACK NAMES ITS REGISTER (the second review's crafted listing, F9.2): the door keeps the SP it leaves in
+    ONE register (`move.l sp,d3`, the nearest above the standing instruction), and only `movea.l d3,sp` is its way
+    back. RED, each by name: SP "put back" from D4 — what stands in SP after it is whatever D4 held, and the reading
+    took it for our own frames —, and a place stood at with no register keeping the SP it left."""
+    from_another = [(at, "moveal %d4,%sp" if text == "moveal %d3,%sp" else text) for at, text in THROUGH_THE_DOOR]
+    with pytest.raises(AssertionError, match="caller: `moveal %d4,%sp` at 0x116 puts SP back from a register that is not %d3"):
+        StackReading.of_listing({"caller": from_another, "deep": DEEP}, STARTS, **DOOR_DECLARED).of("caller")
+    nothing_kept = [line for line in THROUGH_THE_DOOR if line[1] != "movel %sp,%d3"]
+    with pytest.raises(AssertionError, match="stands SP at a declared place and no `move.l sp,<register>` above it keeps"):
+        StackReading.of_listing({"caller": nothing_kept, "deep": DEEP}, STARTS, **DOOR_DECLARED).of("caller")
+    kept_in_an_address_register = [(at, {"movel %sp,%d3": "moveal %sp,%a3", "moveal %d3,%sp": "moveal %a3,%sp"}.get(text, text))
+                                   for at, text in THROUGH_THE_DOOR]
+    read = StackReading.of_listing({"caller": kept_in_an_address_register, "deep": DEEP}, STARTS, **DOOR_DECLARED)
+    assert read.depth_at("caller", 0x118) == LONG_BYTES + 8, "the register is read, not assumed"
+
+
+DOS_GLUE = [(0x500, "movel %sp@+,8c22 <a_place>"), (0x506, "trap #1"), (0x508, "movew %d0,c918 <another>"),
+            (0x50e, "moveal 8c22 <a_place>,%a0"), (0x514, "jmp %a0@")]
+ITS_CALLER = [(0x100, "movel #4849664,%sp@-"), (0x106, "bsrs 500 <glue>"), (0x108, "addql #4,%sp"), (0x10a, "rts")]
+
+
+def test_a_routine_that_pops_its_return_address_and_jumps_through_it_is_read_as_returning():
+    """`__DOS`: `move.l (sp)+,<place>` — its own return address parked — the trap, then `movea.l <place>,a0` /
+    `jmp (a0)`: THE ROUTINE'S RETURN, and GEMDOS's own bytes stand under THE CALLER's frame (four bytes above the SP
+    the glue was entered at). REFUSED, as a jump through a pointer of the machine always was: a register loaded from
+    ANOTHER place, the pop not the routine's first instruction, the jump reached at another depth."""
+    def read(glue):
+        return StackReading.of_listing({"caller": ITS_CALLER, "glue": glue}, {0x500: "glue"}, takes_an_exception={"trap #1": 50})
+    assert read(DOS_GLUE).of("caller").deepest == LONG_BYTES + LONG_BYTES + (50 - LONG_BYTES) and read(DOS_GLUE).returns("caller")
+    assert read(DOS_GLUE).of("glue") == StackUse(50 - LONG_BYTES, ("glue",), None, ("glue",))
+    for broken in (_with(DOS_GLUE, at_50e="moveal 8c26 <elsewhere>,%a0"), [(0x4fe, "nop"), *DOS_GLUE],
+                   _with(DOS_GLUE, at_508="subql #2,%sp")):
+        with pytest.raises(AssertionError, match="glue calls through %a0 at 0x514, which holds a pointer read out of memory"):
+            read(broken).of("caller")
+
+
+CUT_AT_ITS_RETURN_SITE = {"routine": [(0x100, "movel #4849664,%sp@-"), (0x106, "bsrs 500 <glue>")],
+                          "its_return_site": [(0x108, "addql #4,%sp"), (0x10a, "rts")], "glue": DOS_GLUE}
+
+
+def test_a_body_cut_at_the_label_of_its_own_return_site_is_read_on_through_it():
+    """pgmld's shape on the shipped blob: the instruction after its `bsr` of the DOS glue carries a LABEL (the ROM parks
+    that address), and the listing ends the routine's body at the call. The callee RETURNS and the label begins right
+    behind the call: the body goes on through it, at the depth it stood at — where a label further off, or a last
+    call of a routine that never returns, leaves the body ended as it was."""
+    read = StackReading.of_listing(CUT_AT_ITS_RETURN_SITE, {0x500: "glue"}, takes_an_exception={"trap #1": 50})
+    assert read.of("routine").deepest == LONG_BYTES + LONG_BYTES + (50 - LONG_BYTES) and read.returns("routine")
+    assert [at for at, _text in read.functions()["routine"]] == [0x100, 0x106, 0x108, 0x10a]
+    further = {**CUT_AT_ITS_RETURN_SITE, "its_return_site": [(0x110, "addql #4,%sp"), (0x112, "rts")]}
+    with pytest.raises(AssertionError, match=r"routine: a path runs off the listed body's last instruction .* its callee \['glue'\] returns"):
+        StackReading.of_listing(further, {0x500: "glue"}, takes_an_exception={"trap #1": 50}).of("routine")
+    never_back = {**CUT_AT_ITS_RETURN_SITE, "glue": [(0x500, "trap #7")]}
+    halted = StackReading.of_listing(never_back, {0x500: "glue"})
+    assert halted.of("routine").deepest == LONG_BYTES + LONG_BYTES and not halted.returns("routine")
+
+
+# ---- (11) THE START-UP AS THE ROM SPELLS IT: gem_entry's two stacks (band 5 wave 4; rulings W4-R4, W4-R9) ----------------------
+THE_FIRST_STACK_S, PD0_S = (0x890e, 0x8994), (0x9ca2, 0xa3a2)                      # 134 and 1,792 bytes
+THE_FIRST_STACK_S_SPAN, PD0_S_SPAN = THE_FIRST_STACK_S[1] - THE_FIRST_STACK_S[0], PD0_S[1] - PD0_S[0]
+THE_USER_STACK_LOADED = 0x898e          # `$fd9ecc movea.l #$898e,sp`: six under the top the Super call and the `addq` leave
+# WHERE THE ROM ENTERS EACH ROUTINE, in bytes below its stack's top (its return address among them) — READ, and held
+# to the ROM's boot below. gem_main: gem_entry's `jsr`. Its callees: `link #-8` and three registers under it (28) —
+# sh_main and the reader among them. sh_main's: `link #-10` and three (26) more — deskmain, a bare call; dos_exec
+# under a word and a longword pushed; the cartridge's under one longword. sh_cmd's (`link #-2`, two registers: 14):
+# the two file routines bare, the two disk routines under one longword.
+A_RETURN = LONG_BYTES
+GEM_MAIN_S_FRAME, SH_MAIN_S_FRAME, SH_CMD_S_FRAME = LONG_BYTES + 8 + 3 * LONG_BYTES, LONG_BYTES + 10 + 3 * LONG_BYTES, LONG_BYTES + 2 + 2 * LONG_BYTES
+THE_ROM_ENTERS_GEM_MAIN = A_RETURN                                                  # 4
+THE_ROM_ENTERS_SH_MAIN = THE_ROM_ENTERS_GEM_MAIN + GEM_MAIN_S_FRAME + A_RETURN      # 32
+THE_ROM_S_SP_IN_SH_MAIN = THE_ROM_ENTERS_SH_MAIN + SH_MAIN_S_FRAME                  # 58: `$a368`
+THE_ROM_ENTERS_DESKMAIN = THE_ROM_S_SP_IN_SH_MAIN + A_RETURN                        # 62: `$a364`
+THE_ROM_ENTERS_SH_CMD = THE_ROM_ENTERS_DESKMAIN                                     # 62
+THE_ROM_S_SP_IN_SH_CMD = THE_ROM_ENTERS_SH_CMD + SH_CMD_S_FRAME                     # 76: `$a356`
+THE_ROM_ENTERS = {
+    stack.THE_FIRST_STACK: {addrs.AES_ROM_ROM_RSC_INIT: A_RETURN, addrs.AES_ROM_SIZE_THEGLO: A_RETURN},
+    stack.PD0_S_STACK: {stack.GEM_MAIN_ROM: THE_ROM_ENTERS_GEM_MAIN, stack.SH_MAIN_ROM: THE_ROM_ENTERS_SH_MAIN,
+                        stack.SH_CMD_ROM: THE_ROM_ENTERS_SH_CMD, stack.DESKMAIN_ROM: THE_ROM_ENTERS_DESKMAIN,
+                        stack.DOS_EXEC_ROM: THE_ROM_S_SP_IN_SH_MAIN + aes.WORD_BYTES + LONG_BYTES + A_RETURN,         # 68: `$a35e`
+                        stack.CART_EXEC_ROM: THE_ROM_S_SP_IN_SH_MAIN + LONG_BYTES + A_RETURN,                        # 66
+                        addrs.AES_ROM_DESK_SHOW_FILE: THE_ROM_S_SP_IN_SH_CMD + A_RETURN,                             # 80
+                        addrs.AES_ROM_DESK_PRINT_FILE: THE_ROM_S_SP_IN_SH_CMD + A_RETURN,
+                        addrs.AES_ROM_DESK_FORMAT: THE_ROM_S_SP_IN_SH_CMD + LONG_BYTES + A_RETURN,                   # 84
+                        addrs.AES_ROM_DESK_COPY_DISK: THE_ROM_S_SP_IN_SH_CMD + LONG_BYTES + A_RETURN}}
+THE_ROUTINES_ON_PD0_ARE = {stack.GEM_MAIN_ROM: 884, stack.SH_MAIN_ROM: 534, stack.SH_CMD_ROM: 196}     # bytes, to the return word's end
+
+
+def test_gem_entry_s_two_stacks_are_read_off_the_rom_s_own_operands():
+    """THE FIRST STACK: from the end of the words gem_entry lays under the address it loads (`$8904..$890d`) to that
+    address AND THE SUPER CALL'S SIX — 134 bytes; PD0's: UDA0's, past its saved state, to UDA1 — 1,792. And what a
+    reading is told of them: the first begins SIX UNDER ITS TOP (the bytes the ROM's `addq.w #6` drops that it never
+    pushed there), the second at its top."""
+    assert stack.gem_entry_s_stacks() == {stack.THE_FIRST_STACK: THE_FIRST_STACK_S, stack.PD0_S_STACK: PD0_S}
+    assert stack.spans_of_the_start_up() == {stack.THE_FIRST_STACK: THE_FIRST_STACK_S_SPAN, stack.PD0_S_STACK: PD0_S_SPAN}
+    assert (THE_FIRST_STACK_S_SPAN, PD0_S_SPAN) == (134, 1792) and PD0_S == (aes.AES_THEGLO + aes.UDA_STATE_BYTES, aes.AES_UDA1)
+    assert stack.the_first_stack_begins() == {f"moveal #{THE_USER_STACK_LOADED},%sp": stack.SUPER_S_PUSHES}
+    assert THE_USER_STACK_LOADED + stack.SUPER_S_PUSHES == THE_FIRST_STACK_S[1]
+    assert aes.header_constants("gemstart.h")["GEM_FIRST_STACK"] == THE_USER_STACK_LOADED
+
+
+def test_the_rom_s_start_up_is_read_through_the_start_up_s_shapes():
+    """THE ROM'S OWN gem_entry, gem_main, sh_main AND sh_cmd THROUGH THE READING (`the_rom_s_start_up`: `rom_data`'s
+    decoding, every Line-F word read for what it is): WHERE EACH ROUTINE IS ENTERED — the ROM-depth rule's figures —
+    and gem_entry never returns. THE REDS: without the Super call's declaration every depth of the first stack is SIX
+    TOO DEEP — and the loop's top, which the `bra` reaches at PD0's top, is two paths at two depths: refused by name;
+    without the first stack's beginning the ROM's gem_entry is refused by name."""
+    read, names = stack.the_rom_s_start_up()
+    assert stack.the_rom_enters() == THE_ROM_ENTERS
+    assert THE_ROM_ENTERS[stack.PD0_S_STACK][stack.DESKMAIN_ROM] == 62 and THE_ROM_ENTERS[stack.PD0_S_STACK][stack.DOS_EXEC_ROM] == 68
+    assert not read.returns(stack.THE_ROM_S_GEM_ENTRY) and read.returns(names[stack.GEM_MAIN_ROM])
+    assert stack.the_rom_s_sp_at_the_door() == {THE_ROM_S_SP_IN_SH_MAIN, THE_ROM_S_SP_IN_SH_CMD}
+    assert stack.the_desk_door_stands() == {f"moveal #{PD0_S[1] - depth},%sp": depth for depth in (THE_ROM_S_SP_IN_SH_MAIN, THE_ROM_S_SP_IN_SH_CMD)}
+    declared, functions = stack.start_up_declared(), read.functions()
+    starts = {address: name for address, name in names.items()}
+    with pytest.raises(AssertionError, match="gem_entry: two paths reach 0xfd9f72 at depths 6 and 0"):
+        StackReading.of_listing(functions, starts, takes_an_exception={stack.GEMDOS_TRAP: stack.gemdos_need()},
+                                begins_a_stack=declared["begins_a_stack"]).of(stack.THE_ROM_S_GEM_ENTRY)
+    with pytest.raises(AssertionError, match="the stack reading does not follow `moveal #35214,%sp`"):
+        StackReading.of_listing(functions, starts, takes_an_exception={stack.GEMDOS_TRAP: stack.gemdos_need()},
+                                ends_where_it_began=declared["ends_where_it_began"]).of(stack.THE_ROM_S_GEM_ENTRY)
+
+
+def test_the_routines_read_on_pd0_are_each_a_callee_of_the_one_before_and_end_at_their_one_return_word():
+    """THE THREE ALCYON ROUTINES THE READING LISTS (declared by address): gem_main is gem_entry's last call, sh_main a
+    call of gem_main's, sh_cmd of sh_main's, the reader of gem_main's — and each is read to its one Line-F return
+    word: 884, 534 and 196 bytes. Every call out of band 5 is a call of sh_main's or sh_cmd's own."""
+    read, names = stack.the_rom_s_start_up()
+    called_by = {caller: {callee for callee, _under, _at in read.sites(names[caller])} for caller in (stack.GEM_ENTRY_ROM, *THE_ROUTINES_ON_PD0_ARE)}
+    assert max(read.sites(stack.THE_ROM_S_GEM_ENTRY), key=lambda site: site[2])[0] == names[stack.GEM_MAIN_ROM]
+    assert {names[stack.SH_MAIN_ROM], names[stack.THE_INF_READER_ROM]} <= called_by[stack.GEM_MAIN_ROM]
+    assert {names[stack.SH_CMD_ROM], names[stack.DESKMAIN_ROM], names[stack.DOS_EXEC_ROM], names[stack.CART_EXEC_ROM]} <= called_by[stack.SH_MAIN_ROM]
+    assert {names[utility] for utility in stack.THE_SHELL_S_UTILITIES_ROM} <= called_by[stack.SH_CMD_ROM]
+    for routine, size in THE_ROUTINES_ON_PD0_ARE.items():
+        body = read.functions()[names[routine]]
+        assert body[-1] == (routine + size - 1, "rts") and body[-2] == (routine + size - aes.WORD_BYTES, switch.UNLINK), hex(routine)
+
+
+THE_BIOS_STARTS_GEM_AT_MASK = 3         # the pre-init capture's status word, `$0300`: user state, levels 4-7 open
+THE_ROM_S_FIRST_STACK_USE = 84          # its lowest store `$8940`, under rom_rsc_init's Malloc: 50 spare
+THE_ROM_S_MSHRINK_REACHES = stack.SUPER_S_PUSHES + 12 + 50      # 68: the Mshrink frame and GEMDOS's own pushes — READ, and measured
+THE_ROM_S_INIT, THE_ROM_S_DESK, THE_ROM_S_DESK_PARKS = 282, 886, 350    # PD0: gem_main to deskmain; the desk to its idle; UDA+62 there
+
+
+@pytest.mark.parametrize("boot", stack.THE_BOOTS)
+def test_the_rom_s_boot_enters_each_routine_where_the_reading_says(boot):
+    """THE READING HELD TO THE MACHINE: the ROM's own boot (the blank disk; two accessories) arrives at rom_rsc_init
+    and size_theglo four bytes under the first stack's top — `$8990`: the top IS the loaded address and six — at
+    gem_main four under PD0's, at the reader and sh_main 32 under, AT deskmain 62 UNDER: `$a364`. In user state at
+    the mask the BIOS leaves; and all of it the ROM's GEM text, no blob laid."""
+    run, machine = stack.start_up_run(boot), stack.THE_BOOTS[boot]()[0]
+    tops = dict.fromkeys(THE_ROM_ENTERS[stack.THE_FIRST_STACK], THE_FIRST_STACK_S[1])       # any other is on PD0's
+    below = {**THE_ROM_ENTERS[stack.THE_FIRST_STACK], **THE_ROM_ENTERS[stack.PD0_S_STACK], stack.THE_INF_READER_ROM: THE_ROM_ENTERS_SH_MAIN}
+    assert set(run.entered) == set(stack.WATCHED_IN_THE_ROM_S_BOOT)
+    for address, sp in run.entered.items():
+        assert tops.get(address, PD0_S[1]) - sp == below[address], f"{boot}: the ROM enters {address:#x} with SP {sp:#x}"
+    assert run.entered[stack.DESKMAIN_ROM] == 0xa364 and run.entered[addrs.AES_ROM_ROM_RSC_INIT] == 0x8990
+    assert list(run.entered)[-1] == stack.DESKMAIN_ROM and run.ours == 0 and run.the_rom_s > 0
+    status = machine.registers["sr"]
+    assert not status & aes_boot.SR_SUPERVISOR and (status & addrs.SR_IPL_MASK) >> aes_boot.SR_IPL_SHIFT == THE_BIOS_STARTS_GEM_AT_MASK
+
+
+@pytest.mark.parametrize("boot", stack.THE_BOOTS)
+def test_finding_the_rom_s_own_depths_on_gem_entry_s_two_stacks(boot):
+    """THE ROM'S MEASURED DEPTHS, each a lowest STORE of its own boot — the same on both disks. THE FIRST STACK: 84 of
+    134 used, 50 spare, the deepest under rom_rsc_init; before it, the Mshrink trap reaches 68 — WHAT THE READING
+    SAYS OF THE ROM'S OWN INSTRUCTIONS (the frame's 12 and GEMDOS's 50, six under the top), so GEMDOS takes of a USER
+    caller's stack what it takes of a supervisor's. PD0: 282 of 1,792 during init, 886 under the desk to its first
+    idle, parked 350 deep there."""
+    run = stack.start_up_run(boot)
+    assert stack.deepest_in(run, stack.THE_FIRST_STACK) == THE_ROM_S_FIRST_STACK_USE == THE_FIRST_STACK_S_SPAN - 50
+    assert stack.deepest_in(run, stack.THE_FIRST_STACK, None, addrs.AES_ROM_ROM_RSC_INIT) == THE_ROM_S_MSHRINK_REACHES == 68
+    assert stack.deepest_in(run, stack.PD0_S_STACK, stack.GEM_MAIN_ROM, stack.DESKMAIN_ROM) == THE_ROM_S_INIT
+    assert stack.deepest_in(run, stack.PD0_S_STACK, stack.DESKMAIN_ROM) == THE_ROM_S_DESK
+    assert PD0_S[1] - run.parked == THE_ROM_S_DESK_PARKS
+
+
+def test_the_word_gem_entry_stores_inside_its_first_stack_lies_under_the_next_return_address():
+    """A FINDING OF THE ROM'S, by reading and held to its run: `$8992` — `move.w #1`, "a disk to read DESKTOP.INF
+    from" — LIES INSIDE THE FIRST STACK, in the longword the stack's first push goes to. gem_entry stores it AFTER
+    rom_rsc_init returns, and the very next `jsr` (size_theglo's) writes its return address over it: what the `#E`
+    reader finds there when it tests it is THE LOW WORD OF THAT RETURN ADDRESS, `$9f78` in the ROM — non-zero, so the
+    ROM reads the file. (Ours holds the low word of ITS OWN return address there: a blob's is held non-zero below.)"""
+    read, names = stack.the_rom_s_start_up()
+    (inside, size), = stack.stored_inside_the_first_stack().items()
+    assert (inside, size) == (THE_FIRST_STACK_S[1] - aes.WORD_BYTES, aes.WORD_BYTES) == (0x8992, 2)
+    body = read.functions()[stack.THE_ROM_S_GEM_ENTRY]
+    stored_at = next(at for at, text in body if text == f"movew #1,{inside:#x}")
+    calls = sorted(at for _callee, _under, at in read.sites(stack.THE_ROM_S_GEM_ENTRY))
+    assert calls[0] < stored_at < calls[1], "after rom_rsc_init's return, before size_theglo's call"
+    returns_to = next(after for (at, _text), (after, _next) in zip(body, body[1:]) if at == calls[1])
+    for boot in stack.THE_BOOTS:
+        assert stack.start_up_run(boot).at_the_reader == struct.pack(">I", returns_to), boot
+    assert returns_to & aes.WORD_MASK == 0x9f78
+    reader = stack.alcyon_routine_listed(stack.THE_INF_READER_ROM, {})
+    assert any(text == f"tstw {inside:#x}" for _at, text in reader), "the reader tests the word"
+
+
+def test_dos_exec_parks_an_application_s_stack_64_under_its_entry_two_bytes_inside_gemdos_s_own_frame():
+    """dos_exec (`$fe3d46..`): the SP it is entered at LESS 64 becomes PD0's stack for the program's own `trap #2`s —
+    with the ROM's frames, 132 below PD0's top: 1,660 bytes under it. AND A FINDING OF THE ROM'S, BY READING: under
+    that same entry SP dos_exec pushes Pexec's 16 bytes and GEMDOS saves its caller's 50 — to 66. THE PARKED POINTER
+    STANDS TWO BYTES INSIDE WHAT GEMDOS SAVED (the high word of the caller's USP, which the program's first AES call
+    stores over). No machine launches a program: read, not run; reproduced by the pin of `gemdosif.S`, not mended."""
+    entered = THE_ROM_ENTERS[stack.PD0_S_STACK][stack.DOS_EXEC_ROM]
+    assert stack.dos_exec_parks_under() == 64 == aes.header_constants("gemdosif.h")["DOS_EXEC_STACK_KEPT"]
+    assert stack.parked_for_an_application(entered) == (132, 1660)
+    assert stack.PEXEC_S_FRAME_BYTES + stack.gemdos_need() == 66 and stack.parked_inside_gemdos_s_frame(entered) == 2
+
+
+def test_finding_the_first_stack_holds_no_interrupt_s_nest_under_the_rom_either():
+    """WHAT THE FIRST-STACK GATE DOES NOT CHARGE, said as the number it is: gem_entry runs at interrupt mask 3 — the
+    horizontal blank shut out, the vertical blank and the MFP open — and a vertical blank with an MFP interrupt
+    inside it needs 244 bytes (the BOOTED machine's handlers: measured there, not at the pre-init stop). The ROM's own
+    84 and that nest are 328 of 134: the stack was never sized for an interrupt at its deepest point, and the words
+    under it are what one would store over. Under the ROM as under us; the gate is the ROM's own exposure, not more."""
+    assert stack.nest_on_the_first_stack() == THE_NEST - THE_HORIZONTAL_BLANK == 244
+    assert THE_ROM_S_FIRST_STACK_USE + stack.nest_on_the_first_stack() - THE_FIRST_STACK_S_SPAN == 194
+    for shore in BLOBS:
+        assert stack.nest_on_the_first_stack(shore) == stack.nest(shore) - stack.hbl_need(shore) == 244
+
+
+_A_USE_OF_THE_XBIOS_DOOR = re.compile(r"\baes_trp14\(([^;{]*)")
+
+
+def test_the_one_xbios_call_on_pd0_s_paths_is_getrez_and_its_need_is_measured():
+    """THE DECLARATION (`THE_XBIOS_TRAP`): the AES's XBIOS door takes whatever function its caller names, and every
+    call of band 5's code names Getrez (held to the sources: sh_main's, after the desk) — under which the machine's
+    XBIOS takes the 68000's frame of its caller's stack and no more, measured."""
+    uses = [use.group(1) for source in sorted(THE_SOURCES.glob("*.c")) for use in _A_USE_OF_THE_XBIOS_DOOR.finditer(source.read_text())]
+    calls = [use for use in uses if "uint16_t function" not in use]
+    assert calls and len(uses) == len(calls) + 1 and all("XBIOS_GETREZ_FN)" in call for call in calls), uses
+    assert stack.getrez_need() == stack.EXCEPTION_FRAME_BYTES
+
+
+# ---- (12) A BLOB'S OWN START-UP: THE TWO GATES, BOUND AND MEASURED (rulings W4-R9, W4-R4) --------------------------------------
+# Numbers of OUR BUILD, as the trap path's are: a pin that moves says which frame, and is re-pinned with that reason.
+# THE FIRST STACK: gem_entry's `jsr` (4) > the thunk that hands rom_rsc_init the image (8) > rom_rsc_init (20) >
+# dos_alloc (56: its own 6 and GEMDOS's 50 under the Malloc trap) = 88 of 134 — FOUR MORE THAN THE ROM'S 84, 46 SPARE.
+THE_FIRST_STACK_CHAIN = ((stack.ON_THE_FIRST_STACK, 4), ("gemstart_to_aes_rom_rsc_init", 8), ("aes_rom_rsc_init", 20), ("aes_dos_alloc", 56))
+THE_FIRST_STACK_BOUND, THE_FIRST_STACK_GATE_S_MARGIN = 88, 46
+# PD0's OWN FRAMES, deepest: the shell's error alert after a launch that failed — a button of the alert watched while it
+# is held (the trap path's own deepest chain from fm_do down) under gem_main 12 > sh_main 24 > the_command_is_found 20.
+PD0_FROM_GEM_ENTRY = (("aes_rom_gem_main", 12), ("aes_sh_main", 24), ("the_command_is_found", 20), ("aes_fm_error", 24), ("aes_fm_alert", 88))
+PD0_OWN_FRAMES = {BENCH: 808, SHIPPED: 812}             # + the nest's 252: 732 / 728 spare of 1,792
+PD0_BEFORE_THE_SHELL = {BENCH: (300, "bring_gem_up"), SHIPPED: (304, "bring_gem_up")}
+# MEASURED, the blob's own gem_entry run from the pre-init stop over the blank disk to deskmain's entry (the machine's
+# VDI under its traps is THE ROM'S: the blob's own is linked under no vector there): PD0's lowest store during init.
+OUR_INIT_MEASURED = {BENCH: 376, SHIPPED: 386}          # the ROM's own: 282
+# THE DESK DOOR (ruling W4-R4): where OUR frames stand before each door stands SP at the ROM's — sh_main's two doors
+# 32 down (the ROM's 58: pad 26), sh_cmd's four 52 down (the ROM's 76: pad 24) — and THE VET'S MARGIN, what is left
+# above the lowest SP the door lets ours stand at (the ROM's SP less the argument slot its call sequence stores in):
+# deskmain 26 (a bare call: no slot), dos_exec 22, each utility 20.
+THE_DOORS = (("aes_sh_cmd", THE_ROM_S_SP_IN_SH_CMD, 52, 20),) * 4 + (("aes_sh_main", THE_ROM_S_SP_IN_SH_MAIN, 32, 26),
+                                                                    ("aes_sh_main", THE_ROM_S_SP_IN_SH_MAIN, 32, 22))
+# AN APPLICATION'S TRAP UNDER sh_main: parked 132 below PD0's top, 1,660 bytes under it; the trap path's bound from
+# there (its need with the nest, less the six an accessory's UDA keeps under its own top): 1,540 / 1,370.
+AN_APPLICATION_IS_LEFT, THE_TRAP_PATH_NEEDS_THERE = 1660, {BENCH: 1540, SHIPPED: 1370}
+# THE VDI CALLS OF PD0's PATHS NO RUN MEASURES ON OUR OWN VDI — init's own (v_opnwk, the escapes, vsl_type, vsl_width,
+# vst_alignment... by opcode): their trap sites are NOT BOUND at a trap, and say so.
+INIT_S_OPCODES_NOT_MEASURED = {1, 5, 15, 16, 38, 110, 118, 125}
+
+
+def test_the_start_up_is_read_the_moment_a_blob_links_it(blob, monkeypatch):
+    """BY SYMBOL: a blob that links `aes_rom_gem_entry` is read ON ITS TWO STACKS — the first to the instruction at
+    which PD0's begins, PD0's from there: gem_entry never returns, its loop's foot calls gem_main, gem_main calls the
+    shell — and one that links none is refused by name, never read as nothing."""
+    assert stack.links(blob.elf, stack.GEM_ENTRY), stack.NOT_LINKED.format(blob.elf)
+    read = stack.start_up_reading(blob.elf)
+    assert not read.returns(stack.GEM_ENTRY) and not read.returns(stack.pd0_entry(blob.elf))
+    gem_main, under = stack.our_gem_main(blob.elf)
+    assert under == THE_ROM_ENTERS_GEM_MAIN and stack.SH_MAIN in {callee for callee, _under, _at in read.sites(gem_main)}
+    assert [under for _callee, under, _at in read.sites(stack.ON_THE_FIRST_STACK)] == [A_RETURN, A_RETURN], "its two callees, at the top"
+    assert read.functions()[stack.ON_THE_FIRST_STACK][-1][1] == switch.THE_HALT
+    monkeypatch.setattr(stack, "links", lambda elf, symbol: False)
+    with pytest.raises(AssertionError, match="links no `aes_rom_gem_entry`: its start-up is not read"):
+        stack.start_up_reading.__wrapped__("a blob that links none")
+
+
+def test_finding_the_first_stack_gate_bound_and_measured(blob):
+    """THE FIRST-STACK GATE (ruling W4-R9), BOUND AND MEASURED, on each blob: the build can take 88 of gem_entry's 134
+    bytes — its `jsr`, the thunk, rom_rsc_init and dos_alloc down to GEMDOS's own pushes under the Malloc trap — and
+    its own run from the pre-init stop TAKES 88: the bound, to the byte; 46 spare where the ROM has 50. WHO RAN: the
+    blob (cycles in its span), and NOT ONE CYCLE of the ROM's GEM text; each callee is entered where the reading
+    says. No `trap #2` is taken there; no interrupt is charged (the finding above)."""
+    shore = stack.shore_of(blob)
+    needed, chain = stack.first_stack_bound(blob)
+    assert (needed, tuple(chain)) == (THE_FIRST_STACK_BOUND, THE_FIRST_STACK_CHAIN), f"{shore}: {_moved(tuple(chain), THE_FIRST_STACK_CHAIN)}"
+    assert THE_FIRST_STACK_S_SPAN - needed == THE_FIRST_STACK_GATE_S_MARGIN and needed - THE_ROM_S_FIRST_STACK_USE == 4
+    gem_main, _under = stack.our_gem_main(blob.elf)
+    run = stack.our_start_up_run(shore, gem_main)
+    assert stack.deepest_in(run, stack.THE_FIRST_STACK) == THE_FIRST_STACK_BOUND, "measured: the bound itself"
+    assert run.ended == (blob.entry(gem_main), PD0_S[1] - THE_ROM_ENTERS_GEM_MAIN) and run.ours > 0 and run.the_rom_s == 0
+    read = stack.start_up_reading(blob.elf)
+    for callee, under, _at in read.sites(stack.ON_THE_FIRST_STACK):
+        assert THE_FIRST_STACK_S[1] - run.entered[blob.entry(callee)] == under, callee
+
+
+# ---- WHO RAN, HELD: a stand-in that runs the ROM's GEM text FROM A LAID IMAGE, twice --------------------------------------------
+# A LABELLED STAND-IN, no blob: eighteen bytes laid where a blob is — three `jsr`s of a bare `rts` and nothing else —
+# entered as a blob's gem_entry is. Two of the `rts` are GEM's own text (the first and the last such word of
+# `aes.AES_TEXT`, found in the ROM's bytes), one lies just below it (above it the ROM holds no `rts` word at all:
+# the Line-F table and the resources).
+RTS_WORD, JSR_ABSOLUTE_LONG = 0x4e75, 0x4eb9
+RTS_CYCLES, JSR_ABSOLUTE_LONG_CYCLES = 16, 20           # the 68000's own
+
+
+def _rts_words(lo, hi):
+    return [at for at in range(lo, hi, aes.WORD_BYTES) if case.word_in(BASE_IMAGE, at) == RTS_WORD]
+
+
+def the_stand_in():
+    """`(the image, the `rts` words it calls inside GEM's text, those outside)`: a `jsr` of each, in address order."""
+    lo, hi = aes.AES_TEXT
+    inside, below = _rts_words(lo, hi), _rts_words(emu.ROM_BASE, lo)[-1]
+    assert not _rts_words(hi, emu.ROM_END), "an `rts` word above GEM's text: the stand-in would call it too"
+    called = (below, inside[0], inside[-1])
+    return b"".join(struct.pack(">HI", JSR_ABSOLUTE_LONG, at) for at in called), (inside[0], inside[-1]), (below,)
+
+
+def test_who_ran_is_one_run_s_own_cycles_over_the_whole_of_gem_s_text_whatever_the_profile_held_before():
+    """THE START-UP RUN'S "WHO RAN", HELD BY A RUN THAT KNOWS THE ANSWER (the second review's F5: the mutant that
+    reads the profile without differencing it lived in four arrangements of five, and a ROM span narrowed to two
+    bytes lived in all). A LABELLED STAND-IN laid where a blob is and entered as one runs three `rts` of the ROM —
+    GEM's own FIRST and LAST, and the last one below its text:
+      * ROM TEXT RUN FROM A LAID IMAGE READS > 0: exactly the two `rts` inside (the measured start-ups' "not one cycle
+        of the ROM's GEM text" would see it), and the one outside is no cycle of GEM's — the span profiled is
+        `aes.AES_TEXT`, gem_entry to the Line-F table, from end to end and no further;
+      * `ours` is the image's own three `jsr`s (and what the run's first step costs there: not pinned);
+      * AND THE SAME RUN MADE AGAIN IN THIS PROCESS ANSWERS THE SAME — the profile is never reset, so a run's cycles
+        are a DIFFERENCE over that run alone: alone, in any order, under any `-n`."""
+    image, inside, outside = the_stand_in()
+    lo, hi = aes.AES_TEXT
+    assert (lo, hi) == (addrs.AES_ROM_GEM_ENTRY, aes.AES_LINEF_TABLE) and lo <= inside[0] < inside[1] < hi
+    assert outside[0] < lo
+    machine, disk = stack.THE_BOOTS[stack.THE_BLANK_DISK]()
+    base = stack.blob_of(SHIPPED).base
+    laid = (base, image, base)
+    runs = [stack._start_up_run.derive(machine, disk, (), base + len(image), laid) for _each in range(2)]
+    for run in runs:
+        assert run.ended[0] == base + len(image)
+        assert run.the_rom_s == len(inside) * RTS_CYCLES, "GEM's own text, run from a laid image — and no `rts` outside it"
+        assert run.ours >= len(inside + outside) * JSR_ABSOLUTE_LONG_CYCLES
+    assert runs[0] == runs[1], "the second run's cycles are its own"
+    # ...and THE ROM'S OWN BOOT made after them is still no cycle of a laid image's, and many of GEM's.
+    the_rom_s = stack._start_up_run.derive(machine, disk, (), stack.GEM_MAIN_ROM, None)
+    assert the_rom_s.ours == 0 < the_rom_s.the_rom_s and the_rom_s.ended[0] == stack.GEM_MAIN_ROM
+    assert stack._start_up_run.derive(machine, disk, (), stack.GEM_MAIN_ROM, None).the_rom_s == the_rom_s.the_rom_s
+
+
+def test_a_blob_laid_over_bytes_that_are_not_clear_is_refused():
+    """THE LAID RUN'S PREMISE, its refusal RED: the span the image is laid in holds nothing at the pre-init stop — an
+    image laid over the machine's own bytes (here the system variables) would run a start-up of neither shore."""
+    machine, disk = stack.THE_BOOTS[stack.THE_BLANK_DISK]()
+    image, _inside, _outside = the_stand_in()
+    over = addrs.SYSVAR_FRCLOCK - len(image)
+    assert any(machine.ram[over:over + len(image)]), "the premise: the machine's own bytes lie there"
+    with pytest.raises(AssertionError, match="the span the blob is laid in is not clear at the pre-init stop"):
+        stack._start_up_run.derive(machine, disk, (), over + len(image), (over, image, over))
+
+
+def test_a_trap_2_on_the_first_stack_is_refused_by_the_gate_s_bound(monkeypatch):
+    """THE FIRST-STACK BOUND'S REFUSAL, RED on a crafted listing: gem_entry's first stack holds 134 bytes and the
+    bound charges no VDI under it — a build whose first stretch takes a `trap #2` is named, not bounded."""
+    crafted = StackReading.of_listing({stack.ON_THE_FIRST_STACK: [(0x100, "subql #4,%sp"), (0x102, switch.TRAP_2), (0x104, switch.THE_HALT)]})
+    monkeypatch.setattr(stack, "start_up_reading", lambda elf: crafted)
+    with pytest.raises(AssertionError, match="the build takes a `trap #2` on gem_entry's first stack"):
+        stack.first_stack_bound(stack.blob_of(SHIPPED))
+
+
+def test_the_gate_of_the_first_stack_is_the_shipped_blob_and_it_fits():
+    """THE GATE (W4-R9): our boot does not land unless the SHIPPED blob's gem_entry fits its first stack, bound and
+    measured — it does, 46 bytes spare by both. The margin is pinned: a frame that eats it reddens here first."""
+    shipped = stack.blob_of(SHIPPED)
+    needed, _chain = stack.first_stack_bound(shipped)
+    measured = stack.deepest_in(stack.our_start_up_run(SHIPPED, stack.our_gem_main(shipped.elf)[0]), stack.THE_FIRST_STACK)
+    assert THE_FIRST_STACK_S_SPAN - max(needed, measured) == THE_FIRST_STACK_GATE_S_MARGIN > 0
+
+
+def test_the_word_the_reader_tests_inside_the_first_stack_is_not_zero_on_a_blob(blob):
+    """THE ROM'S QUIRK, ON OURS (the finding above): what the `#E` reader tests at `$8992` is the low word of OUR
+    gem_entry's return address from size_theglo — a number of the blob's LAYOUT. Zero would say "no disk": the INF
+    never read. Read off the listing, held non-zero, and held to the run: the four bytes under the first stack's top
+    at our reader's arrival are that return address."""
+    shore, word = stack.shore_of(blob), stack.the_word_the_reader_tests(blob)
+    assert word != 0, f"{shore}: gem_entry's loop links where its return address ends in $0000 — the reader would open no DESKTOP.INF"
+    at_the_reader = stack.our_start_up_run(shore, stack.DESKMAIN_ROM).at_the_reader
+    assert struct.unpack(">I", at_the_reader)[0] & aes.WORD_MASK == word and blob.base <= struct.unpack(">I", at_the_reader)[0] < blob.base + len(blob.blob)
+
+
+def test_finding_pd0_s_own_frames_from_gem_main_down(blob):
+    """PD0's STACK, THE BUILD'S OWN FRAMES from gem_entry's `jsr gem_main` down — init, the shell's loop, what stands
+    above the desk door — pinned by chain: the deepest is the shell's error alert after a failed launch, 808 / 812;
+    with the nest's 252, 732 / 728 SPARE of 1,792. Before the shell is entered: 300 / 304 (the ROM's own init is
+    measured at 282, its VDI's need under its traps among them). The desk's own frames are the ROM's: not counted."""
+    shore, read = stack.shore_of(blob), stack.pd0_bound(blob)
+    assert tuple(read.chain)[1:1 + len(PD0_FROM_GEM_ENTRY)] == PD0_FROM_GEM_ENTRY, f"{shore}: {_moved(tuple(read.chain)[1:6], PD0_FROM_GEM_ENTRY)}"
+    assert read.chain[0] == (stack.pd0_entry(blob.elf), A_RETURN) and read.deepest == PD0_OWN_FRAMES[shore]
+    assert sum(held for _function, held in read.chain) == read.deepest
+    assert PD0_S_SPAN - read.deepest - stack.nest(shore) == PD0_S_SPAN - PD0_OWN_FRAMES[shore] - THE_NEST > 700
+    assert stack.pd0_during_init(blob) == PD0_BEFORE_THE_SHELL[shore]
+
+
+def test_the_rom_depth_rule_every_call_out_of_the_build_is_entered_where_the_rom_enters_it(blob):
+    """THE ROM-DEPTH RULE (ruling W4-R4), READ OFF THE BLOB: deskmain, dos_exec and the shell's four utilities are each
+    entered EXACTLY where the ROM enters them — 62, 68, 80, 80, 84, 84 bytes below PD0's top — because every one is
+    made through a door that stands SP at the ROM's own (a place READ OFF THE ROM: a door that stood it anywhere else
+    is an instruction the reading refuses). THE PAD IS NEVER NEGATIVE: our frames stand 26 and 24 bytes ABOVE the
+    ROM's at the doors, and above the lowest SP each door's own vet allows by 26, 22 and 20. The cartridge's
+    routine is on no path of the build (W4-R12)."""
+    the_rom_s = THE_ROM_ENTERS[stack.PD0_S_STACK]
+    entered = stack.entered_out_of_the_build(blob)
+    assert entered == {address: the_rom_s[address] for address in (stack.DOS_EXEC_ROM, stack.DESKMAIN_ROM, *stack.THE_SHELL_S_UTILITIES_ROM)}
+    assert stack.CART_EXEC_ROM not in entered
+    doors = stack.desk_door_calls(blob)
+    assert tuple((call.function, call.stands, call.ours, call.floor - call.ours) for call in doors) == THE_DOORS, doors
+    assert all(call.stands - call.ours > 0 and call.floor - call.ours >= 0 for call in doors)
+
+
+OUR_READER_IS_ENTERED = 72              # bytes below PD0's top, on either blob (`$a35a`)
+
+
+def test_the_reader_is_entered_seventy_two_bytes_down_read_and_measured_where_the_rom_s_is_thirty_two(blob):
+    """THE `#E` READER'S ENTRY DURING INIT, READ AND MEASURED: ours 72 bytes below PD0's top (`$a35a`), where the ROM's
+    own boot enters its reader 32 down — PD0's image during init differs by nature (ruling W4-R4 constrains the calls
+    OUT of the build, and the reader is none); the ledger says the two figures, and this is what holds them."""
+    read, top = stack.start_up_reading(blob.elf), PD0_S[1]
+    run = stack.our_start_up_run(stack.shore_of(blob), stack.DESKMAIN_ROM)
+    assert read.deepest_to(stack.pd0_entry(blob.elf), stack.THE_INF_READER)[0] == OUR_READER_IS_ENTERED
+    assert top - run.entered[blob.entry(stack.THE_INF_READER)] == OUR_READER_IS_ENTERED and top - OUR_READER_IS_ENTERED == 0xa35a
+    assert {top - stack.start_up_run(boot).entered[stack.THE_INF_READER_ROM] for boot in stack.THE_BOOTS} == {32}
+
+
+def test_the_rom_depth_rule_measured_our_own_boot_enters_deskmain_where_the_rom_s_does(blob):
+    """...AND MEASURED: the blob laid at the pre-init stop and entered at its own gem_entry (a LABELLED STAGING, ruling
+    W4-R1's; the blank disk) arrives AT deskmain's OWN ADDRESS WITH THE ROM'S STACK POINTER, `$a364` — and to there
+    NOT ONE CYCLE of the ROM's GEM text ran ("ours booted" is claimed TO deskmain's ENTRY and no further: ruling
+    W4-R3). PD0's lowest store on the way: 376 / 386 bytes down, where the ROM's own init stores 282 down — the
+    machine's VDI under our traps there is the ROM's. Over a disk with an accessory the run is refused by name."""
+    shore = stack.shore_of(blob)
+    run = stack.our_start_up_run(shore, stack.DESKMAIN_ROM)
+    assert run.ended == (stack.DESKMAIN_ROM, PD0_S[1] - THE_ROM_ENTERS_DESKMAIN) == (addrs.AES_ROM_DESKMAIN, 0xa364)
+    assert run.the_rom_s == 0 and run.ours > 0
+    gem_main = blob.entry(stack.our_gem_main(blob.elf)[0])
+    assert run.entered[gem_main] == PD0_S[1] - THE_ROM_ENTERS_GEM_MAIN
+    assert stack.deepest_in(run, stack.PD0_S_STACK, gem_main) == OUR_INIT_MEASURED[shore] > THE_ROM_S_INIT
+    assert stack.deepest_in(run, stack.THE_FIRST_STACK) == THE_FIRST_STACK_BOUND
+    with pytest.raises(AssertionError, match="run over the blank disk alone: over 'two quiet accessories' the loader's first Pexec"):
+        stack.our_start_up_run.__wrapped__(shore, stack.DESKMAIN_ROM, stack.TWO_QUIET_ACCESSORIES)
+
+
+# THE ONE SET OF FIGURES FOR THE SHELL'S DEPTH (the integration of wave 4's four slices; each said it its own way).
+# From PD0's top: gem_entry's `jsr` 4, gem_main's frame 8 (one saved register and the image it hands the shell: the
+# ROM's 24) — so sh_main's return address lies 16 down where the ROM's lies 32, `$a392` against `$a382`; sh_main
+# then stands 32 down at its two doors and sh_cmd 52 at its four (THE_DOORS: the ROM's 58 / 76, pads 26 / 24, the
+# vet's margins 26 / 22 / 20). "The budget" a build must keep is those margins: 20 bytes more above the shell — in
+# gem_entry's call, gem_main's frame, sh_main's or sh_cmd's — and the utilities' doors halt.
+THE_BUILD_ENTERS_SH_MAIN = 16
+
+
+def test_the_shell_is_entered_sixteen_bytes_down_read_and_measured_where_the_rom_s_is_thirty_two(blob):
+    """sh_main's ENTRY, READ AND MEASURED on each blob: the reading reaches it 16 bytes below PD0's top through
+    gem_main alone, and the blob's own run from the pre-init stop (the LABELLED STAGING, ruling W4-R1's; the blank
+    disk) arrives at it with the stack pointer `$a392` — not one cycle of the ROM's GEM text on the way. The ROM's
+    sh_main is entered 32 down (`$a382`): the 16 between them, and what the shell's own frames leave of the ROM's, IS
+    the doors' pad. A frame that grows on EITHER side of this entry — gem_main's above it, the shell's below —
+    moves this figure or THE_DOORS (the rule's own test, above): each reddens for its own side."""
+    shore, read = stack.shore_of(blob), stack.start_up_reading(blob.elf)
+    gem_main, _under = stack.our_gem_main(blob.elf)
+    assert read.deepest_to(stack.pd0_entry(blob.elf), stack.SH_MAIN) == (THE_BUILD_ENTERS_SH_MAIN, (gem_main, stack.SH_MAIN))
+    run = stack.our_start_up_run(shore, stack.SH_MAIN)
+    assert run.ended == (blob.entry(stack.SH_MAIN), PD0_S[1] - THE_BUILD_ENTERS_SH_MAIN) and run.ended[1] == 0xa392
+    assert run.the_rom_s == 0 and run.ours > 0
+    the_rom_s = THE_ROM_ENTERS[stack.PD0_S_STACK][addrs.AES_ROM_SH_MAIN]
+    assert the_rom_s == 32 and PD0_S[1] - the_rom_s == 0xa382
+    in_sh_main = {call.ours - THE_BUILD_ENTERS_SH_MAIN for call in stack.desk_door_calls(blob) if call.function == stack.SH_MAIN}
+    assert in_sh_main == {16}, "what sh_main itself holds at its two doors: its return address is counted in the entry's 16"
+
+
+def test_finding_an_application_s_trap_under_sh_main_fits_what_dos_exec_leaves_it(blob):
+    """AN APPLICATION'S `trap #2` ON PD0's STACK: dos_exec, entered where the ROM enters it, parks the stack pointer
+    132 below the top — 1,660 bytes under it — and the trap path's bound from there, its own VDI's need and the nest
+    on top, is 1,370 on the shipped blob: 290 SPARE (the bench blob's 1,540: 120). No machine launches a program:
+    the bound's alone."""
+    shore = stack.shore_of(blob)
+    parked, left, needed = stack.an_application_s_trap(blob)
+    assert (parked, left) == (THE_ROM_ENTERS[stack.PD0_S_STACK][stack.DOS_EXEC_ROM] + 64, AN_APPLICATION_IS_LEFT)
+    the_gate_s_bound = PD2_S_SPAN - TRAP_PATH_SPARE[shore][stack.PD2]       # what the trap path needs of an accessory's stack
+    assert needed == THE_TRAP_PATH_NEEDS_THERE[shore] == the_gate_s_bound - stack.KEPT_UNDER_THE_TOP
+    assert left - needed == {BENCH: 120, SHIPPED: 290}[shore] > 0
+
+
+def test_finding_the_vdi_calls_of_init_are_measured_on_no_vdi_of_ours(blob):
+    """WHAT PD0's BOUND DOES NOT HOLD, by name: of the VDI opcodes a trap site of PD0's paths can ask, eight are asked
+    by init alone and NO RUN MEASURES WHAT OUR OWN VDI NEEDS UNDER THEM (`os_needs`: the scenarios are the screen
+    manager's and the trap path's). So PD0's stack is bound in OUR OWN FRAMES and NOT at its traps; the deepest trap
+    of its paths stands 744 / 754 down, 786 / 776 above the nest's foot."""
+    shore, read = stack.shore_of(blob), stack.start_up_reading(blob.elf)
+    sites = stack.trap_sites_under(read, stack.pd0_entry(blob.elf))
+    asked = {opcode for site in sites if site.opcodes for opcode in site.opcodes}
+    assert asked - set(stack.needs_bounded(shore)) == INIT_S_OPCODES_NOT_MEASURED
+    assert max(site.depth for site in sites) == stack.pd0_bound(blob).at_a_trap == {BENCH: 744, SHIPPED: 754}[shore]

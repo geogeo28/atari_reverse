@@ -262,6 +262,13 @@
 #define HOST_SLOT_AES_SNDCLI_BASEPAGE   0x7f3e0  /* $fe42e8's -6(a6)                                             */
 #define HOST_SLOT_AES_SNDCLI_BASEPAGE_BYTES 4
 /* ---- end of slice L's ---- */
+/* ---- band 5 wave 4, slice I (`aes/geminit.h`) ---- the INF reader's local: the pair of hex digits scan_2 answers
+ * through the address it is handed; and gem_main's: the BITBLK address rs_gaddr answers the same way, three times. */
+#define HOST_SLOT_AES_READ_INF_PAIR     0x7f4c0  /* $fda408's -2(a6)                                             */
+#define HOST_SLOT_AES_READ_INF_PAIR_BYTES 2
+#define HOST_SLOT_AES_GEM_MAIN_ICON     0x7f4c4  /* $fda062's -4(a6)                                             */
+#define HOST_SLOT_AES_GEM_MAIN_ICON_BYTES 4
+/* ---- end of slice I's ---- */
 /* ...and the screen manager's handlers' (`aes/gemctrl.h`). hctl_window's: the window's rectangle with the four words
  * r_get unpacks it into, and the elevator's corner ob_offset answers into — each read out and given back before any
  * wait; THE RECTANGLE A DRAG IS HELD BY (gr_dragbox's bound, gr_rubwind's twin offsets) and THE TWO WORDS IT ANSWERS
@@ -404,6 +411,8 @@ enum host_slot {
     HOST_SLOT_ID_AES_DISPATCH_MOUSE_FORM,
     HOST_SLOT_ID_AES_PGMLD_WORDS,
     HOST_SLOT_ID_AES_SNDCLI_BASEPAGE, /* band 5 wave 3, slice L */
+    HOST_SLOT_ID_AES_READ_INF_PAIR,   /* band 5 wave 4, slice I */
+    HOST_SLOT_ID_AES_GEM_MAIN_ICON,   /* band 5 wave 4, slice I */
     HOST_SLOT_ID_AES_HCTL_WINDOW_SIZE,
     HOST_SLOT_ID_AES_HCTL_WINDOW_CORNER,
     HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT,     /* a slot per process: the screen manager's frame across a drag's waits */

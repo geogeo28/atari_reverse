@@ -2138,6 +2138,21 @@ ROM_CALLS_OWED_TO_A_LATER_BAND = {
     addrs.AES_ROM_DESK_USERDEF: ("aes_rom_ub_trampoline", "band 6: the desk's G_USERDEF draw code, which ub_trampoline "
                                                           "(`src/aes/trapdoor.S`) calls on the desk's own stack"),
 }
+# ---- slice SH (band 5 wave 4): THE DESK DOOR ----------------------------------------------------------------------------
+# ...AND THE ONE KIND OF SUCH A `jsr` A C FUNCTION MAKES: the desk door's (`include/aes/deskdoor.h`) — deskmain from
+# sh_main, the desk's four built-ins from sh_cmd, each the ROM's own routine over the frame and AT THE STACK POINTER
+# the ROM's caller gives it. Declared like the transcription's, and held by the same test to the same rule: ONE site
+# each, inside the function named. A call of one from any other C, a second site, or a call of any other routine of
+# the AES's text reds there — "a call from C reds" is now "a call from C outside the desk door reds".
+_THE_DESK_DOOR_S = "band 6: the desk's range, called through the desk door (`include/aes/deskdoor.h`)"
+ROM_CALLS_OWED_TO_A_LATER_BAND.update({
+    addrs.AES_ROM_DESKMAIN: ("aes_sh_main", f"{_THE_DESK_DOOR_S} — the desktop itself"),
+    addrs.AES_ROM_DESK_SHOW_FILE: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fe`"),
+    addrs.AES_ROM_DESK_PRINT_FILE: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fd`"),
+    addrs.AES_ROM_DESK_FORMAT: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fc`"),
+    addrs.AES_ROM_DESK_COPY_DISK: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fb`"),
+})
+# ---- end of slice SH's block ------------------------------------------------------------------------------------------------
 
 
 def _jsrs_into_the_aes_s_text(elf):

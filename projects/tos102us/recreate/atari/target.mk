@@ -97,5 +97,14 @@ SWITCH_SOURCES := $(RECREATE)/src/aes/switch.S $(RECREATE)/src/aes/irq.S
 TRAPDOOR_SOURCES := $(RECREATE)/src/aes/trapdoor.S
 TRANSCRIBED_SOURCES := $(filter-out $(ALCYON_ENTRY_SOURCES) $(SWITCH_SOURCES) $(TRAPDOOR_SOURCES), \
                          $(wildcard $(RECREATE)/src/vdi/*.S) $(wildcard $(RECREATE)/src/aes/*.S))
+# ---- band 5 wave 4, slice I ----
+# GEMSTART is a fifth kind, the switch's and the trap door's sibling: gem_entry — THE ROUTINE THAT SETS UP THE FIRST STACK,
+# entered by no call and never returning — and gem_gemdos_call, the ROM's bytes, no C twin, no row; and the Line-F handler
+# gem_entry copies, as data. Listed APART because, like the trap door before the narrow flip, it is LINKED AND NOT YET
+# ENTERED: every build links it, and the BIOS still starts the ROM's gem_entry until the our-boot machine runs ours
+# (slice B). Pinned by `test/test_aes_gemstart.py`. Taken out of the transcriptions' wildcard here, in its own line.
+GEMSTART_SOURCES := $(RECREATE)/src/aes/gemstart.S
+TRANSCRIBED_SOURCES := $(filter-out $(GEMSTART_SOURCES), $(TRANSCRIBED_SOURCES))
+# ---- end of slice I's ----
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
 TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))

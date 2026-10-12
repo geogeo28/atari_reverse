@@ -1213,9 +1213,11 @@ def test_no_jsr_of_the_build_enters_the_aes_s_text_and_the_door_s_users_arrive_a
                          ids=("the bench blob", "the shipped blob"))
 def test_a_call_into_the_rom_s_aes_text_owed_to_a_later_band_is_one_site_in_the_function_named(elf):
     """THE ONE KIND OF `jsr` INTO THE AES'S TEXT THE RULE ABOVE LETS BE (`tier3.ROM_CALLS_OWED_TO_A_LATER_BAND`: a
-    transcription's own call of a routine not reconstructed yet), held to what it declares: each routine named is
+    transcription's own call of a routine not reconstructed yet, and — band 5 wave 4 — the shell's calls of the
+    desk's range through THE DESK DOOR, `include/aes/deskdoor.h`), held to what it declares: each routine named is
     called from EXACTLY ONE site of the blob, inside the function named — so an entry nothing needs any more, a
-    second caller and a call from C are each red — and no routine named is a door entry or has a body of ours."""
+    second caller and a call from C outside the desk door are each red — and no routine named is a door entry or
+    has a body of ours."""
     owed = tier3.rom_calls_owed(elf())
     assert sorted(owed.values()) == sorted(tier3.ROM_CALLS_OWED_TO_A_LATER_BAND), "one site for each routine declared"
     ranges = tier3._function_ranges(elf())
@@ -2201,9 +2203,11 @@ def test_the_switch_is_its_own_kind_of_the_build_contract(make_lists):
     every_s = set(map(str, (RECREATE / "src" / "aes").glob("*.S"))) | set(map(str, (RECREATE / "src" / "vdi").glob("*.S")))
     # (slice T, band 5 wave 3: the trap door is a fourth kind while it is linked and not installed — TRAPDOOR_SOURCES,
     # held to make's own expansion by `test_aes_trapdoor.py`.)
+    # (slice I, band 5 wave 4: gemstart is a fifth, linked and not entered — GEMSTART_SOURCES, held to make's own
+    # expansion by `test_aes_gemstart.py`.)
     assert every_s == (set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch)
-                       | set(transcription.trapdoor_sources())), (
-        "a `.S` of the table's components that is of none of the four kinds")
+                       | set(transcription.trapdoor_sources()) | set(transcription.gemstart_sources())), (
+        "a `.S` of the table's components that is of none of the five kinds")
 
 
 JMP_OPERAND_BYTES = aes.LONG_BYTES      # dsptch's last instruction is `jmp <disp>.l`: its operand, the last four bytes

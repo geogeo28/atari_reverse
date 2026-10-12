@@ -147,6 +147,37 @@ ROM_ADDRESSES_AS_DATA = {
     # the one word of the door's region that still names the ROM (`test_aes_trapdoor.py`).
     "trapdoor.S": {"AES_ROM_DESK_USERDEF": CODE},
     # ---- end of slice T's block --------------------------------------------------------------------------------------
+    # ---- band 5 wave 4, slice I: gemstart and geminit ----------------------------------------------------------------
+    # WHAT gem_entry COPIES, carried as the ROM's own data (ruling W4-R3: the Line-F call table stays the ROM's): the
+    # handler's `movea.l #$fee900` — the table's address, inside the region the `.S` pins — and the table's first nine
+    # entries with the high word of its tenth, ROM routines' addresses nothing of a build executes or reads
+    # (`test_aes_gemstart.py` pins the hundred bytes with NO relocation). gem_entry's own four by-value operands (rows
+    # $fd9f4a, $fd9f86, $fd9f92, $fd9f9e of (b)) are NOT here: each is the build's symbol, a `Relocated` of its pin.
+    "gemstart.S": {"AES_LINEF_TABLE": REGION_TABLE, "AES_ROM_GSX_1CODE": CODE, "AES_ROM_BB_FILL": CODE,
+                   "AES_ROM_GSX_TCALC": CODE, "AES_ROM_GR_JUST": CODE, "AES_ROM_GSX_TBLT": CODE, "AES_ROM_GSX_ATTR": CODE,
+                   "AES_ROM_GSX_BLT": CODE, "AES_ROM_GSX_MOFF": CODE, "AES_ROM_GR_INSIDE": CODE, "AES_ROM_GSX_BOX": CODE},
+    # The INF reader's seven return sites (its Line-F calls of the glue park them: host arguments, as the loader's) and
+    # the ROM's four strings it hands the glue — the root and the file's name, once for the current drive and once for
+    # C: (data past the text, outside every pinned region).
+    "geminit.c": {"AES_READ_INF_GDRV_RETURN": RETURN_SITE, "AES_READ_INF_CHDIR_RETURN": RETURN_SITE,
+                  "AES_READ_INF_SDRV_C_RETURN": RETURN_SITE, "AES_READ_INF_CHDIR_OF_C_RETURN": RETURN_SITE,
+                  "AES_READ_INF_CLOSE_RETURN": RETURN_SITE, "AES_READ_INF_SDRV_BACK_RETURN": RETURN_SITE,
+                  "AES_READ_INF_FREE_RETURN": RETURN_SITE, "AES_INF_ROOT": TABLE, "AES_INF_NAME": TABLE,
+                  "AES_INF_ROOT_OF_C": TABLE, "AES_INF_NAME_OF_C": TABLE},
+    # ---- end of slice I's block --------------------------------------------------------------------------------------
+    # ---- band 5 wave 4, slice SH: the shell's loop and the desk door ----------------------------------------------------
+    # THE DESK DOOR'S FIVE (`aes/deskdoor.h`): the ROM's own deskmain and the desk's four built-ins, each called at
+    # its ROM address — on target the operand of the build's ONE `jsr` of it (`bench/tier3.py`,
+    # ROM_CALLS_OWED_TO_A_LATER_BAND), off it the door hook's key. Band 6's, until each has a body of ours. deskmain's
+    # is spelt in the header's own wrapper; the four are the arguments sh_cmd hands the door.
+    "aes/deskdoor.h": {"AES_ROM_DESKMAIN": CODE},
+    # ...and sh_main's and sh_cmd's own: sh_show handed sh_find by value (row $feb272 of (b): off target the ROM's
+    # address, the hook's key; on target the build's entry, `ALCYON_ROUTINE`), the return site sh_main's Getrez parks
+    # through trp14 (a host argument), and the ROM's string sh_cmd's `$fd` heads the command line with, read in place.
+    "shell.c": {"AES_ROM_DESK_SHOW_FILE": CODE, "AES_ROM_DESK_PRINT_FILE": CODE, "AES_ROM_DESK_FORMAT": CODE,
+                "AES_ROM_DESK_COPY_DISK": CODE, "AES_ROM_SH_SHOW": CODE, "AES_SH_MAIN_GETREZ_RETURN": RETURN_SITE,
+                "AES_SH_PRINTING_TEXT": TABLE},
+    # ---- end of slice SH's block ---------------------------------------------------------------------------------------
 }
 
 
@@ -205,7 +236,7 @@ CODE_IMMEDIATES = {
     0xFE8844: Immediate(addrs.AES_ROM_MOTION_GLUE, "gsx_setmb_aes: the mouse-motion interrupt glue, for vex_motv", "gsxif.c"),
     0xFE884A: Immediate(addrs.AES_ROM_BUTTON_GLUE, "gsx_setmb_aes: the button interrupt glue, for vex_butv", "gsxif.c"),
     0xFEA08C: Immediate(addrs.AES_ROM_JUST_DRAW, "ob_draw: just_draw, everyobj's routine", "obdraw.c"),
-    0xFEB272: Immediate(0xFEADDC, "sh_main: sh_find's optional routine"),
+    0xFEB272: Immediate(0xFEADDC, "sh_main: sh_find's optional routine", "shell.c"),
     0xFEC146: Immediate(addrs.AES_ROM_NEWRECT, "draw_change: newrect, everyobj's routine", "wmupdate.c"),
     0xFED5A6: Immediate(0xFE38B0, "$fed554 (ctx): gotopgm pushed"),
 }

@@ -313,6 +313,7 @@
 #define LINEF_OFFSET_MASK     0x0fff     /* a call's byte offset into the table ($fee8d2 andi.w #$fff)         */
 #define LINEF_REGISTER_BITS   0x0ffe     /* a return's register bits            ($fee8e2 andi.w #$ffe)         */
 #define LINEF_MASK_SHIFT      2          /* ...moved to movem's mask            ($fee8e8 lsl.w #2)             */
+#define LINEF_SCRATCH_BYTES   4          /* Alcyon's scratch longword under the saved registers, stepped over ($fee8f4 addq.l #4,sp) */
 #define LINEF_COPY_BYTES      100        /* gemstart's Malloc                   ($fd9f36 move.l #100)          */
 #define LINEF_COPY_WORDS      50         /* ...and its copy: `dbf` from 49      ($fd9f46 move.w #49)           */
 #define LINEF_MASK_OFFSET     0x36       /* the `movem`'s mask word, in the handler ($fee8f6 + 2 - $fee8c2)    */

@@ -33,9 +33,11 @@ WHAT TWO CAPTURES DISAGREE ABOUT — `MASK`, measured as `boot_snapshot.MASK` wa
 SNAPSHOT, THE CLOCKS MOVE: that one stops at a fixed count of vertical blanks, this one at an INSTRUCTION, and when
 the boot reaches it depends on where the (emulated) disk stood in its rotation as each sector was asked for —
 fourteen captures stopped with `_hz_200` between 396 and 450. So the mask is two things: every clock the tick
-advances (GEMDOS's time of day among them), and what the floppy driver left behind (its scratch, its vertical-blank
-service's words, the dead frames of the stack the OS ran it on). The registers, the palette and every byte outside
-the mask are the same in every capture taken.
+advances (GEMDOS's time of day among them), and what the floppy's interrupts left behind (the vertical-blank
+service's words, the dead frames of the stacks the boot ran on — GEMDOS's, the BIOS's own, the AUTO runner's and
+the launched program's). The registers
+and the palette are the same in every capture taken; `--twice` (and `make preinit-twice`, over all four disks) says
+whether two captures agree outside the mask.
 """
 import argparse
 import re
@@ -80,8 +82,29 @@ PreInit.__doc__ = """The pre-init machine: `ram` (the megabyte), `registers` (`{
 # MEASURED over eighteen independent boots (fourteen with the blank disk, four with the accessories'), each kind
 # cross-compared: 283 distinct bytes with the blank disk, 12 to 172 a pair. The regions
 # below are the union, each clock as the whole field it is and the driver's bytes coalesced across gaps of 0x100.
-# Two of the driver's regions are `boot_snapshot.MASK`'s own, met a boot earlier ($1464 and $74c0 there; a few bytes
-# wider here).
+# Two of the regions are `boot_snapshot.MASK`'s own, met a boot earlier ($1464 and $74c0 there; wider here).
+#
+# THE THREE STACKS THE BOOT RAN ON ARE MASKED AS WHAT THEY ARE, NOT AS THE BYTES EIGHTEEN BOOTS SHOWED (band 5 wave 4's
+# fix pass: `--twice` failed on the fourth capture, and then on the second). The machine stops IN USER MODE at the
+# launched program's first instruction, so each is a stack nobody returns to — and what an interrupt pushed on it,
+# and how deep, is each boot's phase:
+#   * GEMDOS'S OWN (`$fc4fb8` / `$fc4fd8 movea.l #$16ce,sp`: every `trap #1` reloads it). It was masked to `$1676`,
+#     "its top"; one kept capture in 86 holds six longwords in the frame above (`$16a8..$16bf`).
+#   * THE BIOS'S OWN, whose top is `$755a` — the address its AUTO runner reloads SP with, and the ISP every capture
+#     stops with; the next exception pushes over it from the top. It was `$74b8` +$5e, "the floppy driver's scratch".
+#     `$74b0..$74b7`, in about one capture in twelve of EVERY disk: the same nest — a vertical blank's floppy service
+#     ($fc0790) with an MFP interrupt inside ($fc1c2e) — taken twelve bytes deeper. `$7516..$7551`, in one capture of
+#     240: A VERTICAL BLANK TAKEN AT gem_entry's FIRST INSTRUCTION, between GEMDOS's `rte` and the breakpoint — its
+#     exception frame is the launch frame's own six bytes (`$0300 $00fd9eca` at `$7554`) and its handler's
+#     `movem.l d0-a6,-(sp)` lays the registers of the stop (zero but D0 and A6) over GEMDOS's saved context of the
+#     BIOS's Pexec, which every other capture still shows there.
+#   * THE LAUNCHED PROGRAM'S, under the context GEMDOS laid for it (`$f7fc6`, the stop's D0 and A6: 50 bytes below
+#     its USP): GEMDOS's launch stands on it for a moment, and one capture in 240 took the vertical blank's nest
+#     there (`$f7fa2..$f7fb3`). The context itself is the same in every capture and is not masked.
+# Each of the last two runs STACK_DEAD_BYTES down from its top (the deepest nest seen reaches 170), and
+# `test/test_aes_boot_w4.py` holds every capture to all three: the tops read off the ROM's instructions and the
+# capture's own registers, the machine in user mode, and nothing ever stored for as far again below either floor — a
+# deeper nest is named, not met as a diff.
 #
 # THE LAST REGION IS A STACK NOBODY RETURNS TO, and was met at one capture in six of a later gate. The BIOS's AUTO
 # runner ($fc0cae) is a process whose stack is the top of its own basepage (`lea 256(a5),sp`), on which it searches
@@ -96,17 +119,25 @@ PreInit.__doc__ = """The pre-init machine: `ram` (the megabyte), `registers` (`{
 # holds the machine it reaches equal, outside these regions, to the one the capture's own bytes reach — the same
 # instruction count, the same registers. (MEASURED: the boot reads none of them. Between two captures the booted
 # machines differ ONLY in bytes of this mask, carried through untouched.)
+GEMDOS_STACK_FLOOR, GEMDOS_STACK_TOP = 0x1455, 0x16ce       # the lowest byte two captures differed in; `movea.l #$16ce,sp`
+BIOS_STACK_TOP = 0x755a                 # the BIOS's stack's top: the AUTO runner's `lea $755a,sp`, the ISP at the stop
+LAUNCH_CONTEXT = 0xf7fc6                # GEMDOS's context of the launched program, on its own stack: the stop's D0 and A6
+STACK_DEAD_BYTES = 0x100                # how far below the last two the mask reaches (the deepest interrupt nest seen: 170)
 MASK = (
     (0x000462, 0x008, "_vbclock and _frclock: the vertical blanks counted"),
     (0x0004ba, 0x004, "_hz_200: the 200 Hz ticks counted"),
     (0x0009f8, 0x010, "the floppy's vertical-blank service's own words ($fc1bc4: the write-protect latches, the motor)"),
     (0x000e88, 0x002, "the timer-C divider: which of its four states the 200 Hz tick left it in"),
-    (0x001455, 0x221, "dead frames of the OS's own stack, to its top at $1676 (boot_snapshot's $1464 region, wider)"),
+    (GEMDOS_STACK_FLOOR, GEMDOS_STACK_TOP - GEMDOS_STACK_FLOOR,
+     "dead frames of GEMDOS's own stack, to its top at $16ce (boot_snapshot's $1464 region, wider)"),
     (0x0068fc, 0x002, "GEMDOS's 20 ms accumulator, advanced by the 50 Hz tick"),
-    (0x0074b8, 0x05e, "the floppy driver's scratch (boot_snapshot's $74c0 region, wider at both ends)"),
+    (BIOS_STACK_TOP - STACK_DEAD_BYTES, STACK_DEAD_BYTES,
+     "dead frames of the BIOS's own stack, to its top at $755a — the ISP at the stop (boot_snapshot's $74c0 region, whole)"),
     (0x0075b0, 0x002, "GEMDOS's time of day, in two-second steps"),
     (0x00879c, 0x004, "the milliseconds the 50 Hz tick has counted"),
     (0x00ca82, 0x080, "the AUTO runner's ABANDONED stack (its basepage's command tail): frames of the interrupts it took"),
+    (LAUNCH_CONTEXT - STACK_DEAD_BYTES, STACK_DEAD_BYTES,
+     "dead frames under the launched program's context ($f7fc6): GEMDOS's launch stood on its stack"),
 )
 
 
@@ -127,6 +158,13 @@ def seven_accessory_path(recreate=RECREATE):
     with `tools/accessory_disk.py`'s SEVEN-accessory floppy in the drive from power-on — one more `.ACC` than the
     loader takes."""
     return recreate / "build" / "preinit_acc7.bin"
+
+
+def inf_path(recreate=RECREATE):
+    """...and THE DESKTOP.INF PRE-INIT MACHINE's (band 5 wave 4, ruling W4-R7; `make preinit-inf`): the same stop of a
+    boot with `tools/accessory_disk.py`'s DESKTOP.INF floppy in the drive from power-on — the blank disk plus the
+    ROM's own default DESKTOP.INF, no accessory: what the `#E` reader's FILE arm is booted over."""
+    return recreate / "build" / "preinit_inf.bin"
 
 
 def packed(machine):

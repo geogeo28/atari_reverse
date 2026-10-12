@@ -2519,4 +2519,35 @@
 #define AES_FREE_ACCS_PD_RETURN        0xfe44c8   /* ...its descriptor's block */
 /* ---- end of slice L's ---- */
 
+/* ---- band 5 wave 4, slice I: GEM'S START-UP (`aes/gemstart.h`, `aes/geminit.h`), each read from its body ---- */
+#define AES_ROM_GEM_GEMDOS_CALL   0xfd9fc6   /* gemstart: a `trap #1` over the caller's own frame; AES_DOS_AX := D0.w, AES_DOS_ERR := D0.l < 0 */
+#define AES_ROM_GEM_ENTRY_END     0xfd9ffc   /* ...its `rts` is the word before ini_dlongs: where gemstart's text ends */
+#define AES_ROM_GEM_MAIN          0xfda062   /* (): GEM brought up, the shell run, GEM taken down; `jsr`ed by gem_entry alone */
+#define AES_ROM_GEM_READ_INF      0xfda408   /* () -> 1 / 0: \DESKTOP.INF read into the shell's buffer, its first `#E` line acted on */
+#define AES_ROM_LINEF_COPY_END    0xfee926   /* past what gem_entry copies with the handler: the call table's first 38 bytes */
+/* The return sites the reader's Line-F calls of the glue park in AES_DOS_RETURN, in its own order. */
+#define AES_READ_INF_GDRV_RETURN       0xfda43e   /* from dos_gdrv */
+#define AES_READ_INF_CHDIR_RETURN      0xfda44a   /* ...from dos_chdir of the current drive's root */
+#define AES_READ_INF_SDRV_C_RETURN     0xfda46e   /* ...from dos_sdrv(C:) */
+#define AES_READ_INF_CHDIR_OF_C_RETURN 0xfda476   /* ...from dos_chdir of C:'s root */
+#define AES_READ_INF_CLOSE_RETURN      0xfda4aa   /* ...from dos_close */
+#define AES_READ_INF_SDRV_BACK_RETURN  0xfda4b2   /* ...from dos_sdrv of the drive it began on */
+#define AES_READ_INF_FREE_RETURN       0xfda560   /* ...from dos_free of the buffer */
+/* ---- end of slice I's ---- */
+
+/* ---- band 5 wave 4, slice SH: THE SHELL'S LOOP (`aes/shell.h`) and THE DESK DOOR (`aes/deskdoor.h`), each read from its body ---- */
+#define AES_ROM_SH_MAIN           0xfeb0e6   /* (): the shell's loop — the desk, a built-in of it, or a program launched; until nothing is asked */
+#define AES_ROM_SH_CMD            0xfeb2fc   /* () -> 1 / 0: the tail's command byte $fe..$fb run as a built-in of the desk; 0 for any other */
+/* The five ROM routines the shell calls that are band 6's (the desk's range): the ROM's own until then. */
+#define AES_ROM_DESKMAIN          0xfe272e   /* read: () -> word: the desktop, to its return — 0 quit the shell, else a launch asked */
+#define AES_ROM_DESK_SHOW_FILE    0xfed61e   /* read: (name): a file shown on the screen — `$fed632` over (name, 1) */
+#define AES_ROM_DESK_PRINT_FILE   0xfed624   /* read: (name): ...printed — the same over (name, 0) */
+#define AES_ROM_DESK_FORMAT       0xfed912   /* (tail, command): the desk's Format, by sh_cmd's `$fc` */
+#define AES_ROM_DESK_COPY_DISK    0xfedde4   /* (tail, command): the desk's disk copy, by sh_cmd's `$fb` */
+/* sh_main's return site from trp14 (its Getrez), which the door parks in AES_XBIOS_RETURN. */
+#define AES_SH_MAIN_GETREZ_RETURN 0xfeb1f0
+/* What sh_cmd's `$fd` heads the command line with: the ROM's own string, past the text. */
+#define AES_SH_PRINTING_TEXT      0xfef47e   /* "PRINTING  " ($feb32e move.l #$fef47e,-(sp)) */
+/* ---- end of slice SH's ---- */
+
 #endif /* TOS102US_ADDRS_H */

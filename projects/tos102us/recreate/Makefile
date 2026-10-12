@@ -113,12 +113,43 @@ $(ACC7_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/m
 $(PREINIT_ACC7): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)
 	$(PY) tools/preinit_snapshot.py --disk $(ACC7_DISK) --work build/preinit_acc7_snapshot --out $@
 
-.PHONY: preinit preinit-acc preinit-acc7
+# THE DESKTOP.INF PRE-INIT MACHINE (band 5 wave 4, ruling W4-R7): a FOURTH capture, with the blank disk plus the ROM's
+# own default DESKTOP.INF in the drive from power-on and no accessory — what the `#E` reader's FILE arm, its `#E`
+# parse and app_reschange in place are booted over, and (its view pair patched in the image) a drive window whose
+# items are drawn through ub_trampoline. Its own disk, its own scratch directory, four more seconds of Hatari, once.
+# The disk needs the ROM image (the text is cut out of it). NOT among REGISTRY_READS, as the third is not.
+PREINIT_INF := build/preinit_inf.bin
+INF_DISK := build/acc/INFDISK.ST
+
+$(INF_DISK): tools/accessory_disk.py $(ROM_IMAGE)
+	$(PY) tools/accessory_disk.py --inf --out $@
+
+$(PREINIT_INF): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(INF_DISK)
+	$(PY) tools/preinit_snapshot.py --disk $(INF_DISK) --work build/preinit_inf_snapshot --out $@
+
+.PHONY: preinit preinit-acc preinit-acc7 preinit-inf
 preinit: $(PREINIT)
 preinit-acc: $(PREINIT_ACC)
 preinit-acc7: $(PREINIT_ACC7)
+preinit-inf: $(PREINIT_INF)
 
-test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7)
+# THE MASK HELD TO THE CAPTURES (`make preinit-twice`): each of the four disks booted TWICE MORE, into a directory of
+# its own — never over a capture above, which the suites and the registry read — and the two machines held equal
+# outside `preinit_snapshot.MASK`, registers and palette included (`--twice` exits non-zero and names every unmasked
+# byte). Eight captures, half a minute. A prerequisite of `gates` alone: `make test` stays the suites.
+PREINIT_TWICE_DIR := build/preinit_twice
+PREINIT_TWICE := $(PY) tools/preinit_snapshot.py --twice
+
+.PHONY: preinit-twice
+preinit-twice: $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC_DISK) $(ACC7_DISK) $(INF_DISK)
+	$(PREINIT_TWICE) --work $(PREINIT_TWICE_DIR)/blank --out $(PREINIT_TWICE_DIR)/blank.bin
+	$(PREINIT_TWICE) --disk $(ACC_DISK) --work $(PREINIT_TWICE_DIR)/acc --out $(PREINIT_TWICE_DIR)/acc.bin
+	$(PREINIT_TWICE) --disk $(ACC7_DISK) --work $(PREINIT_TWICE_DIR)/acc7 --out $(PREINIT_TWICE_DIR)/acc7.bin
+	$(PREINIT_TWICE) --disk $(INF_DISK) --work $(PREINIT_TWICE_DIR)/inf --out $(PREINIT_TWICE_DIR)/inf.bin
+
+gates: preinit-twice
+
+test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF)
 # ...AND SO DOES EVERY TARGET WHOSE RECIPE IMPORTS THE REGISTRY (`test_boot_snapshot`: bench/shipped_glue.py,
 # test/derived.py, bench/tier3.py): the screen manager's rows are registered FROM those machines (an arrival is the
 # ROM's own run over one), so the import reads both files — and `gates`' own prerequisites above come AFTER its

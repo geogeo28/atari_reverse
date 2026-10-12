@@ -1445,7 +1445,8 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 
 ## Wave log
 
-* **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: THE CURRENT WAVE, AES band 5 wave 3 (2026-10-11).
+* **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: AES band 5 wave 3
+  (2026-10-11) and THE CURRENT WAVE, wave 4 (its entries follow wave 3's, before `* **Next**`).
   - **BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER: LINKED, HELD AT TIER 1, NOTHING BOUND — AND THE GATE W3-R8 DOES
     NOT FIT** (2026-10-10/11; five slices in one tree — T the door, G gemdosif's last two, L the loader, M the
     machines, S the stack's reading — then one integration pass; the design and its rulings W3-R1..R13:
@@ -2052,8 +2053,11 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
     VERIFIED** (2026-10-11; one agent alone in the tree, on `db2de96`; ruling W3-R1, reading (A) NARROW; the brief:
     `scratchpad/b5/W3/for_flip.md`; scratch, probes and logs: `scratchpad/b5/W3/F/`). WHAT IS TRUE NOW: the build's
     own install_trap2 and retake store the build's own `trap #2` handler; the relocation registry MAPS the door's
-    three code addresses, each proved a mapping by rows whose own run stores it — ONE registry declaration is PENDING
-    (the desk's trampoline slot `$8c32`, wave 4's); EVERY TIER 3 ROW OF A MACHINE WITH ACCESSORIES RUNS BEHIND OUR
+    three code addresses, each proved a mapping by rows whose own run stores it — THREE registry declarations are PENDING
+    (the desk's trampoline slot `$8c32` with its walked USERBLKs, justretf's slot `$947a` and the tick glue's — wave
+    4's, declared by its slice M; AND, CORRECTED BY THAT SLICE'S SCAN: behind the narrow door the VDI's `USER_TIM`,
+    `USER_BUT` and `USER_MOT` still hold THE ROM'S tick, button and motion glue — a door machine runs the ROM's AES
+    glue at those interrupts until the full flip's door gains them; AWAITING 21); EVERY TIER 3 ROW OF A MACHINE WITH ACCESSORIES RUNS BEHIND OUR
     DOOR on our shore (41 rows: ctlmgr's 9, hctl_window's 22, hctl_button's 5, hctl_rect's 5), an accessory's turn
     inside it OURS and priced by itself; the accessory loader's four routines are PRICED (8 rows); the stack
     battery's measured runs are behind the shipped door and the gate W3-R8 reads what it read (BOUND 20 spare,
@@ -2358,6 +2362,296 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
         (`test_aes_ctlmgr.py`), the door split's pin (`test_aes_shlib.py`), the selector switch's bytes and the
         profile's three holds (`test_tier3.py`), the bar's red (`test_aes_switching.py`), the door boot's and the
         door run's holds, the re-pin tool's refusals (`test_repin.py`), this ledger's figures (`test_status.py`).
+  - **BAND 5 WAVE 4 — INIT, THE SHELL, THE MACHINES' ROM SIDE, THE START-UP'S STACKS: LINKED, HELD AT TIER 1 AND BY
+    PINS — NOTHING BOUND, NOTHING MAPPED, NO ROW; BOTH STACK GATES FIT** (2026-10-11/12; four slices in one tree on
+    disjoint files — I init, SH the shell, M the machines, S the stack's reading — then one integration pass; the
+    design and its rulings W4-R1..R14: `scratchpad/b5/W4/design.md`; the integration's brief:
+    `scratchpad/b5/W4/integrate.md`; each slice's hand-back: `scratchpad/b5/W4/{I,SH,M,S}/handback.md`). WHERE THE
+    SIX ROUTINES STAND: gem_entry, gem_gemdos_call and the Line-F copy are a byte-pinned `.S` LINKED AND NOT ENTERED
+    by any row; gem_main, the `#E` reader, sh_main and sh_cmd are C, COMPILED ON BOTH BLOBS AND HELD AT TIER 1 —
+    **NONE OF THEM IS "VERIFIED" IN THIS LEDGER'S SENSE: no `VERIFIED_CASES` row, no table line, the section's 378
+    unchanged, the table's 5,678 lines byte-identical to `e4b8613`'s.** What makes them verified is slice B's (THE
+    OUR BOOT: the blob laid at the pre-init stop and entered at its own gem_entry, rows and who-ran, the registry's
+    activation) and then slice F's (the full `$88` flip) — `* **Next**`. THE TWO GATES OF THE WAVE, ON THE SHIPPED
+    BLOB, BOUND AND MEASURED (slice S): **gem_entry's FIRST STACK FITS ITS 134 BYTES — 88 used, 46 spare** (the
+    ROM's own: 84, 50 spare; ruling W4-R9), and **THE ROM-DEPTH RULE HOLDS — our own start-up arrives at deskmain's
+    address with the ROM's stack pointer, `$a364`** (ruling W4-R4), not one cycle of the ROM's GEM text on the way:
+    "OURS BOOTED" IS CLAIMED TO deskmain's ENTRY AND NO FURTHER (ruling W4-R3: from there the desk calls the ROM's
+    AES through the ROM's Line-F table on both shores), and that run is a LABELLED STAGING (ruling W4-R1), over the
+    blank disk alone (W4-R2: on a disk with an accessory our own loader's first Pexec clears the blob). SHIPPED
+    OBJECTS against `e4b8613`'s 152: `geminit.o` CHANGED (174 → 2,398 text bytes; its three verified leaves
+    byte-identical), `gemstart.o` and `shell.o` NEW; 151 byte-identical; `aes_trp14` gains a glue thunk in the
+    shipped blob (its first C caller). The orchestrator's rulings on what the slices asked are provisional and are
+    each in AWAITING (21).
+  - **WAVE 4, SLICE I — GEM'S START-UP: `gemstart.S` BYTE-PINNED, gem_main AND THE `#E` READER IN C** (new
+    `src/aes/gemstart.S`, `include/aes/gemstart.h`; `src/aes/geminit.c` extended; `test/aes_geminit.py`,
+    `test_aes_gemstart.py`, `test_aes_geminit_{inf,main,boot}.py`: 127 tests with `test_aes_geminit.py`'s and the
+    integration's one).
+    - `gemstart.S`: gem_entry `$fd9eca` and gem_gemdos_call `$fd9fc6` — `.S` BECAUSE C CANNOT EXPRESS IT (the
+      program's entry: no caller, no return, the stack loaded twice; the file's head says so) — ONE PINNED REGION
+      `$fd9eca..$fd9ffb`, the ROM's but for SEVEN RELOCATED OPERANDS: the handler it copies, three `jsr`s
+      (rom_rsc_init through an image-only thunk, `aes_size_theglo`, `aes_rom_gem_main`) and the three by-value
+      `lea`s (`aes_rom_justretf` → `$947a`, `aes_rom_tick_glue` → `$947e`, `aes_rom_ub_trampoline` → `$8c32`);
+      and the Line-F copy `$fee8c2..$fee925` as DATA, 100 bytes, NO relocation (its `movea.l #$fee900` stays the
+      ROM's table: W4-R3). A FIFTH `.S` KIND in `atari/target.mk`, `GEMSTART_SOURCES`: linked and not entered. No
+      word of a blob names the ROM's gemstart but the copied data's own `$fee900`.
+      `OWED_BY_ROUTINES_NOT_RECONSTRUCTED` loses `$fd9f86` / `$fd9f92` (3 → 1: the shell's launch's gotopgm).
+    - gem_gemdos_call: its (T) relation over the scripted recording trap, six cases × two blobs, 1.00, with who-ran
+      by the cycle profile (0 in the ROM's routine). LINKED AND NOT BOUND (W4-R14: every caller is band 6's).
+    - THE `#E` READER `$fda408` (`aes_gem_read_inf`; the name is ours, `# ctx`): 36 Tier-1 cases over a
+      read-laying recorder (`ReadLaid`: the file's bytes laid at the Fread on both shores) — every arm; the NUL one
+      past a 2,048-byte block and below the block on a failed read; C: left current on the drive-C road; all seven
+      parked return sites — AN ARGUMENT CLASS, UNPRICED UNTIL SLICE B; and AT ITS REAL BOOT ARRIVAL (the blank
+      disk, no file), held twice with the ROM's GEMDOS in place.
+    - gem_main `$fda062` (C; target entry `aes_rom_gem_main(void)`, the image through `target_image()`, no thunk):
+      three `noinline` stretches round the shell so that their frames are gone before sh_main runs — it holds 8
+      bytes under the shell where the ROM's holds 24. ITS FIRST STRETCH (`$fda062` → its `sti`) is held to the
+      ROM's own boot in place through a host-only entry (`aes_gem_main_lays_the_processes`), twice — the second
+      pass with every silently stored byte inverted — and (the integration) FROM gem_main's SECOND ENTRY, the
+      served door's machine. PAST IT gem_main is held by its CALL SET alone (the ROM's 45 Line-F calls of 33
+      routines).
+    - SWEEP (one log, `scratchpad/b5/W4/I/sweep.log`; a private copy, each mutant's artifact rebuilt): 51 of 51
+      killed, 2 EXPECTED SURVIVORS — ev_dclick's arguments swapped and the band's bar height: no row of this slice
+      runs `bring_gem_up`.
+    - UNPINNED: gem_entry BY ANY RUN of this slice (the pin alone: slice S's measured start-up runs it, slice B
+      makes its checkpoints); `bring_gem_up` / `take_gem_down` beyond their call set — order, arguments, stores;
+      the reader's file arm at a real arrival (the INF capture's: B's); the cursor after scan_2 (the ROM drops
+      scan_2's answer; no input found that tells it apart).
+  - **WAVE 4, SLICE SH — sh_main `$feb0e6` AND sh_cmd `$feb2fc` IN C, AND THE DESK DOOR** (new `src/aes/shell.c`,
+    `include/aes/deskdoor.h`; `test/aes_shmain.py`, `test_aes_shell_{cmd,main,door}.py`: 123 tests). VERIFIED AT
+    TIER 1 AND NOT BOUND: sh_cmd's five arms (38 cases) and thirteen passes of sh_main, each a row that switches
+    held to the ROM's scheduled run with nothing dropped — the desk quitting at three resolutions, a built-in
+    between two desk passes, a program launched; behaviour (d) (`DOS_ERR` below −32 while graphic → fm_error(~err −
+    30) on the next pass) and (e) (`$c84e` cleared after every deskmain). deskmain and the desk's four built-ins
+    are ANSWERED AT THEIR ENTRY on both shores — a staged RAM copy of the Line-F table with five entries pointed
+    at recording stubs on the ROM's, the hook `recreate_call_desk_door` on ours —, GEMDOS scripted, Getrez a
+    staged trap where a run switches: A LABELLED ARGUMENT CLASS in every row's name (AWAITING 21).
+    - **THE DESK DOOR (ruling W4-R4).** At each of the six calls out of the shell (deskmain, the four built-ins,
+      dos_exec) ONE `asm` keeps the SP in D3, HALTS (`trap #7`) unless it is on PD0's stack at or above the ROM's
+      with the call's own slot free, stands the SP WHERE THE ROM'S STANDS (`$a368` in sh_main, `$a356` in sh_cmd;
+      `_Static_assert`ed, re-derived from the ROM's prologues), lays the ROM's frame, calls, and puts ours back. THE
+      PAD IS TAKEN AT RUN TIME, NEVER A NUMBER OF A FILE — so the excess is zero by construction, or the door
+      halts. The five ROM routines are `ROM_CALLS_OWED_TO_A_LATER_BAND`'s, ONE SITE EACH in the function named ("a
+      call from C reds" is now "a call from C outside the desk door reds"). Without the diet GCC's sh_main was 30
+      bytes deeper than the ROM's: two `FRAME_DIET` marks (and gem_main's entry's one) bought it back — pinned in
+      `test_stack_diet.py`, read by the start-up's reading.
+    - The cartridge's program (`cart_exec`) HALTS BY NAME (W4-R12).
+    - SWEEP (one log, `scratchpad/b5/W4/SH/sweep.log`; a private copy): 57 mutants, 55 killed. UNPINNED BY NATURE:
+      the word handed fm_error where nothing is found (2 and 3 are one alert, the word only ever on the stack);
+      that sh_find is handed sh_show at all is held ON TARGET ALONE, by the call graph (from sh_main it draws
+      nothing: sh_dodef is set first — the ROM's behaviour, reproduced).
+    - NO MACHINE: nothing of this slice entered sh_main on a blob (slice S's measured start-up does, to deskmain's
+      entry); the door's halt has never been taken; dos_exec's parked pointer on host is the constant `$a35e`; the
+      new `aes_trp14` thunk has not been run from the shell.
+  - **WAVE 4, SLICE M — THE ROM'S SIDE OF THE MACHINES** (harness: `test/aes_boot.py`, `test_aes_boot_w4.py` — 70
+    tests —, `tools/accessory_disk.py`, `tools/preinit_snapshot.py`, `Makefile`; declarations in
+    `test/aes_event.py`; no row, nothing mapped, no shipped object, no kit edit).
+    - THE FOURTH CAPTURE, `make preinit-inf` (W4-R7): the blank disk plus the ROM's own default DESKTOP.INF, its
+      `#E` pairs patched in the image; `inf_machine`. It reaches the reader's file arm, the `#E` parse and
+      app_reschange (pair `11` its "changes" arm) and still boots; any other resolution pair is refused by name.
+    - THE DEVICE MODEL AS FAR AS A DRIVE'S WINDOW (W4-R8, REWORDED BY WHAT WAS MEASURED): the reads the design
+      took for "PSG port A and GPIP by declaration" were the real FDC code running. Before it opens a drive the
+      desk calls XBIOS Floprd of the boot sector itself, then `Rwabs(0, NULL, 2, 0, drive)`, which the driver
+      takes as "store the count as the drive's media-change mode" (`$fc12e2`, byte `$755a`); GEMDOS's next Mediach
+      answers CHANGED and asks Getbpb. THE MODEL SERVES A FOURTH DRIVER ENTRY (Floprd, read out of the XBIOS
+      dispatcher's table through the machine's own vector) AND THAT ONE MODE BYTE — no hardware declared, no kit
+      edit. (HEAD's model had a latent hole there: it would have copied two sectors to address 0.)
+    - ub_trampoline's ARRIVALS COUNTED ON THE ROM'S MACHINE: one, in the text view (`#E 9B`), zero in the icon
+      view; the desk's USERBLKs WALKED from the machine (`aes_event.userblk_slots`).
+    - **THE SERVED DOOR** (W4-R6: `Boot.served`, a label the machine carries): deskmain and the four built-ins
+      answered at their entry on the ROM's own machine. deskmain = 0 → gem_main's TEARDOWN (`$88` and `$404` end
+      as the saved VDI and BIOS values) → gem_entry's loop → THE SECOND gem_main — same SSP, A6, SR and `$2c`, BUT
+      `rlr` STILL NAMES THE SHELL'S PD where the first pass entered with 0; deskmain = 1 after the ROM's own
+      shel_write → dos_exec's entry at SSP `$a35e`; the `$fe` built-in served. Refusals by name (not at a served
+      entry, user mode, a caller that is not the shell, a door the teardown gave back …).
+    - THE OUR-BOOT MACHINE'S PREMISES VETTED AGAINST THE ROM'S RUN (the entry in user mode; the harness's window
+      zero at the stop; the ROM's own boot stores nothing there to its idle — on the blank and the INF disks; the
+      accessory disk is REFUSED with the count). THE LAY ITSELF IS REFUSED BY NAME: "NOT BUILT YET", slice B's.
+    - THREE REGISTRY DECLARATIONS PENDING (`DECLARED_NOT_YET_MAPPED_AT_TIER3`): the desk's trampoline slot
+      `$8c32` with its walked USERBLKs, justretf's slot `$947a`, the tick glue's (`$947e`, the VDI's `USER_TIM`,
+      the contrl longwords a vex_timv hands) — each held to gem_entry's own instructions; in no tuple and no door.
+    - **THE SCAN — A CORRECTION TO WHAT THE NARROW DOOR FLIP CLAIMS FOR DOOR MACHINES**
+      (`aes_boot.entries_held_by_value`, `vet_no_entry_is_held_as_the_rom_s`): on EVERY narrow-door machine
+      (desk, accessory, INF; both blobs) SIX LIVE LONGWORDS STILL HOLD A ROM ENTRY — the three pending slots
+      and the VDI's `USER_TIM`, AND THE VDI's `USER_BUT` AND `USER_MOT`: the button and motion glue, installed by
+      gsx_init before the takeover's stop, declared (`GLUE_CODES`, exit-only) but in no door. So a tick, a button
+      or a motion interrupt taken behind a door called ours runs THE ROM'S GLUE (and through the fork queue what
+      it queues). Pinned as `LEFT_THE_ROM_S_BEHIND_THE_NARROW_DOOR`; NOT MAPPED NOW (the orchestrator's ruling,
+      AWAITING 21): OWED TO SLICE F OF THIS WAVE, whose door must gain them.
+    - EXISTING MACHINES UNCHANGED, PROVED: 91 machines derived by HEAD's `aes_boot` and the tree's in one process,
+      0 differing (`scratchpad/b5/W4/M/proof_unchanged.log`). SWEEP (`…/M/sweep.log`): 63 mutants, 62 killed; the
+      survivor's guard (a block past the megabyte, unobservable) was removed.
+    - NOT PROVED: anything of ours booted, the served door on an our-boot machine; Getbpb's write-protect latch
+      arm; a launch past dos_exec's entry; the built-ins other than `$fe` by a run; a served return leaves D0's
+      high word, the scratch registers and the Line-F mask word as the caller had them (both shores the same —
+      not what a real return leaves); `userblk_slots` still walks a block the desk has freed.
+  - **WAVE 4, SLICE S — THE START-UP'S STACKS: READ, BOUND, MEASURED; BOTH GATES FIT** (`test/aes_switch.py`'s
+    reading, `test/aes_stack.py`, `test_aes_stack.py` 176 → 217 with the integration's two; no shipped object).
+    - THE READER'S SEVEN NEW SHAPES: a declared run after which SP stands where it began (Super); a stack's
+      declared beginning reached again by a loop; a call to a ROM address no blob links; the desk door's pad (SP
+      stood at a declared place, put back from a register); `__DOS`'s return through a parked address; a body cut
+      at its own return-site label and read on through it; a routine read per caller where one hands it a routine
+      and another none (sh_find: `shell.c` hands it sh_show, so wave 3's "no caller hands a routine" is retired).
+    - THE ROM'S START-UP, READ AND HELD TO ITS BOOT ON TWO DISKS: entered 4 / 32 / 62 / 68 / 80 / 84 bytes below
+      PD0's top (gem_main, sh_main, deskmain, dos_exec, the utilities); first stack 84 used; init 282; the desk
+      886; parked 350 at the idle.
+    - THE FIRST STACK, SHIPPED BLOB: BOUND 88 (gem_entry's `jsr` 4 > the thunk 8 > rom_rsc_init 20 > dos_alloc
+      56, GEMDOS's 50 inside) AND MEASURED 88 (lowest store `$893c`): 46 spare of 134.
+    - **THE SHELL'S DEPTH — THE ONE SET OF FIGURES** (the slices said it three ways; settled by the integration on
+      the rebuilt tree, read and measured on both blobs): from PD0's top gem_entry's `jsr` 4 and gem_main's frame 8
+      (the ROM's 24), so **sh_main IS ENTERED 16 DOWN, `$a392`, WHERE THE ROM'S IS 32 DOWN, `$a382`** (measured:
+      our own start-up's arrival); sh_main stands 32 down at its two doors and sh_cmd 52 at its four (the ROM's
+      58 / 76): **PADS 26 / 24; THE VET'S MARGINS 26 (deskmain) / 22 (dos_exec) / 20 (each utility)**. Twenty
+      bytes more above the shell — in gem_entry's call, gem_main's frame, sh_main's or sh_cmd's — and the
+      utilities' doors halt. HELD: `THE_DOORS` and the entry's 16 (`test_aes_stack.py`, each reddens for its own
+      side), the shell's own share (`test_aes_shell_door.py`, `OUR_SLACK` 6 / 2 / 0), gem_main's 8
+      (`test_aes_geminit_main.py`).
+    - AN APPLICATION'S TRAP UNDER sh_main: parked 132 down, 1,660 bytes under it, the trap path needs 1,370 —
+      290 spare (bench 120); no machine launches a program: the bound's alone. PD0's OWN FRAMES: 812 + the nest's
+      252 of 1,792, 728 spare (the deepest: the shell's error alert after a failed launch); init measured 386
+      down against the ROM's 282 (allowed: W4-R4 constrains the calls out of the build; our reader is entered 72
+      down where the ROM's is 32 — PD0's image during init differs by nature, slice B's to class).
+    - FINDINGS: (1) `$8992` LIES INSIDE THE FIRST STACK (slice I found it too; the integration's entry, below);
+      (2) THE FIRST STACK HOLDS NO INTERRUPT NEST, THE ROM'S NEITHER (gem_entry runs at mask 3; a vertical blank
+      with an MFP interrupt inside needs 244 bytes of the booted machine's handlers: 84 + 244 of 134) — recorded,
+      NOT CHARGED by the gate (AWAITING 21); (3) dos_exec's 64 IS TWO BYTES SHORT, by reading: Pexec's 16 plus
+      GEMDOS's 50 reach 66 under its entry SP, so the parked pointer lies 2 bytes inside GEMDOS's saved frame —
+      the ROM's, reproduced by `gemdosif.S`'s pin; no machine runs it.
+    - SWEEP (`scratchpad/b5/W4/S/sweep.log`): 29 of 29 killed (a private copy of `test/` alone, no build). NOT
+      PROVED: the `$90c` capture set; PD0 at its traps on our own VDI (eight init-only opcodes — 1, 5, 15, 16, 38,
+      110, 118, 125 — have no measured need: a named gap); an interrupt taken at a deepest point; our boot past
+      deskmain's entry; a pad mutant in the C (needs a build: B's).
+  - **WAVE 4 — THE INTEGRATION: ONE TREE, ITS REDS, WHAT THE SLICES DISAGREED ON** (2026-10-12; one pass; tests,
+    harness, comments and docs — NO SOURCE LINE OF A SHIPPED OBJECT: two header comments).
+    - THE CROSS-SLICE REDS, each closed for its reason: `test_stack_diet.py` ×2 — the three new marks
+      (`aes_rom_gem_main`, `aes_sh_cmd`, `aes_sh_main`) pinned as MEASURED on a marks-off link (20 → 12, 56 → 32,
+      40 → 24 at their deepest: the doors), read by `aes_stack.start_up_reading` (the trap path's reading refuses
+      the door's `movea.l #,sp` by name, and the test holds that it does); `test_status.py` — this ledger's
+      sentence of the pending declarations (one → three); `test_addrs.py` — `INF_BUFFER_BYTES` a third `$800`
+      that is a size, and `AES_ROM_GEM_ENTRY_END` / `AES_ROM_INI_DLONGS` a boundary and the function that begins at
+      it (two `ALLOWED_ALIASES`, each with its reason); `test_boot_snapshot.py`'s mask test — next item;
+      `test_transcribed.py`'s caller pairs: green as slice SH left them. ONE `make test` over the merged tree
+      found NO OTHER (no band or window claim of two slices overlaps).
+    - **`$8992` IS CAPTURE-DECIDED, AND THE MASK WAS RIGHT** (the red: slice I declared it a case field, and the
+      snapshot's MASK covers `$8930..$8bff`). FOUND: fourteen kept captures of the idle machine hold `$00fd9f80`
+      or `$00fd9f82` at `$8990`, under a status word `$2304` at `$898e` — AN EXCEPTION FRAME: an interrupt taken
+      while gem_entry's clear of THEGLO ran on the first stack lays the interrupted PC (the clear loop's two
+      instructions) over the same four bytes as size_theglo's return address. So what the reader and ldaccs test
+      is the low word of A CODE ADDRESS OF gem_entry's STRETCH ON THE FIRST STACK (`$fd9f78..$fd9fbc`): `$9f78`
+      on the oracle's boots (no interrupt lands there), `$9f80` / `$9f82` on Hatari's. CLOSED: the word is NOT a
+      declared case field — every case of the reader's stages its own (`aes_gsx`'s precedent for the VDI's masked
+      contrl words); the layout gate (`test_aes_gemstart.py`) now holds THE WHOLE STRETCH clear of a multiple of
+      64 KB on both blobs, not the one return address; `gemstart.h`, `loader.h`, `test_aes_boot_w4.py` and names.txt say
+      what is true — AS THE FIX PASS CORRECTED THREE OF THEM (below): the longword is `$00fd9f78` at the second
+      gem_main's entry ON THE SERVED MACHINE ONLY, where the desk never ran. THIS IS ALSO SLICE S's FINDING 2 SEEN ON A MACHINE: interrupts DO land on the first stack. FOR
+      SLICE B: the our-boot machine needs a class for `$8990..$8993` (a code address differs between the shores
+      by nature) and may not call those bytes dead.
+    - gem_main DOES NOT READ `rlr` BEFORE IT STORES IT (slice M's finding 3): read off `geminit.c` — its first
+      touch is `run_the_first_process`'s store — and HELD BY A RUN the slices did not have between them: the C's
+      first stretch FROM gem_main's SECOND ENTRY — the ROM's boot stopped at deskmain, deskmain answered 0 by slice
+      M's served door, the ROM's teardown and gem_entry's loop run to it (a labelled argument class, W4-R6): `rlr`
+      the shell's PD, the static count 2, the not-ready list as a session left it — is the megabyte the ROM's own
+      run leaves from there (`test_aes_geminit_boot.py`). THREE MUTANTS IN `geminit.c`, the host library rebuilt
+      for each, EACH KILLED BY THAT TEST ALONE (`scratchpad/b5/W4/INT/mut_rlr.log`): the lists emptied only where
+      `rlr` is 0, the static count not cleared, the stretch ended early where `rlr` was set.
+    - THE SHELL'S DEPTH: slice S's entry, above — ONE SET OF FIGURES, settled on the rebuilt tree: slice SH's
+      "budget ≤ 28" and "slack 6 / 2 / 0" count from gem_main's SP before it pushes the image, slice I's "8 under
+      the shell" is gem_main's frame with that push, slice S's 32 / 52 and 26 / 22 / 20 are the whole path — the
+      same build, no figure of the three wrong. NEW: sh_main's entry READ AND MEASURED
+      (`test_the_shell_is_entered_sixteen_bytes_down…`, both blobs: `$a392`, the ROM's `$a382`). THE PAD PROOF, IN
+      THE C, both blobs rebuilt for each (`scratchpad/b5/W4/INT/mut_pad.log`): FOUR BYTES OF FRAME IN
+      `aes_rom_gem_main` (above the shell) redden the entry's 16, `THE_DOORS` and init's measured depth on both
+      blobs (the measured start-up's test with them); FOUR IN `aes_sh_main` leave the entry's reading and redden
+      `THE_DOORS` and what sh_main holds at its doors. Both controls green, both sources restored by hash.
+    - CODE BAR over the four diffs: no line over 160 columns, no raw register name outside `.S` / `asm`; fixed —
+      the stale one-site docstring and "four kinds" (`test_tier3.py`), a restated `$fee900`
+      (`test_aes_boot_w4.py`). LEFT, listed: `test_aes_boot_w4.py` restates ROM addresses the headers hold
+      (`$8908`, `$890a`, `$c42e`, the shell's pointers — its premise is "the ROM's side alone"); `from pathlib
+      import Path` unused in `aes_boot.py` (pre-existing); `ld.HOST_SLOT_ROLES.setdefault` at import in
+      `test_aes_geminit_boot.py` (a public door of `aes_loader` is more than two lines: owed (k)); the
+      `WHO_ASKS_FOR_A_DOOR` regex misses calls with nested parentheses (slice M wrote its own so it sees them).
+    - OBJECTS AND THE TABLE on the integrated tree: the shipped objects are slice I's and SH's three (above) and
+      nothing else; the table byte-identical to `e4b8613`'s.
+  - **WAVE 4 — THE FIX PASS: THE TWO REVIEWS' LIST** (2026-10-12; `scratchpad/RW4/{A,B}/review.md` — neither found a
+    blocker in code, harness or build; tests, harness, tools, the Makefile, comments, named constants and docs —
+    EVERY SHIPPED OBJECT BYTE-IDENTICAL to the integration's 154, both blobs at their hashes, the table's 5,678 lines
+    byte-identical; no row registered, nothing bound or mapped).
+    - **`$8992` IS PUSHED OVER ON THE FIRST PASS ALONE** (the second review's F1; the integration's entry, names.txt
+      and `test_aes_boot_w4.py` said "on every pass"). gem_entry's loop's `bra` comes back with SP = A6 = PD0's top,
+      so the SECOND pass's `jsr` of size_theglo pushes at `$a39e`; on a real second pass the word is what the desk
+      last stored — 0 at `$fe2a62`, 1 at `$fe2a6a` (held to the ROM's two instructions). The assertion "`$8990` is
+      `$00fd9f78` at the second gem_main's entry" holds ON THE SERVED MACHINE ONLY (the served door never ran the
+      desk) and now says so in its name; a LABELLED CRAFT — the desk's 0, its 1, the interrupted PC Hatari's boots
+      hold, each poked at deskmain's entry — is each still there at the second entry.
+    - **THE FOURTH CAPTURE WAS NOT REPRODUCIBLE UNDER THE MASK — NOR, IT TURNED OUT, WAS ANY OF THE FOUR** (F4;
+      `preinit_snapshot.py --twice --disk build/acc/INFDISK.ST` exited 1). WHAT THE 27 BYTES ARE: DEAD FRAMES OF THE
+      BIOS'S OWN STACK, whose top `$755a` is the ISP every capture stops with (the machine stops in user mode: nothing
+      returns to a byte below it, and the next exception pushes over it). `$74b1`, `$74b3`, `$74b5..$74b7`: the
+      boot's usual interrupt nest — a vertical blank's floppy service (`$fc0790`) with an MFP interrupt inside
+      (`$fc1c2e`) — taken TWELVE BYTES DEEPER, its lowest saved-register words under the span the mask held;
+      `$7516..$7551`: A VERTICAL BLANK TAKEN AT gem_entry's FIRST INSTRUCTION, between GEMDOS's `rte` and the
+      breakpoint — its exception frame is the launch frame's own six bytes and its handler's `movem.l d0-a6,-(sp)`
+      lays the stop's registers (zero but D0 and A6) over GEMDOS's saved context of the BIOS's Pexec, which every
+      other capture still shows there (read against a boot stopped at the BIOS's own `trap #1`, `$fc050c`). WHY THE
+      THREE OLDER CAPTURES "DID NOT SHOW IT": they do — the deeper nest is in 9 of 86 kept blank-disk captures, 4 of
+      88 of the accessory disk's, 1 of 23 of the seven-accessory one's (about one in twelve, of every disk); the mask
+      was the union of what eighteen boots had SHOWN, and a pair of captures agrees eleven times in twelve. The
+      second kind is one capture in 240. AND A THIRD, met when the new holder first ran (the accessory disk):
+      `$f7fa2..$f7fb3`, the same nest taken while GEMDOS's launch stands on THE LAUNCHED PROGRAM'S stack, under the
+      context it lays there (`$f7fc6`: the stop's D0 and A6). AND A FOURTH in one kept capture of 86: six longwords
+      of GEMDOS's own stack above the `$1676` the mask called its top (`movea.l #$16ce,sp` is). NONE IS SOMETHING A
+      ROW CAN DEPEND ON: each lies under a stack pointer nobody returns to. FIXED AS THE MASK'S ENTRIES ARE
+      JUSTIFIED: the three stacks masked AS WHAT THEY ARE, each to its top (`$1455..$16ce`; `$745a..$755a`;
+      `$f7ec6..$f7fc6`; the AUTO runner's was already whole), and the noise tests — every masked byte noise, the same
+      instructions to the same registers and the same machine outside the mask — pass over the wider mask on the
+      desk's, the accessories' and the INF machine. HELD: `test_the_three_stacks_the_boot_ran_on_are_dead_at_the_stop…`
+      (×4 captures: the tops read off the ROM's instructions and the capture's registers; nothing ever stored for
+      256 bytes below either floor — a deeper nest is NAMED) and `make preinit-twice` (`--twice` over all four
+      disks, into `build/preinit_twice/`; a prerequisite of `gates`): 40 captures of 40 equal outside the mask on
+      the day it was made, and under it no two of the 229 captures kept in the scratchpad differ but by their disk.
+    - WHO RAN, DETERMINISTICALLY (F5): a LABELLED STAND-IN laid where a blob is — three `jsr`s of a bare `rts`: GEM's
+      text's first and last, and the last one below it — run TWICE in one process: `the_rom_s` is the two `rts`
+      inside, exactly, both times. The undifferenced profile (S13) now dies with one test alone and beside the
+      measured start-ups; a ROM span of two bytes, one ending `$100` short and one beginning `$2000` low (T05) die.
+    - THE MAKEFILE (F6): `test_makefile.py` derives which captures the registry's import READS
+      (`aes_boot.CAPTURES_READ` at collection) and holds them to `REGISTRY_READS` — a row registered from the
+      DESKTOP.INF machine without the capture there is named; `test` / `guarded` / `gates` are held to all FOUR
+      pre-init captures and each capture to its own disk, the tool and the ROM image (MK1, MK2 die).
+    - THE STACK READING (F9): "no routine is handed" is read only where the zero longword is THE ARGUMENT THE CALLEE
+      CALLS THROUGH (the slot on both sides, by the walks' own depths), and the desk door's put-back only from THE
+      REGISTER THAT KEPT SP — each with the review's crafted listing as its red. Refusal reds for a `trap #2` on the
+      first stack (T01) and a blob laid over bytes not clear (T02). `test_the_reader_is_entered_seventy_two_bytes_down…`
+      pins the figure slice S's entry states.
+    - TIER 1's HOLES (the first review): a deskmain answering −1 (a row: `tst.w`, not "positive"), a device `$22`
+      (the whole word ORed into the pair), the second drive map's bit 18 (a word test), a read answering 0 — each a
+      labelled class, each killing the review's mutant (C6, B5, B7). The argument class is in the test NAMES of
+      `test_aes_geminit_inf.py` and `test_aes_shell_cmd.py`, "deskmain served" in the second-entry test's.
+    - CODE BAR: `SH_NO_ERROR` (unused) removed; the ROM's three frames in `deskdoor.h` and the Line-F handler's
+      scratch longword in `gemstart.S` named; two tests' restated ROM addresses read from the headers.
+    - SWEEP (one log, `scratchpad/b5/W4/FIX/sweep.log`; the shared tree, each file restored by hash, the host
+      library rebuilt for each C mutant): 22 of 22 killed, both controls green.
+    - **UNHELD, BY NAME** (each reported by a review, none closed here):
+      * `bring_gem_up` / `take_gem_down` — NINE MUTANTS SURVIVE (the first review's A1..A9; no row runs either), THE
+        LIST SLICE B's CHECKPOINTS MUST KILL: A1 the keyboard owner not stored; A2 the hourglass form 4; A3
+        gsx_trans handed the width for the height; A4 the teardown hands the tick glue back; A5 the rs_fixit gate
+        inverted; A6 the band's width from hchar; A7 ldaccs before the mouse forms; A8 restore_trap2 before giveerr;
+        A9 `indisp` not cleared.
+      * sh_main: THE `!= 4` ARM OF THE COLOUR TEST (`$feb1fc cmpi.w #4`; the review's C3) — Getrez's own C core
+        answers the shifter's byte masked to 0..3, so no staging of that byte reaches 4 on our shore, and a staged
+        trap answering 4 on the ROM's alone would differ by the staging; and ratinit BEFORE wm_start (C5): two
+        calls whose stores commute in the final megabyte, no ledger of internal calls at Tier 1 — slice B's
+        checkpoints, or unpinned by nature.
+      * the desk door's clobber lists (`deskdoor.h`) are killed only through a frame size the compiler happens to
+        change; the usable-disk layout gate reads the two bench blobs, not the layout `make -C atari` links.
+      * the served door (`aes_boot.served`): D0's high word at a served return (B01); the caller-in-the-blob arm
+        (B02: no machine yet); what a served run's `stored` holds (B05), its ROM-side re-lay (B06), its watches
+        (B07). The device model: the driver's one-byte stores in the run's ledger (B04); Getbpb's record re-vetted
+        (B09). `door_slots`: a part with both a vector and a walk (B08: no such part yet). The stack reading: the
+        Super call's `SUPER_TAKES` (T04: another chain is 32 deeper).
+      * the delay list's and the screen lock's clears at gem_main's SECOND entry (clean there; the first-entry
+        inverted-stores test holds both); "`ub_trampoline` once per item" for more than one item.
+      * the mask outside the stacks is still what captures showed; one figure of the who-ran stand-in (`ours`: the
+        three `jsr`s and the run's first step) is held equal between its two runs, not to a number.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -2388,7 +2682,22 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
   free_accs's an argument class), the measured runs are behind the shipped door (the gate unchanged: 20 by the
   bound, 128 measured) and the prototype door is retired. `$88` IS STILL THE ROM'S ON EVERY MACHINE THE ROM MADE:
   the snapshot's rows are entered behind the ROM's door, and one alone — sh_tographic's — runs behind ours from its
-  own retake on. THE FLIP'S FIX PASS (its sub-entry) changed tests, harness and docs, no shipped byte. **NEXT: WAVE 4.**
+  own retake on. THE FLIP'S FIX PASS (its sub-entry) changed tests, harness and docs, no shipped byte.
+  **WAVE 4's FOUR PARALLEL SLICES ARE IN AND INTEGRATED** (its entries, above; 378 verified STILL — no row was
+  registered): gem_entry, gem_gemdos_call and the Line-F copy a byte-pinned `.S` linked and not entered; gem_main, the
+  `#E` reader, sh_main and sh_cmd in C, held at Tier 1; the desk door; the fourth capture, the served door, the
+  our-boot machine's premises and the scan on the ROM's side; the start-up's stacks read, and both gates — the first
+  stack's 134 bytes (46 spare) and the ROM-depth rule (deskmain entered at `$a364`) — bound and measured on the
+  shipped blob. **NEXT: SLICE B, THE OUR BOOT, ALONE** (`bench/tier3.py`, `test/aes_boot.py`'s lay — today refused by
+  name —, the batteries' boot rows, the registry's activation of gem_entry's three and the tick glue): the our-boot
+  machine on both disks and both blobs, every class derived from pointers and needed-or-refused (among them
+  `$8990..$8993`, a code address by nature, NOT dead); who ran at deskmain's entry; the pad proof in the C; the rows
+  of gem_main's and sh_main's stretches, the reader's arrivals (the INF capture's file arm), sh_cmd's arms and the
+  served class's — run with the SP on UDA0 (the door halts on any other stack); the six routines VERIFIED there.
+  **THEN SLICE F, THE FULL `$88` FLIP, ALONE AND LAST** (`GEM_TRAP_VECTOR.at_entry`; the design's 27 reds; the desk's
+  machine's door) — AND WITH IT THE DOOR GAINS what slice M's scan found the narrow door leaves the ROM's: `$8c32`,
+  `$947a`, `$947e` / `USER_TIM`, AND `USER_BUT`, `USER_MOT` (AWAITING 21, M-1); `DECLARED_NOT_YET_MAPPED_AT_TIER3`
+  empty. The orchestrator runs the from-empty gate before each commit and the `$90c` set at the wave's end.
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -2397,8 +2706,10 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
   `aes_rom_ub_trampoline` from our gem_entry (`USERBLK_TRAMPOLINE_SLOT`), the full `$88` flip (every row's VDI trap
   through our door: W3-R1), the trap door's kind merged into the switch's once no word of a blob names the ROM's;
   BAND 6: the desk's `$fde844` (ub_trampoline's one ROM call). WAVE 4, FLIP 5 — init and the shell
-  (gem_entry, gem_main, the `#E` reader, sh_main, sh_cmd, the Line-F copy): both shores boot from the pre-init image
-  to the first idle. With them THE GLUE SITES OWED (`## Not reconstructed`, band 4 wave 2: gem_main's justretf into
+  (gem_entry, gem_main, the `#E` reader, sh_main, sh_cmd, the Line-F copy): OURS BOOTS FROM THE PRE-INIT IMAGE TO
+  deskmain's ENTRY AND NO FURTHER (ruling W4-R3: from there the desk calls the ROM's AES through the ROM's Line-F
+  table on both shores; wave 3's wording here, "both shores boot … to the first idle", read wider than that and is
+  withdrawn). With them THE GLUE SITES OWED (`## Not reconstructed`, band 4 wave 2: gem_main's justretf into
   `$947a`, the tick glue into `$947e` and vex_timv, gotopgm's two callers, cli / sti, the spl entries), a third
   real process (the control arm's and the desktop arm's owners; a writer that does not own the mouse), and the
   message's apret before the rectangles' (`j09`: band 5's accessory — the real menu chain does not reach it).
@@ -2573,6 +2884,80 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
       forker 1,146 / 708; idle 998 / 652; mn_bar 1,016 / 952; disp is cheaper (1,230 / 1,440). In the 1.21 turn
       (the arrow held): chkkbd 778 / 568, forker 382 / 236, the gsx_ncode wrapper +276, idle 272 / 176, the wcopy
       wrapper +108, the marshal 304 / 236. So: call glue, the marshal and the switch — not an algorithm.
+    (21) WAVE 4, THE FOUR PARALLEL SLICES, THEIR INTEGRATION AND THE FIX PASS (the wave's entries, above) — EACH A
+      RULING OF THE ORCHESTRATOR'S, PROVISIONAL, NONE THE USER'S WORD YET. THE DESIGN'S FOURTEEN, one line each (what
+      was ruled; all by the orchestrator, all awaiting the user):
+      - W4-R1 — THE OUR-BOOT MACHINE (the blob laid at the pre-init stop, entered at its own gem_entry with the
+        capture's registers, no longword mapped by the harness) counts within "no pokes" as a LABELLED STAGING, said
+        in every row's name that uses it — (7)'s stricter successor.
+      - W4-R2 — (a) ACCESSORY MACHINES STAY DOOR TAKEOVERS in wave 4 (our own loader's first Pexec clears the blob):
+        no kit edit, no re-lay after a clear; (b) — a kit window that serves the blob outside the TPA, and the
+        cartridge's `$fa0000` in the same visit — is left to the user.
+      - W4-R3 — THE LINE-F TABLE STAYS THE ROM'S: the desk's AES calls are the ROM's on both shores, "ours booted" is
+        claimed TO deskmain's ENTRY, in those words, wherever it is claimed; a table of our own entries (658 longwords:
+        the desk over our AES) is band 6's opening or a wave 5 — the user's.
+      - W4-R4 — THE ROM-DEPTH RULE with a NAMED pad: at each call out of the shell PD0's SSP is the ROM's (deskmain
+        entered at `$a364`); a build that cannot come in at or under the ROM's depth is REPORTED, never shifted
+        silently. (SH-1, its form: the pad taken at run time, a halt if ours is deeper.)
+      - W4-R5 — gem_main and sh_main ARE VERIFIED ON THE BLOBS AT CHECKPOINTS (slice B's), their host twins run where
+        a stretch is a call with a return; no host model of gem_main's whole run.
+      - W4-R6 — deskmain (AND A BUILT-IN) SERVED AT ITS ENTRY ON BOTH SHORES is a labelled argument class in the row's
+        name, not a poke — the only road to the teardown, the second pass and the launch pass today. ITS LIMIT, found
+        by the second review: a verdict may depend on what the served ROUTINE would have stored (`$8992`: the wave's
+        fix pass, above).
+      - W4-R7 — A FOURTH CAPTURE, `make preinit-inf` (the blank disk plus the ROM's own default DESKTOP.INF).
+      - W4-R8 — `continued` SERVES THE BOOT'S DEVICE MODEL AS FAR AS A DRIVE'S WINDOW; as slice M reworded it (M-2):
+        the driver's fourth entry (XBIOS Floprd) and its media-change mode byte, no hardware declared, no kit edit.
+      - W4-R9 — THE FIRST-STACK GATE: our boot does not land unless gem_entry's first stack fits its 134 bytes, bound
+        and measured, on the shipped blob. NO INTERRUPT IS CHARGED BY IT (the table below).
+      - W4-R10 — THE THREE DESK-ALONE ROWS keep wave 2's takeover machine at the flip and gain a door of one part, no
+        figure moved; re-basing them onto the our-boot machine is decided after slice B.
+      - W4-R11 — PRICING: gem_main and sh_main as STRETCHES to deskmain's entry, the reader in place over real GEMDOS
+        with its own-cycle ratio beside, both Line-F figures printed (D-2's and F-10's conventions, provisional).
+      - W4-R12 — THE CARTRIDGE PAIR (`$fed554`, `$fed5c2`) STAYS OUT and refuses by name: band 5 closes "but the
+        cartridge" unless W4-R2 (b).
+      - W4-R13 — SLICE B ALONE, THEN SLICE F ALONE AND LAST (a mapping needs our gem_main's own store to be a mapping,
+        not a poke).
+      - W4-R14 — gem_gemdos_call SHIPS NOW with gem_entry's region, LINKED AND NOT BOUND (every caller is band 6's),
+        its (T) row an argument class. And gem_entry / gem_gemdos_call as `.S` on "C cannot express it".
+      **THE FIRST STACK AND INTERRUPTS — THE USER'S RULING WANTED, WITH THE SECOND REVIEW'S NUMBERS.** On Hatari's
+      own boots gem_entry's first stack holds interrupt residue down to `$8920` — 116 bytes below its top, 18 above
+      the live words (`$8904..$890d`, intact) — in both idle snapshots read: status words `$2404` / `$2400`, PCs
+      `$fc1c2e`, `$fc0790`, a level-4 handler interrupted by level 6. The oracle's boot takes no interrupt there.
+
+      | what the gate could charge | ROM | ours | of 134 |
+      |---|---:|---:|---|
+      | nothing (today's gate) | 84 | 88 | 50 / 46 spare |
+      | the observed nest at the top (the clear loop, where every capture shows the frame; pinned `.S`, same on both shores) | 116 | 116 | 18 spare |
+      | the observed nest at each shore's deepest point | 200 | 204 | over by 66 / 70 |
+      | slice S's booted-machine nest (244) at the deepest | 328 | 332 | over by 194 / 198 |
+
+      (The 244 is the booted machine's handlers — the VDI's cursor in the blank —, not the pre-init machine's; 116 is
+      an observed lower bound on the pre-init nest; where in rom_rsc_init an interrupt can land was not measured.)
+      THE ORCHESTRATOR'S RECOMMENDATION: KEEP THE GATE AS IT IS — the ROM's own exposure, reproduced 4 bytes deeper —
+      AND RECORD IT. (S-2, as slice S reported it: 84 + 244 of 134 by arithmetic; recorded as a finding, not charged.)
+      **THE ROM'S GLUE IS LIVE BEHIND THE NARROW DOOR — MEASURED** (M-1; slice M's scan, the second review's cycle
+      profile over one continued run — a mouse move and a click, the quiet-pair door machine, both blobs): the ROM's
+      button glue 440 cycles, its motion glue 248, its tick glue 1,914; then the ROM's forkq 9,364, forker 36,930,
+      bchange 2,032, mchange 644, tchange 596 — our forkq / forker / glue 0, the blob 12,512 in all, and the run ends
+      at the ROM's idle. `USER_BUT` and `USER_MOT` are NOT MAPPED NOW, pinned as M left them
+      (`LEFT_THE_ROM_S_BEHIND_THE_NARROW_DOOR`), a correction to the narrow door flip's entry: THE DOOR GAINS THEM
+      WITH THE THREE PENDING IN SLICE F. THE 41 DOOR ROWS' PRICES UNDER IT WERE NOT MEASURED — OWED TO SLICE F.
+      FROM THE SLICES, the rest: SH-1's CONSEQUENCE FOR SLICE B — a row run on any stack but PD0's halts at its first
+      door, so sh_main's and sh_cmd's rows run with the SP on UDA0. SH-2, THE TIER-1 STAGING OF THE DOOR ON THE ROM'S
+      SHORE (a RAM copy of the Line-F table, one operand of the handler's copy pointed at it, five entries at
+      recording stubs) and GETREZ ANSWERED BY A STAGED TRAP where a run switches: kept, each a labelled class. I-1,
+      the host-only stretch entry (`aes_gem_main_lays_the_processes`) and the runtime `HOST_SLOT_ROLES.setdefault`:
+      kept (a public door of `aes_loader` is owed (k), not a two-line change). I-2, the name `gem_read_inf` (ours;
+      `# ctx`). I-3, THE READER'S TIER-1 CASES STAY UNPRICED until slice B's arrival rows. I-4 / SH-3, A PRIVATE-COPY
+      MUTATION BUILD OF A SUBSET (a library and two blobs, never the gates) is within the lighter cycle. I-5 / S-1,
+      `$8992` — on the first pass a code address's low half, capture-decided (the integration's entry); on a later
+      pass the desk's own 0 or 1 (the fix pass): how the our-boot machine holds it (a registry kind, or a named
+      per-comparison class) is slice B's to propose. SH-4, one read out of the ROM's order in sh_main
+      (`a_pass_begins` tests the loop's word where a pass would begin: one more read, no store differs) and the two
+      survivors of its sweep (fm_error's 2 against 3; sh_find's routine at Tier 1): as the slice's entry says. FROM
+      THE FIX PASS: `make gates` NOW RUNS `make preinit-twice` (eight more captures, half a minute; the mask held to
+      all four disks) — one Makefile line, the orchestrator's to keep or drop.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -2608,7 +2993,9 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
     `aes._INCLUDE`, `aes_gemctrl._as_pokes`, `aes_loader._GemdosWatched`, `_vet_it_returned`; `aes_trapdoor.py` →
     `aes_boot._Run`; `aes_stack.py` (`measured_at_the_door`) → `aes_boot._TakingOver`, `_Run`, `_CPU`,
     `aes_switch._our_vdi_under_the_trap`; `test_aes_boot.py` (the seam test) → `aes_boot._prototype_door_at`; slice
-    G's batteries → `RomBench._call`, `tier3._measure_transcription`, `tier3._mapped_back`; (l) a kit WRITE-LEDGER MARK / RESET (AWAITING 16); (m) slice
+    G's batteries → `RomBench._call`, `tier3._measure_transcription`, `tier3._mapped_back`; AND, WAVE 4:
+    `test_aes_geminit_boot.py` registers the reader's host slots in `aes_loader.HOST_SLOT_ROLES` at its import (a
+    `setdefault`: the loader's table has no door for another battery's routine); (l) a kit WRITE-LEDGER MARK / RESET (AWAITING 16); (m) slice
     M's mutation sweep made again over the final `aes_boot.py` (it predates the entered-at-a-stop fix); (n) CLOSED AT
     PASS 2: wave 2's machines with THE MERGED TREE'S OWN BLOBS — the review (C) ran `813239c`'s harness and the
     merged one over the same merged blobs, caches off: 26 machines (11 boots, 15 continued idles of the four chains)
@@ -2696,9 +3083,32 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 
 ## Suite
 
-`make test`: **27,812 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **28,190 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 5 WAVE 4, THE FOUR PARALLEL SLICES INTEGRATED (2026-10-12; slices I, SH, M, S and the integration: GEM's
+  start-up a byte-pinned `.S`, gem_main, the `#E` reader, sh_main and sh_cmd in C at Tier 1, the desk door, the
+  fourth capture and the served door, the start-up's stacks and both gates — nothing bound, nothing mapped, no row;
+  154 shipped objects: 151 byte-identical to `e4b8613`'s 152, `geminit.o` changed, `gemstart.o` and `shell.o` new;
+  the table's 5,678 lines BYTE-IDENTICAL): ONE `make test` in the shared tree (`-n 8`), `build/*.so` and every
+  `__pycache__` removed first, **28,164 passed / 8 skipped**, rc 0 (`scratchpad/b5/W4/INT/final.log`). BY THE LIGHTER
+  CYCLE: `make gates` from a private copy with no `build/`, `make guarded` and the `$90c` capture set were NOT run
+  by the integration — the orchestrator's from-empty gate before the commit. RE-SUMMED from this tree's own run,
+  ITEMISED BY FILE against `e4b8613`'s own collection (27,820 = 27,812 + 8 skipped; `pytest --collect-only` on
+  both): +352 on the line below — `test_aes_boot_w4.py` 70, `test_aes_gemstart.py` 54, `test_aes_geminit_inf.py` 36,
+  `test_aes_geminit_main.py` 12, `test_aes_geminit_boot.py` 10, `test_aes_shell_cmd.py` 38,
+  `test_aes_shell_main.py` 53, `test_aes_shell_door.py` 32, `test_aes_stack.py` 176 → 217 (+41),
+  `test_stack_diet.py` 99 → 105 (+6); no other file's count moved. (As first written this line said "346 itemised
+  and 6 more, not itemised" and slice S's entry "182 → 217": there were no such six — the second review's F2.)
+- BAND 5 WAVE 4, THE FIX PASS (2026-10-12; its entry: the two reviews' list — every shipped object, both blobs and
+  the table's 5,678 lines BYTE-IDENTICAL): ONE `make test` in the shared tree (`-n 8`), `build/*.so` and every
+  `__pycache__` removed first, the four pre-init machines captured again by it (the capture tool's mask changed),
+  **28,190 passed / 8 skipped**, rc 0 (`scratchpad/b5/W4/FIX/final.log`). BY THE LIGHTER CYCLE: `make gates`,
+  `make guarded`, a private-copy full build and the `$90c` capture set were NOT run by the pass. RE-SUMMED from
+  this tree's own collection: +26 on the integration's 28,164 — `test_aes_boot_w4.py` 70 → 76 (the three dead
+  stacks ×4 captures, the usable-disk word, the driver's refusal), `test_aes_geminit_inf.py` 36 → 40,
+  `test_aes_shell_main.py` 53 → 55 (one row, two tests), `test_aes_stack.py` 217 → 224, `test_makefile.py` 7 → 14;
+  +378 on `e4b8613` in all, no other file's count moved.
 - BAND 5 WAVE 3, THE NARROW DOOR FLIP'S FIX PASS (2026-10-11; the two reviews' list — tests, harness, tools and docs:
   the loader's replay held to the ROM's in-place run and one row made the ROM's run, the net-of-Line-F figure held,
   the one snapshot row behind our door said and pinned, the reds the reviews found missing; every shipped object,
@@ -3870,8 +4280,8 @@ immediates: a site ported and not re-pointed reds):
 
   | ROM site | what it names | whose |
   |---|---|---|
-  | `$fd9f86` `lea $fed424` → `$947a` | justretf into AES_DRWADDR | gem_main |
-  | `$fd9f92` `lea $fed426` → `$947e` | the tick glue, later handed to vex_timv | gem_main |
+  | ~~`$fd9f86` `lea $fed424` → `$947a`~~ | justretf into AES_DRWADDR | gem_entry — PAID, band 5 wave 4: `src/aes/gemstart.S` names the build's `aes_rom_justretf` (its byte pin's relocation; linked, entered by no row yet) |
+  | ~~`$fd9f92` `lea $fed426` → `$947e`~~ | the tick glue, later handed to vex_timv | gem_entry — PAID the same way (`aes_rom_tick_glue`) |
   | `$fe437c`, `$fed5a6` (gotopgm's address pushed) | gotopgm | the accessory loader, the shell's launch |
   | `$fe6698`, `$fe66b6` `move.l #$fed424` | justretf handed to the VDI | appl_tplay |
 

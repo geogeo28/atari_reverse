@@ -258,7 +258,7 @@ cmt 0xfc9f0c Line-A handler, installed at 0xfc037a into $28. Reads the faulting 
 fn 0xfee8c2 linef_handler
 cmt 0xfee8c2 GEM Line-F call handler, copied into a Malloc'd buffer and installed into $2c by the AES init at 0xfd9f4a. An EVEN $fXXX word is a one-word call through the 658-entry table at 0xfee900 (index = the low 12 bits as a byte offset); an ODD one is a return (unlk a6; rts, plus a movem mask of (op & 0x0ffe) * 4).
 fn 0xfd9eca gem_entry
-cmt 0xfd9eca GEM entry point named by the memory-usage parameter block at 0xfefff4.
+cmt 0xfd9eca gem_entry (the GEM entry point the memory-usage parameter block at 0xfefff4 names; entered by the BIOS as a program, never called, never returns): USP := $898e; Mshrink(basepage, text+data+bss+256); Super(sp) — the same stack the supervisor's, top $8994; $c924 := p_env; $8904..$890c laid; $2c's high byte non-zero -> Malloc(100), the Line-F handler and 38 bytes of its table ($fee8c2..$fee925) copied, $2c := the copy; jsr rom_rsc_init ($fee4de); $8992 := 1; $97fe := 0; LOOP $fd9f72: jsr size_theglo ($fee800), THEGLO cleared (move.w d1,(a0)+ / dbmi d0), justretf -> $947a, the tick glue -> $947e, ub_trampoline -> $8c32, A6 := UDA0's stack top, UDA+62 := A6, SP := A6, jsr gem_main ($fda062), bra LOOP. On target: src/aes/gemstart.S (byte-pinned but seven relocated operands)
 fn 0xfc0688 memory_size_probe   # ctx
 cmt 0xfc0688 Called from the reset path at 0xfc0050/0xfc00e8 through the a6 return-address convention (lea ret,a6 / bra sub / jmp (a6)) rather than by bsr.
 
@@ -2272,4 +2272,36 @@ cmt 0xfe44d4 cre_aproc() — the plan's "allocator"; the name is the published G
 var 0x9bc4 gl_acc_basepages
 cmt 0x9bc4 longs[6]: the basepages of the accessories whose PD was ALLOCATED, by the count $c682 as it stood when each was loaded (sndcli $fe436c; free_accs $fe44a4) — the first accessory's is in $9724, not here
 var 0x8992 gl_disk_usable # ctx
-cmt 0x8992 word: 1 from gem_entry ($fd9f64); the desk clears it where a GEMDOS call on the current drive fails ($fe2a62) and sets it again where one succeeds ($fe2a6a); ldaccs loads nothing from a disk while it is 0 ($fe43ba), and so does gem_main's own test at $fda432 (what else reads it is band 6's to say)
+cmt 0x8992 word, tested for non-zero: ldaccs loads nothing from a disk while it is 0 ($fe43ba) and the INF reader opens no DESKTOP.INF ($fda432); the desk clears it where a GEMDOS call on the current drive fails ($fe2a62) and sets it again where one succeeds ($fe2a6a). gem_entry stores 1 here ($fd9f64) BUT THE 1 DOES NOT LAST: the word is the top of gem_entry's first stack ([$890e, $8994)), and ON THE FIRST PASS the loop's jsr of size_theglo ($fd9f72) pushes $00fd9f78 over $8990..$8993 — what the reader and ldaccs test on that pass is $9f78, or the low word of an interrupted PC where an exception is taken on that stack before movea.l a6,sp ($fd9fbc): Hatari's boots leave $9f80 / $9f82, the clear loop's. THE FIRST PASS ALONE: the loop's bra ($fd9fc4) comes back with SP = A6 = PD0's top, so a later pass's jsr pushes at $a39e and the word is then what the desk last stored, 0 or 1 (what else reads it is band 6's to say)
+# ---- AES band 5 wave 4 (2026-10-11): GEM's start-up (slice I), the shell's loop and the desk door (SH), the machines' ROM side (M)
+# GEM's start-up (src/aes/gemstart.S, src/aes/geminit.c; slice I) — gem_entry's and the Line-F handler's fn and cmt are above
+fn 0xfd9fc6 gem_gemdos_call
+cmt 0xfd9fc6 gem_gemdos_call: the return address parked in $8900, $98ec / $c918 cleared, trap #1 over the caller's own frame, $c918 := D0.w, $98ec := 1 where D0.l < 0, back through $8900. Line-F $f198; its four callers are shell utilities (band 6). On target: src/aes/gemstart.S, linked and not bound
+fn 0xfda062 gem_main
+cmt 0xfda062 gem_main(): ini_dlongs, cli, install_trap2; the lists emptied, the 15 EVBs freed, pinit x3, the UDAs, PD0 made rlr; sti; ictlmgr -> $9b3a/$9ad8/$9afa; gem_read_inf; rom_ram(0), the two mouse forms; ldaccs; set_defdrv; gsx_init; three icons through gsx_trans; takeerr; sh_tographic; the tick exchanged with the VDI's ($947e handed, the VDI's kept in $948a); ev_dclick(3, 1); rs_fixit once ($9c40); wm_start, fs_start; the band (tree 2) sized; dsptch; all_run; sh_main; then the teardown: gsx_mfree, giveerr, rs_free, free_accs, the tick put back, gsx_wsclose, gsx_escapes(2), restore_trap2. C: gem_main (src/aes/geminit.c); target entry aes_rom_gem_main
+fn 0xfda408 gem_read_inf # ctx
+cmt 0xfda408 gem_read_inf(): Malloc 2048; sh_get; \DESKTOP.INF of the current drive, then C:, read into it (else rom_ram(3)); NUL at buffer + (signed word) count; only where read: each #E's second pair — a change pending -> rewritten (pair & $f0)|(device-1), scan goes on; none -> app_reschange((pair & 3)+1), scan ends; sh_put; Mfree. D0 0 where nothing was read or the device is unchanged. C: aes_gem_read_inf (src/aes/geminit.c)
+var 0x947e gl_tick_routine # ctx
+cmt 0x947e long: the routine gem_main hands vex_timv — the tick glue $fed426, stored by gem_entry ($fd9f92) on every pass
+# the shell's loop and the desk door (src/aes/shell.c, include/aes/deskdoor.h; slice SH)
+fn 0xfeb0e6 sh_main
+cmt 0xfeb0e6 sh_main(): ad_pfile $c7a2 := band[2].ob_spec; sh_isgem = gl_shgem = sh_isdef = sh_doexec = sh_dodef = 1; while sh_doexec: $c93c := sh_isdef (then sh_isgem := 1), sh_isdef := 1; sh_isgem != gl_shgem -> copy, sh_tographic / sh_toalpha; gl_shgem -> wm_start, ratinit; $c890 -> cart_exec $fed5c2; sh_dodef -> desk_alloc, deskmain, gl_bpend := 0, desk_free, Getrez not 2/4 -> band[0].ob_spec := $1173, answer ? sh_dodef := 0 : sh_doexec := 0; else sh_cmd() ? sh_dodef := 1 : (sh_draw, sh_dodef := 1, sh_find(cmd, sh_show) ? pd_nameit, dos_exec(cmd, 0, tail), gl_shgem && DOS_ERR && DOS_AX < -32 -> fm_error(~AX - 30) : fm_error(2)). C: aes_sh_main (src/aes/shell.c)
+fn 0xfeb2fc sh_cmd
+cmt 0xfeb2fc sh_cmd(): the tail's first byte $c42e: $fe -> $fed61e(text $c42f); $fd -> strcpy("PRINTING  " $fef47e, cmd), strcat(text, cmd), sh_draw(cmd, 0, 1), $fed624(text); $fc -> sh_draw, $fed912(text, cmd); $fb -> sh_draw, $fedde4(text, cmd); 1 — any other byte 0. C: aes_sh_cmd (src/aes/shell.c)
+fn 0xfe272e deskmain # ctx
+fn 0xfed61e desk_show_file
+cmt 0xfed61e (name): pushes 1 and falls into $fed632 with $fed624 (which pushes 0): a file shown on the screen / printed
+fn 0xfed624 desk_print_file
+fn 0xfed912 desk_format # ctx
+fn 0xfedde4 desk_copy_disk # ctx
+fn 0xfed5c2 cart_exec # ctx
+var 0xc93c sh_isdef_seen # ctx
+cmt 0xc93c stored by sh_main each pass ($feb130 clr, $feb146 := 1 where sh_isdef was set); read by nothing
+var 0xc890 sh_cart_launch # ctx
+cmt 0xc890 set by the desk ($fe15c4) for a cartridge's program; tested and cleared by sh_main ($feb186, $feb1c0)
+var 0xfef47e sh_printing_text
+# the ROM's side of the machines (test/aes_boot.py; slice M)
+var 0x755a flop_media_mode
+cmt 0x755a the floppy driver's media-change mode, a byte a drive: Rwabs of a NULL buffer stores its count here ($fc12e2), Mediach answers 2 while it is 2 ($fc119a), Getbpb rewrites it from the write-protect latch ($fc1160)
+cmt 0xfe1ad0 the desk, before it opens a drive: Drvmap, Malloc(512), XBIOS Floprd of the boot sector (eralert on an error), then Rwabs(0, NULL, 2, 0, drive) — the forced media change
+cmt 0xfe3094 the desk copies ub_trampoline's address out of $8c32 into the USERBLK of a window item shown as text (block + 5580 + 8 * index; its object block + 15902 + 24 * index, type G_USERDEF)

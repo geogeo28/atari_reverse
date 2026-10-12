@@ -75,8 +75,12 @@ ALLOWED_ALIASES = {
     frozenset(("SYSVAR_ETV_TIMER", "WK_RTARROW", "USERDEF_STACK_BYTES")):
         "a window kind's right-arrow BIT ($400) and a SIZE — the G_USERDEF stack's 1024 bytes (`aes/deskmem.h`) — not "
         "addresses, beside the timer vector",
-    frozenset(("VDI_PTSIN_COPY_BYTES", "WK_HSLIDE")):
-        "a SIZE and a window kind's horizontal-slider BIT, not addresses, both $800",
+    frozenset(("VDI_PTSIN_COPY_BYTES", "WK_HSLIDE", "INF_BUFFER_BYTES")):
+        "two SIZES and a window kind's horizontal-slider BIT, not addresses, all $800: the VDI's ptsin copy, the block "
+        "the AES reads DESKTOP.INF into (`aes/geminit.h`) and the slider's bit",
+    frozenset(("AES_ROM_GEM_ENTRY_END", "AES_ROM_INI_DLONGS")):
+        "where `src/aes/gemstart.S`'s pinned text ends and the routine that begins at it — a boundary and a function "
+        "(GEMDOS_TRAP1_END's kind): a wave that moves either must not silently move the other",
     frozenset(("AES_GSX_CONTRL", "AES_GSX_OPCODE")):
         "the AES's contrl[] (the address the block's first pointer holds) and contrl[0], the opcode word — an array "
         "and its first element",

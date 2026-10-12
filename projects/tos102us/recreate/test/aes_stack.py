@@ -45,6 +45,14 @@ SWITCH — whose jump table the reading now reads (`aes_switch.jump_tables`) —
 terms, the same verdict, beside the two stacks an accessory can have: PD2's 1,396 bytes (the first one, in the
 AES's static PD) and an allocated PD's 1,788. And the two PRIVATE stacks of the door's neighbours: crit_err's
 2,048 bytes and the 1,024 the desk allocates for ub_trampoline.
+
+THE START-UP AND THE SHELL (band 5 wave 4, rulings W4-R4 and W4-R9; the section of that name below). gem_entry runs
+on TWO stacks of its own making — 134 bytes over its own live words, then PD0's 1,792, on which gem_main and sh_main
+stay for the whole session, under every frame of the desk's. The ROM's own start-up is READ OFF THE ROM and HELD TO
+ITS BOOT; a blob's is read the moment it links `aes_rom_gem_entry`: THE FIRST-STACK GATE (what the build takes of the
+134, bound and measured, beside the ROM's 84) and THE ROM-DEPTH RULE (each call out of the build — deskmain, the
+shell's utilities — and dos_exec entered exactly where the ROM enters it: the desk door's pad), with PD0's own frames
+and what dos_exec leaves an application's trap.
 """
 import collections
 import functools
@@ -416,16 +424,17 @@ def measured(name, shore=THE_ROM_S):
 
 
 # ---- WHAT THE OS NEEDS UNDER A TRAP, BY THE VDI CALL — AND UNDER A LINE-A TRAP ----------------------------------------------
-def _watched_from_its_frame(pokes, entry, inner, shore, handler=None, past_its_word=0):
+def _watched_from_its_frame(pokes, entry, inner, shore, handler=None, past_its_word=0, io_seed=None):
     """The ROM's routine at `entry` over `pokes` (its frame staged) on the run's own stack, watched at the
     exceptions it takes through `handler` — the VDI of `shore` under its traps: the `Trap`s. `handler` None: THE GEM
     TRAP'S, AS THIS RUN'S OWN MACHINE HOLDS IT in `$88` (band 5 wave 3, slice M: the ROM's on every machine but one
-    whose trap door is ours — a watch keyed on the ROM's would see no trap there)."""
+    whose trap door is ours — a watch keyed on the ROM's would see no trap there). `io_seed`: the hardware bytes the run
+    is DECLARED to read (`{address: byte}`: the shifter's mode under Getrez)."""
     memory = with_our_vdi(make_image(pokes), shore)
     handler = aes_event.gem_trap_on(memory) if handler is None else handler
     aes_event.vet_a_handler_of_the_machine(memory, handler, f"the watch of {entry:#x}'s exceptions")
     watch = _ExceptionsOn((emu.STACK_TOP - WATCHED_UNDER_AN_EXCEPTION, emu.STACK_TOP), inner, handler, past_its_word)
-    rom_bench.watched_original(memory, entry, watch)
+    rom_bench.watched_original(memory, entry, watch, io_seed=io_seed)
     rom_bench.vet_the_run_just_made(f"the ROM's run of {entry:#x}, watched at its exceptions")
     return tuple(watch.taken)
 
@@ -967,8 +976,10 @@ def need_charged_the_worst(blob):
 #     path is read from the marshal under that many bytes — an ALLOWANCE, as the screen manager's was before its
 #     entry linked — and from the handler's own AES arm the moment the symbol exists (`trap_entered_at`; a test
 #     reddens if it then is not, and holds the linked door to the ROM-read depth).
-#   * WHAT THE TRAP PATH'S READING IS TOLD beside the screen manager's: sh_find's `routine` is a pointer NO CALLER OF
-#     THE BUILD HANDS A ROUTINE IN (held to the sources); `trap #1` and the bell's `trap #13` take what THE
+#   * WHAT THE TRAP PATH'S READING IS TOLD beside the screen manager's: sh_find's `routine` is a pointer NO CALLER ON
+#     THE TRAP PATH HANDS A ROUTINE IN — since band 5 wave 4 the shell's own call hands one (sh_show), so sh_find is
+#     READ FOR EACH CALLER'S ARGUMENT and a call hands none only where it SHOWS a zero (held to the sources and to
+#     both readings); `trap #1` and the bell's `trap #13` take what THE
 #     MACHINE'S OWN handlers are MEASURED to take of the caller's stack (`gemdos_need`, `bell_need` — the ROM's
 #     GEMDOS and BIOS on every shore: said beside the numbers).
 #   * BY THE CALL (`calls_of_the_switch`): each arm of the switch — an AES opcode — with the deepest its own frames
@@ -987,6 +998,8 @@ GEMDOS_TRAP, THE_BELL_S_TRAP = "trap #1", "trap #13"
 NO_ROUTINE_IS_HANDED = aes_switch.NO_ROUTINE_IS_HANDED
 SH_FIND = "aes_sh_find"
 TRAP_PATH_POINTERS = {**THROUGH_A_POINTER, SH_FIND: (NO_ROUTINE_IS_HANDED,)}
+# ...and sh_find is READ FOR EACH CALLER'S ARGUMENT (band 5 wave 4: the shell hands it sh_show; every other call none).
+TRAP_PATH_CALLS_WHAT_IT_IS_HANDED = (*CALLS_WHAT_IT_IS_HANDED, SH_FIND)
 THE_DOOR = "the trap door's own bytes above the marshal (the ROM's, read off the ROM: for a blob that links no handler)"
 # ...and the two private stacks beside the door (their section, below): each begun by one instruction, at its top.
 # `move.l sp,$8c42` ($fe3ccc); `movea.l #$9446,sp` ($fe3cd2): the build's own header's
@@ -1079,9 +1092,9 @@ THE_BELL = (PUSH_WORD, BEL, PUSH_LONG, *BCONOUT_TO_THE_CONSOLE, TRAP_13, DROP_6)
 THE_BELL_AS_LISTED = ("movew #7,%sp@-", "movel #196610,%sp@-", THE_BELL_S_TRAP)
 
 
-def _need_under_a_staged_trap(words, vector):
+def _need_under_a_staged_trap(words, vector, io_seed=None):
     taken = _watched_from_its_frame(case.merge_pokes(aes_event.machine(), _a_staged_trap(*words)), BAND_AT, None, THE_ROM_S,
-                                    case.long_in(BASE_IMAGE, vector) & BUS)
+                                    case.long_in(BASE_IMAGE, vector) & BUS, io_seed=io_seed)
     assert len(taken) == 1, f"the staged call took {len(taken)} traps: one was expected"
     return taken[0].under
 
@@ -1109,7 +1122,7 @@ def trap_reading(elf):
     """THE READING of the blob at `elf` as THE TRAP PATH is read (above): one, every function read once."""
     excepted = {THE_LINE_A_INIT: line_a_need(), GEMDOS_TRAP: gemdos_need(), THE_BELL_S_TRAP: bell_need()}
     return aes_switch.StackReading(elf, TRAP_PATH_POINTERS, leaves_the_stack=LEAVES_THE_STACK,
-                                   calls_what_it_is_handed=CALLS_WHAT_IT_IS_HANDED, takes_an_exception=excepted,
+                                   calls_what_it_is_handed=TRAP_PATH_CALLS_WHAT_IT_IS_HANDED, takes_an_exception=excepted,
                                    begins_a_stack={**THE_DOOR_BEGINS, **THE_PRIVATE_STACKS_BEGIN},
                                    leaves_its_stack_at=(THE_WAY_OUT_LEAVES,))
 
@@ -1493,6 +1506,519 @@ def measured_at_the_door(modes, shore=THE_ROM_S, our_vdi=True):
     return _door_run(*DOOR_MODES[modes], shore, _content_of(shore), our_vdi and shore != THE_ROM_S)
 
 
+# ---- THE START-UP AND THE SHELL: gem_entry's two stacks, PD0's from init to the desk (band 5 wave 4; W4-R4, W4-R9) ----------------
+# gem_entry (`$fd9eca`: the program the BIOS starts — no caller, no return) runs on TWO stacks, and gem_main and sh_main
+# stay on the second for the whole session, UNDER every frame of the desk's:
+#   * THE FIRST STACK — `movea.l #$898e,sp` in user state; Mshrink; `Super(sp)`, which makes that same address the
+#     SUPERVISOR's stack pointer; then `addq.w #6,sp` drops the Super call's two pushes, WHICH STOOD ON THE USER STACK:
+#     the stack's top is the loaded address AND SIX, `$8994`, and its bottom the end of the words gem_entry itself lays
+#     under it (`$8904..$890d`: the device, the change flag — read tens of thousands of instructions later). 134 bytes,
+#     on which rom_rsc_init (a Malloc and a 17 KB copy), size_theglo and three GEMDOS traps run. THE FIRST-STACK GATE
+#     (W4-R9): what OUR rom_rsc_init and size_theglo take of it, bound and measured, beside the ROM's own 84.
+#     AND ONE WORD gem_entry STORES LIES INSIDE THAT STACK: `$8992` (`move.w #1`, after rom_rsc_init returns) is the
+#     low word of the longword the next `jsr` pushes its return address into — what the `#E` reader later TESTS there
+#     is the low word of size_theglo's return address (`stored_inside_the_first_stack`; held to the ROM's run).
+#   * PD0's STACK — UDA0's, `[$9ca2, $a3a2)`: `movea.l a6,sp` at the loop's foot, then `jsr gem_main`, for ever. THE
+#     ROM-DEPTH RULE (W4-R4): at each call out of the build into the ROM — deskmain, the shell's utilities, the
+#     cartridge's — and into dos_exec, PD0's stack pointer is the ROM's own: READ OFF THE ROM (`the_rom_enters`:
+#     gem_entry, gem_main, sh_main and sh_cmd as `rom_data` decodes them, every Line-F word read for what it is) and
+#     HELD TO THE ROM'S BOOT (`start_up_run`); on a blob, what stands above each is `entered_out_of_the_build`, and E —
+#     its excess over the ROM's — is what the desk door's pad must make zero.
+#   * AN APPLICATION'S TRAP UNDER sh_main: dos_exec parks, as PD0's stack for the program's `trap #2`s, the SP it is
+#     entered at LESS 64 (`$fe3d48`: read off the ROM) — the trap path's bound, counted from there, beside what is
+#     left of UDA0 below it.
+# THE LIMITS, beside the screen manager's two: the ROM's own figures are its boot's lowest STORES (no reader reads the
+# ROM's rom_rsc_init or its init tree); no interrupt is taken in a measured run but the horizontal blank, and THE NEST
+# IS NOT CHARGED TO THE FIRST STACK by the gate — it does not fit there under the ROM either (`report` says the sum).
+GEM_ENTRY = "aes_rom_gem_entry"
+GEM_ENTRY_ROM, GEM_ENTRY_ROM_END = addrs.AES_ROM_GEM_ENTRY, addrs.AES_ROM_GEM_GEMDOS_CALL    # to its `bra` back ($fd9fc4)
+THE_INF_READER_ROM = addrs.AES_ROM_GEM_READ_INF     # the `#E` reader, gem_main's: it tests the word inside the first stack ($fda432)
+THE_FIRST_STACK, PD0_S_STACK = "gem_entry's first stack", "PD0's stack (UDA0's)"
+THE_SUPER_CALL = ("movel %sp,%sp@-", "movew #32,%sp@-", GEMDOS_TRAP)        # Super(sp): `$fd9efa..$fd9f00`
+SUPER_S_PUSHES = LONG_BYTES + WORD_BYTES
+# GEMDOS's Super builds the frame it returns by IN THE SIX BYTES OF ITS OWN ARGUMENTS (`$fc501c..$fc5038`: the PC and
+# the status word stored under the new stack pointer, then `rte`): nothing of the caller's stack below them is taken.
+SUPER_TAKES = 0
+PD0_S_STACK_BEGINS = "moveal %fp,%sp"   # gem_entry's `movea.l a6,sp` ($fd9fbc): A6 is UDA0's end
+_THE_FIRST_STACK_LOADED = re.compile(r"^moveal #(\d+),%sp$")
+_UDA0_LOADED, _UDA0_S_END = re.compile(r"^moveal #(\d+),%fp$"), re.compile(r"^addal #(\d+),%fp$")
+_AN_ABSOLUTE_STORE = re.compile(r"^(?:move|clr)([wl]) (?:.*,)?0x([0-9a-f]+)$")
+_A_ROM_TRANSFER = re.compile(r"^((?:jsr|bsr\w*|bra\w*|b(?:hi|ls|cc|cs|ne|eq|vc|vs|pl|mi|ge|lt|gt|le)\w*|db\w+ %d\d,) ?)0x([0-9a-f]+)$")
+THE_WORDS_UNDER_WITHIN = 0x100          # how far under the loaded address gem_entry's own words are looked for
+AN_ALCYON_ROUTINE_AT_MOST = 0x400       # gem_main is 884 bytes: no routine read here is longer
+A_ROM_ROUTINE = "rom_{:x}"              # the name the reading gives a ROM routine it does not read: a bare return
+
+
+def rom_routine_listed(lo, hi, names):
+    """THE ROM's `[lo, hi)` AS THE STACK READING READS A BLOB'S LISTING, EVERY LINE-F WORD READ FOR WHAT IT IS (where
+    `rom_listed` is handed a name for each): a CALL word a `jsr` of the routine the ROM's own call table names for
+    it; a RETURN word the `unlk` and `rts` its handler ends in (`$fee8fc`: two lines, the second at the word's odd
+    byte). A transfer's target is named by `names` (`{ROM address: name}` — one not there is named `rom_<address>` AND
+    ADDED: what the caller must list or stub), a place inside the body its own.
+    WHAT A LINE-F CALL TAKES BESIDE A `jsr`'s FOUR BYTES — the exception's frame is six before the handler makes it a
+    return address — is not in this listing: it is read for WHERE A CALLEE IS ENTERED, never for a deepest SP."""
+    listed = []
+    for at, text in rom_data.instructions(lo, hi):
+        if text is None:
+            word = case.word_in(BASE_IMAGE, at)
+            if word & aes.LINEF_RETURN_BIT:
+                listed += [(at, aes_switch.UNLINK), (at + 1, "rts")]
+                continue
+            text = f"jsr {aes.line_f_target(word):#x}"
+        named = _A_ROM_TRANSFER.match(text)
+        if named:
+            target = int(named.group(2), 16)
+            inside = f"inside+{target - lo:#x}" if lo <= target < hi else None
+            text = f"{named.group(1)}{target:x} <{inside or names.setdefault(target, A_ROM_ROUTINE.format(target))}>"
+        listed.append((at, text))
+    return listed
+
+
+def _is_a_line_f_return(at):
+    word = case.word_in(BASE_IMAGE, at)
+    return word & ~aes.LINEF_OFFSET_MASK == aes.LINE_F and bool(word & aes.LINEF_RETURN_BIT)
+
+
+def alcyon_routine_listed(start, names):
+    """...of THE ALCYON ROUTINE AT `start`, to its first Line-F RETURN word — the one way out an Alcyon routine of
+    GEM's has. (A word of an operand can look like one: the first THE DECODING reaches as an instruction is it.)"""
+    for end in range(start, start + AN_ALCYON_ROUTINE_AT_MOST, WORD_BYTES):
+        if _is_a_line_f_return(end) and (end, None) in rom_data.instructions(start, end + WORD_BYTES):
+            return rom_routine_listed(start, end + WORD_BYTES, names)
+    raise AssertionError(f"the ROM's routine at {start:#x} reaches no Line-F return word within {AN_ALCYON_ROUTINE_AT_MOST} bytes")
+
+
+def _operand(body, shaped, what):
+    found = [int(match.group(1)) for _at, text in body if text and (match := shaped.match(text))]
+    assert len(found) == 1, f"gem_entry holds {len(found)} instructions that are {what}: one is read"
+    return found[0]
+
+
+def _absolute_stores(body):
+    """`{address: bytes}` of every word or longword an instruction of `body` stores at an absolute address."""
+    return {int(stored.group(2), 16): aes_switch.OPERAND_BYTES[stored.group(1)]
+            for _at, text in body if text and (stored := _AN_ABSOLUTE_STORE.match(text))}
+
+
+def _the_first_run(stores):
+    """`(start, end)` of the first unbroken run of `stores` (`{address: bytes}`), from the lowest."""
+    start = end = min(stores)
+    while end in stores:
+        end += stores[end]
+    return start, end
+
+
+@functools.cache
+def gem_entry_s_stacks():
+    """`{which: (bottom, top)}` of the two stacks gem_entry runs on, READ OFF THE ROM'S OWN OPERANDS: the first from
+    the end of the words gem_entry lays under the address it loads (the unbroken run of them) to that address AND
+    THE SUPER CALL'S SIX; PD0's from the end of UDA0's saved state to UDA0's end."""
+    body = rom_data.instructions(GEM_ENTRY_ROM, GEM_ENTRY_ROM_END)
+    loaded = _operand(body, _THE_FIRST_STACK_LOADED, "`movea.l #<address>,sp`")
+    laid_under = {at: size for at, size in _absolute_stores(body).items() if loaded - THE_WORDS_UNDER_WITHIN <= at < loaded}
+    uda0 = _operand(body, _UDA0_LOADED, "`movea.l #<UDA0>,a6`")
+    return {THE_FIRST_STACK: (_the_first_run(laid_under)[1], loaded + SUPER_S_PUSHES),
+            PD0_S_STACK: (uda0 + aes.UDA_STATE_BYTES, uda0 + _operand(body, _UDA0_S_END, "`adda.l #<its bytes>,a6`"))}
+
+
+def spans_of_the_start_up():
+    return {which: top - bottom for which, (bottom, top) in gem_entry_s_stacks().items()}
+
+
+def the_first_stack_begins():
+    """The instruction at which gem_entry's first stack begins, as a listing spells it — AND WHERE SP STANDS AFTER IT,
+    below the top the Super call and the `addq.w #6` leave: the six bytes the ROM drops that it never pushed there."""
+    _bottom, top = gem_entry_s_stacks()[THE_FIRST_STACK]
+    return {f"moveal #{top - SUPER_S_PUSHES},%sp": SUPER_S_PUSHES}
+
+
+def stored_inside_the_first_stack():
+    """`{address: bytes}`: THE WORDS gem_entry ITSELF STORES INSIDE ITS FIRST STACK — one, `$8992` (`move.w #1`: "the
+    disk is usable"), the low word of the first longword a `jsr` on that stack pushes."""
+    bottom, top = gem_entry_s_stacks()[THE_FIRST_STACK]
+    return {at: size for at, size in _absolute_stores(rom_data.instructions(GEM_ENTRY_ROM, GEM_ENTRY_ROM_END)).items() if bottom <= at < top}
+
+
+def start_up_declared():
+    """WHAT A READING OF THE START-UP IS TOLD (`aes_switch.StackReading`'s keywords): where each of gem_entry's two
+    stacks begins, and that the Super call leaves SP where it stood."""
+    return {"begins_a_stack": {**the_first_stack_begins(), PD0_S_STACK_BEGINS: 0}, "ends_where_it_began": {THE_SUPER_CALL: SUPER_TAKES}}
+
+
+# THE ROM'S START-UP, READ: gem_entry and the three Alcyon routines under it that stay on PD0's stack.
+THE_ROM_S_GEM_ENTRY = "gem_entry"
+
+
+@functools.cache
+def the_rom_s_start_up():
+    """`(the reading, {ROM address: the name it reads it under})` of THE ROM'S OWN gem_entry, gem_main, sh_main and
+    sh_cmd (THE_ROM_S_ROUTINES_ON_PD0: each held to be a callee of the one before it) — every other routine a bare
+    return."""
+    names = {GEM_ENTRY_ROM: THE_ROM_S_GEM_ENTRY}
+    functions = {THE_ROM_S_GEM_ENTRY: rom_routine_listed(GEM_ENTRY_ROM, GEM_ENTRY_ROM_END, names)}
+    for routine in THE_ROM_S_ROUTINES_ON_PD0:
+        functions[names.setdefault(routine, A_ROM_ROUTINE.format(routine))] = alcyon_routine_listed(routine, names)
+    for address, name in names.items():
+        functions.setdefault(name, [(address, "rts")])
+    read = aes_switch.StackReading.of_listing(functions, {address: name for address, name in names.items()},
+                                              takes_an_exception={GEMDOS_TRAP: gemdos_need()}, **start_up_declared())
+    return read, names
+
+
+def _pd0_s_part(read, entry):
+    """The name gem_entry is read under FROM THE INSTRUCTION AT WHICH PD0's STACK BEGINS (`<entry>+<offset>`)."""
+    body = read.functions()[entry]
+    begins, = [at for at, text in body if aes_switch.as_declared(text) == PD0_S_STACK_BEGINS]
+    return f"{entry}{aes_switch.INTO}{begins - body[0][0]:#x}"
+
+
+# THE ROUTINES THAT STAY ON PD0's STACK (the ROM's): gem_main, sh_main, sh_cmd — and WHAT THE SHELL CALLS OUT OF BAND 5:
+GEM_MAIN_ROM, SH_MAIN_ROM, SH_CMD_ROM = addrs.AES_ROM_GEM_MAIN, addrs.AES_ROM_SH_MAIN, addrs.AES_ROM_SH_CMD
+THE_ROM_S_ROUTINES_ON_PD0 = (GEM_MAIN_ROM, SH_MAIN_ROM, SH_CMD_ROM)
+DESKMAIN_ROM, CART_EXEC_ROM, DOS_EXEC_ROM = addrs.AES_ROM_DESKMAIN, 0xFED5C2, addrs.AES_ROM_DOS_EXEC
+THE_SHELL_S_UTILITIES_ROM = (addrs.AES_ROM_DESK_SHOW_FILE, addrs.AES_ROM_DESK_PRINT_FILE, addrs.AES_ROM_DESK_FORMAT,
+                             addrs.AES_ROM_DESK_COPY_DISK)      # sh_cmd's four arms ($feb322, $feb356, $feb372, $feb390)
+DESKMAIN, CART_EXEC = "deskmain ($fe272e): the desk, the ROM's until band 6", "cart_exec ($fed5c2): the cartridge's, out (W4-R12)"
+A_UTILITY = "the shell's utility at ${:x}: the ROM's until band 6"
+THE_DESK_DOOR = {DESKMAIN_ROM: DESKMAIN, CART_EXEC_ROM: CART_EXEC,
+                 **{utility: A_UTILITY.format(utility) for utility in THE_SHELL_S_UTILITIES_ROM}}
+DOS_EXEC = "aes_rom_dos_exec"
+
+
+@functools.cache
+def the_rom_enters():
+    """`{ROM address: the bytes below its stack's top at the routine's first instruction}` under THE ROM'S gem_entry,
+    READ: the two callees of the first stack; and on PD0's, gem_main, sh_main, sh_cmd, dos_exec and every call out of
+    band 5 — THE ROM-DEPTH RULE's figures (W4-R4)."""
+    read, names = the_rom_s_start_up()
+    address_of = {name: address for address, name in names.items()}
+    first = {address_of[callee]: under for callee, under, _at in read.sites(THE_ROM_S_GEM_ENTRY) if address_of[callee] != GEM_MAIN_ROM}
+    pd0 = _pd0_s_part(read, THE_ROM_S_GEM_ENTRY)
+    on_pd0 = {address: read.deepest_to(pd0, names[address])[0]
+              for address in (GEM_MAIN_ROM, SH_MAIN_ROM, SH_CMD_ROM, DOS_EXEC_ROM, *THE_DESK_DOOR)}
+    return {THE_FIRST_STACK: first, PD0_S_STACK: on_pd0}
+
+
+# dos_exec PARKS, AS THE STACK OF THE PROGRAM'S OWN TRAPS, the SP it is entered at less this (`$fe3d46 movea.l sp,a1` /
+# `$fe3d48 suba.l #64,a1` / `move.l a1,62(a0)`, between its two mask brackets: SP is its entry's): READ OFF THE ROM.
+_DOS_EXEC_PARKS = re.compile(r"^subal #(\d+),%a1$")
+DOS_EXEC_READ_TO = DOS_EXEC_ROM + 0x44                      # ...to its `trap #1` ($fe3d70)
+PEXEC_S_FRAME_BYTES = 3 * LONG_BYTES + 2 * WORD_BYTES       # what dos_exec pushes for Pexec ($fe3d5a..$fe3d6c)
+
+
+@functools.cache
+def dos_exec_parks_under():
+    return _operand(rom_data.instructions(DOS_EXEC_ROM, DOS_EXEC_READ_TO), _DOS_EXEC_PARKS, "`suba.l #<bytes>,a1`")
+
+
+def parked_for_an_application(entered):
+    """`(the bytes below PD0's top its stack pointer is parked at for an application's traps, the bytes of PD0's stack
+    under it)` where dos_exec is entered `entered` bytes below the top."""
+    parked = entered + dos_exec_parks_under()
+    return parked, spans_of_the_start_up()[PD0_S_STACK] - parked
+
+
+def parked_inside_gemdos_s_frame(entered):
+    """HOW MANY BYTES OF WHAT GEMDOS SAVES ON ITS CALLER'S STACK FOR Pexec LIE UNDER THE PARKED STACK POINTER — where
+    the application's first `trap #2` stacks: dos_exec's frame for Pexec and GEMDOS's own pushes under it reach
+    `entered` + 16 + 50, the parked pointer stands at `entered` + 64. BY READING (no machine launches a program)."""
+    return max(entered + PEXEC_S_FRAME_BYTES + gemdos_need() - parked_for_an_application(entered)[0], 0)
+
+
+# ---- ...THE ROM'S BOOT, MEASURED: where each routine is entered, and the lowest store on each stack ------------------------------
+StartUpRun = namedtuple("StartUpRun", "entered lowest parked at_the_reader ended instructions ours the_rom_s")
+StartUpRun.__doc__ = """One run of a start-up from the pre-init machine: `entered`, `{address: the supervisor stack
+pointer at its first arrival}` over the addresses watched; `lowest`, `{(which stack, the address watched whose arrival
+begins the stretch — None: the run's start): the lowest address stored on that stack in the stretch}` (no entry where
+nothing was); `parked`, the long PD0's UDA keeps as its stack pointer where the run ended; `at_the_reader`, the four
+bytes under the first stack's top at the reader's arrival (None: not reached); `ended`, `(the PC, the supervisor
+stack pointer)` where the run ended; `instructions`; and WHO RAN, by cycle profile (differences over this run alone):
+`ours`, the cycles in the blob's span (0 where none was laid), `the_rom_s`, in GEM's own text."""
+THE_BLANK_DISK, TWO_QUIET_ACCESSORIES = "the blank disk", "two quiet accessories"
+THE_BOOTS = {THE_BLANK_DISK: lambda: (aes_boot.preinit(), aes_boot.blank_disk()),
+             TWO_QUIET_ACCESSORIES: lambda: (aes_boot.accessory_preinit(), aes_boot.accessory_disk_of(aes_boot.QUIET, aes_boot.QUIET))}
+PROFILE_HELD_BY_A_START_UP_RUN = "a start-up run of the stack battery's (`aes_stack._start_up_run`)"
+
+
+@derived.kept
+def _start_up_run(machine, disk, watched, until, laid, reader=THE_INF_READER_ROM):
+    """THE DERIVATION: the boot of `disk` from the pre-init `machine`, stopped at its first arrival at each of
+    `watched` (a sorted tuple of addresses; `reader`, the `#E` reader's entry, is one where its arrival is asked) and
+    ended at `until` (None: at its first idle). `laid` None: THE ROM'S OWN BOOT. Else `(base, the blob's bytes, its
+    gem_entry)`: THE BLOB LAID where the run stands before its first instruction — the span held clear — and ENTERED
+    AT ITS OWN gem_entry with the capture's whole register file (a LABELLED STAGING, ruling W4-R1's: no longword of
+    the machine is mapped). A `StartUpRun`. KEPT BY CONTENT though the laid run is THE BLOB's: its bytes are an
+    argument, so a rebuilt blob is another question (`derived.py`'s named exception, as a takeover boot's)."""
+    memory = bytearray(BASE_IMAGE)
+    memory[:aes_boot.RAM_BYTES] = machine.ram
+    registers, span = dict(machine.registers), (0, 0)
+    if laid is not None:
+        base, image, entry = laid
+        assert not any(memory[base:base + len(image)]), "the span the blob is laid in is not clear at the pre-init stop"
+        memory[base:base + len(image)] = image
+        registers["pc"], span = entry, (base, base + len(image))
+    stacks, marks, entered, seen = gem_entry_s_stacks(), [(None, 0)], {}, {}
+
+    def arrived_at(address):
+        def read(mem, sp):
+            if address not in entered:
+                entered[address] = sp
+                marks.append((address, aes_boot._CPU.osh_num_writes()))
+                seen[address] = bytes(mem[stacks[THE_FIRST_STACK][1] - LONG_BYTES:stacks[THE_FIRST_STACK][1]])
+        return read
+    run = aes_boot._Run(memory, aes_boot.Floppy(memory, disk), aes_boot.BOOT_INSNS, until=until,
+                        observing={address: ("a routine of the start-up", arrived_at(address)) for address in watched})
+    aes_event.vet_the_profile_is_free("a start-up run of the stack battery's")
+    emu.prof_enable(True)
+
+    def tallies():                          # the profile is never reset: a run's own cycles are a difference
+        return emu.prof_cycles(*span) if laid is not None else 0, emu.prof_cycles(*aes.AES_TEXT)
+    try:
+        before = tallies()
+        with aes_event.profile_held(PROFILE_HELD_BY_A_START_UP_RUN):
+            result = run.to_an_idle(registers, aes_boot.io_seed_of(machine))
+        ledger = aes_boot._CPU.osh_write_addrs()[:aes_boot._CPU.osh_num_writes()]
+        _writes, truncated = emu.bench_writes(memory)
+        assert not truncated, "the start-up run's write ledger saturated: its lowest stores are not known"
+        ours, the_rom_s = (now - then for now, then in zip(tallies(), before))
+        ended = emu.bench_door_pc(), emu.bench_door_sp()
+    finally:
+        emu.prof_enable(False)
+        aes_boot._CPU.m68k_set_irq(aes_boot.NO_INTERRUPT)
+        emu.bench_abort()
+    lowest = {}
+    for (began, since), (_next, before) in zip(marks, marks[1:] + [(None, len(ledger))]):
+        for which, (bottom, top) in stacks.items():
+            on_it = [at for at in ledger[since:before] if bottom <= at < top]
+            if on_it:
+                lowest[which, began] = min(on_it)
+    uda0 = stacks[PD0_S_STACK][0] - aes.UDA_STATE_BYTES
+    return StartUpRun(entered, lowest, case.long_in(memory, uda0 + aes.UDA_SUPER_SP) & BUS, seen.get(reader),
+                      ended, result["ninsns"], ours, the_rom_s)
+
+
+WATCHED_IN_THE_ROM_S_BOOT = tuple(sorted((addrs.AES_ROM_ROM_RSC_INIT, addrs.AES_ROM_SIZE_THEGLO, GEM_MAIN_ROM, THE_INF_READER_ROM,
+                                          SH_MAIN_ROM, DESKMAIN_ROM)))
+
+
+@functools.cache
+def start_up_run(boot):
+    """THE ROM'S OWN BOOT `boot` (of THE_BOOTS), watched at the start-up's routines: a `StartUpRun`."""
+    machine, disk = THE_BOOTS[boot]()
+    return _start_up_run(machine, disk, WATCHED_IN_THE_ROM_S_BOOT, None, None)
+
+
+def deepest_in(run, which, since=None, before=None):
+    """The bytes of the stack `which` a `StartUpRun` used — its top less its lowest store — over the stretches that
+    begin at the arrivals from `since` (None: the run's start) up to, not including, `before` (None: to its end)."""
+    _bottom, top = gem_entry_s_stacks()[which]
+    order = [None, *run.entered]            # the arrivals, in the order they happened
+    stretches = order[order.index(since):order.index(before) if before is not None else len(order)]
+    stored = [run.lowest[which, began] for began in stretches if (which, began) in run.lowest]
+    return top - min(stored) if stored else 0
+
+
+# ---- ...AND A BLOB'S OWN START-UP, READ (the moment it links `aes_rom_gem_entry`) -------------------------------------------------
+# THE SAME DECLARATIONS as the ROM's reading, the trap path's beside them (gem_main's tree reaches the whole AES), and
+# two of the desk door's (`include/aes/deskdoor.h`): each call OUT OF THE BUILD named (`THE_DESK_DOOR`), and THE PAD —
+# the door's `movea.l #<the ROM's SP>,sp`, declared to stand SP WHERE THE ROM'S OWN FRAMES LEAVE IT, a depth READ OFF
+# THE ROM (`the_rom_s_sp_at_the_door`), never the header's number: a door that stands SP anywhere else is an
+# instruction the reading does not know, and is refused by name.
+ON_THE_FIRST_STACK = "gem_entry, on its first stack"        # its body to the instruction at which PD0's stack begins
+SH_MAIN, THE_INF_READER = "aes_sh_main", "aes_gem_read_inf"
+# THE ONE XBIOS CALL ON PD0's PATHS is sh_main's Getrez, through the AES's XBIOS door (`aes_trp14`: held to the
+# sources, as sh_find's routine is): its `trap #14` takes what the machine's XBIOS is MEASURED to take under Getrez.
+THE_XBIOS_TRAP, TRAP_14 = "trap #14", 0x4E4E
+GETREZ_AS_STAGED = (PUSH_WORD, addrs.XBIOS_GETREZ_FN, TRAP_14, DROP_2)
+A_MODE_READ = {addrs.SHIFTER_RESOLUTION: 0}                 # the shifter's byte Getrez reads: declared (any mode: one path)
+NOT_LINKED = "the blob at {} links no `aes_rom_gem_entry`: its start-up is not read (band 5 wave 4, slices I and SH)"
+_THE_DOOR_S_VET = re.compile(r"^cmpal #(\d+),%sp$")
+THE_DOOR_S_VET_WITHIN = 6               # the instructions before the standing one its two `cmpa.l` are looked for in
+DoorCall = namedtuple("DoorCall", "function at stands ours floor")
+DoorCall.__doc__ = """One call through the desk door: the `function` that makes it and the address of the instruction
+that stands SP at the ROM's; `stands`, the bytes below PD0's top SP stands at after it (the ROM's own, declared);
+`ours`, where OUR frames stood before it — THE PAD is `stands - ours`; `floor`, the deepest the door's own vet lets
+ours stand (the ROM's SP less the slot the ROM's call sequence stores in): `floor - ours` is the door's margin, and
+negative it is the halt the vet takes on target."""
+
+
+@derived.kept
+def getrez_need():
+    """THE DERIVATION (ROM-only): what the machine's XBIOS takes of its caller's stack under Getrez's `trap #14`."""
+    return _need_under_a_staged_trap(GETREZ_AS_STAGED, addrs.VECTOR_TRAP_XBIOS, A_MODE_READ)
+
+
+@functools.cache
+def the_rom_s_sp_at_the_door():
+    """`{the bytes below PD0's top the ROM's SP stands at between the calls of sh_main, ...of sh_cmd}`, READ OFF THE ROM:
+    where each routine is entered and the frame its `link` and `movem` lay (deskmain's and the first utility's call
+    words, which push nothing: the SP there is the routine's own)."""
+    read, names = the_rom_s_start_up()
+    entered = the_rom_enters()[PD0_S_STACK]
+    return {entered[callee] - LONG_BYTES for callee in (DESKMAIN_ROM, THE_SHELL_S_UTILITIES_ROM[0])}
+
+
+def the_desk_door_stands():
+    """What a reading is told of the door's pad (`stands_sp_at`): the instruction, as a listing spells it, by depth."""
+    _bottom, top = gem_entry_s_stacks()[PD0_S_STACK]
+    return {f"moveal #{top - depth},%sp": depth for depth in the_rom_s_sp_at_the_door()}
+
+
+def _start_up_read(elf, functions, entered_at_depth):
+    """One reading of the start-up's `functions` (the blob's listing, some of it replaced), told `entered_at_depth`."""
+    starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(elf) if symbol.kind in "Tt"}
+    excepted = {THE_LINE_A_INIT: line_a_need(), GEMDOS_TRAP: gemdos_need(), THE_BELL_S_TRAP: bell_need(), THE_XBIOS_TRAP: getrez_need()}
+    declared = start_up_declared()
+    return aes_switch.StackReading.of_listing(
+        functions, starts, TRAP_PATH_POINTERS, leaves_the_stack=LEAVES_THE_STACK,
+        calls_what_it_is_handed=TRAP_PATH_CALLS_WHAT_IT_IS_HANDED,
+        takes_an_exception=excepted, leaves_its_stack_at=(THE_WAY_OUT_LEAVES,), text_bytes=aes_switch.text_bytes(elf),
+        begins_a_stack={**THE_DOOR_BEGINS, **THE_PRIVATE_STACKS_BEGIN, **declared["begins_a_stack"]},
+        ends_where_it_began=declared["ends_where_it_began"], out_of_the_build=THE_DESK_DOOR, stands_sp_at=the_desk_door_stands(),
+        entered_at_depth=entered_at_depth)
+
+
+def _where_the_door_s_functions_are_entered(elf, functions):
+    """`{function: the bytes below PD0's top at its first instruction}` for every function of `functions` that goes
+    through the desk door, READ OFF THE SAME LISTING before any of them is: each a bare return until where it is
+    entered is known (sh_main from gem_main; sh_cmd, then, from sh_main), by the deepest path that enters it."""
+    stands = the_desk_door_stands()
+    through = {name for name, body in functions.items() if any(aes_switch.as_declared(text) in stands for _at, text in body)}
+    entered = {}
+    while through - set(entered):
+        unread = {name: [(functions[name][0][0], "rts")] for name in through - set(entered)}
+        read = _start_up_read(elf, {**functions, **unread}, entered)
+        reached = {name: read.deepest_to(_pd0_s_part(read, GEM_ENTRY), name) for name in unread}
+        found = {name: to[0] for name, to in reached.items() if to is not None}
+        if not found:
+            break                           # ...the rest are on no path of PD0's: never read, so never asked
+        entered.update(found)
+    return entered
+
+
+@functools.cache
+def start_up_reading(elf):
+    """THE READING of the start-up of the blob at `elf` (above) — gem_entry READ TWICE: ON ITS FIRST STACK, a body of
+    its own cut at the instruction where PD0's begins (the build's halt in its place: nothing after it stands on the
+    first stack), and whole, to be read FROM that instruction (`pd0_entry`). Refused by name until the blob links it."""
+    assert links(elf, GEM_ENTRY), NOT_LINKED.format(elf)
+    functions = dict(aes_switch.listed_functions(elf))
+    body = functions[GEM_ENTRY]
+    cut, = [index for index, (_at, text) in enumerate(body) if aes_switch.as_declared(text) == PD0_S_STACK_BEGINS]
+    functions[ON_THE_FIRST_STACK] = [*body[:cut], (body[cut][0], aes_switch.THE_HALT)]
+    return _start_up_read(elf, functions, _where_the_door_s_functions_are_entered(elf, functions))
+
+
+def pd0_entry(elf):
+    """The name the blob's gem_entry is read under ON PD0's STACK: from its `movea.l a6,sp`."""
+    return _pd0_s_part(start_up_reading(elf), GEM_ENTRY)
+
+
+def first_stack_bound(blob):
+    """THE FIRST-STACK GATE'S BOUND (W4-R9): `(the bytes of gem_entry's first stack the build can take — its own
+    pushes, its callees' frames, GEMDOS's own under each `trap #1` —, the chain that leads there)`. No interrupt is
+    charged (the section's header)."""
+    read = start_up_reading(blob.elf)
+    use = read.of(ON_THE_FIRST_STACK)
+    assert use.at_a_trap is None, f"the build takes a `trap #2` on gem_entry's first stack ({use.trap_path}): the VDI's need there is charged nowhere"
+    return use.deepest, read.chain(ON_THE_FIRST_STACK)
+
+
+def pd0_bound(blob):
+    """PD0's `Bound` on `blob` FROM gem_entry's `jsr gem_main` DOWN — init, the shell's loop, what stands above each
+    call out of the build (the desk's own frames are the ROM's: not counted) and dos_exec's Pexec."""
+    return _bound_from(start_up_reading(blob.elf), (pd0_entry(blob.elf),), 0, "")
+
+
+def entered_out_of_the_build(blob):
+    """`{ROM address: the bytes below PD0's top at the routine's first instruction}` on `blob`, for dos_exec and every
+    call of THE_DESK_DOOR a path of the build makes — beside `the_rom_enters`: THE ROM-DEPTH RULE (W4-R4)."""
+    read, entry = start_up_reading(blob.elf), pd0_entry(blob.elf)
+    reached = {address: read.deepest_to(entry, name) for address, name in {DOS_EXEC_ROM: DOS_EXEC, **THE_DESK_DOOR}.items()}
+    return {address: to[0] for address, to in reached.items() if to is not None}
+
+
+def _the_vet_s_floor(body, index):
+    """The lowest SP the door's vet lets ours stand at before the standing instruction `body[index]`: the lower of
+    its two `cmpa.l #<address>,sp` (the other is PD0's top)."""
+    compared = [int(vetted.group(1)) for _at, text in body[max(index - THE_DOOR_S_VET_WITHIN, 0):index] if (vetted := _THE_DOOR_S_VET.match(text))]
+    assert len(compared) == 2, f"the desk door at {body[index][0]:#x} is vetted by {len(compared)} `cmpa.l #,sp`: two were expected"
+    return min(compared)
+
+
+def desk_door_calls(blob):
+    """EVERY CALL THROUGH THE DESK DOOR on PD0's paths of `blob`: a `DoorCall` each, in the listing's order."""
+    read, entry = start_up_reading(blob.elf), pd0_entry(blob.elf)
+    stands, (_bottom, top) = the_desk_door_stands(), gem_entry_s_stacks()[PD0_S_STACK]
+    calls = []
+    for function in sorted(read.read_as(entry)):
+        home = function.partition(aes_switch.HANDED)[0].partition(aes_switch.INTO)[0]
+        body = read.functions().get(home, ())
+        for index, (at, text) in enumerate(body):
+            if aes_switch.as_declared(text) in stands:
+                above = 0 if function == entry else read.deepest_to(entry, function)[0]
+                calls.append(DoorCall(function, at, stands[aes_switch.as_declared(text)], above + read.depth_at(function, at),
+                                      top - _the_vet_s_floor(body, index)))
+    return sorted(calls, key=lambda call: call.at)
+
+
+def an_application_s_trap(blob):
+    """AN APPLICATION'S `trap #2` UNDER sh_main, on `blob`: `(the bytes below PD0's top its stack pointer is parked at,
+    the bytes of PD0's stack under it, the bytes the trap path can need from there — its bound, the nest on top,
+    less what an accessory's UDA keeps under its top: the parked pointer is where the handler starts)`."""
+    parked, left = parked_for_an_application(entered_out_of_the_build(blob)[DOS_EXEC_ROM])
+    return parked, left, trap_need(blob)[0] - KEPT_UNDER_THE_TOP
+
+
+# ...AND MEASURED: the blob's own gem_entry run from the pre-init stop (`_start_up_run`'s labelled staging) — OVER THE
+# BLANK DISK ALONE: on a disk that holds an accessory our own loader's first Pexec clears the largest free block, the
+# blob with it (the design's finding 0.3; ruling W4-R2: accessory machines stay door takeovers) — refused by name.
+OUR_LOADER_WOULD_ERASE_US = ("the blob's own start-up is run over the blank disk alone: over {!r} the loader's first Pexec clears the "
+                             "block the blob is laid in (ruling W4-R2)")
+
+
+@functools.cache
+def our_start_up_run(shore, until, boot=THE_BLANK_DISK):
+    """THE BLOB OF `shore` LAID AT THE PRE-INIT STOP of `boot` and entered at its own gem_entry, to its first arrival at
+    `until` (a symbol of the blob, or a ROM address): a `StartUpRun`, watched at the callees of its first stack and at
+    gem_main's entry."""
+    assert boot == THE_BLANK_DISK, OUR_LOADER_WOULD_ERASE_US.format(boot)
+    blob = blob_of(shore)
+    read = start_up_reading(blob.elf)
+    watched = {blob.entry(callee) for callee, _under, _at in read.sites(ON_THE_FIRST_STACK) + read.sites(pd0_entry(blob.elf))}
+    machine, disk = THE_BOOTS[boot]()
+    ends_at, reader = blob.entry(until) if isinstance(until, str) else until, blob.entry(THE_INF_READER)
+    return _start_up_run(machine, disk, tuple(sorted((watched | {reader}) - {ends_at})), ends_at,
+                         (blob.base, bytes(blob.blob), blob.entry(GEM_ENTRY)), reader)
+
+
+def the_word_the_reader_tests(blob):
+    """THE WORD AT `$8992` WHERE THE `#E` READER TESTS IT, on `blob`, READ OFF ITS LISTING: the low word of the return
+    address of gem_entry's last `jsr` on the first stack (size_theglo's) — gem_entry's own `move.w #1` there is under
+    that push. ZERO would say "no disk to read DESKTOP.INF from": a blob whose loop's top links at `$xxxx0000 - 6`."""
+    read = start_up_reading(blob.elf)
+    body = read.functions()[ON_THE_FIRST_STACK]
+    _callee, _under, last_call = max(read.sites(ON_THE_FIRST_STACK), key=lambda site: site[2])
+    returns_to = next(after for (at, _text), (after, _next) in zip(body, body[1:]) if at == last_call)
+    return returns_to & aes.WORD_MASK
+
+
+def our_gem_main(elf):
+    """`(the name the blob at elf links gem_main under, the bytes below PD0's top at its first instruction)`: the
+    callee of gem_entry's LAST call — the loop's foot."""
+    callee, under, _at = max(start_up_reading(elf).sites(pd0_entry(elf)), key=lambda site: site[2])
+    return callee, under
+
+
+def pd0_during_init(blob):
+    """`(the deepest the build's own frames go on PD0's stack BEFORE THE SHELL IS ENTERED — gem_main's own pushes and
+    every callee of it but sh_main —, the callee that leads there)`: what the ROM's own init is measured beside."""
+    read, (gem_main, under) = start_up_reading(blob.elf), our_gem_main(blob.elf)
+    reached = [(under + below + read.of(callee).deepest, callee) for callee, below, _at in read.sites(gem_main) if callee != SH_MAIN]
+    assert len(reached) < len(read.sites(gem_main)), f"{gem_main} does not call {SH_MAIN}: where init ends is not read"
+    return max(reached)
+
+
 # ---- dsptch's COST, MEASURED: the leaf's declaration held to a run -----------------------------------------------------------
 def dsptch_measured(shore):
     """The bytes the dsptch of the blob of `shore` stores below the SP it is called at before it leaves for the
@@ -1604,6 +2130,56 @@ def _the_trap_path_s_lines():
     return lines
 
 
+def nest_on_the_first_stack(shore=THE_ROM_S):
+    """What an interrupt taken on gem_entry's first stack would need: the vertical blank and the deeper MFP handler
+    inside it — NO HORIZONTAL BLANK (gem_entry runs at the mask the BIOS starts it with, 3: `test_aes_stack.py` holds
+    it to the capture). The handlers' needs are the BOOTED machine's (`aes_switch.interrupt_needs`): a figure, said
+    beside the gate, that the gate does not charge — the ROM's own 84 bytes do not fit under it either."""
+    needs = aes_switch.interrupt_needs() if shore == THE_ROM_S else aes_switch.our_interrupt_needs(blob_of(shore))
+    return aes_switch.worst_interrupt_need(needs)
+
+
+def _the_start_up_s_lines():
+    """The report's lines for gem_entry's two stacks: the ROM's read and measured, each blob's bound and measured."""
+    spans, entered = spans_of_the_start_up(), the_rom_enters()
+    on_pd0, the_rom_s = entered[PD0_S_STACK], start_up_run(THE_BLANK_DISK)
+    used = deepest_in(the_rom_s, THE_FIRST_STACK)
+    parked, left = parked_for_an_application(on_pd0[DOS_EXEC_ROM])
+    lines = [f"THE START-UP — gem_entry's two stacks, read off the ROM: {spans}; the word(s) it stores INSIDE the first: "
+             f"{ {hex(at): size for at, size in stored_inside_the_first_stack().items()} }. The ROM's own boot (the blank disk): "
+             f"{used} of the first stack ({spans[THE_FIRST_STACK] - used} spare; an interrupt there would need "
+             f"{nest_on_the_first_stack()} more: NOT charged, and not there under the ROM either); on PD0's, init "
+             f"{deepest_in(the_rom_s, PD0_S_STACK, GEM_MAIN_ROM, DESKMAIN_ROM)}, the desk to its first idle "
+             f"{deepest_in(the_rom_s, PD0_S_STACK, DESKMAIN_ROM)}",
+             f"  THE ROM-DEPTH RULE (W4-R4): the ROM enters gem_main {on_pd0[GEM_MAIN_ROM]} below PD0's top, sh_main "
+             f"{on_pd0[SH_MAIN_ROM]}, deskmain {on_pd0[DESKMAIN_ROM]}, dos_exec {on_pd0[DOS_EXEC_ROM]}, the shell's utilities "
+             f"{sorted({on_pd0[utility] for utility in THE_SHELL_S_UTILITIES_ROM})}; dos_exec parks an application's stack "
+             f"{parked} down: {left} bytes under it ({parked_inside_gemdos_s_frame(on_pd0[DOS_EXEC_ROM])} of them GEMDOS's own "
+             f"saved frame for Pexec — the ROM's 64 is that short, by reading)"]
+    for shore in BLOBS:
+        blob = blob_of(shore)
+        if not links(blob.elf, GEM_ENTRY):
+            lines.append(f"{shore}: {NOT_LINKED.format(blob.elf)}")
+            continue
+        needed, chain = first_stack_bound(blob)
+        ours = our_start_up_run(shore, DESKMAIN_ROM)
+        gem_main = blob.entry(our_gem_main(blob.elf)[0])
+        own, init = pd0_bound(blob), pd0_during_init(blob)
+        parked, left, trap_needed = an_application_s_trap(blob)
+        doors = desk_door_calls(blob)
+        lines += [f"{shore}: THE FIRST STACK (W4-R9) bound {needed} of {spans[THE_FIRST_STACK]}: {spans[THE_FIRST_STACK] - needed} spare "
+                  f"({_chain(chain)}); measured {deepest_in(ours, THE_FIRST_STACK)}; the word the reader tests: {the_word_the_reader_tests(blob):#06x}",
+                  f"  PD0: own frames {own.deepest} + nest {nest(shore)} = {own.deepest + nest(shore)} of {spans[PD0_S_STACK]}: "
+                  f"{spans[PD0_S_STACK] - own.deepest - nest(shore)} spare ({_chain(own.chain)}); before the shell {init[0]} "
+                  f"({init[1]}); measured to deskmain's entry {deepest_in(ours, PD0_S_STACK, gem_main)}, entered at SSP "
+                  f"{ours.ended[1]:#x} — the ROM's GEM text ran {ours.the_rom_s} cycles, the blob {ours.ours}",
+                  "  THE DESK DOOR: " + "; ".join(f"{call.function} at {call.at:#x}: ours {call.ours}, the ROM's {call.stands}, "
+                                                  f"pad {call.stands - call.ours}, the vet's margin {call.floor - call.ours}" for call in doors),
+                  f"  AN APPLICATION'S TRAP under sh_main: parked {parked} down, {left} under it; the trap path needs "
+                  f"{trap_needed}: " + (f"OVER by {trap_needed - left}" if trap_needed > left else f"{left - trap_needed} spare")]
+    return lines
+
+
 def report():
     lo, top = stack_of(_booted(THE_ROM_S).image())
     span = top - lo
@@ -1632,7 +2208,7 @@ def report():
                   f"ROM's {the_rom_s_at}: {_left_against_the_rom_s(ours_at, the_rom_s_at)}",
                   f"  dsptch takes {reading(blob.elf).of('aes_dsptch').deepest} (measured {dsptch_measured(shore)}); "
                   f"untouched at most {untouched_at_most(blob)}"]
-    lines += _the_trap_path_s_lines()
+    lines += _the_trap_path_s_lines() + _the_start_up_s_lines()
     lines.append("MEASURED from the real entry, the lowest store on PD1's stack (the ROM's machine / ours, our VDI under the traps):")
     for scenario in SCENARIOS:
         ours = ", ".join(f"{shore} {measured(scenario, shore).deepest} (+ nest {nest(shore)} = "
