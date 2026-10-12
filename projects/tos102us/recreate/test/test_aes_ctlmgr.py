@@ -42,6 +42,8 @@ import test_aes_gemctrl as handlers
 
 tier3 = bench_tier3
 RECREATE = pathlib.Path(__file__).resolve().parents[1]
+# The closed waves' entries of the ledger: slice E's (band 5 wave 2) states the count of the Tier 1-only cases held below.
+THE_LEDGER_S_ARCHIVE = RECREATE / "STATUS_ARCHIVE.md"
 onto, click, PRESS, RELEASE = gc.onto, gc.click, gc.PRESS, gc.RELEASE
 A, W, VIEW = gc.TWO_WINDOWS, gc.TWO_WAITERS, aes_event.THE_VIEW_TITLE_S_POINT
 SM, DESK, FIRST, SECOND = gc.THE_SCREEN_MANAGER, gc.THE_DESK_S_PROCESS, gc.FIRST_ACCESSORY, gc.SECOND_ACCESSORY
@@ -768,7 +770,7 @@ def test_the_cases_held_at_their_arrival_and_pinned_nowhere_are_the_ones_status_
     unpinned = [key for name, key in ARRIVALS.items() if name not in cm.HANDLED]
     assert sorted(unpinned) == sorted(key for key in handlers.UNPRICED if key[0] != INLINED_INTO_ITS_CALLERS)
     by_handler = {routine: sum(key[0] == routine for key in unpinned) for routine in {key[0] for key in unpinned}}
-    status = (RECREATE / "STATUS.md").read_text()
+    status = THE_LEDGER_S_ARCHIVE.read_text()
     said = re.findall(r"THE (\d+) TIER 1-ONLY CASES of those handlers \(hctl_window's (\d+), hctl_rect's (\d+)\)", status)
     assert said == [(str(len(unpinned)), str(by_handler[gc.HCTL_WINDOW]), str(by_handler[gc.HCTL_RECT]))], (said, by_handler)
     assert len(ARRIVALS) == len(cm.HANDLED) + len(unpinned) and set(by_handler) == {gc.HCTL_WINDOW, gc.HCTL_RECT}

@@ -23,7 +23,7 @@
  * `$fc4f54` is a real longjmp and `$fc4f38` a real setjmp, and the record at `$7ef4` the dispatcher
  * arms IS jumped to — but by the FILE SYSTEM's critical-error abort, which the dispatcher answers at
  * `$fc9526` by comparing the returned value against `E_CHNG` and killing the process there.
- * `Pterm`'s own unwind is the epilogue above and nothing else. (`recreate/STATUS.md`'s wave-7 note
+ * `Pterm`'s own unwind is the epilogue above and nothing else. (`recreate/STATUS_ARCHIVE.md`'s wave-7 note
  * says "the termination record longjmp"; the record is real, the caller is not `Pterm`.)
  *
  * NOTHING IN THIS FILE HALTS. The last halt it reached — `Fclose` of a handle naming an open FILE, from

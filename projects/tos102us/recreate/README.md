@@ -1188,7 +1188,7 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   twin's core's answer spells the same statement after its call. Held on the blobs:
   `test_tier3.py::test_no_twin_is_jumped_to_on_either_blob` (every instruction naming a twin's first instruction is
   a `jsr`) and `::test_a_rebound_wrapper_in_return_position_is_a_call_of_its_twin`.
-- WHAT BAND 4 WAVE 3 RETIRED OF THE DOOR, AND WHERE EACH GUARD LIVES NOW (step R; STATUS.md's wave log has the
+- WHAT BAND 4 WAVE 3 RETIRED OF THE DOOR, AND WHERE EACH GUARD LIVES NOW (step R; STATUS_ARCHIVE.md's wave log has the
   mutation table). (1) THE SHADOW — until the last flip had stood, every arrival also made the ROM routine's NESTED
   RUN over a copy of the image (`aes_event.nested_run`, capped by `NESTED_RUN_INSNS`), and the twin was held to it at
   its own call: its answer and image where it returned (`vet_the_shadow`), its image at the dispatcher's hook where
@@ -1733,7 +1733,7 @@ is the whole wrapper. Off target it is an ARRIVAL first:
       in a state our build's own run is known to reach, ours exactly as that run left it. (3) WHAT IS HELD BY
       NOTHING WHERE THE RUN ENDS: our screen manager's final context and frames on a row that parks it ELSEWHERE
       (29 of the 33 rows: the other four end where a noted run left it) — vetted only by the runs that wake it again
-      from a park of that kind (STATUS, FLIP 4 pass 2, lists them); and, inside its own turns, what it stores in its own context and stack is its own.
+      from a park of that kind (STATUS_ARCHIVE, FLIP 4 pass 2, lists them); and, inside its own turns, what it stores in its own context and stack is its own.
     - THE PINS: a turn is `(ours, the ROM's, our thunks')` in `test/aes_turns_pinned.py`, by row and blob, held by
       `aes_switching.vet_on_a_blob` (`vet_its_turns`) and written by `tools/repin.py` from a recorded run — and AN
       ACCESSORY'S TURN, behind our door, the same in `test/aes_accessory_turns_pinned.py` ("ctlmgr's OWN ROWS").

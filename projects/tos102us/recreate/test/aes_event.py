@@ -22,7 +22,7 @@ leaf battery and the door case's own compare do not: it named a wrong twin EARLI
 mutants were swept before and after it went: the same 49 killed, one equivalent; ONE of them the door users'
 batteries killed only by the shadow's words (an answer its caller does not read) — which is what the answers
 handed back hold now, and the images at each return and each dispatch what its image compare held, with no run of
-the ROM. STATUS.md's wave log has the tables.)
+the ROM. STATUS_ARCHIVE.md's wave log has the tables.)
 
 THE EVENT LAYER'S OWN C — a twin, a wait, a list routine — is run by its LEAF battery, entered at the routine: its
 returning arms in a fork first (`run_core_guarded`), its SWITCHING arms held to the ROM's own run at dsptch

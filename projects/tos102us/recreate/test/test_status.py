@@ -789,7 +789,7 @@ def test_the_table_today_sentence_counts_the_windows_and_the_save_word_s_drops()
 # The paragraph that opens with EV_MULTI_S_PARAGRAPH counts ev_multi's rows three more times in running prose — `and
 # N WOKEN`, `Its N rows are all`, `the N that switch` — and its table row once more (`N WOKEN` in its notes). They
 # went stale under green tests once (the counts above held the Cases cell and the three sentences, not these). Held
-# here to the registry and to the row's own Cases cell. (The wave logs further down QUOTE HISTORY — "41 WOKEN" of the
+# here to the registry and to the row's own Cases cell. (The wave logs, further down and in `STATUS_ARCHIVE.md`, QUOTE HISTORY — "41 WOKEN" of the
 # retired hook — and are not held: only this paragraph and ev_multi's own row state the present.)
 EV_MULTI_S_PARAGRAPH = "ev_multi's TWIN IS HELD ON BOTH HALVES OF A WAIT:"
 _EV_MULTI = "AES_ROM_EV_MULTI"

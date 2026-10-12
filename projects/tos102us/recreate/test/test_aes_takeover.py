@@ -474,7 +474,7 @@ LEFT_WHERE_A_ROW_BEGINS = {
 
 @pytest.mark.parametrize("name", sorted(_rows_with_the_screen_manager_ours()))
 def test_how_each_row_leaves_our_screen_manager_parked_is_what_status_says(name):
-    """THE CENSUS BEHIND STATUS'S STATEMENT (FLIP 4, "what remains unseen"), on the shipped blob, every row whose
+    """THE CENSUS BEHIND STATUS_ARCHIVE'S STATEMENT (FLIP 4, "what remains unseen"), on the shipped blob, every row whose
     screen manager is ours: NONE ends with it parked as it began (every one of these runs moves it: a menu dropped, a
     message written, the lock queued on); FOUR end where a noted run left it and are held to our build's own run to
     that state; EVERY OTHER ends ELSEWHERE — our screen manager's final saved context and live frames on those rows

@@ -1345,7 +1345,7 @@ def test_every_twin_has_a_leaf_battery_s_rows():
     EVERY TWIN, rebound OR PENDING: a twin's battery is owed the day the twin lands, so the gap is red in the wave
     that built it and not at its flip (ap_rdwr's twin sat a phase with no row, and nothing said so). THAT THE BATTERY
     REACHES EVERY ARM of its twin is not derived here: it is the strict mutation sweep's and the coverage build's to
-    show, entry by entry (STATUS's wave log). RED: a twin whose rows are taken out of the table has none."""
+    show, entry by entry (STATUS's wave log, and STATUS_ARCHIVE's). RED: a twin whose rows are taken out of the table has none."""
     twins = aes_event.REBOUND | aes_event.PENDING
     leaf = _leaf_rows(twins)
     assert len(leaf) == len(twins) >= 1 and all(leaf.values()), (

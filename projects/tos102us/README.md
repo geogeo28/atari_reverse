@@ -153,7 +153,10 @@ other component calls), then GEMDOS, the VDI, the AES and the desktop. Within a 
 
 The reverse-engineering record — what was tried, what a differential found, which name was wrong
 until the body was read — lives in `recreate/STATUS.md` per component and in `docs/` once a
-mechanism turns out to be transferable.
+mechanism turns out to be transferable. `STATUS.md` is the LIVE ledger — the Components table, the verified rows,
+the harness and suite lines, `* **Next**` with the AWAITING list, and the wave log of the CURRENT wave only;
+`recreate/STATUS_ARCHIVE.md` holds every closed wave's entries verbatim, as history nobody re-derives. A new wave
+entry is written in `STATUS.md` and moved to the archive, unchanged, when its wave closes.
 
 ## Layout
 
@@ -167,6 +170,7 @@ projects/tos102us/
 └── recreate/
     ├── README.md        the harness as bound to a ROM: snapshot, image layout, how to write a case
     ├── STATUS.md        per-component progress: verified rows, tier-2 ledgers, tier-3 ratios
+    ├── STATUS_ARCHIVE.md  the closed waves' log entries and suite re-sums, verbatim: history, not maintained
     ├── project.toml, Makefile, include/, src/<component>/, test/
     └── atari/           the rebuilt ROM image, TOSTEST.PRG, TOSBENCH.PRG, the headless drivers
 ```
