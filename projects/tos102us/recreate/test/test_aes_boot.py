@@ -1887,24 +1887,27 @@ def test_an_interrupt_the_idle_s_mask_would_never_let_in_is_refused():
 
 
 # ---- THE TRAP DOOR AS OURS (band 5 wave 3): the takeover handed a door ---------------------------------------------------------
-# EVERY PROOF BELOW IS MADE WITH THE PROTOTYPE DOOR (`aes_boot.with_the_prototype_door`: the ROM's handler, exit and
-# aes_entry assembled after the blob and linked against it — a door handed the takeover as a parameter), on both
-# blobs, whether or not the blob links a door of its own. The registry's declarations stay PENDING: nothing here maps
-# them at Tier 3.
+# EVERY PROOF BELOW IS MADE WITH THE BLOB'S OWN DOOR AS LINKED (`src/aes/trapdoor.S`: `aes_rom_trap2`, and
+# `switch.S`'s gotopgm), found by symbol, on both blobs — since the narrow door flip (band 5 wave 3, slice F). Until
+# then a PROTOTYPE door stood in (the ROM's handler, exit and aes_entry assembled after the blob): the shipped door
+# was held to its bytes, gave the same machines and the same measured depths, and the prototype is RETIRED with the
+# flip. A DOOR IS STILL A PARAMETER of the takeover: these proofs hand it THE VECTOR AND THE PROGRAMS (two parts —
+# the critical-error vector is added where its own tests say), and Tier 3 hands it `aes_event.THE_NARROW_DOOR`.
 QUIET_PAIR, SIX_WAY_PAIR = WITH_ACCESSORIES, "both wait six ways"
 DOOR_MACHINES = (A_DESK, QUIET_PAIR, SIX_WAY_PAIR, WITH_WINDOWS)
 every_door_machine = pytest.mark.parametrize("label", DOOR_MACHINES)
 THE_VECTOR, A_PROGRAM = aes_event.GEM_TRAP_VECTOR.what, aes_event.PROGRAM_ENTRY.what
+THE_VECTOR_AND_THE_PROGRAMS = (aes_event.GEM_TRAP_VECTOR, aes_event.PROGRAM_ENTRY)
 
 
 @functools.cache
 def the_door_of(blob):
-    return aes_boot.with_the_prototype_door(isr.blob_named(blob))
+    return aes_boot.ours_of(isr.blob_named(blob), door=THE_VECTOR_AND_THE_PROGRAMS)
 
 
 @functools.cache
 def behind_a_door(label, blob):
-    """The machine `label`, its screen manager AND ITS TRAP DOOR `blob`'s (the prototype door appended to it)."""
+    """The machine `label`, its screen manager AND ITS TRAP DOOR `blob`'s (its own handler and gotopgm, as linked)."""
     return aes_boot.Machine(aes_boot.booted(*capture_and_disk(label), ours=the_door_of(blob)))
 
 
@@ -1914,89 +1917,19 @@ def programs_of(booted):
 
 
 @every_blob
-def test_the_prototype_door_is_the_blob_extended_and_its_door_names_it(blob):
-    """The fixture, read: the blob's own bytes first and untouched, the door's code after its allocated span; the
-    vector's entry is that code's first instruction — the ROM's own handler's first word — and a program's entry
-    is the blob's gotopgm, by symbol."""
-    plain, ours = aes_boot.ours_of(isr.blob_named(blob)), the_door_of(blob)
-    assert ours.image[:len(plain.image)] == plain.image and ours._replace(image=b"", end=0, door=()) == plain._replace(image=b"", end=0)
+def test_the_door_handed_the_takeover_is_the_blob_s_own_and_nothing_is_appended(blob):
+    """The fixture, read: the blob's own bytes and nothing after them; the vector's entry is `aes_rom_trap2` — whose
+    first two words are the ROM's own handler's — and a program's entry the blob's gotopgm, each by symbol, inside
+    the blob."""
+    built = isr.blob_named(blob)
+    plain, ours = aes_boot.ours_of(built), the_door_of(blob)
+    assert ours._replace(door=()) == plain and plain.door == ()
     (vector, ((rom_trap, our_trap),)), (program, ((rom_gotopgm, our_gotopgm),)) = ours.door
     assert (vector, rom_trap, program, rom_gotopgm) == (THE_VECTOR, addrs.GEM_TRAP2, A_PROGRAM, addrs.AES_ROM_GOTOPGM)
-    assert plain.end <= our_trap < ours.end == ours.base + len(ours.image) and not our_trap % WORD_BYTES
+    assert our_trap == built.entry("aes_rom_trap2") and our_gotopgm == built.entry(aes_boot.GOTOPGM_SYMBOL)
+    assert all(plain.base <= entry < plain.base + len(plain.image) and not entry % WORD_BYTES for entry in (our_trap, our_gotopgm))
     at = our_trap - ours.base
     assert ours.image[at:at + 2 * WORD_BYTES] == BASE_IMAGE[rom_trap:rom_trap + 2 * WORD_BYTES]
-    assert our_gotopgm == isr.blob_named(blob).entry(aes_boot.GOTOPGM_SYMBOL) and plain.base <= our_gotopgm < plain.end
-    assert plain.door == ()
-
-
-# ---- band 5 wave 3, the integration: THE PROTOTYPE CANNOT DRIFT FROM THE SHIPPED DOOR -----------------------------------------
-# Two spellings of the trap door stand in the tree until the flip: `src/aes/trapdoor.S` — what a build SHIPS, byte-pinned
-# against the ROM by `test_aes_trapdoor.py` — and the prototype every proof below (and `aes_stack`'s measured run) is made
-# behind. Such a proof says something of the shipped door only while the two are the same code: the handler, the way
-# out, and aes_entry with the marshal's thunk, BYTE FOR BYTE, but for the longwords by which each door names ITS OWN
-# parts — and those must name the same place of each.
-# `(the prototype's symbol, the shipped symbols it spans)`, in the prototype's order. The prototype sizes nothing and
-# keeps its thunk local, so its last part runs to its last byte: aes_entry AND the thunk.
-THE_DOOR_S_PARTS = (("proto_trap2", (aes_trapdoor.HANDLER_SYMBOL,)), ("proto_trap2_exit", (aes_trapdoor.WAY_OUT_SYMBOL,)),
-                    ("proto_aes_entry", (aes_trapdoor.ENTRY_SYMBOL, aes_trapdoor.MARSHAL_THUNK)))
-# What a door names of itself by an absolute longword: aes_entry by value (the handler), the thunk and the way out
-# (aes_entry's two calls). Every other longword — the mask brackets, the marshal, dsptch — is the blob's: the same in both.
-OWN_PARTS_NAMED = 3
-
-
-def _the_two_doors(blob):
-    """`[((start, bytes) of the prototype's, (start, bytes) of the shipped door's)]` for each of THE_DOOR_S_PARTS."""
-    built, ours = isr.blob_named(blob), the_door_of(blob)
-    (_vector, ((_rom_trap, at),)), _program = ours.door
-    code, placed = aes_boot._prototype_door_at(str(built.elf), at, aes_boot.PROTOTYPE_DOOR_SOURCE.read_text())
-    assert ours.image.endswith(code) and at + len(code) == ours.end, "the prototype is the bytes the takeover appends"
-    starts = [placed[symbol] for symbol, _shipped in THE_DOOR_S_PARTS] + [at + len(code)]
-    assert starts == sorted(starts) and starts[0] == at, "the prototype's parts lie in the order listed, from its first byte"
-    spans = aes_trapdoor.text_spans(built)
-    doors = []
-    for lo, hi, (_symbol, shipped) in zip(starts, starts[1:], THE_DOOR_S_PARTS):
-        assert all(spans[before][1] == spans[after][0] for before, after in zip(shipped, shipped[1:])), f"{shipped} lie end to end"
-        shipped_lo, shipped_hi = spans[shipped[0]][0] - built.base, spans[shipped[-1]][1] - built.base
-        doors.append(((lo, code[lo - at:hi - at]), (shipped_lo + built.base, bytes(built.blob[shipped_lo:shipped_hi]))))
-    return doors
-
-
-def longwords_naming_the_door_s_own_parts(doors):
-    """`[(the part's index, the offset in it)]` of every longword the two doors differ in — each REQUIRED to be a door
-    naming its own part: the two values lie in the same part, at the same distance from its start. Another length, or
-    a byte that differs outside such a longword, is refused by name."""
-    def place(value, which):
-        return next(((index, value - each[which][0]) for index, each in enumerate(doors)
-                     if each[which][0] <= value < each[which][0] + len(each[which][1])), None)
-    found = []
-    for index, ((_lo, proto), (_shipped_lo, shipped)) in enumerate(doors):
-        assert len(proto) == len(shipped), f"part {index}: the prototype holds {len(proto)} bytes, the shipped door {len(shipped)}"
-        offset = 0
-        while offset < len(proto):
-            if proto[offset] == shipped[offset]:
-                offset += 1
-                continue
-            # the longword that holds this byte begins on a word, at most three bytes before it
-            for start in range(offset - offset % WORD_BYTES, max(offset - LONG_BYTES, -1), -WORD_BYTES):
-                named = place(int.from_bytes(proto[start:start + LONG_BYTES], "big"), 0)
-                if named is not None and named == place(int.from_bytes(shipped[start:start + LONG_BYTES], "big"), 1):
-                    break
-            else:
-                raise AssertionError(f"part {index}: the two doors differ at +{offset:#x} in no longword that names a part of the door")
-            found.append((index, start))
-            offset = start + LONG_BYTES
-    return found
-
-
-@every_blob
-def test_the_prototype_door_is_the_shipped_door_but_for_the_longwords_naming_its_own_parts(blob):
-    doors = _the_two_doors(blob)
-    assert len(longwords_naming_the_door_s_own_parts(doors)) == OWN_PARTS_NAMED
-    # ITS RED: one bit of the prototype's first instruction word is refused by name.
-    (lo, proto), shipped = doors[0]
-    with pytest.raises(AssertionError, match=r"part 0: the two doors differ at \+0x0 in no longword that names a part of the door"):
-        longwords_naming_the_door_s_own_parts([((lo, bytes([proto[0] ^ 1]) + proto[1:]), shipped), *doors[1:]])
-# ---- end of the integration's block -------------------------------------------------------------------------------------------
 
 
 @every_blob
@@ -2064,15 +1997,14 @@ CRITICAL_ERRORS = aes_event.CRITICAL_ERROR_VECTOR.what
 
 
 def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s_door_runs_no_cycle():
-    """THE ONE PROOF HERE THAT IS NOT THE PROTOTYPE'S (wave 3's review; the seam test above holds the two doors to the
-    same BYTES, this is a RUN): `ours_of(blob, door=aes_event.THE_NARROW_DOOR)` — the shipped blob's OWN
-    `aes_rom_trap2`, `aes_rom_gotopgm` and `aes_rom_crit_err`, found by symbol, nothing appended — takes the quiet
+    """THE NARROW DOOR, ALL THREE PARTS, AS TIER 3 HANDS IT: `ours_of(blob, door=aes_event.THE_NARROW_DOOR)` — the
+    shipped blob's OWN `aes_rom_trap2`, `aes_rom_gotopgm` and `aes_rom_crit_err`, found by symbol — takes the quiet
     pair's boot to its idle. Every vet of the takeover passes; `$88` and `$404` hold the blob's entries; both
     accessories were entered through the blob's gotopgm and trapped into the blob's handler; the ROM's handler, way
     out, aes_entry, gotopgm AND crit_err ran ZERO cycles from the lay on (crit_err's own entry none either: no
-    critical error in a boot); the megabyte is the ROM-booted machine's outside the classes of each process.
-    NOTHING IS BOUND BY THIS: no Tier 3 row asks such a machine (the registry's three declarations stay pending, and
-    `test_no_battery_asks_for_a_door_machine_while_the_door_is_pending` lets this battery alone ask for a door)."""
+    critical error in a boot); the megabyte is the ROM-booted machine's outside the classes of each process. THIS
+    IS THE MACHINE EVERY TIER 3 ROW OF AN ACCESSORY MACHINE RUNS OVER on our shore since the flip
+    (`aes_ctlmgr.our_machine`)."""
     built = isr.blob_named(THE_SHIPPED_BLOB)
     ours = aes_boot.ours_of(built, door=aes_event.THE_NARROW_DOOR)
     assert ours.image == aes_boot.ours_of(built).image and [part.what for part in ours.door] == [THE_VECTOR, A_PROGRAM, CRITICAL_ERRORS]
@@ -2091,10 +2023,75 @@ def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s
     two_dispatchers = rom.idle != booted.idle
     result = aes_boot.compared(rom, booted, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ())
     assert result.differing == [], f"behind the SHIPPED door the machine differs outside the classes at {result.differing[:4]}"
-    # ...and the prototype's machine is this one, but for where each door's own code lies
+    # ...and the two-part door's machine (the vector and the programs: every proof above) is this one but for `$404`
     assert booted.idle == behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).idle
     assert [(each.name, each.stack) for each in door.programs] == [
         (each.name, each.stack) for each in behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).door.programs]
+
+
+# ---- THE ACCESSORY DEBTS, PINNED BEHIND THE DOOR (band 4's and wave 1's `## Not reconstructed`; the narrow door flip) ----------
+BOTH_FIND_AND_WRITE = (FIND | WRITE, FIND | WRITE)
+SIXTY_FOUR_KB = 0x10000
+
+
+@every_blob
+def test_an_accessory_above_64_kb_finds_and_writes_an_allocated_accessory_through_our_door(blob):
+    """TWO DEBTS OF THE PROCESS LAYER, by a ROM run and OUR C behind the door — both accessories find `TESTACC2` and
+    write to it: fpdnm'S ACCESSORY LOOP WITH A REAL PD (the name is the ALLOCATED accessory's: found past the three
+    static PDs, in `$c6b2[]`, by a static caller and by an allocated one) and ap_find's PREMISE ABOVE 64 KB (the
+    second caller's PD and UDA lie above it). Each accessory's own answers are the ROM-booted machine's (the id
+    found is the allocated accessory's, the write went through, the target was woken by both), every process of
+    ours stands in our text, the ROM's door ran no cycle, and the megabyte is the ROM's outside the classes."""
+    built = isr.blob_named(blob)
+    rom = aes_boot.accessory_machine(*BOTH_FIND_AND_WRITE)
+    ours = aes_boot.accessory_machine(*BOTH_FIND_AND_WRITE, ours=built, door=aes_event.THE_NARROW_DOOR)
+    first, second = programs_of(rom)
+    assert first.pd < SIXTY_FOUR_KB <= second.pd and second.pd in aes_event.processes_of(rom.ram)[aes.AES_PD_COUNT:]
+    for program in (first, second):
+        its, mine = rom.results(program), ours.results(ours.process(program.pd))
+        assert its == mine and its["res_find"] == second.pid and its["res_write"] == 1, f"{program.name}: {its} / {mine}"
+        assert ours.resumed_in(ours.process(program.pd)) == aes_boot.OURS
+    assert rom.results(second)["res_wakes"] == len(BOTH_FIND_AND_WRITE), "the allocated accessory read both messages"
+    assert all(the_rom_s == 0 for _ours, the_rom_s in ours.door.ran.values()) and ours.door.ran[THE_VECTOR][0] > 0
+    two_dispatchers = rom.idle != ours.idle
+    assert aes_boot.compared(rom, ours, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ()).differing == []
+
+
+def test_a_door_boot_begun_inside_another_profiled_run_is_refused_by_name():
+    """THE PROFILE IS ONE SWITCH (`aes_event.profile_held`; wave 3's review, A11): a door boot switches it on for its
+    own who-ran and off again, so one begun while a measurement holds it is REFUSED BY NAME before it runs an
+    instruction — and the same boot, with nobody holding it, is made. (A takeover with no door reads no profile, and
+    is let be.)"""
+    capture, disk = capture_and_disk(QUIET_PAIR)
+    with aes_event.profile_held("a measurement of this test's"):
+        with pytest.raises(AssertionError, match="A PROFILED RUN INSIDE ANOTHER: a door boot .* inside a measurement of this test's"):
+            aes_boot.booted.derive(capture, disk, ours=the_door_of("the shipped blob"))
+        aes_boot.booted.derive(capture, disk, ours=aes_boot.ours_of(isr.blob_named("the shipped blob")))
+    assert not aes_event.PROFILE_HELD_BY
+    assert aes_boot.booted.derive(capture, disk, ours=the_door_of("the shipped blob")).takeover.door.ran[THE_VECTOR][0] > 0
+
+
+def _who_holds_the_profile_inside_the_run(monkeypatch):
+    """`aes_boot._Run.to_an_idle` WATCHED, not replaced: the ledger as each run finds it where it begins."""
+    held, to_an_idle = [], aes_boot._Run.to_an_idle
+
+    def watched(run, *entered):
+        held.append(tuple(aes_event.PROFILE_HELD_BY))
+        return to_an_idle(run, *entered)
+    monkeypatch.setattr(aes_boot._Run, "to_an_idle", watched)
+    return held
+
+
+def test_a_door_boot_holds_the_profile_for_its_own_run_and_a_takeover_with_no_door_does_not(monkeypatch):
+    """...AND A DOOR BOOT IS IN THE LEDGER ITSELF (the fix pass of the narrow door flip, A-5: it ASKED and did not
+    HOLD — a second door boot derived cold inside it would have switched the profile off under it, unrefused): held
+    by its own name for the length of its run and let go after; a takeover with no door switches no profile on and
+    holds nothing."""
+    capture, disk = capture_and_disk(QUIET_PAIR)
+    held = _who_holds_the_profile_inside_the_run(monkeypatch)
+    aes_boot.booted.derive(capture, disk, ours=the_door_of("the shipped blob"))
+    aes_boot.booted.derive(capture, disk, ours=aes_boot.ours_of(isr.blob_named("the shipped blob")))
+    assert held == [(aes_boot.PROFILE_HELD_BY_A_DOOR_BOOT,), ()] and not aes_event.PROFILE_HELD_BY
 
 
 def test_a_partial_door_is_refused_by_name():
@@ -2400,10 +2397,10 @@ def test_the_critical_error_vector_is_mapped_at_the_stop_and_held_where_the_boot
     """`$404`, THE DOOR'S OTHER VECTOR (`aes_event.CRITICAL_ERROR_VECTOR`), by a real boot: at the takeover's stop the
     ROM's takeerr HAS RUN — the vector holds the ROM's crit_err there, on the desk's boot and the accessories' — so it
     is mapped as `$88` is, held where the boot ends, mapped back in a comparison, and refused by name once it holds
-    the ROM's again (giveerr, retake). THE ENTRY IT IS GIVEN HERE IS A LABELLED STAND-IN — the prototype's trap
+    the ROM's again (giveerr, retake). THE ENTRY IT IS GIVEN HERE IS A LABELLED STAND-IN — the blob's trap
     handler: no critical error happens in a boot, so nothing enters it THROUGH `$404` and the ROM's crit_err runs
-    zero cycles; the build's own crit_err is slice G's, and a blob that links none is refused
-    (`test_a_door_s_entries_are_found_by_symbol_...`)."""
+    zero cycles (the build's own crit_err in that slot is the narrow door's third part: the shipped door's boot,
+    above); a blob that links none is refused (`test_a_door_s_entries_are_found_by_symbol_...`)."""
     critical, stand_in = aes_event.CRITICAL_ERROR_VECTOR, the_door_of(blob).door[0].mapping[0][1]
     ours = the_door_of(blob)._replace(door=(*the_door_of(blob).door, aes_boot.DoorPart(critical.what, ((addrs.AES_ROM_CRIT_ERR, stand_in),))))
     for label in (A_DESK, QUIET_PAIR):
@@ -2717,11 +2714,10 @@ def _held_at(pokes, at):
 def rows_on_a_door_machine(rows):
     """The Tier 3 rows whose machine is BEHIND A DOOR OF OURS: one of the door's vectors or slots (`$88`, `$404`, the
     desk's trampoline slot) holds an address INSIDE A BLOB'S SPAN — the bench blob's or the shipped one's, the
-    prototype door after it included (the ROM's handler, the BIOS's, nothing, or a value a case staged elsewhere is none). A door always maps `$88` (a door of
-    the programs alone is refused where its boot ends)."""
-    slots = [slot for declared in THE_DOOR_S for slot in declared.slots]
-    # (a blob's span WITH the prototype door the takeover appends to it: the door of every proof made before the flip)
-    spans = [(ours.base, ours.end) for ours in (aes_boot.with_the_prototype_door(isr.blob_named(name)) for name in isr.BLOBS)]
+    shipped one's (the ROM's handler, the BIOS's, nothing, or a value a case staged elsewhere is none). A door always
+    maps `$88` (a door of the programs alone is refused where its boot ends)."""
+    slots = [slot for declared in THE_DOOR_S for slot in aes_event.THE_MACHINE_S_VECTORS.get(declared.what, declared.slots)]
+    spans = [(ours.base, ours.end) for ours in (aes_boot.ours_of(isr.blob_named(name)) for name in isr.BLOBS)]
 
     def behind_a_door_of_ours(pokes):       # (a row's pokes are read ONCE: a row may make its machine where it is asked)
         held = [_held_at(pokes, slot) & BUS for slot in slots]
@@ -2742,31 +2738,40 @@ def test_every_relocation_declared_is_mapped_at_tier_3_or_named_not_yet_with_its
     assert all(reason and owner for reason, owner in not_yet.values())
 
 
-def test_no_tier_3_row_runs_on_a_door_machine_while_a_door_declaration_is_not_yet_mapped():
-    """...AND NO TIER 3 ROW MAY RUN BEHIND A DOOR WHILE ONE OF THE DOOR'S DECLARATIONS IS PENDING — read off the row
-    registry itself (`tier3.ROWS`: a row whose machine holds a blob's address in a door slot): that row's two shores
-    differ in the slot by nature, and only the registry maps it. So the flip cannot land a door row and forget its
-    mapping: this reddens, naming the first such row. (THE RULE AS IT WAS UNTIL WAVE 3 — "the list is empty once a
-    row runs on a TAKEOVER machine" — read the screen manager's p_ldaddr in the rows' pokes and saw none of the 2,365:
-    a row's machine is the ROM's, made ours at run time. It held nothing, and the list has four entries: restated
-    for what is pending, the door. `test_no_battery_asks_for_a_door_machine_while_the_door_is_pending` holds the
-    same rule over the SOURCES — a row made from a door machine at run time is that test's to see.)"""
-    pending = {declared.what for declared in THE_DOOR_S} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
-    rows = harness.bench_tier3().ROWS
-    assert len(rows) > 1000, "the registry read is Tier 3's whole table"
-    behind = rows_on_a_door_machine(rows)
+def _pending_of_the_narrow_door():
+    return {declared.what for declared in aes_event.THE_NARROW_DOOR} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
+
+
+def vet_no_row_behind_a_door_while_it_is_pending(rows):
+    """THE RULE: no Tier 3 row may run behind a door while a declaration of THE NARROW DOOR is pending — refused by
+    the first such row's name."""
+    pending, behind = _pending_of_the_narrow_door(), rows_on_a_door_machine(rows)
     assert not (behind and pending), (
         f"{len(behind)} Tier 3 row(s) run behind a door (the first: {behind[0].function} / {behind[0].case}) while "
         f"{sorted(pending)} is still not mapped at Tier 3: add it to CODE_RELOCATIONS with its site in `tier3.code_relocations`")
 
 
+def test_no_tier_3_row_runs_on_a_door_machine_while_a_door_declaration_is_not_yet_mapped():
+    """...AND NO TIER 3 ROW MAY RUN BEHIND A DOOR WHILE ONE OF THE NARROW DOOR'S DECLARATIONS IS PENDING — read off the
+    row registry itself (`tier3.ROWS`: a row whose machine holds a blob's address in a door slot): that row's two shores
+    differ in the slot by nature, and only the registry maps it. NONE IS PENDING SINCE THE NARROW DOOR FLIP (band 5 wave
+    3, slice F: the three are in `CODE_RELOCATIONS`; the desk's trampoline slot, wave 4's, is no part of the narrow
+    door) — the rule stands for the next declaration, and its teeth are the test below. (A row made from a door
+    machine at run time — `aes_ctlmgr.our_machine`: the accessory machines' rows — is `WHO_ASKS_FOR_A_DOOR`'s to see.)"""
+    rows = harness.bench_tier3().ROWS
+    assert len(rows) > 1000, "the registry read is Tier 3's whole table"
+    assert not _pending_of_the_narrow_door(), "the narrow door is mapped: what is pending is wave 4's"
+    vet_no_row_behind_a_door_while_it_is_pending(rows)
+
+
 @every_blob
-def test_a_row_on_a_door_machine_is_told_from_the_rom_s_by_what_its_vectors_hold(blob):
+def test_a_row_on_a_door_machine_is_told_from_the_rom_s_by_what_its_vectors_hold(blob, monkeypatch):
     """...and the reading has teeth: a row over the snapshot, over the ROM's own boot, over a TAKEOVER machine with
     no door (its `$88` is the ROM's) and over a machine a case staged another handler in is none; one over a door
     machine's megabyte is, and so is a bare delta that lays a blob's address in the critical-error vector — found by
-    the slot, whatever its name. A CRAFTED ROW THAT ASKS A DOOR MACHINE REDDENS THE RULE ABOVE (its own assertion,
-    made here over the crafted registry: four declarations are pending)."""
+    the slot, whatever its name. A CRAFTED REGISTRY WITH A ROW BEHIND A DOOR IS LET THROUGH BY THE RULE ABOVE AS THE
+    REGISTRY STANDS (the door is mapped) AND REDDENS IT THE MOMENT ONE PART OF THE NARROW DOOR IS PENDING AGAIN — each
+    of the three, put back in turn."""
     row = namedtuple("Row", "function case pokes")
     door, ours = behind_a_door(QUIET_PAIR, blob), aes_boot.ours_of(isr.blob_named(blob))
     in_the_blob = struct.pack(">I", ours.entry)
@@ -2776,8 +2781,12 @@ def test_a_row_on_a_door_machine_is_told_from_the_rom_s_by_what_its_vectors_hold
             row("f", "a blob's address in $404", {aes_event.ETV_CRITIC: in_the_blob})]
     behind = rows_on_a_door_machine(rows)
     assert [each.case for each in behind] == ["a door machine", "a blob's address in $404"]
-    pending = {declared.what for declared in THE_DOOR_S} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
-    assert pending and behind, "the rule above is red over this registry: rows behind a door, declarations pending"
+    vet_no_row_behind_a_door_while_it_is_pending(rows)
+    for part in aes_event.THE_NARROW_DOOR:
+        monkeypatch.setitem(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3, part.what, ("put back by this test", "nobody"))
+        with pytest.raises(AssertionError, match=r"2 Tier 3 row\(s\) run behind a door \(the first: d / a door machine\)"):
+            vet_no_row_behind_a_door_while_it_is_pending(rows)
+        monkeypatch.delitem(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3, part.what)
 
 
 # ---- THE SEVEN-ACCESSORY MACHINE (band 5 wave 3): one more `.ACC` than the loader takes ---------------------------------------------
@@ -2906,7 +2915,7 @@ def test_an_accessory_file_of_any_length_lies_in_one_run_and_its_mode_is_patched
     assert quiet[first + len(names) * clusters * st_build.CLUSTER_BYTES:] == bytes(len(quiet) - first - len(names) * clusters * st_build.CLUSTER_BYTES)
 
 
-# ---- THE DOOR'S DECLARATIONS (band 5 wave 3): pending, and held to the ROM and to the machines ---------------------------------
+# ---- THE DOOR'S DECLARATIONS (band 5 wave 3): held to the ROM and to the machines; the narrow door's three MAPPED ----------
 RTE_WORD, RTS_WORD, LINE_F_RETURN_WORD = 0x4e73, 0x4e75, 0xf001
 LEA_ABSOLUTE_LONG_TO_A0 = 0x41f9
 # Where the ROM hands each routine BY VALUE — `(the instruction, its opcode)`: the longword after the opcode word is
@@ -2932,11 +2941,33 @@ def test_each_declaration_of_the_door_is_the_rom_s_own_by_value_store(declared):
     for at, opcode in THE_DOOR_BY_VALUE[declared.what]:
         assert struct.unpack_from(">HI", BASE_IMAGE, at) == (opcode, rom), f"{declared.what}: the ROM's instruction at {at:#x}"
     spans = aes_event.ROM_TEXT_OF[declared.what]
-    assert spans[0][0] == rom and symbol.startswith("aes_rom_") and declared.at_entry
+    assert spans[0][0] == rom and symbol.startswith("aes_rom_")
     for (lo, hi), last in zip(spans, THE_DOOR_S_LAST_WORDS[declared.what], strict=True):
         assert aes.AES_TEXT[0] <= lo < hi <= aes.AES_TEXT[1] and rom_word(hi - WORD_BYTES) == last
-    assert aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3[declared.what][1] in (aes_event.THE_DOOR_FLIP, aes_event.WAVE_4)
-    assert declared not in aes_event.CODE_RELOCATIONS
+    # THE NARROW DOOR'S THREE ARE MAPPED, WHERE A RUN ENDS AND NEVER AT ITS ENTRY (ruling W3-R1: a row's machine holds
+    # what it came with — the full flip, `$88` at every row's entry, is wave 4's); the desk's trampoline is pending.
+    if declared in aes_event.THE_NARROW_DOOR:
+        assert declared in aes_event.CODE_RELOCATIONS and not declared.at_entry
+        assert declared.what not in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
+    else:
+        assert declared is aes_event.USERBLK_TRAMPOLINE_SLOT and declared not in aes_event.CODE_RELOCATIONS
+        assert aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3[declared.what][1] == aes_event.WAVE_4
+
+
+def test_each_part_of_the_narrow_door_is_proved_a_mapping_by_registered_rows_whose_own_run_stores_it():
+    """A MAPPING NOBODY WOULD MISS IS NOT A MAPPING (`aes_event.MAPPING_PROVED_BY`): every part of the narrow door
+    names the entries whose OWN RUN stores its code address — install_trap2 and retake for `$88`, retake and takeerr
+    for `$404`, sndcli for a program's first-entry frame — and each of those has priced rows in Tier 3's table. (That
+    un-mapping the part reddens them is each battery's own RED: `test_aes_gemdosif_transcription.py`,
+    `test_aes_loader.py`.)"""
+    rows = harness.bench_tier3().ROWS
+    assert set(aes_event.MAPPING_PROVED_BY) == {part.what for part in aes_event.THE_NARROW_DOOR}
+    for what, symbols in aes_event.MAPPING_PROVED_BY.items():
+        for symbol in symbols:
+            assert [row for row in rows if row.symbol == symbol], f"{what}: `{symbol}` has no row whose run stores it"
+    walked = [what for what in aes_event.SLOTS_WALKED_FROM_THE_MACHINE]
+    assert walked == [aes_event.PROGRAM_ENTRY.what] and set(aes_event.THE_MACHINE_S_VECTORS) == {
+        aes_event.GEM_TRAP_VECTOR.what, aes_event.CRITICAL_ERROR_VECTOR.what}, "a vector's own longword, or slots walked: each part one"
 
 
 @every_boot
@@ -2954,29 +2985,23 @@ def test_the_slots_walked_are_the_machine_s_own_processes(label):
     assert aes_event.PROGRAM_ENTRY.slots == (), "its slots are walked: a static tuple would miss an allocated accessory's"
 
 
-# Who may ask for a machine behind a door while its relocations are PENDING: the takeover's own module and battery —
-# and the stack reading's MEASURED RUN of the trap path (ruling W3-R8's gate, slice S: a measurement beside a bound,
-# both shores booted behind the prototype door — no Tier 3 row, nothing compared through the registry).
-DOOR_ASKED_BY = re.compile(r"with_the_prototype_door|(?:ours_of|desk_machine|accessory_machine)\([^)\n]*\bdoor=")
-ASKS_FOR_A_DOOR_TODAY = {"aes_boot.py", "test_aes_boot.py"}
-MAY_MEASURE_BEHIND_A_DOOR = {"aes_stack.py", "test_aes_stack.py"}
+# WHO ASKS FOR A MACHINE BEHIND A DOOR, read off the sources — A LIST, held exactly (a module that begins to ask reds
+# here until it is read): the takeover's own module and battery; `aes_ctlmgr.py`, whose `our_machine` is what every
+# Tier 3 row of an accessory machine runs over on our shore (the narrow door flip); the stack reading's MEASURED RUN
+# of the trap path (ruling W3-R8's gate).
+DOOR_ASKED_BY = re.compile(r"(?:ours_of|desk_machine|accessory_machine)\([^)\n]*\bdoor=")
+WHO_ASKS_FOR_A_DOOR = {"aes_boot.py", "test_aes_boot.py", "aes_ctlmgr.py", "aes_stack.py"}
 
 
-def test_no_battery_asks_for_a_door_machine_while_the_door_is_pending():
-    """...AND NOTHING BINDS THE DOOR BEFORE THE FLIP. A Tier 3 row's two shores are told apart by the registry alone:
-    a row whose OUR shore ran over a door machine while `$88` and the programs' frames are named NOT YET MAPPED would
-    differ in them by nature with nothing to map them. So while any of the door's declarations is pending, no module
-    of `test/` or `bench/` but the takeover's own asks for a door — read off the sources; the flip maps the
-    declarations (`CODE_RELOCATIONS`, their sites in `tier3.code_relocations`) and this then lets it."""
-    pending = {declared.what for declared in THE_DOOR_S} & set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)
+def test_who_asks_for_a_door_machine_is_a_list():
+    """A Tier 3 row's two shores are told apart by the registry alone, so who puts a door machine under a row is
+    held: the modules of `test/` and `bench/` that ask for one are exactly these — and none may while a part of the
+    narrow door is pending (none is, since the flip)."""
     recreate = Path(__file__).resolve().parents[1]
     asking = {path.name for path in (*(recreate / "test").glob("*.py"), *(recreate / "bench").glob("*.py"))
               if DOOR_ASKED_BY.search(path.read_text())}
-    assert asking >= ASKS_FOR_A_DOOR_TODAY
-    asking -= MAY_MEASURE_BEHIND_A_DOOR
-    assert not (pending - {aes_event.USERBLK_TRAMPOLINE_SLOT.what}) or asking == ASKS_FOR_A_DOOR_TODAY, (
-        f"{sorted(asking - ASKS_FOR_A_DOOR_TODAY)} ask(s) for a machine behind a door while {sorted(pending)} are declared "
-        f"NOT YET MAPPED at Tier 3: map them first (`aes_event.CODE_RELOCATIONS`, `tier3.code_relocations`)")
+    assert asking == WHO_ASKS_FOR_A_DOOR, f"who asks for a door machine moved: {sorted(asking ^ WHO_ASKS_FOR_A_DOOR)}"
+    assert not _pending_of_the_narrow_door()
 
 
 @every_blob

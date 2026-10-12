@@ -36,7 +36,7 @@ whether the high word differs — held both ways: declared and equal is refused,
 """
 import pytest
 
-from harness import BASE_IMAGE, addrs, emu
+from harness import BASE_IMAGE, addrs, bench_tier3, emu
 
 import aes
 import aes_boot
@@ -270,6 +270,89 @@ def test_the_door_s_own_instructions_cost_one_call_what_they_cost_another(blob_n
     assert own(INIT) == own(FIND) == own(WRITE)
     arm, entry, thunk = own(ALT)
     assert (arm, thunk) == (own(FIND)[0], 0) and 0 < entry < own(FIND)[1]
+
+
+# ---- THE DOOR'S PRICE: ONE ROUND TRIP, ITS OWN CYCLES ON EACH SHORE (the narrow door flip, band 5 wave 3) --------------------
+# The door is entered by an exception and left by an `rte`: no call and return exists, and the table's row is a call.
+# So ITS PRICE IS HELD HERE, BY ITS OWN BATTERY, PER SELECTOR, at a program's own trap: the cycles each shore spends in
+# THE DOOR'S OWN INSTRUCTIONS on one round trip — the AES arm and the way out (the pinned region: the same bytes),
+# aes_entry (the stream) and, on ours, the marshal's thunk — the marshal, the opcode switch and the routine under them
+# being their own rows'. THE ROM'S COUNT LEAVES OUT ITS LINE-F HANDLER: aes_entry reaches the marshal, dsptch and the
+# way out through three Line-F calls (two for selector 201) where ours `jsr`s — cycles the table's convention counts
+# for the ROM on every other row and that the profile here cannot tell from the marshal's own — so THE RATIO PINNED IS
+# AN UPPER BOUND, and it is under the bar as it stands. (INSIDE A PRICED ROW the same instructions are in an
+# accessory's turn, `aes_accessory_turns_pinned`: there the Line-F handler is counted, as the convention has it.)
+DOOR_S_OWN = (door.THE_AES_ARM, door.AES_ENTRY)
+THE_DOOR_S_PRICE = {door.SELECTOR_AES: (856, 814), door.SELECTOR_AES_ALT: (730, 758)}       # (ours, the ROM's): 1.05, 0.96
+PRICED_AT = {INIT: door.SELECTOR_AES, FIND: door.SELECTOR_AES, WRITE: door.SELECTOR_AES, ALT: door.SELECTOR_AES_ALT}
+NOBODY_ELSE_TRAPS = (FIND, WRITE, ALT)  # (appl_init's trip holds another process's whole trap: the ROM's on both shores)
+
+
+@pytest.mark.parametrize("name", NOBODY_ELSE_TRAPS)
+@pytest.mark.parametrize("blob_name", isr.BLOBS)
+def test_the_door_s_own_round_trip_is_priced_per_selector_and_under_the_bar(name, blob_name, round_trip):
+    """ONE ROUND TRIP'S OWN CYCLES, each shore's door alone, PINNED per selector on both blobs (the door is the same
+    bytes in both) — and at or under the bar with the ROM's Line-F passes left out of its count."""
+    the_rom_s, ours = round_trip(name, blob_name)
+    our_door = door.our_door(isr.blob_named(blob_name))
+    priced = (door.cycles_in(ours, our_door, *DOOR_S_OWN, door.THE_THUNK), door.cycles_in(the_rom_s, door.ROM_DOOR, *DOOR_S_OWN))
+    assert priced == THE_DOOR_S_PRICE[PRICED_AT[name]], f"{name}: the door's own cycles (ours, the ROM's) moved: say why"
+    assert priced[0] / priced[1] <= bench_tier3().TIER3_FUNCTION_BAR
+    assert not door.cycles_in(the_rom_s, our_door, *DOOR_S_OWN, door.THE_THUNK), "the ROM's trip ran no cycle of our door"
+
+
+def test_the_door_s_price_is_the_same_trip_whoever_else_traps_inside_it(round_trip):
+    """...and appl_init's trip, through three processes, spends in OUR door what every selector-200 trip does (the
+    other process's trap inside it is the ROM's on both shores of a trip: the vector is not bound there)."""
+    for blob_name in isr.BLOBS:
+        _its, ours = round_trip(INIT, blob_name)
+        our_door = door.our_door(isr.blob_named(blob_name))
+        assert door.cycles_in(ours, our_door, *DOOR_S_OWN, door.THE_THUNK) == THE_DOOR_S_PRICE[door.SELECTOR_AES][0]
+
+
+# ---- THE CENSUS OF THE DOOR AND THE LOADER AT TIER 3: a ratio, or one of three reasons, by name -----------------------------
+# Every routine of band 5 wave 3 says how it is held at Tier 3: PRICED (rows of the table; or a ratio its own battery
+# pins, said so), or one of THREE REASONS it has no second column:
+NEVER_RETURNS = "NEVER RETURNS: a checkpoint — the machine where it leaves, no second column"
+RUNS_A_PROGRAM = "RUNS A PROGRAM: priced over a scripted Pexec alone; a real launch loads over the harness's blob"
+NO_MACHINE = "NO MACHINE: no oracle machine reaches it"
+IN_THE_TABLE, BY_ITS_BATTERY = "rows of the table", "a ratio its own battery pins"
+THE_CENSUS = {
+    "AES_ROM_TRAP2": (BY_ITS_BATTERY, "the AES arm's round trip per selector (above); inside every accessory's turn"),
+    "the trap's VDI arm": (BY_ITS_BATTERY, "the selector switch, the ROM's own bytes: cut out of both own counts and held equal "
+                                           "on every row behind the door (`tier3.vet_who_ran_the_door`)"),
+    "the trap's Pterm arm": (NEVER_RETURNS, "ends at GEMDOS's own trap handler, Pterm(0) pushed"),
+    "AES_ROM_TRAP2_EXIT": (BY_ITS_BATTERY, "the way out: in the round trip"),
+    "AES_ROM_ENTRY": (BY_ITS_BATTERY, "the stream: in the round trip"),
+    "AES_ROM_UB_TRAMPOLINE": (NO_MACHINE, "a desk window with icons drawn (band 6's `$fde844` under it); held at Tier 1 "
+                                          "over a staged call"),
+    "AES_ROM_GOTOPGM": (NEVER_RETURNS, "enters the program: held where every door machine's boot enters each accessory"),
+    "AES_ROM_CRIT_ERR": (BY_ITS_BATTERY, "held to the ROM's cycle count with eralert served (`test_aes_crit_err.py`; ruling G-2)"),
+    "AES_ROM_DOS_EXEC": (RUNS_A_PROGRAM, "five `.S` rows over the scripted Pexec"),
+    "AES_ROM_SNDCLI": (IN_THE_TABLE, "four rows, GEMDOS replayed"),
+    "AES_ROM_LDACCS": (IN_THE_TABLE, "two rows, GEMDOS replayed"),
+    "AES_ROM_CRE_APROC": (IN_THE_TABLE, "one row"),
+    "AES_ROM_FREE_ACCS": (IN_THE_TABLE, "one row, Mfree scripted"),
+    "the cartridge's loader ($fed554, $fed5c2)": (NO_MACHINE, "the oracle serves no cartridge (ruling W3-R6)"),
+}
+
+
+def test_the_census_says_how_each_routine_of_the_door_and_the_loader_is_held_at_tier_3():
+    """EACH ENTRY IS WHAT IT SAYS: a routine named IN THE TABLE has priced rows there (and as many as it says the
+    loader's battery registers); one with a REASON has none; the door's own entries are all here."""
+    tier3 = bench_tier3()
+    reasons = {NEVER_RETURNS, RUNS_A_PROGRAM, NO_MACHINE}
+    assert {how for how, _what in THE_CENSUS.values()} == reasons | {IN_THE_TABLE, BY_ITS_BATTERY}
+    assert {entry.upper() for entry in transcription.TRAPDOOR_ENTRIES} <= set(THE_CENSUS)
+    for name, (how, _what) in THE_CENSUS.items():
+        if not hasattr(addrs, name):
+            continue
+        rows = [row for row in tier3.ROWS if tier3.rom_address(row) == getattr(addrs, name)]
+        if how == IN_THE_TABLE:
+            assert rows, f"{name}: said priced in the table, and no row is"
+        elif name != "AES_ROM_DOS_EXEC":
+            assert not rows, f"{name}: has a row in the table now: say so in the census"
+    assert [row for row in tier3.ROWS if tier3.rom_address(row) == addrs.AES_ROM_DOS_EXEC], "dos_exec's scripted rows"
 
 
 # ---- THE DECLARED DIVERGENCE: D0's high word ----------------------------------------------------------------------------------

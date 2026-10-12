@@ -11,6 +11,7 @@ project is a DIRECTORY under `src/` (`src/xbios/`, later `src/bios/`, `src/gemdo
 `.c` file, because a TOS component is dozens of functions rather than one subsystem file.
 """
 import re
+from collections import namedtuple
 from pathlib import Path
 
 import pytest
@@ -748,6 +749,10 @@ def test_the_two_counts_paragraph_counts_what_the_table_holds():
     assert {name: int(count) for name, count in said.groupdict().items()} == held, f"STATUS.md says {said[0]!r}; the table holds {held}"
 
 
+_ACCESSORY_TURNS_TODAY_RE = re.compile(r"A TURN OF OURS, on a line of its own: (?P<turns>\w+) of them under (?P<rows>\w+) rows")
+_A_TURN_OF_AN_ACCESSORY_RE = re.compile(r"^\s+an accessory's turn: ours \d+ / ROM \d+ = ")
+
+
 def test_the_table_today_sentence_counts_the_windows_and_the_save_word_s_drops():
     """`THE TABLE TODAY: a FOREIGN WINDOW in N of its rows; the save word `$8996` dropped by name in M of the rows
     that switch; A TURN OF OUR SCREEN MANAGER priced under K of its rows`: the table's rows with a window of the
@@ -766,6 +771,18 @@ def test_the_table_today_sentence_counts_the_windows_and_the_save_word_s_drops()
     assert (int(said["windows"]), int(said["saved"]), int(said["turns"])) == (windows, saved, turns), (
         f"STATUS.md says {said[0]!r}; the table has a window under {windows} rows, {saved} rows that switch drop the word "
         f"and a turn of our screen manager is priced under {turns} rows")
+    # ...AND, SINCE THE NARROW DOOR FLIP, THE ACCESSORIES' TURNS the same paragraph counts: the table's lines, and the
+    # rows they stand under (a row may hold two).
+    of_accessories = _ACCESSORY_TURNS_TODAY_RE.search(" ".join(_status().split()))
+    assert of_accessories, "STATUS.md no longer counts the accessories' turns in its `THE TABLE TODAY` paragraph"
+    lines, under, row = 0, set(), None
+    for line in table.splitlines():
+        if _A_TURN_OF_AN_ACCESSORY_RE.match(line):
+            lines, under = lines + 1, under | {row}
+        elif _TABLE_ROW_RE.match(line) and not line.startswith(" "):
+            row = line
+    assert (_number(of_accessories["turns"]), _number(of_accessories["rows"])) == (lines, len(under)), (
+        f"STATUS.md says {of_accessories[0]!r}; the table prices {lines} turn(s) of an accessory under {len(under)} row(s)")
 
 
 # ---- ...AND THE SECTION'S PROSE COUNTS OF ev_multi's ROWS -----------------------------------------------------------------
@@ -817,6 +834,8 @@ def test_the_prose_counts_of_ev_multi_s_rows_are_the_registry_s_and_its_row_s():
 # so a frame that moves a pin reddens the sentence that still says the old margin. Beside it, two counts the wave's
 # first entry would otherwise keep by hand: the registry's pending declarations and the table's length.
 THE_WAVE_S_ENTRY = "BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER"
+# (...the wave's first entry is history since THE NARROW DOOR FLIP, whose own entry states the two counts as they are)
+THE_FLIP_S_ENTRY = "WAVE 3 — SLICE F: THE NARROW DOOR FLIP"
 THE_GATE_S_ENTRY = "WAVE 3 — THE DOOR DIET"
 _COUNT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
                 "eleven": 11, "twelve": 12}
@@ -825,8 +844,10 @@ _THE_GATE_RE = re.compile(
     r"MEASURED (?P<measured>\d+) spare.*?BOUND (?P<bound>\d+) spare \(fsel_input: [\d,]+ \+ \d+ = (?P<needed>[\d,]+)\);\s+"
     r"all (?P<every>\d+) arms of the opcode switch fit PD2 \((?P<arms>\w+) did not\), and an allocated PD's (?P<allocated>[\d,]+)", re.S)
 ARMS_OVER_PD2_BEFORE_THE_DOOR_DIET = 8      # the wave's first entry's count, history: quoted beside the new verdict
-_PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations are PENDING")
+_PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations? (?:are|is) PENDING")
 _TABLE_LINES_RE = re.compile(r"THE TABLE against `[0-9a-f]+`'s \([\d,]+ lines → (?P<lines>[\d,]+)\)")
+_WAS_PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations are PENDING")
+PENDING_BEFORE_THE_FLIP = 4             # the wave's first entry's count, history
 
 
 def _number(text):
@@ -848,12 +869,14 @@ def test_the_gate_s_sentence_quotes_the_stack_battery_s_pins_and_the_wave_s_coun
             aes_stack.blob_of(pinned.SHIPPED).elf, pinned.SHIPPED)), "allocated": pinned.AN_ALLOCATED_SPAN}
     assert pinned.PD2_S_SPAN - needed == _number(said["bound"]) and worst_arm == 90, "the worst arm is fsel_input (opcode 90)"
     assert pinned.CALLS_OVER_PD2[pinned.SHIPPED] == (), "the sentence says every arm fits: the pin of the arms over PD2 is empty"
-    entry = _paragraph_from(_status(), THE_WAVE_S_ENTRY)
+    was = _WAS_PENDING_RE.search(_paragraph_from(_status(), THE_WAVE_S_ENTRY))
+    assert was and _number(was["count"]) == PENDING_BEFORE_THE_FLIP, "the wave's first entry: its history"
+    entry = _paragraph_from(_status(), THE_FLIP_S_ENTRY)
     pending = _PENDING_RE.search(entry)
-    assert pending and _number(pending["count"]) == len(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3), (
-        f"the entry counts the registry's pending declarations; it holds {sorted(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)}")
-    lines = _TABLE_LINES_RE.search(_status())
-    assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the wave's entry states it"
+    assert pending and _number(pending["count"].lower()) == len(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3), (
+        f"the flip's entry counts the registry's pending declarations; it holds {sorted(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)}")
+    lines = _TABLE_LINES_RE.search(entry)
+    assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the flip's entry states it"
 
 
 # ...AND THE DOOR DIET'S OTHER NUMBERS, which the sentence above does not hold (its review, B-F4: the per-arm table
@@ -922,3 +945,97 @@ def test_the_two_battery_counts_the_wave_3_entries_quote_are_the_batteries_own()
         "arrivals": len(test_aes_loader.CASES), "tests": _collected("test_aes_loader.py"),
         "made": len(test_aes_loader.CASES) - len(staged), "staged": len(staged)}
     assert int(crit_err["cases"]) == _collected("test_aes_crit_err.py")
+
+
+# ---- THE NARROW DOOR FLIP'S FIX PASS: the turns' figures its entry quotes ARE THE TABLE'S (B-F2, B-F3) ---------------------
+# The entry quotes, for the eight accessory turns, each turn's ratio with its thunks and THE FIGURE NET OF THE ROM'S
+# LINE-F HANDLER (`tier3._line_f_of`: printed beside a turn, read by no rule) on both blobs, and compares that one
+# figure with the screen manager's own lines. Each is re-derived here from the table's integers: the shipped blob's
+# from its own lines; the bench blob's from the pinned turns (`aes_accessory_turns_pinned`) over the SAME ROM windows
+# and Line-F shares (the ROM's run of a row is one run, whichever blob stands beside it).
+_A_TURN_S_LINE_RE = re.compile(r"^\s+(?P<whose>an accessory's turn|screen manager's turn): ours (?P<ours>\d+) / ROM (?P<the_rom_s>\d+) = ")
+_ITS_THUNKS_RE = re.compile(r", and (?P<glue>\d+) in thunks: ")
+_ITS_LINE_F_RE = re.compile(r"the ROM's Line-F handler alone is (?P<line_f>\d+) of its (?P<the_rom_s>\d+) \(\d+%\): net of it (?P<net>\d\.\d\d)")
+_THE_EIGHT_TURNS_RE = re.compile(
+    r"THE EIGHT ACCESSORY TURNS IN THE TABLE'S ORDER, with thunks / net of the ROM's Line-F handler — shipped \(the table's own "
+    r"lines\): (?P<shipped>[\d. /,]+); bench \(the pinned turns over the table's ROM windows and Line-F shares\): (?P<bench>[\d. /,]+)\.")
+_ON_THAT_ONE_FIGURE_RE = re.compile(
+    r"ON THAT ONE FIGURE: the screen manager's (?P<managers>\d+) lines that print it are (?P<manager_lo>\d\.\d\d) \.\. "
+    r"(?P<manager_hi>\d\.\d\d), (?P<manager_over>\d+) over 1\.10; the accessories' (?P<accessories>\d+) are (?P<shipped_lo>\d\.\d\d) \.\. "
+    r"(?P<shipped_hi>\d\.\d\d), (?P<shipped_over>\d+) over 1\.10 on the shipped blob and (?P<bench_lo>\d\.\d\d) \.\. "
+    r"(?P<bench_hi>\d\.\d\d), (?P<bench_over>\d+) over 1\.10 on the bench blob")
+THE_BAR_A_TURN_IS_HELD_TO = 1.10
+AN_ACCESSORY_S, THE_BENCH_BLOB = "an accessory's turn", "bench"
+TurnLine = namedtuple("TurnLine", "whose row nth ours the_rom_s glue line_f")
+
+
+def _turn_lines_of_the_table():
+    """Every turn's line of the table as a `TurnLine`: whose it is, the row's own line it stands under and which
+    turn of that row it is, and its integers — `line_f` None where the line prints no Line-F share (a slice's). THE
+    NET FIGURE EACH LINE PRINTS IS HELD HERE to those integers, to the two decimals."""
+    turns, row, nth = [], None, 0
+    for line in BENCH_TABLE.read_text().splitlines():
+        if line and not line.startswith(" "):
+            row, nth = line, 0
+            continue
+        a_turn = _A_TURN_S_LINE_RE.match(line)
+        if not a_turn:
+            continue
+        thunks, share = _ITS_THUNKS_RE.search(line), _ITS_LINE_F_RE.search(line)
+        turn = TurnLine(a_turn["whose"], row, nth, int(a_turn["ours"]), int(a_turn["the_rom_s"]), int(thunks["glue"]) if thunks else 0,
+                        int(share["line_f"]) if share else None)
+        if share:
+            assert int(share["the_rom_s"]) == turn.the_rom_s and share["net"] == f"{_net_of_the_handler(turn):.2f}", (
+                f"the table prints a net figure its own line's integers do not make: {line.strip()[:200]}")
+        turns.append(turn)
+        nth += 1
+    return turns
+
+
+def _with_thunks(turn):
+    return (turn.ours + turn.glue) / turn.the_rom_s
+
+
+def _net_of_the_handler(turn):
+    return (turn.ours + turn.glue) / (turn.the_rom_s - turn.line_f)
+
+
+def _on_the_bench_blob(turn):
+    """The accessory `turn` of the table as the BENCH blob runs it: our member and our thunks the pinned ones of its
+    row (found by the row's case, which the row's own line spells), the ROM's window and Line-F share the table's."""
+    import aes_accessory_turns_pinned
+
+    (pinned,) = [by_blob[THE_BENCH_BLOB] for name, by_blob in aes_accessory_turns_pinned.PINNED.items()
+                 if name.split(", ", 1)[1] in turn.row]
+    ours, the_rom_s, glue = pinned[turn.nth]
+    assert the_rom_s == turn.the_rom_s, f"the pinned bench turn's ROM member {the_rom_s} is not the table's {turn.the_rom_s}"
+    return turn._replace(ours=ours, glue=glue)
+
+
+def _quoted(turns):
+    return ", ".join(f"{_with_thunks(turn):.2f} / {_net_of_the_handler(turn):.2f}" for turn in turns)
+
+
+def _spread(turns):
+    net = [_net_of_the_handler(turn) for turn in turns]
+    return f"{min(net):.2f}", f"{max(net):.2f}", str(sum(figure > THE_BAR_A_TURN_IS_HELD_TO for figure in net))
+
+
+def test_the_fix_pass_s_figures_of_the_turns_net_of_the_line_f_handler_are_the_table_s():
+    """THE EIGHT TURNS' TWO FIGURES ON EACH BLOB, and THE ONE-FIGURE COMPARISON with the screen manager's lines (how
+    many print the figure, its lowest and highest, how many are over 1.10 ON THE CYCLES): each the table's."""
+    status = " ".join(_status().split())
+    eight, compared = _THE_EIGHT_TURNS_RE.search(status), _ON_THAT_ONE_FIGURE_RE.search(status)
+    assert eight and compared, "STATUS.md no longer quotes the eight accessory turns' figures, or no longer compares them on one figure"
+    turns = _turn_lines_of_the_table()
+    of_accessories = [turn for turn in turns if turn.whose == AN_ACCESSORY_S]
+    of_the_manager = [turn for turn in turns if turn.whose != AN_ACCESSORY_S and turn.line_f is not None]
+    assert all(turn.line_f is not None for turn in of_accessories)
+    on_the_bench = [_on_the_bench_blob(turn) for turn in of_accessories]
+    assert (eight["shipped"], eight["bench"]) == (_quoted(of_accessories), _quoted(on_the_bench)), (
+        f"STATUS.md quotes {eight['shipped']!r} and {eight['bench']!r}; the table and the pins make "
+        f"{_quoted(of_accessories)!r} and {_quoted(on_the_bench)!r}")
+    held = dict(zip(("managers", "manager_lo", "manager_hi", "manager_over"), (str(len(of_the_manager)), *_spread(of_the_manager))))
+    held |= dict(zip(("accessories", "shipped_lo", "shipped_hi", "shipped_over"), (str(len(of_accessories)), *_spread(of_accessories))))
+    held |= dict(zip(("bench_lo", "bench_hi", "bench_over"), _spread(on_the_bench)))
+    assert compared.groupdict() == held, f"STATUS.md says {compared[0]!r}; the table holds {held}"

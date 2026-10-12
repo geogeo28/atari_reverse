@@ -306,6 +306,7 @@ import test_aes_deskmem                                     # noqa: E402,F401  (
 import test_aes_shlib                                       # noqa: E402,F401  (the screen switches, the shell's band)
 import test_aes_gemctrl                                     # noqa: E402,F401  (the screen manager's handlers, at the ROM's arrivals)
 import test_aes_ctlmgr                                      # noqa: E402,F401  (ctlmgr's own rows: the screen manager woken, idle to idle)
+import test_aes_loader                                      # noqa: E402,F401  (the accessory loader's blob rows: GEMDOS replayed)
 import test_aes_gemsuper                                    # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 

@@ -27,6 +27,7 @@ import pytest
 from harness import addrs, bench_tier3, make_image
 
 import aes
+import aes_accessory_turns_pinned
 import aes_boot
 import aes_ctlmgr as cm
 import aes_stack as stack
@@ -64,6 +65,14 @@ PARKED_LAST = (*EVERY_ROW_S, cm.THE_MASK_WORD, cm.THE_TRAP_SAVE)
 # / `$8b64`, ours `$8b44` / `$8b30`), D3 / D4 hold our screen manager's registers — and the accessory's final turn
 # takes none; that turn rewrites the mask word alike on both shores, so the row is refused that class.
 SAVE_FRAME_ALONE = (*EVERY_ROW_S, cm.THE_TRAP_SAVE)
+# SINCE THE NARROW DOOR FLIP (band 5 wave 3) THE ACCESSORY MACHINES' ROWS RUN BEHIND OUR DOOR, and an accessory that
+# reads its message and waits again PARKS THROUGH OUR DISPATCHER, as the screen manager does: WHERE AN ACCESSORY PARKS
+# LAST the same two classes differ, for the same two reasons — the run's last BIOS trap is OUR idle's keyboard poll
+# (each build's dispatcher's registers saved), and no masked return of the ROM's follows the accessory's turn (the
+# mask word stays what our build's last ROM call left). MEASURED, both blobs: the six rows below that an accessory
+# ends — the accessory-entry row among them, which `SAVE_FRAME_ALONE` named while the accessory's final turn was
+# the ROM's code and rewrote the mask word alike on both shores (it has no row left).
+AN_ACCESSORY_PARKED_LAST = PARKED_LAST
 THE_MENU_WORKED = {1: (aes_event.ONTO_ITS_PLAIN_ITEM,), 2: (click,)}
 ON_THE_TOP_WINDOW = lambda name, *does, key=A: {0: (onto(gc.gadget(key, name)),), **{1 + nth: (each,) for nth, each in enumerate(does)}}  # noqa: E731
 
@@ -88,13 +97,14 @@ WOKEN = {woken.label: cm.register(woken) for woken in (
     cm.Woken(THE_BAR, gc.THE_DESK, {0: (onto(VIEW),)}, PARKED_LAST),
     cm.Woken(THE_MENU, gc.THE_DESK, {0: (onto(VIEW),), **THE_MENU_WORKED}, EVERY_ROW_S),
     cm.Woken(PAST_THE_TITLES, A, dict(handlers.A_FIRST_TURN), PARKED_LAST),
-    cm.Woken(THE_CLOSER, A, ON_THE_TOP_WINDOW("the closer", click), EVERY_ROW_S),
+    cm.Woken(THE_CLOSER, A, ON_THE_TOP_WINDOW("the closer", click), AN_ACCESSORY_PARKED_LAST),
     cm.Woken(BOTH, A, {0: (onto(VIEW), click), **THE_MENU_WORKED}, EVERY_ROW_S),
-    cm.Woken(AN_ARROW, A, ON_THE_TOP_WINDOW("the up arrow", click), EVERY_ROW_S),
-    cm.Woken(A_DRAG, A, ON_THE_TOP_WINDOW("the title", PRESS, onto(handlers.A_DRAG_TO), RELEASE), EVERY_ROW_S),
-    cm.Woken(TOPPED, A, {0: (onto(handlers.THE_OTHER_WINDOW_S_TITLE),), 1: (click,)}, (*EVERY_ROW_S, cm.THE_TOPPED_WORDS)),
-    cm.Woken(THE_ENTRY, gc.HIDING, dict(handlers.THE_BAR_HIDDEN), SAVE_FRAME_ALONE),
-    cm.Woken(THE_COUNT_AT_3_A_BUTTON, W, ON_THE_TOP_WINDOW("the closer", click, key=W), EVERY_ROW_S),
+    cm.Woken(AN_ARROW, A, ON_THE_TOP_WINDOW("the up arrow", click), AN_ACCESSORY_PARKED_LAST),
+    cm.Woken(A_DRAG, A, ON_THE_TOP_WINDOW("the title", PRESS, onto(handlers.A_DRAG_TO), RELEASE), AN_ACCESSORY_PARKED_LAST),
+    cm.Woken(TOPPED, A, {0: (onto(handlers.THE_OTHER_WINDOW_S_TITLE),), 1: (click,)},
+             (*AN_ACCESSORY_PARKED_LAST, cm.THE_TOPPED_WORDS)),
+    cm.Woken(THE_ENTRY, gc.HIDING, dict(handlers.THE_BAR_HIDDEN), AN_ACCESSORY_PARKED_LAST),
+    cm.Woken(THE_COUNT_AT_3_A_BUTTON, W, ON_THE_TOP_WINDOW("the closer", click, key=W), AN_ACCESSORY_PARKED_LAST),
     cm.Woken(THE_COUNT_AT_3_THE_BAR, W, {0: (onto(VIEW),)}, PARKED_LAST),
 )}
 # THE PREMISE, read off the ROM's own run: the idles a delivery is taken at, the handlers the ROM's ctlmgr called (in
@@ -122,18 +132,23 @@ WHOLE_RUN = {
     THE_BAR: {BENCH: (812236, 775300), SHIPPED: (812236, 768874)},
     THE_MENU: {BENCH: (1975728, 1889292), SHIPPED: (1975728, 1875576)},
     PAST_THE_TITLES: {BENCH: (85630, 73634), SHIPPED: (85630, 71684)},
-    THE_CLOSER: {BENCH: (313410, 247940), SHIPPED: (313410, 244472)},
+    THE_CLOSER: {BENCH: (313410, 241528), SHIPPED: (313410, 237384)},
     BOTH: {BENCH: (1987850, 1899340), SHIPPED: (1987850, 1885190)},
-    AN_ARROW: {BENCH: (225718, 167786), SHIPPED: (225718, 164514)},
-    A_DRAG: {BENCH: (605006, 532494), SHIPPED: (605006, 526624)},
-    TOPPED: {BENCH: (147904, 129556), SHIPPED: (147904, 126398)},
-    THE_ENTRY: {BENCH: (1051754, 954558), SHIPPED: (1051754, 940576)},
-    THE_COUNT_AT_3_A_BUTTON: {BENCH: (362068, 294860), SHIPPED: (362068, 291396)},
+    AN_ARROW: {BENCH: (225718, 161374), SHIPPED: (225718, 157426)},
+    A_DRAG: {BENCH: (605006, 526082), SHIPPED: (605006, 519536)},
+    TOPPED: {BENCH: (147904, 123660), SHIPPED: (147904, 119826)},
+    THE_ENTRY: {BENCH: (1051754, 942988), SHIPPED: (1051754, 928126)},
+    THE_COUNT_AT_3_A_BUTTON: {BENCH: (362068, 281128), SHIPPED: (362068, 274704)},
     THE_COUNT_AT_3_THE_BAR: {BENCH: (811980, 775158), SHIPPED: (811980, 768588)},
 }
-# ...and how many windows of the ROM's processes each run holds beside the screen manager's turns.
-THE_ROM_S_WINDOWS = {THE_BAR: 0, THE_MENU: 1, PAST_THE_TITLES: 0, THE_CLOSER: 1, BOTH: 1, AN_ARROW: 1, A_DRAG: 1, TOPPED: 1,
-                     THE_ENTRY: 2, THE_COUNT_AT_3_A_BUTTON: 1, THE_COUNT_AT_3_THE_BAR: 0}
+# ...and how many windows of the ROM's processes each run holds beside the screen manager's turns: THE DESK'S, where
+# its message woke the desk — and none an accessory's since the narrow door flip: behind our door an accessory's turn
+# is a turn of OURS, priced by itself (`aes_accessory_turns_pinned`), and how many of those each run holds is pinned
+# beside (the accessory-entry row's two: the accessory reads AC_OPEN and hides the bar, then reads again).
+THE_ROM_S_WINDOWS = {THE_BAR: 0, THE_MENU: 1, PAST_THE_TITLES: 0, THE_CLOSER: 0, BOTH: 1, AN_ARROW: 0, A_DRAG: 0, TOPPED: 0,
+                     THE_ENTRY: 0, THE_COUNT_AT_3_A_BUTTON: 0, THE_COUNT_AT_3_THE_BAR: 0}
+THE_ACCESSORIES_TURNS = {THE_BAR: 0, THE_MENU: 0, PAST_THE_TITLES: 0, THE_CLOSER: 1, BOTH: 0, AN_ARROW: 1, A_DRAG: 1, TOPPED: 1,
+                         THE_ENTRY: 2, THE_COUNT_AT_3_A_BUTTON: 1, THE_COUNT_AT_3_THE_BAR: 0}
 TURNS = {label: 2 if label == THE_ENTRY else 1 for label in WOKEN}
 # HOW DEEP EACH ctlmgr GOES ON THE SCREEN MANAGER'S REAL STACK in the row's run — its top less the lowest byte the run
 # stores there: (the ROM's, ours on the bench blob, ours on the shipped blob), THE MACHINE'S VDI (the ROM's) under
@@ -158,7 +173,7 @@ def _pd(label, who):
 
 
 def test_every_row_of_ctlmgr_is_registered_pinned_and_in_the_table():
-    assert WOKEN.keys() == PREMISES.keys() == WHOLE_RUN.keys() == THE_ROM_S_WINDOWS.keys() == DEEPEST.keys()
+    assert WOKEN.keys() == PREMISES.keys() == WHOLE_RUN.keys() == THE_ROM_S_WINDOWS.keys() == DEEPEST.keys() == THE_ACCESSORIES_TURNS.keys()
     assert set(map(_name, WOKEN)) == set(cm.ROWS)
     rows = [row for row in tier3().ROWS if tier3().is_a_woken_row(row)]
     assert sorted(row.case for row in rows) == sorted(WOKEN) and {row.address for row in rows} == {addrs.AES_ROM_CTLMGR}
@@ -188,7 +203,8 @@ def test_our_ctlmgr_woken_on_its_own_stack_does_what_the_rom_s_does_on_both_blob
     inside; here the pins: the whole runs' cycles, the turns (`aes_turns_pinned`), each turn under the bar by
     itself, and the windows of the ROM's processes beside them."""
     measured = tier3().idle_to_idle_on(blob, _name(label), WOKEN[label])
-    assert len(measured.its_turns) == TURNS[label] and measured.foreign.windows == THE_ROM_S_WINDOWS[label]
+    assert len(measured.its_turns) == TURNS[label] and tier3().the_rom_s_windows(measured).windows == THE_ROM_S_WINDOWS[label]
+    assert len(measured.turns) == THE_ACCESSORIES_TURNS[label] == len(switching.accessory_turns_measured(measured))
     assert measured.own_cycles == (sum(turn.ours for turn in measured.its_turns), sum(turn.the_rom_s for turn in measured.its_turns))
     switching.vet_the_whole_run(_name(label), blob, measured, WHOLE_RUN[label])
     switching.vet_its_turns(_name(label), blob, measured)
@@ -260,7 +276,7 @@ def test_wm_topped_s_four_words_are_what_they_are_and_are_named_by_the_row_that_
     with pytest.raises(AssertionError, match="OUR IMAGE IS NOT THE ROM'S"):
         tier3().idle_to_idle_on(_shipped(), "a row", woken._replace(differs=EVERY_ROW_S))
     with pytest.raises(AssertionError, match="a class named and not needed"):
-        tier3().idle_to_idle_on(_shipped(), "a row", WOKEN[THE_CLOSER]._replace(differs=(*EVERY_ROW_S, cm.THE_TOPPED_WORDS)))
+        tier3().idle_to_idle_on(_shipped(), "a row", WOKEN[THE_CLOSER]._replace(differs=(*WOKEN[THE_CLOSER].differs, cm.THE_TOPPED_WORDS)))
 
 
 def test_a_machine_whose_screen_manager_is_the_rom_s_is_refused_where_it_is_resumed(monkeypatch):
@@ -549,6 +565,9 @@ def test_the_boot_s_own_arrival_is_our_ctlmgr_s_too(blob):
 # ---- THE REDS OF A ROW MEASURED AT ITS ARRIVAL ---------------------------------------------------------------------------------
 A_CLICK_ON_THE_CLOSER = handlers.registered_name((gc.HCTL_WINDOW, "the closer clicked: WM_CLOSED"))
 THE_CLOSER_HELD = handlers.registered_name((gc.HCTL_WINDOW, "the closer held; released inside it: WM_CLOSED"))
+THE_ARROW_HELD = handlers.registered_name((gc.HCTL_WINDOW, "the up arrow held: sent, read by its owner, sent again; released"))
+THE_DESK_S_OWN_ITEM = handlers.registered_name(
+    (gc.HCTL_RECT, "on Desk, the desk alone; its own item clicked: MN_SELECTED, no accessory's whatever gl_dafirst holds"))
 NOTHING_SENT = handlers.registered_name((gc.HCTL_WINDOW, "the information line clicked: no gadget's, nothing sent"))
 TOPPED_AT_ONCE = handlers.registered_name((gc.HCTL_WINDOW, "a window that is not the top one: WM_TOPPED"))
 
@@ -776,6 +795,126 @@ def test_who_ran_is_asked_of_a_row_of_ctlmgr_s_own(monkeypatch):
     assert who == _name(label) and ours.in_the_rom_s_ctlmgr == 0 < rom.in_the_rom_s_ctlmgr and ours.in_our_entry > 0
 
 
+# ---- BEHIND OUR DOOR (the narrow door flip, band 5 wave 3): the guards the accessory machines' rows stand on ----------------
+THE_OS_S_OWN_PROCESSES = 2              # the screen manager's PD and the desk's: every PD past them is a loaded program's
+
+
+def test_the_accessory_machines_rows_run_behind_our_door_and_the_desk_s_do_not():
+    """WHICH MACHINE OUR SHORE'S RUNS START FROM (`aes_ctlmgr.our_machine`): for every machine with accessories, the
+    DOOR machine — vector `$88` and `$404` the blob's own handlers, every loaded program taken (its stack span
+    handed the watches), and standing in OUR dispatcher's idle where the ROM-booted one stands in the ROM's; for the
+    desk's own machine, the takeover with no door, as wave 2 made it: its vectors the ROM's, no program."""
+    blob = _shipped()
+    for key in (gc.THE_DESK, A, W, gc.HIDING):
+        woken = types.SimpleNamespace(machine=key)
+        ours, programs = make_image({0: cm.our_machine(woken, blob)}), cm.our_machine_s_programs(woken, blob)
+        assert tier3().behind_our_door(ours, blob) == (key != gc.THE_DESK) == bool(programs)
+        handler, critic = (case.long_in(ours, at) for at in (addrs.VECTOR_TRAP_GEM, aes_event.ETV_CRITIC))
+        if key == gc.THE_DESK:
+            assert (handler, critic) == (addrs.AES_ROM_TRAP2, addrs.AES_ROM_CRIT_ERR)
+            continue
+        assert (handler, critic) == (blob.entry("aes_rom_trap2"), blob.entry("aes_rom_crit_err"))
+        assert [pd for pd, _stack in programs] == [pd for pd in aes_event.processes_of(ours)[THE_OS_S_OWN_PROCESSES:]
+                                                   if case.long_in(ours, pd + aes.PD_UDA)]
+        assert cm._taken(key, blob).idle == aes_boot.OURS != gc.machine(key).idle
+
+
+def test_who_ran_the_door_is_refused_each_way_on_two_runs_counted_by_hand():
+    """`tier3.vet_who_ran_the_door`'s OWN ARITHMETIC, over stand-in runs. BEHIND OUR DOOR: our run not one cycle in the
+    ROM's door nor in its selector switch, the ROM's none in ours, and the two selector switches the same cycles —
+    each refused by name. ON A MACHINE WITH NO DOOR: our selector switch silent and the ROM's alike on both."""
+    ran = lambda **counted: types.SimpleNamespace(**{"in_the_rom_s_door": 0, "in_the_rom_s_selector": 0, "in_our_selector": 0, **counted})   # noqa: E731
+    rom, ours = ran(in_the_rom_s_door=1450, in_the_rom_s_selector=920), ran(in_our_selector=920)
+    vet = tier3().vet_who_ran_the_door
+    vet("a row", rom, ours, True)
+    for astray, refused in ((dict(in_the_rom_s_door=636), "BEHIND OUR DOOR our run spent 636 cycles in the ROM's own trap door"),
+                            (dict(in_the_rom_s_selector=92), "and 92 in its\\s+selector switch"),
+                            (dict(in_our_selector=828), "cost our run\\s+828 cycles in ours and the ROM's 920 in its own")):
+        with pytest.raises(AssertionError, match=refused):
+            vet("a row", rom, types.SimpleNamespace(**{**vars(ours), **astray}), True)
+    with pytest.raises(AssertionError, match="the ROM's run spent 74 cycles in OUR selector switch"):
+        vet("a row", types.SimpleNamespace(**{**vars(rom), "in_our_selector": 74}), ours, True)
+    no_door = ran(in_the_rom_s_selector=920)
+    vet("a row", rom, no_door, False)
+    for astray in (dict(in_our_selector=92), dict(in_the_rom_s_selector=828)):
+        with pytest.raises(AssertionError, match="on a machine whose `\\$88` is the ROM's"):
+            vet("a row", rom, types.SimpleNamespace(**{**vars(no_door), **astray}), False)
+
+
+@pytest.mark.parametrize("label", (THE_CLOSER, THE_BAR), ids=("behind our door", "the desk's machine: no door"))
+def test_who_ran_the_door_is_asked_of_both_kinds_of_row_and_reads_real_cycles(label, monkeypatch):
+    """ITS CALL, held by itself (the guard is silent on honest numbers): a row of ctlmgr's own and a handler's row
+    each ask it once — behind our door with our selector switch's cycles equal to the ROM's own and both above zero,
+    our run none in the ROM's door where the ROM's run spent some (the accessory's own traps); on the desk's machine
+    with our selector switch silent."""
+    asked, the_guard = [], tier3().vet_who_ran_the_door
+    monkeypatch.setattr(tier3(), "vet_who_ran_the_door", lambda who, rom, ours, door: (asked.append((rom, ours, door)), the_guard(who, rom, ours, door))[1])
+    tier3().idle_to_idle_on(_shipped(), _name(label), WOKEN[label])
+    held = _handled(THE_ARROW_HELD if label == THE_CLOSER else THE_DESK_S_OWN_ITEM)
+    tier3().at_its_arrival_on(_shipped(), "a row", held)
+    assert len(asked) == 2
+    for rom, ours, door in asked:
+        assert door == (label == THE_CLOSER)
+        if door:
+            assert ours.in_our_selector == rom.in_the_rom_s_selector > 0 == ours.in_the_rom_s_selector == ours.in_the_rom_s_door
+            assert rom.in_the_rom_s_door > 0, "the accessory's own AES traps: the ROM's door on the ROM's shore"
+        else:
+            assert ours.in_our_selector == 0 < ours.in_the_rom_s_selector == rom.in_the_rom_s_selector
+
+
+def test_a_loaded_program_s_spans_are_held_by_content_wherever_it_does_not_run():
+    """`aes_switching.Switching`'s HOLD OF EVERY LOADED PROGRAM'S SAVED CONTEXT AND STACK behind our door, on its own
+    inputs: over the door machine at its idle (every program parked) the spans are kept; a byte of a program's stack
+    or of its saved context changed by anybody else is REFUSED BY NAME where the run ends and where that program is
+    next resumed — but the SR word of its `rte` frame, the dispatcher's own, where it is resumed."""
+    blob, woken = _shipped(), WOKEN[THE_CLOSER]
+    programs = cm.our_machine_s_programs(woken, blob)
+    (first, (lo, top)), _second = programs
+
+    def watching():
+        memory = make_image({0: cm.our_machine(woken, blob)})
+        watch = switching.IdleToIdle(cm.made(woken).switches, ours=switching.our_dispatcher(blob), takeover=True, door=True,
+                                     programs=programs)
+        watch._hold_the_programs_spans(memory)
+        return memory, watch
+    memory, watch = watching()
+    assert set(watch._programs_stood) == {pd for pd, _stack in programs}
+    watch.vet_the_programs_spans_stood(memory, "where the run ends")
+    parked = case.long_in(memory, aes_event.uda_of(first, memory) + aes.UDA_SUPER_SP) & aes.OS_BUS_ADDR_MASK
+    assert lo < parked < top
+    for at in (top - 1, lo, aes_event.uda_of(first, memory) + aes.UDA_REGS):
+        memory, watch = watching()
+        memory[at] ^= 0xFF
+        with pytest.raises(switching.Refused, match=rf"THE SAVED CONTEXT OR THE STACK OF THE PROGRAM AT {first:#x} HOLDS OTHER BYTES"):
+            watch.vet_the_programs_spans_stood(memory, "where the run ends")
+    memory, watch = watching()
+    memory[parked] ^= 0xFF              # ...the `rte` frame's SR word: the dispatcher's, where the program is resumed
+    watch._entering = first
+    watch._a_program_resumed(memory)
+    assert first not in watch._programs_stood
+    memory, watch = watching()
+    memory[parked + aes.WORD_BYTES] ^= 0xFF
+    watch._entering = first
+    with pytest.raises(switching.Refused, match=rf"where the program at {first:#x} is resumed"):
+        watch._a_program_resumed(memory)
+
+
+def test_an_accessory_s_turn_over_the_bar_is_over_whatever_the_row_s_own_counts():
+    """RULING W3-R3, HELD: an accessory's turn is priced BY ITSELF — the row's measurement with its accessory's turn
+    made dearer, past the bar with its thunks, is OVER by the table's own rule, the row's own ratio untouched; and
+    its line says whose turn it is."""
+    row = next(row for row in tier3().ROWS if tier3().is_a_woken_row(row) and row.case == THE_CLOSER)
+    measured = tier3().idle_to_idle_on(_shipped(), _name(THE_CLOSER), WOKEN[THE_CLOSER])
+    (turn,), bar = measured.turns, tier3().TIER3_FUNCTION_BAR
+    assert turn.whose == switching.AN_ACCESSORY_S and all(each.whose == switching.THE_MANAGER_S for each in measured.its_turns)
+    assert tier3().turns_within_bar(measured) and tier3()._turn_lines(measured, 0)[0].lstrip().startswith("an accessory's turn: ours ")
+    no_other = lambda *_asked: pytest.fail("the verdict of a row through the OS asks no other row's measurement")   # noqa: E731
+    assert tier3().verdict(row, measured, 0, no_other) in ("net", "pinned")
+    measured.turns = (turn._replace(glue=int(turn.the_rom_s * bar) - turn.ours + 1),)
+    assert not tier3().turns_within_bar(measured) and tier3().verdict(row, measured, 0, no_other) == "OVER"
+    assert "OVER THE BAR BY ITSELF" in tier3()._turn_lines(measured, 0)[0]
+
+
 # ---- THE BIOS'S SAVE FRAME: ITS REGISTERS DIFFER BY NATURE, ITS PC AND SR DO NOT (FLIP 4's review) ----------------------------
 def test_the_save_frame_s_class_is_its_ten_registers_and_a_saved_pc_or_sr_that_differs_is_refused():
     """THE CLASS IS NO WIDER THAN WHAT DIFFERS BY NATURE (`tier3.the_trap_save_s_registers`): the forty bytes of D3-D7
@@ -817,3 +956,141 @@ def test_the_booted_machine_s_save_frame_is_left_out_at_the_stops_only_where_the
     monkeypatch.setattr(gc, "its_trap_save_beside_the_snapshot_s", lambda _ram: ())
     with pytest.raises(AssertionError, match="OUR IMAGE IS NOT THE ROM'S"):
         tier3().idle_to_idle_on(_shipped(), _name(THE_BAR), WOKEN[THE_BAR])
+
+
+# ---- THE FIX PASS OF THE NARROW DOOR FLIP: holds its two reviews found asked of nothing ---------------------------------------
+def _stood_in(memory):
+    """A run, as `vet_the_machines_where_the_runs_end` reads one: its memory."""
+    return types.SimpleNamespace(memory=memory)
+
+
+def test_a_loaded_program_s_span_that_holds_the_rom_s_own_bytes_where_the_runs_end_is_refused():
+    """EACH PROGRAM'S SAVED CONTEXT AND STACK ARE REQUIRED TO DIFFER (review mutant A5: the requirement taken out,
+    everything passed). Over two copies of the ROM-booted machine — a door machine whose accessories were the ROM's
+    after all — every span is equal and the vet refuses by name; and with every span but one given another byte, it
+    refuses still and names THAT span: the requirement is per span, not "some span differs"."""
+    blob, woken = _shipped(), WOKEN[THE_CLOSER]
+    programs = cm.our_machine_s_programs(woken, blob)
+    its = bytearray(cm.the_rom_s_machine(woken))
+    windows = [window for program in programs for window in tier3().program_windows(its, program)]
+    assert len(windows) == 2 * len(programs) == 4
+    with pytest.raises(AssertionError, match="BEHIND OUR DOOR A LOADED PROGRAM'S SPAN HOLDS THE ROM'S OWN BYTES"):
+        tier3().vet_the_machines_where_the_runs_end("a row", blob, _stood_in(its), _stood_in(bytearray(its)), (), programs=programs)
+    for equal_lo, equal_hi, _why in windows:
+        other = bytearray(its)
+        for lo, _hi, _why in windows:
+            if lo != equal_lo:
+                other[lo] ^= aes.BYTE_MASK
+        with pytest.raises(AssertionError, match=rf"HOLDS THE ROM'S OWN BYTES where the runs end — \('{equal_lo:#x}', '{equal_hi:#x}'"):
+            tier3().vet_the_machines_where_the_runs_end("a row", blob, _stood_in(its), _stood_in(other), (), programs=programs)
+
+
+def _parameter(memory, evb):
+    return case.long_in(memory, evb + aes.EVB_PARM) & aes.OS_BUS_ADDR_MASK
+
+
+def test_a_parked_address_is_named_only_where_it_names_a_place_of_a_program_s_own_stack():
+    """`tier3.parked_addresses_named`'s BOUND (review mutant B13: every EVB's parameter rewritten on both shores
+    before every compare — a compare that hides — passed). OVER THE DOOR MACHINE AS IT IDLES: an EVB whose parameter
+    names a place inside a loaded program's stack (the machine has some: each accessory's message wait keeps its
+    QPB's address) is given that stack's top, and EVERY OTHER EVB'S PARAMETER IS LEFT AS IT STANDS — nothing else of
+    the megabyte moves. AT THE BOUND'S EDGES, over stand-in values laid in one EVB that names no such place (the
+    function's own arithmetic, labelled): the stack's first byte and its last are inside, the byte under it and its
+    top are not."""
+    blob, woken = _shipped(), WOKEN[THE_CLOSER]
+    programs = cm.our_machine_s_programs(woken, blob)
+    ram = bytearray(cm.our_machine(woken, blob))
+    evbs = tier3().every_evb_of(ram)
+    top_of = {evb: top for evb in evbs for _pd, (lo, top) in programs if lo <= _parameter(ram, evb) < top}
+    assert top_of and len(top_of) < len(evbs), "the machine holds EVBs of both kinds"
+    named = tier3().parked_addresses_named(bytearray(ram), programs)
+    assert {evb: _parameter(named, evb) for evb in evbs} == {evb: top_of.get(evb, _parameter(ram, evb)) for evb in evbs}
+    slots = {at for evb in top_of for at in range(evb + aes.EVB_PARM, evb + aes.EVB_PARM + aes.LONG_BYTES)}
+    assert all(named[at] == ram[at] for at in range(len(ram)) if at not in slots), "and nothing else of the megabyte"
+    assert tier3().parked_addresses_named(bytearray(ram), ()) == ram, "no program: no door, nothing named"
+    spare = next(evb for evb in evbs if evb not in top_of)
+    lowest, highest = min(stack for _pd, stack in programs), max(stack for _pd, stack in programs)
+    for held, becomes in ((lowest[0], lowest[1]), (highest[1] - 1, highest[1]), (lowest[0] - 1, lowest[0] - 1), (highest[1], highest[1])):
+        staged = bytearray(ram)
+        staged[spare + aes.EVB_PARM:spare + aes.EVB_PARM + aes.LONG_BYTES] = held.to_bytes(aes.LONG_BYTES, "big")
+        assert _parameter(tier3().parked_addresses_named(staged, programs), spare) == becomes, f"{held:#x}"
+
+
+def _the_rom_s_handler_stored_back_in_our_run(monkeypatch):
+    """Every pair of runs from an idle with OUR run's machine handed back holding THE ROM'S trap handler in `$88` — A
+    STAND-IN STORE, labelled: what a retake of the ROM's inside the run would leave (no accessory mode calls one)."""
+    run, runs = tier3()._run_to_its_next_idle, []
+
+    def taken_back(image, watch, blob):
+        ran = run(image, watch, blob)
+        runs.append(ran)
+        if len(runs) % 2 == 0:          # the ROM's run first, then ours
+            image[addrs.VECTOR_TRAP_GEM:addrs.VECTOR_TRAP_GEM + aes.LONG_BYTES] = addrs.GEM_TRAP2.to_bytes(aes.LONG_BYTES, "big")
+        return ran
+    monkeypatch.setattr(tier3(), "_run_to_its_next_idle", taken_back)
+
+
+def test_a_door_the_rom_took_back_inside_a_row_s_run_is_refused_by_the_registry_s_vet(monkeypatch):
+    """A DOOR TAKEN BACK INSIDE A TIER 3 RUN (STATUS, slice F (f); review mutant A7 — every ROM address let travel —
+    passed): the door machine came with OUR handler in `$88`, so the ROM's `$fe3ea6` there where our run ends is a
+    STORE, and the registry's vet refuses it by name — on a row of ctlmgr's own and on a handler's row."""
+    _the_rom_s_handler_stored_back_in_our_run(monkeypatch)
+    refused = rf"OUR run left THE ROM'S OWN address {addrs.GEM_TRAP2:#x} in {re.escape(aes_event.GEM_TRAP_VECTOR.what)}"
+    with pytest.raises(AssertionError, match=refused):
+        tier3().idle_to_idle_on(_shipped(), _name(THE_CLOSER), WOKEN[THE_CLOSER])
+    with pytest.raises(AssertionError, match=refused):
+        tier3().at_its_arrival_on(_shipped(), "a row", _handled(THE_ARROW_HELD))
+
+
+A_STRAY_CYCLE_COUNT = 4                 # one `nop` of our build's, run outside every turn: the stand-in below
+
+
+def test_who_ran_is_handed_the_turns_own_cycles__a_cycle_of_ours_outside_every_turn_is_refused(monkeypatch):
+    """WHO RAN'S THIRD RULE AT ITS CALL — "every cycle of our build is one of the turns of ours" — is handed THE SUM OF
+    THE TURNS (review mutant A10: handed the build's own total, a tautology, it passed this battery and the
+    takeover's). A STAND-IN, labelled: the run's turns as they are but the first four cycles short, as if our build
+    had run four cycles outside every window — refused by name, by that rule."""
+    made = tier3().turns_made
+
+    def four_cycles_outside_every_turn(*watches):
+        first, *others = made(*watches)
+        return (first._replace(ours=first.ours - A_STRAY_CYCLE_COUNT), *others)
+    monkeypatch.setattr(tier3(), "turns_made", four_cycles_outside_every_turn)
+    with pytest.raises(AssertionError, match=r"our build ran (\d+) cycles and the turns of ours hold \d+") as refused:
+        tier3().idle_to_idle_on(_shipped(), _name(THE_CLOSER), WOKEN[THE_CLOSER])
+    ran, held = (int(count) for count in re.findall(r"\d+", str(refused.value).split("our build ran")[1])[:2])
+    assert ran - held == A_STRAY_CYCLE_COUNT
+
+
+WITH_AN_ACCESSORY_S_TURN = sorted(aes_accessory_turns_pinned.PINNED)
+# (`test_status.BENCH_TABLE`'s file, spelt here: importing that module would hand this battery out behind the registry —
+# `test_derived.py`, "fewest imports first".)
+THE_TABLE_S_FILE = RECREATE / "build" / "bench" / "tier3.txt"
+
+
+def test_the_rows_with_an_accessory_s_turn_are_seven_and_hold_eight():
+    assert len(WITH_AN_ACCESSORY_S_TURN) == 7
+    assert sum(len(by_blob[SHIPPED]) for by_blob in aes_accessory_turns_pinned.PINNED.values()) == 8
+    assert {_name(label) for label, turns in THE_ACCESSORIES_TURNS.items() if turns} | {THE_ARROW_HELD} == set(WITH_AN_ACCESSORY_S_TURN)
+
+
+@pytest.mark.parametrize("registered", WITH_AN_ACCESSORY_S_TURN)
+def test_the_figure_net_of_the_line_f_handler_beside_an_accessory_s_turn_is_made_of_its_own_tallies(registered):
+    """THE FIGURE THE LINE PRINTS BESIDE A TURN (`tier3._line_f_of`; review mutant B11 — the convention's ratio printed
+    in its place — passed 4,132 tests): derived HERE from the measured turn's own four tallies, never from the line —
+    our build's own cycles and its thunks' over the ROM's AES subtree LESS its Line-F handler's RAM copy — for each of
+    the eight accessory turns as the table measures them (the shipped blob), and the table's file says that line."""
+    row, = (row for row in tier3().ROWS if row.registered == registered)
+    measured = tier3().measure(row, tier3().RomBench())
+    turns = tier3().the_accessories_turns(tier3().turns_of(measured))
+    assert tuple((turn.ours, turn.the_rom_s, turn.glue) for turn in turns) == switching.accessory_turns_pinned(registered, SHIPPED) != ()
+    lines = [line for line in tier3()._turn_lines(measured, 0) if line.lstrip().startswith("an accessory's turn: ")]
+    table = {line.strip() for line in THE_TABLE_S_FILE.read_text().splitlines()}
+    for turn, line in zip(turns, lines, strict=True):
+        assert 0 < turn.line_f < turn.the_rom_s and turn.glue > 0
+        net_of_the_handler = (turn.ours + turn.glue) / (turn.the_rom_s - turn.line_f)
+        assert line.endswith(f"; the ROM's Line-F handler alone is {turn.line_f} of its {turn.the_rom_s} "
+                             f"({turn.line_f / turn.the_rom_s:.0%}): net of it {net_of_the_handler:.2f}"), line
+        assert f"= {turn.ours / turn.the_rom_s:.2f} — " in line and f"{(turn.ours + turn.glue) / turn.the_rom_s:.2f} with them" in line
+        assert net_of_the_handler > (turn.ours + turn.glue) / turn.the_rom_s, "another figure than the convention's"
+        assert line.strip() in table, f"{THE_TABLE_S_FILE} does not say this line: run `make bench`"

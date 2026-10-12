@@ -35,6 +35,7 @@ import aes_evlib as evlib
 import aes_switch
 import aes_switching as switching
 import aes_takeover
+import aes_accessory_turns_pinned
 import aes_turns_pinned
 import case
 import test_aes_evdisp_model as model
@@ -185,12 +186,22 @@ def test_the_table_says_a_foreign_window_under_every_row_that_has_one_and_under_
     # ...OF TWO KINDS SINCE FLIP 4, by what the row names (`aes_takeover.named_in`: its screen manager ours): a turn of
     # OUR screen manager, said on a line of its own — one a turn — or a window of the ROM's process.
     ours = [name for name in enters_another if aes_takeover.named_in(aes_event.SWITCHING_ROWS[name].drops)]
-    with_a_window = [name for name in enters_another if name not in ours]
+    # ...or, SINCE THE NARROW DOOR FLIP, of a third: a handler's row measured behind our door whose one other process
+    # is AN ACCESSORY — a turn of ours too (`aes_accessory_turns_pinned`), and no window of the ROM's process.
+    an_accessory_s = [name for name in enters_another if name not in ours and name in aes_accessory_turns_pinned.PINNED]
+    with_a_window = [name for name in enters_another if name not in ours and name not in an_accessory_s]
     said, turns_said = table.count("foreign window(s)"), len(re.findall(r"^\s+screen manager's turn: ours \d+", table, re.MULTILINE))
     # ...and ctlmgr's OWN rows (the screen manager woken, from idle to idle: `test_aes_ctlmgr.py`) — the row IS its
     # turns, so no turn's line; a window of the ROM's process where its message woke the desk or an accessory.
     import test_aes_ctlmgr as its_own
     woken_with_a_window = [label for label, windows in its_own.THE_ROM_S_WINDOWS.items() if windows]
+    # ...and, SINCE THE NARROW DOOR FLIP, AN ACCESSORY'S TURN — behind our door a turn of ours, on a line of its own,
+    # one a turn: under the rows of ctlmgr's own that wake an accessory, and under a handler's row with one inside.
+    accessory_turns_said = len(re.findall(r"^\s+an accessory's turn: ours \d+", table, re.MULTILINE))
+    assert accessory_turns_said == sum(len(by_blob[SHIPPED]) for by_blob in aes_accessory_turns_pinned.PINNED.values()), (
+        f"{test_status.BENCH_TABLE} says an accessory's turn {accessory_turns_said} time(s), and "
+        f"`aes_accessory_turns_pinned` holds another number of them on the shipped blob")
+    assert sum(its_own.THE_ACCESSORIES_TURNS.values()) <= accessory_turns_said
     assert said == len(with_a_window) + len(woken_with_a_window), (
         f"{test_status.BENCH_TABLE} says a foreign window under {said} row(s) where the registry holds "
         f"{len(with_a_window)} whose run enters a process of the ROM's and {len(woken_with_a_window)} rows of ctlmgr's "
@@ -559,15 +570,15 @@ def test_a_turn_of_our_screen_manager_is_held_to_no_cycle_of_the_rom_s_aes_and_t
     assert alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [mine]), the_rom_s) == (1, whole, the_rom_s_own)
     assert tier3().turns_made(_a_turn([SCREEN_MANAGER, SHELL], [mine]), the_rom_s) == (tier3().Turn(ours, the_rom_s_own, glue, shared),)
     assert tier3().turns_made(_a_run([SCREEN_MANAGER, SHELL], [(whole, the_rom_s_own, 0)]), the_rom_s) == ()
-    with pytest.raises(AssertionError, match="A TURN OF OUR SCREEN MANAGER, spent 16 cycles of ours in the AES's\\s+own ROM"):
+    with pytest.raises(AssertionError, match=r"A TURN OF OURS \(the screen manager's\), spent 16 cycles of ours in the AES's\s+own ROM"):
         alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [(mine[0] + 16, 16, *mine[2:])]), the_rom_s)
-    with pytest.raises(AssertionError, match="the OS both run cost ours .* the two screen managers did not make the same calls"):
+    with pytest.raises(AssertionError, match="the OS both run cost ours .* the two did not make the same calls"):
         alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [(mine[0] + 2, *mine[1:])]), the_rom_s)
     # MISCLASSIFIED: the turn of ours read as the ROM's process's is our build's cycles inside a window of the ROM's;
     # a window of the ROM's process read as a turn of ours is the AES's ROM run inside a turn.
     with pytest.raises(AssertionError, match="cycles of OUR build ran inside window 0, a window of the ROM's process"):
         alike("a row", _a_run([SCREEN_MANAGER, SHELL], [mine]), the_rom_s)
-    with pytest.raises(AssertionError, match="A TURN OF OUR SCREEN MANAGER, spent 155862 cycles of ours in the AES's"):
+    with pytest.raises(AssertionError, match=r"A TURN OF OURS \(the screen manager's\), spent 155862 cycles of ours in the AES's"):
         alike("a row", _a_turn([SCREEN_MANAGER, SHELL], [(whole, the_rom_s_own, 0, 0)]), the_rom_s)
 
 
@@ -819,3 +830,24 @@ def test_the_rule_leaves_nothing_out_of_any_other_pre_existing_row(chunk, monkey
                     if name not in THE_EIGHTEEN and held.row.name not in aes_gemctrl.ROUTINES and name not in aes_event.SLICED_ROWS)
     for name in others[chunk::RULE_CHUNKS]:
         assert _left_out_by_the_rule(name, monkeypatch)[1] == [], name
+
+
+# ---- `vet_its_turns`' OWN BAR (the narrow door flip's fix pass, B-F7) ---------------------------------------------------------
+@pytest.mark.parametrize("whose, pins", ((switching.THE_MANAGER_S, aes_turns_pinned), (switching.AN_ACCESSORY_S, aes_accessory_turns_pinned)),
+                         ids=("the screen manager's", "an accessory's"))
+def test_a_pinned_turn_over_the_bar_by_itself_is_refused_where_its_row_is_vetted(whose, pins, monkeypatch):
+    """A TURN IS HELD TO THE BAR BY ITSELF WHERE IT IS PINNED, not by the table's verdict alone (review mutant B14 —
+    the vet's bar at 9 — passed 4,107 tests: no pinned turn is near it). Over A STAND-IN ROW, labelled — one turn,
+    measured as pinned: at the bar with its thunks it passes; one cycle of thunk past it, it is refused by name."""
+    tier3, blob, who = bench_tier3(), bench_tier3().shipped_bench(), "a stand-in row of this test's"
+    the_rom_s, thunks = 1000, 100
+    at_the_bar = int(the_rom_s * tier3.TIER3_FUNCTION_BAR) - thunks
+    for ours, refused in ((at_the_bar, False), (at_the_bar + 1, True)):
+        turn = (ours, the_rom_s, thunks)
+        monkeypatch.setitem(pins.PINNED, who, {blob.elf.parent.name: (turn,)})
+        measured = types.SimpleNamespace(turns=(tier3.Turn(*turn, 0, 0, whose),))
+        if not refused:
+            switching.vet_its_turns(who, blob, measured)
+            continue
+        with pytest.raises(AssertionError, match="a turn of ours .* is over the bar by itself"):
+            switching.vet_its_turns(who, blob, measured)

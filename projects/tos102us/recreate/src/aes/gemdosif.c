@@ -300,12 +300,15 @@ uint32_t aes_dos_lseek(uint8_t *image, int16_t handle, int16_t mode, uint32_t of
  * pointer's floor on a routine of two to six instructions). The C is what Tier 1 proves. */
 
 /* The two handlers GEM installs, as a vector holds them: off target the ROM's own addresses (Tier 1 stays exact); on
- * target a rebuilt ROM owes its own. crit_err's IS the build's (`gemdosif.S`: rows $fe3c8e, $fe3cb6 of
- * `test_aes_rom_data.py`); the trap door's operand moves with the door's flip, so until then the target stores the
- * ROM's (rows $fe3c78, $fe3c84). */
+ * target the build's own entries — crit_err's (`gemdosif.S`: rows $fe3c8e, $fe3cb6 of `test_aes_rom_data.py`) and,
+ * since the narrow door flip, the trap door's (`trapdoor.S`: rows $fe3c78, $fe3c84). */
+#ifndef RECREATE_HOST_DIFFERENTIAL
+void aes_rom_trap2(void);                                                                            /* $fe3ea6 */
+#endif
+
 static inline uint32_t gem_trap2_handler(void)
 {
-    return GEM_TRAP2;
+    return ALCYON_ROUTINE(GEM_TRAP2, aes_rom_trap2);
 }
 
 static inline uint32_t critical_error_handler(void)

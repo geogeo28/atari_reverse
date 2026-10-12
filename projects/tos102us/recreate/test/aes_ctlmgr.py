@@ -300,18 +300,50 @@ def the_rom_s_machine(woken):
     return gc.machine(woken.machine).ram
 
 
-def our_machine(woken, blob):
-    """...and on ours: THE SAME BOOT WITH THE SCREEN MANAGER `blob`'s (the takeover machine) — held, where it is
-    made, to be the ROM-booted one outside the classes a takeover differs in by nature, its screen manager parked
-    in our text, its idle the ROM's dispatcher's (the desk parks last in every boot). `woken`: a row, or anything
-    that names its `machine`."""
-    key = woken.machine
-    taken = (aes_boot.desk_machine(ours=blob) if key == gc.THE_DESK
-             else aes_boot.accessory_machine(*gc.ACCESSORY_MODES[key], ours=blob))
-    beside = aes_boot.compared(gc.machine(key), taken)
-    assert not beside.differing and taken.idle == aes_boot.THE_ROM_S, f"{key}: the takeover machine differs at {beside.differing[:4]}"
+# WHICH DISPATCHER A MACHINE IDLES IN: the one its LAST process parked through. The ROM's boot and a takeover boot
+# with no door end in the ROM's (the desk parks last through it, or an accessory the ROM's trap handler parked);
+# BEHIND OUR DOOR an accessory that parks last parks through OURS — the door machine then stands in our idle where
+# the ROM-booted one stands in the ROM's, and the two differ besides in the two classes `aes_boot.by_nature` names
+# for that (the Line-F mask word; the BIOS's last register-save frame, the idle's own keyboard poll's).
+TWO_IDLES = (aes_boot.TRAP_SAVE_FRAME, aes_boot.LINE_F_MASK)
+
+
+@functools.cache
+def _taken(key, blob):
+    """THE MACHINE OUR SHORE'S RUNS START FROM (`our_machine`), as `aes_boot` made it: held where it is made to be
+    the ROM-booted one outside the classes such a machine differs in by nature — `TWO_IDLES` named exactly where
+    the two idle in two dispatchers (each REFUSED by `compared` where the machines do not differ in it)."""
+    if key == gc.THE_DESK:
+        taken = aes_boot.desk_machine(ours=blob)
+    else:
+        taken = aes_boot.accessory_machine(*gc.ACCESSORY_MODES[key], ours=blob, door=aes_event.THE_NARROW_DOOR)
+    booted = gc.machine(key)
+    beside = aes_boot.compared(booted, taken, also=TWO_IDLES if taken.idle != booted.idle else ())
+    assert not beside.differing and booted.idle == aes_boot.THE_ROM_S, f"{key}: the takeover machine differs at {beside.differing[:4]}"
     assert taken.resumed_in(taken.screen_manager()) == aes_boot.OURS
-    return taken.ram
+    return taken
+
+
+def our_machine(woken, blob):
+    """...and on ours: THE SAME BOOT WITH THE SCREEN MANAGER `blob`'s (the takeover machine) — AND, WHERE THE BOOT
+    LOADS ACCESSORIES, ITS TRAP DOOR TOO (the narrow door flip, band 5 wave 3: `aes_boot.accessory_machine(...,
+    door=aes_event.THE_NARROW_DOOR)` — every accessory entered through the blob's gotopgm, trapping into the blob's
+    handler, parked by our dispatcher; `$88` and `$404` the blob's). THE DESK'S OWN MACHINE HAS NO DOOR: nothing of
+    it traps into the AES (the desk calls the AES's routines directly), and wave 2's machine is kept byte for byte.
+    Held, where it is made, to be the ROM-booted one outside the classes such a machine differs in by nature
+    (`aes_boot.by_nature`: per process behind a door), its screen manager parked in our text. ITS IDLE is the
+    ROM's dispatcher's on the desk's machine and OURS behind a door (`_taken`): a row's run is entered at the ROM's
+    dispatcher's loop on both shores all the same (`tier3._run_to_its_next_idle`) — the dispatch that brings the
+    first process in is the ROM's code on both, outside every window and held equal. `woken`: a row, or anything
+    that names its `machine`."""
+    return _taken(woken.machine, blob).ram
+
+
+def our_machine_s_programs(woken, blob):
+    """THE LOADED PROGRAMS OF THAT MACHINE, behind our door: `((pd, (lo, top)), ...)` — each one's stack span as the
+    door's takeover found it; none for a machine with no door (the desk's)."""
+    taken = _taken(woken.machine, blob).takeover
+    return tuple((program.pd, program.stack) for program in (taken.door.programs if taken.door else ()))
 
 
 def register(woken):

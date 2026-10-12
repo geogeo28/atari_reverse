@@ -194,6 +194,9 @@ def test_in_a_turn_of_ours_the_rom_s_ctlmgr_runs_no_instruction_and_our_entry_do
 
 
 # ---- THE REFUSALS -------------------------------------------------------------------------------------------------------------------
+AN_ACCESSORY_S_PD = aes.AES_PD_TABLE + 2 * aes.PD_BYTES          # the spare static PD: the first accessory's, where one is loaded
+
+
 def test_a_machine_said_ours_whose_screen_manager_resumes_in_the_rom_s_text_is_refused(blob, monkeypatch):
     """A ROW ON A TAKEOVER MACHINE WHOSE SCREEN MANAGER RESUMES IN THE ROM'S TEXT: the row names the spans, and what is
     laid over them is the ROM's own (as if nothing had been made ours) — refused BY NAME at switchto's `rte`, read
@@ -212,19 +215,30 @@ def test_the_watch_refuses_a_process_resumed_in_code_its_machine_does_not_say_it
     ROM's process, and passes. WHOSE A PC IS, AT THE EDGES: the blob's first byte and not its end; the AES's text's
     first instruction and its last word, and neither the word under it nor the one at its end (the Line-F table)."""
     switches = switching.settled(PILOT).switches
-    desk_s = aes.AES_TEXT[0] + 0x100
-    for takes_over, entering, pc, refused in (
-            (False, SM, blob.base + 0x100, "ANOTHER PROCESS than the row's, is resumed IN OUR BUILD'S TEXT"),
-            (False, SM, 0x400, "neither in the blob nor in the AES's ROM text"),
-            (True, SM, desk_s, "WHOSE SCREEN MANAGER RESUMES IN THE ROM'S TEXT"),
-            (True, aes.SHELL_PD, blob.base + 0x100, "A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT")):
-        watch = switching.ours(blob, switches, switches.at_idles, takeover=takes_over)
+    desk_s, in_the_blob = aes.AES_TEXT[0] + 0x100, blob.base + 0x100
+    # ...AND BEHIND OUR DOOR (the narrow door flip; STAND-INS, both — no machine `aes_boot` makes stands so: a partial
+    # door is refused where it is laid, and nothing of the desk traps into the AES): an accessory — any process that
+    # is neither the screen manager nor the desk, here the spare static PD — resumed in the ROM's text, and the DESK
+    # resumed in ours (its own flip is wave 4's).
+    for takes_over, door, entering, pc, refused in (
+            (False, False, SM, in_the_blob, "ANOTHER PROCESS than the row's, is resumed IN OUR BUILD'S TEXT"),
+            (False, False, SM, 0x400, "neither in the blob nor in the AES's ROM text"),
+            (True, False, SM, desk_s, "WHOSE SCREEN MANAGER RESUMES IN THE ROM'S TEXT"),
+            (True, False, aes.SHELL_PD, in_the_blob, "A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT"),
+            (True, True, AN_ACCESSORY_S_PD, desk_s, "A ROW BEHIND OUR DOOR WHOSE ACCESSORY RESUMES IN THE ROM'S TEXT"),
+            (True, True, aes.SHELL_PD, in_the_blob, "behind our door the desk is still the ROM's")):
+        watch = switching.ours(blob, switches, switches.at_idles, takeover=takes_over, door=door)
         watch._entering = entering
         with pytest.raises(switching.Refused, match=refused):
             watch._vet_whose(watch._whose(pc), pc)
     watch = switching.ours(blob, switches, switches.at_idles, takeover=True)
     watch._entering = aes.SHELL_PD
     watch._vet_whose(watch._whose(desk_s), desk_s)
+    # ...and what a door machine's rows do hold, passed: an accessory in our text, the desk in the ROM's.
+    behind_the_door = switching.ours(blob, switches, switches.at_idles, takeover=True, door=True)
+    for entering, pc in ((AN_ACCESSORY_S_PD, in_the_blob), (aes.SHELL_PD, desk_s)):
+        behind_the_door._entering = entering
+        behind_the_door._vet_whose(behind_the_door._whose(pc), pc)
     assert (watch._whose(blob.base), watch._whose(blob.end), watch._whose(desk_s)) == (switching.OURS, None, switching.THE_ROM_S)
     lo, hi = aes.AES_TEXT
     assert [watch._whose(pc) for pc in (lo - aes.WORD_BYTES, lo, hi - aes.WORD_BYTES, hi)] == [None, switching.THE_ROM_S, switching.THE_ROM_S, None]
@@ -275,7 +289,7 @@ def test_who_ran_is_refused_each_way_on_two_runs_counted_by_hand():
     for astray, refused in ((dict(in_the_rom_s_ctlmgr=16), "WHO RAN — our run spent 16 cycles in the ROM's ctlmgr"),
                             (dict(in_our_entry=0), "WHO RAN — our run spent 0 cycles in the ROM's ctlmgr and 0 in"),
                             (dict(in_the_aes=1216), "OUR run spent 1216 cycles at the PCs of the AES's own ROM"),
-                            (dict(blob=3001), "our build ran 3001 cycles and its screen manager's turns hold 3000")):
+                            (dict(blob=3001), "our build ran 3001 cycles and the turns of ours hold 3000")):
         with pytest.raises(AssertionError, match=refused):
             tier3().vet_who_ran("a row", rom, types.SimpleNamespace(**{**vars(ours), **astray}), 1200, 3000)
     for astray in (dict(in_the_rom_s_ctlmgr=0), dict(blob=4)):

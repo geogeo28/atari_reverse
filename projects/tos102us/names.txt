@@ -2213,9 +2213,9 @@ fn 0xfe3c12 dos_sdrv   # ctx
 fn 0xfe3c62 restore_trap2   # ctx
 cmt 0xfe3c62 vector $88 := $8c2a (what install_trap2 found there); gem_main's call $fda3d0
 fn 0xfe3c6e install_trap2   # ctx
-cmt 0xfe3c6e $8c2a := vector $88 FIRST (the handler's VDI arm jumps through it), then vector $88 := $fe3ea6; gem_main's call $fda074
+cmt 0xfe3c6e $8c2a := vector $88 FIRST (the handler's VDI arm jumps through it), then vector $88 := $fe3ea6; gem_main's call $fda074. In a build (src/aes/gemdosif.S, and its C twin on target) the immediate at $fe3c78 is the build's own handler, trapdoor.S's aes_rom_trap2 — since the narrow door flip (band 5 wave 3, slice F); Tier 3 maps $88 where a run ends (aes_event.GEM_TRAP_VECTOR)
 fn 0xfe3c84 retake   # ctx
-cmt 0xfe3c84 retake(): vector $88 := $fe3ea6 BEFORE the trap, then FALLS INTO the shared tail $fe3c94 — Setexc($101, D0 = crit_err $fe3cbe) through the BIOS; nothing is saved; answers Setexc's D0. (AES_MAP's "critic install")
+cmt 0xfe3c84 retake(): vector $88 := $fe3ea6 BEFORE the trap, then FALLS INTO the shared tail $fe3c94 — Setexc($101, D0 = crit_err $fe3cbe) through the BIOS; nothing is saved; answers Setexc's D0. (AES_MAP's "critic install") In a build both immediates are the build's own entries: $fe3c84's aes_rom_trap2 (the narrow door flip), $fe3c8e's aes_rom_crit_err (slice G)
 fn 0xfe3ca4 giveerr   # ctx
 cmt 0xfe3ca4 giveerr(): Setexc($101, old critic $8c26) by a branch into the tail $fe3c94; a saved longword with bit 31 set installs nothing (Setexc's bmi)
 fn 0xfe3cac takeerr   # ctx

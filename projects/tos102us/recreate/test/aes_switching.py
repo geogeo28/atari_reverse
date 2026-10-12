@@ -50,6 +50,7 @@ import abi
 import aes
 import aes_event
 import aes_switch
+import aes_accessory_turns_pinned
 import aes_takeover
 import aes_turns_pinned
 import case
@@ -69,6 +70,11 @@ OUR_OWN, THE_ROM_S = "our own", "the ROM's"         # whose dispatcher an idle i
 # blob — OUR process, our build's own frames under it — or in the AES's ROM text: the ROM's.
 OURS = "ours"
 SCREEN_MANAGER = aes.SCREEN_MANAGER_PD
+# WHOSE TURN A WINDOW IS, by WHO is entered (both shores alike: the ROM's shore reads no kind off its PCs): the screen
+# manager's, a loaded program's — an accessory's: told apart from the rest ONLY BEHIND A DOOR (`Switching`'s `door`),
+# where its turn is our build's code as the screen manager's is — or another process's (the desk's; and, on a machine
+# with no door of ours, an accessory's with it).
+THE_MANAGER_S, AN_ACCESSORY_S, ANOTHER_PROCESS_S = "the screen manager's", "an accessory's", "another process's"
 # Every longword of the machine that can hold a relocated code address (`aes_event.CODE_RELOCATIONS`): what a
 # foreign window is watched to have stored.
 CODE_SLOTS = tuple(slot for relocation in aes_event.CODE_RELOCATIONS for slot in relocation.slots)
@@ -122,7 +128,18 @@ class Switching:
     both shores). REFUSED BY NAME: a PC that is neither's; on a takeover machine, a screen manager resumed in the
     ROM's text (the machine's screen manager is not ours after all); on any other, a foreign process resumed in the
     blob. A window is ONE KIND'S: where the turn passes between the screen manager and another process it closes and
-    another opens. `images`: `pages(memory)` — the image's digest, what differs
+    another opens.
+    `door` (band 5 wave 3, the narrow door flip): THE RUN IS OF A ROW MEASURED BEHIND OUR TRAP DOOR — our shore's
+    machine a DOOR machine (`aes_boot.ours_of` handed a door: every loaded program entered through our gotopgm,
+    trapping into our handler, parked by our dispatcher), the ROM's shore's the ROM-booted one. Said to BOTH shores'
+    watches, because it is by WHO is entered that windows are split: AN ACCESSORY'S TURN IS A WINDOW OF ITS OWN
+    (`window_whose`: AN_ACCESSORY_S), apart from the desk's — on our shore OUR code (its AES calls our door, marshal,
+    switch and routines; its own text the same bytes on both shores), priced by itself as the screen manager's is.
+    REFUSED BY NAME behind a door: an accessory resumed in the ROM's text (the door did not take it), the desk
+    resumed in ours (PD0 is the ROM's until its own flip). `programs`: `((pd, (lo, top)), ...)` — each loaded
+    program's stack span, as the door's takeover found it: ITS SAVED CONTEXT AND ITS STACK ARE HELD BY CONTENT
+    WHEREVER IT DOES NOT RUN, on both shores (below: they are out of every compare of the two, as the screen
+    manager's are). `images`: `pages(memory)` — the image's digest, what differs
     by nature left out — taken at every poll and at every resume (`taken`: `(the stop, its ordinal, the pages)`), for
     the holder to compare the two shores stop by stop.
 
@@ -141,9 +158,10 @@ class Switching:
     stack pointer there)}`: a QPB is a local of a LIVE frame — at or above that pointer), and `vet_ended(who)`."""
 
     def __init__(self, switches, *, inner=None, ours=None, relocated=None, relocated_polls=None, tally=_whole_cycles,
-                 observing=None, ledger=None, takeover=False, images=None):
+                 observing=None, ledger=None, takeover=False, images=None, door=False, programs=()):
         assert not (ours is None and (relocated or relocated_polls)), "the ROM's shore takes its deliveries as they are"
         assert ours is not None or not takeover, "a machine whose screen manager is ours is OUR shore's"
+        assert takeover or ours is None or not door, "a machine behind our door is a takeover machine"
         _refuse_what_is_never_made("idle", switches.at_idles, switches.idles)
         if switches.at_polls:
             assert switches.polls is not None, "a delivery at a poll, and no count of the polls the ROM's run makes"
@@ -157,10 +175,12 @@ class Switching:
         self._rtes = frozenset({ROM_RTE} | ({ours.rte} if ours else set()))
         self._inner_armed = frozenset(inner.first) if inner else frozenset()
         self._polled, self._resumes_at, self._entering = set(), None, None
-        self._window, self._slots_found, self._window_class, self._window_is_the_manager_s = None, None, None, False
+        self._window, self._slots_found, self._window_class, self._window_whose = None, None, None, None
         self._takeover, self._images, self.taken = takeover, images, []
+        self._door, self._programs = door, dict(programs)
+        self._programs_stood, self._program_running = None, None
         self.idles, self.polls, self.entered, self.foreign, self.foreign_codes = 0, 0, [], [], {}
-        self.resumed_in, self.window_classes = [], []
+        self.resumed_in, self.window_classes, self.window_whose = [], [], []
         self._manager_stood, self._holding_the_manager_s = None, switches.process != SCREEN_MANAGER
         self.manager_s_states, self._manager_s_stores_seen = [], frozenset()
         self.qpbs_seen, self.qpbs_parked, self._qpbs_at = {}, {}, {}
@@ -175,6 +195,8 @@ class Switching:
     def stopped(self, pc, sp, memory):
         if self._manager_stood is None and self._window is None and not self.entered:
             self.hold_the_manager_s_spans(memory)       # (a watch nobody handed its run's entry image: from its first stop)
+        if self._programs_stood is None:                # ...and every loaded program's, behind a door (all but the one running)
+            self._hold_the_programs_spans(memory)
         if pc == self._resumes_at:
             self._resumed(pc, sp, memory)
         elif pc in self._rtes:
@@ -273,10 +295,23 @@ class Switching:
         if not self._takeover and whose == OURS:
             raise Refused(f"{entered}, ANOTHER PROCESS than the row's, is resumed IN OUR BUILD'S TEXT ({pc:#x}) on a "
                           f"machine whose screen manager is not ours: a foreign window is the ROM's own code")
-        if whose == OURS and self._entering != SCREEN_MANAGER:
+        its = self._whose_turn(self._entering)
+        if whose == OURS and its != THE_MANAGER_S and not (self._door and its == AN_ACCESSORY_S):
             raise Refused(f"{entered}, A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT ({pc:#x}): "
-                          f"the one process of a machine that is ours is its screen manager — this window would be "
-                          f"priced as the screen manager's turn")
+                          + ("behind our door the desk is still the ROM's (its own flip is wave 4's)" if self._door else
+                             "the one process of a machine that is ours is its screen manager")
+                          + " — this window would be priced as a turn of ours")
+        if self._door and self._takeover and its == AN_ACCESSORY_S and whose != OURS:
+            raise Refused(f"A ROW BEHIND OUR DOOR WHOSE ACCESSORY RESUMES IN THE ROM'S TEXT ({pc:#x}; {entered}): the "
+                          f"door was to have taken every loaded program (`aes_boot.ours_of`, handed a door), and this one "
+                          f"stands parked by the ROM's trap handler — its turn would be the ROM's code, priced as ours")
+
+    def _whose_turn(self, pd):
+        """WHOSE TURN the process `pd`'s is (THE_MANAGER_S, AN_ACCESSORY_S, ANOTHER_PROCESS_S), by who it is — an
+        accessory's told from the desk's only behind a door (the module's note)."""
+        if pd == SCREEN_MANAGER:
+            return THE_MANAGER_S
+        return AN_ACCESSORY_S if self._door and pd != aes.SHELL_PD else ANOTHER_PROCESS_S
 
     def _resumed(self, pc, sp, memory):
         self._resumes_at = None
@@ -286,23 +321,23 @@ class Switching:
         self._image_taken(A_RESUME, len(self.resumed_in) - 1, memory)
         if foreign:
             self._vet_whose(whose, pc)
+        self._a_program_resumed(memory)
         # A WINDOW IS ONE KIND'S: it closes where the row's own process is resumed — and where the turn passes
         # BETWEEN THE SCREEN MANAGER AND ANOTHER PROCESS (its turn, then the desk's or an accessory's: two windows,
         # each priced as what it is). Split by WHO is entered, on both shores alike — the ROM's shore reads no kind
         # off its PCs — and so by kind on ours (`_vet_whose` holds the two to agree).
-        the_manager_s = self._entering == SCREEN_MANAGER
-        if the_manager_s:               # ...its own turn begins: what it stood parked in must be as it left it
+        its = self._whose_turn(self._entering)
+        if its == THE_MANAGER_S:        # ...its own turn begins: what it stood parked in must be as it left it
             self.vet_the_manager_s_spans_stood(memory, f"where the screen manager is resumed at {pc:#x}", handed_back=True)
             self._manager_stood = None
-        if self._window is not None and (not foreign or whose != self._window_class
-                                         or the_manager_s != self._window_is_the_manager_s):
+        if self._window is not None and (not foreign or whose != self._window_class or its != self._window_whose):
             self._close_the_window(memory)
         if foreign and self._window is None:
             if whose != OURS:           # ...the dispatcher changes hands at a window of the ROM's code alone
                 self._vet_no_fork_is_queued(memory, "entered")
             self._stores_outside_so_far()
             self._window, self._slots_found, self._window_class = self._tally(), self._code_slots(memory), whose
-            self._window_is_the_manager_s = the_manager_s
+            self._window_whose = its
             if self.inner is not None:
                 self.inner.window_class = whose
                 self.inner.foreign_window_opened()
@@ -311,7 +346,7 @@ class Switching:
 
     def _close_the_window(self, memory):
         """The open window closed where the machine stands: its tally kept under its kind."""
-        if self._window_is_the_manager_s:
+        if self._window_whose == THE_MANAGER_S:
             self.hold_the_manager_s_spans(memory, its_turn_ended=True)
         if self._window_class == OURS:  # ...a turn of OUR screen manager: its stores are our build's own
             self._stores_outside_so_far()
@@ -322,7 +357,8 @@ class Switching:
                                        if code != self._slots_found[slot] and code in ROM_CODES})
         self.foreign.append(tuple(now - then for now, then in zip(self._tally(), self._window)))
         self.window_classes.append(self._window_class)
-        self._window = self._slots_found = self._window_class = None
+        self.window_whose.append(self._window_whose)
+        self._window = self._slots_found = self._window_class = self._window_whose = None
         if self.inner is not None:
             self.inner.foreign_window_closed()
 
@@ -385,6 +421,67 @@ class Switching:
                 + ", ".join(f"{at:#x} ({kept:#04x} -> {found:#04x})" for at, (kept, found) in sorted(moved.items())[:8])
                 + (f" and {len(moved) - 8} more" if len(moved) > 8 else "")
                 + " (a byte shown unchanged was STORED, by the run's ledger, with the value it held)")
+
+    # ---- EVERY LOADED PROGRAM'S SAVED CONTEXT AND STACK ARE ITS OWN, behind a door: nobody else stores there ----
+    # Behind our door each accessory's two spans (its UDA's saved context; its stack, from the UDA's state block to
+    # the top psetup's frame was laid under) are two builds' frames, out of every compare of the two shores as the
+    # screen manager's are. What that may not hide is A STORE THERE BY ANYBODY ELSE: so each program's spans are HELD
+    # BY CONTENT, on both shores, from where the run's watch first stops (every program but the one running) and from
+    # where each program's turn ENDS (the next process resumed: its savestate is done) to where it is next RESUMED —
+    # and where the run ends (`vet_the_programs_spans_stood`). Excepted, as the screen manager's: the SR word of the
+    # `rte` frame at the stack pointer it stood parked at, where it is resumed. BY CONTENT ALONE (no ledger half: a
+    # store that leaves the byte it found is not seen here).
+    def _program_s_spans(self, pd, memory):
+        uda = aes_event.uda_of(pd, memory)
+        (lo, hi, _why), = aes_switch.uda_context_drop(uda)
+        return (lo, hi), self._programs[pd]
+
+    def _hold_a_program_s_spans(self, pd, memory):
+        parked = case.long_in(memory, aes_event.uda_of(pd, memory) + aes.UDA_SUPER_SP) & BUS
+        self._programs_stood[pd] = (parked, tuple((lo, bytes(memory[lo:hi])) for lo, hi in self._program_s_spans(pd, memory)))
+
+    def _hold_the_programs_spans(self, memory):
+        """The run's first stop: every loaded program but the one running stands parked — its spans kept."""
+        self._programs_stood = {}
+        running = case.long_in(memory, aes.AES_RLR) & BUS
+        self._program_running = running if running in self._programs else None
+        for pd in self._programs:
+            if pd != running:
+                self._hold_a_program_s_spans(pd, memory)
+
+    def _vet_a_program_s_spans_stood(self, pd, memory, where, handed_back=False):
+        parked, stood = self._programs_stood[pd]
+        its_rte_s_sr = range(parked, parked + aes.WORD_BYTES) if handed_back else ()
+        moved = {lo + offset: (kept, memory[lo + offset]) for lo, held in stood
+                 for offset, kept in enumerate(held) if memory[lo + offset] != kept and lo + offset not in its_rte_s_sr}
+        if moved:
+            whose = "OUR" if self._ours is not None else "THE ROM'S"
+            raise Refused(
+                f"IN {whose} RUN, {where}, THE SAVED CONTEXT OR THE STACK OF THE PROGRAM AT {pd:#x} HOLDS OTHER BYTES THAN "
+                f"ITS OWN LAST TURN LEFT — stored by another process's code, or by the dispatcher outside its turn "
+                f"(behind our door these bytes are out of every compare of the two shores): "
+                + ", ".join(f"{at:#x} ({kept:#04x} -> {found:#04x})" for at, (kept, found) in sorted(moved.items())[:8])
+                + (f" and {len(moved) - 8} more" if len(moved) > 8 else ""))
+
+    def _a_program_resumed(self, memory):
+        """A process is resumed: the program that ran until now (if one did) stands parked — its spans kept from
+        here; and the one resumed (if it is one) must stand as its last turn left it."""
+        if not self._programs:
+            return
+        if self._programs_stood is None:
+            self._hold_the_programs_spans(memory)
+        before, self._program_running = self._program_running, self._entering if self._entering in self._programs else None
+        if before is not None and before != self._entering:
+            self._hold_a_program_s_spans(before, memory)
+        if self._entering in self._programs_stood:
+            self._vet_a_program_s_spans_stood(self._entering, memory, f"where the program at {self._entering:#x} is resumed",
+                                              handed_back=True)
+            del self._programs_stood[self._entering]
+
+    def vet_the_programs_spans_stood(self, memory, where):
+        """...and where the run ends (`memory`): every program that does not run stands as its last turn left it."""
+        for pd in self._programs_stood or ():
+            self._vet_a_program_s_spans_stood(pd, memory, where)
 
     def _image_taken(self, stop, ordinal, memory):
         if self._images is not None:
@@ -584,22 +681,25 @@ def _refuse_what_is_never_made(kind, named, made):
                       f"be laid")
 
 
-def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observing=None, images=None):
+def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observing=None, images=None, door=False,
+              programs=()):
     """THE ROM'S SHORE: the watch of the ROM's own run of a row that switches. `entered_at` and `inner`: its door
-    watch — given, or made here where the row has door-call deliveries too (one that does not `block`)."""
+    watch — given, or made here where the row has door-call deliveries too (one that does not `block`). `door`,
+    `programs`: the row is measured behind our door (`Switching`'s)."""
     if inner is None and switches.at_calls:
         inner = aes_event.DoorStops(aes_event.ENTRIES, aes_event.ROM_RETURNS, delivered=switches.at_calls,
                                     entered_at=entered_at)
-    return Switching(switches, inner=inner, tally=tally, observing=observing, images=images)
+    return Switching(switches, inner=inner, tally=tally, observing=observing, images=images, door=door, programs=programs)
 
 
 def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None, relocated_polls=None, takeover=False,
-         images=None):
+         images=None, door=False, programs=()):
     """OUR SHORE, on `blob`: `relocated` the row's idle deliveries as our own dispatcher takes them,
     `relocated_polls` those it takes at a poll that is no idle; `takeover`: over a machine whose screen manager is
-    ours (`aes_takeover`)."""
+    ours (`aes_takeover`); `door`, `programs`: and whose trap door is (`Switching`'s)."""
     return Switching(switches, inner=inner, ours=our_dispatcher(blob), relocated=relocated,
-                     relocated_polls=relocated_polls, tally=tally, ledger=ledger, takeover=takeover, images=images)
+                     relocated_polls=relocated_polls, tally=tally, ledger=ledger, takeover=takeover, images=images,
+                     door=door, programs=programs)
 
 
 # ---- THE REGISTRAR: a row that blocks and is woken ------------------------------------------------------------------------
@@ -1050,12 +1150,22 @@ def vet_the_whole_run(who, blob, measured, whole):
         f"{who} measures {measured.original_net} / {measured.recreate_net} cycles on {directory}: say why it moved")
 
 
+def _as_pinned(turns):
+    return tuple((turn.ours, turn.the_rom_s, turn.glue) for turn in turns)
+
+
 def turns_measured(measured):
     """The turns of our screen manager inside a measured run, as a pin spells them: `(ours, the ROM's, our thunks')`
     cycles each, in order (`tier3.Turn`) — of a row of ctlmgr's own (`its_turns`: the run IS its turns) as of a row
     with a turn inside it."""
     turns = getattr(measured, "its_turns", None) or getattr(measured, "turns", ())
-    return tuple((turn.ours, turn.the_rom_s, turn.glue) for turn in turns)
+    return _as_pinned(turn for turn in turns if turn.whose == THE_MANAGER_S)
+
+
+def accessory_turns_measured(measured):
+    """...and THE ACCESSORIES' TURNS inside it (behind our door: `tier3.Turn.whose`), spelt the same way — a turn of
+    ours inside ANY row measured there: a row of ctlmgr's own, a handler's."""
+    return _as_pinned(turn for turn in getattr(measured, "turns", ()) if turn.whose == AN_ACCESSORY_S)
 
 
 def turns_pinned(who, directory):
@@ -1063,18 +1173,25 @@ def turns_pinned(who, directory):
     return tuple(tuple(turn) for turn in aes_turns_pinned.PINNED.get(who, {}).get(directory, ()))
 
 
+def accessory_turns_pinned(who, directory):
+    """...and the accessories' (`aes_accessory_turns_pinned`: a data file of its own, the same shape)."""
+    return tuple(tuple(turn) for turn in aes_accessory_turns_pinned.PINNED.get(who, {}).get(directory, ()))
+
+
 def vet_its_turns(who, blob, measured):
-    """THE SCREEN MANAGER'S TURNS INSIDE THE RUN ARE THE PINNED ONES (`aes_turns_pinned`: by the row's name and the
-    blob's directory; none for a row with no line there) — each the turn's whole AES subtree, ours against the ROM's (the table's convention), in the same
-    window — AND EACH IS AT OR UNDER THE BAR BY ITSELF, its thunks counted. A turn that moves says why."""
+    """THE TURNS OF OURS INSIDE THE RUN ARE THE PINNED ONES — the screen manager's (`aes_turns_pinned`) and, behind our
+    door, the accessories' (`aes_accessory_turns_pinned`), each by the row's name and the blob's directory; none for a
+    row with no line there — each the turn's whole AES subtree, ours against the ROM's (the table's convention), in
+    the same window — AND EACH IS AT OR UNDER THE BAR BY ITSELF, its thunks counted. A turn that moves says why."""
     directory = blob.elf.parent.name
-    held = turns_pinned(who, directory)
-    assert turns_measured(measured) == held, (
-        f"{who}: on {directory} the screen manager's turns inside the run measure {turns_measured(measured)} (ours, the "
-        f"ROM's, thunks) where {held} is pinned: say why they moved")
     tier3 = bench_tier3()
-    assert all(tier3.turn_ratio_with_glue(tier3.Turn(*turn, 0)) <= tier3.TIER3_FUNCTION_BAR for turn in held), (
-        f"{who}: a turn of our screen manager is over the bar by itself on {directory}")
+    for whose, measures, held in (("the screen manager's", turns_measured(measured), turns_pinned(who, directory)),
+                                  ("the accessories'", accessory_turns_measured(measured), accessory_turns_pinned(who, directory))):
+        assert measures == held, (
+            f"{who}: on {directory} {whose} turns inside the run measure {measures} (ours, the ROM's, thunks) where "
+            f"{held} is pinned: say why they moved")
+        assert all(tier3.turn_ratio_with_glue(tier3.Turn(*turn, 0)) <= tier3.TIER3_FUNCTION_BAR for turn in held), (
+            f"{who}: a turn of ours ({whose}) is over the bar by itself on {directory}")
 
 
 def priced_by_the_table(row):

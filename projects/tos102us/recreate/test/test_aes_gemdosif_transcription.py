@@ -10,12 +10,15 @@ BIOS's Setexc in both columns (the image pointer's floor on two to six instructi
 Pexec fails — and none is a C function's shape (retake falls into the Setexc tail, giveerr branches into it, takeerr
 calls it and branches into it; pgmld's command tail is a word of its own text and its two calls `bsr` a hop). So by
 the user's rule the target carries the ROM's code. Two claims hold it: its BYTES are the ROM's, every one of the
-three regions but ELEVEN LONGS RELOCATED (the hop's `jmp` to `__DOS`, where the `.S` lays it out; crit_err's address in
+three regions but THIRTEEN LONGS RELOCATED (the hop's `jmp` to `__DOS`, where the `.S` lays it out; the trap door's
+address in install_trap2 and retake — `trapdoor.S`'s entry, since the narrow door flip; crit_err's address in
 retake and takeerr; the six `jsr`s of spl7_save / spl_restore; crit_err's table and its `jsr` of eralert); and it
 BEHAVES as the ROM — the image and the WHOLE REGISTER FILE — through Tier 3's transcription relation, over the C
 battery's own machines. THE HANDLER retake AND takeerr INSTALL IS THE BUILD'S OWN: etv_critic and the recorder's
 ledger hold `aes_rom_crit_err` on our shore — and D1, where the BIOS's Setexc leaves what it was handed — MAPPED
-through Tier 3's relocation registry (`aes_event.CRITICAL_ERROR_HANDLER`) and compared exactly — no drop.
+through Tier 3's relocation registry (`aes_event.CRITICAL_ERROR_VECTOR`) and compared exactly — no drop. AND SO IS
+THE TRAP DOOR install_trap2 AND retake STORE (`aes_event.GEM_TRAP_VECTOR`): vector `$88` holds `aes_rom_trap2` on our
+shore where the ROM's run leaves `$fe3ea6` — these rows are what proves that mapping a mapping.
 
 TWO SURFACES, as a vector take has two:
   * THE VECTORS' MEMORY, over the machine's own BIOS: both shores take the real `trap #13` into the ROM's Setexc (its
@@ -73,12 +76,17 @@ SPL_BRACKETS = {0xFE3CC6: "crit_err masks round its change of stack", 0xFE3CD8: 
                 0xFE3D2E: "dos_exec masks round the UDA's SP parked", 0xFE3D52: "...and back",
                 0xFE3D78: "dos_exec masks round the UDA's SP put back", 0xFE3D90: "...and back"}
 INSTALLS_CRIT_ERR = {0xFE3C8E: "retake", 0xFE3CB6: "takeerr"}     # `move.l #$fe3cbe,d0`: rows of `test_aes_rom_data.py`
+# `move.l #$fe3ea6,$88`: the trap door's handler by value (the narrow door flip: `trapdoor.S`'s entry in a build).
+INSTALLS_THE_TRAP_DOOR = {0xFE3C78: "install_trap2", addrs.AES_ROM_RETAKE: "retake"}
+THE_TRAP_DOOR_S_ANCHOR = "AES_ROM_TRAP2"
 LOADS_THE_TABLE, CALLS_ERALERT = 0xFE3CE2, 0xFE3D08
 ERALERT_THUNK = "gemdosif_to_aes_eralert"
 RELOCATED = {
     JMP_OPERAND: Relocated(ABSOLUTE, RESTORE_TRAP2, "the hop's `jmp` to `__DOS`, where the .S lays it out"),
     **{at + OPERAND: Relocated(ABSOLUTE, RESTORE_TRAP2, f"{routine} hands Setexc crit_err, where the .S lays it out")
        for at, routine in INSTALLS_CRIT_ERR.items()},
+    **{at + OPERAND: Relocated(ABSOLUTE, THE_TRAP_DOOR_S_ANCHOR, f"{routine} stores the trap door, where `trapdoor.S` lays it out")
+       for at, routine in INSTALLS_THE_TRAP_DOOR.items()},
     **{at + OPERAND: Relocated(ABSOLUTE, "AES_ROM_SPL7_SAVE", why) for at, why in SPL_BRACKETS.items()},
     LOADS_THE_TABLE + OPERAND: Relocated(ABSOLUTE, CRIT_ERR_ALERTS, "crit_err's table, where the .S lays it out"),
     CALLS_ERALERT + OPERAND: Relocated(ABSOLUTE, None, "crit_err's alert: eralert ships as C", thunk=ERALERT_THUNK),
@@ -86,18 +94,19 @@ RELOCATED = {
 SETEXC, CRITIC_NUMBER = addrs.BIOS_SETEXC_FN, battery.SETEXC_CRITIC
 JMP_ABSOLUTE_LONG = b"\x4e\xf9"
 JSR_ABSOLUTE_LONG, MOVE_L_IMMEDIATE_D0, MOVEA_L_IMMEDIATE_A1 = 0x4EB9, 0x203C, 0x227C
+MOVE_L_IMMEDIATE_TO_ABSOLUTE = 0x23FC   # `move.l #<imm>,<abs>.l`: the immediate one word in, the address after it
 # The build's symbol for each ROM address a relocated operand names.
 SYMBOL_OF = {addrs.AES_ROM_SPL7_SAVE: "aes_rom_spl7_save", addrs.AES_ROM_SPL_RESTORE: "aes_rom_spl_restore",
-             addrs.AES_ROM_CRIT_ERR: "aes_rom_crit_err", addrs.AES_ROM_CRIT_ERR_ALERTS: "aes_rom_crit_err_alerts"}
+             addrs.AES_ROM_CRIT_ERR: "aes_rom_crit_err", addrs.AES_ROM_CRIT_ERR_ALERTS: "aes_rom_crit_err_alerts",
+             addrs.AES_ROM_TRAP2: "aes_rom_trap2"}
 # The thunk's shape (`aes_switch.vet_a_thunk`): two words, the second pushed first, each sign-extended.
 ERALERT_THUNK_SHAPE = ("movew %sp@(6),%d0", "extl %d0", "movel %d0,%sp@-", "movew %sp@(8),%d0", "extl %d0",
                        "movel %d0,%sp@-", "pea 0", "jsr {body}", "lea %sp@(12),%sp", "rts")
 
 
 def test_the_transcription_is_the_rom_s_bytes_exactly():
-    """THE BYTE PIN: every word the ROM's but the ten longwords that name where the build links a routine or a table
-    of its own. The trap #2 handler install_trap2 and retake store is still the ROM's immediate (the door's flip
-    moves it: `test_aes_rom_data.py` reds the day the build has an entry for it)."""
+    """THE BYTE PIN: every word the ROM's but the twelve longwords that name where the build links a routine or a
+    table of its own — the trap #2 handler install_trap2 and retake store among them since the narrow door flip."""
     transcription.assert_transcribed(REGION, relocated=RELOCATED)
 
 
@@ -107,13 +116,13 @@ def test_crit_err_s_table_is_the_rom_s_bytes_exactly():
 
 def test_both_blobs_hold_the_region_with_each_operand_naming_its_own_routine(blob):
     """THE SHIPPED BLOB TOO, operand by operand (its absolute operands are its own layout's): every byte outside the
-    ten the bench blob's, and each of the ten the address THAT blob links the routine, the table or the thunk at."""
+    twelve the bench blob's, and each of the twelve the address THAT blob links the routine, the table or the thunk at."""
     held = blob
 
     def laid(rom_address, size):
         return transcription.bytes_of(held, RESTORE_TRAP2, rom_address, size)
     operands = {at: relocation for at, relocation in RELOCATED.items() if REGION.lo <= at < REGION.hi}
-    assert len(operands) == len(SPL_BRACKETS) + len(INSTALLS_CRIT_ERR) + 2
+    assert len(operands) == len(SPL_BRACKETS) + len(INSTALLS_CRIT_ERR) + len(INSTALLS_THE_TRAP_DOOR) + 2
     at = REGION.lo
     while at < REGION.hi:
         if at not in operands:
@@ -130,13 +139,15 @@ def test_both_blobs_hold_the_region_with_each_operand_naming_its_own_routine(blo
 
 def test_the_relocated_operands_are_the_instructions_the_rom_has_there():
     """Each site read off the ROM: a `jsr <abs>.l` of spl7_save or spl_restore, `move.l #crit_err,d0`,
-    `movea.l #table,a1`, `jsr eralert` — so a relocation names the instruction it says it does."""
+    `move.l #trap2,$88`, `movea.l #table,a1`, `jsr eralert` — so a relocation names the instruction it says it does."""
     def at_site(at):
         return case.word_in(BASE_IMAGE, at), case.long_in(BASE_IMAGE, at + OPERAND)
     assert {at_site(at) for at in SPL_BRACKETS} == {(JSR_ABSOLUTE_LONG, addrs.AES_ROM_SPL7_SAVE),
                                                     (JSR_ABSOLUTE_LONG, addrs.AES_ROM_SPL_RESTORE)}
     assert [at_site(at)[1] for at in sorted(SPL_BRACKETS)] == 3 * [addrs.AES_ROM_SPL7_SAVE, addrs.AES_ROM_SPL_RESTORE]
     assert {at_site(at) for at in INSTALLS_CRIT_ERR} == {(MOVE_L_IMMEDIATE_D0, addrs.AES_ROM_CRIT_ERR)}
+    assert {at_site(at) for at in INSTALLS_THE_TRAP_DOOR} == {(MOVE_L_IMMEDIATE_TO_ABSOLUTE, addrs.AES_ROM_TRAP2)}
+    assert {case.long_in(BASE_IMAGE, at + OPERAND + aes.LONG_BYTES) for at in INSTALLS_THE_TRAP_DOOR} == {addrs.VECTOR_TRAP_GEM}
     assert at_site(LOADS_THE_TABLE) == (MOVEA_L_IMMEDIATE_A1, addrs.AES_ROM_CRIT_ERR_ALERTS)
     assert at_site(CALLS_ERALERT) == (JSR_ABSOLUTE_LONG, addrs.AES_ROM_ERALERT)
 
@@ -237,18 +248,79 @@ def test_what_retake_and_takeerr_install_is_the_build_s_own_crit_err(name, shape
     assert case.long_in(the_rom_s, aes_event.ETV_CRITIC) == addrs.AES_ROM_CRIT_ERR
 
 
-def test_a_handler_left_unmapped_is_refused(blob, monkeypatch):
+@pytest.fixture
+def unmapped(monkeypatch):
+    """`unmapped(part)`: the registry with the door's `part` naming no entry of any build — for the test's length."""
+    tier3 = bench_tier3()
+
+    def take_out(part):
+        door = tuple(each._replace(symbols={}) if each is part else each for each in aes_event.THE_NARROW_DOOR)
+        monkeypatch.setattr(aes_event, "THE_NARROW_DOOR", door)
+        tier3.door_relocation.cache_clear()
+    yield take_out
+    monkeypatch.undo()
+    tier3.door_relocation.cache_clear()
+
+
+def test_a_handler_left_unmapped_is_refused(blob, unmapped):
     """THE RED of the mapping: with crit_err's entry taken out of the registry the same row is refused at the first
     thing that holds it — D1, where the BIOS's Setexc left the handler it was handed (the register file is compared
     before the image, which holds it in etv_critic). The relation drops nothing."""
-    tier3 = bench_tier3()
-    monkeypatch.setattr(aes_event, "CRITICAL_ERROR_HANDLER", aes_event.CRITICAL_ERROR_HANDLER._replace(symbols={}))
-    tier3.critical_error_handler_relocation.cache_clear()
-    try:
-        with pytest.raises(AssertionError, match=rf"register file than the original: d1 {addrs.AES_ROM_CRIT_ERR:#x} -> "):
-            held_on(blob, TAKEERR, "the vectors given back")
-    finally:
-        tier3.critical_error_handler_relocation.cache_clear()
+    unmapped(aes_event.CRITICAL_ERROR_VECTOR)
+    with pytest.raises(AssertionError, match=rf"register file than the original: d1 {addrs.AES_ROM_CRIT_ERR:#x} -> "):
+        held_on(blob, TAKEERR, "the vectors given back")
+
+
+# ---- ...AND SO IS THE TRAP DOOR (the narrow door flip): vector $88, mapped and never dropped ----------------------------
+STORERS_OF_THE_DOOR = sorted(key for key in OWN_BIOS if key[0] in (INSTALL_TRAP2, RETAKE))
+
+
+def test_the_rows_that_prove_the_door_s_vector_a_mapping_are_these():
+    """`aes_event.MAPPING_PROVED_BY` names install_trap2's and retake's `.S` entries for `$88` and retake's and
+    takeerr's for `$404`: each has registered rows here, over the machine's own BIOS."""
+    proved = aes_event.MAPPING_PROVED_BY
+    assert proved[aes_event.GEM_TRAP_VECTOR.what] == tuple(transcription.transcription_symbol(name) for name in (INSTALL_TRAP2, RETAKE))
+    assert proved[aes_event.CRITICAL_ERROR_VECTOR.what] == tuple(transcription.transcription_symbol(name) for name in (RETAKE, TAKEERR))
+    assert {name for name, _shape in STORERS_OF_THE_DOOR} == {INSTALL_TRAP2, RETAKE}
+    assert {name for name, _shape in INSTALLERS} == {RETAKE, TAKEERR}
+
+
+@pytest.mark.parametrize("name,shape", STORERS_OF_THE_DOOR, ids=lambda value: value)
+def test_what_install_trap2_and_retake_store_is_the_build_s_own_trap_door(name, shape, blob):
+    """WHAT THE MAPPING STANDS ON, read off OUR run before it is mapped back: vector `$88` holds the address THIS blob
+    links `aes_rom_trap2` at — where the ROM's run of the same row leaves `$fe3ea6` — so the mapping is not vacuous,
+    and a `trap #2` on a machine our takes ran on enters our door."""
+    ours = left_by_ours(blob, name, shape).image
+    assert case.long_in(ours, addrs.VECTOR_TRAP_GEM) == blob.entry(SYMBOL_OF[addrs.AES_ROM_TRAP2])
+    the_rom_s, _writes, _regs = emu.run(make_image(machine(OWN_BIOS[(name, shape)]())), getattr(addrs, name), {})
+    assert case.long_in(the_rom_s, addrs.VECTOR_TRAP_GEM) == addrs.AES_ROM_TRAP2
+
+
+@pytest.mark.parametrize("name,shape", STORERS_OF_THE_DOOR, ids=lambda value: value)
+def test_a_trap_door_left_unmapped_is_refused(name, shape, blob, unmapped):
+    """THE RED of that mapping: with the trap door's entry taken out of the registry each row that stores it differs
+    from the ROM's in vector `$88` — named by its first differing byte, the ROM's `$fe` there. The relation drops
+    nothing."""
+    unmapped(aes_event.GEM_TRAP_VECTOR)
+    high_byte_of_the_rom_s = addrs.AES_ROM_TRAP2 >> 16 & 0xFF      # (the vector's top byte is zero on both shores)
+    with pytest.raises(AssertionError, match=rf"left different memory than the original .*first "
+                                             rf"{addrs.VECTOR_TRAP_GEM + 1:#x} \({high_byte_of_the_rom_s:#x} -> "):
+        held_on(blob, name, shape)
+
+
+def test_a_build_that_stored_the_rom_s_trap_door_is_refused_by_name(blob, monkeypatch):
+    """...AND THE OTHER WAY: a `.S` whose operand was left the ROM's would leave `$fe3ea6` in vector `$88` — equal to
+    the ROM's memory, so the compare alone would pass it. The registry's vet refuses it by name, on the machine that
+    held another handler there when the run was entered (the vectors given back: the BIOS's)."""
+    made = rom_bench.RomBench._call
+
+    def storing_the_rom_s(self, image, symbol, *args, **kwargs):
+        ours = made(self, image, symbol, *args, **kwargs)
+        ours.image[addrs.VECTOR_TRAP_GEM:addrs.VECTOR_TRAP_GEM + aes.LONG_BYTES] = addrs.AES_ROM_TRAP2.to_bytes(aes.LONG_BYTES, "big")
+        return ours
+    monkeypatch.setattr(rom_bench.RomBench, "_call", storing_the_rom_s)
+    with pytest.raises(AssertionError, match=rf"THE ROM'S OWN address {addrs.AES_ROM_TRAP2:#x} in the GEM trap's vector"):
+        held_on(blob, INSTALL_TRAP2, "the vectors given back")
 
 
 def test_a_build_that_installed_the_rom_s_crit_err_is_refused_by_name(blob, monkeypatch):
@@ -262,7 +334,7 @@ def test_a_build_that_installed_the_rom_s_crit_err_is_refused_by_name(blob, monk
         ours.image[aes_event.ETV_CRITIC:aes_event.ETV_CRITIC + aes.LONG_BYTES] = addrs.AES_ROM_CRIT_ERR.to_bytes(aes.LONG_BYTES, "big")
         return ours
     monkeypatch.setattr(rom_bench.RomBench, "_call", installing_the_rom_s)
-    with pytest.raises(AssertionError, match="THE ROM'S OWN address 0xfe3cbe in the critical-error handler GEM installs"):
+    with pytest.raises(AssertionError, match="THE ROM'S OWN address 0xfe3cbe in the critical-error vector"):
         held_on(blob, TAKEERR, "the vectors given back")
 
 

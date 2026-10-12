@@ -19,6 +19,7 @@ import os
 OUT = os.environ.get("PINREC_OUT")
 WHOLE, PRICED, REFUSED = "whole", "priced", "refused"
 TURN = "turn"                           # the screen manager's turns inside a row's run on a blob (`aes_turns_pinned`)
+ACCESSORY_TURN = "accessory turn"       # ...and the accessories', behind our door (`aes_accessory_turns_pinned`)
 A_REFUSAL_S_WORDS = 200
 
 
@@ -36,6 +37,13 @@ def _record(kind, who, held, measured):
         out.write(json.dumps({"kind": kind, "who": who, "old": held, "new": measured, "file": _the_test_s_file()}) + "\n")
 
 
+def _record_its_turns(switching, who, directory, measured):
+    """The turns of ours inside a run on a blob, of both kinds, each against its own data file's line."""
+    for kind, pinned, measures in ((TURN, switching.turns_pinned, switching.turns_measured),
+                                   (ACCESSORY_TURN, switching.accessory_turns_pinned, switching.accessory_turns_measured)):
+        _record(kind, [who, directory], [list(turn) for turn in pinned(who, directory)], [list(turn) for turn in measures(measured)])
+
+
 def _recording_whole_runs(switching):
     """`vet_on_a_blob`, its verdict untouched, the whole run's cycles on the blob recorded after it."""
     vet, measured_on, row_name = switching.vet_on_a_blob, switching.measured_on, switching.row_name
@@ -48,8 +56,7 @@ def _recording_whole_runs(switching):
             try:
                 measured, _watch, _foreign = measured_on(blob, row)
                 _record(WHOLE, [row_name(row), directory], list(whole[directory]), [measured.original_net, measured.recreate_net])
-                held = [list(turn) for turn in switching.turns_pinned(row_name(row), directory)]
-                _record(TURN, [row_name(row), directory], held, [list(turn) for turn in switching.turns_measured(measured)])
+                _record_its_turns(switching, row_name(row), directory, measured)
             except AssertionError as refusal:
                 _record(REFUSED, row_name(row), None, str(refusal)[:A_REFUSAL_S_WORDS])
     return vet_on_a_blob
@@ -88,9 +95,7 @@ def _recording_a_run_s_pins(switching):
         try:
             return its_turns(who, blob, measured)
         finally:
-            directory = blob.elf.parent.name
-            _record(TURN, [who, directory], [list(turn) for turn in switching.turns_pinned(who, directory)],
-                    [list(turn) for turn in switching.turns_measured(measured)])
+            _record_its_turns(switching, who, blob.elf.parent.name, measured)
     return vet_the_whole_run, vet_its_turns
 
 

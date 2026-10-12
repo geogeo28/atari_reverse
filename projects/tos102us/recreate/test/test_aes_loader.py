@@ -45,7 +45,8 @@ from collections import namedtuple
 
 import pytest
 
-from harness import BASE_IMAGE, addrs, make_image
+from harness import BASE_IMAGE, addrs, bench_tier3, emu, make_image
+from recreate_kit import rom_bench
 
 import accessory_disk
 import aes
@@ -60,6 +61,9 @@ import aes_shell as sh
 import case
 import fs_pexec
 import gemdos
+import routines
+import transcription
+import vdi
 from case import merge_pokes
 
 SNDCLI, LDACCS, FREE_ACCS, CRE_APROC = ld.SNDCLI, ld.LDACCS, ld.FREE_ACCS, ld.CRE_APROC
@@ -943,3 +947,324 @@ def test_a_run_that_does_not_return_to_its_caller_s_frame_is_refused():
     assert there["isp"] != registers["isp"] + LONG_BYTES
     with pytest.raises(ld.Refused, match="not AES_ROM_CRE_APROC's return to its caller"):
         ld._vet_it_returned(arrived, ran._replace(stood=ran.stood._replace(registers=there)))
+
+
+# ---- THE BLOB ROWS (band 5 wave 3, slice F: the narrow door flip) ---------------------------------------------------------------
+# Each routine PRICED, as a kit call over its arrival with GEMDOS REPLAYED from the ROM's own run of that arrival
+# (`aes_loader.replayed_megabyte`: what is a labelled staging there, and why). The arrivals are the accessory capture's
+# and the desk capture's (the registry's import reads those two captures and no third); the seven-accessory boot's
+# cases stay Tier 1. WHAT A BLOB RUN STORES THAT THE ROM'S DOES NOT — both MAPPED by the relocation registry, nothing
+# dropped:
+#   * THE FIRST-ENTRY FRAME psetup lays for the program (sndcli hands pstart gotopgm): the build's own
+#     `aes_rom_gotopgm` — `aes_event.PROGRAM_ENTRY`, whose slots are WALKED FROM THE MACHINE. sndcli's rows are what
+#     proves that entry a mapping (`aes_event.MAPPING_PROVED_BY`);
+#   * pgmld's COMMAND TAIL in the replayed trap's ledger, on the shipped blob (the `.S` hands its own zero word):
+#     `aes_event.TEXT_SITES`. (On the bench blob the C twin of pgmld hands a zero word of its own, as its own rows
+#     say — the table prices these rows on the shipped blob, `through`.)
+ROWS_AT_ARRIVALS = (FIRST, SECOND, ITS_DESCRIPTOR, TWO_ACCESSORIES, NO_ACCESSORY, DESCRIPTOR_REFUSED, SECOND_FAILS_TO_LOAD)
+# THE ROWS WHOSE DTA IS LAID AT EACH SEARCH, not first (`aes_loader.DtaFilledAtItsSearches`): the one run whose searches
+# leave it more than one value — a name found, then the next.
+DTA_AT_ITS_SEARCHES = (TWO_ACCESSORIES,)
+# free_accs IS CALLED BY NO BOOT (gem_main never returns here), so its row is no arrival's and replays no run of the
+# ROM's: an ARGUMENT CLASS, said in its name — the accessory capture's machine AT ITS FIRST IDLE (`aes_boot`), the
+# glue's verdict words stale, each Mfree answered what the ROM's own GEMDOS answers THAT block's Mfree over that
+# machine, asked call by call outside any run of free_accs (`_the_rom_s_own_answers`); nothing GEMDOS stores is laid.
+# (Its name is kept under the table's widest case: a longer one would re-align every line of `build/bench/tier3.txt`.)
+FREE_ACCS_ROW = ("ARGUMENT CLASS (no boot calls it): both accessories' blocks freed at the accessory machine's idle, "
+                 "each Mfree answered as GEMDOS does")
+
+
+def _row_label(label):
+    """A case's label as its row's: its routine's name dropped (the row is named by its core), the staging said."""
+    staging = f"{ld.REPLAYED}, {ld.AT_ITS_SEARCHES}" if label in DTA_AT_ITS_SEARCHES else ld.REPLAYED
+    return f"{label.split(', ', 1)[1]} ({staging})"
+
+
+@functools.cache
+def _replayed(label, at_its_searches=None):
+    """`label`'s machine as a blob row runs over it (pokes) — `at_its_searches`: as the row says, unless handed."""
+    arrived, ran = _arrived(label), _returned(label)
+    at_its_searches = label in DTA_AT_ITS_SEARCHES if at_its_searches is None else at_its_searches
+    megabyte = gc._as_pokes(ld.replayed_megabyte(arrived, ran, at_its_searches), f"{label}: its arrival, GEMDOS's stores laid")
+    return merge_pokes(megabyte, ld.replayed_trap(arrived, ran, at_its_searches))
+
+
+# (THE EVENT LAYER'S REGISTRAR: sndcli's pstart runs psetup's mask bracket, whose SR save word no host C stores —
+# settled as every such row's is, `aes_event.settled`: staged at the value the ROM's run leaves, dropped by name.)
+BLOB_ROWS = {label: aes_event.register_row(_row_label(label), _arrived(label).routine, _arrived(label).arguments, _replayed(label),
+                                           hook=functools.partial(ld.replayed_hook, label in DTA_AT_ITS_SEARCHES))
+             for label in ROWS_AT_ARRIVALS}
+
+
+def _free_accs_machine():
+    machine = merge_pokes(_at_its_idle(True), gd.STALE_DOS)
+    return merge_pokes(machine, gd.scripted_pokes(_the_rom_s_own_answers(machine)))
+
+
+BLOB_ROWS[FREE_ACCS_ROW] = aes.register(FREE_ACCS_ROW, FREE_ACCS, (), _free_accs_machine(), hook=gd.scripted_hook)
+
+
+def _table_row(label):
+    """The registered blob row of the case `label`, as the table reads it."""
+    tier3 = bench_tier3()
+    name = FREE_ACCS if label == FREE_ACCS_ROW else _arrived(label).routine
+    return tier3.row_named((routines.core_symbol(name), label if label == FREE_ACCS_ROW else _row_label(label)))
+
+
+def _measured(label):
+    tier3 = bench_tier3()
+    return tier3.measure(_table_row(label), tier3.RomBench())
+
+
+@pytest.mark.parametrize("label", (*ROWS_AT_ARRIVALS, FREE_ACCS_ROW))
+def test_a_blob_row_of_the_loader_is_held_by_tier_3_and_under_the_bar(label):
+    """EACH ROW THROUGH THE TABLE'S OWN MEASURE (the shipped blob for a row that reaches pgmld's `.S`): the second
+    differential whole — the megabyte, the answer, the replayed trap's ledger call for call — nothing dropped but
+    the Line-F mask word every C row drops, and the ratio at or under the bar."""
+    tier3 = bench_tier3()
+    row = _table_row(label)
+    by_nature = {why for _lo, _hi, why in (*aes.LINE_F_MASK_WINDOW, *aes_event.sr_drops())}
+    assert {why for _lo, _hi, why in row.dropped} <= by_nature, "the words every such row settles, and nothing of the loader's own"
+    assert _measured(label).ratio <= tier3.TIER3_FUNCTION_BAR
+
+
+# ---- EACH REPLAYED ROW IS THE ROM'S OWN RUN OF ITS ARRIVAL (`aes_loader.vet_the_replay_is_the_run_in_place`) ----------------
+# The classes each row's two megabytes — the ROM's routine as a kit call over the row's machine, and the ROM's in-place
+# run — differ in, named per row and refused where unneeded. Every row: the in-place frames, the trap, the harness's
+# stack. psetup's SR save word where the run reaches pstart; the glue's words a run never stores (cre_aproc's Malloc
+# is dos_alloc's own trap, which parks nothing and keeps no verdict; sndcli (a) stops behind its open).
+EVERY_REPLAY_S = (ld.ROM_FRAMES, ld.THE_REPLAYED_TRAP, ld.THE_HARNESS_STACK)
+PSETUP_S_STATUS = ld.parked_status(aes.AES_SR_PSETUP)
+REPLAY_CLASSES = {
+    FIRST: (*EVERY_REPLAY_S, PSETUP_S_STATUS),
+    SECOND: (*EVERY_REPLAY_S, PSETUP_S_STATUS),
+    ITS_DESCRIPTOR: (*EVERY_REPLAY_S, *(ld.staged_stale(field) for field in sh.DOS_FIELDS)),
+    TWO_ACCESSORIES: (*EVERY_REPLAY_S, PSETUP_S_STATUS),
+    NO_ACCESSORY: EVERY_REPLAY_S,
+    DESCRIPTOR_REFUSED: (*EVERY_REPLAY_S, ld.staged_stale("DOS_RETURN")),
+    SECOND_FAILS_TO_LOAD: EVERY_REPLAY_S,
+}
+assert set(REPLAY_CLASSES) == set(ROWS_AT_ARRIVALS)
+
+
+def _the_rom_s_shore(pokes, label):
+    """The ROM's routine of `label` as the kit calls it over the row machine `pokes`: `(the memory it left, D0)`."""
+    arrived = _arrived(label)
+    staged = aes.staged(arrived.routine, vdi.as_signed(arrived.routine, arrived.arguments), pokes)
+    final, _writes, registers = emu.run(make_image(staged), getattr(addrs, arrived.routine))
+    return final, registers["d0"]
+
+
+def _vet_the_replay(label, pokes, classes=None, at_its_searches=None):
+    final, answer = _the_rom_s_shore(pokes, label)
+    ld.vet_the_replay_is_the_run_in_place(
+        label, _arrived(label), _returned(label), final, answer, *(REPLAY_CLASSES[label] if classes is None else classes),
+        at_its_searches=label in DTA_AT_ITS_SEARCHES if at_its_searches is None else at_its_searches)
+
+
+@pytest.mark.parametrize("label", ROWS_AT_ARRIVALS)
+def test_a_replayed_row_s_rom_shore_is_the_rom_s_own_run_of_the_arrival_in_place(label):
+    """THE HOLD OF THE STAGING (the fix pass of the narrow door flip, B-F1): the row's own registered machine, the
+    ROM's routine called over it as Tier 3 calls it — its GEMDOS ledger the in-place run's calls frame for frame, its
+    answer that run's, its megabyte that run's outside the row's classes, each needed."""
+    row = _table_row(label)
+    final, _writes, registers = emu.run(make_image(row.pokes), row.entry)
+    ld.vet_the_replay_is_the_run_in_place(label, _arrived(label), _returned(label), final, registers["d0"],
+                                          *REPLAY_CLASSES[label], at_its_searches=label in DTA_AT_ITS_SEARCHES)
+
+
+@pytest.mark.parametrize("label", ROWS_AT_ARRIVALS)
+def test_a_class_of_the_replay_s_hold_left_out_or_added_unneeded_is_refused(label):
+    """EACH CLASS IS NEEDED AND NO OTHER IS: a row's hold with one of its classes left out differs by the megabyte,
+    and with one it does not name added is refused as naming a class not needed."""
+    pokes = _replayed(label)
+    for left_out in REPLAY_CLASSES[label]:
+        with pytest.raises(ld.Refused, match="megabyte is not the ROM's run's in place"):
+            _vet_the_replay(label, pokes, [each for each in REPLAY_CLASSES[label] if each is not left_out])
+    unneeded = next(each for each in (PSETUP_S_STATUS, ld.staged_stale("DOS_AX")) if each not in REPLAY_CLASSES[label])
+    with pytest.raises(ld.Refused, match="a class named and not needed"):
+        _vet_the_replay(label, pokes, (*REPLAY_CLASSES[label], unneeded))
+
+
+def _with_the_script(label, answers):
+    """`label`'s row machine with the replayed trap's script holding `answers` in the run's own answers' place."""
+    recorder = ld.recorder_of(label in DTA_AT_ITS_SEARCHES)
+    script = b"".join(struct.pack(">I", answer & aes.LONG_MASK) for answer in answers)
+    return merge_pokes(_replayed(label), recorder.script.staged(script))
+
+
+def _the_run_s_answers(label):
+    return [call.answer for call in _returned(label).calls]
+
+
+MAKES_SEVERAL_CALLS = tuple(label for label in ROWS_AT_ARRIVALS if label != ITS_DESCRIPTOR)      # cre_aproc makes one
+
+
+@pytest.mark.parametrize("label", MAKES_SEVERAL_CALLS)
+def test_a_replay_with_two_answers_swapped_is_not_the_rom_s_run(label):
+    """THE RED, a script that is not the run's (reviewer B's B1 — which passed every row while both shores were
+    compared with each other alone): the first two answers swapped — a later call's frame is then not the in-place
+    run's (the handle closed, the block shrunk, the drive set), or a call is missing."""
+    answers = _the_run_s_answers(label)
+    assert answers[0] != answers[1]
+    with pytest.raises(ld.Refused, match="the first to differ is call"):
+        _vet_the_replay(label, _with_the_script(label, [answers[1], answers[0], *answers[2:]]))
+
+
+NOT_GEMDOS_S = 0x40                     # a bit no answer of these runs' last call has: an answer GEMDOS did not give
+
+
+@pytest.mark.parametrize("label", ROWS_AT_ARRIVALS)
+def test_a_replay_whose_last_answer_is_not_gemdos_s_is_not_the_rom_s_run(label):
+    """...and the LAST answer wrong (B2): the one no later call's frame can show — seen in the megabyte, where the
+    glue keeps GEMDOS's answer (`DOS_AX`), or the routine what it made of it."""
+    answers = _the_run_s_answers(label)
+    with pytest.raises(ld.Refused, match="megabyte is not the ROM's run's in place|GEMDOS calls|answers"):
+        _vet_the_replay(label, _with_the_script(label, [*answers[:-1], answers[-1] ^ NOT_GEMDOS_S]))
+
+
+ANSWERS_A_WORD = tuple(label for label in ROWS_AT_ARRIVALS if vdi.ALCYON[_arrived(label).routine].restype is not None)
+
+
+@pytest.mark.parametrize("label", ANSWERS_A_WORD)
+def test_a_replay_that_answers_another_word_than_the_run_in_place_is_refused(label):
+    """...AND THE ANSWER IS THE RUN'S (sndcli's 1 or 0, cre_aproc's): the row's own run handed to the hold with
+    another word in D0 is refused by the answer — and ldaccs, which answers nothing, is asked for none."""
+    assert len(ANSWERS_A_WORD) == 5 and LDACCS not in {_arrived(each).routine for each in ANSWERS_A_WORD}
+    final, answer = _the_rom_s_shore(_replayed(label), label)
+    with pytest.raises(ld.Refused, match="the replayed run answers"):
+        ld.vet_the_replay_is_the_run_in_place(label, _arrived(label), _returned(label), final, answer ^ 1, *REPLAY_CLASSES[label])
+
+
+def _without_the_stores_of(label, nth):
+    """`label`'s row machine with what GEMDOS stored in call `nth` of the ROM's run NOT LAID."""
+    arrived, ran = _arrived(label), _returned(label)
+    kept = ran._replace(calls=tuple(call._replace(stored=()) if index == nth else call for index, call in enumerate(ran.calls)))
+    megabyte = gc._as_pokes(ld.replayed_megabyte(arrived, kept), f"{label}: GEMDOS's stores laid but call {nth}'s")
+    return merge_pokes(megabyte, ld.replayed_trap(arrived, ran))
+
+
+STORES_IN_ITS_FIRST_CALL = (FIRST, SECOND, ITS_DESCRIPTOR, DESCRIPTOR_REFUSED, SECOND_FAILS_TO_LOAD)
+
+
+@pytest.mark.parametrize("label", STORES_IN_ITS_FIRST_CALL)
+def test_a_replay_with_one_call_s_stores_not_laid_is_not_the_rom_s_run(label):
+    """...and A STORE OF GEMDOS'S NOT LAID (B3: the first call's — an open's file record, a Malloc's descriptor):
+    the megabyte where the run returns is not the in-place run's. (ldaccs's first call is Dgetdrv, which stores
+    nothing outside the process's own stack: no row of it is asked.)"""
+    assert ld.replayed_megabyte(_arrived(label), _returned(label)) != ld.replayed_megabyte(
+        _arrived(label), _returned(label)._replace(calls=_returned(label).calls[1:]))
+    with pytest.raises(ld.Refused, match="megabyte is not the ROM's run's in place"):
+        _vet_the_replay(label, _without_the_stores_of(label, 0), at_its_searches=False)
+
+
+def test_ldaccs_s_first_call_stores_nothing_a_replay_lays():
+    """...which is held, not said: laid or not, Dgetdrv's stores leave the two ldaccs rows' megabytes as they are."""
+    for label in (TWO_ACCESSORIES, NO_ACCESSORY):
+        arrived, ran = _arrived(label), _returned(label)
+        assert ran.calls[0].function == DGETDRV
+        assert ld.replayed_megabyte(arrived, ran) == ld.replayed_megabyte(arrived, ran._replace(calls=ran.calls[1:]))
+
+
+def test_the_dta_laid_first_loads_the_last_accessory_twice_and_is_refused():
+    """WHY ONE ROW'S DTA IS LAID AT ITS SEARCHES (B-F1 (b)): laid first — as every other store of GEMDOS's is — the
+    DTA holds what the LAST search left, ldaccs hands sndcli the second accessory's name at both passes, and the
+    first PD is named for the second file. The hold refuses that machine by the megabyte: one byte of the PD's
+    name. Laid at its searches, the row is the ROM's run (the hold's own test above)."""
+    arrived, ran = _arrived(TWO_ACCESSORIES), _returned(TWO_ACCESSORIES)
+    lo, hi = ld.its_dta(ran)
+    names = [fill[DTA_NAME:fill.index(b"\0", DTA_NAME)] for fill in ld.dta_at_each_search(arrived, ran)]
+    assert names[-3:-1] == [f"{name}.ACC".encode() for name in aes_boot.ACCESSORY_NAMES], "two names found, one after the other"
+    assert names[-1] == names[-2], "...and the search that finds no more leaves the last"
+    laid_first = _replayed(TWO_ACCESSORIES, at_its_searches=False)
+    final, _answer = _the_rom_s_shore(laid_first, TWO_ACCESSORIES)
+    first_pd_s, second_pd_s = (bytes(final[pd + aes.PD_NAME:pd + aes.PD_NAME + aes.PD_NAME_BYTES])
+                               for pd in (SPARE_STATIC_PD, case.long_in(final, PDS)))
+    assert first_pd_s == second_pd_s, "both processes named for the last file found"
+    with pytest.raises(ld.Refused, match="megabyte is not the ROM's run's in place") as refused:
+        _vet_the_replay(TWO_ACCESSORIES, laid_first, at_its_searches=False)
+    the_digit = SPARE_STATIC_PD + aes.PD_NAME + len(aes_boot.ACCESSORY_NAMES[0]) - 1
+    assert f"{the_digit:#x}+1: the ROM's {ord('1'):x}, ours {ord('2'):x}" in str(refused.value), "the first PD's name: TESTACC2 for TESTACC1"
+    staged = make_image(_replayed(TWO_ACCESSORIES))
+    assert case.long_in(staged, ld.DTA_FILLED.dta_cell) == lo
+    assert bytes(staged[lo:hi]) == arrived.stood.ram[lo:hi], "the DTA as the arrival holds it until its first search: laid at its calls ALONE"
+
+
+@pytest.mark.parametrize("label", [label for label in ROWS_AT_ARRIVALS if label not in DTA_AT_ITS_SEARCHES])
+def test_a_row_that_names_the_dta_at_its_searches_and_does_not_need_it_is_refused(label):
+    """...AND NO OTHER ROW NAMES IT: a run with no Fsetdta has no DTA to lay, and one whose searches all fail leaves
+    it one value — laid first it is the ROM's."""
+    with pytest.raises(ld.Refused, match="no one DTA to lay at its searches|leave the DTA one value"):
+        _replayed(label, at_its_searches=True)
+
+
+def test_the_rows_that_reach_pgmld_are_priced_as_shipped_and_ldaccs_reaches_it_through_sndcli():
+    """sndcli's and ldaccs's rows are `through` rows (the shipped blob: pgmld is its `.S` there, behind the generated
+    thunk), and `aes_event.TEXT_SITE_CALLERS_CALLERS` is the build's own call graph: ldaccs reaches sndcli, the one
+    declared caller of pgmld."""
+    tier3 = bench_tier3()
+    graph = transcription.call_graph(tier3.BUILT_ELF)
+    reaching = transcription.callers_closure(graph, set(aes_event.TEXT_SITE_CALLERS)) - set(aes_event.TEXT_SITE_CALLERS)
+    assert set(aes_event.TEXT_SITE_CALLERS_CALLERS) == {name for name in reaching if name in ("aes_ldaccs", "aes_cre_aproc", "aes_free_accs")}
+    assert set(aes_event.TEXT_SITE_CALLERS_CALLERS) == {"aes_ldaccs"}
+    for label in (FIRST, TWO_ACCESSORIES):
+        assert tier3.ships_through_a_call(_table_row(label))
+    assert not tier3.ships_through_a_call(_table_row(FREE_ACCS_ROW))
+
+
+# ---- THE FIRST-ENTRY FRAME sndcli LAYS IS THE BUILD'S OWN gotopgm: mapped, never dropped (`aes_event.PROGRAM_ENTRY`) ----
+SNDCLI_ROWS = (FIRST, SECOND)
+
+
+@pytest.fixture
+def program_entry_unmapped(monkeypatch):
+    """The registry with `PROGRAM_ENTRY` naming no entry of any build — for the test's length."""
+    tier3 = bench_tier3()
+    door = tuple(each._replace(symbols={}) if each is aes_event.PROGRAM_ENTRY else each for each in aes_event.THE_NARROW_DOOR)
+    monkeypatch.setattr(aes_event, "THE_NARROW_DOOR", door)
+    tier3.door_relocation.cache_clear()
+    yield
+    monkeypatch.undo()
+    tier3.door_relocation.cache_clear()
+
+
+@pytest.mark.parametrize("label", SNDCLI_ROWS)
+def test_the_frame_sndcli_lays_holds_the_rom_s_gotopgm_on_the_rom_s_shore_and_its_slot_is_walked(label):
+    """WHAT THE MAPPING STANDS ON, on the ROM's shore: where the ROM's own run of the arrival returns, the process
+    just started is parked on psetup's frame, whose PC — the slot `aes_event.first_entry_frames` walks to — holds the
+    ROM's gotopgm; no static tuple names it (the second accessory's is a Malloc's)."""
+    before, left = _arrived(label).stood.ram, _returned(label).stood.ram
+
+    def holding_gotopgm(ram):
+        return {slot for _pd, slot in aes_event.first_entry_frames(ram) if case.long_in(ram, slot) == addrs.AES_ROM_GOTOPGM}
+    laid = holding_gotopgm(left) - holding_gotopgm(before)
+    assert len(laid) == 1 and aes_event.PROGRAM_ENTRY.slots == (), "sndcli's own run lays one frame, and its slot is walked"
+    assert len(holding_gotopgm(left)) == 1 + SNDCLI_ROWS.index(label), "the first accessory's is still unpopped at the second's"
+
+
+@pytest.mark.parametrize("label", SNDCLI_ROWS)
+def test_a_first_entry_frame_left_unmapped_is_refused(label, program_entry_unmapped):
+    """THE RED of the mapping: with gotopgm's entry taken out of the registry sndcli's row differs from the ROM's in
+    the frame's PC — the build's own `aes_rom_gotopgm` where the ROM laid `$fe38b0`. The relation drops nothing."""
+    with pytest.raises(AssertionError, match="left different memory than the original"):
+        _measured(label)
+
+
+@pytest.mark.parametrize("label", SNDCLI_ROWS)
+def test_a_build_that_laid_the_rom_s_gotopgm_is_refused_by_name(label, monkeypatch):
+    """...AND THE OTHER WAY: a sndcli that handed pstart the ROM's gotopgm would leave `$fe38b0` in the frame — equal
+    to the ROM's memory, so the compare alone would pass it. The registry's vet refuses it by name (THAT frame of
+    the arrival's machine did not hold it: our code stored the ROM's) — AT THE SECOND ACCESSORY TOO, whose machine
+    comes with the first's frame still unpopped and holding the ROM's gotopgm: what came with a machine excuses the
+    slot it stood in and no other (`tier3.what_came_with`; the fix pass, A-4 — per relocation, this row passed)."""
+    made = rom_bench.RomBench._call
+
+    def laying_the_rom_s(self, image, symbol, *args, **kwargs):
+        ours = made(self, image, symbol, *args, **kwargs)
+        for _pd, slot in aes_event.first_entry_frames(ours.image):
+            if self.base <= case.long_in(ours.image, slot) < self.end:
+                ours.image[slot:slot + LONG_BYTES] = addrs.AES_ROM_GOTOPGM.to_bytes(LONG_BYTES, "big")
+        return ours
+    monkeypatch.setattr(rom_bench.RomBench, "_call", laying_the_rom_s)
+    with pytest.raises(AssertionError, match=rf"THE ROM'S OWN address {addrs.AES_ROM_GOTOPGM:#x} in a loaded program's first-entry frame"):
+        _measured(label)

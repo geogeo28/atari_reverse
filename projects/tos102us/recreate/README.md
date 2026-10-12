@@ -341,30 +341,30 @@ aes_boot.compared(rom_machine, m).differing                # [] — and .within:
   below); and every row whose run ENTERS the screen manager, whose machine is made ours from it or from our build's
   own run of its history (`test/aes_takeover.py`; "TIER 3: A ROW THAT SWITCHES", THE SCREEN MANAGER'S TURN).
 
-### A machine whose TRAP DOOR is ours — THE DOOR TAKEOVER (`aes_boot.ours_of(blob, door=)`, band 5 wave 3; PENDING)
+### A machine whose TRAP DOOR is ours — THE DOOR TAKEOVER (`aes_boot.ours_of(blob, door=)`, band 5 wave 3)
 
 A DOOR (`aes_boot.ours_of(blob, door=<declarations>)`, `desk_machine(ours=, door=)`, `accessory_machine(ours=, door=)`)
-is the registry's pending declarations applied at the takeover's stop beside the screen manager's entry, each the same
-kind of mapping: a VECTOR (`aes_event.GEM_TRAP_VECTOR`, `CRITICAL_ERROR_VECTOR`) must hold the ROM's handler there and
-is given the blob's; A LOADED PROGRAM'S FIRST-ENTRY FRAME (`aes_event.PROGRAM_ENTRY`) is found by WALKING THE MACHINE
-(`aes_event.first_entry_frames`: every process's `UDA_SUPER_SP` frame — an allocated accessory's stack is a Malloc's, so
-no static tuple can name it). Vetted where the boot ends, each refused by name: every mapped program entered through our
-gotopgm on its stack's top and parked in our text; each vector still ours (the ROM's retake, restore_trap2 and giveerr
-put the ROM's back); and WHO RAN, read off the cycle profile from the lay on — the ROM text each part stands for
-(`aes_event.ROM_TEXT_OF`) ran zero cycles and our handler ran. A door boot switches the oracle's profile on for its own
-run: never derive one inside another measurement's profiled run.
+is the registry's declarations of the trap door applied at the takeover's stop beside the screen manager's entry, each
+the same kind of mapping, each answered BY THE BLOB'S OWN ENTRY, found by symbol (a blob that links none is refused): a
+VECTOR (`aes_event.GEM_TRAP_VECTOR`, `CRITICAL_ERROR_VECTOR`: the machine's own longword, `THE_MACHINE_S_VECTORS`) must
+hold the ROM's handler there and is given the blob's; A LOADED PROGRAM'S FIRST-ENTRY FRAME (`aes_event.PROGRAM_ENTRY`)
+is found by WALKING THE MACHINE (`aes_event.first_entry_frames`: every process's `UDA_SUPER_SP` frame — an allocated
+accessory's stack is a Malloc's, so no static tuple can name it). Vetted where the boot ends, each refused by name:
+every mapped program entered through our gotopgm on its stack's top and parked in our text; each vector still ours (the
+ROM's retake, restore_trap2 and giveerr put the ROM's back); and WHO RAN, read off the cycle profile from the lay on —
+the ROM text each part stands for (`aes_event.ROM_TEXT_OF`) ran zero cycles and our handler ran.
 
-- **THE PROTOTYPE DOOR.** `aes_boot.with_the_prototype_door(blob)` is a door for ANY blob — `test/acc/protodoor.S`, the
-  ROM's trap handler, exit and aes_entry assembled after the blob's last byte and linked against the blob's ELF
-  (`--just-symbols`). It is the takeover's own fixture and the stack reading's measured run; it is not the shipped door
-  (`src/aes/trapdoor.S`) — and IT CANNOT DRIFT FROM IT:
-  `test_the_prototype_door_is_the_shipped_door_but_for_the_longwords_naming_its_own_parts` holds the two byte for
-  byte on both blobs but for the three longwords by which each names its own parts (aes_entry by value, the thunk,
-  the way out), each required to name the same place of each.
-  EVERY DOOR PROOF BUT ONE IS THE PROTOTYPE'S: `test_the_shipped_door_itself_boots_a_machine…` takes the shipped
-  blob's OWN door (`ours_of(blob, door=aes_event.THE_NARROW_DOOR)`: its `aes_rom_trap2`, `aes_rom_gotopgm` and
-  `aes_rom_crit_err`, by symbol) through the quiet pair's boot to its idle, every vet passing. Nothing is bound by
-  it: no Tier 3 row asks such a machine before the flip.
+- **THE NARROW DOOR** (`aes_event.THE_NARROW_DOOR`: the vector `$88`, the programs' frames, the vector `$404`) is the
+  door TIER 3 hands: since the narrow door flip every row of a machine with accessories runs, on our shore, over
+  `aes_boot.accessory_machine(..., ours=blob, door=aes_event.THE_NARROW_DOOR)` (`aes_ctlmgr.our_machine`; "ctlmgr's
+  OWN ROWS", below). The desk's own machine has no door (nothing of it traps into the AES), and no row of the
+  snapshot's has one: `$88` stays the ROM's handler on every machine the ROM made (ruling W3-R1; the full flip is
+  wave 4's). WHO ASKS FOR A DOOR MACHINE is a held list (`test_who_asks_for_a_door_machine_is_a_list`).
+- **THE PROTOTYPE DOOR IS RETIRED.** The takeover was first proved with a door assembled beside the blob
+  (`test/acc/protodoor.S`), while the shipped door (`src/aes/trapdoor.S`) was linked and bound by nothing. The shipped
+  door was held to the prototype's bytes, boots the same machines and gives the stack battery's measured runs the
+  same depths to the byte — so every proof is made with the blob's own door, and the prototype, its helper and the
+  test that held the two equal are gone.
 - **A PARTIAL DOOR IS REFUSED BY NAME** where it is laid: the vector mapped while a loaded program's first-entry
   frame still holds the ROM's gotopgm (who-ran is read per DECLARED part, so the ROM's gotopgm would run unseen
   behind a door of the vector alone). A door of the programs alone is refused where the boot ends. AND A TAKEOVER
@@ -373,14 +373,27 @@ run: never derive one inside another measurement's profiled run.
 - **WHAT A DOOR MACHINE DIFFERS IN** (`aes_boot.by_nature`, `compared`): wave 2's classes per process — the screen
   manager's and each program's saved context and stack — and a wait's parameter where BOTH machines hold an address of
   the waiter's own stack there (`PARKED_ADDRESS`); the vectors are mapped back (`mapped_back`), never dropped.
-- **REFUSED BY NAME**: a door the ROM took back where a boot or a continuation ends; a boot or a continuation that
-  stores at `$0..$7` (on the machine that is the ROM's shadow and a bus error — what six accessories each in a
-  six-way wait do: get_evb answers 0 for the empty list). The seven-accessory machine
-  (`aes_boot.seven_accessory_machine`, `make preinit-acc7`) has NO takeover: its boot's six `Pexec(3)` clears saturate
-  the kit's write ledger before the lay.
-- **WHO MAY ASK FOR ONE.** While any of the door's declarations is pending no module but the takeover's own (and the
-  stack reading's measured run) may ask for a door machine
-  (`test_no_battery_asks_for_a_door_machine_while_the_door_is_pending`).
+- **WHICH DISPATCHER IT IDLES IN.** A process parks through the dispatcher of the build it runs, and the last park
+  decides: behind our door an accessory that parks last parks through OURS. Every accessory machine of the rows
+  idles in OUR dispatcher where the ROM-booted one idles in the ROM's (`aes_ctlmgr._taken`, `TWO_IDLES`: the Line-F
+  mask word and the BIOS's last register-save frame named in that comparison, each refused where not needed).
+- **REFUSED BY NAME**: a door the ROM took back where a boot or a continuation ends — and INSIDE A TIER 3 RUN, by
+  the registry's own vet (`tier3.vet_no_slot_names_the_rom`: the machine came with ours in `$88`, so a ROM address
+  there where the run ends is a store, the ROM's retake's — RED on both kinds of row over a stand-in store,
+  `test_aes_ctlmgr.py`: no accessory mode calls a retake); a boot or a continuation that stores at `$0..$7` (on the
+  machine that is the ROM's shadow and a bus error — what six accessories each in a six-way wait do: get_evb answers
+  0 for the empty list). The seven-accessory machine (`aes_boot.seven_accessory_machine`, `make preinit-acc7`) has
+  NO takeover: its boot's six `Pexec(3)` clears saturate the kit's write ledger before the lay.
+- **A DOOR BOOT SWITCHES THE ORACLE'S CYCLE PROFILE ON AND OFF for its own run**, and the kit has no reader of that
+  switch: one begun inside another profiled measurement would end that measurement's tallies unseen. The harness
+  keeps its own ledger (`aes_event.profile_held`). WHO HOLDS IT, by name, for the length of its own run: Tier 3's
+  three measuring paths (`_profiled`, `RomBench._call`, `_run_to_its_next_idle`), a door boot (`aes_boot.booted`)
+  and the stack battery's door run (`aes_stack._door_run`) — each with a RED of its own. WHO ASKS IT, and REFUSES BY
+  NAME to begin while anyone holds it (`vet_the_profile_is_free`): the door boot and the stack battery's door run
+  (Tier 3's paths hold and do not ask: `_profiled` nests `_call` by design). Ask a door machine BEFORE a
+  measurement's own runs begin, as `tier3._two_shores` does (a kept derivation asked beforehand runs nothing). NOT
+  IN THE LEDGER: the trap door's own battery's run (`aes_trapdoor._run`) and a test that switches the profile itself
+  by `emu.prof_enable` — each a run of its own that derives no door boot inside it; a kit accessor is owed.
 
 ### `aes_boot._Run` — EVERY ARRIVAL AT A STOP IS A STOP (band 5 wave 3)
 
@@ -535,10 +548,37 @@ ld.held_twice(arrived, ld.ROM_FRAMES, ld.HOST_FRAMES, ld.LINE_F_MASK, steers=(..
   (`staged`), labelled where it is made; the ROM's own run is then made from THAT machine, in place, as from any
   other (the allocated count at 1; the count its caller pushed at −1; the usable-disk word at 0).
 - **WHAT IS NOT HELD SO**: free_accs (no boot calls it: the booted machines at their idle through the kit's
-  differential, `Mfree` scripted with the ROM's own GEMDOS's answers); sndcli's open-fails arm (the snapshot,
-  `aes_shell`'s scripted trap); the cartridge arm (the C halts by name, in a child). And NOTHING HERE IS A BLOB ROW:
-  the megabyte is a host core's — pricing, who-ran and the code addresses a build stores (gotopgm in the frame
-  psetup lays; pgmld's command tail) are the door flip's.
+  differential, each `Mfree` answered what the ROM's own GEMDOS answers THAT block's Mfree over that machine, asked
+  call by call outside any run of free_accs — an argument class, no replay of a run); sndcli's open-fails arm (the snapshot,
+  `aes_shell`'s scripted trap); the cartridge arm (the C halts by name, in a child).
+- **THE BLOB ROWS — GEMDOS REPLAYED** (the narrow door flip; `aes_loader.replayed_megabyte`, `GEMDOS_REPLAYED`).
+  Tier 3 prices a call both shores make from one machine on the harness's own stack, which a routine that really
+  loads a program cannot be. What can be is the routine over ITS ARRIVAL'S MEGABYTE with GEMDOS replayed from the
+  ROM's own in-place run of that arrival, by the recording, scripted trap every GEMDOS-calling row is priced over:
+  each `trap #1` is answered the D0 the ROM's own GEMDOS answered and recorded (both shores held to the same calls,
+  frames and order by the ledger), and every byte that GEMDOS stored is LAID BEFORE THE CALL — a labelled staging,
+  said in each row's name: the program stands in memory before it is "loaded". BUT A STORE THE ROUTINE READS
+  BETWEEN TWO OF GEMDOS'S IS LAID AT ITS CALL: the DTA, which each search fills anew and ldaccs hands sndcli the
+  name out of — laid first it holds its LAST value and both passes load the last file found (the row "ldaccs, two
+  accessories" was that, until the flip's fix pass). A row whose searches leave the DTA more than one value says so
+  (`DTA_AT_ITS_SEARCHES`; its name: "the DTA laid at each search") and runs over `DtaFilledAtItsSearches` — the
+  recorder with a third table, the 44 bytes each search left, copied to the DTA by the handler at Fsfirst and
+  Fsnext, on both shores and by the host twin; a row that names it and does not need it is refused.
+  **THE STAGING IS HELD TO THE ROM'S RUN** (`aes_loader.vet_the_replay_is_the_run_in_place`): both shores of a blob
+  row run over one machine and one script and are compared with each other, so the ROM's shore of each of the SEVEN
+  replayed rows — the ROM's routine as the kit calls it over the row's own machine — is held to the ROM's own
+  IN-PLACE run of that arrival: its GEMDOS ledger that run's calls frame for frame, its answer, and its megabyte
+  where it returns outside classes NAMED PER ROW and refused where unneeded (the in-place run's frames on the
+  process's stack; the replayed trap's vector and band; the harness's stack; psetup's SR save word, level 3 in the
+  boot and 7 in a kit call; a word of the glue's staged stale that the routine never stores). A script with two
+  answers swapped, a last answer GEMDOS did not give, a call's stores not laid and the DTA laid first are each RED.
+  Eight rows (sndcli 4, ldaccs 2, cre_aproc 1 — replayed — and free_accs 1, WHICH IS NO REPLAY: no boot calls it;
+  an argument class over the accessory machine at its idle, said in its name), registered through the event
+  layer's registrar (psetup's SR save word is settled as every such row's is). WHAT A BLOB STORES THAT THE ROM DOES
+  NOT IS MAPPED, never dropped: the first-entry frame's PC (`aes_event.PROGRAM_ENTRY`) and, on the shipped blob,
+  pgmld's command tail in the replayed trap's ledger (`TEXT_SITES`; ldaccs reaches the `.S` through sndcli:
+  `TEXT_SITE_CALLERS_CALLERS`). The seven-accessory boot's cases stay Tier 1 (the registry's import reads two
+  captures and no third).
 - **A KEPT DERIVATION** (`run_on`, `derived.kept`), keyed by the machine's content: the megabyte, the registers, the
   disk. The whole battery is some nine seconds cold at four workers (its count is STATUS's, derived by `test_status.py`).
 - **IT REACHES `aes_boot`'s RUN** (`_Run`, the CPU's accessors): the one run that serves the device model. A public
@@ -731,6 +771,40 @@ tier3.idle_to_idle_on(blob, name, woken)                           # both shores
 - **ITS PRICE** is the screen manager's turns: our build's own cycles in them (less its thunks') against the ROM's
   ctlmgr's own in the same windows. The table prices it on the shipped blob; both blobs are pinned
   (`test_aes_ctlmgr.py`: the whole runs in the battery, the turns in `aes_turns_pinned.py`).
+- **AN ACCESSORY'S TURN INSIDE THE ROW IS OURS TOO, AND PRICED BY ITSELF** (the narrow door flip; ruling W3-R3). On a
+  machine with accessories our shore's machine is the DOOR machine: an accessory woken by the screen manager's
+  message runs its own text — the same bytes on both shores, in neither own column — and every AES call it makes
+  enters OUR door, marshal, opcode switch and routines where the ROM's run enters the ROM's. The dispatcher's watch
+  splits windows BY WHO IS ENTERED on both shores alike (`aes_switching.Switching`'s `door`: the screen manager's, an
+  accessory's, another process's — the desk's, still the ROM's); an accessory's window is a `tier3.Turn` whose
+  `whose` says so: our build's own cycles in it against the ROM's AES subtree's in the same window, on a line of its
+  own under the row (`an accessory's turn: ours N / ROM M = r`, the ROM's Line-F handler's share printed), HELD TO THE
+  BAR BY ITSELF with its thunks — a row with one over the bar is OVER — and pinned by row and blob in a data file
+  of its own (`test/aes_accessory_turns_pinned.py`, written by the re-pin tools). It is in neither of the row's own
+  columns: a row of ctlmgr's own stays priced on the screen manager's turns.
+- **WHAT ELSE A ROW BEHIND THE DOOR IS HELD TO.** WHO RAN THE DOOR (`tier3.vet_who_ran_the_door`): our run not one
+  cycle in the ROM's handler, way out, aes_entry, gotopgm or crit_err — nor in the ROM's selector switch: every
+  `trap #2` of every process, the desk's VDI calls among them, enters ours. THE SELECTOR SWITCH IS IN NEITHER OWN
+  COUNT ON EITHER SHORE: the ROM's (`GEM_SELECTOR_SWITCH`) was cut out of the AES's own spans because our build's
+  trap ran it; behind our door ours runs instead — the same 26 bytes, pinned — and is cut out of our count the same
+  way (`tier3.our_cycles`; the bytes held equal on both blobs by `test_tier3.py`), the two held to cost THE SAME
+  CYCLES on every such row. ONE SNAPSHOT ROW RUNS BEHIND OUR DOOR TOO, FROM ITS OWN RETAKE ON — sh_tographic's: its
+  machine comes with the ROM's `$fe3ea6`, our retake stores our handler (a mapping by the row's own run), and the
+  six VDI traps behind it run OUR selector switch. Every kit call of ours is asked who ran the selector switch
+  (`tier3.vet_who_ran_the_selector_switch`, a `DoorSplit` a run: none of ours where `$88` never held ours; the same
+  `trap #2`s as the ROM's run to the cycle; a row that takes the door itself named in
+  `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` or refused), and that row's split is pinned exactly (`test_aes_shlib.py`).
+  THE MACHINE'S OWN CLASSES, which
+  no row names: each loaded program's saved context and stack (`tier3.program_windows`: left out at every stop and
+  where the runs end, EACH REQUIRED TO DIFFER there, and HELD BY CONTENT on both shores wherever that program does
+  not run — `Switching`'s `programs`), and an EVB's parameter that names a place of a program's own stack, read as
+  that on both shores (`tier3.parked_addresses_named`: a message wait's QPB is a local of each build's own frame).
+- **WHERE THE RUNS BEGIN, BEHIND THE DOOR.** The door machine idles in OUR dispatcher and the ROM-booted one in the
+  ROM's; both runs are entered at the ROM's dispatcher's loop all the same, as every row from an idle always was —
+  the dispatch that brings the first process in is the ROM's code on both shores, outside every window and held
+  equal, and the first delivery is the ROM's forker's on both. So the classes a row names where it ENDS follow who
+  parked last in ITS run: where an accessory does, through our dispatcher, the Line-F mask word and the BIOS's
+  save frame differ as they do where the screen manager does (ten rows name them since the flip).
 - **WHAT IS NO SUCH ROW**, said in the battery: a key eaten (no machine routes a key to the screen manager: a labelled
   staging, Tier 1), the spin with no menu bar (the machine never idles again: no end to run to), the multi-click
   count's argument classes. The count above 1 IS a row on each arm (the machine with two more two-click waiters);
@@ -1401,21 +1475,30 @@ is the whole wrapper. Off target it is an ARRIVAL first:
   a battery by its name with a silent default. AN ENTRY DECLARED BESIDE THE TUPLE IS NAMED
   (`aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3`: what, why, the slice that owes its site): every `RelocatedCode` is in
   the tuple or in that list, and NO TIER 3 ROW MAY RUN BEHIND A DOOR while a door declaration is in it
-  (`test_no_tier_3_row_runs_on_a_door_machine_while_a_door_declaration_is_not_yet_mapped`, over the rows' machines;
-  `test_no_battery_asks_for_a_door_machine_while_the_door_is_pending`, over the sources — the rule read "EMPTY once a
-  row runs on a takeover machine" until wave 3, and its test saw none of the rows). IT WAS EMPTY FROM FLIP 4 TO WAVE 3 (below): THE SCREEN MANAGER'S ENTRY (`SCREEN_MANAGER_ENTRY`: the PD's p_ldaddr
+  (`test_no_tier_3_row_runs_on_a_door_machine_while_a_door_declaration_is_not_yet_mapped`, over the rows' machines,
+  its teeth each part of the narrow door put back in turn; `test_who_asks_for_a_door_machine_is_a_list`, over the
+  sources). IT WAS EMPTY FROM FLIP 4 TO WAVE 3 (below): THE SCREEN MANAGER'S ENTRY (`SCREEN_MANAGER_ENTRY`: the PD's p_ldaddr
   and the PC of the frame psetup lays at the top of the process's stack) is the registry's fourth relocation, mapped
   at a run's entry and exit for every run of a build that links `aes_rom_ctlmgr` (`tier3.screen_manager_relocation`)
   — ictlmgr's own row stores it through pstart at both slots and is compared exactly, nothing dropped.
-  SINCE BAND 5 WAVE 3 the tuple has a FIFTH, `CRITICAL_ERROR_HANDLER` (slice G): etv_critic `$404`, mapped WHERE A RUN
-  ENDS ONLY — the build's retake and takeerr hand Setexc the build's own crit_err, so the vector holds it wherever the
-  ROM's run left `$fe3cbe` (and D1 of those two `.S` entries, which Setexc hands back) — and puts no handler of ours
-  into a machine a run starts on. AND FOUR ARE PENDING, declared in `aes_event`, named in
-  `DECLARED_NOT_YET_MAPPED_AT_TIER3`, in no tuple Tier 3 reads: `GEM_TRAP_VECTOR` (`$88` -> `aes_rom_trap2`),
-  `PROGRAM_ENTRY` (gotopgm -> `aes_rom_gotopgm`; its slots are WALKED: `SLOTS_WALKED_FROM_THE_MACHINE`),
-  `CRITICAL_ERROR_VECTOR` (`$404` -> `aes_rom_crit_err`, at a run's entry; `CRITICAL_ERROR_HANDLER` is the same
-  longword where a run ends, and the door flip makes the two one), `USERBLK_TRAMPOLINE_SLOT` (`$8c32`, wave 4).
-  `THE_NARROW_DOOR` is the three the door flip takes; `ROM_TEXT_OF` the ROM text each stands for.
+  SINCE THE NARROW DOOR FLIP (band 5 wave 3, slice F) THE TUPLE HOLDS THE TRAP DOOR'S THREE (`THE_NARROW_DOOR`):
+  `GEM_TRAP_VECTOR` (`$88` -> `aes_rom_trap2`), `CRITICAL_ERROR_VECTOR` (`$404` -> `aes_rom_crit_err`; one entry
+  with slice G's exit-only handler, whose slots — the vector and a recording `trap #13`'s ledger — it keeps) and
+  `PROGRAM_ENTRY` (gotopgm -> `aes_rom_gotopgm`; its slots are WALKED from the machine a site is asked about:
+  `SLOTS_WALKED_FROM_THE_MACHINE`, `tier3.slots_of`). ALL THREE ARE MAPPED WHERE A RUN ENDS AND NEVER AT ITS ENTRY —
+  the narrow flip: a row's machine holds what it came with (the ROM's handlers on every machine the ROM made, the
+  build's on a door machine); what our run leaves of its own entries is given the ROM's names before any compare,
+  and a ROM address our run stored where the machine did not come with one is refused by name — PER SLOT for these
+  three (`tier3.what_came_with`: the ROM's gotopgm an earlier program's unpopped frame came with excuses THAT frame
+  and no other; a vector of the VDI's, which a run may displace and restore, still travels within its relocation).
+  WHAT NO VALUE CAN SHOW: a build that stored the ROM's address back into a slot that came with it (the ROM's retake
+  over a ROM-made machine's `$88`) — held by the rows whose machine comes with another value, and by the byte pin. EACH IS PROVED A
+  MAPPING BY ROWS WHOSE OWN RUN STORES IT (`MAPPING_PROVED_BY`): install_trap2's and retake's `.S` rows for `$88`
+  (their operand is the build's symbol), retake's and takeerr's for `$404`, sndcli's for the frame its pstart lays —
+  un-mapped, each reds in that longword (`test_aes_gemdosif_transcription.py`, `test_aes_loader.py`). ONE IS STILL
+  PENDING, named in `DECLARED_NOT_YET_MAPPED_AT_TIER3`: `USERBLK_TRAMPOLINE_SLOT` (`$8c32`, wave 4: gem_entry
+  stores it). `ROM_TEXT_OF` is the ROM text each stands for. WAVE 4's FULL FLIP makes `$88` an entry mapping for
+  every row (`tier3.our_gem_trap` already keys our marks on that longword as the registry maps it at entry).
   The queue and the recording are mapped ROM → ours as a machine or an
   interrupt's delivery is laid into our blob and back before the kit compares; THE GLUE IS MAPPED AT EXIT ONLY — a
   row's machine holds the ROM's glue in the vectors, and a vex call hands what it DISPLACED to wherever its caller's
@@ -1652,7 +1735,8 @@ is the whole wrapper. Off target it is an ARRIVAL first:
       (29 of the 33 rows: the other four end where a noted run left it) — vetted only by the runs that wake it again
       from a park of that kind (STATUS, FLIP 4 pass 2, lists them); and, inside its own turns, what it stores in its own context and stack is its own.
     - THE PINS: a turn is `(ours, the ROM's, our thunks')` in `test/aes_turns_pinned.py`, by row and blob, held by
-      `aes_switching.vet_on_a_blob` (`vet_its_turns`) and written by `tools/repin.py` from a recorded run.
+      `aes_switching.vet_on_a_blob` (`vet_its_turns`) and written by `tools/repin.py` from a recorded run — and AN
+      ACCESSORY'S TURN, behind our door, the same in `test/aes_accessory_turns_pinned.py` ("ctlmgr's OWN ROWS").
     - A CASE OF THE FOREIGN-WINDOW RULE THAT NEEDS THE SCREEN MANAGER THE ROM'S says so
       (`SwitchingRow.the_rom_s_screen_manager`, `tier3.left_on_the_rom_s_screen_manager`): the row as it stood before
       the flip, unregistered. No registered row is left there.
@@ -2560,7 +2644,8 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   trap sites — and no arm charged less than what EVERY call takes BESIDE the switch (`beside_the_switch`: the
   door's own calls, the marshal's copies in and back; a run of appl_init stores where the copies do, 2 bytes below
   its arm's own frames, which is how the term was found missing). MEASURED: accessories' own calls behind the
-  prototype door, each blob's own VDI staged at the same stop, who ran by cycle profile, and every call's lowest
+  blob's own door as linked (`trapdoor.S`: the shipped door since the narrow door flip), each blob's own VDI staged
+  at the same stop, who ran by cycle profile, and every call's lowest
   store held to its arm's bound. THE FINDING, PINNED (STATUS, wave 3: the gate W3-R8): SINCE THE DOOR DIET THE
   SHIPPED BLOB FITS PD2 — every arm of the switch by the bound, 20 bytes spare at the worst (fsel_input: an icon's
   blit under the selector's watched button, 1,124 + the 252 nest = 1,376 of 1,396), and 128 spare on the deepest
@@ -2637,13 +2722,20 @@ and a way out that drops every frame above it BY A CONSTANT — which is why aes
 `link a6,#-4` and one longword of local are what the constant counts). `transcription.TRAPDOOR_ENTRIES` is the
 kind's table, the switch's row type; `test_aes_trapdoor.py` holds its pins, its symbols end to end, its thunk, and
 what is dead.
-- **A KIND APART WHILE IT IS LINKED AND NOT INSTALLED.** The switch's rule is that no word of a blob names a ROM
-  address of the kind. The door is linked by every build and bound by none until the flip: vector `$88` holds the
-  ROM's handler, so the code that installs it must still name the ROM's. WHO DOES IS A LIST, held on both blobs
-  (`test_who_still_names_the_rom_s_door…`: install_trap2's and retake's operand in `gemdosif.S`, and the same two in
-  their C twins — four words a blob) and by site in the census (`test_aes_rom_data.LINKED_AND_INSTALLED_AT_THE_FLIP`,
-  the one declared exception to "a `.S` installs no ROM address of a routine the build has", refused where not
-  needed). The flip empties both; the kind merges into the switch's once nothing names the ROM's door.
+- **INSTALLED BY THE BUILD'S OWN TAKES SINCE THE NARROW DOOR FLIP.** `gemdosif.S`'s install_trap2 and retake store
+  THIS handler (their operand is `aes_rom_trap2`, two `Relocated` of their own pin), and so do their C twins on
+  target (`ALCYON_ROUTINE`): no word of a blob names the ROM's door any more
+  (`test_no_word_of_a_blob_names_the_rom_s_door…`), and no `.S` names a ROM routine the build has a body of
+  (`test_aes_rom_data.py`: the list that excused the two sites while the door was linked and not installed is gone).
+  It stays a kind of its own in `atari/target.mk` (TRAPDOOR_SOURCES) until wave 4 merges it into the switch's.
+- **ITS PRICE.** No call and return exists, so no table row: the door's own cycles on one round trip are pinned PER
+  SELECTOR by its own battery, at a program's own trap on both blobs (`test_aes_trapdoor_rows.py`,
+  `THE_DOOR_S_PRICE`: 856 against the ROM's 814 for selector 200, 730 against 758 for 201 — the ROM's count without
+  its Line-F handler's three passes, so an upper bound: 1.05, 0.96), and the same instructions are inside every
+  accessory's turn the table prices. `THE_CENSUS` there says how each routine of the door and the loader is held at
+  Tier 3: rows of the table, a ratio its battery pins, or one of three reasons — NEVER RETURNS (the Pterm arm,
+  gotopgm: checkpoints), RUNS A PROGRAM (dos_exec: priced over a scripted Pexec alone), NO MACHINE (ub_trampoline's
+  arrival, the cartridge's loader).
 - **A TRANSCRIPTION'S OWN CALL OF A ROUTINE NOT RECONSTRUCTED YET** stays the ROM's word: ub_trampoline's
   `jsr $fde844`, the desk's draw code (band 6). It is the one `jsr` of a build into the AES's ROM text, so the
   door rule that derives "no `jsr` enters the AES's text" carries it BY DECLARATION —
@@ -2952,9 +3044,11 @@ the machine or the deliveries, and the tool ends non-zero), a pair two rows shar
 the recording file nor its imports spell, and A PAIR SPELT MORE TIMES THAN ROWS RECORDED ITS MOVE (two rows that
 share a pair, one of which moved: nothing says which line is which, so neither is written). A file that spells the
 same pair for a row nobody recorded is never touched (`test/test_repin.py`). THE SCREEN MANAGER'S TURNS (FLIP 4) are a
-third kind of record: not pairs in a test's file but lines of ONE DATA FILE, `test/aes_turns_pinned.py`, a line a
+third kind of record (and THE ACCESSORIES' TURNS a fourth, the same shape in `test/aes_accessory_turns_pinned.py`):
+not pairs in a test's file but lines of ONE DATA FILE, `test/aes_turns_pinned.py`, a line a
 row's blob — written, or added for a row the file did not hold, from the record; refused where a turn's ROM-side
-member moved or the run makes another number of turns. The recorder also wraps `aes_switching.vet_the_whole_run`
+member moved or the run makes another number of turns, and — the run ending non-zero — WHERE THE DATA FILE OF A
+RECORD'S KIND IS MISSING (a record is never dropped in silence). The recorder also wraps `aes_switching.vet_the_whole_run`
 and `vet_its_turns`, for a vetter that makes its own measurement (ctlmgr's rows).
 What it does not reach is red in the second run and is re-pinned by hand with its reason (the dispatcher's yield
 and wait and its stack's four numbers, fs_input's slices, the glue stacks). The plugin is a module outside the
@@ -3077,7 +3171,7 @@ recreate/
 │                       pass over forks that ends, whatever a fork does)
 │                       `aes_boot.py` (the ROM's own boot from a pre-init machine: the desk's and the accessory
 │                       machines, the takeover and the door takeover) and `acc/` (the test accessory's source and
-│                       link script; `protodoor.S`, the takeover's PROTOTYPE trap door — a fixture, never shipped)
+│                       link script)
 │                       `aes_trapdoor.py` (arrivals at a trap, trips, the classes, who-ran), `test_aes_trapdoor.py`
 │                       (the shipped door's bytes) and `test_aes_trapdoor_rows.py` (its runs: Tier 1, both blobs);
 │                       `aes_loader.py` / `test_aes_loader.py` (the accessory loader at its arrivals, GEMDOS replayed)

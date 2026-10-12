@@ -1605,11 +1605,34 @@ def test_finding_the_measured_runs_behind_the_door(modes, shore):
     # idle was reached behind a door, the ROM's text of each part zero cycles, our handler and our gotopgm entered.
     assert (run.door_ran is not None) == (shore != THE_ROM_S and run.idle is not None)
     if run.door_ran is not None:
-        assert set(run.door_ran) == {stack.aes_event.GEM_TRAP_VECTOR.what, stack.aes_event.PROGRAM_ENTRY.what}
-        assert all(ours > 0 and the_rom_s == 0 for ours, the_rom_s in run.door_ran.values())
+        door_ran, critical_errors = dict(run.door_ran), stack.aes_event.CRITICAL_ERROR_VECTOR.what
+        assert set(door_ran) == {part.what for part in stack.aes_event.THE_NARROW_DOOR}, "the shipped door, all three parts"
+        assert door_ran.pop(critical_errors) == (0, 0), "no critical error in a boot: neither crit_err runs"
+        assert all(ours > 0 and the_rom_s == 0 for ours, the_rom_s in door_ran.values())
     for which, used in run.deepest.items():
         assert run.by_call[which, THE_DEEPEST_CALL[modes]] == used == max(depth for (stack_, _call), depth in run.by_call.items()
                                                                            if stack_ == which)
+
+
+def test_a_door_run_asks_the_profile_s_ledger_and_holds_it_for_its_own_run(monkeypatch):
+    """THE MEASURED RUNS ARE DOOR BOOTS IN ALL BUT NAME (the narrow door flip's fix pass, A-5: `_door_run` switched the
+    profile on with no word to the ledger): begun while a measurement holds the profile it is REFUSED BY NAME before
+    it runs an instruction; made uncached with nobody holding it, it holds the profile by its own name for the
+    length of its run — the ROM's shore as a blob's — and lets it go."""
+    modes, shore = stack.QUIETLY, SHIPPED
+    asked = (*stack.DOOR_MODES[modes], shore, stack._content_of(shore), True)
+    with stack.aes_event.profile_held("a measurement of this test's"):
+        with pytest.raises(AssertionError, match="A PROFILED RUN INSIDE ANOTHER: a door run of the stack battery's .* inside a measurement of this test's"):
+            stack._door_run.derive(*asked)
+    held, to_an_idle = [], aes_boot._Run.to_an_idle
+
+    def watched(run, *entered):
+        held.append(tuple(stack.aes_event.PROFILE_HELD_BY))
+        return to_an_idle(run, *entered)
+    monkeypatch.setattr(aes_boot._Run, "to_an_idle", watched)
+    run = stack._door_run.derive(*asked)
+    assert held[0] == (stack.PROFILE_HELD_BY_A_DOOR_RUN,) and not stack.aes_event.PROFILE_HELD_BY
+    assert tuple(run.deepest.values()) == DOOR_MEASURED[modes][shore], "and it is the run the pins hold"
 
 
 A_STAGED_REFUSAL = "STAGED BY THE TEST: the run is refused after its last stop, as a run that reaches no idle is"

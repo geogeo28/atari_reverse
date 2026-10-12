@@ -190,6 +190,69 @@ def test_sh_toalpha_hides_the_mouse_after_giveerr_and_before_it_frees_the_buffer
     assert aes.high_word(the_rom_s.held(mfree, aes.AES_GL_MOFF)) == aes.high_word(the_rom_s.held(setexc, aes.AES_GL_MOFF)) + 1
 
 
+# ---- WHO RAN THE SELECTOR SWITCH under sh_tographic's row: THE ONE SNAPSHOT ROW BEHIND OUR DOOR -------------------------------
+# sh_tographic calls retake FIRST, and since the narrow door flip our build's retake stores our build's own trap
+# handler (a mapping by the row's own run, never a poke). So this row's machine comes with the ROM's `$fe3ea6` in `$88`
+# and OUR run leaves with ours — and every VDI call behind the retake enters OUR selector switch, the ROM's own 26
+# bytes, where the ROM's run enters the ROM's. The table's line does not move by it (the switch is cut out of both
+# own counts, `tier3.our_cycles`), and `vet_who_ran_the_door` is asked of rows from an idle alone: this is the row's
+# own who-ran pin, the split held exactly (`tier3.DoorSplit`), on both blobs.
+VDI_CALLS_BEHIND_ITS_RETAKE = sum(door == VDI for door, _function in CALLS_IN_ORDER[(SH_TOGRAPHIC, TO_GRAPHIC_ROW)])
+THE_VDI_ARM_S_PASS_CYCLES = 92          # one `trap #2` through the selector switch's VDI arm, as the oracle counts it
+
+
+def _door_split_of(path, name, label):
+    """The `tier3.DoorSplit` of the one kit call of ours the measurement of the row makes on the blob at `path`."""
+    tier3 = bench_tier3()
+    tier3.measure(tier3.row_named((routines.core_symbol(name), label)), tier3.RomBench(path))
+    (split,) = tier3.DOOR_SPLIT
+    return split
+
+
+@pytest.mark.parametrize("path", isr.BLOBS.values(), ids=isr.BLOBS)
+def test_sh_tographic_s_row_runs_behind_our_door_from_its_own_retake_on__who_ran_the_selector_switch(path):
+    """THE SPLIT, EXACT: `$88` the ROM's as our run is entered and OURS where it ends; our run's six VDI traps all
+    through OUR selector switch and not one cycle in the ROM's; the ROM's run the same cycles in its own."""
+    tier3 = bench_tier3()
+    behind_the_retake = VDI_CALLS_BEHIND_ITS_RETAKE * THE_VDI_ARM_S_PASS_CYCLES
+    assert VDI_CALLS_BEHIND_ITS_RETAKE == 6
+    assert _door_split_of(path, SH_TOGRAPHIC, TO_GRAPHIC_ROW) == tier3.DoorSplit(
+        routines.core_symbol(SH_TOGRAPHIC), ours_at_entry=False, ours_where_it_ends=True, in_ours=behind_the_retake,
+        in_the_rom_s=0, the_rom_s_run_in_its_own=behind_the_retake)
+
+
+def test_sh_toalpha_s_row_never_holds_our_door_and_runs_the_rom_s_selector_switch_alone():
+    """...AND THE ROW BESIDE IT, which takes no door (giveerr is the critical-error vector's alone): `$88` the ROM's at
+    both ends, not one cycle in our selector switch, both runs the same cycles in the ROM's."""
+    split = _door_split_of(isr.BLOBS["the shipped blob"], SH_TOALPHA, TO_ALPHA_ROW)
+    assert (split.ours_at_entry, split.ours_where_it_ends, split.in_ours) == (False, False, 0)
+    assert split.in_the_rom_s == split.the_rom_s_run_in_its_own > 0
+
+
+def test_a_snapshot_row_behind_our_door_that_is_not_named_is_refused(monkeypatch):
+    """THE RED of "the one such row": with sh_tographic's name taken out of the set its measurement is refused by
+    name — a snapshot row whose own run takes the door and traps behind it is a finding until it is declared."""
+    tier3 = bench_tier3()
+    monkeypatch.setattr(tier3, "THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN", frozenset())
+    with pytest.raises(AssertionError, match="a snapshot row behind our door that `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` does not name"):
+        _door_split_of(isr.BLOBS["the shipped blob"], SH_TOGRAPHIC, TO_GRAPHIC_ROW)
+
+
+def test_who_ran_the_selector_switch_refuses_each_wrong_split():
+    """`tier3.vet_who_ran_the_selector_switch`'s OWN ARITHMETIC, over stand-in splits: cycles in ours where `$88` never
+    held ours; a run behind its own door that took another count of traps than the ROM's; one that ran the ROM's
+    switch for a trap the ROM's run never took."""
+    tier3 = bench_tier3()
+    vet, sound = tier3.vet_who_ran_the_selector_switch, tier3.DoorSplit(routines.core_symbol(SH_TOGRAPHIC), False, True, 552, 0, 552)
+    vet(sound)
+    vet(sound._replace(ours_where_it_ends=False, in_ours=0, in_the_rom_s=552))
+    with pytest.raises(AssertionError, match="`\\$88` never held our handler"):
+        vet(sound._replace(ours_where_it_ends=False))
+    for wrong in (sound._replace(in_ours=460), sound._replace(in_the_rom_s=92), sound._replace(the_rom_s_run_in_its_own=0)):
+        with pytest.raises(AssertionError, match="did not take the same `trap #2`s"):
+            vet(wrong)
+
+
 # ---- sh_draw and sh_show -----------------------------------------------------------------------------------------------------
 BAND = od.trees()["desktop band"]
 SHELL_BUFFER = od.SHELL_BUFFER

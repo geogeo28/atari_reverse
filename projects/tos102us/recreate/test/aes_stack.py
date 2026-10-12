@@ -989,7 +989,9 @@ SH_FIND = "aes_sh_find"
 TRAP_PATH_POINTERS = {**THROUGH_A_POINTER, SH_FIND: (NO_ROUTINE_IS_HANDED,)}
 THE_DOOR = "the trap door's own bytes above the marshal (the ROM's, read off the ROM: for a blob that links no handler)"
 # ...and the two private stacks beside the door (their section, below): each begun by one instruction, at its top.
-CRIT_ERR_SP_SAVE, CRIT_ERR_STACK_TOP = 0x8C42, 0x9446       # `move.l sp,$8c42` ($fe3ccc); `movea.l #$9446,sp` ($fe3cd2)
+# `move.l sp,$8c42` ($fe3ccc); `movea.l #$9446,sp` ($fe3cd2): the build's own header's
+CRIT_ERR_SP_SAVE, CRIT_ERR_STACK_TOP = (aes.header_constants("gemdosif.h")[name]
+                                        for name in ("AES_CRIT_ERR_SAVED_SP", "AES_CRIT_ERR_STACK_TOP"))
 CRIT_ERR_S_STACK_BEGINS = f"moveal #{CRIT_ERR_STACK_TOP},%sp"
 UB_S_STACK_BEGINS = f"moveal {aes.AES_USERDEF_STACK:x},%sp"
 THE_PRIVATE_STACKS_BEGIN = {CRIT_ERR_S_STACK_BEGINS: 0, UB_S_STACK_BEGINS: 0}
@@ -1341,8 +1343,9 @@ def trap_userdef_call(blob):
 # ---- THE TRAP PATH, MEASURED: accessories' own calls on a machine whose trap door is ours ------------------------------------
 # BESIDE THE BOUND, A RUN (ruling W3-R8: bound AND measured): the ROM's own accessory boot with THE DOOR TAKEOVER
 # (`aes_boot._TakingOver`, slice M's: the blob laid at the boot's first switchto `rte`, the GEM trap's vector and every
-# never-entered program's first-entry frame mapped — here to the takeover's PROTOTYPE door, the ROM's own door bytes
-# linked against the blob: `aes_boot.with_the_prototype_door`) AND, AT THE SAME STOP, THE BLOB'S OWN VDI UNDER THE
+# never-entered program's first-entry frame mapped — to THE BLOB'S OWN DOOR AS LINKED, `src/aes/trapdoor.S`, since the
+# narrow door flip: `aes_event.THE_NARROW_DOOR`, the critical-error vector with it; until then to a prototype door
+# assembled beside the blob, which gave these same depths to the byte) AND, AT THE SAME STOP, THE BLOB'S OWN VDI UNDER THE
 # TRAP (`aes_switch._our_vdi_under_the_trap`: the table's 71 slots, the Line-A vectors — the staging truth). From
 # that stop to the idle: the lowest STORE on each accessory's own stack, by the AES call it was made under; and WHO
 # RAN the VDI, by cycle profile (ruling W3-R11) — the ROM's VDI text against the blob's dispatcher.
@@ -1431,6 +1434,9 @@ def _deepest_by_call(stacks, ledger, since, calls):
     return deepest, by_call
 
 
+PROFILE_HELD_BY_A_DOOR_RUN = "a door run of the stack battery's (`aes_stack._door_run`)"
+
+
 @derived.kept
 def _door_run(first, second, shore, blob_s_bytes, our_vdi):
     """THE DERIVATION: the ROM's boot of the accessory pair (`first`, `second`: their modes) behind the door of
@@ -1442,18 +1448,22 @@ def _door_run(first, second, shore, blob_s_bytes, our_vdi):
     memory = bytearray(BASE_IMAGE)
     memory[:aes_boot.RAM_BYTES] = machine.ram
     marks = _Marks(blob)
-    ours = aes_boot.with_the_prototype_door(blob) if blob is not None else None
+    ours = aes_boot.ours_of(blob, door=aes_event.THE_NARROW_DOOR) if blob is not None else None
     taking = _TheDoorTakenWithOurVdi(memory, ours, blob, our_vdi) if blob is not None else None
     handler = dict(ours.door[0].mapping)[addrs.GEM_TRAP2] if blob is not None else addrs.GEM_TRAP2
     observing = {handler + addrs.GEM_TRAP2_AES_ARM - addrs.GEM_TRAP2: ("an AES call", marks.at_an_aes_call)}
     if blob is None:
         observing[addrs.AES_ROM_SWITCHTO_RTE] = ("a process entered or resumed", marks.at_the_first_switch)
     run = aes_boot._Run(memory, aes_boot.Floppy(memory, disk), aes_boot.BOOT_INSNS, taking=taking, observing=observing)
+    # THE PROFILE IS ONE SWITCH (`aes_event.profile_held`): this run is a door boot in all but name — asked of the
+    # ledger before it switches the profile on, and held in it for its own length.
+    aes_event.vet_the_profile_is_free("a door run of the stack battery's")
     emu.prof_enable(True)
     refused = door_ran = None
     try:
         try:
-            run.to_an_idle(machine.registers, aes_boot.io_seed_of(machine))
+            with aes_event.profile_held(PROFILE_HELD_BY_A_DOOR_RUN):
+                run.to_an_idle(machine.registers, aes_boot.io_seed_of(machine))
         except aes_boot.Refused as said:    # ...no idle: KEPT WITH ITS REASON (a test holds which), the depths below what it stored first
             refused = str(said)
         since, ours_then, the_rom_s_then = taking.since if taking is not None else marks.since
@@ -1586,7 +1596,7 @@ def _the_trap_path_s_lines():
     lo, top = userdef_stack()
     lines.append(f"ub_trampoline's stack [{lo:#x}, {top:#x}) = {top - lo}: {ub.above} bytes are the trampoline's; what the desk's "
                  f"draw code takes is the ROM's until band 6")
-    lines.append("MEASURED BEHIND THE DOOR (the prototype door; each blob's own VDI under its traps), the lowest store on each "
+    lines.append("MEASURED BEHIND THE DOOR (each blob's own door as linked; its own VDI under its traps), the lowest store on each "
                  "accessory's own stack from the takeover on — PD2 / an allocated PD:")
     for modes in DOOR_MODES:
         runs = {shore: measured_at_the_door(modes, shore) for shore in (THE_ROM_S, *BLOBS)}

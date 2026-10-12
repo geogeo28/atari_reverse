@@ -456,22 +456,22 @@ assert len(ROWS) == len(SWITCHING) == len(REGISTERED), "two rows of one label"
 # last; no C does)...
 EVERY_HANDLER_S = (cm.THE_DISPATCHER_S_STACK, cm.ITS_SAVED_CONTEXT, cm.ITS_STACK, cm.THE_MASK_WORD)
 # ...and THE BIOS'S SAVE FRAME (its ten saved registers) WHERE THE HANDLER ITSELF TAKES THE LAST BIOS TRAP before it
-# returns (a wait's keyboard poll, its own dispatcher's: each build's own registers saved). MEASURED, every case: AT
-# THE ARRIVAL the frame is the same on both shores — so it is no class on THESE TEN: nine whose handler takes no BIOS
-# trap at all (a click counted off, a place that is nobody's, a gadget the window has not, WM_TOPPED sent with the
-# button up, no menu: no wait, no dispatch — the frame returns as it arrived), and the arrow held, whose last trap is
-# the ROM's own dispatcher's on both shores, handing the machine back from the accessory that read its message.
+# returns (a wait's keyboard poll, its own dispatcher's: each build's own registers saved). MEASURED, every case: it
+# is no class on THESE SIX — whose handler takes no BIOS trap at all (a place that is nobody's, a gadget the window
+# has not, WM_TOPPED sent with the button up: no wait, no dispatch — the frame returns as it arrived) and at whose
+# ARRIVAL the frame is the same on both shores (the run's last BIOS trap was the ROM's own dispatcher's, entered at
+# the machine's idle on both). SINCE THE NARROW DOOR FLIP (band 5 wave 3) FOUR MORE NAME IT, which did not: the
+# three on the machine whose accessory hides the bar — that accessory's turn comes before their arrival and it
+# parks through OUR dispatcher behind our door, so the frame AT THE ARRIVAL is our idle's poll's — and the arrow
+# held, whose last trap is now each build's own dispatcher's, handing the machine back from the accessory that read
+# its message (it was the ROM's on both shores while the accessory was the ROM's).
 THE_SAVE_FRAME_EQUAL = frozenset({
-    (HCTL_BUTTON, "the hidden bar's two clicks, counted twice and posted once: counted down to one"),
-    (HCTL_BUTTON, "a real click on a window's closer after them: the count still one, the click swallowed"),
     (HCTL_BUTTON, "a click on the bar past the titles: the desktop's place, nothing"),
     (HCTL_WINDOW, "the information line clicked: no gadget's, nothing sent"),
     (HCTL_WINDOW, "a window that is not the top one: WM_TOPPED"),
     (HCTL_WINDOW, "the title of a window with a SIZER and no MOVER clicked: nothing sent"),
     (HCTL_WINDOW, "the corner of a window with a MOVER and no SIZER clicked: nothing sent"),
     (HCTL_RECT, "the mouse off the titles again, along the bar, before the manager ran: nothing"),
-    (HCTL_RECT, "no menu bar: nothing"),
-    (HCTL_WINDOW, "the up arrow held: sent, read by its owner, sent again; released"),
 })
 # ...and WM_TOPPED'S FOUR STALE WORDS on the two cases that send it (ruling W2-R2: the ROM's are its stack's residue
 # on the real stack, ours four zeroes) — where the handler returns in the manager's buffer and the owner's pipe.
@@ -595,7 +595,7 @@ WHOLE_RUN = {
     'the track right of the horizontal elevator clicked: the page after':
         {BENCH: (102158, 54020), SHIPPED: (102158, 52710)},
     'the up arrow held: sent, read by its owner, sent again; released':
-        {BENCH: (138364, 90182), SHIPPED: (138364, 88850)},
+        {BENCH: (138364, 87946), SHIPPED: (138364, 86692)},
     'the information line held: nothing sent, a yield until the button rises':
         {BENCH: (85152, 48384), SHIPPED: (85152, 48924)},
     'a window that is not the top one, held: WM_TOPPED, then the button waited up':

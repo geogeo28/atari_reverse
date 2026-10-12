@@ -55,11 +55,17 @@ from recreate_kit import rom_bench
 import aes
 import aes_boot
 import aes_event
+import aes_fslib
+import aes_gemdosif
+import aes_shell
 import aes_switch
 import case
 import gemdos
+import isr
+import opcodes as op
 import routines
 import vdi
+import vdi_helpers
 
 RAM_BYTES = addrs.ST_RAM_BYTES
 LONG_BYTES, WORD_BYTES = aes.LONG_BYTES, aes.WORD_BYTES
@@ -547,3 +553,224 @@ def staged(arrived, pokes):
     ram = bytearray(arrived.stood.ram)
     laid(ram, tuple(pokes.items()))
     return arrival(arrived.routine, arrived.stood._replace(ram=bytes(ram)))
+
+
+# ---- A BLOB ROW OF THE LOADER: the routine as a kit call over its arrival, GEMDOS REPLAYED (the narrow door flip) ----------
+# Tier 3 prices a routine as a call both shores make from one machine on the harness's own stack — which a routine
+# that really loads a program cannot be (the module's docstring: `Pexec` clears the stack it would run on). What CAN
+# be a call on both shores is the routine over ITS ARRIVAL'S MEGABYTE WITH GEMDOS REPLAYED FROM THE ROM'S OWN RUN
+# (`returned`), by the recording, scripted trap every other GEMDOS-calling row is priced over (`aes_gemdosif.Recorder`):
+#   * each `trap #1` is ANSWERED the D0 the ROM's own GEMDOS answered that call of its in-place run, and RECORDED —
+#     so both shores are held to make the same calls with the same frames in the same order, by the ledger;
+#   * EVERY BYTE THE ROM'S GEMDOS STORED in that run (the program a `Pexec(3)` loaded, GEMDOS's own records)
+#     IS LAID BEFORE THE CALL — A LABELLED STAGING, said in each row's name: the program stands in memory before it
+#     is "loaded". Left as the arrival holds them: the bytes of the running process's own stack (`rom_frames`: the
+#     in-place run's frames, which a kit call does not run on);
+#   * BUT A STORE THE ROUTINE READS BETWEEN TWO OF GEMDOS'S — THE DTA, which each search fills anew and ldaccs hands
+#     sndcli the name out of — IS LAID AT ITS CALL, by the handler (`DtaFilledAtItsSearches`): laid first it would
+#     hold its LAST value, and the loader would load the last file found at every pass. A row says so
+#     (`at_its_searches`) and is refused where its DTA is stored one value alone.
+# WHAT HOLDS THE STAGING TO THE ROM'S RUN: `vet_the_replay_is_the_run_in_place` — the ROM's shore of each row against
+# the ROM's own in-place run of the same arrival, megabyte and ledger.
+# The recorder is laid where `aes_gemdosif`'s own four are (a machine holds one or the others), and its ledger's
+# longwords that can hold pgmld's command tail — an address of the `.S`'s own text on the shipped blob — are declared
+# to the registry as that module's are (`aes_event.TEXT_SITES`).
+REPLAYED_CALLS = 24                     # ldaccs over two accessories makes 23 (measured); the ledger refuses a 25th
+REPLAYED_SEARCHES = 4                   # ...of which four are searches (two Fsfirst, two Fsnext); the fills refuse a fifth
+REPLAYED_HANDLER_ROOM = 0x180
+FSETDTA, SEARCHES, DTA_BYTES = addrs.GEMDOS_FSETDTA_FN, aes_fslib.SEARCHES, aes_fslib.DTA_BYTES
+
+
+class DtaFilledAtItsSearches(aes_gemdosif.Recorder):
+    """A RECORDER THAT LAYS THE DTA AT EACH SEARCH: behind its script a third table, the FILLS — the DTA_BYTES the
+    DTA holds once GEMDOS has answered a search, one entry per search of the run, in order — and a cell naming the
+    DTA. The handler, past the answer: for Fsfirst and Fsnext the next fill copied to the DTA, its pointer stored
+    back. Every register but D0 as found; the host twin is the same effect."""
+
+    def __init__(self, *args, searches, **kwargs):
+        self.searches = searches
+        super().__init__(*args, **kwargs)
+        self.end = self.dta_cell + LONG_BYTES
+
+    @property
+    def fills(self):
+        return aes_shell.Table(self.script.first + self.script.entries * LONG_BYTES, self.searches, DTA_BYTES, "DTA fills")
+
+    @property
+    def dta_cell(self):
+        return self.fills.first + self.searches * DTA_BYTES
+
+    def after_the_answer(self):
+        fills_pointer, cell = struct.pack(">I", self.fills.pointer_at), struct.pack(">I", self.dta_cell)
+        fill = (vdi.pack_words(op.PUSH_A1, op.PUSH_D1) + vdi_helpers.MOVEA_L_ABSOLUTE_A0 + fills_pointer
+                + vdi.pack_words(op.MOVEA_L_ABSOLUTE_A1) + cell
+                + vdi.pack_words(op.MOVEQ_D1 | (DTA_BYTES - 1), op.MOVE_B_A0_TO_A1, op.DBF_D1,
+                                 aes_fslib.DBF_BACK_TO_THE_MOVE & aes.WORD_MASK)
+                + vdi_helpers.STORE_A0_ABSOLUTE + fills_pointer + vdi.pack_words(op.POP_D1, op.POP_A1))
+        first, following = (vdi.pack_words(op.CMPI_W_STACK, function, vdi_helpers.FRAME_WORDS_AT) for function in SEARCHES)
+        return [first, (op.BEQ_S, "fill"), following, (op.BNE_S, "filled"), ("label", "fill"), fill, ("label", "filled")]
+
+    def pokes(self, answers, dta, filled):
+        """The parent's, the `filled` DTAs in their table and the cell at `dta`."""
+        return {**super().pokes(answers), **self.fills.staged(b"".join(filled)), self.dta_cell: struct.pack(">I", dta)}
+
+    def twin(self, function):
+        answering = super().twin(function)
+        if function not in SEARCHES:
+            return answering
+
+        def handler(buf, arguments, argument_bytes):
+            answer = answering(buf, arguments, argument_bytes)
+            fill = self.fills.next(buf)
+            isr.poke(buf, case.long_in(buf, self.dta_cell) & BUS, ctypes.string_at(ctypes.addressof(buf.contents) + fill, DTA_BYTES))
+            self.fills.step(buf, fill)
+            return answer
+        return handler
+
+
+REPLAYED_AT = aes_gemdosif.PATH_AT + aes_gemdosif.PATH_BYTES
+GEMDOS_REPLAYED = aes_gemdosif.Recorder(addrs.VECTOR_TRAP_GEMDOS, REPLAYED_AT, REPLAYED_HANDLER_ROOM, FRAME_BYTES,
+                                        entries=REPLAYED_CALLS)
+DTA_FILLED = DtaFilledAtItsSearches(addrs.VECTOR_TRAP_GEMDOS, REPLAYED_AT, REPLAYED_HANDLER_ROOM, FRAME_BYTES,
+                                    entries=REPLAYED_CALLS, searches=REPLAYED_SEARCHES)
+assert GEMDOS_REPLAYED.end <= DTA_FILLED.end <= aes_gemdosif.BAND_AT + aes_gemdosif.BAND_BYTES, (
+    "the replayed trap runs out of the band it borrows")
+assert DTA_FILLED.ledger == GEMDOS_REPLAYED.ledger, "one ledger for both: the text sites declared below are both's"
+PEXEC_TAIL_IN_AN_ENTRY = 2 * WORD_BYTES + LONG_BYTES            # past the function, the mode and the name
+aes_event.declare_text_site_slots(*(GEMDOS_REPLAYED.ledger.first + nth * GEMDOS_REPLAYED.ledger.stride + PEXEC_TAIL_IN_AN_ENTRY
+                                    for nth in range(REPLAYED_CALLS)))
+REPLAYED = "GEMDOS replayed"
+AT_ITS_SEARCHES = "the DTA laid at each search"
+
+
+def recorder_of(at_its_searches):
+    """The replayed trap of a blob row: the one that fills the DTA at its searches, or the plain one."""
+    return DTA_FILLED if at_its_searches else GEMDOS_REPLAYED
+
+
+def replayed_hook(at_its_searches=False):
+    """The host twin of the replayed trap, as `aes.register`'s `hook`."""
+    recorder = recorder_of(at_its_searches)
+    return gemdos.bound_handlers({gemdos.rom_handler(function): recorder.twin(function) for function in FRAME_BYTES})
+
+
+def its_dta(ran):
+    """`(lo, hi)`: the DTA the ROM's run `ran` named, read off its one Fsetdta's frame — refused for a run with none."""
+    named = [call.frame for call in ran.calls if call.function == FSETDTA]
+    if len(named) != 1:
+        raise Refused(f"the run makes {len(named)} Fsetdta calls: no one DTA to lay at its searches")
+    at = int.from_bytes(named[0], "big") & BUS
+    return at, at + DTA_BYTES
+
+
+def dta_at_each_search(arrived, ran):
+    """WHAT THE DTA HOLDS ONCE GEMDOS HAS ANSWERED EACH SEARCH of the ROM's run `ran`, in order: the arrival's bytes
+    with GEMDOS's stores laid call by call. REFUSED BY NAME where a call that is no search stored there (the handler
+    lays it at searches alone) and where every search leaves the one value (a DTA stored once is laid first, as
+    every other store: the class is named and not needed)."""
+    lo, hi = its_dta(ran)
+    held, filled = bytearray(arrived.stood.ram[lo:hi]), []
+    for nth, call in enumerate(ran.calls):
+        for at, data in call.stored:
+            inside = range(max(at, lo), min(at + len(data), hi))
+            if not inside:
+                continue
+            if call.function not in SEARCHES:
+                raise Refused(f"GEMDOS call {nth} ({call.function:#x}) of the run stores in the DTA [{lo:#x}, {hi:#x}): no "
+                              f"search, and the handler lays the DTA at searches alone")
+            held[inside.start - lo:inside.stop - lo] = data[inside.start - at:inside.stop - at]
+        if call.function in SEARCHES:
+            filled.append(bytes(held))
+    if len(set(filled)) < 2:
+        raise Refused(f"the run's {len(filled)} searches leave the DTA one value: laid first it is the ROM's — the row "
+                      f"names `{AT_ITS_SEARCHES}` and does not need it")
+    return filled
+
+
+def replayed_megabyte(arrived, ran, at_its_searches=False):
+    """THE MEGABYTE OF A BLOB ROW (above), as bytes: `arrived`'s with every byte GEMDOS stored in the ROM's own run
+    `ran` of it laid — but inside the running process's own stack, and (`at_its_searches`) but the DTA, which the
+    handler lays."""
+    ram = bytearray(arrived.stood.ram)
+    left = [rom_frames(arrived.stood), *([its_dta(ran)] if at_its_searches else [])]
+    for call in ran.calls:
+        for at, data in call.stored:
+            for offset, byte in enumerate(data):
+                if not any(lo <= at + offset < hi for lo, hi in left):
+                    ram[at + offset] = byte
+    return bytes(ram)
+
+
+def replayed_trap(arrived, ran, at_its_searches=False):
+    """...and what is staged over it (pokes): the glue's verdict words stale, the replayed trap scripted with the
+    answers the ROM's own GEMDOS gave the run `ran` — and, `at_its_searches`, with the DTA each search left."""
+    assert len(ran.calls) <= REPLAYED_CALLS, f"the run makes {len(ran.calls)} GEMDOS calls: more than the replayed trap's ledger"
+    answers = [call.answer for call in ran.calls]
+    if not at_its_searches:
+        return case.merge_pokes(aes_gemdosif.STALE_DOS, GEMDOS_REPLAYED.pokes(answers))
+    return case.merge_pokes(aes_gemdosif.STALE_DOS, DTA_FILLED.pokes(answers, its_dta(ran)[0], dta_at_each_search(arrived, ran)))
+
+
+# ---- A BLOB ROW'S REPLAY HELD TO THE ROM'S OWN RUN IN PLACE -----------------------------------------------------------------
+# Both shores of a blob row run over the one staged megabyte and the one script, and Tier 3 compares them with each
+# other: a staging that is not the ROM's run (two answers swapped, a store not laid, the DTA at its last value) would
+# pass on both. So THE ROM'S SHORE OF EACH ROW — the ROM's routine as the kit calls it over the row's machine — IS
+# HELD TO THE ROM'S OWN IN-PLACE RUN OF THAT ARRIVAL (`returned`): the same GEMDOS calls, frame for frame, in the
+# trap's ledger; the same answer; and the same megabyte where it returns, outside classes named PER ROW, each located
+# from the machine and refused where the two never differ in it:
+#   * ROM_FRAMES — the in-place run's own frames, on the process's stack (a kit call runs on the harness's);
+#   * THE_REPLAYED_TRAP — GEMDOS's vector and the band the handler, its ledger and its script are staged in;
+#   * THE_HARNESS_STACK — the kit call's own frames;
+#   * `parked_status(word)` — an SR save word: the boot runs the routine at interrupt level 3, a kit call at 7;
+#   * `staged_stale(field)` — a word of the glue's the row stages STALE and the routine never stores.
+THE_REPLAYED_TRAP = "the replayed trap: GEMDOS's vector, and the band its handler, ledger and script are staged in"
+THE_HARNESS_STACK = "the harness's stack: the kit call's own frames"
+ReplayClass = namedtuple("ReplayClass", "name spans")
+
+
+def parked_status(word):
+    """An SR save word (`aes_event.SR_DROPS`), as a class of the hold above."""
+    return ReplayClass(f"the status register parked at {word:#x}: the boot's level 3, a kit call's 7",
+                       tuple((lo, hi) for lo, hi, _why in aes_event.sr_drops(word)))
+
+
+def staged_stale(field):
+    """One word of the glue's (`aes_shell.DOS_FIELDS`) staged stale, as a class of the hold above."""
+    (at, stale), = aes.field_pokes("AES", **{field: 0}).items()
+    return ReplayClass(f"staged stale and never stored: {field}", ((at, at + len(stale)),))
+
+
+def _replay_classes(arrived, recorder, named):
+    located = {ROM_FRAMES: lambda: (rom_frames(arrived.stood),),
+               THE_REPLAYED_TRAP: lambda: ((recorder.vector, recorder.vector + LONG_BYTES), (recorder.at, recorder.end)),
+               THE_HARNESS_STACK: lambda: ((case.STACK_BAND.start, case.STACK_BAND.stop),)}
+    unknown = [each for each in named if not isinstance(each, ReplayClass) and each not in located]
+    if unknown:
+        raise Refused(f"no class a replayed row may name: {unknown}")
+    return Classes({each.name: each.spans for each in named if isinstance(each, ReplayClass)}
+                   | {each: located[each]() for each in named if not isinstance(each, ReplayClass)})
+
+
+def vet_the_replay_is_the_run_in_place(who, arrived, ran, replayed, answer, *named, at_its_searches=False):
+    """THE HOLD (above): `replayed` — the memory the ROM's routine left as a kit call over the row's machine — and its
+    `answer` (D0) against the ROM's in-place run `ran` of the arrival `arrived`, outside the classes `named`. Refused
+    by name at the first of: a ledger that is not the run's calls, another answer, a megabyte that differs, a class
+    never needed."""
+    recorder = recorder_of(at_its_searches)
+    made = recorder.calls(replayed)
+    in_place = [(call.function, call.frame.ljust(recorder.recorded_bytes, b"\0")) for call in ran.calls]
+    if made != in_place:
+        nth = next((nth for nth, (ours, theirs) in enumerate(zip(made, in_place)) if ours != theirs), min(len(made), len(in_place)))
+        shown = " — ".join(f"{whose} {function:#x} over {frame.hex()}" for whose, calls in (("replayed", made), ("in place", in_place))
+                           for function, frame in calls[nth:nth + 1])
+        raise Refused(f"{who}: the replayed run makes {len(made)} GEMDOS calls, the ROM's run in place {len(in_place)}; the "
+                      f"first to differ is call {nth} — {shown}")
+    if vdi.ALCYON[arrived.routine].restype is not None and answer & aes.WORD_MASK != answered(ran):
+        raise Refused(f"{who}: the replayed run answers {answer & aes.WORD_MASK:#x}, the ROM's run in place {answered(ran):#x}")
+    classes = _replay_classes(arrived, recorder, named)
+    megabyte = bytes(replayed[:RAM_BYTES])
+    differing = classes.differing(ran.stood.ram, megabyte)
+    if differing:
+        raise Refused(f"{who}: where it returns the replayed run's megabyte is not the ROM's run's in place — "
+                      f"{_said(differing, ran.stood.ram, megabyte)}")
+    classes.vet_each_was_needed(who)

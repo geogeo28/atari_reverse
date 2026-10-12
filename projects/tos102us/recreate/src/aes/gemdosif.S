@@ -23,7 +23,8 @@
  *   - `$fe39b4..$fe3a0b`: the zero word, the hop, pgmld, and the two return tails behind it — `moveq #0 / rts` is
  *     dos_sfirst's and dos_open's miss, carried as the bytes it is (their C returns by itself). ONE WORD RELOCATED:
  *     the hop's `jmp $fe3c3e.l`, to where this file lays `__DOS` out.
- *   - `$fe3c3e..$fe3db3`: `__DOS`, the vector takes, crit_err and dos_exec. TEN LONGWORDS RELOCATED: retake's and
+ *   - `$fe3c3e..$fe3db3`: `__DOS`, the vector takes, crit_err and dos_exec. TWELVE LONGWORDS RELOCATED: install_trap2's
+ *     and retake's `move.l #$fe3ea6,$88` (the trap door, where `trapdoor.S` lays it out); retake's and
  *     takeerr's `move.l #$fe3cbe,d0` (crit_err, where this file lays it out); the six `jsr`s of spl7_save /
  *     spl_restore (`switch.S`'s entries); crit_err's `movea.l #$fef790,a1` (the table below) and its `jsr $fe768c`
  *     (eralert, which ships as C: the thunk at the end of this file).
@@ -37,9 +38,11 @@
  *   - OF THE TWO HANDLERS THE VECTOR TAKES INSTALL, crit_err IS THE BUILD'S OWN (the sites `$fe3c8e`, `$fe3cb6`:
  *     `#aes_rom_crit_err`, a `Relocated(ABSOLUTE, ...)` of the pin) — so etv_critic holds this file's entry wherever
  *     a build's retake or takeerr ran, MAPPED at Tier 3 through the relocation registry
- *     (`aes_event.CRITICAL_ERROR_HANDLER`). THE TRAP #2 HANDLER IS STILL THE ROM'S ADDRESS (`#GEM_TRAP2`, the sites
- *     `$fe3c78`, `$fe3c84`): the trap door lands beside this in wave 3 and the two operands move with THE FLIP —
- *     `test_aes_rom_data.py` holds both statements (a by-value site whose target has a body of ours reds).
+ *     (`aes_event.CRITICAL_ERROR_VECTOR`). AND SO IS THE TRAP #2 HANDLER, since the narrow door flip (band 5 wave
+ *     3, slice F; the sites `$fe3c78`, `$fe3c84`: `#aes_rom_trap2`, `trapdoor.S`'s entry, two more `Relocated` of
+ *     the pin) — vector `$88` holds the build's own door wherever a build's install_trap2 or retake ran, MAPPED the
+ *     same way (`aes_event.GEM_TRAP_VECTOR`). `test_aes_rom_data.py` holds that no by-value site of this file names a
+ *     ROM routine the build has a body of.
  *   - crit_err's alert is `aes_eralert`, C: its `jsr` names a LOCAL THUNK that takes the two words it pushed into
  *     the C call. The registers eralert's C leaves (D2/A2 kept, A0/A1 its own) are not Alcyon's: the BIOS's disk
  *     driver, compiled C itself, reads D0 alone where the handler returns (`$fc1030`, `$fc1252`).
@@ -126,13 +129,13 @@ aes_rom_restore_trap2:
     .globl  aes_rom_install_trap2
 aes_rom_install_trap2:
     move.l  (VECTOR_TRAP_GEM).l,(SYSVAR_VDI_ENTRY).l
-    move.l  #GEM_TRAP2,(VECTOR_TRAP_GEM).l
+    move.l  #aes_rom_trap2,(VECTOR_TRAP_GEM).l      /* $fe3c78: the build's own door (`trapdoor.S`) */
     rts
 
 /* ---- retake, $fe3c84: both of GEM's again — the trap #2 vector stored, then crit_err through the tail it falls into */
     .globl  aes_rom_retake
 aes_rom_retake:
-    move.l  #GEM_TRAP2,(VECTOR_TRAP_GEM).l
+    move.l  #aes_rom_trap2,(VECTOR_TRAP_GEM).l      /* $fe3c84 */
     move.l  #aes_rom_crit_err,%d0
 /* ...the shared tail, $fe3c94: Setexc($101, D0) — D0 the handler displaced */
 .Lsetexc_critic:

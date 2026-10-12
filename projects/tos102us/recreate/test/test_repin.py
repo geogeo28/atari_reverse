@@ -2,6 +2,7 @@
 rewrites, and WHAT IT REFUSES (a ROM-side count that moved; a pair two rows move two ways; a pair neither the
 recording file nor its imports spell; a pair spelt for more rows than recorded its move). Over crafted records and a
 crafted test file: nothing of the tree is read."""
+import json
 import pathlib
 import sys
 
@@ -146,3 +147,60 @@ def test_a_turn_s_record_is_held_to_what_the_file_holds_not_to_what_it_says_was_
         text, written, refused = repin.turns_repinned([record], THE_TURNS_TEXT)
         assert (text, written) == (THE_TURNS_TEXT, 0) and len(refused) == 1 and why in refused[0], refused
     assert repin.turns_repinned([_turn(A_ROW, "bench_shipped", held, held)], THE_TURNS_TEXT) == (THE_TURNS_TEXT, 0, [])
+
+
+# ---- THE ACCESSORIES' TURNS: the same shape, a data file of their own (`test/aes_accessory_turns_pinned.py`; the narrow door flip) ----
+def _accessory_turn(row, blob, held, measured):
+    return {"kind": repin.ACCESSORY_TURN, "who": [row, blob], "old": held, "new": measured, "file": A_FILE.name}
+
+
+def _a_tree(tmp_path, records, files):
+    """A crafted `recreate/` under `tmp_path` — `files`: `{name: text}` in its `test/` — and the recorder's file."""
+    (tmp_path / "test").mkdir()
+    for name, text in files.items():
+        (tmp_path / "test" / name).write_text(text)
+    record = tmp_path / "pins.jsonl"
+    record.write_text("".join(json.dumps(each) + "\n" for each in records))
+    return [str(record), str(tmp_path)]
+
+
+def test_an_accessory_turn_s_record_is_its_own_data_file_s_and_no_other_kind_s(tmp_path, capsys):
+    """THE NEW KIND, THROUGH `main`'s LOOP: an accessory turn's record rewrites the accessories' file and leaves the
+    screen manager's — which holds the same row — as it was; a record of the OTHER kind over the same row rewrites
+    the other file alone. Our member and our thunks' moved; the ROM's stood."""
+    moved = [[175000, 278034, 12000]]
+    arguments = _a_tree(tmp_path, [_accessory_turn(A_ROW, "bench_shipped", [[175400, 278034, 12148]], moved)],
+                        {repin.TURNS_FILE: THE_TURNS_TEXT, repin.ACCESSORY_TURNS_FILE: THE_TURNS_TEXT})
+    assert repin.main([*arguments, "--apply"]) == 0 and "1 line(s) of turns written" in capsys.readouterr().out
+    assert (tmp_path / "test" / repin.TURNS_FILE).read_text() == THE_TURNS_TEXT
+    held = {}
+    exec((tmp_path / "test" / repin.ACCESSORY_TURNS_FILE).read_text(), held)
+    assert held["PINNED"][A_ROW] == {"bench": ((198044, 278034, 1376),), "bench_shipped": ((175000, 278034, 12000),)}
+    assert repin.turns_repinned([_turn(A_ROW, "bench_shipped", [[175400, 278034, 12148]], moved)], THE_TURNS_TEXT,
+                                repin.ACCESSORY_TURN) == (THE_TURNS_TEXT, 0, []), "a record is its own kind's file's"
+
+
+def test_an_accessory_turn_whose_rom_side_count_moved_fails_the_run_and_writes_nothing(tmp_path, capsys):
+    arguments = _a_tree(tmp_path, [_accessory_turn(A_ROW, "bench_shipped", [[175400, 278034, 12148]], [[175400, 278035, 12148]])],
+                        {repin.ACCESSORY_TURNS_FILE: THE_TURNS_TEXT})
+    assert repin.main([*arguments, "--apply"]) == 1
+    assert "THE ROM'S OWN COUNT MOVED in its turns (accessory turn)" in capsys.readouterr().out
+    assert (tmp_path / "test" / repin.ACCESSORY_TURNS_FILE).read_text() == THE_TURNS_TEXT
+
+
+@pytest.mark.parametrize("kind", repin.TURNS_FILES)
+def test_a_turn_s_record_whose_data_file_is_missing_is_refused_by_name_and_fails_the_run(kind, tmp_path, capsys):
+    """A RECORD IS NEVER DROPPED IN SILENCE (the fix pass, B-F5: with the accessories' file moved away a valid record
+    printed "0 written, 0 refused" and ended 0): refused by the row's name, the run non-zero — and a tree that has
+    neither the file nor a record of its kind is no failure."""
+    other = next(name for each, name in repin.TURNS_FILES.items() if each != kind)
+    record = {"kind": kind, "who": [A_ROW, "bench_shipped"], "old": [[175400, 278034, 12148]], "new": [[175000, 278034, 12000]],
+              "file": A_FILE.name}
+    arguments = _a_tree(tmp_path, [record], {other: THE_TURNS_TEXT})
+    assert repin.main([*arguments, "--apply"]) == 1
+    said = capsys.readouterr().out
+    assert f"REFUSED: {A_ROW} on bench_shipped: {repin.THE_DATA_FILE_IS_MISSING}" in said and repin.TURNS_FILES[kind] in said
+    assert "0 line(s) of turns written" in said and "1 refused" in said
+    assert (tmp_path / "test" / other).read_text() == THE_TURNS_TEXT
+    (tmp_path / "pins.jsonl").write_text("")
+    assert repin.main(arguments) == 0

@@ -2831,8 +2831,8 @@ GLUE_CODES = RelocatedCode("a glue's address handed to the VDI", GLUE_CODE_SLOTS
 # LOADER'S sndcli (band 5 wave 3, slice L: pgmld's first C caller): its pair is in
 # `transcription.C_CALLERS_OF_TRANSCRIBED_CORES` — which `test_transcribed.py` holds to the build's own call graph, and
 # from which `bench/shipped_glue.py` generates the thunk, so `aes_pgmld` on the shipped blob IS that thunk into the
-# `.S` — and its name is HERE (`test_aes_pgmld.py` reds while the two disagree). No row of sndcli is priced yet (its
-# blob rows are the door flip's): the mapping is declared, and first applied there.
+# `.S` — and its name is HERE (`test_aes_pgmld.py` reds while the two disagree). First applied on sndcli's and
+# ldaccs's blob rows (the narrow door flip: `test_aes_loader.py`, "THE BLOB ROWS").
 # THE SLOTS: the one longword of the machine, and the longwords of a recording trap's ledger that can hold one — its
 # recorder's module declares those where it lays the ledger out (`declare_text_site_slots`: `test/aes_gemdosif.py`,
 # a module this one cannot import — it is built on this one — so the list is completed at ITS import, never a test
@@ -2843,6 +2843,9 @@ TEXT_SITE_SYMBOLS = {addrs.AES_PGMLD_PEXEC_RETURN: "aes_rom_pgmld_pexec_return",
 TEXT_SITE_ENTRIES = ("aes_rom_pgmld",)  # the `.S` entries whose own run parks them
 TEXT_SITE_CORE = "aes_pgmld"            # ...the C core a caller names to reach that `.S` (through its thunk)
 TEXT_SITE_CALLERS = ("aes_sndcli",)      # ...and the C callers that do (above)
+# ...and THE C THAT REACHES ONE OF THOSE CALLERS (ldaccs calls sndcli): its run parks the same sites, in the same slots
+# (`test_aes_loader.py` holds each to the build's call graph; first applied on the loader's blob rows, the door flip).
+TEXT_SITE_CALLERS_CALLERS = ("aes_ldaccs",)
 TEXT_SITE_SLOTS = [aes.AES_TRAP1_RETURN]
 TEXT_SITES = RelocatedCode("a site of the GEMDOS glue's own text named in RAM", TEXT_SITE_SLOTS, TEXT_SITE_SYMBOLS, False)
 
@@ -2883,85 +2886,88 @@ SCREEN_MANAGER_ENTRY_SYMBOL = "aes_rom_ctlmgr"
 SCREEN_MANAGER_ENTRY_SLOTS = (aes.SCREEN_MANAGER_PD + aes.PD_LDADDR, aes.AES_UDA1_STACK_TOP - LONG_BYTES)
 SCREEN_MANAGER_ENTRY = RelocatedCode("the screen manager's entry", SCREEN_MANAGER_ENTRY_SLOTS,
                                      {SCREEN_MANAGER_ROM_ENTRY: SCREEN_MANAGER_ENTRY_SYMBOL}, True)
-# ---- slice G (band 5 wave 3): THE CRITICAL-ERROR HANDLER GEM INSTALLS ------------------------------------------------------
-# retake and takeerr hand Setexc crit_err's address BY VALUE (`$fe3c8e`, `$fe3cb6`): the ROM's in the ROM and on the
-# host, the build's own entry (`aes_rom_crit_err`, `src/aes/gemdosif.S`) in a build linked elsewhere — the `.S`'s
-# operand, and the C twins' (`gemdosif.c`: `ALCYON_ROUTINE`). THE SLOTS: etv_critic itself, and the longwords of a
-# recording `trap #13`'s ledger that hold the handler a Setexc was handed (declared where the ledger is laid out, as
-# the text sites' are). MAPPED WHERE A RUN ENDS ALONE: a ROM-made machine holds the ROM's crit_err in etv_critic, and
-# giveerr / takeerr MOVE what a slot held (a value that travels), so our image at entry is the machine as it is — the
-# glue's rule. This maps what a build's own vector takes STORE; it puts no handler of ours into any machine (the
-# door takeover's `$404` is the flip's).
-# NOT A SLOT YET, because no run stores ours there: AES_OLD_CRITIC (`$8c26`), which holds a build's crit_err only
-# after a takeerr that FOLLOWS one of the build's own installs in the same history (every takeerr run today saves
-# what a ROM-made machine holds). The day a row does that it differs there by name, and the slot is declared then.
-ETV_CRITIC = 0x404                      # the critical-error handler's vector (Setexc's $101)
-CRITICAL_ERROR_HANDLER_SYMBOLS = {addrs.AES_ROM_CRIT_ERR: "aes_rom_crit_err"}
-CRITICAL_ERROR_HANDLER_SLOTS = [ETV_CRITIC]
-# ...and the `.S` entries whose own run leaves it in A REGISTER (the BIOS's Setexc comes back with the handler it was
-# handed in D1): a transcription row is held to the whole register file, so Tier 3 maps theirs too.
-CRITICAL_ERROR_HANDLER_ENTRIES = ("aes_rom_retake", "aes_rom_takeerr")
-CRITICAL_ERROR_HANDLER = RelocatedCode("the critical-error handler GEM installs", CRITICAL_ERROR_HANDLER_SLOTS,
-                                       CRITICAL_ERROR_HANDLER_SYMBOLS, False)
-
-
-def declare_critical_error_handler_slots(*slots):
-    """Longwords of a recording trap's ledger that can hold the handler a Setexc was handed (its recorder's module's)."""
-    CRITICAL_ERROR_HANDLER_SLOTS.extend(slot for slot in slots if slot not in CRITICAL_ERROR_HANDLER_SLOTS)
-
-
-# ---- (end of slice G's block) -----------------------------------------------------------------------------------------------
-CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES, SCREEN_MANAGER_ENTRY, CRITICAL_ERROR_HANDLER)
-# EVERY RELOCATION DECLARED BESIDE THE TUPLE AND NOT IN IT, BY NAME: `{what: (why it is not mapped at Tier 3 yet, the
-# slice that owes its site)}`. `test_aes_boot.py` holds that each `RelocatedCode` of this module is in the tuple or
-# here — never neither — and that NO TIER 3 ROW RUNS BEHIND A DOOR while a door declaration is in it. IT WAS EMPTY FROM
-# FLIP 4 TO WAVE 3; the four below (the trap door's, slice M) are in it until the door flip maps them.
-DECLARED_NOT_YET_MAPPED_AT_TIER3 = {}
-# ---- (band 5 wave 3, slice M) THE TRAP DOOR'S RELOCATIONS: DECLARED, NOT MAPPED ----------------------------------------
+# ---- THE TRAP DOOR'S RELOCATIONS (band 5 wave 3: declared by slices G and M, MAPPED BY THE NARROW DOOR FLIP, slice F) ----
 # What a machine whose TRAP DOOR is ours holds of the build, beside the screen manager's entry — each a code address a
-# ROM routine stores BY VALUE and a build's own stores as its own. DECLARED HERE AND PENDING: none is in the tuple Tier 3
-# reads until the door flip (slice F) gives each its mapping site; until then each is named in
-# `DECLARED_NOT_YET_MAPPED_AT_TIER3`, and the one consumer is the door TAKEOVER (`aes_boot.booted(..., ours=)` of an
-# `Ours` handed a `door`: the mapping applied where the ROM's boot stands at its first switchto `rte`).
-#   * THE GEM TRAP'S VECTOR (`$88`): install_trap2 and retake store the AES's `trap #2` handler there (`$fe3c7a`,
-#     `$fe3c86`: `move.l #$fe3ea6`) — the build's `aes_rom_trap2` (slice T's `.S`).
+# ROM routine stores BY VALUE and a build's own stores as its own:
+#   * THE GEM TRAP'S VECTOR (`$88`): install_trap2 and retake store the AES's `trap #2` handler there (`$fe3c78`,
+#     `$fe3c84`: `move.l #$fe3ea6`) — the build's `aes_rom_trap2` (`src/aes/trapdoor.S`), the operand of
+#     `src/aes/gemdosif.S`'s two since the flip.
+#   * THE CRITICAL-ERROR VECTOR (`$404`): retake and takeerr hand Setexc crit_err's address BY VALUE (`$fe3c8e`,
+#     `$fe3cb6`) — the build's `aes_rom_crit_err` (`gemdosif.S`); the C twins' too (`gemdosif.c`: `ALCYON_ROUTINE`).
+#     ITS SLOTS: etv_critic itself, and the longwords of a recording `trap #13`'s ledger that hold the handler a
+#     Setexc was handed (declared where the ledger is laid out, as the text sites' are).
 #   * A LOADED PROGRAM'S FIRST-ENTRY FRAME: sndcli hands pstart gotopgm's address (`$fe437c`) and psetup pushes it,
 #     under a status word, on the new process's own stack — the frame switchto's `rte` pops at its first entry. ONE
 #     PER LOADED PROGRAM, on a stack whose address the layout decides (an allocated accessory's is a Malloc's): so
 #     THE SLOTS ARE WALKED FROM THE MACHINE (`first_entry_frames`: every process's `UDA_SUPER_SP`'s frame), never a
 #     static tuple — a slot not walked would be silently unmapped and the ROM's gotopgm run for that program.
-#   * THE CRITICAL-ERROR VECTOR (`$404`): takeerr and retake store crit_err there (through Setexc; `$fe3c90`,
-#     `$fe3cb8`) — the build's (slice G's `.S`).
 #   * THE DESK'S USER-BLOCK TRAMPOLINE (`$8c32`): gem_entry stores `$fe3f3e` there (`$fd9f9e`); no routine of ours
-#     stores it before wave 4's gem_entry, so it stays named here past the door flip.
+#     stores it before wave 4's gem_entry — STILL PENDING, named in `DECLARED_NOT_YET_MAPPED_AT_TIER3`.
+# THE NARROW FLIP (ruling W3-R1): THE THREE ARE MAPPED WHERE A RUN ENDS, NEVER AT ITS ENTRY (`at_entry` False — the
+# glue's rule). A row's machine holds what it came with: the ROM's handlers on every machine the ROM made (the
+# snapshot's `$88` stays `$fe3ea6`, and every (V) row's VDI trap the ROM's selector switch), the build's on a DOOR
+# MACHINE (`aes_boot.ours_of` handed `THE_NARROW_DOOR`: the same three applied where the ROM's boot stands at its
+# first switchto `rte`). What our run then leaves of its own entries is given the ROM's names before any compare,
+# and a ROM address our run stored where the machine did not come with one is refused by name
+# (`tier3.vet_no_slot_names_the_rom`) — which is also what refuses A DOOR THE ROM TOOK BACK inside a run (retake,
+# restore_trap2, giveerr: the design's risk 5). WAVE 4's FULL FLIP makes `$88` an entry mapping for every row.
+# EACH IS PROVED A MAPPING, NOT A POKE, BY A ROW WHOSE OWN RUN STORES IT (`MAPPING_PROVED_BY`: held by
+# `test_aes_boot.py` — every door part has one, and un-mapping it reddens that row):
+#   `$88` by install_trap2's and retake's `.S` rows; `$404` by retake's and takeerr's; the first-entry frame by
+#   sndcli's own (its pstart lays it).
 # `ROM_TEXT_OF`: THE ROM TEXT EACH ONE STANDS FOR, `{what: ((lo, hi), ...)}` — what must run ZERO CYCLES on a machine
 # whose door is ours (a who-ran is a cycle profile of these, never a count of stops: `aes_boot._TakingOver.made`).
 # (each end is THE NEXT ROUTINE'S ENTRY, as `addrs.h` names it)
+ETV_CRITIC = 0x404                      # the critical-error handler's vector (Setexc's $101)
 GEM_TRAP_EXIT_END = addrs.AES_ROM_UB_TRAMPOLINE     # the handler and its exit, `$fe3ea6..$fe3f3d`; the trampoline follows
 AES_ENTRY_END = addrs.AES_ROM_AP_RDWR               # aes_entry, `$fe65aa..$fe65c3` (its dead `LF_RET` word the last)
 GOTOPGM_END = addrs.AES_ROM_SAVESTATE               # gotopgm, `$fe38b0..$fe38d3`
 CRIT_ERR_END = addrs.AES_ROM_DOS_EXEC               # crit_err, `$fe3cbe..$fe3d2d`; dos_exec follows
 USERBLK_TRAMPOLINE, USERBLK_TRAMPOLINE_END = addrs.AES_ROM_UB_TRAMPOLINE, addrs.AES_ROM_SIGNAL
-GEM_TRAP_VECTOR = RelocatedCode("the GEM trap's vector ($88)", (addrs.VECTOR_TRAP_GEM,), {addrs.GEM_TRAP2: "aes_rom_trap2"}, True)
-PROGRAM_ENTRY = RelocatedCode("a loaded program's first-entry frame", (), {addrs.AES_ROM_GOTOPGM: "aes_rom_gotopgm"}, True)
-# (...the vector AT A RUN'S ENTRY, on a machine whose door is ours: slice G's `CRITICAL_ERROR_HANDLER`, above, is the
-# same routine in the same longword mapped where a run of OUR vector takes ENDS — what they store — and puts no
-# handler of ours into a machine; the flip makes the two one.)
-CRITICAL_ERROR_VECTOR = RelocatedCode("the critical-error vector ($404)", (ETV_CRITIC,), CRITICAL_ERROR_HANDLER_SYMBOLS, True)
+GEM_TRAP_VECTOR = RelocatedCode("the GEM trap's vector ($88)", (addrs.VECTOR_TRAP_GEM,), {addrs.GEM_TRAP2: "aes_rom_trap2"}, False)
+# ...the `.S` entries whose own run STORES it (what its mapping is proved by).
+GEM_TRAP_VECTOR_ENTRIES = ("aes_rom_install_trap2", "aes_rom_retake")
+PROGRAM_ENTRY = RelocatedCode("a loaded program's first-entry frame", (), {addrs.AES_ROM_GOTOPGM: "aes_rom_gotopgm"}, False)
+PROGRAM_ENTRY_CALLERS = ("aes_sndcli",)             # ...the C whose own run lays one (through pstart)
+# ONE ENTRY SINCE THE FLIP (ruling G-1): slice G's exit-only `CRITICAL_ERROR_HANDLER` and slice M's pending
+# `CRITICAL_ERROR_VECTOR` were the same routine in the same longword.
+CRITICAL_ERROR_SYMBOLS = {addrs.AES_ROM_CRIT_ERR: "aes_rom_crit_err"}
+CRITICAL_ERROR_SLOTS = [ETV_CRITIC]
+# ...and the `.S` entries whose own run leaves it in A REGISTER (the BIOS's Setexc comes back with the handler it was
+# handed in D1): a transcription row is held to the whole register file, so Tier 3 maps theirs too.
+CRITICAL_ERROR_ENTRIES = ("aes_rom_retake", "aes_rom_takeerr")
+CRITICAL_ERROR_VECTOR = RelocatedCode("the critical-error vector ($404)", CRITICAL_ERROR_SLOTS, CRITICAL_ERROR_SYMBOLS, False)
+# NOT A SLOT YET, because no run stores ours there: AES_OLD_CRITIC (`$8c26`), which holds a build's crit_err only
+# after a takeerr that FOLLOWS one of the build's own installs in the same history (every takeerr run today saves
+# what a ROM-made machine holds). The day a row does that it differs there by name, and the slot is declared then.
+
+
+def declare_critical_error_slots(*slots):
+    """Longwords of a recording trap's ledger that can hold the handler a Setexc was handed (its recorder's module's)."""
+    CRITICAL_ERROR_SLOTS.extend(slot for slot in slots if slot not in CRITICAL_ERROR_SLOTS)
+
+
 USERBLK_TRAMPOLINE_SLOT = RelocatedCode("the desk's user-block trampoline ($8c32)", (aes.AES_USERDEF_TRAMPOLINE,),
                                         {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, True)
 ROM_TEXT_OF = {GEM_TRAP_VECTOR.what: ((addrs.GEM_TRAP2, GEM_TRAP_EXIT_END), (addrs.AES_ROM_ENTRY, AES_ENTRY_END)),
                PROGRAM_ENTRY.what: ((addrs.AES_ROM_GOTOPGM, GOTOPGM_END),),
                CRITICAL_ERROR_VECTOR.what: ((addrs.AES_ROM_CRIT_ERR, CRIT_ERR_END),),
                USERBLK_TRAMPOLINE_SLOT.what: ((USERBLK_TRAMPOLINE, USERBLK_TRAMPOLINE_END),)}
-# WHAT THE NARROW DOOR FLIP TAKES (ruling W3-R1): the door a takeover is handed once the build links all three.
+# THE NARROW DOOR (ruling W3-R1): the door a takeover is handed, and what Tier 3 maps where a run ends.
 THE_NARROW_DOOR = (GEM_TRAP_VECTOR, PROGRAM_ENTRY, CRITICAL_ERROR_VECTOR)
-THE_DOOR_FLIP, WAVE_4 = "slice F (band 5 wave 3: the narrow door flip)", "band 5 wave 4 (gem_entry in C)"
-DECLARED_NOT_YET_MAPPED_AT_TIER3.update({
-    GEM_TRAP_VECTOR.what: ("no Tier 3 row runs on a machine whose `$88` holds a build's handler before the flip", THE_DOOR_FLIP),
-    PROGRAM_ENTRY.what: ("its slots are walked from a machine (`first_entry_frames`): Tier 3 has no such site yet", THE_DOOR_FLIP),
-    CRITICAL_ERROR_VECTOR.what: ("no Tier 3 row runs on a machine whose `$404` holds a build's handler before the flip", THE_DOOR_FLIP),
-    USERBLK_TRAMPOLINE_SLOT.what: ("no routine of ours stores it before gem_entry is ours", WAVE_4)})
+# WHERE THE MACHINE ITSELF KEEPS A VECTOR OF THE DOOR — what a takeover maps (a recorder's ledger is no machine's).
+THE_MACHINE_S_VECTORS = {GEM_TRAP_VECTOR.what: (addrs.VECTOR_TRAP_GEM,), CRITICAL_ERROR_VECTOR.what: (ETV_CRITIC,)}
+# THE ROW(S) WHOSE OWN RUN STORES EACH (above): `{what: the symbols whose registered rows prove it a mapping}`.
+MAPPING_PROVED_BY = {GEM_TRAP_VECTOR.what: GEM_TRAP_VECTOR_ENTRIES, CRITICAL_ERROR_VECTOR.what: CRITICAL_ERROR_ENTRIES,
+                     PROGRAM_ENTRY.what: PROGRAM_ENTRY_CALLERS}
+CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES, SCREEN_MANAGER_ENTRY, *THE_NARROW_DOOR)
+# EVERY RELOCATION DECLARED BESIDE THE TUPLE AND NOT IN IT, BY NAME: `{what: (why it is not mapped at Tier 3 yet, the
+# slice that owes its site)}`. `test_aes_boot.py` holds that each `RelocatedCode` of this module is in the tuple or
+# here — never neither — and that NO TIER 3 ROW RUNS BEHIND A DOOR while a declaration of THE NARROW DOOR is in it.
+# EMPTY FROM FLIP 4 TO WAVE 3; four (the trap door's) from slice M to the door flip; ONE since: the desk's trampoline.
+WAVE_4 = "band 5 wave 4 (gem_entry in C)"
+DECLARED_NOT_YET_MAPPED_AT_TIER3 = {
+    USERBLK_TRAMPOLINE_SLOT.what: ("no routine of ours stores it before gem_entry is ours", WAVE_4)}
 
 
 def processes_of(memory):
@@ -2989,6 +2995,47 @@ def first_entry_frames(memory):
 
 
 SLOTS_WALKED_FROM_THE_MACHINE = {PROGRAM_ENTRY.what: first_entry_frames}
+
+
+# ---- THE CYCLE PROFILE IS ONE SWITCH OF THE ORACLE'S: who has it on ------------------------------------------------------
+# A measurement that reads who ran off the cycle profile switches it on for its own run and off after. A SECOND
+# profiled run begun INSIDE it — a door boot derived cold in the middle of a row's measurement — would switch it off
+# for the rest of the first, whose tallies then stop short with nothing to say so (wave 3's review, A11). The kit has
+# no reader of the switch (`osh_prof_enable` sets it, nothing answers it: a kit accessor is owed), so THE HARNESS
+# KEEPS ITS OWN LEDGER. WHO HOLDS IT by name while it has the profile on: every measuring path of Tier 3 (`_profiled`,
+# `RomBench._call`, `_run_to_its_next_idle`), a door boot's own run (`aes_boot.booted`) and the stack battery's door
+# run (`aes_stack._door_run`). WHO ASKS IT, and REFUSES BY NAME to begin while anyone holds it: the door boot and
+# that door run. (Not in the ledger: `aes_trapdoor._run` and a test that switches the profile itself, by
+# `emu.prof_enable` — each a run of its own that derives no door boot inside it.)
+PROFILE_HELD_BY = []
+
+
+@contextlib.contextmanager
+def profile_held(by):
+    """The cycle profile is `by`'s for the block: said in the ledger a door boot asks (above)."""
+    PROFILE_HELD_BY.append(by)
+    try:
+        yield
+    finally:
+        PROFILE_HELD_BY.pop()
+
+
+def vet_the_profile_is_free(who):
+    """`who` is about to switch the cycle profile on and off for a run of its own: REFUSED BY NAME while another
+    measurement holds it."""
+    assert not PROFILE_HELD_BY, (
+        f"A PROFILED RUN INSIDE ANOTHER: {who} would switch the oracle's cycle profile on and OFF again inside "
+        f"{PROFILE_HELD_BY[-1]}, whose tallies would stop there unseen — make it BEFORE that measurement's own runs "
+        f"begin (a kept derivation asked beforehand is served and runs nothing)")
+
+
+def slots_over(relocation, memory):
+    """THE LONGWORDS `relocation` (anything with `what` and `slots`) LIES IN over the machine `memory`: its declared
+    ones — or, for one WALKED FROM THE MACHINE (`SLOTS_WALKED_FROM_THE_MACHINE`), what the walk finds there now."""
+    walked = SLOTS_WALKED_FROM_THE_MACHINE.get(relocation.what)
+    return tuple(slot for _pd, slot in walked(memory)) if walked else tuple(relocation.slots)
+
+
 # ---- (end of slice M's declarations) ---------------------------------------------------------------------------------
 # THE DISPATCHER'S OWN STACK ($899a..$8c1a), which savestate moves to: what a Tier 3 row that drops it has put back
 # on our shore (`bench/tier3.py`, `spans_put_back`), and the dispatcher's battery names its drop by.

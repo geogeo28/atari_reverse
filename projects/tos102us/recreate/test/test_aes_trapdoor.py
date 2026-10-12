@@ -14,10 +14,11 @@ FOUR CLAIMS HOLD IT.
     and the instruction after the handler's `jsr (a0)` are never executed as a return), and it is reached from one
     place.
 
-LINKED, NOT INSTALLED (band 5 wave 3: nothing is bound before the flip). No vector holds this handler and no slot of
-the relocation registry maps it; the build's own code still hands the ROM's handler on BY VALUE. That is said here as
-A LIST, not left to be found: `STILL_NAMING_THE_ROM_S_DOOR` — who, in each blob, holds a word that names the ROM's
-door — which the flip must empty of its own two sites and wave 4 of the rest.
+INSTALLED BY THE BUILD'S OWN TAKES SINCE THE NARROW DOOR FLIP (band 5 wave 3, slice F): `gemdosif.S`'s install_trap2
+and retake store THIS handler (their operand is `aes_rom_trap2`, relocated in their own pin), and the relocation
+registry maps it (`aes_event.GEM_TRAP_VECTOR`). WHO STILL NAMES THE ROM'S DOOR is said as a list, not left to be
+found, and it is EMPTY: the same two takes' C TWINS (`gemdosif.c`) moved with them, and no word of a blob names the
+ROM's door.
 """
 import subprocess
 from pathlib import Path
@@ -270,7 +271,7 @@ def test_the_handler_s_call_of_aes_entry_is_never_returned_from():
 def test_aes_entry_is_named_by_the_handler_alone_and_the_door_by_the_sites_the_census_lists():
     """WHO NAMES THE DOOR IN THE ROM, off the census of its code immediates: aes_entry by ONE instruction, the
     handler's own (relocated above); the handler by install_trap2 and retake (`gemdosif.S`: the two operands the
-    flip re-points); ub_trampoline by gem_entry (wave 4)."""
+    narrow door flip re-pointed at `aes_rom_trap2`); ub_trampoline by gem_entry (wave 4)."""
     naming = {site: row.value for site, row in rom_census.CODE_IMMEDIATES.items()
               if any(row.value == entry.rom for entry in ENTRIES.values())}
     assert naming == {0xFD9F9E: addrs.AES_ROM_UB_TRAMPOLINE, 0xFE3C78: addrs.AES_ROM_TRAP2, 0xFE3C84: addrs.AES_ROM_TRAP2,
@@ -278,15 +279,17 @@ def test_aes_entry_is_named_by_the_handler_alone_and_the_door_by_the_sites_the_c
     assert aes.line_f_call_sites("AES_ROM_ENTRY") == {} == aes.line_f_call_sites("AES_ROM_TRAP2")
 
 
-# ---- LINKED, NOT INSTALLED: who still names the ROM's door ------------------------------------------------------------------
-# Every even longword of a blob that names an address INSIDE the ROM's bytes of an entry of the door. While the door
-# is not bound these are right — the vector holds the ROM's handler, and the code that installs it must name what is
-# there — and each is a site slice F owes the build's own entry:
-#   install_trap2's and retake's operand in `gemdosif.S` (the ROM's sites $fe3c78, $fe3c84), on both blobs;
-#   the same two in their C TWINS (`gemdosif.c`) — linked on the bench blob, and on the shipped one the weak bodies a
-#     thunk of the same name stands over (bytes no symbol sizes: counted, not named).
-# (The graphics bridge's check of vector $88, `aes/gsx.h`, is host-only: it compiles to no word of a blob.)
-# A word more, or one of these gone, reds here.
+# ---- NOBODY NAMES THE ROM'S DOOR ANY MORE, since the narrow door flip ----------------------------------------------------------
+# Every even longword of a blob that names an address INSIDE the ROM's bytes of an entry of the door: NONE.
+#   * install_trap2's and retake's operand in `gemdosif.S` (the ROM's sites $fe3c78, $fe3c84) name THE BUILD'S OWN
+#     HANDLER, on both blobs: held here from the blob's own bytes;
+#   * and so do their C TWINS (`gemdosif.c`: `gem_trap2_handler`, `ALCYON_ROUTINE`) — linked on the bench blob, and
+#     on the shipped one the weak bodies a thunk of the same name stands over. (They HAD to move with the `.S`: a
+#     twin that stores the ROM's handler over a machine that did not come with it is refused by the registry's own
+#     vet on its `(T)` rows — `tier3.vet_no_slot_names_the_rom`.)
+# (The graphics bridge's check of vector $88, `aes/gsx.h`, is host-only: it compiles to no word of a blob.) What is
+# left of the door's by-value sites is gem_entry's `lea` of ub_trampoline — wave 4's, in no blob yet.
+# A word that names the ROM's door reds here.
 VECTOR_TAKE_SITES = (0xFE3C78, 0xFE3C84)
 THE_TAKES_REGION_S_ANCHOR = "AES_ROM_RESTORE_TRAP2"
 THEIR_C_TWINS = ("aes_install_trap2", "aes_retake")
@@ -303,18 +306,22 @@ def _words_naming_the_rom_s_door(blob):
             if _door_entry_named(int.from_bytes(blob.blob[offset:offset + LONG_BYTES], "big"))}
 
 
-def test_who_still_names_the_rom_s_door_is_the_two_vector_takes_and_their_twins(blob):
-    naming = _words_naming_the_rom_s_door(blob)
-    assert set(naming.values()) == {HANDLER}, (
-        "only the HANDLER is named by value: aes_entry's one naming word is relocated, ub_trampoline's is gem_entry's (not built)")
-    in_the_transcription = {blob.entry(transcription.transcription_symbol(THE_TAKES_REGION_S_ANCHOR)) + _operand(site)
-                            - getattr(addrs, THE_TAKES_REGION_S_ANCHOR) for site in VECTOR_TAKE_SITES}
-    assert in_the_transcription <= set(naming), "gemdosif.S's two vector takes no longer name the ROM's handler: is the door bound?"
-    elsewhere = set(naming) - in_the_transcription
-    assert len(elsewhere) == len(THEIR_C_TWINS), f"words naming the ROM's handler beside the takes and their twins: {sorted(map(hex, elsewhere))}"
+def test_no_word_of_a_blob_names_the_rom_s_door_and_the_takes_store_the_build_s_own_handler(blob):
+    assert not _words_naming_the_rom_s_door(blob), "a word of the blob names the ROM's door: who stores it, and into what?"
+    handler = blob.entry(HANDLER).to_bytes(LONG_BYTES, "big")
+    takes = blob.entry(transcription.transcription_symbol(THE_TAKES_REGION_S_ANCHOR)) - getattr(addrs, THE_TAKES_REGION_S_ANCHOR)
+    for site in VECTOR_TAKE_SITES:
+        operand = takes + _operand(site) - blob.base
+        assert blob.blob[operand:operand + LONG_BYTES] == handler, f"the take at ${site:x} does not store `{HANDLER}`"
+    # ...and the twins: each body holds the handler's address once (the bench blob sizes them; the shipped blob's weak
+    # bodies are counted with the `.S`'s two — four words a blob, wherever the linker laid them)
+    holding = [offset for offset in range(0, len(blob.blob) - LONG_BYTES + 1, WORD_BYTES)
+               if blob.blob[offset:offset + LONG_BYTES] == handler]
+    assert len(holding) == len(VECTOR_TAKE_SITES) + len(THEIR_C_TWINS)
     if blob.elf == transcription.BENCH_ELF:
         twins = [door.text_spans(blob)[twin] for twin in THEIR_C_TWINS]
-        assert all(any(lo <= word < hi for lo, hi in twins) for word in elsewhere)
+        in_the_twins = [at for at in holding if any(lo <= blob.base + at < hi for lo, hi in twins)]
+        assert len(in_the_twins) == len(THEIR_C_TWINS)
 
 
 def test_that_scan_sees_a_planted_word():

@@ -1954,10 +1954,12 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False, False, True, False], (
+    assert [each.at_entry for each in read] == [True, False, False, True, False, False, False], (
         "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone; the screen "
         "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr); "
-        "the critical-error handler's at exit alone (wave 3, slice G: a machine's etv_critic is the ROM's own)")
+        "THE NARROW DOOR'S THREE — the GEM trap's vector, a program's first-entry frame, the critical-error vector — "
+        "at exit alone (ruling W3-R1: a row's machine holds what it came with; `$88` at every row's entry is wave 4's)")
+    assert [each.what for each in read][-3:] == [part.what for part in aes_event.THE_NARROW_DOOR]
     # ...each mapped whole for this run — but the GEMDOS glue's text sites, mapped only for a run that reaches the
     # `.S` that parks them (`tier3.text_site_relocation`: forker's, on the bench's blob, reaches the C twin).
     assert [set(each.mapping) for each in read] == [
@@ -1989,11 +1991,23 @@ def test_a_slot_of_the_registry_that_holds_the_rom_s_own_address_after_our_run_i
     # ...what the run CAME WITH may travel — an argument the call was handed and, for a relocation mapped at exit
     # alone, what its slots held at entry (a value a vex call displaced or restored) — and that alone.
     at_exit = [registry[0]._replace(at_entry=False)]
-    tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, at_exit, {at_exit[0].what: frozenset({A_BUTTON_GLUE})})
-    assert tier3.rom_addresses_in(image, at_exit[0]) == {A_BUTTON_GLUE}
-    for came_with in (None, {at_exit[0].what: frozenset()}, {at_exit[0].what: frozenset({A_MOTION_GLUE})}):
+    what = at_exit[0].what
+    tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, at_exit, {what: tier3.CameWith(frozenset({A_BUTTON_GLUE}))})
+    assert tier3.what_came_with(image, at_exit) == {what: tier3.CameWith(frozenset({A_BUTTON_GLUE}))}, "a vector's: anywhere"
+    assert tier3.what_came_with(image, registry) == {what: tier3.NOTHING_CAME}, "mapped at entry: nothing came"
+    assert tier3.what_came_with(image, registry, frozenset({A_BUTTON_GLUE, 0x1234})) == {what: tier3.CameWith(frozenset({A_BUTTON_GLUE}))}
+    for came_with in (None, {what: tier3.NOTHING_CAME}, {what: tier3.CameWith(frozenset({A_MOTION_GLUE}))}):
         with pytest.raises(AssertionError, match="no slot of it held that address when our run was entered"):
             tier3.vet_no_slot_names_the_rom("aes_gsx_init", image, at_exit, came_with)
+    # ...AND FOR THE TRAP DOOR'S OWN, ONLY WHERE IT STOOD (the fix pass of the narrow door flip, A-4): the ROM's address
+    # one slot came with excuses that slot, and the same address in ANOTHER slot of the relocation is our store.
+    of_the_door = [at_exit[0]._replace(what=aes_event.GEM_TRAP_VECTOR.what)]       # (a stand-in: the door's name over two glue slots)
+    came = tier3.what_came_with(image, of_the_door)
+    assert came == {aes_event.GEM_TRAP_VECTOR.what: tier3.CameWith(frozenset(), {other: A_BUTTON_GLUE})}
+    tier3.vet_no_slot_names_the_rom("aes_sndcli", image, of_the_door, came)
+    image[slot:slot + aes.LONG_BYTES] = A_BUTTON_GLUE.to_bytes(aes.LONG_BYTES, "big")
+    with pytest.raises(AssertionError, match=f"\\(the longword at {slot:#x}\\)"):
+        tier3.vet_no_slot_names_the_rom("aes_sndcli", image, of_the_door, came)
 
 
 def _a_build_that_stores_the_rom_s_address(monkeypatch, rom_address, symbol):
@@ -2208,6 +2222,56 @@ def test_dsptch_is_the_rom_s_twenty_bytes_on_both_blobs(blob):
     lands_at = int.from_bytes(ours[-JMP_OPERAND_BYTES:], "big")
     assert lands_at == blob.entry(OUR_DISP) != addrs.AES_ROM_DISP, f"dsptch jumps to {lands_at:#x}"
     assert addrs.AES_ROM_DISP not in tier3.door_calls(blob.elf).values()
+
+
+# ---- EVERY PROFILED RUN OF TIER 3 HOLDS THE PROFILE FOR ITS OWN LENGTH (`aes_event.profile_held`; the fix pass, A-5) ----
+A_DOOR_BOOT_ASKED_INSIDE = "a door boot asked cold inside it"
+A_ROW_OF_ONE_KIT_CALL = ("aes_sh_toalpha", "to a text program, the cursor hidden")
+
+
+def _asks_the_ledger(*_run, **_kwargs):
+    """What a door boot does before it switches the profile on (`aes_boot.booted`), in a run's place."""
+    aes_event.vet_the_profile_is_free(A_DOOR_BOOT_ASKED_INSIDE)
+
+
+def test_a_row_s_profiled_measurement_holds_the_profile():
+    with pytest.raises(AssertionError, match=rf"A PROFILED RUN INSIDE ANOTHER: {A_DOOR_BOOT_ASKED_INSIDE} .* inside a row's profiled measurement"):
+        tier3._profiled(_asks_the_ledger)
+    assert not aes_event.PROFILE_HELD_BY and not tier3._PROFILING
+
+
+def test_a_run_from_a_machine_s_idle_holds_the_profile(monkeypatch):
+    """(Review mutant A9 — the hold taken out of `_run_to_its_next_idle` — passed: the one RED held the ledger by
+    hand.) The run's own stand-in asks the ledger as a door boot would, and is refused BY THAT RUN'S NAME."""
+    monkeypatch.setattr(tier3, "watched_original", _asks_the_ledger)
+    with pytest.raises(AssertionError, match=rf"A PROFILED RUN INSIDE ANOTHER: {A_DOOR_BOOT_ASKED_INSIDE} .* inside a run from a machine's idle"):
+        tier3._run_to_its_next_idle(bytearray(), None, tier3.shipped_bench())
+    assert not aes_event.PROFILE_HELD_BY
+
+
+def test_our_run_of_a_kit_call_holds_the_profile(monkeypatch):
+    """...and `RomBench._call`'s: inside a row's measurement the innermost holder is OUR RUN, by its symbol."""
+    monkeypatch.setattr(rom_bench.RomBench, "_call", _asks_the_ledger)
+    try:
+        with pytest.raises(AssertionError, match=rf"{A_DOOR_BOOT_ASKED_INSIDE} .* inside our run of `{A_ROW_OF_ONE_KIT_CALL[0]}` \(`tier3.RomBench._call`\)"):
+            tier3.measure(tier3.row_named(A_ROW_OF_ONE_KIT_CALL), RomBench())
+    finally:
+        tier3.OUR_RUN.clear()           # ...what the measurement cut short left of itself, for the next one's guard
+    assert not aes_event.PROFILE_HELD_BY
+
+
+@pytest.mark.parametrize("blob", (lambda: RomBench(), tier3.shipped_bench), ids=BLOBS)
+def test_our_selector_switch_is_the_rom_s_own_bytes_on_both_blobs(blob):
+    """WHAT `tier3.our_cycles` RESTS ON, on every row behind our door: the first 26 bytes of the build's own trap
+    handler — the selector switch and the VDI arm, `$fe3ea6..$fe3ebf` — ARE THE ROM'S, byte for byte, no relocated
+    word inside. They are cut out of our own count as the ROM's are cut out of the AES's spans because they are the
+    same code; a build whose switch were another would be priced short by it."""
+    blob = blob()
+    lo, hi = tier3.our_selector_switch(blob)
+    the_rom_s_lo, the_rom_s_hi = tier3.GEM_SELECTOR_SWITCH
+    assert (lo, hi - lo) == (blob.entry(tier3.OUR_GEM_TRAP), tier3.SELECTOR_SWITCH_BYTES) and hi - lo == the_rom_s_hi - the_rom_s_lo
+    assert bytes(blob.blob[lo - blob.base:hi - blob.base]) == bytes(BASE_IMAGE[the_rom_s_lo:the_rom_s_hi])
+    assert (the_rom_s_lo, the_rom_s_hi) == (addrs.GEM_TRAP2, addrs.GEM_TRAP2_PTERM_ARM)
 
 
 @pytest.mark.parametrize("variable", ("BENCH_CFLAGS", "SHIPPED_CFLAGS"))

@@ -90,8 +90,10 @@ DOOR: the registry's pending declarations mapped beside the screen manager's ent
 first-entry frame of every loaded program, WALKED FROM THE MACHINE. Every accessory is then entered through our
 gotopgm, traps into our handler and parks through our dispatcher; the desk stays the ROM's. WHO RAN is a cycle
 profile (the ROM's door text: zero cycles from the lay on), the classes are per process, and a door the ROM took
-back is refused by name. NOTHING BINDS A DOOR AT TIER 3 BEFORE THE DOOR FLIP: the one door here is the takeover's
-own fixture (`with_the_prototype_door`), a parameter.
+back is refused by name. THE DOOR IS A PARAMETER, each part answered by the blob's own entry, found by symbol
+(`src/aes/trapdoor.S`, `switch.S`, `gemdosif.S`): Tier 3 hands `aes_event.THE_NARROW_DOOR` (the accessory machines'
+rows, since the narrow door flip — `aes_ctlmgr.our_machine`). The prototype door the takeover was first proved
+with (`test/acc/protodoor.S`) is retired: the shipped door gave the same machines.
 THE THIRD CAPTURE (`seven_accessory_preinit`, `make preinit-acc7`): seven accessories in the drive, one more than
 the loader takes — `seven_accessory_machine`. Its boot saturates the kit's write ledger, so no takeover is made of it
 (refused by name); and a boot that stores at `$0..$7` — the ROM's shadow: a bus error on the machine — is refused.
@@ -109,14 +111,13 @@ a rebuilt blob is another question and the old answer is never served for it; an
 besides (`derived.tree_key`). Neither answer runs the host library, so a process whose candidate library is not the
 project's own (where `derived` keeps nothing) loses nothing by it.
 """
+import contextlib
 import ctypes
 import functools
 import hashlib
 import operator
 import random
 import struct
-import subprocess
-import tempfile
 from collections import namedtuple
 from pathlib import Path
 
@@ -447,8 +448,8 @@ def _the_frame_the_handler_is_entered_over(memory):
 # so that the two are held to make ONE MACHINE): on an accessory boot both accessories are entered, take their first
 # `trap #2` and park INSIDE THE ROM'S aes_entry before the screen manager first runs — a process the ROM's gotopgm
 # entered and the ROM's trap handler parked is the ROM's for as long as it lives.
-# THE DOOR (`Ours.door`, of `ours_of(blob, door=)`; none by default — and none is mapped at Tier 3 before the door
-# flip): the registry's PENDING declarations a takeover applies beside the screen manager's entry, each the same kind
+# THE DOOR (`Ours.door`, of `ours_of(blob, door=)`; none by default): the registry's declarations of the trap door
+# (`aes_event.THE_NARROW_DOOR`) a takeover applies beside the screen manager's entry, each the same kind
 # of mapping and nothing else —
 #   * a VECTOR (`aes_event.GEM_TRAP_VECTOR`, `CRITICAL_ERROR_VECTOR`): the longword must hold the ROM's handler (a
 #     vector the ROM has not installed yet, or has given back, is refused by name) and is given the blob's;
@@ -553,42 +554,7 @@ def ours_of(blob, door=()):
     return _ours_at(str(blob.elf), blob.base, blob.end, bytes(blob.blob), declared)
 
 
-# ---- THE PROTOTYPE DOOR: a trap door for ANY blob, the takeover's own fixture (`test/acc/protodoor.S`) -------------------
-# The door takeover is proved against A DOOR HANDED IT, never against the shipped `.S` of the day: the ROM's handler,
-# exit and aes_entry assembled AFTER THE BLOB'S LAST BYTE and linked against the blob's own ELF, so its five calls are
-# the blob's routines. The bytes are appended to the `Ours` — a labelled extension of a BUILD — and the door names
-# them: the vector the prototype's handler, a program's first entry the blob's own gotopgm (`switch.S`, shipped).
-PROTOTYPE_DOOR_SOURCE = accessory_disk.ACC_DIR / "protodoor.S"
-PROTOTYPE_TRAP2, GOTOPGM_SYMBOL = "proto_trap2", aes_event.PROGRAM_ENTRY.symbols[addrs.AES_ROM_GOTOPGM]
-
-
-@functools.cache
-def _prototype_door_at(elf, at, source):
-    """`source` assembled at `at` against the symbols of `elf`: `(its bytes, {symbol: address})`."""
-    with tempfile.TemporaryDirectory() as work:
-        (Path(work) / "protodoor.S").write_text(source)
-
-        def tool(*command):
-            return subprocess.run(command, cwd=work, check=True, capture_output=True, text=True).stdout
-        tool("m68k-elf-gcc", accessory_disk.TARGET_CPU, "-nostdlib", "-Wl,--build-id=none", "-Wl,-e0", f"-Wl,-Ttext={at:#x}",
-             f"-Wl,--just-symbols={elf}", "protodoor.S", "-o", "protodoor.elf")
-        tool("m68k-elf-objcopy", "-O", "binary", "protodoor.elf", "protodoor.bin")
-        placed = {name: int(value, 16) for value, kind, name in map(str.split, tool("m68k-elf-nm", "protodoor.elf").splitlines())
-                  if kind == "T"}
-        return (Path(work) / "protodoor.bin").read_bytes(), placed
-
-
-def with_the_prototype_door(blob):
-    """`ours_of(blob)` WITH THE PROTOTYPE DOOR (above) appended past its allocated span, and its `door` naming it:
-    the GEM trap's vector -> the prototype's handler, a loaded program's first-entry frame -> the blob's gotopgm."""
-    plain = ours_of(blob)
-    at = plain.end + plain.end % WORD_BYTES
-    code, placed = _prototype_door_at(str(blob.elf), at, PROTOTYPE_DOOR_SOURCE.read_text())
-    gotopgm = {symbol.name: symbol.start for symbol in transcription.symbol_table(str(blob.elf))}[GOTOPGM_SYMBOL]
-    door = (DoorPart(aes_event.GEM_TRAP_VECTOR.what, ((addrs.GEM_TRAP2, placed[PROTOTYPE_TRAP2]),)),
-            DoorPart(aes_event.PROGRAM_ENTRY.what, ((addrs.AES_ROM_GOTOPGM, gotopgm),)))
-    padded = plain.image + bytes(at - plain.base - len(plain.image))
-    return plain._replace(image=padded + code, end=at + len(code), door=door)
+GOTOPGM_SYMBOL = aes_event.PROGRAM_ENTRY.symbols[addrs.AES_ROM_GOTOPGM]
 
 
 def whose(pc, ours=None):
@@ -706,11 +672,12 @@ def _declared(what):
 
 
 def door_slots(memory, part):
-    """WHERE THE MACHINE `memory` KEEPS what the door part `part` maps: `((pd or None, slot), ...)` — the
-    declaration's own longwords, or, for one WALKED FROM THE MACHINE (`aes_event.SLOTS_WALKED_FROM_THE_MACHINE`: a
-    loaded program's first-entry frame), each process's."""
+    """WHERE THE MACHINE `memory` KEEPS what the door part `part` maps: `((pd or None, slot), ...)` — the vector's
+    own longword (`aes_event.THE_MACHINE_S_VECTORS`: a declaration's other slots are a recorder's ledger's, no
+    machine's), or, for one WALKED FROM THE MACHINE (`aes_event.SLOTS_WALKED_FROM_THE_MACHINE`: a loaded program's
+    first-entry frame), each process's."""
     walked = aes_event.SLOTS_WALKED_FROM_THE_MACHINE.get(part.what)
-    return walked(memory) if walked else tuple((None, slot) for slot in _declared(part.what).slots)
+    return walked(memory) if walked else tuple((None, slot) for slot in aes_event.THE_MACHINE_S_VECTORS[part.what])
 
 
 def vet_the_door_stands(memory, ours, when):
@@ -1121,6 +1088,9 @@ def _io_seed(io):
     return {preinit_snapshot.IO_AT + offset: byte for offset, byte in enumerate(io)}
 
 
+PROFILE_HELD_BY_A_DOOR_BOOT = "a door boot's own run (`aes_boot.booted`)"
+
+
 @derived.kept
 def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_FIRST_ENTRY):
     """THE ROM'S OWN BOOT (the module's docstring) from the pre-init `machine` (`preinit_snapshot.PreInit`) with
@@ -1136,13 +1106,19 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     taking = _TakingOver(memory, ours, laid) if ours is not None else None
     run = _Run(memory, floppy, budget, until=until, taking=taking)
     profiled = taking is not None and taking.profiled
+    if profiled:
+        aes_event.vet_the_profile_is_free("a door boot")           # ...refused by name (the harness's own ledger), before
+    # ...AND HELD FOR ITS OWN RUN, as every profiled run of Tier 3's is: a second door boot begun inside this one
+    # (a derivation asked cold by a stop's watcher) would switch the profile off under it.
+    holding = aes_event.profile_held(PROFILE_HELD_BY_A_DOOR_BOOT) if profiled else contextlib.nullcontext()
     try:
         # A DOOR'S WHO-RAN IS READ OFF THE CYCLE PROFILE (`_TakingOver.made`), on for this run alone: its tallies are
         # read as DIFFERENCES from the lay, nothing reset — but the profile is one switch of the oracle's, so a door
         # boot is never derived inside another measurement's profiled run (it would be left off for the rest of it).
         if profiled:
             emu.prof_enable(True)
-        result = run.to_an_idle(machine.registers, io_seed_of(machine))
+        with holding:
+            result = run.to_an_idle(machine.registers, io_seed_of(machine))
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))

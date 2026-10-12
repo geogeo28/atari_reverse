@@ -93,7 +93,8 @@ class Recorder:
     def stub(self):
         """The handler: the function word into the ledger, then its frame a word at a time — each function whose
         frame ends there branching out to the zeros that pad its entry; the ledger's pointer stored back; D0 the
-        script's next longword, its pointer stored back; `rte`. Every register but D0 as found."""
+        script's next longword, its pointer stored back; what a recorder of more does there (`after_the_answer`);
+        `rte`. Every register but D0 as found."""
         pieces = [PUSH_A0 + MOVEA_L_ABSOLUTE_A0 + struct.pack(">I", self.ledger.pointer_at),
                   vdi.pack_words(MOVE_W_STACK_TO_A0_POSTINC, FRAME_WORDS_AT)]
         for recorded in range(0, self.recorded_bytes, WORD_BYTES):
@@ -107,8 +108,14 @@ class Recorder:
         pieces += [MOVE_L_ABSOLUTE_TO_A0_POSTINC + struct.pack(">I", at) for at in self.parked]
         pieces += [STORE_A0_ABSOLUTE + struct.pack(">I", self.ledger.pointer_at) + MOVEA_L_ABSOLUTE_A0
                    + struct.pack(">I", self.script.pointer_at) + vdi.pack_words(MOVE_L_A0_POSTINC_D0) + STORE_A0_ABSOLUTE
-                   + struct.pack(">I", self.script.pointer_at) + POP_A0 + RTE]
+                   + struct.pack(">I", self.script.pointer_at), *self.after_the_answer(), POP_A0 + RTE]
         return shell.laid_out(pieces)
+
+    def after_the_answer(self):
+        """The handler's pieces between the answer and its `rte` — A0 pushed and free, the call's function word at
+        FRAME_WORDS_AT: none here. A recorder that LAYS WHAT GEMDOS STORED at the call says them
+        (`aes_loader.DtaFilledAtItsSearches`)."""
+        return []
 
     def pokes(self, answers):
         """The vector at the handler, an empty ledger (its entries FILLed) and the script of `answers`."""
@@ -170,10 +177,10 @@ aes_event.declare_text_site_slots(*TRAP1_SITES_IN_THE_LEDGER, *PEXEC_TAILS_IN_TH
 # ...and the BIOS's, for the vector takes' `.S` (both shores 68000: no host twin is bound): Setexc's vector word and
 # handler.
 BIOS = Recorder(addrs.VECTOR_TRAP_BIOS, GEMDOS.end, 0x40, {addrs.BIOS_SETEXC_FN: WORD_BYTES + LONG_BYTES}, entries=4)
-# WHERE THAT LEDGER CAN HOLD THE CRITICAL-ERROR HANDLER A BUILD INSTALLS (`aes_event.CRITICAL_ERROR_HANDLER`: retake's
+# WHERE THAT LEDGER CAN HOLD THE CRITICAL-ERROR HANDLER A BUILD INSTALLS (`aes_event.CRITICAL_ERROR_VECTOR`: retake's
 # and takeerr's Setexc is handed crit_err — the ROM's address in the ROM, the build's own entry in a build): the
 # longword of each entry's frame past the function and Setexc's vector number.
-aes_event.declare_critical_error_handler_slots(*(BIOS.ledger.first + nth * BIOS.ledger.stride + 2 * WORD_BYTES
+aes_event.declare_critical_error_slots(*(BIOS.ledger.first + nth * BIOS.ledger.stride + 2 * WORD_BYTES
                                                  for nth in range(BIOS.ledger.entries)))
 # ...and the XBIOS's, for the AES's XBIOS door (`trp14.S`, the same way): the shapes its ROM callers push — the
 # function word alone (Getrez), one more word (Blitmode) — and A MADE-UP ONE, an ARGUMENT CLASS wherever it is run:
