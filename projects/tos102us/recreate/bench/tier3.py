@@ -2074,12 +2074,18 @@ AES_OWN_SPANS = ((aes.AES_TEXT[0], GEM_SELECTOR_SWITCH[0]), (GEM_SELECTOR_SWITCH
 # for byte on each blob — no relocated word inside). So they are cut out of OUR shore's own count exactly as
 # `GEM_SELECTOR_SWITCH` is cut out of the ROM's — the OS both run, from the same bytes, in neither own column — and
 # what was a remark is an equality: on every run measured from an idle behind the door each shore's selector switch
-# costs the same cycles (`vet_who_ran_the_door`). ON A MACHINE WHOSE `$88` IS THE ROM'S ours runs no cycle and
-# `our_cycles` is the blob's whole span as it always was — which is every snapshot row BUT ONE: a kit call whose OWN
-# RUN takes the door (`aes_retake` / `aes_install_trap2` store the build's handler: a mapping by the row's own run,
-# never a poke) runs every `trap #2` it makes AFTER that store through ours. One row does — sh_tographic's
-# (`THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN`) — and `RomBench._call` holds WHO RAN THE SELECTOR SWITCH on every kit call
-# (`vet_who_ran_the_selector_switch`): none of ours where `$88` never held ours, the same `trap #2`s on both shores.
+# costs the same cycles (`vet_who_ran_the_door`).
+# SINCE THE FULL FLIP (band 5 wave 4, slice F: `aes_event.GEM_TRAP_VECTOR` is mapped AT A RUN'S ENTRY) THAT IS EVERY
+# RUN OF OURS: a row's machine is entered with the build's own handler in `$88` wherever the ROM-made machine holds
+# the ROM's, so every `trap #2` a (V) row takes on a kit call runs OUR selector switch and NOT ONE CYCLE of the ROM's
+# — WHO RAN moved, and nothing else: the switch is in neither own column on either shore, so no cost, no own column,
+# no shared column and no pin reads it. `RomBench._call` holds WHO RAN THE SELECTOR SWITCH on every kit call
+# (`vet_who_ran_the_selector_switch`): the ROM's switch no cycle of our run; the same `trap #2`s on both shores; and
+# the two ways a run's OWN STORE moves the vector, each named or refused — a run entered over a machine whose `$88`
+# is NOT the ROM's AES's (GEM down: the BIOS's VDI door) that TAKES the door and traps behind it
+# (`THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN`), and its converse, a run that GIVES THE DOOR BACK
+# (`THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN`: restore_trap2 stores the VDI's own entry, the value `$8c2a` holds, on
+# both shores — the ROM's behaviour, and no ROM AES address: that one in the slot is the registry's vet's to refuse).
 OUR_GEM_TRAP = "aes_rom_trap2"
 SELECTOR_SWITCH_BYTES = GEM_SELECTOR_SWITCH[1] - GEM_SELECTOR_SWITCH[0]
 
@@ -2624,12 +2630,12 @@ def screen_manager_relocation(elf):
 
 @functools.cache
 def door_relocation(elf, what):
-    """`{the ROM's routine: the blob's own entry}` for the part `what` of THE NARROW DOOR (`aes_event.THE_NARROW_DOOR`:
+    """`{the ROM's routine: the blob's own entry}` for the part `what` of THE TRAP DOOR'S THREE (`aes_event.THE_TRAP_DOOR`:
     the GEM trap's vector, the critical-error vector, a loaded program's first-entry frame) — empty for a build that
-    links no entry for it. FOR EVERY RUN OF SUCH A BUILD, WHERE IT ENDS (none is mapped at a run's entry: the narrow
-    flip, `aes_event`): its install_trap2 and retake store its own trap handler, its retake and takeerr hand Setexc its
-    own crit_err, its sndcli hands pstart its own gotopgm — and a door machine came with all three."""
-    declared, = [part for part in aes_event.THE_NARROW_DOOR if part.what == what]
+    links no entry for it. FOR EVERY RUN OF SUCH A BUILD, WHERE IT ENDS — AND, FOR THE GEM TRAP'S VECTOR, AT ITS ENTRY
+    TOO (the full flip, `aes_event`): its install_trap2 and retake store its own trap handler, its retake and takeerr
+    hand Setexc its own crit_err, its sndcli hands pstart its own gotopgm — and a door machine came with all three."""
+    declared, = [part for part in aes_event.THE_TRAP_DOOR if part.what == what]
     return _entries_placed(elf, declared.symbols)
 
 
@@ -2639,7 +2645,8 @@ def stored_by_gem_entry_relocation(elf, what):
     (`aes_event.STORED_BY_GEM_ENTRY`: justretf into `$947a`, the tick glue into `$947e` — and on, by gsx_tick, into the
     VDI's tick vector and the AES's contrl —, ub_trampoline into `$8c32` and the desk's USERBLKs) — empty for a build
     that links no entry for it. FOR EVERY RUN OF SUCH A BUILD, WHERE IT ENDS (band 5 wave 4, slice B: its own
-    gem_entry stores its own three; none is mapped at a run's entry before the full flip)."""
+    gem_entry stores its own three; none is mapped at a run's entry — not after the full flip either, which made
+    `$88` alone an entry mapping and put these three in the DOOR a takeover maps: STATUS AWAITING (23), F-2)."""
     declared, = [each for each in aes_event.STORED_BY_GEM_ENTRY if each.what == what]
     return _entries_placed(elf, declared.symbols)
 
@@ -2653,7 +2660,7 @@ Relocation = namedtuple("Relocation", "what slots mapping at_entry", defaults=(T
 def code_relocations(elf, symbol):
     """THE REGISTRY (`aes_event.CODE_RELOCATIONS`) for a run of `symbol` on the blob `elf`: a `Relocation` each —
     the fork queue's (`fork_relocation`), the glue's, the GEMDOS glue's text sites, the screen manager's entry
-    (`screen_manager_relocation`), the narrow door's three (`door_relocation`) and gem_entry's three by-value stores
+    (`screen_manager_relocation`), the trap door's three (`door_relocation`) and gem_entry's three by-value stores
     (`stored_by_gem_entry_relocation`). The one reading every site that
     maps a code address makes: a run's entry and exit, a delivery, a mark. A relocation whose slots are WALKED FROM
     THE MACHINE (a program's first-entry frame) declares none: `slots_of` finds them over the memory it is asked of."""
@@ -2661,7 +2668,7 @@ def code_relocations(elf, symbol):
               aes_event.GLUE_CODES.what: (glue_code_slots(), glue_relocation(elf)),
               aes_event.TEXT_SITES.what: (aes_event.TEXT_SITES.slots, text_site_relocation(elf, symbol)),
               aes_event.SCREEN_MANAGER_ENTRY.what: (aes_event.SCREEN_MANAGER_ENTRY.slots, screen_manager_relocation(elf)),
-              **{part.what: (part.slots, door_relocation(elf, part.what)) for part in aes_event.THE_NARROW_DOOR},
+              **{part.what: (part.slots, door_relocation(elf, part.what)) for part in aes_event.THE_TRAP_DOOR},
               **{each.what: (each.slots, stored_by_gem_entry_relocation(elf, each.what)) for each in aes_event.STORED_BY_GEM_ENTRY}}
     declared = {each.what: each.at_entry for each in aes_event.CODE_RELOCATIONS}
     assert sorted(mapped) == sorted(declared), "a relocation the registry declares is mapped by no site"
@@ -2680,7 +2687,7 @@ def _backwards(mapping):
     return {entry: rom for rom, entry in mapping.items()}
 
 
-def _mapped_back(memory, relocations):
+def mapped_back(memory, relocations):
     """`memory` — an image OUR shore left, or holds at a stop — with every code slot of `relocations` GIVEN THE ROM'S
     NAME, in place: what our shore's memory is compared with the ROM's as (the one spelling: where a run ends on the
     kit's path, at a stop of the dispatcher's watch, where two machines' runs end). The memory."""
@@ -2792,7 +2799,7 @@ def _a_code_relocated(at, ours, original, relocations):
 # where the run ends (`anywhere`), and those that may stand ONLY WHERE THEY STOOD (`where_it_stood`: `{slot: address}`).
 CameWith = namedtuple("CameWith", "anywhere where_it_stood", defaults=(frozenset(), {}))
 NOTHING_CAME = CameWith()
-THE_DOOR_S_OWN = frozenset(part.what for part in aes_event.THE_NARROW_DOOR)
+THE_TRAP_DOOR_S_OWN = frozenset(part.what for part in aes_event.THE_TRAP_DOOR)
 
 
 def what_came_with(memory, relocations, handed=frozenset()):
@@ -2800,14 +2807,14 @@ def what_came_with(memory, relocations, handed=frozenset()):
     CALL WAS HANDED as an argument (`handed`: forkq queues the code it is handed, gsx_setmb installs the routines it
     is handed — the case's own values, on both shores) may stand in any slot. For a relocation MAPPED AT EXIT ALONE,
     what its slots held at entry too: anywhere for a vector our run may displace and restore (the VDI's hold the
-    ROM's glue, which the ROM's own gem_main installed) — but FOR THE TRAP DOOR'S THREE (`THE_NARROW_DOOR`: `$88`, a
+    ROM's glue, which the ROM's own gem_main installed) — but FOR THE TRAP DOOR'S THREE (`THE_TRAP_DOOR`: `$88`, a
     program's first-entry frame, `$404`) ONLY IN THE SLOT THAT HELD IT: no routine moves one of those from a slot to
     another, so the ROM's gotopgm in a frame OUR run laid is our store, whatever an earlier program's frame holds."""
     came = {}
     for relocation in relocations:
         stood = {} if relocation.at_entry else {slot: _long_at(memory, slot) for slot in slots_of(relocation, memory)
                                                 if _long_at(memory, slot) in relocation.mapping}
-        in_place = relocation.what in THE_DOOR_S_OWN
+        in_place = relocation.what in THE_TRAP_DOOR_S_OWN
         came[relocation.what] = CameWith((handed & frozenset(relocation.mapping)) | (frozenset() if in_place else frozenset(stood.values())),
                                          stood if in_place else {})
     return came
@@ -2935,7 +2942,7 @@ class RomBench(rom_bench.RomBench):
         vet_no_slot_names_the_rom(symbol, ours.image, relocations, came_with,
                                   getattr(kwargs.get("watch"), "foreign_codes", None))
         vet_no_slot_names_the_rom(symbol, ours.image, [Relocation(A_RECORD, recorded + written, forks)], {A_RECORD: CameWith(handed)})
-        _mapped_back(ours.image, relocations)
+        mapped_back(ours.image, relocations)
         for relocation in relocations:
             if relocation.what == aes_event.TEXT_SITES.what:
                 vet_no_register_names_the_rom(symbol, ours.regs, relocation.mapping)
@@ -2989,25 +2996,42 @@ OUR_RUN = []
 # run's in its own (None where the original's run was not profiled).
 DoorSplit = namedtuple("DoorSplit", "symbol ours_at_entry ours_where_it_ends in_ours in_the_rom_s the_rom_s_run_in_its_own")
 DOOR_SPLIT = []
-# THE ONE SNAPSHOT ROW WHOSE OWN RUN TAKES THE DOOR AND TRAPS AFTER IT (the comment at `OUR_GEM_TRAP`): sh_tographic's
-# `aes_retake` stores the build's handler, and the six VDI calls behind it enter our selector switch. Held exactly:
-# its split by `test_aes_shlib.py`, and that it is the only one by the vet below.
-THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN = frozenset({"aes_sh_tographic"})
+# THE ROUTINES WHOSE OWN RUN MOVES THE VECTOR (the comment at `OUR_GEM_TRAP`), each set HELD EXACTLY by the vet below
+# — a routine that does and is not named is refused, and so is one named that does not:
+#   * TAKES THE DOOR AND TRAPS BEHIND IT — entered over a machine whose `$88` is not ours (nor the ROM's AES's: that
+#     one is mapped at entry) and spending cycles in our selector switch. NONE SINCE THE FULL FLIP: until it
+#     sh_tographic's row was the one (its retake stored our handler over the ROM's, and six VDI calls followed) —
+#     that row is entered behind ours now, as every row is. The set stands, empty, for the next such row.
+#   * GIVES THE DOOR BACK — entered with ours in `$88` and ending with another value there: restore_trap2, as the
+#     `.S` the target ships and as its C twin (their rows' machine is "GEM up": the ROM's handler in `$88`, ours as our
+#     run is entered — and both shores leave the VDI's own entry there, the value `$8c2a` holds).
+THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN = frozenset()
+THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN = frozenset({"aes_restore_trap2", "aes_rom_restore_trap2"})
 
 
 def vet_who_ran_the_selector_switch(split):
-    """WHO RAN THE SELECTOR SWITCH in one kit call of ours (a `DoorSplit`), refused by name: where the GEM trap's
-    vector never held our handler, OUR SWITCH RAN NO CYCLE; where the run itself took the door (the ROM's at entry,
-    ours where it ends) and trapped behind it, the routine is the one that is said to; and wherever both runs were
-    profiled, THE TWO RUNS TOOK THE SAME `trap #2`s — ours through one switch or the other, the same bytes — to the
-    cycle."""
+    """WHO RAN THE SELECTOR SWITCH in one kit call of ours (a `DoorSplit`), refused by name: THE ROM'S SWITCH RAN NO
+    CYCLE OF OUR RUN (the full flip: `$88` is the build's at every run's entry, and no store of ours puts the ROM's
+    back); where the GEM trap's vector never held our handler, OUR SWITCH RAN NO CYCLE either; a run that took the
+    door itself and trapped behind it, or gave the door back, is of a routine that is said to — and a routine said
+    to give it back does; and wherever both runs were profiled, THE TWO RUNS TOOK THE SAME `trap #2`s through a
+    selector switch — ours through ours, the same bytes — to the cycle."""
     who = f"{split.symbol}: WHO RAN THE SELECTOR SWITCH —"
+    assert not split.in_the_rom_s, (
+        f"{who} our run spent {split.in_the_rom_s} cycles in THE ROM'S selector switch: `$88` is the build's own at "
+        f"every run's entry (`aes_event.GEM_TRAP_VECTOR`), so a `trap #2` of ours reached the ROM's handler through a "
+        f"vector the ROM's code put back, or one left unmapped")
     if not (split.ours_at_entry or split.ours_where_it_ends):
         assert not split.in_ours, f"{who} our run spent {split.in_ours} cycles in OUR selector switch and `$88` never held our handler"
     if split.in_ours and not split.ours_at_entry:
         assert split.symbol in THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN, (
             f"{who} our run took the door itself and spent {split.in_ours} cycles in our selector switch behind it: a "
-            f"snapshot row behind our door that `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` does not name")
+            f"row behind a door its own run took that `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` does not name")
+    gave_it_back = split.ours_at_entry and not split.ours_where_it_ends
+    assert gave_it_back == (split.symbol in THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN), (
+        f"{who} our run was entered behind our door and " + ("GAVE THE DOOR BACK (`$88` holds another handler where it "
+        "ends), and `THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN` does not name it" if gave_it_back else
+        "ends behind it still, and `THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN` names it: a routine named and not needed"))
     if split.the_rom_s_run_in_its_own is not None:
         assert split.in_ours + split.in_the_rom_s == split.the_rom_s_run_in_its_own, (
             f"{who} our run spent {split.in_ours} cycles in our selector switch and {split.in_the_rom_s} in the ROM's, "
@@ -3338,7 +3362,7 @@ class _StopImages:
 
     def _ours_as_the_rom_s(self, memory):
         """Our run's megabyte with every code address of ours mapped back to the ROM's: a bytearray of its own."""
-        ram = _mapped_back(bytearray(memory[:addrs.ST_RAM_BYTES]), self._relocations)
+        ram = mapped_back(bytearray(memory[:addrs.ST_RAM_BYTES]), self._relocations)
         map_code_slots(ram, self._records_holding_our_entries(ram), _backwards(self._forks))
         return ram
 
@@ -3482,12 +3506,14 @@ Ran = namedtuple("Ran", "memory watch cost stored streams odd in_the_rom_s_ctlmg
 Ran.__doc__ = """One shore's run from a machine's idle (`_run_to_its_next_idle`): its `memory`, `watch`, `cost`, what
 it `stored`, its off-image `streams` and `odd` accesses — and WHO RAN, cycles at PCs: in the ROM's ctlmgr, in our
 entry's body, in the AES's own ROM spans, in our `blob` (`our_cycles`) and its `glue`; and THE TRAP DOOR's — in the
-ROM's text of the narrow door's parts (`THE_ROM_S_DOOR`: the handler past its selector switch, its way out,
-aes_entry, gotopgm, crit_err), in the ROM's selector switch and in ours."""
-# THE ROM'S TEXT OF THE NARROW DOOR, less the selector switch both shores run from the same bytes (`AES_OWN_SPANS`):
-# what a run behind OUR door executes not one cycle of.
-THE_ROM_S_DOOR = tuple((max(lo, GEM_SELECTOR_SWITCH[1]) if lo == GEM_SELECTOR_SWITCH[0] else lo, hi)
-                       for part in aes_event.THE_NARROW_DOOR for lo, hi in aes_event.ROM_TEXT_OF[part.what])
+ROM's text of the door's parts (`THE_ROM_S_DOOR`: the handler past its selector switch, its way out, aes_entry,
+gotopgm, crit_err — and, since the full flip, justretf, the tick glue, the desk's trampoline, the button and motion
+glues), in the ROM's selector switch and in ours."""
+# THE ROM'S TEXT OF THE DOOR (`aes_event.THE_DOOR`: every part a takeover maps), less the selector switch both shores
+# run from the same bytes (`AES_OWN_SPANS`): what a run behind OUR door executes not one cycle of. (Each span once:
+# justretf is the text of two parts — its kept slot's, and the glue's, which a playback hands it in place of.)
+THE_ROM_S_DOOR = tuple(dict.fromkeys((max(lo, GEM_SELECTOR_SWITCH[1]) if lo == GEM_SELECTOR_SWITCH[0] else lo, hi)
+                                     for part in aes_event.THE_DOOR for lo, hi in aes_event.ROM_TEXT_OF[part.what]))
 
 
 def _run_to_its_next_idle(image, watch, blob):
@@ -3629,7 +3655,7 @@ def vet_the_machines_where_the_runs_end(who, blob, rom, ours, named, its_own=(),
     stack (`program_windows`), EACH REQUIRED TO DIFFER, per program (a door machine's accessory parked in the ROM's
     frames would hold the ROM's bytes there); and a wait's parameter that names a place of the waiter's own stack ON
     BOTH MACHINES, read as that (`parked_addresses_named`)."""
-    mapped = _mapped_back(bytearray(ours.memory[:addrs.ST_RAM_BYTES]), code_relocations(blob.elf, aes_ctlmgr.SYMBOL))
+    mapped = mapped_back(bytearray(ours.memory[:addrs.ST_RAM_BYTES]), code_relocations(blob.elf, aes_ctlmgr.SYMBOL))
     its = bytearray(rom.memory[:addrs.ST_RAM_BYTES])
     of_the_programs = [window for program in programs for window in program_windows(its, program)]
     equal = [(f"{lo:#x}", f"{hi:#x}", why) for lo, hi, why in of_the_programs if its[lo:hi] == mapped[lo:hi]]
@@ -3675,23 +3701,27 @@ def vet_who_ran(who, rom, ours, in_the_rom_s_code, in_our_turns):
 
 def vet_who_ran_the_door(who, rom, ours, behind_a_door):
     """WHO RAN THE TRAP DOOR, COUNTED AT THE PCs of a row's two runs from a machine's idle (`rom`, `ours`: the two
-    `Ran`; `behind_a_door`: our shore's machine holds the blob's handler in `$88`). BEHIND OUR DOOR: our run NOT ONE
-    CYCLE in the ROM's handler past its selector switch, its way out, aes_entry, gotopgm or crit_err
-    (`THE_ROM_S_DOOR`), NOR IN THE ROM'S SELECTOR SWITCH — every `trap #2` of every process, the desk's VDI calls
-    among them, enters ours; the ROM's run not one in ours; and THE TWO SELECTOR SWITCHES — the same bytes, cut out of
-    both own counts — COST THE SAME CYCLES, each on its own shore (the exemption, as an equality). ON A MACHINE WITH
-    NO DOOR OF OURS: our selector switch ran no cycle (its `$88` is the ROM's), and both shores ran the ROM's alike.
-    Refused by name."""
+    `Ran`; `behind_a_door`: our shore's machine holds the blob's handler in `$88` AS THE MACHINE STANDS). BEHIND OUR
+    DOOR — WHICH EVERY SUCH ROW IS, SINCE THE FULL FLIP: our run NOT ONE CYCLE in the ROM's text of any part of the
+    door (`THE_ROM_S_DOOR`: the handler past its selector switch, its way out, aes_entry, gotopgm, crit_err,
+    justretf, the tick glue, the trampoline, the button and motion glues), NOR IN THE ROM'S SELECTOR SWITCH — every
+    `trap #2` of every process, the desk's VDI calls among them, enters ours; the ROM's run not one in ours; and THE
+    TWO SELECTOR SWITCHES — the same bytes, cut out of both own counts — COST THE SAME CYCLES, each on its own shore
+    (the exemption, as an equality). A ROW FROM AN IDLE OF A MACHINE WITH NO DOOR OF OURS IS REFUSED: the registry
+    would map `$88` at the run's entry over a machine that holds the ROM's — a vector the machine's own boot never
+    took (until the full flip the desk's own machine was such a one, and its rows ran the ROM's switch on both
+    shores). Refused by name."""
     assert not rom.in_our_selector, f"{who}: WHO RAN — the ROM's run spent {rom.in_our_selector} cycles in OUR selector switch"
-    if not behind_a_door:
-        assert not ours.in_our_selector and ours.in_the_rom_s_selector == rom.in_the_rom_s_selector, (
-            f"{who}: WHO RAN — on a machine whose `$88` is the ROM's our run spent {ours.in_our_selector} cycles in our "
-            f"selector switch and {ours.in_the_rom_s_selector} in the ROM's, the ROM's run {rom.in_the_rom_s_selector}")
-        return
+    assert behind_a_door, (
+        f"{who}: WHO RAN — A ROW FROM AN IDLE ON A MACHINE WITH NO DOOR OF OURS: its `$88` is the ROM's as the machine "
+        f"stands, and the registry maps the build's own there at every run's entry (our run spent "
+        f"{ours.in_our_selector} cycles in our selector switch and {ours.in_the_rom_s_selector} in the ROM's, the ROM's "
+        f"run {rom.in_the_rom_s_selector}). Make the machine behind THE DOOR (`aes_ctlmgr.our_machine`)")
     assert not ours.in_the_rom_s_door and not ours.in_the_rom_s_selector, (
         f"{who}: WHO RAN — BEHIND OUR DOOR our run spent {ours.in_the_rom_s_door} cycles in the ROM's own trap door "
         f"({', '.join(f'[{lo:#x}, {hi:#x})' for lo, hi in THE_ROM_S_DOOR)}) and {ours.in_the_rom_s_selector} in its "
-        f"selector switch: a process the ROM's handler parked, a vector the ROM took back, a Line-F call into aes_entry")
+        f"selector switch: a process the ROM's handler parked, a vector the ROM took back, a Line-F call into aes_entry, "
+        f"an interrupt of the VDI's or a draw of the desk's through a longword the door left the ROM's")
     assert ours.in_our_selector == rom.in_the_rom_s_selector, (
         f"{who}: WHO RAN — the selector switch (the same bytes on both shores, in neither own count) cost our run "
         f"{ours.in_our_selector} cycles in ours and the ROM's {rom.in_the_rom_s_selector} in its own: the two runs did "
@@ -3736,6 +3766,15 @@ def _mapped_at_entry(image, relocations):
     for relocation in relocations:
         if relocation.at_entry:
             map_code_slots(image, relocation.slots, relocation.mapping)
+
+
+def as_our_run_is_entered(image, elf, symbol):
+    """`image` — a row's machine as the ROM made it — AS OUR RUN OF `symbol` ON THE BLOB `elf` IS ENTERED OVER IT: every
+    code slot the registry maps at entry given the build's own, in place (`$88` among them since the full flip). What
+    a watch of OUR run that reads the machine's vectors BEFORE the run begins is armed over (`aes_trap_order`): armed
+    over the ROM-made image it would wait for the first `trap #2` at a handler our run never enters. The image."""
+    _mapped_at_entry(image, [relocation for relocation in code_relocations(elf, symbol) if relocation.mapping])
+    return image
 
 
 def idle_to_idle_on(blob, who, woken):
@@ -5163,6 +5202,13 @@ def measured_rows(bench, jobs=SERIAL, shares=None):
     return [(ROWS[index], made[index]) for index in sorted(made)]
 
 
+# THE LEGEND'S LABEL FOR THE MACHINE A ROW FROM AN IDLE RUNS OVER ON OUR SIDE (ruling W4-R2; band 5 wave 4, slice F's fix
+# pass): the door's longwords are the harness's lay over the ROM's own stores, not a property of a ROM-made machine —
+# said in these words in the table's legend, as an our-boot row says `LABELLED STAGING` in its own name.
+THE_IDLE_ROWS_MACHINE_IS_A_LABELLED_STAGING = "A DOOR TAKEOVER, A LABELLED STAGING"
+DOOR_LONGWORDS_LAID = sum(len(aes_event.THE_MACHINE_S_VECTORS.get(part.what, ())) for part in aes_event.THE_DOOR)
+
+
 def table(bench, jobs=SERIAL):
     """Every row measured, as the lines `make bench` writes and STATUS.md quotes.
 
@@ -5221,7 +5267,16 @@ def table(bench, jobs=SERIAL):
         f"row of a machine with accessories is measured BEHIND OUR TRAP DOOR (vector $88 the build's own handler, "
         f"every accessory entered through the build's gotopgm), where an accessory's turn is ours too — its own text "
         f"the same bytes on both sides, every AES call it makes our door, marshal, opcode switch and routines against "
-        f"the ROM's — printed and held the same way (`an accessory's turn: ours N / ROM M = r`).",
+        f"the ROM's — printed and held the same way (`an accessory's turn: ours N / ROM M = r`). WHO RUNS THE TRAP: "
+        f"vector $88 holds the build's own `trap #2` handler as every Tier 3 run of ours is entered (the full flip) — "
+        f"the selector switch a VDI call runs is that handler's first {SELECTOR_SWITCH_BYTES} bytes on our side, the "
+        f"ROM's own on the ROM's: the same bytes, in neither own column, not one cycle of the ROM's on a kit call of "
+        f"ours. {THE_IDLE_ROWS_MACHINE_IS_A_LABELLED_STAGING}: every row from a machine's idle, the desk's own "
+        f"machine's too, runs on our side over the ROM's own boot with {DOOR_LONGWORDS_LAID} longwords of the machine "
+        f"(and each loaded program's first-entry frame) LAID BY THE HARNESS over what the ROM's own start-up stored, "
+        f"each given the build's own entry — so that at its idle no longword holds, by value, the ROM's copy of a "
+        f"routine the relocation registry declares ({len(aes_boot.routines_by_value())} routines, not every ROM "
+        f"routine). The Line-F call table behind vector $2c is the ROM's still: the desk's turns stay foreign windows.",
         "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "
         "by nature (a return address each build parks), which the ROM must write and the case's own differential "
         "still compares.",

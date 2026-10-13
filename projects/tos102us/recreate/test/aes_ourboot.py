@@ -486,7 +486,7 @@ def mapped_back(ram, blob, without=()):
     declarations LEFT UNMAPPED (their `what` — a test's, to show each mapping is needed; `THE_FIRST_STACK_S_TOP_LONGWORD`
     for the one that is no declaration)."""
     tier3, mapped = bench_tier3(), bytearray(ram)
-    tier3._mapped_back(mapped, [each for each in relocations_of(blob) if each.what not in without])
+    tier3.mapped_back(mapped, [each for each in relocations_of(blob) if each.what not in without])
     if THE_FIRST_STACK_S_TOP_LONGWORD not in without:
         held, start = case.long_in(mapped, THE_FIRST_STACK_S_TOP_LONGWORD), blob.entry(aes_boot.GEM_ENTRY_SYMBOL)
         ours_returns_to = start + RSC_INIT_RETURNS_TO - GEM_ENTRY
@@ -519,7 +519,7 @@ def compared(the_rom_s, ours, blob, without=()):
             within[name] = differing
         for lo, hi in spans:
             mine[lo:hi] = theirs[lo:hi]
-    return Compared(tuple(aes_boot._differing_runs(theirs, bytes(mine))), within)
+    return Compared(tuple(aes_boot.differing_runs(theirs, bytes(mine))), within)
 
 
 def vet_alike(who, the_rom_s, ours, blob, live):
@@ -742,7 +742,7 @@ def noise_proved(both, since, until, seed, also=(), on_ours=False):
     for lo, hi in left_out:
         mine[lo:hi] = theirs[lo:hi]
     registers = sorted(name for name in arrives.registers if arrives.registers[name] != run.ended.registers[name])
-    return tuple(aes_boot._differing_runs(bytes(theirs), bytes(mine))), registers, sum(hi - lo for lo, hi in dead)
+    return tuple(aes_boot.differing_runs(bytes(theirs), bytes(mine))), registers, sum(hi - lo for lo, hi in dead)
 
 
 def places_with_returns(both, blob):

@@ -2907,15 +2907,27 @@ SCREEN_MANAGER_ENTRY = RelocatedCode("the screen manager's entry", SCREEN_MANAGE
 #     THE SLOTS ARE WALKED FROM THE MACHINE (`first_entry_frames`: every process's `UDA_SUPER_SP`'s frame), never a
 #     static tuple — a slot not walked would be silently unmapped and the ROM's gotopgm run for that program.
 #   * THE DESK'S USER-BLOCK TRAMPOLINE (`$8c32`): gem_entry stores `$fe3f3e` there (`$fd9f9e`); no routine of ours
-#     stores it before wave 4's gem_entry — STILL PENDING, named in `DECLARED_NOT_YET_MAPPED_AT_TIER3`.
-# THE NARROW FLIP (ruling W3-R1): THE THREE ARE MAPPED WHERE A RUN ENDS, NEVER AT ITS ENTRY (`at_entry` False — the
-# glue's rule). A row's machine holds what it came with: the ROM's handlers on every machine the ROM made (the
-# snapshot's `$88` stays `$fe3ea6`, and every (V) row's VDI trap the ROM's selector switch), the build's on a DOOR
-# MACHINE (`aes_boot.ours_of` handed `THE_NARROW_DOOR`: the same three applied where the ROM's boot stands at its
-# first switchto `rte`). What our run then leaves of its own entries is given the ROM's names before any compare,
-# and a ROM address our run stored where the machine did not come with one is refused by name
-# (`tier3.vet_no_slot_names_the_rom`) — which is also what refuses A DOOR THE ROM TOOK BACK inside a run (retake,
-# restore_trap2, giveerr: the design's risk 5). WAVE 4's FULL FLIP makes `$88` an entry mapping for every row.
+#     stored it before wave 4's gem_entry — pending until that wave's slice B activated it (below).
+# THE NARROW FLIP (ruling W3-R1) MAPPED THE THREE WHERE A RUN ENDS, NEVER AT ITS ENTRY (`at_entry` False — the
+# glue's rule): a row's machine held what it came with, the ROM's handlers on every machine the ROM made, the build's
+# on a DOOR MACHINE (`aes_boot.ours_of` handed a door: its parts applied where the ROM's boot stands at its first
+# switchto `rte`). What our run then leaves of its own entries is given the ROM's names before any compare, and a ROM
+# address our run stored where the machine did not come with one is refused by name
+# (`tier3.vet_no_slot_names_the_rom`) — which is also what refuses A DOOR THE ROM TOOK BACK inside a run (a retake of
+# the ROM's storing `$fe3ea6`: the design's risk 5).
+# THE FULL FLIP (band 5 wave 4, slice F; ruling W3-R1's other half): `$88` IS MAPPED AT A RUN'S ENTRY TOO
+# (`GEM_TRAP_VECTOR.at_entry`) — EVERY TIER 3 RUN (`tier3.RomBench._call`, and the runs from an idle or an arrival) over
+# a machine whose vector holds the ROM's handler is entered with the build's own `trap #2` handler there, and every
+# `trap #2` it takes (a (V) row's VDI calls: the selector switch) enters OURS. NOT "every run of ours": a blob run made
+# through THE KIT'S OWN CLASS (`isr.blob()`, `aes_stack.blob_of`, `aes_switch.our_loop_run`, a transcription's run, ...)
+# reads no registry and is entered over the snapshot's `$fe3ea6` — `our_loop_run` takes `trap #2` INTO THE ROM'S handler
+# in three stack tests whose names say "the ROM's own handlers" (the first review's finding 2: 1,672 such runs counted
+# over the AES batteries; whether they should stand behind our door is a ruling, STATUS AWAITING (23)). And eight rows'
+# machines hold another value in `$88` (the vectors given back, a program's own): nothing is mapped there at entry
+# (`test_aes_shlib.py` holds the eight). It is
+# a mapping and no poke because the build's own start-up stores it there (`MAPPING_PROVED_BY`: install_trap2's and
+# retake's rows, and gem_main's stretches on the our-boot machine). THE OTHER TWO STAY EXIT-ONLY: `$404` and a
+# program's frame are what the machine came with until a run of ours stores them.
 # EACH IS PROVED A MAPPING, NOT A POKE, BY A ROW WHOSE OWN RUN STORES IT (`MAPPING_PROVED_BY`: held by
 # `test_aes_boot.py` — every door part has one, and un-mapping it reddens that row):
 #   `$88` by install_trap2's and retake's `.S` rows; `$404` by retake's and takeerr's; the first-entry frame by
@@ -2929,7 +2941,7 @@ AES_ENTRY_END = addrs.AES_ROM_AP_RDWR               # aes_entry, `$fe65aa..$fe65
 GOTOPGM_END = addrs.AES_ROM_SAVESTATE               # gotopgm, `$fe38b0..$fe38d3`
 CRIT_ERR_END = addrs.AES_ROM_DOS_EXEC               # crit_err, `$fe3cbe..$fe3d2d`; dos_exec follows
 USERBLK_TRAMPOLINE, USERBLK_TRAMPOLINE_END = addrs.AES_ROM_UB_TRAMPOLINE, addrs.AES_ROM_SIGNAL
-GEM_TRAP_VECTOR = RelocatedCode("the GEM trap's vector ($88)", (addrs.VECTOR_TRAP_GEM,), {addrs.GEM_TRAP2: "aes_rom_trap2"}, False)
+GEM_TRAP_VECTOR = RelocatedCode("the GEM trap's vector ($88)", (addrs.VECTOR_TRAP_GEM,), {addrs.GEM_TRAP2: "aes_rom_trap2"}, True)
 # ...the `.S` entries whose own run STORES it (what its mapping is proved by).
 GEM_TRAP_VECTOR_ENTRIES = ("aes_rom_install_trap2", "aes_rom_retake")
 PROGRAM_ENTRY = RelocatedCode("a loaded program's first-entry frame", (), {addrs.AES_ROM_GOTOPGM: "aes_rom_gotopgm"}, False)
@@ -2953,25 +2965,33 @@ def declare_critical_error_slots(*slots):
 
 
 # (EXIT-ONLY since band 5 wave 4's slice B activated it — what our own gem_entry stores is given the ROM's name where a
-# run ends; a row's machine AT ITS ENTRY holds what it came with until the full flip, slice F, as `$88` does.)
+# run ends; a row's machine AT ITS ENTRY holds what it came with. STILL SO AFTER THE FULL FLIP, slice F: no routine of
+# band ≤ 5 reads `$8c32` — the desk copies it — so an entry mapping would be one no row could miss; a takeover's DOOR
+# maps it instead (`THE_DOOR`, below), where the desk's draws then arrive at ours.)
 USERBLK_TRAMPOLINE_SLOT = RelocatedCode("the desk's user-block trampoline ($8c32)", (aes.AES_USERDEF_TRAMPOLINE,),
                                         {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, False)
 ROM_TEXT_OF = {GEM_TRAP_VECTOR.what: ((addrs.GEM_TRAP2, GEM_TRAP_EXIT_END), (addrs.AES_ROM_ENTRY, AES_ENTRY_END)),
                PROGRAM_ENTRY.what: ((addrs.AES_ROM_GOTOPGM, GOTOPGM_END),),
                CRITICAL_ERROR_VECTOR.what: ((addrs.AES_ROM_CRIT_ERR, CRIT_ERR_END),),
                USERBLK_TRAMPOLINE_SLOT.what: ((USERBLK_TRAMPOLINE, USERBLK_TRAMPOLINE_END),)}
-# THE NARROW DOOR (ruling W3-R1): the door a takeover is handed, and what Tier 3 maps where a run ends.
-THE_NARROW_DOOR = (GEM_TRAP_VECTOR, PROGRAM_ENTRY, CRITICAL_ERROR_VECTOR)
-# WHERE THE MACHINE ITSELF KEEPS A VECTOR OF THE DOOR — what a takeover maps (a recorder's ledger is no machine's).
+# THE TRAP DOOR'S THREE (wave 3's NARROW DOOR, ruling W3-R1): the first three parts of THE DOOR a takeover is handed
+# (`THE_DOOR`, below, where the rest of it is declared) — and the three NO ROUTINE MOVES FROM ONE SLOT TO ANOTHER
+# (`tier3.what_came_with`: a ROM address one of their slots came with excuses that slot alone).
+THE_TRAP_DOOR = (GEM_TRAP_VECTOR, PROGRAM_ENTRY, CRITICAL_ERROR_VECTOR)
+# WHERE THE MACHINE ITSELF KEEPS A PART OF THE DOOR IN A LONGWORD OF ITS OWN — what a takeover maps, each REQUIRED TO
+# HOLD THE ROM'S ROUTINE at the stop and OURS for as long as the door stands (a recorder's ledger is no machine's;
+# the longwords a value only TRAVELS through — the AES's contrl, a displaced-save — are no part of it: mapped back
+# where a run ends, by the registry). Completed where the door's other parts are declared (`THE_DOOR`).
 THE_MACHINE_S_VECTORS = {GEM_TRAP_VECTOR.what: (addrs.VECTOR_TRAP_GEM,), CRITICAL_ERROR_VECTOR.what: (ETV_CRITIC,)}
 # THE ROW(S) WHOSE OWN RUN STORES EACH (above): `{what: the symbols whose registered rows prove it a mapping}`.
 MAPPING_PROVED_BY = {GEM_TRAP_VECTOR.what: GEM_TRAP_VECTOR_ENTRIES, CRITICAL_ERROR_VECTOR.what: CRITICAL_ERROR_ENTRIES,
                      PROGRAM_ENTRY.what: PROGRAM_ENTRY_CALLERS}
-CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES, SCREEN_MANAGER_ENTRY, *THE_NARROW_DOOR)
+CODE_RELOCATIONS = (FORK_CODES, GLUE_CODES, TEXT_SITES, SCREEN_MANAGER_ENTRY, *THE_TRAP_DOOR)
 # EVERY RELOCATION DECLARED BESIDE THE TUPLE AND NOT IN IT, BY NAME: `{what: (why it is not mapped at Tier 3 yet, the
 # slice that owes its site)}`. `test_aes_boot.py` holds that each `RelocatedCode` of this module is in the tuple or
-# here — never neither — and that NO TIER 3 ROW RUNS BEHIND A DOOR while a declaration of THE NARROW DOOR is in it.
-# EMPTY FROM FLIP 4 TO WAVE 3; four (the trap door's) from slice M to the door flip; ONE since: the desk's trampoline.
+# here — never neither — and that NO TIER 3 ROW RUNS BEHIND A DOOR while a declaration of THE DOOR is in it.
+# EMPTY FROM FLIP 4 TO WAVE 3; four (the trap door's) from slice M to the door flip; one, then three, to wave 4's
+# slice B; EMPTY SINCE (the blocks below take each out where it is activated).
 WAVE_4 = "band 5 wave 4 (gem_entry in C)"
 DECLARED_NOT_YET_MAPPED_AT_TIER3 = {
     USERBLK_TRAMPOLINE_SLOT.what: ("no routine of ours stores it before gem_entry is ours", WAVE_4)}
@@ -3093,8 +3113,8 @@ SLOTS_WALKED_FROM_THE_MACHINE[USERBLK_TRAMPOLINE_SLOT.what] = userblk_slots
 # store the build's own justretf, tick glue and trampoline where the ROM's store the ROM's; the tick glue then travels
 # to the VDI's tick vector and through the AES's contrl by our own gsx_tick. So the three are among `CODE_RELOCATIONS`:
 # what our run stored of them is given the ROM's name before a compare and compared exactly. EXIT-ONLY, all three (the
-# glue's rule — a snapshot row's machine is the ROM-made one as it is; nothing of them at a row's entry, nor in a
-# takeover's door, before the full flip: slice F's, with the VDI's button and motion vectors). EACH IS PROVED A
+# glue's rule — a snapshot row's machine is the ROM-made one as it is; nothing of them at a row's entry: the full
+# flip, slice F's, puts them in a takeover's DOOR, below, with the VDI's button and motion vectors). EACH IS PROVED A
 # MAPPING BY ROWS CUT FROM THE BUILD'S OWN START-UP RUN — gem_main's stretches (`aes_ourboot.STRETCHES`): the megabyte
 # where one ends holds all three as OUR gem_entry stored them in that same run, and un-mapping any reddens them by
 # name (`test_aes_ourboot.py`). No declaration is pending.
@@ -3105,6 +3125,36 @@ for _activated in STORED_BY_GEM_ENTRY:
     del DECLARED_NOT_YET_MAPPED_AT_TIER3[_activated.what]
     MAPPING_PROVED_BY[_activated.what] = STORED_BY_GEM_ENTRY_PROVED_BY
 del _activated                          # (no second name for a declaration: the module's `RelocatedCode`s are read by scan)
+
+# ---- BAND 5 WAVE 4, SLICE F: THE FULL FLIP — THE DOOR -------------------------------------------------------------------------
+# THE DOOR A TAKEOVER IS HANDED (`aes_boot.ours_of`'s `door`, by `aes_ctlmgr.our_machine`: the accessory machines',
+# and the desk's own machine's since this slice): THE TRAP DOOR'S THREE, and EVERYTHING ELSE A MACHINE THE ROM'S gem_entry AND gem_main
+# MADE HOLDS BY VALUE OF A ROUTINE OF BAND ≤ 5 where the takeover stands (the boot's first switchto `rte`) — what
+# slice M's scan found the narrow door left the ROM's (`aes_boot.vet_no_entry_is_held_as_the_rom_s`: six longwords):
+#   * gem_entry's three by-value stores (`STORED_BY_GEM_ENTRY`): justretf in `$947a`; the tick glue in `$947e` and —
+#     handed on by gem_main's gsx_tick — in the VDI's tick vector; the desk's trampoline in `$8c32` and, copied from
+#     there by the desk, in its USERBLKs (walked);
+#   * THE TWO GLUES gsx_init handed the VDI (`GLUE_CODES`: the button's and the motion's vectors).
+# So behind THE DOOR no interrupt of the VDI's and no draw of the desk's is ENTERED AT the ROM's copy of a routine the
+# registry declares, and the scan finds none of those seventeen at a door machine's idle (`test_aes_boot_w4.py`, which
+# also holds what the scan does not look for and where it refuses). THESE EIGHT LONGWORDS ARE LAID BY THE HARNESS over
+# what the ROM's own start-up stored — a door TAKEOVER, A LABELLED STAGING (ruling W4-R2) — not a property a ROM-made
+# machine has. EACH ADDITION IS THE MAPPING OF A STORE THE BUILD'S OWN
+# START-UP MAKES — `MAPPING_PROVED_BY`: gem_main's stretches on the our-boot machine hold all of them where our own
+# gem_entry, gsx_tick and gsx_init stored them — never a poke; each un-mapped from the door reddens the scan and the
+# who-ran of the door machine's runs for ITS longword. THE REGISTRY'S OWN FLAGS DO NOT MOVE BY IT: the four stay
+# exit-only on a snapshot row (a machine the ROM made holds the ROM's until a run of ours stores).
+# ACCESSORY MACHINES STAY DOOR TAKEOVERS (ruling W4-R2); the Line-F table behind `$2c` is the ROM's (W4-R3, band 6).
+BUTTON_GLUE_END, MOTION_GLUE_END = addrs.AES_ROM_MOTION_GLUE, addrs.AES_ROM_DRAWRAT     # (each end the next routine's entry)
+ROM_TEXT_OF[GLUE_CODES.what] = ((addrs.AES_ROM_BUTTON_GLUE, BUTTON_GLUE_END), (addrs.AES_ROM_MOTION_GLUE, MOTION_GLUE_END),
+                                *ROM_TEXT_OF[JUSTRETF_SLOT.what])      # (...and the routine a playback hands in their place)
+THE_MACHINE_S_VECTORS.update({
+    USERBLK_TRAMPOLINE_SLOT.what: (aes.AES_USERDEF_TRAMPOLINE,), JUSTRETF_SLOT.what: (JUSTRETF_KEPT_AT,),
+    TICK_GLUE.what: (TICK_GLUE_KEPT_AT, vdi.field("LINEA", "USER_TIM").at),
+    GLUE_CODES.what: (vdi.field("LINEA", "USER_BUT").at, vdi.field("LINEA", "USER_MOT").at)})
+THE_DOOR = (*THE_TRAP_DOOR, *STORED_BY_GEM_ENTRY, GLUE_CODES)
+# ...and the rows whose own run stores the two glues: gem_main's stretches (its gsx_init's gsx_setmb), as the three.
+MAPPING_PROVED_BY[GLUE_CODES.what] = STORED_BY_GEM_ENTRY_PROVED_BY
 
 
 # ---- THE CYCLE PROFILE IS ONE SWITCH OF THE ORACLE'S: who has it on ------------------------------------------------------

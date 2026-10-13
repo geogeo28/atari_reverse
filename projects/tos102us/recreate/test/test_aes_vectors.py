@@ -30,6 +30,7 @@ import struct
 import pytest
 
 from harness import BASE_IMAGE, addrs, bench_tier3, emu, make_image
+from recreate_kit import rom_bench
 
 import aes
 import aes_event
@@ -39,6 +40,7 @@ import case
 import routines
 import vdi
 from case import merge_pokes
+from opcodes import DROP_STACK_BYTES, JSR_ABSOLUTE_LONG, LOAD_IMMEDIATE, PUSH_LONG_IMMEDIATE, PUSH_WORD_IMMEDIATE, RTS, TRAP_BIOS, TRAP_GEM
 
 RESTORE_TRAP2, INSTALL_TRAP2, RETAKE, GIVEERR, TAKEERR = (
     "AES_ROM_RESTORE_TRAP2", "AES_ROM_INSTALL_TRAP2", "AES_ROM_RETAKE", "AES_ROM_GIVEERR", "AES_ROM_TAKEERR")
@@ -258,6 +260,39 @@ def test_two_vectors_at_one_handler_are_refused_by_the_order_watch():
     assert shared in watch.first and len(watch.first) == len(order.VECTORS) - 1
     with pytest.raises(AssertionError, match="one handler behind two vectors"):
         watch.stopped(shared, emu.STACK_TOP, machine)
+
+
+# THE WATCH RE-READS THE VECTORS AT EVERY STOP — HELD BY A LABELLED CRAFTED RUN (band 5 wave 4, slice F's fix pass).
+# Until the full flip one row exercised it: sh_tographic's own retake moved `$88` inside our run and six VDI traps
+# followed. With `$88` the build's at every run's entry NO ROW MOVES THE VECTOR AND TRAPS AFTER (restore_trap2's row
+# takes no trap), and a watch that read the vectors once, at its arming, passed every battery (the first review's
+# mutant A8). So a run is made for it, of the ROM's own routines and no row's: a stub in this battery's band that
+# calls THE ROM'S restore_trap2 — vector `$88` := the VDI's own entry — then asks the BIOS what etv_critic holds
+# (Setexc($101, -1): the stop at which the vectors are read again), then takes `trap #2` with D0 = -1 (the VDI's
+# own entry answers its address, `$fc4ebc`'s arm: no VDI call is made) and returns.
+ASK_ONLY, SETEXC_FRAME_BYTES = aes.LONG_MASK, 2 * aes.WORD_BYTES + aes.LONG_BYTES       # Setexc's "tell me", and what its caller pushed
+A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS_AT = PROGRAM_S_CRITIC + 8
+A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS = b"".join((
+    JSR_ABSOLUTE_LONG, struct.pack(">I", addrs.AES_ROM_RESTORE_TRAP2),
+    PUSH_LONG_IMMEDIATE, struct.pack(">I", ASK_ONLY), PUSH_WORD_IMMEDIATE, struct.pack(">H", SETEXC_CRITIC),
+    PUSH_WORD_IMMEDIATE, struct.pack(">H", addrs.BIOS_SETEXC_FN), TRAP_BIOS, DROP_STACK_BYTES, struct.pack(">H", SETEXC_FRAME_BYTES),
+    LOAD_IMMEDIATE["d0"], struct.pack(">I", ASK_ONLY), TRAP_GEM, RTS))
+assert A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS_AT + len(A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS) <= gd.BAND_AT + gd.BAND_BYTES
+
+
+def test_labelled_craft_a_trap_taken_after_the_run_s_own_store_moved_its_vector_is_seen_because_every_stop_re_reads_them():
+    """A LABELLED CRAFT (above; no row's run): over GEM up, the stub's `trap #2` arrives at THE VDI'S OWN ENTRY — where
+    the vector points only since the run's own restore_trap2, and where NO WATCH WAS ARMED AT THE ENTRY — and the
+    ledger holds it, after the Setexc, with `$88` read as the VDI's at both. A watch armed once would hold the
+    Setexc alone."""
+    machine = make_image(merge_pokes(gem_up(), {A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS_AT: A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS}))
+    watch = order.TrapOrder(machine)
+    assert GEM_S_TRAP2 in watch.first and BIOS_VDI_DOOR not in watch.first, "armed at GEM's handler, as the machine stands"
+    final, _writes, registers = rom_bench.watched_original(machine, A_RUN_THAT_GIVES_THE_DOOR_BACK_AND_TRAPS_AT, watch)
+    rom_bench.vet_the_run_just_made("the crafted run that gives the door back and traps")
+    assert [call.trap for call in watch.made] == [order.BIOS, order.GEM] and watch.names()[0] == (order.BIOS, addrs.BIOS_SETEXC_FN)
+    assert [watch.held(nth, TRAP2) for nth in range(2)] == 2 * [BIOS_VDI_DOOR] == 2 * [case.long_in(final, TRAP2)]
+    assert registers["d0"] == addrs.VDI_ROM_ENTRY, "the VDI's own entry answered D0 = -1 with its address: the trap was taken there"
 
 
 # ---- the registry -------------------------------------------------------------------------------------------------------------

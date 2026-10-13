@@ -304,7 +304,8 @@ def the_rom_s_machine(woken):
 # with no door end in the ROM's (the desk parks last through it, or an accessory the ROM's trap handler parked);
 # BEHIND OUR DOOR an accessory that parks last parks through OURS — the door machine then stands in our idle where
 # the ROM-booted one stands in the ROM's, and the two differ besides in the two classes `aes_boot.by_nature` names
-# for that (the Line-F mask word; the BIOS's last register-save frame, the idle's own keyboard poll's).
+# for that (the Line-F mask word; the BIOS's last register-save frame, the idle's own keyboard poll's). THE DESK'S
+# OWN MACHINE BEHIND THE DOOR idles in the ROM's all the same: it loads no program, and the desk parks last.
 TWO_IDLES = (aes_boot.TRAP_SAVE_FRAME, aes_boot.LINE_F_MASK)
 
 
@@ -314,9 +315,9 @@ def _taken(key, blob):
     the ROM-booted one outside the classes such a machine differs in by nature — `TWO_IDLES` named exactly where
     the two idle in two dispatchers (each REFUSED by `compared` where the machines do not differ in it)."""
     if key == gc.THE_DESK:
-        taken = aes_boot.desk_machine(ours=blob)
+        taken = aes_boot.desk_machine(ours=blob, door=aes_event.THE_DOOR)
     else:
-        taken = aes_boot.accessory_machine(*gc.ACCESSORY_MODES[key], ours=blob, door=aes_event.THE_NARROW_DOOR)
+        taken = aes_boot.accessory_machine(*gc.ACCESSORY_MODES[key], ours=blob, door=aes_event.THE_DOOR)
     booted = gc.machine(key)
     beside = aes_boot.compared(booted, taken, also=TWO_IDLES if taken.idle != booted.idle else ())
     assert not beside.differing and booted.idle == aes_boot.THE_ROM_S, f"{key}: the takeover machine differs at {beside.differing[:4]}"
@@ -325,14 +326,20 @@ def _taken(key, blob):
 
 
 def our_machine(woken, blob):
-    """...and on ours: THE SAME BOOT WITH THE SCREEN MANAGER `blob`'s (the takeover machine) — AND, WHERE THE BOOT
-    LOADS ACCESSORIES, ITS TRAP DOOR TOO (the narrow door flip, band 5 wave 3: `aes_boot.accessory_machine(...,
-    door=aes_event.THE_NARROW_DOOR)` — every accessory entered through the blob's gotopgm, trapping into the blob's
-    handler, parked by our dispatcher; `$88` and `$404` the blob's). THE DESK'S OWN MACHINE HAS NO DOOR: nothing of
-    it traps into the AES (the desk calls the AES's routines directly), and wave 2's machine is kept byte for byte.
+    """...and on ours: THE SAME BOOT WITH THE SCREEN MANAGER `blob`'s (the takeover machine) — AND ITS DOOR
+    (`aes_boot.<machine>(..., door=aes_event.THE_DOOR)`: the narrow door flip, band 5 wave 3, for a boot that loads
+    accessories — every accessory entered through the blob's gotopgm, trapping into the blob's handler, parked by
+    our dispatcher; `$88` and `$404` the blob's — and, SINCE THE FULL FLIP (wave 4, slice F), THE WHOLE DOOR ON EVERY
+    SUCH MACHINE, THE DESK'S OWN AMONG THEM: `$88` is the build's at every row's entry, so the machine a row from an
+    idle runs over holds it as the machine stands — with `$404`, justretf's slot, the tick glue's two, the VDI's
+    button and motion vectors and the desk's trampoline slot: EIGHT LONGWORDS LAID BY THE HARNESS over what the ROM's
+    own start-up stored — A DOOR TAKEOVER, A LABELLED STAGING (ruling W4-R2; the table's legend says it for these rows)
+    — so that at the idle no longword holds, by value, the ROM's copy of a routine the registry declares). THE DESK'S
+    MACHINE IS WAVE 2's TAKEOVER STILL (ruling W4-R10: not re-based on the our-boot machine) — it loads no program,
+    so its door maps vectors alone, and outside those longwords it is wave 2's byte for byte (`test_aes_ctlmgr.py`).
     Held, where it is made, to be the ROM-booted one outside the classes such a machine differs in by nature
     (`aes_boot.by_nature`: per process behind a door), its screen manager parked in our text. ITS IDLE is the
-    ROM's dispatcher's on the desk's machine and OURS behind a door (`_taken`): a row's run is entered at the ROM's
+    ROM's dispatcher's on the desk's machine and OURS where an accessory parks last (`_taken`): a row's run is entered at the ROM's
     dispatcher's loop on both shores all the same (`tier3._run_to_its_next_idle`) — the dispatch that brings the
     first process in is the ROM's code on both, outside every window and held equal. `woken`: a row, or anything
     that names its `machine`."""
@@ -341,7 +348,7 @@ def our_machine(woken, blob):
 
 def our_machine_s_programs(woken, blob):
     """THE LOADED PROGRAMS OF THAT MACHINE, behind our door: `((pd, (lo, top)), ...)` — each one's stack span as the
-    door's takeover found it; none for a machine with no door (the desk's)."""
+    door's takeover found it; none for a machine that loads none (the desk's)."""
     taken = _taken(woken.machine, blob).takeover
     return tuple((program.pd, program.stack) for program in (taken.door.programs if taken.door else ()))
 

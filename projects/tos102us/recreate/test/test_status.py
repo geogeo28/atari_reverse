@@ -1104,6 +1104,97 @@ def test_the_ledger_holds_each_of_the_six_routines_as_the_census_says():
             assert address not in verified and how in unpriced.get(address, ""), f"{name} ({address:#x}): no ⚠️ row that says {how!r}"
 
 
+# ---- BAND 5 WAVE 4, SLICE F: THE FULL FLIP — its entry's counts are the registry's, the batteries' pins and the table's --------------
+# The entry states the flip in numbers a reader will quote: how many parts THE DOOR has and how many longwords of a
+# machine it maps; how many of the registry's declarations are mapped at a run's entry; the two switches' rows' traps
+# (the who-ran pins); who gives the door back; the registry's rows; the table's length; nothing pending. Each is read
+# here off what holds it. (What the entry gives as A PROBE'S CENSUS — how many rows take a `trap #2` on a kit call — it
+# labels so: one measuring pass, held by no test; the RULE, not one cycle of the ROM's selector switch on a kit call
+# of ours, is `tier3.vet_who_ran_the_selector_switch`'s, asked on every such call of every row's own test.)
+THE_FULL_FLIP_S_ENTRY = "WAVE 4 — SLICE F: THE FULL FLIP"
+_THE_FULL_FLIP_RE = re.compile(
+    r"THE DOOR of (?P<parts>\w+) parts over (?P<longwords>\w+) longwords of a machine.*?"
+    r"(?P<at_entry>\w+) of the registry's (?P<declared>\w+) declarations are mapped AT A RUN'S ENTRY.*?"
+    r"sh_tographic's (?P<graphic>\w+) VDI traps \((?P<graphic_cycles>\d+) cycles\) and sh_toalpha's (?P<alpha>\w+) "
+    r"\((?P<alpha_cycles>\d+)\).*?(?P<given_back>\w+) routines GIVE THE DOOR BACK.*?(?P<taken>\w+) routine TAKES IT by a run of its own.*?"
+    r"the registry's (?P<rows>[\d,]+) rows", re.S)
+THE_LEGEND_SAYS_WHO_RUNS_THE_TRAP = "WHO RUNS THE TRAP: vector $88 holds the build's own `trap #2` handler as every Tier 3 run of ours is entered"
+
+
+def test_the_full_flip_s_entry_quotes_the_registry_the_who_ran_pins_and_the_table():
+    import aes_event
+    import test_aes_shlib as switches
+    from harness import bench_tier3
+
+    entry = " ".join(_paragraph_from(_status(), THE_FULL_FLIP_S_ENTRY).split())      # (the ledger wraps where it will)
+    said = _THE_FULL_FLIP_RE.search(entry)
+    assert said, "the full flip's entry no longer states its counts in the sentences this test reads"
+    tier3 = bench_tier3()
+    traps = switches.VDI_CALLS_OF
+    graphic, alpha = traps[(switches.SH_TOGRAPHIC, switches.TO_GRAPHIC_ROW)], traps[(switches.SH_TOALPHA, switches.TO_ALPHA_ROW)]
+    assert {name: _number(value.lower()) for name, value in said.groupdict().items()} == {
+        "parts": len(aes_event.THE_DOOR),
+        "longwords": sum(len(aes_event.THE_MACHINE_S_VECTORS.get(part.what, ())) for part in aes_event.THE_DOOR),
+        "at_entry": sum(declared.at_entry for declared in aes_event.CODE_RELOCATIONS), "declared": len(aes_event.CODE_RELOCATIONS),
+        "graphic": graphic, "graphic_cycles": graphic * switches.THE_VDI_ARM_S_PASS_CYCLES,
+        "alpha": alpha, "alpha_cycles": alpha * switches.THE_VDI_ARM_S_PASS_CYCLES,
+        "given_back": len(tier3.THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN), "taken": len(tier3.THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN),
+        "rows": len(tier3.ROWS)}
+    assert aes_event.GEM_TRAP_VECTOR.at_entry, "the word itself"
+    pending, lines = _PENDING_RE.search(entry), _TABLE_LINES_RE.search(entry)
+    assert pending and _number(pending["count"].lower()) == len(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3) == 0
+    assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the full flip's entry states it"
+    # ...AND THE ONE LINE OF THE TABLE THE FLIP MOVED SAYS IT: the legend.
+    legend = [line for line in BENCH_TABLE.read_text().splitlines() if THE_LEGEND_SAYS_WHO_RUNS_THE_TRAP in line]
+    assert len(legend) == 1 and legend[0].startswith("`net`: ")
+
+
+# ---- ...AND ITS FIX PASS (after the two reviews): what the reworded sentences quote, and the legend's label -------------------------
+# The reviews found two claims worded wider than any test held ("no entry of band <= 5 is the ROM's by value"; "every
+# run of ours") and a staging stated as a property of the machine. The fix pass reworded them; this holds the
+# numbers the new sentences give — the scan's list, the Line-F entries held live, the one longword at deskmain's
+# entry, the rows not entered behind our door — to what derives each, and THE LEGEND'S LABEL to the table's line.
+_THE_SCAN_S_LIST_RE = re.compile(r"THE\s+SCAN'S LIST IS (?P<scanned>\w+) VALUES")
+_THE_HEADLINE_S_LIST_RE = re.compile(r"A ROUTINE THE REGISTRY DECLARES \((?P<scanned>\w+) routines")
+_THE_COPIED_ENTRIES_RE = re.compile(r"THE FIRST (?P<copied>\w+) ENTRIES OF THE LINE-F CALL TABLE")
+_AT_DESKMAIN_S_ENTRY_RE = re.compile(r"AT deskmain's ENTRY the takeover machine behind THE DOOR holds the ROM's tick glue in (?P<held>\w+) longword")
+_NOT_ENTERED_BEHIND_OUR_DOOR_RE = re.compile(
+    r"(?P<rows>\w+) rows' machines hold another value in `\$88` than the ROM's handler.*?(?P<takers>\w+) TAKE THE DOOR", re.S)
+THE_AES_ROW_S_SCAN = "the ROM's copy of a routine the registry declares ({} routines"
+
+
+def test_the_full_flip_s_fix_pass_quotes_the_scan_s_list_the_longword_at_deskmain_s_entry_and_the_legend_says_a_labelled_staging():
+    import aes_boot
+    import aes_event
+    import test_aes_boot_w4 as door_machines
+    import test_aes_shlib as switches
+    from harness import bench_tier3
+
+    status = _status()
+    entry = " ".join(_paragraph_from(status, THE_FULL_FLIP_S_ENTRY).split())
+    said = {}
+    for reading in (_THE_SCAN_S_LIST_RE, _THE_HEADLINE_S_LIST_RE, _THE_COPIED_ENTRIES_RE, _AT_DESKMAIN_S_ENTRY_RE, _NOT_ENTERED_BEHIND_OUR_DOOR_RE):
+        found = reading.search(entry)
+        assert found, f"the full flip's entry no longer has the sentence {reading.pattern!r} reads"
+        said.setdefault(reading.pattern, {name: _number(value.lower()) for name, value in found.groupdict().items()})
+    scanned = len(aes_boot.routines_by_value())
+    takers, never = switches.ROWS_THAT_TAKE_THE_DOOR, switches.ROWS_THAT_NEVER_HOLD_IT
+    assert list(said.values()) == [
+        {"scanned": scanned}, {"scanned": scanned}, {"copied": door_machines.LINE_F_ENTRIES_COPIED},
+        {"held": len(door_machines.HELD_AT_DESKMAIN_S_ENTRY)},
+        {"rows": sum(takers.values()) + sum(never.values()), "takers": sum(takers.values())}]
+    assert THE_AES_ROW_S_SCAN.format(scanned) in status, "the Components table's aes row states the scan's list too"
+    # ...AND THE TABLE'S LEGEND SAYS WHAT THE IDLE ROWS' MACHINE IS: a door takeover, laid by the harness, a labelled
+    # staging — in the words `tier3` names — with the door's longwords and the scan's list counted as the registry has them.
+    tier3 = bench_tier3()
+    legend, = [line for line in BENCH_TABLE.read_text().splitlines() if THE_LEGEND_SAYS_WHO_RUNS_THE_TRAP in line]
+    longwords = sum(len(aes_event.THE_MACHINE_S_VECTORS.get(part.what, ())) for part in aes_event.THE_DOOR)
+    for words in (tier3.THE_IDLE_ROWS_MACHINE_IS_A_LABELLED_STAGING, "A DOOR TAKEOVER", "A LABELLED STAGING", "LAID BY THE HARNESS",
+                  f"with {longwords} longwords of the machine", f"({scanned} routines, not every ROM routine)"):
+        assert words in legend, f"the table's legend no longer says {words!r}"
+    assert "EVERY run of ours" not in legend and "holds a ROM routine of band" not in legend, "the two sentences the reviews found too wide"
+
+
 # ---- SLICE B's FIX PASS: THE STRETCHES' LINE NET OF THE ROM'S LINE-F HANDLER, READ FROM THE TABLE ---------------------------
 # The table prints, under each of the sixteen stretches, its ratio NET OF THE ROM'S LINE-F HANDLER — the one place the
 # figures over the bar that the slice REPORTS are printed. Nothing read that line (a line capped at the bar, or printed

@@ -1357,7 +1357,7 @@ def trap_userdef_call(blob):
 # BESIDE THE BOUND, A RUN (ruling W3-R8: bound AND measured): the ROM's own accessory boot with THE DOOR TAKEOVER
 # (`aes_boot._TakingOver`, slice M's: the blob laid at the boot's first switchto `rte`, the GEM trap's vector and every
 # never-entered program's first-entry frame mapped — to THE BLOB'S OWN DOOR AS LINKED, `src/aes/trapdoor.S`, since the
-# narrow door flip: `aes_event.THE_NARROW_DOOR`, the critical-error vector with it; until then to a prototype door
+# narrow door flip — and since the full flip (band 5 wave 4) to THE WHOLE DOOR, `aes_event.THE_DOOR`; until then to a prototype door
 # assembled beside the blob, which gave these same depths to the byte) AND, AT THE SAME STOP, THE BLOB'S OWN VDI UNDER THE
 # TRAP (`aes_switch._our_vdi_under_the_trap`: the table's 71 slots, the Line-A vectors — the staging truth). From
 # that stop to the idle: the lowest STORE on each accessory's own stack, by the AES call it was made under; and WHO
@@ -1461,7 +1461,7 @@ def _door_run(first, second, shore, blob_s_bytes, our_vdi):
     memory = bytearray(BASE_IMAGE)
     memory[:aes_boot.RAM_BYTES] = machine.ram
     marks = _Marks(blob)
-    ours = aes_boot.ours_of(blob, door=aes_event.THE_NARROW_DOOR) if blob is not None else None
+    ours = aes_boot.ours_of(blob, door=aes_event.THE_DOOR) if blob is not None else None
     taking = _TheDoorTakenWithOurVdi(memory, ours, blob, our_vdi) if blob is not None else None
     handler = dict(ours.door[0].mapping)[addrs.GEM_TRAP2] if blob is not None else addrs.GEM_TRAP2
     observing = {handler + addrs.GEM_TRAP2_AES_ARM - addrs.GEM_TRAP2: ("an AES call", marks.at_an_aes_call)}

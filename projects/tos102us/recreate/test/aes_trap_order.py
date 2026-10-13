@@ -7,11 +7,16 @@ before or after the mouse form was set, a vector stored before or after the Sete
 the behaviour (an Mfree after the workstation closed; a critical error arriving between the two). Each battery's own
 ledger (the VDI's calls, GEMDOS's script, the BIOS's recorder) holds ONE door's sequence, and none the interleaving.
 
-HOW, ON BOTH SHORES WITH ONE WATCH. A trap arrives where its vector points, whichever build takes it: the ROM's
-routine and our build's on a blob run over the SAME machine, so the four handlers are the same four addresses on
-both shores. `TrapOrder` is a bench watch (`rom_bench.watched`) armed at them: at each arrival it notes the trap,
-the function the call names and the witness longwords, arms the trap's own return (a stop may not arm the PC it
-stands at) and, there, the handlers again. Nothing is staged, nothing costs a cycle, and no row's machine changes.
+HOW, ON BOTH SHORES WITH ONE KIND OF WATCH. A trap arrives where its vector points, whichever build takes it —
+READ OFF EACH SHORE'S OWN MACHINE: the ROM's routine runs over the row's machine as the ROM made it, our build's on a
+blob over that machine AS OUR RUN IS ENTERED (`tier3.as_our_run_is_entered`: since the full flip, band 5 wave 4,
+vector `$88` holds the build's own `trap #2` handler there — three handlers are the same addresses on both shores,
+GEM's is each shore's own). `TrapOrder` is a bench watch (`rom_bench.watched`) armed at them: at each arrival it
+notes the trap, the function the call names and the witness longwords, arms the trap's own return (a stop may not
+arm the PC it stands at) and, there, the handlers again — as the vectors stand THEN. Nothing is staged, nothing costs
+a cycle, and no row's machine changes. (Until the full flip one image armed both watches. With `$88` ours at entry
+that left OUR watch BLIND to every `trap #2` taken before another trap's stop re-read the vectors — sh_toalpha's
+first call, the arrow's `vsc_form`: found by running, the design's risk 5.)
 
 WHAT IT HOLDS, AND WHAT IT DOES NOT: the order of the m68k build's traps on THE TWO BLOBS, against the ROM's. THE HOST
 BUILD'S ORDER IS HELD BY NOTHING — it takes no trap (its doors are hooks and direct C calls, the BIOS's with no hook
@@ -65,8 +70,8 @@ def _function(trap, sp, memory):
 
 
 class TrapOrder:
-    """The watch (above). `made`: a `Call` each, in order. `machine`: the run's memory at its entry (the vectors a
-    routine re-points — install_trap2's, a scripted handler's — are read again at every stop)."""
+    """The watch (above). `made`: a `Call` each, in order. `machine`: the run's memory AT ITS ENTRY, on the shore it
+    watches (the vectors a routine re-points — install_trap2's, a scripted handler's — are read again at every stop)."""
 
     def __init__(self, machine, witnesses=WITNESSES):
         self.made, self._witnesses, self._returns = [], tuple(witnesses), []
@@ -94,8 +99,8 @@ class TrapOrder:
 def on_both_shores(tier3, bench, row, witnesses=WITNESSES):
     """`row` (a Tier 3 row of a C routine) measured on `bench` with BOTH runs watched: `(the ROM's TrapOrder, ours)` —
     and the row's whole second differential made on the way (the image, the answer, the registers)."""
-    machine = make_image(row.pokes)
-    the_rom_s, ours = TrapOrder(machine, witnesses), TrapOrder(machine, witnesses)
+    the_rom_s = TrapOrder(make_image(row.pokes), witnesses)
+    ours = TrapOrder(tier3.as_our_run_is_entered(make_image(row.pokes), bench.elf, row.symbol), witnesses)
     tier3._measure_call(bench, row, watch=ours, original_watch=the_rom_s)
     ours.made = _given_the_rom_s_names(ours.made, witnesses, tier3.code_relocations(bench.elf, row.symbol))
     return the_rom_s, ours

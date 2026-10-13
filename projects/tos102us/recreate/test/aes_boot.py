@@ -100,9 +100,14 @@ first-entry frame of every loaded program, WALKED FROM THE MACHINE. Every access
 gotopgm, traps into our handler and parks through our dispatcher; the desk stays the ROM's. WHO RAN is a cycle
 profile (the ROM's door text: zero cycles from the lay on), the classes are per process, and a door the ROM took
 back is refused by name. THE DOOR IS A PARAMETER, each part answered by the blob's own entry, found by symbol
-(`src/aes/trapdoor.S`, `switch.S`, `gemdosif.S`): Tier 3 hands `aes_event.THE_NARROW_DOOR` (the accessory machines'
-rows, since the narrow door flip — `aes_ctlmgr.our_machine`). The prototype door the takeover was first proved
-with (`test/acc/protodoor.S`) is retired: the shipped door gave the same machines.
+(`src/aes/trapdoor.S`, `switch.S`, `gemdosif.S`, `gemstart.S`'s three, `irq.S`'s glues): Tier 3 hands
+`aes_event.THE_DOOR` (the accessory machines' rows since the narrow door flip, the desk's own machine's since the
+full flip — `aes_ctlmgr.our_machine`): the trap door's three AND, since the full flip, what the ROM's gem_entry and
+gem_main stored by value before the takeover's stop — justretf's slot, the tick glue's two, the desk's trampoline
+slot, the VDI's button and motion vectors — so that the scan finds, at a door machine's idle, no live longword
+holding by value the ROM's copy of a routine the registry declares (`vet_no_entry_is_held_as_the_rom_s`: seventeen
+routines, not every ROM routine — the section "THE SCAN" below). The prototype door the takeover was first proved with
+(`test/acc/protodoor.S`) is retired: the shipped door gave the same machines.
 THE THIRD CAPTURE (`seven_accessory_preinit`, `make preinit-acc7`): seven accessories in the drive, one more than
 the loader takes — `seven_accessory_machine`. Its boot saturates the kit's write ledger, so no takeover is made of it
 (refused by name); and a boot that stores at `$0..$7` — the ROM's shadow: a bus error on the machine — is refused.
@@ -115,7 +120,7 @@ blank disk plus the ROM's own default DESKTOP.INF — `inf_machine`, its `#E` li
 watched: `trampoline_stops`); THE SERVED DOOR (`served`: deskmain and the shell's built-ins answered AT THEIR ENTRY,
 a labelled argument class — the one door here through which a routine is not run); THE OUR-BOOT MACHINE'S PREMISES
 vetted against the ROM's own run (`vet_ours_can_be_laid_at_gem_entry`); and THE SCAN (`entries_held_by_value`,
-`vet_no_entry_is_held_as_the_rom_s`): no entry of band ≤ 5 held by value as the ROM's.
+`vet_no_entry_is_held_as_the_rom_s`): no longword holding, by value, the ROM's copy of a routine the registry declares.
 THE OUR-BOOT MACHINE (band 5 wave 4, slice B; ruling W4-R1 — A LABELLED STAGING, said in the name of every row and
 test that uses it): `booted(..., ours=, laid=AT_GEM_ENTRY)`, `our_desk_machine`, `our_inf_machine` — the pre-init
 machine with THE BLOB LAID WHERE THE RUN STANDS BEFORE ITS FIRST INSTRUCTION and the run ENTERED AT THE BLOB'S OWN
@@ -609,11 +614,13 @@ def _the_frame_the_handler_is_entered_over(memory):
 # so that the two are held to make ONE MACHINE): on an accessory boot both accessories are entered, take their first
 # `trap #2` and park INSIDE THE ROM'S aes_entry before the screen manager first runs — a process the ROM's gotopgm
 # entered and the ROM's trap handler parked is the ROM's for as long as it lives.
-# THE DOOR (`Ours.door`, of `ours_of(blob, door=)`; none by default): the registry's declarations of the trap door
-# (`aes_event.THE_NARROW_DOOR`) a takeover applies beside the screen manager's entry, each the same kind
-# of mapping and nothing else —
-#   * a VECTOR (`aes_event.GEM_TRAP_VECTOR`, `CRITICAL_ERROR_VECTOR`): the longword must hold the ROM's handler (a
-#     vector the ROM has not installed yet, or has given back, is refused by name) and is given the blob's;
+# THE DOOR (`Ours.door`, of `ours_of(blob, door=)`; none by default): the registry's declarations (`aes_event.THE_DOOR`,
+# or some of them) a takeover applies beside the screen manager's entry, each the same kind of mapping and nothing
+# else —
+#   * a LONGWORD OF THE MACHINE'S OWN (`aes_event.THE_MACHINE_S_VECTORS`: `$88`, `$404` — and, since the full flip,
+#     justretf's slot, the tick glue's kept longword and the VDI's tick vector, its button and motion vectors, the
+#     desk's trampoline slot): the longword must hold the ROM's routine (one the ROM has not stored yet, or has given
+#     back, is refused by name) and is given the blob's;
 #   * A LOADED PROGRAM'S FIRST-ENTRY FRAME (`aes_event.PROGRAM_ENTRY`): WALKED FROM THE MACHINE — every process whose
 #     UDA's stack pointer names a frame holding the ROM's gotopgm, vetted never entered — and given the blob's.
 # VETTED AT THE STOP, each refused by name (`_vet_the_boot_s_first_entry`, `_vet_never_entered`, `_vetted_slots`,
@@ -712,9 +719,11 @@ def _ours_at(elf, base, end, image, door=()):
 
 def ours_of(blob, door=()):
     """`blob` (a `RomBench`: the bench blob's or the shipped one's) AS A TAKEOVER READS IT: an `Ours` — its entry
-    FOUND BY SYMBOL in its ELF, and REFUSED BY NAME where the blob has none. `door`: THE TRAP DOOR IS OURS TOO — the
-    registry's declarations the takeover maps beside the screen manager's entry (`aes_event.GEM_TRAP_VECTOR`,
-    `PROGRAM_ENTRY`, `CRITICAL_ERROR_VECTOR`), each entry found by symbol or the blob refused."""
+    FOUND BY SYMBOL in its ELF, and REFUSED BY NAME where the blob has none. `door`: THE DOOR IS OURS TOO — the
+    registry's declarations the takeover maps beside the screen manager's entry (`aes_event.THE_DOOR`'s seven since the
+    full flip — the trap door's three, `GEM_TRAP_VECTOR`, `PROGRAM_ENTRY`, `CRITICAL_ERROR_VECTOR`; gem_entry's three
+    by-value stores; the two glues — or some of them: a test's own door), each entry found by symbol or the blob
+    refused."""
     declared = tuple((part.what, tuple(sorted(part.symbols.items()))) for part in door)
     return _ours_at(str(blob.elf), blob.base, blob.end, bytes(blob.blob), declared)
 
@@ -2062,7 +2071,7 @@ def _of_a_program(rom, ours, program):
     return classes
 
 
-def _differing_runs(one, other):
+def differing_runs(one, other):
     """Every maximal `(address, length)` run two megabytes differ at."""
     runs = []
     for block in range(0, len(one), COMPARED_BLOCK_BYTES):
@@ -2079,7 +2088,11 @@ def _differing_runs(one, other):
 
 def mapped_back(machine):
     """`machine`'s megabyte with every code address of the registry's slots given THE ROM'S NAME (ours -> the ROM's:
-    the screen manager's entry, where a slot holds it) — what a takeover machine is compared as."""
+    the screen manager's entry, where a slot holds it; the longwords its door mapped) — what a takeover machine is
+    compared as. OF A MACHINE AS ITS TAKEOVER LEFT IT: where a continuation behind THE DOOR has run OUR glue, code
+    addresses have TRAVELLED out of those longwords (our fork functions into the fork queue, the trampoline into the
+    desk's USERBLKs) — such a machine is compared through the registry itself (`tier3.mapped_back`:
+    `test_aes_boot_w4.py`), and compared here it differs there by name."""
     ram = bytearray(machine.ram)
     if machine.ours is not None:
         _mapped(ram, aes_event.SCREEN_MANAGER_ENTRY.slots, {machine.ours.entry: ROM_ENTRY})
@@ -2108,7 +2121,7 @@ def compared(rom, ours, also=()):
     unneeded = [name for name in also if not within[name]]
     if unneeded:
         raise Refused(f"the two machines do not differ in {unneeded}: a class named beside and not needed")
-    return Compared(_differing_runs(theirs, bytes(mine)), within)
+    return Compared(differing_runs(theirs, bytes(mine)), within)
 
 
 def noised(machine, spans, seed):
@@ -2330,7 +2343,7 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
                          served=(*boot.served, label))
 
 
-# ---- THE SCAN: NO ENTRY OF BAND ≤ 5 HELD BY VALUE AS THE ROM'S (band 5 wave 4; the design's §3.4) ----------------------------
+# ---- THE SCAN: NO LONGWORD HOLDS, BY VALUE, THE ROM'S COPY OF A ROUTINE THE REGISTRY DECLARES (band 5 wave 4; the design's §3.4) ----
 # WHAT A DOOR MUST MAP is decided by the machine, not by a list someone keeps: every longword of the megabyte that holds
 # THE ROM'S ADDRESS OF A ROUTINE THE REGISTRY DECLARES (`aes_event`'s `RelocatedCode`s, mapped or pending — the routines
 # the ROM stores BY VALUE and a build stores as its own; and `gem_entry`) is found by a scan (`entries_held_by_value`)
@@ -2345,9 +2358,22 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
 #   * ELSEWHERE (`UNACCOUNTED`): a live longword no declaration knows — a slot the registry is missing.
 # The blob's own span is not scanned (it is code: a ROM address in it is a constant of the build, held by the census).
 # THE VET (`vet_no_entry_is_held_as_the_rom_s`): a machine called ours with a finding or an unaccounted holder is
-# REFUSED BY NAME, every one listed. On the machines made before wave 4's activation it REFUSES — the narrow door maps
-# three declarations of what the scan finds — and what it names there is what THE DOOR must gain (`test_aes_boot_w4.py`
-# pins the list, so a holder added or mapped moves a test).
+# REFUSED BY NAME, every one listed. BEHIND THE DOOR (the full flip) IT PASSES at every door machine's idle and where a
+# continuation ends; behind the trap door's three alone — wave 3's narrow door — it refuses, naming the six longwords
+# the full flip's four parts map (`test_aes_boot_w4.py` pins both, so a holder added or mapped moves a test).
+# WHAT THE SCAN IS NOT (band 5 wave 4, slice F's fix pass — the second review's finding 1):
+#   * IT IS A LIST OF SEVENTEEN VALUES (`routines_by_value`: the sixteen routines the registry's declarations name, and
+#     gem_entry), NOT THE BUILD'S SYMBOL SET: a ROM routine the registry does not declare passes it wherever it lies —
+#     in a live longword nobody declared, and IN A LONGWORD OF THE DOOR ITSELF. What refuses a wrong value in a door
+#     longword is `vet_the_door_stands` (anything there but the blob's own entry). On every door machine the reviewer's
+#     wider scan found twelve live longwords holding OTHER ROM routines, none of which a door can map (the Line-F
+#     table's first nine entries in gem_entry's RAM copy; aes_dsptch as a saved register; dos_alloc twice; a resume PC
+#     of the desk — `test_aes_boot_w4.py` names them): the scan over every named entry is an option put to the user.
+#   * IT COMPARES THE WHOLE LONGWORD: a routine's address under a non-zero top byte is another value to it.
+#   * IT IS RUN AT AN IDLE AND WHERE A CONTINUATION ENDS, NOWHERE ELSE. At deskmain's entry a door machine still holds
+#     the ROM's tick glue in the AES's contrl (`aes.AES_GSX_CONTRL_PTR`: the ROM's gsx_tick's hand-in from before the
+#     takeover's stop, a slot of the registry a value TRAVELS through — no longword of the machine's own, so no door
+#     maps it) and the scan refuses there, for that one longword; gone by the first idle.
 IN_A_SLOT, UNACCOUNTED = "a slot of the registry: {}", "no slot of the registry and no dead span"
 THE_BIOS_S = "gem_entry's address, stored by the BIOS: not mapped"
 DEAD_PROCESS_STACK, DEAD_FORK_ENTRY = "{}'s stack below its parked stack pointer", "a fork-queue entry outside the queue's live run"
@@ -2437,6 +2463,6 @@ def vet_no_entry_is_held_as_the_rom_s(machine):
     left = [each for each in held if not each.dead and each.where != THE_BIOS_S]
     if left:
         named = "; ".join(f"${each.slot:x} holds {each.routine:#x} (`{each.symbol}`): {each.where}" for each in left)
-        raise Refused(f"AN ENTRY OF BAND ≤ 5 IS HELD BY VALUE AS THE ROM'S on a machine called ours — {len(left)} "
+        raise Refused(f"A ROUTINE THE REGISTRY DECLARES IS HELD BY VALUE AS THE ROM'S on a machine called ours — {len(left)} "
                       f"longword(s): {named}. The door maps what it declares; these it left the ROM's")
     return held

@@ -801,30 +801,72 @@ def test_who_ran_is_asked_of_a_row_of_ctlmgr_s_own(monkeypatch):
 THE_OS_S_OWN_PROCESSES = 2              # the screen manager's PD and the desk's: every PD past them is a loaded program's
 
 
-def test_the_accessory_machines_rows_run_behind_our_door_and_the_desk_s_do_not():
-    """WHICH MACHINE OUR SHORE'S RUNS START FROM (`aes_ctlmgr.our_machine`): for every machine with accessories, the
-    DOOR machine — vector `$88` and `$404` the blob's own handlers, every loaded program taken (its stack span
-    handed the watches), and standing in OUR dispatcher's idle where the ROM-booted one stands in the ROM's; for the
-    desk's own machine, the takeover with no door, as wave 2 made it: its vectors the ROM's, no program."""
+def test_every_row_from_an_idle_runs_behind_our_door__the_desk_s_own_machine_s_too():
+    """WHICH MACHINE OUR SHORE'S RUNS START FROM (`aes_ctlmgr.our_machine`): THE DOOR MACHINE, for every machine —
+    vector `$88` and `$404` the blob's own handlers, and every other longword the door maps the blob's own routine
+    (the full flip: justretf's slot, the tick glue's two, the trampoline's, the VDI's button and motion vectors);
+    every loaded program taken (its stack span handed the watches). A machine with accessories stands in OUR
+    dispatcher's idle where the ROM-booted one stands in the ROM's; THE DESK'S OWN MACHINE — no door until the full
+    flip — loads no program, so its door is vectors alone and it idles in the ROM's as the ROM-booted one does."""
     blob = _shipped()
     for key in (gc.THE_DESK, A, W, gc.HIDING):
         woken = types.SimpleNamespace(machine=key)
         ours, programs = make_image({0: cm.our_machine(woken, blob)}), cm.our_machine_s_programs(woken, blob)
-        assert tier3().behind_our_door(ours, blob) == (key != gc.THE_DESK) == bool(programs)
+        assert tier3().behind_our_door(ours, blob) and bool(programs) == (key != gc.THE_DESK)
         handler, critic = (case.long_in(ours, at) for at in (addrs.VECTOR_TRAP_GEM, aes_event.ETV_CRITIC))
-        if key == gc.THE_DESK:
-            assert (handler, critic) == (addrs.AES_ROM_TRAP2, addrs.AES_ROM_CRIT_ERR)
-            continue
         assert (handler, critic) == (blob.entry("aes_rom_trap2"), blob.entry("aes_rom_crit_err"))
-        assert [pd for pd, _stack in programs] == [pd for pd in aes_event.processes_of(ours)[THE_OS_S_OWN_PROCESSES:]
-                                                   if case.long_in(ours, pd + aes.PD_UDA)]
-        assert cm._taken(key, blob).idle == aes_boot.OURS != gc.machine(key).idle
+        rom_s = gc.machine(key)
+        for part in aes_event.THE_DOOR:
+            for slot in aes_event.THE_MACHINE_S_VECTORS.get(part.what, ()):
+                assert part.symbols[rom_s.long(slot)] and case.long_in(ours, slot) == blob.entry(part.symbols[rom_s.long(slot)]), f"{slot:#x}"
+        if key != gc.THE_DESK:          # (the desk's own machine: the spare static PD has its UDA and no program)
+            assert [pd for pd, _stack in programs] == [pd for pd in aes_event.processes_of(ours)[THE_OS_S_OWN_PROCESSES:]
+                                                       if case.long_in(ours, pd + aes.PD_UDA)]
+        assert (cm._taken(key, blob).idle == aes_boot.OURS) == (key != gc.THE_DESK) and rom_s.idle == aes_boot.THE_ROM_S
+
+
+def test_the_desk_s_machine_behind_the_door_is_wave_2_s_takeover_but_for_the_longwords_the_door_maps(blob):
+    """RULING W4-R10, HELD: the desk's own machine behind THE DOOR is wave 2's takeover machine — the same boot, the
+    same stop, the same megabyte — BUT FOR THE EIGHT LONGWORDS THE DOOR MAPS (no program is loaded: no frame), each
+    the ROM's routine there and the blob's own here, and the same registers at the idle. The door's who-ran says our
+    `trap #2` handler ran from the lay on (the desk's own VDI calls) and no ROM text of any part did."""
+    built = blob
+    wave_2_s, behind = aes_boot.desk_machine(ours=built), cm._taken(gc.THE_DESK, built)
+    mapped = behind.door.vectors
+    assert set(mapped) == {slot for part in aes_event.THE_DOOR for slot in aes_event.THE_MACHINE_S_VECTORS.get(part.what, ())} and len(mapped) == 8
+    assert behind.door.programs == () and wave_2_s.door is None and (behind.idle, behind.registers) == (wave_2_s.idle, wave_2_s.registers)
+    differing = aes_boot.differing_runs(wave_2_s.ram, behind.ram)
+    assert {at for at, length in differing for at in range(at, at + length)} <= {at for slot in mapped for at in range(slot, slot + aes.LONG_BYTES)}
+    for slot, (the_rom_s, ours) in mapped.items():
+        assert (wave_2_s.long(slot), behind.long(slot)) == (the_rom_s, ours) and built.base <= ours < built.end
+    ran = behind.door.ran
+    assert all(in_the_rom_s == 0 for _ours, in_the_rom_s in ran.values()) and ran[aes_event.GEM_TRAP_VECTOR.what][0] > 0
+
+
+def test_who_ran_the_door_reads_the_rom_s_text_of_every_part_of_the_door():
+    """`tier3.THE_ROM_S_DOOR` — what a run behind our door executes NOT ONE CYCLE of — IS THE ROM'S TEXT OF EVERY PART
+    OF THE DOOR, spelt here by the ROM's own addresses: the trap handler past its selector switch with its way out,
+    aes_entry, gotopgm, crit_err — AND, SINCE THE FULL FLIP, justretf, the tick glue, the desk's trampoline, the
+    button and motion glues. (No Tier 3 row takes an interrupt through the VDI's vectors — a row's deliveries are
+    laid — so a who-ran blind to the glue's text would be missed by no row: it is held here, and the glue's run by
+    the continuations of `test_aes_boot_w4.py`.) Each span once, none over the selector switch."""
+    spans = tier3().THE_ROM_S_DOOR
+    assert len(spans) == len(set(spans)) and set(spans) == {
+        (addrs.GEM_TRAP2_PTERM_ARM, addrs.AES_ROM_UB_TRAMPOLINE), (addrs.AES_ROM_ENTRY, addrs.AES_ROM_AP_RDWR),
+        (addrs.AES_ROM_GOTOPGM, addrs.AES_ROM_SAVESTATE), (addrs.AES_ROM_CRIT_ERR, addrs.AES_ROM_DOS_EXEC),
+        (addrs.AES_ROM_JUSTRETF, addrs.AES_ROM_TICK_GLUE), (addrs.AES_ROM_TICK_GLUE, addrs.AES_ROM_CART_INIT),
+        (addrs.AES_ROM_UB_TRAMPOLINE, addrs.AES_ROM_SIGNAL),
+        (addrs.AES_ROM_BUTTON_GLUE, addrs.AES_ROM_MOTION_GLUE), (addrs.AES_ROM_MOTION_GLUE, addrs.AES_ROM_DRAWRAT)}
+    selector_lo, selector_hi = tier3().GEM_SELECTOR_SWITCH
+    assert not any(lo < selector_hi and selector_lo < hi for lo, hi in spans), "the selector switch: both shores run it from the same bytes"
+    assert all(aes.AES_TEXT[0] <= lo < hi <= aes.AES_TEXT[1] for lo, hi in spans)
 
 
 def test_who_ran_the_door_is_refused_each_way_on_two_runs_counted_by_hand():
     """`tier3.vet_who_ran_the_door`'s OWN ARITHMETIC, over stand-in runs. BEHIND OUR DOOR: our run not one cycle in the
     ROM's door nor in its selector switch, the ROM's none in ours, and the two selector switches the same cycles —
-    each refused by name. ON A MACHINE WITH NO DOOR: our selector switch silent and the ROM's alike on both."""
+    each refused by name. ON A MACHINE WITH NO DOOR: REFUSED, whatever the counts (the full flip: `$88` is the
+    build's at every run's entry — a row from an idle runs over a machine that holds it as it stands)."""
     ran = lambda **counted: types.SimpleNamespace(**{"in_the_rom_s_door": 0, "in_the_rom_s_selector": 0, "in_our_selector": 0, **counted})   # noqa: E731
     rom, ours = ran(in_the_rom_s_door=1450, in_the_rom_s_selector=920), ran(in_our_selector=920)
     vet = tier3().vet_who_ran_the_door
@@ -836,19 +878,18 @@ def test_who_ran_the_door_is_refused_each_way_on_two_runs_counted_by_hand():
             vet("a row", rom, types.SimpleNamespace(**{**vars(ours), **astray}), True)
     with pytest.raises(AssertionError, match="the ROM's run spent 74 cycles in OUR selector switch"):
         vet("a row", types.SimpleNamespace(**{**vars(rom), "in_our_selector": 74}), ours, True)
-    no_door = ran(in_the_rom_s_selector=920)
-    vet("a row", rom, no_door, False)
-    for astray in (dict(in_our_selector=92), dict(in_the_rom_s_selector=828)):
-        with pytest.raises(AssertionError, match="on a machine whose `\\$88` is the ROM's"):
-            vet("a row", rom, types.SimpleNamespace(**{**vars(no_door), **astray}), False)
+    for no_door in (ran(in_the_rom_s_selector=920), ours):
+        with pytest.raises(AssertionError, match="A ROW FROM AN IDLE ON A MACHINE WITH NO DOOR OF OURS: its `\\$88` is the ROM's"):
+            vet("a row", rom, no_door, False)
 
 
-@pytest.mark.parametrize("label", (THE_CLOSER, THE_BAR), ids=("behind our door", "the desk's machine: no door"))
+@pytest.mark.parametrize("label", (THE_CLOSER, THE_BAR), ids=("a machine with accessories", "the desk's own machine"))
 def test_who_ran_the_door_is_asked_of_both_kinds_of_row_and_reads_real_cycles(label, monkeypatch):
     """ITS CALL, held by itself (the guard is silent on honest numbers): a row of ctlmgr's own and a handler's row
-    each ask it once — behind our door with our selector switch's cycles equal to the ROM's own and both above zero,
-    our run none in the ROM's door where the ROM's run spent some (the accessory's own traps); on the desk's machine
-    with our selector switch silent."""
+    each ask it once, BEHIND OUR DOOR ON EVERY MACHINE (the desk's own too, since the full flip) — our selector
+    switch's cycles equal to the ROM's own and both above zero, our run none in the ROM's switch nor in the ROM's
+    text of any part of the door; and the ROM's run spent some in its door exactly where a program traps into the
+    AES (an accessory's own traps: none on the desk's machine, whose desk calls the AES by Line-F)."""
     asked, the_guard = [], tier3().vet_who_ran_the_door
     monkeypatch.setattr(tier3(), "vet_who_ran_the_door", lambda who, rom, ours, door: (asked.append((rom, ours, door)), the_guard(who, rom, ours, door))[1])
     tier3().idle_to_idle_on(_shipped(), _name(label), WOKEN[label])
@@ -856,12 +897,9 @@ def test_who_ran_the_door_is_asked_of_both_kinds_of_row_and_reads_real_cycles(la
     tier3().at_its_arrival_on(_shipped(), "a row", held)
     assert len(asked) == 2
     for rom, ours, door in asked:
-        assert door == (label == THE_CLOSER)
-        if door:
-            assert ours.in_our_selector == rom.in_the_rom_s_selector > 0 == ours.in_the_rom_s_selector == ours.in_the_rom_s_door
-            assert rom.in_the_rom_s_door > 0, "the accessory's own AES traps: the ROM's door on the ROM's shore"
-        else:
-            assert ours.in_our_selector == 0 < ours.in_the_rom_s_selector == rom.in_the_rom_s_selector
+        assert door
+        assert ours.in_our_selector == rom.in_the_rom_s_selector > 0 == ours.in_the_rom_s_selector == ours.in_the_rom_s_door
+        assert (rom.in_the_rom_s_door > 0) == (label == THE_CLOSER), "the accessory's own AES traps: the ROM's door on the ROM's shore"
 
 
 def test_a_loaded_program_s_spans_are_held_by_content_wherever_it_does_not_run():

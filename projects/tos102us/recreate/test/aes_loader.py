@@ -337,7 +337,7 @@ class Classes:
                 if theirs[lo:hi] != left[lo:hi]:
                     self.needed.add(name)
                 left[lo:hi] = theirs[lo:hi]
-        return aes_boot._differing_runs(theirs, bytes(left))
+        return aes_boot.differing_runs(theirs, bytes(left))
 
     def vet_each_was_needed(self, who):
         unneeded = sorted(set(self.spans) - self.needed)

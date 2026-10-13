@@ -1682,9 +1682,12 @@ def test_finding_the_measured_runs_behind_the_door(modes, shore):
     assert (run.door_ran is not None) == (shore != THE_ROM_S and run.idle is not None)
     if run.door_ran is not None:
         door_ran, critical_errors = dict(run.door_ran), stack.aes_event.CRITICAL_ERROR_VECTOR.what
-        assert set(door_ran) == {part.what for part in stack.aes_event.THE_NARROW_DOOR}, "the shipped door, all three parts"
+        assert set(door_ran) == {part.what for part in stack.aes_event.THE_DOOR}, "the shipped door, every part (seven since the full flip)"
         assert door_ran.pop(critical_errors) == (0, 0), "no critical error in a boot: neither crit_err runs"
-        assert all(ours > 0 and the_rom_s == 0 for ours, the_rom_s in door_ran.values())
+        # ...NOR the four parts the full flip added — no tick, no mouse packet, no cursor routine, no window item in a boot
+        for part in (*stack.aes_event.STORED_BY_GEM_ENTRY, stack.aes_event.GLUE_CODES):
+            assert door_ran.pop(part.what) == (0, 0), part.what
+        assert len(door_ran) == 2 and all(ours > 0 and the_rom_s == 0 for ours, the_rom_s in door_ran.values())
     for which, used in run.deepest.items():
         assert run.by_call[which, THE_DEEPEST_CALL[modes]] == used == max(depth for (stack_, _call), depth in run.by_call.items()
                                                                            if stack_ == which)

@@ -306,7 +306,7 @@ def test_the_handler_shows_the_alert_and_answers_as_the_rom_s(label, blob):
     # ...our image with the code addresses of the build given the ROM's names, as Tier 3 gives them (the relocation
     # registry: the alert's Return is a fork our interrupt code queued — a fork function's address in the queue).
     tier3 = bench_tier3()
-    our_image = tier3._mapped_back(bytearray(our_run.image), tier3.code_relocations(blob.elf, S_ENTRY))
+    our_image = tier3.mapped_back(bytearray(our_run.image), tier3.code_relocations(blob.elf, S_ENTRY))
     assert differing(rom_image, our_image, blob, BY_NATURE) == []
     compared = [name for name in emu.REPORTED_REGS if name not in ERALERT_S_OWN]
     assert {name: our_run.regs[name] for name in compared} == {name: rom_regs[name] for name in compared}

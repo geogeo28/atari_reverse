@@ -29,9 +29,9 @@
  * word, which is all `dbmi` reads) and nothing at all after the other two. A5, the basepage, is read once more
  * after the Mshrink trap alone ($fd9f04), before any call.
  *
- * NOT BOUND YET (band 5 wave 4, slice I): every build links this file and nothing enters it — the BIOS still starts
- * the ROM's gem_entry. What a build's gem_entry stores by value (`$947a`, `$947e`, `$8c32`) is the relocation
- * registry's to map the day it runs (slice B).
+ * WHO ENTERS IT (band 5 wave 4): the our-boot machine alone, a labelled staging (slice B: `test/aes_boot.py`) — on
+ * iron the BIOS still starts the ROM's gem_entry. What a build's gem_entry stores by value (`$947a`, `$947e`, `$8c32`)
+ * the relocation registry maps where a run ends, and a takeover's door maps on a machine the ROM booted (slice F).
  *
  * REGISTERS AND STACKS. Entered in USER state with the basepage above the stack pointer; from the second trap on,
  * supervisor state, on `[$890e, $8994)` until the loop's `movea.l a6,sp`, then on UDA0.

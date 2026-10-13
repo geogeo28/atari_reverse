@@ -47,6 +47,7 @@ import test_aes_gsxif as gsxif
 import test_aes_ob_draw as ob_draw
 import test_aes_shell_buf as shell_buf
 import test_aes_vectors as vectors
+import transcription
 import vdi
 from case import merge_pokes
 from test_aes_gsx import screen_changed
@@ -190,65 +191,141 @@ def test_sh_toalpha_hides_the_mouse_after_giveerr_and_before_it_frees_the_buffer
     assert aes.high_word(the_rom_s.held(mfree, aes.AES_GL_MOFF)) == aes.high_word(the_rom_s.held(setexc, aes.AES_GL_MOFF)) + 1
 
 
-# ---- WHO RAN THE SELECTOR SWITCH under sh_tographic's row: THE ONE SNAPSHOT ROW BEHIND OUR DOOR -------------------------------
-# sh_tographic calls retake FIRST, and since the narrow door flip our build's retake stores our build's own trap
-# handler (a mapping by the row's own run, never a poke). So this row's machine comes with the ROM's `$fe3ea6` in `$88`
-# and OUR run leaves with ours — and every VDI call behind the retake enters OUR selector switch, the ROM's own 26
-# bytes, where the ROM's run enters the ROM's. The table's line does not move by it (the switch is cut out of both
-# own counts, `tier3.our_cycles`), and `vet_who_ran_the_door` is asked of rows from an idle alone: this is the row's
-# own who-ran pin, the split held exactly (`tier3.DoorSplit`), on both blobs.
-VDI_CALLS_BEHIND_ITS_RETAKE = sum(door == VDI for door, _function in CALLS_IN_ORDER[(SH_TOGRAPHIC, TO_GRAPHIC_ROW)])
+# ---- WHO RAN THE SELECTOR SWITCH under the two switches' rows: EVERY ROW IS ENTERED BEHIND OUR DOOR (the full flip) --------
+# Since band 5 wave 4's slice F vector `$88` holds the build's own `trap #2` handler AS OUR RUN OF A ROW IS ENTERED
+# (`aes_event.GEM_TRAP_VECTOR` is an entry mapping) — so every VDI call of a kit call of ours enters OUR selector switch,
+# the ROM's own 26 bytes, where the ROM's run enters the ROM's: WHO RAN moved, and no cost (the switch is cut out of
+# both own counts, `tier3.our_cycles`). These two rows are the pin of it, the split held exactly (`tier3.DoorSplit`):
+# sh_tographic's on both blobs — until the flip THE ONE snapshot row behind our door, from its own retake on (wave 3's
+# `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` named it; the set is empty now, the row entered behind ours as every row is)
+# — and sh_toalpha's, which then never held our door and ran the ROM's switch alone. THE CONVERSE, A ROW WHOSE OWN
+# RUN GIVES THE DOOR BACK, is restore_trap2's (`THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN`): held below by its own row.
+VDI_CALLS_OF = {key: sum(door == VDI for door, _function in calls) for key, calls in CALLS_IN_ORDER.items()}
 THE_VDI_ARM_S_PASS_CYCLES = 92          # one `trap #2` through the selector switch's VDI arm, as the oracle counts it
+RESTORE_TRAP2, GEM_UP = "AES_ROM_RESTORE_TRAP2", "GEM up: the BIOS's door put back"
 
 
-def _door_split_of(path, name, label):
+def _door_split_of(path, symbol, label):
     """The `tier3.DoorSplit` of the one kit call of ours the measurement of the row makes on the blob at `path`."""
     tier3 = bench_tier3()
-    tier3.measure(tier3.row_named((routines.core_symbol(name), label)), tier3.RomBench(path))
+    tier3.measure(tier3.row_named((symbol, label)), tier3.RomBench(path))
     (split,) = tier3.DOOR_SPLIT
     return split
 
 
+@pytest.mark.parametrize("name,label", CALLS_IN_ORDER, ids=lambda value: value)
 @pytest.mark.parametrize("path", isr.BLOBS.values(), ids=isr.BLOBS)
-def test_sh_tographic_s_row_runs_behind_our_door_from_its_own_retake_on__who_ran_the_selector_switch(path):
-    """THE SPLIT, EXACT: `$88` the ROM's as our run is entered and OURS where it ends; our run's six VDI traps all
-    through OUR selector switch and not one cycle in the ROM's; the ROM's run the same cycles in its own."""
+def test_a_switch_s_row_is_entered_behind_our_door_and_runs_our_selector_switch_alone(path, name, label):
+    """THE SPLIT, EXACT, both rows on both blobs: `$88` OURS as our run is entered and where it ends; every VDI trap of
+    our run (six for sh_tographic, four for sh_toalpha) through OUR selector switch and NOT ONE CYCLE in the ROM's;
+    the ROM's run the same cycles in its own."""
     tier3 = bench_tier3()
-    behind_the_retake = VDI_CALLS_BEHIND_ITS_RETAKE * THE_VDI_ARM_S_PASS_CYCLES
-    assert VDI_CALLS_BEHIND_ITS_RETAKE == 6
-    assert _door_split_of(path, SH_TOGRAPHIC, TO_GRAPHIC_ROW) == tier3.DoorSplit(
-        routines.core_symbol(SH_TOGRAPHIC), ours_at_entry=False, ours_where_it_ends=True, in_ours=behind_the_retake,
-        in_the_rom_s=0, the_rom_s_run_in_its_own=behind_the_retake)
+    through_the_switch = VDI_CALLS_OF[(name, label)] * THE_VDI_ARM_S_PASS_CYCLES
+    assert VDI_CALLS_OF == {(SH_TOALPHA, TO_ALPHA_ROW): 4, (SH_TOGRAPHIC, TO_GRAPHIC_ROW): 6}
+    assert _door_split_of(path, routines.core_symbol(name), label) == tier3.DoorSplit(
+        routines.core_symbol(name), ours_at_entry=True, ours_where_it_ends=True, in_ours=through_the_switch,
+        in_the_rom_s=0, the_rom_s_run_in_its_own=through_the_switch)
 
 
-def test_sh_toalpha_s_row_never_holds_our_door_and_runs_the_rom_s_selector_switch_alone():
-    """...AND THE ROW BESIDE IT, which takes no door (giveerr is the critical-error vector's alone): `$88` the ROM's at
-    both ends, not one cycle in our selector switch, both runs the same cycles in the ROM's."""
-    split = _door_split_of(isr.BLOBS["the shipped blob"], SH_TOALPHA, TO_ALPHA_ROW)
-    assert (split.ours_at_entry, split.ours_where_it_ends, split.in_ours) == (False, False, 0)
-    assert split.in_the_rom_s == split.the_rom_s_run_in_its_own > 0
-
-
-def test_a_snapshot_row_behind_our_door_that_is_not_named_is_refused(monkeypatch):
-    """THE RED of "the one such row": with sh_tographic's name taken out of the set its measurement is refused by
-    name — a snapshot row whose own run takes the door and traps behind it is a finding until it is declared."""
+def test_no_row_takes_the_door_by_its_own_run_any_more_and_the_ones_that_give_it_back_are_restore_trap2_s():
+    """THE TWO SETS, AS THE FULL FLIP LEFT THEM: nobody takes the door by a run of its own (sh_tographic's row was the
+    one: entered behind ours now); the door is given back by restore_trap2 alone — the `.S` the target ships and its
+    C twin, each a registered row."""
     tier3 = bench_tier3()
-    monkeypatch.setattr(tier3, "THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN", frozenset())
-    with pytest.raises(AssertionError, match="a snapshot row behind our door that `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` does not name"):
-        _door_split_of(isr.BLOBS["the shipped blob"], SH_TOGRAPHIC, TO_GRAPHIC_ROW)
+    assert tier3.THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN == frozenset()
+    twin, shipped = routines.core_symbol(RESTORE_TRAP2), transcription.transcription_symbol(RESTORE_TRAP2)
+    assert tier3.THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN == {twin, shipped}
+    assert all(tier3.row_named((symbol, GEM_UP)) for symbol in (twin, shipped))
+
+
+# THE ROWS NOT ENTERED BEHIND OUR DOOR (slice F's fix pass; the first review's finding 4): a row's machine whose `$88`
+# does not hold the ROM's AES handler is mapped nothing at entry — the vectors given back (the VDI's own entry there)
+# or a program's own staged handler. EIGHT ROWS OF THE REGISTRY, of three routines: install_trap2's and retake's seven
+# TAKE THE DOOR (not ours as the run is entered, ours where it ends, no trap behind it) and takeerr's one never holds
+# it. Until this pass `ours_at_entry` was held False for takeerr's row alone: forced True on every kit call, the seven
+# takers read as "entered behind it" and nothing reddened (they take no trap, so no rule of the vet looked).
+INSTALL_TRAP2, RETAKE, TAKEERR = "AES_ROM_INSTALL_TRAP2", "AES_ROM_RETAKE", "AES_ROM_TAKEERR"
+ROWS_THAT_TAKE_THE_DOOR = {routines.core_symbol(INSTALL_TRAP2): 1, routines.core_symbol(RETAKE): 2,
+                           transcription.transcription_symbol(INSTALL_TRAP2): 2, transcription.transcription_symbol(RETAKE): 2}
+ROWS_THAT_NEVER_HOLD_IT = {transcription.transcription_symbol(TAKEERR): 1}
+
+
+def test_the_rows_not_entered_behind_our_door_are_the_seven_that_take_it_and_takeerr_s_one_and_each_split_says_so():
+    """THE CENSUS, over every row of the registry, and each one's split on the shipped blob: the rows whose machine
+    holds another value than the ROM's AES handler in `$88` are install_trap2's and retake's seven and takeerr's one;
+    each of the seven is NOT ENTERED BEHIND OUR DOOR and ENDS BEHIND IT, by its own store, with not one cycle in either
+    selector switch; takeerr's is behind it at neither end."""
+    tier3 = bench_tier3()
+    not_the_rom_s = [(row.symbol, row.case) for row in tier3.ROWS
+                     if case.long_in(make_image(row.pokes), addrs.VECTOR_TRAP_GEM) != addrs.GEM_TRAP2]
+    counted = {symbol: sum(1 for each, _case in not_the_rom_s if each == symbol) for symbol, _case in not_the_rom_s}
+    assert counted == {**ROWS_THAT_TAKE_THE_DOOR, **ROWS_THAT_NEVER_HOLD_IT} and len(not_the_rom_s) == 8
+    for symbol, label in not_the_rom_s:
+        split = _door_split_of(isr.BLOBS["the shipped blob"], symbol, label)
+        assert split.the_rom_s_run_in_its_own in (None, 0), "no `trap #2` on either shore"
+        assert split == tier3.DoorSplit(symbol, ours_at_entry=False, ours_where_it_ends=symbol in ROWS_THAT_TAKE_THE_DOOR, in_ours=0,
+                                        in_the_rom_s=0, the_rom_s_run_in_its_own=split.the_rom_s_run_in_its_own), label
+
+
+@pytest.mark.parametrize("which", ("the C twin", "the `.S` the target ships"))
+def test_restore_trap2_s_row_gives_the_door_back__the_vdi_s_own_entry_on_both_shores_and_never_the_rom_s_aes_s(which):
+    """THE CONVERSE (the design's risk 7): restore_trap2's row is entered with OUR handler in `$88` (its machine is
+    "GEM up": the ROM's there, mapped at entry) and ENDS WITH THE VDI'S OWN ENTRY there — the value the machine's
+    `$8c2a` held, by the routine's own store, on both shores (the image compare is the row's): no handler of ours and
+    NOT THE ROM'S AES'S either. It takes no trap: neither selector switch runs a cycle."""
+    tier3 = bench_tier3()
+    symbol = routines.core_symbol(RESTORE_TRAP2) if which == "the C twin" else transcription.transcription_symbol(RESTORE_TRAP2)
+    row = tier3.row_named((symbol, GEM_UP))
+    split = _door_split_of(isr.BLOBS["the shipped blob"], symbol, GEM_UP)
+    assert split == tier3.DoorSplit(symbol, True, False, 0, 0, None if split.the_rom_s_run_in_its_own is None else 0)
+    machine = make_image(row.pokes)
+    saved = case.long_in(machine, addrs.SYSVAR_VDI_ENTRY)
+    assert case.long_in(machine, addrs.VECTOR_TRAP_GEM) == addrs.GEM_TRAP2 != saved
+    the_rom_s, _writes, _regs = emu.run(make_image(row.pokes), getattr(addrs, RESTORE_TRAP2), {})
+    assert case.long_in(the_rom_s, addrs.VECTOR_TRAP_GEM) == saved and not aes.AES_TEXT[0] <= saved & aes.OS_BUS_ADDR_MASK < aes.AES_TEXT[1]
+
+
+def test_a_row_that_gives_the_door_back_and_is_not_named_is_refused_and_so_is_one_named_that_does_not(monkeypatch):
+    """THE REDS of the converse, both ways, by real measurements: with restore_trap2's names taken out of the set its
+    row is refused by name (a run entered behind our door that ends behind another handler is a finding until it is
+    declared); and with sh_tographic's name put IN — a routine that ends behind our door — its row is refused as
+    named and not needed."""
+    tier3 = bench_tier3()
+    monkeypatch.setattr(tier3, "THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN", frozenset())
+    with pytest.raises(AssertionError, match="GAVE THE DOOR BACK .*and `THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN` does not name it"):
+        _door_split_of(isr.BLOBS["the shipped blob"], routines.core_symbol(RESTORE_TRAP2), GEM_UP)
+    monkeypatch.setattr(tier3, "THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN", frozenset({routines.core_symbol(SH_TOGRAPHIC)}))
+    with pytest.raises(AssertionError, match="ends behind it still, and `THE_DOOR_GIVEN_BACK_BY_THE_ROW_S_OWN_RUN` names it"):
+        _door_split_of(isr.BLOBS["the shipped blob"], routines.core_symbol(SH_TOGRAPHIC), TO_GRAPHIC_ROW)
+
+
+def test_a_row_left_behind_the_rom_s_door_is_refused_by_who_ran__the_registry_s_word_un_flipped(monkeypatch):
+    """THE WORD'S OWN RED, BY A REAL MEASUREMENT: with `$88` mapped where a run ends only — the registry as it stood
+    before the full flip — sh_toalpha's row runs its four VDI traps through THE ROM'S selector switch, and who-ran
+    refuses it by name: 368 cycles of our run in the ROM's switch."""
+    tier3 = bench_tier3()
+    un_flipped = tuple(each._replace(at_entry=False) if each is aes_event.GEM_TRAP_VECTOR else each for each in aes_event.CODE_RELOCATIONS)
+    monkeypatch.setattr(aes_event, "CODE_RELOCATIONS", un_flipped)
+    in_the_rom_s = VDI_CALLS_OF[(SH_TOALPHA, TO_ALPHA_ROW)] * THE_VDI_ARM_S_PASS_CYCLES
+    with pytest.raises(AssertionError, match=rf"our run spent {in_the_rom_s} cycles in THE ROM'S selector switch"):
+        _door_split_of(isr.BLOBS["the shipped blob"], routines.core_symbol(SH_TOALPHA), TO_ALPHA_ROW)
 
 
 def test_who_ran_the_selector_switch_refuses_each_wrong_split():
-    """`tier3.vet_who_ran_the_selector_switch`'s OWN ARITHMETIC, over stand-in splits: cycles in ours where `$88` never
-    held ours; a run behind its own door that took another count of traps than the ROM's; one that ran the ROM's
-    switch for a trap the ROM's run never took."""
+    """`tier3.vet_who_ran_the_selector_switch`'s OWN ARITHMETIC, over stand-in splits: a cycle of ours in THE ROM'S
+    switch; cycles in ours where `$88` never held ours; a run that takes the door itself and traps behind it, unnamed;
+    a run that took another count of traps than the ROM's."""
     tier3 = bench_tier3()
-    vet, sound = tier3.vet_who_ran_the_selector_switch, tier3.DoorSplit(routines.core_symbol(SH_TOGRAPHIC), False, True, 552, 0, 552)
+    vet, sound = tier3.vet_who_ran_the_selector_switch, tier3.DoorSplit(routines.core_symbol(SH_TOGRAPHIC), True, True, 552, 0, 552)
     vet(sound)
-    vet(sound._replace(ours_where_it_ends=False, in_ours=0, in_the_rom_s=552))
+    vet(sound._replace(ours_at_entry=False, ours_where_it_ends=False, in_ours=0, the_rom_s_run_in_its_own=0))
+    with pytest.raises(AssertionError, match="our run spent 92 cycles in THE ROM'S selector switch"):
+        vet(sound._replace(in_ours=460, in_the_rom_s=92))
     with pytest.raises(AssertionError, match="`\\$88` never held our handler"):
-        vet(sound._replace(ours_where_it_ends=False))
-    for wrong in (sound._replace(in_ours=460), sound._replace(in_the_rom_s=92), sound._replace(the_rom_s_run_in_its_own=0)):
+        vet(sound._replace(ours_at_entry=False, ours_where_it_ends=False))
+    with pytest.raises(AssertionError, match="a row behind a door its own run took that `THE_DOOR_TAKEN_BY_THE_ROW_S_OWN_RUN` does not name"):
+        vet(sound._replace(ours_at_entry=False))
+    for wrong in (sound._replace(in_ours=460), sound._replace(the_rom_s_run_in_its_own=0)):
         with pytest.raises(AssertionError, match="did not take the same `trap #2`s"):
             vet(wrong)
 

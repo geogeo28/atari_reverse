@@ -1220,8 +1220,8 @@ SNDCLI_ROWS = (FIRST, SECOND)
 def program_entry_unmapped(monkeypatch):
     """The registry with `PROGRAM_ENTRY` naming no entry of any build — for the test's length."""
     tier3 = bench_tier3()
-    door = tuple(each._replace(symbols={}) if each is aes_event.PROGRAM_ENTRY else each for each in aes_event.THE_NARROW_DOOR)
-    monkeypatch.setattr(aes_event, "THE_NARROW_DOOR", door)
+    door = tuple(each._replace(symbols={}) if each is aes_event.PROGRAM_ENTRY else each for each in aes_event.THE_TRAP_DOOR)
+    monkeypatch.setattr(aes_event, "THE_TRAP_DOOR", door)
     tier3.door_relocation.cache_clear()
     yield
     monkeypatch.undo()
