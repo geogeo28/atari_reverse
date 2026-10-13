@@ -10,13 +10,15 @@ machines THE ROM makes, before any of our init runs on one:
   * THE SERVED DOOR (ruling W4-R6): deskmain and the shell's built-ins ANSWERED AT THEIR ENTRY, a labelled argument
     class — the teardown and gem_entry's second pass, the launch pass to dos_exec's entry, sh_cmd's arm — with every
     refusal;
-  * THE OUR-BOOT MACHINE'S PREMISES (ruling W4-R1), vetted against the ROM's own run, and its lay refused by name
-    until slice B builds it;
-  * THE REGISTRY'S PENDING DECLARATIONS (the tick glue, justretf's slot, the walked USERBLKs) held to the ROM, and THE
-    SCAN — no entry of band ≤ 5 held by value as the ROM's — with what it finds on today's door machines PINNED.
+  * THE OUR-BOOT MACHINE'S PREMISES (ruling W4-R1), vetted against the ROM's own run — and THE LAY MADE on the disks
+    without an accessory (slice B built it: A LABELLED STAGING, held by `test_aes_ourboot.py`), refused by name on
+    one with;
+  * gem_entry's THREE BY-VALUE DECLARATIONS OF THE REGISTRY (the tick glue, justretf's slot, the walked USERBLKs) held
+    to the ROM — declared here, ACTIVATED BY SLICE B, none pending — and THE SCAN — no entry of band ≤ 5 held by
+    value as the ROM's — with what it finds on today's door machines PINNED.
 
-NOTHING HERE IS MAPPED AND NO ROW IS PRICED: every machine below but the door machines the scan reads is the ROM's
-own. Addresses of the ROM are held to its bytes where they are named; nothing a capture decides is pinned.
+NO ROW IS PRICED HERE, and but for the door machines the scan reads and the one our-boot lay, every machine below is
+the ROM's own. Addresses of the ROM are held to its bytes where they are named; nothing a capture decides is pinned.
 """
 import functools
 import struct
@@ -761,12 +763,13 @@ def test_what_the_served_door_refuses_each_by_name():
 def test_the_served_door_on_a_takeover_machine_calls_no_routine_and_a_door_the_teardown_gives_back_is_refused(blob):
     """ON A MACHINE WHOSE BLOB IS OURS (a takeover of today: the screen manager's, and behind the narrow door) the door
     answers deskmain as on the ROM's — the caller is the ROM's sh_main still — and says two things by name: a routine
-    CALLED over the machine first is refused (whose shel_write is the our-boot slice's to say); and behind a door the
+    CALLED over the machine first is refused (on a takeover nothing has said whose it would be; on an OUR-BOOT machine
+    it is the ROM's, the desk's own call: `test_aes_ourboot.py`); and behind a door the
     teardown's own giveerr and restore_trap2 — the ROM's, on both shores by design — hand `$404` and `$88` back: THE
     DOOR IS NO LONGER OURS, refused where the served run ends and never silently lost (the design's risk 7)."""
     capture, disk = aes_boot.preinit(), aes_boot.blank_disk()
     taken = aes_boot.booted(capture, disk, until=DESKMAIN, ours=aes_boot.ours_of(isr.blob_named(blob)))
-    with pytest.raises(Refused, match="a routine called over a machine whose blob is ours, before deskmain is answered"):
+    with pytest.raises(Refused, match="a routine called over a TAKEOVER machine, before deskmain is answered"):
         aes_boot.served(taken, 1, until=SH_CMD, calls=(shel_write(THE_INF_ITSELF, b""),))
     again = aes_boot.served(taken, 0, until=GEM_MAIN)
     assert again.served[0].routine == "deskmain" and again.takeover.ours == taken.takeover.ours
@@ -787,11 +790,12 @@ def ours_of(blob):
 
 @every_blob
 @pytest.mark.parametrize("label", OUR_BOOT_DISKS)
-def test_the_our_boot_machine_s_premises_hold_on_the_disks_without_an_accessory(label, blob):
+def test_labelled_staging_the_our_boot_machine_s_premises_hold_and_its_lay_boots_on_the_disks_without_an_accessory(label, blob):
     """RULING W4-R1's PREMISES, MEASURED ON THE ROM'S SIDE for both blobs: the capture stands at gem_entry in user
     mode; the window the harness uses — the blob's span, the staging band, the stack band — is zero there; and THE
-    ROM'S OWN BOOT of that machine and disk stores NOT ONE BYTE in it before its first idle. And the lay itself is
-    refused by name: `booted(..., laid=AT_GEM_ENTRY)` is slice B's to build."""
+    ROM'S OWN BOOT of that machine and disk stores NOT ONE BYTE in it before its first idle. AND THE LAY IS MADE THERE
+    (slice B: a LABELLED STAGING — `test_aes_ourboot.py` holds the machine): the blob's own gem_entry reaches
+    deskmain's entry, not one cycle of the ROM's GEM text nor of its Line-F handler's copy on the way."""
     capture, disk = (made() for made in OUR_BOOT_DISKS[label])
     ours = ours_of(blob)
     window = aes_boot.vet_ours_can_be_laid_at_gem_entry(capture, disk, ours)
@@ -799,16 +803,16 @@ def test_the_our_boot_machine_s_premises_hold_on_the_disks_without_an_accessory(
     assert window[aes_boot.THE_BLOB] == (ours.base, ours.end) and window[aes_boot.STACK_BAND] == (emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
     spans = sorted(window.values())
     assert all(hi <= lo_after for (_lo, hi), (lo_after, _hi) in zip(spans, spans[1:])), "three spans apart"
-    with pytest.raises(Refused, match="THE OUR-BOOT MACHINE IS NOT BUILT YET: .* band 5 wave 4's slice B"):
-        aes_boot.booted.derive(capture, disk, ours=ours, laid=aes_boot.AT_GEM_ENTRY)
+    ours_booted = aes_boot.booted(capture, disk, until=DESKMAIN, ours=ours, laid=aes_boot.AT_GEM_ENTRY)
+    assert ours_booted.our_boot.ours == ours and ours_booted.our_boot.ran[0] > 0 and ours_booted.our_boot.ran[1:] == (0, 0)
 
 
 @every_blob
 def test_over_a_disk_with_an_accessory_the_rom_s_own_boot_clears_the_window_and_the_lay_is_refused(blob):
     """RULING W4-R2, AS THE REFUSAL IT IS: on the accessories' capture the window is zero at the stop too — and the
     ROM's own boot stores at EVERY BYTE of the blob's span before its first idle (the loader's `Pexec(3)` clears the
-    largest free block). The vet says so with the count, and `booted(..., laid=AT_GEM_ENTRY)` is refused FOR THAT,
-    before it is refused for not being built."""
+    largest free block). The vet says so with the count, and `booted(..., laid=AT_GEM_ENTRY)` is refused FOR THAT:
+    no accessory disk has an our-boot machine, and the blob is never put back after a clear."""
     capture, disk, ours = aes_boot.accessory_preinit(), aes_boot.accessory_disk_of(QUIET, QUIET), ours_of(blob)
     said = rf"THE ROM'S OWN BOOT OF THIS DISK STORES AT {ours.end - ours.base} BYTE\(S\) OF the blob's own span"
     with pytest.raises(Refused, match=said):
@@ -860,19 +864,20 @@ def test_the_stores_counted_in_a_span_are_the_runs_bytes_inside_it():
     assert aes_boot._stored_within(((0x10, 0x10),), 0x20, 0x30) == 0 == aes_boot._stored_within((), 0, RAM_BYTES)
 
 
-# ---- THE REGISTRY'S PENDING DECLARATIONS ----------------------------------------------------------------------------------------
-PENDING = (aes_event.USERBLK_TRAMPOLINE_SLOT, aes_event.JUSTRETF_SLOT, aes_event.TICK_GLUE)
+# ---- gem_entry's THREE BY-VALUE STORES: DECLARED BY THIS SLICE, ACTIVATED BY SLICE B (`test_aes_ourboot.py`) -------------------------
+PENDING = (aes_event.USERBLK_TRAMPOLINE_SLOT, aes_event.JUSTRETF_SLOT, aes_event.TICK_GLUE)       # ...as this slice left them
 STORED_BY_GEM_ENTRY_AT = {aes_event.USERBLK_TRAMPOLINE_SLOT.what: aes_event.USERBLK_TRAMPOLINE_STORED_AT,
                           aes_event.JUSTRETF_SLOT.what: aes_event.JUSTRETF_STORED_AT, aes_event.TICK_GLUE.what: aes_event.TICK_GLUE_STORED_AT}
 
 
 @pytest.mark.parametrize("declared", PENDING, ids=lambda declared: declared.what)
-def test_each_pending_declaration_is_gem_entry_s_own_by_value_store_and_is_mapped_nowhere(declared):
+def test_each_declaration_of_the_wave_is_gem_entry_s_own_by_value_store_mapped_where_a_run_ends_and_in_no_door(declared):
     """THE WAVE'S THREE DECLARATIONS, HELD TO THE ROM AND TO THE MACHINES: each one's ROM routine and its first slot are
     the two operands of gem_entry's own `lea` / `move.l a0` pair, inside gem_entry; the text it stands for begins at
     the routine, lies in the AES's ROM text and ends on an `rts`; every machine the ROM boots holds the routine in
-    that slot; BOTH BLOBS LINK AN ENTRY FOR IT (found by symbol, as a door part is) — and it is PENDING: named with
-    wave 4 as its owner, in no tuple Tier 3 reads, in no door, mapped by nothing."""
+    that slot; BOTH BLOBS LINK AN ENTRY FOR IT (found by symbol, as a door part is). SINCE SLICE B each is among the
+    tuple Tier 3 reads — MAPPED WHERE A RUN ENDS, never at its entry — proved a mapping by the rows of the build's own
+    start-up; and STILL IN NO DOOR: a takeover machine holds the ROM's there until the full flip (the scan, below)."""
     (rom, symbol), = declared.symbols.items()
     at = STORED_BY_GEM_ENTRY_AT[declared.what]
     assert aes.AES_TEXT[0] <= addrs.AES_ROM_GEM_ENTRY <= at < addrs.AES_ROM_GEM_ENTRY_END
@@ -886,18 +891,23 @@ def test_each_pending_declaration_is_gem_entry_s_own_by_value_store_and_is_mappe
         part, = aes_boot.ours_of(isr.blob_named(blob), door=(declared,)).door
         (mapped_rom, entry), = part.mapping
         assert mapped_rom == rom and isr.blob_named(blob).base <= entry < isr.blob_named(blob).end
-    assert aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3[declared.what][1] == aes_event.WAVE_4
-    assert declared not in aes_event.CODE_RELOCATIONS and declared not in aes_event.THE_NARROW_DOOR
-    assert declared.what not in aes_event.MAPPING_PROVED_BY and declared.what not in aes_event.THE_MACHINE_S_VECTORS
+    assert declared.what not in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3 and declared in aes_event.STORED_BY_GEM_ENTRY
+    assert declared in aes_event.CODE_RELOCATIONS and not declared.at_entry and declared not in aes_event.THE_NARROW_DOOR
+    assert aes_event.MAPPING_PROVED_BY[declared.what] == aes_event.STORED_BY_GEM_ENTRY_PROVED_BY
+    assert declared.what not in aes_event.THE_MACHINE_S_VECTORS
 
 
-def test_the_pending_declarations_are_these_three_and_the_tick_glue_s_slots_are_the_machine_s():
-    """EXACTLY THREE ARE PENDING (STATUS's count is this dictionary's length). THE TICK GLUE'S SLOTS: `$947e`, where
-    gem_entry keeps it; the VDI's own tick vector, which holds it on every machine the ROM boots (gsx_tick handed it
-    over) while the AES keeps the VDI's displaced one beside; and the AES's contrl[7..8] and [9..10], through which a
-    vex_timv hands and displaces it. justretf's routine is the glue table's own symbol for it."""
-    assert set(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3) == {declared.what for declared in PENDING}
-    kept, vector, handed, displaced = aes_event.TICK_GLUE.slots
+def test_no_declaration_is_pending_and_the_tick_glue_s_slots_are_the_machine_s():
+    """NONE IS PENDING ANY MORE (STATUS's count is this dictionary's length: slice B activated the three). THE TICK
+    GLUE'S SLOTS: `$947e`, where gem_entry keeps it; the VDI's own tick vector, which holds it on every machine the ROM
+    boots (gsx_tick handed it over) while the AES keeps the VDI's displaced one beside; the AES's contrl[7..8] and
+    [9..10], through which a vex_timv hands and displaces it — and, since the teardown is run (slice B), that
+    displaced-save longword itself, which the teardown's own vex_timv leaves the glue in. justretf's routine is the
+    glue table's own symbol for it."""
+    assert aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3 == {} and aes_event.STORED_BY_GEM_ENTRY == (
+        aes_event.JUSTRETF_SLOT, aes_event.TICK_GLUE, aes_event.USERBLK_TRAMPOLINE_SLOT)
+    kept, vector, handed, displaced, saved = aes_event.TICK_GLUE.slots
+    assert saved == aes.header_constants("evdisp.h")["AES_TICK_CHAIN"] == aes_event.TICK_GLUE_DISPLACED_AT
     assert (kept, vector) == (aes_event.TICK_GLUE_KEPT_AT, vdi.field("LINEA", "USER_TIM").at)
     assert (handed, displaced) == (aes.AES_GSX_CONTRL_PTR, aes.AES_GSX_CONTRL_PTR2) == aes_event.GLUE_CODE_SLOTS[2:4]
     for booted in (aes_boot.desk_machine(), aes_boot.accessory_machine(), inf()):

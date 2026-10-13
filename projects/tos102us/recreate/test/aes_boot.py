@@ -114,9 +114,17 @@ blank disk plus the ROM's own default DESKTOP.INF — `inf_machine`, its `#E` li
 `continued` AS FAR AS A DRIVE'S WINDOW (the device model above; the desk's user-block trampoline's arrivals
 watched: `trampoline_stops`); THE SERVED DOOR (`served`: deskmain and the shell's built-ins answered AT THEIR ENTRY,
 a labelled argument class — the one door here through which a routine is not run); THE OUR-BOOT MACHINE'S PREMISES
-vetted against the ROM's own run (`vet_ours_can_be_laid_at_gem_entry`; the lay itself, `laid=AT_GEM_ENTRY`, refused
-by name until it is built); and THE SCAN (`entries_held_by_value`, `vet_no_entry_is_held_as_the_rom_s`): no entry of
-band ≤ 5 held by value as the ROM's.
+vetted against the ROM's own run (`vet_ours_can_be_laid_at_gem_entry`); and THE SCAN (`entries_held_by_value`,
+`vet_no_entry_is_held_as_the_rom_s`): no entry of band ≤ 5 held by value as the ROM's.
+THE OUR-BOOT MACHINE (band 5 wave 4, slice B; ruling W4-R1 — A LABELLED STAGING, said in the name of every row and
+test that uses it): `booted(..., ours=, laid=AT_GEM_ENTRY)`, `our_desk_machine`, `our_inf_machine` — the pre-init
+machine with THE BLOB LAID WHERE THE RUN STANDS BEFORE ITS FIRST INSTRUCTION and the run ENTERED AT THE BLOB'S OWN
+gem_entry with the capture's whole register file. NOT ONE LONGWORD OF THE MACHINE IS MAPPED BY THE HARNESS: `$88`,
+`$404`, the three routines gem_entry stores by value, the VDI's three vectors and the screen manager's entry are each
+stored by OUR OWN RUN. "OURS BOOTED" IS CLAIMED TO deskmain's ENTRY AND NO FURTHER (ruling W4-R3: from there the desk —
+the ROM's — calls the ROM's AES through the ROM's Line-F table on both shores): WHO RAN is cut there (`OurBoot.ran`: a
+cycle profile — the ROM's GEM text and the Line-F handler's copy ZERO cycles, or the boot is refused by name), and
+what the machine differs from the ROM-booted one in, checkpoint by checkpoint, is `aes_ourboot.py`'s.
 
 EVERYTHING HERE IS A KEPT DERIVATION (`derived.kept`). A ROM boot runs no line of the reconstruction. TWO KEPT
 ANSWERS HERE DO RUN THE CANDIDATE — A NAMED EXCEPTION to `derived.py`'s rule that a derivation runs none (the
@@ -519,8 +527,9 @@ BOOT_INSNS = 4_000_000                  # measured: 718,522 with two quiet acces
 ONE_INSTRUCTION = 1                     # the segment a run leaves a stop by (`_Run._stepped_off`)
 THE_ROM_S, OURS = "the ROM's", "ours"     # whose code a PC is, and whose dispatcher an idle is (`whose`)
 Boot = namedtuple("Boot", "ram registers disk instructions cycles polls blanks floppy io_reads hardware_reads "
-                          "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed served",
-                  defaults=(None, THE_ROM_S, None, (), ()))
+                          "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed served "
+                          "our_boot",
+                  defaults=(None, THE_ROM_S, None, (), (), None))
 Boot.__doc__ = """One boot of the ROM from a pre-init machine to the first idle: the megabyte of `ram` it left and the
 CPU's `registers` there (REGISTER_NAMES; the PC is idle's poll), the `disk` as it left it, its cost, how many times
 idle polled on the way (`polls`, the last the idle), how many horizontal blanks it took (`blanks`), every `floppy`
@@ -533,7 +542,15 @@ machine carried (what a run continued from this one is served). `idle`: WHOSE DI
 (THE_ROM_S, OURS — None for a boot stopped earlier, at `until`); `takeover`: the `Takeover` of a boot whose screen
 manager is ours, or None; `observed`: of a CONTINUED run (`continued`), the calls it was watched to make; `served`: THE
 LABEL of a machine made through the served door (`served`: a `Served` for each routine answered at its entry, in
-order) — empty for every machine a run of the ROM's own code alone made."""
+order) — empty for every machine a run of the ROM's own code alone made; `our_boot`: the `OurBoot` of a machine OUR
+gem_entry booted (`laid=AT_GEM_ENTRY`: a labelled staging), or None."""
+
+
+def blob_of(boot):
+    """THE BLOB `boot`'s MACHINE HOLDS (an `Ours`): a takeover's, an our-boot's — None for a machine the ROM booted."""
+    if boot.takeover is not None:
+        return boot.takeover.ours
+    return boot.our_boot.ours if boot.our_boot is not None else None
 
 
 def io_seed_of(machine):
@@ -616,6 +633,7 @@ def _the_frame_the_handler_is_entered_over(memory):
 # it runs: the desk through the ROM's, the screen manager — and, behind a door, every accessory — through ours; so
 # the boot's last park decides, and `Boot.idle` says which.
 ENTRY_SYMBOL = aes_event.SCREEN_MANAGER_ENTRY_SYMBOL
+GEM_ENTRY_SYMBOL = "aes_rom_gem_entry"  # `src/aes/gemstart.S`: the build's own gem_entry, where an our-boot machine is entered
 ROM_ENTRY = aes_event.SCREEN_MANAGER_ROM_ENTRY
 OUR_POLL, OUR_IDLE = "aes_chkkbd", "aes_idle"       # the blob's dispatcher: its poll, and the idle that calls it
 SCREEN_MANAGER_NAME = b"SCRENMGR"
@@ -630,14 +648,15 @@ AT_GEM_ENTRY = "at gem_entry, before the boot's first instruction, the run enter
 HANDLER_NAMES = ("AES_ROM_HCTL_BUTTON", "AES_ROM_HCTL_RECT")
 HANDLER_WORDS = 2                       # (mx, my)
 
-Ours = namedtuple("Ours", "base end image entry poll idle handlers rom door", defaults=((), ()))
+Ours = namedtuple("Ours", "base end image entry poll idle handlers rom door start", defaults=((), (), None))
 Ours.__doc__ = """A blob AS A TAKEOVER READS IT (`ours_of`), by content — what a kept boot is keyed by: where it is
 linked (`base`) and ends (`end`: its allocated span), its bytes (`image`), its `entry` (ENTRY_SYMBOL), its
 dispatcher's `poll` and the `(start, end)` of the `idle` that calls it, `handlers`: `((the ROM's handler, its C
 core's entry), ...)` — `rom`: `((address, bytes), ...)`, THE ROM DATA A LABELLED STAGING MAPS FOR THIS BLOB
 (`restaged`: the VDI's opcode tables naming the blob's own handlers), laid over the ROM in every continuation —
 and `door`: THE TRAP DOOR A TAKEOVER MAPS BESIDE THE SCREEN MANAGER'S ENTRY, a `DoorPart` each (none: the screen
-manager alone is ours)."""
+manager alone is ours); `start`: the blob's own gem_entry (GEM_ENTRY_SYMBOL: where an our-boot machine is entered),
+None for a build that links none."""
 DoorPart = namedtuple("DoorPart", "what mapping")
 DoorPart.__doc__ = """One declaration of the registry as a blob answers it: `what` (its `RelocatedCode.what`) and
 `mapping` — `((the ROM's routine, the blob's own entry), ...)`, each entry found by symbol."""
@@ -686,8 +705,9 @@ def _ours_at(elf, base, end, image, door=()):
         raise Refused(f"the blob {elf} does not size `{OUR_IDLE}`: a poll made from it cannot be told from ev_multi's")
     handlers = tuple((getattr(addrs, name), placed[routines.core_symbol(name)].start) for name in HANDLER_NAMES
                      if routines.core_symbol(name) in placed)
+    start = placed.get(GEM_ENTRY_SYMBOL)
     return Ours(base, max(end, base + len(image)), image, entry.start, poll.start, (idle.start, idle.start + idle.size),
-                handlers, door=_door_of(placed, blob, door))
+                handlers, door=_door_of(placed, blob, door), start=start.start if start is not None else None)
 
 
 def ours_of(blob, door=()):
@@ -1295,18 +1315,134 @@ def vet_ours_can_be_laid_at_gem_entry(machine, disk, ours):
     return window
 
 
-def _refuse_the_our_boot_not_built(machine, disk, ours):
-    """`booted(..., laid=AT_GEM_ENTRY)` AS IT STANDS: the premises vetted (each its own refusal), then the lay itself
-    refused by name — band 5 wave 4's slice B builds the lay and the entry, and removes this."""
+# ---- THE OUR-BOOT MACHINE ITSELF (band 5 wave 4, slice B): THE BLOB LAID AT gem_entry AND ENTERED AT ITS OWN ----------------
+# WHAT THE HARNESS DOES, and it is two things: the blob's bytes laid in the window the premises hold free, and the
+# capture's register file entered WITH THE PC AT THE BLOB'S gem_entry instead of the ROM's — the one word of the CPU
+# that says whose start-up runs. Every other register, both stack pointers and the megabyte are the capture's. No
+# longword of the machine is given a blob address by the harness: what holds one where the run ends was stored by
+# our own instructions (`aes_ourboot.py` holds each to the registry's declaration of it).
+# WHAT `exec_os` AND THE AES's BASEPAGE STILL NAME is the ROM's gem_entry — stored by the BIOS, read by nothing after
+# the launch, NOT MAPPED on either shore (the scan's `THE_BIOS_S`).
+# WHO RAN, CUT AT deskmain's ENTRY (`OurBoot.ran`, ruling W4-R3): the cycle profile's tallies as the run arrives at
+# `$fe272e` (or where it ends, for a boot stopped earlier) less what they were as it began — NOT ONE CYCLE in the
+# ROM's GEM text (`aes.AES_TEXT`) nor in the Line-F handler's RAM copy, or the boot is REFUSED BY NAME; the blob's own
+# count is what "ours" means. From deskmain on the ROM's spans are live BY DECLARATION (the desk is the ROM's, and
+# calls the ROM's AES through the ROM's table): nothing is claimed of them, in those words.
+# REFUSED BY NAME beside the premises: a blob that links no gem_entry; a door (nothing is mapped); A HALT OF THE BUILD
+# (`trap #7`: the desk door's vet, a routine not reconstructed — the run is stopped where the BIOS's handler for it
+# is entered, and said: never run on into the bombs); a store of the boot's into the blob's span.
+# Every vector the BIOS has given no handler holds ONE routine's address under the vector's own number in the high
+# byte (a 68000 drives 24 address lines; the handler reads the byte back off the PC to say which bombs to draw). The
+# oracle's PC keeps all 32 bits: the stop is armed at the longword AS THE VECTOR HOLDS IT.
+THE_BIOS_S_EXCEPTION_HANDLER = 0xfc0b50
+VECTOR_TRAP_7 = 0x9c                    # `trap #7`: the build's halt (`recreate_not_reconstructed`, the desk door's vet)
+TRAP_7_WORD, TRAP_INSTRUCTION_BYTES = 0x4e47, WORD_BYTES
+OUR_BOOT = "OUR BOOT — A LABELLED STAGING (ruling W4-R1): the blob laid at gem_entry, the run entered at its own"
+PROFILE_HELD_BY_AN_OUR_BOOT = "an our-boot's own run (`aes_boot.booted`, laid at gem_entry)"
+OurBoot = namedtuple("OurBoot", "ours at_the_desk ran")
+OurBoot.__doc__ = """What makes a `Boot` an OUR-BOOT machine's (above): the blob (`ours`, an `Ours`); `at_the_desk` —
+`(instructions, cycles, the supervisor stack pointer)` as the run FIRST arrived at deskmain's entry, None for a boot
+stopped before it; and `ran`, WHO RAN UP TO THERE (to where the boot ended, for one stopped earlier): `(cycles in the
+blob, cycles in the ROM's GEM text, cycles in the Line-F handler's RAM copy)` — the last two zero, or no such `Boot`
+exists."""
+LINE_F_COPY = (aes.AES_LINEF_COPY, aes.AES_LINEF_COPY + aes.LINEF_COPY_BYTES)
+
+
+def vet_an_our_boot_is_asked_right(machine, disk, ours):
+    """`booted(..., laid=AT_GEM_ENTRY)`'s question, vetted before anything is laid: a blob, one that links its own
+    gem_entry, handed no door — and the three premises (`vet_ours_can_be_laid_at_gem_entry`), each its own refusal."""
     if ours is None:
         raise Refused(f"nothing is laid {AT_GEM_ENTRY} without a blob: `ours` names none")
     if ours.door:
         raise Refused(f"a blob laid {AT_GEM_ENTRY} is handed NO DOOR: the harness maps no longword of the our-boot "
                       f"machine — each vector and entry is stored by our own run (ruling W4-R1)")
+    if ours.start is None:
+        raise Refused(f"the blob links no `{GEM_ENTRY_SYMBOL}`: an our-boot machine is entered at the build's own "
+                      f"gem_entry and nowhere else")
     vet_ours_can_be_laid_at_gem_entry(machine, disk, ours)
-    raise Refused(f"THE OUR-BOOT MACHINE IS NOT BUILT YET: a blob laid {AT_GEM_ENTRY} — its premises hold for this "
-                  f"machine and disk (the entry in user mode, the window zero at the stop, nothing of the ROM's own "
-                  f"boot stored there), and the lay and the entry are band 5 wave 4's slice B")
+
+
+def watched_for_the_build_s_halt(memory, ours):
+    """THE STOP A RUN OF A MACHINE WHOSE BLOB IS `ours` IS WATCHED AT FOR THE BUILD'S HALT (`_Run`'s `observing`):
+    `{where the machine's `trap #7` vector leads: (what, its reader)}` — the reader REFUSES BY NAME, with the address
+    of the `trap #7` in the blob read off the frame the BIOS's handler is entered over. Refused where the vector is
+    no longer the BIOS's own (a halt would not be seen where it is watched for)."""
+    halts_at = case.long_in(memory, VECTOR_TRAP_7)
+    if halts_at & BUS != THE_BIOS_S_EXCEPTION_HANDLER:
+        raise Refused(f"this machine's `trap #7` vector holds {halts_at:#x}, not the BIOS's own handler "
+                      f"({THE_BIOS_S_EXCEPTION_HANDLER:#x}): a halt of the build would not be seen where it is watched for")
+
+    def halted(memory, sp):
+        status, pc = case.word_in(memory, sp), case.long_in(memory, sp + FRAME_PC) & BUS
+        halt = pc - TRAP_INSTRUCTION_BYTES
+        in_the_blob = ours.base <= halt < ours.base + len(ours.image)
+        raise Refused(
+            f"THE RUN TOOK A `trap #7` THE MACHINE DOES NOT HANDLE, from {pc:#x} (status {status:#06x}, SP {sp:#x})"
+            + (f" — THE BUILD'S OWN HALT, `trap #7` at {halt:#x} (blob + {halt - ours.base:#x}): the desk door's vet (a "
+               f"build whose frames run deeper than the ROM's at a call out of the shell, or a call off PD0's stack) "
+               f"or a routine not reconstructed" if in_the_blob and case.word_in(memory, halt) == TRAP_7_WORD else ""))
+    return {halts_at: ("the build's halt: `trap #7`, taken", halted)}
+
+
+class BootingOurs:
+    """ONE OUR-BOOT (above), from the lay to its `OurBoot`: the blob laid as it is made; `watched`, the stops the
+    run is observed at (deskmain's entry, the BIOS's exception handler); `begun()` once the profile is on; `made()`
+    where the run ended."""
+
+    def __init__(self, memory, ours):
+        self._memory, self.ours = memory, ours
+        _vet_clear_where_the_blob_goes(memory, ours)
+        memory[ours.base:ours.base + len(ours.image)] = ours.image
+        self._began, self._at_the_desk, self._ran = None, None, None
+        self.watched = {addrs.AES_ROM_DESKMAIN: ("deskmain's entry", self._arrived_at_the_desk),
+                        **watched_for_the_build_s_halt(memory, ours)}
+
+    def entered(self, registers):
+        """The capture's register file, entered at the blob's own gem_entry."""
+        return {**registers, "pc": self.ours.start}
+
+    def _tallies(self):
+        ours = self.ours
+        return (emu.prof_cycles(ours.base, ours.base + len(ours.image)), emu.prof_cycles(*aes.AES_TEXT),
+                emu.prof_cycles(*LINE_F_COPY))
+
+    def begun(self):
+        """The profile is on and the run about to begin: the tallies it starts from (never reset: differences)."""
+        self._began = self._tallies()
+
+    def _ran_so_far(self):
+        return tuple(now - then for now, then in zip(self._tallies(), self._began))
+
+    def _arrived_at_the_desk(self, _memory, sp):
+        if self._at_the_desk is None:   # ...its FIRST arrival: the claim's cut (a second pass's is the served door's)
+            cost = aes_event.run_cost()
+            self._at_the_desk, self._ran = (cost["insns"], cost["cycles"], sp), self._ran_so_far()
+
+    def made(self, memory, ended, stored):
+        """THE OUR-BOOT, VETTED WHERE THE RUN ENDED (above): its `OurBoot`. `ended`: `(instructions, cycles, the
+        registers)` there; `stored`: every address the run and the harness stored at."""
+        ours = self.ours
+        reached = sorted(at for at in stored if ours.base <= at < ours.end)
+        if reached or bytes(memory[ours.base:ours.base + len(ours.image)]) != ours.image:
+            raise Refused(
+                f"THE OUR-BOOT STORED OVER ITS OWN BLOB: "
+                + (f"{len(reached)} byte(s) of its span [{ours.base:#x}, {ours.end:#x}) from {reached[0]:#x} on" if reached
+                   else "its span holds other bytes than the blob's, by no store the ledgers name")
+                + " — the blob lies in memory GEMDOS believes free: a Malloc or a Pexec of the boot's was handed it (a "
+                  "disk with an accessory: ruling W4-R2), and the run went on over code that was no longer there")
+        instructions, cycles, registers = ended
+        if self._at_the_desk is None and registers["pc"] & BUS == addrs.AES_ROM_DESKMAIN:
+            self._at_the_desk, self._ran = (instructions, cycles, registers["isp"]), self._ran_so_far()   # ...ended there (`until`)
+        ran = self._ran if self._ran is not None else self._ran_so_far()
+        ours, the_rom_s, the_copy = ran
+        if the_rom_s or the_copy or not ours:
+            raise Refused(
+                f"NOT AN OUR BOOT — WHO RAN up to {'deskmain' + chr(39) + 's entry' if self._at_the_desk else 'where the boot was stopped'}: "
+                f"{ours} cycles in the blob, {the_rom_s} IN THE ROM'S OWN GEM TEXT [{aes.AES_TEXT[0]:#x}, "
+                f"{aes.AES_TEXT[1]:#x}) and {the_copy} in the Line-F handler's RAM copy — a routine of the build that "
+                f"is still the ROM's (a `jsr` into its text, a vector or a code address by value left the ROM's, a "
+                f"Line-F call), or a blob that never ran")
+        return OurBoot(self.ours, self._at_the_desk, ran)
 
 
 @derived.kept
@@ -1318,36 +1454,49 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     `ours` (an `Ours`: `ours_of(blob)`): THE SCREEN MANAGER IS OURS — the takeover (above) made at its first entry,
     the `Boot`'s `takeover` what it did; `until` may then name an address of the blob. KEPT BY CONTENT: the pre-init
     machine's, the disk's and the blob's — a rebuilt blob is another question. `laid`: when the blob is (the RED's;
-    `AT_GEM_ENTRY`: THE OUR-BOOT MACHINE, ruling W4-R1 — its premises vetted against the ROM's own run, its lay and
-    entry refused by name until band 5 wave 4's slice B builds them)."""
-    if laid == AT_GEM_ENTRY:
-        _refuse_the_our_boot_not_built(machine, disk, ours)
+    `AT_GEM_ENTRY`: THE OUR-BOOT MACHINE, ruling W4-R1's LABELLED STAGING — its premises vetted against the ROM's own
+    run, the blob laid before the run's first instruction and the run entered at the blob's own gem_entry; no
+    takeover, no door: the `Boot`'s `our_boot` says what it is and who ran to deskmain's entry)."""
+    ours_boots = laid == AT_GEM_ENTRY
+    if ours_boots:
+        vet_an_our_boot_is_asked_right(machine, disk, ours)
     memory = bytearray(BASE_IMAGE)                  # ...for the ROM in it: the megabyte below is the pre-init machine's
     memory[:RAM_BYTES] = machine.ram
     floppy = Floppy(memory, disk)
-    taking = _TakingOver(memory, ours, laid) if ours is not None else None
-    run = _Run(memory, floppy, budget, until=until, taking=taking)
-    profiled = taking is not None and taking.profiled
+    booting = BootingOurs(memory, ours) if ours_boots else None
+    taking = _TakingOver(memory, ours, laid) if ours is not None and not ours_boots else None
+    run = (_Run(memory, floppy, budget, until=until, ours=ours, observing=booting.watched) if ours_boots
+           else _Run(memory, floppy, budget, until=until, taking=taking))
+    profiled = ours_boots or (taking is not None and taking.profiled)
     if profiled:
-        aes_event.vet_the_profile_is_free("a door boot")           # ...refused by name (the harness's own ledger), before
+        aes_event.vet_the_profile_is_free("an our-boot" if ours_boots else "a door boot")      # ...refused by name, before
     # ...AND HELD FOR ITS OWN RUN, as every profiled run of Tier 3's is: a second door boot begun inside this one
     # (a derivation asked cold by a stop's watcher) would switch the profile off under it.
-    holding = aes_event.profile_held(PROFILE_HELD_BY_A_DOOR_BOOT) if profiled else contextlib.nullcontext()
+    held_by = PROFILE_HELD_BY_AN_OUR_BOOT if ours_boots else PROFILE_HELD_BY_A_DOOR_BOOT
+    holding = aes_event.profile_held(held_by) if profiled else contextlib.nullcontext()
+    entered = booting.entered(machine.registers) if ours_boots else machine.registers
     try:
-        # A DOOR'S WHO-RAN IS READ OFF THE CYCLE PROFILE (`_TakingOver.made`), on for this run alone: its tallies are
-        # read as DIFFERENCES from the lay, nothing reset — but the profile is one switch of the oracle's, so a door
-        # boot is never derived inside another measurement's profiled run (it would be left off for the rest of it).
+        # A DOOR'S WHO-RAN — AND AN OUR-BOOT'S — IS READ OFF THE CYCLE PROFILE (`_TakingOver.made`,
+        # `BootingOurs.made`), on for this run alone: its tallies are read as DIFFERENCES, nothing reset — but the
+        # profile is one switch of the oracle's, so such a boot is never derived inside another measurement's
+        # profiled run (it would be left off for the rest of it).
         if profiled:
             emu.prof_enable(True)
+        if ours_boots:
+            booting.begun()
         with holding:
-            result = run.to_an_idle(machine.registers, io_seed_of(machine))
+            result = run.to_an_idle(entered, io_seed_of(machine))
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
         _vet_nothing_stored_under_the_rom_s_shadow(machine.ram, memory, writes, "THE BOOT")
-        if taking is not None and truncated:
+        if ours is not None and truncated:
             raise Refused("the boot's write ledger saturated: what it stored over the blob's span is not known")
         takeover = taking.made(memory, run.idle is not None) if taking is not None else None
+        our_boot = None
+        if ours_boots:
+            harness_s = {at for start, data in run.laid.items() for at in range(start, start + len(data))}
+            our_boot = booting.made(memory, (result["ninsns"], result["cycles"], registers), {*writes, *harness_s})
     finally:
         if profiled:
             emu.prof_enable(False)
@@ -1356,7 +1505,7 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     rom_bench.vet_the_run_just_made("the ROM's boot from the pre-init machine")
     return Boot(bytes(memory[:RAM_BYTES]), registers, bytes(floppy.disk), result["ninsns"], result["cycles"], run.polls,
                 run.blanks, tuple(floppy.calls), *streams, run.stored(writes), run.frame, truncated, machine.io, run.idle,
-                takeover)
+                takeover, our_boot=our_boot)
 
 
 # ---- THE TEST ACCESSORY (`tools/accessory_disk.py` builds it and its disk) ---------------------------------------------------
@@ -1432,7 +1581,8 @@ class Machine:
         self.boot, self.ram, self.registers = boot, boot.ram, boot.registers
         self.pokes = {0: boot.ram}
         self.takeover, self.idle, self.observed, self.served = boot.takeover, boot.idle, boot.observed, boot.served
-        self.ours = boot.takeover.ours if boot.takeover else None      # the blob of a machine whose screen manager is ours
+        self.our_boot = boot.our_boot   # of a machine OUR gem_entry booted (a labelled staging): its `OurBoot`
+        self.ours = blob_of(boot)       # the blob of a machine whose screen manager is ours (a takeover's, an our-boot's)
         self.door = boot.takeover.door if boot.takeover else None      # ...and what a door takeover did, behind a door
 
     def image(self):
@@ -1607,6 +1757,23 @@ def inf_machine(view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED, machine=Non
     return Machine(booted(machine or inf_preinit(), inf_disk_of(view, resolution), **_taken_over_by(ours, door)))
 
 
+# ---- THE OUR-BOOT MACHINES (band 5 wave 4, slice B; ruling W4-R1: A LABELLED STAGING) ----------------------------------------
+def our_desk_machine(blob, until=None, machine=None):
+    """THE DESK'S MACHINE, BOOTED BY OUR OWN gem_entry (`booted(..., laid=AT_GEM_ENTRY)`: A LABELLED STAGING — the blob
+    `blob` (a `RomBench`) laid at the pre-init stop of the blank disk's capture and the run entered at its own
+    gem_entry) — to its first idle, or stopped at its first arrival at `until`. "OURS BOOTED" IS CLAIMED TO
+    deskmain's ENTRY AND NO FURTHER (`Machine.our_boot`: who ran, cut there)."""
+    return Machine(booted(machine or preinit(), blank_disk(), until=until, ours=ours_of(blob), laid=AT_GEM_ENTRY))
+
+
+def our_inf_machine(blob, view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED, until=None, machine=None):
+    """...and THE DESKTOP.INF MACHINE, booted the same way over the disk its capture was made with: OUR reader's file
+    arm, its `#E` parse and app_reschange run in place. NO DISK WITH AN ACCESSORY HAS ONE (ruling W4-R2: refused by
+    name — our own loader's first Pexec would clear the blob)."""
+    return Machine(booted(machine or inf_preinit(), inf_disk_of(view, resolution), until=until, ours=ours_of(blob),
+                          laid=AT_GEM_ENTRY))
+
+
 # ---- A BOOTED MACHINE, CONTINUED: what it receives at its idle, and the run to its next -------------------------------------
 # WHAT A MACHINE RECEIVES is what a user's hand sends it, AS THE HARDWARE DELIVERS IT: bytes of the IKBD, each taken
 # through the ROM's own ACIA handler entered from the machine's own vector (`_Receiving`, as `aes_switch` enters one: the
@@ -1771,7 +1938,7 @@ def continued(boot, received, budget=CONTINUED_INSNS):
     memory GEMDOS believes free — a row's chain may not Malloc or Pexec its way into it)."""
     if boot.idle is None:
         raise Refused("a boot stopped before its first idle is continued by nothing: it stands at no idle")
-    ours = boot.takeover.ours if boot.takeover else None
+    ours = blob_of(boot)
     memory = bytearray(BASE_IMAGE)
     memory[:RAM_BYTES] = boot.ram
     for at, data in (ours.rom if ours is not None else ()):      # the ROM data a staging mapped for the blob (`restaged`)
@@ -1947,11 +2114,16 @@ def compared(rom, ours, also=()):
 def noised(machine, spans, seed):
     """`machine` with every byte of `spans` (`(lo, hi)` each) replaced by NOISE that differs from it: the machine a
     dead span is proved dead on — its continuation is the plain machine's."""
-    generator, ram = random.Random(seed), bytearray(machine.ram)
+    return Machine(machine.boot._replace(ram=noise_over(machine.ram, spans, seed)))
+
+
+def noise_over(ram, spans, seed):
+    """The megabyte `ram` with every byte of `spans` replaced by noise that differs from it: bytes."""
+    generator, noisy = random.Random(seed), bytearray(ram)
     for lo, hi in spans:
         for at in range(lo, hi):
-            ram[at] ^= generator.randrange(1, 256)
-    return Machine(machine.boot._replace(ram=bytes(ram)))
+            noisy[at] ^= generator.randrange(1, 256)
+    return bytes(noisy)
 
 
 def restaged(machine, memory, rom=()):
@@ -1998,8 +2170,10 @@ def dead_spans(machine):
 # THE CALLER does with an answer — on both shores, from the same stop — and nothing about the routine served.
 # BEFORE THE ANSWER, `calls`: ROM routines CALLED over the stopped machine as a battery calls one (`aes.staged`: the
 # frame and whatever the call's own `staging` pokes hold, in the call's image alone) and THEIR STORES laid in — how the
-# shell's buffers come to hold what a real shel_write leaves, never a poke. Refused on a machine whose blob is ours
-# (which shore's routine it would be is the our-boot slice's to say).
+# shell's buffers come to hold what a real shel_write leaves, never a poke. WHOSE ROUTINE, on a machine whose blob is
+# ours: THE ROM'S, on an OUR-BOOT machine — the call stands in for the desk's own, and the desk calls the AES through
+# the ROM's Line-F table on both shores (ruling W4-R3): the same routine, the same stores, on either machine. Refused
+# on a TAKEOVER machine, where nothing has said which it would be.
 # REFUSED BY NAME (`served`): a boot that stands at no routine the door serves (an idle, another `until`); one that
 # stands there in user mode; a caller that is not the shell — the return address is neither the ROM's own site of
 # that call nor inside the machine's blob; an answer that is no word; a SECOND arrival at any routine the door serves
@@ -2029,11 +2203,42 @@ def _vet_stands_at_a_served_entry(boot):
     if not boot.registers["sr"] & SR_SUPERVISOR:
         raise Refused(f"{name} is entered in user mode: the shell runs it on its own supervisor stack, and the "
                       f"answer would pop a return address off another")
-    back, ours = case.long_in(boot.ram, sp) & BUS, boot.takeover.ours if boot.takeover else None
+    back = case.long_in(boot.ram, sp) & BUS
+    _vet_the_shell_called(name, call, back, blob_of(boot))
+    return name, at, back
+
+
+def _vet_the_shell_called(name, call, back, ours):
+    """The routine `name` would return to `back`: the ROM's own site of that call (the word after its Line-F call
+    word at `call`) or, on a machine whose blob is `ours`, a place in the blob — else refused by name."""
     if back != call + WORD_BYTES and not (ours is not None and whose(back, ours) == OURS):
         raise Refused(f"{name} was not called by the shell: it would return to {back:#x}, neither the ROM's own site "
                       f"({call:#x}, a Line-F call word) nor a place in this machine's blob")
-    return name, at, back
+
+
+def served_where_it_stands(memory, sp, answer, ours):
+    """THE SERVED DOOR'S ACT, IN PLACE: a run in flight stands STOPPED AT THE ENTRY of a routine of `SERVED_ROUTINES`
+    (a watch's stop: `memory`, the stack pointer `sp`; `ours` the blob the machine holds, or None) — vetted as a
+    stopped boot is (supervisor state, called by the shell, a word answered), then the return address popped and D0's
+    low word the `answer`, on the CPU where it stands; nothing else is touched. Answers its `Served` (no calls: a
+    routine cannot be called over a machine whose run is in flight). What a run watched on both shores serves a
+    built-in of the desk's by, mid-stretch (`aes_ourboot.Pass.serving`)."""
+    at = _register("pc") & BUS
+    if at not in SERVED_ROUTINES:
+        raise Refused(f"THE SERVED DOOR ANSWERS A ROUTINE AT ITS ENTRY: the run stands at {at:#x} — at none of "
+                      f"{[f'{each:#x}' for each in SERVED_ROUTINES]}")
+    name, call = SERVED_ROUTINES[at]
+    if not _register("sr") & SR_SUPERVISOR:
+        raise Refused(f"{name} is entered in user mode: the shell runs it on its own supervisor stack, and the "
+                      f"answer would pop a return address off another")
+    if not -0x8000 <= answer <= aes.WORD_MASK:
+        raise Refused(f"{name} answers a word: {answer:#x} is none")
+    back = case.long_in(memory, sp) & BUS
+    _vet_the_shell_called(name, call, back, ours)
+    _set_register("d0", _register("d0") & ~aes.WORD_MASK & LONG_MASK | answer & aes.WORD_MASK)
+    _set_register("pc", back)
+    _set_register("a7", sp + LONG_BYTES)
+    return Served(name, at, answer & aes.WORD_MASK, ())
 
 
 def _called_over(memory, name, arguments, pokes):
@@ -2059,20 +2264,20 @@ def _refusing_a_second_arrival(name, until):
     return refused
 
 
-@derived.kept
-def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
-    """THE SERVED DOOR (above): `boot` — stopped at the entry of a routine of `SERVED_ROUTINES` — continued as if that
-    routine had answered the word `answer`, to its first arrival at `until` (None: to the first idle). `calls`:
-    `((an addrs name, its arguments, its staging pokes), ...)`, the ROM's routines called over the stopped machine
-    first. A `Boot`: the megabyte and the registers THERE, that run's own cost and streams, and `served` — THE LABEL,
-    one `Served` longer. Each refusal is by name (above)."""
+def answered_at_its_entry(boot, answer, calls=()):
+    """THE SERVED DOOR'S ONE ACT (above), without the run that follows it: `boot` — stopped at the entry of a routine
+    of `SERVED_ROUTINES` — vetted, `calls` made over its machine, and the routine ANSWERED the word `answer`:
+    `(the routine's name, its entry, the sixteen megabytes the run goes on over, what the calls stored `{address:
+    bytes}`, the register file it goes on with)`. Each refusal is by name (above). What `served` makes its run from,
+    and what a measurement that watches such a run on both shores makes its own from (`aes_ourboot.py`)."""
     name, at, back = _vet_stands_at_a_served_entry(boot)
     if not -0x8000 <= answer <= aes.WORD_MASK:
         raise Refused(f"{name} answers a word: {answer:#x} is none")
-    ours = boot.takeover.ours if boot.takeover else None
-    if calls and ours is not None:
-        raise Refused(f"a routine called over a machine whose blob is ours, before {name} is answered: whose routine — "
-                      f"the ROM's or the blob's — is the our-boot slice's to say, and this door calls the ROM's")
+    ours = blob_of(boot)
+    if calls and boot.takeover is not None:
+        raise Refused(f"a routine called over a TAKEOVER machine, before {name} is answered: whose routine — the ROM's "
+                      f"or the blob's — nothing has said there, and this door calls the ROM's (on an our-boot machine "
+                      f"it stands in for the desk's own call, which is the ROM's on both shores: ruling W4-R3)")
     memory = bytearray(BASE_IMAGE)
     memory[:RAM_BYTES] = boot.ram
     for rom_at, data in (ours.rom if ours is not None else ()):
@@ -2080,13 +2285,25 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
     called = {}
     for routine, arguments, pokes in calls:
         called.update(_called_over(memory, routine, arguments, pokes))
+    answered = {**boot.registers, "pc": back, "isp": boot.registers["isp"] + LONG_BYTES,
+                "d0": boot.registers["d0"] & ~aes.WORD_MASK & LONG_MASK | answer & aes.WORD_MASK}
+    return name, at, memory, called, answered
+
+
+@derived.kept
+def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
+    """THE SERVED DOOR (above): `boot` — stopped at the entry of a routine of `SERVED_ROUTINES` — continued as if that
+    routine had answered the word `answer`, to its first arrival at `until` (None: to the first idle). `calls`:
+    `((an addrs name, its arguments, its staging pokes), ...)`, the ROM's routines called over the stopped machine
+    first. A `Boot`: the megabyte and the registers THERE, that run's own cost and streams, and `served` — THE LABEL,
+    one `Served` longer. Each refusal is by name (above)."""
+    name, at, memory, called, answered = answered_at_its_entry(boot, answer, calls)
+    ours = blob_of(boot)
     floppy = Floppy(memory, boot.disk)
     again = {entry: (each, _refusing_a_second_arrival(each, until)) for entry, (each, _call) in SERVED_ROUTINES.items()
              if entry != until}
     run = _Run(memory, floppy, budget, until=until, ours=ours,
                observing={**handler_stops(ours), **trampoline_stops(ours), **again})
-    answered = {**boot.registers, "pc": back, "isp": boot.registers["isp"] + LONG_BYTES,
-                "d0": boot.registers["d0"] & ~aes.WORD_MASK & LONG_MASK | answer & aes.WORD_MASK}
     try:
         result = run.to_an_idle(answered, _io_seed(boot.io))
         registers = _registers_now()

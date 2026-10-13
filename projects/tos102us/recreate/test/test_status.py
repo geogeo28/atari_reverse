@@ -837,8 +837,8 @@ THE_WAVE_S_ENTRY = "BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER"
 # (...the wave's first entry is history since THE NARROW DOOR FLIP, whose own entry states the two counts as they are)
 THE_FLIP_S_ENTRY = "WAVE 3 — SLICE F: THE NARROW DOOR FLIP"
 THE_GATE_S_ENTRY = "WAVE 3 — THE DOOR DIET"
-_COUNT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-                "eleven": 11, "twelve": 12}
+_COUNT_WORDS = {"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                "ten": 10, "eleven": 11, "twelve": 12}
 _THE_GATE_RE = re.compile(
     r"THE TRAP PATH FITS PD2's (?P<pd2>[\d,]+) BYTES ON THE\s+SHIPPED BLOB\*\*.*?the (?P<nest>\d+)-byte nest.*?"
     r"MEASURED (?P<measured>\d+) spare.*?BOUND (?P<bound>\d+) spare \(fsel_input: [\d,]+ \+ \d+ = (?P<needed>[\d,]+)\);\s+"
@@ -848,6 +848,9 @@ _PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations? (?:are|is) PEND
 _TABLE_LINES_RE = re.compile(r"THE TABLE against `[0-9a-f]+`'s \([\d,]+ lines → (?P<lines>[\d,]+)\)")
 _WAS_PENDING_RE = re.compile(r"(?P<count>\w+) registry declarations are PENDING")
 PENDING_BEFORE_THE_FLIP = 4             # the wave's first entry's count, history
+PENDING_WHEN_THE_OUR_BOOT_BEGAN = 3     # ...the flip's entry's, as wave 4's slice M left it (its three declarations): history
+TABLE_LINES_AT_THE_FLIP = 5678          # ...and the table's length then
+THE_OUR_BOOT_S_ENTRY = "WAVE 4 — SLICE B: THE OUR BOOT"     # band 5 wave 4: where the two counts are stated as they are
 
 
 def _number(text):
@@ -871,12 +874,17 @@ def test_the_gate_s_sentence_quotes_the_stack_battery_s_pins_and_the_wave_s_coun
     assert pinned.CALLS_OVER_PD2[pinned.SHIPPED] == (), "the sentence says every arm fits: the pin of the arms over PD2 is empty"
     was = _WAS_PENDING_RE.search(_paragraph_from(_status(), THE_WAVE_S_ENTRY))
     assert was and _number(was["count"]) == PENDING_BEFORE_THE_FLIP, "the wave's first entry: its history"
-    entry = _paragraph_from(_status(), THE_FLIP_S_ENTRY)
-    pending = _PENDING_RE.search(entry)
+    # THE FLIP'S ENTRY IS HISTORY TOO since band 5 wave 4's slice B (the our boot): its two counts are what they were...
+    flip = _paragraph_from(_status(), THE_FLIP_S_ENTRY)
+    pending, lines = _PENDING_RE.search(flip), _TABLE_LINES_RE.search(flip)
+    assert pending and _number(pending["count"].lower()) == PENDING_WHEN_THE_OUR_BOOT_BEGAN, "the flip's entry: its history"
+    assert lines and _number(lines["lines"]) == TABLE_LINES_AT_THE_FLIP, "the flip's entry: its history"
+    # ...AND THE OUR BOOT'S ENTRY STATES THEM AS THEY ARE: the registry's pending declarations, the table's length.
+    entry = _paragraph_from(_status(), THE_OUR_BOOT_S_ENTRY)
+    pending, lines = _PENDING_RE.search(entry), _TABLE_LINES_RE.search(entry)
     assert pending and _number(pending["count"].lower()) == len(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3), (
-        f"the flip's entry counts the registry's pending declarations; it holds {sorted(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)}")
-    lines = _TABLE_LINES_RE.search(entry)
-    assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the flip's entry states it"
+        f"the our boot's entry counts the registry's pending declarations; it holds {sorted(aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3)}")
+    assert lines and _number(lines["lines"]) == len(BENCH_TABLE.read_text().splitlines()), "the table's length, as the our boot's entry states it"
 
 
 # ...AND THE DOOR DIET'S OTHER NUMBERS, which the sentence above does not hold (its review, B-F4: the per-arm table
@@ -961,10 +969,14 @@ _THE_EIGHT_TURNS_RE = re.compile(
     r"lines\): (?P<shipped>[\d. /,]+); bench \(the pinned turns over the table's ROM windows and Line-F shares\): (?P<bench>[\d. /,]+)\.")
 _ON_THAT_ONE_FIGURE_RE = re.compile(
     r"ON THAT ONE FIGURE: the screen manager's (?P<managers>\d+) lines that print it are (?P<manager_lo>\d\.\d\d) \.\. "
-    r"(?P<manager_hi>\d\.\d\d), (?P<manager_over>\d+) over 1\.10; the accessories' (?P<accessories>\d+) are (?P<shipped_lo>\d\.\d\d) \.\. "
+    r"(?P<manager_hi>\d\.\d\d), (?P<manager_over>\d+) over 1\.10 \((?P<earlier>\d+) of them under the earlier slices' rows, "
+    r"(?P<earlier_lo>\d\.\d\d) \.\. (?P<earlier_hi>\d\.\d\d), (?P<earlier_over>\d+) over 1\.10; (?P<slice_b>\d+) under slice B's — the first "
+    r"turn inside gem_main's three stretches — (?P<slice_b_lo>\d\.\d\d) \.\. (?P<slice_b_hi>\d\.\d\d), (?P<slice_b_over>\d+) over 1\.10\); "
+    r"the accessories' (?P<accessories>\d+) are (?P<shipped_lo>\d\.\d\d) \.\. "
     r"(?P<shipped_hi>\d\.\d\d), (?P<shipped_over>\d+) over 1\.10 on the shipped blob and (?P<bench_lo>\d\.\d\d) \.\. "
     r"(?P<bench_hi>\d\.\d\d), (?P<bench_over>\d+) over 1\.10 on the bench blob")
 THE_BAR_A_TURN_IS_HELD_TO = 1.10
+A_STRETCH_S_CASE_BEGINS = "LABELLED STAGING (our boot)"     # `aes_ourboot.ON_THE_OUR_BOOT_MACHINE`: held equal below
 AN_ACCESSORY_S, THE_BENCH_BLOB = "an accessory's turn", "bench"
 TurnLine = namedtuple("TurnLine", "whose row nth ours the_rom_s glue line_f")
 
@@ -1036,6 +1048,134 @@ def test_the_fix_pass_s_figures_of_the_turns_net_of_the_line_f_handler_are_the_t
         f"STATUS.md quotes {eight['shipped']!r} and {eight['bench']!r}; the table and the pins make "
         f"{_quoted(of_accessories)!r} and {_quoted(on_the_bench)!r}")
     held = dict(zip(("managers", "manager_lo", "manager_hi", "manager_over"), (str(len(of_the_manager)), *_spread(of_the_manager))))
+    # ...WHOSE LINES ARE WHICH SLICE'S (never folded into one statistic unsaid): the ones under a stretch of the our boot.
+    under_slice_b = [turn for turn in of_the_manager if A_STRETCH_S_CASE_BEGINS in turn.row]
+    under_earlier = [turn for turn in of_the_manager if turn not in under_slice_b]
+    held |= dict(zip(("earlier", "earlier_lo", "earlier_hi", "earlier_over"), (str(len(under_earlier)), *_spread(under_earlier))))
+    held |= dict(zip(("slice_b", "slice_b_lo", "slice_b_hi", "slice_b_over"), (str(len(under_slice_b)), *_spread(under_slice_b))))
     held |= dict(zip(("accessories", "shipped_lo", "shipped_hi", "shipped_over"), (str(len(of_accessories)), *_spread(of_accessories))))
     held |= dict(zip(("bench_lo", "bench_hi", "bench_over"), _spread(on_the_bench)))
     assert compared.groupdict() == held, f"STATUS.md says {compared[0]!r}; the table holds {held}"
+
+
+# ---- BAND 5 WAVE 4, SLICE B: THE OUR BOOT — its entry's figures and the census of the six routines, derived ----------------------
+# The entry's headline states how far ours boots, how many rows and routines that made, and the two stack gates as the
+# our-boot machine measures them. Each is a pin or a registry of `test_aes_ourboot.py` / `aes_ourboot.py`, QUOTED here.
+_THE_OUR_BOOT_RE = re.compile(
+    r"OURS BOOTS TO deskmain's ENTRY AND NO FURTHER — (?P<rows>\d+) rows,\s+(?P<verified>\w+)\s+routines\s+verified\s+and\s+"
+    r"(?P<unpriced>\w+)\s+unpriced.*?first stack (?P<bound>\d+) / (?P<span>\d+), bound and measured.*?"     # (the entry wraps)
+    r"the shell entered at `\$(?P<shell>[0-9a-f]+)`.*?margins\s+(?P<deskmain>\d+) / (?P<dos_exec>\d+) / (?P<built_in>\d+)", re.S)
+_AN_UNPRICED_LINE_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|.*⚠️ verified, unpriced.*$", re.M)
+
+
+def test_the_our_boot_s_entry_quotes_the_battery_s_pins_and_the_registry_s_rows():
+    import aes_ourboot
+    import test_aes_ourboot as battery
+    from harness import addrs, bench_tier3
+
+    said = _THE_OUR_BOOT_RE.search(_paragraph_from(_status(), THE_OUR_BOOT_S_ENTRY))
+    assert said, "the our-boot's entry no longer states its headline in the sentence this test reads"
+    tier3 = bench_tier3()
+    routines = {getattr(addrs, name): how for name, (how, _what) in aes_ourboot.THE_CENSUS.items()}
+    rows = [row for row in tier3.ROWS if tier3.rom_address(row) in routines]
+    priced = [how for how in routines.values() if how == aes_ourboot.IN_THE_TABLE]
+    margins = battery.THE_MARGINS
+    assert {name: _number(value.lower()) if name != "shell" else int(value, 16) for name, value in said.groupdict().items()} == {
+        "rows": len(rows), "verified": len(priced), "unpriced": len(routines) - len(priced),
+        "bound": battery.pinned.THE_FIRST_STACK_BOUND, "span": battery.pinned.THE_FIRST_STACK_S_SPAN,
+        "shell": battery.THE_SHELL_IS_ENTERED_AT, "deskmain": margins[aes_ourboot.DESKMAIN_ENTERED],
+        "dos_exec": margins[aes_ourboot.DOS_EXEC_ENTERED], "built_in": margins[aes_ourboot.SHOW_FILE]}
+
+
+def test_the_ledger_holds_each_of_the_six_routines_as_the_census_says():
+    """THE CENSUS OF WAVE 4's SIX (`aes_ourboot.THE_CENSUS`), against the ledger's own rows: a routine with rows of the
+    table has a `✅ verified` row (the pins above hold its ratios to the table); one WITHOUT A SECOND COLUMN has a `⚠️
+    verified, unpriced` row that says its reason in the census's own words."""
+    import aes_ourboot
+    from harness import addrs
+
+    verified = {address for address, _cell in _verified_rows()}
+    unpriced = {int(match["addr"], 16): match[0] for match in _AN_UNPRICED_LINE_RE.finditer(_status())}
+    for name, (how, _what) in aes_ourboot.THE_CENSUS.items():
+        address = getattr(addrs, name)
+        if how == aes_ourboot.IN_THE_TABLE:
+            assert address in verified and address not in unpriced, f"{name} ({address:#x}): rows of the table, and no ✅ row"
+        else:
+            assert address not in verified and how in unpriced.get(address, ""), f"{name} ({address:#x}): no ⚠️ row that says {how!r}"
+
+
+# ---- SLICE B's FIX PASS: THE STRETCHES' LINE NET OF THE ROM'S LINE-F HANDLER, READ FROM THE TABLE ---------------------------
+# The table prints, under each of the sixteen stretches, its ratio NET OF THE ROM'S LINE-F HANDLER — the one place the
+# figures over the bar that the slice REPORTS are printed. Nothing read that line (a line capped at the bar, or printed
+# with no handler's share at all, passed every test), and STATUS quoted its figures by hand. So: EVERY STRETCH'S LINE IS
+# READ HERE, all sixteen, held to its own integers; the battery's pins of the figures over 1.00 and STATUS's quotes —
+# the entry's (f) and AWAITING (22) B-1 — are THOSE LINES' PRINTED DIGITS; and the battery holds each line's integers
+# to the stretch's measured price (`test_aes_ourboot.py`: the table cannot print a figure the run did not make). THE
+# LINES' READER IS `aes_ourboot.stretch_lines_of` — the battery's too, which may not import this module: one that did
+# would reach the bench's registry through it, and be handed out after it (`derived._registry_modules`).
+_THE_SIXTEEN_STRETCHES_RE = re.compile(
+    r"THE SIXTEEN STRETCHES IN THE TABLE'S ORDER, with thunks / net of the ROM's Line-F handler \(the table's own lines\): "
+    r"(?P<shipped>[\d. /,]+); THE BENCH BLOB'S, the same sixteen \(the battery's pins\): (?P<bench>[\d. /,]+)\.")
+_FIGURES_OVER_RE = re.compile(r"(?P<over_1>\w+) FIGURES ARE OVER 1\.00 AND (?P<over_the_bar>\w+) OVER 1\.10")
+_A_FIGURE_WITH_ITS_CYCLES_RE = re.compile(
+    r"(?P<net>\d\.\d\d) \((?P<ours>[\d,]+) \+ (?P<glue>[\d,]+) in thunks to (?P<the_rom_s>[\d,]+) less (?P<line_f>[\d,]+)\)")
+_B_1_RE = re.compile(
+    r"B-1 — .*?(?P<stretches>\w+) STRETCHES AND ONE TURN ARE OVER 1\.10.*?THE STRETCHES OVER 1\.00 ON THAT LINE, IN THE TABLE'S ORDER: "
+    r"(?P<figures>[\d., ]+) \(.*?THE TURN: (?P<turn>\d\.\d\d) under (?P<rows>\d+) rows")
+_B_12_RE = re.compile(r"B-12 .*?NET OF THE ROM'S LINE-F HANDLER, the stretches over 1\.10 in the registry's order: (?P<figures>[\d., ]+) \(")
+_A_LEDGER_ROW_S_NET_RE = re.compile(r"(?i:net of the ROM's Line-F handler) (?P<net>\d\.\d\d(?: / \d\.\d\d)*)")
+THE_OUR_BOOT_S_AWAITING = "(22) WAVE 4, SLICE B — THE OUR BOOT"
+
+
+def _with_its_cycles(net, ours, glue, the_rom_s, line_f):
+    return (net, *(f"{value:,}" for value in (ours, glue, the_rom_s, line_f)))
+
+
+def test_the_stretches_figures_net_of_the_line_f_handler_are_the_table_s_own_lines():
+    """EVERY STRETCH'S LINE NET OF THE ROM'S LINE-F HANDLER, all sixteen, and every quote of one: the battery's pins of
+    the figures over 1.00 (and so of the five over the bar) and of the turn inside gem_main's stretches; the entry's
+    sixteen pairs, its count of figures over 1.00 and over 1.10, and each figure it spells with its cycles; AWAITING
+    (22) B-1's list and B-12's (the bench blob's, the battery's pins) — EACH THE TABLE'S PRINTED DIGITS."""
+    import aes_ourboot
+    import test_aes_ourboot as battery
+    from harness import addrs
+
+    assert aes_ourboot.THE_TABLE == BENCH_TABLE, "one table"
+    lines = aes_ourboot.stretch_lines_of(BENCH_TABLE.read_text())
+    keyed = {battery.key_of(aes_ourboot.STRETCHES[name]): line for name, line in lines.items()}
+    assert len(lines) == 16 and list(keyed) == [battery.key_of(stretch) for stretch in battery.STRETCHES], "the table's order is the registry's"
+    assert A_STRETCH_S_CASE_BEGINS == aes_ourboot.ON_THE_OUR_BOOT_MACHINE
+    over_1 = {key: line.net for key, line in keyed.items() if float(line.net) > 1.00}
+    assert over_1 == battery.NET_OF_LINE_F_OVER_1_00 and list(over_1) == list(battery.NET_OF_LINE_F_OVER_1_00), (
+        f"the battery pins {battery.NET_OF_LINE_F_OVER_1_00} as the figures over 1.00 net of the ROM's Line-F handler; the table prints {over_1}")
+    turns = [turn for line in lines.values() for turn in line.turns]
+    shipped_turn = battery.THE_TURN_INSIDE[battery.SHIPPED]
+    assert {(turn.with_thunks, turn.net) for turn in turns} == {shipped_turn} and len(turns) == sum(stretch.turns for stretch in battery.STRETCHES) == 3
+    status = " ".join(_status().split())
+    entry = " ".join(_paragraph_from(_status(), THE_OUR_BOOT_S_ENTRY).split())
+    sixteen, counted = _THE_SIXTEEN_STRETCHES_RE.search(entry), _FIGURES_OVER_RE.search(entry)
+    assert sixteen and counted, "the our-boot's entry no longer quotes the sixteen stretches' two figures, or no longer counts the ones over"
+    assert sixteen["shipped"] == ", ".join(f"{line.with_thunks} / {line.net}" for line in lines.values()), (
+        f"STATUS.md quotes {sixteen['shipped']!r} for the sixteen stretches; the table prints "
+        f"{', '.join(f'{line.with_thunks} / {line.net}' for line in lines.values())!r}")
+    assert sixteen["bench"] == ", ".join(f"{with_thunks} / {net}" for with_thunks, net in battery.ON_THE_BENCH_BLOB.values())
+    printed = [*over_1.values(), *(turn.net for turn in turns)]
+    assert {name: _number(value.lower()) for name, value in counted.groupdict().items()} == {
+        "over_1": len(printed), "over_the_bar": sum(float(figure) > battery.BAR for figure in printed)}, f"STATUS.md says {counted[0]!r}"
+    spelt = [tuple(found.groups()) for found in _A_FIGURE_WITH_ITS_CYCLES_RE.finditer(entry)]
+    held = [_with_its_cycles(line.net, line.ours, line.glue, line.the_rom_s, line.line_f) for key, line in keyed.items() if key in over_1]
+    held.append(_with_its_cycles(turns[0].net, turns[0].ours, turns[0].glue, turns[0].the_rom_s, turns[0].line_f))
+    assert spelt == held, f"the entry spells {spelt} with their cycles; the table's lines over 1.00, in its order, and the turn's are {held}"
+    # ...and THE LEDGER'S OWN ROWS of the four routines quote the same line, every stretch of each in the table's order.
+    for routine in aes_ourboot.SYMBOL_OF:
+        ledger_row = re.search(rf"^\| `0x{getattr(addrs, routine):x}` \|.*$", _status(), re.M)[0]
+        quoted = _A_LEDGER_ROW_S_NET_RE.search(ledger_row)
+        assert quoted and quoted["net"] == " / ".join(line.net for (its_routine, _what), line in keyed.items() if its_routine == routine), (
+            f"{routine}'s row of the ledger quotes {quoted and quoted['net']!r} net of the ROM's Line-F handler")
+    awaiting = status[status.index(THE_OUR_BOOT_S_AWAITING):]
+    b_1, b_12 = _B_1_RE.search(awaiting), _B_12_RE.search(awaiting)
+    assert b_1 and b_12, "AWAITING (22) no longer lists B-1's figures, or B-12's, in the sentence this test reads"
+    assert (_number(b_1["stretches"].lower()), b_1["figures"], b_1["turn"], int(b_1["rows"])) == (
+        len(battery.OVER_THE_BAR_NET_OF_LINE_F), ", ".join(over_1.values()), shipped_turn[1], len(turns)), f"AWAITING (22) says {b_1[0][-200:]!r}"
+    assert b_12["figures"] == ", ".join(net for _with_thunks, net in battery.ON_THE_BENCH_BLOB.values() if float(net) > battery.BAR), (
+        f"AWAITING (22) B-12 says {b_12['figures']!r}")

@@ -18,9 +18,10 @@ FIVE CLAIMS HOLD IT.
     word is kept, and a negative LONGWORD alone is an error. AN ARGUMENT CLASS (ruling W4-R14): its four ROM callers
     are the shell's utilities, band 6's.
 
-NOT HELD HERE — gem_entry BY A RUN. It is entered by no call and never returns; what it does is slice B's, on the
-our-boot machine (the blob laid at the pre-init stop): its arrivals at rom_rsc_init, at the loop's top and at
-gem_main, the `$2c` test's two arms, THEGLO cleared. Until then every instruction of it is held by the byte pin alone.
+NOT HELD HERE — gem_entry BY A RUN. It is entered by no call and never returns; what it does is held by slice B's
+battery (`test_aes_ourboot.py`), on the our-boot machine (the blob laid at the pre-init stop: A LABELLED STAGING):
+its arrivals at rom_rsc_init, at the loop's top and at gem_main, THEGLO cleared, the `$2c` test's taken arm — and
+its SKIP arm by a labelled craft alone (no machine reaches it). This file holds its bytes.
 """
 import struct
 import subprocess
@@ -321,6 +322,15 @@ def staged_call(label):
     caller = frame_caller(words)
     pokes = merge_pokes(STALE, aes_gemdosif.scripted_pokes([answer]))
     return caller, transcription.transcription_pokes("AES_ROM_GEM_GEMDOS_CALL", pokes, caller)
+
+
+# THE (T) ROWS, REGISTERED (band 5 wave 4, slice B: `bench/tier3.py` prices them). AN ARGUMENT CLASS, said in each row's
+# name: the trap is the recording one and the frame a staged caller's — every real caller of gem_gemdos_call is a
+# shell utility of band 6's (ruling W4-R14: the routine ships now, linked and not bound).
+AN_ARGUMENT_CLASS = "ARGUMENT CLASS (the trap recorded, a staged caller's frame)"
+for _label, (_words, _answer) in ANSWERS.items():
+    transcription.register_transcription("AES_ROM_GEM_GEMDOS_CALL", f"{AN_ARGUMENT_CLASS}: {_label}",
+                                         merge_pokes(STALE, aes_gemdosif.scripted_pokes([_answer])), caller=frame_caller(_words))
 
 
 def run_gemdos_call(blob, label):

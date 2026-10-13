@@ -52,7 +52,8 @@ RESOURCE = aes.header_constants("resource.h")
 # are of the switch's kind (`irq.S`: `test_aes_irq.py` takes them off its owed list by this table), the third the trap
 # door's.
 STORED_BY_VALUE = {0xFD9F86: "aes_rom_justretf", 0xFD9F92: "aes_rom_tick_glue", 0xFD9F9E: "aes_rom_ub_trampoline"}
-# ...and where each is stored: what the relocation registry will map the day a build's gem_entry runs (slice B).
+# ...and where each is stored: what the relocation registry maps where a run of the build's gem_entry ends (slice B
+# activated the three: `aes_event.STORED_BY_GEM_ENTRY`).
 STORED_INTO = {0xFD9F86: GSXIF["AES_DRWADDR"], 0xFD9F92: GEMSTART["AES_TICK_ROUTINE"], 0xFD9F9E: aes.AES_USERDEF_TRAMPOLINE}
 
 def default_inf_bytes(memory):

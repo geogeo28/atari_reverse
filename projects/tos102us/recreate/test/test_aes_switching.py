@@ -206,9 +206,16 @@ def test_the_table_says_a_foreign_window_under_every_row_that_has_one_and_under_
         f"{test_status.BENCH_TABLE} says a foreign window under {said} row(s) where the registry holds "
         f"{len(with_a_window)} whose run enters a process of the ROM's and {len(woken_with_a_window)} rows of ctlmgr's "
         f"own that wake one — if the file predates the tree, run `make bench`")
-    assert turns_said == len(ours) == len(aes_turns_pinned.PINNED) - len(its_own.WOKEN), (
+    # ...and, SINCE THE OUR BOOT (band 5 wave 4, slice B), under each STRETCH of the build's own start-up that holds the
+    # screen manager's first turn (`aes_ourboot.Stretch.turns`, pinned and refused by `priced` where the run has another).
+    import aes_ourboot
+    import test_aes_ourboot                 # noqa: F401  (it registers the stretches)
+    in_a_stretch = sum(stretch.turns for stretch in aes_ourboot.STRETCHES.values())
+    assert in_a_stretch and len(ours) == len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)
+    assert turns_said == len(ours) + in_a_stretch, (
         f"{test_status.BENCH_TABLE} says a turn of the screen manager {turns_said} time(s) where the registry holds "
-        f"{len(ours)} rows whose run enters OUR screen manager, {len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)} of them pinned")
+        f"{len(ours)} rows whose run enters OUR screen manager, {len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)} of them pinned, "
+        f"and {in_a_stretch} stretch(es) of the our-boot's with a turn inside")
 
 
 A_HIGH_WORD_NO_CALLER_READS = 0x10000

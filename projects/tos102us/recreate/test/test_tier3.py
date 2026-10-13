@@ -1956,12 +1956,15 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False, False, True, False, False, False], (
+    assert [each.at_entry for each in read] == [True, False, False, True, False, False, False, False, False, False], (
         "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone; the screen "
         "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr); "
         "THE NARROW DOOR'S THREE — the GEM trap's vector, a program's first-entry frame, the critical-error vector — "
-        "at exit alone (ruling W3-R1: a row's machine holds what it came with; `$88` at every row's entry is wave 4's)")
-    assert [each.what for each in read][-3:] == [part.what for part in aes_event.THE_NARROW_DOOR]
+        "at exit alone (ruling W3-R1: a row's machine holds what it came with; `$88` at every row's entry is wave 4's "
+        "full flip); AND gem_entry's THREE BY-VALUE STORES — justretf's slot, the tick glue's, the desk's trampoline — "
+        "at exit alone too (band 5 wave 4, slice B: stored by the build's own gem_entry on the our-boot machine)")
+    assert [each.what for each in read][-6:-3] == [part.what for part in aes_event.THE_NARROW_DOOR]
+    assert [each.what for each in read][-3:] == [declared.what for declared in aes_event.STORED_BY_GEM_ENTRY]
     # ...each mapped whole for this run — but the GEMDOS glue's text sites, mapped only for a run that reaches the
     # `.S` that parks them (`tier3.text_site_relocation`: forker's, on the bench's blob, reaches the C twin).
     assert [set(each.mapping) for each in read] == [

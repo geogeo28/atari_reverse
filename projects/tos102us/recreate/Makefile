@@ -117,7 +117,7 @@ $(PREINIT_ACC7): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)
 # own default DESKTOP.INF in the drive from power-on and no accessory — what the `#E` reader's FILE arm, its `#E`
 # parse and app_reschange in place are booted over, and (its view pair patched in the image) a drive window whose
 # items are drawn through ub_trampoline. Its own disk, its own scratch directory, four more seconds of Hatari, once.
-# The disk needs the ROM image (the text is cut out of it). NOT among REGISTRY_READS, as the third is not.
+# The disk needs the ROM image (the text is cut out of it). AMONG REGISTRY_READS since slice B registered rows made of it.
 PREINIT_INF := build/preinit_inf.bin
 INF_DISK := build/acc/INFDISK.ST
 
@@ -155,7 +155,9 @@ test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF)
 # ROM's own run over one), so the import reads both files — and `gates`' own prerequisites above come AFTER its
 # recipe rule's, whose first leaf is `shipped-glue`. Named once, used by the three rules below
 # (`test/test_makefile.py` holds that no importer of the registry is without them).
-REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC)
+# ...AND THE FOURTH SINCE BAND 5 WAVE 4's SLICE B: the build's own start-up is priced over the DESKTOP.INF machine too
+# (`test/aes_ourboot.py`: the reader's file arm), so the registry's import reads that capture.
+REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF)
 
 # TIER 3's table: every verified function's `recreate / original` cycle ratio. It runs the ORIGINAL
 # too, so it needs the snapshot exactly as the suites do; `bench/tier3.py` exits non-zero on a row

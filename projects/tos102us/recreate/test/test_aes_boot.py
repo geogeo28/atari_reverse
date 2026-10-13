@@ -2945,13 +2945,12 @@ def test_each_declaration_of_the_door_is_the_rom_s_own_by_value_store(declared):
     for (lo, hi), last in zip(spans, THE_DOOR_S_LAST_WORDS[declared.what], strict=True):
         assert aes.AES_TEXT[0] <= lo < hi <= aes.AES_TEXT[1] and rom_word(hi - WORD_BYTES) == last
     # THE NARROW DOOR'S THREE ARE MAPPED, WHERE A RUN ENDS AND NEVER AT ITS ENTRY (ruling W3-R1: a row's machine holds
-    # what it came with — the full flip, `$88` at every row's entry, is wave 4's); the desk's trampoline is pending.
-    if declared in aes_event.THE_NARROW_DOOR:
-        assert declared in aes_event.CODE_RELOCATIONS and not declared.at_entry
-        assert declared.what not in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
-    else:
-        assert declared is aes_event.USERBLK_TRAMPOLINE_SLOT and declared not in aes_event.CODE_RELOCATIONS
-        assert aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3[declared.what][1] == aes_event.WAVE_4
+    # what it came with — the full flip, `$88` at every row's entry, is wave 4's slice F); AND SO IS THE DESK'S
+    # TRAMPOLINE since wave 4's slice B (our own gem_entry stores it: `test_aes_ourboot.py`) — no part of the narrow
+    # door, which a takeover maps, until the full flip.
+    assert declared in aes_event.CODE_RELOCATIONS and not declared.at_entry
+    assert declared.what not in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
+    assert (declared in aes_event.THE_NARROW_DOOR) != (declared is aes_event.USERBLK_TRAMPOLINE_SLOT)
 
 
 def test_each_part_of_the_narrow_door_is_proved_a_mapping_by_registered_rows_whose_own_run_stores_it():
@@ -2961,7 +2960,8 @@ def test_each_part_of_the_narrow_door_is_proved_a_mapping_by_registered_rows_who
     un-mapping the part reddens them is each battery's own RED: `test_aes_gemdosif_transcription.py`,
     `test_aes_loader.py`.)"""
     rows = harness.bench_tier3().ROWS
-    assert set(aes_event.MAPPING_PROVED_BY) == {part.what for part in aes_event.THE_NARROW_DOOR}
+    stored_by_gem_entry = {declared.what for declared in aes_event.STORED_BY_GEM_ENTRY}      # (wave 4, slice B: `test_aes_ourboot.py`)
+    assert set(aes_event.MAPPING_PROVED_BY) == {part.what for part in aes_event.THE_NARROW_DOOR} | stored_by_gem_entry
     for what, symbols in aes_event.MAPPING_PROVED_BY.items():
         for symbol in symbols:
             assert [row for row in rows if row.symbol == symbol], f"{what}: `{symbol}` has no row whose run stores it"
@@ -2969,9 +2969,10 @@ def test_each_part_of_the_narrow_door_is_proved_a_mapping_by_registered_rows_who
     walked = [what for what in aes_event.SLOTS_WALKED_FROM_THE_MACHINE if what in door]
     assert walked == [aes_event.PROGRAM_ENTRY.what] and set(aes_event.THE_MACHINE_S_VECTORS) == {
         aes_event.GEM_TRAP_VECTOR.what, aes_event.CRITICAL_ERROR_VECTOR.what}, "a vector's own longword, or slots walked: each part one"
-    # ...and the one walk that is no part of the narrow door: the desk's USERBLKs, wave 4's and PENDING (`test_aes_boot_w4.py`).
+    # ...and the one walk that is no part of the narrow door: the desk's USERBLKs, wave 4's — MAPPED WHERE A RUN ENDS
+    # since its slice B, in no door before the full flip (`test_aes_boot_w4.py`).
     assert set(aes_event.SLOTS_WALKED_FROM_THE_MACHINE) - door == {aes_event.USERBLK_TRAMPOLINE_SLOT.what}
-    assert aes_event.USERBLK_TRAMPOLINE_SLOT.what in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
+    assert aes_event.USERBLK_TRAMPOLINE_SLOT in aes_event.STORED_BY_GEM_ENTRY and not aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
 
 
 @every_boot

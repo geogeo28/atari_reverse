@@ -12,9 +12,10 @@ So the rule is held from the makefiles' text, and held the CONSERVATIVE way roun
 script or pytest must have the three, EXCEPT the tools named here that MAKE them — and those are held never to
 import a test module.
 
-WHICH THREE IS DERIVED, NOT DECLARED (band 5 wave 4's fix pass): `aes_boot.CAPTURES_READ` as this module's own import
-of the registry ends is what the import READ — so the day a row is registered from the seven-accessory or the
-DESKTOP.INF machine, the registry's import reads a fourth file and this battery says REGISTRY_READS lacks it.
+WHICH ONES IS DERIVED, NOT DECLARED (band 5 wave 4's fix pass): `aes_boot.CAPTURES_READ` as this module's own import
+of the registry ends is what the import READ — so the day a row is registered from the seven-accessory machine, the
+registry's import reads one more file and this battery says REGISTRY_READS lacks it. (It did for the DESKTOP.INF
+machine the day slice B registered the build's own start-up over it: the fourth capture is among them since.)
 
 AND THE SUITES' OWN CAPTURES ARE FOUR: `test`, `guarded` and `gates` need every pre-init machine a test boots from
 (the seven-accessory and DESKTOP.INF ones too), each made from ITS OWN disk by the capture tool, and `gates` holds
@@ -118,16 +119,19 @@ def not_among_the_registry_s_reads(read, texts):
 
 def test_what_the_registry_s_import_reads_is_what_registry_reads_names():
     """DERIVED: the captures this process read while the registry was imported are the Makefile's REGISTRY_READS, with
-    the snapshot — no fewer (the two pre-init machines the screen manager's rows are registered from) and no more.
-    RED, on the list a registered row of the DESKTOP.INF machine would make: the fourth capture is named as lacking."""
-    assert READ_BY_THE_REGISTRY_S_IMPORT == ("build/preinit.bin", "build/preinit_acc.bin")
+    the snapshot — no fewer and no more: the two pre-init machines the screen manager's rows are registered from, AND
+    THE DESKTOP.INF ONE since band 5 wave 4's slice B registered rows made of it (the build's own start-up: the
+    reader's file arm). RED, on the list a registered row of the seven-accessory machine would make: that capture is
+    named as lacking; and each of the three, dropped from the rule, is named too."""
+    assert READ_BY_THE_REGISTRY_S_IMPORT == ("build/preinit.bin", "build/preinit_acc.bin", "build/preinit_inf.bin")
     assert not_among_the_registry_s_reads(CAPTURES, _texts()) == []
-    inf = str(preinit_snapshot.inf_path().relative_to(RECREATE))
-    assert not_among_the_registry_s_reads((*CAPTURES, inf), _texts()) == [inf]
+    seven = str(preinit_snapshot.seven_accessory_path().relative_to(RECREATE))
+    assert not_among_the_registry_s_reads((*CAPTURES, seven), _texts()) == [seven]
     makefile, kit = _texts()
-    rule = "REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC)"
+    rule = "REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF)"
     assert makefile.count(rule) == 1
-    assert not_among_the_registry_s_reads(CAPTURES, [makefile.replace(rule, "REGISTRY_READS := $(SNAPSHOT) $(PREINIT)"), kit]) == ["build/preinit_acc.bin"]
+    for dropped, lacking in ((" $(PREINIT_ACC)", "build/preinit_acc.bin"), (" $(PREINIT_INF)", "build/preinit_inf.bin")):
+        assert not_among_the_registry_s_reads(CAPTURES, [makefile.replace(rule, rule.replace(dropped, "")), kit]) == [lacking]
 
 
 def suites_without_a_capture(texts):

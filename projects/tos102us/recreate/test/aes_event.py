@@ -2952,8 +2952,10 @@ def declare_critical_error_slots(*slots):
     CRITICAL_ERROR_SLOTS.extend(slot for slot in slots if slot not in CRITICAL_ERROR_SLOTS)
 
 
+# (EXIT-ONLY since band 5 wave 4's slice B activated it — what our own gem_entry stores is given the ROM's name where a
+# run ends; a row's machine AT ITS ENTRY holds what it came with until the full flip, slice F, as `$88` does.)
 USERBLK_TRAMPOLINE_SLOT = RelocatedCode("the desk's user-block trampoline ($8c32)", (aes.AES_USERDEF_TRAMPOLINE,),
-                                        {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, True)
+                                        {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, False)
 ROM_TEXT_OF = {GEM_TRAP_VECTOR.what: ((addrs.GEM_TRAP2, GEM_TRAP_EXIT_END), (addrs.AES_ROM_ENTRY, AES_ENTRY_END)),
                PROGRAM_ENTRY.what: ((addrs.AES_ROM_GOTOPGM, GOTOPGM_END),),
                CRITICAL_ERROR_VECTOR.what: ((addrs.AES_ROM_CRIT_ERR, CRIT_ERR_END),),
@@ -3037,7 +3039,12 @@ assert _stored_by_gem_entry(USERBLK_TRAMPOLINE_STORED_AT) == (USERBLK_TRAMPOLINE
 JUSTRETF_SLOT = RelocatedCode(f"the routine that draws nothing, kept by value (${JUSTRETF_KEPT_AT:x})", (JUSTRETF_KEPT_AT,),
                               {JUSTRETF_ROM: HANDED_ENTRY_SYMBOLS[JUSTRETF_ROM]}, False)
 TICK_GLUE_SYMBOL = "aes_rom_tick_glue"
-TICK_GLUE_SLOTS = (TICK_GLUE_KEPT_AT, vdi.field("LINEA", "USER_TIM").at, aes.AES_GSX_CONTRL_PTR, aes.AES_GSX_CONTRL_PTR2)
+# ...and (slice B: the teardown is run now, through the served door) THE LONGWORD THE AES KEEPS THE DISPLACED TICK
+# ROUTINE IN, `$948a`: gem_main's bring-up parks the VDI's own there, and its TEARDOWN hands that one back to vex_timv
+# and keeps what THAT displaces — the tick glue itself — in the same longword (`$fda3ac..$fda3c4`).
+TICK_GLUE_DISPLACED_AT = aes.header_constants("evdisp.h")["AES_TICK_CHAIN"]
+TICK_GLUE_SLOTS = (TICK_GLUE_KEPT_AT, vdi.field("LINEA", "USER_TIM").at, aes.AES_GSX_CONTRL_PTR, aes.AES_GSX_CONTRL_PTR2,
+                   TICK_GLUE_DISPLACED_AT)
 TICK_GLUE = RelocatedCode("the tick glue's address handed to the VDI", TICK_GLUE_SLOTS, {TICK_GLUE_ROM: TICK_GLUE_SYMBOL}, False)
 TICK_GLUE_END = addrs.AES_ROM_CART_INIT                 # the tick glue, `$fed426..$fed477`; cart_init follows
 ROM_TEXT_OF.update({JUSTRETF_SLOT.what: ((JUSTRETF_ROM, TICK_GLUE_ROM),), TICK_GLUE.what: ((TICK_GLUE_ROM, TICK_GLUE_END),)})
@@ -3080,6 +3087,24 @@ def userblk_slots(memory):
 
 SLOTS_WALKED_FROM_THE_MACHINE[USERBLK_TRAMPOLINE_SLOT.what] = userblk_slots
 # ---- BAND 5 WAVE 4, SLICE M (end) ---------------------------------------------------------------------------------------------
+
+# ---- BAND 5 WAVE 4, SLICE B: gem_entry's THREE, ACTIVATED — MAPPED WHERE A RUN ENDS ------------------------------------------
+# OUR OWN gem_entry RUNS NOW (the our-boot machine, `aes_boot.booted(..., laid=AT_GEM_ENTRY)`), and its three `lea`s
+# store the build's own justretf, tick glue and trampoline where the ROM's store the ROM's; the tick glue then travels
+# to the VDI's tick vector and through the AES's contrl by our own gsx_tick. So the three are among `CODE_RELOCATIONS`:
+# what our run stored of them is given the ROM's name before a compare and compared exactly. EXIT-ONLY, all three (the
+# glue's rule — a snapshot row's machine is the ROM-made one as it is; nothing of them at a row's entry, nor in a
+# takeover's door, before the full flip: slice F's, with the VDI's button and motion vectors). EACH IS PROVED A
+# MAPPING BY ROWS CUT FROM THE BUILD'S OWN START-UP RUN — gem_main's stretches (`aes_ourboot.STRETCHES`): the megabyte
+# where one ends holds all three as OUR gem_entry stored them in that same run, and un-mapping any reddens them by
+# name (`test_aes_ourboot.py`). No declaration is pending.
+STORED_BY_GEM_ENTRY = (JUSTRETF_SLOT, TICK_GLUE, USERBLK_TRAMPOLINE_SLOT)
+STORED_BY_GEM_ENTRY_PROVED_BY = ("aes_rom_gem_main",)   # the symbol of the rows cut from the run that stores them
+CODE_RELOCATIONS = (*CODE_RELOCATIONS, *STORED_BY_GEM_ENTRY)
+for _activated in STORED_BY_GEM_ENTRY:
+    del DECLARED_NOT_YET_MAPPED_AT_TIER3[_activated.what]
+    MAPPING_PROVED_BY[_activated.what] = STORED_BY_GEM_ENTRY_PROVED_BY
+del _activated                          # (no second name for a declaration: the module's `RelocatedCode`s are read by scan)
 
 
 # ---- THE CYCLE PROFILE IS ONE SWITCH OF THE ORACLE'S: who has it on ------------------------------------------------------

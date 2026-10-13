@@ -109,6 +109,9 @@ import aes_takeover                                        # noqa: E402
 import aes_ctlmgr                                          # noqa: E402
 import aes_boot                                            # noqa: E402
 import aes_gemctrl                                         # noqa: E402
+# ...and THE BUILD'S OWN START-UP (band 5 wave 4, slice B): gem_main, the `#E` reader, sh_main and sh_cmd are priced as
+# STRETCHES of the our-boot machine's runs beside the ROM's own (`aes_ourboot.STRETCHES`, registered by its battery).
+import aes_ourboot                                         # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1636,12 +1639,28 @@ def is_a_woken_row(row):
     return row.registered in aes_ctlmgr.ROWS and row.address == aes_ctlmgr.ENTRY
 
 
+def _stretch_row(name, stretch):
+    """One STRETCH OF THE BUILD'S OWN START-UP (`aes_ourboot.STRETCHES`) as a bench row: both shores run from one
+    machine — the ROM's own code, and OUR build laid at gem_entry and entered at its own (A LABELLED STAGING: the
+    row's case says so) — and priced between two checkpoints (`stretch_on`). No call, no frame, no pokes: the
+    machine is the pre-init capture's, or deskmain's entry through the served door."""
+    address = getattr(addrs, stretch.routine)
+    return Row(aes_ourboot.function_of(stretch), aes_ourboot.case_of(stretch), address, aes_ourboot.SYMBOL_OF[stretch.routine],
+               (), None, {}, None, None, RETURNS_NOTHING, False, address, registered=name)
+
+
+def is_a_stretch(row):
+    """Is `row` a stretch of the build's own start-up — measured on the our-boot machine beside the ROM's boot?"""
+    return row.registered in aes_ourboot.STRETCHES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
         + tuple(_transcription_row(case) for case in trap.CASES + tuple(gemdos.TRANSCRIPTIONS))
         + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES)
-        + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS))
+        + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS)
+        + tuple(_stretch_row(name, stretch) for name, stretch in aes_ourboot.STRETCHES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -2109,8 +2128,10 @@ def goes_through_the_os(row):
     """(V), and (V) at the door: is `row` the C of a routine that reaches the VDI by `trap #2`, or the event layer through one of
     the event door's entries — priced on its own cycles? And A ROW THAT SWITCHES is, whatever its routine reaches: its
     run is watched at the dispatcher on both shores, which only that path does. (ctlmgr's own rows among them: the
-    screen manager woken, from idle to idle.)"""
-    return not row.transcription and (row.symbol in _reaching_the_trap() or arrives_at_an_entry(row)
+    screen manager woken, from idle to idle.) AND A STRETCH OF THE BUILD'S OWN START-UP is: a run between two
+    checkpoints of a boot has no return to compare and GEMDOS, the BIOS and the VDI under it — priced on each shore's
+    own cycles, whatever its routine reaches."""
+    return not row.transcription and (is_a_stretch(row) or row.symbol in _reaching_the_trap() or arrives_at_an_entry(row)
                                       or bool(aes_event.switching(row.delivered)))
 
 
@@ -2612,6 +2633,17 @@ def door_relocation(elf, what):
     return _entries_placed(elf, declared.symbols)
 
 
+@functools.cache
+def stored_by_gem_entry_relocation(elf, what):
+    """`{the ROM's routine: the blob's own entry}` for one of THE THREE gem_entry STORES BY VALUE
+    (`aes_event.STORED_BY_GEM_ENTRY`: justretf into `$947a`, the tick glue into `$947e` — and on, by gsx_tick, into the
+    VDI's tick vector and the AES's contrl —, ub_trampoline into `$8c32` and the desk's USERBLKs) — empty for a build
+    that links no entry for it. FOR EVERY RUN OF SUCH A BUILD, WHERE IT ENDS (band 5 wave 4, slice B: its own
+    gem_entry stores its own three; none is mapped at a run's entry before the full flip)."""
+    declared, = [each for each in aes_event.STORED_BY_GEM_ENTRY if each.what == what]
+    return _entries_placed(elf, declared.symbols)
+
+
 A_RECORD = "a record of appl_trecord's buffer"
 # One relocation of the registry AS ONE RUN READS IT: `what` it is, the longwords it lies in, `{the ROM's routine:
 # its entry in the blob}`, and whether our image is mapped at the run's entry too.
@@ -2621,14 +2653,16 @@ Relocation = namedtuple("Relocation", "what slots mapping at_entry", defaults=(T
 def code_relocations(elf, symbol):
     """THE REGISTRY (`aes_event.CODE_RELOCATIONS`) for a run of `symbol` on the blob `elf`: a `Relocation` each —
     the fork queue's (`fork_relocation`), the glue's, the GEMDOS glue's text sites, the screen manager's entry
-    (`screen_manager_relocation`) and the narrow door's three (`door_relocation`). The one reading every site that
+    (`screen_manager_relocation`), the narrow door's three (`door_relocation`) and gem_entry's three by-value stores
+    (`stored_by_gem_entry_relocation`). The one reading every site that
     maps a code address makes: a run's entry and exit, a delivery, a mark. A relocation whose slots are WALKED FROM
     THE MACHINE (a program's first-entry frame) declares none: `slots_of` finds them over the memory it is asked of."""
     mapped = {aes_event.FORK_CODES.what: (FORK_CODE_SLOTS, fork_relocation(elf, symbol)),
               aes_event.GLUE_CODES.what: (glue_code_slots(), glue_relocation(elf)),
               aes_event.TEXT_SITES.what: (aes_event.TEXT_SITES.slots, text_site_relocation(elf, symbol)),
               aes_event.SCREEN_MANAGER_ENTRY.what: (aes_event.SCREEN_MANAGER_ENTRY.slots, screen_manager_relocation(elf)),
-              **{part.what: (part.slots, door_relocation(elf, part.what)) for part in aes_event.THE_NARROW_DOOR}}
+              **{part.what: (part.slots, door_relocation(elf, part.what)) for part in aes_event.THE_NARROW_DOOR},
+              **{each.what: (each.slots, stored_by_gem_entry_relocation(elf, each.what)) for each in aes_event.STORED_BY_GEM_ENTRY}}
     declared = {each.what: each.at_entry for each in aes_event.CODE_RELOCATIONS}
     assert sorted(mapped) == sorted(declared), "a relocation the registry declares is mapped by no site"
     return tuple(Relocation(what, *mapped[what], at_entry) for what, at_entry in declared.items())
@@ -3746,23 +3780,77 @@ def idle_to_idle_on(blob, who, woken):
     vet_the_streams_alike(who, rom, ours)
     OUR_RUN.append(OurRun(aes_ctlmgr.SYMBOL, ours.in_the_aes, False, 0))
     measured = Measurement(rom.cost, ours.cost, blob.overhead)
-    measured.own_cycles = (sum(turn.ours for turn in turns), sum(turn.the_rom_s for turn in turns))
-    measured.glue_cycles = sum(turn.glue for turn in turns)
-    # (`foreign`: the windows as the ROM's run made them less the row's OWN turns — its accessories' turns are among
-    # them still, and `the_rom_s_windows` takes them off as it does a turn inside any row)
-    measured.foreign = Foreign(windows.windows + len(of_the_accessories),
-                               windows.whole + sum(turn.the_rom_s + turn.shared for turn in of_the_accessories),
-                               windows.in_the_aes + sum(turn.the_rom_s for turn in of_the_accessories))
-    measured.turns, measured.its_turns = of_the_accessories, turns
-    measured.turns_in_the_costs = (sum(turn.ours + turn.glue for turn in of_the_accessories),
-                                   sum(turn.the_rom_s for turn in of_the_accessories))
-    measured.rebound_calls, measured.rebound_own, measured.rebound_glue = 0, (0, 0), 0
+    own = (sum(turn.ours for turn in turns), sum(turn.the_rom_s for turn in turns))
+    _priced_round_the_turns_inside(measured, own, sum(turn.glue for turn in turns), of_the_accessories, windows)
+    measured.its_turns = turns
     measured.outside_the_windows = in_the_aes_outside[1]
     # ...and HOW DEEP EACH ctlmgr WENT ON THE SCREEN MANAGER'S REAL STACK: its top less the lowest byte each run
     # stored there (the ROM's, ours) — a lowest STORE, with the machine's VDI (the ROM's) under the traps.
     lo, top = aes_takeover.spans_of(rom.memory).stack
     measured.deepest = tuple(top - min(at for at in ran.stored if lo <= at < top) for ran in (rom, ours))
     return measured
+
+
+def _priced_round_the_turns_inside(measured, own, glue, inside, windows=Foreign(0, 0, 0)):
+    """What a row priced OUTSIDE THE KIT'S `measure` — a run from idle to idle, a stretch — lays on its `Measurement`:
+    its `own` cycles (ours, the ROM's) and its thunks' (`glue`), and THE TURNS INSIDE IT (`inside`), each priced by
+    itself on a line of its own and in neither of the row's columns. `windows`: the ROM's processes' own windows of
+    the run, the row's own turns taken off. (`foreign`: those windows AND the turns inside — `the_rom_s_windows`
+    takes the turns off as it does a turn inside any row.)"""
+    measured.own_cycles, measured.glue_cycles = own, glue
+    measured.foreign = Foreign(windows.windows + len(inside), windows.whole + sum(turn.the_rom_s + turn.shared for turn in inside),
+                               windows.in_the_aes + sum(turn.the_rom_s for turn in inside))
+    measured.turns = inside
+    measured.turns_in_the_costs = (sum(turn.ours + turn.glue for turn in inside), sum(turn.the_rom_s for turn in inside))
+    measured.rebound_calls, measured.rebound_own, measured.rebound_glue = 0, (0, 0), 0
+
+
+# ---- A STRETCH OF THE BUILD'S OWN START-UP (band 5 wave 4, slice B: `test/aes_ourboot.py`) ---------------------------------------
+# gem_main, the `#E` reader, sh_main and sh_cmd are entered by no kit call: gem_main never returns in a boot, the
+# reader's GEMDOS is the real one in place, the shell runs under the desk for a session. So each is priced as A RUN
+# BETWEEN TWO ADDRESSES (ruling W4-R11; ctlmgr's rows are the precedent — a bench run of code in place, outside the
+# kit's `measure`): BOTH SHORES RUN FROM ONE MACHINE — the pre-init capture's, the ROM's own gem_entry on its shore and
+# OUR BUILD LAID THERE AND ENTERED AT ITS OWN on ours (A LABELLED STAGING, ruling W4-R1: no longword mapped by the
+# harness), or deskmain's entry of each shore's boot ANSWERED A WORD (the served door, ruling W4-R6: A LABELLED
+# ARGUMENT CLASS) — watched at the same checkpoints (`aes_ourboot.both_shores`), and the row is the stretch between two.
+# WHAT IS HELD, by name (`aes_ourboot.priced`): both shores arrive at both checkpoints; WHO RAN — our run NOT ONE CYCLE
+# in the ROM's GEM text nor its Line-F handler's copy, to where the pass ends (no pass goes past an arrival at
+# deskmain: "ours booted" is claimed to deskmain's entry and no further, ruling W4-R3); THE MEGABYTE WHERE THE STRETCH
+# ENDS is the ROM's with every code address of the registry mapped back, outside the dead classes (each proved dead
+# by noise) and THE LIVE CLASSES THE ROW NAMES, each needed; and THE OS BOTH RUN — GEMDOS, the BIOS, the VDI, each
+# shore's selector switch — COSTS THE SAME CYCLES on both shores, outside and inside every turn of another process.
+# ITS PRICE: each shore's own cycles in the stretch — ours the blob's (less its thunks'), the ROM's in its AES text and
+# Line-F handler (the table's convention) — the screen manager's turn inside it cut out and priced on a line of its
+# own; and, printed under the row and part of no rule, the same figure NET OF THE ROM'S LINE-F HANDLER.
+# ON THE SHIPPED BLOB, as ctlmgr's rows are: it is what a build runs. (The bench blob's own figures — the C twins of
+# every transcribed core in a real boot — are the battery's to report: `test_aes_ourboot.py`.)
+def stretch_on(blob, who, stretch):
+    """ONE STRETCH'S `Measurement` ON `blob` (above): the two costs the stretch's own on each shore, `own_cycles`,
+    its thunks' cycles, its turns, and what `_stretch_lines` prints (`line_f`, `stretch`)."""
+    price = aes_ourboot.priced(stretch, blob)
+    # WHO RAN, FOR THE GENERAL GUARD: what OUR run spent in the ROM's own GEM text over the stretch, MEASURED (`priced`
+    # refuses a pass that spent a cycle there; the guard holds the row to what it declares — nothing).
+    OUR_RUN.append(OurRun(aes_ourboot.SYMBOL_OF[stretch.routine], price.in_the_rom_s, False, 0))
+    the_rom_s, ours = price.costs
+    measured = Measurement(the_rom_s, ours, (0, 0))     # ...between two stops of one run: no reset's instruction in either
+    _priced_round_the_turns_inside(measured, price.own, price.glue, tuple(Turn(*turn, aes_switching.THE_MANAGER_S) for turn in price.turns))
+    measured.line_f, measured.shared_outside = price.line_f, price.shared
+    assert who == aes_ourboot.row_name(stretch) and shared_cycles(measured)[0] == shared_cycles(measured)[1], who
+    return measured
+
+
+STRETCH_LINE_F = ("{indent}  net of the ROM's Line-F handler ({line_f} of its {the_rom_s}, {share:.0%}): {net:.2f} — printed, part of "
+                  "no rule: the bar is the table's convention's")
+WHERE_THE_STRETCH_ENDS = "left out of the compare of the two machines where the stretch ends"
+
+
+def _stretch_lines(stretch, measured, indent):
+    """What a stretch's row says under itself: its ratio net of the ROM's Line-F handler, and the LIVE classes it
+    names where it ends (each held to differ) — the dead ones are proved dead by noise, checkpoint by checkpoint."""
+    ours, the_rom_s = measured.own_cycles
+    lines = [STRETCH_LINE_F.format(indent=" " * indent, line_f=measured.line_f, the_rom_s=the_rom_s, share=measured.line_f / the_rom_s,
+                                   net=(ours + glue_cycles_of(measured)) / (the_rom_s - measured.line_f))]
+    return lines + [f"{'':<{indent}}  {WHERE_THE_STRETCH_ENDS}: {named}" for named in stretch.differs]
 
 
 def _frame_the_rom_s_caller_pushed(words):
@@ -4758,6 +4846,8 @@ def _measured_on_its_path(row, bench):
         f"transcription, a `.S` that calls C)")
     if is_a_woken_row(row):
         return idle_to_idle_on(shipped_bench(), row.registered, aes_ctlmgr.ROWS[row.registered])
+    if is_a_stretch(row):
+        return stretch_on(shipped_bench(), row.registered, aes_ourboot.STRETCHES[row.registered])
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5135,6 +5225,16 @@ def table(bench, jobs=SERIAL):
         "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "
         "by nature (a return address each build parks), which the ROM must write and the case's own differential "
         "still compares.",
+        f"A STRETCH OF THE BUILD'S OWN START-UP — a row whose case begins `{aes_ourboot.ON_THE_OUR_BOOT_MACHINE}` (gem_main, the "
+        f"`#E` reader, sh_main, sh_cmd) — is no call: both shores run from one machine, the ROM's own code and OUR build "
+        f"laid at gem_entry and entered at its own (a LABELLED STAGING: no longword mapped), and the row is the run between "
+        f"two checkpoints both arrive at — its two costs the stretch's, its ratio (V)'s: our own cycles against the ROM's in "
+        f"the AES's text and Line-F handler, <= {TIER3_FUNCTION_BAR:.2f} and so with its thunks, the OS both run held to ONE "
+        f"number, the screen manager's turn inside it on a line of its own. `ARGUMENT CLASS (deskmain served ...)`: the "
+        f"pass begins where deskmain is ANSWERED AT ITS ENTRY on both shores (the roads no boot takes: the teardown, the "
+        f"second pass, the shell's launch pass and built-ins). Below each: its ratio NET OF THE ROM'S LINE-F HANDLER — "
+        f"printed, part of no rule — and the live classes its two machines differ in where it ends. \"OURS BOOTED\" IS "
+        f"CLAIMED TO deskmain's ENTRY AND NO FURTHER: no stretch goes past an arrival there.",
         "",
     ]
     # Widths from the rows themselves rather than guessed: a case label one character over a fixed
@@ -5186,6 +5286,9 @@ def table(bench, jobs=SERIAL):
         # windows, each with its reason (`vet_the_machines_where_the_runs_end`: each held to differ).
         if is_measured_at_its_arrival(row):
             lines += _where_the_handler_returns_lines(aes_ctlmgr.HANDLED[row.registered], name_width + ADDRESS_WIDTH)
+        # ...and a stretch of the build's own start-up: its ratio net of the ROM's Line-F handler, its live classes.
+        if is_a_stretch(row):
+            lines += _stretch_lines(aes_ourboot.STRETCHES[row.registered], m, name_width + ADDRESS_WIDTH)
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:
