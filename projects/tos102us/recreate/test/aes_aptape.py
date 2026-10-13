@@ -31,6 +31,7 @@ import aes_evinput as evinput
 import aes_evlib as evlib
 import aes_switching
 import case
+import staging
 import vdi
 from case import merge_pokes
 
@@ -282,15 +283,18 @@ PRICED = {row.label: row for row in (*(RECORDING_ROWS[name] for name in PRICED_R
 # ext.l d6 / divs.w #8,d6`), and numbers them under a signed compare (`$fe6812 cmp.w d6,d5 / blt`). A count of 0 records
 # until Control-backslash (above), so a recording runs past 4,095 records by ROM-run means alone: the mouse moved a
 # packet at a time — a mouse record each — over as many idles as it takes. THE BUFFER is free RAM of the snapshot (the
-# staged window is 24 KB: too small), held clear where the row is made.
+# staged window is 24 KB: too small), held clear where the row is made — A CLAIM OF `staging.HIGH_BANDS`, above the
+# oracle's stack band: it stood at $50000, unclaimed, which band 6 put inside both blobs' spans (Tier 1 lays no blob,
+# and the buffer is STORED by the run, not poked, so the kit's refusal of a poke in the blob would never have seen it).
 # WHY TIER 1 ALONE: one ROM run of it is some ten seconds; a blob's pair, the table's and the sweeps' replays would
 # each pay that again for a row whose price is the short recordings' — the loop it would add is the one that numbers
 # NO record.
-LONG_RECORD_AT = 0x50000
 PACKETS_AN_IDLE = 30                    # under the fork queue's 32 entries (AES_FORK_ENTRIES), which forker empties at each idle
 IDLES_OF_PACKETS = 137                  # the fewest idles of thirty that pass 4,095 records
 A_LONG_RECORDING_S_RECORDS = IDLES_OF_PACKETS * PACKETS_AN_IDLE
 A_LONG_RECORDING_S_BYTES = A_LONG_RECORDING_S_RECORDS * RECORD.size
+LONG_RECORD_AT = staging.HIGH_BANDS.claim(0xE8100, A_LONG_RECORDING_S_BYTES + RECORD.size,
+                                          "test/aes_aptape.py: a recording past 32,767 bytes")
 MOST_BYTES_A_SIGNED_WORD_COUNTS = 0x7FFF
 assert MOST_BYTES_A_SIGNED_WORD_COUNTS < A_LONG_RECORDING_S_BYTES < MOST_BYTES_A_SIGNED_WORD_COUNTS + PACKETS_AN_IDLE * RECORD.size
 A_LONG_RECORDING = "a count of 0 over 4,110 packets: past 32,767 bytes the records are counted below 0, and none is numbered"

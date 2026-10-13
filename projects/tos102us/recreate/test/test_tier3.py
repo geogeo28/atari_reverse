@@ -2211,9 +2211,12 @@ def test_the_switch_is_its_own_kind_of_the_build_contract(make_lists):
     # held to make's own expansion by `test_aes_trapdoor.py`.)
     # (slice I, band 5 wave 4: gemstart is a fifth, linked and not entered — GEMSTART_SOURCES, held to make's own
     # expansion by `test_aes_gemstart.py`.)
+    # (slice T, band 6 wave 0: the generated Line-F table is a sixth, linked and not bound — LINEFTABLE_SOURCES, held to
+    # make's own expansion by `test_aes_lineftable.py`.)
     assert every_s == (set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch)
-                       | set(transcription.trapdoor_sources()) | set(transcription.gemstart_sources())), (
-        "a `.S` of the table's components that is of none of the five kinds")
+                       | set(transcription.trapdoor_sources()) | set(transcription.gemstart_sources())
+                       | set(transcription.lineftable_sources())), (
+        "a `.S` of the table's components that is of none of the six kinds")
 
 
 JMP_OPERAND_BYTES = aes.LONG_BYTES      # dsptch's last instruction is `jmp <disp>.l`: its operand, the last four bytes

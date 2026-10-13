@@ -649,6 +649,25 @@ assert set(GEMSTART_ENTRIES) == GEMSTART_GLOBLS, (
     f"gemstart's table and its source's `.globl`s disagree: {sorted(set(GEMSTART_ENTRIES) ^ GEMSTART_GLOBLS)}")
 # ---- end of slice I's block ---------------------------------------------------------------------------------------------
 
+# ---- band 6 wave 0, slice T: THE LINE-F TABLE's source ------------------------------------------------------------------
+# `atari/target.mk`: LINEFTABLE_SOURCES — the table of ours for the ROM's Line-F call table and the thunks behind it,
+# GENERATED (`bench/linef_table.py`): no ROM instruction, no C twin, no table row, and A KIND APART WHILE IT IS LINKED
+# AND NOT BOUND. Its one `.globl` is the table; its thunks are the file's own (local, sized).
+# `test_aes_lineftable.py` holds the source to its generator and the kind to make's own expansion.
+LINEF_TABLE_SYMBOL = "aes_linef_table"
+LINEF_THUNK_PREFIX = "linef_to_"        # a thunk is `linef_to_<core>`: the one name by which a whole-blob scan knows one
+
+
+def lineftable_sources():
+    """LINEFTABLE_SOURCES, as `atari/target.mk` writes it."""
+    return _listed_sources("LINEFTABLE_SOURCES")
+
+
+LINEFTABLE_GLOBLS = globl_entries(lineftable_sources())
+assert LINEFTABLE_GLOBLS == {LINEF_TABLE_SYMBOL}, (
+    f"the Line-F table's source defines other `.globl`s than its table: {sorted(LINEFTABLE_GLOBLS)}")
+# ---- end of slice T's block ---------------------------------------------------------------------------------------------
+
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
 # `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).

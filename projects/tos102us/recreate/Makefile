@@ -127,16 +127,36 @@ $(INF_DISK): tools/accessory_disk.py $(ROM_IMAGE)
 $(PREINIT_INF): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(INF_DISK)
 	$(PY) tools/preinit_snapshot.py --disk $(INF_DISK) --work build/preinit_inf_snapshot --out $@
 
+# ---- BEGIN band 6 wave 0, slice H: THE FILES PRE-INIT MACHINE (ruling W6-R10) — a FIFTH capture -------------------------------
+# With the files disk in the drive from power-on (tools/accessory_disk.py --files: the ROM's default DESKTOP.INF, a text
+# longer than the viewer's page, a program and the folder AUTO with a file in it; no accessory): what the desk's own
+# acts — a file shown, a folder opened, a copy, a delete — are continued over (test/aes_desk.py). Its own disk, its
+# own scratch directory, four more seconds of Hatari, once. NOT among REGISTRY_READS: no registered row is made of it.
+PREINIT_FILES := build/preinit_files.bin
+FILES_DISK := build/acc/FILESDISK.ST
+
+$(FILES_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/mkprg.py include/gemdos/pexec_load.h $(ROM_IMAGE)
+	$(PY) tools/accessory_disk.py --files --out $@
+
+$(PREINIT_FILES): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(FILES_DISK)
+	$(PY) tools/preinit_snapshot.py --disk $(FILES_DISK) --work build/preinit_files_snapshot --out $@
+
+.PHONY: preinit-files
+preinit-files: $(PREINIT_FILES)
+test guarded gates: $(PREINIT_FILES)
+preinit-twice: $(FILES_DISK)
+# ---- END band 6 wave 0, slice H -----------------------------------------------------------------------------------------------
+
 .PHONY: preinit preinit-acc preinit-acc7 preinit-inf
 preinit: $(PREINIT)
 preinit-acc: $(PREINIT_ACC)
 preinit-acc7: $(PREINIT_ACC7)
 preinit-inf: $(PREINIT_INF)
 
-# THE MASK HELD TO THE CAPTURES (`make preinit-twice`): each of the four disks booted TWICE MORE, into a directory of
+# THE MASK HELD TO THE CAPTURES (`make preinit-twice`): each of the five machines booted TWICE MORE, into a directory of
 # its own — never over a capture above, which the suites and the registry read — and the two machines held equal
 # outside `preinit_snapshot.MASK`, registers and palette included (`--twice` exits non-zero and names every unmasked
-# byte). Eight captures, half a minute. A prerequisite of `gates` alone: `make test` stays the suites.
+# byte). Ten captures, under a minute. A prerequisite of `gates` alone: `make test` stays the suites.
 PREINIT_TWICE_DIR := build/preinit_twice
 PREINIT_TWICE := $(PY) tools/preinit_snapshot.py --twice
 
@@ -146,6 +166,7 @@ preinit-twice: $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC_DISK) $(ACC7
 	$(PREINIT_TWICE) --disk $(ACC_DISK) --work $(PREINIT_TWICE_DIR)/acc --out $(PREINIT_TWICE_DIR)/acc.bin
 	$(PREINIT_TWICE) --disk $(ACC7_DISK) --work $(PREINIT_TWICE_DIR)/acc7 --out $(PREINIT_TWICE_DIR)/acc7.bin
 	$(PREINIT_TWICE) --disk $(INF_DISK) --work $(PREINIT_TWICE_DIR)/inf --out $(PREINIT_TWICE_DIR)/inf.bin
+	$(PREINIT_TWICE) --disk $(FILES_DISK) --work $(PREINIT_TWICE_DIR)/files --out $(PREINIT_TWICE_DIR)/files.bin
 
 gates: preinit-twice
 

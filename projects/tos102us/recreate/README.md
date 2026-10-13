@@ -150,8 +150,9 @@ make preinit        # build/preinit.bin      — the snapshot's machine stopped 
 make preinit-acc    # build/preinit_acc.bin  — the same stop, the test accessories' floppy in A: from power-on (~4 s)
 make preinit-acc7   # build/preinit_acc7.bin — the same stop, SEVEN test accessories in the drive (band 5 wave 3)
 make preinit-inf    # build/preinit_inf.bin  — the same stop, the blank floppy plus the ROM's default DESKTOP.INF (wave 4)
+make preinit-files  # build/preinit_files.bin — the same stop, THE FILES DISK: files, a folder, a program (band 6 wave 0)
 python tools/preinit_snapshot.py --twice          # capture twice, report what differs (exit 1 on a byte outside the mask)
-make preinit-twice  # ...that, for ALL FOUR disks, into build/preinit_twice/ (never over a capture): `make gates` runs it
+make preinit-twice  # ...that, for ALL FIVE machines, into build/preinit_twice/ (never over a capture): `make gates` runs it
 python tools/preinit_snapshot.py --cross-check    # OPT-IN: the accessory machine against a real Hatari boot
 ```
 
@@ -376,6 +377,53 @@ Band 5 wave 4's slice M (`test/aes_boot.py`, `test_aes_boot_w4.py`): everything 
   of THE DOOR, and EACH PART TAKEN OUT IN TURN, BY A REAL BOOT, IS REFUSED BY THE SCAN FOR ITS OWN LONGWORDS. ON AN
   OUR-BOOT MACHINE THE SCAN PASSES with nothing mapped by anyone: the next section.
 
+### THE HANDS — a user's acts on the desk, on the ROM's own machine (`test/aes_desk.py`, `test_aes_desk_rom.py`, band 6 wave 0)
+
+Band 6's subject is the desk, and a desk routine runs when a hand does something. NOTHING OF OURS RUNS IN THIS
+BATTERY: every machine is one the ROM booted, and a machine that holds a blob is refused by name — it is the ROM-side
+campaign the band's rows will be arrivals of.
+
+- **THE FIFTH CAPTURE** (`make preinit-files`; `tools/accessory_disk.py --files`, `aes_boot.files_machine`): the ROM's
+  default DESKTOP.INF, `README.TXT` (longer than the viewer's 22-line page), `TESTPRG.PRG` (the test accessory's
+  file) and the folder `AUTO` with a file in it — one disk whatever the view, made by the existing tools. Not among
+  the registry's reads (no registered row is made of it); the suites have it as a prerequisite. THE PRE-INIT CAPTURES
+  ARE FIVE, and `test_makefile.py` holds each to its own disk, the capture tool and the ROM image — and a disk whose
+  content is cut out of the ROM (the two that carry its DESKTOP.INF) to the ROM image in its OWN rule.
+- **A RECEPTION AT A NAMED STOP** (`aes_boot.continued(boot, received, budget, until=, at=)`). A run that waits for a
+  hand WITHOUT idling — the desk's file viewer polling the console, the rubber box under a held button — has no
+  idle to be continued from. So a continuation may END at a named stop (`until`: the run's first arrival at that
+  address, an instruction of the ROM's own polling loop, held to its bytes; an idle that comes first is refused by
+  name) and a boot that STANDS at one may be continued FROM it (`at`; a boot that stands elsewhere, or at an idle,
+  is refused). The reception is taken as every other is: the ROM's own handlers from the machine's own vectors,
+  between two instructions of the loop. `aes_desk.STOPS` names three: the viewer's key wait at a page's end and at
+  the file's end, and gr_stilldn's entry.
+- **THE LINE-F STAND-IN — A DEFECT OF THE ORACLE, NAMED.** The kit's 68000 EXECUTES `$F620..$F627` as the 68040's
+  MOVE16 where a 68000 takes the Line-F exception (held over all 4,096 `$Fxxx` words: those eight alone). The ROM
+  holds two such words, both call words of the File menu's handler (`$fe1ec2` → Show Info, `$fe1ece` → New Folder).
+  `continued` stops at each and takes the exception by hand (`aes_boot.line_f_taken`: the six-byte frame, the trace
+  bit cleared, the PC from vector 11 as the machine holds it), says so in `Boot.observed`
+  (`LINE_F_TAKEN_BY_HAND`) and lays the frame in the run's ledger. ITS LIMITS: it is armed in `continued` ALONE —
+  `booted`, `served`, the our-boot's watched runs and every kit run execute the words —, and each exception taken
+  by hand is 34 cycles and one instruction short in the run's counts. A fix is the kit's (STATUS, AWAITING 24); the
+  day the kit traps those words, `test_the_oracle_s_cpu_traps_every_line_f_word_but_the_eight_...` reddens and the
+  stand-in goes.
+- **A CHAIN** (`aes_desk.CHAINS`, 46 of them) is steps of a hand from a machine's idle or from another chain's end:
+  `item(title, text)`, `clicked`, `double_clicked`, `dragged`, `typed`, `pressed(button)`, `rubber_box`, `shown`.
+  POINTS ARE READ OFF THE MACHINE'S OWN TREES (`menu_point`, `icon_point`, `drive_point`, `button_point`,
+  `top_window` and its gadgets) — an item that is absent, double, out of sight or DISABLED is refused by name: a
+  click on a disabled item is a chain that idles and did nothing. A dialog's Return is ITS DEFAULT, which is not
+  always its OK (the delete dialog's is Cancel).
+- **WHAT A CHAIN REACHED IS READ OFF ITS CYCLE PROFILE, NEVER OFF ITS NAME** (`aes_desk.stepped`: every step
+  profiled; `entered(name)`: the routines whose FIRST INSTRUCTION ran in the chain's own steps). Every chain names
+  at least one routine its own steps must enter (`Chain.enters`, read off the ROM) and, where the act leaves
+  something on the machine or the disk, that is held too (`LEFT_BEHIND`).
+- **THE REACH TABLE** (`aes_desk.reach()`: `{routine: the chains whose own steps entered it}` over band 6's 244
+  routines) is a derivation; its count is pinned in the battery (a chain added moves it by design) and quoted by
+  STATUS through `test_status.py`. **THE STACKS' DEPTHS** (`aes_desk.depths`, `deepest`) are read off the runs'
+  WRITE LEDGERS — the lowest byte of each stack a chain's own steps stored — for PD0, PD1, the dispatcher's stack
+  and the desk's userdef stack. A depth is the lowest STORE, not the lowest SP, and no interrupt is taken at the
+  deepest point.
+
 ### THE OUR-BOOT MACHINE — the build's own gem_entry boots it (`aes_boot.booted(..., laid=AT_GEM_ENTRY)`, `test/aes_ourboot.py`)
 
 Band 5 wave 4's slice B. **A LABELLED STAGING** (ruling W4-R1), said in the name of every row and test made of it;
@@ -483,7 +531,8 @@ aes_boot.compared(rom_machine, m).differing                # [] — and .within:
   Every boot ends in the ROM's (the desk parks last); `Boot.idle` / `Machine.idle` says which.
 - **`Machine.continued(...)`** receives `mouse_to(x, y)`, `ikbd(header, dx, dy)` and `CLICK_TICKS` through the ROM's
   own ACIA and Timer C handlers and runs on to the next idle. REFUSED BY NAME: a reception the idle's interrupt mask
-  would never let in; a machine that never idles (the button held on a menu's item).
+  would never let in; a machine that never idles (the button held on a menu's item) — unless the run is ended at A
+  NAMED STOP (`aes_boot.continued`'s `until` / `at`, band 6 wave 0: "A reception at a named stop", below).
 - **THE STANDING LIMIT.** The blob lies in memory GEMDOS believes free. A takeover machine CANNOT BE CONTINUED THROUGH
   AN ALLOCATION THAT REACHES THE BLOB — a Malloc or Pexec of the desk's or an accessory's would be handed it — and a
   continuation that stores there, or leaves other bytes there, is refused by name. A case that stages a megabyte
@@ -1125,10 +1174,31 @@ diffs. Nothing is excluded, nothing is waived, and the harness needed no new doo
 
 **What it costs is a fourth tenant of the free window.** `project.toml` declares three
 (`stack_top`, `bench_base`, `staging_base`) and `RomBench._vet_tenancy` refuses an overlap between
-them. A FAT12 floppy does not fit in the 4 KB case band, so the disk takes 44 KB at `$68000` and
-says so by arithmetic instead: `test_gemdos_fs_disk.py` asserts the span is clear of all three and
-that the captured snapshot leaves every byte of it zero. Growing `staging_bytes` so the kit's own
-vet covers it is the tidier answer and is not an agent's edit to make.
+them. A FAT12 floppy does not fit in the 4 KB case band, so the disk takes 44 KB — and a user buffer
+after it — ABOVE the oracle's stack band, at `$82000`, as a claim of `staging.HIGH_BANDS`, which
+refuses every other tenant up there by name; `test_gemdos_fs_disk.py` asserts the captured snapshot
+leaves every byte of it zero. (It stood at `$68000`, between the blob and the stack band, until band
+6 wave 0 re-cut the window.)
+
+**The declared staging band is the blob's ceiling.** It stands at `$75000` and ends where the VDI's
+staged window begins (`$76000`; the AES's follows, to `$7e000` — two windows only the batteries know),
+and it is the LOWEST tenant above `bench_base`: so the one overlap the kit refuses by name — the blob
+over the band — fences every tenant above it. `test/test_window.py` holds that no registered span
+(`staging.Registry.ALL`) starts below the band, that the band ends exactly at the VDI's window, and
+drives the refusal with a blob really linked two bytes past the band (refused where it is LOADED —
+`RomBench`'s constructor — not where it is linked). A battery that needs a span of its own takes it in
+`staging.HIGH_BANDS`, never below the band.
+
+**A priced row's ROM shore may not READ the blob's room** (`test/room_poison.py`,
+`test_room_poison.py`). `[bench_base, staging_base)` is free RAM on the ROM's shore and THE BLOB on
+ours, and the kit vets a case's POKES there, not its reads: a case whose ROM-shore run reads the room
+is green or red by the linker's layout (one row was: STATUS, band 6 wave 0). The kit keeps no ledger
+of RAM reads, so the guard is a POISON DIFFERENTIAL: every row of the table is measured twice, cold —
+as the table measures it, and again with the room filled, under every oracle run that holds no blob,
+with bytes that are non-zero and differ from both blobs' own byte at each address — and a row whose
+poisoned measurement is refused or whose costs move is NAMED. It shards over xdist by `chunk`. What it
+does not hold is said in the module: the our-boot stretches (their ROM shore is a boot remembered
+from before the guard is armed), a read whose byte changes nothing, a by-hand single step.
 
 **Inside the 4 KB case band, a battery that needs several buffers at once CLAIMS a band**, through
 `test/staging.py`'s `band(offset, size, owner)` — which refuses an overlap with every band already
@@ -2984,6 +3054,26 @@ boots as from an unusable disk. gem_gemdos_call has (T) cases of its own (linked
 below) and by the stack battery's measured start-up (`aes_stack.our_start_up_run`: its own lay of the same blob);
 it has NO ROW of its own (NEVER RETURNS) — gem_main's, the reader's and the shell's stretches begin inside its run.
 
+**THE LINE-F CALL TABLE OF OURS is a sixth kind: GENERATED, linked and NOT BOUND** (`atari/target.mk`:
+`LINEFTABLE_SOURCES`; `src/aes/lineftable.S`, band 6 wave 0). No ROM instruction and no row: 658 longwords for the
+ROM's table `$fee900..$fef347` and one thunk a C core. Each entry has one of three verdicts, derived from the ROM's
+own table bytes and the build's symbols: OURS NATIVELY (82: the entry of a byte-pinned `.S` routine or an Alcyon
+entry — the longword IS the routine), OURS THROUGH A THUNK (337 entries, 299 thunks: a C core with a declared Alcyon
+signature) or THE ROM'S own longword (239: band 6's routines, and sh_main / sh_cmd by a declared exception —
+`linef_table.ENTERED_BY_OURS_ALONE`). A THUNK is entered over the ROM caller's own frame and pushes it again as GCC
+reads it: the arguments LAST FIRST, a word sign-extended through A0, a longword as it is; then, for a core that
+takes one, the caller's return site (re-read from where the thunk's own return address now lies); then the image
+base `pea (0).w`; `jsr` the core; drop what it pushed; D0 as the core left it. THE FILE IS CHECKED IN AND HELD EQUAL
+to the generator's text by `test_aes_lineftable.py` — regenerate it with `python bench/linef_table.py`, NEVER edit
+it — because kit.mk sweeps `src/*/*.S` when make reads the makefile and the census and the build contract read the
+sources at import. NOT BOUND: the operand of the blob's own Line-F handler copy (`aes_rom_linef_handler + $16`)
+stays `$fee900`; gemstart's eighth relocation is declared pending in the generator (`PENDING_BINDING`: slice B's).
+The tests reach the table through A LABELLED STAGING — one longword laid in OUR run's copy of the machine, the
+handler copy's operand `$cc24`, put back before the compare — and say so in their names: every thunk read off the
+blob's bytes against its signature; 292 thunks and 51 native routines ENTERED by their routine's own registered
+case (the ROM's call word → the ROM's handler → our table → our entry) against the ROM's own run, who-ran read over
+the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the reason.
+
 **THE DESK DOOR — how the shell calls what is still the ROM's** (`include/aes/deskdoor.h`; `src/aes/shell.c`: sh_main,
 sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskmain and the desk's four built-ins
 (show a file, print, format, copy a disk: band 6's, the ROM's own addresses) and dos_exec (ours).
@@ -3448,12 +3538,18 @@ recreate/
 │                       `test_aes_shell_{cmd,main,door}.py` (the shell and the desk door); `test_aes_boot_w4.py`
 │                       (the fourth capture, the served door, the our-boot premises, the scan); `aes_ourboot.py` /
 │                       `test_aes_ourboot.py` (THE OUR BOOT: both shores at the same checkpoints, the classes, the
-│                       noise proof, the stretches `bench/tier3.py` prices)
+│                       noise proof, the stretches `bench/tier3.py` prices); `aes_desk.py` /
+│                       `test_aes_desk_rom.py` (THE HANDS: chains of a user's acts on the ROM's machine, the reach
+│                       table, the stacks' depths); `test_aes_lineftable.py` (the Line-F table of ours and its
+│                       thunks, entered through a labelled staging); `test_window.py` (the free window's order and
+│                       the blob's ceiling); `room_poison.py` / `test_room_poison.py` (the read guard: a poison
+│                       differential over every priced row)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
-│                       two pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and its floppy)
+│                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files)
 └── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
                         bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
                         the shipped configuration's blob and its generated glue; derived/ (the
                         derivation cache, by tree) and gates/ (`make gates`' logs); preinit.bin, preinit_acc.bin,
-                        preinit_acc7.bin and acc/ (the three pre-init machines and the accessory floppies they need)
+                        preinit_acc7.bin, preinit_inf.bin, preinit_files.bin and acc/ (the five pre-init machines
+                        and the floppies they need)
 ```

@@ -12,7 +12,7 @@ rather than merely their effect (`test_the_tpa_is_read_after_the_mpb_is_stored_a
 
 The MPB goes in `staging.SCRATCH`, dead RAM the capture leaves empty, and the whole-image diff is
 what proves both structures. The explicit reads below are a second, named statement of the fields'
-layout, so a failure says which one moved rather than "a byte at $60004".
+layout, so a failure says which one moved rather than "a byte at $75004".
 """
 import ctypes
 import struct

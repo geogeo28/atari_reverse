@@ -44,13 +44,20 @@ bench_base = 0x30000
 # ...and the THIRD tenant of that same free window: where a CASE stages memory of its own. Several
 # routines here take a POINTER — Getmpb's parameter block, Protobt's boot sector, Supexec's stub
 # routine — so a case has to own a piece of the machine's RAM, and it must be RAM the snapshot leaves
-# empty or the case would be staging over the desktop's live data. $60000 leaves the whole of
-# $30000..$60000 below it for the blob to grow into, and $1f000 of headroom below the stack guard
-# above it. `test/staging.py` reads these two keys rather than spelling the address a second time;
-# `RomBench._vet_tenancy` refuses any overlap between the three tenants, and
+# empty or the case would be staging over the desktop's live data.
+#
+# IT IS ALSO THE BLOB'S CEILING, and that is why it stands where it does: the band is the LOWEST
+# tenant above `bench_base`, directly under the VDI's and the AES's staged windows (`test/vdi.py`,
+# `test/aes.py`: $76000..$7e000, which only the batteries know), so the one overlap
+# `RomBench._vet_tenancy` refuses by name — the blob over this band — is the fence for every tenant
+# above it. `test/test_window.py` holds that no tenant stands below the band, and drives the refusal
+# with a blob really linked past it. It stood at $60000 until band 6 (the blob had 5 KB left under
+# it); the file system's staged window and the desk's arena, which stood between, went above the
+# stack band (`test/gemdos_fs.py`, `test/test_aes_deskmem.py`).
+# `test/staging.py` reads these two keys rather than spelling the address a second time, and
 # `test_boot_snapshot.py::test_the_case_staging_band_is_dead_memory_in_this_snapshot` is what keeps
 # the "dead RAM" half true against a future capture.
-staging_base  = 0x60000
+staging_base  = 0x75000
 staging_bytes = 0x1000
 
 # The whole 24-bit address space, so the ROM sits inside the flat image at its real address. The

@@ -172,7 +172,11 @@ def process_entries(elf):
 def routines_handed_to(elf, callee):
     """Every routine a call of `callee` hands it, over the whole blob: `{(caller, the routine)}`."""
     read = reading(elf)
+    # ---- band 6 wave 0, slice T ---- BUT THE LINE-F TABLE'S OWN THUNK (`linef_to_<callee>`): it hands on what ITS
+    # caller pushed — a ROM caller's routine, which no instruction of the blob names. LINKED AND NOT BOUND: no run
+    # reaches a thunk until slice B binds the table, and the reading of a walk entered from the ROM is that slice's.
     return {(caller, read.handed_at(caller, at)) for caller, body in read.functions().items()
+            if not caller.startswith(transcription.LINEF_THUNK_PREFIX)
             for at, text in body if _calls(text, callee)}
 
 

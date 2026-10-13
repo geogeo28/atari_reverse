@@ -32,6 +32,7 @@ import aes_event
 import aes_switch
 import aes_switching as switching
 import case
+import staging
 import test_aes_evfork_interrupted as between_instructions
 import vdi
 
@@ -245,6 +246,9 @@ def test_a_recording_past_32767_bytes_is_counted_below_zero_and_numbered_nowhere
     row = tape.a_long_recording_row()
     ran = switching.companion(row)
     made, cut = tape.A_LONG_RECORDING_S_RECORDS, aes.signed(tape.A_LONG_RECORDING_S_BYTES)
+    # THE BUFFER IS A CLAIMED TENANT above the stack band (band 6 wave 0: it stood, unclaimed, where the blob now lies)
+    assert (tape.LONG_RECORD_AT, tape.A_LONG_RECORDING_S_BYTES + tape.RECORD.size) in [
+        (at, size) for at, size, _owner in staging.HIGH_BANDS.claims]
     assert (ran.delivered.idles, ran.entered) == (tape.IDLES_OF_PACKETS + 2, ONCE)
     assert cut < 0 and aes.signed(ran.answer) == -(-cut // tape.RECORD.size) == -4082, hex(ran.answer)
     x, y = tape.WHERE_THE_SNAPSHOT_S_MOUSE_IS

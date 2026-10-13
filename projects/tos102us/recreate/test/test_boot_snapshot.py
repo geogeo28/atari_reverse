@@ -449,7 +449,7 @@ def test_the_asm_twin_runner_refuses_this_project_by_name():
 # byte the model invented. The routine is what makes both halves of that reachable from a case
 # rather than only from a fixture, and it is planted in RAM rather than found in the ROM because
 # what is being pinned is the MODEL: `test_xbios_getrez.py` is where the real function is held to it.
-UNMODELLED_READ_AT = 0x70000            # clear of the desktop and of the oracle's stack band
+UNMODELLED_READ_AT = staging.POINTER_ARGUMENTS     # the single-buffer batteries' band: dead RAM, and no blob grows into it
 UNMODELLED_READ_CODE = (b"\x10\x39" + addrs.SHIFTER_RESOLUTION.to_bytes(4, "big")  # move.b ..,d0
                         + b"\x4e\x75")                                            # rts
 DECLARED_RESOLUTION = 0x02              # not 0: the fabrication's own byte would prove nothing

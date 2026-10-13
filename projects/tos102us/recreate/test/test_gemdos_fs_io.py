@@ -84,8 +84,8 @@ class Cursor:
 def test_the_user_buffer_is_dead_memory_clear_of_the_ram_disk_and_the_stack():
     span = bytes(BASE_IMAGE[fs.USER_AT:fs.USER_AT + fs.USER_BYTES])
     assert span == bytes(len(span)), "the captured machine holds data where the user buffer goes"
-    assert fs.RAM_DISK_AT + fs.RAM_DISK_BYTES <= fs.USER_AT
-    assert fs.USER_AT + fs.USER_BYTES <= emu.STACK_GUARD_LO
+    assert emu.STACK_BAND_HI <= fs.RAM_DISK_AT and fs.RAM_DISK_AT + fs.RAM_DISK_BYTES <= fs.USER_AT
+    assert fs.USER_AT + fs.USER_BYTES == fs.RAM_DISK_AT + fs.FS_WINDOW_BYTES, "the window `staging.HIGH_BANDS` holds ends with it"
 
 
 def test_a_disk_variant_with_no_changes_is_the_staged_disk():

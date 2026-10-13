@@ -10,6 +10,10 @@ and they must not overlap — the oracle's own stack around `stack_top`, Tier 3'
 at `bench_base` (which grows with the reconstruction), and this one at `staging_base`. All three are
 declared in that one file, with the addresses, so `RomBench._vet_tenancy` can refuse an overlap.
 
+THE DECLARED BAND IS ALSO THE BLOB'S CEILING: it is the lowest tenant above `bench_base`, so the one
+overlap that vet refuses — the blob over this band — fences every span below (`Registry.ALL`), none
+of which the kit knows. `test_window.py` holds both halves.
+
 `test_boot_snapshot.py::test_the_case_staging_band_is_dead_memory_in_this_snapshot` is what keeps the
 "dead RAM" half true — a future capture whose desktop grew into the band reddens there rather than
 silently running these cases over live bytes.
@@ -51,9 +55,12 @@ class Registry:
     system's staged RAM disk window (`test/gemdos_fs.py`) another, so a battery staging there is
     held to the same rule by the same code rather than by a copy of it."""
 
+    ALL = []        # every span made, in the order made: `test_window.py` holds each one clear of the blob's room to grow
+
     def __init__(self, lo, hi, label):
         self.lo, self.hi, self.label = lo, hi, label
         self.claims = []
+        Registry.ALL.append(self)
 
     def claim(self, at, size, owner):
         """Claim `[at, at + size)` for `owner`, and answer `at`."""

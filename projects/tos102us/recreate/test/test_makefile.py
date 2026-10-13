@@ -17,9 +17,10 @@ of the registry ends is what the import READ — so the day a row is registered 
 registry's import reads one more file and this battery says REGISTRY_READS lacks it. (It did for the DESKTOP.INF
 machine the day slice B registered the build's own start-up over it: the fourth capture is among them since.)
 
-AND THE SUITES' OWN CAPTURES ARE FOUR: `test`, `guarded` and `gates` need every pre-init machine a test boots from
-(the seven-accessory and DESKTOP.INF ones too), each made from ITS OWN disk by the capture tool, and `gates` holds
-the mask to them (`make preinit-twice`)."""
+AND THE SUITES' OWN PRE-INIT CAPTURES ARE FIVE: `test`, `guarded` and `gates` need every pre-init machine a test boots
+from (the seven-accessory, the DESKTOP.INF and — band 6 wave 0 — the files ones too), each made from ITS OWN disk by
+the capture tool, and `gates` holds the mask to them (`make preinit-twice`). A DISK WHOSE CONTENT IS CUT OUT OF THE
+ROM (the two that carry the ROM's own DESKTOP.INF) has the ROM image among its own rule's prerequisites."""
 import re
 from pathlib import Path
 
@@ -27,6 +28,7 @@ import pytest
 
 from harness import project
 
+import accessory_disk
 import aes_boot
 import preinit_snapshot
 import test_boot_snapshot          # noqa: F401  (THE REGISTRY: what its import reads is read off `aes_boot` just below)
@@ -42,7 +44,10 @@ CAPTURES = (SNAPSHOT, *READ_BY_THE_REGISTRY_S_IMPORT)
 # EVERY PRE-INIT MACHINE A SUITE BOOTS FROM: `{its file: the disk it is captured with, None for the blank one}`.
 PREINIT_CAPTURES = {str(path().relative_to(RECREATE)): disk for path, disk in (
     (preinit_snapshot.preinit_path, None), (preinit_snapshot.accessory_path, "build/acc/ACCDISK.ST"),
-    (preinit_snapshot.seven_accessory_path, "build/acc/ACC7DISK.ST"), (preinit_snapshot.inf_path, "build/acc/INFDISK.ST"))}
+    (preinit_snapshot.seven_accessory_path, "build/acc/ACC7DISK.ST"), (preinit_snapshot.inf_path, "build/acc/INFDISK.ST"),
+    # (band 6 wave 0, slice H: THE FIFTH — the files disk's, `make preinit-files`)
+    (accessory_disk.files_capture_path, "build/acc/FILESDISK.ST"))}
+DISKS_CUT_FROM_THE_ROM = ("build/acc/INFDISK.ST", "build/acc/FILESDISK.ST")    # each carries the ROM's default DESKTOP.INF
 THE_SUITES = ("test", "guarded", "gates")
 CAPTURE_TOOL, ROM_IMAGE = "tools/preinit_snapshot.py", "../../../tools/hatari/TOS102US.img"
 TWICE = "preinit-twice"
@@ -145,15 +150,20 @@ def suites_without_a_capture(texts):
         asked = [line for line in (line.replace("$@", capture) for line in recipe) if CAPTURE_TOOL in line and f"--out {capture}" in line]
         said = bool(asked) and all((f"--disk {disk}" in line) if disk else ("--disk" not in line) for line in asked)
         lacking[capture] = sorted(wanted - needs) + ([] if said else ["a recipe that captures it from its own disk"])
+    for disk in DISKS_CUT_FROM_THE_ROM:
+        if ROM_IMAGE not in rules.get(disk, (set(), []))[0]:
+            lacking[disk] = [ROM_IMAGE]
     return {target: missing for target, missing in lacking.items() if missing}
 
 
 def test_the_suites_have_every_pre_init_capture_and_each_capture_its_own_disk():
-    """THE FOUR PRE-INIT MACHINES: `test`, `guarded` and `gates` have each as a prerequisite, and each is made by the
+    """THE FIVE PRE-INIT MACHINES: `test`, `guarded` and `gates` have each as a prerequisite, and each is made by the
     capture tool from ITS OWN disk, the ROM image and the tool among its prerequisites — so a changed disk captures
-    again. And `gates` holds the mask to all four: `preinit-twice` among its prerequisites, its recipe `--twice`
-    over each disk, into a directory that is none of the captures'."""
+    again; a disk cut out of the ROM is made again by a changed ROM image. And `gates` holds the mask to all five:
+    `preinit-twice` among its prerequisites, its recipe `--twice` over each disk, into a directory that is none of
+    the captures'."""
     assert suites_without_a_capture(_texts()) == {}
+    assert set(DISKS_CUT_FROM_THE_ROM) <= set(PREINIT_CAPTURES.values())
     needs, recipe = rules_of(_texts())[TWICE]
     assert TWICE in rules_of(_texts())["gates"][0] and TWICE not in rules_of(_texts())["test"][0]
     assert {disk for disk in PREINIT_CAPTURES.values() if disk} <= needs
@@ -174,10 +184,14 @@ def test_the_suites_have_every_pre_init_capture_and_each_capture_its_own_disk():
      "$(PREINIT_ACC7): $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)"),
     ("build/preinit_inf.bin", "--disk $(INF_DISK) --work build/preinit_inf_snapshot --out $@",
      "--disk $(ACC_DISK) --work build/preinit_inf_snapshot --out $@"),
+    ("build/acc/FILESDISK.ST", "atari/mkprg.py include/gemdos/pexec_load.h $(ROM_IMAGE)\n\t$(PY) tools/accessory_disk.py --files",
+     "atari/mkprg.py include/gemdos/pexec_load.h\n\t$(PY) tools/accessory_disk.py --files"),
+    ("build/acc/INFDISK.ST", "$(INF_DISK): tools/accessory_disk.py $(ROM_IMAGE)", "$(INF_DISK): tools/accessory_disk.py"),
 ])
 def test_a_suite_without_a_capture_or_a_capture_without_its_disk_is_named(named, rule, without):
     """RED: the fourth capture dropped from the suites' prerequisites (the third likewise), a capture's rule without
-    its disk or without the tool, and a capture taken from another machine's disk — each named."""
+    its disk or without the tool, a capture taken from another machine's disk, and a disk cut out of the ROM whose
+    rule lacks the ROM image — each named."""
     makefile, kit = _texts()
     assert makefile.count(rule) == 1
     assert named in suites_without_a_capture([makefile.replace(rule, without), kit])

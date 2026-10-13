@@ -1270,3 +1270,55 @@ def test_the_stretches_figures_net_of_the_line_f_handler_are_the_table_s_own_lin
         len(battery.OVER_THE_BAR_NET_OF_LINE_F), ", ".join(over_1.values()), shipped_turn[1], len(turns)), f"AWAITING (22) says {b_1[0][-200:]!r}"
     assert b_12["figures"] == ", ".join(net for _with_thunks, net in battery.ON_THE_BENCH_BLOB.values() if float(net) > battery.BAR), (
         f"AWAITING (22) B-12 says {b_12['figures']!r}")
+
+
+# ---- BAND 6 WAVE 0: THE OPENING'S GROUNDWORK — the entry's counts are the three batteries' and the build's -----------------
+# The entry quotes the hands' campaign (chains, steps, reach, the four depths), the table (its three verdicts, the
+# thunks and native routines entered through it), the pre-init captures and the read guard. EACH IS READ HERE off what
+# holds it: the batteries' pins (each held to its derivation by the battery's own tests — a chain walked, a thunk
+# entered), the generator's entries, the makefile test's captures, the registry's rows.
+THE_OPENING_S_ENTRY = "BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK"
+_THE_HANDS_RE = re.compile(
+    r"THE HANDS' CAMPAIGN IS (?P<chains>\d+) CHAINS / (?P<steps>\d+) STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH (?P<reached>\d+) OF "
+    r"BAND 6's (?P<routines>\d+); THE DEEPEST BY THE WRITE LEDGERS: PD0 (?P<pd0>[\d,]+) of (?P<pd0_bytes>[\d,]+), PD1 (?P<pd1>\d+) of "
+    r"(?P<pd1_bytes>[\d,]+), the dispatcher (?P<dispatcher>\d+) \((?P<elsewhere>\d+) on every other chain\), the userdef stack (?P<userdef>\d+) "
+    r"of (?P<userdef_bytes>[\d,]+)")
+_THE_TABLE_OF_OURS_RE = re.compile(
+    r"THE TABLE IS (?P<entries>\d+) ENTRIES: (?P<native>\d+) native \((?P<native_routines>\d+) routines\), (?P<thunked>\d+) through "
+    r"(?P<thunks>\d+) thunks, (?P<the_rom_s>\d+) the ROM's; (?P<entered>\d+) THUNKS ENTERED THROUGH IT, (?P<unentered>\w+) UNENTERED BY NAME; "
+    r"(?P<natives_entered>\d+) NATIVE ROUTINES ENTERED, (?P<natives_unentered>\w+) NOT, BY NAME")
+_THE_CAPTURES_RE = re.compile(r"THE PRE-INIT CAPTURES ARE (?P<captures>\w+)")
+_THE_READ_GUARD_RE = re.compile(r"THE READ GUARD: (?P<rows>[\d,]+) rows in (?P<chunks>\d+) chunks, (?P<not_held>\w+) NOT HELD BY NAME")
+
+
+def test_the_opening_s_entry_quotes_the_hands_the_table_the_captures_and_the_read_guard():
+    import aes_desk as desk
+    import test_aes_desk_rom as hands
+    import test_aes_lineftable as table
+    import test_makefile
+    import test_room_poison as guard
+    from harness import bench_tier3
+
+    entry = " ".join(_paragraph_from(_status(), THE_OPENING_S_ENTRY).split())
+    said = {name: pattern.search(entry) for name, pattern in (("the hands", _THE_HANDS_RE), ("the table", _THE_TABLE_OF_OURS_RE),
+                                                              ("the captures", _THE_CAPTURES_RE), ("the read guard", _THE_READ_GUARD_RE))}
+    missing = [name for name, found in said.items() if not found]
+    assert not missing, f"band 6 wave 0's entry no longer states {missing} in the sentence this test reads"
+    numbers = {name: {key: _number(value.lower()) for key, value in found.groupdict().items()} for name, found in said.items()}
+    deepest = {which: depth for which, (_chain, depth) in hands.DEEPEST.items()}
+    assert numbers["the hands"] == {
+        "chains": len(desk.CHAINS), "steps": sum(len(chain.steps) for chain in desk.CHAINS.values()), "reached": hands.REACHED,
+        "routines": len(desk.routines()), "pd0": deepest[desk.PD0_STACK], "pd0_bytes": hands.PD0_BYTES, "pd1": deepest[desk.PD1_STACK],
+        "pd1_bytes": hands.PD1_BYTES, "dispatcher": deepest[desk.DISPATCHER_STACK], "elsewhere": hands.DISPATCHER_ELSEWHERE,
+        "userdef": deepest[desk.USERDEF_STACK], "userdef_bytes": desk.USERDEF_STACK_BYTES}
+    assert (hands.CHAINS, hands.STEPS, hands.BAND_6_ROUTINES) == (len(desk.CHAINS), numbers["the hands"]["steps"], len(desk.routines()))
+    verdicts = [made.verdict for made in table.linef_table.entries()]
+    natives_entered, natives_unentered = table.native_cases()
+    assert numbers["the table"] == {
+        "entries": len(verdicts), "native": verdicts.count(table.OURS_NATIVE), "native_routines": len(table.native_routines()),
+        "thunked": verdicts.count(table.OURS_THROUGH_A_THUNK), "thunks": len(table.THUNKED), "the_rom_s": verdicts.count(table.THE_ROM_S),
+        "entered": len(table.ENTERED), "unentered": len(table.UNENTERED), "natives_entered": len(natives_entered),
+        "natives_unentered": len(natives_unentered)}
+    assert numbers["the captures"] == {"captures": len(test_makefile.PREINIT_CAPTURES)}
+    tier3 = bench_tier3()
+    assert numbers["the read guard"] == {"rows": len(tier3.ROWS), "chunks": guard.CHUNKS, "not_held": guard.NOT_HELD_ROWS}

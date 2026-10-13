@@ -181,8 +181,21 @@ ROM_ADDRESSES_AS_DATA = {
 }
 
 
+# ---- band 6 wave 0, slice T: the GENERATED Line-F table (`lineftable.S`) ---------------------------------------------------
+# Every entry of our table that is still THE ROM'S is the ROM routine's own address, a LITERAL (band 6's routines carry
+# no name yet) and CODE each, owed by the slice that ports the routine. A generated file's uses are its generator's:
+# listed here AS THE FILE HOLDS THEM, apart from the typed table above (whose names the kind checks below look up), and
+# held where the generator is — `test_aes_lineftable.py`: exactly the entries whose verdict is the ROM's, each a
+# routine's entry in the ROM's text. (This module cannot ask the generator: the registry it derives from imports this.)
+GENERATED_SOURCES = ("lineftable.S",)
+ROM_ADDRESSES_OF_GENERATED_SOURCES = {source: {use: CODE for use in uses} for source, uses in rom_data.census(AES).items()
+                                      if source in GENERATED_SOURCES}
+# ---- end of slice T's block ---------------------------------------------------------------------------------------------
+
+
 def test_the_census_is_the_list():
-    assert rom_data.census(AES) == rom_data.listed(ROM_ADDRESSES_AS_DATA)
+    assert not set(GENERATED_SOURCES) & set(ROM_ADDRESSES_AS_DATA), "a generated source is listed by its generator, not by hand"
+    assert rom_data.census(AES) == rom_data.listed({**ROM_ADDRESSES_AS_DATA, **ROM_ADDRESSES_OF_GENERATED_SOURCES})
 
 
 def test_a_table_s_kind_is_where_it_lies():

@@ -1452,7 +1452,7 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 ## Wave log
 
 * **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: AES band 5 wave 3
-  (2026-10-11) and THE CURRENT WAVE, wave 4 (its entries follow wave 3's, before `* **Next**`).
+  (2026-10-11), wave 4 (its entries follow wave 3's) and BAND 6 WAVE 0 (2026-10-13: the last entry before `* **Next**`).
   - **BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER: LINKED, HELD AT TIER 1, NOTHING BOUND — AND THE GATE W3-R8 DOES
     NOT FIT** (2026-10-10/11; five slices in one tree — T the door, G gemdosif's last two, L the loader, M the
     machines, S the stack's reading — then one integration pass; the design and its rulings W3-R1..R13:
@@ -3307,6 +3307,238 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
         build and the `my-code-review` skill were not run — the orchestrator's. NOT RE-MEASURED by this pass and
         quoted as the reviewers': the 381, the 1,672, F-1's and F-14's cycle figures, the twelve holders on the
         machines beyond the six re-read.
+  - **BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK (W, H, T): NOTHING BOUND — the window re-cut, the hands' campaign on the
+    ROM's own machine, the Line-F call table of ours LINKED INTO BOTH BLOBS AND BOUND NOWHERE; 383 verified STILL, no
+    row added, none moved** (2026-10-13; three slices on `6fbad55` — W the window and H the hands side by side, T the
+    table after W — two reviews, then ONE FIX PASS alone in the tree, which wrote this entry: every number in it is
+    the fix pass's own build, collect or log unless it says whose measurement it is. The design and the orchestrator's
+    provisional rulings W6-R1..R13: `scratchpad/b6/design.md`; the hand-backs: `scratchpad/b6/{W,H,T}/handback.md`; the
+    reviews: `scratchpad/RB6W0/{A,B}/review.md`; the fix pass's brief, scratch, probes and logs:
+    `scratchpad/b6/fix_w0.md`, `scratchpad/b6/FIX/`). WHAT IS TRUE NOW: the blob has room to grow (`staging_base` at
+    `$75000`); a campaign of a user's acts on the desk runs on the ROM's machine as a battery; a table of 658
+    longwords — ours where bands 0–5 have an entry, the ROM's own longword for band 6's — and its 299 generated thunks
+    are in both blobs. WHAT IS NOT: THE HANDLER'S OPERAND IS STILL `$fee900` IN BOTH BLOBS' BYTES — no machine of ours
+    runs over our table but under a LABELLED STAGING of slice T's own tests; no routine of band 6 is ours; no registry
+    declaration was activated; no kit edit; no shipped C or `.S` changed but the ONE NEW generated file. THE BINDING
+    (slice B: rows move shore) WAITS FOR THE USER (W6-R1, AWAITING (24)). IN ONE SENTENCE EACH, AS `test_status.py`
+    READS THEM: THE HANDS' CAMPAIGN IS 46 CHAINS / 133 STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 215 OF BAND
+    6's 244; THE DEEPEST BY THE WRITE LEDGERS: PD0 1,460 of 1,792, PD1 722 of 1,196, the dispatcher 190 (188 on every
+    other chain), the userdef stack 438 of 1,024. THE TABLE IS 658 ENTRIES: 82 native (64 routines), 337 through 299
+    thunks, 239 the ROM's; 292 THUNKS ENTERED THROUGH IT, seven UNENTERED BY NAME; 51 NATIVE ROUTINES ENTERED, 13 NOT,
+    BY NAME. THE PRE-INIT CAPTURES ARE five. THE READ GUARD: 2,395 rows in 32 chunks, 16 NOT HELD BY NAME.
+    - **SLICE W — THE WINDOW** (`project.toml`, `test/staging.py`, `test/gemdos_fs.py`, `test/test_window.py` and the
+      order assertions of five batteries). The declared staging band moved `$60000` → `$75000`, DIRECTLY UNDER the VDI's
+      and the AES's staged windows (`$76000..$7e000`, not moved); the file system's window `[$68000, $75000)` →
+      `[$82000, $8f000)` and deskmem's arena → `[$b9000, $bea00)`, both claims of `staging.HIGH_BANDS`, above the
+      oracle's stack band. WHY SO: the band stays THE LOWEST TENANT ABOVE `bench_base`, so the one overlap the kit
+      refuses by name — the blob over the band — fences every tenant above it, none of which the kit knows.
+      HELD (`test_window.py`, 5 tests): no registered span (`staging.Registry.ALL`) starts below the band; a blob
+      REALLY LINKED two bytes past the band is refused by name where it is loaded (`RomBench`'s constructor: at LAY,
+      not at build — `make` links it without complaint), and the same link ending at the floor passes; the blob's
+      whole room is zero in the snapshot; the order blob < band, the band ending EXACTLY where the VDI's window
+      begins (the fix pass's red: the second review's mutant, the band a page lower, survived every test), the high
+      spans above the stack band. The kit hard-codes neither address (read: its one `0x60000` is its own synthetic
+      fixture). THE CUT IS NOT THE DESIGN'S (the design did not know the two windows at `$76000`): of three — (a)
+      everything packed below the stack band, 46 KB of room; (b) AS BUILT; (c) the VDI's and the AES's windows above
+      the stack band too, some 132 KB, moving nearly every case's addresses, NOT measured — (b) was taken and
+      accepted provisionally by the orchestrator: AWAITING (24).
+    - **SLICE H — THE HANDS, ON THE ROM'S MACHINE** (`test/aes_desk.py`, `test_aes_desk_rom.py` — 74 tests; additive
+      blocks in `test/aes_boot.py`, `tools/accessory_disk.py`, `Makefile`, `test_makefile.py`). NOTHING OF OURS RUNS
+      IN IT: every machine is one the ROM booted, a machine that holds a blob is refused by name. A CHAIN is steps of
+      a user's hand — points read off the machine's own trees (the menu, the desk's objects, the window tree, the
+      dialog that is up; an item that is absent, double, out of sight or DISABLED is refused), receptions delivered
+      through the device model, never a poke — each step a continuation to the ROM's idle or to A NAMED STOP
+      (`continued`'s `until` / `at`: the file viewer's two key waits, the rubber box's poll, each held to the ROM's
+      bytes). EACH CHAIN IS HELD (a case a chain): every step ends where it says with its ledger whole; ITS OWN
+      STEPS ENTERED THE ROUTINES IT NAMES, by the cycle profile; 25 of the 46 also hold what the act leaves on the
+      machine or the disk (`LEFT_BEHIND`). THE REACH TABLE (`aes_desk.reach`: routine ← chains, a routine reached by
+      its FIRST INSTRUCTION, own steps only) is a derivation, its count pinned; reviewer B re-derived it
+      independently of the profiler, by a door stop at every routine's entry (211 as it then stood; B's
+      measurement). THE DEPTHS are the lowest STORE of a chain's own steps (`Boot.stored`), not residue and not the
+      lowest SP: PD0's deepest is "A: File > Open" (B confirmed 1,460 by the lowest stack pointer, single-stepped:
+      B's measurement), PD1's and the userdef stack's "window: View > Show as Text", the dispatcher's the second
+      window. NO INTERRUPT IS TAKEN AT A DEEPEST POINT (a reception's handlers run on the harness's stack). THE FIFTH
+      CAPTURE (`make preinit-files`, ruling W6-R10): the ROM's default DESKTOP.INF, a text longer than the viewer's
+      page, a program and the folder AUTO with a file in it, made by the existing tools.
+      THE ORACLE'S DEFECT THIS SLICE FOUND, REPRODUCED AND STOOD IN FOR: the kit's 68000 EXECUTES `$F620..$F627` as
+      the 68040's MOVE16 where a 68000 takes the Line-F exception (swept over all 4,096 `$Fxxx` words: those eight
+      alone); the ROM holds two such words, both call words of the File menu's handler (`$fe1ec2` → Show Info,
+      `$fe1ece` → New Folder) — which is why the design's New Folder made no folder and its two Show Infos ran
+      nothing. `aes_boot.continued` stops at each and takes the exception by hand (the six-byte frame, vector 11 as
+      the machine holds it); the red is kept (with the stand-in taken away the chain idles at every step and makes
+      nothing). WHAT THE STAND-IN IS NOT: charged (34 cycles AND one instruction short an exception, in
+      `Boot.cycles` and `Boot.instructions`; B's measurement) and armed anywhere but `continued` (`booted`, `served`,
+      the our-boot's watched runs and every kit run execute the words). The kit fix is the user's: AWAITING (24).
+      WHAT THE DESIGN'S CAMPAIGN HAD WRONG, each "ok … idle" there: the second window's double click closed the
+      first (the icon lay under the closer); the trash dialog's default is CANCEL; Install Application is disabled
+      for a non-program; the three chains above.
+    - **SLICE T — THE TABLE** (`bench/linef_table.py` the generator, `src/aes/lineftable.S` GENERATED — checked in
+      AND held equal to the generator's text by a test, never edited —, `test/test_aes_lineftable.py`, 482 tests;
+      own lines of `atari/target.mk`, `test/transcription.py`). A SIXTH KIND of `.S` (`LINEFTABLE_SOURCES`): no ROM
+      instruction, target-only, LINKED AND NOT BOUND. Each entry's verdict is DERIVED IN THE TEST from the ROM's own
+      table bytes, the `.S` sources' labels as make lists them, the declared Alcyon signatures and each blob's symbol
+      table, then held equal to the generator's, on both blobs, entry by entry both ways; none dead. TWO ROUTINES OF
+      OURS ARE LEFT THE ROM'S BY A DECLARED EXCEPTION (sh_main, sh_cmd: `linef_table.ENTERED_BY_OURS_ALONE` — the desk
+      door counts the C frames above it; premise held off the ROM's text: every Line-F call of either lies in a
+      routine that is ours). EVERY THUNK is read off the blob's bytes against its routine's signature (offsets,
+      widths, a word sign-extended through A0, push order, the return site, the image, the core called, the bytes
+      dropped) AND ENTERED where a registered case can enter it: the ROM's call word → the ROM's handler in RAM → our
+      table → our thunk → our core, against the ROM's own run of the same case, on the shipped blob (and on the
+      bench blob where the routine's C reaches no transcribed core). THE UNENTERED SEVEN, BY NAME: all_run,
+      ap_tplay, ap_trecd, desk_free, desk_rsrc_free, ev_timer (every case taken through interrupts) and
+      gem_read_inf (no case at the routine: a stretch of the boot); three of the entered are AN ARGUMENT CLASS STAGED
+      IN THE TEST and say so in their id (dos_sdta, dos_close, dos_cconout). THE SEVEN CORES THAT TAKE THEIR CALLER'S
+      RETURN SITE are handed the real one (the ROM's park found in its ledger, ours equal, undropped). A THUNKED
+      CALL'S GLUE IS 60–372 CYCLES, MEAN 120.5 A THUNK (slice T's figures; the test holds every entered thunk's
+      measured cycles to the model) — REPORTED, NOT ACCEPTED (W6-R3). THE STAGED OUR-BOOT OVER THE TABLE reaches the
+      desk's first idle with the ROM's screen byte-equal, on both blobs — one labelled test; who-ran there: no ROM
+      routine the table makes ours is entered, the desk's own text and two routines the table leaves the ROM's run by
+      declaration (slice T's figures: shipped 459,903 instructions / 5,155,292 cycles against the ROM's own boot's
+      592,893 / 6,824,868; the handler's copy 80,338; 23 thunks, 23,424). NOT BOUND, HELD: the operand at
+      `aes_rom_linef_handler + $16` is `$fee900` in both blobs and no longword of a blob holds the table's address;
+      the eighth relocation is DECLARED PENDING in the generator (`linef_table.PENDING_BINDING`, waits for slice B) —
+      not in `aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3`, which existing tests and this file pin EMPTY. THE COPY'S TAIL
+      (design risk 9): gem_entry's 100-byte copy carries nine and a half longwords behind the handler — `gemstart.S`'s
+      own, THE ROM'S; our table is indexed in the blob and no byte of it is copied. TWO EXISTING WHOLE-BLOB CLAIMS
+      WERE NARROWED to leave the thunks out (`aes_stack.routines_handed_to`; ct_msgup's "called by no instruction of
+      a blob"): true only while the table is unbound, OWED BY SLICE B by name.
+    - **THE REVIEWS' BLOCKER, AND ITS FIX — A PRICED ROW READ THE BLOB'S ROOM.** `vdi_vqt_width | ptsout over the
+      font's HOR_TABLE` lays ptsout over the high word of the font's HOR_TABLE pointer so that the ROM's second read
+      of the pointer (`$fce894`) takes the right offset from ANOTHER table than the first; the table was the
+      snapshot's low RAM at `$400` and the entry asked was character 5's, whose left byte 6 moved the re-read to
+      `$6040b` — free RAM on the ROM's shore, THE BLOB on ours since this wave (it lay in the old staging band, zero
+      on both, at HEAD). The row was green only because the shipped blob holds `$00` there: reviewer A relinked with
+      pads and it reddened exactly when that byte was not zero (+4, +16, +32, +64, +4096; at +4096 `bench/tier3.py`
+      itself died) — and slice T's "unexplained red, seen once" was this. Nothing vets a READ (the kit refuses a
+      POKE in the blob's span). THE FIX IS THE CASE'S: the entry asked is now the one whose left byte is the third
+      byte of hdv_init's ROM pointer (`$46c`: `$0f`, character 54 of the same table), which moves the re-read to
+      `$f046c` — a pair the case STAGES AND CLAIMS in `staging.HIGH_BANDS`, above the stack band, the same bytes on
+      both shores whatever the blob's layout; the same arm, and THE ROW'S FIGURES DID NOT MOVE (53 / 692 against
+      54 / 658 before and after: another character of the same table, the same instructions). PROVED BY LAYOUTS
+      (a private copy, `scratchpad/b6/FIX/pads.log`): `lineftable.S` padded by +4, +16, +32, +64 and
+      +4096 bytes, both blobs relinked each time — the shipped blob's byte at `$6040b` is `$41`, `$75`, `$ff`, `$6f`,
+      `$8b` (reviewer A's five reds) — and AT EVERY PAD all of `test_tier3.py` and the case's own battery are green
+      (4,041 passed, as unpadded) and THE TIER-3 TABLE IS BYTE-IDENTICAL TO THE UNPADDED ONE. `aes_aptape.LONG_RECORD_AT`,
+      which stood at `$50000` unclaimed — inside both blobs' spans, a buffer the run STORES (Tier 1 only: no blob is
+      laid, no priced row) — is a claim of `HIGH_BANDS` now (`$e8100`); no pinned figure moved.
+    - **THE READ GUARD, BUILT — A POISON DIFFERENTIAL** (`test/room_poison.py`, `test_room_poison.py`: 32 chunks over
+      xdist and five tests of the guard itself; no kit edit). Every priced row is measured twice, cold: as the table
+      measures it, and again with `[bench_base, staging_base)` filled, under every oracle run that holds no blob,
+      with bytes that are non-zero and differ from BOTH blobs' own byte at each address (the room put back as each
+      run stops, before anything reads the memory). A row whose poisoned measurement is refused by its own
+      differential, or whose costs move, is NAMED. IT REDDENS ON THE UNFIXED CASE AND ON A PLANTED READ (the sweep,
+      below). WHAT IT COSTS: the file alone at `-n 8`, the registry's derivations kept: 37 passed in 43 s of wall, 243 s of test calls summed
+      (`scratchpad/b6/FIX/poison_final.log`; cold, every worker importing the registry first, 2 min 16 s —
+      `poison2.log`, the first whole pass): two cold measurements of every priced row. WHAT IT DOES NOT HOLD, BY NAME: the 16 stretches of the build's own
+      start-up (their ROM shore is the ROM's own boot, a run remembered from before the guard is armed —
+      `is_not_held`, exact both ways); a read whose byte changes nothing the run leaves or costs; an instruction
+      single-stepped through the library directly (`aes_boot`'s by-hand steps); the Tier-1-only cases (they lay no
+      blob: harmless until priced). Reviewer B's read watch (a private kit: every read of the room recorded) saw ONE
+      row of 2,395 read the room — that one — and four ROM boots and all of slice H's 129 steps read nothing of it
+      (B's measurement); a kit read ledger would be exact where this is a differential: AWAITING (24).
+    - **THE FIX PASS, ITEM BY ITEM** (tests, harness and docs; NO SHIPPED BYTE). H: reviewer B's test added —
+      slice H's surviving mutant A11 (`run.laid.update(line_f_frames)`) is NOT dead code: a continuation that BEGINS
+      inside the File-menu handler past its first Line-F call ends with the by-hand frame's status word stored by
+      nobody but the harness, and the test kills the mutant. NO CHAIN IS HELD BY ITS NAME ALONE: the 16 chains whose
+      `enters` was empty each name a routine read off the ROM and off their own profile (the button handler, the View
+      and Options menus' handlers and the view / sort setter, the window opener for a drive and for a folder, the two
+      arms of close, the full box, gr_rubbox's binding, the INF writer), six of them a `LEFT_BEHIND` as well (the
+      drive selected, the View menu's check marks moved, the folder's parent shown again, the INF written from the
+      text view, the files window's items); "Options > Print Screen" is renamed for what it does — ITS ALERT RAISED,
+      NOT ANSWERED: the hardcopy leaf `$fe8862` is a printer's, unreached by design. FOUR CHAINS ADDED (reviewer B's
+      probes): a key typed at the desk's idle (`$fe22a6`), the files window's down arrow and its page area
+      (`$fe3310`, `$fe3504`) and its right arrow (`$fe359a`) — reach 211 → 215, chains 42 → 46, steps 129 → 133; the
+      deepest of each stack did not move. A typed key is LET GO (the ROM's machine is another with it held: B's
+      mutant H8); a disk cut out of the ROM has the ROM image in its own rule (H15, `test_makefile.py`); the oracle
+      test's docstring no longer says a kit fix would make a second exception (the stop PRE-EMPTS the word: B, with
+      the kit fixed privately, 65 passed and 2 failed by design). T: WHO RAN reads THE WHOLE ROM GEM TEXT
+      `[gem_entry, $fee900)` after every entered run — 0 cycles — not the routine's first word, and a thunk is entered
+      EXACTLY once (`== 1` where `>= 1` stood); hctl_rect and hctl_window ARE ENTERED (each by its first case that
+      takes no interrupt — "the mouse off the titles again, along the bar" and "the closer clicked: WM_CLOSED"; a
+      handler measured at its arrival is Tier 3's choice for its price and no reason; their other 4 of 6 and 14 of
+      22 cases take interrupts), UNENTERED 9 → 7; THE NATIVE ENTRIES ARE ENTERED TOO — 51 of the 64 routines by
+      their own registered case, on the shipped blob, the entry's first instruction run and the ROM's text at 0; the
+      13 not, by name: nine with no declared signature (gem_gemdos_call, dsptch, the two spl entries, cli, sti,
+      savestate, switchto, the trap's exit), three with no registered case at the entry (crit_err, dos_exec,
+      drawrat) and pgmld (red when forced: a code address stored by value — reviewer A's measurement). W: the band's
+      place pinned (above). CODE BAR: `FALLEN_INTO` before its use, a comment mended in the generator (its output
+      unchanged), the view pair's check spelt once, `continued`'s `at` no longer shadowed, `_Receiving`'s refusal says
+      where the machine stands, named literals, the makefile test's "five", the three tests that forge a state say so
+      in their names; `aes_desk.desk_tree` / `box` and `aes_boot.line_f_taken` are public (renames inside the wave's
+      files). PRIVATE REACHES LEFT, FOR SLICE B (each older than the wave or the kit's): `aes_boot._set_register` /
+      `_register`; `emu._LIB`; `rom_bench._allocated_span` / `_vet_tenancy` / `_both_sides` / `_vet_return_value` /
+      `_bench_io_seed` / `_vet_pokes_are_clear_of_the_blob`; `tier3._reaching_transcribed_cores` / `_shares` /
+      `_costs`; `aes_boot.booted.__wrapped__`; `aes._line_f_call_index`; `rom_census._the_c_routine_holding`.
+    - **THE SWEEP** (one log, `scratchpad/b6/FIX/sweep.log`, driver `sweep.py`; a private copy, every `__pycache__`
+      cleared, the blobs relinked where a compiled source is mutated, restores hash-verified; each mutant against the
+      fix pass's FINAL battery; a crash, an error at collection or a timeout is not a kill; descriptions the
+      driver's, verdicts the log's): 21 runs — the control GREEN (902 passed), 20 mutants, 20 KILLED, none survived, no error at collection and no
+      timeout; every failure an assertion's (none a `Refused` raised inside a test). **C0** — CONTROL: nothing mutated
+      — the battery — CONTROL GREEN; **P1** — test_vdi_text_measure.py: THE UNFIXED CASE put back whole (HEAD's file):
+      the entry asked is character 5's, the re-read at $6040b — inside the blob's room, unstaged, unclaimed. THE GUARD
+      MUST NAME THE ROW — KILLED (1 failed, in 1 test function(s)); **P2** — room_poison.py: THE POISON IS NEVER LAID
+      (`_laid` answers None for every machine) — a planted read answers the snapshot's zero — KILLED (34 failed, in 3
+      test function(s)); **P4** — room_poison.py: a byte the CASE STAGED in the room is poisoned over (the whole
+      poison laid, whatever the room held) — KILLED (1 failed, in 1 test function(s)); **P5** — room_poison.py: the
+      room is LEFT POISONED where a run stops (`_put_back` puts nothing back) — KILLED (34 failed, in 3 test
+      function(s)); **P6** — test_room_poison.py: `is_not_held` names no share — the sixteen our-boot stretches are
+      asked to be held — KILLED (17 failed, in 2 test function(s)); **P7** — test_vdi_text_measure.py: the pair the
+      re-read lands on is NOT STAGED (it reads the snapshot's zero there) — KILLED (1 failed, in 1 test function(s));
+      **P8** — aes_aptape.py: the long recording's buffer back at $50000, UNCLAIMED (inside both blobs' spans) —
+      KILLED (1 failed, in 1 test function(s)); **A11** — aes_boot.py, slice H's surviving mutant A11: `continued`
+      does not lay the frames taken by hand into the run's ledger — KILLED (1 failed, in 1 test function(s)); **H8** —
+      aes_desk.py, reviewer B's surviving mutant H8: `typed` — a key is pressed and never released (no break code) —
+      KILLED (1 failed, in 1 test function(s)); **H15** — Makefile, reviewer B's surviving mutant H15: the files
+      disk's rule lacks the ROM image (its DESKTOP.INF is cut from it) — KILLED (2 failed, in 2 test function(s));
+      **W6** — project.toml, reviewer B's surviving mutant W6: staging_base = 0x74000 — the band a page lower, a hole
+      under the VDI's window — KILLED (1 failed, in 1 test function(s)); **T1** — test_aes_lineftable.py: WHO-RAN
+      NARROWED BACK TO A FIRST WORD (`rom_gem_text_cycles` reads the text's first word alone) — the reader's red
+      plants a cycle mid-routine — KILLED (1 failed, in 1 test function(s)); **T2** — linef_table.py, slice T's M12
+      again: A NATIVE ENTRY LEFT THE ROM'S — gr_inside ($fda56e) emitted as the ROM's own longword (it was killed by
+      the entry test alone: now a native entry is ENTERED) — KILLED (4 failed, in 3 test function(s)); **D1** —
+      aes_desk.py: a chain names NO routine of its act ("A: opened" enters nothing) — KILLED (1 failed, in 1 test
+      function(s)); **D2** — aes_desk.py: `menu_item_is_checked` reads the DISABLED bit (the View menu's marks are not
+      read) — KILLED (2 failed, in 1 test function(s)); **D3** — aes_desk.py: `drive_is_selected` / `icon_is_selected`
+      read the CHECKED bit — KILLED (3 failed, in 1 test function(s)); **D4** — aes_desk.py: the scroll gadgets'
+      points are taken 40 pixels inside the window (its work area, no gadget) — KILLED (4 failed, in 2 test
+      function(s)); **D5** — aes_desk.py: "folder: File > Close" chooses Close Window (the folder's window shut, not
+      its parent shown) — KILLED (2 failed, in 2 test function(s)); **S1** — STATUS.md: the wave's entry says REACH
+      214 — KILLED (1 failed, in 1 test function(s)); **S2** — STATUS.md: the wave's entry says 293 THUNKS ENTERED
+      THROUGH IT — KILLED (1 failed, in 1 test function(s)). WHAT THE SWEEP SAYS BESIDE ITS VERDICTS: P1 is the
+      guard's proof — its one red names `vdi_vqt_width | ptsout over the font's HOR_TABLE: REFUSED under the poison`
+      with the poison's own byte in the difference (`0xc4049 (0xa5 -> 0x00)`), every other row green; T2 was killed by
+      the entry test ALONE in slice T's sweep and is now killed by the native routines' entered list too; S1 / S2 are
+      `test_status.py`'s new test. NOT MUTATED: `calls == 1` (no build makes a thunk run twice without breaking the
+      run); a machine that holds a blob poisoned too (its own unit test holds it: as a mutant over the whole battery
+      every row of ours would run a poisoned blob to its instruction budget). The table by script:
+      `scratchpad/b6/FIX/mutant_table.md`; each mutant's output: `scratchpad/b6/FIX/logs/sweep_<id>.out`.
+    - **THE TABLE, THE OBJECTS, THE BLOBS.** `make bench` rc 0 in the shared tree (`scratchpad/b6/FIX/bench.log`: both blobs relinked — the makefile and the
+      tests are their prerequisites —, the accessory and DESKTOP.INF machines captured again —
+      `tools/accessory_disk.py` moved): THE TIER-3 TABLE IS BYTE-IDENTICAL TO `scratchpad/final37/tier3.txt` (`cmp`;
+      5,777 lines) — NO LINE DIFFERS, the re-defined vqt_width row's included (the same figures). OBJECTS: the 154
+      that existed are sha256-identical to `scratchpad/final37/objs.txt` (`diff`: one line, the new one); NEW:
+      `src_aes_lineftable_S.o` (c715eb70…), the generated file's — unchanged by the fix pass (the generator's text
+      moved in a comment only: `lineftable.S` is byte for byte slice T's). THE BLOBS (sha256 of the `.bin`; ends by
+      file length): bench `[$30000, $60cd4)` 8c55f508acf54638…, shipped `[$30000, $61710)` 4af4e80576760200… — slice
+      T's bytes, 11,240 more than HEAD's each (the table's 2,632, the thunks' 8,606 and 2 of fill; the old bytes are
+      NOT a prefix: the file links where its name sorts, and everything behind it and every absolute operand naming it
+      moved by that much — slice T's account, reviewer A's `moved.py` rerun: 0 unexplained). ROOM LEFT UNDER
+      `staging_base`: 80,112 bytes over the shipped blob, 82,732 over the bench blob — THIS LAYOUT'S FIGURES, said and
+      not pinned. The fix pass changed NO shipped byte.
+    - **UNPINNED / NOT DONE, BY NAME:** anything on OUR shore over the table but slice T's labelled stagings (the
+      three invariants across shores are slice B's); the by-hand Line-F stops on a machine of OURS (the second
+      review's surviving mutant H16: the stops armed only where `ours is None` passes every test — the battery is
+      the ROM's machine's alone; slice B's campaign on our shore must hold it or New Folder silently breaks there
+      again); the two entries the oracle's MOVE16 words name (`$f620`, `$f624`: the ROM's in the table, entered by no
+      run through the handler outside `continued`); the seven unentered thunks and thirteen unentered native
+      routines (their bytes' reading and the entry-by-entry test alone); a missing sign extension BY A RUN (the byte
+      reading alone kills it: GCC reads a word argument's low word); THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
+      CALLER (AWAITING (24)); a door (accessory) machine over the table; whether anything READS the copy's tail; an
+      interrupt taken at PD0's deepest point; a folder that was on the disk from power-on OPENED (the driver answers
+      E_CHNG, `Floppy._rwabs` refuses by name: AWAITING (24)); print, format, disk copy, drive B:, a resolution
+      change, a critical error under the desk (the design's 3.3); the guard's four blind spots (above); a build-time
+      refusal of a blob linked past the band (it is refused at lay); the `$90c` capture set, `make gates`,
+      `make guarded` and the from-empty build — THE ORCHESTRATOR'S.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -3369,6 +3601,17 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
   built-ins behind THE DESK DOOR (`ROM_CALLS_OWED_TO_A_LATER_BAND`), the desk's `$fde844` (ub_trampoline's one
   ROM call) and the glue entries whose every caller is a shell utility (`$fe3b6a`, `$fe3be8`, `$fe3bfa`,
   `$fee478`, `$fed522` / `$fed534`).
+  **BAND 6 WAVE 0's GROUNDWORK IS IN** (its entry, above; 383 verified STILL): the window is re-cut, the hands'
+  campaign runs on the ROM's machine as a battery, the table of ours and its thunks are linked into both blobs and
+  BOUND NOWHERE. **NEXT: SLICE B, THE BINDING — IT WAITS FOR THE USER (ruling W6-R1; AWAITING (24))**: the handler's
+  operand relocated on every machine of ours, the registry's table kind and the door's part for `$cc24`, every row
+  that moves re-derived and listed, the three invariants on every chain, units O and D in C. WHAT IT OWES BY NAME FROM
+  THIS WAVE: the two whole-blob claims narrowed to leave the thunks out (`aes_stack.routines_handed_to`; ct_msgup's
+  "called by no instruction of a blob"); THE PENDING EIGHTH RELOCATION, declared in the generator
+  (`linef_table.PENDING_BINDING`) and not in `aes_event`'s registry; the by-hand Line-F stops on a machine of OURS
+  (the second review's B-H16: armed and held on the ROM's machine alone); THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
+  CALLER (seven binding sites, ours differs on four — to settle BEFORE the binding); the private reaches the wave's
+  entry lists; and, before the File-menu handler is priced, the ruling on the oracle's MOVE16.
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -3787,6 +4030,83 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
         the ROM's AES text 268,346 cycles on the ROM-booted run → 243,592 behind the door, the blob 28,000, the
         whole run 711,540 → 708,874; the ROM's forker 11,620, disp 20,750 and idle 7,930 UNCHANGED — the ROM's
         dispatcher still runs behind the door because the desk parks in it.
+    (24) BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK (its entry, above). NOTHING HERE IS THE USER'S WORD YET: the
+      rulings are the ORCHESTRATOR'S, PROVISIONAL (`scratchpad/b6/design.md`, its end), and the rest is reported with
+      its numbers and whose measurement each is.
+      - THE DESIGN'S RULINGS, AS PROVISIONALLY RULED:
+        W6-R1 — THE OPENING IS THE TABLE, as wave 0, PROVISIONALLY; the choice was left to the user by W4-R3 and stays theirs — slices W, T and H proceed under either order, SLICE B (THE BINDING) DOES NOT START before the user has seen this list.
+        W6-R2 — accepted: the window re-cut first (`bench_base` stays).
+        W6-R3 — accepted: thunks are generated, target-only glue, counted and printed as glue.
+        W6-R4 — accepted: a PD0 gate, bound AND measured with the nest charged, before deskmain flips; the margins are REPORTED, not accepted (below).
+        W6-R5 — accepted: who-ran over the whole run with declared, shrinking ROM spans, plus the converse invariant (a ROM desk routine's own cycles equal on both shores).
+        W6-R6 — accepted: bottom-up by level; the call cycle's 17 routines in one slice; no C of ours calls the ROM's desk.
+        W6-R7 — DEFERRED to the user with W4-R10 and AWAITING (4): how the desk's turn is priced is decided at slice B.
+        W6-R8 — the user's (the kit's three: the blob outside the TPA, the cartridge window, a ledger mark); nothing in wave 0 edits the kit.
+        W6-R9 — accepted in principle: devices declared at the driver's entries, built when wave 4 of the band needs them.
+        W6-R10 — accepted: a fifth capture, made by the existing tools (slice H built it).
+        W6-R11 — accepted provisionally: a desk routine's row is an arrival-to-return stretch; restated at slice B with the first desk rows.
+        W6-R12 — accepted: unit names are `# ctx` until each body is read.
+        W6-R13 — the campaign's 1.12 net of the ROM's Line-F handler is REPORTED with F-10 / B-1; nothing accepted.
+      - THE ORACLE'S MOVE16 — A KIT EDIT, THE USER'S. The kit's 68000 executes `$F620..$F627` as the 68040's MOVE16
+        (`tools/recreate_kit/oracle/musashi/m68k_in.c`: one jump table for every CPU type, and the `move16` handler
+        asks none — read by both slice H and reviewer B); the ROM holds two such words, `$fe1ec2` and `$fe1ece`, the
+        File menu's calls of Show Info and New Folder. THE KIT FIX (reviewer B's measurement, in a private copy of the
+        kit: 5 lines of that one file — the handler's body under a 68040 test, `m68ki_exception_1111()` otherwise):
+        the build clean, the from-empty Tier-3 table byte-identical, the 42 chains of that day green, slice H's two
+        tests of the defect red BY DESIGN, and the stand-in — some 45 lines of `aes_boot.py` and its arming — goes.
+        THE STAND-IN, AS BUILT: correct where armed, which is `aes_boot.continued` ALONE — `booted`, `served`, the
+        our-boot's watched runs and every kit run (`emu.run`, Tiers 1 and 3) execute the words; 34 cycles and 1
+        instruction uncharged at each exception taken by hand (B's measurement); a Tier-1 case of the File menu's
+        handler, and "entered through the table by its ROM call word" for entries `$620` / `$624` once Show Info and
+        New Folder are ours, are silently wrong or impossible on it. BOTH REVIEWERS' AND THE ORCHESTRATOR'S
+        RECOMMENDATION: the kit fix, BEFORE the File-menu handler (`$fe1e80`) is priced.
+      - THE CUT (slice W): (a) everything below the stack band, 46 KB of room; (b) AS BUILT — the declared band at
+        `$75000`, the file system's window and deskmem's arena above the stack band: 80,112 bytes of room left over
+        the shipped blob after slice T (82,732 over the bench blob; this layout's figures, not pinned); (c) the VDI's
+        and the AES's windows above the stack band too, some 132 KB, moving nearly every case's addresses — not
+        measured. (b) does not make (c) harder.
+      - D0 AFTER A VOID ROUTINE — SLICE B MUST SETTLE IT BEFORE THE BINDING (reviewer A's measurements: a static
+        scan of the 256 Line-F calls of thunked routines in text the table leaves the ROM's, and runs). SEVEN ROM
+        BINDING SITES store D0 as the binding's answer directly after a VOID routine of ours (`$fde156` gr_mkstate,
+        `$fde1e0` mn_bar, `$fde2d8` ob_add, `$fde064` ob_center, `$fde32c` ob_change, `$fde2fe` ob_draw, `$fde298`
+        ob_order — the design knew two); OURS DIFFERS ON FOUR, by the values (first entered case, ours / the ROM's:
+        gr_mkstate `00078c46` / `0000ffff`, mn_bar `0000b0aa` / `0`, ob_add `0000ce14` / `00000168`, ob_center `1a` /
+        `3`; ob_change, ob_draw, ob_order equal). Over all entered thunks: 61 of 127 void routines leave a different
+        D0.w, 12 of 131 word routines a different D0 high word; no word or long ANSWER differs. WHETHER THE DESK
+        READS THOSE FOUR BINDINGS' ANSWERS WAS NOT TRACED. The decision is W3-R5's kind: reproduce the ROM's D0 in
+        the thunk or the core where a caller reads it, or declare the divergence.
+      - PD0's MARGINS, FOR W6-R4 — REPORTED, NOTHING ACCEPTED (the ROM's own desk on the ROM's AES; depths held by
+        slice H's battery, the margins and the next-deepest reviewer B's table): PD0 1,460 of 1,792 on "A: File >
+        Open", at mask 3 — 332 spare, 88 UNDER THE 244-BYTE NEST (VBL 100 + Timer C 144; 80 with a horizontal blank,
+        not reachable at mask 3); next 1,446 (A: opened), 1,438 (a file shown), 1,424 (the launch); PD1 722 of 1,196
+        (230 under the nest); the dispatcher 190 of 640; the userdef stack 438 of 1,024. The two nest columns are
+        arithmetic over measured numbers: no interrupt was taken at a deepest point. WITH OUR AES UNDER THE ROM'S
+        DESK the design measured 1,504 (by residue, one pass, the shipped blob): 288 spare, 44 under the nest —
+        whether the bar is the ROM's own figure or "the ROM's exposure, N bytes deeper" is the user's.
+      - A THUNKED CALL'S GLUE: 60–372 cycles, mean 120.5 a thunk (slice T's figures, held per entered thunk); and
+        THE CAMPAIGN'S 1.12 NET OF THE ROM'S LINE-F HANDLER (the design's aggregate over 25 chains: 0.76 by the
+        table's convention, 1.10 without the thunks) — both REPORTED, neither accepted (W6-R3, W6-R13).
+      - SLICE T's FOUR, with reviewer A's facts: (1) sh_main / sh_cmd LEFT THE ROM'S IN THE TABLE by a declared
+        exception (premise true over the whole ROM: one call word each, `$fda398` in gem_main and `$feb22e` in
+        sh_main, no `bsr` / `jsr`, the address nowhere but the table) — or thunked, and the shell door's claim
+        restated; (2) THE TWO NARROWED WHOLE-BLOB CLAIMS (`aes_stack.routines_handed_to`; ct_msgup's "called by no
+        instruction") — every Line-F caller of everyobj and of ct_msgup is ours, the same premise; the alternative
+        is not to emit those two thunks until slice B; (3) THE GENERATED FILE'S CENSUS (its 239 ROM longwords are
+        literals: listed as held, checked by the table's own test) — or band 6's routines named first; (4) THE
+        PENDING RELOCATION DECLARED IN THE GENERATOR (`linef_table.PENDING_BINDING`), not in `aes_event`'s registry —
+        or moved there at slice B with the tests that pin that registry empty.
+      - SLICE H's: A FOLDER THAT WAS ON THE DISK FROM POWER-ON CANNOT BE OPENED on the device model — the desk forces
+        a media change and GEMDOS's next call is Rwabs of the folder's cluster, which the ROM's driver answers
+        E_CHNG and `Floppy._rwabs` refuses by name; answering E_CHNG opens it (reviewer B tried, a monkeypatch: the
+        ROM's GEMDOS recovers by its own code and the folder opens at the ROM's idle) and MOVES THE PIN at
+        `test_aes_boot_w4.py:420` and puts GEMDOS's media-change recovery under the desk on both shores — not done.
+        THE FOLDER IS NAMED `AUTO` (`st_build.build` makes no other). A HARNESS REFUSAL RAISED INSIDE A TEST WAS
+        COUNTED AS A MUTANT'S KILL in slice H's sweep (its A12, D17, D21: B found D21's 24 failures all that one
+        refusal, none an assertion about the behaviour mutated) — say if such a kill counts.
+      - THE READ GUARD, AS BUILT (the entry's paragraph): a poison differential in the project's harness, one more
+        pair of runs a priced row; it does not hold the 16 our-boot stretches. THE EXACT ALTERNATIVE IS THE KIT'S
+        (reviewer B's estimate, from its private instrument): about 25 lines of `shim.c` — a span, a ring of
+        (address, PC), five getters — and one refusal in `RomBench` where the ORIGINAL's run read the blob's room.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -3913,9 +4233,27 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 
 ## Suite
 
-`make test`: **28,379 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **28,980 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK, WITH ITS FIX PASS (2026-10-13; slices W, H and T on `6fbad55`, two
+  reviews, then one fix pass alone in the tree — the window, the hands' campaign, the table linked and bound nowhere,
+  the read guard, tests and docs: ONE NEW OBJECT, the generated `src_aes_lineftable_S.o`; the 154 that existed
+  identical to `scratchpad/final37/objs.txt`; both blobs 11,240 bytes longer, at slice T's hashes; the table's 5,777
+  lines BYTE-IDENTICAL to `scratchpad/final37/tier3.txt` after `make bench`): `make bench` rc 0, then ONE `make test`
+  in the shared tree (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` removed first, **28,980 passed / 8
+  skipped**, rc 0 (`scratchpad/b6/FIX/final.log`; RUN ONCE). BY THE LEAN CYCLE: `make gates`, `make guarded`, a `$90c`
+  capture set and a from-empty build were NOT run — the orchestrator's. RE-SUMMED, ITEMISED BY FILE against slice F's
+  fix pass's own collection (28,988 = 28,980 + 8 skipped, against 28,387; `pytest --collect-only` on both, 269 files
+  then and 273 now: `scratchpad/b5/W4/FIXF/collect_perfile.txt`, `scratchpad/b6/FIX/collect_perfile.txt`): +601 —
+  FOUR NEW FILES: `test_aes_lineftable.py` 482 (a thunk entered through the table 394 — 292 on the shipped blob, 102
+  of them on the bench blob too —, a native routine entered 51, a glue entry's return site 14, seven tests on both
+  blobs 14 — the entries, the table's size, the thunks' bytes and their place, the reader's reds, the operand left the
+  ROM's, the staged our-boot — and nine of one case), `test_aes_desk_rom.py` 74 (a chain 46; 28 more: the oracle's
+  defect and its stand-in, the named stops and `continued`'s refusals, the reach table, the depths, the files disk and
+  its capture), `test_room_poison.py` 37 (the poison differential's 32 chunks, five of the guard itself),
+  `test_window.py` 5; `test_makefile.py` 14 → 16 (a disk cut out of the ROM whose rule lacks the ROM image: two reds),
+  `test_status.py` 31 → 32 (this wave's entry); no file lost a test.
 - BAND 5 WAVE 4, SLICE F's FIX PASS (2026-10-13; one agent alone in the tree on `f0985a1`, slice F uncommitted under
   it: wording, three reds and the reviews' list — NO SHIPPED BYTE: 154 of 154 objects and both blobs identical; the
   table's 5,777 lines the same but the legend's one after `make bench`): ONE `make test` in the shared tree

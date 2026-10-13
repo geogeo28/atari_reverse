@@ -13,6 +13,7 @@ import pytest
 
 from harness import addrs
 
+import staging
 import vdi
 import vdi_helpers
 import vdi_text
@@ -277,29 +278,43 @@ def test_vqt_width_writes_its_counts_after_the_answer(character):
 # left offset there ($fce890) and then READS THE POINTER AGAIN for the right one ($fce894) — a build that kept the
 # first read takes the right offset from the old table (the target GCC's type-based alias analysis did). The
 # table's high word must start at 0, since ptsout[2] is cleared before either read, so the table is the
-# snapshot's own low RAM read as one: the system variables at $400, whose entry for character 5 has a small
-# positive left byte — which moves the re-read into the snapshot's RAM at left * $10000 + $400, onto a right
-# byte that differs from the entry's own.
+# snapshot's own low RAM read as one: the system variables at $400. The entry asked is the one whose LEFT byte
+# is the third byte of hdv_init's ROM pointer ($46a: $00fc0f44, so left = $0f), which moves the re-read to
+# left * $10000 + the entry — ABOVE THE ORACLE'S STACK BAND, onto a pair this case stages and claims.
+#
+# WHY THAT ENTRY AND NO SMALLER LEFT BYTE: the re-read's address is the left byte's to decide, and with a left
+# of 3..7 it falls in `[bench_base, staging_base)` — free RAM on the ROM's shore, the BLOB on ours, so the two
+# shores read different bytes and the row measures the blob's layout (it stood at $6040b, character 5, until
+# band 6 grew the blob over it). The asserts below refuse such an entry by name.
 PTSOUT_OVER_HOR_HIGH_WORD = vdi.FONT_HOR_TABLE - 2 * WORD
 LOW_RAM_HOR_TABLE = 0x400
-HOR_OVERLAP_CHARACTER = 5
+HDV_INIT_THIRD_BYTE_AT = 0x46C                                  # hdv_init ($46a) holds a ROM address: $00fc0f44
+HOR_OVERLAP_CHARACTER = (HDV_INIT_THIRD_BYTE_AT - LOW_RAM_HOR_TABLE) // text.HOR_ENTRY_BYTES
 HOR_OVERLAP_ENTRY = LOW_RAM_HOR_TABLE + text.HOR_ENTRY_BYTES * HOR_OVERLAP_CHARACTER
 HOR_OVERLAP_LEFT = vdi.BASE_IMAGE[HOR_OVERLAP_ENTRY]
-HOR_OVERLAP_MOVED_ENTRY = (HOR_OVERLAP_LEFT << 16) + HOR_OVERLAP_ENTRY
-assert 0 < HOR_OVERLAP_LEFT < 0x10 and vdi.BASE_IMAGE[HOR_OVERLAP_MOVED_ENTRY + 1] != vdi.BASE_IMAGE[HOR_OVERLAP_ENTRY + 1], (
-    "the snapshot's entry must move the re-read onto a right byte that differs")
+HOR_OVERLAP_MOVED_ENTRY = staging.HIGH_BANDS.claim((HOR_OVERLAP_LEFT << 16) + HOR_OVERLAP_ENTRY, text.HOR_ENTRY_BYTES,
+                                                   "test_vdi_text_measure.py: the HOR entry vqt_width's second read lands on")
+vdi.declare_case_field(HOR_OVERLAP_MOVED_ENTRY, text.HOR_ENTRY_BYTES, "the HOR entry vqt_width's second read lands on")
+HOR_OVERLAP_MOVED_PAIR = bytes([0x21, 0x93])                    # (left, right): a right byte that is negative
+assert HOR_OVERLAP_ENTRY == HDV_INIT_THIRD_BYTE_AT and 0 < HOR_OVERLAP_LEFT < 0x80, (
+    "the entry's left byte must be small and positive: it becomes the re-read pointer's high word")
+assert HOR_OVERLAP_MOVED_PAIR[1] != vdi.BASE_IMAGE[HOR_OVERLAP_ENTRY + 1], (
+    "the re-read must land on a right byte that differs from the first entry's own")
+assert not any(vdi.BASE_IMAGE[HOR_OVERLAP_MOVED_ENTRY:HOR_OVERLAP_MOVED_ENTRY + text.HOR_ENTRY_BYTES]), (
+    "the pair's place is dead RAM in the snapshot")
 
 
 def hor_overlap_call():
     return vdi.merge_pokes(width_call("proportional", HOR_OVERLAP_CHARACTER),
                            vdi.field_pokes("FONT", PROPORTIONAL, HOR_TABLE=LOW_RAM_HOR_TABLE),
-                           vdi.linea_pokes(PTSOUT=PROPORTIONAL + PTSOUT_OVER_HOR_HIGH_WORD))
+                           vdi.linea_pokes(PTSOUT=PROPORTIONAL + PTSOUT_OVER_HOR_HIGH_WORD),
+                           {HOR_OVERLAP_MOVED_ENTRY: HOR_OVERLAP_MOVED_PAIR})
 
 
 def test_vqt_width_reads_the_hor_table_again_after_storing_the_left_offset():
     ptsout = vqt_width(hor_overlap_call()).words(PROPORTIONAL + PTSOUT_OVER_HOR_HIGH_WORD, 5)
     assert ptsout[2] == HOR_OVERLAP_LEFT
-    assert ptsout[4] == signed_byte(vdi.BASE_IMAGE[HOR_OVERLAP_MOVED_ENTRY + 1])
+    assert ptsout[4] == signed_byte(HOR_OVERLAP_MOVED_PAIR[1])
 
 
 def test_vqt_width_on_a_virtual_workstation():

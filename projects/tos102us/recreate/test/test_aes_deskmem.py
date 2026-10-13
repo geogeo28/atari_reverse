@@ -32,7 +32,7 @@ import aes_gemdosif as gd
 import aes_resource as rs
 import aes_switching as switching
 import case
-import gemdos_fs
+import staging
 import vdi
 from case import merge_pokes
 
@@ -70,11 +70,14 @@ def test_size_theglo_answers_theglo_s_words_less_one():
 # ---- desk_alloc ---------------------------------------------------------------------------------------------------------
 # THE BLOCKS THE SCRIPT ANSWERS: free RAM of the snapshot (held so below), the globals' staged FILLed — with a byte
 # past it — so the clear shows, and how far.
-# (Above Tier 3's blob, below the staged RAM disk — `test_the_scripted_blocks_are_free_ram_of_the_snapshot`. Only the
-# globals' block is ever written; the other four are addresses desk_alloc keeps and never follows.)
-ARENA = 0x60000
-BLOCKS = (ARENA, ARENA + 0x4C00, ARENA + 0x4E00, ARENA + 0x5200, ARENA + 0x5600)
-ARENA_END = BLOCKS[-1] + 0x400
+# (A claimed band of the free RAM above the stack band — `staging.HIGH_BANDS` refuses every other tenant by name;
+# it stood at $60000, where the blob grows, until band 6. Only the globals' block is ever written; the other four
+# are addresses desk_alloc keeps and never follows.)
+BLOCK_OFFSETS = (0, 0x4C00, 0x4E00, 0x5200, 0x5600)
+ARENA_BYTES = BLOCK_OFFSETS[-1] + 0x400
+ARENA = staging.HIGH_BANDS.claim(0xB9000, ARENA_BYTES, "test_aes_deskmem.py: the five blocks desk_alloc is answered")
+BLOCKS = tuple(ARENA + offset for offset in BLOCK_OFFSETS)
+ARENA_END = ARENA + ARENA_BYTES
 GLOBALS_FILL = 0x5C
 FILLED_GLOBALS = {ARENA: bytes([GLOBALS_FILL]) * (SIZES[0] + 2)}
 STALE_POINTERS = {at: vdi.STALE_LONG.to_bytes(aes.LONG_BYTES, "big") for at in POINTERS}
@@ -82,8 +85,8 @@ STALE_POINTERS = {at: vdi.STALE_LONG.to_bytes(aes.LONG_BYTES, "big") for at in P
 
 def test_the_scripted_blocks_are_free_ram_of_the_snapshot():
     assert not any(BASE_IMAGE[ARENA:ARENA_END])
+    assert emu.STACK_BAND_HI <= ARENA, "above the stack band: everything under the declared staging band is the blob's room"
     assert BLOCKS[0] + SIZES[0] + 2 <= BLOCKS[1] and list(BLOCKS) == sorted(BLOCKS) and not any(block & 1 for block in BLOCKS)
-    assert ARENA_END <= gemdos_fs.IMAGE_AT, "below the staged RAM disk"
 
 
 def alloc(answers=BLOCKS, **kwargs):

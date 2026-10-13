@@ -18,7 +18,7 @@ import ctypes
 
 import pytest
 
-from harness import BASE_IMAGE, _lib, addrs, emu, project
+from harness import BASE_IMAGE, _lib, addrs, emu
 
 import case
 import gemdos
@@ -61,20 +61,15 @@ def test_the_ram_disk_span_is_dead_memory_in_this_snapshot():
 def test_the_ram_disk_span_is_clear_of_the_three_declared_tenants():
     """`project.toml` declares three tenants of the free window and `RomBench._vet_tenancy` refuses
     an overlap between THEM; this span is a fourth one it does not know about, so the arithmetic is
-    here. Growing `staging_bytes` instead is the orchestrator's call (`test/gemdos_fs.py`).
-
-    WHAT THIS DOES NOT CHECK is Tier 3's blob against its own EXTENT — `bench_base` is an address
-    and its length is whatever the cross-compiled cores come to, which only `RomBench._vet_tenancy`
-    knows. All that is asserted here is that the blob starts below the case band and this span
-    starts above it, so a blob that grew past `staging_base` would be caught by that vet and not by
-    this test.
+    here: the whole window lies ABOVE the stack band, which is above the case band, which is the
+    blob's ceiling (`test_window.py` holds the last, and drives the vet's refusal). Every other
+    tenant up there is refused by `staging.HIGH_BANDS`' claim, made when `gemdos_fs` is imported.
     """
-    config = project.current()
     top = fs.RAM_DISK_AT + fs.RAM_DISK_BYTES
 
-    assert staging.SCRATCH + staging.SCRATCH_BYTES <= fs.RAM_DISK_AT, "it overlaps the case band"
-    assert config.bench_base < staging.SCRATCH, "Tier 3's blob is expected below the case band"
-    assert top <= emu.STACK_GUARD_LO, "it reaches into the run's own stack guard"
+    assert staging.SCRATCH + staging.SCRATCH_BYTES <= emu.STACK_GUARD_LO, "the case band is expected below the stack band"
+    assert emu.STACK_BAND_HI <= fs.RAM_DISK_AT, "it reaches into the run's own stack band"
+    assert (fs.RAM_DISK_AT, fs.FS_WINDOW_BYTES) in [(at, size) for at, size, _owner in staging.HIGH_BANDS.claims]
     assert fs.IMAGE_AT + fs.DISK_BYTES <= top, "the disk image itself runs past the span"
 
 

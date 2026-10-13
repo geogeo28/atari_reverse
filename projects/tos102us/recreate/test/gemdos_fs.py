@@ -29,18 +29,15 @@ about. Nothing here is excluded and nothing is waived.
 ---- WHERE IT LIVES, AND HOW MUCH RAM IT IS -------------------------------------------------------
 
 `project.toml` declares three tenants of the captured machine's free window ($1dde2..$f7fa1): the
-run's stack at `stack_top` ($80000), Tier 3's cross-compiled blob at `bench_base` ($30000), and
-`staging_base` ($60000), the 4 KB band a case stages buffers and stubs in. A FAT12 floppy does not
-fit in 4 KB, so this module takes a FOURTH span of that same window — 44 KB at $68000, between the
-staging band's top and the stack guard — and says so by ARITHMETIC rather than by prose:
-`test_gemdos_fs_disk.py` asserts the span is clear of all three declared tenants AND that the
-captured snapshot leaves every byte of it zero, which is the claim
+run's stack at `stack_top`, Tier 3's cross-compiled blob at `bench_base`, and `staging_base`, the
+4 KB band a case stages buffers and stubs in. A FAT12 floppy does not fit in 4 KB, so this module
+takes a FOURTH span of that same window — 44 KB, and a user buffer after it — ABOVE THE STACK BAND,
+in `staging.HIGH_BANDS`, where a claim refuses every other tenant by name. (It stood between the
+case band and the stack guard until band 6: that is where the blob grows, and the declared band is
+the blob's ceiling — `project.toml`.) `test_gemdos_fs_disk.py` asserts that the captured snapshot
+leaves every byte of it zero, which is the claim
 `test_boot_snapshot.py::test_the_case_staging_band_is_dead_memory_in_this_snapshot` makes about the
 declared band.
-
-Growing `staging_bytes` instead would be the tidier answer and is the ORCHESTRATOR's to make:
-`project.toml` is nobody's file during a wave, and `RomBench._vet_tenancy` is what would then refuse
-an overlap automatically rather than these assertions doing it by hand.
 
 ---- THE DISK -------------------------------------------------------------------------------------
 
@@ -101,24 +98,27 @@ CONSTANTS = {name: value for header in FS_HEADERS for name, value in addrs.parse
 sys.modules[__name__].__dict__.update(CONSTANTS)
 
 # ---- the span, and what is in it -----------------------------------------------------------------
-# Above the declared staging band's top ($61000) and far below the stack guard, in the free window
-# the snapshot leaves zero. `test_gemdos_fs_disk.py` is where both claims are checked.
-RAM_DISK_AT = 0x68000
+# Above the oracle's stack band, in the free window the snapshot leaves zero — and clear of the blob's
+# whole room to grow, which is everything under the declared staging band. `test_gemdos_fs_disk.py` is
+# where the "zero" half is checked; the other tenants up here are refused by the claim below.
+RAM_DISK_AT = 0x82000
 RAM_DISK_BYTES = 0xB000
 # A USER BUFFER big enough for a transfer of whole clusters, which neither the 4 KB case band
 # (claimed to its last byte) nor the RAM disk's own gap can hold: a FIFTH tenant of the captured
 # machine's free window, taken the way the RAM disk took the fourth — by arithmetic
-# `test_gemdos_fs_io.py` checks (dead RAM in the snapshot, clear of the RAM disk and of the stack
-# guard). Growing `staging_bytes` would be the tidier answer, and is the orchestrator's.
-USER_AT = 0x74000
+# `test_gemdos_fs_io.py` checks (dead RAM in the snapshot, clear of the RAM disk).
+GAP_UNDER_THE_USER_BUFFER = 0x1000      # as it always stood: `test_gemdos_fs_rename.py`'s path band is claimed in it
+USER_AT = RAM_DISK_AT + RAM_DISK_BYTES + GAP_UNDER_THE_USER_BUFFER
 USER_BYTES = 0x1000
+FS_WINDOW_BYTES = USER_AT + USER_BYTES - RAM_DISK_AT
+staging.HIGH_BANDS.claim(RAM_DISK_AT, FS_WINDOW_BYTES, "test/gemdos_fs.py: the file system's staged window")
 
 # EVERY TENANT OF BOTH SPANS IS CLAIMED — `test/staging.py`'s `Registry`, the rule the declared band's
 # batteries are held to, over the file system's window: the RAM disk and the user buffer above it.
 # This module claims its own tenants below; a battery staging a buffer of its own claims it the same
 # way (`test/fs_records.py` lays out the record gap), and an overlap between two claims is refused by
 # name.
-SPAN = staging.Registry(RAM_DISK_AT, USER_AT + USER_BYTES, "the file system's staged window")
+SPAN = staging.Registry(RAM_DISK_AT, RAM_DISK_AT + FS_WINDOW_BYTES, "the file system's staged window")
 
 BPB_AT = RAM_DISK_AT                            # the record `hdv_bpb` answers with
 STUBS_AT = RAM_DISK_AT + 0x20                   # the three 68000 routines the vectors name

@@ -31,9 +31,9 @@ def test_the_window_is_dead_ram_in_this_snapshot():
 
 
 def test_the_window_is_clear_of_every_other_tenant():
-    """Above the declared case band and the file system's window, below the oracle's stack guard."""
+    """Above the declared case band, below the oracle's stack guard — over which the file system's window is."""
     assert staging.SCRATCH + staging.SCRATCH_BYTES <= vdi.WINDOW_AT
-    assert gemdos_fs.SPAN.hi <= vdi.WINDOW_AT
+    assert emu.STACK_BAND_HI <= gemdos_fs.SPAN.lo
     assert vdi.WINDOW_AT + vdi.WINDOW_BYTES <= emu.STACK_GUARD_LO
 
 

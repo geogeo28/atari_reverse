@@ -446,6 +446,10 @@ def test_ct_msgup_is_called_by_no_instruction_of_a_blob_and_its_arrival_is_refus
     the machine idles with the handler never called, not run to a budget."""
     core = routines.core_symbol(INLINED_INTO_ITS_CALLERS)
     naming = [line for line in transcription.listing(blob.elf).splitlines() if f"<{core}>" in line and "\t" in line]
+    # ---- band 6 wave 0, slice T ---- ...BUT THE LINE-F TABLE'S OWN THUNK, linked and not bound: no run reaches it until
+    # slice B binds the table — and the arrival a ROM caller then has at ct_msgup is that slice's to restate.
+    thunk, = (symbol for symbol in transcription.symbol_table(blob.elf) if symbol.name == transcription.LINEF_THUNK_PREFIX + core)
+    naming = [line for line in naming if not thunk.start <= int(line.split(":")[0], 16) < thunk.start + thunk.size]
     assert not naming, f"a blob names ct_msgup's entry: its cases have an arrival now — {naming[:2]}"
     name, key = next((name, key) for name, key in EVERY_ARRIVAL.items()
                      if key[0] == INLINED_INTO_ITS_CALLERS and "WM_CLOSED, the button up" in name)

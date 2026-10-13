@@ -195,6 +195,12 @@ def inf_pairs_at(image, text):
     return at + text.index(INF_E_LINE)
 
 
+def _vet_view_pair(view):
+    """A `#E` line's view pair is two hex digits: one byte — refused by name otherwise."""
+    if not 0 <= view <= 0xff:
+        raise ValueError(f"a `#E` line's view pair is one byte, not {view:#x}")
+
+
 def inf_disk_of(text, view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED):
     """THE DESKTOP.INF DISK (above): the blank disk holding `text` as DESKTOP.INF, its `#E` line's two pairs patched
     in the image to `view` and `resolution` — ONE DISK TO THE MACHINE whatever the pairs. REFUSED BY NAME: a
@@ -204,8 +210,7 @@ def inf_disk_of(text, view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED):
                          f"harness: only {[f'{each:02X}' for each in RESOLUTIONS_THAT_BOOT]} boot to the desk — another "
                          f"resolution leaves the device model (the BIOS waits at $fc07e2 for a vertical blank no boot "
                          f"delivers)")
-    if not 0 <= view <= 0xff:
-        raise ValueError(f"a `#E` line's view pair is one byte, not {view:#x}")
+    _vet_view_pair(view)
     image = bytearray(disk_with(((INF_NAME, text),)))
     line = inf_pairs_at(image, text)
     for at, pair in ((INF_VIEW_PAIR_AT, view), (INF_RESOLUTION_PAIR_AT, resolution)):
@@ -218,17 +223,81 @@ def inf_disk_path(recreate=RECREATE):
     return recreate / "build" / "acc" / "INFDISK.ST"
 
 
+# ---- THE FILES DISK (band 6 wave 0, ruling W6-R10): files, a folder and a program — the fifth capture's floppy ----------------
+# What the desk's own acts need a disk to hold (`make preinit-files`): something to open, show, copy and delete. MADE BY
+# THE TOOLS THAT MAKE THE OTHER FOUR — `st_build.build` as it stands, whose one folder is `\AUTO` — so THE FOLDER IS
+# `AUTO`, and it holds no program: TOS runs every `\AUTO\*.PRG` before the desk, and this disk is to boot to the desk
+# the other captures boot to (the AUTO runner searches the folder, finds nothing to run, and the boot goes on).
+#   * `DESKTOP.INF` — THE ROM'S OWN DEFAULT TEXT, as the DESKTOP.INF disk holds it: the same desk, the same `#E` line,
+#     its VIEW pair patched in the image as there (ONE DISK TO THE MACHINE whatever the view);
+#   * `README.TXT` — a text LONGER THAN A SCREEN of the desk's file viewer (`$fed7c0`: 22 lines a page), so that showing
+#     it stops at the viewer's page prompt before its end;
+#   * `TESTPRG.PRG` — a program: the test accessory's own file under a program's name (a GEM program that waits for
+#     ever; what the desk does with it is the desk's: an icon, Show Info, Install Application, a launch);
+#   * `AUTO\INSIDE.TXT` — a file inside the folder: the folder is not empty.
+FILES_FOLDER = "AUTO"                   # the one folder `st_build` makes
+README_NAME, PROGRAM_NAME, INSIDE_NAME = "README.TXT", "TESTPRG.PRG", "INSIDE.TXT"
+VIEWER_PAGE_LINES = 22                  # the desk's file viewer shows this many lines a page ($fed7c0 `moveq #21,d6`, a `dbf`)
+README_LINES = 2 * VIEWER_PAGE_LINES + 6     # two page prompts and a last, short page
+README = b"".join(b"LINE %02d OF A FILE LONGER THAN THE VIEWER'S PAGE\r\n" % nth for nth in range(1, README_LINES + 1))
+INSIDE = b"A FILE INSIDE THE FOLDER\r\n"
+
+
+def _where_the_files_lie(layout):
+    """`{name: its offset in the image}` of a `st_build.Layout`'s files (a folder's file under `folder\\name`)."""
+    return {name: (st_build.FIRST_DATA_SECTOR + (first - st_build.FIRST_CLUSTER) * st_build.SECTORS_PER_CLUSTER) * st_build.SECTOR_BYTES
+            for name, _size, first, _count in layout.placed}
+
+
+def files_disk_of(text, program, view=VIEW_AS_ICONS):
+    """THE FILES DISK (above): `text` its DESKTOP.INF (the ROM's default: `default_inf`), `program` the bytes of its
+    program (the test accessory's file: `built().file`), the `#E` line's VIEW pair patched in the image to `view` —
+    built from the unpatched text, so the boot sector (its serial), both FATs and both directories are the same bytes
+    whatever the view."""
+    _vet_view_pair(view)
+    root = ((INF_NAME, text), (README_NAME, README), (PROGRAM_NAME, program))
+    with tempfile.TemporaryDirectory() as work:
+        def placed(files):
+            for name, data in files:
+                (Path(work) / name).write_bytes(data)
+            return [(name, Path(work) / name) for name, _data in files]
+        layout = st_build.build(Path(work) / "disk.st", placed(root), auto_files=placed(((INSIDE_NAME, INSIDE),)))
+        image = bytearray(layout.path.read_bytes())
+    lies = _where_the_files_lie(layout)
+    for name, data in (*root, (f"{FILES_FOLDER}\\{INSIDE_NAME}", INSIDE)):
+        assert image[lies[name]:lies[name] + len(data)] == data, f"{name} is not where st_build says it laid it"
+    pair = lies[INF_NAME] + text.index(INF_E_LINE) + INF_VIEW_PAIR_AT
+    image[pair:pair + len(HEX_PAIR % view)] = HEX_PAIR % view
+    return bytes(image)
+
+
+def files_disk_path(recreate=RECREATE):
+    """Where `make` writes the files disk — the default view, unpatched — for the capture to boot (FILES_DISK)."""
+    return recreate / "build" / "acc" / "FILESDISK.ST"
+
+
+def files_capture_path(recreate=RECREATE):
+    """...and where THE FILES PRE-INIT MACHINE lands (`make preinit-files`): the capture tool's stop of a boot with
+    that floppy in drive A: from power-on — the fifth capture."""
+    return recreate / "build" / "preinit_files.bin"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True, help="where the image is written")
     parser.add_argument("--seven", action="store_true", help="the seven-accessory disk (SEVEN_NAMES) instead of the pair's")
     parser.add_argument("--inf", action="store_true", help="the DESKTOP.INF disk (the ROM's default text; no accessory) instead")
+    parser.add_argument("--files", action="store_true", help="the files disk (files, a folder and a program; no accessory) instead")
     args = parser.parse_args(argv)
     names = SEVEN_NAMES if args.seven else NAMES
     args.out.parent.mkdir(parents=True, exist_ok=True)
     if args.inf:
         args.out.write_bytes(inf_disk_of(default_inf()))
         print(f"the DESKTOP.INF disk (the ROM's default text) -> {args.out}")
+        return 0
+    if args.files:
+        args.out.write_bytes(files_disk_of(default_inf(), built().file))
+        print(f"the files disk (files, the folder {FILES_FOLDER} and a program) -> {args.out}")
         return 0
     args.out.write_bytes(disk_of(built(), (QUIET,) * len(names), names))
     print(f"the accessory disk ({len(names)} accessories) -> {args.out}")
