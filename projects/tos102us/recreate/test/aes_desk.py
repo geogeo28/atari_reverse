@@ -285,29 +285,50 @@ def _buttons_reading(ram, text):
     return found
 
 
-def _tree_of(ram, thing):
-    """`(the tree, the index)` of the object at `thing`: its tree's root is the first object below it whose ob_next is
-    NIL (a tree's objects lie in one run, and only its root has no next)."""
-    tree = thing
-    while aes_objects.object_word(ram, tree, 0, "NEXT") != aes.OB_NIL:
-        tree -= aes.OB_BYTES
-        if thing - tree > aes.TREE_OBJECTS * aes.OB_BYTES:
-            raise Refused(f"the object at {thing:#x} lies in no tree: no root within {aes.TREE_OBJECTS} objects below it")
-    return tree, (thing - tree) // aes.OB_BYTES
+def _shown_under(ram, root):
+    """THE OBJECTS LINKED UNDER THE OBJECT AT `root`, by their index: what a tree rooted there SHOWS — a bounded walk
+    of its head and next links (an address that is no tree's root answers whatever its bytes link, or nothing: it
+    never loops, and it reads no further than a tree's length)."""
+    shown, parents = set(), [aes.OB_ROOT]
+    while parents:
+        child = aes_objects.object_word(ram, root, parents.pop(), "HEAD")
+        while 0 < child <= aes.TREE_OBJECTS and child not in shown:
+            shown.add(child)
+            parents.append(child)
+            child = aes_objects.object_word(ram, root, child, "NEXT")
+    return shown
+
+
+def _trees_showing(ram, thing, roots):
+    """`[(the tree, the index)]` of the object at `thing` in every tree of `roots` (addresses) THAT SHOWS IT: a root —
+    an object with no next — a whole number of objects below it, with the object linked under it. NOT "the first
+    object below it whose ob_next is NIL": a dialog's tree holds objects ITS DESK TOOK OUT OF IT, each left with no
+    next (the Install Disk Drive dialog's four, between its text fields and its three buttons), and a walk down from
+    a button stops at the nearest of those — a root nobody runs."""
+    found = []
+    for index in range(1, aes.TREE_OBJECTS + 1):
+        root = thing - index * aes.OB_BYTES
+        if root in roots and aes_objects.object_word(ram, root, aes.OB_ROOT, "NEXT") == aes.OB_NIL and index in _shown_under(ram, root):
+            found.append((root, index))
+    return found
+
+
+def dialog_button(machine, text):
+    """`(the tree, the index)` of THE BUTTON READING `text` OF THE DIALOG THAT IS UP: the button object SHOWN BY a
+    tree the desk's process holds ON ITS LIVE STACK (the form the AES is running was handed it there:
+    `_trees_showing`) — refused by name where no such button's tree is being run, or more than one."""
+    ram, parked = machine.ram, machine.long(machine.static_processes()[0].uda + aes.UDA_SUPER_SP) & BUS
+    held = {case.long_in(ram, at) & BUS for at in range(parked, stacks(machine)[PD0_STACK][1] - LONG_BYTES + WORD_BYTES, WORD_BYTES)}
+    up = [shown for thing in _buttons_reading(ram, text) for shown in _trees_showing(ram, thing, held)]
+    if len(up) != 1:
+        raise Refused(f"{len(up)} dialogs that are up on this machine hold a button reading {text!r}: a hand presses one")
+    return up[0]
 
 
 def button_point(machine, text):
-    """THE MIDDLE OF THE BUTTON READING `text` OF THE DIALOG THAT IS UP: the button object whose tree the desk's
-    process holds ON ITS LIVE STACK (the form the AES is running was handed it there) — refused by name where no such
-    button's tree is being run, or more than one. For a dialog's button that is NOT its default: Return takes the
-    default, and the delete dialog's is Cancel."""
-    ram, parked = machine.ram, machine.long(machine.static_processes()[0].uda + aes.UDA_SUPER_SP) & BUS
-    held = {case.long_in(ram, at) & BUS for at in range(parked, stacks(machine)[PD0_STACK][1] - LONG_BYTES + WORD_BYTES, WORD_BYTES)}
-    up = [(tree, index) for tree, index in (_tree_of(ram, thing) for thing in _buttons_reading(ram, text)) if tree in held]
-    if len(up) != 1:
-        raise Refused(f"{len(up)} dialogs that are up on this machine hold a button reading {text!r}: a hand presses one")
-    (tree, index), = up
-    x, y, width, height = box(ram, tree, index)
+    """THE MIDDLE OF THAT BUTTON. For a dialog's button that is NOT its default: Return takes the default, and the
+    delete dialog's is Cancel."""
+    x, y, width, height = box(machine.ram, *dialog_button(machine, text))
     return x + width // 2, y + height // 2
 
 
@@ -325,6 +346,7 @@ STOPS = {
 # ---- A HAND'S RECEPTIONS ----------------------------------------------------------------------------------------------------------------
 KEY_RELEASED = 0x80                     # the IKBD's break code: the make code with this bit
 SCAN_A, SCAN_RETURN, SCAN_SPACE = 0x1e, 0x1c, 0x39
+SCAN_BACKSPACE, SCAN_C = 0x0e, 0x2e
 BUTTON_DOWN, BUTTON_UP = aes_boot.ikbd(aes_boot.LEFT_DOWN, 0, 0), aes_boot.ikbd(aes_boot.NO_BUTTON, 0, 0)
 A_CLICK = (BUTTON_DOWN, BUTTON_UP, aes_boot.CLICK_TICKS)
 A_DOUBLE_CLICK = (BUTTON_DOWN, BUTTON_UP, BUTTON_DOWN, BUTTON_UP, aes_boot.CLICK_TICKS)
@@ -455,6 +477,13 @@ CLOSE_A_WINDOW, CLOSE_TO_THE_PARENT = 0xfe18e4, 0xfe1972   # `$fe1a18`'s two arm
 FULL_A_WINDOW = 0xfe0f9c                # the full box: wind_get's current / previous / full, the one that is not current set
 SCROLL_A_WINDOW = 0xfe3310              # a window's view moved by its bars...
 SCROLL_VERTICALLY, SCROLL_HORIZONTALLY = 0xfe3504, 0xfe359a     # ...through the message handler's two arrow / page arms
+# ...and the leaves and the binding only a dialog's less-trodden button reaches (band 6 wave 1a's fix pass: units O and
+# D take their cases at these chains' arrivals)
+RENAME_A_FILE, SET_ATTRIBUTES = addrs.AES_ROM_DOS_RENAME, addrs.AES_ROM_DOS_CHMOD      # Show Info's two acts on a file
+FREE_AN_ICON, TAKE_AN_ICON = addrs.AES_ROM_APP_FREE, addrs.AES_ROM_APP_ALLOC         # Install Disk Drive's Remove and Install
+SHOW_A_DOS_ERROR = addrs.AES_ROM_DESK_FORM_ERROR    # the desk's form_error binding: the copy engine's, after a DOS error
+THE_RENAMED = "DESKTOP.INA"             # what the file reads once its name's last character is typed over with an A
+READ_ONLY_FILE = "file: File > Show Info, Read-Only pressed, Return"
 
 
 def _icon_box(machine, name):
@@ -506,6 +535,13 @@ CHAINS = {
     "drive A: selected": Chain(INF_ICONS, clicked("drive A:'s icon", drive("A")), (BUTTON_HANDLER,)),
     "A: File > Show Info, Return": Chain("drive A: selected", (*item("File", "Show Info..."), *RETURN), (SHOW_INFO,)),
     "A: Options > Install Disk Drive, Return": Chain("drive A: selected", (*item("Options", "Install Disk Drive..."), *RETURN), (DIALOG_RUNNER,)),
+    # (the dialog's two other buttons: Remove frees the drive's ANODE — the list in use's LAST, the INF's first line —;
+    # a letter typed over the field's and Install takes a new one, linked AT THE TAIL: `$fdf210` hands app_alloc 0.
+    # The desk keeps the letter as typed: the new icon's is a lower-case c)
+    "A: Options > Install Disk Drive, Remove pressed": Chain(
+        "drive A: selected", (*item("Options", "Install Disk Drive..."), *pressed("Remove")), (DIALOG_RUNNER, FREE_AN_ICON)),
+    "A: Options > Install Disk Drive, 'C' typed, Install pressed": Chain(
+        "drive A: selected", (*item("Options", "Install Disk Drive..."), *typed("C", SCAN_C), *pressed("Install")), (DIALOG_RUNNER, TAKE_AN_ICON)),
     "A: File > Open": Chain("drive A: selected", item("File", "Open"), (OPEN_SELECTION,)),
     "A: File > Format, Return (the warning answered)": Chain("drive A: selected", (*item("File", "Format..."), *RETURN), (DO_FORMAT,)),
     "drive A: dragged to the trash, Return": Chain(
@@ -521,6 +557,16 @@ CHAINS = {
     "window: A: opened again (two windows)": Chain("A: opened", OPEN_A, (OPEN_A_DRIVE,)),
     "file: selected": Chain("A: opened", clicked("the file's icon", icon(THE_INF)), (BUTTON_HANDLER,)),
     "file: File > Show Info, Return": Chain("file: selected", (*item("File", "Show Info..."), *RETURN), (SHOW_INFO,)),
+    # (Show Info's two acts on a file: its name edited — the last character typed over — is Frename; its Read-Only
+    # button is Fattrib. And a read-only file dragged to the trash is REFUSED by GEMDOS: the copy engine shows the
+    # error through the desk's form_error, the one chain that reaches that binding)
+    "file: File > Show Info, Backspace, 'A', Return (renamed)": Chain(
+        "file: selected", (*item("File", "Show Info..."), *typed("Backspace", SCAN_BACKSPACE), *typed("A", SCAN_A), *RETURN),
+        (SHOW_INFO, RENAME_A_FILE)),
+    READ_ONLY_FILE: Chain("file: selected", (*item("File", "Show Info..."), *pressed("Read-Only"), *RETURN), (SHOW_INFO, SET_ATTRIBUTES)),
+    "file: read-only, dragged to the trash, OK — access denied, Return": Chain(
+        READ_ONLY_FILE, (*dragged("the file's icon", icon(THE_INF), "the trash", icon(THE_TRASH)), *pressed("OK"), *RETURN),
+        (ICON_DRAG, COPY_ENGINE, SHOW_A_DOS_ERROR)),
     "file: File > Open (the Show / Print / Cancel alert)": Chain("file: selected", item("File", "Open"), (OPEN_SELECTION,)),
     "file: shown, a key at its end": Chain("file: File > Open (the Show / Print / Cancel alert)", shown((VIEWER_AT_THE_FILE_S_END,)), (SHOW_FILE,)),
     "file: double-clicked (the alert)": Chain("A: opened", double_clicked("the file's icon", icon(THE_INF)), (OPEN_SELECTION,)),

@@ -242,7 +242,7 @@ def test_staging_starts_every_ledger_empty():
 def test_the_module_aliases_survive_staging():
     """`staged()` CLEARS the ledgers and never rebinds them — these aliases are what the batteries read."""
     for alias, hook in ((isr.CALLS, isr._HOOK), (gemdos.HANDLER_CALLS, gemdos._HANDLER_HOOK),
-                        (gemdos_fs.DISK_CALLS, gemdos_fs._DISK_HOOK)):
+                        (gemdos_fs.DISK_CALLS, gemdos_fs.DISK_HOOK)):
         with hook.staged({}, str):
             pass
         assert alias is hook.calls

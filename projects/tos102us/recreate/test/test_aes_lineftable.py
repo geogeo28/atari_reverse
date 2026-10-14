@@ -176,7 +176,8 @@ def expected_of(blob):
         target = case.long_in(BASE_IMAGE, aes.AES_LINEF_TABLE + index * LONG_BYTES)
         if target in pinned and pinned[target] in defined:
             expected.append((OURS_NATIVE, pinned[target]))
-        elif target in declared and routines.core_symbol(declared[target]) in defined and declared[target] not in NOT_OFFERED:
+        elif (target in declared and routines.core_symbol(declared[target]) in defined and declared[target] not in NOT_OFFERED
+              and declared[target] not in linef_table.LINKED_AND_NOT_FLIPPED):       # band 6 wave 1a: written, linked, not flipped
             expected.append((OURS_THROUGH_A_THUNK, linef_table.THUNK_PREFIX + routines.core_symbol(declared[target])))
         else:
             expected.append((THE_ROM_S, None))
@@ -700,6 +701,13 @@ def test_the_cores_that_take_a_return_site_are_the_seven_glue_entries_and_each_i
     site —, two ship as their `.S` (dos_exec, trp14: native entries, the ROM's own pop) and one is the VDI's, no
     Line-F target. Every one of the seven has a case that enters it (above): none is unentered."""
     declared = {name for name, signature in vdi.ALCYON.items() if signature.host_arguments}
+    # ---- band 6 wave 1a, unit O ---- seven more cores take a return site (the desk's glue entries through `$fe3c28`,
+    # dos_rename and the BIOS door trp13): WRITTEN, LINKED AND NOT FLIPPED — no thunk is made for one until its flip.
+    not_flipped = {name for name in declared if name in linef_table.LINKED_AND_NOT_FLIPPED}
+    assert not_flipped == {"AES_ROM_DOS_RENAME", "AES_ROM_DOS_RAWCIO", "AES_ROM_DOS_CHMOD", "AES_ROM_DOS_DELETE", "AES_ROM_DOS_RMDIR",
+                           "AES_ROM_DOS_CREATE", "AES_ROM_TRP13"}
+    declared -= not_flipped
+    # ---- end of unit O's ----
     natives = {entry.target for entry in linef_table.entries() if entry.verdict == OURS_NATIVE}
     assert len(declared) == 10 and len(HOSTED) == 7
     assert {name for name in declared - set(HOSTED) if getattr(addrs, name) in natives} == {"AES_ROM_DOS_EXEC", "AES_ROM_TRP14"}
@@ -812,3 +820,34 @@ def test_the_staged_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_t
     cut = boot.our_boot.ran
     assert cut[1:] == (0, 0) and made.in_the_blob > cut[0], "nothing of ours ran from deskmain's entry on"
     assert not made.move16_sites, "the boot passed a Line-F word the oracle executes as MOVE16"
+
+
+# ---- band 6 wave 1a's fix pass: THE ROUTINES LINKED AND NOT FLIPPED, held by a test of their own -------------------------
+# `linef_table.LINKED_AND_NOT_FLIPPED` keeps the two units' entries the ROM's while the binding waits (W6-R1). The
+# first review found it held by nothing of its own (its finding 2: a name that is no routine's, a native entry's
+# routine, sh_main — each added to it, every test green). Each of these refuses such a name, and the exemption expires
+# by itself at the flip: a routine registered as a row, its name left here, reds.
+LINKED_AND_NOT_FLIPPED_ROUTINES = 59     # unit D's 41 (the forty bindings and desk_wait) and unit O's 18
+
+
+def test_the_routines_linked_and_not_flipped_are_the_two_units_and_none_is_flipped_or_flippable_another_way(blob):
+    """EXACTLY THE TWO UNITS' NAMES (by count and by the units' own lists); each DECLARED in `vdi.ALCYON` — a thunk
+    could be made, which is what the exemption holds back —; each core DEFINED IN THIS BLOB; NONE A NATIVE ENTRY (the
+    generator asks `native` first, so a native routine's name here would be flipped all the same, silently: neither a
+    pinned `.S` entry of the build's nor an entry the generator makes native names one); none in
+    ENTERED_BY_OURS_ALONE; NONE WITH A REGISTERED ROW (the registries' rows, the switching rows, the transcriptions)."""
+    import aes_deskbind
+    import aes_deskleaves
+
+    held = linef_table.LINKED_AND_NOT_FLIPPED
+    assert len(held) == LINKED_AND_NOT_FLIPPED_ROUTINES and set(held) == set(aes_deskbind.BINDINGS) | set(aes_deskleaves.UNIT_O)
+    assert set(held) <= set(vdi.ALCYON), f"not declared: {sorted(set(held) - set(vdi.ALCYON))}"
+    cores = {routines.core_symbol(name) for name in held}
+    assert cores <= set(symbols_of(blob)), f"not linked: {sorted(cores - set(symbols_of(blob)))}"
+    addresses = {getattr(addrs, name) for name in held}
+    natives = {entry.target for entry in linef_table.entries() if entry.verdict == OURS_NATIVE}
+    assert not addresses & natives and not addresses & set(_pinned_entries()) and not addresses & set(linef_table.native_entries())
+    assert not set(held) & set(linef_table.ENTERED_BY_OURS_ALONE)
+    registered = {*(row[0].split(",")[0] for row in (*aes.CASES, *aes.UNPRICED)), *(name.split(",")[0] for name in aes_event.SWITCHING_ROWS),
+                  *(row[1] for row in transcription.TRANSCRIPTIONS)}
+    assert not registered & (cores | {transcription.transcription_symbol(name) for name in held}), "a routine of the list has a row"

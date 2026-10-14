@@ -39,6 +39,12 @@ _TABLE_ROW_RE = re.compile(r"^.*\$(?P<addr>f[c-e][0-9a-f]+)\s.*?(?P<ratio>\d+\.\
 BENCH_TABLE = REC / "build" / "bench" / "tier3.txt"
 # ...and the Components table's own claim: `| <component> | <Tier 1 count> | …`.
 _COMPONENT_RE = re.compile(r"^\| (?P<name>\S+) \| (?P<tier1>\d+) \|", re.M)
+# THE SECOND HEADING KIND (band 6 wave 1a's fix pass): `## Linked, unbound — <component> (N)` — C written, linked into
+# both blobs and held at Tier 1, NOTHING bound or registered — and its rows, marked so and never `✅ verified`.
+_LINKED_UNBOUND_RE = re.compile(r"^## Linked, unbound — (?P<name>\S+) \((?P<count>\d+)\)\s*$", re.M)
+LINKED_UNBOUND = "🔗 linked, unbound"
+_LINKED_UNBOUND_ROW_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|.*\| " + LINKED_UNBOUND + r" \|", re.M)
+_ANY_HEADING_RE = re.compile(r"^## ", re.M)
 
 
 def _status():
@@ -54,6 +60,16 @@ def _sections():
         end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
         body = text[head.end():end]
         out.append((head["name"], int(head["count"]), len(_ROW_RE.findall(body))))
+    return out
+
+
+def _linked_unbound_sections():
+    """[(component, stated count, the rows' addresses, the body)] of the second heading kind, each to the next heading."""
+    text, out = _status(), []
+    for head in _LINKED_UNBOUND_RE.finditer(text):
+        following = _ANY_HEADING_RE.search(text, head.end())
+        body = text[head.end():following.start() if following else len(text)]
+        out.append((head["name"], int(head["count"]), [int(row["addr"], 16) for row in _LINKED_UNBOUND_ROW_RE.finditer(body)], body))
     return out
 
 
@@ -81,10 +97,11 @@ def test_every_component_with_code_has_a_section_that_covers_it():
     reconstructed cores and four rows has lost one.
     """
     stated = {name: count for name, count, _rows in _sections()}
+    linked_unbound = {name for name, _count, _rows, _body in _linked_unbound_sections()}
     for directory in sorted(path for path in (REC / "src").iterdir() if path.is_dir()):
         cores = sorted(directory.glob("*.c"))
-        if not cores:
-            continue
+        if not cores or directory.name in linked_unbound and directory.name not in stated:
+            continue                    # (a component linked and unbound: held by the test below, to the generator's list)
         assert directory.name in stated, (
             f"src/{directory.name}/ holds {len(cores)} reconstructed core(s) and STATUS.md has no "
             f"`## Verified — {directory.name} (N)` section — the ledger is missing a component, "
@@ -94,6 +111,30 @@ def test_every_component_with_code_has_a_section_that_covers_it():
             f"carries fewer rows than src/{directory.name}/ has .c files ({len(cores)}: "
             f"{', '.join(path.name for path in cores)}) — at least one reconstructed function has "
             f"no row")
+
+
+def test_a_component_linked_and_unbound_is_held_to_the_line_f_table_s_exception_list():
+    """THE SECOND HEADING KIND (band 6 wave 1a's fix pass; both reviews' remedy for the red `src/desk/` made):
+    `## Linked, unbound — <component> (N)` — a component whose C is written, LINKED INTO BOTH BLOBS and held at Tier 1
+    while nothing of it is bound or registered (ruling W6-R1 waits for the user). A `## Verified` section would not be
+    honest — its rows would be `✅ verified` with no row of the table to quote. Its rows are marked otherwise, NONE
+    `✅ verified`; N is its row count AND `len(linef_table.LINKED_AND_NOT_FLIPPED)`, and the rows' addresses are
+    EXACTLY that list's routines: the exemption is the generator's own list, and it expires at the flip by itself — a
+    routine flipped leaves the list, and this reds until its row moves to a Verified section."""
+    import sys
+    sys.path.insert(0, str(REC / "bench"))
+    import linef_table
+    from harness import addrs
+
+    sections = _linked_unbound_sections()
+    assert [name for name, _count, _rows, _body in sections] == ["desk"], "one component is linked and unbound: the desk's two units"
+    (name, count, rows, body), = sections
+    held = {getattr(addrs, routine) for routine in linef_table.LINKED_AND_NOT_FLIPPED}
+    assert count == len(rows) == len(linef_table.LINKED_AND_NOT_FLIPPED), (
+        f"`## Linked, unbound — {name} ({count})` carries {len(rows)} rows; the generator's list holds {len(linef_table.LINKED_AND_NOT_FLIPPED)}")
+    assert sorted(rows) == sorted(held), f"rows that are not the list's: {sorted(map(hex, set(rows) ^ held))}"
+    assert not _ROW_RE.search(body), f"a row of `## Linked, unbound — {name}` says `✅ verified`"
+    assert (REC / "src" / name).is_dir()
 
 
 def test_every_section_names_a_real_component():
@@ -1291,6 +1332,36 @@ _THE_CAPTURES_RE = re.compile(r"THE PRE-INIT CAPTURES ARE (?P<captures>\w+)")
 _THE_READ_GUARD_RE = re.compile(r"THE READ GUARD: (?P<rows>[\d,]+) rows in (?P<chunks>\d+) chunks, (?P<not_held>\w+) NOT HELD BY NAME")
 
 
+HANDS_AT_WAVE_0 = {"chains": 46, "steps": 133, "reached": 215}
+THE_WAVE_1A_ENTRY = "BAND 6 WAVE 1a — UNITS O AND D"
+
+
+def hands_now(hands, *, with_the_campaign_s_size=False):
+    """What `_THE_HANDS_RE` reads, as the battery and the derivations have it today (the four depths; and the
+    campaign's size where asked)."""
+    import aes_desk as desk
+
+    deepest = {which: depth for which, (_chain, depth) in hands.DEEPEST.items()}
+    now = {"routines": len(desk.routines()), "pd0": deepest[desk.PD0_STACK], "pd0_bytes": hands.PD0_BYTES, "pd1": deepest[desk.PD1_STACK],
+           "pd1_bytes": hands.PD1_BYTES, "dispatcher": deepest[desk.DISPATCHER_STACK], "elsewhere": hands.DISPATCHER_ELSEWHERE,
+           "userdef": deepest[desk.USERDEF_STACK], "userdef_bytes": desk.USERDEF_STACK_BYTES}
+    if with_the_campaign_s_size:
+        now.update(chains=len(desk.CHAINS), steps=sum(len(chain.steps) for chain in desk.CHAINS.values()), reached=hands.REACHED)
+    return now
+
+
+def test_the_wave_1a_entry_states_the_hands_campaign_as_it_stands():
+    """BAND 6 WAVE 1a's fix pass added five chains (the dialogs' less-trodden buttons): its entry states the
+    campaign's size, its reach and the four depths in the opening's sentence, read here off the battery and the
+    derivations as the opening's is."""
+    import test_aes_desk_rom as hands
+
+    entry = " ".join(_paragraph_from(_status(), THE_WAVE_1A_ENTRY).split())
+    found = _THE_HANDS_RE.search(entry)
+    assert found, "band 6 wave 1a's entry no longer states the hands' campaign in the sentence this test reads"
+    assert {key: _number(value.lower()) for key, value in found.groupdict().items()} == hands_now(hands, with_the_campaign_s_size=True)
+
+
 def test_the_opening_s_entry_quotes_the_hands_the_table_the_captures_and_the_read_guard():
     import aes_desk as desk
     import test_aes_desk_rom as hands
@@ -1305,13 +1376,12 @@ def test_the_opening_s_entry_quotes_the_hands_the_table_the_captures_and_the_rea
     missing = [name for name, found in said.items() if not found]
     assert not missing, f"band 6 wave 0's entry no longer states {missing} in the sentence this test reads"
     numbers = {name: {key: _number(value.lower()) for key, value in found.groupdict().items()} for name, found in said.items()}
-    deepest = {which: depth for which, (_chain, depth) in hands.DEEPEST.items()}
-    assert numbers["the hands"] == {
-        "chains": len(desk.CHAINS), "steps": sum(len(chain.steps) for chain in desk.CHAINS.values()), "reached": hands.REACHED,
-        "routines": len(desk.routines()), "pd0": deepest[desk.PD0_STACK], "pd0_bytes": hands.PD0_BYTES, "pd1": deepest[desk.PD1_STACK],
-        "pd1_bytes": hands.PD1_BYTES, "dispatcher": deepest[desk.DISPATCHER_STACK], "elsewhere": hands.DISPATCHER_ELSEWHERE,
-        "userdef": deepest[desk.USERDEF_STACK], "userdef_bytes": desk.USERDEF_STACK_BYTES}
-    assert (hands.CHAINS, hands.STEPS, hands.BAND_6_ROUTINES) == (len(desk.CHAINS), numbers["the hands"]["steps"], len(desk.routines()))
+    # (the campaign's size AS THE ENTRY WROTE IT — history since band 6 wave 1a's fix pass added chains: its entry
+    # states the campaign as it stands, and `test_the_wave_1a_entry_states_the_hands_campaign_as_it_stands` reads it)
+    assert {key: numbers["the hands"].pop(key) for key in HANDS_AT_WAVE_0} == HANDS_AT_WAVE_0
+    assert numbers["the hands"] == hands_now(hands)
+    assert (hands.CHAINS, hands.STEPS, hands.BAND_6_ROUTINES) == (len(desk.CHAINS), sum(len(chain.steps) for chain in desk.CHAINS.values()),
+                                                                  len(desk.routines()))
     verdicts = [made.verdict for made in table.linef_table.entries()]
     natives_entered, natives_unentered = table.native_cases()
     assert numbers["the table"] == {

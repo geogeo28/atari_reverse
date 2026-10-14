@@ -2550,4 +2550,76 @@
 #define AES_SH_PRINTING_TEXT      0xfef47e   /* "PRINTING  " ($feb32e move.l #$fef47e,-(sp)) */
 /* ---- end of slice SH's ---- */
 
+/* ---- band 6 wave 1a, unit D: THE DESK'S AES BINDINGS (`desk/deskbind.h`), each read from its body; LINKED, UNBOUND ---- */
+#define AES_ROM_DESK_APPL_INIT            0xfddde6   /* (): the desk's global[] filled in, gl_apid kept; 1 */
+#define AES_ROM_DESK_APPL_BVSET           0xfdde54   /* (disks, hard disks): the two drive bit vectors kept; 1 */
+#define AES_ROM_DESK_APPL_EXIT            0xfdde6c   /* (): mn_clsda, the desk's pipe read away, all_run; 1 */
+#define AES_ROM_DESK_APPL_WRITE           0xfddea6   /* (process, length, message): ap_rdwr's write, then a yield */
+#define AES_ROM_DESK_EVNT_MULTI           0xfdded8   /* (flags, clicks, mask, state, 2 MOBLKs, message, timer, 6 answers): ev_multi, a yield, the answers out */
+#define AES_ROM_DESK_EVNT_BUTTON          0xfddf82   /* (clicks, mask, state, 4 answers): ev_button, a yield, the answers out */
+#define AES_ROM_DESK_EVNT_DCLICK          0xfddfc2   /* (rate, set): ev_dclick, then a yield */
+#define AES_ROM_DESK_FORM_DO              0xfddfda   /* (tree, start): desk_wait(0), fm_do, a yield */
+#define AES_ROM_DESK_FORM_DIAL            0xfddffa   /* (type, little GRECT, big GRECT): fm_dial over the caller's own words, a yield */
+#define AES_ROM_DESK_FORM_ALERT           0xfde022   /* (default, string): fm_alert, then a yield */
+#define AES_ROM_DESK_FORM_ERROR           0xfde03e   /* (code): fm_error, then a yield */
+#define AES_ROM_DESK_FORM_CENTER          0xfde054   /* (tree, 4 answers): ob_center, the rectangle out, a yield */
+#define AES_ROM_DESK_GRAF_MOUSE           0xfde094   /* (number, form): the cursor hidden, shown or its form set, a yield */
+#define AES_ROM_DESK_GRAF_RUBBOX          0xfde122   /* (x, y, min w, min h, w out, h out): gr_rubbox, then a yield */
+#define AES_ROM_DESK_GRAF_MKSTATE         0xfde142   /* (4 answers): gr_mkstate, then a yield */
+#define AES_ROM_DESK_GRAF_GROWBOX         0xfde16a   /* (from GRECT, to GRECT): gr_growbox over the caller's own words, a yield */
+#define AES_ROM_DESK_GRAF_SHRINKBOX       0xfde182   /* (from GRECT, to GRECT): gr_shrinkbox the same way */
+#define AES_ROM_DESK_MENU_TNORMAL         0xfde19a   /* (tree, title, normal): do_chg of SELECTED, redrawn, a yield */
+#define AES_ROM_DESK_MENU_BAR             0xfde1d4   /* (tree, show): mn_bar, then a yield */
+#define AES_ROM_DESK_MENU_ICHECK          0xfde1f0   /* (tree, item, check): do_chg of CHECKED, a yield */
+#define AES_ROM_DESK_MENU_IENABLE         0xfde21a   /* (tree, item, enable): do_chg of DISABLED, the item's top bit a redraw, a yield */
+#define AES_ROM_DESK_OBJC_OFFSET          0xfde264   /* (tree, object, x out, y out): ob_offset, then a yield */
+#define AES_ROM_DESK_OBJC_ORDER           0xfde28c   /* (tree, object, position): ob_order, then a yield */
+#define AES_ROM_DESK_OBJC_FIND            0xfde2a8   /* (tree, object, depth, x, y): ob_find, then a yield */
+#define AES_ROM_DESK_OBJC_ADD             0xfde2cc   /* (tree, parent, child): ob_add, then a yield */
+#define AES_ROM_DESK_OBJC_DRAW            0xfde2e8   /* (tree, object, depth, clip GRECT): gsx_sclip, ob_draw, a yield */
+#define AES_ROM_DESK_OBJC_CHANGE          0xfde30e   /* (tree, object, unread, clip GRECT, state, redraw): gsx_sclip, ob_change, a yield */
+#define AES_ROM_DESK_RSRC_GADDR           0xfde354   /* (type, index, answer): rs_gaddr over the desk's global[], a yield */
+#define AES_ROM_DESK_SHEL_WRITE           0xfde376   /* (doexec, isgem, isover, command, tail): sh_write, then a yield */
+#define AES_ROM_DESK_SHEL_GET             0xfde39e   /* (buffer, bytes): sh_get, then a yield */
+#define AES_ROM_DESK_SHEL_PUT             0xfde3ba   /* (data, bytes): sh_put, then a yield */
+#define AES_ROM_DESK_WIND_CLOSE           0xfde3d6   /* (window): wm_close, then a yield */
+#define AES_ROM_DESK_WIND_DELETE          0xfde3ec   /* (window): wm_delete, then a yield; its leftover word answered */
+#define AES_ROM_DESK_WIND_FIND            0xfde402   /* (x, y): wm_find, then a yield */
+#define AES_ROM_DESK_WIND_UPDATE          0xfde41a   /* (code): wm_update, then a yield */
+#define AES_ROM_DESK_WIND_CREATE          0xfde430   /* (kind, GRECT): wm_create over the caller's own words, a yield */
+#define AES_ROM_DESK_WIND_OPEN            0xfde450   /* (window, GRECT): wm_open the same way */
+#define AES_ROM_DESK_WIND_GET             0xfde470   /* (window, field, 4 answers): wm_get, a yield, the words out */
+#define AES_ROM_DESK_WIND_SET             0xfde4ac   /* (window, field, 4 words): wm_set over the caller's own words, a yield */
+#define AES_ROM_DESK_WIND_CALC            0xfde4cc   /* (type, kind, x, y, w, h, 4 answers): wm_calc, a yield; its leftover word answered */
+#define AES_ROM_DESK_WAIT                 0xfe1bdc   /* (busy): the desk's cursor the hourglass or the arrow — its graf_mouse binding (unit K's leaf) */
+/* ---- end of unit D's ---- */
+
+/* ---- band 6 wave 1a, unit O: THE DESK'S LEAVES FILED IN AES MODULES (`desk/deskleaf.h`), each read from its body; LINKED, UNBOUND ---- */
+#define AES_ROM_GSX_PLINE         0xfda8a8   /* (x, y, count, points): the points moved by (x, y) into ptsin, gsx_xline over them */
+#define AES_ROM_APP_ALLOC         0xfdae96   /* (to head): an ANODE off the desk's free list onto its list in use; the node, or 0 */
+#define AES_ROM_APP_FREE          0xfdaee2   /* (node): ...unlinked from the list in use, pushed on the free list */
+#define AES_ROM_DOS_WRITE         0xfe3a7c   /* Fwrite of a WORD count: `moveq #$40,d1`, then dos_read's own body */
+#define AES_ROM_DOS_GDIR          0xfe3ab0   /* (drive, path): Dgetpath */
+#define AES_ROM_DOS_MKDIR         0xfe3ac4   /* (path): Dcreate; EACCDN -> AES_DOS_AX 5; D0.w 1 done / 0 failed */
+#define AES_ROM_DOS_SETDT         0xfe3ae8   /* (handle, time and date): Fdatime, set, over the caller's own two words */
+#define AES_ROM_DOS_LABEL         0xfe3b02   /* (drive, name out): Fsetdta of its own frame, Fsfirst of the volume label; 1 / 0 */
+#define AES_ROM_DOS_SPACE         0xfe3b6a   /* (drive, &total, &avail): Dfree, both in bytes by 16-bit multiplies; 1 */
+#define AES_ROM_DOS_RENAME        0xfe3ba0   /* (old, new): Frename through __DOS, its caller's return parked */
+#define AES_ROM_DOS_AVAIL         0xfe3be8   /* (): Malloc(-1) — the largest free block; nothing parked, no verdict */
+#define AES_ROM_DOS_RAWCIO        0xfe3bfa   /* (character): Crawio through $fe3c28 */
+#define AES_ROM_DOS_CHMOD         0xfe3c16   /* (name, set, attributes): Fattrib through $fe3c28 */
+#define AES_ROM_DOS_DELETE        0xfe3c1a   /* (name): Fdelete through $fe3c28 */
+#define AES_ROM_DOS_RMDIR         0xfe3c1e   /* (path): Ddelete through $fe3c28 */
+#define AES_ROM_DOS_CREATE        0xfe3c22   /* (name, attributes): Fcreate through $fe3c28 */
+#define AES_ROM_GSX_HARDCOPY      0xfe8862   /* (): VDI escape 17 (v_hardcopy) through gsx_escapes' register entry */
+#define AES_ROM_TRP13             0xfee478   /* the AES's BIOS door: its return parked in AES_BIOS_RETURN, trap #13 over its caller's frame */
+/* The sites inside the glue those entries' own `bsr __DOS` returns to: what each parks in AES_TRAP1_RETURN (dos_write
+ * parks dos_read's, whose body it runs; the five through $fe3c28 park AES_DOS_TRAP_RETURN). */
+#define AES_DOS_GDIR_TRAP_RETURN   0xfe3ac0
+#define AES_DOS_MKDIR_TRAP_RETURN  0xfe3ad0
+#define AES_DOS_SETDT_TRAP_RETURN  0xfe3afc
+#define AES_DOS_LABEL_TRAP_RETURN  0xfe3b38
+#define AES_DOS_RENAME_TRAP_RETURN 0xfe3bb0
+/* ---- end of unit O's ---- */
+
 #endif /* TOS102US_ADDRS_H */

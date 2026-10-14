@@ -85,7 +85,7 @@ EPLFMT, EIMBA, ENSMEM, EACCDN, EFILNF, ENMFIL = (aes.signed(_ERRORS[f"GEMDOS_{na
                                                  for name in ("EPLFMT", "EIMBA", "ENSMEM", "EACCDN", "EFILNF", "ENMFIL"))
 PEXEC_LOAD = 3                          # Pexec's mode: load, do not start
 GEMDOS_OK = 0
-DTA_NAME = addrs.parse(aes._INCLUDE / "gemdos" / "fs.h")["DTA_NAME"]
+DTA_NAME = addrs.parse(aes.INCLUDE / "gemdos" / "fs.h")["DTA_NAME"]
 DRIVE_C_BIT = aes.header_constants("deskleaf.h")["DRIVE_C_BIT"]
 SPARE_STATIC_PD = aes.AES_PD_TABLE + 2 * aes.PD_BYTES          # the third static PD: the first accessory's
 ALL_THREE = (ld.ROM_FRAMES, ld.HOST_FRAMES, ld.LINE_F_MASK)

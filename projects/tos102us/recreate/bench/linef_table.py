@@ -135,6 +135,27 @@ ENTERED_BY_OURS_ALONE = {
     "AES_ROM_SH_CMD": "the shell's command arm: called by sh_main alone, which is ours",
 }
 
+# ---- band 6 wave 1a ----
+# THE ROUTINES OF BAND 6 THAT ARE WRITTEN, LINKED AND NOT YET FLIPPED: each has a C core and a declared signature — a
+# thunk could be made — and its entry STAYS THE ROM'S BY DECLARATION until the band's opening is ruled (W6-R1: the
+# table bound first, or the desk ported against the ROM's AES and the table last). Held at Tier 1 meanwhile; a
+# routine leaves this list at its flip, and the generated file's diff is that flip's record. `{routine: why}`.
+LINKED_AND_NOT_FLIPPED = {}
+# ---- unit D: the desk's AES bindings and desk_wait (`src/desk/deskbind.c`, `test/aes_deskbind.py`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{binding}": "unit D: a binding of the desk's, held at Tier 1 at its arrivals" for binding in (
+    "APPL_INIT", "APPL_BVSET", "APPL_EXIT", "APPL_WRITE", "EVNT_MULTI", "EVNT_BUTTON", "EVNT_DCLICK", "FORM_DO", "FORM_DIAL",
+    "FORM_ALERT", "FORM_ERROR", "FORM_CENTER", "GRAF_MOUSE", "GRAF_RUBBOX", "GRAF_MKSTATE", "GRAF_GROWBOX", "GRAF_SHRINKBOX",
+    "MENU_TNORMAL", "MENU_BAR", "MENU_ICHECK", "MENU_IENABLE", "OBJC_OFFSET", "OBJC_ORDER", "OBJC_FIND", "OBJC_ADD", "OBJC_DRAW",
+    "OBJC_CHANGE", "RSRC_GADDR", "SHEL_WRITE", "SHEL_GET", "SHEL_PUT", "WIND_CLOSE", "WIND_DELETE", "WIND_FIND", "WIND_UPDATE",
+    "WIND_CREATE", "WIND_OPEN", "WIND_GET", "WIND_SET", "WIND_CALC", "WAIT")})
+# ---- end of unit D's ----
+# ---- unit O: the desk's leaves filed in AES modules (`src/desk/deskleaf.c`, `test/aes_deskleaves.py`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{leaf}": "unit O: a desk-only leaf filed in an AES module, held at Tier 1 at its arrivals" for leaf in (
+    "GSX_PLINE", "APP_ALLOC", "APP_FREE", "DOS_WRITE", "DOS_GDIR", "DOS_MKDIR", "DOS_SETDT", "DOS_LABEL", "DOS_SPACE", "DOS_RENAME",
+    "DOS_AVAIL", "DOS_RAWCIO", "DOS_CHMOD", "DOS_DELETE", "DOS_RMDIR", "DOS_CREATE", "GSX_HARDCOPY", "TRP13")})
+# ---- end of unit O's ----
+# ---- end of band 6 wave 1a's ----
+
 
 def thunk_symbol(routine):
     """The thunk a ROM caller's Line-F call of `routine` lands in."""
@@ -148,7 +169,7 @@ def entries():
     for index, target in enumerate(rom_table()):
         if target in native:
             made.append(Entry(index, target, OURS_NATIVE, native[target], None))
-        elif target in declared and declared[target] not in ENTERED_BY_OURS_ALONE:
+        elif target in declared and declared[target] not in ENTERED_BY_OURS_ALONE and declared[target] not in LINKED_AND_NOT_FLIPPED:
             made.append(Entry(index, target, OURS_THROUGH_A_THUNK, thunk_symbol(declared[target]), declared[target]))
         else:
             made.append(Entry(index, target, THE_ROM_S, None, None))

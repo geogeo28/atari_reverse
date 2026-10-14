@@ -407,12 +407,16 @@ campaign the band's rows will be arrivals of.
   by hand is 34 cycles and one instruction short in the run's counts. A fix is the kit's (STATUS, AWAITING 24); the
   day the kit traps those words, `test_the_oracle_s_cpu_traps_every_line_f_word_but_the_eight_...` reddens and the
   stand-in goes.
-- **A CHAIN** (`aes_desk.CHAINS`, 46 of them) is steps of a hand from a machine's idle or from another chain's end:
+- **A CHAIN** (`aes_desk.CHAINS`, 51 of them since band 6 wave 1a's fix pass) is steps of a hand from a machine's idle or from another chain's end:
   `item(title, text)`, `clicked`, `double_clicked`, `dragged`, `typed`, `pressed(button)`, `rubber_box`, `shown`.
   POINTS ARE READ OFF THE MACHINE'S OWN TREES (`menu_point`, `icon_point`, `drive_point`, `button_point`,
   `top_window` and its gadgets) — an item that is absent, double, out of sight or DISABLED is refused by name: a
   click on a disabled item is a chain that idles and did nothing. A dialog's Return is ITS DEFAULT, which is not
-  always its OK (the delete dialog's is Cancel).
+  always its OK (the delete dialog's is Cancel). A DIALOG'S BUTTON (`dialog_button`) is the object SHOWN BY a tree whose
+  root the desk's process holds on its live stack — a bounded walk of the tree's links —, NOT the nearest object
+  below it with no next: the Install Disk Drive dialog's tree holds four objects the desk took out of it, each left
+  with no next, and a walk down from its Remove stops at one (band 6 wave 1a's fix pass; the dialog's three buttons
+  are held a row).
 - **WHAT A CHAIN REACHED IS READ OFF ITS CYCLE PROFILE, NEVER OFF ITS NAME** (`aes_desk.stepped`: every step
   profiled; `entered(name)`: the routines whose FIRST INSTRUCTION ran in the chain's own steps). Every chain names
   at least one routine its own steps must enter (`Chain.enters`, read off the ROM) and, where the act leaves
@@ -423,6 +427,64 @@ campaign the band's rows will be arrivals of.
   WRITE LEDGERS — the lowest byte of each stack a chain's own steps stored — for PD0, PD1, the dispatcher's stack
   and the desk's userdef stack. A depth is the lowest STORE, not the lowest SP, and no interrupt is taken at the
   deepest point.
+
+### A DESK ROUTINE AT ITS ARRIVAL — units O and D (`test/aes_deskleaves.py`, `test/aes_deskbind.py`, band 6 wave 1a)
+
+Band 6's first two units — the desk's eighteen leaves filed in AES modules (`src/desk/deskleaf.c`, unit O) and its
+forty-one AES bindings (`src/desk/deskbind.c`, unit D) — are LINKED INTO BOTH BLOBS AND HELD AT TIER 1, NOTHING BOUND
+(STATUS: `## Linked, unbound — desk (59)`). A case of either is taken WHERE THE ROM'S OWN DESK CALLS THE ROUTINE.
+
+- **AN ARRIVAL** (`aes_deskleaves.arrival(At(routine, chain, step, nth))`; `aes_deskbind.arrival(short, chain, nth)`,
+  and a boot by `aes_boot.booted(until=)`): a chain of the hands walked to the step whose profile says the routine
+  ran, and THAT STEP'S RUN STOPPED AT THE ROUTINE'S FIRST INSTRUCTION (`aes_boot.continued(…, until=entry)`), the
+  n-th by continuing from that stop to the next (`at=entry`). The megabyte and the registers are what the ROM's own
+  caller left; THE ARGUMENTS ARE READ OFF THE FRAME IT PUSHED, by the routine's declared Alcyon signature, and the
+  return site off the stack. Nothing is poked. Where no chain reaches an arm the case is A LABELLED ARGUMENT CLASS —
+  the same machine with other arguments, said in the case's id — and only there (the fix pass's lesson: "no chain
+  reaches it" is a claim about the chains; a dialog's less-trodden button reached four of unit O's "no arrival").
+- **THE ROM'S OWN RUN IN PLACE** (`aes_deskleaves.ran_at`, `aes_deskbind.returned_in_place`): the arrival continued
+  on the desk's own stack to the routine's return — for the DOS glue through the real GEMDOS and disk, stopped at
+  each trap's return: the OS's answers, the frame each trap was taken over, D0 and A0 at return. What a ROM caller
+  is LEFT is compared with it: D0 at the declared width on every case; what C has not (D0 beyond the answer, A0)
+  NAMED AND COUNTED.
+- **UNIT O'S DIFFERENTIAL** (`aes_deskleaves.held`): the ROM's routine against the host C core over the arrival's
+  megabyte, a `trap #1` answered on both shores by `aes_gemdosif`'s recording trap WITH THE ANSWERS THE RUN IN PLACE
+  GOT — a labelled staging said IN THE CASE'S ID (`test_desk_leaves.SCRIPTED`). A FRAME THAT BEGINS WITH AN ADDRESS OF
+  THE ROUTINE'S OWN STACK (dos_label's DTA, dos_space's Dfree answers, dos_setdt's stamp) differs between the shores
+  by nature: the ledger records nothing of it, the host twin keeps WHAT IT WAS POINTED AT (`Seen.seen`), and what
+  GEMDOS would have laid there is LAID BEFORE THE CALL on both shores (`frame_laid`; `FRAME_LAID` in the id). THE
+  TARGET ARMS run nowhere in Tier 1, so one case a routine also runs ON EACH BLOB by the kit's second differential
+  (`aes_deskleaves.on_a_blob`, `RomBench.measure`, unregistered) over the arrival's megabyte less the blob's span, its
+  GEMDOS a trap that KEEPS ITS LAST CALL in cells the megabyte compare reaches (`LAST_CALL_TRAP`). (The scratch price
+  probes run the same cases over `aes_shell.scripted_pokes` — band 5's own convention, the lighter handler — and a
+  bare trap: STATUS, AWAITING (24).)
+- **UNIT D'S DIFFERENTIAL** (`aes_deskbind.held`): every binding but two ends on `dsptch`, so every case is A ROW THAT
+  SWITCHES (`aes_event.woken_row` → `aes_switching.companion`: the C through the host's scheduler against the ROM's
+  scheduled run, NOTHING DROPPED), its wait ended by a named wake (`test_desk_bind.WAKES`); appl_init and appl_bvset,
+  which never yield, are plain differentials. EVERY YIELD IS A CALL (`deskbind.c`'s `yield`), held on both listings:
+  GCC's sibling call would resume the desk at the binding's caller.
+- **WHAT THE C ANSWERS AND WHO READS THE ROM'S** (`aes_deskbind.answer_class`, `answer_readers`): a case's answer is
+  held to the ROM's D0.w, or is one of two named divergences — NO WORD IN C (a binding of a void implementation) and
+  THE NESTED RELEASE'S LEFTOVER (wm_open / wm_set under a held screen lock) — each counted. `answer_readers(routine)`
+  follows every path of the ROM's GEM text from every call of a routine — both arms of a branch, through a caller that
+  returns the answer — to a READ of D0, an OVERWRITE, a call or a return; a store counts as a read (it errs toward
+  "read"); a `move.b …,d0` is NO overwrite of a word answer, and an `ext.w d0` behind one is. It holds unit D's nine
+  read bindings and unit O's four routines whose C answers less (none read); and BY RUNS, the desk's continuation is
+  one machine whatever D0 and A0 hold at the binding's return (the what-if inverts both).
+- **THE HOST SLOTS** (`include/host_slot.h`): `AES_DESK_BIND_FRAME`, ONE frame for all forty bindings (the desk is one
+  process and no binding calls another while it holds it; held across evnt_multi's, evnt_button's and wind_get's
+  waits — `test_aes_event.SLOTS_HELD_WHERE_PARKED` owes it a line at the binding), and unit O's `AES_DOS_LABEL_FRAME`,
+  `AES_DOS_SPACE_DFREE`, `AES_DOS_SETDT_STAMP` (each a leaf's frame GEMDOS is handed by address, none held across a
+  wait). Each is held to its C frame's size by a `_Static_assert`. On target a slot is the local's own address.
+- **THE LESSONS, FOR THE NEXT USER OF ARRIVALS.** An arrival's megabyte is handed Tier 3 as
+  `aes_event.as_pokes(ram, upto=ST_RAM_BYTES)` (the kit refuses a whole-megabyte poke over the blob's span), and on a
+  blob `aes_deskleaves.less_the_blob` refuses a megabyte that is not the snapshot's inside the blob's span. A battery
+  that imports `bench/linef_table.py` at module level pays the whole registry's import in every worker: import it
+  inside the one test that asks. `aes.line_f_call_sites` reads every even word of the GEM text and so counts an
+  OPERAND that happens to be a call word (`$fddc46`, `$fe1d2e`): hold a site to an instruction boundary
+  (`test_desk_leaves.call_sites`). A dialog's button is found under THE ROOT THE DESK'S STACK HOLDS THAT SHOWS IT
+  (`aes_desk.dialog_button`), never under "the first object below it with no next": a tree may hold objects its
+  desk took out of it.
 
 ### THE OUR-BOOT MACHINE — the build's own gem_entry boots it (`aes_boot.booted(..., laid=AT_GEM_ENTRY)`, `test/aes_ourboot.py`)
 
@@ -3072,7 +3134,23 @@ The tests reach the table through A LABELLED STAGING — one longword laid in OU
 handler copy's operand `$cc24`, put back before the compare — and say so in their names: every thunk read off the
 blob's bytes against its signature; 292 thunks and 51 native routines ENTERED by their routine's own registered
 case (the ROM's call word → the ROM's handler → our table → our entry) against the ROM's own run, who-ran read over
-the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the reason.
+the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the reason. A ROUTINE WRITTEN, LINKED AND NOT
+FLIPPED (band 6 wave 1a): a C core with a declared signature would be thunked, so the generator keeps its entries THE
+ROM'S by a declared list, `linef_table.LINKED_AND_NOT_FLIPPED` (each unit an `.update` of its own names) — held by a
+test of its own (`test_aes_lineftable.py`: exactly the two units' 59 names, each declared and linked, none a native
+entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by the ledger's `## Linked, unbound` section
+(`test_status.py`); a routine leaves the list at its flip, and the generated file's diff is that flip's record.
+
+**THE DESK'S BIOS DOOR is a seventh kind: a TRANSCRIPTION IN WAITING, linked and NOT ENTERED** (`atari/target.mk`:
+`DESKDOOR_SOURCES`; `src/desk/trp13.S`, band 6 wave 1a's fix pass). trp13 `$fee478` is trp14's sibling — four hand
+instructions over whatever frame its caller pushed — and its C twin (`aes_trp13`, `src/desk/deskleaf.c`) measured over
+the bar (+214 cycles a call: 1.355 / 1.253 / 1.053 at its three arrivals), so by the rule it ships as the ROM's sixteen
+bytes. It is NOT a row of `include/transcribed.h` yet: a row there is a native entry of the Line-F table, and the
+table's two entries for `$fee478` stay the ROM's until the binding (ruling W6-R1). So it is listed apart, in
+`src/desk/` (outside the transcriptions' two directories), pinned on both blobs and held through the transcription
+relation to the ROM's door at the hands' three arrivals over the machine's own BIOS — the same cycles on both shores
+(`test_desk_leaves.py`); `test_tier3.py`'s census of `.S` kinds reads `src/desk/` too. At its flip it becomes a row,
+as `src/aes/trp14.S` is.
 
 **THE DESK DOOR — how the shell calls what is still the ROM's** (`include/aes/deskdoor.h`; `src/aes/shell.c`: sh_main,
 sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskmain and the desk's four built-ins
@@ -3516,7 +3594,9 @@ recreate/
 ├── src/<component>/    the reconstruction, one directory per ROM component (`src/aes/trapdoor.S` with
 │                       `include/aes/trapdoor.h`: the trap door, the fourth `.S` kind; `src/aes/loader.c`: the
 │                       accessory loader; `src/aes/gemstart.S` with `include/aes/gemstart.h`: GEM's start-up, the
-│                       fifth; `src/aes/shell.c` with `include/aes/deskdoor.h`: the shell's loop and the desk door)
+│                       fifth; `src/aes/shell.c` with `include/aes/deskdoor.h`: the shell's loop and the desk door;
+│                       `src/desk/`: the desk's units written and linked, NOT BOUND — `deskleaf.c` and `deskbind.c`
+│                       with `include/desk/`, and `trp13.S`, the BIOS door, the seventh kind)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -3541,7 +3621,9 @@ recreate/
 │                       noise proof, the stretches `bench/tier3.py` prices); `aes_desk.py` /
 │                       `test_aes_desk_rom.py` (THE HANDS: chains of a user's acts on the ROM's machine, the reach
 │                       table, the stacks' depths); `test_aes_lineftable.py` (the Line-F table of ours and its
-│                       thunks, entered through a labelled staging); `test_window.py` (the free window's order and
+│                       thunks, entered through a labelled staging); `aes_deskleaves.py` / `test_desk_leaves.py`
+│                       and `aes_deskbind.py` / `test_desk_bind.py` (band 6's first units at their arrivals, linked
+│                       and unbound); `test_window.py` (the free window's order and
 │                       the blob's ceiling); `room_poison.py` / `test_room_poison.py` (the read guard: a poison
 │                       differential over every priced row)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the

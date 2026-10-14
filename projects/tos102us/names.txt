@@ -1594,7 +1594,6 @@ fn 0xfe8828 gsx_graphic
 cmt 0xfe8828 gsx_graphic(mode): a WORD compare with gl_graphic; into alpha = escape 3 + gsx_resetmb, into graphics = escape 2 + gsx_setmb_aes. The ROM's two callers are start-up ($fead68, mode already held) and shutdown ($fead9a, into alpha): the into-graphics arm is never taken
 fn 0xfe883e gsx_setmb_aes
 cmt 0xfe883e gsx_graphic's tail, gsx_init's bsr: gsx_setmb($fed3be button glue, $fed3e4 motion glue, &drwaddr $947a) — the third argument is never read
-fn 0xfe8862 gsx_hardcopy # ctx
 fn 0xfe8866 gsx_escapes
 cmt 0xfe886a gsx_escapes' register entry (D0 = the escape): contrl[5] := D0, then VDI 5 through $fe8bb6
 fn 0xfe8876 gsx_wsopen
@@ -2305,8 +2304,6 @@ fn 0xfe1f2a desk_view_menu # ctx
 cmt 0xfe1f2a (item): items 29..35 by the table $fef6c4 — the view (0 icons / 1 text) and the sort key (0..3); where either changed: the old item's check cleared and the new one's set ($fde1f0), then $fe2a7c(view, sort)
 fn 0xfe1fde desk_options_menu # ctx
 cmt 0xfe1fde (item): items 37..44 by the table $fef6e0 — install disk drive $fdf11a / application $fdf3c8, preferences $fdef12, Save Desktop (alert $fde022, then the INF writer $fdbb34), Print Screen (alert, then gsx_hardcopy $fe8862), the blitter item (trp14 $40)
-fn 0xfde122 desk_gr_rubbox # ctx
-cmt 0xfde122 the desk's binding of gr_rubbox: the frame handed on, then dsptch
 fn 0xfed61e desk_show_file
 cmt 0xfed61e (name): pushes 1 and falls into $fed632 with $fed624 (which pushes 0): a file shown on the screen / printed
 fn 0xfed624 desk_print_file
@@ -2323,3 +2320,130 @@ var 0x755a flop_media_mode
 cmt 0x755a the floppy driver's media-change mode, a byte a drive: Rwabs of a NULL buffer stores its count here ($fc12e2), Mediach answers 2 while it is 2 ($fc119a), Getbpb rewrites it from the write-protect latch ($fc1160)
 cmt 0xfe1ad0 the desk, before it opens a drive: Drvmap, Malloc(512), XBIOS Floprd of the boot sector (eralert on an error), then Rwabs(0, NULL, 2, 0, drive) — the forced media change
 cmt 0xfe3094 the desk copies ub_trampoline's address out of $8c32 into the USERBLK of a window item shown as text (block + 5580 + 8 * index; its object block + 15902 + 24 * index, type G_USERDEF)
+# ---- AES band 6 wave 1a (2026-10-13): units O and D — the desk's leaves filed in AES modules and its AES bindings, each READ
+# from its body (none # ctx): C in src/desk/, linked into both blobs, held at Tier 1, NOTHING BOUND (STATUS: Linked, unbound — desk)
+# unit O (src/desk/deskleaf.c; the BIOS door src/desk/trp13.S)
+fn 0xfda8a8 gsx_pline
+cmt 0xfda8a8 gsx_pline(x.w, y.w, count.w, points): count points copied into ptsin $98c4 — each a longword, then its x and y moved by WORD sums — then gsx_xline(count, ptsin). count is a signed word (none for <= 0); nothing bounds it by ptsin. D0 gsx_xline's. One caller: the drag outline $fdc4e8. C: aes_gsx_pline (src/desk/deskleaf.c)
+fn 0xfdae96 app_alloc
+cmt 0xfdae96 app_alloc(tohead.w) -> ANODE: the free list's first node (desk+13206) taken off it and linked into the list in use (desk+13210) — at its head where tohead or the list is empty, else behind its last node, its own link cleared; 0 and nothing stored where none is free. Callers: the INF parse $fdb726 (1), the install dialogs $fdf210 (0) and $fdf5c2 (1). C: aes_app_alloc
+fn 0xfdaee2 app_free
+cmt 0xfdaee2 app_free(node): unlinked from the list in use (the head moved on, or the node before it relinked; one on no list unlinks nothing) and pushed on the free list. D0 not set where the head is freed (else the node before). One caller: $fdf38e, Install Disk Drive's Remove. C: aes_app_free
+fn 0xfe3a7c dos_write
+cmt 0xfe3a7c dos_write(handle.w, count.w, buffer): moveq #$40,d1 and dos_read's own body from $fe3a7e — Fwrite, the count zero-extended; parks dos_read's site $fe3a94. One caller: the INF writer $fdbe5c. C: aes_dos_write
+fn 0xfe3ab0 dos_gdir
+cmt 0xfe3ab0 dos_gdir(drive.w, path): Dgetpath(path, drive) through __DOS (site $fe3ac0). One caller: $fdbe98. C: aes_dos_gdir
+fn 0xfe3ac4 dos_mkdir
+cmt 0xfe3ac4 dos_mkdir(path): Dcreate through __DOS (site $fe3ad0); EACCDN, a WORD compare made whatever the verdict -> dos_ax 5; D0.w = verdict ^ 1, its high word Dcreate's. Callers $fdd608 $fddb2c $fddc1c $fdffe2: none reads D0. C: aes_dos_mkdir
+fn 0xfe3ae8 dos_setdt
+cmt 0xfe3ae8 dos_setdt(handle.w, time.w, date.w): Fdatime(&its caller's own two words — pea 10(sp) —, handle, 1) through __DOS (site $fe3afc). GEMDOS leaves the two words byte-swapped where they lie. One caller: the copy's $fdd442. C: aes_dos_setdt
+fn 0xfe3b02 dos_label
+cmt 0xfe3b02 dos_label(drive.w, name): link #-52; Fsetdta(-44(a6)) by trap #1 itself, never set back; "X:\*.*" built at -52(a6) (letter = drive.b + $40, the text at $fe3b64); Fsfirst(path, 8) through __DOS (site $fe3b38); answer.w 0 -> the DTA's name copied out, 1; else dos_err = dos_ax = 1 whatever GEMDOS said, 0. One caller: Show Info $fdee7a. C: aes_dos_label
+var 0xfe3b64 dos_label_pattern
+fn 0xfe3b6a dos_space
+cmt 0xfe3b6a dos_space(drive.w, &total, &avail): link #-16; Dfree by trap #1 itself (nothing parked, no verdict, its answer unread); cluster bytes = clsiz.w * secsiz.w, and its LOW WORD times total.w and free.w (three mulu.w); 1. Callers: Show Info $fdee62, disk copy $feddac. C: aes_dos_space
+fn 0xfe3ba0 dos_rename
+cmt 0xfe3ba0 dos_rename(old, new): its return popped into dos_return, $00560000 pushed over the two names (Frename, reserved 0), __DOS by bsr (site $fe3bb0), back through dos_return. One caller: $fdec82. C: aes_dos_rename
+fn 0xfe3be8 dos_avail
+cmt 0xfe3be8 dos_avail(): Malloc(-1) by trap #1 itself — the largest free block; nothing parked, no verdict. Callers: the copy engine $fdd974, disk copy $feddec. C: aes_dos_avail
+fn 0xfe3bfa dos_rawcio
+cmt 0xfe3bfa dos_rawcio(character.w): Crawio through $fe3c28 ($ff asks for a key). Callers: the show / print engine, six sites $fed696..$fed826. C: aes_dos_rawcio
+fn 0xfe3c16 dos_chmod
+cmt 0xfe3c16 dos_chmod(name, set.w, attributes.w): Fattrib through $fe3c28. One caller: $fdecf6. C: aes_dos_chmod
+fn 0xfe3c1a dos_delete
+cmt 0xfe3c1a dos_delete(name): Fdelete through $fe3c28. One caller: $fdd1d6. C: aes_dos_delete
+fn 0xfe3c1e dos_rmdir
+cmt 0xfe3c1e dos_rmdir(path): Ddelete through $fe3c28. One caller: $fdd4e0. C: aes_dos_rmdir
+fn 0xfe3c22 dos_create
+cmt 0xfe3c22 dos_create(name, attributes.w): Fcreate through $fe3c28. Callers: $fdb20c, the copy's $fdd39c. C: aes_dos_create
+fn 0xfe8862 gsx_hardcopy
+cmt 0xfe8862 gsx_hardcopy(): moveq #17,d0 into gsx_escapes' register entry $fe886a — VDI escape 17, v_hardcopy, XBIOS Scrdmp. One caller: Options > Print Screen $fe2116. C: aes_gsx_hardcopy
+fn 0xfee478 trp13
+cmt 0xfee478 trp13: move.l (sp)+,$95ae / trap #13 / move.l $95ae,-(sp) / rts — the AES's BIOS door, trp14's sibling, over whatever frame its caller pushed. Nine sites: Drvmap $fe1ae4, Rwabs(0,NULL,2,0,dev) $fe1bb0, Bconout $fed7dc, Getbpb $fedc4a $fedecc $fedee6, Rwabs(3,...) $fedcec $fedd6c $fedd8a. SHIPS AS ITS SIXTEEN ROM BYTES: src/desk/trp13.S (aes_rom_trp13; linked, not entered, no transcribed row until its flip); C twin aes_trp13 (src/desk/deskleaf.c), +214 cycles a call
+var 0x95ae bios_return
+# unit D (src/desk/deskbind.c)
+fn 0xfddde6 desk_appl_init
+cmt 0xfddde6 desk_appl_init(): the desk's own global[] ($96ba): [0..1] := the LONG $00010120 (1, $0120: the AES's own appl_init stores $0120, 1), [2] := rlr->p_pid, [10] := gl_nplanes, [11..12] := &THEGLO, [13] := gl_bvdisk, [14] := gl_bvhard; gl_apid $c790 := rlr->p_pid; 1. No yield. C: aes_desk_appl_init (src/desk/deskbind.c)
+fn 0xfdde54 desk_appl_bvset
+cmt 0xfdde54 desk_appl_bvset(disks, hard): gl_bvdisk $c850 := disks, gl_bvhard $c828 := hard; 1. No yield. C: aes_desk_appl_bvset
+fn 0xfdde6c desk_appl_exit
+cmt 0xfdde6c desk_appl_exit(): mn_clsda; rlr->p_qindex != 0 -> ap_rdwr(1, pid, qindex, $b7f8); all_run; 1. No dsptch of its own (all_run's). C: aes_desk_appl_exit
+fn 0xfddea6 desk_appl_write
+cmt 0xfddea6 desk_appl_write(pid, length, buffer): ret = ap_rdwr(2, pid, length, buffer); dsptch; ret. C: aes_desk_appl_write
+fn 0xfdded8 desk_evnt_multi
+cmt 0xfdded8 desk_evnt_multi(flags, clicks, mask, state, MOBLK 1 (5 words), MOBLK 2, msgbuf.l, tlo, thi, &mx, &my, &button, &kstate, &key, &clicks): ret = ev_multi(flags, &its own MOBLK words 16(a6), 26(a6), (thi<<16)+tlo ALWAYS, (clicks<<16)+((mask<<8)+state), msgbuf, &six local words); dsptch; the six words out through the six pointers AFTER the yield; ret. C: aes_desk_evnt_multi
+fn 0xfddf82 desk_evnt_button
+cmt 0xfddf82 desk_evnt_button(clicks, mask, state, &mx, &my, &button, &kstate): ret = ev_button(clicks, mask, state, &four local words); dsptch; the four words out; ret. C: aes_desk_evnt_button
+fn 0xfddfc2 desk_evnt_dclick
+cmt 0xfddfc2 desk_evnt_dclick(rate, set): ret = ev_dclick(rate, set); dsptch; ret. C: aes_desk_evnt_dclick
+fn 0xfddfda desk_form_do
+cmt 0xfddfda desk_form_do(tree, start): desk_wait(0) (the arrow: a yield of its own); ret = fm_do(tree, start); dsptch; ret. C: aes_desk_form_do
+fn 0xfddffa desk_form_dial
+cmt 0xfddffa desk_form_dial(type, x, y, w, h, X, Y, W, H): ret = fm_dial(type, &its own words 10(a6), 18(a6)); dsptch; ret. C: aes_desk_form_dial
+fn 0xfde022 desk_form_alert
+cmt 0xfde022 desk_form_alert(default, string): ret = fm_alert(default, string); dsptch; ret. C: aes_desk_form_alert
+fn 0xfde03e desk_form_error
+cmt 0xfde03e desk_form_error(code): ret = fm_error(code); dsptch; ret. One caller: the copy engine's $fdd1c4 after a DOS error, code ~dos_ax - 30 (a read-only file dragged to the trash: EACCDN, error 5). C: aes_desk_form_error
+fn 0xfde054 desk_form_center
+cmt 0xfde054 desk_form_center(tree, &x, &y, &w, &h): ob_center(tree, &local GRECT); ret = D0 (ob_center's leftover: 3 at every arrival; read by no caller); the GRECT out through the four pointers BEFORE the yield (the one binding that copies first); dsptch; ret. C: aes_desk_form_center (void: a named divergence)
+fn 0xfde094 desk_graf_mouse
+cmt 0xfde094 desk_graf_mouse(number, form.l): number > 255 SIGNED (ble; the AES's own arm $fe6292 is bls): 256 -> gsx_moff, 257 -> gsx_mon, any other nothing; else number == 255 ? form : *(rs_gaddr(the AES's global, 14, number+3, &local)) -> gsx_mfset; dsptch. Stores no answer: D0 is dsptch's leftover (D0.w 0 at every arrival). C: aes_desk_graf_mouse
+cmt 0xfde0ee DEAD: the desk's graf_handle binding (gl_wchar, gl_hchar, gl_wbox, gl_hbox out through four pointers, gl_handle answered; no yield) — 52 bytes no Line-F entry names and nothing calls. Not ported.
+fn 0xfde122 desk_graf_rubbox
+cmt 0xfde122 desk_graf_rubbox(x, y, minw, minh, &w, &h): gr_rubbox(the same); dsptch. Stores no answer. C: aes_desk_graf_rubbox
+fn 0xfde142 desk_graf_mkstate
+cmt 0xfde142 desk_graf_mkstate(&mx, &my, &button, &kstate): gr_mkstate(the same); ret = D0 (gr_mkstate's leftover, $ffff: its dbf run out; read by no caller); dsptch; ret. C: aes_desk_graf_mkstate (void: a named divergence)
+fn 0xfde16a desk_graf_growbox
+cmt 0xfde16a desk_graf_growbox(x, y, w, h, X, Y, W, H): gr_growbox(&its own words 8(a6), 16(a6)); dsptch. Stores no answer. C: aes_desk_graf_growbox
+fn 0xfde182 desk_graf_shrinkbox
+cmt 0xfde182 desk_graf_shrinkbox(x, y, w, h, X, Y, W, H): gr_shrinkbox(&8(a6), &16(a6)); dsptch. Stores no answer. C: aes_desk_graf_shrinkbox
+fn 0xfde19a desk_menu_tnormal
+cmt 0xfde19a desk_menu_tnormal(tree, title, normal): ret = do_chg(tree, title, 1 SELECTED, !normal, 1 redraw, 1 check-disabled); dsptch; ret. C: aes_desk_menu_tnormal
+fn 0xfde1d4 desk_menu_bar
+cmt 0xfde1d4 desk_menu_bar(tree, show): mn_bar(tree, show); ret = D0 (mn_bar's leftover, 0 at every arrival; read by no caller); dsptch; ret. C: aes_desk_menu_bar (void: a named divergence)
+fn 0xfde1f0 desk_menu_icheck
+cmt 0xfde1f0 desk_menu_icheck(tree, item, check): ret = do_chg(tree, item, 4 CHECKED, check, 0, 0); dsptch; ret. C: aes_desk_menu_icheck
+fn 0xfde21a desk_menu_ienable
+cmt 0xfde21a desk_menu_ienable(tree, item, enable): ret = do_chg(tree, item & $7fff, 8 DISABLED, !enable, (item & $8000) != 0 redraw, 0); dsptch; ret. No caller of the desk's sets the top bit. C: aes_desk_menu_ienable
+fn 0xfde264 desk_objc_offset
+cmt 0xfde264 desk_objc_offset(tree, object, &x, &y): ret = ob_offset(the same); dsptch; ret. C: aes_desk_objc_offset
+fn 0xfde28c desk_objc_order
+cmt 0xfde28c desk_objc_order(tree, object, position): ob_order(the same); ret = D0 (ob_order's leftover: $78 / $18 at the arrivals; read by no caller); dsptch; ret. C: aes_desk_objc_order (void: a named divergence)
+fn 0xfde2a8 desk_objc_find
+cmt 0xfde2a8 desk_objc_find(tree, object, depth, x, y): ret = ob_find(the same); dsptch; ret. C: aes_desk_objc_find
+fn 0xfde2cc desk_objc_add
+cmt 0xfde2cc desk_objc_add(tree, parent, child): ob_add(the same); ret = D0 (ob_add's leftover: $30 / 0; read by no caller); dsptch; ret. C: aes_desk_objc_add (void: a named divergence)
+fn 0xfde2e8 desk_objc_draw
+cmt 0xfde2e8 desk_objc_draw(tree, object, depth, x, y, w, h): gsx_sclip(&its own words 16(a6)); ob_draw(tree, object, depth); ret = D0 (ob_draw's leftover: 1 / 0; read by no caller); dsptch; ret. C: aes_desk_objc_draw (void: a named divergence)
+fn 0xfde30e desk_objc_change
+cmt 0xfde30e desk_objc_change(tree, object, (a word nothing reads), x, y, w, h, state, redraw): gsx_sclip(&16(a6)); ob_change(tree, object, state, redraw); ret = D0 (ob_change's leftover: 0 / 1 / $40 / $41; read by no caller); dsptch; ret. C: aes_desk_objc_change (void: a named divergence)
+fn 0xfde354 desk_rsrc_gaddr
+cmt 0xfde354 desk_rsrc_gaddr(type, index, &answer): ret = rs_gaddr($96ba the desk's global[], type, index, &answer); dsptch; ret. C: aes_desk_rsrc_gaddr
+fn 0xfde376 desk_shel_write
+cmt 0xfde376 desk_shel_write(doex, isgem, isover, command, tail): ret = sh_write(the same); dsptch; ret. C: aes_desk_shel_write
+fn 0xfde39e desk_shel_get
+cmt 0xfde39e desk_shel_get(buffer, bytes): ret = sh_get(the same); dsptch; ret. C: aes_desk_shel_get
+fn 0xfde3ba desk_shel_put
+cmt 0xfde3ba desk_shel_put(data, bytes): ret = sh_put(the same); dsptch; ret. C: aes_desk_shel_put
+fn 0xfde3d6 desk_wind_close
+cmt 0xfde3d6 desk_wind_close(window): ret = wm_close(window); dsptch; ret. C: aes_desk_wind_close
+fn 0xfde3ec desk_wind_delete
+cmt 0xfde3ec desk_wind_delete(window): ret = wm_delete(window) (its leftover: THEGLO + 56 * window's low word; read by no caller); dsptch; ret. C: aes_desk_wind_delete
+fn 0xfde402 desk_wind_find
+cmt 0xfde402 desk_wind_find(x, y): ret = wm_find(x, y); dsptch; ret. C: aes_desk_wind_find
+fn 0xfde41a desk_wind_update
+cmt 0xfde41a desk_wind_update(code): ret = wm_update(code); dsptch; ret. C: aes_desk_wind_update
+fn 0xfde430 desk_wind_create
+cmt 0xfde430 desk_wind_create(kind, x, y, w, h): ret = wm_create(kind, &its own words 10(a6)); dsptch; ret. C: aes_desk_wind_create
+fn 0xfde450 desk_wind_open
+cmt 0xfde450 desk_wind_open(window, x, y, w, h): ret = wm_open(window, &10(a6)); dsptch; ret. The desk holds the screen's lock at every arrival, so ret is the nested release's leftover ($c506 / $c53e: w_setsize's address; the C core answers 0; read by no caller). C: aes_desk_wind_open
+fn 0xfde470 desk_wind_get
+cmt 0xfde470 desk_wind_get(window, field, &w1, &w2, &w3, &w4): ret = wm_get(window, field, &four local words); dsptch; the four words out; ret. C: aes_desk_wind_get
+fn 0xfde4ac desk_wind_set
+cmt 0xfde4ac desk_wind_set(window, field, w1, w2, w3, w4): ret = wm_set(window, field, &its own words 12(a6)); dsptch; ret. At WF_NEWDESK under the held lock ret is the nested release's leftover ($30; the C core answers 0; read by no caller). C: aes_desk_wind_set
+fn 0xfde4cc desk_wind_calc
+cmt 0xfde4cc desk_wind_calc(type, kind, x, y, w, h, &x, &y, &w, &h): ret = wm_calc(the same) (its leftover: the height it stored; read by no caller); dsptch; ret. C: aes_desk_wind_calc
+fn 0xfe1bdc desk_wait
+cmt 0xfe1bdc desk_wait(busy): desk_graf_mouse(busy ? 2 the hourglass : 0 the arrow, 0L). Unit K's by address; ported with unit D because desk_form_do calls it. C: aes_desk_wait
+var 0xc790 gl_apid
+cmt 0xc790 the desk's own process id, kept by desk_appl_init ($fdde48 move.w 28(a0),$c790)

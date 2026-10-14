@@ -907,12 +907,12 @@ DISK_CALL = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.POINTER(ctypes.c_uint8), cty
                              ctypes.c_uint16, ctypes.c_uint32, ctypes.c_uint16, ctypes.c_uint16,
                              ctypes.c_uint16)
 
-_DISK_HOOK = AddressHook("recreate_call_disk_vector", DISK_CALL)
-DISK_CALLS = _DISK_HOOK.calls
+DISK_HOOK = AddressHook("recreate_call_disk_vector", DISK_CALL)
+DISK_CALLS = DISK_HOOK.calls
 # ...and the transfers that asked for something outside the staged disk, which a case reports as its
 # own failure beside the hook's refusals, because a ctypes callback cannot raise through to its caller.
 OUT_OF_RANGE = []
-recording = _DISK_HOOK.recording
+recording = DISK_HOOK.recording
 
 
 def _span(buf, at, length):
@@ -959,7 +959,7 @@ def _rwabs(buf, rwflag, buffer, count, recno, _dev):
 
 
 # The staged driver's three vectors, the same on every case: what varies is the DISK, which is image.
-_DRIVER = {addrs.BIOS_GETBPB_FN: _getbpb, addrs.BIOS_MEDIACH_FN: _mediach, addrs.BIOS_RWABS_FN: _rwabs}
+DRIVER = {addrs.BIOS_GETBPB_FN: _getbpb, addrs.BIOS_MEDIACH_FN: _mediach, addrs.BIOS_RWABS_FN: _rwabs}
 
 
 def _describe_refused(refused):
@@ -973,7 +973,7 @@ def staged_disk():
     """The driver staged for ONE case, and the two refusals the callback could not raise reported on
     the way out: a call the hook refused, and a transfer off the staged disk."""
     OUT_OF_RANGE.clear()
-    with _DISK_HOOK.staged(_DRIVER, _describe_refused):
+    with DISK_HOOK.staged(DRIVER, _describe_refused):
         yield
     assert not OUT_OF_RANGE, (
         f"the candidate asked the staged disk for records outside it: {OUT_OF_RANGE} — the disk is "

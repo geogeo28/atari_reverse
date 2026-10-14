@@ -2206,17 +2206,20 @@ def test_the_switch_is_its_own_kind_of_the_build_contract(make_lists):
     assert not entries & (set(transcription.TRANSCRIBED) | set(transcription.ALCYON_ENTRIES))
     assert not entries & {transcription.transcribed_core(entry) for entry in transcription.TRANSCRIBED}
     assert not set(transcription.SWITCH_ENTRIES) & set(shipped_glue.thunked_cores())
-    every_s = set(map(str, (RECREATE / "src" / "aes").glob("*.S"))) | set(map(str, (RECREATE / "src" / "vdi").glob("*.S")))
+    every_s = {str(source) for component in ("aes", "vdi", "desk") for source in (RECREATE / "src" / component).glob("*.S")}
     # (slice T, band 5 wave 3: the trap door is a fourth kind while it is linked and not installed — TRAPDOOR_SOURCES,
     # held to make's own expansion by `test_aes_trapdoor.py`.)
     # (slice I, band 5 wave 4: gemstart is a fifth, linked and not entered — GEMSTART_SOURCES, held to make's own
     # expansion by `test_aes_gemstart.py`.)
     # (slice T, band 6 wave 0: the generated Line-F table is a sixth, linked and not bound — LINEFTABLE_SOURCES, held to
     # make's own expansion by `test_aes_lineftable.py`.)
+    # (band 6 wave 1a's fix pass: the desk's BIOS door is a seventh, a transcription in waiting, linked and not
+    # entered — DESKDOOR_SOURCES, in `src/desk/`, which this sweep reads since then; held to make's own expansion by
+    # `test_desk_leaves.py`.)
     assert every_s == (set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch)
                        | set(transcription.trapdoor_sources()) | set(transcription.gemstart_sources())
-                       | set(transcription.lineftable_sources())), (
-        "a `.S` of the table's components that is of none of the six kinds")
+                       | set(transcription.lineftable_sources()) | set(transcription.deskdoor_sources())), (
+        "a `.S` of the table's components that is of none of the seven kinds")
 
 
 JMP_OPERAND_BYTES = aes.LONG_BYTES      # dsptch's last instruction is `jmp <disp>.l`: its operand, the last four bytes

@@ -291,6 +291,33 @@ def test_a_point_is_refused_where_the_machine_s_trees_do_not_show_one_thing_to_p
         desk.top_window(idle)
 
 
+REMOVE_A_DRIVE = "A: Options > Install Disk Drive, Remove pressed"
+STEPS_TO_THE_DIALOG = 3                 # the bar's title, the item, the click: the dialog is up after them
+TAKEN_OUT_OF_THE_INSTALL_DIALOG = 4     # the objects of its tree the desk unlinks for a disk drive (an icon's type boxes)
+
+
+def test_a_dialog_s_button_is_found_under_the_tree_the_desk_runs_and_not_under_the_nearest_object_with_no_next():
+    """THE INSTALL DISK DRIVE DIALOG'S TREE HOLDS OBJECTS THE DESK TOOK OUT OF IT — four, each left with no next,
+    between its fields and its three buttons. The nearest object below `Remove` with no next is one of those: a root
+    nobody runs, and the search that took it found "0 dialogs" (the second review's finding 1). The button is found
+    under THE ROOT THE DESK'S STACK HOLDS, which shows it: `Install`, `Remove` and `Cancel` are three points of one
+    row, left to right. And a button no dialog that is up shows is refused still."""
+    chain = desk.CHAINS[REMOVE_A_DRIVE]
+    machine = desk.walked(chain.after).machine
+    for step in chain.steps[:STEPS_TO_THE_DIALOG]:
+        machine = aes_boot.Machine(desk.stepped(machine.boot, tuple(step.hand(machine)), None, None, step.budget).boot)
+    tree, remove = desk.dialog_button(machine, "Remove")
+    no_next = [index for index in range(1, remove) if aes_objects.object_word(machine.ram, tree, index, "NEXT") == aes.OB_NIL]
+    assert len(no_next) == TAKEN_OUT_OF_THE_INSTALL_DIALOG and remove - 1 not in no_next and remove - 2 in no_next, (
+        "the walk down from Remove passes Install and stops at an object the desk took out")
+    assert not set(no_next) & set(aes_objects.children_of(machine.ram, tree, aes.OB_ROOT))
+    (install_x, row), (remove_x, remove_y), (cancel_x, cancel_y) = (desk.button_point(machine, text) for text in ("Install", "Remove", "Cancel"))
+    assert row == remove_y == cancel_y and install_x < remove_x < cancel_x
+    assert {desk.dialog_button(machine, text)[0] for text in ("Install", "Cancel")} == {tree}
+    with pytest.raises(Refused, match="0 dialogs that are up on this machine hold a button reading 'Read-Only'"):
+        desk.button_point(machine, "Read-Only")
+
+
 # ---- THE CAMPAIGN: a case a chain ----------------------------------------------------------------------------------------------------------
 ROOT_AT = (st_build.RESERVED_SECTORS + st_build.FAT_COPIES * st_build.SECTORS_PER_FAT) * st_build.SECTOR_BYTES
 
@@ -313,11 +340,19 @@ def written(chain):
 
 
 INF_ON_DISK, FOLDER_ON_DISK = name_on_disk(desk.THE_INF), name_on_disk(desk.NEW_FOLDER)
+RENAMED_ON_DISK = name_on_disk(desk.THE_RENAMED)
+ATTR_READ_ONLY = 0x01                   # a directory entry's read-only bit (`gemdos/fs.h`: GEMDOS_ATTR_READ_ONLY)
+DENIED = "file: read-only, dragged to the trash, OK — access denied, Return"
 README_ON_DISK, AUTO_ON_DISK, INSIDE_ON_DISK = (name_on_disk(name) for name in (desk.THE_README, desk.THE_FOLDER, accessory_disk.INSIDE_NAME))
 LAUNCHED = "files: the program double-clicked — launched"
 # `{chain: what its last machine holds}` — where the act leaves something a test can read off the machine or the disk.
 def shown_texts(machine):
     return [text for _index, text, _letter in desk.icons(machine)]
+
+
+def drive_letters(machine):
+    """The letters of the drive icons the desk shows, in its tree's order."""
+    return [letter for _index, _text, letter in desk.icons(machine) if letter.strip("\0")]
 
 
 def the_inf_is_written(chain):
@@ -355,11 +390,21 @@ LEFT_BEHIND = {
         AUTO_ON_DISK not in root_of(chain.machine.boot.disk) and chain.machine.boot.disk.count(INSIDE_ON_DISK) == 0),
     "files: the window made full": lambda chain: desk.top_window(chain.machine)[2:] > desk.top_window(desk.walked("files: A: opened").machine)[2:],
     LAUNCHED: lambda chain: chain.machine.static_processes()[0].name == desk.THE_PROGRAM.split(".")[0].encode().ljust(aes.PD_NAME_BYTES),
+    # ---- band 6 wave 1a's fix pass: the dialogs' less-trodden buttons
+    "A: Options > Install Disk Drive, Remove pressed": lambda chain: drive_letters(chain.machine) == ["B"],
+    "A: Options > Install Disk Drive, 'C' typed, Install pressed": lambda chain: drive_letters(chain.machine) == ["B", "A", "c"],
+    "file: File > Show Info, Backspace, 'A', Return (renamed)": lambda chain: (
+        root_of(chain.machine.boot.disk).get(RENAMED_ON_DISK) == st_build.ATTR_NONE and INF_ON_DISK not in root_of(chain.machine.boot.disk)
+        and desk.THE_RENAMED in shown_texts(chain.machine)),
+    desk.READ_ONLY_FILE: lambda chain: root_of(chain.machine.boot.disk).get(INF_ON_DISK) == ATTR_READ_ONLY and written(chain),
+    # (GEMDOS refuses the delete: the disk as the chain found it, not a sector written)
+    DENIED: lambda chain: root_of(chain.machine.boot.disk).get(INF_ON_DISK) == ATTR_READ_ONLY and not written(chain),
 }
 # `{chain: the Line-F words its own steps had taken by hand}` — the File menu's Show Info and New Folder, once each.
 SHOW_INFO_WORD, NEW_FOLDER_WORD = ((at, word) for at, (word, _routine) in THE_TWO_WORDS.items())
 TAKEN_BY_HAND = {
     "A: File > Show Info, Return": (SHOW_INFO_WORD,), "file: File > Show Info, Return": (SHOW_INFO_WORD,),
+    "file: File > Show Info, Backspace, 'A', Return (renamed)": (SHOW_INFO_WORD,), desk.READ_ONLY_FILE: (SHOW_INFO_WORD,),
     "folder: selected, File > Show Info, Return": (SHOW_INFO_WORD,), "files: the program selected, File > Show Info, Return": (SHOW_INFO_WORD,),
     "folder: File > New Folder, 'A', Return": (NEW_FOLDER_WORD,)}
 
@@ -371,11 +416,11 @@ def test_the_tables_of_this_battery_name_chains_there_are():
     assert all(set(chain.enters) <= set(desk.routines()) for chain in desk.CHAINS.values())
 
 
-CHAINS, STEPS = 46, 133
+CHAINS, STEPS = 51, 158
 
 
 def test_every_chain_names_a_routine_of_its_act_and_the_campaign_is_this_many_chains_and_steps():
-    """NO CHAIN IS HELD BY ITS NAME ALONE (the design's risk 7): each of the 46 names at least one routine ITS OWN
+    """NO CHAIN IS HELD BY ITS NAME ALONE (the design's risk 7): each of the 51 names at least one routine ITS OWN
     STEPS must enter — the act's own, read off the ROM — and the per-chain case holds it to the cycle profile."""
     assert [name for name, chain in desk.CHAINS.items() if not chain.enters] == []
     assert (len(desk.CHAINS), sum(len(chain.steps) for chain in desk.CHAINS.values())) == (CHAINS, STEPS)
@@ -431,11 +476,11 @@ def test_a_typed_key_is_let_go_and_the_rom_s_machine_is_another_with_it_held():
 
 
 # ---- THE REACH TABLE AND THE STACKS -----------------------------------------------------------------------------------------------------
-REACHED = 215                           # of band 6's 244, by the campaign's own steps (the boot's routines are not a chain's)
+REACHED = 219                           # of band 6's 244, by the campaign's own steps (the boot's routines are not a chain's)
 
 
 def test_the_reach_table_has_a_row_for_every_routine_and_is_read_off_each_chain_s_own_steps():
-    """THE DERIVATION: `{routine: chains}` over band 6's 244 — 215 with a chain, in `CHAINS`' order; a chain's row
+    """THE DERIVATION: `{routine: chains}` over band 6's 244 — 219 with a chain, in `CHAINS`' order; a chain's row
     is ITS OWN steps' (the file selected enters no folder maker though the chain it goes on to does), and a routine
     is reached by its FIRST INSTRUCTION (a chain whose profile holds only a later PC of it — a return into a routine
     its predecessor entered — does not reach it)."""

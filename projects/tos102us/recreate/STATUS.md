@@ -15,7 +15,7 @@ counts in this file against its rows.
 | gemdos | 109 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): one row shown under the bar, the buffer flush at 1.01, is 1.13 on its own cycles behind the BIOS's.** 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
 | vdi + linea | 151 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): eight rows shown 1.00–1.10 are 1.26–1.66 on their own cycles behind an OS trap both shores run — a probe's measurement, no verdict changed.** shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 48 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)), the escape's `.S` rows that reach the BIOS console's C through its own thunks 1.31–2.43x as shipped, verdict `own` (T←: its own instructions within the bar, the console's C carried by five cited Bconout(CON:) acceptances); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.42–1.10), fourteen rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–2.05 shipped, 0.69–1.08 net of the thunks); the GEMDOS-trap rows priced over a staged `trap #1` with LINEA_RETSAV dropped by name | COMPLETE but the deferred BLITTER bodies |
 | aes | 383 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): TEN rows shown 1.05–1.10 here are 1.10–1.60 on their own cycles behind a GEMDOS or BIOS trap the net-pricing classifier does not see (the bell ×4 1.60; six `dos_*` rows 1.10–1.19). Every "within the bar" in this cell is true of the ratios AS THE TABLE PRICES THEM and is NOT a claim about those ten; nothing is accepted.** shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)) and gemdosif's uda_insuper and psetup as `src/aes/pdpipe.S` (C 1.50 / 1.24, (T)), its pgmld, `__DOS`, the five vector takes and — since band 5 wave 3 — crit_err and dos_exec as `src/aes/gemdosif.S` (NINE routines: dos_exec 1.00 ×5, crit_err verified and unpriced, held to the ROM's cycles in its own battery) and the XBIOS door as `src/aes/trp14.S` (band 5 wave 1: seven routines at 1.00; their C 1.10–1.42 by (T) where it is over the bar, verified and unpriced where it is under it or takes a host argument); the process switch and the interrupts' glue as hand 68000 in `src/aes/switch.S` and `src/aes/irq.S` (the SWITCH kind, band 4 wave 2: dsptch, the mask brackets, gotopgm, savestate and switchto byte-exact, disp as the ROM's own instruction stream, the three interrupt glues, drawrat and justretf — 13 `.S` rows at 1.00, a yield through our whole dispatcher 0.75 on its own cycles and 0.92 on the whole run; the three glues and gotopgm verified and unpriced); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.20–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks); every row whose C reaches the event layer through THE EVENT DOOR priced on its own cycles, its entries' calls among them (EV: 0.31–1.04; every entry of the door is REBOUND since FLIP 3 — its C twin on both builds, each call an ARRIVAL, the ROM's routine in the ROM's own cycles, nothing taken off either side. Since band 4 wave 0 the door's first entry, tak_flag, is: 88 rows moved by it, none over 0.82 — and since band 4 wave 1's FLIP 2 six more are, post_button, ct_chgown, unsync, ev_block, ap_rdwr and ev_button: 137 rows moved by it, every one a lower numerator against the same original, the highest 0.95, and ev_multi, the last, since FLIP 3 (26 leaf rows 0.63–0.87), and every row that calls a rebound entry held on TWO COUNTS since then — its own cycles, and the caller's own net of those calls: 366 rows since band 5 wave 2's close (365 at its wave 1's slice C, 337 at that wave's slices S and H, 241 at band 4 wave 3's steps S and T, 224 at its slices, 185 at flip 3), the highest caller's own 1.04 (gr_stilldn); 171 rows SWITCH since band 5 wave 2's close (170 at its wave 1's slice C, 149 at that wave's slices S and H, 108 at band 4 wave 3) — a call blocked (or a bare yield), parked by our own dispatcher and woken, one returning run on both shores, 0.46–0.88 on their own cycles (the 149 before slice C 0.60–0.88, and 0.64–0.97 with their thunks: the 0.88 is a session's put-away slice, every other row at or under 0.75 and 0.83; slice C's 21 — the screen manager's handlers, the screen manager their process; since wave 2's close measured at each shore's own ctlmgr's arrival, ct_msgup's two aside — 0.46–0.77), ev_timer's first four rows, fm_alert's two and fs_input's five (SLICES of two sessions the user is waited for in) and the event tape's fourteen (ap_trecd 6, ap_tplay 8) among them — gr_stilldn, gr_watchbox (V+EV), ap_sendmsg; band 3 wave 1's window update, screen lock, drag loops and menus 0.31–0.82; band 3 wave 2's forms and alerts 0.29–0.87 over a sixth door entry, ev_button; band 3 wave 3's file selector, fs_input, 0.61–0.95 by the SLICES of six sessions (eight since band 4 wave 3's step S: two more in which the user is waited for) and 0.73–0.77 on its three no-memory arms; the rows taken THROUGH INTERRUPTS (56, 0.59–0.95 — 39 of them SLICES of 7 sessions too long for one row, each the run between two arrivals both shores make at one PC, our memory held to the ROM's at both) priced the same way, their deliveries laid at the same door calls on every run of both sides — our run watched at the door's entries, the original's watched too, both sides' calls equal entry by entry and frame by frame); newrect's and mkrect's ALCYON ENTRIES in `src/aes/wmupdate.S` — the routines the target hands everyobj on draw_change's walk — target-only glue, their cycles counted as glue (T→G); just_draw's, `src/aes/obdraw.S`, IS GONE since band 5 wave 3's door diet (ob_draw holds the walk as its own body and calls just_draw as C calls: 0.73–0.88 own, 0.86–0.98 with the thunks under its traps), gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; the selector's rows that reach GEMDOS priced over GEMDOS REPLAYED (the ROM's own answers and DTAs, call by call, every frame in a ledger the differential compares); `dos_free`, `dos_sdta`, `dos_close`, the bell's Cconout glue and band 5's `dos_gdrv`, `dos_chdir`, `dos_sdrv` verified and unpriced (a host argument) BAND 5 WAVE 4's SLICE B ADDS THE BUILD'S OWN START-UP, PRICED AS STRETCHES of the our-boot machine's runs beside the ROM's own boot (A LABELLED STAGING: the blob laid at the pre-init stop and entered at its own gem_entry; "ours booted" claimed to deskmain's entry and no further): gem_main 0.57–0.86, the `#E` reader 0.97–0.98 over real GEMDOS in place, sh_main 0.63–0.92, sh_cmd 0.45–0.82 — sixteen rows on their own cycles, the OS both run held to one number —, gem_gemdos_call's six `.S` rows at 1.00, gem_entry verified at its checkpoints and unpriced (NEVER RETURNS); NET OF THE ROM'S LINE-F HANDLER five of those rows read 1.15–1.28 (reported, AWAITING 22). AND ITS SLICE F, THE FULL FLIP, MOVED WHO RUNS THE TRAP AND NO FIGURE: vector `$88` holds the build's own `trap #2` handler as every Tier 3 run of ours is entered (the selector switch a VDI call runs is ours — the ROM's own bytes, in neither own column, not one cycle of the ROM's on a kit call of ours) and every row from a machine's idle, the desk's own machine's too, runs BEHIND THE DOOR — a door TAKEOVER, a labelled staging: eight longwords laid by the harness over what the ROM's own start-up stored, so that at the machine's idle no longword holds, by value, the ROM's copy of a routine the registry declares (17 routines — not every ROM routine: twelve live longwords hold others no door can map, the wave log's slice F entry); the table's lines are what they were but the legend's. BAND 5 WAVE 3 ADDED, WITH NO ROW THEN (linked, held at Tier 1, bound nowhere — the door flip's): the trap door as `src/aes/trapdoor.S` (the fourth `.S` kind: `trap #2`'s handler, its way out, ub_trampoline byte-pinned, aes_entry a stream) and the accessory loader in C, `src/aes/loader.c` (sndcli, ldaccs, free_accs, cre_aproc). | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations; band 2 wave 3: the object draw path (ob_format, far_call, ob_user, just_draw, ob_draw, ob_change) — BAND 2 COMPLETE; band 3 wave 0: THE EVENT DOOR with its pilots (gr_stilldn, gr_watchbox, ap_sendmsg, ct_mouse), the object editor (ob_edit and its ten helpers) and the window library's pure half (23 routines); band 3 wave 1: the window messages and update with the screen lock (13 routines), the interactive gemgrlib and the menu library (16), five more door entries and interrupts delivered at door entries; band 3 wave 2: the forms and the alerts (gemfmlib, gemfmalt, the keyboard-queue leaves fq / dq and fm_do's bell — 16 routines), ev_button the sixth door entry, the interrupted rows priced and fully vetted, keys delivered through the BIOS keyboard handler; band 3 wave 3: the file selector (gemfslib's nine event-free routines and fs_input run whole as sessions, dos_snext and the bell's Cconout glue — 11 routines and one unpriced), a case's own derivation budget, sessions priced by their slices with the partition held, GEMDOS replayed — BAND 3 COMPLETE; band 4 wave 0: the event door made REBINDABLE and tak_flag rebound (flip 1 of three), gemasync's lists with evremove (8 routines), the PDs and the pipes (9, two of them shipping as `.S`), a third process as the labelled STAGED APPLICATION (Tier 1 only); band 4 wave 1 phase A: the input and the waits (34 routines in C at 0.31–0.91 — geminput's posts and click counter, the fork queue and its four fork functions, iasync and its arms, gemevlib; forker, ev_timer and drawrat verified and unpriced), six twins linked and PENDING (flip 2 is phase B: nothing flipped), every blocking arm held to the ROM at dsptch, a word an interrupt shares held at every instruction boundary of both blobs; band 4 wave 2 phase A: THE DISPATCHER (the switch and the glue as `.S`, disp_act / mwait_act / idle in C at 0.38–0.75, forker priced at 0.60–1.04, the glue installed by our own code on target, a host scheduler model behind a switch that defaults to refusing) and ev_multi's twin PENDING with its woken cases (14 more ✅ rows; nothing flipped — FLIP 3 is the next commit); band 4 wave 2's FLIP 3: ev_multi rebound, the door all C; band 4 wave 3: THE ROWS THAT SWITCH — the foundation's pilots, the waits, ev_multi and the door users (87 rows, the memory-laying hook road retired), then its steps S and T: THE SESSIONS THAT SWITCH (a slice's marks per process; fm_alert's and fs_input's ends-blocked cases taken on through their wakes, 7 rows) and THE EVENT TAPE, ap_trecd and ap_tplay in C (`src/aes/aptape.c`: 2 routines, 14 rows, the bare yield into another process a registered row) — 108 rows switch; step R: the door's retirement — BAND 4 COMPLETE; band 5 wave 0: the pre-init machines and the ROM's own boot (harness, no row); band 5 wave 1: slice S, THE OPCODE SWITCH AND THE MARSHAL (`src/aes/gemsuper.c`: 2 routines), and slices H and G, THE LEAVES ROUND gem_main AND THE SHELL (26 routines: geminit's, gemshlib's, the cartridge chain, the desk's memory and three desk leaves, gemdosif's leftovers with pgmld and the vector takes, the XBIOS door) — 149 rows switch; slice C (gemctrl's four handlers) is next |
-| desk | 0 | — | — | NOT STARTED |
+| desk | 0 | — | — (no row: nothing bound) | STARTED — band 6 wave 1a: units O and D, 59 routines in C, LINKED INTO BOTH BLOBS AND HELD AT TIER 1, NOTHING BOUND (`## Linked, unbound — desk (59)`, below the AES's section); the BIOS door ships as its ROM bytes (`src/desk/trp13.S`) |
 | data | — | — | — | NOT STARTED |
 
 **KNOWN PRICING GAP — THE USER'S RULING PENDING (found 2026-10-07, band 4 wave 2's fix pass; NOT fixed, NOT
@@ -1431,6 +1431,82 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 | `0xfeb0e6` | `sh_main` (`src/aes/shell.c`; band 5 wave 4) | 4 rows — STRETCHES on the our-boot machine beside the ROM's (A LABELLED STAGING; three through the served door, AN ARGUMENT CLASS — deskmain answered at its entry on both shores, a built-in of the desk's answered where the run arrives at it, the shell's buffers as the ROM's own shel_write leaves them: `test_aes_ourboot.py`) + 13 passes at Tier 1 (`test_aes_shell_main.py`) | 2816 / 41244 the desk quits .. 98081 / 945322 a program to dos_exec's entry | **0.92** LABELLED STAGING (our boot): the first pass to deskmain's entry (`net`), **0.75** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 0): the desk quits: the shell's last pass, to gem_main's teardown (`net`), **0.86** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): a file shown, and back to deskmain's entry (`net`), **0.63** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1): a program the disk holds, to dos_exec's entry (`net`) | ✅ verified | the launch band's text noted, the five flags set, then a pass at a time: the screen (wm_start THEN ratinit: two checkpoints, their order held), the desk through THE DESK DOOR — deskmain ENTERED ON THE ROM'S OWN STACK POINTER `$a364`, the door's margin 26 measured off D3 —, after it the click count cleared, desk_free, Getrez, the band's colour; a command: sh_cmd, else sh_find, pd_nameit and dos_exec ENTERED at `$a35e` (margin 22) where the row ends: RUNS A PROGRAM past it (a real Pexec loads over the blob), and the cartridge's arm halts by name (NO MACHINE). Entered at `$a392` where the ROM's is at `$a382`. 0.92 / 0.79 / 0.87 / 0.68 with thunks, whole run 0.93 / 0.95 / 0.88 / 0.96; NET OF THE ROM'S LINE-F HANDLER 0.94 / 1.27 / 0.89 / 0.85 — the last pass's 1.27 REPORTED (AWAITING 22: 7,778 + 388 in thunks to the ROM's 10,372 less 3,940). On the bench blob the first pass 2.00 and the built-in pass 1.82 (desk_alloc's and the band's loops as C twins): reported. Unpinned by nature: the `!= 4` arm of the colour test (Getrez answers 0..3) |
 | `0xfeb2fc` | `sh_cmd` (`src/aes/shell.c`; band 5 wave 4) | 5 rows — its entry to its return on the our-boot machine beside the ROM's (A LABELLED STAGING, AN ARGUMENT CLASS: deskmain answered 1 after the ROM's own shel_write, the built-in answered where the run arrives at it: `test_aes_ourboot.py`) + 38 Tier-1 cases (`test_aes_shell_cmd.py`) | 37 / 440 no built-in's byte .. 99033 / 937246 `$fd` | **0.52** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fe: a file shown (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fd: a file printed (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fc: Format (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fb: the disk copy (`net`), **0.45** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1): no built-in's byte: a program's tail (`net`) | ✅ verified | the tail's first byte: `$fe` the desk's "show a file" handed the text behind it; `$fd` the line made "PRINTING  " and the name, the band drawn, "print"; `$fc` / `$fb` the band drawn, Format / the disk copy handed the text and the command; any other byte answers 0. EACH BUILT-IN ENTERED THROUGH THE DESK DOOR ON THE ROM'S OWN STACK POINTER (`$a352` the two file ones, `$a34e` the two disk ones) AND HANDED THE ROM'S ARGUMENTS (the bytes it will read above its return address compared exactly: the fix pass), the door's margin 20 measured off D3 — and the door's HALT taken by a mutant 24 bytes deeper. 0.52 / 0.93 / 0.93 / 0.93 / 0.45 with thunks, whole run 0.52 / 1.00 / 1.00 / 1.00 / 0.45; NET OF THE ROM'S LINE-F HANDLER 1.06 / 1.27 / 1.28 / 1.28 / 0.75 — REPORTED (AWAITING 22: 34,734 + 4,580 in thunks to the ROM's 42,232 less 11,390 for `$fd`; the three are strcpy / strcat and the band's draw, each verified long since) |
 
+## Linked, unbound — desk (59)
+
+THE DESK'S FIRST TWO UNITS (band 6 wave 1a: its entry in the wave log), `src/desk/`: written in C, LINKED INTO BOTH
+BLOBS and HELD AT TIER 1 at the arrivals of the hands' chains — and NOTHING OF THEM BOUND: no row registered, no price
+but scratch probes, every Line-F table entry naming one the ROM's (`bench/linef_table.py`: `LINKED_AND_NOT_FLIPPED`,
+the generator's declared exception, until the binding — ruling W6-R1, the user's). A SECOND KIND OF SECTION, because a
+`## Verified` row is `✅ verified` and quotes the table's ratios, and none of these has a row of the table to quote:
+`test/test_status.py` holds this one's count to the generator's list, its rows' addresses to the list's routines, and
+none of its rows `✅ verified` — so a routine flipped at the binding leaves the list and reds here until its row moves
+to a Verified section. Unit O's eighteen: `test/test_desk_leaves.py` (`src/desk/deskleaf.c`; the BIOS door ships as
+its sixteen ROM bytes, `src/desk/trp13.S`); unit D's forty-one: `test/test_desk_bind.py` (`src/desk/deskbind.c`).
+"Bytes" are the shipped blob's symbol sizes against the AES map's inventory; a probe is a scratch measurement at one
+arrival — no row, no verdict.
+
+| address | routine | cases | bytes ours / the ROM's | Tier 3 | state | what is held, and what is not |
+|---|---|---|---|---|---|---|
+| `0xfda8a8` | `gsx_pline` (`aes_gsx_pline`; `src/desk/deskleaf.c`; unit O) | 3 arrival(s) + labelled classes (`test_desk_leaves.py`) | 122 / 42 B | — no row (not bound) | 🔗 linked, unbound | probe 0.997 (69,534 / 69,338: unit O's); D0's HIGH WORD not the C's (named; read by no caller) |
+| `0xfdae96` | `app_alloc` (`aes_app_alloc`; `src/desk/deskleaf.c`; unit O) | 4 arrival(s) + labelled classes (`test_desk_leaves.py`) | 84 / 74 B | — no row (not bound) | 🔗 linked, unbound | probe 0.554 (unit O's) |
+| `0xfdaee2` | `app_free` (`aes_app_free`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 104 / 62 B | — no row (not bound) | 🔗 linked, unbound | probe 0.68–0.75 (unit O's, over the INF parse's lists); ALL OF D0 not the C's — the node before, at its arrival (named; read by no caller) |
+| `0xfddde6` | `desk_appl_init` (`aes_desk_appl_init`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 126 / 110 B | — no row (not bound) | 🔗 linked, unbound | probe 0.669 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfdde54` | `desk_appl_bvset` (`aes_desk_appl_bvset`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 32 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe 0.500 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfdde6c` | `desk_appl_exit` (`aes_desk_appl_exit`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 2 labelled class(es) (`test_desk_bind.py`) | 96 / 58 B | — no row (not bound) | 🔗 linked, unbound | no probe (its run enters the screen manager: refused by name) |
+| `0xfddea6` | `desk_appl_write` (`aes_desk_appl_write`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 56 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.767 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfdded8` | `desk_evnt_multi` (`aes_desk_evnt_multi`; `src/desk/deskbind.c`; unit D) | 7 at arrivals + 2 labelled class(es) (`test_desk_bind.py`) | 234 / 170 B | — no row (not bound) | 🔗 linked, unbound | probe 0.815 (unit D's, shipped blob, one arrival — not a row); frame 76 B (the ROM's 52) |
+| `0xfddf82` | `desk_evnt_button` (`aes_desk_evnt_button`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 108 / 64 B | — no row (not bound) | 🔗 linked, unbound | probe 0.773 (unit D's, shipped blob, one arrival — not a row); frame 40 B (the ROM's 24) |
+| `0xfddfc2` | `desk_evnt_dclick` (`aes_desk_evnt_dclick`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 48 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe 0.889 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfddfda` | `desk_form_do` (`aes_desk_form_do`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 112 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.856 (unit D's, shipped blob, one arrival — not a row); frame 48 B (the ROM's 14) |
+| `0xfddffa` | `desk_form_dial` (`aes_desk_form_dial`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 112 / 40 B | — no row (not bound) | 🔗 linked, unbound | probe 0.915 (unit D's, shipped blob, one arrival — not a row); frame 44 B (the ROM's 16) |
+| `0xfde022` | `desk_form_alert` (`aes_desk_form_alert`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 46 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.947 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde03e` | `desk_form_error` (`aes_desk_form_error`; `src/desk/deskbind.c`; unit D) | 1 at arrivals + 2 labelled class(es) (`test_desk_bind.py`) | 42 / 22 B | — no row (not bound) | 🔗 linked, unbound | no probe (no chain reached it then) |
+| `0xfde054` | `desk_form_center` (`aes_desk_form_center`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 82 / 64 B | — no row (not bound) | 🔗 linked, unbound | probe 0.877 (unit D's, shipped blob, one arrival — not a row); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde094` | `desk_graf_mouse` (`aes_desk_graf_mouse`; `src/desk/deskbind.c`; unit D) | 4 at arrivals + 3 labelled class(es) (`test_desk_bind.py`) | 206 / 90 B | — no row (not bound) | 🔗 linked, unbound | probe 0.933 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde122` | `desk_graf_rubbox` (`aes_desk_graf_rubbox`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 58 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.967 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde142` | `desk_graf_mkstate` (`aes_desk_graf_mkstate`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 42 / 40 B | — no row (not bound) | 🔗 linked, unbound | probe 0.889 (unit D's, shipped blob, one arrival — not a row); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde16a` | `desk_graf_growbox` (`aes_desk_graf_growbox`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 98 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe 0.993 (unit D's, shipped blob, one arrival — not a row); frame 36 B (the ROM's 12) |
+| `0xfde182` | `desk_graf_shrinkbox` (`aes_desk_graf_shrinkbox`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 98 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe 0.993 (unit D's, shipped blob, one arrival — not a row); frame 36 B (the ROM's 12) |
+| `0xfde19a` | `desk_menu_tnormal` (`aes_desk_menu_tnormal`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 72 / 58 B | — no row (not bound) | 🔗 linked, unbound | probe 0.905 (unit D's, shipped blob, one arrival — not a row); frame 36 B (the ROM's 22) |
+| `0xfde1d4` | `desk_menu_bar` (`aes_desk_menu_bar`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 36 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.948 (unit D's, shipped blob, one arrival — not a row); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde1f0` | `desk_menu_icheck` (`aes_desk_menu_icheck`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 60 / 42 B | — no row (not bound) | 🔗 linked, unbound | probe 0.855 (unit D's, shipped blob, one arrival — not a row); frame 36 B (the ROM's 24) |
+| `0xfde21a` | `desk_menu_ienable` (`aes_desk_menu_ienable`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 2 labelled class(es) (`test_desk_bind.py`) | 92 / 74 B | — no row (not bound) | 🔗 linked, unbound | probe 0.858 (unit D's, shipped blob, one arrival — not a row); frame 40 B (the ROM's 22) |
+| `0xfde264` | `desk_objc_offset` (`aes_desk_objc_offset`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 54 / 40 B | — no row (not bound) | 🔗 linked, unbound | probe 0.804 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde28c` | `desk_objc_order` (`aes_desk_objc_order`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 42 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.781 (unit D's, shipped blob, one arrival — not a row); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde2a8` | `desk_objc_find` (`aes_desk_objc_find`; `src/desk/deskbind.c`; unit D) | 4 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 64 / 36 B | — no row (not bound) | 🔗 linked, unbound | probe 0.764 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde2cc` | `desk_objc_add` (`aes_desk_objc_add`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 42 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.870 (unit D's, shipped blob, one arrival — not a row); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde2e8` | `desk_objc_draw` (`aes_desk_objc_draw`; `src/desk/deskbind.c`; unit D) | 4 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 86 / 38 B | — no row (not bound) | 🔗 linked, unbound | probe 0.994 (unit D's, shipped blob, one arrival — not a row); frame 40 B (the ROM's 18); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde30e` | `desk_objc_change` (`aes_desk_objc_change`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 92 / 46 B | — no row (not bound) | 🔗 linked, unbound | probe 0.896 (unit D's, shipped blob, one arrival — not a row); frame 44 B (the ROM's 18); D0: NO WORD IN C (a named, counted divergence; read by no caller) |
+| `0xfde354` | `desk_rsrc_gaddr` (`aes_desk_rsrc_gaddr`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 58 / 34 B | — no row (not bound) | 🔗 linked, unbound | probe 0.843 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde376` | `desk_shel_write` (`aes_desk_shel_write`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 62 / 40 B | — no row (not bound) | 🔗 linked, unbound | probe 0.932 (unit D's, shipped blob, one arrival — not a row); bench blob 1.342 — the callee's C twin (reviewer B confirmed) |
+| `0xfde39e` | `desk_shel_get` (`aes_desk_shel_get`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 46 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.979 (unit D's, shipped blob, one arrival — not a row); bench blob 1.739 — the callee's C twin (reviewer B confirmed) |
+| `0xfde3ba` | `desk_shel_put` (`aes_desk_shel_put`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 46 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.978 (unit D's, shipped blob, one arrival — not a row); bench blob 1.972 — the callee's C twin (reviewer B confirmed) |
+| `0xfde3d6` | `desk_wind_close` (`aes_desk_wind_close`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 42 / 22 B | — no row (not bound) | 🔗 linked, unbound | probe 0.977 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde3ec` | `desk_wind_delete` (`aes_desk_wind_delete`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 42 / 22 B | — no row (not bound) | 🔗 linked, unbound | probe 0.884 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde402` | `desk_wind_find` (`aes_desk_wind_find`; `src/desk/deskbind.c`; unit D) | 4 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 48 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe 0.851 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde41a` | `desk_wind_update` (`aes_desk_wind_update`; `src/desk/deskbind.c`; unit D) | 3 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 42 / 22 B | — no row (not bound) | 🔗 linked, unbound | probe 0.863 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde430` | `desk_wind_create` (`aes_desk_wind_create`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 80 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.751 (unit D's, shipped blob, one arrival — not a row) |
+| `0xfde450` | `desk_wind_open` (`aes_desk_wind_open`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 80 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.959 (unit D's, shipped blob, one arrival — not a row); D0: THE NESTED RELEASE'S LEFTOVER at every arrival (named, counted; read by no caller) |
+| `0xfde470` | `desk_wind_get` (`aes_desk_wind_get`; `src/desk/deskbind.c`; unit D) | 5 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 102 / 60 B | — no row (not bound) | 🔗 linked, unbound | probe 0.843 (unit D's, shipped blob, one arrival — not a row); frame 36 B (the ROM's 22) |
+| `0xfde4ac` | `desk_wind_set` (`aes_desk_wind_set`; `src/desk/deskbind.c`; unit D) | 6 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 86 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.794 (unit D's, shipped blob, one arrival — not a row); frame 36 B (the ROM's 14); D0: THE NESTED RELEASE'S LEFTOVER at WF_NEWDESK (named, counted; read by no caller) |
+| `0xfde4cc` | `desk_wind_calc` (`aes_desk_wind_calc`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 90 / 52 B | — no row (not bound) | 🔗 linked, unbound | probe 0.889 (unit D's, shipped blob, one arrival — not a row); frame 48 B (the ROM's 34) |
+| `0xfe1bdc` | `desk_wait` (`aes_desk_wait`; `src/desk/deskbind.c`; unit D) | 2 at arrivals + 1 labelled class(es) (`test_desk_bind.py`) | 86 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe 0.922 (unit D's, shipped blob, one arrival — not a row); frame 40 B (the ROM's 10) |
+| `0xfe3a7c` | `dos_write` (`aes_dos_write`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 88 / 30 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0721 band 5's handler (666/714), 1.0554 O's recorder, 1.1538 bare (Save Desktop writes DESKTOP.INF) |
+| `0xfe3ab0` | `dos_gdir` (`aes_dos_gdir`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 68 / 20 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0096 band 5's handler (628/634), 1.0079 O's recorder, 1.0219 bare (Save Desktop asks the current path) |
+| `0xfe3ac4` | `dos_mkdir` (`aes_dos_mkdir`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 98 / 36 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0592 band 5's handler (642/680), 1.0560 O's recorder, 1.1319 bare (New Folder); D0's HIGH WORD not the C's (named; read by no caller) |
+| `0xfe3ae8` | `dos_setdt` (`aes_dos_setdt`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 80 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0405 band 5's handler (642/668), 1.0418 O's recorder, 1.0903 bare (a file copied into a folder) |
+| `0xfe3b02` | `dos_label` (`aes_dos_label`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 166 / 98 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0104 band 5's handler (1158/1170), 1.0102 O's recorder, 1.0190 bare (Show Info, answered EFILNF (the frame is); 1.0557 band 5's handler (1184/1250), 1.0548 O's recorder, 1.1006 bare (Show Info, found (the stack filled with ); frame 64 B, the ROM's own 64 |
+| `0xfe3b6a` | `dos_space` (`aes_dos_space`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 74 / 54 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0840 band 5's handler (738/800), 1.0893 O's recorder, 1.1615 bare (Show Info (the stack filled with the wor) |
+| `0xfe3ba0` | `dos_rename` (`aes_dos_rename`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 84 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0881 band 5's handler (636/692), 1.0670 O's recorder, 1.1986 bare (Show Info renames the file) |
+| `0xfe3be8` | `dos_avail` (`aes_dos_avail`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 14 / 14 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0106 band 5's handler (376/380), 1.0076 O's recorder, 1.0351 bare (a file copy sizes its buffer) |
+| `0xfe3bfa` | `dos_rawcio` (`aes_dos_rawcio`; `src/desk/deskleaf.c`; unit O) | 2 arrival(s) + labelled classes (`test_desk_leaves.py`) | 74 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0157 band 5's handler (638/648), 1.0155 O's recorder, 1.0352 bare (the viewer's carriage return); 1.0157 band 5's handler (638/648), 1.0155 O's recorder, 1.0352 bare (the viewer's line feed) |
+| `0xfe3c16` | `dos_chmod` (`aes_dos_chmod`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 90 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0972 band 5's handler (638/700), 1.0751 O's recorder, 1.2183 bare (Show Info makes the file read-only) |
+| `0xfe3c1a` | `dos_delete` (`aes_dos_delete`; `src/desk/deskleaf.c`; unit O) | 2 arrival(s) + labelled classes (`test_desk_leaves.py`) | 74 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0282 band 5's handler (638/656), 1.0249 O's recorder, 1.0634 bare (a file dragged to the trash); 1.0250 band 5's handler (640/656), 1.0221 O's recorder, 1.0559 bare (a read-only file dragged to the trash — ) |
+| `0xfe3c1e` | `dos_rmdir` (`aes_dos_rmdir`; `src/desk/deskleaf.c`; unit O) | 1 arrival(s) + labelled classes (`test_desk_leaves.py`) | 74 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0282 band 5's handler (638/656), 1.0241 O's recorder, 1.0634 bare (a folder dragged to the trash) |
+| `0xfe3c22` | `dos_create` (`aes_dos_create`; `src/desk/deskleaf.c`; unit O) | 2 arrival(s) + labelled classes (`test_desk_leaves.py`) | 80 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0596 band 5's handler (638/676), 1.0476 O's recorder, 1.1338 bare (Save Desktop creates DESKTOP.INF); 1.0596 band 5's handler (638/676), 1.0476 O's recorder, 1.1338 bare (a file copied into a folder) |
+| `0xfe8862` | `gsx_hardcopy` (`aes_gsx_hardcopy`; `src/desk/deskleaf.c`; unit O) | NO ARRIVAL: labelled classes alone (`test_desk_leaves.py`) — its printer is a device the model has not | 18 / 4 B | — no row (not bound) | 🔗 linked, unbound | not probed (no blob case: the hardcopy's Scrdmp is staged for the host alone); ALL OF D0 not the C's (named; read by no caller) |
+| `0xfee478` | `trp13` (`aes_trp13`; `src/desk/deskleaf.c`; SHIPS AS `src/desk/trp13.S`, the ROM's 16 bytes; unit O) | 3 arrival(s) + labelled classes (`test_desk_leaves.py`) | 82 / 16 B | — no row (not bound) | 🔗 linked, unbound | the `.S` 1.00 at all three arrivals (602 / 846 / 4,022 cycles, the transcription relation, held by a test); its C twin 1.355 / 1.253 / 1.053 (+214 a call) — the evidence the `.S` answers |
+
 ## Harness
 
 | surface | state |
@@ -1452,7 +1528,8 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 ## Wave log
 
 * **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: AES band 5 wave 3
-  (2026-10-11), wave 4 (its entries follow wave 3's) and BAND 6 WAVE 0 (2026-10-13: the last entry before `* **Next**`).
+  (2026-10-11), wave 4 (its entries follow wave 3's), BAND 6 WAVE 0 and BAND 6 WAVE 1a (2026-10-13: the last entry before
+  `* **Next**`).
   - **BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER: LINKED, HELD AT TIER 1, NOTHING BOUND — AND THE GATE W3-R8 DOES
     NOT FIT** (2026-10-10/11; five slices in one tree — T the door, G gemdosif's last two, L the loader, M the
     machines, S the stack's reading — then one integration pass; the design and its rulings W3-R1..R13:
@@ -3539,6 +3616,199 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
       change, a critical error under the desk (the design's 3.3); the guard's four blind spots (above); a build-time
       refusal of a blob linked past the band (it is refused at lay); the `$90c` capture set, `make gates`,
       `make guarded` and the from-empty build — THE ORCHESTRATOR'S.
+  - **BAND 6 WAVE 1a — UNITS O AND D: 59 ROUTINES OF THE DESK IN C, LINKED INTO BOTH BLOBS, HELD AT TIER 1, NOTHING
+    BOUND; THE BIOS DOOR SHIPS AS ITS SIXTEEN ROM BYTES** (2026-10-13; two units in one tree on `0efcb96` — O the
+    desk's leaves filed in AES modules, D the desk's AES bindings — two reviews, then ONE FIX PASS alone in the tree,
+    which wrote this entry: every number in it is the fix pass's own build, collect, probe or log unless it says whose
+    measurement it is. The brief: `scratchpad/b6/W1/common.md`; the hand-backs: `scratchpad/b6/W1/{O,D}/handback.md`;
+    the reviews: `scratchpad/RB6W1/{A,B}/review.md`; the fix pass's brief, probes and logs: `scratchpad/b6/W1/fix_w1a.md`,
+    `scratchpad/b6/W1/FIX/`). 383 verified STILL: no row registered, no registry declaration activated, no Tier-3 row,
+    every Line-F table entry of the 59 the ROM's (`src/aes/lineftable.S` byte-identical), no kit edit. THE LEDGER
+    HOLDS THEM IN A SECTION OF A SECOND KIND, `## Linked, unbound — desk (59)` (below the AES's), held to the
+    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. THE HANDS' CAMPAIGN IS 51 CHAINS / 158 STEPS, EVERY ONE
+    NAMING A ROUTINE OF ITS ACT; REACH 219 OF BAND 6's 244; THE DEEPEST BY THE WRITE LEDGERS: PD0 1,460 of 1,792, PD1
+    722 of 1,196, the dispatcher 190 (188 on every other chain), the userdef stack 438 of 1,024.
+    - **UNIT O — THE DESK'S LEAVES FILED IN AES MODULES** (`src/desk/deskleaf.c`, `src/desk/trp13.S`,
+      `include/desk/deskleaf.h`, `test/aes_deskleaves.py`, `test/test_desk_leaves.py` — 366 tests): thirteen entries of
+      the DOS glue (dos_write, dos_gdir, dos_mkdir, dos_setdt, dos_label, dos_space, dos_rename, dos_avail, dos_rawcio,
+      dos_chmod, dos_delete, dos_rmdir, dos_create), gsx_pline, app_alloc, app_free, gsx_hardcopy and the BIOS door
+      trp13. SEVENTEEN OF THE EIGHTEEN AT ARRIVALS OF THE HANDS' CHAINS (the step that enters the routine stopped at its
+      first instruction; the arguments read off the frame; the ROM's own run IN PLACE continued through the real GEMDOS
+      and disk to each trap's return and to the routine's: the OS's answers, D0 and A0 at return): the C core against
+      the ROM's routine over the arrival's megabyte, GEMDOS answered by the recording trap with that run's own answers
+      — A LABELLED STAGING SAID IN EVERY SUCH CASE'S ID (`SCRIPTED`; a frame GEMDOS fills laid before the call,
+      `FRAME_LAID`; the blob cases' trap that keeps its last call, `LAST_CALL_TRAP`; the forced media change's disk
+      driver replayed for the C, `DRIVER_REPLAYED`); labelled argument classes for the arms no chain's machine reaches.
+      NO ARRIVAL: gsx_hardcopy alone (its printer is a device the model has not; W6-R9's). One case a routine but the
+      hardcopy's run ON EACH BLOB by the kit's second differential (`RomBench.measure`, unregistered): the target
+      arms. ROM BEHAVIOURS, EACH REPRODUCED AND HELD: dos_label leaves the process's DTA naming its own dead frame;
+      GEMDOS's Fdatime leaves the stamp byte-swapped in dos_setdt's CALLER's words; dos_space's arithmetic is 16-bit
+      (a 64 KB cluster answers 0); dos_label reports any failure as AES_DOS_ERR = AES_DOS_AX = 1, and "found" is the
+      answer's WORD being 0; dos_mkdir's EACCDN is a word compare made whatever the verdict; dos_space and dos_avail
+      store no verdict; app_free pushes a node on no list onto the free list all the same; gsx_pline bounds its count
+      by nothing.
+    - **UNIT D — THE DESK'S AES BINDINGS** (`src/desk/deskbind.c`, `include/desk/deskbind.h`, `test/aes_deskbind.py`,
+      `test/test_desk_bind.py` — 309 tests): the forty routines `$fddde6..$fde4ff` (each `ret = the AES routine(...);
+      dsptch(); ret`) and desk_wait `$fe1bdc` (unit K's by address, here because form_do calls it). EVERY ONE OF THE 41
+      AT AN ARRIVAL OF ITS OWN — 112 cases at arrivals of the hands' chains or the DESKTOP.INF machine's boot, 19
+      labelled argument classes — each a row that switches held to the ROM's scheduled run with nothing dropped (the
+      two that never yield, plain differentials). EVERY YIELD IS A CALL, NEVER A JUMP (GCC's sibling call would resume
+      the desk at the binding's caller), held on both listings. ROM BEHAVIOURS: the desk's appl_init stores
+      global[0..1] the other way round from the AES's own; graf_mouse's number compared SIGNED; form_center copies out
+      BEFORE its yield; evnt_multi ADDS the shifted mask to the state (held since the fix pass, by a class: no desk
+      caller's state has a bit in the mask's byte) and builds the timer long whatever the flags (UNOBSERVABLE: ev_multi
+      reads the timer under MU_TIMER alone — a reading, said so; the hand-back's "each reproduced by a case" was not
+      true of either half until this pass, and is not of the second); appl_exit has no dsptch of its own;
+      objc_change's third word is read by nothing; `$fde0ee..$fde121` is DEAD CODE (the desk's graf_handle binding: no
+      Line-F entry names it, nothing calls it), not ported.
+    - **D0 AT RETURN — THE WAVE-0 REVIEW'S QUESTION, ANSWERED FOR THESE 59, THE REMEDY NOT CHOSEN** (W3-R5's kind;
+      AWAITING (24)). WHO READS A BINDING'S ANSWER, by reading every call site (`aes_deskbind.answer_readers`: both arms
+      of every branch to a read, an overwrite or a call, through the callers that return it; both reviewers re-derived
+      the same nine): NINE BINDINGS' ANSWERS ARE READ (appl_init 1 site, appl_exit 1, evnt_multi 3, form_alert 8,
+      objc_find 1, rsrc_gaddr 1, shel_write 1, wind_find 2, wind_create 1), THIRTY-TWO BY NOTHING — every binding of a
+      void implementation and every one that stores no answer among them; and BY RUNS, the desk's own continuation is
+      the same machine with D0 and A0 inverted at the binding's return (the battery's what-if, 77 cases). TWO NAMED,
+      COUNTED DIVERGENCES: NO WORD IN C (the seven bindings of void implementations — form_center, graf_mkstate,
+      menu_bar, objc_order, objc_add, objc_draw, objc_change: 19 cases) and THE NESTED RELEASE'S LEFTOVER (wind_open at
+      every arrival, wind_set at WF_NEWDESK: 3 cases); unit O's FOUR (D0's high word behind dos_mkdir and gsx_pline, all
+      of D0 behind app_free — the node before the freed one, at its arrival — and gsx_hardcopy) are read by nothing
+      either, by the same reading since the fix pass. A0 IS HELD NOWHERE (no C function owes one): the glue's thirteen
+      arrivals return the address they went back through.
+    - **THE REVIEWS' BLOCKER, AND ITS FIX — REAL ARRIVALS WHERE A RUN REACHES** (the second review's finding 1, by the
+      policy's letter: a labelled class only where no run reaches the machine). Unit O's "no arrival" for dos_rename,
+      dos_chmod, app_free and app_alloc's tail arm was the 46 chains', not the ROM's: the dialogs' less-trodden buttons
+      reach each. THE BUTTON SEARCH WAS MENDED FIRST (`aes_desk.dialog_button`): the Install Disk Drive dialog's tree
+      holds four objects THE DESK TOOK OUT OF IT, each left with no next, and the search that took "the first object
+      below the button with no next" for its tree's root stopped at one of those — a root nobody runs; a button is now
+      found under a root the desk's stack holds THAT SHOWS IT (a bounded walk of the tree's links), and the dialog's
+      three buttons are held a row, left to right. FIVE CHAINS (`aes_desk.CHAINS`; 46 → 51 chains, 133 → 158 steps,
+      reach 215 → 219, no depth moved): Show Info's name edited (Backspace, `A`, Return: Frename, the file renamed
+      DESKTOP.INA on the disk); its Read-Only button (Fattrib: the entry's read-only bit set); THAT FILE DRAGGED TO THE
+      TRASH (GEMDOS refuses with EACCDN, the copy engine shows it through the desk's form_error — `$fdd1c4`, the first
+      review's "in principle" — and the alert is answered; the file stays); Install Disk Drive's Remove (drive A:'s
+      ANODE freed: the list in use's LAST) and its Install with `C` typed (app_alloc from `$fdf210`, WHICH HANDS 0: the
+      tail's arm; the desk keeps the letter as typed, a lower-case c). ARRIVALS TAKEN THERE: dos_rename, dos_chmod and
+      dos_delete answered EACCDN (the glue's failing arm by the ROM's own GEMDOS), app_free (the node before relinked;
+      its D0, the node before, a divergence counted), app_alloc's tail (the class it replaced, gone), form_error
+      (error 5's alert, answered), and wind_find at the trash's icon — a point of the desktop whose MIRROR lies in the
+      open window (the class it replaced, gone). The test docstring that put Remove in the install-application
+      dialog is mended (it is Install Disk Drive's). "NO ARRIVAL" IS GSX_HARDCOPY ALONE.
+    - **THE FIX PASS, ITEM BY ITEM.** PRICES (the second review's finding 2): the glue re-probed on BAND 5's OWN
+      CONVENTION — `aes_shell.scripted_pokes`, the handler dos_read's and dos_lseek's rows are scripted by, which
+      costs less than unit O's recorder and so flatters less — at the new arrivals, and REVIEWER B's THREE C SHAPES
+      APPLIED (dos_rename's function and reserved word one longword as the ROM pushes them, its operands in three
+      registers; dos_chmod's two words one longword; dos_label's pattern copied to its NUL): ON BAND 5's CONVENTION,
+      dos_rename 1.132 → 1.088, dos_chmod 1.129 → 1.097, dos_label (found) 1.106 → 1.056 — NOTHING OF UNIT O OVER 1.10
+      ON IT (the highest: dos_chmod 1.097, dos_rename 1.088, dos_space 1.084, dos_write 1.072); before-figures the
+      second review's, after-figures this pass's (`scratchpad/b6/W1/FIX/price.log`, both blobs alike). OVER A BARE
+      TRAP — REPORTED, NOT ACTED ON (AWAITING (24)): dos_chmod 1.218, dos_rename 1.199, dos_space 1.162, dos_write
+      1.154, dos_create 1.134, dos_mkdir 1.132, dos_label (found) 1.101 — and band 5's own rows would read 1.118
+      (dos_read) and 1.164 (dos_lseek) bare (B's measurement). THE BIOS DOOR (the orchestrator's provisional ruling, by
+      the standing policy "`.S` only where C measures over the bar", trp14's precedent): its C twin measured 1.355 /
+      1.253 / 1.053 at its three arrivals (+214 cycles a call), so trp13 SHIPS AS ITS SIXTEEN ROM BYTES,
+      `src/desk/trp13.S` — byte-pinned on both blobs, and held through the transcription relation to the ROM's door
+      at the same three arrivals, over the machine's own BIOS: 602 / 846 / 4,022 CYCLES ON BOTH SHORES, 1.00 (a test,
+      not a row); the C (`aes_trp13`) is its Tier-1 twin, its target arm kept and run on both blobs. NOT A ROW OF THE
+      TRANSCRIBED TABLE: a row there makes the Line-F table's two entries for `$fee478` OURS, NATIVE, which waits for
+      the binding — so the door is A SEVENTH KIND of `.S`, `atari/target.mk`'s DESKDOOR_SOURCES, linked and not
+      entered (a transcription in waiting: a row at its flip, as trp14's), and `test_tier3.py`'s census of `.S` kinds
+      reads `src/desk/` since. SURVIVORS CLOSED (both reviews' mutants, with cases): menu_ienable ENABLING A DISABLED
+      ITEM at a real arrival ("drive A: selected"'s first: File > Open — the binding's main use); labelled classes for
+      menu_icheck of a disabled item, evnt_button awaiting the button DOWN, graf_rubbox's least width 40 beside its
+      height 6, form_dial GROWING a box from a little rectangle of four different words, shel_put of three bytes of
+      the INF's second line, evnt_multi's state with a bit in the mask's byte (the ADD moves the mask to the right
+      button), desk_wait with busy 2, dos_label's answer `$0100` (a word whose low byte is 0), app_alloc's argument
+      `$0100` — each killing its reviewer's mutant in the sweep below. RECORDED BY NAME, NOT HELD: B8 (dos_space's two
+      stores in the other order — only two pointers that alias tell), B22 (dos_label's copy capped at 12 bytes — no
+      chain's label is twelve characters), RA5 / D5 (evnt_multi's timer built only under MU_TIMER — unobservable,
+      above). `LINKED_AND_NOT_FLIPPED` HELD BY A TEST OF ITS OWN (`test_aes_lineftable.py`, both blobs): exactly the two
+      units' 59 names, each declared, each core linked, none a native entry, none in ENTERED_BY_OURS_ALONE, none with a
+      registered row. `_Static_assert(BIND_FRAME_BYTES == HOST_SLOT_AES_DESK_BIND_FRAME_BYTES)`. THE TWO REDS: unit O's
+      three host-slot ids moved behind unit D's (no object moved) and `test_status.py`'s second heading kind (this
+      entry's section). The scripted trap and the laid frame SAID IN THE CASE IDS (the second review's finding 5; the
+      dead `A0_IS_NOT_HELD` gone, the docstring's non-existent name mended, "thirteen" true: the A0 count IS 13 now).
+      Unit O's "no caller reads D0" held by unit D's `answer_readers` over its four routines (the second review's
+      finding 8: one instruction behind a call was not enough — at `$fdf390` D0 lives three instructions on), and
+      `answer_readers` reads a `move.b …,d0` as no overwrite of the answer — an `ext.w d0` behind it is (the first
+      review's finding 5: the ROM's three such pairs; its nine readers unchanged, and a listing made in the test holds
+      both ways). CODE BAR: evnt_multi's key and clicks answers named; the GEMDOS error numbers, the glue's hop, the
+      frames' drops (`lea %c(sp)`, an operand) named; the mask's shift unsigned; `aes/fmlib.h` dropped (unused); the
+      harness's three private reaches made public (`gemdos_fs.DISK_HOOK`, `gemdos_fs.DRIVER`, `aes.INCLUDE`; renames,
+      their other users too). OWED AT THE BINDING, NOT DONE HERE (each would move a pinned object or rename a file):
+      the glue's four statics spelt twice (`src/aes/gemdosif.c` and `src/desk/deskleaf.c`); two files named
+      `deskleaf.c` (`src/aes/`, `src/desk/`).
+    - **THE SWEEP** (one log, `scratchpad/b6/W1/FIX/sweep.log`, driver `sweep.py` beside it; A PRIVATE COPY, `FIX/tree`;
+      per mutant ONE replacement matching exactly once, its file's sha256 held before and after, the product it touches
+      REMOVED AND REBUILT — the host library, the bench blob, or both blobs — and rebuilt again from the restored source
+      before the next, every `__pycache__` cleared; each run against THE FINAL BATTERY narrowed to the NODE IDS of the
+      new case(s) the mutant is aimed at, so each verdict says which case killed it; a failed build, a crash or a timeout
+      is not a kill; descriptions the driver's, verdicts the log's): the control GREEN (46 cases), 39 mutants and one
+      re-run — 37 KILLED, 2 SURVIVED, 1 REFUSED BY THE BUILD. **RA13** — menu_ienable: the last flag 1 — do_chg asked to
+      mind DISABLED (reviewer A's) — KILLED (1 failed); **RA11** — menu_icheck: the last flag 1 — a DISABLED item not
+      checked (reviewer A's) — KILLED (1 failed); **RA8** — evnt_button: the buttons and the keys answered through each
+      other's pointer (reviewer A's) — KILLED (1 failed); **RA19** — graf_rubbox: the least width and height swapped
+      (reviewer A's) — KILLED (1 failed); **RA20** — form_dial: the little rectangle's x and y swapped (reviewer A's) —
+      KILLED (1 failed); **RA18** — shel_put: one byte fewer (reviewer A's) — KILLED (1 failed); **RA6** — evnt_multi:
+      the shifted mask OR-ed with the state, not ADDED (reviewer A's RA6 = reviewer B's D4) — KILLED (1 failed); **D7**
+      — desk_wait: `busy == 1` for the ROM's `tst.w` (reviewer B's) — KILLED (1 failed); **AK1** — wind_find: x and y
+      the other way round (unit D's AK1) — at the REAL arrival that replaced the class — KILLED (1 failed); **FE1** —
+      form_error: the code one more — at form_error's FIRST ARRIVAL (a read-only file dragged to the trash) — KILLED (1
+      failed); **RA24** — the bindings' host slot declared 12 bytes (reviewer A's) — the _Static_assert — NOT A KILL: THE
+      BUILD REFUSED IT (`static assertion failed`, `deskbind.c`: the assert is the guard by construction, and by the
+      sweep's rule a refused build is counted apart); **AR1** — answer_readers: a byte move into D0 taken for an
+      overwrite again (reviewer A's finding 5) — KILLED (1 failed); **AR2** — answer_readers: the `ext.w d0` behind a
+      byte move read as a read of the answer — KILLED (1 failed); **AR3** — answer_readers: answers that no routine's D0
+      is read (unit O's four held by it since the fix pass) — KILLED (1 failed); **B6** — dos_label: found = the
+      answer's low BYTE being 0 (reviewer B's) — KILLED (4 failed); **B16** — app_alloc: to_head tested as a byte
+      (reviewer B's) — KILLED (1 failed); **RN1** — dos_rename: Frename's reserved word 1 — at its arrival — KILLED (2
+      failed); **CH1** — dos_chmod: Fattrib's set word 0 (asked, not set) — at its arrival — KILLED (2 failed); **DE1** —
+      __DOS's verdict: AES_DOS_AX the answer's HIGH word — at dos_delete's EACCDN arrival — KILLED (2 failed); **AT1** —
+      app_alloc: the tail's own link not cleared — at the Install arrival — KILLED (1 failed); **AF2** — app_free: the
+      node before not relinked — at the Remove arrival — KILLED (1 failed); **LB1** — dos_label: the pattern copied
+      without its NUL (the shape's do/while) — SURVIVED at the arrival (1 passed: the frame laid before the call IS the
+      ROM's own path, its NUL with it); **LB1b** — LB1 again (the pattern copied without its NUL), over dos_label's
+      classes: their frame is laid `$a5`, not the ROM's path — KILLED (7 failed); **SH1** — trp13-free shape: Frename's
+      two names pushed the other way round (target) — KILLED (1 failed); **SH2** — Fattrib's shape: the two words in the
+      other order in their longword (target) — KILLED (1 failed); **TS1** — trp13.S: the return pushed back from the
+      XBIOS door's longword — KILLED (4 failed); **TS2** — trp13's C target arm calls the `.S` (`jsr aes_rom_trp13` for
+      its trap): the `.S` reached — KILLED (1 failed); **TK1** — atari/target.mk: the door's source listed among the
+      transcriptions too — KILLED (1 failed); **T1** — LINKED_AND_NOT_FLIPPED: a name that is no routine added (reviewer
+      A's T1) — KILLED (2 failed); **T6** — LINKED_AND_NOT_FLIPPED: sh_main (ENTERED_BY_OURS_ALONE) added (reviewer A's
+      T6) — KILLED (2 failed); **T7** — LINKED_AND_NOT_FLIPPED: gr_inside, a NATIVE entry added (reviewer A's T7) —
+      KILLED (2 failed); **TQ1** — aes_desk: the button's tree the FIRST object below it with no next again (the search
+      before the mend) — KILLED (1 failed); **CN1** — aes_desk: Install's letter typed B, not C — KILLED (1 failed);
+      **CN2** — aes_desk: the name's edit a Tab, not a Backspace — SURVIVED (1 passed); **CN3** — aes_desk: Show Info's
+      Read/Write pressed, not Read-Only — KILLED (1 failed); **CN4** — aes_desk: the read-only file's delete dialog
+      answered Cancel, not OK — KILLED (1 failed); **CN5** — aes_desk: Install Disk Drive's Cancel pressed, not Remove —
+      KILLED (1 failed); **ST1** — STATUS.md: the desk's linked-unbound section says 58 — KILLED (1 failed); **ST2** —
+      STATUS.md: trp13's row marked ✅ verified — KILLED (1 failed); **ST3** — STATUS.md: the wave 1a entry says REACH 218
+      — KILLED (1 failed). WHAT THE SWEEP SAYS BESIDE ITS VERDICTS (six re-run with their outputs kept,
+      `scratchpad/b6/W1/FIX/logs/`, the same verdicts): every kill's first failure is an assertion but TQ1's, whose is THE
+      HARNESS'S OWN REFUSAL BY NAME ("0 dialogs that are up on this machine hold a button reading 'Remove'") — the very
+      red the mend answers, not an assertion (the wave-0 question of such a kill stands: AWAITING (24)); T1, T6 and T7
+      each die on the list's count first (`60 == 59`), the per-property checks behind it; CN2 SURVIVES — a Tab for the
+      Backspace leaves the same DESKTOP.INA (the name field is full: the typed A takes its last place either way — a
+      reading of the outcome, ob_edit's arm not traced), so the Backspace is not what the chain's rename rests on: an
+      EQUIVALENT MUTANT OF THE CHAIN, recorded; LB1 is killed by the classes (LB1b), not by the arrival, where the frame
+      laid is the ROM's own.
+    - **THE TABLE, THE OBJECTS, THE BLOBS.** `make bench` rc 0 in the shared tree (`scratchpad/b6/W1/FIX/bench.log`): THE
+      TIER-3 TABLE IS BYTE-IDENTICAL TO `scratchpad/final39/tier3.txt` (`cmp`; 5,777 lines). OBJECTS: the 155 of
+      `scratchpad/final39/objs.txt` sha256-identical (`diff`: three lines, the new ones); `src_desk_deskbind_c.o`
+      64d213db… — THE UNITS' OWN BYTES (the fix pass's edits there, the named indices, the unsigned shift, the include
+      dropped and the static assert, compile to the same object); `src_desk_deskleaf_c.o` 0e01c179… (the units' adddac7f…:
+      reviewer B's three shapes, 1,492 → 1,480 bytes of text); NEW `src_desk_trp13_S.o` 9975666c… (16 bytes, the ROM's).
+      `src/aes/lineftable.S` BYTE-IDENTICAL (`git diff --quiet`). THE BLOBS (sha256 of the `.bin`; ends by file length):
+      bench `[$30000, $61ef8)` 00c9ea0fb473ed6d…, shipped `[$30000, $62934)` ec844a31909c26a5… — 4,644 bytes more than
+      HEAD's each (the units' 4,640, then −12 of shapes and +16 of the door). ROOM LEFT UNDER `staging_base`: 75,468
+      bytes over the shipped blob, 78,088 over the bench blob — THIS LAYOUT'S FIGURES, said and not pinned.
+    - **UNPINNED / NOT DONE, BY NAME:** NOTHING OF THE 59 RAN ON A MACHINE OF OURS (no thunk exists for one; the
+      cores were entered by the kit's call alone); gsx_hardcopy at an arrival; the timer long evnt_multi builds whatever the flags (unobservable); B8, B22; an objc_draw of a
+      G_USERDEF tree (unit E's draw code); appl_exit's and form_error's prices; app_free's middle-node arm at an
+      arrival (reachable in principle: drive B:'s Remove — no chain yet; a labelled class says so); app_alloc's
+      "none free" and "an empty list's tail" arms (classes); trp13's Getbpb and Rwabs transfers at an arrival (format
+      and disk copy have no chain); A0 at return on any shore of ours; PD0's margin with the units bound (reviewer B's
+      arithmetic, AWAITING (24)); the harness's own footprint on an arrival's megabyte (said, not vetted); the `$90c`
+      capture set, `make gates`, `make guarded` and the from-empty build — THE ORCHESTRATOR'S.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -3612,6 +3882,19 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
   (the second review's B-H16: armed and held on the ROM's machine alone); THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
   CALLER (seven binding sites, ours differs on four — to settle BEFORE the binding); the private reaches the wave's
   entry lists; and, before the File-menu handler is priced, the ruling on the oracle's MOVE16.
+  **BAND 6 WAVE 1a IS IN** (its entry, above; 383 verified STILL): units O and D — the desk's eighteen leaves filed in
+  AES modules and its forty-one AES bindings — are C, LINKED INTO BOTH BLOBS, HELD AT TIER 1 at the hands' chains'
+  arrivals (58 of the 59 at an arrival of their own; gsx_hardcopy's printer the model has not), NOTHING BOUND, in the
+  ledger's `## Linked, unbound — desk (59)`; the BIOS door ships as its ROM bytes (`src/desk/trp13.S`, linked and not
+  entered). THE D0 QUESTION IS ANSWERED FOR THEM AND ITS REMEDY IS THE USER'S (AWAITING (24)): nine bindings' answers
+  are read by the desk, the rest by nothing; two divergence classes and unit O's four are named and counted. SLICE B
+  (THE BINDING) STILL WAITS FOR THE USER (W6-R1), and owes from this wave by name: each of the 59 OUT OF
+  `LINKED_AND_NOT_FLIPPED` at its flip (its ledger row moved to a Verified section, `test_status.py` reds until it
+  is), trp13 A ROW OF THE TRANSCRIBED TABLE (its `.S` a native entry then, as trp14's), the D0 remedy, the glue's
+  four statics given one home and the two `deskleaf.c` files told apart, `aes_event.SLOTS_HELD_WHERE_PARKED` taught
+  the bindings' one frame (it reds when evnt_multi, evnt_button or wind_get gets a switching row), unit O's seven
+  hosted thunks (the cores that take a return site) and a case each, and W6-R4's gate measured with the units bound
+  (PD0's deepest known path is under desk_wind_open: reviewer B's arithmetic, AWAITING (24)).
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -4107,6 +4390,52 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
         pair of runs a priced row; it does not hold the 16 our-boot stretches. THE EXACT ALTERNATIVE IS THE KIT'S
         (reviewer B's estimate, from its private instrument): about 25 lines of `shim.c` — a span, a ring of
         (address, PC), five getters — and one refusal in `RomBench` where the ORIGINAL's run read the blob's room.
+    (24, continued) BAND 6 WAVE 1a — UNITS O AND D (its entry, above). AGAIN NOTHING HERE IS THE USER'S WORD: the
+      fix pass's brief's rulings are the ORCHESTRATOR'S, PROVISIONAL, each marked so; the rest is reported with its
+      numbers and whose measurement each is.
+      - PROVISIONAL RULINGS OF THE FIX PASS'S BRIEF: (a) TRP13 SHIPS AS ITS SIXTEEN ROM BYTES (`src/desk/trp13.S`), by
+        the standing policy "`.S` only where C measures over the bar" and trp14's precedent — its C twin 1.355 / 1.253
+        / 1.053 at its three arrivals (+214 cycles a call; unit O's and this pass's probe), the `.S` 1.00 at the same
+        three; as a SEVENTH `.S` KIND (`DESKDOOR_SOURCES`), not a row of the transcribed table, because a row is a
+        native Line-F entry and the binding waits — the orchestrator's brief said "exactly as trp14 ships": THIS IS THE
+        DEPARTURE, and why; (b) THE LEDGER'S SECOND HEADING KIND, `## Linked, unbound — desk (N)`, held to
+        `LINKED_AND_NOT_FLIPPED` (the alternative both reviews named: the two units' files under `src/aes/`, which
+        holds a `deskleaf.c` already); (c) THE PRICE CONVENTION THE FIX PASS QUOTES FIRST is band 5's own
+        (`aes_shell.scripted_pokes`) — which convention the bar reads for a glue entry is THE USER'S (below).
+      - THE BARE-TRAP QUESTION (the second review's finding 2), NOT ACTED ON: over a bare `move.l #,d0 / rte` trap,
+        dos_chmod 1.218, dos_rename 1.199, dos_space 1.162, dos_write 1.154, dos_create 1.134, dos_mkdir 1.132,
+        dos_label (found) 1.101 (this pass's probe, shapes applied); on band 5's own recording handler all under 1.10
+        (dos_chmod 1.097 the highest). BAND 5's OWN ROWS WOULD READ 1.118 (dos_read) and 1.164 (dos_lseek) BARE —
+        reviewer B's measurement — where the table carries them at 1.06 / 1.08. Which the bar reads is the user's; a
+        bare convention would move band 5's rows too (F-10's and K5's kind).
+      - THE D0 REMEDY (the wave-0 review's question, settled as far as a reading and runs go): nine bindings' answers
+        read (appl_init, appl_exit, evnt_multi, form_alert, objc_find, rsrc_gaddr, shel_write, wind_find,
+        wind_create), thirty-two by nothing; the seven void bindings (19 cases) and wind_open / wind_set's nested
+        release (3) are NAMED AND COUNTED divergences, unit O's four (dos_mkdir's and gsx_pline's high word, app_free's
+        and gsx_hardcopy's whole D0) unread too. The remedy — the callee answering the ROM's word, a `.S` binding, or
+        a declared divergence — is THE USER'S. A0 is held nowhere.
+      - PD0 WITH THE UNITS BOUND (reviewer B's finding 3; THE REVIEWER'S ARITHMETIC, nothing measured on a machine of
+        ours): the deepest known path is under desk_wind_open (entry 646, deepest store 1,460 on "A: File > Open"), not
+        objc_draw; bound, a thunk and the core put unit D 28 bytes deeper than the 1,504 machine (the design's: the
+        ROM's desk over our AES) — 1,532 of 1,792, 16 SPARE UNDER THE 244-BYTE NEST (44 today); objc_draw +34 over the
+        ROM's, not the hand-back's +22 (the thunk's 36 bytes). For W6-R4's gate.
+      - THE BINDINGS' ONE HOST SLOT (`AES_DESK_BIND_FRAME`, unit D's question 6): on target there is no shared frame
+        (`host_slot_claim` is the local's own address, each frame on its caller's stack, as the ROM's); on the host a
+        second claim is refused by name; `aes_event.SLOTS_HELD_WHERE_PARKED` WILL RED at the binding (the frame is held
+        across evnt_multi's, evnt_button's and wind_get's waits) — owed then. No accessory or AES routine calls a
+        binding (all 171 call sites are band 6's: reviewer A).
+      - RECORDED, EACH FOR THE USER TO SEE: desk_wait (unit K's by address) ported in unit D's file because form_do
+        calls it; `$fde0ee..$fde121` dead and unported; every yield a CALL (a C binding of no answer would end in a
+        tail jump); dos_label's DTA, under a binding, names OUR frame (the basepage's DTA field will differ by nature
+        on a machine compare); `aes.line_f_call_sites` counts OPERAND words (two false sites for unit O; its battery
+        holds each candidate to an instruction boundary); unit D's probe ratios are whole runs to the binding's return
+        and no figure includes a thunk; the three bench-blob ratios over 1.00 (shel_write 1.342, shel_get 1.739,
+        shel_put 1.972) are the callee's C twin (reviewer B confirmed: the bindings' bytes are identical but for call
+        targets); unit D's §12 incident (a malformed PID list reached `kill` and was rejected — nothing harmed, by
+        reviewer B's log check); every sweep of the wave ran over PRIVATE COPIES (the authors', the reviewers', this
+        pass's).
+      - OWED AT THE BINDING (not done: each moves a pinned object or renames a file): the glue's four statics spelt in
+        both `src/aes/gemdosif.c` and `src/desk/deskleaf.c`; the two files named `deskleaf.c`.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -4233,9 +4562,27 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 
 ## Suite
 
-`make test`: **28,980 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **29,665 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 6 WAVE 1a — UNITS O AND D, WITH THEIR FIX PASS (2026-10-13; two units in one tree on `0efcb96`, two reviews, then
+  one fix pass alone in the tree — 59 routines of the desk in C, linked into both blobs and held at Tier 1, nothing
+  bound; the BIOS door's `.S`; five chains; tests and docs: THREE NEW OBJECTS, `src_desk_deskbind_c.o`,
+  `src_desk_deskleaf_c.o` and `src_desk_trp13_S.o`; the 155 that existed identical to `scratchpad/final39/objs.txt`;
+  both blobs 4,644 bytes longer; the table's 5,777 lines BYTE-IDENTICAL to `scratchpad/final39/tier3.txt` after
+  `make bench`): ONE `make test` in the shared tree (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__`
+  removed first, **29,665 passed / 8 skipped**, rc 0 (`scratchpad/b6/W1/FIX/final.log`; RUN ONCE). BY THE LEAN CYCLE:
+  `make gates`, `make guarded`, a `$90c` capture set and a from-empty build were NOT run — the orchestrator's.
+  RE-SUMMED, ITEMISED BY FILE against band 6 wave 0's fix pass's own collection (29,673 = 29,665 + 8 skipped, against
+  28,988; `pytest --collect-only` on both, 273 files then and 275 now: `scratchpad/b6/FIX/collect_perfile.txt`,
+  `scratchpad/b6/W1/FIX/collect_perfile.txt`): +685 — TWO NEW FILES: `test_desk_leaves.py` 366 (unit O: the glue at
+  its thirteen arrivals ×2 26, the leaf machine's classes, dos_setdt / dos_label / dos_space at their arrivals and
+  over classes, gsx_pline, app_alloc's and app_free's arrivals and classes, the hardcopy, the BIOS door's C and its
+  `.S` — pinned on both blobs and held at its three arrivals —, D0 and A0, the readers, the blob cases ×2 70, the
+  unbound pins), `test_desk_bind.py` 309 (unit D: a case a binding's arrival or class 131, the in-place word 91, the
+  what-if 77, ten more); `test_aes_desk_rom.py` 74 → 80 (five chains, the dialog's button search),
+  `test_aes_lineftable.py` 482 → 484 (`LINKED_AND_NOT_FLIPPED` held, both blobs), `test_status.py` 32 → 34 (the
+  linked-unbound section, the wave 1a entry's hands sentence); no file lost a test.
 - BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK, WITH ITS FIX PASS (2026-10-13; slices W, H and T on `6fbad55`, two
   reviews, then one fix pass alone in the tree — the window, the hands' campaign, the table linked and bound nowhere,
   the read guard, tests and docs: ONE NEW OBJECT, the generated `src_aes_lineftable_S.o`; the 154 that existed

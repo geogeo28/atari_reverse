@@ -51,12 +51,12 @@ from case import merge_pokes
 from opcodes import DROP_STACK_LONG, LINE_F, PUSH_ADDRESS_SHORT, RTS
 
 # ---- the headers' constants, and the FIELDS (`test/layouts.py`, the one reader of the width tags) ------------------
-_INCLUDE = Path(__file__).resolve().parents[1] / "include"
+INCLUDE = Path(__file__).resolve().parents[1] / "include"
 # The headers every AES core reads the machine's records through (`gsx.h` and `gsxif.h`: the VDI binding's): the host
 # reads the same constants and widths by this parse, so a case's offset is the header's — the one the compiler checked
 # the C against.
 # `gsx.h` includes `vdi/vdi.h`, so the VDI's constants are `known`: a define spelt as an alias of one resolves.
-AES_HEADERS = tuple(_INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h",
+AES_HEADERS = tuple(INCLUDE / name for name in ("aes/aes.h", "aes/objects.h", "aes/gsx.h", "aes/gsxif.h",
                                                    "aes/objdraw.h", "aes/obuser.h", "aes/obedit.h",
                                                    "aes/evdoor.h", "aes/ctrl.h", "aes/mnlib.h", "aes/apmsg.h",
                                                    "aes/wmupdate.h"))
@@ -66,7 +66,7 @@ sys.modules[__name__].__dict__.update(CONSTANTS)
 
 def header_constants(name):
     """The constants of one more AES header, `include/aes/<name>` — a slice's own (`rlist.h`, `strings.h`, ...)."""
-    return layouts.parse_constants((_INCLUDE / "aes" / name,), known={**vdi.CONSTANTS, **CONSTANTS})
+    return layouts.parse_constants((INCLUDE / "aes" / name,), known={**vdi.CONSTANTS, **CONSTANTS})
 
 WORD_BYTES = layouts.WORD_BYTES
 LONG_BYTES = layouts.LONG_BYTES
@@ -152,7 +152,7 @@ def stale_fields(*names):
 
 
 # The C's frames kept off target (`include/host_slot.h`): each slot's address and size, by `HOST_SLOT_<role>`.
-HOST_SLOTS = addrs.parse(_INCLUDE / "host_slot.h")
+HOST_SLOTS = addrs.parse(INCLUDE / "host_slot.h")
 
 
 def stale_host_slot(role, fill=None):

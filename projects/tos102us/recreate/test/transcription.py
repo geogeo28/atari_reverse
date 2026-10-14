@@ -668,6 +668,24 @@ assert LINEFTABLE_GLOBLS == {LINEF_TABLE_SYMBOL}, (
     f"the Line-F table's source defines other `.globl`s than its table: {sorted(LINEFTABLE_GLOBLS)}")
 # ---- end of slice T's block ---------------------------------------------------------------------------------------------
 
+# ---- band 6 wave 1a, the fix pass: THE DESK'S BIOS DOOR's source ----------------------------------------------------------
+# `atari/target.mk`: DESKDOOR_SOURCES — trp13 (`$fee478`), the ROM's sixteen bytes, A TRANSCRIPTION IN WAITING: its C
+# twin is proved at Tier 1 and measured over the bar, and it is A KIND APART WHILE IT IS LINKED AND NOT ENTERED — no
+# row of the transcribed table (a row is a native entry of the Line-F table, which waits for the binding), no Tier-3
+# row, no word of a build naming it. Same row type as the switch's; it exits to nothing of our build.
+# `test_desk_leaves.py` holds its bytes on both blobs, its behaviour at the chains' arrivals and the kind to make's
+# own expansion.
+def deskdoor_sources():
+    """DESKDOOR_SOURCES, as `atari/target.mk` writes it."""
+    return _listed_sources("DESKDOOR_SOURCES")
+
+
+DESKDOOR_GLOBLS = globl_entries(deskdoor_sources())
+DESKDOOR_ENTRIES = {"aes_rom_trp13": SwitchEntry(addrs.AES_ROM_TRP13, addrs.AES_ROM_TRP14 - addrs.AES_ROM_TRP13)}
+assert set(DESKDOOR_ENTRIES) == DESKDOOR_GLOBLS, (
+    f"the desk door's table and its source's `.globl`s disagree: {sorted(set(DESKDOOR_ENTRIES) ^ DESKDOOR_GLOBLS)}")
+# ---- end of the fix pass's block ----------------------------------------------------------------------------------------
+
 # THE C THAT CALLS A TRANSCRIBED C CORE from outside the table, as `(caller, core)`: the one list of the
 # calls a shipped build makes through glue (`bench/shipped_glue.py` generates a thunk per core named here).
 # `test_transcribed.py` holds it to the calls the m68k build really makes (`call_graph`).
@@ -863,6 +881,9 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("a_pass_begins", "aes_ratinit"), ("a_pass_begins", "aes_strlen"), ("after_the_desk", "aes_trp14"),
     ("aes_sh_cmd", "aes_strcpy"), ("aes_sh_cmd", "aes_strcat"),
     # ---- end of slice SH's ----
+    # ---- band 6 wave 1a, unit D: the desk's bindings (`src/desk/deskbind.c`) ---- graf_mouse's show (257)
+    ("aes_desk_graf_mouse", "aes_gsx_mon"),
+    # ---- end of unit D's ----
 }
 
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------

@@ -269,6 +269,25 @@
 #define HOST_SLOT_AES_GEM_MAIN_ICON     0x7f4c4  /* $fda062's -4(a6)                                             */
 #define HOST_SLOT_AES_GEM_MAIN_ICON_BYTES 4
 /* ---- end of slice I's ---- */
+/* ---- band 6 wave 1a, unit D (`desk/deskbind.h`) ---- THE DESK'S BINDINGS' FRAME: the words a binding hands an AES
+ * routine BY ADDRESS — in the ROM its caller's own argument words (a GRECT, a MOBLK: `move.l a6,(sp) / addi.l #16,(sp)`)
+ * or a local of its `link` (ev_multi's six answers, rs_gaddr's bit image). ONE frame for all forty: the desk is one
+ * process and a binding calls no binding while it holds it. Live across the wait of evnt_multi, evnt_button and
+ * wind_get's yield — one frame for every process, sound as the door users' own are (below, THE AUDIT). */
+#define HOST_SLOT_AES_DESK_BIND_FRAME   0x7f4d0  /* $fdded8's -20(a6) answers, its 16(a6) and 26(a6) rectangles    */
+#define HOST_SLOT_AES_DESK_BIND_FRAME_BYTES 32   /* BIND_FRAME_BYTES: evnt_multi's, the widest                    */
+/* ---- end of unit D's ---- */
+/* ---- band 6 wave 1a, unit O (`desk/deskleaf.h`) ---- three frames of the desk's DOS glue that GEMDOS is handed BY
+ * ADDRESS: dos_label's whole `link` (its search path, then the DTA it sets — the frame's own layout), dos_space's
+ * (Dfree's four longwords) and the two argument words dos_setdt hands Fdatime where they lie. None is held across a
+ * wait: each is a leaf that traps and returns. */
+#define HOST_SLOT_AES_DOS_LABEL_FRAME   0x7f828  /* $fe3b02's -52(a6) path, -44(a6) DTA                           */
+#define HOST_SLOT_AES_DOS_LABEL_FRAME_BYTES 52   /* LABEL_FRAME_BYTES                                            */
+#define HOST_SLOT_AES_DOS_SPACE_DFREE   0x7f860  /* $fe3b6a's -16(a6)                                            */
+#define HOST_SLOT_AES_DOS_SPACE_DFREE_BYTES 16   /* DFREE_BYTES                                                  */
+#define HOST_SLOT_AES_DOS_SETDT_STAMP   0x7f870  /* $fe3ae8's `pea 10(sp)`: its caller's time and date words      */
+#define HOST_SLOT_AES_DOS_SETDT_STAMP_BYTES 4    /* DOS_STAMP_BYTES                                              */
+/* ---- end of unit O's ---- */
 /* ...and the screen manager's handlers' (`aes/gemctrl.h`). hctl_window's: the window's rectangle with the four words
  * r_get unpacks it into, and the elevator's corner ob_offset answers into — each read out and given back before any
  * wait; THE RECTANGLE A DRAG IS HELD BY (gr_dragbox's bound, gr_rubwind's twin offsets) and THE TWO WORDS IT ANSWERS
@@ -413,6 +432,10 @@ enum host_slot {
     HOST_SLOT_ID_AES_SNDCLI_BASEPAGE, /* band 5 wave 3, slice L */
     HOST_SLOT_ID_AES_READ_INF_PAIR,   /* band 5 wave 4, slice I */
     HOST_SLOT_ID_AES_GEM_MAIN_ICON,   /* band 5 wave 4, slice I */
+    HOST_SLOT_ID_AES_DESK_BIND_FRAME, /* band 6 wave 1a, unit D */
+    HOST_SLOT_ID_AES_DOS_LABEL_FRAME, /* band 6 wave 1a, unit O */
+    HOST_SLOT_ID_AES_DOS_SPACE_DFREE, /* band 6 wave 1a, unit O */
+    HOST_SLOT_ID_AES_DOS_SETDT_STAMP, /* band 6 wave 1a, unit O */
     HOST_SLOT_ID_AES_HCTL_WINDOW_SIZE,
     HOST_SLOT_ID_AES_HCTL_WINDOW_CORNER,
     HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT,     /* a slot per process: the screen manager's frame across a drag's waits */
