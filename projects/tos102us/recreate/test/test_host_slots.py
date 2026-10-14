@@ -43,37 +43,55 @@ def misplaced(slots):
     return faults
 
 
+# THE PINNED ROLES, by the wave that added them: a group of band 6 wave 1b names its own roles inside its own block, so
+# no two authors edit one line; the pin is their union.
+ROLES_BEFORE_BAND_6_WAVE_1B = {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
+                               "CREATE_FREE_NAME", "CREATE_FCB", "RENAME_ENTRY", "C_ENTRY_ARGUMENTS",
+                               "REDIRECTED_BYTE", "PEXEC_LOCALS", "GEMDOS_WORDS", "VDI_VST_FONT_CALL",
+                               "VDI_WIDE_CORNERS", "VDI_WIDE_OFFSET", "VDI_PERP_DIRECTION", "VDI_ARROW_TRIANGLE",
+                               "VDI_MARKER_POINTS", "VDI_GTEXT_EXTENT", "VDI_JUSTIFIED_EXTENT",
+                               "VDI_OPNWK_COLOUR_CALL", "AES_OB_FIND_RECTS", "AES_SH_ENVRN_FRAME",
+                               "AES_SH_FIND_FRAME", "AES_GSX_START_DISCARD", "AES_CLINE_POINTS",
+                               "AES_GTEXT_RECT", "AES_JUST_COUNT", "AES_BOX_RECT", "AES_XOR_RECT", "AES_MOVEBOX_STEPS",
+                               "AES_GROWBOX_STEPS", "AES_OB_USER_PARMBLK", "AES_JUST_DRAW_FRAME",
+                               "AES_OB_DRAW_POSITION", "AES_OB_CHANGE_FRAME",
+                               "AES_GR_STILLDN_RECTANGLE", "AES_GR_STILLDN_ANSWERS", "AES_GR_WATCHBOX_RECT",
+                               "AES_GR_DRAW_RECT", "AES_GR_CLAMP_MOUSE", "AES_GR_RUBWIND_RECT", "AES_GR_DRAGBOX_FRAME",
+                               "AES_GR_SLIDEBOX_RECTS", "AES_MENU_SR_RECT", "AES_MN_DO_FRAME", "AES_MN_REGISTER_NAME",
+                               "AES_PXL_RECT_FIELD", "AES_CURFLD_RECTS", "AES_OB_EDIT_FRAME",
+                               "AES_W_CLIPDRAW_RECT", "AES_W_CPWALK_RECT", "AES_W_MOVE_RECTS", "AES_WM_GET_RECT",
+                               "AES_W_SETACTIVE_RECT", "AES_W_REDRAW_RECTS", "AES_DRAW_CHANGE_FRAME", "AES_WM_OPCL_RECT",
+                               "AES_WM_SET_RECT", "AES_FM_PARSE_INDEX", "AES_FM_BUILD_RECTS", "AES_FM_DO_FRAME",
+                               "AES_FM_BUTTON_FRAME", "AES_FM_ALERT_FRAME", "AES_ERALERT_FRAME", "AES_FM_ERROR_CODE",
+                               "AES_FS_START_TREE", "AES_FS_FORMAT_FRAME", "AES_FS_NSCROLL_FRAME",
+                               "AES_FS_INPUT_FRAME", "AES_PD_MATCH_NAME", "AES_AP_FIND_NAME",
+                               "AES_MARSHAL_FRAME", "AES_DISPATCH_MOUSE_FORM",
+                               "AES_PGMLD_WORDS", "AES_HCTL_WINDOW_SIZE", "AES_HCTL_WINDOW_CORNER",
+                               "AES_HCTL_WINDOW_DRAG_RECT", "AES_HCTL_WINDOW_DRAG_ANSWERS", "AES_HCTL_RECT_CHOICE",
+                               "AES_CTLMGR_ANSWERS",
+                               "AES_AMOUSE_MOBLK", "AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB", "AES_INOROUT_RECT",
+                               "AES_SNDCLI_BASEPAGE",                  # band 5 wave 3, slice L
+                               "AES_READ_INF_PAIR", "AES_GEM_MAIN_ICON",   # band 5 wave 4, slice I
+                               "AES_DESK_BIND_FRAME",                      # band 6 wave 1a, unit D
+                               "AES_DOS_LABEL_FRAME", "AES_DOS_SPACE_DFREE", "AES_DOS_SETDT_STAMP"}   # band 6 wave 1a, unit O
+# ---- band 6 wave 1b, group G1 (units I, L) ----
+ROLES_G1 = {"AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME"}
+# ---- end of group G1's ----
+# ---- band 6 wave 1b, group G2 (units A, K, J) ----
+ROLES_G2 = {"AES_APP_TRAN_BITBLK", "AES_MEN_UPDATE_FIND"}
+# ---- end of group G2's ----
+# ---- band 6 wave 1b, group G3 (units B, G) ----
+ROLES_G3 = {"AES_GR_ISDOWN_ANSWERS", "AES_GR_BWAIT_ANSWERS", "AES_ACT_CHKOBJ_RECTS", "AES_ACT_CHG_RECT", "AES_ACT_ALLCHG_RECTS"}
+# ---- end of group G3's ----
+# ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
+ROLES_G4 = {"AES_DESK_DIR_RECT", "AES_DESK_FUN_MSG", "AES_DESK_MY_ITOA_NUMBER", "AES_DESK_OB_SFCB_FRAME", "AES_DESK_INF_DTTMSZ_FRAME"}
+# ---- end of group G4's ----
+PINNED_ROLES = ROLES_BEFORE_BAND_6_WAVE_1B | ROLES_G1 | ROLES_G2 | ROLES_G3 | ROLES_G4
+
+
 def test_every_host_slot_is_inside_the_dropped_band_and_apart():
     slots = host_slots(CONSTANTS)
-    assert set(slots) == {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DELETE_MARK", "ATTRIBUTE", "FRAME_WORD",
-                          "CREATE_FREE_NAME", "CREATE_FCB", "RENAME_ENTRY", "C_ENTRY_ARGUMENTS",
-                          "REDIRECTED_BYTE", "PEXEC_LOCALS", "GEMDOS_WORDS", "VDI_VST_FONT_CALL",
-                          "VDI_WIDE_CORNERS", "VDI_WIDE_OFFSET", "VDI_PERP_DIRECTION", "VDI_ARROW_TRIANGLE",
-                          "VDI_MARKER_POINTS", "VDI_GTEXT_EXTENT", "VDI_JUSTIFIED_EXTENT",
-                          "VDI_OPNWK_COLOUR_CALL", "AES_OB_FIND_RECTS", "AES_SH_ENVRN_FRAME",
-                          "AES_SH_FIND_FRAME", "AES_GSX_START_DISCARD", "AES_CLINE_POINTS",
-                          "AES_GTEXT_RECT", "AES_JUST_COUNT", "AES_BOX_RECT", "AES_XOR_RECT", "AES_MOVEBOX_STEPS",
-                          "AES_GROWBOX_STEPS", "AES_OB_USER_PARMBLK", "AES_JUST_DRAW_FRAME",
-                          "AES_OB_DRAW_POSITION", "AES_OB_CHANGE_FRAME",
-                          "AES_GR_STILLDN_RECTANGLE", "AES_GR_STILLDN_ANSWERS", "AES_GR_WATCHBOX_RECT",
-                          "AES_GR_DRAW_RECT", "AES_GR_CLAMP_MOUSE", "AES_GR_RUBWIND_RECT", "AES_GR_DRAGBOX_FRAME",
-                          "AES_GR_SLIDEBOX_RECTS", "AES_MENU_SR_RECT", "AES_MN_DO_FRAME", "AES_MN_REGISTER_NAME",
-                          "AES_PXL_RECT_FIELD", "AES_CURFLD_RECTS", "AES_OB_EDIT_FRAME",
-                          "AES_W_CLIPDRAW_RECT", "AES_W_CPWALK_RECT", "AES_W_MOVE_RECTS", "AES_WM_GET_RECT",
-                          "AES_W_SETACTIVE_RECT", "AES_W_REDRAW_RECTS", "AES_DRAW_CHANGE_FRAME", "AES_WM_OPCL_RECT",
-                          "AES_WM_SET_RECT", "AES_FM_PARSE_INDEX", "AES_FM_BUILD_RECTS", "AES_FM_DO_FRAME",
-                          "AES_FM_BUTTON_FRAME", "AES_FM_ALERT_FRAME", "AES_ERALERT_FRAME", "AES_FM_ERROR_CODE",
-                          "AES_FS_START_TREE", "AES_FS_FORMAT_FRAME", "AES_FS_NSCROLL_FRAME",
-                          "AES_FS_INPUT_FRAME", "AES_PD_MATCH_NAME", "AES_AP_FIND_NAME",
-                          "AES_MARSHAL_FRAME", "AES_DISPATCH_MOUSE_FORM",
-                          "AES_PGMLD_WORDS", "AES_HCTL_WINDOW_SIZE", "AES_HCTL_WINDOW_CORNER",
-                          "AES_HCTL_WINDOW_DRAG_RECT", "AES_HCTL_WINDOW_DRAG_ANSWERS", "AES_HCTL_RECT_CHOICE",
-                          "AES_CTLMGR_ANSWERS",
-                          "AES_AMOUSE_MOBLK", "AES_AP_RDWR_QPB", "AES_EV_MULTI_QPB", "AES_INOROUT_RECT",
-                          "AES_SNDCLI_BASEPAGE",                  # band 5 wave 3, slice L
-                          "AES_READ_INF_PAIR", "AES_GEM_MAIN_ICON",   # band 5 wave 4, slice I
-                          "AES_DESK_BIND_FRAME",                      # band 6 wave 1a, unit D
-                          "AES_DOS_LABEL_FRAME", "AES_DOS_SPACE_DFREE", "AES_DOS_SETDT_STAMP"}   # band 6 wave 1a, unit O
+    assert set(slots) == PINNED_ROLES
     assert not misplaced(slots)
 
 

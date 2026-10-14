@@ -313,13 +313,19 @@ def _trees_showing(ram, thing, roots):
     return found
 
 
-def dialog_button(machine, text):
-    """`(the tree, the index)` of THE BUTTON READING `text` OF THE DIALOG THAT IS UP: the button object SHOWN BY a
+def _buttons_up(machine, text):
+    """`[(the tree, the index)]` of every BUTTON READING `text` OF A DIALOG THAT IS UP: the button object SHOWN BY a
     tree the desk's process holds ON ITS LIVE STACK (the form the AES is running was handed it there:
-    `_trees_showing`) — refused by name where no such button's tree is being run, or more than one."""
+    `_trees_showing`)."""
     ram, parked = machine.ram, machine.long(machine.static_processes()[0].uda + aes.UDA_SUPER_SP) & BUS
     held = {case.long_in(ram, at) & BUS for at in range(parked, stacks(machine)[PD0_STACK][1] - LONG_BYTES + WORD_BYTES, WORD_BYTES)}
-    up = [shown for thing in _buttons_reading(ram, text) for shown in _trees_showing(ram, thing, held)]
+    return [shown for thing in _buttons_reading(ram, text) for shown in _trees_showing(ram, thing, held)]
+
+
+def dialog_button(machine, text):
+    """`(the tree, the index)` of THE BUTTON READING `text` OF THE DIALOG THAT IS UP (`_buttons_up`) — refused by name
+    where no such button's tree is being run, or more than one."""
+    up = _buttons_up(machine, text)
     if len(up) != 1:
         raise Refused(f"{len(up)} dialogs that are up on this machine hold a button reading {text!r}: a hand presses one")
     return up[0]
@@ -622,6 +628,132 @@ CHAINS = {
     "files: the program double-clicked — launched": Chain(
         "files: the window made full", double_clicked("the program's icon", icon(THE_PROGRAM), budget=LAUNCH_INSNS), (OPEN_SELECTION,)),
 }
+# ---- band 6 wave 1b: each group APPENDS its own chains inside its own block (the order above unchanged), and adds
+# their count, steps and reach to its own entries of `test_aes_desk_rom.py`'s pins ----
+# ---- band 6 wave 1b, group G1 (units I, L) ----
+# (the fuller clicked on a FULL window: do_wfull's other arm, the window back to its previous size; and on a window
+# whose view is scrolled a column right: win_ocalc pulls the scroll back to keep the grown view filled; that view rebuilt
+# at its scroll, the first file shown is the second)
+CHAINS.update({
+    "window: its fuller clicked again (back to its size)": Chain("window: its fuller clicked", clicked("the fuller", fuller_point),
+                                                                 (FULL_A_WINDOW,)),
+    "files: the right arrow clicked, then the window made full": Chain(
+        "files: the window's right arrow clicked", clicked("the fuller", fuller_point), (FULL_A_WINDOW,)),
+    # (...and its view rebuilt at that scroll: the first file shown the second)
+    "files: the right arrow clicked, then View > Sort by Size": Chain(
+        "files: the window's right arrow clicked", item("View", "Sort by Size"), (VIEW_MENU, SET_VIEW_AND_SORT)),
+})
+# ---- end of group G1's ----
+# ---- band 6 wave 1b, group G2 (units A, K, J) ----
+# (the fix pass's chains for unit K's arms no chain made: the View menu's Show as Icons over a window already in icons;
+# Save Desktop with a window open — cnx_put's per-window entry — and with its view scrolled; two icons selected at once by a rubber box —
+# men_update's many-selected list. TRIED AND NOT KEPT: drive C: installed, then selected and Show Info — the desk keeps
+# the letter as typed, a lower-case c, past 'B': men_update's hard-disk list DISABLES Show Info (refused by name), and
+# the drive opened instead never enters drive_check)
+DO_VIEWMENU, CNX_PUT, MEN_UPDATE = 0xfe1f2a, 0xfe2536, 0xfe1cb6         # desktop's
+BOX_START_ABOVE = 3                     # how far above drive B:'s object a box round it and the trash begins: between
+                                        # drive A:'s object (it ends 5 rows above B:'s) and B:'s
+
+
+def above_drive(letter):
+    """A point of the bare desktop just above the object of the drive icon bearing `letter`, at its left edge."""
+    def point(machine):
+        x, y, _width, _height = box(machine.ram, desk_tree(machine), _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter))
+        return x, y - BOX_START_ABOVE
+    return point
+
+
+CHAINS.update({
+    "window: View > Show as Icons (the view it has)": Chain("A: opened", item("View", "Show as Icons"), (VIEW_MENU, DO_VIEWMENU)),
+    "window: Options > Save Desktop, Return": Chain("A: opened", (*item("Options", "Save Desktop"), *RETURN), (INF_WRITE, CNX_PUT)),
+    # (...and with the window's view scrolled a column right: its scroll's column and row apart)
+    "files: the right arrow clicked, then Options > Save Desktop, Return": Chain(
+        "files: the window's right arrow clicked", (*item("Options", "Save Desktop"), *RETURN), (INF_WRITE, CNX_PUT)),
+    "a rubber box on the desktop, round drive B: and the trash": Chain(
+        INF_ICONS, rubber_box(above_drive("B"), past(THE_TRASH)), (RUBBER_BOX_BINDING, MEN_UPDATE)),
+})
+# ---- end of group G2's ----
+# ---- band 6 wave 1b, group G3 (units B, G) ----
+BARE_DESKTOP = (300, 150)               # a point of the desktop far from every icon of the INF machine's (and under no window)
+MOVE_DRVICON, CHECK_AN_ICON_S_HIT = 0xfdc268, 0xfdc86e   # deskact's desktop icons put down; its hit held to an icon's image
+SORT_BY_THE_KEY = 0xfdfa2c              # deskfpd's pn_fcomp
+DRIVE_CORNER_INSET = 1                  # a point this far inside a drive icon's object: outside its image and its label
+
+
+def drive_corner(letter):
+    """A point just inside the top left corner of the OBJECT of the drive icon bearing `letter` — the object is wider and
+    taller than its image and label, and this point lies on neither (a click objc_find gives the icon and gr_obfind's
+    act_chkobj does not)."""
+    def point(machine):
+        index = _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter)
+        x, y, _width, _height = box(machine.ram, desk_tree(machine), index)
+        return x + DRIVE_CORNER_INSET, y + DRIVE_CORNER_INSET
+    return point
+
+
+CHAINS.update({
+    # (an icon let go where it began — on the desktop, no icon under it — is put down there: move_drvicon, the one
+    # caller `$fdcec4` in the drag loop; the icon's ANODE takes the new place)
+    "drive A: dragged to a bare spot of the desktop": Chain(
+        INF_ICONS, dragged("drive A:'s icon", drive("A"), "a bare spot of the desktop", lambda _machine: BARE_DESKTOP), (MOVE_DRVICON,)),
+    "drive A:'s object clicked at its corner, outside its image and its label": Chain(
+        INF_ICONS, clicked("drive A:'s object's corner", drive_corner("A")), (BUTTON_HANDLER, CHECK_AN_ICON_S_HIT)),
+    # (the files machine's directory sorted by each of the View menu's other three keys: pn_fcomp's three arms)
+    "files: View > Sort by Size": Chain("files: A: opened", item("View", "Sort by Size"), (VIEW_MENU, SORT_BY_THE_KEY)),
+    "files: View > Sort by Date": Chain("files: A: opened", item("View", "Sort by Date"), (VIEW_MENU, SORT_BY_THE_KEY)),
+    "files: View > Sort by Type": Chain("files: A: opened", item("View", "Sort by Type"), (VIEW_MENU, SORT_BY_THE_KEY)),
+})
+# ---- end of group G3's ----
+# ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
+# THE COPY ENGINE'S NAME CONFLICT AND A FOLDER INSIDE A FOLDER, each made on the ROM's machine by the hands: a file
+# copied where its name is already, a folder copied onto its own drive (a folder of that name is there: dos_mkdir
+# answers EACCDN), the conflict's field typed over — the copy made as B, a second folder at the root —, B copied into A,
+# and A, a folder now holding a folder, deleted (the walk goes down into B and comes back up). NO STEP OF THESE IS NEW
+# FOLDER (its Line-F word is taken by hand: `test_aes_desk_rom.TAKEN_BY_HAND`): the second folder is the conflict's copy.
+# (Tried and refused by name, not kept: a folder made INSIDE an opened folder, and Show Info of A holding B — both
+# stop at "Rwabs ... while the driver holds the disk CHANGED", the forced media change `aes_desk`'s docstring names.)
+SCAN_B = 0x30
+DO_NAMECON, SUB_PATH, PATH_PART = 0xfdcf48, 0xfdd0d2, 0xfdd762   # deskdir's name-conflict dialog, its folder up, par_chk's folder walk
+A_COPY_OF_A_AS_B = "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)"
+B_INTO_A = "folders: B dragged onto A, Return"
+CHAINS.update({
+    "folder: the file dragged onto it again, Return — the name conflict, Return": Chain(
+        "folder: the file dragged onto it, Return",
+        (*dragged("the file's icon", icon(THE_INF), "the folder", icon(NEW_FOLDER)), *RETURN, *RETURN), (COPY_ENGINE, DO_NAMECON)),
+    A_COPY_OF_A_AS_B: Chain(
+        "folder: File > New Folder, 'A', Return",
+        (*dragged("the folder's icon", icon(NEW_FOLDER), "drive A:'s icon", drive("A")), *RETURN, *typed("Backspace", SCAN_BACKSPACE),
+         *typed("B", SCAN_B), *RETURN), (COPY_ENGINE, DO_NAMECON, PATH_PART)),
+    B_INTO_A: Chain(A_COPY_OF_A_AS_B, (*dragged("folder B's icon", icon("B"), "folder A", icon(NEW_FOLDER)), *RETURN), (COPY_ENGINE, PATH_PART)),
+    "folders: A (holding B) dragged to the trash, OK": Chain(
+        B_INTO_A, (*dragged("folder A's icon", icon(NEW_FOLDER), "the trash", icon(THE_TRASH)), *pressed("OK")), (COPY_ENGINE, SUB_PATH)),
+})
+
+
+def lowest_button_point(text):
+    """THE MIDDLE OF THE LOWEST BUTTON READING `text` OF THE DIALOG THAT IS UP — Set Preferences holds two "No"s, the
+    deletes' confirmation above the copies' (`dialog_button` refuses a text two buttons read; both walk `_buttons_up`)."""
+    def point(machine):
+        up = [box(machine.ram, *shown) for shown in _buttons_up(machine, text)]
+        if not up:
+            raise Refused(f"no dialog that is up on this machine holds a button reading {text!r}")
+        x, y, width, height = max(up, key=lambda each: each[1])
+        return x + width // 2, y + height // 2
+    return point
+
+
+# ...and THE SAME CONFLICT WITH COPIES UNCONFIRMED (Set Preferences' second No): no copy dialog is up, and the conflict
+# dialog is put up for the first time — do_namecon's two other arms.
+COPIES_UNCONFIRMED = "folder: Options > Set Preferences, copies unconfirmed (the lower No), Return"
+CHAINS.update({
+    COPIES_UNCONFIRMED: Chain(
+        "folder: the file dragged onto it, Return", (*item("Options", "Set Preferences..."), *clicked("the lower No", lowest_button_point("No")),
+                                                      *RETURN), (DIALOG_RUNNER,)),
+    "folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return": Chain(
+        COPIES_UNCONFIRMED, (*dragged("the file's icon", icon(THE_INF), "the folder", icon(NEW_FOLDER)), *RETURN), (COPY_ENGINE, DO_NAMECON)),
+})
+# ---- end of group G4's ----
+# ---- end of band 6 wave 1b's ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack.

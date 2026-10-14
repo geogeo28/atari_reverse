@@ -403,13 +403,11 @@ def test_the_rom_s_binding_in_place_leaves_the_word_its_harness_run_does(name):
 CORES = frozenset(routines.core_symbol(name) for name in db.BINDINGS)
 
 
-def test_no_function_of_a_blob_outside_the_bindings_own_file_refers_to_one(blob):
-    """THE UNBOUND PIN, off the build's own call graph: every function that refers to a binding's core (a call, an
-    address taken) is itself a binding's core (form_do's desk_wait, desk_wait's graf_mouse — where GCC keeps them calls)."""
-    graph = transcription.call_graph(blob.elf)
-    assert CORES <= set(graph), f"not linked: {sorted(CORES - set(graph))}"
-    referring = {function for function, targets in graph.items() if targets & CORES}
-    assert referring <= CORES, f"bound: {sorted(referring - CORES)} refer to a binding"
+def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_binding(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every binding's core linked;
+    and no function outside the unbound desk (the held cores and what only they reach) refers to ANY held core — wave
+    1b's routines call the bindings by design (form_do's desk_wait, desk_wait's graf_mouse among the bindings' own)."""
+    assert not db.bound_referrers(blob, db.BINDINGS)
 
 
 JUMP = re.compile(r"\tjmp (.*)$")

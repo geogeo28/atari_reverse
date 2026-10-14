@@ -100,13 +100,14 @@ RECORD_BYTES = {"PD": PD_BYTES, "UDA": UDA_STATE_BYTES, "CDA": CDA_BYTES, "EVB":
                 "PARM": PARM_BYTES, "GRECT": GRECT_BYTES, "ORECT": ORECT_BYTES, "RSH": RSH_BYTES}
 
 # ---- the window, and the bands in it --------------------------------------------------------------------------------
-# Above the VDI's window and below the stack guard, dead in the snapshot (`test_aes_door.py` holds both). 24 KB: the
+# Above the VDI's window and below the stack guard, dead in the snapshot (`test_aes_door.py` holds both). 25.5 KB: the
 # first 8 KB are the bands the object, graphics and string layers stage in (full, measured, when the event door claimed
-# its 48 bytes); the next 8 KB the form, menu, window and file-selector layers' own; the last 8 KB were added for the
-# file selector's replayed GEMDOS (`aes_fslib`: a session over a hundred names needs a 6 KB script), 4.4 KB below the
-# stack guard left dead.
+# its 48 bytes); the next 8 KB the form, menu, window and file-selector layers' own; the next 8 KB were added for the
+# file selector's replayed GEMDOS (`aes_fslib`: a session over a hundred names needs a 6 KB script); the last 1.5 KB
+# for the desk's widest laid tree (`aes_deskact`: 61 objects and a root, which no band of the first 24 KB had room for
+# whole) — 2.8 KB below the stack guard left dead.
 WINDOW_AT = 0x78000
-WINDOW_BYTES = 0x6000
+WINDOW_BYTES = 0x6600
 SPAN = staging.Registry(WINDOW_AT, WINDOW_AT + WINDOW_BYTES, "the AES's staged window")
 LAYOUTS = layouts.Layouts(AES_HEADERS, RECORDS, CONSTANTS, require=SPAN.require_claimed, where="`aes/aes.h`, THE WIDTH TAG")
 FIELDS = LAYOUTS.fields

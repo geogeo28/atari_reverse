@@ -288,6 +288,64 @@
 #define HOST_SLOT_AES_DOS_SETDT_STAMP   0x7f870  /* $fe3ae8's `pea 10(sp)`: its caller's time and date words      */
 #define HOST_SLOT_AES_DOS_SETDT_STAMP_BYTES 4    /* DOS_STAMP_BYTES                                              */
 /* ---- end of unit O's ---- */
+/* BAND 6 WAVE 1b: an ADDRESS WINDOW per group (the band's free gaps, measured at ec18000), each group's slots inside its
+ * own windows only — one slot per role, `_Static_assert` of each frame against its `_BYTES` in the unit's `.c`. Out of
+ * room: STOP and report, never borrow another group's window. Each id in `enum host_slot` below, in its group's region. */
+/* ---- band 6 wave 1b, group G1 (units I, L) ---- windows $7f620..$7f640 (32 B), $7f6de..$7f700 (34 B),
+ * $7f3e4..$7f400 (28 B), $7f228..$7f240 (24 B) */
+/* Unit I's window leaves' one frame (`desk/deskwin.h`): the GRECTs a leaf hands a binding or a rectangle routine BY
+ * ADDRESS — its `link` locals in the ROM (do_wfull's three, do_wredraw's piece and the caller's own clip words), or
+ * ini_str's string address. No leaf of the unit calls another while it holds it; held across the yields of the
+ * bindings it calls (wind_get's, objc_draw's, the boxes'). */
+#define HOST_SLOT_AES_DESK_WIN_FRAME    0x7f620  /* $fe0f9c's -24(a6) up                                          */
+#define HOST_SLOT_AES_DESK_WIN_FRAME_BYTES 24    /* WIN_FRAME_BYTES                                              */
+/* ...and unit L's (`desk/deskview.h`): win_sinfo's merge parameters, win_shwall's rectangle. */
+#define HOST_SLOT_AES_DESK_VIEW_FRAME   0x7f6de  /* $fe37ee's -6(a6) up                                           */
+#define HOST_SLOT_AES_DESK_VIEW_FRAME_BYTES 8    /* VIEW_FRAME_BYTES                                             */
+/* ---- end of group G1's ---- */
+/* ---- band 6 wave 1b, group G2 (units A, K, J) ---- windows $7f7ba..$7f7d0 (22 B), $7f4f0..$7f500 (16 B),
+ * $7f430..$7f440 (16 B) */
+/* app_tran's (`desk/deskapp.h`): the BITBLK address rs_gaddr answers into its frame — HELD ACROSS THE YIELD of the
+ * rsrc_gaddr binding, which stores it before its dsptch and is read after it (one desk process: one frame). */
+#define HOST_SLOT_AES_APP_TRAN_BITBLK   0x7f430  /* $fdb186's -4(a6)                                              */
+#define HOST_SLOT_AES_APP_TRAN_BITBLK_BYTES 4    /* APP_TRAN_BITBLK_BYTES                                        */
+/* men_update's (`desk/desktop.h`): i_find's two answers, the FNODE and whether a program, handed BY ADDRESS — given
+ * back before its men_list's yields. */
+#define HOST_SLOT_AES_MEN_UPDATE_FIND   0x7f4f0  /* $fe1cb6's -6(a6) FNODE, -2(a6) is-a-program                   */
+#define HOST_SLOT_AES_MEN_UPDATE_FIND_BYTES 6    /* FIND_FRAME_BYTES                                             */
+/* ---- end of group G2's ---- */
+/* ---- band 6 wave 1b, group G3 (units B, G) ---- windows $7f1a0..$7f1e0 (64 B), $7f5dc..$7f600 (36 B) */
+/* deskact's (`desk/deskact.h`): the frame words its hit tests and drags hand on BY ADDRESS — gr_isdown's two answers
+ * of evnt_multi and gr_bwait's four of gr_isdown, BOTH HELD ACROSS evnt_multi's WAIT; act_chkobj's, act_chg's and
+ * act_allchg's rectangles, handed to rc_intersect / rc_copy / rc_union and held across their callees (act_allchg's
+ * across act_chkobj's own: two roles, one desk process). */
+#define HOST_SLOT_AES_GR_ISDOWN_ANSWERS 0x7f1a0  /* $fdc152's -16(a6) clicks and -14(a6) key                      */
+#define HOST_SLOT_AES_GR_ISDOWN_ANSWERS_BYTES 4  /* GR_ISDOWN_FRAME_BYTES                                        */
+#define HOST_SLOT_AES_GR_BWAIT_ANSWERS  0x7f1a4  /* $fdc4fe's -10(a6)..-4(a6): the mouse, the button, the keys    */
+#define HOST_SLOT_AES_GR_BWAIT_ANSWERS_BYTES 8   /* GR_BWAIT_FRAME_BYTES                                         */
+#define HOST_SLOT_AES_ACT_CHKOBJ_RECTS  0x7f1ac  /* $fdc86e's -18(a6) and -10(a6)                                */
+#define HOST_SLOT_AES_ACT_CHKOBJ_RECTS_BYTES 16  /* ACT_CHKOBJ_FRAME_BYTES                                       */
+#define HOST_SLOT_AES_ACT_CHG_RECT      0x7f1bc  /* $fdc9e4's -10(a6)                                            */
+#define HOST_SLOT_AES_ACT_CHG_RECT_BYTES 8       /* ACT_CHG_FRAME_BYTES                                          */
+#define HOST_SLOT_AES_ACT_ALLCHG_RECTS  0x7f1c4  /* $fdcabc's -20(a6) and -12(a6)                                */
+#define HOST_SLOT_AES_ACT_ALLCHG_RECTS_BYTES 16  /* ACT_ALLCHG_FRAME_BYTES                                       */
+/* ---- end of group G3's ---- */
+/* ---- band 6 wave 1b, group G4 (units C, H, E, F) ---- window $7f100..$7f1a0 (160 B) */
+/* Frame locals whose address each routine hands a binding or a string helper. TWO ARE HELD ACROSS A BINDING'S YIELD
+ * (the dispatcher runs before the binding returns): the rectangle the dialog helpers get from form_center and hand on,
+ * and fun_msg's message — the formatters' frames hold no binding. One frame for every process: only the desk's
+ * process runs these. Unit C's four dialog helpers share one rectangle (none calls another while holding it). */
+#define HOST_SLOT_AES_DESK_DIR_RECT     0x7f100  /* $fdcf04/$fdcfa8/$fdcfea's -8(a6) x y w h, $fdd04c's -8(a6) GRECT */
+#define HOST_SLOT_AES_DESK_DIR_RECT_BYTES 8
+#define HOST_SLOT_AES_DESK_FUN_MSG      0x7f108  /* $fdfda6's -16(a6): the message appl_write is handed           */
+#define HOST_SLOT_AES_DESK_FUN_MSG_BYTES 16
+#define HOST_SLOT_AES_DESK_MY_ITOA_NUMBER 0x7f118 /* $fde500's 8(a6): its own argument word, merge_str's parameter */
+#define HOST_SLOT_AES_DESK_MY_ITOA_NUMBER_BYTES 2
+#define HOST_SLOT_AES_DESK_OB_SFCB_FRAME 0x7f11a /* $fde610's -50(a6) up: the size, time, date texts, the SFCB copy */
+#define HOST_SLOT_AES_DESK_OB_SFCB_FRAME_BYTES 50
+#define HOST_SLOT_AES_DESK_INF_DTTMSZ_FRAME 0x7f14c /* $fdea9a's -26(a6) up: the date, time and size texts         */
+#define HOST_SLOT_AES_DESK_INF_DTTMSZ_FRAME_BYTES 26
+/* ---- end of group G4's ---- */
 /* ...and the screen manager's handlers' (`aes/gemctrl.h`). hctl_window's: the window's rectangle with the four words
  * r_get unpacks it into, and the elevator's corner ob_offset answers into — each read out and given back before any
  * wait; THE RECTANGLE A DRAG IS HELD BY (gr_dragbox's bound, gr_rubwind's twin offsets) and THE TWO WORDS IT ANSWERS
@@ -436,6 +494,28 @@ enum host_slot {
     HOST_SLOT_ID_AES_DOS_LABEL_FRAME, /* band 6 wave 1a, unit O */
     HOST_SLOT_ID_AES_DOS_SPACE_DFREE, /* band 6 wave 1a, unit O */
     HOST_SLOT_ID_AES_DOS_SETDT_STAMP, /* band 6 wave 1a, unit O */
+    /* ---- band 6 wave 1b, group G1 (units I, L) ---- */
+    HOST_SLOT_ID_AES_DESK_WIN_FRAME,  /* band 6 wave 1b, group G1 */
+    HOST_SLOT_ID_AES_DESK_VIEW_FRAME, /* band 6 wave 1b, group G1 */
+    /* ---- end of group G1's ---- */
+    /* ---- band 6 wave 1b, group G2 (units A, K, J) ---- */
+    HOST_SLOT_ID_AES_APP_TRAN_BITBLK, /* band 6 wave 1b, group G2 */
+    HOST_SLOT_ID_AES_MEN_UPDATE_FIND, /* band 6 wave 1b, group G2 */
+    /* ---- end of group G2's ---- */
+    /* ---- band 6 wave 1b, group G3 (units B, G) ---- */
+    HOST_SLOT_ID_AES_GR_ISDOWN_ANSWERS,   /* band 6 wave 1b, group G3 */
+    HOST_SLOT_ID_AES_GR_BWAIT_ANSWERS,    /* band 6 wave 1b, group G3 */
+    HOST_SLOT_ID_AES_ACT_CHKOBJ_RECTS,    /* band 6 wave 1b, group G3 */
+    HOST_SLOT_ID_AES_ACT_CHG_RECT,        /* band 6 wave 1b, group G3 */
+    HOST_SLOT_ID_AES_ACT_ALLCHG_RECTS,    /* band 6 wave 1b, group G3 */
+    /* ---- end of group G3's ---- */
+    /* ---- band 6 wave 1b, group G4 (units C, H, E, F) ---- */
+    HOST_SLOT_ID_AES_DESK_DIR_RECT,          /* band 6 wave 1b, group G4 */
+    HOST_SLOT_ID_AES_DESK_FUN_MSG,           /* band 6 wave 1b, group G4 */
+    HOST_SLOT_ID_AES_DESK_MY_ITOA_NUMBER,    /* band 6 wave 1b, group G4 */
+    HOST_SLOT_ID_AES_DESK_OB_SFCB_FRAME,     /* band 6 wave 1b, group G4 */
+    HOST_SLOT_ID_AES_DESK_INF_DTTMSZ_FRAME,  /* band 6 wave 1b, group G4 */
+    /* ---- end of group G4's ---- */
     HOST_SLOT_ID_AES_HCTL_WINDOW_SIZE,
     HOST_SLOT_ID_AES_HCTL_WINDOW_CORNER,
     HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT,     /* a slot per process: the screen manager's frame across a drag's waits */

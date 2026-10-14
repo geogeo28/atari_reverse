@@ -51,7 +51,7 @@ import linef_table                      # noqa: E402
 
 WORD_BYTES, LONG_BYTES = aes.WORD_BYTES, aes.LONG_BYTES
 RECREATE = Path(__file__).resolve().parents[1]
-LEAF = layouts.parse_constants((aes.INCLUDE / "desk" / "deskleaf.h",), known=aes.CONSTANTS)
+LEAF = layouts.parse_constants((aes.INCLUDE / "desk" / "deskglobals.h", aes.INCLUDE / "desk" / "deskleaf.h"), known=aes.CONSTANTS)
 At = dl.At
 SENTINEL = emu.SENTINEL
 # GEMDOS's error numbers, as the headers that reconstruct GEMDOS name them (signed longwords).
@@ -1017,44 +1017,33 @@ def test_what_the_blob_cases_trap_with_is_kept_and_compared__the_rom_s_own_last_
 
 # ---- UNBOUND: linked into both blobs, reached by nothing ----------------------------------------------------------------------------
 BLOBS = pytest.mark.parametrize("blob_name", tuple(isr.BLOBS))
-OWN_STATICS = {"dos_verdict", "copy_text_out"}         # the file's own, which only its cores call
-
-
 def cores():
     """`{the core's symbol: its routine}` for the eighteen."""
     return {routines.core_symbol(name): name for name in dl.UNIT_O}
 
 
 @BLOBS
-def test_both_blobs_link_the_eighteen_cores_and_no_function_outside_them_reaches_one(blob_name):
-    """LINKED: every core is a sized function of the blob, and the door's `.S` entry is defined. UNBOUND: no function of
-    the blob outside the eighteen (and the file's own statics) references one — a call, a branch, an address taken
-    (`transcription.call_graph`) — and nothing references the `.S`."""
-    elf = isr.blob_named(blob_name).elf
-    defined = {symbol.name for symbol in transcription.symbol_table(elf) if symbol.kind in "Tt"}
+def test_both_blobs_link_the_eighteen_cores_and_no_function_outside_the_unbound_desk_reaches_one(blob_name):
+    """LINKED: every core is a sized function of the blob, and the door's `.S` entry is defined. UNBOUND
+    (`aes_deskbind.bound_referrers`, one pin for every unit of the desk): no function outside the unbound desk — the
+    held cores and what only they reach (the file's own statics among them) — references ANY held core (a call, a
+    branch, an address taken: `transcription.call_graph`); wave 1b's routines call five of the eighteen by design.
+    And nothing references the `.S`."""
+    blob = isr.blob_named(blob_name)
+    defined = {symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.kind in "Tt"}
     assert set(cores()) <= defined
-    graph = transcription.call_graph(elf)
-    own = set(cores()) | OWN_STATICS
-    reached_from = {caller: sorted(set(callees) & set(cores())) for caller, callees in graph.items()
-                    if caller.split(":")[-1] not in own and set(callees) & set(cores())}
-    assert not reached_from, f"a function outside the unit reaches its cores: {reached_from}"
+    assert not aes_deskbind.bound_referrers(blob, dl.UNIT_O)
+    graph = transcription.call_graph(blob.elf)
     assert TRP13_ENTRY in defined and not [caller for caller, callees in graph.items() if TRP13_ENTRY in callees], (
         "the door's `.S` is linked and reached by nothing")
 
 
 @BLOBS
-def test_no_longword_of_a_blob_holds_a_core_s_address(blob_name):
-    """...and none is named BY VALUE: no longword of the blob's bytes, at any even offset, is a core's address (a table
-    entry, a vector's holder) — nor the door's `.S` entry's."""
-    blob = isr.blob_named(blob_name)
-    named_entries = {*cores(), TRP13_ENTRY}
-    starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.name in named_entries}
-    assert len(starts) == len(named_entries)
-    image = blob.blob
-    named = sorted({starts[value] for offset in (0, WORD_BYTES)
-                    for (value,) in struct.iter_unpack(">I", image[offset:offset + (len(image) - offset) // LONG_BYTES * LONG_BYTES])
-                    if value in starts})
-    assert not named, f"a longword of the blob holds the address of {named}"
+def test_no_longword_of_a_blob_outside_the_unbound_desk_holds_a_core_s_address(blob_name):
+    """...and none is named BY VALUE (`aes_deskbind.bound_longwords`): no longword of the blob's bytes, at any even
+    offset, is a held core's address (a table entry, a vector's holder) — nor the door's `.S` entry's — but an
+    operand of the unbound desk's own instructions (a held core's `jsr` of another, wave 1b's C calling unit O's)."""
+    assert not aes_deskbind.bound_longwords(isr.blob_named(blob_name), also={TRP13_ENTRY})
 
 
 TRP13_ENTRIES = 2                       # the door has two entries in the ROM's table (`$f1a0`, `$f708`); every other routine one

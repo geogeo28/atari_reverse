@@ -416,11 +416,30 @@ def test_the_tables_of_this_battery_name_chains_there_are():
     assert all(set(chain.enters) <= set(desk.routines()) for chain in desk.CHAINS.values())
 
 
-CHAINS, STEPS = 51, 158
+# THE CAMPAIGN'S SIZE, by the block that added the chains: `{block: (chains, steps)}` — a group of band 6 wave 1b adds
+# its own chains' count and steps inside its own block (`aes_desk.CHAINS`' matching block), so no two authors edit one
+# line; the pin is the sum.
+CHAINS_AND_STEPS_BY_BLOCK = {
+    "band 6 waves 0 and 1a": (51, 158),
+    # ---- band 6 wave 1b, group G1 (units I, L) ----
+    "band 6 wave 1b, group G1": (3, 5),
+    # ---- end of group G1's ----
+    # ---- band 6 wave 1b, group G2 (units A, K, J) ----
+    "band 6 wave 1b, group G2": (4, 14),     # (the fix pass's) Show as Icons; Save Desktop, a window open, then scrolled; B: and the trash boxed
+    # ---- end of group G2's ----
+    # ---- band 6 wave 1b, group G3 (units B, G) ----
+    "band 6 wave 1b, group G3": (5, 13),     # a drive put down on the desktop, its object's corner clicked, three sorts
+    # ---- end of group G3's ----
+    # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
+    "band 6 wave 1b, group G4": (6, 29),    # the name conflict three ways, B into A, A holding B deleted, copies unconfirmed
+    # ---- end of group G4's ----
+}
+CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
+                 sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
 
 
 def test_every_chain_names_a_routine_of_its_act_and_the_campaign_is_this_many_chains_and_steps():
-    """NO CHAIN IS HELD BY ITS NAME ALONE (the design's risk 7): each of the 51 names at least one routine ITS OWN
+    """NO CHAIN IS HELD BY ITS NAME ALONE (the design's risk 7): each of the CHAINS names at least one routine ITS OWN
     STEPS must enter — the act's own, read off the ROM — and the per-chain case holds it to the cycle profile."""
     assert [name for name, chain in desk.CHAINS.items() if not chain.enters] == []
     assert (len(desk.CHAINS), sum(len(chain.steps) for chain in desk.CHAINS.values())) == (CHAINS, STEPS)
@@ -476,11 +495,29 @@ def test_a_typed_key_is_let_go_and_the_rom_s_machine_is_another_with_it_held():
 
 
 # ---- THE REACH TABLE AND THE STACKS -----------------------------------------------------------------------------------------------------
-REACHED = 219                           # of band 6's 244, by the campaign's own steps (the boot's routines are not a chain's)
+# Of band 6's 244, by the campaign's own steps (the boot's routines are not a chain's): `{block: routines its chains
+# reached first}` — a group of band 6 wave 1b adds the routines ITS chains reach that none reached before, in its own
+# block; the pin is the sum.
+REACHED_BY_BLOCK = {
+    "band 6 waves 0 and 1a": 219,
+    # ---- band 6 wave 1b, group G1 (units I, L) ----
+    "band 6 wave 1b, group G1": 0,
+    # ---- end of group G1's ----
+    # ---- band 6 wave 1b, group G2 (units A, K, J) ----
+    "band 6 wave 1b, group G2": 0,
+    # ---- end of group G2's ----
+    # ---- band 6 wave 1b, group G3 (units B, G) ----
+    "band 6 wave 1b, group G3": 1,          # move_drvicon `$fdc268` (the drive put down on a bare spot)
+    # ---- end of group G3's ----
+    # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
+    "band 6 wave 1b, group G4": 4,          # $fdcf04 draw_dial, $fdcf48 do_namecon, $fdd0d2 sub_path, $fdd762 path_part
+    # ---- end of group G4's ----
+}
+REACHED = sum(REACHED_BY_BLOCK.values())
 
 
 def test_the_reach_table_has_a_row_for_every_routine_and_is_read_off_each_chain_s_own_steps():
-    """THE DERIVATION: `{routine: chains}` over band 6's 244 — 219 with a chain, in `CHAINS`' order; a chain's row
+    """THE DERIVATION: `{routine: chains}` over band 6's 244 — REACHED with a chain, in `CHAINS`' order; a chain's row
     is ITS OWN steps' (the file selected enters no folder maker though the chain it goes on to does), and a routine
     is reached by its FIRST INSTRUCTION (a chain whose profile holds only a later PC of it — a return into a routine
     its predecessor entered — does not reach it)."""

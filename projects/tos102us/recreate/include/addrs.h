@@ -2622,4 +2622,135 @@
 #define AES_DOS_RENAME_TRAP_RETURN 0xfe3bb0
 /* ---- end of unit O's ---- */
 
+/* BAND 6 WAVE 1b: four groups, each naming ONLY its own units' routines inside its own block (another group's routine
+ * by THAT group's name), the blocks in G1..G4 order. */
+/* ---- band 6 wave 1b, group G1 (units I `desk/deskwin.h`, L `desk/deskview.h`) ---- */
+/* Unit I: the screen's objects, the program leaves, the window leaves. */
+#define AES_ROM_OBJ_INIT          0xfe0776   /* (): every screen object unlinked, the root the screen's size, its five children added */
+#define AES_ROM_OBJ_WALLOC        0xfe0840   /* (x, y, w, h): the first window root of no size takes the rectangle; it, or 0 */
+#define AES_ROM_OBJ_WFREE         0xfe08b4   /* (object, x, y, w, h): a window root takes the rectangle, its icons unlinked */
+#define AES_ROM_OBJ_IALLOC        0xfe0942   /* (parent, x, y, w, h): the first unlinked icon object added under parent; it, or 0 */
+#define AES_ROM_PRO_CHDIR         0xfe09cc   /* (drive, path): the drive and path made current (99: none); 1 */
+#define AES_ROM_PRO_CMD           0xfe0a7c   /* (command, tail, unread, count byte): the launch's command and tail kept; 1 */
+#define AES_ROM_PRO_RUN           0xfe0ab6   /* wave 2 (ctx): a program run through pro_exec, the windows redrawn */
+#define AES_ROM_PRO_EXEC          0xfe0b26   /* (isgraf, isover, command, tail): the hourglass, then shel_write's answer */
+#define AES_ROM_DESK_RSRC_LOAD    0xfe0b56   /* (): rom_ram's part 1 (the desk's resource) over the desk's global[]; 1 */
+#define AES_ROM_INI_TREE          0xfe0b6e   /* (answer, index): rsrc_gaddr of a tree */
+#define AES_ROM_INI_STR           0xfe0b86   /* (index): a free string copied into g_lngstr; its address */
+#define AES_ROM_DESK_CLEAR        0xfe0bbc   /* wave 2 (ctx): a window's icons all made not SELECTED (act_allchg) */
+#define AES_ROM_DESK_VERIFY       0xfe0c2a   /* wave 2 (ctx): the view rebuilt where changed; g_croot and g_cwin set */
+#define AES_ROM_DO_WREDRAW        0xfe0c9a   /* (window, GRECT): its objects drawn over its rectangle list, clipped */
+#define AES_ROM_GET_XYWH          0xfe0d5a   /* (tree, object, 4 answers): an object's four words out */
+#define AES_ROM_GET_SPEC          0xfe0db8   /* (tree, object): an object's ob_spec */
+#define AES_ROM_DO_XYFIX          0xfe0dce   /* (&x, &y): a corner on a 16-pixel column, below the desk's top */
+#define AES_ROM_DO_WOPEN          0xfe0e38   /* wave 2 (ctx): a window opened, a box grown from its icon */
+#define AES_ROM_ZOOM_CLOSED       0xfe0f36   /* (close, window, icon x, icon y): closed where asked, a box shrunk to the icon */
+#define AES_ROM_DO_WFULL          0xfe0f9c   /* (window): made full, or back to its previous size */
+/* The sites pro_chdir's DOS glue calls return to: what each parks (`aes/gemdosif.h`, the host argument). */
+#define AES_PRO_CHDIR_SDRV_RETURN  0xfe09fe  /* ...from dos_sdrv(drive - 'A') */
+#define AES_PRO_CHDIR_CHDIR_RETURN 0xfe0a78  /* ...from dos_chdir(the path) */
+/* Unit L: the view, the window list, the layout leaves. */
+#define AES_ROM_WIN_VIEW          0xfe2a7c   /* (view, sort): an item's extent, spacing and pitch, the columns across */
+#define AES_ROM_WIN_START         0xfe2b64   /* (): obj_init, the icon view, every WNODE free */
+#define AES_ROM_WIN_ALLOC         0xfe2ba2   /* (obid): a WNODE, its root object and its GEM window; it, or 0 */
+#define AES_ROM_WIN_FREE          0xfe2c5c   /* (WNODE): its GEM window deleted, the WNODE and its root freed */
+#define AES_ROM_WIN_FIND          0xfe2cb8   /* (handle): the WNODE of a GEM window, or 0 */
+#define AES_ROM_WIN_TOP           0xfe2cf4   /* (WNODE): its root on top, its drive and path made current */
+#define AES_ROM_WIN_ONTOP         0xfe2d46   /* (): the WNODE on top, its drive and path made current; or 0 */
+#define AES_ROM_WIN_CNT           0xfe2dc8   /* (level): the WNODE index of the root that many along */
+#define AES_ROM_WIN_ITH           0xfe2dfc   /* (level): ...its WNODE */
+#define AES_ROM_WIN_OCALC         0xfe2e12   /* (WNODE, wfit, hfit, &first): the view's columns and rows, what is shown */
+#define AES_ROM_WIN_ICALC         0xfe2f0a   /* (FNODE): the file's ANODE found (app_afind) */
+#define AES_ROM_WIN_BLDVIEW       0xfe2f68   /* (WNODE, GRECT): the window's icons laid out as objects */
+#define AES_ROM_WIN_BLT           0xfe3310   /* wave 2 (ctx): a window's view scrolled by a blit */
+#define AES_ROM_WIN_SLIDE         0xfe3504   /* wave 2 (ctx): ...by a slider */
+#define AES_ROM_WIN_ARROW         0xfe359a   /* wave 2 (ctx): ...by an arrow or a page */
+#define AES_ROM_WIN_SRTALL        0xfe3622   /* wave 2 (ctx): every window's files sorted */
+#define AES_ROM_WIN_BDALL         0xfe3684   /* wave 2 (ctx): every window's view rebuilt */
+#define AES_ROM_WIN_SHWALL        0xfe36fa   /* (): a redraw message sent for every open window */
+#define AES_ROM_WIN_ISEL          0xfe3760   /* (tree, root, current): the next SELECTED child; or 0 */
+#define AES_ROM_WIN_INAME         0xfe37c4   /* (object): an icon's text */
+#define AES_ROM_WIN_SINFO         0xfe37ee   /* (WNODE): its info line: the bytes and files of its path */
+#define AES_ROM_WIN_SNAME         0xfe384c   /* (WNODE): its name: its path's spec to the `*`, a blank each end */
+/* ---- end of group G1's ---- */
+/* ---- band 6 wave 1b, group G2 (units A `desk/deskapp.h`, K `desk/desktop.h`, J `desk/desksupp.h`) ---- */
+/* unit A (deskapp): the INF's fields read and written, the ANODE list, the icons' images, the desktop built */
+#define AES_ROM_SCAN_STR          0xfdb014   /* (cursor, &string): blanks skipped, a text to its `@` copied into g_pbuff; the cursor past it */
+#define AES_ROM_SAVE_STR          0xfdb05a   /* (cursor, string): the text, `@` and a blank written at the cursor; the cursor past them */
+#define AES_ROM_APP_PARSE         0xfdb082   /* (cursor, anode): an INF line's type letter, its icons, letter and two texts read; the cursor */
+#define AES_ROM_APP_TRAN          0xfdb186   /* (index): the desk resource's BITBLK `index` turned to the device's form in place */
+#define AES_ROM_APP_GETFH         0xfdb1c8   /* (open, name, attributes): the name kept, opened (mode 2) or created; the handle, 0 failing */
+#define AES_ROM_APP_RDICON        0xfdb220   /* (): the ROM's icon blocks copied, their images and masks laid in two blocks, turned */
+#define AES_ROM_SNAP_DISK         0xfdb508   /* (x, y, &x, &y): a desktop point snapped to the icon grid */
+#define AES_ROM_APP_REVIT         0xfdbb0a   /* (): the ANODE list in use turned round */
+#define AES_ROM_APP_PATH_SAVE     0xfdbe7e   /* (): the current drive and path kept, the boot drive's root made current */
+#define AES_ROM_APP_PATH_RESTORE  0xfdbeb6   /* (): ...and the kept drive and path made current again */
+#define AES_ROM_APP_BLDDESK       0xfdbeec   /* (): the desktop's icon objects built from the ANODEs on it; the drive vectors set */
+/* unit K (desktop): the menus' state, the item under a click, the windows' state kept */
+#define AES_ROM_I_FIND            0xfe1bf6   /* (window, item, &fnode, &is_app): the ANODE of a desktop icon or a window's file */
+#define AES_ROM_MEN_LIST          0xfe1c8c   /* (tree, items, enable): menu_ienable over a NUL-ended byte list of items */
+#define AES_ROM_MEN_UPDATE        0xfe1cb6   /* (tree): the File / View / Options items enabled as the selection says */
+#define AES_ROM_DO_VIEWMENU       0xfe1f2a   /* (item): the View menu's choice checked; the windows redrawn where it changed; 0 */
+#define AES_ROM_CNX_PUT           0xfe2536   /* (): the view, the sort and the four windows kept for the INF */
+/* unit J (desksupp) */
+#define AES_ROM_DRIVE_CHECK       0xfe1ad0   /* (letter): Drvmap, the boot sector read (Floprd, eralert), the media change forced */
+/* ---- end of group G2's ---- */
+/* ---- band 6 wave 1b, group G3 (units B `desk/deskact.h`, G `desk/deskfpd.h`) ---- */
+/* unit B (deskact: hit tests, icon drags), each read from its body; LINKED, UNBOUND */
+#define AES_ROM_APP_AFIND         0xfdc080   /* (isdesk, type, obid, name, isapp out): the ANODE of a desktop icon or of a file's name */
+#define AES_ROM_GR_OBFIND         0xfdc0fa   /* (tree, root, mx, my): objc_find, an icon's hit checked by act_chkobj */
+#define AES_ROM_GR_ISDOWN         0xfdc152   /* (out, x, y, w, h, 4 answers): evnt_multi of the button and a rectangle; 1 while down */
+#define AES_ROM_GR_ACCOBS         0xfdc1ba   /* (tree, root, count out, points): the selected icons' corners, at most 60 */
+#define AES_ROM_MOVE_DRVICON      0xfdc268   /* (tree, root, x, y, points): the selected desktop icons put down where the drag left them */
+#define AES_ROM_GR_EXTENT         0xfdc398   /* (count, points, rect): the rectangle that holds the points */
+#define AES_ROM_GR_OBALIGN        0xfdc458   /* (count, x, y, points): each point moved by (-x, -y) */
+#define AES_ROM_GR_PLNS           0xfdc49a   /* (x, y, count, outline, icons, corners): the outline drawn at each icon, the cursor hidden */
+#define AES_ROM_GR_BWAIT          0xfdc4fe   /* (rect, mx, my, count, outline, icons, corners): outlines drawn, gr_isdown, drawn again */
+#define AES_ROM_ACT_CHKOBJ        0xfdc86e   /* (tree, root, obj, x, y, w, h): the object if the rectangle touches its icon or text, else root */
+#define AES_ROM_ACT_CHG           0xfdc9e4   /* (window, tree, root, obj, clip, value, set, draw, check disabled): one object's state changed */
+#define AES_ROM_ACT_ALLCHG        0xfdcabc   /* (window, tree, root, except, rect, clip, value, set, draw): every icon the rectangle touches */
+/* unit G (deskfpd: path and file nodes, the sort), each read from its body; LINKED, UNBOUND */
+#define AES_ROM_FN_INIT           0xfdf6d0   /* (): the file nodes linked into the free list */
+#define AES_ROM_PN_INIT           0xfdf710   /* (): the path nodes linked into the free list, none open */
+#define AES_ROM_FPD_START         0xfdf756   /* (): the DTA's and a buffer's pointers set, fn_init, pn_init */
+#define AES_ROM_FPD_BLDSPEC       0xfdf77a   /* (drive, path, name, ext, spec out): "D:\path\name.ext"; 0 where the path is too long */
+#define AES_ROM_FPD_PARSE         0xfdf7f4   /* (spec, drive out, path out, name out, ext out): a spec taken apart */
+#define AES_FPD_PARSE_GDRV_RETURN 0xfdf834   /* fpd_parse's return site from dos_gdrv: what AES_DOS_RETURN holds after it */
+#define AES_ROM_FPD_OFIND         0xfdf8c6   /* (file list, obj): the file node of an object, or 0 */
+#define AES_ROM_FPD_ELIST         0xfdf8ec   /* (list, stop): the node whose next is `stop` */
+#define AES_ROM_FN_FREE           0xfdf908   /* (node): a file node pushed on the free list */
+#define AES_ROM_FL_FREE           0xfdf926   /* (list): a file list put at the head of the free list */
+#define AES_ROM_FN_ALLOC          0xfdf952   /* (): a file node off the free list, or 0 */
+#define AES_ROM_PN_ALLOC          0xfdf972   /* (): a path node off the free list onto the open list, cleared; or 0 */
+#define AES_ROM_PN_FREE           0xfdf9aa   /* (path): its files freed, the node unlinked and freed */
+#define AES_ROM_PN_OPEN           0xfdf9da   /* (drive, path, name, ext, attributes): a path node with its spec, or 0 */
+#define AES_ROM_PN_FCOMP          0xfdfa2c   /* (file, file, key): the two files' order by name, date, size or type */
+#define AES_ROM_PN_COMP           0xfdfaee   /* (file, file): folders first, then pn_fcomp by the window's sort key */
+#define AES_ROM_PN_SORT           0xfdfb38   /* (count or -1, list): the list sorted (a shell sort), relinked; its head */
+/* ---- end of group G3's ---- */
+/* ---- band 6 wave 1b, group G4 (units C `desk/deskdir.h`, H `desk/deskfun.h`, E `desk/deskusr.h`, F `desk/deskinf.h`) ---- */
+#define AES_ROM_DESK_DRAW_DIAL            0xfdcf04   /* (tree): form_center, objc_draw of the whole tree there */
+#define AES_ROM_DESK_DO_NAMECON           0xfdcf48   /* (): the name-conflict dialog shown (or drawn again), run; the copy dialog's item redrawn */
+#define AES_ROM_DESK_HIDE_DIAL            0xfdcfa8   /* (tree): form_center, form_dial(FINISH) over it */
+#define AES_ROM_DESK_SHOW_DIAL            0xfdcfea   /* (tree): form_center, form_dial(START), objc_draw */
+#define AES_ROM_DESK_DRAW_FLD             0xfdd04c   /* (tree, object): the object drawn where ob_offset puts it */
+#define AES_ROM_DESK_ADD_PATH             0xfdd0a4   /* (path, name): the name in place of the "*.*", "\*.*" after it */
+#define AES_ROM_DESK_SUB_PATH             0xfdd0d2   /* (path): the last folder of the path dropped, "\*.*" in its place */
+#define AES_ROM_DESK_ADD_FNAME            0xfdd10a   /* (path, name): the name in place of the "*.*" */
+#define AES_ROM_DESK_DEL_FNAME            0xfdd12c   /* (path): "\*.*" in place of the last name */
+#define AES_ROM_DESK_GET_FNAME            0xfdd158   /* (path, text): the path's last name, as a dialog's 8.3 field */
+#define AES_ROM_DESK_D_ERRMSG             0xfdd1a0   /* (): the DOS glue's verdict; a failure's alert (form_error); 1 / 0 */
+#define AES_ROM_DESK_D_DOFDEL             0xfdd1ce   /* (name): dos_delete, then d_errmsg's answer */
+#define AES_ROM_DESK_PATH_PART            0xfdd762   /* (cursor, path): the path's next folder name, cut off by a NUL in place */
+#define AES_ROM_DESK_PAR_CHK              0xfdd7a6   /* (source, files, destination): a selected folder copied into itself is refused */
+#define AES_ROM_DESK_FUN_ALERT            0xfdfd58   /* (default, string, parameters): an alert string of the desk's, merged, shown */
+#define AES_ROM_DESK_FUN_MSG              0xfdfda6   /* (type, unread, five words): a message to the desk's own pipe */
+#define AES_ROM_DESK_MY_ITOA              0xfde500   /* (number, text): two digits, a leading 0 below 10 */
+#define AES_ROM_DESK_FMT_TIME             0xfde546   /* (time, text): "hhmmam" of a DOS time */
+#define AES_ROM_DESK_FMT_DATE             0xfde5ba   /* (date, text): "mmddyy" of a DOS date */
+#define AES_ROM_DESK_OB_SFCB              0xfde610   /* (sfcb, text): a file's line of the text view; its length */
+#define AES_ROM_DESK_INF_FIELD            0xfdea5e   /* (source, text, tree, object, is name): a name or a size into an info dialog's field */
+#define AES_ROM_DESK_INF_DTTMSZ           0xfdea9a   /* (tree, file, date, time, size objects, &size): an info dialog's three fields */
+/* ---- end of group G4's ---- */
+
 #endif /* TOS102US_ADDRS_H */

@@ -428,11 +428,17 @@ campaign the band's rows will be arrivals of.
   and the desk's userdef stack. A depth is the lowest STORE, not the lowest SP, and no interrupt is taken at the
   deepest point.
 
-### A DESK ROUTINE AT ITS ARRIVAL — units O and D (`test/aes_deskleaves.py`, `test/aes_deskbind.py`, band 6 wave 1a)
+### A DESK ROUTINE AT ITS ARRIVAL — units O and D (wave 1a) and the four groups of wave 1b (`test/aes_desk*.py`)
 
 Band 6's first two units — the desk's eighteen leaves filed in AES modules (`src/desk/deskleaf.c`, unit O) and its
-forty-one AES bindings (`src/desk/deskbind.c`, unit D) — are LINKED INTO BOTH BLOBS AND HELD AT TIER 1, NOTHING BOUND
-(STATUS: `## Linked, unbound — desk (59)`). A case of either is taken WHERE THE ROM'S OWN DESK CALLS THE ROUTINE.
+forty-one AES bindings (`src/desk/deskbind.c`, unit D) — and wave 1b's hundred routines in four groups (G1 units I, L:
+`deskwin.c`, `deskview.c`; G2 units A, K, J: `deskapp.c`, `desktop.c`, `desksupp.c`; G3 units B, G: `deskact.c`,
+`deskfpd.c`; G4 units C, H, E, F: `deskdir.c`, `deskfun.c`, `deskusr.c`, `deskinf.c`) are LINKED INTO BOTH BLOBS AND
+HELD AT TIER 1, NOTHING BOUND (STATUS: `## Linked, unbound — desk (159)`). A case of any is taken WHERE THE ROM'S OWN
+DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
+`aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with
+`aes_deskfpd.py`), `aes_deskarrive.py` (G4) — each an arrival of the kind below, a row that switches where the routine
+reaches a binding of unit D's, else the plain differential.
 
 - **AN ARRIVAL** (`aes_deskleaves.arrival(At(routine, chain, step, nth))`; `aes_deskbind.arrival(short, chain, nth)`,
   and a boot by `aes_boot.booted(until=)`): a chain of the hands walked to the step whose profile says the routine
@@ -484,7 +490,51 @@ forty-one AES bindings (`src/desk/deskbind.c`, unit D) — are LINKED INTO BOTH 
   OPERAND that happens to be a call word (`$fddc46`, `$fe1d2e`): hold a site to an instruction boundary
   (`test_desk_leaves.call_sites`). A dialog's button is found under THE ROOT THE DESK'S STACK HOLDS THAT SHOWS IT
   (`aes_desk.dialog_button`), never under "the first object below it with no next": a tree may hold objects its
-  desk took out of it.
+  desk took out of it. Two buttons that read alike (Set Preferences' two "No"s) are told apart by place
+  (`aes_desk.lowest_button_point`); both walk `aes_desk._buttons_up`.
+- **WAVE 1b's KINDS OF CASE, AS THE IDS SAY THEM.** An arrival (`arrival N of <chain>`); A LABELLED ARGUMENT CLASS
+  (`ARGUMENT CLASS (<why>)`, `__an_argument_class`: the same machine with other arguments — only where no chain's run
+  hands them, which the fix pass spot-checked for every class of G1 and G2 against the chains); A LABELLED STAGING
+  OF MACHINE STATE (`[LAID: <what>]` — G3's `Case.laid` and, since the fix pass, G4's: bytes of the arrival's
+  megabyte laid on both shores, a word the machine holds, never an argument; every laid poke INTO THE AES'S WINDOW
+  must lie inside one claimed band, `aes.SPAN.require_claimed` — G3's 61-object tree has a band of its own,
+  `aes_deskact.TREE_BAND_AT`, the window's last 1.5 KB); SCRIPTED (a GEMDOS trap answered with the ROM's own run's
+  answers); DRIVER_REPLAYED (drive_check's floppy: the sector Floprd read in the ROM's own run in place laid where it
+  reads it, the XBIOS vector and `hdv_rw` at answering stubs on the ROM's shore, the child's hooks answering the same
+  values and holding each call's frame to the ROM's on ours — `aes_desksupp`); UNPINNED AT ITS ARRIVALS (arrivals
+  exist and the HARNESS cannot run the C there: desk_rsrc_load, whose rom_ram halts by name outside the dispatcher —
+  its C held over the leaf machine, said so, never called a class).
+- **THE UNBOUND PIN IS ONE, FOR THE WHOLE DESK** (`aes_deskbind.bound_referrers`, `bound_longwords`,
+  `unbound_closure`): desk routines call desk routines in C by design (a group's importers, unit D's bindings, unit
+  O's leaves), so no unit's pin asks "who outside my file refers to my cores". THE UNBOUND DESK is the held cores
+  (`LINKED_AND_NOT_FLIPPED`) and every function ONLY THEY reach (a static helper, by its callers, never its name); a
+  function outside it referring to ANY held core reds EVERY unit's pin — and, by value, a longword of a blob holding a
+  held core's address outside the unbound desk's own instructions (a held core's `jsr abs.l` of another is its
+  operand). A held core cannot be flipped quietly behind it: `test_aes_lineftable.py` refuses a held name that is
+  native, entered by ours alone or registered.
+- **THE DESK'S GLOBALS HAVE ONE HOME** (`include/desk/deskglobals.h`): every offset into the desk's block once (GEM's
+  `g_*` / `ml_*` name where the published desktop has one; the ROM's own instruction beside it), an ANODE's layout and
+  its a_type values, the desktop's root, the two views, the sort keys, and the helpers every unit had spelt
+  (`desk_globals`, `screen_objects`, `rect_word`, `lay_rect`). A unit's header includes it; a battery reads the values
+  off it (`aes_deskbind.DESK_GLOBALS`), never spells a number again. Moving the defines left every object byte-identical.
+- **PRICING A YIELDING ROW: THE TIER 3 BENCH CLASS, NOT THE KIT'S.** A scratch probe of a routine that reaches a
+  binding measures on `harness.bench_tier3().RomBench` (what conftest's `blob` fixture hands, and unit D's and G1's
+  probes used): only it puts the dispatcher's stack back as our run found it and honours a declared X flag
+  (`bench/tier3.py`, `put_back_for`). On the kit's plain `RomBench` (`isr.blob_named`) every yielding row of the desk —
+  unit D's bindings too — refuses on the 27–33 bytes of OUR dispatch path's own frames under the yield (`$8b2a`
+  shipped, `$8b34` bench): a refusal of the probe's class, not of the routine (wave 1b's fix pass priced every
+  yielding row of G2 and G4 so). Band 5's own trap convention (`aes_shell.scripted_pokes`) refuses every DOS-glue user
+  whose functions its `FRAME_BYTES` lacks (Dsetdrv, Dsetpath, Fdelete, Dgetdrv, Dgetpath): the handler records
+  `RECORDED_BYTES` of a frame it has no size for, the caller's own stack past it — told those five in the probe's
+  process, they price (STATUS AWAITING (24): making it permanent moves band 5's scripted rows).
+- **A WAVE IN PARALLEL GROUPS — THE BLOCKS AND THE LEDGER.** Wave 1b's four groups wrote one tree at once: every shared
+  file (`addrs.h`, `host_slot.h` and its enum, `linef_table.py`, `test_aes_lineftable.py`'s per-unit table,
+  `test_host_slots.py`'s role sets, `aes_desk.py`'s chains, `test_aes_desk_rom.py`'s pins, `transcription.py`'s
+  C-caller pairs) carries a delimited block per group (`---- band 6 wave 1b, group G<n> (…) ----` … `---- end of group
+  G<n>'s ----`), and the exact-count pins are SUMS over the blocks (`CHAINS_AND_STEPS_BY_BLOCK`, `REACHED_BY_BLOCK`,
+  `LINKED_AND_NOT_FLIPPED_UNITS`), so no two authors edit one line. A routine another group calls was its group's
+  FIRST deliverable, and its caller linked against it only after a line in a scratch ledger said its cases were green
+  (an undefined symbol in the shared tree breaks every author's build). Host slots by address window, one per group.
 
 ### THE OUR-BOOT MACHINE — the build's own gem_entry boots it (`aes_boot.booted(..., laid=AT_GEM_ENTRY)`, `test/aes_ourboot.py`)
 
@@ -3137,8 +3187,9 @@ case (the ROM's call word → the ROM's handler → our table → our entry) aga
 the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the reason. A ROUTINE WRITTEN, LINKED AND NOT
 FLIPPED (band 6 wave 1a): a C core with a declared signature would be thunked, so the generator keeps its entries THE
 ROM'S by a declared list, `linef_table.LINKED_AND_NOT_FLIPPED` (each unit an `.update` of its own names) — held by a
-test of its own (`test_aes_lineftable.py`: exactly the two units' 59 names, each declared and linked, none a native
-entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by the ledger's `## Linked, unbound` section
+test of its own (`test_aes_lineftable.py`: exactly the units' names — a per-unit table of counts, 159 since band 6 wave
+1b — each declared and linked, none a native entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by
+the ledger's `## Linked, unbound` section
 (`test_status.py`); a routine leaves the list at its flip, and the generated file's diff is that flip's record.
 
 **THE DESK'S BIOS DOOR is a seventh kind: a TRANSCRIPTION IN WAITING, linked and NOT ENTERED** (`atari/target.mk`:

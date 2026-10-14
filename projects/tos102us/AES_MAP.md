@@ -248,7 +248,26 @@ Interrupt vectors (VDI, snapshot): USER_BUT `0x2960`→`FED3BE`, USER_MOT `0x296
 LONGWORD (`a_next`); the INF parse takes one a line, pushed at the list in use's head (so the INF's first line, drive A:'s
 `#M`, is its LAST node); Install Disk Drive's Install links one at the TAIL (`FDF210` hands app_alloc 0), its Remove frees it
 (`FDF38E`). **gl_apid** `C790`: the desk's own process id (appl_init `FDDE48`). **$95AE**: trp13's parked return (the BIOS
-door's `AES_BIOS_RETURN`, trp14's `$95B2` beside it).
+door's `AES_BIOS_RETURN`, trp14's `$95B2` beside it — written by the door at `FEE488` and read back by it at `FEE490`, and
+by NO OTHER INSTRUCTION OF THE ROM: the long `$000095B2` occurs in the ROM's bytes at those two operands alone; band 6
+wave 1b's fix pass).
+**The desk's nodes, as band 6 wave 1b read them** (`recreate/include/desk/deskglobals.h` holds every offset of the desk's
+block once, GEM's name where the published desktop names it; `deskfpd.h` the FNODE / PNODE, `deskview.h` the WNODE):
+* ANODE (an INF line's icon; `a_next` +0 long, `a_flags` +4 word — AF_ISDESK its bit 2, tested in its low byte `btst #2,5(an)`
+  —, `a_type` +6 word — AT_ISFILE 0, AT_ISFOLD 1, AT_ISDISK 2, AT_ISTRSH 3, AT_ISCART 4 —, `a_obid` +8 word, `a_pappl` +10
+  long, `a_pdata` +14 long, `a_aicon` +18 word, `a_dicon` +20 word, `a_letter` +22 word, `a_xspot` +24 / `a_yspot` +26 word):
+  the free list `g_aavail` +13206, the list in use `g_ahead` +13210. app_afind `FDC080` tries a node's DATA pattern before its
+  APPLICATION's.
+* FNODE (a file of a window's directory, 40 bytes; 400 of them in `$C67A`'s block, `g_favail` +0 their free list): `f_next`
+  +0 long, the DTA's attributes +9 byte (a folder `$10`), time +10 word, date +12 word, size +14 long, name +18 (NUL-ended),
+  `f_obid` +32 word, `f_pa` +34 long (its ANODE, win_icalc's), `f_isap` +38 word.
+* PNODE (an open path, a window's; 140 bytes, five in the block at +4 `g_plist`): `p_next` +0 long, flags +4 word, the
+  attributes it is read with +6 word, its spec `"D:\path\*.*"` +8 (121 bytes, LEN_ZFPATH), its file list +130 long, the
+  files' count +134 word and their bytes +136 long (the info line's). `g_pavail` +704 (WHERE A SIXTH POOL NODE WOULD LIE:
+  pn_init's loop starts a node late and clears the link it set), `g_phead` +708.
+* WNODE (one of the desk's four windows, 230 bytes): flags +4, its GEM handle +6, the icon it was opened from +8, its root
+  object +10, the scroll's first column / row +12 / +14, the columns / rows shown +16 / +18, the view's +20 / +22, its PNODE
+  +24 long, its name `" A:\PATH\ "` +28 (the drive letter +29), its info line +149.
 **The MASK, explained** (README labels corrected): `0x8930+0x2D0` = the DISPATCHER stack below `0x8C1A` (savestate's `lea 0x8c1a,sp`
 at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private stacks (`94F2`, `9552`) — timer fires every tick;
 `0x9FA5`/`0xA19B` = PD0's UDA stack, `0xA771` = PD1's; `0xC7E1+7` = the AES's VDI contrl[0..3], rewritten on every `chkkbd` poll
@@ -313,6 +332,39 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   THE BAND'S INVENTORY (2026-10-13, the design pass): 244 routines / 39,268 B in 15 units — O the desk-only leaves filed in AES modules (18), A..L the desk's range `FDB014..FE387B` (202), M / N the utilities `FED478..FEE497` (24) — less the seven routines bands 0–5 own in those ranges; one row a routine (size, class, callees, the chain that reaches it) in `scratchpad/b6/inventory.md`, from `aes_map/inventory.txt`; `test/aes_desk.routines()` derives the 244. The unit names are the published GEM desktop's modules BY POSITION AND CALL SHAPE: `# ctx` until each body is read.
   WAVE 0 (2026-10-13; STATUS.md, "BAND 6 WAVE 0"): THE OPENING'S GROUNDWORK, NOTHING BOUND — the window re-cut (`staging_base` `$75000`: the blob's ceiling); THE HANDS' CAMPAIGN on the ROM's own machine (`test/aes_desk.py`: 46 chains of a user's acts, reach 215 of the 244 by the cycle profile, the stacks' depths off the write ledgers; the File menu's handler `FE1E80` and its two call words the kit's oracle executes as MOVE16, `FE1EC2` / `FE1ECE`, taken by hand); THE LINE-F CALL TABLE OF OURS (`src/aes/lineftable.S`, generated: 658 entries for `FEE900..FEF347` — 82 native, 337 through 299 thunks, 239 the ROM's — LINKED INTO BOTH BLOBS, the handler's operand `FEE8D8` STILL `FEE900`). The binding is slice B's and waits for the user (STATUS AWAITING (24)).
   WAVE 1a (2026-10-13; STATUS.md, "BAND 6 WAVE 1a" and its section `## Linked, unbound — desk (59)`): UNITS O AND D IN C — LINKED INTO BOTH BLOBS, HELD AT TIER 1 AT THE HANDS' ARRIVALS, NOTHING BOUND (every Line-F entry naming one stays the ROM's: `linef_table.LINKED_AND_NOT_FLIPPED`). UNIT O, `src/desk/deskleaf.c`: gsx_pline `FDA8A8`, app_alloc `FDAE96`, app_free `FDAEE2`; the DOS glue's thirteen — dos_write `FE3A7C`, dos_gdir `FE3AB0`, dos_mkdir `FE3AC4`, dos_setdt `FE3AE8`, dos_label `FE3B02` (its pattern `":\*.*"` at `FE3B64`), dos_space `FE3B6A`, dos_rename `FE3BA0`, dos_avail `FE3BE8`, dos_rawcio `FE3BFA`, dos_chmod `FE3C16`, dos_delete `FE3C1A`, dos_rmdir `FE3C1E`, dos_create `FE3C22`; gsx_hardcopy `FE8862` (VDI escape 17); the BIOS door trp13 `FEE478` (its return parked in `$95AE`), WHICH SHIPS AS ITS SIXTEEN ROM BYTES (`src/desk/trp13.S`, a seventh `.S` kind, linked and not entered; its C twin +214 cycles a call). UNIT D, `src/desk/deskbind.c`: the forty bindings `FDDDE6..FDE4FF` — appl_init `FDDDE6` (keeps gl_apid `$C790`), appl_bvset `FDDE54`, appl_exit `FDDE6C`, appl_write `FDDEA6`, evnt_multi `FDDED8`, evnt_button `FDDF82`, evnt_dclick `FDDFC2`, form_do `FDDFDA`, form_dial `FDDFFA`, form_alert `FDE022`, form_error `FDE03E`, form_center `FDE054`, graf_mouse `FDE094`, graf_rubbox `FDE122`, graf_mkstate `FDE142`, graf_growbox `FDE16A`, graf_shrinkbox `FDE182`, menu_tnormal `FDE19A`, menu_bar `FDE1D4`, menu_icheck `FDE1F0`, menu_ienable `FDE21A`, objc_offset `FDE264`, objc_order `FDE28C`, objc_find `FDE2A8`, objc_add `FDE2CC`, objc_draw `FDE2E8`, objc_change `FDE30E`, rsrc_gaddr `FDE354`, shel_write `FDE376`, shel_get `FDE39E`, shel_put `FDE3BA`, wind_close `FDE3D6`, wind_delete `FDE3EC`, wind_find `FDE402`, wind_update `FDE41A`, wind_create `FDE430`, wind_open `FDE450`, wind_get `FDE470`, wind_set `FDE4AC`, wind_calc `FDE4CC` — and desk_wait `FE1BDC` (unit K's by address: form_do calls it). `FDE0EE..FDE121` IS DEAD CODE (the desk's graf_handle binding: no Line-F entry names it, nothing calls it), not ported. The hands' campaign grew to 51 chains (reach 219 of the 244): Show Info's rename and Read-Only, a read-only file dragged to the trash (GEMDOS refuses; the copy engine's form_error at `FDD1C4`), Install Disk Drive's Remove and Install.
+  WAVE 1b (2026-10-14; STATUS.md, "BAND 6 WAVE 1b", and the same section, now `## Linked, unbound — desk (159)`): ONE
+  HUNDRED ROUTINES OF UNITS I, L, A, K, J, B, G, C, H, E, F IN C, in four groups — LINKED INTO BOTH BLOBS, HELD AT TIER 1 AT
+  THE HANDS' ARRIVALS, NOTHING BOUND (`linef_table.LINKED_AND_NOT_FLIPPED`, 159). GROUP G1 — unit I, `src/desk/deskwin.c`:
+  obj_init `FE0776`, obj_walloc `FE0840`, obj_wfree `FE08B4`, obj_ialloc `FE0942`, pro_chdir `FE09CC`, pro_cmd `FE0A7C`,
+  pro_exec `FE0B26`, desk_rsrc_load `FE0B56`, ini_tree `FE0B6E`, ini_str `FE0B86`, do_wredraw `FE0C9A`, get_xywh `FE0D5A`,
+  get_spec `FE0DB8`, do_xyfix `FE0DCE`, zoom_closed `FE0F36`, do_wfull `FE0F9C`; unit L, `src/desk/deskview.c`: win_view
+  `FE2A7C`, win_start `FE2B64`, win_alloc `FE2BA2`, win_free `FE2C5C`, win_find `FE2CB8`, win_top `FE2CF4`, win_ontop
+  `FE2D46`, win_cnt `FE2DC8`, win_ith `FE2DFC`, win_ocalc `FE2E12`, win_icalc `FE2F0A`, the view builder win_bldview `FE2F68`,
+  win_shwall `FE36FA`, win_isel `FE3760`, win_iname `FE37C4`, win_sinfo `FE37EE`, win_sname `FE384C` (wave 2's of the two
+  units, `# ctx`: pro_run `FE0AB6`, desk_clear `FE0BBC`, desk_verify `FE0C2A`, do_wopen `FE0E38`, win_blt `FE3310`, win_slide
+  `FE3504`, win_arrow `FE359A`, win_srtall `FE3622`, win_bdall `FE3684`). GROUP G2 — unit A, `src/desk/deskapp.c`: scan_str
+  `FDB014`, save_str `FDB05A`, app_parse `FDB082` (the switch `FEF364` over 'C'..'T'), app_tran `FDB186`, app_getfh `FDB1C8`,
+  app_rdicon `FDB220` (Alcyon `lmul` `FE3DB4` twice: libgcc's multiply in C), snap_disk `FDB508`, app_revit `FDBB0A`,
+  app_path_save `FDBE7E` (keeps `$9B38` / `$980E`), app_path_restore `FDBEB6`, app_blddesk `FDBEEC` (Getrez through trp14,
+  its return site `FDBF16`); unit K, `src/desk/desktop.c`: i_find `FE1BF6`, men_list `FE1C8C`, men_update `FE1CB6` (the
+  ROM's item lists `FEF646..FEF68A`), do_viewmenu `FE1F2A` (the switch `FEF6C4`, items 29..35), cnx_put `FE2536`; unit J,
+  `src/desk/desksupp.c`: drive_check `FE1AD0` (Drvmap by trp13, Floprd by a door of its own over the ROM's nine-word frame).
+  GROUP G3 — unit B, `src/desk/deskact.c`: app_afind `FDC080` (DESKAPP's, filed here), gr_obfind `FDC0FA`, gr_isdown
+  `FDC152`, gr_accobs `FDC1BA`, move_drvicon `FDC268` (its one caller `FDCEC4`: an icon let go where its drag began),
+  gr_extent `FDC398`, gr_obalign `FDC458`, gr_plns `FDC49A`, gr_bwait `FDC4FE`, act_chkobj `FDC86E`, act_chg `FDC9E4`,
+  act_allchg `FDCABC` (the drag loops `FDC57A` / `FDCC2A` / `FDCD34` are wave 2's); unit G, `src/desk/deskfpd.c`: fn_init
+  `FDF6D0`, pn_init `FDF710`, fpd_start `FDF756`, fpd_bldspec `FDF77A`, fpd_parse `FDF7F4`, fpd_ofind `FDF8C6`, fpd_elist
+  `FDF8EC`, fn_free `FDF908`, fl_free `FDF926`, fn_alloc `FDF952`, pn_alloc `FDF972`, pn_free `FDF9AA`, pn_open `FDF9DA`,
+  pn_fcomp `FDFA2C` (scasb: the shipped glue's first scasb thunk), pn_comp `FDFAEE`, pn_sort `FDFB38`. GROUP G4 — unit C,
+  `src/desk/deskdir.c`: draw_dial `FDCF04`, do_namecon `FDCF48`, hide_dial `FDCFA8`, show_dial `FDCFEA`, draw_fld `FDD04C`,
+  add_path `FDD0A4`, sub_path `FDD0D2`, add_fname `FDD10A`, del_fname `FDD12C`, get_fname `FDD158`, d_errmsg `FDD1A0`,
+  d_dofdel `FDD1CE`, path_part `FDD762`, par_chk `FDD7A6`; unit H, `src/desk/deskfun.c`: fun_alert `FDFD58`, fun_msg `FDFDA6`;
+  unit E, `src/desk/deskusr.c`: my_itoa `FDE500`, fmt_time `FDE546`, fmt_date `FDE5BA`, ob_sfcb `FDE610` (the text view's
+  line, on the desk's G_USERDEF stack); unit F, `src/desk/deskinf.c`: inf_field `FDEA5E`, inf_dttmsz `FDEA9A`. FOUR
+  ROUTINES NO CHAIN REACHED BEFORE NOW HAVE ARRIVALS (G4's chains: the name conflict, a folder copied into a folder, a folder
+  holding a folder deleted — `FDCF04`, `FDCF48`, `FDD0D2`, `FDD762`), and move_drvicon `FDC268` (G3's: drive A: put down on
+  a bare spot): the hands' campaign is 69 chains, reach 224 of the 244. THE DESK'S GLOBALS NOW HAVE ONE HOME,
+  `recreate/include/desk/deskglobals.h` (§4).
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

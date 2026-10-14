@@ -23,6 +23,8 @@ against the ROM's own routine on the host library, over A MACHINE A ROM RUN MADE
 import bisect
 import functools
 import re
+import struct
+import sys
 from collections import namedtuple
 from pathlib import Path
 
@@ -37,6 +39,8 @@ import aes_switching as switching
 import case
 import layouts
 import rom_data
+import routines
+import transcription
 import vdi
 
 BUS = aes_boot.BUS
@@ -48,6 +52,10 @@ PREFIX = "AES_ROM_DESK_"
 # The bindings' own header's constants (`include/desk/deskbind.h`), read as every AES header's are.
 HEADER = Path(__file__).resolve().parents[1] / "include" / "desk" / "deskbind.h"
 CONSTANTS = layouts.parse_constants((HEADER,), known={**vdi.CONSTANTS, **aes.CONSTANTS})
+# THE DESK'S ONE HOME (`include/desk/deskglobals.h`): its globals' offsets, an ANODE's layout, the desktop's root, the
+# views and the sort keys — what every unit's battery reads them by, never a number spelt again.
+GLOBALS_HEADER = HEADER.parent / "deskglobals.h"
+DESK_GLOBALS = layouts.parse_constants((GLOBALS_HEADER,), known={**vdi.CONSTANTS, **aes.CONSTANTS})
 
 # ---- THE SIGNATURES: `{binding: (the C core's answer, its frame's arguments in push order)}` ---------------------------------
 # `None` where the core answers nothing: a binding of a `void` implementation (VOID_ANSWERS) or one whose ROM routine
@@ -393,3 +401,79 @@ def call_sites(short):
 def calls_of(routine):
     """Every call of the routine at `routine` in the ROM's GEM text, by the calling instruction's address."""
     return tuple(_gem_text()[1].get(routine, ()))
+
+
+# ---- LINKED AND UNBOUND: THE ONE PIN OF EVERY UNIT OF THE DESK ---------------------------------------------------------------
+# The desk is held unbound AS ONE (band 6 wave 1b's fix pass): a desk routine calls another desk routine in C by design
+# (a group's routine its importers', unit D's bindings, unit O's leaves), so a unit's pin asks not "who outside my file
+# refers to my cores" but "does anything that RUNS — anything outside the unbound desk — refer to a core of the desk".
+# Every unit's pin asks it of every held core: a bound caller of any one reds them all.
+BENCH = Path(__file__).resolve().parents[1] / "bench"
+
+
+def _linef_table():
+    sys.path.insert(0, str(BENCH))
+    import linef_table                  # HERE, not at the module's top: the generator imports every battery's registry
+    return linef_table
+
+
+def held_cores():
+    """The C cores of the routines LINKED AND NOT FLIPPED (`linef_table.LINKED_AND_NOT_FLIPPED`)."""
+    return frozenset(routines.core_symbol(name) for name in _linef_table().LINKED_AND_NOT_FLIPPED)
+
+
+def unbound_closure(graph):
+    """THE UNBOUND DESK in the call graph `graph`: the held cores, and every function ONLY THEY reach (a unit's static
+    helper, a callee GCC kept out of line) — grown until it holds: a function that some function outside it refers to,
+    or that nothing refers to, stays out."""
+    unbound = set(held_cores())
+    referrers = {}
+    for function, targets in graph.items():
+        for target in targets:
+            referrers.setdefault(target, set()).add(function)
+    grown = True
+    while grown:
+        held = {function for function, by in referrers.items() if function not in unbound and by and by <= unbound}
+        grown, unbound = bool(held), unbound | held
+    return frozenset(unbound)
+
+
+def bound_referrers(blob, names):
+    """THE UNBOUND PIN, off `blob`'s own call graph (a call, a branch, an address taken): every core of `names` LINKED
+    (refused by name where one is not) — and `{function: the held cores it refers to}` for every function OUTSIDE THE
+    UNBOUND DESK (`unbound_closure`) that refers to ANY held core: none, while nothing is bound."""
+    graph = transcription.call_graph(blob.elf)
+    cores = {routines.core_symbol(name) for name in names}
+    assert cores <= set(graph), f"not linked: {sorted(cores - set(graph))}"
+    held, unbound = held_cores(), unbound_closure(graph)
+    return {function: sorted(targets & held) for function, targets in graph.items()
+            if function not in unbound and targets & held}
+
+
+def _unbound_extents(blob):
+    """`[(start, end)]` of the functions of the unbound desk in `blob`: their instructions, whose operands name the
+    cores they call (a held core's `jsr` of another's absolute address)."""
+    elf = blob.elf
+    unbound = unbound_closure(transcription.call_graph(elf))
+    labels = [(int(match.group(1), 16), match.group(2))
+              for match in map(transcription.LISTED_FUNCTION.match, transcription.listing(elf).splitlines()) if match]
+    nodes = transcription.nodes_of_labels(labels, transcription.symbol_origins(elf))
+    ends = {symbol.start: symbol.start + symbol.size for symbol in transcription.symbol_table(elf) if symbol.size is not None}
+    return [(address, ends[address]) for (address, _name), node in nodes.items() if node in unbound and address in ends]
+
+
+def bound_longwords(blob, also=()):
+    """...AND BY VALUE: the held cores (and the symbols `also`) whose address a longword of `blob`'s bytes holds, at
+    any even offset (a table entry, a vector's holder) — OUTSIDE THE INSTRUCTIONS OF THE UNBOUND DESK, where a held
+    core's own `jsr abs.l` names its callee. None, while nothing is bound."""
+    named = held_cores() | set(also)
+    starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.name in named}
+    assert set(starts.values()) == named, f"not linked: {sorted(named - set(starts.values()))}"
+    extents, image = _unbound_extents(blob), blob.blob
+    found = set()
+    for offset in range(0, len(image) - LONG_BYTES + 1, aes.WORD_BYTES):
+        (value,) = struct.unpack_from(">I", image, offset)
+        at = blob.base + offset
+        if value in starts and not any(lo <= at and at + LONG_BYTES <= hi for lo, hi in extents):
+            found.add(starts[value])
+    return sorted(found)

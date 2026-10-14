@@ -1,0 +1,208 @@
+"""THE DESK'S WINDOWS — THE VIEW, THE WINDOW LIST, THE LAYOUT LEAVES (`src/desk/deskview.c`; band 6 wave 1b, group G1,
+unit L), HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+
+How a case is taken, run and held is the group's (`aes_deskwin.py`; `test_desk_win.py` says it whole): an arrival of
+a chain of the hands, the routine's arguments read off its caller's frame; a row that switches where the routine
+reaches a binding of unit D's, else the plain differential; the DOS glue's `trap #1`s scripted with the answers the
+ROM's run in place got (SCRIPTED, in the id) where win_top and win_ontop make the window's path current; a LABELLED
+ARGUMENT CLASS where no chain makes an arm, said in the id; UNPINNED BY NAME where neither can.
+
+D0 AT RETURN: held at the declared width where the core answers; GEM's VOID routines are `void` in C, the word the
+ROM leaves a NAMED, COUNTED DIVERGENCE that no instruction of the ROM reads (`aes_deskbind.answer_readers`).
+"""
+import struct
+from collections import Counter
+
+import pytest
+
+from harness import addrs
+
+import aes
+import aes_deskbind as db
+import aes_deskview as v
+import aes_deskwin as w
+import case
+import layouts
+
+Case = w.Case
+
+OPEN, TWO_WINDOWS = "A: File > Open", "window: A: opened again (two windows)"
+SHOWN, SHOWN_LONG = "file: shown, a key at its end", "files: the long file shown, a blank at each page's end and at its end"
+AS_TEXT, BY_SIZE = "window: View > Show as Text", "window: View > Sort by Size"
+SAVED, SELECTED = "Options > Save Desktop, Return", "drive A: selected"
+SCROLLED_RIGHT = "files: the right arrow clicked, then the window made full"
+SORTED_SCROLLED = "files: the right arrow clicked, then View > Sort by Size"
+NEW_FOLDER, FILES = "folder: File > New Folder, 'A', Return", "files: A: opened"
+NEITHER_VIEW = 2                        # a view word that is neither V_ICON nor V_TEXT
+A_NARROW_WIDTH = 0x50                   # two items of the icon view's pitch across (72 + 8)
+NO_SUCH_WINDOW = 5                      # a GEM window handle no WNODE holds at the arrival
+
+CASES = (
+    Case("AES_ROM_WIN_VIEW", AS_TEXT, arm=lambda a: a[0] == 1), Case("AES_ROM_WIN_VIEW", BY_SIZE, arm=lambda a: a == (0, 2)),
+    Case("AES_ROM_WIN_VIEW", SHOWN, arm=lambda a: a == (0, 0)),
+    Case("AES_ROM_WIN_VIEW", BY_SIZE, arguments=lambda a: (NEITHER_VIEW, a.arguments[1]),
+         why="a view neither icons nor text (no caller of the desk's hands one): the extents kept, the pitch made again"),
+    Case("AES_ROM_WIN_START", SHOWN), Case("AES_ROM_WIN_START", SHOWN_LONG),
+    Case("AES_ROM_WIN_ALLOC", OPEN), Case("AES_ROM_WIN_ALLOC", TWO_WINDOWS),
+    Case("AES_ROM_WIN_FREE", "window: File > Close Window"), Case("AES_ROM_WIN_FREE", "window: its closer clicked"),
+    Case("AES_ROM_WIN_FIND", OPEN), Case("AES_ROM_WIN_FIND", TWO_WINDOWS, 2, arm=lambda a: a == (2,)),
+    Case("AES_ROM_WIN_FIND", OPEN, arguments=(NO_SUCH_WINDOW,), why="a handle no WNODE holds: 0"),
+    Case("AES_ROM_WIN_TOP", OPEN, traps=2), Case("AES_ROM_WIN_TOP", TWO_WINDOWS, traps=2),
+    Case("AES_ROM_WIN_ONTOP", "Desk > Desktop Info, Return"), Case("AES_ROM_WIN_ONTOP", AS_TEXT, traps=2),
+    Case("AES_ROM_WIN_CNT", SAVED, arm=lambda a: a == (1,)), Case("AES_ROM_WIN_CNT", SAVED, 3, arm=lambda a: a == (3,)),
+    Case("AES_ROM_WIN_CNT", AS_TEXT, arm=lambda a: a == (4,)),
+    Case("AES_ROM_WIN_ITH", SAVED), Case("AES_ROM_WIN_ITH", AS_TEXT),
+    Case("AES_ROM_WIN_OCALC", OPEN), Case("AES_ROM_WIN_OCALC", AS_TEXT, arm=lambda a: a[1] == 0),
+    Case("AES_ROM_WIN_OCALC", "window: its fuller clicked"), Case("AES_ROM_WIN_OCALC", TWO_WINDOWS),
+    # (its columns scrolled one right, the window made full: the scroll pulled back)
+    Case("AES_ROM_WIN_OCALC", SCROLLED_RIGHT),
+    Case("AES_ROM_WIN_OCALC", SORTED_SCROLLED),          # (its scroll kept: the first file shown the second)
+    Case("AES_ROM_WIN_ICALC", OPEN), Case("AES_ROM_WIN_ICALC", NEW_FOLDER, arm=lambda a: True),
+    Case("AES_ROM_WIN_ICALC", FILES, 4),                # (the program: an application's ANODE)
+    Case("AES_ROM_WIN_BLDVIEW", OPEN), Case("AES_ROM_WIN_BLDVIEW", AS_TEXT), Case("AES_ROM_WIN_BLDVIEW", FILES),
+    Case("AES_ROM_WIN_BLDVIEW", "files: View > Show as Text"), Case("AES_ROM_WIN_BLDVIEW", TWO_WINDOWS),
+    Case("AES_ROM_WIN_BLDVIEW", SORTED_SCROLLED),
+    Case("AES_ROM_WIN_BLDVIEW", FILES, arguments=lambda a: (*a.arguments[:3], A_NARROW_WIDTH, a.arguments[4]),
+         why="a rectangle two items wide over the four files' row (the desk's own windows fit every column): three columns "
+             "laid, the fourth skipped at the row's end"),
+    Case("AES_ROM_WIN_SHWALL", AS_TEXT), Case("AES_ROM_WIN_SHWALL", BY_SIZE),
+    Case("AES_ROM_WIN_ISEL", SELECTED, arm=lambda a: a[2] == 0), Case("AES_ROM_WIN_ISEL", SELECTED, 2, arm=lambda a: a[2] != 0),
+    Case("AES_ROM_WIN_ISEL", "Desk > Desktop Info, Return"), Case("AES_ROM_WIN_ISEL", "a rubber box on the desktop, round the trash", 2),
+    Case("AES_ROM_WIN_INAME", SELECTED), Case("AES_ROM_WIN_INAME", "drive A: dragged to the trash, Return"),
+    Case("AES_ROM_WIN_SINFO", OPEN), Case("AES_ROM_WIN_SINFO", "file: File > Show Info, Return"),
+    Case("AES_ROM_WIN_SNAME", OPEN), Case("AES_ROM_WIN_SNAME", "folder: opened"), Case("AES_ROM_WIN_SNAME", TWO_WINDOWS),
+)
+# THE ARMS NO RUN REACHES AND NO ARGUMENT CLASS CAN MAKE (each depends on the MACHINE, which a class may not poke).
+UNPINNED = {
+    "AES_ROM_WIN_VIEW": "a screen wider than 320 pixels (the text line of 45 cells, its space two cells less a pixel), and one of "
+                        "more than 300 lines (the icons' space of 8): the machine's screen is 320 x 200; and the neither-view "
+                        "arm apart from the icon arm — every arrival holds the icons' extents already, and over the desk's "
+                        "restart (its extents zeros) that arm divides by zero (the 68000's vector 5; the C refuses by name)",
+    "AES_ROM_WIN_ALLOC": "four windows open (the count refuses a fifth); no window root free; wind_create refusing — no chain "
+                         "opens a fifth window",
+    "AES_ROM_WIN_BLDVIEW": "a view neither icons nor text (g_iview is the desk's own, and every caller of win_view hands 0 or 1); "
+                           "a SECOND ROW after columns skipped — no machine of the hands has more files than the desk has "
+                           "columns (the files machine: four items, four columns), so the skip's effect is never seen",
+    "AES_ROM_WIN_OCALC": "rows rounded up past a whole row (the same: no machine has more files than columns, and never a "
+                         "multiple short of a row)",
+    "AES_ROM_WIN_TOP": "a cartridge's window (its name \"Cartridge\": no path made current) — no cartridge (ruling W3-R6)",
+}
+
+BY_LABEL = {w.label(each): each for each in CASES}
+assert len(BY_LABEL) == len(CASES), "two cases of one name"
+EVERY_CASE = pytest.mark.parametrize("name", BY_LABEL)
+A_CLASS = [name for name, each in BY_LABEL.items() if each.why]
+AT_ITS_OWN_ARRIVAL = [name for name, each in BY_LABEL.items() if not each.why]
+
+
+# ---- TIER 1 ----------------------------------------------------------------------------------------------------------------------
+@EVERY_CASE
+def test_a_routine_from_its_arrival_is_the_rom_s(name):
+    """THE CASE: the C core held to the ROM's routine from the same entry — the row's companion or the plain
+    differential; the answer at the declared width. No case idles: no routine of the unit waits."""
+    each = BY_LABEL[name]
+    _answer, _rom_d0, idles = w.ran(each, each.name in v.YIELDS_L)
+    assert not idles, f"{name}: the ROM's run idles {idles} time(s)"
+
+
+TALL_CELL = 16                          # gl_hchar of a high-resolution machine's 8 x 16 cell
+
+
+def test_win_view_of_the_text_view_takes_the_cell_s_height__a_labelled_staging():
+    """A LABELLED STAGING — gl_hchar LAID 16 (every machine of the hands is 320 x 200, its cell 8 by 8: a text item's
+    height read from the cell's width or its height is the same there): win_view at its text arrival, the item's
+    height gl_hchar's — reviewer A's RA-L5, the width read for it, is told apart."""
+    each = Case("AES_ROM_WIN_VIEW", AS_TEXT, arm=lambda a: a[0] == 1)
+    pokes, arguments = w.machine_of(each)
+    w.plain(each.name, arguments, case.merge_pokes(pokes, {aes.AES_GL_HCHAR: struct.pack(">H", TALL_CELL)}))
+
+
+ARRIVALS, CLASSES = 48, 3
+
+
+def test_every_routine_has_a_case_at_an_arrival_of_its_own():
+    """Seventeen routines, each with a case at its own arrival; the classes by routine."""
+    assert {BY_LABEL[name].name for name in AT_ITS_OWN_ARRIVAL} == set(v.UNIT_L) and len(v.UNIT_L) == 17
+    assert {BY_LABEL[name].name for name in A_CLASS} == {"AES_ROM_WIN_VIEW", "AES_ROM_WIN_FIND", "AES_ROM_WIN_BLDVIEW"}
+    assert (len(AT_ITS_OWN_ARRIVAL), len(A_CLASS)) == (ARRIVALS, CLASSES)
+    assert set(UNPINNED) <= set(v.UNIT_L)
+
+
+VIEW = layouts.parse_constants((aes.INCLUDE / "desk" / "deskview.h", aes.INCLUDE / "desk" / "deskfpd.h"), known=aes.CONSTANTS)
+
+
+def _arrival_of(routine, chain, nth=1):
+    return w.arrival_of(next(each for each in CASES if (each.name, each.chain, each.nth, each.why) == (routine, chain, nth, None)))
+
+
+def test_the_arrivals_chosen_for_an_arm_are_the_machines_that_make_it():
+    """WHAT AN `arm` OF THE ARGUMENTS ALONE CANNOT SAY, read off the arrival's machine: win_icalc's New Folder arrival
+    is handed THE FOLDER's FNODE (F_SUBDIR: the folders' ANODEs searched); win_ocalc's arrival on the window scrolled
+    a column right and made full holds a scroll it must pull back (W_CVCOL 1 of four columns, all four now fitting);
+    its arrival on the window scrolled and SORTED keeps the scroll (three columns fit beside it): the first file shown
+    is the second."""
+    folder = _arrival_of("AES_ROM_WIN_ICALC", NEW_FOLDER)
+    assert folder.boot.ram[folder.arguments[0] + VIEW["FNODE_ATTR"]] & VIEW["FNODE_ATTR_SUBDIR"]
+    scrolled = _arrival_of("AES_ROM_WIN_OCALC", SCROLLED_RIGHT)
+    window, fit = scrolled.arguments[0], scrolled.arguments[1]
+    columns, scroll = (case.word_in(scrolled.boot.ram, window + VIEW[field]) for field in ("WNODE_VNCOL", "WNODE_CVCOL"))
+    assert scroll == 1 and fit > columns - scroll
+    kept = _arrival_of("AES_ROM_WIN_OCALC", SORTED_SCROLLED)
+    window, fit = kept.arguments[0], kept.arguments[1]
+    columns, scroll = (case.word_in(kept.boot.ram, window + VIEW[field]) for field in ("WNODE_VNCOL", "WNODE_CVCOL"))
+    assert scroll == 1 and fit <= columns - scroll, "the sorted view's scroll is kept: its first file shown is the second"
+
+
+# ---- D0 AT RETURN -----------------------------------------------------------------------------------------------------------------
+VOID_IN_C = frozenset(name for name, (restype, _frame) in v.SIGNATURES.items() if restype is None)
+# ...the one that leaves its CALLER's D0: it stores none of its own (win_sname's copy runs through A3 and A4).
+NO_ANSWER_OF_ITS_OWN = ("AES_ROM_WIN_SNAME",)
+
+
+def test_the_void_routines_are_gem_s_void_ones_and_no_rom_caller_reads_what_they_leave():
+    """THE NAMED DIVERGENCE: ten routines are `void` in C where the ROM leaves a word — and BY READING EVERY CALLER
+    (`answer_readers`), no instruction of the ROM's reads it."""
+    assert VOID_IN_C == {"AES_ROM_WIN_VIEW", "AES_ROM_WIN_START", "AES_ROM_WIN_FREE", "AES_ROM_WIN_TOP", "AES_ROM_WIN_OCALC",
+                         "AES_ROM_WIN_ICALC", "AES_ROM_WIN_BLDVIEW", "AES_ROM_WIN_SHWALL", "AES_ROM_WIN_SINFO", "AES_ROM_WIN_SNAME"}
+    for name in VOID_IN_C:
+        assert db.calls_of(getattr(addrs, name)), f"{name}: nothing calls it — no reader to find"
+        assert not db.answer_readers(getattr(addrs, name)), f"{name}: a ROM caller reads what it leaves in D0"
+
+
+READ_AT = {"AES_ROM_WIN_ALLOC": 2, "AES_ROM_WIN_FIND": 16, "AES_ROM_WIN_ONTOP": 7, "AES_ROM_WIN_CNT": 1, "AES_ROM_WIN_ITH": 3,
+           "AES_ROM_WIN_ISEL": 5, "AES_ROM_WIN_INAME": 2}
+
+
+def test_the_answers_the_c_has_are_read_where_the_reading_says():
+    """...and the seven that answer are each read: the count of reading instructions."""
+    read = {name: len(db.answer_readers(getattr(addrs, name))) for name in v.UNIT_L if name not in VOID_IN_C}
+    assert {name: sites for name, sites in read.items() if sites} == READ_AT
+
+
+@pytest.mark.parametrize("name", [name for name in AT_ITS_OWN_ARRIVAL
+                                  if not BY_LABEL[name].traps and BY_LABEL[name].name not in NO_ANSWER_OF_ITS_OWN])
+def test_the_rom_s_routine_in_place_leaves_the_d0_its_harness_run_does(name):
+    """THE HARNESS-STACK RUN IS THE MACHINE'S OWN, as far as D0: the ROM's routine run IN PLACE from the arrival leaves
+    the D0 the case's ROM run leaves — the whole register for a pointer, its word otherwise."""
+    each = BY_LABEL[name]
+    _answer, rom_d0, _idles = w.ran(each, each.name in v.YIELDS_L)
+    in_place = w.in_place(each.name, each.chain, each.nth).returned.registers["d0"]
+    mask = aes.LONG_MASK if v.SIGNATURES[each.name][0] is aes.LONG_ANSWER else aes.WORD_MASK
+    assert in_place & mask == rom_d0 & mask
+
+
+def test_the_answers_that_are_not_the_rom_s_are_counted_by_name():
+    """THE COUNT, over the battery's cases: how many answer nothing in C where the ROM leaves a word."""
+    assert Counter(BY_LABEL[name].name in VOID_IN_C for name in BY_LABEL)[True] == 33
+
+
+# ---- LINKED AND UNBOUND -----------------------------------------------------------------------------------------------------------
+def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_one(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every core of the unit
+    linked; and no function outside the unbound desk (the held cores and what only they reach) refers to ANY held core."""
+    assert not db.bound_referrers(blob, v.UNIT_L)
+
+
+def test_the_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
+    """...the generator's verdict for each of unit L's is THE ROM'S, and no registered row is one of theirs."""
+    assert w.verdicts_not_the_rom_s(v.UNIT_L) == (set(), [])

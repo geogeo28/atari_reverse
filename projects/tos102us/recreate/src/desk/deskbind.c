@@ -30,15 +30,7 @@
 #include "aes/wmlib.h"
 #include "aes/wmupdate.h"
 #include "desk/deskbind.h"
-
-/* A rectangle's four words laid in the bindings' frame at `rect`, as the ROM's caller pushed them. */
-static inline void lay_rect(uint8_t *image, uint32_t rect, int16_t x, int16_t y, int16_t w, int16_t h)
-{
-    wr16(image + rect + GRECT_X, (uint16_t)x);
-    wr16(image + rect + GRECT_Y, (uint16_t)y);
-    wr16(image + rect + GRECT_W, (uint16_t)w);
-    wr16(image + rect + GRECT_H, (uint16_t)h);
-}
+#include "desk/deskglobals.h"                  /* lay_rect: a rectangle's four words laid in the bindings' frame */
 
 /* A mouse rectangle's five words: whether leaving it is the event, then the rectangle. */
 static inline void lay_moblk(uint8_t *image, uint32_t moblk, int16_t leave, int16_t x, int16_t y, int16_t w, int16_t h)

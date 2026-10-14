@@ -884,6 +884,46 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # ---- band 6 wave 1a, unit D: the desk's bindings (`src/desk/deskbind.c`) ---- graf_mouse's show (257)
     ("aes_desk_graf_mouse", "aes_gsx_mon"),
     # ---- end of unit D's ----
+    # ---- band 6 wave 1b, group G1 (units I, L: `src/desk/deskwin.c`, `deskview.c`) ---- the screen's objects' rectangles
+    # set and their sample objects copied; the program leaves' paths and texts; do_xyfix's clamp, do_wfull's compare;
+    # the window list's names compared (make_its_path_current inlined into win_top and win_ontop); win_ocalc's and the
+    # view builder's fits, its icon blocks copied, its sliders' thousandths; the info line's template and merge
+    ("aes_obj_init", "aes_movs"), ("aes_obj_init", "aes_r_set"), ("aes_obj_walloc", "aes_r_set"), ("aes_obj_wfree", "aes_r_set"),
+    ("aes_obj_ialloc", "aes_r_set"), ("aes_pro_chdir", "aes_strcpy"), ("aes_pro_cmd", "aes_strcpy"), ("aes_ini_str", "aes_lstcpy"),
+    ("aes_do_xyfix", "aes_max"), ("aes_do_wfull", "aes_rc_equal"), ("aes_win_top", "aes_streq"), ("aes_win_ontop", "aes_streq"),
+    ("aes_win_ocalc", "aes_min"), ("aes_win_bldview", "aes_min"), ("aes_win_bldview", "aes_movs"), ("set_slider", "aes_mul_div"),
+    ("aes_win_sinfo", "aes_lstcpy"), ("aes_win_sinfo", "aes_merge_str"),
+    # ---- end of group G1's ----
+    # ---- band 6 wave 1b, group G2 (units A, K, J: `src/desk/deskapp.c`, `desktop.c`, `desksupp.c`) ---- app_getfh's
+    # name into g_tmppth; snap_disk's clamp (its axis helper inlined into it); app_rdicon's image count, its two ICONBLK
+    # lists and its masks; app_blddesk's ICONBLK copies (its icon helper inlined) and its Getrez through the XBIOS door
+    ("aes_app_getfh", "aes_strcpy"), ("aes_snap_disk", "aes_min"),
+    ("aes_app_rdicon", "aes_max"), ("aes_app_rdicon", "aes_movs"), ("aes_app_rdicon", "aes_wcopy"),
+    ("aes_app_blddesk", "aes_movs"), ("aes_app_blddesk", "aes_trp14"),
+    # ...men_update's root-name compare, cnx_put's window paths
+    ("aes_men_update", "aes_streq"), ("aes_cnx_put", "aes_strcpy"),
+    # ---- end of group G2's ----
+    # ---- band 6 wave 1b, group G3 (units B, G: `src/desk/deskact.c`, `deskfpd.c`) ---- app_afind's two patterns;
+    # gr_extent's and act_chkobj's rectangles; fpd_bldspec's path measured; pn_fcomp's names compared and its types found
+    # (by scasb: THE SHIPPED GLUE'S FIRST scasb THUNK)
+    ("aes_app_afind", "aes_wildcmp"), ("aes_gr_extent", "aes_r_set"), ("aes_act_chkobj", "aes_r_set"),
+    ("aes_fpd_bldspec", "aes_strlen"), ("aes_pn_fcomp", "aes_strchk"), ("aes_pn_fcomp", "aes_scasb"),
+    # ...an object's rectangle put on the screen (act_chg's and act_allchg's helper), act_allchg's extent copied and joined
+    ("act_on_the_screen", "aes_rc_copy"), ("aes_act_allchg", "aes_rc_copy"), ("aes_act_allchg", "aes_rc_union"),
+    # ---- end of group G3's ----
+    # ---- band 6 wave 1b, group G4 (units C, H, E, F: `src/desk/deskdir.c`, `deskfun.c`, `deskusr.c`, `deskinf.c`) ----
+    # the path leaves' copies and joins; draw_fld's rectangle; par_chk's two paths walked and compared (path_part inlined)
+    ("aes_desk_add_fname", "aes_strcpy"), ("aes_desk_add_path", "aes_strcat"), ("aes_desk_add_path", "aes_strcpy"),
+    ("aes_desk_del_fname", "aes_strcpy"), ("aes_desk_sub_path", "aes_strcpy"), ("aes_desk_get_fname", "aes_fmt_str"),
+    ("aes_desk_get_fname", "aes_strcpy"), ("aes_desk_draw_fld", "aes_wcopy"), ("aes_desk_par_chk", "aes_strcat"),
+    ("aes_desk_par_chk", "aes_strcpy"), ("aes_desk_par_chk", "aes_streq"), ("aes_desk_par_chk", "aes_strlen"),
+    # ...the alert's and the message's merges; the text view's line and its time and date (my_itoa inlined into both)
+    ("aes_desk_fun_alert", "aes_merge_str"), ("aes_desk_my_itoa", "aes_merge_str"), ("aes_desk_fmt_time", "aes_merge_str"),
+    ("aes_desk_fmt_time", "aes_strcpy"), ("aes_desk_fmt_date", "aes_merge_str"), ("aes_desk_ob_sfcb", "aes_lbcopy"),
+    ("aes_desk_ob_sfcb", "aes_merge_str"), ("aes_desk_ob_sfcb", "aes_strcpy"), ("aes_desk_ob_sfcb", "aes_strlen"),
+    # ...Show Info's fields
+    ("aes_desk_inf_field", "aes_fmt_str"), ("aes_desk_inf_field", "aes_merge_str"), ("aes_desk_inf_dttmsz", "aes_merge_str"),
+    # ---- end of group G4's ----
 }
 
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------

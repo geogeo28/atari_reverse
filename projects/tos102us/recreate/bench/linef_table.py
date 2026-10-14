@@ -155,6 +155,45 @@ LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{leaf}": "unit O: a desk-only leaf file
     "DOS_AVAIL", "DOS_RAWCIO", "DOS_CHMOD", "DOS_DELETE", "DOS_RMDIR", "DOS_CREATE", "GSX_HARDCOPY", "TRP13")})
 # ---- end of unit O's ----
 # ---- end of band 6 wave 1a's ----
+# ---- band 6 wave 1b: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----
+# ---- band 6 wave 1b, group G1 (units I `src/desk/deskwin.c`, L `src/desk/deskview.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit I: the desk's window objects and program leaves, held at Tier 1 at its arrivals"
+                               for routine in ("OBJ_INIT", "OBJ_WALLOC", "OBJ_WFREE", "OBJ_IALLOC", "PRO_CHDIR", "PRO_CMD", "PRO_EXEC",
+                                               "DESK_RSRC_LOAD", "INI_TREE", "INI_STR", "DO_WREDRAW", "GET_XYWH", "GET_SPEC", "DO_XYFIX",
+                                               "ZOOM_CLOSED", "DO_WFULL")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit L: the desk's view and its layout leaves, held at Tier 1 at its arrivals"
+                               for routine in ("WIN_VIEW", "WIN_START", "WIN_ALLOC", "WIN_FREE", "WIN_FIND", "WIN_TOP", "WIN_ONTOP",
+                                               "WIN_CNT", "WIN_ITH", "WIN_OCALC", "WIN_ICALC", "WIN_BLDVIEW", "WIN_SHWALL", "WIN_ISEL",
+                                               "WIN_INAME", "WIN_SINFO", "WIN_SNAME")})
+# ---- end of group G1's ----
+# ---- band 6 wave 1b, group G2 (units A `src/desk/deskapp.c`, K `src/desk/desktop.c`, J `src/desk/desksupp.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit A: the desk's application list, held at Tier 1 at its arrivals" for routine in (
+    "SCAN_STR", "SAVE_STR", "APP_PARSE", "APP_TRAN", "APP_RDICON", "APP_GETFH", "SNAP_DISK", "APP_REVIT", "APP_PATH_SAVE", "APP_PATH_RESTORE",
+    "APP_BLDDESK")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit K: the desk's main loop's helpers, held at Tier 1 at their arrivals" for routine in (
+    "I_FIND", "MEN_LIST", "MEN_UPDATE", "DO_VIEWMENU", "CNX_PUT")})
+LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DRIVE_CHECK": "unit J: drive_check, held at Tier 1 at its arrivals, its floppy driver replayed"})
+# ---- end of group G2's ----
+# ---- band 6 wave 1b, group G3 (units B `src/desk/deskact.c`, G `src/desk/deskfpd.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit B: a hit test or drag of the desk's, held at Tier 1 at its arrivals" for routine in (
+    "APP_AFIND", "GR_OBFIND", "GR_ISDOWN", "GR_ACCOBS", "GR_EXTENT", "GR_OBALIGN", "GR_PLNS", "GR_BWAIT", "ACT_CHKOBJ",
+    "MOVE_DRVICON", "ACT_CHG", "ACT_ALLCHG")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit G: a path or file node routine of the desk's, held at Tier 1 at its arrivals" for routine in (
+    "FN_INIT", "PN_INIT", "FPD_START", "FPD_BLDSPEC", "FPD_PARSE", "FPD_OFIND", "FPD_ELIST", "FN_FREE", "FL_FREE", "FN_ALLOC",
+    "PN_ALLOC", "PN_FREE", "PN_OPEN", "PN_FCOMP", "PN_COMP", "PN_SORT")})
+# ---- end of group G3's ----
+# ---- band 6 wave 1b, group G4 (units C `src/desk/deskdir.c`, H `deskfun.c`, E `deskusr.c`, F `deskinf.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit C: the copy engine's helpers, held at Tier 1 at their arrivals" for routine in (
+    "DRAW_DIAL", "DO_NAMECON", "HIDE_DIAL", "SHOW_DIAL", "DRAW_FLD", "ADD_PATH", "SUB_PATH", "ADD_FNAME", "DEL_FNAME", "GET_FNAME",
+    "D_ERRMSG", "D_DOFDEL", "PATH_PART", "PAR_CHK")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit H: the desk's alert and its message to itself, held at Tier 1 at their arrivals"
+                               for routine in ("FUN_ALERT", "FUN_MSG")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit E: the text view's line and its formatters, held at Tier 1 at their arrivals"
+                               for routine in ("MY_ITOA", "FMT_TIME", "FMT_DATE", "OB_SFCB")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit F: an info dialog's fields, held at Tier 1 at their arrivals"
+                               for routine in ("INF_FIELD", "INF_DTTMSZ")})
+# ---- end of group G4's ----
+# ---- end of band 6 wave 1b's ----
 
 
 def thunk_symbol(routine):

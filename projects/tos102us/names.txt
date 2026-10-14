@@ -2300,8 +2300,8 @@ cmt 0xfe1568 the File menu's Open of the selection: a drive's window $fe13ea, a 
 fn 0xfe1800 desk_do_format # ctx
 fn 0xfed736 desk_viewer_loop # ctx
 cmt 0xfed736 the file viewer's loop: a page of 22 lines ($fed7c0: moveq #21,d6 over the line routine $fed7cc); at the file's end ($9556 = -1) a key wait polling Crawio by Line-F at $fed754; else the prompt $fed790, its key wait at $fed79c — Q or ^C ends, a blank shows a page, Return a line (aes_desk.STOPS names the two waits)
-fn 0xfe1f2a desk_view_menu # ctx
-cmt 0xfe1f2a (item): items 29..35 by the table $fef6c4 — the view (0 icons / 1 text) and the sort key (0..3); where either changed: the old item's check cleared and the new one's set ($fde1f0), then $fe2a7c(view, sort)
+fn 0xfe1f2a do_viewmenu
+cmt 0xfe1f2a do_viewmenu(item): items 29..35 by the table $fef6c4 — the view (0 icons / 1 text) and the sort key (0..3); where either changed: the old item's check cleared and the new one's set ($fde1f0), then win_view(view, sort); 0. C: aes_do_viewmenu (src/desk/desktop.c; band 6 wave 1b, G2)
 fn 0xfe1fde desk_options_menu # ctx
 cmt 0xfe1fde (item): items 37..44 by the table $fef6e0 — install disk drive $fdf11a / application $fdf3c8, preferences $fdef12, Save Desktop (alert $fde022, then the INF writer $fdbb34), Print Screen (alert, then gsx_hardcopy $fe8862), the blitter item (trp14 $40)
 fn 0xfed61e desk_show_file
@@ -2318,7 +2318,8 @@ var 0xfef47e sh_printing_text
 # the ROM's side of the machines (test/aes_boot.py; slice M)
 var 0x755a flop_media_mode
 cmt 0x755a the floppy driver's media-change mode, a byte a drive: Rwabs of a NULL buffer stores its count here ($fc12e2), Mediach answers 2 while it is 2 ($fc119a), Getbpb rewrites it from the write-protect latch ($fc1160)
-cmt 0xfe1ad0 the desk, before it opens a drive: Drvmap, Malloc(512), XBIOS Floprd of the boot sector (eralert on an error), then Rwabs(0, NULL, 2, 0, drive) — the forced media change
+fn 0xfe1ad0 drive_check
+cmt 0xfe1ad0 drive_check(letter): the desk, before it opens a drive: Drvmap — fm_error(15) and AES_DOS_ERR 1 where the map lacks it; for A: and B: Malloc(512), XBIOS Floprd of the boot sector (eralert on an error), then Rwabs(0, NULL, 2, 0, drive) — the forced media change — and Mfree; no memory: fm_error(8); desk_wait(0) on every arm but the map's. C: aes_drive_check (src/desk/desksupp.c; band 6 wave 1b, G2)
 cmt 0xfe3094 the desk copies ub_trampoline's address out of $8c32 into the USERBLK of a window item shown as text (block + 5580 + 8 * index; its object block + 15902 + 24 * index, type G_USERDEF)
 # ---- AES band 6 wave 1a (2026-10-13): units O and D — the desk's leaves filed in AES modules and its AES bindings, each READ
 # from its body (none # ctx): C in src/desk/, linked into both blobs, held at Tier 1, NOTHING BOUND (STATUS: Linked, unbound — desk)
@@ -2447,3 +2448,216 @@ fn 0xfe1bdc desk_wait
 cmt 0xfe1bdc desk_wait(busy): desk_graf_mouse(busy ? 2 the hourglass : 0 the arrow, 0L). Unit K's by address; ported with unit D because desk_form_do calls it. C: aes_desk_wait
 var 0xc790 gl_apid
 cmt 0xc790 the desk's own process id, kept by desk_appl_init ($fdde48 move.w 28(a0),$c790)
+# ---- AES band 6 wave 1b (2026-10-14): groups G1..G4 — 100 routines of the desk's units I, L, A, K, J, B, G, C, H, E, F,
+# each READ from its body (a `# ctx` name is one of wave 2's, named by its first lines): C in src/desk/, linked into both
+# blobs, held at Tier 1, NOTHING BOUND (STATUS: Linked, unbound — desk). do_viewmenu ($fe1f2a, was desk_view_menu # ctx)
+# and drive_check ($fe1ad0) keep their lines above, merged.
+# group G1: units I (src/desk/deskwin.c) and L (src/desk/deskview.c)
+fn 0xfe0776 obj_init
+cmt 0xfe0776 obj_init(): every screen object unlinked, the root the screen's size, its five children added. C: aes_obj_init (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0840 obj_walloc
+cmt 0xfe0840 obj_walloc(x, y, w, h): the first window root of no size takes the rectangle; it, or 0. C: aes_obj_walloc (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe08b4 obj_wfree
+cmt 0xfe08b4 obj_wfree(object, x, y, w, h): a window root takes the rectangle, its icons unlinked. C: aes_obj_wfree (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0942 obj_ialloc
+cmt 0xfe0942 obj_ialloc(parent, x, y, w, h): the first unlinked icon object added under parent; it, or 0. C: aes_obj_ialloc (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe09cc pro_chdir
+cmt 0xfe09cc pro_chdir(drive, path): the drive and path made current (99: none); 1. C: aes_pro_chdir (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0a7c pro_cmd
+cmt 0xfe0a7c pro_cmd(command, tail, unread, count byte): the launch's command and tail kept; 1. C: aes_pro_cmd (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0ab6 pro_run   # ctx
+fn 0xfe0b26 pro_exec
+cmt 0xfe0b26 pro_exec(isgraf, isover, command, tail): the hourglass, then shel_write's answer. C: aes_pro_exec (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0b56 desk_rsrc_load
+cmt 0xfe0b56 desk_rsrc_load(): rom_ram's part 1 (the desk's resource) over the desk's global[]; 1. C: aes_desk_rsrc_load (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0b6e ini_tree
+cmt 0xfe0b6e ini_tree(answer, index): rsrc_gaddr of a tree. C: aes_ini_tree (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0b86 ini_str
+cmt 0xfe0b86 ini_str(index): a free string copied into g_lngstr; its address. C: aes_ini_str (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0bbc desk_clear   # ctx
+fn 0xfe0c2a desk_verify   # ctx
+fn 0xfe0c9a do_wredraw
+cmt 0xfe0c9a do_wredraw(window, GRECT): its objects drawn over its rectangle list, clipped. C: aes_do_wredraw (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0d5a get_xywh
+cmt 0xfe0d5a get_xywh(tree, object, 4 answers): an object's four words out. C: aes_get_xywh (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0db8 get_spec
+cmt 0xfe0db8 get_spec(tree, object): an object's ob_spec. C: aes_get_spec (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0dce do_xyfix
+cmt 0xfe0dce do_xyfix(&x, &y): a corner on a 16-pixel column, below the desk's top. C: aes_do_xyfix (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0e38 do_wopen   # ctx
+fn 0xfe0f36 zoom_closed
+cmt 0xfe0f36 zoom_closed(close, window, icon x, icon y): closed where asked, a box shrunk to the icon. C: aes_zoom_closed (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe0f9c do_wfull
+cmt 0xfe0f9c do_wfull(window): made full, or back to its previous size. C: aes_do_wfull (src/desk/deskwin.c; band 6 wave 1b, G1)
+fn 0xfe2a7c win_view
+cmt 0xfe2a7c win_view(view, sort): an item's extent, spacing and pitch, the columns across. C: aes_win_view (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2b64 win_start
+cmt 0xfe2b64 win_start(): obj_init, the icon view, every WNODE free. C: aes_win_start (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2ba2 win_alloc
+cmt 0xfe2ba2 win_alloc(obid): a WNODE, its root object and its GEM window; it, or 0. C: aes_win_alloc (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2c5c win_free
+cmt 0xfe2c5c win_free(WNODE): its GEM window deleted, the WNODE and its root freed. C: aes_win_free (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2cb8 win_find
+cmt 0xfe2cb8 win_find(handle): the WNODE of a GEM window, or 0. C: aes_win_find (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2cf4 win_top
+cmt 0xfe2cf4 win_top(WNODE): its root on top, its drive and path made current. C: aes_win_top (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2d46 win_ontop
+cmt 0xfe2d46 win_ontop(): the WNODE on top, its drive and path made current; or 0. C: aes_win_ontop (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2dc8 win_cnt
+cmt 0xfe2dc8 win_cnt(level): the WNODE index of the root that many along. C: aes_win_cnt (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2dfc win_ith
+cmt 0xfe2dfc win_ith(level): ...its WNODE. C: aes_win_ith (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2e12 win_ocalc
+cmt 0xfe2e12 win_ocalc(WNODE, wfit, hfit, &first): the view's columns and rows, what is shown. C: aes_win_ocalc (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2f0a win_icalc
+cmt 0xfe2f0a win_icalc(FNODE): the file's ANODE found (app_afind). C: aes_win_icalc (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe2f68 win_bldview
+cmt 0xfe2f68 win_bldview(WNODE, GRECT): the window's icons laid out as objects. C: aes_win_bldview (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe3310 win_blt   # ctx
+fn 0xfe3504 win_slide   # ctx
+fn 0xfe359a win_arrow   # ctx
+fn 0xfe3622 win_srtall   # ctx
+fn 0xfe3684 win_bdall   # ctx
+fn 0xfe36fa win_shwall
+cmt 0xfe36fa win_shwall(): a redraw message sent for every open window. C: aes_win_shwall (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe3760 win_isel
+cmt 0xfe3760 win_isel(tree, root, current): the next SELECTED child; or 0. C: aes_win_isel (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe37c4 win_iname
+cmt 0xfe37c4 win_iname(object): an icon's text. C: aes_win_iname (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe37ee win_sinfo
+cmt 0xfe37ee win_sinfo(WNODE): its info line: the bytes and files of its path. C: aes_win_sinfo (src/desk/deskview.c; band 6 wave 1b, G1)
+fn 0xfe384c win_sname
+cmt 0xfe384c win_sname(WNODE): its name: its path's spec to the `*`, a blank each end. C: aes_win_sname (src/desk/deskview.c; band 6 wave 1b, G1)
+# group G2: units A (src/desk/deskapp.c), K (src/desk/desktop.c) and J (src/desk/desksupp.c)
+fn 0xfdb014 scan_str
+cmt 0xfdb014 scan_str(cursor, &string): blanks skipped, the text to its `@` copied into the desk's string buffer at g_pbuff (NUL-ended, g_pbuff moved past it); the cursor past the `@`. C: aes_scan_str (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdb05a save_str
+cmt 0xfdb05a save_str(cursor, string): the text, `@` and a blank written at the cursor (a NULL string: its end alone); the cursor past them. C: aes_save_str (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdb082 app_parse
+cmt 0xfdb082 app_parse(cursor, anode): an INF line — its type letter by the switch $fef364 over 'C'..'T' (a_type, and a_flags where the arm stores them: 'D' the type alone), on the desktop its spot, its two icons, its letter and its two texts; the cursor. C: aes_app_parse (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdb186 app_tran
+cmt 0xfdb186 app_tran(index): the desk resource's BITBLK `index` turned to the device's form in place (gsx_trans through rsrc_gaddr's yield); gsx_trans's word. C: aes_app_tran (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdb1c8 app_getfh
+cmt 0xfdb1c8 app_getfh(open, name, unused): the name kept in g_tmppth, opened read-write or created (the third argument read and never used: Fcreate's attributes 0); the handle, 0 where GEMDOS failed. C: aes_app_getfh (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdb220 app_rdicon
+cmt 0xfdb220 app_rdicon(): the ROM's ICONBLKs copied twice (g_iblist, and the masks' list), their images laid in one Malloc'ed block and their masks in another (Alcyon lmul's products, their low words kept), each turned to the device's form; BITBLK 0 turned too (app_tran); 1. C: aes_app_rdicon (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdb508 snap_disk
+cmt 0xfdb508 snap_disk(x, y, &x, &y): a point of the desktop snapped to the icons' grid — across over the screen's width, down over the desktop's height from its top (g_ydesk); WRITES y less g_ydesk INTO ITS OWN ARGUMENT WORD in its caller's frame ($fdb58c), which its three callers pop unread. C: aes_snap_disk (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdbb0a app_revit
+cmt 0xfdbb0a app_revit(): the ANODE list in use turned round. C: aes_app_revit (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdbe7e app_path_save
+cmt 0xfdbe7e app_path_save(): the current drive and its path kept ($9b38, $980e: Dgetdrv, Dgetpath), the boot drive's root made current (C: where set_defdrv found it, else A:). C: aes_app_path_save (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdbeb6 app_path_restore
+cmt 0xfdbeb6 app_path_restore(): the kept drive and path made current again (Dsetdrv, Dsetpath). C: aes_app_path_restore (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfdbeec app_blddesk
+cmt 0xfdbeec app_blddesk(): the desktop's tree emptied (obj_wfree), its pattern by the resolution (Getrez through trp14), an icon object for each ANODE on the desktop (obj_ialloc; its ICONBLK from the mask list, its name and letter), the drives' bit vector handed appl_bvset; its answer. C: aes_app_blddesk (src/desk/deskapp.c; band 6 wave 1b, G2)
+fn 0xfe1bf6 i_find
+cmt 0xfe1bf6 i_find(window, item, &fnode, &is_app): the ANODE of a desktop icon (window 0: app_afind by its object) or of a window's file (by its FNODE's name, a folder by its attribute); the FNODE (0 on the desktop) stored. C: aes_i_find (src/desk/desktop.c; band 6 wave 1b, G2)
+fn 0xfe1c8c men_list
+cmt 0xfe1c8c men_list(tree, items, enable): menu_ienable of each item of a NUL-ended BYTE list — each a signed byte, so an item of $80 or more asks the bar redrawn. C: aes_men_list (src/desk/desktop.c; band 6 wave 1b, G2)
+fn 0xfe1cb6 men_update
+cmt 0xfe1cb6 men_update(tree): the menu's items 18..40 enabled, then the lists of what no selection allows disabled ($fef646..$fef68a) — by each selected icon's ANODE type, by whether a window is on top (and its name the root's: Close), by how many are selected. C: aes_men_update (src/desk/desktop.c; band 6 wave 1b, G2)
+fn 0xfe2536 cnx_put
+cmt 0xfe2536 cnx_put(): the INF's view, sort, preferences and resolution (from 0) kept in g_cnxsave, and each open window's rectangle (wind_get WF_CXYWH, do_xyfix), scroll, icon and path; the entries left over cleared. C: aes_cnx_put (src/desk/desktop.c; band 6 wave 1b, G2)
+# group G3: units B (src/desk/deskact.c) and G (src/desk/deskfpd.c)
+fn 0xfdc080 app_afind
+cmt 0xfdc080 app_afind(isdesk, type, obid, name, &isapp): the ANODE in use (g_ahead, G+13210) that is — isdesk — the desktop icon object obid (a_obid +8, a WORD compare) shows; else the first of `type` (+6, a WORD compare), not AF_ISDESK (bit 2 of +5), whose data pattern (+14) or else application pattern (+10) wildcmp-matches name, *isapp := 0 / 1. 0 where none. C: aes_app_afind (src/desk/deskact.c)
+fn 0xfdc0fa gr_obfind
+cmt 0xfdc0fa gr_obfind(tree, root, mx, my): objc_find(tree, root, 2, mx, my); an icon found (not root, not NIL) held by act_chkobj(.., 1, 1) to its image or label. C: aes_gr_obfind
+fn 0xfdc152 gr_isdown
+cmt 0xfdc152 gr_isdown(out, x, y, w, h, &mx, &my, &button, &keys): evnt_multi(MU_BUTTON|MU_M1, 1 click, mask 1, state 0, the rectangle; no second, no message, no timer), the key and clicks into its own frame; 0 where the button event came (up), else 1. C: aes_gr_isdown
+fn 0xfdc1ba gr_accobs
+cmt 0xfdc1ba gr_accobs(tree, root, &count, points): the screen corners of root's SELECTED children as point pairs, at most 60 (the cap tested after every child); *count. D0 a leftover (void). C: aes_gr_accobs
+fn 0xfdc268 move_drvicon
+cmt 0xfdc268 move_drvicon(tree, root, x, y, corners): each SELECTED desktop icon put down — snap_disk(x + corner.x, y + corner.y, &ob_x, &ob_y) —, its ANODE's a_xspot/a_yspot (+24/+26) the new place, do_wredraw(0, ..) over the old and the new (g_wicon/g_hicon G+8204/8206). One caller $fdcec4 (an icon let go where its drag began, no target). D0 a leftover. C: aes_move_drvicon
+fn 0xfdc398 gr_extent
+cmt 0xfdc398 gr_extent(count, points, rect): r_set(rect, least x, least y, most x - least x + 1, most y - least y + 1) — the least from 10000, the most from 0, SIGNED compares. D0 a leftover. C: aes_gr_extent
+fn 0xfdc458 gr_obalign
+cmt 0xfdc458 gr_obalign(count, x, y, points): each point moved by (-x, -y) in place. D0 a leftover. C: aes_gr_obalign
+fn 0xfdc49a gr_plns
+cmt 0xfdc49a gr_plns(x, y, count, outline, icons, corners): graf_mouse(M_OFF), gsx_pline(x + corner.x, y + corner.y, count, outline) for each icon, graf_mouse(M_ON). D0 a leftover. C: aes_gr_plns
+fn 0xfdc4fe gr_bwait
+cmt 0xfdc4fe gr_bwait(rect, mx, my, count, outline, icons, corners): gr_plns at the rect's corner, gr_isdown(1, mx, my, 2, 2, four answers of its own frame — read by nothing), gr_plns again (an XOR: rubbed out); gr_isdown's answer. C: aes_gr_bwait
+fn 0xfdc86e act_chkobj
+cmt 0xfdc86e act_chkobj(tree, root, obj, x, y, w, h): obj where the rectangle touches what of it is drawn, else root — the view g_iview (G+6610) unless root is the desktop's (1: icons): text, a line of 45 cells (gl_wchar * 45, muls) by gl_hchar; icons, the rectangle made relative to the object against the ICONBLK's label (+26) then image (+18), g_iblist G+13214 by g_index G+5324. A view neither answers obj. C: aes_act_chkobj
+fn 0xfdc9e4 act_chg
+cmt 0xfdc9e4 act_chg(wh, tree, root, obj, clip, value, set, draw, check_disabled): 0 where obj is DISABLED and the check asked; else its state with value set / cleared — where it changes, objc_change(tree, obj, 0, clip, state, 0) and, draw asked, do_wredraw(wh, the object's screen rectangle inside the clip); 1. Read by no caller. C: aes_act_chg
+fn 0xfdcabc act_allchg
+cmt 0xfdcabc act_allchg(wh, tree, root, except, rect, clip, value, set, draw): every child of root but except whose screen rectangle touches rect and whose image or label the touched part touches (act_chkobj) with value set / cleared, stored by hand; the extent of those changed (rc_union, the first rc_copy) redrawn inside the clip (do_wredraw) where draw asks. D0 a leftover. C: aes_act_allchg
+fn 0xfdf6d0 fn_init
+cmt 0xfdf6d0 fn_init(): the 400 FNODEs ($c67a's block, 40 bytes each) linked in order, g_favail (G+0) their head, the last's link cleared. C: aes_fn_init (src/desk/deskfpd.c)
+fn 0xfdf710 pn_init
+cmt 0xfdf710 pn_init(): the 5 PNODEs (G+4, 140 bytes each) linked in order — the LAST TOO, to where a sixth would lie (G+704 = g_pavail itself) — g_pavail := the first, g_phead (G+708) := 0, the last's link cleared again (the loop starts one node late; the clear puts it right). C: aes_pn_init
+fn 0xfdf756 fpd_start
+cmt 0xfdf756 fpd_start(): G+966 := &G+838 (the directory read's DTA pointer), G+834 := &G+712 (# ctx: a buffer), fn_init, pn_init. C: aes_fpd_start
+fn 0xfdf77a fpd_bldspec
+cmt 0xfdf77a fpd_bldspec(drive, path, name, ext, spec): "D:\path\name.ext" — the separator only between a path and a name, the mark only before an extension of a name; 0 where strlen(path) + 13 >= 121 (a path of 108 or more). C: aes_fpd_bldspec
+fn 0xfdf7f4 fpd_parse
+cmt 0xfdf7f4 fpd_parse(spec, &drive, path, name, ext): the byte before the first ':' as a SIGNED word (or dos_gdrv() + 'A', the spec from its start), the path to the last '\', the name to the LAST '.', the extension after it. Moves its own argument pointers in its caller's frame. A '.' in the path and none in the name runs the name's copy away (no spec the desk builds has one). D0 a leftover. C: aes_fpd_parse
+fn 0xfdf8c6 fpd_ofind
+cmt 0xfdf8c6 fpd_ofind(files, obj): the FNODE of the list whose f_obid (+32, a WORD compare) is obj; 0. C: aes_fpd_ofind
+fn 0xfdf8ec fpd_elist
+cmt 0xfdf8ec fpd_elist(files, stop): the node whose link is stop (no NIL check). C: aes_fpd_elist
+fn 0xfdf908 fn_free
+cmt 0xfdf908 fn_free(file): pushed on g_favail. C: aes_fn_free
+fn 0xfdf926 fl_free
+cmt 0xfdf926 fl_free(files): a non-empty list put at g_favail's head, its last (fpd_elist(files, 0)) linked to the old head. C: aes_fl_free
+fn 0xfdf952 fn_alloc
+cmt 0xfdf952 fn_alloc(): g_favail's first node taken off; 0. C: aes_fn_alloc
+fn 0xfdf972 pn_alloc
+cmt 0xfdf972 pn_alloc(): g_pavail's first node taken off and pushed on g_phead, p_flags (+4) and p_flist (+130) cleared; 0. C: aes_pn_alloc
+fn 0xfdf9aa pn_free
+cmt 0xfdf9aa pn_free(path): fl_free(p_flist); unlinked from g_phead's list (found by the link that names it, no NIL check); pushed on g_pavail. C: aes_pn_free
+fn 0xfdf9da pn_open
+cmt 0xfdf9da pn_open(drive, path, name, ext, attr): pn_alloc, fpd_bldspec into p_spec (+8), p_attr (+6) := attr; 0 where none is free — or where the spec does not fit, THE NODE LEFT OPEN (never given back). C: aes_pn_open
+fn 0xfdfa2c pn_fcomp
+cmt 0xfdfa2c pn_fcomp(f1, f2, key): by name (0) strchk; by date (1) f2's date - f1's, then the times >> 5 (two-second field dropped, lsr); by size (2) the larger first (1 / -1, SIGNED longs), then the names; by type (3) strchk of scasb(name, '.') each, then the names. Any other key answered itself (the switch's word left in D0). C: aes_pn_fcomp
+fn 0xfdfaee pn_comp
+cmt 0xfdfaee pn_comp(f1, f2): a folder (attr bit 4, +9) before a file (-1 / 1); two of a kind pn_fcomp(f1, f2, g_isort G+6626). C: aes_pn_comp
+fn 0xfdfb38 pn_sort
+cmt 0xfdfb38 pn_sort(count, files): count -1: the list indexed into ml_pfndx (G+14302) first, counted into its own count word (its caller's frame); K&R's shell sort by pn_comp (gap halved by divs.w); relinked in order, the last's link cleared; the head (0 for a count not positive). C: aes_pn_sort
+# group G4: units C (src/desk/deskdir.c), H (deskfun.c), E (deskusr.c) and F (deskinf.c)
+fn 0xfdcf04 desk_draw_dial
+cmt 0xfdcf04 draw_dial(tree): form_center, objc_draw(tree, 0, 8, rect). C: aes_desk_draw_dial (src/desk/deskdir.c)
+fn 0xfdcf48 desk_do_namecon
+cmt 0xfdcf48 do_namecon(): the name-conflict dialog shown (first) or drawn again, form_do; copy dialog up: item 4 drawn selected. C: aes_desk_do_namecon
+fn 0xfdcfa8 desk_hide_dial
+cmt 0xfdcfa8 hide_dial(tree): form_center, form_dial(FINISH). C: aes_desk_hide_dial
+fn 0xfdcfea desk_show_dial
+cmt 0xfdcfea show_dial(tree): form_center, form_dial(START), objc_draw. C: aes_desk_show_dial
+fn 0xfdd04c desk_draw_fld
+cmt 0xfdd04c draw_fld(tree, obj): the object drawn alone where ob_offset puts it. C: aes_desk_draw_fld
+fn 0xfdd0a4 desk_add_path
+cmt 0xfdd0a4 add_path(path, name): name for "*.*", "\*.*" after. C: aes_desk_add_path
+fn 0xfdd0d2 desk_sub_path
+cmt 0xfdd0d2 sub_path(path): last folder dropped. C: aes_desk_sub_path
+fn 0xfdd10a desk_add_fname
+cmt 0xfdd10a add_fname(path, name): name for "*.*". C: aes_desk_add_fname
+fn 0xfdd12c desk_del_fname
+cmt 0xfdd12c del_fname(path): "\*.*" for the last name. C: aes_desk_del_fname
+fn 0xfdd158 desk_get_fname
+cmt 0xfdd158 get_fname(path, text): last name, fmt_str'd via ml_ftmp. C: aes_desk_get_fname
+fn 0xfdd1a0 desk_d_errmsg
+cmt 0xfdd1a0 d_errmsg(): DOS verdict; failed and AX<=-32: form_error(~AX-30); 1/0. C: aes_desk_d_errmsg
+fn 0xfdd1ce desk_d_dofdel
+cmt 0xfdd1ce d_dofdel(name): dos_delete, d_errmsg. C: aes_desk_d_dofdel
+fn 0xfdd762 desk_path_part
+cmt 0xfdd762 path_part(cursor, path): next folder name, NUL-cut in place (# ctx name). C: aes_desk_path_part
+fn 0xfdd7a6 desk_par_chk
+cmt 0xfdd7a6 par_chk(src, files, dst): selected folder into itself refused (fun_alert 22). C: aes_desk_par_chk
+fn 0xfdfd58 desk_fun_alert
+cmt 0xfdfd58 fun_alert(default, string, params): rsrc string, merged, form_alert. C: aes_desk_fun_alert (src/desk/deskfun.c)
+fn 0xfdfda6 desk_fun_msg
+cmt 0xfdfda6 fun_msg(type, unread, w3..w7): message to the desk's own pipe. C: aes_desk_fun_msg
+fn 0xfde500 desk_my_itoa
+cmt 0xfde500 my_itoa(n, text): two digits ("%W", leading 0 when n<=9 unsigned). C: aes_desk_my_itoa (src/desk/deskusr.c)
+fn 0xfde546 desk_fmt_time
+cmt 0xfde546 fmt_time(time, text): "hhmmam"/"pm". C: aes_desk_fmt_time
+fn 0xfde5ba desk_fmt_date
+cmt 0xfde5ba fmt_date(date, text): "mmddyy". C: aes_desk_fmt_date
+fn 0xfde610 desk_ob_sfcb
+cmt 0xfde610 ob_sfcb(sfcb, text): text-view line; its length. C: aes_desk_ob_sfcb
+fn 0xfdea5e desk_inf_field
+cmt 0xfdea5e inf_field(src, text, tree, obj, is_name): fmt_str or "%L", inf_sset (# ctx name). C: aes_desk_inf_field (src/desk/deskinf.c)
+fn 0xfdea9a desk_inf_dttmsz
+cmt 0xfdea9a inf_dttmsz(tree, fnode, dobj, tobj, sobj, &size): date, time, size fields. C: aes_desk_inf_dttmsz

@@ -43,6 +43,8 @@
 #ifndef TOS102US_DESK_DESKLEAF_H
 #define TOS102US_DESK_DESKLEAF_H
 
+#include "desk/deskglobals.h"
+
 /* ---- the DOS glue ----------------------------------------------------------------------------------------------------- */
 /* What dos_mkdir leaves in AES_DOS_AX where Dcreate answers EACCDN: the MS-DOS number GEM was written against. */
 #define DOS_AX_ACCESS_DENIED  5          /* ($fe3ad8 move.w #5,$c918)                                          */
@@ -81,11 +83,8 @@
 
 /* ---- gemgraf's three --------------------------------------------------------------------------------------------------- */
 /* The desk's ANODE lists, in its global block (AES_DESK_GLOBALS): the nodes free and the nodes in use, each a chain
- * through a node's first longword. */
-#define DESK_ANODES_FREE      13206      /* long: g_aavail                      ($fdaea8 movea.l 13206(a3),a5)  */
-#define DESK_ANODES_IN_USE    13210      /* long: g_ahead                       ($fdaeb8 tst.l 13210(a3))       */
-#define ANODE_NEXT            0          /* long: a_next                        ($fdaeb0 move.l (a5),13206(a3)) */
-#define ANODE_NONE            0
+ * through a node's first longword — DESK_ANODES_FREE, DESK_ANODES_IN_USE, ANODE_NEXT, ANODE_NONE (`desk/deskglobals.h`,
+ * their one home since wave 1b's fix pass). */
 
 /* ---- the BIOS door ----------------------------------------------------------------------------------------------------- */
 /* The widest frame a ROM caller pushes for it, in words past the function: Rwabs's (rwflag, buffer.l, count, recno,

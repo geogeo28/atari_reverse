@@ -1431,9 +1431,10 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 | `0xfeb0e6` | `sh_main` (`src/aes/shell.c`; band 5 wave 4) | 4 rows — STRETCHES on the our-boot machine beside the ROM's (A LABELLED STAGING; three through the served door, AN ARGUMENT CLASS — deskmain answered at its entry on both shores, a built-in of the desk's answered where the run arrives at it, the shell's buffers as the ROM's own shel_write leaves them: `test_aes_ourboot.py`) + 13 passes at Tier 1 (`test_aes_shell_main.py`) | 2816 / 41244 the desk quits .. 98081 / 945322 a program to dos_exec's entry | **0.92** LABELLED STAGING (our boot): the first pass to deskmain's entry (`net`), **0.75** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 0): the desk quits: the shell's last pass, to gem_main's teardown (`net`), **0.86** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): a file shown, and back to deskmain's entry (`net`), **0.63** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1): a program the disk holds, to dos_exec's entry (`net`) | ✅ verified | the launch band's text noted, the five flags set, then a pass at a time: the screen (wm_start THEN ratinit: two checkpoints, their order held), the desk through THE DESK DOOR — deskmain ENTERED ON THE ROM'S OWN STACK POINTER `$a364`, the door's margin 26 measured off D3 —, after it the click count cleared, desk_free, Getrez, the band's colour; a command: sh_cmd, else sh_find, pd_nameit and dos_exec ENTERED at `$a35e` (margin 22) where the row ends: RUNS A PROGRAM past it (a real Pexec loads over the blob), and the cartridge's arm halts by name (NO MACHINE). Entered at `$a392` where the ROM's is at `$a382`. 0.92 / 0.79 / 0.87 / 0.68 with thunks, whole run 0.93 / 0.95 / 0.88 / 0.96; NET OF THE ROM'S LINE-F HANDLER 0.94 / 1.27 / 0.89 / 0.85 — the last pass's 1.27 REPORTED (AWAITING 22: 7,778 + 388 in thunks to the ROM's 10,372 less 3,940). On the bench blob the first pass 2.00 and the built-in pass 1.82 (desk_alloc's and the band's loops as C twins): reported. Unpinned by nature: the `!= 4` arm of the colour test (Getrez answers 0..3) |
 | `0xfeb2fc` | `sh_cmd` (`src/aes/shell.c`; band 5 wave 4) | 5 rows — its entry to its return on the our-boot machine beside the ROM's (A LABELLED STAGING, AN ARGUMENT CLASS: deskmain answered 1 after the ROM's own shel_write, the built-in answered where the run arrives at it: `test_aes_ourboot.py`) + 38 Tier-1 cases (`test_aes_shell_cmd.py`) | 37 / 440 no built-in's byte .. 99033 / 937246 `$fd` | **0.52** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fe: a file shown (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fd: a file printed (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fc: Format (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fb: the disk copy (`net`), **0.45** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1): no built-in's byte: a program's tail (`net`) | ✅ verified | the tail's first byte: `$fe` the desk's "show a file" handed the text behind it; `$fd` the line made "PRINTING  " and the name, the band drawn, "print"; `$fc` / `$fb` the band drawn, Format / the disk copy handed the text and the command; any other byte answers 0. EACH BUILT-IN ENTERED THROUGH THE DESK DOOR ON THE ROM'S OWN STACK POINTER (`$a352` the two file ones, `$a34e` the two disk ones) AND HANDED THE ROM'S ARGUMENTS (the bytes it will read above its return address compared exactly: the fix pass), the door's margin 20 measured off D3 — and the door's HALT taken by a mutant 24 bytes deeper. 0.52 / 0.93 / 0.93 / 0.93 / 0.45 with thunks, whole run 0.52 / 1.00 / 1.00 / 1.00 / 0.45; NET OF THE ROM'S LINE-F HANDLER 1.06 / 1.27 / 1.28 / 1.28 / 0.75 — REPORTED (AWAITING 22: 34,734 + 4,580 in thunks to the ROM's 42,232 less 11,390 for `$fd`; the three are strcpy / strcat and the band's draw, each verified long since) |
 
-## Linked, unbound — desk (59)
+## Linked, unbound — desk (159)
 
-THE DESK'S FIRST TWO UNITS (band 6 wave 1a: its entry in the wave log), `src/desk/`: written in C, LINKED INTO BOTH
+THE DESK'S FIRST TWO UNITS (band 6 wave 1a: its entry in the wave log) AND WAVE 1b's HUNDRED ROUTINES IN FOUR GROUPS
+(band 6 wave 1b: its entry), `src/desk/`: written in C, LINKED INTO BOTH
 BLOBS and HELD AT TIER 1 at the arrivals of the hands' chains — and NOTHING OF THEM BOUND: no row registered, no price
 but scratch probes, every Line-F table entry naming one the ROM's (`bench/linef_table.py`: `LINKED_AND_NOT_FLIPPED`,
 the generator's declared exception, until the binding — ruling W6-R1, the user's). A SECOND KIND OF SECTION, because a
@@ -1442,6 +1443,12 @@ the generator's declared exception, until the binding — ruling W6-R1, the user
 none of its rows `✅ verified` — so a routine flipped at the binding leaves the list and reds here until its row moves
 to a Verified section. Unit O's eighteen: `test/test_desk_leaves.py` (`src/desk/deskleaf.c`; the BIOS door ships as
 its sixteen ROM bytes, `src/desk/trp13.S`); unit D's forty-one: `test/test_desk_bind.py` (`src/desk/deskbind.c`).
+Wave 1b's: group G1, units I and L (33: `test_desk_win.py`, `test_desk_view.py`; `deskwin.c`, `deskview.c`); group G2,
+units A, K and J (17: `test_desk_app.py`, `test_desk_top.py`, `test_desk_supp.py`; `deskapp.c`, `desktop.c`,
+`desksupp.c`); group G3, units B and G (28: `test_desk_act.py`, `test_desk_fpd.py`; `deskact.c`, `deskfpd.c`); group G4,
+units C, H, E and F (22: `test_desk_dir.py`, `test_desk_fun.py`, `test_desk_usr.py`, `test_desk_inf.py`; `deskdir.c`,
+`deskfun.c`, `deskusr.c`, `deskinf.c`). EVERY UNIT'S UNBOUND PIN IS ONE (`aes_deskbind.bound_referrers`): nothing outside
+the unbound desk refers to any of the 159.
 "Bytes" are the shipped blob's symbol sizes against the AES map's inventory; a probe is a scratch measurement at one
 arrival — no row, no verdict.
 
@@ -1506,6 +1513,106 @@ arrival — no row, no verdict.
 | `0xfe3c22` | `dos_create` (`aes_dos_create`; `src/desk/deskleaf.c`; unit O) | 2 arrival(s) + labelled classes (`test_desk_leaves.py`) | 80 / 26 B | — no row (not bound) | 🔗 linked, unbound | probe (shipped blob, not a row): 1.0596 band 5's handler (638/676), 1.0476 O's recorder, 1.1338 bare (Save Desktop creates DESKTOP.INF); 1.0596 band 5's handler (638/676), 1.0476 O's recorder, 1.1338 bare (a file copied into a folder) |
 | `0xfe8862` | `gsx_hardcopy` (`aes_gsx_hardcopy`; `src/desk/deskleaf.c`; unit O) | NO ARRIVAL: labelled classes alone (`test_desk_leaves.py`) — its printer is a device the model has not | 18 / 4 B | — no row (not bound) | 🔗 linked, unbound | not probed (no blob case: the hardcopy's Scrdmp is staged for the host alone); ALL OF D0 not the C's (named; read by no caller) |
 | `0xfee478` | `trp13` (`aes_trp13`; `src/desk/deskleaf.c`; SHIPS AS `src/desk/trp13.S`, the ROM's 16 bytes; unit O) | 3 arrival(s) + labelled classes (`test_desk_leaves.py`) | 82 / 16 B | — no row (not bound) | 🔗 linked, unbound | the `.S` 1.00 at all three arrivals (602 / 846 / 4,022 cycles, the transcription relation, held by a test); its C twin 1.355 / 1.253 / 1.053 (+214 a call) — the evidence the `.S` answers |
+| `0xfe0776` | `obj_init` (`aes_obj_init`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 198 / 202 B | — no row (not bound) | 🔗 linked, unbound | probe 103490/70738=0.684 shipped, 103490/74076=0.716 bench (G1's scratch probe, one arrival, not a row); frame 64 B, the ROM's 34 |
+| `0xfe0840` | `obj_walloc` (`aes_obj_walloc`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 120 / 114 B | — no row (not bound) | 🔗 linked, unbound | probe 834/608=0.729 shipped, 834/502=0.602 bench (G1's scratch probe, one arrival, not a row); frame 28 B, the ROM's 34 |
+| `0xfe08b4` | `obj_wfree` (`aes_obj_wfree`; `src/desk/deskwin.c`; unit I) | 4 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 142 / 142 B | — no row (not bound) | 🔗 linked, unbound | probe 972/694=0.714 shipped, 972/588=0.605 bench (G1's scratch probe, one arrival, not a row); frame 40 B, the ROM's 38 |
+| `0xfe0942` | `obj_ialloc` (`aes_obj_ialloc`; `src/desk/deskwin.c`; unit I) | 4 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 202 / 136 B | — no row (not bound) | 🔗 linked, unbound | probe 14250/12156=0.853 shipped, 14250/11930=0.837 bench (G1's scratch probe, one arrival, not a row); frame 60 B, the ROM's 32 |
+| `0xfe09cc` | `pro_chdir` (`aes_pro_chdir`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) + 3 labelled class(es) (`test_desk_win.py`) | 234 / 174 B | — no row (not bound) | 🔗 linked, unbound | probe 2278/1984=0.871 shipped, 2278/1958=0.86 bench (G1's scratch probe over unit O's recorder, one arrival, not a row); band 5's handler with the five frames it lacks told in the probe's process (AWAITING (24)): 0.866 shipped, 0.854 bench; frame 40 B, the ROM's 22 |
+| `0xfe0a7c` | `pro_cmd` (`aes_pro_cmd`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 68 / 58 B | — no row (not bound) | 🔗 linked, unbound | probe 1238/994=0.803 shipped, 1238/1392=1.124 bench (G1's scratch probe, one arrival, not a row); frame 36 B, the ROM's 26 |
+| `0xfe0b26` | `pro_exec` (`aes_pro_exec`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 56 / 48 B | — no row (not bound) | 🔗 linked, unbound | probe 59618/55234=0.926 shipped, 59618/63320=1.062 bench (G1's scratch probe, one arrival, not a row); frame 36 B, the ROM's 24 |
+| `0xfe0b56` | `desk_rsrc_load` (`aes_desk_rsrc_load`; `src/desk/deskwin.c`; unit I) | UNPINNED AT ITS ARRIVALS (they exist: the desk restarted after a file is shown; there rom_ram's C halts by name at band 5's dispatch_point, outside the dispatcher) — its C held over the leaf machine, the arrivals' D0 by the ROM's run in place (`test_desk_win.py`) | 30 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe — shipped, — bench (G1's scratch probe, one arrival, not a row); frame 16 B, the ROM's 20 |
+| `0xfe0b6e` | `ini_tree` (`aes_ini_tree`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 28 / 24 B | — no row (not bound) | 🔗 linked, unbound | probe 14004/11624=0.83 shipped, 14004/11502=0.821 bench (G1's scratch probe, one arrival, not a row); frame 16 B, the ROM's 18 |
+| `0xfe0b86` | `ini_str` (`aes_ini_str`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 80 / 54 B | — no row (not bound) | 🔗 linked, unbound | probe 14866/12076=0.812 shipped, 14866/12160=0.818 bench (G1's scratch probe, one arrival, not a row); frame 60 B, the ROM's 20 |
+| `0xfe0c9a` | `do_wredraw` (`aes_do_wredraw`; `src/desk/deskwin.c`; unit I) | 4 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 430 / 192 B | — no row (not bound) | 🔗 linked, unbound | probe 429524/415936=0.968 shipped, 429524/416350=0.969 bench (G1's scratch probe, one arrival, not a row); frame 116 B, the ROM's 56 |
+| `0xfe0d5a` | `get_xywh` (`aes_get_xywh`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 62 / 94 B | — no row (not bound) | 🔗 linked, unbound | probe 672/252=0.375 shipped, 672/252=0.375 bench (G1's scratch probe, one arrival, not a row); frame 0 B, the ROM's 16 |
+| `0xfe0db8` | `get_spec` (`aes_get_spec`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 26 / 22 B | — no row (not bound) | 🔗 linked, unbound | probe 246/110=0.447 shipped, 246/110=0.447 bench (G1's scratch probe, one arrival, not a row); frame 0 B, the ROM's 12 |
+| `0xfe0dce` | `do_xyfix` (`aes_do_xyfix`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) + 2 labelled class(es) (`test_desk_win.py`) | 118 / 106 B | — no row (not bound) | 🔗 linked, unbound | probe 15100/12508=0.828 shipped, 15100/12258=0.812 bench (G1's scratch probe, one arrival, not a row); frame 64 B, the ROM's 46 |
+| `0xfe0f36` | `zoom_closed` (`aes_zoom_closed`; `src/desk/deskwin.c`; unit I) | 2 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 246 / 102 B | — no row (not bound) | 🔗 linked, unbound | probe 2613394/2580538=0.987 shipped, 2613394/2587154=0.99 bench (G1's scratch probe, one arrival, not a row); frame 88 B, the ROM's 52 measured (reviewer B); shrinkbox's work-area w / h UNOBSERVABLE at Tier 1 (RA-I2: unpinned by name) |
+| `0xfe0f9c` | `do_wfull` (`aes_do_wfull`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 418 / 204 B | — no row (not bound) | 🔗 linked, unbound | probe 3468378/3384318=0.976 shipped, 3468378/3386770=0.976 bench (G1's scratch probe, one arrival, not a row); frame 144 B, the ROM's 68 |
+| `0xfe2a7c` | `win_view` (`aes_win_view`; `src/desk/deskview.c`; unit L) | 3 arrival(s) + 1 labelled class(es) + gl_hchar LAID 16 (a labelled staging: reviewer A's RA-L5) (`test_desk_view.py`) | 320 / 232 B | — no row (not bound) | 🔗 linked, unbound | probe 908/878=0.967 shipped, 908/878=0.967 bench (G1's scratch probe, one arrival, not a row); frame 28 B, the ROM's 16 |
+| `0xfe2b64` | `win_start` (`aes_win_start`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 94 / 62 B | — no row (not bound) | 🔗 linked, unbound | probe 105470/72312=0.686 shipped, 105470/75648=0.717 bench (G1's scratch probe, one arrival, not a row); frame 20 B, the ROM's 26 |
+| `0xfe2ba2` | `win_alloc` (`aes_win_alloc`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 326 / 184 B | — no row (not bound) | 🔗 linked, unbound | probe 19448/14906=0.766 shipped, 19448/14498=0.745 bench (G1's scratch probe, one arrival, not a row); frame 48 B, the ROM's 38 |
+| `0xfe2c5c` | `win_free` (`aes_win_free`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 220 / 92 B | — no row (not bound) | 🔗 linked, unbound | probe 30694/24992=0.814 shipped, 30694/24644=0.803 bench (G1's scratch probe, one arrival, not a row); frame 52 B, the ROM's 24 |
+| `0xfe2cb8` | `win_find` (`aes_win_find`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 1 labelled class(es) (`test_desk_view.py`) | 54 / 60 B | — no row (not bound) | 🔗 linked, unbound | probe 474/142=0.3 shipped, 474/142=0.3 bench (G1's scratch probe, one arrival, not a row); frame 0 B, the ROM's 16 |
+| `0xfe2cf4` | `win_top` (`aes_win_top`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 112 / 82 B | — no row (not bound) | 🔗 linked, unbound | probe 20340/15880=0.781 shipped, 20340/15748=0.774 bench (G1's scratch probe over unit O's recorder, one arrival, not a row); band 5's handler with the five frames it lacks told in the probe's process (AWAITING (24)): 0.780 shipped, 0.773 bench; frame 32 B, the ROM's 20 |
+| `0xfe2d46` | `win_ontop` (`aes_win_ontop`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 184 / 128 B | — no row (not bound) | 🔗 linked, unbound | probe 386/250=0.648 shipped, 386/250=0.648 bench (G1's scratch probe, one arrival, not a row); frame 32 B, the ROM's 30 |
+| `0xfe2dc8` | `win_cnt` (`aes_win_cnt`; `src/desk/deskview.c`; unit L) | 3 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 70 / 52 B | — no row (not bound) | 🔗 linked, unbound | probe 458/222=0.485 shipped, 458/222=0.485 bench (G1's scratch probe, one arrival, not a row); frame 0 B, the ROM's 24 |
+| `0xfe2dfc` | `win_ith` (`aes_win_ith`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 90 / 22 B | — no row (not bound) | 🔗 linked, unbound | probe 850/332=0.391 shipped, 850/332=0.391 bench (G1's scratch probe, one arrival, not a row); frame 4 B, the ROM's 12 |
+| `0xfe2e12` | `win_ocalc` (`aes_win_ocalc`; `src/desk/deskview.c`; unit L) | 6 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 308 / 248 B | — no row (not bound) | 🔗 linked, unbound | probe 1806/1392=0.771 shipped, 1806/1208=0.669 bench (G1's scratch probe, one arrival, not a row); frame 40 B, the ROM's 40 |
+| `0xfe2f0a` | `win_icalc` (`aes_win_icalc`; `src/desk/deskview.c`; unit L) | 3 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 60 / 94 B | — no row (not bound) | 🔗 linked, unbound | probe 10468/9774=0.934 shipped, 10468/9012=0.861 bench (G1's scratch probe, one arrival, not a row); frame 32 B, the ROM's 28 |
+| `0xfe2f68` | `win_bldview` (`aes_win_bldview`; `src/desk/deskview.c`; unit L) | 6 arrival(s) + 1 labelled class(es) (`test_desk_view.py`) | 838 / 936 B | — no row (not bound) | 🔗 linked, unbound | probe 1165562/997612=0.856 shipped, 1165562/993916=0.853 bench (G1's scratch probe, one arrival, not a row); frame 124 B, the ROM's 74 |
+| `0xfe36fa` | `win_shwall` (`aes_win_shwall`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 206 / 102 B | — no row (not bound) | 🔗 linked, unbound | probe 41316/30478=0.738 shipped, 41316/31254=0.756 bench (G1's scratch probe, one arrival, not a row); frame 108 B, the ROM's 46 |
+| `0xfe3760` | `win_isel` (`aes_win_isel`; `src/desk/deskview.c`; unit L) | 4 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 104 / 100 B | — no row (not bound) | 🔗 linked, unbound | probe 904/480=0.531 shipped, 904/480=0.531 bench (G1's scratch probe, one arrival, not a row); frame 8 B, the ROM's 20 |
+| `0xfe37c4` | `win_iname` (`aes_win_iname`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 42 / 42 B | — no row (not bound) | 🔗 linked, unbound | probe 326/156=0.479 shipped, 326/156=0.479 bench (G1's scratch probe, one arrival, not a row); frame 0 B, the ROM's 20 |
+| `0xfe37ee` | `win_sinfo` (`aes_win_sinfo`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 124 / 94 B | — no row (not bound) | 🔗 linked, unbound | probe 21760/18936=0.87 shipped, 21760/17704=0.814 bench (G1's scratch probe, one arrival, not a row); frame 64 B, the ROM's 34 |
+| `0xfe384c` | `win_sname` (`aes_win_sname`; `src/desk/deskview.c`; unit L) | 3 arrival(s) + 0 labelled class(es) (`test_desk_view.py`) | 70 / 48 B | — no row (not bound) | 🔗 linked, unbound | probe 564/390=0.691 shipped, 564/390=0.691 bench (G1's scratch probe, one arrival, not a row); frame 8 B, the ROM's 24 |
+| `0xfdb014` | `scan_str` (`aes_scan_str`; `src/desk/deskapp.c`; unit A) | 19 arrival(s) + 1 labelled staging (`test_desk_app.py`) | 142 / 70 B | — no row (not bound) | 🔗 linked, unbound | probe 0.784 (group G2's scratch probe, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfdb05a` | `save_str` (`aes_save_str`; `src/desk/deskapp.c`; unit A) | 18 arrival(s) + 1 labelled class(es) (`test_desk_app.py`) | 72 / 40 B | — no row (not bound) | 🔗 linked, unbound | probe 0.995 (group G2's scratch probe, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfdb082` | `app_parse` (`aes_app_parse`; `src/desk/deskapp.c`; unit A) | 10 arrival(s) + 5 labelled class(es) — four lines LAID, a flagged node (`test_desk_app.py`) | 482 / 260 B | — no row (not bound) | 🔗 linked, unbound | probe 0.346 (group G2's scratch probe, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfdb186` | `app_tran` (`aes_app_tran`; `src/desk/deskapp.c`; unit A) | 2 arrival(s) + 1 labelled class(es) (`test_desk_app.py`) | 76 / 66 B | — no row (not bound) | 🔗 linked, unbound | probe 0.851, X flag declared (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob; 0.844 bench); its answer held to the ROM's in place at its width |
+| `0xfdb1c8` | `app_getfh` (`aes_app_getfh`; `src/desk/deskapp.c`; unit A) | 1 arrival(s), GEMDOS SCRIPTED + 4 labelled class(es) (`test_desk_app.py`) | 110 / 88 B | — no row (not bound) | 🔗 linked, unbound | probe 0.813 (group G2's scratch probe, shipped blob; 0.983 bench: strcpy's C twin); its answer held to the ROM's in place at its width |
+| `0xfdb220` | `app_rdicon` (`aes_app_rdicon`; `src/desk/deskapp.c`; unit A) | 2 arrival(s), GEMDOS SCRIPTED (`test_desk_app.py`) | 904 / 744 B | — no row (not bound) | 🔗 linked, unbound | probe 0.914, X flag declared (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); **1.230 ON THE BENCH BLOB, REPORTED** (169,214 / 208,094: movs's and wcopy's C twins there); its answer held to the ROM's in place at its width |
+| `0xfdb508` | `snap_disk` (`aes_snap_disk`; `src/desk/deskapp.c`; unit A) | 12 arrival(s) + 6 labelled class(es) (`test_desk_app.py`) | 224 / 244 B | — no row (not bound) | 🔗 linked, unbound | probe 0.51–0.59 (group G2's scratch probe, shipped blob); D0 a leftover the C has none of (counted; read by no caller); writes its own argument word in its caller's frame ($fdb58c; popped unread) |
+| `0xfdbb0a` | `app_revit` (`aes_app_revit`; `src/desk/deskapp.c`; unit A) | 3 arrival(s) (`test_desk_app.py`) | 78 / 42 B | — no row (not bound) | 🔗 linked, unbound | probe 0.813 (group G2's scratch probe, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdbe7e` | `app_path_save` (`aes_app_path_save`; `src/desk/deskapp.c`; unit A) | 1 arrival(s), GEMDOS SCRIPTED + 1 labelled class(es) (`test_desk_app.py`) | 118 / 56 B | — no row (not bound) | 🔗 linked, unbound | probe 0.821 over G2's recorder (both blobs); band 5's handler with the five frames told and Dgetdrv's ledger excess dropped by name: 0.823 (AWAITING (24)); its answer held to the ROM's in place |
+| `0xfdbeb6` | `app_path_restore` (`aes_app_path_restore`; `src/desk/deskapp.c`; unit A) | 1 arrival(s), GEMDOS SCRIPTED + 1 labelled staging (`test_desk_app.py`) | 60 / 22 B | — no row (not bound) | 🔗 linked, unbound | probe 0.851 over G2's recorder (both blobs); band 5's handler with the five frames it lacks told in the probe's process (AWAITING (24)): 0.852; its answer held to the ROM's in place |
+| `0xfdbeec` | `app_blddesk` (`aes_app_blddesk`; `src/desk/deskapp.c`; unit A) | 4 arrival(s), Getrez STAGED (`test_desk_app.py`) | 640 / 404 B | — no row (not bound) | 🔗 linked, unbound | probe 0.876 on the bench blob (the fix pass's probe on the Tier 3 bench class, whole run); **REFUSED ON THE SHIPPED BLOB**: AES_XBIOS_RETURN left $00067160 (the shipped glue's aes_trp14 thunk's return) where the ROM's door leaves $00fdbf16 — read by no instruction of the ROM (a named divergence, 4 arrivals; AWAITING (24)); its answer held to the ROM's in place at its width |
+| `0xfe1bf6` | `i_find` (`aes_i_find`; `src/desk/desktop.c`; unit K) | 3 arrival(s) (`test_desk_top.py`) | 204 / 150 B | — no row (not bound) | 🔗 linked, unbound | probe 0.49 / 0.87 (group G2's scratch probe, shipped blob, both arms); its answer held to the ROM's in place at its width |
+| `0xfe1c8c` | `men_list` (`aes_men_list`; `src/desk/desktop.c`; unit K) | 19 arrival(s) + 1 labelled class(es) (`test_desk_top.py`) | 64 / 42 B | — no row (not bound) | 🔗 linked, unbound | probe 0.849 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfe1cb6` | `men_update` (`aes_men_update`; `src/desk/desktop.c`; unit K) | 4 arrival(s) + 2 at arrivals SCRIPTED — a file's, a program's (`test_desk_top.py`) | 644 / 406 B | — no row (not bound) | 🔗 linked, unbound | probe 0.845 / two selected 0.843 / scripted 0.846, 0.845 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfe1f2a` | `do_viewmenu` (`aes_do_viewmenu`; `src/desk/desktop.c`; unit K) | 6 arrival(s) — items 29, 30, 32, 33, 34, 35 — + 1 labelled class(es), item 36 (`test_desk_top.py`) | 416 / 180 B | — no row (not bound) | 🔗 linked, unbound | probe 0.851 / by date 0.850 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfe2536` | `cnx_put` (`aes_cnx_put`; `src/desk/desktop.c`; unit K) | 5 arrival(s) — two with a window open, one of them scrolled (`test_desk_top.py`) | 286 / 226 B | — no row (not bound) | 🔗 linked, unbound | probe 0.503 / a window open 0.778 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfe1ad0` | `drive_check` (`aes_drive_check`; `src/desk/desksupp.c`; unit J) | 5 arrival(s), DRIVER_REPLAYED + 4 labelled — E_CHNG, drive B:, AES_DOS_ERR stale, drive P: (`test_desk_supp.py`) | 530 / 268 B | — no row (not bound) | 🔗 linked, unbound | probe 0.919 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller); eralert's retry arm UNPINNED (no driver answers an error) |
+| `0xfdc080` | `app_afind` (`aes_app_afind`; `src/desk/deskact.c`; unit B) | 4 arrival(s) + 6 labelled class(es) (the fix pass's: a node's two patterns one, LAID — the data's tried first) (`test_desk_act.py`) | 162 / 122 B | — no row (not bound) | 🔗 linked, unbound | probe 0.563 (1,066 / 600: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdc0fa` | `gr_obfind` (`aes_gr_obfind`; `src/desk/deskact.c`; unit B) | 6 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 98 / 88 B | — no row (not bound) | 🔗 linked, unbound | probe 0.762 (22,836 / 17,412: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdc152` | `gr_isdown` (`aes_gr_isdown`; `src/desk/deskact.c`; unit B) | 2 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 116 / 104 B | — no row (not bound) | 🔗 linked, unbound | probe 0.834 (64,078 / 53,450: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdc1ba` | `gr_accobs` (`aes_gr_accobs`; `src/desk/deskact.c`; unit B) | 2 arrival(s) + 1 labelled class(es) (its 62-object tree LAID in a band of its own, `aes_deskact.TREE_BAND_AT`) (`test_desk_act.py`) | 150 / 174 B | — no row (not bound) | 🔗 linked, unbound | probe 0.522 (1,414 / 738: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdc268` | `move_drvicon` (`aes_move_drvicon`; `src/desk/deskact.c`; unit B) | 1 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 318 / 304 B | — no row (not bound) | 🔗 linked, unbound | probe 0.952 (606,804 / 577,588: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdc398` | `gr_extent` (`aes_gr_extent`; `src/desk/deskact.c`; unit B) | 3 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 178 / 192 B | — no row (not bound) | 🔗 linked, unbound | probe 0.478 (3,208 / 1,534: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdc458` | `gr_obalign` (`aes_gr_obalign`; `src/desk/deskact.c`; unit B) | 2 arrival(s) + 0 labelled class(es) (`test_desk_act.py`) | 56 / 66 B | — no row (not bound) | 🔗 linked, unbound | probe 0.415 (516 / 214: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdc49a` | `gr_plns` (`aes_gr_plns`; `src/desk/deskact.c`; unit B) | 3 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 142 / 100 B | — no row (not bound) | 🔗 linked, unbound | probe 0.971 (115,872 / 112,464: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdc4fe` | `gr_bwait` (`aes_gr_bwait`; `src/desk/deskact.c`; unit B) | 3 arrival(s) + 0 labelled class(es) (`test_desk_act.py`) | 174 / 124 B | — no row (not bound) | 🔗 linked, unbound | probe 0.94 (297,092 / 279,190: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdc86e` | `act_chkobj` (`aes_act_chkobj`; `src/desk/deskact.c`; unit B) | 7 arrival(s) + 6 labelled class(es) (`test_desk_act.py`) | 464 / 374 B | — no row (not bound) | 🔗 linked, unbound | probe 0.824 (2,840 / 2,340: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdc9e4` | `act_chg` (`aes_act_chg`; `src/desk/deskact.c`; unit B) | 5 arrival(s) + 5 labelled class(es) (the fix pass's: the object SELECTED already, LAID — an OR) (`test_desk_act.py`) | 236 / 216 B | — no row (not bound) | 🔗 linked, unbound | probe 0.966 (449,374 / 433,910: group G3's, shipped blob) ; its word held to the ROM's in place; read by no caller |
+| `0xfdcabc` | `act_allchg` (`aes_act_allchg`; `src/desk/deskact.c`; unit B) | 4 arrival(s) + 4 labelled class(es) (`test_desk_act.py`) | 374 / 366 B | — no row (not bound) | 🔗 linked, unbound | probe 0.879 (9,000 / 7,912: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf6d0` | `fn_init` (`aes_fn_init`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 0 labelled class(es) (`test_desk_fpd.py`) | 76 / 64 B | — no row (not bound) | 🔗 linked, unbound | probe 0.306 (63,432 / 19,412: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf710` | `pn_init` (`aes_pn_init`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 0 labelled class(es) (`test_desk_fpd.py`) | 70 / 70 B | — no row (not bound) | 🔗 linked, unbound | probe 0.383 (1,236 / 474: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf756` | `fpd_start` (`aes_fpd_start`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 0 labelled class(es) (`test_desk_fpd.py`) | 110 / 36 B | — no row (not bound) | 🔗 linked, unbound | probe 0.306 (65,288 / 19,990: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf77a` | `fpd_bldspec` (`aes_fpd_bldspec`; `src/desk/deskfpd.c`; unit G) | 3 arrival(s) + 4 labelled class(es) (`test_desk_fpd.py`) | 232 / 122 B | — no row (not bound) | 🔗 linked, unbound | probe 0.864 (914 / 790: group G3's, shipped blob) ; its answer held to the ROM's in place at its width; writes its own argument word in its caller's frame ($fdf7e2; read by none) |
+| `0xfdf7f4` | `fpd_parse` (`aes_fpd_parse`; `src/desk/deskfpd.c`; unit G) | 3 arrival(s) + 5 labelled class(es) (`test_desk_fpd.py`) | 472 / 210 B | — no row (not bound) | 🔗 linked, unbound | probe 0.997 (1,154 / 1,150: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf8c6` | `fpd_ofind` (`aes_fpd_ofind`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 2 labelled class(es) (`test_desk_fpd.py`) | 30 / 38 B | — no row (not bound) | 🔗 linked, unbound | probe 0.271 (354 / 96: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdf8ec` | `fpd_elist` (`aes_fpd_elist`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 1 labelled class(es) (`test_desk_fpd.py`) | 24 / 28 B | — no row (not bound) | 🔗 linked, unbound | probe 0.312 (320 / 100: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdf908` | `fn_free` (`aes_fn_free`; `src/desk/deskfpd.c`; unit G) | 1 arrival(s) + 0 labelled class(es) (`test_desk_fpd.py`) | 34 / 30 B | — no row (not bound) | 🔗 linked, unbound | probe 0.429 (340 / 146: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf926` | `fl_free` (`aes_fl_free`; `src/desk/deskfpd.c`; unit G) | 3 arrival(s) + 0 labelled class(es) (`test_desk_fpd.py`) | 56 / 44 B | — no row (not bound) | 🔗 linked, unbound | probe 0.254 (882 / 224: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf952` | `fn_alloc` (`aes_fn_alloc`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 1 labelled class(es) (`test_desk_fpd.py`) | 26 / 32 B | — no row (not bound) | 🔗 linked, unbound | probe 0.311 (366 / 114: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdf972` | `pn_alloc` (`aes_pn_alloc`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 2 labelled class(es) (`test_desk_fpd.py`) | 64 / 56 B | — no row (not bound) | 🔗 linked, unbound | probe 0.589 (462 / 272: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdf9aa` | `pn_free` (`aes_pn_free`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 0 labelled class(es) (`test_desk_fpd.py`) | 110 / 48 B | — no row (not bound) | 🔗 linked, unbound | probe 0.332 (1,476 / 490: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdf9da` | `pn_open` (`aes_pn_open`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) + 4 labelled class(es) (the fix pass's: an attribute word with a high byte) (`test_desk_fpd.py`) | 150 / 66 B | — no row (not bound) | 🔗 linked, unbound | probe 0.643 (2,126 / 1,366: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdfa2c` | `pn_fcomp` (`aes_pn_fcomp`; `src/desk/deskfpd.c`; unit G) | 7 arrival(s) + 11 labelled class(es) (the fix pass's: dates three days apart, a time past 16:00, sizes apart by the high word alone — LAID) (`test_desk_fpd.py`) | 276 / 190 B | — no row (not bound) | 🔗 linked, unbound | probe 0.653 (714 / 466: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdfaee` | `pn_comp` (`aes_pn_comp`; `src/desk/deskfpd.c`; unit G) | 3 arrival(s) + 1 labelled class(es) (the fix pass's: a read-only file against a plain one, LAID) (`test_desk_fpd.py`) | 82 / 72 B | — no row (not bound) | 🔗 linked, unbound | probe 0.338 (402 / 136: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdfb38` | `pn_sort` (`aes_pn_sort`; `src/desk/deskfpd.c`; unit G) | 6 arrival(s) + 2 labelled class(es) (`test_desk_fpd.py`) | 316 / 260 B | — no row (not bound) | 🔗 linked, unbound | probe 0.693 (946 / 656: group G3's, shipped blob) ; its answer held to the ROM's in place at its width |
+| `0xfdcf04` | `draw_dial` (`aes_desk_draw_dial`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) + 1 labelled class(es) (`test_desk_dir.py`) | 98 / 68 B | — no row (not bound) | 🔗 linked, unbound | probe 0.985 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdcf48` | `do_namecon` (`aes_desk_do_namecon`; `src/desk/deskdir.c`; unit C) | 3 arrival(s), its wake Return (`test_desk_dir.py`) | 218 / 96 B | — no row (not bound) | 🔗 linked, unbound | probe 0.968 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdcfa8` | `hide_dial` (`aes_desk_hide_dial`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 100 / 66 B | — no row (not bound) | 🔗 linked, unbound | probe 0.970 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfdcfea` | `show_dial` (`aes_desk_show_dial`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 144 / 98 B | — no row (not bound) | 🔗 linked, unbound | probe 0.984 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdd04c` | `draw_fld` (`aes_desk_draw_fld`; `src/desk/deskdir.c`; unit C) | 2 arrival(s) + 1 labelled class(es) (`test_desk_dir.py`) | 126 / 88 B | — no row (not bound) | 🔗 linked, unbound | probe 0.976 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdd0a4` | `add_path` (`aes_desk_add_path`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 76 / 46 B | — no row (not bound) | 🔗 linked, unbound | probe 0.788 (0.909) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdd0d2` | `sub_path` (`aes_desk_sub_path`; `src/desk/deskdir.c`; unit C) | 2 arrival(s) (`test_desk_dir.py`) | 64 / 56 B | — no row (not bound) | 🔗 linked, unbound | probe 0.825 (0.908) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdd10a` | `add_fname` (`aes_desk_add_fname`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 48 / 34 B | — no row (not bound) | 🔗 linked, unbound | probe 0.724 (**1.060**: strcpy's C twin) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdd12c` | `del_fname` (`aes_desk_del_fname`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 54 / 44 B | — no row (not bound) | 🔗 linked, unbound | probe 0.767 (0.865) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdd158` | `get_fname` (`aes_desk_get_fname`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 104 / 72 B | — no row (not bound) | 🔗 linked, unbound | probe 0.958 (**1.209 ON THE BENCH BLOB, REPORTED**: strcpy's and fmt_str's C twins) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdd1a0` | `d_errmsg` (`aes_desk_d_errmsg`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) — one through its alert's wake — + 1 labelled staging, -32 exactly (`test_desk_dir.py`) | 62 / 46 B | — no row (not bound) | 🔗 linked, unbound | probe 0.951 the alert's arm (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); 0.387 the plain arm (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdd1ce` | `d_dofdel` (`aes_desk_d_dofdel`; `src/desk/deskdir.c`; unit C) | 2 arrival(s), GEMDOS SCRIPTED + 1 labelled class(es) (`test_desk_dir.py`) | 88 / 14 B | — no row (not bound) | 🔗 linked, unbound | probe 0.654 over unit O's recorder, 0.495 bare (group G4's scratch probe, shipped blob (bench in brackets)); band 5's handler with the five frames it lacks told in the probe's process (AWAITING (24)): 0.633; its answer held to the ROM's in place at its width |
+| `0xfdd762` | `path_part` (`aes_desk_path_part`; `src/desk/deskdir.c`; unit C) | 3 arrival(s) (`test_desk_dir.py`) | 82 / 68 B | — no row (not bound) | 🔗 linked, unbound | probe 0.511 (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdd7a6` | `par_chk` (`aes_desk_par_chk`; `src/desk/deskdir.c`; unit C) | 4 arrival(s) + 3 labelled — an aliased buffer no ROM caller hands (the refusal), another drive, two folders SELECTED LAID (`test_desk_dir.py`) | 588 / 370 B | — no row (not bound) | 🔗 linked, unbound | probe 0.880 (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfdfd58` | `fun_alert` (`aes_desk_fun_alert`; `src/desk/deskfun.c`; unit H) | 2 arrival(s), their wakes (`test_desk_fun.py`) | 186 / 78 B | — no row (not bound) | 🔗 linked, unbound | probe 0.956 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfdfda6` | `fun_msg` (`aes_desk_fun_msg`; `src/desk/deskfun.c`; unit H) | 3 arrival(s) + 1 labelled class(es) (`test_desk_fun.py`) | 86 / 76 B | — no row (not bound) | 🔗 linked, unbound | probe 0.762 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); its answer held to the ROM's in place at its width |
+| `0xfde500` | `my_itoa` (`aes_desk_my_itoa`; `src/desk/deskusr.c`; unit E) | 4 arrival(s) + 2 labelled class(es) — $ffff, $0105 (`test_desk_usr.py`) | 70 / 70 B | — no row (not bound) | 🔗 linked, unbound | probe 0.856 (0.505) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfde546` | `fmt_time` (`aes_desk_fmt_time`; `src/desk/deskusr.c`; unit E) | 3 arrival(s) + 3 labelled class(es) (`test_desk_usr.py`) | 360 / 116 B | — no row (not bound) | 🔗 linked, unbound | probe 0.770 (0.517) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width |
+| `0xfde5ba` | `fmt_date` (`aes_desk_fmt_date`; `src/desk/deskusr.c`; unit E) | 2 arrival(s) + 2 labelled class(es) (`test_desk_usr.py`) | 228 / 86 B | — no row (not bound) | 🔗 linked, unbound | probe 0.899 (0.562) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfde610` | `ob_sfcb` (`aes_desk_ob_sfcb`; `src/desk/deskusr.c`; unit E) | 5 arrival(s) (`test_desk_usr.py`) | 764 / 420 B | — no row (not bound) | 🔗 linked, unbound | probe 0.890 (0.632) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width; a screen wider than 320 UNPINNED |
+| `0xfdea5e` | `inf_field` (`aes_desk_inf_field`; `src/desk/deskinf.c`; unit F) | 6 arrival(s) + 1 labelled class(es) — is_name $0100 (`test_desk_inf.py`) | 142 / 60 B | — no row (not bound) | 🔗 linked, unbound | probe 0.779 (0.558) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdea9a` | `inf_dttmsz` (`aes_desk_inf_dttmsz`; `src/desk/deskinf.c`; unit F) | 3 arrival(s) (`test_desk_inf.py`) | 160 / 118 B | — no row (not bound) | 🔗 linked, unbound | probe 0.780 (0.534) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
 
 ## Harness
 
@@ -1528,8 +1635,8 @@ arrival — no row, no verdict.
 ## Wave log
 
 * **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: AES band 5 wave 3
-  (2026-10-11), wave 4 (its entries follow wave 3's), BAND 6 WAVE 0 and BAND 6 WAVE 1a (2026-10-13: the last entry before
-  `* **Next**`).
+  (2026-10-11), wave 4 (its entries follow wave 3's), BAND 6 WAVE 0, BAND 6 WAVE 1a (2026-10-13) and BAND 6 WAVE 1b
+  (2026-10-14: the last entry before `* **Next**`).
   - **BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER: LINKED, HELD AT TIER 1, NOTHING BOUND — AND THE GATE W3-R8 DOES
     NOT FIT** (2026-10-10/11; five slices in one tree — T the door, G gemdosif's last two, L the loader, M the
     machines, S the stack's reading — then one integration pass; the design and its rulings W3-R1..R13:
@@ -3625,9 +3732,10 @@ arrival — no row, no verdict.
     `scratchpad/b6/W1/FIX/`). 383 verified STILL: no row registered, no registry declaration activated, no Tier-3 row,
     every Line-F table entry of the 59 the ROM's (`src/aes/lineftable.S` byte-identical), no kit edit. THE LEDGER
     HOLDS THEM IN A SECTION OF A SECOND KIND, `## Linked, unbound — desk (59)` (below the AES's), held to the
-    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. THE HANDS' CAMPAIGN IS 51 CHAINS / 158 STEPS, EVERY ONE
-    NAMING A ROUTINE OF ITS ACT; REACH 219 OF BAND 6's 244; THE DEEPEST BY THE WRITE LEDGERS: PD0 1,460 of 1,792, PD1
-    722 of 1,196, the dispatcher 190 (188 on every other chain), the userdef stack 438 of 1,024.
+    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. (The campaign's size as it stands, re-derived at wave 1b's
+    fix pass — wave 1a's own fix pass left it at 51 chains / 158 steps, reach 219:) THE HANDS' CAMPAIGN IS 69 CHAINS / 219
+    STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 224 OF BAND 6's 244; THE DEEPEST BY THE WRITE LEDGERS: PD0 1,460
+    of 1,792, PD1 722 of 1,196, the dispatcher 190 (188 on every other chain), the userdef stack 438 of 1,024.
     - **UNIT O — THE DESK'S LEAVES FILED IN AES MODULES** (`src/desk/deskleaf.c`, `src/desk/trp13.S`,
       `include/desk/deskleaf.h`, `test/aes_deskleaves.py`, `test/test_desk_leaves.py` — 366 tests): thirteen entries of
       the DOS glue (dos_write, dos_gdir, dos_mkdir, dos_setdt, dos_label, dos_space, dos_rename, dos_avail, dos_rawcio,
@@ -3809,6 +3917,216 @@ arrival — no row, no verdict.
       and disk copy have no chain); A0 at return on any shore of ours; PD0's margin with the units bound (reviewer B's
       arithmetic, AWAITING (24)); the harness's own footprint on an arrival's megabyte (said, not vetted); the `$90c`
       capture set, `make gates`, `make guarded` and the from-empty build — THE ORCHESTRATOR'S.
+  - **BAND 6 WAVE 1b — FOUR GROUPS, 100 ROUTINES OF THE DESK IN C, LINKED INTO BOTH BLOBS, HELD AT TIER 1, NOTHING
+    BOUND** (2026-10-13/14; on `ec18000`: a prep pass laid each shared file's per-group blocks, then FOUR GROUPS IN ONE
+    TREE, disjoint files — G1 units I, L (`deskwin.c`, `deskview.c`: 33 routines), G2 units A, K, J (`deskapp.c`,
+    `desktop.c`, `desksupp.c`: 17), G3 units B, G (`deskact.c`, `deskfpd.c`: 28), G4 units C, H, E, F (`deskdir.c`,
+    `deskfun.c`, `deskusr.c`, `deskinf.c`: 22) — two reviews, then ONE FIX PASS alone in the tree, which wrote this entry:
+    every number in it is the fix pass's own build, collect, probe or log unless it says whose measurement it is. The
+    cut: `scratchpad/b6/W1b/cut.md`; the briefs: `scratchpad/b6/W1b/common.md`, `fix_w1b.md`; the hand-backs
+    `scratchpad/b6/W1b/{prep,G1,G2,G3,G4}/handback.md`; the reviews `scratchpad/RB6W1b/{A,B}/review.md`; the fix pass's
+    probes and logs `scratchpad/b6/W1b/FIX/`). 383 verified STILL: no row registered, no registry declaration activated,
+    no Tier-3 row, every Line-F table entry of the 159 the ROM's (`src/aes/lineftable.S` byte-identical), no kit edit.
+    THE LEDGER'S `## Linked, unbound — desk` SECTION IS 159 ROWS (59 + 100). THE CUT (its ruling R-1b-1, provisional):
+    the wave is the routines of units A–L at level 0–2 with units O, D and desk_wait counted as leaves — 100 routines /
+    13,368 B; the view builder `$fe2f68` kept in it (R-1b-2); wave 2 after it: 42 routines / 12,662 B.
+    - **THE CASES** (every one at an ARRIVAL of a ROM run — a chain of the hands stopped at the routine's first
+      instruction, the arguments read off the frame its ROM caller pushed — or a LABELLED class or staging said in its
+      id): G1 89 arrivals + 8 argument classes, gl_hchar LAID 16 for win_view, desk_rsrc_load UNPINNED AT ITS ARRIVALS
+      (its C held over the leaf machine: rom_ram's C halts by name outside the dispatcher — a harness limit, not a
+      class); G2 117 arrivals + 26 classes and stagings (drive_check's floppy DRIVER REPLAYED in its ids); G3 86 arrivals
+      + 60; G4 68 arrivals + 16. EVERY ONE OF THE 100 HAS AN ARRIVAL OF ITS OWN but desk_rsrc_load (above): the five no
+      chain reached are reached by new chains — move_drvicon by G3's drive put down on a bare spot, draw_dial,
+      do_namecon, sub_path and path_part by G4's name conflict, folder-into-folder and folder-holding-a-folder chains.
+      THE HANDS: 69 chains / 219 steps (G1 3, G2 4, G3 5, G4 6 new), reach 224 of the 244; no chain went deeper than
+      PD0's 1,460 (`DEEPEST` unchanged). A routine reaching a binding of unit D's is a row that switches
+      (`aes_switching.companion`, nothing dropped); the rest the plain differential.
+    - **D0 AT RETURN** (`aes_deskbind.answer_readers` over every call site of the ROM's GEM text): every answer the C
+      has is held to the ROM's run in place at its width; GEM's VOID routines are `void` in C and the word the ROM
+      leaves there is a NAMED, COUNTED DIVERGENCE read by NO instruction of the ROM — G1 17 routines (56 cases), G2
+      snap_disk, app_revit, men_list, men_update, cnx_put, drive_check, G3 12 routines (43 cases), G4 9 routines (36
+      cases); act_chg's answer the C has is read by none of its six callers either. A0: not compared (the Alcyon callers
+      move a pointer out of D0 — a reading; G3's runs found A0 `$cc44`, the Line-F return's own, at every return).
+    - **THE PRICES** (scratch probes, one arrival each, NOT rows; ROM / ours, whole run to the return, net of the shared
+      entry; the convention beside each figure). NOTHING OVER 1.00 ON THE SHIPPED BLOB. The plain routines on the kit's
+      second differential (`aes_deskleaves.on_a_blob`): G1 0.30–0.99, G2 0.35–0.995, G3 0.25–0.997, G4 0.39–0.96. THE
+      YIELDING ROUTINES ON THE TIER 3 BENCH CLASS (`harness.bench_tier3().RomBench`, conftest's `blob` — reviewer A's
+      finding: the kit's plain `RomBench`, which G2's and G4's probes took, refuses every yielding row of the desk, unit
+      D's bindings too, on our dispatch path's own 27–33 bytes under the yield; only tier3's puts the dispatcher's stack
+      back), shipped blob: app_tran 0.851 (X flag declared), men_list 0.849, app_rdicon 0.914 (X), drive_check 0.919,
+      men_update 0.845 / 0.843 two selected / 0.846 and 0.845 scripted, do_viewmenu 0.851 / 0.850, cnx_put 0.503 / 0.778
+      a window open, draw_dial 0.985, do_namecon 0.968, hide_dial 0.970, show_dial 0.984, draw_fld 0.976, d_errmsg 0.951,
+      fun_alert 0.956, fun_msg 0.762; G1's and G3's rows priced so by their authors. **REPORTED, NOT ACCEPTED — ON THE
+      BENCH BLOB ALONE**: app_rdicon **1.230** (169,214 / 208,094), get_fname **1.209**, pro_cmd **1.124**, pro_exec
+      1.062, add_fname 1.060 — each function's instructions identical on the two blobs but for call targets, the callees
+      that differ transcribed cores' C twins (reviewer A: by body identity, not a cycle split). **app_blddesk ON THE
+      SHIPPED BLOB IS REFUSED** (0.876 on the bench blob): `AES_XBIOS_RETURN` ($95b2) holds `$00067160`, the return
+      inside the shipped glue's `aes_trp14` thunk, where the ROM's door leaves its caller's site `$00fdbf16` — A NAMED
+      DIVERGENCE, 4 arrivals (app_blddesk the one C caller of the door's thunk; drive_check parks the ROM's own site),
+      READ BY NO INSTRUCTION OF THE ROM: the long `$000095b2` occurs in the ROM's bytes only as the door's own two
+      operands (`$fee48a` store, `$fee492` load back), and the next door call overwrites it. Not masked; A BINDING-SLICE
+      QUESTION (AWAITING (24)). BAND 5's OWN TRAP CONVENTION (`aes_shell.scripted_pokes`) refuses every DOS-glue user
+      here because its `FRAME_BYTES` lacks Dsetdrv, Dsetpath, Fdelete, Dgetdrv and Dgetpath (the handler then records
+      `RECORDED_BYTES`, the caller's own stack past the frame). TOLD THOSE FIVE IN THE PROBE'S PROCESS ONLY (the
+      provisional ruling: no table move this wave), shipped / bench: pro_chdir 0.866 / 0.854, win_top 0.780 / 0.773,
+      d_dofdel 0.633 / 0.633, app_path_restore 0.852 / 0.852, app_path_save 0.823 / 0.823 (Dgetdrv's frame is told
+      a word — the handler records none shorter — and its ledger's excess dropped by name, G2's `shell_drop`); over G2's
+      own recorder 0.821 / 0.851. Making it permanent moves 26 lines of the Tier-3 table (band 5's scripted rows +72
+      cycles a shore; dos_open, dos_read and dos_lseek −0.01: reviewer A's trial) — THE USER'S CALL (AWAITING (24)).
+    - **FRAMES AND PD0** (reviewer B's MEASUREMENT of the ROM's frames — the ROM's run in place from arrival 0, stopped at
+      each callee's entry; ours off the listing; no diet done, none measured needed): G3 gr_obfind 42 / 44, gr_isdown 80
+      / 104, move_drvicon 40 / 100, gr_extent 48 / 40, gr_plns 42 / 52, gr_bwait 68 / 100, act_chkobj 58 / 96, act_chg 56 /
+      60, act_allchg 64 / 104, pn_open 26 / 40, pn_fcomp 32 / 60, pn_sort 40 / 60; G1 and G2 do_wfull 64 / 144, do_wredraw
+      52 / 116, zoom_closed 52 / 88, win_bldview 70 / 124, win_shwall 40 / 108, app_blddesk 38 / 52 (G2 said 30), app_rdicon
+      72 / 64 — G1's listing estimates of the ROM's ran 4 to 6 high. PD0, THE ROM's DEEPEST STORE AND, BY ARITHMETIC, THE
+      ROUTINE BOUND (its excess, its callee's, a thunk's 28 at the ROM-side entry): move_drvicon 1,076 → ≈ 1,262, act_chg
+      1,068 → ≈ 1,198, the drag's wait 884 → ≈ 1,012, G1's zoom_closed 1,380 → ≈ 1,476, do_wfull 1,102 → ≈ 1,254,
+      win_bldview 1,290 → ≈ 1,390, and THE TIGHTEST, do_wredraw on "A: File > Open" (entry 708) 1,416 → ≈ 1,526 OF THE
+      1,548 under the 244-byte nest (G1 said 1,522). G4's ob_sfcb / fmt_time run on the desk's G_USERDEF stack (332 of
+      1,024); no wave-1b routine runs on PD1. THE ONE LEVER, NAMED AND NOT APPLIED: unit I's 24-byte local declared
+      whole by every unit-I routine (do_wredraw 24 → 16 saves 8). The real pressure is wave 2's: wind_open's 1,460
+      under do_wopen. Nothing of it measured on a machine of ours.
+    - **ROM BEHAVIOURS FOUND, EACH IN THE C AS THE ROM HAS IT** (reproduced by a case where one can be): win_alloc raises
+      the open count BEFORE obj_walloc and leaves it raised where no root is free (unpinned: every root taken); pro_cmd's
+      third word read by nothing (GEM's exitflag); obj_wfree leaves D0 -1 (and win_free hands it on; unread); win_view of
+      a view neither 0 nor 1 divides by the old pitch — zero at the restart (the 68000's divide trap; the C refuses by
+      name off target); obj_ialloc adds under g_screen where every other index is the block's own (the same value
+      always); win_top / win_ontop compare "Cartridge" with a name win_sname gives a leading blank (no window it named
+      can equal it); snap_disk, fpd_bldspec, fpd_parse and pn_sort WRITE THEIR OWN ARGUMENT WORDS IN THEIR CALLER'S FRAME
+      (no C can; no caller reads them back: snap_disk's three pop it unread, pn_open discards fpd_bldspec's); app_rdicon
+      keeps the low words of Alcyon `lmul`'s products; drive_check returns early without its desk_wait(0) where the map
+      lacks the drive; men_update's frame word is uninitialised for a type past 4 (unpinned); pn_init's loop starts a
+      node late (its link set to where a sixth would lie, then cleared); pn_open leaves the node OPEN where the spec does
+      not fit; fpd_parse runs a name's copy away where the path has a '.' and the name none (no spec of the desk's has
+      one: in the C, not a case); pn_fcomp answers an unknown key as itself; fpd_elist and pn_free walk with no NIL check;
+      gr_accobs tests its 60-cap after every child, selected or not; app_afind tries a node's DATA pattern before its
+      application's (held by a class since the fix pass); act_chkobj answers obj for a view neither 0 nor 1; path_part
+      walks a pointer up to the cursor byte by byte, reading nothing it keeps (the C's `end = cursor`: an equivalent
+      spelling, not a fix — reviewer B); par_chk takes the LAST selected folder, its attributes `$10` exactly, copying
+      both paths again on every turn; d_errmsg alerts only at -32 and below (code ~answer - 30; held at -32 exactly since
+      the fix pass); ob_sfcb counts its blanks in a word down to zero (a size past 8 digits would run the word round);
+      my_itoa hands merge_str the address of its own argument word; do_namecon's two flags are set by every confirmed
+      copy (the first-time arm needs copies unconfirmed). A0 `$cc44` at every in-place return (G3's runs).
+    - **WHAT THE WAVE SHIPS BESIDE THE C**: the shipped glue's FIRST `scasb` THUNK (G3's pn_fcomp: `aes_scasb`, ruling
+      R-1b-6) — `build/bench_shipped/glue.S` 97892842… where the base's was 8ce1e69e…; no object of the 158 moved by it.
+      Desk-side Floprd: drive_check's own `trap #14` over the ROM's nine-word frame on target, a hook a case binds off
+      target (band 5's trp14 untouched).
+    - **THE FIX PASS** (one agent, alone in the tree; its brief's rulings the ORCHESTRATOR'S, PROVISIONAL — AWAITING
+      (24)): (1) ONE UNBOUND PIN FOR EVERY UNIT OF THE DESK — `aes_deskbind.bound_referrers` / `bound_longwords` /
+      `unbound_closure` (G1's closure's shape), in place of five implementations (wave 1a's two pins had gone red, six
+      tests, when wave 1b's C called the bindings and five of unit O's leaves: reviewer B's blocker); a referrer of ANY
+      held core must be a held core or a function only held cores reach, and every unit's pin asks it of all 159; the
+      longword scan kept, an operand of the unbound desk's own instructions excluded. (2) do_viewmenu's items 33, 35
+      and 29 are ARRIVALS (G3's Sort by Date / Type; a new chain "window: View > Show as Icons (the view it has)" in G2's
+      block), item 36 a class alone; every other labelled class of G1 and G2 spot-checked against every chain then in the tree, 68 (every
+      arrival of each such routine, its arguments read: `scratchpad/b6/W1b/FIX/probes/classes_spot.log`) — none reached;
+      snap_disk gained an arrival (G3's bare-spot drop: across, "moved on" by 0). (3) THE YIELDING ROWS PRICED on the Tier
+      3 bench class (above); AES_XBIOS_RETURN's divergence named and counted. (4) band 5's convention with the five frames
+      told, at probe level (above). (5) G4's 24 C-caller pairs in `C_CALLERS_OF_TRANSCRIBED_CORES` (`test_transcribed.py`
+      green; glue unchanged by them). (6) THE DESK'S GLOBALS ONE HOME, `include/desk/deskglobals.h`: one name an offset
+      (DESK_G_ICONS, DESK_G_INDEX, DESK_G_IVIEW, DESK_G_ISORT, DESK_G_TMPPTH, DESK_G_WICON / HICON, DESK_G_IBLIST,
+      DESK_MASK_ICONBLKS, DESK_G_SCREEN_OBJECTS for the two and three names each had), the ANODE once (GEM's a_* names,
+      AT_* types), DESKTOP_ROOT, V_ICON / V_TEXT, SORT_BY_*, and `desk_globals` / `screen_objects` / `rect_word` /
+      `lay_rect` static inline there (seven, two, two and two copies before); desktop.h's MENU_DISABLED / ENABLED renamed
+      MENU_ITEM_* (the clash with `aes/gemsuper.h`'s state bit); the stale comments mended (deskdir.h's "cannot be
+      included", G2's "g_screen", G3's "medium-resolution"), fpd_bldspec's and snap_disk's frame writes said; the tests'
+      re-spelt values read off the header; `aes_desk._buttons_up` serves `dialog_button` and `lowest_button_point`. EVERY
+      OBJECT BYTE-IDENTICAL AFTER IT, the eleven desk objects and deskbind's / deskleaf's too (`rect_word`'s two spellings,
+      `bus_word` and `be16`, compile alike on target). (7) THE SURVIVORS AS CASES: cnx_put with a window open ("window:
+      Options > Save Desktop, Return") and with its view scrolled a column (CX3 needed the scroll's column and row apart); men_update with a program selected and with two icons boxed ("a rubber box on the
+      desktop, round drive B: and the trash"); drive_check of drive B: (a class: the model has no drive B:) and with a
+      stale AES_DOS_ERR LAID; win_view with gl_hchar LAID 16; app_afind's data-before-application (LAID), act_chg's OR
+      (LAID), pn_fcomp's date difference, time past 16:00 and long size (LAID), pn_open's attribute word, pn_comp's folder
+      bit against a read-only file (LAID); par_chk's two selected folders (LAID; G4's cases gained `laid`), d_errmsg at -32
+      exactly (LAID), inf_field's is_name `$0100`, my_itoa's `$0105`; par_chk's refusal class relabelled (an aliased
+      buffer no ROM caller hands). TRIED AND NOT KEPT: drive C: installed then Show Info — the desk keeps the letter as
+      typed (`c`), men_update's hard-disk list disables Show Info, and opening it never enters drive_check. (8) G3's
+      61-child tree in a band of its own (`aes_deskact.TREE_BAND_AT`, the AES window grown by 1.5 KB under the stack
+      guard: no band of the first 24 KB had 1,488 bytes whole), and G3's laid layers vetted (`aes.SPAN.require_claimed`
+      over every poke into the window). (9) desk_rsrc_load's case UNPINNED AT ITS ARRIVALS, no longer a "leaf machine"
+      class. (10) frames: B's measured table and the arithmetic above, recorded; no diet.
+    - **THE SWEEP** (one log, `scratchpad/b6/W1b/FIX/sweep.log`; driver `FIX/sweep.py`; a PRIVATE COPY; each mutant ONE
+      replacement, its product removed and rebuilt, every `__pycache__` cleared, the selected node ids of the FINAL
+      battery run, the source restored and its sha256 held, the product rebuilt from it; a build refusal, a crash or a
+      timeout is NOT a kill): THE CONTROL, nothing mutated: the 65 selected cases green (67 at the re-run). FORTY MUTANTS — one at least for
+      every new case or test, and every reviewer survivor the brief named re-run by its reviewer's description
+      (B12 recorded, not run) — FINAL: 38 KILLED (37 by an assertion; CN7 by the HARNESS'S OWN REFUSAL BY NAME —
+      the arrival refused — said so), 2 SURVIVED AND RECORDED: RB-J1 (drive_check's eralert retry arm: no driver
+      answers an error — UNPINNED) and RA-I2 (zoom_closed's shrinkbox w / h — UNOBSERVABLE at Tier 1). The first
+      pass's CX3 SURVIVED (the arrival's scroll column and row were both 0: a scrolled arrival added), RB11 was
+      NOT RUN (its selector), B8 was NOT A KILL (a worker crash: over B's own destination the mutant's folder went
+      into itself, an alert a plain differential cannot take — the class re-made with the source's own root for
+      destination); each RE-RUN, KILLED. Every mutant, its description copied from the driver, its verdict from
+      the log: **P1** — a bound band-5 static helper (aes_or_start's, src/aes/rlist.c) calling aes_snap_disk (G2)
+      and aes_app_afind (G3) — reviewer B's P1, every unit's pin — KILLED (22 failed, an AssertionError); **P2** —
+      a longword of bound data (a table in src/aes/rlist.c) holding aes_snap_disk's address — the scan by value,
+      kept — KILLED (2 failed, an AssertionError); **VMa** — do_viewmenu: Sort by Date taken for the size's key —
+      at the new arrival (files: View > Sort by Date) — KILLED (1 failed, an AssertionError); **VMb** —
+      do_viewmenu: Sort by Type taken for the name's key — at the new arrival (files: View > Sort by Type) —
+      KILLED (1 failed, an AssertionError); **VMc** — do_viewmenu: the text view for icons (G2's VM1) — at the new
+      arrival (Show as Icons over a window in icons) — KILLED (1 failed, an AssertionError); **RB-K4** — cnx_put:
+      wind_get's x and y answered into each other's word (reviewer A's) — KILLED (1 failed, an AssertionError);
+      **RB-K5** — cnx_put: the left-over entries cleared from the first (reviewer A's) — KILLED (1 failed, an
+      AssertionError); **CX2** — cnx_put: the corner not fixed — do_xyfix dropped (G2's CX2) — KILLED (1 failed,
+      an AssertionError); **CX3** — cnx_put: the scroll's column and row swapped (G2's CX3) — SURVIVED (1 passed);
+      RE-RUN: KILLED (1 failed, 1 passed, an AssertionError); **RB-K3** — men_update: is_app read as its HIGH byte
+      (reviewer A's) — KILLED (1 failed, an AssertionError); **MU3** — men_update: the none-selected list for many
+      (G2's MU3) — KILLED (1 failed, an AssertionError); **RB-J3** — drive_check: B: no floppy (`<` 'B') (reviewer
+      A's) — KILLED (1 failed, an AssertionError); **DC3** — drive_check: the map's bit by the letter (G2's DC3) —
+      KILLED (1 failed, an AssertionError); **DC4** — drive_check: AES_DOS_ERR not cleared first (G2's DC4) —
+      KILLED (1 failed, an AssertionError); **RB-J1** — drive_check: eralert's error and drive swapped (reviewer
+      A's) — the retry arm, RECORDED UNPINNED — SURVIVED (10 passed); **RA-L5** — win_view: the text item's height
+      the cell's WIDTH, gl_wchar for gl_hchar (reviewer A's) — KILLED (1 failed, an AssertionError); **RA-I2** —
+      zoom_closed: shrinkbox's work-area w and h swapped (reviewer A's) — RECORDED UNOBSERVABLE — SURVIVED (4
+      passed); **RB1** — changed_state: set by XOR, not OR (reviewer B's) — KILLED (1 failed, an AssertionError);
+      **RB11** — app_afind: the application's pattern tried before the data's (reviewer B's) — NOT RUN (its
+      selector named a phrase of the ledger's row); RE-RUN: KILLED (1 failed, an AssertionError); **TB1** —
+      gr_accobs: the cap passed by one (`>` for `>=`) — over the 61-object tree in its own band — KILLED (1
+      failed, an AssertionError); **VL1** — test_desk_act: the 61-object tree laid 16 bytes low — across G3's text
+      band and its tree band (the vet) — KILLED (1 failed, an AssertionError); **RB5** — pn_fcomp: the dates'
+      difference clamped to its sign (reviewer B's) — KILLED (1 failed, an AssertionError); **RB6** — pn_fcomp:
+      the second's time shifted as a SIGNED word, asr for lsr (reviewer B's) — KILLED (1 failed, an
+      AssertionError); **RB7** — pn_fcomp: by size, the first compare on the low words (reviewer B's) — KILLED (1
+      failed, an AssertionError); **RB8** — pn_open: the attributes stored as a BYTE (reviewer B's) — KILLED (1
+      failed, an AssertionError); **RB13** — pn_comp: a read-only bit taken for a folder's, the mask $11 (reviewer
+      B's) — KILLED (1 failed, an AssertionError); **B4** — d_errmsg: alert only BELOW -32 — the ROM's bgt: -32
+      itself alerts (reviewer B's) — KILLED (1 failed, an AssertionError); **B8** — par_chk: the FIRST selected
+      folder taken, not the last (reviewer B's) — NOT A KILL (pytest rc 1: a crash) (1 failed); RE-RUN: KILLED (1
+      failed, an AssertionError); **B10** — inf_field: is_name tested as a byte — the ROM's tst.w (reviewer B's) —
+      KILLED (1 failed, an AssertionError); **B11** — my_itoa: the unsigned compare on the low byte alone
+      (reviewer B's) — KILLED (1 failed, an AssertionError); **DR1** — test_desk_win: desk_rsrc_load's case
+      counted among the classes again — KILLED (1 failed, an AssertionError); **DG1** — deskglobals.h: g_isort one
+      word on (0x19e4) — the one home's value read by the C — KILLED (2 failed, 2 passed, an AssertionError);
+      **BU1** — aes_desk._buttons_up: the first button reading the text alone (the lower No of Set Preferences
+      lost) — KILLED (1 failed, an AssertionError); **CN6** — aes_desk: the window's View item Show as Text, not
+      Show as Icons — KILLED (1 failed, an assertion); **CN7** — aes_desk: the box round B: and the trash begun on
+      drive A:'s object (8 rows above B:'s) — KILLED (1 failed, a HARNESS REFUSAL BY NAME — the arrival refused:
+      not an assertion); **CN8** — aes_desk: Save Desktop with a window open taken on the desktop machine (no
+      window) — KILLED (1 failed, an AssertionError); **TR1** — transcription.py: G4's sub_path -> strcpy pair
+      left out — KILLED (1 failed, an AssertionError); **ST1** — STATUS.md: the desk's linked-unbound section says
+      158 — KILLED (1 failed, an AssertionError); **ST2** — STATUS.md: the wave 1a entry says REACH 223 — KILLED
+      (1 failed, an AssertionError); **ST3** — STATUS.md: cnx_put's row marked ✅ verified — KILLED (1 failed, an
+      AssertionError).
+    - **THE TABLE, THE OBJECTS, THE BLOBS.** `make bench` rc 0 in the shared tree (`scratchpad/b6/W1b/FIX/bench.log`): THE
+      TIER-3 TABLE IS BYTE-IDENTICAL TO `scratchpad/b6/W1b/base/tier3.txt` (`cmp`; 5,777 lines) — no table move this wave.
+      OBJECTS: the 158 of `scratchpad/b6/W1b/base/objs.txt` sha256-identical; the eleven new `src/desk` objects — deskact
+      8c97cc73…, deskapp aa024c87…, deskdir 27d58c30…, deskfpd 44ee8f07…, deskfun dde953f5…, deskinf da706a4f…, desksupp
+      2ce727e1…, desktop 3cda8895…, deskusr 0a6fed6f…, deskview e2e77d88…, deskwin 8745b718… — IDENTICAL BEFORE AND AFTER
+      THE FIX PASS (`FIX/objs_before.txt`, `FIX/objs_final.txt`: all 169 objects): the one home and the renames moved no
+      byte. `src/aes/lineftable.S` BYTE-IDENTICAL (`git diff --quiet`). THE BLOBS (sha256 of the `.bin`; ends by file
+      length): bench `[$30000, $66b90)` 103aab0b659d08b6…, shipped `[$30000, $6761c)` bccf9783eafd9332… — 19,608 / 19,688
+      bytes more than wave 1a's; THE SHIPPED GLUE `glue.S` 97892842… = the base's 8ce1e69e… plus G3's `scasb` thunk,
+      line for line (`diff` against G3's copy generated without the pair). ROOM LEFT UNDER `staging_base` (`$75000`):
+      58,480 bytes over the bench blob, 55,780 over the shipped — THIS LAYOUT'S FIGURES, said and not pinned.
+    - **UNPINNED / NOT DONE, BY NAME:** NOTHING OF THE 100 RAN ON A MACHINE OF OURS; desk_rsrc_load's C at its arrivals;
+      drive_check's eralert retry (no driver answers an error) and its no-memory arm; app_blddesk's mono pattern; men_update's
+      a_type past 4; zoom_closed's shrinkbox w / h (UNOBSERVABLE at Tier 1: reviewer A's RA-I2); G1's unpinned I5, L2, L9c,
+      L11, L33 / L49 and equivalents I15, I30, I31, I34, L25, L40, L52, L58; G2's RD5, RD9 (equivalent on the ROM's fixed
+      icons: one-plane images, products under `$10000` — readings); G3's B1, B5, C10 / H4, E4, N3 (equivalent by reading or
+      end state); G4's E3, F6, C9 (equivalent by reading), E14, C26 and B12 (unpinned: no screen wider than 320, no
+      folder of another attribute bit); a size past eight digits (ob_sfcb); A0 at return on any shore of ours; PD0's margin
+      bound (arithmetic); the harness's footprint on an arrival's megabyte; the `$90c` capture set, `make gates`, `make
+      guarded` and the from-empty build — THE ORCHESTRATOR'S.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -3895,6 +4213,21 @@ arrival — no row, no verdict.
   the bindings' one frame (it reds when evnt_multi, evnt_button or wind_get gets a switching row), unit O's seven
   hosted thunks (the cores that take a return site) and a case each, and W6-R4's gate measured with the units bound
   (PD0's deepest known path is under desk_wind_open: reviewer B's arithmetic, AWAITING (24)).
+  **BAND 6 WAVE 1b IS IN** (its entry, above; 383 verified STILL): one hundred more routines of the desk — units I and L
+  (the screen's objects, the program leaves, the window leaves, the view and the window list), A, K and J (the INF and
+  the icons, the menus kept in step, the drive check), B and G (the hit tests, the drags' outlines, the path and file
+  nodes and the sort), C, H, E and F (the copy engine's helpers, the alert and the message, the text view's line, Show
+  Info's fields) — are C, LINKED INTO BOTH BLOBS, HELD AT TIER 1 at the hands' arrivals (every one at an arrival of its
+  own but desk_rsrc_load, UNPINNED AT ITS ARRIVALS: a harness limit), NOTHING BOUND, in the ledger's `## Linked, unbound
+  — desk (159)`; one unbound pin holds the whole desk; the desk's globals have one home (`include/desk/deskglobals.h`).
+  SLICE B (THE BINDING) STILL WAITS FOR THE USER (W6-R1), and owes from this wave by name: the hundred out of
+  `LINKED_AND_NOT_FLIPPED` at their flips; the slots each group's routines hold across a binding's wait
+  (`AES_DESK_WIN_FRAME`, `AES_DESK_VIEW_FRAME`, `AES_APP_TRAN_BITBLK`, G3's and G4's) taught to
+  `aes_event.SLOTS_HELD_WHERE_PARKED`; app_blddesk's AES_XBIOS_RETURN on the shipped blob (a C caller of the door's
+  thunk parks the thunk's return: answer it, declare it, or hand the ROM's site — the user's); the five trap frames band
+  5's convention lacks (a table move: the user's); the D0 remedy for the wave's void routines (the same question as
+  wave 1a's); W6-R4's gate with do_wredraw's path bound (≈ 1,526 of 1,548 by arithmetic). WAVE 2 IS NEXT AFTER THE
+  BINDING'S RULING: 42 routines / 12,662 B of units A–L below the 17-routine cycle (the cut's §1).
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -4436,6 +4769,42 @@ arrival — no row, no verdict.
         pass's).
       - OWED AT THE BINDING (not done: each moves a pinned object or renames a file): the glue's four statics spelt in
         both `src/aes/gemdosif.c` and `src/desk/deskleaf.c`; the two files named `deskleaf.c`.
+    (24, continued) BAND 6 WAVE 1b — FOUR GROUPS, 100 ROUTINES (its entry, above). NOTHING HERE IS THE USER'S WORD: the
+      cut's and the fix pass's brief's rulings are the ORCHESTRATOR'S, PROVISIONAL, each marked so; the rest is reported
+      with its numbers and whose measurement each is.
+      - PROVISIONAL RULINGS OF THE CUT (`scratchpad/b6/W1b/cut.md` §6): R-1b-1 the level with units O, D and desk_wait as
+        leaves (100 routines / 13,368 B; `$fdb5fc` the INF parse and `$fdd1dc` left to wave 2); R-1b-2 the view builder
+        `$fe2f68` in this wave; R-1b-3 the prep pass's per-group blocks and the exact-count pins summed per block; R-1b-4
+        the host-slot address windows, one a group (nobody ran out); R-1b-5 the exports ledger as the cross-group
+        handshake; R-1b-6 G3's `scasb` thunk a shipped-glue change of the wave; R-1b-7 the groups' chains appended and
+        their pins summed (no chain deeper than PD0's 1,460); R-1b-8 desk_wait staying in `deskbind.c`; four groups.
+      - PROVISIONAL RULINGS OF THE FIX PASS'S BRIEF: (a) ONE UNBOUND PIN for every unit of the desk, a referrer of any held
+        core allowed only where it is itself held or reached by held cores alone, the longword scan excluding the unbound
+        desk's own operands; (b) NO TIER-3 TABLE MOVE THIS WAVE for band 5's convention: the five frames told at probe
+        level only — MAKING IT PERMANENT moves 26 lines of `build/bench/tier3.txt` (band 5's scripted rows +72 cycles a
+        shore; dos_open, dos_read and dos_lseek −0.01: reviewer A's trial) — THE USER'S CALL; (c) app_blddesk's
+        AES_XBIOS_RETURN NOT MASKED — named, counted (4 arrivals, shipped blob), read by no instruction of the ROM: a
+        question for the binding slice (the C answering the ROM's site, a declared residue, or the thunk's); (d) G1's
+        desk_rsrc_load UNPINNED AT ITS ARRIVALS, not a class (its C cannot run where the arrivals are: rom_ram halts by
+        name outside the dispatcher) — for ruling; (e) G1's frames: no diet (the one lever named: unit I's 24-byte local,
+        do_wredraw 24 → 16); (f) the AES window grown by 1.5 KB for G3's 61-object tree (`aes.WINDOW_BYTES` `$6600`, 2.8
+        KB below the stack guard left dead) rather than fewer children (60 can never show the cap).
+      - THE GROUPS' OWN "TO RULE ON", CARRIED (none ruled): G1 — `void` for GEM's VOID routines whose leftover is
+        deterministic (obj_wfree's -1) against answering it; the bench-blob ratios over 1.00 that a callee's C twin
+        explains (pro_cmd 1.124, pro_exec 1.062 — and G2's app_rdicon 1.230, G4's get_fname 1.209 and add_fname 1.060);
+        G2 — the `+$2600..+$2800` band kept, its own recorder where band 5's lacks Dgetpath / Fopen / Fcreate, the
+        desk-side Floprd door; G3 — LAID stagings for unreachable arms (a 61-child tree, gl_hchar 16, DISABLED and
+        SELECTED state words, list heads, FNODE fields) and its band at the window's end; static helpers named in
+        `C_CALLERS_OF_TRANSCRIBED_CORES` (`act_on_the_screen`); the named equivalents B1, B5, N3, C10 / H4, E4; thirteen
+        frames over 32 bytes, no diet; G4 — the d_dofdel denied delete held in two halves (unit O's EACCDN arrival and
+        d_errmsg's alert) rather than one case; the duplicated desk-global offsets (ANSWERED by the fix pass's one home);
+        `lowest_button_point` repeating `dialog_button`'s walk (ANSWERED: `_buttons_up`); the yielding rows' prices
+        (ANSWERED: the Tier 3 bench class prices them all).
+      - THE D0 REMEDY FOR THE WAVE'S VOID ROUTINES: the same question as wave 1a's — G1 17 routines (56 cases), G2 six,
+        G3 12 (43 cases), G4 9 (36 cases), every one read by no ROM caller (`answer_readers`); remedy the user's.
+      - PD0 WITH THE WAVE BOUND (reviewer B's MEASURED ROM frames and his ARITHMETIC for ours bound): do_wredraw on "A:
+        File > Open" ≈ 1,526 of the 1,548 under the 244-byte nest, the tightest of the wave; the wave's paths stay under
+        wind_open's 1,460 + 72 of wave 1a (1,532). For W6-R4's gate, measured at the binding.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -4562,9 +4931,25 @@ arrival — no row, no verdict.
 
 ## Suite
 
-`make test`: **29,665 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **30,295 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 6 WAVE 1b — FOUR GROUPS, 100 ROUTINES, WITH THEIR FIX PASS (2026-10-13/14; a prep pass and four groups in one
+  tree on `ec18000`, two reviews, then one fix pass alone in the tree — 100 routines of the desk in C, linked into both
+  blobs and held at Tier 1, nothing bound; eighteen chains; `include/desk/deskglobals.h`; tests and docs: ELEVEN NEW
+  OBJECTS, `src/desk`'s; the 158 that existed identical to `scratchpad/b6/W1b/base/objs.txt`; both blobs 19,608 / 19,688
+  bytes longer; the shipped glue the base's and G3's `scasb` thunk; the table's 5,777 lines BYTE-IDENTICAL to
+  `scratchpad/b6/W1b/base/tier3.txt` after `make bench`): ONE `make test` in the shared tree (`PYTEST_ARGS="-n 8"`),
+  `build/*.so` and every `__pycache__` removed first, **30,295 passed / 8 skipped**, rc 0
+  (`scratchpad/b6/W1b/FIX/final.log`; RUN ONCE). BY THE LEAN CYCLE: `make gates`, `make guarded`, a `$90c` capture set
+  and a from-empty build were NOT run — the orchestrator's. RE-SUMMED, ITEMISED BY FILE against band 6 wave 1a's fix
+  pass's own collection (30,303 = 30,295 + 8 skipped, against 29,673; `pytest --collect-only` on both, 275 files then
+  and 286 now: `scratchpad/b6/W1/FIX/collect_perfile.txt`, `scratchpad/b6/W1b/FIX/collect_perfile.txt`): +630 — ELEVEN
+  NEW FILES: `test_desk_win.py` 91, `test_desk_view.py` 102 (G1: a case an arrival or a class, the D0 readers, the
+  laid 16-row cell, the unbound pins ×2), `test_desk_app.py` 99, `test_desk_top.py` 46, `test_desk_supp.py` 10 (G2),
+  `test_desk_act.py` 77, `test_desk_fpd.py` 84 (G3), `test_desk_dir.py` 54, `test_desk_fun.py` 10, `test_desk_usr.py`
+  25, `test_desk_inf.py` 14 (G4); `test_aes_desk_rom.py` 80 → 98 (eighteen chains, one test each); no file lost a test
+  (`test_desk_leaves.py` 366 and `test_desk_bind.py` 309 unchanged: their pins rewritten, not added).
 - BAND 6 WAVE 1a — UNITS O AND D, WITH THEIR FIX PASS (2026-10-13; two units in one tree on `0efcb96`, two reviews, then
   one fix pass alone in the tree — 59 routines of the desk in C, linked into both blobs and held at Tier 1, nothing
   bound; the BIOS door's `.S`; five chains; tests and docs: THREE NEW OBJECTS, `src_desk_deskbind_c.o`,

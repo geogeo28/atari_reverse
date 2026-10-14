@@ -29,6 +29,7 @@ taking the Line-F exception. The two entries those call words name are held by t
 (`UNENTERED_BY_THE_ORACLE`); no entry of ours is called by such a word.
 """
 import functools
+import importlib
 import struct
 import sys
 from collections import Counter, namedtuple
@@ -827,20 +828,45 @@ def test_the_staged_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_t
 # first review found it held by nothing of its own (its finding 2: a name that is no routine's, a native entry's
 # routine, sh_main — each added to it, every test green). Each of these refuses such a name, and the exemption expires
 # by itself at the flip: a routine registered as a row, its name left here, reds.
-LINKED_AND_NOT_FLIPPED_ROUTINES = 59     # unit D's 41 (the forty bindings and desk_wait) and unit O's 18
+# EACH UNIT'S OWN LIST AND ITS COUNT: `{(the unit's test module, its list's name): routines}` — a group of band 6 wave
+# 1b adds one line per unit inside its own block, so no two authors edit one line; the pin is their sum.
+LINKED_AND_NOT_FLIPPED_UNITS = {
+    ("aes_deskbind", "BINDINGS"): 41,    # unit D: the forty bindings and desk_wait
+    ("aes_deskleaves", "UNIT_O"): 18,    # unit O
+    # ---- band 6 wave 1b, group G1 (units I, L) ----
+    ("aes_deskwin", "UNIT_I"): 16,       # unit I: the window objects, the program leaves, the window leaves
+    ("aes_deskview", "UNIT_L"): 17,      # unit L: the view, the window list, the layout leaves
+    # ---- end of group G1's ----
+    # ---- band 6 wave 1b, group G2 (units A, K, J) ----
+    ("aes_deskapp", "UNIT_A"): 11,       # unit A
+    ("aes_desktop", "UNIT_K"): 5,        # unit K
+    ("aes_desksupp", "UNIT_J"): 1,       # unit J
+    # ---- end of group G2's ----
+    # ---- band 6 wave 1b, group G3 (units B, G) ----
+    ("aes_deskact", "UNIT_B"): 12,       # unit B: the hit tests and drags
+    ("aes_deskfpd", "UNIT_G"): 16,       # unit G: the path and file nodes
+    # ---- end of group G3's ----
+    # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
+    ("aes_deskdir", "UNIT_C"): 14,
+    ("aes_deskfun", "UNIT_H"): 2,
+    ("aes_deskusr", "UNIT_E"): 4,
+    ("aes_deskinf", "UNIT_F"): 2,
+    # ---- end of group G4's ----
+}
+LINKED_AND_NOT_FLIPPED_ROUTINES = sum(LINKED_AND_NOT_FLIPPED_UNITS.values())
 
 
-def test_the_routines_linked_and_not_flipped_are_the_two_units_and_none_is_flipped_or_flippable_another_way(blob):
-    """EXACTLY THE TWO UNITS' NAMES (by count and by the units' own lists); each DECLARED in `vdi.ALCYON` — a thunk
-    could be made, which is what the exemption holds back —; each core DEFINED IN THIS BLOB; NONE A NATIVE ENTRY (the
-    generator asks `native` first, so a native routine's name here would be flipped all the same, silently: neither a
-    pinned `.S` entry of the build's nor an entry the generator makes native names one); none in
+def test_the_routines_linked_and_not_flipped_are_the_units_and_none_is_flipped_or_flippable_another_way(blob):
+    """EXACTLY THE UNITS' NAMES (by each unit's count, by their sum and by the units' own lists); each DECLARED in
+    `vdi.ALCYON` — a thunk could be made, which is what the exemption holds back —; each core DEFINED IN THIS BLOB; NONE
+    A NATIVE ENTRY (the generator asks `native` first, so a native routine's name here would be flipped all the same,
+    silently: neither a pinned `.S` entry of the build's nor an entry the generator makes native names one); none in
     ENTERED_BY_OURS_ALONE; NONE WITH A REGISTERED ROW (the registries' rows, the switching rows, the transcriptions)."""
-    import aes_deskbind
-    import aes_deskleaves
+    lists = {unit: set(getattr(importlib.import_module(unit[0]), unit[1])) for unit in LINKED_AND_NOT_FLIPPED_UNITS}
+    assert {unit: len(names) for unit, names in lists.items()} == LINKED_AND_NOT_FLIPPED_UNITS
 
     held = linef_table.LINKED_AND_NOT_FLIPPED
-    assert len(held) == LINKED_AND_NOT_FLIPPED_ROUTINES and set(held) == set(aes_deskbind.BINDINGS) | set(aes_deskleaves.UNIT_O)
+    assert len(held) == LINKED_AND_NOT_FLIPPED_ROUTINES and set(held) == set().union(*lists.values())
     assert set(held) <= set(vdi.ALCYON), f"not declared: {sorted(set(held) - set(vdi.ALCYON))}"
     cores = {routines.core_symbol(name) for name in held}
     assert cores <= set(symbols_of(blob)), f"not linked: {sorted(cores - set(symbols_of(blob)))}"
