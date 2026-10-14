@@ -428,13 +428,15 @@ campaign the band's rows will be arrivals of.
   and the desk's userdef stack. A depth is the lowest STORE, not the lowest SP, and no interrupt is taken at the
   deepest point.
 
-### A DESK ROUTINE AT ITS ARRIVAL — units O and D (wave 1a) and the four groups of wave 1b (`test/aes_desk*.py`)
+### A DESK ROUTINE AT ITS ARRIVAL — units O and D (wave 1a), the four groups of wave 1b and of wave 2 (`test/aes_desk*.py`)
 
 Band 6's first two units — the desk's eighteen leaves filed in AES modules (`src/desk/deskleaf.c`, unit O) and its
 forty-one AES bindings (`src/desk/deskbind.c`, unit D) — and wave 1b's hundred routines in four groups (G1 units I, L:
 `deskwin.c`, `deskview.c`; G2 units A, K, J: `deskapp.c`, `desktop.c`, `desksupp.c`; G3 units B, G: `deskact.c`,
-`deskfpd.c`; G4 units C, H, E, F: `deskdir.c`, `deskfun.c`, `deskusr.c`, `deskinf.c`) are LINKED INTO BOTH BLOBS AND
-HELD AT TIER 1, NOTHING BOUND (STATUS: `## Linked, unbound — desk (159)`). A case of any is taken WHERE THE ROM'S OWN
+`deskfpd.c`; G4 units C, H, E, F: `deskdir.c`, `deskfun.c`, `deskusr.c`, `deskinf.c`) and wave 2's forty-four in
+four more groups over the same files (G1 C, F, E; G2 H, G and unit M — the cartridge's directory pair, the one new
+file `deskutil.c`; G3 I, J, K, L; G4 A, B) are LINKED INTO BOTH BLOBS AND HELD AT TIER 1, NOTHING BOUND (STATUS:
+`## Linked, unbound — desk (203)`). A case of any is taken WHERE THE ROM'S OWN
 DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
 `aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with
 `aes_deskfpd.py`), `aes_deskarrive.py` (G4) — each an arrival of the kind below, a row that switches where the routine
@@ -503,7 +505,36 @@ reaches a binding of unit D's, else the plain differential.
   reads it, the XBIOS vector and `hdv_rw` at answering stubs on the ROM's shore, the child's hooks answering the same
   values and holding each call's frame to the ROM's on ours — `aes_desksupp`); UNPINNED AT ITS ARRIVALS (arrivals
   exist and the HARNESS cannot run the C there: desk_rsrc_load, whose rom_ram halts by name outside the dispatcher —
-  its C held over the leaf machine, said so, never called a class).
+  its C held over the leaf machine, said so, never called a class). WAVE 2 ADDS ONE: GEMDOS REPLAYED (next).
+- **GEMDOS REPLAYED** (wave 2): a routine whose run traps GEMDOS more than band 5's scripted trap can serve (the copy
+  engine's Fread / Fwrite / Fcreate / Fdatime / Dcreate, a directory's searches) runs on BOTH shores over a RECORDING
+  TRAP WHOSE SCRIPT IS THE ROM'S OWN RUN IN PLACE — each call's answer and, for a search, the DTA it left, laid into the
+  DTA the run's last Fsetdta named — said `GEMDOS REPLAYED` in every id. THE WALK IS ONE, `aes_deskdir.in_place`: from
+  each stand the run to the next trap and the run to the routine's return are both made and the NEARER taken (a
+  return on another frame is refused), at each idle the case's next wake taken in; `aes_deskdir.EngineRecorder` /
+  `replayed` the recorder (three spare answers and a spare DTA behind the script, so a C that calls more is an
+  assertion, not a crash), and every case also asserts that the ledger's calls ARE the run in place's. (Unit H's
+  drivers use it; wave 2's own second walk was deleted at its fix pass — the two measured identical on all 45 cases.)
+  Its other forms: `aes_deskfpd.gemdos_script` over `aes_fslib`'s replay (pn_active), `aes_desksupp.replayed_row`
+  (the openers and closers: fslib's tables with Dsetdrv / Dsetpath, in G3's AES window), unit A's own recorder
+  scripted with `aes_deskapp.dos_answers_in_place` (the INF read and write; it records an Fread's / Fwrite's handle,
+  count AND BUFFER). ONE CHILD BINDING serves every recorder in a row's child, `aes_gemdosif.bind_handlers_in_a_child(lib,
+  handlers)`. MERGING THE FOUR into one mechanism (needs its own claimed band, ≈ `0x700` B) is DEFERRED (STATUS).
+- **A HANDLE LAID OPEN FOR THE HOST** (wave 2): the host's trap reaches the reconstructed GEMDOS dispatcher, which
+  RESOLVES Fread's and Fwrite's handle BEFORE the replay's twin answers — a handle the machine never opened is EIHNDL on
+  the host alone (a C crashed so). ONE WAY to lay one: `aes_gemdosif.opened_record` copies the record AS THE ROM'S
+  GEMDOS LEFT IT at the open of the ROM's own run in place (`Replay.handles`; `dos_answers_in_place(…, handles)`); a
+  record no run provides (a SCRIPTED Fopen of DESKTOP.INF) is a LAID staging said in the case's id
+  (`gemdos_process.descriptor_poke`, `aes_shell.OPEN_FOR_THE_HOST`'s precedent).
+- **WAKES THAT CLICK** (wave 2): a run that waits on a dialog or an alert is woken by the same hand twice — as the
+  row's interrupts, one an idle, and as the receptions the run in place takes in — `aes_deskfun.keys_typed` or
+  `clicked(point_of, step)`, the point read off the machine the chain's step `step` left (`aes_desk.button_point`,
+  `lowest_button_point` / `highest_button_point` where two buttons read alike, `aes_deskfun.alert_button_point` for an
+  AES alert's PADDED texts). Format's warning answered OK and the name conflict's Skip are cases so.
+- **HELD WITH NO TABLE ENTRY** (wave 2, R-W2-4): the desk's userdef draw `$fde844` has no Line-F word — ub_trampoline
+  calls it by value — so it is held in `linef_table.LINKED_HELD_NO_TABLE_ENTRY`, not `LINKED_AND_NOT_FLIPPED`; the
+  unbound pin (`aes_deskbind.held_cores`), the unit's count, STATUS's section (`test_status.py`) and Tier 3's
+  owed-call pin (`test_tier3.py`: trapdoor.S's `jsr $fde844` stays the ROM's until the binding relocates it) read both.
 - **THE UNBOUND PIN IS ONE, FOR THE WHOLE DESK** (`aes_deskbind.bound_referrers`, `bound_longwords`,
   `unbound_closure`): desk routines call desk routines in C by design (a group's importers, unit D's bindings, unit
   O's leaves), so no unit's pin asks "who outside my file refers to my cores". THE UNBOUND DESK is the held cores
@@ -535,6 +566,11 @@ reaches a binding of unit D's, else the plain differential.
   `LINKED_AND_NOT_FLIPPED_UNITS`), so no two authors edit one line. A routine another group calls was its group's
   FIRST deliverable, and its caller linked against it only after a line in a scratch ledger said its cases were green
   (an undefined symbol in the shared tree breaks every author's build). Host slots by address window, one per group.
+  WAVE 2 did the same with its own blocks (`---- band 6 wave 2, group G<n> (…) ----`) and its own count keys
+  (`UNIT_<X>_WAVE_2`), wave 1b's lines left as they were; and its PREP RE-LAID THE WHOLE HOST-SLOT TABLE first — every
+  slot packed down onto the band's floor in its address order, parity kept, 102 of 107 moved, every object
+  byte-identical (host-only addresses) — so the band's free bytes were one run, cut into the groups' windows
+  (`test_host_slots.WAVE_2_WINDOWS`, shrunk at the fix pass to the extents used: 138 B free again in two runs).
 
 ### THE OUR-BOOT MACHINE — the build's own gem_entry boots it (`aes_boot.booted(..., laid=AT_GEM_ENTRY)`, `test/aes_ourboot.py`)
 
@@ -3188,7 +3224,8 @@ the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the re
 FLIPPED (band 6 wave 1a): a C core with a declared signature would be thunked, so the generator keeps its entries THE
 ROM'S by a declared list, `linef_table.LINKED_AND_NOT_FLIPPED` (each unit an `.update` of its own names) — held by a
 test of its own (`test_aes_lineftable.py`: exactly the units' names — a per-unit table of counts, 159 since band 6 wave
-1b — each declared and linked, none a native entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by
+1b, 202 + 1 since wave 2's userdef draw held in `LINKED_HELD_NO_TABLE_ENTRY` — each declared and linked, none a native
+entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by
 the ledger's `## Linked, unbound` section
 (`test_status.py`); a routine leaves the list at its flip, and the generated file's diff is that flip's record.
 

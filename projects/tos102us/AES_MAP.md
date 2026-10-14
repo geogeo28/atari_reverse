@@ -365,6 +365,30 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   holding a folder deleted — `FDCF04`, `FDCF48`, `FDD0D2`, `FDD762`), and move_drvicon `FDC268` (G3's: drive A: put down on
   a bare spot): the hands' campaign is 69 chains, reach 224 of the 244. THE DESK'S GLOBALS NOW HAVE ONE HOME,
   `recreate/include/desk/deskglobals.h` (§4).
+  WAVE 2 (2026-10-14; STATUS.md, "BAND 6 WAVE 2", and the same section, now `## Linked, unbound — desk (203)`): FORTY-FOUR
+  ROUTINES OF UNITS C, F, E, H, G, M, I, J, K, L, A, B IN C, in four groups, each READ from its body — LINKED INTO BOTH
+  BLOBS, HELD AT TIER 1 AT THE HANDS' ARRIVALS, NOTHING BOUND (`linef_table.LINKED_AND_NOT_FLIPPED` 202, and
+  `LINKED_HELD_NO_TABLE_ENTRY` 1). GROUP G1 — unit C, `src/desk/deskdir.c`: the copy engine d_dofcopy `FDD1DC` (Fread /
+  Fwrite through gem_gemdos_call, Fcreate drops the read-only bit `FDD394`), d_doop `FDD454` (a folder's tree walked a level a
+  DTA, < 8 levels), dir_op `FDD918` (count 0 / delete 1 / copy 2; a found destination folder made up as AES_DOS_AX 5,
+  `FDDB12`); unit F, `deskinf.c`: inf_folder `FDE9CE`; unit E, `deskusr.c`: dr_code `FDE7B4` and the desk's G_USERDEF draw
+  `FDE844` — NO LINE-F WORD (ub_trampoline `FE3F3E` calls it by value: held with no table entry, R-W2-4). GROUP G2 — unit
+  M, a NEW file `src/desk/deskutil.c` (the cartridge's directory, R-W2-1): cart_sfirst `FED522` (its DTA kept at `$96FA`),
+  cart_snext `FED534`; unit G, `deskfpd.c`: pn_close `FDFA20`, pn_active `FDFC3C` (the cartridge's arm on 'c',
+  `FDFC48 cmpi.b #99`); unit H, `deskfun.c`: fun_rebld `FDFDF2`, fun_mkdir `FDFEBC` (was desk_new_folder `# ctx`: File > New
+  Folder, its call word `$F624` at `FE1ECE` a MOVE16 site on the oracle), fun_op `FE003A`, fun_ddst `FE0140`, fun_wdst
+  `FE01D6`, fun_win2win `FE0258`, fun_win2desk `FE02F2`, fun_disk `FE038C`, fun_desk2win `FE0454`, fun_d2desk `FE0500`,
+  fun_drag `FE070A` (the last two reached first by wave 2's chains: a desktop icon let go in a window). GROUP G3 — unit I,
+  `deskwin.c`: pro_run `FE0AB6`, desk_clear `FE0BBC`, desk_verify `FE0C2A`, do_wopen `FE0E38`; unit L, `deskview.c`: win_blt
+  `FE3310`, win_slide `FE3504`, win_arrow `FE359A` (its table `FEF770`: WA_UPPAGE..WA_RTLINE), win_srtall `FE3622`,
+  win_bdall `FE3684`; unit J, `desksupp.c`: do_diropen `FE1068`, do_dopen `FE13EA`, do_fopen `FE14BA` (stores into its
+  own argument slots 16/20/24(a6)), desk_do_format `FE1800`, close_window `FE18E4`, close_folder `FE1972`, fun_close `FE1A18`
+  (a 138-byte path frame); unit K, `desktop.c`: hndl_kbd `FE22A6`, cnx_get `FE2618`. GROUP G4 — unit A, `deskapp.c`: the
+  INF parse app_start `FDB5FC` (its 21-way switch `FDB914`; a failed read's NUL at the sign-extended length, `FDB6D6`) and
+  write app_save `FDBB34` (its switch `FDBD34`); unit B, `deskact.c`: the drag loop gr_drgplns `FDC57A`, act_bsclick
+  `FDCC2A`, act_bdown `FDCD34`. Every callee of the 44 is C. The hands' campaign is 101 chains / 338 steps, reach 226 of the
+  244; the dispatcher's 190 is reached by five chains (a second window; a desktop icon dropped into a window), 188 by every
+  other. LEFT IN THE DESK'S RANGE for wave 3: the 17-routine cycle, `FE2172` and deskmain; units M / N's other 22 for wave 4.
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

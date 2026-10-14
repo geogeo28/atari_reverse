@@ -10,9 +10,13 @@
 """
 import pytest
 
+import aes
 import aes_deskarrive as da
+from aes_desk import EMPTIED_INFO
 import aes_deskbind as db
+import aes_deskdir as cdir
 import aes_deskinf as inf
+import case
 
 DRIVE_INFO, FILE_INFO = "A: File > Show Info, Return", "file: File > Show Info, Return"
 FOLDER_INFO, PROGRAM_INFO = "folder: selected, File > Show Info, Return", "files: the program selected, File > Show Info, Return"
@@ -63,3 +67,61 @@ def test_the_answers_the_c_has_not_are_counted_and_read_by_no_caller():
 
 def test_the_unit_is_linked_and_unbound(blob):
     da.unbound(blob, inf.UNIT_F)
+
+
+# ==== BAND 6 WAVE 2, group G1: inf_folder `$fde9ce` ==================================================================
+# AT ITS ARRIVALS — Show Info of drive A: and of a folder, both through the File menu's Show Info word ($fe1ec2, a
+# MOVE16 word on the oracle: THE STAND-IN of `aes_boot.continued` is what takes these chains there) — its count walk's
+# GEMDOS REPLAYED from the ROM's own run in place (`aes_deskdir.in_place`, `REPLAYED` in the id). It reaches no
+# binding (the walk has no tree): the plain differential.
+INF_FOLDER = inf.INF_FOLDER
+FOLDER_CASES = {f"{INF_FOLDER} — arrival 0 of {chain} [{cdir.REPLAYED}]": chain for chain in (DRIVE_INFO, FOLDER_INFO, EMPTIED_INFO)}
+
+
+def folder_counted(arrived, replay):
+    """The plain differential over the arrival, GEMDOS replayed: the image the C left."""
+    pokes = case.merge_pokes(da.machine_of(arrived), cdir.replayed(replay))
+    return aes.run_function(INF_FOLDER, arrived.arguments, pokes, hook=cdir.engine_hook, poison=False).final
+
+
+@pytest.mark.parametrize("name", FOLDER_CASES)
+def test_inf_folder_from_its_arrival_with_gemdos_replayed_is_the_rom_s(name):
+    """THE CASE: the counts walked and set into the dialog's two fields, D0 at its width — the calls the ROM's own."""
+    arrived = da.arrival(INF_FOLDER, FOLDER_CASES[name])
+    replay = cdir.in_place(arrived)
+    image = folder_counted(arrived, replay)
+    assert tuple(function for function, _frame in cdir.engine_calls(image)) == replay.functions
+
+
+# The walk's failure: no chain's GEMDOS fails a search of a folder Show Info is asked of (the model's disk answers
+# every read). AN ARGUMENT CLASS, SCRIPTED: Fsfirst answering ERROR (-1, above -32: d_errmsg shows no alert) — the walk
+# stops at once (asking its search once more: the ROM's), and inf_folder answers 0 with its fields untouched.
+GEMDOS_ERROR = -1
+
+
+def test_inf_folder_an_argument_class_the_walk_failing_answers_0_scripted():
+    arrived = da.arrival(INF_FOLDER, FOLDER_INFO)
+    replay = cdir.in_place(arrived)
+    dta = replay.fills[0]
+    failed = replay._replace(answers=(0, GEMDOS_ERROR & aes.LONG_MASK, GEMDOS_ERROR & aes.LONG_MASK), fills=(dta, dta),
+                             functions=(cdir.FSETDTA, cdir.FSFIRST, cdir.FSNEXT))
+    image = folder_counted(arrived, failed)
+    assert tuple(function for function, _frame in cdir.engine_calls(image)) == failed.functions
+
+
+# THE TALLIES CLEARED FIRST: Show Info of drive A: once its one file is deleted (the fix pass's EMPTIED_INFO, a case
+# above) arrives with the delete's count left in them — g_nfiles 1, g_size the file's — and over an empty root.
+def test_inf_folder_s_emptied_arrival_finds_the_tallies_stale():
+    arrived = da.arrival(INF_FOLDER, EMPTIED_INFO)
+    desk = case.long_in(arrived.boot.ram, aes.AES_DESK_GLOBALS) & db.BUS
+    stale = [case.long_in(arrived.boot.ram, desk + db.DESK_GLOBALS[name]) for name in ("DESK_G_NFILES", "DESK_G_SIZE")]
+    assert all(stale), stale
+
+
+def test_inf_folder_is_linked_and_unbound(blob):
+    da.unbound(blob, inf.UNIT_F_WAVE_2)
+
+
+def test_inf_folder_s_answer_is_held_at_the_word_and_read_by_its_two_callers():
+    assert da.vdi.ALCYON[INF_FOLDER].restype is aes.WORD_ANSWER
+    assert len(db.answer_readers(da.entry_of(INF_FOLDER))) == 2 and len(FOLDER_CASES) == 3

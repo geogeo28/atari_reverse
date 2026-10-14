@@ -10,6 +10,8 @@
 #ifndef TOS102US_DESK_DESKUSR_H
 #define TOS102US_DESK_DESKUSR_H
 
+#include "aes/gemgraf.h"
+
 /* ---- my_itoa: a number as two digits ------------------------------------------------------------------------------ */
 #define MY_ITOA_DIGITS        2          /* ($fde51c cmp.w #2,d7)                                               */
 #define MY_ITOA_ONE_DIGIT_MOST 9         /* at most this, the merge starts past the first '0' ($fde530 cmpi.w #9: bls) */
@@ -70,6 +72,24 @@
 #define OB_SFCB_TIME_SEPARATOR ':'
 #define OB_SFCB_SUFFIX_STEP   3          /* past "am"'s two letters and its NUL ($fde7ac addql #3,a4)           */
 
+/* ==== BAND 6 WAVE 2, group G1: the text view's G_USERDEF draw — dr_code `$fde7b4` (GEM's DESKUSR name, read from its
+ * body) and its one caller `$fde844` (AES_ROM_DESK_USERDEF), which ub_trampoline calls by VALUE on the desk's userdef
+ * stack (no Line-F word: held in `linef_table.LINKED_HELD_NO_TABLE_ENTRY`, ruling R-W2-4) ======================== */
+/* dr_code: a line whose SELECTED bit changed is inverted (bb_fill in XOR, solid); any other drawn — ob_sfcb into
+ * g_1text, the text's colour set, its characters into intin, v_gtext in the large font at the object's corner, and the
+ * LINE colour left in XOR mode ($fde830..$fde83a: gsx_attr(0, 3, 1)). Its answer: the current state, as handed. */
+#define DR_CODE_INVERT_MODE   GSX_MODE_XOR  /* bb_fill's mode                ($fde7d6 move.w #3,-(sp))               */
+#define DR_CODE_INVERT_FILL   GSX_FIS_SOLID /* ...interior and style ($fde7d0 move.l #$00010007): solid             */
+#define DR_CODE_INVERT_STYLE  GSX_PATTERN_SOLID
+#define DR_CODE_TEXT_MODE     GSX_MODE_REPLACE  /* gsx_attr(1, 1, 1): the text's ($fde7fc move.l #$00010001)        */
+#define DR_CODE_COLOUR        1          /* black                                 ($fde7f8 move.w #1,(sp))      */
+#define DR_CODE_LINE_MODE_AFTER GSX_MODE_XOR  /* gsx_attr(0, 3, 1) after the text ($fde834 move.w #3,-(sp))        */
+/* $fde844's frame (`link #-38`, a slot off target, `host_slot.h`): the clip it keeps, then the PARMBLK copied whole
+ * (lbcopy) — the clip it sets is the copy's own, and dr_code is handed the copy's fields */
+#define USERDEF_CLIP_KEPT     0          /* bytes[GRECT_BYTES]: gsx_gclip's         ($fde862 addi.l #-38,(sp))  */
+#define USERDEF_PARMBLK       8          /* bytes[PARM_BYTES]                       ($fde856 addi.l #-30,(sp))  */
+#define USERDEF_FRAME_BYTES   38
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -77,6 +97,9 @@ void aes_desk_my_itoa(uint8_t *image, int16_t number, uint32_t text);           
 uint32_t aes_desk_fmt_time(uint8_t *image, int16_t time, uint32_t text);                                        /* $fde546 */
 void aes_desk_fmt_date(uint8_t *image, int16_t date, uint32_t text);                                            /* $fde5ba */
 uint32_t aes_desk_ob_sfcb(uint8_t *image, uint32_t sfcb, uint32_t text);                                        /* $fde610 */
+int16_t aes_desk_dr_code(uint8_t *image, uint32_t tree, int16_t object, int16_t previous_state, int16_t current_state,
+                         int16_t x, int16_t y, int16_t width, int16_t height, uint32_t sfcb);                    /* $fde7b4 */
+int16_t aes_desk_userdef(uint8_t *image, uint32_t parmblk);                                                     /* $fde844 */
 #endif
 
 #endif /* TOS102US_DESK_DESKUSR_H */

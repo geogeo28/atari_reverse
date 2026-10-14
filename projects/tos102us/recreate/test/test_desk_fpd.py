@@ -339,3 +339,149 @@ def test_the_table_s_entries_for_the_unit_stay_the_rom_s_and_no_registry_names_o
     assert verdicts == {name: linef_table.THE_ROM_S for name in df.UNIT_G}
     assert set(df.UNIT_G) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
     assert not da.registered(df.UNIT_G)
+
+
+# ---- band 6 wave 2, group G2 (unit G): pn_close `$fdfa20`, pn_active `$fdfc3c` ---------------------------------------------------
+# pn_active SEARCHES THE DISK: every case of it runs over GEMDOS REPLAYED (`aes_deskfpd.gemdos_script`: the ROM's own run in
+# place's answers and DTAs, `aes_fslib`'s replay on both shores — in the id), unpoisoned as the list routines are. A
+# drive's spec is all the chains hand it ("A:\..."): the cartridge's arm ('c', unit M's search) and a file pool spent
+# are labelled classes, and a name the disk does not hold (".AB": begins with '.' and goes on) a class whose replay's
+# answer says it.
+CLOSE, ACTIVE = "AES_ROM_PN_CLOSE", "AES_ROM_PN_ACTIVE"
+NONE_LEFT = "file: dragged to the trash, OK"                # A:'s one file deleted: the search finds none (EFILNF)
+REPLAYED_STEERED = (*UNPOISONED, ("hook", df.replay_hook))
+REPLAYED = df.replay_laid()
+PNODE_SPEC, DOS_AX_NO_FILE_NODES = FPD["PNODE_SPEC"], FPD["DOS_AX_NO_FILE_NODES"]
+# THE CARTRIDGE'S DRIVE AS THE ROM COMPARES IT — the immediate of pn_active's `cmpi.b #99,8(a5)` at `$fdfc48`, read off
+# the ROM, not the C's header (a header mutated would lay its own wrong letter: the fix pass's RB12)
+PN_ACTIVE_CARTRIDGE_COMPARE = 0xfdfc48
+CARTRIDGE_DRIVE = case.word_in(BASE_IMAGE, PN_ACTIVE_CARTRIDGE_COMPARE + aes.WORD_BYTES) & 0xff
+DTA_NAME = 30                           # a DTA's found name (`desk/deskleaf.h` DTA_NAME)
+
+
+def _cartridge_s_spec(arrived):
+    """LAID: the path's spec drive 'c' — the cartridge's (no GEMDOS call follows: nothing replayed)."""
+    return {(arrived.arguments[0] & BUS) + PNODE_SPEC: bytes((CARTRIDGE_DRIVE,))}
+
+
+def _no_file_node_free(arrived):
+    """LAID: the free file list's head 0 — over the replay of the arrival's own search (its first two calls are made)."""
+    return case.merge_pokes(REPLAYED[1](arrived), _head_laid(DESK_FILES_FREE)(arrived))
+
+
+def _first_found_renamed(arrived):
+    """The arrival's script, its first search's DTA naming ".AB" in place of "." (a name of the class `.` + more)."""
+    script = list(df.gemdos_script(arrived))
+    first = next(at for at, (d0, dta) in enumerate(script) if not d0 and dta[DTA_NAME:DTA_NAME + 2] == b".\0")
+    d0, dta = script[first]
+    script[first] = (d0, dta[:DTA_NAME] + b".AB\0" + dta[DTA_NAME + 4:])
+    return tuple(script)
+
+
+TWELVE = b"ABCDEFGH.TXT"                 # an 8.3 name of twelve bytes: its NUL is the last byte pn_active copies
+STALE_NAME = b"X" * 14                  # a node's name bytes as a longer name left them
+
+
+def _first_found_named_twelve(arrived):
+    """The arrival's script, its first search's DTA naming a full 8.3 name (the disk holds none of twelve bytes)."""
+    script = list(df.gemdos_script(arrived))
+    first = next(at for at, (d0, _dta) in enumerate(script) if at and not d0)
+    d0, dta = script[first]
+    script[first] = (d0, dta[:DTA_NAME] + TWELVE + b"\0" + dta[DTA_NAME + len(TWELVE) + 1:])
+    return tuple(script)
+
+
+def _twelve_over_stale_nodes(arrived):
+    """...replayed, and the node the first entry is taken into — the old list's head, which fl_free puts first, or the
+    free list's head — its name bytes LAID stale (a name of fourteen bytes): the copy's last byte, the NUL, is seen."""
+    ram, path = arrived.boot.ram, arrived.arguments[0] & BUS
+    heads = {case.long_in(ram, path + FPD["PNODE_FLIST"]), case.long_in(ram, _desk(arrived) + DESK_FILES_FREE)} - {0}
+    return case.merge_pokes(df.replay_laid(_first_found_named_twelve)[1](arrived),
+                            *({(node & BUS) + FNODE_NAME: STALE_NAME} for node in heads))
+
+
+def _attributes_with_a_high_byte(arrived):
+    """...replayed, the path's attribute word LAID with a bit in its high byte (every caller hands pn_open a byte's)."""
+    at = (arrived.arguments[0] & BUS) + FPD["PNODE_ATTR"]
+    word = case.word_in(arrived.boot.ram, at) | ATTRIBUTE_HIGH_BYTE
+    return case.merge_pokes(REPLAYED[1](arrived), {at: struct.pack(">H", word)})
+
+
+def test_the_header_s_cartridge_drive_is_the_rom_s():
+    assert FPD["CARTRIDGE_DRIVE"] == CARTRIDGE_DRIVE
+
+
+CASES_WAVE_2 = (
+    Case(CLOSE, CLOSED, steered=UNPOISONED), Case(CLOSE, FOLDER_CLOSED, steered=UNPOISONED),
+    # pn_active: one file, four (a folder among them, sorted), a folder's "." and ".." (not listed: its node left over
+    # and freed), and none (Fsfirst's EFILNF)
+    *(Case(ACTIVE, chain, laid=REPLAYED, steered=REPLAYED_STEERED) for chain in (OPEN_A, FILES_OPENED, FOLDER_OPENED, NONE_LEFT)),
+    Case(ACTIVE, OPEN_A, why="the spec's drive 'c', the cartridge's (no machine of ours opens one): unit M's search, none",
+         arguments=lambda a: a.arguments, laid=("the path's spec drive 'c'", _cartridge_s_spec), steered=UNPOISONED),
+    Case(ACTIVE, FILES_OPENED, why="no file node free: the search ends at its first entry, AES_DOS_AX 100",
+         arguments=lambda a: a.arguments, laid=(f"{df.REPLAYED}; the free file list's head 0", _no_file_node_free),
+         steered=REPLAYED_STEERED),
+    Case(ACTIVE, FOLDER_OPENED, why="a name '.AB' (a '.' and more): listed",
+         arguments=lambda a: a.arguments, laid=df.replay_laid(_first_found_renamed, f"{df.REPLAYED}, the first found named '.AB'"),
+         steered=REPLAYED_STEERED),
+    Case(ACTIVE, OPEN_A, why="an attribute word with a bit in its high byte: handed Fsfirst a WORD",
+         arguments=lambda a: a.arguments, laid=(f"{df.REPLAYED}; the path's attributes $01xx", _attributes_with_a_high_byte),
+         steered=REPLAYED_STEERED),
+    Case(ACTIVE, FILES_OPENED, why="a full 8.3 name (twelve bytes) into a node of stale name bytes: its NUL copied",
+         arguments=lambda a: a.arguments, laid=(f"{df.REPLAYED}, the first found named {TWELVE.decode()}; its node's name "
+                                                f"bytes stale", _twelve_over_stale_nodes), steered=REPLAYED_STEERED),
+)
+BY_LABEL_WAVE_2 = da.by_label(CASES_WAVE_2)
+
+
+@pytest.mark.parametrize("name", BY_LABEL_WAVE_2)
+def test_a_wave_2_routine_from_its_arrival_is_the_rom_s(name):
+    """THE CASE: the C core against the ROM's routine over the arrival's megabyte — every byte, the answer at its width;
+    at its own arrival the answer ALSO the one the ROM's run in place leaves its caller (pn_active's AES_DOS_AX)."""
+    each = BY_LABEL_WAVE_2[name]
+    arrived = da.arrival_of(each)
+    result = da.plain(arrived, *da.layers_of(each), **dict(each.steered or ()))
+    if each.why or df.SIGNATURES_WAVE_2[each.name][0] is None:
+        return
+    back = da.returned_in_place(arrived)
+    assert da.answered_at_its_width(each.name, result.long_answer()) == da.answered_at_its_width(each.name, back.registers["d0"])
+
+
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 6, 5
+
+
+def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
+    at_its_own = [each for each in CASES_WAVE_2 if not each.why]
+    assert {each.name for each in at_its_own} == set(df.UNIT_G_WAVE_2)
+    assert (len(at_its_own), len(CASES_WAVE_2) - len(at_its_own)) == (ARRIVALS_WAVE_2, CLASSES_WAVE_2)
+
+
+def test_the_arrivals_are_the_arms_their_comments_say():
+    """pn_active's four arrivals: the files each search finds (".": its first's name) and its last answer — the
+    disk's, read off the replay's script, not by a chain's name."""
+    def found(chain):
+        script = df.gemdos_script(da.arrival(ACTIVE, chain))
+        return [dta[DTA_NAME:].split(b"\0")[0] for d0, dta in script[1:] if not d0]       # past Fsetdta
+    assert {chain: found(chain) for chain in (OPEN_A, FILES_OPENED, FOLDER_OPENED, NONE_LEFT)} == {
+        OPEN_A: [b"DESKTOP.INF"], FILES_OPENED: [b"AUTO", b"DESKTOP.INF", b"README.TXT", b"TESTPRG.PRG"],
+        FOLDER_OPENED: [b".", b".."], NONE_LEFT: []}
+
+
+def test_pn_close_s_d0_is_read_by_no_caller_and_pn_active_s_by_its_callers():
+    """D0: pn_close is void (its D0 pn_free's leftover, the C none — a NAMED, COUNTED divergence: its two cases), read
+    by no instruction of the ROM; pn_active's word answer read by its callers (`aes_deskbind.answer_readers`)."""
+    assert not db.answer_readers(da.entry_of(CLOSE))
+    assert db.answer_readers(da.entry_of(ACTIVE))
+    assert sum(each.name == CLOSE for each in CASES_WAVE_2) == 2
+
+
+def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_routine(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`) asked of the unit's wave-2 routines."""
+    assert not db.bound_referrers(blob, df.UNIT_G_WAVE_2)
+
+
+def test_the_table_s_entries_for_the_wave_2_routines_stay_the_rom_s_and_no_registry_names_one():
+    verdicts, linef_table = da.table_verdicts(df.UNIT_G_WAVE_2)
+    assert verdicts == {name: linef_table.THE_ROM_S for name in df.UNIT_G_WAVE_2}
+    assert set(df.UNIT_G_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
+    assert not da.registered(df.UNIT_G_WAVE_2)

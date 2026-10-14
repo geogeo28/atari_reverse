@@ -19,6 +19,15 @@
  * (`test/test_desk_top.py`), read by no caller.
  *
  * NAMES: the published GEM desktop's DESKTOP / DESKMAIN where the body is its routine.
+ *
+ * BAND 6 WAVE 2 (group G3), each read from its body (names `# ctx`):
+ *   $fe22a6 hndl_kbd(key)                    Esc ($011b): the window on top re-read (fun_rebld); 0
+ *   $fe2618 cnx_get()                        the INF's view and sort through the View menu's handler, its preferences,
+ *                                            the double-click rate, the resolution word; each window kept (a path)
+ *                                            opened again: a window for its icon, its scroll, its spec parsed, its
+ *                                            corner on do_xyfix's column (IN g_cnxsave), its drive and path made
+ *                                            current — then do_diropen, or the window freed where that failed; then
+ *                                            cnx_put
  */
 #ifndef TOS102US_DESK_DESKTOP_H
 #define TOS102US_DESK_DESKTOP_H
@@ -77,6 +86,20 @@
 #define FIND_FNODE            0          /* long                                                                 */
 #define FIND_IS_APP           4          /* word                                                                 */
 #define FIND_FRAME_BYTES      6
+/* ---- band 6 wave 2 ---------------------------------------------------------------------------------------------- */
+/* hndl_kbd's key: Esc's scan and ASCII, aes/obedit.h's OB_EDIT_KEY_ESCAPE ($fe22ae cmpi.w #283,8(a6)) */
+#define HNDL_KBD_DONE         0          /* ($fe22aa clr.w -2(a6))                                               */
+#define CNX_DCLICK_RATE       3          /* evnt_dclick's rate, set              ($fe2650 move.w #3,-(sp))       */
+#define CNX_DCLICK_SET        1          /* ($fe264c move.w #1,(sp))                                             */
+#define CNX_RESOLUTION_BASE   1          /* the INF's resolution word is from 0, the word set from 1 ($fe265c addq.w #1) */
+#define CNX_NEW_WINDOW        1          /* do_diropen's `new`                   ($fe270c move.w #1,-(sp))       */
+/* CNX_GET'S FRAME — fpd_parse's extension, name and drive word, the ROM's layout (-14(a6) up: the name's eight bytes
+ * run into the drive word's high byte where it has eight characters), HELD across do_diropen (the name and extension
+ * are its). */
+#define CNX_GET_FRAME_EXT     0          /* bytes[4]                             ($fe269c -14(a6))               */
+#define CNX_GET_FRAME_NAME    4          /* bytes[8]                             ($fe26a4 -10(a6))               */
+#define CNX_GET_FRAME_DRIVE   12         /* word                                 ($fe26b4 -2(a6))                */
+#define CNX_GET_FRAME_BYTES   14
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>
@@ -86,6 +109,9 @@ void aes_men_update(uint8_t *image, uint32_t tree);                             
 int16_t aes_do_viewmenu(uint8_t *image, int16_t item);                                           /* $fe1f2a */
 void aes_cnx_put(uint8_t *image);                                                                /* $fe2536 */
 void aes_men_list(uint8_t *image, uint32_t tree, uint32_t items, int16_t enable);                /* $fe1c8c */
+/* band 6 wave 2 (group G3) */
+int16_t aes_hndl_kbd(uint8_t *image, int16_t key);                                               /* $fe22a6 */
+void aes_cnx_get(uint8_t *image);                                                                /* $fe2618 */
 #endif
 
 #endif /* TOS102US_DESK_DESKTOP_H */

@@ -124,6 +124,44 @@
 #define SORT_BY_SIZE          2
 #define SORT_BY_TYPE          3
 
+/* ---- BAND 6 WAVE 2: each group adds the offsets and values more than one unit reads inside its own block, by GEM's
+ * name where one exists, the ROM's instruction beside each — a name already above is USED, never spelt again ---- */
+/* ---- band 6 wave 2, group G1 (units C, F, E) ---- */
+/* The copy engine's tallies — dir_op and d_doop count into them, inf_folder (Show Info) reads them, and the desk's
+ * other counters read g_size (GEM's g_nfiles, g_ndirs, g_size) */
+#define DESK_G_NFILES         7288       /* long: the files counted             ($fdd66e addq.l #1,7288(a3))    */
+#define DESK_G_NDIRS          7292       /* long: ...the folders                ($fdd4c2 addq.l #1,7292(a3))    */
+#define DESK_G_SIZE           7296       /* long: ...their bytes                ($fdd680 add.l d0,7296(a3))     */
+/* g_1text: the text a line of the text view is made in (dr_code's, ob_sfcb's) and the drivers' scratch text */
+#define DESK_G_1TEXT          7300       /* bytes                               ($fde7ea addi.l #7300,(sp))     */
+/* The deepest folder level a dir_op's walks reached — kept by unit C, read by fun_op (`$fe00a0`) */
+#define AES_DESK_OP_DEPTH     0xc674     /* word                                ($fdd92e clr.w $c674)           */
+/* ---- end of group G1's wave-2 ---- */
+/* ---- band 6 wave 2, group G2 (units H, G, M) ---- */
+#define DESK_MKDIR_TREE       8100       /* long: the New Folder dialog's tree  ($fdfece move.l 8100(a0),d7)    */
+/* ---- end of group G2's wave-2 ---- */
+/* ---- band 6 wave 2, group G3 (units I, J, K, L) ---- */
+#define DESK_G_A_CMD          0x1e98     /* long: a_cmd, the launch's command   ($fe0aee move.l 7832(a5),-(sp)) */
+#define DESK_G_A_TAIL         0x1f1c     /* long: a_tail, ...and its tail       ($fe0aea move.l 7964(a5),(sp)) */
+#define DESK_G_WLASTSEL       0x1fb0     /* word: g_wlastsel, the window last opened or on top ($fe0f30 move.w d6,8112(a4)) */
+/* ---- end of group G3's wave-2 ---- */
+/* ---- band 6 wave 2, group G4 (units A, B) ---- */
+#define DESK_G_XYOBPTS        7428       /* words: g_xyobpts, a drag's icon corners ($fdcdf2 addi.l #7428,(sp)) */
+#define DESK_G_AFILE          8208       /* bytes[INF_BUFFER_BYTES]: g_afile, DESKTOP.INF as read or written
+                                          *                                     ($fdb652 addi.l #8208,(sp))    */
+#define DESK_G_AFSIZE         10256      /* word: g_afsize, its length          ($fdb698 move.w d0,10256(a3))  */
+#define DESK_G_BUFFER         10258      /* bytes: gl_buffer, the INF's texts, kept from g_pbuff on ($fdb60a)  */
+#define DESK_G_ALIST          12310      /* ANODE[DESK_ANODES]: g_alist, the pool ($fdb622 addi.l #12310,d0)   */
+#define ANODE_BYTES           28         /* ($fdb61c muls.w #28,d1)                                             */
+#define DESK_ANODES           32         /* NUM_ANODES: the pool's last node's link cleared ($fdb648 clr.l 13178(a3)) */
+/* ---- end of group G4's wave-2 ---- */
+/* ---- band 6 wave 2's fix pass: values more than one unit spelt, given ONE home ---- */
+#define DESK_SEARCH_ALL       0x16       /* hidden, system and folders: the copy engine's, fun_mkdir's and fun_disk's
+                                          * searches ($fdd486, $fdffa6, $fe03ac move.w #22,(sp))               */
+#define DESK_WAIT_BUSY        1          /* desk_wait's busy bee                  ($fdd2dc move.w #1,(sp))      */
+#define DESK_WAIT_DONE        0          /* ...and the arrow again (its every other caller's word 0)            */
+/* ---- end of band 6 wave 2's fix pass ---- */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 

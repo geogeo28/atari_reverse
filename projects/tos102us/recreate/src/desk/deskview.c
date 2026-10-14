@@ -8,9 +8,13 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "recreate.h"
 #include "aes/aes.h"
 #include "aes/deskmem.h"
+#include "aes/gemgraf.h"
+#include "aes/gsxif.h"
 #include "aes/objects.h"
+#include "aes/rect.h"
 #include "aes/resource.h"
 #include "aes/strings.h"
 #include "aes/wmlib.h"
@@ -23,6 +27,7 @@
 
 /* THE ONE FRAME'S SIZE IS ITS HOST SLOT'S (`host_slot.h`). */
 _Static_assert(VIEW_FRAME_BYTES == HOST_SLOT_AES_DESK_VIEW_FRAME_BYTES, "the view's frame and its host slot");
+_Static_assert(SCROLL_FRAME_BYTES == HOST_SLOT_AES_DESK_SCROLL_FRAME_BYTES, "the scrolls' frame and its host slot");
 
 static inline int16_t desk_word(const uint8_t *image, uint32_t field)
 {
@@ -458,4 +463,156 @@ void aes_win_sname(uint8_t *image, uint32_t window)
         set_bus_byte(image, name++, bus_byte(image, spec));
     set_bus_byte(image, name++, STRING_SPACE);
     set_bus_byte(image, name, STRING_NUL);
+}
+
+/* ================================================================================================
+ * BAND 6 WAVE 2 (group G3): THE SCROLLS AND THE WINDOWS' REBUILDS.
+ * ============================================================================================= */
+
+/* The window's work area answered into the rectangle at `rect`. */
+static inline void get_work(uint8_t *image, int16_t handle, uint32_t rect)
+{
+    (void)aes_desk_wind_get(image, handle, WF_WORKXYWH, rect + GRECT_X, rect + GRECT_Y, rect + GRECT_W, rect + GRECT_H);
+}
+
+/* $fe3310 — win_blt: the first row (`vertical`) or column made `first` — no less than 0, no more than the view's less
+ * what is shown; none moved: done (the ROM's D0 0). The view rebuilt over the work area; where the work area lies
+ * wholly below the menu bar (its copy clipped there unchanged) and the step is less than what is shown, the rows
+ * (columns) still shown blitted along by the step's pitches — up for a step down, down for a step up — and the
+ * work area cut to the strip they left; then that redrawn. */
+void aes_win_blt(uint8_t *image, uint32_t window, int16_t vertical, int16_t first)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(SCROLL_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_DESK_SCROLL_FRAME, frame_local);
+    uint32_t work = frame + SCROLL_FRAME_WORK, clipped = frame + SCROLL_FRAME_CLIPPED;
+    uint32_t shown_field = vertical ? WNODE_PNROW : WNODE_PNCOL, scroll = vertical ? WNODE_CVROW : WNODE_CVCOL;
+    int16_t shown, step;
+
+    first = aes_max(WIN_BLT_FIRST, first);
+    first = aes_min((int16_t)(wnode_word(image, window, vertical ? WNODE_VNROW : WNODE_VNCOL) - wnode_word(image, window, shown_field)),
+                    first);
+    shown = wnode_word(image, window, shown_field);
+    step = (int16_t)(first - wnode_word(image, window, scroll));
+    set_wnode_word(image, window, scroll, (int16_t)(wnode_word(image, window, scroll) + step));
+    if (!step) {
+        host_slot_release(AES_DESK_SCROLL_FRAME);
+        return;
+    }
+    get_work(image, wnode_word(image, window, WNODE_ID), work);
+    aes_win_bldview(image, window, rect_word(image, work, GRECT_X), rect_word(image, work, GRECT_Y),
+                    rect_word(image, work, GRECT_W), rect_word(image, work, GRECT_H));
+    aes_rc_copy(image, work, clipped);
+    (void)aes_rc_intersect(image, AES_GL_RFULL, clipped);
+    if (aes_rc_equal(image, work, clipped)) {
+        int16_t backward = step < 0;
+
+        if (backward)
+            step = (int16_t)-step;
+        if (step < shown) {
+            int16_t source_x = 0, source_y = 0, to_x = 0, to_y = 0, width, height, swapped;
+
+            if (vertical) {
+                source_y = (int16_t)(step * desk_word(image, DESK_G_IHINT));
+                width = rect_word(image, work, GRECT_W);
+                height = (int16_t)(rect_word(image, work, GRECT_H) - source_y);
+            } else {
+                source_x = (int16_t)(step * desk_word(image, DESK_G_IWINT));
+                width = (int16_t)(rect_word(image, work, GRECT_W) - source_x);
+                height = rect_word(image, work, GRECT_H);
+            }
+            if (backward) {
+                swapped = source_x, source_x = to_x, to_x = swapped;
+                swapped = source_y, source_y = to_y, to_y = swapped;
+            }
+            (void)aes_gsx_sclip(image, work);
+            aes_bb_screen(image, WIN_BLT_RULE, (int16_t)(rect_word(image, work, GRECT_X) + source_x),
+                          (int16_t)(rect_word(image, work, GRECT_Y) + source_y), (int16_t)(rect_word(image, work, GRECT_X) + to_x),
+                          (int16_t)(rect_word(image, work, GRECT_Y) + to_y), width, height);
+            if (vertical) {
+                if (!backward)
+                    set_bus_word(image, work + GRECT_Y, (uint16_t)(rect_word(image, work, GRECT_Y) + height));
+                set_bus_word(image, work + GRECT_H, (uint16_t)(rect_word(image, work, GRECT_H) - height));
+            } else {
+                if (!backward)
+                    set_bus_word(image, work + GRECT_X, (uint16_t)(rect_word(image, work, GRECT_X) + width));
+                set_bus_word(image, work + GRECT_W, (uint16_t)(rect_word(image, work, GRECT_W) - width));
+            }
+        }
+    }
+    aes_do_wredraw(image, wnode_word(image, window, WNODE_ID), rect_word(image, work, GRECT_X), rect_word(image, work, GRECT_Y),
+                   rect_word(image, work, GRECT_W), rect_word(image, work, GRECT_H));
+    host_slot_release(AES_DESK_SCROLL_FRAME);
+}
+
+/* $fe3504 — win_slide: the slider's size asked (and never read), the place `value` in thousandths of what is not
+ * shown made the first row (column): win_blt. */
+void aes_win_slide(uint8_t *image, int16_t handle, int16_t value, int16_t vertical)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(SCROLL_FRAME_BYTES)];
+    uint32_t window = aes_win_find(image, handle), frame;
+    int16_t total = wnode_word(image, window, vertical ? WNODE_VNROW : WNODE_VNCOL);
+    int16_t shown = wnode_word(image, window, vertical ? WNODE_PNROW : WNODE_PNCOL);
+
+    frame = host_slot_claim(AES_DESK_SCROLL_FRAME, frame_local);
+    (void)aes_desk_wind_get(image, handle, vertical ? WF_VSLSIZE : WF_HSLSIZE, frame + SCROLL_FRAME_SIZE,
+                            frame + SCROLL_FRAME_UNREAD, frame + SCROLL_FRAME_UNREAD, frame + SCROLL_FRAME_UNREAD);
+    host_slot_release(AES_DESK_SCROLL_FRAME);
+    aes_win_blt(image, window, vertical, aes_mul_div(value, (int16_t)(total - shown), SLIDER_SCALE));
+}
+
+/* $fe359a — win_arrow: a page or a line up or down (a row), left or right (a column) from the first shown: win_blt. */
+void aes_win_arrow(uint8_t *image, int16_t handle, int16_t arrow)
+{
+    uint32_t window = aes_win_find(image, handle);
+    int16_t row = wnode_word(image, window, WNODE_CVROW), column = wnode_word(image, window, WNODE_CVCOL);
+    int16_t vertical = 1, first;
+
+    switch (arrow) {
+    case WA_UPPAGE: first = (int16_t)(row - wnode_word(image, window, WNODE_PNROW)); break;
+    case WA_DNPAGE: first = (int16_t)(row + wnode_word(image, window, WNODE_PNROW)); break;
+    case WA_UPLINE: first = (int16_t)(row - 1); break;
+    case WA_DNLINE: first = (int16_t)(row + 1); break;
+    case WA_LFPAGE: first = (int16_t)(column - wnode_word(image, window, WNODE_PNCOL)), vertical = 0; break;
+    case WA_RTPAGE: first = (int16_t)(column + wnode_word(image, window, WNODE_PNCOL)), vertical = 0; break;
+    case WA_LFLINE: first = (int16_t)(column - 1), vertical = 0; break;
+    case WA_RTLINE: first = (int16_t)(column + 1), vertical = 0; break;
+    default:
+        recreate_not_reconstructed("win_arrow of an arrow word past WA_RTLINE: the ROM scrolls to its caller's D6");
+    }
+    aes_win_blt(image, window, vertical, first);
+}
+
+/* $fe3622 — win_srtall: every window that has a GEM window, its path's files sorted again. */
+void aes_win_srtall(uint8_t *image)
+{
+    int16_t index;
+
+    for (index = 0; index < DESK_WINDOWS; index++) {
+        uint32_t path;
+
+        if (!wnode_word(image, wnode(image, index), WNODE_ID))
+            continue;
+        path = bus_long(image, wnode(image, index) + WNODE_PATH);
+        set_bus_long(image, bus_long(image, wnode(image, index) + WNODE_PATH) + PNODE_FLIST,
+                     aes_pn_sort(image, SORT_AGAIN, bus_long(image, path + PNODE_FLIST)));
+    }
+}
+
+/* $fe3684 — win_bdall: every window that has a GEM window, its view rebuilt over its work area. */
+void aes_win_bdall(uint8_t *image)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(SCROLL_FRAME_BYTES)];
+    uint32_t work = host_slot_claim(AES_DESK_SCROLL_FRAME, frame_local) + SCROLL_FRAME_WORK;
+    int16_t index;
+
+    for (index = 0; index < DESK_WINDOWS; index++) {
+        int16_t handle = wnode_word(image, wnode(image, index), WNODE_ID);
+
+        if (!handle)
+            continue;
+        get_work(image, handle, work);
+        aes_win_bldview(image, wnode(image, index), rect_word(image, work, GRECT_X), rect_word(image, work, GRECT_Y),
+                        rect_word(image, work, GRECT_W), rect_word(image, work, GRECT_H));
+    }
+    host_slot_release(AES_DESK_SCROLL_FRAME);
 }

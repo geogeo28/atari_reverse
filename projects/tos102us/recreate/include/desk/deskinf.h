@@ -20,12 +20,26 @@
 #define DTTMSZ_SIZE_TEXT      16         /* bytes: inf_field's "%L"             ($fdeafe -10(a6))               */
 #define DTTMSZ_FRAME_BYTES    26
 
+/* ==== BAND 6 WAVE 2, group G1: inf_folder `$fde9ce` (GEM's DESKINF name, read from its body) ======================
+ * Show Info's count of a folder: the tallies cleared, d_doop's count walk (no tree), the folder itself taken off the
+ * folders, the two counts set into the dialog. Its frame (`link #-16`) is handed on whole — the two texts to
+ * inf_field, the count word to d_doop as BOTH its counts (never written: no tree) — so it is one host slot off
+ * target, laid as the ROM's: */
+#define INF_FOLDER_FOLDERS_TEXT 0        /* bytes: the folders' "%L"              ($fdea44 addi.l #-16,(sp))     */
+#define INF_FOLDER_FILES_TEXT 6          /* bytes: the files' "%L"                ($fdea22 addi.l #-10,(sp))     */
+#define INF_FOLDER_COUNT      14         /* word: d_doop's two count pointers     ($fde9e8 subq.l #2,(sp))       */
+#define INF_FOLDER_FRAME_BYTES 16
+#define INF_FOLDER_FAILED     0          /* the walk failed                       ($fdea0e clr.w d0)             */
+#define INF_FOLDER_COUNTED    1          /*                                       ($fdea5a moveq #1,d0)          */
+#define INF_FOLDER_NO_TREE    0          /* d_doop's tree: none, so nothing drawn ($fde9f8 clr.l -(sp))          */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
 void aes_desk_inf_field(uint8_t *image, uint32_t source, uint32_t text, uint32_t tree, int16_t object, int16_t is_name); /* $fdea5e */
 void aes_desk_inf_dttmsz(uint8_t *image, uint32_t tree, uint32_t file, int16_t date_object, int16_t time_object,
                          int16_t size_object, uint32_t size);                                                  /* $fdea9a */
+int16_t aes_desk_inf_folder(uint8_t *image, uint32_t tree, int16_t files_object, int16_t folders_object, uint32_t path); /* $fde9ce */
 #endif
 
 #endif /* TOS102US_DESK_DESKINF_H */

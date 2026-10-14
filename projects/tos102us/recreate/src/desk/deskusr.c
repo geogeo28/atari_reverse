@@ -7,11 +7,17 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "aes/aes.h"
+#include "aes/gemgraf.h"
+#include "aes/gsx.h"
+#include "aes/objects.h"
 #include "aes/strings.h"
+#include "desk/deskglobals.h"
 #include "desk/deskusr.h"
 
 _Static_assert(OB_SFCB_FRAME_BYTES == HOST_SLOT_AES_DESK_OB_SFCB_FRAME_BYTES, "ob_sfcb's frame and its host slot");
 _Static_assert(sizeof(int16_t) == HOST_SLOT_AES_DESK_MY_ITOA_NUMBER_BYTES, "my_itoa's number and its host slot");
+_Static_assert(USERDEF_FRAME_BYTES == HOST_SLOT_AES_DESK_USERDEF_FRAME_BYTES, "the userdef draw's frame and its host slot");
+_Static_assert(USERDEF_PARMBLK + PARM_BYTES == USERDEF_FRAME_BYTES, "the PARMBLK's copy ends at the frame's top");
 
 /* $fde500 — my_itoa: `number` as two digits at `text` — "00" laid and ended first, then merge_str's "%W" of it over
  * them, from the SECOND place where it is at most 9 (an UNSIGNED compare): a leading 0. merge_str is handed the
@@ -153,4 +159,58 @@ uint32_t aes_desk_ob_sfcb(uint8_t *image, uint32_t sfcb, uint32_t text)
     line += OB_SFCB_SUFFIX_STEP;
     host_slot_release(AES_DESK_OB_SFCB_FRAME);
     return line - text;
+}
+
+/* ==== band 6 wave 2, group G1 ======================================================================================= */
+
+/* $fde7b4 — dr_code: A LINE OF A WINDOW'S TEXT VIEW DRAWN (the PARMBLK's fields, `sfcb` its UB_PARM): where only its
+ * SELECTED bit changed, the object's rectangle inverted; else the line made of the SFCB (ob_sfcb, into g_1text) and
+ * written at the object's corner in the large font — the text colour set first, and the LINE colour left in XOR mode
+ * after (the ROM's). Its answer: `current_state`. */
+int16_t aes_desk_dr_code(uint8_t *image, uint32_t tree, int16_t object, int16_t previous_state, int16_t current_state,
+                         int16_t x, int16_t y, int16_t width, int16_t height, uint32_t sfcb)
+{
+    uint32_t text = desk_globals(image) + DESK_G_1TEXT;
+    int16_t characters;
+
+    (void)tree;
+    (void)object;
+    if ((previous_state ^ current_state) & OB_STATE_SELECTED) {
+        (void)aes_bb_fill(image, DR_CODE_INVERT_MODE, DR_CODE_INVERT_FILL, DR_CODE_INVERT_STYLE, x, y, width, height);
+        return current_state;
+    }
+    (void)aes_desk_ob_sfcb(image, sfcb, text);
+    aes_gsx_attr(image, GSX_TEXT_TEXT, DR_CODE_TEXT_MODE, DR_CODE_COLOUR);
+    characters = aes_xstrpix(image, bus_long(image, AES_AD_INTIN), text);
+    (void)aes_gsx_tblt(image, GSX_FONT_IBM, x, y, characters);
+    aes_gsx_attr(image, GSX_TEXT_LINE, DR_CODE_LINE_MODE_AFTER, DR_CODE_COLOUR);
+    return current_state;
+}
+
+/* A word of the PARMBLK's copy in the userdef draw's frame. */
+static inline int16_t parm_word(const uint8_t *image, uint32_t frame, uint32_t field)
+{
+    return (int16_t)bus_word(image, frame + USERDEF_PARMBLK + field);
+}
+
+/* $fde844 — the desk's G_USERDEF draw code (`AES_ROM_DESK_USERDEF`): the PARMBLK at `parmblk` copied into its frame,
+ * the clip kept and the copy's clip set, the line drawn (dr_code, over the copy's fields), the kept clip set again.
+ * dr_code's answer. Called by VALUE — ub_trampoline's `jsr`, on the desk's userdef stack. */
+int16_t aes_desk_userdef(uint8_t *image, uint32_t parmblk)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(USERDEF_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_DESK_USERDEF_FRAME, frame_local);
+    int16_t state;
+
+    aes_lbcopy(image, frame + USERDEF_PARMBLK, parmblk, PARM_BYTES);
+    aes_gsx_gclip(image, frame + USERDEF_CLIP_KEPT);
+    (void)aes_gsx_sclip(image, frame + USERDEF_PARMBLK + PARM_CLIP);
+    state = aes_desk_dr_code(image, bus_long(image, frame + USERDEF_PARMBLK + PARM_TREE),
+                             parm_word(image, frame, PARM_OBJECT), parm_word(image, frame, PARM_PREVSTATE),
+                             parm_word(image, frame, PARM_CURRSTATE), parm_word(image, frame, PARM_RECT + GRECT_X),
+                             parm_word(image, frame, PARM_RECT + GRECT_Y), parm_word(image, frame, PARM_RECT + GRECT_W),
+                             parm_word(image, frame, PARM_RECT + GRECT_H), bus_long(image, frame + USERDEF_PARMBLK + PARM_PARM));
+    (void)aes_gsx_sclip(image, frame + USERDEF_CLIP_KEPT);
+    host_slot_release(AES_DESK_USERDEF_FRAME);
+    return state;
 }

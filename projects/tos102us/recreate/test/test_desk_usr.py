@@ -18,6 +18,7 @@ import pytest
 import aes_deskarrive as da
 import aes_deskbind as db
 import aes_deskusr as usr
+import aes_gsx
 
 
 
@@ -95,3 +96,76 @@ def test_the_answers_the_c_has_not_are_counted_and_read_by_no_caller():
 
 def test_the_unit_is_linked_and_unbound(blob):
     da.unbound(blob, usr.UNIT_E)
+
+
+# ==== BAND 6 WAVE 2, group G1: dr_code `$fde7b4` and the userdef draw `$fde844` =======================================
+# AT THEIR ARRIVALS — a window's lines drawn as text (the files disk's, the INF disk's, a selected line's: the chain this
+# group added, "the long file's line clicked") — over the plain differential, the VDI's door bound (`aes_gsx.vdi_hook`:
+# gsx_attr, bb_fill and gsx_tblt reach the VDI by `trap #2`). Neither yields. The userdef draw runs on the desk's userdef
+# stack (its arrivals' own SP); called by value (ub_trampoline), it has no Line-F word (R-W2-4).
+# TRIED, AND NO ARRIVAL: dr_code's INVERTING arm (a SELECTED bit that changed): a clicked line is drawn again WHOLE
+# ($41 -> $41, the chain above) — the desk redraws a selection by objc_draw, never objc_change's userdef call. A
+# LABELLED ARGUMENT CLASS, the bit flipped in `previous_state` over a line's arrival.
+DR_CODE, USERDEF = usr.DR_CODE, usr.USERDEF
+TEXT_VIEW_OPENED, TEXT_VIEW_SAVED = "text view: A: opened", "text view: Options > Save Desktop, Return"
+LINE_CLICKED = "files: View > Show as Text, the long file's line clicked"
+PREVIOUS_STATE = 2                      # dr_code's third argument
+SELECTED = 1
+
+
+def _changed(bit):
+    def arguments_of(arrived):
+        arguments = list(arrived.arguments)
+        arguments[PREVIOUS_STATE] ^= bit
+        return tuple(arguments)
+    return arguments_of
+
+
+CROSSED = 2                             # another state bit of the word's low byte than SELECTED
+
+
+WAVE_2_CASES = (
+    *(Case(name, chain) for name in (DR_CODE, USERDEF) for chain in (AS_TEXT, TEXT_VIEW_OPENED, TEXT_VIEW_SAVED, FILES_AS_TEXT,
+                                                                     LINE_CLICKED)),
+    Case(DR_CODE, FILES_AS_TEXT, 1), Case(USERDEF, FILES_AS_TEXT, 1),    # the folder's line: its glyph
+    Case(DR_CODE, LINE_CLICKED, arguments=_changed(SELECTED),
+         why="the SELECTED bit changed (no chain's desk changes a line's state but by drawing it whole): the line inverted"),
+    Case(DR_CODE, LINE_CLICKED, arguments=_changed(CROSSED),
+         why="a state bit OTHER than SELECTED changed: the line drawn whole, the CURRENT state answered"),
+)
+WAVE_2_BY_LABEL = da.by_label(WAVE_2_CASES)
+
+
+@pytest.mark.parametrize("name", WAVE_2_BY_LABEL)
+def test_a_line_of_the_text_view_from_its_arrival_is_the_rom_s(name):
+    """THE CASE: the C core against the ROM's routine over the arrival's megabyte — the VDI's calls, the clip, the
+    line's text — its answer (the state) at the word."""
+    da.tier_1(WAVE_2_BY_LABEL[name], hook=aes_gsx.vdi_hook)
+
+
+def test_the_arrivals_draw_whole_lines_and_the_clicked_one_selected():
+    """The arms the arrivals take: every line drawn whole (no SELECTED bit changed), the clicked one in its selected
+    state."""
+    states = {chain: da.arrival(DR_CODE, chain).arguments[2:4] for chain in (AS_TEXT, LINE_CLICKED)}
+    assert all(previous == current for previous, current in states.values())
+    assert states[LINE_CLICKED][1] & SELECTED and not states[AS_TEXT][1] & SELECTED
+
+
+def test_the_text_view_s_draw_is_linked_and_unbound(blob):
+    da.unbound(blob, usr.UNIT_E_WAVE_2)
+
+
+WAVE_2_ARRIVALS, WAVE_2_CLASSES = 12, 2
+
+
+def test_every_line_routine_has_a_case_at_an_arrival_of_its_own():
+    at_its_own = [each for each in WAVE_2_CASES if not each.why]
+    assert {each.name for each in at_its_own} == set(usr.UNIT_E_WAVE_2)
+    assert (len(at_its_own), len(WAVE_2_CASES) - len(at_its_own)) == (WAVE_2_ARRIVALS, WAVE_2_CLASSES)
+
+
+def test_the_line_s_answers_are_held_at_the_word():
+    """dr_code's answer (the state) read by its one caller; the userdef draw's by no Line-F site — it is called by
+    value, and ub_trampoline hands it back to ob_user: compared at the word on every case all the same."""
+    assert all(da.vdi.ALCYON[name].restype is usr.aes.WORD_ANSWER for name in usr.UNIT_E_WAVE_2)
+    assert {name: len(db.answer_readers(da.entry_of(name))) for name in usr.UNIT_E_WAVE_2} == {DR_CODE: 1, USERDEF: 0}

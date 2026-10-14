@@ -18,7 +18,9 @@ not copied into itself — HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED
     reaches that arm inside d_dofdel), and par_chk's refusal by a run (a folder dragged into its own window: the second
     window's folder opens over a forced media change, which the model refuses by name — tried, `aes_desk`'s block).
 """
+import functools
 import struct
+from collections import namedtuple
 
 import pytest
 
@@ -30,8 +32,10 @@ import aes_deskarrive as da
 import aes_deskbind as db
 import aes_deskdir as cdir
 import aes_deskleaves as dl
+import aes_event
 import case
 import layouts
+from aes_desk import EMPTIED_INFO, KEY_RELEASED, READ_ONLY_COPIED, SCAN_B, SCAN_BACKSPACE, SCAN_RETURN
 
 Case = da.Case
 RETURN = da.RETURN_TYPED
@@ -234,12 +238,318 @@ def test_the_answers_the_c_has_not_are_counted_and_read_by_no_caller():
 
 
 def test_the_strings_the_unit_names_are_the_rom_s():
-    """The ROM's "\\*.*" four times and "*.*" twice, at the addresses the header names."""
+    """The ROM's "\\*.*" seven times and "*.*" twice, at the addresses the header names — and the copy engine's five
+    count templates, "%W" each (band 6 wave 2)."""
     texts = {name: bytes(BASE_IMAGE[at:BASE_IMAGE.index(b"\0", at)]) for name, at in cdir.CONSTANTS.items()
-             if name.startswith("AES_DESK_") and name.endswith(("TAIL", "SOURCE", "DESTINATION"))}
-    assert texts == {"AES_DESK_ADD_PATH_TAIL": b"\\*.*", "AES_DESK_SUB_PATH_TAIL": b"\\*.*", "AES_DESK_DEL_FNAME_TAIL": b"\\*.*",
-                     "AES_DESK_PAR_CHK_TAIL": b"\\*.*", "AES_DESK_PAR_CHK_END_SOURCE": b"*.*", "AES_DESK_PAR_CHK_END_DESTINATION": b"*.*"}
+             if name.startswith("AES_DESK_") and name.endswith(("TAIL", "SOURCE", "DESTINATION", "FORMAT"))}
+    tails = ("ADD_PATH", "SUB_PATH", "DEL_FNAME", "PAR_CHK", "DOOP_RMDIR", "DOOP_MKDIR", "DIR_OP_FOLDER")
+    formats = ("DIR_OP_FILES", "DIR_OP_FOLDERS", "DIR_OP_FILE", "DOOP_FOLDER", "DOOP_FILE")
+    assert texts == {**{f"AES_DESK_{tail}_TAIL": b"\\*.*" for tail in tails},
+                     **{f"AES_DESK_{each}_FORMAT": b"%W" for each in formats},
+                     "AES_DESK_PAR_CHK_END_SOURCE": b"*.*", "AES_DESK_PAR_CHK_END_DESTINATION": b"*.*"}
 
 
 def test_the_unit_is_linked_and_unbound(blob):
     da.unbound(blob, cdir.UNIT_C)
+
+
+# ==== BAND 6 WAVE 2, group G1: THE COPY ENGINE — d_dofcopy, d_doop, dir_op ===========================================
+# EVERY CASE IS AN ARRIVAL of a chain of the hands, its GEMDOS REPLAYED from the ROM's own run in place
+# (`aes_deskdir.in_place`: the answers, the DTA each search left, the handles laid open for the host — `REPLAYED`, in the
+# id), its waits ended by the keys the chain itself typed there (`wakes`, one a idle: the same make code taken in by the
+# in-place run and delivered by the row). A case whose run reaches a binding of unit D (a dialog, a field drawn) is a
+# ROW THAT SWITCHES; one that reaches none, the plain differential. Both shores' ledgers are the same bytes (the
+# megabyte); `the_ledger_is_the_run_in_place` holds that the calls made are the ROM's run's own.
+D_DOFCOPY, D_DOOP, DIR_OP = cdir.UNIT_C_WAVE_2
+SHOW_INFO_A, FOLDER_SHOW_INFO = "A: File > Show Info, Return", "folder: selected, File > Show Info, Return"
+TRASH_CANCELLED = "file: dragged to the trash, Return (Cancel, the dialog's default)"
+AUTO_AS_B = "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)"
+FILE_DELETED_UNASKED = "folder: deletes unconfirmed — the file dragged to the trash"
+FOLDER_DELETED_UNASKED = "folder: deletes unconfirmed — the folder dragged to the trash"
+AS_B = (SCAN_RETURN, SCAN_BACKSPACE, SCAN_B, SCAN_RETURN)        # the copy dialog's Return, then the conflict's new name
+RENAMED = (SCAN_BACKSPACE, SCAN_B, SCAN_RETURN)                  # the conflict's name's last letter made a B
+# Each row past the default derivation budget declares its own (`aes_event`: 5 N <= B <= 10 N), from the run measured:
+COPY_RUN_BUDGET = 3_000_000             # dir_op copying a file over its conflict: 512,420 instructions
+FILE_COPY_BUDGET = 2_000_000            # ...a file copied, a folder copied: 323,943 and 325,464
+AS_B_BUDGET = 3_000_000                 # ...a folder copied as B over its conflict: 549,917
+
+READ_ONLY_ARCHIVED_ATTRIBUTES, A_TIME = 0x21, 0x1234
+ARCHIVED_ATTRIBUTES = 0x20             # the archive bit alone: a read-only file IS copied by a chain (READ_ONLY_COPIED)
+
+
+def _fnode_laid(arrived):
+    """LAID: the one SELECTED file of dir_op's list archived, its time $1234."""
+    ram, desk = arrived.boot.ram, case.long_in(arrived.boot.ram, aes.AES_DESK_GLOBALS) & db.BUS
+    objects, node, laid = desk + db.DESK_GLOBALS["DESK_G_SCREEN_OBJECTS"], arrived.arguments[2] & db.BUS, {}
+    while node:
+        shown = case.word_in(ram, node + FPD["FNODE_OBID"])
+        if shown != cdir.CONSTANTS["FNODE_NO_OBJECT"] and case.word_in(ram, objects + shown * aes.OB_BYTES + aes.OB_STATE) & 1:
+            laid[node + FPD["FNODE_ATTR"]] = bytes((ARCHIVED_ATTRIBUTES,))
+            laid[node + FPD["FNODE_TIME"]] = struct.pack(">H", A_TIME)
+        node = case.long_in(ram, node + FPD["FNODE_NEXT"]) & db.BUS
+    assert len(laid) == 2, "one selected file"
+    return laid
+
+
+EngineCase = namedtuple("EngineCase", "name chain nth wakes yields budget laid", defaults=(0, (), False, None, None))
+EngineCase.__doc__ = """A case of the copy engine: `name` at the `nth` arrival of `chain`, the make codes `wakes` typed
+one an idle (the chain's own), `yields` where its run reaches a binding (a row that switches), `budget` its row's
+declared derivation budget (`aes_event`); `laid`: `(what, arrival -> pokes)`, A LABELLED STAGING laid over the
+arrival's megabyte BEFORE the ROM's own run in place is taken (`LAID` in the id)."""
+ENGINE_CASES = (
+    # d_dofcopy: a file copied into a folder — fitting the buffer, the long file; over the name conflict, Return (the same
+    # name: copied over), with the copy dialog up and with copies unconfirmed (the conflict's dialog put up first)
+    EngineCase(D_DOFCOPY, COPIED), EngineCase(D_DOFCOPY, README_COPIED),
+    EngineCase(D_DOFCOPY, FILE_CONFLICT, 0, (SCAN_RETURN,), True), EngineCase(D_DOFCOPY, UNCONFIRMED_CONFLICT, 0, (SCAN_RETURN,), True),
+    # ...and over the conflict with ANOTHER NAME typed (its keys, not the chain's): the destination renamed, the typed
+    # name kept as the next conflict's source, the new name opened again — free — and created
+    EngineCase(D_DOFCOPY, FILE_CONFLICT, 0, RENAMED, True),
+    # d_doop: Show Info's count of drive A: and of a folder; a folder deleted, one holding a file, one holding a folder
+    # (counted first, then deleted); a folder copied into another, and as B over the conflict
+    EngineCase(D_DOOP, SHOW_INFO_A), EngineCase(D_DOOP, FOLDER_SHOW_INFO),
+    EngineCase(D_DOOP, FOLDER_TRASHED, 1, (), True), EngineCase(D_DOOP, AUTO_TRASHED, 1, (), True),
+    EngineCase(D_DOOP, A_DELETED), EngineCase(D_DOOP, A_DELETED, 1, (), True),
+    EngineCase(D_DOOP, B_INTO_A, 2, (), True), EngineCase(D_DOOP, FOLDER_CONFLICT, 2, (), True),
+    # dir_op: the selection counted (a file, a folder holding a file, a folder holding a folder); the delete dialog
+    # cancelled; a file copied (the copy dialog's Return), over the conflict, with copies unconfirmed; a folder copied,
+    # and as B over the folder's conflict
+    EngineCase(DIR_OP, TRASHED), EngineCase(DIR_OP, AUTO_TRASHED), EngineCase(DIR_OP, A_DELETED),
+    EngineCase(DIR_OP, TRASH_CANCELLED, 1, (SCAN_RETURN,), True),
+    EngineCase(DIR_OP, COPIED, 2, (SCAN_RETURN,), True, FILE_COPY_BUDGET),
+    EngineCase(DIR_OP, FILE_CONFLICT, 2, (SCAN_RETURN, SCAN_RETURN), True, COPY_RUN_BUDGET),
+    EngineCase(DIR_OP, UNCONFIRMED_CONFLICT, 2, (SCAN_RETURN,), True, COPY_RUN_BUDGET),
+    EngineCase(DIR_OP, B_INTO_A, 2, (SCAN_RETURN,), True, FILE_COPY_BUDGET),
+    EngineCase(DIR_OP, FOLDER_CONFLICT, 2, AS_B, True, AS_B_BUDGET),
+    # deletes unconfirmed (the group's chains): no dialog — a file deleted by dir_op, a folder walked and deleted by
+    # d_doop with no tree
+    EngineCase(DIR_OP, FILE_DELETED_UNASKED, 1), EngineCase(DIR_OP, FOLDER_DELETED_UNASKED, 1),
+    EngineCase(D_DOOP, FOLDER_DELETED_UNASKED, 1),
+    # a folder holding a file copied (the group's chain: AUTO copied into drive A:'s root as AUTB): the walk's file copied
+    # by d_dofcopy from its DTA's time, date and attributes
+    EngineCase(D_DOOP, AUTO_AS_B, 2, (), True), EngineCase(DIR_OP, AUTO_AS_B, 2, AS_B, True, AS_B_BUDGET),
+    # the copied file's FNODE LAID archived ($20) with a time of $1234 — every file of the model's disks has a time of 0
+    # and no archive bit (the read-only bit is an arrival's: READ_ONLY_COPIED, below): its attributes and stamp handed
+    EngineCase(DIR_OP, COPIED, 2, (SCAN_RETURN,), True, FILE_COPY_BUDGET,
+               ("the selected file's FNODE archived, its time $1234", lambda arrived: _fnode_laid(arrived))),
+    # (the fix pass's) A READ-ONLY FILE COPIED (the chain READ_ONLY_COPIED: the file made read-only, a folder made, the
+    # file dragged onto it): d_dofcopy handed attributes $01 — Fcreate's read-only bit dropped (the ROM's `andi.w #-2`)
+    # — and dir_op's copy of it; (Show Info of drive A: emptied by a delete) d_doop's walk over an EMPTY root: Fsfirst's
+    # EFILNF at its first search (a folder's own search finds "." first) — AX 18 by the search glue, as ENMFIL: the AX-2
+    # arm (dos_open's EFILNF) no search of the walk can give
+    EngineCase(D_DOFCOPY, READ_ONLY_COPIED), EngineCase(DIR_OP, READ_ONLY_COPIED, 2, (SCAN_RETURN,), True, FILE_COPY_BUDGET),
+    EngineCase(D_DOOP, EMPTIED_INFO),
+)
+
+
+def engine_label(each):
+    typed = f"; {len(each.wakes)} key(s) typed at its idles" if each.wakes else ""
+    laid = f" [{da.LAID}: {each.laid[0]}]" if each.laid else ""
+    return f"{each.name} — arrival {each.nth} of {each.chain} [{cdir.REPLAYED}]{laid}{typed}"
+
+
+ENGINE_BY_LABEL = {engine_label(each): each for each in ENGINE_CASES}
+assert len(ENGINE_BY_LABEL) == len(ENGINE_CASES), "two engine cases of one name"
+
+
+def _received(scancode):
+    return (aes_boot.ikbd(scancode), aes_boot.ikbd(scancode | KEY_RELEASED))
+
+
+@functools.cache
+def engine_replay(each):
+    """The case's arrival and the ROM's own run of it in place (`aes_deskdir.in_place`)."""
+    arrived = da.arrival(each.name, each.chain, each.nth)
+    if each.laid:
+        arrived = da._laid_over(arrived, each.laid[1](arrived))
+    return arrived, cdir.in_place(arrived, [_received(scancode) for scancode in each.wakes])
+
+
+def engine_run(each):
+    """THE CASE AT TIER 1 — the row through the companion (its idles the wakes'), or the plain differential: the image
+    the C left."""
+    arrived, replay = engine_replay(each)
+    pokes = case.merge_pokes(da.machine_of(arrived), cdir.replayed(replay))
+    if not each.yields:
+        return aes.run_function(each.name, arrived.arguments, pokes, hook=cdir.engine_hook, poison=False).final
+    at_idle = {idle: aes_event.key(scancode) for idle, scancode in enumerate(each.wakes)}
+    row = aes_event.woken_row(engine_label(each), each.name, arrived.arguments, lambda: pokes, at_idle, objects=True,
+                              answered=True, budget=each.budget)
+    ran, the_rom_s = da.held(row), da.the_rom_s_run(row)
+    assert the_rom_s.idles == len(each.wakes), f"{engine_label(each)}: the ROM's run idles {the_rom_s.idles} time(s)"
+    return ran.image
+
+
+@pytest.mark.parametrize("name", ENGINE_BY_LABEL)
+def test_the_copy_engine_from_its_arrival_with_gemdos_replayed_is_the_rom_s(name):
+    """THE CASE: the C core against the ROM's routine from the same entry, GEMDOS replayed on both shores — its answer
+    at its width, every byte of the megabyte (the ledger among them) — and THE CALLS MADE ARE THE ROM'S RUN'S OWN."""
+    each = ENGINE_BY_LABEL[name]
+    image = engine_run(each)
+    assert tuple(function for function, _frame in cdir.engine_calls(image)) == engine_replay(each)[1].functions
+
+
+READ_ONLY = 0x01                        # (GEMDOS's FA_RDONLY)
+EFILNF_ANSWER = addrs.parse(aes.INCLUDE / "gemdos" / "process.h")["GEMDOS_EFILNF"]
+
+
+def test_the_fix_pass_s_arrivals_take_the_arms_they_are_there_for():
+    """READ OFF THE ARRIVALS, not the chains' names: d_dofcopy over READ_ONLY_COPIED is handed attributes $01 (the
+    read-only bit Fcreate drops); d_doop over EMPTIED_INFO searches an empty root — its first Fsfirst answers EFILNF."""
+    assert da.arrival(D_DOFCOPY, READ_ONLY_COPIED).arguments[-1] == READ_ONLY
+    _arrived, replay = engine_replay(EngineCase(D_DOOP, EMPTIED_INFO))
+    assert replay.functions[-1] == cdir.FSFIRST and replay.answers[-1] == EFILNF_ANSWER & aes.LONG_MASK
+
+
+# THE NAME CONFLICT'S SKIP (the fix pass's: a dialog button clicked — unit H's click wake, `aes_deskfun.clicked`, the
+# conflict's dialog up after the chain's step before its last): its NAMECON_SKIP button reads "Cancel", and the copy
+# dialog under it holds one too — the lower of the two is clicked; the run in place creates nothing (pinned below).
+import aes_desk                         # noqa: E402
+import aes_deskfun as fun               # noqa: E402
+
+SKIP_TEXT = "Cancel"                     # the conflict dialog's NAMECON_SKIP button reads "Cancel" in this ROM
+SKIP_CLICKED = fun.clicked(aes_desk.lowest_button_point(SKIP_TEXT), -2)
+
+
+def test_d_dofcopy_s_name_conflict_skipped_by_a_click_is_the_rom_s():
+    arrived = da.arrival(D_DOFCOPY, FILE_CONFLICT, 0)
+    replay = cdir.in_place(arrived, SKIP_CLICKED.receptions(FILE_CONFLICT))
+    pokes = case.merge_pokes(da.machine_of(arrived), cdir.replayed(replay))
+    row = aes_event.woken_row(f"{D_DOFCOPY} — arrival 0 of {FILE_CONFLICT} [{cdir.REPLAYED}]; the conflict's Skip clicked",
+                              D_DOFCOPY, arrived.arguments, lambda: pokes, SKIP_CLICKED.at_idle(FILE_CONFLICT), objects=True,
+                              answered=True)
+    assert cdir.FCREATE not in replay.functions, "the conflict skipped: nothing created"
+    ran = da.held(row)
+    assert da.the_rom_s_run(row).idles
+    assert tuple(function for function, _frame in cdir.engine_calls(ran.image)) == replay.functions
+
+
+def test_the_copy_engine_is_linked_and_unbound(blob):
+    da.unbound(blob, cdir.UNIT_C_WAVE_2)
+
+
+# ---- d_dofcopy's arms no chain's GEMDOS reaches: LABELLED ARGUMENT CLASSES, GEMDOS SCRIPTED ------------------------------
+# The model's disk answers every read and write, and no floppy holds a file larger than free memory: so these arms are
+# taken over the ARRIVAL of a plain copy (the file fitting the buffer) with GEMDOS SCRIPTED — the same recorder, its
+# answers made up as said in each id (the arrival's own frames and handles; a second handle laid open beside the first,
+# for the copy whose source stays open). Every answer below -32 would show an alert; these are ERROR (-1) or EFILNF,
+# which d_errmsg shows none for, but the short write's own alert.
+SCRIPTED_CLASS = "GEMDOS SCRIPTED: answers no run gives"
+ERROR, EFILNF, A_SHORT_WRITE = -1, -33, 0x100
+SOURCE, DESTINATION = 6, 7              # the handles: the source, and the destination where the source stays open
+
+
+def _copy_class(answers, *, chain=COPIED, second_handle=False):
+    """(the arrival of a copy — d_dofcopy's case at arrival 0 of `chain` —, its replay with `answers` in place of the
+    run's) — the file's length the run's own first Fread answer, the buffer's the arrival's DESK_G_XLEN."""
+    arrived, replay = engine_replay(next(each for each in ENGINE_CASES if (each.name, each.chain, each.nth) == (D_DOFCOPY, chain, 0)))
+    desk = case.long_in(arrived.boot.ram, aes.AES_DESK_GLOBALS) & db.BUS
+    length, buffer = replay.answers[1], case.long_in(arrived.boot.ram, desk + cdir.CONSTANTS["DESK_G_XLEN"])
+    script = tuple((length if each == "length" else buffer if each == "buffer" else each) & aes.LONG_MASK for each in answers)
+    handles = dict(replay.handles)
+    if second_handle:
+        handles[cdir.handle_record(DESTINATION)] = handles[cdir.handle_record(SOURCE)]
+    return arrived, replay._replace(answers=script, handles=handles)
+
+
+FOPEN, FREAD, FCLOSE, FCREATE, FWRITE, FDATIME, FDELETE = (cdir.FOPEN, cdir.FREAD, cdir.FCLOSE, cdir.FCREATE, cdir.FWRITE,
+                                                         cdir.FDATIME, cdir.FDELETE)
+CopyClass = namedtuple("CopyClass", "answers functions verdict wakes second_handle chain arguments",
+                       defaults=((), False, COPIED, None))
+COPY_CLASSES = {
+    "the source's Fopen failing (EFILNF): 0 at once": CopyClass((EFILNF,), (FOPEN,), 0),
+    "its Fread failing (ERROR): 0 at once, the source left open (the ROM's)": CopyClass((SOURCE, ERROR), (FOPEN, FREAD), 0),
+    "the destination's Fopen failing otherwise (ERROR): d_errmsg's 0, the source closed AGAIN (the ROM's)": CopyClass(
+        (SOURCE, "length", 0, ERROR, 0), (FOPEN, FREAD, FCLOSE, FOPEN, FCLOSE), 0),
+    "a file larger than the buffer, its first write failing (ERROR): no second read, the source left open, the copy "
+    "stamped — 1 (the ROM's)": CopyClass((SOURCE, "buffer", EFILNF, DESTINATION, ERROR, 0, 0),
+                                         (FOPEN, FREAD, FOPEN, FCREATE, FWRITE, FDATIME, FCLOSE), 1, (), True),
+    "Fcreate failing (ERROR): 0": CopyClass((SOURCE, "length", 0, EFILNF, ERROR), (FOPEN, FREAD, FCLOSE, FOPEN, FCREATE), 0),
+    "a write short of the read (the disk full): the alert, both closed, the copy deleted, 0": CopyClass(
+        (SOURCE, "length", 0, EFILNF, SOURCE, A_SHORT_WRITE, 0, 0, 0),
+        (FOPEN, FREAD, FCLOSE, FOPEN, FCREATE, FWRITE, FCLOSE, FCLOSE, FDELETE), 0, (SCAN_RETURN,)),
+    "a write failing (ERROR): its verdict overwritten by the stamp's — 1 (the ROM's)": CopyClass(
+        (SOURCE, "length", 0, EFILNF, SOURCE, ERROR, 0, 0), (FOPEN, FREAD, FCLOSE, FOPEN, FCREATE, FWRITE, FDATIME, FCLOSE), 1),
+    "a file larger than the buffer: read and written a buffer at a time, the source closed at its end": CopyClass(
+        (SOURCE, "buffer", EFILNF, DESTINATION, "buffer", "length", 0, "length", 0, 0),
+        (FOPEN, FREAD, FOPEN, FCREATE, FWRITE, FREAD, FCLOSE, FWRITE, FDATIME, FCLOSE), 1, (), True),
+    "...its second read failing (ERROR): the copy kept short and stamped, 1 (the ROM's)": CopyClass(
+        (SOURCE, "buffer", EFILNF, DESTINATION, "buffer", ERROR, 0, 0, 0),
+        (FOPEN, FREAD, FOPEN, FCREATE, FWRITE, FREAD, FCLOSE, FDATIME, FCLOSE), 1, (), True),
+    # (the run's own answers — the copy of a file fitting the buffer — over arguments no caller hands at these arrivals)
+    "an ARCHIVED source (attributes $20 — the read-only bit is an arrival's): created as $20": CopyClass(
+        (SOURCE, "length", 0, EFILNF, SOURCE, "length", 0, 0), (FOPEN, FREAD, FCLOSE, FOPEN, FCREATE, FWRITE, FDATIME, FCLOSE),
+        1, arguments=lambda arrived: (*arrived.arguments[:3], ARCHIVED_ATTRIBUTES)),
+    "the destination THE SOURCE ITSELF, over the conflict, Return: the same file — the source closed, nothing copied, 1":
+        CopyClass((SOURCE, "length", 0, SOURCE, 0, 0), (FOPEN, FREAD, FCLOSE, FOPEN, FCLOSE, FCLOSE), 1, (SCAN_RETURN,),
+                  chain=FILE_CONFLICT, arguments=lambda arrived: (arrived.arguments[0], arrived.arguments[0], *arrived.arguments[2:])),
+}
+
+
+@pytest.mark.parametrize("what", COPY_CLASSES, ids=[f"{D_DOFCOPY} — ARGUMENT CLASS ({what}), over arrival 0 of "
+                                                   f"{COPY_CLASSES[what].chain} [{SCRIPTED_CLASS}]" for what in COPY_CLASSES])
+def test_d_dofcopy_an_argument_class_gemdos_scripted_is_the_rom_s(what):
+    """THE CLASS: the C against the ROM's routine over the plain copy's arrival, GEMDOS scripted on both shores — the
+    calls made the ones said, the answer the one said."""
+    each = COPY_CLASSES[what]
+    arrived, replay = _copy_class(each.answers, chain=each.chain, second_handle=each.second_handle)
+    if each.arguments:
+        arrived = arrived._replace(arguments=each.arguments(arrived))
+    pokes = case.merge_pokes(da.machine_of(arrived), cdir.replayed(replay))
+    # (a row even where no binding is reached: a C that put up an alert the ROM's run does not is then held to that
+    # run's dispatcher — an assertion — where a plain differential would end in the yield's refusal)
+    at_idle = {idle: aes_event.key(scancode) for idle, scancode in enumerate(each.wakes)}
+    row = aes_event.woken_row(what, D_DOFCOPY, arrived.arguments, lambda: pokes, at_idle, objects=True, answered=True)
+    ran = da.held(row)
+    assert da.the_rom_s_run(row).idles == len(each.wakes)
+    image, answer = ran.image, ran.answer
+    assert tuple(function for function, _frame in cdir.engine_calls(image)) == each.functions
+    assert answer == each.verdict
+
+
+ENGINE_ARRIVALS, ENGINE_CLASSES = 30, 13         # (with d_doop's DTA class, below)        # ...and the classes all d_dofcopy's, over its plain copy's arrival
+
+
+def test_every_routine_of_the_engine_has_a_case_at_an_arrival_of_its_own():
+    assert {each.name for each in ENGINE_CASES} == set(cdir.UNIT_C_WAVE_2)
+    laid, doop_dta_class = sum(1 for each in ENGINE_CASES if each.laid), 1
+    assert (len(ENGINE_CASES) - laid, len(COPY_CLASSES) + laid + doop_dta_class) == (ENGINE_ARRIVALS, ENGINE_CLASSES)
+
+
+def test_the_engine_s_answers_are_held_at_the_word_and_read_where_the_table_says():
+    """No divergence of D0: the three answer a word in C, compared on every case — d_dofcopy's read by d_doop and
+    dir_op, d_doop's by dir_op and inf_folder, dir_op's (always 1) by no instruction of the ROM."""
+    assert all(da.vdi.ALCYON[name].restype is aes.WORD_ANSWER for name in cdir.UNIT_C_WAVE_2)
+    read = {name: len(db.answer_readers(da.entry_of(name))) for name in cdir.UNIT_C_WAVE_2}
+    assert read == {D_DOFCOPY: 2, D_DOOP: 2, DIR_OP: 0}
+
+
+# ...and d_doop's file copied from a DTA no disk of the model's leaves: every file's time is 0 and none is read-only —
+# AN ARGUMENT CLASS over the AUTB copy's arrival, the walk's DTA of INSIDE.TXT SCRIPTED read-only and archived ($21 —
+# no run copies a read-only file out of a walked folder: READ_ONLY_COPIED's is a single file's copy),
+# its time $1234: the stamp and the attributes handed d_dofcopy, read off the DTA.
+INSIDE = b"INSIDE.TXT"
+DTA = layouts.parse_constants((aes.INCLUDE / "gemdos" / "fs.h",), known=aes.CONSTANTS)
+
+
+def _inside_read_only(fill):
+    if fill[DTA["DTA_NAME"]:].split(b"\0")[0] != INSIDE:
+        return fill
+    laid = bytearray(fill)
+    laid[DTA["DTA_FOUND_ATTR"]] = READ_ONLY_ARCHIVED_ATTRIBUTES
+    laid[DTA["DTA_TIME"]:DTA["DTA_TIME"] + aes.WORD_BYTES] = struct.pack(">H", A_TIME)
+    return bytes(laid)
+
+
+def test_d_doop_an_argument_class_the_walk_s_file_read_only_with_a_time_scripted():
+    each = EngineCase(D_DOOP, AUTO_AS_B, 2, (), True)
+    arrived, replay = engine_replay(each)
+    fills = tuple(_inside_read_only(fill) for fill in replay.fills)
+    assert fills != replay.fills, "the walk finds INSIDE.TXT"
+    pokes = case.merge_pokes(da.machine_of(arrived), cdir.replayed(replay._replace(fills=fills)))
+    row = aes_event.woken_row(f"{D_DOOP} — ARGUMENT CLASS (INSIDE.TXT's DTA read-only, a time) [{SCRIPTED_CLASS}]", D_DOOP,
+                              arrived.arguments, lambda: pokes, {}, objects=True, answered=True)
+    ran = da.held(row)
+    calls = cdir.engine_calls(ran.image)
+    assert tuple(function for function, _frame in calls) == replay.functions
+    created = [frame for function, frame in calls if function == FCREATE]
+    assert created and created[0][aes.LONG_BYTES:aes.LONG_BYTES + aes.WORD_BYTES] == struct.pack(">H", READ_ONLY_ARCHIVED_ATTRIBUTES & ~1)

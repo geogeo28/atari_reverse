@@ -16,6 +16,9 @@
 #include "aes/gemdosif.h"
 #include "aes/strings.h"
 #include "desk/deskfpd.h"
+#include "desk/deskleaf.h"
+#include "desk/deskutil.h"
+#include "desk/deskview.h"
 
 /* $fdf6d0 — fn_init: the pool's file nodes linked in order, the free list their head; the last node's link cleared. */
 void aes_fn_init(uint8_t *image)
@@ -311,3 +314,68 @@ uint32_t aes_pn_sort(uint8_t *image, int16_t count, uint32_t files)
         set_bus_long(image, last + FNODE_NEXT, FNODE_NONE);
     return head;
 }
+
+/* ---- band 6 wave 2, group G2 (unit G) ------------------------------------------------------------------------------ */
+/* $fdfa20 — pn_close: the path node freed (pn_free). */
+void aes_pn_close(uint8_t *image, uint32_t path)
+{
+    aes_pn_free(image, path);
+}
+
+/* The entry the DTA holds is listed: any name but "." and ".." (a name that begins with '.' and goes on is). */
+static int is_listed(uint8_t *image, uint32_t dta)
+{
+    return bus_byte(image, dta + DTA_NAME) != SPEC_EXT_MARK
+        || (bus_byte(image, dta + DTA_NAME + 1) != SPEC_EXT_MARK && bus_byte(image, dta + DTA_NAME + 1));
+}
+
+/* $fdfc3c — pn_active: the path's files read anew. The old list freed; a search of the spec — the cartridge's where
+ * its drive is 'c' — each entry found taken into a file node (one taken AHEAD of the entry it is for: a node short
+ * ends the search, AES_DOS_AX E_NOFNODES), counted, its bytes added, indexed at ml_pfndx and linked on; the node
+ * taken last and left over freed; the list sorted. Its answer: AES_DOS_AX — the search's last verdict. */
+int16_t aes_pn_active(uint8_t *image, uint32_t path)
+{
+    int16_t on_the_cartridge = bus_byte(image, path + PNODE_SPEC) == CARTRIDGE_DRIVE;
+    int16_t attributes = (int16_t)bus_word(image, path + PNODE_ATTR);
+    uint32_t file = FNODE_NONE, link = path + PNODE_FLIST;
+    int16_t found;
+
+    set_bus_word(image, path + PATH_FILE_COUNT, 0);
+    set_bus_long(image, path + PATH_FILE_BYTES, 0);
+    aes_fl_free(image, bus_long(image, path + PNODE_FLIST));
+    if (on_the_cartridge) {
+        found = aes_cart_sfirst(image, bus_long(image, desk_globals(image) + DESK_DTA_POINTER), attributes);
+    } else {
+        (void)aes_dos_sdta(image, AES_PN_ACTIVE_SDTA_RETURN, bus_long(image, desk_globals(image) + DESK_DTA_POINTER));
+        found = aes_dos_sfirst(image, path + PNODE_SPEC, attributes);
+    }
+    while (found) {
+        if (file == FNODE_NONE) {
+            file = aes_fn_alloc(image);
+            if (file == FNODE_NONE) {
+                found = 0;
+                wr16(image + AES_DOS_AX, DOS_AX_NO_FILE_NODES);
+            }
+            continue;
+        }
+        if (is_listed(image, desk_globals(image) + DESK_DTA)) {
+            int16_t count = (int16_t)bus_word(image, path + PATH_FILE_COUNT);
+
+            aes_movs(image, DTA_COPIED_BYTES, desk_globals(image) + DESK_DTA + DTA_COPIED_FROM, file + FNODE_FROM_THE_DTA);
+            set_bus_long(image, path + PATH_FILE_BYTES, bus_long(image, path + PATH_FILE_BYTES) + bus_long(image, file + FNODE_SIZE));
+            set_bus_long(image, desk_globals(image) + DESK_FILE_INDEX + (uint32_t)(count * M68K_LONG_BYTES), file);
+            set_bus_long(image, link, file);
+            set_bus_word(image, path + PATH_FILE_COUNT, (uint16_t)(count + 1));
+            link = file + FNODE_NEXT;
+            file = FNODE_NONE;
+        }
+        found = on_the_cartridge ? aes_cart_snext(image) : aes_dos_snext(image);
+    }
+    set_bus_long(image, link, FNODE_NONE);
+    if (file != FNODE_NONE)
+        aes_fn_free(image, file);
+    set_bus_long(image, path + PNODE_FLIST,
+                 aes_pn_sort(image, (int16_t)bus_word(image, path + PATH_FILE_COUNT), bus_long(image, path + PNODE_FLIST)));
+    return (int16_t)be16(image + AES_DOS_AX);
+}
+/* ---- end of group G2's wave-2 ---- */

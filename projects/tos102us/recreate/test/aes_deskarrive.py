@@ -214,7 +214,7 @@ def _linef_table():
 def unbound(blob, names):
     """THE UNBOUND PIN of the routines `names`, on `blob` (`aes_deskbind.bound_referrers`, one for every unit of the
     desk): each core LINKED, and no function outside the unbound desk refers to ANY held core; each one's Line-F table
-    entries THE ROM'S; and no registered row names one."""
+    entries THE ROM'S (a routine of `LINKED_HELD_NO_TABLE_ENTRY` has none: R-W2-4); and no registered row names one."""
     import routines
     linef_table = _linef_table()
     cores = {routines.core_symbol(name) for name in names}
@@ -222,7 +222,8 @@ def unbound(blob, names):
     assert not bound, f"bound: {bound}"
     ours = {entry_of(name): name for name in names}
     verdicts = {ours[entry.target]: entry.verdict for entry in linef_table.entries() if entry.target in ours}
-    assert verdicts == {name: linef_table.THE_ROM_S for name in names}
-    assert set(names) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
+    no_table_entry = set(linef_table.LINKED_HELD_NO_TABLE_ENTRY)       # R-W2-4: held, and no verdict to hold
+    assert verdicts == {name: linef_table.THE_ROM_S for name in names if name not in no_table_entry}
+    assert set(names) <= set(linef_table.LINKED_AND_NOT_FLIPPED) | no_table_entry
     registered = [row for row in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS) if row.split(",")[0] in cores]
     assert not registered, f"registered: {registered}"

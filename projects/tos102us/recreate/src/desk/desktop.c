@@ -7,18 +7,22 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "aes/aes.h"
+#include "aes/gemstart.h"
+#include "aes/obedit.h"
 #include "aes/gsxif.h"
 #include "aes/strings.h"
 #include "desk/deskact.h"
 #include "desk/deskapp.h"
 #include "desk/deskbind.h"
 #include "desk/deskfpd.h"
+#include "desk/deskfun.h"
 #include "desk/desksupp.h"
 #include "desk/desktop.h"
 #include "desk/deskview.h"
 #include "desk/deskwin.h"
 
 _Static_assert(FIND_FRAME_BYTES == HOST_SLOT_AES_MEN_UPDATE_FIND_BYTES, "men_update's two answers and their host slot");
+_Static_assert(CNX_GET_FRAME_BYTES == HOST_SLOT_AES_DESK_CNX_GET_FRAME_BYTES, "cnx_get's frame and its host slot");
 
 static inline int16_t desk_word(const uint8_t *image, uint32_t desk, uint32_t field)
 {
@@ -174,4 +178,56 @@ void aes_cnx_put(uint8_t *image)
         set_bus_byte(image, entry + SAVE_PATH, 0);
         set_bus_word(image, entry + SAVE_OBID, 0);
     }
+}
+
+/* ================================================================================================
+ * BAND 6 WAVE 2 (group G3).
+ * ============================================================================================= */
+
+/* $fe22a6 — hndl_kbd (`desk/desktop.h`): Esc re-reads the window on top (fun_rebld); any other key nothing. 0. */
+int16_t aes_hndl_kbd(uint8_t *image, int16_t key)
+{
+    uint32_t top;
+
+    if (key == OB_EDIT_KEY_ESCAPE && (top = aes_win_ontop(image)) != 0)
+        aes_desk_fun_rebld(image, top);
+    return HNDL_KBD_DONE;
+}
+
+/* $fe2618 — cnx_get (`desk/desktop.h`). */
+void aes_cnx_get(uint8_t *image)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(CNX_GET_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_DESK_CNX_GET_FRAME, frame_local), desk = desk_globals(image);
+    uint32_t drive = frame + CNX_GET_FRAME_DRIVE;
+    int16_t level, preference;
+
+    (void)aes_do_viewmenu(image, (int16_t)(desk_word(image, desk, DESK_CNX_VIEW) + VIEW_ITEM_ICONS));
+    (void)aes_do_viewmenu(image, (int16_t)(desk_word(image, desk, DESK_CNX_SORT) + SORT_ITEM_NAME));
+    for (preference = 0; preference < PREFERENCE_WORDS; preference++)
+        set_bus_word(image, desk + DESK_PREFERENCES + 2 * (uint32_t)preference,
+                     bus_word(image, desk + DESK_CNX_PREFERENCES + 2 * (uint32_t)preference));
+    (void)aes_desk_evnt_dclick(image, CNX_DCLICK_RATE, CNX_DCLICK_SET);
+    wr16(image + GEM_START_WORD_890C, (uint16_t)(desk_word(image, desk, DESK_CNX_RESOLUTION) + CNX_RESOLUTION_BASE));
+    for (level = 0; level < DESK_WINDOWS; level++) {
+        uint32_t entry = desk + DESK_G_WINDOW_SAVES + (uint32_t)m68k_muls_w((uint16_t)level, WINDOW_SAVE_BYTES), window;
+
+        if (!bus_byte(image, entry + SAVE_PATH))
+            continue;
+        window = aes_win_alloc(image, desk_word(image, entry, SAVE_OBID));
+        if (!window)
+            continue;
+        set_bus_word(image, window + WNODE_CVCOL, bus_word(image, entry + SAVE_CVCOL));
+        set_bus_word(image, window + WNODE_CVROW, bus_word(image, entry + SAVE_CVROW));
+        aes_fpd_parse(image, entry + SAVE_PATH, drive, desk + DESK_G_1TEXT, frame + CNX_GET_FRAME_NAME, frame + CNX_GET_FRAME_EXT);
+        aes_do_xyfix(image, entry + SAVE_X, entry + SAVE_Y);
+        (void)aes_pro_chdir(image, (int16_t)be16(image + drive), desk + DESK_G_1TEXT);
+        if (be16(image + AES_DOS_ERR))
+            aes_win_free(image, window);
+        else
+            (void)aes_do_diropen(image, window, CNX_NEW_WINDOW, desk_word(image, entry, SAVE_OBID), (int16_t)be16(image + drive),
+                                 desk + DESK_G_1TEXT, frame + CNX_GET_FRAME_NAME, frame + CNX_GET_FRAME_EXT, entry);
+    }
+    aes_cnx_put(image);
+    host_slot_release(AES_DESK_CNX_GET_FRAME);
 }

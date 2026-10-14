@@ -14,6 +14,7 @@ arrival's megabyte with THE ROM'S FLOPPY DRIVER REPLAYED on both shores — a LA
   * Drvmap is the machine's own BIOS on the ROM's shore, its C core (`bios_drvmap`) on ours.
 """
 import ctypes
+import functools
 import os
 from collections import namedtuple
 import struct
@@ -22,10 +23,15 @@ import sys
 import aes
 import aes_boot
 import aes_deskapp as da
+import aes_deskwin as w
+import aes_fslib as fsl
 import aes_gemdosif as gd
+import aes_loader as ld
 import aes_switch
 import case
+import gemdos
 import gemdos_fs as fs
+import isr
 import vdi
 from address_hook import bind_pointer
 from harness import addrs
@@ -34,6 +40,22 @@ WORD, IMAGE = vdi.WORD_ARG, vdi.IMAGE_ARG
 DRIVE_CHECK = "AES_ROM_DRIVE_CHECK"
 aes.declare_alcyon(DRIVE_CHECK, None, (IMAGE, WORD))
 UNIT_J = (DRIVE_CHECK,)
+# ---- band 6 wave 2, group G3 (unit J) ---- the unit's wave-2 routines: their own signatures and list, so wave
+# 1b's UNIT_J (and its count) stays as it is
+LONG = vdi.LONG_ARG
+SIGNATURES_WAVE_2 = {
+    "AES_ROM_DO_DIROPEN": (aes.WORD_ANSWER, (LONG, WORD, WORD, WORD, LONG, LONG, LONG, LONG)),
+    "AES_ROM_DO_DOPEN": (aes.WORD_ANSWER, (WORD,)),
+    "AES_ROM_DO_FOPEN": (aes.WORD_ANSWER, (LONG, WORD, WORD, LONG, LONG, LONG)),
+    "AES_ROM_DESK_DO_FORMAT": (aes.WORD_ANSWER, (WORD,)),
+    "AES_ROM_CLOSE_WINDOW": (aes.WORD_ANSWER, (LONG,)),
+    "AES_ROM_CLOSE_FOLDER": (aes.WORD_ANSWER, (LONG, WORD, LONG, LONG, LONG)),
+    "AES_ROM_FUN_CLOSE": (aes.WORD_ANSWER, (LONG, WORD)),
+}
+for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+UNIT_J_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# ---- end of group G3's wave-2 ----
 DRIVER_REPLAYED = "THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged"
 
 # ---- the ROM's own run in place: where each of its calls returns ------------------------------------------------------------
@@ -70,22 +92,27 @@ def in_place(arrived):
 
 
 # ---- the ROM's shore: two stubs in the group's band ---------------------------------------------------------------------------
-STUBS_AT = da.BAND_AT + 0x1C0
+STUBS_AT = da.GEMDOS.end                # (behind unit A's recorder, which ends at the band's $1D0)
 MOVE_L_IMMEDIATE_D0, RTE, RTS = b"\x20\x3c", b"\x4e\x73", b"\x4e\x75"
 STUB_BYTES = 8
 assert da.GEMDOS.end <= STUBS_AT and STUBS_AT + 2 * STUB_BYTES <= da.BAND_AT + da.BAND_BYTES - 0x10
 
 
-def staged(replay):
-    """The ROM's shore's staging: the sector laid at the buffer Malloc answers, the XBIOS's vector at Floprd's answer,
-    `hdv_rw` at Rwabs's, and band 5's GEMDOS recorder scripted with Malloc's and Mfree's."""
+def floppy_staged(replay):
+    """The ROM's shore's floppy: the sector laid at the buffer Malloc answers, the XBIOS's vector at Floprd's answer,
+    `hdv_rw` at Rwabs's."""
     floprd_stub, rwabs_stub = STUBS_AT, STUBS_AT + STUB_BYTES
     return case.merge_pokes(
         {replay.malloc & da.BUS: replay.sector},
         {floprd_stub: MOVE_L_IMMEDIATE_D0 + struct.pack(">i", aes.signed(replay.floprd)) + RTE,
          rwabs_stub: MOVE_L_IMMEDIATE_D0 + struct.pack(">I", replay.rwabs & aes.LONG_MASK) + RTS,
-         addrs.VECTOR_TRAP_XBIOS: struct.pack(">I", floprd_stub), addrs.HDV_RWABS: struct.pack(">I", rwabs_stub)},
-        gd.GEMDOS.pokes((replay.malloc, replay.mfree)))
+         addrs.VECTOR_TRAP_XBIOS: struct.pack(">I", floprd_stub), addrs.HDV_RWABS: struct.pack(">I", rwabs_stub)})
+
+
+def staged(replay):
+    """The ROM's shore's staging: the floppy (`floppy_staged`), and band 5's GEMDOS recorder scripted with Malloc's and
+    Mfree's."""
+    return case.merge_pokes(floppy_staged(replay), gd.GEMDOS.pokes((replay.malloc, replay.mfree)))
 
 
 # ---- ours: the child's two hooks --------------------------------------------------------------------------------------------
@@ -138,3 +165,110 @@ def row_of(arrived, replay, label=None, laid=()):
               f"{aes.signed(replay.rwabs, bits=32)}, {read_frame(replay, drive)!r}, {change_frame(drive)!r}); ")
     row = da.row_of(arrived, layers=(staged(replay), *laid), label=label)
     return row._replace(door=aes_switch.DoorUser(True, source))
+
+
+
+# ==== BAND 6 WAVE 2 (group G3): GEMDOS AND THE FLOPPY REPLAYED UNDER THE WINDOWS' OPENERS AND CLOSERS ==================
+# do_diropen reads a path (pn_active: Fsetdta, Fsfirst, Fsnext), do_dopen and do_fopen check a drive first
+# (drive_check: Malloc, the boot sector's Floprd, the forced change's Rwabs, Mfree) and make it current (pro_chdir:
+# Dsetdrv, Dsetpath) — under rows that switch. The host build has no GEMDOS of the floppy's, so A CASE OF ONE OF THEM
+# RUNS BOTH SHORES OVER A REPLAY — A LABELLED STAGING, said in its id (REPLAYED):
+#   * GEMDOS: `aes_fslib`'s replay (the ledger of every call, each answered from a script — D0, and for a search the
+#     44 bytes the DTA holds after it), its handler laid in THIS GROUP'S OWN WINDOW (G3's: the fslib band's room is
+#     160 bytes, and two more functions — pro_chdir's Dsetdrv and Dsetpath — make the handler 172), its DTA cell,
+#     ledger and script fslib's own; the host twin the same over the C's image, bound in the row's child;
+#   * THE SCRIPT IS THE ROM'S OWN RUN IN PLACE (`watched`: `aes_loader.run_on`, every `trap #1` of the AES's glue
+#     watched — `__DOS`'s and dos_alloc's own — its answer and what GEMDOS stored, the DTA laid call by call);
+#   * the floppy, where drive_check runs: drive_check's own replay (`in_place`, `floppy_staged`) at its arrival in
+#     the same step, its two hooks bound in the child (`bind_replay_in_a_child`).
+BUS = da.BUS
+REPLAYED = "GEMDOS REPLAYED: the ROM's run in place's answers and DTAs"
+REPLAYED_WITH_THE_FLOPPY = f"{REPLAYED}; {DRIVER_REPLAYED}"
+DSETDRV, DSETPATH = addrs.GEMDOS_DSETDRV_FN, addrs.GEMDOS_DSETPATH_FN
+REPLAY_ARGUMENT_BYTES = {**fsl.SESSION_ARGUMENT_BYTES, DSETDRV: aes.WORD_BYTES, DSETPATH: aes.LONG_BYTES}
+REPLAY_HANDLER_AT = aes.SPAN.claim(0x7bf40, 0xC0, "test/aes_desksupp.py: group G3's GEMDOS replay handler (fslib's tables)")
+assert len(fsl.replay_handler(REPLAY_ARGUMENT_BYTES)) <= 0xC0
+WATCHED_INSNS = 6_000_000               # a window opened and drawn: do_dopen at A: File > Open runs ~2.1 M
+
+
+@functools.cache
+def watched(name, chain, nth=1, budget=WATCHED_INSNS):
+    """THE ROM'S OWN RUN IN PLACE of the arrival, every GEMDOS call of the glue watched (`aes_loader.returned`): its
+    `Ran` — and the DTA after each call, the arrival's DTA bytes with GEMDOS's stores laid call by call (`dtas`)."""
+    arrived = w.arrival(name, chain, nth)
+    stood = ld.stood_at(arrived.boot)
+    return arrived, ld.returned(ld.arrival(name, stood), budget)
+
+
+def gemdos_script(name, chain, nth=1):
+    """THE SCRIPT (above): `((D0, the DTA's 44 bytes after a search, or none), ...)`, one per call of the run in place.
+    The DTA is the one each Fsetdta names, followed from the arrival's bytes through every call's stores."""
+    arrived, ran = watched(name, chain, nth)
+    ram, dta, script = bytearray(arrived.boot.ram), None, []
+    for call in ran.calls:
+        for at, data in call.stored:
+            ram[at:at + len(data)] = data
+        if call.function == fsl.FSETDTA:
+            dta = int.from_bytes(call.frame[:aes.LONG_BYTES], "big") & BUS
+        searched = bytes(ram[dta:dta + fsl.DTA_BYTES]) if call.function in fsl.SEARCHES else fsl.NO_DTA
+        script.append((call.answer, searched))
+    return tuple(script)
+
+
+def replay_pokes(script):
+    """The trap vector at THIS GROUP'S handler, fslib's ledger empty, its DTA cell STALE, the script."""
+    assert len(script) <= fsl.REPLAY_CALLS, f"{len(script)} calls: more than the replay's band holds"
+    entries = b"".join(struct.pack(">I", answer & aes.LONG_MASK) + filled for answer, filled in script)
+    return {addrs.VECTOR_TRAP_GEMDOS: struct.pack(">I", REPLAY_HANDLER_AT),
+            REPLAY_HANDLER_AT: fsl.replay_handler(REPLAY_ARGUMENT_BYTES), fsl.DTA_CELL_AT: struct.pack(">I", vdi.STALE_LONG),
+            **fsl.LEDGER.staged(), **fsl.SCRIPT.staged(entries)}
+
+
+def _replayed(function):
+    """The handler's HOST TWIN for `function` (`aes_fslib._replayed`'s, over this group's functions)."""
+    def handler(buf, arguments, _argument_bytes):
+        entry, script = fsl.LEDGER.next(buf), fsl.SCRIPT.next(buf)
+        frame = fsl.LEDGER.record(buf, entry, function, arguments, REPLAY_ARGUMENT_BYTES[function])
+        if function == fsl.FSETDTA:
+            isr.poke(buf, fsl.DTA_CELL_AT, frame[:aes.LONG_BYTES])
+        if function in fsl.SEARCHES:
+            isr.poke(buf, case.long_in(buf, fsl.DTA_CELL_AT) & BUS,
+                     ctypes.string_at(ctypes.addressof(buf.contents) + script + aes.LONG_BYTES, fsl.DTA_BYTES))
+        fsl.SCRIPT.step(buf, script)
+        return case.long_in(buf, script)
+    return handler
+
+
+REPLAY_HANDLERS = {gemdos.rom_handler(function): _replayed(function) for function in REPLAY_ARGUMENT_BYTES}
+
+
+def bind_gemdos_replay_in_a_child(lib):
+    """IN THE ROW'S CHILD: the replay's host twins bound to GEMDOS's handlers (`aes_gemdosif.bind_handlers_in_a_child`);
+    any other handler ENDS the child."""
+    gd.bind_handlers_in_a_child(lib, REPLAY_HANDLERS, "the replay")
+
+
+GEMDOS_REPLAY_DOORS = "import aes_desksupp; aes_desksupp.bind_gemdos_replay_in_a_child(lib); "
+
+
+def floppy_replay(chain, nth=1):
+    """drive_check's own replay at its `nth` arrival (from 1) of `chain`: a `Replay`, and the drive it reads."""
+    arrived = da.arrival(DRIVE_CHECK, chain, nth - 1)
+    return in_place(arrived), arrived.arguments[0] - ord("A")
+
+
+def replayed_row(each, floppy=None, script=None):
+    """THE CASE (an `aes_deskwin.Case`) of a routine of the group's that traps: its row that switches over the arrival's
+    megabyte with GEMDOS replayed — and, `floppy` (drive_check's `(chain, nth)`), the floppy replayed too. `script`:
+    a labelled staging's own script in place of the run in place's (said in the case's id)."""
+    arrived = w.arrival_of(each)
+    layers = [replay_pokes(script or gemdos_script(each.name, each.chain, each.nth))]
+    doors = GEMDOS_REPLAY_DOORS
+    if floppy:
+        replay, drive = floppy_replay(*floppy)
+        layers.append(floppy_staged(replay))
+        doors += (f"aes_desksupp.bind_replay_in_a_child(lib, {aes.signed(replay.floprd)}, {aes.signed(replay.rwabs, bits=32)}, "
+                  f"{read_frame(replay, drive)!r}, {change_frame(drive)!r}); ")
+    pokes = case.merge_pokes(w.megabyte(arrived), *layers)
+    the_row = w.row(w.label(each), each.name, arrived.arguments, pokes, vdi.ALCYON[each.name].restype is not None, each.budget)
+    return the_row._replace(door=aes_switch.DoorUser(True, doors))

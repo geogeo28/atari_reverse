@@ -59,6 +59,24 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_A = tuple(SIGNATURES)
+# ---- band 6 wave 2, group G4 (unit A) ---- the unit's wave-2 routines: their own signatures and list, so wave
+# 1b's UNIT_A (and its count) stays as it is
+SIGNATURES_WAVE_2 = {
+    "AES_ROM_APP_START": (aes.WORD_ANSWER, ()),
+    "AES_ROM_APP_SAVE": (None, (WORD,)),
+}
+for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+UNIT_A_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# app_start TRAPS (isdrive's Dgetdrv / Dsetdrv for each drive line, app_rdicon's two Mallocs; DESKTOP.INF's Fopen,
+# Fread, Fclose where the shell's buffer holds no INF) and SWITCHES (shel_get's binding, app_tran's): THIS UNIT'S
+# recording trap's host twins bound in its child (`bind_scripted_in_a_child`, below).
+CHILD_DOORS = "import aes_deskapp; aes_deskapp.bind_scripted_in_a_child(lib); "
+aes_event.declare_child_doors("AES_ROM_APP_START", CHILD_DOORS)
+# app_save the same: to disk, app_path_save's and app_path_restore's drive calls, Fcreate, Fwrite, Fclose; and the
+# shell's two bindings.
+aes_event.declare_child_doors("AES_ROM_APP_SAVE", CHILD_DOORS)
+# ---- end of group G4's wave-2 ----
 # app_rdicon both TRAPS (two Mallocs) and SWITCHES (app_tran's binding): its C runs in a child under the scheduler's
 # model, band 5's scripted trap's host twins bound there (`aes_gemdosif.CHILD_DOORS`: Malloc is one of its functions).
 aes_event.declare_child_doors("AES_ROM_APP_RDICON", gd.CHILD_DOORS)
@@ -79,6 +97,14 @@ entry (an `addrs` name): the `Boot` there, the `arguments` the desk's caller pus
 routine's declared signature, words unsigned — and the address the call `returns_to`; `ends_at`: the named stop the
 step it was met in ends at (None: an idle), and that step's `budget`."""
 THE_BOOT = "the boot of the DESKTOP.INF machine"
+# ---- band 6 wave 2, group G4 (unit A): THE OTHER BOOTS app_start is reached by — each a pre-init capture and the disk
+# it was captured with, the INF the AES read at its start then in the shell's buffer ----
+BOOT_AS_TEXT = "the boot of the DESKTOP.INF machine, as text"
+BOOTS = {THE_BOOT: lambda: (aes_boot.inf_preinit(), aes_boot.inf_disk_of()),
+         BOOT_AS_TEXT: lambda: (aes_boot.inf_preinit(), aes_boot.inf_disk_of(aes_boot.VIEW_AS_TEXT))}
+# (Tried and not kept: the files machine's boot and the blank disk's — the shell's buffer holds THE SAME INF TEXT as
+# the DESKTOP.INF machine's at both: the ROM's default, which the AES read at its start.)
+# ---- end of group G4's wave-2 ----
 
 
 def entry_of(routine):
@@ -122,10 +148,10 @@ def arrivals(routine, chain_name, count=1):
     """THE FIRST `count` ARRIVALS OF THE CHAIN `chain_name` AT `routine`, over its steps in order — each step whose
     profile says the routine's first instruction ran is stopped at its first arrival, then on from there to the next,
     to the step's end (a step that ends at a named stop gives its first alone). THE_BOOT: the DESKTOP.INF machine's
-    own boot stopped at its first arrival (`aes_boot.booted(until=)`)."""
+    own boot stopped at its first arrival (`aes_boot.booted(until=)`) — and so each boot of BOOTS."""
     entry, found = entry_of(routine), []
-    if chain_name == THE_BOOT:
-        boot = aes_boot.booted(aes_boot.inf_preinit(), aes_boot.inf_disk_of(), until=entry)
+    if chain_name in BOOTS:
+        boot = aes_boot.booted(*BOOTS[chain_name](), until=entry)
         return (_arrived(routine, chain_name, 0, boot, None, aes_boot.BOOT_INSNS),)
     for boot, received, stands_at, ends_at, budget, done in _steps(chain_name):
         if len(found) >= count or entry not in aes_desk.cycles_at(done.profile):
@@ -228,8 +254,15 @@ BAND_AT = aes.SPAN.claim(aes.WINDOW_AT + BAND_OFFSET, BAND_BYTES, "test/aes_desk
 DOS_FRAME_BYTES = {addrs.GEMDOS_DGETDRV_FN: 0, addrs.GEMDOS_DSETDRV_FN: aes.WORD_BYTES, addrs.GEMDOS_DSETPATH_FN: LONG_BYTES,
                    addrs.GEMDOS_DGETPATH_FN: LONG_BYTES + aes.WORD_BYTES, addrs.GEMDOS_FOPEN_FN: LONG_BYTES + aes.WORD_BYTES,
                    addrs.GEMDOS_FCREATE_FN: LONG_BYTES + aes.WORD_BYTES, addrs.GEMDOS_MALLOC_FN: LONG_BYTES,
-                   addrs.GEMDOS_MFREE_FN: LONG_BYTES}
-GEMDOS = gd.Recorder(addrs.VECTOR_TRAP_GEMDOS, BAND_AT, 0xB0, DOS_FRAME_BYTES, entries=10,
+                   addrs.GEMDOS_MFREE_FN: LONG_BYTES,
+                   # (band 6 wave 2, group G4: app_start's and app_save's file calls — the handle, the count AND THE
+                   # BUFFER'S ADDRESS of a transfer, all three recorded (the fix pass's: a C reading into or writing from
+                   # another address than g_afile's is an assertion))
+                   addrs.GEMDOS_FREAD_FN: aes.WORD_BYTES + 2 * LONG_BYTES, addrs.GEMDOS_FWRITE_FN: aes.WORD_BYTES + 2 * LONG_BYTES,
+                   addrs.GEMDOS_FCLOSE_FN: aes.WORD_BYTES}
+DOS_CALLS_RECORDED = 13                 # app_start's most: Dgetdrv / Dsetdrv, Fopen, four drive lines' maps, two Mallocs
+DOS_HANDLER_ROOM = 0x98                 # the handler's own 152 bytes: the band holds the ledger's 13 entries of 20 behind it
+GEMDOS = gd.Recorder(addrs.VECTOR_TRAP_GEMDOS, BAND_AT, DOS_HANDLER_ROOM, DOS_FRAME_BYTES, entries=DOS_CALLS_RECORDED,
                      parked=(aes.AES_DOS_RETURN, aes.AES_TRAP1_RETURN))
 assert GEMDOS.end <= BAND_AT + BAND_BYTES
 DOS_HANDLERS = {gemdos.rom_handler(function): GEMDOS.twin(function) for function in DOS_FRAME_BYTES}
@@ -240,12 +273,13 @@ def scripted_hook():
     return gemdos.bound_handlers(DOS_HANDLERS)
 
 
-def dos_answers_in_place(arrived, traps):
+def dos_answers_in_place(arrived, traps, handles=None):
     """WHAT GEMDOS ANSWERED THE ROM'S OWN RUN IN PLACE: from the arrival, `traps` times to the GEMDOS handler's entry
     and on to the address its exception frame returns to — D0 there — then to the routine's own return. Each trap is
     held to be TAKEN INSIDE THE ROUTINE (the stack deeper than the arrival's: a count too high meets a trap of its
     caller's and is refused by name; one too low leaves the C's script short, which its trap refuses). `(the answers,
-    the Boot at the return)`."""
+    the Boot at the return)`. `handles`, a dict where given, gets each file handle an Fopen or Fcreate of the run
+    opened: its record as GEMDOS left it (`aes_gemdosif.opened_record`)."""
     boot, stands_at, answers = arrived.boot, entry_of(arrived.routine), []
     handler = case.long_in(boot.ram, addrs.VECTOR_TRAP_GEMDOS) & BUS
     for nth in range(traps):
@@ -253,8 +287,11 @@ def dos_answers_in_place(arrived, traps):
         sp = stack_pointer(boot)
         assert sp < stack_pointer(arrived.boot), f"{label_of(arrived)}: its trap {nth} is its caller's, not its own"
         back = case.long_in(boot.ram, sp + aes.WORD_BYTES) & BUS
+        function = case.word_in(boot.ram, sp + gd.FRAME_WORDS_AT - LONG_BYTES)
         boot = aes_boot.continued(boot, (), arrived.budget, back, handler)
         answers.append(boot.registers["d0"])
+        if handles is not None:
+            handles.update(gd.opened_record(boot.ram, function, answers[-1]))
         stands_at = back
     boot = aes_boot.continued(boot, (), arrived.budget, arrived.returns_to, stands_at)
     assert stack_pointer(boot) == stack_pointer(arrived.boot) + LONG_BYTES, f"{label_of(arrived)}: not its own return"
@@ -272,6 +309,22 @@ def scripted_row(arrived, answers, **kwargs):
     (`aes_gemdosif.GEMDOS`, whose host twins its child binds: `aes_event.declare_child_doors`) scripted with
     `answers` — `SCRIPTED`."""
     return row_of(arrived, layers=(gd.GEMDOS.pokes(answers),), **kwargs)
+
+
+# ---- band 6 wave 2, group G4 (unit A): THIS RECORDER IN A ROW'S CHILD — app_start and app_save both trap (the file
+# calls band 5's recorder does not serve) and switch (shel_get's, shel_put's bindings): CHILD_DOORS, above ----
+def bind_scripted_in_a_child(lib):
+    """The recording trap's host twins (DOS_HANDLERS) bound into `lib`, the candidate a row's child loaded — band 5's
+    `aes_gemdosif.bind_handlers_in_a_child`, over this recorder's functions: a call it does not serve ends the child
+    by name."""
+    gd.bind_handlers_in_a_child(lib, DOS_HANDLERS, "unit A's script")
+
+
+def unit_scripted_row(arrived, answers, layers=(), **kwargs):
+    """A ROUTINE OF THE UNIT THAT BOTH TRAPS AND SWITCHES, at its arrival: the row over the megabyte with THIS recording
+    trap scripted with `answers` (its host twins bound in the row's child: CHILD_DOORS) — `SCRIPTED` — and `layers`."""
+    return row_of(arrived, layers=(GEMDOS.pokes(answers), *layers), **kwargs)
+# ---- end of group G4's wave-2 ----
 
 
 def dos_calls(image):

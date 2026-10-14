@@ -8,11 +8,14 @@
 #include "m68k_idioms.h"
 #include "aes/objtext.h"
 #include "aes/strings.h"
+#include "desk/deskdir.h"
 #include "desk/deskfpd.h"
+#include "desk/deskglobals.h"
 #include "desk/deskinf.h"
 #include "desk/deskusr.h"
 
 _Static_assert(DTTMSZ_FRAME_BYTES == HOST_SLOT_AES_DESK_INF_DTTMSZ_FRAME_BYTES, "inf_dttmsz's frame and its host slot");
+_Static_assert(INF_FOLDER_FRAME_BYTES == HOST_SLOT_AES_DESK_INF_FOLDER_FRAME_BYTES, "inf_folder's frame and its host slot");
 
 /* $fdea5e — inf_field: object `object` of `tree` set to `text`, made first of `source` — a NAME in 8.3 form
  * (fmt_str) where `is_name`, else the decimal of the longword `source` points at (merge_str's "%L"). */
@@ -39,4 +42,32 @@ void aes_desk_inf_dttmsz(uint8_t *image, uint32_t tree, uint32_t file, int16_t d
     aes_inf_sset(image, tree, time_object, frame + DTTMSZ_TIME_TEXT);
     aes_desk_inf_field(image, size, frame + DTTMSZ_SIZE_TEXT, tree, size_object, INF_FIELD_A_NUMBER);
     host_slot_release(AES_DESK_INF_DTTMSZ_FRAME);
+}
+
+/* ==== band 6 wave 2, group G1 ======================================================================================= */
+
+/* $fde9ce — inf_folder: SHOW INFO'S COUNT OF THE FOLDER `path` — the copy engine's tallies cleared, its count walk
+ * (d_doop, no tree; its two count pointers both the frame's one word), then the folder itself taken off the folders and
+ * the two tallies set into objects `files_object` and `folders_object` of `tree` ("%L"). 1, or 0 where the walk failed
+ * (the fields left as they were). */
+int16_t aes_desk_inf_folder(uint8_t *image, uint32_t tree, int16_t files_object, int16_t folders_object, uint32_t path)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(INF_FOLDER_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_DESK_INF_FOLDER_FRAME, frame_local);
+    uint32_t desk = desk_globals(image);
+    int16_t counted;
+
+    set_bus_long(image, desk + DESK_G_NFILES, 0);
+    set_bus_long(image, desk + DESK_G_NDIRS, 0);
+    set_bus_long(image, desk + DESK_G_SIZE, 0);
+    counted = aes_desk_d_doop(image, OP_COUNT, INF_FOLDER_NO_TREE, path, path, frame + INF_FOLDER_COUNT,
+                              frame + INF_FOLDER_COUNT);
+    if (counted) {
+        set_bus_long(image, desk + DESK_G_NDIRS, bus_long(image, desk + DESK_G_NDIRS) - 1);
+        aes_desk_inf_field(image, desk + DESK_G_NFILES, frame + INF_FOLDER_FILES_TEXT, tree, files_object, INF_FIELD_A_NUMBER);
+        aes_desk_inf_field(image, desk + DESK_G_NDIRS, frame + INF_FOLDER_FOLDERS_TEXT, tree, folders_object,
+                           INF_FIELD_A_NUMBER);
+    }
+    host_slot_release(AES_DESK_INF_FOLDER_FRAME);
+    return counted ? INF_FOLDER_COUNTED : INF_FOLDER_FAILED;
 }

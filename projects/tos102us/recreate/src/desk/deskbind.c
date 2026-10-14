@@ -182,7 +182,7 @@ int16_t aes_desk_form_do(uint8_t *image, uint32_t tree, int16_t start)
 {
     int16_t exit_object;
 
-    aes_desk_wait(image, 0);
+    aes_desk_wait(image, DESK_WAIT_DONE);
     exit_object = aes_fm_do(image, tree, start);
     yield(image);
     return exit_object;

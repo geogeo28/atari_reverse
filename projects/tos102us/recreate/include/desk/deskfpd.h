@@ -73,4 +73,22 @@ int16_t aes_pn_comp(uint8_t *image, uint32_t first, uint32_t second);           
 uint32_t aes_pn_sort(uint8_t *image, int16_t count, uint32_t files);                                  /* $fdfb38 */
 #endif
 
+/* ---- band 6 wave 2, group G2 (unit G): a path closed, its directory read ----------------------------------------------
+ *   $fdfa20 pn_close(path)    pn_free
+ *   $fdfc3c pn_active(path)   the path's files read anew: the old list freed, a search of its spec (GEMDOS's — or the
+ *                             cartridge's, unit M, where the spec's drive is 'c'), a file node per entry but "." and
+ *                             "..", each counted, sized and indexed, the list sorted; AES_DOS_AX its answer
+ * (A PNODE's count and bytes: `desk/deskview.h`'s PATH_FILE_COUNT / PATH_FILE_BYTES, which the info line reads.) */
+#define CARTRIDGE_DRIVE       0x63       /* 'c', the cartridge's spec drive     ($fdfc48 cmpi.b #99,8(a5))     */
+#define FNODE_FROM_THE_DTA    8          /* the node's byte the DTA's entry is copied to ($fdfce6 addq.l #8,(sp)) */
+#define DTA_COPIED_FROM       20         /* ...from the DTA's byte before the attribute ($fdfcee addi.l #858)  */
+#define DTA_COPIED_BYTES      23         /* ...to the name's end                ($fdfcf4 move.w #23,-(sp))     */
+#define DOS_AX_NO_FILE_NODES  100        /* the pool spent: GEM's E_NOFNODES    ($fdfcb0 move.w #100,$c918)    */
+
+#ifndef __ASSEMBLER__
+void aes_pn_close(uint8_t *image, uint32_t path);                                                     /* $fdfa20 */
+int16_t aes_pn_active(uint8_t *image, uint32_t path);                                                 /* $fdfc3c */
+#endif
+/* ---- end of group G2's wave-2 ---- */
+
 #endif /* TOS102US_DESK_DESKFPD_H */

@@ -924,6 +924,42 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # ...Show Info's fields
     ("aes_desk_inf_field", "aes_fmt_str"), ("aes_desk_inf_field", "aes_merge_str"), ("aes_desk_inf_dttmsz", "aes_merge_str"),
     # ---- end of group G4's ----
+    # ---- band 6 wave 2, group G1 (units C, F, E: `src/desk/deskdir.c`, `deskinf.c`, `deskusr.c`) ----
+    # the copy engine: d_dofcopy's name conflict (its names compared, typed, copied back); d_doop's and dir_op's counts
+    # merged, their paths copied and their tails put back (the path editors inlined), dir_op's folder conflict
+    ("aes_desk_d_dofcopy", "aes_strcpy"), ("aes_desk_d_dofcopy", "aes_streq"), ("aes_desk_d_dofcopy", "aes_unfmt_str"),
+    ("aes_desk_d_doop", "aes_merge_str"), ("aes_desk_d_doop", "aes_strcat"), ("aes_desk_d_doop", "aes_strcpy"),
+    ("aes_desk_dir_op", "aes_merge_str"), ("aes_desk_dir_op", "aes_strcpy"),
+    # ...dir_op's dialog (`confirmed`) and its folder's arm (`folder_op`, the folder conflict inlined into it), apart
+    ("confirmed", "aes_merge_str"), ("folder_op", "aes_fmt_str"), ("folder_op", "aes_strcat"), ("folder_op", "aes_strcpy"),
+    ("folder_op", "aes_unfmt_str"),
+    # ...Show Info's folder counts; the text view's line: its characters into intin, the PARMBLK copied, the clip kept
+    ("aes_desk_inf_folder", "aes_merge_str"), ("aes_desk_dr_code", "aes_xstrpix"), ("aes_desk_userdef", "aes_gsx_gclip"),
+    ("aes_desk_userdef", "aes_lbcopy"),
+    # ---- end of group G1's wave-2 ----
+    # ---- band 6 wave 2, group G2 (units H, G, M: `src/desk/deskfun.c`, `deskfpd.c`, `deskutil.c`) ----
+    # pn_active's DTA entry moved into its file node; the drivers' specs compared (fun_rebld's windows, the cartridge's
+    # window by its name: shows_the_cartridge inlined into fun_win2win and fun_win2desk), copied and joined (fun_ddst's
+    # drive root, fun_wdst's destination, fun_mkdir's path), New Folder's name unformatted
+    ("aes_pn_active", "aes_movs"), ("aes_desk_fun_rebld", "aes_streq"), ("aes_desk_fun_win2win", "aes_streq"),
+    ("aes_desk_fun_win2desk", "aes_streq"), ("aes_desk_fun_ddst", "aes_strcpy"), ("aes_desk_fun_wdst", "aes_strcpy"),
+    ("aes_desk_fun_wdst", "aes_strcat"), ("aes_desk_fun_mkdir", "aes_strcpy"), ("aes_desk_fun_mkdir", "aes_unfmt_str"),
+    # ---- end of group G2's wave-2 ----
+    # ---- band 6 wave 2, group G3 (units I, J, K, L: `src/desk/deskwin.c`, `desksupp.c`, `desktop.c`, `deskview.c`) ----
+    # pro_run's tail measured; do_diropen's cartridge name and format's tail copied; fun_close's path measured; win_blt's
+    # scroll held between its bounds, its work area copied and compared; win_slide's slider scaled
+    ("aes_pro_run", "aes_strlen"), ("aes_do_diropen", "aes_strcpy"), ("aes_desk_do_format", "aes_strcpy"),
+    ("aes_fun_close", "aes_strlen"), ("aes_win_blt", "aes_max"), ("aes_win_blt", "aes_min"), ("aes_win_blt", "aes_rc_copy"),
+    ("aes_win_blt", "aes_rc_equal"), ("aes_win_slide", "aes_mul_div"),
+    # ---- end of group G3's wave-2 ----
+    # ---- band 6 wave 2, group G4 (units A, B: `src/desk/deskapp.c`, `deskact.c`) ----
+    # app_start's two drag outlines cleared and its INF's name kept (desktop_grid and app_getfh inlined); the drag's
+    # rectangle held to the clip; the press's rubber box begun
+    ("aes_app_start", "aes_bfill"), ("aes_app_start", "aes_strcpy"), ("aes_gr_drgplns", "aes_rc_constrain"),
+    ("aes_act_bdown", "aes_r_set"),
+    # app_save's INF cleared past its kept part, and DESKTOP.INF's name kept (app_getfh inlined)
+    ("aes_app_save", "aes_bfill"), ("aes_app_save", "aes_strcpy"),
+    # ---- end of group G4's wave-2 ----
 }
 
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------

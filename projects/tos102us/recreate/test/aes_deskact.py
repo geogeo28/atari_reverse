@@ -50,6 +50,17 @@ SIGNATURES = {
 UNIT_B = tuple(SIGNATURES)
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+# ---- band 6 wave 2, group G4 (unit B) ---- the unit's wave-2 routines: their own signatures and list, so wave
+# 1b's UNIT_B (and its count) stays as it is
+SIGNATURES_WAVE_2 = {
+    "AES_ROM_GR_DRGPLNS": (None, (WORD, WORD, LONG, WORD, LONG, WORD, LONG, LONG, LONG, LONG, LONG)),
+    "AES_ROM_ACT_BSCLICK": (None, (WORD, LONG, WORD, WORD, WORD, WORD, LONG, WORD)),
+    "AES_ROM_ACT_BDOWN": (aes.WORD_ANSWER, (WORD, LONG, WORD, WORD, WORD, WORD, LONG, LONG)),
+}
+for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+UNIT_B_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# ---- end of group G4's wave-2 ----
 # THE ROUTINES WHOSE CALLEES REACH THE DISPATCHER (a binding of unit D's): their cases are rows that switch.
 YIELDING = ("AES_ROM_GR_OBFIND", "AES_ROM_GR_ISDOWN", "AES_ROM_GR_PLNS", "AES_ROM_GR_BWAIT", "AES_ROM_MOVE_DRVICON",
             "AES_ROM_ACT_CHG", "AES_ROM_ACT_ALLCHG")

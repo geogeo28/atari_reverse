@@ -387,3 +387,284 @@ def test_the_new_chains_of_the_group_reach_what_they_were_made_for():
     assert aes_desk.CHECK_AN_ICON_S_HIT in aes_desk.entered(CORNER)
     for key in ("Size", "Date", "Type"):
         assert aes_desk.SORT_BY_THE_KEY in aes_desk.entered(f"files: View > Sort by {key}")
+
+
+# ==== BAND 6 WAVE 2, GROUP G4: THE DRAG'S LOOP AND THE BUTTON'S TWO HANDLERS (gr_drgplns, act_bsclick, act_bdown) ====
+# Every one of the three reaches a binding of unit D's that yields: each case is A ROW THAT SWITCHES at a chain's
+# arrival. THE DRAGS WAIT (gr_bwait's evnt_multi, every turn of the loop): their rows are taken through A HAND'S WAKE
+# at the drag's idles — where the mouse is carried and when the button is let go, each point read off the arrival's
+# own machine (`aes_desk`'s points) and said in the case's id. The rubber box's poll never idles: its row is woken at
+# its door calls, unit D's GRAF_RUBBOX wakes.
+from pathlib import Path                                                            # noqa: E402
+
+import aes_boot                                                                     # noqa: E402
+import layouts                                                                      # noqa: E402
+import vdi                                                                          # noqa: E402
+
+DRGPLNS, BSCLICK, BDOWN = "AES_ROM_GR_DRGPLNS", "AES_ROM_ACT_BSCLICK", "AES_ROM_ACT_BDOWN"
+RUBBER_B = "a rubber box on the desktop, round drive B: and the trash"
+FILE_ON_FOLDER = "files: the long file dragged onto the folder, Return"
+FILE_TRASHED_RETURN = "file: dragged to the trash, Return (Cancel, the dialog's default)"
+DOUBLE_CLICKED = "file: double-clicked (the alert)"
+THE_TRASH, THE_FOLDER, THE_PROGRAM = "TRASH", "AUTO", "TESTPRG.PRG"
+
+
+def _point(of):
+    """`arrival -> (x, y)`: a point read off the arrival's own machine."""
+    return lambda arrived: of(aes_boot.Machine(arrived.boot))
+
+
+TRASH = _point(lambda machine: aes_desk.icon_point(machine, THE_TRASH))
+DRIVE_B = _point(lambda machine: aes_desk.drive_point(machine, "B"))
+FOLDER = _point(lambda machine: aes_desk.icon_point(machine, THE_FOLDER))
+PROGRAM = _point(lambda machine: aes_desk.icon_point(machine, THE_PROGRAM))
+BARE = _point(lambda _machine: aes_desk.BARE_DESKTOP)
+MENU_BAR_Y = 4                          # a row inside the menu bar (above the desktop's work area)
+OVER_THE_MENU_BAR = _point(lambda _machine: (aes_desk.BARE_DESKTOP[0], MENU_BAR_Y))
+TITLE_BAR_INSET = 4                     # a row of the top window's title bar: its border, outside its work area's tree
+
+
+def _on_the_title_bar(machine):
+    x, y, width, _height = aes_desk.top_window(machine)
+    return x + width // 2, y + TITLE_BAR_INSET
+
+
+ON_THE_TITLE_BAR = _point(_on_the_title_bar)
+
+
+def _carried(*points):
+    """A HAND'S WAKE: the mouse carried to each point at the drag's successive idles, then the button let go."""
+    def wake(arrived):
+        idles = {nth: aes_event.move_to(*point(arrived)) for nth, point in enumerate(points)}
+        return dict(at_idle={**idles, len(points): aes_event.release})
+    return wake
+
+
+LET_GO_WHERE_PRESSED = "the button let go where it was pressed"
+WAKES_WAVE_2 = {
+    LET_GO_WHERE_PRESSED: _carried(),
+    "carried to the trash, let go": _carried(TRASH),
+    "carried to the trash, then to drive B:, let go": _carried(TRASH, DRIVE_B),
+    "carried to the trash, then to a bare spot, let go": _carried(TRASH, BARE),
+    "carried to a bare spot, let go": _carried(BARE),
+    "carried over the menu bar, let go": _carried(OVER_THE_MENU_BAR),
+    "carried onto the window's title bar, let go": _carried(ON_THE_TITLE_BAR),
+    "carried to the trash, a bare spot, the trash again, let go": _carried(TRASH, BARE, TRASH),
+    "carried to the trash, then a pixel on inside it, let go": _carried(TRASH, _point(
+        lambda machine: tuple(at + 1 for at in aes_desk.icon_point(machine, THE_TRASH)))),
+    "carried to the folder, let go": _carried(FOLDER),
+    "carried to the program (a file: no drop), let go": _carried(PROGRAM),
+    "the box let go at its first door call": lambda _arrived: dict(at_calls={0: aes_event.release}),
+    "the box grown at its first door call, let go at its third": lambda _arrived: dict(
+        at_calls={0: aes_event.move_to(*AWAY), 2: aes_event.release}),
+}
+SHIFT, LEFT_SHIFT, A_HIGH_KEY_BIT = 0x0001, 0x0002, 0x0100
+# Unit B's header's constants (`include/desk/deskact.h`), read as unit A's are (`aes_deskapp.CONSTANTS`).
+ACT_HEADER = Path(__file__).resolve().parents[1] / "include" / "desk" / "deskact.h"
+ACT_CONSTANTS = layouts.parse_constants((ACT_HEADER.parent / "deskglobals.h", ACT_HEADER), known={**vdi.CONSTANTS, **aes.CONSTANTS})
+
+
+def _keys(value):
+    return lambda arrived: (*arrived.arguments[:5], value, *arrived.arguments[6:])
+
+
+def _double_click(arrived):
+    return (*arrived.arguments[:7], 1)
+
+
+def _object_unselected(arrived):
+    """LAID: the icon the press is on (found by the ROM's own run) NOT SELECTED — every chain's press finds it selected
+    (the button handler's click selected it first)."""
+    tree, obj = arrived.arguments[1] & BUS, _pressed_object(arrived)
+    state = tree + obj * aes.OB_BYTES + aes.OB_STATE
+    return {state: struct.pack(">H", case.word_in(arrived.boot.ram, state) & ~(1 << aes.OB_STATE_SELECTED_BIT) & 0xFFFF)}
+
+
+def _pressed_object(arrived):
+    """The icon under act_bdown's press: the selected child of its root under the point (the chains press on one)."""
+    tree, root, mx, my = arrived.arguments[1] & BUS, arrived.arguments[2], arrived.arguments[3], arrived.arguments[4]
+    ram = arrived.boot.ram
+    word = lambda index, at: aes.signed(case.word_in(ram, tree + index * aes.OB_BYTES + at))     # noqa: E731
+    child = word(root, aes.OB_HEAD)
+    while child > root:
+        x, y = word(root, aes.OB_X) + word(child, aes.OB_X), word(root, aes.OB_Y) + word(child, aes.OB_Y)
+        if x <= mx < x + word(child, aes.OB_WIDTH) and y <= my < y + word(child, aes.OB_HEIGHT):
+            return child
+        child = word(child, aes.OB_NEXT)
+    raise AssertionError("no child of the root under the press")
+
+
+def _another_selected(arrived):
+    """LAID: another child of the root than the one under the point SELECTED too (no chain selects two that way)."""
+    tree, root, obj = arrived.arguments[1] & BUS, arrived.arguments[2], _pressed_object(arrived)
+    ram = arrived.boot.ram
+    child = aes.signed(case.word_in(ram, tree + root * aes.OB_BYTES + aes.OB_HEAD))
+    while child == obj:
+        child = aes.signed(case.word_in(ram, tree + child * aes.OB_BYTES + aes.OB_NEXT))
+    state = tree + child * aes.OB_BYTES + aes.OB_STATE
+    return {state: struct.pack(">H", case.word_in(ram, state) | 1 << aes.OB_STATE_SELECTED_BIT)}
+
+
+def _both_selected(arrived):
+    """LAID: the icon under the click SELECTED, and another child of the root."""
+    tree, obj = arrived.arguments[1] & BUS, _pressed_object(arrived)
+    state = tree + obj * aes.OB_BYTES + aes.OB_STATE
+    return {**_another_selected(arrived),
+            state: struct.pack(">H", case.word_in(arrived.boot.ram, state) | 1 << aes.OB_STATE_SELECTED_BIT)}
+
+
+def _object_disabled(arrived):
+    """LAID: the icon under the click DISABLED (no icon of the desk's ever is)."""
+    tree, obj = arrived.arguments[1] & BUS, _pressed_object(arrived)
+    state = tree + obj * aes.OB_BYTES + aes.OB_STATE
+    return {state: struct.pack(">H", case.word_in(arrived.boot.ram, state) | 1 << aes.OB_STATE_DISABLED_BIT)}
+
+
+def _at(point):
+    return lambda arrived: (*arrived.arguments[:3], *point(arrived), *arrived.arguments[5:])
+
+
+Wave2 = Case
+CASES_WAVE_2 = (
+    # act_bsclick: an icon selected (the others put out); double-clicked; one selected already (nothing put out);
+    # a click on no icon (the root: everything put out) — at the corner of drive A:'s object, and where a box begins
+    Wave2(BSCLICK, SELECTED), Wave2(BSCLICK, OPENED, arm=lambda a: a[7] == 1), Wave2(BSCLICK, FILE_TRASHED),
+    Wave2(BSCLICK, CORNER), Wave2(BSCLICK, RUBBER), Wave2(BSCLICK, FILE_SELECTED), Wave2(BSCLICK, DOUBLE_CLICKED),
+    Wave2(BSCLICK, SELECTED, why="Shift held (the right one): the unselected icon toggled on, nothing else put out",
+          arguments=_keys(SHIFT)),
+    Wave2(BSCLICK, FILE_TRASHED, why="Shift held (the left one): the selected icon toggled off", arguments=_keys(LEFT_SHIFT)),
+    Wave2(BSCLICK, FILE_TRASHED, why="Shift held (the right one alone, $0001): the selected icon toggled off", arguments=_keys(SHIFT)),
+    Wave2(BSCLICK, FILE_TRASHED, why="a keys word whose low two bits are clear ($0100): no Shift — a BYTE's bits",
+          arguments=_keys(A_HIGH_KEY_BIT)),
+    Wave2(BSCLICK, SELECTED, why="drive A: double-clicked SELECTED already, another icon selected too: the others put out",
+          arguments=_double_click, laid=("drive A: and another icon SELECTED", _both_selected)),
+    Wave2(BSCLICK, SELECTED, why="a click on the trash (its x far from its y): it selected, drive A: put out",
+          arguments=_at(TRASH)),
+    Wave2(BSCLICK, SELECTED, why="the clicked icon DISABLED: act_chg refuses it (the check asked)",
+          arguments=lambda a: a.arguments, laid=("the icon DISABLED", _object_disabled)),
+    Wave2(BSCLICK, SELECTED, why="a point outside the tree's root: objc_find's NIL, every icon put out", arguments=_with(3, 0xFFFF)),
+    # act_bdown: the selection dragged and let go — on the trash, where it began, on a bare spot (put down there:
+    # move_drvicon), from a window onto the desktop, back onto itself, onto a folder in its own window; a rubber box
+    Wave2(BDOWN, DRAGGED, wake="carried to the trash, let go"), Wave2(BDOWN, DRAGGED, wake=LET_GO_WHERE_PRESSED),
+    Wave2(BDOWN, PUT_DOWN, wake="carried to a bare spot, let go"), Wave2(BDOWN, FILE_TRASHED, wake="carried to the trash, let go"),
+    Wave2(BDOWN, FILE_TRASHED, wake=LET_GO_WHERE_PRESSED), Wave2(BDOWN, FILE_ON_FOLDER, wake="carried to the folder, let go"),
+    Wave2(BDOWN, FILE_TRASHED, wake="carried to a bare spot, let go"),
+    Wave2(BDOWN, RUBBER, wake="the box let go at its first door call"),
+    Wave2(BDOWN, RUBBER_B, wake="the box grown at its first door call, let go at its third"),
+    Wave2(BDOWN, DRAGGED, wake="carried to a bare spot, let go", why="two icons selected: both dragged, both put down",
+          arguments=lambda a: a.arguments, laid=("another icon SELECTED", _another_selected)),
+    Wave2(BDOWN, DRAGGED, wake=LET_GO_WHERE_PRESSED, why="the pressed icon not selected: no drag, the button awaited",
+          arguments=lambda a: a.arguments, laid=("the pressed icon UNSELECTED", _object_unselected)),
+    # (the fix pass's) a window in the TEXT view, pressed on the file's line: the line's outline dragged; the desktop
+    # of the machine booted as text (the windows' view word TEXT): still icons
+    Wave2(BDOWN, aes_desk.TEXT_LINE_DRAGGED, wake="carried to the trash, let go"),
+    Wave2(BDOWN, aes_desk.TEXT_PUT_DOWN, wake="carried to a bare spot, let go"),
+    # gr_drgplns: let go where pressed; the trash lit, then put out (let go there); lit, then another lit in its
+    # place; lit, then put out over the bare desktop; from a window to the trash; onto a folder in a window; over a
+    # file, which takes no drop
+    Wave2(DRGPLNS, DRAGGED, wake=LET_GO_WHERE_PRESSED), Wave2(DRGPLNS, DRAGGED, wake="carried to the trash, let go"),
+    Wave2(DRGPLNS, DRAGGED, wake="carried to the trash, then to drive B:, let go"),
+    Wave2(DRGPLNS, DRAGGED, wake="carried to the trash, then to a bare spot, let go"),
+    Wave2(DRGPLNS, DRAGGED, wake="carried to the trash, a bare spot, the trash again, let go"),
+    Wave2(DRGPLNS, DRAGGED, wake="carried to the trash, then a pixel on inside it, let go"),
+    Wave2(DRGPLNS, PUT_DOWN, wake="carried to a bare spot, let go"),
+    Wave2(DRGPLNS, FILE_TRASHED, wake="carried to the trash, let go"),
+    Wave2(DRGPLNS, FILE_ON_FOLDER, wake="carried to the folder, let go"),
+    Wave2(DRGPLNS, FILE_ON_FOLDER, wake="carried to the program (a file: no drop), let go"),
+    # (the fix pass's) carried over the menu bar, and a window's file carried onto its window's title bar — Reviewer B's
+    # points for objc_find's NIL. Both arrivals are kept; the NIL-as-an-icon mutant (D11) SURVIVES them: taken as an icon,
+    # NIL reads object -1's state and i_find's NULL ANODE's type (low memory), which answer "no drop" on every machine
+    # of ours — the two arms leave one machine (a reading, STATUS's sweep)
+    Wave2(DRGPLNS, DRAGGED, wake="carried over the menu bar, let go"),
+    Wave2(DRGPLNS, FILE_TRASHED, wake="carried onto the window's title bar, let go"),
+)
+BY_LABEL_WAVE_2 = da.by_label(CASES_WAVE_2)
+SIGNATURES_WAVE_2 = da.SIGNATURES_WAVE_2
+
+
+def wave_2_row(name):
+    each = BY_LABEL_WAVE_2[name]
+    arrived = da.arrival_of(each)
+    wake = WAKES_WAVE_2[each.wake](arrived) if each.wake else {}
+    return each, da.row_of(arrived, name.split(" — ", 1)[1], answered=SIGNATURES_WAVE_2[each.name][0] is not None,
+                           layers=da.layers_of(each), **wake)
+
+
+@pytest.mark.parametrize("name", BY_LABEL_WAVE_2)
+def test_a_wave_2_routine_from_its_arrival_is_the_rom_s(name):
+    """THE CASE: the row through the host's scheduler held to the ROM's scheduled run — the idles, the image at every
+    dispatch, act_bdown's answer (the window the drag was let go over) the ROM's D0. A drag's row idles at every turn of
+    its loop; a click's never."""
+    each, row = wave_2_row(name)
+    ran, the_rom_s = da.held(row), da.the_rom_s_run(row)
+    assert bool(the_rom_s.idles) == (each.name != BSCLICK and each.wake is not None and "door call" not in each.wake), (
+        f"{name}: the ROM's run idles {the_rom_s.idles} time(s)")
+    assert ran.entered == the_rom_s.entered and ran.entered[-1] == aes.SHELL_PD
+    if ran.answer is not None:
+        assert ran.answer & aes.WORD_MASK == the_rom_s.d0 & aes.WORD_MASK
+
+
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 30, 10
+
+
+def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
+    own = [each for each in CASES_WAVE_2 if not each.why]
+    assert {each.name for each in own} == set(da.UNIT_B_WAVE_2)
+    assert (len(own), len(CASES_WAVE_2) - len(own)) == (ARRIVALS_WAVE_2, CLASSES_WAVE_2)
+
+
+def test_act_bsclick_s_arrivals_take_its_four_arms():
+    """WHICH ARM EACH ARRIVAL TAKES, read off the ROM's own run in place: whether it reaches act_allchg (the others put
+    out) and act_chg (the icon's own state) before it returns — a miss (allchg alone), a selection (both), a click on
+    a selected icon (act_chg alone); the double click's (both, again)."""
+    def reaches(arrived, routine):
+        try:
+            stop = aes_boot.continued(arrived.boot, (), arrived.budget, da.entry_of(routine), da.entry_of(BSCLICK))
+        except aes_boot.Refused:
+            return False
+        return da.stack_pointer(stop) < da.stack_pointer(arrived.boot)
+    arms = {chain: tuple(reaches(da.arrival(BSCLICK, chain), routine) for routine in ("AES_ROM_ACT_ALLCHG", "AES_ROM_ACT_CHG"))
+            for chain in (SELECTED, FILE_TRASHED, CORNER, OPENED)}
+    assert arms == {SELECTED: (True, True), FILE_TRASHED: (False, True), CORNER: (True, False), OPENED: (True, True)}
+
+
+def test_act_bdown_s_cases_answer_each_of_its_drops():
+    """act_bdown's answer over its cases, the ROM's run's: the desktop (0) for a drop on the trash or where it began;
+    nothing (-1) for an icon put down on a bare spot, a file let go on itself, a press on no selection; the window (1)
+    for a file let go on a folder in its own window."""
+    answers = {}
+    for name, each in BY_LABEL_WAVE_2.items():
+        if each.name == BDOWN and not each.why:
+            answers[(each.chain, each.wake)] = da.the_rom_s_run(wave_2_row(name)[1]).d0 & aes.WORD_MASK
+    nothing = ACT_BDOWN_NOTHING & aes.WORD_MASK
+    assert answers[(DRAGGED, "carried to the trash, let go")] == 0
+    assert answers[(PUT_DOWN, "carried to a bare spot, let go")] == nothing
+    assert answers[(FILE_TRASHED, LET_GO_WHERE_PRESSED)] == nothing
+    assert answers[(FILE_ON_FOLDER, "carried to the folder, let go")] == 1
+
+
+ACT_BDOWN_NOTHING = ACT_CONSTANTS["ACT_BDOWN_NOTHING"]
+VOID_WAVE_2 = [name for name, (restype, _frame) in SIGNATURES_WAVE_2.items() if restype is None]
+
+
+def test_no_caller_reads_what_gr_drgplns_or_act_bsclick_leave_in_d0_and_act_bdown_s_word_is_read():
+    """BY READING THE CALLERS (`aes_deskbind.answer_readers`): the D0 the two void routines leave is read nowhere — the
+    counted divergence of their cases —; act_bdown's word is read (its caller's `move.w d0,d4`). AND THE ARGUMENT WORDS
+    act_bdown's evnt_button writes in place (16/18/20(a6)) are the frame its one caller `$fe2232` pops unread
+    (`addal #18,sp`, then `d4` alone): no ROM caller reads them back."""
+    assert {name: db.answer_readers(da.entry_of(name)) for name in VOID_WAVE_2} == {name: set() for name in VOID_WAVE_2}
+    assert db.answer_readers(da.entry_of(BDOWN))
+    assert sum(1 for each in CASES_WAVE_2 if each.name in VOID_WAVE_2) == NO_WORD_IN_C_WAVE_2
+
+
+NO_WORD_IN_C_WAVE_2 = 27
+
+
+def test_the_wave_2_routines_are_linked_unbound_and_the_rom_s(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, asked of every held core); the table's entries the ROM's; no
+    registry row."""
+    assert not db.bound_referrers(blob, da.UNIT_B_WAVE_2)
+    verdicts, linef_table = da.table_verdicts(da.UNIT_B_WAVE_2)
+    assert verdicts == {name: linef_table.THE_ROM_S for name in da.UNIT_B_WAVE_2}
+    assert set(da.UNIT_B_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
+    assert not da.registered(da.UNIT_B_WAVE_2)

@@ -198,3 +198,114 @@ def test_the_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
     """...the generator's verdict for each of the sixteen is THE ROM'S (`linef_table.LINKED_AND_NOT_FLIPPED`), and no
     registered row is one of theirs."""
     assert w.verdicts_not_the_rom_s(w.UNIT_I) == (set(), [])
+
+
+# ==== BAND 6 WAVE 2 (group G3): THE UNIT'S LAST FOUR — pro_run, desk_clear, desk_verify, do_wopen ====================
+# Held as wave 1b's sixteen are (the module's docstring), over their own case list: wave 1b's counts above stay theirs.
+DESKTOP_INFO, PREFERENCES = "Desk > Desktop Info, Return", "Options > Set Preferences, Return"
+LAUNCHED, FOLDER_OPENED = "files: the program double-clicked — launched", "folder: opened"
+NEW_FOLDER = "folder: File > New Folder, 'A', Return"
+NO_WINDOW = layouts.parse_constants((aes.INCLUDE / "desk" / "deskwin.h",), known=aes.CONSTANTS)["PRO_RUN_NO_WINDOW"]  # none
+
+CASES_WAVE_2 = (
+    Case("AES_ROM_PRO_RUN", SHOWN), Case("AES_ROM_PRO_RUN", SHOWN_LONG), Case("AES_ROM_PRO_RUN", LAUNCHED),
+    Case("AES_ROM_PRO_RUN", SHOWN, arguments=lambda a: (*a.arguments[:2], NO_WINDOW & 0xffff, a.arguments[3]),
+         why="window -1, none to open again (no caller of the chains' hands it: every pro_run is a file shown or a "
+             "program launched from a window)"),
+    Case("AES_ROM_DESK_CLEAR", OPEN, arm=lambda a: a[0] == 1), Case("AES_ROM_DESK_CLEAR", TWO_WINDOWS, 2, arm=lambda a: a[0] == 2),
+    Case("AES_ROM_DESK_CLEAR", NEW_FOLDER, arm=lambda a: a[0] == 0),
+    Case("AES_ROM_DESK_VERIFY", DESKTOP_INFO, arm=lambda a: a == (0, 0)),
+    Case("AES_ROM_DESK_VERIFY", CLOSED, 2, arm=lambda a: a == (0, 1)),
+    Case("AES_ROM_DESK_VERIFY", "window: View > Show as Text", arm=lambda a: a == (1, 0)),
+    Case("AES_ROM_DESK_VERIFY", OPEN, 2, arm=lambda a: a == (1, 1)),
+    Case("AES_ROM_DESK_VERIFY", TWO_WINDOWS, 2, arm=lambda a: a == (2, 1)),
+    # (a new window: wind_open's run, 346,795 and 427,943 instructions)
+    Case("AES_ROM_DO_WOPEN", OPEN, arm=lambda a: a[0] == 1, budget=2_100_000),
+    Case("AES_ROM_DO_WOPEN", TWO_WINDOWS, arm=lambda a: a[0] == 1, budget=2_600_000),
+    Case("AES_ROM_DO_WOPEN", SHOWN, arm=lambda a: a[0] == 0), Case("AES_ROM_DO_WOPEN", FOLDER_OPENED, arm=lambda a: a[0] == 0),
+    Case("AES_ROM_DO_WOPEN", LAUNCHED, arm=lambda a: a[0] == 0),
+)
+# (the wave-2 fix pass's) REACHED BY A RUN, NOT HELD: a text view's line shown ("text view: A: opened", the line
+# selected, File > Open, Return) reaches do_wopen over the line's G_USERDEF object — its box's width arm (Reviewer B's
+# RB2) — but the C's act_chg draws that object through ub_trampoline's call by value (`$fe3f3e`), which a row's child
+# does not serve (measured: the fork ends by name). UNPINNED AT ITS ARRIVAL, by name.
+UNPINNED_WAVE_2 = {
+    "AES_ROM_DO_WOPEN": "a text view's line opened (a G_USERDEF object: the box's width arm) — reached by a run, its C's draw of "
+                        "the line a USERDEF far call no row's child serves",
+}
+BY_LABEL_WAVE_2 = {w.label(each): each for each in CASES_WAVE_2}
+assert len(BY_LABEL_WAVE_2) == len(CASES_WAVE_2), "two cases of one name"
+A_CLASS_WAVE_2 = [name for name, each in BY_LABEL_WAVE_2.items() if each.why]
+AT_ITS_OWN_ARRIVAL_WAVE_2 = [name for name, each in BY_LABEL_WAVE_2.items() if not each.why]
+# The routines whose run reaches the dispatcher through a binding of unit D's — desk_verify only where it rebuilds a
+# window's view (a window named, and `changed`).
+YIELDS_I_WAVE_2 = frozenset({"AES_ROM_PRO_RUN", "AES_ROM_DESK_CLEAR", "AES_ROM_DO_WOPEN"})
+
+
+def yields_wave_2(each):
+    if each.name == "AES_ROM_DESK_VERIFY":
+        window, changed = w.arrival_of(each).arguments
+        return bool(window and changed)
+    return each.name in YIELDS_I_WAVE_2
+
+
+@pytest.mark.parametrize("name", BY_LABEL_WAVE_2)
+def test_a_wave_2_routine_from_its_arrival_is_the_rom_s(name):
+    """THE CASE, as wave 1b's: the C core held to the ROM's routine from the same entry; no case idles."""
+    each = BY_LABEL_WAVE_2[name]
+    _answer, _rom_d0, idles = w.ran(each, yields_wave_2(each))
+    assert not idles, f"{name}: the ROM's run idles {idles} time(s)"
+
+
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 16, 1
+
+
+def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
+    """The four, each with a case at its own arrival; the one class pro_run's window -1."""
+    assert {BY_LABEL_WAVE_2[name].name for name in AT_ITS_OWN_ARRIVAL_WAVE_2} == set(w.UNIT_I_WAVE_2)
+    assert {BY_LABEL_WAVE_2[name].name for name in A_CLASS_WAVE_2} == {"AES_ROM_PRO_RUN"}
+    assert (len(AT_ITS_OWN_ARRIVAL_WAVE_2), len(A_CLASS_WAVE_2)) == (ARRIVALS_WAVE_2, CLASSES_WAVE_2)
+    assert set(UNPINNED_WAVE_2) <= set(w.UNIT_I_WAVE_2)
+
+
+VOID_IN_C_WAVE_2 = frozenset(name for name, (restype, _frame) in w.SIGNATURES_WAVE_2.items() if restype is None)
+
+
+def test_the_wave_2_void_routines_are_gem_s_void_ones_and_no_rom_caller_reads_what_they_leave():
+    """THE NAMED DIVERGENCE: desk_clear, desk_verify and do_wopen are `void` in C where the ROM leaves a callee's word
+    (their last instructions store to memory) — and no instruction of the ROM's reads it."""
+    assert VOID_IN_C_WAVE_2 == {"AES_ROM_DESK_CLEAR", "AES_ROM_DESK_VERIFY", "AES_ROM_DO_WOPEN"}
+    for name in VOID_IN_C_WAVE_2:
+        assert db.calls_of(getattr(addrs, name)), f"{name}: nothing calls it — no reader to find"
+        assert not db.answer_readers(getattr(addrs, name)), f"{name}: a ROM caller reads what it leaves in D0"
+
+
+READ_AT_WAVE_2 = {"AES_ROM_PRO_RUN": 2}
+
+
+def test_the_wave_2_answers_the_c_has_are_read_where_the_reading_says():
+    """pro_run answers pro_exec's word: read where the reading says."""
+    read = {name: len(db.answer_readers(getattr(addrs, name))) for name in w.UNIT_I_WAVE_2 if name not in VOID_IN_C_WAVE_2}
+    assert {name: sites for name, sites in read.items() if sites} == READ_AT_WAVE_2
+
+
+@pytest.mark.parametrize("name", AT_ITS_OWN_ARRIVAL_WAVE_2)
+def test_a_wave_2_rom_routine_in_place_leaves_the_d0_its_harness_run_does(name):
+    """As wave 1b's: the ROM's routine IN PLACE leaves the D0 the case's ROM run leaves (its word)."""
+    each = BY_LABEL_WAVE_2[name]
+    _answer, rom_d0, _idles = w.ran(each, yields_wave_2(each))
+    in_place = w.in_place(each.name, each.chain, each.nth).returned.registers["d0"]
+    assert in_place & aes.WORD_MASK == rom_d0 & aes.WORD_MASK
+
+
+def test_the_wave_2_answers_that_are_not_the_rom_s_are_counted_by_name():
+    assert Counter(BY_LABEL_WAVE_2[name].name in VOID_IN_C_WAVE_2 for name in BY_LABEL_WAVE_2)[True] == 13
+
+
+def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_one(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`), asked of unit I's wave-2 four."""
+    assert not db.bound_referrers(blob, w.UNIT_I_WAVE_2)
+
+
+def test_the_wave_2_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
+    assert w.verdicts_not_the_rom_s(w.UNIT_I_WAVE_2) == (set(), [])

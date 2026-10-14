@@ -118,9 +118,10 @@ def test_a_component_linked_and_unbound_is_held_to_the_line_f_table_s_exception_
     `## Linked, unbound — <component> (N)` — a component whose C is written, LINKED INTO BOTH BLOBS and held at Tier 1
     while nothing of it is bound or registered (ruling W6-R1 waits for the user). A `## Verified` section would not be
     honest — its rows would be `✅ verified` with no row of the table to quote. Its rows are marked otherwise, NONE
-    `✅ verified`; N is its row count AND `len(linef_table.LINKED_AND_NOT_FLIPPED)`, and the rows' addresses are
-    EXACTLY that list's routines: the exemption is the generator's own list, and it expires at the flip by itself — a
-    routine flipped leaves the list, and this reds until its row moves to a Verified section."""
+    `✅ verified`; N is its row count AND the number of routines HELD UNBOUND — `linef_table.LINKED_AND_NOT_FLIPPED`
+    and (band 6 wave 2's R-W2-4) `LINKED_HELD_NO_TABLE_ENTRY`, the union `aes_deskbind.held_cores` reads —, and the
+    rows' addresses are EXACTLY those routines: the exemption is the generator's own lists, and it expires at the flip by
+    itself — a routine flipped leaves the list, and this reds until its row moves to a Verified section."""
     import sys
     sys.path.insert(0, str(REC / "bench"))
     import linef_table
@@ -129,9 +130,10 @@ def test_a_component_linked_and_unbound_is_held_to_the_line_f_table_s_exception_
     sections = _linked_unbound_sections()
     assert [name for name, _count, _rows, _body in sections] == ["desk"], "one component is linked and unbound: the desk's two units"
     (name, count, rows, body), = sections
-    held = {getattr(addrs, routine) for routine in linef_table.LINKED_AND_NOT_FLIPPED}
-    assert count == len(rows) == len(linef_table.LINKED_AND_NOT_FLIPPED), (
-        f"`## Linked, unbound — {name} ({count})` carries {len(rows)} rows; the generator's list holds {len(linef_table.LINKED_AND_NOT_FLIPPED)}")
+    held_unbound = {**linef_table.LINKED_AND_NOT_FLIPPED, **linef_table.LINKED_HELD_NO_TABLE_ENTRY}
+    held = {getattr(addrs, routine) for routine in held_unbound}
+    assert count == len(rows) == len(held_unbound), (
+        f"`## Linked, unbound — {name} ({count})` carries {len(rows)} rows; the generator's lists hold {len(held_unbound)}")
     assert sorted(rows) == sorted(held), f"rows that are not the list's: {sorted(map(hex, set(rows) ^ held))}"
     assert not _ROW_RE.search(body), f"a row of `## Linked, unbound — {name}` says `✅ verified`"
     assert (REC / "src" / name).is_dir()
@@ -1322,7 +1324,7 @@ THE_OPENING_S_ENTRY = "BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK"
 _THE_HANDS_RE = re.compile(
     r"THE HANDS' CAMPAIGN IS (?P<chains>\d+) CHAINS / (?P<steps>\d+) STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH (?P<reached>\d+) OF "
     r"BAND 6's (?P<routines>\d+); THE DEEPEST BY THE WRITE LEDGERS: PD0 (?P<pd0>[\d,]+) of (?P<pd0_bytes>[\d,]+), PD1 (?P<pd1>\d+) of "
-    r"(?P<pd1_bytes>[\d,]+), the dispatcher (?P<dispatcher>\d+) \((?P<elsewhere>\d+) on every other chain\), the userdef stack (?P<userdef>\d+) "
+    r"(?P<pd1_bytes>[\d,]+), the dispatcher (?P<dispatcher>\d+) \((?P<elsewhere>\d+) on every other chain[^)]*\), the userdef stack (?P<userdef>\d+) "
     r"of (?P<userdef_bytes>[\d,]+)")
 _THE_TABLE_OF_OURS_RE = re.compile(
     r"THE TABLE IS (?P<entries>\d+) ENTRIES: (?P<native>\d+) native \((?P<native_routines>\d+) routines\), (?P<thunked>\d+) through "

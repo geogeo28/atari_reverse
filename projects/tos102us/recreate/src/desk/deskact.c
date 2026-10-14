@@ -8,7 +8,9 @@
 #include "m68k_idioms.h"
 #include "aes/aes.h"
 #include "aes/evdoor.h"
+#include "aes/gemgraf.h"
 #include "aes/gemsuper.h"
+#include "aes/gsxif.h"
 #include "aes/objects.h"
 #include "aes/rect.h"
 #include "aes/strings.h"
@@ -16,6 +18,8 @@
 #include "desk/deskapp.h"
 #include "desk/deskbind.h"
 #include "desk/deskleaf.h"
+#include "desk/desktop.h"
+#include "desk/deskview.h"
 #include "desk/deskwin.h"
 
 /* EVERY FRAME HANDED ON BY ADDRESS IS ITS HOST SLOT'S SIZE (`host_slot.h`). */
@@ -334,4 +338,203 @@ void aes_act_allchg(uint8_t *image, int16_t window, uint32_t tree, int16_t root,
     if (draw)
         act_redrawn_inside(image, window, clip, extent);
     host_slot_release(AES_ACT_ALLCHG_RECTS);
+}
+
+/* ---- band 6 wave 2, group G4: the drag's loop and the button's two handlers ---------------------------------------- */
+_Static_assert(DRGPLNS_FRAME_BYTES == HOST_SLOT_AES_GR_DRGPLNS_FRAME_BYTES, "gr_drgplns's frame and its host slot");
+_Static_assert(ACT_BDOWN_FRAME_BYTES == HOST_SLOT_AES_ACT_BDOWN_FRAME_BYTES, "act_bdown's frame and its host slot");
+
+/* The icon lit under a drag — the window, tree, root and object act_chg was handed — and its light put out again. */
+struct lit_icon {
+    int16_t window;
+    uint32_t tree;
+    int16_t root;
+    int16_t object;
+};
+
+static void lit_icon_put_out(uint8_t *image, struct lit_icon *lit, uint32_t clip)
+{
+    (void)aes_act_chg(image, lit->window, lit->tree, lit->root, lit->object, clip, OB_STATE_SELECTED, 0, 1, 1);
+    *lit = (struct lit_icon){0, 0, 0, DRGPLNS_NO_OBJECT};
+}
+
+/* An icon a drag may be let go on: a folder, a disk, the cartridge or the trash — not a file. (The ROM reads i_find's
+ * ANODE with no test of it: a file's object has one.) */
+static int takes_a_drop(const uint8_t *image, uint32_t anode)
+{
+    uint16_t type = bus_word(image, anode + ANODE_TYPE);
+
+    return type == AT_ISFOLD || type == AT_ISDISK || type == AT_ISCART || type == AT_ISTRSH;
+}
+
+/* $fdc57a — gr_drgplns: THE DRAG. The outline's extent and the icons' (their corners made relative to it, its size
+ * grown by the outline's), then until the button comes up: the mouse read (graf_mkstate, into the two argument words
+ * — the ROM's own frame), the icons' rectangle moved with it inside the clip, the outlines drawn and rubbed out round
+ * the wait (gr_bwait); the window under the mouse (a desk window's tree and root, else the desktop's), the icon under
+ * it (gr_obfind, stored at once through `object_out`) — an unselected folder, disk, cartridge or trash LIT, the one lit
+ * before put out. At the end the last one put out, and the icons' corner and the window stored through the pointers. */
+void aes_gr_drgplns(uint8_t *image, int16_t mx, int16_t my, uint32_t clip, int16_t count, uint32_t outline, int16_t icons,
+                    uint32_t corners, uint32_t x_out, uint32_t y_out, uint32_t window_out, uint32_t object_out)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(DRGPLNS_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_GR_DRGPLNS_FRAME, frame_local);
+    uint32_t extent = frame + DRGPLNS_OUTLINE_EXTENT, rect = frame + DRGPLNS_ICONS_RECT;
+    uint32_t mouse_x = frame + DRGPLNS_MOUSE_X, mouse_y = frame + DRGPLNS_MOUSE_Y;
+    struct lit_icon lit = {0, 0, 0, DRGPLNS_NO_OBJECT};
+    int16_t off_x, off_y, down, window, root, object;
+    uint32_t tree, wnode;
+
+    set_bus_word(image, mouse_x, (uint16_t)mx);
+    set_bus_word(image, mouse_y, (uint16_t)my);
+    aes_gr_extent(image, count, outline, extent);
+    aes_gr_extent(image, icons, corners, rect);
+    set_bus_word(image, rect + GRECT_W, (uint16_t)(rect_word(image, rect, GRECT_W) + rect_word(image, extent, GRECT_W)));
+    set_bus_word(image, rect + GRECT_H, (uint16_t)(rect_word(image, rect, GRECT_H) + rect_word(image, extent, GRECT_H)));
+    aes_gr_obalign(image, icons, rect_word(image, rect, GRECT_X), rect_word(image, rect, GRECT_Y), corners);
+    off_x = (int16_t)(mx - rect_word(image, rect, GRECT_X));
+    off_y = (int16_t)(my - rect_word(image, rect, GRECT_Y));
+    do {
+        (void)aes_gsx_sclip(image, AES_GL_RSCREEN);
+        aes_gsx_attr(image, GSX_TEXT_LINE, GSX_MODE_XOR, DRGPLNS_OUTLINE_COLOUR);
+        aes_desk_graf_mkstate(image, mouse_x, mouse_y, frame + DRGPLNS_BUTTON, frame + DRGPLNS_KEYS);
+        mx = (int16_t)bus_word(image, mouse_x);
+        my = (int16_t)bus_word(image, mouse_y);
+        set_bus_word(image, rect + GRECT_X, (uint16_t)(mx - off_x));
+        set_bus_word(image, rect + GRECT_Y, (uint16_t)(my - off_y));
+        aes_rc_constrain(image, clip, rect);
+        down = aes_gr_bwait(image, rect, mx, my, count, outline, icons, corners);
+        window = aes_desk_wind_find(image, mx, my);
+        tree = bus_long(image, desk_globals(image) + DESK_G_SCREEN);
+        root = DESKTOP_ROOT;
+        if (window) {
+            wnode = aes_win_find(image, window);
+            if (wnode) {
+                tree = bus_long(image, desk_globals(image) + DESK_G_SCREEN);
+                root = (int16_t)bus_word(image, wnode + WNODE_ROOT);
+            } else {
+                window = 0;
+            }
+        }
+        object = aes_gr_obfind(image, tree, root, mx, my);
+        set_bus_word(image, object_out, (uint16_t)object);
+        if (object == root || object == OB_NIL) {
+            if (lit.object)
+                lit_icon_put_out(image, &lit, clip);
+        } else if (object != lit.object) {
+            if (lit.object)
+                lit_icon_put_out(image, &lit, clip);
+            if (!is_selected(image, tree, object)
+                && takes_a_drop(image, aes_i_find(image, window, object, frame + DRGPLNS_FNODE, frame + DRGPLNS_IS_APP))) {
+                lit = (struct lit_icon){window, tree, root, object};
+                (void)aes_act_chg(image, window, tree, root, object, clip, OB_STATE_SELECTED, 1, 1, 1);
+            }
+        }
+    } while (down);
+    if (lit.object)
+        lit_icon_put_out(image, &lit, clip);
+    set_bus_word(image, x_out, (uint16_t)rect_word(image, rect, GRECT_X));
+    set_bus_word(image, y_out, (uint16_t)rect_word(image, rect, GRECT_Y));
+    set_bus_word(image, window_out, (uint16_t)window);
+    host_slot_release(AES_GR_DRGPLNS_FRAME);
+}
+
+/* $fdcc2a — act_bsclick: A CLICK. On no icon (the root, or none) every icon of the root put out; on one, with no Shift
+ * key: the others put out first where it is double-clicked or not yet selected, and it SELECTED; with a Shift key: it
+ * TOGGLED alone. (act_chg, drawn, the disabled check asked.) */
+void aes_act_bsclick(uint8_t *image, int16_t window, uint32_t tree, int16_t root, int16_t mx, int16_t my, int16_t keys,
+                     uint32_t clip, int16_t double_click)
+{
+    int shifted = (keys & SHIFT_KEYS) != 0;
+    int16_t object = aes_gr_obfind(image, tree, root, mx, my);
+    uint16_t state;
+
+    if (object == root || object == OB_NIL) {
+        aes_act_allchg(image, window, tree, root, object, AES_GL_RFULL, clip, OB_STATE_SELECTED, 0, 1);
+        return;
+    }
+    state = bus_word(image, object_address(tree, object, OB_STATE));
+    if (!shifted) {
+        if (double_click || !(state & OB_STATE_SELECTED)) {
+            aes_act_allchg(image, window, tree, root, object, AES_GL_RFULL, clip, OB_STATE_SELECTED, 0, 1);
+            state |= OB_STATE_SELECTED;
+        }
+    } else {
+        state ^= OB_STATE_SELECTED;
+    }
+    (void)aes_act_chg(image, window, tree, root, object, clip, OB_STATE_SELECTED, (int16_t)(state & OB_STATE_SELECTED), 1, 1);
+}
+
+/* The outline a drag of the selection carries: the icon view's, from the desktop's root or a window of icons; the text
+ * view's from a window of text. Its point count through `count`. */
+static uint32_t drag_outline(const uint8_t *image, int16_t root, int16_t *count)
+{
+    uint32_t desk = desk_globals(image);
+    int16_t view = root == DESKTOP_ROOT ? V_ICON : (int16_t)bus_word(image, desk + DESK_G_IVIEW);
+
+    if (view == V_ICON) {
+        *count = (int16_t)bus_word(image, desk + DESK_G_NMICON);
+        return desk + DESK_G_XYICON;
+    }
+    *count = (int16_t)bus_word(image, desk + DESK_G_NMTEXT);
+    return desk + DESK_G_XYTEXT;
+}
+
+/* act_bdown's press on a selected icon: the selection's corners gathered and dragged; a drop back onto the icon it
+ * began on — or, from the desktop, onto the bare desktop, the icons put down there (move_drvicon) — is no drop. */
+static void dragged_selection(uint8_t *image, int16_t window, uint32_t tree, int16_t root, int16_t object, uint32_t frame,
+                              uint32_t object_out)
+{
+    uint32_t corners = desk_globals(image) + DESK_G_XYOBPTS, outline;
+    uint32_t drop_window = frame + ACT_BDOWN_DROP_WINDOW;
+    int16_t icons, count;
+
+    aes_gr_accobs(image, tree, root, frame + ACT_BDOWN_COUNT, corners);
+    icons = (int16_t)bus_word(image, frame + ACT_BDOWN_COUNT);
+    if (!icons)
+        return;
+    outline = drag_outline(image, root, &count);
+    aes_gr_drgplns(image, (int16_t)bus_word(image, frame + ACT_BDOWN_MOUSE_X), (int16_t)bus_word(image, frame + ACT_BDOWN_MOUSE_Y),
+                   AES_GL_RFULL, count, outline, icons, corners, frame + ACT_BDOWN_DROP_X, frame + ACT_BDOWN_DROP_Y,
+                   drop_window, object_out);
+    if (bus_word(image, drop_window)) {
+        if (window == (int16_t)bus_word(image, drop_window) && (int16_t)bus_word(image, object_out) == object)
+            set_bus_word(image, drop_window, (uint16_t)ACT_BDOWN_NOTHING);
+    } else if (!window && (int16_t)bus_word(image, object_out) == root) {
+        aes_move_drvicon(image, tree, root, (int16_t)bus_word(image, frame + ACT_BDOWN_DROP_X),
+                         (int16_t)bus_word(image, frame + ACT_BDOWN_DROP_Y), corners);
+        set_bus_word(image, drop_window, (uint16_t)ACT_BDOWN_NOTHING);
+    }
+}
+
+/* $fdcd34 — act_bdown: A PRESS. The root stored through `object_out`; on no icon a rubber box from the mouse (the
+ * icons it holds lit); on a SELECTED icon the selection dragged (`dragged_selection`); then the button awaited up
+ * (evnt_button, its answers into the argument words — the ROM's own frame, read by no caller). The window the drag
+ * was let go over, ACT_BDOWN_NOTHING where there was no drop. */
+int16_t aes_act_bdown(uint8_t *image, int16_t window, uint32_t tree, int16_t root, int16_t mx, int16_t my, int16_t keys,
+                      uint32_t clip, uint32_t object_out)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(ACT_BDOWN_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_ACT_BDOWN_FRAME, frame_local);
+    uint32_t box = frame + ACT_BDOWN_BOX;
+    int16_t object, dropped;
+
+    set_bus_word(image, frame + ACT_BDOWN_MOUSE_X, (uint16_t)mx);
+    set_bus_word(image, frame + ACT_BDOWN_MOUSE_Y, (uint16_t)my);
+    set_bus_word(image, frame + ACT_BDOWN_KEYS, (uint16_t)keys);
+    set_bus_word(image, frame + ACT_BDOWN_DROP_WINDOW, (uint16_t)ACT_BDOWN_NOTHING);
+    set_bus_word(image, object_out, (uint16_t)root);
+    object = aes_gr_obfind(image, tree, root, mx, my);
+    if (root == object || object == OB_NIL) {
+        aes_r_set(image, box, mx, my, RUBBER_BOX_MIN, RUBBER_BOX_MIN);
+        aes_desk_graf_rubbox(image, rect_word(image, box, GRECT_X), rect_word(image, box, GRECT_Y), RUBBER_BOX_MIN,
+                             RUBBER_BOX_MIN, box + GRECT_W, box + GRECT_H);
+        aes_act_allchg(image, window, tree, root, object, box, clip, OB_STATE_SELECTED, 1, 1);
+    } else if (is_selected(image, tree, object)) {
+        dragged_selection(image, window, tree, root, object, frame, object_out);
+    }
+    (void)aes_desk_evnt_button(image, ACT_BDOWN_CLICKS, ACT_BDOWN_MASK, ACT_BDOWN_STATE, frame + ACT_BDOWN_MOUSE_X,
+                               frame + ACT_BDOWN_MOUSE_Y, frame + ACT_BDOWN_BUTTON, frame + ACT_BDOWN_KEYS);
+    dropped = (int16_t)bus_word(image, frame + ACT_BDOWN_DROP_WINDOW);
+    host_slot_release(AES_ACT_BDOWN_FRAME);
+    return dropped;
 }

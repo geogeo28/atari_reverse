@@ -44,6 +44,7 @@ import abi
 import aes
 import aes_boot
 import aes_ctlmgr
+import aes_deskbind
 import aes_event
 import aes_fslib
 import aes_gemdosif
@@ -852,8 +853,36 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     ("aes_deskusr", "UNIT_E"): 4,
     ("aes_deskinf", "UNIT_F"): 2,
     # ---- end of group G4's ----
+    # ---- band 6 wave 2: each unit's WAVE-2 list (`UNIT_<X>_WAVE_2`, its own block of the unit's module) and count,
+    # one line per unit inside its group's block — wave 1b's lines above stay as they are ----
+    # ---- band 6 wave 2, group G1 (units C, F, E) ----
+    ("aes_deskdir", "UNIT_C_WAVE_2"): 3,
+    ("aes_deskinf", "UNIT_F_WAVE_2"): 1,
+    ("aes_deskusr", "UNIT_E_WAVE_2"): 2,
+    # ---- end of group G1's wave-2 ----
+    # ---- band 6 wave 2, group G2 (units H, G, M) ----
+    ("aes_deskfun", "UNIT_H_WAVE_2"): 11,
+    ("aes_deskfpd", "UNIT_G_WAVE_2"): 2,
+    ("aes_deskutil", "UNIT_M_WAVE_2"): 2,
+    # ---- end of group G2's wave-2 ----
+    # ---- band 6 wave 2, group G3 (units I, J, K, L) ----
+    ("aes_deskwin", "UNIT_I_WAVE_2"): 4,
+    ("aes_desksupp", "UNIT_J_WAVE_2"): 7,
+    ("aes_desktop", "UNIT_K_WAVE_2"): 2,
+    ("aes_deskview", "UNIT_L_WAVE_2"): 5,
+    # ---- end of group G3's wave-2 ----
+    # ---- band 6 wave 2, group G4 (units A, B) ----
+    ("aes_deskapp", "UNIT_A_WAVE_2"): 2,
+    ("aes_deskact", "UNIT_B_WAVE_2"): 3,
+    # ---- end of group G4's wave-2 ----
 }
 LINKED_AND_NOT_FLIPPED_ROUTINES = sum(LINKED_AND_NOT_FLIPPED_UNITS.values())
+
+
+def held_unbound():
+    """Every routine the units' lists hold: the generator's LINKED_AND_NOT_FLIPPED, and LINKED_HELD_NO_TABLE_ENTRY's
+    routines — written and linked as they are, with no entry of the table to hold (R-W2-4)."""
+    return {**linef_table.LINKED_AND_NOT_FLIPPED, **linef_table.LINKED_HELD_NO_TABLE_ENTRY}
 
 
 def test_the_routines_linked_and_not_flipped_are_the_units_and_none_is_flipped_or_flippable_another_way(blob):
@@ -861,11 +890,12 @@ def test_the_routines_linked_and_not_flipped_are_the_units_and_none_is_flipped_o
     `vdi.ALCYON` — a thunk could be made, which is what the exemption holds back —; each core DEFINED IN THIS BLOB; NONE
     A NATIVE ENTRY (the generator asks `native` first, so a native routine's name here would be flipped all the same,
     silently: neither a pinned `.S` entry of the build's nor an entry the generator makes native names one); none in
-    ENTERED_BY_OURS_ALONE; NONE WITH A REGISTERED ROW (the registries' rows, the switching rows, the transcriptions)."""
+    ENTERED_BY_OURS_ALONE; NONE WITH A REGISTERED ROW (the registries' rows, the switching rows, the transcriptions).
+    The units' lists hold LINKED_HELD_NO_TABLE_ENTRY's routines too (R-W2-4), each held to all of it but the table."""
     lists = {unit: set(getattr(importlib.import_module(unit[0]), unit[1])) for unit in LINKED_AND_NOT_FLIPPED_UNITS}
     assert {unit: len(names) for unit, names in lists.items()} == LINKED_AND_NOT_FLIPPED_UNITS
 
-    held = linef_table.LINKED_AND_NOT_FLIPPED
+    held = held_unbound()
     assert len(held) == LINKED_AND_NOT_FLIPPED_ROUTINES and set(held) == set().union(*lists.values())
     assert set(held) <= set(vdi.ALCYON), f"not declared: {sorted(set(held) - set(vdi.ALCYON))}"
     cores = {routines.core_symbol(name) for name in held}
@@ -877,3 +907,22 @@ def test_the_routines_linked_and_not_flipped_are_the_units_and_none_is_flipped_o
     registered = {*(row[0].split(",")[0] for row in (*aes.CASES, *aes.UNPRICED)), *(name.split(",")[0] for name in aes_event.SWITCHING_ROWS),
                   *(row[1] for row in transcription.TRANSCRIPTIONS)}
     assert not registered & (cores | {transcription.transcription_symbol(name) for name in held}), "a routine of the list has a row"
+
+
+# ---- band 6 wave 2 (ruling R-W2-4): THE ROUTINES HELD WITH NO ENTRY OF THE TABLE ------------------------------------------
+NO_TABLE_ENTRY_PROBE = "AES_ROM_DESK_USERDEF"   # `$fde844`, the routine the set was made for: no Line-F word names it
+
+
+def test_the_routines_held_with_no_table_entry_have_none_and_the_unbound_pin_holds_them(monkeypatch):
+    """LINKED_HELD_NO_TABLE_ENTRY's routines are NO TARGET OF THE ROM'S TABLE (else LINKED_AND_NOT_FLIPPED is their
+    list) and in no other list; and THE DESK'S ONE UNBOUND PIN HOLDS THEM: a name put in the set puts its core in
+    `aes_deskbind.held_cores()` — the closure every unit's pin grows from — as one of LINKED_AND_NOT_FLIPPED's is."""
+    held_alone = linef_table.LINKED_HELD_NO_TABLE_ENTRY
+    targets = set(linef_table.rom_table())
+    assert not {name for name in held_alone if getattr(addrs, name) in targets}, "a routine of the set has a table entry"
+    assert not set(held_alone) & set(linef_table.LINKED_AND_NOT_FLIPPED)
+    assert getattr(addrs, NO_TABLE_ENTRY_PROBE) not in targets
+    probe_core = routines.core_symbol(NO_TABLE_ENTRY_PROBE)
+    monkeypatch.setitem(held_alone, NO_TABLE_ENTRY_PROBE, "the probe")
+    assert probe_core in aes_deskbind.held_cores()
+    assert probe_core in aes_deskbind.unbound_closure({probe_core: set()})

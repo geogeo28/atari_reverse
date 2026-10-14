@@ -418,8 +418,11 @@ def _linef_table():
 
 
 def held_cores():
-    """The C cores of the routines LINKED AND NOT FLIPPED (`linef_table.LINKED_AND_NOT_FLIPPED`)."""
-    return frozenset(routines.core_symbol(name) for name in _linef_table().LINKED_AND_NOT_FLIPPED)
+    """The C cores of the routines LINKED AND NOT FLIPPED (`linef_table.LINKED_AND_NOT_FLIPPED`) — and of those linked
+    and held with NO ENTRY OF THE TABLE to hold (`linef_table.LINKED_HELD_NO_TABLE_ENTRY`, R-W2-4)."""
+    linef_table = _linef_table()
+    return frozenset(routines.core_symbol(name)
+                     for name in (*linef_table.LINKED_AND_NOT_FLIPPED, *linef_table.LINKED_HELD_NO_TABLE_ENTRY))
 
 
 def unbound_closure(graph):

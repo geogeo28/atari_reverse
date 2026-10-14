@@ -143,3 +143,69 @@ def test_no_caller_reads_what_men_update_or_cnx_put_leave_in_d0():
     """men_update's and cnx_put's D0 (their last binding's leftover) read by nothing: counted divergences."""
     for routine in (MEN_UPDATE, CNX_PUT):
         assert db.calls_of(da.entry_of(routine)) and not db.answer_readers(da.entry_of(routine))
+
+
+# ==== BAND 6 WAVE 2 (group G3): cnx_get `$fe2618` ==================================================================
+# The desk restarted after a file is shown (deskmain again): the INF's windows opened again — each through
+# do_diropen, which reads its path (pn_active) and makes it current (win_top's pro_chdir): GEMDOS REPLAYED
+# (`aes_desksupp.replayed_row`, said in the id), a row that switches.
+import aes_desksupp as ds               # noqa: E402 — wave 2's, kept with its section
+import aes_desktop as dt                # noqa: E402
+import aes_deskwin as w                 # noqa: E402
+
+SHOWN_FILE, SHOWN_LONG = "file: shown, a key at its end", "files: the long file shown, a blank at each page's end and at its end"
+ESCAPE, A_KEY = "window: Esc typed (the top window read again)", "a key typed at the desk's idle"
+ESC_ASCII_ALONE = 0x001b                # Esc's ASCII byte alone (the scan code 0)
+SCROLLED_KEPT, SORT_KEPT = "files: the right arrow clicked, then the long file shown", "files: View > Sort by Size, then the long file shown"
+VIEW_KEPT = "files: View > Show as Text, then the long file's line shown"
+CASES_WAVE_2 = (w.Case("AES_ROM_CNX_GET", SHOWN_FILE, budget=4_000_000), w.Case("AES_ROM_CNX_GET", SHOWN_LONG, budget=4_000_000),
+                # (the fix pass's, restored from G3's) the INF kept a window scrolled a column right; and the sort by
+                # size: its view and sort words told apart
+                w.Case("AES_ROM_CNX_GET", SCROLLED_KEPT, budget=4_000_000), w.Case("AES_ROM_CNX_GET", SORT_KEPT, budget=4_000_000),
+                w.Case("AES_ROM_CNX_GET", VIEW_KEPT, budget=4_000_000),
+                # hndl_kbd: Esc with a window on top (fun_rebld: its path read again, GEMDOS replayed), and 'a' (nothing)
+                w.Case("AES_ROM_HNDL_KBD", ESCAPE, arm=lambda a: a == (0x011b,)),
+                w.Case("AES_ROM_HNDL_KBD", A_KEY, arm=lambda a: a != (0x011b,)),
+                # (the fix pass's) a key whose LOW byte is Esc's and whose scan is not: no Esc (the word compared)
+                w.Case("AES_ROM_HNDL_KBD", ESCAPE, arguments=lambda a: (ESC_ASCII_ALONE,),
+                       why="the key $001b — Esc's ASCII with no scan code: hndl_kbd compares the WORD, nothing done"))
+TRAPS_K = {(ESCAPE, "AES_ROM_HNDL_KBD"), *((chain, "AES_ROM_CNX_GET") for chain in (SHOWN_FILE, SHOWN_LONG, SCROLLED_KEPT, SORT_KEPT, VIEW_KEPT))}
+BY_LABEL_WAVE_2 = {w.label(each) + (f"; {ds.REPLAYED}" if (each.chain, each.name) in TRAPS_K else ""): each for each in CASES_WAVE_2}
+
+
+@pytest.mark.parametrize("name", BY_LABEL_WAVE_2)
+def test_a_wave_2_routine_at_its_arrival_is_the_rom_s(name):
+    """THE CASE: the row over the arrival (GEMDOS replayed where its run traps); no idle — or, where the run reaches no
+    binding ('a' at the idle: hndl_kbd returns at once), the kit's plain differential."""
+    each = BY_LABEL_WAVE_2[name]
+    if (each.chain, each.name) not in TRAPS_K:
+        w.ran(each, False)
+        return
+    the_row = ds.replayed_row(each)
+    w.held(the_row)
+    assert not w.the_rom_s_run(the_row).idles
+
+
+def test_hndl_kbd_answers_0_read_by_its_caller():
+    """hndl_kbd's word (0 on both arms, compared on every case) is read by its one caller (`answer_readers`)."""
+    assert len(db.answer_readers(da.entry_of("AES_ROM_HNDL_KBD"))) == 1
+
+
+UNPINNED_WAVE_2 = {
+    "AES_ROM_CNX_GET": "a kept window win_alloc refuses (four open), and a kept path pro_chdir refuses (the window freed): "
+                       "every chain's restart keeps one window of the disk's own path",
+}
+
+
+def test_cnx_get_is_gem_s_void_one_and_no_rom_caller_reads_what_it_leaves():
+    """THE NAMED DIVERGENCE: cnx_get is `void` in C (its D0 cnx_put's leftover) — read by no instruction of the ROM."""
+    assert db.calls_of(da.entry_of("AES_ROM_CNX_GET")) and not db.answer_readers(da.entry_of("AES_ROM_CNX_GET"))
+
+
+def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_one(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`), asked of unit K's wave-2 routines."""
+    assert not db.bound_referrers(blob, dt.UNIT_K_WAVE_2)
+
+
+def test_the_wave_2_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
+    assert w.verdicts_not_the_rom_s(dt.UNIT_K_WAVE_2) == (set(), [])

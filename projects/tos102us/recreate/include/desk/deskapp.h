@@ -57,6 +57,8 @@
  * addresses here), the list ended by an ib_pmask of -1; every icon the first one's size. */
 #define ICONBLK_WIDTH         22         /* word: ib_wicon                              ($fdb2b2 move.w 13236(a5),d0) */
 #define ICONBLK_HEIGHT        24         /* word: ib_hicon                              ($fdb2b6 muls.w 13238(a5),d0) */
+#define ICONBLK_WTEXT         30         /* word: ib_wtext, the label's width   ($fdb92e add.w 13244(a3),d0)  */
+#define ICONBLK_HTEXT         32         /* word: ib_htext, its height          ($fdb93a add.w 13246(a3),d0)  */
 #define ICONBLK_LIST_END      0xffffffffu /* an ib_pmask that ends the list            ($fdb2a6 cmpi.l #-1,13214(a0)) */
 #define APP_ICONBLKS_BYTES    204        /* the ROM's six ICONBLKs, and the images' part past them
                                                                                       ($fdb22e move.w #204,-16(a6)) */
@@ -102,6 +104,57 @@
 /* app_tran's answer word: rs_gaddr's BITBLK address, handed on BY ADDRESS ($fdb18a move.l a6,(sp) / subq.l #4,(sp)). */
 #define APP_TRAN_BITBLK_BYTES 4
 
+/* ---- band 6 wave 2 (group G4): DESKTOP.INF read whole and parsed, and written ---------------------------------------
+ * (Its buffer, length, text buffer and ANODE pool: `desk/deskglobals.h` DESK_G_AFILE .. DESK_ANODES; a window's
+ * g_cnxsave entry: `desk/desktop.h` SAVE_*, `desk/deskview.h` WINDOW_SAVE_BYTES.) */
+/* the buffer (shel_get's, dos_read's: $fdb64c move.w #2048,(sp)) is aes/geminit.h's INF_BUFFER_BYTES */
+#define INF_LINE_START        '#'        /* a line's first byte                   ($fdb65c cmpib #35)            */
+#define INF_TYPE_ENVIRONMENT  'E'        /* the INF's #E line: the view, sort, preferences, resolution          */
+#define INF_TYPE_WINDOW       'W'        /* a window's #W line                                                  */
+#define INF_DRIVE_LETTER_AT   14         /* a drive's letter in its #M / #T line  ($fdb712 cmpib #67,14(a4))    */
+#define INF_DRIVE_C           'C'
+#define AES_INF_NAME_READ     0xfef414   /* the ROM's "DESKTOP.INF", app_start's  ($fdb66e move.l #$fef414)    */
+#define AES_INF_NAME_WRITE    0xfef420   /* ...and app_save's copy                ($fdbe34 move.l #$fef420)    */
+#define AES_APP_START_CLOSE_RETURN 0xfdb6bc /* dos_close's parked return: the word after its Line-F call         */
+#define AES_APP_SAVE_CLOSE_RETURN  0xfdbe68
+/* The #E line's two fields: the first's bits the view, the sort and two preferences, the second's the third
+ * preference over the resolution (from 0). */
+#define INF_E_VIEW_BIT        0x80       /* ($fdb87e btst #7,-13(a6); $fdbb68 move.w #128,d0)                  */
+#define INF_E_SORT_MASK       0x60       /* ($fdb894 and.w #96,d0)                                              */
+#define INF_E_SORT_SHIFT      5          /* ($fdb898 asr.w #5,d0)                                               */
+#define INF_E_PREFERENCE_1_BIT 0x10      /* DESK_CNX_PREFERENCES[1]               ($fdb89e btst #4,-13(a6))     */
+#define INF_E_PREFERENCE_0_BIT 0x08      /* DESK_CNX_PREFERENCES[0]               ($fdb8b0 btst #3,-13(a6))     */
+#define INF_E_PREFERENCE_2_MASK 0xf0     /* DESK_CNX_PREFERENCES[2], the second field's ($fdb8d6 and.w #240)     */
+#define INF_E_PREFERENCE_2_SHIFT 4
+#define APP_START_ENVIRONMENT_BYTES 2    /* scan_2's word, handed BY ADDRESS      ($fdb86e -14(a6))              */
+/* A #W line's rectangle is in character cells: a column or a width past the screen's columns HALVED (a column at the
+ * columns, a width only past them), the size at least seven boxes. */
+#define WINDOW_LEAST_BOXES    7          /* ($fdb7e8 muls.w #7,d0)                                              */
+/* The icons' grid (g_icw, g_ich: `desk/deskglobals.h` DESK_GRID_W / _H): an icon object and a space beside it of
+ * 8 pixels where the screen is over 300 lines tall (`desk/deskview.h` TALL_SCREEN_LINES, ICON_SPACE_TALL), and two
+ * under it; the screen's leftover shared out. */
+#define ICON_SPACE_UNDER      2          /* ($fdb98a addq.w #2,d0)                                              */
+/* The two drag outlines (DESK_G_XYICON, DESK_G_XYTEXT): point pairs, each cleared by a bfill of HALF ITS BYTES (the
+ * ROM's count is bytes, its outline's words: the last two words of each are left as they were). */
+#define ICON_OUTLINE_POINTS   9          /* ($fdba14 move.w #9,8128(a3))                                        */
+#define TEXT_OUTLINE_POINTS   5          /* ($fdba1a move.w #5,8130(a3))                                        */
+#define ICON_OUTLINE_CLEARED  18         /* ($fdba2a move.w #18,-(sp))                                          */
+#define TEXT_OUTLINE_CLEARED  10         /* ($fdbab0 move.w #10,-(sp))                                          */
+#define ICON_OUTLINE_LABEL_GAP 2         /* the image's frame ends this far above the label, less a small cell
+                                          *                                     ($fdba4e subq.w #2,d0)         */
+#define TEXT_OUTLINE_CELLS    12         /* a text line's outline, in cells across ($fdbabe muls.w #12,d0)      */
+#define APP_START_DONE        1          /* ($fdbadc moveq #1,d0)                                               */
+/* app_save's INF: written into g_afile past its first INF_KEPT_BYTES — those are shel_get's, put back from the shell's
+ * buffer after (the AES's own #a..#d lines) — over INF_WRITTEN_BYTES cleared; an icon's line written only while
+ * less than INF_ICON_LINES_END is; each line ended CR LF, the whole by the end mark and a NUL. */
+#define INF_KEPT_BYTES        128        /* ($fdbb42 lea 8336(a3),a5; $fdbe06 move.w #128,(sp))                 */
+#define INF_WRITTEN_BYTES     1920       /* ($fdbb4a move.w #1920,-(sp))                                        */
+#define INF_ICON_LINES_END    2013       /* ($fdbcbe cmpi.l #2013,d0)                                           */
+#define INF_CR                '\r'       /* ($fdbbd0 move.b #13,(a5)+)                                          */
+#define INF_LF                '\n'
+#define INF_FILE_END          0x1a       /* ($fdbdee move.b #26,(a5)+)                                          */
+#define APP_START_NO_ICONS    0          /* app_rdicon's 0                        ($fdb922 clr.w d0)            */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -116,6 +169,8 @@ void aes_app_revit(uint8_t *image);                                             
 uint32_t aes_app_path_save(uint8_t *image);                                                      /* $fdbe7e */
 uint32_t aes_app_path_restore(uint8_t *image);                                                   /* $fdbeb6 */
 int16_t aes_app_blddesk(uint8_t *image);                                                         /* $fdbeec */
+int16_t aes_app_start(uint8_t *image);                                                           /* $fdb5fc */
+void aes_app_save(uint8_t *image, int16_t to_disk);                                              /* $fdbb34 */
 #endif
 
 #endif /* TOS102US_DESK_DESKAPP_H */

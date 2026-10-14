@@ -406,7 +406,11 @@ TAKEN_BY_HAND = {
     "A: File > Show Info, Return": (SHOW_INFO_WORD,), "file: File > Show Info, Return": (SHOW_INFO_WORD,),
     "file: File > Show Info, Backspace, 'A', Return (renamed)": (SHOW_INFO_WORD,), desk.READ_ONLY_FILE: (SHOW_INFO_WORD,),
     "folder: selected, File > Show Info, Return": (SHOW_INFO_WORD,), "files: the program selected, File > Show Info, Return": (SHOW_INFO_WORD,),
-    "folder: File > New Folder, 'A', Return": (NEW_FOLDER_WORD,)}
+    "folder: File > New Folder, 'A', Return": (NEW_FOLDER_WORD,),
+    # (band 6 wave 2's, and its fix pass's) New Folder again; Show Info of an emptied drive A:; a folder made after the
+    # read-only file and in the files window
+    "folder: File > New Folder again, 'A', Return — the name taken, Return": (NEW_FOLDER_WORD,),
+    desk.EMPTIED_INFO: (SHOW_INFO_WORD,), desk.READ_ONLY_COPIED: (NEW_FOLDER_WORD,), desk.A_FIFTH_ENTRY: (NEW_FOLDER_WORD,)}
 
 
 def test_the_tables_of_this_battery_name_chains_there_are():
@@ -416,7 +420,7 @@ def test_the_tables_of_this_battery_name_chains_there_are():
     assert all(set(chain.enters) <= set(desk.routines()) for chain in desk.CHAINS.values())
 
 
-# THE CAMPAIGN'S SIZE, by the block that added the chains: `{block: (chains, steps)}` — a group of band 6 wave 1b adds
+# THE CAMPAIGN'S SIZE, by the block that added the chains: `{block: (chains, steps)}` — a group of band 6 wave 1b (or 2) adds
 # its own chains' count and steps inside its own block (`aes_desk.CHAINS`' matching block), so no two authors edit one
 # line; the pin is the sum.
 CHAINS_AND_STEPS_BY_BLOCK = {
@@ -433,6 +437,21 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
     "band 6 wave 1b, group G4": (6, 29),    # the name conflict three ways, B into A, A holding B deleted, copies unconfirmed
     # ---- end of group G4's ----
+    # ---- band 6 wave 2, group G1 (units C, F, E) ----
+    "band 6 wave 2, group G1": (7, 33),    # (+ the fix pass's) Show Info of the emptied drive; the read-only file copied
+    # ---- end of group G1's wave-2 ----
+    # ---- band 6 wave 2, group G2 (units H, G, M) ----
+    "band 6 wave 2, group G2": (7, 30),    # desktop icons into a window and onto icons, New Folder again, a file onto its drive;
+                                           # (the fix pass's) drive A: into its window, emptied
+    # ---- end of group G2's wave-2 ----
+    # ---- band 6 wave 2, group G3 (units I, J, K, L) ----
+    "band 6 wave 2, group G3": (16, 49),   # the arrows, the bar, the slider; the window sized, then paged; one of two closed; Esc;
+                                           # (the fix pass's) three INF restarts kept; a fifth entry, then the down arrow;
+                                           # two windows shown as text
+    # ---- end of group G3's wave-2 ----
+    # ---- band 6 wave 2, group G4 (units A, B) ----
+    "band 6 wave 2, group G4": (2, 7),     # (the fix pass's) the text view: a line dragged; an icon put down
+    # ---- end of group G4's wave-2 ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -496,7 +515,7 @@ def test_a_typed_key_is_let_go_and_the_rom_s_machine_is_another_with_it_held():
 
 # ---- THE REACH TABLE AND THE STACKS -----------------------------------------------------------------------------------------------------
 # Of band 6's 244, by the campaign's own steps (the boot's routines are not a chain's): `{block: routines its chains
-# reached first}` — a group of band 6 wave 1b adds the routines ITS chains reach that none reached before, in its own
+# reached first}` — a group of band 6 wave 1b (or 2) adds the routines ITS chains reach that none reached before, in its own
 # block; the pin is the sum.
 REACHED_BY_BLOCK = {
     "band 6 waves 0 and 1a": 219,
@@ -512,6 +531,18 @@ REACHED_BY_BLOCK = {
     # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
     "band 6 wave 1b, group G4": 4,          # $fdcf04 draw_dial, $fdcf48 do_namecon, $fdd0d2 sub_path, $fdd762 path_part
     # ---- end of group G4's ----
+    # ---- band 6 wave 2, group G1 (units C, F, E) ----
+    "band 6 wave 2, group G1": 0,
+    # ---- end of group G1's wave-2 ----
+    # ---- band 6 wave 2, group G2 (units H, G, M) ----
+    "band 6 wave 2, group G2": 2,          # $fe038c fun_disk, $fe0454 fun_desk2win (a desktop icon let go in a window)
+    # ---- end of group G2's wave-2 ----
+    # ---- band 6 wave 2, group G3 (units I, J, K, L) ----
+    "band 6 wave 2, group G3": 0,
+    # ---- end of group G3's wave-2 ----
+    # ---- band 6 wave 2, group G4 (units A, B) ----
+    "band 6 wave 2, group G4": 0,
+    # ---- end of group G4's wave-2 ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 
@@ -526,7 +557,10 @@ def test_the_reach_table_has_a_row_for_every_routine_and_is_read_off_each_chain_
     assert sum(1 for chains in table.values() if chains) == REACHED
     assert all(list(chains) == [name for name in desk.CHAINS if name in chains] for chains in table.values())
     assert "folder: File > New Folder, 'A', Return" in table[desk.MAKE_FOLDER] and "A: opened" not in table[desk.MAKE_FOLDER]
-    assert set(table[desk.SHOW_FILE]) == {THE_SHOW, "files: the long file shown, a blank at each page's end and at its end"}
+    assert set(table[desk.SHOW_FILE]) == {THE_SHOW, "files: the long file shown, a blank at each page's end and at its end",
+                                          *(chain for chain in desk.CHAINS if chain.endswith(("then the long file shown",
+                                                                                              "then the long file's line shown")))}
+    assert len(table[desk.SHOW_FILE]) == 5
     for name in ("A: opened", THE_SHOW):
         assert {routine for routine, chains in table.items() if name in chains} == desk.entered(name)
     assert desk.reach(("A: opened",))[desk.MAKE_FOLDER] == ()
@@ -546,18 +580,26 @@ PD0_BYTES, PD1_BYTES = 1792, 1196
 DEEPEST = {desk.PD0_STACK: ("A: File > Open", 1460), desk.PD1_STACK: ("window: View > Show as Text", 722),
            desk.DISPATCHER_STACK: ("window: A: opened again (two windows)", 190), desk.USERDEF_STACK: ("window: View > Show as Text", 438)}
 DISPATCHER_ELSEWHERE = 188
+# THE DISPATCHER AT 190 — not the second window alone: band 6 wave 2's re-derivation (Reviewer B's, its fix pass's
+# measure) finds it on these five chains, four of them pure walks of the ROM after "A: opened" (nothing by hand, nothing
+# laid), the fifth over Show Info's stand-in — the ROM's own depth (W6-R4: REPORTED, the deepest unchanged at 190).
+# What stores at 190 is not traced.
+DISPATCHER_AT_190 = frozenset({DEEPEST[desk.DISPATCHER_STACK][0], "A: opened, drive A: dragged into its window, Return",
+                               "A: opened, the trash dragged into its window, Return",
+                               "file: dragged to the trash, OK — then drive A: dragged into its window", desk.EMPTIED_INFO})
 
 
 def test_the_deepest_each_stack_is_taken_and_by_which_chain_off_the_write_ledgers():
     """MEASURED, THE ROM'S OWN DESK ON THE ROM'S AES: PD0 1,460 of 1,792 (File > Open on drive A:: 332 spare, 88 under
-    the 244-byte nest band 5 charges), PD1 722 of 1,196 (a menu chosen over a window), the dispatcher 190 with a
-    second window opened and 188 ON EVERY OTHER CHAIN, the userdef stack 438 of 1,024 (the text view drawn). A depth
+    the 244-byte nest band 5 charges), PD1 722 of 1,196 (a menu chosen over a window), the dispatcher 190 on the
+    chains DISPATCHER_AT_190 (a second window opened, a desktop icon dropped into a window) and 188 ON EVERY OTHER,
+    the userdef stack 438 of 1,024 (the text view drawn). A depth
     is the lowest STORE of a chain's own steps."""
     spans = desk.stacks(aes_boot.inf_machine())
     assert (spans[desk.PD0_STACK][1] - spans[desk.PD0_STACK][0], spans[desk.PD1_STACK][1] - spans[desk.PD1_STACK][0]) == (PD0_BYTES, PD1_BYTES)
     assert {which: desk.deepest(which) for which in DEEPEST} == DEEPEST
     assert ({name: desk.depths(name)[desk.DISPATCHER_STACK] for name in desk.CHAINS}
-            == {name: DEEPEST[desk.DISPATCHER_STACK][1] if name == DEEPEST[desk.DISPATCHER_STACK][0] else DISPATCHER_ELSEWHERE for name in desk.CHAINS})
+            == {name: DEEPEST[desk.DISPATCHER_STACK][1] if name in DISPATCHER_AT_190 else DISPATCHER_ELSEWHERE for name in desk.CHAINS})
 
 
 def test_a_depth_is_from_the_stack_s_top_down_to_the_lowest_byte_stored_inside_it():

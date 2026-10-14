@@ -30,6 +30,17 @@
  *     $fe0dce do_xyfix(&x, &y)                        a window's corner put on a 16-pixel column, below the desk's top
  *     $fe0f36 zoom_closed(close, window, x, y)        the window closed (where asked) and a box shrunk to the icon
  *     $fe0f9c do_wfull(window)                        the window made full, or back to its previous size
+ *   BAND 6 WAVE 2 (group G3), the unit's last four, each read from its body:
+ *     $fe0ab6 pro_run(isgraf, isover, window, icon)   the tail's count and its CR set where it has none, pro_exec,
+ *                                                     the count cleared; a window named (not -1) opened again over
+ *                                                     the desk's area; pro_exec's answer
+ *     $fe0bbc desk_clear(window)                      every icon of the window (the desktop's, window 0) not
+ *                                                     SELECTED, redrawn inside its work area
+ *     $fe0c2a desk_verify(window, changed)            the window's view rebuilt over its work area where `changed`;
+ *                                                     its root and handle the desk's current (g_croot, g_cwin)
+ *     $fe0e38 do_wopen(new, window, icon, x, y, w, h) a box grown from the icon to the rectangle (its corner put on
+ *                                                     do_xyfix's column), the icon not SELECTED, the GEM window
+ *                                                     opened where `new`; g_wlastsel the window
  *
  * WHAT THE C ANSWERS (ruling W3-R5's kind: NOT DECIDED HERE). The ROM's routine returns by its Line-F word with D0
  * as its last instruction left it. Where GEM's routine is VOID the C is `void` — the most direct C — and the word
@@ -87,6 +98,30 @@
 #define WIN_FRAME_BYTES       (3 * GRECT_BYTES)   /* do_wfull's: -8(a6), -16(a6), -24(a6)                        */
 #define WIN_FRAME_STRING      0          /* long: the free string's address rsrc_gaddr answers ($fe0b8a -4(a6)) */
 
+/* ---- band 6 wave 2: pro_run, desk_clear, desk_verify, do_wopen ---------------------------------------------------- */
+#define PRO_RUN_NO_WINDOW     (-1)       /* pro_run's window: none to open again ($fe0b02 cmpi.w #-1,12(a6))   */
+#define PRO_RUN_TAIL_END      '\r'       /* the tail's end, where it had no count ($fe0ae4 move.b #13,7837(a0)) */
+#define DO_WOPEN_OLD_WINDOW   0          /* pro_run's do_wopen: the window is open already ($fe0b16 clr.w -(sp)) */
+/* desk_clear's act_allchg: every icon of the root, none spared, its SELECTED bit cleared, the window redrawn. The
+ * rectangle the icons are tested against is the whole area below the menu bar (`aes/gsxif.h`'s AES_GL_RFULL); the
+ * clip, the window's work area. (A tenth word, 1, lies in the slot under its frame: act_allchg reads nine.) */
+#define ACT_NONE_SPARED       0          /* act_allchg's except                  ($fe0c10 clr.w -(sp))          */
+#define ACT_CLEARED           0          /* act_*'s set: the bits of `value` cleared ($fe0bfc / $fe0efc clr.w) */
+#define ACT_DRAWN             1          /* ...its draw                          ($fe0bf8 / $fe0ef8 move.w #1) */
+#define ACT_DISABLED_CHECKED  1          /* act_chg's check: a DISABLED icon refused ($fe0ef4 move.w #1,(sp))  */
+#define DESK_VERIFY_CHANGED   1          /* desk_verify's `changed` its callers hand ($fe10da move.w #1,(sp))  */
+/* THE OPENERS' FRAME — what desk_clear, desk_verify and do_wopen hand on BY ADDRESS (none of the three calls another,
+ * and none is called while another holds it): a work area wind_get answers into (desk_clear's -8(a6) up,
+ * desk_verify's -8(a6) up — its x at -2: the ROM's order reversed, read back word by word), and do_wopen's corner —
+ * ITS OWN ARGUMENT WORDS x and y, 14(a6) and 16(a6), which do_xyfix moves IN PLACE — the icon's rectangle get_xywh
+ * answers (-2..-8(a6), reversed) and the current root's (-16(a6) up). Compacted: the ROM's words in this order. */
+#define OPEN_FRAME_WORK       0          /* bytes[GRECT_BYTES]: desk_clear's / desk_verify's work area           */
+#define OPEN_FRAME_CORNER_X   0          /* word: do_wopen's x                  ($fe0e5e 14(a6))               */
+#define OPEN_FRAME_CORNER_Y   2          /* word: ...its y                      ($fe0e56 16(a6))               */
+#define OPEN_FRAME_ICON       4          /* bytes[GRECT_BYTES]: the icon's rectangle ($fe0e6a -8(a6) .. -2(a6))   */
+#define OPEN_FRAME_ROOT       (OPEN_FRAME_ICON + GRECT_BYTES)  /* bytes[GRECT_BYTES]: the root's ($fe0e4c lea -16(a6)) */
+#define OPEN_FRAME_BYTES      (OPEN_FRAME_ROOT + GRECT_BYTES)
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -107,6 +142,12 @@ uint32_t aes_get_spec(uint8_t *image, uint32_t tree, int16_t object);           
 void aes_do_xyfix(uint8_t *image, uint32_t x_inout, uint32_t y_inout);                                 /* $fe0dce */
 void aes_zoom_closed(uint8_t *image, int16_t close, int16_t window, int16_t icon_x, int16_t icon_y);   /* $fe0f36 */
 void aes_do_wfull(uint8_t *image, int16_t window);                                                     /* $fe0f9c */
+/* band 6 wave 2 (group G3) */
+int16_t aes_pro_run(uint8_t *image, int16_t isgraf, int16_t isover, int16_t window, int16_t icon);     /* $fe0ab6 */
+void aes_desk_clear(uint8_t *image, int16_t window);                                                   /* $fe0bbc */
+void aes_desk_verify(uint8_t *image, int16_t window, int16_t changed);                                 /* $fe0c2a */
+void aes_do_wopen(uint8_t *image, int16_t new_window, int16_t window, int16_t icon, int16_t x, int16_t y, int16_t w,
+                  int16_t h);                                                                          /* $fe0e38 */
 #endif
 
 #endif /* TOS102US_DESK_DESKWIN_H */

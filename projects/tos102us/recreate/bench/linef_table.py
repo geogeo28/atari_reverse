@@ -194,6 +194,53 @@ LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit F: an info dialo
                                for routine in ("INF_FIELD", "INF_DTTMSZ")})
 # ---- end of group G4's ----
 # ---- end of band 6 wave 1b's ----
+# ---- band 6 wave 2: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----
+# ---- band 6 wave 2, group G1 (units C `src/desk/deskdir.c`, F `deskinf.c`, E `deskusr.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit C: the copy engine, held at Tier 1 at its arrivals, GEMDOS replayed"
+                               for routine in ("D_DOFCOPY", "D_DOOP", "DIR_OP")})
+LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DESK_INF_FOLDER": "unit F: Show Info's count of a folder, held at Tier 1 at its arrivals"})
+LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DESK_DR_CODE": "unit E: a text-view line drawn, held at Tier 1 at its arrivals"})
+# ---- end of group G1's wave-2 ----
+# ---- band 6 wave 2, group G2 (units H `src/desk/deskfun.c`, G `deskfpd.c`, M `deskutil.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit G: a path closed or read, held at Tier 1 at its arrivals" for routine in (
+    "PN_CLOSE", "PN_ACTIVE")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_FUN_{routine}": "unit H: an operation's driver, held at Tier 1 at its arrivals"
+                               for routine in ("REBLD", "MKDIR", "OP", "DDST", "WDST", "WIN2WIN", "WIN2DESK", "DISK", "DESK2WIN",
+                                               "D2DESK", "DRAG")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit M: the cartridge's directory search, held at Tier 1 over argument classes"
+                               for routine in ("CART_SFIRST", "CART_SNEXT")})
+# ---- end of group G2's wave-2 ----
+# ---- band 6 wave 2, group G3 (units I `src/desk/deskwin.c`, J `desksupp.c`, K `desktop.c`, L `deskview.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit I: an opener of the desk's windows, held at Tier 1 at its arrivals"
+                               for routine in ("PRO_RUN", "DESK_CLEAR", "DESK_VERIFY", "DO_WOPEN")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit L: a scroll or rebuild of the desk's windows, held at Tier 1 at its arrivals"
+                               for routine in ("WIN_BLT", "WIN_SLIDE", "WIN_ARROW", "WIN_SRTALL", "WIN_BDALL")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit J: an opener or closer of the desk's windows, held at Tier 1 at its arrivals"
+                               for routine in ("DO_DIROPEN", "DO_DOPEN", "DO_FOPEN", "DESK_DO_FORMAT", "CLOSE_WINDOW",
+                                               "CLOSE_FOLDER", "FUN_CLOSE")})
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit K: a helper of the desk's main loop, held at Tier 1 at its arrivals"
+                               for routine in ("HNDL_KBD", "CNX_GET")})
+# ---- end of group G3's wave-2 ----
+# ---- band 6 wave 2, group G4 (units A `src/desk/deskapp.c`, B `deskact.c`) ----
+LINKED_AND_NOT_FLIPPED.update({name: "unit A: DESKTOP.INF parsed and written, held at Tier 1 at their arrivals"
+                               for name in ("AES_ROM_APP_START", "AES_ROM_APP_SAVE")})
+LINKED_AND_NOT_FLIPPED.update({name: "unit B: the drag's loop and the button's handlers, held at Tier 1 at their arrivals"
+                               for name in ("AES_ROM_GR_DRGPLNS", "AES_ROM_ACT_BSCLICK", "AES_ROM_ACT_BDOWN")})
+# ---- end of group G4's wave-2 ----
+# ---- end of band 6 wave 2's ----
+
+# ---- band 6 wave 2 (ruling R-W2-4) ----
+# THE ROUTINES WRITTEN, LINKED AND HELD UNBOUND THAT HAVE NO ENTRY OF THE TABLE: reached by VALUE only — `$fde844`, the
+# desk's G_USERDEF draw code, by ub_trampoline's `jsr` (trapdoor.S's pinned operand) — so the generator has no verdict
+# of theirs to hold back; their binding is that operand's relocation. Held unbound all the same: the desk's one unbound
+# pin (`test/aes_deskbind.py`'s `held_cores`) holds them with LINKED_AND_NOT_FLIPPED, and `test_aes_lineftable.py`
+# counts them in their unit's list. `{routine: why}`.
+LINKED_HELD_NO_TABLE_ENTRY = {}
+# ---- band 6 wave 2, group G1 (unit E) ----
+LINKED_HELD_NO_TABLE_ENTRY.update({"AES_ROM_DESK_USERDEF": "unit E: the text view's G_USERDEF draw, reached by value from "
+                                                           "ub_trampoline; held at Tier 1 at its arrivals"})
+# ---- end of group G1's wave-2 ----
+# ---- end of band 6 wave 2's (R-W2-4) ----
 
 
 def thunk_symbol(routine):

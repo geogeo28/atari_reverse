@@ -245,18 +245,49 @@ CHILD_DOORS = "import aes_gemdosif; aes_gemdosif.bind_scripted_in_a_child(lib); 
 FRESH_CHILD_DOORS = f"import sys; sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r}); {CHILD_DOORS.rstrip('; ')}"
 
 
-def bind_scripted_in_a_child(lib):
-    """The scripted trap's host twins (SCRIPTED_HANDLERS) bound into `lib`, the candidate the child loaded."""
+# A HANDLE LAID OPEN FOR THE HOST: the host's trap reaches the reconstructed dispatcher, which resolves Fread's and
+# Fwrite's handle before it calls the handler (`aes_shell.OPEN_FOR_THE_HOST`'s reason), where the ROM's staged trap
+# answers at the vector. THE ONE WAY band 6 lays one (its wave 2's fix pass): the record AS THE ROM'S GEMDOS LEFT IT
+# at the open of the ROM's own run in place (`opened_record`); a record no run provides is a LAID staging, said in its
+# case's id (`aes_shell.OPEN_FOR_THE_HOST`, `gemdos_process.descriptor_poke`).
+HANDLE_RECORD_BYTES = addrs.GEMDOS_HANDLE_STRIDE
+OPENS = (addrs.GEMDOS_FOPEN_FN, addrs.GEMDOS_FCREATE_FN)
+
+
+def handle_record(handle):
+    """The address of GEMDOS's record of the file handle `handle`."""
+    return addrs.GEMDOS_HANDLE_TABLE + (handle - addrs.GEMDOS_FIRST_FILE_HANDLE) * HANDLE_RECORD_BYTES
+
+
+def opened_record(ram, function, answer):
+    """`{the record's address: its bytes}` in `ram` — the machine where the ROM's run's GEMDOS call `function` returned
+    `answer` — for an Fopen or Fcreate that opened a file handle; `{}` for any other call or a failure."""
+    handle = aes.signed(answer & aes.LONG_MASK, bits=32)
+    if function not in OPENS or handle < addrs.GEMDOS_FIRST_FILE_HANDLE:
+        return {}
+    record = handle_record(handle)
+    return {record: bytes(ram[record:record + HANDLE_RECORD_BYTES])}
+
+
+def bind_handlers_in_a_child(lib, handlers, serving="the script"):
+    """`handlers` (`{GEMDOS's handler: its host twin}`) bound into `lib`, the candidate a row's child loaded: THE ONE
+    child binding of every recording trap (band 5's script here; band 6's copy engine, replays and unit A's recorder) —
+    a call of a handler `serving` does not serve ENDS THE CHILD by name."""
     def dispatch(buf, handler, arguments, argument_bytes):
         try:
-            assert handler in SCRIPTED_HANDLERS, f"the candidate called GEMDOS handler {handler:#x}, which the script does not serve"
-            return SCRIPTED_HANDLERS[handler](buf, arguments, argument_bytes)
+            assert handler in handlers, f"the candidate called GEMDOS handler {handler:#x}, which {serving} does not serve"
+            return handlers[handler](buf, arguments, argument_bytes)
         except Exception as refused:    # a callback cannot raise into C: the child ends here, by name
             print(refused, file=sys.stderr, flush=True)
             os._exit(CHILD_GEMDOS_REFUSED)
     trampoline = gemdos.CALL_HANDLER(dispatch)
     _CHILD_TRAMPOLINES.append(trampoline)
     bind_pointer(GEMDOS_HANDLER_HOOK, trampoline, lib)
+
+
+def bind_scripted_in_a_child(lib):
+    """The scripted trap's host twins (SCRIPTED_HANDLERS) bound into `lib`, the candidate the child loaded."""
+    bind_handlers_in_a_child(lib, SCRIPTED_HANDLERS)
 
 
 def register_unpriced(label, name, arguments, machine, **kwargs):

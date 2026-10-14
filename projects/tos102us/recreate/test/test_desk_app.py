@@ -360,3 +360,318 @@ def test_app_path_restore_makes_the_kept_drive_current__an_argument_class():
     answers, _back = da.dos_answers_in_place(arrived, TRAPS[PATH_RESTORE])
     result = da.scripted(arrived, answers, {da.CONSTANTS["AES_DESK_KEPT_DRIVE"]: bytes((0, KEPT_DRIVE_B))})
     assert da.dos_calls(result.final)[0][1][:aes.WORD_BYTES] == bytes((0, KEPT_DRIVE_B))
+
+
+# ==== BAND 6 WAVE 2, GROUP G4: app_start ($fdb5fc), DESKTOP.INF READ AND PARSED ====================================
+# app_start TRAPS AND SWITCHES: each case is a row over the arrival's megabyte with THE UNIT'S recording trap
+# (`aes_deskapp.unit_scripted_row`) SCRIPTED WITH THE ANSWERS THE ROM'S OWN RUN IN PLACE GOT — isdrive's Dgetdrv and
+# Dsetdrv at every drive line, app_rdicon's two Mallocs. Every arrival parses THE SHELL'S BUFFER (deskmain's restart
+# re-reads what app_save put there; the boot reads what the AES read at its start): the file-read and ROM arms of the
+# read, and the arms no INF of the chains holds, are labelled classes — the buffer, or the script, laid.
+import aes_boot                                                                     # noqa: E402
+import gemdos_process                                                               # noqa: E402
+import struct                                                                       # noqa: E402
+import layouts                                                                      # noqa: E402
+
+APP_START = "AES_ROM_APP_START"
+LONG_SHOWN = "files: the long file shown, a blank at each page's end and at its end"
+START_ARRIVALS = (BOOT, da.BOOT_AS_TEXT, SHOWN, LONG_SHOWN)
+SHELL_INF = aes.AES_SHELL_GEM_BUFFER
+INF_BYTES = aes.header_constants("geminit.h")["INF_BUFFER_BYTES"]
+DRIVE_LINES = (b"#M", b"#T")
+MAP_CALLS = 2                           # isdrive: Dgetdrv, then Dsetdrv of its drive (the map)
+MAP_A_B, MAP_A_B_C, MAP_EMPTY = 0x0003, 0x0007, 0
+EFILNF_ANSWER = aes.signed(addrs.parse(aes.INCLUDE / "gemdos" / "process.h")["GEMDOS_EFILNF"], bits=32)
+INF_HANDLE = addrs.GEMDOS_FIRST_FILE_HANDLE     # the first file handle GEMDOS gives: DESKTOP.INF's
+STALE_BYTE = 0xA5                       # a byte as no store of the run's leaves it
+GEMDOS_ERROR = -1                       # GEMDOS's ERROR: a code above -32, which d_errmsg shows no alert for
+
+
+def shell_inf(ram):
+    """THE SHELL'S BUFFER in `ram`, to its NUL: the INF shel_get hands app_start."""
+    return bytes(ram[SHELL_INF:SHELL_INF + INF_BYTES]).split(b"\0")[0]
+
+
+def start_traps(inf):
+    """The GEMDOS calls app_start makes over a shell's buffer holding `inf`, an INF: the map at each drive line, and
+    app_rdicon's two Mallocs."""
+    return MAP_CALLS * sum(line.startswith(DRIVE_LINES) for line in inf.split(b"\r\n")) + RDICON_MALLOCS
+
+
+def start_case(arrived, answers, *layers):
+    row = da.unit_scripted_row(arrived, answers, layers)
+    ran, the_rom_s = da.held(row), da.the_rom_s_run(row)
+    assert not the_rom_s.idles and ran.answer == the_rom_s.d0 & aes.WORD_MASK == da.CONSTANTS["APP_START_DONE"]
+    return ran
+
+
+@pytest.mark.parametrize("chain", START_ARRIVALS, ids=lambda chain: f"app_start — arrival 0 of {chain} — {da.SCRIPTED}")
+def test_app_start_at_its_arrival_is_the_rom_s_through_its_traps_and_yields(chain):
+    """THE CASE: the C through the host's scheduler held to the ROM's scheduled run (the pool, every ANODE, the
+    window entries, the #E fields, the grid, both outlines, the ledger of every call) — and its 1 the run in place's."""
+    arrived = da.arrival(APP_START, chain)
+    answers, back = da.dos_answers_in_place(arrived, start_traps(shell_inf(arrived.boot.ram)))
+    start_case(arrived, answers)
+    assert back.registers["d0"] & aes.WORD_MASK == da.CONSTANTS["APP_START_DONE"]
+
+
+def test_app_start_s_arrivals_take_the_arms_their_inf_reaches():
+    """WHAT THE ARRIVALS' INFs HOLD (read off the shell's buffer at each): the #E view bit set (the text boot) and
+    clear; #W lines with a path (the shows: deskmain's app_save(0) wrote A:'s window) and without; a width past the
+    columns (halved) and within them; a drive C: line dropped (no C: in the map) and a cartridge line (no cartridge);
+    the AES's own lower-case lines, past the switch's table."""
+    infs = {chain: shell_inf(da.arrival(APP_START, chain).boot.ram) for chain in START_ARRIVALS}
+    every = b"".join(infs.values())
+    environment = {line[3:5] for inf in infs.values() for line in inf.split(b"\r\n") if line.startswith(b"#E")}
+    assert {int(field, 16) & da.CONSTANTS["INF_E_VIEW_BIT"] != 0 for field in environment} == {True, False}
+    assert b"A:\\*.*@" in every and b"#W 00 00 04 03 43 10 09 @" in every
+    widths = {int(line[15:17], 16) for line in every.split(b"\r\n") if line.startswith(b"#W")}
+    columns = case.word_in(da.arrival(APP_START, BOOT).boot.ram, aes.AES_GL_NCOLS)
+    assert any(width > columns for width in widths) and any(width <= columns for width in widths)
+    assert b"#M 00 02 00 FF C HARD DISK" in every and b"#C 01 06 00 FF c CARTRIDGE" in every and b"#a000000" in every
+
+
+def _shell_laid(edit):
+    """LAID: the shell's buffer at the arrival, `edit(text) -> text` — machine state, outside the AES's window."""
+    return lambda arrived: {SHELL_INF: edit(shell_inf(arrived.boot.ram)) + b"\0"}
+
+
+NOT_AN_INF = _shell_laid(lambda inf: b" " + inf[1:])          # its first byte a blank: no line begins the buffer
+# THE HOST'S GEMDOS DISPATCHER RESOLVES Fread's and Fwrite's HANDLE before it reaches the scripted handler (the ROM's
+# staged trap answers at the vector, ahead of it): a handle the machine never opened resolves to nothing there and the
+# call is EIHNDL on the host alone. So a script that opens one also LAYS its record in GEMDOS's handle table — named,
+# owned by none: the dispatcher reads its value's sign and nothing else (`src/gemdos/dispatch.c`, resolve_handle).
+HANDLE_NAMED = 1                        # a file system's pointer stand-in: positive, a file's (not a device's)
+
+
+def _with_the_handle_open(layer):
+    return lambda arrived: {**layer(arrived), **gemdos_process.descriptor_poke(INF_HANDLE, HANDLE_NAMED, 0)}
+
+
+def _inf_read_answers(arrived, *opened):
+    """The script for a buffer that is no INF: the map, `opened` (Fopen and what follows it), then the in-place run's
+    two Mallocs."""
+    answers, _back = da.dos_answers_in_place(arrived, start_traps(shell_inf(arrived.boot.ram)))
+    return (0, MAP_A_B, *opened, *answers[-RDICON_MALLOCS:])
+
+
+def _read_up_to_the_drives(arrived):
+    """Fread's answer: the shell's text up to its first drive line (the buffer is not written by the scripted read: what
+    the parse then reads is the laid buffer, NUL-ended there)."""
+    inf = shell_inf(arrived.boot.ram)
+    return _inf_read_answers(arrived, INF_HANDLE, inf.index(b"#M"), 0)
+
+
+def _rom_s_inf_answers(arrived, the_map, *opened):
+    """...and for the ROM's own INF parsed (rom_ram): the map at each of its four drive lines."""
+    answers, _back = da.dos_answers_in_place(arrived, start_traps(shell_inf(arrived.boot.ram)))
+    rom_s_drive_lines = sum(line.startswith(DRIVE_LINES) for line in aes_boot.default_inf().split(b"\r\n"))
+    return (0, the_map, *opened, *(0, the_map) * rom_s_drive_lines, *answers[-RDICON_MALLOCS:])
+
+
+def _every_map(the_map):
+    """The in-place run's script, every Dsetdrv (each drive line's map) answering `the_map`."""
+    def answers(arrived):
+        script, _back = da.dos_answers_in_place(arrived, start_traps(shell_inf(arrived.boot.ram)))
+        return tuple(the_map if nth % MAP_CALLS and nth < len(script) - RDICON_MALLOCS else answer
+                     for nth, answer in enumerate(script))
+    return answers
+
+
+def _replaced(old, new):
+    def edit(inf):
+        assert inf.count(old) == 1 and len(old) == len(new), (old, new)
+        return inf.replace(old, new)
+    return edit
+
+
+START_CLASSES = {
+    "THE SHELL'S BUFFER LAID not an INF; the map A:+B:, DESKTOP.INF opened, read (to its first drive line) and closed — SCRIPTED,"
+    " GEMDOS's handle 6 LAID open": (lambda arrived: _read_up_to_the_drives(arrived), _with_the_handle_open(NOT_AN_INF)),
+    # (the fix pass's) the read FAILING: the INF's NUL stored at the SIGNED answer — a byte BEFORE g_afile (`$fdb6d6`'s
+    # sign-extending `movea.w`) — that byte LAID stale, so the NUL is seen; the parse then reads the text shel_get left
+    # in g_afile — the buffer, laid NUL-ended before its first drive line (the recorder's script holds no more maps)
+    "THE SHELL'S BUFFER LAID not an INF and ended before its drive lines, the byte before g_afile LAID stale; the map "
+    "A:+B:, DESKTOP.INF opened, its read failing (ERROR, -1) and closed — SCRIPTED, GEMDOS's handle 6 LAID open": (
+        lambda arrived: _inf_read_answers(arrived, INF_HANDLE, GEMDOS_ERROR, 0),
+        lambda arrived: {**_with_the_handle_open(_shell_laid(lambda inf: b" " + inf[1:inf.index(DRIVE_LINES[0])]))(arrived),
+                         desk_of(arrived) + da.CONSTANTS["DESK_G_AFILE"] - 1: bytes((STALE_BYTE,))}),
+    "THE SHELL'S BUFFER LAID not an INF; the map A:+B:, DESKTOP.INF refused (EFILNF): the ROM's own INF — SCRIPTED":
+        (lambda arrived: _rom_s_inf_answers(arrived, MAP_A_B, EFILNF_ANSWER), NOT_AN_INF),
+    "THE SHELL'S BUFFER LAID not an INF; the map EMPTY: the ROM's own INF, every drive line dropped — SCRIPTED":
+        (lambda arrived: _rom_s_inf_answers(arrived, MAP_EMPTY), NOT_AN_INF),
+    "drive C: in the map at every drive line: its line kept — SCRIPTED": (_every_map(MAP_A_B_C), None),
+    "the map EMPTY at every drive line: each dropped — SCRIPTED": (_every_map(MAP_EMPTY), None),
+    "a #W line LAID with its column AT the columns (halved) and its width AT them (not), two rows tall, scrolled a column and two rows": (
+        None, _shell_laid(_replaced(b"#W 00 00 04 03 43 10 09 @", b"#W 01 02 28 03 28 02 09 @"))),
+    "the first window entry's path LAID stale (its #W line's path is empty)": (
+        None, lambda arrived: {desk_of(arrived) + da.CONSTANTS["DESK_G_WINDOW_SAVES"] + DESKTOP_CONSTANTS["SAVE_PATH"]: STALE_OUTLINE}),
+    "a monochrome screen LAID (gl_height 400, gl_hchar 16): the tall screen's space, a row's own height": (
+        None, lambda _arrived: {aes.AES_GL_HEIGHT: struct.pack(">H", TALL_HEIGHT), aes.AES_GL_HCHAR: struct.pack(">H", TALL_CELL)}),
+    "the ANODE pool's links LAID stale: every one set again, the last cleared": (
+        None, lambda arrived: {desk_of(arrived) + da.CONSTANTS["DESK_G_ALIST"] + nth * da.CONSTANTS["ANODE_BYTES"]: b"\xa5" * 4
+                               for nth in range(da.CONSTANTS["DESK_ANODES"])}),
+    "the #E line LAID: the sort 3, the second preference alone, the third 15": (
+        None, _shell_laid(_replaced(b"#E 1B 10 ", b"#E 6B F0 "))),
+    "a line LAID of the letter '@' (below the switch's table) and one of 'X' (past it)": (
+        None, _shell_laid(_replaced(b"#a000000\r\n#b000000", b"#@000000\r\n#X000000"))),
+    "both drag outlines LAID stale (every arrival's are zeros): each bfill clears HALF its outline, the rest kept": (
+        None, lambda arrived: {desk_of(arrived) + da.CONSTANTS[outline]: STALE_OUTLINE for outline in ("DESK_G_XYICON", "DESK_G_XYTEXT")}),
+}
+TALL_HEIGHT, TALL_CELL = 400, 16
+# Unit K's header (`include/desk/desktop.h`): a g_cnxsave entry's layout, read as unit A's constants are.
+DESKTOP_CONSTANTS = layouts.parse_constants((da.HEADER.parent / "desktop.h",), known=da.CONSTANTS)
+STALE_OUTLINE = bytes((0xA5,)) * (2 * 2 * da.CONSTANTS["ICON_OUTLINE_POINTS"])   # an outline's point pairs, every byte stale
+
+
+def desk_of(arrived):
+    return case.long_in(arrived.boot.ram, aes.AES_DESK_GLOBALS) & da.BUS
+
+
+@pytest.mark.parametrize("which", START_CLASSES, ids=[f"app_start — {which}, over the boot's arrival {CLASS}" for which in START_CLASSES])
+def test_app_start_over_the_boot_s_arrival__an_argument_class(which):
+    """A LABELLED CLASS over the boot's arrival (the arms no arrival's INF or GEMDOS reaches): the row with the script
+    and the shell's buffer said in its id."""
+    arrived = da.arrival(APP_START, BOOT)
+    answers_of, laid = START_CLASSES[which]
+    answers = answers_of(arrived) if answers_of else da.dos_answers_in_place(arrived, start_traps(shell_inf(arrived.boot.ram)))[0]
+    start_case(arrived, answers, *((laid(arrived),) if laid else ()))
+
+
+def test_app_start_s_answer_is_read_by_deskmain():
+    """Its 1 (app_rdicon's 0 is its 0 — app_rdicon answers 1 at every return: that arm is DEAD in the ROM, unpinned by
+    construction) is read by its one caller, deskmain."""
+    assert db.answer_readers(da.entry_of(APP_START))
+
+
+def test_unit_a_s_wave_2_routines_are_linked_unbound_and_the_rom_s(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, asked of every held core) for unit A's wave-2 routines; their
+    table entries the ROM's; no registry row names one."""
+    assert not db.bound_referrers(blob, da.UNIT_A_WAVE_2)
+    linef_table = _linef_table()
+    ours = {getattr(addrs, name): name for name in da.UNIT_A_WAVE_2}
+    assert {ours[entry.target]: entry.verdict for entry in linef_table.entries() if entry.target in ours} == {
+        name: linef_table.THE_ROM_S for name in da.UNIT_A_WAVE_2}
+    assert set(da.UNIT_A_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
+    cores = {routines.core_symbol(name) for name in da.UNIT_A_WAVE_2}
+    assert not [name for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS)
+                if name.split(",")[0] in cores]
+
+
+# ==== BAND 6 WAVE 2, GROUP G4: app_save ($fdbb34), DESKTOP.INF WRITTEN =============================================
+# app_save SWITCHES (shel_get's and shel_put's bindings) and, TO DISK, TRAPS: app_path_save's seven calls, Fcreate,
+# Fwrite, Fclose, app_path_restore's two — a row with the unit's recording trap SCRIPTED WITH THE ROM'S RUN IN PLACE'S
+# ANSWERS, GEMDOS's record of the created handle LAID OPEN AS THE ROM'S RUN LEFT IT (`aes_gemdosif.opened_record`, off the
+# run in place: the host's dispatcher resolves Fwrite's handle — above).
+# deskmain's own call (before a file is shown, before a launch) writes to the shell's buffer alone: no trap.
+# UNPINNED AT ITS ARRIVALS, by name: the TOP WINDOW'S ARM (win_ontop, then G2's fun_rebld) — the three Save Desktop
+# chains with a window open reach it, but past Fclose they make 13 to 16 more calls (pro_chdir's, and pn_active's
+# Fsetdta / Fsfirst / Fsnext), which neither recording trap serves (`aes_deskapp.DOS_FRAME_BYTES`, 13 entries).
+APP_SAVE = "AES_ROM_APP_SAVE"
+LAUNCHED = "files: the program double-clicked — launched"
+SAVE_TO_DISK_TRAPS = TRAPS[PATH_SAVE] + 3 + TRAPS[PATH_RESTORE]      # ...and Fcreate, Fwrite, Fclose between
+SAVE_ARRIVALS = {SAVED: SAVE_TO_DISK_TRAPS, SHOWN: 0, LONG_SHOWN: 0, LAUNCHED: 0}
+
+
+def save_case(arrived, answers, *layers, at_idle=None):
+    row = da.unit_scripted_row(arrived, answers, layers, answered=False, at_idle=at_idle)
+    ran, the_rom_s = da.held(row), da.the_rom_s_run(row)
+    assert bool(the_rom_s.idles) == bool(at_idle)
+    return ran
+
+
+@pytest.mark.parametrize("chain", SAVE_ARRIVALS, ids=lambda chain: f"app_save — arrival 0 of {chain} — {da.SCRIPTED}")
+def test_app_save_at_its_arrival_is_the_rom_s_through_its_traps_and_yields(chain):
+    """THE CASE: the C through the host's scheduler held to the ROM's scheduled run — the INF in g_afile and in the
+    shell's buffer, its length, the list turned round and back, the ledger of every call."""
+    arrived = da.arrival(APP_SAVE, chain)
+    assert arrived.arguments == ((1,) if SAVE_ARRIVALS[chain] else (0,))
+    opened = {}
+    answers, back = da.dos_answers_in_place(arrived, SAVE_ARRIVALS[chain], opened)
+    assert back is not None and bool(opened) == bool(SAVE_ARRIVALS[chain])
+    save_case(arrived, answers, opened)
+
+
+
+
+def _anode_of_no_letter(arrived):
+    """LAID: the list's first node in use of a type past the cartridge's (no INF letter)."""
+    node = case.long_in(arrived.boot.ram, desk_of(arrived) + da.CONSTANTS["DESK_ANODES_IN_USE"]) & da.BUS
+    return {node + da.CONSTANTS["ANODE_TYPE"]: struct.pack(">H", da.CONSTANTS["AT_ISCART"] + 1)}
+
+
+def _created_refused(arrived):
+    answers, _back = da.dos_answers_in_place(arrived, SAVE_TO_DISK_TRAPS)
+    path_save, restore = TRAPS[PATH_SAVE], TRAPS[PATH_RESTORE]
+    return (*answers[:path_save], GEMDOS_ERROR, *answers[-restore:])
+
+
+EACCDN_ANSWER = aes.signed(addrs.parse(aes.INCLUDE / "gemdos" / "fs.h")["GEMDOS_EACCDN"], bits=32)   # d_errmsg's alert (at or below -32)
+SPOT_X, SPOT_Y_PAST_THE_TOP = 216, 98   # a desktop spot whose grid cells differ by the grid's width / height (and by the
+                                        # icon's width: 170 gave 2 under either divisor) and the top
+GEM_BIT_ALONE = 0x0001                  # one of a GEM program's two flag bits
+
+
+def _created_refused_with_an_alert(arrived):
+    answers, _back = da.dos_answers_in_place(arrived, SAVE_TO_DISK_TRAPS)
+    return (*answers[:TRAPS[PATH_SAVE]], EACCDN_ANSWER, *answers[-TRAPS[PATH_RESTORE]:])
+
+
+def _first_node(arrived, wanted):
+    """The first ANODE in use whose type is `wanted`'s and whose flags hold AF_ISDESK as `on_the_desktop` says."""
+    ram, desk = arrived.boot.ram, desk_of(arrived)
+    node = case.long_in(ram, desk + da.CONSTANTS["DESK_ANODES_IN_USE"]) & da.BUS
+    while not wanted(ram, node):
+        node = case.long_in(ram, node) & da.BUS
+        assert node, "no node in use is the one asked"
+    return node
+
+
+def _settings_laid(arrived):
+    """LAID: the #E fields the chains never set — the text view, the sort by type —, a desktop icon's spot off the grid's
+    cells, a file node with one GEM flag bit alone, the cell 16 rows tall, and g_afile's kept part stale."""
+    desk = desk_of(arrived)
+    flags, kind = da.CONSTANTS["ANODE_FLAGS"], da.CONSTANTS["ANODE_TYPE"]
+    on_desk = _first_node(arrived, lambda ram, node: case.word_in(ram, node + flags) & da.CONSTANTS["ANODE_ON_THE_DESKTOP"])
+    a_file = _first_node(arrived, lambda ram, node: case.word_in(ram, node + kind) == da.CONSTANTS["AT_ISFILE"])
+    return {desk + da.CONSTANTS["DESK_CNX_VIEW"]: struct.pack(">H", 1),
+            desk + da.CONSTANTS["DESK_CNX_SORT"]: struct.pack(">H", da.CONSTANTS["SORT_BY_TYPE"]),
+            on_desk + da.CONSTANTS["ANODE_XSPOT"]: struct.pack(">hh", SPOT_X, SPOT_Y_PAST_THE_TOP),
+            a_file + flags: struct.pack(">H", GEM_BIT_ALONE),
+            aes.AES_GL_HCHAR: struct.pack(">H", TALL_CELL),
+            desk + da.CONSTANTS["DESK_G_AFILE"]: STALE_OUTLINE * 4}
+
+
+def _text_view_sort_0(arrived):
+    desk = desk_of(arrived)
+    return {desk + da.CONSTANTS["DESK_CNX_VIEW"]: struct.pack(">H", db.DESK_GLOBALS["V_TEXT"]),
+            desk + da.CONSTANTS["DESK_CNX_SORT"]: struct.pack(">H", 0)}
+
+
+SAVE_CLASSES = {
+    "DESKTOP.INF's Fcreate refused (EACCDN): d_errmsg's alert, answered by Return — SCRIPTED": (
+        SAVED, _created_refused_with_an_alert, (), {0: aes_event.key(aes_event.RETURN_KEY)}),
+    "the view, the sort, a spot, a file's flags, the cell and the kept part LAID": (SHOWN, None, (_settings_laid,), None),
+    "DESKTOP.INF's Fcreate refused (-1, no alert) — the path given back, nothing written — SCRIPTED": (SAVED, _created_refused, (), None),
+    "a node in use LAID of a type past the cartridge's: its line written with no letter": (SHOWN, None, (_anode_of_no_letter,), None),
+    # (the fix pass's) the text view's own Save Desktop ("text view: Options > Save Desktop, Return") reaches app_save
+    # with the view TEXT and the sort 0 — and then the top window's arm, unpinned: so its #E fields LAID
+    "the view TEXT and the sort 0 LAID (the text view's Save Desktop's own: its #E view bit from the view alone)": (
+        SHOWN, None, (_text_view_sort_0,), None),
+}
+
+
+@pytest.mark.parametrize("which", SAVE_CLASSES, ids=[f"app_save — {which} {CLASS}" for which in SAVE_CLASSES])
+def test_app_save__an_argument_class(which):
+    """A LABELLED CLASS: the arms no arrival's run reaches."""
+    chain, answers_of, layers, at_idle = SAVE_CLASSES[which]
+    arrived = da.arrival(APP_SAVE, chain)
+    answers = answers_of(arrived) if answers_of else ()
+    save_case(arrived, answers, *(layer(arrived) for layer in layers), at_idle=at_idle)
+
+
+def test_no_caller_reads_what_app_save_leaves_in_d0():
+    """app_save answers nothing in C: the ROM's D0 there (shel_put's, the path's, d_errmsg's 1, fun_rebld's) is read by
+    neither of its callers — the Options menu's Save Desktop and deskmain's own — a COUNTED divergence of its cases."""
+    assert db.calls_of(da.entry_of(APP_SAVE)) and not db.answer_readers(da.entry_of(APP_SAVE))
+    assert len(SAVE_ARRIVALS) + len(SAVE_CLASSES) == 9

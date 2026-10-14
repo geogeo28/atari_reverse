@@ -206,3 +206,112 @@ def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_one(blob):
 def test_the_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
     """...the generator's verdict for each of unit L's is THE ROM'S, and no registered row is one of theirs."""
     assert w.verdicts_not_the_rom_s(v.UNIT_L) == (set(), [])
+
+
+# ==== BAND 6 WAVE 2 (group G3): THE UNIT'S LAST FIVE — the scrolls and the windows' rebuilds ===========================
+# Held as wave 1b's seventeen are, over their own case list: wave 1b's counts above stay theirs. The scroll chains are
+# G3's (`aes_desk.py`'s wave-2 block): the arrows themselves, the bar's pages, the slider dragged, the window sized.
+RIGHT_PAGE, DOWN_SLIDER = "files: the window's right arrow clicked", "files: the window's down arrow clicked"
+LEFT_LINE = "files: the right arrow clicked, then the left arrow clicked"
+LEFT_PAGE = "files: the right arrow clicked, then the horizontal bar left of its slider (a page)"
+RIGHT_LINE = "files: the window's right arrow gadget itself clicked (a column)"
+DOWN_LINE, UP_LINE = "files: the window's down arrow gadget itself clicked (a row)", "files: the window's up arrow gadget clicked (a row)"
+SLID_RIGHT = "files: the window's horizontal slider dragged right"
+NARROW_PAGE = "files: the window sized smaller, then its right arrow clicked"
+VIEW_TEXT, SORT_DATE = "files: View > Show as Text", "files: View > Sort by Date"
+FIFTH_DOWN = "files: a fifth entry, then the down arrow gadget clicked (a row)"     # (the fix pass's: a second row)
+WA_UPPAGE, WA_DNPAGE = 0, 1             # win_arrow's two words no chain clicks (`desk/deskview.h`)
+A_LOW_PLACE = 300                       # win_slide's place, in thousandths: under the half of the one column hidden
+
+
+def _arrow(word):
+    return lambda a: (a.arguments[0], word)
+
+
+CASES_WAVE_2 = (
+    Case("AES_ROM_WIN_BLT", DOWN_SLIDER, arm=lambda a: a[1:] == (1, 0)),           # (no step: done)
+    Case("AES_ROM_WIN_BLT", RIGHT_PAGE, arm=lambda a: a[1:] == (0, 3)),            # (a column right: blitted left)
+    Case("AES_ROM_WIN_BLT", LEFT_LINE, arm=lambda a: a[1:] == (0, 0)),             # (a column left: blitted right)
+    Case("AES_ROM_WIN_BLT", LEFT_PAGE, arm=lambda a: a[1] == 0 and aes.signed(a[2]) < 0),   # (a first column below 0)
+    Case("AES_ROM_WIN_BLT", NARROW_PAGE, arm=lambda a: a[1:] == (0, 2)),           # (a step of what is shown: redrawn whole)
+    Case("AES_ROM_WIN_SLIDE", DOWN_SLIDER), Case("AES_ROM_WIN_SLIDE", SLID_RIGHT, arm=lambda a: a[2] == 0),
+    Case("AES_ROM_WIN_SLIDE", SLID_RIGHT, arguments=lambda a: (a.arguments[0], A_LOW_PLACE, a.arguments[2]),
+         why="a place of 300 thousandths (the drag's own, 690, is past the half its one hidden column rounds to: no "
+             "other place told apart): the first column 0, not 1"),
+    Case("AES_ROM_WIN_ARROW", LEFT_PAGE), Case("AES_ROM_WIN_ARROW", RIGHT_PAGE), Case("AES_ROM_WIN_ARROW", LEFT_LINE),
+    Case("AES_ROM_WIN_ARROW", RIGHT_LINE), Case("AES_ROM_WIN_ARROW", DOWN_LINE), Case("AES_ROM_WIN_ARROW", UP_LINE),
+    # (the fix pass's) a fifth entry in the files window — a second row — and its down arrow: the vertical arms
+    # (win_arrow's rows, win_blt's vertical no-step return: both rows shown)
+    Case("AES_ROM_WIN_ARROW", FIFTH_DOWN), Case("AES_ROM_WIN_BLT", FIFTH_DOWN),
+    Case("AES_ROM_WIN_ARROW", FIFTH_DOWN, arguments=_arrow(WA_UPPAGE),
+         why="a page up over the window of two rows: both shown, its vertical slider fills its bar — no page to click"),
+    Case("AES_ROM_WIN_ARROW", FIFTH_DOWN, arguments=_arrow(WA_DNPAGE),
+         why="a page down over the window of two rows: both shown, its vertical slider fills its bar — no page to click"),
+    Case("AES_ROM_WIN_SRTALL", AS_TEXT), Case("AES_ROM_WIN_SRTALL", SORT_DATE), Case("AES_ROM_WIN_SRTALL", "files: View > Sort by Type"),
+    Case("AES_ROM_WIN_BDALL", AS_TEXT), Case("AES_ROM_WIN_BDALL", SORT_DATE), Case("AES_ROM_WIN_BDALL", VIEW_TEXT),
+    Case("AES_ROM_WIN_BDALL", "two windows: View > Show as Text"),          # (the fix pass's: a second WNODE rebuilt)
+)
+# EVERY CASE IS A ROW (`aes_deskwin.row`), even where its run reaches no binding (a step of none: win_blt done
+# before its wind_get; win_srtall's sort alone): the kit's plain differential would also make its ATTRIBUTION PASS —
+# every byte the ROM stored laid inverted — and win_blt stores the scroll word it read (`add.w d6,14(a5)`, d6 0)
+# and win_srtall each list head it sorted, so that pass runs both over a machine no run makes (a scroll the step is
+# not 0 from; a list head off the bus) — the C to the dispatcher, the ROM's sort into the ROM window.
+UNPINNED_WAVE_2 = {
+    "AES_ROM_WIN_BLT": "a VERTICAL blit (rows kept, the uncovered strip below or above): the fix pass's fifth entry gives a "
+                       "second row, but both rows are shown — a row-blit needs more rows than shown (nine entries at four "
+                       "columns, or a shorter window), not tried; and a work area not wholly below the menu bar (rc_equal "
+                       "false: a window pushed off the screen's edge)",
+    "AES_ROM_WIN_ARROW": "an arrow word past WA_RTLINE: the ROM scrolls to its caller's D6, a value the C does not have — "
+                         "refused by name (the AES's window manager sends 0..7)",
+}
+BY_LABEL_WAVE_2 = {w.label(each): each for each in CASES_WAVE_2}
+assert len(BY_LABEL_WAVE_2) == len(CASES_WAVE_2), "two cases of one name"
+A_CLASS_WAVE_2 = [name for name, each in BY_LABEL_WAVE_2.items() if each.why]
+AT_ITS_OWN_ARRIVAL_WAVE_2 = [name for name, each in BY_LABEL_WAVE_2.items() if not each.why]
+
+
+@pytest.mark.parametrize("name", BY_LABEL_WAVE_2)
+def test_a_wave_2_routine_from_its_arrival_is_the_rom_s(name):
+    """THE CASE, as wave 1b's: the C core held to the ROM's routine from the same entry; no case idles."""
+    each = BY_LABEL_WAVE_2[name]
+    _answer, _rom_d0, idles = w.ran(each, True)
+    assert not idles, f"{name}: the ROM's run idles {idles} time(s)"
+
+
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 22, 3
+
+
+def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
+    """The five, each with a case at its own arrival; win_arrow's two pages and win_slide's low place the classes."""
+    assert {BY_LABEL_WAVE_2[name].name for name in AT_ITS_OWN_ARRIVAL_WAVE_2} == set(v.UNIT_L_WAVE_2)
+    assert {BY_LABEL_WAVE_2[name].name for name in A_CLASS_WAVE_2} == {"AES_ROM_WIN_ARROW", "AES_ROM_WIN_SLIDE"}
+    assert (len(AT_ITS_OWN_ARRIVAL_WAVE_2), len(A_CLASS_WAVE_2)) == (ARRIVALS_WAVE_2, CLASSES_WAVE_2)
+    assert set(UNPINNED_WAVE_2) <= set(v.UNIT_L_WAVE_2)
+
+
+def test_win_arrow_s_arrivals_and_classes_take_every_arrow_word():
+    """Every one of the eight WA_* words is a case: six at arrivals of their own, the two pages as classes."""
+    words = {w.arrival_of(each).arguments[1] for each in CASES_WAVE_2 if each.name == "AES_ROM_WIN_ARROW"}
+    assert words == set(range(8))
+
+
+def test_the_wave_2_routines_are_gem_s_void_ones_and_no_rom_caller_reads_what_they_leave():
+    """THE NAMED DIVERGENCE: the five are `void` in C (win_blt's no-step arm leaves 0 — `clr.w d0` — every other the
+    last callee's word) — and no instruction of the ROM's reads what they leave."""
+    assert all(restype is None for restype, _frame in v.SIGNATURES_WAVE_2.values())
+    for name in v.UNIT_L_WAVE_2:
+        assert db.calls_of(getattr(addrs, name)), f"{name}: nothing calls it — no reader to find"
+        assert not db.answer_readers(getattr(addrs, name)), f"{name}: a ROM caller reads what it leaves in D0"
+
+
+def test_the_wave_2_answers_that_are_not_the_rom_s_are_counted_by_name():
+    assert len(BY_LABEL_WAVE_2) == 25
+
+
+def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_one(blob):
+    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`), asked of unit L's wave-2 five."""
+    assert not db.bound_referrers(blob, v.UNIT_L_WAVE_2)
+
+
+def test_the_wave_2_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
+    assert w.verdicts_not_the_rom_s(v.UNIT_L_WAVE_2) == (set(), [])

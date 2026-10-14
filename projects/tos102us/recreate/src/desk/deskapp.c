@@ -7,9 +7,12 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "aes/aes.h"
+#include "aes/cart.h"
 #include "aes/deskleaf.h"
 #include "aes/gemdosif.h"
+#include "aes/geminit.h"
 #include "aes/gemgraf.h"
+#include "aes/gsxif.h"
 #include "aes/infscan.h"
 #include "aes/objects.h"
 #include "aes/resource.h"
@@ -17,7 +20,11 @@
 #include "aes/trp14.h"
 #include "desk/deskapp.h"
 #include "desk/deskbind.h"
+#include "desk/deskdir.h"
+#include "desk/deskfun.h"
 #include "desk/deskleaf.h"
+#include "desk/desktop.h"
+#include "desk/deskview.h"
 #include "desk/deskwin.h"
 
 _Static_assert(APP_TRAN_BITBLK_BYTES == HOST_SLOT_AES_APP_TRAN_BITBLK_BYTES, "app_tran's answer word and its host slot");
@@ -369,4 +376,392 @@ int16_t aes_app_blddesk(uint8_t *image)
         icon_object(image, desk, anode);
     }
     return aes_desk_appl_bvset(image, (int16_t)disks, 0);
+}
+
+/* ---- band 6 wave 2, group G4: DESKTOP.INF read and parsed ---------------------------------------------------------- */
+_Static_assert(APP_START_ENVIRONMENT_BYTES == HOST_SLOT_AES_APP_START_ENVIRONMENT_BYTES, "app_start's #E word and its host slot");
+
+static inline uint32_t pool_anode(uint32_t desk, int16_t nth)
+{
+    return desk + DESK_G_ALIST + (uint32_t)(nth * ANODE_BYTES);
+}
+
+/* The INF into g_afile: the shell's buffer as it stands where it begins a line (the INF this desk wrote last), else —
+ * a drive in the map — DESKTOP.INF read from the current drive, else the ROM's own; that one NUL-ended at its length
+ * (a sign-extended word). */
+static void inf_read(uint8_t *image, uint32_t desk)
+{
+    uint32_t afile = desk + DESK_G_AFILE;
+    int16_t handle;
+
+    (void)aes_desk_shel_get(image, afile, INF_BUFFER_BYTES);
+    if (bus_byte(image, afile) == INF_LINE_START)
+        return;
+    if ((uint16_t)aes_isdrive(image) && (handle = aes_app_getfh(image, 1, AES_INF_NAME_READ, 0)) != 0) {
+        set_bus_word(image, desk + DESK_G_AFSIZE, (uint16_t)aes_dos_read(image, handle, INF_BUFFER_BYTES, afile));
+        (void)aes_dos_close(image, AES_APP_START_CLOSE_RETURN, handle);
+    } else {
+        set_bus_word(image, desk + DESK_G_AFSIZE, (uint16_t)aes_rom_ram(image, ROM_RSC_DESKTOP_INF, afile, 0));
+    }
+    set_bus_byte(image, afile + (uint32_t)(int32_t)(int16_t)bus_word(image, desk + DESK_G_AFSIZE), STRING_NUL);
+}
+
+/* An icon's line: a node taken (app_alloc, to the list's head) and the line parsed into it. */
+static uint32_t icon_line(uint8_t *image, uint32_t cursor)
+{
+    return aes_app_parse(image, cursor, aes_app_alloc(image, 1));
+}
+
+/* A drive's or the trash's line, kept where the map has a drive — drive C:'s only where the map has C:. */
+static int drive_line_kept(uint8_t *image, uint32_t cursor)
+{
+    uint16_t drives = (uint16_t)aes_isdrive(image);
+
+    if (!drives)
+        return 0;
+    return bus_byte(image, cursor + INF_DRIVE_LETTER_AT) != INF_DRIVE_C || (drives & DRIVE_C_BIT);
+}
+
+/* The #E line: the view, the sort and the preferences kept for cnx_get — the two fields scanned into the frame's word
+ * (the ROM's then stores (field & 6) + 1 there, GEM's gl_restype, read by none: not reproduced) — and the resolution
+ * the AES runs in. The cursor past the second field. */
+static uint32_t environment_line(uint8_t *image, uint32_t desk, uint32_t cursor)
+{
+    uint16_t word_local[FRAME_LOCAL_WORDS(APP_START_ENVIRONMENT_BYTES)];
+    uint32_t field = host_slot_claim(AES_APP_START_ENVIRONMENT, word_local);
+    uint16_t bits;
+
+    cursor = aes_scan_2(image, cursor + INF_TYPE_FIELD_BYTES, field);
+    bits = bus_word(image, field);
+    set_bus_word(image, desk + DESK_CNX_VIEW, (bits & INF_E_VIEW_BIT) != 0);
+    set_bus_word(image, desk + DESK_CNX_SORT, (uint16_t)((bits & INF_E_SORT_MASK) >> INF_E_SORT_SHIFT));
+    set_bus_word(image, desk + DESK_CNX_PREFERENCES + 2, (bits & INF_E_PREFERENCE_1_BIT) != 0);
+    set_bus_word(image, desk + DESK_CNX_PREFERENCES, (bits & INF_E_PREFERENCE_0_BIT) != 0);
+    cursor = aes_scan_2(image, cursor, field);
+    set_bus_word(image, desk + DESK_CNX_PREFERENCES + 4,
+                 (uint16_t)((bus_word(image, field) & INF_E_PREFERENCE_2_MASK) >> INF_E_PREFERENCE_2_SHIFT));
+    set_bus_word(image, desk + DESK_CNX_RESOLUTION, (uint16_t)(be16(image + AES_GL_RESTYPE) - 1));
+    host_slot_release(AES_APP_START_ENVIRONMENT);
+    return cursor;
+}
+
+/* One word of a #W line's rectangle scanned and made pixels: halved where it is `past` the screen's columns, times
+ * the cell's `pixels`, at least `least` (none: 0 and below). */
+static uint32_t window_measure(uint8_t *image, uint32_t cursor, uint32_t at, int across, int past_only, int16_t pixels,
+                               int16_t least)
+{
+    int16_t value;
+
+    cursor = aes_scan_2(image, cursor, at);
+    value = (int16_t)bus_word(image, at);
+    if (across && (past_only ? value > (int16_t)be16(image + AES_GL_NCOLS) : value >= (int16_t)be16(image + AES_GL_NCOLS)))
+        value = (int16_t)(value / 2);
+    value = (int16_t)(value * pixels);
+    if (least > value)
+        value = least;
+    set_bus_word(image, at, (uint16_t)value);
+    return cursor;
+}
+
+/* A #W line into the next of g_cnxsave's entries (counted from 0 over the parse, with no bound): its scroll, its
+ * rectangle from cells to pixels, its icon, and its path to the `@` — the cursor left AT the `@`. */
+static uint32_t window_line(uint8_t *image, uint32_t desk, uint32_t cursor, int16_t *saved)
+{
+    uint32_t entry = desk + DESK_G_WINDOW_SAVES + (uint32_t)m68k_muls_w((uint16_t)(*saved)++, WINDOW_SAVE_BYTES);
+    int16_t wchar = (int16_t)be16(image + AES_GL_WCHAR), hchar = (int16_t)be16(image + AES_GL_HCHAR);
+    int16_t no_least = INT16_MIN;
+    uint32_t path;
+
+    cursor = aes_scan_2(image, cursor + INF_TYPE_FIELD_BYTES, entry + SAVE_CVCOL);
+    cursor = aes_scan_2(image, cursor, entry + SAVE_CVROW);
+    cursor = window_measure(image, cursor, entry + SAVE_X, 1, 0, wchar, no_least);
+    cursor = window_measure(image, cursor, entry + SAVE_Y, 0, 0, hchar, no_least);
+    cursor = window_measure(image, cursor, entry + SAVE_W, 1, 1, wchar,
+                            (int16_t)(be16(image + AES_GL_WBOX) * WINDOW_LEAST_BOXES));
+    cursor = window_measure(image, cursor, entry + SAVE_H, 0, 0, hchar,
+                            (int16_t)(be16(image + AES_GL_HBOX) * WINDOW_LEAST_BOXES));
+    cursor = aes_scan_2(image, cursor, entry + SAVE_OBID);
+    for (path = entry + SAVE_PATH; bus_byte(image, cursor) != INF_TEXT_END; )
+        set_bus_byte(image, path++, bus_byte(image, cursor++));
+    set_bus_byte(image, path, STRING_NUL);
+    return cursor;
+}
+
+/* One line from its type letter (a signed byte; the ROM's switch over 'C'..'W'): the cursor where the parse goes on —
+ * at the letter itself where the line is not kept (the next `#` is looked for from there). */
+static uint32_t inf_line(uint8_t *image, uint32_t desk, uint32_t cursor, int16_t *saved)
+{
+    switch ((int8_t)bus_byte(image, cursor)) {
+    case INF_TYPE_CARTRIDGE:
+        return aes_cart_init(image) ? icon_line(image, cursor) : cursor;
+    case INF_TYPE_DISK:
+    case INF_TYPE_TRASH:
+        return drive_line_kept(image, cursor) ? icon_line(image, cursor) : cursor;
+    case INF_TYPE_FOLDER:
+    case INF_TYPE_TOS_APP:
+    case INF_TYPE_GEM_APP:
+    case INF_TYPE_TTP_APP:
+        return icon_line(image, cursor);
+    case INF_TYPE_ENVIRONMENT:
+        return environment_line(image, desk, cursor);
+    case INF_TYPE_WINDOW:
+        return window_line(image, desk, cursor, saved);
+    default:
+        return cursor;
+    }
+}
+
+/* `total` shared over its whole multiples of `cell`: the cell grown by the leftover over their count (DIVS twice). */
+static int16_t grid_pitch(int16_t total, int16_t cell)
+{
+    int16_t count = quotient_word(m68k_divs_w((uint32_t)(int32_t)total, (uint16_t)cell));
+    int16_t leftover = remainder_word(m68k_divs_w((uint32_t)(int32_t)total, (uint16_t)cell));
+
+    return (int16_t)(cell + quotient_word(m68k_divs_w((uint32_t)(int32_t)leftover, (uint16_t)count)));
+}
+
+/* A point pair's word of an outline: point `nth`'s x (`y` 0) or y. */
+static inline void set_outline_word(uint8_t *image, uint32_t outline, int nth, int y, int16_t value)
+{
+    set_bus_word(image, outline + (uint32_t)(2 * nth + y) * M68K_WORD_BYTES, (uint16_t)value);
+}
+
+/* The icons' grid from the first ICONBLK, every node's spot snapped to it, and the drag outlines of both views — the
+ * icon's (its image's frame over its label's) and a text line's. */
+static void desktop_grid(uint8_t *image, uint32_t desk)
+{
+    uint32_t iconblk = desk + DESK_G_IBLIST, xyicon = desk + DESK_G_XYICON, xytext = desk + DESK_G_XYTEXT, anode;
+    int16_t wicon, hicon, top, small = (int16_t)be16(image + AES_GL_WSCHAR);
+    int16_t width = (int16_t)be16(image + AES_GL_WIDTH), height = (int16_t)be16(image + AES_GL_HEIGHT);
+
+    wicon = (int16_t)(2 * iconblk_word(image, iconblk, IB_XTEXT) + iconblk_word(image, iconblk, ICONBLK_WTEXT));
+    hicon = (int16_t)(iconblk_word(image, iconblk, ICONBLK_HEIGHT) + iconblk_word(image, iconblk, ICONBLK_HTEXT));
+    set_bus_word(image, desk + DESK_G_WICON, (uint16_t)wicon);
+    set_bus_word(image, desk + DESK_G_HICON, (uint16_t)hicon);
+    set_bus_word(image, desk + DESK_GRID_W,
+                 (uint16_t)grid_pitch(width, (int16_t)((height > TALL_SCREEN_LINES ? ICON_SPACE_TALL : 0) + wicon)));
+    set_bus_word(image, desk + DESK_GRID_H, (uint16_t)grid_pitch((int16_t)(height - (int16_t)be16(image + AES_GL_HBOX)),
+                                                                 (int16_t)(hicon + ICON_SPACE_UNDER)));
+    for (anode = bus_long(image, desk + DESK_ANODES_IN_USE); anode != ANODE_NONE; anode = bus_long(image, anode + ANODE_NEXT))
+        aes_snap_disk(image, (int16_t)((int16_t)bus_word(image, anode + ANODE_XSPOT) * (int16_t)bus_word(image, desk + DESK_GRID_W)),
+                      (int16_t)((int16_t)bus_word(image, anode + ANODE_YSPOT) * (int16_t)bus_word(image, desk + DESK_GRID_H)
+                                + (int16_t)bus_word(image, desk + DESK_AREA_Y)),
+                      anode + ANODE_XSPOT, anode + ANODE_YSPOT);
+    set_bus_word(image, desk + DESK_G_NMICON, ICON_OUTLINE_POINTS);
+    set_bus_word(image, desk + DESK_G_NMTEXT, TEXT_OUTLINE_POINTS);
+    aes_bfill(image, ICON_OUTLINE_CLEARED, 0, xyicon);
+    top = (int16_t)(hicon - small - ICON_OUTLINE_LABEL_GAP);
+    set_outline_word(image, xyicon, 0, 0, (int16_t)(small << 2));
+    set_outline_word(image, xyicon, 1, 0, (int16_t)(small << 2));
+    set_outline_word(image, xyicon, 1, 1, top);
+    set_outline_word(image, xyicon, 2, 1, top);
+    set_outline_word(image, xyicon, 3, 1, hicon);
+    set_outline_word(image, xyicon, 4, 0, wicon);
+    set_outline_word(image, xyicon, 4, 1, hicon);
+    set_outline_word(image, xyicon, 5, 0, wicon);
+    set_outline_word(image, xyicon, 5, 1, top);
+    set_outline_word(image, xyicon, 6, 0, (int16_t)(small << 3));
+    set_outline_word(image, xyicon, 6, 1, top);
+    set_outline_word(image, xyicon, 7, 0, (int16_t)(small << 3));
+    set_outline_word(image, xyicon, 8, 0, (int16_t)(small << 2));
+    aes_bfill(image, TEXT_OUTLINE_CLEARED, 0, xytext);
+    set_outline_word(image, xytext, 1, 0, (int16_t)((int16_t)be16(image + AES_GL_WCHAR) * TEXT_OUTLINE_CELLS));
+    set_outline_word(image, xytext, 2, 0, (int16_t)((int16_t)be16(image + AES_GL_WCHAR) * TEXT_OUTLINE_CELLS));
+    set_outline_word(image, xytext, 2, 1, (int16_t)be16(image + AES_GL_HCHAR));
+    set_outline_word(image, xytext, 3, 1, (int16_t)be16(image + AES_GL_HCHAR));
+}
+
+/* $fdb5fc — app_start: THE DESK'S INF. The text buffer begun, the ANODE pool linked free and none in use; the INF read
+ * (`inf_read`) and parsed line by line from each `#` (`inf_line`); the icons read from the ROM (app_rdicon — its 0 is
+ * this one's); the grid and the outlines (`desktop_grid`). APP_START_DONE. */
+int16_t aes_app_start(uint8_t *image)
+{
+    uint32_t desk = desk_globals(image), cursor;
+    int16_t nth, saved = 0;
+
+    set_bus_long(image, desk + DESK_STRING_CURSOR, desk + DESK_G_BUFFER);
+    for (nth = DESK_ANODES - 2; nth >= 0; nth--)
+        set_bus_long(image, pool_anode(desk, nth) + ANODE_NEXT, pool_anode(desk, (int16_t)(nth + 1)));
+    set_bus_long(image, desk + DESK_ANODES_IN_USE, ANODE_NONE);
+    set_bus_long(image, desk + DESK_ANODES_FREE, desk + DESK_G_ALIST);
+    set_bus_long(image, pool_anode(desk, DESK_ANODES - 1) + ANODE_NEXT, ANODE_NONE);
+    inf_read(image, desk);
+    for (cursor = desk + DESK_G_AFILE; bus_byte(image, cursor); )
+        cursor = bus_byte(image, cursor) == INF_LINE_START ? inf_line(image, desk, cursor + 1, &saved) : cursor + 1;
+    if (!aes_app_rdicon(image))
+        return APP_START_NO_ICONS;
+    desktop_grid(image, desk);
+    return APP_START_DONE;
+}
+
+/* ---- band 6 wave 2, group G4: DESKTOP.INF written --------------------------------------------------------------------- */
+static inline uint32_t put_byte(uint8_t *image, uint32_t cursor, uint8_t byte)
+{
+    set_bus_byte(image, cursor, byte);
+    return cursor + 1;
+}
+
+static inline uint32_t line_ended(uint8_t *image, uint32_t cursor)
+{
+    return put_byte(image, put_byte(image, cursor, INF_CR), INF_LF);
+}
+
+/* `#`, the line's letter and its blank. */
+static uint32_t line_begun(uint8_t *image, uint32_t cursor, uint8_t letter)
+{
+    cursor = put_byte(image, cursor, INF_LINE_START);
+    cursor = put_byte(image, cursor, letter);
+    return put_byte(image, cursor, INF_FIELD_SEPARATOR);
+}
+
+/* A word of the desk's globals; a word divided (DIVS: the quotient). */
+static inline int16_t desk_word_at(const uint8_t *image, uint32_t at)
+{
+    return (int16_t)bus_word(image, at);
+}
+
+static inline int16_t over(int16_t value, int16_t by)
+{
+    return quotient_word(m68k_divs_w((uint32_t)(int32_t)value, (uint16_t)by));
+}
+
+/* The #E line: the view, the sort and two preferences in the first field; the third preference over the resolution in
+ * the second. */
+static uint32_t environment_written(uint8_t *image, uint32_t desk, uint32_t cursor)
+{
+    uint16_t bits = 0;
+
+    cursor = line_begun(image, cursor, INF_TYPE_ENVIRONMENT);
+    bits |= desk_word_at(image, desk + DESK_CNX_VIEW) ? INF_E_VIEW_BIT : 0;
+    bits |= (uint16_t)(bus_word(image, desk + DESK_CNX_SORT) << INF_E_SORT_SHIFT) & INF_E_SORT_MASK;
+    bits |= desk_word_at(image, desk + DESK_CNX_PREFERENCES + 2) ? INF_E_PREFERENCE_1_BIT : 0;
+    bits |= desk_word_at(image, desk + DESK_CNX_PREFERENCES) ? INF_E_PREFERENCE_0_BIT : 0;
+    cursor = aes_save_2(image, cursor, (int16_t)bits);
+    bits = (uint16_t)(bus_word(image, desk + DESK_CNX_RESOLUTION)
+                      | (uint16_t)(bus_word(image, desk + DESK_CNX_PREFERENCES + 4) << INF_E_PREFERENCE_2_SHIFT));
+    cursor = aes_save_2(image, cursor, (int16_t)bits);
+    return line_ended(image, cursor);
+}
+
+/* The four #W lines: each g_cnxsave entry's scroll, its rectangle in cells, its icon and its path to its NUL. */
+static uint32_t windows_written(uint8_t *image, uint32_t desk, uint32_t cursor)
+{
+    int16_t wchar = (int16_t)be16(image + AES_GL_WCHAR), hchar = (int16_t)be16(image + AES_GL_HCHAR);
+
+    for (int16_t saved = 0; saved < DESK_WINDOWS; saved++) {
+        uint32_t entry = desk + DESK_G_WINDOW_SAVES + (uint32_t)m68k_muls_w((uint16_t)saved, WINDOW_SAVE_BYTES), path;
+
+        cursor = line_begun(image, cursor, INF_TYPE_WINDOW);
+        cursor = aes_save_2(image, cursor, desk_word_at(image, entry + SAVE_CVCOL));
+        cursor = aes_save_2(image, cursor, desk_word_at(image, entry + SAVE_CVROW));
+        cursor = aes_save_2(image, cursor, over(desk_word_at(image, entry + SAVE_X), wchar));
+        cursor = aes_save_2(image, cursor, over(desk_word_at(image, entry + SAVE_Y), hchar));
+        cursor = aes_save_2(image, cursor, over(desk_word_at(image, entry + SAVE_W), wchar));
+        cursor = aes_save_2(image, cursor, over(desk_word_at(image, entry + SAVE_H), hchar));
+        cursor = aes_save_2(image, cursor, desk_word_at(image, entry + SAVE_OBID));
+        for (path = entry + SAVE_PATH; bus_byte(image, path) != STRING_NUL; path++)
+            cursor = put_byte(image, cursor, bus_byte(image, path));
+        cursor = put_byte(image, cursor, INF_TEXT_END);
+        cursor = line_ended(image, cursor);
+    }
+    return cursor;
+}
+
+/* An ANODE's type letter, as app_parse reads it back: a file's by its flags — a GEM program's both its low two bits,
+ * else a TTP's its bit 3, else a TOS program's. A type past the cartridge's writes NO letter. */
+static uint32_t type_letter_written(uint8_t *image, uint32_t cursor, uint32_t anode)
+{
+    uint8_t flags = bus_byte(image, anode + ANODE_FLAGS + OB_WORD_LOW_BYTE);
+
+    switch (bus_word(image, anode + ANODE_TYPE)) {
+    case AT_ISFILE:
+        if ((flags & ANODE_GEM_APP_FLAGS) == ANODE_GEM_APP_FLAGS)
+            return put_byte(image, cursor, INF_TYPE_GEM_APP);
+        return put_byte(image, cursor, flags & ANODE_TTP_APP_FLAGS ? INF_TYPE_TTP_APP : INF_TYPE_TOS_APP);
+    case AT_ISFOLD:
+        return put_byte(image, cursor, INF_TYPE_FOLDER);
+    case AT_ISDISK:
+        return put_byte(image, cursor, INF_TYPE_DISK);
+    case AT_ISTRSH:
+        return put_byte(image, cursor, INF_TYPE_TRASH);
+    case AT_ISCART:
+        return put_byte(image, cursor, INF_TYPE_CARTRIDGE);
+    default:
+        return cursor;
+    }
+}
+
+/* One ANODE's line: its letter; on the desktop its spot on the grid (down, from the desktop's top); its two icons; its
+ * drive letter (a blank for none); its two texts. */
+static uint32_t icon_written(uint8_t *image, uint32_t desk, uint32_t cursor, uint32_t anode)
+{
+    uint16_t letter = bus_word(image, anode + ANODE_LETTER);
+
+    cursor = put_byte(image, cursor, INF_LINE_START);
+    cursor = type_letter_written(image, cursor, anode);
+    cursor = put_byte(image, cursor, INF_FIELD_SEPARATOR);
+    if (bus_word(image, anode + ANODE_FLAGS) & ANODE_ON_THE_DESKTOP) {
+        cursor = aes_save_2(image, cursor, over(desk_word_at(image, anode + ANODE_XSPOT), desk_word_at(image, desk + DESK_GRID_W)));
+        cursor = aes_save_2(image, cursor, over((int16_t)(desk_word_at(image, anode + ANODE_YSPOT) - desk_word_at(image, desk + DESK_AREA_Y)),
+                                                desk_word_at(image, desk + DESK_GRID_H)));
+    }
+    cursor = aes_save_2(image, cursor, desk_word_at(image, anode + ANODE_AICON));
+    cursor = aes_save_2(image, cursor, desk_word_at(image, anode + ANODE_DICON));
+    cursor = put_byte(image, cursor, letter ? (uint8_t)letter : INF_FIELD_SEPARATOR);
+    cursor = put_byte(image, cursor, INF_FIELD_SEPARATOR);
+    cursor = aes_save_str(image, cursor, bus_long(image, anode + ANODE_PAPPL));
+    cursor = aes_save_str(image, cursor, bus_long(image, anode + ANODE_PDATA));
+    return line_ended(image, cursor);
+}
+
+/* The INF to disk: DESKTOP.INF created on the boot drive's root (app_path_save), the INF written less its NUL, closed,
+ * the path given back; the top window's directory read again (fun_rebld). Where GEMDOS refused the create, its alert
+ * (d_errmsg) and the path given back. */
+static void inf_to_disk(uint8_t *image, uint32_t desk)
+{
+    uint32_t afile = desk + DESK_G_AFILE, top;
+    int16_t handle;
+
+    set_bus_word(image, desk + DESK_G_AFSIZE, (uint16_t)(bus_word(image, desk + DESK_G_AFSIZE) - 1));
+    (void)aes_app_path_save(image);
+    handle = aes_app_getfh(image, 0, AES_INF_NAME_WRITE, 0);
+    if (!handle) {
+        (void)aes_desk_d_errmsg(image);
+        (void)aes_app_path_restore(image);
+        return;
+    }
+    set_bus_word(image, desk + DESK_G_AFSIZE,
+                 (uint16_t)aes_dos_write(image, handle, (int16_t)bus_word(image, desk + DESK_G_AFSIZE), afile));
+    (void)aes_dos_close(image, AES_APP_SAVE_CLOSE_RETURN, handle);
+    (void)aes_app_path_restore(image);
+    top = aes_win_ontop(image);
+    if (top)
+        aes_desk_fun_rebld(image, top);
+}
+
+/* $fdbb34 — app_save: THE DESK'S INF WRITTEN into g_afile past its first INF_KEPT_BYTES (those cleared on — the
+ * shell's own lines put back there from its buffer): #E, the four #W, every ANODE in the list's order (turned round
+ * for it, and back after) while less than INF_ICON_LINES_END is written, the end mark and a NUL; its length; the
+ * shell's buffer given it (shel_put); and to disk where `to_disk` asks (`inf_to_disk`). */
+void aes_app_save(uint8_t *image, int16_t to_disk)
+{
+    uint32_t desk = desk_globals(image), afile = desk + DESK_G_AFILE, cursor = afile + INF_KEPT_BYTES, anode;
+
+    aes_bfill(image, INF_WRITTEN_BYTES, 0, cursor);
+    cursor = environment_written(image, desk, cursor);
+    cursor = windows_written(image, desk, cursor);
+    aes_app_revit(image);
+    for (anode = bus_long(image, desk + DESK_ANODES_IN_USE); anode != ANODE_NONE; anode = bus_long(image, anode + ANODE_NEXT)) {
+        if ((int32_t)(cursor - afile) >= INF_ICON_LINES_END)
+            break;
+        cursor = icon_written(image, desk, cursor, anode);
+    }
+    cursor = put_byte(image, cursor, INF_FILE_END);
+    cursor = put_byte(image, cursor, STRING_NUL);
+    aes_app_revit(image);
+    set_bus_word(image, desk + DESK_G_AFSIZE, (uint16_t)(cursor - afile));
+    (void)aes_desk_shel_get(image, afile, INF_KEPT_BYTES);
+    (void)aes_desk_shel_put(image, afile, INF_BUFFER_BYTES);
+    if (to_disk)
+        inf_to_disk(image, desk);
 }

@@ -20,6 +20,16 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_K = tuple(SIGNATURES)
+# ---- band 6 wave 2, group G3 (unit K) ---- the unit's wave-2 routines: their own signatures and list, so wave
+# 1b's UNIT_K (and its count) stays as it is
+SIGNATURES_WAVE_2 = {
+    "AES_ROM_HNDL_KBD": (aes.WORD_ANSWER, (WORD,)),
+    "AES_ROM_CNX_GET": (None, ()),
+}
+for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+UNIT_K_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# ---- end of group G3's wave-2 ----
 # men_update both SWITCHES (menu_ienable) and, where a window is on top, TRAPS (G1's win_ontop makes its drive and path
 # current: Dsetdrv, Dsetpath through the glue): its C's child binds band 5's scripted trap's twins.
 aes_event.declare_child_doors("AES_ROM_MEN_UPDATE", gd.CHILD_DOORS)

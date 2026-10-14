@@ -754,6 +754,221 @@ CHAINS.update({
 })
 # ---- end of group G4's ----
 # ---- end of band 6 wave 1b's ----
+# ---- band 6 wave 2: each group APPENDS its own chains inside its own block (the order above unchanged), and adds
+# their count, steps and reach to its own entries of `test_aes_desk_rom.py`'s pins ----
+# ---- band 6 wave 2, group G1 (units C, F, E) ----
+# A LINE OF THE TEXT VIEW CLICKED: the desk selects it, and the line's G_USERDEF draw is called over a state whose
+# SELECTED bit changed — dr_code's inverting arm (`$fde7c8`), which no line drawn whole takes.
+import layouts                          # (here, inside the group's block: the module's head is no group's)
+
+SFCB_NAME = layouts.parse_constants((aes.INCLUDE / "desk" / "deskusr.h",), known=aes.CONSTANTS)["SFCB_NAME"]
+
+
+def _line_shows(ram, tree, index, name):
+    """Is object `index` of `tree` a line of a text view (a G_USERDEF) whose SFCB — its USERBLK's parameter — names `name`?"""
+    if aes_objects.object_word(ram, tree, index, "TYPE") & aes.WORD_MASK != aes.CONSTANTS["G_USERDEF"]:
+        return False
+    sfcb = case.long_in(ram, (case.long_in(ram, tree + index * aes.OB_BYTES + aes.CONSTANTS["OB_SPEC"]) & BUS)
+                        + aes.CONSTANTS["UB_PARM"]) & BUS
+    return bytes(ram[sfcb + SFCB_NAME:]).split(b"\0")[0] == name.encode()
+
+
+def text_line_point(name):
+    """THE MIDDLE OF THE TEXT VIEW'S LINE SHOWING THE FILE `name` — refused by name where the desk shows none, or two."""
+    def point(machine):
+        ram, tree = machine.ram, desk_tree(machine)
+        found = [index for index in _live_objects(ram, tree) if _line_shows(ram, tree, index, name)]
+        if len(found) != 1:
+            raise Refused(f"the desk shows {len(found)} text-view lines of {name!r}: a hand clicks one")
+        x, y, width, height = box(ram, tree, found[0])
+        return x + width // 2, y + height // 2
+    return point
+
+
+# DELETES UNCONFIRMED (Set Preferences' first No, above the copies' — `lowest_button_point`'s other end): the delete
+# dialog is not put up, so dir_op's delete runs whole with no idle — its file and folder arms (a folder walked by d_doop
+# with no tree) at arrivals of their own.
+def highest_button_point(text):
+    """THE MIDDLE OF THE HIGHEST BUTTON READING `text` OF THE DIALOG THAT IS UP (`lowest_button_point`'s twin)."""
+    def point(machine):
+        up = [box(machine.ram, *shown) for shown in _buttons_up(machine, text)]
+        if not up:
+            raise Refused(f"no dialog that is up on this machine holds a button reading {text!r}")
+        x, y, width, height = min(up, key=lambda each: each[1])
+        return x + width // 2, y + height // 2
+    return point
+
+
+DELETES_UNCONFIRMED = "folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return"
+CHAINS.update({
+    "files: View > Show as Text, the long file's line clicked": Chain(
+        "files: View > Show as Text", clicked("the long file's line", text_line_point(THE_README)), (addrs.AES_ROM_DESK_USERDEF,)),
+    DELETES_UNCONFIRMED: Chain(
+        "folder: File > New Folder, 'A', Return", (*item("Options", "Set Preferences..."), *clicked("the upper No", highest_button_point("No")),
+                                                    *RETURN), (DIALOG_RUNNER,)),
+    "folder: deletes unconfirmed — the file dragged to the trash": Chain(
+        DELETES_UNCONFIRMED, dragged("the file's icon", icon(THE_INF), "the trash", icon(THE_TRASH)), (ICON_DRAG, COPY_ENGINE)),
+    "folder: deletes unconfirmed — the folder dragged to the trash": Chain(
+        DELETES_UNCONFIRMED, dragged("the folder's icon", icon(NEW_FOLDER), "the trash", icon(THE_TRASH)), (ICON_DRAG, COPY_ENGINE)),
+    # A FOLDER HOLDING A FILE COPIED: AUTO (INSIDE.TXT in it) dragged onto drive A:'s root, where it is already — the
+    # folder's name conflict answered AUTB — so d_doop's walk copies a file (d_dofcopy from the walk's DTA)
+    "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": Chain(
+        "files: A: opened", (*dragged("the folder's icon", icon(THE_FOLDER), "drive A:'s icon", drive("A")), *RETURN,
+                             *typed("Backspace", SCAN_BACKSPACE), *typed("B", SCAN_B), *RETURN), (COPY_ENGINE,)),
+})
+# (the wave-2 fix pass's) DRIVE A:'s SHOW INFO AFTER A DELETE: the copy engine's tallies left by the delete's count
+# (inf_folder clears them — g_nfiles 1, g_size the file's), and the walk over an EMPTY root (Fsfirst's EFILNF at once,
+# where a folder's own search always finds "." first — the glue makes it AX 18, as ENMFIL). Show Info's word is a MOVE16
+# site: the stand-in takes it.
+EMPTIED_INFO = "file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return"
+# ...and A READ-ONLY FILE COPIED: the file made read-only, a folder made, the file dragged onto it — d_dofcopy handed
+# attributes $01 (Fcreate drops the bit). New Folder's word is a MOVE16 site: the stand-in takes it.
+READ_ONLY_COPIED = "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return"
+CHAINS.update({
+    EMPTIED_INFO: Chain("file: dragged to the trash, OK", (*clicked("drive A:'s icon", drive("A")), *item("File", "Show Info..."),
+                                                            *RETURN), (SHOW_INFO,)),
+    READ_ONLY_COPIED: Chain(READ_ONLY_FILE, (*item("File", "New Folder..."), *typed("A", SCAN_A), *RETURN,
+                                             *dragged("the file's icon", icon(THE_INF), "the folder", icon(NEW_FOLDER)), *RETURN),
+                            (MAKE_FOLDER, ICON_DRAG, COPY_ENGINE)),
+})
+# ---- end of group G1's wave-2 ----
+# ---- band 6 wave 2, group G2 (units H, G, M) ----
+# Unit H's drops no chain made (the cut's §3.2): desktop icons let go in a window (fun_drag -> fun_desk2win: a drive's
+# files copied there by fun_disk, the trash refused), and on a desktop icon (fun_d2desk: a disk onto a disk — the copy's
+# alert, Cancel its default; the trash onto a disk — refused).
+WINDOW_INSIDE = 48                      # a point this far inside the top window's bottom right corner: its bare work area
+CHAINS.update({
+    "A: opened, drive A: dragged into its window, Return": Chain(
+        "A: opened", (*dragged("drive A:'s icon", drive("A"), "A:'s window", from_the_bottom_right(WINDOW_INSIDE, WINDOW_INSIDE)),
+                      *RETURN), (ICON_DRAG, addrs.AES_ROM_DESK_FUN_DESK2WIN)),
+    "A: opened, the trash dragged into its window, Return": Chain(
+        "A: opened", (*dragged("the trash", icon(THE_TRASH), "A:'s window", from_the_bottom_right(WINDOW_INSIDE, WINDOW_INSIDE)),
+                      *RETURN), (ICON_DRAG, addrs.AES_ROM_DESK_FUN_DESK2WIN)),
+    "drive A: dragged onto drive B:, Return": Chain(
+        INF_ICONS, (*dragged("drive A:'s icon", drive("A"), "drive B:", drive("B")), *RETURN), (ICON_DRAG, addrs.AES_ROM_DESK_FUN_D2DESK)),
+    "the trash dragged onto drive A:, Return": Chain(
+        INF_ICONS, (*dragged("the trash", icon(THE_TRASH), "drive A:", drive("A")), *RETURN), (ICON_DRAG, addrs.AES_ROM_DESK_FUN_D2DESK)),
+    # (a window's file onto its own drive's icon: fun_ddst's disk arm, a copy to the root it is in — the conflict with
+    # itself, Return)
+    "file: dragged onto drive A:'s icon, Return — the name conflict, Return": Chain(
+        "A: opened", (*dragged("the file's icon", icon(THE_INF), "drive A:", drive("A")), *RETURN, *RETURN),
+        (ICON_DRAG, addrs.AES_ROM_DESK_FUN_DDST)),
+    # (New Folder again, of the name just made: fun_mkdir's search finds it — "You can not create a folder with that
+    # name" — and Return takes the alert's default, Cancel)
+    "folder: File > New Folder again, 'A', Return — the name taken, Return": Chain(
+        "folder: File > New Folder, 'A', Return", (*item("File", "New Folder..."), *typed("A", SCAN_A), *RETURN, *RETURN), (MAKE_FOLDER,)),
+    # (the wave-2 fix pass's) drive A: dropped into its window ONCE ITS ONE FILE IS DELETED: fun_disk over an empty root
+    # (pn_active's Fsfirst answers EFILNF: nothing dropped)
+    "file: dragged to the trash, OK — then drive A: dragged into its window": Chain(
+        "file: dragged to the trash, OK", dragged("drive A:'s icon", drive("A"), "A:'s window",
+                                                  from_the_bottom_right(WINDOW_INSIDE, WINDOW_INSIDE)),
+        (ICON_DRAG, addrs.AES_ROM_DESK_FUN_DESK2WIN)),
+})
+# ---- end of group G2's wave-2 ----
+# ---- band 6 wave 2, group G3 (units I, J, K, L) ----
+# A window's bottom row from its left (the left arrow, its first gadget), and its sizer pulled up and left: what unit
+# L's win_blt is reached through backward (a column left) and by a step no less than what is shown (a page of a
+# narrower window: its redraw whole).
+LEFT_ARROW_FROM_THE_LEFT = 8            # into the left arrow, the bottom row's first gadget
+SIZER_PULL = 48                         # how far up and left of the sizer's corner it is let go: a column narrower
+ARROW_BESIDE_THE_SIZER = 16             # into the right (down) arrow itself, beside the sizer
+UP_ARROW_FROM_THE_TOP = 24              # into the up arrow, under the title bar
+BAR_FROM_THE_LEFT = 20                  # into the horizontal bar, right of the left arrow
+SLIDER_FROM_THE_LEFT = 24               # into the horizontal slider, right of the left arrow (it starts at the bar's left)
+SLIDER_PULL = 40                        # how far right the slider is carried
+
+
+def from_the_bottom_left(from_the_left, from_the_bottom):
+    """`machine -> the point` that far inside the top window's bottom left corner."""
+    def point(machine):
+        x, y, _width, height = top_window(machine)
+        return x + from_the_left, y + height - from_the_bottom
+    return point
+
+
+def from_the_top_right(from_the_right, from_the_top):
+    """`machine -> the point` that far inside the top window's top right corner."""
+    def point(machine):
+        x, y, width, _height = top_window(machine)
+        return x + width - from_the_right, y + from_the_top
+    return point
+
+
+SCAN_ESCAPE = 0x01                      # Esc: hndl_kbd's key, the top window read again
+LONG_FILE_SHOWN = (*clicked("the long file's icon", icon(THE_README)), *item("File", "Open"),
+                   *shown((VIEWER_AT_A_PAGE_S_END, VIEWER_AT_A_PAGE_S_END, VIEWER_AT_THE_FILE_S_END)))
+A_FIFTH_ENTRY = "files: File > New Folder, 'A', Return (a fifth entry: a second row)"
+SIZED_SMALLER = "files: the window's sizer pulled up and left (smaller)"
+CHAINS.update({
+    "files: the right arrow clicked, then the left arrow clicked": Chain(
+        "files: the window's right arrow clicked", clicked("the left arrow", from_the_bottom_left(LEFT_ARROW_FROM_THE_LEFT, SCROLL_GADGET_INSET)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+    SIZED_SMALLER: Chain(
+        "files: A: opened", dragged("the sizer", from_the_bottom_right(SCROLL_GADGET_INSET, SCROLL_GADGET_INSET), "up and left",
+                                    from_the_bottom_right(SIZER_PULL, SIZER_PULL)), (addrs.AES_ROM_DESK_VERIFY,)),
+    "files: the right arrow clicked, then the horizontal bar left of its slider (a page)": Chain(
+        "files: the window's right arrow clicked", clicked("the bar left of the slider", from_the_bottom_left(BAR_FROM_THE_LEFT,
+                                                                                                             SCROLL_GADGET_INSET)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+    "files: the window's right arrow gadget itself clicked (a column)": Chain(
+        "files: A: opened", clicked("the right arrow", from_the_bottom_right(ARROW_BESIDE_THE_SIZER, SCROLL_GADGET_INSET)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+    "files: the window's down arrow gadget itself clicked (a row)": Chain(
+        "files: A: opened", clicked("the down arrow", from_the_bottom_right(SCROLL_GADGET_INSET, ARROW_BESIDE_THE_SIZER)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+    "files: the window's up arrow gadget clicked (a row)": Chain(
+        "files: A: opened", clicked("the up arrow", from_the_top_right(SCROLL_GADGET_INSET, UP_ARROW_FROM_THE_TOP)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+    "files: the window's horizontal slider dragged right": Chain(
+        "files: A: opened", dragged("the horizontal slider", from_the_bottom_left(SLIDER_FROM_THE_LEFT, SCROLL_GADGET_INSET),
+                                    "the right", from_the_bottom_left(SLIDER_FROM_THE_LEFT + SLIDER_PULL, SCROLL_GADGET_INSET)),
+        (SCROLL_A_WINDOW, SCROLL_VERTICALLY)),
+    "window: Esc typed (the top window read again)": Chain("A: opened", typed("Esc", SCAN_ESCAPE), (KEY_HANDLER,)),
+    "two windows: File > Close Window (one left on top)": Chain(
+        "window: A: opened again (two windows)", item("File", "Close Window"), (CLOSE_A_WINDOW,)),
+    "files: the window sized smaller, then its right arrow clicked": Chain(
+        SIZED_SMALLER, clicked("the right arrow", from_the_bottom_right(RIGHT_ARROW_FROM_THE_RIGHT, SCROLL_GADGET_INSET)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+    # (the wave-2 fix pass's) the desk restarted after a file is shown, the INF keeping a window scrolled, and a sort
+    # not the first: cnx_get's kept scroll and sort
+    "files: the right arrow clicked, then the long file shown": Chain(
+        "files: the window's right arrow clicked", LONG_FILE_SHOWN, (OPEN_SELECTION, SHOW_FILE)),
+    "files: View > Sort by Size, then the long file shown": Chain("files: View > Sort by Size", LONG_FILE_SHOWN, (OPEN_SELECTION, SHOW_FILE)),
+    # ...and a view kept not 0 with its sort 0 (the view told from the sort: Reviewer B's K1)
+    "files: View > Show as Text, then the long file's line shown": Chain(
+        "files: View > Show as Text", (*clicked("the long file's line", text_line_point(THE_README)), *item("File", "Open"),
+                                       *shown((VIEWER_AT_A_PAGE_S_END, VIEWER_AT_A_PAGE_S_END, VIEWER_AT_THE_FILE_S_END))),
+        (OPEN_SELECTION, SHOW_FILE)),
+    # ...and A FIFTH ENTRY in the files window (a folder made: the icon view's four columns, so a second row), then the
+    # down arrow: win_arrow's and win_blt's vertical arms (New Folder's word is a MOVE16 site: the stand-in takes it)
+    A_FIFTH_ENTRY: Chain("files: A: opened", (*item("File", "New Folder..."), *typed("A", SCAN_A), *RETURN), (MAKE_FOLDER,)),
+    # ...and TWO WINDOWS SHOWN AS TEXT (win_bdall over a second WNODE)
+    "two windows: View > Show as Text": Chain("window: A: opened again (two windows)", item("View", "Show as Text"),
+                                              (VIEW_MENU, SET_VIEW_AND_SORT)),
+    "files: a fifth entry, then the down arrow gadget clicked (a row)": Chain(
+        A_FIFTH_ENTRY, clicked("the down arrow", from_the_bottom_right(SCROLL_GADGET_INSET, ARROW_BESIDE_THE_SIZER)),
+        (SCROLL_A_WINDOW, SCROLL_HORIZONTALLY)),
+})
+# ---- end of group G3's wave-2 ----
+# ---- band 6 wave 2, group G4 (units A, B) ----
+# (Ruling R-W2-8, TRIED AND NOT KEPT: "window: Options > Save Desktop, Return", then the file clicked, File > Open,
+# Return (Show) and a blank at its end — deskmain re-enters after the viewer and app_start parses the shell's buffer.
+# It walks (PD0 1,438, the dispatcher's 188) and enters app_start, over THE SAME INF TEXT as "file: shown, a key at its
+# end": deskmain's own app_save(0) before any show already writes the open window's #W line, its path "A:\*.*", into
+# the buffer — so that chain reaches the window-line arms already, and this one reaches no routine and no arm more.)
+# (the wave-2 fix pass's) A PRESS IN THE TEXT VIEW: act_bdown in a window shown as text — the file's line dragged to the
+# trash (its dialog cancelled: Return) — and on the desktop of the machine booted as text (an icon put down: the
+# windows' view word TEXT, the desktop's icons still icons)
+TEXT_LINE_DRAGGED = "text view: A: opened, the file's line dragged to the trash, Return (Cancel)"
+TEXT_PUT_DOWN = "text view: drive A: dragged to a bare spot of the desktop"
+CHAINS.update({
+    TEXT_LINE_DRAGGED: Chain("text view: A: opened", (*dragged("the file's line", text_line_point(THE_INF), "the trash", icon(THE_TRASH)),
+                                                      *RETURN), (ICON_DRAG, addrs.AES_ROM_ACT_BDOWN)),
+    TEXT_PUT_DOWN: Chain(INF_TEXT, dragged("drive A:'s icon", drive("A"), "a bare spot of the desktop", lambda _machine: BARE_DESKTOP),
+                         (MOVE_DRVICON, addrs.AES_ROM_ACT_BDOWN)),
+})
+# ---- end of group G4's wave-2 ----
+# ---- end of band 6 wave 2's ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack.

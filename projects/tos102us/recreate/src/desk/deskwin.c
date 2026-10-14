@@ -18,12 +18,14 @@
 #include "aes/resource.h"
 #include "aes/strings.h"
 #include "aes/wmlib.h"
+#include "desk/deskact.h"
 #include "desk/deskbind.h"
 #include "desk/deskview.h"
 #include "desk/deskwin.h"
 
 /* THE ONE FRAME'S SIZE IS ITS HOST SLOT'S (`host_slot.h`). */
 _Static_assert(WIN_FRAME_BYTES == HOST_SLOT_AES_DESK_WIN_FRAME_BYTES, "the window leaves' frame and its host slot");
+_Static_assert(OPEN_FRAME_BYTES == HOST_SLOT_AES_DESK_OPEN_FRAME_BYTES, "the openers' frame and its host slot");
 
 static inline void set_links_nil(uint8_t *image, uint32_t objects, int16_t object, uint32_t field)
 {
@@ -303,4 +305,108 @@ void aes_do_wfull(uint8_t *image, int16_t window)
         set_current(image, window, full);
     }
     host_slot_release(AES_DESK_WIN_FRAME);
+}
+
+/* ================================================================================================
+ * BAND 6 WAVE 2 (group G3): THE OPENERS.
+ * ============================================================================================= */
+
+/* $fe0ab6 — pro_run: where the tail has no count yet, its length the count and a CR after it (the length a signed
+ * word, the CR's place `adda.w`); pro_exec over the desk's command and tail, the count cleared; where a window is
+ * named, do_wopen of it again over the desk's area — no new GEM window. pro_exec's answer. */
+int16_t aes_pro_run(uint8_t *image, int16_t isgraf, int16_t isover, int16_t window, int16_t icon)
+{
+    uint32_t globals = desk_globals(image);
+    int16_t answer, length;
+
+    if (!bus_byte(image, globals + DESK_G_TAIL)) {
+        length = aes_strlen(image, globals + DESK_G_TAIL_TEXT);
+        set_bus_byte(image, globals + DESK_G_TAIL, (uint8_t)length);
+        set_bus_byte(image, offset_by(globals, length) + DESK_G_TAIL_TEXT, PRO_RUN_TAIL_END);
+    }
+    answer = aes_pro_exec(image, isgraf, isover, bus_long(image, globals + DESK_G_A_CMD), bus_long(image, globals + DESK_G_A_TAIL));
+    set_bus_byte(image, globals + DESK_G_TAIL, 0);
+    if (window != PRO_RUN_NO_WINDOW)
+        aes_do_wopen(image, DO_WOPEN_OLD_WINDOW, window, icon, rect_word(image, globals + DESK_G_DESK_RECT, GRECT_X),
+                     rect_word(image, globals + DESK_G_DESK_RECT, GRECT_Y), rect_word(image, globals + DESK_G_DESK_RECT, GRECT_W),
+                     rect_word(image, globals + DESK_G_DESK_RECT, GRECT_H));
+    return answer;
+}
+
+/* The root object a window's icons hang from: its WNODE's, or the desktop's for window 0. */
+static int16_t root_of(uint8_t *image, int16_t window)
+{
+    return window ? (int16_t)bus_word(image, aes_win_find(image, window) + WNODE_ROOT) : DESKTOP_ROOT;
+}
+
+/* $fe0bbc — desk_clear: every icon of the window's root (the desktop's for window 0) not SELECTED — tested against
+ * the area below the menu bar, redrawn inside the window's work area. */
+void aes_desk_clear(uint8_t *image, int16_t window)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(OPEN_FRAME_BYTES)];
+    uint32_t work = host_slot_claim(AES_DESK_OPEN_FRAME, frame_local) + OPEN_FRAME_WORK;
+
+    get_rect(image, window, WF_WORKXYWH, work);
+    aes_act_allchg(image, window, bus_long(image, desk_globals(image) + DESK_G_SCREEN), root_of(image, window),
+                   ACT_NONE_SPARED, AES_GL_RFULL, work, OB_STATE_SELECTED, ACT_CLEARED, ACT_DRAWN);
+    host_slot_release(AES_DESK_OPEN_FRAME);
+}
+
+/* $fe0c2a — desk_verify: where a window is named and `changed`, its view rebuilt over its work area; the window's
+ * root (the desktop's for window 0) and handle made the desk's current, g_croot and g_cwin. */
+void aes_desk_verify(uint8_t *image, int16_t window, int16_t changed)
+{
+    uint32_t globals = desk_globals(image), node;
+    int16_t root = DESKTOP_ROOT;
+
+    if (window) {
+        node = aes_win_find(image, window);
+        if (changed) {
+            uint16_t frame_local[FRAME_LOCAL_WORDS(OPEN_FRAME_BYTES)];
+            uint32_t work = host_slot_claim(AES_DESK_OPEN_FRAME, frame_local) + OPEN_FRAME_WORK;
+
+            get_rect(image, window, WF_WORKXYWH, work);
+            aes_win_bldview(image, node, rect_word(image, work, GRECT_X), rect_word(image, work, GRECT_Y),
+                            rect_word(image, work, GRECT_W), rect_word(image, work, GRECT_H));
+            host_slot_release(AES_DESK_OPEN_FRAME);
+        }
+        root = (int16_t)bus_word(image, node + WNODE_ROOT);
+    }
+    set_bus_word(image, globals + DESK_SELECTION_ROOT, (uint16_t)root);
+    set_bus_word(image, globals + DESK_SELECTION_WINDOW, (uint16_t)window);
+}
+
+/* $fe0e38 — do_wopen: the corner put on do_xyfix's column (IN PLACE: the routine's own argument words); a box grown
+ * from the icon — its rectangle on the screen, the root's corner added; a text view's line (G_USERDEF) as wide as the
+ * window — to the rectangle; the icon not SELECTED (a DISABLED one refused), redrawn inside the root's rectangle;
+ * where `new_window`, the GEM window opened at the rectangle. g_wlastsel the window. */
+void aes_do_wopen(uint8_t *image, int16_t new_window, int16_t window, int16_t icon, int16_t x, int16_t y, int16_t w,
+                  int16_t h)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(OPEN_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_DESK_OPEN_FRAME, frame_local), globals = desk_globals(image);
+    uint32_t objects = screen_objects(image), corner_x = frame + OPEN_FRAME_CORNER_X, corner_y = frame + OPEN_FRAME_CORNER_Y;
+    uint32_t box = frame + OPEN_FRAME_ICON, root = frame + OPEN_FRAME_ROOT;
+
+    wr16(image + corner_x, (uint16_t)x);
+    wr16(image + corner_y, (uint16_t)y);
+    aes_do_xyfix(image, corner_x, corner_y);
+    x = (int16_t)be16(image + corner_x);
+    y = (int16_t)be16(image + corner_y);
+    aes_get_xywh(image, objects, icon, box + GRECT_X, box + GRECT_Y, box + GRECT_W, box + GRECT_H);
+    aes_get_xywh(image, objects, (int16_t)bus_word(image, globals + DESK_SELECTION_ROOT), root + GRECT_X, root + GRECT_Y,
+                 root + GRECT_W, root + GRECT_H);
+    set_bus_word(image, box + GRECT_X, (uint16_t)(rect_word(image, box, GRECT_X) + rect_word(image, root, GRECT_X)));
+    set_bus_word(image, box + GRECT_Y, (uint16_t)(rect_word(image, box, GRECT_Y) + rect_word(image, root, GRECT_Y)));
+    if (object_word(image, objects, icon, OB_TYPE) == G_USERDEF)
+        set_bus_word(image, box + GRECT_W, (uint16_t)w);
+    aes_desk_graf_growbox(image, rect_word(image, box, GRECT_X), rect_word(image, box, GRECT_Y), rect_word(image, box, GRECT_W),
+                          rect_word(image, box, GRECT_H), x, y, w, h);
+    (void)aes_act_chg(image, (int16_t)bus_word(image, globals + DESK_SELECTION_WINDOW), bus_long(image, globals + DESK_G_SCREEN),
+                      (int16_t)bus_word(image, globals + DESK_SELECTION_ROOT), icon, root, OB_STATE_SELECTED, ACT_CLEARED,
+                      ACT_DRAWN, ACT_DISABLED_CHECKED);
+    if (new_window)
+        (void)aes_desk_wind_open(image, window, x, y, w, h);
+    set_bus_word(image, globals + DESK_G_WLASTSEL, (uint16_t)window);
+    host_slot_release(AES_DESK_OPEN_FRAME);
 }

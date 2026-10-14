@@ -28,6 +28,15 @@
  *     $fe37c4 win_iname(object)                   an icon's text: its ICONBLK's ib_ptext
  *     $fe37ee win_sinfo(window)                   the window's info line: the bytes and the files of its path
  *     $fe384c win_sname(window)                   the window's name: its path to the first `*`, a blank at each end
+ *   BAND 6 WAVE 2 (group G3), the unit's last five, each read from its body:
+ *     $fe3310 win_blt(window, vertical, first)    the view scrolled to its row (or column) `first`, kept inside its
+ *                                                 extent: the view rebuilt; where the work area lies wholly on the
+ *                                                 screen and the step is less than a page, the rows (columns) kept
+ *                                                 blitted along and only the uncovered strip redrawn, else the whole
+ *     $fe3504 win_slide(handle, value, vertical)  a slider's place (thousandths) as the first row (column): win_blt
+ *     $fe359a win_arrow(handle, arrow)            an arrow or a page (WA_*, 0..7) as the first row (column): win_blt
+ *     $fe3622 win_srtall()                        every open window's files sorted again (pn_sort, the count -1)
+ *     $fe3684 win_bdall()                         every open window's view rebuilt over its work area
  *
  * WHAT THE C ANSWERS: as `desk/deskwin.h` says — GEM's VOID routines are `void` here, the word the ROM leaves a
  * NAMED, COUNTED DIVERGENCE (`test/test_desk_view.py`).
@@ -119,6 +128,31 @@
  * parameters (6 bytes), win_shwall's work area. ONE layout: no routine of the unit calls another while it holds it. */
 #define VIEW_FRAME_BYTES      GRECT_BYTES /* win_shwall's -8(a6) rectangle, the widest                          */
 
+/* ---- band 6 wave 2: the scrolls and the windows' rebuilds ---------------------------------------------------------- */
+#define WIN_BLT_RULE          3          /* bb_screen's rule: S_ONLY             ($fe34b2 move.w #3,-(sp))       */
+#define WIN_BLT_FIRST         0          /* the scroll's least first row (column) ($fe3326 clr.w -(sp): max)    */
+#define SORT_AGAIN            (-1)       /* pn_sort's count: count the list first ($fe365c move.w #-1,-(sp))    */
+/* win_arrow's WA_* (the AES's WM_ARROWED word, `aes/gemctrl.h`): a page or a line up or down a row, left or right a
+ * column; its switch's table at $fef770, `cmp.w #7 / bhi` — ANY OTHER WORD leaves the ROM's D6 (its caller's) as the
+ * first row: no value the C has, refused by name (the AES's window manager sends 0..7 alone). */
+#define WA_UPPAGE             0
+#define WA_DNPAGE             1
+#define WA_UPLINE             2
+#define WA_DNLINE             3
+#define WA_LFPAGE             4
+#define WA_RTPAGE             5
+#define WA_LFLINE             6
+#define WA_RTLINE             7
+/* THE SCROLLS' FRAME — the words a scroll hands on BY ADDRESS: win_blt's work area (-22(a6)) and its copy clipped to
+ * the area below the menu bar (-30(a6)); win_slide's two wind_get answer words, which it never reads (-16(a6) the
+ * slider's size, -12(a6) the other three); win_bdall's work area. Given back before each calls another of the unit
+ * (win_slide's before its win_blt). Compacted: the ROM's words in this order. */
+#define SCROLL_FRAME_WORK     0          /* bytes[GRECT_BYTES]                  ($fe3320 lea -22(a6),a4)       */
+#define SCROLL_FRAME_CLIPPED  GRECT_BYTES /* bytes[GRECT_BYTES]                 ($fe33b2 -30(a6))              */
+#define SCROLL_FRAME_SIZE     0          /* word                                ($fe355a -16(a6))              */
+#define SCROLL_FRAME_UNREAD   2          /* word                                ($fe3542 -12(a6))              */
+#define SCROLL_FRAME_BYTES    (2 * GRECT_BYTES)
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -139,6 +173,12 @@ int16_t aes_win_isel(uint8_t *image, uint32_t tree, int16_t root, int16_t curren
 uint32_t aes_win_iname(uint8_t *image, int16_t object);                                                /* $fe37c4 */
 void aes_win_sinfo(uint8_t *image, uint32_t window);                                                   /* $fe37ee */
 void aes_win_sname(uint8_t *image, uint32_t window);                                                   /* $fe384c */
+/* band 6 wave 2 (group G3) */
+void aes_win_blt(uint8_t *image, uint32_t window, int16_t vertical, int16_t first);                    /* $fe3310 */
+void aes_win_slide(uint8_t *image, int16_t handle, int16_t value, int16_t vertical);                   /* $fe3504 */
+void aes_win_arrow(uint8_t *image, int16_t handle, int16_t arrow);                                     /* $fe359a */
+void aes_win_srtall(uint8_t *image);                                                                  /* $fe3622 */
+void aes_win_bdall(uint8_t *image);                                                                   /* $fe3684 */
 #endif
 
 #endif /* TOS102US_DESK_DESKVIEW_H */

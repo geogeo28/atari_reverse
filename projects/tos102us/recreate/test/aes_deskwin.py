@@ -62,6 +62,18 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_I = tuple(SIGNATURES)
+# ---- band 6 wave 2, group G3 (unit I) ---- the unit's wave-2 routines: their own signatures and list, so wave
+# 1b's UNIT_I (and its count) stays as it is
+SIGNATURES_WAVE_2 = {
+    "AES_ROM_PRO_RUN": (aes.WORD_ANSWER, (WORD,) * 4),
+    "AES_ROM_DESK_CLEAR": (None, (WORD,)),
+    "AES_ROM_DESK_VERIFY": (None, (WORD, WORD)),
+    "AES_ROM_DO_WOPEN": (None, (WORD, WORD, WORD, *RECT)),
+}
+for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+UNIT_I_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# ---- end of group G3's wave-2 ----
 # The routines whose run reaches the dispatcher — through a binding of unit D's — on every arm a case takes: rows that
 # switch.
 YIELDS_I = frozenset({"AES_ROM_OBJ_INIT", "AES_ROM_OBJ_IALLOC", "AES_ROM_PRO_EXEC", "AES_ROM_INI_TREE", "AES_ROM_INI_STR",

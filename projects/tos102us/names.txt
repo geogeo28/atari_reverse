@@ -2251,8 +2251,6 @@ fn 0xfe3f08 gem_trap2_exit
 cmt 0xfe3f08 the AES arm's way out, reached only by aes_entry's Line-F call at 0xfe65c0 (table index 175): D0.w := the word aes_entry cleared (always 0); adda.l #24,sp drops its own return, aes_entry's local and saved A6, the handler's return and the three arguments; UDA+0 := 0, UDA+62 := SP, SP := UDA+70; D1-A6 reloaded off the user stack; USP; rte. D0's HIGH word is set by nobody: the last longword the AES's code left there, or the program's own.
 fn 0xfe3f3e ub_trampoline
 cmt 0xfe3f3e ub_trampoline(parmblk): the caller's SP parked in 0x8c36, SP := 0x8c3a (the desk's 1 KB userdef stack, desk_alloc's), the PARMBLK pushed, jsr 0xfde844 (the desk's G_USERDEF draw code), SP back from 0x8c36, rts. Named by value at 0xfd9f9e (gem_entry stores it in 0x8c32); the desk copies 0x8c32 into each window icon's USERBLK. recreate: aes_rom_ub_trampoline (src/aes/trapdoor.S).
-fn 0xfde844 desk_userdef_draw   # ctx
-cmt 0xfde844 (parmblk): the desk's G_USERDEF draw code, called only through ub_trampoline 0xfe3f3e on the desk's own stack — the 30-byte PARMBLK copied into its frame (lbcopy), the clip read and set, the draw at 0xfde7b4, the clip put back; answers that draw's D0.w. Band 6.
 cmt 0xfe3fa2 signal's second `move.l a4,d0` (the PD it is about to wake): the last longword moved into D0 on the path of a wind_set that sends a message — the high word a program then reads in D0 after its trap (1 where that PD lies above 64 KB). See recreate/test/test_aes_trapdoor_rows.py.
 # gemdosif's last two (src/aes/gemdosif.S; band 5 wave 3, slice G) — crit_err's fn and cmt are above (0xfe3cbe)
 fn 0xfe3d2e dos_exec
@@ -2294,10 +2292,8 @@ fn 0xfe272e deskmain # ctx
 fn 0xfe1e80 desk_file_menu # ctx
 cmt 0xfe1e80 (item): items 18..26 by the table $fef6a0 — of the selection (d6, $fe3760): Open $fe1568, Show Info $fe16e6 (call word $f620 at $fe1ec2), Format $fe1800; of the top window (a5, $fe2d46): New Folder $fdfebc ($f624 at $fe1ece), Close and Close Window $fe1a18 (word 0 / 1). The kit's oracle executes $f620..$f627 as MOVE16: aes_boot.continued takes those two exceptions by hand
 fn 0xfe16e6 desk_show_info # ctx
-fn 0xfdfebc desk_new_folder # ctx
 fn 0xfe1568 desk_open # ctx
 cmt 0xfe1568 the File menu's Open of the selection: a drive's window $fe13ea, a folder's $fe14ba, a file's Show / Print / Cancel alert
-fn 0xfe1800 desk_do_format # ctx
 fn 0xfed736 desk_viewer_loop # ctx
 cmt 0xfed736 the file viewer's loop: a page of 22 lines ($fed7c0: moveq #21,d6 over the line routine $fed7cc); at the file's end ($9556 = -1) a key wait polling Crawio by Line-F at $fed754; else the prompt $fed790, its key wait at $fed79c — Q or ^C ends, a blank shows a page, Return a line (aes_desk.STOPS names the two waits)
 fn 0xfe1f2a do_viewmenu
@@ -2465,7 +2461,6 @@ fn 0xfe09cc pro_chdir
 cmt 0xfe09cc pro_chdir(drive, path): the drive and path made current (99: none); 1. C: aes_pro_chdir (src/desk/deskwin.c; band 6 wave 1b, G1)
 fn 0xfe0a7c pro_cmd
 cmt 0xfe0a7c pro_cmd(command, tail, unread, count byte): the launch's command and tail kept; 1. C: aes_pro_cmd (src/desk/deskwin.c; band 6 wave 1b, G1)
-fn 0xfe0ab6 pro_run   # ctx
 fn 0xfe0b26 pro_exec
 cmt 0xfe0b26 pro_exec(isgraf, isover, command, tail): the hourglass, then shel_write's answer. C: aes_pro_exec (src/desk/deskwin.c; band 6 wave 1b, G1)
 fn 0xfe0b56 desk_rsrc_load
@@ -2474,8 +2469,6 @@ fn 0xfe0b6e ini_tree
 cmt 0xfe0b6e ini_tree(answer, index): rsrc_gaddr of a tree. C: aes_ini_tree (src/desk/deskwin.c; band 6 wave 1b, G1)
 fn 0xfe0b86 ini_str
 cmt 0xfe0b86 ini_str(index): a free string copied into g_lngstr; its address. C: aes_ini_str (src/desk/deskwin.c; band 6 wave 1b, G1)
-fn 0xfe0bbc desk_clear   # ctx
-fn 0xfe0c2a desk_verify   # ctx
 fn 0xfe0c9a do_wredraw
 cmt 0xfe0c9a do_wredraw(window, GRECT): its objects drawn over its rectangle list, clipped. C: aes_do_wredraw (src/desk/deskwin.c; band 6 wave 1b, G1)
 fn 0xfe0d5a get_xywh
@@ -2484,7 +2477,6 @@ fn 0xfe0db8 get_spec
 cmt 0xfe0db8 get_spec(tree, object): an object's ob_spec. C: aes_get_spec (src/desk/deskwin.c; band 6 wave 1b, G1)
 fn 0xfe0dce do_xyfix
 cmt 0xfe0dce do_xyfix(&x, &y): a corner on a 16-pixel column, below the desk's top. C: aes_do_xyfix (src/desk/deskwin.c; band 6 wave 1b, G1)
-fn 0xfe0e38 do_wopen   # ctx
 fn 0xfe0f36 zoom_closed
 cmt 0xfe0f36 zoom_closed(close, window, icon x, icon y): closed where asked, a box shrunk to the icon. C: aes_zoom_closed (src/desk/deskwin.c; band 6 wave 1b, G1)
 fn 0xfe0f9c do_wfull
@@ -2513,11 +2505,6 @@ fn 0xfe2f0a win_icalc
 cmt 0xfe2f0a win_icalc(FNODE): the file's ANODE found (app_afind). C: aes_win_icalc (src/desk/deskview.c; band 6 wave 1b, G1)
 fn 0xfe2f68 win_bldview
 cmt 0xfe2f68 win_bldview(WNODE, GRECT): the window's icons laid out as objects. C: aes_win_bldview (src/desk/deskview.c; band 6 wave 1b, G1)
-fn 0xfe3310 win_blt   # ctx
-fn 0xfe3504 win_slide   # ctx
-fn 0xfe359a win_arrow   # ctx
-fn 0xfe3622 win_srtall   # ctx
-fn 0xfe3684 win_bdall   # ctx
 fn 0xfe36fa win_shwall
 cmt 0xfe36fa win_shwall(): a redraw message sent for every open window. C: aes_win_shwall (src/desk/deskview.c; band 6 wave 1b, G1)
 fn 0xfe3760 win_isel
@@ -2661,3 +2648,99 @@ fn 0xfdea5e desk_inf_field
 cmt 0xfdea5e inf_field(src, text, tree, obj, is_name): fmt_str or "%L", inf_sset (# ctx name). C: aes_desk_inf_field (src/desk/deskinf.c)
 fn 0xfdea9a desk_inf_dttmsz
 cmt 0xfdea9a inf_dttmsz(tree, fnode, dobj, tobj, sobj, &size): date, time, size fields. C: aes_desk_inf_dttmsz
+# ---- AES band 6 wave 2 (2026-10-14): groups G1..G4 — 44 routines of the desk's units C, F, E, H, G, M, I, J, K, L, A, B,
+# each READ from its body: C in src/desk/, linked into both blobs, held at Tier 1, NOTHING BOUND (STATUS: Linked,
+# unbound — desk). The ten wave-1b `# ctx` names among them (pro_run .. win_bdall), desk_new_folder (now
+# desk_fun_mkdir), desk_do_format and desk_userdef_draw are confirmed here, their old lines removed (one cmt an address).
+# group G1: units C (src/desk/deskdir.c), F (deskinf.c), E (deskusr.c)
+fn 0xfdd1dc desk_d_dofcopy
+cmt 0xfdd1dc d_dofcopy(src, dst, stamp, attr): one file copied a buffer at a time (gem_gemdos_call Fread/Fwrite), the name conflict asked, Fcreate (read-only bit off), Fdatime; short write: alert 17, deleted, 0. C: aes_desk_d_dofcopy (src/desk/deskdir.c; band 6 wave 2, G1)
+fn 0xfdd454 desk_d_doop
+cmt 0xfdd454 d_doop(op, tree, src, dst, &files, &folders): a folder's tree walked a level a DTA (DTA stack at desk+6892), each file counted/deleted/copied, each folder entered (<8 levels) and counted/Ddeleted; the dialog's counts down. C: aes_desk_d_doop
+fn 0xfdd918 desk_dir_op
+cmt 0xfdd918 dir_op(op, src, files, dst, &files, &folders, &size): the copy/delete engine over the selection — count (0), delete (1), copy (2, Malloc all but 512); the confirm dialog per Set Preferences; folder conflict made up as AX 5. Answers 1. C: aes_desk_dir_op
+fn 0xfde9ce desk_inf_folder
+cmt 0xfde9ce inf_folder(tree, fobj, dobj, path): Show Info's folder counts — the tallies cleared, d_doop count, folders - 1 — into two fields; 1/0; hands one frame word as both count pointers. C: aes_desk_inf_folder (src/desk/deskinf.c)
+fn 0xfde7b4 desk_dr_code
+cmt 0xfde7b4 dr_code(PARMBLK fields): a text-view line inverted (SELECTED changed) or drawn (ob_sfcb, v_gtext large font; line mode left XOR); answers the current state. C: aes_desk_dr_code (src/desk/deskusr.c)
+fn 0xfde844 desk_userdef_draw
+cmt 0xfde844 (parmblk): the desk's G_USERDEF draw code, called only through ub_trampoline 0xfe3f3e on the desk's userdef stack — the PARMBLK copied (lbcopy), the clip kept and set, dr_code 0xfde7b4, the clip restored; dr_code's D0.w. No Line-F table entry: C: aes_desk_userdef (src/desk/deskusr.c), held in LINKED_HELD_NO_TABLE_ENTRY (R-W2-4)
+# group G2: units M (src/desk/deskutil.c), G (deskfpd.c), H (deskfun.c)
+fn 0xfed522 cart_sfirst
+cmt 0xfed522 cart_sfirst(dta, unread attributes): the DTA kept at $96fa for cart_find, cart_init, then cart_snext. C: aes_cart_sfirst (src/desk/deskutil.c; band 6 wave 2, G2)
+fn 0xfed534 cart_snext
+cmt 0xfed534 cart_snext(): cart_find(1) -> 1; the chain's end -> AES_DOS_AX 18, 0. C: aes_cart_snext
+fn 0xfdfa20 pn_close
+cmt 0xfdfa20 pn_close(path): pn_free. C: aes_pn_close (src/desk/deskfpd.c)
+fn 0xfdfc3c pn_active
+cmt 0xfdfc3c pn_active(path): its files read (GEMDOS, or the cartridge's on 'c' — $fdfc48 cmpi.b #99), '.' and '..' skipped (a '.' and more listed), counted, sized, indexed, sorted; AES_DOS_AX. C: aes_pn_active
+fn 0xfdfdf2 desk_fun_rebld
+cmt 0xfdfdf2 fun_rebld(window): every open window of its path read again, verified, its info line, a redraw. C: aes_desk_fun_rebld (src/desk/deskfun.c)
+fn 0xfdfebc desk_fun_mkdir
+cmt 0xfdfebc fun_mkdir(window): File > New Folder — the dialog, the name searched (found: refused as EACCDN), Dcreate, the window rebuilt; 1 (0: too deep); its answer read by none. Its call word $f624 at $fe1ece is a MOVE16 site on the oracle. C: aes_desk_fun_mkdir
+fn 0xfe003a desk_fun_op
+cmt 0xfe003a fun_op(op, path): the copy / delete engine (dir_op) run over the path's selection, a copy counted twice, the deepest copy 9; 1 done, 0 refused. C: aes_desk_fun_op
+fn 0xfe0140 desk_fun_ddst
+cmt 0xfe0140 fun_ddst(path, anode, object): a window's files dropped on a desktop icon — the trash (delete), a disk (copy to its root), the cartridge refused. C: aes_desk_fun_ddst
+fn 0xfe01d6 desk_fun_wdst
+cmt 0xfe01d6 fun_wdst(path, spec, anode, fnode): ...on a window, a folder of it or its background (copy). C: aes_desk_fun_wdst
+fn 0xfe0258 desk_fun_win2win
+cmt 0xfe0258 fun_win2win(source, destination, object): a drag from a window into a window; the cartridge's window refused. C: aes_desk_fun_win2win (void)
+fn 0xfe02f2 desk_fun_win2desk
+cmt 0xfe02f2 fun_win2desk(source, object): a drag from a window onto the desktop; from the cartridge's window fm_error(5). C: aes_desk_fun_win2desk (void)
+fn 0xfe038c desk_fun_disk
+cmt 0xfe038c fun_disk(drive object, window, anode, fnode, object): a drive's files copied into a window (pn_open, pn_active, fun_wdst), its answer of 18 dropped; no path node: its caller's D7. C: aes_desk_fun_disk
+fn 0xfe0454 desk_fun_desk2win
+cmt 0xfe0454 fun_desk2win(window, object): the selected desktop icons dropped into a window — the trash and the cartridge refused, a drive's files by fun_disk. C: aes_desk_fun_desk2win (void)
+fn 0xfe0500 desk_fun_d2desk
+cmt 0xfe0500 fun_d2desk(object): the selected desktop icons dropped on a desktop icon: disk copy (DISKCOPY), the trash refused (a one-button alert with default 2); the copied answer sticky. C: aes_desk_fun_d2desk
+fn 0xfe070a desk_fun_drag
+cmt 0xfe070a fun_drag(source, destination, source object, object): a drag's drop sent to its driver. C: aes_desk_fun_drag
+# group G3: units I (src/desk/deskwin.c), L (deskview.c), J (desksupp.c), K (desktop.c)
+fn 0xfe0ab6 pro_run
+cmt 0xfe0ab6 pro_run(isgraf, isover, window, icon): a program run through pro_exec (its tail's count and CR), the window opened again where not -1. C: aes_pro_run (src/desk/deskwin.c; band 6 wave 2, G3)
+fn 0xfe0bbc desk_clear
+cmt 0xfe0bbc desk_clear(window): its icons all made not SELECTED (act_allchg over the area below the bar; a tenth word pushed, unread). C: aes_desk_clear (void)
+fn 0xfe0c2a desk_verify
+cmt 0xfe0c2a desk_verify(window, changed): the view rebuilt where changed; g_croot and g_cwin set. C: aes_desk_verify (void)
+fn 0xfe0e38 do_wopen
+cmt 0xfe0e38 do_wopen(new, window, icon, x, y, w, h): a window opened (wind_open), a box grown from its icon (a text line's G_USERDEF as wide as the line), act_chg. C: aes_do_wopen (void)
+fn 0xfe3310 win_blt
+cmt 0xfe3310 win_blt(window, vertical, first): a window's view scrolled — the step blitted (bb_screen) and the strip redrawn, or redrawn whole; clr.w d0 on the no-step arm. C: aes_win_blt (src/desk/deskview.c; void)
+fn 0xfe3504 win_slide
+cmt 0xfe3504 win_slide(window, place, vertical): ...to a slider's place (mul_div over the hidden extent). C: aes_win_slide (void)
+fn 0xfe359a win_arrow
+cmt 0xfe359a win_arrow(window, word): ...by an arrow or a page (the table $fef770, WA_UPPAGE..WA_RTLINE; past 7: its caller's D6). C: aes_win_arrow (void; a word past 7 refused by name)
+fn 0xfe3622 win_srtall
+cmt 0xfe3622 win_srtall(): every open window's files sorted (pn_sort). C: aes_win_srtall (void)
+fn 0xfe3684 win_bdall
+cmt 0xfe3684 win_bdall(): every open window's view rebuilt (win_bldview over its work area). C: aes_win_bdall (void)
+fn 0xfe1068 do_diropen
+cmt 0xfe1068 do_diropen(window, new, icon, drive, path, name, ext, rect): pn_open (F_SUBDIR) — none: fun_alert 19, the top window current, 1 — pn_active, the window named ("Cartridge" for 'c', kept at $9888) and its info line set, do_wopen where icon > 0 (win_top where new), desk_verify, do_wredraw where not new; 1. C: aes_do_diropen (src/desk/desksupp.c)
+fn 0xfe13ea do_dopen
+cmt 0xfe13ea do_dopen(icon): win_alloc (none: the "no more windows" alert), drive_check (not 'c'), pro_chdir "", do_diropen(new) over the root object's rectangle; or win_free; 0. C: aes_do_dopen
+fn 0xfe14ba do_fopen
+cmt 0xfe14ba do_fopen(window, icon, drive, path, name, ext): the work area, drive_check, pro_chdir "" then the path, pn_close; the path refused: "", "*", "*" STORED INTO ITS ARGUMENT SLOTS 16/20/24(a6); do_diropen(not new) over the work area; 0. C: aes_do_fopen
+fn 0xfe1800 desk_do_format
+cmt 0xfe1800 desk_do_format(icon): with no g_cwin, app_afind of the icon; a disk: fun_alert(2, 9, "X") — 1: pro_cmd(ini_str 3, "X: /V", 1, 252), pro_run(1, 1, g_cwin, icon); its answer, else 0. C: aes_desk_do_format
+fn 0xfe18e4 close_window
+cmt 0xfe18e4 close_window(window): wind_get (unread), zoom_closed(1, ...) to the icon, pn_close, win_free, the top window current and verified; 0. C: aes_close_window
+fn 0xfe1972 close_folder
+cmt 0xfe1972 close_folder(window, drive, path, name, ext): zoom_closed(0) to the work area's middle less half an icon, do_fopen(window, 0, ...); 0. C: aes_close_folder
+fn 0xfe1a18 fun_close
+cmt 0xfe1a18 fun_close(window, close it): the hourglass, fpd_parse of its spec into a 138-byte frame; closing or at the root: close_window, else the path cut at its last '\' and close_folder; the arrow; the callee's answer. C: aes_fun_close
+fn 0xfe22a6 hndl_kbd
+cmt 0xfe22a6 hndl_kbd(key): Esc ($011b, the word) — fun_rebld of the top window; 0. C: aes_hndl_kbd (src/desk/desktop.c)
+fn 0xfe2618 cnx_get
+cmt 0xfe2618 cnx_get(): do_viewmenu of the INF's view and sort, its preferences, evnt_dclick(3, 1), $890c the resolution + 1; each kept window: win_alloc, its scroll, fpd_parse, do_xyfix in g_cnxsave, pro_chdir, do_diropen(new) — or win_free; cnx_put. C: aes_cnx_get (void)
+# group G4: units A (src/desk/deskapp.c), B (deskact.c)
+fn 0xfdb5fc app_start
+cmt 0xfdb5fc app_start(): ANODE pool linked; INF = shell buffer if '#', else DESKTOP.INF read (isdrive, Fopen/Fread/Fclose; its NUL at the signed length) else rom_ram(3); lines parsed ('C' cart_init, 'M'/'T' map/C:, 'D''F''G''P' app_parse, 'E' view/sort/prefs/res, 'W' g_cnxsave in pixels); app_rdicon; grid g_icw/g_ich, spots snapped, both drag outlines (bfill counts bytes: half cleared). 1. C: aes_app_start (src/desk/deskapp.c; band 6 wave 2, G4)
+fn 0xfdbb34 app_save
+cmt 0xfdbb34 app_save(todisk): INF written at g_afile+128 (#E, 4 #W, ANODE lines < 2013 B, ^Z NUL), first 128 B from shel_get, shel_put 2048; todisk: path_save, Fcreate DESKTOP.INF, Fwrite less the NUL, Fclose, path_restore, fun_rebld(win_ontop). D0 read by none. C: aes_app_save (void)
+fn 0xfdc57a gr_drgplns
+cmt 0xfdc57a gr_drgplns(mx,my,clip,n,outline,icons,corners,&x,&y,&wh,&obj): the drag loop — graf_mkstate into its own arg words, gr_bwait, wind_find/win_find, gr_obfind, folder/disk/cart/trash lit (act_chg); corner and window stored. C: aes_gr_drgplns (void)
+fn 0xfdcc2a act_bsclick
+cmt 0xfdcc2a act_bsclick(wh,tree,root,mx,my,keys,clip,dclick): miss → all put out; Shift (either, keys & 3) toggles; else others put out (dclick or unselected) and selected. C: aes_act_bsclick (void)
+fn 0xfdcd34 act_bdown
+cmt 0xfdcd34 act_bdown(wh,tree,root,mx,my,keys,clip,&obj): miss → rubber box (6x6) lights; selected → gr_accobs + gr_drgplns (outline by view: the desktop's root always icons), self-drop / desktop put-down (move_drvicon) → -1; evnt_button into its own arg words; the drop window or -1. C: aes_act_bdown

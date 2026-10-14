@@ -1431,7 +1431,7 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 | `0xfeb0e6` | `sh_main` (`src/aes/shell.c`; band 5 wave 4) | 4 rows — STRETCHES on the our-boot machine beside the ROM's (A LABELLED STAGING; three through the served door, AN ARGUMENT CLASS — deskmain answered at its entry on both shores, a built-in of the desk's answered where the run arrives at it, the shell's buffers as the ROM's own shel_write leaves them: `test_aes_ourboot.py`) + 13 passes at Tier 1 (`test_aes_shell_main.py`) | 2816 / 41244 the desk quits .. 98081 / 945322 a program to dos_exec's entry | **0.92** LABELLED STAGING (our boot): the first pass to deskmain's entry (`net`), **0.75** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 0): the desk quits: the shell's last pass, to gem_main's teardown (`net`), **0.86** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): a file shown, and back to deskmain's entry (`net`), **0.63** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1): a program the disk holds, to dos_exec's entry (`net`) | ✅ verified | the launch band's text noted, the five flags set, then a pass at a time: the screen (wm_start THEN ratinit: two checkpoints, their order held), the desk through THE DESK DOOR — deskmain ENTERED ON THE ROM'S OWN STACK POINTER `$a364`, the door's margin 26 measured off D3 —, after it the click count cleared, desk_free, Getrez, the band's colour; a command: sh_cmd, else sh_find, pd_nameit and dos_exec ENTERED at `$a35e` (margin 22) where the row ends: RUNS A PROGRAM past it (a real Pexec loads over the blob), and the cartridge's arm halts by name (NO MACHINE). Entered at `$a392` where the ROM's is at `$a382`. 0.92 / 0.79 / 0.87 / 0.68 with thunks, whole run 0.93 / 0.95 / 0.88 / 0.96; NET OF THE ROM'S LINE-F HANDLER 0.94 / 1.27 / 0.89 / 0.85 — the last pass's 1.27 REPORTED (AWAITING 22: 7,778 + 388 in thunks to the ROM's 10,372 less 3,940). On the bench blob the first pass 2.00 and the built-in pass 1.82 (desk_alloc's and the band's loops as C twins): reported. Unpinned by nature: the `!= 4` arm of the colour test (Getrez answers 0..3) |
 | `0xfeb2fc` | `sh_cmd` (`src/aes/shell.c`; band 5 wave 4) | 5 rows — its entry to its return on the our-boot machine beside the ROM's (A LABELLED STAGING, AN ARGUMENT CLASS: deskmain answered 1 after the ROM's own shel_write, the built-in answered where the run arrives at it: `test_aes_ourboot.py`) + 38 Tier-1 cases (`test_aes_shell_cmd.py`) | 37 / 440 no built-in's byte .. 99033 / 937246 `$fd` | **0.52** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fe: a file shown (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fd: a file printed (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fc: Format (`net`), **0.82** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1, a built-in too): the tail's byte $fb: the disk copy (`net`), **0.45** LABELLED STAGING (our boot), ARGUMENT CLASS (deskmain served 1): no built-in's byte: a program's tail (`net`) | ✅ verified | the tail's first byte: `$fe` the desk's "show a file" handed the text behind it; `$fd` the line made "PRINTING  " and the name, the band drawn, "print"; `$fc` / `$fb` the band drawn, Format / the disk copy handed the text and the command; any other byte answers 0. EACH BUILT-IN ENTERED THROUGH THE DESK DOOR ON THE ROM'S OWN STACK POINTER (`$a352` the two file ones, `$a34e` the two disk ones) AND HANDED THE ROM'S ARGUMENTS (the bytes it will read above its return address compared exactly: the fix pass), the door's margin 20 measured off D3 — and the door's HALT taken by a mutant 24 bytes deeper. 0.52 / 0.93 / 0.93 / 0.93 / 0.45 with thunks, whole run 0.52 / 1.00 / 1.00 / 1.00 / 0.45; NET OF THE ROM'S LINE-F HANDLER 1.06 / 1.27 / 1.28 / 1.28 / 0.75 — REPORTED (AWAITING 22: 34,734 + 4,580 in thunks to the ROM's 42,232 less 11,390 for `$fd`; the three are strcpy / strcat and the band's draw, each verified long since) |
 
-## Linked, unbound — desk (159)
+## Linked, unbound — desk (203)
 
 THE DESK'S FIRST TWO UNITS (band 6 wave 1a: its entry in the wave log) AND WAVE 1b's HUNDRED ROUTINES IN FOUR GROUPS
 (band 6 wave 1b: its entry), `src/desk/`: written in C, LINKED INTO BOTH
@@ -1447,8 +1447,12 @@ Wave 1b's: group G1, units I and L (33: `test_desk_win.py`, `test_desk_view.py`;
 units A, K and J (17: `test_desk_app.py`, `test_desk_top.py`, `test_desk_supp.py`; `deskapp.c`, `desktop.c`,
 `desksupp.c`); group G3, units B and G (28: `test_desk_act.py`, `test_desk_fpd.py`; `deskact.c`, `deskfpd.c`); group G4,
 units C, H, E and F (22: `test_desk_dir.py`, `test_desk_fun.py`, `test_desk_usr.py`, `test_desk_inf.py`; `deskdir.c`,
-`deskfun.c`, `deskusr.c`, `deskinf.c`). EVERY UNIT'S UNBOUND PIN IS ONE (`aes_deskbind.bound_referrers`): nothing outside
-the unbound desk refers to any of the 159.
+`deskfun.c`, `deskusr.c`, `deskinf.c`). Wave 2's forty-four (its entry), in the same units' files and one new one:
+group G1, units C, F and E (6); group G2, units H, G and M (15 — unit M's pair in `deskutil.c`, `test_desk_util.py`);
+group G3, units I, J, K and L (18); group G4, units A and B (5). ONE OF THEM HAS NO LINE-F TABLE ENTRY — the desk's
+userdef draw `$fde844`, called by value from ub_trampoline — and is held in `linef_table.LINKED_HELD_NO_TABLE_ENTRY`
+(R-W2-4): this section's count is both lists', 202 + 1. EVERY UNIT'S UNBOUND PIN IS ONE (`aes_deskbind.bound_referrers`):
+nothing outside the unbound desk refers to any of the 203.
 "Bytes" are the shipped blob's symbol sizes against the AES map's inventory; a probe is a scratch measurement at one
 arrival — no row, no verdict.
 
@@ -1613,6 +1617,51 @@ arrival — no row, no verdict.
 | `0xfde610` | `ob_sfcb` (`aes_desk_ob_sfcb`; `src/desk/deskusr.c`; unit E) | 5 arrival(s) (`test_desk_usr.py`) | 764 / 420 B | — no row (not bound) | 🔗 linked, unbound | probe 0.890 (0.632) (group G4's scratch probe, shipped blob (bench in brackets)); its answer held to the ROM's in place at its width; a screen wider than 320 UNPINNED |
 | `0xfdea5e` | `inf_field` (`aes_desk_inf_field`; `src/desk/deskinf.c`; unit F) | 6 arrival(s) + 1 labelled class(es) — is_name $0100 (`test_desk_inf.py`) | 142 / 60 B | — no row (not bound) | 🔗 linked, unbound | probe 0.779 (0.558) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
 | `0xfdea9a` | `inf_dttmsz` (`aes_desk_inf_dttmsz`; `src/desk/deskinf.c`; unit F) | 3 arrival(s) (`test_desk_inf.py`) | 160 / 118 B | — no row (not bound) | 🔗 linked, unbound | probe 0.780 (0.534) (group G4's scratch probe, shipped blob (bench in brackets)); D0 a leftover the C has none of (counted; read by no caller) |
+| `0xfdd1dc` | `d_dofcopy` (`aes_desk_d_dofcopy`; `src/desk/deskdir.c`; unit C) | 7 arrival(s), GEMDOS REPLAYED (a read-only file's copy; the conflict's Skip clicked) + 11 labelled class(es), GEMDOS SCRIPTED (`test_desk_dir.py`) | 1544 / 632 B | — no row (not bound) | 🔗 linked, unbound | probe 0.835, 0.833 (0.913, 0.905) (G1's probe over its replay recorder, shipped blob (bench in brackets)); its answer held at the word, read by d_doop and dir_op; frame 68 B (108 with call pushes), the ROM's 44 |
+| `0xfdd454` | `d_doop` (`aes_desk_d_doop`; `src/desk/deskdir.c`; unit C) | 11 arrival(s), GEMDOS REPLAYED (an emptied root: Fsfirst's EFILNF) + 1 labelled class (INSIDE.TXT's DTA $21, a time) (`test_desk_dir.py`) | 1708 / 782 B | — no row (not bound) | 🔗 linked, unbound | probe 0.879–0.906 (0.894–0.906) (G1's probe over its replay recorder, shipped blob (bench in brackets)); its answer held at the word; frame 72 B (104), the ROM's 44 |
+| `0xfdd918` | `dir_op` (`aes_desk_dir_op`; `src/desk/deskdir.c`; unit C) | 13 arrival(s), GEMDOS REPLAYED + 1 LAID (the FNODE archived, a time) (`test_desk_dir.py`) | 1430 (+ folder_op 702, confirmed 216) / 1230 B | — no row (not bound) | 🔗 linked, unbound | probe 0.709–0.911; one file counted **1.046 (1.139 ON THE BENCH BLOB, REPORTED**: strcpy's C twin, an inference) (G1's probe over its replay recorder, shipped blob (bench in brackets)); answers 1, read by no instruction; frame 84 B (112), the ROM's 48 |
+| `0xfde9ce` | `inf_folder` (`aes_desk_inf_folder`; `src/desk/deskinf.c`; unit F) | 3 arrival(s), GEMDOS REPLAYED — one the emptied drive's (its tallies stale) + 1 labelled class (the walk failing, SCRIPTED) (`test_desk_inf.py`) | 236 / 144 B | — no row (not bound) | 🔗 linked, unbound | probe 0.766, 0.769 (0.719, 0.774) (G1's probe over its replay recorder, shipped blob (bench in brackets)); answer read by its 2 callers; reached only through Show Info's MOVE16 stand-in |
+| `0xfde7b4` | `dr_code` (`aes_desk_dr_code`; `src/desk/deskusr.c`; unit E) | 6 arrival(s) + 2 labelled class(es) (`test_desk_usr.py`) | 232 / 144 B | — no row (not bound) | 🔗 linked, unbound | probe 0.993 (0.981–0.987) (G1's); answer read by the userdef draw; leaves line mode XOR (the ROM's) |
+| `0xfde844` | `the desk's userdef draw` (`aes_desk_userdef`; `src/desk/deskusr.c`; unit E) | 6 arrival(s) (`test_desk_usr.py`) | 186 / 98 B | — no row (not bound) | 🔗 linked, unbound | probe 0.993 (0.983–0.988) (G1's); NO LINE-F TABLE ENTRY — held in `LINKED_HELD_NO_TABLE_ENTRY` (R-W2-4), called by value from ub_trampoline: its call relocated at the binding; 60 B on the userdef stack, the ROM's 58 |
+| `0xfed522` | `cart_sfirst` (`aes_cart_sfirst`; `src/desk/deskutil.c`; unit M) | 0 arrival(s) + 3 labelled class(es) (no cartridge in the model) (`test_desk_util.py`) | 70 / 18 B | — no row (not bound) | 🔗 linked, unbound | not reached by any run (W6-R8); the found arm held by the C alone over a host image (a reading) |
+| `0xfed534` | `cart_snext` (`aes_cart_snext`; `src/desk/deskutil.c`; unit M) | 0 arrival(s) + 3 labelled class(es) (`test_desk_util.py`) | 44 / 30 B | — no row (not bound) | 🔗 linked, unbound | not reached by any run; its answer held at the word, read by pn_active |
+| `0xfdfa20` | `pn_close` (`aes_pn_close`; `src/desk/deskfpd.c`; unit G) | 2 arrival(s) (`test_desk_fpd.py`) | 6 / 12 B | — no row (not bound) | 🔗 linked, unbound | probe 0.278–0.300 (no trap; a tail call); void in C — pn_free's leftover, read by none (counted, 2) |
+| `0xfdfc3c` | `pn_active` (`aes_pn_active`; `src/desk/deskfpd.c`; unit G) | 4 arrival(s), GEMDOS REPLAYED (fslib's) + 5 labelled class(es) — the cartridge's drive 'c' read off the ROM's `cmpi.b` at $fdfc48 (`test_desk_fpd.py`) | 602 / 284 B | — no row (not bound) | 🔗 linked, unbound | probe 0.706–0.875 over fslib's replay; band 5's convention REFUSED; its answer read by 3 callers |
+| `0xfdfdf2` | `fun_rebld` (`aes_desk_fun_rebld`; `src/desk/deskfun.c`; unit H) | 4 arrival(s), GEMDOS REPLAYED + 1 labelled class (`test_desk_fun.py`) | 336 / 202 B | — no row (not bound) | 🔗 linked, unbound | probe 0.874 [0.872] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); void (counted); frame 120 B, the ROM's 52; slot FUN_REBLD 8 B |
+| `0xfdfebc` | `fun_mkdir` (`aes_desk_fun_mkdir`; `src/desk/deskfun.c`; unit H) | 4 arrival(s), GEMDOS REPLAYED + 2 labelled class(es) (`test_desk_fun.py`) | 590 (+ desk_search_or_mkdir 78, shared with dir_op) / 382 B | — no row (not bound) | 🔗 linked, unbound | probe 0.922 [0.924] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); its answer read by none; reached only through New Folder's MOVE16 stand-in (`$f624` is its own word) |
+| `0xfe003a` | `fun_op` (`aes_desk_fun_op`; `src/desk/deskfun.c`; unit H) | 3 arrival(s), GEMDOS REPLAYED + 3 labelled class(es) (`test_desk_fun.py`) | 36 + operated 440 / 262 B | — no row (not bound) | 🔗 linked, unbound | probe 0.965 [0.968] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); answer read by 4; counts a copy twice (the ROM's) |
+| `0xfe0140` | `fun_ddst` (`aes_desk_fun_ddst`; `src/desk/deskfun.c`; unit H) | 2 arrival(s), GEMDOS REPLAYED + 2 labelled class(es) (`test_desk_fun.py`) | 296 / 148 B | — no row (not bound) | 🔗 linked, unbound | probe 0.962 [0.965] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); answer read by 2 |
+| `0xfe01d6` | `fun_wdst` (`aes_desk_fun_wdst`; `src/desk/deskfun.c`; unit H) | 3 arrival(s), GEMDOS REPLAYED (`test_desk_fun.py`) | 252 / 130 B | — no row (not bound) | 🔗 linked, unbound | probe 0.965 [0.968] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); answer read by 2 |
+| `0xfe0258` | `fun_win2win` (`aes_desk_fun_win2win`; `src/desk/deskfun.c`; unit H) | 1 arrival, GEMDOS REPLAYED + 2 labelled class(es) (`test_desk_fun.py`) | 338 / 154 B | — no row (not bound) | 🔗 linked, unbound | probe 0.932 [0.934] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); void (counted); source ≠ destination UNPINNED (no chain drags between two windows) |
+| `0xfe02f2` | `fun_win2desk` (`aes_desk_fun_win2desk`; `src/desk/deskfun.c`; unit H) | 2 arrival(s), GEMDOS REPLAYED + 2 labelled class(es) (`test_desk_fun.py`) | 250 / 154 B | — no row (not bound) | 🔗 linked, unbound | probe 0.932 [0.934] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); void (counted) |
+| `0xfe038c` | `fun_disk` (`aes_desk_fun_disk`; `src/desk/deskfun.c`; unit H) | 2 arrival(s), GEMDOS REPLAYED — one over a drive emptied by a delete (EFILNF) + 2 labelled class(es) (`test_desk_fun.py`) | 340 / 200 B | — no row (not bound) | 🔗 linked, unbound | probe 0.963 [0.968] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); no path node free: the ROM answers its caller's D7 — a NAMED DIVERGENCE (1 case, not compared) |
+| `0xfe0454` | `fun_desk2win` (`aes_desk_fun_desk2win`; `src/desk/deskfun.c`; unit H) | 2 arrival(s), GEMDOS REPLAYED + 1 labelled class (`test_desk_fun.py`) | 396 / 172 B | — no row (not bound) | 🔗 linked, unbound | probe 0.945 [0.950] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); void (counted); reached first by wave 2's chains |
+| `0xfe0500` | `fun_d2desk` (`aes_desk_fun_d2desk`; `src/desk/deskfun.c`; unit H) | 4 arrival(s) + 2 labelled class(es) (`test_desk_fun.py`) | 32 + dropped_on_an_icon 658 / 510 B | — no row (not bound) | 🔗 linked, unbound | probe 0.946 [0.953] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); answer read by 1; its one-button trash alert defaults to button 2 (the ROM's) |
+| `0xfe070a` | `fun_drag` (`aes_desk_fun_drag`; `src/desk/deskfun.c`; unit H) | 4 arrival(s), GEMDOS REPLAYED on two + 2 labelled class(es) (`test_desk_fun.py`) | 252 / 108 B | — no row (not bound) | 🔗 linked, unbound | probe 0.932 [0.934] (G2's probe, convention R (unit C's recorder replaying the ROM's run in place), whole row, shipped [bench]); answer read by 1 |
+| `0xfe0ab6` | `pro_run` (`aes_pro_run`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) + 1 labelled class (window -1) (`test_desk_win.py`) | 310 / 112 B | — no row (not bound) | 🔗 linked, unbound | probe 0.990 / 0.985 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); answer read at 2 |
+| `0xfe0bbc` | `desk_clear` (`aes_desk_clear`; `src/desk/deskwin.c`; unit I) | 3 arrival(s) (`test_desk_win.py`) | 220 / 110 B | — no row (not bound) | 🔗 linked, unbound | probe 0.803 / 0.825 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void (counted) |
+| `0xfe0c2a` | `desk_verify` (`aes_desk_verify`; `src/desk/deskwin.c`; unit I) | 5 arrival(s) (`test_desk_win.py`) | 226 / 112 B | — no row (not bound) | 🔗 linked, unbound | probe 0.477 / 0.477, its window-0 arm (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void (counted) |
+| `0xfe0e38` | `do_wopen` (`aes_do_wopen`; `src/desk/deskwin.c`; unit I) | 5 arrival(s); a text line's G_USERDEF arm reached by a run, UNPINNED (its draw unserved) (`test_desk_win.py`) | 530 / 254 B | — no row (not bound) | 🔗 linked, unbound | probe 0.976 / 0.975 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void (counted); frame 104 B, the ROM's 72 — ON BOTH BOUND FILE > OPEN PATHS (W6-R4) |
+| `0xfe3310` | `win_blt` (`aes_win_blt`; `src/desk/deskview.c`; unit L) | 6 arrival(s) — one vertical (a fifth entry's second row) (`test_desk_view.py`) | 890 / 500 B | — no row (not bound) | 🔗 linked, unbound | probe 0.606 / 0.780, its no-step arm (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void (counted); a vertical row-blit UNPINNED |
+| `0xfe3504` | `win_slide` (`aes_win_slide`; `src/desk/deskview.c`; unit L) | 2 arrival(s) + 1 labelled class (place 300) (`test_desk_view.py`) | 308 / 150 B | — no row (not bound) | 🔗 linked, unbound | probe 0.818 / 0.835 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void |
+| `0xfe359a` | `win_arrow` (`aes_win_arrow`; `src/desk/deskview.c`; unit L) | 7 arrival(s) + 2 labelled class(es) (the pages, over a window of two rows) (`test_desk_view.py`) | 422 / 136 B | — no row (not bound) | 🔗 linked, unbound | probe 0.904 / 0.906 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void; a word past 7 refused by name (the ROM scrolls to its caller's D6) |
+| `0xfe3622` | `win_srtall` (`aes_win_srtall`; `src/desk/deskview.c`; unit L) | 3 arrival(s) (`test_desk_view.py`) | 94 / 98 B | — no row (not bound) | 🔗 linked, unbound | probe 0.610 / 0.610 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void |
+| `0xfe3684` | `win_bdall` (`aes_win_bdall`; `src/desk/deskview.c`; unit L) | 4 arrival(s) — one over two windows (`test_desk_view.py`) | 144 / 118 B | — no row (not bound) | 🔗 linked, unbound | probe 0.851 / 0.856 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void |
+| `0xfe1068` | `do_diropen` (`aes_do_diropen`; `src/desk/desksupp.c`; unit J) | 6 arrival(s), GEMDOS REPLAYED + 1 LAID (no path node free) (`test_desk_supp.py`) | 898 / 330 B | — no row (not bound) | 🔗 linked, unbound | probe 0.939 / 0.939 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); answers 1 on both arms, read by none; frame 72 B, the ROM's 56 (File > Open) |
+| `0xfe13ea` | `do_dopen` (`aes_do_dopen`; `src/desk/desksupp.c`; unit J) | 3 arrival(s), GEMDOS REPLAYED and the floppy (`test_desk_supp.py`) | 434 / 208 B | — no row (not bound) | 🔗 linked, unbound | probe 0.938 / 0.938 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); frame 64 B, the ROM's 62 |
+| `0xfe14ba` | `do_fopen` (`aes_do_fopen`; `src/desk/desksupp.c`; unit J) | 2 arrival(s), GEMDOS REPLAYED + 1 class (Dsetpath EPTHNF) (`test_desk_supp.py`) | 304 / 174 B | — no row (not bound) | 🔗 linked, unbound | probe 0.928 / 0.928 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); reached only through New Folder's stand-in; stores into its caller's argument slots (the ROM's) |
+| `0xfe1800` | `desk_do_format` (`aes_desk_do_format`; `src/desk/desksupp.c`; unit J) | 2 arrival(s) — Return and the warning's OK clicked + 1 labelled staging (its host slot stale) (`test_desk_supp.py`) | 326 / 228 B | — no row (not bound) | 🔗 linked, unbound | probe 0.962 / 0.955 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); answer read by 1 |
+| `0xfe18e4` | `close_window` (`aes_close_window`; `src/desk/desksupp.c`; unit J) | 3 arrival(s), GEMDOS REPLAYED (`test_desk_supp.py`) | 286 / 142 B | — no row (not bound) | 🔗 linked, unbound | probe 0.986 / 0.984 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped) |
+| `0xfe1972` | `close_folder` (`aes_close_folder`; `src/desk/desksupp.c`; unit J) | 1 arrival, GEMDOS REPLAYED (`test_desk_supp.py`) | 222 / 166 B | — no row (not bound) | 🔗 linked, unbound | probe 0.923 / 0.923 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); reached only through the stand-in |
+| `0xfe1a18` | `fun_close` (`aes_fun_close`; `src/desk/desksupp.c`; unit J) | 4 arrival(s), GEMDOS REPLAYED (`test_desk_supp.py`) | 236 / 184 B | — no row (not bound) | 🔗 linked, unbound | probe 0.984 / 0.982 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); its 138-B frame the slot FUN_CLOSE_FRAME |
+| `0xfe22a6` | `hndl_kbd` (`aes_hndl_kbd`; `src/desk/desktop.c`; unit K) | 2 arrival(s) + 1 labelled class (the key $001b) (`test_desk_top.py`) | 46 / 40 B | — no row (not bound) | 🔗 linked, unbound | probe 0.872 / ~0.87 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); answer read by 1 |
+| `0xfe2618` | `cnx_get` (`aes_cnx_get`; `src/desk/desktop.c`; unit K) | 5 arrival(s), GEMDOS REPLAYED — a kept scroll, a kept sort and a kept view among them (`test_desk_top.py`) | 390 / 278 B | — no row (not bound) | 🔗 linked, unbound | probe 0.934 / 0.935 (G3's probe, `measured_on` over `bench_tier3().RomBench`, whole row, bench / shipped); void (counted) |
+| `0xfdb5fc` | `app_start` (`aes_app_start`; `src/desk/deskapp.c`; unit A) | 4 arrival(s), GEMDOS SCRIPTED + 13 labelled class(es) (`test_desk_app.py`) | 1588 / 1252 B | — no row (not bound) | 🔗 linked, unbound | probe 0.993 / 0.739 (G4's probe, `measured_on` over `bench_tier3().RomBench`, whole run, bench / shipped); answer read by deskmain; its cartridge arm UNPINNED (no cartridge) |
+| `0xfdbb34` | `app_save` (`aes_app_save`; `src/desk/deskapp.c`; unit A) | 4 arrival(s), GEMDOS SCRIPTED (the created handle's record the run's) + 5 labelled class(es) (`test_desk_app.py`) | 1404 / 842 B | — no row (not bound) | 🔗 linked, unbound | probe **1.098–1.112 ON THE BENCH BLOB, REPORTED** (bfill's C twin, an inference) / 0.628–0.636 (G4's probe, `measured_on` over `bench_tier3().RomBench`, whole run, bench / shipped); void (counted); its top-window arm UNPINNED (fun_rebld's GEMDOS past the recorder) |
+| `0xfdc57a` | `gr_drgplns` (`aes_gr_drgplns`; `src/desk/deskact.c`; unit B) | 12 arrival(s) through a hand's wake — carried over the menu bar and onto a window's title bar among them (`test_desk_act.py`) | 982 / 756 B | — no row (not bound) | 🔗 linked, unbound | probe 0.916–0.945 / 0.914–0.944 (G4's probe, `measured_on` over `bench_tier3().RomBench`, whole run, bench / shipped); void (counted); its slot HELD WHERE PARKED (gr_bwait) |
+| `0xfdcc2a` | `act_bsclick` (`aes_act_bsclick`; `src/desk/deskact.c`; unit B) | 7 arrival(s) + 8 labelled class(es) — the right Shift alone among them (`test_desk_act.py`) | 346 / 266 B | — no row (not bound) | 🔗 linked, unbound | probe 0.750–0.955 / 0.760–0.955 (G4's probe, `measured_on` over `bench_tier3().RomBench`, whole run, bench / shipped); void (counted) |
+| `0xfdcd34` | `act_bdown` (`aes_act_bdown`; `src/desk/deskact.c`; unit B) | 11 arrival(s) — two in the text view + 2 labelled class(es) (`test_desk_act.py`) | 768 / 464 B | — no row (not bound) | 🔗 linked, unbound | probe 0.898–0.959 / 0.897–0.958 (G4's probe, `measured_on` over `bench_tier3().RomBench`, whole run, bench / shipped); answer read by its caller; writes its own argument words (popped unread); slot HELD WHERE PARKED |
+
 
 ## Harness
 
@@ -3732,10 +3781,12 @@ arrival — no row, no verdict.
     `scratchpad/b6/W1/FIX/`). 383 verified STILL: no row registered, no registry declaration activated, no Tier-3 row,
     every Line-F table entry of the 59 the ROM's (`src/aes/lineftable.S` byte-identical), no kit edit. THE LEDGER
     HOLDS THEM IN A SECTION OF A SECOND KIND, `## Linked, unbound — desk (59)` (below the AES's), held to the
-    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. (The campaign's size as it stands, re-derived at wave 1b's
-    fix pass — wave 1a's own fix pass left it at 51 chains / 158 steps, reach 219:) THE HANDS' CAMPAIGN IS 69 CHAINS / 219
-    STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 224 OF BAND 6's 244; THE DEEPEST BY THE WRITE LEDGERS: PD0 1,460
-    of 1,792, PD1 722 of 1,196, the dispatcher 190 (188 on every other chain), the userdef stack 438 of 1,024.
+    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. (The campaign's size as it stands, re-derived at wave 2's
+    fix pass — wave 1a's own fix pass left it at 51 chains / 158 steps, reach 219; wave 1b's at 69 / 219, reach 224:) THE
+    HANDS' CAMPAIGN IS 101 CHAINS / 338 STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 226 OF BAND 6's 244; THE
+    DEEPEST BY THE WRITE LEDGERS: PD0 1,460 of 1,792, PD1 722 of 1,196, the dispatcher 190 (188 on every other chain but
+    the five `test_aes_desk_rom.DISPATCHER_AT_190` names — the ROM's own depth, wave 2's re-derivation), the userdef
+    stack 438 of 1,024.
     - **UNIT O — THE DESK'S LEAVES FILED IN AES MODULES** (`src/desk/deskleaf.c`, `src/desk/trp13.S`,
       `include/desk/deskleaf.h`, `test/aes_deskleaves.py`, `test/test_desk_leaves.py` — 366 tests): thirteen entries of
       the DOS glue (dos_write, dos_gdir, dos_mkdir, dos_setdt, dos_label, dos_space, dos_rename, dos_avail, dos_rawcio,
@@ -4127,6 +4178,262 @@ arrival — no row, no verdict.
       folder of another attribute bit); a size past eight digits (ob_sfcb); A0 at return on any shore of ours; PD0's margin
       bound (arithmetic); the harness's footprint on an arrival's megabyte; the `$90c` capture set, `make gates`, `make
       guarded` and the from-empty build — THE ORCHESTRATOR'S.
+  - **BAND 6 WAVE 2 — FOUR GROUPS, 44 ROUTINES OF THE DESK IN C, LINKED INTO BOTH BLOBS, HELD AT TIER 1, NOTHING BOUND**
+    (2026-10-14; on `6601276`: a prep pass — the per-group blocks, THE WHOLE HOST-SLOT TABLE RE-LAID onto the band's floor,
+    unit M's empty home, the held-with-no-table-entry set — then FOUR GROUPS IN ONE TREE, disjoint files — G1 units C, F, E
+    (`deskdir.c`, `deskinf.c`, `deskusr.c`: 6 routines), G2 units H, G, M (`deskfun.c`, `deskfpd.c` and the NEW
+    `deskutil.c`: 15), G3 units I, J, K, L (`deskwin.c`, `desksupp.c`, `desktop.c`, `deskview.c`: 18), G4 units A, B
+    (`deskapp.c`, `deskact.c`: 5) — two reviews, then ONE FIX PASS alone in the tree, which wrote this entry: every number
+    in it is the fix pass's own build, collect, probe or log unless it says whose measurement it is. The cut:
+    `scratchpad/b6/W2/cut.md`; the briefs `scratchpad/b6/W2/common.md`, `fix_w2.md`; the hand-backs
+    `scratchpad/b6/W2/{prep,G1,G2,G3,G4}/handback.md`; the reviews `scratchpad/RW2/{A,B}/review.md`; the fix pass's probes
+    and logs `scratchpad/b6/W2/FIX/`). 383 verified STILL: no row registered, no registry declaration activated, no Tier-3
+    row, every Line-F table entry of the 202 the ROM's (`src/aes/lineftable.S` byte-identical), no kit edit. THE LEDGER'S
+    `## Linked, unbound — desk` SECTION IS 203 ROWS (159 + 44): `$fde844`, the desk's userdef draw, has NO LINE-F TABLE
+    ENTRY (ub_trampoline calls it by value) and is held in `linef_table.LINKED_HELD_NO_TABLE_ENTRY` (R-W2-4), which
+    `test_status.py`, the unbound pin, the unit's count and Tier 3's owed-call pin now read with `LINKED_AND_NOT_FLIPPED`.
+    AFTER THIS WAVE EVERY CALLEE OF THE 44 IS C (unit M's pair, R-W2-1, joined the wave for `$fdfc3c`'s cartridge arm).
+    - **THE CASES** (every one at an ARRIVAL of a ROM run, or a LABELLED class or staging said in its id): G1 46 arrivals + 16 classes
+      (with the fix pass: d_dofcopy 7 arrivals — a read-only file's copy, the conflict's Skip clicked — + 11 classes,
+      GEMDOS SCRIPTED; d_doop 11 + 1; dir_op 13 + 1 LAID; inf_folder 3 + 1; dr_code 6 + 2; the userdef draw 6); G2 37 +
+      29 (fun_disk's empty drive an ARRIVAL now; unit M 0 + 6, no cartridge in the model); G3 68 arrivals + 10 classes /
+      stagings (Format's warning answered OK by a click; a fifth entry's second row under win_arrow and win_blt; two
+      windows under win_bdall; cnx_get's kept scroll, sort and view); G4 38 + 28 (the text view's line dragged and its desktop
+      put-down, the drag carried over the menu bar and onto a window's title bar, arrivals; the right Shift alone, a failed INF read, the view TEXT
+      with the sort 0, classes). STAGING KINDS, AS THE IDS SAY THEM: SCRIPTED, LAID, DRIVER_REPLAYED, and wave 2's
+      GEMDOS REPLAYED — the ROM's own run in place, call by call, its answers and the DTA each search left, on BOTH shores
+      over a recording trap (`aes_deskdir.in_place` / `EngineRecorder`: the copy engine and every driver of unit H;
+      `aes_deskfpd.gemdos_script` over fslib's replay; `aes_desksupp.replayed_row`, the openers and closers, with the
+      floppy where drive_check runs; unit A's recorder scripted by `dos_answers_in_place`) — with each FILE HANDLE THE
+      RUN OPENED LAID OPEN FOR THE HOST's dispatcher, its record as the ROM's GEMDOS left it (`aes_gemdosif.opened_record`;
+      a record no run gives is LAID, said in the id). THE HANDS: 101 chains / 338 steps (G1 7, G2 7, G3 16, G4 2 new —
+      the fix pass's eleven among them), reach 226 of the 244 (`$fe038c`, `$fe0454` first reached by G2's "dragged into its
+      window" chains); no chain deeper than PD0's 1,460; THE DISPATCHER AT 190 ON FIVE CHAINS — not the second window
+      alone: the second window's, G2's two desktop icons dropped into a window and the fix pass's emptied drive dropped
+      there (four pure walks of the ROM after "A: opened", nothing by hand, nothing laid), and its emptied Show Info (over
+      Show Info's stand-in) — the ROM's own
+      depth, RE-DERIVED AND REPORTED (W6-R4; `test_aes_desk_rom.DISPATCHER_AT_190`; what stores at 190 not traced).
+      ARRIVALS ON THE MOVE16 STAND-IN (a chain or its ancestry passes `$fe1ec2` Show Info or `$fe1ece` New Folder):
+      inf_folder's every one, d_doop's two Show Info counts and its emptied root, every "folder: …" chain's (d_dofcopy,
+      d_doop, dir_op, fun_mkdir — reached ONLY so —, fun_rebld's three, pn_active / pn_close's folder arrivals, fun_op /
+      fun_wdst / fun_win2win / fun_drag on the folder copy, do_fopen, close_folder, fun_close's folder arm, do_diropen's
+      two folder arrivals, do_wopen on "folder: opened", desk_clear on New Folder), the read-only file's copy and the
+      fifth entry's down arrow; G4's none (Reviewer A's `move16_lists.py` matched every group's list).
+    - **D0 AT RETURN** (`aes_deskbind.answer_readers`): every answer the C has held to the ROM's at its width; GEM's void
+      routines `void` in C, the ROM's leftover a NAMED, COUNTED DIVERGENCE read by no instruction: G2 pn_close 2, unit H
+      15; G3 desk_clear / desk_verify / do_wopen 13, unit L 25, cnx_get 5; G4 unit B 27, app_save 9; fun_disk with no
+      path node answers its CALLER'S D7 (1 case, not compared). G1: no divergence. A0: not compared.
+    - **THE PRICES** (scratch probes, one arrival each, NOT rows; ROM / ours, net of the shared entry, the convention beside
+      each): G1's plain arrivals over its own replay recorder (`aes_deskleaves.on_a_blob`), shipped (bench): d_dofcopy
+      0.833–0.835 (0.905–0.913), d_doop 0.879–0.906, inf_folder 0.766–0.769, dr_code / the userdef draw 0.993; G1's
+      SEVENTEEN YIELDING engine rows priced by Reviewer A on `bench_tier3().RomBench` (`aes_switching.measured_on`, G1's
+      recorder, the ROM's run in place): 0.947–0.980 on both blobs, no refusal, no X flag. G2 on convention R (unit C's
+      recorder replaying the ROM's run in place, whole row): every routine 0.874–0.965 shipped, pn_close 0.278–0.300, pn_active
+      0.706–0.875 over fslib's replay — band 5's convention REFUSED for every trapping G2 routine (its ledger records past each
+      frame; its script holds 10–11 entries). G3 (`measured_on` over the Tier 3 bench class, whole row including callees —
+      do_wopen's 4.1 M cycles, do_dopen's 5.7 M dilute a routine's own excess): none over 1.00. G4 (the same class, unit A's
+      recorder): ≤ 0.96 but app_save. **REPORTED, NOT ACCEPTED — ON THE BENCH BLOB ALONE: dir_op's one-file count 1.139**
+      (1,660 → 1,890 cycles; 1.046 shipped; Reviewer A reproduced it on the plain bench over G1's recorder; ATTRIBUTION,
+      AN INFERENCE from Tier 3's own strcpy rows: the C twin 188 + 52n against the ROM's 122 + 22n, +246 cycles for the
+      6-byte spec — the whole +230 excess; the `noinline` shape's own share not measured) and **app_save 1.098–1.112**
+      (0.628–0.636 shipped; Tier 3's bfill rows give the twin 134 + 44.3n against 120 + 18n: +50.5 k cycles over 1,920
+      bytes against a bench excess of +23.6 k — the attribution sufficient, an inference, both reviewers').
+    - **FRAMES AND PD0** (R-W2-6: REPORTED, NO TRIMMING; W6-R4 is the user's). ON "A: File > Open", Reviewer B's MEASURED
+      ROM frames at each call site against ours off the shipped listing: do_dopen at do_diropen 58 / 64 (+6), do_diropen at
+      do_wopen 50 / 68 (+18), do_wopen at desk_wind_open 56 / 88 (+32), do_wopen at act_chg 68 / 104 (+36); the ROM's entry
+      depths do_dopen 470, do_diropen 532, do_wopen 586, desk_wind_open 646 (deepest below 1,460), act_chg 658, do_wredraw
+      708 (deepest 1,416). BOTH File > Open paths over the 1,548 bound, BY ARITHMETIC: THROUGH wind_open ≈ 1,572 (wave
+      1b's 1,532, +12 the thunk at do_dopen, +56 the excesses, −28 wind_open's binding thunk gone; G3 said ≈ 1,580 on
+      listing-read ROM frames) and THROUGH act_chg → do_wredraw → objc_draw ≈ 1,580 (our do_wredraw entered at ≈ 798
+      against the ROM's 708, +56 at objc_draw, −2, +20 our AES): THE DEEPEST BOUND PATH ON THIS ARITHMETIC. THE LEVER,
+      NAMED (W6-R4, the user's): do_wopen, on both paths — its 32-byte locals, eight saved registers and longword pushes; a
+      slim outer frame making the growbox / act_chg / wind_open calls with the heavy part `noinline` — est. 30–50 B on
+      each; then do_diropen (+18) and wave 1b's do_wredraw local (24 → 16). THE DRAG NEST: +116 B at gr_bwait's wait (act_bdown
+      92, gr_drgplns 100 measured by B; G4 said +108), its deepest redraw ≈ 1,480 of 1,548 by arithmetic (G4 said ≤ 1,350).
+      THE COPY NEST: G1's frames left call pushes out — at the call: d_dofcopy 108, d_doop 104, dir_op 112, folder_op 88 (G1
+      gave 68, 72, 84, 48), so 408 B with call pushes, not 272; the ROM's measured dir_op 406 → d_doop 472, deepest 578
+      ("folders: B dragged onto A"), 598 the copy chains' deepest — ≈ 500 B under 1,548 still (arithmetic). G2's deepest
+      ROM run fun_rebld 1,168, ours ≈ 1,236. HELD WHERE PARKED (owed to `aes_event.SLOTS_HELD_WHERE_PARKED` at the
+      binding): G2's six slots across alerts, form_do and the copy engine; G4's GR_DRGPLNS_FRAME and ACT_BDOWN_FRAME across
+      gr_bwait and evnt_button; and G3's three across do_diropen's alert park — FUN_CLOSE_FRAME (fun_close → close_folder →
+      do_fopen), SUPP_FRAME (do_fopen; desk_do_format's own wait), CNX_GET_FRAME (cnx_get) — named here. HOST-SLOT BAND
+      after the wave: 123 slots ending at `$7f99a`; G3's and G4's windows shrunk to their extents (`$7f844..$7f910`,
+      `$7f962..$7f99a`): 138 B free, `$7f910..$7f962` (82) and `$7f99a..$7f9d2` (56). Nothing of it measured on a machine
+      of ours.
+    - **ROM BEHAVIOURS FOUND, EACH IN THE C AS THE ROM HAS IT** (a case each where one can reach it): G1 — d_dofcopy
+      returns at once on a failed Fread, the source left open; closes the source a SECOND time where the destination's
+      Fopen fails otherwise; a failed Fwrite's verdict overwritten by Fdatime's (answers 1; a large file's source left
+      open); a failed second read leaves a short copy, stamped; Fcreate drops the read-only bit (now an arrival); a typed
+      name equal to the source's goes straight to create; d_doop asks Fsnext once more after a failure; dir_op cuts the
+      CALLER's path, makes a found folder's conflict up as AES_DOS_ERR 1 / AX 5, takes its dialog down over the conflict
+      tree's place; inf_folder hands one frame word as both count pointers; dr_code leaves line mode XOR; the desk redraws
+      a clicked text line whole (dr_code's invert arm no arrival). The search glue gives EFILNF as AX 18 (ENMFIL's), so
+      d_doop's AX-2 arm (dos_open's EFILNF) is reached by no search — Reviewer A's RA5 is equivalent on every walk.
+      G2 — fun_d2desk's trash alert is one-button with default 2 (Return does nothing: wave 1b's "idles for ever"); fun_op
+      counts a copy twice; fun_disk compares pn_active's answer with 18 and drops it, answering its caller's D7 where
+      pn_open fails; fun_disk's desktop-icon arm is handed by no caller; pn_active lists a name that is '.' and more;
+      fun_mkdir's and fun_op's separator counts skip the spec's first byte; fun_mkdir's answer read by none; fun_win2win /
+      fun_win2desk test "the cartridge's window" against `$9888`'s text, empty at every arrival; fun_d2desk's "copied" is
+      sticky across icons. G3 — do_diropen answers 1 on both arms; do_fopen stores into its own argument slots 16/20/24(a6)
+      (its two ROM callers `$fe168a` / `$fe1a0a` pop with `addal #16` and never read them back — Reviewer B's reading; the
+      unused FOPEN_*_ARGUMENT defines deleted); desk_do_format hands pro_cmd the count byte 252; desk_clear pushes a tenth
+      word act_allchg does not read; win_arrow past 7 scrolls to its caller's D6 (refused by name in C); cnx_get's name
+      buffer runs into the drive word; do_dopen's cartridge clears AES_DOS_ERR. G4 — the drag outlines' bfill counts
+      BYTES (half cleared); a #W column halved at ≥ ncols, a width only at > ncols; the #W counter unbounded; the cursor
+      left AT the `@`; a type > 4 writes no letter; app_save keeps the shell's first 128 B; i_find's ANODE read with no NULL
+      test; act_bdown writes its own argument words; app_rdicon's 0 arm DEAD; a failed INF read's NUL stored BEFORE
+      g_afile (`$fdb6d6`'s sign-extending `movea.w`: now a class).
+    - **THE FIX PASS** (one agent, alone in the tree; its brief's rulings the ORCHESTRATOR'S, PROVISIONAL — AWAITING (24)):
+      (1) Reviewer A's blocker: "file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return" (G1's
+      block): inf_folder's ARRIVAL with the tallies stale (g_nfiles 1, g_size the file's) and d_doop's over the emptied
+      root; the LAID "g_size stale" class DROPPED. (2) A's blocker: "file: dragged to the trash, OK — then drive A: dragged
+      into its window" (G2's block): fun_disk's empty drive an ARRIVAL, the LAID EFILNF class dropped. (3) "file: read-only
+      — File > New Folder, 'A', Return, the file dragged onto it, Return": d_dofcopy handed $01 and dir_op's copy, ARRIVALS;
+      the dir_op FNODE and d_dofcopy classes NARROWED to the archive bit and a time ($20 / $1234) — d_doop's walk-DTA class
+      keeps $21 (no run copies a read-only file out of a walked folder). (4) GEMDOS REPLAYS: G2's own `in_place` DELETED,
+      `aes_deskfun.in_place` IS `aes_deskdir.in_place` (A measured the two identical on all 45 cases: G2's "G1 defect" was
+      unit A's wave-1b walk's, not G1's, and the folder-copy arms' limit is ENGINE_SEARCHES = 8 and the band, not
+      ENGINE_CALLS, 24 since — the record corrected); ONE child binding `aes_gemdosif.bind_handlers_in_a_child(lib,
+      handlers)` in place of three copies; ONE handle-laying helper `aes_gemdosif.opened_record` (G1's way: the ROM's
+      record), G4's app_save rows now laying the record of the handle the ROM's own Fcreate opened (only the to-disk
+      arrival opens one; the made-up record at handle 6 stays only in app_start's SCRIPTED DESKTOP.INF classes, LAID in
+      their ids). THE FULL MERGE of the four replays (A's shape: the recorder, the walk and `replayed` in a shared module;
+      G3's Dsetdrv / Dsetpath into its frame table; G4's drive calls; ≈ `0x700` B of its own claimed band) is DEFERRED.
+      (5) ONE HOME: OP_COUNT / OP_DELETE / OP_COPY in `deskdir.h` only; DIR_OP_FOLDER_DTA → AES_SH_SCRATCH; DOS_AX_FOLDER_EXISTS
+      / DOS_ERR_FOLDER_FOUND → DOS_AX_ACCESS_DENIED / GEM_DOS_FAILED; the 0x16 search attributes one name, DESK_SEARCH_ALL,
+      and desk_wait's words DESK_WAIT_BUSY / DESK_WAIT_DONE (`deskglobals.h`, every caller); G1's folder_made and G2's
+      made_or_refused ONE helper, `desk_search_or_mkdir` (`deskdir.c`, declared in `deskdir.h`); KEY_ESCAPE →
+      OB_EDIT_KEY_ESCAPE; INF_BYTES → INF_BUFFER_BYTES; the tests read DESK_PATHS_FREE, PRO_RUN_NO_WINDOW, EPTHNF, EFILNF,
+      EACCDN and the first file handle off the headers; G1's `file_selected` serves wave 1b's `last_selected_folder` too;
+      the two `noinline`s' reason said. `alert_button_point` and `aes_desk.button_point` NOT collapsed: not equivalent (an
+      alert's buttons are PADDED texts `_buttons_reading` does not match). OBJECTS: deskdir and deskfun changed (the helper
+      called, the selection test shared); deskapp, desktop, desksupp, deskbind byte-identical (the renames alone). (6)
+      pn_active's cartridge class lays the drive the ROM COMPARES (`$fdfc48`'s immediate, read off the ROM) and a test holds
+      the header's CARTRIDGE_DRIVE to it. (7) Format's warning answered OK by a click (Reviewer B's probe) — FORMAT_CHOSEN
+      + 1 dies; the name conflict's SKIP clicked too (its NAMECON_SKIP button reads "Cancel"; of the two "Cancel"s up the
+      lower; the run in place creates nothing). (8) "files: File > New Folder, 'A', Return (a fifth entry: a second row)",
+      then its down arrow: win_arrow's and win_blt's VERTICAL arrivals; the vertical row-blit (≥ 9 entries) NOT TRIED. (9)
+      G3's survivors: RB8 a case (two windows shown as text); RB9 a labelled staging (the SUPP slot stale); RB10 a class
+      (the key $001b); RB2 — a run DOES reach do_wopen over a text line's G_USERDEF ("text view: … the file's line …
+      shown"), but the C's act_chg draws it through ub_trampoline's far call no row's child serves: UNPINNED BY NAME
+      (`test_desk_win.UNPINNED_WAVE_2`); RB11 recorded (no vertical slide in the data). (10) THE RED PINS:
+      TAKEN_BY_HAND gained New Folder again's word (and the fix pass's three new chains'); DISPATCHER_ELSEWHERE kept 188
+      for every chain but the five at 190 (above); `test_status.py` counts both held lists; and A RED NO ONE REPORTED —
+      `test_tier3.py`'s owed-call pin refused `$fde844` because it now has a body of ours: a body held unbound with no
+      table entry is exempt (its call is relocated at the binding). (11) G3's two INF-restart chains RESTORED, the
+      SHOW_FILE pin widened to them (four chains), cnx_get's kept scroll and sort ARRIVALS. (12) G4: unit A's recorder
+      records an Fread's / Fwrite's BUFFER (its ledger stride 20, its handler room `0x98`, unit J's stubs moved behind it:
+      the band's `$1D8` of `$200`); SPOT_X 216; the right Shift alone; a failed INF read (the NUL before g_afile, the byte
+      there LAID stale); the drag carried over the menu bar and onto a window's title bar (Reviewer B's NIL points); the view TEXT with the sort 0; act_bdown's two LAID view classes replaced by
+      ARRIVALS ("text view: A: opened, the file's line dragged to the trash", "text view: drive A: dragged to a bare spot").
+      (13) records, above. (14) THE SWEEP, below.
+    - **THE SWEEP** (one log, `scratchpad/b6/W2/FIX/sweep.log`; driver `FIX/sweep.py` — wave 1b's, its mutants
+      this wave's; a PRIVATE COPY, `FIX/tree`; each mutant ONE replacement matching once, its product removed and
+      rebuilt, every `__pycache__` cleared, the selected node ids of the final battery run, the source restored
+      and its sha256 held, the product rebuilt from it; a build refusal, a crash or a timeout is NOT a kill). THE
+      CONTROL, nothing mutated: the 229 selected cases green (231 at the re-run, 1 at the ledger's). SIXTY-TWO
+      MUTANTS — one for every new case or test of the fix pass, every reviewer survivor (A's RA3, RA5, RA10, RB4,
+      RB12; B's G3 RB2, RB8, RB9, RB10, RB11 and G4 RB2, RB7, RB8, RB13, RB19, RB20; G4's refuted D11 and V29) and
+      EVERY AUTHOR SURVIVOR re-run against the final battery (G1's C5, C13; G2's H18, H25, H27, H32, H33, H34;
+      G3's I7, I9, I19, L4, L11, L16, L18, J9, J26, K1, K6; G4's D10, D20, D24, S9, B10, B18, B19, A11, A31, A33,
+      A37) — FINAL: 26 KILLED (each by an assertion), 34 SURVIVED AND RECORDED, 2 NOT A KILL: RB12 (its two
+      selected tests FAILED ON ASSERTIONS — the header's drive against the ROM's compare, and the class's image —
+      and the run also ERRORED in conftest's teardown, the mutant C's GEMDOS calls with no door bound: the
+      driver's classifier names that NOT A KILL; by the assertions it is a kill) and H33 (fun_drag yields on a
+      plain arm — a crash, as G2 found). THE SURVIVORS, BY REASON: equivalent on every machine of ours — RA5 (the
+      search glue makes EFILNF AX 18: d_doop's AX-2 arm is reached by no search), L16 (the view's first row 0, the
+      page clamped at 0), D11 (NIL read as an icon answers "no drop": object -1's state and a NULL ANODE's type),
+      C13, H27 (unobservable), H34, I7, L18, J9, S9, A11, A31, A33, A37 (each by its author's reading), D24 and
+      B19 (their own frame words); no data reaches the arm — RA3 (no disk eight folders deep), RB4 (a ninth
+      level), RB7 (the INF full at 2,013 B), RB11 (no vertical slide), C5 (a second conflict), H18, H32 (no drag
+      between two windows), H25, I9, I19, L4, L11, J26, D10, D20, B10, B18; and RB2w — reached by a run (a text
+      line opened) but its draw a far call no row's child serves. K1 and RB2a SURVIVED the first pass and are
+      KILLED on the re-run against the cases added for them (a kept view; the byte before g_afile laid stale).
+      Every mutant, its description copied from the driver, its verdict from the log: **RA10** — inf_folder:
+      g_nfiles not cleared first (item 1: the emptied drive's Show Info) — KILLED (1 failed, 7 passed, an
+      AssertionError); **RA5** — d_doop: EFILNF (AX 2) not a folder's end (item 1) — SURVIVED (31 passed); **N3**
+      — d_dofcopy: the read-only bit KEPT on the copy (item 3: the read-only file copied) — KILLED (2 failed, an
+      AssertionError); **N4** — fun_disk: an empty drive taken as holding files (item 2: drive A: emptied, dropped
+      in its window) — KILLED (1 failed, an AssertionError); **C6** — d_dofcopy: the conflict's OK taken as Skip
+      (item 7: Skip clicked) — KILLED (1 failed, an AssertionError); **FMT1** — desk_do_format: the formatting
+      button 2 (FORMAT_CHOSEN + 1: item 7, the OK clicked) — KILLED (1 failed, an AssertionError); **RB9** —
+      desk_do_format: the letter's NUL not written (item 9: the slot laid stale) — KILLED (1 failed, an
+      AssertionError); **RB10** — hndl_kbd: Esc by its ASCII byte alone (item 9: the key $001b) — KILLED (1
+      failed, 3 passed, an AssertionError); **L16** — win_arrow: a page up by columns (item 8: the window of two
+      rows) — SURVIVED (4 passed); **L2** — win_blt: the extent's row / column swapped (item 8: the vertical
+      arrivals) — KILLED (3 failed, 1 passed, an AssertionError); **RB11** — win_slide: the extent always the
+      columns (Reviewer B; no vertical slide in the data) — SURVIVED (31 passed); **RB8v** — win_bdall: the first
+      WNODE rebuilt every time (item 9: two windows shown as text) — KILLED (1 failed, 3 passed, an
+      AssertionError); **RB2w** — do_wopen: a text view's box as wide as h (Reviewer B; item 9: reached, its draw
+      unserved) — SURVIVED (10 passed); **K1** — cnx_get: the view from the sort (item 11: the kept sort) — first
+      SURVIVED (5 passed); RE-RUN against the final battery: KILLED (1 failed, 5 passed, an AssertionError);
+      **K6** — cnx_get: the column from the row (item 11: the kept scroll) — KILLED (1 failed, 4 passed, an
+      AssertionError); **RB12** — pn_active: the cartridge's drive 'C', not 'c' (item 6) — NOT A KILL (pytest rc
+      1: no test failed on an assertion) (2 failed, 14 passed, 1 error); **SM1** — desk_search_or_mkdir: a found
+      folder's AX made up 4 (item 5: the one helper) — KILLED (1 failed, 5 passed, an AssertionError); **DW1** —
+      the arrow's desk_wait word 1 (item 5: DESK_WAIT_DONE, every caller) — KILLED (1 failed, an AssertionError);
+      **RB13** — act_bsclick: only the left Shift a Shift (item 12: the right Shift alone) — KILLED (1 failed, 3
+      passed, an AssertionError); **RB8a** — app_save: a spot's column over the icon's width, not the grid's (item
+      12: SPOT_X 216) — KILLED (1 failed, 9 passed, an AssertionError); **RB19** — app_start: Fread into g_afile +
+      1 (item 12: the buffer recorded) — KILLED (2 failed, 17 passed, an AssertionError); **RB20** — app_save:
+      Fwrite from g_afile + 1 (item 12: the buffer recorded) — KILLED (1 failed, 9 passed, an AssertionError);
+      **RB2a** — app_start: the INF's NUL at an UNSIGNED length (item 12: the read failing) — first SURVIVED (19
+      passed); RE-RUN against the final battery: KILLED (1 failed, 18 passed, an AssertionError); **D11** —
+      gr_drgplns: NIL taken as an icon (item 12: carried over the menu bar) — first SURVIVED (11 passed); RE-RUN
+      against the final battery: SURVIVED (12 passed); **V29** — app_save: the view's bit from the sort (item 12:
+      the view TEXT, the sort 0) — KILLED (1 failed, 9 passed, an AssertionError); **TV1** — act_bdown's outline:
+      the window's view word read for the desktop's root too (item 12: the text-view put-down) — KILLED (1 failed,
+      12 passed, an AssertionError); **RB16** — act_bdown: the text view's drag carries the icon outline (item 12:
+      the text-view line dragged) — KILLED (1 failed, 1 passed, an AssertionError); **P190** — DISPATCHER_AT_190
+      without the emptied Show Info (item 10) — KILLED (1 failed, an AssertionError); **PHB** — TAKEN_BY_HAND
+      without New Folder again's word (item 10) — KILLED (1 failed, an assert); **PT3** — test_tier3: the
+      held-with-no-table-entry exemption dropped (the red found at the pass's start) — KILLED (2 failed, an
+      AssertionError); **RA3** — d_doop: a folder entered at level 8 too (>= -> >) — SURVIVED (31 passed); **RB4**
+      — fun_op: a copy as deep as nine refused too (> -> >=) — SURVIVED (6 passed); **RB7** — app_save: the
+      INF-full stop at > 2013 (boundary) — SURVIVED (10 passed); **C5** — d_dofcopy: the file conflict's two
+      fields swapped — SURVIVED (31 passed); **C13** — gem_gemdos_call's verdict words not cleared — SURVIVED (31
+      passed); **H18** — fun_win2win: i_find in the source window — SURVIVED (3 passed); **H32** — fun_drag:
+      win2win's windows swapped — SURVIVED (6 passed); **H25** — fun_desk2win: the icon's FNODE for the drop's —
+      SURVIVED (3 passed); **H27** — fun_d2desk: the trash alert names the destination — SURVIVED (6 passed);
+      **H34** — fun_ddst: a NULL ANODE's type read — SURVIVED (4 passed); **H33** — fun_drag: the desktop's
+      background dropped on — NOT A KILL (pytest rc 1: a crash) (1 failed, 5 passed); **I7** — desk_clear: the
+      whole screen for the area below the bar — SURVIVED (6 passed); **I9** — desk_clear: window 0's root 0 —
+      SURVIVED (6 passed); **I19** — do_wopen: act_chg's disabled check off — SURVIVED (10 passed); **L4** —
+      win_blt: clipped to the screen, not below the bar — SURVIVED (6 passed); **L11** — win_slide: slider fields
+      swapped — SURVIVED (3 passed); **L18** — win_srtall: tests the icon, not the handle — SURVIVED (3 passed);
+      **J9** — do_dopen: chdir to '*' — SURVIVED (3 passed); **J26** — fun_close: the separator '/' — SURVIVED (4
+      passed); **D10** — gr_drgplns: a window no WNODE has kept — SURVIVED (11 passed); **D20** — gr_drgplns: an
+      icon lit again under the mouse — SURVIVED (11 passed); **D24** — gr_drgplns: graf_mkstate's button and keys
+      answers swapped — SURVIVED (11 passed); **S9** — act_bsclick: the others' rectangle the whole screen —
+      SURVIVED (15 passed); **B10** — act_bdown: a window's icons put down on the desktop — SURVIVED (13 passed);
+      **B18** — act_bdown: the box's except the root — SURVIVED (13 passed); **B19** — act_bdown: evnt_button's x
+      and y answers swapped (its own argument words) — SURVIVED (13 passed); **A11** — app_start: rom_ram's size 1
+      — SURVIVED (19 passed); **A31** — app_start: an icon's width one label margin — SURVIVED (19 passed);
+      **A33** — app_start: the tall screen's space on the short — SURVIVED (19 passed); **A37** — app_start: the
+      spot not moved below the menu — SURVIVED (19 passed); **ST1** — STATUS.md: the desk's linked-unbound section
+      says 202 (the userdef draw's row not counted) — KILLED (1 failed, an AssertionError); **ST2** — STATUS.md:
+      the userdef draw's row gone (R-W2-4's held set uncounted) — KILLED (1 failed, an AssertionError).
+    - **THE TABLE, THE OBJECTS, THE BLOBS.** `make bench` rc 0 in the shared tree: THE TIER-3 TABLE BYTE-IDENTICAL to
+      `scratchpad/b6/W2/base/tier3.txt` (`cmp`; 5,777 lines) — no table move. OBJECTS: the 158 non-desk-wave objects of
+      `base/objs.txt` (the 155 outside `src/desk`, deskbind, deskleaf, trp13) sha256-identical; the desk's twelve changed
+      objects — deskact, deskapp, deskdir, deskfpd, deskfun, deskinf, desksupp, desktop, deskusr, deskview, deskwin and
+      the new deskutil — deskact 799423e3…, deskapp 6a888030…, deskdir 25479775…, deskfpd 885a560d…, deskfun bdb447e1…,
+      deskinf 7d9f9b32…, desksupp 536d72a7…, desktop b354ed79…, deskusr 241fe378…, deskview 4ed92acb…, deskwin
+      e4f9b163…, deskutil f37a0b17…; THE FIX PASS MOVED TWO OF THEM, deskdir and deskfun (the shared helper
+      `desk_search_or_mkdir`, the one selection test), every other object identical before and after it
+      (`FIX/objs_before.txt`, `FIX/objs_final.txt`). `src/aes/lineftable.S` byte-identical; THE SHIPPED GLUE `glue.S` the base's
+      (97892842…: no new thunk). THE BLOBS: bench 246,656 B 186c54b605b0f5c6…, shipped 249,544 B 6dcf73b6f4ad8b68…
+      — 22,512 / 22,700 bytes more than wave 1b's (56 B less than the groups' hand-back: the fix pass's shared helpers).
+    - **UNPINNED / NOT DONE, BY NAME:** NOTHING OF THE 44 RAN ON A MACHINE OF OURS; PD0 bound (arithmetic); A0; G1 — the
+      depth-8 walk (RA3: no disk that deep), a second conflict on a typed name (C5), no name typed, a delete confirmed by OK,
+      a Ddelete or search error other than the end, C13 (equivalent by reading); G2 — cart_sfirst's found arm (the oracle's
+      port reads 0), fun_win2win's two windows (H18, H32), fun_disk's fun_ddst arm, fun_mkdir's Retry, fun_ddst's folder
+      copy as B (ENGINE_SEARCHES), fun_op's ninth level (RB4), H25, H27 (unobservable), H34; G3 — the vertical row-blit,
+      a fifth window, a failing drive check, the cartridge, win_arrow past 7, cnx_get's refusals, do_wopen's text-line arm
+      (RB2, reached, unserved), I7, I9, I19, L4, L11, L16, L18, J9, J26 (each named in the sweep); G4 — app_save's
+      top-window arm (fun_rebld's GEMDOS past unit A's recorder), app_start's cartridge arm, ANODE-pool exhaustion, the INF
+      full at 2,013 B (RB7), D10, D20, D24, B10, B18, B19, S9, A11, A31, A33, A37 (each named in the sweep); the `$90c`
+      capture set, `make gates`, `make guarded`, the from-empty build and `my-code-review` — THE ORCHESTRATOR'S.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -4226,8 +4533,22 @@ arrival — no row, no verdict.
   `aes_event.SLOTS_HELD_WHERE_PARKED`; app_blddesk's AES_XBIOS_RETURN on the shipped blob (a C caller of the door's
   thunk parks the thunk's return: answer it, declare it, or hand the ROM's site — the user's); the five trap frames band
   5's convention lacks (a table move: the user's); the D0 remedy for the wave's void routines (the same question as
-  wave 1a's); W6-R4's gate with do_wredraw's path bound (≈ 1,526 of 1,548 by arithmetic). WAVE 2 IS NEXT AFTER THE
-  BINDING'S RULING: 42 routines / 12,662 B of units A–L below the 17-routine cycle (the cut's §1).
+  wave 1a's); W6-R4's gate with do_wredraw's path bound (≈ 1,526 of 1,548 by arithmetic). (Wave 2 followed: below.)
+  **BAND 6 WAVE 2 IS IN** (its entry, above; 383 verified STILL): forty-four more routines of the desk — the copy
+  engine and Show Info's folder count (units C, F), the text view's line draw and the desk's userdef draw (E), the
+  operations' drivers (H), the directory read and close (G) and the cartridge's directory pair (M, a new file), the
+  windows' openers, closers, scrolls and rebuilds (I, J, K, L), the INF's parse and write and the drags (A, B) — are C,
+  LINKED INTO BOTH BLOBS, HELD AT TIER 1 at the hands' arrivals, NOTHING BOUND, in the ledger's `## Linked, unbound — desk
+  (203)`; every callee of them is C. WHAT IS LEFT OF THE DESK BELOW THE UTILITIES IS WAVE 3: THE DESK FLIP — the
+  17-routine cycle, `$fe2172` and deskmain (19 routines / 6,924 B, the cut's §1), and with it the binding. IT WAITS FOR
+  THE USER: W6-R1 (slice B, the binding) and THE MOVE16 KIT FIX (the oracle executes `$f620..$f627` as MOVE16: New Folder's
+  `$fdfebc` and every arrival through Show Info / New Folder stand on `aes_boot.continued`'s stand-in). Owed by name
+  from this wave at the binding: the 44 out of the held lists at their flips (`$fde844`'s call in trapdoor.S relocated —
+  it has no table entry); the slots held where parked (G2's six, G4's two, G3's FUN_CLOSE / SUPP / CNX_GET frames) taught
+  to `aes_event.SLOTS_HELD_WHERE_PARKED`; W6-R4's gate with BOTH File > Open paths bound (≈ 1,572 through wind_open, ≈
+  1,580 through act_chg → do_wredraw: over the 1,548 by arithmetic — the do_wopen lever named, the user's); the D0
+  remedy for the void routines and fun_disk's caller-D7; the replays' full merge (deferred, ≈ `0x700` B of a band of
+  its own); band 5's trap frames (now with the copy engine's: the user's).
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -4805,6 +5126,56 @@ arrival — no row, no verdict.
       - PD0 WITH THE WAVE BOUND (reviewer B's MEASURED ROM frames and his ARITHMETIC for ours bound): do_wredraw on "A:
         File > Open" ≈ 1,526 of the 1,548 under the 244-byte nest, the tightest of the wave; the wave's paths stay under
         wind_open's 1,460 + 72 of wave 1a (1,532). For W6-R4's gate, measured at the binding.
+    (24, continued) BAND 6 WAVE 2 — FOUR GROUPS, 44 ROUTINES (its entry, above). NOTHING HERE IS THE USER'S WORD: the
+      cut's and the fix pass's brief's rulings are the ORCHESTRATOR'S, PROVISIONAL, each marked so; the rest is reported
+      with its numbers and whose measurement each is.
+      - PROVISIONAL RULINGS OF THE CUT AND THE PREP (`scratchpad/b6/W2/cut.md` §7, `common.md`): R-W2-1 unit M's pair
+        `$fed522` / `$fed534` in this wave, G2's, a new file `src/desk/deskutil.c` (44 routines); R-W2-2 the four groups
+        (E with G1), the exports ledger, G1 first with unit C; R-W2-3 THE HOST-SLOT RE-LAY (every slot packed onto the
+        band's floor, 102 of 107 moved, every object identical) and a window per group (14 B kept back); R-W2-4 `$fde844`
+        in `LINKED_HELD_NO_TABLE_ENTRY`, not `LINKED_AND_NOT_FLIPPED`; R-W2-5 the per-unit counts on new wave-2 keys;
+        R-W2-6 the File > Open frames REPORTED, no trimming; R-W2-7 CARRIED, THE USER'S: band 5's trap frames (now Fcreate,
+        Fdatime, Dcreate, Ddelete, Mfree, Fsnext too), the MOVE16 kit fix, W6-R8 (cartridge, drive B:, the blob in the TPA);
+        R-W2-8 G4's INF re-entry chain tried before an INF arm was labelled (tried: the same INF text as "file: shown" —
+        not kept).
+      - PROVISIONAL RULINGS OF THE FIX PASS'S BRIEF: (a) G2's own `in_place` deleted, G1's walk the one (measured
+        identical on 45 cases by Reviewer A); (b) ONE child binding and ONE handle-laying helper; G4's app_save rows lay
+        the ROM's own record (a record no run gives stays LAID in app_start's classes' ids); (c) THE FULL MERGE OF THE FOUR
+        REPLAYS DEFERRED — A's shape: `EngineRecorder` + `in_place` + `replayed` into a shared module and
+        `bind_handlers_in_a_child`; G3's Dsetdrv / Dsetpath and G4's drive calls into the engine's frame table; its own
+        claimed band ≈ `0x700` B (the engine borrows `aes_gemdosif`'s, 1,376 of 1,472 B; its 8 DTA fills already refuse G2's
+        folder copies, 10 and 11 searches); (d) ONE HOME for the re-spelt values (above); (e) pn_active's cartridge arm a
+        labelled class; (f) the vertical row-blit NOT TRIED (≥ 9 entries at four columns) — named unpinned; (g)
+        DISPATCHER_ELSEWHERE kept as 188 for every chain but the five at 190, read as the ROM's own depth (not loosened:
+        re-derived); `test_status.py` counting both held lists; (h) `WAVE_2_WINDOWS` shrunk to the extents used (138 B free);
+        (i) the unused FOPEN_*_ARGUMENT defines deleted rather than a test of their callers' pops (a reading recorded);
+        (j) `test_tier3.py`'s owed-call pin exempting a body held with no table entry — a red no group reported.
+      - THE GROUPS' "TO RULE ON", CARRIED (none ruled): G1 — the engine recorder BORROWING `aes_gemdosif`'s band (its own
+        window `$7b640..$7b800` too small: a 24-call ledger, 8 DTAs, a `0x150` handler); gem_gemdos_call's effect spelt
+        inline in C (`file_transfer`: no C callee can take its frame — the `.S` pops its own return so GEMDOS reads its
+        caller's frame); GEMDOS REPLAYED and handles laid open as staging kinds, with the spare answers; dir_op's 1.139 on
+        the bench blob and the `noinline` shape that trades 48 B of copy-nest depth for it; the Skip / no-name /
+        second-conflict arms (Skip now a case). G2 — New Folder again's TAKEN_BY_HAND line (DONE by the fix pass); the
+        dispatcher's 190 (DONE: re-derived); its `in_place` criterion (ANSWERED: G1's walk had no such defect); ENGINE_CALLS
+        (ANSWERED: the limit is ENGINE_SEARCHES); B5 refused for every trapping routine (the frames question); fun_disk's
+        caller-D7 answer (the D0 remedy); six slots held across yields. G3 — the INF-restart chains (RESTORED, the SHOW_FILE
+        pin widened); the File > Open bound depth over 1,548; its copy of fslib's twin and its handler in G3's AES window
+        (`$7bf40`, `0xC0` B); desk_do_format's OK arm (DONE: a click wake); do_diropen's answer 1 on both arms. G4 —
+        app_save's bench-only 1.10–1.11; app_save's fun_rebld arm (by G1's replay or a recorder with Fsetdta / Fsfirst /
+        Fsnext: unpinned); the handle-record laying as the standard (DONE: `opened_record`); a generic child binding (DONE);
+        the drag nest's frames (+116 B measured by B).
+      - THE PREP'S: the re-lay moved 102 host-slot addresses of bands 2–6 (host-only; the whole suite's first run is this
+        pass's, green); `$fde844`'s STATUS row (DONE: the section counts both lists); the file name `deskutil`; 14 B kept
+        back the whole band's slack (138 B free after the fix pass's shrink).
+      - D0: the wave's void routines (G2 17 cases, G3 43, G4 36) read by no ROM caller, and fun_disk's caller-D7 — the
+        remedy the user's, wave 1a's question.
+      - PD0 WITH THE WAVE BOUND (Reviewer B's measured ROM frames, his and G3's arithmetic): BOTH File > Open paths ≈ 1,572
+        and ≈ 1,580 OVER the 1,548; the drag's ≈ 1,480 and the copy chains' ≈ 1,050 under it. W6-R4's gate, the user's: the
+        do_wopen lever (a slim outer frame, est. 30–50 B a path), do_diropen's +18, do_wredraw's 24 → 16.
+      - PRICES OVER THE BAR, REPORTED: dir_op 1.139 and app_save 1.098–1.112, both bench-blob only, both attributed to a
+        transcribed core's C twin (strcpy, bfill) by inference from Tier 3's own rows.
+      - THE SWEEP'S SURVIVORS, RECORDED (each named in the entry's sweep): whether an equivalent by reading or an arm no
+        data reaches stays recorded rather than pinned by a fabricated record.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -4931,9 +5302,26 @@ arrival — no row, no verdict.
 
 ## Suite
 
-`make test`: **30,295 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **30,685 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 6 WAVE 2 — FOUR GROUPS, 44 ROUTINES, WITH THEIR FIX PASS (2026-10-14; a prep pass and four groups in one tree on
+  `6601276`, two reviews, then one fix pass alone in the tree — 44 routines of the desk in C, linked into both blobs and
+  held at Tier 1, nothing bound; thirty-two chains; the host-slot table re-laid; tests and docs: ONE NEW OBJECT,
+  `src_desk_deskutil_c.o`; the 158 outside the wave's identical to `scratchpad/b6/W2/base/objs.txt`; both blobs 22,512 /
+  22,700 bytes longer than wave 1b's; the shipped glue the base's; the table's 5,777 lines BYTE-IDENTICAL to
+  `scratchpad/b6/W2/base/tier3.txt` after `make bench`): ONE `make test` in the shared tree (`PYTEST_ARGS="-n 8"`),
+  `build/*.so` and every `__pycache__` removed first, **30,685 passed / 8 skipped**, rc 0, 453 s
+  (`scratchpad/b6/W2/FIX/final.log`; RUN ONCE). BY THE LEAN CYCLE: `make gates`, `make guarded`, a `$90c` capture set and
+  a from-empty build were NOT run — the orchestrator's. RE-SUMMED, ITEMISED BY FILE against wave 1b's fix pass's own
+  collection (30,693 = 30,685 + 8 skipped, against 30,303; `pytest --collect-only` on both, 286 files then and 287 now:
+  `scratchpad/b6/W1b/FIX/collect_perfile.txt`, `scratchpad/b6/W2/FIX/collect_perfile.txt`): +390 — ONE NEW FILE,
+  `test_desk_util.py` 14 (unit M); `test_desk_dir.py` 54 → 103, `test_desk_inf.py` 14 → 22, `test_desk_usr.py` 25 → 44
+  (G1); `test_desk_fun.py` 10 → 66, `test_desk_fpd.py` 84 → 102 (G2); `test_desk_win.py` 91 → 131, `test_desk_view.py`
+  102 → 134, `test_desk_supp.py` 10 → 40, `test_desk_top.py` 46 → 59 (G3); `test_desk_act.py` 77 → 123, `test_desk_app.py`
+  99 → 130 (G4); `test_aes_desk_rom.py` 98 → 130 (thirty-two chains, one test each); `test_aes_lineftable.py` 484 → 485
+  (the held-with-no-table-entry pin); `test_host_slots.py` 2 → 3 (the windows' refusal); no file lost a test
+  (`test_tier3.py` and `test_status.py`: their pins rewritten, not added).
 - BAND 6 WAVE 1b — FOUR GROUPS, 100 ROUTINES, WITH THEIR FIX PASS (2026-10-13/14; a prep pass and four groups in one
   tree on `ec18000`, two reviews, then one fix pass alone in the tree — 100 routines of the desk in C, linked into both
   blobs and held at Tier 1, nothing bound; eighteen chains; `include/desk/deskglobals.h`; tests and docs: ELEVEN NEW

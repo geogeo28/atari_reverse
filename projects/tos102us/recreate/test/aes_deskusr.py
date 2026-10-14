@@ -15,3 +15,14 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_E = tuple(SIGNATURES)
+# ---- band 6 wave 2, group G1 (unit E) ---- the unit's wave-2 routines: their own signatures and list, so wave
+# 1b's UNIT_E (and its count) stays as it is
+DR_CODE, USERDEF = "AES_ROM_DESK_DR_CODE", "AES_ROM_DESK_USERDEF"
+SIGNATURES_WAVE_2 = {
+    DR_CODE: (aes.WORD_ANSWER, (LONG, WORD, WORD, WORD, WORD, WORD, WORD, WORD, LONG)),
+    USERDEF: (aes.WORD_ANSWER, (LONG,)),
+}
+for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
+UNIT_E_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# ---- end of group G1's wave-2 ----
