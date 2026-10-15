@@ -622,7 +622,9 @@ def pre_pokes():
     return {0: pre().ram}
 
 
-def test_the_floppy_answers_drive_a_alone_only_inside_the_disk_and_no_getbpb():
+def test_the_floppy_answers_drive_a_alone_only_inside_the_disk_and_a_getbpb_rewrites_nothing_of_the_disk_logged_in():
+    """(Band 6 wave 4: a Getbpb of the disk logged in, which the disk copy asks of its source, is served — the boot
+    sector read into the driver's buffer again, the mode stored; the record, which holds this disk, is not laid.)"""
     memory = make_image(pre_pokes())
     floppy = aes_boot.Floppy(memory, aes_boot.blank_disk())
     stack = harness.emu.STACK_TOP
@@ -635,8 +637,8 @@ def test_the_floppy_answers_drive_a_alone_only_inside_the_disk_and_no_getbpb():
     assert call(aes_boot.MEDIACH, aes_boot.DRIVE_A) == addrs.MEDIACH_UNCHANGED
     with pytest.raises(aes_boot.Refused, match="drive A: alone"):
         call(aes_boot.MEDIACH, aes_boot.DRIVE_A + 1)
-    with pytest.raises(aes_boot.Refused, match="Getbpb of drive 0"):
-        call(aes_boot.GETBPB, aes_boot.DRIVE_A)
+    assert call(aes_boot.GETBPB, aes_boot.DRIVE_A) == floppy.record
+    assert [at for at, _data in floppy.laid_by_the_last_call()] == [aes_boot.driver_boot_sector(memory), aes_boot.driver_mode(memory)]
     past = len(floppy.disk) // st_build.SECTOR_BYTES
     with pytest.raises(aes_boot.Refused, match="leaves the disk"):
         call(aes_boot.RWABS, 0, 0, 0x8000, 1, past, aes_boot.DRIVE_A)

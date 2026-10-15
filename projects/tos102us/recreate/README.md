@@ -183,11 +183,16 @@ cold, 11 ms served.
    and `Floprd` copy sectors between the caller's buffer and a 720 KB image held OFF the machine; `Mediach` says
    UNCHANGED unless the desk FORCED a change — before it opens a drive it reads the boot sector by `Floprd` and
    calls `Rwabs(0, NULL, 2, 0, drive)`, which the ROM's driver takes as "store the count as the drive's
-   media-change mode" (the byte `$755a`, `$fc12e2`) —; `Getbpb` is served only then (the same disk: it rewrites what
-   the driver's record holds, lays the boot sector in the driver's buffer and ends the change) and refused by name
-   otherwise. The disk served must be THE DISK THE CAPTURE BOOTED WITH — the driver's own record must hold its BPB,
-   its geometry and its serial, or the boot is refused. The driver's private scratch and timers are not advanced; no
-   hardware register is declared for any of it.
+   media-change mode" (the byte `$755a`, `$fc12e2`) —; `Getbpb` rewrites the drive's record off the disk in the
+   drive (the bytes that differ: none for the disk the machine logged in), lays the boot sector in the driver's
+   buffer and ends any change — no boot asks one; the desk's forced change, the disk copy's source, a disk the
+   formatter rewrote and drive B:'s first log-in do (band 6 wave 4). `Rwabs` maps a record through the drive's record
+   (its sectors a cylinder and a track: a single-sided disk lies on the medium's first side), answers E_CHNG and moves
+   nothing for a flag under 2 on a drive held CHANGED (`$fc12f8`), and — where `_fverify` (`$444`) is set, as on
+   every capture — leaves after a write what the ROM's verify leaves in the driver's buffer `$16da` (the zero word,
+   the last record written at `$18da`). The disk served must be THE DISK THE CAPTURE BOOTED WITH — the driver's own
+   record must hold its BPB, its geometry and its serial, or the boot is refused. The driver's private scratch and
+   timers are not advanced; no hardware register is declared for any of it.
 2. **The blitter probe's bus error.** XBIOS `Blitmode`'s probe (`$fc0f1a`) touches `$ffff8a00` behind a bus-error
    vector; the oracle's CPU takes no bus error and the read is of an unmodelled I/O byte. The run is stopped at that
    one instruction (`$fc0f34`) and the exception taken as a 68000 takes it: the 14-byte group-0 frame pushed, the PC
@@ -201,6 +206,29 @@ cold, 11 ms served.
    handler then raises the interrupted mask to 3, which is why every SR the AES saves reads `$23xx`. One level-2
    interrupt is held pending for the run (`m68k_set_irq`), taken through the image's vector, served by the ROM's
    handler. Every boot takes exactly one.
+6. **The devices of band 6 wave 4 (ruling W6-R9: DECLARED AT THE DRIVER'S ENTRIES, NOT POKED)** — each answers what
+   no hardware here does, and every run it answered NAMES ITS CLASS in `Boot.devices` (`THE_FORMATTER`, `DRIVE_B`,
+   `THE_PRINTER`), never silently:
+   - **THE FORMATTER** (`Floppy.formatter`): XBIOS `Flopwr` and `Flopfmt`, two more entries read off the machine's own
+     XBIOS table and served where `Floprd` is (`Floppy.served_at`: the four and these two). Flopfmt marks the drive
+     CHANGED, formats one side of one track in the skew table's order and leaves the caller's buffer as the ROM's
+     does (the track its builder `$fc198c` lays, then its verify's reads and the bad-sector list's zero); Flopwr
+     marks the drive CHANGED where it writes sector 1 of track 0, side 0. The FDC's own reads (PSG register 14, the
+     MFP's `$fffa01` done line) are below the entries, and read by no run.
+   - **DRIVE B:** — the ROM's OWN TWO-DRIVE PATH (`_nflops` is 2 on every capture: the one-drive swap `$fc1ebe` is
+     not taken). `with_a_disk_in_drive_b(machine, disk)` makes a machine with a second image there (`Boot.drive_b`,
+     the image as each run leaves it), refused where B: holds one or was logged in; the model answers Getbpb, Floprd,
+     Flopwr and Flopfmt of drive 1 off it. Drive B: was never LOGGED IN on any capture, but the boot did touch it
+     (its access time is stamped): "the same machine to the byte" is not measured — hence the label.
+   - **THE PRINTER** — a machine's, not every run's: `with_a_printer_on_line(machine)` sets `Boot.printer`, and a run
+     continued from it is served the MFP's GPIP with BUSY clear and stops at the port transaction's first
+     instruction (`PRINTER_SEND`, `$fc20cc`), where the byte is kept (`Boot.printed`) and the driver's own answer
+     (sent) handed back. Every GPIP read of such a run must be a BUSY poll before a byte, one a byte, or the run is
+     refused by name (`devices_answered`: the ROM reads that byte at its RS232 handshake, its monitor detect and the
+     FDC's done line too); on a machine with no printer the GPIP is declared by nothing and the kit refuses its read.
+     The BIOS driver's FIVE-SECOND HOLD-OFF (`$fc209a`: `_hz_200 - $e84 < 1000` answers "not ready" without polling,
+     and stamps the time) is the ROM's and runs as such: TIME PASSES at an idle only by a reception,
+     `aes_boot.ticked(n)` — n ticks of the system timer, each through Timer C's handler as a click's are.
 
 NO OTHER INTERRUPT IS DELIVERED: nothing between `gem_entry` and the first idle waits on a clock. **No time passes** in
 a booted machine — its clocks are its pre-init machine's, and `colorptr` (`$45a`) is still pending: the first
@@ -427,6 +455,14 @@ campaign the band's rows will be arrivals of.
   WRITE LEDGERS — the lowest byte of each stack a chain's own steps stored — for PD0, PD1, the dispatcher's stack
   and the desk's userdef stack. A depth is the lowest STORE, not the lowest SP, and no interrupt is taken at the
   deepest point.
+- **THE DEVICES' CHAINS** (band 6 wave 4, slice H: the block "band 6 wave 4, slice H" of `aes_desk.CHAINS`, over the
+  device model's item 6): File > Format to its end, a disk copied onto a second disk (`aes_desk.DISK_IN_B`), a file
+  printed — from the Show / Print / Cancel alert's machine with a printer put on line (`aes_desk.PRINTER_ON_LINE`),
+  "not ready" until `aes_desk.FIVE_SECONDS` (`ticked(1000)`) has passed. A machine is a key of `MACHINES` or a chain's
+  end; those two keys are machines MADE FROM one (a second disk, a printer: `Boot` fields, the megabyte unchanged).
+  `aes_desk.box` refuses by name an object of a dialog laid inside another's tree boxed from the outer root
+  (`aes_objects.Unrooted`, raised where the climb reaches NIL: the DISKCOPY dialog is the utility tree's objects
+  11..16, rooted at 11 — `dialog_button` finds its COPY as that root's 5).
 
 ### A DESK ROUTINE AT ITS ARRIVAL — units O and D (wave 1a), the four groups of wave 1b and of wave 2 (`test/aes_desk*.py`)
 

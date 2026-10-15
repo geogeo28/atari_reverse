@@ -32,9 +32,9 @@ WHAT THE ORACLE MUST SERVE for that run, MEASURED (a boot that meets anything el
      THE DISK SERVED IS THE DISK THE CAPTURE BOOTED WITH, and that is held, not assumed: the driver's own record for
      drive A: must hold the BPB of the image's boot sector, ITS GEOMETRY AND ITS SERIAL, or the boot is refused. So
      GEMDOS's cache of the FAT and the root, the driver's record and its boot-sector buffer are the ones the REAL
-     driver left before `gem_entry`; nothing is swapped in, and `Getbpb` — which the ROM would answer by reading the
-     boot sector again and rewriting all of that: the same bytes, for that disk — is asked by no boot (one that asks
-     with no change forced is refused by name). The desk's
+     driver left before `gem_entry`; nothing is swapped in, and `Getbpb` — which the ROM answers by reading the
+     boot sector again and rewriting all of that: the same bytes, for that disk — is asked by no boot (band 6 wave
+     4's devices, below, are where a run asks it of another disk: one the formatter rewrote, drive B:'s). The desk's
      machine boots from the capture made with the blank disk, the accessories' from the capture made with THEIR
      disk in the drive from power-on (`preinit_snapshot.accessory_path`); a mode is a word inside an accessory's own
      cluster, which nothing reads before `gem_entry` (`tools/accessory_disk.py`).
@@ -166,6 +166,7 @@ import case
 import fs_pexec
 import routines
 import staging
+import test_bios_bconout as bconout
 import transcription
 
 RAM_BYTES = addrs.ST_RAM_BYTES
@@ -314,6 +315,80 @@ RECORD_GEOMETRY = struct.Struct(">5H")
 FLOPPY_RECORD_GEOMETRY = 18
 FLOPPY_BOOT_SECTOR_BUFFER_LOAD = 0xfc112a           # ...copied out of its boot-sector buffer: `adda.l #<buffer>,a1`
 ADDA_L_IMMEDIATE_A1 = 0xd3fc
+# ...and of a record, the words its Getbpb lays (`$fc1070..$fc111a`, `$fc1130`): the BPB's first EIGHT — its ninth,
+# the flags, it leaves as it was — then the geometry and the serial.
+FLOPPY_RECORD_FLAGS = 16
+
+# ---- THE DEVICES OF BAND 6 WAVE 4 (ruling W6-R9: DECLARED AT THE DRIVER'S ENTRIES, NOT POKED) ---------------------------------
+# Each answers what no hardware here does, and says so: the CLASS it answers in is named in every `Boot` whose run it
+# answered (`Boot.devices`), never silently.
+#   * THE FORMATTER: XBIOS Flopfmt and Flopwr, two more entries of the ROM's floppy driver served where Floprd is (the
+#     desk's File > Format and its disk copy ask them FOR THEMSELVES, under the three vectors). What they reach below
+#     those entries — the PSG's register 14 (the drive's select, `$fc1e60`) and the MFP's `$fffa01` (the FDC's done
+#     line, `$fc1a92`) — is the FDC's transaction, which no declaration serves: they are answered at the entry, as
+#     Floprd is, and nothing of the two is read.
+#   * DRIVE B: — THE ROM'S OWN TWO-DRIVE PATH. The capture's machine counts TWO floppies (`_nflops`, read in place:
+#     the driver's one-drive swap, `$fc1ebe`, is not taken) and its drive B: was never LOGGED IN (its record all
+#     zeros — the boot did touch drive 1: its access time `$9fc + 4` is stamped on every capture); a machine made with a
+#     disk in it (`with_a_disk_in_drive_b`) answers Getbpb, Floprd and Flopwr of drive 1 off a second image.
+#   * THE PRINTER — ON A MACHINE MADE WITH ONE (`with_a_printer_on_line`, `Boot.printer`; every other machine's
+#     GPIP is declared by nothing, and a run that reads it is refused by the kit, by name). The BIOS's printer driver
+#     (`$fc2090`) runs as the ROM's — its five-second hold-off, its BUSY poll — over the MFP's GPIP DECLARED with
+#     BUSY clear (a printer on line). What it reaches past that poll, the PSG transaction that hands the port one byte
+#     (port B made an output, the byte on it, the strobe pulsed low twice and high once: `$fc20cc..$fc20f4`), is
+#     answered at its first instruction as the FDC's are at the driver's entries: the byte kept in the run's ledger
+#     (`Boot.printed`), the driver's own answer (sent) handed back — and EVERY GPIP read of the run must be such a
+#     poll, one a byte, or the run is refused by name (`devices_answered`: the RS232 handshake, the monitor detect
+#     and the FDC's done line read the same byte). WHY NOT THE PSG DECLARED TOO, MEASURED: fourteen accesses of the
+#     chip a byte (the reviewer's run of the ROM's own transaction) — the DESKTOP.INF's print overflows the kit's PSG
+#     ledger (4,096 events) and the run is refused by name. What the skipped transaction leaves unlike the ROM's: D1
+#     and D2 (`$ffffff8f`, `$20` there; the model leaves them as entered — scratch to the trap's caller).
+THE_FORMATTER = "W6-R9 THE FORMATTER: XBIOS Flopfmt / Flopwr answered at the driver's entries (no FDC here)"
+DRIVE_B = "W6-R9 DRIVE B: a second disk, in the drive the capture's machine never logged in"
+THE_PRINTER = "W6-R9 THE PRINTER: a printer on line at the parallel port (no printer here)"
+FLOPWR, FLOPFMT = "Flopwr", "Flopfmt"
+# THE PARALLEL PORT'S BUSY LINE, as a machine with a printer on line is served it: the GPIP with every line high but
+# BUSY (`test_bios_bconout.py`'s declaration of a ready printer: one for the tree). A run that never polls it reads none.
+THE_PRINTER_S_PORT = {"hw_seed": {addrs.MFP_GPIP: bconout.GPIP_READY}}
+PRINTER_SEND = 0xfc20cc                 # `move.w sr,d3`: the transaction's first instruction, BUSY seen clear
+PRINTER_CHARACTER_AT = 6                # Bconout's character, as the driver reads it (`$fc20e4`: `move.w 6(sp),d0`)
+XBIOS_FLOPWR, XBIOS_FLOPFMT = 9, 10
+DRIVE_B_DEVICE = DRIVE_A + 1
+# Flopfmt's frame as the dispatcher's `jsr` leaves it (`$fc1930..$fc1942`, the shared prologue `$fc1c48`): the
+# buffer, the skew table, the device, sectors a track, the track, the side, the interleave, the magic, the virgin word.
+(FLOPFMT_BUFFER_AT, FLOPFMT_SKEW_AT, FLOPFMT_DEVICE_AT, FLOPFMT_SECTORS_AT, FLOPFMT_TRACK_AT, FLOPFMT_SIDE_AT,
+ FLOPFMT_INTERLEAVE_AT, FLOPFMT_MAGIC_AT, FLOPFMT_VIRGIN_AT) = 4, 8, 12, 14, 16, 18, 20, 22, 26
+FLOPFMT_MAGIC = 0x87654321              # `$fc1916`'s `cmpi.l`: any other is an error before the FDC is touched
+FLOPFMT_MAGIC_CHECK_AT = 0xfc1916
+# THE TRACK THE ROM'S FLOPFMT LAYS IN THE CALLER'S BUFFER before it writes it (`$fc198c`; held to the ROM's own run of
+# that code by the battery): each run a byte repeated, a sector's ID and data fields between.
+TRACK_GAP_BYTE, TRACK_SYNC_ZERO, TRACK_SYNC_MARK = 0x4e, 0x00, 0xf5
+TRACK_LEAD_IN, TRACK_SYNC_ZEROS, TRACK_SYNC_MARKS, TRACK_ID_GAP, TRACK_SECTOR_GAP, TRACK_LEAD_OUT = 60, 12, 3, 22, 40, 1401
+ID_ADDRESS_MARK, DATA_ADDRESS_MARK, CRC_WRITE = 0xfe, 0xfb, 0xf7
+SECTOR_SIZE_CODE = 2                    # 512 bytes
+# ...and what its verify (`$fc1afe`) then leaves there: each sector read into the buffer's SECOND 512 bytes, and the
+# list of the sectors that failed at its head, ended by a zero word — for a track that verified, the zero alone.
+VERIFY_READS_AT = st_build.SECTOR_BYTES
+BAD_SECTORS_END = bytes(WORD_BYTES)
+# A FLOPWR OF THE BOOT SECTOR (sector 1 of track 0, side 0) MARKS THE DRIVE CHANGED, as Flopfmt marks it before it
+# formats (`$fc1862..$fc1874`, `$fc194a`: `moveq #2,d0; bsr` the mode store `$fc1ef6`).
+FLOPWR_MARKS_THE_BOOT_SECTOR_AT, FLOPFMT_MARKS_THE_DRIVE_AT, THE_MODE_STORE = 0xfc1862, 0xfc1948, 0xfc1ef6
+# THE ROM'S RWABS ASKS NO MEDIA CHANGE OF A CALL WHOSE FLAG IS 2 OR MORE (`$fc12f8`: `cmpi.w #2,8(a6); bge`) — the
+# format's own writes of the FAT and the root (flag 3) while the drive is held CHANGED; OF ANY OTHER, a drive held
+# CHANGED answers E_CHNG and transfers nothing (`$fc11e4`'s Mediach is 2: `$fc1316`), the mode left as it is — GEMDOS's
+# first read after the format, which then logs the disk in again.
+RWABS_NO_MEDIA_CHECK = 2
+RWABS_NO_MEDIA_CHECK_AT = 0xfc12f8
+# ...and maps a record to (track, side, sector) through the drive's RECORD (`$fc1394..$fc13b6`): its sectors a
+# cylinder and a track — the disk's own geometry, which a single-sided disk lays on the medium's first side.
+FLOPPY_RECORD_CYLINDER_SECTORS, FLOPPY_RECORD_TRACK_SECTORS = 22, 24
+# ...and VERIFIES EACH WRITE where `_fverify` is set (`$fc1426`: `tst.w $444`; every capture's is): Flopver
+# (`$fc1ae2`) of the sectors just written into the driver's own buffer (`$fc143c`: `move.l #$16da,-(sp)`), which
+# leaves what Flopfmt's verify leaves in its buffer (`VERIFY_READS_AT`, `BAD_SECTORS_END`): each sector read into the
+# buffer's second 512 bytes — the transfer's last record there at the end — and the bad-sector list's end, the zero
+# word, at its head (`$fc1714` reads it: none, so no -16).
+SYSVAR_FVERIFY = 0x444
+RWABS_VERIFY_AT, RWABS_VERIFY_BUFFER = 0xfc1426, 0x16da
 
 Call = namedtuple("Call", "function arguments answer")
 
@@ -384,13 +459,43 @@ def _xbios_entry(memory, function):
     return entry
 
 
+def virgin_sector(virgin):
+    """A formatted sector's 512 bytes: the virgin word over (`$fc1a10`: `move.b` its two bytes, 256 times)."""
+    return virgin.to_bytes(WORD_BYTES, "big") * (st_build.SECTOR_BYTES // WORD_BYTES)
+
+
+def track_laid(track, side, order, virgin):
+    """THE TRACK THE ROM'S FLOPFMT LAYS IN ITS BUFFER (`$fc198c`) for `track` of `side`, its sectors numbered in
+    `order` (the skew table's), each data field the `virgin` word over: the lead-in, then per sector its ID field
+    (sync, the mark, track, side, sector, the size code, the CRC's write byte) and its data field, then the lead-out."""
+    def run(byte, count):
+        return bytes((byte,)) * count
+
+    sync = run(TRACK_SYNC_ZERO, TRACK_SYNC_ZEROS) + run(TRACK_SYNC_MARK, TRACK_SYNC_MARKS)
+    data = virgin_sector(virgin)
+    sectors = (sync + bytes((ID_ADDRESS_MARK, track & aes.BYTE_MASK, side & aes.BYTE_MASK, sector, SECTOR_SIZE_CODE, CRC_WRITE))
+               + run(TRACK_GAP_BYTE, TRACK_ID_GAP) + sync + bytes((DATA_ADDRESS_MARK,)) + data + bytes((CRC_WRITE,))
+               + run(TRACK_GAP_BYTE, TRACK_SECTOR_GAP) for sector in order)
+    return run(TRACK_GAP_BYTE, TRACK_LEAD_IN) + b"".join(sectors) + run(TRACK_GAP_BYTE, TRACK_LEAD_OUT)
+
+
+def record_spans(disk):
+    """`((offset, bytes), ...)` THE ROM'S GETBPB WRITES INTO A DRIVE'S RECORD of a floppy's boot sector: the BPB's
+    first eight words, then the geometry and the serial (the flags word between is the driver's, untouched)."""
+    return ((0, bpb_of(disk)[:FLOPPY_RECORD_FLAGS]),
+            (FLOPPY_RECORD_GEOMETRY, record_geometry_of(disk) + accessory_disk.serial_of(disk)))
+
+
 class Floppy:
     """Drive A: as the entries of the machine's own driver answer for it (the module's docstring): `disk` a 720 KB
     image held off the machine — THE DISK THE MACHINE BOOTED WITH, or the model is refused: the driver's record
-    must hold its BPB, its geometry and its serial. `calls`: every call made, in order."""
+    must hold its BPB, its geometry and its serial. `calls`: every call made, in order. AND WAVE 4's DEVICES (above,
+    W6-R9): the formatter's two entries (`formatter`), and `drive_b` — a second image in drive B:, or None (no image:
+    the drive as the capture left it, never logged in) — each class of answer a run was given kept in `labelled`."""
 
-    def __init__(self, memory, disk):
+    def __init__(self, memory, disk, drive_b=None):
         self._memory, self.disk, self.calls, self._laid = memory, bytearray(disk), [], []
+        self.drive_b, self.labelled = None if drive_b is None else bytearray(drive_b), set()
         vectors = {GETBPB: addrs.HDV_BPB, MEDIACH: addrs.HDV_MEDIACH, RWABS: addrs.HDV_RWABS}
         self.entries = {case.long_in(memory, vector) & BUS: function for function, vector in vectors.items()}
         self.entries[_xbios_entry(memory, XBIOS_FLOPRD)] = FLOPRD
@@ -398,8 +503,36 @@ class Floppy:
         if len(self.entries) != len(vectors) + 1 or outside:
             raise Refused(f"this machine's three disk vectors and its XBIOS Floprd do not name four routines of the ROM "
                           f"({outside}): the model stands in for the ROM's floppy driver and for no other")
+        self.formatter = {_xbios_entry(memory, XBIOS_FLOPWR): FLOPWR, _xbios_entry(memory, XBIOS_FLOPFMT): FLOPFMT}
         self.record, self._mode_at = driver_record(memory), driver_mode(memory)
         self._vet_it_is_the_disk_the_machine_logged_in()
+        if self.drive_b is not None:
+            self._vet_drive_b_holds_its_own_disk()
+
+    def held_in_b(self):
+        """The image in drive B: as the run leaves it — None where the drive is empty."""
+        return None if self.drive_b is None else bytes(self.drive_b)
+
+    @property
+    def served_at(self):
+        """`{entry: function}` of every routine of the driver the model answers: the four, and the formatter's two."""
+        return {**self.entries, **self.formatter}
+
+    def _record_of(self, device):
+        return self.record + (device - DRIVE_A) * FLOPPY_BPB_RECORD_BYTES
+
+    def _mode_of(self, device):
+        return self._mode_at + device - DRIVE_A
+
+    def _vet_drive_b_holds_its_own_disk(self):
+        """DRIVE B:'s RECORD IS ITS DISK'S — or none (never logged in: the capture's), or one the driver holds CHANGED
+        (a boot sector written since: its next Getbpb logs the disk in again) — or the model is refused by name."""
+        record = self._record_of(DRIVE_B_DEVICE)
+        held = bytes(self._memory[record:record + FLOPPY_RECORD_SERIAL + st_build.BOOT_SERIAL_BYTES])
+        if not any(held) or self._memory[self._mode_of(DRIVE_B_DEVICE)] == MEDIA_CHANGED:
+            return
+        if any(held[at:at + len(data)] != data for at, data in record_spans(self.drive_b)):
+            raise Refused(f"drive B:'s record ({held.hex()}) is not the disk in it: the model swaps none in")
 
     def _vet_it_is_the_disk_the_machine_logged_in(self):
         held = bytes(self._memory[self.record:self.record + BPB_WORDS.size])
@@ -422,6 +555,15 @@ class Floppy:
         if device != DRIVE_A:
             raise Refused(f"{function} of drive {device}: the model holds drive A: alone")
 
+    def _disk_of(self, function, device):
+        """The image in drive `device`: A:'s, or B:'s where the machine was made with one there (labelled) — refused by
+        name for any other drive, and for B: where it holds none."""
+        if device == DRIVE_B_DEVICE and self.drive_b is not None:
+            self.labelled.add(DRIVE_B)
+            return self.drive_b
+        self._drive_a(function, device)
+        return self.disk
+
     def _lay(self, at, data):
         """The harness's own store into the machine, in the driver's place: made, and kept for the run's ledger."""
         self._memory[at:at + len(data)] = data
@@ -438,26 +580,26 @@ class Floppy:
 
     def served(self, entry, sp):
         """The call the run stands at the entry of, answered: `(D0, the return address)`."""
-        answer = getattr(self, f"_{self.entries[entry].lower()}")(sp)
+        answer = getattr(self, f"_{self.served_at[entry].lower()}")(sp)
         return answer, case.long_in(self._memory, sp) & BUS
 
     def _getbpb(self, sp):
-        """ONLY OF A DISK THE DRIVER HOLDS CHANGED — the desk's forced change, GEMDOS's Mediach answered so: the
-        ROM's reads the boot sector into its buffer again and rewrites its record, which FOR THE DISK THE MACHINE
-        LOGGED IN are the bytes the record holds (vetted again, whole); and it ends the change. (It leaves the mode
-        MAYBE where the drive's write-protect latch is set — a byte of the capture's mask this model does not read:
-        UNCHANGED is stored, and a latched drive's next transfer would compare the serial and find the same disk.)"""
+        """THE ROM'S GETBPB OF THE DISK IN THE DRIVE: it reads the boot sector into its buffer again, rewrites the
+        drive's record off it (`record_spans`) and ends any change. For the disk the machine logged in the record's
+        bytes are the ones it holds and are not laid again — the desk's forced change of A:, GEMDOS's Mediach answered
+        so, and the disk copy's own Getbpb of its source; a disk the formatter rewrote, or drive B:'s first, is logged
+        in. (It leaves the mode MAYBE where the drive's write-protect latch is set — a byte of the capture's mask this
+        model does not read: UNCHANGED is stored, and a latched drive's next transfer would compare the serial and
+        find the same disk.)"""
         device = self._word(sp + DEVICE_AT)
-        if not self.changed():
-            raise Refused(f"Getbpb of drive {device}: the ROM's would read the boot sector again and "
-                          f"rewrite its record, its serial and its buffer — and no boot over the disk the machine "
-                          f"logged in asks, but after a change the desk forced (Rwabs of no buffer)")
-        self._drive_a(GETBPB, device)
-        self._vet_it_is_the_disk_the_machine_logged_in()
-        self._lay(driver_boot_sector(self._memory), self.disk[:st_build.SECTOR_BYTES])
-        self._lay(self._mode_at, bytes((MEDIA_UNCHANGED,)))
-        self.calls.append(Call(GETBPB, (DRIVE_A,), self.record))
-        return self.record
+        disk, record = self._disk_of(GETBPB, device), self._record_of(device)
+        for at, data in record_spans(disk):
+            if bytes(self._memory[record + at:record + at + len(data)]) != data:
+                self._lay(record + at, data)
+        self._lay(driver_boot_sector(self._memory), disk[:st_build.SECTOR_BYTES])
+        self._lay(self._mode_of(device), bytes((MEDIA_UNCHANGED,)))
+        self.calls.append(Call(GETBPB, (device,), record))
+        return record
 
     def _mediach(self, sp):
         """UNCHANGED — but CHANGED while the driver's mode byte says so, as the ROM's answers it first ($fc119a)."""
@@ -466,23 +608,48 @@ class Floppy:
         self.calls.append(Call(MEDIACH, (DRIVE_A,), answer))
         return answer
 
+    def _medium_at(self, track, side, sector):
+        """Where (track, side, sector) lies in an image: the medium's own order — 80 tracks of two sides of nine."""
+        return ((track * st_build.HEADS + side) * st_build.SECTORS_PER_TRACK + sector - 1) * st_build.SECTOR_BYTES
+
+    def _records_at(self, record, count):
+        """Where Rwabs's `count` records from `record` lie on drive A:'s medium, as the ROM's maps them: through the
+        drive's RECORD — its sectors a cylinder and a track (`$fc1394..$fc13b6`)."""
+        cylinder = self._word(self.record + FLOPPY_RECORD_CYLINDER_SECTORS)
+        track_sectors = self._word(self.record + FLOPPY_RECORD_TRACK_SECTORS)
+        at = []
+        for each in range(record, record + count):
+            track, in_the_cylinder = divmod(each, cylinder)
+            side, sector = divmod(in_the_cylinder, track_sectors)
+            at.append(self._medium_at(track, side, sector + 1))
+        return at
+
+    def _lay_the_verify(self, last_record):
+        """What the ROM's Rwabs's verify of a write leaves in the driver's buffer (`RWABS_VERIFY_BUFFER`): the last
+        record read back at its second 512 bytes, the bad-sector list's end at its head."""
+        self._lay(RWABS_VERIFY_BUFFER + VERIFY_READS_AT, last_record)
+        self._lay(RWABS_VERIFY_BUFFER, BAD_SECTORS_END)
+
     def _rwabs(self, sp):
         flag, count, record = (self._word(sp + at) for at in (RWABS_FLAG_AT, RWABS_COUNT_AT, RWABS_RECORD_AT))
         buffer = case.long_in(self._memory, sp + RWABS_BUFFER_AT) & BUS
         self._drive_a(RWABS, self._word(sp + RWABS_DEVICE_AT))
         if not buffer:
             return self._mode_set(flag, count, record)
-        if self.changed():
-            raise Refused(f"Rwabs of {count} sector(s) at record {record} while the driver holds the disk CHANGED: the "
-                          f"ROM's answers E_CHNG and transfers nothing — GEMDOS asks Mediach first, and no run here "
-                          f"does otherwise")
-        at, size = record * st_build.SECTOR_BYTES, count * st_build.SECTOR_BYTES
-        if at + size > len(self.disk) or buffer + size > RAM_BYTES:
+        if self.changed() and flag < RWABS_NO_MEDIA_CHECK:
+            self.calls.append(Call(RWABS, (flag, buffer, count, record, DRIVE_A), addrs.E_CHNG_LONG))
+            return addrs.E_CHNG_LONG
+        sector_bytes, size = st_build.SECTOR_BYTES, count * st_build.SECTOR_BYTES
+        at = self._records_at(record, count)
+        if any(each + sector_bytes > len(self.disk) for each in at) or buffer + size > RAM_BYTES:
             raise Refused(f"Rwabs of {count} sector(s) at record {record} to {buffer:#x} leaves the disk or the RAM")
         if flag & RWABS_WRITE:
-            self.disk[at:at + size] = self._memory[buffer:buffer + size]
+            for nth, each in enumerate(at):
+                self.disk[each:each + sector_bytes] = self._memory[buffer + nth * sector_bytes:buffer + (nth + 1) * sector_bytes]
+            if at and self._word(SYSVAR_FVERIFY):
+                self._lay_the_verify(self.disk[at[-1]:at[-1] + sector_bytes])
         else:
-            self._lay(buffer, self.disk[at:at + size])
+            self._lay(buffer, b"".join(self.disk[each:each + sector_bytes] for each in at))
         self.calls.append(Call(RWABS, (flag, buffer, count, record, DRIVE_A), 0))
         return 0
 
@@ -496,23 +663,73 @@ class Floppy:
         self.calls.append(Call(RWABS, (flag, 0, mode, record, DRIVE_A), 0))
         return 0
 
+    def _sectors_asked(self, function, sp):
+        """Floprd's and Flopwr's one frame, read and vetted: `(buffer, device, sector, track, side, count, the
+        image, where on it)` — REFUSED BY NAME off the track (a sector past the ninth), off the medium, past the RAM."""
+        buffer = case.long_in(self._memory, sp + FLOPRD_BUFFER_AT) & BUS
+        device, sector, track, side, count = (self._word(sp + at) for at in (
+            FLOPRD_DEVICE_AT, FLOPRD_SECTOR_AT, FLOPRD_TRACK_AT, FLOPRD_SIDE_AT, FLOPRD_COUNT_AT))
+        disk = self._disk_of(function, device)
+        size = count * st_build.SECTOR_BYTES
+        on_the_track = 1 <= sector and 1 <= count and sector - 1 + count <= st_build.SECTORS_PER_TRACK
+        if (not on_the_track or side >= st_build.HEADS or track >= st_build.TRACKS or not buffer
+                or buffer + size > RAM_BYTES):
+            raise Refused(f"{function} of {count} sector(s) from sector {sector} of track {track}, side {side}, to "
+                          f"{buffer:#x} leaves the track, the disk or the RAM")
+        return buffer, device, sector, track, side, count, disk, self._medium_at(track, side, sector)
+
     def _floprd(self, sp):
         """XBIOS Floprd: `count` sectors of one track's one side, copied to the caller's buffer. (The ROM's own
         prologue — which disk a single drive holds, the drive's lock and select — is the driver's private state.)"""
+        buffer, device, sector, track, side, count, disk, at = self._sectors_asked(FLOPRD, sp)
+        self._lay(buffer, disk[at:at + count * st_build.SECTOR_BYTES])
+        self.calls.append(Call(FLOPRD, (buffer, device, sector, track, side, count), 0))
+        return 0
+
+    def _flopwr(self, sp):
+        """XBIOS Flopwr (THE FORMATTER's): `count` sectors of the caller's buffer written to one track's one side —
+        and a write that begins at the boot sector marks the drive CHANGED, as the ROM's does before its FDC is
+        touched."""
+        buffer, device, sector, track, side, count, disk, at = self._sectors_asked(FLOPWR, sp)
+        disk[at:at + count * st_build.SECTOR_BYTES] = self._memory[buffer:buffer + count * st_build.SECTOR_BYTES]
+        if (sector - 1) | track | side == 0:
+            self._lay(self._mode_of(device), bytes((MEDIA_CHANGED,)))
+        self.labelled.add(THE_FORMATTER)
+        self.calls.append(Call(FLOPWR, (buffer, device, sector, track, side, count), 0))
+        return 0
+
+    def _flopfmt(self, sp):
+        """XBIOS Flopfmt (THE FORMATTER's): one side of one track formatted in the skew table's order, its sectors
+        the virgin word over — the drive marked CHANGED first, as the ROM's marks it — and the caller's buffer left
+        as the ROM's leaves it: the track it laid (`track_laid`), then its verify's — the sectors read back one by
+        one into the second 512 bytes (the last one's there), the bad-sector list at the head (none: the zero alone).
+        REFUSED BY NAME: another magic, an interleave (the desk hands the skew table, -1), another track than the
+        medium's nine sectors, a skew table that is not those nine, a track past the medium, a buffer past the RAM."""
         memory = self._memory
-        buffer = case.long_in(memory, sp + FLOPRD_BUFFER_AT) & BUS
-        device, sector, track, side, count = (self._word(sp + at) for at in (
-            FLOPRD_DEVICE_AT, FLOPRD_SECTOR_AT, FLOPRD_TRACK_AT, FLOPRD_SIDE_AT, FLOPRD_COUNT_AT))
-        self._drive_a(FLOPRD, device)
-        sectors, track_sectors, sides, _hidden = geometry_of(self.disk)
-        size = count * st_build.SECTOR_BYTES
-        on_the_track = 1 <= sector and 1 <= count and sector - 1 + count <= track_sectors
-        if not on_the_track or side >= sides or track >= sectors // (track_sectors * sides) or not buffer or buffer + size > RAM_BYTES:
-            raise Refused(f"Floprd of {count} sector(s) from sector {sector} of track {track}, side {side}, to "
-                          f"{buffer:#x} leaves the track, the disk or the RAM")
-        at = ((track * sides + side) * track_sectors + sector - 1) * st_build.SECTOR_BYTES
-        self._lay(buffer, self.disk[at:at + size])
-        self.calls.append(Call(FLOPRD, (buffer, DRIVE_A, sector, track, side, count), 0))
+        buffer, skew = (case.long_in(memory, sp + at) & BUS for at in (FLOPFMT_BUFFER_AT, FLOPFMT_SKEW_AT))
+        device, sectors, track, side, interleave, virgin = (self._word(sp + at) for at in (
+            FLOPFMT_DEVICE_AT, FLOPFMT_SECTORS_AT, FLOPFMT_TRACK_AT, FLOPFMT_SIDE_AT, FLOPFMT_INTERLEAVE_AT,
+            FLOPFMT_VIRGIN_AT))
+        magic = case.long_in(memory, sp + FLOPFMT_MAGIC_AT)
+        disk = self._disk_of(FLOPFMT, device)
+        order = [self._word(skew + nth * WORD_BYTES) for nth in range(sectors)]
+        laid = bytearray(track_laid(track, side, order, virgin))
+        if (magic != FLOPFMT_MAGIC or aes.signed(interleave) >= 0 or sectors != st_build.SECTORS_PER_TRACK
+                or sorted(order) != list(range(1, sectors + 1)) or track >= st_build.TRACKS or side >= st_build.HEADS
+                or buffer + len(laid) > RAM_BYTES):
+            raise Refused(f"Flopfmt of track {track}, side {side} ({sectors} sectors {order}, interleave "
+                          f"{aes.signed(interleave)}, magic {magic:#x}) into {buffer:#x}: the model formats the desk's "
+                          f"track alone — nine sectors in a skew table's order, on the medium, the buffer in the RAM")
+        self._lay(self._mode_of(device), bytes((MEDIA_CHANGED,)))
+        data = virgin_sector(virgin)
+        for sector in order:
+            at = self._medium_at(track, side, sector)
+            disk[at:at + st_build.SECTOR_BYTES] = data
+        laid[VERIFY_READS_AT:VERIFY_READS_AT + st_build.SECTOR_BYTES] = data
+        laid[:len(BAD_SECTORS_END)] = BAD_SECTORS_END
+        self._lay(buffer, laid)
+        self.labelled.add(THE_FORMATTER)
+        self.calls.append(Call(FLOPFMT, (buffer, device, track, side), 0))
         return 0
 
 
@@ -533,8 +750,8 @@ ONE_INSTRUCTION = 1                     # the segment a run leaves a stop by (`_
 THE_ROM_S, OURS = "the ROM's", "ours"     # whose code a PC is, and whose dispatcher an idle is (`whose`)
 Boot = namedtuple("Boot", "ram registers disk instructions cycles polls blanks floppy io_reads hardware_reads "
                           "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed served "
-                          "our_boot",
-                  defaults=(None, THE_ROM_S, None, (), (), None))
+                          "our_boot drive_b devices printed printer",
+                  defaults=(None, THE_ROM_S, None, (), (), None, None, (), b"", False))
 Boot.__doc__ = """One boot of the ROM from a pre-init machine to the first idle: the megabyte of `ram` it left and the
 CPU's `registers` there (REGISTER_NAMES; the PC is idle's poll), the `disk` as it left it, its cost, how many times
 idle polled on the way (`polls`, the last the idle), how many horizontal blanks it took (`blanks`), every `floppy`
@@ -548,7 +765,23 @@ machine carried (what a run continued from this one is served). `idle`: WHOSE DI
 manager is ours, or None; `observed`: of a CONTINUED run (`continued`), the calls it was watched to make; `served`: THE
 LABEL of a machine made through the served door (`served`: a `Served` for each routine answered at its entry, in
 order) — empty for every machine a run of the ROM's own code alone made; `our_boot`: the `OurBoot` of a machine OUR
-gem_entry booted (`laid=AT_GEM_ENTRY`: a labelled staging), or None."""
+gem_entry booted (`laid=AT_GEM_ENTRY`: a labelled staging), or None. WAVE 4's DEVICES (W6-R9): `drive_b`, the image
+in drive B: as the run left it (None: no image there — every capture's, whose drive B: was never logged in); `devices`, the CLASSES of answer the run
+was given that no hardware here gives (`THE_FORMATTER`, `DRIVE_B`, `THE_PRINTER`), sorted; `printed`, the bytes it
+handed the printer, in order (`PRINTER_SEND`); `printer`, whether the machine has a printer on line
+(`with_a_printer_on_line`: its runs are served the GPIP and the port's transaction; False for every capture's)."""
+
+
+def devices_answered(floppy, hardware_reads, printed):
+    """The classes of answer the run was given that no hardware here gives: the floppy's (`Floppy.labelled`), and
+    THE_PRINTER where it handed the printer a byte — REFUSED BY NAME unless every read of the MFP's GPIP was the
+    printer driver's BUSY poll before a byte it handed (one a byte, BUSY seen clear): the ROM reads that byte elsewhere
+    too (the RS232 handshake, the monitor detect, the FDC's done line), which the printer's declaration does not serve."""
+    polls = sum(1 for at, _value in hardware_reads if at == addrs.MFP_GPIP)
+    if polls != len(printed):
+        raise Refused(f"the run read the MFP's GPIP ({addrs.MFP_GPIP:#x}) {polls} time(s) and handed the printer "
+                      f"{len(printed)} byte(s): a GPIP read that is no BUSY poll of the printer's is served by no device here")
+    return tuple(sorted(floppy.labelled | ({THE_PRINTER} if printed else set())))
 
 
 def blob_of(boot):
@@ -1107,13 +1340,14 @@ class _Run:
     disarmed to the NEXT stop, and such a pair counted once: 102 arrivals at the trap handler where 366 happened. A
     zero was honest then; a count was not.)"""
 
-    def __init__(self, memory, floppy, budget, *, until=None, taking=None, ours=None, observing=None):
+    def __init__(self, memory, floppy, budget, *, until=None, taking=None, ours=None, observing=None, printer=False):
         self._memory, self._floppy, self._budget, self._until = memory, floppy, budget, until
         self._taking, self._ours, self._observing = taking, ours, dict(observing or {})
+        self._printer = printer         # a printer on line (`Boot.printer`): its port declared, its transaction a stop
         self._hbl = case.long_in(memory, addrs.VECTOR_HBL) & BUS
         self._back = None               # where a poll of ours returns: the poll's entry is a stop again from there
         self.laid, self.pushed, self.frame, self.polls, self.blanks = {}, {}, {}, 0, 0
-        self.idle, self.observed, self.result = None, [], None
+        self.idle, self.observed, self.result, self.printed = None, [], None, bytearray()
 
     def _our_dispatcher(self):
         """The blob whose idle is a stop as the run stands: a continued machine's, or a takeover's once made."""
@@ -1122,7 +1356,8 @@ class _Run:
         return self._ours
 
     def _stops(self):
-        stops = {*self._floppy.entries, BLITTER_PROBE_TOUCH, IDLE_LOOP, IDLE_POLLED, self._hbl, *self._observing}
+        stops = {*self._floppy.served_at, BLITTER_PROBE_TOUCH, IDLE_LOOP, IDLE_POLLED, self._hbl, *self._observing}
+        stops |= {PRINTER_SEND} if self._printer else set()
         stops |= {self._until} if self._until else set()
         stops |= self._taking.armed if self._taking is not None else set()
         ours = self._our_dispatcher()
@@ -1134,7 +1369,7 @@ class _Run:
         """Entered with the register file `entered` — the door at its PC, so the run stops before one instruction —
         and a horizontal blank pending; then each stop, to the idle."""
         budget, memory = self._budget, self._memory
-        emu.install_chip_seeds()
+        emu.install_chip_seeds(**(THE_PRINTER_S_PORT if self._printer else {}))
         result = emu.run_bench(memory, entered["pc"], 0, OFF_THE_MACHINE, emu.SENTINEL, max_insns=budget,
                                door={entered["pc"]}, seed_regs=None, io_seed=io_seed)
         assert result["status"] == emu.BENCH_DOOR and not result["ninsns"], "the run began before its registers were laid"
@@ -1188,11 +1423,14 @@ class _Run:
     def _stopped(self, pc, sp):
         """One stop served: True where the run ends there."""
         memory, ours = self._memory, self._our_dispatcher()
-        if pc in self._floppy.entries:
+        if pc in self._floppy.served_at:
             self._serve_the_driver(pc, sp)
         elif pc == self._hbl:
             self.blanks += 1            # ...taken: the CPU let the line go, and the next one is pending from here
             _CPU.m68k_set_irq(HBL_LEVEL)
+        elif pc == PRINTER_SEND:
+            self.printed.append(case.word_in(memory, sp + PRINTER_CHARACTER_AT) & aes.BYTE_MASK)
+            _return_from_the_driver(addrs.PRINTER_SENT, case.long_in(memory, sp) & BUS, sp)
         elif pc == BLITTER_PROBE_TOUCH:
             _vet_the_probe(memory)
             self.pushed = _bus_error(memory, BLITTER_REGISTERS)
@@ -1766,6 +2004,27 @@ def inf_machine(view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED, machine=Non
     return Machine(booted(machine or inf_preinit(), inf_disk_of(view, resolution), **_taken_over_by(ours, door)))
 
 
+def with_a_disk_in_drive_b(machine, disk):
+    """`machine` — booted, or continued, with drive B: empty — WITH `disk` IN DRIVE B: (band 6 wave 4, W6-R9: the
+    `DRIVE_B` class). Drive B: was never LOGGED IN — the driver's record for it is all zeros — so a disk there is one
+    no BPB of the machine's describes. IT IS NOT MEASURED THE SAME MACHINE TO THE BYTE: the boot did touch drive 1 (its
+    access time `$9fc + 4` is stamped on every capture), and no capture was made with a disk in drive B: — hence the
+    label. REFUSED BY NAME for a machine whose drive B: holds one already, or was logged in."""
+    record = driver_record(machine.image()) + DRIVE_B_DEVICE * FLOPPY_BPB_RECORD_BYTES
+    if machine.boot.drive_b is not None or any(machine.ram[record:record + FLOPPY_BPB_RECORD_BYTES]):
+        raise Refused("a disk is put in drive B: of a machine whose drive B: holds one already, or was logged in")
+    return Machine(machine.boot._replace(drive_b=bytes(disk)))
+
+
+def with_a_printer_on_line(machine):
+    """`machine` WITH A PRINTER ON LINE AT ITS PARALLEL PORT (band 6 wave 4, W6-R9: the `THE_PRINTER` class): every
+    run continued from it is served the GPIP with BUSY clear and the port's transaction (`PRINTER_SEND`). Nothing of
+    the megabyte changes — no run before it read the port. REFUSED BY NAME for a machine that has one already."""
+    if machine.boot.printer:
+        raise Refused("a printer is put on line at a machine that has one already")
+    return Machine(machine.boot._replace(printer=True))
+
+
 # ---- BEGIN band 6 wave 0, slice H: THE FILES MACHINE (ruling W6-R10) — the fifth capture ---------------------------------------
 @functools.cache
 def files_preinit():
@@ -1819,6 +2078,8 @@ def our_inf_machine(blob, view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED, u
 CONTINUED_INSNS = 1_500_000             # one wake's run to the next idle (measured: a menu dropped is some 80,000)
 MOUSE_TO, IKBD_BYTES, CLICK_TICKS = "the mouse moved to", "the IKBD sends", ("ticks until the click's count has run out",)
 MOST_CLICK_TICKS = 256                  # a click's count is a few serviced ticks: a wait past this resolves nothing
+TICKS = "the system timer ticks"        # ...and TIME PASSING at the idle (band 6 wave 4): that many ticks, each through
+                                        # Timer C's handler as a click's are — the printer's five-second hold-off waited out
 LEFT_DOWN, NO_BUTTON = aes_event.LEFT_DOWN_PACKET, aes_event.NO_BUTTON_PACKET
 
 
@@ -1830,6 +2091,11 @@ def mouse_to(x, y):
 def ikbd(*packet):
     """RECEIVED: these bytes from the IKBD — a relative mouse packet is its header, dx and dy."""
     return IKBD_BYTES, bytes(byte & aes.BYTE_MASK for byte in packet)
+
+
+def ticked(count):
+    """RECEIVED: `count` ticks of the system timer — time passing at the idle, a 200th of a second each."""
+    return TICKS, count
 
 
 MFP_LEVEL = 6                           # the 68901's interrupt priority: the ACIAs' line and Timer C both
@@ -1879,11 +2145,14 @@ class _Receiving:
             if aes_event._cursor(memory) == cursor:
                 raise Refused(f"the mouse cannot be moved to ({x}, {y}): a packet of ({dx}, {dy}) left the cursor at {cursor}")
 
+    def _tick(self):
+        self._interrupted(addrs.VECTOR_TIMER_C, "the system timer's tick", psg_seed=aes_switch.QUIET_PSG)
+
     def _ticked_until_the_click_resolves(self):
         for _tick in range(MOST_CLICK_TICKS):
             if not case.word_in(self._memory, aes.AES_GL_CLICK_TICKS):
                 return
-            self._interrupted(addrs.VECTOR_TIMER_C, "the system timer's tick", psg_seed=aes_switch.QUIET_PSG)
+            self._tick()
         raise Refused(f"{MOST_CLICK_TICKS} ticks of the system timer did not run the click's count out")
 
     def all_of(self, received):
@@ -1895,6 +2164,9 @@ class _Receiving:
                 self._through_the_acia(*what)
             elif (kind, *what) == CLICK_TICKS:
                 self._ticked_until_the_click_resolves()
+            elif kind == TICKS:
+                for _tick in range(*what):
+                    self._tick()
             else:
                 raise Refused(f"a machine cannot receive {(kind, *what)}")
         return self
@@ -2056,11 +2328,11 @@ def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None):
     for rom_at, data in (ours.rom if ours is not None else ()):  # the ROM data a staging mapped for the blob (`restaged`)
         memory[rom_at:rom_at + len(data)] = data
     receiving = _Receiving(memory, boot.registers["sr"]).all_of(received)
-    floppy = Floppy(memory, boot.disk)
+    floppy = Floppy(memory, boot.disk, boot.drive_b)
     line_f_frames = {}                  # (slice H: the frames of the Line-F exceptions taken by hand — the harness's stores)
     by_hand = {word_at: (LINE_F_TAKEN_BY_HAND, line_f_taken(line_f_frames)) for word_at in line_f_words_the_oracle_does_not_trap()}
     run = _Run(memory, floppy, budget, until=until, ours=ours,
-               observing={**handler_stops(ours), **trampoline_stops(ours), **by_hand})
+               observing={**handler_stops(ours), **trampoline_stops(ours), **by_hand}, printer=boot.printer)
     try:
         result = run.to_an_idle(boot.registers, _io_seed(boot.io))
         registers = _registers_now()
@@ -2082,7 +2354,9 @@ def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None):
                          instructions=result["ninsns"], cycles=result["cycles"], polls=run.polls, blanks=run.blanks,
                          floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
                          hardware_writes=streams[2], stored=run.stored(writes), bus_error_frame=run.frame,
-                         writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed))
+                         writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed),
+                         drive_b=floppy.held_in_b(),
+                         devices=devices_answered(floppy, streams[1], run.printed), printed=bytes(run.printed))
 
 
 # ---- A MACHINE WHOSE SCREEN MANAGER IS OURS, BESIDE THE ONE THE ROM BOOTED: what the two differ in, BY NATURE ---------------
@@ -2419,11 +2693,11 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
     one `Served` longer. Each refusal is by name (above)."""
     name, at, memory, called, answered = answered_at_its_entry(boot, answer, calls)
     ours = blob_of(boot)
-    floppy = Floppy(memory, boot.disk)
+    floppy = Floppy(memory, boot.disk, boot.drive_b)
     again = {entry: (each, _refusing_a_second_arrival(each, until)) for entry, (each, _call) in SERVED_ROUTINES.items()
              if entry != until}
     run = _Run(memory, floppy, budget, until=until, ours=ours,
-               observing={**handler_stops(ours), **trampoline_stops(ours), **again})
+               observing={**handler_stops(ours), **trampoline_stops(ours), **again}, printer=boot.printer)
     try:
         result = run.to_an_idle(answered, _io_seed(boot.io))
         registers = _registers_now()
@@ -2447,7 +2721,8 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
                          floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
                          hardware_writes=streams[2], stored=run.stored(writes), bus_error_frame=run.frame,
                          writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed),
-                         served=(*boot.served, label))
+                         served=(*boot.served, label), drive_b=floppy.held_in_b(),
+                         devices=devices_answered(floppy, streams[1], run.printed), printed=bytes(run.printed))
 
 
 # ---- THE SCAN: NO LONGWORD HOLDS, BY VALUE, THE ROM'S COPY OF A ROUTINE THE REGISTRY DECLARES (band 5 wave 4; the design's §3.4) ----

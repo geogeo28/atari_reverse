@@ -1684,8 +1684,8 @@ arrival — no row, no verdict.
 ## Wave log
 
 * **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: AES band 5 wave 3
-  (2026-10-11), wave 4 (its entries follow wave 3's), BAND 6 WAVE 0, BAND 6 WAVE 1a (2026-10-13) and BAND 6 WAVE 1b
-  (2026-10-14: the last entry before `* **Next**`).
+  (2026-10-11), wave 4 (its entries follow wave 3's), BAND 6 WAVE 0, BAND 6 WAVE 1a (2026-10-13), BAND 6 WAVE 1b, BAND 6
+  WAVE 2 and BAND 6 WAVE 4's SLICE H (2026-10-14: the last entry before `* **Next**`).
   - **BAND 5 WAVE 3 — THE TRAP DOOR AND THE LOADER: LINKED, HELD AT TIER 1, NOTHING BOUND — AND THE GATE W3-R8 DOES
     NOT FIT** (2026-10-10/11; five slices in one tree — T the door, G gemdosif's last two, L the loader, M the
     machines, S the stack's reading — then one integration pass; the design and its rulings W3-R1..R13:
@@ -3781,9 +3781,10 @@ arrival — no row, no verdict.
     `scratchpad/b6/W1/FIX/`). 383 verified STILL: no row registered, no registry declaration activated, no Tier-3 row,
     every Line-F table entry of the 59 the ROM's (`src/aes/lineftable.S` byte-identical), no kit edit. THE LEDGER
     HOLDS THEM IN A SECTION OF A SECOND KIND, `## Linked, unbound — desk (59)` (below the AES's), held to the
-    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. (The campaign's size as it stands, re-derived at wave 2's
-    fix pass — wave 1a's own fix pass left it at 51 chains / 158 steps, reach 219; wave 1b's at 69 / 219, reach 224:) THE
-    HANDS' CAMPAIGN IS 101 CHAINS / 338 STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 226 OF BAND 6's 244; THE
+    generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. (The campaign's size as it stands, re-derived at band 6
+    wave 4 slice H's fix pass — wave 1a's own fix pass left it at 51 chains / 158 steps, reach 219; wave 1b's at 69 /
+    219, reach 224; wave 2's at 101 / 338, reach 226:) THE
+    HANDS' CAMPAIGN IS 113 CHAINS / 363 STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 235 OF BAND 6's 244; THE
     DEEPEST BY THE WRITE LEDGERS: PD0 1,460 of 1,792, PD1 722 of 1,196, the dispatcher 190 (188 on every other chain but
     the five `test_aes_desk_rom.DISPATCHER_AT_190` names — the ROM's own depth, wave 2's re-derivation), the userdef
     stack 438 of 1,024.
@@ -4434,6 +4435,160 @@ arrival — no row, no verdict.
       top-window arm (fun_rebld's GEMDOS past unit A's recorder), app_start's cartridge arm, ANODE-pool exhaustion, the INF
       full at 2,013 B (RB7), D10, D20, D24, B10, B18, B19, S9, A11, A31, A33, A37 (each named in the sweep); the `$90c`
       capture set, `make gates`, `make guarded`, the from-empty build and `my-code-review` — THE ORCHESTRATOR'S.
+  - **BAND 6 WAVE 4 — SLICE H (the devices): THE FORMATTER, DRIVE B: AND THE PRINTER, DECLARED AT THE DRIVER'S ENTRIES
+    (ruling W6-R9); HARNESS ONLY, NOTHING BOUND** (2026-10-14; on `dd6bc64`: one author alone in the tree, one review,
+    then ONE FIX PASS alone in the tree, which wrote this entry — every number in it is the fix pass's own build, run,
+    probe or log unless it says whose measurement it is. The cut: `scratchpad/b6/W4/cut.md` §2, §5; the briefs
+    `scratchpad/b6/W4/H_brief.md`, `fix_H.md`; the hand-back `scratchpad/b6/W4/H/handback.md`; the review
+    `scratchpad/RW4H/review.md`; the fix pass's logs `scratchpad/b6/W4/HFIX/`). 383 verified STILL: no routine, no row,
+    no table move — EVERY OBJECT, BOTH BLOBS, `build/bench/tier3.txt`, `src/aes/lineftable.S` AND THE SHIPPED `glue.S`
+    BYTE-IDENTICAL to `scratchpad/b6/W4/base/` (after `make` and `make bench`, both rc 0: the 170 objects of
+    `build/bench_shipped/obj`, both `.bin` — 246,656 / 249,544 B —, both `.elf` and `libtos102us.so` sha256-equal to
+    `base/hashes.txt`; `tier3.txt`, `lineftable.S` and `glue.S` `cmp`-equal: `HFIX/hashes_after.txt`). No kit edit. Each
+    device answers what no hardware here does and NAMES ITS CLASS in `Boot.devices` of every run it answered
+    (`aes_boot.devices_answered`), never silently:
+    - **THE FORMATTER** (`THE_FORMATTER`, "W6-R9 THE FORMATTER: XBIOS Flopfmt / Flopwr answered at the driver's entries
+      (no FDC here)"): XBIOS 9 and 10 read off the machine's own XBIOS table (`Floppy.formatter`, beside the four, which
+      stay four; `Floppy.served_at` the six). FLOPFMT (`$fc1916`, its magic `$87654321` compared first) marks the drive
+      CHANGED (`$fc1948`: `moveq #2,d0; bsr` the mode store `$fc1ef6`), formats one side of one track in the skew
+      table's order, the virgin word over, and leaves the caller's buffer as the ROM's does: the track its builder
+      `$fc198c` lays (held to the builder's own run to its first FDC access, three tracks), then its verify's — each
+      sector read at the buffer + 512 (`$fc1b08`), the bad-sector list's zero at its head (`$fc1ba6`). Refused by name:
+      another magic, an interleave, a skew table not the nine sectors, a track past the medium. FLOPWR writes the
+      sectors and marks the drive CHANGED where it writes sector 1 of track 0, side 0 (`$fc1862..$fc1874`). FLOPVER IS
+      NOT BUILT: the format path reaches it only inside Flopfmt (`bsr $fc1afe`). THE FDC's OWN READS — PSG register 14
+      (the drive select, `$fc1e60`) and the MFP's `$fffa01` bit 5 (the done line, `$fc17c6`, `$fc18b0`, `$fc1a92`,
+      `$fc1b60`, `$fc1de2`) — are below the entries: read by no run. WHAT ELSE THE FORMAT'S PATH NEEDED (the author's,
+      each held to the ROM's own Rwabs / Getbpb run in place over the model's Floprd): Rwabs asks no media check of a
+      flag of 2 or more (`$fc12f8`: the format's FAT and root, flag 3); a lower flag on a drive held CHANGED answers
+      E_CHNG and moves nothing (`$fc1316`); a record maps through the drive's record (`$fc1394..$fc13b6`: a single-sided
+      disk on the medium's first side); Getbpb serves the disk in the drive (`record_spans`: the BPB's first eight
+      words, then the geometry and the serial; the flags word the driver's), laying only what differs.
+    - **DRIVE B: — THE ROM'S OWN TWO-DRIVE PATH, NOT THE SWAP** (`DRIVE_B`, "W6-R9 DRIVE B: a second disk, in the drive
+      the capture's machine never logged in"): `_nflops` (`$4a6`) is 2 on the four captures the battery reads (the
+      blank, accessory, INF and files disks'), so the one-drive swap (`$fc1ebe`: `cmpi.w #1,_nflops`, the "insert disk
+      B" critical error) is never taken. `aes_boot.with_a_disk_in_drive_b(machine, disk)` makes a machine with a second
+      image there (`Boot.drive_b`, as each run leaves it) — refused where B: holds one or was logged in; B:'s record is
+      vetted (its own disk, never logged in, or held CHANGED). THE COPY's buffer is all of free memory but a kilobyte:
+      it clears the desk's userdef stack, as a launch does (`aes_desk.THE_DESK_S_BLOCKS_ARE_CLEARED_IN` gained COPIED;
+      the depth test's one exception generalised to that tuple).
+    - **THE PRINTER — A MACHINE'S, NOT EVERY RUN'S** (`THE_PRINTER`, "W6-R9 THE PRINTER: a printer on line at the
+      parallel port (no printer here)"): `aes_boot.with_a_printer_on_line(machine)` sets `Boot.printer`; a run continued
+      from such a machine is served the MFP's GPIP with BUSY clear (`test_bios_bconout.GPIP_READY`, by
+      `install_chip_seeds(hw_seed=)`) and stops at the port transaction's first instruction (`PRINTER_SEND`, `$fc20cc`:
+      `move.w sr,d3`), where the byte is kept (`Boot.printed`) and the driver's own answer (sent, `$fc20f4`) handed
+      back. EVERY GPIP read of such a run must be a BUSY poll before a byte, one a byte, or the run is refused by name —
+      the ROM reads `$fffa01` at its RS232 handshake (`$fc21c2`), its monitor detect (`$fc070a`) and the FDC's done line
+      too (the reviewer's reading); on a machine with no printer the GPIP is declared by nothing and the kit refuses its
+      read by name, as before the slice. THE PRINT CHAINS GO ON FROM `aes_desk.PRINTER_ON_LINE`, the Show / Print /
+      Cancel alert's machine with a printer put on line (the same megabyte). WHY THE ORACLE'S CPRNOUT ANSWERED "NOT
+      READY" (the author's measurement, held by the battery): the BIOS driver's FIVE-SECOND HOLD-OFF, `$fc209a..$fc20ca`
+      — `_hz_200 - PRINTER_RETRY_AT ($e84) < 1000` answers 0 WITHOUT POLLING THE PORT and stamps the time; `$e84` is 0
+      from power-on and the capture's machine has been up 563 ticks (no time passes in the model), so Retry fails until
+      1,000 more ticks pass. TIME PASSES AT AN IDLE only by a reception: `aes_boot.ticked(n)`, n ticks of the system
+      timer, each through Timer C's handler as a click's are (`aes_desk.FIVE_SECONDS` = 1,000 — the hold-off to the
+      tick, pinned below). WHY NOT THE PSG DECLARED TOO (the author's trial): the DESKTOP.INF's print overflowed the
+      kit's 4,096-event PSG ledger (3,338 dropped) and the run was refused — the ROM's own transaction is FOURTEEN PSG
+      accesses a byte (the reviewer's run of `$fc2090`: register 7 ×3, 15 ×2, 14 ×9; 531 × 14 = 7,434), not the "nine"
+      the author's comment said (corrected).
+    - **THE CHAINS** (the block "band 6 wave 4, slice H" of `aes_desk.CHAINS`, its keys in `test_aes_desk_rom`'s two
+      dicts): TWELVE CHAINS / 25 STEPS — Format's dialog up (the warning's OK), its EXIT, FORMAT clicked (formatted
+      single-sided, the dialog's default — the author's and the reviewer's probes: 80 Flopfmt, a Floprd, two Flopwr,
+      Getbpb, Rwabs ×3 flag 3, then GEMDOS's E_CHNG and its re-log; idles with the "357376 bytes" alert up), then its OK
+      and EXIT; the copy's dialog up (drive A: dragged onto drive B:, OK), its Return (EXIT); a disk in drive B:, the
+      copy (COPY clicked — the reviewer's probe: Getbpb(1), Getbpb(0), 322 Floprd, 162 Flopwr in 2,473,753 instructions
+      — B: equal to A: but the serial and the boot checksum); Print clicked (not ready), its Cancel, its Retry (not
+      ready again), five seconds then Retry (printed), and five seconds then Print (printed: the 529-byte DESKTOP.INF,
+      then the engine's CR LF, `$fed6b4` / `$fed6bc`). THE NINE ROUTINES NEWLY REACHED: `$fed912` desk_format, `$fedde4`
+      desk_copy_disk, `$fed624` desk_print_file; `$fed888` and `$fee236` (the utilities' dialog fetched and centred;
+      drawn and run), `$fee166` and `$fee450` (Format's progress bar; the redraw before its alert), `$fee294` (the
+      copy's tracks), `$fed832` (a byte put). THE HANDS: 113 CHAINS / 363 STEPS, REACH 235 OF 244 (the wave 1a entry's
+      sentence, re-derived); NO DEPTH MOVED (the pins green; the author's figures: PD0's deepest of the block 1,438 —
+      Print — below 1,460; PD1 616; the dispatcher 188 on all twelve; the copy's userdef 1,024 a clear). STILL WITH NO
+      RUN: `$fee364` (crit_err, the "BPBs differ" alert — a disk of another geometry in B: would reach it; no chain
+      tries), `$fee3a4` / `$fee466` (bad sectors), the RS232 printer arm, the cartridge pair. THE HARNESS GAP the cut
+      found — `aes_desk.box` climbing for ever from an object of a sub-tree — is refused by name
+      (`aes_objects.Unrooted`): the DISKCOPY dialog is the utility tree's objects 11..16, rooted at 11; `dialog_button`
+      finds its COPY as that root's 5.
+    - **THE FIX PASS** (one agent, alone in the tree; its brief's rulings the ORCHESTRATOR'S, PROVISIONAL — AWAITING
+      (24)): (1) THE PRINTER A MACHINE'S (the review's finding 1, R-H-3): the GPIP declared only on a machine with a
+      printer on line (`Boot.printer`; `_Run(printer=)`, the PRINTER_SEND stop armed there alone), and
+      `devices_answered` refusing by name where the GPIP reads ≠ the bytes printed — the RS232 handshake or the monitor
+      detect refused again; held by the ROM's own driver run with no printer (the kit's refusal names `0xfffa01`) and by
+      the guard's unit case (a read with no byte, a byte with no read, two reads for one byte). (2) Flopwr of sector 1,
+      track 0, SIDE 1 marks nothing (R3). (3) Rwabs flag 1 on a CHANGED drive answers E_CHNG, the disk untouched (R11).
+      (4) R-H-4 PAID: after an Rwabs write with `_fverify` (`$444`) set — every capture's — the model lays what the
+      ROM's verify leaves (`$fc1426..$fc1448`: Flopver `$fc1ae2` of the sectors just written into the driver's buffer,
+      whose body `$fc1afe` is Flopfmt's verify's): the zero word at `$16da`, THE LAST RECORD WRITTEN at `$18da..$1ada`;
+      nothing where `_fverify` is clear. Pinned to the ROM's instructions (no run of the verify itself can be made: it
+      is the FDC's) over FORMATTED's own three flag-3 writes, read off its ledger — (7 @ 11), (5 @ 1), (5 @ 6). IT
+      CHANGED NO EXISTING CASE'S EXPECTATION: every battery of the cycle green over it (Save Desktop's and the copies'
+      writes among them — both shores share the model). The odd-buffer bounce through `$16da` (`$fc137e`) stays
+      unmodelled: nothing reaches it. (5) `Unrooted` refused AT NIL — the climb past the outer root (tail 10 ≠ 16) reads
+      no object below the tree; the cycle check kept. (6) R10's boundary PINNED EXACTLY: the ROM's own driver run in
+      place, a printer on line — 999 ticks after the last timeout answers 0 with no GPIP read, 1,000 polls once and
+      prints — and the "five seconds" step alone (no click, whose own ticks carried a 999 past the bound) leaves the
+      machine exactly 1,000 ticks past the stamp; R9 by the same driver run with the byte `$c4` (no ROM-run file holds a
+      byte ≥ `$80`: DESKTOP.INF is ASCII and no chain prints README.TXT); R4 by a format of drive B: (no chain formats
+      B:). R12 (`served()` dropping `devices`) RECORDED: no slice-H chain goes through the served door. (7) RECORDS, no
+      code: the skipped port transaction leaves D1 / D2 unlike the ROM's (`$ffffff8f` / `$20`; D3 restored by the BIOS
+      dispatcher `$fc0808` / `$fc0836`; whether GEMDOS's caller reads D1 / D2 not checked); the "nine accesses" comment
+      corrected to fourteen; THE `_Run`s OF `aes_trapdoor._run`, `aes_loader._run_on`, `aes_stack`, `aes_ourboot` and
+      `booted()` CARRY NO `devices` / `printed` / `drive_b` — a binding-time gap, OWED (their Floppy refuses drive 1 by
+      name, and with the printer a machine's, no printer is on line there: a printing run is refused, not silent);
+      R-H-5's wording corrected wherever written — the boot DID touch drive 1 (its access time `$9fc + 4` is `$e1` on
+      the INF capture, `$e8` / `$df` on others: the reviewer's), it never LOGGED IT IN (its record all zeros; `$9f8` /
+      `$9fa` zero on every capture), and "the same machine to the byte" is a claim no capture measured — hence the
+      label; DRIVER-PRIVATE RAM the ROM's Flopfmt / Flopwr store and the model skips (`$9fc[dev]`, `$a4c` / `$a50`,
+      `$a04..$a26`, `$a28`), Getbpb's equal bytes not in a run's `stored`, the scratch registers a served entry leaves —
+      W4-R8's class.
+    - **THE SWEEP** (one log, `scratchpad/b6/W4/HFIX/sweep.log`; driver `HFIX/mutate.py`; a PRIVATE COPY, `HFIX/tree`;
+      each mutant ONE replacement matching once, every `__pycache__` cleared, `AES_DERIVED_OFF=1`, the battery
+      `test_aes_devices`, `test_aes_boot_w4`, `test_aes_objects_find`, `test_aes_oblib_walk` and the twelve chains'
+      `test_aes_desk_rom` cases at `-n 6`, the source restored and its sha256 held; a crash, an error or no failed
+      assertion is NOT a kill). THE CONTROL, nothing mutated: 332 passed. FOURTEEN MUTANTS — the reviewer's six
+      survivors re-run and one per new pin of the fix pass — 13 KILLED (each by a failed assertion), 1 SURVIVED AND
+      RECORDED (R12), NONE NOT A KILL. (The driver's first rule read a bare `assert` — which `--tb=line` prints without
+      "AssertionError:" — as no assertion and logged R10 and F3 so; the log's last section reads every verdict again by
+      the corrected rule, every raised line an assertion. A first run of the sweep with the private copy short of
+      `names.txt` collected nothing — its control red, rc 4 — and is kept as `sweep_setup_failed.log`, no verdict taken
+      from it; a second, its verdicts unclassified, as `sweep_pass1_unclassified.log`.) Every mutant, its description
+      copied from the driver, its verdict from the log: **R3** — Flopwr: side ignored in the boot-sector mark (item 2) —
+      KILLED (1 failed, 331 passed); **R4** — Flopfmt marks A: whatever the device (item 6) — KILLED (1 failed); **R9**
+      — printer: 7-bit ledger (item 6) — KILLED (1 failed); **R10** — five seconds less one tick (item 6) — KILLED (1
+      failed: `assert (1618 - 619) == 1000`); **R11** — Rwabs: a flag-1 write on a changed drive transfers (item 3) —
+      KILLED (1 failed); **R12** — served(): devices unlabelled — SURVIVED (332 passed; recorded: no slice-H chain
+      through the served door); **F1** — item 1: devices_answered's GPIP-reads-vs-bytes guard dropped — KILLED (1
+      failed); **F2** — item 1: the GPIP declared on every run, printer or none — KILLED (1 failed); **F3** — item 1:
+      the print chains' machine with no printer put on line — KILLED (7 failed: the kit's refusal of the GPIP read, by
+      name, and the printer pin); **F4** — item 4: the verify's leftovers not laid — KILLED (1 failed); **F5** — item 4:
+      the verify leaves the FIRST record written, not the last — KILLED (1 failed); **F6** — item 4: the verify laid
+      whatever _fverify says — KILLED (1 failed); **F7** — item 4: the bad-sector list's zero not laid — KILLED (1
+      failed); **F8** — item 5: Unrooted no longer refused at NIL (the climb reads below the tree) — KILLED (1 failed).
+      THE AUTHOR'S 21, NOT RE-RUN (their driver `scratchpad/b6/W4/H/mutate.py`, their log `H/sweep.log`, each KILLED by
+      a failed test there): **M1** track layout: lead-out one byte short; **M2** Flopfmt: the drive not marked CHANGED;
+      **M3** Flopfmt: the bad-sector list's end not laid; **M4** Flopwr: any sector 1 marks the drive; **M5** Getbpb:
+      the serial not laid; **M6** Getbpb: the change not ended; **M7** Rwabs: flag 3 asks the media check; **M8** Rwabs:
+      records mapped linearly, not through the record; **M9** Rwabs: a changed drive answers 0, not E_CHNG; **M10**
+      drive B: served off A:'s image; **M11** drive B: unlabelled; **M12** drive B:'s vet dropped; **M13** a disk put in
+      a drive B: already logged in; **M14** printer: the character read from the wrong word; **M15** printer: BUSY
+      declared set; **M16** printer: the send answers not sent; **M17** time passing: half the ticks; **M18** printer
+      unlabelled; **M19** box: the climb's refusal not said by name; **M20** Flopfmt: an interleave not refused; **M21**
+      Rwabs write: every record written from the buffer's first sector (survived until the author's formatted-disk pin;
+      killed by it). (M15 and M18 mutate lines the fix pass rewrote — the port's declaration now a printer machine's,
+      the label read off the bytes printed; their verdicts are the author's, on the slice as handed.) THE REVIEWER'S 17
+      (driver `scratchpad/RW4H/mutate.py`, log `RW4H/sweep.log`): **R1** Flopfmt: verify reads laid at the head, not
+      buffer+512 — KILLED; **R2** track: CRC write byte $f5 — KILLED; **R3**, **R4**, **R9**, **R10**, **R11**, **R12**
+      — SURVIVED there, re-run above; **R5** Flopwr marks A: whatever the device — KILLED; **R6** Rwabs map:
+      cylinder/track words swapped — KILLED (52 failed); **R7** Getbpb: serial not laid — KILLED (10); **R8** Getbpb:
+      A:'s boot sector laid for any drive — KILLED; **R13** track: ID field side byte 0 — KILLED; **R14** Flopfmt:
+      verify reads not laid — KILLED; **R15** Floprd/Flopwr: track 80 accepted — KILLED; **R16** copy not classed as a
+      clear — KILLED; **R17** drive B vet: CHANGED exemption dropped — KILLED.
+    - **UNPINNED / NOT DONE, BY NAME:** R12 (no chain through the served door with a device); the "BPBs differ" arm and
+      the bad-sector arms (no disk of another geometry in B:, no failing sector); the RS232 printer; the odd-buffer
+      Rwabs bounce; the `_Run`s outside `continued` / `served` surfacing devices (owed at the binding); driver-private
+      RAM (W4-R8's class); whether GEMDOS's caller reads D1 / D2 after a Bconout; `make gates`, `make guarded`, the
+      `$90c` capture set, the from-empty build and `my-code-review` — THE ORCHESTRATOR'S.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -4549,6 +4704,15 @@ arrival — no row, no verdict.
   1,580 through act_chg → do_wredraw: over the 1,548 by arithmetic — the do_wopen lever named, the user's); the D0
   remedy for the void routines and fun_disk's caller-D7; the replays' full merge (deferred, ≈ `0x700` B of a band of
   its own); band 5's trap frames (now with the copy engine's: the user's).
+  **BAND 6 WAVE 4's SLICE H IS IN** (its entry, above; 383 verified STILL; harness only — every object and blob
+  byte-identical): THE DEVICES the utilities need, declared at the driver's entries (W6-R9) and labelled in every run
+  they answer — the formatter (XBIOS Flopfmt / Flopwr), drive B: (the ROM's own two-drive path, a second image) and a
+  printer on line (a machine's, the BIOS's five-second hold-off run as the ROM's, `ticked(n)` the time that passes) —
+  and twelve chains walking Format, the disk copy and Print to their ends (reach 235 of 244). NEXT: WAVE 4's TWO
+  AUTHOR GROUPS — G1 unit M's engine (`deskutil.c`), G2 unit N (a new file) — the utilities' routines in C, UNBOUND,
+  held at Tier 1 at these chains' arrivals (the cut, `scratchpad/b6/W4/cut.md`). WAVE 3, THE DESK FLIP, STILL WAITS FOR THE USER: W6-R1 (slice B, the binding) and THE
+  MOVE16 KIT FIX. Owed by name from this slice: the `_Run`s outside `continued` / `served` surfacing `devices`,
+  `printed` and `drive_b` (at the binding); R12; the user's word on R-H-2 and R-H-5 (AWAITING (24)).
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -5176,6 +5340,30 @@ arrival — no row, no verdict.
         transcribed core's C twin (strcpy, bfill) by inference from Tier 3's own rows.
       - THE SWEEP'S SURVIVORS, RECORDED (each named in the entry's sweep): whether an equivalent by reading or an arm no
         data reaches stays recorded rather than pinned by a fabricated record.
+    (24, continued) BAND 6 WAVE 4, SLICE H — THE DEVICES (its entry, above). NOTHING HERE IS THE USER'S WORD: W6-R9
+      ("devices declared at the driver's entries, built when wave 4 needs them") was accepted IN PRINCIPLE in band 6's
+      design; the slice's and the fix pass's rulings are the ORCHESTRATOR'S, PROVISIONAL, each marked so.
+      - THE AUTHOR'S "TO RULE ON", CARRIED (none ruled by the user): R-H-1 two existing pins RE-STATED — a Getbpb of the
+        disk logged in, unchanged, is now served (the copy asks it of its source) and rewrites nothing but the buffer
+        and the mode; an Rwabs on a CHANGED drive now answers E_CHNG instead of being refused (a run asks one: GEMDOS's
+        first read after the format) — the reviewer found the relaxation hides no boot divergence (every boot still
+        restricted to Mediach / Rwabs, the window's order pinned, the new answers held to the ROM's own Getbpb and
+        Rwabs). R-H-2 the printer's PSG transaction ANSWERED AT ITS FIRST INSTRUCTION because the kit's 4,096-event PSG
+        ledger refuses a whole-file print (14 events a byte) — or a bigger ledger asked of the kit (W6-R8's kind, the
+        user's). R-H-5 drive B: holding a disk on a machine whose boot touched drive 1 but never logged it in — the
+        copy's machine, labelled DRIVE_B; "the same machine to the byte" is not measured (the wording corrected).
+      - PROVISIONAL RULINGS OF THE FIX PASS'S BRIEF (the orchestrator's): (a) R-H-3 ANSWERED — the printer is A
+        MACHINE'S (`with_a_printer_on_line`, `Boot.printer`; the print chains' machine alone), and a run whose GPIP
+        reads are not one BUSY poll a byte printed is refused by name; (b) the Flopwr side-1 frame and the flag-1 Rwabs
+        pinned (R3, R11); (c) R-H-4 PAID — the ROM's write-verify's leftovers laid (`$16da` the zero word, `$18da` the
+        last record written) where `_fverify` is set, pinned to the ROM's instructions over FORMATTED's three writes —
+        no run of the verify itself (the FDC's); (d) `Unrooted` refused at NIL; (e) R10's 1,000-tick boundary pinned by
+        the ROM's own driver (999 / 1,000) and the five-seconds step alone; R4 and R9 cheap cases; R12 RECORDED (no
+        chain through the served door with a device); (f) RECORDED, no code — the skipped transaction's D1 / D2, the
+        `_Run`s that surface no devices (OWED AT THE BINDING), R-H-5's wording, the driver-private RAM (W4-R8's class).
+      - FOR THE USER: whether "a printer on line" and "a second disk in drive B:" — machines MADE FROM a capture's
+        (`Boot` fields, the megabyte unchanged) — stand as the devices' machines, or a capture with a disk in drive B:
+        is owed (the kit's or the capture tool's: W6-R8's kind); a bigger PSG ledger (R-H-2).
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -5302,9 +5490,25 @@ arrival — no row, no verdict.
 
 ## Suite
 
-`make test`: **30,685 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **30,737 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 6 WAVE 4, SLICE H — THE DEVICES, WITH ITS FIX PASS (2026-10-14; one author alone in the tree on `dd6bc64`, one
+  review, then one fix pass alone in the tree — the formatter, drive B: and a printer declared at the driver's entries,
+  twelve chains, the sub-tree box refused; HARNESS ONLY: every object, both blobs, both ELFs, `libtos102us.so`, the
+  table's lines, `lineftable.S` and the shipped `glue.S` identical to `scratchpad/b6/W4/base/` after `make` and `make
+  bench`): ONE `make test` in the shared tree (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` removed
+  first, **30,737 passed / 8 skipped**, rc 0, 417 s (`scratchpad/b6/W4/HFIX/final.log`; RUN ONCE). BY THE LEAN CYCLE:
+  `make gates`, `make guarded`, a `$90c` capture set and a from-empty build were NOT run — the orchestrator's.
+  RE-SUMMED, ITEMISED BY FILE against wave 2's fix pass's own collection (30,745 = 30,737 + 8 skipped, against 30,693;
+  `pytest --collect-only` on both, 287 files then and 288 now: `scratchpad/b6/W2/FIX/collect_perfile.txt`,
+  `scratchpad/b6/W4/HFIX/collect_perfile.txt`): +52 — ONE NEW FILE, `test_aes_devices.py` 40 (the author's 33: the
+  formatter's entries, frame and mark, the track held to the ROM's builder, Flopfmt / Flopwr, the formatted disk, Getbpb
+  ×3 and Rwabs ×4 held to the ROM's own, E_CHNG by flag, drive B:'s path and vet, the printer's send, hold-off and ledger, the labels
+  ×12, the copy's clear, the sub-tree box; the fix pass's 7: a format of drive B:, the verify's leftovers, the driver's
+  hold-off at 999 / 1,000 with a byte past ASCII, the GPIP refused with no printer, the GPIP-reads guard, the printer
+  machine, five seconds to the tick); `test_aes_desk_rom.py` 130 → 142 (twelve chains, one test each); no file lost a
+  test (`test_aes_boot.py`, `test_aes_boot_w4.py`: two pins re-stated, not added).
 - BAND 6 WAVE 2 — FOUR GROUPS, 44 ROUTINES, WITH THEIR FIX PASS (2026-10-14; a prep pass and four groups in one tree on
   `6601276`, two reviews, then one fix pass alone in the tree — 44 routines of the desk in C, linked into both blobs and
   held at Tier 1, nothing bound; thirty-two chains; the host-slot table re-laid; tests and docs: ONE NEW OBJECT,

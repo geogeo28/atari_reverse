@@ -398,15 +398,13 @@ def test_floprd_reads_the_sectors_of_one_side_of_one_track_or_is_refused():
 
 def test_the_forced_change_is_stored_answered_and_ended_as_the_rom_s_driver_does():
     """THE DESK'S PROTOCOL, call by call. `Rwabs(0, NULL, 2, 0, A:)` transfers nothing and stores CHANGED in the
-    driver's own mode byte; Mediach then answers CHANGED (as often as it is asked); a transfer in that state is
-    refused by name (the ROM's would answer E_CHNG: GEMDOS never asks one there); Getbpb answers the driver's record,
-    lays the boot sector in the driver's buffer and ENDS the change — Mediach is UNCHANGED again and a second Getbpb
-    is refused as every Getbpb of a disk not changed is. Any other mode than the forced change is refused."""
+    driver's own mode byte; Mediach then answers CHANGED (as often as it is asked); a transfer in that state answers
+    E_CHNG and moves nothing, as the ROM's does (band 6 wave 4: GEMDOS's first read after a format asks one); Getbpb
+    answers the driver's record, lays the boot sector in the driver's buffer and ENDS the change — Mediach is
+    UNCHANGED again. Any other mode than the forced change is refused."""
     driver = Driver()
     record, buffer = driver.floppy.record, aes_boot.driver_boot_sector(driver.memory)
     assert driver.mode() != aes_boot.MEDIA_CHANGED and driver.call(aes_boot.MEDIACH, A) == aes_boot.MEDIA_UNCHANGED
-    with pytest.raises(Refused, match="Getbpb of drive 0: .* but after a change the desk forced"):
-        driver.call(aes_boot.GETBPB, A)
     for mode in (0, 1, 3):
         with pytest.raises(Refused, match=f"Rwabs of no buffer with the count {mode}: .* serves the forced change .2. alone"):
             driver.call(aes_boot.RWABS, 0, 0, 0, mode, 0, A)
@@ -417,8 +415,10 @@ def test_the_forced_change_is_stored_answered_and_ended_as_the_rom_s_driver_does
     assert [at for at in differing if at not in stack_frame] == [aes_boot.driver_mode(driver.memory)], "the mode byte and nothing else"
     assert driver.floppy.laid_by_the_last_call() == ((aes_boot.driver_mode(driver.memory), bytes((aes_boot.MEDIA_CHANGED,))),)
     assert [driver.call(aes_boot.MEDIACH, A) for _ in range(2)] == [aes_boot.MEDIA_CHANGED] * 2
-    with pytest.raises(Refused, match="while the driver holds the disk CHANGED: the ROM's answers E_CHNG"):
-        driver.call(aes_boot.RWABS, 0, BUFFER >> 16, BUFFER & aes.WORD_MASK, 1, 0, A)
+    driver.memory[BUFFER:BUFFER + st_build.SECTOR_BYTES] = bytes(st_build.SECTOR_BYTES)
+    assert driver.call(aes_boot.RWABS, 0, BUFFER >> 16, BUFFER & aes.WORD_MASK, 1, 0, A) == addrs.E_CHNG_LONG
+    assert driver.floppy.laid_by_the_last_call() == () and not any(driver.memory[BUFFER:BUFFER + st_build.SECTOR_BYTES])
+    assert driver.mode() == aes_boot.MEDIA_CHANGED
     with pytest.raises(Refused, match="Getbpb of drive 1: the model holds drive A: alone"):
         driver.call(aes_boot.GETBPB, A + 1)
     driver.memory[buffer:buffer + st_build.SECTOR_BYTES] = bytes(st_build.SECTOR_BYTES)      # (so that its rewrite is seen)
@@ -426,10 +426,8 @@ def test_the_forced_change_is_stored_answered_and_ended_as_the_rom_s_driver_does
     assert bytes(driver.memory[buffer:buffer + st_build.SECTOR_BYTES]) == aes_boot.blank_disk()[:st_build.SECTOR_BYTES]
     assert [at for at, _data in driver.floppy.laid_by_the_last_call()] == [buffer, aes_boot.driver_mode(driver.memory)]
     assert driver.call(aes_boot.MEDIACH, A) == aes_boot.MEDIA_UNCHANGED
-    with pytest.raises(Refused, match="Getbpb of drive 0"):
-        driver.call(aes_boot.GETBPB, A)
     assert [call.function for call in driver.floppy.calls] == [aes_boot.MEDIACH, aes_boot.RWABS, aes_boot.MEDIACH, aes_boot.MEDIACH,
-                                                               aes_boot.GETBPB, aes_boot.MEDIACH]
+                                                               aes_boot.RWABS, aes_boot.GETBPB, aes_boot.MEDIACH]
     assert driver.floppy.calls[1].arguments == (0, 0, aes_boot.MEDIA_CHANGED, 0, A)
 
 

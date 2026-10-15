@@ -400,6 +400,38 @@ LEFT_BEHIND = {
     # (GEMDOS refuses the delete: the disk as the chain found it, not a sector written)
     DENIED: lambda chain: root_of(chain.machine.boot.disk).get(INF_ON_DISK) == ATTR_READ_ONLY and not written(chain),
 }
+# ---- band 6 wave 4, slice H: what the devices' acts leave — a disk formatted single-sided (its new serial logged in),
+# drive A: copied onto drive B: (all but the boot sector's serial and checksum), the file printed (its bytes, then the
+# engine's CR LF: `$fed6b4`, `$fed6bc`) or nothing printed
+PRINT_ENDS_WITH = b"\r\n"
+BOOT_SECTOR_CHECKSUM_AT = st_build.SECTOR_BYTES - WORD_BYTES
+COPY_DIFFERS_AT = {*range(st_build.BOOT_SERIAL_AT, st_build.BOOT_SERIAL_AT + st_build.BOOT_SERIAL_BYTES),
+                   *range(BOOT_SECTOR_CHECKSUM_AT, st_build.SECTOR_BYTES)}
+
+
+def formatted_single_sided_and_logged_in(chain):
+    disk = chain.machine.boot.disk
+    aes_boot.Floppy(chain.machine.image(), disk)            # (refused, by name, unless the driver's record holds it)
+    return aes_boot.geometry_of(disk)[2] == 1 and accessory_disk.serial_of(disk) != accessory_disk.serial_of(aes_boot.inf_disk_of())
+
+
+def copied_onto_drive_b(chain):
+    source, copy = chain.machine.boot.disk, chain.machine.boot.drive_b
+    return {at for at in range(len(source)) if source[at] != copy[at]} == COPY_DIFFERS_AT and source == aes_boot.inf_disk_of()
+
+
+def printed(chain):
+    return chain.steps[-1].boot.printed == aes_boot.default_inf() + PRINT_ENDS_WITH
+
+
+def nothing_printed(chain):
+    return all(not step.boot.printed for step in chain.steps)
+
+
+LEFT_BEHIND.update({desk.FORMATTED: formatted_single_sided_and_logged_in, desk.COPIED: copied_onto_drive_b,
+                    "file: File > Open, five seconds, Print clicked (printed)": printed,
+                    "file: the printer not ready, five seconds, Retry (printed)": printed,
+                    desk.NOT_READY: nothing_printed, "file: the printer not ready, Retry (not ready again)": nothing_printed})
 # `{chain: the Line-F words its own steps had taken by hand}` — the File menu's Show Info and New Folder, once each.
 SHOW_INFO_WORD, NEW_FOLDER_WORD = ((at, word) for at, (word, _routine) in THE_TWO_WORDS.items())
 TAKEN_BY_HAND = {
@@ -452,6 +484,10 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 wave 2, group G4 (units A, B) ----
     "band 6 wave 2, group G4": (2, 7),     # (the fix pass's) the text view: a line dragged; an icon put down
     # ---- end of group G4's wave-2 ----
+    # ---- band 6 wave 4, slice H (the devices) ----
+    "band 6 wave 4, slice H": (12, 25),    # Format up, EXIT, FORMAT, then OK and EXIT; the copy up, EXIT, COPY onto a
+                                           # second disk; Print: not ready, Cancel, Retry, five seconds then Retry or Print
+    # ---- end of slice H's ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -485,7 +521,7 @@ def test_the_chain_ends_at_the_rom_s_idle_having_done_what_its_name_says(name):
     assert LEFT_BEHIND.get(name, lambda _chain: True)(chain), f"{name!r} did not leave what its act leaves"
     assert desk.taken_by_hand(name) == TAKEN_BY_HAND.get(name, ())
     for which, (lo, hi) in desk.stacks(chain.machine).items():
-        if (name, which) != (LAUNCHED, desk.USERDEF_STACK):
+        if not (name in desk.THE_DESK_S_BLOCKS_ARE_CLEARED_IN and which == desk.USERDEF_STACK):
             assert desk.depths(name)[which] < hi - lo, which
     assert desk.depths(name)[desk.PD0_STACK] > 0
 
@@ -543,6 +579,10 @@ REACHED_BY_BLOCK = {
     # ---- band 6 wave 2, group G4 (units A, B) ----
     "band 6 wave 2, group G4": 0,
     # ---- end of group G4's wave-2 ----
+    # ---- band 6 wave 4, slice H (the devices) ----
+    "band 6 wave 4, slice H": 9,           # $fed912 format, $fedde4 copy, $fed624 print; $fed888 $fee236 the utilities'
+                                           # dialog; $fee166 $fee450 format's; $fee294 the copy's tracks; $fed832 a byte put
+    # ---- end of slice H's ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 

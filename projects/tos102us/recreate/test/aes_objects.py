@@ -62,25 +62,49 @@ def children_of(image, tree, parent):
     return children
 
 
+class Unrooted(ValueError):
+    """A climb from an object that never reaches the tree's root — an object of a sub-tree rooted elsewhere (a dialog
+    laid inside another's tree, whose indices are its own root's), climbed from the outer tree's: the links climb past
+    the root to NIL and, followed on, off the tree and round for ever. Said by name instead, at NIL."""
+
+
+def _climbed(tree, index, step):
+    """`step` taken from `index` over and over, every object it lands on yielded — UNROOTED where one comes round again."""
+    seen = set()
+    while True:
+        if index in seen:
+            raise Unrooted(f"the climb from an object of the tree at {tree:#x} comes round to object {index} again: "
+                           f"it is not linked under the tree's root")
+        seen.add(index)
+        yield index
+        index = step(index)
+
+
 def parent_by_climbing(tree, index, image):
     """get_par's rule, which needs no tree length: along ob_next to the object whose ob_tail is the one just left.
     Not `aes.parent_of`, the links model get_par's own battery is held to: the two agree on a well-formed tree, and
-    this one is what ob_find's model climbs by (the argument order is `aes.parent_of`'s)."""
+    this one is what ob_find's model climbs by (the argument order is `aes.parent_of`'s). UNROOTED, by name, where
+    the climb reaches NIL — past the root, whose tail was not the object left: no object outside the tree is read —
+    or comes round (`_climbed`)."""
     if index == aes.OB_ROOT:
         return aes.OB_NIL
-    left, parent = index, object_word(image, tree, index, "NEXT")
-    while object_word(image, tree, parent, "TAIL") != left:
-        left, parent = parent, object_word(image, tree, parent, "NEXT")
-    return parent
+    left = index
+    for parent in _climbed(tree, object_word(image, tree, index, "NEXT"), lambda at: object_word(image, tree, at, "NEXT")):
+        if parent == aes.OB_NIL:
+            raise Unrooted(f"the climb from object {index} of the tree at {tree:#x} reaches NIL past object {left}: "
+                           f"it is not linked under the tree's root")
+        if object_word(image, tree, parent, "TAIL") == left:
+            return parent
+        left = parent
 
 
 def screen_origin(image, tree, index):
     """The screen position of object `index` as ob_offset sums it: its and every ancestor's ob_x/ob_y, as words."""
     x = y = 0
-    while index != aes.OB_NIL:
-        x, y = signed(x + object_word(image, tree, index, "X")), signed(y + object_word(image, tree, index, "Y"))
-        index = parent_by_climbing(tree, index, image)
-    return x, y
+    for each in _climbed(tree, index, lambda at: parent_by_climbing(tree, at, image)):
+        if each == aes.OB_NIL:
+            return x, y
+        x, y = signed(x + object_word(image, tree, each, "X")), signed(y + object_word(image, tree, each, "Y"))
 
 
 def inside(x, y, rect):

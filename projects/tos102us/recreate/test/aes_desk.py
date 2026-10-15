@@ -30,11 +30,12 @@ later waves' rows are arrivals of, and the ROM-side column of the invariants sli
 THE MACHINES (`MACHINES`): the DESKTOP.INF machine (the fourth capture: one file on the disk) in both views, and THE
 FILES MACHINE (the fifth, `make preinit-files`: files, a folder with a file in it, a program).
 
-WHAT NO CHAIN HERE DOES, each for a reason the device model has (the design's 3.3): print (no printer), format and
-disk copy (XBIOS Flopfmt / Flopwr), drive B:, a resolution change, a critical error — AND A FOLDER THAT WAS ON THE DISK
-FROM POWER-ON OPENED: the desk forces a media change and GEMDOS's next call reads the folder's cluster before it asks
-Mediach, which the ROM's driver answers E_CHNG and `aes_boot.Floppy` refuses by name (a folder made in the session
-opens: its cluster is in GEMDOS's buffers). The files machine's folder is copied into and deleted, not opened.
+WHAT NO CHAIN HERE DOES, each for a reason the device model has (the design's 3.3): a resolution change, a critical
+error, the screen dump — AND A FOLDER THAT WAS ON THE DISK FROM POWER-ON OPENED: the desk forces a media
+change and GEMDOS's next call reads the folder's cluster before it asks Mediach (no chain made since band 6 wave 4,
+whose model answers that read E_CHNG as the ROM's driver does, has tried it; a folder made in the session opens: its
+cluster is in GEMDOS's buffers). The files machine's folder is copied into and deleted, not opened. (Print, format,
+disk copy and drive B: are band 6 wave 4's chains, over `aes_boot`'s W6-R9 devices: the block at the end.)
 """
 import functools
 from collections import namedtuple
@@ -175,8 +176,16 @@ def icons(machine):
 
 
 def box(ram, tree, index):
-    """`(x, y, width, height)` of object `index` of `tree`, on the screen."""
-    return (*aes_objects.screen_origin(ram, tree, index), *(aes_objects.object_word(ram, tree, index, field) for field in SIZE_FIELDS))
+    """`(x, y, width, height)` of object `index` of `tree`, on the screen — REFUSED BY NAME for an object not linked
+    under the tree's root (band 6 wave 4's harness gap: it climbed for ever): a dialog laid INSIDE another's tree is
+    a tree of its own, rooted at its own object and indexed from it (the DISKCOPY dialog is the utility tree's objects
+    11..16, its COPY button that root's 5) — box it from there, as `dialog_button` finds it."""
+    try:
+        origin = aes_objects.screen_origin(ram, tree, index)
+    except aes_objects.Unrooted as unrooted:
+        raise Refused(f"object {index} of the tree at {tree:#x}: {unrooted} — an object of a sub-tree rooted "
+                      f"elsewhere, boxed from the outer tree's root") from unrooted
+    return (*origin, *(aes_objects.object_word(ram, tree, index, field) for field in SIZE_FIELDS))
 
 
 def windows(machine):
@@ -535,7 +544,7 @@ CHAINS = {
     "Options > Set Preferences, Return": Chain(INF_ICONS, (*item("Options", "Set Preferences..."), *RETURN), (DIALOG_RUNNER,)),
     "Options > Save Desktop, Return": Chain(INF_ICONS, (*item("Options", "Save Desktop"), *RETURN), (INF_WRITE,)),
     # (the item's arm asks an alert first and prints on its button 1: the chain RAISES THE ALERT AND DOES NOT ANSWER IT —
-    # the hardcopy leaf `$fe8862` is a printer's, which the device model does not have)
+    # the hardcopy leaf `$fe8862` is the screen dump's, which no chain tries)
     PRINT_SCREEN_S_ALERT: Chain(INF_ICONS, item("Options", "Print Screen"), (OPTIONS_MENU, DESK_ALERT)),
     "a key typed at the desk's idle": Chain(INF_ICONS, typed("A", SCAN_A), (KEY_HANDLER,)),
     "drive A: selected": Chain(INF_ICONS, clicked("drive A:'s icon", drive("A")), (BUTTON_HANDLER,)),
@@ -969,10 +978,72 @@ CHAINS.update({
 })
 # ---- end of group G4's wave-2 ----
 # ---- end of band 6 wave 2's ----
+# ---- band 6 wave 4, slice H: THE DEVICES (ruling W6-R9; `aes_boot`'s formatter, drive B: and printer) ----
+# The utilities' built-ins, each walked to its end on the ROM's machine: File > Format (single-sided, its dialog's
+# default) formats drive A: through the formatter's two entries; drive A: dropped on drive B: copies it onto a SECOND
+# DISK (a machine made with one in drive B: — the capture's machine counts two floppies, so the ROM's own two-drive
+# path, no swap); a file's Print reaches the printer — on a machine made WITH ONE ON LINE when the alert is up (every
+# other machine's port is declared by nothing) — "not ready" while the BIOS's five-second hold-off since power-on runs
+# (the machine has been up 563 ticks: `PRINTER_RETRY_AT` is 0, and the driver answers 0 without touching the port),
+# printed once that time has passed.
+UTILITY_DIALOG_SET_UP, UTILITY_DIALOG_RUN = 0xfed888, 0xfee236  # the utilities' dialog fetched and centred; drawn, run
+FORMAT_LAID_OUT, FORMAT_ALERT_REDRAWN = 0xfee166, 0xfee450      # Format's progress bar laid; the redraw before its alert
+COPY_TRACKS = 0xfee294                  # the copy's tracks read (or written and read back), a track at a time
+PRINT_ENGINE, PRINT_READ, PRINT_PUT = 0xfed632, 0xfed6d6, 0xfed832     # the show / print engine; a buffer read; a byte put
+DISK_IN_B = "the DESKTOP.INF machine, a second disk in drive B:"
+MACHINES[DISK_IN_B] = lambda: aes_boot.with_a_disk_in_drive_b(aes_boot.inf_machine(), aes_boot.blank_disk())
+SHOW_PRINT_ALERT = "file: File > Open (the Show / Print / Cancel alert)"
+PRINTER_ON_LINE = "the Show / Print / Cancel alert's machine, a printer on line"
+MACHINES[PRINTER_ON_LINE] = lambda: aes_boot.with_a_printer_on_line(walked(SHOW_PRINT_ALERT).machine)
+FIVE_SECONDS = Step("five seconds pass (the printer's hold-off)", lambda _machine: (aes_boot.ticked(addrs.PRINTER_RETRY_HOLDOFF_TICKS),))
+DEVICE_INSNS = 4_000_000                # a disk copied (measured 2,473,753), a file printed (1,513,290)
+
+
+def answered(text, budget=STEP_INSNS):
+    """The button reading `text` — its blanks aside, as an alert's and a utility dialog's are padded — of what is up,
+    clicked (`aes_deskfun.alert_button_point`)."""
+    def point(machine):
+        import aes_deskfun              # (here: the desk's function modules import this one)
+        return aes_deskfun.alert_button_point(text)(machine)
+    return (Step(f"the {text!r} button clicked", _moved(point, *A_CLICK), None, budget),)
+
+
+FORMAT_UP = "A: File > Format, the warning's OK (the FORMAT dialog)"
+FORMATTED = "A: File > Format, OK, FORMAT clicked (formatted)"
+COPY_UP = "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)"
+COPIED = "a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)"
+NOT_READY = "file: File > Open, Print clicked (the printer not ready)"
+CHAINS.update({
+    FORMAT_UP: Chain("drive A: selected", (*item("File", "Format..."), *answered("OK")),
+                     (DO_FORMAT, addrs.AES_ROM_DESK_FORMAT, UTILITY_DIALOG_SET_UP, UTILITY_DIALOG_RUN)),
+    "A: File > Format, OK, EXIT clicked": Chain(FORMAT_UP, answered("EXIT"), (addrs.AES_ROM_DESKMAIN,)),
+    FORMATTED: Chain(FORMAT_UP, pressed("FORMAT"), (FORMAT_LAID_OUT, FORMAT_ALERT_REDRAWN)),
+    "A: formatted, the alert's OK, EXIT clicked": Chain(FORMATTED, (*answered("OK"), *answered("EXIT")),
+                                                      (UTILITY_DIALOG_RUN, addrs.AES_ROM_DESKMAIN)),
+    COPY_UP: Chain(INF_ICONS, (*dragged("drive A:'s icon", drive("A"), "drive B:", drive("B")), *answered("OK")),
+                   (ICON_DRAG, addrs.AES_ROM_DESK_COPY_DISK, UTILITY_DIALOG_SET_UP, UTILITY_DIALOG_RUN)),
+    "drive A: onto drive B:, OK, then Return (EXIT, the default)": Chain(COPY_UP, RETURN, (addrs.AES_ROM_DESKMAIN,)),
+    COPIED: Chain(DISK_IN_B, (*dragged("drive A:'s icon", drive("A"), "drive B:", drive("B")), *answered("OK"),
+                              Step("the dialog's 'COPY' clicked", _moved(lambda machine: button_point(machine, "COPY"), *A_CLICK),
+                                   None, DEVICE_INSNS)),
+                  (addrs.AES_ROM_DESK_COPY_DISK, COPY_TRACKS)),
+    NOT_READY: Chain(PRINTER_ON_LINE, answered("Print"),
+                     (addrs.AES_ROM_DESK_PRINT_FILE, PRINT_ENGINE, PRINT_READ, PRINT_PUT)),
+    "file: the printer not ready, Cancel": Chain(NOT_READY, answered("Cancel"), (addrs.AES_ROM_DESKMAIN,)),
+    "file: the printer not ready, Retry (not ready again)": Chain(NOT_READY, answered("Retry"), (addrs.AES_ROM_DESK_WAIT,)),
+    "file: the printer not ready, five seconds, Retry (printed)": Chain(
+        NOT_READY, (FIVE_SECONDS, *answered("Retry", DEVICE_INSNS)), (PRINT_READ, PRINT_PUT, addrs.AES_ROM_DESKMAIN)),
+    "file: File > Open, five seconds, Print clicked (printed)": Chain(
+        PRINTER_ON_LINE, (FIVE_SECONDS, *answered("Print", DEVICE_INSNS)),
+        (addrs.AES_ROM_DESK_PRINT_FILE, PRINT_ENGINE, PRINT_READ, PRINT_PUT)),
+})
+# ---- end of band 6 wave 4, slice H's ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
-# kilobyte that was the userdef stack is stored whole, which is no depth of a stack.
-THE_DESK_S_BLOCKS_ARE_CLEARED_IN = ("files: the program double-clicked — launched",)
+# kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK
+# COPY — a built-in, run by the shell after deskmain's return, whose buffer is all of free memory but a kilobyte, read
+# full of tracks.)
+THE_DESK_S_BLOCKS_ARE_CLEARED_IN = ("files: the program double-clicked — launched", COPIED)
 
 Walked = namedtuple("Walked", "machine steps")
 Walked.__doc__ = """A chain walked: the `Machine` its last step left, and a `Stepped` for each of ITS OWN steps."""
