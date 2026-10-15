@@ -161,6 +161,23 @@
 #define DESK_WAIT_BUSY        1          /* desk_wait's busy bee                  ($fdd2dc move.w #1,(sp))      */
 #define DESK_WAIT_DONE        0          /* ...and the arrow again (its every other caller's word 0)            */
 /* ---- end of band 6 wave 2's fix pass ---- */
+/* ---- BAND 6 WAVE 4: the same rule, a block per group — a name already in this header or `aes/aes.h` is USED ---- */
+/* ---- band 6 wave 4, group G1 (unit M) ---- */
+/* THE SHOW / PRINT ENGINE's three words (`$fed632` and its parts): where it is in its 4,096-byte buffer — -1 once the
+ * viewer has shown the file's end —, whether the last Fread came short, and what that Fread answered. */
+#define AES_SHOW_INDEX        0x9556     /* word: the next byte's index         ($fed668 move.w a6,$9556)      */
+#define AES_SHOW_AT_EOF       0x9558     /* word: 1 once an Fread came short    ($fed714 move.w #1,$9558)      */
+#define AES_SHOW_COUNT        0x955a     /* word: the last Fread's answer       ($fed70a move.w d0,$955a)      */
+/* ---- end of group G1's wave-4 ---- */
+/* ---- band 6 wave 4, group G2 (unit N) ---- */
+/* THE DISK UTILITIES' globals (`desk/deskdisk.h`): what util_open fetches, and the command line sh_cmd hands Format
+ * and the copy — kept for util_redraw. */
+#define AES_DESK_UTIL_TREE    0xc946     /* long: the utility tree (rsrc_gaddr(R_TREE, 0)) ($fed89e move.l #$c946) */
+#define AES_DESK_UTIL_TEDINFOS 0x96fe    /* long: its first TEDINFO (rsrc_gaddr(R_TEDINFO, 0)) ($fed8aa)        */
+#define AES_DESK_UTIL_BAR_X   0xc90e     /* word: the write bar's frame's place in the progress box, as fetched */
+#define AES_DESK_UTIL_BAR_Y   0xc910     /* word                                ($fed8c0, $fed8ce)             */
+#define AES_DESK_UTIL_COMMAND 0xc6e6     /* long: the command line shown        ($fed93c move.l 12(a6),$c6e6)  */
+/* ---- end of group G2's wave-4 ---- */
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>

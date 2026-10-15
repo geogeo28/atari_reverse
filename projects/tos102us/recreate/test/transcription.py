@@ -960,6 +960,19 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # app_save's INF cleared past its kept part, and DESKTOP.INF's name kept (app_getfh inlined)
     ("aes_app_save", "aes_bfill"), ("aes_app_save", "aes_strcpy"),
     # ---- end of group G4's wave-2 ----
+    # ---- band 6 wave 4, group G1 (unit M: `src/desk/deskutil.c`) ----
+    # the show / print engine's keys upcased — at "-MORE-" and between two bytes printed (the parts that call it, the
+    # viewer's and the print loop's, inlined into their built-in; line_shown and char_put stay functions of their own,
+    # as the build's call graph reads); aes_toupper has C callers already: no new thunk
+    ("aes_desk_show_file", "aes_toupper"), ("aes_desk_print_file", "aes_toupper"),
+    # ---- end of group G1's wave-4 ----
+    # ---- band 6 wave 4, group G2 (unit N: `src/desk/deskdisk.c`) ---- (ruling R-W4-6: aes_crit_err, `$fee364`'s, has
+    # no C caller before this group — its pair here makes the ONE new shipped-glue thunk, `glue.S`'s hash said)
+    # util_error's negative error, GEM's critical-error alert; Format's root and FATs sized (max), its label copied and
+    # its space alerted; the copy's free memory cut into tracks (ldiv)
+    ("aes_desk_util_error", "aes_crit_err"), ("aes_desk_format", "aes_max"), ("aes_desk_format", "aes_lbcopy"),
+    ("aes_desk_format", "aes_merge_str"), ("aes_desk_copy_disk", "aes_ldiv"),
+    # ---- end of group G2's wave-4 ----
 }
 
 # ---- (d) the m68k build's CALL GRAPH -------------------------------------------------------------------

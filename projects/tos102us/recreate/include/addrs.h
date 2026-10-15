@@ -2812,4 +2812,32 @@
 #define AES_ROM_ACT_BDOWN         0xfdcd34   /* (window, tree, root, mx, my, keys, clip, &object): a press — a drag or a box */
 /* ---- end of group G4's wave-2 ---- */
 
+/* BAND 6 WAVE 4: two groups (ruling R-W4-4), each naming ONLY its own unit's routines inside its own block (`# ctx`
+ * until each body is read); the four wave-4 routines named already — AES_ROM_DESK_SHOW_FILE, _PRINT_FILE, _FORMAT,
+ * _COPY_DISK (slice SH's block above) — keep their names where they are. */
+/* ---- band 6 wave 4, group G1 (unit M `desk/deskutil.h`) ---- */
+/* THE SHOW / PRINT ENGINE's eight `bsr`-only parts, each read from its body: no Line-F table entry, no signature —
+ * static C inside the engine's (ruling R-W4-5); named here for the ROM's text alone. */
+#define AES_ROM_DESK_SHOW_OR_PRINT 0xfed632  /* (name, show): opened, a 4 KB buffer, shown or printed, closed; 1 / 0 */
+#define AES_ROM_DESK_SHOW_NEXT_BYTE 0xfed6d6 /* (regs): the buffer's next byte into D5 (Fread at its end); 0 past it */
+#define AES_ROM_DESK_VIEWER_LOOP  0xfed736   /* (regs): the file viewer — a page, then a key at each page's end */
+#define AES_ROM_DESK_VIEWER_MORE  0xfed790   /* (regs): "-MORE-", a key awaited, upcased, the line erased: the key */
+#define AES_ROM_DESK_VIEWER_PAGE  0xfed7c0   /* (regs): up to 22 lines shown */
+#define AES_ROM_DESK_VIEWER_LINE  0xfed7cc   /* (regs): a line through Bconout; at the file's end "-END OF FILE-" */
+#define AES_ROM_DESK_RAWCIO_STRING 0xfed81a  /* (text): a string written a character at a time through Crawio */
+#define AES_ROM_DESK_PRINT_CHAR   0xfed832   /* (regs): D5 to the printer (its "not ready" alert) or the RS232 port */
+/* ---- end of group G1's wave-4 ---- */
+/* ---- band 6 wave 4, group G2 (unit N `desk/deskdisk.h`) ---- */
+/* THE DISK UTILITIES' HELPERS, each read from its body (# ctx: no ROM symbol names them); Format and the copy are
+ * AES_ROM_DESK_FORMAT / _COPY_DISK above. LINKED, UNBOUND. */
+#define AES_ROM_DESK_UTIL_OPEN    0xfed888   /* (): the utilities' resource, its tree and TEDINFOs fetched, the dialogs centred */
+#define AES_ROM_DESK_UTIL_SHOW    0xfee236   /* (tree, depth, run, start): drawn over the tree's root box; run: fm_do */
+#define AES_ROM_DESK_UTIL_BARS    0xfee166   /* (&step, &width, tracks): the progress box's two bars laid out, drawn */
+#define AES_ROM_DESK_COPY_TRACKS  0xfee294   /* (op, buffer, filler, device, side, step, first, count): tracks read or written */
+#define AES_ROM_DESK_UTIL_ERROR   0xfee364   /* (error, drive): the line redrawn; crit_err, or the utilities' alert */
+#define AES_ROM_DESK_FAT_MARK     0xfee3a4   /* (cluster, unread, bpb, fat): a cluster marked bad; 10(a6) stored */
+#define AES_ROM_DESK_UTIL_REDRAW  0xfee450   /* (): sh_draw of the command line */
+#define AES_ROM_DESK_FAT_SWAP     0xfee466   /* (word): its two bytes swapped in place */
+/* ---- end of group G2's wave-4 ---- */
+
 #endif /* TOS102US_ADDRS_H */

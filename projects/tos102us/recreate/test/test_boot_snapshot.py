@@ -300,6 +300,7 @@ import test_aes_gemdosif_transcription                      # noqa: E402,F401  (
 import test_aes_pgmld                                       # noqa: E402,F401  (pgmld: Pexec(3), then Mshrink)
 import test_aes_dos_exec                                    # noqa: E402,F401  (dos_exec's `.S` rows: wave 3, slice G)
 import test_aes_trp14                                       # noqa: E402,F401  (the XBIOS door: its `.S` rows, its twin)
+import test_aes_crit_err                                    # noqa: E402,F401  (crit_err's contract: its C caller, band 6 wave 4 G2, R-W4-9)
 import test_aes_cart                                        # noqa: E402,F401  (the cartridge chain)
 import test_aes_deskleaf                                    # noqa: E402,F401  (three leaves of the desk's range)
 import test_aes_deskmem                                     # noqa: E402,F401  (the desk's memory)

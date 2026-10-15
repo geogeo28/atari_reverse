@@ -2294,17 +2294,10 @@ cmt 0xfe1e80 (item): items 18..26 by the table $fef6a0 — of the selection (d6,
 fn 0xfe16e6 desk_show_info # ctx
 fn 0xfe1568 desk_open # ctx
 cmt 0xfe1568 the File menu's Open of the selection: a drive's window $fe13ea, a folder's $fe14ba, a file's Show / Print / Cancel alert
-fn 0xfed736 desk_viewer_loop # ctx
-cmt 0xfed736 the file viewer's loop: a page of 22 lines ($fed7c0: moveq #21,d6 over the line routine $fed7cc); at the file's end ($9556 = -1) a key wait polling Crawio by Line-F at $fed754; else the prompt $fed790, its key wait at $fed79c — Q or ^C ends, a blank shows a page, Return a line (aes_desk.STOPS names the two waits)
 fn 0xfe1f2a do_viewmenu
 cmt 0xfe1f2a do_viewmenu(item): items 29..35 by the table $fef6c4 — the view (0 icons / 1 text) and the sort key (0..3); where either changed: the old item's check cleared and the new one's set ($fde1f0), then win_view(view, sort); 0. C: aes_do_viewmenu (src/desk/desktop.c; band 6 wave 1b, G2)
 fn 0xfe1fde desk_options_menu # ctx
 cmt 0xfe1fde (item): items 37..44 by the table $fef6e0 — install disk drive $fdf11a / application $fdf3c8, preferences $fdef12, Save Desktop (alert $fde022, then the INF writer $fdbb34), Print Screen (alert, then gsx_hardcopy $fe8862), the blitter item (trp14 $40)
-fn 0xfed61e desk_show_file
-cmt 0xfed61e (name): pushes 1 and falls into $fed632 with $fed624 (which pushes 0): a file shown on the screen / printed
-fn 0xfed624 desk_print_file
-fn 0xfed912 desk_format # ctx
-fn 0xfedde4 desk_copy_disk # ctx
 fn 0xfed5c2 cart_exec # ctx
 var 0xc93c sh_isdef_seen # ctx
 cmt 0xc93c stored by sh_main each pass ($feb130 clr, $feb146 := 1 where sh_isdef was set); read by nothing
@@ -2744,3 +2737,63 @@ fn 0xfdcc2a act_bsclick
 cmt 0xfdcc2a act_bsclick(wh,tree,root,mx,my,keys,clip,dclick): miss → all put out; Shift (either, keys & 3) toggles; else others put out (dclick or unselected) and selected. C: aes_act_bsclick (void)
 fn 0xfdcd34 act_bdown
 cmt 0xfdcd34 act_bdown(wh,tree,root,mx,my,keys,clip,&obj): miss → rubber box (6x6) lights; selected → gr_accobs + gr_drgplns (outline by view: the desktop's root always icons), self-drop / desktop put-down (move_drvicon) → -1; evnt_button into its own arg words; the drop window or -1. C: aes_act_bdown
+
+# ---- AES band 6 wave 4 (2026-10-15): groups G1 (unit M, the show / print engine, src/desk/deskutil.c) and G2 (unit N,
+# Format, the disk copy and their helpers, the NEW src/desk/deskdisk.c) — 20 routines in C, linked, unbound, held at
+# Tier 1; each READ from its body (the eight engine parts static C: ruling R-W4-5) ----
+fn 0xfed61e desk_show_file
+cmt 0xfed61e (name): pushes 1 and branches into $fed624's tail: the engine $fed632 over (name, 1) — the file shown. C: aes_desk_show_file (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed624 desk_print_file
+cmt 0xfed624 (name): the engine $fed632 over (name, 0) — the file printed; D0 its word (1 / 0), read by no caller. C: aes_desk_print_file (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed632 desk_show_or_print
+cmt 0xfed632 (name, show) — no frame, A6 = 4096 AS DATA: Fopen(name, 0), Malloc(4096) (none: returns 0 with the file LEFT OPEN), index $9556 := 4096; the viewer $fed736, or Setprt(-1) and the print loop (a Crawio($ff) key check per byte: ^C / Q end it), CR LF at the end (the LF tried even where the CR was abandoned); Fclose, Mfree; 1. C: static shown_or_printed (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed6d6 desk_show_next_byte
+cmt 0xfed6d6 (regs: D3 handle, A3 buffer, A6 size) -> D0 1 and the byte in D5, or 0: past the end ($9556 = -1), or at a short read's count; Fread(4096) where the index reached 4096 ($955a its answer, $9558 := 1 when short) — a refill reading 0 shows the buffer again from its first byte. C: static next_byte (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed736 desk_viewer_loop
+cmt 0xfed736 the file viewer: Cconws(ESC v), a page; at the file's end ($9556 = -1) a key wait at $fed754, else "-MORE-" ($fed790) — Q (a byte compare) or ^C ends, a blank a page, Return a line, any other key nothing. C: static viewer (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed790 desk_viewer_more
+cmt 0xfed790 "-MORE-" by Crawio ($fed81a), a key awaited by Crawio($ff) at $fed79c until its WORD is not 0 (an ASCII-0 key waits on), toupper, Cconws(ESC l): the key. C: static more_asked (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed7c0 desk_viewer_page
+cmt 0xfed7c0 up to 22 lines ($fed7cc), dbf from 21; ends at the file's end. C: static page_shown (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed7cc desk_viewer_line
+cmt 0xfed7cc bytes through Bconout(2) (trp13) to a line feed; at the file's end Crawio CR, LF, "-END OF FILE-" and $9556 := -1, 0. C: static line_shown (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed81a desk_rawcio_string
+cmt 0xfed81a (text on the stack; clobbers A5, D2): each byte sign-extended to a word and written by Crawio. C: static rawcio_string (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed832 desk_print_char
+cmt 0xfed832 (regs: D4 port, D5 char, D6): D4 0 — Cauxout, 1; else Cprnout until printed, its "not ready" alert (fm_show(17) over three words read as (17, $00000001, $00fe)) — Cancel abandons (0), Retry again; a Cprnout answer of 99 abandons too. C: static char_put (src/desk/deskutil.c; band 6 wave 4, G1)
+fn 0xfed888 desk_util_open
+cmt 0xfed888 (): the utilities' resource (rom_ram 5), its tree ($c946) and first TEDINFO ($96fe) fetched, the write bar's frame's place kept ($c90e/$c910), the three dialogs centred (a GRECT in its frame: host slot AES_DESK_UTIL_OPEN_RECT); desk_wait. C: aes_desk_util_open (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee236 desk_util_show
+cmt 0xfee236 (tree, depth, run, start): drawn over the utility tree's ROOT box (less / plus a 3-pixel margin), whatever tree; run: fm_do(tree, start). Void. C: aes_desk_util_show (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee450 desk_util_redraw
+cmt 0xfee450 (): sh_draw of the command line ($c6e6). Void. C: aes_desk_util_redraw (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee466 desk_fat_swap
+cmt 0xfee466 (word): its two bytes swapped in place; the word. C: aes_desk_fat_swap (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee166 desk_util_bars
+cmt 0xfee166 (&step, &width, tracks): the progress box's two bars laid out (the frame's width / 80, each answer stored then read again), drawn; 40 tracks doubles the step; the busy bee. Void. C: aes_desk_util_bars (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee364 desk_util_error
+cmt 0xfee364 (error, drive): the line redrawn, the arrow; a negative error crit_err (Line-F: the C's one call of aes_crit_err, R-W4-9's glue thunk), else the utilities' alert ("an error has occurred" / "not the same type"). Void. C: aes_desk_util_error (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee3a4 desk_fat_mark
+cmt 0xfee3a4 (cluster, unread, bpb, fat): a cluster marked bad — 16-bit $ffff, 12-bit through a word copied out, swapped, masked, swapped back (host slot AES_DESK_FAT_MARK_WORD); STORES into its own argument slot 10(a6), which Format pops unread. Void. C: aes_desk_fat_mark (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfee294 desk_copy_tracks
+cmt 0xfee294 (op, buffer, filler, device, side, step, first, count): tracks read or written (each written one read back), the bar stepped; a failure util_error'd; over no track it answers its CALLER's D4 (the C: `first`). C: aes_desk_copy_tracks (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfed912 desk_format
+cmt 0xfed912 (tail, command): Format — two Mallocs (unchecked), the dialog until EXIT; FORMAT: Flopfmt every track and side by the turned skew, bad sectors listed, track 0 read back, the boot sector (Protobt) written TWICE round Getbpb, the root and both FATs by Rwabs, Dfree's space alerted; the Flopwr filler its never-written -4(a6). desk_rsrc_free's answer. C: aes_desk_format (src/desk/deskdisk.c; band 6 wave 4, G2)
+fn 0xfedde4 desk_copy_disk
+cmt 0xfedde4 (tail, command): the disk copy — Malloc of all free memory but 1 KB and of 600 (its failure LEAKS the first block), both BPBs (tracks and sides compared alone), a bufferful of tracks a pass (ldiv of the FREE memory), the boot sector re-serialled (Protobt) and written once a side; desk_rsrc_free's answer. C: aes_desk_copy_disk (src/desk/deskdisk.c; band 6 wave 4, G2)
+var 0x9556 show_index
+cmt 0x9556 the show / print engine's index into its 4096-byte buffer; -1 once the viewer showed the file's end
+var 0x9558 show_at_eof
+cmt 0x9558 1 once the engine's Fread came short (set nowhere else: $fed710)
+var 0x955a show_count
+cmt 0x955a the engine's last Fread answer
+var 0xc946 util_tree
+cmt 0xc946 the utilities' dialog tree, rsrc_gaddr(R_TREE, 0) at $fed888 (also Malloc'd by rom_ram: Format and the copy Mfree it)
+var 0x96fe util_tedinfos
+cmt 0x96fe the utilities' first TEDINFO, rsrc_gaddr(R_TEDINFO, 0) at $fed888
+var 0xc90e util_bar_x
+cmt 0xc90e the write bar's frame's x in the progress box, kept by $fed888
+var 0xc910 util_bar_y
+cmt 0xc910 ...its y
+var 0xc6e6 util_command
+cmt 0xc6e6 the command line Format and the copy show, sh_draw'n by $fee450

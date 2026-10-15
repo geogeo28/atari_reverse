@@ -108,19 +108,40 @@ ROLES_WAVE_2_G3 = {"AES_DESK_FUN_CLOSE_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_
 ROLES_WAVE_2_G4 = {"AES_GR_DRGPLNS_FRAME", "AES_ACT_BDOWN_FRAME", "AES_APP_START_ENVIRONMENT"}
 # ---- end of group G4's wave-2 ----
 ROLES_WAVE_2 = {"G1": ROLES_WAVE_2_G1, "G2": ROLES_WAVE_2_G2, "G3": ROLES_WAVE_2_G3, "G4": ROLES_WAVE_2_G4}
-PINNED_ROLES = ROLES_BEFORE_BAND_6_WAVE_1B | ROLES_G1 | ROLES_G2 | ROLES_G3 | ROLES_G4 | set().union(*ROLES_WAVE_2.values())
+# BAND 6 WAVE 4 (ruling R-W4-7): the same, over the band's two free runs after wave 2's fix pass — G2 (unit N) the
+# whole 82 B run, G1 (unit M) 24 B of the 56 B run; `$7f9b2..$7f9d2` (32 B) kept back. Its windows are told apart
+# from wave 2's by the WAVE_4_PREFIX on their group's name.
+WAVE_4_PREFIX = "wave-4 "
+WAVE_4_WINDOWS = {"G1": ((0x7f99a, 0x7f9b2),), "G2": ((0x7f910, 0x7f962),)}
+# ---- band 6 wave 4, group G1 (unit M) ----
+ROLES_WAVE_4_G1 = set()
+# ---- end of group G1's wave-4 ----
+# ---- band 6 wave 4, group G2 (unit N) ----
+ROLES_WAVE_4_G2 = {"AES_DESK_UTIL_FRAME", "AES_DESK_UTIL_OPEN_RECT", "AES_DESK_FAT_MARK_WORD"}
+# ---- end of group G2's wave-4 ----
+ROLES_WAVE_4 = {"G1": ROLES_WAVE_4_G1, "G2": ROLES_WAVE_4_G2}
+PINNED_ROLES = (ROLES_BEFORE_BAND_6_WAVE_1B | ROLES_G1 | ROLES_G2 | ROLES_G3 | ROLES_G4 | set().union(*ROLES_WAVE_2.values())
+                | set().union(*ROLES_WAVE_4.values()))
+
+
+def every_window_and_its_roles():
+    """`({group: spans}, {group: roles})` of waves 2 and 4 — read at the call, so a test's monkeypatch reaches it."""
+    windows = {**WAVE_2_WINDOWS, **{WAVE_4_PREFIX + group: spans for group, spans in WAVE_4_WINDOWS.items()}}
+    roles = {**ROLES_WAVE_2, **{WAVE_4_PREFIX + group: names for group, names in ROLES_WAVE_4.items()}}
+    return windows, roles
 
 
 def outside_the_windows(slots):
-    """What breaks band 6 wave 2's windows: a group's slot not wholly inside one of its own windows, any other slot
-    reaching into a window, a window outside the band or over another."""
+    """What breaks band 6 wave 2's and wave 4's windows: a group's slot not wholly inside one of its own windows, any
+    other slot reaching into a window, a window outside the band or over another."""
     ceiling = min(emu.STACK_TOP - emu.STACK_SCRATCH, gemdos.FRAME_AT)
-    windows = sorted((lo, hi, group) for group, spans in WAVE_2_WINDOWS.items() for lo, hi in spans)
+    windows_by_group, roles_by_group = every_window_and_its_roles()
+    windows = sorted((lo, hi, group) for group, spans in windows_by_group.items() for lo, hi in spans)
     faults = [f"{group}'s window {lo:#x}..{hi:#x} is outside the band" for lo, hi, group in windows
               if not emu.STACK_GUARD_LO <= lo < hi <= ceiling]
     faults += [f"{group}'s window runs into {next_group}'s" for (_lo, hi, group), (next_lo, _hi, next_group)
                in zip(windows, windows[1:]) if hi > next_lo]
-    owner = {role: group for group, roles in ROLES_WAVE_2.items() for role in roles}
+    owner = {role: group for group, roles in roles_by_group.items() for role in roles}
     for role, (at, width) in slots.items():
         inside = [group for lo, hi, group in windows if lo <= at and at + width <= hi]
         touches = [group for lo, hi, group in windows if at < hi and lo < at + width]
@@ -146,6 +167,19 @@ def test_the_windows_refuse_a_slot_of_another_group_or_out_of_its_own(monkeypatc
     assert outside_the_windows({**slots, "FRAME_WORD": (g3_lo, slots["FRAME_WORD"][1])}) == ["FRAME_WORD reaches into G3's window"]
     monkeypatch.setitem(ROLES_WAVE_2, "G1", ROLES_WAVE_2["G1"] | {"A_PHANTOM_ROLE"})
     assert outside_the_windows({**slots, "A_PHANTOM_ROLE": (g4_lo, 2)}) == ["A_PHANTOM_ROLE is not inside G1's window"]
+
+
+def test_the_wave_4_windows_refuse_a_slot_of_another_group_and_lie_in_the_free_runs(monkeypatch):
+    """...and wave 4's are held the same way: a slot of no wave-4 group moved into G2's window, and a wave-4 G1 role
+    whose slot lies in G2's, are each refused by name; a G1 role filling G1's whole window is not."""
+    slots = host_slots(CONSTANTS)
+    (g1_lo, g1_hi), (g2_lo, _g2_hi) = WAVE_4_WINDOWS["G1"][0], WAVE_4_WINDOWS["G2"][0]
+    moved = {**slots, "FRAME_WORD": (g2_lo, slots["FRAME_WORD"][1])}
+    assert outside_the_windows(moved) == [f"FRAME_WORD reaches into {WAVE_4_PREFIX}G2's window"]
+    monkeypatch.setitem(ROLES_WAVE_4, "G1", ROLES_WAVE_4["G1"] | {"A_PHANTOM_ROLE"})
+    assert outside_the_windows({**slots, "A_PHANTOM_ROLE": (g2_lo, 2)}) == [
+        f"A_PHANTOM_ROLE is not inside {WAVE_4_PREFIX}G1's window"]
+    assert outside_the_windows({**slots, "A_PHANTOM_ROLE": (g1_lo, g1_hi - g1_lo)}) == []
 
 
 def test_the_check_refuses_a_slot_moved_onto_another():

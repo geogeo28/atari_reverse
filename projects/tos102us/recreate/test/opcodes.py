@@ -108,6 +108,7 @@ MOVE_L_STACK_TO_ABSOLUTE = 0x23EF       # move.l  <d16>(sp),<xxx>.l
 MOVEA_L_ABSOLUTE_A1 = 0x2279            # movea.l <xxx>.l,a1
 PUSH_A1 = 0x2F09                        # move.l  a1,-(sp)
 POP_A1 = 0x225F                         # movea.l (sp)+,a1
+ADDQ_L_8_SP = 0x508F                    # addq.l  #8,sp
 PUSH_D1 = 0x2F01                        # move.l  d1,-(sp)
 POP_D1 = 0x221F                         # move.l  (sp)+,d1
 MOVEQ_D1 = 0x7200                       # moveq   #<imm8>,d1: the immediate in the low byte

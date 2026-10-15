@@ -407,9 +407,11 @@ def test_its_one_line_f_caller_is_the_desk_s_and_hands_it_a_negative_error_alone
     """BESIDE THE VECTOR, ONE CALL: the desk's at `$fee378` — reached only where the word it hands on is negative
     (`tst.w 8(a6)` / `bge` round the call), as the BIOS's driver calls etv_critic only for a negative answer. So no
     caller hands crit_err a positive error. BAND 6's: the day that routine is C its call of `aes_crit_err` reaches the
-    `.S` through a generated thunk, and the pair is `transcription.C_CALLERS_OF_TRANSCRIBED_CORES`'s — none yet."""
+    `.S` through a generated thunk, and the pair is `transcription.C_CALLERS_OF_TRANSCRIBED_CORES`'s — util_error's
+    alone (band 6 wave 4, R-W4-9)."""
     assert [at for sites in aes.line_f_call_sites(CRIT_ERR).values() for at in sites] == [THE_DESK_S_CALL]
     assert case.long_in(BASE_IMAGE, ITS_TEST) == TST_W_8_A6 and BASE_IMAGE[ITS_BRANCH_ROUND_THE_CALL] == BGE_S
     branches_to = ITS_BRANCH_ROUND_THE_CALL + aes.WORD_BYTES + BASE_IMAGE[ITS_BRANCH_ROUND_THE_CALL + 1]
     assert ITS_BRANCH_ROUND_THE_CALL < THE_DESK_S_CALL < branches_to
-    assert not [caller for caller, core in transcription.C_CALLERS_OF_TRANSCRIBED_CORES if core == "aes_crit_err"]
+    assert [caller for caller, core in transcription.C_CALLERS_OF_TRANSCRIBED_CORES if core == "aes_crit_err"] == [
+        "aes_desk_util_error"]

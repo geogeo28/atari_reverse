@@ -986,10 +986,14 @@ CHAINS.update({
 # other machine's port is declared by nothing) — "not ready" while the BIOS's five-second hold-off since power-on runs
 # (the machine has been up 563 ticks: `PRINTER_RETRY_AT` is 0, and the driver answers 0 without touching the port),
 # printed once that time has passed.
-UTILITY_DIALOG_SET_UP, UTILITY_DIALOG_RUN = 0xfed888, 0xfee236  # the utilities' dialog fetched and centred; drawn, run
-FORMAT_LAID_OUT, FORMAT_ALERT_REDRAWN = 0xfee166, 0xfee450      # Format's progress bar laid; the redraw before its alert
-COPY_TRACKS = 0xfee294                  # the copy's tracks read (or written and read back), a track at a time
-PRINT_ENGINE, PRINT_READ, PRINT_PUT = 0xfed632, 0xfed6d6, 0xfed832     # the show / print engine; a buffer read; a byte put
+# (the wave-4 fix pass: each by its `addrs` name, the groups' — the utilities' dialog fetched and centred, drawn and run;
+# Format's progress bar laid, the redraw before its alert; the copy's tracks; the show / print engine, a buffer read,
+# a byte put)
+UTILITY_DIALOG_SET_UP, UTILITY_DIALOG_RUN = addrs.AES_ROM_DESK_UTIL_OPEN, addrs.AES_ROM_DESK_UTIL_SHOW
+FORMAT_LAID_OUT, FORMAT_ALERT_REDRAWN = addrs.AES_ROM_DESK_UTIL_BARS, addrs.AES_ROM_DESK_UTIL_REDRAW
+COPY_TRACKS = addrs.AES_ROM_DESK_COPY_TRACKS
+PRINT_ENGINE, PRINT_READ, PRINT_PUT = (addrs.AES_ROM_DESK_SHOW_OR_PRINT, addrs.AES_ROM_DESK_SHOW_NEXT_BYTE,
+                                       addrs.AES_ROM_DESK_PRINT_CHAR)
 DISK_IN_B = "the DESKTOP.INF machine, a second disk in drive B:"
 MACHINES[DISK_IN_B] = lambda: aes_boot.with_a_disk_in_drive_b(aes_boot.inf_machine(), aes_boot.blank_disk())
 SHOW_PRINT_ALERT = "file: File > Open (the Show / Print / Cancel alert)"
@@ -1038,6 +1042,51 @@ CHAINS.update({
         (addrs.AES_ROM_DESK_PRINT_FILE, PRINT_ENGINE, PRINT_READ, PRINT_PUT)),
 })
 # ---- end of band 6 wave 4, slice H's ----
+# ---- band 6 wave 4: each group APPENDS its own chains inside its own block (the order above unchanged), and adds
+# their count to `test_aes_desk_rom.py`'s matching block ----
+# ---- band 6 wave 4, group G1 (unit M) ----
+# (the wave-4 fix pass, reviewer A's finding 2) THE ENGINE'S WORDS STALE BY A RUN: the INF shown to its end, then shown
+# again — the second show's arrival finds `$9556` -1, `$9558` 1 and `$955a` the first's count (529), as the first run
+# left them (reviewer A's probe, `probe_stale.py`).
+SHOWN_AGAIN = "file: shown, a key at its end — the file clicked, File > Open, shown again"
+# THE VIEWER'S KEYS at its "-MORE-" (the fix pass, reviewer A's finding 1): each typed at the named stop as a chain types
+# its blank there — the scan codes of q, x, F1 and the Control key (^C: Control held, then C).
+SCAN_Q, SCAN_X, SCAN_F1, SCAN_CONTROL = 0x10, 0x2d, 0x3b, 0x1d
+CHAINS.update({
+    SHOWN_AGAIN: Chain("file: shown, a key at its end", (*clicked("the file's icon", icon(THE_INF)), *item("File", "Open"),
+                                                         *shown((VIEWER_AT_THE_FILE_S_END,))), (SHOW_FILE,)),
+})
+# ---- end of group G1's wave-4 ----
+# ---- band 6 wave 4, group G2 (unit N) ----
+# THE COPY REFUSED: a SINGLE-SIDED disk in drive B: (the blank disk's boot sector made one side's — half its sectors,
+# one side; slice H's DRIVE_B class), drive A:'s two-sided disk dropped on it: COPY finds the two disks' BPBs differ
+# in their sides and util_error says "not the same type" (`$fee364`'s alert, which no other run reaches).
+import struct                           # (here, inside the group's block: the module's head is no group's)
+
+
+def single_sided_disk():
+    """The blank disk with a one-sided boot sector: its sectors and sides words halved / 1 (`aes_boot`'s offsets)."""
+    disk, boot = bytearray(aes_boot.blank_disk()), aes_boot.BOOT_SECTOR_BPB
+    fields = list(boot.unpack_from(disk, aes_boot.st_build.BPB_AT))
+    sides_at = aes_boot.BOOT_SECTOR_GEOMETRY_AT + aes.WORD_BYTES
+    fields[SECTORS_FIELD] //= aes_boot.st_build.HEADS
+    boot.pack_into(disk, aes_boot.st_build.BPB_AT, *fields)
+    struct.pack_into("<H", disk, sides_at, 1)
+    return bytes(disk)
+
+
+SECTORS_FIELD = 5                       # BOOT_SECTOR_BPB's sectors word (`aes_boot.geometry_of`'s)
+SINGLE_SIDED_IN_B = "the DESKTOP.INF machine, a single-sided disk in drive B:"
+MACHINES[SINGLE_SIDED_IN_B] = lambda: aes_boot.with_a_disk_in_drive_b(aes_boot.inf_machine(), single_sided_disk())
+NOT_THE_SAME_TYPE = "a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type)"
+CHAINS.update({
+    NOT_THE_SAME_TYPE: Chain(SINGLE_SIDED_IN_B, (*dragged("drive A:'s icon", drive("A"), "drive B:", drive("B")), *answered("OK"),
+                                                 Step("the dialog's 'COPY' clicked",
+                                                      _moved(lambda machine: button_point(machine, "COPY"), *A_CLICK))),
+                             (addrs.AES_ROM_DESK_COPY_DISK, addrs.AES_ROM_DESK_UTIL_ERROR)),
+})
+# ---- end of group G2's wave-4 ----
+# ---- end of band 6 wave 4's ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK

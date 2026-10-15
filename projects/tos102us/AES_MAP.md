@@ -389,6 +389,25 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   `FDCC2A`, act_bdown `FDCD34`. Every callee of the 44 is C. The hands' campaign is 101 chains / 338 steps, reach 226 of the
   244; the dispatcher's 190 is reached by five chains (a second window; a desktop icon dropped into a window), 188 by every
   other. LEFT IN THE DESK'S RANGE for wave 3: the 17-routine cycle, `FE2172` and deskmain; units M / N's other 22 for wave 4.
+  WAVE 4 (2026-10-15; STATUS.md, "BAND 6 WAVE 4", and the same section, now `## Linked, unbound — desk (215)`): TWENTY
+  ROUTINES OF UNITS M AND N IN C, in two groups, each READ from its body — LINKED INTO BOTH BLOBS, HELD AT TIER 1 AT THE
+  HANDS' ARRIVALS, NOTHING BOUND (`linef_table.LINKED_AND_NOT_FLIPPED` 214, `LINKED_HELD_NO_TABLE_ENTRY` 1). GROUP G1 —
+  unit M, `src/desk/deskutil.c`, THE SHOW / PRINT ENGINE: its two built-ins with a table entry, desk_show_file `FED61E`
+  (pushes 1, `bra` into `FED624`'s tail) and desk_print_file `FED624`, and its eight `bsr`-only parts as STATIC C (no
+  table entry, no signature: R-W4-5) — the engine `FED632` (no frame, A6 = 4,096 as DATA; no buffer leaves the file
+  open), next_byte `FED6D6` (`$9556` index, `$9558` EOF, `$955A` count; a refill reading 0 shows the buffer again),
+  the viewer `FED736` (its stop `FED754`), "-MORE-" `FED790` (its stop `FED79C`; an ASCII-0 key waits on), a page
+  `FED7C0`, a line `FED7CC` (Bconout), a Crawio string `FED81A`, a byte put `FED832` (Cprnout / Cauxout; the "not
+  ready" alert over a misread frame, a printer's 99 abandons). GROUP G2 — unit N, a NEW file `src/desk/deskdisk.c`:
+  util_open `FED888`, util_show `FEE236`, util_redraw `FEE450`, fat_swap `FEE466`, util_bars `FEE166`, util_error
+  `FEE364` (crit_err's one C caller: ONE new shipped-glue thunk, R-W4-6 / R-W4-9), fat_mark `FEE3A4` (stores into its own
+  argument slot 10(a6)), copy_tracks `FEE294` (no track: its caller's D4), Format `FED912` (Flopfmt by the turned
+  skew, the boot sector written twice round Getbpb, the root and two FATs by Rwabs, Dfree's space alert; its Flopwr
+  filler an unwritten `-4(a6)`) and the disk copy `FEDDE4` (all free memory but 1 KB; its Malloc(600)'s failure leaks
+  the first block `FEDE26`; the boot sector re-serialled and written twice on a two-sided disk). The utilities' globals:
+  `$C946` the tree, `$96FE` its TEDINFOs, `$C90E` / `$C910` the bar frame's place, `$C6E6` the command line. The hands'
+  campaign is 115 chains / 374 steps, reach 236 of the 244. LEFT IN THE DESK'S RANGE: the 17-routine cycle, `FE2172`
+  and deskmain (wave 3, the flip); the cartridge pair `FED554` / `FED5C2` (W6-R8's cartridge window).
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

@@ -118,6 +118,76 @@ void aes_gsx_hardcopy(uint8_t *image);                                          
  * that pushed fewer hands whatever its stack holds above them, as the ROM's door leaves them there. */
 uint32_t aes_trp13(uint8_t *image, uint32_t return_site, int16_t function, int16_t first, int16_t second,
                    int16_t third, int16_t fourth, int16_t fifth, int16_t sixth);                    /* $fee478 */
+
+/* ---- THE DESK'S TRAP IDIOMS, ONE HOME EACH (band 6 wave 4's fix pass) ----------------------------------------------------- */
+#include "machine.h"
+#include "m68k_idioms.h"
+#include "aes/aes.h"
+#include "aes/gemstart.h"
+#include "bios/bcon.h"
+
+/* gem_gemdos_call ($fd9fc6) AS A DESK ROUTINE REACHES IT: a byte-pinned `.S` that pops its own return so that GEMDOS
+ * reads its caller's frame — no C frame can be handed to it — so its effect is spelt round the trap: its caller's
+ * return site parked in AES_GEMDOS_RETURN and the glue's verdict words cleared (`entered`); then AES_DOS_AX := the
+ * answer's word, AES_DOS_ERR := 1 for a NEGATIVE LONGWORD alone (`answered`, which hands the answer on). */
+static inline void desk_gemdos_call_entered(uint8_t *image, uint32_t return_site)
+{
+    set_bus_long(image, AES_GEMDOS_RETURN, return_site);
+    set_bus_word(image, AES_DOS_ERR, GEM_DOS_NO_ERROR);
+    set_bus_word(image, AES_DOS_AX, GEM_DOS_NO_ERROR);
+}
+
+static inline uint32_t desk_gemdos_call_answered(uint8_t *image, uint32_t answer)
+{
+    set_bus_word(image, AES_DOS_AX, (uint16_t)answer);
+    if ((int32_t)answer < 0)
+        set_bus_word(image, AES_DOS_ERR, GEM_DOS_FAILED);
+    return answer;
+}
+
+/* Bconout(device, character) THROUGH THE AES's BIOS DOOR (trp13, $fee478): its caller's return site parked in
+ * AES_BIOS_RETURN as the door parks it, then ON TARGET the trap over the three words a Bconout caller pushes — not the
+ * door's widest frame, which costs a character at a time — and OFF TARGET Bconout's own core, as trp13's twin calls it. */
+static inline uint32_t desk_bconout(uint8_t *image, uint32_t return_site, uint16_t device, uint16_t character)
+{
+    wr32(image + AES_BIOS_RETURN, return_site);
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    return bios_bconout(image, BIOS_BCONOUT, device, character);
+#else
+    (void)image;
+    return bios_trap_device_char(BIOS_BCONOUT_FN, device, character);
+#endif
+}
+
+/* THE XBIOS THROUGH THE ROM's trp14 DOOR ($fee488): its caller's return site parked in AES_XBIOS_RETURN (every desk
+ * caller, on both builds) ... */
+static inline void desk_xbios_parked(uint8_t *image, uint32_t return_site)
+{
+    wr32(image + AES_XBIOS_RETURN, return_site);
+}
+
+#ifndef RECREATE_HOST_DIFFERENTIAL
+/* ...then, ON TARGET, `trap #14` over `frame` (`words` words, the function first), pushed from its end — a0 walks back
+ * from it, d1 counts down, d3 (a register the trap keeps) holds the drop; D2 / A1 / A2 declared clobbered (a TOS trap
+ * keeps neither: the BuggyBoy real-hardware lesson). The XBIOS's long answer. (Off target each caller has its own
+ * door: the hook a case binds, or the function's own core.) */
+static inline int32_t desk_xbios_trap(const uint16_t *frame, uint16_t words)
+{
+    register int32_t answer __asm__("d0");
+    register const uint16_t *cursor __asm__("a0") = frame + words;
+    register uint32_t left __asm__("d1") = (uint32_t)words - 1u;
+    register uint32_t bytes __asm__("d3") = (uint32_t)words * M68K_WORD_BYTES;
+
+    __asm__ volatile ("1:\tmove.w -(%1),-(%%sp)\n\t"
+                      "dbra %2,1b\n\t"
+                      "trap #14\n\t"
+                      "adda.l %3,%%sp"
+                      : "=d"(answer), "+a"(cursor), "+d"(left)
+                      : "d"(bytes)
+                      : "d2", "a1", "a2", "memory", "cc");
+    return answer;
+}
+#endif
 #endif
 
 #endif /* TOS102US_DESK_DESKLEAF_H */

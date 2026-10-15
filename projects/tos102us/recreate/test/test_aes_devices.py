@@ -20,6 +20,7 @@ import st_build
 import aes
 import aes_boot
 import aes_desk as desk
+import aes_deskbind
 import aes_objects
 import case
 from aes_boot import Refused
@@ -414,10 +415,14 @@ def test_the_printer_is_not_ready_for_five_seconds_after_power_on_because_its_la
     assert again.hardware_reads == () and not again.printed
 
 
+ENGINE_CR_AT, ENGINE_LF_AT = 0xfed6b4, 0xfed6bc      # the engine's two last bytes, in `$fed632`'s print loop (read)
+MOVE_W_TO_D5 = 0x3a3c                   # move.w #<word>,d5
+
+
 def test_a_file_printed_is_its_bytes_each_a_poll_of_busy_and_the_engine_s_cr_lf():
     """THE LEDGER: the file's own bytes in order, then the engine's CR LF (`move.w #13,d5`, `move.w #10,d5`) — one
     GPIP read (BUSY clear) for each byte handed."""
-    assert rom_words(0xfed6b4, 2) == (0x3a3c, 0x000d) and rom_words(0xfed6bc, 2) == (0x3a3c, 0x000a)
+    assert rom_words(ENGINE_CR_AT, 2) == (MOVE_W_TO_D5, addrs.CON_CR) and rom_words(ENGINE_LF_AT, 2) == (MOVE_W_TO_D5, addrs.CON_LF)
     boot = desk.walked("file: File > Open, five seconds, Print clicked (printed)").steps[-1].boot
     assert boot.printed == aes_boot.default_inf() + b"\r\n"
     assert boot.hardware_reads == ((addrs.MFP_GPIP, aes_boot.THE_PRINTER_S_PORT["hw_seed"][addrs.MFP_GPIP]),) * len(boot.printed)
@@ -511,8 +516,18 @@ def test_five_seconds_are_the_hold_off_s_thousand_ticks_to_the_tick():
 # ---- THE LABELS, chain by chain -------------------------------------------------------------------------------------------------------
 LABELLED = {desk.FORMATTED: {aes_boot.THE_FORMATTER}, desk.COPIED: {aes_boot.DRIVE_B, aes_boot.THE_FORMATTER},
             "file: File > Open, five seconds, Print clicked (printed)": {aes_boot.THE_PRINTER},
-            "file: the printer not ready, five seconds, Retry (printed)": {aes_boot.THE_PRINTER}}
-SLICE_H = tuple(desk.CHAINS)[tuple(desk.CHAINS).index(desk.FORMAT_UP):]
+            "file: the printer not ready, five seconds, Retry (printed)": {aes_boot.THE_PRINTER},
+            desk.NOT_THE_SAME_TYPE: {aes_boot.DRIVE_B}}     # (band 6 wave 4's G2 chain: its id is a key, held below)
+SLICE_H_S_LAST = "file: File > Open, five seconds, Print clicked (printed)"
+SLICE_H = tuple(desk.CHAINS)[tuple(desk.CHAINS).index(desk.FORMAT_UP):tuple(desk.CHAINS).index(SLICE_H_S_LAST) + 1]
+
+
+def test_a_later_wave_s_device_chain_names_its_classes_too():
+    """SLICE H's PIN BOUNDED TO ITS OWN CHAINS: a later wave's chain on a device machine is held by the same label table
+    (band 6 wave 4's G2: a single-sided disk in drive B:, the copy refused — drive B: answered it)."""
+    name = desk.NOT_THE_SAME_TYPE
+    assert name not in SLICE_H
+    assert set().union(*(step.boot.devices for step in desk.walked(name).steps)) == LABELLED[name]
 
 
 @pytest.mark.parametrize("name", SLICE_H)
@@ -552,4 +567,4 @@ def test_an_object_of_a_dialog_laid_inside_another_s_tree_is_boxed_from_its_own_
     assert (x + width // 2, y + height // 2) == desk.button_point(machine, "COPY")
 
 
-UTILITY_TREE = 0xc946                   # the utilities' tree, as `$fed888` fetches it
+UTILITY_TREE = aes_deskbind.DESK_GLOBALS["AES_DESK_UTIL_TREE"]   # the utilities' tree, as `$fed888` fetches it

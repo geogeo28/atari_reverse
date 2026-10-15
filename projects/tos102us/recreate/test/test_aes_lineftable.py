@@ -875,6 +875,13 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     ("aes_deskapp", "UNIT_A_WAVE_2"): 2,
     ("aes_deskact", "UNIT_B_WAVE_2"): 3,
     # ---- end of group G4's wave-2 ----
+    # ---- band 6 wave 4: each unit's WAVE-4 list (`UNIT_<X>_WAVE_4`, its own block of the unit's module) and count ----
+    # ---- band 6 wave 4, group G1 (unit M) ----
+    ("aes_deskutil", "UNIT_M_WAVE_4"): 2,
+    # ---- end of group G1's wave-4 ----
+    # ---- band 6 wave 4, group G2 (unit N) ----
+    ("aes_deskdisk", "UNIT_N_WAVE_4"): 10,
+    # ---- end of group G2's wave-4 ----
 }
 LINKED_AND_NOT_FLIPPED_ROUTINES = sum(LINKED_AND_NOT_FLIPPED_UNITS.values())
 

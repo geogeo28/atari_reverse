@@ -297,24 +297,15 @@ int16_t aes_desk_par_chk(uint8_t *image, uint32_t source, uint32_t files, uint32
 
 /* ==== BAND 6 WAVE 2, group G1: THE COPY ENGINE — d_dofcopy, d_doop, dir_op ========================================== */
 
-/* gem_gemdos_call ($fd9fc6) AS THE ENGINE REACHES IT for Fread and Fwrite: its caller's return site parked in
- * AES_GEMDOS_RETURN, the glue's verdict words cleared, `trap #1` over (function, handle, count, buffer), AES_DOS_AX :=
- * the answer's word, AES_DOS_ERR := 1 for a NEGATIVE LONGWORD alone. gem_gemdos_call is a byte-pinned `.S` that pops
- * its own return address so that GEMDOS reads its caller's frame — no C frame can be handed to it — so its effect is
- * spelt here, over `gemdos/gemdos.h`'s trap. The trap's whole D0 is the answer. */
+/* gem_gemdos_call ($fd9fc6) AS THE ENGINE REACHES IT for Fread and Fwrite (`desk/deskleaf.h`'s two halves of its
+ * effect), `trap #1` over (function, handle, count, buffer) — `gemdos/gemdos.h`'s trap. The trap's whole D0 is the
+ * answer. */
 static uint32_t file_transfer(uint8_t *image, uint32_t return_site, uint16_t function, int16_t handle, uint32_t count,
                               uint32_t buffer)
 {
-    uint32_t answer;
-
-    set_bus_long(image, AES_GEMDOS_RETURN, return_site);
-    set_bus_word(image, AES_DOS_ERR, GEM_DOS_NO_ERROR);
-    set_bus_word(image, AES_DOS_AX, GEM_DOS_NO_ERROR);
-    answer = gemdos_trap_word_word_long_long(image, function, (uint16_t)handle, count, buffer);
-    set_bus_word(image, AES_DOS_AX, (uint16_t)answer);
-    if ((int32_t)answer < 0)
-        set_bus_word(image, AES_DOS_ERR, GEM_DOS_FAILED);
-    return answer;
+    desk_gemdos_call_entered(image, return_site);
+    return desk_gemdos_call_answered(image, gemdos_trap_word_word_long_long(image, function, (uint16_t)handle, count,
+                                                                            buffer));
 }
 
 /* Fread of the copy buffer's whole length into it. */

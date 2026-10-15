@@ -32,39 +32,26 @@ int32_t (*desk_floprd_door)(uint8_t *image, uint32_t buffer, uint16_t device, ui
                             uint16_t side, uint16_t count);
 #endif
 
-/* Floprd through the XBIOS — the ROM's trp14 door over its caller's nine words, its own return parked in
- * AES_XBIOS_RETURN first (the site the ROM's door parks: its Line-F call's). ON TARGET the trap over that frame; OFF
- * TARGET the hook a case binds, refused by name where none is. The answer's word, as the ROM reads it. */
-_Static_assert(BOOT_TRACK == 0 && BOOT_SIDE == 0 && FLOPRD_NO_FILLER == 0, "the frame's zero words are pushed by clr.l");
-
+/* Floprd through the XBIOS — the ROM's trp14 door over its caller's nine words (`desk/deskleaf.h`), its own return
+ * parked in AES_XBIOS_RETURN first (the site the ROM's door parks: its Line-F call's). ON TARGET the trap over that
+ * frame; OFF TARGET the hook a case binds, refused by name where none is. The answer's word, as the ROM reads it. */
 static int16_t floprd(uint8_t *image, uint32_t buffer, int16_t device)
 {
-    wr32(image + AES_XBIOS_RETURN, AES_DRIVE_CHECK_FLOPRD_RETURN);
+    desk_xbios_parked(image, AES_DRIVE_CHECK_FLOPRD_RETURN);
 #ifdef RECREATE_HOST_DIFFERENTIAL
     if (!desk_floprd_door)
         recreate_not_reconstructed("drive_check's Floprd: the host has no floppy, and no case bound its door");
     return (int16_t)desk_floprd_door(image, buffer, (uint16_t)device, BOOT_SECTOR, BOOT_TRACK, BOOT_SIDE, BOOT_SECTORS);
 #else
     {
-        /* The frame as the ROM lays it, pushed from its end: the count, the side and track (two zero words), the
-         * sector, the device, the filler, the buffer, the function; three operands in registers the trap does not keep. */
-        register uint32_t answer __asm__("d0") = XBIOS_FLOPRD_FN;
-        register uint32_t device_word __asm__("d1") = (uint16_t)device;
-        register uint32_t form __asm__("a0") = buffer;
+        /* The frame as the ROM lays it: the function, the buffer, the filler, the device, the sector, the track, the
+         * side, the count. */
+        const uint16_t frame[] = {XBIOS_FLOPRD_FN, (uint16_t)(buffer >> 16), (uint16_t)buffer,
+                                  (uint16_t)(FLOPRD_NO_FILLER >> 16), (uint16_t)FLOPRD_NO_FILLER, (uint16_t)device,
+                                  BOOT_SECTOR, BOOT_TRACK, BOOT_SIDE, BOOT_SECTORS};
 
-        __asm__ volatile ("move.w %4,-(%%sp)\n\t"
-                          "clr.l -(%%sp)\n\t"
-                          "move.w %5,-(%%sp)\n\t"
-                          "move.w %1,-(%%sp)\n\t"
-                          "clr.l -(%%sp)\n\t"
-                          "move.l %2,-(%%sp)\n\t"
-                          "move.w %0,-(%%sp)\n\t"
-                          "trap #14\n\t"
-                          "lea %c3(%%sp),%%sp"
-                          : "+d"(answer), "+d"(device_word), "+a"(form)
-                          : "i"(FLOPRD_FRAME_BYTES), "i"(BOOT_SECTORS), "i"(BOOT_SECTOR)
-                          : "d2", "a1", "a2", "memory", "cc");
-        return (int16_t)answer;
+        _Static_assert(sizeof frame == FLOPRD_FRAME_BYTES, "Floprd's frame as the ROM pushes it");
+        return (int16_t)desk_xbios_trap(frame, sizeof frame / sizeof frame[0]);
     }
 #endif
 }

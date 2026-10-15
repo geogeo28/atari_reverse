@@ -679,15 +679,7 @@ DOOR_ARRIVALS = {"Drvmap: a drive opened, its letter checked against the map": A
                  FORCED_CHANGE: At(dl.TRP13, OPEN_A, 0, 2),
                  "Bconout(CON:, a character): the viewer's text": At(dl.TRP13, SHOW_THE_FILE, 0)}
 BIOS_RETURN = aes.AES_BIOS_RETURN
-SAVE_FRAME_BYTES = addrs.TRAP_SAVE_FRAME_BYTES
-
-
-def savptr_frame(ram):
-    """`(lo, hi, why)`: the BIOS's register-save frame under the machine's `savptr` — the ROM's trap stores the
-    registers and the return of ITS run there, a C core none."""
-    savptr = case.long_in(ram, addrs.SYSVAR_SAVPTR) & dl.BUS
-    return ((savptr - SAVE_FRAME_BYTES, savptr, "the BIOS's register-save frame under savptr: the ROM's trap #13 stores its own "
-             "registers and return there; the host's BIOS core is called, and saves none"),)
+savptr_frame = dl.savptr_frame          # (its home: `aes_deskleaves`, shared with unit M's engine cases)
 
 
 def replayed_driver(arrived, ran, made):

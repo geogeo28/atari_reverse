@@ -449,3 +449,16 @@ def the_rom_s_last_call(bench, name, arguments, dropped=(), **machine_s):
     the blob's core was held equal to, said."""
     final, _writes, _regs = emu.run(vdi.make_image(blob_pokes(bench, name, arguments, **machine_s)), getattr(addrs, name), {})
     return last_call_kept(final, LAST_FUNCTION[name])
+
+
+# THE BIOS'S REGISTER-SAVE FRAME a case drops (trp13's door cases; the show engine's, whose Bconout is the BIOS's own
+# on both shores — band 6 wave 4).
+SAVE_FRAME_BYTES = addrs.TRAP_SAVE_FRAME_BYTES
+
+
+def savptr_frame(ram):
+    """`(lo, hi, why)`: the BIOS's register-save frame under the machine's `savptr` — the ROM's trap stores the
+    registers and the return of ITS run there, a C core none."""
+    savptr = case.long_in(ram, addrs.SYSVAR_SAVPTR) & BUS
+    return ((savptr - SAVE_FRAME_BYTES, savptr, "the BIOS's register-save frame under savptr: the ROM's trap #13 stores its own "
+             "registers and return there; the host's BIOS core is called, and saves none"),)

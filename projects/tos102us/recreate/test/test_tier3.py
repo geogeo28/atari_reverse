@@ -1226,11 +1226,13 @@ def test_a_call_into_the_rom_s_aes_text_owed_to_a_later_band_is_one_site_in_the_
         holder, why = tier3.ROM_CALLS_OWED_TO_A_LATER_BAND[routine]
         assert why and any(lo <= site < hi for lo, hi in ranges[holder]), f"the call of {routine:#x} at {site:#x} is not in {holder}"
         assert routine not in aes_event.ENTRIES
-        # (a body of ours HELD UNBOUND with no table entry — `linef_table.LINKED_HELD_NO_TABLE_ENTRY`, band 6 wave 2's
-        # R-W2-4: the desk's userdef draw — is linked and reached by nothing: its call is relocated at the binding)
+        # (a body of ours HELD UNBOUND — `linef_table.LINKED_HELD_NO_TABLE_ENTRY`, band 6 wave 2's R-W2-4: the desk's
+        # userdef draw; and, band 6 wave 4, `LINKED_AND_NOT_FLIPPED`'s desk built-ins the desk door enters: Format,
+        # the disk copy, show and print — is linked and reached by nothing: its call is relocated at the binding)
+        held = {*linef_table.LINKED_HELD_NO_TABLE_ENTRY, *linef_table.LINKED_AND_NOT_FLIPPED}
         assert not [name for name in dir(addrs) if getattr(addrs, name) == routine and routines.is_routine(name)
                     and (name.lower() in ranges or routines.core_symbol(name) in ranges)
-                    and name not in linef_table.LINKED_HELD_NO_TABLE_ENTRY], "the routine has a body of ours: relocate the call"
+                    and name not in held], "the routine has a body of ours: relocate the call"
 # ---- end of slice T's block ---------------------------------------------------------------------------------------------
 
 

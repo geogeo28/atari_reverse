@@ -77,29 +77,45 @@ D_DOFCOPY, D_DOOP, DIR_OP = UNIT_C_WAVE_2
 # window (`$7b640..$7b800`, 448 B) cannot hold the 24-call ledger with eight DTAs the wave's longest run needs.
 
 REPLAYED = "GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search"
+REPLAYED_ANSWERS = "GEMDOS REPLAYED: the ROM's own run in place — its answers"     # (a run that makes no search)
 FOPEN, FREAD, FWRITE, FCLOSE = (addrs.GEMDOS_FOPEN_FN, addrs.GEMDOS_FREAD_FN, addrs.GEMDOS_FWRITE_FN,
                                 addrs.GEMDOS_FCLOSE_FN)
 FCREATE, FDATIME, FDELETE = addrs.GEMDOS_FCREATE_FN, addrs.GEMDOS_FDATIME_FN, addrs.GEMDOS_FDELETE_FN
 DCREATE, DDELETE, FSETDTA = addrs.GEMDOS_DCREATE_FN, addrs.GEMDOS_DDELETE_FN, addrs.GEMDOS_FSETDTA_FN
 FSFIRST, FSNEXT, MALLOC, MFREE = (addrs.GEMDOS_FSFIRST_FN, addrs.GEMDOS_FSNEXT_FN, addrs.GEMDOS_MALLOC_FN,
                                   addrs.GEMDOS_MFREE_FN)
+DFREE = addrs.GEMDOS_DFREE_FN
 SEARCHES = (FSFIRST, FSNEXT)
 W, L = aes.WORD_BYTES, aes.LONG_BYTES
 # Each function the engine reaches, with how many bytes of its frame are its own.
 ENGINE_FRAME_BYTES = {FSNEXT: 0, FCLOSE: W, FDELETE: L, DCREATE: L, DDELETE: L, FSETDTA: L, MALLOC: L, MFREE: L,
-                      FOPEN: L + W, FCREATE: L + W, FSFIRST: L + W, FDATIME: L + 2 * W, FREAD: W + 2 * L, FWRITE: W + 2 * L}
+                      FOPEN: L + W, FCREATE: L + W, FSFIRST: L + W, FDATIME: L + 2 * W, FREAD: W + 2 * L, FWRITE: W + 2 * L,
+                      DFREE: L + W}
 ENGINE_CALLS = 24                       # dir_op's copy of AUTO (a folder holding a file) as AUTB makes 20 (measured)
 ENGINE_SEARCHES = 8                     # d_doop's delete of a folder holding a folder makes 7
 ENGINE_HANDLER_ROOM = 0x150
 PARKED = (aes.AES_DOS_RETURN, aes.AES_TRAP1_RETURN, aes.AES_GEMDOS_RETURN)
 ARGUMENTS_IN_FRAME = gd.ARGUMENTS_IN_FRAME
 MOVE_L_A1_TO_A0 = 0x2091                # move.l  (a1),(a0)
+CLR_L_A0, MOVE_L_A0_POSTINC_A1_POSTINC = 0x4290, 0x22D8      # clr.l (a0); move.l (a0)+,(a1)+
+DISKINFO_BYTES = 4 * L                  # Dfree's DISKINFO: free clusters, clusters, sector size, sectors a cluster
 DTA_BYTES = aes_loader.DTA_BYTES
 
 
 class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
     """`aes_loader`'s recorder that lays the DTA at each search — its cell set BY EACH Fsetdta (the 68000 handler
-    and its twin), and an Fdatime's pointer replaced in the ledger by the four bytes it points at."""
+    and its twin), an Fdatime's pointer replaced in the ledger by the four bytes it points at — and (band 6 wave 4,
+    Format's space alert) a Dfree's: ITS POINTER RECORDED AS 0 (the address of dos_space's own frame: the ROM's stack
+    there, a host slot here) and the DISKINFO the run in place's Dfree filled (`DFREE_FILLED`) laid at it from the
+    cell behind the DTA's (`diskinfo_at`)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.end = self.diskinfo_at + DISKINFO_BYTES
+
+    @property
+    def diskinfo_at(self):
+        return self.dta_cell + L
 
     def after_the_answer(self):
         cell, ledger = struct.pack(">I", self.dta_cell), struct.pack(">I", self.ledger.pointer_at)
@@ -111,11 +127,22 @@ class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
                    + vdi.pack_words(op.LEA_D16_A0_A0, (W - self.ledger.stride) & aes.WORD_MASK, op.PUSH_A1,
                                     op.MOVEA_L_STACK_A1, ARGUMENTS_IN_FRAME + L, MOVE_L_A1_TO_A0, op.POP_A1),
                    ("label", "stamped")]
-        return [*kept, *stamped, *super().after_the_answer()]
+        spaced = [is_function(DFREE), (op.BNE_S, "spaced"),
+                  vdi_helpers.MOVEA_L_ABSOLUTE_A0 + ledger
+                  + vdi.pack_words(op.LEA_D16_A0_A0, (W - self.ledger.stride) & aes.WORD_MASK, CLR_L_A0, op.PUSH_A1,
+                                   op.MOVEA_L_STACK_A1, ARGUMENTS_IN_FRAME + L, op.LEA_ABSOLUTE_LONG_A0)
+                  + struct.pack(">I", self.diskinfo_at)
+                  + vdi.pack_words(*(MOVE_L_A0_POSTINC_A1_POSTINC,) * (DISKINFO_BYTES // L), op.POP_A1),
+                  ("label", "spaced")]
+        return [*kept, *stamped, *spaced, *super().after_the_answer()]
+
+    def pokes(self, answers, dta, filled, diskinfo=bytes(DISKINFO_BYTES)):
+        """The parent's, and the DISKINFO a Dfree lays (zeros where the run made none)."""
+        return {**super().pokes(answers, dta, filled), self.diskinfo_at: diskinfo}
 
     def twin(self, function):
         answering = super().twin(function)
-        if function not in (FSETDTA, FDATIME):
+        if function not in (FSETDTA, FDATIME, DFREE):
             return answering
 
         def handler(buf, arguments, argument_bytes):
@@ -123,9 +150,13 @@ class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
             if function == FSETDTA:
                 isr.poke(buf, self.dta_cell, struct.pack(">I", pointer))
             answer = answering(buf, arguments, argument_bytes)
+            entry = case.long_in(buf, self.ledger.pointer_at) - self.ledger.stride
             if function == FDATIME:
-                entry = case.long_in(buf, self.ledger.pointer_at) - self.ledger.stride
                 isr.poke(buf, entry + W, ctypes.string_at(ctypes.addressof(buf.contents) + (pointer & db.BUS), L))
+            if function == DFREE:
+                isr.poke(buf, entry + W, bytes(L))
+                isr.poke(buf, pointer & db.BUS, ctypes.string_at(ctypes.addressof(buf.contents) + self.diskinfo_at,
+                                                                 DISKINFO_BYTES))
             return answer
         return handler
 
@@ -151,15 +182,24 @@ for _name in UNIT_C_WAVE_2:
     aes_event.declare_child_doors(_name, ENGINE_CHILD_DOORS)
 
 # ---- THE ROM'S OWN RUN IN PLACE, call by call ---------------------------------------------------------------------------
-Replay = namedtuple("Replay", "answers fills functions handles returned")
+Replay = namedtuple("Replay", "answers fills functions handles returned written", defaults=((),))
 Replay.__doc__ = """What the ROM's own run of a routine from its arrival got of GEMDOS: the `answers` (D0 at each of
 its traps' returns, in order), the `fills` (the DTA each search left), the `functions` called, `handles` — `{the
-handle record's address: its bytes}` as GEMDOS left each record an Fopen or Fcreate of the run opened —, and the
-`Boot` it `returned` on (D0 there)."""
+handle record's address: its bytes}` as GEMDOS left each record an Fopen or Fcreate of the run opened —, the `Boot` it
+`returned` on (D0 there), and `written` — `((function, address, bytes), ...)`: what each call `in_place` was asked to
+CAPTURE wrote, read where it wrote it once GEMDOS answered (band 6 wave 4: the bytes an Fread read, Dfree's
+DISKINFO)."""
 # THE HOST'S TRAP REACHES THE RECONSTRUCTED DISPATCHER, which resolves Fread's and Fwrite's handle before it calls the
 # handler: each handle the run opened is LAID OPEN, its record as the ROM's GEMDOS left it at the open
 # (`aes_gemdosif.opened_record`) — the ROM's side, whose recorder stands in for the whole of GEMDOS, reads it not at all.
 handle_record = gd.handle_record
+# WHAT A CALL WROTE, to capture (`in_place`'s `captures`: `{function: Capture}`): the frame's longword `pointer_at`
+# bytes past its function word names where; `length` how many bytes — a number, or ANSWERED (the call's answer: a
+# read's count, none where it failed).
+Capture = namedtuple("Capture", "pointer_at length")
+ANSWERED = "the call's answer"
+FREAD_READ = {FREAD: Capture(2 * W + L, ANSWERED)}          # Fread(handle.w, count.l, buffer.l): what it read
+DFREE_FILLED = {DFREE: Capture(W, DISKINFO_BYTES)}          # Dfree(buffer.l, drive.w): the DISKINFO it filled
 
 
 def _sp(boot):
@@ -174,27 +214,45 @@ def _continued_to(boot, received, arrived, until, stands_at):
         return None
 
 
-def in_place(arrived, wakes=()):
+def _captured(ram, frame, answer, capture):
+    """`(address, bytes)`: what a call wrote by its frame (its function word at `frame`), as `capture` says."""
+    at = case.long_in(ram, frame + capture.pointer_at) & db.BUS
+    length = max(aes.signed(answer, bits=32), 0) if capture.length == ANSWERED else capture.length
+    return at, bytes(ram[at:at + length])
+
+
+def in_place(arrived, wakes=(), stops=(), captures=None):
     """THE ROM'S OWN RUN of the routine from `arrived` to its return, over the real disk: hopped from GEMDOS's handler
     entry to where each `trap #1` returns — a trap the run meets only AFTER its return (fewer instructions to the
-    return) is its caller's —, and at each idle the next of `wakes` (receptions, as a chain's hand gives them) taken in.
-    The DTA a search fills is the one the run's last Fsetdta named — refused by name where none did. `Replay`."""
-    boot, stands_at, received, wakes = arrived.boot, da.entry_of(arrived.name), (), list(wakes)
+    return) is its caller's —, and the next of `wakes` (receptions, as a chain's hand gives them) taken in AT AN IDLE,
+    or — where `stops` names one for it (a tuple, one per wake from the first; None: an idle) — AT THAT NAMED STOP
+    (`aes_desk.STOPS`: a wait that never idles), where the run reaches it before its next trap. The DTA a search fills
+    is the one the run's last Fsetdta named — refused by name where none did. `captures` (`{function: Capture}`): what
+    each such call wrote, kept in `written`. `Replay`."""
+    boot, stands_at, received = arrived.boot, da.entry_of(arrived.name), ()
+    pending = list(zip(wakes, (*stops, *(None,) * (len(wakes) - len(stops)))))
     handler, sp0 = case.long_in(boot.ram, addrs.VECTOR_TRAP_GEMDOS) & db.BUS, _sp(arrived.boot)
-    answers, fills, functions, handles, dta = [], [], [], {}, None
+    answers, fills, functions, handles, written, dta = [], [], [], {}, [], None
     while True:
         hop = _continued_to(boot, received, arrived, handler, stands_at)
+        if pending and pending[0][1] is not None:
+            stop = pending[0][1]
+            at_stop = _continued_to(boot, received, arrived, stop, stands_at)
+            if at_stop is not None and (hop is None or at_stop.instructions < hop.instructions):
+                boot, stands_at, received = at_stop, stop, pending.pop(0)[0]
+                continue
         back = _continued_to(boot, received, arrived, arrived.returns_to, stands_at)
         if back is not None and (hop is None or back.instructions <= hop.instructions):
-            assert _sp(back) == sp0 + L and not wakes, f"{da.label_of(arrived)}: not its own return, or wakes left"
-            return Replay(tuple(answers), tuple(fills), tuple(functions), handles, back)
+            assert _sp(back) == sp0 + L and not pending, f"{da.label_of(arrived)}: not its own return, or wakes left"
+            return Replay(tuple(answers), tuple(fills), tuple(functions), handles, back, tuple(written))
         if hop is None:
-            assert wakes, f"{da.label_of(arrived)}: the run idles with no wake left to take in"
+            assert pending and pending[0][1] is None, f"{da.label_of(arrived)}: the run idles with no wake left to take in"
             boot, stands_at = aes_boot.continued(boot, received, arrived.budget, None, stands_at), None
-            received = wakes.pop(0)
+            received = pending.pop(0)[0]
             continue
         sp = _sp(hop)
-        function, returns = case.word_in(hop.ram, sp + gd.FRAME_WORDS_AT - L), case.long_in(hop.ram, sp + W) & db.BUS
+        frame = sp + gd.FRAME_WORDS_AT - L
+        function, returns = case.word_in(hop.ram, frame), case.long_in(hop.ram, sp + W) & db.BUS
         if function == FSETDTA:
             dta = case.long_in(hop.ram, sp + ARGUMENTS_IN_FRAME - L) & db.BUS
         boot = aes_boot.continued(hop, (), arrived.budget, returns, handler)
@@ -203,6 +261,8 @@ def in_place(arrived, wakes=()):
         if function in SEARCHES:
             assert dta is not None, f"{da.label_of(arrived)}: a search before any Fsetdta of its own"
             fills.append(bytes(boot.ram[dta:dta + DTA_BYTES]))
+        if captures and function in captures:
+            written.append((function, *_captured(boot.ram, frame, answers[-1], captures[function])))
         handles.update(gd.opened_record(boot.ram, function, answers[-1]))
         stands_at, received = returns, ()
 
@@ -216,10 +276,13 @@ SPARE_ANSWERS = 3                       # ...three: a C that loops on past a fai
 
 def replayed(replay, dta_at_first=None):
     """The recorder's pokes for `replay`: its answers and fills (and the spares), the cell first at `dta_at_first` (a
-    stale longword where none: every routine here names its DTA before it searches), the handles laid open."""
+    stale longword where none: every routine here names its DTA before it searches), the handles laid open, and the
+    DISKINFO its Dfree filled where it captured one (`DFREE_FILLED`)."""
+    diskinfo = [data for function, _at, data in replay.written if function == DFREE]
+    assert len(diskinfo) <= 1, "a run of two Dfrees: the recorder lays one DISKINFO"
     return merge_pokes(ENGINE.pokes((*replay.answers, *(SPARE_ANSWER,) * SPARE_ANSWERS),
                                     vdi.STALE_LONG if dta_at_first is None else dta_at_first,
-                                    (*replay.fills, SPARE_DTA)), replay.handles)
+                                    (*replay.fills, SPARE_DTA), *diskinfo), replay.handles)
 
 
 def engine_calls(image):

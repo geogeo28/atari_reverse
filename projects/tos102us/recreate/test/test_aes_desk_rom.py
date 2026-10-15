@@ -193,7 +193,7 @@ def test_a_viewer_s_stop_is_the_first_instruction_of_its_own_key_poll(stop):
     assert branch_at + WORD_BYTES + struct.unpack(">b", bytes((BACK_TO_THE_PUSH & aes.BYTE_MASK,)))[0] == at
 
 
-VIEWER_PAGE_COUNT_AT = 0xfed7c0         # the viewer's page loop: its line counter loaded
+VIEWER_PAGE_COUNT_AT = addrs.AES_ROM_DESK_VIEWER_PAGE    # the viewer's page loop: its line counter loaded
 MOVEQ_TO_D6 = 0x7c00                    # `moveq #n,d6`, the count in the low byte
 
 
@@ -488,6 +488,12 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     "band 6 wave 4, slice H": (12, 25),    # Format up, EXIT, FORMAT, then OK and EXIT; the copy up, EXIT, COPY onto a
                                            # second disk; Print: not ready, Cancel, Retry, five seconds then Retry or Print
     # ---- end of slice H's ----
+    # ---- band 6 wave 4, group G1 (unit M) ----
+    "band 6 wave 4, group G1": (1, 6),     # (the fix pass) the INF shown again: its engine's words stale by a run
+    # ---- end of group G1's wave-4 ----
+    # ---- band 6 wave 4, group G2 (unit N) ----
+    "band 6 wave 4, group G2": (1, 5),     # a single-sided disk in drive B:, drive A: dropped on it, OK, COPY: refused
+    # ---- end of group G2's wave-4 ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -583,6 +589,12 @@ REACHED_BY_BLOCK = {
     "band 6 wave 4, slice H": 9,           # $fed912 format, $fedde4 copy, $fed624 print; $fed888 $fee236 the utilities'
                                            # dialog; $fee166 $fee450 format's; $fee294 the copy's tracks; $fed832 a byte put
     # ---- end of slice H's ----
+    # ---- band 6 wave 4, group G1 (unit M) ----
+    "band 6 wave 4, group G1": 0,
+    # ---- end of group G1's wave-4 ----
+    # ---- band 6 wave 4, group G2 (unit N) ----
+    "band 6 wave 4, group G2": 1,          # $fee364 util_error: the copy's "not the same type"
+    # ---- end of group G2's wave-4 ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 
@@ -599,8 +611,9 @@ def test_the_reach_table_has_a_row_for_every_routine_and_is_read_off_each_chain_
     assert "folder: File > New Folder, 'A', Return" in table[desk.MAKE_FOLDER] and "A: opened" not in table[desk.MAKE_FOLDER]
     assert set(table[desk.SHOW_FILE]) == {THE_SHOW, "files: the long file shown, a blank at each page's end and at its end",
                                           *(chain for chain in desk.CHAINS if chain.endswith(("then the long file shown",
-                                                                                              "then the long file's line shown")))}
-    assert len(table[desk.SHOW_FILE]) == 5
+                                                                                              "then the long file's line shown"))),
+                                          desk.SHOWN_AGAIN}     # (band 6 wave 4's fix pass: the INF shown again)
+    assert len(table[desk.SHOW_FILE]) == 6
     for name in ("A: opened", THE_SHOW):
         assert {routine for routine, chains in table.items() if name in chains} == desk.entered(name)
     assert desk.reach(("A: opened",))[desk.MAKE_FOLDER] == ()

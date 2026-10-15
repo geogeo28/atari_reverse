@@ -1217,8 +1217,9 @@ CORE_RETURN_SECONDS = 10               # a forked core's alarm: a thousand times
 STDERR_FD = 2                          # where the C's refusal writes: the descriptor, whatever `sys.stderr` is under pytest
 FORK_RAISED = 8                        # a fork's exit status when its own Python raised: the harness's error
 FORK_REACHED_A_HOOK = 9                # ...and when the core reached a hook no fork serves
+CHILD_FLOPPY_REFUSED = 10               # a row's child where the desk's floppy replay refuses the C's call (`aes_deskdisk`)
 _CHILD_STATUSES = (CHILD_VDI_REFUSED, vdi_helpers.CHILD_ORPHANED, CHILD_OBJECT_REFUSED, CHILD_DELIVERY_REFUSED,
-                   CHILD_RETURN_REFUSED, FORK_RAISED, FORK_REACHED_A_HOOK)
+                   CHILD_RETURN_REFUSED, FORK_RAISED, FORK_REACHED_A_HOOK, CHILD_FLOPPY_REFUSED)
 assert len(set(_CHILD_STATUSES)) == len(_CHILD_STATUSES), "two kinds of child's end share an exit status"
 # Every hook the candidate has but the dispatcher's — the event door's two, the two the VDI's cores and the walked
 # routines leave through, and the other components' (GEMDOS's handler and clock, Supexec's routine, the disk driver's

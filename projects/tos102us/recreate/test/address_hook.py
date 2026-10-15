@@ -144,13 +144,24 @@ def as_the_case_s_outcome(key, raised):
 # effect's raise is RECORDED and the call REFUSED (`answered_or_recorded`), and where the binding closes the record is
 # given its outcome: what stops the session raised again, itself, whatever the run then failed by
 # (`raise_what_stops_the_session`); anything else the case's failure or skip (`as_the_case_s_outcome`).
+class RefusedAnswering(AssertionError):
+    """AN EFFECT'S REFUSAL THAT ANSWERS: recorded and given its case's outcome like any raise, but the call is answered
+    `answer` instead of REFUSED_ANSWER — so a C that loops on its door (a replay spent, a key awaited for ever) is
+    handed a way out and ends, and its case fails BY THIS NAMED ASSERTION rather than by a watchdog's timeout."""
+
+    def __init__(self, why, answer):
+        super().__init__(why)
+        self.answer = answer
+
+
 def answered_or_recorded(effect, key, raised_in):
-    """`effect()`'s answer — or, WHATEVER it raises, `(key, the exception)` kept in `raised_in` and the call refused."""
+    """`effect()`'s answer — or, WHATEVER it raises, `(key, the exception)` kept in `raised_in` and the call refused
+    (answered REFUSED_ANSWER, or a `RefusedAnswering`'s own answer)."""
     try:
         return effect()
     except BaseException as raised:    # every exception: a `pytest.fail`, a Ctrl-C are no `Exception`
         raised_in.append((key, raised))
-        return REFUSED_ANSWER
+        return raised.answer if isinstance(raised, RefusedAnswering) else REFUSED_ANSWER
 
 
 def raise_what_stops_the_session(raised_in):

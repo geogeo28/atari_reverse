@@ -228,6 +228,19 @@ LINKED_AND_NOT_FLIPPED.update({name: "unit B: the drag's loop and the button's h
                                for name in ("AES_ROM_GR_DRGPLNS", "AES_ROM_ACT_BSCLICK", "AES_ROM_ACT_BDOWN")})
 # ---- end of group G4's wave-2 ----
 # ---- end of band 6 wave 2's ----
+# ---- band 6 wave 4: one `.update({...})` PER UNIT inside its group's own block, the group's names only. The show /
+# print engine's eight `bsr`-only parts are static C inside the engine (ruling R-W4-5): no entry of theirs here, nor
+# in LINKED_HELD_NO_TABLE_ENTRY ----
+# ---- band 6 wave 4, group G1 (unit M `src/desk/deskutil.c`) ----
+LINKED_AND_NOT_FLIPPED.update({name: "unit M: the show / print engine's two built-ins, held at Tier 1 at their arrivals"
+                               for name in ("AES_ROM_DESK_SHOW_FILE", "AES_ROM_DESK_PRINT_FILE")})
+# ---- end of group G1's wave-4 ----
+# ---- band 6 wave 4, group G2 (unit N `src/desk/deskdisk.c`) ----
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit N: the disk utilities, held at Tier 1 at their arrivals"
+                               for routine in ("UTIL_OPEN", "UTIL_SHOW", "UTIL_REDRAW", "FAT_SWAP", "UTIL_BARS", "UTIL_ERROR",
+                                               "FAT_MARK", "COPY_TRACKS", "FORMAT", "COPY_DISK")})
+# ---- end of group G2's wave-4 ----
+# ---- end of band 6 wave 4's ----
 
 # ---- band 6 wave 2 (ruling R-W2-4) ----
 # THE ROUTINES WRITTEN, LINKED AND HELD UNBOUND THAT HAVE NO ENTRY OF THE TABLE: reached by VALUE only — `$fde844`, the

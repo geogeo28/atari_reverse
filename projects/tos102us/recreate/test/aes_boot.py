@@ -2309,10 +2309,13 @@ def line_f_taken(frames):
 
 
 @derived.kept
-def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None):
+def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watches=None):
     """`boot` — a machine at its idle — CONTINUED (above): what it `received` taken through the ROM's interrupt
     handlers, then the run to its next idle. `until`, `at` (band 6 wave 0): A NAMED STOP the run ENDS AT instead of an
     idle, and the one the boot STANDS AT instead of an idle (`_vet_stands_where_it_is_continued_from`'s section).
+    `watches` (band 6 wave 4): `{PC: (a name, the reader of the frame there)}` the run is watched at BESIDE the
+    handlers — an ARGUMENT, so a derivation's key holds it (`aes_deskdisk`'s floppy doors: a run watched there is
+    another question than one that is not).
     A `Boot` again: the megabyte and the registers THERE, that run's own
     cost, polls, stores and streams, whose `idle` it ended at, and `observed` — `(the handler, (mx, my))` for each
     call of a screen manager's handler (`handler_stops`), in order, whichever shore's ctlmgr made it, and
@@ -2332,7 +2335,7 @@ def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None):
     line_f_frames = {}                  # (slice H: the frames of the Line-F exceptions taken by hand — the harness's stores)
     by_hand = {word_at: (LINE_F_TAKEN_BY_HAND, line_f_taken(line_f_frames)) for word_at in line_f_words_the_oracle_does_not_trap()}
     run = _Run(memory, floppy, budget, until=until, ours=ours,
-               observing={**handler_stops(ours), **trampoline_stops(ours), **by_hand}, printer=boot.printer)
+               observing={**handler_stops(ours), **trampoline_stops(ours), **by_hand, **(watches or {})}, printer=boot.printer)
     try:
         result = run.to_an_idle(boot.registers, _io_seed(boot.io))
         registers = _registers_now()

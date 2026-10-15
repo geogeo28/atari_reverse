@@ -427,7 +427,7 @@ uint32_t aes_trp13(uint8_t *image, uint32_t return_site, int16_t function, int16
     case BIOS_DRVMAP_FN:
         return bios_drvmap(image);
     case BIOS_BCONOUT_FN:
-        return bios_bconout(image, BIOS_BCONOUT, (uint16_t)first, (uint16_t)second);
+        return desk_bconout(image, return_site, (uint16_t)first, (uint16_t)second);
     case BIOS_GETBPB_FN:
         return (uint32_t)recreate_call_disk_vector(image, BIOS_GETBPB_FN, 0, 0, 0, 0, (uint16_t)first);
     case BIOS_RWABS_FN:

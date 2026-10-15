@@ -414,6 +414,26 @@
 #define HOST_SLOT_AES_APP_START_ENVIRONMENT 0x7f998 /* $fdb5fc's -14(a6)                                         */
 #define HOST_SLOT_AES_APP_START_ENVIRONMENT_BYTES 2 /* APP_START_ENVIRONMENT_BYTES                               */
 /* ---- end of group G4's wave-2 ---- */
+/* BAND 6 WAVE 4 (ruling R-W4-7): the band's two free runs after wave 2's fix pass, cut into one window per group
+ * (pinned: `test/test_host_slots.py`'s WAVE_4_WINDOWS) — G2's the whole 82 B run, for unit N's handed spans
+ * (`$fed888`'s 8, `$fee3a4`'s 2, and ONE slot format `$fed912` (52) and the copy `$fedde4` (26) share: both are
+ * sh_cmd's, they never nest); G1's 24 B of the 56 B run (the engine hands no frame address), `$7f9b2..$7f9d2` (32 B)
+ * KEPT BACK. A group's slots lie inside its own window only; out of room: STOP and report. Each id in
+ * `enum host_slot` below, in its group's region. */
+/* ---- band 6 wave 4, group G1 (unit M) ---- window $7f99a..$7f9b2 (24 B) */
+/* ---- end of group G1's wave-4 ---- */
+/* ---- band 6 wave 4, group G2 (unit N) ---- window $7f910..$7f962 (82 B) */
+/* Unit N's (`desk/deskdisk.h`): util_open's rectangle; THE FRAME FORMAT AND THE COPY SHARE (both sh_cmd's built-ins,
+ * never nested — COMPACTED: util_bars' two answers, Format's Dfree answers and its skew table), HELD ACROSS the
+ * dialogs' fm_do, util_error's alerts and Format's fm_alert — a "held where parked" fact of the binding's; fat_mark's
+ * FAT word, handed fat_swap. 40 of the window's 82 B. */
+#define HOST_SLOT_AES_DESK_UTIL_FRAME   0x7f910  /* $fed912's -52(a6), -22..-8(a6); $fedde4's -26, -14(a6)          */
+#define HOST_SLOT_AES_DESK_UTIL_FRAME_BYTES 30   /* UTIL_FRAME_BYTES                                             */
+#define HOST_SLOT_AES_DESK_UTIL_OPEN_RECT 0x7f92e /* $fed888's -8(a6)                                             */
+#define HOST_SLOT_AES_DESK_UTIL_OPEN_RECT_BYTES 8 /* UTIL_OPEN_RECT_BYTES                                         */
+#define HOST_SLOT_AES_DESK_FAT_MARK_WORD 0x7f936 /* $fee3a4's -2(a6)                                              */
+#define HOST_SLOT_AES_DESK_FAT_MARK_WORD_BYTES 2 /* FAT_MARK_WORD_BYTES                                          */
+/* ---- end of group G2's wave-4 ---- */
 /* ...and the screen manager's handlers' (`aes/gemctrl.h`). hctl_window's: the window's rectangle with the four words
  * r_get unpacks it into, and the elevator's corner ob_offset answers into — each read out and given back before any
  * wait; THE RECTANGLE A DRAG IS HELD BY (gr_dragbox's bound, gr_rubwind's twin offsets) and THE TWO WORDS IT ANSWERS
@@ -608,6 +628,13 @@ enum host_slot {
     HOST_SLOT_ID_AES_ACT_BDOWN_FRAME,        /* band 6 wave 2, group G4 */
     HOST_SLOT_ID_AES_APP_START_ENVIRONMENT,  /* band 6 wave 2, group G4 */
     /* ---- end of group G4's wave-2 ---- */
+    /* ---- band 6 wave 4, group G1 (unit M) ---- */
+    /* ---- end of group G1's wave-4 ---- */
+    /* ---- band 6 wave 4, group G2 (unit N) ---- */
+    HOST_SLOT_ID_AES_DESK_UTIL_FRAME,
+    HOST_SLOT_ID_AES_DESK_UTIL_OPEN_RECT,
+    HOST_SLOT_ID_AES_DESK_FAT_MARK_WORD,
+    /* ---- end of group G2's wave-4 ---- */
     HOST_SLOT_ID_AES_HCTL_WINDOW_SIZE,
     HOST_SLOT_ID_AES_HCTL_WINDOW_CORNER,
     HOST_SLOT_ID_AES_HCTL_WINDOW_DRAG_RECT,     /* a slot per process: the screen manager's frame across a drag's waits */
