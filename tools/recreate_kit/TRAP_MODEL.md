@@ -132,6 +132,41 @@ Not built: nothing has needed a second option pinned, and the trace flag was pin
 mechanism depends on it. Until it is, a fresh clone at a later upstream commit can move the oracle's
 ground truth under every project at once with nothing red.
 
+### `$F620..$F627` take the Line-F exception — the one opcode the oracle corrects
+
+Musashi builds ONE opcode table for every CPU type: `m68kmake` installs a handler wherever its mask
+matches, and the CPU columns of `m68k_in.c` set only its cycles (a `.` is 0 cycles, not "absent"). An
+instruction a CPU lacks must therefore refuse itself in its handler, and every Line-F handler does
+(`cpgen`, `pmmu`, `040fpu0`, … — `if (CPU_TYPE_IS_…_PLUS(CPU_TYPE)) …; m68ki_exception_1111();`)
+**except MOVE16's**. Upstream's oracle, set to a 68000, so EXECUTED `$F620..$F627` as the 68040's
+`MOVE16 (Ax)+,(Ay)+` — sixteen bytes copied, both registers advanced, no cycles — where a 68000 takes
+the Line-F exception through vector 11. Found by TOS 1.02's recreate (band 6 wave 0): the desk calls
+Show Info and New Folder by the Line-F words `$f620` / `$f624`, and both did nothing.
+
+`oracle/move16_guard.c` installs the missing guard over those eight table entries after
+`m68k_init()` (`shim.c`'s `enter_from_reset`): a CPU type below the 68040 takes `m68ki_exception_1111()`,
+the 68040 keeps upstream's handler. It is a tracked file rather than an edit of `m68k_in.c` for the
+reason above — the clone is untracked, and an edit there would vanish with the next one, silently.
+Pinned by `test/test_line_f.py`: every `$Fxxx` word on the oracle takes vector 11 with the six-byte
+frame (the status word, the word's own address) in 34 cycles, and is not executed — the address
+registers MOVE16 would post-increment come back as seeded (the step count alone cannot tell: an
+executed word and the `jmp` behind it also count one step). A guard that lapses for any of the eight
+is red, and so is one installed BEFORE `m68k_init()`: the table is built on a process's first run
+only, so that guard would be overwritten for the first run and hold for every later one, and one case
+runs `$F620` as a fresh subprocess's first oracle run to catch it.
+
+UNPINNED, and unreachable: the guard's 68040 arm (upstream's MOVE16 handler). `shim.c` hard-sets the
+oracle to `M68K_CPU_TYPE_68000`, so no run takes it; a mutant that kills the arm (every CPU traps)
+survives the kit's suite (the M16 review's K7). It stays because it is Musashi's own idiom, and the
+day a project needs a 68040 it is the first thing to pin.
+
+No other project's main `.PRG` text holds such a word as an opcode (swept, each project's executed
+PRG: the only even-aligned `$F620..$F627` words are immediates and a branch displacement — Bubble
+Ghost's table stores, a Zynaps `bsr`). Code a game loads at run time was not swept (Bubble Ghost's
+encrypted `GHOST.PRG` holds a ciphertext `$f624` the oracle never runs; it runs the decrypted
+`GHOST_RT`); the dynamic evidence there is every other project's suite, green on the fixed oracle
+when it landed (2026-10-15): the fix moved TOS 1.02's desk alone.
+
 ### Odd word and long accesses — counted, not taken
 
 `M68K_EMULATE_ADDRESS_ERROR` is OFF (the header's default), so a word or long access at an odd

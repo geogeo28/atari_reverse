@@ -425,16 +425,13 @@ campaign the band's rows will be arrivals of.
   is refused). The reception is taken as every other is: the ROM's own handlers from the machine's own vectors,
   between two instructions of the loop. `aes_desk.STOPS` names three: the viewer's key wait at a page's end and at
   the file's end, and gr_stilldn's entry.
-- **THE LINE-F STAND-IN — A DEFECT OF THE ORACLE, NAMED.** The kit's 68000 EXECUTES `$F620..$F627` as the 68040's
-  MOVE16 where a 68000 takes the Line-F exception (held over all 4,096 `$Fxxx` words: those eight alone). The ROM
-  holds two such words, both call words of the File menu's handler (`$fe1ec2` → Show Info, `$fe1ece` → New Folder).
-  `continued` stops at each and takes the exception by hand (`aes_boot.line_f_taken`: the six-byte frame, the trace
-  bit cleared, the PC from vector 11 as the machine holds it), says so in `Boot.observed`
-  (`LINE_F_TAKEN_BY_HAND`) and lays the frame in the run's ledger. ITS LIMITS: it is armed in `continued` ALONE —
-  `booted`, `served`, the our-boot's watched runs and every kit run execute the words —, and each exception taken
-  by hand is 34 cycles and one instruction short in the run's counts. A fix is the kit's (STATUS, AWAITING 24); the
-  day the kit traps those words, `test_the_oracle_s_cpu_traps_every_line_f_word_but_the_eight_...` reddens and the
-  stand-in goes.
+- **THE LINE-F WORDS `$F620..$F627` — A DEFECT OF THE ORACLE, FIXED IN THE KIT (slice M16).** The kit's 68000
+  EXECUTED them as the 68040's MOVE16 where a 68000 takes the Line-F exception; the ROM holds two, both call words of
+  the File menu's handler (`$fe1ec2` → Show Info, `$fe1ece` → New Folder). Until the fix `continued` took the
+  exception by hand (the retired `aes_boot.line_f_taken`); the oracle now takes it itself
+  (`tools/recreate_kit/oracle/move16_guard.c`, held by the kit's `test/test_line_f.py`), on every run — `booted`,
+  `served`, the watched runs and Tiers 1 and 3 alike. The chains through the two words are held off the cycle
+  profile (`test_aes_desk_rom.THROUGH_THE_TWO_WORDS`).
 - **A CHAIN** (`aes_desk.CHAINS`, 51 of them since band 6 wave 1a's fix pass) is steps of a hand from a machine's idle or from another chain's end:
   `item(title, text)`, `clicked`, `double_clicked`, `dragged`, `typed`, `pressed(button)`, `rubber_box`, `shown`.
   POINTS ARE READ OFF THE MACHINE'S OWN TREES (`menu_point`, `icon_point`, `drive_point`, `button_point`,

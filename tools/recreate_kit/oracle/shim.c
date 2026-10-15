@@ -1478,8 +1478,11 @@ static void io_enter_run(void) {
     g_io_seq_spent_index = 0;
 }
 
+void oracle_guard_move16(void);     /* move16_guard.c: `$F620..$F627` trap on a 68000, as every `$Fxxx` does */
+
 static void enter_from_reset(void) {
     m68k_init();
+    oracle_guard_move16();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     m68k_pulse_reset();
     m68k_set_reg(M68K_REG_SR, ENTRY_SR);

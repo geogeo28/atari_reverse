@@ -33,6 +33,7 @@ tools/recreate_kit/
 │                     gem.c + raster.c: the GEM/VDI model, the two files the ORACLE links too, so
 │                     both sides draw the same pixels by construction
 ├── oracle/           loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (callbacks)
+│                     move16_guard.c (the one CPU correction over upstream Musashi: TRAP_MODEL.md)
 │                     isa_conformance.py  tos_probe.py   musashi/ + build/ (gitignored)
 ├── test/             the kit's own regression tests (`make test` here; no project needed)
 ├── TRAP_MODEL.md     what each modeled TOS trap does — and what it deliberately does NOT capture

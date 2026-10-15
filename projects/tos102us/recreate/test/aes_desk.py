@@ -21,7 +21,7 @@ later waves' rows are arrivals of, and the ROM-side column of the invariants sli
     it, and the Line-F handler's copy. WHAT A CHAIN REACHED IS READ OFF THAT PROFILE AND NOWHERE ELSE (`entered`,
     `reach`: a routine is reached when its first instruction ran) — never off the chain's name: a held drag that idles
     one step early looks done and is not (the design's risk 7), and two "Show Info" chains of the measuring pass ran
-    nothing at all (`aes_boot.line_f_words_the_oracle_does_not_trap`: the oracle's CPU skipped the call).
+    nothing at all (the oracle's CPU executed their call word as MOVE16 — fixed in the kit, band 6 slice M16).
   * A STACK'S DEPTH PER CHAIN IS READ OFF THE RUNS' WRITE LEDGERS (`depths`: the lowest byte of the stack a step's
     run stored, `Boot.stored`), not off residue: what THIS chain's steps stored, whatever an earlier chain left.
     ITS TWO LIMITS, as `aes_stack.py` says of every measured depth: a depth is the lowest STORE, not the lowest SP,
@@ -718,7 +718,7 @@ CHAINS.update({
 # copied where its name is already, a folder copied onto its own drive (a folder of that name is there: dos_mkdir
 # answers EACCDN), the conflict's field typed over — the copy made as B, a second folder at the root —, B copied into A,
 # and A, a folder now holding a folder, deleted (the walk goes down into B and comes back up). NO STEP OF THESE IS NEW
-# FOLDER (its Line-F word is taken by hand: `test_aes_desk_rom.TAKEN_BY_HAND`): the second folder is the conflict's copy.
+# FOLDER (its Line-F word: `test_aes_desk_rom.THROUGH_THE_TWO_WORDS`): the second folder is the conflict's copy.
 # (Tried and refused by name, not kept: a folder made INSIDE an opened folder, and Show Info of A holding B — both
 # stop at "Rwabs ... while the driver holds the disk CHANGED", the forced media change `aes_desk`'s docstring names.)
 SCAN_B = 0x30
@@ -827,11 +827,10 @@ CHAINS.update({
 })
 # (the wave-2 fix pass's) DRIVE A:'s SHOW INFO AFTER A DELETE: the copy engine's tallies left by the delete's count
 # (inf_folder clears them — g_nfiles 1, g_size the file's), and the walk over an EMPTY root (Fsfirst's EFILNF at once,
-# where a folder's own search always finds "." first — the glue makes it AX 18, as ENMFIL). Show Info's word is a MOVE16
-# site: the stand-in takes it.
+# where a folder's own search always finds "." first — the glue makes it AX 18, as ENMFIL).
 EMPTIED_INFO = "file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return"
 # ...and A READ-ONLY FILE COPIED: the file made read-only, a folder made, the file dragged onto it — d_dofcopy handed
-# attributes $01 (Fcreate drops the bit). New Folder's word is a MOVE16 site: the stand-in takes it.
+# attributes $01 (Fcreate drops the bit).
 READ_ONLY_COPIED = "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return"
 CHAINS.update({
     EMPTIED_INFO: Chain("file: dragged to the trash, OK", (*clicked("drive A:'s icon", drive("A")), *item("File", "Show Info..."),
@@ -949,7 +948,7 @@ CHAINS.update({
                                        *shown((VIEWER_AT_A_PAGE_S_END, VIEWER_AT_A_PAGE_S_END, VIEWER_AT_THE_FILE_S_END))),
         (OPEN_SELECTION, SHOW_FILE)),
     # ...and A FIFTH ENTRY in the files window (a folder made: the icon view's four columns, so a second row), then the
-    # down arrow: win_arrow's and win_blt's vertical arms (New Folder's word is a MOVE16 site: the stand-in takes it)
+    # down arrow: win_arrow's and win_blt's vertical arms
     A_FIFTH_ENTRY: Chain("files: A: opened", (*item("File", "New Folder..."), *typed("A", SCAN_A), *RETURN), (MAKE_FOLDER,)),
     # ...and TWO WINDOWS SHOWN AS TEXT (win_bdall over a second WNODE)
     "two windows: View > Show as Text": Chain("window: A: opened again (two windows)", item("View", "Show as Text"),
@@ -1174,8 +1173,3 @@ def deepest(which, names=None):
     the userdef stack's over the chains in which it IS a stack (`THE_DESK_S_BLOCKS_ARE_CLEARED_IN`)."""
     asked = [name for name in names or CHAINS if which != USERDEF_STACK or name not in THE_DESK_S_BLOCKS_ARE_CLEARED_IN]
     return max(((name, depths(name)[which]) for name in asked), key=lambda found: found[1])
-
-
-def taken_by_hand(name):
-    """The Line-F words whose exception the model took by hand over the chain `name`'s own steps, `((address, word), ...)`."""
-    return tuple(what for step in walked(name).steps for label, what in step.boot.observed if label == aes_boot.LINE_F_TAKEN_BY_HAND)

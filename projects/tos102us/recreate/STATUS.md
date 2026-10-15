@@ -3608,15 +3608,16 @@ arrival — no row, no verdict.
       window. NO INTERRUPT IS TAKEN AT A DEEPEST POINT (a reception's handlers run on the harness's stack). THE FIFTH
       CAPTURE (`make preinit-files`, ruling W6-R10): the ROM's default DESKTOP.INF, a text longer than the viewer's
       page, a program and the folder AUTO with a file in it, made by the existing tools.
-      THE ORACLE'S DEFECT THIS SLICE FOUND, REPRODUCED AND STOOD IN FOR: the kit's 68000 EXECUTES `$F620..$F627` as
+      THE ORACLE'S DEFECT THIS SLICE FOUND, REPRODUCED AND STOOD IN FOR: the kit's 68000 EXECUTED `$F620..$F627` as
       the 68040's MOVE16 where a 68000 takes the Line-F exception (swept over all 4,096 `$Fxxx` words: those eight
       alone); the ROM holds two such words, both call words of the File menu's handler (`$fe1ec2` → Show Info,
       `$fe1ece` → New Folder) — which is why the design's New Folder made no folder and its two Show Infos ran
-      nothing. `aes_boot.continued` stops at each and takes the exception by hand (the six-byte frame, vector 11 as
-      the machine holds it); the red is kept (with the stand-in taken away the chain idles at every step and makes
-      nothing). WHAT THE STAND-IN IS NOT: charged (34 cycles AND one instruction short an exception, in
+      nothing. `aes_boot.continued` stopped at each and took the exception by hand (the six-byte frame, vector 11 as
+      the machine held it); the red was kept (with the stand-in taken away the chain idled at every step and made
+      nothing). WHAT THE STAND-IN WAS NOT: charged (34 cycles AND one instruction short an exception, in
       `Boot.cycles` and `Boot.instructions`; B's measurement) and armed anywhere but `continued` (`booted`, `served`,
-      the our-boot's watched runs and every kit run execute the words). The kit fix is the user's: AWAITING (24).
+      the our-boot's watched runs and every kit run executed the words). FIXED IN THE KIT BY SLICE M16 (the user's
+      ruling of 2026-10-15; its entry, below): the stand-in is retired.
       WHAT THE DESIGN'S CAMPAIGN HAD WRONG, each "ok … idle" there: the second window's double click closed the
       first (the icon lay under the closer); the trash dialog's default is CANCEL; Install Application is disabled
       for a non-program; the three chains above.
@@ -3712,7 +3713,7 @@ arrival — no row, no verdict.
       place pinned (above). CODE BAR: `FALLEN_INTO` before its use, a comment mended in the generator (its output
       unchanged), the view pair's check spelt once, `continued`'s `at` no longer shadowed, `_Receiving`'s refusal says
       where the machine stands, named literals, the makefile test's "five", the three tests that forge a state say so
-      in their names; `aes_desk.desk_tree` / `box` and `aes_boot.line_f_taken` are public (renames inside the wave's
+      in their names; `aes_desk.desk_tree` / `box` and `aes_boot.line_f_taken` (retired by slice M16) are public (renames inside the wave's
       files). PRIVATE REACHES LEFT, FOR SLICE B (each older than the wave or the kit's): `aes_boot._set_register` /
       `_register`; `emu._LIB`; `rom_bench._allocated_span` / `_vet_tenancy` / `_both_sides` / `_vet_return_value` /
       `_bench_io_seed` / `_vet_pokes_are_clear_of_the_blob`; `tier3._reaching_transcribed_cores` / `_shares` /
@@ -3774,11 +3775,9 @@ arrival — no row, no verdict.
       `staging_base`: 80,112 bytes over the shipped blob, 82,732 over the bench blob — THIS LAYOUT'S FIGURES, said and
       not pinned. The fix pass changed NO shipped byte.
     - **UNPINNED / NOT DONE, BY NAME:** anything on OUR shore over the table but slice T's labelled stagings (the
-      three invariants across shores are slice B's); the by-hand Line-F stops on a machine of OURS (the second
-      review's surviving mutant H16: the stops armed only where `ours is None` passes every test — the battery is
-      the ROM's machine's alone; slice B's campaign on our shore must hold it or New Folder silently breaks there
-      again); the two entries the oracle's MOVE16 words name (`$f620`, `$f624`: the ROM's in the table, entered by no
-      run through the handler outside `continued`); the seven unentered thunks and thirteen unentered native
+      three invariants across shores are slice B's); the two entries the File menu's Line-F words name (`$f620`,
+      `$f624`: the ROM's in the table — entered through the handler since slice M16; no case of the table enters them
+      yet); the seven unentered thunks and thirteen unentered native
       routines (their bytes' reading and the entry-by-entry test alone); a missing sign extension BY A RUN (the byte
       reading alone kills it: GCC reads a word argument's low word); THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
       CALLER (AWAITING (24)); a door (accessory) machine over the table; whether anything READS the copy's tail; an
@@ -4226,10 +4225,11 @@ arrival — no row, no verdict.
       the fix pass's eleven among them), reach 226 of the 244 (`$fe038c`, `$fe0454` first reached by G2's "dragged into its
       window" chains); no chain deeper than PD0's 1,460; THE DISPATCHER AT 190 ON FIVE CHAINS — not the second window
       alone: the second window's, G2's two desktop icons dropped into a window and the fix pass's emptied drive dropped
-      there (four pure walks of the ROM after "A: opened", nothing by hand, nothing laid), and its emptied Show Info (over
-      Show Info's stand-in) — the ROM's own
+      there (four pure walks of the ROM after "A: opened", nothing by hand, nothing laid), and its emptied Show Info (through
+      Show Info's word) — the ROM's own
       depth, RE-DERIVED AND REPORTED (W6-R4; `test_aes_desk_rom.DISPATCHER_AT_190`; what stores at 190 not traced).
-      ARRIVALS ON THE MOVE16 STAND-IN (a chain or its ancestry passes `$fe1ec2` Show Info or `$fe1ece` New Folder):
+      ARRIVALS THROUGH THE FILE MENU'S TWO WORDS (a chain or its ancestry passes `$fe1ec2` Show Info or `$fe1ece` New
+      Folder; on the stand-in until slice M16, on the CPU's own exception since):
       inf_folder's every one, d_doop's two Show Info counts and its emptied root, every "folder: …" chain's (d_dofcopy,
       d_doop, dir_op, fun_mkdir — reached ONLY so —, fun_rebld's three, pn_active / pn_close's folder arrivals, fun_op /
       fun_wdst / fun_win2win / fun_drag on the folder copy, do_fopen, close_folder, fun_close's folder arm, do_diropen's
@@ -4644,7 +4644,7 @@ arrival — no row, no verdict.
       (THE_FORMATTER, DRIVE_B). THE HANDS: 115 chains / 374 steps (G2 1 / 5, the fix pass 1 / 6), reach 236 of the 244
       (`$fee364` first reached by G2's chain); no chain deeper than PD0's 1,460; DEEPEST and DISPATCHER_ELSEWHERE did
       not move; the SHOW_FILE pin widened to the shown-again chain (six). ARRIVALS ON THE MOVE16 STAND-IN: NONE (both
-      groups' pins, measured over every chain under each arrival).
+      groups' pins, measured over every chain under each arrival; the rule retired with the stand-in, slice M16).
     - **D0 AT RETURN** (`aes_deskbind.answer_readers`): G1 — both built-ins answer the engine's word, held at the word on
       every case, read by no caller (sh_cmd's `jsr`s): no divergence. G2 — the six void routines' D0 (util_open, util_show,
       util_redraw, util_bars, util_error, fat_mark: 21 cases) read by no instruction of the ROM, a NAMED, COUNTED
@@ -4838,6 +4838,53 @@ arrival — no row, no verdict.
       the copy's null-BPB exit (C9), its Malloc(600) leak, its early "not enough memory" return, Format's fatal and
       Flopfmt / Floprd error arms; desksupp's target Floprd frame; the `$90c` capture set, `make gates`, `make guarded`,
       the from-empty build and `my-code-review` — THE ORCHESTRATOR'S.
+  - **BAND 6 — SLICE M16: THE ORACLE'S MOVE16 FIX** (the user's ruling of 2026-10-15: a kit edit FOR THIS FIX ONLY;
+    every object, both blobs, tier3.txt, lineftable.S and glue.S byte-identical to the base — the fix is the oracle's).
+    THE CAUSE: Musashi's ONE opcode table serves every CPU type (the CPU columns set cycles, not presence), so an
+    instruction a CPU lacks must refuse itself in its handler; every Line-F handler does but MOVE16's, which the
+    oracle's 68000 therefore EXECUTED at `$F620..$F627` in 0 cycles. THE FIX, in Musashi's idiom but TRACKED (the
+    clone under `oracle/musashi/` is untracked and unpinned): `tools/recreate_kit/oracle/move16_guard.c` installs the
+    missing `CPU_TYPE_IS_040_PLUS` guard — else `m68ki_exception_1111()` — over the eight table entries after every
+    `m68k_init()`; kit.mk links it, the kit's probes compile it. HELD by the kit's `test/test_line_f.py`: every `$Fxxx`
+    word takes vector 11 with the six-byte frame in 34 cycles and is NOT executed (the address registers MOVE16 would
+    advance come back as seeded), and `$F620` traps on a fresh process's FIRST oracle run. THE STAND-IN IS RETIRED:
+    `aes_boot.continued` stops nowhere for a Line-F word, and every chain through Show Info / New Folder runs on the
+    ROM's own exception, held off the cycle profile (`test_aes_desk_rom.THROUGH_THE_TWO_WORDS`, the same 11 chains the
+    stand-in served); New Folder makes its folder (the kept red, reversed); the MOVE16 rule's three tests and the
+    table's UNENTERED_BY_THE_ORACLE retired with their subject. NO PIN MOVED: depths, reach, chains, Tier 3 unchanged;
+    what the stand-in shorted (pinned by nothing) is now charged — +1 instruction / +34 cycles on the one step of each
+    of the 11 chains that passes the word, every other step identical (the slice's measurement,
+    `scratchpad/b6/M16/counts_table.txt`). Every other project green on the fixed oracle (bubbleghost 1909, buggyboy
+    296, flyingshark 3851, joust 4368, wonderboy 6465, zynaps 4751 + 4 skipped: the author's runs) — none executes
+    such a word (their main PRG texts hold `$F62x` only as immediates / a displacement; code loaded at run time not
+    swept).
+    - **THE FIX PASS** (one agent, alone in the tree; the review's five findings): (1) THE INSTALL ORDER PINNED — a kit
+      case runs `$F620` as a fresh subprocess's first oracle run (`m68k_init` builds the table on a process's first
+      run only; a guard installed before it lapses for that run alone, which no pytest worker's case is sure to see);
+      (2) the guard's 68040 arm said UNREACHABLE AND UNPINNED in TRAP_MODEL.md's subsection (the oracle is hard-set
+      to a 68000; the review's K7); (3) `test_line_f` tells a trap from an execution by the ADDRESS REGISTERS (each
+      a0..a6 seeded to a distinct 16-byte-aligned address; MOVE16 post-increments two), not the step count, which an
+      executed word plus the `jmp` behind it also makes 2; (4) `LONG_BYTES` dropped from `test_aes_desk_rom.py` (unused
+      since the slice); (5) TRAP_MODEL.md's "no other project's .PRG" narrowed to each project's main PRG text, code
+      loaded at run time named as not swept, the suites the dynamic evidence. MUTANTS (one log,
+      `scratchpad/b6/M16/FIX/sweep.log`; forced rebuild of liboracle.so, `__pycache__` cleared, sources and the .so
+      607a4263… hash-verified restored after each; every kill an assertion): K8 the guard before `m68k_init()` —
+      KILLED (the first-run case; it SURVIVED the whole kit suite before this pass); K6 the guard's sense inverted —
+      KILLED (both cases); K9 the guard call dropped — KILLED (both); K10 execute-then-trap (MOVE16 run, then the
+      exception: frame, steps and cycles all a trap's) — KILLED by the register file alone (both cases); against the
+      pre-pass test K10 died only by a RUNAWAY (`RuntimeError`, the run never reached the sentinel), not an assertion.
+      THE REVIEW'S (its own private tree, `scratchpad/RM16/`): K1 `MOVE16_FIRST 0xf621` KILLED; K2 `0xf61f` KILLED; K3
+      `MOVE16_COUNT 9` SURVIVED (equivalent on a 68000: `$f628` traps anyway); K4 frame PC +2 KILLED; K5 +2 cycles
+      KILLED; K6 KILLED; K7 the 040 arm dead SURVIVED (unreachable, item 2); K8 SURVIVED (item 1, now killed); K9
+      KILLED, and K9b the same against `test_aes_desk_rom` KILLED (25 failed / 92 passed, assertions); T1 the New
+      Folder chain's pin set to Show Info's word KILLED; T2 the new-folder test reversed KILLED. SUITES: the kit 1243
+      passed (1242 + the first-run case); tos102us's lean battery (test_aes_boot*, test_aes_desk_rom,
+      test_aes_devices, test_aes_lineftable, test_desk_*, test_status) 3054 passed at -n 6, test_derived ALONE 118.
+      The guard file did not change in this pass (liboracle.so 607a4263… throughout), so no other project's suite was
+      re-run. THE FINAL tos102us `make test` (`-n 8`, `build/*.so` and every `__pycache__` removed): 30,803 passed /
+      8 skipped, rc 0 (−9: the stand-in's tests; `## Suite`), the 176 base hashes identical after it. UNPINNED, BY
+      NAME: the guard's 68040 arm (K7); `make gates`, `$90c`, `my-code-review` — THE
+      ORCHESTRATOR'S.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -4907,10 +4954,10 @@ arrival — no row, no verdict.
   that moves re-derived and listed, the three invariants on every chain, units O and D in C. WHAT IT OWES BY NAME FROM
   THIS WAVE: the two whole-blob claims narrowed to leave the thunks out (`aes_stack.routines_handed_to`; ct_msgup's
   "called by no instruction of a blob"); THE PENDING EIGHTH RELOCATION, declared in the generator
-  (`linef_table.PENDING_BINDING`) and not in `aes_event`'s registry; the by-hand Line-F stops on a machine of OURS
-  (the second review's B-H16: armed and held on the ROM's machine alone); THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
+  (`linef_table.PENDING_BINDING`) and not in `aes_event`'s registry; THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
   CALLER (seven binding sites, ours differs on four — to settle BEFORE the binding); the private reaches the wave's
-  entry lists; and, before the File-menu handler is priced, the ruling on the oracle's MOVE16.
+  entry lists. (The ruling on the oracle's MOVE16 — owed before the File-menu handler is priced — is given and done:
+  slice M16; with it the by-hand Line-F stops, the second review's B-H16, are gone.)
   **BAND 6 WAVE 1a IS IN** (its entry, above; 383 verified STILL): units O and D — the desk's eighteen leaves filed in
   AES modules and its forty-one AES bindings — are C, LINKED INTO BOTH BLOBS, HELD AT TIER 1 at the hands' chains'
   arrivals (58 of the 59 at an arrival of their own; gsx_hardcopy's printer the model has not), NOTHING BOUND, in the
@@ -4945,8 +4992,8 @@ arrival — no row, no verdict.
   LINKED INTO BOTH BLOBS, HELD AT TIER 1 at the hands' arrivals, NOTHING BOUND, in the ledger's `## Linked, unbound — desk
   (203)`; every callee of them is C. WHAT IS LEFT OF THE DESK BELOW THE UTILITIES IS WAVE 3: THE DESK FLIP — the
   17-routine cycle, `$fe2172` and deskmain (19 routines / 6,924 B, the cut's §1), and with it the binding. IT WAITS FOR
-  THE USER: W6-R1 (slice B, the binding) and THE MOVE16 KIT FIX (the oracle executes `$f620..$f627` as MOVE16: New Folder's
-  `$fdfebc` and every arrival through Show Info / New Folder stand on `aes_boot.continued`'s stand-in). Owed by name
+  THE USER: W6-R1 (slice B, the binding) and THE MOVE16 KIT FIX (the oracle executed `$f620..$f627` as MOVE16: New Folder's
+  `$fdfebc` and every arrival through Show Info / New Folder stood on `aes_boot.continued`'s stand-in — done, slice M16). Owed by name
   from this wave at the binding: the 44 out of the held lists at their flips (`$fde844`'s call in trapdoor.S relocated —
   it has no table entry); the slots held where parked (G2's six, G4's two, G3's FUN_CLOSE / SUPP / CNX_GET frames) taught
   to `aes_event.SLOTS_HELD_WHERE_PARKED`; W6-R4's gate with BOTH File > Open paths bound (≈ 1,572 through wind_open, ≈
@@ -4960,7 +5007,7 @@ arrival — no row, no verdict.
   and twelve chains walking Format, the disk copy and Print to their ends (reach 235 of 244). NEXT: WAVE 4's TWO
   AUTHOR GROUPS — G1 unit M's engine (`deskutil.c`), G2 unit N (a new file) — the utilities' routines in C, UNBOUND,
   held at Tier 1 at these chains' arrivals (the cut, `scratchpad/b6/W4/cut.md`). WAVE 3, THE DESK FLIP, STILL WAITS FOR THE USER: W6-R1 (slice B, the binding) and THE
-  MOVE16 KIT FIX. Owed by name from this slice: the `_Run`s outside `continued` / `served` surfacing `devices`,
+  MOVE16 KIT FIX (done since, slice M16). Owed by name from this slice: the `_Run`s outside `continued` / `served` surfacing `devices`,
   `printed` and `drive_b` (at the binding); R12; the user's word on R-H-2 and R-H-5 (AWAITING (24)).
   **BAND 6 WAVE 4 IS IN** (its entry, above; 383 verified STILL): twenty more routines of the desk — unit M's show /
   print engine (`deskutil.c`: its two built-ins, its eight `bsr`-only parts static C) and unit N, Format, the disk copy
@@ -4968,13 +5015,22 @@ arrival — no row, no verdict.
   NOTHING BOUND, in the ledger's `## Linked, unbound — desk (215)`; GEMDOS replayed through ONE walk (stops and
   captures), the floppy replayed with every Rwabs write's bytes held; crit_err's one C caller through one new glue thunk.
   WHAT IS LEFT OF THE DESK IS WAVE 3: THE DESK FLIP — the 17-routine cycle, `$fe2172` and deskmain (19 routines / 6,924
-  B), and with it the binding. IT WAITS FOR THE USER: W6-R1 (slice B, the binding), THE MOVE16 KIT FIX, W6-R4 (the PD0
-  gate and its levers — wave 2's do_wopen, wave 4's `noinline` copy_side / format_tracks), W6-R8 (the cartridge pair and
+  B), and with it the binding. IT WAITED FOR THE USER (ruled 2026-10-15: SLICE M16's entry and AWAITING (24)): W6-R1
+  (slice B, the binding), THE MOVE16 KIT FIX, W6-R4 (the PD0 gate and its levers — wave 2's do_wopen, wave 4's
+  `noinline` copy_side / format_tracks), W6-R8 (the cartridge pair and
   the copy's Malloc of all free memory meeting the blob on a bound run) and R-H-2 (the printer's PSG ledger). Owed by
   name from this wave at the binding: the 20 out of the held lists at their flips (the desk door's four `jsr`s in
   `shell.c` become C calls, the twelve table entries ours); UTIL_FRAME held where parked taught to
   `aes_event.SLOTS_HELD_WHERE_PARKED`; the D0 remedy for G2's six void routines; util_error's crit_err arm (unpinned);
   the shared Recorder function table (deferred: the band's room).
+  **BAND 6 SLICE M16 IS IN** (its entry, above; 383 verified STILL; tests and the kit only — every object, both blobs,
+  tier3.txt, lineftable.S and glue.S byte-identical): the oracle's 68000 takes the Line-F exception at `$F620..$F627`
+  as at every `$Fxxx` word, and the stand-in is retired. THE USER RULED ON 2026-10-15 (AWAITING (24)). **NEXT: SLICE B,
+  THE BINDING**, under those rulings: the table first (W6-R1); W6-R4 a HARD GATE at PD0's 1,548 B, the build dieted
+  to fit in C first (do_wopen's frame, `noinline` copy_side / format_tracks), `.S` only where C cannot; the desk's
+  turn priced as an accessory's (W6-R7); W6-R8's three kit items and a bigger PSG ledger (R-H-2) NOT authorized — a
+  disk copy or a launch whose Malloc or Pexec reaches the blob stays on the ROM's shore and is a labelled class on
+  ours, and the print is answered at its first instruction.
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -5393,10 +5449,18 @@ arrival — no row, no verdict.
         the ROM's AES text 268,346 cycles on the ROM-booted run → 243,592 behind the door, the blob 28,000, the
         whole run 711,540 → 708,874; the ROM's forker 11,620, disp 20,750 and idle 7,930 UNCHANGED — the ROM's
         dispatcher still runs behind the door because the desk parks in it.
-    (24) BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK (its entry, above). NOTHING HERE IS THE USER'S WORD YET: the
-      rulings are the ORCHESTRATOR'S, PROVISIONAL (`scratchpad/b6/design.md`, its end), and the rest is reported with
-      its numbers and whose measurement each is.
-      - THE DESIGN'S RULINGS, AS PROVISIONALLY RULED:
+    (24) BAND 6 WAVE 0 — THE OPENING'S GROUNDWORK (its entry, above). The rulings below are the ORCHESTRATOR'S,
+      PROVISIONAL (`scratchpad/b6/design.md`, its end), and the rest is reported with its numbers and whose
+      measurement each is — EXCEPT THE FIRST BULLET, WHICH IS THE USER'S WORD:
+      - **THE USER'S RULINGS OF 2026-10-15** (the user's own, not provisional): W6-R1 — THE TABLE FIRST (the opening
+        as wave 0 built it; slice B follows). THE MOVE16 KIT FIX AUTHORIZED — a kit edit for that fix only; DONE by
+        slice M16 (its entry). W6-R8 (the kit's three: the blob outside the TPA, the cartridge window, a ledger mark)
+        NOT AUTHORIZED, and THE BIGGER PSG LEDGER (R-H-2's) NOT AUTHORIZED: a disk copy or a launch whose Malloc or
+        Pexec reaches the blob stays ROM-shore, a labelled class on ours, and the print is answered at its first
+        instruction. W6-R4 — A HARD GATE AT 1,548 B (PD0), the build DIETED TO FIT: in C first (wave 2's do_wopen
+        frame, wave 4's `noinline` copy_side / format_tracks), `.S` only where C cannot. W6-R7 — THE DESK'S TURN
+        PRICED AS AN ACCESSORY'S.
+      - THE DESIGN'S RULINGS, AS PROVISIONALLY RULED (W6-R1, R4, R7 and R8 since ruled by the user: the bullet above):
         W6-R1 — THE OPENING IS THE TABLE, as wave 0, PROVISIONALLY; the choice was left to the user by W4-R3 and stays theirs — slices W, T and H proceed under either order, SLICE B (THE BINDING) DOES NOT START before the user has seen this list.
         W6-R2 — accepted: the window re-cut first (`bench_base` stays).
         W6-R3 — accepted: thunks are generated, target-only glue, counted and printed as glue.
@@ -5410,7 +5474,10 @@ arrival — no row, no verdict.
         W6-R11 — accepted provisionally: a desk routine's row is an arrival-to-return stretch; restated at slice B with the first desk rows.
         W6-R12 — accepted: unit names are `# ctx` until each body is read.
         W6-R13 — the campaign's 1.12 net of the ROM's Line-F handler is REPORTED with F-10 / B-1; nothing accepted.
-      - THE ORACLE'S MOVE16 — A KIT EDIT, THE USER'S. The kit's 68000 executes `$F620..$F627` as the 68040's MOVE16
+      - THE ORACLE'S MOVE16 — A KIT EDIT, THE USER'S: RULED (2026-10-15, authorized) AND DONE BY SLICE M16 — as a
+        TRACKED file (`tools/recreate_kit/oracle/move16_guard.c`), not the 5-line `m68k_in.c` edit B measured: the
+        Musashi clone is untracked and unpinned, and an edit there would vanish with the next clone. As it stood:
+        the kit's 68000 executed `$F620..$F627` as the 68040's MOVE16
         (`tools/recreate_kit/oracle/musashi/m68k_in.c`: one jump table for every CPU type, and the `move16` handler
         asks none — read by both slice H and reviewer B); the ROM holds two such words, `$fe1ec2` and `$fe1ece`, the
         File menu's calls of Show Info and New Folder. THE KIT FIX (reviewer B's measurement, in a private copy of the
@@ -5561,7 +5628,8 @@ arrival — no row, no verdict.
         band's floor, 102 of 107 moved, every object identical) and a window per group (14 B kept back); R-W2-4 `$fde844`
         in `LINKED_HELD_NO_TABLE_ENTRY`, not `LINKED_AND_NOT_FLIPPED`; R-W2-5 the per-unit counts on new wave-2 keys;
         R-W2-6 the File > Open frames REPORTED, no trimming; R-W2-7 CARRIED, THE USER'S: band 5's trap frames (now Fcreate,
-        Fdatime, Dcreate, Ddelete, Mfree, Fsnext too), the MOVE16 kit fix, W6-R8 (cartridge, drive B:, the blob in the TPA);
+        Fdatime, Dcreate, Ddelete, Mfree, Fsnext too), the MOVE16 kit fix (carried until slice M16), W6-R8 (cartridge, drive B:,
+        the blob in the TPA);
         R-W2-8 G4's INF re-entry chain tried before an INF arm was labelled (tried: the same INF text as "file: shown" —
         not kept).
       - PROVISIONAL RULINGS OF THE FIX PASS'S BRIEF: (a) G2's own `in_place` deleted, G1's walk the one (measured
@@ -5673,7 +5741,7 @@ arrival — no row, no verdict.
         with the call pushes (≈ 636 of 1,792 on the copy's path; the `noinline` lever, W6-R4's); B-F9 the pre-existing
         status collisions (`aes_desksupp` 8 = FORK_RAISED, the GEMDOS refusals' 7 = CHILD_RETURN_REFUSED) — ONE REGISTRY
         would end them, NOT done (out of this wave's scope); B-F10 the floppy replay honest; MOVE16: NO ARRIVAL OF THE WAVE
-        DEPENDS ON THE STAND-IN (both groups' pins).
+        DEPENDS ON THE STAND-IN (both groups' pins; the rule carried until slice M16 retired it).
       - D0: G2's six void routines (21 cases) read by no ROM caller — the remedy the user's, wave 1a's question.
       - PD0 WITH THE WAVE BOUND (arithmetic, B's and A's): the copy's path ≈ 636 and Format's ≈ +80 over the ROM's, the
         engine's ≈ 60 deeper — all under 1,548.
@@ -5804,9 +5872,22 @@ arrival — no row, no verdict.
 
 ## Suite
 
-`make test`: **30,812 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
+`make test`: **30,803 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
 own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
 row), **0 xfailed**, 0 failed.
+- BAND 6 SLICE M16 — THE ORACLE'S MOVE16 FIX, WITH ITS FIX PASS (2026-10-15; one author alone in the tree on `2833ced`,
+  one review, then one fix pass alone in the tree — the kit's oracle traps `$F620..$F627` on its 68000, the stand-in
+  retired; THE KIT AND TESTS ONLY: every object, both blobs, `libtos102us.so`, the table's lines, `lineftable.S` and the
+  shipped `glue.S` identical to `scratchpad/b6/M16/base/` (176 hashes), liboracle.so ffc20393… → 607a4263…): ONE `make
+  test` in the shared tree (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` removed first, **30,803 passed /
+  8 skipped**, rc 0, 696 s (`scratchpad/b6/M16/FIX/final.log`; RUN ONCE). BY THE LEAN CYCLE: `make gates`, a `$90c`
+  capture set and a from-empty build were NOT run — the orchestrator's. RE-SUMMED, ITEMISED BY FILE against wave 4's fix
+  pass's own collection (30,811 = 30,803 + 8 skipped, against 30,820; `pytest --collect-only`, 289 files both:
+  `scratchpad/b6/W4/FIX/collect_perfile.txt`, `scratchpad/b6/M16/FIX/collect_perfile.txt`): −9, the stand-in's —
+  `test_aes_desk_rom.py` 144 → 139 (the defect sweep, now the kit's; `by_hand_at`'s two tests, one of them three
+  cases), `test_aes_lineftable.py` 485 → 484 (UNENTERED_BY_THE_ORACLE's), `test_desk_disk.py` 41 → 40,
+  `test_desk_supp.py` 40 → 39, `test_desk_util.py` 44 → 43 (the MOVE16 rule's three); no file gained a test. THE KIT's
+  own suite: 1243 passed (`test_line_f.py`, NEW: 2 — every `$Fxxx` word, and the first-run case).
 - BAND 6 WAVE 4 — TWO GROUPS, 20 ROUTINES, WITH THEIR FIX PASS (2026-10-15; a prep pass and two groups in one tree on
   `1c62f8c`, two reviews, R-W4-9, then one fix pass alone in the tree — 20 routines of the desk in C, linked into both
   blobs and held at Tier 1, nothing bound; two chains; tests, harness and docs: ONE NEW OBJECT, `src_desk_deskdisk_c.o`;
@@ -5904,7 +5985,7 @@ row), **0 xfailed**, 0 failed.
   of them on the bench blob too —, a native routine entered 51, a glue entry's return site 14, seven tests on both
   blobs 14 — the entries, the table's size, the thunks' bytes and their place, the reader's reds, the operand left the
   ROM's, the staged our-boot — and nine of one case), `test_aes_desk_rom.py` 74 (a chain 46; 28 more: the oracle's
-  defect and its stand-in, the named stops and `continued`'s refusals, the reach table, the depths, the files disk and
+  defect and its stand-in (retired by slice M16), the named stops and `continued`'s refusals, the reach table, the depths, the files disk and
   its capture), `test_room_poison.py` 37 (the poison differential's 32 chunks, five of the guard itself),
   `test_window.py` 5; `test_makefile.py` 14 → 16 (a disk cut out of the ROM whose rule lacks the ROM image: two reds),
   `test_status.py` 31 → 32 (this wave's entry); no file lost a test.

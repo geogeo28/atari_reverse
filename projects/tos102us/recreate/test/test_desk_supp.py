@@ -93,8 +93,6 @@ def test_no_caller_in_the_rom_reads_what_drive_check_leaves_in_d0():
 # arguments off its caller's frame), every one a ROW THAT SWITCHES (`aes_deskwin.row`, held by the companion, nothing
 # dropped). A routine whose run traps runs over GEMDOS REPLAYED — and, under drive_check, the floppy too
 # (`aes_desksupp.replayed_row`: the ROM's run in place's answers, DTAs and driver, A LABELLED STAGING said in the id).
-# THE MOVE16 STAND-IN: a folder of these chains is New Folder's (`$fe1ece`'s word, executed by `aes_boot.continued`'s
-# stand-in) — the arrivals on "folder: …" chains stand on it.
 import aes_deskwin as w                 # noqa: E402 — wave 2's, kept with its section
 import case                             # noqa: E402
 from harness import addrs               # noqa: E402
@@ -117,7 +115,6 @@ DESK_PATHS_FREE = db.DESK_GLOBALS["DESK_PATHS_FREE"]                         # g
 TRAPS_J = frozenset({"AES_ROM_DO_DIROPEN", "AES_ROM_DO_DOPEN", "AES_ROM_DO_FOPEN", "AES_ROM_CLOSE_WINDOW", "AES_ROM_CLOSE_FOLDER",
                      "AES_ROM_FUN_CLOSE"})
 UNDER_DRIVE_CHECK = frozenset({"AES_ROM_DO_DOPEN", "AES_ROM_DO_FOPEN", "AES_ROM_CLOSE_FOLDER"})
-STANDS_ON_THE_MOVE16_STAND_IN = frozenset({FOLDER_OPENED, FOLDER_CLOSED})
 RETURN_AT_THE_FIRST_IDLE = {0: aes_event.key(aes_event.RETURN_KEY)}
 
 # (a row's own budget where its run is long — a window opened and drawn: 6 x the measured run, `aes_event`'s rule)
@@ -191,14 +188,6 @@ def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
     assert {each.name for each in CASES_WAVE_2 if each.why} == {"AES_ROM_DO_DIROPEN", "AES_ROM_DO_FOPEN"}
     assert (len(at_its_own), len(CASES_WAVE_2) - len(at_its_own)) == (ARRIVALS_WAVE_2, CLASSES_WAVE_2)
     assert set(UNPINNED_WAVE_2) <= set(ds.UNIT_J_WAVE_2)
-
-
-def test_the_arrivals_on_a_session_folder_stand_on_the_move16_stand_in():
-    """THE MOVE16 RULE (cut §4): do_fopen and close_folder are reached ONLY through a folder New Folder made — the
-    File menu's `$fe1ece` word, which the oracle executes as MOVE16 and `aes_boot.continued`'s stand-in takes: every
-    case of theirs is on such a chain (said here, and in the hand-back)."""
-    assert {each.chain for each in CASES_WAVE_2 if each.name in ("AES_ROM_DO_FOPEN", "AES_ROM_CLOSE_FOLDER")} \
-        <= STANDS_ON_THE_MOVE16_STAND_IN
 
 
 UNPINNED_WAVE_2 = {

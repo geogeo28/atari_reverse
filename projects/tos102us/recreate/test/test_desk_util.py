@@ -513,28 +513,6 @@ def test_the_engine_s_parts_are_static_c_held_through_the_built_ins_cases():
     assert all(set(table[getattr(addrs, name)]) & arrived_from for name in (*ENGINE_PARTS, *du.UNIT_M_WAVE_4))
 
 
-# THE PRINTER'S MACHINE is made from the Show / Print / Cancel alert's chain (`aes_desk.MACHINES`).
-MADE_FROM = {aes_desk.PRINTER_ON_LINE: aes_desk.SHOW_PRINT_ALERT}
-
-
-def _chains_under(chain):
-    """The chain and every chain its machine was walked from."""
-    under = []
-    while chain is not None:
-        if chain in aes_desk.CHAINS:
-            under.append(chain)
-            chain = aes_desk.CHAINS[chain].after
-        else:
-            chain = MADE_FROM.get(chain)
-    return under
-
-
-def test_no_arrival_of_the_engine_stands_on_the_move16_stand_in():
-    """MEASURED (the MOVE16 rule): no chain under any arrival the cases take took a Line-F word by hand."""
-    assert not {chain: aes_desk.taken_by_hand(chain) for arrived_from in (SHOWN, LONG_SHOWN, NOT_READY, SHOWN_AGAIN)
-                for chain in _chains_under(arrived_from) if aes_desk.taken_by_hand(chain)}
-
-
 def test_the_built_ins_answer_a_word_read_by_no_rom_caller():
     """D0: each answers the engine's word (held on every case); sh_cmd's two `jsr`s read neither (`answer_readers`)."""
     assert not any(db.answer_readers(getattr(addrs, name)) for name in du.UNIT_M_WAVE_4)

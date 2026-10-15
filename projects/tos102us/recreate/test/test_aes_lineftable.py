@@ -23,10 +23,6 @@ WHAT IS HELD.
     (`UNENTERED`), exact both ways.
   * THE CORES THAT TAKE THE CALLER'S RETURN SITE are handed the real one (the word after the call word).
   * THE STAGED OUR-BOOT OVER THE TABLE reaches the desk's first idle — ours — with the ROM's own screen, byte for byte.
-
-WHAT THE ORACLE CANNOT ENTER (slice H's finding): the kit's 68000 executes `$F620..$F627` as MOVE16 instead of
-taking the Line-F exception. The two entries those call words name are held by the table's bytes and listed
-(`UNENTERED_BY_THE_ORACLE`); no entry of ours is called by such a word.
 """
 import functools
 import importlib
@@ -735,33 +731,12 @@ def test_a_glue_entry_s_thunk_hands_the_real_return_site_through_the_table_a_lab
     bench.entered(entered_case)
 
 
-# ---- WHAT THE ORACLE CANNOT ENTER (slice H's finding) ----------------------------------------------------------------------
-# The kit's 68000 executes `$F620..$F627` as the 68040's MOVE16 and takes no Line-F exception. The entries those call
-# words name cannot be entered through the handler by their own word on this oracle (outside `aes_boot.continued`,
-# which stands in for the exception by hand): held by the table's bytes (above), and BY NAME here.
-UNENTERED_BY_THE_ORACLE = {0xF620: 0xFE16E6, 0xF624: 0xFDFEBC}
-
-
-def test_the_two_entries_the_oracle_s_move16_words_name_are_the_rom_s_and_no_entry_of_ours_is_called_by_one():
-    words = [word for word in aes_boot.ORACLE_S_MOVE16_WORDS if not word & aes.LINEF_RETURN_BIT and not word % LONG_BYTES]
-    table = linef_table.entries()
-    named = {word: table[(word & aes.LINEF_OFFSET_MASK) // LONG_BYTES] for word in words}
-    assert {word: entry.target for word, entry in named.items()} == UNENTERED_BY_THE_ORACLE
-    assert all(entry.verdict == THE_ROM_S for entry in named.values())
-    assert all([other.index for other in table if other.target == entry.target] == [entry.index] for entry in named.values())
-    in_the_text = {case.word_in(BASE_IMAGE, at): at for at in range(*aes.AES_TEXT, WORD_BYTES)
-                   if case.word_in(BASE_IMAGE, at) in aes_boot.ORACLE_S_MOVE16_WORDS}
-    assert set(in_the_text) == set(UNENTERED_BY_THE_ORACLE), "another word of the GEM text is one the oracle executes"
-    for routine in ENTERED:
-        assert aes.line_f_call_word(routine) not in aes_boot.ORACLE_S_MOVE16_WORDS
-
-
 # ---- THE STAGED OUR-BOOT OVER THE TABLE, to the desk's first idle ---------------------------------------------------------
 # THE LABELLED STAGING: the blob's own bytes with ONE operand laid by the harness before the blob is — the handler
 # gem_entry copies loads OUR table — and then the our-boot machine as it is (`aes_boot.booted(..., laid=AT_GEM_ENTRY)`:
 # the blob laid at the pre-init stop, the run entered at its own gem_entry). Every other longword is the run's own.
 OurBootOverTheTable = namedtuple("OurBootOverTheTable", "boot in_the_blob in_the_rom_s_gem_text in_the_copy in_the_copy_s_tail in_thunks "
-                                                        "thunks_entered rom_routines_of_ours_entered move16_sites")
+                                                        "thunks_entered rom_routines_of_ours_entered")
 HANDLER_BYTES = aes.AES_LINEF_TABLE - addrs.AES_ROM_LINEF_HANDLER      # the handler itself: the copy's tail lies behind it
 
 
@@ -786,8 +761,7 @@ def our_boot_over_the_table(blob):
         emu.prof_cycles(copy + HANDLER_BYTES, copy + aes.LINEF_COPY_BYTES),
         sum(emu.prof_cycles(thunk.start, thunk.start + thunk.size) for thunk in thunks),
         [thunk.name for thunk in thunks if emu.prof_cycles(thunk.start, thunk.start + WORD_BYTES)],
-        [target for target in ours if rom_span_entered(target)],
-        [at for at in aes_boot.line_f_words_the_oracle_does_not_trap() if emu.prof_cycles(at, at + WORD_BYTES)])
+        [target for target in ours if rom_span_entered(target)])
 
 
 def screen_of(ram):
@@ -821,7 +795,6 @@ def test_the_staged_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_t
         f"ROM routines the table makes ours were entered: {[hex(target) for target in made.rom_routines_of_ours_entered]}")
     cut = boot.our_boot.ran
     assert cut[1:] == (0, 0) and made.in_the_blob > cut[0], "nothing of ours ran from deskmain's entry on"
-    assert not made.move16_sites, "the boot passed a Line-F word the oracle executes as MOVE16"
 
 
 # ---- band 6 wave 1a's fix pass: THE ROUTINES LINKED AND NOT FLIPPED, held by a test of their own -------------------------

@@ -70,10 +70,9 @@ def test_the_unit_is_linked_and_unbound(blob):
 
 
 # ==== BAND 6 WAVE 2, group G1: inf_folder `$fde9ce` ==================================================================
-# AT ITS ARRIVALS — Show Info of drive A: and of a folder, both through the File menu's Show Info word ($fe1ec2, a
-# MOVE16 word on the oracle: THE STAND-IN of `aes_boot.continued` is what takes these chains there) — its count walk's
-# GEMDOS REPLAYED from the ROM's own run in place (`aes_deskdir.in_place`, `REPLAYED` in the id). It reaches no
-# binding (the walk has no tree): the plain differential.
+# AT ITS ARRIVALS — Show Info of drive A: and of a folder, both through the File menu's Show Info word ($fe1ec2) — its
+# count walk's GEMDOS REPLAYED from the ROM's own run in place (`aes_deskdir.in_place`, `REPLAYED` in the id). It
+# reaches no binding (the walk has no tree): the plain differential.
 INF_FOLDER = inf.INF_FOLDER
 FOLDER_CASES = {f"{INF_FOLDER} — arrival 0 of {chain} [{cdir.REPLAYED}]": chain for chain in (DRIVE_INFO, FOLDER_INFO, EMPTIED_INFO)}
 

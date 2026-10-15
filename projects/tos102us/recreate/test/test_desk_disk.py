@@ -324,19 +324,6 @@ def test_every_routine_of_the_unit_has_a_case_and_those_a_run_reaches_one_at_an_
     assert (sum(not each.why for each in CASES), sum(bool(each.why) for each in CASES)) == (ARRIVALS, CLASSES)
 
 
-def _lineage(chain):
-    while chain in aes_desk.CHAINS:
-        yield chain
-        chain = aes_desk.CHAINS[chain].after
-
-
-def test_no_arrival_stands_on_the_move16_stand_in():
-    """THE MOVE16 RULE (cut §5.1): no chain the cases arrive by — nor any it follows — takes a Line-F word by hand."""
-    chains = {each.chain for each in CASES}
-    assert {chain: [aes_desk.taken_by_hand(each) for each in _lineage(chain) if aes_desk.taken_by_hand(each)]
-            for chain in chains} == {chain: [] for chain in chains}
-
-
 def test_the_device_cases_name_their_device_class():
     """A case over a device machine says so in its id: the formatter's and drive B:'s runs are replayed (FLOPPY
     REPLAYED) — and the copy's chains are DRIVE_B machines (`aes_boot`'s label, on the walked machine's devices)."""

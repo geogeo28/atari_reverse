@@ -275,8 +275,8 @@ CASES_WAVE_2 = (
     *(Case2(fun.FUN_REBLD, chain, replayed=True) for chain in (FILE_INFO, PROGRAM_INFO, TRASHED, COPIED)),
     Case2(fun.FUN_REBLD, FILE_INFO, why="a closed window's node: no open window shows its spec, none read",
           arguments=lambda a: (_a_closed_window(a),)),
-    # fun_mkdir (its call word a MOVE16 site: both chains through the stand-in): a folder made; its name taken (the alert,
-    # Cancel); no name; the dialog cancelled; a window nine folders down (LAID); Dcreate refused (its answer EACCDN)
+    # fun_mkdir: a folder made; its name taken (the alert, Cancel); no name; the dialog cancelled; a window nine folders
+    # down (LAID); Dcreate refused (its answer EACCDN)
     Case2(fun.FUN_MKDIR, NEW_FOLDER, TYPED_A, replayed=True, budget=MKDIR_ROW_INSNS),
     Case2(fun.FUN_MKDIR, NAME_TAKEN, TYPED_A_TAKEN, replayed=True, budget=MKDIR_ROW_INSNS),
     Case2(fun.FUN_MKDIR, NEW_FOLDER, RETURN_KEY), Case2(fun.FUN_MKDIR, NEW_FOLDER, CANCEL_CLICKED),

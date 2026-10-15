@@ -12,10 +12,10 @@ NOTHING OF OURS RUNS IN THIS BATTERY: every machine is one the ROM booted, with 
   * THE STACKS' DEPTHS PER CHAIN OFF THE WRITE LEDGERS, the deepest of each held with its chain;
   * THE TWO ACTS THAT WAIT WITHOUT IDLING — a file shown, a rubber box — reached by A RECEPTION AT A NAMED STOP, the
     stops held to the ROM's bytes and `continued`'s two new arguments to their refusals;
-  * THE FOLDER CHAIN, MENDED — and why it was broken: THE ORACLE'S CPU EXECUTES `$F620..$F627` AS THE 68040's MOVE16
-    where a 68000 takes a Line-F exception. Held three ways: the defect itself over every `$Fxxx` word (so the day the
-    kit's CPU traps them this battery says the by-hand exception can go), the two words of the ROM it bites, and the
-    chain with the stand-in taken away (New Folder makes no folder);
+  * THE FOLDER CHAIN, MENDED — and why it was broken: THE ORACLE'S CPU EXECUTED `$F620..$F627` AS THE 68040's MOVE16
+    where a 68000 takes a Line-F exception, until the kit's fix (band 6 slice M16: `recreate_kit/oracle/move16_guard.c`,
+    held over every `$Fxxx` word by the kit's `test/test_line_f.py`). Held here: the two words of the ROM it bit, the
+    chains that pass them (the CPU's own exception, read off the cycle profile), and New Folder making its folder;
   * THE FIFTH CAPTURE'S DISK (files, the folder AUTO with a file in it, a program) and its machine.
 
 MEASURED NUMBERS ARE THE ROM'S OVER THESE HANDS AND THESE DISKS: a count below is pinned where the ROM, the disk and
@@ -35,10 +35,9 @@ import aes_boot
 import aes_desk as desk
 import aes_objects
 import case
-import staging
 from aes_boot import Refused
 
-BUS, WORD_BYTES, LONG_BYTES = aes_boot.BUS, aes.WORD_BYTES, aes.LONG_BYTES
+BUS, WORD_BYTES = aes_boot.BUS, aes.WORD_BYTES
 THE_ROM_S = aes_boot.THE_ROM_S
 ROM = bytes(BASE_IMAGE[emu.ROM_BASE:emu.ROM_END])
 
@@ -65,44 +64,10 @@ def test_band_6_s_routines_are_the_desk_s_ranges_and_its_leaves_less_the_seven_o
             desk.DO_FORMAT, desk.INF_WRITE, desk.SHOW_FILE, addrs.AES_ROM_DESK_USERDEF} <= set(routines)
 
 
-# ---- THE ORACLE'S DEFECT: `$F620..$F627` ARE EXECUTED, NOT TRAPPED ---------------------------------------------------------------------
-# One instruction staged in an image of this test's own (the staging band, nothing claimed: no other case shares the
-# image), the Line-F vector pointed at a stub that answers THE PC THE EXCEPTION STACKED and returns.
-WORD_AT, STUB_AT = staging.SCRATCH, staging.SCRATCH + 0x40
-ANSWER_THE_STACKED_PC = bytes.fromhex("202f0002" "5c8f" "4e75")     # move.l 2(sp),d0 ; addq.l #6,sp ; rts
-NOP = 0x4e71
-EVERY_LINE_F_WORD = range(0xf000, 0x10000)
-SWEEP_INSNS = 64                        # a word that traps is three instructions; one that does not runs into the NOPs
-
-
-def stacked_pc_of(word):
-    """The PC the oracle's CPU stacks for the Line-F exception of `word`, staged alone — None where it takes none
-    (the stub is never entered: the run does not come back)."""
-    image = bytearray(BASE_IMAGE)
-    image[WORD_AT:WORD_AT + 4 * WORD_BYTES] = struct.pack(">4H", word, NOP, NOP, NOP)
-    image[STUB_AT:STUB_AT + len(ANSWER_THE_STACKED_PC)] = ANSWER_THE_STACKED_PC
-    image[addrs.VECTOR_LINE_F:addrs.VECTOR_LINE_F + LONG_BYTES] = struct.pack(">I", STUB_AT)
-    try:
-        _final, _writes, registers = emu.run(image, WORD_AT, max_insns=SWEEP_INSNS)
-    except RuntimeError as never_trapped:
-        assert "did not reach rts" in str(never_trapped), never_trapped
-        return None
-    return registers["d0"]
-
-
-def test_the_oracle_s_cpu_traps_every_line_f_word_but_the_eight_it_executes_as_move16():
-    """THE DEFECT, REPRODUCED AND NAMED: over all 4,096 words `$Fxxx` the oracle's 68000 takes the Line-F exception
-    with the frame a 68000 pushes — the word's own address — but for `$F620..$F627`, which it executes. THE DAY THIS
-    REDDENS THE KIT'S CPU TRAPS THEM, and `aes_boot`'s by-hand exception (`line_f_taken`) can go. IT WOULD NOT BE A
-    SECOND EXCEPTION MEANWHILE: the stop PRE-EMPTS the word — the run is stopped before it and the PC moved to the
-    handler, so the CPU never executes it (reviewer B, with the kit fixed in a private copy: this battery 65 passed and
-    2 failed BY DESIGN — this test and `test_without_the_exception_taken_by_hand_...` — every chain green with the
-    stand-in still armed). What the stand-in does not charge: 34 cycles AND one instruction an exception."""
-    not_trapped = [word for word in EVERY_LINE_F_WORD if stacked_pc_of(word) != WORD_AT]
-    assert not_trapped == list(aes_boot.ORACLE_S_MOVE16_WORDS), [f"{word:#06x}" for word in not_trapped]
-    assert all(stacked_pc_of(word) is None for word in aes_boot.ORACLE_S_MOVE16_WORDS)
-
-
+# ---- THE TWO WORDS THE ORACLE'S MOVE16 BIT (fixed in the kit, band 6 slice M16) --------------------------------------------------------
+# The kit's CPU executed `$F620..$F627` as the 68040's MOVE16 (upstream Musashi's handler asks no CPU type); it takes
+# the Line-F exception there now, as a 68000 does (`recreate_kit/test/test_line_f.py`, every `$Fxxx` word).
+FORMER_MOVE16_WORDS = range(0xf620, 0xf628)
 FILE_MENU_HANDLER = (0xfe1e80, 0xfe1f2a)
 THE_TWO_WORDS = {0xfe1ec2: (0xf620, desk.SHOW_INFO), 0xfe1ece: (0xf624, desk.MAKE_FOLDER)}
 
@@ -110,56 +75,22 @@ THE_TWO_WORDS = {0xfe1ec2: (0xf620, desk.SHOW_INFO), 0xfe1ece: (0xf624, desk.MAK
 def test_the_rom_holds_two_such_words_both_call_words_of_the_file_menu_s_handler():
     """FOUND BY THE SCAN, held to the ROM: the whole image holds a word of `$F620..$F627` at two even addresses and no
     other — the File menu handler's calls of Show Info and of New Folder, by the Line-F table's own entries."""
-    everywhere = [at for at in range(emu.ROM_BASE, emu.ROM_END, WORD_BYTES) if case.word_in(BASE_IMAGE, at) in aes_boot.ORACLE_S_MOVE16_WORDS]
-    assert tuple(everywhere) == aes_boot.line_f_words_the_oracle_does_not_trap() == tuple(THE_TWO_WORDS)
+    everywhere = [at for at in range(emu.ROM_BASE, emu.ROM_END, WORD_BYTES) if case.word_in(BASE_IMAGE, at) in FORMER_MOVE16_WORDS]
+    assert tuple(everywhere) == tuple(THE_TWO_WORDS)
     for at, (word, routine) in THE_TWO_WORDS.items():
         assert FILE_MENU_HANDLER[0] <= at < FILE_MENU_HANDLER[1]
         assert case.word_in(BASE_IMAGE, at) == word and aes.line_f_target(word) == routine
 
 
-A_STACK_POINTER = staging.SCRATCH + 0x200
-SUPERVISOR_AT_MASK_3, USER_AT_MASK_3, TRACED = 0x2300, 0x0300, aes_boot.SR_TRACE
-
-
-def by_hand_at(at, word, status):
-    """`line_f_taken` called as a watch calls it, the CPU standing at `at` with `status`: `(what it answers, the
-    frames it kept, the memory, the registers after)`."""
-    memory, frames = bytearray(BASE_IMAGE), {}
-    memory[at:at + WORD_BYTES] = struct.pack(">H", word)
-    aes_boot._set_register("sr", status)
-    aes_boot._set_register("pc", at)
-    answered = aes_boot.line_f_taken(frames)(memory, A_STACK_POINTER)
-    return answered, frames, memory, {name: aes_boot._register(name) for name in ("sr", "pc", "a7")}
-
-
-def test_the_exception_taken_by_hand_over_a_forged_cpu_state_is_the_frame_a_68000_pushes_and_the_machine_s_own_vector():
-    """The six bytes — the status word as it stood, THE WORD'S OWN ADDRESS — under the stack pointer, the stack pointer
-    lowered by them, the trace bit cleared and nothing else of the status, the PC from vector 11 AS THE MACHINE HOLDS
-    IT; the frame kept for the run's ledger."""
-    answered, frames, memory, after = by_hand_at(WORD_AT, 0xf624, SUPERVISOR_AT_MASK_3 | TRACED)
-    frame = struct.pack(">HI", SUPERVISOR_AT_MASK_3 | TRACED, WORD_AT)
-    assert answered == (WORD_AT, 0xf624) and frames == {A_STACK_POINTER - len(frame): frame}
-    assert bytes(memory[A_STACK_POINTER - len(frame):A_STACK_POINTER]) == frame
-    assert after == {"sr": SUPERVISOR_AT_MASK_3, "pc": case.long_in(BASE_IMAGE, addrs.VECTOR_LINE_F) & BUS,
-                     "a7": A_STACK_POINTER - len(frame)}
-
-
-@pytest.mark.parametrize("word, status", [(0xf624, USER_AT_MASK_3), (0xf628, SUPERVISOR_AT_MASK_3), (NOP, SUPERVISOR_AT_MASK_3)],
-                         ids=("in user mode", "a Line-F word the oracle traps itself", "no Line-F word"))
-def test_the_exception_is_taken_by_hand_over_a_forged_cpu_state_at_a_move16_word_in_supervisor_mode_and_nowhere_else(word, status):
-    with pytest.raises(Refused, match="stands in for the oracle's CPU at a word it executes as MOVE16"):
-        by_hand_at(WORD_AT, word, status)
-
-
-# THE BY-HAND FRAME IS IN THE RUN'S LEDGER (reviewer B's test, band 6 wave 0's review: slice H's sweep left the line
-# `run.laid.update(line_f_frames)` alive and called it unobservable). Entered from its top the File-menu handler makes a
-# Line-F call of its own (`$fe1e90`) at the same stack pointer, so the CPU's own frame ledgers the same six bytes in the
-# same step — which is why no chain sees the line. A continuation that BEGINS INSIDE the handler, past that call, has
-# no such frame: the status word the stand-in pushes is then a store nobody but the harness made.
+# THE CPU'S FRAME AT SHOW INFO'S WORD IS IN THE RUN'S LEDGER (reviewer B's test, band 6 wave 0's review, over the stand-in
+# then). Entered from its top the File-menu handler makes a Line-F call of its own (`$fe1e90`) at the same stack pointer,
+# whose frame ledgers the same six bytes in the same step. A continuation that BEGINS INSIDE the handler, past that
+# call, has no such frame: the six bytes changed there are the exception's at Show Info's word, and the ledger holds them.
 SHOW_INFO_ARM = 0xfe1ebc                # the File-menu handler's Show Info arm: `tst.w d6`, six bytes before its call word
+LINE_F_FRAME_BYTES = 6                  # a 68000's group-1/2 frame: the status word, the PC (the Line-F word's own address)
 
 
-def test_a_continuation_from_inside_the_file_menu_handler_ledgers_the_whole_frame_taken_by_hand():
+def test_a_continuation_from_inside_the_file_menu_handler_ledgers_the_whole_frame_the_cpu_pushed():
     machine = desk.walked("drive A: selected").machine
     *to_the_menu, the_click = desk.item("File", "Show Info...")
     for step in to_the_menu:
@@ -168,12 +99,12 @@ def test_a_continuation_from_inside_the_file_menu_handler_ledgers_the_whole_fram
     assert at_the_arm.idle is None and at_the_arm.registers["pc"] & BUS == SHOW_INFO_ARM
     boot = aes_boot.continued.derive(at_the_arm, (), aes_boot.CONTINUED_INSNS, desk.SHOW_INFO, SHOW_INFO_ARM)
     assert boot.registers["pc"] & BUS == desk.SHOW_INFO
-    assert [label for label, _what in boot.observed] == [aes_boot.LINE_F_TAKEN_BY_HAND]
+    assert boot.observed == ()
     frame_at = boot.registers["isp"] - WORD_BYTES   # the handler popped the six bytes and pushed its return, a long
-    assert at_the_arm.registers["isp"] - aes_boot.LINE_F_FRAME.size == frame_at
-    changed = {at for at in range(frame_at, frame_at + aes_boot.LINE_F_FRAME.size) if boot.ram[at] != at_the_arm.ram[at]}
+    assert at_the_arm.registers["isp"] - LINE_F_FRAME_BYTES == frame_at
+    changed = {at for at in range(frame_at, frame_at + LINE_F_FRAME_BYTES) if boot.ram[at] != at_the_arm.ram[at]}
     ledgered = {at for start, length in boot.stored for at in range(start, start + length)}
-    assert changed and changed <= ledgered, f"bytes {sorted(map(hex, changed - ledgered))} of the by-hand frame changed and are in no ledger"
+    assert changed and changed <= ledgered, f"bytes {sorted(map(hex, changed - ledgered))} of the CPU's frame changed and are in no ledger"
 
 
 # ---- THE NAMED STOPS, AND `continued`'s TWO NEW ARGUMENTS --------------------------------------------------------------------------------
@@ -219,9 +150,9 @@ def test_the_rubber_box_s_poll_is_gr_stilldn_and_the_run_stands_there_twice_befo
     assert last.boot.idle == THE_ROM_S
 
 
-def test_what_continued_refuses_of_a_named_stop_each_by_name_the_last_over_a_forged_pc():
-    """A boot at its idle continued `at` a stop; a stopped boot continued from no stop, or from another; an idle met
-    before `until`; and a boot stopped AT a word the oracle does not trap."""
+def test_what_continued_refuses_of_a_named_stop_each_by_name():
+    """A boot at its idle continued `at` a stop; a stopped boot continued from no stop, or from another; and an idle
+    met before `until`."""
     idle, stopped = aes_boot.inf_machine().boot, desk.walked(THE_BOX).steps[0].boot
     stop = desk.STOPS[desk.RUBBER_BOX_POLL]
     with pytest.raises(Refused, match=f"the idle of the ROM's dispatcher — not at {stop:#x}"):
@@ -233,10 +164,6 @@ def test_what_continued_refuses_of_a_named_stop_each_by_name_the_last_over_a_for
     with pytest.raises(Refused, match=f"reached its first idle and never arrived at {desk.STOPS[desk.VIEWER_AT_A_PAGE_S_END]:#x}"):
         aes_boot.continued(idle, (aes_boot.mouse_to(*desk.icon_point(aes_boot.inf_machine(), desk.THE_TRASH)),),
                            until=desk.STOPS[desk.VIEWER_AT_A_PAGE_S_END])
-    word_at, = [at for at, (_word, routine) in THE_TWO_WORDS.items() if routine == desk.MAKE_FOLDER]
-    at_the_word = stopped._replace(registers={**stopped.registers, "pc": word_at})
-    with pytest.raises(Refused, match="a Line-F word the oracle's CPU does not trap — is continued by nothing"):
-        aes_boot.continued(at_the_word, (), at=word_at)
 
 
 def test_a_step_with_no_reception_is_profiled_to_the_cycle():
@@ -432,9 +359,10 @@ LEFT_BEHIND.update({desk.FORMATTED: formatted_single_sided_and_logged_in, desk.C
                     "file: File > Open, five seconds, Print clicked (printed)": printed,
                     "file: the printer not ready, five seconds, Retry (printed)": printed,
                     desk.NOT_READY: nothing_printed, "file: the printer not ready, Retry (not ready again)": nothing_printed})
-# `{chain: the Line-F words its own steps had taken by hand}` — the File menu's Show Info and New Folder, once each.
+# `{chain: the two words its own steps ran, one per step}` — the File menu's Show Info and New Folder, by the CPU's own
+# Line-F exception (read off each step's cycle profile: the word's PC charged).
 SHOW_INFO_WORD, NEW_FOLDER_WORD = ((at, word) for at, (word, _routine) in THE_TWO_WORDS.items())
-TAKEN_BY_HAND = {
+THROUGH_THE_TWO_WORDS = {
     "A: File > Show Info, Return": (SHOW_INFO_WORD,), "file: File > Show Info, Return": (SHOW_INFO_WORD,),
     "file: File > Show Info, Backspace, 'A', Return (renamed)": (SHOW_INFO_WORD,), desk.READ_ONLY_FILE: (SHOW_INFO_WORD,),
     "folder: selected, File > Show Info, Return": (SHOW_INFO_WORD,), "files: the program selected, File > Show Info, Return": (SHOW_INFO_WORD,),
@@ -446,7 +374,7 @@ TAKEN_BY_HAND = {
 
 
 def test_the_tables_of_this_battery_name_chains_there_are():
-    assert set(LEFT_BEHIND) <= set(desk.CHAINS) and set(TAKEN_BY_HAND) <= set(desk.CHAINS)
+    assert set(LEFT_BEHIND) <= set(desk.CHAINS) and set(THROUGH_THE_TWO_WORDS) <= set(desk.CHAINS)
     assert all(chain.after in desk.CHAINS or chain.after in desk.MACHINES for chain in desk.CHAINS.values())
     assert all(step.until is None or step.until in desk.STOPS for chain in desk.CHAINS.values() for step in chain.steps)
     assert all(set(chain.enters) <= set(desk.routines()) for chain in desk.CHAINS.values())
@@ -499,6 +427,12 @@ CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.valu
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
 
 
+def through_the_two_words(name):
+    """`((address, word), ...)`: the two words the chain `name`'s own steps ran, in step order (the CPU's exception)."""
+    return tuple(site for step in desk.walked(name).steps for site in (SHOW_INFO_WORD, NEW_FOLDER_WORD)
+                 if site[0] in desk.cycles_at(step.profile))
+
+
 def test_every_chain_names_a_routine_of_its_act_and_the_campaign_is_this_many_chains_and_steps():
     """NO CHAIN IS HELD BY ITS NAME ALONE (the design's risk 7): each of the CHAINS names at least one routine ITS OWN
     STEPS must enter — the act's own, read off the ROM — and the per-chain case holds it to the cycle profile."""
@@ -510,8 +444,8 @@ def test_every_chain_names_a_routine_of_its_act_and_the_campaign_is_this_many_ch
 def test_the_chain_ends_at_the_rom_s_idle_having_done_what_its_name_says(name):
     """EACH CHAIN, ON THE ROM'S MACHINE: every step ends where it says — its named stop (at no idle, the PC the
     stop's), else the idle of the ROM's dispatcher — with its ledger whole; the machine holds no blob; ITS OWN STEPS
-    ENTERED THE ACT'S ROUTINES (the cycle profile); what the act leaves behind is there; the Line-F exceptions the
-    model took by hand are the ones its menu items call for and no other; and no stack was stored outside its span's
+    ENTERED THE ACT'S ROUTINES (the cycle profile); what the act leaves behind is there; the File menu's two former
+    MOVE16 words it ran are the ones its menu items call for and no other; and no stack was stored outside its span's
     reach (a depth is below the stack's size, PD0's above nothing)."""
     declared, chain = desk.CHAINS[name], desk.walked(name)
     for step, stepped in zip(declared.steps, chain.steps):
@@ -525,7 +459,7 @@ def test_the_chain_ends_at_the_rom_s_idle_having_done_what_its_name_says(name):
     missed = [f"{routine:#x}" for routine in declared.enters if routine not in desk.entered(name)]
     assert not missed, f"{name!r} idled and its own steps never entered {missed}: the chain did not do what its name says"
     assert LEFT_BEHIND.get(name, lambda _chain: True)(chain), f"{name!r} did not leave what its act leaves"
-    assert desk.taken_by_hand(name) == TAKEN_BY_HAND.get(name, ())
+    assert through_the_two_words(name) == THROUGH_THE_TWO_WORDS.get(name, ())
     for which, (lo, hi) in desk.stacks(chain.machine).items():
         if not (name in desk.THE_DESK_S_BLOCKS_ARE_CLEARED_IN and which == desk.USERDEF_STACK):
             assert desk.depths(name)[which] < hi - lo, which
@@ -635,7 +569,7 @@ DEEPEST = {desk.PD0_STACK: ("A: File > Open", 1460), desk.PD1_STACK: ("window: V
 DISPATCHER_ELSEWHERE = 188
 # THE DISPATCHER AT 190 — not the second window alone: band 6 wave 2's re-derivation (Reviewer B's, its fix pass's
 # measure) finds it on these five chains, four of them pure walks of the ROM after "A: opened" (nothing by hand, nothing
-# laid), the fifth over Show Info's stand-in — the ROM's own depth (W6-R4: REPORTED, the deepest unchanged at 190).
+# laid), the fifth through Show Info's word — the ROM's own depth (W6-R4: REPORTED, the deepest unchanged at 190).
 # What stores at 190 is not traced.
 DISPATCHER_AT_190 = frozenset({DEEPEST[desk.DISPATCHER_STACK][0], "A: opened, drive A: dragged into its window, Return",
                                "A: opened, the trash dragged into its window, Return",
@@ -663,19 +597,18 @@ def test_a_depth_is_from_the_stack_s_top_down_to_the_lowest_byte_stored_inside_i
     assert desk.depth_stored(stored[3:], 0x100, 0x200) == 0
 
 
-# ---- THE FOLDER CHAIN, WITH THE STAND-IN TAKEN AWAY -----------------------------------------------------------------------------------------
-def test_without_the_exception_taken_by_hand_new_folder_makes_no_folder_and_still_idles(monkeypatch):
-    """THE RED THE MEASURING PASS MET, kept: the same hands with the oracle left to execute `$f624` — the chain idles
-    at every step, enters no folder maker, takes nothing by hand and writes no sector. (Why a chain's name proves
-    nothing, and what the stand-in is for.)"""
-    monkeypatch.setattr(aes_boot, "line_f_words_the_oracle_does_not_trap", lambda: ())
-    machine, ran = desk.walked("A: opened").machine, set()
+# ---- THE FOLDER CHAIN, ON THE CPU'S OWN EXCEPTION -------------------------------------------------------------------------------------------
+def test_new_folder_makes_its_folder_through_the_cpu_s_own_line_f_exception():
+    """THE RED THE MEASURING PASS MET (the oracle EXECUTED `$f624` as MOVE16: the chain idled at every step, entered no
+    folder maker and wrote no sector), MENDED IN THE KIT: the same hands, every step's profile charging the word's PC,
+    the folder maker entered and a sector written, the folder on the disk."""
+    machine, ran, wrote = desk.walked("A: opened").machine, set(), False
     for step in desk.CHAINS["folder: File > New Folder, 'A', Return"].steps:
         stepped = desk.stepped.derive(machine.boot, tuple(step.hand(machine)))
-        assert stepped.boot.idle == THE_ROM_S and aes_boot.LINE_F_TAKEN_BY_HAND not in dict(stepped.boot.observed)
-        assert not any(call.function == aes_boot.RWABS and call.arguments[0] & aes_boot.RWABS_WRITE for call in stepped.boot.floppy)
+        assert stepped.boot.idle == THE_ROM_S
+        wrote |= any(call.function == aes_boot.RWABS and call.arguments[0] & aes_boot.RWABS_WRITE for call in stepped.boot.floppy)
         machine, ran = aes_boot.Machine(stepped.boot), ran | set(desk.cycles_at(stepped.profile))
-    assert desk.MAKE_FOLDER not in ran and FOLDER_ON_DISK not in root_of(machine.boot.disk)
+    assert NEW_FOLDER_WORD[0] in ran and desk.MAKE_FOLDER in ran and wrote and FOLDER_ON_DISK in root_of(machine.boot.disk)
 
 
 # ---- THE FILES DISK AND ITS MACHINE (the fifth capture) -------------------------------------------------------------------------------

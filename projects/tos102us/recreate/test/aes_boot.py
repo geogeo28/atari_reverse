@@ -2250,61 +2250,7 @@ def _vet_stands_where_it_is_continued_from(boot, at):
         raise Refused(f"A RECEPTION AT A NAMED STOP is taken where the machine STANDS STOPPED THERE: this one stands at "
                       f"{pc:#x}" + (f", the idle of {boot.idle} dispatcher" if boot.idle is not None else "")
                       + f" — not at {at:#x}")
-    if at in line_f_words_the_oracle_does_not_trap():
-        raise Refused(f"a machine stopped AT {at:#x} — a Line-F word the oracle's CPU does not trap — is continued by "
-                      f"nothing: a run leaves the stop it is entered at by one instruction, and the oracle would "
-                      f"EXECUTE the word (as MOVE16) where the stop takes its exception by hand")
 
-
-# THE LINE-F WORDS THE ORACLE'S CPU DOES NOT TRAP — A DEFECT OF THE ORACLE, STOOD IN FOR AS THE BUS ERROR IS (found by
-# this slice: the File menu's New Folder made no folder, and its Show Info showed nothing). GEM calls its own routines
-# by a Line-F word, an exception on a 68000. The oracle's CPU, set to a 68000, takes it for every word `$Fxxx` BUT
-# EIGHT: `$F620..$F627` it EXECUTES, as the 68040's `MOVE16 (Ax)+,(Ay)+` — four bytes long, sixteen bytes copied between
-# two address registers, both advanced (its opcode table holds that handler for every CPU type, and the handler asks
-# none: the kit's vendored CPU core, which no project edits). THE ROM HOLDS TWO SUCH WORDS, both call words of the
-# desk's File-menu handler (`$fe1ec2: $f620` -> the selection's Show Info, `$fe1ece: $f624` -> New Folder), found here
-# BY A SCAN OF ITS GEM TEXT, never listed. So a continuation is STOPPED AT EACH and the exception is taken there as a
-# 68000 takes it (`line_f_taken`): the six-byte frame — the status word, THE WORD'S OWN ADDRESS — pushed on the
-# supervisor stack, the trace bit cleared, the PC loaded from vector 11 as the machine holds it; no other register
-# touched. Each one taken is said in the run's `observed` (LINE_F_TAKEN_BY_HAND, the word's address and the word) and
-# its frame is among the run's stores. WHAT THE MODEL DOES NOT DO: charge the exception — the run's counts are the
-# oracle's own, SHORT BY 34 CYCLES AND BY ONE INSTRUCTION for each one taken (the oracle counts a trapping word as an
-# instruction and its exception as 34 cycles: reviewer B's measurement, `$f61c` / `$f628` trapped by the oracle beside
-# `$f620` / `$f624` by hand), in `Boot.cycles` and `Boot.instructions` both. IT IS ARMED IN `continued` ALONE: `booted`,
-# `served`, the our-boot's watched runs and every kit run (`emu.run`, Tiers 1 and 3) are not stopped there — no boot
-# passes the File menu, and no registered case names the two items.
-VECTOR_LINE_F = addrs.VECTOR_LINE_F     # vector 11: the Line-F emulator's
-ORACLE_S_MOVE16_WORDS = range(0xf620, 0xf628)       # the words the oracle's 68000 executes instead of trapping
-LINE_F_FRAME = struct.Struct(">HI")     # a 68000's group-1/2 frame: the status word, the PC — the Line-F word's own address
-LINE_F_TAKEN_BY_HAND = "a Line-F word the oracle's CPU does not trap: its exception taken by hand"
-
-
-@functools.cache
-def line_f_words_the_oracle_does_not_trap():
-    """WHERE THE ROM'S GEM TEXT HOLDS ONE (above): every even address of `aes.AES_TEXT` whose word is one of the
-    oracle's MOVE16's — found by the scan, `(address, ...)`."""
-    return tuple(at for at in range(*aes.AES_TEXT, WORD_BYTES) if case.word_in(BASE_IMAGE, at) in ORACLE_S_MOVE16_WORDS)
-
-
-def line_f_taken(frames):
-    """The watch of a stop at such a word (`_Run`'s `observing`): THE STOPPED CPU TAKES THE LINE-F EXCEPTION there,
-    its frame kept in `frames` (`{address: bytes}`: the harness's own store) — refused by name in user mode, where a
-    68000 would push on the other stack."""
-    def taken(memory, sp):
-        status, pc = _register("sr"), _register("pc") & BUS
-        word = case.word_in(memory, pc)
-        if not status & SR_SUPERVISOR or word not in ORACLE_S_MOVE16_WORDS:
-            raise Refused(f"a Line-F exception taken by hand at {pc:#x} (the word {word:#06x}, status {status:#06x}): the "
-                          f"model stands in for the oracle's CPU at a word it executes as MOVE16, in supervisor mode, "
-                          f"and nowhere else")
-        frame = LINE_F_FRAME.pack(status, pc)
-        memory[sp - LINE_F_FRAME.size:sp] = frame
-        frames[sp - LINE_F_FRAME.size] = frame
-        _set_register("a7", sp - LINE_F_FRAME.size)
-        _set_register("sr", status & ~SR_TRACE)
-        _set_register("pc", case.long_in(memory, VECTOR_LINE_F) & BUS)
-        return pc, word
-    return taken
 # ---- END band 6 wave 0, slice H -----------------------------------------------------------------------------------------------
 
 
@@ -2332,15 +2278,12 @@ def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watch
         memory[rom_at:rom_at + len(data)] = data
     receiving = _Receiving(memory, boot.registers["sr"]).all_of(received)
     floppy = Floppy(memory, boot.disk, boot.drive_b)
-    line_f_frames = {}                  # (slice H: the frames of the Line-F exceptions taken by hand — the harness's stores)
-    by_hand = {word_at: (LINE_F_TAKEN_BY_HAND, line_f_taken(line_f_frames)) for word_at in line_f_words_the_oracle_does_not_trap()}
     run = _Run(memory, floppy, budget, until=until, ours=ours,
-               observing={**handler_stops(ours), **trampoline_stops(ours), **by_hand, **(watches or {})}, printer=boot.printer)
+               observing={**handler_stops(ours), **trampoline_stops(ours), **(watches or {})}, printer=boot.printer)
     try:
         result = run.to_an_idle(boot.registers, _io_seed(boot.io))
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
-        run.laid.update(line_f_frames)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
     finally:
         _CPU.m68k_set_irq(NO_INTERRUPT)

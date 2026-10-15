@@ -109,9 +109,14 @@ $(GENDIR)/m68kops.c: $(MUSASHI)/m68kmake.c $(MUSASHI)/m68k_in.c
 # ledgers, the heap) are the CANDIDATE's halves of models the shim mirrors itself.
 ORACLE_SHARED_SRC := $(KIT)/src/gem.c $(KIT)/src/raster.c
 
-$(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(KIT)/include/raster.h $(ORACLE_SHARED_SRC) $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/kit.mk
+# move16_guard.c is the one CPU correction the oracle carries over upstream Musashi (it says why it is
+# not an edit of the untracked clone): `$F620..$F627` take the Line-F exception on the 68000.
+ORACLE_CPU_FIX := $(KIT)/oracle/move16_guard.c
+
+$(ORACLE): $(KIT)/oracle/shim.c $(ORACLE_CPU_FIX) $(KIT)/include/os.h $(KIT)/include/raster.h $(ORACLE_SHARED_SRC) \
+           $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/kit.mk
 	$(CC) $(OCFLAGS) -shared \
-	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c \
+	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c $(ORACLE_CPU_FIX) \
 	  $(ORACLE_SHARED_SRC) \
 	  -o $(ORACLE)
 
