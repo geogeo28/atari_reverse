@@ -39,6 +39,11 @@ cycle-driven — but the PHASE of the AES's and the desktop's idle work at the i
 blank interrupts it. Three independent boots stopped with different D0/D7/A0/A6/A7, and 1,929 bytes
 of dead stack and idle scratch differed. `--twice` is what measures that set, `MASK` below records
 it, and `test/test_boot_snapshot.py` is what stops any case depending on a byte inside it.
+WHERE THE PHASE COMES FROM: HATARI'S FLOPPY. Armed at power-on, two boots agree register for register
+at every vertical blank up to the first floppy wait and differ from it on; with no disk they are
+bit-identical (snapflake, 2026-10-15). The same start-up difference can leave dead slots inside the
+screen manager's LIVE frames holding another residue, which `tools/vet_snapshot.py` refuses — the
+Makefile captures again until one passes.
 THE MASK IS WHAT THREE BOOTS SHOWED, NOT A BOUND: later captures moved bytes outside it (the note
 under `MASK`'s comment below) — "outside the mask" is not "bit-identical between any two captures".
 
@@ -230,7 +235,11 @@ def capture(destination, work, settle_vblanks=SETTLE_VBLANKS):
             "--disk-a", str(blank_disk(work)), "--confirm-quit", "false"]
     session = HeadlessSession(argv, log, work / "boot_snapshot.fifo", work)
     try:
-        session.arm(f"b VBL > {settle_vblanks} :once :trace {clause}")
+        # `pc = ($70).l` as well as the count: Hatari's VBL counter ticks whether or not the CPU can
+        # take the interrupt, so "VBL > N" alone fired on whatever instruction ran next — inside an
+        # IPL-7 section ($cc46, `move.w d2,sr`) 1 boot in 20 (snapflake, 2026-10-15), refused below.
+        # With it the stop is the handler's entry for the first vertical blank past N the CPU takes.
+        session.arm(f"b VBL > {settle_vblanks} && pc = (${VECTOR_VBL:x}).l :once :trace {clause}")
         if await_file(session, dump, "booting to the desktop", minimum_bytes=ST_RAM_BYTES) is None:
             raise SystemExit(f"the machine never reached the stop point — see {log}")
         ram = dump.read_bytes()

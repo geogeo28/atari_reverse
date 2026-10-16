@@ -455,7 +455,9 @@ def test_the_disk_is_one_disk_to_the_machine_whatever_the_modes():
     assert quiet == accessory_disk.disk_path().read_bytes(), "the image the capture booted is not this tree's"
     for first in MODES:
         for second in MODES:
-            image = bytearray(aes_boot.accessory_disk_of(first, second))
+            # UNCACHED (`__wrapped__`): every pair once, here alone — the cache would hold all of them, 200 MB of disks
+            # in one worker for the rest of its run, for the dozen pairs the machines ask again
+            image = bytearray(aes_boot.accessory_disk_of.__wrapped__(first, second))
             assert [case.long_in(image, at) for at in mode_words] == [first, second]
             for at in mode_words:
                 image[at:at + LONG_BYTES] = bytes(LONG_BYTES)
@@ -3068,3 +3070,28 @@ def test_a_machine_restaged_carries_its_blob_as_the_staging_left_it(blob):
         aes_boot.Machine(again.boot._replace(ram=bytes(changed))).continued()
     rom = booted_as(A_DESK)
     assert aes_boot.restaged(rom, memory).ram == bytes(memory[:RAM_BYTES]) and aes_boot.restaged(rom, memory).takeover is None
+
+
+# ---- A CONTINUATION'S REFUSAL IS KEPT (gate-speed pass, L1: `aes_boot.KeptRefusal`) ----------------------------------------------
+def test_a_continuation_s_refusal_is_kept_with_its_reason_and_by_every_argument(tmp_path, monkeypatch):
+    """`continued` over a cache of the test's own and a stand-in run that refuses with a reason naming its stop: asked
+    twice, the same `Refused` text twice and the run made ONCE; asked with another stop, that stop's own refusal,
+    made — the stop is part of the key (the gate-speed review's M6: a key without it served the other stop's)."""
+    monkeypatch.setattr(derived, "ROOT", tmp_path / "derived")
+    monkeypatch.setattr(derived, "_CLAIMS_HELD", [])
+    monkeypatch.delenv(derived.DERIVED_OFF, raising=False)
+    monkeypatch.setattr(derived, "_candidate_is_the_project_s", lambda: True)
+    monkeypatch.setattr(derived, "SAMPLED_ONE_IN", 0)
+    runs = []
+
+    def refusing(boot, received, budget, until, at, watches):
+        runs.append(until)
+        raise aes_boot.Refused(f"stands short of {until:#x}")
+    monkeypatch.setattr(aes_boot, "_continue", refusing)
+
+    def reason_of(until):
+        with pytest.raises(aes_boot.Refused) as refused:
+            aes_boot.continued(b"a machine", b"what it received", until=until)
+        return str(refused.value)
+    assert [reason_of(0xfed888), reason_of(0xfed888)] == ["stands short of 0xfed888"] * 2 and runs == [0xfed888]
+    assert reason_of(0xfed912) == "stands short of 0xfed912" and runs == [0xfed888, 0xfed912]

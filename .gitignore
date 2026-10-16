@@ -10,6 +10,8 @@ projects/*/decomp.c
 .idea/
 projects/*/recreate/.venv
 projects/*/recreate/build/
+# a recreate's store of captures and derivations kept across from-empty builds (no trailing slash: a link matches too)
+projects/*/recreate/kept
 projects/*/recreate/render/atari/build/
 projects/*/recreate/render/atari/disk/
 projects/*/recreate/render/atari/disk_orig/

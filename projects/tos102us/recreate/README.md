@@ -123,8 +123,11 @@ gaps of 0x100 bytes — deliberately wider than any one pair's difference.
 three later captures 32 bytes outside it moved (`$1459` +11, `$8920` +14, `$9fa1` +3, `$a075`, `$a098` +4, `$a24a`
 +2, `$c7e9`), a fourth showed `$754e` +2, `$95ba` +4, `$9707`, `$1662` +2, and `savptr`'s frame lies at `$93a` or one
 46-byte frame lower: the same phase-of-the-idle-work class at the edges of the regions above. The mask and the
-capture are unchanged; what follows from it is the rule the gate enforces — every test holds over a FRESH capture, and
-a number a capture decides is derived, never pinned.
+capture are unchanged; what follows from it is the rule — every test holds over a FRESH capture (`make gates FRESH=1`
+proves it; a default gate is served the kept one, "`make gates`" below), and a number a capture decides is derived,
+never pinned. A fresh SNAPSHOT is vetted before it is kept (`tools/vet_snapshot.py`, the snapshot's rule): Hatari's
+floppy starts each boot at its own rotational phase, and about one capture in eighteen (3 of 54 measured, 2026-10-15)
+leaves another start-up's residue in a dead slot of the screen manager's live frames, which the suite refuses.
 
 **Two captures are never bit-identical, so anything that HASHES across trees pins one file.** A row, a
 scenario or a derived machine is a reproducible object PER SNAPSHOT: the same sources over the same
@@ -3442,7 +3445,8 @@ A battery's machines are DERIVED — the ROM's own runs: a scenario watched at a
 session over the staged disk, the one run that says whether a row's routine stores the Line-F mask word. A
 derivation runs no line of the reconstruction, so every process of a run made the same ones again: 25 CPU-seconds
 of every process's import (each xdist worker of both suites, and the bench). `@derived.kept` keeps a derivation's
-answer under `build/derived/` and serves it to any process that asks the same question.
+answer under `kept/derived/` (beside build/: "The store", under `make gates`) and serves it to any process that
+asks the same question.
 
 A STALE ANSWER CANNOT BE SERVED, because "the same question" is CONTENT. WHAT KEYS IT:
 1. THE TREE — the digest of every file a derivation could read or be made by (every `test/`, `bench/`, `tools/`
@@ -3538,7 +3542,7 @@ HOW IT IS RUN:
 - TELLING A COLD RUN FROM A WARM ONE: collection is 36–40 s a worker cold and about 10 s warm (pytest's own wall,
   ten workers, quiet at the start: 209 s and 1,560 CPU-s for a bare cold `pytest`, 146 s and 1,288 CPU-s warm —
   22,681 tests, 2026-10-07; before the kit read images in place and the zygote's lazy-cache fix: 231 / 170 s). A
-  timing quoted without saying which is not a timing; for a cold figure empty `build/derived/` or set
+  timing quoted without saying which is not a timing; for a cold figure point `AES_DERIVED_ROOT` at an empty directory or set
   `AES_DERIVED_OFF=1`, and remember that ANY edit under the keyed tree makes the next run cold.
 - WHAT MUST STAY EQUAL cold, warm and off (the content-neutrality check of any change here): the collected case ids
   and outcomes, the row hashes and scenario hashes over one pinned `boot_ram.bin`, the table's lines.
@@ -3647,16 +3651,53 @@ derivation key, so `test_derived`'s census of imported modules is red in a RECOR
 
 ## `make gates` — the pre-commit gates as one command
 
-`make gates` builds once (libraries, both blobs, snapshot, derivations, table) and then runs `make test`'s pytest,
-`make guarded`'s pytest and the ROM build (`make -C atari -B all`) SIDE BY SIDE, each with its own log
-(`build/gates/<gate>.log`), its own status file and its own pytest cache; it prints each one's last lines and ends
-non-zero if any did. The same command lines as kit.mk's targets (PYTEST_ARGS / GUARDED_PYTEST_ARGS apply), the same
-case ids and outcomes as the four run in turn. It starts by removing `build/gates/`, so two of them at once in one
-tree overwrite each other's logs: one at a time. WHAT IT BUYS IS NOT THREE GATES FOR THE WALL OF ONE — the two
-suites are the same CPU-bound work twice and ten cores are ten cores (side by side each takes about twice as long):
-measured, 388 s against 389 s for the four in turn (309 s with the derivations made; 375 s and 2,985 CPU-s from an
-EMPTY `build/` at 22,681 tests, 2026-10-07). It buys one command, one build and one set of derivations. It does not
+`make gates` builds once (libraries, both blobs, snapshot, derivations, table) and then runs `make guarded`'s pytest
+and the ROM build (`make -C atari -B all`) SIDE BY SIDE, each with its own log (`build/gates/<gate>.log`), its own
+status file and its own pytest cache; it prints each one's last lines and ends non-zero if either did. It starts by
+removing `build/gates/`, so two of them at once in one tree overwrite each other's logs: one at a time. It does not
 `rm build/*.so`: the forced rebuild before a commit is still the committer's own first step.
+
+IT RUNS THE GUARDED SUITE ONLY (the user's ruling, 2026-10-15): the same tests and assertions as `make test`, over a
+candidate image with PROT_NONE guard pages. What the gate no longer proves is that the suite passes over the plain
+bytearray image as `make test` builds it; an access that stays in bounds behaves the same in both. `make test` stays,
+for authors. The suite runs on GATE_WORKERS = min(cores, memory / 3 GiB), at least one (memory: Darwin's `sysctl -n
+hw.memsize`, `getconf` elsewhere) — 10 on a 10-core 32 GB machine; a `GUARDED_PYTEST_ARGS` on the command line or in
+the environment wins. `make gates FRESH=1` (below) re-makes everything from nothing; use it at a band's boundary.
+
+Measured from an EMPTY build/ (10 cores, 32 GB, alone on the machine):
+
+| run | build + derive | suite(s) | wall |
+|---|---|---|---|
+| before (2026-10-15, 30,803 tests): test + guarded side by side, `-n 5` each | 204 s | 1,133 / 1,141 s | 1,346 s |
+| part 1's levers, test + guarded, 5 + 5 | 133 s | 909 s | 1,044 s |
+| `make gates FRESH=1` (2026-10-16, 30,818 tests) | 145 s | 635 s | 781 s |
+| `make gates`, the first after a FRESH (captures served, their derivations cold) | 106 s | 634 s | 740 s |
+| `make gates`, store warm | 74 s | 323 s | 398 s |
+
+### The store (`kept/`)
+
+`kept/` lies beside build/ and is gitignored; moving build/ aside or `make clean` leaves it (remove it by hand). It
+keeps:
+- **Each Hatari capture** (`kept/captures/<key>/`, the snapshot and the five pre-init machines), with its digest beside
+  it (`.sha256`). The KEY is the digest of the CONTENT of the capture rule's prerequisites, the capture tools' workspace
+  imports, the emulator itself (the binary Homebrew's `hatari` script execs), the user's `hatari.cfg` (which no capture
+  tool overrides) and the kit's oracle: a `touch` is served, an edit is captured again. The key is read ONCE, before
+  the capture: a capture whose key moved while it was made is neither kept nor left in build/ (the make fails; the next
+  captures again). A served capture is never copied back; a kept one is replaced by rename, never written over; an
+  entry its digest does not match is not served.
+- **test/derived.py's cache** (`kept/derived/`, its ROOT; `AES_DERIVED_ROOT` overrides it).
+
+A SNAPSHOT IS VETTED, served or made (`tools/vet_snapshot.py`, ~0.6 s: the screen manager parked as the ROM's own boot
+leaves it — `test_aes_takeover`'s premise). Hatari's floppy makes each boot's start-up its own, and ~5.5% of captures
+leave another start-up's residue in a dead slot of the screen manager's live frames; such a capture is captured again
+(up to four times, then the build stops and nothing is kept), and a refused served entry is replaced.
+
+`FRESH=1` makes every Hatari capture again WHATEVER build/ HOLDS (the six are phony then), each replacing its kept entry,
+and derives into `build/derived/`, under a tree no run made before (no two captures are bit-identical). `FRESH=0` is
+not FRESH. WHAT A DEFAULT GATE NO LONGER PROVES: that the suite holds over FRESH captures (preinit-twice still boots the
+five pre-init machines twice and holds the mask to them), nor that every kept answer is made from nothing (each process
+still makes its sample again, held equal). A capture of a bad class the vet does not know would be served red to every
+default gate of its key until a FRESH gate replaced it.
 
 ## Mutation sweeps — how a mutant is counted
 
@@ -3784,10 +3825,13 @@ recreate/
 │                       differential over every priced row)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files)
-└── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
-                        bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
-                        the shipped configuration's blob and its generated glue; derived/ (the
-                        derivation cache, by tree) and gates/ (`make gates`' logs); preinit.bin, preinit_acc.bin,
-                        preinit_acc7.bin, preinit_inf.bin, preinit_files.bin and acc/ (the five pre-init machines
-                        and the floppies they need)
+├── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
+│                       bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
+│                       the shipped configuration's blob and its generated glue; gates/ (`make gates`' logs),
+│                       and derived/ under `make gates FRESH=1` only; preinit.bin, preinit_acc.bin,
+│                       preinit_acc7.bin, preinit_inf.bin, preinit_files.bin and acc/ (the five pre-init machines
+│                       and the floppies they need)
+└── kept/               gitignored, beside build/ (`make clean` leaves it): THE STORE — captures/<key>/ (each Hatari
+                        capture and its .sha256, by the key of what made it) and derived/ (the derivation cache,
+                        by tree); see "The store" under `make gates`
 ```

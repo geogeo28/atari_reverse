@@ -5,7 +5,8 @@ file-selector session over the staged disk, the one run that says whether a row'
 A derivation reads the ROM, the boot snapshot and its own arguments and runs no line of the reconstruction, so its
 answer is the same in every process of a run and in every run of the same tree — and every process made it again:
 each xdist worker, the bench, each `make` of the three gates (25 CPU-seconds of every process's import, measured).
-`@kept` keeps a derivation's answer in `build/derived/`, and serves it to the next process that asks the same question.
+`@kept` keeps a derivation's answer in `kept/derived/` (ROOT: beside build/, so a from-empty build is served too), and
+serves it to the next process that asks the same question.
 
 A STALE ANSWER IS NOT SERVED, BY CONSTRUCTION, because "the same question" is decided by CONTENT, never by a name, a
 version number someone remembers to bump, or a file's date:
@@ -106,7 +107,8 @@ written, or failed: a derivation that raises leaves none, and whoever waited mak
 SWITCHED OFF by DERIVED_OFF in the environment (nothing read, nothing written, nothing claimed or waited for: every
 derivation made, as before there was a cache) — the cold shore of the A/B the cache is held equal by — and for a process whose candidate is not
 the project's own build (a mutation sweep's private library: each mutant would be a tree of its own, written once
-and never read). `make clean` removes `build/`, and the cache with it; a tree nobody used for PRUNE_AFTER_SECONDS,
+and never read). `make clean` removes `build/` and NOT the cache (ROOT is beside it: remove `kept/` by hand); a tree
+nobody used for PRUNE_AFTER_SECONDS,
 or past the TREES_KEPT most lately used, goes when a process first writes to another.
 """
 import contextlib
@@ -129,7 +131,10 @@ from pathlib import Path
 RECREATE = Path(__file__).resolve().parents[1]
 REPO = RECREATE.parents[2]
 KIT = REPO / "tools" / "recreate_kit"
-ROOT = RECREATE / "build" / "derived"
+# THE STORE beside build/ (the Makefile's "THE STORE"), so that a from-empty build is served what this tree already
+# derived; ROOT_NAMED in the environment puts it elsewhere (`make gates FRESH=1`: build/derived, made from nothing).
+ROOT_NAMED = "AES_DERIVED_ROOT"
+ROOT = Path(os.environ.get(ROOT_NAMED) or RECREATE / "kept" / "derived")
 DERIVED_OFF = "AES_DERIVED_OFF"
 HANDED_DOWN = "AES_DERIVED_TREE"        # INTERNAL: a process's tree key and the record it was made with, for its children
 SAMPLE_SEED = "AES_DERIVED_SAMPLE_SEED"
@@ -867,13 +872,13 @@ def _made_again_and_equal(derive, arguments, named, key, served):
             f"derived: the answer kept for {derive.__module__}.{derive.__qualname__} at {_path_of(key)} is NOT what "
             f"the derivation answers now, made again in this process — a derivation that depends on what ran before "
             f"it, or on something its key does not read, or a kept file from another tree. Nothing served from "
-            f"{ROOT / tree_key()} can be trusted: `make clean`, and find which.")
+            f"{ROOT / tree_key()} can be trusted: remove that directory, and find which.")
     SAMPLED.append((f"{derive.__module__}.{derive.__qualname__}", key))
 
 
 def kept(derive):
     """DECORATE A ROM-ONLY DERIVATION (the module's docstring: what it must be): its answer is read from
-    `build/derived/` where this tree, this base image and these arguments were asked before — by any process — and
+    ROOT (`kept/derived/`) where this tree, this base image and these arguments were asked before — by any process — and
     made, kept and answered where they were not: by this process, or by the one that was making them already
     (`_served_or_claimed`)."""
     @functools.wraps(derive)

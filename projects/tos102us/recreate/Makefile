@@ -31,6 +31,9 @@ $(BENCH_ELF): $(wildcard atari/shim_include/*.h) atari/target.mk
 # Capturing costs ~15 s of real time per run, because emulation is real time; it happens once, and
 # again only when the tool that defines the stop point changes.
 SNAPSHOT := build/boot_ram.bin
+# The blank pre-init machine (below) — named HERE because the snapshot's rule reads it as an order-only prerequisite
+# (its vet boots the ROM from it), and a rule's prerequisites are expanded where the rule is read.
+PREINIT := build/preinit.bin
 
 # WHAT THE CAPTURE REALLY DEPENDS ON, which is not include/addrs.h. tools/boot_snapshot.py parses
 # that header, but it reads exactly TWO of its nine hundred constants — the machine's size and the
@@ -45,6 +48,65 @@ SNAPSHOT_INPUTS := build/snapshot_inputs.txt
 SNAPSHOT_CONSTANTS := ST_RAM_BYTES VECTOR_VBL
 ROM_IMAGE := ../../../tools/hatari/TOS102US.img
 
+# ---- THE STORE: WHAT A FROM-EMPTY BUILD NEED NOT MAKE AGAIN (the user's ruling (b), 2026-10-15) ----------------------------
+# kept/ (gitignored, beside build/ and never under it: moving build/ aside or `make clean` leaves it) holds
+#   * kept/captures/<key>/ — each Hatari capture below (the snapshot, the five pre-init machines), KEYED by the digest of
+#     its own rule's prerequisites (the ROM image, the capture tools, the content stamps of the constants they read,
+#     the disk it is captured with), of the workspace modules those tools import, of the Hatari that runs them and of
+#     the kit's oracle — by CONTENT, so an edit of any of them is another key and the capture is made again (a `touch`
+#     re-runs the recipe and is served);
+#   * kept/derived/ — test/derived.py's cache (its ROOT), keyed by itself: the tree, the captures' bytes among it.
+# A capture's recipe is `$(FROM_THE_STORE) || <the capture>`, then `$(INTO_THE_STORE)`: served where its key is kept,
+# made where it is not, and a MADE one kept (a served one is the entry's own bytes, never copied back). The snapshot's
+# is `$(FROM_THE_STORE) && <its vet> || <the capture, vetted>`: a served snapshot is vetted too, and one refused is
+# captured again and replaces the entry (the vet: the snapshot's rule, below).
+# THE KEY IS READ ONCE, BEFORE THE CAPTURE (into `$@.key`), and the capture is kept only if the key read again after it
+# is the same: an edit to a keyed file DURING the capture (4-15 s of real time; three agents edit this tree) would
+# otherwise keep a capture of the old content under the new content's key, served to every gate after (the gate-speed
+# review's race). Such a capture is removed instead, so the next make captures it again.
+# EACH ENTRY HAS ITS DIGEST BESIDE IT (`<entry>.sha256`, written as the entry is kept): an entry its digest does not
+# match is not served but made again. Both are written to a temporary name and RENAMED into place, never written over:
+# a make reading the entry meanwhile reads the whole of the old one.
+# `FRESH=1` (`make gates FRESH=1`, at a band's boundary) RE-MAKES EVERYTHING FROM NOTHING, as before the store, WHATEVER
+# build/ HOLDS: the captures are phony then (HATARI_CAPTURES, below), so each is made by Hatari again and REPLACES the
+# kept one (the authors' runs that follow and the next gate share it), and the derivations are made into build/derived/
+# — under a tree key no run made before, since no two captures are bit-identical. `FRESH=0` (or empty) is not FRESH.
+# WHAT A DEFAULT GATE NO LONGER PROVES: that the suite holds over FRESH captures (README: two captures are never
+# bit-identical; preinit-twice still boots all five pre-init machines again and holds the mask to them), nor that every
+# kept answer is made again from nothing (each process still makes its sample of the answers again, held equal).
+# A CAPTURE IS KEPT AS IT IS MADE, before any suite has run over it. The one bad class known (a snapshot whose screen
+# manager is parked where no history of ours leaves it) is refused by the snapshot's vet, served or made; a capture of
+# another bad class would be served red to every default gate of its key until FRESH=1 replaced it. The guard to add if
+# one appears: keep the captures into the store from a GREEN gate only (the review's F4; not taken while the vet covers
+# every bad class seen).
+STORE := kept
+CAPTURE_STORE := $(STORE)/captures
+FRESH_RUN := $(filter-out 0,$(strip $(FRESH)))
+# THE EMULATOR the captures run, not the script on the PATH: Homebrew's `hatari` is two lines that `exec` the app
+# bundle's binary, and a key that read the script would see the install's path and version, not the program.
+HATARI_ON_PATH := $(realpath $(shell command -v hatari))
+HATARI := $(or $(shell sed -n 's/^exec "\([^"]*\)".*/\1/p' $(HATARI_ON_PATH) 2>/dev/null),$(HATARI_ON_PATH))
+# AND ITS CONFIGURATION, which no capture tool overrides (no `-c`; HOME is kept): the user's file sets the CPU's cycle
+# exactness, the floppy's speed, the fast boot — each a change to what a boot produces. Spelt with `?` for the space in
+# its directory's name (a make word cannot hold one; the shell's glob and make's `wildcard` both match it). Where the
+# file is not, nothing is keyed for it: Hatari then runs on its defaults.
+HATARI_CONFIG := $(HOME)/Library/Application?Support/Hatari/hatari.cfg
+CAPTURES_MADE_BY := ../../../tools/st_build.py ../../../tools/hatari_headless.py tools/addrs.py $(HATARI) $(ORACLE) \
+                    $(if $(wildcard $(HATARI_CONFIG)),$(HATARI_CONFIG))
+CAPTURE_KEY = $$({ echo '$@'; shasum -a 256 $(sort $^ $(CAPTURES_MADE_BY)); } | shasum -a 256 | cut -c1-40)
+STORED_CAPTURE = $(CAPTURE_STORE)/$$(cat $@.key)/$(notdir $@)
+DIGEST_OF = $$(shasum -a 256 < $(1) | cut -c1-64)
+FROM_THE_STORE = echo $(CAPTURE_KEY) > $@.key && [ -z "$(FRESH_RUN)" ] && stored=$(STORED_CAPTURE) && [ -f "$$stored" ] \
+	&& [ "$(call DIGEST_OF,"$$stored")" = "$$(cat "$$stored.sha256" 2>/dev/null)" ] && cp "$$stored" $@ && echo "$@: kept, $$stored"
+INTO_THE_STORE = stored=$(STORED_CAPTURE) && { cmp -s $@ "$$stored" || $(KEPT_IF_STILL_ITS_KEY); }; status=$$?; rm -f $@.key; exit $$status
+KEPT_IF_STILL_ITS_KEY = if [ "$$(cat $@.key)" = "$(CAPTURE_KEY)" ]; then \
+	  mkdir -p "$$(dirname "$$stored")" && cp $@ "$$stored.$$$$" && echo "$(call DIGEST_OF,$@)" > "$$stored.sha256.$$$$" \
+	  && mv "$$stored.$$$$" "$$stored" && mv "$$stored.sha256.$$$$" "$$stored.sha256"; \
+	else rm -f $@; echo "$@: NOT KEPT, AND REMOVED — a file it is keyed by changed while it was captured" >&2; false; fi
+ifneq ($(FRESH_RUN),)
+export AES_DERIVED_ROOT := $(CURDIR)/build/derived
+endif
+
 .PHONY: snapshot-inputs
 snapshot-inputs:
 	@mkdir -p $(dir $(SNAPSHOT_INPUTS))
@@ -57,8 +119,22 @@ snapshot-inputs:
 # timestamp moves only when one of the two values really changed.
 $(SNAPSHOT_INPUTS): snapshot-inputs ;
 
-$(SNAPSHOT): tools/boot_snapshot.py $(SNAPSHOT_INPUTS) $(ROM_IMAGE)
-	$(PY) tools/boot_snapshot.py --out $@
+# A SNAPSHOT IS VETTED BEFORE IT IS KEPT (tools/vet_snapshot.py: its screen manager parked as the ROM's boot leaves
+# it, under a second). Hatari's floppy makes each boot's start-up history its own, and some captures leave the screen
+# manager parked where no history of ours does (2026-10-15: test_aes_takeover red, bench/tier3.py refused). One that
+# fails, or that the capture tool refuses, is captured again, up to SNAPSHOT_ATTEMPTS times; then the build stops and
+# nothing is kept. The vet and what it reads are ORDER-ONLY: they decide whether a capture is kept, not what is
+# captured, so they are no part of its key. A SERVED capture is vetted as well (0.6 s; it catches an entry kept before
+# the vet was): one refused is captured again, and the vetted capture replaces the entry.
+SNAPSHOT_ATTEMPTS := 4
+VET_SNAPSHOT = $(PY) tools/vet_snapshot.py $@
+CAPTURE_VETTED = for attempt in $$(seq $(SNAPSHOT_ATTEMPTS)); do \
+	  $(PY) tools/boot_snapshot.py --out $@ && $(VET_SNAPSHOT) && exit 0; \
+	done; rm -f $@; echo "$@: no capture of $(SNAPSHOT_ATTEMPTS) passed tools/vet_snapshot.py" >&2; exit 1
+
+$(SNAPSHOT): tools/boot_snapshot.py $(SNAPSHOT_INPUTS) $(ROM_IMAGE) | tools/vet_snapshot.py $(PREINIT) $(CAND) $(ORACLE)
+	@$(FROM_THE_STORE) && $(VET_SNAPSHOT) || ($(CAPTURE_VETTED))
+	@$(INTO_THE_STORE)
 
 .PHONY: snapshot
 snapshot: $(SNAPSHOT)
@@ -74,7 +150,6 @@ snapshot: $(SNAPSHOT)
 #
 # THEIR OWN CONTENT STAMP of the header constants the tool reads, made as the snapshot's is (a word added to
 # SNAPSHOT_CONSTANTS would capture the snapshot again, which this must never do).
-PREINIT := build/preinit.bin
 PREINIT_ACC := build/preinit_acc.bin
 ACC_DISK := build/acc/ACCDISK.ST
 PREINIT_INPUTS := build/preinit_inputs.txt
@@ -92,13 +167,15 @@ preinit-inputs:
 $(PREINIT_INPUTS): preinit-inputs ;
 
 $(PREINIT): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE)
-	$(PY) tools/preinit_snapshot.py --out $@
+	@$(FROM_THE_STORE) || $(PY) tools/preinit_snapshot.py --out $@
+	@$(INTO_THE_STORE)
 
 $(ACC_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/mkprg.py include/gemdos/pexec_load.h
 	$(PY) tools/accessory_disk.py --out $@
 
 $(PREINIT_ACC): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC_DISK)
-	$(PY) tools/preinit_snapshot.py --disk $(ACC_DISK) --work build/preinit_acc_snapshot --out $@
+	@$(FROM_THE_STORE) || $(PY) tools/preinit_snapshot.py --disk $(ACC_DISK) --work build/preinit_acc_snapshot --out $@
+	@$(INTO_THE_STORE)
 
 # THE SEVEN-ACCESSORY PRE-INIT MACHINE (band 5 wave 3): a THIRD capture, with seven test accessories in the drive from
 # power-on — one more than the loader takes — for the loader's at-most-six arm, five allocated PDs and the EVB supply
@@ -111,7 +188,8 @@ $(ACC7_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/m
 	$(PY) tools/accessory_disk.py --seven --out $@
 
 $(PREINIT_ACC7): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC7_DISK)
-	$(PY) tools/preinit_snapshot.py --disk $(ACC7_DISK) --work build/preinit_acc7_snapshot --out $@
+	@$(FROM_THE_STORE) || $(PY) tools/preinit_snapshot.py --disk $(ACC7_DISK) --work build/preinit_acc7_snapshot --out $@
+	@$(INTO_THE_STORE)
 
 # THE DESKTOP.INF PRE-INIT MACHINE (band 5 wave 4, ruling W4-R7): a FOURTH capture, with the blank disk plus the ROM's
 # own default DESKTOP.INF in the drive from power-on and no accessory — what the `#E` reader's FILE arm, its `#E`
@@ -125,7 +203,8 @@ $(INF_DISK): tools/accessory_disk.py $(ROM_IMAGE)
 	$(PY) tools/accessory_disk.py --inf --out $@
 
 $(PREINIT_INF): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(INF_DISK)
-	$(PY) tools/preinit_snapshot.py --disk $(INF_DISK) --work build/preinit_inf_snapshot --out $@
+	@$(FROM_THE_STORE) || $(PY) tools/preinit_snapshot.py --disk $(INF_DISK) --work build/preinit_inf_snapshot --out $@
+	@$(INTO_THE_STORE)
 
 # ---- BEGIN band 6 wave 0, slice H: THE FILES PRE-INIT MACHINE (ruling W6-R10) — a FIFTH capture -------------------------------
 # With the files disk in the drive from power-on (tools/accessory_disk.py --files: the ROM's default DESKTOP.INF, a text
@@ -139,13 +218,21 @@ $(FILES_DISK): tools/accessory_disk.py test/acc/testacc.S test/acc/acc.ld atari/
 	$(PY) tools/accessory_disk.py --files --out $@
 
 $(PREINIT_FILES): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(FILES_DISK)
-	$(PY) tools/preinit_snapshot.py --disk $(FILES_DISK) --work build/preinit_files_snapshot --out $@
+	@$(FROM_THE_STORE) || $(PY) tools/preinit_snapshot.py --disk $(FILES_DISK) --work build/preinit_files_snapshot --out $@
+	@$(INTO_THE_STORE)
 
 .PHONY: preinit-files
 preinit-files: $(PREINIT_FILES)
 test guarded gates: $(PREINIT_FILES)
 preinit-twice: $(FILES_DISK)
 # ---- END band 6 wave 0, slice H -----------------------------------------------------------------------------------------------
+
+# EVERY HATARI CAPTURE, made again under FRESH whatever build/ holds (THE STORE, above): phony then, so make runs each
+# recipe, and the recipe serves nothing.
+HATARI_CAPTURES = $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF) $(PREINIT_FILES)
+ifneq ($(FRESH_RUN),)
+.PHONY: $(HATARI_CAPTURES)
+endif
 
 .PHONY: preinit preinit-acc preinit-acc7 preinit-inf
 preinit: $(PREINIT)
@@ -156,17 +243,29 @@ preinit-inf: $(PREINIT_INF)
 # THE MASK HELD TO THE CAPTURES (`make preinit-twice`): each of the five machines booted TWICE MORE, into a directory of
 # its own — never over a capture above, which the suites and the registry read — and the two machines held equal
 # outside `preinit_snapshot.MASK`, registers and palette included (`--twice` exits non-zero and names every unmasked
-# byte). Ten captures, under a minute. A prerequisite of `gates` alone: `make test` stays the suites.
+# byte). A prerequisite of `gates` alone: `make test` stays the suites.
+# THE FIVE PAIRS RUN SIDE BY SIDE, each into its own directory, log and status (the `gates` recipe's arrangement): a
+# capture is four seconds of REAL TIME in Hatari, not of CPU, so five at once take one pair's wall — measured 8-9 s
+# against 40 s in turn, every verdict "identical" (gate-speed pass, 2026-10-15). Each log is printed after, in turn.
 PREINIT_TWICE_DIR := build/preinit_twice
 PREINIT_TWICE := $(PY) tools/preinit_snapshot.py --twice
+TWICE_RAN = > $(PREINIT_TWICE_DIR)/$(1).log 2>&1; echo $$? > $(PREINIT_TWICE_DIR)/$(1).status
+TWICE_PAIRS := blank acc acc7 inf files
 
 .PHONY: preinit-twice
 preinit-twice: $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(ACC_DISK) $(ACC7_DISK) $(INF_DISK)
-	$(PREINIT_TWICE) --work $(PREINIT_TWICE_DIR)/blank --out $(PREINIT_TWICE_DIR)/blank.bin
-	$(PREINIT_TWICE) --disk $(ACC_DISK) --work $(PREINIT_TWICE_DIR)/acc --out $(PREINIT_TWICE_DIR)/acc.bin
-	$(PREINIT_TWICE) --disk $(ACC7_DISK) --work $(PREINIT_TWICE_DIR)/acc7 --out $(PREINIT_TWICE_DIR)/acc7.bin
-	$(PREINIT_TWICE) --disk $(INF_DISK) --work $(PREINIT_TWICE_DIR)/inf --out $(PREINIT_TWICE_DIR)/inf.bin
-	$(PREINIT_TWICE) --disk $(FILES_DISK) --work $(PREINIT_TWICE_DIR)/files --out $(PREINIT_TWICE_DIR)/files.bin
+	@mkdir -p $(PREINIT_TWICE_DIR) && rm -f $(PREINIT_TWICE_DIR)/*.status
+	@( $(PREINIT_TWICE) --work $(PREINIT_TWICE_DIR)/blank --out $(PREINIT_TWICE_DIR)/blank.bin $(call TWICE_RAN,blank) ) & \
+	 ( $(PREINIT_TWICE) --disk $(ACC_DISK) --work $(PREINIT_TWICE_DIR)/acc --out $(PREINIT_TWICE_DIR)/acc.bin $(call TWICE_RAN,acc) ) & \
+	 ( $(PREINIT_TWICE) --disk $(ACC7_DISK) --work $(PREINIT_TWICE_DIR)/acc7 --out $(PREINIT_TWICE_DIR)/acc7.bin $(call TWICE_RAN,acc7) ) & \
+	 ( $(PREINIT_TWICE) --disk $(INF_DISK) --work $(PREINIT_TWICE_DIR)/inf --out $(PREINIT_TWICE_DIR)/inf.bin $(call TWICE_RAN,inf) ) & \
+	 ( $(PREINIT_TWICE) --disk $(FILES_DISK) --work $(PREINIT_TWICE_DIR)/files --out $(PREINIT_TWICE_DIR)/files.bin $(call TWICE_RAN,files) ) & \
+	 wait
+	@failed=0; for pair in $(TWICE_PAIRS); do \
+	   echo "== preinit-twice $$pair: exit status $$(cat $(PREINIT_TWICE_DIR)/$$pair.status)"; \
+	   cat $(PREINIT_TWICE_DIR)/$$pair.log; \
+	   [ "$$(cat $(PREINIT_TWICE_DIR)/$$pair.status)" = 0 ] || failed=1; \
+	 done; exit $$failed
 
 gates: preinit-twice
 
@@ -216,6 +315,7 @@ SHIPPED_JOBS   := 8
 
 .PHONY: shipped-glue
 shipped-glue: $(CAND) $(ORACLE) $(REGISTRY_READS)
+shipped-glue: | derived
 	@$(PY) bench/shipped_glue.py $(SHIPPED_GLUE)
 
 $(SHIPPED_GLUE): shipped-glue ;
@@ -235,10 +335,14 @@ $(SHIPPED_BIN): $(SHIPPED_ELF)
 # THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
 # registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
 # suites makes again — unless they are kept. This step makes them over every core and keeps them under
-# build/derived/, by content (a tree it was run for already costs it a tenth of a second); the table and both suites
+# kept/derived/ (THE STORE, above), by content (a tree it was run for already costs it a tenth of a second); the table and both suites
 # ask after it and are served. ORDER-ONLY for the table: it must come first, and must never be what rebuilds it.
+# AND FOR THE GLUE, which imports the whole registry in ONE process: cold, that import was the build's longest serial
+# stretch (65 s); made over every core first, it is 29 s and the glue's import 5 s (gate-speed pass, 2026-10-15). So the
+# shipped blob is NOT among this step's prerequisites: no derivation reads it at import (the tree's key does not name
+# it, and a warm with the blob present after one without it makes no new answer — measured, 1,978 kept either way).
 .PHONY: derived
-derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN) $(SHIPPED_BIN)
+derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
 	@$(PY) test/derived.py
 
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
@@ -259,31 +363,47 @@ test: $(SNAPSHOT) $(BENCH_TABLE) derived
 guarded: $(SNAPSHOT) $(BENCH_TABLE) derived
 
 # ---- THE GATES AS ONE COMMAND ------------------------------------------------------------------------------------------
-# `make test`, `make guarded`, `make bench` and the ROM build (`make -C atari -B all`) are run back to back before
-# every commit. They share ONE build — the libraries, both blobs, the snapshot, the table, the derivations — which is
-# made first, once; what is left is three jobs that read it and write nothing another reads (each suite its own log
-# and its own pytest cache; the ROM build its own directory), so they run SIDE BY SIDE, and `gates` ends non-zero if
-# any of them did, having printed each one's last lines. THE SAME RESULTS AS THE FOUR RUN IN TURN: the same pytest
-# command lines as kit.mk's two targets (PYTEST_ARGS / GUARDED_PYTEST_ARGS apply), over the same files.
-# What it buys is NOT three gates for the wall time of one — the two suites are the same CPU-bound work twice and
-# ten cores are ten cores — but every serial stretch overlapped and nothing built or derived twice (recreate/README.md
-# has the measured table).
+# `make guarded`, `make bench` and the ROM build (`make -C atari -B all`) are run before every commit. They share ONE
+# build — the libraries, both blobs, the snapshot, the table, the derivations — which is made first, once; what is
+# left is two jobs that read it and write nothing the other reads (the suite its own log and its own pytest cache; the
+# ROM build its own directory), so they run SIDE BY SIDE, and `gates` ends non-zero if either did, having printed each
+# one's last lines. The same pytest command line as kit.mk's `guarded` (GUARDED_PYTEST_ARGS applies, given on the
+# command line or in the environment; its default here is GATE_WORKERS, below), over the same files.
+# THE GUARDED SUITE ONLY (the user's ruling (a'), 2026-10-15): `make test` runs the same tests with the same assertions
+# over a plain bytearray candidate image where `guarded` puts PROT_NONE pages around it, so a run of both was the same
+# CPU-bound work twice. WHAT THE GATE NO LONGER PROVES: that the suite passes over the plain image as `make test` builds
+# it — an access that stays in bounds behaves the same in both. `make test` stays a target, for authors and by hand.
 GATES_DIR := build/gates
 GATE_LINES_SHOWN := 6
 GATE_PYTEST = PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(WATCHDOG_PLUGIN) -o cache_dir=$(GATES_DIR)/$(1).cache $(2) test
 GATE_RAN = > $(GATES_DIR)/$(1).log 2>&1; echo $$? > $(GATES_DIR)/$(1).status
+GATE_JOBS := guarded atari
 # The ROM build's own make, NAMED HERE and not spelt `$$(MAKE)` in the recipe: a recipe line that spells it is run by
-# `make -n` too (make's rule for recursive makes), and this one line starts both suites.
+# `make -n` too (make's rule for recursive makes), and this one line starts the suite.
 ROM_BUILD := $(MAKE) -C atari -B all
+# THE SUITE'S WORKERS, unless the command line (or the environment) names GUARDED_PYTEST_ARGS: a worker per core, as
+# many as the machine's memory holds at GATE_WORKER_BYTES each — a worker's measured peak (2.1 GB RSS, guarded alone at
+# 10 workers) and the ~0.7 GB a compressed worker takes back when it touches its pages again. 10 on the 10-core 32 GB
+# machine: summed workers' peak 11.2 GB, the compressor at 6.5 GB, no swap added (2026-10-15) — below the 5 + 5 of the
+# two suites side by side that went before (7.7 GB compressed); kit.mk's `-n auto` x 2 had been SIGKILLed.
+GATE_WORKER_BYTES := 3221225472
+# (A `define`: test/test_makefile.py's reading of this file expands what a one-line definition holds, and a shell
+# arithmetic's parentheses would stop it there.) The memory is Darwin's `sysctl -n hw.memsize`; elsewhere (Linux)
+# `getconf`'s pages times their size.
+define GATE_WORKERS_HELD
+memory=$$(sysctl -n hw.memsize 2>/dev/null || echo $$(( $$(getconf _PHYS_PAGES) * $$(getconf PAGESIZE) ))); \
+cores=$$(getconf _NPROCESSORS_ONLN); held=$$(( memory / $(GATE_WORKER_BYTES) )); echo $$(( held < 1 ? 1 : (held < cores ? held : cores) ))
+endef
+GATE_WORKERS := $(shell $(GATE_WORKERS_HELD))
+GATE_GUARDED_ARGS := $(if $(filter command environment,$(firstword $(origin GUARDED_PYTEST_ARGS))),$(GUARDED_PYTEST_ARGS),-n $(GATE_WORKERS))
 
 .PHONY: gates
 gates: $(CAND) $(ORACLE) $(ASM_BIN) $(SNAPSHOT) $(BENCH_TABLE) derived
 	@rm -rf $(GATES_DIR) && mkdir -p $(GATES_DIR)
-	@( $(call GATE_PYTEST,test,$(PYTEST_ARGS)) $(call GATE_RAN,test) ) & \
-	 ( $(call GATE_PYTEST,guarded,$(GUARDED_PYTEST_ARGS) -p recreate_kit.guarded_image) $(call GATE_RAN,guarded) ) & \
+	@( $(call GATE_PYTEST,guarded,$(GATE_GUARDED_ARGS) -p recreate_kit.guarded_image) $(call GATE_RAN,guarded) ) & \
 	 ( $(ROM_BUILD) $(call GATE_RAN,atari) ) & \
 	 wait
-	@failed=0; for gate in test guarded atari; do \
+	@failed=0; for gate in $(GATE_JOBS); do \
 	   echo "== $$gate: exit status $$(cat $(GATES_DIR)/$$gate.status) ($(GATES_DIR)/$$gate.log)"; \
 	   tail -n $(GATE_LINES_SHOWN) $(GATES_DIR)/$$gate.log; \
 	   [ "$$(cat $(GATES_DIR)/$$gate.status)" = 0 ] || failed=1; \

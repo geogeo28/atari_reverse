@@ -2254,8 +2254,33 @@ def _vet_stands_where_it_is_continued_from(boot, at):
 # ---- END band 6 wave 0, slice H -----------------------------------------------------------------------------------------------
 
 
-@derived.kept
 def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watches=None):
+    """`_continue`, KEPT — ITS REFUSAL TOO (`_continued_or_its_refusal`): raises `Refused` with the reason the run
+    was refused for when it was made."""
+    answer = _continued_or_its_refusal(boot, received, budget, until, at, watches)
+    if isinstance(answer, KeptRefusal):
+        raise Refused(answer.reason)
+    return answer
+
+
+# A REFUSAL IS AN ANSWER OF THE ARGUMENTS as much as a machine is: every `Refused` of a continuation is decided by the
+# machine, the reception, the budget and the stops. The callers that PROBE with one (`aes_deskdir.in_place`: the hop
+# to the next trap, to a named stop, to the return — most of them refused) asked the ROM for the same refusals in
+# every process, and a run refused at its budget is CONTINUED_INSNS instructions (measured, gate-speed pass
+# 2026-10-15: 35 refused runs, 127 s, made again in each desk_show_file case). So the refusal is kept, its reason with
+# it; any other exception keeps nothing, as before.
+KeptRefusal = namedtuple("KeptRefusal", "reason")
+
+
+@derived.kept
+def _continued_or_its_refusal(boot, received, budget, until, at, watches):
+    try:
+        return _continue(boot, received, budget, until, at, watches)
+    except Refused as refused:
+        return KeptRefusal(str(refused))
+
+
+def _continue(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watches=None):
     """`boot` — a machine at its idle — CONTINUED (above): what it `received` taken through the ROM's interrupt
     handlers, then the run to its next idle. `until`, `at` (band 6 wave 0): A NAMED STOP the run ENDS AT instead of an
     idle, and the one the boot STANDS AT instead of an idle (`_vet_stands_where_it_is_continued_from`'s section).
@@ -2303,6 +2328,9 @@ def continued(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watch
                          writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed),
                          drive_b=floppy.held_in_b(),
                          devices=devices_answered(floppy, streams[1], run.printed), printed=bytes(run.printed))
+
+
+continued.derive = _continue            # the run made here and now, never kept (`kept`'s own attribute, as it was)
 
 
 # ---- A MACHINE WHOSE SCREEN MANAGER IS OURS, BESIDE THE ONE THE ROM BOOTED: what the two differ in, BY NATURE ---------------

@@ -1696,6 +1696,88 @@ arrival — no row, no verdict.
 | shared record-and-refuse hook (`test/address_hook.py`) | **DONE** 2026-09-25: one `AddressHook` class per `.so` door (`recreate_call_vector`, `recreate_call_routine`, `recreate_call_gemdos_handler`, `recreate_call_disk_vector`), bound through `bind_pointer`: dispatch by key, a pass that opens and CLOSES around each candidate run, first-pass-only `calls`, the `CALLS_MAX` cap, and `staged()` — the one lifecycle, which refuses and REPORTS anything unstaged or outside a pass. Every guarantee pinned by `test/test_address_hook.py` (15/15 mutations killed). A new door is a new instance, never a copy. Since 2026-10-07 (AES band 4 wave 2) it records WHATEVER an effect raises — a `pytest.fail` / `pytest.skip` inside a hook raises a `BaseException` that is no `Exception`, which a ctypes callback prints and drops: the case passed GREEN with the effect's work done and its refusal lost — answers it as a refused call, and `staged()` fails the case by the effect's own words (three RED tests) |
 
 
+### Harness — gate speed (2026-10-15/16: parts 1 and 2, the review, the snapshot-flake investigation, the fix pass)
+
+`make gates` from an EMPTY build/ went from **1,346 s** (test + guarded side by side, `-n 5` each, 30,803 tests) to
+**781 s with `FRESH=1`** and **398 s on a warm store** (30,818 passed / 8 skipped in every run of this pass).
+
+**The levers and what each saved (part 1, measured from empty, 1,346 → 1,044 s):**
+- L1 — a continuation's REFUSAL is kept with its reason (`aes_boot.KeptRefusal`, `_continued_or_its_refusal`): the
+  desk_show_file cases had made up to 35 refused 1.5M-instruction probes again in every process, 11 cases at 71–210 s,
+  ≈1,270 s per suite; served, one case is 2.3 s. Pinned by
+  `test_aes_boot.py::test_a_continuation_s_refusal_is_kept_with_its_reason_and_by_every_argument`.
+- L2 — the five preinit-twice pairs run side by side (40 → 9 s).
+- L3 — the derivations made over every core before the shipped glue's one-process registry import (65 + 9 → 5 + 33 s).
+- L4 — `GATE_WORKERS` (below) instead of `-n auto` twice, which had been SIGKILLed.
+- L5 — the disks test no longer caches 200 MB of floppy images in one worker (`accessory_disk_of.__wrapped__`).
+
+**The guarded-only gate (the user's ruling, part 2):** `make gates` runs the GUARDED suite alone beside the ROM build;
+`make test` (the same tests over the plain bytearray image) stays a target. On `GATE_WORKERS` = min(cores, memory /
+3 GiB), at least one — 10 on this 10-core 32 GB machine (summed worker RSS peak 11.2 GB, no swap added). Memory is
+Darwin's `sysctl -n hw.memsize`, `getconf` pages × size elsewhere. `test_makefile` pins the formula exactly.
+
+**The store (the user's ruling, part 2; this pass hardened it):** `kept/` beside build/, gitignored, left by
+`make clean`.
+- `kept/captures/<key>/` — each of the six Hatari captures and its `.sha256`. THE KEY: sha256 of the target name and
+  the CONTENT of its rule's prerequisites, the capture tools' workspace imports (`st_build.py`, `hatari_headless.py`,
+  `tools/addrs.py`), THE EMULATOR (the app-bundle binary Homebrew's `hatari` script execs — not the script), the
+  user's `hatari.cfg` (where it exists; no capture tool passes `-c`) and the kit's oracle. A `touch` is served; an edit
+  is captured again.
+- THE KEY IS READ ONCE, BEFORE THE CAPTURE (`$@.key`): a capture whose key moved while it was made (an edit during
+  its 4–16 s) is neither kept nor left in build/, and the recipe fails (the review's race F1; its repro
+  `scratchpad/gatespeed/FIX/race/repro.log`: "part now: two; in build: two", nothing stale served).
+- A served capture is never copied back; a kept one is replaced by RENAME (a reader keeps the whole of the old bytes);
+  an entry its digest does not match is not served but captured again.
+- `kept/derived/` — test/derived.py's ROOT (`AES_DERIVED_ROOT` overrides it).
+
+**FRESH:** `make gates FRESH=1` makes every Hatari capture again WHATEVER build/ holds (the six are phony then), each
+replacing its kept entry, and derives into `build/derived/` under a tree no run made before. `FRESH=0` (or empty) is
+not FRESH. **What a default gate no longer proves:** that the suite holds over FRESH captures (preinit-twice still boots
+all five pre-init machines twice and holds the mask), nor that every kept answer is made from nothing (each process
+still re-makes its sample, 40 per gate, held equal). Use FRESH at a band's boundary.
+
+**The snapshot flake — root cause (snapflake, 2026-10-15) and the vet.** One from-empty capture in part 2 left the
+screen manager parked where no history of ours leaves it (test_aes_takeover 74 red, bench/tier3.py refused).
+VERIFIED: Hatari's FLOPPY is not deterministic — two boots armed at power-on agree register for register up to the
+first floppy wait and differ from it on; with no disk they are bit-identical (INFERENCE: a random rotational phase at
+start). The start-up's interleaving with the interrupts leaves residue in DEAD SLOTS inside the screen manager's LIVE
+frames, which `aes_takeover.state_of` compares byte for byte: class A, ev_multi's never-written `-8(a6)` QPB
+(`$a85a..$a861`); class B, the slot over the parked `rte` frame (`$a828`). **3 of 54 captures (~5.5%) bad.** No stop
+point can fix it (the residue is settled at VBL ~100–700). A second, independent flake: `b VBL > 900` fired inside an
+IPL-7 section 1 in 20 (`$cc46`); the stop is now `&& pc = ($70).l`, the VBL handler's entry (0 of 30 since).
+`tools/vet_snapshot.py` (the suite's own premise, ~0.6 s) vets every snapshot — made (up to `SNAPSHOT_ATTEMPTS` = 4
+captures, then the build stops and nothing is kept) AND served (a refused entry is captured again and replaced).
+The review's F4 (keep captures from a green gate only) is NOT taken: the vet covers the one bad class known; it is the
+guard to add if another appears.
+
+**The fix pass found and fixed one defect of the snapflake patch on the way:** the snapshot rule's order-only
+`$(PREINIT)` was expanded before `PREINIT` was defined (empty), so a from-empty build vetted with no pre-init machine
+and failed every attempt (`scratchpad/gatespeed/FIX/g0_fresh_failed_preinit_order.log`). `PREINIT` is defined beside
+`SNAPSHOT` now, and `test_the_snapshot_s_vet_has_what_it_reads` reads MAKE'S OWN DATABASE (`make -p -q`), which the
+text parse could not see.
+
+**Timings of this pass, each from an EMPTY build/, alone on the machine, `-n 10`:**
+
+| run | build + derive | suite | wall | captures |
+|---|---|---|---|---|
+| `make gates FRESH=1` | 145 s | 635 s | 781 s | all six made, the snapshot once (no retry) |
+| `make gates`, the first after it (captures served, derivations cold for them) | 106 s | 634 s | 740 s | all six served, snapshot vetted |
+| `make gates`, store warm | 74 s | 323 s | 398 s | all six served |
+
+**Every mutant of the gate-speed change, with its verdict** (part 2's 7, the review's 6, this pass's 16; this pass's
+logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
+- Part 2 — all KILLED: the plain test run re-added; the snapshot's INTO dropped; the key without hatari_headless;
+  the key without `$^`; FRESH served; FRESH not exporting the root; derived.ROOT in build/.
+- Review — M1 key by names: KILLED. M2 FRESH does not replace: KILLED. M3 INTO in place: SURVIVED then, **KILLED now**
+  (rename pin). M4 the test run re-added: KILLED. M5 memory share halved: SURVIVED then, **KILLED now** (exact formula).
+  M6 refusal key drops `until`: killed then only by a consumer battery (test_desk_disk), **KILLED now by the L1 test**.
+- This pass — all 16 KILLED: served snapshot unvetted; key recomputed at INTO (the race, as the review found it);
+  no key re-check at INTO; served capture copied back; M3; digest not checked; FRESH not phony; FRESH=0 as FRESH;
+  hatari.cfg not keyed; key reads the wrapper script; M5; the vet's PREINIT dropped from the rule's text;
+  PREINIT defined below the rule again (the patch's own order: make's database pin); M6; a refusal no longer kept
+  (`except KeyError`); the vet keeps everything.
+- Not pinned: the Linux `getconf` fallback of GATE_WORKERS (no Linux machine here).
+
 ## Wave log
 
 * **Entries before AES band 5 wave 3 are in `STATUS_ARCHIVE.md`** (verbatim history, not maintained). Below: AES band 5 wave 3
@@ -5872,9 +5954,20 @@ arrival — no row, no verdict.
 
 ## Suite
 
-`make test`: **30,803 passed**, 8 skipped (the `RUN_SLOW`-gated placement search; Crawio's read arm, a parameter its
-own case drives; and, since slice C, the six `RUN_SLOW` chunks of the dispatcher's-own-calls rule over every other
-row), **0 xfailed**, 0 failed.
+`make guarded` (the gate; `make test` collects the same ids): **30,818 passed**, 8 skipped (the `RUN_SLOW`-gated
+placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
+of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- THE GATE-SPEED CHANGE — PARTS 1 AND 2, ITS REVIEW AND ITS FIX PASS (2026-10-15/16; harness, tests and docs only: no
+  source, no row; "Harness — gate speed" above): THREE `make gates` from an EMPTY build/, alone on the machine, each
+  **30,818 passed / 8 skipped**, rc 0 — `FRESH=1` 781 s, the next default 740 s, store warm 398 s
+  (`scratchpad/gatespeed/FIX/g{1_fresh,2_default,3_warm}.{log,info,guarded.log}`). The guarded suite IS the gate now
+  (the user's ruling), so this count is `make guarded`'s over the same ids `make test` collects; `make test` itself was
+  not run. RE-SUMMED, ITEMISED BY FILE against slice M16's fix pass's own collection (30,826 = 30,818 + 8 skipped,
+  against 30,811; `pytest --collect-only`, 289 files then and 290 now: `scratchpad/b6/M16/FIX/collect_perfile.txt`,
+  `scratchpad/gatespeed/FIX/collect_perfile.txt`): +15 — `test_makefile.py` 16 → 27 (part 1's +1, part 2's +4, the fix
+  pass's +6: the emulator and hatari.cfg in the key, FRESH whatever build holds, the race, served-not-copied-back with
+  the rename, the digest, the vet's prerequisite by make's database), `test_aes_boot.py` 545 → 546 (L1's refusal kept),
+  `test_vet_snapshot.py` NEW, 3; no file lost a test.
 - BAND 6 SLICE M16 — THE ORACLE'S MOVE16 FIX, WITH ITS FIX PASS (2026-10-15; one author alone in the tree on `2833ced`,
   one review, then one fix pass alone in the tree — the kit's oracle traps `$F620..$F627` on its 68000, the stand-in
   retired; THE KIT AND TESTS ONLY: every object, both blobs, `libtos102us.so`, the table's lines, `lineftable.S` and the
