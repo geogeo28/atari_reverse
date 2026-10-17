@@ -13,6 +13,7 @@ dos_lseek ($fe3a9a), dos_sdta ($fe3c06), dos_close ($fe3c0a): `src/aes/gemdosif.
 `test/aes_shell.py` says how each `trap #1` is answered: REAL GEMDOS over the staged disk for the paths a disk can
 take, the SCRIPTED trap for the arms only a GEMDOS answer no disk gives reaches, and for every Tier 3 row.
 """
+import ctypes
 import struct
 
 import pytest
@@ -20,15 +21,18 @@ import pytest
 from harness import BASE_IMAGE, addrs, emu
 
 import aes
+import aes_fslib
+import aes_gemdosif
 import aes_shell as sh
 import case
 import fs_dir
+import gemdos
 import gemdos_fs as fs
 import gemdos_process as process
 import vdi
 import vdi_helpers
 from case import merge_pokes
-from opcodes import DROP_STACK_LONG
+from opcodes import DROP_STACK_BYTES, DROP_STACK_LONG, PUSH_WORD_IMMEDIATE, RTS, TRAP_GEMDOS
 
 SHELL = sh.SHELL
 SEPARATOR, DRIVE_SEPARATOR, PATH_SEPARATOR = SHELL["SH_DIRECTORY_SEPARATOR"], SHELL["SH_DRIVE_SEPARATOR"], SHELL["SH_PATH_SEPARATOR"]
@@ -447,6 +451,57 @@ def test_the_scripted_handler_records_what_the_rom_s_glue_traps_with():
     final, _writes, regs = emu.run(vdi.make_image(pokes), addrs.AES_ROM_DOS_CLOSE, {})
     assert sh.calls(final) == [(addrs.GEMDOS_FCLOSE_FN, sh.frame(("w", 9)))]
     assert regs["d0"] == 5
+
+
+# EVERY FUNCTION THE SCRIPTED TRAP MUST TELL APART — band 5's seven, and the desk's eleven (ruling R8: F2's Dsetdrv,
+# Dsetpath, Dgetdrv, Dgetpath, Fdelete, Fcreate, Mfree; F3's Fdatime, Dcreate, Ddelete, Fsnext) — with its frame's own
+# bytes as the tree's other tables spell them: the GEMDOS leaves' shapes, band 5's recorder, the selector's replay.
+TOLD = {name: getattr(addrs, f"GEMDOS_{name.upper()}_FN") for name in (
+    "Fsetdta", "Fsfirst", "Fopen", "Fread", "Fseek", "Fclose", "Malloc",
+    "Dsetdrv", "Dsetpath", "Dgetdrv", "Dgetpath", "Fdelete", "Fcreate", "Mfree",
+    "Fdatime", "Dcreate", "Ddelete", "Fsnext")}
+OWN_FRAME_BYTES = {**{leaf.selector: struct.calcsize(leaf.frame) for leaf in fs.LEAVES}, **aes_gemdosif.FRAME_BYTES,
+                   **aes_fslib.ARGUMENT_BYTES}
+WORD_BYTES = aes.WORD_BYTES
+CALLER_S_STACK = 0xA5A5                 # each word above a frame: what a handler recording past the frame takes in
+ABOVE_THE_FRAME = struct.pack(">H", CALLER_S_STACK) * (sh.RECORDED_BYTES // WORD_BYTES)
+TOLD_ANSWER = 0x1234_5678
+
+
+def _trap_caller(function, own):
+    """A caller of `trap #1` with `function` over the frame `own`, RECORDED_BYTES of CALLER_S_STACK above it."""
+    words = [own[at:at + WORD_BYTES] for at in range(0, len(own), WORD_BYTES)]
+    pushes = ([struct.pack(">H", CALLER_S_STACK)] * (sh.RECORDED_BYTES // WORD_BYTES) + words[::-1]
+              + [struct.pack(">H", function)])
+    return (b"".join(PUSH_WORD_IMMEDIATE + word for word in pushes) + TRAP_GEMDOS
+            + DROP_STACK_BYTES + struct.pack(">h", len(pushes) * WORD_BYTES) + RTS)
+
+
+@pytest.mark.parametrize("function", TOLD.values(), ids=TOLD)
+def test_the_scripted_trap_records_each_told_frame_whole_and_nothing_past_it(function):
+    """The 68000 handler under a caller of each function, and its host twin over the same frame: the function word,
+    the frame's own bytes, zeros to the entry's end — no word of the caller's stack above a shorter frame — and the
+    script's answer."""
+    own = bytes(range(0x11, 0x11 + OWN_FRAME_BYTES[function]))
+    recorded = [(function, own.ljust(sh.RECORDED_BYTES, b"\0"))]
+    pokes = merge_pokes(sh.scripted_pokes([TOLD_ANSWER]), {sh.SPEC_AT: _trap_caller(function, own)})
+    final, _writes, regs = emu.run(vdi.make_image(pokes), sh.SPEC_AT, {})
+    assert (sh.calls(final), regs["d0"]) == (recorded, TOLD_ANSWER)
+    staged = vdi.make_image(merge_pokes(sh.scripted_pokes([TOLD_ANSWER]), {sh.SPEC_AT: own + ABOVE_THE_FRAME}))
+    buf = ctypes.cast((ctypes.c_uint8 * len(staged)).from_buffer(staged), ctypes.POINTER(ctypes.c_uint8))
+    twin = sh.SCRIPTED_HANDLERS[gemdos.rom_handler(function)]
+    assert (twin(buf, sh.SPEC_AT, len(own)), sh.calls(staged)) == (TOLD_ANSWER, recorded)
+
+
+# ...and A FUNCTION IT IS NOT TOLD, recorded RECORDED_BYTES deep whatever lies there, as the chain of compares did:
+# one inside the size table (Mshrink, which no row here makes) and a function word past it (the `bcc.w`), which no
+# GEMDOS of this ROM has. Only the 68000 side: the twin is bound for the told functions alone.
+@pytest.mark.parametrize("function", (addrs.GEMDOS_MSHRINK_FN, sh.TOLD_BOUND), ids=("inside the table", "past it"))
+def test_the_scripted_trap_records_an_untold_function_recorded_bytes_deep(function):
+    assert function not in sh.FRAME_BYTES
+    pokes = merge_pokes(sh.scripted_pokes([TOLD_ANSWER]), {sh.SPEC_AT: _trap_caller(function, b"")})
+    final, _writes, regs = emu.run(vdi.make_image(pokes), sh.SPEC_AT, {})
+    assert (sh.calls(final), regs["d0"]) == ([(function, ABOVE_THE_FRAME)], TOLD_ANSWER)
 
 
 # ---- sh_find over REAL GEMDOS -----------------------------------------------------------------------------------------

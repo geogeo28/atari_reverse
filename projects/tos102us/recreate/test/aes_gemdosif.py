@@ -10,11 +10,11 @@ TWO WAYS TO ANSWER A `trap #1`, `test/aes_shell.py`'s two (which says why Tier 3
     module's band that RECORDS each call — its function word and ITS FRAME'S OWN BYTES — in a ledger and answers the
     next longword of a script; the host twin is the same effect over the candidate's image.
 
-WHY NOT `aes_shell`'s HANDLER: it tells apart the frames of the file calls; these are other functions with other
-frames — Dgetdrv's is the function word ALONE, and what lies above it on the ROM's stack is its caller's (a return
-address, an Alcyon slot), which no C build reproduces: recorded, it would differ by nature. So this handler records
-`FRAME_BYTES[function]` bytes and zeros after them, and a new compare in the shell's stub would move every priced row
-over it. The tables are `aes_shell.Table`'s, the layout helper `aes_shell.laid_out`.
+WHY NOT `aes_shell`'s HANDLER: its entry is ten bytes deep, Fread's, and this module's are not — Pexec's frame is
+fourteen bytes, a recorder here can also record the longwords the glue PARKS at each call (`parked`), and the BIOS's
+and the XBIOS's traps have recorders of their own. Like the shell's, it records `FRAME_BYTES[function]` bytes and
+zeros after them: what lies above a shorter frame on the ROM's stack is its caller's (a return address, an Alcyon
+slot), which no C build reproduces. The tables are `aes_shell.Table`'s, the layout helper `aes_shell.laid_out`.
 
 NOTHING HERE POISONS, for `aes_shell`'s two reasons (real GEMDOS chases what it stores; the handler stores back the
 ledger's and the script's pointers). What stands in is staging: the glue's four words STALE.

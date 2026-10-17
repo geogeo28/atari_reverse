@@ -163,7 +163,23 @@ def test_each_named_stop_has_its_address_on_our_shore():
 # ---- WHO RAN: the declared spans -------------------------------------------------------------------------------------------------------
 # A chain each of `aes_desk.ROM_TEXT_UNDER_ROM_CALLERS` runs in on our shore: no span is declared that nothing runs.
 RAN_IN = {desk.LMUL: "file: shown, a key at its end"}      # (unit O's five spans went with its flip: `aes_desk`'s note)
-BAND_6_FLIPPED = 56                     # band 6's routines whose entry of the shipped blob's table is ours (slice F1: O + D, three held)
+# band 6's routines whose entry of the shipped blob's table is ours: slice F1's 56 (O + D, three held) and, since slice
+# F2, each group's own count on a line inside its own block (no two authors edit one line; the pin is the sum)
+BAND_6_FLIPPED_AT_F2 = {
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    "G1": 0,
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    "G2": 0,
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    "G3": 0,
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    "G4": 0,
+    # ---- end of group G4's ----
+}
+BAND_6_FLIPPED = 56 + sum(BAND_6_FLIPPED_AT_F2.values())
 
 
 def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text_they_reach_each_run():
@@ -185,7 +201,16 @@ def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text
 # for the routines NO WALKED CHAIN REACHES ON OUR SHORE, by name with why (exact both ways).
 NOT_ENTERED_ON_OUR_SHORE = {
     "AES_ROM_GSX_HARDCOPY": "unit O's: no chain answers Print Screen's alert (its chain raises it and stops), so nothing calls "
-                            "the hardcopy — Tier 1 holds it over an argument class (`test_desk_leaves.py`)"}
+                            "the hardcopy — Tier 1 holds it over an argument class (`test_desk_leaves.py`)",
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- end of group G4's ----
+}
 
 
 @functools.cache
@@ -230,8 +255,11 @@ INI_TREE = 0xfe0b6e
 ROM_RAM_S_ARM_RETURN = 0xfee74a         # rom_ram's desk arm, past its Line-F call of ini_tree: `addq.l #4,sp` (8 cycles)
 ADDQ_L_AN_CYCLES = 8
 RUN_UNDER_BANDS_0_TO_5 = {
+    # ---- band 6 slice F2, group G1 (units I, L): ini_tree is unit I's — this entry leaves at its flip ----
     INI_TREE: Under("rom_ram's desk arm (the desktop sized, deskmain's second pass): ini_tree, the desk's tree 0", 158,
-                    ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES)}
+                    ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES),
+    # ---- end of group G1's ----
+}
 # TWO LEFT THE CLASS AT THEIR FLIP (band 6 slice F1): dos_write `$fe3a7c`, unit O's — band 5's dos_read `$fe3a78` entered
 # its body by `moveq #$3f,d1; bra`, 124 a pass, on the ROM's shore alone — and unit D's rsrc_gaddr binding `$fde354`,
 # 218 a pass under ini_tree's. A routine no longer the ROM's is held by who-ran (no cycle of its ROM span on our shore).
@@ -514,6 +542,9 @@ def test_a_boot_s_devices_are_vetted_as_a_continuation_s():
 
 
 # ---- THE DEPTHS, PER CHAIN: `{chain: (PD0's, PD1's, the dispatcher's, the userdef stack's)}` in bytes, our shore ---------------------------
+# (BAND 6 SLICE F2: a flip moves chains of every group at once, so DEPTHS — and DEEPEST_PD0 — are NOT per-group
+# lines: a group's author hands back its partial flip's rows, and the ORCHESTRATOR'S INTEGRATION re-derives the
+# table over the merged flip, as tier3.txt and lineftable.S are made again, never hand-merged.)
 DEPTHS = {
     'Desk > Desktop Info, Return': (1104, 668, 254, 0),
     'Options > Set Preferences, Return': (1170, 668, 254, 0),

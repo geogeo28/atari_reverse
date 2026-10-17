@@ -4709,6 +4709,16 @@ ROWS_THAT_SWITCH = {
     "aes_desk_shel_put": 2, "aes_desk_shel_write": 2, "aes_desk_wait": 2, "aes_desk_wind_calc": 2,
     "aes_desk_wind_close": 2, "aes_desk_wind_create": 2, "aes_desk_wind_delete": 2, "aes_desk_wind_find": 4,
     "aes_desk_wind_get": 5, "aes_desk_wind_open": 2, "aes_desk_wind_set": 6, "aes_desk_wind_update": 3,
+    # band 6 slice F2: wave 1b's routines that yield through a binding of unit D — every row at an arrival of each,
+    # one block a group
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- end of group G4's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
     # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
@@ -4753,7 +4763,16 @@ BY_NATURE_CENSUS = {
                            # since band 6 slice F1, the ten desk bindings' rows that declare it (`test_desk_bind.X_FLAG_DIFFERS`)
                            THE_DECLARED_X_FLAG: {"aes_desk_free": 1, "aes_desk_rsrc_free": 1, "aes_desk_objc_find": 3,
                                                  "aes_desk_rsrc_gaddr": 2, "aes_desk_shel_write": 1, "aes_desk_wind_find": 3,
-                                                 "aes_desk_wind_get": 1},
+                                                 "aes_desk_wind_get": 1,
+                                                 # ---- band 6 slice F2, group G1 (units I, L) ----
+                                                 # ---- end of group G1's ----
+                                                 # ---- band 6 slice F2, group G2 (units A, K, J) ----
+                                                 # ---- end of group G2's ----
+                                                 # ---- band 6 slice F2, group G3 (units B, G) ----
+                                                 # ---- end of group G3's ----
+                                                 # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+                                                 # ---- end of group G4's ----
+                                                 },
                            # (...and under the opcode switch's arms, `test_aes_gemsuper.py`: a playback's timer record
                            # at two speeds, two recordings' sleep, evnt_timer and two evnt_multi with a timer;
                            # appl_read's read, evnt_mesag's and two evnt_multi that ask a message — one of them at the
@@ -5332,6 +5351,17 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_desk_form_alert": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
     "aes_desk_form_error": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME", "AES_FM_ERROR_CODE"),
     # ---- end of slice F1's ----
+    # ---- band 6 slice F2 (N14): wave 1b's routines that are door users, one block a group — what each holds where the
+    # desk is parked (the group's frames held across a binding's wait: 1b's AES_DESK_WIN_FRAME, AES_DESK_VIEW_FRAME,
+    # AES_APP_TRAN_BITBLK, G3's and G4's) ----
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- end of group G4's ----
 }
 A_SLOT_PER_PROCESS = ", process "
 

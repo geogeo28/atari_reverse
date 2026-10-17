@@ -21,7 +21,7 @@ TWO WAYS TO ANSWER A `trap #1`, and a case picks the one whose surface it needs:
 THE LEDGER RECORDS A FRAME AS ITS CALLER PUSHED IT, and the frames are not one shape: the word above Fclose's handle,
 or above Fsetdta's or Malloc's longword, is its caller's stack — Alcyon's argument slot on the ROM's side, which no C
 build reproduces. So an entry is the function word and TEN bytes — the frame's own, zero-padded — through a 68000
-stub that branches on the functions whose frame is shorter (`FRAME_BYTES`). Ten is dos_read's, the widest: every frame
+stub that looks each function's frame size up in a table (`FRAME_BYTES`). Ten is dos_read's, the widest: every frame
 here is recorded whole, so the ledger pins each target shape (`gemdos/gemdos.h`) completely — a scripted read moves no
 data, so its buffer is on the surface through the ledger alone.
 
@@ -50,8 +50,8 @@ import isr
 import vdi
 import vdi_helpers
 from case import merge_pokes
-from opcodes import (BEQ_S, BRA_S, CLR_W_A0_POSTINC, CMPI_W_STACK, MOVE_L_A0_POSTINC_D0, MOVE_W_STACK_TO_A0_POSTINC, RTE,
-                     RTS)
+from opcodes import (BCC_W, BRA_S, CLR_W_A0_POSTINC, CMP_W_IMMEDIATE_D0, JMP_PC_INDEX, MOVE_B_PC_INDEX_D0,
+                     MOVE_L_A0_POSTINC_D0, MOVE_W_STACK_D0, MOVE_W_STACK_TO_A0_POSTINC, RTE, RTS)
 from vdi_helpers import FRAME_WORDS_AT, MOVEA_L_ABSOLUTE_A0, POP_A0, PUSH_A0, STORE_A0_ABSOLUTE
 
 WORD_BYTES = aes.WORD_BYTES
@@ -107,9 +107,9 @@ ANSWER_AT = ENVIRONMENT_AT + TEXT_BYTES         # a longword sh_envrn answers th
 LOG_AT = ANSWER_AT + LONG_BYTES
 ANSWER_AND_LOG_BYTES = 0x10                     # the two longwords, and room
 HANDLER_AT = ANSWER_AT + ANSWER_AND_LOG_BYTES   # the scripted trap's handler, then sh_find's two routines
-LEDGER_OFFSET = 0x1C0
+LEDGER_OFFSET = 0x230
 LEDGER_AT = BAND_AT + LEDGER_OFFSET             # ...the ledger's pointer, then its entries
-SCRIPT_OFFSET = 0x250
+SCRIPT_OFFSET = 0x2C0
 SCRIPT_AT = BAND_AT + SCRIPT_OFFSET             # ...and the script's pointer, then its answers
 LEDGER_ENTRIES = 11
 ENTRY_BYTES = 2 * WORD_BYTES + 2 * LONG_BYTES   # the function, then ten bytes of its frame: dos_read's whole
@@ -281,15 +281,31 @@ def run_real(name, arguments, pokes=None, **kwargs):
 # How many bytes of a frame the ledger records, by function: ten — all of Fread's: its handle, count and buffer —
 # unless the frame is shorter.
 RECORDED_BYTES = ENTRY_BYTES - WORD_BYTES
+# Band 5's own seven, then the desk's — band 6's F2 (Dsetdrv, Dsetpath, Dgetdrv, Dgetpath, Fdelete, Fcreate, Mfree)
+# and F3 (Fdatime, Dcreate, Ddelete, Fsnext): ruling R8, the table moves once. Dgetdrv and Fsnext push no argument: a
+# frame of nothing, the function word alone recorded.
 FRAME_BYTES = {addrs.GEMDOS_FCLOSE_FN: WORD_BYTES, addrs.GEMDOS_FSETDTA_FN: LONG_BYTES,
                addrs.GEMDOS_MALLOC_FN: LONG_BYTES, addrs.GEMDOS_FSFIRST_FN: LONG_BYTES + WORD_BYTES,
-               addrs.GEMDOS_FOPEN_FN: LONG_BYTES + WORD_BYTES, addrs.GEMDOS_FSEEK_FN: LONG_BYTES + 2 * WORD_BYTES}
-SCRIPTED_FUNCTIONS = (addrs.GEMDOS_FSETDTA_FN, addrs.GEMDOS_FSFIRST_FN, addrs.GEMDOS_FOPEN_FN, addrs.GEMDOS_FREAD_FN,
-                      addrs.GEMDOS_FSEEK_FN, addrs.GEMDOS_FCLOSE_FN, addrs.GEMDOS_MALLOC_FN)
+               addrs.GEMDOS_FOPEN_FN: LONG_BYTES + WORD_BYTES, addrs.GEMDOS_FSEEK_FN: LONG_BYTES + 2 * WORD_BYTES,
+               addrs.GEMDOS_FREAD_FN: RECORDED_BYTES,
+               addrs.GEMDOS_DGETDRV_FN: 0, addrs.GEMDOS_FSNEXT_FN: 0, addrs.GEMDOS_DSETDRV_FN: WORD_BYTES,
+               addrs.GEMDOS_DSETPATH_FN: LONG_BYTES, addrs.GEMDOS_FDELETE_FN: LONG_BYTES, addrs.GEMDOS_MFREE_FN: LONG_BYTES,
+               addrs.GEMDOS_DCREATE_FN: LONG_BYTES, addrs.GEMDOS_DDELETE_FN: LONG_BYTES,
+               addrs.GEMDOS_DGETPATH_FN: LONG_BYTES + WORD_BYTES, addrs.GEMDOS_FCREATE_FN: LONG_BYTES + WORD_BYTES,
+               addrs.GEMDOS_FDATIME_FN: LONG_BYTES + 2 * WORD_BYTES}
+SCRIPTED_FUNCTIONS = tuple(FRAME_BYTES)
 # The handler's instructions: `move.l a0,-(sp)` puts the trap's frame four bytes up — its SR and PC, then the caller's
 # function word (`vdi_helpers.FRAME_WORDS_AT`, the same stub's) and arguments.
 ARGUMENTS_IN_FRAME = FRAME_WORDS_AT + WORD_BYTES
 BRANCH_BYTES = WORD_BYTES               # a `.s` branch, its displacement in its own word
+# The handler looks each function's frame up in a SIZE TABLE — a byte per function word below TOLD_BOUND, the offset
+# of the recording block for its frame's size — so every call pays the same dispatch whichever its function, and
+# telling one more function moves no other row's cycles (a chain of compares would: each is paid by every function
+# behind it). A function word at or past the bound is recorded RECORDED_BYTES deep, as an untold one below it is.
+TOLD_BOUND = max(FRAME_BYTES) + 1
+assert TOLD_BOUND <= 0x100, "below the bound d0.w's high byte is clear, so the table's byte is the whole index"
+FRAME_SIZES = range(0, RECORDED_BYTES + WORD_BYTES, WORD_BYTES)     # a block per size, none to Fread's: widest last
+D8_REACH = 0x80                         # an extension word's d8 is a signed byte: forward, at most 0x7f
 
 
 # ---- THE TWO TABLES OF A RECORDING TRAP HANDLER, spelt once ---------------------------------------------------------------
@@ -382,26 +398,58 @@ def laid_out(pieces):
     return code
 
 
+def _recording_block(size):
+    """A frame of `size` bytes into the ledger: its words, then the zeros that pad its entry to RECORDED_BYTES."""
+    words = [vdi.pack_words(MOVE_W_STACK_TO_A0_POSTINC, ARGUMENTS_IN_FRAME + at) for at in range(0, size, WORD_BYTES)]
+    return b"".join(words) + vdi.pack_words(CLR_W_A0_POSTINC) * ((RECORDED_BYTES - size) // WORD_BYTES)
+
+
+def _recording_blocks():
+    """A block per frame size, the shortest first, each but the widest ending in a `bra.s` to what follows them all —
+    the widest, laid last, falls into it: `{size: its block's offset}`, and the blocks laid."""
+    offsets, at, pieces = {}, 0, []
+    for size in FRAME_SIZES:
+        block = _recording_block(size)
+        offsets[size], at = at, at + len(block)
+        pieces.append(block)
+        if size != RECORDED_BYTES:
+            pieces.append((BRA_S, "recorded"))
+            at += BRANCH_BYTES
+    return offsets, laid_out(pieces + [("label", "recorded")])
+
+
+def _d8(displacement):
+    """A brief extension word with d0.w as its index: its d8 alone, reaching forward."""
+    assert 0 < displacement < D8_REACH
+    return displacement
+
+
 # NOT `vdi_helpers.recording_trap_handler`, which this cannot extend: that one records one shape, (function, longword),
-# at a fixed ledger the VDI's batteries share, and answers one fixed value; the AES's glue traps with six frame shapes,
-# each recorded whole, and a load needs a different answer per call — the SCRIPT.
+# at a fixed ledger the VDI's batteries share, and answers one fixed value; the AES's and the desk's glue trap with
+# six frame shapes (none, a word, a longword, a longword and a word, a longword and two words, Fread's ten bytes),
+# each recorded whole, and a load needs a different answer per call — the SCRIPT. Nor `aes_gemdosif.Recorder`'s
+# chain of compares, whose cost grows with every function told (TOLD_BOUND).
 def handler_stub():
-    """The recording handler: the function word into the ledger, then its frame one word at a time — each function
-    whose frame ends sooner branching out to the zeros that pad it to RECORDED_BYTES; the ledger's pointer stored
-    back; D0 the script's next longword, its pointer stored back; `rte`."""
-    pieces = [PUSH_A0 + MOVEA_L_ABSOLUTE_A0 + struct.pack(">I", LEDGER_AT),
-              vdi.pack_words(MOVE_W_STACK_TO_A0_POSTINC, FRAME_WORDS_AT)]
-    for recorded in range(WORD_BYTES, RECORDED_BYTES, WORD_BYTES):
-        pieces.append(vdi.pack_words(MOVE_W_STACK_TO_A0_POSTINC, ARGUMENTS_IN_FRAME + recorded - WORD_BYTES))
-        for function in (function for function, size in FRAME_BYTES.items() if size == recorded):
-            pieces += [vdi.pack_words(CMPI_W_STACK, function, FRAME_WORDS_AT), (BEQ_S, f"pad {recorded}")]
-    pieces += [vdi.pack_words(MOVE_W_STACK_TO_A0_POSTINC, ARGUMENTS_IN_FRAME + RECORDED_BYTES - WORD_BYTES), (BRA_S, "done")]
-    for recorded in range(WORD_BYTES, RECORDED_BYTES, WORD_BYTES):      # each falls through into the shorter pads
-        pieces += [("label", f"pad {recorded}"), vdi.pack_words(CLR_W_A0_POSTINC)]
-    pieces += [("label", "done"), STORE_A0_ABSOLUTE + struct.pack(">I", LEDGER_AT) + MOVEA_L_ABSOLUTE_A0
-               + struct.pack(">I", SCRIPT_AT) + vdi.pack_words(MOVE_L_A0_POSTINC_D0) + STORE_A0_ABSOLUTE
-               + struct.pack(">I", SCRIPT_AT) + POP_A0 + RTE]
-    return laid_out(pieces)
+    """The recording handler: the function word into the ledger; below TOLD_BOUND, its frame's block looked up in the
+    size table (`move.b`) and jumped to (`jmp`), at or past it (`bcc.w`) the widest block; the block's frame words and
+    pads; the ledger's pointer stored back; D0 the script's next longword, its pointer stored back; `rte`. Every
+    register but D0 as found."""
+    offsets, blocks = _recording_blocks()
+    table = bytes(offsets[FRAME_BYTES.get(function, RECORDED_BYTES)] for function in range(TOLD_BOUND))
+    table += bytes(len(table) % WORD_BYTES)                     # the blocks start on a word
+    head = PUSH_A0 + MOVEA_L_ABSOLUTE_A0 + struct.pack(">I", LEDGER_AT) + vdi.pack_words(
+        MOVE_W_STACK_TO_A0_POSTINC, FRAME_WORDS_AT, MOVE_W_STACK_D0, FRAME_WORDS_AT, CMP_W_IMMEDIATE_D0, TOLD_BOUND)
+    # bcc.w, move.b, jmp: each an opcode word, then the word its PC-relative operand counts from
+    branch_from = len(head) + WORD_BYTES
+    table_from = branch_from + 2 * WORD_BYTES
+    jump_from = table_from + 2 * WORD_BYTES
+    table_at = jump_from + WORD_BYTES
+    blocks_at = table_at + len(table)
+    dispatch = vdi.pack_words(BCC_W, blocks_at + offsets[RECORDED_BYTES] - branch_from,
+                              MOVE_B_PC_INDEX_D0, _d8(table_at - table_from), JMP_PC_INDEX, _d8(blocks_at - jump_from))
+    tail = (STORE_A0_ABSOLUTE + struct.pack(">I", LEDGER_AT) + MOVEA_L_ABSOLUTE_A0 + struct.pack(">I", SCRIPT_AT)
+            + vdi.pack_words(MOVE_L_A0_POSTINC_D0) + STORE_A0_ABSOLUTE + struct.pack(">I", SCRIPT_AT) + POP_A0 + RTE)
+    return head + dispatch + table + blocks + tail
 
 
 ROUTINE_AT = HANDLER_AT + len(handler_stub())
@@ -445,7 +493,7 @@ def _scripted(function):
     """The handler's HOST TWIN for `function`: the same ledger entry, the same answer, both pointers bounded."""
     def handler(buf, arguments, _argument_bytes):
         entry, answer_at = LEDGER.next(buf), SCRIPT.next(buf)
-        LEDGER.record(buf, entry, function, arguments, FRAME_BYTES.get(function, RECORDED_BYTES))
+        LEDGER.record(buf, entry, function, arguments, FRAME_BYTES[function])
         SCRIPT.step(buf, answer_at)
         return case.long_in(buf, answer_at)
     return handler

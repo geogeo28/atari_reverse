@@ -150,6 +150,9 @@ LINKED_AND_NOT_FLIPPED.update({
 # ---- unit O: FLIPPED at band 6 slice F1 — its seventeen C cores thunked, trp13 a row of the transcribed table (native) ----
 # ---- end of band 6 wave 1a's ----
 # ---- band 6 wave 1b: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----
+# (BAND 6 SLICE F2 flips these by group: each group takes its flipped names out of its OWN block's lines and leaves the
+# ones it holds there with the reason it holds them — no group edits another's block; `src/aes/lineftable.S` is then
+# made again by this generator, never merged by hand.)
 # ---- band 6 wave 1b, group G1 (units I `src/desk/deskwin.c`, L `src/desk/deskview.c`) ----
 LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit I: the desk's window objects and program leaves, held at Tier 1 at its arrivals"
                                for routine in ("OBJ_INIT", "OBJ_WALLOC", "OBJ_WFREE", "OBJ_IALLOC", "PRO_CHDIR", "PRO_CMD", "PRO_EXEC",

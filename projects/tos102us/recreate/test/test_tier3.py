@@ -74,6 +74,14 @@ import test_aes_gemsuper                                   # noqa: E402  (its do
 import test_aes_all_run                                    # noqa: E402  (all_run's rows: door users that switch, pinned there)
 import test_aes_gemctrl                                    # noqa: E402  (the screen manager's handlers' rows, pinned there)
 import test_desk_bind                                      # noqa: E402  (band 6 unit D's bindings' rows, pinned there)
+# ---- band 6 slice F2, group G1 (units I, L): its batteries whose door users' rows are pinned there ----
+# ---- end of group G1's ----
+# ---- band 6 slice F2, group G2 (units A, K, J): its batteries whose door users' rows are pinned there ----
+# ---- end of group G2's ----
+# ---- band 6 slice F2, group G3 (units B, G): its batteries whose door users' rows are pinned there ----
+# ---- end of group G3's ----
+# ---- band 6 slice F2, group G4 (units C, H, E, F): its batteries whose door users' rows are pinned there ----
+# ---- end of group G4's ----
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -3501,6 +3509,16 @@ DOOR_USERS_WHOLE_RUN.update(test_aes_gemctrl.DOOR_USERS_WHOLE_RUN)
 # that switches — the desk's own process parked through our dispatcher and woken, its binding's call open across it.
 DOOR_USERS_PRICED.update(test_desk_bind.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_desk_bind.DOOR_USERS_WHOLE_RUN)
+# ...and, since band 6 slice F2, each wave-1b group's (its batteries' `DOOR_USERS_PRICED` / `DOOR_USERS_WHOLE_RUN`, imported
+# at this module's top by the group), one block a group:
+# ---- band 6 slice F2, group G1 (units I, L) ----
+# ---- end of group G1's ----
+# ---- band 6 slice F2, group G2 (units A, K, J) ----
+# ---- end of group G2's ----
+# ---- band 6 slice F2, group G3 (units B, G) ----
+# ---- end of group G3's ----
+# ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+# ---- end of group G4's ----
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():
@@ -3829,6 +3847,14 @@ UNPRICED_AT_A_ROM_ENTRY = {
         "no chain of the hands reaches it (Print Screen's alert answered is its arrival, and the printer's Scrdmp a device "
         "the model declares at the alert alone): held at Tier 1 over this class, the case its thunk is entered by — priced nowhere",
     # ---- end of slice F1's ----
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- end of group G4's ----
 }
 # OWED, the same class, registered nowhere yet: dos_sdta, dos_close and dos_cconout (host arguments of the same
 # `$fe3c28` tail; their batteries are bands 3's — STATUS.md's rows say "verified, unpriced").

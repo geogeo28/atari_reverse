@@ -681,10 +681,11 @@ reaches a binding of unit D's, else the plain differential.
   (`bench/tier3.py`, `put_back_for`). On the kit's plain `RomBench` (`isr.blob_named`) every yielding row of the desk —
   unit D's bindings too — refuses on the 27–33 bytes of OUR dispatch path's own frames under the yield (`$8b2a`
   shipped, `$8b34` bench): a refusal of the probe's class, not of the routine (wave 1b's fix pass priced every
-  yielding row of G2 and G4 so). Band 5's own trap convention (`aes_shell.scripted_pokes`) refuses every DOS-glue user
-  whose functions its `FRAME_BYTES` lacks (Dsetdrv, Dsetpath, Fdelete, Dgetdrv, Dgetpath): the handler records
-  `RECORDED_BYTES` of a frame it has no size for, the caller's own stack past it — told those five in the probe's
-  process, they price (STATUS AWAITING (24): making it permanent moves band 5's scripted rows).
+  yielding row of G2 and G4 so). Band 5's own trap convention (`aes_shell.scripted_pokes`) is TOLD EVERY FRAME F2 AND
+  F3 NEED since band 6 slice R8 (the user's ruling R8, the table moved once): Dsetdrv, Dsetpath, Dgetdrv, Dgetpath,
+  Fdelete, Fcreate, Mfree; Fdatime, Dcreate, Ddelete, Fsnext — in its size table (below, "The AES's FILE calls"). A
+  function it has no size for is still recorded `RECORDED_BYTES` deep, the caller's own stack past its frame, and such a
+  row refuses by nature.
 - **A WAVE IN PARALLEL GROUPS — THE BLOCKS AND THE LEDGER.** Wave 1b's four groups wrote one tree at once: every shared
   file (`addrs.h`, `host_slot.h` and its enum, `linef_table.py`, `test_aes_lineftable.py`'s per-unit table,
   `test_host_slots.py`'s role sets, `aes_desk.py`'s chains, `test_aes_desk_rom.py`'s pins, `transcription.py`'s
@@ -1537,7 +1538,13 @@ reconstructed dispatcher, its handlers bound to the reconstructed leaves, the di
 files — the GEMDOS door's three windows dropped (the trap entry's register save, GEMDOS's stack, deepened for the file
 system's frames, and the termination record). And over a SCRIPTED trap: a staged handler that records every call's
 function and frame and answers a script — for the answers no disk gives, and for Tier 3, where real GEMDOS's register
-save would differ by nature. Its host twin is reached through the reconstructed dispatcher, which RESOLVES a file handle
+save would differ by nature. The handler finds a frame's size in a SIZE TABLE (`aes_shell.handler_stub`, band 6 slice
+R8): a byte per function word below `TOLD_BOUND`, the offset of the block that records that many bytes and pads the
+entry with zeros, reached by `move.b <d8>(pc,d0.w),d0` / `jmp <d8>(pc,d0.w)`; a function word at or past the bound
+takes the widest block by `bcc.w`, as an untold one below it does. So every call pays the same dispatch whichever its
+function — the handler's cycles are in both columns of every row recorded through it, and a chain of compares charged
+each function by its place in the chain, and moved every row behind a function newly told; telling one now moves
+none. Its host twin is reached through the reconstructed dispatcher, which RESOLVES a file handle
 before Fread/Fseek; the scripted handle is staged open for it. sh_find's routine is `staged_call.h`'s
 `call_alcyon_pointer` (one pushed longword), through the register-carrying hook like `call_alcyon_object`.
 
@@ -1552,7 +1559,7 @@ nothing the caller can see changed). A test holds the replayed run to the real d
 GEMDOS. Both the scripted trap and the replay are one machinery, `aes_shell.Table(pointer_at, entries, stride, what)`: a
 table a longword in the image points into, `staged` at a run's start, `next` bounding the pointer the host twin reads
 out of the candidate's image before it stores through it, `record` and `recorded` for a ledger. The two 68000 stubs
-stay their batteries' own (a new compare in a shared stub would move every priced row over it); `REPLAY_CALLS` (128)
+stay their batteries' own (a change to a shared stub would move every priced row over it); `REPLAY_CALLS` (128)
 bounds a script, so a session making more GEMDOS calls than that is refused by name.
 
 WHY TIER 3 CANNOT PRICE OVER REAL GEMDOS: the trap entry's register save holds the CALLER's registers, which differ

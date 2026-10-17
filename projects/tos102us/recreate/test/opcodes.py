@@ -103,6 +103,11 @@ BRA_W = 0x6000                          # bra.w   <d16>: the whole word, its dis
 BSR_W = 0x6100                          # bsr.w   <d16>
 BEQ_S = 0x67                            # beq.s   <d8>
 BNE_S = 0x66                            # bne.s   <d8>
+BCC_W = 0x6400                          # bcc.w   <d16>: the whole word, as BRA_W
+# A JUMP THROUGH A TABLE (`test/aes_shell.py`'s recording handler): each takes a brief extension word, which for a
+# d0.w index is its d8 alone.
+MOVE_B_PC_INDEX_D0 = 0x103B             # move.b  <d8>(pc,<Xn>),d0
+JMP_PC_INDEX = 0x4EFB                   # jmp     <d8>(pc,<Xn>)
 # ...and the words a trap handler that fills a buffer adds to those (`test/aes_fslib.py`'s replayed search).
 MOVE_L_STACK_TO_ABSOLUTE = 0x23EF       # move.l  <d16>(sp),<xxx>.l
 MOVEA_L_ABSOLUTE_A1 = 0x2279            # movea.l <xxx>.l,a1

@@ -36,11 +36,11 @@ pass with Tier 3's (V) machinery forced onto the row, both blobs equal) are the 
 | `aes_bell` / the bell on, the console mid-escape (ESC) | 1.07 | **1.60** — 138 against 86 (+52) | 684 |
 | `aes_bell` / the bell on, the console mid-escape (ESC Y, its row) | 1.07 | **1.60** — 138 against 86 (+52) | 666 |
 | `dos_alloc` / no memory | 1.10 | **1.19** — 174 against 146 (+28) | 136 |
-| `dos_lseek` / to the start | 1.08 | **1.18** — 308 against 260 (+48) | 374 |
-| `dos_read` / a header | 1.06 | **1.13** — 328 against 290 (+38) | 386 |
-| `dos_sfirst` / found | 1.05 | **1.12** — 290 against 260 (+30) | 322 |
-| `dos_open` / EFILNF | 1.06 | **1.12** — 334 against 298 (+36) | 346 |
-| `dos_open` / a handle | 1.05 | **1.10** (1.103) — 300 against 272 (+28) | 346 |
+| `dos_lseek` / to the start | 1.09 | **1.18** — 308 against 260 (+48) | 298 |
+| `dos_read` / a header | 1.07 | **1.13** — 328 against 290 (+38) | 292 |
+| `dos_sfirst` / found | 1.05 | **1.12** — 290 against 260 (+30) | 294 |
+| `dos_open` / EFILNF | 1.06 | **1.12** — 334 against 298 (+36) | 294 |
+| `dos_open` / a handle | 1.05 | **1.10** (1.103) — 300 against 272 (+28) | 294 |
 | `dos_space` / Show Info (desk, unit O) | 1.09 | **1.18** (1.176) — 414 against 352 (+62) | 342 |
 | `dos_write` / Save Desktop (desk, unit O) | 1.06 | **1.17** (1.171) — 328 against 280 (+48) | 586 |
 | `dos_mkdir` / New Folder (desk, unit O) | 1.06 | **1.15** (1.148) — 294 against 256 (+38) | 422 |
@@ -1152,15 +1152,15 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 | `0xfeae04` | `sh_name` (`src/aes/shell_find.c`) | 2 rows | 185 / 1804 a full path, 176 / 1738 a name alone, scanned whole | **0.94** a full path (T→), **0.95** a name alone, scanned whole (T→) | ✅ verified | the name past the last separator, a name with none; direct and through Line-F. The C's per-byte back-scan passes 1.10 only on names of about 100 bytes (a review probe, unregistered); GEMDOS names are 8.3 |
 | `0xfeae36` | `sh_envrn` (`src/aes/shell_find.c`) | 2 rows | 343 / 3670 PATH= in the AES's own environment, 464 / 5232 HOME= in the AES's own environment | **1.02** PATH= in the AES's own environment (T→), **0.96** HOME= in the AES's own environment (T→) | ✅ verified | its 46-byte frame kept whole in a host slot in the ROM's layout, plus the caller's saved A6's top byte past it (0 on a 24-bit bus): a name up to 31 bytes is served (its terminator lands as a 0 on that byte), and so is a compare whose rewritten length lands a 0 there; a nonzero byte, or anything further, halts by name (32 bytes and over, empty, the 256 wrap); ROM-alone cases pin what the ROM does on both sides. ROM findings: byte 5 of its 50-byte environment copy becomes `;` (right only for the AES's own `PATH=\0` layout), and its match is not anchored to a string's start |
 | `0xfeaf1e` | `sh_path` (`src/aes/shell_find.c`) | 1 row | 704 / 8198 element 1 of the AES's own | **0.65** element 1 of the AES's own (T→) | ✅ verified | each PATH element built in turn with the name; an EMPTY element tests its caller's D6. Every application path enters with the dispatcher's 1 (`$fe5da8` `moveq #1,d6`), which the C takes. DIVERGENCE narrowed to sh_main's own sh_find (`$feb27e`), whose inherited D6 no C sees; a ROM-only case pins it (D6 = `\` leaves out the `\`) |
-| `0xfeafbe` | `sh_find` (`src/aes/shell_find.c`) | 3 rows | 2000 / 23694 not there: the root and PATH tried, 401 / 4746 found as given, 407 / 4860 found with sh_main's kind of routine, a logger | **0.72** not there: the root and PATH tried (T→), **0.91** found as given (T→), **0.91** found with sh_main's kind of routine, a logger (T→) | ✅ verified | over REAL GEMDOS on the staged RAM disk (the ROM's own AES and desk resources as files, an application resource in SUBDIR, a header-claims-nothing file, a file cut short) and the scripted trap for the error arms; the caller's routine by `call_alcyon_pointer` — a logger, and one that sets DOS_ERR (the re-read after it pinned); the logger row runs call_alcyon_pointer's target asm. Its 22-byte frame kept whole: a name part up to 22 bytes is served (its NUL on the saved A6's top byte), 23 and over halt by name. The routine's top byte is unreachable (callers pass 0 or `$feaddc`). ROM finding: its DTA (`$b89a`) IS rs_str's buffer, so sh_path's rs_str("PATH=") overwrites the last Fsfirst's DTA |
-| `0xfe3a1c` | `dos_sfirst` (`src/aes/gemdosif.c`) | 2 rows | 49 / 684 EFILNF, 42 / 622 found | **1.03** EFILNF, **1.05** found | ✅ verified | Fsfirst over the scripted trap, whose ledger records every frame whole (10 bytes); DOS_AX / DOS_ERR from the answer; a tagged spec; direct and through Line-F. GEMDOS 1.02 answers EFILNF for every miss (no directory, no drive), so the error arm that is not retried and DOS_AX 3 are reachable only over the scripted trap, and are pinned there |
-| `0xfe3a52` | `dos_open` (`src/aes/gemdosif.c`) | 2 rows | 45 / 658 a handle, 48 / 684 EFILNF | **1.05** a handle, **1.06** EFILNF | ✅ verified | the handle, or 0 with DOS_ERR; direct and through Line-F; a tagged name handed to GEMDOS as pushed (the dispatcher's device-name test reads it through the bus) |
-| `0xfe3a78` | `dos_read` (`src/aes/gemdosif.c`) | 1 row | 49 / 716 a header | **1.06** a header | ✅ verified | Fread's buffer longword recorded whole in the frame; a tagged buffer |
-| `0xfe3a9a` | `dos_lseek` (`src/aes/gemdosif.c`) | 1 row | 43 / 674 to the start | **1.08** to the start | ✅ verified | Fseek's handle and mode passed as one longword (the ROM glue's own `move.l`) |
+| `0xfeafbe` | `sh_find` (`src/aes/shell_find.c`) | 3 rows | 1996 / 23630 not there: the root and PATH tried, 401 / 4738 found as given, 407 / 4852 found with sh_main's kind of routine, a logger | **0.72** not there: the root and PATH tried (T→), **0.91** found as given (T→), **0.91** found with sh_main's kind of routine, a logger (T→) | ✅ verified | over REAL GEMDOS on the staged RAM disk (the ROM's own AES and desk resources as files, an application resource in SUBDIR, a header-claims-nothing file, a file cut short) and the scripted trap for the error arms; the caller's routine by `call_alcyon_pointer` — a logger, and one that sets DOS_ERR (the re-read after it pinned); the logger row runs call_alcyon_pointer's target asm. Its 22-byte frame kept whole: a name part up to 22 bytes is served (its NUL on the saved A6's top byte), 23 and over halt by name. The routine's top byte is unreachable (callers pass 0 or `$feaddc`). ROM finding: its DTA (`$b89a`) IS rs_str's buffer, so sh_path's rs_str("PATH=") overwrites the last Fsfirst's DTA |
+| `0xfe3a1c` | `dos_sfirst` (`src/aes/gemdosif.c`) | 2 rows | 47 / 656 EFILNF, 40 / 594 found | **1.03** EFILNF, **1.05** found | ✅ verified | Fsfirst over the scripted trap, whose ledger records every frame whole (10 bytes); DOS_AX / DOS_ERR from the answer; a tagged spec; direct and through Line-F. GEMDOS 1.02 answers EFILNF for every miss (no directory, no drive), so the error arm that is not retried and DOS_AX 3 are reachable only over the scripted trap, and are pinned there |
+| `0xfe3a52` | `dos_open` (`src/aes/gemdosif.c`) | 2 rows | 41 / 606 a handle, 44 / 632 EFILNF | **1.05** a handle, **1.06** EFILNF | ✅ verified | the handle, or 0 with DOS_ERR; direct and through Line-F; a tagged name handed to GEMDOS as pushed (the dispatcher's device-name test reads it through the bus) |
+| `0xfe3a78` | `dos_read` (`src/aes/gemdosif.c`) | 1 row | 41 / 622 a header | **1.07** a header | ✅ verified | Fread's buffer longword recorded whole in the frame; a tagged buffer |
+| `0xfe3a9a` | `dos_lseek` (`src/aes/gemdosif.c`) | 1 row | 37 / 598 to the start | **1.09** to the start | ✅ verified | Fseek's handle and mode passed as one longword (the ROM glue's own `move.l`) |
 | `0xfe3c06` | `dos_sdta` (`src/aes/gemdosif.c`) | 4 direct/Line-F | — | unpriced — a HOST ARGUMENT (its caller's return site, parked through `$fe3c28`; the dos_free precedent) | ⚠️ verified, unpriced | Fsetdta over the scripted trap; through real GEMDOS it answers the dispatcher's own D0 (`$00fd0001` on the ROM, 0 on the host binding), which the next Fsfirst overwrites before anything reads DOS_AX/DOS_ERR |
 | `0xfe3c0a` | `dos_close` (`src/aes/gemdosif.c`) | 4 direct/Line-F | — | unpriced — a HOST ARGUMENT (as dos_sdta) | ⚠️ verified, unpriced | Fclose over the scripted trap, both returns parked |
-| `0xfeaae2` | `rs_readit` (`src/aes/resource.c`) | 2 rows | 664 / 8200 the header's read fails, 27766 / 336892 the desk's resource, whole | **0.88** the header's read fails (T→), **0.19** the desk's resource, whole (T→) | ✅ verified | over real GEMDOS and the scripted trap: open, header, Malloc, read, relocate; a tagged global and name. The worst row is a failed load (the C about the ROM on glue and walk; a whole load adds the relocation at about 5x). ROM findings: it closes handle 0 after a failed Fopen, stores dos_alloc's 0 into rs_hdr before testing it, ignores Fseek's answer; Malloc(0) returns a block in this GEMDOS (an rsh_rssize-0 file "loads") |
-| `0xfeac5c` | `rs_load` (`src/aes/resource.c`) | 2 rows | 703 / 8700 the header's read fails, 102238 / 1250402 the desk's resource, whole | **0.85** the header's read fails (T→), **0.19** the desk's resource, whole (T→) | ✅ verified | as rs_readit, through sh_find's PATH walk. ROM finding: the walk's rs_str makes the AES's OWN resource current, so a failed rsrc_load leaves rs_global/rs_hdr the AES's |
+| `0xfeaae2` | `rs_readit` (`src/aes/resource.c`) | 2 rows | 656 / 8090 the header's read fails, 27744 / 336608 the desk's resource, whole | **0.88** the header's read fails (T→), **0.19** the desk's resource, whole (T→) | ✅ verified | over real GEMDOS and the scripted trap: open, header, Malloc, read, relocate; a tagged global and name. The worst row is a failed load (the C about the ROM on glue and walk; a whole load adds the relocation at about 5x). ROM findings: it closes handle 0 after a failed Fopen, stores dos_alloc's 0 into rs_hdr before testing it, ignores Fseek's answer; Malloc(0) returns a block in this GEMDOS (an rsh_rssize-0 file "loads") |
+| `0xfeac5c` | `rs_load` (`src/aes/resource.c`) | 2 rows | 695 / 8590 the header's read fails, 102216 / 1250118 the desk's resource, whole | **0.85** the header's read fails (T→), **0.19** the desk's resource, whole (T→) | ✅ verified | as rs_readit, through sh_find's PATH walk. ROM finding: the walk's rs_str makes the AES's OWN resource current, so a failed rsrc_load leaves rs_global/rs_hdr the AES's |
 | `0xfeb4be` | `w_getxptr` (`src/aes/wrect.c`) | 5 rows + 1 Line-F | 35 / 482 every row | **0.32** WS 0 of the desktop, **0.34** WS 1 of the desktop, **0.26** WS 2 of the desktop, **0.33** WS 3 of the desktop, **0.35** WS 4 of the desktop | ✅ verified | every arm of the five-row switch (`$fefcca`: 0 WS_FULL rec+16, 1 WS_CURR and 4 WS_TRUE the window tree's ob_x at `$9734` + wh*24 + 16, 2 WS_PREV rec+32, 3 WS_WORK rec+24) for the desktop, the last window and window -1 (signed `muls.w`: record and tree object below their tables); past 4 compared UNSIGNED (5, -1, `$7fff`): the ROM answers D0 as the switch left it — `which` in the low word, pinned; the caller's high word unpinned (no caller passes one). A core over words alone |
 | `0xfeb53e` | `w_getsize` (`src/aes/wrect.c`, rc_copy's `.S` through glue) | 5 rows + 1 Line-F | 92 / 1248 WS 0 .. 98 / 1318 WS 4 | **0.36** WS 0 of the desktop (T→), **0.36** WS 1 of the desktop (T→), **0.34** WS 2 of the desktop (T→), **0.36** WS 3 of the desktop (T→), **0.50** WS 4 of the desktop (T→) | ✅ verified | each rectangle copied; WS_TRUE grown by 2 only when w AND h, READ BACK from the copy, are non-zero (no width / no height / empty / 1×1); the word wrap (`$ffff` → 1, `$7fff` → `$8001`); ORDER overlaps — the answer a word and a longword over its source, below it; a tagged answer; window -1 |
 | `0xfe5cee` | `newrect` (`src/aes/wrect.c`, rc_copy's `.S` through glue) | 5 rows | 141 / 1970 a closed window .. 2010 / 25146 a window over the desktop already cut in four | **0.71** a window over the desktop already cut in four (T→), **0.67** a window over the desktop (T→), **0.49** the desktop alone (T→), **0.34** a closed window (T→), **0.50** the desktop, its list of four (T→) | ✅ verified | the snapshot's desktop rebuilt from its own ORECT; a window over it cutting it; three windows (the top one cuts both below, a lower one leaves the upper); a list of four freed whole in list order; tagged links; closed windows and no-area windows stop before the walk (gl_mkrect's stale link left); the area read from gl_mkrect after the border grows it (`$fffe` wide and high: the list freed, no cut); an EXHAUSTED POOL builds the list at `$0`; window -1; the tree argument is the walk's alone. Since band 3 wave 1 the target hands everyobj mkrect's ALCYON ENTRY (`src/aes/wmupdate.S`, through `wrect.c`'s mkrect_routine), so our side runs its own mkrect's C: the two cut rows re-priced 0.81 → 0.67 and 0.89 → 0.72 (before, our side ran the ROM's mkrect, its cost hidden as ours). These rows are not (V), so they alone cannot see a target that hands the ROM's mkrect again: that pin lives on draw_change's and wm_*'s (V) rows, which REFUSE our cycles inside the AES's own spans. No Line-F door: everyobj's `jsr (a0)` on the address `$fec146` pushes — the door case is the ROM's own everyobj over the whole window tree against the C pair, newrect and mkrect bound through one hook. Hands everyobj mkrect BY ITS ROM ADDRESS on the host (`test_aes_rom_data.py`, CODE) |
@@ -5359,6 +5359,104 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       frame chain on our machine is not the ROM's: `$a288` `$fddf40` / 0, `$a2bc` `$a360` / `$a34e`" — the first break
       the reason now names). Every red an AssertionError, no crash.
     - NOT RUN by the fix pass: `make gates`, a `$90c` capture set, `my-code-review` — the orchestrator's.
+  - **BAND 6 SLICE R8 — BAND 5's TRAP FRAMES TOLD (THE TABLE MOVES): `aes_shell`'s SCRIPTED TRAP TOLD THE ELEVEN FRAMES
+    F2 AND F3 NEED, THROUGH A SIZE TABLE; 25 TIER-3 LINES MOVE, ONCE; NOTHING FLIPPED, NO OBJECT MOVED** (2026-10-17; on
+    `b68e8f8` with the F2 prep: the brief `scratchpad/b6/F2/R8/brief.md`, one author alone in the tree — its hand-back
+    `R8/handback.md`, a chain of compares —, one review `scratchpad/RR8/review.md` (no blocker; F1 a measured
+    recommendation, the size table), then ONE FIX PASS alone in the tree (`R8/fix.md`), which adopted the table and wrote
+    this entry: every number here is the fix pass's own run unless it says whose; its logs `scratchpad/b6/F2/R8/FIX/`).
+    - **THE USER'S RULING R8** (given before the slice): band 5's missing trap frames — THE TABLE MOVES, each moved
+      `tier3.txt` line listed with its reason, rather than a by-name drop; read by the orchestrator as covering the move
+      wherever it is needed (units A, C, G, and I, L, J too). THE ORCHESTRATOR'S (provisional): move the rows ONCE — tell
+      the handler all eleven frames F2 and F3 need.
+    - **THE ELEVEN FRAMES** (`aes_shell.FRAME_BYTES`, each equal to the reconstructed leaf's own argument read and within
+      the ROM dispatcher's copied span — reviewer's check): F2's Dsetdrv 2, Dsetpath 4, Dgetdrv 0, Dgetpath 6, Fdelete 4,
+      Fcreate 6, Mfree 4; F3's Fdatime 8, Dcreate 4, Ddelete 4, Fsnext 0 — Dgetdrv's and Fsnext's a frame of NOTHING, the
+      function word alone recorded; Fread told at `RECORDED_BYTES` (10). `SCRIPTED_FUNCTIONS = tuple(FRAME_BYTES)`, so the
+      twin's binding list cannot disagree with the stub; the twin reads `FRAME_BYTES[function]`. G2's probe's "Dgetdrv's
+      ledger excess dropped by name" is no longer needed.
+    - **THE SIZE-TABLE HANDLER** (the fix pass, from the review's measured probe, re-derived: `aes_shell.handler_stub`):
+      the function word into the ledger; `cmp.w #TOLD_BOUND,d0` (`TOLD_BOUND = max(FRAME_BYTES) + 1`, $58) and `bcc.w`
+      to the widest block; `move.b <d8>(pc,d0.w),d0` reads a byte table of block offsets, `jmp <d8>(pc,d0.w)` enters the
+      block for that frame size — its moves, its pads, `bra.s` to the tail (the widest laid last, falling into it); the
+      tail as before. 244 B; the band re-laid inside its 0x300 (ledger `0x230`, script `0x2C0`). NAMED OPCODES in
+      `test/opcodes.py` (`BCC_W`, `MOVE_B_PC_INDEX_D0`, `JMP_PC_INDEX`; `MOVE_W_STACK_D0` and `CMP_W_IMMEDIATE_D0` were
+      there — the review's probe spelt `cmpi.w`, the same 8 cycles: the table below is BYTE-IDENTICAL to the probe's,
+      `630d6b1e…`). Every function pays the same dispatch, so TELLING ONE MORE MOVES NO OTHER ROW (a chain charged each
+      function by its place in it, and moved every row behind a new compare); an untold function is recorded 10 deep,
+      as the chain did. `laid_out` is HEAD's again (asserting `.s` only): the author's `.w` relaxation served the chain
+      alone — every other stub built with it (the eleven `aes_gemdosif.Recorder`s, fslib's replays) was byte-identical
+      under both (the author's and the reviewer's `stubs.py`) — so RR8 F5's two equivalent survivors are gone with the
+      code. RR8 F4 (the chain duplicating `Recorder.stub`): GONE — the shell's stub is a size table on purpose, the
+      Recorder's a chain (`handler_stub`'s comment says why).
+    - **THE MOVED LINES: 25 of 6,361** (a LINE-ALIGNED compare against HEAD's `tier3.txt`, `FIX/moved_lines.txt`; the
+      author's and the cut's "26" was `diff | grep -c`, which misaligns one unchanged line — RR8 F2). Thirteen rows, six
+      dispatch rows, six whole-run lines (the dispatch rows: rs_load's failing load twice — opcode 110 and the top-byte
+      row —, sh_find found three times, sh_find not there once). The OS both run per scripted call FALLS (HEAD → table): dos_* 322–386 → 292–298, sh_find "not
+      there" 1236 → 1172, rs_readit / rs_load failing 1566 → 1456, whole 2620 → 2336. Before → after (ROM / ours, ratio):
+      sh_find not there 23694 / 17034 0.72 → 23630 / 16970 0.72; found as given 4746 / 4308 0.91 → 4738 / 4300 0.91;
+      a logger 4860 / 4428 0.91 → 4852 / 4420 0.91; dos_sfirst EFILNF 684 / 704 1.03 → 656 / 676 1.03; found 622 / 652
+      1.05 → 594 / 624 1.05; dos_open a handle 658 / 686 1.05 → 606 / 634 1.05; EFILNF 684 / 720 1.06 → 632 / 668 1.06;
+      **dos_read 716 / 754 1.06 → 622 / 660 1.07**; **dos_lseek 674 / 722 1.08 → 598 / 646 1.09**; rs_readit fails 8200
+      / 7254 0.88 → 8090 / 7144 0.88; whole 336892 / 65306 0.19 → 336608 / 65022 0.19; rs_load fails 8700 / 7402 0.85
+      → 8590 / 7292 0.85; whole 1250402 / 238498 0.19 → 1250118 / 238214 0.19; dispatch ×2 (opcode 110 / top byte,
+      rs_load fails) 9318 / 7752 0.74 → 9208 / 7642 0.74, whole run 0.83 (OS 1566 → 1456); dispatch ×3 (sh_find found)
+      5372 / 4654 0.78 → 5364 / 4646 0.78, whole 0.87 (OS 592 → 584); dispatch opcode 124 not there 24320 / 17380 0.63
+      → 24256 / 17316 0.63, whole 0.71 (OS 1236 → 1172). EVERY SUB-1.00 RATIO AT ITS HEAD VALUE. **TWO RATIOS RISE,
+      REPORTED, NOT ACCEPTED: dos_read 1.06 → 1.07 and dos_lseek 1.08 → 1.09** — both K5 rows, both TOWARDS their own
+      cycles (below); none crosses 1.10. The STATUS rows quoting them are updated (`0xfe3a78`, `0xfe3a9a`; the cost
+      cells of all seven addresses).
+    - **THE DILUTION QUESTION AND ITS ANSWER** (the author's to-rule 1; RR8 F1): the handler is cycles in BOTH columns of
+      every row recorded through it, so a heavier handler dilutes a ratio towards 1.00. MEASURED BOTH WAYS, Tier 3's (V)
+      machinery forced onto each row, both blobs equal (the review's `k5_band5.py`; HEAD and the chain the review's
+      `RR8/k5_{head,r8}.log`, the table this pass's `FIX/k5_fix.log`), shown HEAD → chain → table: dos_lseek 1.0757 →
+      1.0542 → **1.0860**; dos_read 1.0562 → 1.0399 → **1.0653**; dos_sfirst found 1.0515 → 1.0382 → 1.0542; dos_open
+      EFILNF 1.0559 → 1.0425 → 1.0608; dos_open a handle 1.0453 → 1.0341 → 1.0495 — the OS both run 322–386 → 526–662 →
+      292–298. THE CHAIN (+84..+276 cycles a call) would have WIDENED K5's dilution (every dos_* row down 0.01–0.03) and
+      raised seven sub-1.00 ratios by 0.01; THE TABLE is lighter than HEAD's own chain on every call, so the shown column
+      moves TOWARDS THE OWN COLUMN — the honest direction, at a cost: dos_lseek 1.086, 0.014 under the bar.
+    - **K5, RE-MEASURED, UNCHANGED IN OWN CYCLES** (this pass's run, the review's script, `FIX/k5_fix.log`): every row's own
+      column EQUAL to HEAD's on both blobs — dos_lseek 308 / 260 (1.1846), dos_read 328 / 290 (1.1310), dos_sfirst found
+      290 / 260 (1.1154), dos_open EFILNF 334 / 298 (1.1208), a handle 300 / 272 (1.1029), dos_sfirst EFILNF 342 / 322,
+      sh_find's, rs_readit's and rs_load's too. The K5 block's "shown" and "the OS both run" cells moved with the table
+      (dos_lseek 1.09 / 298, dos_read 1.07 / 292, dos_sfirst found 1.05 / 294, dos_open ×2 1.06 / 1.05, 294); its own
+      column did not; nothing accepted.
+    - **ROM SIDE** (the author's reading, CONFIRMED by the orchestrator, provisional): "no row's ROM side moved" means the
+      ROM's code, arguments and verdicts — not its cycles, which any handler change moves on both shores alike. No blob,
+      no object moved: 177 hashes (`FIX/hashes_after_bench.txt`) equal HEAD's but `build/bench/tier3.txt` (`aaebfd06…` →
+      **`630d6b1e…`**); `lineftable.S` `cb40a3d1`, `glue.S` `2031996e`, the bench blob `5062f7ae`, the shipped
+      `4baf5f1c`, the 171 objects. Nothing flipped (`LINKED_AND_NOT_FLIPPED` untouched); `tools/flipped_depths.py` not
+      run (no blob moved).
+    - **PINS**: the author's `test_the_scripted_trap_records_each_told_frame_whole_and_nothing_past_it` (18 cases: the
+      68000 handler under a staged `trap #1` caller with `$A5A5` caller's stack above each frame, and the host twin over
+      the same frame; each size held to the tree's other tables — `gemdos_fs.LEAVES`, `aes_gemdosif.FRAME_BYTES`,
+      `aes_fslib.ARGUMENT_BYTES`), KEPT; the fix pass's `test_the_scripted_trap_records_an_untold_function_recorded_bytes_deep`
+      (2: Mshrink inside the table, a function word AT the bound past it — the `bcc.w` arm, which no GEMDOS of this ROM
+      reaches; the 68000 side only, the twin bound for told functions alone). `aes_gemdosif`'s docstring re-worded
+      (RR8 F3: why its recorders are not the shell's — Pexec's 14 bytes, the parked longwords, the BIOS / XBIOS vectors).
+    - **MUTANTS — every one, its verdict.** THE AUTHOR'S (against the chain, since replaced): the eleven frames dropped,
+      Fsnext told 2, Fdatime told 6, the `.w` displacement +2, the loop from 2, the twin at `RECORDED_BYTES` — 16 KILLED;
+      the `.w` opcode's low byte set — ABNORMAL (the stub never reaches `rte`). THE REVIEWER'S (against the chain): 7
+      KILLED, the `.w` range `>=`→`>` and one-pass relaxation SURVIVED as equivalents (RR8 F5; that code is gone). THE FIX
+      PASS'S, AGAINST THE TABLE (`FIX/sweep.log`: a private copy, the kit watchdog loaded, `build/libtos102us.so` moved
+      aside and remade before each, `__pycache__` cleared, every restore hash-equal `00fd7aed`; battery
+      `test_aes_shell_find.py`, 173): KILLED — Dgetpath 6→4 (1), Mfree 4→6 (1), Dgetdrv 0→2 (1), Fdatime 8→10 (1), the
+      table skipping Dsetdrv with the twin still 2 (1), the twin recording a word for a frame of nothing (2), each block
+      one pad short (69), an untold function inside the table recorded 0 deep (1), `bcc.w` to the shortest block (1),
+      the bound one short (2: Fdatime past it), `move.b`'s d8 one byte on (54); ABNORMAL (a crash is not a kill) — `jmp`'s
+      d8 one word on (sh_find's module-level row never reaches `rts`: 8 collection errors), the blocks laid widest first
+      (`laid_out` refuses the zero-reach `bra.s` at import: 8 errors); SURVIVED — the table's word padding dropped,
+      EQUIVALENT while `TOLD_BOUND` is even ($58).
+    - **THE F2 PREP** (lands with this slice; `scratchpad/b6/F2/prep_handback.md`, behaviour-neutral — 177 hashes and the
+      collection equal before and after, reviewed by RR8): per-group blocks G1–G4 in `bench/linef_table.py` (F2's rule:
+      each group edits its own block, the generator remakes `lineftable.S`), `test_aes_lineftable.py` (`FLIPPED_AT_F2`,
+      the sums, `UNENTERED`), `test_aes_event.py` (`SLOTS_HELD_WHERE_PARKED`, `ROWS_THAT_SWITCH`, the census's X-flag
+      declarations), `test_aes_desk_ours.py` (`BAND_6_FLIPPED = 56 + sum(…)`, `NOT_ENTERED_ON_OUR_SHORE`; `DEPTHS` /
+      `DEEPEST_PD0` re-derived at integration, not per group) and `test_tier3.py` (battery imports, `DOOR_USERS_*`,
+      `UNPRICED_AT_A_ROM_ENTRY`). THE BLOCKS MERGE 3-WAY ONLY (RR8 F6, measured): two groups' edits 2 lines apart sit
+      inside a plain `git apply`'s 3-line context and FAIL; `git merge-file` merges them clean — the integration applies
+      group edits with `git apply -3` or a 3-way merge, never a plain `git apply`.
+    - NOT RUN by the fix pass: `make gates`, `make guarded`, a `$90c` capture set, `my-code-review` — the orchestrator's.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -5538,6 +5636,16 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
   screen-manager history at that arrival, appl_exit's too), graf_rubbox's two door-call-0 wakes (the companion and
   the registry derive the first delivery over different mask words `$cc44`: a registrar question); (d) a printer
   chain to retire gsx_hardcopy's who-ran exemption (optional).
+  **BAND 6 SLICE R8 IS IN, WITH THE F2 PREP** (its entry, above; every verified count unchanged, NOTHING FLIPPED, no
+  object moved): band 5's scripted trap is told the eleven frames F2 and F3 need through a SIZE TABLE, and 25 Tier-3 lines
+  moved once (dos_read 1.07 and dos_lseek 1.09 rise TOWARDS their own cycles: reported, K5's). **NEXT: F2** per its
+  cut's split (`scratchpad/b6/F2/cut.md` §5): G1 ∥ G4, each in a PRIVATE TREE, then G3 ∥ G2 once stage 1 is merged,
+  then F2b (i_find, win_icalc, win_bldview, win_shwall, their callees flipped), H2 ALONE (the harness for unit D's
+  objc_draw and evnt_multi: (a) and (b) below), then F2c (the ten held for it). The integration is the orchestrator's,
+  the group edits applied 3-WAY (`git apply -3` or a merge: the prep's blocks fail a plain `git apply`, RR8 F6), then
+  `lineftable.S`, `tier3.txt`, `DEPTHS` / `DEEPEST_PD0` and the desk-turn pins MADE AGAIN, never by hand;
+  `tools/flipped_depths.py` exit 0 and the from-empty gate. appl_exit and desk_rsrc_load flip as ⚠️ verified-but-unpriced
+  at their flips (THE USER'S RULING of 2026-10-17, AWAITING (24)).
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -5555,7 +5663,8 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
   message's apret before the rectangles' (`j09`: band 5's accessory — the real menu chain does not reach it).
   - **AWAITING THE USER** (each reported, none accepted): (1) THE K5 PRICING GAP — ten rows shown 1.05–1.10 are
     1.10–1.60 on their own cycles behind a GEMDOS or BIOS trap the net-pricing classifier does not see (FIFTEEN since band
-    6 slice F1: five of the desk's unit O rows, shown 1.04–1.09, are 1.10–1.18 on their own); (2) THE SAME
+    6 slice F1: five of the desk's unit O rows, shown 1.04–1.09, are 1.10–1.18 on their own) — THE USER'S RULING OF
+    2026-10-17: it STAYS REPORTED and comes back to the user when band 6 closes; (2) THE SAME
     CLASS, band 5 wave 1: A SCRIPTED TRAP'S HANDLER IS CYCLES IN BOTH COLUMNS of every row recorded through it and
     dilutes the ratio (pgmld's failing arm reads 1.10 over today's recorder and 1.11 over a lighter one — it ships
     as `.S` either way; isdrive's, set_defdrv's, desk_alloc's and the screen switches' rows carry the same handler);
@@ -6329,7 +6438,20 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
         differential refuses on the dispatcher's stack below the derived drop: a second piece; both owed, not landed.
       - THE USER'S QUESTION: appl_exit — flip it as a ⚠️ verified, unpriced row (Tier 1 and the our-shore walk hold it;
         reviewer A's A11: behaviourally clean, killed by bookkeeping pins alone), or keep it held until a screen-manager
-        history reaches the viewer's arrival. KEPT HELD until then.
+        history reaches the viewer's arrival. KEPT HELD until then. — RULED BY THE USER ON 2026-10-17 (the bullet below).
+    (24, continued) BAND 6 SLICE R8 + THE F2 PREP (its entry, above).
+      - **THE USER'S RULINGS OF 2026-10-17** (the user's own word, not provisional): (1) appl_exit AND desk_rsrc_load
+        FLIP AS ⚠️ VERIFIED-BUT-UNPRICED — not in this slice: applied at their flips. (2) THE K5 BLOCK STAYS REPORTED and comes back to the user when
+        band 6 closes (the block under the Components table; nothing in it accepted). And earlier, R8: the table moves.
+      - THE ORCHESTRATOR'S RULINGS FOR THE FIX PASS (`scratchpad/b6/F2/R8/fix.md`), PROVISIONAL: (1) ADOPT THE
+        SIZE-TABLE HANDLER (RR8 F1) — the same ledger at less cost than HEAD's chain, every sub-1.00 row at its HEAD
+        value, no row moved again when F3's functions are told, the shown column nearer the own column; named opcodes,
+        the 18-case pin kept, RR8's mutants re-run; `laid_out` back to HEAD's asserting form, no other stub needing
+        the widening; (2) RR8 F4's duplicate: gone with the table; (3) RR8 F3: `aes_gemdosif`'s docstring re-worded;
+        (4) moved lines counted line-aligned (25, not 26); (5) the author's "ROM side" reading CONFIRMED — the ROM's
+        code, arguments and verdicts, not its cycles.
+      - REPORTED, NOT ACCEPTED: dos_read 1.06 → 1.07 and dos_lseek 1.08 → 1.09 (1.0860), both shown nearer their own
+        1.13 / 1.18 — K5's rows, under the user's ruling (2) above.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -6456,10 +6578,19 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (band 6 slice F1's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
-the orchestrator's): **31,574 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (band 6 slice R8's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
+the orchestrator's): **31,594 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6 SLICE R8 + THE F2 PREP, WITH ITS FIX PASS (2026-10-17; one author alone in the tree on `b68e8f8` + the prep,
+  one review, then one fix pass alone in the tree — the wave log's entry; objects, blobs, `glue.S`, `lineftable.S` and
+  the library NONE moved (177 hashes); the table 6,361 lines, 25 moved by the size-table handler): ONE `make test` in
+  the shared tree (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` moved aside first, **31,594 passed / 8
+  skipped**, rc 0 (`scratchpad/b6/F2/R8/FIX/final.log`; RUN ONCE). RE-SUMMED, ITEMISED BY FILE against slice F1's fix
+  pass's own collection (31,602 = 31,594 + 8 skipped, against 31,582; `pytest --collect-only`, 291 files both:
+  `scratchpad/b6/F1/FIX/collect_perfile.txt`, `scratchpad/b6/F2/R8/FIX/collect_perfile.txt`): +20 —
+  `test_aes_shell_find.py` 153 → 173 (the author's told-frame pin, 18; the fix pass's untold-function pin, 2); the
+  prep's five files' counts unmoved; no other file's count moved.
 - BAND 6 SLICE F1 — UNITS O + D FLIPPED, WITH ITS FIX PASS (2026-10-16/17; one author alone in the tree on `1613b44`, two
   reviews, then one fix pass alone in the tree — the wave log's entry; objects: `src_aes_lineftable_S.o` and
   `src_desk_deskleaf_c.o` moved by the author, NONE by the fix pass (171 hash-equal, both blobs and `glue.S` too); the

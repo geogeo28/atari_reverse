@@ -75,8 +75,30 @@ OURS_NATIVE, OURS_THROUGH_A_THUNK, THE_ROM_S = linef_table.OURS_NATIVE, linef_ta
 # THE TABLE AS IT STANDS (band 6 slice F1: bands 0-5 ours, and band 6's units O and D flipped — unit O's seventeen
 # thunked cores and trp13's `.S` (native, its two entries)). Each flip of a routine moves these — that is their use: a
 # verdict that changes with no flip reds here, by count, before any run. (Wave 0: 82 / 337 / 239, 299 thunks.)
-VERDICTS = {OURS_NATIVE: 84, OURS_THROUGH_A_THUNK: 393, THE_ROM_S: 181}
-THUNKS = 354
+VERDICTS_AT_F1 = {OURS_NATIVE: 84, OURS_THROUGH_A_THUNK: 393, THE_ROM_S: 181}
+THUNKS_AT_F1 = 354
+# BAND 6 SLICE F2 (wave 1b's hundred, four groups): EACH GROUP'S FLIP ON A LINE OF ITS OWN, inside its group's block —
+# `(entries of the table it makes ours through a thunk, thunks it adds, of them entered by a registered case)` — so no
+# two authors edit one line; the pins below are the sums. (A wave-1b routine has a C core and no `.S`: its entries
+# move from the ROM's to a thunk, none to native.)
+FLIPPED_AT_F2 = {
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    "G1": (0, 0, 0),
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    "G2": (0, 0, 0),
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    "G3": (0, 0, 0),
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    "G4": (0, 0, 0),
+    # ---- end of group G4's ----
+}
+ENTRIES_FLIPPED_AT_F2 = sum(entries for entries, _thunks, _entered in FLIPPED_AT_F2.values())
+VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_AT_F2,
+            THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_AT_F2}
+THUNKS = THUNKS_AT_F1 + sum(thunks for _entries, thunks, _entered in FLIPPED_AT_F2.values())
 # The operand of the handler's RAM copy (`$cc24`): the table kind's one slot (`aes_event.LINEF_TABLE_SLOT`).
 TABLE_OPERAND_IN_RAM = aes.AES_LINEF_COPY + aes.LINEF_TABLE_OPERAND
 
@@ -615,8 +637,18 @@ UNENTERED = {
         "RSRC_GADDR", "SHEL_GET", "SHEL_PUT", "SHEL_WRITE", "WAIT", "WIND_CALC", "WIND_CLOSE", "WIND_CREATE", "WIND_DELETE",
         "WIND_FIND", "WIND_GET", "WIND_OPEN", "WIND_SET", "WIND_UPDATE")},
     # ---- end of unit D's ----
+    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- end of group G1's ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- end of group G2's ----
+    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- end of group G3's ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- end of group G4's ----
 }
-ENTERED_THUNKS = 311                    # of the 354: THUNKS less the 43 above (band 6 slice F1: unit O's 17, unit D's appl_init / appl_bvset)
+# of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
+# each F2 group adds its own entered count on its line of FLIPPED_AT_F2)
+ENTERED_THUNKS = 311 + sum(entered for _entries, _thunks, entered in FLIPPED_AT_F2.values())
 
 
 def test_the_thunks_no_case_enters_are_listed_by_name():
